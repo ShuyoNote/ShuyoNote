@@ -115,20 +115,24 @@ mod mesh_wire_bytes;
 // `IdentityOracle` / `PairedDeviceOracle`）＋ **融合账本**（`MergeLedger`：撤销／永久不分离）。
 // 2026-10-10 入库，**2026-10-12 才接进构建** ✓（在那之前它不在本清单里 ⇒ 连它自己的判据都**不在二进制里** ✗）。
 //
-// ## ⛔ 死代码收据（2026-10-12）｜为什么留着 ＋ 什么时候能删
-// 它**今天没有生产调用方** ✗ —— 而这不是"忘了接"，是**那条路今天不成立** ✓：
-//   · 闸要管的是**按名融合**，而 `sync::merge_anchor_by_name`（`sync.rs:6738`）**零生产调用者**
-//     ⇒ 今天**没有可闸的对象**：硬接在 `sync.rs:3342`（`apply_upsert` 之前）只会变成死代码，
-//     或者更糟 —— 拦住**正常**的按 id 直连同步 ✗（那条路今天就是这么同步的）；
-//   · 按名融合还缺一格数据：`doc_content.rs:414-417` 逐字 —— 远端载荷**只有 id、没有空间名** ⇒ 判不了"同名" ✗；
-//   · 第 2 档（账号）在**设备直连**那条路上拿不到：`LanAnnounce`（`lan.rs:65-122`）**没有**身份字段 ✗
-//     （⛔ 补它只许用 `#[serde(default)]` 可选取字段；⛔ 不许升 `WIRE_VERSION`；⛔ 不许进 `pairing.rs`）。
-// ⇒ ⭐ **判据已就位并能跑**（`mesh.rs` 的 D1/D2/D3 三条 ＋ 本文件自己的 j/k/l），但 **闸不能生效** ✓
-//   ⇒ ⭐ **留给 owner 拍的就是"接按名融合那条路"**（那是另一件、且要动协议形状 ✓）。
-// ⛔ 什么时候删这处 `#[allow(dead_code)]`：**`merge_anchor_by_name` 真有了生产调用者**那一轮
-//   （那时闸被 `Ingest::Peer` 的消费处调 ⇒ 自然有使用者）；⚠️ 若那时它还在，说明闸**没真接上** ✗。
-// ⚠️ 与 `sync.rs:198/:236` 那两条收据是**同一件事**（它们的消费方就是这里说的"那个消费处"）
-//   ⇒ 那两条**同样删不掉** ✓（删了就是谎称接上了 ✗）。
+// ## ⭐⭐ 2026-10-17：**闸接上了**（第 1 档）—— 本条收据据此改写（⛔ 不是删掉不收 ✗）
+// 接线点：`mesh::absorb_peer_batch`（设备直连那一批的落库口）⇒
+// `mesh_merge_ledger::batch_merge_gate`（先类别/名字取证 ⇒ `merge_gate`）＋
+// `sync::merge_ledger_record`（账本落到 `meta.sync_state` 的 `LEDGER_KEY` 那一格）✓。
+// ⇒ 下列**现在有生产调用者**：`normalize_space_name`（账本的 `name_key`）、`merge_gate`、
+// `SamePerson`／`IdentityBasis`／`WhyUnknown`、`IdentityOracle`／`PairedDeviceOracle`、
+// `MergeRequest`／`MergeOutcome`、`MergeLedger::record`／`view`／`encode_state`／`decode_state`、
+// `LedgerStore`／`LedgerError`／`MergeRecord`／`SpaceView` ✓。
+//
+// ⚠️ **本模块仍然带 `#[allow(dead_code)]`，而且这是如实的**（⛔ 别把它读成"闸没接上" ✗）：
+// 下面这些**今天仍只有判据/下一笔在用** —— **撤销/永久不分离的界面入口尚未接线**
+// （图②「撤销这次融合」／图③「永久不分离」是后续那笔的界面事）：
+// `MergeLedger::undo`／`mark_permanent`／`release_permanent`、`UndoRequest`／`UndoResult`、
+// `PermanentRequest`／`MarkOutcome`／`ReleaseOutcome`、`PairMark`、`MemStore`、
+// `MergeRecord::undone_at_ms` 那一侧 ✓。
+// ⛔ 什么时候删这处 `#[allow(dead_code)]`：**撤销/永久那两格也接上生产调用者**那一轮
+//   （那时整模块都在用，`allow` 自然可删）；⚠️ 若那时它还在，说明那两格**没真接上** ✗。
+// ⚠️ 与 `sync.rs` 那两条账号身份收据是**不同的事**（那两条是第 2/3 档，仍未消费 ✓）。
 #[allow(dead_code)]
 mod mesh_merge_ledger;
 // 隐私边界的**第 0 步**（2026-09-23）：**钥匙袋** —— 主口令 ⇒ 主密钥 ⇒ 每空间随机密钥被包裹。

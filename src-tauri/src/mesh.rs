@@ -159,6 +159,114 @@ pub struct Absorbed {
     pub superseded: usize,
     /// ★ 这些页**等你裁决**（页级保留本地 ⇒ 远端那一版进了「待取回的远端版本」）。
     pub awaiting: usize,
+    /// ⭐ **2026-10-17（按名融合接线）**：这一批的「同名个人空间融合」结论。
+    ///
+    /// ⚠️ 它是**读数**，不是业务数据：`Merged`/`AlreadyMerged` 时内容已经并进本机这一个空间；
+    /// `Refused*` 时**一条都没落库、水位也没前进**（⇒ 下一轮还会再拉，⛔ 不静默丢数据）。
+    pub merge: PeerMergeState,
+}
+
+/// ⭐ 一次设备直连批次的**按名融合结论**（口径见 `mesh_merge_ledger::batch_merge_gate`）。
+///
+/// ⚠️ 为什么是六态而不是 `bool`：**"不参与"与"明确拒绝"对已收到那一批的处置完全不同**
+/// （前者照旧同步、后者一条不落库）⇒ 折成 bool 就分不出"为什么没融"。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerMergeState {
+    /// 这一档**不参与**按名融合（团队/未分类/判不出类别/对面没带名字）⇒ **沿用既有按暗号同步**。
+    NotEligible(crate::mesh_merge_ledger::NotEligibleWhy),
+    /// ⭐ 同名个人空间 ＋ 已信任 ⇒ 账本**记下了这一笔**，内容已并入本机这一个空间。
+    Merged,
+    /// 同一对之前已经记过 ⇒ 幂等（⛔ 不记第二笔；内容照旧按 id 幂等应用）。
+    AlreadyMerged,
+    /// ⭐ **明确拒绝**（不同名／判不出身份／不同人）⇒ **这一批一条都没落库、水位没前进**。
+    Refused(crate::mesh_merge_ledger::MergeGate),
+    /// ⭐ 账本坏/写不进去 ⇒ **这一批一条都没落库**（没有可撤的账，就不做不可逆的事）。
+    LedgerUnavailable,
+    /// 这一轮**没走到融合判定**（空批 / 拉取失败那一支）—— 如实说"没发生"，⛔ 不假装。
+    NotRun,
+}
+
+/// 这一批是不是**从某台对端的某个空间**来的 —— 从载荷里读"我这边管它叫什么"（`_space_name`）。
+///
+/// ⚠️ **读不到就 `None`**（老对端/老载荷 ✓）：那一格**只用于同名判据** ⇒ 保守取"没有"最安全
+/// （⛔ 不猜、⛔ 不从 id 反推名字 ✗）。⚠️ 载荷可能是密文（推的那一侧会加密）⇒ 先解一次；
+/// 解不开就按明文读（解不开的那一批在 `apply_pulled_changes` 里本来就会**整批中止**）。
+fn peer_space_name_in_batch(c: &Connection, rows: &[MeshRow]) -> Option<String> {
+    for r in rows {
+        if r.entity != "page" || r.op != "upsert" {
+            continue;
+        }
+        let Some(payload) = r.payload.as_deref() else { continue };
+        let plain = crate::security::decrypt_payload(c, payload)
+            .unwrap_or_else(|_| payload.to_string());
+        if let Some(name) = crate::sync::space_name_of_payload(&plain) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// ⭐ **融合闸的接线处**（读本机类别/名字、对面名字、信任名单 ⇒ 纯函数
+/// `mesh_merge_ledger::batch_merge_gate`）—— 顺序与口径全在纯函数里，这里只负责取数。
+fn peer_merge_decision(
+    c: &Connection,
+    rows: &[MeshRow],
+    peer_device: &str,
+    space_id: &str,
+    device_level: bool,
+) -> crate::mesh_merge_ledger::BatchMerge {
+    use crate::mesh_merge_ledger::{batch_merge_gate, IdentityOracle, PairedDeviceOracle};
+
+    let kind = crate::sync::local_space_kind(c);
+    let local_name = crate::sync::local_space_name(c).unwrap_or_default();
+    let peer_name = peer_space_name_in_batch(c, rows);
+    // ⭐ 身份 = 第一档「本机显式信任过那台」（`mesh_paired_devices`；读法与界面/门同一处 ✓）。
+    //   ⚠️ 名单读不出来 ⇒ 空名单 ⇒ 落 `Unknown(NotPaired)` ⇒ **不融合**（保守方向 ✓），并**留痕**。
+    let paired: Vec<String> = match paired_devices(c, space_id, device_level) {
+        Ok(v) => v.into_iter().map(|d| d.device_id).collect(),
+        Err(e) => {
+            eprintln!(
+                "[mesh] 融合闸：信任名单读不出来 ⇒ 按「判不出是不是同一个人」处理（**不融合**）：{e}"
+            );
+            Vec::new()
+        }
+    };
+    let oracle = PairedDeviceOracle { paired_devices: &paired };
+    let identity = oracle.same_person(peer_device, &local_name);
+    batch_merge_gate(kind, &local_name, peer_name.as_deref(), &identity)
+}
+
+/// 这一次融合要记进账本的东西（⭐ `moved` ＝ 这一批并进来的**页 id**；`kept_before` ＝ 并入前本机已有几条）。
+///
+/// ⚠️ **幂等键**：`对端设备 ＋ 暗号空间 ＋ 本机空间名` —— 同一对重复接入给同一个键 ⇒
+/// `MergeLedger::record` 只记第一笔（语义规格 §4）✓。⚠️ 名字参与键：用户改名后是**新的一格**（可撤各算各的）。
+fn peer_merge_request(
+    c: &Connection,
+    rows: &[MeshRow],
+    peer_device: &str,
+    space_id: &str,
+) -> crate::mesh_merge_ledger::MergeRequest {
+    let local_name = crate::sync::local_space_name(c).unwrap_or_default();
+    let mut moved: Vec<String> = Vec::new();
+    for r in rows {
+        if r.entity == "page" && r.op == "upsert" && !moved.contains(&r.entity_id) {
+            moved.push(r.entity_id.clone());
+        }
+    }
+    let kept_before: usize = c
+        .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0))
+        .unwrap_or(0) as usize;
+    let idem = format!(
+        "peer={};space={};name={}",
+        peer_device.trim(),
+        space_id.trim(),
+        local_name.trim()
+    );
+    crate::mesh_merge_ledger::MergeRequest::personal(&local_name, peer_device)
+        .moved(moved)
+        .kept(kept_before)
+        .idem(&idem)
+        .space_id(space_id)
 }
 
 /// 把对端给的一批收下并应用。
@@ -168,9 +276,32 @@ pub struct Absorbed {
 ///
 /// ⚠️ 交给它的 `seq`：**有戳 ⇒ 用戳的毫秒；没戳 ⇒ 用发送方的 `device_seq`**。
 /// 理由与缺口见模块头「已知缺口」那一段。
-pub fn absorb_peer_batch(c: &Connection, rows: &[MeshRow]) -> Result<Absorbed, String> {
+///
+/// ## ⭐⭐ 2026-10-17：**按名融合闸接在这里**（owner 口径：「空间名称完全一致才算同一空间，需要融合，
+/// space_id 可以不同」）
+/// 顺序（详见 `mesh_merge_ledger::batch_merge_gate`）：**先类别 → 再身份 → 后名字**。
+/// - ⭐ **同名个人空间 ＋ 本机信任过那台** ⇒ 记一笔账（⛔ 不重复记）＋ 把这批并进**本机这一个空间**
+///   （保留本机 `space_id` 与名字 ✓ —— 落库时 `doc_content::upsert_remote` 会把
+///   `workspace_id` 锚到本机这一格）；
+/// - ⭐ **不同名 / 判不出同一个人** ⇒ ⛔ **一条都不落库、水位不前进**（`tail = 0`）并留痕 ——
+///   ⚠️ 这是**行为变化**：以前「按暗号匹配上就收」不看名字；owner 的口径是"名字不完全一致就不算同一空间"
+///   ⇒ 宁可停下来让人看见，也不把两个不同名的空间悄悄并在一起（少合 ＋ 可撤 ✓ ／ 多合 ＝ 不可逆 ✗）；
+/// - ⭐ **团队/未分类/类别读不出/对面没带名字** ⇒ **不参与**按名融合，**照旧按暗号同步**（⛔ 不回归）。
+pub fn absorb_peer_batch(
+    c: &Connection,
+    rows: &[MeshRow],
+    peer_device: &str,
+    space_id: &str,
+    device_level: bool,
+) -> Result<Absorbed, String> {
     if rows.is_empty() {
-        return Ok(Absorbed { applied: 0, tail: 0, superseded: 0, awaiting: 0 });
+        return Ok(Absorbed {
+            applied: 0,
+            tail: 0,
+            superseded: 0,
+            awaiting: 0,
+            merge: PeerMergeState::NotRun,
+        });
     }
     let incoming: Vec<crate::sync::IncomingChange> = rows
         .iter()
@@ -189,6 +320,79 @@ pub fn absorb_peer_batch(c: &Connection, rows: &[MeshRow]) -> Result<Absorbed, S
             }
         })
         .collect();
+    let now = crate::db::now_ms();
+
+    // ⭐ 融合闸：先取证（只读），再决定这一批的处置。
+    let merge = match peer_merge_decision(c, rows, peer_device, space_id, device_level) {
+        crate::mesh_merge_ledger::BatchMerge::Refuse(gate) => {
+            eprintln!(
+                "[mesh] **不融合**（{}）：对端 `{}` 的这一批 {} 条**一条都不落库、水位不前进** \
+                 ⇒ 下一轮还会再拉（如实停下，不把两个不同名的空间悄悄并在一起）。\
+                 口径：owner 2026-10-17「空间名称完全一致才算同一空间，需要融合，space_id 可以不同」",
+                gate_reason(gate),
+                peer_device,
+                rows.len()
+            );
+            return Ok(Absorbed {
+                applied: 0,
+                tail: 0,
+                superseded: 0,
+                awaiting: 0,
+                merge: PeerMergeState::Refused(gate),
+            });
+        }
+        crate::mesh_merge_ledger::BatchMerge::NotEligible(why) => {
+            eprintln!(
+                "[mesh] 这一批**不参与按名融合**（{}）⇒ 沿用既有「按暗号」同步（{} 条照旧处理）",
+                not_eligible_reason(why),
+                rows.len()
+            );
+            PeerMergeState::NotEligible(why)
+        }
+        crate::mesh_merge_ledger::BatchMerge::Allow => {
+            // ⭐⭐ **先记账、再落库**：账本是"可撤"的唯一凭据 ⇒ 记不上就不做不可逆的事。
+            //   ⚠️ 顺序反过来（先落库、后记账）时账本一坏就变成"并了但撤不回去"（不可逆 ✗）。
+            match crate::sync::merge_ledger_record(
+                c,
+                now,
+                &peer_merge_request(c, rows, peer_device, space_id),
+            ) {
+                Ok(crate::mesh_merge_ledger::MergeOutcome::Recorded(rec)) => {
+                    eprintln!(
+                        "[mesh] **同名个人空间融合**：对端 `{}` 的空间名＝本机「{}」⇒ 这一批 {} 条并入本机这一个空间\
+                         （本机 space_id／名字保持不变）；账本记下第 #{} 笔（可撤销）",
+                        peer_device,
+                        crate::sync::local_space_name(c).unwrap_or_default(),
+                        rows.len(),
+                        rec.id
+                    );
+                    PeerMergeState::Merged
+                }
+                // 同一对重复接入 ⇒ 只记一笔（内容照旧按 id 幂等应用）。
+                Ok(crate::mesh_merge_ledger::MergeOutcome::SkippedDuplicate(_)) => {
+                    PeerMergeState::AlreadyMerged
+                }
+                // 「永久不分离」⇒ 今后不再每次记账（内容照旧幂等应用）。
+                Ok(crate::mesh_merge_ledger::MergeOutcome::SkippedPermanent(_)) => {
+                    PeerMergeState::AlreadyMerged
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[mesh] **融合账本坏 / 写不进去** ⇒ 这一批**一条都不落库**\
+                         （没有可撤的账，就不做不可逆的事；如实停下）：{e}"
+                    );
+                    return Ok(Absorbed {
+                        applied: 0,
+                        tail: 0,
+                        superseded: 0,
+                        awaiting: 0,
+                        merge: PeerMergeState::LedgerUnavailable,
+                    });
+                }
+            }
+        }
+    };
+
     // ⭐ **设备直连（网格）** ⇒ `Ingest::Peer`（⛔ 不是服务器那条路）—— 两条路的材料在
     //   `sync::apply_pulled_changes` 会合，所以"这一笔是从对端来的"必须由**调用方显式说**
     //   （口径见 `doc_content::Ingest`；作用范围见
@@ -197,7 +401,7 @@ pub fn absorb_peer_batch(c: &Connection, rows: &[MeshRow]) -> Result<Absorbed, S
         c,
         incoming,
         0,
-        crate::db::now_ms(),
+        now,
         crate::doc_content::Ingest::Peer,
     )?;
     let tail = rows.iter().map(|r| r.device_seq).max().unwrap_or(0);
@@ -206,7 +410,31 @@ pub fn absorb_peer_batch(c: &Connection, rows: &[MeshRow]) -> Result<Absorbed, S
         tail,
         superseded: out.superseded_page_ids.len(),
         awaiting: out.pending_remote_ids.len(),
+        merge,
     })
+}
+
+/// 拒绝理由的人话（⭐ 三种拒绝**分得开**，排障要看得出是哪一种）。
+fn gate_reason(gate: crate::mesh_merge_ledger::MergeGate) -> &'static str {
+    use crate::mesh_merge_ledger::MergeGate;
+    match gate {
+        MergeGate::Allow => "允许（不该走到这里）",
+        MergeGate::RefuseDifferentName => "名字不一样（trim 后不是逐字相等）",
+        MergeGate::RefuseUnknownIdentity => "判不出是不是同一个人（这台不在本机信任名单里）",
+        MergeGate::RefuseDifferentPerson => "判得出、但不是同一个人",
+    }
+}
+
+/// "不参与"的人话（⭐ 与"拒绝"分开：不参与 ⇒ 照旧同步）。
+fn not_eligible_reason(why: crate::mesh_merge_ledger::NotEligibleWhy) -> &'static str {
+    use crate::mesh_merge_ledger::{NotEligibleWhy, SpaceKind};
+    match why {
+        NotEligibleWhy::NotPersonal(SpaceKind::Personal) => "个人空间（不该走到这里）",
+        NotEligibleWhy::NotPersonal(SpaceKind::Team) => "团队空间不参与（一个字节都不动）",
+        NotEligibleWhy::NotPersonal(SpaceKind::Unclassified) => "未分类空间不参与（一个字节都不动）",
+        NotEligibleWhy::KindUnknown => "本机这一格的类别读不出来 ⇒ 判不出（⛔ 不默认成个人空间）",
+        NotEligibleWhy::NoPeerName => "对面载荷里没带空间名（老对端/老载荷）⇒ 判不了同名",
+    }
 }
 
 // ─────────────────────────── 纯函数：这次要拉哪些对端 ───────────────────────────
@@ -346,6 +574,12 @@ pub struct PeerPullReport {
     /// 标题用 `sync::item_title`（与服务器那条路**同一个函数** ✓ —— 两处各写一遍迟早漂 ✓）。
     #[serde(skip)]
     pub items: Vec<crate::sync::SyncItem>,
+    /// ⭐ **2026-10-17（按名融合接线）**：这一台的这一批**融没融**（见 [`PeerMergeState`]）。
+    ///
+    /// ⚠️ `#[serde(skip)]`：**不进 JSON** ✗ ⇒ `commands.ts` 里 `MeshRoundReport` 的契约**一个字都不变** ✓；
+    /// 它今天只服务判据与日志（面板那两格「已融合／未融合」是**下一笔**的界面事）。
+    #[serde(skip)]
+    pub merge: PeerMergeState,
     /// 拉不动时**如实写在这里**（`None` ＝ 这一台这一轮没问题）。
     pub error: Option<String>,
 }
@@ -377,6 +611,9 @@ pub async fn pull_and_absorb(
     peer: &MeshPeer,
     space_id: &str,
     token: Option<&str>,
+    // ⭐ **2026-10-17（按名融合接线）**：⭐ 由**调用方**从 `mesh_scope` 传进来（⛔ 不在这里反推）——
+    //   它只用来选「信任名单是哪一行」（`paired_row_key`，个人档＝空串那一行 ✓）。
+    device_level: bool,
 ) -> Result<PeerPullReport, String> {
     let since = {
         let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
@@ -413,7 +650,7 @@ pub async fn pull_and_absorb(
         })
         .collect();
     let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-    let ab = absorb_peer_batch(&g, &rows)?;
+    let ab = absorb_peer_batch(&g, &rows, &peer.device_id, space_id, device_level)?;
     if ab.tail > since {
         set_peer_cursor(&g, space_id, &peer.device_id, ab.tail)?;
     }
@@ -425,6 +662,7 @@ pub async fn pull_and_absorb(
         superseded: ab.superseded,
         awaiting: ab.awaiting,
         items,
+        merge: ab.merge,
         error: None,
     })
 }
@@ -923,7 +1161,7 @@ pub async fn round_candidates(
             let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
             pair_secret_for(&g, paired_row_key(space_id, device_level), &p.device_id)
         };
-        match pull_and_absorb(conn, &client, p, space_id, secret.as_deref()).await {
+        match pull_and_absorb(conn, &client, p, space_id, secret.as_deref(), device_level).await {
             Ok(rep) => out.push(rep),
             // ⚠️ **不连坐**：这一台拉不动，别的照拉；错原样带回给界面。
             Err(e) => out.push(PeerPullReport {
@@ -935,6 +1173,8 @@ pub async fn round_candidates(
                 superseded: 0,
                 awaiting: 0,
                 items: Vec::new(),
+                // 拉取失败 ⇒ 融合判定没跑过（如实说"没发生"，⛔ 不假装"不融"）。
+                merge: PeerMergeState::NotRun,
                 error: Some(e),
             }),
         }
@@ -969,6 +1209,44 @@ pub fn round_note(peers: &[PeerPullReport]) -> String {
     }
     if awaiting > 0 {
         tail.push(format!("另有 {awaiting} 页等你裁决（见下面「待取回的远端版本」）"));
+    }
+    // ⭐ **2026-10-17（按名融合接线）**：融合/没融也**必须说出来** —— 与上面那两句同一条纪律
+    //   （网格这一档没有服务端，`MeshRoundReport` 是用户唯一能看到的窗口）。
+    let merged = peers
+        .iter()
+        .filter(|r| matches!(r.merge, PeerMergeState::Merged))
+        .count();
+    let already = peers
+        .iter()
+        .filter(|r| matches!(r.merge, PeerMergeState::AlreadyMerged))
+        .count();
+    let refused = peers
+        .iter()
+        .filter(|r| matches!(r.merge, PeerMergeState::Refused(_)))
+        .count();
+    let ledger_bad = peers
+        .iter()
+        .filter(|r| matches!(r.merge, PeerMergeState::LedgerUnavailable))
+        .count();
+    if merged > 0 {
+        tail.push(format!(
+            "其中 {merged} 台把**同名个人空间**并进来了（已记融合账，可撤销）"
+        ));
+    }
+    if already > 0 {
+        tail.push(format!(
+            "另有 {already} 台的同名融合**之前已经记过账**（幂等，不重复并入）"
+        ));
+    }
+    if refused > 0 {
+        tail.push(format!(
+            "有 {refused} 台**没融合**（空间名/身份对不上）—— 那一批**没落库**，原因见日志"
+        ));
+    }
+    if ledger_bad > 0 {
+        tail.push(format!(
+            "有 {ledger_bad} 台的**融合账本坏了** ⇒ 那一批没落库（见日志）"
+        ));
     }
     if tail.is_empty() {
         base
@@ -3242,6 +3520,8 @@ mod tests {
             // ⭐ P1：**摘掉口令** ⇒ 这一趟只能靠 `pull_and_absorb` 自己的真签名进门 ✓
             //   （B 的钥匙在 A 的门上登记过 ✓）。
             None,
+            // 融合闸的信任名单键：这一组对端**不带 `_space_name`** ⇒ 走"不参与融合"那一支，值不影响读数。
+            false,
         )
         .await
         .unwrap();
@@ -3260,6 +3540,7 @@ mod tests {
             "space-x",
             // ⭐ P1：同上 —— 换 A 进门，A 的钥匙在 B 的门上登记过 ✓。
             None,
+            false,
         )
         .await
         .unwrap();
@@ -3278,6 +3559,7 @@ mod tests {
             "space-x",
             // ⭐ P1：幂等那一趟同样**不带口令** ✓。
             None,
+            false,
         )
         .await
         .unwrap();
@@ -3424,7 +3706,7 @@ mod tests {
         let rows = serve_own_records(&src, "A", 0, 500).unwrap();
         assert_eq!(rows.len(), 2);
 
-        let ab = absorb_peer_batch(&c, &rows).unwrap();
+        let ab = absorb_peer_batch(&c, &rows, "A", "ws", false).unwrap();
         assert_eq!(ab.applied, 2);
         assert_eq!(ab.tail, rows.iter().map(|r| r.device_seq).max().unwrap());
         // ★ 丙-⑤：这两条对端都是**本机没有的页** ⇒ 既没有"让给远端"的，也没有"等裁决"的。
@@ -3432,7 +3714,7 @@ mod tests {
         assert_eq!((ab.superseded, ab.awaiting), (0, 0), "{ab:?}");
         // 重复收同一批：幂等（内容不再变）
         let before = content_of(&c, "p1");
-        let ab2 = absorb_peer_batch(&c, &rows).unwrap();
+        let ab2 = absorb_peer_batch(&c, &rows, "A", "ws", false).unwrap();
         assert_eq!(content_of(&c, "p1"), before);
         assert_eq!(ab2.applied, 2, "仍然走完 apply（幂等），但内容一字不变");
         // ⚠️ 这里为 0 靠的是 丙-⑤ 在 `doc_content::stash_pending_remote` 里新加的那一句
@@ -3476,7 +3758,7 @@ mod tests {
             payload: Some(crate::hlc::with_stamp(&serde_json::to_string(&theirs).unwrap(), &later).unwrap()),
             updated_at: 20,
         }];
-        let ab = absorb_peer_batch(&c, &rows).unwrap();
+        let ab = absorb_peer_batch(&c, &rows, "A", "ws", false).unwrap();
         assert_eq!(ab.applied, 1, "{ab:?}");
         assert_eq!(ab.superseded, 1, "戳判远端 ＋ 本机脏 ⇒ 必须报成「你那一版让给了远端」：{ab:?}");
         assert_eq!(ab.awaiting, 0, "远端赢了就没有「等裁决」的东西：{ab:?}");
@@ -3508,9 +3790,247 @@ mod tests {
             ),
             updated_at: 40,
         }];
-        let ab2 = absorb_peer_batch(&c, &rows2).unwrap();
+        let ab2 = absorb_peer_batch(&c, &rows2, "A", "ws", false).unwrap();
         assert_eq!((ab2.superseded, ab2.awaiting), (0, 1), "本机赢了 ⇒ 远端那一版进「待取回」等裁决：{ab2:?}");
         assert!(content_of(&c, "p2").contains("本机更晚的那一版"), "{}", content_of(&c, "p2"));
+    }
+
+    // ═══════════ ⭐ 按名融合接线（2026-10-17）：同名个人空间 ⇒ 并进来；其余**如实不动** ═══════════
+    //
+    // 口径逐字：owner 2026-10-17「个人版：空间名称完全一致才算同一空间，需要融合，space_id 可以不同。」
+    // ＋ Lead 当日对齐的补充口径：名字 **trim 后逐字相等**；只个人空间；团队/未分类不参与。
+    //
+    // ⚠️ 这组判据**走真表、真读法**（`meta.workspaces.kind` ⇒ `sync::local_space_kind`；
+    //    `meta.mesh_paired_devices` ⇒ `paired_devices` ⇒ `PairedDeviceOracle` ⇒ `batch_merge_gate`），
+    //    ⛔ 不是只重跑纯函数 —— 只测纯函数的话，"闸没接上"这件事它照样绿。
+
+    use crate::mesh_merge_ledger::{MergeGate, NotEligibleWhy, SpaceKind};
+
+    /// 融合夹具：本机空间名/类别（`meta.workspaces`）＋ 信任名单（`meta.mesh_paired_devices`，设备级那一行）。
+    fn merge_fixture(c: &Connection, name: &str, kind: &str, trusted: &[&str]) {
+        c.execute_batch(
+            "CREATE TABLE IF NOT EXISTS meta.workspaces (
+                 id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                 created_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0,
+                 kind TEXT NOT NULL DEFAULT '');
+             CREATE TABLE IF NOT EXISTS meta.mesh_paired_devices (
+                 space_id TEXT NOT NULL, device_id TEXT NOT NULL,
+                 secret_sha256 TEXT NOT NULL, added_at_ms INTEGER NOT NULL,
+                 pubkey TEXT NOT NULL DEFAULT '', PRIMARY KEY (space_id, device_id));",
+        )
+        .unwrap();
+        let ws: String = c
+            .query_row("SELECT id FROM workspaces ORDER BY rowid ASC LIMIT 1", [], |r| r.get(0))
+            .expect("空间库必须有自己那一行（`db::migrate` 播种）");
+        c.execute(
+            "INSERT INTO meta.workspaces (id, name, kind) VALUES (?1, ?2, ?3)
+             ON CONFLICT(id) DO UPDATE SET name = excluded.name, kind = excluded.kind",
+            params![ws, name, kind],
+        )
+        .unwrap();
+        for d in trusted {
+            c.execute(
+                "INSERT INTO meta.mesh_paired_devices
+                     (space_id, device_id, secret_sha256, added_at_ms, pubkey)
+                 VALUES (?1, ?2, '', 1, '')",
+                params![DEVICE_LEVEL_SPACE, d],
+            )
+            .unwrap();
+        }
+    }
+
+    /// 一条**对端来的**页 upsert（`_space_name` 那个挂件与推那一侧**同一个函数** `sync::with_space_name`）。
+    fn peer_row(seq: i64, pg: &PageDetail, space_name: Option<&str>) -> MeshRow {
+        let payload = serde_json::to_string(pg).unwrap();
+        let payload = match space_name {
+            Some(n) => crate::sync::with_space_name(&payload, n).unwrap(),
+            None => payload,
+        };
+        MeshRow {
+            device_seq: seq,
+            entity: "page".to_string(),
+            entity_id: pg.id.clone(),
+            op: "upsert".to_string(),
+            payload: Some(payload),
+            updated_at: pg.updated_at,
+        }
+    }
+
+    /// ⭐ **判据①**：同名个人空间 ⇒ **融合**（并进本机这一个空间、保留本机 id/名字）＋ **账本一条记录（可读）**。
+    ///
+    /// 反例（逐字）：把 `absorb_peer_batch` 里的闸去掉（回到"按暗号照收"）时，本判据**仍然绿** ✗ ——
+    /// 所以下面还钉了"对面 `space_id` 与本机不同、落库后必须锚到本机 id"这一句：
+    /// 不同 `space_id` 的同名空间要合成一个（owner 原话「space_id 可以不同」）。
+    #[test]
+    fn a_same_named_personal_space_is_merged_and_the_ledger_has_one_record() {
+        let c = space_conn("B");
+        merge_fixture(&c, "工作", "personal", &["平板"]);
+        // ⭐ 对面那页的 `workspace_id` 是**对面那台的空间 id**（与本机 `ws` 不同名 —— owner 说的正是这件事）。
+        let mut p = page("p1", "从平板来的", 10);
+        p.workspace_id = "对面那台的空间 id".to_string();
+        let rows = vec![peer_row(1, &p, Some("  工作  "))];
+
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        assert_eq!(ab.merge, PeerMergeState::Merged, "⭐ 同名个人空间必须融合：{ab:?}");
+        assert_eq!((ab.applied, ab.tail), (1, 1), "融合这一批算收下 ⇒ 水位到批尾：{ab:?}");
+        assert!(content_of(&c, "p1").contains("从平板来的"));
+
+        // ⭐ 保留**本机** space_id 与名字（⛔ 不许把对面的 id 落进来）。
+        let landed_ws: String = c
+            .query_row("SELECT workspace_id FROM pages WHERE id = 'p1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(landed_ws, "ws", "⛔ 融合后落库的 workspace_id 必须是本机的（space_id 可以不同）");
+        assert_eq!(
+            crate::sync::local_space_name(&c).as_deref(),
+            Some("工作"),
+            "⛔ 归一/融合都不许改写用户写的名字"
+        );
+
+        // ⭐ **账本一条记录（可读）**：谁、融了哪些行、融合前本机有几条。
+        let v = crate::sync::merge_ledger_view(&c, "工作").unwrap();
+        assert_eq!(v.undoable.len(), 1, "⭐ 账本必须记下这一笔（否则「可撤」没有落点）");
+        assert_eq!(v.undoable[0].peer_device, "平板");
+        assert_eq!(v.undoable[0].moved, vec!["p1".to_string()], "撤销要动的是并进来的页 id");
+        assert_eq!(v.undoable[0].kept_before, 0, "融合前本机没有页");
+    }
+
+    /// ⭐ **判据②（反向）**：不同名 ⇒ **不融合**：一条都不落库、水位不前进、账本一笔都不记。
+    ///
+    /// 反例（逐字）：不拒绝而照旧落库 ⇒ `pages` 会多一行（`COUNT(*) = 1`）而本判据当场红 ——
+    /// 那正是 owner 最不要的「把两个本来不同名的空间悄悄并在一起」。
+    #[test]
+    fn a_different_named_personal_space_is_not_merged_and_nothing_lands() {
+        let c = space_conn("B");
+        merge_fixture(&c, "工作", "personal", &["平板"]);
+        let rows = vec![peer_row(1, &page("p1", "不该进来", 10), Some("私人"))];
+
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        assert_eq!(
+            ab.merge,
+            PeerMergeState::Refused(MergeGate::RefuseDifferentName),
+            "⛔ 名字不一样却融了 ✗：{ab:?}"
+        );
+        assert_eq!((ab.applied, ab.tail), (0, 0), "⭐ 不融 ⇒ 一条不落库、水位不前进（下一轮还会再拉）");
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0, "⛔ 不同名却落库 = 把两个空间悄悄并了");
+        assert!(
+            crate::sync::merge_ledger_view(&c, "工作").unwrap().undoable.is_empty(),
+            "⛔ 没融就不许记账"
+        );
+    }
+
+    /// ⭐ **判据③（反向）**：**团队空间一个字节都不动** —— 不参与按名融合，照旧按暗号同步；
+    /// ⛔ **一条融合账都不许记**。未分类/类别读不出同理（"判不出 ⇒ 不融"，⛔ 不默认成个人空间）。
+    #[test]
+    fn a_team_or_unclassified_space_is_never_touched_by_name_fusion() {
+        // ① 团队空间：哪怕名字完全一样、也信任过那台 ⇒ 仍**不参与**融合（老路照旧）。
+        let c = space_conn("B");
+        merge_fixture(&c, "工作", "team", &["平板"]);
+        let rows = vec![peer_row(1, &page("p1", "团队空间的数据", 10), Some("工作"))];
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        assert_eq!(
+            ab.merge,
+            PeerMergeState::NotEligible(NotEligibleWhy::NotPersonal(SpaceKind::Team)),
+            "⛔ 团队空间参与了融合 ✗：{ab:?}"
+        );
+        assert_eq!((ab.applied, ab.tail), (1, 1), "⭐ 团队空间沿用既有同步（不掺融合）");
+        assert!(
+            crate::sync::merge_ledger_view(&c, "工作").unwrap().undoable.is_empty(),
+            "⛔ 团队空间**一条融合账都不许记**"
+        );
+
+        // ② 未分类（`kind=''`）：读到了，但**不参与**。
+        let c = space_conn("B");
+        merge_fixture(&c, "工作", "", &["平板"]);
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        assert_eq!(
+            ab.merge,
+            PeerMergeState::NotEligible(NotEligibleWhy::NotPersonal(SpaceKind::Unclassified)),
+            "{ab:?}"
+        );
+        assert_eq!((ab.applied, ab.tail), (1, 1), "未分类空间：老路照旧");
+
+        // ③ 类别**读不出来**（没有 `meta.workspaces` 那张表）⇒ 判不出 ⇒ 不参与（⛔ 不默认成个人空间）。
+        let c = space_conn("B");
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        assert_eq!(
+            ab.merge,
+            PeerMergeState::NotEligible(NotEligibleWhy::KindUnknown),
+            "⭐ 读不到 ≠ 读到 0：类别判不出时**不许**当个人空间：{ab:?}"
+        );
+        assert_eq!((ab.applied, ab.tail), (1, 1), "判不出类别 ⇒ 不参与 ⇒ 老路照旧");
+    }
+
+    /// ⭐ **判据④**：**重复接入幂等** —— 同一对设备再连一次 ⇒ 账本**仍只有一笔**、页面数不涨、
+    /// 原来那笔的记录不被改写。反例：每次接入都记一笔 ⇒ `undoable.len() == 2` ⇒ 红。
+    #[test]
+    fn re_absorbing_the_same_pair_is_idempotent() {
+        let c = space_conn("B");
+        merge_fixture(&c, "工作", "personal", &["平板"]);
+        let rows = vec![peer_row(1, &page("p1", "从平板来的", 10), Some("工作"))];
+
+        let first = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        assert_eq!(first.merge, PeerMergeState::Merged);
+        let first_at = crate::sync::merge_ledger_view(&c, "工作").unwrap().undoable[0].at_ms;
+
+        // 重复接入同一批（同一对设备、同一个名字）⇒ ⭐ 不再记第二笔。
+        let again = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        assert_eq!(
+            again.merge,
+            PeerMergeState::AlreadyMerged,
+            "⭐ 重复接入必须幂等（只记一笔）：{again:?}"
+        );
+        assert_eq!((again.applied, again.tail), (1, 1), "内容照旧按 id 幂等应用");
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1, "⭐ 页面数也不许涨（没有第二份内容）");
+        let v = crate::sync::merge_ledger_view(&c, "工作").unwrap();
+        assert_eq!(v.undoable.len(), 1, "⭐ 账本仍只有一笔");
+        assert_eq!(v.undoable[0].at_ms, first_at, "原来那一笔不许被改写");
+    }
+
+    /// ⭐ **判据⑤（身份闸，与判据①互补）**：**没被本机信任过**那台 ⇒ 判**不出**是不是同一个人
+    /// ⇒ ⛔ 不融（哪怕名字完全一样）—— 且**不许**把"判不出"折成"不同人"。
+    #[test]
+    fn an_untrusted_device_cannot_merge_even_with_the_same_name() {
+        let c = space_conn("B");
+        merge_fixture(&c, "工作", "personal", &[]); // 信任名单是空的
+        let rows = vec![peer_row(1, &page("p1", "陌生设备的同名空间", 10), Some("工作"))];
+
+        let ab = absorb_peer_batch(&c, &rows, "陌生设备", DEVICE_LEVEL_SPACE, true).unwrap();
+        assert_eq!(
+            ab.merge,
+            PeerMergeState::Refused(MergeGate::RefuseUnknownIdentity),
+            "⛔ 没配对过却 Allow ⇒ 陌生人的同名空间会被静默并进来 ✗：{ab:?}"
+        );
+        assert_eq!((ab.applied, ab.tail), (0, 0), "不融 ⇒ 一条不落库");
+        assert_ne!(
+            ab.merge,
+            PeerMergeState::Refused(MergeGate::RefuseDifferentPerson),
+            "⛔ 「判不出」不许折成「不同人」（那是替用户下断言）"
+        );
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
+    }
+
+    /// ⭐ **判据⑥（兼容/如实）**：对面**没带空间名**（老对端/老载荷）⇒ 判不了同名 ⇒ **不参与融合**
+    /// （⛔ 不记账），但 **沿用既有「按暗号」同步**（⛔ 不许因此静默丢数据/把老对端整条断掉）。
+    #[test]
+    fn a_batch_without_a_space_name_is_not_fused_but_keeps_the_old_path() {
+        let c = space_conn("B");
+        merge_fixture(&c, "工作", "personal", &["平板"]);
+        let rows = vec![peer_row(1, &page("p1", "老对端来的", 10), None)];
+
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        assert_eq!(
+            ab.merge,
+            PeerMergeState::NotEligible(NotEligibleWhy::NoPeerName),
+            "⭐ 拿不到名字 ⇒ 如实「没参与融合」（⛔ 不猜、⛔ 不拿 id 反推名字）：{ab:?}"
+        );
+        assert_eq!((ab.applied, ab.tail), (1, 1), "兼容：老对端照旧按暗号同步");
+        assert!(
+            crate::sync::merge_ledger_view(&c, "工作").unwrap().undoable.is_empty(),
+            "⛔ 没判出同名就记账 = 假账"
+        );
     }
 
     /// ★ 丙-⑤：**那两句人话**（纯函数，判据不打桩、不看网络）—— 老那两句逐字不变，
@@ -3525,6 +4045,7 @@ mod tests {
             superseded,
             awaiting,
             items: Vec::new(),
+            merge: PeerMergeState::NotRun,
             error: None,
         };
         assert_eq!(round_note(&[ok(0, 0)]), "网格：拉了 1 台对端", "老那一句**逐字不变**");
@@ -3541,6 +4062,19 @@ mod tests {
         let two = round_note(&[ok(1, 1), ok(2, 0)]);
         assert!(two.contains("拉了 2 台对端"), "{two}");
         assert!(two.contains("3 页你本机那一版让给了远端"), "3 = 1 + 2：{two}");
+        // ⭐ 2026-10-17：**融合/没融也要出现在这句人话里**（网格这一档用户只能看它）。
+        let mut merged = ok(0, 0);
+        merged.merge = PeerMergeState::Merged;
+        assert!(
+            round_note(&[merged]).contains("同名个人空间"),
+            "融合了却不说 ⇒ 用户不知道空间真的并进来了"
+        );
+        let mut refused = ok(0, 0);
+        refused.merge = PeerMergeState::Refused(MergeGate::RefuseDifferentName);
+        assert!(
+            round_note(&[refused]).contains("没融合"),
+            "没融也要说 —— 否则用户只会以为同步坏了（而且那一批确实没落库）"
+        );
         // 拉不动那台：老那句（分辨"没人"／"都拉不动"）不许被新句子盖掉
         let mut bad = ok(0, 0);
         bad.error = Some("连接被拒".to_string());
@@ -4009,6 +4543,7 @@ mod tests {
             "space-x",
             // ⭐ P1：**不带口令** ✓ —— 这一趟靠 A 的真签名进门（A 的钥匙在 B 的门上登记过 ✓）。
             None,
+            false,
         )
         .await
         .unwrap();

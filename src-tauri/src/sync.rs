@@ -191,10 +191,14 @@ fn get_auth_email(c: &Connection, server_url: &str) -> Option<String> {
 /// ⇒ ⭐ **后两种在"是不是同一个人"的判定里都落 `Unknown`（⇒ 不融合）**，
 ///   ⛔ **但它们是两条不同的拒绝理由**（排障要看得出是"没登录"还是"取不到"）✓ ——
 ///   折成一个 `false` 就等于**替用户断言"不是同一个人"**，而我们没有依据 ✗。
-// ⭐⭐ **死代码收据（2026-10-10）**｜为什么留着：它是"**是不是同一个人**"那道闸的**三态类型**，
-//    而闸门的落点（`Ingest::Peer` 的消费处）在**接线那一轮**才写 ✓ —— 本轮先落地＋带判据 ✓。
-//    ⛔ 什么时候删：⭐ **接线那一轮把消费方接上之后，立刻删掉这处 `#[allow(dead_code)]`** ✓；
-//    若那时它还在，说明闸门**没真接上** ✗（这条 `allow` 就是证据）。
+// ⭐⭐ **死代码收据（2026-10-10 立；2026-10-17 更新）**｜为什么留着：它是"**是不是同一个人**"
+//    那道闸的**第 2 档（账号）**类型；⭐ 闸的**第 1 档（配对/信任）已于 2026-10-17 接线**
+//    （`mesh::absorb_peer_batch` ⇒ `mesh_merge_ledger::batch_merge_gate` ⇒ `merge_gate` ✓），
+//    但**这一档（账号身份）今天仍然没有被消费** ✗ —— 设备直连的链路上拿不到账号 id
+//    （`LanAnnounce` 没有身份字段；见语义规格 §2〈身份闸〉第二档）✓。
+//    ⛔ 什么时候删：⭐ **账号那一档接线时**（把 `auth_user_id` 的读数喂给 `SamePerson`）。
+//    ⚠️ 本条 2026-10-17 的措辞是**订正过的**：原文写"闸门落点在接线那一轮才写" ⇒ 那一轮已经写了 ✓，
+//       但写的是**第 1 档**，不是这一格（⛔ 别把"闸接上了"读成"这一格也有人用了" ✗）。
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthUserId {
@@ -229,10 +233,10 @@ fn set_auth_user_id(c: &Connection, server_url: &str, user_id: &str) -> Result<b
 
 /// ⭐ **读**账号身份（**三态**）—— 与 `get_auth_token`／`get_auth_email` 同形，
 /// ⚠️ 但 ⛔ **不把三态揉成一个** ✓（"没会话"与"有会话但 id 空"是两件事）。
-// ⭐⭐ **死代码收据（2026-10-10）**｜为什么留着：它是那道闸的**读取器**，消费方（`Ingest::Peer`
-//    的判定处）在**接线那一轮**才写 ✓ —— 本轮先落地＋带判据（三条，见 `mod tests`）✓。
-//    ⛔ 什么时候删：⭐ **接线那一轮接上消费方之后立刻删掉这处 `#[allow(dead_code)]`** ✓
-//    （它还在 ⇒ 说明没真接上 ✗）。
+// ⭐⭐ **死代码收据（2026-10-10 立；2026-10-17 更新）**｜为什么留着：它是**第 2 档（账号）**的读取器；
+//    第 1 档（配对/信任）已于 2026-10-17 由 `mesh::absorb_peer_batch` 接上 ✓，
+//    而**账号那一档的消费方今天仍不存在** ✗（同上一条收据）⇒ 这一格还没人读 ✓。
+//    ⛔ 什么时候删：⭐ **账号那一档接线时**，与上面那条 `AuthUserId` 一起删 ✓。
 #[allow(dead_code)]
 pub fn auth_user_id(c: &Connection, server_url: &str) -> AuthUserId {
     let row: Option<String> = c
@@ -363,15 +367,45 @@ pub fn record_change(
 ///
 /// ⭐ 为什么要它（2026-10-17，owner 拍"同名空间融合按第 1 档起步"）：
 /// 仓里收据 `lib.rs:118-131` 逐字写着"按名融合还缺一格数据：远端载荷**只有 id、没有空间名** ⇒
-/// 判不了『同名』✗"。这一格就是补那个缺 ✗ —— **只补数据，不改任何判定** ✓
-/// （身份闸 `mesh_merge_ledger::merge_gate` 今天仍无生产调用者 ✗，接线是下一笔 ✓）。
+/// 判不了『同名』✗"。这一格就是补那个缺 ✗。
+///
+/// ⭐⭐ **2026-10-17（接线那一笔）起它有两个读者**，两边必须看**同一个名字**：
+/// · **推**那一侧：`record_page_upsert` 把它挂上载荷（`with_space_name`）；
+/// · **收**那一侧：`mesh::absorb_peer_batch` 拿对面载荷里的这一格与本机这一格比（[`local_space_name`]）。
 pub const SPACE_NAME_PAYLOAD_FIELD: &str = "_space_name";
 
-/// 从**空间库**里取这个空间的名字（每个空间库恰好一行 `workspaces` ✓ —— 见 `doc_content.rs:409-411`）。
+/// 本机这个空间**对用户显示的名字**（每个空间库恰好一行 `workspaces` ✓ —— 见 `doc_content.rs:409-411`）。
 ///
-/// ⚠️ **取不到就返回 `None`，⛔ 不许让保存失败** ✗ —— 名字只是"融合用的提示"，
+/// ## ⭐⭐ 2026-10-17 订正：**先读 `meta.workspaces`**（用户改过名的那一份），读不到才回退空间库自己那一行
+/// 原实现只读空间库的 `workspaces.name` ✗ —— 而**改名只写 `meta.workspaces`**
+/// （`workspaces::rename_workspace` 逐字只 `UPDATE meta.workspaces` ✗），空间库那一行**只在建库时播种**
+/// （`db::ensure_space_workspace`）⇒ 用户改过名之后，空间库那份是**旧名** ✗。
+/// 后果（真问题，不是洁癖）：载荷挂的是旧名 ⇒ 两端名字明明一样也判不出同名 ⇒ **按名融合静默失效**，
+/// 而日志里只会说"名字不同"（＝把"读错了"伪装成"读到了别的" ✗）。
+/// ⇒ 用户看到的名字（`meta.workspaces.name`）才是"空间名" ✓；空间库那一行只当**回退**（老库/判不了）✓。
+///
+/// ⚠️ **取不到就返回 `None`，⛔ 不许让保存失败** ✗ —— 名字只是"融合用的判据"，
 /// 丢的是那一次的同名判断，不是用户的编辑 ✓（与 `local_stamp` 那条同一条纪律 ✓）。
 pub(crate) fn local_space_name(c: &Connection) -> Option<String> {
+    // ① ⭐ 用户看到的那一份（改名只写这里 ⇒ 它才是权威）。
+    let id: Option<String> = c
+        .query_row("SELECT id FROM workspaces ORDER BY rowid ASC LIMIT 1", [], |r| {
+            r.get(0)
+        })
+        .ok();
+    if let Some(id) = id.as_deref() {
+        if let Ok(name) = c.query_row(
+            "SELECT COALESCE(name, '') FROM meta.workspaces WHERE id = ?1",
+            params![id],
+            |r| r.get::<_, String>(0),
+        ) {
+            let name = name.trim().to_string();
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+    }
+    // ② 回退：空间库自己那一行（建库时播种的那份 / meta 读不到时）。
     let name: Option<String> = c
         .query_row("SELECT name FROM workspaces LIMIT 1", [], |r| r.get(0))
         .ok();
@@ -381,6 +415,74 @@ pub(crate) fn local_space_name(c: &Connection) -> Option<String> {
     } else {
         Some(name)
     }
+}
+
+/// 本机这个空间**属于哪一档**（读 `meta.workspaces.kind`）—— ⭐ **读不出来就 `None`**（判不出）。
+///
+/// ⚠️ ⛔ **别拿 `space_crypto::space_kind` 来判**：它把"没有那一行/读不出"兜底成
+/// `SpaceKind::Personal`（那是**同步闸门**的保守方向 ✓：没分类也放行）；而**融合是不可逆的数据动作**
+/// ⇒ 这里的保守方向相反：**判不出就不融**（`None` ⇒ `NotEligible(KindUnknown)` ✓，见语义规格 §10-②）。
+pub(crate) fn local_space_kind(c: &Connection) -> Option<crate::mesh_merge_ledger::SpaceKind> {
+    let raw: String = c
+        .query_row(
+            "SELECT COALESCE(kind, '') FROM meta.workspaces
+             WHERE id = (SELECT id FROM workspaces ORDER BY rowid ASC LIMIT 1)",
+            [],
+            |r| r.get(0),
+        )
+        .ok()?;
+    Some(crate::mesh_merge_ledger::SpaceKind::from_raw(&raw))
+}
+
+// ─────────────── ⭐ 融合账本落到 `meta.sync_state` 的那一格（2026-10-17 接线） ───────────────
+//
+// 口径照 `mesh_merge_ledger.rs` 文件头那两段「一行接上」：
+// ① 账本存 **meta 的一个 KV**（`LEDGER_KEY`；值＝`encode_state` 的文本 ✓）；
+// ② 业务侧只需要 `MergeLedger::new(&store).record(now, &req)` 这一行 ✓。
+//
+// ⚠️ **放 meta（⛔ 不放空间库）**：融合是"这一对设备之间"的事实 ✓（`LEDGER_KEY` 的注释写着"一个 KV"✓），
+//    放空间库会让**两个个人空间各记一份** ⇒ 同一对设备重复接入会记两笔 ✗。
+// ⚠️ **账本坏 ⇒ 如实报错**（`LedgerError::Store`），⛔ 不静默当成空账本 ✗ ——
+//    把坏账本读成"还没融过"就是"再融一次"（不可逆），而用户那次撤销的入口会凭空消失 ✗。
+
+/// `meta.sync_state` 那一格上的账本存储（[`crate::mesh_merge_ledger::LedgerStore`] 的生产实现）。
+pub(crate) struct MetaLedgerStore<'a>(pub(crate) &'a Connection);
+
+impl crate::mesh_merge_ledger::LedgerStore for MetaLedgerStore<'_> {
+    fn load(&self) -> Result<crate::mesh_merge_ledger::LedgerState, crate::mesh_merge_ledger::LedgerError> {
+        let raw = get_meta_state(self.0, crate::mesh_merge_ledger::LEDGER_KEY);
+        match raw {
+            // ⭐ 那一格**不存在** ⇒ 还没有账本（空账 ✓，⛔ 不是错误）。
+            None => Ok(crate::mesh_merge_ledger::LedgerState::default()),
+            Some(text) => crate::mesh_merge_ledger::decode_state(&text)
+                .map_err(crate::mesh_merge_ledger::LedgerError::Store),
+        }
+    }
+    fn save(&self, state: &crate::mesh_merge_ledger::LedgerState) -> Result<(), crate::mesh_merge_ledger::LedgerError> {
+        set_meta_state(
+            self.0,
+            crate::mesh_merge_ledger::LEDGER_KEY,
+            &crate::mesh_merge_ledger::encode_state(state),
+        )
+        .map_err(crate::mesh_merge_ledger::LedgerError::Store)
+    }
+}
+
+/// ⭐ 记一笔融合（接线的那一行）。
+pub(crate) fn merge_ledger_record(
+    c: &Connection,
+    now_ms: i64,
+    req: &crate::mesh_merge_ledger::MergeRequest,
+) -> Result<crate::mesh_merge_ledger::MergeOutcome, crate::mesh_merge_ledger::LedgerError> {
+    crate::mesh_merge_ledger::MergeLedger::new(&MetaLedgerStore(c)).record(now_ms, req)
+}
+
+/// ⭐ 读某一格空间的融合账（「N 条已融合（可撤销）」＋ 每一笔融了什么）。
+pub(crate) fn merge_ledger_view(
+    c: &Connection,
+    raw_name: &str,
+) -> Result<crate::mesh_merge_ledger::SpaceView, crate::mesh_merge_ledger::LedgerError> {
+    crate::mesh_merge_ledger::MergeLedger::new(&MetaLedgerStore(c)).view(raw_name)
 }
 
 /// 把空间名挂到载荷上（**推**那一侧用）。与 `hlc::with_stamp` 逐条同形：
@@ -4052,6 +4154,7 @@ mod mesh_history_tests {
                     title: format!("页 {i}"),
                 })
                 .collect(),
+            merge: crate::mesh::PeerMergeState::NotRun,
             error: err.map(str::to_string),
         }
     }
@@ -7028,15 +7131,23 @@ pub async fn team_seen_all_notifications(server_url: String, token: String) -> R
 ///    叫"**本来就是同一个空间**" ✓）—— ⛔ **绝不用它去"匹配另一个空间"** ✗。
 ///
 /// ⚠️ 返回的是**本地空间 id**（锚点 ✓）；`None` ⇒ 调用方**不要落库** ✓（图②那句"未融合" ✓）。
+///
+/// ⚠️ **2026-10-17（接线那一笔）**：按名融合的**生产落点**是
+/// `mesh_merge_ledger::batch_merge_gate`（它自己调 `same_space_name_by_trim`）；
+/// 本函数仍是**旧接线的锚点判据**（"多空间路由"那一笔才用得上：把对面那个空间路由到本机**另一个**
+/// 同名空间）⇒ 它的名字判等**已经收敛到** `same_space_name_by_trim`（⛔ 不许在这里留第二份 trim 规则）。
 pub(crate) fn merge_anchor_by_name(
     remote_space_id: &str,
     remote_name: &str,
     local: &[(String, String)],
 ) -> Option<String> {
-    // ⭐ ① **按名**：⭐ 名字（去空白）相同 ⇒ 本地那一个 ✓ —— ⭐ **这就是 owner 要的"按名融合"** ✓。
-    let want = remote_name.trim();
-    if !want.is_empty() {
-        if let Some((id, _)) = local.iter().find(|(_, name)| name.trim() == want) {
+    // ⭐ ① **按名**：⭐ 名字（`trim` 后逐字）相同 ⇒ 本地那一个 ✓ —— ⭐ **这就是 owner 要的"按名融合"** ✓。
+    //   ⚠️ 判等**只有一处实现**（`same_space_name_by_trim`：远端名字为空 ⇒ 永远 `None` ✓）。
+    if !remote_name.trim().is_empty() {
+        if let Some((id, _)) = local
+            .iter()
+            .find(|(_, name)| crate::mesh_merge_ledger::same_space_name_by_trim(name, remote_name))
+        {
             return Some(id.clone());
         }
     }
@@ -10063,6 +10174,112 @@ mod tests {
     fn missing_workspace_table_yields_none_not_a_failure() {
         let c = rusqlite::Connection::open_in_memory().unwrap();
         assert_eq!(local_space_name(&c), None, "⛔ 没有表时不许 panic／Err ✗");
+    }
+
+    /// ⭐⑥ **2026-10-17（接线）**：改名要**看得见** —— `meta.workspaces` 那一份才是用户看到的名字。
+    /// 反例（逐字）：只读空间库 `workspaces.name` 时，改名后仍回 `"默认空间"`（旧名）⇒
+    /// 两端同名也判不出 ⇒ 按名融合静默失效，而日志只会说"名字不同"（把"读错了"伪装成"读到别的"✗）。
+    #[test]
+    fn local_space_name_prefers_the_meta_name_so_renames_are_visible() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE workspaces (
+                 id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                 created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE meta.workspaces (
+                 id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT '');
+             INSERT INTO workspaces VALUES ('ws-1', '默认空间', 1, 1);
+             INSERT INTO meta.workspaces (id, name, kind) VALUES ('ws-1', '项目', 'personal');",
+        )
+        .unwrap();
+        assert_eq!(
+            local_space_name(&c).as_deref(),
+            Some("项目"),
+            "⛔ 改过名之后还在用旧名 ⇒ 两端同名也判不出 ✗"
+        );
+        assert_eq!(
+            local_space_kind(&c),
+            Some(crate::mesh_merge_ledger::SpaceKind::Personal),
+            "类别读的是 meta.workspaces.kind（personal）"
+        );
+    }
+
+    /// ⭐⑦ **类别读不出来 ⇒ `None`（判不出）** —— ⛔ 不许默认成个人空间。
+    /// 方向与同步闸门**相反**：同步闸门对未分类放行（保守=放行）；融合是**不可逆**的 ⇒ 保守=不融。
+    #[test]
+    fn local_space_kind_is_none_when_it_cannot_be_read() {
+        // ① 连 `meta.workspaces` 都没有
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        assert_eq!(local_space_kind(&c), None, "⛔ 没有那张表 ⇒ 判不出（不许当个人空间）");
+        // ② 表在、但没有这一行；③ 表在、这一行 kind='' ⇒ 未分类（**读到了**，与"读不到"是两件事）
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE workspaces (
+                 id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                 created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE meta.workspaces (
+                 id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT '');
+             INSERT INTO workspaces VALUES ('ws-1', '默认空间', 1, 1);",
+        )
+        .unwrap();
+        assert_eq!(local_space_kind(&c), None, "没有这一行 ⇒ 判不出");
+        c.execute(
+            "INSERT INTO meta.workspaces (id, name, kind) VALUES ('ws-1', '默认空间', '')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            local_space_kind(&c),
+            Some(crate::mesh_merge_ledger::SpaceKind::Unclassified),
+            "⭐ 读到了（未分类）与读不到**必须分得开**"
+        );
+    }
+
+    /// ⭐⑧ **融合账本**：一个 meta KV、记一笔读得回；**账本坏 ⇒ 如实报错**（⛔ 不静默当空账）。
+    /// 反例（逐字）：坏账本被当成空账本 ⇒ 会**再融一次**（不可逆）而用户那次撤销的入口凭空消失 ✗。
+    #[test]
+    fn merge_ledger_lives_on_one_meta_kv_and_refuses_a_corrupt_one() {
+        use crate::mesh_merge_ledger::{LedgerError, MergeOutcome, MergeRequest};
+
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+        )
+        .unwrap();
+        let req = MergeRequest::personal("工作", "平板")
+            .moved(["p1", "p2"])
+            .kept(3)
+            .idem("pair-1");
+        let out = merge_ledger_record(&c, 1_000, &req).unwrap();
+        assert!(matches!(out, MergeOutcome::Recorded(_)), "{out:?}");
+        let v = merge_ledger_view(&c, "工作").unwrap();
+        assert_eq!(v.undoable.len(), 1, "⭐ 账本一条记录（可读）");
+        assert_eq!(v.undoable[0].moved, vec!["p1".to_string(), "p2".to_string()]);
+        assert_eq!(v.undoable[0].kept_before, 3);
+        assert_eq!(v.undoable[0].peer_device, "平板");
+        assert!(
+            get_meta_state(&c, crate::mesh_merge_ledger::LEDGER_KEY)
+                .is_some_and(|t| t.starts_with(crate::mesh_merge_ledger::FORMAT_VERSION)),
+            "账本必须真的落在 meta 的 `LEDGER_KEY` 那一格上"
+        );
+        // 重复接入（同一把幂等键）⇒ ⛔ 不记第二笔。
+        assert!(matches!(
+            merge_ledger_record(&c, 1_500, &req).unwrap(),
+            MergeOutcome::SkippedDuplicate(_)
+        ));
+        assert_eq!(merge_ledger_view(&c, "工作").unwrap().undoable.len(), 1);
+        // ⭐ 坏账本 ⇒ **Err**（⛔ 不许读成空账本 ⇒ 再融一次）。
+        set_meta_state(&c, crate::mesh_merge_ledger::LEDGER_KEY, "v9\n不认识的东西\n").unwrap();
+        assert!(
+            matches!(
+                merge_ledger_record(&c, 2_000, &req),
+                Err(LedgerError::Store(_))
+            ),
+            "⛔ 坏账本被当成空账本 = 静默再融一次 ✗"
+        );
     }
     }
 }
