@@ -1165,7 +1165,10 @@ export function genMcpTools(reg, kind = "read") {
       ...(kind === "write" ? { kind: "write" } : {}),
       name: c.id.replace(/\./g, "_"),
       capabilityId: c.id,
-      description: c.desc ?? c.title,
+      // ⭐ 2026-10-17：`mcpDesc` 优先 —— 外部面**结果形状不同**的能力（目前只有 `pages.search`：
+      //   外部面多包一层范围信封，插件面仍是裸数组）必须能各自说清自己的返回值。
+      //   两份描述**不是**两份语义：检索本身仍是同一个引擎（`cap_pages_search`）✓。
+      description: c.mcpDesc ?? c.desc ?? c.title,
       inputSchema: {
         type: "object",
         properties,

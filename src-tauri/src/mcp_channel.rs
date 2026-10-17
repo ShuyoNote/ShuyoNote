@@ -719,8 +719,9 @@ pub fn read_token() -> Option<String> {
 /// ① 显式覆盖 `SHUYONOTE_MCP_BRIDGE`（给了且是文件 ⇒ 用它）；
 /// ② 从**当前 exe 所在目录**往上最多 8 层找 `<dir>/tools/shuyonote-mcp/index.mjs`
 ///    （`pnpm tauri dev` / 仓内构建就跑得到仓库根 ✓）；
-/// ③ 打包后的资源目录 `<resource>/mcp/index.mjs`（由命令层传进来 ✓；当前没打进包 ⇒ 通常是空 ✗，
-///    但留这条是为了将来把桥随包发出去时**不用改前端**）。
+/// ③ 打包后的资源目录 `<resource>/mcp/index.mjs`（由命令层传进来 ✓；
+///    ⭐ 2026-10-18 起**真的打进包**了 —— 三份平台包配置都写了
+///    `"../tools/shuyonote-mcp/index.mjs": "mcp/index.mjs"` ⇒ 安装版也能自动填好路径 ✓）。
 fn resolve_bridge_from(start: &std::path::Path, resource_dir: Option<&std::path::Path>) -> Option<PathBuf> {
     let mut cur = Some(start.to_path_buf());
     let mut hops = 0;
@@ -744,15 +745,39 @@ fn resolve_bridge_from(start: &std::path::Path, resource_dir: Option<&std::path:
     None
 }
 
+/// 给人看／给客户端配置用的路径：**去掉 Windows 的 `\\?\`（verbatim）前缀**。
+///
+/// 为什么必须有这一步（2026-10-18 装包实测）：Tauri 的 `resource_dir` 是
+/// `std::path::Path::canonicalize` 出来的（为了解软链接 ✓），而 Windows 上 canonicalize
+/// 返回的是**设备路径** `\\?\C:\...` ⇒ 面板把整串填进配置片段：
+///
+/// ```text
+/// "args": ["\\\\?\\C:\\Users\\<你>\\AppData\\Local\\Programs\\ShuyoNote\\mcp\\index.mjs"]
+/// ```
+///
+/// Node 恰好认它（本机实测 bridge 能 `initialize` ✓），但这是"碰巧能跑"：
+/// ① 设备路径不是普通路径 —— 别的 MCP 客户端／脚本未必认；② 用户看到只会以为我们出 bug。
+/// `\\?\UNC\server\share` 要折回 `\\server\share`（网络盘同理 ✓）。
+fn display_path(p: &std::path::Path) -> String {
+    let s = p.display().to_string();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) => rest.to_string(),
+        None => s,
+    }
+}
+
 fn resolve_bridge_path(resource_dir: Option<&std::path::Path>) -> Option<String> {
     if let Some(v) = std::env::var_os(BRIDGE_ENV) {
         let p = PathBuf::from(v);
         if p.is_file() {
-            return Some(p.display().to_string());
+            return Some(display_path(&p));
         }
     }
     let start = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    resolve_bridge_from(&start, resource_dir).map(|p| p.display().to_string())
+    resolve_bridge_from(&start, resource_dir).map(|p| display_path(&p))
 }
 
 /// 给 GUI／命令用的状态读数 ✓（含令牌全文 —— 本机同一用户 ✓，面板要能"复制给 agent" ✓）。
@@ -1167,6 +1192,55 @@ mod bridge_path_tests {
 
         let _ = std::fs::remove_dir_all(&repo);
         let _ = std::fs::remove_dir_all(&clean);
+    }
+
+    /// ⭐ 2026-10-18：**桥必须随包发** —— 三份平台包配置里都要有
+    /// `"../tools/shuyonote-mcp/index.mjs": "mcp/index.mjs"`。
+    ///
+    /// 为什么要有这条：`resolve_bridge_from` 的资源分支只是"能找到就用"，**找不到不会红** ——
+    /// 于是打包配置哪天被人删一行，安装版就会永远拿不到 `bridge_path`（面板退回占位文案），
+    /// 而所有既有判据照样是绿的。这就是本仓最忌的那族：**行为悄悄变差、没有信号** ✗。
+    #[test]
+    fn every_platform_bundle_ships_the_bridge() {
+        for (name, text) in [
+            ("windows", include_str!("../tauri.windows.conf.json")),
+            ("linux", include_str!("../tauri.linux.conf.json")),
+            ("macos", include_str!("../tauri.macos.conf.json")),
+        ] {
+            assert!(
+                text.contains("\"../tools/shuyonote-mcp/index.mjs\": \"mcp/index.mjs\""),
+                "{name} 的打包配置没有把桥映射到 mcp/index.mjs（安装版会拿不到 bridge_path）✗"
+            );
+        }
+        // 源文件真的在（`include_str!` 的映射指向它 ✓）
+        let bridge = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("tools")
+            .join("shuyonote-mcp")
+            .join("index.mjs");
+        assert!(bridge.is_file(), "桥源文件不在：{bridge:?}");
+    }
+
+    /// ⭐ 2026-10-18（装包实测）：Tauri 的 `resource_dir` 来自 `Path::canonicalize` ⇒ Windows 上是
+    /// `\\?\C:\...` 设备路径。面板把它原样填进配置片段，用户看到的是一串 `\\\\?\\`。
+    /// Node 碰巧认（实测能 initialize），但这不是"对"—— 这里钉死"给人看的路径必须是普通路径"。
+    #[test]
+    fn verbatim_paths_are_shown_as_plain_paths() {
+        assert_eq!(
+            display_path(std::path::Path::new(r"\\?\C:\Users\x\ShuyoNote\mcp\index.mjs")),
+            r"C:\Users\x\ShuyoNote\mcp\index.mjs",
+            "`\\\\?\\C:\\…` 必须折回 `C:\\…`（安装版面板的配置片段就是这条）"
+        );
+        assert_eq!(
+            display_path(std::path::Path::new(r"\\?\UNC\srv\share\index.mjs")),
+            r"\\srv\share\index.mjs",
+            "网络盘：`\\\\?\\UNC\\srv\\share` 必须折回 `\\\\srv\\share`"
+        );
+        assert_eq!(
+            display_path(std::path::Path::new(r"C:\plain\path.mjs")),
+            r"C:\plain\path.mjs",
+            "普通路径**不许**被改动"
+        );
     }
 }
 

@@ -30,7 +30,14 @@ const EXPECTED = [
   "pages.create",
   "pages.get",
   "pages.importMarkdown",
+  // 2026-10-17：`pages.list` 进 AI/MCP 面（搜索之外的发现通路）
+  "pages.list",
   "pages.search",
+  // 2026-10-17：这三条在注册表里早就是 ai:true（M2 的写面 + 空间切换），
+  // 但这份清单没跟上 ⇒ 测试一直红着（与检索改动无关，顺手对齐现状 ✓）。
+  "pages.update",
+  "spaces.list",
+  "spaces.switch",
 ];
 
 describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实现）", () => {

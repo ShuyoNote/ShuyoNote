@@ -5,7 +5,8 @@
 //!   ① 把「这次是谁在调」交给 `plugins::with_external_caller` ✓（会话号 ＋ 该会话被授予的权限 ✓）；
 //!   ② 把整件事交给**唯一鉴权点** `plugins::dispatch_capability` ✓
 //!      （权限判定／未解锁大声失败／每次调用留审计／写走草稿确认 —— 全在那边 ✓）；
-//!   ③ 把结果原样回给调用方 ✓。
+//!   ③ 把结果回给调用方 ✓（⚠️ 唯一的改写：`pages.search` 外面包一层**范围信封** ——
+//!      `[]` 必须说得出"是哪个空间没有"，见 [`with_search_scope`]）。
 //!
 //! ⚠️ 它**不许**自己开库、**不许**自己判权限 —— 判据 `scripts/check-mcp-host-authz.mjs` 逐条核
 //! 「必须调用 `dispatch_capability`」＋「不许出现 `Connection::…`」＋「不许出现 `*_permission`」
@@ -82,11 +83,22 @@ pub(crate) fn set_external_draft_sink(f: impl Fn(&str, &str) + Send + Sync + 'st
     }
 }
 
+/// 这次调用**必须**留给人点确认吗（即使「免确认」档开着）。
+///
+/// 为什么单独一条（2026-10-18）：`pages.update` 是**整页替换** —— 一次调用把整页正文换成别的，
+/// 而这条路上**没有 undo、没有 dry-run、没有"改前快照"回传**（审计也只记能力名、不记参数）。
+/// 加法式写（新建页 / 追加块 / 导入 Markdown）可以由用户显式开免确认；
+/// **覆盖式的不行** —— 对一份"默认推荐"级别的知识库来说，一次误会就是一次数据丢失。
+fn needs_confirmation(method: &str) -> bool {
+    matches!(method, "pages.update")
+}
+
 /// 把这一批草稿交给出口 ✓（没装出口 ⇒ **出声**：宁可日志里留一句，也不静默吞掉 ✗）。
 fn deliver_drafts(source: &str, auto_apply: bool, drafts: &[plugins::PluginDraft]) -> bool {
     let payload = serde_json::json!({
         "source": source,
         // ⭐ 免确认开关**开着** ⇒ 前端直接落库（不再弹确认框）；关着 ⇒ 前端摊给用户确认 ✓
+        //   ⚠️ 但**覆盖式写**（`pages.update`）永远走"确认"那一路（见 [`needs_confirmation`]）✓
         //   两条路的**落库点同一个** ✓（`applyDraftAndRefresh` ⇒ `ai/apply.ts` ✓）。
         "auto_apply": auto_apply,
         "drafts": drafts,
@@ -131,7 +143,12 @@ pub(crate) fn handle_external_call_with(
             // ⭐ 2026-10-08：**装「当前空间」** ✓ —— 缺这一步，`with_read_conn` 必然回
             //   `space_unknown: 无法确定当前空间，数据能力不可用` ✗，7 条只读工具**全都用不了** ✗。
             //   现场、真因与口径写在 `plugins::with_active_space` 的注释里 ✓（owner 让我演示时撞出来的 ✓）。
-            plugins::with_active_space(|| plugins::dispatch_capability(method, args_json))
+            plugins::with_active_space(|| {
+                // ⭐ 2026-10-17：检索结果**自带范围**（`with_search_scope`）✓。
+                //   放在这个闭包里做，是因为范围快照读的**必须**是这次调用用的那个空间 ✓
+                //   （出了闭包 `read_space` 就恢复了 ⇒ 再读会得到 `space_unknown` ✗）。
+                with_search_scope(method, args_json, plugins::dispatch_capability(method, args_json))
+            })
         })
     });
     if drafts.is_empty() {
@@ -139,7 +156,9 @@ pub(crate) fn handle_external_call_with(
     }
     // ② 交出去 ✓；③ 回给 agent 的话**如实**（是「待确认」就不许说成「已写入」✗）
     let source = format!("external:{session_id}");
-    let auto = auto_write;
+    // ⭐ 2026-10-18：**覆盖式写永远要人确认**（见 [`needs_confirmation`]）——
+    //   「免确认」档只对**加法式**写生效 ✓。
+    let auto = auto_write && !needs_confirmation(method);
     let delivered = deliver_drafts(&source, auto, &drafts);
     let summaries: Vec<String> = drafts.iter().map(|d| d.summary.clone()).collect();
     let out_json = out.unwrap_or_else(|e| format!("{{\"error\":{}}}", serde_json::Value::String(e)));
@@ -158,6 +177,127 @@ pub(crate) fn handle_external_call_with(
         }
     }
     Ok(v.to_string())
+}
+
+/// 外部面的**检索信封**（2026-10-17）：`pages.search` 的结果要**自带范围**。
+///
+/// 为什么必须有这一层（现场）：外部 agent 实测「四次搜索全空」之后，对着 `[]` 只能得出
+/// 「这个库是空的」——而它其实**不知道**自己搜的是哪个空间（当时活动空间是一块只有 0–2 页的
+/// 新空间，知识库主体在另一个 42 页的空间里）。空数组把「这个空间没有」与「搜错空间了」
+/// 压成同一个答案 ⇒ 调用方只能猜，而猜错的代价是"这个产品不能当知识库用"。
+///
+/// 三条口径：
+///   1. **只在外部面加**：插件面拿到的仍是裸数组（`api.pages.search(...) || []` 是既有写法 ✓，
+///      `capabilities.json` 的 `returns.type` 也还是 array ✓）——信封是**协议面**的呈现，
+///      不是第二套检索语义（结果仍由同一个 `cap_pages_search` 产出 ✓）。
+///   2. **失败不伪装成空**：`dispatch_capability` 的 Err 原样上抛（错就是错，不许变成 `matched:0` ✗）。
+///   3. **范围取不到也不许装**：`scope` 给 null ＋ `scopeError` 说明原因，而不是编一个 0 页 ✓。
+fn with_search_scope(
+    method: &str,
+    args_json: &str,
+    out: Result<String, String>,
+) -> Result<String, String> {
+    if method != "pages.search" {
+        return out;
+    }
+    // 先看这次到底是不是「命中数组」：失败与空都不必去读范围 ✓（只有检索才付这次查询 ✓）
+    let items = match out.as_ref() {
+        Ok(json) => search_items(json),
+        Err(_) => None,
+    };
+    match items {
+        Some(items) => {
+            let hint = long_cjk_retry_hint(args_json);
+            Ok(search_envelope(items, plugins::space_scope_snapshot(), hint.as_deref()).to_string())
+        }
+        None => out,
+    }
+}
+
+/// 中文**整句**查询的补救提示（2026-10-18）。
+///
+/// 检索没有分词：一句没有空格的中文（「找一下焦煤相关的材料」）会当成**一个**超长词去匹配，
+/// 必然 0 条 —— 而这不是"库里没有"。与其让调用方下这个判断，不如直接教它怎么重试
+/// （拆成 2–4 个关键词、用空格分开）——这条建议**它能立刻执行** ✓。
+///
+/// 只在「没有空格 且 ≥6 字 且 含 CJK」时给（短词、英文、多词查询都不加，免得噪音）。
+fn long_cjk_retry_hint(args_json: &str) -> Option<String> {
+    let q = serde_json::from_str::<serde_json::Value>(args_json)
+        .ok()
+        .and_then(|v| v.get("q").and_then(|x| x.as_str()).map(str::to_string))?;
+    let t = q.trim();
+    if t.is_empty() || t.split_whitespace().count() != 1 {
+        return None;
+    }
+    let chars = t.chars().count();
+    let has_cjk = t
+        .chars()
+        .any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c));
+    if chars < 6 || !has_cjk {
+        return None;
+    }
+    Some(
+        "这句是一整句中文，而检索**没有分词**（整句被当成一个词）⇒ 建议拆成 2–4 个关键词、\
+         用空格分开再试（例如「焦煤 材料」）。"
+            .to_string(),
+    )
+}
+
+/// 把能力面的检索结果（`[{id,title,snippet}]`）解成数组；不是数组就 `None`（原样返回 ✓）。
+fn search_items(json: &str) -> Option<Vec<serde_json::Value>> {
+    serde_json::from_str::<serde_json::Value>(json)
+        .ok()
+        .and_then(|v| match v {
+            serde_json::Value::Array(a) => Some(a),
+            _ => None,
+        })
+}
+
+/// [`with_search_scope`] 去掉"读范围"那一步的形态：判据可以直接喂范围（不碰库 ✓）。
+fn with_search_scope_with(
+    method: &str,
+    out: Result<String, String>,
+    scope: Result<serde_json::Value, String>,
+    hint: Option<&str>,
+) -> Result<String, String> {
+    if method != "pages.search" {
+        return out;
+    }
+    match out.as_ref().ok().and_then(|json| search_items(json)) {
+        Some(items) => Ok(search_envelope(items, scope, hint).to_string()),
+        None => out,
+    }
+}
+
+/// [`with_search_scope`] 的纯函数部分（判据直接喂范围，不碰库 ✓）。
+fn search_envelope(
+    items: Vec<serde_json::Value>,
+    scope: Result<serde_json::Value, String>,
+    extra_hint: Option<&str>,
+) -> serde_json::Value {
+    let matched = items.len();
+    let mut v = serde_json::json!({ "matched": matched, "results": items });
+    match scope {
+        Ok(s) => {
+            if matched == 0 {
+                // 只给**能立刻执行**的下一步（别列一个这时还不存在的工具名 ✗）
+                let name = s["spaceName"].as_str().unwrap_or("");
+                let pages = s["pageCount"].as_i64().unwrap_or(0);
+                let extra = extra_hint.map(|h| format!("\n{h}")).unwrap_or_default();
+                v["hint"] = serde_json::Value::String(format!(
+                    "当前空间「{name}」（{pages} 页）没有匹配 —— 这不代表别的空间也没有。\
+                     可以换更短的词、去掉部分关键词；或用 pages_list 先看一遍本空间最近更新的页面；\
+                     也可用 spaces_list 确认当前空间（必要时 spaces_switch 切换）再搜。{extra}"
+                ));
+            }
+            v["scope"] = s;
+        }
+        Err(e) => {
+            v["scope"] = serde_json::Value::Null;
+            v["scopeError"] = serde_json::Value::String(e);
+        }
+    }
+    v
 }
 
 #[cfg(test)]
@@ -385,6 +525,60 @@ mod w3_draft_tests {
         assert!(got[0].contains("p-update-1"), "payload 必须带目标页 id ✓：{got:?}");
         assert!(out.contains("\"drafted\":true"), "回话要带 drafted ✓：{out}");
     }
+
+    /// ⭐ 2026-10-18：**整页替换永远要人确认** —— 即使「免确认」档开着。
+    ///
+    /// 挡的是哪一幕：`pages.update` 一次调用把整页正文换掉，而这条路没有 undo／dry-run／改前快照，
+    /// 审计也只记能力名、不记参数。免确认档把它一起放过去 ⇒ 一次误会就是一次数据丢失。
+    /// 三条断言一起说清：回话如实（`auto_apply:false`）／数据目录**逐字节不变**／草稿也标了 false。
+    #[test]
+    fn pages_update_never_auto_applies_even_when_allow_write_is_on() {
+        let _serial = DRAFT_SINK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = crate::db::ensure_test_app_data_dir().to_path_buf();
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen2 = seen.clone();
+        set_external_draft_sink(move |_source, payload| {
+            if let Ok(mut g) = seen2.lock() {
+                g.push(payload.to_string());
+            }
+        });
+
+        let before = fingerprint(&dir);
+        let session = "sdk-update-auto-1";
+        let cap = crate::capabilities_gen::lookup("pages.update").expect("pages.update 必须存在 ✓");
+        let perm = cap.permission.expect("写能力必须有 permission ✓");
+        let out = handle_external_call_with(
+            session,
+            &[perm.to_string()],
+            "pages.update",
+            r##"{"id":"p-update-auto","markdown":"整页替换的新正文"}"##,
+            true, // ⭐ 免确认开关**开着** —— 正是这条判据要挡的场景 ✓
+        )
+        .expect("调用本身应当成功（它产出的是草稿 ✓）");
+        let after = fingerprint(&dir);
+
+        assert_eq!(
+            before, after,
+            "整页替换在免确认档下也**不许**自动落库 ✗：数据目录变了"
+        );
+        assert!(
+            out.contains("\"auto_apply\":false"),
+            "回话必须如实说「没自动写」✓：{out}"
+        );
+        assert!(
+            out.contains("\"awaiting_confirm\":true"),
+            "回话必须说「在等人确认」✓：{out}"
+        );
+        let got = seen.lock().map(|g| g.clone()).unwrap_or_default();
+        assert_eq!(got.len(), 1, "草稿要交出去一次 ✓（拿到 {} 条）", got.len());
+        assert!(
+            got[0].contains("\"auto_apply\":false"),
+            "出口那边也必须是「等确认」（否则前端会直接落库 ✗）：{}",
+            got[0]
+        );
+        assert!(got[0].contains("update_page"), "payload 的 kind 必须是 update_page ✓");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -447,5 +641,107 @@ mod w4_audit_tests {
         assert!(rows[0].ok, "这一笔本身是成功的 ✓");
         assert_eq!(rows[0].capability, "pages.create", "审计里要看得出改的是哪一类能力 ✓");
         assert_eq!(rows[0].plugin_id, "external", "外部会话不是插件 ⇒ 不许冒用插件 id ✓");
+    }
+
+    /// 检索信封（2026-10-17）：`pages.search` 的外部结果**必须**带上范围；空结果必须说得出
+    /// "是哪个空间没有"。判据把范围直接喂进来（不碰库 ⇒ 不依赖活动空间，也不会被并行测试干扰 ✓）。
+    #[test]
+    fn pages_search_result_carries_scope_and_says_which_space_is_empty() {
+        let scope = || Ok(serde_json::json!({"spaceId":"s1","spaceName":"运营","pageCount":42}));
+
+        // ① 有命中：matched 与 results 都在，**不必**给 hint（有结果时别劝人换词 ✗）
+        let one = with_search_scope_with(
+            "pages.search",
+            Ok(r#"[{"id":"p1","title":"短剧方案","snippet":"…"}]"#.to_string()),
+            scope(),
+            None,
+        )
+        .expect("成功的结果不该被信封弄成错误 ✓");
+        let v: serde_json::Value = serde_json::from_str(&one).unwrap();
+        assert_eq!(v["matched"], 1);
+        assert_eq!(v["results"][0]["id"], "p1");
+        assert_eq!(v["scope"]["spaceName"], "运营", "范围必须带空间名（否则调用方仍然不知道搜的是哪）");
+        assert_eq!(v["scope"]["pageCount"], 42);
+        assert!(v.get("hint").is_none(), "有命中还劝换词只会让 agent 怀疑结果：{v}");
+
+        // ② 空：**必须**说清楚是哪个空间、有多少页 —— 这就是「[] 让调用方困惑」的修法
+        let none =
+            with_search_scope_with("pages.search", Ok("[]".to_string()), scope(), None).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&none).unwrap();
+        assert_eq!(v["matched"], 0);
+        let hint = v["hint"].as_str().unwrap_or_default();
+        assert!(hint.contains("运营"), "空结果的提示要点名空间：{hint}");
+        assert!(hint.contains("42"), "空结果的提示要给页数（0 页与 42 页是两件事）：{hint}");
+
+        // ②b 整句中文：除了范围，还要给"拆词重试"这句**能立刻执行**的话
+        let split_hint = long_cjk_retry_hint(r#"{"q":"找一下焦煤相关的材料"}"#);
+        assert!(split_hint.is_some(), "整句中文必须给拆词建议");
+        let v: serde_json::Value = serde_json::from_str(
+            &with_search_scope_with(
+                "pages.search",
+                Ok("[]".to_string()),
+                scope(),
+                split_hint.as_deref(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let hint = v["hint"].as_str().unwrap_or_default();
+        assert!(hint.contains("拆成 2–4 个关键词"), "空结果 + 整句中文 ⇒ 教它拆词：{hint}");
+
+        // ③ 非检索能力**原样**（信封只属于 pages.search，别的工具结果不许被改形状 ✗）
+        let raw = with_search_scope_with(
+            "pages.get",
+            Ok(r#"{"id":"p1","title":"会议纪要"}"#.to_string()),
+            scope(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(raw, r#"{"id":"p1","title":"会议纪要"}"#);
+
+        // ④ **失败不许伪装成 0 命中**（错就是错 ✓）
+        assert!(
+            with_search_scope_with(
+                "pages.search",
+                Err("bad_args: 缺少参数 q".to_string()),
+                scope(),
+                None
+            )
+            .is_err(),
+            "检索失败必须是错误，不能变成 matched:0 —— 那会让 agent 以为库里真没有 ✗"
+        );
+
+        // ⑤ 范围读不到：给 null ＋ 原因，**不编一个 0 页** ✓
+        let v: serde_json::Value = serde_json::from_str(
+            &with_search_scope_with(
+                "pages.search",
+                Ok(r#"[{"id":"p1"}]"#.to_string()),
+                Err("db_error: 库打不开".to_string()),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(v["scope"].is_null());
+        assert!(
+            v["scopeError"].as_str().unwrap_or_default().contains("db_error"),
+            "取不到范围时要如实说明，而不是静默留空：{v}"
+        );
+        assert_eq!(v["matched"], 1, "范围取不到不影响这次检索本身的读数");
+    }
+
+    /// 整句中文的补救提示只在"真的会误伤"的形状上出现（2026-10-18）。
+    /// 短词、多词、英文加这句只会变成噪音；空 q 更不该有。
+    #[test]
+    fn long_cjk_retry_hint_only_fires_on_whole_chinese_sentences() {
+        assert!(
+            long_cjk_retry_hint(r#"{"q":"找一下焦煤相关的材料"}"#).is_some(),
+            "整句中文（无空格、≥6 字）⇒ 要给拆词建议"
+        );
+        assert!(long_cjk_retry_hint(r#"{"q":"焦煤"}"#).is_none(), "短词不给");
+        assert!(long_cjk_retry_hint(r#"{"q":"焦煤 材料"}"#).is_none(), "已经拆好的多词查询不给");
+        assert!(long_cjk_retry_hint(r#"{"q":"release notes"}"#).is_none(), "英文多词不给");
+        assert!(long_cjk_retry_hint(r#"{"q":""}"#).is_none(), "空 q 不给");
+        assert!(long_cjk_retry_hint(r#"{}"#).is_none(), "缺 q 不给");
     }
 }

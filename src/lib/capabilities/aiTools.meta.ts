@@ -15,6 +15,18 @@ export interface AiCapabilityMeta {
 
 export const AI_TOOL_META: AiCapabilityMeta[] = [
   {
+    id: "pages.list",
+    description: "列出本空间页面（id / 标题 / 创建时间 / 更新时间），按更新时间倒序；不含正文。**搜索之外的发现通路**：不知道关键词、或检索返回空时，先用它看这个空间里有什么。参数: limit (可选, 默认 50, 上限 200)。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "limit": { type: "number" },
+      },
+      required: [],
+    },
+    isWrite: false,
+  },
+  {
     id: "pages.get",
     description: "读取单个页面的标题与正文纯文本。参数: id (必填), offset/limit (可选分页，按**字符/Unicode 标量**计数)。**必须看 `chars_total` 与返回长度判断是否读全**：只读了窗口就当整页用，是这类工具最常见的误用。",
     argsSchema: {
@@ -30,7 +42,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "pages.search",
-    description: "在本空间检索页面（关键词匹配；应用内 AI 检索会叠加本地嵌入的语义加分，配了嵌入模型时意思相近的内容也能命中）。参数: q (必填, 关键词/内容描述), limit (可选, 默认 8)。返回匹配页面的 id/title/snippet。",
+    description: "在本空间检索页面：关键词用空格分隔 ⇒ 全部出现才算命中（与应用内搜索同一个引擎，含正文与附件抽取文本）。参数: q (必填), limit (可选, 默认 8)。返回 [{id,title,snippet}]；**空数组 = 本空间没有命中，不是失败**。",
     argsSchema: {
       type: "object",
       properties: {

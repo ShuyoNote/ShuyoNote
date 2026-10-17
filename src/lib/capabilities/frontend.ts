@@ -118,6 +118,14 @@ const BLOCKS_LIMIT_MAX = 500;
 const SEARCH_LIMIT_DEFAULT = 8;
 const SEARCH_LIMIT_MAX = 100;
 
+/**
+ * `pages.list` 的 `limit` 默认值与上限：注册表 `default: 50`、Rust `cap_pages_list` 的 `clamp(1, 200)`。
+ * ⚠️ 这是**外部 agent 的发现通路**（搜索之外唯一能看到"这个空间有什么"的工具）⇒ 排序口径也必须一致：
+ * 按 `updated_at` 倒序，不是侧栏树的 `sort_order/created_at` 顺序。
+ */
+const PAGES_LIST_LIMIT_DEFAULT = 50;
+const PAGES_LIST_LIMIT_MAX = 200;
+
 /** `files.search` 的 `limit`：注册表 `default: 10`、Rust `cap_files_search` 的 `clamp(1, 100)`。 */
 const FILES_SEARCH_LIMIT_DEFAULT = 10;
 const FILES_SEARCH_LIMIT_MAX = 100;
@@ -130,6 +138,24 @@ const FILES_READ_LIMIT_DEFAULT = 200;
 const FILES_READ_LIMIT_MAX = 1000;
 
 export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
+  // ⭐ 2026-10-17：`pages.list` 进 AI/MCP 面 —— 外部 agent 以前**只能搜索**，
+  // 搜不到就等于"库里没有"（没有第二条发现通路）。排序口径与 Rust 侧 `cap_pages_list` 一致：
+  // `updated_at` 倒序（`api.listPages` 给的是侧栏树的 `sort_order/created_at` 顺序，别直接用）。
+  "pages.list": async (args) => {
+    const limit = intArg(args, "limit", PAGES_LIST_LIMIT_DEFAULT, 1, PAGES_LIST_LIMIT_MAX);
+    const rows = await api.listPages();
+    const sorted = [...rows].sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+    return {
+      ok: true,
+      pages: sorted.slice(0, limit).map((p) => ({
+        id: p.id,
+        title: p.title,
+        created_at: p.created_at,
+        updated_at: p.updated_at,
+      })),
+    };
+  },
+
   "pages.search": async (args) => {
     const query = String(args.q ?? "");
     // ⚠️ 默认值与上限**必须与注册表和 Rust 侧逐值相同**（`check-capabilities` 会比对注册表
