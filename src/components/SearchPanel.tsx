@@ -8,6 +8,7 @@ import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
 import type { SearchResult } from "../types";
 import { SearchIcon } from "./icons";
+import { RailSearchIcon } from "./railIcons";
 
 // Map a raw semantic/rank score to a friendly percentage-ish label (0..1 style).
 function formatScore(score: number): string {
@@ -144,7 +145,7 @@ export function SearchPanel() {
         title="搜索笔记"
         aria-label="搜索笔记"
       >
-        <SearchIcon />
+        <RailSearchIcon />
       </button>
       {open && (
         <div

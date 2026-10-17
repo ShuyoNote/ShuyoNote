@@ -107,12 +107,13 @@ describe("侧边工具栏：知识地图下面的 LLM Wiki 图标按钮", () => 
     expect(wikiBtn()!.querySelector("svg")).not.toBeNull();
   });
 
-  it("★ 图标与竖条其它图标**同一套风格**：单色描边 ＋ 同一 viewBox/线宽，⛔ 不许自带彩色渐变", () => {
+  it("★ 图标与竖条其它图标**同一套风格**：单色填充 ＋ 同一 viewBox，⛔ 不许自带彩色渐变", () => {
     const wikiSvg = wikiBtn()!.querySelector("svg")!;
     const mapSvg = mapBtn()!.querySelector("svg")!; // 「知识地图」那颗：它就是本竖条的样板
-    // ① 单色、跟主题走（竖条里所有图标都这样：`Icon` 外壳写死 fill=none + stroke=currentColor ✓）
-    expect(wikiSvg.getAttribute("stroke")).toBe("currentColor");
-    expect(wikiSvg.getAttribute("fill")).toBe("none");
+    // ① 单色、跟主题走 —— ⭐ 2026-10-18：rail 换成 codicon（16 网格 **填充**字形）：
+    //    `fill=currentColor`、没有 stroke（原来是 `fill=none + stroke=currentColor` 的描边口径 ✓）。
+    expect(wikiSvg.getAttribute("fill")).toBe("currentColor");
+    expect(wikiSvg.getAttribute("stroke")).toBeNull();
     // ② 几何口径与邻居逐字一致（换 viewBox/线宽 ⇒ 与旁边几颗"不是一套"✓）
     expect(wikiSvg.getAttribute("viewBox")).toBe(mapSvg.getAttribute("viewBox"));
     expect(wikiSvg.getAttribute("stroke-width")).toBe(mapSvg.getAttribute("stroke-width"));

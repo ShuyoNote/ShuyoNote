@@ -545,18 +545,16 @@ html[data-platform="win"] .app-body {
   cursor: pointer;
   transition: color var(--transition-fast), background var(--transition-fast);
 }
-/* ⭐⭐ **2026-10-18（owner：侧边工具栏图标不像 VS Code 那样齐整）**：
- * rail 里的图标**只在这里定规格** —— 22×22 渲染、`viewBox` 24（图标组件自带）、**线宽 1.8**。
- * ⚠️ 真因（改前量到的）：11 颗按 18px 渲染、同步/邮箱 2 颗按 20px ⇒ 同一 `strokeWidth=1.7`
- *   在两档里实际是 **1.28px / 1.42px**；再加上 18px 下各图标的视觉外接框从 ~9px 到 ~15px 不等 ⇒ 看着散。
- * ⇒ 统一渲染 22px ＋ 线宽 1.8（实际 ≈1.65px；48 方块里占 46%，接近 VS Code 的 24/48），
- *   并**禁止**在 `ActivityBar.tsx` 里再传 `width/height`。
+/* ⭐⭐ **2026-10-18（owner：「更狠点」⇒ rail 换 VS Code Codicons）**：
+ * rail 里的图标**只在这里定规格** —— **24×24** 渲染、`viewBox` 16（`railIcons.tsx` 里每条 path 原样来自
+ * codicon，16 网格 + `fill=currentColor`）—— 与 VS Code 的 24/48 比例逐字一致 ✓。
+ * ⚠️ 这里**不再写 stroke-width**：codicon 是**填充路径**，描边口径不适用（写了反而会在某些字形上冒边）。
+ * ⛔ 不要在 `ActivityBar.tsx` 里再传 `width/height`。
  */
 .activity-bar .activity-btn > svg,
 .activity-bar .btn-trash > svg {
-  width: 22px;
-  height: 22px;
-  stroke-width: 1.8;
+  width: 24px;
+  height: 24px;
 }
 /* ⭐ 2026-10-18：徽标**绝对定位到右上角** —— 原来 `.sync-badge` 是 grid 的第二行，
  * 会把 20px 图标往上顶（带徽标的那两颗与邻居**不在一根中线上**）；`.trash-badge` 又是 -5/-5 另一套。 */

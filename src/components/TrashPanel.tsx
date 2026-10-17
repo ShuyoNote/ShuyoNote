@@ -7,7 +7,7 @@ import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
 import type { PageMeta } from "../types";
-import { TrashIcon } from "./icons";
+import { RailTrashIcon } from "./railIcons";
 
 // 相对时间：最近用「几分钟前」，超一周显示日期。
 function formatWhen(ts?: number | null): string {
@@ -149,7 +149,7 @@ export function TrashPanel() {
   return (
     <div className="trash-panel">
       <button ref={triggerRef} className="btn-trash" onClick={toggle} title="回收站" aria-label="回收站">
-        <TrashIcon />
+        <RailTrashIcon />
         {items.length > 0 && <span className="trash-badge">{items.length > 99 ? "99+" : items.length}</span>}
       </button>
       {open && (

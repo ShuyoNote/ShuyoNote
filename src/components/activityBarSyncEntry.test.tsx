@@ -102,28 +102,33 @@ describe("2026-10-14：左栏「邮箱」换成 SVG（与其余图标同一套�
     expect(bar, "⛔ 不许再用文字字形 ✗（owner：按钮用 svg ✓）").not.toContain("✉");
   });
 
-  it("② ⭐（源码级）那颗邮箱**用的是新 SVG 组件** `MailIcon`（今天【红】✓）", () => {
+  it("② ⭐（源码级）那颗邮箱**用的是 rail 专用 SVG 组件** `RailMailIcon`（今天【红】✓）", () => {
     const bar = src("ActivityBar.tsx");
     // ⚠️ **2026-10-14**：⭐ 这句原来把**尺寸字面**也钉进去了 ✗ —— ⭐ 而尺寸刚被对齐过 ✓
-    //   ⇒ ⭐ 按 R192「换对象不删断言」：⭐ 只钉**用的是 `MailIcon` 这个组件** ✓，⛔ 不再钉具体像素 ✗。
-    expect(bar, "⭐ 必须用的是 `MailIcon` 这个 SVG 组件 ✓").toContain("<MailIcon");
-    expect(bar, "⭐ `MailIcon` 也要在 import 名单里 ✓").toContain("  MailIcon,");
+    //   ⇒ ⭐ 按 R192「换对象不删断言」：⭐ 只钉**用的是哪个 SVG 组件** ✓，⛔ 不再钉具体像素 ✗。
+    // ⚠️ **2026-10-18**：rail 图标换成 VS Code Codicons ⇒ 组件改叫 `RailMailIcon`（同一条口径 ✓）。
+    expect(bar, "⭐ 必须用的是 `RailMailIcon` 这个 SVG 组件 ✓").toContain("<RailMailIcon");
+    expect(bar, "⭐ `RailMailIcon` 也要在 import 名单里 ✓").toContain("  RailMailIcon,");
   });
 
-  it("③ ⭐（源码级）新图标与既有那套**同风格**（同一处定义 ＋ 同一个 `<Icon>` 外壳 ⇒ 同一 `viewBox`）（今天【红】✓）", () => {
-    const icons = src("icons.tsx");
-    expect(icons, "⭐ 必须定义在同一处 ✓（`src/components/icons.tsx` ✓ —— 这才是统一样式 ✓）").toContain(
-      "export function MailIcon(props: IconProps)",
+  it("③ ⭐（源码级）rail 图标**同一套**：都在 `railIcons.tsx`、都走同一个 `<RailIcon>` 外壳、viewBox 16 一致", () => {
+    const rail = src("railIcons.tsx");
+    expect(rail, "⭐ 必须定义在 `railIcons.tsx`（rail 专用一套）✓").toContain(
+      "export function RailMailIcon(props: RailIconProps)",
     );
-    const at = icons.indexOf("export function MailIcon(props: IconProps)");
-    const body = icons.slice(at, at + 400);
-    expect(body, "⭐ 必须走同一个 `Icon` 外壳 ✓（⭐ viewBox／描边口径／props 由它统一 ✓）").toContain("<Icon {...props}>");
-    expect(icons, "⭐ 那个外壳的 viewBox 就是 24×24 ✓（⭐ 与隔壁那颗同一个 ✓）").toContain('viewBox="0 0 24 24"');
+    expect(rail, "⭐ 必须走同一个 `RailIcon` 外壳 ✓（viewBox／fill／props 由它统一 ✓）").toContain("<RailIcon {...props}>");
+    // ⚠️ codicon 官方同一版里 `search` 已是 24 网格、其余还是 16 ⇒ 生成时**统一到 16 画布**
+    //   （24 的缩 ⅔ 装进来；CSS 渲染 24px ⇒ 外观一致），所以这里钉的是 16 —— 13 颗同一个 viewBox 才是"一套" ✓。
+    expect(rail, "⭐ 外壳的 viewBox 统一到 16×16 ✓（13 颗同一个 ✓）").toContain('viewBox="0 0 16 16"');
+    expect(rail, "⭐ 单色：`fill=currentColor`（⛔ 别写死颜色 ✗）").toContain('fill="currentColor"');
   });
 
-  it("④ 锁（今天已绿 ✓）：⛔ 没引新依赖 ✗（自绘 ✓）＋ ⭐ 那颗的其余属性逐字未变 ✓", () => {
-    const icons = src("icons.tsx");
-    expect(icons, "⛔ 图标必须是**自绘**的 ✗（⛔ 不许从库引 ✗ —— 与既有 10 颗同源 ✓）").not.toContain("lucide");
+  it("④ 锁（今天已绿 ✓）：⛔ 没进依赖树（codicon path 是 vendored 进来的）＋ 那颗的其余属性逐字未变", () => {
+    const rail = src("railIcons.tsx");
+    expect(rail, "⛔ 不许 `import … from \"@vscode/codicons\"` ✗（vendored path ⇒ 不进依赖树 ✓）").not.toContain(
+      "@vscode/codicons",
+    );
+    expect(rail, "⭐ 出处要写明（MIT）✓").toContain("MIT");
     const bar = src("ActivityBar.tsx");
     expect(bar, "⭐ `rail-mail` 的 testid 未变 ✓").toContain('data-testid="rail-mail"');
     expect(bar, "⭐ 标题／无障碍名逐字未变 ✓").toContain('title="邮箱"');
