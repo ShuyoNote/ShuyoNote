@@ -14,6 +14,8 @@ import { buildHelpSite } from "../lib/helpSite";
 import { buildWikiExport, type WikiPageInput } from "../lib/wikiExport";
 import { usePdfReader } from "../store/pdfReader";
 import { useCommunitySave } from "../store/communitySave";
+// ⭐ 2026-10-18（C 弹窗）：两个新入口只负责**打开浮层**；勾选项与执行全在同一条链上 ✓
+import { useExportDialog } from "../store/exportDialog";
 import { exportWorkspaceToMarkdown, exportPageToMarkdown } from "../lib/exportMarkdown";
 import {
   exportPageBundleToZip,
@@ -100,6 +102,30 @@ registerCommandGroup({
   id: "export",
   name: "导出",
   commands: [
+    // ⭐ 2026-10-18（C 弹窗）：先给**两个统一入口** —— 点开同一个对话框（预估 ＋ 三个勾选项），
+    //   执行在 `lib/exportMarkdownDialog.ts` ✓。
+    //   ⛔ 下面四条旧命令**一条不删** ✗ —— owner 真机验过新入口再收（不做"先删后补" ✓）。
+    {
+      id: "export.entry-page",
+      title: "导出当前页…",
+      description: "打开导出对话框：附件 zip ／ 元数据 YAML ／ 纯 .md 平铺，先给预估（新入口）",
+      closeOnRun: true,
+      run: (ctx) => {
+        if (!ctx.currentId) return "未打开页面";
+        useExportDialog.getState().openFor("page", ctx.currentId);
+        return "已打开导出对话框";
+      },
+    },
+    {
+      id: "export.entry-space",
+      title: "导出本空间…",
+      description: "打开导出对话框（本空间的页 ＋ 全部附件）：选项与预估同上（新入口）",
+      closeOnRun: true,
+      run: () => {
+        useExportDialog.getState().openFor("space");
+        return "已打开导出对话框";
+      },
+    },
     {
       id: "export.current-json",
       title: "导出当前页 JSON",

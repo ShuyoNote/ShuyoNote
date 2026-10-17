@@ -43,6 +43,8 @@ import { SpaceTransferProgress } from "./components/SpaceTransferProgress";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { FilePreviewDialog } from "./components/FilePreviewDialog";
 import { CommunitySaveDialog } from "./components/CommunitySaveDialog";
+// ⭐ 2026-10-18（C 弹窗）：两个导出入口（导出当前页… / 导出本空间…）共用的那个浮层 ✓
+import { MarkdownExportDialog } from "./components/MarkdownExportDialog";
 import { PdfReader } from "./components/PdfReader";
 import { FormulaEditorDialog } from "./components/FormulaEditorDialog";
 import { CoverPicker } from "./components/CoverPicker";
@@ -1096,6 +1098,7 @@ function AppShell() {
               （⭐ 与紧邻的 `{pdfWhere === "overlay" && <PdfReader />}` 同一写法 ✓）。 */}
           {previewWhere === "overlay" && <FilePreviewDialog />}
           <CommunitySaveDialog />
+          <MarkdownExportDialog />
           <PdfReader />
           <FormulaEditorDialog />
           <Toaster />
@@ -1265,6 +1268,7 @@ function AppShell() {
         <Toaster />
         <ConfirmDialog />
         <InputDialog />
+        <MarkdownExportDialog />
         <AiAssistantPanel />
         <CommentsDrawer />
         {/* 阶段 1 · B1：正文索引补算（合并/裁决过的页面在后台补上；应用启动与每次同步结束后跑一趟） */}

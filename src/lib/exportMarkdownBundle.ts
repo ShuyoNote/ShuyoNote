@@ -344,6 +344,66 @@ export interface BundleFile {
   text: string;
 }
 
+/**
+ * ⭐ 2026-10-18（C 弹窗的「☐纯 .md 平铺」）：**不按页面树建目录**的路径表 —— 所有页都放根 ✓。
+ *
+ * 口径与 [`treePaths`] 一致的地方（同名去重、folder 不出文件、转换失败的页不占路径）刻意复用同一份规则；
+ * 不同的只有一处：**不再建目录**（子页也平铺在根）✓。
+ * ⚠️ 平铺时"同名"是按**根目录整张表**去重的 ⇒ 两棵子树里的同名页也会被区分开（`-<id 前 6 位>` ✓）。
+ */
+export function flatPaths(prepared: readonly PreparedPage[]): Map<string, string> {
+  const usable = prepared.filter((p) => !p.error && p.kind !== "folder");
+  const byTitle = (a: PreparedPage, b: PreparedPage) =>
+    (a.title || "").localeCompare(b.title || "", "zh") || a.id.localeCompare(b.id);
+  const paths = new Map<string, string>();
+  const used = new Set<string>();
+  for (const p of usable.slice().sort(byTitle)) {
+    const base = safeEntryName(p.title || p.id, p.id);
+    let name = base;
+    if (used.has(name)) name = safeEntryName(`${base}-${p.id.slice(0, 6)}`, p.id);
+    used.add(name);
+    paths.set(p.id, `${name}.md`);
+  }
+  return paths;
+}
+
+/** YAML front matter 里的一格：用 JSON 字符串写法转义引号/反斜杠/换行/控制字符 ✓。 */
+function yamlValue(text: string): string {
+  return JSON.stringify(String(text ?? ""));
+}
+
+/**
+ * ⭐ 2026-10-18（C 弹窗的「☐元数据 YAML」）：每份 `.md` 顶部的 YAML front matter —— **纯函数**，好测 ✓。
+ *
+ * 为什么要有它：`.md` 被别的工具（Obsidian / 静态站 / 脚本）拿去时，`title` / `id` / `kind`
+ * 是**可机读**的元数据 ✓；现在那行 HTML 注释只能给人看。
+ * ⚠️ 字段只放**确定有**的三个（`title` / `id` / `kind`）—— ⛔ 不猜时间戳/标签 ✗
+ *   （`updated_at` 我们这一层拿不到，写了就是假读数 ✓）。
+ */
+export function yamlFrontMatter(page: { id: string; title?: string | null; kind?: string | null }): string {
+  const lines = [
+    "---",
+    `title: ${yamlValue(page.title || "未命名")}`,
+    `id: ${yamlValue(page.id)}`,
+    `kind: ${yamlValue(page.kind || "page")}`,
+    "---",
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+/**
+ * 一份 `.md` 的文件头 —— 两种口径（**同一份实现**，⛔ 别在别处再拼一遍 ✗）：
+ * · `yaml: true` ⇒ YAML front matter（机读 ✓）
+ * · `yaml: false` ⇒ 与老导出**逐字相同**的 HTML 注释（向后兼容 ✓）
+ */
+export function pageFileHeader(
+  page: { id: string; title?: string | null; kind?: string | null },
+  yaml: boolean,
+): string {
+  if (yaml) return yamlFrontMatter(page);
+  return `<!-- title: ${page.title || "未命名"} · id: ${page.id} -->\n`;
+}
+
 export interface BundleAsset {
   hash: string;
   /** zip 内的相对路径：`assets/<hash>.<ext>`。 */
@@ -373,6 +433,16 @@ export interface BundlePlanOptions {
   extraHashes?: readonly string[];
   /** ⭐ 2026-10-18：生成 `_attachments.md` 索引（**条目数 ＝ 附件数** ✓）。 */
   attachmentIndex?: boolean;
+  /**
+   * ⭐ 2026-10-18（C 弹窗的「☐纯 .md 平铺」）：**不按页面树建目录**（所有 `.md` 放根 ✓）。
+   * 缺省 `false` ⇒ 仍是 `父.md` ＋ `父/子.md`（与加之前逐字相同 ✓）。
+   */
+  flat?: boolean;
+  /**
+   * ⭐ 2026-10-18（C 弹窗的「☐元数据 YAML」）：每份 `.md` 顶部写 YAML front matter（见 [`pageFileHeader`]）。
+   * 缺省 `false` ⇒ 仍是老的 HTML 注释头（向后兼容 ✓）。
+   */
+  yaml?: boolean;
 }
 
 /** 索引表格里的一格：竖线 / 换行会把表格拆坏 ⇒ 转义 ✓。 */
@@ -434,7 +504,8 @@ export function planBundle(
   const canUse = (hash: string) => !available || available.has(hash);
 
   const files: BundleFile[] = [];
-  const treePathsById = treePaths(prepared);
+  // ⭐ 2026-10-18：两种路径口径（C 弹窗的「纯 .md 平铺」）—— 缺省仍是目录树 ✓
+  const treePathsById = opts.flat ? flatPaths(prepared) : treePaths(prepared);
   const assets = new Map<string, BundleAsset>();
   const unresolved = new Set<string>();
   let skipped = 0;
@@ -498,10 +569,14 @@ export function planBundle(
     // ④ 字面量那条路（office 导入的图片没有指纹，正文里只剩 `attachment://<hash>`）
     md = rewriteAttachmentRefs(md, (hash) => refPath.get(hash) ?? null);
 
-    // ⑤ 路径：**目录树** ✓（同目录重名去重已在 `treePaths` 里做完 ✓）
+    // ⑤ 路径：**目录树** ✓（同目录重名去重已在 `treePaths` / `flatPaths` 里做完 ✓）
     const name = treePathsById.get(p.id) ?? `${safeEntryName(p.title || p.id, p.id)}.md`;
-    // 文件头与单页 / 空间导出**同一个形状**（`<!-- title: … · id: … -->`）
-    files.push({ path: name, text: `<!-- title: ${p.title || "未命名"} · id: ${p.id} -->\n${md}` });
+    // 文件头：缺省与单页 / 空间导出**同一个形状**（`<!-- title: … · id: … -->`）；
+    // ⭐ 勾了「元数据 YAML」⇒ 换成机读的 front matter ✓
+    files.push({
+      path: name,
+      text: pageFileHeader({ id: p.id, title: p.title, kind: p.kind }, Boolean(opts.yaml)) + md,
+    });
   }
 
   // ⭐ 2026-10-18：空间导出的"完整备份"口径 —— **没被正文引用的附件也装进来** ✓
@@ -624,6 +699,8 @@ async function allAttachmentMeta(
 
 interface BundleResult {
   bytes: Uint8Array;
+  /** ⭐ 2026-10-18：最终排版出来的文件（`.md` 正文，含索引页）—— C 弹窗的「纯 .md」那条路直接用它 ✓。 */
+  files: BundleFile[];
   pages: number;
   assets: number;
   unresolved: number;
@@ -658,14 +735,18 @@ export interface BundleExportOptions {
   onProgress?: BundleProgress;
 }
 
-/** [`bundleFor`] 的内部选项。 */
-interface BundleForOptions {
+/** [`bundleFor`] 的选项（⭐ 2026-10-18：C 弹窗要的 `flat` / `yaml` 也走这里 ✓）。 */
+export interface BundleForOptions {
   onProgress?: BundleProgress;
   /**
    * ⭐ 2026-10-18：空间导出用 —— 把**全部**附件（含未被正文引用的）装进 zip ＋ 生成
    * `_attachments.md` 索引 ✓。单页导出不开它（只看这一页正文引用的那些 ✓）。
    */
   allAttachments?: boolean;
+  /** ⭐ 2026-10-18（C 弹窗）：不按页面树建目录（全部 `.md` 放根 ✓）。 */
+  flat?: boolean;
+  /** ⭐ 2026-10-18（C 弹窗）：每份 `.md` 顶部写 YAML front matter ✓。 */
+  yaml?: boolean;
 }
 
 /**
@@ -676,7 +757,7 @@ interface BundleForOptions {
  * 首尾点空格 ＋ 限长 ✓）。
  * ⚠️ 名字读不到（命令失败 / 为空）⇒ **原样退回 `fallback`**（⛔ 不因为一个文件名把导出弄失败 ✗）。
  */
-async function defaultBundleZipName(fallback: string): Promise<string> {
+export async function defaultBundleZipName(fallback: string): Promise<string> {
   const spaceName = await api.getWorkspaceName().catch(() => "");
   const named = spaceName ? sanitizeName(spaceName) : "";
   return named ? `${named}-${fallback}` : fallback;
@@ -709,7 +790,7 @@ interface ExportProgressHandle {
  * 结束**同一条** toast 替换成结果（3 秒后自己消失 ✓；⛔ 不另弹一条重复的 ✗）。
  * 传了 `provided`（测试 / 别的壳）⇒ **一个 toast 都不弹**，结果由调用方自己展示 ✓。
  */
-function beginExportProgress(label: string, provided?: BundleProgress): ExportProgressHandle {
+export function startExportProgress(label: string, provided?: BundleProgress): ExportProgressHandle {
   if (provided) return { onProgress: provided, finish: () => {} };
   // 0 ⇒ 持久：不自动消失 ✓（拿到 id 才能**就地**改成进度/结果 ✓）
   const id = useToast.getState().show(`${label}…`, "info", { duration: 0 });
@@ -743,6 +824,64 @@ export function estimateBundleText(
 }
 
 /**
+ * ⭐ 2026-10-18（C 弹窗的**预估行**）：一个导出范围大概有多少东西 —— **不读附件字节**（只问列表 ✓，
+ * 弹窗一打开就要出数 ✓）。
+ *
+ * 口径与真正导出的口径**对齐**（否则预估就是在骗人 ✓）：
+ * · `page` ⇒ 这一页（1 篇）＋ 这一页自己的附件；
+ * · `space` ⇒ 全部页面（**folder 不算"篇"** ✓）＋ 该空间**全部**附件（逐页并集 ＋ 空间根的「未整理」，
+ *   按 hash 去重 —— 与 [`prepareBundle`] 的 `allAttachments` 同一口径 ✓）。
+ * ⚠️ 大小只算附件表里 `size > 0` 的那些；其余进 `unknownSize`（⛔ 不当 0 ✗，见 [`estimateBundleText`]）。
+ */
+export interface ExportEstimate {
+  pageCount: number;
+  assetCount: number;
+  knownBytes: number;
+  unknownSize: number;
+  /** 附件清单没列出来的地方数（预估可能偏低 ⇒ 界面要如实说 ✓）。 */
+  unreadable: number;
+}
+
+export async function estimateExportScope(
+  target: { kind: "page"; pageId: string } | { kind: "space" },
+): Promise<ExportEstimate> {
+  let scopes: (string | null)[];
+  let pageCount: number;
+  if (target.kind === "page") {
+    scopes = [target.pageId];
+    pageCount = 1;
+  } else {
+    const metas = await api.listPages();
+    pageCount = metas.filter((m) => m.kind !== "folder").length;
+    // 逐页 ＋ 空间根（null）—— 与空间导出的"完整备份"口径一致 ✓
+    scopes = [...metas.map((m) => m.id), null];
+  }
+  const seen = new Set<string>();
+  let assetCount = 0;
+  let knownBytes = 0;
+  let unknownSize = 0;
+  let unreadable = 0;
+  for (const pageId of scopes) {
+    let rows: AttachmentMeta[] = [];
+    try {
+      rows = await api.listPageAttachments(pageId);
+    } catch {
+      unreadable += 1;
+      continue;
+    }
+    for (const row of rows ?? []) {
+      if (!row?.hash || seen.has(row.hash)) continue;
+      seen.add(row.hash);
+      assetCount += 1;
+      const size = Number(row.size);
+      if (Number.isFinite(size) && size > 0) knownBytes += size;
+      else unknownSize += 1;
+    }
+  }
+  return { pageCount, assetCount, knownBytes, unknownSize, unreadable };
+}
+
+/**
  * 一键导出的**字节上限**（`300 MB`）。
  *
  * ⚠️ 为什么要有它：`packBundle` 用的是 `fflate` 的 `zipSync` —— **同步** ✗ ⇒ 大空间会把主线程
@@ -766,9 +905,12 @@ export function bundleTooLargeMessage(totalBytes: number): string | null {
 /**
  * 导出核心：转换 → 问类型（空间导出还要列**全部**附件）→ 取字节（同 hash 只取一次）→ 排版 → 打包。
  *
- * ⭐ 2026-10-18：加了 `onProgress`（每取一个附件报一次 ✓）与 `allAttachments`（完整备份口径 ✓）。
+ * ⭐ 2026-10-18：加了 `onProgress`（每取一个附件报一次 ✓）与 `allAttachments`（完整备份口径 ✓）；
+ * 又加了 `flat` / `yaml`（C 弹窗的两个勾选项 ✓）。
+ *
+ * ⚠️ 新选项**缺省时与原行为逐字相同** ✓ —— 老的四个命令一字不改。
  */
-async function bundleFor(
+export async function prepareBundle(
   pages: readonly MarkdownPageInput[],
   opts: BundleForOptions = {},
 ): Promise<BundleResult> {
@@ -782,6 +924,8 @@ async function bundleFor(
   const planOpts: BundlePlanOptions = {
     extraHashes,
     attachmentIndex: Boolean(opts.allAttachments),
+    flat: Boolean(opts.flat),
+    yaml: Boolean(opts.yaml),
   };
   const referenced = new Set(referencedHashes(prepared));
 
@@ -826,6 +970,7 @@ async function bundleFor(
   if (bundleTooLargeMessage(totalBytes)) {
     return {
       bytes: new Uint8Array(0),
+      files: final.files,
       pages: pageCount,
       assets: final.assets.length,
       unresolved: final.unresolved.length,
@@ -840,6 +985,7 @@ async function bundleFor(
 
   return {
     bytes: packBundle(final, bytesOf),
+    files: final.files,
     pages: pageCount,
     assets: final.assets.length,
     unresolved: final.unresolved.length,
@@ -852,7 +998,7 @@ async function bundleFor(
 }
 
 /** 一句给用户的话：成功的部分说清，**没装进去的那几件也如实说** ✓。 */
-function bundleMessage(title: string, path: string, r: BundleResult): string {
+export function bundleMessage(title: string, path: string, r: BundleResult): string {
   const bits = [`${r.pages} 页`, `${r.assets} 个附件`];
   if (r.extras) bits.push(`其中 ${r.extras} 个未被正文引用（完整备份口径一并带走）`);
   if (r.bins) bits.push(`其中 ${r.bins} 个拿不到类型 ⇒ 存成 .bin`);
@@ -883,7 +1029,7 @@ export async function exportPageBundleToZip(
 ): Promise<string> {
   const title = page.title || "未命名";
   // ⭐ 2026-10-18：先弹**持久 toast**，后面每一步都以它为准（⛔ 中途无声无息 ✗）
-  const progress = beginExportProgress("正在导出", opts.onProgress);
+  const progress = startExportProgress("正在导出", opts.onProgress);
   try {
     // ⭐ 2026-10-18：文件夹节点没有正文（它只是目录层，见 `treePaths`）⇒ **一个字节都不写**，
     //   也⛔ 不产出一个"0 页的空 zip"假装成功 ✗。
@@ -903,7 +1049,7 @@ export async function exportPageBundleToZip(
       progress.finish("已取消导出", "info");
       return "已取消导出";
     }
-    const result = await bundleFor([page], { onProgress: progress.onProgress });
+    const result = await prepareBundle([page], { onProgress: progress.onProgress });
     // ⚠️ 超限 ⇒ **一个字节都不写** ✓，把原因如实返回（⛔ 不假装成功 ✗）
     if (result.tooLarge) {
       const tooLargeMsg = bundleTooLargeMessage(result.tooLarge) ?? "导出体积超过上限";
@@ -930,7 +1076,7 @@ export async function exportPageBundleToZip(
  */
 export async function exportWorkspaceBundleToZip(opts: BundleExportOptions = {}): Promise<string> {
   // ⭐ 2026-10-18：先弹**持久 toast**（「正在导出…」⇒「取附件 3/32」⇒ 结果 ✓）
-  const progress = beginExportProgress("正在导出本空间", opts.onProgress);
+  const progress = startExportProgress("正在导出本空间", opts.onProgress);
   try {
     // ⭐ 2026-10-18（owner：「压缩包名加上空间名称」）：默认文件名带上**当前空间名** ✓ ——
     //   否则多个空间各导一份时全叫「空间导出.zip」（浏览器只会加 (1)/(2) ✗，分不出是哪个空间 ✓）。
@@ -966,7 +1112,7 @@ export async function exportWorkspaceBundleToZip(opts: BundleExportOptions = {})
       }
     }
 
-    const result = await bundleFor(pages, { onProgress: progress.onProgress, allAttachments: true });
+    const result = await prepareBundle(pages, { onProgress: progress.onProgress, allAttachments: true });
     // ⚠️ 超限 ⇒ **一个字节都不写** ✓（与单页那条同口径 ✓）
     if (result.tooLarge) {
       const tooLargeMsg = bundleTooLargeMessage(result.tooLarge) ?? "导出体积超过上限";

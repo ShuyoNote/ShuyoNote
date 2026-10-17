@@ -47,14 +47,18 @@ import { useToast } from "../store/toast";
 import {
   assetPathFor,
   attachmentHashesIn,
+  estimateExportScope,
   ExportReportedError,
   exportPageBundleToZip,
   exportWorkspaceBundleToZip,
+  flatPaths,
   packBundle,
+  pageFileHeader,
   planBundle,
   preparePages,
   rewriteAttachmentRefs,
   safeEntryName,
+  yamlFrontMatter,
 } from "./exportMarkdownBundle";
 
 /** 造一份**真的**编辑器状态 JSON（⛔ 不手搓形状：手搓的容易缺字段，判据就会骗人 ✗）。 */
@@ -453,6 +457,93 @@ describe("⑤ 空间导出带上**全部附件**（2026-10-18 加）", () => {
     const out = unzipBytes(writeMock.mock.calls[0][1] as number[]);
     expect(Object.keys(out)).toEqual(["页.md"]);
     expect(msg).toContain("0 个附件");
+  });
+});
+
+// ⭐ 2026-10-18（C 弹窗）：三个勾选项对应两件事 ——
+//   · 「纯 .md 平铺」⇒ `flatPaths` / `planBundle({flat})` 不建目录；
+//   · 「元数据 YAML」⇒ 每份 `.md` 顶部换成 YAML front matter（老口径仍是 HTML 注释 ✓）。
+// 另钉「预估行」的数据来源 `estimateExportScope`（不读附件字节，只问列表）。
+describe("⑧ C 弹窗的排版选项（flat / YAML）＋ 预估（2026-10-18 加）", () => {
+  it("`flatPaths`：全部放根、folder 不出文件、同名按 id 区分 ✓", () => {
+    const paths = flatPaths([
+      { id: "f", title: "资料", kind: "folder", markdown: "", srcToHash: new Map() },
+      { id: "c", title: "子页", kind: "page", markdown: "", srcToHash: new Map() },
+      { id: "x", title: "子页", kind: "page", markdown: "", srcToHash: new Map() },
+    ]);
+    expect(paths.has("f")).toBe(false);
+    // 同一层同名 ⇒ 按标题再按 id 排，后到的退 `-<id 前 6 位>`（与 treePaths 同一策略 ✓）
+    expect([...paths.values()].sort()).toEqual(["子页-x.md", "子页.md"].sort());
+  });
+
+  it("`planBundle({flat: true})`：zip 内每条都在根（没有 `父/子.md`）✓", () => {
+    const plan = planBundle(
+      preparePages([
+        { id: "a", title: "父", docJson: plainDoc(), parentId: null },
+        { id: "b", title: "子", docJson: plainDoc(), parentId: "a" },
+      ]),
+      () => undefined,
+      undefined,
+      { flat: true },
+    );
+    expect(plan.files.map((f) => f.path).sort()).toEqual(["子.md", "父.md"].sort());
+  });
+
+  it("`yamlFrontMatter`：字段固定三个（title/id/kind），值按 JSON 转义 ✓", () => {
+    const yaml = yamlFrontMatter({ id: "p1", title: '带"引号"\n换行', kind: "page" });
+    expect(yaml.startsWith("---\n")).toBe(true);
+    expect(yaml.endsWith("\n---\n")).toBe(true);
+    expect(yaml).toContain('title: "带\\"引号\\"\\n换行"'); // JSON 字符串 ⇒ 引号/换行都转义 ✓
+    expect(yaml).toContain('id: "p1"');
+    expect(yaml).toContain('kind: "page"');
+    expect(yaml.split("\n").filter(Boolean)).toHaveLength(5); // --- / 三格 / --- ✓
+  });
+
+  it("`pageFileHeader`：不勾 YAML ⇒ 与老导出**逐字相同**的 HTML 注释（向后兼容 ✓）", () => {
+    expect(pageFileHeader({ id: "p1", title: "页" }, false)).toBe("<!-- title: 页 · id: p1 -->\n");
+    expect(pageFileHeader({ id: "p1", title: "页" }, true).startsWith("---\n")).toBe(true);
+  });
+
+  it("`planBundle({yaml: true})`：每份 .md 顶部是 front matter（不再是 HTML 注释）✓", () => {
+    const plan = planBundle([{ id: "p1", title: "页", markdown: "# 正文", srcToHash: new Map() }], () => undefined, undefined, {
+      yaml: true,
+    });
+    expect(plan.files[0].text.startsWith('---\ntitle: "页"\nid: "p1"\nkind: "page"\n---\n# 正文')).toBe(true);
+  });
+
+  it("`estimateExportScope`（当前页）：只问这一页的附件、按 hash 去重、大小未知单独计数 ✓", async () => {
+    listAttachmentsMock.mockResolvedValue([
+      { id: "a1", hash: "h1", mime: "image/png", name: "a.png", size: 2048, path: "" },
+      { id: "a2", hash: "h1", mime: "image/png", name: "a.png", size: 2048, path: "" }, // 同 hash ⇒ 只算一次
+      { id: "a3", hash: "h2", mime: "application/pdf", name: "b.pdf", size: 0, path: "" }, // 大小未知
+    ]);
+    const e = await estimateExportScope({ kind: "page", pageId: "p1" });
+    expect(e).toMatchObject({ pageCount: 1, assetCount: 2, knownBytes: 2048, unknownSize: 1, unreadable: 0 });
+    expect(listAttachmentsMock).toHaveBeenCalledWith("p1");
+  });
+
+  it("`estimateExportScope`（本空间）：folder 不算「篇」、逐页＋空间根求并集 ✓", async () => {
+    listPagesMock.mockResolvedValue([
+      { id: "p1", kind: "page", parent_id: null },
+      { id: "p2", kind: "page", parent_id: null },
+      { id: "f1", kind: "folder", parent_id: null },
+    ]);
+    listAttachmentsMock.mockImplementation(async (pageId: string | null) =>
+      pageId === "p1"
+        ? [{ id: "a1", hash: "h1", mime: "image/png", name: "a.png", size: 1024, path: "" }]
+        : pageId === null
+          ? [{ id: "a9", hash: "h9", mime: "application/pdf", name: "未整理.pdf", size: 4096, path: "" }]
+          : [],
+    );
+    const e = await estimateExportScope({ kind: "space" });
+    expect(e).toMatchObject({ pageCount: 2, assetCount: 2, knownBytes: 5120, unknownSize: 0, unreadable: 0 });
+  });
+
+  it("`estimateExportScope`：某处附件清单列不出来 ⇒ 记 `unreadable`（⛔ 不静默当成 0 ✗）", async () => {
+    listAttachmentsMock.mockRejectedValue(new Error("列不出来"));
+    const e = await estimateExportScope({ kind: "page", pageId: "p1" });
+    expect(e.unreadable).toBe(1);
+    expect(e.assetCount).toBe(0);
   });
 });
 
