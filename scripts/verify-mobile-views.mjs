@@ -1746,8 +1746,23 @@ function assertScrollReachable(m, vp) {
   }
 }
 
-/** 打开同步面板（它挂在侧栏里；窄屏侧栏是抽屉、默认 hidden ⇒ 先把抽屉打开）。 */
+/**
+ * 打开同步面板。
+ *
+ * ⚠️ **2026-10-17 修（只换定位，3 条断言一条没动 ✓ —— 判据没被弱化 ✓）**：
+ * 左栏那颗「同步」现在是 **`setView("sync")` ⇒ AppView 的一个视图** ✓
+ * （`App.tsx:1202` 的 `<SyncPanel contentOnly />` ✓），⛔ 不再是"侧栏里的 `.btn-sync` 触发器" ✗
+ * —— 那条路只剩抽屉/浮层那一支（`SyncPanel.tsx:1263` 的 `!contentOnly` 分支 ✓）。
+ * 实测（web 壳 1280×800）：整页 **`.btn-sync` 数量 = 0** ✗ ⇒ 旧写法点了个空气 ⇒ 面板永远不打开 ✗。
+ * 而 `contentOnly` 时内容体的类名**仍是** `sync-popover is-sync is-inline` ✓（`SyncPanel.tsx:1303` ✓）
+ * ⇒ 下游那三条量法一个字都不用改 ✓。
+ */
 async function openSyncPanel(page) {
+  // ① 现在的**主入口**：左栏那颗（⭐ 它自测里就说明"按 data-testid 认它"✓）
+  await safeEval(page, () => document.querySelector('[data-testid="rail-sync"]')?.click());
+  await sleep(900);
+  if (await safeEval(page, () => !!document.querySelector(".sync-popover.is-sync"))) return true;
+  // ② 回退：抽屉/浮层那支仍在（窄屏要先把侧栏打开）—— ⛔ 老写法保留 ✗，别把另一条路弄没 ✓
   await safeEval(page, async () => {
     const loaded = (performance.getEntriesByType?.("resource") ?? [])
       .map((e) => e.name)

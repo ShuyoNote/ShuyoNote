@@ -254,7 +254,13 @@ const OVERLAYS = [
   { id: "input", label: "输入框", root: ".confirm-overlay", box: ".confirm-box", sheet: true },
   { id: "search", label: "搜索浮层", root: ".search-popover", box: ".search-popover", sheet: true, sheetClass: true },
   { id: "trash", label: "回收站", root: ".trash-popover", box: ".trash-popover", sheet: true, sheetClass: true },
-  { id: "sync", label: "同步面板", root: ".sync-popover", box: ".sync-popover", sheet: true, sheetClass: true },
+  // ⚠️ 2026-10-17：同步面板现在是 **AppView 的内联视图**（`contentOnly` ⇒ `.is-inline` ✓，
+  //   `App.tsx:1202`）⇒ 它不是模态浮层 ✗、也没有"要锁住的外壳背景"（它自己就是内容区 ✓）。
+  //   本层的所有测试档（792×360 ＋ 桌面档）都走那条分支 ✓（运行记录自己写着"窄视口里它的宿主被
+  //   移动端自己的屏取代 ⇒ 搬到 792×360 与桌面档跑"✓）⇒ 按 `noScrollLock` 机制处理 ✓（与 TOC 同一先例 ✓）。
+  //   ⛔ **不是删判据** ✗：模态那条路（不带 `.is-inline` 的浮层）**照旧要求锁** ✓ ——
+  //   哪天真把同步重新按浮层形态验收，请把这一行摘掉 ✓。
+  { id: "sync", label: "同步面板", root: ".sync-popover", box: ".sync-popover", sheet: true, sheetClass: true, noScrollLock: true },
   { id: "pluginManager", label: "插件管理", root: ".plugin-manager-overlay", box: ".plugin-manager", sheet: false, fullscreen: true },
   { id: "storage", label: "存储 / 空间管理", root: ".stg-overlay", box: ".stg-panel", sheet: false, optional: true, fullscreen: true },
   { id: "palette", label: "命令面板", root: ".palette-overlay", box: ".palette", sheet: false, fullscreen: true },
@@ -375,8 +381,14 @@ async function openOverlay(which) {
       case "trash":
         return click(".btn-trash");
       case "sync": {
-        // 同步面板挂在**侧栏**里（PageTree 底部的 SyncPanel），而窄屏侧栏是抽屉、
-        // 默认是 `hidden` ⇒ 得先把抽屉打开，它的浮层才量得到真实几何。
+        // ⚠️ 2026-10-17 修（**只换定位，断言一条没动** ✓）：左栏那颗「同步」现在是
+        //    `setView("sync")` ⇒ AppView 的一个视图（`App.tsx:1202` 的 `<SyncPanel contentOnly />` ✓），
+        //    ⛔ 不再是"侧栏里的 `.btn-sync` 触发器" ✗ —— 实测 web 壳整页 `.btn-sync` = **0 个** ✗，
+        //    旧写法点的是空气 ⇒ 面板永远"没能打开" ✗。
+        //    而 `contentOnly` 时内容体的类名**仍是** `.sync-popover` ✓（`SyncPanel.tsx:1303` ✓）
+        //    ⇒ 下游的几何／常驻 chrome／滚到底三条量法一个字都不用改 ✓。
+        if (await click('[data-testid="rail-sync"]')) return true;
+        // 回退：抽屉/浮层那一支仍在（窄屏侧栏是抽屉、默认 `hidden` ⇒ 先打开它 ✓）
         const a = await store("/src/store/activity.ts");
         a.useActivity.getState().setSidebarOpen(true, { persist: false });
         await new Promise((r) => setTimeout(r, 500));
@@ -1332,15 +1344,33 @@ async function main() {
           const slot = document.querySelector(".mobile-sync-slot");
           const btn = slot ? slot.querySelector("button") : null;
           const r = btn ? btn.getBoundingClientRect() : null;
+          // ⚠️ 2026-10-17 修（**只换"怎么认这是一颗真按钮"，断言一条没删** ✓）：
+          //    那颗入口是**图标按钮**（SyncPanel 的 `.btn-sync` ✓）⇒ `textContent` 天生为空 ✗，
+          //    旧判据 `!!label` 会把"入口在／看得见／点得着"误判成"没有" ✗。
+          //    ⇒ 认它的**可访问名**（`aria-label` ／ `title` ✓）＋ **可见** ✓
+          //      （比只看文字**更强**：还验了可见性 ✓；而空文字本身不是缺陷 ✓）。
+          const cs = btn ? getComputedStyle(btn) : null;
+          const visible =
+            !!r &&
+            r.width > 0 &&
+            r.height > 0 &&
+            cs.display !== "none" &&
+            cs.visibility !== "hidden";
+          const label = btn
+            ? btn.getAttribute("aria-label") ||
+              btn.getAttribute("title") ||
+              (btn.textContent || "").trim()
+            : null;
           return {
             hasSlot: !!slot,
-            label: btn ? (btn.textContent || "").trim() : null,
+            label,
+            visible,
             w: r ? Math.round(r.width) : 0,
             h: r ? Math.round(r.height) : 0,
           };
         });
         ok(
-          sync.hasSlot && !!sync.label,
+          sync.hasSlot && sync.visible && !!sync.label,
           `手机上主界面有同步入口（${sync.label ?? "（没有）"}）——TitleBar 在手机端不渲染，否则只能开抽屉才点得到`,
         );
         ok(sync.h >= 44, `同步入口命中区高度 ≥44（实测 ${sync.h}×${sync.w}）`);
