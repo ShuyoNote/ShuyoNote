@@ -6,9 +6,9 @@
 | 源 | 值 |
 |---|---|
 | 注册表文件 | `capabilities/capabilities.json` |
-| 注册表 sha256 | `a321ba06da0789e0dc298b64abf02d33e9daba7c728561e53d4f8da0341662ae` |
+| 注册表 sha256 | `48c469a0ff9db8a79485ccb2156ec96b72c75791aca04a7d88afe98a4c3481a5` |
 | `registryVersion` | 1 |
-| `apiVersion` | 1.1.0 |
+| `apiVersion` | 1.2.0 |
 | 能力条数 | **29**（按 `kind`：host 2 / read 16 / write 11） |
 | 生成命令 | `node scripts/gen-knowledge-ontology.mjs` |
 
@@ -39,7 +39,7 @@
 | properties.set | write | current-space | write:properties |  | ✓ | 设置某个页面的属性值。参数: attrId (必填, 从 properties.list 拿), value (必填), pageId (可选, 省略=当前打开的页面)。这是写操作，返回草稿供用户确认。 |
 | settings.get | read | app | kv:own |  |  | 读取用户在插件管理里为该插件设置的值。参数: key (必填, manifest.settings 里声明的 key)。没设过返回 null（此时用你自己的默认值）。**只有宿主界面能写**——插件不能改用户给它设的配置。 |
 | spaces.list | read | app | read:pages | ✓ |  | 列出所有空间及当前激活空间（切换空间前先看 id/名称）。只读，不改变任何状态。 |
-| spaces.switch | write | app | write:pages | ✓ | ✓ | 切换 ShuyoNote 的当前空间：参数 id 或 name 二选一。这是写操作（影响后续读写作用域），返回草稿供用户确认。 |
+| spaces.switch | write | app | write:pages |  | ✓ | 切换 ShuyoNote 的当前空间：参数 id 或 name 二选一。这是写操作（影响后续读写作用域），返回草稿供用户确认。 |
 | tags.add | write | current-space | write:tags |  | ✓ | 给页面加一个标签。参数: name (必填, 不带 #), pageId (可选, 省略=当前打开的页面)。标签不需要预先创建。这是写操作，返回草稿供用户确认。 |
 | tags.list | read | current-space | read:tags |  |  | 列出本空间用到的标签及各自的页面数。返回 [{id, name, page_count}]。 |
 | user.notify | host | app | — |  |  | 给用户弹一条提示。参数: message (必填)。命令执行结束后显示；插件没有 console，这是给人看的那条路（写日志用 log.write）。 |

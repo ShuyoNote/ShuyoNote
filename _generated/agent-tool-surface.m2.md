@@ -5,10 +5,10 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `a321ba06da0789e0dc298b64abf02d33e9daba7c728561e53d4f8da0341662ae` |
-| `apiVersion` | 1.1.0 |
+| 注册表 sha256 | `48c469a0ff9db8a79485ccb2156ec96b72c75791aca04a7d88afe98a4c3481a5` |
+| `apiVersion` | 1.2.0 |
 | 取用条件 | `ai === true` **且** `kind === "write"` |
-| 条数 | **5** |
+| 条数 | **4** |
 | 生成命令 | `node scripts/gen-agent-tool-surface.mjs --phase m2` |
 
 | id | scope | permission | desc |
@@ -17,4 +17,3 @@
 | pages.create | current-space | write:pages | 新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。 |
 | pages.importMarkdown | current-space | write:pages | 导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。 |
 | pages.update | current-space | write:pages | 更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。 |
-| spaces.switch | app | write:pages | 切换 ShuyoNote 的当前空间：参数 id 或 name 二选一。这是写操作（影响后续读写作用域），返回草稿供用户确认。 |

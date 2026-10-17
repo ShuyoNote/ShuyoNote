@@ -37,7 +37,10 @@ const EXPECTED = [
   // 但这份清单没跟上 ⇒ 测试一直红着（与检索改动无关，顺手对齐现状 ✓）。
   "pages.update",
   "spaces.list",
-  "spaces.switch",
+  // ⚠️ 2026-10-18：`spaces.switch` **已从 AI 面移除**（注册表里 `ai:false`）——
+  //    依据是面板「外部 AI 接入」的档位文案：「只读（全部空间）…**也不会改动你正在看的那个空间**」。
+  //    ⇒ 与 `check-agent-surface` 的「`ai:true` 只许 `current-space`」同一条口径：
+  //      看见有哪些空间可以（`spaces.list` 是显式例外），**替人切换不行** ✓。
 ];
 
 describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实现）", () => {

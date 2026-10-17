@@ -20,7 +20,9 @@ register({
     if (!(limit > 0)) limit = 20;
     limit = Math.min(limit, 50);
 
-    var hits = api.pages.search(q, limit);
+    // 2026-10-18：`pages.search` 的第 2 个参数变成了 `spaceId`（跨空间只读那条线的入参），
+    // 第 3 个才是 `limit`。这里传 `undefined` ＝ 用当前空间 ✓（例子仍只搜本空间）。
+    var hits = api.pages.search(q, undefined, limit);
     if (hits.length === 0) {
       api.notify("没有找到和「" + q + "」相关的页面");
       return "没有命中，什么都没生成";
