@@ -460,6 +460,29 @@ interface BundleResult {
   unresolved: number;
   bins: number;
   skipped: number;
+  /** ⭐ 2026-10-17：这次要打的字节数 —— **超过 [`BUNDLE_BYTE_CAP`] 时才有值** ⇒ 没有产出 zip ✓。 */
+  tooLarge?: number;
+}
+
+/**
+ * 一键导出的**字节上限**（`300 MB`）。
+ *
+ * ⚠️ 为什么要有它：`packBundle` 用的是 `fflate` 的 `zipSync` —— **同步** ✗ ⇒ 大空间会把主线程
+ * 冻住（用户看到的是"点了没反应"✗，而那正是最坏的一种失败：看起来像卡死 ✓）。
+ * ⇒ 超过上限就**不打**：如实报出体积、建议分批 ✓（⛔ 不默默卡住 ✗、⛔ 不截断内容却假装成功 ✗）。
+ * ⭐ 这是 **V1.1 的兜底**；真正的解是异步/流式打包 ＋ 进度条（V1.5 ✓）。
+ */
+export const BUNDLE_BYTE_CAP = 300 * 1024 * 1024;
+
+/** 超过上限时**给用户的那句话**（纯函数 ⇒ 好测 ✓；⛔ 不在这里读任何外部状态 ✗）。 */
+export function bundleTooLargeMessage(totalBytes: number): string | null {
+  if (totalBytes <= BUNDLE_BYTE_CAP) return null;
+  const mb = Math.round(totalBytes / (1024 * 1024));
+  const capMb = Math.round(BUNDLE_BYTE_CAP / (1024 * 1024));
+  return (
+    `这次导出约 ${mb} MB，超过一键导出的上限（${capMb} MB）—— 太大容易把界面卡住，` +
+    `已**没有**开始打包。建议**分批**导：先选一个子树导出，或把大附件移出这个空间再导`
+  );
 }
 
 /** 导出核心：转换 → 问类型 → 取字节（同 hash 只取一次）→ 排版 → 打包。 */
@@ -490,6 +513,22 @@ async function bundleFor(pages: readonly MarkdownPageInput[]): Promise<BundleRes
           metaOf,
           new Set(planned.assets.filter((a) => !failed.has(a.hash)).map((a) => a.hash)),
         );
+
+  // ⚠️ `zipSync` 是**同步**的 ✗（见 `BUNDLE_BYTE_CAP` 的注释）⇒ 超限就**先别打** ✓
+  const textBytes = final.files.reduce((n, f) => n + f.text.length, 0);
+  const assetBytes = final.assets.reduce((n, a) => n + (bytesOf.get(a.hash)?.length ?? 0), 0);
+  const totalBytes = textBytes + assetBytes;
+  if (bundleTooLargeMessage(totalBytes)) {
+    return {
+      bytes: new Uint8Array(0),
+      pages: final.files.length,
+      assets: final.assets.length,
+      unresolved: final.unresolved.length,
+      bins: final.assets.filter((a) => a.path.endsWith(".bin")).length,
+      skipped: final.skipped,
+      tooLarge: totalBytes,
+    };
+  }
 
   return {
     bytes: packBundle(final, bytesOf),
@@ -529,6 +568,8 @@ export async function exportPageBundleToZip(page: MarkdownPageInput): Promise<st
   });
   if (!path) return "已取消导出"; // 取消 ⇒ 一个字节都不写 ✓
   const result = await bundleFor([page]);
+  // ⚠️ 超限 ⇒ **一个字节都不写** ✓，把原因如实返回（⛔ 不假装成功 ✗）
+  if (result.tooLarge) return bundleTooLargeMessage(result.tooLarge) ?? "导出体积超过上限";
   // Web 侧 `write_binary_file` 是 Blob ＋ `<a download>`（见 `web.ts`）；桌面是真实落盘 ✓
   await api.writeBinaryFile(path, Array.from(result.bytes));
   return bundleMessage(title, path, result);
@@ -558,6 +599,8 @@ export async function exportWorkspaceBundleToZip(): Promise<string> {
   }
 
   const result = await bundleFor(pages);
+  // ⚠️ 超限 ⇒ **一个字节都不写** ✓（与单页那条同口径 ✓）
+  if (result.tooLarge) return bundleTooLargeMessage(result.tooLarge) ?? "导出体积超过上限";
   await api.writeBinaryFile(path, Array.from(result.bytes));
   const msg = bundleMessage("本空间", path, result);
   return unreadable ? `${msg}；另有 ${unreadable} 页读不出来已跳过` : msg;
