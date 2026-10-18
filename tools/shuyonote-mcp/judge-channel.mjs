@@ -26,6 +26,7 @@ import { createServer } from "node:http";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BRIDGE = join(HERE, "index.mjs");
+import { defaultMcpDir, resolveEndpointFiles } from "./paths.mjs";
 // ⚠️ 夹具用**真生成物**（唯一真相源 ✓）：`capabilities/mcp-tools.json` 是**裸数组** ✓
 const REAL_TOOLS = JSON.parse(readFileSync(join(HERE, "..", "..", "capabilities", "mcp-tools.json"), "utf8"));
 
@@ -69,15 +70,36 @@ try {
   console.log("MCP 桥的转发面判据（真起进程 ✓）");
 
   // ---------- ① 没配连接信息 ⇒ 如实报"通道未开" ----------
+  // ⚠️ 2026-10-18：桥现在**默认去应用数据目录找** ⇒ "没配"必须用 `SHUYONOTE_MCP_HOME`
+  //    指到一个**空目录**（否则会读到这台机器上真在跑的 App，判据就不确定了 ✗）。
   {
+    const emptyHome = mkdtempSync(join(tmpdir(), "shuyonote-mcp-empty-"));
     const r = await runBridge({
-      env: { SHUYONOTE_MCP_PORT_FILE: "", SHUYONOTE_MCP_TOKEN_FILE: "" },
+      env: { SHUYONOTE_MCP_HOME: emptyHome },
       lines: [{ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "pages_search", arguments: { q: "x" } } }],
     });
+    rmSync(emptyHome, { recursive: true, force: true });
     const line = r.parsed[0];
     ok(r.parsed.length > 0 && r.parsed.every((p) => p.okJson), "stdout 每一行都是合法 JSON（协议纯净 ✓）");
     ok(!!line && !!line.value.error, "没配连接信息时 tools/call 回的是 **error**（不是空 result ✓）");
     ok(String(line?.value?.error?.message || "").includes("通道未开"), `错误里说清原因（拿到：${line?.value?.error?.message}）`);
+  }
+
+  // ---------- ①b 路径解析优先级（纯函数，不起进程） ----------
+  {
+    const base = resolveEndpointFiles({ env: { SHUYONOTE_MCP_HOME: "/tmp/shuyo-home" } });
+    ok(base.portFile.endsWith("port") && base.tokenFile.endsWith("token"), "只给 HOME ⇒ 在它下面找 port/token ✓");
+    const over = resolveEndpointFiles({
+      env: { SHUYONOTE_MCP_HOME: "/tmp/shuyo-home", SHUYONOTE_MCP_TOKEN_FILE: "/x/t" },
+    });
+    ok(over.tokenFile === "/x/t" && over.portFile.endsWith("port"), "单独覆盖 token 仍然优先（另一项回落到 HOME ✓）");
+    const win = defaultMcpDir({ platform: "win32", env: { APPDATA: "C:\\Users\\u\\AppData\\Roaming" } });
+    ok(/cn\.shuyo\.shuyonote[\\/]mcp$/.test(win), `Windows 默认目录按 %APPDATA% 算（拿到：${win}）`);
+    const mac = defaultMcpDir({ platform: "darwin", home: "/Users/u" });
+    ok(
+      /Library[\\/]Application Support[\\/]cn\.shuyo\.shuyonote[\\/]mcp$/.test(mac),
+      `macOS 默认目录按 Application Support 算（拿到：${mac}）`,
+    );
   }
 
   // ---------- ② 端口文件存在但没人监听 ⇒ 如实报错、不卡死 ----------
@@ -164,6 +186,24 @@ try {
       "转发带 `Authorization: Bearer <token>`（token 由桥从文件读、**校验在 App** ✓）",
     );
     ok(/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(String(realCall?.host || "")), `Host 是回环（拿到 ${realCall?.host} ✓）`);
+  }
+
+  // ---------- ⑥ 不写任何路径 ⇒ 桥自己按 HOME/平台默认找到（连接器商店的形状） ----------
+  {
+    const home = mkdtempSync(join(tmpdir(), "shuyonote-mcp-home-"));
+    writeFileSync(join(home, "port"), String(fake.address().port) + "\n", "utf8");
+    writeFileSync(join(home, "token"), TOKEN + "\n", "utf8");
+    const r = await runBridge({
+      env: { SHUYONOTE_MCP_HOME: home, SHUYONOTE_MCP_PORT_FILE: "", SHUYONOTE_MCP_TOKEN_FILE: "" },
+      lines: [{ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "pages_search", arguments: { q: "命" } } }],
+      timeoutMs: 8000,
+    });
+    rmSync(home, { recursive: true, force: true });
+    const line = r.parsed[0];
+    ok(
+      String(line?.value?.result?.content?.[0]?.text || "").includes("命中"),
+      "只给 `SHUYONOTE_MCP_HOME` ⇒ 桥自己找到 port/token 并真连上（商店版 mcp.json 不用写路径 ✓）",
+    );
   }
 
   await new Promise((r) => fake.close(r));

@@ -1,0 +1,31 @@
+{
+  "name": "shuyonote-mcp",
+  "version": "0.1.0",
+  "description": "ShuyoNote 的本地 MCP 桥：把 MCP 调用原样转发给正在运行的本机 ShuyoNote（只转发，不判权限、不重试、不缓存）。",
+  "type": "module",
+  "bin": {
+    "shuyonote-mcp": "./index.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "paths.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "AGPL-3.0-only",
+  "homepage": "https://gitcode.com/shuyo-cn/ShuyoNote",
+  "repository": {
+    "type": "git",
+    "url": "https://gitcode.com/shuyo-cn/ShuyoNote"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "shuyonote",
+    "notes",
+    "knowledge-base",
+    "local-first"
+  ]
+}
