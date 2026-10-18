@@ -185,4 +185,21 @@ describe("「通知」菜单项按空间类型显隐", () => {
     expect(block, "条件块里要留着它的 testid（判据能点到）").toContain("menu-notifications");
     expect(block, "⛔ 条件块里不许出现「讨论」那颗").not.toContain("CommentIcon");
   });
+
+  it("③ 抽屉里的「通知」页签也按同一口径藏（owner：「抽屉面板里面的通知也去掉」）", () => {
+    const src = read("src/components/CommentsDrawer.tsx");
+    expect(src, "抽屉要引用同一条规则").toContain("showsNotifications(");
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+    expect(code, "⛔ 抽屉里也不许自己判 kind").not.toMatch(/kind\s*===\s*"team"/);
+    const guardedAt = code.indexOf("withNotifications &&");
+    const tabAt = code.indexOf('setTab("notifications")');
+    expect(guardedAt, "页签要真的在条件块里").toBeGreaterThan(-1);
+    expect(tabAt, "页签按钮要在").toBeGreaterThan(-1);
+    expect(guardedAt, "条件块要在页签之前（包住它）").toBeLessThan(tabAt);
+    // 关键词：正文用**回落后的** tab —— 否则个人空间里 `commentsTab` 还停在 notifications 时
+    // 会渲染出一页空的「通知」（本判据就是为了钉这个残留态 ✓）
+    expect(code, "正文必须用回落后的 tab（个人空间回落「评论」）").toMatch(/effectiveTab\s*===\s*"comments"/);
+  });
 });
