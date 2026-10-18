@@ -112,17 +112,27 @@ describe("第 0 片：可下发清单（⛔ 不联网 ✗）", () => {
     expect(byId.get("ok-one")?.state, "⭐ 字段齐的那条照旧 `downloadable` ✓").toBe("downloadable");
   });
 
-  it("④ 锁（今天已绿 ✓）：那四件的 `state` ⭐ **仍是 `not-available`**（⛔ 本片不许把它们放出来 ✗）", () => {
+  it("④ 锁：这四件**都没有真实 `path`／`sha256`** ⇒ 谁都不许是 `downloadable`（⛔ 不许「顺手」放出来 ✗）", () => {
     for (const id of ["layout", "vlm-ocr", "embeddings", "transcription"]) {
       const at = PANE_SRC.indexOf(`id: "${id}"`);
       expect(at, `⭐ 屏里那一条（\`${id}\`）要在 ✓`).toBeGreaterThan(-1);
-      const line = PANE_SRC.slice(at, PANE_SRC.indexOf("\n", at));
-      expect(
-        line,
-        `⛔ \`${id}\` 没有真实 \`path\`／\`sha256\` ⇒ ⭐ 必须还是 \`not-available\` ✗（⛔ 不许"顺手"放出来 ✗）`,
-      ).toContain('state: "not-available"');
-      expect(line, `⭐ 而且它不该带 \`path\`／\`sha256\` ✓（带了就是假装上架 ✗）`).not.toContain("sha256");
+      // ⚠️ 2026-10-18：`vlm-ocr` 改成**多行**了（第四态 `local-endpoint`）⇒ 不能再只看一行，
+      //    要取整条（到下一个 `},` 为止）✓。
+      const seg = PANE_SRC.slice(at, PANE_SRC.indexOf("},", at) + 2);
+      expect(seg.length, `⭐ 要能取到 \`${id}\` 的整条 ✓`).toBeGreaterThan(10);
+      expect(seg, `⛔ \`${id}\` 没有真实 path／sha256 ⇒ 不许是 downloadable ✗`).not.toContain('state: "downloadable"');
+      expect(seg, `⭐ 而且它不该带 \`sha256\` ✓（带了就是假装上架 ✗）`).not.toContain("sha256");
+      expect(seg, `⭐ 也不该带 \`path\` ✓`).not.toContain("path:");
     }
+  });
+
+  it("④b 锁：`vlm-ocr` 是**第四态** `local-endpoint`（看图识字靠本机 Ollama，不由本应用下载 ✓）", () => {
+    const at = PANE_SRC.indexOf('id: "vlm-ocr"');
+    expect(at).toBeGreaterThan(-1);
+    const seg = PANE_SRC.slice(at, PANE_SRC.indexOf("},", at) + 2);
+    expect(seg, "⭐ 它必须是 local-endpoint（面板会为它渲染「检查本机模型」那颗键 ✓）").toContain('state: "local-endpoint"');
+    expect(PANE_SRC, "⭐ 面板要真的接线：探测走 `probeVisionModels` ✓").toContain("probeVisionModels(");
+    expect(PANE_SRC, "⭐ 推荐模型名只能来自一处（`localEndpoint.ts` 的常量）✓").toContain("RECOMMENDED_VISION_MODEL");
   });
 
   it("⑤ ⭐ 清单**取不到**（网络错／HTTP 非 200／解析不过）⇒ ⭐ 回退到内置那份（今天【红】✓）", async () => {

@@ -23,7 +23,15 @@
 // ## ⚠️ 本模块**不做**什么（⭐ 如实 ✗）
 // ⛔ 不下载任何东西 ✗、⛔ 不校验包 ✗、⛔ 不落盘 ✗ —— ⭐ 通用下载器（contents→blobs 两步 ＋
 // **两道 sha256** ＋ 先 `.part` 再 rename ✓）是**下一片** ✓（⭐ 先例＝`dictionary.rs` 那条链 ✓）。
-export type AbilityState = "builtin" | "downloadable" | "not-available";
+//
+// ## 2026-10-18 新增第四态：`local-endpoint`（⛔ 不是"上架"，是"本机自备端点" ✓）
+// 现场：owner 问「把 qwen2.5vl:3b 加到能力下载中心」。但视觉抽取那条红线要求**本机端点**，
+// 而程序里**没有**能加载 GGUF 的推理进程（`localVision` 只连用户自备的 loopback ✓）。
+// ⇒ 这一件**不该**用 `downloadable`（那意味着"我们发一个包、装完就能用" ✗），
+//    它真实的形态是：**能力在、模型要人自己拉** ⇒ 单独一态 + 一次"检查本机模型" ✓。
+// ⚠️ 所以它仍然**没有** `path`／`sha256` —— ⛔ 别把它改成 `downloadable` 来"看起来上架了" ✗。
+export type AbilityState = "builtin" | "downloadable" | "not-available" | "local-endpoint";
+
 
 /** 清单条目 —— ⭐ 只认**真实值** ✓（`path` ／ `sha256` 任缺 ⇒ 不许出现下载按钮 ✗）。 */
 export interface Ability {
@@ -46,7 +54,7 @@ export const MIRROR_CONTENTS_API =
 /** 清单在镜像仓里的位置 ✓（⭐ 与 ECDICT 的 `mirror/…` 同仓 ✓）。 */
 export const MANIFEST_FILE = "manifest.json";
 
-const STATES: readonly AbilityState[] = ["builtin", "downloadable", "not-available"];
+const STATES: readonly AbilityState[] = ["builtin", "downloadable", "not-available", "local-endpoint"];
 
 const nonEmpty = (v: unknown): string | undefined => {
   if (typeof v !== "string") return undefined;

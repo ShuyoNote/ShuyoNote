@@ -85,7 +85,9 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     const rows = soonRows();
     // ⚠️ **2026-10-10**：这一节原为 5 条 —— ⭐「英汉词库」升级成 `downloadable` 后**离开了这一节** ✓
     //    （同一次还按 owner 的口径删掉了「PDF 引擎」那条"验证用"的条目 ✓）
-    expect(rows.length, "这一节应该有 4 条").toBe(4);
+    // ⚠️ **2026-10-18**：3 条 —— ⭐「看图识字（VLM）」搬去了**第四态**那一节（`local-endpoint`）✓：
+    //    它现在**能用**（靠本机 Ollama），只是模型不由本应用下发 ⇒ 不该再跟"还没上架"混在一起 ✓。
+    expect(rows.length, "这一节应该有 3 条（看图识字已移到「需要本机模型」那一节）").toBe(3);
     for (const row of rows) {
       const cell = noteCellOf(row);
       expect(cell, "那一格必须是 `.set-row` 的直接子元素（就是它被 flex 压的现场）").not.toBeNull();
