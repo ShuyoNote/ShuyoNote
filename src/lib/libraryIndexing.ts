@@ -75,6 +75,10 @@ export async function runLibraryIndex(opts: {
  *
  * 为什么把失败单独提出来：`indexLibrary` 的不变量是"一页失败不停整个库"，
  * 所以"跑完了"和"全都成了"是两件事 —— 只显示"完成"会让用户以为没有坏页。
+ *
+ * ⚠️ 2026-10-18 改写：原来接的是「另有 N 条没成」，而底层摘要里**已经**有「失败 N」⇒
+ * 现场读起来像"失败 11 … 另有 11 条没成"＝ **22 条**（实际就是那 11 条）。现在接「明细：…」，
+ * 数字只说一次。
  */
 export function formatIndexSummary(report: LibraryIndexReport): string {
   const base = report.summary;
@@ -84,6 +88,6 @@ export function formatIndexSummary(report: LibraryIndexReport): string {
     .slice(0, 3)
     .map((f) => `${f.kind === "page" ? "页面" : "附件"} ${f.id}（${f.reason}）`)
     .join("、");
-  const more = fails.length > 3 ? ` 等 ${fails.length} 条` : "";
-  return `${base}；另有 ${fails.length} 条没成：${head}${more}`;
+  const more = fails.length > 3 ? ` …（共 ${fails.length} 条）` : "";
+  return `${base}；明细：${head}${more}`;
 }

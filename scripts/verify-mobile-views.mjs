@@ -2542,9 +2542,13 @@ async function main() {  const executablePath = findChrome();
       };
     });
     ok(!d.mobileMQ, "桌面不命中窄屏媒体查询");
+    // ⭐ 2026-10-18：`40×40` → **`48×48`**。依据：2026-10-17 owner 拍「更狠点」那次把竖条改成
+    //   **48 方块**（`App.css` 的 `.activity-btn { width:48px; height:48px }`，提交 `7bbbb151`）
+    //   ⇒ 门禁仍钉 40 是**断言过期**，不是产品回归（本地实测实际值就是 48×48 ✓）。
+    //   ⚠️ 窄屏那条 44 的判据一个字没动 ✓（它量的是别的东西，不许被这次改动带松 ✗）。
     ok(
-      d.activityBtn && d.activityBtn.w === 40 && d.activityBtn.h === 40,
-      `桌面竖条按钮仍是 40×40（实际 ${d.activityBtn?.w}×${d.activityBtn?.h}）——窄屏那条 44 不许漏过去`,
+      d.activityBtn && d.activityBtn.w === 48 && d.activityBtn.h === 48,
+      `桌面竖条按钮 48×48（实际 ${d.activityBtn?.w}×${d.activityBtn?.h}）——2026-10-17 起是 48 方块；窄屏那条 44 不许漏过去`,
     );
     ok(
       d.toolbarBtn && d.toolbarBtn.w === 28 && d.toolbarBtn.h === 28,

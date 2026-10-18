@@ -19,21 +19,26 @@
 //   按施工单 §1「哑桥只转发 MCP ⇄ 本机通道」✓ ⇒ **桥是客户端、App 是服务端** ✓。
 //
 // ## 契约（与判据逐字对齐 ✓）
-//   环境变量（由 agent 的 MCP 配置给 ✓）：
-//     · `SHUYONOTE_MCP_PORT_FILE`  = App 写下的**端口文件**（内容就是端口号 ✓）
-//     · `SHUYONOTE_MCP_TOKEN_FILE` = 会话 token 文件（只读 ✓，第一行 token ✓）
+//   连接信息（**不配也能连** ✓ —— 2026-10-18）：
+//     · 默认去**应用数据目录**下找（见 `paths.mjs`）：`…/cn.shuyo.shuyonote/mcp/{port,token}`；
+//     · `SHUYONOTE_MCP_HOME` 可整体改道（测试 / 自定义安装用）；
+//     · `SHUYONOTE_MCP_PORT_FILE` / `SHUYONOTE_MCP_TOKEN_FILE` 仍可单独覆盖（优先）。
+//
+// ## 为什么改成"自己找"（连接器商店那一条）
+// 商店里的 `mcp.json` 不许写死用户机器上的绝对路径，而 App 把 port/token 写在**每个用户都不同**的
+// 应用数据目录里 ⇒ 只能由桥按平台约定去算。⛔ 不再要求用户在 MCP 配置里手工填两个路径。
 //   行为：
 //     · 两个文件读不到 ⇒ **不猜**：`tools/list` 回空清单 ＋ `tools/call` 回一条**说清原因**的错误 ✓
 //       （通道没开 / 路径没给对 —— 都属于"没连上"，不是"有 0 个工具" ✓）；
 //     · 转发用 `Authorization: Bearer <token>` ⇒ 由 **App** 校验 token/Origin/Host ✓（桥不判 ✗）；
 //     · 一切日志走 stderr ✓；stdout 只有协议行 ✓。
 // 退出码：0 正常结束 ／ 2 起不来（stdin 不可用等）
-// 人工看帧：`SHUYONOTE_MCP_PORT_FILE=… SHUYONOTE_MCP_TOKEN_FILE=… \
-//            echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | node tools/shuyonote-mcp/index.mjs`
+// 人工看帧：`echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | node tools/shuyonote-mcp/index.mjs`
 import { readFileSync } from "node:fs";
+import { resolveEndpointFiles } from "./paths.mjs";
 
-const PORT_FILE = process.env.SHUYONOTE_MCP_PORT_FILE || "";
-const TOKEN_FILE = process.env.SHUYONOTE_MCP_TOKEN_FILE || "";
+// 显式 env > `SHUYONOTE_MCP_HOME` > 平台默认（Windows: %APPDATA%\cn.shuyo.shuyonote\mcp）
+const { portFile: PORT_FILE, tokenFile: TOKEN_FILE } = resolveEndpointFiles();
 const PROTOCOL_VERSION = "2024-11-05";
 const SERVER_INFO = { name: "shuyonote-bridge", version: "0.1.0" };
 
@@ -45,14 +50,12 @@ const send = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
 // ---------------- ① 读连接信息（App 那一侧写的两个文件 ✓） ----------------
 /** 返回 `{ ok: true, port, token }` 或 `{ ok: false, why }` —— **原因要说清** ✓（别静默当"没工具" ✗）。 */
 function readEndpoint() {
-  if (!PORT_FILE) return { ok: false, why: "没给 `SHUYONOTE_MCP_PORT_FILE`（App 写的端口文件）" };
-  if (!TOKEN_FILE) return { ok: false, why: "没给 `SHUYONOTE_MCP_TOKEN_FILE`（会话 token 文件）" };
   let portText;
   let token;
   try {
     portText = readFileSync(PORT_FILE, "utf8").trim();
   } catch {
-    return { ok: false, why: `读不到端口文件（${PORT_FILE}）—— ShuyoNote 里的「外部接入」开关是不是没开？` };
+    return { ok: false, why: `读不到端口文件（${PORT_FILE}）—— ShuyoNote 里的「外部 AI 接入」开关是不是没开？` };
   }
   try {
     token = (readFileSync(TOKEN_FILE, "utf8").split("\n")[0] || "").trim();

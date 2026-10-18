@@ -357,6 +357,14 @@ async function openOverlay(which) {
     return true;
   };
   try {
+    // ⭐ 2026-10-18（本地复现 + 直接驱动对照得出）：**先把外壳复位到「笔记」视图**。
+    //    为什么必须：`EmojiPicker` / `TableOfContents` 挂在**编辑器外壳**里（`App.tsx:897-899`）、
+    //    `HistoryPanel` 挂在编辑器工具条（`EditorToolbar.tsx:364`）⇒ 上一视口／上一层留下的视图
+    //    （`sync`／文件／看板 …）会把它们**整个卸载**，症状正是"`opened=true` 但元素不在 DOM 里"。
+    //    ⚠️ 对照读数（792×360、干净页面直接驱动）：emoji / toc / history 三层**都真的能打开**
+    //    （`overlayCount=1` / `tocPanelCount=1` / `historyCount=1`）⇒ 问题在**驱动顺序**，不在产品 ✗。
+    click('[aria-label="笔记"]');
+    await new Promise((r) => setTimeout(r, 350));
     switch (which) {
       case "settings": {
         const m = await store("/src/store/editor.ts");
@@ -727,8 +735,12 @@ function probeLayer(rootSel, boxSel) {
   //   于是"输入框高 32px（< 44）"这类从来不进读数 —— 实测同步面板 10 个输入控件里 9 个 < 44，
   //   而三个门禁全绿（`verify-mobile-views` 的命中区选择器**含 input**，但它跑的时候本面板没被打开）。
   //   排除规则与上面的 `buttons` 逐条一致：可见性 + pointer-events + 可达性（可滚祖先）。
-  const fields = [...root.querySelectorAll('input:not([type="hidden"]), select, textarea')]
-    .filter(isVisible)
+  // ⭐ 2026-10-18：**另外记一笔"存在但被禁用"的输入框数** —— web 壳里没有 Tauri 后端，
+  //   同步面板的控件是 `pointer-events:none` 的禁用态（实测：`select.sync-input`，136×44，pointer-events=none）
+  //   ⇒ 用"没量到"去判红会变成"web 壳永远红"；改成**如实说明不适用**，而真宿主上仍由同一判据管 ✓。
+  const fieldsAll = [...root.querySelectorAll('input:not([type="hidden"]), select, textarea')].filter(isVisible);
+  const disabledFieldCount = fieldsAll.filter((f) => getComputedStyle(f).pointerEvents === "none").length;
+  const fields = fieldsAll
     .filter((f) => getComputedStyle(f).pointerEvents !== "none")
     .map((f) => {
       const r = f.getBoundingClientRect();
@@ -813,6 +825,13 @@ function probeLayer(rootSel, boxSel) {
       if (getComputedStyle(n).position === "fixed") return;
     }
     if (el.closest(".sidebar")) return;
+    // ⭐ 2026-10-18：两类**本来就不该被锁**的东西，从"该锁"集合里排除 ——
+    //  ① **浮层自己的滚动区**（`root` 之内）：打开的面板自己滚是设计，锁了才是 bug；
+    //  ② **左侧竖条的滚动组**（`.activity-bar`）：2026-10-17 起 `.activity-group` 是
+    //     "顶过边就自己滚"（`App.css` 的 `overflow-y:auto`）⇒ 它是 chrome 自己的滚，不是背景 ✗。
+    //  实测（792×360 直接驱动）：`.activity-group` clientH 259 / scrollH 528 ⇒ 它确实在滚，且**该**滚 ✓。
+    if (root.contains(el)) return;
+    if (el.closest(".activity-bar")) return;
     lockable.push({ cls: String(el.className || el.tagName).slice(0, 40), locked: el.style.overflowY === "hidden" });
   });
 
@@ -849,6 +868,7 @@ function probeLayer(rootSel, boxSel) {
     clipped: clipped.slice(0, 6),
     buttons,
     fields,
+    disabledFieldCount,
     hasImgBar: !!imgBar,
     imgBarRects,
     noteScrollOverflowY: noteScroll ? getComputedStyle(noteScroll).overflowY : null,
@@ -1686,12 +1706,22 @@ async function main() {
           if (layer.id === "sync") {
             const fs = m.fields ?? [];
             const shortF = fs.filter((f) => f.h < 44);
-            ok(
-              fs.length > 0 && shortF.length === 0,
-              fs.length
-                ? `同步面板的输入框命中区 ≥44（${fs.length} 个：${fs.map((f) => f.h).join(" / ")}px）`
-                : "同步面板里**没量到**输入框 ⇒ 这条【没验过】，按 fail 记",
-            );
+            // ⭐ 2026-10-18：web 壳里同步面板的控件是**禁用态**（`pointer-events:none`，因为拿不到
+            //   Tauri 后端读数）⇒ 这一条在 web 壳上**不适用**，如实记 note；**不许**把它读成"通过"，
+            //   也**不许**因此把判据删掉（真宿主上仍由下面那条管 ✓）。
+            if (fs.length === 0 && (m.disabledFieldCount ?? 0) > 0) {
+              note(
+                `${vp.name} · 同步面板：${m.disabledFieldCount} 个输入控件在 **web 壳里是禁用态**（` +
+                  `pointer-events:none，拿不到 Tauri 后端读数）⇒ 命中区这一条在 web 壳上不适用；真宿主上仍由同一判据管 ✓`,
+              );
+            } else {
+              ok(
+                fs.length > 0 && shortF.length === 0,
+                fs.length
+                  ? `同步面板的输入框命中区 ≥44（${fs.length} 个：${fs.map((f) => f.h).join(" / ")}px）`
+                  : "同步面板里**没量到**输入框 ⇒ 这条【没验过】，按 fail 记",
+              );
+            }
           }
           note(
             `${vp.name} · ${layer.label}：可见输入框 ${(m.fields || []).length} 个，` +

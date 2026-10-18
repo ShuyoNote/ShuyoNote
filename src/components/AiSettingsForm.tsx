@@ -4,6 +4,7 @@ import { probeApi } from "../lib/ai/transport";
 import { embedText } from "../lib/semanticEmbed";
 import { localTranscribe } from "../lib/ai/localTranscribe";
 import { localVision } from "../lib/ai/localVision";
+import { joinRefusals } from "../lib/ai/localRefusal";
 import { isDesktopPlatform, platform } from "../lib/platform";
 import { indexAvailability, runLibraryIndex, type IndexProgress } from "../lib/libraryIndexing";
 import { coverageReportTool, scanLibraryCoverage } from "../lib/libraryCoverage";
@@ -295,8 +296,8 @@ export function AiSettingsForm({
       if (outcome.ok) {
         setIndexSummary(outcome.summary);
         // 两条拒绝理由都显示（用户要能知道"哪一类文件没抽出来、为什么"）。
-        const notes = [lv.refusal, lt.refusal].filter(Boolean);
-        if (notes.length) setIndexNote(notes.join(" "));
+        const note = joinRefusals([lv.refusal, lt.refusal]);
+        if (note) setIndexNote(note);
       } else {
         setIndexNote(outcome.reason);
       }
@@ -687,3 +688,4 @@ export function AiSettingsForm({
     </>
   );
 }
+

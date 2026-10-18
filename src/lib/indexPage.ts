@@ -26,6 +26,7 @@ import { chunkPage, type ChunkPageResult } from "./platform/pageChunks";
 import type { AttachmentTextStore } from "./extract/store";
 import type { ChunkStore } from "./extract/chunkStore";
 import type { ExtractDeps } from "./extract/types";
+import { isIndexableNode } from "./indexableNode";
 
 export interface PageAttachmentIndex {
   attId: string;
@@ -211,7 +212,7 @@ export async function indexLibrary(
   stores: IndexPageStores,
   opts: IndexLibraryOptions = {},
 ): Promise<LibraryIndexReport> {
-  const pageIds = (await api.listPages()).map((p) => p.id);
+  const pageIds = (await api.listPages()).filter((p) => isIndexableNode(p.kind)).map((p) => p.id);
   const total = pageIds.length + 1; // +1 是"未整理附件"那一步
   const failures: LibraryIndexReport["failures"] = [];
   const byStatus: Record<string, number> = {};
@@ -261,3 +262,4 @@ export async function indexLibrary(
       `；块 ${chunks}`,
   };
 }
+

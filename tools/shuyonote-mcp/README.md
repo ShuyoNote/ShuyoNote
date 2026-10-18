@@ -72,6 +72,35 @@ $env:SHUYONOTE_MCP_PORT_FILE  = "C:\path\to\port"
 
 （App 的「外部 AI 接入」那一节里同样有一段现成的、路径已填好的配置可以直接复制 ✓。）
 
+## 不填路径也能连（2026-10-18 起）
+
+桥会**自己去找** App 写的两个文件，所以配置里可以只写 `command`（连接器商店里那份 `mcp.json`
+**不允许**写死用户机器上的绝对路径，靠的就是这一条）：
+
+| 系统 | 默认位置 |
+| :-- | :-- |
+| Windows | `%APPDATA%\cn.shuyo.shuyonote\mcp\{port,token}` |
+| macOS | `~/Library/Application Support/cn.shuyo.shuyonote/mcp/{port,token}` |
+| Linux | `$XDG_DATA_HOME/cn.shuyo.shuyonote/mcp/{port,token}`（未设 ⇒ `~/.local/share/…`） |
+
+优先级：`SHUYONOTE_MCP_PORT_FILE` / `SHUYONOTE_MCP_TOKEN_FILE`（单项）> `SHUYONOTE_MCP_HOME`（整个目录）
+> 平台默认。⛔ 三个都不配、App 也没开 ⇒ 报「通道未开：读不到端口文件（…）」—— **不猜、不假装连上** ✓。
+
+## 想放进连接器商店（WorkBuddy 那类）
+
+这份桥已经按"商店连接器"的形状准备好了：
+
+- ✓ **不用用户填路径**：见上一节（默认目录）；
+- ✓ **能打成 tgz 直接从 https 装**：`tools/shuyonote-mcp/package.json` 已就位（`bin: shuyonote-mcp`，
+  零依赖，Node ≥ 20）⇒ 商店那份 `mcp.json` 写
+  `command: "npx"`、`args: ["-y", "-p", "https://shuyo.cn/mcp/shuyonote-mcp-<版本>.tgz", "shuyonote-mcp"]`、
+  `runtime: {type:"node"}` 即可（**不需要 npm 账号**）；
+- ✓ **连接器目录**：已在仓内 `connectors/shuyonote/`（meta / mcp.json / icon.svg / SKILL.md），
+  发布与提交步骤见 `connectors/README.md`；
+- ▢ **认证口径**：本桥是**本机 stdio + 本机回环**，token 由 App 自己校验 ⇒ 商店侧应声明**无需认证**
+  （`auth_mode` 省略），不是 OAuth 也不是"用户自填 Token"表单。
+
+
 ## 它能看到什么（9 个只读 ＋ 5 个写，写按档位出现）
 
 | 工具 | 干什么 |

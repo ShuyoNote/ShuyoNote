@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="ShuyoNote">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5B9BF8"/>
+      <stop offset="1" stop-color="#2F6BE4"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#bg)"/>
+  <!-- 左页 -->
+  <rect x="30" y="42" width="32" height="52" rx="6" fill="#FFFFFF"/>
+  <g fill="#BFD7FE">
+    <rect x="37" y="52" width="18" height="3.4" rx="1.7"/>
+    <rect x="37" y="61" width="18" height="3.4" rx="1.7"/>
+    <rect x="37" y="70" width="12" height="3.4" rx="1.7"/>
+  </g>
+  <!-- 右页 -->
+  <rect x="66" y="38" width="32" height="56" rx="6" fill="#FFFFFF"/>
+  <g fill="#BFD7FE">
+    <rect x="73" y="48" width="18" height="3.4" rx="1.7"/>
+    <rect x="73" y="57" width="18" height="3.4" rx="1.7"/>
+    <rect x="73" y="66" width="13" height="3.4" rx="1.7"/>
+  </g>
+  <!-- 星点 -->
+  <path d="M97 20 L99.6 27.4 L107 30 L99.6 32.6 L97 40 L94.4 32.6 L87 30 L94.4 27.4 Z" fill="#FFFFFF"/>
+</svg>

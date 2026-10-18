@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "shuyonote": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "-p",
+        "https://shuyo.cn/mcp/shuyonote-mcp-0.1.0.tgz",
+        "shuyonote-mcp"
+      ],
+      "runtime": {
+        "type": "node",
+        "version": "20"
+      },
+      "timeout": 30000
+    }
+  }
+}
