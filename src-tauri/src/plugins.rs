@@ -2132,22 +2132,23 @@ fn cap_pages_update(
         return Err("bad_args: 新正文超过 200KB 上限，请拆分后再更新".to_string());
     }
     let new_title = title.map(str::trim).filter(|s| !s.is_empty());
+    // 读一次原文：既给「改前字数」，也给「这一页叫什么」。
+    // ⭐ 2026-10-18：摘要原来写的是页面 **UUID**（`更新页面 91d3…（整页替换）`）——
+    //   那串字符对用户毫无意义 ⇒ 有标题就用标题，没有才退回 id。
+    // 读不到（页不存在 / 空间锁定）⇒ `null`，**不编一个 0**（前端会如实显示"读不到原文"）。
+    let existing = with_read_conn(|c| Ok(crate::doc_content::read(c, id).ok().flatten()))
+        .ok()
+        .flatten();
+    let before_chars = existing.as_ref().map(|d| d.text.chars().count());
+    let label = existing
+        .as_ref()
+        .map(|d| d.title.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| id.to_string());
     let summary = match new_title {
-        Some(t) => format!("更新页面 {id}（整页替换，标题改为「{t}」）"),
-        None => format!("更新页面 {id}（整页替换）"),
+        Some(t) => format!("更新页面「{label}」（整页替换，标题改为「{t}」）"),
+        None => format!("更新页面「{label}」（整页替换）"),
     };
-    // ⭐ 2026-10-18：把**改前读数**随草稿交出去 —— 确认框要能让用户看见「原文 N 字 → 新文 M 字」。
-    //   为什么在后端取：渲染层不该去摸正文列（`check-doc-content-access` 只许减不许多）；
-    //   这里走的是唯一读出口 `doc_content::read`（不直接写 SQL）✓。
-    //   读不到（页不存在 / 空间锁定）⇒ `null`，**不编一个 0**（前端会如实显示"读不到原文"）。
-    let before_chars: Option<usize> = with_read_conn(|c| {
-        Ok(crate::doc_content::read(c, id)
-            .ok()
-            .flatten()
-            .map(|d| d.text.chars().count()))
-    })
-    .ok()
-    .flatten();
     push_draft(
         format!("update_page:{id}"),
         summary.clone(),
