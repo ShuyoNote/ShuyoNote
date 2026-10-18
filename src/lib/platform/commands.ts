@@ -1763,4 +1763,22 @@ export interface CommandMap {
   //    （与 `mesh_sync_now` 同一处置 —— ⛔ 不假装连上了 ✗，⛔ 也不显示 0 天 ✗）。
   relay_status: { args: undefined; result: RelayStatus };
   relay_probe: { args: undefined; result: RelayStatus };
+
+  // ---- 个人版「跨网同步订阅」：设备身份 ＋ 发卡站受控请求（2026-10-18）----
+  // ⚠️ 私钥**只在 Rust**：`license_sign` 签的是**调用方给的字节**（四条字节由
+  //    `src/lib/license/signedBytes.ts` 拼，⛔ 后端不自己拼 ✗ —— 那份契约只许有一份实现）。
+  // ⚠️ `license_http_request` 只打**登记过的那台**发卡站（后端做同源复核）⇒ Web 侧没有这一层。
+  license_device: { args: undefined; result: { dev: string; pubkey: string } };
+  license_sign: { args: { payload: string }; result: string };
+  license_set_issuer: { args: { base: string }; result: void };
+  license_issuer_ready: { args: undefined; result: { ready: boolean; base?: string; why?: string } };
+  license_http_request: {
+    args: { method: string; path: string; headers: [string, string][]; body: string | null };
+    result: { status: number; body: string };
+  };
+  /** 把续期拿回来的租约交给中继（后端**先验签**再写进中继配置的 `token` 那一格）。 */
+  license_apply_lease: {
+    args: { lease: string };
+    result: { applied: boolean; leaseExp: number; relayUrl: string | null };
+  };
 }

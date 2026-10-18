@@ -867,5 +867,24 @@ export const api = {
    * ⚠️ 它**不碰**本地数据/功能（到期只收回跨网 ✓）。
    */
   relayProbe: () => invoke("relay_probe") as Promise<RelayStatus>,
+
+  // ---- 个人版「跨网同步订阅」（2026-10-18）----
+  // ⚠️ 私钥**只在 Rust**：`licenseSign` 签的是**调用方给的字节**（四条字节由
+  //    `src/lib/license/signedBytes.ts` 拼，⛔ 后端不自己拼 ✗）。
+  // ⚠️ `licenseHttpRequest` 只许打**登记过的那台**发卡站（后端同源复核）⇒ Web 壳如实拒绝。
+  licenseDevice: () => invoke("license_device") as Promise<{ dev: string; pubkey: string }>,
+  licenseSign: (payload: string) => invoke("license_sign", { payload }) as Promise<string>,
+  licenseSetIssuer: (base: string) => invoke("license_set_issuer", { base }) as Promise<void>,
+  licenseIssuerReady: () =>
+    invoke("license_issuer_ready") as Promise<{ ready: boolean; base?: string; why?: string }>,
+  /** 把续期拿回来的租约交给中继（后端**先验签**再写进中继配置的 `token` 那一格）。 */
+  licenseApplyLease: (lease: string) =>
+    invoke("license_apply_lease", { lease }) as Promise<{ applied: boolean; leaseExp: number; relayUrl: string | null }>,
+  licenseHttpRequest: (args: {
+    method: string;
+    path: string;
+    headers: [string, string][];
+    body: string | null;
+  }) => invoke("license_http_request", args) as Promise<{ status: number; body: string }>,
 };
 
