@@ -36,7 +36,10 @@ const argOf = (f) => {
   const i = process.argv.indexOf(f);
   return i >= 0 ? process.argv[i + 1] : undefined;
 };
-const SKIP_REMOTE = process.argv.includes("--skip-remote");
+// ⚠️ `--ci-sha` 是**证据通道**：只跑第 4 条（Rust 判据）。它必须先把前面那些
+//    "线上资产/两个 Web 入口" 的判据关掉 —— 否则证据里会混进与这条判据无关的红 ✓。
+const CI_ONLY = process.argv.includes("--ci-sha");
+const SKIP_REMOTE = process.argv.includes("--skip-remote") || CI_ONLY;
 const DEEP = process.argv.includes("--deep");
 const PINNED_IP = argOf("--pinned-ip") ?? process.env.GH_PINNED_IP ?? "";
 const VERSION = (argOf("--version") ?? JSON.parse(readFileSync("package.json", "utf8")).version).replace(/^v/, "");
@@ -232,6 +235,99 @@ if (!SKIP_REMOTE) {
     okOrUnverified(r, v === VERSION, `${base} 的 version.json = ${VERSION}（实测 ${v ?? `HTTP ${r.code}`}）`);
   }
 }
+
+// ---- 4. 发版 tag 上必须有一次「Rust 测试 = success」的 CI run ----
+//
+// 来由（2026-10-18，连续踩到两次）：`read-ci` 读到
+//     `CI ｜ completed/cancelled`（移动端 ✅、单测 ✅、**Rust cancelled**）
+// —— 那不是失败，是"推得太近，GitHub 的 concurrency 把旧 run 取消了"。
+// **问题在于它读起来像"没红"**：`cancelled` ≠ 通过，它等于**没验过**。
+// 而 Rust 组是本仓唯一跑不了本机的组（`AGENTS.md` §7）⇒ 一旦被取消，
+// 那笔提交的 Rust 就**从来没被验过**，而发版照常出包。
+// ⇒ 本判据：该提交上必须有一条 `CI` run，且其中 `Rust 测试` job 的结论**恰好是 success**。
+//    `cancelled` / `failure` / 没有这条 job ⇒ 红，并把**真实结论**原样打出来（⛔ 不只写"没有" ✗）。
+//
+// ⚠️ `--ci-sha <sha>`：只跑这一条、直接拿这个提交来判（**证据通道** —— 同一个脚本
+//    喂「已知被取消的提交」必须红、喂「已知绿的提交」必须绿；判据要有牙，⛔ 不能只会说"通过" ✗）。
+const ciShaArg = argOf("--ci-sha");
+
+async function checkCiVerdict() {
+  let sha = ciShaArg;
+  if (!sha) {
+    const t = await httpGet(`https://api.github.com/repos/${GH_REPO}/commits/${TAG}`, { timeout: 25 });
+    try {
+      sha = JSON.parse(t.body).sha;
+    } catch {
+      /* 下面统一报 */
+    }
+    if (!sha) {
+      okOrUnverified(t, false, `取 ${TAG} 指向的提交（GitHub API，HTTP ${t.code}）`);
+      return;
+    }
+  } else {
+    // ⚠️ `actions/runs?head_sha=` **只认 40 位全 SHA**（短 SHA 会静默返回空列表 ✗ ——
+    //    实测：喂 `5e11f90a` 时 `workflow_runs` 是 `[]`，而 HTTP 还是 200），
+    //    所以证据通道传短 SHA 时要先解析成完整 SHA ✓。
+    const t = await httpGet(`https://api.github.com/repos/${GH_REPO}/commits/${sha}`, { timeout: 25 });
+    try {
+      sha = JSON.parse(t.body).sha;
+    } catch {
+      /* 保留原样，下面会红并印出真实原因 */
+    }
+  }
+  ok(sha.length === 40, `判据对象是完整 SHA（${sha.slice(0, 8)}…，长度 ${sha.length}）`);
+  ok(true, `Rust 判据的对象：提交 ${sha.slice(0, 8)}`);
+
+  const runsRes = await httpGet(
+    `https://api.github.com/repos/${GH_REPO}/actions/runs?head_sha=${sha}&per_page=50`,
+    { timeout: 30 },
+  );
+  let runs = [];
+  try {
+    runs = JSON.parse(runsRes.body).workflow_runs ?? [];
+  } catch {
+    /* 下面统一报 */
+  }
+  if (!runs.length) {
+    okOrUnverified(runsRes, false, `该提交上取到 CI run（HTTP ${runsRes.code}）`);
+    return;
+  }
+  const ci = runs
+    .filter((r) => r.name === "CI")
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
+  ok(!!ci, "该提交上有一条 `CI` run");
+  if (!ci) return;
+
+  // ⚠️ run 级 `cancelled` **先报**：它比"某个 job 红"更隐蔽（读起来只是"没跑完"）
+  if (ci.conclusion === "cancelled") {
+    ok(
+      false,
+      "`CI` run 的结论是 **cancelled** ⇒ 这一笔**没验过**（⛔ 不是「没红」 ✗）" +
+        "——并发取消（推得太近）会这样：重跑，或等新提交",
+    );
+  }
+
+  const jobsRes = await httpGet(`${ci.jobs_url}?per_page=100`, { timeout: 30 });
+  let jobs = [];
+  try {
+    jobs = JSON.parse(jobsRes.body).jobs ?? [];
+  } catch {
+    /* 下面统一报 */
+  }
+  const rust = jobs.find((j) => /Rust/i.test(j.name ?? ""));
+  if (!rust) {
+    okOrUnverified(jobsRes, false, "该 `CI` run 里能找到 `Rust 测试` 那条 job");
+    return;
+  }
+  ok(
+    rust.conclusion === "success",
+    `"Rust 测试" 结论 = **success**（实际 \`${rust.conclusion ?? rust.status}\`）` +
+      "——cancelled / failure 都算**没验过**；Rust 组本机跑不了，这条是它唯一的凭据",
+  );
+}
+
+// `--ci-sha` ⇒ 证据通道：只跑这一条（⛔ 不让别的判据的读数混进来 ✗）
+if (ciShaArg || !SKIP_REMOTE) await checkCiVerdict();
 
 console.log(`[结果] release-state ${failed === 0 ? "通过" : `${failed} 项失败`}（${pass} 通过）`);
 process.exit(failed === 0 ? 0 : 1);
