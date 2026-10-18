@@ -88,14 +88,15 @@ $env:SHUYONOTE_MCP_PORT_FILE  = "C:\path\to\port"
 
 ## 想放进连接器商店（WorkBuddy 那类）
 
-这份桥已经按"商店连接器"的形状准备好了三件事，剩下的在传之前还要做：
+这份桥已经按"商店连接器"的形状准备好了：
 
 - ✓ **不用用户填路径**：见上一节（默认目录）；
-- ✓ **可以当 npm 包发**：`tools/shuyonote-mcp/package.json` 已就位（`bin: shuyonote-mcp`，零依赖，Node ≥ 20）
-  ⇒ 商店那份 `mcp.json` 写 `command: "npx"`、`args: ["-y", "shuyonote-mcp"]`、`runtime: {type:"node"}` 即可；
-- ▢ **发布到 npm**（或先用 `npm pack` 本地装一份验证）：`npm publish` 那一步需要账号，仓库里没替你做；
-- ▢ **连接器目录**：`connector-meta.json` / `mcp.json` / `icon.svg` / `skills/<name>/SKILL.md`
-  （字段以 WorkBuddy 开放文档为准，提交前对着「提交前检查」逐条过）；
+- ✓ **能打成 tgz 直接从 https 装**：`tools/shuyonote-mcp/package.json` 已就位（`bin: shuyonote-mcp`，
+  零依赖，Node ≥ 20）⇒ 商店那份 `mcp.json` 写
+  `command: "npx"`、`args: ["-y", "-p", "https://shuyo.cn/mcp/shuyonote-mcp-<版本>.tgz", "shuyonote-mcp"]`、
+  `runtime: {type:"node"}` 即可（**不需要 npm 账号**）；
+- ✓ **连接器目录**：已在仓内 `connectors/shuyonote/`（meta / mcp.json / icon.svg / SKILL.md），
+  发布与提交步骤见 `connectors/README.md`；
 - ▢ **认证口径**：本桥是**本机 stdio + 本机回环**，token 由 App 自己校验 ⇒ 商店侧应声明**无需认证**
   （`auth_mode` 省略），不是 OAuth 也不是"用户自填 Token"表单。
 

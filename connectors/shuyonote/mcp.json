@@ -3,12 +3,16 @@
     "shuyonote": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "shuyonote-mcp@0.1.0"],
+      "args": [
+        "-y",
+        "-p",
+        "https://shuyo.cn/mcp/shuyonote-mcp-0.1.0.tgz",
+        "shuyonote-mcp"
+      ],
       "runtime": {
         "type": "node",
         "version": "20"
       },
-      "npmRegistries": ["https://registry.npmmirror.com", "https://registry.npmjs.org"],
       "timeout": 30000
     }
   }
