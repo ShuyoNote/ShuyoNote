@@ -223,6 +223,33 @@ if (!SKIP_REMOTE) {
 }
 
 // ---- 3. 两个 Web 入口（详细版在 pnpm check:web-deploy） ----
+//
+// ⚠️ 2026-10-18（真事故）：`version.json` = 新版、`index.html` 也 200 —— **页面照样起不来**。
+//    真因是 `app/assets/` 目录权限 0700（scp 的 umask 077 + `rsync -a` 原样保留）⇒ nginx 403
+//    ⇒ 所有 chunk 取不到 ⇒ 界面报 `Error: SqliteStore not initialized`。
+//    ⇒ 所以这里**必须逐条 HEAD 它 index.html 里引用的 assets**：只看版本号发现不了这一类。
+async function checkWebAssets(base) {
+  const idx = await httpGet(base, { timeout: 30 });
+  const refs = [
+    ...new Set(idx.body.match(/assets\/[A-Za-z0-9._-]+\.(?:js|css|wasm|mjs|woff2)/g) ?? []),
+  ].slice(0, 24);
+  if (refs.length === 0) {
+    okOrUnverified(idx, false, `${base} 的 index.html 里找不到任何 assets 引用（HTTP ${idx.code}）`);
+    return;
+  }
+  const bad = [];
+  for (const ref of refs) {
+    // `Range: bytes=0-0`：只取 1 字节（❌ 不下整包），200/206 都算可达
+    const r = await httpGet(new URL(ref, base).href, { timeout: 20, headers: { Range: "bytes=0-0" } });
+    if (r.code !== 200 && r.code !== 206) bad.push(`${r.code} ${ref}`);
+  }
+  ok(
+    bad.length === 0,
+    `${base} 的 ${refs.length} 个 assets 全部可达（${bad.slice(0, 3).join(" ／ ") || "无失败"}）` +
+      `——403 是权限、404 是少文件，两种坏法症状一样`,
+  );
+}
+
 if (!SKIP_REMOTE) {
   for (const base of WEB_ENTRIES) {
     const r = await httpGet(new URL("version.json", base).href, { timeout: 25 });
@@ -233,6 +260,7 @@ if (!SKIP_REMOTE) {
       /* 下面统一报 */
     }
     okOrUnverified(r, v === VERSION, `${base} 的 version.json = ${VERSION}（实测 ${v ?? `HTTP ${r.code}`}）`);
+    await checkWebAssets(base);
   }
 }
 
