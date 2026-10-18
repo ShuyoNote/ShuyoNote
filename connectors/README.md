@@ -61,7 +61,28 @@ curl -sI https://shuyo.cn/mcp/shuyonote-mcp-<新版本>.tgz   # 200 + 对上 Con
 - [ ] `skills/shuyonote-usage/SKILL.md` 的 frontmatter 必填项齐（description / description_zh /
       description_en / version / author）。
 
-## 提交
+## 提交（已提交，待审核）
+
+**2026-10-18 已提交审核**：
+
+| 项 | 值 |
+|---|---|
+| 连接器 ID | `oc_b625160f131e5789` |
+| 市场展示名 | ShuyoNote 笔记 |
+| 版本 | 0.1.0 |
+| 类目 | 工具 - 办公；社交 - 笔记 |
+| 上传包 | `shuyonote-connector-0.1.0.zip`（4 文件，3.9 KB） |
+| tgz（运行时拉的） | `https://shuyo.cn/mcp/shuyonote-mcp-0.1.0.tgz`，sha256 `c20d65c2…70978` |
+| 状态 | 待审核（预计 7 个工作日） |
+
+⚠️ **审核期间冻结**：不要改 `mcp.json` 里的 tgz 地址、不要覆盖服务器上那个包 ——
+审核员测到的必须与提交的一致。要发新版就等这轮出结果。
+
+> 提交页**没有**填审核说明的地方 ⇒ 另发一封邮件到 `openworkbuddy@tencent.com`，
+> 写清「本机型、需要先装 App 并开外部接入、三步测试、隐私政策链接」。邮件正文在
+> 本仓提交记录那条 commit 里（或按本条上方几句自己写）。
+
+## 提交的常规步骤（下次更新照这个走）
 
 把 `connectors/shuyonote/` 打成 zip，在开放平台「入驻 → 资质审核 → 提交连接器」上传；
 审核通过后 10～15 分钟同步到市场。
