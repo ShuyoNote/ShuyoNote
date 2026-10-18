@@ -83,6 +83,35 @@ const ok = (cond, msg) => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** 「未实查」记一行（**既不算通过也不算失败** —— 与 `AGENTS.md` §7「跳过 ≠ 通过」同口径 ✓）。 */
+const note = (msg) => console.log(`  · ${msg}`);
+
+/**
+ * 「通知」那一项**该不该出现** —— 判据与界面同一条（`lib/syncTag.ts::showsNotifications`：
+ * 只有 `kind === "team"` 才渲染，且取法是**当前活动空间**）。
+ *
+ * ⭐ 2026-10-18（owner：「那就去掉通知」）：所以本门禁**两向都判** ——
+ *    · 个人空间 ⇒ 该项**必须不出现**（出现才是回归 ✓）
+ *    · 团队空间 ⇒ 该项**必须出现**（消失才是回归 ✓）
+ *    ⛔ 不再"无条件要求存在" ✗ —— 那会把设计记成回归。
+ * ⚠️ 读不到 store（模块取不到等）⇒ `ok:false`，调用方按**未实查**记，⛔ 不猜 ✗。
+ */
+async function notificationsMenuExpected(page) {
+  try {
+    return await page.evaluate(async () => {
+      const loaded = (performance.getEntriesByType?.("resource") ?? [])
+        .map((e) => e.name)
+        .filter((n) => n.includes("/src/store/space.ts"));
+      const m = await import(/* @vite-ignore */ (loaded.length ? loaded[loaded.length - 1] : "/src/store/space.ts"));
+      const st = m.useSpaceStore.getState();
+      const kind = st.spaces.find((w) => w.id === st.activeId)?.kind;
+      return { ok: true, expected: kind === "team", kind: kind ?? null, activeId: st.activeId ?? null };
+    });
+  } catch (e) {
+    return { ok: false, why: String(e?.message ?? e).slice(0, 120) };
+  }
+}
+
 // 找一个可用的 Chrome。puppeteer-core 不带浏览器，所以这里自己找；
 // 找不到就明确报错，而不是静默跳过（否则这个验收脚本会假装通过）。
 
@@ -508,6 +537,21 @@ async function main() {
       if (openedVia === "menu") {
         await sleep(400);
         const label = p.kind === "discuss" ? "讨论" : "通知";
+        // ⭐ 2026-10-18：个人空间里「通知」**按设计不渲染** ⇒ 这一档断言两向都判 ✓
+        if (p.kind === "notify") {
+          const rule = await notificationsMenuExpected(phone);
+          if (!rule.ok) {
+            note(`${p.name}：读不到当前空间类型（${rule.why}）⇒ 这一档**未实查**，⛔ 不当通过`);
+          } else if (!rule.expected) {
+            const present = await phone.evaluate(() =>
+              Array.from(document.querySelectorAll(".editor-more-menu .toolbar-menu-item")).some((x) =>
+                (x.textContent || "").includes("通知"),
+              ),
+            );
+            ok(!present, `${p.name}：个人空间里按设计**没有**「通知」这一项（团队空间才有）`);
+            continue;
+          }
+        }
         const hit = await phone.evaluate((text) => {
           const item = Array.from(document.querySelectorAll(".editor-more-menu .toolbar-menu-item")).find((x) =>
             (x.textContent || "").includes(text),
@@ -695,6 +739,21 @@ async function main() {
       if (openedVia === "menu") {
         await sleep(400);
         const label = p.kind === "discuss" ? "讨论" : "通知";
+        // ⭐ 2026-10-18：同手机上那条 —— 两向都判（个人空间必须没有、团队空间必须有）✓
+        if (p.kind === "notify") {
+          const rule = await notificationsMenuExpected(desktop);
+                  if (!rule.ok) {
+            note(`桌面 · ${p.name}：读不到当前空间类型（${rule.why}）⇒ 这一档**未实查**，⛔ 不当通过`);
+          } else if (!rule.expected) {
+            const present = await desktop.evaluate(() =>
+              Array.from(document.querySelectorAll(".editor-more-menu .toolbar-menu-item")).some((x) =>
+                (x.textContent || "").includes("通知"),
+              ),
+            );
+            ok(!present, `桌面 · ${p.name}：个人空间里按设计**没有**「通知」这一项（团队空间才有）`);
+            continue;
+          }
+        }
         const hit = await desktop.evaluate((text) => {
           const item = Array.from(document.querySelectorAll(".editor-more-menu .toolbar-menu-item")).find((x) =>
             (x.textContent || "").includes(text),
