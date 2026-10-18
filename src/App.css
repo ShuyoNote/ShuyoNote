@@ -3882,6 +3882,16 @@ select.sync-input {
   background: var(--chip-bg);
 }
 
+/* ⭐ 2026-10-18：「N 个空间未解锁，结果不含它们」那一行（全空间搜索、未输主口令时）。
+   ⚠️ 灰字＋小字号：它是**说明**不是错误 —— 搜索本身是成功的 ✓（⛔ 别做成红色警告 ✗）。 */
+.search-locked-hint {
+  margin: 0;
+  padding: 6px 10px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
 .search-scope-btn {
   border: none;
   background: transparent;

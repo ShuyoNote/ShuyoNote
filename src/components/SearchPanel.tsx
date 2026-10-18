@@ -3,6 +3,7 @@ import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { api } from "../lib/api";
+import { lockedHintText, lockedSpaceNames } from "../lib/searchScope";
 import { Highlighted } from "../lib/snippetHighlight";
 import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
@@ -40,9 +41,34 @@ export function SearchPanel() {
   const [loading, setLoading] = useState(false);
   const [allSpaces, setAllSpaces] = useState(true);
   const [activeIdx, setActiveIdx] = useState(0);
+  // ⭐ 2026-10-18：全空间搜索时**搜不到的那几个空间**（未解锁）—— 点开面板时读一次 ✓。
+  const [lockedHint, setLockedHint] = useState("");
   const debounceRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+
+  // 「少搜了哪些空间」只在**全空间**这一档有意义；读一次安全读数就够（空间解锁状态低频变化 ✓）。
+  useEffect(() => {
+    if (!open || !allSpaces) {
+      setLockedHint("");
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      try {
+        const rows = await api.spaceSecurityOverview();
+        if (!alive) return;
+        const names = lockedSpaceNames(useSpaceStore.getState().spaces, rows);
+        setLockedHint(lockedHintText(names));
+      } catch {
+        // 读不到（web 壳没有这条命令等）⇒ **一个字都不说**（⛔ 不许凭空说"未解锁" ✗）
+        if (alive) setLockedHint("");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [open, allSpaces]);
 
   // Auto-focus the input when the popover opens; reset state when it closes.
   useEffect(() => {
@@ -200,6 +226,15 @@ export function SearchPanel() {
               </button>
             </div>
           </div>
+
+          {/* ⭐ 2026-10-18（owner：「桌面版，未输入主口令时，全空间搜索不可用」）：
+              内核现在**能搜的照搜、搜不了的跳过**（`search.rs` 那段注释），跳过的空间在这里点名 ✓。
+              ⛔ 不许静默：少了几页却不说，与"搜索坏了"在用户那边读起来一样 ✗。 */}
+          {allSpaces && lockedHint ? (
+            <p className="search-locked-hint" data-testid="search-locked-hint">
+              {lockedHint}
+            </p>
+          ) : null}
 
           {!showResults && !loading && (
             <div className="search-tips">
