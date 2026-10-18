@@ -87,16 +87,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const note = (msg) => console.log(`  · ${msg}`);
 
 /**
- * 「通知」那一项**该不该出现** —— 判据与界面同一条（`lib/syncTag.ts::showsNotifications`：
- * 只有 `kind === "team"` 才渲染，且取法是**当前活动空间**）。
+ * 「通知」只在**团队空间**渲染（规则唯一出处 `lib/syncTag.ts::showsNotifications`）。
  *
- * ⭐ 2026-10-18（owner：「那就去掉通知」）：所以本门禁**两向都判** ——
- *    · 个人空间 ⇒ 该项**必须不出现**（出现才是回归 ✓）
- *    · 团队空间 ⇒ 该项**必须出现**（消失才是回归 ✓）
- *    ⛔ 不再"无条件要求存在" ✗ —— 那会把设计记成回归。
- * ⚠️ 读不到 store（模块取不到等）⇒ `ok:false`，调用方按**未实查**记，⛔ 不猜 ✗。
+ * ⭐ 2026-10-18（owner：「那就去掉通知」）：web 壳里种子空间的 `kind` 是 `null` ⇒ 那条路跑不到
+ *    ⇒ 下面 `ensureActiveSpaceTeam` 先把活动空间切成 team，让**原有几何断言一条不少**地照跑；
+ *    个人空间那一向由收尾时 `ensureActiveSpacePersonal` ＋ 一条断言来验 ✓。
+ *    ⚠️ 只改内存 store，⛔ 不落库 ✗。
  */
-async function notificationsMenuExpected(page) {
+
+/**
+ * 把活动空间的 `kind` 改成 `team`（只改内存 store，⛔ 不落库 ✗）。
+ *
+ * 为什么：「通知」只在团队空间渲染，而 web 壳的种子空间 `kind` 是 `null`
+ * ⇒ 不切 team，那条路跑不到，几何断言就会**少一条**（基线"只增不减"当场红 ——
+ * 2026-10-18 的 CI 就是这么红的：`mobile-layout 断言数从 69 降到 68`）。
+ */
+async function ensureActiveSpaceTeam(page) {
   try {
     return await page.evaluate(async () => {
       const loaded = (performance.getEntriesByType?.("resource") ?? [])
@@ -104,16 +110,32 @@ async function notificationsMenuExpected(page) {
         .filter((n) => n.includes("/src/store/space.ts"));
       const m = await import(/* @vite-ignore */ (loaded.length ? loaded[loaded.length - 1] : "/src/store/space.ts"));
       const st = m.useSpaceStore.getState();
-      const kind = st.spaces.find((w) => w.id === st.activeId)?.kind;
-      return { ok: true, expected: kind === "team", kind: kind ?? null, activeId: st.activeId ?? null };
+      const spaces = st.spaces.map((w) => (w.id === st.activeId ? { ...w, kind: "team" } : w));
+      m.useSpaceStore.setState({ spaces });
+      return spaces.some((w) => w.id === st.activeId && w.kind === "team");
     });
-  } catch (e) {
-    return { ok: false, why: String(e?.message ?? e).slice(0, 120) };
+  } catch {
+    return false;
   }
 }
 
-// 找一个可用的 Chrome。puppeteer-core 不带浏览器，所以这里自己找；
-// 找不到就明确报错，而不是静默跳过（否则这个验收脚本会假装通过）。
+/** 把活动空间切回**个人**（验"个人空间里确实没有「通知」"那一向）。 */
+async function ensureActiveSpacePersonal(page) {
+  try {
+    return await page.evaluate(async () => {
+      const loaded = (performance.getEntriesByType?.("resource") ?? [])
+        .map((e) => e.name)
+        .filter((n) => n.includes("/src/store/space.ts"));
+      const m = await import(/* @vite-ignore */ (loaded.length ? loaded[loaded.length - 1] : "/src/store/space.ts"));
+      const st = m.useSpaceStore.getState();
+      const spaces = st.spaces.map((w) => (w.id === st.activeId ? { ...w, kind: "personal" } : w));
+      m.useSpaceStore.setState({ spaces });
+      return spaces.some((w) => w.id === st.activeId && w.kind === "personal");
+    });
+  } catch {
+    return false;
+  }
+}
 
 // 在页面里读「竖条 / 侧栏 / 遮罩 / 按钮」的真实几何与计算样式。
 const probe = () => {
@@ -537,20 +559,12 @@ async function main() {
       if (openedVia === "menu") {
         await sleep(400);
         const label = p.kind === "discuss" ? "讨论" : "通知";
-        // ⭐ 2026-10-18：个人空间里「通知」**按设计不渲染** ⇒ 这一档断言两向都判 ✓
+        // ⭐ 2026-10-18：**「通知」只在团队空间渲染** ⇒ 先把活动空间切成 team，
+        //    让这一档走**原来那条路**（断言一条不少 ✓）；个人空间那一向由收尾那条判 ✓。
         if (p.kind === "notify") {
-          const rule = await notificationsMenuExpected(phone);
-          if (!rule.ok) {
-            note(`${p.name}：读不到当前空间类型（${rule.why}）⇒ 这一档**未实查**，⛔ 不当通过`);
-          } else if (!rule.expected) {
-            const present = await phone.evaluate(() =>
-              Array.from(document.querySelectorAll(".editor-more-menu .toolbar-menu-item")).some((x) =>
-                (x.textContent || "").includes("通知"),
-              ),
-            );
-            ok(!present, `${p.name}：个人空间里按设计**没有**「通知」这一项（团队空间才有）`);
-            continue;
-          }
+          const team = await ensureActiveSpaceTeam(phone);
+          if (!team) note(`${p.name}：切不到团队空间（读不到 store）⇒ 这一档**未实查**，⛔ 不当通过`);
+          await sleep(250);
         }
         const hit = await phone.evaluate((text) => {
           const item = Array.from(document.querySelectorAll(".editor-more-menu .toolbar-menu-item")).find((x) =>
@@ -739,20 +753,11 @@ async function main() {
       if (openedVia === "menu") {
         await sleep(400);
         const label = p.kind === "discuss" ? "讨论" : "通知";
-        // ⭐ 2026-10-18：同手机上那条 —— 两向都判（个人空间必须没有、团队空间必须有）✓
+        // ⭐ 2026-10-18：同手机上那条 —— 先把活动空间切成 team，走原来那条路 ✓
         if (p.kind === "notify") {
-          const rule = await notificationsMenuExpected(desktop);
-                  if (!rule.ok) {
-            note(`桌面 · ${p.name}：读不到当前空间类型（${rule.why}）⇒ 这一档**未实查**，⛔ 不当通过`);
-          } else if (!rule.expected) {
-            const present = await desktop.evaluate(() =>
-              Array.from(document.querySelectorAll(".editor-more-menu .toolbar-menu-item")).some((x) =>
-                (x.textContent || "").includes("通知"),
-              ),
-            );
-            ok(!present, `桌面 · ${p.name}：个人空间里按设计**没有**「通知」这一项（团队空间才有）`);
-            continue;
-          }
+          const team = await ensureActiveSpaceTeam(desktop);
+          if (!team) note(`桌面 · ${p.name}：切不到团队空间（读不到 store）⇒ 这一档**未实查**，⛔ 不当通过`);
+          await sleep(250);
         }
         const hit = await desktop.evaluate((text) => {
           const item = Array.from(document.querySelectorAll(".editor-more-menu .toolbar-menu-item")).find((x) =>
@@ -775,6 +780,30 @@ async function main() {
       ok(dg.right <= dg.winWidth, `桌面主区不超出视口（right=${dg.right} ≤ ${dg.winWidth}）`);
       ok(dg.docWidth <= dg.winWidth, `桌面无横向溢出（文档宽=${dg.docWidth}）`);
       await shot(desktop, `07-desktop-panel-${p.kind}`);
+    }
+
+    // ⭐ 2026-10-18（owner：「那就去掉通知」）**收尾那一向**：切回个人空间 ⇒ 「通知」必须**不出现**。
+    //    为什么要有这一条：上面那一档为了让几何断言跑全，把空间**临时切成 team** 了 ⇒
+    //    如果不验"个人空间里确实没有"，这条产品口径就**一条判据都没有** ✓。
+    const backPersonal = await ensureActiveSpacePersonal(desktop);
+    if (backPersonal) {
+      await desktop.evaluate(() => {
+        const more = document.querySelector(".editor-toolbar-more .toolbar-btn");
+        if (more) more.click();
+      });
+      await sleep(400);
+      const stillThere = await desktop.evaluate(() =>
+        Array.from(document.querySelectorAll(".editor-more-menu .toolbar-menu-item")).some((x) =>
+          (x.textContent || "").includes("通知"),
+        ),
+      );
+      ok(!stillThere, "桌面 · 个人空间里「通知」**按设计不出现**（团队空间才有）");
+      await desktop.evaluate(() => {
+        const more = document.querySelector(".editor-toolbar-more .toolbar-btn");
+        if (more) more.click();
+      });
+    } else {
+      note("桌面 · 个人空间那一向读不到 store ⇒ **未实查**，⛔ 不当通过");
     }
 
     await deskCtx.close();
