@@ -26507,3 +26507,43 @@ body.is-plugin-panel-open .main {
 .sync-popover.is-inline .sync-head { padding-top: 6px; }
 .sync-popover.is-inline .sync-head .sync-title { font-size: 20px; margin: 0 0 6px; line-height: 1.25; }
 .sync-popover.is-inline .sync-subtitle { margin-bottom: 12px; }
+
+/* ⭐ 2026-10-19（owner：「中继和跨网订阅不是一回事？」 → 拍 A ＋「美化这个面板」）：
+   「跨网同步订阅」那一块 —— 版式只做**三件事**（⛔ 不新造颜色、不新造反色阶）：
+   ① 状态值沿用中继那套 `is-ok/is-warn/is-bad/is-muted` 的胶囊（同一套颜色语义 ✓）；
+   ② 动作行横排、有间距（原来按钮与说明会挤在一行中间 ✓）；
+   ③ 粘贴框等宽字体、可竖向拉高（许可证是一长串，用正文字体读不准 ✓）。 */
+.sync-popover .license-block .sync-row-body { gap: 6px; }
+.sync-popover .license-block .license-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.sync-popover .license-block .license-prompt { color: var(--text-dim); }
+.sync-popover .license-block .license-dim { color: var(--text-faint); font-size: 12px; }
+.sync-popover .license-block .license-err { color: var(--danger); }
+.sync-popover .license-block .license-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.sync-popover .license-block .license-paste-input {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--chip-bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.sync-popover .license-block .license-paste-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
