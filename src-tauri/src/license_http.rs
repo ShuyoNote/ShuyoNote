@@ -178,6 +178,10 @@ pub async fn license_http_request(
 
 #[cfg(test)]
 mod tests {
+    // ⚠️ 这一行**不能省**：2026-10-18 我把它删掉后，`cargo check`（不编测试）照样绿，
+    //    而 CI 的 `cargo test` 直接 8 处 `E0425`（`origin_of`／`ISSUER_BASE` 找不到）⇒ 整条 Rust 红。
+    //    ⇒ 本地验 Rust 改动一律用 `cargo check --tests`（或 `cargo test --lib`）。
+    use super::*;
 
     #[test]
     fn same_origin_and_missing_base() {
