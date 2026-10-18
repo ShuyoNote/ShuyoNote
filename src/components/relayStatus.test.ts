@@ -156,9 +156,13 @@ describe("中继那一格 · owner 截图里那两条读数", () => {
     await vi.waitFor(() => expect(mocks.relayProbe).toHaveBeenCalled());
 
     const text = el.textContent ?? "";
-    expect(text, "读不到有效期就得说读不到").toContain("读不到有效期");
+    // ⚠️ 2026-10-19（owner：「中继和跨网订阅不是一回事？」⇒ 拍 A）：**「读不到有效期」那句搬到
+    //    `LicenseSection` 去了** —— 中继这一节现在只回答"连上没有"。所以这里改成钉两件事：
+    //    ① 这一节**不许**再显示许可证读数（否则又是"同一件事两处显示"）；
+    //    ② 诚实性没丢：天数一个都不许冒出来，连没连上必须说出来。
+    expect(text, "许可证读数已搬走（拍 A）").not.toContain("读不到有效期");
     expect(text, "⛔ 不许在读数缺失时冒出任何天数").not.toMatch(/剩余\s*\d/);
-    expect(text).not.toContain("已连上中继");
+    expect(text, "连没连上仍要说").toContain("未连上中继");
   });
 
   /**

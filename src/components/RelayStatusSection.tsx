@@ -69,10 +69,11 @@ export function RelayStatusSection() {
           <span className="sync-row-label">中继</span>
           <span className="sync-row-value relay-connection">{view.connectionLabel}</span>
         </div>
-        <div className="sync-att">
-          <span className="sync-row-label">中继许可证</span>
-          <span className="sync-row-value relay-license">{view.licenseLabel}</span>
-        </div>
+        {/* ⭐ 2026-10-19（owner：「中继和跨网订阅不是一回事？」⇒ 拍 A）：**「中继许可证」那一行搬走了** ✗
+            —— 许可证/有效期属于**订阅**（`LicenseSection`），中继这一节只回答"连上没有" ✓。
+            ⚠️ 别在这里再把有效期加回来：同一件事两处显示，用户会读到两套数（旧界面就是这样 ✗）。
+            ⚠️ `view.licenseLabel` 仍由 `relayStatusView` 产出（映射只有一处 ✓）—— 它现在由
+            `LicenseSection` 的「中继侧读数」那一行消费 ✓。 */}
         {/* ⭐⭐ **2026-10-14（owner：「优化文案及布局」）** ✗：⭐ 这一格原来是**三句在说同一件事** ✓
             （一行机器报错 ＋ 两行长解释 ✓），而且**那句报错排在最前** ✗ ⇒ ⭐ 新顺序：
             ① 【一句人话解释】**为什么这一格永远不会有读数** ✓（owner 2026-10-12 拍的，判据 ④ 钉着 ✓）；
