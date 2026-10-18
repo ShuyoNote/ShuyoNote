@@ -16,6 +16,7 @@
 // 若将来要跑几万页，应该让命令面提供一个"列全部附件"的命令，而不是在这里并发打。
 
 import { api } from "./api";
+import { isIndexableNode } from "./indexableNode";
 import {
   indexCoverage,
   summarizeCoverage,
@@ -29,7 +30,7 @@ import {
  * **只读**：不触发抽取、不写库。它回答"现在覆盖到哪"，不负责"去补齐"。
  */
 export async function scanLibraryCoverage(stores: CoverageStores): Promise<CoverageReport> {
-  const pages = await api.listPages();
+  const pages = (await api.listPages()).filter((p) => isIndexableNode(p.kind));
   const pageIds = pages.map((p) => p.id);
 
   // 按 id 去重：同一个附件不会被两页同时引用，但"未整理"那一批与逐页结果可能有交集，
@@ -124,3 +125,4 @@ export function coverageReportTool(
     },
   };
 }
+

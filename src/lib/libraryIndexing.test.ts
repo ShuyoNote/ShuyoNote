@@ -135,7 +135,7 @@ describe("formatIndexSummary：失败要单独说出来", () => {
     expect(formatIndexSummary(report([]))).toBe("索引完成：1 页 / 附件 0 个（可检索 0）/ 块 3");
   });
 
-  it("有失败 ⇒ 摘要后面接上条数与明细（前 3 条 + 更多）", () => {
+  it("有失败 ⇒ 摘要后面接「明细」（前 3 条 + 共 N 条），数字只说一次", () => {
     const s = formatIndexSummary(
       report([
         { kind: "page", id: "p1", reason: "boom" },
@@ -145,10 +145,13 @@ describe("formatIndexSummary：失败要单独说出来", () => {
         { kind: "attachment", id: "a4", reason: "internal" },
       ]),
     );
-    expect(s).toContain("另有 5 条没成");
+    expect(s).toContain("明细：");
     expect(s).toContain("页面 p1（boom）");
     expect(s).toContain("附件 a2（no_extractor）");
-    expect(s).toContain("等 5 条");
+    expect(s).toContain("（共 5 条）");
     expect(s).not.toContain("a4"); // 只列前 3 条
+    // ⚠️ 2026-10-18：别再出现「另有 N 条没成」——底层摘要已有「失败 N」，两条并排会读成 2N
+    expect(s).not.toContain("另有");
   });
 });
+

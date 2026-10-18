@@ -441,6 +441,26 @@ describe("indexLibrary：全库索引（UI 上那个「开始索引」）", () =
     expect(r.summary).toContain("页面 2/2 已索引");
   });
 
+  // ⭐ 2026-10-18（现场）：`listPages` 里**文件夹也是节点**，而它没有正文（`get_page` 明确拒
+  //   「该节点不是页面」）⇒ 以前会把它算进 42 个页面、再记成一条失败，用户看到"失败 11"
+  //   却分不清哪些是真问题。现在：文件夹**不进索引、也不进总数**。
+  it("文件夹不进索引、也不算失败（⛔ 不再出现「该节点不是页面」）", async () => {
+    (api.listPages as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "p1", kind: "page" },
+      { id: "f1", kind: "folder" },
+    ]);
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    // `f1` 故意没有正文：如果它仍被索引，就会像生产里那样抛「页面不存在」
+    setActivePlatform(platformWith({ p1: "正文一。" }, {}));
+
+    const s = await stores();
+    const r = await indexLibrary(s);
+
+    expect(r.pages).toEqual({ total: 1, ok: 1, failed: 0 });
+    expect(r.failures).toEqual([]);
+    expect(r.summary).toContain("页面 1/1 已索引");
+  });
+
   it("**一页坏掉不停整个库**：其余页面照常索引完，坏页进 failures", async () => {
     setPages(["good", "bad"]);
     (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
