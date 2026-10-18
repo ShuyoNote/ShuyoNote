@@ -69,3 +69,20 @@ export function syncTagColor(serverUrl: string): string {
   const hue = h % 360;
   return `hsl(${hue} 65% 45%)`;
 }
+
+/**
+ * ⭐ **「通知」这一项只在团队空间里出现**（owner 2026-10-18：「那就去掉通知」✓）。
+ *
+ * 为什么归到这里而不是写进组件：本文件头两条已经立了同一条规矩 ——
+ * ⛔ 界面**不许**自己判 `kind === "team"`（那是第二份真相）✗，规则只在这里实现 ✓。
+ *
+ * · `kind === "team"` ⇒ 显示 ✓
+ * · 个人空间 ／ 未分类（`""`）／ 拿不到（`undefined`）／ 其它 ⇒ **不显示**（fail-closed ✓）
+ *
+ * 依据：通知的数据面是**团队侧**的（`NotificationCenter.tsx` 读的是 `teamListNotifications`，
+ * 用途是"有人 @ 了你"）⇒ 个人空间里它基本恒空，留着只会让人点开看一片空白 ✓。
+ * ⚠️ `讨论` **不**走这条（它还能当页内旁注用）⇒ 别顺手把两颗一起藏 ✗。
+ */
+export function showsNotifications(kind: string | undefined): boolean {
+  return kind === "team";
+}

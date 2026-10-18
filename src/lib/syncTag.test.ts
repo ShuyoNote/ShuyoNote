@@ -14,7 +14,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { showsServerTag, syncTagColor, syncTagLabel, syncTagTitle } from "./syncTag";
+import { showsNotifications, showsServerTag, syncTagColor, syncTagLabel, syncTagTitle } from "./syncTag";
 
 const read = (p: string) => readFileSync(p, "utf8");
 const URL_IP = "http://121.199.8.9:8787";
@@ -146,5 +146,43 @@ describe("服务器标识 · 数据流（`kind` 真的发出来了吗）", () =>
       /SELECT id,name,theme,icon,sort_order,created_at,updated_at,kind FROM meta\.workspaces/,
     );
     expect(io, "导入空间那条路没有把 kind 读出来").toMatch(/kind:\s*r\.get\(7\)\?/);
+  });
+});
+
+// ⭐ 2026-10-18（owner：「那就去掉通知」）：**「通知」只在团队空间出现**。
+//   规则与上面同一条脾气 —— 只在一处实现（`showsNotifications`），⛔ 界面里不许再写 `kind === "team"` ✗。
+describe("「通知」菜单项按空间类型显隐", () => {
+  it("① 规则：团队 ⇒ 显示；个人／未分类／拿不到 ⇒ 不显示（fail-closed）", () => {
+    expect(showsNotifications("team"), "团队空间要有「通知」").toBe(true);
+    expect(showsNotifications("personal"), "⛔ 个人空间不许有「通知」").toBe(false);
+    expect(showsNotifications(""), "未分类按个人处理").toBe(false);
+    expect(showsNotifications(undefined), "拿不到类型 ⇒ 不显示（宁可不显示也不误显示）").toBe(false);
+  });
+
+  it("② 接线：`EditorToolbar` 那两颗由 `showsNotifications` 判，且**只有「通知」**被它包住", () => {
+    const src = read("src/components/EditorToolbar.tsx");
+    // ⚠️ 判「有没有自己判 kind」时必须**先剥注释**：本文件的注释里就写着那句禁令（`⛔ … kind === "team"`），
+    //    不剥会把"说明"当成"违规" ✗（本仓踩过同形假红：`check-im-boundary` 的注释误判）。
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(^|[^:])\/\/[^\n]*/g, "$1")
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+    expect(code, "工具栏要引用这条规则").toContain("showsNotifications(");
+    expect(code, "⛔ 界面不许自己判 kind（第二份真相）").not.toMatch(/kind\s*===\s*"team"/);
+    // 讨论那颗在条件块**之外**、通知那颗在**之内**：拿两段的相对位置核
+    const discussAt = src.indexOf('openComments(true, "comments")');
+    const guardedAt = src.indexOf("withNotifications &&");
+    const notifAt = src.indexOf('openComments(true, "notifications")');
+    expect(discussAt, "「讨论」那颗要在").toBeGreaterThan(-1);
+    expect(guardedAt, "条件渲染要真的存在").toBeGreaterThan(-1);
+    expect(notifAt, "「通知」那颗要在").toBeGreaterThan(-1);
+    expect(discussAt, "「讨论」必须在条件块**之前**（⛔ 别把两颗一起藏 ✗）").toBeLessThan(guardedAt);
+    expect(notifAt, "「通知」必须在条件块**之后**（＝被包住 ✓）").toBeGreaterThan(guardedAt);
+    // 条件块里应当只包着「通知」那颗（到下一个兄弟条目 `copyMarkdown` 为止），
+    // ⛔ 不能顺手把「讨论」也卷进去 ✗
+    const block = src.slice(guardedAt, src.indexOf("copyMarkdown()"));
+    expect(block, "条件块里要包着「通知」那颗").toContain("BellIcon");
+    expect(block, "条件块里要留着它的 testid（判据能点到）").toContain("menu-notifications");
+    expect(block, "⛔ 条件块里不许出现「讨论」那颗").not.toContain("CommentIcon");
   });
 });
