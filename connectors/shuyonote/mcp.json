@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "shuyonote": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "shuyonote-mcp@0.1.0"],
+      "runtime": {
+        "type": "node",
+        "version": "20"
+      },
+      "npmRegistries": ["https://registry.npmmirror.com", "https://registry.npmjs.org"],
+      "timeout": 30000
+    }
+  }
+}

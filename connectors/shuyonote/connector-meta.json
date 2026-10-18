@@ -1,0 +1,26 @@
+{
+  "name": "ShuyoNote",
+  "name_zh": "ShuyoNote 笔记",
+  "name_en": "ShuyoNote",
+  "description": "Search and read your local ShuyoNote notes; with permission, create pages and append content. Your data stays on your machine.",
+  "description_zh": "检索、阅读你本机的 ShuyoNote 笔记；授权后可以新建页面或追加内容。数据留在本机，只把命中的片段交给模型。",
+  "description_en": "Search and read notes in your local ShuyoNote app; with permission, create pages and append content. Your data stays on your machine.",
+  "source": "shuyonote",
+  "type": "mcp",
+  "version": "0.1.0",
+  "examples_zh": [
+    "帮我找一下笔记里关于焦煤招标的材料",
+    "最近一周我改过哪些笔记？",
+    "把这周的项目进展记到「周报」那一页",
+    "读一下「招标知识库」那一页的全文",
+    "别的空间里有没有提到 MCP 的笔记？"
+  ],
+  "examples_en": [
+    "Find my notes about the coal tender",
+    "Which notes did I edit in the last week?",
+    "Append this week's progress to my weekly report",
+    "Read the full text of my \"tender knowledge base\" page",
+    "Are there notes about MCP in another space?"
+  ],
+  "minWorkbuddyVersion": "5.0.0"
+}
