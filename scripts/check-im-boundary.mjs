@@ -68,8 +68,87 @@ function bodyOf(text, signatureRe) {
   const brace = after.indexOf("{");
   if (brace < 0) return null;
   const body = after.slice(brace + 1);
-  const end = body.search(/\n\}\n/);
+  // ⚠️ **行尾必须容忍 `\r`**：服务端仓的 `src/sync.rs` 是 **CRLF 入库**（2026-10-18 实测：
+  //    blob 里 CR 633 / LF 633）。原来的 `/\n\}\n/` 在 CRLF 文件上**永远匹配不到** ⇒ 返回
+  //    "整个文件剩余部分"，于是 ② 实际扫的是 **从 `push_frame` 到文件尾 501 行**，
+  //    把 `pull` 里那句注释 `(WAL snapshot)` 当成"帧里出现了内容字段"报出来 ✗。
+  //    ⇒ 判据既**误报**（注释里的词）又**漏判**（帧范围被放大到全文件）。
+  const end = body.search(/\r?\n\}\r?\n/);
   return end < 0 ? body : body.slice(0, end);
+}
+
+/**
+ * 去掉 Rust 的 `//` 行注释与 `/* *\/` 块注释（**字符串里的不算注释** ✓）。
+ * 为什么要在扫内容字段之前剥：那些字段名只有出现在**帧的字面量**里才算"推送带正文"；
+ * 写在注释里（如 `(WAL snapshot)`）只是描述，不该让判据红 —— 2026-10-18 就是这么假红了一次 ✗。
+ * ⚠️ 只剥注释、**不剥字符串**：`"body"` 这类引号字段必须还能被认出来（那才是真判据 ✓）。
+ */
+function stripComments(src) {
+  let out = "";
+  let i = 0;
+  let inLine = false;
+  let inBlock = false;
+  let inStr = false;
+  let inChar = false;
+  while (i < src.length) {
+    const c = src[i];
+    const n = src[i + 1];
+    if (inLine) {
+      if (c === "\n") {
+        inLine = false;
+        out += c;
+      }
+      i++;
+      continue;
+    }
+    if (inBlock) {
+      if (c === "*" && n === "/") {
+        inBlock = false;
+        i += 2;
+        continue;
+      }
+      if (c === "\n") out += c;
+      i++;
+      continue;
+    }
+    if (inStr) {
+      if (c === "\\") {
+        out += c + (n ?? "");
+        i += 2;
+        continue;
+      }
+      if (c === '"') inStr = false;
+      out += c;
+      i++;
+      continue;
+    }
+    if (inChar) {
+      if (c === "\\") {
+        out += c + (n ?? "");
+        i += 2;
+        continue;
+      }
+      if (c === "'") inChar = false;
+      out += c;
+      i++;
+      continue;
+    }
+    if (c === "/" && n === "/") {
+      inLine = true;
+      i += 2;
+      continue;
+    }
+    if (c === "/" && n === "*") {
+      inBlock = true;
+      i += 2;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "'") inChar = true;
+    out += c;
+    i++;
+  }
+  return out;
 }
 
 /** 纯判据：一组源码文本（可为 null ＝ 不在）⇒ findings（空＝干净 ✓） */
@@ -122,10 +201,11 @@ export function judge({ collabRs, mainRs, syncRs, dbRs, frameKindRs }) {
     if (body === null) {
       out.push("✗ 找不到 `sync.rs::push`（旧名 `push_frame`）⇒ 判据**没检查到东西**（不算通过 ✗）");
     } else {
-      const bad = contentHits(body);
+      const scan = stripComments(body);
+      const bad = contentHits(scan);
       if (bad.length) out.push("✗ `push` 的帧里出现了内容类字段「" + bad.join("／") + "」⇒ 推送只许说有新消息（⛔ 不带正文）✗");
       for (const need of ["space_id", "seq"]) {
-        if (!body.includes(need)) out.push("✗ `push` 的帧里没有 `" + need + "` ⇒ 帧被改空了也照样\"过\" ✗（判据要正向锚 ✓）");
+        if (!scan.includes(need)) out.push("✗ `push` 的帧里没有 `" + need + "` ⇒ 帧被改空了也照样\"过\" ✗（判据要正向锚 ✓）");
       }
     }
   }

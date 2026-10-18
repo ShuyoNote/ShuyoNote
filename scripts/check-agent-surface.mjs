@@ -36,6 +36,22 @@ export const NOTE_ID_PREFIXES = [
 export const ALLOWED_AI_KINDS = ["read", "write"];
 export const ALLOWED_AI_SCOPE = "current-space";
 
+/**
+ * `ai:true` 的能力**默认**只许 `current-space`；**例外必须在这里逐条点名**并写清理由。
+ * ⚠️ 这是"显式白名单"，不是"放宽规则"：规则一个字没松，只是给每条例外留一行可核对的依据。
+ *
+ * · `spaces.list` —— **只读**列出空间清单（id / 名称 / 哪个是当前）。
+ *   依据＝面板「外部 AI 接入」的档位 **「只读（全部空间）」** 就是这颗能力
+ *   （owner 2026-10-18 在界面上选的档，面板原文：「能读本空间以外的笔记（只读）；写仍然会被拒绝，
+ *   也不会改动你正在看的那个空间」）⇒ **写一律拒绝**，越过 current-space 的只有"看得见有哪些空间"。
+ *   ⛔ 要加例外就在这张表里加一行**并写理由**，别去改下面那条规则 ✗
+ *   （2026-10-18 的反面样本：`spaces.switch`（写）原本也标 `ai:true` ⇒ 被这条规则当场拦下，
+ *    处置是**把它的 `ai` 关掉**，不是给它开例外 ✓）。
+ */
+export const AI_SCOPE_EXEMPT = {
+  "spaces.list": "只读列空间清单：面板「只读（全部空间）」档位靠它；写仍被拒 ✓",
+};
+
 function firstDiff(a, b) {
   const A = a.split("\n"), B = b.split("\n");
   for (let i = 0; i < Math.max(A.length, B.length); i++) {
@@ -75,7 +91,8 @@ export function judge(expected, actual, phase, registryText) {
     const id = String(c.id);
     if (!NOTE_ID_PREFIXES.some((p) => id.startsWith(p))) out.push("✗ `ai:true` 的能力「" + id + "」不在**笔记域**前缀集里 ⇒ 这是把**库以外**的东西暴露给了 agent ✗（R43：库权限 ≠ 仓库权限 ✓）");
     if (!ALLOWED_AI_KINDS.includes(c.kind)) out.push("✗ `ai:true` 的能力「" + id + "」的 `kind` 是 `" + c.kind + "` ⇒ 只许 read／write（**不许 host** ✓）");
-    if (c.scope !== ALLOWED_AI_SCOPE) out.push("✗ `ai:true` 的能力「" + id + "」的 `scope` 是 `" + c.scope + "` ⇒ 只许 `" + ALLOWED_AI_SCOPE + "`（不许全局 ✗）");
+    if (c.scope !== ALLOWED_AI_SCOPE && !Object.prototype.hasOwnProperty.call(AI_SCOPE_EXEMPT, id))
+      out.push("✗ `ai:true` 的能力「" + id + "」的 `scope` 是 `" + c.scope + "` ⇒ 只许 `" + ALLOWED_AI_SCOPE + "`（不许全局 ✗）；要开例外请写进 `AI_SCOPE_EXEMPT` 并给理由 ✓");
   }
   return out;
 }

@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "apiVersion": "1.1.0",
+  "apiVersion": "1.2.0",
   "notes": "插件能力注册表——单一事实源。scripts/gen-capabilities.mjs 由本文件生成：JS shim（api.*）、Rust 绑定表、作者类型包、作者文档；scripts/check-capabilities.mjs 校验一致性与完整性。改能力请改这里，不要手改生成物。",
   "permissions": [
     {
@@ -1132,7 +1132,7 @@
       },
       "rust": "cap_spaces_switch",
       "desc": "切换 ShuyoNote 的当前空间：参数 id 或 name 二选一。这是写操作（影响后续读写作用域），返回草稿供用户确认。",
-      "ai": true
+      "ai": false
     }
   ],
   "legacyGlobals": [

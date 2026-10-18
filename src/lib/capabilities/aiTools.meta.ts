@@ -199,17 +199,4 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
     },
     isWrite: false,
   },
-  {
-    id: "spaces.switch",
-    description: "切换 ShuyoNote 的当前空间：参数 id 或 name 二选一。这是写操作（影响后续读写作用域），返回草稿供用户确认。",
-    argsSchema: {
-      type: "object",
-      properties: {
-      "id": { type: "string" },
-      "name": { type: "string" },
-      },
-      required: [],
-    },
-    isWrite: true,
-  },
 ];
