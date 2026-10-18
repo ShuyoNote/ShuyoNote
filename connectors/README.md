@@ -66,13 +66,17 @@ curl -sI https://shuyo.cn/mcp/shuyonote-mcp-<新版本>.tgz   # 200 + 对上 Con
 把 `connectors/shuyonote/` 打成 zip，在开放平台「入驻 → 资质审核 → 提交连接器」上传；
 审核通过后 10～15 分钟同步到市场。
 
+**隐私政策**：<https://shuyo.cn/privacy.html>（2026-10-18 上线，站 repo 的 `site/privacy.html`）。
+平台若要求填隐私链接，就填这个。它按实际行为写清了三件事，可以直接引用：
+笔记不收集；连接器四步流向；**你让 AI 读的内容会随对话交给模型服务商**（不要对外说成"数据不出本机"）。
+
 ## 两个要跟 WorkBuddy 确认的点
 
 1. **认证口径**：本连接器是「本机 stdio + 本机回环」，token 由 App 自己校验 ⇒ `auth_mode` **省略**
    （无需认证）。提交说明里写明这一点；不要用 `auth_mode: token`（那是"用户自填凭证"的表单模式，
    我们的凭证是 App 自己写的文件，用户填不出来）。
-2. **npmmirror 同步**：`mcp.json` 先试 `registry.npmmirror.com` 再回落 `registry.npmjs.org`。
-   如果审核方对"双 registry"有意见，删掉 `npmRegistries` 只留默认也可以（国内拉包会慢一点）。
+2. **tgz 直装**：`mcp.json` 用 `npx -y -p https://shuyo.cn/mcp/shuyonote-mcp-<版本>.tgz shuyonote-mcp`，
+   不从 npm registry 拉。若审核方要求"必须来自 npm"，再改发 npm（包本身不用改，只换 `args`）。
 
 ## 边界（别在说明里写成没有的）
 
