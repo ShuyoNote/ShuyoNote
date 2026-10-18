@@ -20,6 +20,8 @@ import { ECDICT_PACK_ID } from "../lib/dictionary/download";
 // ⭐ **第 0 片（2026-10-14）**：清单**可下发** ✓（⭐ 形状／归一化／回退都在那一处 ✓ ——
 //    ⛔ 本文件不再自己定义 `Ability` ✗，⭐ 那会变成第二份真相 ✓）。
 import { loadAbilitiesManifest, type Ability } from "../lib/abilities/manifest";
+// ⭐ 2026-10-18：第四态 `local-endpoint`（看图识字）的探测 —— 只探本机、只读 `/api/tags` ✓。
+import { RECOMMENDED_VISION_MODEL, probeVisionModels, visionProbeText } from "../lib/abilities/localEndpoint";
 
 /** Rust 侧下载的进度事件 → 界面那一行字（字节；没给 Content-Length ⇒ **如实**说"总量未知"）。 */
 function fmtRustProgress(name: string, p: { received: number; total: number | null }): string {
@@ -71,7 +73,20 @@ const ABILITIES: Ability[] = [
       "（实测：`contents` 对大文件不回内容、`raw` 回的是 HTML）。",
   },
   { id: "layout", name: "版面分析", summary: "识别表格与分栏；模型较大", state: "not-available", note: "还没上架" },
-  { id: "vlm-ocr", name: "看图识字（VLM）", summary: "复杂扫描件与手写", state: "not-available", note: "还没上架" },
+  // ⭐ 2026-10-18（owner：「把 qwen2.5vl:3b 加到能力下载中心」）⇒ 结论：**不能当 `downloadable` 发** ✗。
+  //    视觉抽取只许**本机端点**（红线），而本程序不启动推理进程 ⇒ 真实形态是"能力在、模型自己拉" ✓。
+  //    所以它是**第四态** `local-endpoint`：面板给一颗「检查本机模型」，并说清缺了要跑哪条命令 ✓。
+  //    ⛔ 别为了"看起来上架了"把它改成 `downloadable` —— 那等于假装"下完就能用"，而装完也没有东西能加载它 ✗。
+  {
+    id: "vlm-ocr",
+    name: "看图识字（VLM）",
+    summary: `用本机 Ollama 的视觉模型读图片与扫描件（推荐 ${RECOMMENDED_VISION_MODEL}，约 3.2 GB）`,
+    state: "local-endpoint",
+    note:
+      "本程序不代下模型：视觉抽取只许本机端点（红线）。装好 Ollama 后拉一个视觉模型（`ollama pull " +
+      RECOMMENDED_VISION_MODEL +
+      "`），再点右边那颗「检查本机模型」。",
+  },
   { id: "embeddings", name: "本地向量", summary: "离线语义检索", state: "not-available", note: "还没上架" },
   { id: "transcription", name: "音频转写", summary: "会议录音转文字", state: "not-available", note: "还没上架" },
 ];
@@ -117,6 +132,9 @@ export function AbilitiesPane() {
    *  ⚠️ 拉到了就**并上来**（⛔ 不是整份替换 ✗ —— 那会抹掉代码里 `office-import`／`ecdict-en-zh` ✓），
    *  ⭐ **拉不到 ⇒ 就是它** ✓（⛔ 不许整屏空白 ✗）。 */
   const [abilities, setAbilities] = useState<Ability[]>(ABILITIES);
+  /** ⭐ 2026-10-18：看图识字（`local-endpoint`）那颗「检查本机模型」的结果 ——
+   *  ⚠️ **探不到 ≠ 没有**：连不上就显示"连不上"，⛔ 不许写成"没装模型" ✗（两者读起来一样、处置完全不同）。 */
+  const [vlm, setVlm] = useState<{ busy: boolean; text: string } | null>(null);
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -216,6 +234,23 @@ export function AbilitiesPane() {
   const builtin = abilities.filter((a) => a.state === "builtin" || (a.state === "downloadable" && packReady));
   const downloadable = abilities.filter((a) => a.state === "downloadable" && !packReady);
   const missing = abilities.filter((a) => a.state === "not-available");
+  /** ⭐ 2026-10-18：需要用户在自己机器上备模型的那些（看图识字）✓ */
+  const localEndpoint = abilities.filter((a) => a.state === "local-endpoint");
+
+  /**
+   * 「检查本机模型」：只探 loopback（`localVision` 同一条红线 ✓），只读 `/api/tags`。
+   * ⚠️ 结论**如实**：连不上就写"连不上"，有模型但没视觉模型就写"缺什么 + 哪条命令" ✓。
+   */
+  const checkLocalVision = async () => {
+    setVlm({ busy: true, text: "" });
+    try {
+      const probe = await probeVisionModels();
+      setVlm({ busy: false, text: visionProbeText(probe) });
+    } catch (e) {
+      // 走到这里说明探测本身炸了（不该发生：probeVisionModels 内部已兜住）——照实说
+      setVlm({ busy: false, text: `检查失败：${e instanceof Error ? e.message : String(e)}` });
+    }
+  };
 
   return (
     <>
@@ -308,6 +343,40 @@ export function AbilitiesPane() {
         ) : null}
       </section>
       )}
+
+      {/* ⭐ 2026-10-18：第四态 `local-endpoint` —— 能力在，但模型**由用户在本机自己拉**（红线：视觉只许本机端点 ✓）。
+          ⚠️ 这一节**不是**"还没上架"：它现在就能用，只是前提在用户机器上 ✓ —— 所以单独一节 + 一颗检查键 ✓。 */}
+      {localEndpoint.length > 0 ? (
+        <section className="set-section" data-testid="local-endpoint-section">
+          <div className="set-section-title">{t("abilities.localEndpointTitle", "需要本机模型（本应用不代下）")}</div>
+          {localEndpoint.map((a) => (
+            <div className="set-row" key={a.id} data-ability={a.id}>
+              <div className="set-row-text">
+                <div className="set-row-name">{a.name}</div>
+                <div className="set-row-sub">{a.summary}</div>
+                {a.note ? (
+                  <div className="set-row-sub set-row-note" title={a.note}>
+                    {a.note}
+                  </div>
+                ) : null}
+              </div>
+              <button
+                className="set-btn is-primary"
+                data-testid="check-local-vision"
+                disabled={vlm?.busy === true}
+                onClick={() => void checkLocalVision()}
+              >
+                {vlm?.busy ? "检查中…" : "检查本机模型"}
+              </button>
+            </div>
+          ))}
+          {vlm && !vlm.busy ? (
+            <p className="set-hint" data-testid="local-vision-result">
+              {vlm.text}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="set-section">
         <div className="set-section-title">{t("abilities.soonTitle", "还没上架")}</div>
