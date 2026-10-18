@@ -554,8 +554,24 @@ pub async fn search(db: State<'_, Db>, args: SearchArgs) -> Result<Vec<SearchRes
         // Each space gets a fair share of the global limit (integer ceiling).
         let n = spaces.len().max(1);
         let per_limit = (limit + n - 1) / n;
+        // ⭐ 2026-10-18（owner 报「桌面版，未输入主口令时，全空间搜索不可用」）：
+        //    **一个空间打不开，不许拖垮整次全空间搜索** ✗。
+        //    旧写法是 `open_space_conn(&sid)?` ⇒ 未输主口令时每个**加密**空间都会打不开
+        //    （`security::startup_needs_unlock` 那条闸门）⇒ 整次搜索直接 `Err`
+        //    ⇒ 界面只 `console.error` 后显示「无结果」⇒ 读起来就是"搜索坏了" ✗。
+        //    现在的口径：**能搜的照搜，搜不了的空间跳过**，并把跳过的**数量与名字**打进日志 ✓；
+        //    用户面由前端另给一句「N 个空间未解锁，结果不含它们」（判据见 `SearchPanel.tsx`）。
+        let mut skipped: Vec<String> = Vec::new();
         for (sid, sname) in spaces {
-            let conn = crate::db::open_space_conn(&sid)?;
+            let conn = match crate::db::open_space_conn(&sid) {
+                Ok(c) => c,
+                Err(e) => {
+                    // ⚠️ 只记名字与**原因**，不把空间 id 塞进用户面（与 `store/space.ts:114` 同口径）
+                    eprintln!("[search] 全空间搜索跳过「{sname}」：{e}");
+                    skipped.push(sname);
+                    continue;
+                }
+            };
             let mut hits = if let Some(e) = emb.as_ref() {
                 // Cross-space vector alignment: each space's connection is wrapped
                 // in a Db so it reuses the same cache-aware semantic ranking.
@@ -573,6 +589,14 @@ pub async fn search(db: State<'_, Db>, args: SearchArgs) -> Result<Vec<SearchRes
                 }
             }
             out.append(&mut hits);
+        }
+        if !skipped.is_empty() {
+            // 一行汇总，方便排查"为什么某个空间的页搜不到"
+            eprintln!(
+                "[search] 全空间搜索完成，跳过 {} 个空间（未解锁/打不开）：{}",
+                skipped.len(),
+                skipped.join("、")
+            );
         }
         out.truncate(limit);
         return Ok(out);
