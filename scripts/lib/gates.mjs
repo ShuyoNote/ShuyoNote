@@ -285,6 +285,23 @@ export const GATES = [
     registered: "2026-10-01",
   },
   {
+    id: "check-mcp-bundle-resources",
+    group: "contract",
+    label: "安装包必须带全桥的相对 import（`bundle.resources` 漏一个 ⇒ 装完就是 ERR_MODULE_NOT_FOUND）",
+    cmd: "node scripts/check-mcp-bundle-resources.mjs",
+    selfSkipOk: "**若** `tools/shuyonote-mcp/index.mjs` 不存在 ⇒ 没有可检查对象（不许假绿 ✗）",
+    incident:
+      "2026-10-19（1.92.20 发版当天）：桥在 10-18 改成 `import { resolveEndpointFiles } from ./paths.mjs`" +
+      "（f19b5f3a，为连接器商店那条路自己按平台约定找默认目录），而三份平台 conf 的 `bundle.resources` **只映射了 index.mjs** ✗" +
+      " ⇒ `paths.mjs` 从来没进过安装包 ⇒ **所有** 1.92.20 用户按商店片段接线都是 `ERR_MODULE_NOT_FOUND`，" +
+      "桥一行代码都没来得及跑（没有日志、没有报错线索，用户侧只看到「连不上」「没有工具」）。" +
+      "既有四条 MCP 判据（stdout 纯净／桥哑／宿主面鉴权／通道）**全看源码** ⇒ 「源码全对、少搬一个文件」这件事没有任何一条看得见 ✗" +
+      " —— 而它又是最难归因的一类：仓库里一切正常、发出去必崩。" +
+      "本条把「桥源码的**递归** import 图」与「三份 conf 的 resources」逐个对上：漏文件／目标名不是 `mcp/<源文件名>`／" +
+      "import 到不存在的文件，三种都红；tgz＋npm 那条路不归它管（`package.json` 的 `files` 本来就对 ✓）。",
+    registered: "2026-10-19",
+  },
+  {
     id: "check-kb-s1-search",
     group: "contract",
     label: "S1 检索：同一次查询覆盖正文＋附件派生文本；索引不可用给稳定码",
