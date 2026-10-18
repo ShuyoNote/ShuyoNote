@@ -18,6 +18,13 @@ mod pairing_trust;
 //    ⚠️ ⭐ 公钥现在是**占位** ✗（真公钥由 owner 给）⇒ ⭐ 真凭证**一律验不过**，⭐ 这是**有意**的 ✓。
 //    ⛔ 边界：⭐ 自己写 ✗，⛔ 不许从专有中继仓拷代码（⭐ 那仓专有、本仓 AGPL ✓）。
 mod relay_license;
+// ⭐ 2026-10-18（个人版「跨网同步订阅」客户端）：
+//    · `device_identity` —— 本机 ed25519 私钥 ＋ `dev-<sha256(pubkey)[..8]>` 令牌；
+//      私钥坏了**明确报错、⛔ 绝不换新**（换了旧卡就续不了）。
+//    · `license_http` —— 只许打**登记过的那台**发卡站（同源复核）＋ 用本机私钥签调用方给的字节；
+//      ⚠️ 被签名的四条字节**只在** `src/lib/license/signedBytes.ts` 拼（⛔ 这里不自己拼 ✗）。
+mod device_identity;
+mod license_http;
 // ⭐ 2026-10-11（owner 拍「甲：一端点就通，图④为准」）：⭐ 一键信任的**命令层** ✗ ——
 //    点一下就通 ✓：⭐ 用本空间**已有的网格令牌**把对面登记好（⭐ 调 `sync::remember_peer_card` ✓，
 //    那是"⭐ 登记对面 ✗"的唯一实现 ✓）＋ ⭐ 广播一条"⭐ 我想信任你 ✗"。⭐ 令牌**不上线** ✓。
@@ -1160,6 +1167,14 @@ pub fn run() {
   // ⭐ P-4 片③-a（2026-10-14）：⭐ 逐台「对码」读数 ✗ —— ⭐ 命令只是薄壳 ✓，
   //    ⭐ 派生在 `pairing_trust::pairing_code_for`（片① 已入库 ✓）；⛔ 一行算法都不在这儿 ✗。
   pairing_trust::pairing_code_reading,
+  // ── 个人版「跨网同步订阅」：设备身份 ＋ 发卡站受控请求 ──────────────────────────
+  //    ⚠️ 私钥**只在 Rust**（`device_identity`）；四条被签名字节由前端拼好后交过来签，
+  //    ⛔ 这里不自己拼（否则那份契约就有两份实现 ✗）。Web 侧如实拒绝（`web.ts`）。
+  device_identity::license_device,
+  device_identity::license_sign,
+  license_http::license_set_issuer,
+  license_http::license_issuer_ready,
+  license_http::license_http_request,
 ])
         .run(app_context())
         .expect("error while running tauri application");

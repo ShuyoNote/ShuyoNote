@@ -1794,6 +1794,19 @@ export function makeInvoke(store: SqliteStore) {
       // ⚠️ 注意它回来的 `connection.label` 是"<b>不可用</b>"，⛔ 不是"已连上" ✗。
       return relayUnavailableShape() as T;
     }
+    // ---- 个人版「跨网同步订阅」（2026-10-18）----
+    // Web 壳里这一整块**没有**：私钥在 Rust（`device_identity`）、发卡站请求也要走后端做同源复核。
+    // ⇒ 如实抛一句**说得出边界**的错（⛔ 不假装成功、⛔ 不返回 0 天/空卡 ✗）。
+    // ⚠️ `license_issuer_ready` 不抛：界面要用它决定"整块关掉"还是"显示"，回 `ready:false` ＋ 原因 ✓。
+    if (cmd === "license_issuer_ready") {
+      return {
+        ready: false,
+        why: "Web 版没有本机设备密钥，跨网订阅只能在桌面版里用。",
+      } as T;
+    }
+    if (cmd === "license_device" || cmd === "license_sign" || cmd === "license_set_issuer" || cmd === "license_http_request") {
+      throw new Error("Web 版没有本机设备密钥，跨网订阅只能在桌面版里用。");
+    }
     if (cmd === "delete_page") {
       // Soft-delete the page AND recursively all of its descendants (folders'
       // children, databases' pages, ...), so removing a folder empties it from
