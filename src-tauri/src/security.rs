@@ -2029,6 +2029,13 @@ mod tests {
 
     #[test]
     fn payload_passthrough_when_disabled() {
+        // ⭐ 2026-10-18（CI 实测 flake，逐字）：
+        //     `security::tests::payload_passthrough_when_disabled` 断言 `left == right` 失败，
+        //     left 是一串 base64（**真的加密了**）、right 是 `plaintext payload`。
+        //     真因：本模块的其它测试会 `enable_space_meta` / `enable_meta` 改**进程级**口令状态，
+        //     而本测试**没拿 `SEC_LOCK`**（同模块另外几十个测试都拿了）⇒ 并行跑时读到别人开着的闸门 ⇒ 假红。
+        //     ⚠️ 这不是产品 bug：同一笔在上一轮 CI 上是绿的、这一轮红，失败点就在这把锁上。
+        let _g = SEC_LOCK.lock().unwrap();
         let (_t, c) = temp_ws();
         let plain = "plaintext payload";
         assert_eq!(encrypt_payload(&c, plain).unwrap(), plain);
