@@ -56,6 +56,8 @@ import { SyncAdvancedFold } from "./SyncAdvancedFold";
 // ⭐ 跨网中继那两格（图⑤「中继」／图⑧「中继许可证」，2026-10-10）——
 //    读数（连上没连上 ＋ 剩余 N 天）**全部来自后端**，这一块只摆上去 ✓。
 import { RelayStatusSection } from "./RelayStatusSection";
+// ⭐ 2026-10-18：个人版「跨网同步订阅」面板（桌面专属；Web 侧没有本机私钥 ⇒ 不挂）。
+import { LicenseSection } from "./LicenseSection";
 import {
   publishPendingRemoteTotal,
   subscribePendingRemoteTotal,
@@ -2318,6 +2320,9 @@ export function SyncPanel({
             {isDesktopPlatform() && lanStatus && (!!activeRow || isPersonalActive) && (
               <>
                   <RelayStatusSection />
+                  {/* ⭐ 2026-10-18：个人版「跨网同步订阅」的状态与续期（桌面专属 —— Web 没有本机私钥）。
+                      ⚠️ 停卡那一档写的是「已停卡 · 只停了跨网」，⛔ 不许写"已过期"（判据 `license/uiText.test.ts`）。 */}
+                  <LicenseSection />
               {/* ⭐⭐ **2026-10-14（owner：「和上面重复了」⇒ 拍「整张卡连输入框一起去掉」）** ✗ ——
                   ⭐ 这一块原来是「设备直连设置」那张卡 ✓（说明 ＋ 监听地址输入框 ＋ 保存地址 ＋ 用自动选开启
                   ＋ 关掉网格 ＋ `<MeshAdvancedForm` ✓）⇒ ⛔ **整张卡已删** ✗。

@@ -674,6 +674,15 @@ node scripts/check-web-build.mjs --url https://shuyonote.github.io/ShuyoNote/
 > [!] **清理旧 assets 必须保留「动态加载」资源（踩坑，v1.84.1）**：官网手动部署时若删旧产物，**不能只按 `index.html`/`sw.js` 的静态资源引用过滤**——sql.js 的 wasm（`new URL('sql-wasm-….wasm', import.meta.url)` 在 `vendor-*.js` 里运行时加载）和 pdf worker（`pdf.worker.min-….mjs`）等**不在静态引用里**，误删会导致 `Error: SqliteStore not initialized`（sql-wasm fetch 404 → `SqliteStore.init()` 抛错 → catch 返回未初始化 store → 所有 DB 查询报错）。
 > **正确做法**：按**本地 `dist-web` 全量清单**同步（`find . -type f` 生成本地清单，服务器按清单删多余文件），既铺平目录又保留全部动态资源。**GitHub Pages 走 CI 全新构建不受影响**；只有手动 scp 的官方站需小心。
 
+> [!] **另一个同样报 `SqliteStore not initialized` 的成因：目录权限 0700（2026-10-18 实际踩到）**。
+> `scp -r` 在 root 会话下可能带着 **umask 077** 建目录，而 `rsync -a` 会**原样保留**这个模式 ⇒
+> `app/assets/` 变成 `drwx------` ⇒ nginx 的 `www-data` 连**目录都进不去** ⇒ 请求 `assets/*.js` 全部 **403** ⇒
+> `vendor-*.js` 里的 sql-wasm fetch 失败 ⇒ 同样的 `Error: SqliteStore not initialized`。
+> **判据（部署后必跑，比只看 HTTP 200 有效）**：
+> `ls -ld <app>/assets` 必须是 `drwxr-xr-x`；`curl -s https://shuyo.cn/app/ | grep -oE 'assets/[^"]+\.(js|css)' | while read a; do code=$(curl -s -o /dev/null -w '%{http_code}' -I "https://shuyo.cn/app/$a"); echo "$code $a"; done`
+> ⇒ **每一行都必须是 200**（403 就是权限，404 就是少文件 —— 两种错因症状一样，必须靠状态码分开）。
+> 修法一条：`chmod -R a+rX <app>`（`X` 只给目录与原本可执行的加 x，别给普通文件乱加）。
+
 > [!] **清单文件必须是 LF —— 否则 `comm` 会把线上**整个目录**判成"多余"全删掉（2026-09-21 v1.91.19 实际踩到，网站空了约 3 分钟）**：
 > PowerShell 5.1 的 `Set-Content -Encoding ascii`（以及 `Out-File`）写的是 **CRLF**，每行尾多一个 `\r`，
 > 而服务器 `find | sort` 出来的是 LF ⇒ 两边**没有一行相等** ⇒ `comm -23` 把**全部**文件判成"服务器多余"。
