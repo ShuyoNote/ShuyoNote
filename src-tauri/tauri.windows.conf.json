@@ -3,7 +3,8 @@
   "bundle": {
     "resources": {
       "vendor/pdfium/win-x64/bin/pdfium.dll": "pdfium.dll",
-      "../tools/shuyonote-mcp/index.mjs": "mcp/index.mjs"
+      "../tools/shuyonote-mcp/index.mjs": "mcp/index.mjs",
+      "../tools/shuyonote-mcp/paths.mjs": "mcp/paths.mjs"
     }
   }
 }

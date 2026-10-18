@@ -37,7 +37,7 @@
 * **关掉 ⇒ 每个请求立刻被拒** ✓，**重新打开会换一枚新令牌**（旧令牌作废 ✓）。
 
 桥本身有两个来源，面板会**自动填好**它找到的那一个：
-* **安装包自带**：`<安装目录>/mcp/index.mjs`（三份平台包配置都随包发这个文件 ✓）；
+* **安装包自带**：`<安装目录>/mcp/index.mjs`，且 `paths.mjs` **必须跟着一起发**（桥 `import` 它；三份平台包配置都随包发这两个文件 ✓ —— 2026-10-19：1.92.20 只发了 `index.mjs`，导致装完必 `ERR_MODULE_NOT_FOUND`，`scripts/check-mcp-bundle-resources.mjs` 现在盯着这件事）；
 * **源码仓库**：`<仓库根>/tools/shuyonote-mcp/index.mjs`（`pnpm tauri dev` 时 ✓）。
 
 ⚠️ 两种都要求本机有 **Node.js**（桥是一个零依赖的 `node:fs` 脚本，不要求 `npm install`，

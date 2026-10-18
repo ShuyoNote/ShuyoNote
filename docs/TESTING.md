@@ -56,7 +56,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 83 条（contract 56 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 29 条 · 命令 Rust 298 / web 272 / CommandMap 299
+门禁 84 条（contract 57 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 29 条 · 命令 Rust 298 / web 272 / CommandMap 299
 基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 2795 · smoke-web 365 · check-pdf-reload 8 · check-panel-layout 61 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 69 · mobile-overlays 826 · mobile-views 249 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
@@ -131,6 +131,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | `check-mcp-host-channel` | contract | **宿主面那半**通道（方向②：桥→App）：默认关／只绑回环／token 从文件读／`Origin`·`Host` **恰好回环**（前缀写法判红）／必须走唯一入口 `handle_external_call`；通道未建 ⇒ 绿＋自报跳过（**它现在在** ✓ 2026-10-06） |
 | `check-mcp-bridge-dumb` | contract | MCP 桥必须哑：不碰库／不判权限／不写审计／不摸权威形态 |
 | `check-mcp-bridge-stdout` | plugin | MCP 桥的 **stdout 只许协议消息**：源码里不许有 `console.log`；真起进程喂 `initialize`／通知／`tools/list` ⇒ stdout 每行都要 `JSON.parse` 得动、带 id 的请求必有回、**通知不许有回**；版本协商（不支持的版本回自己支持的那个）；桥不在 ⇒ exit 2（不算通过） |
+| `check-mcp-bundle-resources` | contract | 安装包必须带全桥的**递归 import 图**：三份平台 conf 的 `bundle.resources` 漏一个文件 ⇒ 装完桥 import 它必 `ERR_MODULE_NOT_FOUND`（2026-10-19 · 1.92.20 漏了 `paths.mjs`，全员中招且无一行日志）；顺带核目标名必须是 `mcp/<源文件名>`、import 到不存在的文件也判红；桥不在 ⇒ exit 2（不算通过） |
 | `check-mcp-audit-single-ledger` | contract | 审计只有一本账（`PLUGIN_AUDIT`）且能力调用成功/失败都留痕；宿主面不许自建环 |
 | `check-search-platform-parity` | contract | 桌面专属检索能力（FTS/BM25 只在桌面、Web 走 LIKE）必须写进 app 侧文档 |
 | `check-kb-s1-search` | contract | S1 检索：同一次查询覆盖正文＋附件派生文本；索引不可用给稳定码 |
