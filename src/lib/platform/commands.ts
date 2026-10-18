@@ -1776,4 +1776,9 @@ export interface CommandMap {
     args: { method: string; path: string; headers: [string, string][]; body: string | null };
     result: { status: number; body: string };
   };
+  /** 把续期拿回来的租约交给中继（后端**先验签**再写进中继配置的 `token` 那一格）。 */
+  license_apply_lease: {
+    args: { lease: string };
+    result: { applied: boolean; leaseExp: number; relayUrl: string | null };
+  };
 }

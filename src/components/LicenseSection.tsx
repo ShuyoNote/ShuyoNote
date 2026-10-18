@@ -124,12 +124,28 @@ export function LicenseSection() {
         body: JSON.stringify({ card: current.text, dev, ts, sig }),
       });
       if (res.status !== 200) throw new Error(`发卡站回了 HTTP ${res.status}`);
-      const json = JSON.parse(res.body) as { card?: string };
+      const json = JSON.parse(res.body) as { card?: string; lease?: string };
       if (!json.card) throw new Error("续期响应里没有新卡");
       const next = [...cards, { text: json.card }];
       writeCards(next);
       setCards(next);
-      setMsg("续期成功：新卡已存下（旧卡保留，按 rot 自动挑当前那张）。");
+      // ⭐ 租约**立刻交给中继**（写进中继配置的 `token` 一格，后端先验签再落盘）。
+      //    ⛔ 不能只留在内存：中继连接是另一次启动也要读的东西 ⇒ 只留内存等于"续了费没用"。
+      if (!json.lease) {
+        setMsg("续期成功：新卡已存下。⚠️ 这次响应里没有租约（跨网要等下一次续期或重新开通）。");
+        return;
+      }
+      try {
+        const applied = await api.licenseApplyLease(json.lease);
+        const when = new Date(applied.leaseExp * 1000).toLocaleString();
+        setMsg(
+          applied.relayUrl
+            ? `续期成功：新卡已存下，租约已交给中继（到期 ${when}）。`
+            : `续期成功：新卡已存下，租约已保存（到期 ${when}）——⚠️ 但还没配中继地址，跨网仍连不上。`,
+        );
+      } catch (e) {
+        setMsg(`续期成功（新卡已存下），但租约没交给中继：${e instanceof Error ? e.message : String(e)}`);
+      }
     } catch (e) {
       setMsg(`续期失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {

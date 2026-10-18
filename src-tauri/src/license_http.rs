@@ -92,8 +92,63 @@ pub async fn http(
     Ok((status, text))
 }
 
-// ── 命令层（薄壳）──────────────────────────────────────────────────────────────
+/// 把**续期拿回来的租约**交给中继（写进中继配置的 `token` 那一格）。
+///
+/// ## 为什么必须写进配置而不是留在内存
+/// 中继连接是**另一个进程/另一次启动**也要读的东西（`relay_client::token_text` 从配置读）⇒
+/// 只留在内存里 ⇒ 下次启动又变回"未授权"（用户会以为"续了费却没用"）。
+///
+/// ## 三条不许省的
+/// ① **先验签再落盘**（`relay_license::verify_lease`，设备号必须是本机）—— ⛔ 不验就写 = 把可伪造的串当凭证；
+/// ② 只改 `token` 一格，其余字段（`url` 等）**原样保留**（读 `serde_json::Value` 而不是结构体 ⇒ 不丢未知字段）；
+/// ③ 先写 `.tmp` 再 rename（同目录）。
+pub fn apply_lease(lease: &str) -> Result<serde_json::Value, String> {
+    let text = lease.trim();
+    if text.is_empty() {
+        return Err("租约是空的".to_string());
+    }
+    let id = crate::device_identity::load_default()?;
+    let claims = crate::relay_license::verify_lease(text, now_unix(), &id.dev())
+        .map_err(|e| format!("租约验不过（{e:?}）—— 没写进配置"))?;
 
+    let path = crate::relay_client::resolve_config_path()
+        .ok_or_else(|| "拿不到中继配置路径（app data dir 还没初始化）".to_string())?;
+    let mut cfg: serde_json::Value = if path.exists() {
+        let raw = std::fs::read_to_string(&path).map_err(|e| format!("读不了中继配置：{e}"))?;
+        serde_json::from_str(&raw).map_err(|e| format!("中继配置不是合法 JSON：{e}"))?
+    } else {
+        serde_json::json!({})
+    };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("建不了中继配置目录：{e}"))?;
+    }
+    cfg["token"] = serde_json::Value::String(text.to_string());
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(&cfg).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("写不了临时配置文件：{e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("落盘中继配置失败：{e}"))?;
+
+    Ok(serde_json::json!({
+        "applied": true,
+        "leaseExp": claims.exp,
+        "relayUrl": cfg.get("url").cloned().unwrap_or(serde_json::Value::Null),
+    }))
+}
+
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// 把续期拿到的租约交给中继（**先验签**再落盘；只改 `token` 一格）。
+#[tauri::command]
+pub fn license_apply_lease(lease: String) -> Result<serde_json::Value, String> {
+    apply_lease(&lease)
+}
+
+// ── 命令层（薄壳）──────────────────────────────────────────────────────────────
 /// 登记发卡站地址（空串 = 关闭这一整块；界面据 `license_issuer_ready` 决定显不显示按钮）。
 #[tauri::command]
 pub fn license_set_issuer(base: String) -> Result<(), String> {

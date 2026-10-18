@@ -1175,6 +1175,7 @@ pub fn run() {
   license_http::license_set_issuer,
   license_http::license_issuer_ready,
   license_http::license_http_request,
+  license_http::license_apply_lease,
 ])
         .run(app_context())
         .expect("error while running tauri application");

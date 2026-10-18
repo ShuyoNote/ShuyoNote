@@ -1804,7 +1804,13 @@ export function makeInvoke(store: SqliteStore) {
         why: "Web 版没有本机设备密钥，跨网订阅只能在桌面版里用。",
       } as T;
     }
-    if (cmd === "license_device" || cmd === "license_sign" || cmd === "license_set_issuer" || cmd === "license_http_request") {
+    if (
+      cmd === "license_device" ||
+      cmd === "license_sign" ||
+      cmd === "license_set_issuer" ||
+      cmd === "license_http_request" ||
+      cmd === "license_apply_lease"
+    ) {
       throw new Error("Web 版没有本机设备密钥，跨网订阅只能在桌面版里用。");
     }
     if (cmd === "delete_page") {

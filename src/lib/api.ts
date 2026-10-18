@@ -877,6 +877,9 @@ export const api = {
   licenseSetIssuer: (base: string) => invoke("license_set_issuer", { base }) as Promise<void>,
   licenseIssuerReady: () =>
     invoke("license_issuer_ready") as Promise<{ ready: boolean; base?: string; why?: string }>,
+  /** 把续期拿回来的租约交给中继（后端**先验签**再写进中继配置的 `token` 那一格）。 */
+  licenseApplyLease: (lease: string) =>
+    invoke("license_apply_lease", { lease }) as Promise<{ applied: boolean; leaseExp: number; relayUrl: string | null }>,
   licenseHttpRequest: (args: {
     method: string;
     path: string;
