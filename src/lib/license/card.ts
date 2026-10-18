@@ -172,8 +172,19 @@ export function pickCurrent<T extends { payload: LicenseClaims }>(cards: T[]): T
   });
 }
 
-/** 剩余天数（向上取整到"天"，仅 active/grace 有意义；其它态给 0）。 */
+/**
+ * 剩余**有效**天数（算到 `exp`，⛔ **不含宽限**）。
+ *
+ * ⚠️ 这里踩过一次（2026-10-18 真链路实测）：早先把宽限也算进去 ⇒ 30 天的卡显示"还剩 44 天"，
+ *    而 `renewDecision` 的"≤7 天提示续期"会因此**晚 14 天才响**（错过续期窗口）。
+ *    ⇒ 口径定为：`daysLeft` 只算到 `exp`；宽限是另一档状态（`grace`）自己说话 ✓。
+ */
 export function daysLeft(payload: LicenseClaims, nowSec: number): number {
-  const end = payload.exp + Math.max(0, payload.grace) * 86_400;
-  return Math.max(0, Math.ceil((end - nowSec) / 86_400));
+  return Math.max(0, Math.ceil((payload.exp - nowSec) / 86_400));
+}
+
+/** 宽限还剩几天（仅在 `grace` 那一档有意义；其它态给 0）。 */
+export function graceDaysLeft(payload: LicenseClaims, nowSec: number): number {
+  const graceEnd = payload.exp + Math.max(0, payload.grace) * 86_400;
+  return Math.max(0, Math.ceil((graceEnd - nowSec) / 86_400));
 }

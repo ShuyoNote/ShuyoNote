@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CLOCK_TOLERANCE_SECS,
+  graceDaysLeft,
   CROSSNET_CAP,
   cardState,
   crossnetAllowed,
@@ -132,9 +133,12 @@ describe("cardState —— 五态与 ±10 分钟容差（边界两侧都钉）",
     for (const s of ["stopped", "expired", "not-yet"] as const) expect(crossnetAllowed(s)).toBe(false);
   });
 
-  it("⑤ 剩余天数按「到期 + 宽限」算，且不为负", () => {
-    expect(daysLeft(base, base.exp)).toBeGreaterThanOrEqual(14);
-    expect(daysLeft(base, base.exp + base.grace * 86_400 + 99_999)).toBe(0);
+  it("⑤ 剩余天数只算到 exp（⛔ 不含宽限 —— 含了会让续期提示晚 14 天才响）", () => {
+    // 真链路实测（2026-10-18）：30 天的卡曾经显示"还剩 44 天"（把 14 天宽限也算了）。
+    expect(daysLeft(base, base.nbf), "从生效算 = 整段有效期").toBe(Math.ceil((base.exp - base.nbf) / 86_400));
+    expect(daysLeft(base, base.exp), "到 exp 当天算 0").toBe(0);
+    expect(daysLeft(base, base.exp + 99_999), "过期后不为负").toBe(0);
+    expect(graceDaysLeft(base, base.exp + 86_400), "宽限另算（这一档只在 grace 用）").toBe(base.grace - 1);
   });
 });
 
