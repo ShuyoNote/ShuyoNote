@@ -1116,9 +1116,11 @@ mod rekey_tests {
         let c = rusqlite::Connection::open(crate::db::space_db_path(&dir, "old-id")).unwrap();
         c.execute_batch("PRAGMA foreign_keys = ON").unwrap();
         // 一页挂在这个空间上（FK 生效 ⇒ 旧实现删父行会撞）
+        // ⚠️ 只给**非内容列**：内容那两列有默认值，且"直接访问内容列"由
+        //    `check-doc-content-access` 管着（只减不增）⇒ ⛔ 测试里也不去碰它们 ✓
         c.execute(
-            "INSERT INTO pages (id, workspace_id, title, content_json, content_text, created_at, updated_at)
-             VALUES ('pg-1', 'old-id', '标题', '{}', '', 1, 1)",
+            "INSERT INTO pages (id, workspace_id, title, created_at, updated_at)
+             VALUES ('pg-1', 'old-id', '标题', 1, 1)",
             [],
         )
         .unwrap();

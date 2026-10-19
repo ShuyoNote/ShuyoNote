@@ -1,5 +1,6 @@
 {
   "src-tauri/src/backlinks.rs": 2,
+  "src-tauri/src/backup.rs": 2,
   "src-tauri/src/blocks.rs": 22,
   "src-tauri/src/commands.rs": 18,
   "src-tauri/src/db.rs": 9,
