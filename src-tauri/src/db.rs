@@ -482,7 +482,7 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
 }
 
 /// Schema for the app-level `meta.db` (cross-workspace shared state).
-fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
+pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS workspaces (
