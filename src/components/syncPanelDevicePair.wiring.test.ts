@@ -142,4 +142,34 @@ describe("T4 · 把这台设备接进来", () => {
     // ④ ⛔ 对面**没报公钥** ⇒ 如实说、⛔ 不硬凑一个身份 ✗（老版本对端就是这一档 ✓）
     expect(fn).toContain("if (!peer.pubkey)");
   });
+
+  // ⭐ **2026-10-19（owner 真机：「配对成功后，页面不能自动刷新」）**：
+  //   配好之后那一行**还停在「待配对」** —— 成功那条路只弹了一句 toast、**没重读** `lan_status`
+  //   ⇒ 要等下一轮 5 秒轮询才变，用户看到的是"配好了没反应" ✓。
+  //   **变异**：删掉 `setLanNonce` 那两行 ⇒ 这一条必红（真机上也会再退回"要等一轮轮询"）✓。
+  it("⑥ 配对成功/失败之后都要**立刻重读**局域网读数（⛔ 不能让那一行停在旧状态 ✗）", () => {
+    const fn = between(SRC, "const trustDevice = async", "\n  };");
+    // 成功 ＋ 失败各一次（失败也要让那台回到该在的那一段）
+    expect((fn.match(/setLanNonce\(/g) ?? []).length, "成功＋失败两处").toBe(2);
+    // 那个 nonce 必须真的进了轮询 effect 的依赖（否则自增不触发重读 ⇒ 静默无效）
+    expect(SRC, "轮询 effect 的依赖里要有 lanNonce").toMatch(
+      /\}, \[open, contentOnly, activeId, lanNonce\]\);/,
+    );
+    // ⛔ 界面不许自己改列表：列表唯一来源仍是后端那份读数
+    expect(fn).not.toMatch(/setLanStatus\(/);
+  });
+
+  // ⭐ **2026-10-19（owner：「配对成功，没有同步发生？」）**：
+  //   配对**只做信任、不搬数据** —— 真正搬运原本只发生在同步节拍上（可能是分钟级）⇒ 配完像"什么都没发生"。
+  //   ⇒ 信任成功后**立刻跑一轮网格交换**（与「立即同步」同一条 `mesh_sync_now`），并刷新那两份清单。
+  //   **变异**：删掉 `api.meshSyncNow` 那一段 ⇒ 这一条必红（真机上就要等节拍才动数据）。
+  it("⑦ 配对成功后**立刻交换一轮**（⛔ 不让用户等同步节拍 ✗）", () => {
+    const fn = between(SRC, "const trustDevice = async", "\n  };");
+    expect(fn, "要用那条现成的网格命令").toContain("api.meshSyncNow(");
+    // 交换会改数据 ⇒ 页面列表与待取回清单必须跟着刷（否则"说拉了 2 页、列表还是空"）
+    expect(fn).toContain("loadPages()");
+    expect(fn).toContain("loadPendingRemote()");
+    // ⛔ 失败不许吞：要说出来（信任已成立，这一步只是"立刻搬一次"失败）
+    expect(fn).toContain("立刻交换失败");
+  });
 });
