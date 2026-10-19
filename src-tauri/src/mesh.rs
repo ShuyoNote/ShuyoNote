@@ -480,13 +480,15 @@ pub fn invitable_base_for(
     }
     // ★ 「服务这个空间」这一关与地址解析共用**同一把尺**（`lan::serves_space`）。
     // ★ 「服务这个空间」这一关与地址解析共用**同一把尺**。
-    let by_name = !space_name.trim().is_empty() && !p.announce.hub_space_names.is_empty();
-    let serves = if by_name {
-        crate::lan::serves_space_name(space_name, p)
-    } else {
-        crate::lan::serves_space(space_id, p)
-    };
-    if !serves {
+    // ⭐⭐ **2026-10-19 回滚（真机读数驱动）**：⭐ 这里原来"对端报了名字就只看名字" ✗ ——
+    //   实测（windows↔AMD）：对端公告**收到了**（`✅ 与本机空间匹配`），但后台轮次**候选 0**，
+    //   因为我这一格的本机空间名与对端报的名字**不同**（房间档下它们根本不是同一个名字），
+    //   ⇒ 名字这把尺把"能说话的对端"直接筛掉了 ✗。
+    //   ⇒ **挑选对端回到 id/房间**（传输作用域）✓；名字只用在**落库那一层**
+    //   （`mesh_merge_ledger::batch_merge_gate`）—— 那才是"同名才融合"该待的地方 ✓。
+    //   ⚠️ `space_name` 参数**保留**（公告里那格照发、将来"多空间路由"要用），但⛔ 不参与挑选。
+    let _ = space_name;
+    if !crate::lan::serves_space(space_id, p) {
         return None;
     }
     let base = p.announce.hub_base.as_deref().map(str::trim).filter(|b| !b.is_empty())?;
@@ -3333,30 +3335,40 @@ mod tests {
         p
     }
 
-    /// ⭐⭐ **2026-10-19（owner 重申「个人空间严格按空间名称自动同步」· B1 步三）**：
-    /// 挑对端时**名字优先**，三格：
-    /// 1. 同名不同 id ⇒ 挑中 ✓；2. 同 id 不同名 ⇒ ⛔ 不许挑中；3. 老对端没报名字 ⇒ 回落 id ✓。
+    /// ⭐⭐ **2026-10-19（真机读数把这一条改回来了）**：**挑对端按"传输作用域"（id／房间），⛔ 不按名字** ✗。
     ///
-    /// **变异**：`invitable_base_for` 里 `by_name` 那支恒 `false` ⇒ 第 1 格必红；恒 `true`（不看名字）⇒ 第 2 格必红。
+    /// 来由（windows↔AMD 实测，逐字）：
+    /// ```text
+    /// [mesh] 收到公告：来源 172.16.174.37 ｜ 对端 94bfb27e ｜ 它代言 1 个空间 [1234…]
+    ///        ｜ ✅ 与本机空间**匹配** ⇒ 可以成为网格对端
+    /// [mesh] 后台一轮完成：空间 1234… ｜ 候选 0 ｜ 收下 0 条
+    /// ```
+    /// ⇒ 公告收到了、也判了"匹配"，但**候选 0** —— 因为"对端报了名字就只看名字"那把尺，
+    ///   把**能说话的对端**筛掉了（房间档里两边本机空间名根本不同）✓
+    /// ⭐ 结论：**名字只用在落库那一层**（`mesh_merge_ledger::batch_merge_gate`）——
+    ///   那才是"同名才融合"该待的地方 ✓；用它筛对端，会把**传输**和**融合**两件事搅在一起 ✗。
+    ///
+    /// 三格：① 同名但服务**别的**房间 ⇒ ⛔ 不挑（传输作用域不同）；
+    ///       ② 同房间、名字不同 ⇒ **挑中**（能说话；名字交给落库那一层判）；
+    ///       ③ 老对端没报名字 ⇒ 照旧按 id。
+    ///
+    /// **变异**：把 `invitable_base_for` 改回"有名字就只看名字" ⇒ 第 ② 格必红（正是今天那次故障）。
     #[test]
-    fn the_same_space_name_wins_over_a_matching_id() {
+    fn peer_selection_is_by_transport_scope_not_by_name() {
         let named = vec![announced_named("B", "http://192.168.1.3:8787", "sp-remote", "产品")];
-        let got = mesh_peers_by_name("sp-local", "产品", "me", &named);
-        assert_eq!(got.len(), 1, "同名不同 id 必须挑中");
-        assert_eq!(got[0].device_id, "B");
-
-        let same_id_other_name = vec![announced_named("C", "http://192.168.1.4:8787", "sp-local", "运营")];
         assert!(
-            mesh_peers_by_name("sp-local", "产品", "me", &same_id_other_name).is_empty(),
-            "id 对得上但名字不同 ⇒ ⛔ 不许挑中（严格按名字）"
+            mesh_peers_by_name("sp-local", "产品", "me", &named).is_empty(),
+            "① 对端服务的是**别的**房间 ⇒ ⛔ 不挑（传输作用域不同）"
         );
+
+        let same_room_other_name =
+            vec![announced_named("C", "http://192.168.1.4:8787", "sp-local", "运营")];
+        let got = mesh_peers_by_name("sp-local", "产品", "me", &same_room_other_name);
+        assert_eq!(got.len(), 1, "② 同一房间、名字不同 ⇒ **要挑中**（名字交给落库那层判）");
+        assert_eq!(got[0].device_id, "C");
 
         let old = vec![announced("D", "http://192.168.1.5:8787", &["sp-local"])];
-        assert_eq!(
-            mesh_peers_by_name("sp-local", "产品", "me", &old).len(),
-            1,
-            "老对端没报名字 ⇒ 回落到 id，别把升级期变成断连"
-        );
+        assert_eq!(mesh_peers_by_name("sp-local", "产品", "me", &old).len(), 1, "③ 老对端按 id");
         let old_other = vec![announced("E", "http://192.168.1.6:8787", &["other"])];
         assert!(mesh_peers_by_name("sp-local", "产品", "me", &old_other).is_empty());
     }
