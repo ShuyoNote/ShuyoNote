@@ -140,6 +140,13 @@ pub struct LanAnnounce {
     /// `#[serde(default)]` ⇒ 老对端不发这一格也收得下，⛔ 不升 `WIRE_VERSION`。
     #[serde(default)]
     pub hub_space_names: Vec<String>,
+    /// ⭐ 2026-10-19（B1 步四的准备）：**这些空间是什么类别**（与 `hub_space_names` 一一对应）。
+    ///
+    /// 为什么需要它：自动建空间那道闸（G2「两边都必须 personal」）**判不出对端的类别**就拦不住
+    /// —— 那是"把别人的团队空间当成个人空间建到我这儿"。
+    /// ⚠️ 今天**只发、不用**（判定仍然是"只看名字／回落 id"）；空串 ＝ 这一台没报类别。
+    #[serde(default)]
+    pub hub_space_kinds: Vec<String>,
     /// 身份指纹。★ **＝ `device_id`**（owner 2026-09-25 拍板，B 片施工单 §8.3）：
     /// 填的是**应用级事实**（设备标识），**不是**"设备密钥材料的指纹" ——
     /// 它要挡的是**掉包**，不是"同一台设备换了钥匙"。语义不许悄悄改（真需要后者时另立字段）。
@@ -189,6 +196,7 @@ impl Default for LanAnnounce {
             short_id: String::new(),
             hub_base: None,
             hub_spaces: Vec::new(),
+            hub_space_kinds: Vec::new(),
             hub_space_names: Vec::new(),
             fp: String::new(),
             trust_ask: String::new(),
@@ -460,6 +468,9 @@ pub fn announce_for_own_hub(
     space_id: &str,
     // ⭐ 2026-10-19（B1）：⭐ 这个空间**叫什么** ✗ —— 只往公告里带，⛔ 今天不参与任何判定。
     space_name: &str,
+    // ⭐ 2026-10-19（B1 步四的准备）：⭐ 这个空间**属于哪一档**（personal／team／空）✗ ——
+    //   自动建空间那道闸（G2）要它；⛔ 今天同样**只发、不用**。
+    space_kind: &str,
 ) -> Option<LanAnnounce> {
     let base = configured_url.trim().trim_end_matches('/');
     // ① 自己用的地址都不是局域网地址 ⇒ 没什么可代言的。
@@ -495,6 +506,11 @@ pub fn announce_for_own_hub(
             Vec::new()
         } else {
             vec![space_name.trim().to_string()]
+        },
+        hub_space_kinds: if space_kind.trim().is_empty() {
+            Vec::new()
+        } else {
+            vec![space_kind.trim().to_string()]
         },
         // ★ 见上面那段：`fp` ＝ 应用级事实 `device_id`（B 片施工单 §8.3 的收口）。
         fp: dev.to_string(),
@@ -1020,6 +1036,7 @@ mod tests {
                 short_id: "T3ST1".into(),
                 hub_base: base.map(|s| s.to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
+                hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
@@ -1168,6 +1185,7 @@ mod tests {
             short_id: "T3ST1".into(),
             hub_base: base.map(|s| s.to_string()),
             hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
+            hub_space_kinds: Vec::new(),
             hub_space_names: Vec::new(),
             fp: "fp".into(),
             pubkey: String::new(),
@@ -1189,12 +1207,18 @@ mod tests {
             "http://192.168.1.5:8787",
             "room-1",
             "数友标尺",
+            "personal",
         )
         .expect("局域网地址 ⇒ 应当有公告");
         assert_eq!(a.hub_space_names, vec!["数友标尺".to_string()], "公告要带空间名");
         assert_eq!(a.hub_spaces, vec!["room-1".to_string()], "id 那一格不许被名字顶掉");
+        assert_eq!(
+            a.hub_space_kinds,
+            vec!["personal".to_string()],
+            "类别也要带上（自动建空间那道闸 G2 要它）"
+        );
 
-        let b = announce_for_own_hub("dev-a", "本机", "T3ST1", "http://192.168.1.5:8787", "room-1", "")
+        let b = announce_for_own_hub("dev-a", "本机", "T3ST1", "http://192.168.1.5:8787", "room-1", "", "")
             .expect("名字为空也照样有公告");
         assert!(b.hub_space_names.is_empty(), "空名 ⇒ 不带那一格（⛔ 不塞空串）");
 
@@ -1745,7 +1769,7 @@ mod tests {
             ("", false),                        // 没配置 ⇒ 不许代言
         ];
         for (url, should_produce) in cases {
-            let mine = announce_for_own_hub("dev-me", "本机", "T3ST1", url, "sp-1", "");
+            let mine = announce_for_own_hub("dev-me", "本机", "T3ST1", url, "sp-1", "", "");
             assert_eq!(
                 mine.is_some(),
                 should_produce,
@@ -1761,8 +1785,8 @@ mod tests {
         }
 
         // 没有设备身份 / 没有空间身份 ⇒ 代言不成立（空身份只会产出没人能用的公告）。
-        assert!(announce_for_own_hub("", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1", "").is_none());
-        assert!(announce_for_own_hub("dev-me", "本机", "T3ST1", "http://192.168.1.5:8787", "  ", "").is_none());
+        assert!(announce_for_own_hub("", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1", "", "").is_none());
+        assert!(announce_for_own_hub("dev-me", "本机", "T3ST1", "http://192.168.1.5:8787", "  ", "", "").is_none());
     }
 
     /// ★ 判据 ⑰（B 片施工单 §8.3 的收口）：**`fp` 真的填了，且填的是 `device_id`**。
@@ -1776,17 +1800,17 @@ mod tests {
     /// "有人顺手把 `fp` 的语义换成密钥指纹"（那会让老接收方读到一串它解释不了的东西）。
     #[test]
     fn the_fingerprint_is_the_device_id_and_is_actually_filled() {
-        let a = announce_for_own_hub("dev-me", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1", "")
+        let a = announce_for_own_hub("dev-me", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1", "", "")
             .expect("该代言");
         assert_eq!(a.fp, "dev-me", "fp 必须就是 device_id（不是密钥材料指纹）");
         assert_eq!(a.fp, a.device_id, "两者是同一个应用级事实，不许各填一份");
         // 前后空白照 trim（与 device_id 同一把尺，免得出现"身份一样但 fp 字符串不同"）
-        let b = announce_for_own_hub("  dev-me  ", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1", "")
+        let b = announce_for_own_hub("  dev-me  ", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1", "", "")
             .expect("该代言");
         assert_eq!(b.fp, "dev-me");
         assert_eq!(b.fp, b.device_id, "trim 之后两者也必须一致");
         // 空身份 ⇒ 根本产出不了公告（这条与判据 ⑫ 同一支），所以不存在"fp 是空串"的合法产出
-        assert!(announce_for_own_hub("   ", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1", "").is_none());
+        assert!(announce_for_own_hub("   ", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1", "", "").is_none());
     }
 
     /// ★ 判据 ⑬：状态行要能把**三件处置不同的事**分开 —— 走了局域网 / 网段里什么都没有 /
@@ -1977,7 +2001,7 @@ mod short_id_wire_tests {
     /// 并把**短标识那一格的增量**也量出来 ✓（Lead 要的那两个数 ✓）。
     #[test]
     fn announce_bytes_reading_with_and_without_short_id() {
-        let a = announce_for_own_hub("dev-me", "本机", "K7M2Q", "http://192.168.1.5:8787", "sp-1", "")
+        let a = announce_for_own_hub("dev-me", "本机", "K7M2Q", "http://192.168.1.5:8787", "sp-1", "", "")
             .expect("这条应当能代言 ✓");
         let with = encode_announce(&a).expect("可编码 ✓");
         let mut b = a.clone();
