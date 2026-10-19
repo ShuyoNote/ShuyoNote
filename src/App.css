@@ -24691,6 +24691,15 @@ body.is-plugin-panel-open .main {
    （`overflow:hidden` ＋ 有界高度 ✓），否则子级的 `overflow-y:auto` 拿不到有界高度 ⇒ 滚不动 ✓。
    ⛔ 不改桌面 `.main` 一个字节 ✗；⛔ 不用 `transform` 做转场 ✗（带 transform 的祖先会成为包含块 ⇒
    里面 `position:fixed` 的浮层会偏 ✗ —— 那条坑 `:21278` 附近有逐字记录 ✓）。 */
+/* ⭐ 移动端内容外壳（纯重构那一刀 ✓）：把所有移动屏**统一裹一层** ✓，为底栏 ＋ 留白留位置 ✓。
+   ⚠️ 本轮**不加** `padding-bottom` ✗（留白跟底栏同一刀 ✓ —— 否则底部会多一截空白 ✗）。 */
+.m-tabshell {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .mshell {
   flex: 1;
   display: flex;

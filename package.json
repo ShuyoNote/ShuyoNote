@@ -68,6 +68,7 @@
     "check:pdfjs-shim": "node scripts/check-pdfjs-worker-shim.mjs",
     "check:macos-bundle": "node scripts/check-macos-bundle.mjs",
     "sign:macos-app": "node scripts/sign-macos-app.mjs",
+    "notarize:macos": "node scripts/notarize-macos.mjs",
     "check:linux-bundle": "node scripts/check-linux-bundle.mjs",
     "check:android-bundle": "node scripts/check-android-bundle.mjs",
     "android:stage-pdfium": "node scripts/stage-android-pdfium.mjs",
