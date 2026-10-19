@@ -1153,9 +1153,13 @@ pub async fn round(
     // ⭐ **2026-10-19（B1 步三）**：⚠️ 名字**和 cfg 同一把锁**里读出来（一次锁、一次读 ✓）——
     //   ⛔ 不许跨 `await` 持锁 ✗（下面 `mesh_peers_by_name` 之后就进网络了）。
     //   读不到名字 ⇒ 空串 ⇒ `mesh_peers_by_name` 回落到 id（老行为，⛔ 不是"一个都不拉"）。
-    let space_name = {
+    //   ⭐⭐ **2026-10-19 修**：⭐ **只有设备级／个人档才按名字挑** ✗ —— 团队空间**不参与**按名融合
+    //   （规格 C3）⇒ 团队档必须传空名（回落 id），否则"同名"会误伤团队空间的正常同步 ✓。
+    let space_name = if device_level {
         let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
         crate::sync::local_space_name(&g).unwrap_or_default()
+    } else {
+        String::new()
     };
     let Some(_bind) = cfg.bind.clone() else {
         return Ok(MeshRoundReport {
