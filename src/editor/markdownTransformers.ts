@@ -51,6 +51,7 @@ import {
   $createMermaidNode,
   $isMermaidNode,
 } from "./nodes/MermaidNode";
+import { DrawingNode, $isDrawingNode } from "./nodes/DrawingNode";
 import { suggestColWidths } from "../lib/tableFit";
 
 const UUID_RE = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
@@ -66,6 +67,38 @@ export const IMAGE: ElementTransformer = {
     const width = match[3] ? +match[3] : null;
     const height = match[4] ? +match[4] : null;
     parentNode.replace($createImageNode(src, match[1], false, width, height));
+  },
+  type: "element",
+};
+
+// `![drawing](attachments/<thumbHash>.<ext>)` —— Excalidraw 块**导出成图片附件引用**。
+//
+// 来由（owner 2026-10-19）：「drawing 导出图片附件」。
+// 旧行为：只把图里提取的**文字**塞一段（纯图形的图在 .md 里**整段消失**）。
+// 现在：优先用**缩略图**（`thumbHash`，内容寻址 ✓ 与附件同一套）；没有缩略图 ⇒ 退回场景原文
+//   （⛔ 不硬编一个不存在的路径）。
+// ⚠️ `resolveImage` 那一路（发社区）会把地址换成 `/attachments/<hash>` —— 见 `exportMarkdown.ts`。
+export const DRAWING: ElementTransformer = {
+  dependencies: [DrawingNode],
+  export: (node: LexicalNode) => {
+    if (!$isDrawingNode(node)) return null;
+    const thumb = node.__thumbHash;
+    if (thumb) {
+      const mime = node.__thumbMime || "image/png";
+      const ext = mime === "image/jpeg" ? "jpg" : mime === "image/webp" ? "webp" : mime === "image/svg+xml" ? "svg" : "png";
+      return `![drawing](attachments/${thumb}.${ext})`;
+    }
+    // 没有缩略图 ⇒ 退回图上文字（⛔ 不留空段，也不编造路径）
+    return node.__text.trim() || null;
+  },
+  // ⚠️ **只导出、不导入**：Excalidraw 的场景不在 .md 里（它是附件 blob）⇒ 导回来不可能重建那块图。
+  //   所以 `replace` 只**留一行可读文字**，⛔ 不静默吞掉那一行（R192：换对象不删断言 ✓）。
+  regExp: /^!\[drawing\]\((attachments\/[^)\s]+)\)$/,
+  replace: (parentNode: ElementNode, _children: LexicalNode[], match: string[]) => {
+    const src = (match[1] ?? "").trim();
+    const para = $createParagraphNode();
+    para.append($createTextNode(`（绘图附件：${src}）`));
+    parentNode.replace(para);
   },
   type: "element",
 };
@@ -371,6 +404,9 @@ export const SHUYONOTE_TRANSFORMERS: Transformer[] = [
   HORIZONTAL_RULE,
   IMAGE,
   VIDEO,
+  // ⭐ **2026-10-19（owner：drawing 导出图片附件）**：⭐ 必须**注册进这张表** ✗ ——
+  //   只写 `export const DRAWING` 而不加进来，等于"加了没人跑"（仓库反复踩过的那条）。
+  DRAWING,
   BLOCK_EMBED,
   MERMAID, // ⚠️ 必须在 MULTILINE_ELEMENT_TRANSFORMERS（含 Lexical 的 CODE）之前
   ...MULTILINE_ELEMENT_TRANSFORMERS,

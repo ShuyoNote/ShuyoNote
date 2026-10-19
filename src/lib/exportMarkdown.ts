@@ -75,6 +75,15 @@ export function sanitizeName(name: string): string {
 }
 
 /** Extract the visible text of a single column's serialized EditorState. */
+/** 表格格的 HTML 转义（⛔ 不转义就能让正文里的 `<` 破坏整张表）。 */
+function escapeTableCell(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function extractColumnText(columnJson: string): string {
   try {
     const doc = JSON.parse(columnJson);
@@ -220,12 +229,17 @@ export function pageContentToMarkdown(docJson: string, resolveImage?: ResolveIma
       const root = $getRoot();
       // ① Route-B 列块 → 普通段落（否则列里的内容整块丢 ✗）
       for (const block of root.getChildren().filter((n) => $isColumnsBlockNode(n))) {
-        const text = (block as ColumnsBlockNode).__cols
-          .map((c) => extractColumnText(c))
-          .filter(Boolean)
-          .join("\n");
+        // ⭐ **2026-10-19（owner：多栏导出成 HTML \`<table>\`）**：旧实现把各列文字竖着拼成普通段落
+        //   ⇒ 读者看到"左栏内容、右栏内容"两行，**并排关系全丢** ✓。
+        //   现在：**一行多格**的 \`<table>\`（md 没有分栏语法，HTML 表格是唯一能表达的形态 ✓）。
+        //   ⚠️ 格子里的换行转 \`<br>\`；文字做 HTML 转义（⛔ 不让内容里的 \`<\` 破坏结构）。
+        const cells = (block as ColumnsBlockNode).__cols.map((c) => escapeTableCell(extractColumnText(c)));
         const para = $createParagraphNode();
-        if (text) para.append($createTextNode(text));
+        if (cells.some((c) => c.trim() !== "")) {
+          const row = cells.map((c) => `<td>${c.replace(/\n/g, "<br>")}</td>`).join("");
+          const table = `<table><tbody><tr>${row}</tr></tbody></table>`;
+          para.append($createTextNode(table));
+        }
         block.insertBefore(para);
         block.remove();
       }
