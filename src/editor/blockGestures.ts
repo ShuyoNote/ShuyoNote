@@ -37,6 +37,15 @@ export const BLOCK_GESTURE_EXCLUDED_SELECTOR = [
   //   A/B 实测：摘掉 `ClickToEditPlugin` ⇒ 那条转绿 ✓ ⇒ 真因是"这层没进清单"✓，⛔ 不是命令坏了 ✗。
   ".table-menu",
   ".table-palette",
+  // ⭐⭐ **2026-10-19（owner：「多栏点不进去、没有光标」）**：**分栏那一格的编辑器** ✗ ——
+  //   真因（CDP 实测，不是猜）：mousedown 目标是 `div.editor-column-editable` ⇒
+  //   `ClickToEditPlugin` 的 `isSafeMarqueeTarget` 判它「空白安全区」（空格子里的 `<p>` 没文字
+  //   ⇒ 按既有规则"空块仍算空白"）⇒ 它调 `preventDefault()` 起框选 ⇒ **浏览器默认聚焦被吃掉**
+  //   ⇒ 光标进不了那一格 ✓（逐字堆栈：`at HTMLDivElement.onMouseDown (ClickToEditPlugin.tsx:80)`）
+  //   ⇒ 分栏的编辑器是**要接受输入的地方**，⛔ 不是"空白背景" ⇒ 必须进这份清单 ✓
+  //   ⚠️ `.editor-column-body` 一并兜住：格子内边距/空行的命中目标可能是它 ✓
+  ".editor-column-editable",
+  ".editor-column-body",
 ].join(", ");
 
 /** 这个按下目标是不是"块手势该放行"的浮层/手柄（`true` ⇒ 谁都不许把它当成开始块选/框选）✓。 */
