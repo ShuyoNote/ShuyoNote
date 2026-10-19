@@ -328,6 +328,22 @@ pub fn serves_space(space_id: &str, p: &Peer) -> bool {
     !want.is_empty() && p.announce.hub_spaces.iter().any(|s| s.trim() == want)
 }
 
+/// ⭐ **2026-10-19（owner 重申「个人空间严格按空间名称自动同步」· B1 步三）**：
+/// **这一台是不是在服务这个「名字」的空间** —— 判等用 `same_space_name_by_trim`（与融合闸**同一把尺**）
+/// ⇒ ⛔ 不做全半角／大小写折叠、⛔ 不做简繁（§10-③ 拍定不做）。
+///
+/// ⚠️ 老对端（`hub_space_names` 为空）⇒ 永远 `false` ⇒ 调用方**回落到 id**（别把升级期变成断连）。
+pub fn serves_space_name(name: &str, p: &Peer) -> bool {
+    let want = name.trim();
+    if want.is_empty() {
+        return false;
+    }
+    p.announce
+        .hub_space_names
+        .iter()
+        .any(|n| crate::mesh_merge_ledger::same_space_name_by_trim(n, want))
+}
+
 /// 这个基址是不是**局域网**地址（`http://<私有 IPv4>[:port]`）。
 ///
 /// 口径：**只认 http ＋ 私有 IPv4**。刻意不支持 IPv6 与主机名 —— 它们要额外解析一步，
