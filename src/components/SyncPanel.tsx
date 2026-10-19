@@ -247,6 +247,14 @@ export function SyncPanel({
   // 发现层是进程常驻的（`setup` 里就起了），面板关着就没人看这一行（少一次 IPC/秒）。
   // ⚠️ `line` 是 Rust 侧 `lan::status_line` 的**原文**，这里**只显示、不解释**（档位由 Route 决定）。
   const [lanStatus, setLanStatus] = useState<LanStatus | null>(null);
+  /** ⭐ 2026-10-19（owner：「配对成功后，页面不能自动刷新」）—— 强制再读一次局域网读数。
+   *
+   *  真因：配对成功那条路只弹了一句 toast，**没有重新读 `lan_status`** ⇒ 那一行还停在「待配对」，
+   *  要等下一轮 5 秒轮询（甚至更久）才变 ⇒ 用户看到的是「配好了，没反应」。
+   *  ⇒ 做法：一个自增 nonce 塞进轮询 effect 的依赖里 —— 它一变就**立刻**重跑一次 `tick()`
+   *  （并重挂定时器）。⚠️ 只"再读一次"，⛔ 不在这里自己改列表（列表唯一来源仍是后端 `lanStatus.nearby`）。
+   *  判据：`syncPanelDevicePair.wiring.test.ts` 的「配对成功后要重读」那一条。 */
+  const [lanNonce, setLanNonce] = useState(0);
   useEffect(() => {
     // ⚠️⭐ **2026-10-14（owner 连问三次「同步面板还是旧的」的第二个、也是真正的机械原因）** ✗ ——
     // ⭐ 这一行原来是 `if (!open || !isDesktopPlatform()) return;` ✓ ⇒ ⭐ ⭐ **只有浮层打开时才读** ✗。
@@ -283,7 +291,7 @@ export function SyncPanel({
       alive = false;
       window.clearInterval(timer);
     };
-  }, [open, contentOnly, activeId]);
+  }, [open, contentOnly, activeId, lanNonce]);
   // ⚠️ 只有**当前空间这条档案绑全了**才显示那一行：`lan_status` 没绑定时会回落"第一条绑定"
   //（那是给无参调用兜底的），在面板上显示**别的空间**的地址是错的。
   const activeRow = rows.find((r) => r.ws_id === activeId);
@@ -1258,6 +1266,9 @@ export function SyncPanel({
       // ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）**：⭐ 不再说"要它那边也点一次" ✗ ——
       //   ⭐ 对面收到这一轮 ask 就会**互相登记** ✓（`sync::note_pending_trust_asks` ✓）⇒ 一次配对两个方向都通 ✓。
       toast("配对成功：两边都通了 ✓", "success");
+      // ⭐⭐ **2026-10-19（owner：「配对成功后，页面不能自动刷新」）**：⭐ 成功之后**立刻重读一次**局域网读数 ✗
+      //   —— 原来这里只有一句 toast ⇒ 那一行还停在「待配对」（要等下一轮 5 秒轮询）⇒ 用户以为没配上 ✓。
+      setLanNonce((n) => n + 1);
       // ⚠️ **2026-10-14**：这一格原来会「点完再读一次」后端那份信任读数 ✓ —— ⭐ 而显示它的那一屏
       //    （`TrustDevicePanel` ✓）**已随「附近设备」那一行删掉** ✗ ⇒ 那格读数**没人看**了 ✓ ⇒
       //    ⭐ 那一下也一起去掉 ✓（⛔ 不去刷一个看不见的状态 ✗；命令与参数一个字没动 ✓）。
@@ -1265,6 +1276,8 @@ export function SyncPanel({
       // ⭐ 失败**照实报**（⛔ 不假装成功 ✗）—— 这一条失败时**也要**把读数刷一遍 ✓
       //    （多半还是"还没开始" ✓ —— 那正是**如实**✓）。
       toast(`信任失败：${e}`, "error");
+      // 失败也重读：让那台设备**回到该在的那一段**（⛔ 不留一个刚被点过、状态却停在旧读数的行 ✗）
+      setLanNonce((n) => n + 1);
     }
   };
 

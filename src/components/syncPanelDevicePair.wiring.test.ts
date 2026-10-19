@@ -142,4 +142,20 @@ describe("T4 · 把这台设备接进来", () => {
     // ④ ⛔ 对面**没报公钥** ⇒ 如实说、⛔ 不硬凑一个身份 ✗（老版本对端就是这一档 ✓）
     expect(fn).toContain("if (!peer.pubkey)");
   });
+
+  // ⭐ **2026-10-19（owner 真机：「配对成功后，页面不能自动刷新」）**：
+  //   配好之后那一行**还停在「待配对」** —— 成功那条路只弹了一句 toast、**没重读** `lan_status`
+  //   ⇒ 要等下一轮 5 秒轮询才变，用户看到的是"配好了没反应" ✓。
+  //   **变异**：删掉 `setLanNonce` 那两行 ⇒ 这一条必红（真机上也会再退回"要等一轮轮询"）✓。
+  it("⑥ 配对成功/失败之后都要**立刻重读**局域网读数（⛔ 不能让那一行停在旧状态 ✗）", () => {
+    const fn = between(SRC, "const trustDevice = async", "\n  };");
+    // 成功 ＋ 失败各一次（失败也要让那台回到该在的那一段）
+    expect((fn.match(/setLanNonce\(/g) ?? []).length, "成功＋失败两处").toBe(2);
+    // 那个 nonce 必须真的进了轮询 effect 的依赖（否则自增不触发重读 ⇒ 静默无效）
+    expect(SRC, "轮询 effect 的依赖里要有 lanNonce").toMatch(
+      /\}, \[open, contentOnly, activeId, lanNonce\]\);/,
+    );
+    // ⛔ 界面不许自己改列表：列表唯一来源仍是后端那份读数
+    expect(fn).not.toMatch(/setLanStatus\(/);
+  });
 });
