@@ -477,6 +477,44 @@ pub fn auto_create_space_decision(
     AutoCreateSpace::Create
 }
 
+/// ⭐⭐ **2026-10-19（owner 拍「甲」）**：这一轮**该替对端建哪些空间** —— 四道闸之上的「汇总」那一层。
+///
+/// 三条口径：
+/// 1. **逐台过闸**（G1 来源：这台设备必须在本机信任名单里；G2 类别：对端必须 `personal`）；
+/// 2. **按名字去重**：两台对端都报「产品」⇒ 只建一个（⛔ 不建两个同名空间）；
+/// 3. **顺序稳定**：按名字排序后返回（判据要能逐字节比）。
+///
+/// ⚠️ 纯函数：`local`（本机空间三元组）、`tombstoned`（删过的名字）、`paired`（信任过的设备号）
+/// 全由调用方从库里读好传进来 ⇒ 判据不打桩、不碰库、不联网。
+pub fn peer_spaces_to_create(
+    peers: &[crate::lan::Peer],
+    local: &[(String, String, String)],
+    tombstoned: &[String],
+    paired: &[String],
+    encryption_on: bool,
+) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for p in peers {
+        let dev = p.announce.device_id.trim();
+        let is_paired = paired.iter().any(|d| d.trim() == dev);
+        // ⚠️ 名字与类别是**两个平行数组**（wire 上就是这么发的）⇒ 按**较短的那个**遍历，
+        //    短的那一侧缺的格子当空串处理（⛔ 不许越界、⛔ 不许用下标去猜）。
+        for (i, name) in p.announce.hub_space_names.iter().enumerate() {
+            let kind = p.announce.hub_space_kinds.get(i).map(String::as_str).unwrap_or("");
+            match auto_create_space_decision(name, kind, local, tombstoned, is_paired, encryption_on) {
+                AutoCreateSpace::Create => {
+                    let n = name.trim().to_string();
+                    if !out.iter().any(|(x, _)| x == &n) {
+                        out.push((n, kind.trim().to_string()));
+                    }
+                }
+                AutoCreateSpace::Skip(_) => {}
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
 /// 本机这个空间**属于哪一档**（读 `meta.workspaces.kind`）—— ⭐ **读不出来就 `None`**（判不出）。
 ///
 /// ⚠️ ⛔ **别拿 `space_crypto::space_kind` 来判**：它把"没有那一行/读不出"兜底成
@@ -7308,6 +7346,57 @@ mod merge_by_name_tests {
 
 #[cfg(test)]
 mod tests {
+
+    /// ⭐ **2026-10-19（owner 拍「甲」）**：这一轮该替对端建哪些空间 —— 四格：
+    /// ① 两台对端都报「产品」⇒ 只建**一个**（按名字去重）；
+    /// ② 没配对的那台报什么都不建（G1）；
+    /// ③ 对端报 `team` ⇒ 不建（G2）；
+    /// ④ 名字与类别**平行数组**：类别缺一格时不越界（按空串处理 ⇒ 不建）；顺序按名字稳定排序。
+    ///
+    /// **变异**：把去重那一句删掉 ⇒ 第 ① 格红；把 `is_paired` 恒 `true` ⇒ 第 ② 格红。
+    #[test]
+    fn the_peer_space_planner_dedupes_and_respects_every_gate() {
+        fn peer(dev: &str, names: &[&str], kinds: &[&str]) -> crate::lan::Peer {
+            let mut a = crate::lan::LanAnnounce {
+                v: crate::lan::WIRE_VERSION,
+                device_id: dev.to_string(),
+                ..Default::default()
+            };
+            a.hub_base = Some("http://192.168.1.9:8787".to_string());
+            a.hub_spaces = vec!["room-1".to_string()];
+            a.hub_space_names = names.iter().map(|s| s.to_string()).collect();
+            a.hub_space_kinds = kinds.iter().map(|s| s.to_string()).collect();
+            crate::lan::Peer { announce: a, addr: "192.168.1.9".to_string(), seen_at_ms: 0 }
+        }
+        let local: Vec<(String, String, String)> = vec![(
+            "ws-a".to_string(),
+            "运营".to_string(),
+            "personal".to_string(),
+        )];
+        let none: Vec<String> = Vec::new();
+        let paired = vec!["dev-b".to_string(), "dev-c".to_string()];
+
+        // ① 两台都报「产品」⇒ 只建一个；同时本机已有的「运营」不建（exists）
+        let peers = vec![
+            peer("dev-b", &["产品", "运营"], &["personal", "personal"]),
+            peer("dev-c", &["产品"], &["personal"]),
+        ];
+        let got = peer_spaces_to_create(&peers, &local, &none, &paired, false);
+        assert_eq!(got, vec![("产品".to_string(), "personal".to_string())], "应当只建一个「产品」");
+
+        // ② 没配对的那台 ⇒ 一个都不建
+        let rogue = vec![peer("dev-x", &["产品"], &["personal"])];
+        assert!(peer_spaces_to_create(&rogue, &local, &none, &paired, false).is_empty());
+
+        // ③ team ⇒ 不建
+        let team = vec![peer("dev-b", &["产品"], &["team"])];
+        assert!(peer_spaces_to_create(&team, &local, &none, &paired, false).is_empty());
+
+        // ④ 类别数组缺一格（平行数组不等长）⇒ 当作空串 ⇒ 不建，且**不许 panic**
+        let short = vec![peer("dev-b", &["产品", "客户"], &["personal"])];
+        let got = peer_spaces_to_create(&short, &local, &none, &paired, false);
+        assert_eq!(got, vec![("产品".to_string(), "personal".to_string())], "缺类别那一格不许建");
+    }
 
     /// ⭐ **2026-10-19（owner 拍「甲」）**：自动建空间的**四道闸** —— 6 组真值表 ＋ 2 个边角。
     ///
