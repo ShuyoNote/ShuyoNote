@@ -51,7 +51,7 @@ import {
   $createMermaidNode,
   $isMermaidNode,
 } from "./nodes/MermaidNode";
-import { DrawingNode, $isDrawingNode } from "./nodes/DrawingNode";
+import { $isDrawingNode } from "./nodes/DrawingNode";
 import { suggestColWidths } from "../lib/tableFit";
 
 const UUID_RE = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
@@ -79,7 +79,13 @@ export const IMAGE: ElementTransformer = {
 //   （⛔ 不硬编一个不存在的路径）。
 // ⚠️ `resolveImage` 那一路（发社区）会把地址换成 `/attachments/<hash>` —— 见 `exportMarkdown.ts`。
 export const DRAWING: ElementTransformer = {
-  dependencies: [DrawingNode],
+  // ⚠️ **⛔ 不写 `dependencies`**（2026-10-19 真机事故：写了它 ⇒ **分栏不能编辑** ✗）：
+  //   `SHUYONOTE_TRANSFORMERS` 还被 **`ColumnEditor`**（分栏里每格的编辑器）与
+  //   `MarkdownShortcutPlugin` 共用，而那些编辑器**没注册 `DrawingNode`** ⇒
+  //   `dependencies` 会让它们在建编辑器/挂插件时抛 "node not configured" ⇒ 整格编辑不了 ✓。
+  //   ⭐ 本 transformer **只导出、不导入**（`replace` 只造段落＋文字）⇒ 根本不需要依赖声明 ✓。
+  //   ⚠️ 但类型上 `dependencies` 是**必填** ⇒ 给**空数组**（空数组 ＝ 不注册任何节点 ✓）。
+  dependencies: [],
   export: (node: LexicalNode) => {
     if (!$isDrawingNode(node)) return null;
     const thumb = node.__thumbHash;

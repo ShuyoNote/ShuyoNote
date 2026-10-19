@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import { pageContentToMarkdown } from "./exportMarkdown";
+import { DRAWING, SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 
 function doc(children: unknown[]) {
   return JSON.stringify({
@@ -71,5 +72,16 @@ describe("导出 Markdown：drawing 与多栏", () => {
     expect(md, "文字要转义（否则内容里的 < 会破坏结构）").toContain("&lt;b&gt;内容&lt;/b&gt;");
     // ⛔ 旧行为（竖着拼）不许回来
     expect(md).not.toMatch(/^左栏第一行\n右栏/m);
+  });
+
+  // ⭐⭐ **2026-10-19（真机事故：加了 DRAWING 之后「多栏不能编辑」）**：
+  //   `SHUYONOTE_TRANSFORMERS` 还被 `ColumnEditor`（分栏里每一格的编辑器）共用，
+  //   而它的节点表里**没有 `DrawingNode`** ⇒ transformer 的 `dependencies` 一旦写上，
+  //   分栏编辑器挂 `MarkdownShortcutPlugin` 时就会抛 "node not configured" ⇒ 整格编辑不了 ✓。
+  //   ⇒ 本判据钉住：**DRAWING 的 dependencies 必须是空数组**（只导出、不导入 ⇒ 不需要依赖）。
+  //   **变异**：把 `[]` 改回 `[DrawingNode]` ⇒ 这一条必红。
+  it("④ DRAWING 不许声明 dependencies（否则分栏编辑器挂不上插件 ⇒ 多栏不能编辑）", () => {
+    expect(DRAWING.dependencies, "DRAWING 的 dependencies 必须是空数组").toEqual([]);
+    expect(SHUYONOTE_TRANSFORMERS, "DRAWING 必须真的在导出表里（否则等于没加）").toContain(DRAWING);
   });
 });
