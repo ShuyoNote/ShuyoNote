@@ -92,14 +92,21 @@ export const DRAWING: ElementTransformer = {
     if (thumb) {
       const mime = node.__thumbMime || "image/png";
       const ext = mime === "image/jpeg" ? "jpg" : mime === "image/webp" ? "webp" : mime === "image/svg+xml" ? "svg" : "png";
-      return `![drawing](attachments/${thumb}.${ext})`;
+      // ⭐⭐ **2026-10-19（owner 真机：「Excalidraw 导出 markdown zip 时，没有附件」）**：
+      //   原来这里写的是 `attachments/<hash>.png`（一个**凭空的相对路径**）✗ ——
+      //   · 工作区导出：那个目录**不跟着 .md 走** ⇒ 链接指向空气；
+      //   · zip 导出：打包器只认 `attachment://<hash>` 这种**内容寻址引用**
+      //     （`exportMarkdownBundle.ts::ATTACHMENT_REF`）⇒ 它既收不到 hash、也不会把字节装进 zip ✗。
+      //   ⇒ 改成与图片**同一种**引用：`attachment://<thumbHash>.<ext>` ✓
+      //     这样 zip 那边能认出 hash、把缩略图字节装进 `assets/` 并把正文改成相对路径 ✓。
+      return `![drawing](attachment://${thumb}.${ext})`;
     }
     // 没有缩略图 ⇒ 退回图上文字（⛔ 不留空段，也不编造路径）
     return node.__text.trim() || null;
   },
   // ⚠️ **只导出、不导入**：Excalidraw 的场景不在 .md 里（它是附件 blob）⇒ 导回来不可能重建那块图。
   //   所以 `replace` 只**留一行可读文字**，⛔ 不静默吞掉那一行（R192：换对象不删断言 ✓）。
-  regExp: /^!\[drawing\]\((attachments\/[^)\s]+)\)$/,
+  regExp: /^!\[drawing\]\(((?:attachment:\/\/|attachments\/)[^)\s]+)\)$/,
   replace: (parentNode: ElementNode, _children: LexicalNode[], match: string[]) => {
     const src = (match[1] ?? "").trim();
     const para = $createParagraphNode();

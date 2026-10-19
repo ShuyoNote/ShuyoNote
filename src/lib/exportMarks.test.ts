@@ -37,9 +37,26 @@ describe("导出 Markdown：drawing 与多栏", () => {
       height: 400,
     };
     const md = pageContentToMarkdown(doc([para("前"), drawing, para("后")]));
-    expect(md, "应导出成图片附件引用").toContain("![drawing](attachments/thumb456.png)");
+    // ⭐ 2026-10-19（owner：「Excalidraw 导出 markdown zip 时，没有附件」）：
+    //   必须是**内容寻址**引用 `attachment://<hash>` —— zip 打包器只认这种（它靠它收字节 ✓）；
+    //   ⛔ 不能是 `attachments/<hash>.png` 那种凭空的相对路径（那个目录不跟着 .md 走 ✗）。
+    expect(md, "应导出成内容寻址的附件引用").toContain("![drawing](attachment://thumb456.png)");
     // ⛔ 不许再只留"图上文字"当正文的替代品（那是旧行为）
     expect(md).not.toMatch(/^图上文字$/m);
+  });
+
+  it("①b drawing 带回调（发社区）⇒ 用回调给的地址", () => {
+    const drawing = {
+      type: "drawing",
+      version: 1,
+      hash: "scene123",
+      mime: "application/json",
+      thumbHash: "thumb456",
+      thumbMime: "image/png",
+      text: "",
+    };
+    const md = pageContentToMarkdown(doc([drawing]), (hash) => `/attachments/${hash}`);
+    expect(md).toContain("![drawing](/attachments/thumb456)");
   });
 
   it("② drawing 没有缩略图 ⇒ 退回图上文字（⛔ 不编造路径）", () => {
@@ -72,6 +89,25 @@ describe("导出 Markdown：drawing 与多栏", () => {
     expect(md, "文字要转义（否则内容里的 < 会破坏结构）").toContain("&lt;b&gt;内容&lt;/b&gt;");
     // ⛔ 旧行为（竖着拼）不许回来
     expect(md).not.toMatch(/^左栏第一行\n右栏/m);
+  });
+
+  // ⭐⭐ **2026-10-19（owner 真机：「多栏导出时，多行变成了一行」）**：
+  //   一格里的**多段**原来被 `join("")` 粘成一行（换行没有了 ⇒ `<br>` 那一步无行可换）✗。
+  //   ⇒ 现在按顶层块分行，`<td>` 里再换成 `<br>` ✓。
+  //   **变异**：把 `extractColumnText` 改回 `out.join("")` ⇒ 这一条必红。
+  it("③b 一格里的多行 ⇒ 必须换行（`<br>`），⛔ 不许粘成一行", () => {
+    const colJson = (...lines: string[]) =>
+      JSON.stringify({ root: { children: lines.map((t) => para(t)), type: "root", version: 1 } });
+    const columns = {
+      type: "columnsBlock",
+      version: 1,
+      count: 2,
+      cols: [colJson("第一行", "第二行", "第三行"), colJson("右栏")],
+      widths: [50, 50],
+    };
+    const md = pageContentToMarkdown(doc([columns]));
+    expect(md, "三行必须变成三行 + 两个 <br>").toContain("<td>第一行<br>第二行<br>第三行</td>");
+    expect(md, "⛔ 不许粘成一行").not.toContain("<td>第一行第二行第三行</td>");
   });
 
   // ⭐⭐ **2026-10-19（真机事故：加了 DRAWING 之后「多栏不能编辑」）**：

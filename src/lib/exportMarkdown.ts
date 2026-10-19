@@ -17,7 +17,7 @@ import {
 } from "@lexical/markdown";
 import { platform } from "./platform";
 import { api } from "./api";
-import { IMAGE, SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
+import { DRAWING, IMAGE, SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { ListNode, ListItemNode } from "@lexical/list";
 import { CodeNode, CodeHighlightNode } from "@lexical/code";
@@ -32,7 +32,7 @@ import { VideoNode, $isVideoNode } from "../editor/nodes/VideoNode";
 import { BlockRefNode } from "../editor/nodes/BlockRefNode";
 import { BlockEmbedNode } from "../editor/nodes/BlockEmbedNode";
 import { AttachmentRefNode } from "../editor/nodes/AttachmentRefNode";
-import { DrawingNode } from "../editor/nodes/DrawingNode";
+import { DrawingNode, $isDrawingNode } from "../editor/nodes/DrawingNode";
 import { MermaidNode } from "../editor/nodes/MermaidNode";
 
 const NODES = [
@@ -86,7 +86,23 @@ function escapeTableCell(text: string): string {
 
 function extractColumnText(columnJson: string): string {
   try {
-    const doc = JSON.parse(columnJson);
+    const doc = JSON.parse(columnJson) as { root?: { children?: unknown[] } };
+    // ⭐⭐ **2026-10-19（owner 真机：「多栏导出时，多行变成了一行」）**：
+    //   原来把**所有文字片段直接 `join("")`** ⇒ 段与段之间没有分隔 ⇒ 一格里的三行
+    //   在 `<td>` 里粘成一行 ✗（后面那步 `<br>` 根本没机会生效 —— 换行早被吃掉了）。
+    //   ⇒ 现在**按顶层块分行**：每块自己的文字 `join("")`、块与块之间 `\n` ✓
+    //   （`<td>` 那一层再把这些 `\n` 换成 `<br>` ✓）。
+    const blocks = doc?.root?.children;
+    if (Array.isArray(blocks) && blocks.length > 0) {
+      const lines: string[] = [];
+      for (const b of blocks) {
+        const out: string[] = [];
+        walkText(b, out);
+        const line = out.join("").trim();
+        if (line) lines.push(line);
+      }
+      if (lines.length) return lines.join("\n");
+    }
     const out: string[] = [];
     walkText(doc, out);
     return out.join("");
@@ -180,6 +196,26 @@ export type ResolveImage = (hash: string, mime: string, src: string) => string;
  */
 function transformersWithImageResolver(resolveImage: ResolveImage): Transformer[] {
   return SHUYONOTE_TRANSFORMERS.map((t) => {
+    // ⭐ **2026-10-19**：`DRAWING` 也走同一套回调 ✗ —— 它的引用是 `attachment://<thumbHash>`，
+    //   发布到社区那边要换成 `/attachments/<hash>`（⛔ 否则正文里留一个对方拿不到的本地方案）。
+    //   回调给了空串 ⇒ 保持 `attachment://…`（zip 导出正是靠这个字面量收字节 ✓）。
+    if (t === DRAWING) {
+      const base = t as ElementTransformer;
+      return {
+        ...base,
+        export: (node: LexicalNode) => {
+          if (!$isDrawingNode(node)) return null;
+          const thumb = node.__thumbHash;
+          if (!thumb) return node.getTextContent().trim() || null;
+          const mime = node.__thumbMime || "image/png";
+          const ext =
+            mime === "image/jpeg" ? "jpg" : mime === "image/webp" ? "webp" : mime === "image/svg+xml" ? "svg" : "png";
+          const fallback = `attachment://${thumb}.${ext}`;
+          const url = resolveImage(thumb, mime, fallback);
+          return `![drawing](${url || fallback})`;
+        },
+      };
+    }
     if (t !== IMAGE) return t;
     const base = t as ElementTransformer;
     return {
