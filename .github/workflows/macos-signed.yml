@@ -141,10 +141,31 @@ jobs:
             src-tauri/vendor/pdfium/mac-univ/lib/libpdfium.dylib
           codesign -d --verbose=4 src-tauri/vendor/pdfium/mac-univ/lib/libpdfium.dylib 2>&1 | grep -E 'Authority|Timestamp|flags' || true
 
+      - name: 决定更新器工件开关（没有 TAURI 私钥就关掉）
+        # 发版要 `.app.tar.gz` + `.sig` 才能自动更新，而那需要 TAURI_SIGNING_PRIVATE_KEY。
+        # 新机器上这把钥匙往往还没搬过来（本机 2026-10-19 实测 `~/.tauri/` 整个不存在）；
+        # 硬开会让 build 在**最后一步**才失败，报错还长得像签名问题（缺 private key）。
+        # ⇒ 这里显式判断：没有私钥就只出 `.app`/`.dmg`，并在日志里**警告**"本次不含更新器工件"，
+        #    不静默、也不让公证验证被这件事卡住。
+        run: |
+          set -euo pipefail
+          CONFIG="$RUNNER_TEMP/tauri-signed-config.json"
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo '{}' > "$CONFIG"
+            echo "更新器工件：开（TAURI_SIGNING_PRIVATE_KEY 已配置）"
+          else
+            echo '{"bundle":{"createUpdaterArtifacts":false}}' > "$CONFIG"
+            echo "::warning::没有 TAURI_SIGNING_PRIVATE_KEY ⇒ 本次不出 .app.tar.gz/.sig；产物只能手动分发，不能走自动更新"
+          fi
+          echo "TAURI_BUILD_CONFIG=$CONFIG" >> "$GITHUB_ENV"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
       - name: 打包（签名）＋ 更新器工件
         # 只给签名身份、**不给 APPLE_ID/PASSWORD/TEAM_ID** ⇒ Tauri 只签名、不公证；
         # 公证交给下一步的显式脚本（它自己出三件判据，且失败会打印 notarytool 的问题清单）。
-        run: pnpm tauri build --bundles app,dmg --features sm-library
+        # `--config` 决定要不要更新器工件（见上一格；没有私钥时它把 createUpdaterArtifacts 关掉）。
+        run: pnpm tauri build --bundles app,dmg --features sm-library --config "$TAURI_BUILD_CONFIG"
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
