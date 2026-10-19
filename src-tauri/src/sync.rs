@@ -1399,7 +1399,8 @@ pub async fn download_attachment(
             (Vec::new(), proto)
         } else {
             let peers = crate::lan_state::LanState::global(&device).peers(crate::db::now_ms());
-            let candidates = crate::mesh::mesh_peers(&proto, &device, &peers);
+            let name = crate::sync::local_space_name(&c).unwrap_or_default();
+            let candidates = crate::mesh::mesh_peers_by_name(&proto, &name, &device, &peers);
             (candidates, proto)
         }
     };
@@ -3004,7 +3005,8 @@ pub(crate) fn note_pending_trust_asks(
     // ② 只认**这一轮、这条空间**的对端 ✓（⛔ 不跨空间 ✗）。
     //   ⚠️ 判定"这是不是设备级那一格"**只有一处**（`mesh::is_device_level_space` ✓）——
     //   ⛔ 不在这里反推"个人档还是团队档" ✗（那是第二份口径 ✓）。
-    let candidates = crate::mesh::mesh_peers(proto_space, my_device, peers);
+    let name = crate::sync::local_space_name(c).unwrap_or_default();
+    let candidates = crate::mesh::mesh_peers_by_name(proto_space, &name, my_device, peers);
     let device_level = crate::mesh::is_device_level_space(c, proto_space);
     let row = crate::mesh::paired_row_key(proto_space, device_level);
     let mut registered: Vec<String> = Vec::new();

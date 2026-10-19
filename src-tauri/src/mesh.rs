@@ -457,12 +457,36 @@ pub struct MeshPeer {
 /// 能拉的没有按钮）—— **不炸、不报错、单测全绿**。
 /// 承重判据：`sync::tests` 里那条"`nearby.filter(invitable)` 的集合 == `mesh_peers` 的集合"。
 pub fn invitable_base(space_id: &str, my_device: &str, p: &crate::lan::Peer) -> Option<String> {
+    invitable_base_for(space_id, "", my_device, p)
+}
+
+/// ⭐⭐ **2026-10-19（owner 重申「个人空间严格按空间名称自动同步」· B1 步三）**：
+/// 与 [`invitable_base`] 同一条，但**多一把"名字"的尺** —— 判定顺序：
+///
+/// 1. ⭐ **对端报了空间名** ⇒ **只看名字**（`lan::serves_space_name`，逐字 trim 相等）；
+///    ⚠️ 这一支下**同 id 不同名也不许挑中** ✗ —— 那正是「严格按空间名称」的可核形状。
+/// 2. ⭐ **对端没报名字**（老版本）⇒ 回落到 **id**（`lan::serves_space`）✓ ——
+///    ⛔ 不许因为"对面没报名字"就把老版本整个排除掉（那会把升级期变成断连）。
+/// 3. `space_name` 为空（团队档／还没取到名字）⇒ 回落到 id ✓（团队空间本来就不参与按名融合）。
+pub fn invitable_base_for(
+    space_id: &str,
+    space_name: &str,
+    my_device: &str,
+    p: &crate::lan::Peer,
+) -> Option<String> {
     let id = p.announce.device_id.trim();
     if id.is_empty() || id == my_device.trim() {
         return None;
     }
     // ★ 「服务这个空间」这一关与地址解析共用**同一把尺**（`lan::serves_space`）。
-    if !crate::lan::serves_space(space_id, p) {
+    // ★ 「服务这个空间」这一关与地址解析共用**同一把尺**。
+    let by_name = !space_name.trim().is_empty() && !p.announce.hub_space_names.is_empty();
+    let serves = if by_name {
+        crate::lan::serves_space_name(space_name, p)
+    } else {
+        crate::lan::serves_space(space_id, p)
+    };
+    if !serves {
         return None;
     }
     let base = p.announce.hub_base.as_deref().map(str::trim).filter(|b| !b.is_empty())?;
@@ -479,12 +503,24 @@ pub fn invitable_base(space_id: &str, my_device: &str, p: &crate::lan::Peer) -> 
 /// ⚠️ 这里用的是甲-1 那块砖（`LanAnnounce` 的 `hub_base` / `hub_spaces`）：**发现层三档共用**，
 /// 丙 只是把"谁在代言"读成"谁可以被直接拉"。
 pub fn mesh_peers(space_id: &str, my_device: &str, peers: &[crate::lan::Peer]) -> Vec<MeshPeer> {
-    if space_id.trim().is_empty() {
+    mesh_peers_by_name(space_id, "", my_device, peers)
+}
+
+/// ⭐ **2026-10-19（B1 步三）**：[`mesh_peers`] 的**按名**版本 —— 个人空间用这个：
+/// 对端报了名字就**只看名字**（`invitable_base_for`），没报名字的老对端回落到 id。
+/// ⚠️ `space_id` 仍然要：它挡"空空间"（一条都不拉），也是回落那一支的判据。
+pub fn mesh_peers_by_name(
+    space_id: &str,
+    space_name: &str,
+    my_device: &str,
+    peers: &[crate::lan::Peer],
+) -> Vec<MeshPeer> {
+    if space_id.trim().is_empty() && space_name.trim().is_empty() {
         return Vec::new();
     }
     let mut out: Vec<MeshPeer> = Vec::new();
     for p in peers {
-        let Some(base) = invitable_base(space_id, my_device, p) else {
+        let Some(base) = invitable_base_for(space_id, space_name, my_device, p) else {
             continue;
         };
         let id = p.announce.device_id.trim();
@@ -1114,6 +1150,13 @@ pub async fn round(
         let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
         settings_for(&g, space_id, device_level)
     };
+    // ⭐ **2026-10-19（B1 步三）**：⚠️ 名字**和 cfg 同一把锁**里读出来（一次锁、一次读 ✓）——
+    //   ⛔ 不许跨 `await` 持锁 ✗（下面 `mesh_peers_by_name` 之后就进网络了）。
+    //   读不到名字 ⇒ 空串 ⇒ `mesh_peers_by_name` 回落到 id（老行为，⛔ 不是"一个都不拉"）。
+    let space_name = {
+        let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+        crate::sync::local_space_name(&g).unwrap_or_default()
+    };
     let Some(_bind) = cfg.bind.clone() else {
         return Ok(MeshRoundReport {
             enabled: false,
@@ -1123,7 +1166,7 @@ pub async fn round(
             window: None,
         });
     };
-    let candidates = mesh_peers(space_id, my_device, peers);
+    let candidates = mesh_peers_by_name(space_id, &space_name, my_device, peers);
     if candidates.is_empty() {
         return Ok(MeshRoundReport {
             enabled: true,
@@ -3275,6 +3318,41 @@ mod tests {
             addr: "192.168.1.9".to_string(),
             seen_at_ms: 0,
         }
+    }
+
+    /// ⭐ 会**报名字**的对端（B1 步三之后的新版本才会这样发）。
+    fn announced_named(device: &str, base: &str, space_id: &str, space_name: &str) -> Peer {
+        let mut p = announced(device, base, &[space_id]);
+        p.announce.hub_space_names = vec![space_name.to_string()];
+        p
+    }
+
+    /// ⭐⭐ **2026-10-19（owner 重申「个人空间严格按空间名称自动同步」· B1 步三）**：
+    /// 挑对端时**名字优先**，三格：
+    /// 1. 同名不同 id ⇒ 挑中 ✓；2. 同 id 不同名 ⇒ ⛔ 不许挑中；3. 老对端没报名字 ⇒ 回落 id ✓。
+    ///
+    /// **变异**：`invitable_base_for` 里 `by_name` 那支恒 `false` ⇒ 第 1 格必红；恒 `true`（不看名字）⇒ 第 2 格必红。
+    #[test]
+    fn the_same_space_name_wins_over_a_matching_id() {
+        let named = vec![announced_named("B", "http://192.168.1.3:8787", "sp-remote", "产品")];
+        let got = mesh_peers_by_name("sp-local", "产品", "me", &named);
+        assert_eq!(got.len(), 1, "同名不同 id 必须挑中");
+        assert_eq!(got[0].device_id, "B");
+
+        let same_id_other_name = vec![announced_named("C", "http://192.168.1.4:8787", "sp-local", "运营")];
+        assert!(
+            mesh_peers_by_name("sp-local", "产品", "me", &same_id_other_name).is_empty(),
+            "id 对得上但名字不同 ⇒ ⛔ 不许挑中（严格按名字）"
+        );
+
+        let old = vec![announced("D", "http://192.168.1.5:8787", &["sp-local"])];
+        assert_eq!(
+            mesh_peers_by_name("sp-local", "产品", "me", &old).len(),
+            1,
+            "老对端没报名字 ⇒ 回落到 id，别把升级期变成断连"
+        );
+        let old_other = vec![announced("E", "http://192.168.1.6:8787", &["other"])];
+        assert!(mesh_peers_by_name("sp-local", "产品", "me", &old_other).is_empty());
     }
 
     // ─────────────────────────── 服务侧：没有账本 ───────────────────────────
