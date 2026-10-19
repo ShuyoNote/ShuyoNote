@@ -368,3 +368,11 @@
 ---
 > **边界（如实说）**：本文只写**语义**与**判据**，⛔ 不含实现选型、不含 UI 稿、不含服务端接口设计。
 > 口径的真源是**判据与代码**；本文只做索引，⛔ 不另立第二份真相源（见 [`README.md`](README.md)）。
+
+**落地进度（B1 第一步，2026-10-19）**：⭐ **名字已经上路** ✓ —— `LanAnnounce` 新增
+`hub_space_names: Vec<String>`（`#[serde(default)]`，⛔ 不升 `WIRE_VERSION`；老对端不发也收得下），
+由 `announce_for_own_hub(…, space_name)` 与 `lan_state::announces_for_this_round`（按 `ws_id` 从
+`meta.workspaces.name` 读一次）填进去。
+⚠️ **判定一个字节没动**：挑对端仍然只看 `hub_spaces`（id）⇒ N1／N2 仍未完成；
+「按名挑对端」是下一步（改同步路由的核心判定，要等 CI 能读时做）。
+判据：`lan::tests::an_announce_carries_the_space_name_and_old_peers_still_decode`（3 格：带名／空名不带／老对端仍收）。

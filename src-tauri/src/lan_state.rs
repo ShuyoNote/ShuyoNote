@@ -425,7 +425,7 @@ pub fn announces_for(
     short_id: &str,
     profiles: &[(String, String, String)],
 ) -> Vec<lan::LanAnnounce> {
-    announces_for_with_mesh(local_device_id, device_name, short_id, "", profiles, &[])
+    announces_for_with_mesh(local_device_id, device_name, short_id, "", profiles, &[], &[])
 }
 
 /// ⭐★ **2026-10-09（task-8「设备直连」）**：**这一轮该发哪些公告** —— 产品路径的**唯一入口** ✓。
@@ -485,7 +485,18 @@ pub(crate) fn announces_for_this_round(
         .collect();
     // ⭐ 两段合起来：**唯一入口**（把空间解析对 ✓）＋ **短标识**（跟着公告出去 ✓）——
     //    ⛔ 少任何一半都会丢东西：少了前者 ⇒ 个人空间 0 条公告；少了后者 ⇒ 公告里没短标识。
-    announces_for_with_mesh(local_device_id, device_name, &short_id, &pubkey, &resolved, mesh_bases)
+    // ⭐ 2026-10-19（B1）：⭐ 空间名**每轮读一次** ✗（与短标识／公钥同一个手法 ✓：⛔ 不「一条公告读一次」）。
+    //   ⚠️ 只读 ✓（读路径不许写库 ✓）；读不到 ⇒ 空表 ⇒ 公告里**不带名字**（⛔ 不塞空串 ✓）。
+    let space_names: Vec<(String, String)> = match c.prepare(
+        "SELECT id, COALESCE(name, '') FROM meta.workspaces WHERE deleted_at IS NULL",
+    ) {
+        Ok(mut s) => s
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    announces_for_with_mesh(local_device_id, device_name, &short_id, &pubkey, &resolved, mesh_bases, &space_names)
 }
 
 /// ★ 丙-③-b-2b：**网格开着的那几个空间，公告里报的是我自己的窗口地址。**
@@ -507,6 +518,9 @@ pub fn announces_for_with_mesh(
     pubkey: &str,
     profiles: &[(String, String, String)],
     mesh_bases: &[(String, String)],
+    // ⭐ 2026-10-19（B1）：⭐ `(ws_id, 空间名)` ✗ —— 只往公告里带，⛔ 今天不参与任何判定。
+    //   ⚠️ 同样**当参数传进来**（本函数是纯函数 ✓，读库那一步在 `announces_for_this_round` ✓）。
+    space_names: &[(String, String)],
 ) -> Vec<lan::LanAnnounce> {
     let dev = local_device_id.trim();
     // ⚠️ 没有设备身份 ⇒ **一条都不发**：`decode_announce` 会以 `NoDeviceId` 丢掉它，
@@ -515,8 +529,14 @@ pub fn announces_for_with_mesh(
         return Vec::new();
     }
     let mut out = Vec::new();
-    for (space_id, server_url, _) in profiles {
+    for (space_id, server_url, ws) in profiles {
         let space = space_id.trim();
+        // ⭐ 名字按 **ws_id** 找（`meta.workspaces.name` 才是用户看到的那一份 ✓）。
+        let space_name = space_names
+            .iter()
+            .find(|(id, _)| id.trim() == ws.trim())
+            .map(|(_, n)| n.trim())
+            .unwrap_or("");
         let url = server_url.trim();
         // 只填了地址还没选空间 ⇒ 不发言（与 `bound_profile_count` 同一把尺：算不算绑上）。
         // ★ 丙-③-b-2b：**例外是"这个空间开了网格"** —— 那种情况下本来就不需要服务端地址
@@ -525,7 +545,7 @@ pub fn announces_for_with_mesh(
         if !is_fully_bound(space_id, server_url) && mesh_base.is_none() {
             continue;
         }
-        let mut a = lan::announce_for_own_hub(dev, device_name, short_id, url, space)
+        let mut a = lan::announce_for_own_hub(dev, device_name, short_id, url, space, space_name)
             .unwrap_or_else(|| lan::LanAnnounce {
                 v: lan::WIRE_VERSION,
                 device_id: dev.to_string(),
@@ -541,6 +561,11 @@ pub fn announces_for_with_mesh(
                 pubkey: String::new(),
                 hub_base: None,
                 hub_spaces: Vec::new(),
+                hub_space_names: if space_name.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![space_name.to_string()]
+                },
                 // ★ 存在声明也带指纹（owner 2026-09-25 拍板，B 片施工单 §8.3）：那台设备可能
                 //   **没资格代言**（`hub_base: None`），而 `fp` 留空会让它在"谁在说话"这件事上
                 //   完全隐形 —— 掉包判据要看的就是这个。
@@ -1233,6 +1258,7 @@ mod tests {
                 short_id: "T3ST1".into(),
                 hub_base: Some(base.to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
+                hub_space_names: Vec::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -1445,7 +1471,7 @@ mod tests {
         let bases = mesh_bases_of(&[("sp-1", "http://192.168.1.5:8788")]);
 
         assert!(should_run_discovery(&profiles, &["sp-1".to_string()]), "开了网格 ⇒ 发现层要起");
-        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &bases);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &bases, &[]);
         assert_eq!(got.len(), 1, "{got:#?}");
         assert_eq!(got[0].hub_base.as_deref(), Some("http://192.168.1.5:8788"));
         assert_eq!(got[0].hub_spaces, vec!["sp-1".to_string()]);
@@ -1457,7 +1483,7 @@ mod tests {
     fn a_mesh_base_overrides_the_configured_server_in_the_announce() {
         let profiles = profiles_of(&[("sp-1", "https://s.example.com")]);
         let bases = mesh_bases_of(&[("sp-1", "http://10.0.0.7:9000")]);
-        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &bases);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &bases, &[]);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].hub_base.as_deref(), Some("http://10.0.0.7:9000"), "覆盖成我自己的窗口");
     }
@@ -1468,16 +1494,16 @@ mod tests {
         // ① 半截配置（有地址没空间）：不开发现层、不发言
         let half = profiles_of(&[("", "http://192.168.1.5:8787")]);
         assert!(!should_run_discovery(&half, &[]));
-        assert!(announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &half, &[]).is_empty());
+        assert!(announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &half, &[], &[]).is_empty());
         // ② 绑上了：开，而且报的是配置地址（甲那条路）
         let bound = profiles_of(&[("sp-1", "http://192.168.1.5:8787")]);
         assert!(should_run_discovery(&bound, &[]));
-        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &bound, &[]);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &bound, &[], &[]);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].hub_base.as_deref(), Some("http://192.168.1.5:8787"));
         // ③ 什么都没配：不开、不发言
         assert!(!should_run_discovery(&[], &[]));
-        assert!(announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &[], &[]).is_empty());
+        assert!(announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &[], &[], &[]).is_empty());
     }
 
     /// ⭐ 2026-10-11（**设备身份** ✓，方案 `2026-10-11-device-identity-keys.md` §4 第 2 步 ✓）：
@@ -1492,7 +1518,7 @@ mod tests {
         let profiles = profiles_of(&[("sp-1", "http://192.168.1.5:8787")]);
         // ⭐ 形状正确的公钥（32 字节 ⇒ 64 个十六进制字符 ✓；值本身随便 ✓）
         let pk = "ab".repeat(32);
-        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", &pk, &profiles, &[]);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", &pk, &profiles, &[], &[]);
         assert_eq!(got.len(), 1, "{got:#?}");
         assert_eq!(got[0].pubkey, pk, "⛔ 公告里必须是**传进来那把公钥** ✗（⛔ 不是它自己算的 ✗）");
         // ⭐ 过一遍**线格式**（编／解）⇒ 逐字还在 ✓（⭐ 老对端读不读得动由下一条管 ✓）
@@ -1500,7 +1526,7 @@ mod tests {
         let back = crate::lan::decode_announce(&raw).expect("解码");
         assert_eq!(back.pubkey, pk);
         // ⭐ 没身份（空串）⇒ **照旧发得出来** ✓（⛔ 不因为"没有身份"就不发言 ✗）
-        let none = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &[]);
+        let none = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &[], &[]);
         assert_eq!(none.len(), 1, "没有身份也要照旧发言（发现与身份是两件事）");
         assert_eq!(none[0].pubkey, "", "没有身份 ⇒ 如实地是空串 ✓（⛔ 不猜成任何东西 ✗）");
     }
@@ -1862,6 +1888,7 @@ mod short_id_tests {
                 short_id: "T3ST1".into(),
                 hub_base: Some("10.0.0.9:8899".to_string()),
                 hub_spaces: Vec::new(),
+                hub_space_names: Vec::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
