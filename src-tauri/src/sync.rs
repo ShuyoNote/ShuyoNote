@@ -4048,6 +4048,44 @@ pub async fn mesh_sync_now(
             crate::db::now_ms(),
         );
     }
+    // ⭐⭐ **2026-10-19（owner 拍「甲」：同步时自动建本机没有的同名空间）**：
+    //   ⭐ 位置就在**开窗之后、拉之前** ✗：这样这一轮后面那段 `round` 照常跑（新空间下一轮才轮到）。
+    //   ⚠️ 三条边界：
+    //     ① 没有对端 ⇒ 什么都不做（⛔ 不开空转的写库）；
+    //     ② 拿不到 app data dir ⇒ 什么都不做（⛔ 不猜目录）；
+    //     ③ 失败**只记日志**、不许把整轮弄挂（用户那次同步的正当工作不该被它连坐）；
+    //   ⚠️ 锁**只在这一小块里拿**（`create_missing_peer_spaces` 是同步的 ⇒ ⛔ 不跨 await ✓）。
+    let created_spaces = if peers.is_empty() {
+        Vec::new()
+    } else {
+        match crate::db::app_data_dir_ref() {
+            None => Vec::new(),
+            Some(dir) => {
+                let c = db.0.lock().expect("db mutex poisoned");
+                // 本机**有没有加密空间**（有 ⇒ 不自动建：⛔ 不往加密盘里混一个明文空间）
+                let encrypted: i64 = c
+                    .query_row(
+                        "SELECT COUNT(*) FROM meta.workspaces WHERE encrypted = 1",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                match create_missing_peer_spaces(
+                    &c,
+                    dir,
+                    &peers,
+                    cfg.bind.as_deref(),
+                    encrypted > 0,
+                ) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("[mesh] 自动建空间失败（这一轮照常继续）：{e}");
+                        Vec::new()
+                    }
+                }
+            }
+        }
+    };
     let mut report = crate::mesh::round(
         &db.0,
         &scope.space,
@@ -4060,6 +4098,13 @@ pub async fn mesh_sync_now(
     if report.enabled && report.window.is_none() {
         // 配了地址却没窗口 ⇒ 上面 `ensure_window` 会直接报错，走不到这里；留一句兜底说明。
         report.note.push_str("（⚠️ 设置里配了监听地址，但窗口没起来）");
+    }
+    // ⭐ **2026-10-19（G4：建完必须说出来）** —— ⛔ 不许静默建空间。
+    if !created_spaces.is_empty() {
+        report.note.push_str(&format!(
+            "；因对端的服务，新建了空间「{}」",
+            created_spaces.join("」「")
+        ));
     }
 
     // ④ ⭐⭐ **2026-10-09（task-8）**：**网格这一轮也记一条 `sync_history`** ✓。
