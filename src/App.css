@@ -24692,12 +24692,94 @@ body.is-plugin-panel-open .main {
    ⛔ 不改桌面 `.main` 一个字节 ✗；⛔ 不用 `transform` 做转场 ✗（带 transform 的祖先会成为包含块 ⇒
    里面 `position:fixed` 的浮层会偏 ✗ —— 那条坑 `:21278` 附近有逐字记录 ✓）。 */
 /* ⭐ 移动端内容外壳（纯重构那一刀 ✓）：把所有移动屏**统一裹一层** ✓，为底栏 ＋ 留白留位置 ✓。
-   ⚠️ 本轮**不加** `padding-bottom` ✗（留白跟底栏同一刀 ✓ —— 否则底部会多一截空白 ✗）。 */
+   ⭐ 2026-10-19 第二刀：底栏落地 ⇒ **只在这一处**给内容让出 64px（56px 栏高 ＋ 8px 呼吸位 ✓）。
+   ⛔ 别逐屏加 `padding-bottom` ✗ —— 那会在没有底栏的屏（阅读/配对）上多出一截空白 ✓。 */
 .m-tabshell {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  padding-bottom: calc(64px + var(--sab));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端**底边栏 ＋ 浮「＋」**（2026-10-19 第二刀）
+   ⚠️ 只有 `.m-tabshell` 里会渲染它们（`wrapMobile` ✓：设置屏 ＋ 首页/快速记录/搜索）✓。
+   ⚠️ 栏自身 `position: fixed`：不参与 `.m-tabshell` 的 column flex ✓（否则会给内容再挤一次）。
+   ⚠️ 高度 56（在 56–64 的口径内 ✓）＋ 底部系统手势区 `--sab` ✓；
+      内容让位靠上面 `.m-tabshell` 那**唯一一处** padding-bottom ✓。
+   ========================================================================== */
+.mtab-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 45;
+  display: flex;
+  height: calc(56px + var(--sab, 0px));
+  padding-bottom: var(--sab, 0px);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.mtab-item {
+  flex: 1 1 0;
+  min-width: 0;
+  /* 触屏命中区口径 ≥44（行高给满 56） */
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+/* 选中态＝**实心主色**：图标胶囊填 `--accent`，文字同色（`--on-accent` 是仓里既有的前景色 ✓）。 */
+.mtab-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 24px;
+  border-radius: 999px;
+  color: inherit;
+}
+.mtab-item.is-on {
+  color: var(--accent);
+}
+.mtab-item.is-on .mtab-ico {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.mtab-label {
+  line-height: 1.1;
+}
+/* 浮「＋」：右下、**底栏上方**（56 栏高 ＋ 系统手势区 ＋ 16 呼吸位 ✓），56×56 ≥44 ✓。
+   ⚠️ 它挂在 `.m-tabshell` 下、`position: fixed` ⇒ 不会被 `.mshell` 的 overflow 裁掉 ✓。 */
+.mtab-fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(56px + var(--sab, 0px) + 16px);
+  z-index: 46;
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: var(--shadow-lg);
+  cursor: pointer;
+}
+.mtab-fab:active {
+  filter: brightness(0.92);
 }
 
 .mshell {
@@ -25102,6 +25184,19 @@ body.is-plugin-panel-open .main {
   margin: 2px 2px 0;
   font-size: 12px;
   color: var(--text-faint);
+}
+/* ⭐ 2026-10-19 第二刀：同步入口搬进设置屏（`<SyncPanel />` 自带触发器 ✓，组件未改 ✓）。
+   沿用原主界面那颗浮钮的命中区与外观口径（44×44 胶囊 ✓）——
+   它在一张卡片里，不再需要 fixed 定位 ✓。 */
+.mset .btn-sync {
+  min-width: 44px;
+  min-height: 44px;
+  margin-top: 4px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
 }
 
 /* ⭐ 2026-10-10：手机档"回首页"浮标（台账 R188 的 (b) ✓）—— 只在**开着某个页面**时出现 ✓。

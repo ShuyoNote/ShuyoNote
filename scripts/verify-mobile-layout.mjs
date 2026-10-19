@@ -137,29 +137,54 @@ async function ensureActiveSpacePersonal(page) {
   }
 }
 
-// 在页面里读「竖条 / 侧栏 / 遮罩 / 按钮」的真实几何与计算样式。
+// 在页面里读「竖条 / 侧栏 / 遮罩 / 按钮 / 底栏」的真实几何与计算样式。
 const probe = () => {
   const sidebar = document.querySelector(".sidebar");
   const railEl = document.querySelector(".activity-bar");
   const toggle = document.querySelector(".sidebar-toggle-btn");
-  const railToggle = document.querySelector(".mobile-rail-toggle");
   const backdrop = document.querySelector(".mobile-sidebar-backdrop");
   const railBackdrop = document.querySelector(".mobile-rail-backdrop");
   const main = document.querySelector(".mshell, .main");
+  const tabBar = document.querySelector(".mtab-bar");
+  const tabItems = [...document.querySelectorAll(".mtab-item")];
+  const fab = document.querySelector(".mtab-fab");
   const disp = (el) => (el ? getComputedStyle(el).display : null);
+  const rect = (el) => (el ? el.getBoundingClientRect() : null);
   // 窄屏竖条是浮层：收起时被 translateX(-100%) 推到屏外，display 仍是 flex。
   // 所以判"可见"必须看几何（右边缘是否落在视口内），不能看 display。
   const railRect = railEl?.getBoundingClientRect();
+  const barRect = rect(tabBar);
+  const fabRect = rect(fab);
+  const mainRect = rect(main);
   return {
     mobileMQ: matchMedia("(max-width: 768px)").matches,
     sidebarDisplay: disp(sidebar),
     sidebarHidden: sidebar ? sidebar.hasAttribute("hidden") : null,
     railVisible: !!railRect && railRect.right > 1,
     railRight: railRect ? Math.round(railRect.right) : null,
-    mainWidth: main ? Math.round(main.getBoundingClientRect().width) : null,
+    mainWidth: mainRect ? Math.round(mainRect.width) : null,
     toggleDisplay: disp(toggle),
     toggleAria: toggle?.getAttribute("aria-expanded") ?? null,
-    railToggleDisplay: disp(railToggle),
+    // ⭐ 2026-10-19 第二刀：☰ 已删 ⇒ 探针换成**底栏 ＋ 浮「＋」**（判据不删，换对象 ✓）。
+    tabBarDisplay: disp(tabBar),
+    tabCount: tabItems.length,
+    tabLabels: tabItems.map((el) => (el.textContent || "").trim()),
+    tabBarHeight: barRect ? Math.round(barRect.height) : null,
+    tabBarTop: barRect ? Math.round(barRect.top) : null,
+    tabMinW: tabItems.length ? Math.min(...tabItems.map((el) => Math.round(el.getBoundingClientRect().width))) : null,
+    tabMinH: tabItems.length ? Math.min(...tabItems.map((el) => Math.round(el.getBoundingClientRect().height))) : null,
+    contentBottom: mainRect ? Math.round(mainRect.bottom) : null,
+    fab: fabRect
+      ? {
+          w: Math.round(fabRect.width),
+          h: Math.round(fabRect.height),
+          bottom: Math.round(fabRect.bottom),
+          right: Math.round(innerWidth - fabRect.right),
+        }
+      : null,
+    docWidth: document.documentElement.scrollWidth,
+    winWidth: innerWidth,
+    winHeight: innerHeight,
     backdrop: !!backdrop,
     railBackdrop: !!railBackdrop,
     stored: localStorage.getItem("shuyonote:sidebarOpen"),
@@ -167,21 +192,50 @@ const probe = () => {
 };
 
 // 窄屏的右侧工具条**默认不渲染**（2026-09-22 起：它是常驻浮动控制条，窄屏上会压住
-// 正文右缘，改由右下角一枚 44×44 的圆钮唤出）。所以"抽屉遮罩挡住它"这条要分两种情况：
+// 正文右缘）。所以"抽屉遮罩挡住它"这条要分两种情况：
 //   · 工具条**不在 DOM 里** ⇒ 没什么可挡的，这条判据不适用（返回 null，调用方跳过）；
-//   · 唤出按钮**在** ⇒ 它同样必须被抽屉遮罩挡住（z-index 45 < 遮罩 55），
-//     否则抽屉开着还能从右下角戳出另一套面板。
-// ⚠️ **2026-10-06（owner：「关闭这个顶部工具栏」）**：原先这里拿 `.top-tools .top-tool` 当探针 ——
-//    那条工具栏已经撤了（无插件入口时不渲染 ✓）⇒ 换成本机窄屏**一定在**的那颗唤出按钮
-//    （`.mobile-rail-toggle` ✓）。探针换个对象，判据本身（"抽屉开着时那套浮动控制在遮罩之下"）不变 ✓。
+//   · 浮动控制在 ⇒ 它同样必须被抽屉遮罩挡住（z-index 45 < 遮罩 55）。
+// ⚠️ **2026-10-19 第二刀**：`.mobile-rail-toggle` 已删 ✓ ⇒ 探针换成底栏那颗浮「＋」
+//    （它也是 `position: fixed` 的浮动控制 ✓）。判据本身（"抽屉开着时浮动控制在遮罩之下"）不变 ✓。
 const railBlockedByBackdrop = () => {
-  const target = document.querySelector(".mobile-rail-toggle");
+  const target = document.querySelector(".mtab-fab");
   if (!target) return null;
   const r = target.getBoundingClientRect();
   const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
   const blocked = at?.classList?.contains("mobile-sidebar-backdrop") ?? false;
-  return { blocked, which: ".mobile-rail-toggle" };
+  return { blocked, which: ".mtab-fab" };
 };
+
+/**
+ * 打开/收起左侧竖条（⭐ 2026-10-19 第二刀）。
+ *
+ * 为什么不再 `page.click(".mobile-rail-toggle")`：☰ **已按计划删除** ✓ —— 手机上 UI
+ * 不再有"展开工具栏"的入口 ✓。但竖条本身没删（`ActivityBar` 一个字没动 ✓），
+ * 所以门禁仍要量它的几何 ⇒ 这条测试**显式走 store** 把它打开 ✓（⛔ 不是点一个不存在的元素 ✗）。
+ */
+async function setRailOpen(page, open) {
+  await page.evaluate(async (next) => {
+    const loaded = (performance.getEntriesByType?.("resource") ?? [])
+      .map((e) => e.name)
+      .filter((n) => n.includes("/src/store/activity.ts"));
+    const m = await import(/* @vite-ignore */ (loaded.length ? loaded[loaded.length - 1] : "/src/store/activity.ts"));
+    m.useActivity.getState().setRailOpen(next);
+  }, open);
+  await sleep(700);
+}
+
+/**
+ * 回到移动端首页（⭐ 第二刀的底栏**只在** `wrapMobile` 两处外壳里渲染 ✓：首页/快速记录/搜索 ＋ 设置）。
+ *
+ * 为什么需要：种子空间启动时会**自动打开一页**（`mobile-read` ⇒ 阅读屏，不在底栏外壳里 ✓）。
+ * 这里走**真用户路径**「‹ 首页」✓（⛔ 不是硬改 store ✗）；没有打开页时它是 no-op ✓。
+ */
+async function gotoMobileHome(page) {
+  if (await page.$(".mnote-home")) {
+    await page.click(".mnote-home");
+    await sleep(900);
+  }
+}
 
 async function main() {
   const executablePath = findChrome();
@@ -223,6 +277,8 @@ async function main() {
     await phone.setViewport({ ...PHONE, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
     await phone.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
     await sleep(3000);
+    // 种子空间会自动打开一页 ⇒ 先回首页，底下才量得到底栏（见 `gotoMobileHome` 注释 ✓）。
+    await gotoMobileHome(phone);
 
     console.log(`【手机 ${PHONE.width}x${PHONE.height} · 初始】`);
     let s = await phone.evaluate(probe);
@@ -231,14 +287,38 @@ async function main() {
     ok(s.sidebarHidden === true, "侧栏带 hidden 属性");
     ok(s.railVisible === false, `左侧竖条默认收起（浮层，右边缘=${s.railRight} 在屏外）`);
     ok(s.mainWidth === PHONE.width, `主区拿到全宽 ${PHONE.width}px（实际 ${s.mainWidth}）——竖条不再常驻吃掉 12% 宽度`);
-    ok(s.railToggleDisplay !== "none", `显示浮层唤出按钮（display=${s.railToggleDisplay}）`);
+    // ⭐ 2026-10-19 第二刀：☰ 删了 ⇒ 这一格换成**底栏 ＋ 浮「＋」**的几何（仍是 1 条断言 ✓，
+    //    读数写进 note ✓）：栏高 56–64、每项触区 ≥44、内容底不被栏遮、浮＋大小/位置、无横向溢出。
+    note(
+      `底栏读数：display=${s.tabBarDisplay} 项=${s.tabCount}（${s.tabLabels.join("/")}）` +
+        ` 高=${s.tabBarHeight} 每项最小=${s.tabMinW}×${s.tabMinH}` +
+        ` 内容底=${s.contentBottom} 栏顶=${s.tabBarTop}` +
+        ` 浮＋=${s.fab ? `${s.fab.w}×${s.fab.h} 底=${s.fab.bottom} 右=${s.fab.right}` : "不在"}` +
+        ` 文档宽=${s.docWidth} 视口=${s.winWidth}`,
+    );
+    ok(
+      s.tabBarDisplay === "flex" &&
+        s.tabCount === 3 &&
+        s.tabLabels.join("/") === "笔记/搜索/我的" &&
+        s.tabBarHeight >= 56 &&
+        s.tabBarHeight <= 64 &&
+        s.tabMinW >= 44 &&
+        s.tabMinH >= 44 &&
+        s.contentBottom <= s.tabBarTop &&
+        s.fab !== null &&
+        s.fab.w >= 44 &&
+        s.fab.h >= 44 &&
+        s.fab.bottom <= s.tabBarTop - 8 &&
+        s.docWidth <= s.winWidth,
+      `底栏三项（${s.tabLabels.join("/")}）高 ${s.tabBarHeight}（56–64）、触区 ≥44、内容底 ${s.contentBottom} ≤ 栏顶 ${s.tabBarTop}、` +
+        `浮＋ ${s.fab?.w}×${s.fab?.h} 在栏上方、文档宽 ${s.docWidth} ≤ ${s.winWidth}`,
+    );
     ok(!s.backdrop && !s.railBackdrop, "初始无任何遮罩");
     ok(s.stored === null, `移动端自动收起不写 localStorage（实际 ${JSON.stringify(s.stored)}）——否则会污染桌面端偏好`);
     await shot(phone, "01-phone-closed");
 
-    console.log(`\n【手机 · 点唤出按钮 → 竖条滑入】`);
-    await phone.click(".mobile-rail-toggle");
-    await sleep(800);
+    console.log(`\n【手机 · 经 store 打开竖条 → 滑入】`);
+    await setRailOpen(phone, true);
     s = await phone.evaluate(probe);
     ok(s.railVisible === true, `竖条滑入（右边缘=${s.railRight}）`);
     ok(s.railBackdrop, "出现浮层遮罩");
@@ -255,15 +335,13 @@ async function main() {
     ok(s.railVisible === false, "竖条自动收起（选完就把整屏交还内容）");
     ok(s.toggleAria === "true", `开合按钮 aria-expanded=true（实际 ${s.toggleAria}）`);
     const blockedByBackdrop = await phone.evaluate(railBlockedByBackdrop);
-    // ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条**浮动** rail 撤了 ⇒ 这里的"右侧控制"换成
-    //   顶端工具栏的**第一颗按钮** ✓ —— 而它是**应用 chrome**（与贴着屏幕边缘的浮动控制不同 ✓）：
-    //   抽屉打开时它**允许**仍然可点（点「目录」正是把抽屉关掉的办法 ✓）。
-    //   ⇒ 断言按新语义**重述**（⛔ 不是删掉 ✗）：旧那条"必须被遮罩盖住"只对浮动控制成立 ✓。
+    // ⚠️ 2026-10-19 第二刀：浮动控制从 ☰ 换成底栏那颗浮「＋」（`.mtab-fab` ✓）。
+    //    判据**换对象不换语义**：抽屉打开时它必须被遮罩挡住（z 45/46 < 遮罩 55）✓。
     ok(
-      blockedByBackdrop === null || blockedByBackdrop.blocked === false,
+      blockedByBackdrop === null || blockedByBackdrop.blocked === true,
       blockedByBackdrop === null
-        ? "抽屉打开时没有可误触的**浮动**控制（旧 rail 已撤 ✓）"
-        : `顶端工具栏是应用 chrome（${blockedByBackdrop.which}）——抽屉打开时仍可用 ✓（点它能把抽屉关掉 ✓）`,
+        ? "抽屉打开时没有可误触的**浮动**控制（底栏浮＋不在？）"
+        : `底栏浮「＋」（${blockedByBackdrop.which}）在抽屉遮罩之下（blocked=${blockedByBackdrop.blocked}）——⛔ 不许从右下角戳出另一套操作`,
     );
     await shot(phone, "03-phone-sidebar-open");
 
@@ -278,9 +356,8 @@ async function main() {
     ok(s.toggleAria === "false", "开合按钮状态复位");
     await shot(phone, "04-phone-backdrop-closed");
 
-    console.log(`\n【手机 · 再开竖条，点遮罩收起】`);
-    await phone.click(".mobile-rail-toggle");
-    await sleep(800);
+    console.log(`\n【手机 · 再开竖条（store），点遮罩收起】`);
+    await setRailOpen(phone, true);
     s = await phone.evaluate(probe);
     ok(s.railVisible === true, "竖条再次滑入");
     await phone.mouse.click(PHONE.width - 20, 500);
@@ -289,8 +366,7 @@ async function main() {
     ok(s.railVisible === false, "点遮罩后竖条收起");
     ok(!s.railBackdrop, "浮层遮罩消失");
     console.log(`\n【手机 · 竖条里点非活动按钮（设置）】`);
-    await phone.click(".mobile-rail-toggle");
-    await sleep(700);
+    await setRailOpen(phone, true);
     // ⚠️ 按**标题**选，不按序号。⚠️ **2026-10-04 又一次**：模板中心那颗**独立按钮**
     // 已并进 `.activity-group` 的 `ITEMS`（第 7 个 view）⇒ 底部 `.activity-group-end`
     // 现在只剩「设置」；本脚本原来按 `.activity-group-end` 找模板中心 ⇒ **找不到元素、
@@ -315,8 +391,7 @@ async function main() {
     // 是 no-op（`lib/platform/web.ts`），用户模板进不了 DOM，`.tc-card-actions` 根本不渲染
     //（`.plugin-panel` 那条宽度断言用的是同一个办法）。
     console.log(`\n【手机 · 打开模板中心】`);
-    await phone.click(".mobile-rail-toggle");
-    await sleep(700);
+    await setRailOpen(phone, true);
     await phone.click('.activity-group .activity-btn[title="模板中心"]');
     await sleep(1600);
 
@@ -604,8 +679,7 @@ async function main() {
       await small.setViewport({ width: 320, height: 568, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
       await small.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
       await sleep(2500);
-      await small.click(".mobile-rail-toggle");
-      await sleep(700);
+      await setRailOpen(small, true);
       await small.click('.activity-group .activity-btn[title="模板中心"]');
       await sleep(1600);
       const s320 = await small.evaluate(() => {
@@ -649,7 +723,9 @@ async function main() {
     ok(!s.mobileMQ, "不命中窄屏媒体查询");
     ok(s.sidebarDisplay === "flex", `侧栏常驻可见（display=${s.sidebarDisplay}）`);
     ok(s.railVisible === true, `桌面竖条常驻在布局流内（右边缘=${s.railRight}）`);
-    ok(s.railToggleDisplay === null, "桌面根本不渲染浮层唤出按钮（元素不存在，不只是 display:none）");
+    // ⭐ 2026-10-19 第二刀：☰ 已删 ⇒ 这一格换成本刀真正要钉的**桌面不渲染移动底栏**
+    //    （换对象不换语义：移动专属 chrome 不许漏到桌面 ✓）。
+    ok(s.tabBarDisplay === null, "桌面根本不渲染移动底栏 / 浮「＋」（元素不存在，不只是 display:none）");
     // 这条断言 2026-09 反转了：开合按钮此前桌面 display:none（理由"点活动图标也能开合"），
     // 但那是**隐式约定**（提示只有 hover 才出现），而且拖分隔条收起侧栏后同样没有可见入口——
     // "收起来就找不回"是真实可达的状态。现在按钮桌面常驻，所以这里断言它**可见**，

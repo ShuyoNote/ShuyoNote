@@ -56,10 +56,18 @@ const SCREENS = [
 const SCREENS_EXPECTED = 10;
 
 const findings = [];
-const files = readdirSync(COMPONENTS).filter((n) => /^Mobile.*\.tsx$/.test(n) && !/\.test\.tsx$/.test(n));
+/**
+ * ⭐ **不是屏的移动组件**（显式排除，⛔ 不是放宽"死屏"判据）：
+ * `MobileTabBar.tsx` 是**底栏外壳**（每个移动屏都用它 ✓），它没有自己的整屏、也没有屏根
+ * `data-testid` ⇒ 它不属于这张"屏清单" ✓。⚠️ 组件名沿用 `Mobile*` 前缀（见文件头 ✓）⇒
+ * 这里必须**显式点名**排除；登记表仍然**只登记屏** ⇒「登记 10 条 / 可达 8」不变 ✓。
+ */
+const NON_SCREEN_COMPONENTS = new Set(["MobileTabBar.tsx"]);
+const allMobileFiles = readdirSync(COMPONENTS).filter((n) => /^Mobile.*\.tsx$/.test(n) && !/\.test\.tsx$/.test(n));
+const files = allMobileFiles.filter((n) => !NON_SCREEN_COMPONENTS.has(n));
 
 // ⓪ 扫面非空（否则"路径改了"会被读成干净 ✗）
-if (files.length === 0) {
+if (allMobileFiles.length === 0) {
   console.error("❌ 不算通过：一个 `Mobile*.tsx` 都没扫到（路径改了？）—— 这不是干净 ✗");
   process.exit(2);
 }
@@ -123,6 +131,7 @@ if (findings.length) {
 const reachable = SCREENS.filter((s) => s.reachable).length;
 const pending = SCREENS.filter((s) => s.reach === "nav" && !s.reachable).map((s) => s.id);
 console.log(
-  `✓ 干净：移动屏文件 ${files.length} 个全部登记 ✓；登记表 ${SCREENS.length} 条（棘轮 ✓）` +
+  `✓ 干净：扫了 ${allMobileFiles.length} 个 Mobile 组件（其中 ${NON_SCREEN_COMPONENTS.size} 个是外壳/非屏 ✓）；` +
+    `移动屏文件 ${files.length} 个全部登记 ✓；登记表 ${SCREENS.length} 条（棘轮 ✓）` +
     `；可达 ${reachable} 条 ✓；⭐ **如实记着"到不了"的 ${pending.length} 条：${pending.join("／")}** ✓（阶段 2 的待办 ✓）`,
 );

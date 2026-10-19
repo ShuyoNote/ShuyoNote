@@ -4,6 +4,7 @@ import { useSyncStatus } from "../store/syncStatus";
 import { useMobileNav } from "../store/mobileNav";
 import { useEditorStore } from "../store/editor";
 import { pushOverlay } from "../lib/overlayStack";
+import { SyncPanel } from "./SyncPanel";
 
 /**
  * **移动端设置**（效果图 `docs/plans/mobile/mockups/07-settings.svg`，规格 §4.7）。
@@ -116,6 +117,9 @@ export function MobileSettings() {
           </span>
           <span className="mset-go" aria-hidden>›</span>
         </button>
+        {/* ⭐ 2026-10-19 第二刀：主界面那颗同步浮钮已删 ⇒ **搬到设置屏**这里 ✓
+            （`SyncPanel` 自带触发器 ✓，本刀**一个字符都没改它** ✓；手机上点它会进 08 屏 ✓）。 */}
+        <SyncPanel />
         <div className="mset-status">
           <span className={"mset-dot" + (error ? " is-bad" : syncing ? " is-busy" : "")} aria-hidden />
           <span className="mset-status-text">同步状态：{syncLine}</span>
