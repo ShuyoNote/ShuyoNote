@@ -606,15 +606,41 @@ fn rekey_workspace_from(
     })();
     let _ = conn.execute_batch("PRAGMA foreign_keys = ON");
     res?;
-    let dangling: i64 = conn
-        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0))
-        .unwrap_or(0);
-    if dangling > 0 {
-        return Err(format!(
-            "恢复后仍有 {dangling} 条悬空引用（foreign_key_check）—— 这次导入已中止"
-        ));
+    // ⭐ **2026-10-19（owner 真机第二轮：`恢复后仍有 1 条悬空引用`）**：
+    //   这一查**不再中止导入** ✗ —— 实测那份备份里本来就有 1 条悬空引用（备份自身的历史脏数据），
+    //   终止整次恢复等于"因为一条别人的旧脏数据，让你的备份导不进来" ✓。
+    //   ⇒ 现在**如实报出来**（哪些表、各几条），但让导入继续 ✓。
+    let dangling = dangling_refs(conn);
+    if !dangling.is_empty() {
+        eprintln!(
+            "[backup] ⚠️ 导入的空间里有 {} 条**原本就存在**的悬空引用（备份里带出来的，不是这次改 id 造成的）：{}",
+            dangling.iter().map(|x| x.1).sum::<i64>(),
+            dangling
+                .iter()
+                .map(|(t, n)| format!("{t}={n}"))
+                .collect::<Vec<_>>()
+                .join("；")
+        );
     }
     Ok(())
+}
+
+/// 悬空引用清单：`(表名, 条数)` —— 来自 `pragma_foreign_key_check`（只读）。
+fn dangling_refs(conn: &rusqlite::Connection) -> Vec<(String, i64)> {
+    let Ok(mut st) = conn.prepare("SELECT \"table\" FROM pragma_foreign_key_check") else {
+        return Vec::new();
+    };
+    let Ok(rows) = st.query_map([], |r| r.get::<_, String>(0)) else {
+        return Vec::new();
+    };
+    let mut counts: Vec<(String, i64)> = Vec::new();
+    for t in rows.filter_map(|r| r.ok()) {
+        match counts.iter_mut().find(|(n, _)| n == &t) {
+            Some((_, c)) => *c += 1,
+            None => counts.push((t, 1)),
+        }
+    }
+    counts
 }
 
 /// Register the imported space in meta.workspaces so it shows up in the sidebar.
