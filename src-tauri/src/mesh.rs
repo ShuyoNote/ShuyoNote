@@ -1056,7 +1056,35 @@ fn migrate_device_level_paired_devices(c: &Connection) -> Result<usize, String> 
 /// ⚠️ 它与"我认谁"（`mesh_paired_devices.secret_sha256` ✓）是**两半**：
 ///   这一半是**我要出示的**，那一半是**别人要出示给我、我存的哈希** ✓。
 pub fn pair_secret_for(c: &Connection, space_id: &str, peer_device_id: &str) -> Option<String> {
-    read_setting(c, &format!("mesh_pair_secret:{space_id}"), peer_device_id)
+    // ⭐⭐ **2026-10-19（真机读数）**：**设备级那一格是空串时，回落到旧的房间档那一格** ✗。
+    //   现场（windows↔AMD，逐字三行）：
+    //     `mesh_pair_secret::94bfb27e…`         = **（空）**
+    //     `mesh_pair_secret:123456789Ok,./:94bfb27e…` = `Tashan1973,./`
+    //     `sync_history`：`拉了 1 台对端，其中 1 台没拉动`（对端 401）
+    //   ⇒ 迁移那一步（`mesh_paired_migrated_to_device_level = 1`）**只搬了标记、没搬值** ⇒
+    //     每一轮都拿空串去出示 ⇒ 对端一律 401 ⇒ 用户看到"同步不了"。
+    //   ⇒ 读路径上做**回落**（⛔ 不改写库：写路径仍是 `set_pair_secret` 那一处）✓
+    let main = read_setting(c, &format!("mesh_pair_secret:{space_id}"), peer_device_id)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if main.is_some() {
+        return main;
+    }
+    // 回落：设备级（`space_id` 空）那一格 ↔ 房间档那一格，两边都试一次。
+    let legacy_room = legacy_mesh_room(c).unwrap_or_default();
+    let candidates = [legacy_room.as_str(), ""];
+    for sid in candidates {
+        if sid == space_id {
+            continue;
+        }
+        if let Some(v) = read_setting(c, &format!("mesh_pair_secret:{sid}"), peer_device_id) {
+            let v = v.trim().to_string();
+            if !v.is_empty() {
+                return Some(v);
+            }
+        }
+    }
+    None
 }
 
 /// 写/清那一份（空 ⇒ 清掉 ✓）。⚠️ **不校验强度**：它由配对流程生成（≥60 bit 的码 ✓），
