@@ -487,16 +487,18 @@ pub(crate) fn announces_for_this_round(
     //    ⛔ 少任何一半都会丢东西：少了前者 ⇒ 个人空间 0 条公告；少了后者 ⇒ 公告里没短标识。
     // ⭐ 2026-10-19（B1）：⭐ 空间名**每轮读一次** ✗（与短标识／公钥同一个手法 ✓：⛔ 不「一条公告读一次」）。
     //   ⚠️ 只读 ✓（读路径不许写库 ✓）；读不到 ⇒ 空表 ⇒ 公告里**不带名字**（⛔ 不塞空串 ✓）。
-    let space_names: Vec<(String, String)> = match c.prepare(
-        "SELECT id, COALESCE(name, '') FROM meta.workspaces WHERE deleted_at IS NULL",
+    let space_meta: Vec<(String, String, String)> = match c.prepare(
+        "SELECT id, COALESCE(name, ''), COALESCE(kind, '') FROM meta.workspaces WHERE deleted_at IS NULL",
     ) {
         Ok(mut s) => s
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            })
             .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
             .unwrap_or_default(),
         Err(_) => Vec::new(),
     };
-    announces_for_with_mesh(local_device_id, device_name, &short_id, &pubkey, &resolved, mesh_bases, &space_names)
+    announces_for_with_mesh(local_device_id, device_name, &short_id, &pubkey, &resolved, mesh_bases, &space_meta)
 }
 
 /// ★ 丙-③-b-2b：**网格开着的那几个空间，公告里报的是我自己的窗口地址。**
@@ -518,9 +520,9 @@ pub fn announces_for_with_mesh(
     pubkey: &str,
     profiles: &[(String, String, String)],
     mesh_bases: &[(String, String)],
-    // ⭐ 2026-10-19（B1）：⭐ `(ws_id, 空间名)` ✗ —— 只往公告里带，⛔ 今天不参与任何判定。
+    // ⭐ 2026-10-19（B1）：⭐ `(ws_id, 空间名, 类别)` ✗ —— 只往公告里带，⛔ 今天不参与任何判定。
     //   ⚠️ 同样**当参数传进来**（本函数是纯函数 ✓，读库那一步在 `announces_for_this_round` ✓）。
-    space_names: &[(String, String)],
+    space_meta: &[(String, String, String)],
 ) -> Vec<lan::LanAnnounce> {
     let dev = local_device_id.trim();
     // ⚠️ 没有设备身份 ⇒ **一条都不发**：`decode_announce` 会以 `NoDeviceId` 丢掉它，
@@ -532,11 +534,11 @@ pub fn announces_for_with_mesh(
     for (space_id, server_url, ws) in profiles {
         let space = space_id.trim();
         // ⭐ 名字按 **ws_id** 找（`meta.workspaces.name` 才是用户看到的那一份 ✓）。
-        let space_name = space_names
+        let (space_name, space_kind) = space_meta
             .iter()
-            .find(|(id, _)| id.trim() == ws.trim())
-            .map(|(_, n)| n.trim())
-            .unwrap_or("");
+            .find(|(id, _, _)| id.trim() == ws.trim())
+            .map(|(_, n, k)| (n.trim(), k.trim()))
+            .unwrap_or(("", ""));
         let url = server_url.trim();
         // 只填了地址还没选空间 ⇒ 不发言（与 `bound_profile_count` 同一把尺：算不算绑上）。
         // ★ 丙-③-b-2b：**例外是"这个空间开了网格"** —— 那种情况下本来就不需要服务端地址
@@ -545,7 +547,7 @@ pub fn announces_for_with_mesh(
         if !is_fully_bound(space_id, server_url) && mesh_base.is_none() {
             continue;
         }
-        let mut a = lan::announce_for_own_hub(dev, device_name, short_id, url, space, space_name)
+        let mut a = lan::announce_for_own_hub(dev, device_name, short_id, url, space, space_name, space_kind)
             .unwrap_or_else(|| lan::LanAnnounce {
                 v: lan::WIRE_VERSION,
                 device_id: dev.to_string(),
@@ -561,6 +563,7 @@ pub fn announces_for_with_mesh(
                 pubkey: String::new(),
                 hub_base: None,
                 hub_spaces: Vec::new(),
+                hub_space_kinds: Vec::new(),
                 hub_space_names: if space_name.is_empty() {
                     Vec::new()
                 } else {
@@ -1258,6 +1261,7 @@ mod tests {
                 short_id: "T3ST1".into(),
                 hub_base: Some(base.to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
+                hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
@@ -1888,6 +1892,7 @@ mod short_id_tests {
                 short_id: "T3ST1".into(),
                 hub_base: Some("10.0.0.9:8899".to_string()),
                 hub_spaces: Vec::new(),
+                hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),

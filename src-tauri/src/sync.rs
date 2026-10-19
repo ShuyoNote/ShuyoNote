@@ -5242,6 +5242,7 @@ mod r146_mesh_scope_tests {
                     short_id: String::new(),
                     hub_base: Some("http://192.168.1.6:8788".to_string()),
                     hub_spaces: vec![scope.space.clone()],
+                    hub_space_kinds: Vec::new(),
                     hub_space_names: Vec::new(),
                     fp: "fp".into(),
                     pubkey: peer_pk.clone(),
@@ -8105,6 +8106,7 @@ mod tests {
                 short_id: "T3ST1".into(),
                 hub_base: Some(base.into()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
+                hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
@@ -9462,6 +9464,7 @@ mod tests {
                 short_id: "T3ST1".into(),
                 hub_base: base.map(|b| b.to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
+                hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 fp: device.to_string(),
                 pubkey: String::new(),
@@ -10037,6 +10040,7 @@ mod tests {
                 //    不带方案名 ⇒ `mesh_peers` 当场判它不可直连 ⇒ 候选为空 ✓（判据当场撞到过 ✓）。
                 hub_base: Some("http://192.168.1.6:8788".to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
+                hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 fp: "fp".into(),
                 // ⭐ 2026-10-17：双向登记要**对面那把公钥**（第 3 步之后唯一凭证 ✓）⇒ 夹具必须给合法的 ✓
