@@ -417,6 +417,104 @@ pub(crate) fn local_space_name(c: &Connection) -> Option<String> {
     }
 }
 
+/// ⭐⭐ **2026-10-19（owner 拍「甲」：同步时自动建本机没有的同名空间）**：
+/// 一次"要不要替对端建空间"的**结论** —— `Skip` 带一个**机器可读的理由**（⛔ 不是 `bool`：
+/// "没配对"与"名字对不上"必须分得开，界面/日志要说得出是哪道闸拦的）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoCreateSpace {
+    /// 过闸 ⇒ 这个空间该建。
+    Create,
+    /// 不过闸 ＋ 理由（`not_paired` / `not_personal` / `no_name` / `exists` / `tombstoned` / `encrypted`）。
+    Skip(&'static str),
+}
+
+/// ⭐ **2026-10-19**：**四道闸**（口径见 `docs/specs/2026-10-09-multidevice-merge-semantics.md` §0）。
+///
+/// 顺序即口径（先便宜后贵，且**先判"要不要建"再判"能不能建"**）：
+/// 1. **G1 来源**：只接受**本机信任过（已配对）**的设备的来件 ⇒ 否则 `not_paired`；
+/// 2. **G2 类别**：对端必须 `personal`（`team`／空／判不出 ⇒ `not_personal`）；
+/// 3. **名字**：空名 ⇒ `no_name`（⛔ 不许拿空名去建一个空名空间）；
+/// 4. **本机已有同名个人空间** ⇒ `exists`（那是"路由过去"，⛔ 不是"再建一个"）；
+/// 5. **G3 墓碑**：这个名字在本机**曾被删过** ⇒ `tombstoned`（⛔ 删了又活）；
+/// 6. **加密**：本机启用加密 ⇒ `encrypted`（⛔ 不在加密盘上建一个明文空间混进去）。
+///
+/// ⚠️ 纯函数：`local` 与 `tombstoned` 由调用方从库里读好传进来 ⇒ 判据不打桩、不碰库、不联网。
+/// ⚠️ **它只说"该不该建"，不建任何东西**（真正写库在调用方，且必须**先记账再建**，见 G4）。
+pub fn auto_create_space_decision(
+    peer_name: &str,
+    peer_kind: &str,
+    local: &[(String, String, String)],
+    tombstoned: &[String],
+    paired: bool,
+    encryption_on: bool,
+) -> AutoCreateSpace {
+    let name = peer_name.trim();
+    if !paired {
+        return AutoCreateSpace::Skip("not_paired");
+    }
+    // ⚠️ 逐字：`personal` 才建；`team`／空串／别的写法一律不建（⛔ 不猜"没报就是个人"）。
+    if peer_kind.trim() != "personal" {
+        return AutoCreateSpace::Skip("not_personal");
+    }
+    if name.is_empty() {
+        return AutoCreateSpace::Skip("no_name");
+    }
+    let same_name_personal = local
+        .iter()
+        .any(|(_, n, k)| k.trim() == "personal" && crate::mesh_merge_ledger::same_space_name_by_trim(n, name));
+    if same_name_personal {
+        return AutoCreateSpace::Skip("exists");
+    }
+    if tombstoned
+        .iter()
+        .any(|n| crate::mesh_merge_ledger::same_space_name_by_trim(n, name))
+    {
+        return AutoCreateSpace::Skip("tombstoned");
+    }
+    if encryption_on {
+        return AutoCreateSpace::Skip("encrypted");
+    }
+    AutoCreateSpace::Create
+}
+
+/// ⭐⭐ **2026-10-19（owner 拍「甲」）**：这一轮**该替对端建哪些空间** —— 四道闸之上的「汇总」那一层。
+///
+/// 三条口径：
+/// 1. **逐台过闸**（G1 来源：这台设备必须在本机信任名单里；G2 类别：对端必须 `personal`）；
+/// 2. **按名字去重**：两台对端都报「产品」⇒ 只建一个（⛔ 不建两个同名空间）；
+/// 3. **顺序稳定**：按名字排序后返回（判据要能逐字节比）。
+///
+/// ⚠️ 纯函数：`local`（本机空间三元组）、`tombstoned`（删过的名字）、`paired`（信任过的设备号）
+/// 全由调用方从库里读好传进来 ⇒ 判据不打桩、不碰库、不联网。
+pub fn peer_spaces_to_create(
+    peers: &[crate::lan::Peer],
+    local: &[(String, String, String)],
+    tombstoned: &[String],
+    paired: &[String],
+    encryption_on: bool,
+) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for p in peers {
+        let dev = p.announce.device_id.trim();
+        let is_paired = paired.iter().any(|d| d.trim() == dev);
+        // ⚠️ 名字与类别是**两个平行数组**（wire 上就是这么发的）⇒ 按**较短的那个**遍历，
+        //    短的那一侧缺的格子当空串处理（⛔ 不许越界、⛔ 不许用下标去猜）。
+        for (i, name) in p.announce.hub_space_names.iter().enumerate() {
+            let kind = p.announce.hub_space_kinds.get(i).map(String::as_str).unwrap_or("");
+            match auto_create_space_decision(name, kind, local, tombstoned, is_paired, encryption_on) {
+                AutoCreateSpace::Create => {
+                    let n = name.trim().to_string();
+                    if !out.iter().any(|(x, _)| x == &n) {
+                        out.push((n, kind.trim().to_string()));
+                    }
+                }
+                AutoCreateSpace::Skip(_) => {}
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
 /// 本机这个空间**属于哪一档**（读 `meta.workspaces.kind`）—— ⭐ **读不出来就 `None`**（判不出）。
 ///
 /// ⚠️ ⛔ **别拿 `space_crypto::space_kind` 来判**：它把"没有那一行/读不出"兜底成
@@ -7248,6 +7346,123 @@ mod merge_by_name_tests {
 
 #[cfg(test)]
 mod tests {
+
+    /// ⭐ **2026-10-19（owner 拍「甲」）**：这一轮该替对端建哪些空间 —— 四格：
+    /// ① 两台对端都报「产品」⇒ 只建**一个**（按名字去重）；
+    /// ② 没配对的那台报什么都不建（G1）；
+    /// ③ 对端报 `team` ⇒ 不建（G2）；
+    /// ④ 名字与类别**平行数组**：类别缺一格时不越界（按空串处理 ⇒ 不建）；顺序按名字稳定排序。
+    ///
+    /// **变异**：把去重那一句删掉 ⇒ 第 ① 格红；把 `is_paired` 恒 `true` ⇒ 第 ② 格红。
+    #[test]
+    fn the_peer_space_planner_dedupes_and_respects_every_gate() {
+        fn peer(dev: &str, names: &[&str], kinds: &[&str]) -> crate::lan::Peer {
+            let mut a = crate::lan::LanAnnounce {
+                v: crate::lan::WIRE_VERSION,
+                device_id: dev.to_string(),
+                ..Default::default()
+            };
+            a.hub_base = Some("http://192.168.1.9:8787".to_string());
+            a.hub_spaces = vec!["room-1".to_string()];
+            a.hub_space_names = names.iter().map(|s| s.to_string()).collect();
+            a.hub_space_kinds = kinds.iter().map(|s| s.to_string()).collect();
+            crate::lan::Peer { announce: a, addr: "192.168.1.9".to_string(), seen_at_ms: 0 }
+        }
+        let local: Vec<(String, String, String)> = vec![(
+            "ws-a".to_string(),
+            "运营".to_string(),
+            "personal".to_string(),
+        )];
+        let none: Vec<String> = Vec::new();
+        let paired = vec!["dev-b".to_string(), "dev-c".to_string()];
+
+        // ① 两台都报「产品」⇒ 只建一个；同时本机已有的「运营」不建（exists）
+        let peers = vec![
+            peer("dev-b", &["产品", "运营"], &["personal", "personal"]),
+            peer("dev-c", &["产品"], &["personal"]),
+        ];
+        let got = peer_spaces_to_create(&peers, &local, &none, &paired, false);
+        assert_eq!(got, vec![("产品".to_string(), "personal".to_string())], "应当只建一个「产品」");
+
+        // ② 没配对的那台 ⇒ 一个都不建
+        let rogue = vec![peer("dev-x", &["产品"], &["personal"])];
+        assert!(peer_spaces_to_create(&rogue, &local, &none, &paired, false).is_empty());
+
+        // ③ team ⇒ 不建
+        let team = vec![peer("dev-b", &["产品"], &["team"])];
+        assert!(peer_spaces_to_create(&team, &local, &none, &paired, false).is_empty());
+
+        // ④ 类别数组缺一格（平行数组不等长）⇒ 当作空串 ⇒ 不建，且**不许 panic**
+        let short = vec![peer("dev-b", &["产品", "客户"], &["personal"])];
+        let got = peer_spaces_to_create(&short, &local, &none, &paired, false);
+        assert_eq!(got, vec![("产品".to_string(), "personal".to_string())], "缺类别那一格不许建");
+    }
+
+    /// ⭐ **2026-10-19（owner 拍「甲」）**：自动建空间的**四道闸** —— 6 组真值表 ＋ 2 个边角。
+    ///
+    /// ⚠️ 每一格都钉的是**拒绝方向**（"少建一次只是麻烦，多建一次不可逆"）。
+    /// **变异**：把 `paired` 那一支删掉 ⇒ 第 ② 格红；把 `tombstoned` 那支删掉 ⇒ 第 ⑤ 格红。
+    #[test]
+    fn the_auto_create_gate_refuses_every_unsafe_case() {
+        let local = vec![
+            ("ws-a".to_string(), "运营".to_string(), "personal".to_string()),
+            ("ws-b".to_string(), "产品".to_string(), "team".to_string()),
+        ];
+        let none: Vec<String> = Vec::new();
+
+        // ① 正常：已配对 ＋ 对端 personal ＋ 本机没同名 ⇒ 建
+        assert_eq!(
+            auto_create_space_decision("客户", "personal", &local, &none, true, false),
+            AutoCreateSpace::Create
+        );
+
+        // ② G1：没配对 ⇒ 不建（⛔ 任何情况下都不许未配对设备往本机建空间）
+        assert_eq!(
+            auto_create_space_decision("客户", "personal", &local, &none, false, false),
+            AutoCreateSpace::Skip("not_paired")
+        );
+
+        // ③ G2：对端是 team ／ 没报类别 ⇒ 不建
+        assert_eq!(
+            auto_create_space_decision("客户", "team", &local, &none, true, false),
+            AutoCreateSpace::Skip("not_personal")
+        );
+        assert_eq!(
+            auto_create_space_decision("客户", "", &local, &none, true, false),
+            AutoCreateSpace::Skip("not_personal")
+        );
+
+        // ④ 本机已有同名**个人**空间 ⇒ 不是"建"，是"路由过去"
+        assert_eq!(
+            auto_create_space_decision("运营", "personal", &local, &none, true, false),
+            AutoCreateSpace::Skip("exists")
+        );
+        // ⚠️ 边角：本机有同名但那是 **team** ⇒ 仍然算"没有同名个人空间" ⇒ 允许建
+        //   （team 与 personal 是两回事；团队空间不参与按名融合 ✓）
+        assert_eq!(
+            auto_create_space_decision("产品", "personal", &local, &none, true, false),
+            AutoCreateSpace::Create
+        );
+
+        // ⑤ G3 墓碑：这个名字本机删过 ⇒ 不再建（专治"删了又活"）
+        let tomb = vec!["客户".to_string()];
+        assert_eq!(
+            auto_create_space_decision("客户", "personal", &local, &tomb, true, false),
+            AutoCreateSpace::Skip("tombstoned")
+        );
+
+        // ⑥ 加密：本机开着加密 ⇒ 不在加密盘上建明文空间
+        assert_eq!(
+            auto_create_space_decision("客户", "personal", &local, &none, true, true),
+            AutoCreateSpace::Skip("encrypted")
+        );
+
+        // ⑦ 空名 ⇒ 不建
+        assert_eq!(
+            auto_create_space_decision("   ", "personal", &local, &none, true, false),
+            AutoCreateSpace::Skip("no_name")
+        );
+    }
     use super::*;
 
     /// 造一个全新的"设备目录"（带 meta，丢弃连接）。
