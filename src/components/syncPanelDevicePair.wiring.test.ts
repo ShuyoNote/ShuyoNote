@@ -158,4 +158,18 @@ describe("T4 · 把这台设备接进来", () => {
     // ⛔ 界面不许自己改列表：列表唯一来源仍是后端那份读数
     expect(fn).not.toMatch(/setLanStatus\(/);
   });
+
+  // ⭐ **2026-10-19（owner：「配对成功，没有同步发生？」）**：
+  //   配对**只做信任、不搬数据** —— 真正搬运原本只发生在同步节拍上（可能是分钟级）⇒ 配完像"什么都没发生"。
+  //   ⇒ 信任成功后**立刻跑一轮网格交换**（与「立即同步」同一条 `mesh_sync_now`），并刷新那两份清单。
+  //   **变异**：删掉 `api.meshSyncNow` 那一段 ⇒ 这一条必红（真机上就要等节拍才动数据）。
+  it("⑦ 配对成功后**立刻交换一轮**（⛔ 不让用户等同步节拍 ✗）", () => {
+    const fn = between(SRC, "const trustDevice = async", "\n  };");
+    expect(fn, "要用那条现成的网格命令").toContain("api.meshSyncNow(");
+    // 交换会改数据 ⇒ 页面列表与待取回清单必须跟着刷（否则"说拉了 2 页、列表还是空"）
+    expect(fn).toContain("loadPages()");
+    expect(fn).toContain("loadPendingRemote()");
+    // ⛔ 失败不许吞：要说出来（信任已成立，这一步只是"立刻搬一次"失败）
+    expect(fn).toContain("立刻交换失败");
+  });
 });

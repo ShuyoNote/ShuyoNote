@@ -1266,6 +1266,24 @@ export function SyncPanel({
       // ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）**：⭐ 不再说"要它那边也点一次" ✗ ——
       //   ⭐ 对面收到这一轮 ask 就会**互相登记** ✓（`sync::note_pending_trust_asks` ✓）⇒ 一次配对两个方向都通 ✓。
       toast("配对成功：两边都通了 ✓", "success");
+      // ⭐⭐ **2026-10-19（owner：「配对成功，没有同步发生？」）**：⭐ 配对**只做信任、不搬数据** ✗ ——
+      //   真正搬运原先只发生在**同步节拍**上（面板默认 5 秒一档，但"最小一档"也可能是分钟级），
+      //   所以配完看起来"什么都没发生" ✓。⇒ 信任成功后**立刻对该空间跑一轮网格交换** ✓
+      //   （与「立即同步」走**同一条**命令 `mesh_sync_now` ✓；"没配网格 ⇒ 一个字节都不动"由 Rust 早退保证 ✓）。
+      //   ⚠️ 交换会改数据 ⇒ 那两份清单必须跟着刷（页面列表 ＋ 待取回的远端版本）✓ ——
+      //      与 `syncOne` 的 `finally` 里那段**同一条纪律**（不刷就会出现"说拉了 2 页、列表还是空"✗）。
+      for (const spaceId of spaceIds) {
+        try {
+          const rep = await api.meshSyncNow(spaceId);
+          // `rep.note` **自带**「网格：」前缀（Rust 拼好的人话）⇒ 这里别再写一遍 ✓
+          setStatus(rep.note);
+          await useNotes.getState().loadPages();
+          await loadPendingRemote();
+        } catch (e) {
+          // 交换失败**照实报**（⛔ 不吞掉 ✗）：信任本身已经成立，这一步只是"立刻搬一次"失败 ✓
+          setStatus(`配对成功，但立刻交换失败：${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
       // ⭐⭐ **2026-10-19（owner：「配对成功后，页面不能自动刷新」）**：⭐ 成功之后**立刻重读一次**局域网读数 ✗
       //   —— 原来这里只有一句 toast ⇒ 那一行还停在「待配对」（要等下一轮 5 秒轮询）⇒ 用户以为没配上 ✓。
       setLanNonce((n) => n + 1);
