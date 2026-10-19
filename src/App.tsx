@@ -939,6 +939,17 @@ function NoteEditor({ pageId }: { pageId: string }) {
 //   ⇒ 修法不是把闸门放开（那会把加密空间也放进来 ✗），而是**在锁定屏上给一条出路**：
 //     `LockScreen` 会列出本机**明文**的那些空间，点一下就换过去 ⇒ 换完 `activeSpaceEncrypted`
 //     自己变 false ⇒ 闸门自然放开 ✓（见 `lib/vault.ts::switchToSpace` ✓）。
+/**
+ * ⭐ **移动端内容外壳**（纯重构那一刀 ✓，2026-10-19）：把移动端那几屏统一裹一层 `.m-tabshell` ✓，
+ * 为后面的**底栏 ＋ 留白**留位置 ✓。
+ *
+ * ⚠️ ⭐ **刻意"同一函数在两处各包一次"，而不是"把两处内容提成一个变量"** ✗ ——
+ *    这两处在渲染链里**顺序不同** ✓：`settings` 支排在 `aboutOpen`／`currentId` **之前** ✓，
+ *    capture/search/home 排在**最后** ✓ ⇒ 提成变量挪到最后会**改变行为** ✗
+ *    （例如开着一条笔记时进设置，会被阅读屏抢走 ✗）。⇒ 零行为变化 ✓、也⛔ 没有第二份外壳 ✓。
+ */
+const wrapMobile = (body: React.ReactNode) => <div className="m-tabshell">{body}</div>;
+
 function App() {
   const vault = useVault();
   // 状态未知的首帧什么都不渲染：锁定安装上若先挂外壳，外壳会立刻去读还没解锁的库。
@@ -1219,7 +1230,7 @@ function AppShell() {
            它排在 `aboutOpen` **之前**（照 `pair` 的先例 ✓）：那颗 ⚙️ 是"去开一个面板"的**动作** ✓
            ⇒ 不管底下开着什么（含"关于"是否已打开 ✓），点了就该整屏看到移动设置 ✓。
            ⛔ 桌面档**一个字不动** ✗（桌面的 ⚙️ 仍开那个 `SettingsDialog` ✓，分岔在 `ActivityBar` 里 ✓）。 */
-        <MobileSettings />
+        wrapMobile(<MobileSettings />)
       ) : isMobile && aboutOpen ? (
         /* ⭐ 2026-10-10：手机档的**「关于」屏**（效果图 `10-about.svg`，规格 §4.10）——
            它排在 `currentId` **前面**：从设置里点「关于与更新」时，不管底下有没有开着页，
@@ -1236,12 +1247,14 @@ function AppShell() {
            而不是桌面空态（那句"或按 Ctrl+N"在手机上本来就是错的 ✗）。
            第二屏「快速记录」、第三屏「**03 搜索**」也在这支里（`mobileNav.screen` ✓）。
            ⛔ 桌面分支一个字没动 ✓（下一个 else 就是原来那套 ✓）。 */
-        mobileScreen === "capture" ? (
-          <MobileCapture />
-        ) : mobileScreen === "search" ? (
-          <MobileSearch />
-        ) : (
-          <MobileHome />
+        wrapMobile(
+          mobileScreen === "capture" ? (
+            <MobileCapture />
+          ) : mobileScreen === "search" ? (
+            <MobileSearch />
+          ) : (
+            <MobileHome />
+          ),
         )
       ) : (
         <div className="main empty">

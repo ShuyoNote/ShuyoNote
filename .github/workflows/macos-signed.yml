@@ -1,0 +1,222 @@
+name: macOS (signed + notarized)
+
+# 手动触发的**发版级** macOS 档：Developer ID 签名 → 公证（notarytool）→ 装订（stapler）→ Gatekeeper 复核。
+#
+# 为什么单开一个 workflow、而不是直接打开 release.yml 的 macOS 矩阵行：
+#   ① release.yml 是**打 tag 自动触发**的；macOS 那格还带着一堆没有在 runner 上验过的步骤
+#      （静态 OpenSSL 自编、预签嵌套 dylib、公证）。把它塞进 tag 流里，等于让一次发版去试错 ——
+#      Android 那次 `ClassNotFoundException` 闪退就是"自检包绿、发版件没验"的代价。
+#   ② 这里是 `workflow_dispatch`（手动）：第一次跑要**有人盯着读日志**，绿了之后再把同样的步骤
+#      搬进 release.yml 的矩阵（搬运时判据不变：`docs/macos-updater.md` §九 的三件证据）。
+#
+# 它需要 5 个仓库 Secrets（`docs/macos-updater.md` §2.6）：
+#   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
+#   ＋ 更新器签名用的 TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+#
+# ⚠️ 没有这些 Secrets 时，本 workflow **会失败**（这正是有意的：它是发版档，不是自检档）。
+#    自检档（不碰密钥、不出签名包）是 `.github/workflows/macos.yml`。
+
+on:
+  # ⚠️ 为什么还要 push 触发（2026-10-19 实测踩到）：
+  # GitHub 的 `workflow_dispatch` **只在默认分支（main）上存在该文件时**才给出 "Run workflow" 按钮。
+  # 本仓默认分支是 main，而这个 workflow 先落在 dev ⇒ 网页上根本看不到按钮。
+  # 为了"还没合 main 也能跑一次"，加一条 **只对 dev 生效、且只在这些文件变动时触发** 的 push 入口：
+  # 免得每次改文档/代码都白跑 40–60 分钟。
+  push:
+    branches: ["dev"]
+    paths:
+      - ".github/workflows/macos-signed.yml"
+      - "scripts/notarize-macos.mjs"
+      - "scripts/notarize-macos.test.mjs"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "要构建的分支或标签（默认 dev；发版时填 v* tag）"
+        required: false
+        default: "dev"
+      skip_notarization:
+        description: "只签名、不公证（调试用；产物**不可**对外分发）"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-signed:
+    runs-on: macos-latest
+    # 静态 OpenSSL 自编 ~8 分钟 ＋ Rust 全量 ~20–40 分钟 ＋ 公证排队；150 分钟是留够的。
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # push 触发时 inputs.ref 为空 ⇒ 落回 github.ref（就是被推的那个分支）
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-aarch64-signed
+
+      - name: Install frontend deps
+        run: pnpm install --no-frozen-lockfile
+
+      - name: 取 Cargo 依赖源码（国密补丁要打在 registry 里那份 SQLCipher 源码上）
+        # 与 release.yml 同一条理由：冷 registry 里 `registry/src` 是空的，而
+        # `scripts/lib/sm-library-source.mjs` 要去里面定位 `libsqlite3-sys-<ver>/sqlcipher`。
+        working-directory: src-tauri
+        run: cargo fetch --locked
+
+      - name: 编静态 OpenSSL（macOS 没有系统 OpenSSL）
+        # 为什么不用 Homebrew 的 openssl@3：它默认出**共享库**，而发版件要自包含
+        # （`scripts/sm-library-build.mjs --require-static` 会拒绝带 .dylib 的前缀）。
+        # 版本钉 3.5.4：与仓库里对拍记录中的 `OpenSSL 3.5.4` 同源（docs/RELEASING.md 单一口味一节）。
+        run: |
+          set -euo pipefail
+          VER=3.5.4
+          PREFIX="$RUNNER_TEMP/openssl-$VER"
+          curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-$VER/openssl-$VER.tar.gz" \
+            -o "$RUNNER_TEMP/openssl-$VER.tar.gz"
+          tar -xzf "$RUNNER_TEMP/openssl-$VER.tar.gz" -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/openssl-$VER"
+          ./Configure --prefix="$PREFIX" no-shared no-tests
+          make -j"$(sysctl -n hw.ncpu)"
+          make install_sw
+          # 显式断言：只有静态库（有 dylib 就说明 --no-shared 没生效）
+          ls -la "$PREFIX/lib"
+          if ls "$PREFIX/lib"/*.dylib >/dev/null 2>&1; then
+            echo "::error::前缀里有 .dylib —— no-shared 没生效，发版件会依赖构建机"
+            exit 1
+          fi
+          ls "$PREFIX/lib/libcrypto.a"
+          echo "OPENSSL_DIR=$PREFIX" >> "$GITHUB_ENV"
+
+      - name: 打国密补丁并交给构建步骤（--prepare ＋ --print-env）
+        run: |
+          set -euo pipefail
+          node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --prepare --require-static
+          node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --print-env >> "$GITHUB_ENV"
+
+      - name: 取 PDFium 运行时（macOS）
+        run: |
+          node scripts/fetch-pdfium.mjs --check --platform mac-univ || node scripts/fetch-pdfium.mjs --platform mac-univ
+
+      - name: Import Apple Developer ID cert + keychain (macOS)
+        # 与 release.yml 的同名步骤逐字一致；两处判据相同，改一处请同步另一处。
+        run: |
+          CERT="$HOME/AppleDevID.p12"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT"
+          KEYCHAIN="$HOME/build.keychain-db"
+          KEYCHAIN_PASS="ci-$(date +%s)"
+          echo "$KEYCHAIN_PASS" > "$HOME/KC_PASS"
+          security create-keychain -p "$KEYCHAIN_PASS" build.keychain
+          security import "$CERT" -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          # 无人值守环境必需：只 import 不够，还要放行 codesign 的 ACL 访问（否则 errSecInternalComponent）
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASS" build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security list-keychains -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASS" build.keychain
+          security find-identity -v -p codesigning build.keychain
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: 预签嵌套 dylib ＋ 导出发版身份
+        # ⚠️ 这是 2026-09-27 本机实测逼出来的：设了 APPLE_SIGNING_IDENTITY 后 Tauri 签主可执行文件，
+        # 但**不签** `bundle.macOS.files` 带进来的 libpdfium.dylib ⇒ 打包在签名阶段中止、dmg 都不生成
+        # （原文：`code object is not signed at all / In subcomponent: …/libpdfium.dylib`）。
+        # 修法：打包**之前**把 vendor 里那份签好，Tauri 整份复制时签名跟着走。
+        run: |
+          set -euo pipefail
+          IDENTITY="$(security find-identity -v -p codesigning build.keychain | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::钥匙串里没有 Developer ID Application 身份（证书导入那步的日志里应能看到 find-identity）"
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "签名身份：$IDENTITY"
+          codesign -f --options runtime --timestamp \
+            -s "$IDENTITY" \
+            src-tauri/vendor/pdfium/mac-univ/lib/libpdfium.dylib
+          codesign -d --verbose=4 src-tauri/vendor/pdfium/mac-univ/lib/libpdfium.dylib 2>&1 | grep -E 'Authority|Timestamp|flags' || true
+
+      - name: 决定更新器工件开关（没有 TAURI 私钥就关掉）
+        # 发版要 `.app.tar.gz` + `.sig` 才能自动更新，而那需要 TAURI_SIGNING_PRIVATE_KEY。
+        # 新机器上这把钥匙往往还没搬过来（本机 2026-10-19 实测 `~/.tauri/` 整个不存在）；
+        # 硬开会让 build 在**最后一步**才失败，报错还长得像签名问题（缺 private key）。
+        # ⇒ 这里显式判断：没有私钥就只出 `.app`/`.dmg`，并在日志里**警告**"本次不含更新器工件"，
+        #    不静默、也不让公证验证被这件事卡住。
+        run: |
+          set -euo pipefail
+          CONFIG="$RUNNER_TEMP/tauri-signed-config.json"
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo '{}' > "$CONFIG"
+            echo "更新器工件：开（TAURI_SIGNING_PRIVATE_KEY 已配置）"
+          else
+            echo '{"bundle":{"createUpdaterArtifacts":false}}' > "$CONFIG"
+            echo "::warning::没有 TAURI_SIGNING_PRIVATE_KEY ⇒ 本次不出 .app.tar.gz/.sig；产物只能手动分发，不能走自动更新"
+          fi
+          echo "TAURI_BUILD_CONFIG=$CONFIG" >> "$GITHUB_ENV"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
+      - name: 打包（签名）＋ 更新器工件
+        # 只给签名身份、**不给 APPLE_ID/PASSWORD/TEAM_ID** ⇒ Tauri 只签名、不公证；
+        # 公证交给下一步的显式脚本（它自己出三件判据，且失败会打印 notarytool 的问题清单）。
+        # `--config` 决定要不要更新器工件（见上一格；没有私钥时它把 createUpdaterArtifacts 关掉）。
+        run: pnpm tauri build --bundles app,dmg --features sm-library --config "$TAURI_BUILD_CONFIG"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: 产物自检（identifier / 版本号 / 深链 / dmg，含签名两格）
+        run: pnpm check:macos-bundle
+
+      - name: 公证 ＋ 装订 ＋ Gatekeeper 复核
+        if: ${{ !inputs.skip_notarization }}
+        run: node scripts/notarize-macos.mjs
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: 汇总产物（大小 / 哈希 / 签名与票据读数）
+        if: always()
+        run: |
+          echo "=== bundle/macos ==="
+          ls -la src-tauri/target/release/bundle/macos/ || true
+          echo "=== bundle/dmg ==="
+          ls -la src-tauri/target/release/bundle/dmg/ || true
+          APP="src-tauri/target/release/bundle/macos/ShuyoNote.app"
+          if [ -d "$APP" ]; then
+            echo "=== codesign ==="
+            codesign -d --verbose=4 "$APP" 2>&1 | grep -E 'Authority|Timestamp|flags' || true
+            echo "=== stapler validate ==="
+            xcrun stapler validate "$APP" || true
+            echo "=== spctl ==="
+            /usr/sbin/spctl --assess --type execute -vv "$APP" || true
+            echo "=== sha256 ==="
+            find src-tauri/target/release/bundle -maxdepth 2 -type f \( -name '*.dmg' -o -name '*.tar.gz' -o -name '*.sig' \) -print0 \
+              | xargs -0 shasum -a 256 || true
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-macos-signed
+          path: |
+            src-tauri/target/release/bundle/
+          if-no-files-found: warn

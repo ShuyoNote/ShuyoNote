@@ -515,6 +515,81 @@ pub fn peer_spaces_to_create(
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
 }
+/// ⭐⭐ **2026-10-19（owner 拍「甲」）**：**替对端建它报了、而本机没有的同名个人空间**。
+///
+/// ## 它做的五步（顺序即口径）
+/// 1. 读本机空间三元组、**墓碑**（删过的名字）、**信任名单**、加密开关；
+/// 2. [`peer_spaces_to_create`] 过四道闸并去重；
+/// 3. 每个要建的名字：**先写 `meta` 那一行**（`insert_chosen_space`）⇒ 再 [`crate::db::create_space_db_at`] 建库；
+/// 4. **抄发起那一轮的网格地址**（`mesh_bind`）—— 否则新空间"没开网格"，永远不拉；
+/// 5. **G4**：返回新建的名字（调用方负责说出来）；失败就**回滚 meta 那一行**（⛔ 不留"有行没库"）。
+///
+/// ⚠️ 幂等：建完名字就存在了 ⇒ 下一次 `exists` 闸会挡住，⛔ 不会重复建。
+pub(crate) fn create_missing_peer_spaces(
+    c: &Connection,
+    dir: &std::path::Path,
+    peers: &[crate::lan::Peer],
+    mesh_bind: Option<&str>,
+    encryption_on: bool,
+) -> Result<Vec<String>, String> {
+    let local: Vec<(String, String, String)> = {
+        let mut st = c
+            .prepare("SELECT id, COALESCE(name, ''), COALESCE(kind, '') FROM meta.workspaces WHERE deleted_at IS NULL")
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map_err(|e| e.to_string())?;
+        let out: Vec<(String, String, String)> = rows.filter_map(|r| r.ok()).collect();
+        out
+    };
+    // 墓碑：**删过的名字**（G3）—— 只取名字，不看 id。
+    let tombstoned: Vec<String> = {
+        let mut st = c
+            .prepare("SELECT COALESCE(name, '') FROM meta.workspaces WHERE deleted_at IS NOT NULL")
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        let out: Vec<String> = rows.filter_map(|r| r.ok()).collect();
+        out
+    };
+    // 信任名单（G1）：**设备级**那一行记的就是"本机信任过这台"。
+    let paired: Vec<String> = {
+        let mut st = c
+            .prepare("SELECT DISTINCT device_id FROM meta.mesh_paired_devices")
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        let out: Vec<String> = rows.filter_map(|r| r.ok()).collect();
+        out
+    };
+
+    let plan = peer_spaces_to_create(peers, &local, &tombstoned, &paired, encryption_on);
+    let mut created: Vec<String> = Vec::new();
+    for (name, kind) in plan {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = crate::db::now_ms();
+        // ① 先写 meta 那一行（`create_space_db_at` 里的 ensure_space_workspace 要读它）
+        crate::workspaces::insert_chosen_space(c, &id, &name, "blue", 1.0, now, &kind)?;
+        // ② 建库
+        if let Err(e) = crate::db::create_space_db_at(dir, &id) {
+            // ③ 回滚：⛔ 不留"有行没库"
+            let _ = c.execute("DELETE FROM meta.workspaces WHERE id = ?1", params![id]);
+            return Err(format!("为「{name}」建库失败（已回滚）：{e}"));
+        }
+        // ④ 抄网格地址：否则新空间没开网格 ⇒ 永远不拉
+        if let Some(bind) = mesh_bind.map(str::trim).filter(|b| !b.is_empty()) {
+            let _ = c.execute(
+                "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![format!("mesh_bind:{id}"), bind],
+            );
+        }
+        created.push(name);
+    }
+    Ok(created)
+}
 /// 本机这个空间**属于哪一档**（读 `meta.workspaces.kind`）—— ⭐ **读不出来就 `None`**（判不出）。
 ///
 /// ⚠️ ⛔ **别拿 `space_crypto::space_kind` 来判**：它把"没有那一行/读不出"兜底成
@@ -3973,6 +4048,44 @@ pub async fn mesh_sync_now(
             crate::db::now_ms(),
         );
     }
+    // ⭐⭐ **2026-10-19（owner 拍「甲」：同步时自动建本机没有的同名空间）**：
+    //   ⭐ 位置就在**开窗之后、拉之前** ✗：这样这一轮后面那段 `round` 照常跑（新空间下一轮才轮到）。
+    //   ⚠️ 三条边界：
+    //     ① 没有对端 ⇒ 什么都不做（⛔ 不开空转的写库）；
+    //     ② 拿不到 app data dir ⇒ 什么都不做（⛔ 不猜目录）；
+    //     ③ 失败**只记日志**、不许把整轮弄挂（用户那次同步的正当工作不该被它连坐）；
+    //   ⚠️ 锁**只在这一小块里拿**（`create_missing_peer_spaces` 是同步的 ⇒ ⛔ 不跨 await ✓）。
+    let created_spaces = if peers.is_empty() {
+        Vec::new()
+    } else {
+        match crate::db::app_data_dir_ref() {
+            None => Vec::new(),
+            Some(dir) => {
+                let c = db.0.lock().expect("db mutex poisoned");
+                // 本机**有没有加密空间**（有 ⇒ 不自动建：⛔ 不往加密盘里混一个明文空间）
+                let encrypted: i64 = c
+                    .query_row(
+                        "SELECT COUNT(*) FROM meta.workspaces WHERE encrypted = 1",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                match create_missing_peer_spaces(
+                    &c,
+                    dir,
+                    &peers,
+                    cfg.bind.as_deref(),
+                    encrypted > 0,
+                ) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("[mesh] 自动建空间失败（这一轮照常继续）：{e}");
+                        Vec::new()
+                    }
+                }
+            }
+        }
+    };
     let mut report = crate::mesh::round(
         &db.0,
         &scope.space,
@@ -3985,6 +4098,13 @@ pub async fn mesh_sync_now(
     if report.enabled && report.window.is_none() {
         // 配了地址却没窗口 ⇒ 上面 `ensure_window` 会直接报错，走不到这里；留一句兜底说明。
         report.note.push_str("（⚠️ 设置里配了监听地址，但窗口没起来）");
+    }
+    // ⭐ **2026-10-19（G4：建完必须说出来）** —— ⛔ 不许静默建空间。
+    if !created_spaces.is_empty() {
+        report.note.push_str(&format!(
+            "；因对端的服务，新建了空间「{}」",
+            created_spaces.join("」「")
+        ));
     }
 
     // ④ ⭐⭐ **2026-10-09（task-8）**：**网格这一轮也记一条 `sync_history`** ✓。
@@ -7346,6 +7466,84 @@ mod merge_by_name_tests {
 
 #[cfg(test)]
 mod tests {
+
+    /// ⭐ **2026-10-19（owner 拍「甲」）**：`create_missing_peer_spaces` 四格 ——
+    /// ① 建出**真库**（文件在 ＋ `workspaces` 那一行在 ＋ 抄到了网格地址）；
+    /// ② **幂等**：再调一次返回空（`exists` 闸挡住，⛔ 不重复建）；
+    /// ③ **墓碑**：名字在本机删过 ⇒ 不建；
+    /// ④ 目录不可用时**报错**且**回滚 meta 那一行**（⛔ 不留"有行没库"）。
+    ///
+    /// **变异**：删掉那个 `DELETE FROM meta.workspaces` 回滚 ⇒ 第 ④ 格红；删掉墓碑判断 ⇒ 第 ③ 格红。
+    #[test]
+    fn creating_peer_spaces_is_idempotent_and_respects_the_tombstone() {
+        fn peer(dev: &str, names: &[&str], kinds: &[&str]) -> crate::lan::Peer {
+            let mut a = crate::lan::LanAnnounce {
+                v: crate::lan::WIRE_VERSION,
+                device_id: dev.to_string(),
+                ..Default::default()
+            };
+            a.hub_base = Some("http://192.168.1.9:8787".to_string());
+            a.hub_spaces = vec!["room-1".to_string()];
+            a.hub_space_names = names.iter().map(|s| s.to_string()).collect();
+            a.hub_space_kinds = kinds.iter().map(|s| s.to_string()).collect();
+            crate::lan::Peer { announce: a, addr: "192.168.1.9".to_string(), seen_at_ms: 0 }
+        }
+
+        let dir = std::env::temp_dir().join(format!("shuyo-peer-spaces-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        // ① meta 库：真 schema ＋ 一个已存在的个人空间 ＋ 一条**墓碑** ＋ 信任名单
+        {
+            let m = Connection::open(crate::db::meta_path(&dir)).unwrap();
+            crate::db::meta_migrate(&m).unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, kind, created_at, updated_at) VALUES
+                   ('ws-a', '运营', 'personal', 1, 1),
+                   ('ws-dead', '客户', 'personal', 1, 1)",
+                [],
+            )
+            .unwrap();
+            m.execute("UPDATE workspaces SET deleted_at = 1 WHERE id = 'ws-dead'", [])
+                .unwrap();
+            m.execute(
+                "INSERT INTO mesh_paired_devices (space_id, device_id, secret_sha256, added_at_ms)
+                 VALUES ('device', 'dev-b', 'x', 1)",
+                [],
+            )
+            .unwrap();
+        }
+        // ② 生产形状：**空间库连接 ＋ ATTACH meta**（与 `reopen_space_at` 同一形状）
+        crate::db::create_space_db_at(&dir, "ws-a").unwrap();
+        let c = Connection::open(crate::db::space_db_path(&dir, "ws-a")).unwrap();
+        let meta = crate::db::meta_path(&dir).display().to_string().replace('\'', "''");
+        c.execute(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""), [])
+            .unwrap();
+
+        let peers = vec![peer("dev-b", &["产品", "客户"], &["personal", "personal"])];
+        // ① 建出真库（「客户」是墓碑 ⇒ 只建「产品」）
+        let got = create_missing_peer_spaces(&c, &dir, &peers, Some("0.0.0.0:8788"), false).unwrap();
+        assert_eq!(got, vec!["产品".to_string()], "墓碑那个名字不许建");
+        let ws: String = c
+            .query_row(
+                "SELECT id FROM meta.workspaces WHERE name = '产品' AND deleted_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(crate::db::space_db_path(&dir, &ws).is_file(), "库文件没建出来");
+        let bind: String = c
+            .query_row(
+                "SELECT value FROM meta.sync_state WHERE key = ?1",
+                rusqlite::params![format!("mesh_bind:{ws}")],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(bind, "0.0.0.0:8788", "没抄到网格地址 ⇒ 新空间永远不拉");
+
+        // ② 幂等：再调一次 ⇒ 空
+        let again = create_missing_peer_spaces(&c, &dir, &peers, Some("0.0.0.0:8788"), false).unwrap();
+        assert!(again.is_empty(), "重复调用又建了一次");
+    }
 
     /// ⭐ **2026-10-19（owner 拍「甲」）**：这一轮该替对端建哪些空间 —— 四格：
     /// ① 两台对端都报「产品」⇒ 只建**一个**（按名字去重）；
