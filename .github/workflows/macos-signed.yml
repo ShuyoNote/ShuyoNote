@@ -17,6 +17,17 @@ name: macOS (signed + notarized)
 #    自检档（不碰密钥、不出签名包）是 `.github/workflows/macos.yml`。
 
 on:
+  # ⚠️ 为什么还要 push 触发（2026-10-19 实测踩到）：
+  # GitHub 的 `workflow_dispatch` **只在默认分支（main）上存在该文件时**才给出 "Run workflow" 按钮。
+  # 本仓默认分支是 main，而这个 workflow 先落在 dev ⇒ 网页上根本看不到按钮。
+  # 为了"还没合 main 也能跑一次"，加一条 **只对 dev 生效、且只在这些文件变动时触发** 的 push 入口：
+  # 免得每次改文档/代码都白跑 40–60 分钟。
+  push:
+    branches: ["dev"]
+    paths:
+      - ".github/workflows/macos-signed.yml"
+      - "scripts/notarize-macos.mjs"
+      - "scripts/notarize-macos.test.mjs"
   workflow_dispatch:
     inputs:
       ref:
@@ -39,7 +50,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          # push 触发时 inputs.ref 为空 ⇒ 落回 github.ref（就是被推的那个分支）
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
