@@ -248,8 +248,80 @@ identifier / 版本号 / `shuyonote` 深链 scheme / dmg 都在。
 >   取 CI 产物用 `pnpm fetch:release-artifacts --tag vX.Y.Z --stage`（分片并行 + 续传 + 校验 +
 >   自动验 APK 字节）。详见 [RELEASING.md](RELEASING.md) ④⑤⑥。
 
+## 九、公证链的自动化（2026-10-19 落地，**判据显式化**）
+
+> 背景：§四 说 Tauri 2 在配好 `APPLE_*` 后会自己 `notarytool submit` + `stapler`。那是真的，
+> 但它**不出证据**——成功时日志里看不到 `Accepted`/`stapler validate`/`spctl accepted`；
+> 失败时又常常"签名全绿、dmg 照出"，用户装的时候才被 Gatekeeper 拦
+> （`rejected, source=Unnotarized Developer ID`）。所以这条链改成**显式脚本**，自己出判据。
+
+### 9.1 三件判据（缺一不算过）
+
+| # | 判据 | 怎么读 | 缺了会怎样 |
+|---|---|---|---|
+| ① | `notarytool submit` 返回 **`status: Accepted`** | `--output-format json` 里的 `status` | 没 Accepted 就是没公证；`Invalid` 时要看 `notarytool log` 的 issues |
+| ② | **`stapler validate` 通过** | 装订后的票据校验 | 已 Accepted 但没装订 ⇒ **离线机器仍被拦**，而 CI 全绿 |
+| ③ | **`spctl --assess` 说 accepted** | `.app` 用 `--type execute`；`.dmg` 用 `--type open --context context:primary-signature` | 说明 Gatekeeper 那关没过（常见原因：ad-hoc 签名、没装订） |
+
+脚本还会拒绝 **ad-hoc 签名**（`codesign -d --verbose=4` 里没有 `Authority=`）：那种包
+`codesign --verify --deep --strict` 照样绿，但 Apple 服务器一定拒，报错读起来像网络问题。
+
+### 9.2 本机用法
+
+```bash
+# 一次性：把凭据存进钥匙串（不要写进 shell rc 文件）
+xcrun notarytool store-credentials shuyonote-notary \
+  --apple-id "<APPLE_ID>" --team-id "<TEAM_ID>" --password "<App 专用密码>"
+
+# 只打印将执行什么（密码打码；不联网、不提交）
+node scripts/notarize-macos.mjs --keychain-profile shuyonote-notary --dry-run
+
+# 真跑：公证 app 与 dmg、装订、Gatekeeper 复核
+node scripts/notarize-macos.mjs --keychain-profile shuyonote-notary
+```
+
+CI 形态用环境变量：`APPLE_ID` ＋ `APPLE_PASSWORD`（**App 专用密码**）＋ `APPLE_TEAM_ID`。
+退出码：`0` 三件全过 ／ `1` 公证或复核失败 ／ `2` 环境不具备（工具缺、凭据缺 —— **不算通过**）。
+
+### 9.3 CI：`.github/workflows/macos-signed.yml`（手动档）
+
+`workflow_dispatch`，**不是** tag 自动触发 —— 第一次跑要有人盯着读日志。它做的顺序：
+
+1. `cargo fetch --locked`（国密补丁要打在 registry 里那份 SQLCipher 源码上）
+2. **自编静态 OpenSSL 3.5.4**（`no-shared no-tests`；`--require-static` 会拒绝带 `.dylib` 的前缀）
+3. `sm-library-build.mjs --prepare --require-static` ＋ `--print-env >> $GITHUB_ENV`
+4. 取 PDFium → **预签嵌套 dylib**（§四 ②.5 的坑：Tauri 不签 `bundle.macOS.files` 带进来的库）
+5. 导入 Developer ID 证书 → `tauri build --bundles app,dmg --features sm-library`
+   （**只给签名身份，不给 `APPLE_*`** ⇒ Tauri 只签名，公证交给下一步显式脚本）
+6. `pnpm check:macos-bundle`（产物自检）
+7. `node scripts/notarize-macos.mjs`（公证 ＋ 装订 ＋ spctl 复核）
+8. 汇总读数（`codesign` 的 Authority/Timestamp、`stapler validate`、`spctl`、sha256）＋ 上传 artifacts
+
+⚠️ **第一次跑之前**：配齐 5 个 Apple secrets ＋ 2 个 updater secrets（§2.6），否则这一步**故意失败**。
+⚠️ **绿了之后**再把同序步骤搬进 `release.yml` 的 macOS 矩阵（搬运时判据不变：§9.1 三件证据）。
+
+### 9.4 本机端到端（证书到手当天）
+
+```bash
+# 签名身份 —— 打包前先预签嵌套库（与 CI 同一步，别省）
+codesign -f --options runtime --timestamp \
+  -s "Developer ID Application: <名字> (<TEAMID>)" \
+  src-tauri/vendor/pdfium/mac-univ/lib/libpdfium.dylib
+
+APPLE_SIGNING_IDENTITY="Developer ID Application: <名字> (<TEAMID>)" \
+  pnpm tauri build --bundles app,dmg --features sm-library
+
+node scripts/notarize-macos.mjs
+```
+
+期望最后一行：`✅ 公证 Accepted ＋ 已装订 ＋ Gatekeeper accepted`。
+
 ## 相关文件
+- `scripts/notarize-macos.mjs` —— 公证 ＋ 装订 ＋ Gatekeeper 复核（本文件 §九 的实现）
+- `scripts/notarize-macos.test.mjs` —— 三件判据的纯函数判据（`pnpm test` 里跑）
+- `.github/workflows/macos-signed.yml` —— 手动发版档（签名 + 公证）
+- `scripts/check-macos-bundle.mjs` —— 产物自检（identifier / 版本 / 深链 / dmg / 签名两格）
 - `scripts/lib/releaseArtifacts.mjs` —— 产物收集 / 平台键 / 清单偏好（含 macOS 的 `.app.tar.gz` 规则与门禁）
 - `scripts/release.mjs` —— 发布（建 release、上传、生成 `latest.json`）
-- `.github/workflows/release.yml` —— GitHub Actions 三平台（macOS 步骤已就位，矩阵待解开）
+- `.github/workflows/release.yml` —— GitHub Actions 三平台（macOS 步骤已就位，矩阵待解开；搬运见 §9.3）
 - `src-tauri/tauri.conf.json` —— updater endpoints + pubkey + bundle 配置
