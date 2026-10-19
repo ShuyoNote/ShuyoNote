@@ -102,7 +102,8 @@ pub(crate) fn reopen_space_at(c: &mut Connection, space_id: &str, dir: &Path) ->
     if !is_safe_space_id(space_id) {
         return Err("非法空间 id".to_string());
     }
-    let path = space_db_path(dir, space_id);
+    // ⚠️ 那五步（开库／上钥匙／pragma／迁移／attach meta／补自己那一行）已抽到
+    // `open_prepared_space_at` —— 与「自动建空间」共用同一份口径（⛔ 别在这儿再抄一遍）。
     // ⭐ **2026-10-10（owner 报的「点了加密空间就卡死」）—— 这一段的形状就是根因，别改回去** ✗：
     //   原来是 `let _ = std::mem::replace(c, Connection::open(&path)?);` —— **先把 `c` 换成新库** ✗，
     //   之后才上钥匙／设 pragma／迁移 ✗。加密空间＋本会话没有钥匙时后面某一步必然失败 ✗
@@ -111,9 +112,24 @@ pub(crate) fn reopen_space_at(c: &mut Connection, space_id: &str, dir: &Path) ->
     //   失败被 `.ok()` 吞掉 ⇒ 报「还没有活动空间」⇒ 锁屏闸门永不成立 ✗（＝不锁屏、继续往打不开的库写 ✓）。
     //   ⇒ 现在**先在一个临时连接上把活全干完**（开库／上钥匙／pragma／迁移／attach meta／补自己那一行 ✓），
     //     **最后一步才 `mem::replace`** ✓ ⇒ **任何一步失败时 `c` 一个字节都没动** ✓。
+    let fresh = open_prepared_space_at(dir, space_id)?;
+    // ⭐ 到这里才换：前面任何一步失败 ⇒ `c` 仍旧是**原来那个好连接** ✓
+    let _ = std::mem::replace(c, fresh);
+    Ok(())
+}
+
+/// ⭐⭐ **2026-10-19（owner 拍「甲」：同步时自动建本机没有的同名空间）**：
+/// **把某个空间的库开好、迁移好、attach 上 meta、并补好它自己那一行** —— 但**不切换**任何连接。
+///
+/// 为什么要抽出来：`reopen_space_at` 与「自动建空间」要干的前几步**逐字相同**，
+/// 差别只在最后一步（那边 `mem::replace` 把主连接换过去 ＝ **切换空间**；这边只要库文件存在且可用）。
+/// ⛔ 抄第二份实现会立刻漂移（这个仓为"两份口径"付过很多次代价）。
+fn open_prepared_space_at(dir: &Path, space_id: &str) -> Result<Connection, String> {
+    if !is_safe_space_id(space_id) {
+        return Err("非法空间 id".to_string());
+    }
+    let path = space_db_path(dir, space_id);
     let fresh = Connection::open(&path).map_err(|e| space_open_err(&e, space_id))?;
-    // E1: if the space DB is SQLCipher-encrypted at rest, key the connection before
-    // any pragma/query runs. ⚠️ 它自己返回的就是人话（"先输口令解锁，再打开这个空间" ✓）⇒ 原样透传 ✓
     security::key_space_conn(&fresh, &path)?;
     fresh
         .pragma_update(None, "journal_mode", "WAL")
@@ -130,8 +146,15 @@ pub(crate) fn reopen_space_at(c: &mut Connection, space_id: &str, dir: &Path) ->
         .execute(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""), [])
         .map_err(|e| format!("attach meta failed: {}", space_open_err(&e, space_id)))?;
     ensure_space_workspace(&fresh, space_id)?;
-    // ⭐ 到这里才换：前面任何一步失败 ⇒ `c` 仍旧是**原来那个好连接** ✓
-    let _ = std::mem::replace(c, fresh);
+    Ok(fresh)
+}
+
+/// ⭐ **2026-10-19**：**只建库、不切换当前空间** —— 自动建空间那条路的唯一入口。
+/// ⚠️ 调用方必须**先**写好 `meta.workspaces` 那一行（本函数里的 `ensure_space_workspace` 要读它）。
+/// ⚠️ 幂等：库已存在时只是把迁移补齐（⛔ 不重建、⛔ 不清数据）。
+pub(crate) fn create_space_db_at(dir: &Path, space_id: &str) -> Result<(), String> {
+    let fresh = open_prepared_space_at(dir, space_id)?;
+    drop(fresh);
     Ok(())
 }
 
@@ -1500,6 +1523,79 @@ pub fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// ⭐ **2026-10-19（owner 拍「甲」）**：`create_space_db_at` —— **只建库、不切换**。
+    ///
+    /// 三格（都钉"少建/建坏"这两个方向）：
+    /// ① 建出来的库**能用**（迁移跑过 ⇒ `pages` 表在；补好了 `workspaces` 自己那一行）；
+    /// ② **幂等**：再调一次不报错、也不清数据（先塞一页，第二次调用后它还在）；
+    /// ③ 它**不碰**任何现有连接（这里用一个已连到 A 的连接做对照 —— 调完之后它照样查得到 A 的 `pages`）。
+    ///
+    /// **变异**：把 `create_space_db_at` 实现改成"复用 reopen_space_at 那一套 mem::replace" ⇒ 第 ③ 格必红。
+    #[test]
+    fn create_space_db_at_is_idempotent_and_leaves_a_usable_space() {
+        let dir = std::env::temp_dir().join(format!("shuyo-create-space-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(super::spaces_dir(&dir)).unwrap();
+        {
+            let m = Connection::open(super::meta_path(&dir)).unwrap();
+            meta_migrate(&m).unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, created_at, updated_at)
+                 VALUES ('space-a', 'A', 1, 1), ('space-new', '新产品', 1, 1)",
+                [],
+            )
+            .unwrap();
+        }
+        // 对照连接：先开 A（走的是既有 reopen 那条路）
+        let mut watcher = Connection::open_in_memory().unwrap();
+        super::reopen_space_at(&mut watcher, "space-a", &dir).unwrap();
+
+        // ① 建 space-new（不带 meta 时 ensure_space_workspace 会失败 ⇒ 这条顺带钉了"要先写 meta 那一行"）
+        super::create_space_db_at(&dir, "space-new").expect("建库失败");
+        let p = super::space_db_path(&dir, "space-new");
+        assert!(p.is_file(), "库文件没建出来");
+        {
+            let c = Connection::open(&p).unwrap();
+            let pages: i64 = c
+                .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+                .expect("迁移没跑：连 pages 表都没有");
+            assert_eq!(pages, 0);
+            let rows: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM workspaces WHERE id = 'space-new'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(rows, 1, "没补 space-new 自己那一行 ⇒ 之后插页会 FOREIGN KEY 失败");
+        }
+
+        // ② 幂等：塞一页，再调一次，数据还在
+        {
+            let c = Connection::open(&p).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, title, content_json, content_text, created_at, updated_at)
+                 VALUES ('pg-1', 'space-new', '标题', '{}', '', 1, 1)",
+                [],
+            )
+            .unwrap();
+        }
+        super::create_space_db_at(&dir, "space-new").expect("第二次调用不该报错");
+        {
+            let c = Connection::open(&p).unwrap();
+            let n: i64 = c
+                .query_row("SELECT COUNT(*) FROM pages WHERE id = 'pg-1'", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(n, 1, "幂等失败：第二次调用把数据清了");
+        }
+
+        // ③ 不碰现有连接：watcher 仍然连在 space-a 上
+        let still: i64 = watcher
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .expect("对照连接被弄坏了 —— 说明实现偷偷切换了连接");
+        assert_eq!(still, 0);
+    }
     use super::*;
 
     // Serializes tests that call init() (which sets the global APP_DATA_DIR
