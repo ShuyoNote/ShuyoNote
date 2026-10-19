@@ -53,22 +53,20 @@ export function BackupButton({ label }: { label?: string } = {}) {
 
   const doExport = async () => {
     try {
-      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-      let spaceName = "backup";
-      try {
-        spaceName = (await api.getWorkspaceName()) || "backup";
-      } catch {
-        /* keep default */
-      }
-      // Sanitize for a filename (strip path-invalid chars, collapse spaces).
-      const safe = spaceName
-        .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
-        .replace(/\s+/g, "-")
-        .trim()
-        .slice(0, 40);
+      // ⭐⭐ **2026-10-19（owner：「全库备份的名称不对吧：shuyonote-数友标尺-…？（怎么带上了空间名称？）」）**：
+      //   ⛔ 旧实现拿**当前活动空间的名字**（`api.getWorkspaceName()`）拼文件名 ✗ ——
+      //   而这条命令（`export_backup`）导的是**整机全库**：`meta.db` ＋ **所有**空间库 ＋ 附件 ✓
+      //   ⇒ 名字里出现「数友标尺」会让人以为"只备份了这一个空间" ✗（误导，不是小瑕疵 ✓）。
+      //   ⇒ 改成中性名 `shuyonote-backup-<本地时刻>.zip`（与自动备份同前缀，一眼看得出是整套 ✓）。
+      //   ⚠️ 时刻也换成**本地时间**：旧实现用 `toISOString()` ⇒ 北京时间 10:50 被写成 `02-50` ✗（差 8 小时）。
+      const d = new Date();
+      const p = (n: number) => String(n).padStart(2, "0");
+      const stamp =
+        `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` +
+        `-${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
       const path = await platform.dialog.save({
         title: "导出备份",
-        defaultPath: `shuyonote-${safe || "space"}-${stamp}.zip`,
+        defaultPath: `shuyonote-backup-${stamp}.zip`,
         filters: [{ name: "ZIP", extensions: ["zip"] }],
       });
       if (!path) return;
