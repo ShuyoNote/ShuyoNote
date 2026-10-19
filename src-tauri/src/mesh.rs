@@ -1238,8 +1238,24 @@ pub async fn round_candidates(
             let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
             pair_secret_for(&g, paired_row_key(space_id, device_level), &p.device_id)
         };
+        // ⭐ **2026-10-19（排障用，一行）**：把"这一台拉成了没有 / 出示的是哪一份"打出来 ——
+        //   真机那次"收下 0 条"在界面上只显示一句"1 台没拉动"，**说不清是没秘密、401、还是空** ✓。
+        //   ⚠️ 只打**有无**，⛔ 不打秘密本身。
+        eprintln!(
+            "[mesh] 拉 {} ⇒ secret={} · space={} · device_level={}",
+            p.device_id,
+            if secret.is_some() { "有" } else { "**无**（会 401）" },
+            space_id,
+            device_level
+        );
         match pull_and_absorb(conn, &client, p, space_id, secret.as_deref(), device_level).await {
-            Ok(rep) => out.push(rep),
+            Ok(rep) => {
+                eprintln!(
+                    "[mesh] 拉 {} ⇒ ok fetched={} applied={} cursor={} error={:?}",
+                    p.device_id, rep.fetched, rep.applied, rep.cursor, rep.error
+                );
+                out.push(rep)
+            }
             // ⚠️ **不连坐**：这一台拉不动，别的照拉；错原样带回给界面。
             Err(e) => out.push(PeerPullReport {
                 peer: p.device_id.clone(),
