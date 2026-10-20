@@ -1,7 +1,10 @@
 # 移动端高保真效果图（10 屏 / 10 个 SVG · 390×844 · SVG）
 
-> **状态：设计稿（未接线，界面尚未实现）。** 本目录只有**效果图**，⛔ 不代表功能已做；
-> 需求编号沿用同目录 [`2026-10-08-mobile-requirements.md`](../2026-10-08-mobile-requirements.md)（M-P0-x / M-P1-x / M-P2-x）。
+> **状态（2026-10-20）**：本目录是**设计依据**；对应界面已落地（9 张效果图对应界面 ＋ 新增「首次配对」屏；05 待办 owner 拍不做）。
+> ⚠️ **效果图 ≠ 功能已做**；真机观感与签字以验收包为准。`08-pair.svg` 是**旧稿**（owner 2026-10-14
+> 参考图已升级为「设备直连 ＋ 首次配对」两屏，见 [`2026-10-14-owner-mobile-reference.png`](./2026-10-14-owner-mobile-reference.png)）。
+> 需求编号以现行 [`2026-10-20-mobile-requirements-complete.md`](../2026-10-20-mobile-requirements-complete.md) 为准；
+> 旧编号沿用 [`2026-10-08-mobile-requirements.md`](../2026-10-08-mobile-requirements.md)（M-P0-x / M-P1-x / M-P2-x，历史稿）。
 > **事实来源**：`_tmp/scratch/mobile-facts.md`（2026-10-08 实测逐字读数，A–G 七节）。
 > **配色/字号/圆角**一律取本产品自己的 [`design/design-system.md`](../../../../design/design-system.md) 深色列 token，⛔ 未自创品牌色、未新增主题。
 > 屏内笔记标题/正文均为**示意文案**（效果图占位），不是任何真实数据。
