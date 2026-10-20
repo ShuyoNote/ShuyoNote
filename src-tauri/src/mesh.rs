@@ -162,6 +162,22 @@ pub fn set_peer_cursor(
     crate::sync::set_meta_state(c, &cursor_key(space_id, peer_device), &seq.to_string())
 }
 
+/// ⭐⭐ **2026-10-20（真机：归零自愈写不进去）**：**坏游标**专用的重置入口 —— **允许倒退**。
+///
+/// 为什么必须单独开一个：上面那个 `set_peer_cursor` **拒绝倒退**（这是对的 ✓ —— 水位倒退
+/// 会把已经吸收过的记录再吸收一遍）。但"越界自愈"要做的**恰恰是**把它写小 ✗
+/// ⇒ 用普通入口 ⇒ 返回 `Err(…水位不许倒退…)` ⇒ 自愈**静默失败**、每轮重探一次
+/// （实测：游标在库里一直是 99999，日志却在刷"归零并采用这一批" ✓）。
+/// ⇒ 这个入口只允许在**已判定越界**的那两处调用（带 `healed` 标记的那两支）✓。
+fn reset_peer_cursor(
+    c: &Connection,
+    space_id: &str,
+    peer_device: &str,
+    seq: i64,
+) -> Result<(), String> {
+    crate::sync::set_meta_state(c, &cursor_key(space_id, peer_device), &seq.to_string())
+}
+
 // ─────────────────────────── 收下（走 ③-a 那条 apply 路径） ───────────────────────────
 
 /// 收下一批对端记录的**产物** —— **不只是计数**。
@@ -713,7 +729,7 @@ pub async fn pull_and_absorb(
         );
         {
             let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-            set_peer_cursor(&g, space_id, &peer.device_id, 0)?;
+            reset_peer_cursor(&g, space_id, &peer.device_id, 0)?;
         }
         let auth = {
             let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
@@ -802,7 +818,7 @@ pub async fn pull_and_absorb(
                     );
                     {
                         let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-                        set_peer_cursor(&g, space_id, &peer.device_id, 0)?;
+                        reset_peer_cursor(&g, space_id, &peer.device_id, 0)?;
                     }
                     healed = true;
                     rows = probe_rows;
@@ -830,7 +846,10 @@ pub async fn pull_and_absorb(
     // ⭐ 2026-10-20：**归零自愈过的那一轮必须无条件写回** ✗ ——
     //   原规则是 `ab.tail > since`，而 since 还是那个越界值（99999）⇒ 恒 false
     //   ⇒ 数据库里那格**永远是 99999** ⇒ 每轮都要重新探一次（实测就是这么被咬的 ✓）。
-    if healed || ab.tail > since {
+    if healed {
+        // ⭐ 自愈那一支**允许倒退**（否则 `ab.tail < since` 会被"水位不许倒退"挡住 ⇒ 白修）
+        reset_peer_cursor(&g, space_id, &peer.device_id, ab.tail)?;
+    } else if ab.tail > since {
         set_peer_cursor(&g, space_id, &peer.device_id, ab.tail)?;
     }
     Ok(PeerPullReport {
