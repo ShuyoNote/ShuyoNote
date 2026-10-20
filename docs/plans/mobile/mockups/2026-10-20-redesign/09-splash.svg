@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" role="img" aria-label="启动页：浅色光晕与字标">
+<title>启动页 Splash（浅色重设计 v2）</title>
+<style>
+text{font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei','Helvetica Neue',sans-serif;}
+.mono{font-family:'SF Mono','JetBrains Mono',Consolas,monospace;}
+.t{fill:#1F2329;}.dim{fill:#646A73;}.faint{fill:#8F959E;}
+.onacc{fill:#FFFFFF;}
+</style>
+<defs>
+<radialGradient id="glow" cx="0.5" cy="0.38" r="0.75">
+<stop offset="0" stop-color="#EBF1FF"/>
+<stop offset="0.6" stop-color="#F5F8FF"/>
+<stop offset="1" stop-color="#FFFFFF"/>
+</radialGradient>
+<linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#3370FF"/><stop offset="1" stop-color="#5B8CFF"/>
+</linearGradient>
+</defs>
+<rect x="0" y="0" width="390" height="844" rx="46" fill="#0C0D0F"/>
+<rect x="6" y="6" width="378" height="832" rx="40" fill="url(#glow)"/>
+<rect x="140" y="16" width="110" height="26" rx="13" fill="#0C0D0F"/>
+<text x="32" y="41" class="t" font-size="14" font-weight="600">9:41</text>
+<rect x="296" y="33" width="3.5" height="5" rx="1" fill="#1F2329"/>
+<rect x="301.5" y="30" width="3.5" height="8" rx="1" fill="#1F2329"/>
+<rect x="307" y="27" width="3.5" height="11" rx="1" fill="#1F2329"/>
+<rect x="312.5" y="24" width="3.5" height="14" rx="1" fill="#1F2329"/>
+<path d="M322 34 a9 9 0 0 1 13 0" fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round"/>
+<path d="M325 37.5 a4.5 4.5 0 0 1 7 0" fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round"/>
+<circle cx="328.5" cy="41" r="1.5" fill="#1F2329"/>
+<rect x="342" y="26" width="24" height="12" rx="3.5" fill="none" stroke="#1F2329" opacity=".5"/>
+<rect x="344" y="28" width="17" height="8" rx="1.8" fill="#1F2329"/>
+<rect x="367" y="29.5" width="2.5" height="5" rx="1.2" fill="#1F2329" opacity=".5"/>
+<!-- 圆角应用图标 -->
+<rect x="147" y="216" width="96" height="96" rx="24" fill="url(#mark)"/>
+<g transform="translate(172,238)" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+<path d="M6 36 L8.4 27 L34 1.4 L42.6 10 L17 35.6 Z"/>
+<path d="M30 5.4 L38.6 14"/>
+</g>
+<!-- 字标与副标 -->
+<text x="195" y="372" class="t" font-size="30" font-weight="700" text-anchor="middle">ShuyoNote</text>
+<text x="195" y="400" class="dim" font-size="14" text-anchor="middle">本机优先的笔记应用</text>
+<!-- 加载进度条（流动高光段 + 笔尖光点） -->
+<rect x="105" y="446" width="180" height="4" rx="2" fill="#EBF1FF"/>
+<rect x="105" y="446" width="112" height="4" rx="2" fill="#3370FF"/>
+<rect x="185" y="445" width="24" height="6" rx="3" fill="#FFFFFF" opacity=".65"/>
+<circle cx="217" cy="448" r="4" fill="#3370FF"/>
+<text x="195" y="478" class="faint" font-size="12" text-anchor="middle">正在准备本机数据…</text>
+<!-- 底部：分隔线 / 版本 / 本机承诺 -->
+<path d="M105 740 H285" stroke="#E5E8EE"/>
+<text x="195" y="768" class="dim" font-size="12" text-anchor="middle"><tspan class="mono">版本 1.92.21 · Android</tspan></text>
+<text x="195" y="792" class="faint" font-size="11" text-anchor="middle">你的笔记在本机 · 本地 SQLite 即可用</text>
+<rect x="145" y="820" width="100" height="5" rx="2.5" fill="#1F2329" opacity=".18"/>
+</svg>

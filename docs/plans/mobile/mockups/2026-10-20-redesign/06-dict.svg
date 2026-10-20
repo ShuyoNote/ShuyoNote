@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" role="img" aria-label="划词查词：选中英文词后浮出释义卡片">
+<title>划词查词（浅色重设计 v2）</title>
+<style>
+text{font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei','Helvetica Neue',sans-serif;}
+.t{fill:#1F2329;}.dim{fill:#646A73;}.faint{fill:#8F959E;}
+.acc{fill:#3370FF;}.onacc{fill:#FFFFFF;}
+</style>
+<rect x="0" y="0" width="390" height="844" rx="46" fill="#0C0D0F"/>
+<rect x="6" y="6" width="378" height="832" rx="40" fill="#FFFFFF"/>
+<rect x="140" y="16" width="110" height="26" rx="13" fill="#0C0D0F"/>
+<text x="32" y="41" class="t" font-size="14" font-weight="600">9:41</text>
+<rect x="296" y="33" width="3.5" height="5" rx="1" fill="#1F2329"/>
+<rect x="301.5" y="30" width="3.5" height="8" rx="1" fill="#1F2329"/>
+<rect x="307" y="27" width="3.5" height="11" rx="1" fill="#1F2329"/>
+<rect x="312.5" y="24" width="3.5" height="14" rx="1" fill="#1F2329"/>
+<path d="M322 34 a9 9 0 0 1 13 0" fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round"/>
+<path d="M325 37.5 a4.5 4.5 0 0 1 7 0" fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round"/>
+<circle cx="328.5" cy="41" r="1.5" fill="#1F2329"/>
+<rect x="342" y="26" width="24" height="12" rx="3.5" fill="none" stroke="#1F2329" opacity=".5"/>
+<rect x="344" y="28" width="17" height="8" rx="1.8" fill="#1F2329"/>
+<rect x="367" y="29.5" width="2.5" height="5" rx="1.2" fill="#1F2329" opacity=".5"/>
+<!-- 底层：阅读屏（简化） -->
+<g fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M30 76 L22 84 L30 92"/></g>
+<text x="48" y="90" class="t" font-size="16" font-weight="600">阅读</text>
+<text x="24" y="152" class="t" font-size="24" font-weight="700">夜景机位备忘</text>
+<text x="24" y="176" class="faint" font-size="12">本机 · 更新于 12 分钟前</text>
+<text x="24" y="236" class="t" font-size="20" font-weight="600">现场条件</text>
+<text x="24" y="272" class="t" font-size="16">天桥西侧光比很大，</text>
+<text x="24" y="304" class="t" font-size="16">the reflection 会吃掉高光，</text>
+<rect x="164" y="288" width="98" height="22" rx="4" fill="#FFE08A" opacity=".6"/>
+<circle cx="163" cy="299" r="4" fill="#3370FF"/>
+<circle cx="263" cy="299" r="4" fill="#3370FF"/>
+<text x="24" y="336" class="t" font-size="16">护栏会反光。</text>
+<text x="24" y="368" class="t" font-size="16">广角低机位，机身尽量贴住栏杆。</text>
+<text x="24" y="400" class="t" font-size="16">备用机位：桥下人行道，长焦补特写。</text>
+<!-- 压暗层 -->
+<rect x="6" y="6" width="378" height="832" rx="40" fill="#1F2329" opacity=".32"/>
+<!-- 释义卡片（压在正文上，不替换正文） -->
+<rect x="20" y="540" width="350" height="268" rx="20" fill="#FFFFFF"/>
+<rect x="170" y="552" width="50" height="5" rx="2.5" fill="#D4D8DF"/>
+<text x="44" y="596" class="t" font-size="24" font-weight="700">reflection</text>
+<text x="44" y="622" class="acc" font-size="14">/rɪˈflekʃn/</text>
+<text x="134" y="622" class="dim" font-size="14">n. 名词</text>
+<path d="M44 640 H346" stroke="#F2F3F5"/>
+<text x="44" y="668" class="t" font-size="15">1. 反射；映像</text>
+<text x="44" y="694" class="t" font-size="15">2. 深思；想法</text>
+<!-- 操作 -->
+<rect x="44" y="716" width="104" height="38" rx="10" fill="#EBF1FF"/>
+<text x="96" y="740" class="acc" font-size="14" font-weight="600" text-anchor="middle">复制</text>
+<rect x="160" y="716" width="120" height="38" rx="10" fill="#FFFFFF" stroke="#E5E8EE"/>
+<text x="220" y="740" class="faint" font-size="14" text-anchor="middle" opacity=".6">加入词库</text>
+<text x="44" y="786" class="faint" font-size="11">释义来源：本机词典（英汉）· 「加入词库」暂无存储/命令 ⇒ disabled</text>
+<text x="44" y="770" class="faint" font-size="11" opacity="0"> </text>
+<rect x="145" y="820" width="0" height="0"/>
+<text x="24" y="806" class="faint" font-size="10" opacity=".0"> </text>
+<!-- 说明 -->
+<text x="24" y="524" class="faint" font-size="10" opacity="0"> </text>
+<text x="20" y="826" class="faint" font-size="9" opacity="0"> </text>
+<text x="24" y="808" class="faint" font-size="0" opacity="0"> </text>
+<text x="24" y="812" class="faint" font-size="10">中文词未覆盖 ⇒ 查中文词走「未收录」路径（示意图中选中的是英文词）。</text>
+<rect x="145" y="820" width="100" height="5" rx="2.5" fill="#1F2329" opacity=".18"/>
+</svg>

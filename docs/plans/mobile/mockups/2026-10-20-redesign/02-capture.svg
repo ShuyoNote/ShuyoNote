@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" role="img" aria-label="快速记录：输入区与键盘上方工具栏">
+<title>快速记录（浅色重设计 v2）</title>
+<style>
+text{font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei','Helvetica Neue',sans-serif;}
+.t{fill:#1F2329;}.dim{fill:#646A73;}.faint{fill:#8F959E;}
+.acc{fill:#3370FF;}.onacc{fill:#FFFFFF;}
+</style>
+<rect x="0" y="0" width="390" height="844" rx="46" fill="#0C0D0F"/>
+<rect x="6" y="6" width="378" height="832" rx="40" fill="#FFFFFF"/>
+<rect x="140" y="16" width="110" height="26" rx="13" fill="#0C0D0F"/>
+<text x="32" y="41" class="t" font-size="14" font-weight="600">9:41</text>
+<rect x="296" y="33" width="3.5" height="5" rx="1" fill="#1F2329"/>
+<rect x="301.5" y="30" width="3.5" height="8" rx="1" fill="#1F2329"/>
+<rect x="307" y="27" width="3.5" height="11" rx="1" fill="#1F2329"/>
+<rect x="312.5" y="24" width="3.5" height="14" rx="1" fill="#1F2329"/>
+<path d="M322 34 a9 9 0 0 1 13 0" fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round"/>
+<path d="M325 37.5 a4.5 4.5 0 0 1 7 0" fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round"/>
+<circle cx="328.5" cy="41" r="1.5" fill="#1F2329"/>
+<rect x="342" y="26" width="24" height="12" rx="3.5" fill="none" stroke="#1F2329" opacity=".5"/>
+<rect x="344" y="28" width="17" height="8" rx="1.8" fill="#1F2329"/>
+<rect x="367" y="29.5" width="2.5" height="5" rx="1.2" fill="#1F2329" opacity=".5"/>
+<!-- 顶栏：返回 / 标题 / 存 -->
+<g fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M30 76 L22 84 L30 92"/></g>
+<text x="195" y="90" class="t" font-size="16" font-weight="600" text-anchor="middle">快速记录</text>
+<rect x="304" y="68" width="62" height="32" rx="16" fill="#3370FF"/>
+<text x="335" y="89" class="onacc" font-size="14" font-weight="600" text-anchor="middle">存</text>
+<!-- 标题输入 -->
+<text x="28" y="142" class="t" font-size="22" font-weight="700">夜景机位备忘</text>
+<path d="M28 158 H362" stroke="#E5E8EE"/>
+<!-- 正文输入区 -->
+<text x="28" y="196" class="t" font-size="16">天桥西侧光比很大，护栏会反光。</text>
+<text x="28" y="228" class="t" font-size="16">广角低机位，机身尽量贴住栏杆。</text>
+<text x="28" y="260" class="t" font-size="16">备用机位：桥下人行道，长焦补特写。</text>
+<rect x="254" y="268" width="2" height="20" fill="#3370FF"/>
+<text x="28" y="300" class="faint" font-size="16">想一句就记一句…</text>
+<!-- 草稿状态 -->
+<g transform="translate(132,340)" fill="none" stroke="#8F959E" stroke-width="1.6" stroke-linecap="round"><rect x="1" y="8" width="16" height="12" rx="3"/><path d="M5 8 V5 a4 4 0 0 1 8 0 V8"/></g>
+<text x="195" y="352" class="faint" font-size="12" text-anchor="middle">草稿保存在本机 · 无需登录</text>
+<!-- 键盘上方工具栏（6 项，390 档一屏装得下） -->
+<rect x="6" y="540" width="378" height="52" fill="#FFFFFF"/>
+<path d="M6 540 H384" stroke="#E5E8EE"/>
+<g transform="translate(30,552)" fill="none" stroke="#646A73" stroke-width="1.7" stroke-linecap="round"><path d="M2 4 H18 M2 9 H18 M2 14 H12"/></g>
+<text x="39" y="584" class="dim" font-size="11" text-anchor="middle">段落</text>
+<g transform="translate(88,552)" fill="none" stroke="#646A73" stroke-width="1.7" stroke-linecap="round"><path d="M2 6 H18 M4 13 H16"/></g>
+<text x="97" y="584" class="dim" font-size="11" text-anchor="middle">标题</text>
+<g transform="translate(146,552)" fill="none" stroke="#646A73" stroke-width="1.7" stroke-linecap="round"><circle cx="4" cy="5" r="1.6"/><circle cx="4" cy="12" r="1.6"/><path d="M9 5 H18 M9 12 H18"/></g>
+<text x="155" y="584" class="dim" font-size="11" text-anchor="middle">列表</text>
+<g transform="translate(204,552)" fill="none" stroke="#646A73" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="10" height="10" rx="2"/><path d="M4 8 L7 11 L13 4" transform="translate(0,1)"/><path d="M15 9 H20" /></g>
+<text x="213" y="584" class="dim" font-size="11" text-anchor="middle">待办</text>
+<g transform="translate(262,552)" fill="none" stroke="#646A73" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4 C4 8 4 12 4 16 M4 4 C8 2 12 4 12 7 C12 10 8 10 4 9"/></g>
+<text x="271" y="584" class="dim" font-size="11" text-anchor="middle">引用</text>
+<g transform="translate(320,552)" fill="none" stroke="#646A73" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="17" height="13" rx="2.5"/><circle cx="7" cy="9" r="1.8"/><path d="M4 15 L10 10 L14 13 L16 11.5 L19 14"/></g>
+<text x="329" y="584" class="dim" font-size="11" text-anchor="middle">图片</text>
+<path d="M6 592 H384" stroke="#E5E8EE"/>
+<!-- 浅色键盘示意 -->
+<rect x="6" y="593" width="378" height="245" fill="#F7F8FA"/>
+<g fill="#FFFFFF" stroke="#E5E8EE">
+<rect x="14" y="606" width="31" height="40" rx="6"/><rect x="49" y="606" width="31" height="40" rx="6"/><rect x="84" y="606" width="31" height="40" rx="6"/><rect x="119" y="606" width="31" height="40" rx="6"/><rect x="154" y="606" width="31" height="40" rx="6"/><rect x="189" y="606" width="31" height="40" rx="6"/><rect x="224" y="606" width="31" height="40" rx="6"/><rect x="259" y="606" width="31" height="40" rx="6"/><rect x="294" y="606" width="31" height="40" rx="6"/><rect x="329" y="606" width="31" height="40" rx="6"/>
+<rect x="31" y="654" width="33" height="40" rx="6"/><rect x="68" y="654" width="33" height="40" rx="6"/><rect x="105" y="654" width="33" height="40" rx="6"/><rect x="142" y="654" width="33" height="40" rx="6"/><rect x="179" y="654" width="33" height="40" rx="6"/><rect x="216" y="654" width="33" height="40" rx="6"/><rect x="253" y="654" width="33" height="40" rx="6"/><rect x="290" y="654" width="33" height="40" rx="6"/><rect x="327" y="654" width="33" height="40" rx="6"/>
+<rect x="14" y="702" width="44" height="40" rx="6"/><rect x="62" y="702" width="33" height="40" rx="6"/><rect x="99" y="702" width="33" height="40" rx="6"/><rect x="136" y="702" width="33" height="40" rx="6"/><rect x="173" y="702" width="33" height="40" rx="6"/><rect x="210" y="702" width="33" height="40" rx="6"/><rect x="247" y="702" width="33" height="40" rx="6"/><rect x="284" y="702" width="33" height="40" rx="6"/><rect x="321" y="702" width="39" height="40" rx="6"/>
+<rect x="14" y="750" width="46" height="40" rx="6"/><rect x="130" y="750" width="214" height="40" rx="6"/><rect x="344" y="750" width="31" height="40" rx="6"/>
+</g>
+<g class="t" font-size="14" text-anchor="middle">
+<text x="29.5" y="631">Q</text><text x="64.5" y="631">W</text><text x="99.5" y="631">E</text><text x="134.5" y="631">R</text><text x="169.5" y="631">T</text><text x="204.5" y="631">Y</text><text x="239.5" y="631">U</text><text x="274.5" y="631">I</text><text x="309.5" y="631">O</text><text x="344.5" y="631">P</text>
+<text x="47.5" y="679">A</text><text x="84.5" y="679">S</text><text x="121.5" y="679">D</text><text x="158.5" y="679">F</text><text x="195.5" y="679">G</text><text x="232.5" y="679">H</text><text x="269.5" y="679">J</text><text x="306.5" y="679">K</text><text x="343.5" y="679">L</text>
+</g>
+<g fill="#8F959E">
+<path d="M32 727 L26 717 H38 Z" transform="translate(4,0)"/>
+<path d="M336 727 L342 717 H330 Z" transform="translate(4,0)"/>
+</g>
+<text x="237" y="775" class="faint" font-size="13" text-anchor="middle">空格</text>
+<text x="359.5" y="775" class="t" font-size="13" text-anchor="middle">换行</text>
+<text x="37" y="775" class="dim" font-size="12" text-anchor="middle">123</text>
+<!-- 底部 -->
+<rect x="6" y="806" width="378" height="32" fill="#F7F8FA"/>
+<path d="M6 806 H384" stroke="#E5E8EE"/>
+<circle cx="40" cy="822" r="9" fill="none" stroke="#8F959E" stroke-width="1.6"/>
+<path d="M40 816 V822 L44 824" stroke="#8F959E" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+<text x="195" y="826" class="faint" font-size="11" text-anchor="middle">图片按钮目前只插入 Markdown 语法 · 相册/文件选择器未接</text>
+<rect x="145" y="820" width="0" height="0"/>
+</svg>

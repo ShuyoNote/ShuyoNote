@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" role="img" aria-label="首页：三个入口＋最近笔记">
+<title>首页：三个入口＋最近笔记（浅色重设计 v2）</title>
+<style>
+text{font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei','Helvetica Neue',sans-serif;}
+.mono{font-family:'SF Mono','JetBrains Mono',Consolas,monospace;}
+.t{fill:#1F2329;}.dim{fill:#646A73;}.faint{fill:#8F959E;}
+.acc{fill:#3370FF;}.onacc{fill:#FFFFFF;}
+</style>
+<defs>
+<linearGradient id="hero" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#3370FF"/><stop offset="1" stop-color="#5B8CFF"/>
+</linearGradient>
+</defs>
+<!-- 手机外框与屏幕 -->
+<rect x="0" y="0" width="390" height="844" rx="46" fill="#0C0D0F"/>
+<rect x="6" y="6" width="378" height="832" rx="40" fill="#FFFFFF"/>
+<rect x="140" y="16" width="110" height="26" rx="13" fill="#0C0D0F"/>
+<!-- 状态栏 -->
+<text x="32" y="41" class="t" font-size="14" font-weight="600">9:41</text>
+<rect x="296" y="33" width="3.5" height="5" rx="1" fill="#1F2329"/>
+<rect x="301.5" y="30" width="3.5" height="8" rx="1" fill="#1F2329"/>
+<rect x="307" y="27" width="3.5" height="11" rx="1" fill="#1F2329"/>
+<rect x="312.5" y="24" width="3.5" height="14" rx="1" fill="#1F2329"/>
+<path d="M322 34 a9 9 0 0 1 13 0" fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round"/>
+<path d="M325 37.5 a4.5 4.5 0 0 1 7 0" fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round"/>
+<circle cx="328.5" cy="41" r="1.5" fill="#1F2329"/>
+<rect x="342" y="26" width="24" height="12" rx="3.5" fill="none" stroke="#1F2329" opacity=".5"/>
+<rect x="344" y="28" width="17" height="8" rx="1.8" fill="#1F2329"/>
+<rect x="367" y="29.5" width="2.5" height="5" rx="1.2" fill="#1F2329" opacity=".5"/>
+<!-- 页头 -->
+<text x="24" y="106" class="t" font-size="26" font-weight="700">ShuyoNote</text>
+<text x="24" y="130" class="dim" font-size="13">本地优先 · 离线可用 · 只记你确定要留的</text>
+<!-- 主行动：快速记录 -->
+<rect x="24" y="150" width="342" height="116" rx="16" fill="url(#hero)"/>
+<circle cx="70" cy="186" r="22" fill="#FFFFFF" opacity=".18"/>
+<g transform="translate(58,174)" fill="none" stroke="#FFFFFF" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20 L4.9 15.6 L15.4 5.1 L18.9 8.6 L8.4 19.1 Z"/><path d="M13.4 7.1 L16.9 10.6"/></g>
+<text x="104" y="182" class="onacc" font-size="20" font-weight="700">快速记录</text>
+<text x="104" y="204" class="onacc" font-size="13" opacity=".78">想一句就记一句</text>
+<g fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" opacity=".9"><path d="M340 200 L348 208 L340 216"/></g>
+<!-- 搜索入口 -->
+<rect x="24" y="282" width="342" height="64" rx="14" fill="#F7F8FA" stroke="#E5E8EE"/>
+<g transform="translate(44,300)" fill="none" stroke="#8F959E" stroke-width="1.9" stroke-linecap="round"><circle cx="9" cy="9" r="6.2"/><path d="M13.6 13.6 L19 19"/></g>
+<text x="76" y="320" class="faint" font-size="15">搜索笔记内容</text>
+<!-- 最近笔记 -->
+<rect x="24" y="362" width="342" height="300" rx="16" fill="#FFFFFF" stroke="#E5E8EE"/>
+<text x="44" y="396" class="t" font-size="15" font-weight="600">最近笔记</text>
+<text x="346" y="396" class="faint" font-size="12" text-anchor="end">3 条</text>
+<rect x="44" y="422" width="32" height="32" rx="9" fill="#F2F3F5"/>
+<path d="M52 432 H68 M52 440 H68 M52 448 H62" stroke="#8F959E" stroke-width="1.6" stroke-linecap="round"/>
+<text x="92" y="438" class="t" font-size="15">拍摄现场：夜景机位备忘</text>
+<text x="92" y="458" class="faint" font-size="12">12 分钟前</text>
+<g fill="none" stroke="#8F959E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M340 431 L347 438 L340 445"/></g>
+<path d="M44 482 H346" stroke="#F2F3F5"/>
+<rect x="44" y="498" width="32" height="32" rx="9" fill="#F2F3F5"/>
+<path d="M52 508 H68 M52 516 H68 M52 524 H62" stroke="#8F959E" stroke-width="1.6" stroke-linecap="round"/>
+<text x="92" y="514" class="t" font-size="15">分镜 v3 修改点</text>
+<text x="92" y="534" class="faint" font-size="12">昨天 21:40</text>
+<g fill="none" stroke="#8F959E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M340 507 L347 514 L340 521"/></g>
+<path d="M44 558 H346" stroke="#F2F3F5"/>
+<rect x="44" y="574" width="32" height="32" rx="9" fill="#F2F3F5"/>
+<path d="M52 584 H68 M52 592 H68 M52 600 H62" stroke="#8F959E" stroke-width="1.6" stroke-linecap="round"/>
+<text x="92" y="590" class="t" font-size="15">录音转写：访谈 07</text>
+<text x="92" y="610" class="faint" font-size="12">10 月 6 日</text>
+<g fill="none" stroke="#8F959E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M340 583 L347 590 L340 597"/></g>
+<!-- 浮「＋」 -->
+<circle cx="330" cy="708" r="28" fill="#3370FF"/>
+<circle cx="330" cy="708" r="28" fill="none" stroke="#FFFFFF" stroke-width="0"/>
+<path d="M330 696 V720 M318 708 H342" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round"/>
+<!-- 底边栏：笔记 / 搜索 / 我的 -->
+<path d="M6 752 H384" stroke="#E5E8EE"/>
+<rect x="6" y="753" width="378" height="79" fill="#FFFFFF"/>
+<rect x="37" y="766" width="64" height="32" rx="16" fill="#EBF1FF"/>
+<g transform="translate(47,774)" fill="none" stroke="#3370FF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="1" width="14" height="16" rx="3"/><path d="M5 6 H11 M5 10 H11"/></g>
+<text x="69" y="787" class="acc" font-size="12" font-weight="600">笔记</text>
+<g transform="translate(180,772)" fill="none" stroke="#8F959E" stroke-width="1.8" stroke-linecap="round"><circle cx="8" cy="8" r="6.2"/><path d="M12.6 12.6 L18 18"/></g>
+<text x="195" y="809" class="faint" font-size="11" text-anchor="middle">搜索</text>
+<g transform="translate(306,772)" fill="none" stroke="#8F959E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="5.5" r="3.4"/><path d="M2 17 C2 12.5 5 10.5 8 10.5 C11 10.5 14 12.5 14 17"/></g>
+<text x="321" y="809" class="faint" font-size="11" text-anchor="middle">我的</text>
+<rect x="145" y="820" width="100" height="5" rx="2.5" fill="#1F2329" opacity=".18"/>
+<!-- 说明 -->
+<text x="24" y="736" class="faint" font-size="10">示意文案：笔记标题为效果图占位内容。底边栏为 2026-10-19 导航方案。</text>
+</svg>

@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" role="img" aria-label="关于：版本、许可、组件、链接与合规占位">
+<title>关于（浅色重设计 v2）</title>
+<style>
+text{font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei','Helvetica Neue',sans-serif;}
+.mono{font-family:'SF Mono','JetBrains Mono',Consolas,monospace;}
+.t{fill:#1F2329;}.dim{fill:#646A73;}.faint{fill:#8F959E;}
+.acc{fill:#3370FF;}.onacc{fill:#FFFFFF;}
+</style>
+<defs>
+<linearGradient id="mark2" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#3370FF"/><stop offset="1" stop-color="#5B8CFF"/>
+</linearGradient>
+</defs>
+<rect x="0" y="0" width="390" height="844" rx="46" fill="#0C0D0F"/>
+<rect x="6" y="6" width="378" height="832" rx="40" fill="#FFFFFF"/>
+<rect x="140" y="16" width="110" height="26" rx="13" fill="#0C0D0F"/>
+<text x="32" y="41" class="t" font-size="14" font-weight="600">9:41</text>
+<rect x="296" y="33" width="3.5" height="5" rx="1" fill="#1F2329"/>
+<rect x="301.5" y="30" width="3.5" height="8" rx="1" fill="#1F2329"/>
+<rect x="307" y="27" width="3.5" height="11" rx="1" fill="#1F2329"/>
+<rect x="312.5" y="24" width="3.5" height="14" rx="1" fill="#1F2329"/>
+<path d="M322 34 a9 9 0 0 1 13 0" fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round"/>
+<path d="M325 37.5 a4.5 4.5 0 0 1 7 0" fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round"/>
+<circle cx="328.5" cy="41" r="1.5" fill="#1F2329"/>
+<rect x="342" y="26" width="24" height="12" rx="3.5" fill="none" stroke="#1F2329" opacity=".5"/>
+<rect x="344" y="28" width="17" height="8" rx="1.8" fill="#1F2329"/>
+<rect x="367" y="29.5" width="2.5" height="5" rx="1.2" fill="#1F2329" opacity=".5"/>
+<!-- 顶栏 -->
+<g fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M30 76 L22 84 L30 92"/></g>
+<text x="195" y="90" class="t" font-size="16" font-weight="600" text-anchor="middle">关于</text>
+<!-- App 块 -->
+<rect x="147" y="120" width="56" height="56" rx="14" fill="url(#mark2)"/>
+<g transform="translate(160,133)" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<path d="M4 22 L5.5 16.5 L22 0.5 L27.5 6 L11 22.5 Z"/><path d="M19.5 3 L25 8.5"/>
+</g>
+<text x="195" y="204" class="t" font-size="20" font-weight="700" text-anchor="middle">ShuyoNote</text>
+<text x="195" y="226" class="dim" font-size="13" text-anchor="middle"><tspan class="mono">版本 1.92.21 · 最新发布 1.92.21（示例读数）</tspan></text>
+<rect x="117" y="240" width="156" height="24" rx="12" fill="#EBF1FF"/>
+<text x="195" y="256" class="acc" font-size="12" text-anchor="middle">本机优先 · AGPL-3.0</text>
+<!-- 许可卡 -->
+<rect x="24" y="284" width="342" height="76" rx="14" fill="#FFFFFF" stroke="#E5E8EE"/>
+<text x="44" y="314" class="t" font-size="15" font-weight="600">许可</text>
+<text x="44" y="336" class="dim" font-size="12">GNU Affero General Public License v3.0</text>
+<text x="44" y="352" class="faint" font-size="11">全文 661 行 · 见仓库根 LICENSE · 同步服务端为独立商业组件</text>
+<!-- 开源组件卡 -->
+<rect x="24" y="372" width="342" height="76" rx="14" fill="#FFFFFF" stroke="#E5E8EE"/>
+<text x="44" y="402" class="t" font-size="15" font-weight="600">开源组件</text>
+<text x="44" y="424" class="dim" font-size="12">核心 12 项 · 共 34 项 dependencies</text>
+<text x="44" y="440" class="faint" font-size="11"><tspan class="mono">Tauri 2.11 · Lexical 0.50 · React 18.3 · Yjs 13.6 …</tspan></text>
+<!-- 链接卡 -->
+<rect x="24" y="460" width="342" height="96" rx="14" fill="#FFFFFF" stroke="#E5E8EE"/>
+<text x="44" y="492" class="t" font-size="15" font-weight="600">链接</text>
+<text x="44" y="516" class="dim" font-size="13">官网</text>
+<text x="346" y="516" class="acc" font-size="13" text-anchor="end">shuyo.cn</text>
+<path d="M44 528 H346" stroke="#F2F3F5"/>
+<text x="44" y="546" class="dim" font-size="13">社区</text>
+<text x="346" y="546" class="acc" font-size="13" text-anchor="end">community.shuyo.cn</text>
+<!-- 操作 -->
+<rect x="24" y="572" width="342" height="44" rx="12" fill="#F2F3F5"/>
+<text x="195" y="600" class="t" font-size="14" font-weight="600" text-anchor="middle">检查更新</text>
+<rect x="24" y="628" width="342" height="44" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/>
+<text x="195" y="656" class="faint" font-size="14" text-anchor="middle" opacity=".6">导出诊断信息</text>
+<text x="352" y="656" class="faint" font-size="11" text-anchor="end" opacity=".8">未实现</text>
+<!-- 合规占位（显式「待填」，不编造） -->
+<rect x="24" y="688" width="342" height="72" rx="14" fill="#FFF9EC" stroke="#F2E3B8"/>
+<circle cx="46" cy="712" r="3" fill="#D9A300"/>
+<text x="58" y="716" class="t" font-size="13">隐私政策：<tspan class="faint">待填（占位）</tspan></text>
+<circle cx="46" cy="738" r="3" fill="#D9A300"/>
+<text x="58" y="742" class="t" font-size="13">备案号：<tspan class="faint">待填（占位）</tspan></text>
+<!-- 说明 -->
+<text x="24" y="786" class="faint" font-size="10">⛔ 不出现源码网址 · 不编 URL / 备案号 · 「最新发布」行依赖网络环境，真机未验。</text>
+<rect x="145" y="820" width="100" height="5" rx="2.5" fill="#1F2329" opacity=".18"/>
+</svg>

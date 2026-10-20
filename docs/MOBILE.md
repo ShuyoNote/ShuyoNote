@@ -33,6 +33,9 @@ IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理�
 > [`docs/plans/mobile/2026-10-20-mobile-requirements-complete.md`](plans/mobile/2026-10-20-mobile-requirements-complete.md)（需求）
 > 与 [`docs/plans/mobile/2026-10-20-mobile-tech-plan-complete.md`](plans/mobile/2026-10-20-mobile-tech-plan-complete.md)（技术）。
 > 下面按 10-20 实况更新（底边栏/设置/配对都已前进；iOS 暂缓）。
+> 🎨 **视觉基线（2026-10-20）**：owner 选定**浅色明快卡片版**，10 张重设计图在
+> [`plans/mobile/mockups/2026-10-20-redesign/`](plans/mobile/mockups/2026-10-20-redesign/README.md)；
+> ⚠️ **出图 ≠ 落地**：当前代码仍是旧视觉（`Mobile*.tsx`/`App.css` 未改），落地属阶段 5。
 
 | 屏 | 状态 |
 |---|---|
