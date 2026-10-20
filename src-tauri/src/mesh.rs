@@ -687,6 +687,7 @@ pub async fn pull_and_absorb(
     // ⭐⭐ **2026-10-20（真机：游标越界 ⇒ 永久静默）**：先按原游标拉；若发现
     //   **对端高水位 < 我的游标** ⇒ 说明这格游标不是"对方那条计数"里的值（历史遗留 / 换了空间）
     //   ⇒ **归零重拉一次**，并如实记一行（⛔ 不静默、⛔ 不每次轮都重拉：只在这一情形下发生 ✓）。
+    let mut healed = false;
     let (mut rows, mut max_seq) = {
         // ⭐ 签名要在**拿锁的那一小段**里算好 ✗（⛔ 不许跨 await 持锁 ✗）；拿不到身份 ⇒ `None` ✓
         //   （⭐ 那就只剩口令那一档 ✓ —— 与今天逐字相同 ✓）。
@@ -772,8 +773,24 @@ pub async fn pull_and_absorb(
                 }
             };
             let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
-            if let Ok((probe_rows, _)) =
-                pull_from_peer(client, peer, space_id, 0, token, auth_ref).await
+            // ⚠️ 探针**不许静默**：进没进、回来几条、错在哪 —— 都要看得见 ✓
+            //   （第一版用 `if let Ok` 把 Err 吞了 ⇒ 现场只看到"什么也没发生" ✗）
+            let probe = pull_from_peer(client, peer, space_id, 0, token, auth_ref).await;
+            let probe_rows = match probe {
+                Err(e) => {
+                    eprintln!(
+                        "[mesh {}] ⚠️ 冷探针失败（不影响本轮）：{e}",
+                        crate::db::now_ms()
+                    );
+                    Vec::new()
+                }
+                Ok((r, _)) => r,
+            };
+            eprintln!(
+                "[mesh {}] 冷探针：since={since}（越界候选）⇒ 探到 {} 条",
+                crate::db::now_ms(),
+                probe_rows.len()
+            );
             {
                 let tail = probe_rows.iter().map(|r| r.device_seq).max().unwrap_or(0);
                 if tail > 0 && tail <= since {
@@ -787,6 +804,7 @@ pub async fn pull_and_absorb(
                         let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
                         set_peer_cursor(&g, space_id, &peer.device_id, 0)?;
                     }
+                    healed = true;
                     rows = probe_rows;
                     max_seq = tail;
                 }
@@ -809,14 +827,17 @@ pub async fn pull_and_absorb(
         .collect();
     let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
     let ab = absorb_peer_batch(&g, &rows, &peer.device_id, space_id, device_level)?;
-    if ab.tail > since {
+    // ⭐ 2026-10-20：**归零自愈过的那一轮必须无条件写回** ✗ ——
+    //   原规则是 `ab.tail > since`，而 since 还是那个越界值（99999）⇒ 恒 false
+    //   ⇒ 数据库里那格**永远是 99999** ⇒ 每轮都要重新探一次（实测就是这么被咬的 ✓）。
+    if healed || ab.tail > since {
         set_peer_cursor(&g, space_id, &peer.device_id, ab.tail)?;
     }
     Ok(PeerPullReport {
         peer: peer.device_id.clone(),
         fetched,
         applied: ab.applied,
-        cursor: ab.tail.max(since),
+        cursor: if healed { ab.tail } else { ab.tail.max(since) },
         max_seq,
         superseded: ab.superseded,
         awaiting: ab.awaiting,
