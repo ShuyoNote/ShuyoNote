@@ -38,8 +38,6 @@ import { MobileComposeFab, MobileTabBar } from "./components/MobileTabBar";
 import { MobilePair } from "./components/MobilePair";
 // ⭐ d1：移动端「首次配对」屏（骨架 ✓，对码未接 ✗）
 import { MobilePairCode } from "./components/MobilePairCode";
-// ⭐ 2026-10-20：手机档底栏第 4 项「听」的整屏 —— **听书打点**（只打点，不录音/不转写/不联网 ✓）。
-import { MobileListen } from "./components/MobileListen";
 import { useMobileNav } from "./store/mobileNav";
 import { PluginViewOverlay } from "./components/PluginViewOverlay";
 import { PluginViewPanel } from "./components/PluginViewPanel";
@@ -954,13 +952,12 @@ function NoteEditor({ pageId }: { pageId: string }) {
  *    （例如开着一条笔记时进设置，会被阅读屏抢走 ✗）。⇒ 零行为变化 ✓、也⛔ 没有第二份外壳 ✓。
  *
  * ⭐ 2026-10-20：多一个**显式**选项 `showFab`（默认 true ✓，既有调用一个字不改 ✓）——
- *    听书打点屏**不挂**那颗浮「＋」✗：它会在打点过程中新建笔记并把本屏顶掉
- *    （本屏状态是本组件的 `useState` ✓ ⇒ 一切换就清空 ✗），而且它正好压在「结束」那一行上 ✓。
+ *    留给需要整屏专注、不挂那颗浮「＋」的移动屏（⭐ 参数保留，本轮无调用方 ✓）。
  */
 const wrapMobile = (body: React.ReactNode, opts?: { showFab?: boolean }) => (
   <div className="m-tabshell">
     {body}
-    {/* ⭐ 第二刀：底栏四项（笔记/搜索/听/我的）＋ 右下浮「＋」。两者都 `position: fixed` ✓，
+    {/* ⭐ 第二刀：底栏三项（笔记/搜索/我的）＋ 右下浮「＋」。两者都 `position: fixed` ✓，
         所以放在 body 之后即可（不参与 `.m-tabshell` 的 column flex ✓）。 */}
     <MobileTabBar />
     {opts?.showFab === false ? null : <MobileComposeFab />}
@@ -1079,10 +1076,10 @@ function AppShell() {
     //   （队友实测：DB 里真写进去了 ✓、点击也到了应用 ✓，但界面就是不动 ✗；
     //    真因就是这个"没选中就打开第一页"的兜底 ✗）。
     // ⭐ 2026-10-20：手机上**任何一屏**都不许被这条兜底拽走 ✓（原来只排除 home ✗）——
-    //   实测真事故 ✗：听书打点屏「结束」时 `createPage` 内部会 `loadPages()` ✓ ⇒ `pages`
-    //   一变本 effect 就跑，在 `listen` 屏上把 `currentId`（此刻还是 null）打开成
-    //   **列表第一页（欢迎页）** ✗，而那次 `openPage` 比 `createPage` 末尾的
-    //   `set({ currentId: 新页 })` **更晚落定** ⇒ 刚生成的笔记被顶掉、用户看到旧页 ✗。
+    //   实测真事故 ✗：`createPage` 内部会 `loadPages()` ✓ ⇒ `pages` 一变本 effect 就跑，
+    //   在手机上把 `currentId`（此刻还是 null）打开成**列表第一页（欢迎页）** ✗，
+    //   而那次 `openPage` 比 `createPage` 末尾的 `set({ currentId: 新页 })` **更晚落定**
+    //   ⇒ 刚生成的笔记被顶掉、用户看到旧页 ✗。
     //   启动时"打开记忆里那一页"由 `loadPages` 自己完成（`store/notes.ts` ✓）⇒
     //   手机上这条兜底本来就是多余的 ✓；桌面档一个字不动 ✓。
     if (isMobile) return;
@@ -1244,15 +1241,6 @@ function AppShell() {
            都该整屏看到「关于」✓。⛔ 桌面档的 `AboutDialog` 一个字不动 ✓
            （下面那两处根部浮层照旧渲染它 ✓）。 */
         <MobileAbout />
-      ) : isMobile && mobileScreen === "listen" ? (
-        /* ⭐ 2026-10-20：手机档「**听书打点**」屏（`MobileListen` ✓，底栏第 4 项「听」✓）。
-           它排在 `currentId` **之前**：`currentId` 仍可能非空（例如从设置屏点「听」时底下还开着页 ✓）
-           ⇒ 点「听」就该整屏看到它 ✓（⛔ 不是"被下面那条阅读屏抢走" ✗）。
-           ⚠️ `settings`／`aboutOpen` 仍排在它**前面**（既有顺序一个字没动 ✓）；
-           结束打点时本组件会先 `createPage`（置 `currentId`）再 `setScreen("home")` ✓
-           ⇒ 那一帧之后由下面 `currentId` 那一支接管 ⇒ 落到刚生成的笔记上 ✓。
-           ⚠️ `showFab: false`：浮「＋」与本屏的「结束」叠在右下角，而且它会清掉本屏状态 ✓。 */
-        wrapMobile(<MobileListen />, { showFab: false })
       ) : currentId ? (
         /* ⭐ 2026-10-10：手机档点开一条笔记 ⇒ 走**移动端阅读屏**（效果图 `04-read.svg`，规格 §4.4）✓，
            而不是桌面块编辑器（顶栏是桌面那套图标工具条、还能拖块 ✗ —— 与效果图差得最远 ✓）。

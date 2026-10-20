@@ -50,18 +50,17 @@ const SCREENS = [
   { file: "MobileMergeHistory.tsx", id: "merge-history", testid: "mobile-merge-history", reach: "not-a-screen", reachable: false, why: "未接线**原型** ✓（`0e79ae91` ✓）：**故意不接进任何用户可见路径** ✓ ⇒ 不是屏、也不是死屏 ✓" },
   { file: "MobileDictCard.tsx", id: null, testid: null, reach: "not-a-screen", reachable: false, why: "**卡片**不是屏 ✓（划词卡，锚在 `.mread` 里 ✓）" },
   { file: "MobilePairCode.tsx", id: "paircode", testid: "mobile-paircode", reach: "nav", reachable: true, why: "⭐ d1（2026-10-17 owner 拍「甲」）新建 ✓：从「设备直连」的两颗入口（接入／重新配对 ⇒ `setScreen(「paircode」)` ✓）进来 ✓；⚠️ 20 格对码**本轮未接** ✗（下一刀 d2 ✓），屏上明标未接 ✓" },
-  { file: "MobileListen.tsx", id: "listen", testid: "mobile-listen", reach: "nav", reachable: true, why: "⭐ 2026-10-20 新建 ✓：底栏第 4 项「听」（`MobileTabBar` 的 `.mtab-item`）调 `setScreen(\"listen\")` ✓；owner 拍板的「最小打点模式」 ✓（只打点，不录音/不转写/不联网 ✓）" },
 ];
 
 /** ⭐ 长度常量（棘轮 ✓）：加一屏必须同时改它 ⇒ **悄悄加不了** ✗。 */
-const SCREENS_EXPECTED = 11;
+const SCREENS_EXPECTED = 10;
 
 const findings = [];
 /**
  * ⭐ **不是屏的移动组件**（显式排除，⛔ 不是放宽"死屏"判据）：
  * `MobileTabBar.tsx` 是**底栏外壳**（每个移动屏都用它 ✓），它没有自己的整屏、也没有屏根
  * `data-testid` ⇒ 它不属于这张"屏清单" ✓。⚠️ 组件名沿用 `Mobile*` 前缀（见文件头 ✓）⇒
- * 这里必须**显式点名**排除；登记表仍然**只登记屏** ⇒「登记 11 条 / 可达 9」不变 ✓。
+ * 这里必须**显式点名**排除；登记表仍然**只登记屏** ⇒「登记 10 条 / 可达 8」不变 ✓。
  */
 const NON_SCREEN_COMPONENTS = new Set(["MobileTabBar.tsx"]);
 const allMobileFiles = readdirSync(COMPONENTS).filter((n) => /^Mobile.*\.tsx$/.test(n) && !/\.test\.tsx$/.test(n));

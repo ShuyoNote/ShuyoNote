@@ -289,7 +289,7 @@ async function main() {
     ok(s.mainWidth === PHONE.width, `主区拿到全宽 ${PHONE.width}px（实际 ${s.mainWidth}）——竖条不再常驻吃掉 12% 宽度`);
     // ⭐ 2026-10-19 第二刀：☰ 删了 ⇒ 这一格换成**底栏 ＋ 浮「＋」**的几何（仍是 1 条断言 ✓，
     //    读数写进 note ✓）：栏高 56–64、每项触区 ≥44、内容底不被栏遮、浮＋大小/位置、无横向溢出。
-    // ⭐ 2026-10-20：底栏从三项变四项（**笔记/搜索/听/我的** ✓，加了「听」⇐ 听书打点屏 ✓）。
+    // ⭐ 2026-10-20：底栏回到三项（**笔记/搜索/我的** ✓）。
     note(
       `底栏读数：display=${s.tabBarDisplay} 项=${s.tabCount}（${s.tabLabels.join("/")}）` +
         ` 高=${s.tabBarHeight} 每项最小=${s.tabMinW}×${s.tabMinH}` +
@@ -299,8 +299,8 @@ async function main() {
     );
     ok(
       s.tabBarDisplay === "flex" &&
-        s.tabCount === 4 &&
-        s.tabLabels.join("/") === "笔记/搜索/听/我的" &&
+        s.tabCount === 3 &&
+        s.tabLabels.join("/") === "笔记/搜索/我的" &&
         s.tabBarHeight >= 56 &&
         s.tabBarHeight <= 64 &&
         s.tabMinW >= 44 &&
@@ -311,7 +311,7 @@ async function main() {
         s.fab.h >= 44 &&
         s.fab.bottom <= s.tabBarTop - 8 &&
         s.docWidth <= s.winWidth,
-      `底栏四项（${s.tabLabels.join("/")}）高 ${s.tabBarHeight}（56–64）、触区 ≥44、内容底 ${s.contentBottom} ≤ 栏顶 ${s.tabBarTop}、` +
+      `底栏三项（${s.tabLabels.join("/")}）高 ${s.tabBarHeight}（56–64）、触区 ≥44、内容底 ${s.contentBottom} ≤ 栏顶 ${s.tabBarTop}、` +
         `浮＋ ${s.fab?.w}×${s.fab?.h} 在栏上方、文档宽 ${s.docWidth} ≤ ${s.winWidth}`,
     );
     ok(!s.backdrop && !s.railBackdrop, "初始无任何遮罩");

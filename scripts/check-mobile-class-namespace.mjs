@@ -52,9 +52,8 @@ const SHARED = [
 /** ⭐ 白名单**长度常量** —— 加行必改它 ✓（棘轮的那一半 ✓）。 */
 const SHARED_EXPECTED = 6;
 
-/** 移动命名空间（照各屏的 `.m*` 族 ✓；`mset*` 是设置屏自己的族 ✓；`mtab*` 是底边栏自己的族 ✓；
- *  `mlisten*` 是「听书打点」屏自己的族 ✓（2026-10-20 新加的一屏 ✓））。 */
-const MOBILE_NS = /^m(home|cap|search|read|dict|pair|about|set|settings|listen|note|merge|rail|sync|scroll|pop|sheet|bar|btn|icon|card|head|body|foot|line|list|item|chip|grid|meta|src|dim|empty|title|when|who|count|undo|mark|back|close|actions|hint|err|send|save|draft|tool|filter|result|thumb|dot|time|tag|badge|kbd|seg|toggle|nav|feed|sub|avatar|state|status|row|col|wrap|stack|cover|preview|quote|code|table|tree|pane|overlay|layer|drawer|shell|top|mid|bot|tab)(-|$)/;
+/** 移动命名空间（照各屏的 `.m*` 族 ✓；`mset*` 是设置屏自己的族 ✓；`mtab*` 是底边栏自己的族 ✓）。 */
+const MOBILE_NS = /^m(home|cap|search|read|dict|pair|about|set|settings|note|merge|rail|sync|scroll|pop|sheet|bar|btn|icon|card|head|body|foot|line|list|item|chip|grid|meta|src|dim|empty|title|when|who|count|undo|mark|back|close|actions|hint|err|send|save|draft|tool|filter|result|thumb|dot|time|tag|badge|kbd|seg|toggle|nav|feed|sub|avatar|state|status|row|col|wrap|stack|cover|preview|quote|code|table|tree|pane|overlay|layer|drawer|shell|top|mid|bot|tab)(-|$)/;
 
 /** 取一段源码里的 className 记号（含模板串 `className={`…`}` ✓）。 */
 function classTokens(src) {
