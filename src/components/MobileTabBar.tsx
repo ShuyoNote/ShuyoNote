@@ -1,7 +1,7 @@
 import { useNotes } from "../store/notes";
 import { useMobileNav } from "../store/mobileNav";
 import type { MobileScreen } from "../store/mobileNav";
-import { PageIcon, PersonIcon, PlusIcon, SearchIcon } from "./icons";
+import { BookmarkIcon, PageIcon, PersonIcon, PlusIcon, SearchIcon } from "./icons";
 
 /**
  * **移动端底边栏**（规格 §4 的全局导航，2026-10-19 第二刀）。
@@ -11,17 +11,19 @@ import { PageIcon, PersonIcon, PlusIcon, SearchIcon } from "./icons";
  * ⚠️ 因此本文件必须与 `App.tsx` 删 ☰ 的那一刀**同一笔落地** ✓（只删 ☰ 不接底栏 ⇒ 那三屏全成死屏 ✗）。
  *
  * 规矩（照效果图逐条 ✓）：
- * - 三项：**笔记 / 搜索 / 我的** ✓；图标复用 `./icons`（⛔ 不新引图标库 ✗）。
+ * - 四项：**笔记 / 搜索 / 听 / 我的** ✓（「听」＝ 2026-10-20 的**听书打点**屏 ✓，
+ *   顺序照 owner 的要求：笔记／搜索／**听**／我的 ✓）；图标复用 `./icons`（⛔ 不新引图标库 ✗）。
  * - 选中态＝**实心主色**（图标背后的胶囊用 `--accent`，文字同色 ✓）。
  * - 每项触区 ≥44×44、栏高 56–64 ✓（见 `App.css` 的 `.mtab-*`）。
  * - 类名一律 `mtab-*`（⭐ 必须带连字符 —— 仓里有过 `mpaircode` 少个连字符被
  *   `check-mobile-class-namespace` 拒的先例 ✓）。
  * - 点击只走仓库现有的 `mobileNav` store ✓（⛔ 不新造导航状态 ✗）。
  *
- * ⚠️ **第 4 项「听」等那个屏做出来再加** —— 现在放上去就是一个**假入口** ✗，所以本刀只有三项。
+ * ⚠️ 「听」这一项**只在它的屏真做出来之后**才加 ✓（假入口比没有入口更糟 ✗）——
+ *   `MobileListen.tsx` 与本题同一笔落地 ✓。
  */
 const TABS: {
-  id: Extract<MobileScreen, "home" | "search" | "settings">;
+  id: Extract<MobileScreen, "home" | "search" | "settings" | "listen">;
   label: string;
   Icon: typeof PageIcon;
   /** 这一项在哪些屏上显示为选中（`capture` 是首页主行动的子屏 ⇒「笔记」保持选中 ✓）。 */
@@ -29,6 +31,8 @@ const TABS: {
 }[] = [
   { id: "home", label: "笔记", Icon: PageIcon, activeOn: ["home", "capture"] },
   { id: "search", label: "搜索", Icon: SearchIcon, activeOn: ["search"] },
+  // ⭐ 「听」：听书打点（不录音/不转写，只记按下的那一刻 ✓）
+  { id: "listen", label: "听", Icon: BookmarkIcon, activeOn: ["listen"] },
   { id: "settings", label: "我的", Icon: PersonIcon, activeOn: ["settings"] },
 ];
 
@@ -47,7 +51,13 @@ export function MobileTabBar() {
             className={"mtab-item" + (on ? " is-on" : "")}
             data-tab={id}
             aria-current={on ? "page" : undefined}
-            onClick={() => setScreen(id)}
+            onClick={() => {
+              // ⭐ 「听」是本条**唯一**带字面量 id 的入口：`check-mobile-screen-reachable.mjs`
+              //   对 `reach:"nav"` 的屏要求全仓存在 `setScreen("<id>")` 的**入口调用**（按字面量核 ✓）。
+              //   其余三项仍走 `setScreen(id)` —— 同一个动作，⛔ 不是第二套导航逻辑 ✗。
+              if (id === "listen") setScreen("listen");
+              else setScreen(id);
+            }}
           >
             <span className="mtab-ico" aria-hidden>
               <Icon width={20} height={20} />
