@@ -1069,6 +1069,14 @@ export function SyncPanel({
    */
   useEffect(() => subscribePendingRemoteTotal(setPendingTotal), []);
 
+  // ⭐⭐ **2026-10-20（owner「没看到三个选项的界面」）**：面板**一打开就去读**待取回清单** ✓
+  //   旧行为：清单**只在一轮同步之后**才被读（doSync 里）⇒ 刚打开面板、还没点同步时，
+  //   队列里明明有 5 页，界面上却**一个字都没有** ✗（真机就是这么被耍的 ✓）。
+  useEffect(() => {
+    void loadPendingRemote();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── D5：**状态置顶**要的三个读数（2026-09-29）────────────────────────────────
   // 全部是【现成的】，本笔零 Rust 改动：
   //   · 状态与时间 ← `history`（`api.listSyncHistory` 的 `at`/`pushed`/`pulled`/`ok`）
