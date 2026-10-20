@@ -468,6 +468,7 @@ export function SyncPanel({
   // ★ B 方案（2026-09-22）：**待取回的远端版本**（页级保留本地时存下来的那一版）。
   // 修好之前这一支是**完全静默**的：游标过去了、对端那笔编辑再也取不回、层里一条痕都没有。
   const [pending, setPending] = useState<{ page_id: string; title: string; seq: number }[]>([]);
+  const [pendingError, setPendingError] = useState<string | null>(null);
   const [pendingTotal, setPendingTotal] = useState(0);
 
   /** 读待取回清单（面板打开 / 每次同步 / 每次裁决之后）。失败不打扰用户：它只是提示面。 */
@@ -475,11 +476,14 @@ export function SyncPanel({
     try {
       const q = await api.listPendingRemotePages(20);
       setPending((q?.pages ?? []) as { page_id: string; title: string; seq: number }[]);
+      setPendingError(null);
       // ★ 角标那个数字**公布给单例**（`lib/pendingRemoteBadge.ts`）：它与这里的清单读的是
       //   **同一张表**，公布进去就省掉一次读，而且两处永远是同一个数（不会"角标说有、清单没有"）。
       publishPendingRemoteTotal(Number(q?.total ?? 0));
-    } catch {
+    } catch (e) {
       setPending([]);
+      // ⭐ 2026-10-20（owner「没看到三个选项的界面」）：读失败**不再静默** ✓
+      setPendingError(e instanceof Error ? e.message : String(e));
       // ⚠️ 读失败**不公布 0**：那是"清空角标"，比"暂时不更新"更容易骗人（单例自己也守着这条）。
     }
   };
@@ -1725,6 +1729,35 @@ export function SyncPanel({
               ⚠️ 里面的 JSX **一个字都没搬走** ✗ —— 那些源码级判据（`syncPanelMesh.wiring` ／
                  `syncPanelDevicePair.wiring` ／ `syncPanelDeviceUnpair.wiring` ／
                  `SyncPanel.trustDevicePanel.wiring`）逐字读的**就是本文件** ✓。 */}
+          {/* ⭐⭐ **2026-10-20（owner 真机：「没看到三个选项的界面」）**：
+              这一段原来是**藏在默认收起的「高级」折叠里**的（2026-10-14 那次"其余全收进一个折叠"）✗
+              ⇒ 队列里真有 5 页要裁决，主人却**根本看不到入口** ✓
+              ⇒ 它是**要人动手的事**（不是高级设置），挪到主视图 ✓；读失败时也**说一句真话** ✓（⛔ 不静默 ✗）。 */}
+          {pendingError && (
+            <div className="sync-hint" role="status">
+              ⚠️ 读不到「待取回的远端版本」清单：{pendingError}
+            </div>
+          )}
+          {pending.length > 0 && (
+            <div className="sync-pending-remote" role="status">
+              <div className="sync-conflict-title">📥 待取回的远端版本（{pendingTotal} 页）</div>
+              <ul className="sync-conflict-list">
+                {pending.map((p) => (
+                  <li key={p.page_id}>
+                    《{p.title || "（无标题）"}》
+                    <span className="sync-pending-actions">
+                      <button onClick={() => void resolveOne(p.page_id, "merge")}>合并这一页</button>
+                      <button onClick={() => void resolveOne(p.page_id, "take_remote")}>采用远端</button>
+                      <button onClick={() => void resolveOne(p.page_id, "keep_local")}>保留本地</button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <div className="sync-conflict-hint">
+                这些页面当时保留了本地（本地有未推送的改动），对端那一版已替你存下 —— 三个选项都会真的改数据。
+              </div>
+            </div>
+          )}
           <SyncAdvancedFold>
 
           {!isDesktopPlatform() && (
@@ -1777,26 +1810,6 @@ export function SyncPanel({
                   </div>
                 </>
               )}
-            </div>
-          )}
-          {pending.length > 0 && (
-            <div className="sync-pending-remote" role="status">
-              <div className="sync-conflict-title">📥 待取回的远端版本（{pendingTotal} 页）</div>
-              <ul className="sync-conflict-list">
-                {pending.map((p) => (
-                  <li key={p.page_id}>
-                    《{p.title || "（无标题）"}》
-                    <span className="sync-pending-actions">
-                      <button onClick={() => void resolveOne(p.page_id, "merge")}>合并这一页</button>
-                      <button onClick={() => void resolveOne(p.page_id, "take_remote")}>采用远端</button>
-                      <button onClick={() => void resolveOne(p.page_id, "keep_local")}>保留本地</button>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <div className="sync-conflict-hint">
-                这些页面当时保留了本地（本地有未推送的改动），对端那一版已替你存下 —— 三个选项都会真的改数据。
-              </div>
             </div>
           )}
           <div className={`sync-profiles${isDesktopPlatform() ? "" : " is-disabled"}`}>
