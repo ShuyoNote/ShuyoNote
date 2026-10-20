@@ -618,6 +618,10 @@ pub struct PeerPullReport {
     pub fetched: usize,
     pub applied: usize,
     pub cursor: i64,
+    /// ⭐ **2026-10-20**：对端那一栏的**高水位**（拉取响应带回来的）。
+    /// 用来判「游标是不是越界了」；#[serde(skip)] ⇒ 界面契约一个字都不变 ✓
+    #[serde(skip)]
+    pub max_seq: i64,
     /// ★★ 丙-⑤：这一轮里**本机那一版让给了远端**的页数（⇒ 已在覆盖前存进**版本历史**）。
     /// 见 [`Absorbed::superseded`] —— 网格这一档没有服务端那份冲突清单，这一项就是全部凭证。
     pub superseded: usize,
@@ -726,6 +730,70 @@ pub async fn pull_and_absorb(
         rows = again.0;
         max_seq = again.1.max(max_seq);
     }
+    // ⭐⭐ **2026-10-20（旧对端不带 `max_device_seq`）**：**冷探针**。
+    //   情形：`since > 0`、这次一条没拉到、对端又没报高水位（老版本）⇒
+    //   "真的没有新东西"和"我的游标越界了"**长得一模一样** ✗ ⇒ 问一次 `since=0`：
+    //     · 探针回来的最大 `device_seq` **≤ 我方游标** ⇒ 游标确实越界 ⇒ **归零并采用这一批** ✓
+    //     · 否则 ⇒ 只是没有新东西 ⇒ **游标原样**（⛔ 不把老历史重新并一遍）✓
+    //   ⚠️ 有冷却（10 分钟一格/一对端）：⛔ 不许每轮都探（那等于每轮重读一遍历史）✗
+    if rows.is_empty() && max_seq == 0 && since > 0 {
+        const PROBE_COOLDOWN_MS: i64 = 10 * 60 * 1000;
+        let mut last: i64 = 0;
+        {
+            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+            last = read_setting(
+                &g,
+                &format!("mesh_cursor_probe:{}", space_id),
+                &peer.device_id,
+            )
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
+        }
+        let now = crate::db::now_ms();
+        if now - last > PROBE_COOLDOWN_MS {
+            {
+                let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+                write_setting(
+                    &g,
+                    &format!("mesh_cursor_probe:{}", space_id),
+                    &peer.device_id,
+                    Some(&now.to_string()),
+                )?;
+            }
+            let auth = {
+                let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+                let device_id = crate::sync::device_id(&g).unwrap_or_default();
+                if device_id.trim().is_empty() {
+                    None
+                } else {
+                    let target = pull_target(space_id, 0);
+                    sign_request(&g, &device_id, space_id, "GET", &target, crate::db::now_ms())
+                        .map(|(ts, sig)| (device_id, ts, sig))
+                }
+            };
+            let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
+            if let Ok((probe_rows, _)) =
+                pull_from_peer(client, peer, space_id, 0, token, auth_ref).await
+            {
+                let tail = probe_rows.iter().map(|r| r.device_seq).max().unwrap_or(0);
+                if tail > 0 && tail <= since {
+                    eprintln!(
+                        "[mesh {}] ⚠️ 冷探针：我方 since={since} 但{}那一栏最高只有 {tail} ⇒ 游标越界 ⇒ 归零并采用这一批（{} 条）",
+                        crate::db::now_ms(),
+                        peer.device_id,
+                        probe_rows.len()
+                    );
+                    {
+                        let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+                        set_peer_cursor(&g, space_id, &peer.device_id, 0)?;
+                    }
+                    rows = probe_rows;
+                    max_seq = tail;
+                }
+            }
+        }
+    }
+
     let fetched = rows.len();
     // ⭐ 2026-10-09（task-8）：把**这一批真的换过来的条**留给 `sync_history` 的明细 ✓。
     //    ⚠️ 与服务器那条路同一口径（`sync::item_title` ✓）、同一条 dir＝`"pull"`（网格这一轮只拉 ✓）。
@@ -749,6 +817,7 @@ pub async fn pull_and_absorb(
         fetched,
         applied: ab.applied,
         cursor: ab.tail.max(since),
+        max_seq,
         superseded: ab.superseded,
         awaiting: ab.awaiting,
         items,
@@ -1310,7 +1379,7 @@ pub async fn round_candidates(
                     rep.fetched,
                     rep.applied,
                     rep.cursor,
-                    "",
+                    rep.max_seq,
                     rep.error
                 );
                 out.push(rep)
@@ -1321,6 +1390,7 @@ pub async fn round_candidates(
                 fetched: 0,
                 applied: 0,
                 cursor: 0,
+                max_seq: 0,
                 // 拉不动 ⇒ 一个字节都没换过，这两项必然是 0（不是"不知道"，是"没发生"）。
                 superseded: 0,
                 awaiting: 0,
@@ -4253,6 +4323,7 @@ mod tests {
             awaiting,
             items: Vec::new(),
             merge: PeerMergeState::NotRun,
+        max_seq: 0,
             error: None,
         };
         assert_eq!(round_note(&[ok(0, 0)]), "网格：拉了 1 台对端", "老那一句**逐字不变**");

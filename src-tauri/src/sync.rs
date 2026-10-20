@@ -4373,6 +4373,7 @@ mod mesh_history_tests {
             fetched,
             applied,
             cursor: 0,
+            max_seq: 0,
             superseded: 0,
             awaiting: 0,
             items: (0..fetched)
