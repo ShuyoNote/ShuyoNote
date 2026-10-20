@@ -1,8 +1,10 @@
 # 移动端技术方案（完整版）
 
-> 文档编号：`MOBILE-TECH-2026-10-20`　｜　版本：v2.2（完整版；2026-10-20 视觉落地）
+> 文档编号：`MOBILE-TECH-2026-10-20`　｜　版本：v2.3（完整版；iOS 打包打通 ＋ 视觉落地）
 > 状态：现行（实况基线 2026-10-20；未收口项逐条标注）
 > 基线：应用仓 `dev` ＋ 2026-10-20 工作区改动 · 移动版号 `1.92.21` · Tauri 2（crate 2.11.5 / CLI 2.11.4）· React 18 + TS
+> iOS：打包链路已打通（2026-10-20，见 [`2026-10-20-ios-packaging-recipe.md`](./2026-10-20-ios-packaging-recipe.md)）；
+> 界面/真机仍待验。
 > 视觉基线：**2026-10-20 浅色明快卡片版重设计**（[`mockups/2026-10-20-redesign/`](./mockups/2026-10-20-redesign/README.md)）；
 > ✅ **视觉层已落地（2026-10-20）**（`App.css` 移动覆盖 ＋ `Mobile*.tsx` ＋ `index.html` 启动页）；⛔ **真机观感待签**。
 > 取代关系：本文**取代** [`2026-10-08-mobile-tech-plan.md`](./2026-10-08-mobile-tech-plan.md) 的整体方案。
@@ -31,7 +33,8 @@
    Ed25519 设备身份、配对秘密哈希、20 位对码、人确认后才信任。
 9. **同步端到端只完成一半**：2026-10-20 桌面↔桌面首次搬通（`fetched=8/applied=8`）；
    **手机↔电脑未验**。⛔ 不得把「内核在」写成「同步可用」。
-10. **iOS 暂缓**：能出包/装机，但界面白屏；2026-10-19 再试仍卡上游符号与 iOS `.a` 产物；owner 同意先放下。
+10. **iOS 打包链路已打通（2026-10-20）**：代理 ＋ 手工组装 4 个 SwiftPM 归档；「显示桌面」已定位到
+    `App.tsx` 桌面分支优先并修复；⛔ 界面/真机仍待验。
 11. **数据面两条硬教训**：外部多次写入会被自动保存写回（19→3、18→3 块）；`blocks` 表 ≠ `content_json` 块数。
     两条都必须进代码/回归，不是进 Wiki。
 12. **门禁**：注册表 84 条；移动三条基线 `69 / 249 / 826`；需真实 Chromium ＋ dev server；
@@ -512,9 +515,17 @@ mobile-version.json (mobileVersion=1.92.21)
 - `boa_engine` 的 nan-boxing 在 Android 不成立 ⇒ 开 `jsvalue-enum`（否则插件线程一启动 panic）；
 - 构建能过 ≠ 运行时能用：上述每一条都要真机判据。
 
-### 9.3 iOS（暂缓，但保留可复用配方）
+### 9.3 iOS（打包链路已打通；界面/真机待验）
 
-已做到：`pnpm tauri ios build` 能 `BUILD SUCCEEDED`、能装真机、进程能活；**但界面白屏**。
+**2026-10-20 打通配方**（完整版单列在 [`2026-10-20-ios-packaging-recipe.md`](./2026-10-20-ios-packaging-recipe.md)）：
+
+- **代理必须 export**（FlClash 是代理模式不是全局路由）：`export https_proxy=http://127.0.0.1:7890`；
+  不设 ⇒ `swift-rs` 拉不到 GitHub ⇒ Swift 产物 0 个。
+- **4 个 SwiftPM 库没人自动生成**：从 `Intermediates.noindex/.../Objects-normal/arm64/*.o`
+  按目标 `ar rcs` 成 `libTauriSwiftPM.a`（8 个 `.o`，含 `Invoke.o`）/`libSwiftRsSwiftPM.a`
+  /两个插件库，拷到 `/tmp/ios-swiftpm-libs/`；⛔ 别用合并版 `Tauri.o`（没有 `Invoke.o`）。
+- `src-tauri/vendor/n0-dns-resolver` 补丁别动；`tauri ios xcode-script` 单独跑会 `ConnectionRefused`
+  （它是父进程的 WebSocket 客户端）。
 
 已排除/已修的层（详见 [`../../MOBILE.md`](../../MOBILE.md) iOS 节）：
 
@@ -527,7 +538,10 @@ mobile-version.json (mobileVersion=1.92.21)
 - 2026-10-19：`n0-dns-resolver` 的 `target_vendor="apple"` 同时命中 iOS ⇒ 链接缺
   `_kSCDynamicStoreUseSessionKeys`；已 vendored 收窄为 `all(target_vendor="apple", target_os="macos")`；
   仍卡在 `tauri ios build` 需要的 4 个 `.a` 产物生成。
-- owner 已同意先放下；⛔ 不为 iOS 去改依赖树（风险大且不是我们的代码）。
+- owner 同意先放下；⛔ 不为 iOS 去改依赖树（风险大且不是我们的代码）。
+- **2026-10-20 新读数**：打包链路已打通；「iOS 上还是桌面」已定位到 `App.tsx` 桌面主区分支
+  排在手机分支前（看板/关系图/预览等状态一成立就顶掉手机 UI），已加 `!isMobile` 守卫并补回归测试
+  `src/App.mobileBranchOrder.test.ts`。⛔ 真机界面仍待复验。
 
 **重启条件**：上游给出 iOS 适配/新版本，或 tao/tauri 修复 scene 路径；重启前先在真机上量
 「装后进程是否存活」＋「界面是否可见」，⛔ 不用 `devicectl launch` 返回值当界面判据。
@@ -601,13 +615,14 @@ node scripts/test-report.mjs
 | 2 | 设置面、关于面、设备直连/首次配对；无死屏 | ✅ 主体 | `check-mobile-screen-reachable`；真机可到 |
 | 3 | 交付单立：版号、CI、验收包、素材清单 | **部分** | 版号/CI/包在；商店端与合规未完成 |
 | 4 | 同步收口：手机↔电脑、融合历史可见/可撤 | **未完成** | 六格读数非 0；真机签字 |
-| 5 | 视觉重设计落地：浅色 token、渐变主卡、白卡、浅底胶囊；不动导航结构 | **已落地（视觉层）**；真机观感待签 | `Mobile*.tsx`/`App.css`/`index.html` 改完；layout/views 绿；overlays 2 条既有环境失败见需求 §9.4 |
+| 5 | 视觉重设计落地：浅色 token、渐变主卡、白卡、浅底胶囊；不动导航结构 | **已落地（视觉层）**；真机观感待签 | `Mobile*.tsx`/`App.css`/`index.html` 改完；`mobile-layout` 70/70 绿；`mobile-overlays` 2 条既有环境失败；`mobile-views` 4 条旧行为断言待换对象（见需求 §9.4 #12） |
 
 **工作量驱动（不编工期）**：
 
 - 同步收口：主要是**联调/真机验证**与少数协议字段（空间名、设备名、pubkey），不是大重构；
 - 商店/合规：等待项多（隐私政策、备案、软著、账号），不受代码进度影响，应尽早启动；
-- iOS：上游依赖，投入产出不可控，维持暂缓；
+- iOS：打包链路已通（2026-10-20）；剩余是真机界面复验，不再是「上游硬阻塞」；
+  但 scene/白屏那层仍可能回来，复验前不要承诺「iOS 可用」；
 - 视觉重设计落地：主要是 CSS/token 与少量组件类名调整，**不是重写导航**；但会触动 `mobile-layout`/`mobile-views`/`mobile-overlays` 的几何断言，必须实跑并按基线纪律处理；
 - 若将来拆 core：按**文件口径**排期（92 个文件里 493 处），不是按「12 个零耦合模块」。
 
@@ -618,7 +633,7 @@ node scripts/test-report.mjs
 | # | 风险 | 触发信号 | 应对 |
 |---|---|---|---|
 | 1 | 同步「看起来通了」但只在桌面↔桌面 | 拿跨机桌面读数当手机读数 | 验收必须写清「哪两台设备」；手机↔电脑单独签 |
-| 2 | iOS 上游继续阻塞 | 每次尝试都卡符号/`.a`/白屏 | 暂缓；写上游 issue；⛔ 不改依赖树硬顶 |
+| 2 | iOS 真机界面仍不可用 | 打包成功但真机白屏/桌面/崩溃 | 按配方出包后**先真机看界面**再谈上架；保留上游 issue；⛔ 不改依赖树硬顶 |
 | 3 | 配对安全被绕过 | 「点一下就过」「自动通过」 | `check-pairing-requires-proof`；人确认才 `begin`；⛔ 不代点 |
 | 4 | 合规材料拖住上架 | 隐私政策/备案/软著空 | 阶段 0 就启动；owner 主导；界面占位不编造 |
 | 5 | 移动门禁 flake 被当成真红/真绿 | 同代码 22 条摆动 | 先复跑/查驱动顺序；只有 `flaky:true` 才 retry；CI 0 重试 |
@@ -680,6 +695,7 @@ node scripts/check-apk-contents.mjs <signed.apk>
 | 构建 workflow | [`../../../.github/workflows/android.yml`](../../../.github/workflows/android.yml)、[`../../../.github/workflows/release.yml`](../../../.github/workflows/release.yml) |
 | 移动版号 | [`../../../mobile-version.json`](../../../mobile-version.json) |
 | 效果图 | **现行** [`./mockups/2026-10-20-redesign/README.md`](./mockups/2026-10-20-redesign/README.md)；历史 [`./mockups/README.md`](./mockups/README.md) |
+| iOS 打包配方 | [`./2026-10-20-ios-packaging-recipe.md`](./2026-10-20-ios-packaging-recipe.md) |
 | 设计系统 | [`../../../design/design-system.md`](../../../design/design-system.md) |
 
 ### 13.3 决策索引
@@ -697,10 +713,13 @@ node scripts/check-apk-contents.mjs <signed.apk>
 | 2026-10-14 | 设置/关于入口；owner 参考图 | 07/10 可达 |
 | 2026-10-17 | 20 位码首次配对；一方配对双向通；同名融合第 1 档 | 同步可用性前进 |
 | 2026-10-19 | 底边栏；同步入口搬入设置；配对秘密回落；游标高水位/重拉 | 入口与同步修复 |
-| 2026-10-20 | 「听」撤销；iOS 暂缓；owner 选定浅色明快卡片版重设计（仅出图） | 范围不变；新增阶段 5 |
+| 2026-10-20 | 「听」撤销；iOS 打包打通（代理＋手工 SwiftPM）；「显示桌面」修复；浅色重设计落地 | iOS 转「界面待验」；视觉层完成 |
 
 ### 13.4 变更记录
 
+- **v2.3（2026-10-20）**：iOS 打包链路打通（代理＋手工组装 4 个 SwiftPM 归档，配方单列）；
+  「iOS 显示桌面」定位到 `App.tsx` 桌面主区分支优先并加 `!isMobile` 守卫（回归测试 10 条）；
+  iOS 状态从「暂缓」改为「打包已通／界面待验」。
 - **v2.2（2026-10-20 11:2x）**：视觉重设计**落地到视觉层**：`App.css` 追加移动命名空间覆盖层（浅色 token/
   渐变主卡/白卡/浅底胶囊/底栏与浮＋）、`index.html` 启动页切浅色、`Mobile*.tsx` 补诚实文案；
   capture/search/settings 去掉浮「＋」；删除 08 旧 disabled「信任」按钮。阶段 5 →「已落地（视觉层）／真机待签」。
