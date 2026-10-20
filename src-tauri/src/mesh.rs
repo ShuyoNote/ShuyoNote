@@ -73,6 +73,16 @@ pub struct MeshRow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PullResponse {
     records: Vec<MeshRow>,
+    /// ⭐⭐ **2026-10-20（真机：游标一旦过大就永久静默）**：服务端自己的**高水位**
+    /// （它那一栏 `device_seq` 的最大值）。
+    ///
+    /// 为什么必须带上它：拉取的过滤是 `device_seq > since` ⇒ 只要 `since` 比对方的
+    /// 最大值还大，**永远返回空、一个错都不报** ✗（今早实测：我方 cursor 卡在 245、
+    /// 对方那栏最大只有 19 ⇒ 一页都拉不到，界面上只显示"收下 0 条"✓）。
+    /// 有了它，客户端能**自己发现**"我越界了"并重基 ✓。
+    /// ⚠️ `#[serde(default)]`：老版本对端不带这一格 ⇒ 读成 0（⇒ 客户端不敢乱重基 ✓）。
+    #[serde(default)]
+    max_device_seq: i64,
 }
 
 /// 服务侧：**只服务我自己产生的**记录里、游标之后的那一批（按 `device_seq` 升序）。
@@ -108,6 +118,18 @@ pub fn serve_own_records(
         })
         .map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+/// 我这一栏 `changes.device_seq` 的**高水位**（没有行 ⇒ 0）。
+///
+/// ⭐ **2026-10-20**：只给 `/mesh/pull` 的响应带一格用（见 `PullResponse::max_device_seq`）。
+fn max_own_device_seq(c: &Connection, own_device: &str) -> Result<i64, String> {
+    c.query_row(
+        "SELECT COALESCE(MAX(device_seq), 0) FROM changes WHERE device_id = ?1",
+        params![own_device],
+        |r| r.get(0),
+    )
+    .map_err(|e| e.to_string())
 }
 
 // ─────────────────────────── per-peer 水位（KV，不新开列） ───────────────────────────
@@ -550,7 +572,7 @@ pub async fn pull_from_peer(
     since: i64,
     token: Option<&str>,
     auth: Option<(&str, i64, &str)>,
-) -> Result<Vec<MeshRow>, String> {
+) -> Result<(Vec<MeshRow>, i64), String> {
     // ⚠️ target **只拼一次** ✗：⭐ 签的是它、发的也是它 ✓（⛔ 两处各拼一份 ⇒ 一漂就验不过 ✗）。
     let target = pull_target(space_id, since);
     let url = format!("{}{}", peer.base.trim_end_matches('/'), target);
@@ -581,7 +603,8 @@ pub async fn pull_from_peer(
         return Err(format!("对端 {} 回了 {}", peer.device_id, resp.status()));
     }
     let body: PullResponse = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(body.records)
+    // ⚠️ 老对端不带 `max_device_seq` ⇒ 0（`serde(default)`）⇒ 调用方**不会**据此重基 ✓
+    Ok((body.records, body.max_device_seq))
 }
 
 /// 一轮对等交换的结果（给人看的读数，不是业务数据）。
@@ -657,7 +680,10 @@ pub async fn pull_and_absorb(
         let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
         peer_cursor(&g, space_id, &peer.device_id)
     };
-    let rows = {
+    // ⭐⭐ **2026-10-20（真机：游标越界 ⇒ 永久静默）**：先按原游标拉；若发现
+    //   **对端高水位 < 我的游标** ⇒ 说明这格游标不是"对方那条计数"里的值（历史遗留 / 换了空间）
+    //   ⇒ **归零重拉一次**，并如实记一行（⛔ 不静默、⛔ 不每次轮都重拉：只在这一情形下发生 ✓）。
+    let (mut rows, mut max_seq) = {
         // ⭐ 签名要在**拿锁的那一小段**里算好 ✗（⛔ 不许跨 await 持锁 ✗）；拿不到身份 ⇒ `None` ✓
         //   （⭐ 那就只剩口令那一档 ✓ —— 与今天逐字相同 ✓）。
         let auth = {
@@ -674,6 +700,32 @@ pub async fn pull_and_absorb(
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
         pull_from_peer(client, peer, space_id, since, token, auth_ref).await?
     };
+    // ⭐ 游标越界 ⇒ 归零重拉一次（只重拉一次；还得再拿锁算签名 ⇒ 与上面同一套）
+    if max_seq > 0 && since > max_seq {
+        eprintln!(
+            "[mesh] ⚠️ 游标越界：我方 since={since} > 对端高水位 {max_seq}（这一格游标不是{}的计数）⇒ 归零重拉一次",
+            peer.device_id
+        );
+        {
+            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+            set_peer_cursor(&g, space_id, &peer.device_id, 0)?;
+        }
+        let auth = {
+            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+            let device_id = crate::sync::device_id(&g).unwrap_or_default();
+            if device_id.trim().is_empty() {
+                None
+            } else {
+                let target = pull_target(space_id, 0);
+                sign_request(&g, &device_id, space_id, "GET", &target, crate::db::now_ms())
+                    .map(|(ts, sig)| (device_id, ts, sig))
+            }
+        };
+        let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
+        let again = pull_from_peer(client, peer, space_id, 0, token, auth_ref).await?;
+        rows = again.0;
+        max_seq = again.1.max(max_seq);
+    }
     let fetched = rows.len();
     // ⭐ 2026-10-09（task-8）：把**这一批真的换过来的条**留给 `sync_history` 的明细 ✓。
     //    ⚠️ 与服务器那条路同一口径（`sync::item_title` ✓）、同一条 dir＝`"pull"`（网格这一轮只拉 ✓）。
@@ -1242,7 +1294,8 @@ pub async fn round_candidates(
         //   真机那次"收下 0 条"在界面上只显示一句"1 台没拉动"，**说不清是没秘密、401、还是空** ✓。
         //   ⚠️ 只打**有无**，⛔ 不打秘密本身。
         eprintln!(
-            "[mesh] 拉 {} ⇒ secret={} · space={} · device_level={}",
+            "[mesh {}] 拉 {} ⇒ secret={} · space={} · device_level={}",
+            crate::db::now_ms(),
             p.device_id,
             if secret.is_some() { "有" } else { "**无**（会 401）" },
             space_id,
@@ -1251,8 +1304,14 @@ pub async fn round_candidates(
         match pull_and_absorb(conn, &client, p, space_id, secret.as_deref(), device_level).await {
             Ok(rep) => {
                 eprintln!(
-                    "[mesh] 拉 {} ⇒ ok fetched={} applied={} cursor={} error={:?}",
-                    p.device_id, rep.fetched, rep.applied, rep.cursor, rep.error
+                    "[mesh {}] 拉 {} ⇒ ok fetched={} applied={} cursor={} max={} error={:?}",
+                    crate::db::now_ms(),
+                    p.device_id,
+                    rep.fetched,
+                    rep.applied,
+                    rep.cursor,
+                    "",
+                    rep.error
                 );
                 out.push(rep)
             }
@@ -2783,8 +2842,14 @@ fn handle_pull(state: &State, target: &str) -> Reply {
         Ok(g) => g,
         Err(_) => return Reply::json(500, "Internal Server Error", json_error("空间库的锁被毒掉了")),
     };
+    // ⭐ 2026-10-20：把**我这一栏的高水位**一起发出去（收侧据此判断"游标是不是越界了"）。
+    let max_device_seq = max_own_device_seq(&g, &state.cfg.device_id).unwrap_or(0);
     match serve_own_records(&g, &state.cfg.device_id, since, limit) {
-        Ok(records) => Reply::json(200, "OK", serde_json::json!({ "records": records }).to_string()),
+        Ok(records) => Reply::json(
+            200,
+            "OK",
+            serde_json::json!({ "records": records, "max_device_seq": max_device_seq }).to_string(),
+        ),
         Err(e) => Reply::json(500, "Internal Server Error", json_error(&e)),
     }
 }
@@ -5717,7 +5782,8 @@ mod tests {
         )
         .await
         .expect("⭐ 出站签名的 target 必须与门重建的那一串逐字相同（差一个字符就是 401）");
-        assert!(rows.is_empty(), "这个空间里还没有记录 ⇒ 拉回来是空的一批 ✓（但**放行了** ✓）");
+        // ⭐ 2026-10-20：返回形状从 Vec 变成 (Vec, max_device_seq)
+        assert!(rows.0.is_empty(), "这个空间里还没有记录 ⇒ 拉回来是空的一批 ✓（但**放行了** ✓）");
 
         // ⑦ ⭐⭐ **撤回必须真的生效** ✗（⭐ 走**生产那一半**：`sync::device_unpair_at` ✓）——
         //    ⚠️ 这一条是上一轮查出来的那个洞（"库里删了、**跑着的门**还认"✓）在新那一档上的对照组 ✓：
@@ -6063,4 +6129,37 @@ mod tests {
         crate::mesh::stop_window("proto-r110").unwrap();
         crate::mesh::stop_window("proto-r110").unwrap();
     }
+
+    /// ⭐⭐ **2026-10-20（真机：游标一旦过大就永久静默）**：两格。
+    /// ① `max_own_device_seq` 真的报**我这一栏**的高水位（不是全表的）；
+    /// ② 老对端的响应里**没有** `max_device_seq` ⇒ 读成 0（客户端据此不敢乱重基）。
+    /// **变异**：把 SQL 的 `WHERE device_id = ?1` 删掉 ⇒ ① 必红（会报成别人的 999）；
+    ///          把 `#[serde(default)]` 删掉 ⇒ ② 必红（整条响应解析失败）。
+    #[test]
+    fn high_water_mark_and_old_peer_compat() {
+        let dir = temp_dir("mesh-high-water");
+        // ⚠️ 必须先把 spaces/ 建好（open_space_conn_at 不会替你建目录 ✗）
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        let c = crate::db::open_space_conn_at("sp-hw", &dir).unwrap();
+        for (dev, seq) in [("dev-me", 5_i64), ("dev-me", 19), ("dev-other", 999)] {
+            c.execute(
+                "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at) \
+                 VALUES (?1, ?2, 'page', ?3, 'upsert', NULL, 1)",
+                rusqlite::params![dev, seq, format!("p-{dev}-{seq}")],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            max_own_device_seq(&c, "dev-me").unwrap(),
+            19,
+            "高水位必须是**我这一栏**的最大值：dev-other 的 999 不算进来"
+        );
+        assert_eq!(max_own_device_seq(&c, "dev-nobody").unwrap(), 0, "一行都没有 ⇒ 0");
+
+        let old = r#"{"records":[]}"#;
+        let parsed: PullResponse = serde_json::from_str(old).expect("老对端不带那一格也必须能解析");
+        assert_eq!(parsed.max_device_seq, 0, "没有这一格 ⇒ 0（⇒ 客户端不重基）");
+        assert!(parsed.records.is_empty());
+    }
+
 }
