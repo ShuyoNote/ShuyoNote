@@ -56,7 +56,7 @@ export function MobileHome() {
         <span className="mhome-card-icon" aria-hidden><SearchIcon width={20} height={20} /></span>
         <span className="mhome-card-body">
           <span className="mhome-card-title">搜索</span>
-          <span className="mhome-card-hint">全文搜索 · 结果来自本机索引</span>
+          <span className="mhome-card-hint">搜索笔记内容 · 结果来自本机索引</span>
         </span>
         <span className="mhome-card-go" aria-hidden>›</span>
       </button>

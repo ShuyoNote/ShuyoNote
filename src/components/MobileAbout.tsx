@@ -117,7 +117,7 @@ export function MobileAbout() {
           </svg>
           <div className="mabout-app-text">
             <div className="mabout-brand">{APP_NAME}</div>
-            <div className="mabout-version">版本 {APP_VERSION}（开发）</div>
+            <div className="mabout-version">版本 {APP_VERSION}</div>
             {latest ? <div className="mabout-latest">最新发布 {latest}</div> : null}
           </div>
         </section>

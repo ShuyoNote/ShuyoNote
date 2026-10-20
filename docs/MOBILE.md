@@ -35,7 +35,8 @@ IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理�
 > 下面按 10-20 实况更新（底边栏/设置/配对都已前进；iOS 暂缓）。
 > 🎨 **视觉基线（2026-10-20）**：owner 选定**浅色明快卡片版**，10 张重设计图在
 > [`plans/mobile/mockups/2026-10-20-redesign/`](plans/mobile/mockups/2026-10-20-redesign/README.md)；
-> ⚠️ **出图 ≠ 落地**：当前代码仍是旧视觉（`Mobile*.tsx`/`App.css` 未改），落地属阶段 5。
+> ✅ **视觉层已落地（2026-10-20）**：`App.css` 移动覆盖 ＋ `Mobile*.tsx` ＋ `index.html` 启动页；
+> ⛔ **真机观感仍未签**（要 owner 在 Mate 40 上看一眼）。
 
 | 屏 | 状态 |
 |---|---|

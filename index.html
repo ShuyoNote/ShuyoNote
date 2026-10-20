@@ -253,6 +253,91 @@
         line-height: 1.6;
         color: var(--splash-text-faint);
       }
+
+      /* ══════════════════════════════════════════════════════════════════════
+         2026-10-20 启动页浅色重设计（照 mockups/2026-10-20-redesign/09-splash.svg）
+         ⚠️ id / .is-hide 契约不变；只换观感与图标几何。
+         ========================================================================== */
+      #app-splash {
+        --splash-bg: #f5f8ff;
+        --splash-accent: #3370ff;
+        --splash-accent-strong: #5b8cff;
+        --splash-on-accent: #ffffff;
+        --splash-text: #1f2329;
+        --splash-text-dim: #646a73;
+        --splash-text-faint: #8f959e;
+        --splash-border: #e5e8ee;
+        --splash-track: #ebf1ff;
+        background: radial-gradient(circle at 50% 38%, #ebf1ff 0%, #f5f8ff 60%, #ffffff 100%);
+        color: var(--splash-text);
+      }
+      .splash-main {
+        transform: translateY(-58px);
+      }
+      /* 重设计用整屏浅色光晕，不再需要旧的两个蓝光斑。 */
+      .splash-glow,
+      .splash-glow-soft {
+        display: none;
+      }
+      .splash-icon {
+        width: 96px;
+        height: 96px;
+      }
+      .splash-title {
+        margin-top: 30px;
+      }
+      .splash-brand {
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        color: var(--splash-text);
+      }
+      .splash-sub {
+        font-size: 14px;
+        color: var(--splash-text-dim);
+      }
+      .splash-bar {
+        width: 180px;
+        height: 4px;
+        margin-top: 42px;
+        border-radius: 2px;
+        background: var(--splash-track);
+      }
+      .splash-bar-fill {
+        width: 62%;
+        border-radius: 2px;
+        background: var(--splash-accent);
+      }
+      .splash-bar-sheen {
+        left: 80px;
+        top: -1px;
+        width: 24px;
+        height: 6px;
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.65);
+      }
+      .splash-bar-fill::after {
+        right: -4px;
+        width: 8px;
+        height: 8px;
+        margin-top: -4px;
+        background: var(--splash-accent);
+      }
+      .splash-status {
+        margin-top: 26px;
+        color: var(--splash-text-faint);
+      }
+      .splash-footer {
+        padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 42px);
+      }
+      .splash-footer-rule {
+        width: 180px;
+        background: var(--splash-border);
+      }
+      .splash-version,
+      .splash-note {
+        color: var(--splash-text-faint);
+      }
     </style>
   </head>
 
@@ -262,36 +347,26 @@
       <div class="splash-main">
         <div class="splash-glow" aria-hidden="true"></div>
         <div class="splash-glow-soft" aria-hidden="true"></div>
-        <!-- 图标：坐标逐字取自 09-splash.svg 第 31-32 行 -->
+        <!-- 图标：2026-10-20 浅色重设计（照 `mockups/2026-10-20-redesign/09-splash.svg`） -->
         <div class="splash-icon" aria-hidden="true">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="139 314 112 112">
-            <rect
-              x="139"
-              y="314"
-              width="112"
-              height="112"
-              rx="30"
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+            <defs>
+              <linearGradient id="splash-mark" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#3370FF" />
+                <stop offset="1" stop-color="#5B8CFF" />
+              </linearGradient>
+            </defs>
+            <rect x="0" y="0" width="96" height="96" rx="24" fill="url(#splash-mark)" />
+            <g
+              transform="translate(25,22)"
               fill="none"
-              stroke="#4D8DFF"
-              stroke-opacity="0.30"
-              stroke-width="1.5"
-            />
-            <g transform="translate(147,322) scale(1.0909)">
-              <rect x="0" y="0" width="88" height="88" rx="22" fill="#4D8DFF" />
-              <g fill="none" stroke="#0B1220" stroke-width="3.2" stroke-linecap="round">
-                <path d="M26 31 H62" />
-                <path d="M26 45 H54" />
-                <path d="M26 59 H44" />
-              </g>
-              <g
-                fill="none"
-                stroke="#0B1220"
-                stroke-width="3.2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M46 70 L66 50 L72 56 L52 76 Z" />
-              </g>
+              stroke="#FFFFFF"
+              stroke-width="3"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M6 36 L8.4 27 L34 1.4 L42.6 10 L17 35.6 Z" />
+              <path d="M30 5.4 L38.6 14" />
             </g>
           </svg>
         </div>

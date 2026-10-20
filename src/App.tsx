@@ -1234,7 +1234,7 @@ function AppShell() {
            它排在 `aboutOpen` **之前**（照 `pair` 的先例 ✓）：那颗 ⚙️ 是"去开一个面板"的**动作** ✓
            ⇒ 不管底下开着什么（含"关于"是否已打开 ✓），点了就该整屏看到移动设置 ✓。
            ⛔ 桌面档**一个字不动** ✗（桌面的 ⚙️ 仍开那个 `SettingsDialog` ✓，分岔在 `ActivityBar` 里 ✓）。 */
-        wrapMobile(<MobileSettings />)
+        wrapMobile(<MobileSettings />, { showFab: false })
       ) : isMobile && aboutOpen ? (
         /* ⭐ 2026-10-10：手机档的**「关于」屏**（效果图 `10-about.svg`，规格 §4.10）——
            它排在 `currentId` **前面**：从设置里点「关于与更新」时，不管底下有没有开着页，
@@ -1259,6 +1259,9 @@ function AppShell() {
           ) : (
             <MobileHome />
           ),
+          /* ⭐ 2026-10-20 重设计：浮「＋」只出现在**首页**（效果图 01 有；02/03/07 没有）
+             ⇒ capture/search 隐藏，避免它压住快捷工具栏/搜索结果。 */
+          { showFab: mobileScreen === "home" },
         )
       ) : (
         <div className="main empty">

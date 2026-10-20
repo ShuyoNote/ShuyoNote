@@ -123,14 +123,15 @@ export function MobileRead({ pageId }: { pageId: string }) {
           {updatedAt ? ` · ${stamp(updatedAt)}` : ""}
         </p>
 
-        {/* 「在电脑上继续」——效果图里那块淡蓝提示 ✓；副文案**如实**写同步没通 ✓ */}
+        {/* 「在电脑上继续」——重设计里那块浅色提示 ✓；副文案**如实**写：
+            桌面↔桌面已搬通，手机↔电脑端到端仍待真机验收 ✓（⛔ 不写成"已通" ✗）。 */}
         <aside className="mread-tip">
           <span className="mread-tip-icon" aria-hidden>
             🖥️
           </span>
           <span className="mread-tip-body">
             <span className="mread-tip-title">在电脑上继续</span>
-            <span className="mread-tip-sub">同步通道尚未打通，先在桌面端打开同名笔记</span>
+            <span className="mread-tip-sub">桌面 ↔ 桌面同步已搬通 · 手机 ↔ 电脑端到端待真机验收</span>
           </span>
         </aside>
 

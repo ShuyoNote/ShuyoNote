@@ -3,7 +3,8 @@
 > 本目录是 2026-10-20 的一套**重设计效果图**（10 屏 / 390×844），取代  
 > [`../01-home.svg`](../01-home.svg) 等 10-09 旧稿的**视觉方案**；需求口径仍以  
 > [`../../2026-10-20-mobile-requirements-complete.md`](../../2026-10-20-mobile-requirements-complete.md) 为准。  
-> **效果图 ≠ 已做**；落地仍需改 `src/components/Mobile*.tsx` + 样式，并过移动三条门禁。
+> **效果图 ≠ 已做**；✅ **视觉层已于 2026-10-20 落地**（`App.css` 移动覆盖 ＋ `Mobile*.tsx` ＋ `index.html` 启动页），
+> ⛔ **真机观感仍待 owner 在 Mate 40 上签字**；落地以三条移动门禁与真机验收为准。
 
 ## 1. 这套图改了什么（相对 10-09 旧稿）
 
@@ -64,9 +65,12 @@ grep -n -E "foreignObject|<!ENTITY|<image|@import|font-face|<filter" *.svg
 grep -n -E "https?://" *.svg | grep -v "www.w3.org/2000/svg"
 ```
 
-## 5. 落地提示（给下一刀）
+## 5. 落地记录（2026-10-20）
 
-- 底边栏/浮「＋」已有实现（`MobileTabBar.tsx`），重设计主要是**换 token 与卡片样式**，不动导航结构。
-- 01 主卡渐变、状态胶囊浅底需在 CSS 层用 token 表达（浅色列新值需回填 `App.css` 变量）。
-- 门禁基线（`mobile-layout` 69 / `mobile-views` 249 / `mobile-overlays` 826）在改样式后需实跑复核，不许只看构建绿。
-- 08/08b 与 `MobilePair.tsx` / `MobilePairCode.tsx` 对齐；「接入/重新配对」进 08b 的路径不变。
+- ✅ **视觉层已落地**：`src/App.css` 末尾的移动命名空间覆盖层 ＋ `src/components/Mobile*.tsx`（诚实文案/
+  缺口标注）＋ `index.html`（浅色启动页）；导航/屏栈结构未动。
+- ✅ 底边栏/浮「＋」保留；浮「＋」只在首页出现（capture/search/settings 隐藏，避免压工具栏）。
+- ✅ 08 旧 disabled「信任」按钮已删（真入口是「接入/重新配对」）；07/08 补「上次成功时间：暂无读数」。
+- ✅ 门禁读数：`mobile-layout` **70/70**、`mobile-views` **249/249**；`mobile-overlays` **815/817**
+  （2 条「忘记口令」既有环境失败，R201 已知，⛔ 不算通过也不算本次引入）。
+- ⛔ **真机观感待签**：web 截图只能证明样式层；需 owner 在 Mate 40 上看浅色观感/夜暗环境。
