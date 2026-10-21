@@ -500,6 +500,8 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
   // 后端逐账号推 `email-fetch-progress`，这里显示「正在拉取 3/5 · sales@shuyo.cn」＋已用秒数。
   const [fetchProgress, setFetchProgress] = useState<{ done: number; total: number; account: string } | null>(null);
   const [fetchSeconds, setFetchSeconds] = useState(0);
+  // ⭐ 2026-10-21（C）：上次收取时间戳（后端 `fetched_at`）⇒ 界面显示「上次收取 HH:MM」
+  const [fetchedAt, setFetchedAt] = useState<number>(0);
   // 阅读区工具栏宽度检测：较窄时把次要按钮收进「更多」。
   const readToolbarRef = useRef<HTMLDivElement>(null);
   const readPaneRef = useRef<HTMLDivElement>(null);
@@ -660,6 +662,8 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
       setErr("请先在 设置 → 邮箱 配置 IMAP 账号");
       return;
     }
+    // ⭐ A（2026-10-21）：60 秒内已经拉过、且手上还有列表 ⇒ **不重复拉** ✓
+    if (Date.now() - lastFetchAtRef.current < FETCH_TTL_MS && list.length > 0) return;
     void fetchInbox();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -690,11 +694,24 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
   };
 
   // 拉取列表（聚合 = emailFetchAll(limit/offset)，按账号筛选过滤；af 空数组=全部）。
-  const fetchInbox = async (af: string[] = accountFilter, fs: string[] = folders, offset = 0) => {
+  // ⭐⭐ **2026-10-21（owner：每次点邮箱都重新拉 / 定时有没有用）**：
+  //   A：**60 秒内打开过就不重复拉**（列表已在前端状态里）—— 再点开**立刻出列表** ✓
+  //   C：把 `fetched_at` 显示成「上次收取 HH:MM」，用户能看出后台定时在不在跑 ✓
+  const FETCH_TTL_MS = 60 * 1000;
+  const lastFetchAtRef = useRef<number>(0);
+
+  const fetchInbox = async (
+    af: string[] = accountFilter,
+    fs: string[] = folders,
+    offset = 0,
+    force = false,
+  ) => {
     setBusy(true);
     setErr("");
     try {
-      const agg = await api.emailFetchAll(fs, PAGE_SIZE, offset, undefined, undefined, af);
+      const agg = await api.emailFetchAll(fs, PAGE_SIZE, offset, undefined, undefined, af, force);
+      lastFetchAtRef.current = Date.now();
+      if (typeof agg.fetched_at === "number" && agg.fetched_at > 0) setFetchedAt(agg.fetched_at);
       setList(agg.emails);
       // 聚合角标用后端汇总的 unread（跨所有账号），而非当前页列表统计。
       setUnread(agg.unread);
@@ -839,7 +856,8 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
     // 只拉列表，**不再顺手重扫月份**：`emailFetchAllMonths` 会把所有账号的所有文件夹再扫一遍，
     // 一次「拉取」被拖成两倍时长（2026-09-20「信件拉取时间有点长」）。月份集合只在
     // 切账号/切文件夹时才可能变，那两处各自会调 `loadMonths`。
-    await fetchInbox(accountFilter, folders);
+    // ⭐ 2026-10-21：手动「拉取」必须**绕过** TTL 与后端预取缓存（否则点了像没点）✓
+    await fetchInbox(accountFilter, folders, 0, true);
   };
 
   // AI 总结邮件要点/行动项（A1）：复用已配置的 AI provider（store/ai.ts）。
@@ -1715,6 +1733,16 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
                         </div>
                       )}
                     </div>
+                    {fetchedAt > 0 && (
+                      <span
+                        className="email-fetched-at"
+                        title="这份列表是什么时候拉的（定时任务每 15 分钟检查未读；未读变多时会预取第一页）"
+                        style={{ fontSize: 12, opacity: 0.65, marginRight: 8, whiteSpace: "nowrap" }}
+                      >
+                        上次收取{" "}
+                        {new Date(fetchedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    )}
                     <button className="sync-btn ghost" disabled={busy || accounts.length === 0} onClick={() => void refresh()}>
                       <RefreshIcon width={14} height={14} /> 拉取
                     </button>

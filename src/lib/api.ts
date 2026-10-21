@@ -91,6 +91,8 @@ export interface EmailAggregate {
   emails: EmailMeta[];
   unread: number;
   accounts: string[];
+  /** ⭐ 2026-10-21：这份聚合体是什么时候拉的（毫秒；0/缺省 ＝ 不知道）。界面显示「上次收取」。 */
+  fetched_at?: number;
 }
 
 /**
@@ -244,8 +246,17 @@ export const api = {
   emailSaveAsNote: (raw: string) => invoke("email_save_as_note", { args: { raw } }),
   emailFetchInbox: (account: EmailAccount, folders: string[], limit = 0, offset = 0, dateFrom?: string, dateTo?: string) =>
     invoke("email_fetch_inbox", { args: { account, folders, limit, offset, date_from: dateFrom, date_to: dateTo } }),
-  emailFetchAll: (folders: string[], limit = 0, offset = 0, dateFrom?: string, dateTo?: string, accounts?: string[]) =>
-    invoke("email_fetch_all", { args: { folders, limit, offset, date_from: dateFrom, date_to: dateTo, accounts } }),
+  emailFetchAll: (
+    folders: string[],
+    limit = 0,
+    offset = 0,
+    dateFrom?: string,
+    dateTo?: string,
+    accounts?: string[],
+    /** ⭐ 2026-10-21：`true` ⇒ 绕过定时任务预取的第一页（用户点「刷新」时用）。 */
+    force?: boolean,
+  ) =>
+    invoke("email_fetch_all", { args: { folders, limit, offset, date_from: dateFrom, date_to: dateTo, accounts, force } }),
   emailFetchAllMonths: (folders: string[], accounts?: string[]) =>
     invoke("email_fetch_all_months", { args: { folders, accounts } }),
   emailSaveUid: (account: EmailAccount, uid: number, folder: string) =>
