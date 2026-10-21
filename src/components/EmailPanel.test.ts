@@ -477,7 +477,17 @@ describe("邮件外部图片：占位不碎图 + 明说有几张没加载（2026
   it("★ 拦下的远程图给透明占位（不画碎图）+ 横幅说「1 张外部图片未加载」；点显示图片后原址回来", async () => {
     await mountWithMail();
 
-    const img = document.querySelector<HTMLImageElement>(".email-rich-body img");
+    // ⭐ 2026-10-21：正文改成**沙箱 iframe** 渲染（邮件自带 `<style>` 要能用，样式锁在 iframe 里）
+    //   ⇒ 正文 DOM 不再在主文档里：读 `iframe[srcdoc]`，把那一段解析出来再查 ✓
+    const bodyHost = () => {
+      const frame = document.querySelector<HTMLIFrameElement>(".email-rich-frame");
+      const host = document.createElement("div");
+      host.innerHTML = frame?.getAttribute("srcdoc") ?? "";
+      return host;
+    };
+    const bodyImg = () => bodyHost().querySelector<HTMLImageElement>("img");
+
+    const img = bodyImg();
     expect(img).not.toBeNull();
     // ① 不能是碎图：拦下时 src 必须是内联透明图，原址留在 data-src
     expect(img!.getAttribute("data-img-blocked")).toBe("1");
@@ -494,7 +504,7 @@ describe("邮件外部图片：占位不碎图 + 明说有几张没加载（2026
     expect(bar!.textContent).toContain("防跟踪");
     expect(bar!.textContent).toContain("显示图片");
     // `cid:` 内嵌图不算"外部图片"（它不联网），别把它数进去
-    expect(countBlockedImages(document.querySelector(".email-rich-body")!.innerHTML)).toBe(1);
+    expect(countBlockedImages(bodyHost().innerHTML)).toBe(1);
 
     // ③ 点「显示图片」⇒ 原址回来、横幅收掉
     Array.from(bar!.querySelectorAll<HTMLElement>("button"))
@@ -502,7 +512,7 @@ describe("邮件外部图片：占位不碎图 + 明说有几张没加载（2026
       .click();
     await settle();
     expect(document.querySelector(".email-img-blocked-bar")).toBeNull();
-    const after = document.querySelector<HTMLImageElement>(".email-rich-body img");
+    const after = bodyImg();
     expect(after!.getAttribute("src")).toBe(LOGO);
     expect(after!.getAttribute("data-img-blocked")).toBeNull();
   });
