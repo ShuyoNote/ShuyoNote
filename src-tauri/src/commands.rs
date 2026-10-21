@@ -1239,26 +1239,7 @@ pub fn list_pending_remote_pages(
     limit: Option<usize>,
 ) -> Result<crate::doc_content::PendingRemoteQueue, String> {
     let c = conn(&db);
-    let q = crate::doc_content::pending_remote_queue(&c, limit.unwrap_or(20))?;
-    // ⭐⭐ **2026-10-20（owner：「没看到三个选项的界面」）**：界面那一段不渲染，而库里明明有 5 条
-    //   ⇒ 先把"这条命令到底读的哪个库、读到几条"打出来（⛔ 不再靠猜 ✗）。
-    {
-        let mut dbs: Vec<String> = Vec::new();
-        if let Ok(mut st) = c.prepare("PRAGMA database_list") {
-            if let Ok(rows) = st.query_map([], |r| r.get::<_, String>(2)) {
-                for p in rows.flatten() {
-                    dbs.push(p);
-                }
-            }
-        }
-        eprintln!(
-            "[pending] 读到 total={} pages={} ｜ 库={:?}",
-            q.total,
-            q.pages.len(),
-            dbs
-        );
-    }
-    Ok(q)
+    crate::doc_content::pending_remote_queue(&c, limit.unwrap_or(20))
 }
 
 /// ★ **裁决一处"待取回的远端版本"**：`choice` = `"merge"`（合并这一页：先逐块合并，两端各改不同块 ⇒ 都保留）
