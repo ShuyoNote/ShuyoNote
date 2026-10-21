@@ -1153,6 +1153,16 @@ async fn fetch_unseen(account: &EmailAccountArgs) -> Result<u32, String> {
 #[derive(Default)]
 pub struct EmailPollState {
     pub busy: tokio::sync::Mutex<()>,
+    /// ⭐ **2026-10-21（B）**：定时任务预取好的**第一页**（默认查询：INBOX ＋ 全部账号）。
+  /// 面板打开时若它够新，就直接用它 ⇒ 不再每次都等一遍 IMAP ✓
+    pub first_page: tokio::sync::Mutex<Option<CachedPage>>,
+}
+
+/// 定时任务预取下来的第一页（只对"默认查询"有效：INBOX ＋ 全部账号 ＋ 无日期过滤）。
+#[derive(Clone)]
+pub struct CachedPage {
+    pub at_ms: i64,
+    pub agg: EmailAggregate,
 }
 
 const POLL_EVENT: &str = "email-unread";
@@ -1166,6 +1176,8 @@ pub fn start_email_poller(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let state = app.state::<EmailPollState>();
         let mut failures: u32 = 0;
+        // ⭐ 2026-10-21：上一轮的未读总数（用来判"未读变多"）
+        let mut last_total: u32 = 0;
         loop {
             // 每次唤醒都重新读配置，这样账号/间隔/开关在运行中也能实时生效。
             let accounts = email_list_accounts(app.state::<Db>(), app.clone()).unwrap_or_default();
@@ -1188,6 +1200,31 @@ pub fn start_email_poller(app: AppHandle) {
                 }
                 if ok {
                     failures = 0;
+                    // ⭐ **2026-10-21（C）**：每次轮询打一行 —— 用户问过"定时拉取起作用了吗"，
+                    //   而这条循环以前**一行日志都没有** ⇒ 没法自证 ✓
+                    eprintln!(
+                        "[email] 定时收取：{} 个账号 · 未读 {} · 下一次 {} 分钟后（{}）",
+                        fetchable.len(),
+                        total,
+                        minutes,
+                        if total > last_total { "未读变多 ⇒ 预取第一页" } else { "无变化" }
+                    );
+                    // ⭐ **2026-10-21（B）**：未读变多 ⇒ 顺手把**第一页**拉好放进缓存。
+                    //   面板打开时若它够新就直接用 ⇒ 不再每次都等一遍 IMAP ✓
+                    if total > last_total {
+                        let mut results: Vec<(String, Result<(Vec<EmailMeta>, u32), String>)> = Vec::new();
+                        let inbox = vec!["INBOX".to_string()];
+                        for a in &fetchable {
+                            results.push((
+                                account_key(a),
+                                fetch_account_emails(a, &inbox, None, None).await,
+                            ));
+                        }
+                        let agg = aggregate_fetches(results, 60, 0);
+                        let mut slot = state.first_page.lock().await;
+                        *slot = Some(CachedPage { at_ms: crate::db::now_ms(), agg });
+                    }
+                    last_total = total;
                     let _ = app.emit(POLL_EVENT, total);
                     tokio::time::sleep(std::time::Duration::from_secs(minutes * 60)).await;
                 } else {
@@ -1788,6 +1825,10 @@ async fn fetch_account_emails(
 
 #[derive(Deserialize)]
 pub struct EmailFetchAllArgs {
+    /// ⭐ **2026-10-21**：`Some(true)` ⇒ **绕过预取缓存**（用户点「刷新」时用）。
+    /// 缺省 `None` ⇒ 允许命中缓存（打开面板那一次就该用它）✓
+    #[serde(default)]
+    pub force: Option<bool>,
     #[serde(default)]
     pub folders: Vec<String>,
     #[serde(default)]
@@ -1812,6 +1853,7 @@ pub struct EmailAccountError {
 }
 
 #[derive(Serialize)]
+#[derive(Clone)]
 pub struct EmailAggregate {
     pub emails: Vec<EmailMeta>,
     pub unread: u32,
@@ -1823,6 +1865,10 @@ pub struct EmailAggregate {
     /// 而界面上既没有错误、也没有"少了一个账号"的任何提示 ⇒ 用户看到的是
     /// "这封信没来"（分不清"没收到"和"没拉到"）。现在把失败如实带回前端显示。
     pub errors: Vec<EmailAccountError>,
+    /// ⭐ **2026-10-21**：这份聚合体是**什么时候拉的**（毫秒；0 ＝ 不知道）。
+    /// 界面据此显示「上次收取 HH:MM」，用户也就能看出定时任务有没有在跑 ✓
+    #[serde(default)]
+    pub fetched_at: i64,
 }
 
 /// 把"每个账号一次拉取的结果"合并成聚合体：按时间降序、汇总未读、**失败如实带出来**。
@@ -1859,7 +1905,13 @@ fn aggregate_fetches(
         let end = (start + limit as usize).min(emails.len());
         emails = emails[start..end].to_vec();
     }
-    EmailAggregate { emails, unread: unread_total, accounts: account_keys, errors }
+    EmailAggregate {
+        emails,
+        unread: unread_total,
+        accounts: account_keys,
+        errors,
+        fetched_at: crate::db::now_ms(),
+    }
 }
 
 /// 拉取进度事件（2026-09-20 用户反馈：「信件拉取时间有点长，界面没反馈，体验不好」）。
@@ -1884,6 +1936,26 @@ pub struct EmailFetchProgress {
 /// 传 accounts 时仅聚合这些账号；空表示聚合全部已保存账号。
 #[tauri::command]
 pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: EmailFetchAllArgs) -> Result<EmailAggregate, String> {
+    // ⭐⭐ **2026-10-21（B）**：**默认查询**（第一页 ＋ INBOX ＋ 全部账号 ＋ 无日期过滤）
+    //   且缓存够新 ⇒ 直接返回定时任务预取好的那一页 ✓
+    //   ⇒ 用户点开邮箱**立刻有列表**，不再每次都等一遍 IMAP ✓
+    //   ⛔ 只在默认查询上生效：换了文件夹/账号/日期/翻页 一律真拉（那些没有缓存）✗
+    const CACHE_TTL_MS: i64 = 5 * 60 * 1000;
+    let is_default_query = args.offset == 0
+        && args.date_from.is_none()
+        && args.date_to.is_none()
+        && args.accounts.is_empty()
+        && (args.folders.is_empty()
+            || (args.folders.len() == 1 && args.folders[0].eq_ignore_ascii_case("INBOX")));
+    if is_default_query && args.force != Some(true) {
+        let poll_state = app.state::<EmailPollState>();
+        let slot = poll_state.first_page.lock().await;
+        if let Some(c) = slot.as_ref() {
+            if crate::db::now_ms() - c.at_ms <= CACHE_TTL_MS {
+                return Ok(c.agg.clone());
+            }
+        }
+    }
     let accounts = read_accounts(&db, &app)?;
     let folders = if args.folders.is_empty() { vec!["INBOX".to_string()] } else { args.folders.clone() };
     let targets: Vec<&EmailAccountArgs> = accounts

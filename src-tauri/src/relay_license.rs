@@ -50,15 +50,22 @@ pub struct KeyEntry {
     pub public_key: [u8; PUBKEY_LEN],
 }
 
-/// ⚠️ ⭐ **占位 keyring** ✗ —— ⛔ 这里**不是**真钥匙 ✗。
+/// ⭐ **真 keyring**（2026-10-21 起）—— 签发侧（`shuyo-site/api` 的发卡服务）的真实公钥。
 ///
-/// 真公钥由 owner 给（签发侧生成，`kid` 同名）。⭐ 在拿到之前：⭐ **任何真凭证都验不过** ✗
-/// （⭐ 这是**有意**的 fail-closed ✓，⛔ 不是缺陷 ✓）。
+/// 来历：`issuer-key.json` 由 `api/lib/license.mjs` 的 `loadOrCreateIssuerKey()` 在部署机
+/// `/var/lib/shuyo-api/` 生成；⭐ 私钥只在服务器（600），这里**只有公钥** ✓。
 ///
-/// ⚠️ `rot` / `prev` 换卡那条路**只留位置**：⭐ 以后换卡 ⇒ 新 `kid` 先随版本发出去 ⇒ 这里加一行 ✓。
+/// 第 0 代 `kid = shuyo-lic-2026-10`：2026-10-21 真机付 0.01 元产出的那张卡就是它签的
+/// （`grace = 14`、`cap = ["crossnet"]`、`prev = null`），已用签发侧 `verifyCard()` 自验通过。
+///
+/// ⚠️ 换卡流程（`rot` / `prev`）：新 `kid` **先随版本发出去**，这里加一行；
+/// ⛔ 别删旧行 —— 手上还留着旧卡的人要能继续验过。
 pub const KEYRING: &[KeyEntry] = &[KeyEntry {
-    kid: "PLACEHOLDER-PENDING-OWNER-KEY",
-    public_key: [0u8; PUBKEY_LEN],
+    kid: "shuyo-lic-2026-10",
+    public_key: [
+        0x30, 0xea, 0xfc, 0x05, 0x27, 0x84, 0xc4, 0x4c, 0xb4, 0xa2, 0x6a, 0x58, 0x30, 0x27, 0x27, 0x0f,
+        0xbd, 0xb5, 0xb8, 0x6c, 0x8f, 0xcb, 0x1c, 0x06, 0xde, 0x9e, 0x3b, 0x9f, 0x71, 0x0b, 0xba, 0x99,
+    ],
 }];
 
 /// ⭐ 拒收的原因 ✗（⭐ 每一档都能在界面上说成一句人话 ✓，⛔ 不合并 ✓）。
@@ -246,7 +253,7 @@ pub fn verify_license_with(
     Ok(claims)
 }
 
-/// ⭐ **生产入口** ✗：⭐ 用那份内嵌 keyring（⭐ 现在是占位 ⇒ ⭐ 真凭证一律验不过，⭐ 这是有意的 ✓）。
+/// ⭐ **生产入口** ✓：用那份内嵌 keyring（2026-10-21 起是真公钥 ⇒ 发卡站签的卡能验过 ✓）。
 pub fn verify_license(text: &str, now: i64) -> Result<LicenseClaims, LicenseRefusal> {
     verify_license_with(text, now, KEYRING)
 }
@@ -481,6 +488,29 @@ mod tests {
             public_key: sk.verifying_key().to_bytes(),
         };
         (sk, entry)
+    }
+
+    /// ⭐ 真卡判据（2026-10-21 真机付 0.01 元换来的那张）：**生产 keyring 必须认得它** ✓。
+    ///
+    /// 为什么非要钉一张真卡：它是发卡站（`shuyo-site/api`）用 `kid = shuyo-lic-2026-10` 的
+    /// **真实私钥**签出来的 ⇒ 验得过就说明「客户端内嵌公钥」与「服务器私钥」是同一对 ✓。
+    /// ⛔ 别改成“本地自签一张再验” ✗ —— 那样只证明代码自洽，证明不了钥匙配对。
+    ///
+    /// 这张卡测试专用（`sub` 是 `probe@shuyo.cn` 的散列，30 天，⛔ 不可用于真实用户）。
+    #[test]
+    fn a_real_card_from_the_issuer_verifies_with_the_production_keyring() {
+        const CARD: &str = "SHUYO-LIC-1.eyJ2IjoxLCJ0eXAiOiJjYXJkIiwic3ViIjoiYzU4ZjFmMmM3YjlmMDgwOTkzMWUzODdiMmE3ZmJlOWUiLCJkZXYiOltdLCJzZWF0cyI6MSwibmJmIjoxNzkyNTgwOTYxLCJleHAiOjE3OTUxNzI5NjEsImdyYWNlIjoxNCwia2lkIjoic2h1eW8tbGljLTIwMjYtMTAiLCJpYXQiOjE3OTI1ODA5NjEsImp0aSI6ImVjODQ0MTNiMzc3OTA3OWUiLCJjYXAiOlsiY3Jvc3NuZXQiXSwicm90IjowLCJwcmV2IjpudWxsfQ.Q8YKT7YymMr3uQTqaylEGSVZh3nXEnQD4JPzmnAJ0sn30NeBJqUlyqyZRKffUUcLGZTqAId3uXTPcE2PhjtRBQ";
+        let now = 1_792_580_961 + 60; // 签发后 1 分钟
+        let claims = verify_license(CARD, now).expect("真卡必须验得过");
+        assert!(claims.crossnet, "cap 必须含 crossnet");
+        assert_eq!(claims.exp - claims.nbf, 30 * 86400, "30 天卡");
+        assert_eq!(claims.grace_days, DEFAULT_GRACE_DAYS, "宽限期与签发侧同值");
+
+        // 反向：改掉签名里一个字符 ⇒ 必须拒（不是“没验就算过”）
+        let mut tampered = CARD.to_string();
+        let last = tampered.pop().unwrap();
+        tampered.push(if last == 'A' { 'B' } else { 'A' });
+        assert!(verify_license(&tampered, now).is_err(), "改过签名必须拒");
     }
 
     fn payload(extra: Option<(&str, serde_json::Value)>, fields: Option<serde_json::Value>) -> String {
