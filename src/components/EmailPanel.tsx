@@ -580,6 +580,8 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
   //   原来只靠隐藏测量行算阈值；它一旦测成 0 或偏小，工具栏就永远不会收 ⇒ 溢出
   //   ⇒ 这里再叠一层按真实溢出判定：溢出就升一级，收起后有余量就降一级
   const [collapseLevel, setCollapseLevel] = useState(0); // 0=全显示 1=窄 2=很窄 3=极窄
+  // ⭐ 上一次量到的工具栏宽度（只有宽度变了才尝试“放开一级”，避开来回跳）
+  const lastToolbarWRef = useRef(0);
   // 逐级收纳阈值：按按钮组实际宽度测量，而不是固定常量，避免控制条缩窄时横向溢出。
   const measureSaveRef = useRef<HTMLDivElement>(null);
   const measureIconRef = useRef<HTMLDivElement>(null);
@@ -1685,9 +1687,13 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
     const overflowing = el.scrollWidth > el.clientWidth + 1;
     if (overflowing && collapseLevel < 3) {
       setCollapseLevel((v) => Math.min(3, v + 1));
-    } else if (!overflowing && collapseLevel > 0 && el.clientWidth - el.scrollWidth > 96) {
-      setCollapseLevel((v) => Math.max(0, v - 1));
+    } else if (!overflowing && collapseLevel > 0) {
+      // ⭐ 只在「宽度变了」时才尝试放开（否则会与“溢出就收”来回跳 ✗）。
+      if (el.clientWidth !== lastToolbarWRef.current && el.clientWidth - el.scrollWidth > 24) {
+        setCollapseLevel((v) => Math.max(0, v - 1));
+      }
     }
+    lastToolbarWRef.current = el.clientWidth;
   }, [collapseLevel, toolbarW, need, active, useRich, html, isTrusted, showImages, listW]);
 
   // 测量顶部标题栏三组实际宽度：副标题是否隐藏（headSub）、工具是否收起（headTool），
