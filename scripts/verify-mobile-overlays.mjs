@@ -1360,9 +1360,16 @@ async function main() {
       // "开侧栏抽屉 → 同步"，而且**没有任何报错**（纯粹是找不到）。
       if (!mobileSyncChecked && vp.narrow) {
         mobileSyncChecked = true;
+        // ⭐ 2026-10-19 第二刀：主界面那颗同步浮钮（`.mobile-sync-slot`）**已删** ✓ ⇒
+        //   同步入口搬到「我的」设置屏（`MobileSettings` 的 `<SyncPanel />` ✓，组件未改 ✓）。
+        //   ⇒ 先走**底栏「我的」**（真用户路径 ✓）再量那颗触发器；断言条数不变 ✓。
+        await safeEval(page, () => document.querySelector(".mnote-home")?.click());
+        await sleep(700);
+        await safeEval(page, () => document.querySelector('[data-tab="settings"]')?.click());
+        await sleep(900);
         const sync = await safeEval(page, () => {
-          const slot = document.querySelector(".mobile-sync-slot");
-          const btn = slot ? slot.querySelector("button") : null;
+          const slot = document.querySelector(".mset");
+          const btn = slot ? slot.querySelector(".btn-sync") : null;
           const r = btn ? btn.getBoundingClientRect() : null;
           // ⚠️ 2026-10-17 修（**只换"怎么认这是一颗真按钮"，断言一条没删** ✓）：
           //    那颗入口是**图标按钮**（SyncPanel 的 `.btn-sync` ✓）⇒ `textContent` 天生为空 ✗，
@@ -1391,11 +1398,11 @@ async function main() {
         });
         ok(
           sync.hasSlot && sync.visible && !!sync.label,
-          `手机上主界面有同步入口（${sync.label ?? "（没有）"}）——TitleBar 在手机端不渲染，否则只能开抽屉才点得到`,
+          `手机「我的」设置屏有同步入口（${sync.label ?? "（没有）"}）——TitleBar 在手机端不渲染，⛔ 不能只藏在侧栏抽屉里`,
         );
         ok(sync.h >= 44, `同步入口命中区高度 ≥44（实测 ${sync.h}×${sync.w}）`);
         const clicked = await safeEval(page, () => {
-          const btn = document.querySelector(".mobile-sync-slot button");
+          const btn = document.querySelector(".mset .btn-sync");
           if (!btn) return false;
           btn.click();
           return true;
@@ -1419,6 +1426,9 @@ async function main() {
           document.querySelector(".mpair-back")?.click();
         });
         await sleep(300);
+        // 从「我的」进来的 ⇒ 返回落在设置屏；再回首页（后面对"主界面"的读数原先就在首页 ✓）。
+        await safeEval(page, () => document.querySelector('[data-tab="home"]')?.click());
+        await sleep(600);
       }
 
       // ---- 系统 inset 变量：无壳层报送时必须全是 0px（不许凭空多出边距） ----

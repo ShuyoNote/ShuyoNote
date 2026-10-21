@@ -293,24 +293,27 @@ const probe = (barSelectors) => {
 
 /**
  * 展开左侧浮层竖条。
- * ⚠️ `.mobile-rail-toggle` **只在"竖条收起"时才渲染**（`App.tsx` 的条件渲染），
- * 所以不能无脑 `page.click()`：上一轮如果竖条还开着，这里就会
- * `No element found for selector: .mobile-rail-toggle`（第一版就是这么红的）。
+ *
+ * ⭐ 2026-10-19 第二刀：☰（`.mobile-rail-toggle`）**已按计划删除** ✓ —— 手机上 UI 不再有
+ * "展开工具栏"的入口 ✓。但竖条本身没删（`ActivityBar` 一个字没动 ✓），本门禁仍要经它
+ * 切视图 ⇒ 这里**显式走 store** 打开 ✓（⛔ 不是点一个不存在的元素 ✗）。
  */
 async function openRail(page) {
-  if (await page.$(".mobile-rail-toggle")) {
-    await page.click(".mobile-rail-toggle");
-    await sleep(600);
-  }
+  await page.evaluate(async () => {
+    const loaded = (performance.getEntriesByType?.("resource") ?? [])
+      .map((e) => e.name)
+      .filter((n) => n.includes("/src/store/activity.ts"));
+    const m = await import(/* @vite-ignore */ (loaded.length ? loaded[loaded.length - 1] : "/src/store/activity.ts"));
+    m.useActivity.getState().setRailOpen(true);
+  });
+  await sleep(600);
 }
 
 /**
  * 收起左侧浮层竖条（**走应用自己的路径**：点它那层遮罩）。
  *
  * ⚠️ 不能只是把 `.activity-bar` 的 `is-open` 类摘掉充数：那只是 CSS，store 里
- * `railOpen` 仍是 true ⇒ 唤出按钮不会重新渲染，而且那层 `inset:0` 的遮罩
- * （z-index 58）会盖住右下角那枚 z-index 45 的「右侧工具」按钮——后面任何
- * "点右下角"的操作都会被遮罩吃掉（本脚本第一版就栽在这：工具条永远打不开）。
+ * `railOpen` 仍是 true ⇒ 遮罩（`inset:0`）会盖住底下所有操作。
  */
 async function closeRail(page) {
   if (await page.$(".mobile-rail-backdrop")) {
@@ -1966,6 +1969,13 @@ async function main() {  const executablePath = findChrome();
         //   **它自己的两件如实的事** ✓（比原来那两条更有价值 ✓）。
         //   ⛔ **一条断言都没删** ✗ —— 原「常驻 chrome」与「滚到底够不够得到」**搬家**到了本文件的
         //   **桌面段**（`:2623/2624` 那两行本来就在跑 ✓，对象是 `DESKTOP` ✓）。
+        // ⭐ 2026-10-19 第二刀：主界面那颗同步浮钮**已删** ✓ ⇒ 同步入口搬到「我的」设置屏
+        //   （`MobileSettings` 里的 `<SyncPanel />` ✓，组件本身一个字未改 ✓）。
+        //   ⇒ 先走**底栏「我的」**（真用户路径 ✓），再点那颗触发器；断言与读数一条没删 ✓。
+        await safeEval(spage, () => document.querySelector(".mnote-home")?.click());
+        await sleep(700);
+        await safeEval(spage, () => document.querySelector('[data-tab="settings"]')?.click());
+        await sleep(900);
         await safeEval(spage, () => document.querySelector(".btn-sync")?.click());
         await sleep(1000);
         const pairView = await safeEval(spage, () => {

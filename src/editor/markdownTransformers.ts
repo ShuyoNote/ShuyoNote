@@ -51,6 +51,7 @@ import {
   $createMermaidNode,
   $isMermaidNode,
 } from "./nodes/MermaidNode";
+import { $isDrawingNode } from "./nodes/DrawingNode";
 import { suggestColWidths } from "../lib/tableFit";
 
 const UUID_RE = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
@@ -66,6 +67,51 @@ export const IMAGE: ElementTransformer = {
     const width = match[3] ? +match[3] : null;
     const height = match[4] ? +match[4] : null;
     parentNode.replace($createImageNode(src, match[1], false, width, height));
+  },
+  type: "element",
+};
+
+// `![drawing](attachments/<thumbHash>.<ext>)` —— Excalidraw 块**导出成图片附件引用**。
+//
+// 来由（owner 2026-10-19）：「drawing 导出图片附件」。
+// 旧行为：只把图里提取的**文字**塞一段（纯图形的图在 .md 里**整段消失**）。
+// 现在：优先用**缩略图**（`thumbHash`，内容寻址 ✓ 与附件同一套）；没有缩略图 ⇒ 退回场景原文
+//   （⛔ 不硬编一个不存在的路径）。
+// ⚠️ `resolveImage` 那一路（发社区）会把地址换成 `/attachments/<hash>` —— 见 `exportMarkdown.ts`。
+export const DRAWING: ElementTransformer = {
+  // ⚠️ **⛔ 不写 `dependencies`**（2026-10-19 真机事故：写了它 ⇒ **分栏不能编辑** ✗）：
+  //   `SHUYONOTE_TRANSFORMERS` 还被 **`ColumnEditor`**（分栏里每格的编辑器）与
+  //   `MarkdownShortcutPlugin` 共用，而那些编辑器**没注册 `DrawingNode`** ⇒
+  //   `dependencies` 会让它们在建编辑器/挂插件时抛 "node not configured" ⇒ 整格编辑不了 ✓。
+  //   ⭐ 本 transformer **只导出、不导入**（`replace` 只造段落＋文字）⇒ 根本不需要依赖声明 ✓。
+  //   ⚠️ 但类型上 `dependencies` 是**必填** ⇒ 给**空数组**（空数组 ＝ 不注册任何节点 ✓）。
+  dependencies: [],
+  export: (node: LexicalNode) => {
+    if (!$isDrawingNode(node)) return null;
+    const thumb = node.__thumbHash;
+    if (thumb) {
+      const mime = node.__thumbMime || "image/png";
+      const ext = mime === "image/jpeg" ? "jpg" : mime === "image/webp" ? "webp" : mime === "image/svg+xml" ? "svg" : "png";
+      // ⭐⭐ **2026-10-19（owner 真机：「Excalidraw 导出 markdown zip 时，没有附件」）**：
+      //   原来这里写的是 `attachments/<hash>.png`（一个**凭空的相对路径**）✗ ——
+      //   · 工作区导出：那个目录**不跟着 .md 走** ⇒ 链接指向空气；
+      //   · zip 导出：打包器只认 `attachment://<hash>` 这种**内容寻址引用**
+      //     （`exportMarkdownBundle.ts::ATTACHMENT_REF`）⇒ 它既收不到 hash、也不会把字节装进 zip ✗。
+      //   ⇒ 改成与图片**同一种**引用：`attachment://<thumbHash>.<ext>` ✓
+      //     这样 zip 那边能认出 hash、把缩略图字节装进 `assets/` 并把正文改成相对路径 ✓。
+      return `![drawing](attachment://${thumb}.${ext})`;
+    }
+    // 没有缩略图 ⇒ 退回图上文字（⛔ 不留空段，也不编造路径）
+    return node.__text.trim() || null;
+  },
+  // ⚠️ **只导出、不导入**：Excalidraw 的场景不在 .md 里（它是附件 blob）⇒ 导回来不可能重建那块图。
+  //   所以 `replace` 只**留一行可读文字**，⛔ 不静默吞掉那一行（R192：换对象不删断言 ✓）。
+  regExp: /^!\[drawing\]\(((?:attachment:\/\/|attachments\/)[^)\s]+)\)$/,
+  replace: (parentNode: ElementNode, _children: LexicalNode[], match: string[]) => {
+    const src = (match[1] ?? "").trim();
+    const para = $createParagraphNode();
+    para.append($createTextNode(`（绘图附件：${src}）`));
+    parentNode.replace(para);
   },
   type: "element",
 };
@@ -371,6 +417,9 @@ export const SHUYONOTE_TRANSFORMERS: Transformer[] = [
   HORIZONTAL_RULE,
   IMAGE,
   VIDEO,
+  // ⭐ **2026-10-19（owner：drawing 导出图片附件）**：⭐ 必须**注册进这张表** ✗ ——
+  //   只写 `export const DRAWING` 而不加进来，等于"加了没人跑"（仓库反复踩过的那条）。
+  DRAWING,
   BLOCK_EMBED,
   MERMAID, // ⚠️ 必须在 MULTILINE_ELEMENT_TRANSFORMERS（含 Lexical 的 CODE）之前
   ...MULTILINE_ELEMENT_TRANSFORMERS,

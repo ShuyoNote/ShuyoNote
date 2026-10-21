@@ -1,6 +1,6 @@
 [package]
 name = "shuyonote"
-version = "1.92.21"
+version = "1.92.22"
 description = "A local-first Notion-like note app"
 authors = ["you"]
 edition = "2021"
@@ -272,3 +272,9 @@ boa_engine = { version = "0.21.1", features = ["jsvalue-enum"] }
 #    想长期两全，就让 CI 额外产出一份带符号的 .so 当构建附件（本轮没做）。
 [profile.release]
 strip = true
+
+# ⭐ iOS：`n0-dns-resolver 0.1.0` 用 `target_vendor = "apple"` 收了 `apple.rs`（只该给 macOS）
+#   ⇒ iOS 链接时缺 `_kSCDynamicStoreUseSessionKeys` ✗ ⇒ 用 vendored 版把 cfg 收窄到 macOS、iOS 走 unix ✓
+#   ⚠️ 上游修好后可删掉这一节与 `vendor/` 目录 ✓（见 vendor/n0-dns-resolver/PATCH-NOTE.md）
+[patch.crates-io]
+n0-dns-resolver = { path = "vendor/n0-dns-resolver" }

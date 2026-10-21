@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" role="img" aria-label="首次配对：20 位对码竖排 5 组">
+<title>首次配对 · 20 位对码（浅色重设计 v2）</title>
+<style>
+text{font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei','Helvetica Neue',sans-serif;}
+.t{fill:#1F2329;}.dim{fill:#646A73;}.faint{fill:#8F959E;}
+.acc{fill:#3370FF;}.onacc{fill:#FFFFFF;}
+.warn{fill:#B25E00;}
+</style>
+<rect x="0" y="0" width="390" height="844" rx="46" fill="#0C0D0F"/>
+<rect x="6" y="6" width="378" height="832" rx="40" fill="#FFFFFF"/>
+<rect x="140" y="16" width="110" height="26" rx="13" fill="#0C0D0F"/>
+<text x="32" y="41" class="t" font-size="14" font-weight="600">9:41</text>
+<rect x="296" y="33" width="3.5" height="5" rx="1" fill="#1F2329"/>
+<rect x="301.5" y="30" width="3.5" height="8" rx="1" fill="#1F2329"/>
+<rect x="307" y="27" width="3.5" height="11" rx="1" fill="#1F2329"/>
+<rect x="312.5" y="24" width="3.5" height="14" rx="1" fill="#1F2329"/>
+<path d="M322 34 a9 9 0 0 1 13 0" fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round"/>
+<path d="M325 37.5 a4.5 4.5 0 0 1 7 0" fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round"/>
+<circle cx="328.5" cy="41" r="1.5" fill="#1F2329"/>
+<rect x="342" y="26" width="24" height="12" rx="3.5" fill="none" stroke="#1F2329" opacity=".5"/>
+<rect x="344" y="28" width="17" height="8" rx="1.8" fill="#1F2329"/>
+<rect x="367" y="29.5" width="2.5" height="5" rx="1.2" fill="#1F2329" opacity=".5"/>
+<!-- 顶栏 -->
+<g fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M30 76 L22 84 L30 92"/></g>
+<text x="195" y="90" class="t" font-size="16" font-weight="600" text-anchor="middle">首次配对</text>
+<text x="195" y="120" class="dim" font-size="13" text-anchor="middle">🔒 只需一次 · 两台显示同一串码</text>
+<!-- 20 位对码：5 组 × 4 位 -->
+<g>
+<rect x="29" y="144" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="66" y="180" class="t" font-size="24" font-weight="700" text-anchor="middle">7</text>
+<rect x="115" y="144" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="152" y="180" class="t" font-size="24" font-weight="700" text-anchor="middle">4</text>
+<rect x="201" y="144" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="238" y="180" class="t" font-size="24" font-weight="700" text-anchor="middle">1</text>
+<rect x="287" y="144" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="324" y="180" class="t" font-size="24" font-weight="700" text-anchor="middle">9</text>
+<rect x="29" y="208" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="66" y="244" class="t" font-size="24" font-weight="700" text-anchor="middle">2</text>
+<rect x="115" y="208" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="152" y="244" class="t" font-size="24" font-weight="700" text-anchor="middle">6</text>
+<rect x="201" y="208" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="238" y="244" class="t" font-size="24" font-weight="700" text-anchor="middle">8</text>
+<rect x="287" y="208" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="324" y="244" class="t" font-size="24" font-weight="700" text-anchor="middle">3</text>
+<rect x="29" y="272" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="66" y="308" class="t" font-size="24" font-weight="700" text-anchor="middle">5</text>
+<rect x="115" y="272" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="152" y="308" class="t" font-size="24" font-weight="700" text-anchor="middle">0</text>
+<rect x="201" y="272" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="238" y="308" class="t" font-size="24" font-weight="700" text-anchor="middle">7</text>
+<rect x="287" y="272" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="324" y="308" class="t" font-size="24" font-weight="700" text-anchor="middle">2</text>
+<rect x="29" y="336" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="66" y="372" class="t" font-size="24" font-weight="700" text-anchor="middle">9</text>
+<rect x="115" y="336" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="152" y="372" class="t" font-size="24" font-weight="700" text-anchor="middle">3</text>
+<rect x="201" y="336" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="238" y="372" class="t" font-size="24" font-weight="700" text-anchor="middle">4</text>
+<rect x="287" y="336" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="324" y="372" class="t" font-size="24" font-weight="700" text-anchor="middle">6</text>
+<rect x="29" y="400" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="66" y="436" class="t" font-size="24" font-weight="700" text-anchor="middle">1</text>
+<rect x="115" y="400" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="152" y="436" class="t" font-size="24" font-weight="700" text-anchor="middle">8</text>
+<rect x="201" y="400" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="238" y="436" class="t" font-size="24" font-weight="700" text-anchor="middle">5</text>
+<rect x="287" y="400" width="74" height="54" rx="12" fill="#FFFFFF" stroke="#E5E8EE"/><text x="324" y="436" class="t" font-size="24" font-weight="700" text-anchor="middle">0</text>
+</g>
+<text x="195" y="486" class="dim" font-size="12" text-anchor="middle">20 位 · 5 组 × 4 位 ｜ 两台必须一模一样</text>
+<!-- 信任警示 -->
+<rect x="24" y="506" width="342" height="88" rx="12" fill="#FFF3CC"/>
+<g transform="translate(40,520)" fill="none" stroke="#B25E00" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2 L19 17 H1 Z"/><path d="M10 8 V12"/><circle cx="10" cy="14.6" r=".9" fill="#B25E00" stroke="none"/></g>
+<text x="70" y="532" class="t" font-size="12.5" font-weight="600">对不上一律不建立信任（本机一个字都不收）</text>
+<text x="70" y="554" class="warn" font-size="11.5">两串不一样 → 多半是中间有人在替它应答，</text>
+<text x="70" y="572" class="warn" font-size="11.5">或两台不在同一个网络 → 取消、重连网络。</text>
+<!-- 动作 -->
+<rect x="24" y="620" width="160" height="48" rx="12" fill="#F2F3F5"/>
+<text x="104" y="650" class="t" font-size="15" font-weight="600" text-anchor="middle">取消</text>
+<rect x="206" y="620" width="160" height="48" rx="12" fill="#3370FF"/>
+<text x="286" y="650" class="onacc" font-size="15" font-weight="600" text-anchor="middle">码对得上，确认</text>
+<!-- 诚实说明 -->
+<g transform="translate(120,700)" fill="none" stroke="#D9A300" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1 L10.2 6 L15.5 6.4 L11.5 10 L12.8 15.2 L8 12.4 L3.2 15.2 L4.5 10 L0.5 6.4 L5.8 6 Z"/></g>
+<text x="195" y="730" class="dim" font-size="12" text-anchor="middle">这一步没有「自动通过」：每一次都必须由人点一下。</text>
+<text x="195" y="752" class="faint" font-size="11" text-anchor="middle">code 为 null 时如实显示 reason，不渲染空格子。</text>
+<text x="195" y="772" class="faint" font-size="10" text-anchor="middle">示意码：对码为效果图占位内容，非任何真实配对码。</text>
+<rect x="145" y="820" width="100" height="5" rx="2.5" fill="#1F2329" opacity=".18"/>
+</svg>

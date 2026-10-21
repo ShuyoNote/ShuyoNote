@@ -176,7 +176,7 @@ export function MobilePair() {
         <button className="mpair-back" onClick={goBack} aria-label="返回">
           ‹
         </button>
-        <span className="mpair-head-title">设备配对 · 同步</span>
+        <span className="mpair-head-title">设备直连</span>
       </header>
 
       <div className="mpair-scroll">
@@ -245,12 +245,15 @@ export function MobilePair() {
         {/* ⭐ 黄条（照 owner 2026-10-14 参考图 ✓）：只有**真有问题**时才出现 ✓（`N === 0` ⇒ 不渲染 ✗）。 */}
         {unencryptedCount > 0 && (
           <div className="mpair-warn" role="note" data-testid="mpair-unencrypted-warn">
-            <span aria-hidden>⚠</span> 本机有 <b>{unencryptedCount}</b> 个空间没开加密 ⇒ 内容会在局域网上明文传输
+            <span aria-hidden>⚠</span>
+            <span>
+              本机有 <b>{unencryptedCount}</b> 个空间没开加密 ⇒ 内容会在局域网上明文传输
+            </span>
           </div>
         )}
         {/* ② 如实同步状态：**原样显示后端那句 line** ✓ ＋ 三个读数 ✓ */}
         <section className="mpair-card">
-          <div className="mpair-card-title">本机同步</div>
+          <div className="mpair-card-title">本机同步状态</div>
           {err ? (
             <p className="mpair-line">读不到同步状态：{err}</p>
           ) : !status ? (
@@ -262,6 +265,9 @@ export function MobilePair() {
                 {status.enabled ? "附近发现：已开启" : "附近发现：未开启"}
                 {` · 附近 ${status.peers} 台`}
               </p>
+              {/* ⭐ 2026-10-20 重设计：设计图要求「上次成功时间」。⚠️ 后端没有这个读数
+                  （`useSyncStatus` 只给"此刻"）⇒ 只能如实写「暂无读数」，⛔ 不编时间 ✗。 */}
+              <p className="mpair-line mpair-dim">上次成功时间：暂无读数 · 失败不吞，原样转述后端读数</p>
             </>
           )}
         </section>
@@ -338,14 +344,9 @@ export function MobilePair() {
                       </button>
                     ) : null}
                   </span>
-                  {/* ⛔ 信任/配对后端尚未定形状 ⇒ **明标未接** ✗（禁用 ＋ title 写原因 ✓，⛔ 不做假按钮 ✗） */}
-                  <button
-                    className="mpair-trust"
-                    disabled
-                    title="本屏未接：信任/配对的后端尚未定形状（`secret` 从哪来、握手怎么走还没定）—— 未做 ✗"
-                  >
-                    信任
-                  </button>
+                  {/* ⛔ 2026-10-20：旧那颗 disabled 的「信任」按钮已删 —— 它的文案（"后端尚未定形状"）
+                      已被 2026-10-17 的真配对流程超前；真入口是上面的「接入 / 重新配对」✓。
+                      ⛔ 逐台解除仍未接（见下方那块如实说明）✗。 */}
                 </li>
               ))}
             </ul>
@@ -364,7 +365,8 @@ export function MobilePair() {
         <section className="mpair-card">
           <div className="mpair-card-title">已配对的设备</div>
           <p className="mpair-line mpair-dim">
-            本屏未接 ✗ —— 已配对列表那侧只有「设备标识与时间」，没有名字（规格要求显示"哪台"，⛔ 不许拿标识凑 ✗）。
+            本屏未接 —— 已配对列表那侧只有「设备标识与时间」，没有名字；规格要求显示「哪台」，
+            所以不拿设备标识凑数。
           </p>
         </section>
       </div>

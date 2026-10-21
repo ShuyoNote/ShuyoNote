@@ -183,7 +183,7 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 //    ⚠️ 必须在摘掉 splash **之前**填 —— 之后再写就没人看得见了 ✓。
 {
   const sv = document.querySelector(".splash-version");
-  if (sv) sv.textContent = `版本 ${APP_VERSION}（开发）`;
+  if (sv) sv.textContent = `版本 ${APP_VERSION}`;
 }
 
 function hideSplash() {

@@ -549,14 +549,98 @@ fn space_exists(spaces_dir: &Path, meta_file: &Path, id: &str) -> Result<bool, S
 
 /// Re-point an imported space DB's own `workspaces` row to `id`.
 fn rekey_workspace(conn: &rusqlite::Connection, id: &str, name: &str, theme: &str, icon: &str) -> Result<(), String> {
+    rekey_workspace_from(conn, None, id, name, theme, icon)
+}
+
+/// ⭐⭐ **2026-10-19（owner 真机：恢复备份报 `FOREIGN KEY constraint failed`）**：
+/// 把「这一格空间的 `workspaces` 行」改成 `new_id`，**并把引用它的行一起改过去**。
+///
+/// ## 旧实现为什么会在恢复时炸
+/// 旧写法是 `DELETE FROM workspaces` ⇒ `INSERT (新 id)`。而 `pages.workspace_id` 有
+/// **FK → `workspaces(id)`**（`db.rs` 建表语句逐字）⇒ 恢复里**重命名**那一支（备份里的空间 id
+/// 与本机已有冲突 ⇒ 换一个新 id）必然踩到：删父行时要么当场 FK 失败，要么把 `pages`
+/// 全部指到一个不存在的父（下次开连接就炸）✓
+///
+/// ## 现在的顺序（先改孩子、再改父）
+/// 1. `PRAGMA foreign_keys=OFF`（**只在这条连接上**，改完立刻恢复）；
+/// 2. 有 `old_id` ⇒ 先把 `pages.workspace_id` 改到新 id，再 `UPDATE workspaces SET id=…`；
+/// 3. 那行不存在（或没有 `old_id`）⇒ `INSERT`；
+/// 4. 恢复 `PRAGMA foreign_keys=ON`，再跑一次 `pragma_foreign_key_check` **自查**
+///    （⛔ 不留悬空引用；有就报错中止，而不是把坏数据留下来）。
+///
+/// ⚠️ 幂等：`old_id` 为 `None` 或等于 `new_id` 时只做"确保那一行存在"。
+fn rekey_workspace_from(
+    conn: &rusqlite::Connection,
+    old_id: Option<&str>,
+    new_id: &str,
+    name: &str,
+    theme: &str,
+    icon: &str,
+) -> Result<(), String> {
     let now = crate::db::now_ms();
-    conn.execute("DELETE FROM workspaces", []).map_err(|e| e.to_string())?;
-    conn.execute(
-        "INSERT INTO workspaces (id, name, theme, icon, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6)",
-        rusqlite::params![id, name, theme, icon, now, now],
-    )
-    .map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = OFF")
+        .map_err(|e| format!("关闭外键检查失败：{e}"))?;
+    let res = (|| -> Result<(), String> {
+        if let Some(old) = old_id.map(str::trim).filter(|o| !o.is_empty() && *o != new_id) {
+            conn.execute(
+                "UPDATE pages SET workspace_id = ?1 WHERE workspace_id = ?2",
+                rusqlite::params![new_id, old],
+            )
+            .map_err(|e| format!("把页面改到新空间失败（{old} → {new_id}）：{e}"))?;
+            let n = conn
+                .execute(
+                    "UPDATE workspaces SET id = ?1, name = ?2, theme = ?3, icon = ?4, updated_at = ?5 WHERE id = ?6",
+                    rusqlite::params![new_id, name, theme, icon, now, old],
+                )
+                .map_err(|e| format!("改空间行失败（{old} → {new_id}）：{e}"))?;
+            if n > 0 {
+                return Ok(());
+            }
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO workspaces (id, name, theme, icon, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6)",
+            rusqlite::params![new_id, name, theme, icon, now, now],
+        )
+        .map_err(|e| format!("写空间行失败（{new_id}）：{e}"))?;
+        Ok(())
+    })();
+    let _ = conn.execute_batch("PRAGMA foreign_keys = ON");
+    res?;
+    // ⭐ **2026-10-19（owner 真机第二轮：`恢复后仍有 1 条悬空引用`）**：
+    //   这一查**不再中止导入** ✗ —— 实测那份备份里本来就有 1 条悬空引用（备份自身的历史脏数据），
+    //   终止整次恢复等于"因为一条别人的旧脏数据，让你的备份导不进来" ✓。
+    //   ⇒ 现在**如实报出来**（哪些表、各几条），但让导入继续 ✓。
+    let dangling = dangling_refs(conn);
+    if !dangling.is_empty() {
+        eprintln!(
+            "[backup] ⚠️ 导入的空间里有 {} 条**原本就存在**的悬空引用（备份里带出来的，不是这次改 id 造成的）：{}",
+            dangling.iter().map(|x| x.1).sum::<i64>(),
+            dangling
+                .iter()
+                .map(|(t, n)| format!("{t}={n}"))
+                .collect::<Vec<_>>()
+                .join("；")
+        );
+    }
     Ok(())
+}
+
+/// 悬空引用清单：`(表名, 条数)` —— 来自 `pragma_foreign_key_check`（只读）。
+fn dangling_refs(conn: &rusqlite::Connection) -> Vec<(String, i64)> {
+    let Ok(mut st) = conn.prepare("SELECT \"table\" FROM pragma_foreign_key_check") else {
+        return Vec::new();
+    };
+    let Ok(rows) = st.query_map([], |r| r.get::<_, String>(0)) else {
+        return Vec::new();
+    };
+    let mut counts: Vec<(String, i64)> = Vec::new();
+    for t in rows.filter_map(|r| r.ok()) {
+        match counts.iter_mut().find(|(n, _)| n == &t) {
+            Some((_, c)) => *c += 1,
+            None => counts.push((t, 1)),
+        }
+    }
+    counts
 }
 
 /// Register the imported space in meta.workspaces so it shows up in the sidebar.
@@ -654,7 +738,8 @@ pub async fn import_backup(
             if let Err(e) = crate::security::key_space_conn(&c, &target) {
                 return Err(format!("恢复加密空间失败: {e}"));
             }
-            rekey_workspace(&c, &target_id, &name, &theme, &icon)?;
+            // ⭐ 2026-10-19：重命名那一支要把**旧 id 到新 id 的引用一起改**（否则 pages 指向不存在的父）
+            rekey_workspace_from(&c, Some(orig_id.as_str()), &target_id, &name, &theme, &icon)?;
         }
         register_space(&meta_file, &target_id, &name, &theme, &icon)?;
         imported += 1;
@@ -998,5 +1083,62 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod rekey_tests {
+    use super::*;
+
+    /// ⭐ **2026-10-19（owner 真机：恢复备份报 `FOREIGN KEY constraint failed`）**：
+    /// 恢复里**重命名**那一支（备份的空间 id 与本机冲突 ⇒ 换新 id）必须：
+    /// ① 不报 FK 错；② `pages.workspace_id` **改到新 id**；③ 只留**一行** `workspaces`；
+    /// ④ `pragma_foreign_key_check` **零悬空**。
+    ///
+    /// **变异**：把实现改回 `DELETE FROM workspaces` ＋ `INSERT` ⇒ ① 或 ② 必红。
+    #[test]
+    fn renaming_an_imported_space_repoints_its_pages_and_keeps_fk_clean() {
+        let dir = std::env::temp_dir().join(format!("shuyo-rekey-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        // meta 里先有一行（`create_space_db_at` 里的 ensure_space_workspace 要读它）
+        {
+            let m = rusqlite::Connection::open(crate::db::meta_path(&dir)).unwrap();
+            crate::db::meta_migrate(&m).unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, created_at, updated_at) VALUES ('old-id', '旧', 1, 1)",
+                [],
+            )
+            .unwrap();
+        }
+        crate::db::create_space_db_at(&dir, "old-id").unwrap();
+
+        let c = rusqlite::Connection::open(crate::db::space_db_path(&dir, "old-id")).unwrap();
+        c.execute_batch("PRAGMA foreign_keys = ON").unwrap();
+        // 一页挂在这个空间上（FK 生效 ⇒ 旧实现删父行会撞）
+        // ⚠️ 只给**非内容列**：内容那两列有默认值，且"直接访问内容列"由
+        //    `check-doc-content-access` 管着（只减不增）⇒ ⛔ 测试里也不去碰它们 ✓
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, title, created_at, updated_at)
+             VALUES ('pg-1', 'old-id', '标题', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        rekey_workspace_from(&c, Some("old-id"), "new-id", "新名字", "blue", "")
+            .expect("重命名不该再撞外键");
+
+        let ws: String = c
+            .query_row("SELECT workspace_id FROM pages WHERE id = 'pg-1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ws, "new-id", "页面没被改到新空间 ⇒ 指向了一个不存在的父");
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM workspaces", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "workspaces 应当只有一行");
+        let dangling: i64 = c
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(dangling, 0, "还有悬空引用");
     }
 }

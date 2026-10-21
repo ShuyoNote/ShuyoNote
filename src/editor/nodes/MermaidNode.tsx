@@ -418,7 +418,20 @@ function MermaidView({
   }, [src]);
 
   return (
-    <div className="editor-mermaid" ref={rootRef} onClick={(e) => e.stopPropagation()}>
+    <div
+      className="editor-mermaid"
+      ref={rootRef}
+      onClick={(e) => e.stopPropagation()}
+      // ⭐⭐ **2026-10-19（owner 真机：「mermaid 块代码编辑时，退格就把整个块删掉了」）**：
+      //   真因：宿主 `<span>`（`createDOM`）与这一层都**没有** `contentEditable={false}`，
+      //   而代码页那个 `<textarea>` 是纯 DOM ⇒ **Backspace 冒泡到 Lexical 的 root**
+      //   ⇒ 编辑器以为"光标在块上、你按了退格" ⇒ 把整个 DecoratorNode 删掉 ✓
+      //   ⇒ 两处一起治：① 这一层标成**不可编辑**（表单控件不受它影响，里面那个 textarea 照样能打字）；
+      //     ② 键事件**不再冒泡**给编辑器 ✓（⛔ 不 `preventDefault`：textarea 自己的退格/删除/方向键照常）。
+      //   全屏退出走浏览器原生 fullscreen（`fullscreenchange`），不依赖这里的按键 ✓。
+      contentEditable={false}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
       {/* ⭐ 2026-10-05：顶栏 = 左边「图表/代码」页签 ＋ 语法标签，右边 缩放/下载/全屏。
           整条**悬停才出现**（owner 前两条要求的延续）；全屏时强制显示（那时鼠标不一定在块上）。
           ⛔ 别把它做成 `*-overlay` / `*-popover` 类名 —— 这不是应用自建浮层（见上面全屏那段注释）。

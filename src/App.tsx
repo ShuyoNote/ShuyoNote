@@ -30,8 +30,11 @@ import { MobileAbout } from "./components/MobileAbout";
 import { MobileSearch } from "./components/MobileSearch";
 // ⭐ 阶段 2（R205）：移动端**自己的设置屏**（原来屏在、门没有 ✗ ⇒ 现在由手机 ⚙️ 进 ✓）。
 import { MobileSettings } from "./components/MobileSettings";
+// ⭐ 第二刀（2026-10-19）：手机档**底边栏 ＋ 浮「＋」** —— 与删 ☰ / 删同步浮钮**同一笔** ✓
+//   （只删 ☰ 不接底栏 ⇒ 设置/关于/设备配对全成死屏 ✗）。
+import { MobileComposeFab, MobileTabBar } from "./components/MobileTabBar";
 // ⭐ 2026-10-10：手机档的**「设备配对 · 同步」屏**（效果图 `08-pair.svg`，规格 §4.8）——
-//   入口＝手机档那颗悬浮「同步」胶囊 ✓（桌面档一个字不动 ✓）。
+//   入口＝底栏「我的」设置屏里的 `<SyncPanel />` ✓（2026-10-19 第二刀从主界面浮钮搬过去 ✓；桌面档一个字不动 ✓）。
 import { MobilePair } from "./components/MobilePair";
 // ⭐ d1：移动端「首次配对」屏（骨架 ✓，对码未接 ✗）
 import { MobilePairCode } from "./components/MobilePairCode";
@@ -61,7 +64,7 @@ import { TextRepairRunner } from "./components/TextRepairRunner";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
 import { CommentsDrawer } from "./components/CommentsDrawer";
 import { InlineAiDraftBar } from "./components/InlineAiDraftBar";
-import { SmileIcon, ImageIcon, PropertyIcon, TagIcon, MenuIcon } from "./components/icons";
+import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
 import { LockScreen } from "./components/LockScreen";
 import { useVault } from "./hooks/useVault";
@@ -947,8 +950,19 @@ function NoteEditor({ pageId }: { pageId: string }) {
  *    这两处在渲染链里**顺序不同** ✓：`settings` 支排在 `aboutOpen`／`currentId` **之前** ✓，
  *    capture/search/home 排在**最后** ✓ ⇒ 提成变量挪到最后会**改变行为** ✗
  *    （例如开着一条笔记时进设置，会被阅读屏抢走 ✗）。⇒ 零行为变化 ✓、也⛔ 没有第二份外壳 ✓。
+ *
+ * ⭐ 2026-10-20：多一个**显式**选项 `showFab`（默认 true ✓，既有调用一个字不改 ✓）——
+ *    留给需要整屏专注、不挂那颗浮「＋」的移动屏（⭐ 参数保留，本轮无调用方 ✓）。
  */
-const wrapMobile = (body: React.ReactNode) => <div className="m-tabshell">{body}</div>;
+const wrapMobile = (body: React.ReactNode, opts?: { showFab?: boolean }) => (
+  <div className="m-tabshell">
+    {body}
+    {/* ⭐ 第二刀：底栏三项（笔记/搜索/我的）＋ 右下浮「＋」。两者都 `position: fixed` ✓，
+        所以放在 body 之后即可（不参与 `.m-tabshell` 的 column flex ✓）。 */}
+    <MobileTabBar />
+    {opts?.showFab === false ? null : <MobileComposeFab />}
+  </div>
+);
 
 function App() {
   const vault = useVault();
@@ -1061,9 +1075,14 @@ function AppShell() {
     //   否则"存完回首页"与「‹ 首页」浮标都会被这一步**立刻抵消** ✗
     //   （队友实测：DB 里真写进去了 ✓、点击也到了应用 ✓，但界面就是不动 ✗；
     //    真因就是这个"没选中就打开第一页"的兜底 ✗）。
-    //   ⚠️ 条件用 `isMobile`（与渲染 `MobileHome` 的那一支**同一个条件** ✓）
-    //   ⇒ **桌面档一个字不动** ✓。
-    if (isMobile && useMobileNav.getState().screen === "home") return;
+    // ⭐ 2026-10-20：手机上**任何一屏**都不许被这条兜底拽走 ✓（原来只排除 home ✗）——
+    //   实测真事故 ✗：`createPage` 内部会 `loadPages()` ✓ ⇒ `pages` 一变本 effect 就跑，
+    //   在手机上把 `currentId`（此刻还是 null）打开成**列表第一页（欢迎页）** ✗，
+    //   而那次 `openPage` 比 `createPage` 末尾的 `set({ currentId: 新页 })` **更晚落定**
+    //   ⇒ 刚生成的笔记被顶掉、用户看到旧页 ✗。
+    //   启动时"打开记忆里那一页"由 `loadPages` 自己完成（`store/notes.ts` ✓）⇒
+    //   手机上这条兜底本来就是多余的 ✓；桌面档一个字不动 ✓。
+    if (isMobile) return;
     if (!currentId && pages.length > 0 && useViewStore.getState().view === "notes") {
       const first = pages.find((p) => p.kind === "page" || p.kind === "database");
       if (first) useNotes.getState().openPage(first.id);
@@ -1166,7 +1185,11 @@ function AppShell() {
           />
         )}
         {/* 窄屏：左侧竖条改成浮层，默认收起（48px 常驻会吃掉 390px 视口的 12%）。
-            左下角一个小圆钮唤出，点遮罩或选完活动自动收回。 */}
+            ⭐ 2026-10-19 第二刀：原来左下角的 ☰（`.mobile-rail-toggle`）**已删** ✓ ——
+            手机上不再有"展开工具栏"的入口 ✓；设置 / 关于 / 设备配对改由底栏「我的」进 ✓
+            （见 `MobileTabBar.tsx` ✓）。⇒ `railOpen` 不会再被 UI 置真 ✓；下面那支遮罩代码**保留**
+            （无害 ✓，门禁里仍可经 store 直接打开它来量几何 ✓）。
+            ⚠️ 同步入口也**不再挂在这里** ✓：它搬进了 `MobileSettings`（底栏「我的」✓）。 */}
         {isMobile && railOpen && (
           <div
             className="mobile-rail-backdrop"
@@ -1174,45 +1197,32 @@ function AppShell() {
             aria-hidden
           />
         )}
-        {isMobile && !railOpen && (
-          <button
-            className="mobile-rail-toggle"
-            title="展开工具栏"
-            aria-label="展开工具栏"
-            onClick={() => useActivity.getState().setRailOpen(true)}
-          >
-            <MenuIcon width={18} height={18} />
-          </button>
-        )}
-        {/* 手机上**整个顶栏不渲染**（`TitleBar` 在 `!desktop` 时 return null），于是桌面那个
-            `.titlebar-sync` 根本不存在，同步入口只剩"侧栏抽屉 → 同步"这一条（要开抽屉才看得见）。
-            这里在主界面上再放一个：与「展开工具栏」并排、1 次点击可达；窄屏下面板自己会变成
-            底部弹层（`usePopover` 的 `is-sheet`）。侧栏抽屉里那个仍然保留（两处入口互不影响）。 */}
-        {isMobile && !railOpen && (
-          <div className="mobile-sync-slot">
-            <SyncPanel />
-          </div>
-        )}
-      {pdfWhere === "inline" ? (
+      {/* ⭐⭐ 2026-10-20（跨机实测报回）：**桌面主区这些分支必须带 `!isMobile`** ✗ ——
+          它们原本排在手机分支**前面** ⇒ 只要其中任一状态成立（例如上次的看板/关系图被还原、
+          PDF/文件预览还开着、模板中心打开），手机就会渲染**桌面界面** ✗（owner 报的「iOS 上还是桌面」）。
+          ⇒ 这里的 `!isMobile &&` 是**手机优先**的硬边界；新增桌面主区分支时必须照写。
+          ⚠️ 不要用「把手机分支整体提前」来解决 —— 那会动桌面骨架，风险更大。
+          （回归判据：`src/App.mobileBranchOrder.test.ts` ✓） */}
+      {!isMobile && pdfWhere === "inline" ? (
         <div className="main pdf-main"><PdfReader inline /></div>
-      ) : previewWhere === "inline" ? (
+      ) : !isMobile && previewWhere === "inline" ? (
         /* ⚠️ **2026-10-04 加**：⭐ 文件预览在桌面端也进主区 ✓（与上面 PDF 那条**逐字同形** ✓）——
            ⭐ 它顶替的是"文件"视图（预览从文件列表里点开 ✓）⇒ ⭐ 关掉之后回到原来的视图 ✓
            （⭐ `view` 没有被改过 ✓，⭐ patch 只是临时占了主区 ✓）。 */
         <div className="main"><FilePreviewDialog inline /></div>
-      ) : templateOpen ? (
+      ) : !isMobile && templateOpen ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><TemplateCenterView /></Suspense></div>
-      ) : view === "graph" ? (
+      ) : !isMobile && view === "graph" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><GraphView /></Suspense></div>
-      ) : view === "timeline" ? (
+      ) : !isMobile && view === "timeline" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><TimelineReview /></Suspense></div>
-      ) : view === "map" ? (
+      ) : !isMobile && view === "map" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><KnowledgeMap /></Suspense></div>
-      ) : view === "board" ? (
+      ) : !isMobile && view === "board" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><BoardView /></Suspense></div>
-      ) : view === "files" ? (
+      ) : !isMobile && view === "files" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><FileManagerView /></Suspense></div>
-      ) : view === "sync" ? (
+      ) : !isMobile && view === "sync" ? (
         /* ⭐ **P-2a-1（2026-10-13）**：⭐ 同一份内容（`SyncPanel` 的内容体 ✓）也能进**内容区** ✓ ——
            ⚠️ 抽屉那支（触发器 ＋ 浮层）**逐字不变** ✓；这里只是把同一份 JSX 放进 `main` ✓。 */
         <div className="main"><SyncPanel contentOnly /></div>
@@ -1230,7 +1240,7 @@ function AppShell() {
            它排在 `aboutOpen` **之前**（照 `pair` 的先例 ✓）：那颗 ⚙️ 是"去开一个面板"的**动作** ✓
            ⇒ 不管底下开着什么（含"关于"是否已打开 ✓），点了就该整屏看到移动设置 ✓。
            ⛔ 桌面档**一个字不动** ✗（桌面的 ⚙️ 仍开那个 `SettingsDialog` ✓，分岔在 `ActivityBar` 里 ✓）。 */
-        wrapMobile(<MobileSettings />)
+        wrapMobile(<MobileSettings />, { showFab: false })
       ) : isMobile && aboutOpen ? (
         /* ⭐ 2026-10-10：手机档的**「关于」屏**（效果图 `10-about.svg`，规格 §4.10）——
            它排在 `currentId` **前面**：从设置里点「关于与更新」时，不管底下有没有开着页，
@@ -1255,6 +1265,9 @@ function AppShell() {
           ) : (
             <MobileHome />
           ),
+          /* ⭐ 2026-10-20 重设计：浮「＋」只出现在**首页**（效果图 01 有；02/03/07 没有）
+             ⇒ capture/search 隐藏，避免它压住快捷工具栏/搜索结果。 */
+          { showFab: mobileScreen === "home" },
         )
       ) : (
         <div className="main empty">

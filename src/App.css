@@ -24692,12 +24692,94 @@ body.is-plugin-panel-open .main {
    ⛔ 不改桌面 `.main` 一个字节 ✗；⛔ 不用 `transform` 做转场 ✗（带 transform 的祖先会成为包含块 ⇒
    里面 `position:fixed` 的浮层会偏 ✗ —— 那条坑 `:21278` 附近有逐字记录 ✓）。 */
 /* ⭐ 移动端内容外壳（纯重构那一刀 ✓）：把所有移动屏**统一裹一层** ✓，为底栏 ＋ 留白留位置 ✓。
-   ⚠️ 本轮**不加** `padding-bottom` ✗（留白跟底栏同一刀 ✓ —— 否则底部会多一截空白 ✗）。 */
+   ⭐ 2026-10-19 第二刀：底栏落地 ⇒ **只在这一处**给内容让出 64px（56px 栏高 ＋ 8px 呼吸位 ✓）。
+   ⛔ 别逐屏加 `padding-bottom` ✗ —— 那会在没有底栏的屏（阅读/配对）上多出一截空白 ✓。 */
 .m-tabshell {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  padding-bottom: calc(64px + var(--sab));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端**底边栏 ＋ 浮「＋」**（2026-10-19 第二刀）
+   ⚠️ 只有 `.m-tabshell` 里会渲染它们（`wrapMobile` ✓：设置屏 ＋ 首页/快速记录/搜索）✓。
+   ⚠️ 栏自身 `position: fixed`：不参与 `.m-tabshell` 的 column flex ✓（否则会给内容再挤一次）。
+   ⚠️ 高度 56（在 56–64 的口径内 ✓）＋ 底部系统手势区 `--sab` ✓；
+      内容让位靠上面 `.m-tabshell` 那**唯一一处** padding-bottom ✓。
+   ========================================================================== */
+.mtab-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 45;
+  display: flex;
+  height: calc(56px + var(--sab, 0px));
+  padding-bottom: var(--sab, 0px);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.mtab-item {
+  flex: 1 1 0;
+  min-width: 0;
+  /* 触屏命中区口径 ≥44（行高给满 56） */
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+/* 选中态＝**实心主色**：图标胶囊填 `--accent`，文字同色（`--on-accent` 是仓里既有的前景色 ✓）。 */
+.mtab-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 24px;
+  border-radius: 999px;
+  color: inherit;
+}
+.mtab-item.is-on {
+  color: var(--accent);
+}
+.mtab-item.is-on .mtab-ico {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.mtab-label {
+  line-height: 1.1;
+}
+/* 浮「＋」：右下、**底栏上方**（56 栏高 ＋ 系统手势区 ＋ 16 呼吸位 ✓），56×56 ≥44 ✓。
+   ⚠️ 它挂在 `.m-tabshell` 下、`position: fixed` ⇒ 不会被 `.mshell` 的 overflow 裁掉 ✓。 */
+.mtab-fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(56px + var(--sab, 0px) + 16px);
+  z-index: 46;
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: var(--shadow-lg);
+  cursor: pointer;
+}
+.mtab-fab:active {
+  filter: brightness(0.92);
 }
 
 .mshell {
@@ -25102,6 +25184,19 @@ body.is-plugin-panel-open .main {
   margin: 2px 2px 0;
   font-size: 12px;
   color: var(--text-faint);
+}
+/* ⭐ 2026-10-19 第二刀：同步入口搬进设置屏（`<SyncPanel />` 自带触发器 ✓，组件未改 ✓）。
+   沿用原主界面那颗浮钮的命中区与外观口径（44×44 胶囊 ✓）——
+   它在一张卡片里，不再需要 fixed 定位 ✓。 */
+.mset .btn-sync {
+  min-width: 44px;
+  min-height: 44px;
+  margin-top: 4px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
 }
 
 /* ⭐ 2026-10-10：手机档"回首页"浮标（台账 R188 的 (b) ✓）—— 只在**开着某个页面**时出现 ✓。
@@ -26555,4 +26650,437 @@ body.is-plugin-panel-open .main {
 .sync-popover .license-block .license-paste-input:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   2026-10-20 移动端「浅色明快卡片版」重设计落地（视觉层）
+   ──────────────────────────────────────────────────────────────────────────
+   依据：docs/plans/mobile/mockups/2026-10-20-redesign/（10 图）。
+   ⛔ 只覆盖 `.m*` 移动命名空间：桌面选择器一个不碰；导航/屏栈结构不动。
+   ⛔ 颜色一律走 token（浅/深主题都跟），不写死品牌色；只有渐变/阴影用
+      `color-mix` 从 `--accent` 派生（Chrome/Safari 均支持）。
+   ⚠️ 命中区 ≥44 的既有约束全部保留：这里只改观感，不缩触控尺寸。
+   ========================================================================== */
+
+/* 屏底：浅色版是纯白；深色主题仍由 token 跟随。 */
+.mhome,
+.mcap,
+.msearch,
+.mread,
+.mabout,
+.mpair,
+.mpair-code,
+.mset {
+  background: var(--bg);
+}
+
+/* ---- 底边栏：白底细线；选中＝实心胶囊（与效果图一致） ---- */
+.mtab-bar {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -6px 18px rgba(16, 24, 40, 0.04);
+}
+.mtab-ico {
+  width: 44px;
+  height: 26px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.mtab-item.is-on .mtab-ico {
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.mtab-fab {
+  background: linear-gradient(
+    135deg,
+    var(--accent) 0%,
+    color-mix(in srgb, var(--accent) 55%, #ffffff) 100%
+  );
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* ---- 01 首页：渐变主卡 ＋ 白卡列表 ---- */
+.mhome {
+  padding: 20px 16px calc(26px + var(--sab));
+  gap: 12px;
+}
+.mhome-head {
+  margin: 2px 2px 8px;
+}
+.mhome-title {
+  font-size: 26px;
+  letter-spacing: -0.4px;
+}
+.mhome-sub {
+  margin-top: 5px;
+  font-size: 13px;
+}
+.mshell .mhome-card {
+  min-height: 84px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+.mshell .mhome-card.is-accent {
+  border: 0;
+  background: linear-gradient(
+    135deg,
+    var(--accent) 0%,
+    color-mix(in srgb, var(--accent) 55%, #ffffff) 100%
+  );
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.mhome-card-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: var(--bg-sidebar);
+  font-size: 20px;
+}
+.mhome-card.is-accent .mhome-card-icon {
+  background: rgba(255, 255, 255, 0.18);
+}
+.mhome-card-title {
+  font-size: 18px;
+}
+.mhome-card.is-accent .mhome-card-title {
+  font-size: 19px;
+}
+.mhome-card-hint {
+  font-size: 12.5px;
+}
+.mhome-recent-list {
+  margin-top: 10px;
+}
+.mhome-recent-item {
+  min-height: 52px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.mhome-recent-item:first-child {
+  border-top: 0;
+}
+.mhome-recent-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--bg-sidebar);
+  color: var(--text-dim);
+}
+.mhome-recent-title {
+  font-size: 15px;
+}
+
+/* ---- 02 快速记录：圆角输入区 ＋ 底部白色工具栏（去掉旧汉堡让位） ---- */
+.mcap {
+  padding: 16px 16px calc(8px + var(--sab));
+  gap: 12px;
+}
+.mcap-title {
+  font-size: 24px;
+}
+.mcap-save {
+  min-width: 68px;
+  min-height: 44px;
+  border-radius: 999px;
+  font-size: 15px;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.mcap-area {
+  padding: 16px;
+  border-radius: 16px;
+  font-size: 16px;
+  line-height: 1.8;
+}
+.mcap-hint {
+  font-size: 12px;
+}
+.mcap-bar {
+  gap: 8px;
+  /* ⛔ 旧稿这里给已删除的悬浮 ☰ 让了 56px；2026-10-19 已删 ☰ ⇒ 让位一并去掉。 */
+  padding: 10px 0 calc(4px + var(--sab));
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.mcap-bar-btn {
+  min-width: 48px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+.mcap-bar-label {
+  font-size: 10.5px;
+}
+
+/* ---- 07 我的 / 设置：卡片＋分组＋分段控件 ---- */
+.mset {
+  padding: 18px 16px calc(24px + var(--sab));
+  gap: 14px;
+}
+.mset-head {
+  border-bottom: 0;
+  padding-bottom: 2px;
+}
+.mset-title {
+  font-size: 26px;
+  letter-spacing: -0.3px;
+}
+.mset-close {
+  background: var(--bg-sidebar);
+}
+.mset-card {
+  border-radius: 16px;
+  padding: 14px 16px;
+  box-shadow: var(--shadow-xs);
+}
+.mset-group {
+  margin-bottom: 8px;
+}
+.mset-row {
+  min-height: 48px;
+  gap: 12px;
+}
+.mset-ico {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.mset-row-title {
+  font-size: 15.5px;
+}
+.mset-row-sub {
+  font-size: 12.5px;
+}
+.mset-seg {
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--bg-sidebar);
+}
+.mset-seg-btn {
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  font-size: 14px;
+}
+.mset-seg-btn.is-on {
+  border: 0;
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+.mset-status {
+  margin-top: 10px;
+  padding-top: 12px;
+}
+/* 「上次成功时间：暂无读数」—— 设计目标；后端暂时没有这个读数，文案不许写成已同步。 */
+.mset-last {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+.mset .btn-sync {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-radius: 999px;
+}
+
+/* ---- 04 阅读：浅色提示卡与正文排版 ---- */
+.mread-head {
+  padding: 0 14px 10px;
+}
+.mread-title {
+  font-size: 27px;
+}
+.mread-tip {
+  border: 0;
+  border-radius: 16px;
+  padding: 14px 16px;
+  background: var(--accent-soft);
+}
+.mread-tip-title {
+  font-size: 14px;
+}
+.mread-p {
+  margin-bottom: 14px;
+  font-size: 16px;
+  line-height: 1.85;
+}
+
+/* ---- 03 搜索：聚焦框、结果白卡、当前命中 ---- */
+.msearch-head {
+  padding: 0 14px 10px;
+}
+.msearch-back {
+  border: 0;
+  background: var(--bg-sidebar);
+}
+.msearch-box {
+  height: 50px;
+  border-radius: 16px;
+  background: var(--surface);
+}
+.msearch-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.msearch-input {
+  height: 46px;
+  font-size: 16px;
+}
+.msearch-chip {
+  font-size: 13px;
+  padding: 0 12px;
+}
+.msearch-item {
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: var(--shadow-xs);
+}
+.msearch-item.is-active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.msearch-item-title {
+  font-size: 16px;
+}
+
+/* ---- 06 划词卡片：浅色浮卡、轻阴影 ---- */
+.mdict {
+  border-radius: 18px;
+  box-shadow: 0 12px 32px rgba(16, 24, 40, 0.18);
+}
+.mdict-btn {
+  border-radius: 999px;
+}
+
+/* ---- 08 设备直连：白卡＋浅底状态胶囊 ---- */
+.mpair-card {
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: var(--shadow-xs);
+}
+.mpair-item {
+  padding: 12px 0;
+}
+.mpair-entry {
+  min-height: 44px;
+  border-radius: 999px;
+}
+.mpair-cap {
+  min-height: 36px;
+}
+.mpair-nonearby {
+  border-radius: 14px;
+  background: var(--bg-sidebar);
+}
+
+/* ---- 08b 首次配对：浅色对码格 ---- */
+.mpair-code-cell {
+  border-radius: 12px;
+  background: var(--bg-sidebar);
+  font-size: 23px;
+}
+.mpair-code-confirm,
+.mpair-code-cancel {
+  border-radius: 12px;
+}
+
+/* ---- 10 关于：白卡、浅色按钮 ---- */
+.mabout-card {
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: var(--shadow-xs);
+}
+.mabout-btn {
+  border-radius: 999px;
+}
+.mabout-btn.is-primary {
+  background: linear-gradient(
+    135deg,
+    var(--accent) 0%,
+    color-mix(in srgb, var(--accent) 55%, #ffffff) 100%
+  );
+  border-color: transparent;
+}
+.mabout-link {
+  min-height: 48px;
+}
+
+/* 深色主题下不做另版设计，但保持可读：白底阴影减半，避免在深底上发灰。 */
+[data-theme="dark"] .mhome-card,
+[data-theme="dark"] .mset-card,
+[data-theme="dark"] .msearch-item,
+[data-theme="dark"] .mpair-card,
+[data-theme="dark"] .mabout-card {
+  box-shadow: none;
+}
+
+/* 快速记录输入区：聚焦时给一圈软强调，而不是浏览器默认的粗蓝框。 */
+.mcap-area:focus,
+.mcap-area:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* 设置里的行按钮：`.mset-row` 同时用于 div 和 button —— button 默认边框/底色必须清掉，
+   否则浅色下会出现一圈黑框（2026-10-20 首轮截图实测）。 */
+button.mset-row {
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-family: inherit;
+}
+button.mset-row:active {
+  background: var(--hover);
+}
+button.mset-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 同步入口那颗云图标按钮（`SyncPanel` 的 `.btn-sync`）放到「设备配对与同步」行右侧，
+   不单独占一行（重设计 07 里那行是「一行设置」）。 */
+.mset-card:has(> .sync-panel) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 8px;
+}
+.mset-card:has(> .sync-panel) > .mset-group,
+.mset-card:has(> .sync-panel) > .mset-last,
+.mset-card:has(> .sync-panel) > .mset-status {
+  grid-column: 1 / -1;
+}
+.mset-card:has(> .sync-panel) > .mset-row {
+  grid-column: 1;
+}
+/* 同步行右侧只留云图标那颗真入口（箭头会与它重复）。 */
+.mset-card:has(> .sync-panel) > .mset-row .mset-go {
+  display: none;
+}
+.mset-card:has(> .sync-panel) > .sync-panel {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: center;
+  margin: 0;
+}
+
+/* 08 加密黄条：文字必须在一个 flex 子项里，否则每个 text node 都会成为独立 flex 项，
+   出现「本机／有／1 个空间」竖着断开（2026-10-20 首轮截图实测）。 */
+.mpair-warn > span:last-child {
+  flex: 1 1 auto;
+  min-width: 0;
 }

@@ -56,7 +56,7 @@ describe("isBlockGestureExcluded：块手势该放行哪些浮层/手柄", () =>
     expect(isBlockGestureExcluded(document.createTextNode("裸文本"))).toBe(false);
   });
 
-  it("选择器本身把 8 个类都写进去了（防止有人删元素时漏掉一项 ✓）", () => {
+  it("选择器本身把该类都写进去了（防止有人删元素时漏掉一项 ✓）", () => {
     for (const cls of [
       ".block-handle",
       ".block-grip-menu",
@@ -66,6 +66,11 @@ describe("isBlockGestureExcluded：块手势该放行哪些浮层/手柄", () =>
       ".tag-picker",
       ".slash-menu",
       ".table-resize-handle",
+      // ⭐ 2026-10-19（owner：「多栏点不进去、没有光标」）：分栏那格是**要输入的地方** ✗ ——
+      //    不在清单里 ⇒ 被 `ClickToEditPlugin` 判成"空白安全区" ⇒ `preventDefault()` 起框选
+      //    ⇒ 浏览器默认聚焦被吃掉 ⇒ 光标进不去 ✓（CDP 堆栈逐字见 `blockGestures.ts`）
+      ".editor-column-editable",
+      ".editor-column-body",
     ]) {
       expect(BLOCK_GESTURE_EXCLUDED_SELECTOR).toContain(cls);
     }

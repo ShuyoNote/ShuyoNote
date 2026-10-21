@@ -319,9 +319,13 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-10-11-one-click-trust-decision.md](plans/2026-10-11-one-click-trust-decision.md) | ⭐ **决定：「点一下就通」—— 个人空间一键信任（owner 2026-10-11 逐字「确定：点一下就通」）**：⭐ **部分取代** `2026-09-25-b-slice-pake-selection.md` 的「走 ①」—— 主路径不再要用户逐位核对长比对码 ✓。⚠️ 那道安全职责**换人承担**（⛔ 不许悄悄消失）：**两端各点一次**（单方面点完不算）⇒ 冒充者必须在**被冒充的那台**上也点一下 ✓；⛔ 不做「谁先广播谁算数」・⛔ 不引任何密码学实现・`INV-NS-pairing-code-length-kept`（60 位）**仍然有效**（本决定**不引入任何新码**）✓。抄码通道照旧保留在「严格模式（高级）」✓。落地顺序 ①纯函数（判据先写、先看它红）⇒ ②命令 ⇒ ③界面 ⇒ ④**最后**才写文案 ✓ |
 | [plans/2026-10-11-personal-mesh-device-level.md](plans/2026-10-11-personal-mesh-device-level.md) | ⭐ **方案：个人空间的网格设置改为「设备级」（owner 2026-10-11 重申「个人空间是设备级」，走「甲：先写方案」）**：⭐ 口径＝监听地址／配对暗号／口令**一处填好、所有个人空间共用** ✓；⛔ **团队空间本期不动**（它逐空间是有意的）。⭐ 实测三处落点：`mesh_bind`／`mesh_token`（设置表，键含 `space_id`）／`mesh_room`（`meta.sync_profiles.ws_id`）／已认对端（`mesh_paired_devices.space_id`）⇒ ⭐ **复用已有的 `'ws-personal'` 那一行**，⛔ 不新造键（造第二个「个人」键＝又一份真相源）。含**迁移规则**（取最近改过的那份、对端取并集、⛔ 旧行不删 ⇒ 可回退）、**判据 5 条**（先写先红）、**施工顺序 6 步**、⭐ **两个待量点**（设置表有没有更新时间／`'ws-personal'` 在真实库里在不在）＋ ⭐ 与「搬家 Round 2」合并做 ⇒ 因为是设备级 ⭐ **不需要空间选择器** ✓ |
 | [plans/2026-10-11-device-identity-keys.md](plans/2026-10-11-device-identity-keys.md) | ⭐ **方案：每台设备一把自己的钥匙（Ed25519）—— 让「信任」有方向、且只有被信任的那台拿得走**（owner 2026-10-11 拍 ③）：⭐ 现状实测＝门的名单里存的是 **`sha256(共用的那串口令)`** ⇒ ①分不出"是哪一台"（"单向"只是"哪边登记过"的假象）②**知道口令的第三方照样能拿** ③"逐台撤回"名不副实（每行哈希相同 ＋ 发现层每秒把哈希并回内存）。⭐ 形状：每台一对 Ed25519（私钥不出本机、公钥随公告走 ✓，⛔ 不违反"口令不上线"）；**信任 ＝ 把对方公钥记进自己那份名单**；门从"集合成员判定"改成**验签 ＋ 按设备查名单**；名单**复用** `mesh_paired_devices`（只加一列 `pubkey`，加法迁移）。⭐ **私钥存哪**：三个选项与代价摆开 ⇒ 本轮选**明文进 `meta.sync_state`**（与今天的口令同一保护级、随时可用；⚠️ 已知代价如实写：能读 `meta.db` 就能冒充这台设备 ⇒ 想抬这一档是**另一片**）。⭐ 三步（钥匙落盘／公钥上广播抬 wire 版本／门验签）＋ ⚠️ **两条待 owner 拍**（旧卡什么时候停认／认钥匙要不要当面核对）。✅ 零新依赖（`ed25519-dalek` 已是直接依赖） |
-| [plans/mobile/2026-10-08-mobile-requirements.md](plans/mobile/2026-10-08-mobile-requirements.md) | **移动端需求说明书**：一页纸结论（**立项待 owner 裁决**）／四类场景／P0×6＋P1×5＋P2×4（每条给**可测验收口径**）／七项不做清单／非功能（如实写"设备直连一轮都没成功搬过"）／最小切片＝**手机上记一条 ＋ 同步到电脑** |
-| [plans/mobile/2026-10-08-mobile-tech-plan.md](plans/mobile/2026-10-08-mobile-tech-plan.md) | **移动端详细技术方案**：架构总图／**共享内核的真实工作量**（435 处 `tauri::` 引用散在 **45 个文件**，最密 6 个只占 51%）／切 `crates/core` 五步＋**文件口径判据**／桥接只做一条（uniffi）／两条数据硬教训／同步**不得假设已可用**／阶段 0–3／风险表 |
-| [plans/mobile/2026-10-08-mobile-spec.md](plans/mobile/2026-10-08-mobile-spec.md) | **移动端说明书（自足总篇）**：一句话结论＋**立项待裁决**／四类场景／P0×6＋P1×5＋P2×4（可测验收口径）／**8 屏效果图逐屏嵌入**／七项不做清单／非功能（同步如实写"一轮都没搬过"）／技术方案（435 处 `tauri::` 散在 **45 个文件**，最密 6 个占 51%）／阶段 0–3／风险表／待裁决两条（各带零风险默认） |
+| [plans/mobile/2026-10-20-mobile-requirements-complete.md](plans/mobile/2026-10-20-mobile-requirements-complete.md) | ⭐ **移动端需求说明书（完整版 v2.3 · 2026-10-20 现行）**：产品线结论／平台矩阵／**P0×10＋P1×11＋P2×8**（每条给可测验收口径与**现状**）／10 张效果图逐屏（05 不做）＋底边栏/首次配对／**浅色重设计视觉层已落地（真机观感待签，M-P1-11）**／**iOS 打包已通、界面待验**／非功能／验收与门禁／交付版本合规／阶段进度／已知限制与待拍板 |
+| [plans/mobile/2026-10-20-mobile-tech-plan-complete.md](plans/mobile/2026-10-20-mobile-tech-plan-complete.md) | ⭐ **移动端技术方案（完整版 v2.3 · 2026-10-20 现行）**：Tauri 原生壳＋**单一 IPC 桥**（不拆 core/uniffi 的原因）／形态判定／导航与外壳／共享内核现状（**493 处 `tauri::`／92 文件**）／数据两条硬教训／服务器同步＋设备直连（20 位码/Ed25519/同名融合）／安全／Android 构建签名与独立版号／**iOS 打包链路已打通、界面待验**／**浅色重设计视觉层已落地（阶段 5）**／84 条门禁／阶段与风险 |
+| [plans/mobile/mockups/2026-10-20-redesign/README.md](plans/mobile/mockups/2026-10-20-redesign/README.md) | ⭐ **移动端 UI 重设计（2026-10-20 · 浅色明快卡片版）**：10 屏 SVG（含底边栏/浮＋、首次配对 20 位码）＋ index 联页预览；浅色 token 与诚实文案；✅ **视觉层已落地（2026-10-20）**，真机观感待签 |
+| [plans/mobile/2026-10-20-ios-packaging-recipe.md](plans/mobile/2026-10-20-ios-packaging-recipe.md) | ⭐ **iOS 打包配方（2026-10-20 打通）**：代理必须先 export；4 个 SwiftPM 库必须手工 `ar` 组装（⛔ 别用合并版 `Tauri.o`）；vendor n0 补丁别动；产物/安装/`tauri ios init` 覆盖坑 |
+| [plans/mobile/2026-10-08-mobile-requirements.md](plans/mobile/2026-10-08-mobile-requirements.md) | ⚠️ **历史稿（2026-10-08）**：移动端需求初版（**立项待裁决**／P0×6＋P1×5＋P2×4／最小切片）。**已被 2026-10-20 完整版取代**；其中「立项待裁决」「设备直连一轮都没搬过」等句子已过期 |
+| [plans/mobile/2026-10-08-mobile-tech-plan.md](plans/mobile/2026-10-08-mobile-tech-plan.md) | ⚠️ **历史稿（2026-10-08）**：旧技术方案（**切 `crates/core`＋uniffi** 路线，**未采用**；435 处/78 文件已过期）。**已被 2026-10-20 完整版技术方案取代**，保留作分析存档 |
+| [plans/mobile/2026-10-08-mobile-spec.md](plans/mobile/2026-10-08-mobile-spec.md) | ⚠️ **历史稿（2026-10-08，2026-10-10 更新过屏状态）**：把需求/效果图/技术方案合并的自足总篇。**需求与范围以 2026-10-20 完整版为准**；旧稿的「8 屏已落地」「07 先不接」「08 只读 v1」已被后续改动超前 |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
 > 「还差 **0b** 公开材料可同步」**已作废** —— 0b 那条（经服务器搬钥匙袋）**已整条删除**
@@ -368,7 +372,7 @@ node scripts/test-report.mjs --list                                             
 
 ## 变更记录（changelog）
 
-- [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.92.21`）。
+- [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.92.22`）。
 
 ## 约定
 

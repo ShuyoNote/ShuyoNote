@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" role="img" aria-label="搜索：结果列表与命中片段高亮">
+<title>搜索（浅色重设计 v2）</title>
+<style>
+text{font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei','Helvetica Neue',sans-serif;}
+.t{fill:#1F2329;}.dim{fill:#646A73;}.faint{fill:#8F959E;}
+.acc{fill:#3370FF;}.onacc{fill:#FFFFFF;}
+</style>
+<rect x="0" y="0" width="390" height="844" rx="46" fill="#0C0D0F"/>
+<rect x="6" y="6" width="378" height="832" rx="40" fill="#FFFFFF"/>
+<rect x="140" y="16" width="110" height="26" rx="13" fill="#0C0D0F"/>
+<text x="32" y="41" class="t" font-size="14" font-weight="600">9:41</text>
+<rect x="296" y="33" width="3.5" height="5" rx="1" fill="#1F2329"/>
+<rect x="301.5" y="30" width="3.5" height="8" rx="1" fill="#1F2329"/>
+<rect x="307" y="27" width="3.5" height="11" rx="1" fill="#1F2329"/>
+<rect x="312.5" y="24" width="3.5" height="14" rx="1" fill="#1F2329"/>
+<path d="M322 34 a9 9 0 0 1 13 0" fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round"/>
+<path d="M325 37.5 a4.5 4.5 0 0 1 7 0" fill="none" stroke="#1F2329" stroke-width="2" stroke-linecap="round"/>
+<circle cx="328.5" cy="41" r="1.5" fill="#1F2329"/>
+<rect x="342" y="26" width="24" height="12" rx="3.5" fill="none" stroke="#1F2329" opacity=".5"/>
+<rect x="344" y="28" width="17" height="8" rx="1.8" fill="#1F2329"/>
+<rect x="367" y="29.5" width="2.5" height="5" rx="1.2" fill="#1F2329" opacity=".5"/>
+<!-- 搜索框（聚焦态） -->
+<rect x="21" y="66" width="348" height="50" rx="25" fill="#EBF1FF"/>
+<rect x="24" y="68" width="342" height="46" rx="23" fill="#FFFFFF" stroke="#3370FF" stroke-width="1.6"/>
+<g transform="translate(44,82)" fill="none" stroke="#3370FF" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="9" r="6.2"/><path d="M13.6 13.6 L19 19"/></g>
+<text x="76" y="97" class="t" font-size="16">机位</text>
+<rect x="110" y="82" width="2" height="18" fill="#3370FF"/>
+<text x="348" y="96" class="dim" font-size="13" text-anchor="end">取消</text>
+<!-- 筛选 chips：标题/正文 disabled（检索接口无字段参数） -->
+<rect x="24" y="132" width="62" height="30" rx="15" fill="#EBF1FF"/>
+<text x="55" y="152" class="acc" font-size="13" font-weight="600" text-anchor="middle">全部</text>
+<rect x="96" y="132" width="62" height="30" rx="15" fill="#F7F8FA" stroke="#E5E8EE"/>
+<text x="127" y="152" class="faint" font-size="13" text-anchor="middle" opacity=".55">标题</text>
+<rect x="168" y="132" width="62" height="30" rx="15" fill="#F7F8FA" stroke="#E5E8EE"/>
+<text x="199" y="152" class="faint" font-size="13" text-anchor="middle" opacity=".55">正文</text>
+<!-- 结果元信息 -->
+<text x="24" y="192" class="dim" font-size="13">8 条结果 · 12 毫秒</text>
+<!-- 结果卡 1 -->
+<rect x="24" y="210" width="342" height="128" rx="14" fill="#FFFFFF" stroke="#E5E8EE"/>
+<text x="44" y="242" class="t" font-size="16" font-weight="600">拍摄现场：夜景机位备忘</text>
+<rect x="44" y="254" width="42" height="19" rx="4" fill="#FFE08A" opacity=".55"/>
+<text x="44" y="268" class="t" font-size="13">天桥西侧光比很大，机位</text>
+<text x="88" y="268" class="t" font-size="13">贴住护栏。</text>
+<rect x="158" y="254" width="46" height="19" rx="4" fill="#FFB347" opacity=".65"/>
+<text x="158" y="268" class="t" font-size="13" font-weight="600">机位要低</text>
+<text x="44" y="296" class="faint" font-size="12">拍摄现场 · 昨天 · 本机</text>
+<g fill="none" stroke="#8F959E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M340 268 L347 275 L340 282"/></g>
+<!-- 结果卡 2 -->
+<rect x="24" y="350" width="342" height="128" rx="14" fill="#FFFFFF" stroke="#E5E8EE"/>
+<text x="44" y="382" class="t" font-size="16" font-weight="600">分镜 v3 修改点</text>
+<rect x="44" y="394" width="46" height="19" rx="4" fill="#FFB347" opacity=".65"/>
+<text x="44" y="408" class="t" font-size="13" font-weight="600">机位</text>
+<text x="92" y="408" class="t" font-size="13">表重排：低机位长镜头提前。</text>
+<text x="44" y="436" class="faint" font-size="12">分镜 · 昨天 21:40 · 本机</text>
+<g fill="none" stroke="#8F959E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M340 408 L347 415 L340 422"/></g>
+<!-- 结果卡 3 -->
+<rect x="24" y="490" width="342" height="128" rx="14" fill="#FFFFFF" stroke="#E5E8EE"/>
+<text x="44" y="522" class="t" font-size="16" font-weight="600">录音转写：访谈 07</text>
+<rect x="44" y="534" width="46" height="19" rx="4" fill="#FFE08A" opacity=".55"/>
+<text x="44" y="548" class="t" font-size="13">他说要换个机位</text>
+<text x="132" y="548" class="t" font-size="13">拍空镜，再来一条特写。</text>
+<text x="44" y="576" class="faint" font-size="12">转写 · 10 月 6 日 · 本机</text>
+<g fill="none" stroke="#8F959E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M340 548 L347 555 L340 562"/></g>
+<!-- 页脚诚实说明 -->
+<path d="M24 648 H366" stroke="#F2F3F5"/>
+<text x="24" y="672" class="faint" font-size="11">结果由本机索引生成 · 未上传服务器</text>
+<text x="24" y="690" class="faint" font-size="11">「标题 / 正文」筛选暂不可用：检索接口无字段参数，保持 disabled。</text>
+<text x="24" y="708" class="faint" font-size="11">命中高亮标记只能在 Android / Rust 检索时产生，Web 平台不产出 ⇒ 高亮需真机验。</text>
+<!-- 底边栏：搜索选中 -->
+<path d="M6 752 H384" stroke="#E5E8EE"/>
+<rect x="6" y="753" width="378" height="79" fill="#FFFFFF"/>
+<g transform="translate(46,772)" fill="none" stroke="#8F959E" stroke-width="1.8" stroke-linecap="round"><circle cx="8" cy="8" r="6.2"/><path d="M12.6 12.6 L18 18"/></g>
+<text x="69" y="787" class="faint" font-size="12">笔记</text>
+<rect x="163" y="766" width="64" height="32" rx="16" fill="#EBF1FF"/>
+<g transform="translate(173,774)" fill="none" stroke="#3370FF" stroke-width="1.8" stroke-linecap="round"><circle cx="7" cy="7" r="5.4"/><path d="M11 11 L16 16"/></g>
+<text x="195" y="787" class="acc" font-size="12" font-weight="600">搜索</text>
+<g transform="translate(306,772)" fill="none" stroke="#8F959E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="5.5" r="3.4"/><path d="M2 17 C2 12.5 5 10.5 8 10.5 C11 10.5 14 12.5 14 17"/></g>
+<text x="321" y="809" class="faint" font-size="11" text-anchor="middle">我的</text>
+<rect x="145" y="820" width="100" height="5" rx="2.5" fill="#1F2329" opacity=".18"/>
+</svg>

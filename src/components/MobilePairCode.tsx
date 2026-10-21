@@ -124,7 +124,7 @@ export function MobilePairCode() {
       </header>
 
       <div className="mpair-code-scroll">
-        <p className="mpair-code-lead">👋 只需一次 · 两台显示同一串码</p>
+        <p className="mpair-code-lead">🔒 只需一次 · 两台显示同一串码</p>
 
         {loading ? (
           <p className="mpair-code-note">正在读码…</p>

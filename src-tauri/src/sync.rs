@@ -1572,7 +1572,12 @@ pub async fn download_attachment(
             (Vec::new(), proto)
         } else {
             let peers = crate::lan_state::LanState::global(&device).peers(crate::db::now_ms());
-            let name = crate::sync::local_space_name(&c).unwrap_or_default();
+            // ⭐ 2026-10-19 修：只有**设备级／个人档**才按名字挑（团队不参与按名融合 ⇒ 传空名回落 id）
+            let name = if crate::mesh::is_device_level_space(&c, &proto) {
+                crate::sync::local_space_name(&c).unwrap_or_default()
+            } else {
+                String::new()
+            };
             let candidates = crate::mesh::mesh_peers_by_name(&proto, &name, &device, &peers);
             (candidates, proto)
         }
@@ -3178,9 +3183,14 @@ pub(crate) fn note_pending_trust_asks(
     // ② 只认**这一轮、这条空间**的对端 ✓（⛔ 不跨空间 ✗）。
     //   ⚠️ 判定"这是不是设备级那一格"**只有一处**（`mesh::is_device_level_space` ✓）——
     //   ⛔ 不在这里反推"个人档还是团队档" ✗（那是第二份口径 ✓）。
-    let name = crate::sync::local_space_name(c).unwrap_or_default();
-    let candidates = crate::mesh::mesh_peers_by_name(proto_space, &name, my_device, peers);
     let device_level = crate::mesh::is_device_level_space(c, proto_space);
+    // ⭐ 2026-10-19 修：只有设备级／个人档才按名字挑（团队不参与按名融合 ⇒ 传空名回落 id）
+    let name = if device_level {
+        crate::sync::local_space_name(c).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let candidates = crate::mesh::mesh_peers_by_name(proto_space, &name, my_device, peers);
     let row = crate::mesh::paired_row_key(proto_space, device_level);
     let mut registered: Vec<String> = Vec::new();
     for dev in asks {
@@ -4363,6 +4373,7 @@ mod mesh_history_tests {
             fetched,
             applied,
             cursor: 0,
+            max_seq: 0,
             superseded: 0,
             awaiting: 0,
             items: (0..fetched)

@@ -1,5 +1,10 @@
 # 移动端说明书（2026-10-08）
 
+> ⚠️ **历史稿（2026-10-10 更新过屏状态），已被 2026-10-20 完整版取代**：
+> 需求与范围以 [`2026-10-20-mobile-requirements-complete.md`](./2026-10-20-mobile-requirements-complete.md) 为准，
+> 技术实现以 [`2026-10-20-mobile-tech-plan-complete.md`](./2026-10-20-mobile-tech-plan-complete.md) 为准。
+> 本文的「07 先不接」「08 只读 v1」「8 屏已落地」都已被后续改动超前，保留作历史总篇。
+
 状态：已拍板（立项＝做；owner 2026-10-09 拍「做成产品线」）—— ⭐ **移动端已收口**（2026-10-10）：§4 的 **01／02／03／04／06／08／09／10 八屏已落地** ✓（08 为**只读 v1** ✓ —— 信任那半**未接** ✗，逐字见 §4.8）；**05 待办**与 **07 设置**由 owner 分别拍「**不做**」✗／「**先不接**」✗。证据：`src/components/MobileHome.tsx`、`src/components/MobileCapture.tsx`、`src/components/MobileSearch.tsx`、`src/components/MobileRead.tsx`、`src/components/MobileDictCard.tsx`、`src/components/MobilePair.tsx`、`src/components/MobileAbout.tsx`、`src/store/mobileNav.ts`
 
 > 证据：`mobile/STATUS-2026-10-10.html`（即 docs/plans/mobile/STATUS-2026-10-10.html，§④「立项口径」逐字「移动端立项＝**做** ✓」）· `../../src/components/MobileHome.tsx` · `../../src/components/MobileCapture.tsx` · `../../index.html`

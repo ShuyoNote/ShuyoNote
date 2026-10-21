@@ -4,6 +4,7 @@ import { useSyncStatus } from "../store/syncStatus";
 import { useMobileNav } from "../store/mobileNav";
 import { useEditorStore } from "../store/editor";
 import { pushOverlay } from "../lib/overlayStack";
+import { SyncPanel } from "./SyncPanel";
 
 /**
  * **移动端设置**（效果图 `docs/plans/mobile/mockups/07-settings.svg`，规格 §4.7）。
@@ -77,7 +78,7 @@ export function MobileSettings() {
   return (
     <div className="mshell mset" data-testid="mobile-settings">
       <header className="mset-head">
-        <h1 className="mset-title">设置</h1>
+        <h1 className="mset-title">我的</h1>
         <button
           className="mset-close"
           aria-label="关闭设置"
@@ -111,11 +112,17 @@ export function MobileSettings() {
             ⚠️ 于是本屏顺手成了 08 的**第二个门** ✓（另一个是常驻「同步」胶囊 ✓）。 */}
         <button className="mset-row" onClick={() => setScreen("pair")}>
           <span className="mset-body">
-            <span className="mset-row-title">设备配对</span>
+            <span className="mset-row-title">设备配对与同步</span>
             <span className="mset-row-sub">管理附近设备与配对</span>
           </span>
           <span className="mset-go" aria-hidden>›</span>
         </button>
+        {/* ⭐ 2026-10-19 第二刀：主界面那颗同步浮钮已删 ⇒ **搬到设置屏**这里 ✓
+            （`SyncPanel` 自带触发器 ✓，本刀**一个字符都没改它** ✓；手机上点它会进 08 屏 ✓）。 */}
+        <SyncPanel />
+        {/* ⭐ 2026-10-20 重设计：设计图要求显示「上次成功时间」。⚠️ 后端目前**没有**这个读数
+            （`useSyncStatus` 只给"此刻"），所以这里只能如实写「暂无读数」——⛔ 不编一个时间 ✗。 */}
+        <p className="mset-last">上次成功时间：暂无读数（尚无该读数）</p>
         <div className="mset-status">
           <span className={"mset-dot" + (error ? " is-bad" : syncing ? " is-busy" : "")} aria-hidden />
           <span className="mset-status-text">同步状态：{syncLine}</span>
