@@ -507,6 +507,10 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
   const readPaneRef = useRef<HTMLDivElement>(null);
   const [toolbarW, setToolbarW] = useState(9999);
   const [moreOpen, setMoreOpen] = useState(false);
+  // ⭐⭐ 2026-10-21（owner：工具栏溢出、没有自动收起）：自愈级
+  //   原来只靠隐藏测量行算阈值；它一旦测成 0 或偏小，工具栏就永远不会收 ⇒ 溢出
+  //   ⇒ 这里再叠一层按真实溢出判定：溢出就升一级，收起后有余量就降一级
+  const [collapseLevel, setCollapseLevel] = useState(0); // 0=全显示 1=窄 2=很窄 3=极窄
   // 逐级收纳阈值：按按钮组实际宽度测量，而不是固定常量，避免控制条缩窄时横向溢出。
   const measureSaveRef = useRef<HTMLDivElement>(null);
   const measureIconRef = useRef<HTMLDivElement>(null);
@@ -1605,6 +1609,18 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
     return () => ro.disconnect();
   }, [active, useRich, html, isTrusted, showImages]);
 
+  // ⭐ 2026-10-21：按真实溢出自愈（一次一级）。它不取代上面的测量，只兜住测量偏小。
+  useEffect(() => {
+    const el = readToolbarRef.current;
+    if (!el) return;
+    const overflowing = el.scrollWidth > el.clientWidth + 1;
+    if (overflowing && collapseLevel < 3) {
+      setCollapseLevel((v) => Math.min(3, v + 1));
+    } else if (!overflowing && collapseLevel > 0 && el.clientWidth - el.scrollWidth > 96) {
+      setCollapseLevel((v) => Math.max(0, v - 1));
+    }
+  }, [collapseLevel, toolbarW, need, active, useRich, html, isTrusted, showImages, listW]);
+
   // 测量顶部标题栏三组实际宽度：副标题是否隐藏（headSub）、工具是否收起（headTool），
   // 替代固定阈值 720/560。文案随 folders / 账号变化；30 = .email-page-head 左右 padding(16*2)。
   useEffect(() => {
@@ -1652,9 +1668,9 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
   const colTemplateNarrow = "32px 1fr"; // 勾选 | 内容区(两行)；窄布局不显示星标
   // 阅读区工具栏逐级收纳（阈值按按钮组实测宽度，而非固定常量）：
   //   宽 → P+Q+R 全显；中 → R 收进「更多」（P+Q+更多）；窄 → Q 也收进「更多」（P+更多）。
-  const toolbarNarrow = toolbarW < need.full;          // 放不下全部 → 右侧组收进「更多」
-  const toolbarVeryNarrow = toolbarW < need.noicon;    // 放不下 P+「更多」 → 无图标收尾按钮收进「更多」
-  const toolbarExtreme = toolbarW < need.icon;         // 放不下 保存+「更多」 → 图标核心按钮也收进「更多」
+  const toolbarNarrow = collapseLevel >= 1 || toolbarW < need.full;          // 放不下全部 → 右侧组收进「更多」
+  const toolbarVeryNarrow = collapseLevel >= 2 || toolbarW < need.noicon;    // 放不下 P+「更多」 → 无图标收尾按钮收进「更多」
+  const toolbarExtreme = collapseLevel >= 3 || toolbarW < need.icon;         // 放不下 保存+「更多」 → 图标核心按钮也收进「更多」
   // 顶部标题栏逐级收纳（阈值按实测内容宽度，而非固定 720/560）：32 = .email-page-head 左右 padding。
   const headSubNarrow = headW < headNeed.sub + 32;
   const headToolNarrow = headW < headNeed.tool + 32;
