@@ -3,6 +3,11 @@
 > 记录，含一次踩坑：**CHANGELOG 段头曾被覆盖导致版本中间断**——用脚本防再犯。
 > 发布时间窗（v1.83.0，2026-09）：**GitHub Actions 负责多平台构建（Win/Linux）；GitCode 是应用内「检查更新」与下载通道**。macOS 因缺 Apple 签名/公证凭据暂未启用（见 [multi-platform-ci.md](multi-platform-ci.md)）。
 
+> 📌 **发版之后，三处用户看得到的地方都要刷新**（缺一处就"看起来没发版"）：
+> ① **GitCode 发行版**（§⑥，应用内「检查更新」读的就是它）· ② **Web 版两个入口**（§⑦：
+> Pages 自动 / 国内主站手动）· ③ **官网更新日志页 `shuyo.cn/changelog.html`**（§⑦ 末，从 `CHANGELOG.md`
+> 生成后**手动上传**，不随 Web 版走）。
+
 ## ① 更新 CHANGELOG
 用脚本在顶部插入新版本段（**自动保留所有旧段头**）：
 ```bash
@@ -664,6 +669,32 @@ pnpm check:web-deploy
 node scripts/check-web-build.mjs --url https://shuyo.cn/app/
 node scripts/check-web-build.mjs --url https://shuyonote.github.io/ShuyoNote/
 ```
+
+### 官网「更新日志」页（发版后**必做**，`https://shuyo.cn/changelog.html`）
+
+> 为什么列成必做：它是**从 `CHANGELOG.md` 生成的静态页**，⛔ **不随 Web 版一起上传**（Web 版只铺 `/app/`）
+> ⇒ 发版后不重跑生成＋上传，用户去官网看到的仍是上一版。
+> **2026-10-22 实测踩到**：Web 版已经是 1.92.24，而官网这一页还停在 **1.92.22** —— 页面本身不会报错，
+> 只是"看起来不更新了"（这条与 §⑦ 开头那段"国内主站静默落后五个版本"是同一类事故）。
+
+```bash
+# ① 生成（在 **shuyo-site** 仓里跑：生成器在那儿；默认读 ../ShuyoNote/CHANGELOG.md）
+cd shuyo-site
+node scripts/gen-changelog.mjs        # → site/changelog.html（只取**已发布**的最近 5 个版本）
+
+# ② 上传（与 Web 版同一条通道；密钥按本机实际那把）
+scp -i ~/.ssh/id_ed25519 site/changelog.html root@121.199.8.24:/var/www/shuyo-site/changelog.html
+ssh -i ~/.ssh/id_ed25519 root@121.199.8.24 'chmod 644 /var/www/shuyo-site/changelog.html'
+```
+
+**判据（一条命令，读的是线上那一份）**：
+
+```bash
+curl -s https://shuyo.cn/changelog.html | grep -oE '1\.9[0-9]+\.[0-9]+' | sort -u | tail -3
+# 期望：排序后最新的那个 == 本次发版号（例：1.92.24）⇒ 页面确实跟上了
+```
+
+---
 
 > [!] **子路径的坑（v1.89.0 部署时踩到）**：主站挂在 `/app/` 下，而页面里的 `/assets/…` 会被
 > 解析到**域名根**。检查脚本第一次就是按根路径去取的，于是"线上资源 404"——其实是检查脚本
