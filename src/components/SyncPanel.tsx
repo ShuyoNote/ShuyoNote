@@ -1769,7 +1769,32 @@ export function SyncPanel({
           <SyncAdvancedFold>
 
           {!isDesktopPlatform() && (
-            <div className="sync-web-note">建议使用桌面版以获得稳定多设备同步；Web 版同步受浏览器环境限制。</div>
+            // ⭐⭐ **2026-10-22（owner 拍 A）**：换成**如实说明 ＋ 引导下载** ✓
+            //   旧文案「受浏览器环境限制」太含糊：用户看不出"这里到底能不能同步、为什么"。
+            //   三句硬事实（都能自证）：① Web 版**不提供**多设备同步（这是产品决定）；
+            //   ② 原因是**浏览器存储可能被系统回收**，不能当数据的唯一副本；
+            //   ③ 要用同步 ⇒ 装桌面版（或手机 App）。
+            <div className="sync-web-note" role="note">
+              <div>
+                <b>Web 版不提供多设备同步。</b>
+                浏览器存储可能被系统回收，不能当作笔记的唯一副本。
+              </div>
+              <div style={{ marginTop: 6 }}>
+                要在多台设备之间同步，请安装 <b>桌面版</b>（Windows / Linux / macOS）或 <b>手机 App</b>：
+                <a
+                  href="https://shuyo.cn/"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="sync-btn ghost"
+                  style={{ marginLeft: 8, display: "inline-block", textDecoration: "none" }}
+                >
+                  前往下载页 ↗
+                </a>
+              </div>
+              <div style={{ marginTop: 4, opacity: 0.75 }}>
+                这一页上的笔记仍然可以读写，只是<b>只存在这台浏览器里</b>（换浏览器/清站点数据就会丢）。
+              </div>
+            </div>
           )}
           {conflicts.length > 0 && (
             <div className="sync-conflict-banner" role="alert">
