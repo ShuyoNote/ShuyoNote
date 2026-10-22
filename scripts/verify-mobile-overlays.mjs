@@ -1397,7 +1397,13 @@ async function main() {
               (btn.textContent || "").trim()
             : null;
           return {
+            // ⚠️ `hasSlot` ＝ **设置屏根容器在不在**（`.mset`），⛔ **不是**"同步入口在不在"。
+            //    2026-10-22 我第一版把它当成"入口在"，于是 Web 分支写成 `!hasSlot && 说明`
+            //    —— 而那句说明**就写在 `.mset` 里面**（`MobileSettings` 的「空间」卡脚注）
+            //    ⇒ 两条永远不可能同时成立 ⇒ 永久红 ✗（子代理复核逐行抓到的）。
+            //    ⇒ 认入口一律认**那颗触发器**：`hasTrigger`（`.mset .btn-sync`）。
             hasSlot: !!slot,
+            hasTrigger: !!btn,
             label,
             visible,
             w: r ? Math.round(r.width) : 0,
@@ -1412,12 +1418,17 @@ async function main() {
           (await safeEval(page, () => document.body.innerText || "")) || "",
         );
         ok(
-          tauriShell ? sync.hasSlot && sync.visible && !!sync.label : !sync.hasSlot && webSyncNote,
+          tauriShell ? sync.hasSlot && sync.visible && !!sync.label : !sync.hasTrigger && webSyncNote,
           tauriShell
             ? `原生档「我的」设置屏必须有同步入口（${sync.label ?? "（没有）"}）——TitleBar 在手机端不渲染，⛔ 不能只藏在侧栏抽屉里`
-            : `Web 档「我的」设置屏**不许**有同步入口（配对/局域网是原生命令 ⇒ 那是假入口）；必须如实说明原因（实测有说明=${webSyncNote}）`,
+            : `Web 档「我的」设置屏**不许**有同步入口（配对/局域网是原生命令 ⇒ 那是假入口）；必须如实说明原因（实测 有触发器=${sync.hasTrigger} 有说明=${webSyncNote}）`,
         );
-        ok(tauriShell ? sync.h >= 44 : !sync.hasSlot, tauriShell ? `同步入口命中区高度 ≥44（实测 ${sync.h}×${sync.w}）` : "Web 档无同步入口（无需量命中区）");
+        ok(
+          tauriShell ? sync.h >= 44 : !sync.hasTrigger,
+          tauriShell
+            ? `同步入口命中区高度 ≥44（实测 ${sync.h}×${sync.w}）`
+            : "Web 档无同步入口（无需量命中区）",
+        );
         const clicked = await safeEval(page, () => {
           const btn = document.querySelector(".mset .btn-sync");
           if (!btn) return false;
