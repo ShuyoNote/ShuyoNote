@@ -857,6 +857,12 @@ export interface CommandMap {
   // ⚠️ 入参是**本地工作空间 id**（页所属那一个）：远端 `space_id` 由平台层从该工作空间的档案里取
   //    （两者是两套 id，见 `crdt/claimScope.ts` 文件头）。
   claim_page_lineage: { args: { args: { workspace_id: string; page_id: string } }; result: { granted: boolean; unavailable?: boolean } };
+  // CRDT 阶段 2 · 客户端「加密快照」的**上传**切片（2026-10-23）。
+  // 服务端只存不解析：`PUT /spaces/{id}/snapshot?snapshotSeq=<n>`，体是**不透明字节**
+  // （`shuyonote-sync-server` 提交 `e7245bc` / v17；契约 `scripts/lib/crdt-snapshot-contract.mjs`）。
+  // ⚠️ **只在桌面端成立**：快照源是空间库文件本身，而"服务端解不开"靠的是它**在磁盘上就已经是密文**
+  //    ⇒ Web 平台既没有空间钥匙、库也不是密文，平台层直接拒绝（见 `web.ts` 那条）。
+  sync_upload_snapshot: { args: { args: { space_id?: string } }; result: { space_id: string; snapshot_seq: number; bytes: number; updated_at: string } };
   // 冲刺 §11.4 收口（2026-09-23 第 42 轮）：**待并的远端状态**（桌面 pull 收下的）。
   // ⚠️ **两侧行为不同是平台事实**：桌面 Rust 没有 Yjs ⇒ 只能先把字节收进 `page_crdt_pending`，
   //    由界面侧在打开页面时合并；Web 平台在 `applyChange` 里**当场**合并 ⇒ 恒为空数组 / 0 条。

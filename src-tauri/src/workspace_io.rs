@@ -87,7 +87,7 @@ fn count_dir(dir: &Path) -> (usize, u64) {
 /// 重新加密页面，只写裸 `PRAGMA key` 会产出"默认参数（SHA512）"的快照，而本模块下一步
 /// `convert_space_db(dst, false, k)` 是用国密参数去读它的 ⇒ 接线构建里当场红
 /// （2026-09-22 实测：`snapshot_plaintext_from_an_encrypted_source_is_readable_without_a_key`）。
-fn backup_db_to(src: &Connection, dst: &Path, key: Option<&[u8; 32]>) -> Result<(), String> {
+pub(crate) fn backup_db_to(src: &Connection, dst: &Path, key: Option<&[u8; 32]>) -> Result<(), String> {
     let mut dst_conn = Connection::open(dst).map_err(|e| e.to_string())?;
     if let Some(k) = key {
         crate::security::key_conn_with(&dst_conn, k)?;

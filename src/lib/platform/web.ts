@@ -1654,6 +1654,15 @@ export function makeInvoke(store: SqliteStore) {
       const args = a.args ?? a;
       return writePageProjectionIfChanged(store, String(args.page_id ?? ""), String(args.doc_json ?? "")) as T;
     }
+    if (cmd === "sync_upload_snapshot") {
+      // 加密快照只对**密文库**有意义：Web 平台既没有空间钥匙，本地库也不是密文
+      // （`sqliteStore` 的 DDL 就是明文 SQLite）⇒ 这里**明确拒绝**。
+      // ⛔ 不许"先传一份明文、反正服务端不解析"：服务端不解析正是**危险**所在 ——
+      //    谁拿到那份字节谁就能读，而它会被长期存放在服务端。
+      throw new Error(
+        "Web 版不能上传加密快照：它没有空间钥匙、本地库也不是密文（服务端只存不解析 ⇒ 传上去就是明文落云）。请在桌面端执行。",
+      );
+    }
     if (cmd === "claim_page_lineage") {
       // 冲刺 S9 接线（2026-09-23）：把"谁先给这一页建 CRDT 血统"的裁定发给同步服务。
       //
