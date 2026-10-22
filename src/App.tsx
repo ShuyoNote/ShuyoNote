@@ -1155,25 +1155,14 @@ function AppShell() {
           而 owner 要求两端都有这条顶端工具栏 ✓ ⇒ 这里给手机渲染一行，用的是**同一个组件** ✓。
           桌面那一份在 `TitleBar` 里 ✓（⛔ 两处各写一份 = 两份真相源 ✗）。 */}
       {isMobile && <TopTools className="is-mobile" />}
-      {/* ⭐ 2026-10-10：手机档**开着某个页面**时的「回首页」入口 ✓（台账 R188 的 (b) ✓）。
-          来由（队友逐屏审计**实拍**出来的真缺陷 ✗）：今晚做的「快速记录」存完会落进编辑器 ✗，
-          而那个屏**按返回键直接退出应用** ✗、`am start` 重启**仍回编辑器** ✗、抽屉里也**没有「首页」**✗
-          ⇒ **除 `pm clear` 没有回首页的路** ✗。
-          ⚠️ 它是个 `position: fixed` 的**浮标** ✓ —— ⛔ **不包裹** `NoteEditor`（包裹会多一层布局容器 ✗）。
-          ⭐ 它让"任何一屏都能回首页" ✓ **不依赖**对 store 恢复逻辑的猜测 ✓
-          （(a) 存完清 `currentId` 已单独做在 `MobileCapture` 里 ✓）。 */}
-      {isMobile && currentId && (
-        <button
-          className="mnote-home"
-          onClick={() => {
-            // 清掉当前页 ⇒ `App.tsx` 的手机分支才会渲染 `MobileHome` ✓；再把自己的屏栈复位 ✓。
-            useNotes.setState({ currentId: null, current: null });
-            useMobileNav.getState().setScreen("home");
-          }}
-        >
-          ‹ 首页
-        </button>
-      )}
+      {/* ⭐ 2026-10-10 → **2026-10-22 退役**：这里原先有一颗 position:fixed 的「‹ 首页」浮标
+          （台账 R188 的 (b)），来由是一次真死路：快速记录存完落进编辑器，而那个屏按返回键
+          **直接退出应用**、重启**仍回编辑器**、抽屉里也没有「首页」⇒ 除 pm clear 没有回家的路。
+          ⭐ 现在两条真路都建好了 ⇒ 浮标**冗余**（它压在正文右下角，还让"回家"有两个入口）：
+             · 阅读屏顶栏的「‹ 阅读」（MobileRead.tsx 的 goHome，动作与它逐字相同）；
+             · 底栏三格（笔记 / 搜索 / 我的）。
+          ⚠️ 所以删它时必须**同时有判据**：scripts/check-mobile-exit-routes.mjs
+             要求"每个移动屏都有 ≥1 条回家的路" —— 否则删浮标只是把问题藏起来。 */}
       <div className="app-body">
         <ActivityBar />
         <PageTree view={view} onViewChange={setView} />

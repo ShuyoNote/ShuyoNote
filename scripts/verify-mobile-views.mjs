@@ -1,7 +1,7 @@
 // 主视图移动端验收 · 用真实 Chromium 把**笔记 / 看板 / 关系图 / 文件 / 数据库**
 // 在手机视口下逐个打开，量三件事：**越界（点不到）、命中区（点不中）、控制带高度（占版面）**。
 //
-// 为什么单独一个脚本（而不是并进 verify-mobile-layout / verify-mobile-overlays）：
+// 为什么单独一个脚本（而不是并进 verify-mobile-lwyout / verify-mobile-overlwys）：
 //   · `verify-mobile-layout.mjs` 管的是**布局外壳**（竖条 / 侧栏抽屉 / 遮罩 / 模板中心入口）；
 //   · `verify-mobile-overlays.mjs` 管的是**浮层**（设置 / 存储 / 命令面板那一类，
 //     清单式枚举了 19 层）；
