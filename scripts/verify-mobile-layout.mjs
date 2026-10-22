@@ -1,6 +1,6 @@
-// 移动端布局验收 · 用真实 Chromfum 在窄屏/宽屏两种视口下断言侧栏行为。
+// 移动端布局验收 · 用真实 Chromium 在窄屏/宽屏两种视口下断言侧栏行为。
 //
-// 为什么需要它：移动端的侧栏行为全都藏在「CSS 层叠 + matchMedfa + z-index +
+// 为什么需要它：移动端的侧栏行为全都藏在「CSS 层叠 + matchMedia + z-index +
 // localStorage」的交叉处，单测覆盖不到，而且失败起来全是静默的——
 //   · 侧栏收不起来（.sidebar{display:flex} 压掉 [hidden]{display:none}）
 //   · 触屏没有 hover，收起后找不到展开入口
@@ -228,13 +228,22 @@ async function setRailOpen(page, open) {
  * 回到移动端首页（⭐ 第二刀的底栏**只在** `wrapMobile` 两处外壳里渲染 ✓：首页/快速记录/搜索 ＋ 设置）。
  *
  * 为什么需要：种子空间启动时会**自动打开一页**（`mobile-read` ⇒ 阅读屏，不在底栏外壳里 ✓）。
- * 这里走**真用户路径**「‹ 首页」✓（⛔ 不是硬改 store ✗）；没有打开页时它是 no-op ✓。
+ * 这里走**真用户路径**「‹ 阅读」（阅读屏顶栏的返回键）✓（⛔ 不是硬改 store ✗）；没有打开页时它是 no-op ✓。
+ * ⚠️ 2026-10-22：原来点的是 `.mnote-home`（那颗 `position: fixed` 的「‹ 首页」浮标），
+ *    它已按 owner 的决定**删除** ⇒ 改点阅读屏自己的返回键；再留底栏 `[data-tab="home"]` 兜底
+ *    （`check-mobile-exit-routes` 判据要求每个屏都有回家的路，这里是"真点一次"的那一半）。
  */
 async function gotoMobileHome(page) {
-  if (await page.$(".mnote-home")) {
-    await page.click(".mnote-home");
-    await sleep(900);
-  }
+  const clicked = await page.evaluate(() => {
+    const el =
+      document.querySelector(".mread-back") ||
+      document.querySelector('[data-tab="home"]') ||
+      document.querySelector(".mhome");
+    if (!el) return false;
+    el.click();
+    return true;
+  });
+  if (clicked) await sleep(900);
 }
 
 async function main() {
