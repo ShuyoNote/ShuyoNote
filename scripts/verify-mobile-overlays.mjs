@@ -2,7 +2,7 @@
 // 量几何、量滚动、量命中区。
 //
 // 为什么需要它（三个根因全是"功能直接不可用"，而且都不会报错）：
-//   1. `.set-diwlog{min-width:640px}` **压过** `mwx-width` ⇒ 390px 视口上面板右边缘
+//   1. `.set-dialog{min-width:640px}` **压过** `max-width` ⇒ 390px 视口上面板右边缘
 //      越界 274px（360px 上 304px），「关闭设置」不在视口里 —— 设置面板**关不上**。
 //      `min-width` 胜 `max-width` 是这一类坏法的总根因，公式编辑器同理（溢出 35~50px）。
 //   2. 窄屏收起的左侧竖条带 `transform`，于是成了搜索/回收站浮层（`position:fixed`）
@@ -1363,7 +1363,15 @@ async function main() {
         // ⭐ 2026-10-19 第二刀：主界面那颗同步浮钮（`.mobile-sync-slot`）**已删** ✓ ⇒
         //   同步入口搬到「我的」设置屏（`MobileSettings` 的 `<SyncPanel />` ✓，组件未改 ✓）。
         //   ⇒ 先走**底栏「我的」**（真用户路径 ✓）再量那颗触发器；断言条数不变 ✓。
-        await safeEval(page, () => document.querySelector(".mnote-home")?.click());
+        // ⚠️ 2026-10-22：原先点的是 `.mnote-home`（「‹ 首页」浮标）—— 它**已删除** ⇒ 改点
+        //   阅读屏的返回键（`.mread-back`），底栏 `[data-tab="home"]` 兜底。
+        await safeEval(page, () => {
+          const el =
+            document.querySelector(".mread-back") ||
+            document.querySelector('[data-tab="home"]') ||
+            document.querySelector(".mhome");
+          el?.click();
+        });
         await sleep(700);
         await safeEval(page, () => document.querySelector('[data-tab="settings"]')?.click());
         await sleep(900);

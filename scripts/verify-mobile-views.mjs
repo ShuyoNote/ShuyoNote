@@ -1,7 +1,7 @@
 // 主视图移动端验收 · 用真实 Chromium 把**笔记 / 看板 / 关系图 / 文件 / 数据库**
 // 在手机视口下逐个打开，量三件事：**越界（点不到）、命中区（点不中）、控制带高度（占版面）**。
 //
-// 为什么单独一个脚本（而不是并进 verify-mobile-lwyout / verify-mobile-overlwys）：
+// 为什么单独一个脚本（而不是并进 verify-mobile-layout / verify-mobile-overlays）：
 //   · `verify-mobile-layout.mjs` 管的是**布局外壳**（竖条 / 侧栏抽屉 / 遮罩 / 模板中心入口）；
 //   · `verify-mobile-overlays.mjs` 管的是**浮层**（设置 / 存储 / 命令面板那一类，
 //     清单式枚举了 19 层）；
@@ -1972,7 +1972,15 @@ async function main() {  const executablePath = findChrome();
         // ⭐ 2026-10-19 第二刀：主界面那颗同步浮钮**已删** ✓ ⇒ 同步入口搬到「我的」设置屏
         //   （`MobileSettings` 里的 `<SyncPanel />` ✓，组件本身一个字未改 ✓）。
         //   ⇒ 先走**底栏「我的」**（真用户路径 ✓），再点那颗触发器；断言与读数一条没删 ✓。
-        await safeEval(spage, () => document.querySelector(".mnote-home")?.click());
+        // ⚠️ 2026-10-22：原先点的是 `.mnote-home`（「‹ 首页」浮标）—— 它**已删除** ⇒ 改点
+        //   阅读屏的返回键（`.mread-back`），底栏 `[data-tab="home"]` 兜底。
+        await safeEval(spage, () => {
+          const el =
+            document.querySelector(".mread-back") ||
+            document.querySelector('[data-tab="home"]') ||
+            document.querySelector(".mhome");
+          el?.click();
+        });
         await sleep(700);
         await safeEval(spage, () => document.querySelector('[data-tab="settings"]')?.click());
         await sleep(900);
