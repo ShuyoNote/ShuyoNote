@@ -1758,6 +1758,8 @@ async fn fetch_chunk(account: &EmailAccountArgs, folder: &str, start: u32) -> Re
     let mut metas = Vec::new();
     let mut next = start;
     let mut note = None;
+    let mut broken_at: Option<u32> = None;
+    let mut broken_err = String::new();
     while let Some(item) = stream.next().await {
         match item {
             Ok(m) => {
@@ -1767,15 +1769,199 @@ async fn fetch_chunk(account: &EmailAccountArgs, folder: &str, start: u32) -> Re
                 next += 1;
             }
             Err(e) => {
-                note = Some(format!("第 {next} 条解析失败（跳过这一条，后面的继续拉）：{e}"));
+                // ⚠️ 错误文本里会**逐字带上整条坏响应**（2026-10-22 实测：一条 6 KB 的
+                // `* 17 FETCH (ENVELOPE …)`）。原样写进日志会把真读数淹掉 ⇒ 只留第一行、限长。
+                broken_at = Some(next);
+                broken_err = brief(&e.to_string());
                 break;
             }
         }
     }
-    let finished = note.is_none();
+    // ⚠️ 判据必须是 `broken_at`，**不是 `note`**：`note` 现在要到"救回"那一步才写，
+    // 用它判会把"流过中途报错"误判成"这一箱拉完了"（⇒ 后面的信永远不来）。
+    let finished = broken_at.is_none();
     drop(stream);
     let _ = session.logout().await;
+
+    // ★ 2026-10-22：**别急着丢那一封**。ENVELOPE 坏（典型：Message-ID 里带未转义的 `"`）
+    // 只是"这条响应语法坏了"，服务端那封信本身还在。改走 `BODY.PEEK[HEADER]` 走 literal
+    // 通道取原始头部，自己解析 ⇒ 那一封能救回来（实测 QQ 收件箱里那封工信部通知就此回到列表）。
+    if let Some(seq) = broken_at {
+        match recover_skipped(account, folder, seq).await {
+            Ok(meta) => {
+                note = Some(format!(
+                    "第 {seq} 条 ENVELOPE 解析失败（{broken_err}）—— 已按 UID 单独救回，后面的继续拉"
+                ));
+                metas.push(meta);
+            }
+            Err(why) => {
+                note = Some(format!(
+                    "第 {seq} 条 ENVELOPE 解析失败（{broken_err}）；救回也失败（{}）⇒ 跳过这一条，后面的继续拉",
+                    brief(&why)
+                ));
+            }
+        }
+    }
     Ok(FetchChunk { metas, resume_at: if finished { None } else { Some(next + 1) }, note })
+}
+
+/// 日志里只留**有用那一截** —— 坏响应的原文动辄数千字节（2026-10-22 实测一条 6 KB），
+/// 而且是 `input: [42, 32, 49, 55, …]` 这种字节数组，原样打出来只会把真读数淹掉。
+///
+/// `async-imap` 的 nom 错误尾巴上带 `during parsing of "* 17 FETCH (ENVELOPE (…"` ——
+/// **那一截才是人看得懂的**（能直接看出是哪一条、坏在哪），前面的字节数组全部丢掉。
+fn brief(s: &str) -> String {
+    let tail = s.find("during parsing of").map(|i| &s[i..]).unwrap_or_else(|| s.lines().next().unwrap_or(""));
+    let mut out: String = tail.chars().take(240).collect();
+    if tail.chars().count() > 240 {
+        out.push('…');
+    }
+    out
+}
+
+/// 从"流解析失败"的断点处**单独救回那一封**。
+///
+/// 为什么需要它（2026-10-22 实测，症状是"某封信在列表里永远不出现"）：QQ 收件箱里那封
+/// 工信部通知的 `Message-ID` 是 `<…JavaMail."zwfw-info@miit.gov.cn"@…>` —— 中间那个 `"`
+/// 没转义，在 IMAP 语法里会提前结束字符串 ⇒ **整条 `FETCH … (ENVELOPE …)` 响应解析失败**，
+/// `async-imap` 在这一条上报 `Err`。断点续拉（`resume_at`）能让**后面的**信照常拉到，
+/// 但那一封就此消失（用户看到的是"少了一封"，服务端明明有）。
+///
+/// 修法：**绕开 ENVELOPE 这套引号语法**，分两步取同一封信 ——
+///   ① `FETCH <seq> (UID FLAGS)`：响应里没有任何带引号的字符串，坏 Message-ID 影响不到它；
+///   ② `UID FETCH <uid> (BODY.PEEK[HEADER])`：头部走 literal（`{n}` + 原始字节），
+///      同样不经引号语法；拿到后用 `mailparse` 自己解析（它对引号是宽容的）。
+async fn recover_skipped(
+    account: &EmailAccountArgs,
+    folder: &str,
+    seq: u32,
+) -> Result<EmailMeta, String> {
+    use futures_util::StreamExt;
+
+    let mut session = open_session(account, folder).await?;
+
+    // ① UID / FLAGS（不带 ENVELOPE）
+    let mut got: Option<(u32, bool, bool)> = None;
+    {
+        let mut st = session
+            .fetch(seq.to_string(), "(UID FLAGS)")
+            .await
+            .map_err(|e| format!("取 UID 失败: {}", brief(&e.to_string())))?;
+        while let Some(item) = st.next().await {
+            match item {
+                Ok(m) => {
+                    if let Some(u) = m.uid {
+                        let seen = m.flags().any(|f| f == async_imap::types::Flag::Seen);
+                        let flagged = m.flags().any(|f| f == async_imap::types::Flag::Flagged);
+                        got = Some((u, seen, flagged));
+                    }
+                    break;
+                }
+                Err(e) => return Err(format!("取 UID 时仍解析失败: {}", brief(&e.to_string()))),
+            }
+        }
+    }
+    let (uid, seen, flagged) = got.ok_or_else(|| "服务端没给 UID".to_string())?;
+
+    // ② 原始头部（literal，不经引号语法）
+    let mut raw: Vec<u8> = Vec::new();
+    {
+        let mut st = session
+            .uid_fetch(uid.to_string(), "(BODY.PEEK[HEADER])")
+            .await
+            .map_err(|e| format!("取头部失败: {}", brief(&e.to_string())))?;
+        while let Some(item) = st.next().await {
+            match item {
+                Ok(m) => {
+                    // ⚠️ `BODY[HEADER]` 的数据在 async-imap 里经 **`header()`** 取（`body()` 只给
+                    // `BODY[]`／`BODY[TEXT]`）。2026-10-22 实测踩到：用 `body()` 会拿到空 ⇒
+                    // 救回逻辑静默退化成"跳过这一条"。
+                    if let Some(b) = m.header().or_else(|| m.body()) {
+                        raw.extend_from_slice(b);
+                    }
+                }
+                Err(e) => return Err(format!("取头部时解析失败: {}", brief(&e.to_string()))),
+            }
+        }
+    }
+    let _ = session.logout().await;
+    if raw.is_empty() {
+        return Err("头部为空".to_string());
+    }
+    meta_from_header_block(&raw, folder, uid, seen, flagged)
+        .ok_or_else(|| "头部里没有 Date/From/Subject".to_string())
+}
+
+/// 从**原始头部字节**构造 `EmailMeta`（`recover_skipped` 用；与 `meta_from_fetch` 同口径）。
+///
+/// 用 `mailparse::parse_headers` 而不是 `parse_mail`：只要头部，不需要正文（省一次大流量），
+/// 而且它对"值里带未转义引号"是宽容的 —— 这正是我们要救的那类信。
+fn meta_from_header_block(
+    raw: &[u8],
+    folder: &str,
+    uid: u32,
+    seen: bool,
+    flagged: bool,
+) -> Option<EmailMeta> {
+    let (headers, _) = mailparse::parse_headers(raw).ok()?;
+    let value = |key: &str| {
+        headers
+            .iter()
+            .find(|h| h.get_key().eq_ignore_ascii_case(key))
+            .map(|h| h.get_value())
+            .unwrap_or_default()
+    };
+    let subject = decode_mime_words(&value("Subject"));
+    let date = value("Date");
+    let from = from_display(&value("From"));
+    // 三个字段全空 ⇒ 这块头部对我们没有信息（空块、或服务端只回了 literal 标记）。
+    // **宁可如实返回 None** 让调用方记"跳过这一条"，也不要往列表里塞一封空白信。
+    if subject.is_empty() && from.is_empty() && date.is_empty() {
+        return None;
+    }
+    Some(EmailMeta {
+        uid,
+        subject,
+        from,
+        date,
+        snippet: String::new(),
+        seen,
+        flagged,
+        folder: folder.to_string(),
+        account: String::new(),
+    })
+}
+
+/// 把 `From` 头的值规整成与 `meta_from_fetch` 一致的形态（`名字 <地址>` 或只有地址）。
+fn from_display(raw: &str) -> String {
+    if raw.trim().is_empty() {
+        return String::new();
+    }
+    let parsed = mailparse::addrparse(raw).ok();
+    let first = parsed.as_ref().and_then(|list| {
+        list.iter().find_map(|a| match a {
+            mailparse::MailAddr::Single(s) => Some(s),
+            _ => None,
+        })
+    });
+    match first {
+        Some(s) => {
+            // mailparse 0.15 的 `SingleInfo` 是 `{ display_name, addr }`（`addr` 已含域名）。
+            let addr = s.addr.trim().to_string();
+            let name = decode_mime_words(s.display_name.as_deref().unwrap_or(""))
+                .trim()
+                .to_string();
+            if !name.is_empty() && !name.eq_ignore_ascii_case(&addr) && !addr.is_empty() {
+                format!("{} <{}>", name, addr)
+            } else if !addr.is_empty() {
+                addr
+            } else {
+                name
+            }
+        }
+        // 解析不出来就保留原文（宁可显示得难看，也不要显示成空 —— 空会让人以为没有发件人）。
+        None => raw.trim().to_string(),
+    }
 }
 
 /// 拉取一个账号（多文件夹）的邮件元信息 + 未读数。传 date_from/date_to 时按日期区间过滤。
@@ -2250,6 +2436,38 @@ mod tests {
             "拉取路径里又出现了 `while let Some(Ok(..))` —— 它会在流报错时静默丢掉后面的邮件：\n{body}"
         );
         assert!(body.contains("resume_at"), "断点续拉（resume_at）不见了");
+    }
+
+    /// **救回那一封**：`Message-ID` 里带未转义 `"` 的信，ENVELOPE 整条响应会解析失败，
+    /// 但它的**原始头部**照样能解析出来。（2026-10-22 实测：QQ 收件箱第 17 封工信部通知。）
+    ///
+    /// 这条用**真实报障那封信的头部逐字**当夹具 —— 不是构造的"类似形态"：
+    /// 引号、编码词、`JavaMail` 的怪 Message-ID 都是原文。
+    #[test]
+    fn meta_from_header_block_survives_unescaped_quote_in_message_id() {
+        let raw = concat!(
+            "Date: Tue, 8 Sep 2026 17:14:06 +0800 (CST)\r\n",
+            "Subject: =?utf-8?B?5bel5Lia5ZKM5L+h5oGv5YyW6YOo572R56uZ5aSH5qGI57O757uf6YKu5Lu26YCa55+l?=\r\n",
+            "From: \"=?utf-8?B?endmdy1pbmZv?=\" <zwfw-info@miit.gov.cn>\r\n",
+            "Message-ID: <580092720.2328297.1788858846592.JavaMail.\"zwfw-info@miit.gov.cn\"@jszt-idc07-msgcenter-5b6dc56f8f-4gnfv>\r\n",
+            "To: =?utf-8?B?emhhaXp5?= <zhaizy@qq.com>\r\n",
+            "\r\n",
+        );
+        let m = meta_from_header_block(raw.as_bytes(), "INBOX", 9668, false, false)
+            .expect("原始头部必须解析得出来（这正是绕开 ENVELOPE 的理由）");
+        assert_eq!(m.uid, 9668);
+        assert_eq!(m.subject, "工业和信息化部网站备案系统邮件通知");
+        assert!(m.from.contains("zwfw-info@miit.gov.cn"), "From 丢了：{}", m.from);
+        assert!(m.date.starts_with("Tue, 8 Sep 2026"), "Date 丢了：{}", m.date);
+        assert!(!m.seen && !m.flagged);
+    }
+
+    /// 反判据：**不能**把"救回失败"写成"救回了一个空壳"。没有 Date/From/Subject 就返回 None，
+    /// 让调用方如实记"跳过这一条"，而不是往列表里塞一封空白信。
+    #[test]
+    fn meta_from_header_block_refuses_a_header_block_without_any_fields() {
+        assert!(meta_from_header_block(b"\r\n", "INBOX", 1, false, false).is_none());
+        assert!(meta_from_header_block(b"", "INBOX", 1, false, false).is_none());
     }
 
     /// **手动探针**（默认不跑）：拿本机 `email-account.json` 里的某个账号，跑一次**聚合那一半**的
