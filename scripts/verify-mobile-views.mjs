@@ -1990,12 +1990,20 @@ async function main() {  const executablePath = findChrome();
             hasPendingNote: !!root && (root.textContent || "").includes("未接"),
           };
         });
-        ok(
-          pairView.has,
-          `[壳=${APP_SHELL}] ${vp.name} 点「同步」胶囊 ⇒ 渲染**移动端「设备配对 · 同步」屏**（规格 §4.8 ✓）`,
+        // ⭐ 2026-10-22（owner 拍板「web 版移动端不显示配对同步卡片」）：同步卡**只存在于原生档**
+        //   ⇒ Web 壳这一格改断言**反方向**（⛔ 不是删断言）：Web 档**不许**出现同步入口，
+        //   且必须**如实说明原因**（那句话在「空间」卡脚注里）。
+        const webSyncNote = /Web 版不提供多设备同步/.test(
+          (await safeEval(spage, () => document.body.innerText || "")) || "",
         );
         ok(
-          pairView.trustDisabled !== false && pairView.hasPendingNote,
+          IS_TAURI_SHELL ? pairView.has : !pairView.has && webSyncNote,
+          IS_TAURI_SHELL
+            ? `[壳=${APP_SHELL}] ${vp.name} 点「同步」胶囊 ⇒ 渲染**移动端「设备配对 · 同步」屏**（规格 §4.8 ✓）`
+            : `[壳=${APP_SHELL}] ${vp.name} Web 档**不许**有同步入口（原生命令 ⇒ 假入口）；必须如实说明（实测=${webSyncNote}）`,
+        );
+        ok(
+          IS_TAURI_SHELL ? (pairView.trustDisabled !== false && pairView.hasPendingNote) : true,
           `[壳=${APP_SHELL}] ${vp.name} 屏上**如实标着「未接」**，且「信任」若存在则必定 **disabled**` +
             `（后端未定形状 ⇒ ⛔ 不做假按钮 ✗；实测 ${pairView.trustDisabled === null ? "本环境无对端 ⇒ 按钮未渲染" : "disabled=" + pairView.trustDisabled}）`,
         );

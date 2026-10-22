@@ -4,6 +4,7 @@ import { useSyncStatus } from "../store/syncStatus";
 import { useMobileNav } from "../store/mobileNav";
 import { useEditorStore } from "../store/editor";
 import { useSpaceStore } from "../store/space";
+import { isDesktopPlatform } from "../lib/platform";
 import { exportCurrentSpace, importSpacePackage } from "../lib/spaceTransfer";
 import { pushOverlay } from "../lib/overlayStack";
 import { SyncPanel } from "./SyncPanel";
@@ -128,7 +129,12 @@ export function MobileSettings() {
         </div>
       </section>
 
-      {/* ② 同步 */}
+      {/* ② 同步 —— ⚠️ **只在原生档（Tauri）渲染**（owner 2026-10-22 明确指出：
+          「web 版移动端不显示配对同步卡片」）。配对 / 局域网 / mesh 状态全是原生命令
+          （`isDesktopPlatform() === isTauri()`）⇒ Web 上这张卡里每一项都只会说"不支持"，
+          留着就是**假入口**。Web 上那句"不提供多设备同步"的如实说明**移到「空间」卡的脚注**了
+          （⛔ 不是删掉不说 ✗）。 */}
+      {isDesktopPlatform() && (
       <section className="mset-card">
         <div className="mset-group">同步</div>
         {/* ⭐ 阶段 2（R205）：**真入口** ✓ —— 08「设备配对 · 同步」屏 owner 拍了「走 A」并已落地 ✓
@@ -152,6 +158,7 @@ export function MobileSettings() {
           <span className="mset-status-text">同步状态：{syncLine}</span>
         </div>
       </section>
+      )}
 
       {/* ③ 空间：导出 / 导入（2026-10-22 owner 拍板「加」，效果图
           `docs/plans/mobile/mockups/2026-10-20-redesign/07b-settings-space-native.svg`
@@ -187,6 +194,11 @@ export function MobileSettings() {
         {/* ⚠️ 门槛来自实测：web 导出是"全库快照 ＋ 临时副本 ＋ 整份 zip 在内存"，峰值约 3～4 倍；
             真包里已有 36 / 40 MB 的例子 ⇒ 手机上先劝一句，⛔ 不假装支持 ✗ */}
         <p className="mset-note">大空间（&gt; 50 MB）建议在桌面端导出/导入。</p>
+        {!isDesktopPlatform() && (
+          <p className="mset-note">
+            Web 版不提供多设备同步（浏览器存储可能被回收）—— 换设备请用上面的空间包。
+          </p>
+        )}
       </section>
 
       {/* ④ 外观（真生效 ✓） */}

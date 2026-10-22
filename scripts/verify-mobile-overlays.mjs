@@ -1396,11 +1396,20 @@ async function main() {
             h: r ? Math.round(r.height) : 0,
           };
         });
-        ok(
-          sync.hasSlot && sync.visible && !!sync.label,
-          `手机「我的」设置屏有同步入口（${sync.label ?? "（没有）"}）——TitleBar 在手机端不渲染，⛔ 不能只藏在侧栏抽屉里`,
+        // ⭐ 2026-10-22（owner 拍板「web 版移动端不显示配对同步卡片」）：同步卡**只存在于原生档**
+        //   ⇒ 本段按页面**真壳**分两支。⛔ 不是把断言删掉/放松：Web 那支反过来钉"**不许有假入口**"
+        //   ＋"必须如实说明为什么没有"（那句话在「空间」卡脚注里）。
+        const tauriShell = await safeEval(page, () => !!(window.__TAURI_INTERNALS__));
+        const webSyncNote = /Web 版不提供多设备同步/.test(
+          (await safeEval(page, () => document.body.innerText || "")) || "",
         );
-        ok(sync.h >= 44, `同步入口命中区高度 ≥44（实测 ${sync.h}×${sync.w}）`);
+        ok(
+          tauriShell ? sync.hasSlot && sync.visible && !!sync.label : !sync.hasSlot && webSyncNote,
+          tauriShell
+            ? `原生档「我的」设置屏必须有同步入口（${sync.label ?? "（没有）"}）——TitleBar 在手机端不渲染，⛔ 不能只藏在侧栏抽屉里`
+            : `Web 档「我的」设置屏**不许**有同步入口（配对/局域网是原生命令 ⇒ 那是假入口）；必须如实说明原因（实测有说明=${webSyncNote}）`,
+        );
+        ok(tauriShell ? sync.h >= 44 : !sync.hasSlot, tauriShell ? `同步入口命中区高度 ≥44（实测 ${sync.h}×${sync.w}）` : "Web 档无同步入口（无需量命中区）");
         const clicked = await safeEval(page, () => {
           const btn = document.querySelector(".mset .btn-sync");
           if (!btn) return false;
@@ -1418,8 +1427,10 @@ async function main() {
           saysNotWired: /未接/.test(document.body.innerText || ""),
         }));
         ok(
-          clicked && pop.pairInDom && pop.saysNotWired,
-          `点它进**移动端「设备配对 · 同步」屏**（渲染=${pop.pairInDom}，如实标着未接=${pop.saysNotWired}）`,
+          tauriShell ? clicked && pop.pairInDom && pop.saysNotWired : !clicked && !pop.pairInDom,
+          tauriShell
+            ? `点它进**移动端「设备配对 · 同步」屏**（渲染=${pop.pairInDom}，如实标着未接=${pop.saysNotWired}）`
+            : `Web 档没有那颗触发器（${!clicked ? "确实点不到 ✓" : "居然点到了 ✗"}）⇒ 也就进不了配对屏`,
         );
         // 收起来，别影响后面的层验收
         await safeEval(page, () => {
