@@ -1,4 +1,3 @@
-import { useNotes } from "../store/notes";
 import { useMobileNav } from "../store/mobileNav";
 import type { MobileScreen } from "../store/mobileNav";
 import { PageIcon, PersonIcon, PlusIcon, SearchIcon } from "./icons";
@@ -59,27 +58,34 @@ export function MobileTabBar() {
 }
 
 /**
- * 浮「＋」：右下、**底栏上方** —— 点它＝新建笔记 ✓。
+ * 浮「＋」：右下、**底栏上方** —— 点它＝**进「快速记录」屏**（马上能写字）✓。
  *
- * ⚠️ 只用仓库现有的动作 `useNotes.getState().createPage(null)` ✓（默认 `select` 会打开新页 ⇒
- *    落到 `MobileRead` ✓）；⛔ 不另写一套"先建页再打开" ✗。
- * ⚠️ 先 `setScreen("home")`：`App.tsx` 里 **`settings` 支排在 `currentId` 之前** ✓ ⇒
- *    若停在「我的」上，新页建好了却被设置屏抢走 ⇒ 用户看到"点了没反应" ✗（实测 ✓）。
- *    回首页后 `currentId` 那一支自然接管 ⇒ 新页立刻出现在阅读屏 ✓。
+ * ⭐⭐ **2026-10-22（owner：「浮＋ 与快速记录有什么区别」）：这个按钮以前是死路** ✗ ——
+ *   旧实现是 `createPage(null)` ⇒ 建一个**空页**，而手机档 `currentId` 有值就落到
+ *   `MobileRead`（**只读阅读屏，没有编辑界面**）⇒ 用户看到的是"空白页、没有输入框"
+ *   ＝ 跟"点了没反应"一样 ✓（真机复现过：`App.tsx` 的 `isMobile ? <MobileRead/> : <NoteEditor/>`）。
+ *
+ * ⇒ 现在改成与首页主卡**同一条路**：`setScreen("capture")` ⇒ 进「02 快速记录」屏
+ *   （输入区 ＋ 键盘上方 6 项工具栏 ＋「存」）✓
+ *   · 两个入口**形态**仍不同：首页主卡带说明（主行动）／浮「＋」是任何屏的快捷 ✓
+ *   · ⛔ 不再自己 `createPage`：建页由 `MobileCapture` 在「存」时**一次写完**（含内容）✓
+ *     否则又会造出"有页没内容"的空壳 ✗
+ *
  * ⚠️ 它挂在 `.m-tabshell` 里但 `position: fixed` ✓ —— 外壳没有 `overflow: hidden`，
  *    所以不会被 `.mshell` 的滚动裁掉 ✓（`.mshell` 自己是另一个元素 ✓）。
+ * ⚠️ 现在**只在首页渲染**（`App.tsx` 的 `showFab: mobileScreen === "home"` ✓）——
+ *    02/03/07 那几屏没有它（效果图也没有），免得压住快捷工具栏/搜索结果 ✓。
  */
 export function MobileComposeFab() {
   return (
     <button
       type="button"
       className="mtab-fab"
-      aria-label="新建笔记"
-      title="新建笔记"
+      aria-label="快速记录"
+      title="快速记录"
       onClick={() => {
-        // 见上：设置屏优先级高于 currentId，先把屏栈复位再建页（否则新页被设置屏挡住）。
-        useMobileNav.getState().setScreen("home");
-        void useNotes.getState().createPage(null);
+        // ⭐ 与首页「快速记录」主卡**同一个动作**：进 02 屏（⛔ 不在这里建页 ✗）。
+        useMobileNav.getState().setScreen("capture");
       }}
     >
       <PlusIcon width={24} height={24} />
