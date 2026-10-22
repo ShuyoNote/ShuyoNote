@@ -24946,8 +24946,26 @@ body.is-plugin-panel-open .main {
   justify-content: space-between;
   gap: 12px;
 }
+/* ⭐ 2026-10-22（owner 手机实拍「编辑时底部标签不该显示」）：这一屏的底栏被拿掉了
+   ⇒ 左上这颗「‹ 返回」就是它**唯一**的回家路（回首页：与底栏「笔记」同一目的地）。
+   形态照阅读屏那颗 `.mread-back`（圆形、44px 命中区）——两屏同一个手势，别各写一种。 */
+.mcap-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1;
+}
 .mcap-title {
   margin: 0;
+  flex: 1 1 auto;
   font-size: 24px;
   font-weight: 700;
   color: var(--text);

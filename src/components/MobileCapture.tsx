@@ -167,6 +167,14 @@ export function MobileCapture() {
   return (
     <div className="mshell mcap" data-testid="mobile-capture">
       <header className="mcap-head">
+        {/* ⭐ 2026-10-22（owner 手机实拍：「编辑时底部标签不该显示」）：
+            这一屏**不再挂底栏**（效果图 `02-capture.svg` 本来也没有它：底栏会把快捷工具栏顶到键盘上方，
+            而且"正在打字"时那三个导航项本来也用不上）⇒ 于是必须**自己给一条回家的路**：
+            左上这颗「‹ 返回」＝ 回首页（与底栏「笔记」同一个目的地 ✓）。
+            ⛔ 没有它就成了死路 —— 这一屏此前正是靠底栏才回得去（`check-mobile-exit-routes` 也认这条）。 */}
+        <button className="mcap-back" aria-label="返回首页" onClick={() => setScreen("home")}>
+          ‹
+        </button>
         <h1 className="mcap-title">快速记录</h1>
         <button className="mcap-save" onClick={() => void save()} disabled={busy}>
           {busy ? "存…" : "存"}

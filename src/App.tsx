@@ -954,12 +954,16 @@ function NoteEditor({ pageId }: { pageId: string }) {
  * ⭐ 2026-10-20：多一个**显式**选项 `showFab`（默认 true ✓，既有调用一个字不改 ✓）——
  *    留给需要整屏专注、不挂那颗浮「＋」的移动屏（⭐ 参数保留，本轮无调用方 ✓）。
  */
-const wrapMobile = (body: React.ReactNode, opts?: { showFab?: boolean }) => (
+const wrapMobile = (body: React.ReactNode, opts?: { showFab?: boolean; showTabs?: boolean }) => (
   <div className="m-tabshell">
     {body}
     {/* ⭐ 第二刀：底栏三项（笔记/搜索/我的）＋ 右下浮「＋」。两者都 `position: fixed` ✓，
-        所以放在 body 之后即可（不参与 `.m-tabshell` 的 column flex ✓）。 */}
-    <MobileTabBar />
+        所以放在 body 之后即可（不参与 `.m-tabshell` 的 column flex ✓）。
+        ⭐ 2026-10-22（owner 手机实拍「编辑时底部标签不该显示」）：多一个显式选项 `showTabs`
+        （默认 true ⇒ 既有调用一个字不改）—— 打字屏要整屏专注：底栏会把快捷工具栏顶到键盘上，
+        而且那三个导航项在"正在写"的时候也用不上。⚠️ 于是那个屏**必须自己留一条回家的路**
+        （`MobileCapture` 左上「‹ 返回」✓，`check-mobile-exit-routes` 也认它）。 */}
+    {opts?.showTabs === false ? null : <MobileTabBar />}
     {opts?.showFab === false ? null : <MobileComposeFab />}
   </div>
 );
@@ -1255,8 +1259,11 @@ function AppShell() {
             <MobileHome />
           ),
           /* ⭐ 2026-10-20 重设计：浮「＋」只出现在**首页**（效果图 01 有；02/03/07 没有）
-             ⇒ capture/search 隐藏，避免它压住快捷工具栏/搜索结果。 */
-          { showFab: mobileScreen === "home" },
+             ⇒ capture/search 隐藏，避免它压住快捷工具栏/搜索结果。
+             ⭐ 2026-10-22（owner 手机实拍「编辑时底部标签不该显示」）：**打字屏连底栏也不挂**
+             —— 效果图 02 本来就没有它；键盘弹起时它会把快捷工具栏顶上去。
+             该屏的回家路由它自己的左上「‹ 返回」承担（`MobileCapture` 里那段注释）。 */
+          { showFab: mobileScreen === "home", showTabs: mobileScreen !== "capture" },
         )
       ) : (
         <div className="main empty">
