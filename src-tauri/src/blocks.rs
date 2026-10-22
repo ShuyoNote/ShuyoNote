@@ -26,6 +26,9 @@ pub struct PageBlock {
     /// **列表逐项**（只有 `kind == "list"` 有；`text` 里它们是被粘在一起的，⛔ 别拿 text 切）
     #[serde(default)]
     pub items: Vec<String>,
+    /// 图片块的 `src`（其它块为空串）。⭐ 2026-10-22 补：没有它阅读屏只能画占位框。
+    #[serde(default)]
+    pub src: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -272,6 +275,7 @@ pub async fn get_page_blocks(db: State<'_, Db>, page_id: String) -> Result<Vec<P
             kind: b.kind,
             text: b.text,
             items: b.items,
+            src: b.src,
         })
         .collect())
 }

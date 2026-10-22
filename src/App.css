@@ -25396,6 +25396,14 @@ body.is-plugin-panel-open .main {
   color: var(--text);
   overflow-wrap: anywhere;
 }
+/* 真图（有 src 时）：铺满内容宽、不裁切，圆角与占位框同一档 */
+.mread-img-el {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 0 12px;
+  border-radius: 12px;
+}
 .mread-img {
   display: flex;
   align-items: center;

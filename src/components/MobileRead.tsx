@@ -172,7 +172,12 @@ export function MobileRead({ pageId }: { pageId: string }) {
  * ⚠️ **认不出来的 `kind` 不许丢** —— 落到最后那一支按普通段落渲染（丢了＝内容凭空少一块）。
  * ⚠️ 图片块没有文字：它代表"这里有一张图"的位置（效果图 04 那张虚线占位卡）。
  */
-function BlockView({ b }: { b: PageBlock }) {
+export function BlockView({ b }: { b: PageBlock }) {
+  // ⚠️ 图片的死链兜底：`src` 非空 ≠ 能加载。web 版存的是**一次性 `blob:` URL**
+  //   （`web.ts::save_image` 返回 `blobUrl(bytes,mime)`）⇒ 刷新后那个 URL 就死了。
+  //   死链若照画，用户看到的是**碎图图标**（看起来像"坏了"）；退成占位框才诚实地表达
+  //   "这里有一张图，但这份内容没有可用的地址"。
+  const [imgBroken, setImgBroken] = useState(false);
   switch (b.kind) {
     case "h1":
       return <h1 className="mread-h1">{b.text}</h1>;
@@ -194,7 +199,21 @@ function BlockView({ b }: { b: PageBlock }) {
     case "callout":
       return <div className="mread-callout">{b.text}</div>;
     case "image":
-      return <div className="mread-img">图片</div>;
+      // ⭐ 2026-10-22（owner：「web 移动端快速记录页图片保存显示有问题」）：
+      //   有 `src` 就**真的画那张图**；⛔ 不许一律画占位框（那一版是我上一笔的偷懒）。
+      //   ⚠️ 仍保留占位框作为**兜底**：`src` 为空、或图**加载失败**（`onError`，典型就是
+      //   web 那份已经死掉的 `blob:` 地址）时如实说「这里有一张图」，而不是画碎图图标。
+      return b.src && !imgBroken ? (
+        <img
+          className="mread-img-el"
+          src={b.src}
+          alt={b.text || "图片"}
+          loading="lazy"
+          onError={() => setImgBroken(true)}
+        />
+      ) : (
+        <div className="mread-img">图片</div>
+      );
     case "horizontalrule":
       return <hr className="mread-hr" />;
     default:

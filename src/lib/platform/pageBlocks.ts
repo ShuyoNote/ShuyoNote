@@ -55,6 +55,8 @@ export interface PageBlockLike {
   text: string;
   /** 列表逐项（只有 `kind === "list"` 有；`text` 里各项是粘着的，⛔ 别拿 text 切） */
   items: string[];
+  /** 图片块的 `src`（其它块为空串）。⭐ 2026-10-22 补：没有它阅读屏只能画占位框。 */
+  src: string;
 }
 
 /** 把**序列化后的 Lexical 文档**取成顶层块列表 ✓（空文本的块不收 —— 只列"有内容的块" ✓）。 */
@@ -93,7 +95,13 @@ export function pageBlocksFromDoc(jsonText: string): PageBlockLike[] {
     if (text.length === 0 && items.length === 0 && kind !== "image") return;
     // ⭐ 有 `blockId` 就用它（那是**可引用**的真 id ✓）；没有就按**位置**给回退 id ✓，
     //    ⛔ 绝不因为"没有 blockId"就把这一块**丢掉** ✗ —— 那正是修前那个用户可见的错 ✓。
-    out.push({ block_id: topBlockId(c) || `block-${i}`, kind, text, items });
+    out.push({
+      block_id: topBlockId(c) || `block-${i}`,
+      kind,
+      text,
+      items,
+      src: typeof c?.src === "string" ? c.src : "",
+    });
   });
   return out;
 }
