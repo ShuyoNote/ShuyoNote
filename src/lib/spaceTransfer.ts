@@ -5,6 +5,7 @@ import { confirmDialog } from "../store/confirm";
 import { useSpaceStore } from "../store/space";
 import { useNotes } from "../store/notes";
 import { useSpaceTransfer } from "../store/spaceTransfer";
+import type { WorkspaceMeta } from "../types";
 
 // 单空间迁移（导出 / 导入空间包）。
 //
@@ -63,25 +64,34 @@ export async function exportCurrentSpace(currentName: string): Promise<void> {
   }
 }
 
-/** 导入空间包：始终**新建**一个空间，绝不覆盖现有空间。 */
-export async function importSpacePackage(): Promise<void> {
+/**
+ * 导入空间包：始终**新建**一个空间，绝不覆盖现有空间。
+ *
+ * ⭐ 2026-10-22：**返回新空间的元信息**（`null` ＝ 用户取消 / 失败）。
+ * 为什么改返回值：移动端**没有空间切换器** ⇒ 只"导入成功"用户也看不到东西
+ * （没有切换入口 ＝ 死路，与"浮＋建空页落只读屏"同族）⇒ 调用方必须拿到 `id`
+ * 才能立刻 `switchTo` 过去。桌面那边忽略返回值即可（行为一字不变）。
+ */
+export async function importSpacePackage(): Promise<WorkspaceMeta | null> {
   try {
     const path = await platform.dialog.open({
       title: "导入工作空间",
       filters: [{ name: "ZIP", extensions: ["zip"] }],
       multiple: false,
     });
-    if (!path) return;
+    if (!path) return null;
     const ok = await confirmDialog({
       title: "导入工作空间",
       message: "导入将新建一个工作空间（不会覆盖现有空间）。确定继续？",
     });
-    if (!ok) return;
+    if (!ok) return null;
     const meta = await withProgress("准备导入…", "导入中…", () => api.importWorkspace(path as string));
     toast(`已导入工作空间「${meta.name}」`, "success");
     await useSpaceStore.getState().load();
+    return meta;
   } catch (e) {
     toast(`空间导入失败：${e}`, "error");
+    return null;
   }
 }
 
