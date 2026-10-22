@@ -4,6 +4,8 @@ import { markdownToPageContent } from "../lib/mdPreview";
 import { AlignLeftIcon, CheckIcon, CommentIcon, ImageIcon, ListIcon, OutlineIcon } from "./icons";
 import { pushOverlay } from "../lib/overlayStack";
 import { useNotes } from "../store/notes";
+import { api } from "../lib/api";
+import { platform } from "../lib/platform";
 import { useMobileNav } from "../store/mobileNav";
 
 /**
@@ -21,7 +23,12 @@ import { useMobileNav } from "../store/mobileNav";
  * ⚠️ 如实标注（不许编 ✗）：
  * - 效果图里那行「分段： 拍摄现场」在**说明书与需求文档里都查不到** ✗（`grep 分段` 零命中 ✓）
  *   ⇒ 那是**效果图的美术装饰**，我**不发明**这个功能 ✗（等 owner 说它是什么再补 ✓）。
- * - 「图片」按钮：本屏先只往文本里插 Markdown 图片语法 ✓，⛔ 还没接系统相册／文件选择器 ✗。
+ * - 「图片」按钮（⭐ 2026-10-22 起）：**真接系统选择器** ✓ —— `<input type=file accept="image/*">`
+ *   （安卓/iOS 上由系统弹出相册或文件选择器）⇒ 存成本机附件（`api.saveImage`）
+ *   ⇒ 在光标处插入 `![](<assetUrl>)` ✓（与桌面插图同一个存储层 ✓）。
+ *   ⚠️ 如实记：这条路径**不携带附件指纹**（`hash`）—— 图片能显示、也能随空间导出，
+ *   但「导出 markdown 时把它当附件拷进 zip」的那条链仍未接（需要 `markdownToPageContent`
+ *   产出带 hash 的 ImageNode，属另一个口子）✗。
  * - 工具栏按效果图钉在**底部**：`index.html` 的 viewport 带了
  *   `interactive-widget=resizes-content` ✓ ⇒ 软键盘弹出时内容区会缩短 ✓
  *   ⇒ 底部这条自然就落在**键盘上方** ✓（这正是效果图要的位置 ✓）。
@@ -32,7 +39,8 @@ const BAR = [
   { id: "ul", label: "列表", insert: "- " },
   { id: "todo", label: "待办", insert: "- [ ] " },
   { id: "quote", label: "引用", insert: "> " },
-  { id: "img", label: "图片", insert: "![]()" },
+  // ⭐ 2026-10-22：图片**不再往文本里塞一对空括号**（那样存进去就是坏图 ✗）⇒ 它走系统选择器
+  { id: "img", label: "图片" },
 ];
 
 /** ⭐ 2026-10-10：每项配一个**仓里现成**的细线矢量图标 ✓（效果图是"图标在上、文字在下"✓）。
@@ -53,6 +61,8 @@ export function MobileCapture() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const areaRef = useRef<HTMLTextAreaElement | null>(null);
+  // ⭐ 2026-10-22：真正的系统选择器（accept="image/*" ⇒ 安卓/iOS 弹相册/文件）
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const createPage = useNotes((s) => s.createPage);
   const setScreen = useMobileNav((s) => s.setScreen);
 
@@ -82,6 +92,39 @@ export function MobileCapture() {
       const pos = start + snippet.length;
       el.setSelectionRange(pos, pos);
     });
+  }
+
+  /**
+   * 「图片」：**真接系统选择器** ✓（2026-10-22，owner：「解决这些问题」）。
+   *
+   * 三步：① 用户点按钮 ⇒ 打开 `<input type=file accept="image/*">`；
+   *      ② 选中的文件走**仓里同一层** `api.saveImage`（与桌面插图同一个存储/加密层 ✓）；
+   *      ③ 在光标处插入 `![](<assetUrl>)` —— URL 用 `platform.asset.convertFileSrc(meta.path)`，
+   *        与桌面编辑器喂给 ImageNode 的**同一个转换** ✓（⛔ 不自己拼路径 ✗）。
+   * ⚠️ 失败**如实说**（不吞错）：选择器打不开、保存失败都会在 `err` 里写明 ✓。
+   */
+  async function pickImage(file: File) {
+    if (!file.type.startsWith("image/")) {
+      setErr("只能插入图片文件 ✓");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const data = new Uint8Array(await file.arrayBuffer());
+      const meta = await api.saveImage({
+        page_id: null,
+        name: file.name || null,
+        mime: file.type || "image/png",
+        data: Array.from(data),
+      });
+      const src = platform.asset.convertFileSrc(meta.path);
+      insert(`![${(file.name || "").replace(/[\]]/g, "")}](${src})\n`);
+    } catch (e) {
+      setErr(`插图失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   /** 「存」：**一次调用写完** ✓（`markdownToPageContent` ⇒ `createPage` ✓）。 */
@@ -148,13 +191,39 @@ export function MobileCapture() {
       {/* 键盘上方的快捷工具栏（6 项 ✓，与效果图同一组词 ✓） */}
       <div className="mcap-bar" role="toolbar" aria-label="快捷工具栏">
         {BAR.map((b) => (
-          <button key={b.id} className="mcap-bar-btn" onClick={() => insert(b.insert)}>
+          <button
+            key={b.id}
+            className="mcap-bar-btn"
+            onClick={() => {
+              // ⭐ 2026-10-22：「图片」不再往文本里塞一对空括号（那样存进去就是坏图）✗
+              if (b.id === "img") {
+                fileRef.current?.click();
+                return;
+              }
+              insert(b.insert ?? "");
+            }}
+          >
             {/* ⭐ 图标在上、文字在下 ✓（效果图形态 ✓）；命中区仍由 CSS 的 min-height:44 保证 ✓ */}
             <span className="mcap-bar-icon" aria-hidden>{BAR_ICONS[b.id]?.({ width: 14, height: 14 })}</span>
             <span className="mcap-bar-label">{b.label}</span>
           </button>
         ))}
       </div>
+
+      {/* ⭐ 2026-10-22：系统选择器（隐藏；只由「图片」按钮触发）*/}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        data-testid="mcap-image-input"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          // 清掉 value：否则**选同一张图第二次不会再触发 onChange** ✗（真机常见坑）
+          e.target.value = "";
+          if (f) void pickImage(f);
+        }}
+      />
     </div>
   );
 }

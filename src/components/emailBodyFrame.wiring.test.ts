@@ -1,0 +1,40 @@
+// 判据：邮件正文必须走**沙箱 iframe**（允许 <style>，但**不许** allow-scripts），且图片拦截不变。
+//
+// 来由（owner 2026-10-21）：「邮件的内容渲染为何这么丑？」
+//   真因：为了安全把 `<style>` 整块禁掉 ⇒ 邮件（尤其通知类，靠自带 style + 表格排版）样式全丢。
+//   修法：放进 iframe（样式作用域锁在 iframe 内）⇒ 可以允许 `<style>`；脚本靠 sandbox 挡住。
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const SRC = readFileSync(resolve(__dirname, "EmailPanel.tsx"), "utf8");
+const code = SRC.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+
+describe("邮件正文：沙箱 iframe 渲染", () => {
+  it("① 正文走 iframe（不再 dangerouslySetInnerHTML）", () => {
+    expect(code, "应当有 EmailBodyFrame").toContain("function EmailBodyFrame");
+    expect(code, "正文应当用 <EmailBodyFrame").toContain("<EmailBodyFrame");
+    // ⛔ 正文那一路不许再直接把 HTML 塞进 DOM
+    expect(code).not.toMatch(/email-rich-body[^>]*dangerouslySetInnerHTML/);
+  });
+
+  it("② sandbox 必须只给 allow-same-origin（⛔ 不给 allow-scripts）", () => {
+    expect(code, "sandbox 里应当有 allow-same-origin").toMatch(/sandbox="allow-same-origin"/);
+    // ⛔ 关键：一旦给了 allow-scripts，邮件里的 JS 就能跑（与 US 的消毒结论相反）
+    expect(code, "⛔ 不许 allow-scripts").not.toMatch(/sandbox="[^"]*allow-scripts/);
+  });
+
+  it("③ 消毒规则允许 <style>（它现在只在 iframe 内生效）", () => {
+    const forbid = code.match(/FORBID_TAGS:\s*\[[^\]]*\]/s)?.[0] ?? "";
+    expect(forbid, "FORBID_TAGS 里不该再有 style").not.toMatch(/"style"/);
+    // 但脚本类必须还禁着
+    for (const tag of ['"script"', '"iframe"', '"object"', '"embed"']) {
+      expect(forbid, `FORBID_TAGS 必须仍含 ${tag}`).toContain(tag);
+    }
+  });
+
+  it("④ 图片拦截不变（默认 data-src，点「显示图片」才换回 src）", () => {
+    expect(code, "应当保留 data-src 占位逻辑").toContain("data-src");
+    expect(code, "应当保留「显示图片」入口").toContain("显示图片");
+  });
+});

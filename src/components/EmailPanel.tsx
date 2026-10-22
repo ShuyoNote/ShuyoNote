@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useResolvedTheme } from "../store/theme";
 import DOMPurify from "dompurify";
 import { createPortal } from "react-dom";
 import { api, type EmailAccount, type EmailMeta } from "../lib/api";
@@ -198,7 +199,10 @@ export function stripRemoteCssUrls(s: string): string {
 export function sanitizeEmailHtml(html: string, showImages: boolean): string {
   const config = {
     USE_PROFILES: { html: true },
-    FORBID_TAGS: ["iframe", "script", "object", "embed", "form", "input", "style", "link", "meta", "base", "svg", "math"],
+    // ⭐ 2026-10-21（owner：「邮件正文太丑」）：**不再禁 `<style>`** ✗ ——
+    //   它现在只在**沙箱 iframe** 里生效（样式作用域被锁在 iframe 内，污染不到应用）✓
+    //   ⚠️ 脚本类标签仍然全禁 ✓（iframe 的 sandbox 也不给 allow-scripts ✓）
+    FORBID_TAGS: ["iframe", "script", "object", "embed", "form", "input", "link", "meta", "base", "svg", "math"],
     FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "formaction", "xlink:href", "srcset", "background"],
     ADD_ATTR: ["target", "rel"],
     ALLOW_DATA_ATTR: true,
@@ -312,6 +316,74 @@ function EmailBody({ text }: { text: string }) {
   );
 }
 
+
+// ⭐⭐ **2026-10-21（owner：「邮件正文太丑」· 方案 B）**：正文放进**沙箱 iframe** ✓
+//
+// 为什么必须用 iframe（而不是继续用 `dangerouslySetInnerHTML`）：
+//   · 邮件（尤其通知类）几乎全靠**自带 `<style>` ＋ 表格布局**排版；
+//   · 之前为了安全把 `<style>` 整块禁掉 ⇒ 样式全丢 ⇒ 用户看到的就是"裸表格 + 巨大头像占位"✗；
+//   · 放进 iframe 后，**样式作用域被锁在 iframe 内**（污染不到应用），于是可以放心允许 `<style>` ✓。
+//
+// 安全边界（三条，缺一不可）：
+//   ① `sandbox="allow-same-origin"` —— **不给 `allow-scripts`** ⇒ 邮件里的 JS 一行都跑不了 ✓
+//      （要 `allow-same-origin` 只是为了量高度：跨源读不到 contentDocument ✗）；
+//   ② 内容仍然先过 `sanitizeEmailHtml`（script/iframe/表单/事件属性/javascript: 全去）✓；
+//   ③ 远程图片仍然默认不加载（`data-src` 占位，点「显示图片」才换回 `src`）✓。
+//
+// 高度：onLoad 里量 `contentDocument.documentElement.scrollHeight`（再叠一次 300ms 后的复量，
+// 因为图片/字体加载会改高度）；窗口 resize 也重量 ✓。
+function EmailBodyFrame({ html }: { html: string }) {
+  const resolved = useResolvedTheme();
+  const ref = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(400);
+
+  const measure = () => {
+    const doc = ref.current?.contentDocument;
+    if (!doc) return;
+    const h = Math.max(doc.documentElement?.scrollHeight ?? 0, doc.body?.scrollHeight ?? 0);
+    if (h > 0) setHeight(h);
+  };
+
+  useEffect(() => {
+    measure();
+    const id = window.setTimeout(measure, 300);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.clearTimeout(id);
+      window.removeEventListener("resize", measure);
+    };
+    // html 变了 ⇒ 重新量（iframe 每次 srcDoc 变化都会重载）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [html]);
+
+  const text = resolved === "dark" ? "#e8e8ea" : "#1f2328";
+  const link = resolved === "dark" ? "#7aa2ff" : "#0b62d0";
+  // iframe 是**独立文档**：颜色没法继承 ⇒ 这里显式给一套最小基线（⛔ 不抢邮件自己的样式 ✗，
+  // 只在邮件没写的地方兜底：字体/断行/图片与表格不许溢出/链接色/段距）。
+  const srcDoc = `<!doctype html><html><head><meta charset="utf-8" />
+<style>
+  :root { color-scheme: ${resolved}; }
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { color: ${text}; font: 15px/1.7 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; word-break: break-word; }
+  img { max-width: 100%; height: auto; }
+  table { max-width: 100%; border-collapse: collapse; }
+  a { color: ${link}; }
+  blockquote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid rgba(128,128,128,.45); color: inherit; }
+</style></head><body>${html}</body></html>`;
+
+  return (
+    <iframe
+      ref={ref}
+      className="email-rich-frame"
+      title="邮件正文"
+      sandbox="allow-same-origin"
+      srcDoc={srcDoc}
+      onLoad={measure}
+      style={{ width: "100%", height, border: 0, display: "block", background: "transparent" }}
+    />
+  );
+}
+
 // 富文本正文：经 DOMPurify 消毒后渲染；远程图片默认不加载（src→透明占位 + data-src），
 // 点「显示图片」才加载。被拦下的图**明说数量和原因**——否则用户只看到"图没了"（2026-09-20 报障）。
 function EmailRichBody({
@@ -339,10 +411,7 @@ function EmailRichBody({
           )}
         </div>
       )}
-      <div
-        className="email-rich-body"
-        dangerouslySetInnerHTML={{ __html: clean }}
-      />
+      <EmailBodyFrame html={clean} />
     </div>
   );
 }
@@ -507,6 +576,12 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
   const readPaneRef = useRef<HTMLDivElement>(null);
   const [toolbarW, setToolbarW] = useState(9999);
   const [moreOpen, setMoreOpen] = useState(false);
+  // ⭐⭐ 2026-10-21（owner：工具栏溢出、没有自动收起）：自愈级
+  //   原来只靠隐藏测量行算阈值；它一旦测成 0 或偏小，工具栏就永远不会收 ⇒ 溢出
+  //   ⇒ 这里再叠一层按真实溢出判定：溢出就升一级，收起后有余量就降一级
+  const [collapseLevel, setCollapseLevel] = useState(0); // 0=全显示 1=窄 2=很窄 3=极窄
+  // ⭐ 上一次量到的工具栏宽度（只有宽度变了才尝试“放开一级”，避开来回跳）
+  const lastToolbarWRef = useRef(0);
   // 逐级收纳阈值：按按钮组实际宽度测量，而不是固定常量，避免控制条缩窄时横向溢出。
   const measureSaveRef = useRef<HTMLDivElement>(null);
   const measureIconRef = useRef<HTMLDivElement>(null);
@@ -1605,6 +1680,22 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
     return () => ro.disconnect();
   }, [active, useRich, html, isTrusted, showImages]);
 
+  // ⭐ 2026-10-21：按真实溢出自愈（一次一级）。它不取代上面的测量，只兜住测量偏小。
+  useEffect(() => {
+    const el = readToolbarRef.current;
+    if (!el) return;
+    const overflowing = el.scrollWidth > el.clientWidth + 1;
+    if (overflowing && collapseLevel < 3) {
+      setCollapseLevel((v) => Math.min(3, v + 1));
+    } else if (!overflowing && collapseLevel > 0) {
+      // ⭐ 只在「宽度变了」时才尝试放开（否则会与“溢出就收”来回跳 ✗）。
+      if (el.clientWidth !== lastToolbarWRef.current && el.clientWidth - el.scrollWidth > 24) {
+        setCollapseLevel((v) => Math.max(0, v - 1));
+      }
+    }
+    lastToolbarWRef.current = el.clientWidth;
+  }, [collapseLevel, toolbarW, need, active, useRich, html, isTrusted, showImages, listW]);
+
   // 测量顶部标题栏三组实际宽度：副标题是否隐藏（headSub）、工具是否收起（headTool），
   // 替代固定阈值 720/560。文案随 folders / 账号变化；30 = .email-page-head 左右 padding(16*2)。
   useEffect(() => {
@@ -1652,9 +1743,9 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
   const colTemplateNarrow = "32px 1fr"; // 勾选 | 内容区(两行)；窄布局不显示星标
   // 阅读区工具栏逐级收纳（阈值按按钮组实测宽度，而非固定常量）：
   //   宽 → P+Q+R 全显；中 → R 收进「更多」（P+Q+更多）；窄 → Q 也收进「更多」（P+更多）。
-  const toolbarNarrow = toolbarW < need.full;          // 放不下全部 → 右侧组收进「更多」
-  const toolbarVeryNarrow = toolbarW < need.noicon;    // 放不下 P+「更多」 → 无图标收尾按钮收进「更多」
-  const toolbarExtreme = toolbarW < need.icon;         // 放不下 保存+「更多」 → 图标核心按钮也收进「更多」
+  const toolbarNarrow = collapseLevel >= 1 || toolbarW < need.full;          // 放不下全部 → 右侧组收进「更多」
+  const toolbarVeryNarrow = collapseLevel >= 2 || toolbarW < need.noicon;    // 放不下 P+「更多」 → 无图标收尾按钮收进「更多」
+  const toolbarExtreme = collapseLevel >= 3 || toolbarW < need.icon;         // 放不下 保存+「更多」 → 图标核心按钮也收进「更多」
   // 顶部标题栏逐级收纳（阈值按实测内容宽度，而非固定 720/560）：32 = .email-page-head 左右 padding。
   const headSubNarrow = headW < headNeed.sub + 32;
   const headToolNarrow = headW < headNeed.tool + 32;
