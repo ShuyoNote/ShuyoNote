@@ -25331,6 +25331,82 @@ body.is-plugin-panel-open .main {
   color: var(--text);
   overflow-wrap: anywhere;
 }
+/* ⭐ 2026-10-22：移动阅读屏**按块类型**排版（owner：「页面样式没有了？」）。
+   原先所有块都渲染成 .mread-p（契约只给 block_id+text）⇒ 标题不加粗、列表粘成一行、
+   引用丢蓝条、callout 丢浅底、图片整块消失。取值都走既有设计 token，不新增配色。 */
+.mread-h1 {
+  margin: 22px 0 10px;
+  font-size: 22px;
+  line-height: 1.35;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mread-h2 {
+  margin: 20px 0 8px;
+  font-size: 18px;
+  line-height: 1.4;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mread-h3 {
+  margin: 16px 0 6px;
+  font-size: 16px;
+  line-height: 1.5;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mread-list {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  list-style: disc;
+}
+.mread-list li {
+  margin: 6px 0;
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mread-quote {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  background: var(--surface-2, #f5f7fa);
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mread-callout {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--accent-soft, #ebf1ff);
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mread-img {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  margin: 0 0 12px;
+  border: 1.5px dashed var(--border);
+  border-radius: 12px;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+.mread-hr {
+  margin: 18px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
 .mread-note {
   margin: 18px 0 0;
   font-size: 14px;

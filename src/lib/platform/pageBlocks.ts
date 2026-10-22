@@ -48,20 +48,52 @@ function topBlockId(node: any): string {
   return typeof node?.blockId === "string" ? node.blockId : "";
 }
 
+/** 块类型：`h1`/`h2`/`h3`/`paragraph`/`quote`/`callout`/`list`/`image`…（与 Rust `DocBlock.kind` 同口径） */
 export interface PageBlockLike {
   block_id: string;
+  kind: string;
   text: string;
+  /** 列表逐项（只有 `kind === "list"` 有；`text` 里各项是粘着的，⛔ 别拿 text 切） */
+  items: string[];
 }
 
 /** 把**序列化后的 Lexical 文档**取成顶层块列表 ✓（空文本的块不收 —— 只列"有内容的块" ✓）。 */
+/** 顶层块的 `kind`：`heading` 取 `tag`（真形状是 `{type:"heading", tag:"h1"}`，⛔ 不是 `type:"h1"`），其余取 `type`。 */
+function blockKind(node: any): string {
+  const ty = typeof node?.type === "string" ? node.type : "paragraph";
+  if (ty === "heading") return typeof node?.tag === "string" ? node.tag : "h2";
+  return ty;
+}
+
+/** `list` 节点的逐项文本（其余为空）。⛔ 不拿 `text` 去切 —— `nodeText` 拼子节点时没有分隔符。 */
+function listItems(node: any): string[] {
+  if (!Array.isArray(node?.children)) return [];
+  return node.children
+    .filter((c: any) => c?.type === "listitem")
+    .map((c: any) => nodeText(c).trim())
+    .filter((t: string) => t.length > 0);
+}
+
+/**
+ * 把**序列化后的 Lexical 文档**取成顶层块列表。
+ *
+ * ⭐ 2026-10-22：**除 `text` 外还给出 `kind` 与 `items`** —— 移动阅读屏原先只能一律 `<p>`
+ *   （契约里根本没有"这块是什么"），于是标题不加粗、callout 丢底色、引用丢蓝条、
+ *   **列表被粘成一行**（owner 原话「页面样式没有了？」）。`text` 的语义**一个字符没改** ✓。
+ *
+ * ⚠️ 空文本块不收 —— **但 `image` 例外**：图片块本来就无文字，它代表"这里有一张图"的位置。
+ */
 export function pageBlocksFromDoc(jsonText: string): PageBlockLike[] {
   const v = parseJson(jsonText);
-  return rootChildren(v)
-    .map((c, i) => ({
-      // ⭐ 有 `blockId` 就用它（那是**可引用**的真 id ✓）；没有就按**位置**给回退 id ✓，
-      //    ⛔ 绝不因为"没有 blockId"就把这一块**丢掉** ✗ —— 那正是修前那个用户可见的错 ✓。
-      block_id: topBlockId(c) || `block-${i}`,
-      text: nodeText(c).trim(),
-    }))
-    .filter((b) => b.text.length > 0);
+  const out: PageBlockLike[] = [];
+  rootChildren(v).forEach((c: any, i: number) => {
+    const kind = blockKind(c);
+    const text = nodeText(c).trim();
+    const items = listItems(c);
+    if (text.length === 0 && items.length === 0 && kind !== "image") return;
+    // ⭐ 有 `blockId` 就用它（那是**可引用**的真 id ✓）；没有就按**位置**给回退 id ✓，
+    //    ⛔ 绝不因为"没有 blockId"就把这一块**丢掉** ✗ —— 那正是修前那个用户可见的错 ✓。
+    out.push({ block_id: topBlockId(c) || `block-${i}`, kind, text, items });
+  });
+  return out;
 }
