@@ -762,7 +762,7 @@ function recordChange(
     );
     const lastPushed = prof[0]?.last_pushed_seq ?? 0;
     store.run(
-      "DELETE FROM changes WHERE entity = ? AND entity_id = ? AND op = 'upsert' AND device_id = ? AND id > ?",
+      "DELETE FROM changes WHERE entity = ? AND entity_id = ? AND op = 'upsert' AND device_id = ? AND seq > ?",
       [entity, entityId, did, lastPushed],
     );
   }
@@ -773,7 +773,7 @@ function recordChange(
   const row = store.query<{ id: number }>("SELECT last_insert_rowid() AS id")[0];
   if (row) {
     // device_seq mirrors local auto-increment seq (unique per device).
-    store.run("UPDATE changes SET device_seq = ?1 WHERE id = ?1", [row.id]);
+    store.run("UPDATE changes SET device_seq = ?1 WHERE seq = ?1", [row.id]);
   }
 }
 
@@ -803,7 +803,7 @@ async function trimChangeLogForExport(
   const sum = () =>
     tmp.query<{ n: number; b: number }>("SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(payload)), 0) AS b FROM changes")[0] ?? { n: 0, b: 0 };
   const before = sum();
-  if (hasServer) tmp.run("DELETE FROM changes WHERE id <= ?", [lastPushed]);
+  if (hasServer) tmp.run("DELETE FROM changes WHERE seq <= ?", [lastPushed]);
   else tmp.run("DELETE FROM changes");
   tmp.run("VACUUM");
   const after = sum();
@@ -813,12 +813,12 @@ async function trimChangeLogForExport(
 // Read outbox changes after `lastSeq`.
 function readOutbox(store: SqliteStore, lastSeq: number, limit = 500): SyncChange[] {
   return store.query<SyncChange>(
-    "SELECT id, device_id, device_seq, entity, entity_id, op, payload, updated_at FROM changes WHERE id > ? ORDER BY id ASC LIMIT ?",
+    "SELECT seq AS id, device_id, device_seq, entity, entity_id, op, payload, updated_at FROM changes WHERE seq > ? ORDER BY seq ASC LIMIT ?",
     [lastSeq, limit],
   );
 }
 function maxOutboxSeq(store: SqliteStore, lastSeq: number): number {
-  return store.query<{ m: number }>("SELECT COALESCE(MAX(id), 0) AS m FROM changes WHERE id > ?", [lastSeq])[0]?.m ?? 0;
+  return store.query<{ m: number }>("SELECT COALESCE(MAX(seq), 0) AS m FROM changes WHERE seq > ?", [lastSeq])[0]?.m ?? 0;
 }
 
 // ---- B 方案（2026-09-22）：页级保留本地时留下的那一版远端，怎么收场 ----
@@ -845,7 +845,7 @@ function pushedWatermarkForPage(store: SqliteStore, pageId: string): number {
 function unsentPageChangeCount(store: SqliteStore, pageId: string): number {
   return Number(
     store.query<{ n: number }>(
-      "SELECT COUNT(*) AS n FROM changes WHERE entity = 'page' AND entity_id = ? AND id > ?",
+      "SELECT COUNT(*) AS n FROM changes WHERE entity = 'page' AND entity_id = ? AND seq > ?",
       [pageId, pushedWatermarkForPage(store, pageId)],
     )[0]?.n ?? 0,
   );
@@ -859,7 +859,7 @@ function unsentPageChangeCount(store: SqliteStore, pageId: string): number {
  */
 function discardUnsentPageChanges(store: SqliteStore, pageId: string): number {
   const n = unsentPageChangeCount(store, pageId);
-  store.run("DELETE FROM changes WHERE entity = 'page' AND entity_id = ? AND id > ?", [
+  store.run("DELETE FROM changes WHERE entity = 'page' AND entity_id = ? AND seq > ?", [
     pageId,
     pushedWatermarkForPage(store, pageId),
   ]);
@@ -1242,11 +1242,11 @@ async function syncAttachments(
         await blobStore.put(realHash, blob);
         await blobStore.delete(hash).catch(() => {});
         store.run("UPDATE attachments SET hash = ?1 WHERE hash = ?2", [realHash, hash]);
-        const chs = store.query<{ id: number; payload: string }>("SELECT id, payload FROM changes WHERE entity='attachment' AND payload LIKE ?1", [`%${hash}%`]);
+        const chs = store.query<{ id: number; payload: string }>("SELECT seq AS id, payload FROM changes WHERE entity='attachment' AND payload LIKE ?1", [`%${hash}%`]);
         for (const ch of chs) {
           let p: any;
           try { p = JSON.parse(ch.payload); } catch { continue; }
-          if (p && p.hash === hash) { p.hash = realHash; store.run("UPDATE changes SET payload=?1 WHERE id=?2", [JSON.stringify(p), ch.id]); }
+          if (p && p.hash === hash) { p.hash = realHash; store.run("UPDATE changes SET payload=?1 WHERE seq=?2", [JSON.stringify(p), ch.id]); }
         }
       } catch { /* best-effort re-key */
         continue;
@@ -2436,7 +2436,7 @@ export function makeInvoke(store: SqliteStore) {
       const lim = Math.min(Math.max(Number(req.limit ?? 300) || 300, 1), 2000);
       const since = Date.now() - days * 86_400_000;
       const rows = store.query<ChangeRow>(
-        "SELECT entity_id, op, payload, updated_at FROM changes WHERE entity = 'page' AND updated_at >= ? ORDER BY id ASC LIMIT ?",
+        "SELECT entity_id, op, payload, updated_at FROM changes WHERE entity = 'page' AND updated_at >= ? ORDER BY seq ASC LIMIT ?",
         [since, lim],
       );
       return activityFeedOf(rows) as T;

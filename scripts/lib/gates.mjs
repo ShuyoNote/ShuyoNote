@@ -625,6 +625,15 @@ export const GATES = [
       "2026-10-13 owner 问「移动端要不要单立产品线，单立到哪一级」（台账 R203）时，实测出一个反复出现的形状：**移动屏直接借桌面布局类** ✗ —— 最典型就是 7 屏全写成 `<div className=\"main mhome\">` 这类 ✓。`src/App.css` 里 `.main` 有 11 处规则命中，其中 `body.is-toc-open .main`、`body.is-ai-open .main`、`body.is-plugin-panel-open .main` 全是**桌面侧的状态** ⇒ 移动屏借它，就跟着这些状态一起动：**桌面每加一个状态，移动屏被顺带动一下** ✓。这就是 owner 要「UI 单立」的动因之一。判据做成**纯静态源码扫描**（⛔ 不依赖浏览器/平台 ✗ —— 今晚 `(hover:none)`／`opened=false` 那种随环境变的东西不能用来当判据），白名单是**显式清单 ＋ 长度常量**（加行必改常量 ⇒ 悄悄加不了），**只减不增**。",
   },
   {
+    id: "check-mobile-exit-routes",
+    group: "contract",
+    label: "移动屏回家的路（每个屏 ≥1 条：底栏／屏内／返回键）",
+    // 为什么挂 contract：纯 Node、离线、零依赖、<1 秒（只读 src/components/Mobile*.tsx ＋ App.tsx）。
+    cmd: "node scripts/check-mobile-exit-routes.mjs",
+    incident:
+      "2026-10-10 一次**真死路**（台账 R188 的 (b)）：快速记录存完落进编辑器，而那个屏按返回键**直接退出应用**、`am start` 重启**仍回编辑器**、抽屉里**没有「首页」** ⇒ 除 `pm clear` 没有回家的路 ✗。当时的补救是在 `App.tsx` 加一颗 `position: fixed` 的「‹ 首页」浮标 —— 那是**给所有屏兜底**，所以谁漏了回家路都看不出来 ✗。2026-10-22 owner 拍板删浮标（两条真路已建好：阅读屏顶栏「‹ 阅读」＋ 底栏三格），**前提就是本条判据先存在**：每个移动屏必须至少有一种机械可认的回家写法（被 `wrapMobile` 包着 ⇒ 底栏／源码里有 `setScreen('home')`·`goHome`·`closeSettings`／有 `aria-label=返回…` 或 `m*-back` 类），否则红。例外必须进 `EXEMPT` 白名单并同步改 `EXEMPT_EXPECTED`（棘轮）。⛔ 纯静态源码扫描，不依赖浏览器 —— 真实可点性仍归 `verify-mobile-*` 那套 Chromium 验收。",
+  },
+  {
     id: "check-doc-content-access",
     group: "contract",
     label: "文档内容直接访问（只减不增：新文件 / 超基线即红）",

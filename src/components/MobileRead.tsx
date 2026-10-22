@@ -144,13 +144,9 @@ export function MobileRead({ pageId }: { pageId: string }) {
         ) : (
           /* ⭐ 选中即查词（06 ✓）：`onPointerUp` 覆盖鼠标与触屏两种"选完松手" ✓ */
           <div className="mread-body" onPointerUp={pickWord}>
-            {blocks.map((b) =>
-              b.text ? (
-                <p key={b.block_id} className="mread-p">
-                  {b.text}
-                </p>
-              ) : null,
-            )}
+            {blocks.map((b) => (
+              <BlockView key={b.block_id} b={b} />
+            ))}
           </div>
         )}
 
@@ -163,6 +159,47 @@ export function MobileRead({ pageId }: { pageId: string }) {
       {dictWord ? <MobileDictCard word={dictWord} onClose={() => setDictWord(null)} /> : null}
     </div>
   );
+}
+
+/**
+ * **一块 → 一个元素**：按 `kind` 上样式。
+ *
+ * 为什么需要它（owner 2026-10-22：「页面样式没有了？」）：原先这里一律 `<p>` 排下去 ——
+ * 契约里根本没有"这块是什么" ⇒ 标题不加粗变大、`callout` 丢浅底、`quote` 丢左蓝条、
+ * **列表各项被粘成一行**（`nodeText` 拼子节点没有分隔符）。现在 `kind`/`items` 由契约给（
+ * `src/lib/platform/pageBlocks.ts` ＋ Rust `doc_content::DocBlock` 同口径）。
+ *
+ * ⚠️ **认不出来的 `kind` 不许丢** —— 落到最后那一支按普通段落渲染（丢了＝内容凭空少一块）。
+ * ⚠️ 图片块没有文字：它代表"这里有一张图"的位置（效果图 04 那张虚线占位卡）。
+ */
+function BlockView({ b }: { b: PageBlock }) {
+  switch (b.kind) {
+    case "h1":
+      return <h1 className="mread-h1">{b.text}</h1>;
+    case "h2":
+      return <h2 className="mread-h2">{b.text}</h2>;
+    case "h3":
+      return <h3 className="mread-h3">{b.text}</h3>;
+    case "list":
+      return (
+        <ul className="mread-list">
+          {/* ⚠️ `items` 为空时退回 `text` 一项（老数据/别的渲染路径写进来的列表） */}
+          {(b.items.length > 0 ? b.items : [b.text]).map((t, i) => (
+            <li key={i}>{t}</li>
+          ))}
+        </ul>
+      );
+    case "quote":
+      return <blockquote className="mread-quote">{b.text}</blockquote>;
+    case "callout":
+      return <div className="mread-callout">{b.text}</div>;
+    case "image":
+      return <div className="mread-img">图片</div>;
+    case "horizontalrule":
+      return <hr className="mread-hr" />;
+    default:
+      return <p className="mread-p">{b.text}</p>;
+  }
 }
 
 /**

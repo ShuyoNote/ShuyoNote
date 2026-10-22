@@ -3,6 +3,9 @@ import { useTheme } from "../store/theme";
 import { useSyncStatus } from "../store/syncStatus";
 import { useMobileNav } from "../store/mobileNav";
 import { useEditorStore } from "../store/editor";
+import { useSpaceStore } from "../store/space";
+import { isDesktopPlatform } from "../lib/platform";
+import { exportCurrentSpace, importSpacePackage } from "../lib/spaceTransfer";
 import { pushOverlay } from "../lib/overlayStack";
 import { SyncPanel } from "./SyncPanel";
 
@@ -47,6 +50,28 @@ export function MobileSettings() {
   const phase = useSyncStatus((s) => s.phase);
   const closeSettings = useEditorStore((s) => s.closeSettings);
   const setScreen = useMobileNav((s) => s.setScreen);
+  // ⭐ 2026-10-22：空间卡要"导出**当前**空间" ⇒ 得知道当前是哪个；
+  //   ⛔ 不整店订阅（`check-store-subscriptions`），两个字段级选择器就够 ✓。
+  const spaces = useSpaceStore((s) => s.spaces);
+  const activeId = useSpaceStore((s) => s.activeId);
+  const activeName = spaces.find((s) => s.id === activeId)?.name ?? "当前空间";
+
+  /**
+   * ⭐ **导入完必须自己切过去** —— 移动端**没有空间切换器**（`MobilePair`/`MobilePairCode`
+   * 都只按 `activeId` 查），只"导入成功"的话新空间在这屏里**永远看不到** ＝ 死路
+   * （与"浮＋建空页落只读屏"同族，owner 2026-10-22 报过那一族）。
+   *
+   * ⚠️ 切失败也要说清楚：`switchTo` 自己会弹一条拒绝原因（两档），这里**不重复弹** ✓。
+   */
+  const importAndSwitch = async () => {
+    const meta = await importSpacePackage();
+    if (!meta) return; // 取消 / 失败：toast 已经如实报过，不在这里再编一句
+    const ok = await useSpaceStore.getState().switchTo(meta.id);
+    if (ok) {
+      // 切成了 ⇒ 回首页（首页会渲染**这个空间**的笔记；留在设置屏等于让用户自己找）
+      setScreen("home");
+    }
+  };
 
   // ⭐ 安卓返回键：和「快速记录」同一个坑 ✗（不接就是**直接退出应用** ✗）⇒ 接仓库既有的返回栈 ✓。
   //   关设置 = 关掉浮层状态 ＋ 自己的屏复位 ✓（与右上 ✕ 同一动作 ✓）。
@@ -104,7 +129,12 @@ export function MobileSettings() {
         </div>
       </section>
 
-      {/* ② 同步 */}
+      {/* ② 同步 —— ⚠️ **只在原生档（Tauri）渲染**（owner 2026-10-22 明确指出：
+          「web 版移动端不显示配对同步卡片」）。配对 / 局域网 / mesh 状态全是原生命令
+          （`isDesktopPlatform() === isTauri()`）⇒ Web 上这张卡里每一项都只会说"不支持"，
+          留着就是**假入口**。Web 上那句"不提供多设备同步"的如实说明**移到「空间」卡的脚注**了
+          （⛔ 不是删掉不说 ✗）。 */}
+      {isDesktopPlatform() && (
       <section className="mset-card">
         <div className="mset-group">同步</div>
         {/* ⭐ 阶段 2（R205）：**真入口** ✓ —— 08「设备配对 · 同步」屏 owner 拍了「走 A」并已落地 ✓
@@ -128,8 +158,50 @@ export function MobileSettings() {
           <span className="mset-status-text">同步状态：{syncLine}</span>
         </div>
       </section>
+      )}
 
-      {/* ③ 外观（真生效 ✓） */}
+      {/* ③ 空间：导出 / 导入（2026-10-22 owner 拍板「加」，效果图
+          `docs/plans/mobile/mockups/2026-10-20-redesign/07b-settings-space-native.svg`
+          ＋ `07c-settings-space-web.svg`）
+
+          ⭐ 为什么这一屏必须有它：Web 版**没有「配对同步」**（配对/局域网那套是原生命令，
+          `isDesktopPlatform() === isTauri()`）⇒ 在 Web 上"换设备"只剩**空间包**这一条路 ✓。
+          ⭐ 顺序刻意在「同步」之后、距「外观」之前：DOM 顺序决定它紧跟哪张卡 ——
+          同步卡若某天按平台隐藏，它自然上移，不用改这里 ✓。 */}
+      <section className="mset-card">
+        {/* ⚠️ 2026-10-22 owner 选了「A：与邻卡一致」——所以这里用**本屏既有词汇**
+            （`mset-group` 小灰标 ＋ `mset-row`），⛔ 不用效果图那套"粗体标题＋图标"的新卡头：
+            那套要整屏一起换（其余四张卡还都是旧词汇），不是这一笔的事。
+            ⇒ 效果图 07b/07c 是**目标形态**；本屏的全量重设计由 macOS 侧那批统一做。 */}
+        <div className="mset-group">空间</div>
+        <p className="mset-note">当前：{activeName}</p>
+        <button className="mset-row" onClick={() => void exportCurrentSpace(activeName)}>
+          <span className="mset-body">
+            <span className="mset-row-title">导出当前空间</span>
+            <span className="mset-row-sub">zip · 含该空间的附件</span>
+          </span>
+          <span className="mset-go" aria-hidden>›</span>
+        </button>
+        <button className="mset-row" onClick={() => void importAndSwitch()}>
+          <span className="mset-body">
+            <span className="mset-row-title">导入空间包</span>
+            <span className="mset-row-sub">新建 · 不覆盖现有空间</span>
+          </span>
+          <span className="mset-go" aria-hidden>›</span>
+        </button>
+        {/* ⚠️ 这句是**行为说明**，不是装饰：导入后会自动切到新空间 ✓ */}
+        <p className="mset-note">导入成功会自动切到新空间（否则导完看不到）。</p>
+        {/* ⚠️ 门槛来自实测：web 导出是"全库快照 ＋ 临时副本 ＋ 整份 zip 在内存"，峰值约 3～4 倍；
+            真包里已有 36 / 40 MB 的例子 ⇒ 手机上先劝一句，⛔ 不假装支持 ✗ */}
+        <p className="mset-note">大空间（&gt; 50 MB）建议在桌面端导出/导入。</p>
+        {!isDesktopPlatform() && (
+          <p className="mset-note">
+            Web 版不提供多设备同步（浏览器存储可能被回收）—— 换设备请用上面的空间包。
+          </p>
+        )}
+      </section>
+
+      {/* ④ 外观（真生效 ✓） */}
       <section className="mset-card">
         <div className="mset-group">外观</div>
         <div className="mset-seg" role="radiogroup" aria-label="主题">
@@ -145,7 +217,6 @@ export function MobileSettings() {
             </button>
           ))}
         </div>
-        <p className="mset-note">两种主题都取自设计系统，不新增配色。</p>
       </section>
 
       {/* ④ 关于 */}

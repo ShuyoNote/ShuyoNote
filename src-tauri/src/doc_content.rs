@@ -2726,17 +2726,65 @@ mod tests {
 ///    那么过滤会让**有正文的页永远返回空** ✗（2026-10-10 的用户可见错：手机阅读屏显示
 ///    「这一页还没有内容。」✗）。⇒ 没有就**按位置回退** `block-<下标>` ✓（与 web 侧
 ///    `src/lib/platform/pageBlocks.ts::pageBlocksFromDoc` **同语义** ✓）；空文本块不收 ✓。
-pub(crate) fn page_blocks_from_doc(json: &str) -> Result<Vec<(String, String)>, String> {
+pub(crate) struct DocBlock {
+    pub block_id: String,
+    /// 块类型（移动阅读屏按它上样式）：`h1`/`h2`/`h3`/`paragraph`/`quote`/`callout`/`list`/`image`…
+    ///
+    /// ⚠️ **标题的真形状是 `type:"heading"` ＋ `tag:"h1"`**（不是 `type:"h1"` ✗）——
+    /// 见 `src/lib/platform/web.ts::welcomeContent` 的 `h()`。这里按 `tag` 归一，⛔ 别按 `type` 猜。
+    pub kind: String,
+    /// 拍平后的全文。⭐ **语义一个字符都不改**（查词/摘要/搜索都吃它）。
+    pub text: String,
+    /// **列表逐项**（只有 `list` 节点有）。为什么必须单独给：`blocks::node_text` 拼子节点时
+    /// **没有分隔符** ⇒ `text` 里三项是粘在一起的（"…左侧栏 ＋插入内容：…"）⇒ 拿 `text` 切是错的。
+    pub items: Vec<String>,
+}
+
+/// 顶层块的 `kind`：`heading` 取 `tag`，其余取 `type`。
+fn block_kind(child: &serde_json::Value) -> String {
+    let ty = child
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("paragraph");
+    if ty == "heading" {
+        child
+            .get("tag")
+            .and_then(|v| v.as_str())
+            .unwrap_or("h2")
+            .to_string()
+    } else {
+        ty.to_string()
+    }
+}
+
+/// `list` 节点的逐项文本（其余节点返回空）。
+fn list_items(child: &serde_json::Value) -> Vec<String> {
+    let Some(children) = child.get("children").and_then(|c| c.as_array()) else {
+        return Vec::new();
+    };
+    children
+        .iter()
+        .filter(|c| c.get("type").and_then(|t| t.as_str()) == Some("listitem"))
+        .map(|c| crate::blocks::node_text(c).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+pub(crate) fn page_blocks_from_doc(json: &str) -> Result<Vec<DocBlock>, String> {
     let v: serde_json::Value = serde_json::from_str(json).map_err(|e| e.to_string())?;
-    let mut out: Vec<(String, String)> = Vec::new();
+    let mut out: Vec<DocBlock> = Vec::new();
     let children = v
         .get("root")
         .and_then(|r| r.get("children"))
         .and_then(|c| c.as_array());
     if let Some(children) = children {
         for (i, child) in children.iter().enumerate() {
+            let kind = block_kind(child);
             let text = crate::blocks::node_text(child).trim().to_string();
-            if text.is_empty() {
+            let items = list_items(child);
+            // ⚠️ 空文本块不收 —— **但 `image` 例外**：图片块本来就没有文字，而它正是
+            //    阅读屏上"这里有一张图"的位置（效果图 04 那张虚线占位卡）。
+            if text.is_empty() && items.is_empty() && kind != "image" {
                 continue;
             }
             let block_id = child
@@ -2744,7 +2792,12 @@ pub(crate) fn page_blocks_from_doc(json: &str) -> Result<Vec<(String, String)>, 
                 .and_then(|b| b.as_str())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("block-{i}"));
-            out.push((block_id, text));
+            out.push(DocBlock {
+                block_id,
+                kind,
+                text,
+                items,
+            });
         }
     }
     Ok(out)
@@ -2752,7 +2805,7 @@ pub(crate) fn page_blocks_from_doc(json: &str) -> Result<Vec<(String, String)>, 
 
 /// `get_page_blocks` 的读出口：**读一次 + 解析**都在本层完成 ✓（调用方不再碰落盘形态 ✓）。
 /// `Ok(None)` ＝ 该页不存在 ✓。
-pub fn page_blocks(c: &Connection, page_id: &str) -> Result<Option<Vec<(String, String)>>, String> {
+pub fn page_blocks(c: &Connection, page_id: &str) -> Result<Option<Vec<DocBlock>>, String> {
     let Some(doc) = read(c, page_id)? else {
         return Ok(None);
     };
@@ -2789,8 +2842,8 @@ mod page_blocks_tests {
             !blocks.is_empty(),
             "有正文的页必须给出块 —— 修前这里是 **0 块** ✗（就是那个用户可见的错）"
         );
-        assert_eq!(blocks[0].1, "The apple is red.");
-        assert!(!blocks[0].0.is_empty(), "回退 id 不许是空串");
+        assert_eq!(blocks[0].text, "The apple is red.");
+        assert!(!blocks[0].block_id.is_empty(), "回退 id 不许是空串");
     }
 
     #[test]
@@ -2802,8 +2855,8 @@ mod page_blocks_tests {
         .to_string();
         let blocks = page_blocks_from_doc(&doc).expect("应能解析");
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].0, "b-real-1");
-        assert_eq!(blocks[0].1, "有 id 的块");
+        assert_eq!(blocks[0].block_id, "b-real-1");
+        assert_eq!(blocks[0].text, "有 id 的块");
     }
 
     #[test]
@@ -2817,7 +2870,7 @@ mod page_blocks_tests {
         let texts: Vec<String> = page_blocks_from_doc(&doc)
             .expect("应能解析")
             .into_iter()
-            .map(|b| b.1)
+            .map(|b| b.text)
             .collect();
         assert_eq!(texts, vec!["甲".to_string(), "乙".to_string()]);
     }
@@ -2825,5 +2878,54 @@ mod page_blocks_tests {
     #[test]
     fn bad_json_is_an_error_not_a_panic() {
         assert!(page_blocks_from_doc("{ not json").is_err());
+    }
+
+    /// ⭐ **2026-10-22（owner：「移动阅读屏的页面样式没有了？」）**：块类型必须**按真形状**取出来。
+    ///
+    /// 真形状（`src/lib/platform/web.ts::welcomeContent` 的种子页，逐字）：
+    /// · 标题是 `{type:"heading", tag:"h1"}` —— ⛔ **不是** `type:"h1"` ✗
+    /// · 列表是 `{type:"list", children:[{type:"listitem"}, …]}`，
+    ///   而 `node_text` 拼子节点时**没有分隔符** ⇒ `text` 里各项是粘的 ⇒ 必须单独给 `items`。
+    /// · 图片块没有文字 ⇒ 旧实现把它**整块丢掉**（阅读屏上连"这里有一张图"都不显示）。
+    #[test]
+    fn block_kind_and_list_items_come_from_the_real_shape() {
+        let doc = json!({ "root": { "children": [
+            { "type": "heading", "tag": "h1", "children": [{ "type": "text", "text": "欢迎来到你的新空间" }] },
+            { "type": "callout", "children": [{ "type": "paragraph", "children": [{ "type": "text", "text": "本地优先" }] }] },
+            { "type": "heading", "tag": "h2", "children": [{ "type": "text", "text": "从这里开始" }] },
+            { "type": "list", "tag": "ul", "listType": "bullet", "children": [
+                { "type": "listitem", "children": [{ "type": "text", "text": "甲" }] },
+                { "type": "listitem", "children": [{ "type": "text", "text": "乙" }] }
+            ]},
+            { "type": "quote", "children": [{ "type": "text", "text": "引用一句" }] },
+            { "type": "image", "children": [] }
+        ]}})
+        .to_string();
+
+        let b = page_blocks_from_doc(&doc).expect("应能解析");
+        let kinds: Vec<&str> = b.iter().map(|x| x.kind.as_str()).collect();
+        assert_eq!(
+            kinds,
+            vec!["h1", "callout", "h2", "list", "quote", "image"],
+            "kind 必须来自真形状（heading 取 tag）"
+        );
+        let list = &b[3];
+        assert_eq!(list.items, vec!["甲".to_string(), "乙".to_string()]);
+        assert_eq!(list.text, "甲乙", "text 的语义不许被改（查词/摘要吃它）");
+        assert_eq!(b[5].kind, "image");
+        assert!(b[5].text.is_empty() && b[5].items.is_empty());
+    }
+
+    /// 反判据：认不出来的块类型**不许丢** —— 原样带出去（前端自己兜 style），
+    /// 丢了就等于"内容凭空少了一块"。
+    #[test]
+    fn unknown_block_type_is_carried_out_not_dropped() {
+        let doc = json!({ "root": { "children": [
+            { "type": "someFutureBlock", "children": [{ "type": "text", "text": "将来的块" }] }
+        ]}})
+        .to_string();
+        let b = page_blocks_from_doc(&doc).expect("应能解析");
+        assert_eq!(b.len(), 1, "未知类型不许丢块");
+        assert_eq!(b[0].kind, "someFutureBlock");
     }
 }

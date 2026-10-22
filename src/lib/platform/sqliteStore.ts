@@ -372,8 +372,12 @@ export class SqliteStore {
       );
       CREATE INDEX IF NOT EXISTS idx_attachments_page ON attachments(page_id);
       -- Sync engine tables (S8: per-workspace profiles / auth sessions / change log).
+      -- ⚠️ 主键列叫 seq，与桌面 db.rs **同名同义**（INTEGER PRIMARY KEY AUTOINCREMENT）。
+      --    2026-10-22 之前这里叫 id ⇒ Web 导出的空间包在桌面版**打不开**
+      --    （桌面 migrate() 只 CREATE IF NOT EXISTS，不会纠正列名 ⇒ ON changes(seq) 报 no such column）。
+      --    老浏览器库由下面 migrate() 里那条改名迁移补齐。
       CREATE TABLE IF NOT EXISTS changes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
         device_id TEXT NOT NULL,
         device_seq INTEGER NOT NULL,
         entity TEXT NOT NULL,
@@ -424,6 +428,16 @@ export class SqliteStore {
       this.db.run(COVERAGE_COLUMN_MIGRATION);
     } catch {
       /* already exists */
+    }
+    // ⭐ 2026-10-22：`changes` 的主键列**统一叫 `seq`**（桌面 `db.rs` 一直叫这个名字）。
+    //   Web 历史上叫 `id`，而桌面 `migrate()` 只 CREATE IF NOT EXISTS、**不纠正列名** ⇒
+    //   Web 导出的空间包在桌面版"导入正常、打开时出错"（`no such column: seq`，owner 2026-10-22 报障）。
+    //   ⚠️ 这里**不用 try/catch 吞错**（与上面几条不同）：改名失败不是"已经有了"，而是真问题。
+    {
+      const cols = this.query<{ name: string }>("PRAGMA table_info(changes)").map((r) => r.name);
+      if (!cols.includes("seq") && cols.includes("id")) {
+        this.db.run("ALTER TABLE changes RENAME COLUMN id TO seq");
+      }
     }
     // P6.1「每空间开关」：老浏览器库补列。**`DEFAULT 1` 是有意的**——升级不能静默改变
     // 同步范围（见 docs/plans/2026-09-15-attachment-on-demand-plan.md §五.4）。

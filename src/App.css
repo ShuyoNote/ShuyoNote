@@ -25199,32 +25199,19 @@ body.is-plugin-panel-open .main {
   box-shadow: var(--shadow-md);
 }
 
-/* ⭐ 2026-10-10：手机档"回首页"浮标（台账 R188 的 (b) ✓）—— 只在**开着某个页面**时出现 ✓。
-   ⚠️ `position: fixed` ＋ 不包裹任何容器 ✓（包裹 `NoteEditor` 会多一层布局 ✗）。
-   触控高度 44px ✓；避开左下角那个全局汉堡键（右下角放置 ✓）。 */
-.mnote-home {
-  position: fixed;
-  right: 16px;
-  bottom: calc(20px + var(--sab, 0px));
-  z-index: 40;
-  min-height: 44px;
-  padding: 0 16px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 15px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
-}
+/* ⚠️ 2026-10-22：`.mnote-home`（手机档"回首页"浮标，R188 的 (b)）**已删** ——
+   两条真路已建好（阅读屏顶栏「‹ 阅读」＋ 底栏三格），它压在正文右下角只是冗余的第二条。
+   判据改由 `scripts/check-mobile-exit-routes.mjs` 承担（每个移动屏必须有 ≥1 条回家的路）。
+   历史与来由见 `src/App.tsx` 里那段退役注释（⛔ 别把"为什么曾经需要它"一起删掉）。 */
 
 /* ══════════════════════════════════════════════════════════════════════════
    移动端「阅读」屏（效果图 `docs/plans/mobile/mockups/04-read.svg`，规格 §4.4）
    ⚠️ 同 `.mhome` / `.mcap` / `.mset`：**只有手机档会渲染它**（`App.tsx` 的
       `isMobile && currentId` 那一支 ✓）⇒ 这里**不套 @media** ✓。
    ⛔ 桌面那套 `.editor-*` / `.note-scroll` 一个字没动 ✓。
-   ⚠️ 本段写在文件**最外层**（前一个块 `.mnote-home` 已闭合、净深度 0 ✓，我核过 ✓）。
-   ⚠️ 底部让出约 72px：左下角是全局悬浮汉堡键、右下角是「‹ 首页」浮标与「同步」胶囊
-      （都是 `position: fixed` ✓）—— 不让开的话页脚会被压住 ✓（与 `.mcap-bar` 那次同一类处置 ✓）。
+   ⚠️ 本段写在文件**最外层**（前一个块已闭合、净深度 0 ✓）。
+   ⚠️ 底部让出约 72px：右下角是底栏与「同步」胶囊（`position: fixed` ✓）——
+      不让开的话页脚会被压住 ✓（与 `.mcap-bar` 那次同一类处置 ✓）。
    ========================================================================== */
 .mread {
   /* ⭐ 2026-10-10：06 词条卡是 `position: absolute` 压在本屏上 ✓ ⇒ 本屏必须是定位上下文 ✓ */
@@ -25330,6 +25317,82 @@ body.is-plugin-panel-open .main {
   line-height: 1.75;
   color: var(--text);
   overflow-wrap: anywhere;
+}
+/* ⭐ 2026-10-22：移动阅读屏**按块类型**排版（owner：「页面样式没有了？」）。
+   原先所有块都渲染成 .mread-p（契约只给 block_id+text）⇒ 标题不加粗、列表粘成一行、
+   引用丢蓝条、callout 丢浅底、图片整块消失。取值都走既有设计 token，不新增配色。 */
+.mread-h1 {
+  margin: 22px 0 10px;
+  font-size: 22px;
+  line-height: 1.35;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mread-h2 {
+  margin: 20px 0 8px;
+  font-size: 18px;
+  line-height: 1.4;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mread-h3 {
+  margin: 16px 0 6px;
+  font-size: 16px;
+  line-height: 1.5;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mread-list {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  list-style: disc;
+}
+.mread-list li {
+  margin: 6px 0;
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mread-quote {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  background: var(--surface-2, #f5f7fa);
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mread-callout {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--accent-soft, #ebf1ff);
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mread-img {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  margin: 0 0 12px;
+  border: 1.5px dashed var(--border);
+  border-radius: 12px;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+.mread-hr {
+  margin: 18px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
 }
 .mread-note {
   margin: 18px 0 0;

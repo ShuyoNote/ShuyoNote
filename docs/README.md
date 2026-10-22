@@ -16,6 +16,7 @@
 | **Web 版为什么不能多设备同步** | [Web 同步能力边界](web-sync-boundary.md) |
 | **同步服务端能看到我的什么** | [同步服务端数据可见边界](sync-server-data-boundary.md) |
 | **移动端怎么适配（安卓/iOS/鸿蒙壳）** | [移动端适配](MOBILE.md) |
+| **移动屏怎么回首页（谁靠什么路）** | [移动屏回家的路](mobile-exit-routes.md)（判据 `scripts/check-mobile-exit-routes.mjs`） |
 | 下一步做什么 | [路线图](roadmap.md) |
 | 免费客户出口怎么做 | [免费客户出口·网站/帮助站指南](free-site-export-guide.md) |
 | 某功能的技术方案 | [方案与规划](#方案与规划-plans) |
@@ -372,7 +373,7 @@ node scripts/test-report.mjs --list                                             
 
 ## 变更记录（changelog）
 
-- [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.92.22`）。
+- [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.92.23`）。
 
 ## 约定
 

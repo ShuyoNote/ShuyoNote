@@ -58,6 +58,7 @@
       "check-mcp-host-channel",
       "check-mobile-app-version",
       "check-mobile-class-namespace",
+  "check-mobile-exit-routes",
       "check-mobile-screen-reachable",
       "check-nsis-template",
       "check-ocr-assets",

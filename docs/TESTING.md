@@ -56,7 +56,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 84 条（contract 57 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 29 条 · 命令 Rust 298 / web 272 / CommandMap 299
+门禁 85 条（contract 58 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 29 条 · 命令 Rust 298 / web 272 / CommandMap 299
 基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 2795 · smoke-web 365 · check-pdf-reload 8 · check-panel-layout 61 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 69 · mobile-overlays 826 · mobile-views 249 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
@@ -103,6 +103,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-doc-content-access` | 「文档内容」的直接访问**只减不增**：换 CRDT 时要改的就是这批位置（当前 562 处，基线在 `scripts/doc-content-access-baseline.json`）；新文件直接引用或超基线即红 |
 | contract | `check-mobile-class-namespace` | **移动屏借了非移动命名空间的类**（棘轮：显式白名单**只减不增**，留在清单外的记号即红）。挡的是：移动屏借桌面布局类 ⇒ 桌面侧每加一个状态、移动屏被顺带动一下（活证据：`.main` 共 11 处命中，含 `body.is-ai-open .main`） |
 | contract | `check-mobile-screen-reachable` | **移动屏"无死屏"**（棘轮：登记表**只增不减**）：每个 `Mobile*.tsx` 屏文件必须在**显式登记表**里；登记为"走屏栈（`nav`）"且可达的 ⇒ 全仓必须存在 `setScreen("<id>")` 的入口调用。**并且要求把"到不了"明写出来**（`reachable: false` ＋ 理由）—— ⛔ 中间态不许含糊 ✗。来由：26-10-14 实测 `MobileSettings` 是**死屏**（屏在、门没有）+ `MobileAbout` 有门但只在桌面 chrome 里 |
+| contract | `check-mobile-exit-routes` | **每个移动屏都必须有 ≥1 条「回家的路」**（被 `wrapMobile` 包着 ⇒ 底栏／源码里有 `setScreen("home")`·`goHome`·`closeSettings`／有返回键 `aria-label="返回…"` 或 `m*-back` 类）。挡的是 2026-10-10 那次**真死路**（台账 R188 的 (b)）：快速记录存完落进编辑器 ⇒ 返回键退出应用、重启仍回编辑器、抽屉无「首页」⇒ 除 `pm clear` 无路可回；当时用一颗 `position: fixed` 浮标给**所有屏**兜底 ⇒ 谁漏了都看不出来。2026-10-22 owner 拍板删浮标（两条真路已建好），**前提就是本门禁先存在**。例外进 `EXEMPT` 并同步改 `EXEMPT_EXPECTED`（棘轮）。表见 [mobile-exit-routes.md](mobile-exit-routes.md) |
 | contract | `check-mobile-app-version` | **移动版号是独立标识**（棘轮：登记表**只增不减**）：移动版号**定义恰好一处**（`mobile-version.json` 的 `mobileVersion`）；⛔ **不许**写成桌面 `APP_VERSION` 的别名 ✗；⭐ **不许低于当前桌面号** ✓（R204：手机上装的是 1.92.x，往回跳会让用户看到「版本变低」）。来由：阶段 3（交付单立）—— Tauri 只有 `bundle.android.versionCode`、⛔ **没有 `versionName` 字段** ✗ ⇒ 移动号走「独立事实源 ＋ 构建步写 `tauri.properties`」 |
 | contract | `check-main-only-commits` | **发布线上不许有"开发线永远拿不到"的内容改动**：非 merge 的发布线独有提交只许动**发布产物**（`RELEASE_ARTIFACTS`），merge 则要求除第一父外的父都能从 `dev` 走到。2026-09-25 实测：`dev` 与 `origin/main` 分叉（208 / 7），7 笔里三笔带着开发线没有的内容——包括一笔**标题写着 `release:` 却夹带了 `mdPreview.ts` 修复**的（那个 bug 只在**打包产物**里显形，dev/vitest 永远绿）⇒ 所以判据按**文件集**、不按标题。⚠️ 非浅克隆才能判（残缺祖先图上 `rev-list A..B` 会静默给偏少的答案）⇒ 浅克隆一律 **exit 3** |
 | contract | `check-prism-components` | **代码块高亮只许有一条装配路径**（`src/editor/prismSetup.ts` 的模块化 import）：`public/prism/` 下不许再有 vendored 组件、`index.html` 里不许再有 `<script src="prism/…">`。2026-09-25 清冗余文件时实测：仓库里本来有**两条并行的 Prism 装配路径**（index.html 的 10 行阻塞 script ＋ 10 份 `public/prism/*.js`，与 `prismSetup.ts` 的 16 个组件 import 完全重合）。把前者整条去掉、在真 Chromium 里重新加载：`window.Prism` 照旧能 highlight json / rust / sql / go / markdown（token 都出来了）、页面零 JS 报错 ⇒ 那 10 个文件（77 KB）＋ 10 行阻塞 script 是纯冗余，已删。门禁钉住「别再长回来」；另有**只报告不判红**的静态对账：选择器列了、而 `prismSetup.ts` 没显式 import 的语言（今天 markdown / yaml —— 静态看不到，运行期 markdown 却可用，所以只摆出来、不下结论） |

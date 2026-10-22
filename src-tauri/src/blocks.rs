@@ -16,7 +16,16 @@ pub struct BlockInfo {
 #[derive(Debug, Serialize)]
 pub struct PageBlock {
     pub block_id: String,
+    /// 块类型（`h1`/`h2`/`h3`/`paragraph`/`quote`/`callout`/`list`/`image`…）。
+    /// ⭐ 2026-10-22 补：原先只有 `block_id` ＋ `text` ⇒ 移动阅读屏**不知道这块是什么**，
+    /// 只能一律 `<p>` 排下去 ⇒ 标题不加粗、callout 丢底色、引用丢蓝条、列表粘成一行
+    /// （owner 原话「页面样式没有了？」）。⛔ 不改 `text` 的语义（查词/摘要吃它）。
+    #[serde(default)]
+    pub kind: String,
     pub text: String,
+    /// **列表逐项**（只有 `kind == "list"` 有；`text` 里它们是被粘在一起的，⛔ 别拿 text 切）
+    #[serde(default)]
+    pub items: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -258,7 +267,12 @@ pub async fn get_page_blocks(db: State<'_, Db>, page_id: String) -> Result<Vec<P
     let rows = crate::doc_content::page_blocks(&c, &page_id)?.ok_or_else(|| "页面不存在".to_string())?;
     Ok(rows
         .into_iter()
-        .map(|(block_id, text)| PageBlock { block_id, text })
+        .map(|b| PageBlock {
+            block_id: b.block_id,
+            kind: b.kind,
+            text: b.text,
+            items: b.items,
+        })
         .collect())
 }
 

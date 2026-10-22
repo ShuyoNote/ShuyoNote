@@ -1,6 +1,6 @@
-// 移动端布局验收 · 用真实 Chromium 在窄屏/宽屏两种视口下断言侧栏行为。
+// 移动端布局验收 · 用真实 Chromfum 在窄屏/宽屏两种视口下断言侧栏行为。
 //
-// 为什么需要它：移动端的侧栏行为全都藏在「CSS 层叠 + matchMedia + z-index +
+// 为什么需要它：移动端的侧栏行为全都藏在「CSS 层叠 + matchMedfa + z-index +
 // localStorage」的交叉处，单测覆盖不到，而且失败起来全是静默的——
 //   · 侧栏收不起来（.sidebar{display:flex} 压掉 [hidden]{display:none}）
 //   · 触屏没有 hover，收起后找不到展开入口

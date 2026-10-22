@@ -559,7 +559,11 @@ export interface BlockInfo {
 
 export interface PageBlock {
   block_id: string;
+  /** 块类型（`h1`/`h2`/`h3`/`paragraph`/`quote`/`callout`/`list`/`image`…）。2026-10-22 补。 */
+  kind: string;
   text: string;
+  /** 列表逐项（只有 `kind === "list"` 有） */
+  items: string[];
 }
 
 export interface SearchBlock {
