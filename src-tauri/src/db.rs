@@ -1000,7 +1000,11 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
             updated_at  INTEGER NOT NULL,
             UNIQUE(device_id, device_seq)
         );
-        CREATE INDEX IF NOT EXISTS idx_changes_seq ON changes(seq);
+        -- ⚠️ 这条索引**不许**留在这个 batch 里（2026-10-22 实测）：Web 版导出的空间包里
+        -- `changes` 的主键列叫 `id`（同一语义的自增游标，只是名字不同）⇒ 上面那句
+        -- `CREATE TABLE IF NOT EXISTS` 因为表已存在而**跳过**（列名不会被纠正）⇒ 紧接着
+        -- `ON changes(seq)` 就报 `no such column: seq`，**整批中止** ⇒ 那个空间永远打不开。
+        -- 现在它挪到 batch 之后、紧跟在「把 id 改名成 seq」那条幂等迁移后面。
 
         CREATE TABLE IF NOT EXISTS sync_state (
             key   TEXT PRIMARY KEY,
@@ -1109,6 +1113,35 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         "#,
     )?;
 
+    // ⭐ 2026-10-22（owner 报「Web 导出空间包，桌面版导入正常、**打开时出错**」）：
+    // **同一张 `changes` 表，两边的主键列名不同** —— Web 版叫 `id`，桌面版叫 `seq`；
+    // 语义完全一样（都是 `INTEGER PRIMARY KEY AUTOINCREMENT` 的自增游标，桌面侧
+    // `sync_stream`/`hlc` 都按它定序）。于是「Web 导出 ⇒ 桌面导入」的包在这里必然打不开：
+    // 建表那句 `IF NOT EXISTS` 因表已存在而跳过（**列名不会被纠正**），
+    // 而 `ON changes(seq)` 的索引当场报 `no such column: seq`（原先是同一个 batch ⇒ 整批中止），
+    // 前端只看到「内核拒绝了这次切换」。
+    // 修法：**按语义把列名纠正过来**（`id` → `seq`），再建索引。幂等：桌面自己的库本来就是 `seq`。
+    // ⚠️ 顺序不许反：先改名、后建索引（反过来就是这次报错的原样）。
+    let (changes_has_seq, changes_has_id) = {
+        let mut stmt = conn.prepare("PRAGMA table_info(changes)")?;
+        let mut cols = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut seq = false;
+        let mut id = false;
+        for c in cols.by_ref() {
+            let name = c?;
+            if name == "seq" {
+                seq = true;
+            } else if name == "id" {
+                id = true;
+            }
+        }
+        (seq, id)
+    };
+    if !changes_has_seq && changes_has_id {
+        conn.execute("ALTER TABLE changes RENAME COLUMN id TO seq", [])?;
+    }
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_changes_seq ON changes(seq)", [])?;
+
     // Backfill FTS index if it was just created (empty) but pages already exist.
     let fts_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM page_fts", [], |row| row.get(0))?;
@@ -1125,8 +1158,7 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         let mut stmt = conn.prepare("PRAGMA table_info(pages)")?;
         let mut cols = stmt.query_map([], |row| row.get::<_, String>(1))?;
         cols.any(|c| c.map(|name| name == "kind").unwrap_or(false))
-    };
-    if !has_kind {
+    };    if !has_kind {
         conn.execute(
             "ALTER TABLE pages ADD COLUMN kind TEXT NOT NULL DEFAULT 'page'",
             [],
@@ -1406,6 +1438,27 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
     )?;
     if ws_has_kind == 0 {
         conn.execute("ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT ''", [])?;
+    }
+    // ⭐ 2026-10-22（与上面 `changes.id → seq` 同一次报障）：**Web 版的 `workspaces` 只有
+    // `id/name/theme/icon` 四列**（它把"空间的创建/修改时间"交给 meta 库），而桌面侧这张表
+    // 是 `NOT NULL` 的 `created_at` + `updated_at` —— 本函数末尾那句
+    // `UPDATE workspaces SET name = ?, updated_at = ?` 当场报 `no such column: updated_at`。
+    // ⇒ 缺就补（`DEFAULT 0` = "时间未知"，比编一个假时间诚实）；幂等。
+    let ws_has_created: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'created_at'",
+        [],
+        |row| row.get(0),
+    )?;
+    if ws_has_created == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0", [])?;
+    }
+    let ws_has_updated: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'updated_at'",
+        [],
+        |row| row.get(0),
+    )?;
+    if ws_has_updated == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0", [])?;
     }
 
     // Membership rule for database pages (query-type database: auto-collect by rule).
@@ -2006,5 +2059,76 @@ mod tests {
             .expect("失败之后列不出空间了");
         assert_eq!((pages, listed), (0, 2));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐⭐ **2026-10-22（owner 报「Web 导出空间包，桌面版导入正常、打开时出错」）**：
+    /// **Web 版与桌面版是两套 schema** —— 同一张表，列名/列数不同，而 `migrate()` 用的是
+    /// `CREATE TABLE IF NOT EXISTS`（表已存在就跳过，**列名不会被纠正**）⇒ Web 的包一进桌面就没法打开：
+    ///
+    /// ```text
+    /// ① changes    ：Web 主键叫 id，桌面叫 seq  ⇒ `ON changes(seq)` 的索引报 no such column: seq
+    ///                （那条索引原先**和建表写在同一个 batch 里** ⇒ 整批中止）
+    /// ② workspaces ：Web 只有 id/name/theme/icon，桌面 NOT NULL 的 created_at/updated_at 不在
+    ///                ⇒ migrate 末尾那句 `UPDATE workspaces SET … updated_at = ?` 报 no such column
+    /// ```
+    ///
+    /// 夹具按 **Web 那边的 DDL 逐字**造（`src/lib/platform/sqliteStore.ts`），不是"类似形状"。
+    /// 变异：把改名那句删掉 ⇒ 第 ① 格红；把补 created_at/updated_at 那两段删掉 ⇒ 第 ② 格红。
+    #[test]
+    fn migrate_accepts_a_web_shaped_space_db() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            r#"
+            CREATE TABLE changes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                device_id TEXT NOT NULL,
+                device_seq INTEGER NOT NULL,
+                entity TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                op TEXT NOT NULL,
+                payload TEXT NOT NULL DEFAULT '',
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, theme TEXT, icon TEXT);
+            INSERT INTO workspaces (id, name, theme, icon) VALUES ('ws-web', '新建工作区', '', '');
+            INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at)
+                VALUES ('dev1', 7, 'page', 'p1', 'upsert', '{}', 100);
+            "#,
+        )
+        .unwrap();
+
+        migrate(&c, "ws-web").expect("Web 导出的库必须能被桌面迁移吃下去（这就是那个 bug ✓）");
+
+        // ① 列名按语义纠正，且**值没被改**（原 id=1 的自增游标仍是 1）
+        let seq: i64 = c
+            .query_row("SELECT seq FROM changes WHERE entity_id = 'p1'", [], |r| r.get(0))
+            .expect("changes.seq 没补上（Web 包打不开的第一个原因）");
+        assert_eq!(seq, 1, "改名把游标值改掉了");
+        let idx: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_changes_seq'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(idx, 1, "idx_changes_seq 没建出来（整批中止的正是它）");
+
+        // ② 两张时间列补齐，且末尾那句 UPDATE 真跑过去了（不报错就已经证明）
+        let cols: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('workspaces')
+                  WHERE name IN ('created_at','updated_at')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cols, 2, "workspaces 的时间列没补齐（Web 包打不开的第二个原因）");
+
+        // ③ 幂等：桌面自己的库再跑一遍不报错、数据不动
+        migrate(&c, "ws-web").expect("第二次迁移应当无害（幂等）");
+        let still: i64 = c
+            .query_row("SELECT COUNT(*) FROM changes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(still, 1);
     }
 }

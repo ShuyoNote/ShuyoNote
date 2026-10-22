@@ -1315,4 +1315,38 @@ mod tests {
             "顺序反了：先写指针再换连接（2026-10-10 那个 bug ✓）"
         );
     }
+
+    /// **手动探针（默认不跑）**：拿一份**真实的 appdata 副本**跑一次「切到某个空间」，
+    /// 把内核真正返回的那句错**原样**打出来。
+    ///
+    /// 为什么需要它：前端把任何拒绝统一显示成「内核拒绝了这次切换，请稍后再试」，
+    /// **真错只在 devtools 控制台** ⇒ 一张截图给不出根因（2026-10-22 owner 报
+    /// 「Web 导出的空间包、桌面版导入正常，打开时出错」就是这种形状）。
+    ///
+    /// ```text
+    /// $env:SHUYO_WS_PROBE_DIR='<appdata 副本>'
+    /// $env:SHUYO_WS_PROBE_ACTIVE='<当前活动空间 id>'
+    /// $env:SHUYO_WS_PROBE_SPACE='<要切的那个空间 id>'
+    /// powershell -File scripts\win-cargo-test.ps1 -Filter probe_switch_active_space
+    ///   （然后按提示用 ——ignored 单跑那个 exe；见 docs/TESTING.md 的探针一节）
+    /// ```
+    #[test]
+    #[ignore = "手动探针：要一份真实 appdata 副本（SHUYO_WS_PROBE_DIR）"]
+    fn probe_switch_active_space() {
+        let dir = std::path::PathBuf::from(
+            std::env::var("SHUYO_WS_PROBE_DIR").expect("set SHUYO_WS_PROBE_DIR"),
+        );
+        let active = std::env::var("SHUYO_WS_PROBE_ACTIVE").expect("set SHUYO_WS_PROBE_ACTIVE");
+        let target = std::env::var("SHUYO_WS_PROBE_SPACE").expect("set SHUYO_WS_PROBE_SPACE");
+        // 先把"当前活动空间"开成主连接（与真是启动时同一段代码），再切 —— 两步分开报，根因才分得清。
+        let mut c = rusqlite::Connection::open_in_memory().unwrap();
+        match crate::db::reopen_space_at(&mut c, &active, &dir) {
+            Ok(()) => eprintln!("① 当前空间 {active} 开起来了"),
+            Err(e) => eprintln!("① 当前空间 {active} 打不开：{e}"),
+        }
+        match switch_active_space(&mut c, &target, &dir) {
+            Ok(()) => eprintln!("② 切到 {target} ⇒ **成功**"),
+            Err(e) => eprintln!("② 切到 {target} ⇒ **失败**：{e}"),
+        }
+    }
 }
