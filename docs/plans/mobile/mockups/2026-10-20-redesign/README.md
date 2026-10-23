@@ -3,7 +3,7 @@
 > 本目录是 2026-10-20 的一套**重设计效果图**（10 屏 / 390×844），取代  
 > [`../01-home.svg`](../01-home.svg) 等 10-09 旧稿的**视觉方案**；需求口径仍以  
 > [`../../2026-10-20-mobile-requirements-complete.md`](../../2026-10-20-mobile-requirements-complete.md) 为准。  
-> **效果图 ≠ 已做**；✅ **视觉层已于 2026-10-20 落地**（`App.css` 移动覆盖 ＋ `Mobile*.tsx` ＋ `index.html` 启动页），
+> **效果图 ≠ 已做**；✅ **视觉层已于 2026-10-20 落地**（`App.css` 移动覆盖 ＋ `Mobile*.tsx` ＋ `index.html` 启动页），  
 > ⛔ **真机观感仍待 owner 在 Mate 40 上签字**；落地以三条移动门禁与真机验收为准。
 
 ## 1. 这套图改了什么（相对 10-09 旧稿）
@@ -67,10 +67,10 @@ grep -n -E "https?://" *.svg | grep -v "www.w3.org/2000/svg"
 
 ## 5. 落地记录（2026-10-20）
 
-- ✅ **视觉层已落地**：`src/App.css` 末尾的移动命名空间覆盖层 ＋ `src/components/Mobile*.tsx`（诚实文案/
+- ✅ **视觉层已落地**：`src/App.css` 末尾的移动命名空间覆盖层 ＋ `src/components/Mobile*.tsx`（诚实文案/  
   缺口标注）＋ `index.html`（浅色启动页）；导航/屏栈结构未动。
 - ✅ 底边栏/浮「＋」保留；浮「＋」只在首页出现（capture/search/settings 隐藏，避免压工具栏）。
 - ✅ 08 旧 disabled「信任」按钮已删（真入口是「接入/重新配对」）；07/08 补「上次成功时间：暂无读数」。
-- ✅ 门禁读数：`mobile-layout` **70/70**、`mobile-overlays` **815/817**（2 条「忘记口令」既有环境失败，R201）；
-  `mobile-views` 有 **4 条旧行为断言**（窄屏仍断言桌面视图几何）与「手机优先」冲突 ⇒ 待换对象，⛔ 不调低基线。
+- ✅ 门禁读数：`mobile-layout` **70/70**、`mobile-views` **249/249**、`mobile-overlays` **815/817**
+  （2 条「忘记口令」既有环境失败，R201）。
 - ⛔ **真机观感待签**：web 截图只能证明样式层；需 owner 在 Mate 40 上看浅色观感/夜暗环境。

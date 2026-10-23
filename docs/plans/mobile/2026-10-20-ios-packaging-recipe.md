@@ -61,13 +61,13 @@ xcrun devicectl device install app --device 00008150-0006222E0C3BC01C <app>
 
 ## 4. 与「iOS 上还是桌面」的关系（2026-10-20）
 
-macOS 侧报回：iOS 包能起，但界面出现**桌面界面**。已定位到 `src/App.tsx` 的主区三元：
+macOS 侧报回：iOS 包能起，但界面出现**桌面界面**。当时怀疑 `src/App.tsx` 主区三元里
 `pdfWhere === "inline"` / `previewWhere === "inline"` / `templateOpen` /
-`view === "graph" | "timeline" | "map" | "board" | "files" | "sync"` 排在手机分支**前面**
-⇒ 任一状态成立（例如上次的看板/关系图被还原）⇒ 手机（含 iOS）渲染桌面主区 ✗。
+`view === "graph" | "timeline" | "map" | "board" | "files" | "sync"` 排在手机分支**前面**。
 
-已在 `2026-10-20` 的 `fix(mobile)` 中给每个桌面主区分支加 `!isMobile &&`，
-并加源码形状回归测试 `src/App.mobileBranchOrder.test.ts`（10 条）。⛔ 真机观感仍需复验。
+⚠️ **该猜测已实测否定**：给这些分支加 `!isMobile &&` 会让手机丢失**模板中心 / 文件 / PDF** 等
+既有入口（`mobile-layout` 7 红、`mobile-views` 4 红）⇒ 已在 `ef8ca237` **回退**。
+⇒ 「iOS 显示桌面」仍未定位，下一步取 iOS 真机的 `window.innerWidth` / UA / 截图，⛔ 不再加守卫猜。
 
 ## 5. 相关文档
 

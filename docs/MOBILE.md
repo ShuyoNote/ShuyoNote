@@ -1586,8 +1586,9 @@ z-index + localStorage）：侧栏默认收起、竖条浮层化且主区拿到�
 
 > ⭐ **2026-10-20：打包链路已打通**（代理 ＋ 手工组装 4 个 SwiftPM 归档）——
 > 配方单列在 [`plans/mobile/2026-10-20-ios-packaging-recipe.md`](plans/mobile/2026-10-20-ios-packaging-recipe.md)。
-> 同日定位「iOS 上还是桌面」＝ `App.tsx` 桌面主区分支排在手机分支前，已修（`!isMobile` 守卫）。
-> ⛔ **界面/真机仍未签**；下面 10-09/10-10 的排查记录保留为历史读数。
+> 同日曾把「iOS 上还是桌面」归因于 `App.tsx` 桌面主区分支优先并加 `!isMobile` 守卫，
+> 实测该守卫会破坏手机上的模板中心/文件/PDF（`mobile-layout` 7 红、`mobile-views` 4 红）⇒ **已回退**（`ef8ca237`）。
+> ⛔ **界面/真机仍未签**；该现象待 iOS 真机读数（`innerWidth` / UA / 截图）定位。
 
 > 🔄 **2026-10-10**：下面这张表里**「现有产物」与「⛔ 新构建」两行已过期** ✗ —— **今天出包成功了** ✓
 > （依据：台账 R182 逐字「`pnpm tauri ios build` ⇒ 退出码 **0** ／ `BUILD SUCCEEDED` **1** ／ `Undefined symbols` **0**」）。

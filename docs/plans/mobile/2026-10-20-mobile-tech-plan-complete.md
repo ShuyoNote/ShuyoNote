@@ -33,8 +33,8 @@
    Ed25519 设备身份、配对秘密哈希、20 位对码、人确认后才信任。
 9. **同步端到端只完成一半**：2026-10-20 桌面↔桌面首次搬通（`fetched=8/applied=8`）；
    **手机↔电脑未验**。⛔ 不得把「内核在」写成「同步可用」。
-10. **iOS 打包链路已打通（2026-10-20）**：代理 ＋ 手工组装 4 个 SwiftPM 归档；「显示桌面」已定位到
-    `App.tsx` 桌面分支优先并修复；⛔ 界面/真机仍待验。
+10. **iOS 打包链路已打通（2026-10-20）**：代理 ＋ 手工组装 4 个 SwiftPM 归档；「显示桌面」**仍未定位**
+    （曾试 `!isMobile` 守卫，会破坏手机上的模板中心/文件/PDF，已回退）；⛔ 界面/真机仍待验。
 11. **数据面两条硬教训**：外部多次写入会被自动保存写回（19→3、18→3 块）；`blocks` 表 ≠ `content_json` 块数。
     两条都必须进代码/回归，不是进 Wiki。
 12. **门禁**：注册表 84 条；移动三条基线 `69 / 249 / 826`；需真实 Chromium ＋ dev server；
@@ -539,9 +539,10 @@ mobile-version.json (mobileVersion=1.92.21)
   `_kSCDynamicStoreUseSessionKeys`；已 vendored 收窄为 `all(target_vendor="apple", target_os="macos")`；
   仍卡在 `tauri ios build` 需要的 4 个 `.a` 产物生成。
 - owner 同意先放下；⛔ 不为 iOS 去改依赖树（风险大且不是我们的代码）。
-- **2026-10-20 新读数**：打包链路已打通；「iOS 上还是桌面」已定位到 `App.tsx` 桌面主区分支
-  排在手机分支前（看板/关系图/预览等状态一成立就顶掉手机 UI），已加 `!isMobile` 守卫并补回归测试
-  `src/App.mobileBranchOrder.test.ts`。⛔ 真机界面仍待复验。
+- **2026-10-20 新读数**：打包链路已打通。「iOS 上还是桌面」**仍未定位**：曾试给桌面主区分支加
+  `!isMobile` 守卫，但实测会让手机丢失模板中心/文件/PDF 等既有入口（`mobile-layout` 7 红、
+  `mobile-views` 4 红）⇒ **已回退**（`ef8ca237`）。⛔ 真机界面仍待复验；下一步取 iOS 的
+  `window.innerWidth` / UA / 截图，不再用守卫猜。
 
 **重启条件**：上游给出 iOS 适配/新版本，或 tao/tauri 修复 scene 路径；重启前先在真机上量
 「装后进程是否存活」＋「界面是否可见」，⛔ 不用 `devicectl launch` 返回值当界面判据。
@@ -615,7 +616,7 @@ node scripts/test-report.mjs
 | 2 | 设置面、关于面、设备直连/首次配对；无死屏 | ✅ 主体 | `check-mobile-screen-reachable`；真机可到 |
 | 3 | 交付单立：版号、CI、验收包、素材清单 | **部分** | 版号/CI/包在；商店端与合规未完成 |
 | 4 | 同步收口：手机↔电脑、融合历史可见/可撤 | **未完成** | 六格读数非 0；真机签字 |
-| 5 | 视觉重设计落地：浅色 token、渐变主卡、白卡、浅底胶囊；不动导航结构 | **已落地（视觉层）**；真机观感待签 | `Mobile*.tsx`/`App.css`/`index.html` 改完；`mobile-layout` 70/70 绿；`mobile-overlays` 2 条既有环境失败；`mobile-views` 4 条旧行为断言待换对象（见需求 §9.4 #12） |
+| 5 | 视觉重设计落地：浅色 token、渐变主卡、白卡、浅底胶囊；不动导航结构 | **已落地（视觉层）**；真机观感待签 | `Mobile*.tsx`/`App.css`/`index.html` 改完；`mobile-layout` 70/70、`mobile-views` 249/249 绿；`mobile-overlays` 2 条既有环境失败 |
 
 **工作量驱动（不编工期）**：
 
@@ -717,9 +718,9 @@ node scripts/check-apk-contents.mjs <signed.apk>
 
 ### 13.4 变更记录
 
-- **v2.3（2026-10-20）**：iOS 打包链路打通（代理＋手工组装 4 个 SwiftPM 归档，配方单列）；
-  「iOS 显示桌面」定位到 `App.tsx` 桌面主区分支优先并加 `!isMobile` 守卫（回归测试 10 条）；
-  iOS 状态从「暂缓」改为「打包已通／界面待验」。
+- **v2.3（2026-10-23 订正）**：iOS 打包链路打通（代理＋手工组装 4 个 SwiftPM 归档，配方单列）。
+  ⚠️ 曾加 `!isMobile` 守卫试图修「iOS 显示桌面」，实测破坏手机模板中心/文件/PDF（layout 7 红、
+  views 4 红）⇒ **已回退**（`ef8ca237`）；iOS 桌面现象改为待真机读数定位。iOS 状态「打包已通／界面待验」。
 - **v2.2（2026-10-20 11:2x）**：视觉重设计**落地到视觉层**：`App.css` 追加移动命名空间覆盖层（浅色 token/
   渐变主卡/白卡/浅底胶囊/底栏与浮＋）、`index.html` 启动页切浅色、`Mobile*.tsx` 补诚实文案；
   capture/search/settings 去掉浮「＋」；删除 08 旧 disabled「信任」按钮。阶段 5 →「已落地（视觉层）／真机待签」。
