@@ -3950,6 +3950,24 @@ export function makeInvoke(store: SqliteStore) {
         (store.query<{ hash: string }>("SELECT DISTINCT hash FROM attachments WHERE page_id IN (SELECT id FROM pages WHERE workspace_id = ? AND deleted_at IS NULL)", [ws.id]) as any[])
           .map((r) => String(r.hash)),
       );
+      // ⭐ 2026-10-23（owner 实拍：手机 web 导出 → 桌面导入 ⇒ 图片碎图）：**还得按正文里的引用兜一遍**。
+      //   快速记录存的附件行 `page_id` 是 null（那一刻还没有页）⇒ 上面那条按 page_id 的查询**看不见它**
+      //   ⇒ 导出的 zip 里没有那几个字节 ⇒ 桌面导入后图当然打不开。
+      //   这里扫正文里的 `asst:<hash>`（web 的稳定引用，见 `lib/assetRef.ts`）把它们补进来。
+      //   ⚠️ 只在**导出副本**上做，不动活库；扫的是本空间未删除页的正文。
+      try {
+        const rows = store.query<{ content: string }>(
+          "SELECT content FROM pages WHERE workspace_id = ? AND deleted_at IS NULL",
+          [ws.id],
+        ) as { content: string }[];
+        for (const row of rows) {
+          for (const m of String(row.content ?? "").matchAll(/asst:([0-9a-f]{8,128})/g)) {
+            refHashes.add(m[1]);
+          }
+        }
+      } catch {
+        /* 正文扫不出来不影响导出：按 page_id 那批照旧 */
+      }
       const pages = (store.query("SELECT id FROM pages WHERE workspace_id = ? AND deleted_at IS NULL", [ws.id]) as any[]).length;
       const atts = await blobStore.entries();
       const candidates = atts.filter((a) => refHashes.size === 0 || refHashes.has(a.hash));

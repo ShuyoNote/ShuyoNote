@@ -495,6 +495,16 @@ pub async fn import_workspace(
         }
     }
 
+    // ⭐ 2026-10-23（owner：手机 web 导出 → 桌面导入后**图片打不开**）：把正文里的
+    // **跨平台稳定引用** `asst:<hash>` 落成**本机真实路径**。
+    //
+    // 为什么要这一步：web 版没有"文件路径"这个概念，它在正文里存的是内容指纹引用
+    // （`asst:<hash>`，见 `src/lib/assetRef.ts` 的由来）⇒ 桌面编辑器拿它当路径喂给
+    // `convertFileSrc` 只能得到坏 URL（症状就是截图里那张碎图）。
+    // ⚠️ 顺序：必须排在**附件落盘之后** —— 否则 `find_attachment` 找不到那些字节；
+    //    放在加密之后也安全（helper 自己按 `space_db_is_encrypted` 去袋子里取钥匙）。
+    rewrite_asset_refs_in_space_db(&target_db, &app_data_dir, &new_id)?;
+
     // Register in meta.workspaces.
     let sort_order: f64 = {
         let c = db.0.lock().expect("db mutex poisoned");
@@ -682,12 +692,127 @@ async fn copy_attachments_into_store(
     Ok(())
 }
 
+/// 把正文里的**跨平台稳定引用** `asst:<hash>` 改写成**本机真实路径**（导入时跑一次）。
+///
+/// 场景（owner 2026-10-23 实拍）：手机 web 导出空间包 → 桌面导入 ⇒ 图片碎图。
+/// 根因：web 没有"文件路径"这个概念，它在正文里存的是内容指纹引用 `asst:<hash>`
+/// （见 `src/lib/assetRef.ts` 的由来：`blob:` 地址刷新即死）；而桌面编辑器把 `src`
+/// 直接当路径喂 `convertFileSrc` ⇒ 得到坏 URL。
+/// ⇒ 导入时按 hash 找到刚落盘的附件、把引用换成真实路径，正文从此与"全在本机构建的"一致。
+///
+/// ⚠️ 三条边界：
+/// 1. 找不到那个 hash 的字节 ⇒ **原样留着**（不删、不猜）—— 阅读屏会画占位框，而不是碎图；
+/// 2. 只认 `asst:` 前缀的**字符串值**（⛔ 不动别的字段、不重排 JSON 语义以外的内容）；
+/// 3. 密文库要钥匙：先用 `space_crypto::space_key_for_path` 取（导入时刚装进袋子）。
+fn rewrite_asset_refs_in_space_db(
+    db_path: &Path,
+    app_data_dir: &Path,
+    space_id: &str,
+) -> Result<(), String> {
+    let key = if crate::security::space_db_is_encrypted(db_path) {
+        Some(
+            crate::space_crypto::space_key_for_path(db_path)?
+                .ok_or("拿不到新空间的钥匙，无法改写附件引用")?,
+        )
+    } else {
+        None
+    };
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    if let Some(k) = key.as_ref() {
+        crate::security::key_conn_with(&conn, k)?;
+    }
+    let mut stmt = conn
+        .prepare("SELECT id, content FROM pages WHERE content LIKE '%asst:%'")
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<(String, String)> = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+    let mut changed = 0usize;
+    for (id, content) in rows {
+        let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&content) else {
+            continue; // 坏 JSON 不动（别把用户内容改坏）
+        };
+        if rewrite_asst_refs(&mut v, |hash| {
+            crate::attachments::find_attachment(app_data_dir, space_id, hash)
+                .map(|p| p.to_string_lossy().to_string())
+        }) {
+            let next = serde_json::to_string(&v).map_err(|e| e.to_string())?;
+            conn.execute(
+                "UPDATE pages SET content = ?1 WHERE id = ?2",
+                rusqlite::params![next, id],
+            )
+            .map_err(|e| e.to_string())?;
+            changed += 1;
+        }
+    }
+    if changed > 0 {
+        eprintln!("[import] 已把 {changed} 页里的 asst: 引用改写成本机路径");
+    }
+    Ok(())
+}
+
+/// 递归改写 JSON 里所有 `asst:<hash>` 字符串值；`resolve` 返回 `None` ⇒ 原样保留。
+/// 返回是否有改动（有改动才写回，避免无谓的重排）。
+fn rewrite_asst_refs(v: &mut serde_json::Value, resolve: impl Fn(&str) -> Option<String> + Copy) -> bool {
+    match v {
+        serde_json::Value::String(s) => {
+            if let Some(hash) = s.strip_prefix("asst:") {
+                if let Some(path) = resolve(hash) {
+                    *s = path;
+                    return true;
+                }
+            }
+            false
+        }
+        serde_json::Value::Array(items) => {
+            let mut any = false;
+            for it in items.iter_mut() {
+                any |= rewrite_asst_refs(it, resolve);
+            }
+            any
+        }
+        serde_json::Value::Object(map) => {
+            let mut any = false;
+            for (_, val) in map.iter_mut() {
+                any |= rewrite_asst_refs(val, resolve);
+            }
+            any
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs::File;
     use std::io::Write;
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    // ⭐ 2026-10-23：导入时把 web 的 `asst:<hash>` 改写成真实路径（owner 实拍"导入后图片碎图"）。
+    #[test]
+    fn asst_refs_are_rewritten_to_local_paths_but_unknown_ones_kept() {
+        let mut v: serde_json::Value = serde_json::from_str(
+            r#"{"root":{"children":[
+                 {"type":"image","src":"asst:aaaa1111","altText":"a.jpg"},
+                 {"type":"image","src":"asst:deadbeef","altText":"b.jpg"},
+                 {"type":"paragraph","src":"C:\\old\\keep.png"},
+                 {"type":"text","text":"asst:not-a-src-field-keep-me"}]}}"#,
+        )
+        .unwrap();
+        let changed = rewrite_asst_refs(&mut v, |h| {
+            (h == "aaaa1111").then(|| "C:\\Users\\x\\attachments\\ab\\cd\\aaaa1111.jpg".to_string())
+        });
+        assert!(changed, "应当报告「有改动」");
+        let s = serde_json::to_string(&v).unwrap();
+        assert!(s.contains(r#""src":"C:\\Users\\x\\attachments"#), "已知 hash ⇒ 换成真实路径: {s}");
+        assert!(s.contains(r#""src":"asst:deadbeef""#), "找不到字节的引用必须**原样保留**（不删不猜）: {s}");
+        assert!(s.contains(r#""src":"C:\\old\\keep.png""#), "非 asst 的路径不许动: {s}");
+        assert!(s.contains("asst:not-a-src-field-keep-me"), "只认 asst: 前缀的字符串值，但要认得出来: {s}");
+    }
 
     static TMP_SEQ: AtomicU32 = AtomicU32::new(0);
 

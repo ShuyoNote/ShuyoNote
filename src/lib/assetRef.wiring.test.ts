@@ -44,4 +44,15 @@ describe("附件稳定引用 asst:<hash>", () => {
     const tauri = read("src/lib/platform/tauri.ts");
     expect(tauri, "桌面 resolveRef 必须原样返回路径").toMatch(/resolveRef:[\s\S]{0,200}src\.startsWith\("asst:"\) \? "" : src/);
   });
+
+  // ⭐ 2026-10-23（owner 实拍：手机 web 导出 → 桌面导入 ⇒ 图片碎图）：
+  //   两个洞一起补 —— ① 导出按**正文里的引用**兜附件（page_id 是 null 那批看不见）；
+  //   ② 桌面导入把 `asst:<hash>` 落成真实路径（否则编辑器拿它当路径用 ⇒ 碎图）。
+  it("④ 导出要按正文引用兜附件 ＋ 导入要把引用落成本机路径", () => {
+    const web = read("src/lib/platform/web.ts");
+    expect(web, "web 导出没扫正文里的 asst: 引用").toMatch(/matchAll\(\/asst:\(\[0-9a-f\]\{8,128\}\)\/g\)/);
+    const rs = read("src-tauri/src/workspace_io.rs");
+    expect(rs, "桌面导入没调用改写").toMatch(/rewrite_asset_refs_in_space_db\(&target_db/);
+    expect(rs, "找不到字节的引用必须原样保留").toMatch(/rewrite_asst_refs/);
+  });
 });
