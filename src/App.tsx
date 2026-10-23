@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLeaseAutoRefresh } from "./lib/license/useLeaseAutoRefresh";
 import { hasBlockContent } from "./lib/blankPage";
 import { isDesktopPlatform, isMacDesktopPlatform } from "./lib/platform";
 import { PageTree } from "./components/PageTree";
@@ -989,6 +990,8 @@ function AppShell() {
   const templateOpen = useViewStore((s) => s.view === "templates");
   usePresence();
   useSyncStream();
+  // 中继租约的兜底续期：6 小时一次（面板不常开，光靠面板挂载不够）。
+  useLeaseAutoRefresh();
   // ⭐ M2（施工单 Task W3/W4）：**外部 AI 的写请求**从这条事件进来 —— 默认弹确认、
   //    免确认开关开着时直接落库并留一句看得见的痕 ✓（判断逻辑在 `src/lib/externalDrafts.ts` ✓）。
   useExternalDrafts();

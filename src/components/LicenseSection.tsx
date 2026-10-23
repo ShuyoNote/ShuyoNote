@@ -20,38 +20,12 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { cardState, daysLeft, graceDaysLeft, parseCard, pickCurrent } from "../lib/license/card";
 import type { CardState } from "../lib/license/card";
+import { readCards, writeCards, type StoredCard } from "../lib/license/cardStore";
 import { renewDecision } from "../lib/license/renewPrompt";
 import { nowTs, renewBytes } from "../lib/license/signedBytes";
 import { relayStatusView } from "../lib/relay/statusView";
 
-/** 本机存卡的键（只存**卡文本**；私钥在 Rust 侧，⛔ 不进 localStorage）。 */
-const CARDS_KEY = "shuyonote.license.cards";
-
 type Busy = null | "renew" | "paste";
-
-interface StoredCard {
-  text: string;
-}
-
-function readCards(): StoredCard[] {
-  try {
-    const raw = localStorage.getItem(CARDS_KEY);
-    if (!raw) return [];
-    const arr = JSON.parse(raw) as unknown;
-    if (!Array.isArray(arr)) return [];
-    return arr.filter((x): x is StoredCard => typeof (x as StoredCard)?.text === "string");
-  } catch {
-    return [];
-  }
-}
-
-function writeCards(cards: StoredCard[]): void {
-  try {
-    localStorage.setItem(CARDS_KEY, JSON.stringify(cards.slice(-8)));
-  } catch {
-    // 存不进去不该炸界面；下次进来自会显示"没有卡"
-  }
-}
 
 /** 五态 → 那一行字（**停卡那一档的措辞是产品口径**，⛔ 不在这里改词）。 */
 export function stateLine(state: CardState, days: number, grace: number): string {

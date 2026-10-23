@@ -11,7 +11,36 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../lib/api";
+import { refreshLease } from "../lib/license/lease";
 import { relayStatusView, type RelayStatusView } from "../lib/relay/statusView";
+
+type RelayStatus = Awaited<ReturnType<typeof api.relayProbe>>;
+
+/**
+ * 探针被拒的原因是不是「租约」这一档。
+ * ⚠️ **只认租约**：许可证没配（`crossnet 已暂停`）不在这里换 —— 换租约也救不了。
+ */
+function needsLeaseRefresh(st: RelayStatus): boolean {
+  const c = st.connection;
+  if (c.state === "denied") {
+    const reason = (c.detail || "").trim().toLowerCase();
+    return ["expired", "bad_sig", "unknown_kid", "malformed", "device_mismatch"].includes(reason);
+  }
+  if (c.state === "refused") {
+    return (c.detail || "").includes("缺少跨网凭证");
+  }
+  return false;
+}
+
+/** 探一次；若被拒原因是租约，先自动换一张再探（2026-10-23：租约到期不该让用户自己找按钮）。 */
+export async function probeWithAutoLease(): Promise<RelayStatus> {
+  let st = await api.relayProbe();
+  if (needsLeaseRefresh(st)) {
+    const r = await refreshLease();
+    if (r.ok) st = await api.relayProbe();
+  }
+  return st;
+}
 
 export function RelayStatusSection() {
   // 初值：**还没读** ⇒ 那一格就说"还没检查/读不到"（⛔ 不许先显示一个编出来的数 ✗）
@@ -33,7 +62,7 @@ export function RelayStatusSection() {
       // ② 再真检查一次（发起连接 ＋ 握手）⇒ 那句"已连上/未连上"就是后端给的原文 ✓
       setBusy(true);
       try {
-        const st = await api.relayProbe();
+        const st = await probeWithAutoLease();
         if (alive) setView(relayStatusView(st));
       } catch {
         // 同上：保持①那份（它已经如实说了"还没检查" ✓）
@@ -49,7 +78,7 @@ export function RelayStatusSection() {
   const recheck = async () => {
     setBusy(true);
     try {
-      setView(relayStatusView(await api.relayProbe()));
+      setView(relayStatusView(await probeWithAutoLease()));
     } catch {
       // 失败不动上一份读数（⛔ 不把失败显示成 0 天／已连上 ✗）
     } finally {
