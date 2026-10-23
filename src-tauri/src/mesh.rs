@@ -1585,23 +1585,63 @@ pub fn ensure_window(
     let mut guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
     // ① 这一扇门**已经在开** ⇒ 只把缺的空间加进去（⛔ 不重启 ✗）
     if let Some(h) = guard.get(bind) {
+        let mut failures: Vec<String> = Vec::new();
         for (db_space, proto_space, device_level) in spaces {
-            h.add_space(db_space, proto_space, dir)?;
+            // ⭐ 2026-10-23（S3a）：**一个打不开的空间不许把这一轮整批按死** ✗ ——
+            //   锁着的加密空间就是这种：它自己没钥匙（开不了库），但它**不该连累**同绑定的其它空间 ✓。
+            //   口径：能加的先加；加不上的**记一条**、⛔ 不谎报"我在服务它"（服务范围＝`served()` ✓）。
+            if let Err(e) = h.add_space(db_space, proto_space, dir) {
+                failures.push(format!("{proto_space}: {e}"));
+                continue;
+            }
             // ⭐ **U11**：连接加了，**卡也要一起载** ✗→✓（否则那个空间"服务着但谁都进不来" ✓）
-            h.load_cards_for(proto_space, dir, *device_level)?;
+            if let Err(e) = h.load_cards_for(proto_space, dir, *device_level) {
+                failures.push(format!("{proto_space}: 卡表载不进来：{e}"));
+            }
+        }
+        // ⚠️ 一门都没服务上 ⇒ 仍然**如实报错**（⛔ 不许把"一个都没开"说成成功 ✗）。
+        if !failures.is_empty() && h.served().is_empty() {
+            return Err(failures.join("; "));
+        }
+        for f in &failures {
+            eprintln!("[mesh] 绑定 {bind} 这一轮**少服务一个空间**（其余照常）：{f}");
         }
         return Ok(Some(h.addr()));
     }
     // ② 新开一扇门：先把这些空间的库连接都开好（⭐ 服务范围＝这张表的键 ✓）
+    // ⭐ 2026-10-23（S3a）：逐个开、**开不了的那个跳过**（口径同 ①）—— 一个锁着的加密空间
+    //   曾经让整扇门「这一轮都不宣告」，界面只会说「附近发现 0 台」，真因一个字看不见 ✓。
     let mut conns: std::collections::HashMap<String, Arc<Mutex<Connection>>> = std::collections::HashMap::new();
+    let mut failures: Vec<String> = Vec::new();
     for (db_space, proto_space, _) in spaces {
-        let conn = crate::db::open_space_conn_at(db_space, dir)?;
-        conns.insert(proto_space.clone(), Arc::new(Mutex::new(conn)));
+        match crate::db::open_space_conn_at(db_space, dir) {
+            Ok(conn) => {
+                conns.insert(proto_space.clone(), Arc::new(Mutex::new(conn)));
+            }
+            Err(e) => failures.push(format!("{proto_space}: {e}")),
+        }
+    }
+    if conns.is_empty() {
+        // 一个都开不了 ⇒ 仍然如实报错（⛔ 不许起一扇服务 0 个空间的门当作成功 ✗）
+        return Err(if failures.is_empty() {
+            "没有可服务的空间".to_string()
+        } else {
+            failures.join("; ")
+        });
+    }
+    // ⚠️ **跳过必须出声** ✗：静默少服务一个空间，用户只会看到"有些东西同步不过去"，而真因
+    //   （这一步：那个库打不开，通常是加密空间还没解锁）一个字都不在界面上 ✓。
+    for f in &failures {
+        eprintln!("[mesh] 绑定 {bind} 这一轮**少服务一个空间**（其余照常）：{f}");
     }
     // ⭐ U11：把**每个空间各自的**卡表载进来（一个空间一组 ✓）
+    //   ⚠️ 只给**真的开起来**的那些载卡（打不开的空间载了卡也只是"服务着但没库"✗）。
     let mut paired: CardBook =
         std::collections::HashMap::new();
     for (_, proto_space, device_level) in spaces {
+        if !conns.contains_key(proto_space) {
+            continue;
+        }
         load_cards(dir, proto_space, *device_level, &mut paired);
     }
     let handle = start(
@@ -1618,6 +1658,18 @@ pub fn ensure_window(
     let addr = handle.addr();
     guard.insert(bind.to_string(), handle);
     Ok(Some(addr))
+}
+
+/// ⭐ 2026-10-23（S3a）：**这一扇门此刻到底在服务哪些空间** —— 给"公告"那一侧核对用。
+///
+/// 为什么需要它：`ensure_window` 现在会**跳过**打不开的空间（锁着的加密空间就是这种 ✓），
+/// 而调用方手上只有一份"**想**服务的名单"（`pairs`）⇒ 不核对就会把没服务上的也宣告出去，
+/// 那正是这一族里最坏的一种：**播出去的话是假的** ✓。
+pub fn window_serves(bind: &str, proto_space: &str) -> bool {
+    let bind = bind.trim();
+    let Ok(g) = windows().lock() else { return false };
+    let Some(h) = g.get(bind) else { return false };
+    h.served().iter().any(|s| s == proto_space)
 }
 
 /// ⭐ **U8 的便利包装**（设置面那两条命令用 ✓）：从 `MeshSettings` 取绑定/口令、目录取 app data ✓。
@@ -5489,6 +5541,41 @@ mod tests {
     }
 
     // ══════════════════ ⭐⭐ U8：一个窗口服务多空间（T6） ══════════════════
+
+    /// ⭐ 2026-10-23（S3a）：**一个打不开的空间不许把整扇门按死**。
+    ///
+    /// 现场（2026-10-23 真机，逐字）：保险柜加密且**未解锁** ⇒ 连报 5 次
+    /// 「绑定 0.0.0.0:8788 的窗口起不来（它名下这些空间这一轮都不宣告）」，而同绑定的明文空间
+    /// **一个都同步不了**，界面只会说「附近发现 0 台」。⇒ 口径：能开的先服务；打不开的**如实不宣告**
+    /// （`window_serves` 就是给公告那一侧核对的那把尺 —— 不核对就会把没服务上的也播出去 ✓）。
+    ///
+    /// ⚠️ 本判据独占注册表里 `127.0.0.1:00000` 这个键（与上面那条同一条纪律：别的判据不碰它 ✓）。
+    #[test]
+    fn a_space_that_cannot_open_does_not_take_the_whole_window_down() {
+        let dir = temp_dir("s3a-partial-open");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        {
+            crate::db::open_space_conn_at("sp-good", &dir).unwrap();
+        }
+        // 坏的那个：库路径上放一个**目录** ⇒ sqlite 开不了（与"锁着的密文库"同一档：都是"开不了"）
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir).join("sp-bad.db")).unwrap();
+        let bind = "127.0.0.1:00000";
+        let spaces = vec![
+            ("sp-bad".to_string(), "proto-bad".to_string(), false),
+            ("sp-good".to_string(), "proto-good".to_string(), false),
+        ];
+        let addr = ensure_window(&spaces, "dev-me", bind, &dir)
+            .expect("能开的那个必须把门开起来（⛔ 不许因为一个打不开的空间整扇门不起）")
+            .expect("端口 0 也应当拿到真实地址");
+        assert!(addr.port() > 0);
+        assert!(window_serves(bind, "proto-good"), "能开的空间必须真的在服务");
+        assert!(
+            !window_serves(bind, "proto-bad"),
+            "打不开的空间⛔ 不许被算成在服务（否则公告就是假话）"
+        );
+        // 收干净：这门注册在全局表里（键＝绑定串），别的判据不能被它影响
+        let _ = stop_window("proto-good");
+    }
 
     /// ⭐⭐ **矩阵 U8-①：三个空间 ⇒ 一个端口** ＋ **U8-②：每空间独立、不串** ＋
     /// **T6「关掉一个空间不许关掉整窗」** —— 三条挤在一条判据里，因为它们是**同一个形状**的三面 ✓。

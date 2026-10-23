@@ -781,7 +781,14 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     Ok(Some(addr)) => match crate::mesh::announced_base(addr) {
                         Some(base) => {
                             // ⭐ 一扇门服务多个空间 ⇒ **每个空间都记一条基址**（公告是按空间发的 ✓）
+                            // ⚠️ 2026-10-23（S3a）：只宣告**这扇门真的在服务**的那些 ——
+                            //   打不开的空间（锁着的加密空间）会被 `ensure_window` 跳过，
+                            //   照着 `pairs` 全播就是**播假话**（对方来拉只会 403/404）✗。
                             for (_, space, _) in pairs {
+                                if !crate::mesh::window_serves(bind, space) {
+                                    eprintln!("[mesh] 不宣告 {space}：这扇门这一轮没在服务它（打不开的库）");
+                                    continue;
+                                }
                                 mesh_bases.push((space.clone(), base.clone()));
                             }
                         }

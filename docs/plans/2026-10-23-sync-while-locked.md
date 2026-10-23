@@ -1,7 +1,7 @@
 # 锁定态同步：把「同步要读空间库」换成「同步读一份密封副本」
 
-状态：**施工中**（S1 已核实＝**不需要重构**：生产只有 1 个写入点；S2「密封镜像」已落地并带判据 ✓；S3/S4 未开工）
-证据：`../../src-tauri/src/sync.rs`（`record_change` / `mirror_change_to_mesh_outbox` / `prune_mesh_outbox` ／ 判据 `every_local_change_is_mirrored_into_the_mesh_outbox`）· `../../src-tauri/src/db.rs`（`mesh_outbox` 建表 ＋ `idx_mesh_outbox_age`）· `../../src-tauri/src/security.rs`（`encrypt_payload` `117` / `wire_keys_for_conn` `142` / `startup_needs_unlock` `312`）· `../../src-tauri/src/keyring.rs`（`wrap` `214` / `unwrap_key` `226`）· `../../src-tauri/src/space_crypto.rs`（`251` 那条「会话未解锁」）· `../../src-tauri/src/mesh.rs`（`ensure_window` `1575`）· `../../src-tauri/src/lan_state.rs`（`793` 那一行日志）· `architecture.md` §同步（「锁定会话时拒绝同步」）· `2026-09-23-encryption-scope-decision.md` §3.3③
+状态：**施工中**（S1＝**不需要重构**（生产只有 1 个写入点）；S2「密封镜像」✅；S3a「一个打不开的空间不许把整扇门按死」✅ 真机验过；**S3b「锁定态真搬运」未开工**（要动 wire 格式）；S4 未开工）
+证据：`../../src-tauri/src/sync.rs`（`record_change` / `mirror_change_to_mesh_outbox` / `prune_mesh_outbox` ／ 判据 `every_local_change_is_mirrored_into_the_mesh_outbox`）· `../../src-tauri/src/db.rs`（`mesh_outbox` 建表 ＋ `idx_mesh_outbox_age`）· `../../src-tauri/src/mesh.rs`（`ensure_window` 逐空间跳过 ＋ `window_serves` ／ 判据 `a_space_that_cannot_open_does_not_take_the_whole_window_down`）· `../../src-tauri/src/lan_state.rs`（公告按 `window_serves` 过滤）· `../../src-tauri/src/security.rs`（`encrypt_payload` `117` / `wire_keys_for_conn` `142` / `startup_needs_unlock` `312`）· `../../src-tauri/src/keyring.rs`（`wrap` `214` / `unwrap_key` `226`）· `../../src-tauri/src/space_crypto.rs`（`251` 那条「会话未解锁」）· `architecture.md` §同步（「锁定会话时拒绝同步」）· `2026-09-23-encryption-scope-decision.md` §3.3③
 
 ---
 
@@ -107,8 +107,16 @@
 |---|---|---|---|
 | **S1** | 把 7 处 `INSERT INTO changes` 收敛成 1 个 helper | —— | ✅ **结论：不需要做**（见下） |
 | **S2** | 写入时封一份到 `mesh_outbox`（＋ 保留期按 7 天关掉） | `sync::tests::every_local_change_is_mirrored_into_the_mesh_outbox`：两次 upsert 同一页 ⇒ 镜像只剩 1 行、`device_seq` ＝ `changes.seq`、解回来是最新那份 ✓（明文空间原样过；密文空间"封得上"那一半归 S3 的真机判据） | ✅ 已落地 |
-| **S3** | 窗口改为"能从 outbox 服务"，⛔ 不打开空间库 | 两台真机：一端**锁着** ⇒ 窗口照常起（不再"都不宣告"）；锁定态拉一轮 ⇒ 对端 `mesh_inbox` 有行、**双方空间库零变化** | ⬜ 未开工 |
+| **S3a** | `ensure_window` 逐空间开、**打不开的跳过**；公告按 `window_serves` 过滤（⛔ 不谎报） | 判据 `a_space_that_cannot_open_does_not_take_the_whole_window_down`（能开的在服务、打不开的不算在服务）＋ **真机前后对比**：同一天、同一个锁着的保险柜，改前连报 5 次「窗口起不来…都不宣告」，改后一行「这一轮**少服务一个空间**（其余照常）」＋「网格窗口已启动」，18:49:14 照常发现对端 ✓ | ✅ 已落地 |
+| **S3b** | 窗口在**不开库**的情况下从 `mesh_outbox` 服务；收侧写 `mesh_inbox`（只存不应用） | 一端锁着 ⇒ 对端能拉到行、`mesh_inbox` 有行、**双方空间库零变化**；解锁后一轮 ⇒ 应用成功、块级投影一致 | ⬜ **未开工（要动 wire 格式，见下）** |
 | **S4** | 解锁后 drain ＋ 水位/体积裁剪 | 解锁后一轮 ⇒ 页出现在库里、两侧**块级投影一致**；超限路径有一条"响亮失败"判据 | ⬜ 未开工 |
+
+> ⚠️ **S3b 的真实障碍（写在这里，免得下一轮重新发现）**：现在的 wire 记录是
+> `{seq, device_id, device_seq, entity, entity_id, op, payload}`，`entity/entity_id/op` **在明文**、
+> 只有 `payload` 是封的（`encrypt_payload`）。而 S2 的 outbox 为了不泄露元数据，把
+> **整条记录**封成了 `sealed` ⇒ 锁定态的窗口**拿不出 `entity_id/op`**，照原格式发就是**编**。
+> ⇒ S3b 必须加一种新记录形态（例：`{device_seq, sealed}` ＋ 一个版本标记），**抬 wire 版本**，
+> 老对端按"不认识 ⇒ 跳过"处理。这条要和 macOS / AMD 约好在同一版上升，否则两次对测都白跑。
 
 > ⚠️ **S1 的更正（我先前那个"7 处"是错的）**：按 `git grep -n "INSERT INTO changes"` 数出 7 处，
 > 但逐处看上下文后：**只有 `sync.rs::record_change` 是生产写入点**，其余 5 处是 `#[cfg(test)]` 夹具
@@ -121,6 +129,6 @@
 
 ## 8. 与当前那两条的关系
 
-- **「一个未解锁的加密空间把整扇门按死」**：S3 顺带修掉（窗口不再开任何空间库）。
-  在那之前要不要打一次短修（按空间隔离失败），是**另一件**，不阻塞本方案。
-- **「锁定能不能看见新内容」**：本方案的回答是**不能**，只能搬运。想要能看 ⇒ §2 甲。
+- **「一个未解锁的加密空间把整扇门按死」**：✅ **S3a 已修**（窗口逐空间开、跳过打不开的；公告只播真在服务的那些）。
+  真机读数见 S3a 那一行 —— 同一个锁着的保险柜，改前整扇门不起，改后照常起来并发现对端。
+- **「锁定能不能看见新内容」**：本方案的回答是**不能**，只能搬运（S3b）。想要能看 ⇒ §2 甲。
