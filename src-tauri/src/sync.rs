@@ -618,6 +618,88 @@ pub fn peer_spaces_to_create(
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
 }
+
+/// ⭐ 2026-10-23（owner：「没有的空间，让用户选择哪些可以建立」）：一条**候选**。
+///
+/// ⚠️ 它只回答"能给用户看什么"，⛔ 不代表已经该建（真要建还得用户勾）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissingPeerSpace {
+    pub name: String,
+    /// 哪几台对端报了它（已排序、已去重）—— 界面副标题要写"ZHAIDELL、AMD"
+    pub from: Vec<String>,
+    /// 这个名字在本机**删过**（墓碑）⇒ 界面单列、默认不勾、勾的时候多问一句
+    pub tombstoned: bool,
+}
+
+/// ⭐ **把「对端有、本机没有」的个人空间列出来给人勾** —— 纯函数，不碰库、不建东西。
+///
+/// 与 [`peer_spaces_to_create`] 的**区别是刻意的**：
+/// · 那个是**替用户建**（四道闸全过才建，且"本机有加密空间"一票否决）；
+/// · 这个是**给用户看**：同样只收「配对过（G1）＋ 对端报 personal（G2）＋ 有名字（G3）＋
+///   本机没有同名个人空间」，但**墓碑也列出来**（打标记，让用户自己决定要不要"删了又活"），
+///   并且**不**因为本机有加密空间就把整张表清空 —— 用户勾＝他知情同意（界面必须写"未加密"）。
+///
+/// 输出：**按名字排序、按名字去重**（两台对端报同一个名字 ⇒ 一行，`from` 里两台）✓。
+pub fn missing_peer_spaces(
+    peers: &[crate::lan::Peer],
+    local: &[(String, String, String)],
+    tombstoned: &[String],
+    paired: &[String],
+) -> Vec<MissingPeerSpace> {
+    let mut out: Vec<MissingPeerSpace> = Vec::new();
+    for p in peers {
+        let dev = p.announce.device_id.trim().to_string();
+        // G1：没信任过这台 ⇒ 它的空间**连名字都不显示**（信任是这一整块的入口）。
+        if !paired.iter().any(|d| d.trim() == dev) {
+            continue;
+        }
+        // ⚠️ 名字与类别是**两个平行数组**（wire 上就是这么发的）⇒ 按名字遍历、类别按下标取，
+        //    取不到当空串（⛔ 不许用下标去猜，⛔ 不许越界）。
+        for (i, name) in p.announce.hub_space_names.iter().enumerate() {
+            let kind = p.announce.hub_space_kinds.get(i).map(String::as_str).unwrap_or("");
+            let n = name.trim();
+            // G2：只列 personal；team／空／别的写法一律不列（⛔ 不猜"没报就是个人"）。
+            if kind.trim() != "personal" || n.is_empty() {
+                continue;
+            }
+            // 本机已有同名**个人**空间 ⇒ 不列（那是"路由过去"，⛔ 不是"再建一个"）。
+            let exists = local.iter().any(|(_, ln, lk)| {
+                lk.trim() == "personal"
+                    && crate::mesh_merge_ledger::same_space_name_by_trim(ln, n)
+            });
+            if exists {
+                continue;
+            }
+            let tomb = tombstoned
+                .iter()
+                .any(|t| crate::mesh_merge_ledger::same_space_name_by_trim(t, n));
+            match out
+                .iter_mut()
+                .find(|x| crate::mesh_merge_ledger::same_space_name_by_trim(&x.name, n))
+            {
+                Some(row) => {
+                    if !row.from.iter().any(|d| d == &dev) {
+                        row.from.push(dev.clone());
+                    }
+                    // 任一台把它当"删过的名字" ⇒ 整行都按墓碑处理（保守方向 ✓）。
+                    row.tombstoned = row.tombstoned || tomb;
+                }
+                None => out.push(MissingPeerSpace {
+                    name: n.to_string(),
+                    from: vec![dev.clone()],
+                    tombstoned: tomb,
+                }),
+            }
+        }
+    }
+    for r in out.iter_mut() {
+        r.from.sort();
+        r.from.dedup();
+    }
+    // 顺序稳定（判据要能逐字节比 ✓）
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
 /// ⭐⭐ **2026-10-19（owner 拍「甲」）**：**替对端建它报了、而本机没有的同名个人空间**。
 ///
 /// ## 它做的五步（顺序即口径）
@@ -10869,5 +10951,70 @@ mod tests {
             "⛔ 坏账本被当成空账本 = 静默再融一次 ✗"
         );
     }
+    }
+}
+
+#[cfg(test)]
+mod missing_peer_spaces_tests {
+    use super::*;
+
+    /// 造一台"对端"：给它一组 (空间名, 类别)。
+    fn peer_with(dev: &str, spaces: &[(&str, &str)]) -> crate::lan::Peer {
+        let mut a = crate::lan::announce_for_own_hub(dev, "对端", "S1D", "http://192.168.1.5:8788", "room", "", "").expect("公告要造得出来");
+        a.hub_space_names = spaces.iter().map(|(n, _)| n.to_string()).collect();
+        a.hub_space_kinds = spaces.iter().map(|(_, k)| k.to_string()).collect();
+        crate::lan::Peer { announce: a, addr: "127.0.0.1".to_string(), seen_at_ms: 0 }
+    }
+
+    fn local(spaces: &[(&str, &str)]) -> Vec<(String, String, String)> {
+        spaces
+            .iter()
+            .enumerate()
+            .map(|(i, (n, k))| (format!("ws-{i}"), n.to_string(), k.to_string()))
+            .collect()
+    }
+
+    /// ⭐ 主判据：只列「配对过 ＋ personal ＋ 有名字 ＋ 本机没有」的；两台报同名只出一行。
+    #[test]
+    fn lists_only_missing_personal_spaces_from_paired_devices_and_dedupes_by_name() {
+        let peers = vec![
+            peer_with("dev-a", &[("产品", "personal"), ("团队甲", "team"), ("", "personal"), ("已有", "personal")]),
+            peer_with("dev-b", &[("产品", "personal"), ("客户&伙伴", "personal")]),
+            peer_with("dev-x", &[("没配对的", "personal")]),
+        ];
+        let got = missing_peer_spaces(
+            &peers,
+            &local(&[("已有", "personal"), ("团队甲", "team")]),
+            &[],
+            &["dev-a".to_string(), "dev-b".to_string()],
+        );
+        let names: Vec<&str> = got.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(names, vec!["产品", "客户&伙伴"], "顺序必须稳定（按名字排）");
+
+        let prod = got.iter().find(|x| x.name == "产品").unwrap();
+        assert_eq!(prod.from, vec!["dev-a", "dev-b"], "两台报同名 ⇒ 一行、出处两台");
+        assert!(!prod.tombstoned);
+    }
+
+    /// ⭐ 墓碑：**列出来但打标记**（与"自动建"直接 Skip 不同 —— 这里由人决定"要不要删了又活"）。
+    #[test]
+    fn a_name_that_was_deleted_here_is_listed_but_flagged() {
+        let peers = vec![peer_with("dev-a", &[("旧测试", "personal")])];
+        let got = missing_peer_spaces(&peers, &[], &["旧测试".to_string()], &["dev-a".to_string()]);
+        assert_eq!(got.len(), 1);
+        assert!(got[0].tombstoned, "删过的名字必须打标记（界面默认不勾）");
+    }
+
+    /// ⭐ 本机有加密空间**不该**把整张表清空 —— 用户勾＝知情同意（界面写"未加密"）。
+    #[test]
+    fn an_encrypted_space_on_this_machine_does_not_hide_the_list() {
+        let peers = vec![peer_with("dev-a", &[("产品", "personal")])];
+        let got = missing_peer_spaces(
+            &peers,
+            &local(&[("保险柜", "personal")]), // 本机有个（加密的）个人空间
+            &[],
+            &["dev-a".to_string()],
+        );
+        assert_eq!(got.len(), 1, "加密空间不该把候选表清空：{got:?}");
     }
 }
