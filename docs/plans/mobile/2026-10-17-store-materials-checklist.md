@@ -18,7 +18,7 @@
 | **内容分级** | 按 AppGallery 问卷填（年龄分级/是否含 UGC 等） | ⛔ **没找到**（找了 `docs/` "内容分级/age rating" ✓ ⇒ 只有零散提及 ✗，无问卷结果 ✓） | 按问卷逐题填 ✓（本应用：无广告/无社交/本地优先 ✓） | **owner**（提交时回答 ✓）＋ 我们预备答案 ✓ |
 | **签名密钥（上传/发布）** | 一把**发布用** keystore ＋ 口令（⛔ 不入仓 ✗） | ⛔ **没有**（⭐ 仓里**只有** CI 用 env 传的口令名 ✓：`ANDROID_KEYSTORE_BASE64`／`_PASSWORD`／`_KEY_ALIAS` ✓ —— ⛔ 值不在仓里 ✗ 且**不该在** ✓） | ⭐ **在不入库的地方**生成并保管 ✓（CI secret ✓／owner 密码器 ✓） | ⛔ **只有 owner** |
 | **上传密钥 / 商店账号** | AppGallery 开发者账号 ＋ 应用条目 | ⛔ **没有**（仓里零痕迹 ✓） | 注册开发者账号 ✓ ＋ 建应用条目 ✓ | ⛔ **只有 owner** |
-| **版本号与 `versionCode`** | `versionName` 1.92.x；`versionCode` 单调递增 | ✅ **有**：`mobile-version.json` 的 `mobileVersion`＝**1.92.11** ✓（唯一事实源 ✓）；`versionCode`＝`major*1000000+minor*1000+patch` ✓（`scripts/write-mobile-version.mjs` ✓，写进 `tauri.properties` ✓） | 每次发版改**那一个文件** ✓ | **我们**（改号）＋ owner 拍发版 ✓ |
+| **版本号与 `versionCode`** | `versionName` 1.92.x；`versionCode` 单调递增 | ✅ **有**：`mobile-version.json` 的 `mobileVersion`＝**1.92.24** ✓（唯一事实源 ✓）；`versionCode`＝`major*1000000+minor*1000+patch` ✓（`scripts/write-mobile-version.mjs` ✓，写进 `tauri.properties` ✓） | 每次发版改**那一个文件** ✓ | **我们**（改号）＋ owner 拍发版 ✓ |
 
 ## 两条口径（⭐ 别混 ✗）
 
