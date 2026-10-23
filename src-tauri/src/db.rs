@@ -541,6 +541,20 @@ pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             PRIMARY KEY (space_id, device_id, device_seq)
         );
         CREATE INDEX IF NOT EXISTS idx_mesh_outbox_age ON mesh_outbox(space_id, mirrored_at);
+        -- ⭐ 2026-10-23（S3c，方案 `docs/plans/2026-10-23-sync-while-locked.md` §7.4）：
+        --   **锁着时收下的封包**（"先存、不解密、不应用"）；解锁后由 `drain` 逐条解封、走现有 apply。
+        -- ⚠️ 三条边界：① 只存**封好的**（⛔ 明文不进这张表 ✗ —— 它是给"库打不开"那一刻用的）；
+        --   ② 主键 `(空间, 对端, device_seq)` ⇒ 重复收同一批天然幂等 ✓；
+        --   ③ **应用成功才删** ✗ —— 删早了是静默丢数据，删晚了只是多占几行 ✓。
+        CREATE TABLE IF NOT EXISTS mesh_inbox (
+            space_id    TEXT NOT NULL,
+            peer_device TEXT NOT NULL,
+            device_seq  INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL,
+            sealed      TEXT NOT NULL,
+            received_at INTEGER NOT NULL,
+            PRIMARY KEY (space_id, peer_device, device_seq)
+        );
         CREATE TABLE IF NOT EXISTS sync_state (
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL

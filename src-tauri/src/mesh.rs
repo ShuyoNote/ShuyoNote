@@ -3151,7 +3151,91 @@ fn handle_pull(state: &State, target: &str) -> Reply {
     }
 }
 
-/// ⭐ 2026-10-23（S3b-发）：**锁着的时候，从 `meta.mesh_outbox` 把封好的那几条搬出去**。
+/// ⭐ 2026-10-23（S3c）：把对端搬来的**封包**先存进 `meta.mesh_inbox` —— **不解密、不应用**。
+///
+/// 为什么要有它：**锁着的那一侧也要能收** ✗ —— 那张表只需要明文库（meta.db），不需要空间库的钥匙 ✓；
+/// 等解锁了再由 [`drain_inbox`] 逐条解封、走**现有**的 apply 路径 ✓。
+///
+/// 三条口径：① 只存 `sealed`（⛔ 明文不进这张表 ✗）；② 主键去重 ⇒ 重复收同一批幂等 ✓；
+/// ③ 返回"这次**新**存了几条"（`INSERT OR IGNORE` 的影响行数）—— 读数要能分辨"收过了"与"刚收到" ✓。
+pub fn stash_sealed_rows(
+    meta: &Connection,
+    space_id: &str,
+    peer_device: &str,
+    rows: &[MeshRow],
+) -> Result<usize, String> {
+    let now = crate::db::now_ms();
+    let mut n = 0usize;
+    for r in rows {
+        let Some(blob) = r.sealed.as_deref() else {
+            continue;
+        };
+        let changed = meta
+            .execute(
+                "INSERT OR IGNORE INTO mesh_inbox
+                     (space_id, peer_device, device_seq, updated_at, sealed, received_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![space_id, peer_device, r.device_seq, r.updated_at, blob, now],
+            )
+            .map_err(|e| e.to_string())?;
+        n += changed;
+    }
+    Ok(n)
+}
+
+/// ⭐ 2026-10-23（S3c）：**解锁后**把 inbox 里那一批解封并应用；**应用成功才删** ✗。
+///
+/// ⚠️ 删的时机是这一片最要紧的一格：删早了 = 静默丢数据；删晚了只是多占几行 ✓
+/// ⇒ 只有在 `applied > 0` 时才删（被合并闸拒下的那批**留着**，下次解锁再试 ✓）。
+pub fn drain_inbox(
+    c: &Connection,
+    meta: &Connection,
+    space_id: &str,
+    peer_device: &str,
+    device_level: bool,
+) -> Result<Absorbed, String> {
+    let rows: Vec<MeshRow> = {
+        let mut st = meta
+            .prepare(
+                "SELECT device_seq, updated_at, sealed FROM mesh_inbox
+                  WHERE space_id = ?1 AND peer_device = ?2 ORDER BY device_seq ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let it = st
+            .query_map(params![space_id, peer_device], |r| {
+                Ok(MeshRow {
+                    device_seq: r.get(0)?,
+                    entity: String::new(),
+                    entity_id: String::new(),
+                    op: String::new(),
+                    payload: None,
+                    updated_at: r.get(1)?,
+                    sealed: Some(r.get(2)?),
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        it.filter_map(Result::ok).collect()
+    };
+    if rows.is_empty() {
+        return Ok(Absorbed {
+            applied: 0,
+            tail: 0,
+            superseded: 0,
+            awaiting: 0,
+            merge: PeerMergeState::NotRun,
+        });
+    }
+    let out = absorb_peer_batch(c, &rows, peer_device, space_id, device_level)?;
+    if out.applied > 0 {
+        for r in &rows {
+            let _ = meta.execute(
+                "DELETE FROM mesh_inbox WHERE space_id = ?1 AND peer_device = ?2 AND device_seq = ?3",
+                params![space_id, peer_device, r.device_seq],
+            );
+        }
+    }
+    Ok(out)
+}
 ///
 /// 三条口径，每条都对应一次"否则就会静默丢数据"：
 /// ① **只发给认得封包的对端**（`caps=sealed1`）—— 老对端收到空 `entity` 会"跳过并推游标"，
@@ -4597,6 +4681,64 @@ mod tests {
         assert_eq!(code, 403, "名字对不上 ⇒ 403：{body}");
 
         let _ = stop_window("proto-good");
+    }
+
+    /// ⭐ 2026-10-23（S3c）：**锁着时收下的封包先进 inbox（不解密、不应用）；解锁后 drain 才应用**。
+    ///
+    /// 两条承重的：① 重复收同一批**幂等**（主键去重）；② **应用成功才删**（删早了 = 静默丢数据）。
+    #[test]
+    fn sealed_rows_stash_into_the_inbox_and_apply_on_unlock() {
+        let dir = temp_dir("s3c-inbox");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        let meta = crate::db::open_meta_conn_at(&dir).unwrap();
+        meta.execute(
+            "INSERT INTO workspaces (id, name, created_at, updated_at) VALUES ('sp-a', '工作', 1, 1)",
+            [],
+        )
+        .unwrap();
+        crate::db::pair_device(&meta, "proto-a", "dev-peer", "tok").unwrap();
+        let c = crate::db::open_space_conn_at("sp-a", &dir).unwrap();
+        c.execute("UPDATE workspaces SET name = '工作'", []).unwrap();
+        crate::sync::set_meta_state(&c, "device_id", "dev-me").unwrap();
+
+        // 两条"封包"（空间是明文 ⇒ 封包就是那条记录本身的 JSON，`decrypt_payload` 原样过）
+        let mk = |id: &str, seq: i64| MeshRow {
+            device_seq: seq,
+            entity: String::new(),
+            entity_id: String::new(),
+            op: String::new(),
+            payload: None,
+            updated_at: 1,
+            sealed: Some(
+                serde_json::json!({
+                    "entity": "page",
+                    "entity_id": id,
+                    "op": "upsert",
+                    "payload": serde_json::to_string(&page(id, "锁着时收到的", 10)).unwrap(),
+                })
+                .to_string(),
+            ),
+        };
+        let rows = vec![mk("p1", 1), mk("p2", 2)];
+
+        assert_eq!(stash_sealed_rows(&meta, "sp-a", "dev-peer", &rows).unwrap(), 2);
+        assert_eq!(
+            stash_sealed_rows(&meta, "sp-a", "dev-peer", &rows).unwrap(),
+            0,
+            "同一批再存一次 ⇒ 一条都不新增（主键去重 ⇒ 幂等）"
+        );
+        let n: i64 = meta.query_row("SELECT COUNT(*) FROM mesh_inbox", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 2);
+        // 收下 ≠ 应用：空间库里一条都还没有
+        let before: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+
+        // 解锁 ⇒ drain
+        let ab = drain_inbox(&c, &meta, "sp-a", "dev-peer", false).unwrap();
+        assert_eq!(ab.applied, 2, "两条都要真的应用：{ab:?}");
+        let after: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        assert_eq!(after, before + 2, "应用之后空间库里必须有这两页");
+        let left: i64 = meta.query_row("SELECT COUNT(*) FROM mesh_inbox", [], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0, "应用成功的那几条必须从 inbox 删掉（否则会被反复应用）");
     }
 
     /// ⭐ **判据①**：同名个人空间 ⇒ **融合**（并进本机这一个空间、保留本机 id/名字）＋ **账本一条记录（可读）**。
