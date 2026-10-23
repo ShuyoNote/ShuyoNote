@@ -958,11 +958,15 @@ function stepVerifyIpa(buildMetrics, signing) {
       appStoreEntitlements: distEntry?.entitlements ?? null,
     };
     if (signing && signing.team) {
-      const certTeams = (out.ipa.codesign?.authorities || []).map((a) => (a.match(/\(([A-Z0-9]{10})\)/) || [])[1]).filter(Boolean);
+      // ⚠️ 2026-10-23（真踩过）：team **不能**从证书 CN 的括号里取 —— 那是 Apple 给这张证书的
+      //    UID（如 `Apple Development: Zhi yong Zhai (XSCGZ4DA8U)`），不是 Team ID ⇒ 会把
+      //    **公司 team 签的包误判成个人**（构建 exit 0、ipa 却是对的，脚本自己红 ✗）。
+      //    唯一权威来源是 `codesign -dv` 的 `TeamIdentifier=`（= 描述文件里的 team）。
+      const certTeams = [out.ipa.codesign?.teamIdentifier].filter(Boolean);
       out.ipa.signingTeamExpected = signing.team;
       out.ipa.signingTeamFound = certTeams[0] || null;
       out.ipa.signingMatchesRequested = certTeams.includes(signing.team);
-      console.log(`[签名核对] 期望 team=${signing.team}（--sign ${signing.sign}）· 证书里读到 team=${certTeams.join(",") || "(空)"} · match=${out.ipa.signingMatchesRequested}`);
+      console.log(`[签名核对] 期望 team=${signing.team}（--sign ${signing.sign}）· 签名 TeamIdentifier=${certTeams.join(",") || "(空)"} · match=${out.ipa.signingMatchesRequested}`);
       if (!out.ipa.signingMatchesRequested) {
         fatal(
           `IPA 的签名主体与请求的档位不一致：期望 team=${signing.team}，实际=${certTeams.join(",") || "(空)"}。` +

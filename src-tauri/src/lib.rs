@@ -667,8 +667,14 @@ pub fn run() {
             let version = app.package_info().version.to_string();
             let url = WebviewUrl::App("index.html".into());
             let main_builder = WebviewWindowBuilder::new(app, "main", url)
-                .title(format!("ShuyoNote 数友笔记 · v{version}"))
-                .inner_size(1200.0, 800.0);
+                .title(format!("ShuyoNote 数友笔记 · v{version}"));
+            // ⚠️ 2026-10-23（真机读数定死根因）：`inner_size(1200, 800)` 原来是**无条件**的 ⇒
+            // iOS 上窗口也被建成 1200×800（真机探针：`innerWidth=1200 innerHeight=800`，
+            // 而 `screen=[402,874]`）⇒ CSS `@media (max-width:768px)` 为 false ⇒ 手机上
+            // 渲染的是**桌面布局**（手机 tab 栏不出现）。这就是 owner 报的「iOS 上还是桌面界面」。
+            // ⇒ 尺寸只在桌面给；移动端交给系统（窗口默认铺满屏幕）。
+            #[cfg(desktop)]
+            let main_builder = main_builder.inner_size(1200.0, 800.0);
             // 自绘标题栏（前端 <TitleBar />）。做成无边框而不是保留系统栏，
             // 是为了让顶栏能显示「当前页面 · 空间」并与应用配色连成一体。
             // 用户可在 设置 → 外观 关掉，前端会运行时 setDecorations(true)
