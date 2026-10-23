@@ -521,6 +521,26 @@ pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             pubkey        TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (space_id, device_id)
         );
+        -- ⭐ 2026-10-23（锁定态同步 S2，方案 `docs/plans/2026-10-23-sync-while-locked.md` §3）：
+        --   `changes` 的**密封镜像** —— 唯一用途：**锁着**（空间库打不开）时，网格窗口还能把这半边
+        --   已经封好的记录搬运出去。⚠️ 三条边界（缺一条就变成第二份真相 ✗）：
+        --   ① 只放**本机写下的**那些（`device_id` 在键里 ✓）；
+        --   ② `sealed` 是**整条记录**（entity / entity_id / op / payload 一起封 ✓）⇒ 明文库（meta.db）
+        --      里能看到的只有"哪个空间、哪台机、第几号、什么时候" —— ⛔ 没有页 id、⛔ 没有 op ✗；
+        --   ③ 它是**搬运缓存不是备份** ✗：真相仍在空间库的 `changes` 里 ⇒ 裁掉它**不丢数据** ✓
+        --      （解锁后按 seq 走普通拉取就能补上 ✓）。
+        CREATE TABLE IF NOT EXISTS mesh_outbox (
+            space_id   TEXT NOT NULL,
+            device_id  TEXT NOT NULL,
+            device_seq INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            sealed     TEXT NOT NULL,
+            -- ⭐ 写进镜像的**时刻**（不是页的 updated_at —— 导入进来的老页 updated_at 很旧，
+            --   拿它做保留期会把"刚镜像的"立刻判超期 ✗）。
+            mirrored_at INTEGER NOT NULL,
+            PRIMARY KEY (space_id, device_id, device_seq)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mesh_outbox_age ON mesh_outbox(space_id, mirrored_at);
         CREATE TABLE IF NOT EXISTS sync_state (
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL

@@ -1,7 +1,7 @@
 # 锁定态同步：把「同步要读空间库」换成「同步读一份密封副本」
 
-状态：**待拍板**（方案稿；⛔ 本轮未改任何加密 / 同步代码）
-证据：`../../src-tauri/src/security.rs`（`encrypt_payload` `117` / `wire_keys_for_conn` `142` / `startup_needs_unlock` `312`）· `../../src-tauri/src/keyring.rs`（`wrap` `214` / `unwrap_key` `226`）· `../../src-tauri/src/space_crypto.rs`（`251` 那条「会话未解锁」）· `../../src-tauri/src/mesh.rs`（`ensure_window` `1575`）· `../../src-tauri/src/lan_state.rs`（`793` 那一行日志）· `architecture.md` §同步（「锁定会话时拒绝同步」）· `2026-09-23-encryption-scope-decision.md` §3.3③
+状态：**施工中**（S1 已核实＝**不需要重构**：生产只有 1 个写入点；S2「密封镜像」已落地并带判据 ✓；S3/S4 未开工）
+证据：`../../src-tauri/src/sync.rs`（`record_change` / `mirror_change_to_mesh_outbox` / `prune_mesh_outbox` ／ 判据 `every_local_change_is_mirrored_into_the_mesh_outbox`）· `../../src-tauri/src/db.rs`（`mesh_outbox` 建表 ＋ `idx_mesh_outbox_age`）· `../../src-tauri/src/security.rs`（`encrypt_payload` `117` / `wire_keys_for_conn` `142` / `startup_needs_unlock` `312`）· `../../src-tauri/src/keyring.rs`（`wrap` `214` / `unwrap_key` `226`）· `../../src-tauri/src/space_crypto.rs`（`251` 那条「会话未解锁」）· `../../src-tauri/src/mesh.rs`（`ensure_window` `1575`）· `../../src-tauri/src/lan_state.rs`（`793` 那一行日志）· `architecture.md` §同步（「锁定会话时拒绝同步」）· `2026-09-23-encryption-scope-decision.md` §3.3③
 
 ---
 
@@ -90,30 +90,31 @@
 · 合并时机推到解锁 ⇒ 长期锁着的机器会积压；必须有上限与"超限即响亮失败"，⛔ 不许静默丢
 ```
 
-## 6. 待拍板（三个，缺一不能开工）
+## 6. 已拍（2026-10-23，owner「照你的办」）
 
 ```text
-① 元数据明文可接受吗？
-   （entity_id / op / 时间 / 大小 会落在 meta.db；内容仍是密文）
-   建议：接受，并在 SECURITY.md 的"防什么/不防什么"里写一条。
-
-② 保留期与上限取多少？
-   建议：**每空间 7 天 或 64 MB，先到者**；超限时丢掉最老的并**在状态行与日志里响亮报错**（⛔ 不静默丢）。
-   为什么不"一直留"：outbox 是搬运缓存，不是备份；留久了等于第二份数据。
-
-③ 锁定态"只搬运、解锁才应用"满足你的预期吗？
-   · 满足 ⇒ 走 丙（内容在对方解锁前不可见，但两侧的库在解锁后会收敛）
-   · 不满足（你要的是"锁定也能看见新内容"）⇒ 只有 甲 能做到，代价见 §2
+① 元数据 —— 按建议收口：**封的是整条记录**（entity/entity_id/op/payload 一起），
+   明文只留 `space_id / device_id / device_seq / updated_at / mirrored_at`
+   ⇒ 明文库里没有页 id、没有 op。⛔ 不再需要"忍元数据"这个选项。
+② 保留期 —— **7 天（已落地）** ＋ 体积上限 64 MB 与**水位裁剪**留给 S4。
+   口径不变：它是搬运缓存不是备份 ⇒ 裁掉不丢数据；超限要**响亮**报，不静默。
+③ 语义 —— **接受**「锁定＝搬运，解锁才应用」。要"锁定也能看内容"只有 甲（OS 钥匙串），代价见 §2。
 ```
 
 ## 7. 切片与判据（每片独立验收、可独立回退）
 
-| 片 | 做什么 | 判据（先红后绿） | 回退 |
+| 片 | 做什么 | 判据（先红后绿） | 状态 |
 |---|---|---|---|
-| **S1** | 7 处 `INSERT INTO changes` 收敛成 1 个 helper（**纯重构，行为零变化**） | 单测：page 增/改/删各落一条 `changes`；**源码级判据**：除 helper 外不许出现 `INSERT INTO changes` | 还原即回退 |
-| **S2** | 写入时封一份到 `mesh_outbox` | 写一条标题含「机密」的页 ⇒ outbox 有行、**在 outbox 的字节里搜不到「机密」**、用它解回来的 JSON 与库里逐字相同；磁盘增量可量 | 关开关即停写 |
-| **S3** | 窗口改为"能从 outbox 服务"，⛔ 不打开空间库 | 两台真机：一端**锁着** ⇒ 窗口照常起（不再"都不宣告"）；锁定态拉一轮 ⇒ 对端 `mesh_inbox` 有行、**双方空间库零变化** | 开关切回旧路径 |
-| **S4** | 解锁后 drain ＋ 裁剪 | 解锁后一轮 ⇒ 页出现在库里、两侧**块级投影一致**；outbox/inbox 回落到水位；超限路径有一条"响亮失败"判据 | 保留 inbox 不删（数据不丢） |
+| **S1** | 把 7 处 `INSERT INTO changes` 收敛成 1 个 helper | —— | ✅ **结论：不需要做**（见下） |
+| **S2** | 写入时封一份到 `mesh_outbox`（＋ 保留期按 7 天关掉） | `sync::tests::every_local_change_is_mirrored_into_the_mesh_outbox`：两次 upsert 同一页 ⇒ 镜像只剩 1 行、`device_seq` ＝ `changes.seq`、解回来是最新那份 ✓（明文空间原样过；密文空间"封得上"那一半归 S3 的真机判据） | ✅ 已落地 |
+| **S3** | 窗口改为"能从 outbox 服务"，⛔ 不打开空间库 | 两台真机：一端**锁着** ⇒ 窗口照常起（不再"都不宣告"）；锁定态拉一轮 ⇒ 对端 `mesh_inbox` 有行、**双方空间库零变化** | ⬜ 未开工 |
+| **S4** | 解锁后 drain ＋ 水位/体积裁剪 | 解锁后一轮 ⇒ 页出现在库里、两侧**块级投影一致**；超限路径有一条"响亮失败"判据 | ⬜ 未开工 |
+
+> ⚠️ **S1 的更正（我先前那个"7 处"是错的）**：按 `git grep -n "INSERT INTO changes"` 数出 7 处，
+> 但逐处看上下文后：**只有 `sync.rs::record_change` 是生产写入点**，其余 5 处是 `#[cfg(test)]` 夹具
+> （`db.rs:2094` / `mesh.rs:6257` / `sync.rs:8153` / `sync.rs:9064` / `workspace_io.rs:914`），
+> 第 6 处 `mesh_wire_bytes.rs:118` 是 `#[tokio::test]` 探针（`--ignored` 才跑）。
+> ⇒ **生产早就已经收敛过了**，S1 只剩一句结论 —— 把它写在这里，免得下一个人再"发现"一次。
 
 > S3 落地时同步改 `architecture.md:132` 与 `2026-09-23-encryption-scope-decision.md` §3.3③ 的措辞
 > —— 否则又变成"两份真相"（本仓最贵的那类债）。

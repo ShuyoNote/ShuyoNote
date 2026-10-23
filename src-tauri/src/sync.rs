@@ -334,13 +334,31 @@ pub fn record_change(
                 |r| r.get(0),
             )
             .unwrap_or(0);
-        c.execute(
-            "DELETE FROM changes
-              WHERE entity = ?1 AND entity_id = ?2 AND op = 'upsert'
-                AND device_id = ?3 AND seq > ?4",
-            params![entity, entity_id, did, last_pushed],
-        )
-        .map_err(|e| e.to_string())?;
+        // ⭐ 2026-10-23（S2）：**先选出名单，再按名单删两边** —— 被并掉的这几位，
+        //   `mesh_outbox` 里也要一起消失，否则搬运缓存会重新长成那 672 MB 的形状 ✗
+        //   （它是 `changes` 的**镜像**，⛔ 不是独立账本 ✗）。单连接、无并发写 ⇒ 选出到删之间没有窗口。
+        let doomed: Vec<i64> = {
+            let mut st = c
+                .prepare(
+                    "SELECT seq FROM changes
+                      WHERE entity = ?1 AND entity_id = ?2 AND op = 'upsert'
+                        AND device_id = ?3 AND seq > ?4",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = st
+                .query_map(params![entity, entity_id, did, last_pushed], |r| r.get(0))
+                .map_err(|e| e.to_string())?;
+            rows.filter_map(Result::ok).collect()
+        };
+        if !doomed.is_empty() {
+            let ph = vec!["?"; doomed.len()].join(",");
+            c.execute(
+                &format!("DELETE FROM changes WHERE seq IN ({ph})"),
+                rusqlite::params_from_iter(doomed.iter()),
+            )
+            .map_err(|e| e.to_string())?;
+            prune_mesh_outbox(c, &did, &doomed);
+        }
     }
     c.execute(
         "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at)
@@ -355,7 +373,92 @@ pub fn record_change(
         params![seq],
     )
     .map_err(|e| e.to_string())?;
+    mirror_change_to_mesh_outbox(c, &did, seq, entity, entity_id, op, payload, updated_at);
     Ok(())
+}
+
+/// 这个空间库自己那一行 `id`（`changes`／`sync_profiles` 那几句用的是同一把尺）。
+///
+/// 拿不到（表不在 / 空）⇒ `None`：搬运缓存那两处**按"这一条不搬"处理**，⛔ 不猜 ✗。
+fn space_id_of(c: &Connection) -> Option<String> {
+    c.query_row("SELECT id FROM workspaces LIMIT 1", [], |r| r.get::<_, String>(0))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// 把一条**本地**变更封好放进 `meta.mesh_outbox`（锁定态同步的搬运缓存，方案 §3）。
+///
+/// ⚠️ 四条纪律，缺一条都会变成"第二份真相"✗：
+/// ① **封的是整条记录**（entity / entity_id / op / payload 一起）⇒ 明文库里看不到页 id、看不到 op ✓；
+/// ② 键是 `(space_id, device_id, device_seq)`，`device_seq` 就是 `changes.seq` ⇒ 同一把尺、天然幂等 ✓；
+/// ③ **绝不能失败掉用户这次保存** ✗ —— 镜像丢了只是"那一条锁着时搬不出去"，解锁后按 seq 照旧补得上 ✓；
+/// ④ 但必须**响**（stderr）：静默漏镜像 = "有些东西锁定态永远同步不出去"，而没人知道 ✗。
+fn mirror_change_to_mesh_outbox(
+    c: &Connection,
+    device: &str,
+    seq: i64,
+    entity: &str,
+    entity_id: &str,
+    op: &str,
+    payload: Option<&str>,
+    updated_at: i64,
+) {
+    let Some(space) = space_id_of(c) else {
+        eprintln!("[mesh] 搬运缓存跳过：这个库看不出是哪个空间（不影响保存）");
+        return;
+    };
+    let rec = serde_json::json!({
+        "entity": entity,
+        "entity_id": entity_id,
+        "op": op,
+        "payload": payload,
+    });
+    // 明文空间 ⇒ 原样过（`encrypt_payload` 的既有口径）；密文空间 ⇒ 用**它自己的**钥匙封。
+    let sealed = match crate::security::encrypt_payload(c, &rec.to_string()) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[mesh] 搬运缓存跳过（封不上，不影响保存）：{e}");
+            return;
+        }
+    };
+    if let Err(e) = c.execute(
+        "INSERT OR IGNORE INTO meta.mesh_outbox
+             (space_id, device_id, device_seq, updated_at, sealed, mirrored_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![space, device, seq, updated_at, sealed, crate::db::now_ms()],
+    ) {
+        eprintln!("[mesh] 搬运缓存写入失败（不影响保存）：{e}");
+        return;
+    }
+    // ⚠️ **必须有这一句**：镜像没有上限 ⇒ 明文库会跟着无限长（那 672 MB 的形状 ✗）。
+    //   保留期口径见方案 §6-②（7 天 / 64 MB，先到者）；体积那一半等 S4 的水位裁剪一起做，
+    //   这一处先把**时间**这一半关上（索引 `idx_mesh_outbox_age` 就是为它建的）。
+    if let Err(e) = c.execute(
+        "DELETE FROM meta.mesh_outbox WHERE space_id = ?1 AND mirrored_at < ?2",
+        params![space, crate::db::now_ms() - MESH_OUTBOX_KEEP_MS],
+    ) {
+        eprintln!("[mesh] 搬运缓存过期清理失败（不影响保存）：{e}");
+    }
+}
+
+/// 搬运缓存的时间上限（方案 §6-② 的提案值：**7 天**；体积那一半由 S4 的水位裁剪补上）。
+const MESH_OUTBOX_KEEP_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+/// 从搬运缓存里删掉这几位 —— 名单与 `changes` 那次删除**是同一份**（§ `record_change`）。
+///
+/// ⚠️ 失败只记日志：删不掉只会让缓存变胖，⛔ 不许把用户这次保存弄挂 ✗。
+fn prune_mesh_outbox(c: &Connection, device: &str, seqs: &[i64]) {
+    let Some(space) = space_id_of(c) else { return };
+    for s in seqs {
+        if let Err(e) = c.execute(
+            "DELETE FROM meta.mesh_outbox
+              WHERE space_id = ?1 AND device_id = ?2 AND device_seq = ?3",
+            params![space, device, s],
+        ) {
+            eprintln!("[mesh] 搬运缓存并单失败（不影响保存）：{e}");
+        }
+    }
 }
 
 /// 载荷里那格"**我这边管它叫什么**"（空间名）的字段名。
@@ -8165,6 +8268,57 @@ mod tests {
             .unwrap();
         assert_eq!(peer_rows, 1, "别人的行不许被本机的合并删掉");
         assert_eq!(payload_of(&c, "p1"), "v6");
+    }
+
+    /// ⭐ 2026-10-23（S2，方案 `docs/plans/2026-10-23-sync-while-locked.md` §3）：
+    /// 每条**本地**变更都要在 `meta.mesh_outbox` 留一份**整条记录**的镜像 ✓；
+    /// 并且**被并掉的那些在两边一起消失** ✗ —— 否则搬运缓存会重新长成那 672 MB 的形状
+    /// （它是 `changes` 的镜像，⛔ 不是独立账本 ✗）。
+    #[test]
+    fn every_local_change_is_mirrored_into_the_mesh_outbox() {
+        let c = conn_with_meta();
+        c.execute_batch(
+            "CREATE TABLE changes (
+                 seq INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT NOT NULL, device_seq INTEGER NOT NULL,
+                 entity TEXT NOT NULL, entity_id TEXT NOT NULL, op TEXT NOT NULL, payload TEXT,
+                 updated_at INTEGER NOT NULL, UNIQUE(device_id, device_seq));
+             CREATE TABLE workspaces (id TEXT PRIMARY KEY);
+             INSERT INTO workspaces (id) VALUES ('ws-1');
+             CREATE TABLE meta.mesh_outbox (
+                 space_id TEXT NOT NULL, device_id TEXT NOT NULL, device_seq INTEGER NOT NULL,
+                 updated_at INTEGER NOT NULL, sealed TEXT NOT NULL, mirrored_at INTEGER NOT NULL,
+                 PRIMARY KEY (space_id, device_id, device_seq));",
+        )
+        .unwrap();
+        set_meta_state(&c, KEY_DEVICE_ID, "dev-a").unwrap();
+
+        record_change(&c, "page", "p1", "upsert", Some("v1"), 1).unwrap();
+        record_change(&c, "page", "p1", "upsert", Some("v2"), 2).unwrap();
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM meta.mesh_outbox", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            n, 1,
+            "同实体未推送的 upsert 被并掉 ⇒ 搬运缓存里也必须只剩一份（镜像不是独立账本 ✗）"
+        );
+
+        let (seq, sealed): (i64, String) = c
+            .query_row("SELECT device_seq, sealed FROM meta.mesh_outbox", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        let real: i64 = c
+            .query_row("SELECT seq FROM changes WHERE entity_id = 'p1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(seq, real, "键就是 `changes.seq`（同一把尺 ⇒ 重复镜像天然幂等 ✓）");
+
+        // ⚠️ 本判据里的空间是**明文** ⇒ `encrypt_payload` 原样过 ⇒ 这里能直接解回那条记录。
+        //    密文空间"封得上、且明文库里搜不到"的那一半只能在带钥匙袋的夹具/真机上量（S3 的判据）。
+        let v: serde_json::Value = serde_json::from_str(&sealed).unwrap();
+        assert_eq!(v["entity"], "page");
+        assert_eq!(v["entity_id"], "p1");
+        assert_eq!(v["op"], "upsert");
+        assert_eq!(v["payload"], "v2", "镜像里必须是**最新**那份（与 changes 同一次并单 ✓）");
     }
 
     /// ★ 与前端 `crdt/claimClient.ts` 的三条口径成对（两侧各一份判据、同一套语义）：
