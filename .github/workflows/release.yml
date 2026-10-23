@@ -387,6 +387,7 @@ jobs:
           echo "✓ deb 注册了 shuyonote:// 协议"
 
       - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bundle-${{ matrix.platform }}

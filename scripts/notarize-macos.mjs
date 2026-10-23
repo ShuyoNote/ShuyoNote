@@ -175,7 +175,7 @@ function sleepMs(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function retryAllowFail(cmd, args, predicate, { attempts = 8, delayMs = 1000 } = {}) {
+function retryAllowFail(cmd, args, predicate, { attempts = 12, delayMs = 5000 } = {}) {
   let last;
   for (let i = 0; i < attempts; i++) {
     last = runAllowFail(cmd, args);

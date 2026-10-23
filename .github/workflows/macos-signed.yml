@@ -213,6 +213,7 @@ jobs:
           fi
 
       - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bundle-macos-signed
