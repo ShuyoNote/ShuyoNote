@@ -622,7 +622,8 @@ pub fn peer_spaces_to_create(
 /// ⭐ 2026-10-23（owner：「没有的空间，让用户选择哪些可以建立」）：一条**候选**。
 ///
 /// ⚠️ 它只回答"能给用户看什么"，⛔ 不代表已经该建（真要建还得用户勾）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MissingPeerSpace {
     pub name: String,
     /// 哪几台对端报了它（已排序、已去重）—— 界面副标题要写"ZHAIDELL、AMD"
@@ -772,6 +773,87 @@ pub(crate) fn create_missing_peer_spaces(
             );
         }
         created.push(name);
+    }
+    Ok(created)
+}
+
+/// ⭐ 2026-10-23（owner：「没有的空间，让用户选择哪些可以建立」）：**给界面读的那张候选表**。
+///
+/// 读三样（与 [`create_missing_peer_spaces`] 同一套读法）：本机空间三元组、墓碑、信任名单；
+/// 然后交给纯函数 [`missing_peer_spaces`] 过闸＋去重 ✓。
+///
+/// ⚠️ 这里**不**看"本机有没有加密空间" ✗ —— 那一票否决是"**替**用户建"的闸；
+/// 这张表只是"**给**用户看"，勾不勾由人决定（界面必须写"未加密"）。
+pub(crate) fn list_missing_peer_spaces(
+    c: &Connection,
+    peers: &[crate::lan::Peer],
+) -> Result<Vec<MissingPeerSpace>, String> {
+    let local: Vec<(String, String, String)> = {
+        let mut st = c
+            .prepare("SELECT id, COALESCE(name, ''), COALESCE(kind, '') FROM meta.workspaces WHERE deleted_at IS NULL")
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    let tombstoned: Vec<String> = {
+        let mut st = c
+            .prepare("SELECT COALESCE(name, '') FROM meta.workspaces WHERE deleted_at IS NOT NULL")
+            .map_err(|e| e.to_string())?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    let paired: Vec<String> = {
+        let mut st = c
+            .prepare("SELECT DISTINCT device_id FROM meta.mesh_paired_devices")
+            .map_err(|e| e.to_string())?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    Ok(missing_peer_spaces(peers, &local, &tombstoned, &paired))
+}
+
+/// ⭐ 2026-10-23：**按用户勾的那几个名字建空间** —— 只认"刚才那张候选表里列出来的"那些。
+///
+/// 四条边界：
+/// ① **只建候选表里有的名字** ✗ —— 界面上勾不到的名字，命令也不接受（⛔ 不信任面来的名字一律拒）；
+/// ② 墓碑的名字**允许**（那正是要用户点头才做的事），但同样必须是候选表里列出来的 ✓；
+/// ③ **幂等**：建完再建同名 ⇒ 候选表里已经没了（exists 闸）⇒ 返回空、⛔ 不报错 ✓；
+/// ④ 失败**回滚 meta 那一行**（与 `create_missing_peer_spaces` 同一条：⛔ 不留"有行没库"）。
+pub(crate) fn create_peer_spaces_by_name(
+    c: &Connection,
+    dir: &std::path::Path,
+    peers: &[crate::lan::Peer],
+    names: &[String],
+) -> Result<Vec<String>, String> {
+    let allowed = list_missing_peer_spaces(c, peers)?;
+    // 抄发起这一轮的网格地址（否则新空间"没开网格" ⇒ 永远不拉）—— 与自动建同一口径。
+    let bind: Option<String> = {
+        let s = crate::mesh::settings(c, crate::mesh::DEVICE_LEVEL_SPACE);
+        s.bind.map(|b| b.trim().to_string()).filter(|b| !b.is_empty())
+    };
+    let mut created: Vec<String> = Vec::new();
+    for want in names {
+        let n = want.trim();
+        let Some(cand) = allowed.iter().find(|x| x.name == n) else {
+            continue;
+        };
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = crate::db::now_ms();
+        crate::workspaces::insert_chosen_space(c, &id, &cand.name, "blue", 1.0, now, "personal")?;
+        if let Err(e) = crate::db::create_space_db_at(dir, &id) {
+            let _ = c.execute("DELETE FROM meta.workspaces WHERE id = ?1", params![id]);
+            return Err(format!("为「{}」建库失败（已回滚）：{e}", cand.name));
+        }
+        if let Some(b) = bind.as_deref() {
+            let _ = c.execute(
+                "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![format!("mesh_bind:{id}"), b],
+            );
+        }
+        created.push(cand.name.clone());
     }
     Ok(created)
 }
@@ -11017,4 +11099,29 @@ mod missing_peer_spaces_tests {
         );
         assert_eq!(got.len(), 1, "加密空间不该把候选表清空：{got:?}");
     }
+}
+/// ⭐ 2026-10-23（S2 命令面）：界面上那张「对端有、你没有」的候选表。
+///
+/// ⚠️ 它**只读**：不建任何东西、不写库（建是下面那条命令，且必须由用户勾了才调）。
+#[tauri::command]
+pub fn mesh_missing_spaces(db: tauri::State<'_, crate::db::Db>) -> Result<Vec<MissingPeerSpace>, String> {
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    let dev = device_id(&c)?;
+    let peers = crate::lan_state::LanState::global(&dev).peers(crate::db::now_ms());
+    list_missing_peer_spaces(&c, &peers)
+}
+
+/// ⭐ 2026-10-23（S2 命令面）：**按用户勾的名字**建空间（幂等；只认候选表里有的名字）。
+#[tauri::command]
+pub fn mesh_create_spaces(
+    db: tauri::State<'_, crate::db::Db>,
+    names: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let dir = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "app data dir 未初始化".to_string())?
+        .to_path_buf();
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    let dev = device_id(&c)?;
+    let peers = crate::lan_state::LanState::global(&dev).peers(crate::db::now_ms());
+    create_peer_spaces_by_name(&c, &dir, &peers, &names)
 }

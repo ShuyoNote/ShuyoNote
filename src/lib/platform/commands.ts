@@ -1016,6 +1016,13 @@ export interface CommandMap {
    */
   mesh_sync_now: { args: { workspaceId?: string | null }; result: MeshRoundReport };
   /**
+   * ⭐ **2026-10-23**：「对端有、本机没有」的个人空间候选表（**只读**）。
+   * 界面把它列出来给用户勾，勾了才调下面的 `mesh_create_spaces`。
+   */
+  mesh_missing_spaces: { args: undefined; result: { name: string; from: string[]; tombstoned: boolean }[] };
+  /** ⭐ **2026-10-23**：按用户勾的名字建空间（幂等；只认候选表里有的名字）。 */
+  mesh_create_spaces: { args: { names: string[] }; result: string[] };
+  /**
    * ⭐ **P1.5 主件 · A1**（2026-10-13）：设备直连那一屏的**本机读数** ✗ ——
    * ⭐ **只读** ✓（⛔ 一个字节都不写 ✗、⛔ 一个包都不发 ✗）。
    *

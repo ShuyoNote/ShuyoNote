@@ -912,6 +912,8 @@ pub fn run() {
             // 丙-③-b：**对等交换的产品入口**（确认窗口 ＋ 从发现到的对端各拉一轮）
             // ＋ **设置面**（写监听地址 / 口令，并把窗口的开关跟着改）。
             sync::mesh_sync_now,
+            sync::mesh_missing_spaces,
+            sync::mesh_create_spaces,
             sync::mesh_set_config,
             // 阶段 1 · 冲突留痕与裁决（提示 UI 的两个入口；数据在本地表 `page_conflicts`）
             commands::list_page_conflicts,

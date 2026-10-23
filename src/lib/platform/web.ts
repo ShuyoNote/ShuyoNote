@@ -1754,6 +1754,16 @@ export function makeInvoke(store: SqliteStore) {
         window: null,
       } as T;
     }
+    if (cmd === "mesh_missing_spaces") {
+      // ⭐ 2026-10-23：候选表只在桌面版有（它要发现层与配对名单；Web 两样都没有）。
+      //   ⚠️ 回**空表**而不是抛错：这是"这一档没有"，界面照常渲染（⛔ 不是"没有候选"）。
+      return [] as T;
+    }
+    if (cmd === "mesh_create_spaces") {
+      throw new Error(
+        "Web 版没有设备发现层，也没有配对名单 ⇒ 不能替对端建空间（这一档只在桌面版可用）",
+      );
+    }
     if (cmd === "mesh_panel_scopes") {
       // ⭐ **P1.5 · A1**（2026-10-13）：设备直连那一屏的**本机读数** ✗。
       //   ⚠️ Web 上**没有发现层**（UDP 广播/监听在 Rust 侧 ✓）⇒ ⭐ **没有"窗口"** ✗
