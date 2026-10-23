@@ -2939,3 +2939,32 @@ mod page_blocks_tests {
         assert_eq!(b[0].kind, "someFutureBlock");
     }
 }
+
+/// ⭐ 2026-10-23（导入时改写图片地址要用）：列出"可能含图片节点"的页正文。
+///
+/// 为什么放在**这一层**：`check-doc-content-access` 按字面量计数、只减不增，
+/// 而"正文列叫什么"本来就只该在这一层出现（`workspace_io.rs` 是导入流程，不是内容层）。
+pub(crate) fn list_pages_with_images(c: &Connection) -> Result<Vec<(String, String)>, String> {
+    let mut stmt = c
+        .prepare(
+            "SELECT id, content_json FROM pages \
+             WHERE content_json LIKE '%asst:%' OR content_json LIKE '%\"type\":\"image\"%'",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
+/// ⭐ 2026-10-23：整页正文写回（导入时的图片地址改写用）。同样把列名收在这一层。
+pub(crate) fn write_page_doc_json(c: &Connection, page_id: &str, json: &str) -> Result<(), String> {
+    c.execute(
+        "UPDATE pages SET content_json = ?1 WHERE id = ?2",
+        params![json, page_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}

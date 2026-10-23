@@ -1477,3 +1477,18 @@ export function takeRemoteWholePage(db: ContentSql, row: RemotePageRow, remoteSe
     [Date.now(), "remote", String(row.id)],
   );
 }
+
+/**
+ * ⭐ 2026-10-23（导出漏附件那件事的**收口**）：本空间所有未删除页的**正文 JSON**。
+ *
+ * 为什么要一个函数而不是在 `web.ts` 里写 SQL：`check-doc-content-access` 按字面量计数
+ * （`content_json` 等只减不增），而"列名"本来就该只出现在**这一层**。
+ * 导出时扫附件引用（`asst:` 指纹、以及老数据的文件名兜底）用它拿正文。
+ */
+export function pageDocJsonInSpace(db: ContentSql, workspaceId: string): string[] {
+  const rows = db.query<{ content_json: string | null }>(
+    "SELECT content_json FROM pages WHERE workspace_id = ? AND deleted_at IS NULL",
+    [workspaceId],
+  );
+  return rows.map((r) => String(r.content_json ?? ""));
+}

@@ -46,13 +46,20 @@ describe("附件稳定引用 asst:<hash>", () => {
   });
 
   // ⭐ 2026-10-23（owner 实拍：手机 web 导出 → 桌面导入 ⇒ 图片碎图）：
-  //   两个洞一起补 —— ① 导出按**正文里的引用**兜附件（page_id 是 null 那批看不见）；
-  //   ② 桌面导入把 `asst:<hash>` 落成真实路径（否则编辑器拿它当路径用 ⇒ 碎图）。
-  it("④ 导出要按正文引用兜附件 ＋ 导入要把引用落成本机路径", () => {
+  //   三个洞一起补 —— ① 导出按**正文里的引用**兜附件（page_id 是 null 那批看不见）；
+  //   ② 桌面导入把 `asst:<hash>` 落成真实路径（否则编辑器拿它当路径用 ⇒ 碎图）；
+  //   ③ **修复前**的老图正文里只有一次性 `blob:`（没有 hash）⇒ 只能按**文件名**反查。
+  it("④ 导出按正文引用兜附件 ＋ 导入按 hash 或文件名落成本机路径", () => {
     const web = read("src/lib/platform/web.ts");
-    expect(web, "web 导出没扫正文里的 asst: 引用").toMatch(/matchAll\(\/asst:\(\[0-9a-f\]\{8,128\}\)\/g\)/);
+    // ⚠️ 列名必须是 content_json：第一版写成 content，被 catch 吞掉 ⇒ 静默什么都没扫到。
+    expect(web, "导出扫正文用错了列名（应为 content_json）").toMatch(/SELECT content_json FROM pages WHERE workspace_id/);
+    expect(web, "导出没按正文里的 asst: 引用兜附件").toMatch(/matchAll\(\/asst:\(\[0-9a-f\]\{8,128\}\)\/g\)/);
+    expect(web, "导出没按文件名兜老图（blob: 那批）").toMatch(/byName\.get\(alt\)/);
+    expect(web, "扫失败不许静默").toMatch(/\[export\] 正文里的附件引用没扫成功/);
     const rs = read("src-tauri/src/workspace_io.rs");
     expect(rs, "桌面导入没调用改写").toMatch(/rewrite_asset_refs_in_space_db\(&target_db/);
-    expect(rs, "找不到字节的引用必须原样保留").toMatch(/rewrite_asst_refs/);
+    expect(rs, "导入改写必须读 content_json").toMatch(/SELECT id, content_json FROM pages/);
+    expect(rs, "导入没按文件名兜老图").toMatch(/rewrite_image_srcs/);
+    expect(rs, "按名字反查要真去查附件表").toMatch(/SELECT name, hash FROM attachments/);
   });
 });
