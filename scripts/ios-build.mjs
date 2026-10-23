@@ -36,6 +36,12 @@
 //   node scripts/ios-build.mjs --target aarch64-sim   # 等价于 --sim
 //   node scripts/ios-build.mjs --sim --frontend-dist /tmp/dist-probe
 //                                                 # 诊断用：拿一份现成的 dist（跳过 beforeBuildCommand）
+//   node scripts/ios-build.mjs --build-number 1.92.26
+//                                                 # ⭐ 只递增 CFBundleVersion（build number），
+//                                                 #   CFBundleShortVersionString 保持 tauri.conf 的版本号
+//   node scripts/ios-build.mjs --upload           # ⭐ 分发档出包后**直接上传 App Store Connect**
+//                                                 #   （= 上面的分发导出 ＋ `-exportArchive -destination=upload`；
+//                                                 #    本地 IPA 仍会导出一份，校验照旧全跑）
 //
 // ## 签名（2026-10-23 起：**公司优先、env 驱动**）
 //   node scripts/ios-build.mjs                      # 默认 --sign company ⇒ App Store 分发档（Apple Distribution）
@@ -84,6 +90,18 @@ const SKIP_CARGO = has("--skip-cargo");
 const NO_XCODEGEN = has("--no-xcodegen");
 const RUN_SIM = has("--run-sim");
 const FRONTEND_DIST = val("--frontend-dist");
+/**
+ * ⭐ 2026-10-23（TestFlight 重传修复版）：`--build-number <CFBundleVersion>`。
+ *
+ * 分工是**刻意**的（owner 口径）：App Store Connect 只认 `CFBundleVersion`（build number）
+ * 递增来区分同一版本号的多次上传；**版本号** `CFBundleShortVersionString` 归发版节奏，
+ * 不因为"重传一个修复包"就动。⇒ 本参数**只改 CFBundleVersion**，⛔ 不碰 ShortVersion。
+ * 缺省仍是 `APP_VERSION`（与以前同一行为；既有调用方不改也得原样）。
+ * 环境变量入口：`IOS_BUILD_NUMBER`。合法形态：1–3 段非负整数（Apple 的 CFBundleVersion 规则）。
+ */
+const BUILD_NUMBER = String(val("--build-number") || process.env.IOS_BUILD_NUMBER || APP_VERSION);
+/** ⭐ 2026-10-23：归档后**直接上传** App Store Connect（`-exportArchive -destination=upload`）。只有分发档可用。 */
+const UPLOAD = has("--upload");
 // ── 签名：默认 company（公司主体），个人签名只有显式指定才走 ──────────────────
 const SIGN = String(val("--sign") || process.env.IOS_SIGN || "company").toLowerCase();
 const SIGN_DEV = has("--dev");
@@ -97,6 +115,12 @@ const RUST_TARGET = TARGET_PLATFORM === "sim" ? "aarch64-apple-ios-sim" : "aarch
 const XCODE_SDK_TAG = TARGET_PLATFORM === "sim" ? "iphonesimulator" : "iphoneos";
 const LIB_DIR = TARGET_PLATFORM === "sim" ? LIB_DIR_SIM : LIB_DIR_DEVICE;
 const TAURI_CLI_TARGET = TARGET_PLATFORM === "sim" ? "aarch64-sim" : "aarch64";
+
+// CFBundleVersion 的合法性在**入口**就拦住：Apple 只接受 1–3 段非负整数，
+// 写错形态的话构建能过、上传才被 ITMS 拒（那时候已经浪费了一整条链的几分钟）。
+if (!/^\d+(\.\d+){0,2}$/.test(BUILD_NUMBER)) {
+  fatal(`--build-number 不合法：收到 ${JSON.stringify(BUILD_NUMBER)}（CFBundleVersion 只接受 1–3 段非负整数，如 1.92.26）`);
+}
 
 const startedAt = new Date();
 /** 公司分发档的产物（手工 `xcodebuild -exportArchive` 导出）；verify 用它而不是 tauri 自己那份 */
@@ -547,7 +571,9 @@ function stepPatchProjectYml(signing) {
   const changes = [];
 
   // 4.1 版号：project.yml 是**生成物**，它硬编码的 CFBundle* 会过期（实测 1.91.26）。
-  //     事实源只有一个：tauri.conf.json 的 version（与桌面同一个号）。
+  //     ShortVersion 的事实源只有一个：tauri.conf.json 的 version（与桌面同一个号）。
+  //     ⭐ CFBundleVersion（build number）另有一个入口 `--build-number`：TestFlight 同版本重传时
+  //        **只递增它**，不改 ShortVersion（发版节奏归 owner）。
   const verRe1 = /(CFBundleShortVersionString:\s*)([^\s"']+)/;
   const verRe2 = /(CFBundleVersion:\s*)("?)([^"\n]+)("?)/;
   if (verRe1.test(yml)) {
@@ -558,8 +584,13 @@ function stepPatchProjectYml(signing) {
   if (verRe2.test(yml)) {
     const m = yml.match(verRe2);
     const cur = m[3];
-    yml = yml.replace(verRe2, `$1"${APP_VERSION}"`);
-    if (cur !== APP_VERSION) changes.push(`CFBundleVersion: ${cur} → "${APP_VERSION}"`);
+    yml = yml.replace(verRe2, `$1"${BUILD_NUMBER}"`);
+    if (cur !== BUILD_NUMBER) changes.push(`CFBundleVersion: ${cur} → "${BUILD_NUMBER}"${BUILD_NUMBER !== APP_VERSION ? "（--build-number，ShortVersion 不动）" : ""}`);
+  }
+  if (BUILD_NUMBER !== APP_VERSION) {
+    console.log(
+      `  ⚠️ 只递增 build number：CFBundleShortVersionString=${APP_VERSION}（不变）· CFBundleVersion=${BUILD_NUMBER}`,
+    );
   }
 
   // 4.2 device 四行 OTHER_LDFLAGS：把 /tmp/ios-swiftpm-libs/ 换成仓内稳定路径
@@ -700,6 +731,34 @@ async function stepExportDistribution() {
   section("⑥.5 公司分发导出：xcodebuild -exportArchive -allowProvisioningUpdates");
   const archive = join(GEN_APPLE, "build", "shuyonote_iOS.xcarchive");
   if (!existsSync(archive)) fatal(`分发导出需要 xcarchive，但不存在：${archive}`);
+  // ⭐ --build-number 的回验点：**归档里那份 app 的 Info.plist** 就是导出 IPA 的事实源。
+  //   tauri CLI 的版本同步步骤会按 version 写 CFBundleVersion；正常路径由 ⑥ 的
+  //   `bundle.iOS.bundleVersion` 覆盖把它写成 BUILD_NUMBER。这里再核一次 ——
+  //   不一致时在 unsigned 归档上补写（**大声记一行**，不做静默的第二条真相源）。
+  const archiveAppPlist = join(archive, "Products", "Applications", "ShuyoNote.app", "Info.plist");
+  const archiveAppInfo = existsSync(archiveAppPlist) ? plistJson(archiveAppPlist) : null;
+  console.log(
+    `  archive Info.plist：CFBundleShortVersionString=${archiveAppInfo?.CFBundleShortVersionString ?? "(读不到)"} · CFBundleVersion=${archiveAppInfo?.CFBundleVersion ?? "(读不到)"}`,
+  );
+  if (archiveAppInfo && archiveAppInfo.CFBundleVersion !== BUILD_NUMBER) {
+    const r = capture("plutil", ["-replace", "CFBundleVersion", "-string", BUILD_NUMBER, archiveAppPlist]);
+    const after = r.code === 0 ? plistJson(archiveAppPlist) : null;
+    if (after?.CFBundleVersion !== BUILD_NUMBER) {
+      fatal(`归档里的 CFBundleVersion=${archiveAppInfo.CFBundleVersion} ≠ 期望 ${BUILD_NUMBER}，补写也失败（plutil exit ${r.code}：${r.out}）`);
+    }
+    console.log(`  ⚠️ tauri CLI 没把它写成 ${BUILD_NUMBER} ⇒ 已在 unsigned 归档上补写 CFBundleVersion（回读 ${after.CFBundleVersion} ✓）`);
+    record("archiveBuildNumberPatch", { from: archiveAppInfo.CFBundleVersion, to: BUILD_NUMBER, why: "tauri CLI 按 version 写入了 CFBundleVersion" });
+  } else if (archiveAppInfo) {
+    record("archiveBuildNumber", {
+      CFBundleVersion: archiveAppInfo.CFBundleVersion,
+      CFBundleShortVersionString: archiveAppInfo.CFBundleShortVersionString,
+    });
+  }
+  // 归档顶层的 `ApplicationProperties` 里也有一份 build number（Xcode 的元数据）；有就一起对齐。
+  const archiveTopPlist = join(archive, "Info.plist");
+  if (existsSync(archiveTopPlist) && JSON.stringify(plistJson(archiveTopPlist) || {}).includes("CFBundleVersion")) {
+    capture("plutil", ["-replace", "ApplicationProperties.CFBundleVersion", "-string", BUILD_NUMBER, archiveTopPlist]);
+  }
   const exportDir = join(LOG_DIR, `export-dist-${Date.now()}`);
   rmSync(exportDir, { recursive: true, force: true });
   mkdirSync(exportDir, { recursive: true });
@@ -758,6 +817,83 @@ async function stepExportDistribution() {
   console.log(`  ✓ 分发档 IPA → ${canonical.replace(ROOT + "/", "")}`);
 }
 
+/**
+ * ⭐ 2026-10-23（TestFlight 修复版重传）：把**同一个 xcarchive** 再按
+ * `-exportArchive -exportOptionsPlist`（`destination=upload`）**直接上传 App Store Connect**。
+ *
+ * 为什么用 xcodebuild 而不是 `altool`/`notarytool`：本机走的是 Xcode 已登录的公司账号
+ * （team `D53949JLS2`，Admin），`-allowProvisioningUpdates` 会复用/自动创建
+ * **Cloud Managed Apple Distribution** 证书 ＋ App Store 描述文件 —— 与分发导出同一条路。
+ * ⛔ 这里**不改**任何版本号：build number 已由 `--build-number` 写进 project.yml（见 ④）。
+ *
+ * 判据（不是"看起来跑完了"）：
+ * ① xcodebuild exit 0；② 输出里出现上传成功的原话（`Upload success` / `Uploaded package is processing`
+ * —— 不同 Xcode 版本措辞不同，所以两条都认，并把命中的行原样落进报告）；
+ * ③ 报告里同时带 **archive 里那份 Info.plist 的 CFBundleVersion / ShortVersion** ⇒ 传的是哪一版可核。
+ * 失败按 `BLOCKED:`（exit 2）收场：上传要 App Store Connect 账号/出口合规等 owner 侧条件，
+ * 不能因为"本机构建全绿"就假装传上去了。
+ */
+async function stepUploadDistribution() {
+  section("⑥.6 上传 App Store Connect：xcodebuild -exportArchive -destination=upload");
+  const archive = join(GEN_APPLE, "build", "shuyonote_iOS.xcarchive");
+  if (!existsSync(archive)) fatal(`上传需要 xcarchive，但不存在：${archive}`);
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const uploadDir = `/tmp/upload-${stamp}`;
+  mkdirSync(uploadDir, { recursive: true });
+  const optsPath = join(LOG_DIR, "ExportOptions-upload.plist");
+  writeFileSync(
+    optsPath,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>destination</key><string>upload</string>
+\t<key>method</key><string>app-store-connect</string>
+\t<key>signingStyle</key><string>automatic</string>
+\t<key>uploadSymbols</key><true/>
+\t<key>manageAppVersionAndBuildNumber</key><false/>
+\t<key>teamID</key><string>${COMPANY_TEAM}</string>
+\t<key>thinning</key><string>&lt;none&gt;</string>
+</dict>
+</plist>
+`,
+  );
+  // 回验的**事实源**：archive 里那份 app 的 Info.plist（不是 project.yml —— 声明不等于产物）。
+  const archivePlist = join(archive, "Products", "Applications", "ShuyoNote.app", "Info.plist");
+  const archiveInfo = existsSync(archivePlist) ? plistJson(archivePlist) : null;
+  console.log(
+    `  archive Info.plist：CFBundleShortVersionString=${archiveInfo?.CFBundleShortVersionString ?? "(读不到)"} · CFBundleVersion=${archiveInfo?.CFBundleVersion ?? "(读不到)"}`,
+  );
+  const res = await runStream(
+    "xcodebuild",
+    ["-exportArchive", "-archivePath", archive, "-exportOptionsPlist", optsPath, "-exportPath", uploadDir, "-allowProvisioningUpdates"],
+    { cwd: GEN_APPLE, logName: "xcodebuild-upload" },
+  );
+  const lines = res.out.split("\n");
+  const uploadEvidence = lines.filter((l) => /Upload success|Uploaded package is processing|Upload succeeded|successfully uploaded|Uploading package|ERROR ITMS|export compliance/i.test(l));
+  const uploadOk = /Upload success|Uploaded package is processing|Upload succeeded|successfully uploaded/i.test(res.out);
+  record("upload", {
+    exit: res.code,
+    log: res.logPath,
+    exportDir: uploadDir,
+    exportOptions: optsPath.replace(ROOT + "/", ""),
+    exportOptionsShape: { destination: "upload", method: "app-store-connect", signingStyle: "automatic", teamID: COMPANY_TEAM },
+    archiveCFBundleShortVersionString: archiveInfo?.CFBundleShortVersionString ?? null,
+    archiveCFBundleVersion: archiveInfo?.CFBundleVersion ?? null,
+    uploadOk,
+    uploadEvidence: uploadEvidence.slice(-12),
+  });
+  if (res.code !== 0 || !uploadOk) {
+    console.error(`\n--- 上传输出末尾 60 行 ---\n${lines.slice(-60).join("\n")}`);
+    blocked(
+      `App Store Connect 上传没有拿到成功原话（xcodebuild exit ${res.code}，日志：${res.logPath}）。\n` +
+        `  判据是输出里的 \`Upload success\`/\`Uploaded package is processing\`；拿到的是：${uploadEvidence.length ? uploadEvidence.join(" ｜ ") : "（一条都没匹配到）"}\n` +
+        `  ⚠️ 若是网页端「出口合规/加密」问答未回答 ⇒ 那是 owner-only 的一步，本机无法代答。`,
+    );
+  }
+  console.log(`  ✓ 上传成功原话：${uploadEvidence.join(" ｜ ") || "(命中正则但行已合并，见日志)"}`);
+}
+
 /** 从构建输出里摘出**签名类**错误的原话（找不到就返回 null）。 */
 function signingFailure(out) {
   const patterns = [
@@ -814,13 +950,25 @@ async function stepTauriBuild(env, signing) {
   if (noSignDistribution) {
     buildArgs.push("--no-sign", "--archive-only");
   }
+  // ⭐ 2026-10-23（--build-number）：tauri CLI 在 `ios build` 里会**自己**按
+  //   `version`（= tauri.conf 的 1.92.25）写一遍 CFBundleVersion（实测原话：
+  //   `Setting version of project shuyonote to: 1.92.25.` / `Updated CFBundleVersion in … Info.plist to 1.92.25`）
+  //   ⇒ 只改 project.yml **不够**，会被这一步盖回去。CLI 支持的覆盖键是
+  //   `bundle > iOS > bundleVersion`（config schema: IosConfig.bundleVersion）⇒ 用 `-c` 合并进去。
+  //   ⚠️ `--build-number`（CLI 自己的参数）的语义是"**append** 到版本号后面"，
+  //      会得到 4 段（1.92.25.1）—— 那不是 CFBundleVersion 的合法形态（最多 3 段）⇒ 不用它。
+  const overrides = {};
   if (FRONTEND_DIST) {
     // 诊断用：拿一份**已经建好的**前端目录（例如加了临时探针的 dist），跳过 beforeBuildCommand。
     // ⚠️ 只用于排查（`--frontend-dist`），正常出包不给它 ⇒ 走 `beforeBuildCommand` 的正常链。
-    const conf = JSON.stringify({ build: { beforeBuildCommand: "", frontendDist: resolve(FRONTEND_DIST) } });
-    buildArgs.push("-c", conf);
+    overrides.build = { beforeBuildCommand: "", frontendDist: resolve(FRONTEND_DIST) };
     console.log(`⚠️ --frontend-dist=${resolve(FRONTEND_DIST)}（跳过 beforeBuildCommand）`);
   }
+  if (TARGET_PLATFORM === "device" && BUILD_NUMBER !== APP_VERSION) {
+    overrides.bundle = { iOS: { bundleVersion: BUILD_NUMBER } };
+    console.log(`bundle.iOS.bundleVersion=${BUILD_NUMBER}（只递增 build number；ShortVersion 保持 ${APP_VERSION}）`);
+  }
+  if (Object.keys(overrides).length) buildArgs.push("-c", JSON.stringify(overrides));
   const res = await runStream("pnpm", buildArgs, {
     cwd: ROOT,
     env,
@@ -942,6 +1090,9 @@ function stepVerifyIpa(buildMetrics, signing) {
       CFBundleVersion: info?.CFBundleVersion,
       MinimumOSVersion: info?.MinimumOSVersion,
       versionMatchesTauriConf: info?.CFBundleShortVersionString === APP_VERSION,
+      // ⭐ 2026-10-23：build number 的判据 —— 缺省时两者都等于 APP_VERSION；`--build-number` 时只动这一格。
+      buildNumberExpected: BUILD_NUMBER,
+      buildNumberMatches: info?.CFBundleVersion === BUILD_NUMBER,
       entryCount: entries.length,
       strayObjectFiles: countO,
       straySwiftmodule: countSwiftmodule,
@@ -976,8 +1127,19 @@ function stepVerifyIpa(buildMetrics, signing) {
       }
     }
     console.log(JSON.stringify(out.ipa, null, 2));
+    // ⭐ 2026-10-23：`[CFBundleVersion 核对]` 是**回验**的显式读数（--build-number 的判据就在这一行）。
+    console.log(
+      `[CFBundleVersion 核对] IPA 里 CFBundleShortVersionString=${out.ipa.CFBundleShortVersionString} · CFBundleVersion=${out.ipa.CFBundleVersion} · 期望 build=${BUILD_NUMBER} · match=${out.ipa.buildNumberMatches}`,
+    );
     if (!out.ipa.mtimeAfterStart) fatal("IPA 的 mtime 早于本次开始 —— 这是**旧包**，不能当本轮产物");
     if (!out.ipa.versionMatchesTauriConf) fatal(`IPA 版本 ${out.ipa.CFBundleShortVersionString} ≠ tauri.conf ${APP_VERSION}`);
+    if (!out.ipa.buildNumberMatches) {
+      fatal(
+        `IPA 的 CFBundleVersion=${out.ipa.CFBundleVersion} ≠ 期望 ${BUILD_NUMBER}。` +
+          `\n  ⛔ 不接受"build number 没落到产物里"的包（--build-number 会写 project.yml 的 info.properties，再经 xcodegen 生成 Info.plist ——` +
+          `若这里红，先看 ④ project.yml 那步的读数、再看 tauri CLI 是否覆盖了版本号）。`,
+      );
+    }
     if (buildMetrics) {
       // ⚠️ 公司分发档走的是 `--archive-only --no-sign`：归档产物由 ⑥.5 的 export 成功来保证，
       //    日志里**不一定**有 `** BUILD SUCCEEDED **`（实测 exit 0 但该标记 0 次）⇒ 只在非归档档要求它。
@@ -1041,7 +1203,11 @@ function stepRunSim() {
   const headSubject = capture("git", ["log", "-1", "--pretty=%s"]).out.trim();
   const pkgVersion = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version;
   record("git", { HEAD: head, short: headShort, subject: headSubject, packageVersion: pkgVersion, tauriConfVersion: APP_VERSION, dirty: capture("git", ["status", "--porcelain"]).out.trim().split("\n").filter(Boolean) });
-  console.log(`iOS 打包脚本 · 平台=${TARGET_PLATFORM} · rust target=${RUST_TARGET} · 版本=${APP_VERSION}`);
+  console.log(
+    `iOS 打包脚本 · 平台=${TARGET_PLATFORM} · rust target=${RUST_TARGET} · 版本=${APP_VERSION}` +
+      (BUILD_NUMBER !== APP_VERSION ? ` · CFBundleVersion=${BUILD_NUMBER}（--build-number，ShortVersion 不动）` : "") +
+      (UPLOAD ? " · 上传 ASC" : ""),
+  );
   console.log(`仓根：${ROOT}`);
   console.log(`HEAD：${headShort} · ${headSubject}`);
   const env = await stepProxy();
@@ -1065,14 +1231,25 @@ function stepRunSim() {
   if (!ARCHIVES_ONLY) {
     buildMetrics = await stepTauriBuild(env, signing);
     stepVerifyIpa(buildMetrics, signing);
+    // ⭐ 上传是**在本地导出与校验全绿之后**才做的第二步（同一个 xcarchive）：
+    //   本地 IPA 那一份保留下来当证据，上传那一份只拿 xcodebuild 的原话当判据。
+    if (UPLOAD) {
+      if (TARGET_PLATFORM !== "device") fatal("--upload 只对 device 构建有意义（模拟器包不能上 App Store）");
+      if (!signing || !signing.distribution) fatal("--upload 需要分发档：node scripts/ios-build.mjs --sign company --upload（⛔ 开发档/个人档不上传）");
+      await stepUploadDistribution();
+    }
     if (RUN_SIM) stepRunSim();
   } else {
+    if (UPLOAD) fatal("--upload 不能与 --archives-only 一起用（还没出 archive 的导出/上传阶段）");
     console.log("\n（--archives-only：只做归档 + project.yml + xcodegen，不跑 xcodebuild）");
   }
   section("完成");
   const summary = {
     platform: TARGET_PLATFORM,
     version: APP_VERSION,
+    buildNumber: BUILD_NUMBER,
+    buildNumberDiffersFromVersion: BUILD_NUMBER !== APP_VERSION,
+    uploaded: UPLOAD,
     head: headShort,
     signing,
     archives: archives.map((a) => ({ lib: a.lib, bytes: a.bytes, cSymbols: a.cSymbols })),
