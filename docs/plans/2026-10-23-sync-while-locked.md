@@ -1,6 +1,6 @@
 # 锁定态同步：把「同步要读空间库」换成「同步读一份密封副本」
 
-状态：**施工中**（S1＝**不需要重构**；S2「密封镜像」✅；S3a「打不开的空间不许把整扇门按死」✅ 真机验过；S3b-收 ✅；S3b-发 ✅；**S3c-存**（inbox ＋ drain）✅；**S3c-接**（后台轮与解锁路径接线）⬜；S4 未开工）
+状态：**施工中**（S1＝**不需要重构**；S2「密封镜像」✅；S3a「打不开的空间不许把整扇门按死」✅ 真机验过；S3b-收 ✅；S3b-发 ✅；**S3c-存**（inbox ＋ drain）✅；**S3c-接①**（解锁后第一轮补应用）✅；**S3c-接②**（锁着时也能拉）⬜；S4 未开工）
 证据：`../../src-tauri/src/sync.rs`（`record_change` / `mirror_change_to_mesh_outbox` / `prune_mesh_outbox` ／ 判据 `every_local_change_is_mirrored_into_the_mesh_outbox`）· `../../src-tauri/src/db.rs`（`mesh_outbox` 建表 ＋ `idx_mesh_outbox_age`）· `../../src-tauri/src/mesh.rs`（`ensure_window` 逐空间跳过 ＋ `window_serves` ／ 判据 `a_space_that_cannot_open_does_not_take_the_whole_window_down`）· `../../src-tauri/src/lan_state.rs`（公告按 `window_serves` 过滤）· `../../src-tauri/src/security.rs`（`encrypt_payload` `117` / `wire_keys_for_conn` `142` / `startup_needs_unlock` `312`）· `../../src-tauri/src/keyring.rs`（`wrap` `214` / `unwrap_key` `226`）· `../../src-tauri/src/space_crypto.rs`（`251` 那条「会话未解锁」）· `architecture.md` §同步（「锁定会话时拒绝同步」）· `2026-09-23-encryption-scope-decision.md` §3.3③
 
 ---
@@ -111,7 +111,8 @@
 | **S3b-收** | 收侧能接住 `sealed` 记录：**先解封、再走完全一样的那条路**（合并闸/应用/水位原封不动）；解不开 ⇒ **整批停下**，⛔ 不跳过 | `a_sealed_row_is_unsealed_before_anything_else_looks_at_it`（解开后与普通记录逐字段一样）＋ `a_sealed_row_that_cannot_be_opened_stops_the_batch_instead_of_skipping_it`（解不开必须停）＋ `absorb` 那 4 条旧判据仍绿 | ✅ 已落地（明文空间口径；真封真解的密文半边归真机判据） |
 | **S3b-发** | 锁着时窗口**不开库**、从 `mesh_outbox` 发 `sealed` 行；只发给带 `caps=sealed1` 的对端，不带的**一条都不发**并回一句人话（409）；带 `name_sha` 找回"该发哪一个空间" | `a_locked_space_only_serves_sealed_rows_to_peers_that_understand_them`：不带 caps ⇒ **409 且零记录**；带 caps＋名字哈希 ⇒ 200 ＋ 封包原样搬出（`device_seq` 也带对）；名字对不上 ⇒ 403 ✓ ／ `window` 那 11 条、`absorb` 4 条、`pull` 6 条旧判据仍绿 | ✅ 已落地 |
 | **S3c-存** | `mesh_inbox` 表 ＋ `stash_sealed_rows`（不解密不应用，主键去重）＋ `drain_inbox`（解锁后解封、走现有 apply、**应用成功才删**） | `sealed_rows_stash_into_the_inbox_and_apply_on_unlock`：存两次第二次新增 0（幂等）；存完空间库**一页没多**；drain 后两页都在、inbox 清空 ✓ | ✅ 已落地 |
-| **S3c-接** | ① 锁着时后台轮也能拉（用 meta 连接签名/读名字，拿回封包进 inbox）② 解锁时调 `drain_inbox` | 两端都锁着 ⇒ 各自的 `mesh_inbox` 长行、空间库零变化；解锁一端 ⇒ 那一端 inbox 清空、页出现 | ⬜ **未开工**（动的是后台轮入口与解锁路径） |
+| **S3c-接①** | 解锁后的**第一轮**先把 inbox 补应用（`mesh::round` 开头，逐对端 drain） | 判据 `sealed_rows_stash_into_the_inbox_and_apply_on_unlock`（存→不应用→drain 后应用并清空）＋ `round` 那 44 条旧判据全绿（没碰坏正常同步） | ✅ 已落地 |
+| **S3c-接②** | 锁着时后台轮也能**拉**（用 meta 连接签名/读名字，把封包收进 inbox） | 两端都锁着 ⇒ 各自 `mesh_inbox` 长行、空间库零变化 | ⬜ **未开工** |
 | **S3c** | **锁着的那一侧收不了**（后台那一轮要开库 ⇒ 没有连接 ⇒ 它根本不跑） | 两端都锁着 ⇒ 谁都不同步（这一片要动"没有连接也能跑一轮"） | ⬜ 未开工 |
 | **S4** | 解锁后 drain ＋ 水位/体积裁剪 | 解锁后一轮 ⇒ 页出现在库里、两侧**块级投影一致**；超限路径有一条"响亮失败"判据 | ⬜ 未开工 |
 

@@ -1427,6 +1427,22 @@ pub async fn round(
     } else {
         String::new()
     };
+    // ⭐ 2026-10-23（S3c-接）：**先把"锁着时收下的"那批补应用掉** ✓ ——
+    //   它们躺在 `meta.mesh_inbox` 里，不主动 drain 就永远不动（那是最坏的静默失败：
+    //   "收到了、也存住了、就是不用" ✗）。⚠️ 放在真正拉取**之前**：这一轮后面的 pull
+    //   才有机会看到"已经应用过的"那份；⚠️ drain 失败**不拦这一轮**（下一轮还会再来 ✓）。
+    if let Ok(g) = conn.lock() {
+        for p in peers {
+            match drain_inbox(&g, space_id, &p.announce.device_id, device_level) {
+                Ok(ab) if ab.applied > 0 => eprintln!(
+                    "[mesh] 解锁后补应用：对端 {} ｜ {} 条",
+                    p.announce.device_id, ab.applied
+                ),
+                Ok(_) => {}
+                Err(e) => eprintln!("[mesh] 补应用失败（这一轮照常继续）：{e}"),
+            }
+        }
+    }
     let Some(_bind) = cfg.bind.clone() else {
         return Ok(MeshRoundReport {
             enabled: false,
@@ -3189,15 +3205,16 @@ pub fn stash_sealed_rows(
 /// ⇒ 只有在 `applied > 0` 时才删（被合并闸拒下的那批**留着**，下次解锁再试 ✓）。
 pub fn drain_inbox(
     c: &Connection,
-    meta: &Connection,
     space_id: &str,
     peer_device: &str,
     device_level: bool,
 ) -> Result<Absorbed, String> {
+    // ⚠️ 空间连接上 `meta` 是 **attach 进来的** ⇒ 表名一律写全 `meta.mesh_inbox` ✓
+    //   （与 `mesh_paired_devices`／`sync_profiles` 那几处同一个写法 ✓）。
     let rows: Vec<MeshRow> = {
-        let mut st = meta
+        let mut st = c
             .prepare(
-                "SELECT device_seq, updated_at, sealed FROM mesh_inbox
+                "SELECT device_seq, updated_at, sealed FROM meta.mesh_inbox
                   WHERE space_id = ?1 AND peer_device = ?2 ORDER BY device_seq ASC",
             )
             .map_err(|e| e.to_string())?;
@@ -3228,8 +3245,8 @@ pub fn drain_inbox(
     let out = absorb_peer_batch(c, &rows, peer_device, space_id, device_level)?;
     if out.applied > 0 {
         for r in &rows {
-            let _ = meta.execute(
-                "DELETE FROM mesh_inbox WHERE space_id = ?1 AND peer_device = ?2 AND device_seq = ?3",
+            let _ = c.execute(
+                "DELETE FROM meta.mesh_inbox WHERE space_id = ?1 AND peer_device = ?2 AND device_seq = ?3",
                 params![space_id, peer_device, r.device_seq],
             );
         }
@@ -4733,7 +4750,7 @@ mod tests {
         let before: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
 
         // 解锁 ⇒ drain
-        let ab = drain_inbox(&c, &meta, "sp-a", "dev-peer", false).unwrap();
+        let ab = drain_inbox(&c, "sp-a", "dev-peer", false).unwrap();
         assert_eq!(ab.applied, 2, "两条都要真的应用：{ab:?}");
         let after: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
         assert_eq!(after, before + 2, "应用之后空间库里必须有这两页");
