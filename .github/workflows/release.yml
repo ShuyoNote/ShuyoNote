@@ -29,7 +29,9 @@ jobs:
             bundles: deb,appimage
           - platform: windows-latest
             bundles: nsis
-          # macOS 暂缓：待 Apple 签名/公证 secrets 到位后再加回（dmg,app）。
+          # macOS 签名为公司主体（D53949JLS2）；签名/公证步骤在本 job 内，见下方 macOS 专属 step。
+          - platform: macos-latest
+            bundles: app,dmg
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -100,6 +102,26 @@ jobs:
         working-directory: src-tauri
         run: cargo fetch --locked
 
+      - name: 准备 macOS 静态 OpenSSL 前缀（Homebrew .a）
+        # 2026-10-23：macOS 发版链不再自编 OpenSSL 3.5.4（第一次 run 就红在那一步）。
+        # Homebrew openssl@3 同时带 libcrypto.a/libssl.a；复制到**只有 .a** 的临时前缀。
+        if: matrix.platform == 'macos-latest'
+        run: |
+          set -euo pipefail
+          brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+          SRC="$(brew --prefix openssl@3)"
+          PREFIX="$RUNNER_TEMP/openssl-static"
+          rm -rf "$PREFIX"
+          mkdir -p "$PREFIX/lib" "$PREFIX/include"
+          cp "$SRC/lib/libcrypto.a" "$SRC/lib/libssl.a" "$PREFIX/lib/"
+          cp -R "$SRC/include/openssl" "$PREFIX/include/"
+          if ls "$PREFIX/lib"/*.dylib >/dev/null 2>&1; then
+            echo "::error::前缀里有 .dylib —— 这会链接到构建机的共享库"
+            exit 1
+          fi
+          ls -lh "$PREFIX/lib"
+          echo "OPENSSL_DIR=$PREFIX" >> "$GITHUB_ENV"
+
       - name: Linux system deps
         if: matrix.platform == 'ubuntu-24.04'
         run: |
@@ -144,6 +166,31 @@ jobs:
         # `resource path … doesn't exist`（构建脚本期）把整条构建判红，而不是产出一个少个 dll 的包。
         if: matrix.platform == 'windows-latest'
         run: node scripts/fetch-pdfium.mjs --platform win-x64
+
+      - name: 取 PDFium 运行时（macOS）
+        if: matrix.platform == 'macos-latest'
+        run: node scripts/fetch-pdfium.mjs --check --platform mac-univ || node scripts/fetch-pdfium.mjs --platform mac-univ
+
+      - name: 预签嵌套 dylib ＋ 导出签名身份（macOS）
+        # 与 macos-signed.yml 同一步：Tauri 只签主程序，不签 bundle.macOS.files 带进来的
+        # libpdfium.dylib；不预签会在打包签名阶段中止。显式按公司 Team 选身份，避免
+        # 同时导入个人证书时 head -1 选错。
+        if: matrix.platform == 'macos-latest'
+        run: |
+          set -euo pipefail
+          IDENTITY="$(security find-identity -v -p codesigning build.keychain | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | grep "(${APPLE_TEAM_ID})" | head -1)"
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::钥匙串里没有团队 ${APPLE_TEAM_ID} 的 Developer ID Application 身份"
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "签名身份：$IDENTITY"
+          codesign -f --options runtime --timestamp -s "$IDENTITY" \
+            src-tauri/vendor/pdfium/mac-univ/lib/libpdfium.dylib
+          codesign -d --verbose=4 src-tauri/vendor/pdfium/mac-univ/lib/libpdfium.dylib 2>&1 \
+            | grep -E 'Authority|Timestamp|flags' || true
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: 取 PDFium 运行时（Linux 装包要带的 libpdfium.so）
         # 2026-09-19 加（AMD）。与 Windows 档同一个理由，但 Linux 多一层讲究：库**不在 exe 同目录**
@@ -190,13 +237,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [ "${{ matrix.platform }}" = "macos-latest" ]; then
+            OSSL="$(brew --prefix openssl@3)/bin/openssl"
+          else
+            OSSL="openssl"
+          fi
           echo "== 后端探测（必须真的有 SM3/SM4） =="
-          openssl version
-          openssl list -cipher-algorithms | grep -i -m1 sm4
-          openssl list -digest-algorithms | grep -i -m1 sm3
+          "$OSSL" version
+          "$OSSL" list -cipher-algorithms | grep -i -m1 sm4
+          "$OSSL" list -digest-algorithms | grep -i -m1 sm3
           echo "== 准备（补丁 ＋ 清产物） =="
           if [ "${{ matrix.platform }}" = "windows-latest" ]; then
             # vcpkg 的 x64-windows-static-md ⇒ lib/libcrypto.lib（静态）⇒ 产物自包含
+            node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --prepare --require-static
+          elif [ "${{ matrix.platform }}" = "macos-latest" ]; then
+            # macOS：Homebrew 的 .a 前缀（上方 step 已建，只有静态库）
             node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --prepare --require-static
           else
             # Linux runner 的 OpenSSL 3 自带 SM3/SM4；这里**不要求**静态（系统库是共享的，
@@ -230,7 +285,17 @@ jobs:
           # 不再受它影响。cargo 侧已有 `[profile.release] strip = true`（主二进制本来就没符号），
           # 所以关掉只多出系统库那点符号（约 1–2 MB）。Windows/macOS 档不走 linuxdeploy，不受影响。
           NO_STRIP: "1"
-          # mac 公证（可选）：若不用 Apple 签名则去掉这三项
+          # ⚠️ macOS 公证**不在这里**：这里只给签名身份（前面的 step 已写进 GITHUB_ENV），
+          # 不把 APPLE_ID/PASSWORD/TEAM_ID 交给 Tauri；公证由下面的显式脚本做，才有 Accepted/staple/spctl 证据。
+
+      - name: 产物自检（macOS：identifier / 版本 / 深链 / dmg / 签名）
+        if: matrix.platform == 'macos-latest'
+        run: pnpm check:macos-bundle
+
+      - name: 公证 ＋ 装订 ＋ Gatekeeper 复核（macOS）
+        if: matrix.platform == 'macos-latest'
+        run: node scripts/notarize-macos.mjs
+        env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -788,7 +853,7 @@ jobs:
           BODY_SEG=$(awk -v h="## [$VER]" 'index($0,h)==1{f=1;next} f&&/^## \[/&&index($0,h)!=1{exit} f' "$GITHUB_WORKSPACE/CHANGELOG.md" 2>/dev/null | sed -e 's/^### /## /')
           if [ -z "$BODY_SEG" ]; then echo "::warning::CHANGELOG.md 里没找到 [\] 段（正文会用兜底文案）—— 先看这个 job 有没有 checkout ✓"; BODY_SEG=$(printf '（CHANGELOG 里没找到 [%s] 段）' "$VER"); fi
           # 末尾补一段安装说明（与 CHANGELOG 段拼在一起 ✓，保留原有那句"未对拍"提醒 ✓）
-          BODY_MD=$(printf '# ShuyoNote %s\n\n%s\n\n## 安装\n- **Windows**：`ShuyoNote_%s_x64-setup.exe`\n- **Linux**：`.deb` 或 `.AppImage`\n- **Android**：`ShuyoNote_%s_android-arm64-release.apk`（arm64、正式密钥签名，可直接覆盖安装）\n- 桌面版安装后可在应用内「检查更新」下载并安装。\n\n⚠️ **本版未对拍**：国密的「跨实现双向对拍」（RustCrypto ↔ Tongsuo）9 项**未在本版 CI 运行**（CI 未装 Tongsuo）—— 这是**已知的未验项**，不是失败。细节与手动对拍入口见 docs/RELEASING.md（仓库内文档）。\n' "$TAG" "$BODY_SEG" "$VER" "$VER")
+          BODY_MD=$(printf '# ShuyoNote %s\n\n%s\n\n## 安装\n- **Windows**：`ShuyoNote_%s_x64-setup.exe`\n- **Linux**：`.deb` 或 `.AppImage`\n- **macOS（Apple Silicon）**：`ShuyoNote_%s_aarch64.dmg`（Developer ID 签名＋公证）\n- **Android**：`ShuyoNote_%s_android-arm64-release.apk`（arm64、正式密钥签名，可直接覆盖安装）\n- 桌面版安装后可在应用内「检查更新」下载并安装。\n\n⚠️ **本版未对拍**：国密的「跨实现双向对拍」（RustCrypto ↔ Tongsuo）9 项**未在本版 CI 运行**（CI 未装 Tongsuo）—— 这是**已知的未验项**，不是失败。细节与手动对拍入口见 docs/RELEASING.md（仓库内文档）。\n' "$TAG" "$BODY_SEG" "$VER" "$VER" "$VER")
           BODY_JSON=$(printf '%s' "$BODY_MD" | jq -Rs .)
           if [ -z "$RID" ]; then
             RESP=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
@@ -837,6 +902,6 @@ jobs:
             fi
             echo "uploaded: $(basename "$f")"
             found=$((found+1))
-          done < <(find . -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' -o -name 'ShuyoNote_*_android-arm64-release.apk' -o -name 'ShuyoNote_*_android-arm64-release.apk.sha256' \))
+          done < <(find . -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' -o -name 'ShuyoNote_*_android-arm64-release.apk' -o -name 'ShuyoNote_*_android-arm64-release.apk.sha256' \))
           echo "release $TAG -> $found installer(s) attached"
           [ "$found" -gt 0 ] || { echo "no installers found"; exit 1; }

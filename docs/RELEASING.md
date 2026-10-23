@@ -1,7 +1,7 @@
 # 发布流程（ShuyoNote）
 
 > 记录，含一次踩坑：**CHANGELOG 段头曾被覆盖导致版本中间断**——用脚本防再犯。
-> 发布时间窗（v1.83.0，2026-09）：**GitHub Actions 负责多平台构建（Win/Linux）；GitCode 是应用内「检查更新」与下载通道**。macOS 因缺 Apple 签名/公证凭据暂未启用（见 [multi-platform-ci.md](multi-platform-ci.md)）。
+> 发布时间窗（v1.83.0，2026-09）：**GitHub Actions 负责多平台构建（Win/Linux）；GitCode 是应用内「检查更新」与下载通道**。macOS 已于 2026-10-23 接入 `release.yml`（公司主体签名/公证）；GitHub 侧仍需配 5 个 Apple secrets 才能让 CI 复现（见 [multi-platform-ci.md](multi-platform-ci.md)）。
 
 > 📌 **发版之后，三处用户看得到的地方都要刷新**（缺一处就"看起来没发版"）：
 > ① **GitCode 发行版**（§⑥，应用内「检查更新」读的就是它）· ② **Web 版两个入口**（§⑦：
@@ -159,7 +159,7 @@ git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端�
 把仓库镜像到 GitHub，打 `v*` tag / workflow_dispatch → `.github/workflows/release.yml` 自动：
 - `ubuntu-24.04` → `.deb + .AppImage`
 - `windows-latest` → `.exe (nsis)`
-- `macos-latest` → `.dmg/.app`（**待 Apple secrets 后启用**）
+- `macos-latest` → `.dmg/.app`（**已启用；需 5 个 Apple secrets，2026-10-23 起签名/公证在 build job 内完成**）
 
 > **macOS 档另有两条 PDFium 相关步骤（2026-09-19 加）**：打包前先
 > `node scripts/fetch-pdfium.mjs --platform mac-univ` 现拉 `libpdfium.dylib`（二进制**不入库**），

@@ -166,6 +166,25 @@ function runAllowFail(cmd, args) {
   }
 }
 
+/**
+ * Gatekeeper 的评估结果在 staple 之后可能有短暂延迟（本机 2026-10-23 实测：
+ * 刚 staple 完立刻跑 spctl/codesign 曾拿到空输出，几秒后同一份产物就是 accepted）。
+ * 这不是"随机重试掩盖失败"：每轮仍按同一判据判，超过次数仍原样判红。
+ */
+function sleepMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function retryAllowFail(cmd, args, predicate, { attempts = 8, delayMs = 1000 } = {}) {
+  let last;
+  for (let i = 0; i < attempts; i++) {
+    last = runAllowFail(cmd, args);
+    if (predicate(last)) return last;
+    if (i < attempts - 1) sleepMs(delayMs);
+  }
+  return last;
+}
+
 function redact(args) {
   const out = [...args];
   const i = out.indexOf("--password");
@@ -246,11 +265,15 @@ function notarizeTarget(kind, target, creds, { dryRun }) {
   const stapled = validate.ok && /valid/i.test(`${validate.out}${validate.err}`);
   console.log(`  ${stapled ? "✅" : "❌"} stapler validate${stapled ? "：valid" : `（exit≠0）${(validate.err || validate.out).slice(0, 300)}`}`);
 
-  // ③ Gatekeeper + 身份复核
-  const spctl = runAllowFail("/usr/sbin/spctl", spctlArgs(kind, target));
+  // ③ Gatekeeper + 身份复核（staple 后给系统几秒刷新；判据不变，只是重试）
+  const spctl = retryAllowFail("/usr/sbin/spctl", spctlArgs(kind, target), (r) =>
+    /accepted/i.test(`${r.out}${r.err}`),
+  );
   const spctlOutput = `${spctl.out}${spctl.err}`;
   console.log(`  ${/accepted/i.test(spctlOutput) ? "✅" : "❌"} spctl: ${spctlOutput.trim().split("\n").slice(-1)[0]}`);
-  const details = runAllowFail("codesign", codesignArgs(target));
+  const details = retryAllowFail("codesign", codesignArgs(target), (r) =>
+    /Authority=/.test(`${r.out}${r.err}`),
+  );
   const authority = signingAuthority(`${details.out}${details.err}`);
   console.log(`  ${authority ? "✅" : "❌"} 签名身份：${authority ?? "（没有 Authority，ad-hoc）"}`);
 

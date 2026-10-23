@@ -3,10 +3,12 @@
 > 目标：在 **macOS 机器**上构建**签名 + 公证**的 `.dmg` / `.app`，并用 `tauri-plugin-updater` 做**自分发自动更新**（不走 App Store）。
 > 前提：一台 macOS 机器（**已有**）+ 一个**付费 Apple Developer 账号**（$99/年，**已有**）。
 
-> ⚠️ **当前状态（2026-09-14）**：Apple 账号已可用，macOS 构建**仍差 5 个 secrets**。
-> 本机自检通过：`node_modules/.tauri-wrap.cjs build --bundles app,dmg` 能出
-> `ShuyoNote.app` + `ShuyoNote_1.90.2_aarch64.dmg`（未签名，`Signature=adhoc`）。
-> 要启用 macOS 通道，只差：**① 造 Developer ID Application 证书 → ② 生成 App 专用密码 → ③ 在 GitHub 配 5 个 secrets → ④ 解开 release.yml 的 macOS 矩阵行**（见 §二、§六）。
+> ⚠️ **当前状态（2026-10-23）**：本机已用公司主体
+> `Developer ID Application: Puyang Shuyou Information Technology Service Co., Ltd. (D53949JLS2)`
+> **签名 + 公证 + 装订成功**（1.92.24，Gatekeeper `accepted / Notarized Developer ID`）。
+> `release.yml` 的 macOS 矩阵**已启用**（`macos-latest` → `app,dmg`）；GitHub 侧仍需配 5 个 Apple secrets
+> （见 §2.6）才能让 CI 复现。`macos-signed.yml` 保留为手动调试档。
+> ⚠️ 本机没有 `~/.tauri/shuyonote.key` ⇒ 手动包只出 dmg；自动更新工件要恢复原私钥后再构建。
 
 > ⚠️ **更新通道的产物是 `.app.tar.gz`，不是 dmg**（本仓库 `scripts/lib/releaseArtifacts.mjs` 已按此实现并有门禁）。
 > 证据：`tauri-plugin-updater`（2.10.1）`src/updater.rs` 的 macOS `install_inner()` 直接
@@ -200,18 +202,20 @@ identifier / 版本号 / `shuyonote` 深链 scheme / dmg 都在。
 「本机绿 ≠ 干净环境绿」的亏（Android 的 ranlib 与 bindgen target 都只在 Linux runner 上暴露）。
 它**刻意不碰密钥、不发布、不挂 tag**。
 
-### 6.2 签名 + 公证（等 secrets）
+### 6.2 签名 + 公证（已接入 release.yml）
 
-`.github/workflows/release.yml` 的 macOS 步骤（导入证书 + keychain）**已经写好并留在文件里**，
-只差矩阵里那一行：
+`.github/workflows/release.yml` 的 macOS 矩阵已启用，并包含：导入公司证书 → 选 `APPLE_TEAM_ID` 身份 →
+预签 `libpdfium.dylib` → Homebrew 静态 OpenSSL → `tauri build --bundles app,dmg --features sm-library` →
+`check:macos-bundle` → `notarize-macos.mjs`。
 
 ```yaml
           - platform: macos-latest
-            bundles: dmg,app
+            bundles: app,dmg
 ```
 
-**顺序**：① 先在 GitHub 配好 §2.6 的 5 个 secrets → ② 解开上面两行 → ③ 打 `v*` tag。
-（反过来的话，那个 job 会在导入证书那步失败；`fail-fast: false`，其它平台不受影响，但那次 release 不含 macOS。）
+**剩余动作**：在 GitHub 配好 §2.6 的 5 个 secrets（公司证书/Apple ID/App 专用密码/Team `D53949JLS2`）
+＋ 2 个 updater secrets；然后先手动跑 `macos-signed.yml` 验证，绿了再打 `v*` tag。
+（缺 secrets 时那个 job 会在证书导入/签名那步显式失败；`fail-fast: false`，其它平台不受影响。）
 
 ## 七、边界 / 注意
 - **自动更新只对「签名+公证」版本有效**；未签名/未公证的 mac 包会被 Gatekeeper 拦（可手动下载）。
@@ -228,13 +232,13 @@ identifier / 版本号 / `shuyonote` 深链 scheme / dmg 都在。
 
 ## 八、拿到 Apple 账号后的清单（照着做）
 0. **`sudo xcodebuild -license accept`**（Xcode 升级过就必须重来一次；判据见 §一那个警告框——
-   `xcrun notarytool --version` 要能打印版本号）。本机现在是**卡在这一步**的。
+   `xcrun notarytool --version` 要能打印版本号）。本机 2026-10-23 已通过。
 1. §2.1 找到 **Team ID**（10 位）。
 2. §2.2–2.4 申请 **Developer ID Application** 证书 → 装进钥匙串 → 导出 `.p12`。
    **判断标准**：`security find-identity -v -p codesigning` 里有 1 个 `Developer ID Application`。
 3. §2.5 生成 **App 专用密码**。
-4. §2.6 在 GitHub 配 5 个 secrets。
-5. 解开 release.yml 的 macOS 矩阵两行（§六）。
+4. §2.6 在 GitHub 配 5 个公司 secrets（`APPLE_TEAM_ID=D53949JLS2`）。
+5. `release.yml` 的 macOS 矩阵**已启用**（本机已用公司证书实测签名+公证通过）。
 6. 本机先手动跑一次 §四（带 `APPLE_*`）→ 应产出**公证过**的 dmg 与 `.app.tar.gz`；
    `spctl -a -vvv ShuyoNote.app` 应显示 `accepted, source=Notarized Developer ID`。
 7. 打 `v*` tag → CI 出三平台 + Android；再用 `release.mjs --no-build` 发 GitCode。
@@ -288,17 +292,17 @@ CI 形态用环境变量：`APPLE_ID` ＋ `APPLE_PASSWORD`（**App 专用密码*
 `workflow_dispatch`，**不是** tag 自动触发 —— 第一次跑要有人盯着读日志。它做的顺序：
 
 1. `cargo fetch --locked`（国密补丁要打在 registry 里那份 SQLCipher 源码上）
-2. **自编静态 OpenSSL 3.5.4**（`no-shared no-tests`；`--require-static` 会拒绝带 `.dylib` 的前缀）
+2. **准备 Homebrew 静态 OpenSSL 前缀**（`libcrypto.a`/`libssl.a`，过滤掉 `.dylib`；2026-10-23 起不再自编 3.5.4）
 3. `sm-library-build.mjs --prepare --require-static` ＋ `--print-env >> $GITHUB_ENV`
 4. 取 PDFium → **预签嵌套 dylib**（§四 ②.5 的坑：Tauri 不签 `bundle.macOS.files` 带进来的库）
 5. 导入 Developer ID 证书 → `tauri build --bundles app,dmg --features sm-library`
    （**只给签名身份，不给 `APPLE_*`** ⇒ Tauri 只签名，公证交给下一步显式脚本）
 6. `pnpm check:macos-bundle`（产物自检）
-7. `node scripts/notarize-macos.mjs`（公证 ＋ 装订 ＋ spctl 复核）
+7. `node scripts/notarize-macos.mjs`（公证 ＋ 装订 ＋ spctl 复核；staple 后 spctl/codesign 带短暂重试）
 8. 汇总读数（`codesign` 的 Authority/Timestamp、`stapler validate`、`spctl`、sha256）＋ 上传 artifacts
 
 ⚠️ **第一次跑之前**：配齐 5 个 Apple secrets ＋ 2 个 updater secrets（§2.6），否则这一步**故意失败**。
-⚠️ **绿了之后**再把同序步骤搬进 `release.yml` 的 macOS 矩阵（搬运时判据不变：§9.1 三件证据）。
+⚠️ **`release.yml` 已用同一套 macOS 步骤**；`macos-signed.yml` 是手动调试档，改一处请同步另一处。
 
 ### 9.4 本机端到端（证书到手当天）
 
@@ -323,5 +327,5 @@ node scripts/notarize-macos.mjs
 - `scripts/check-macos-bundle.mjs` —— 产物自检（identifier / 版本 / 深链 / dmg / 签名两格）
 - `scripts/lib/releaseArtifacts.mjs` —— 产物收集 / 平台键 / 清单偏好（含 macOS 的 `.app.tar.gz` 规则与门禁）
 - `scripts/release.mjs` —— 发布（建 release、上传、生成 `latest.json`）
-- `.github/workflows/release.yml` —— GitHub Actions 三平台（macOS 步骤已就位，矩阵待解开；搬运见 §9.3）
+- `.github/workflows/release.yml` —— GitHub Actions 三平台（macOS 矩阵已启用；签名/公证步骤在 build job 内）
 - `src-tauri/tauri.conf.json` —— updater endpoints + pubkey + bundle 配置
