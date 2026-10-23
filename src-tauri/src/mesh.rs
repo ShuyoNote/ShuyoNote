@@ -3167,6 +3167,108 @@ fn handle_pull(state: &State, target: &str) -> Reply {
     }
 }
 
+/// ⭐ 2026-10-23（S3c-接②）：**锁着时的那一轮** —— 不开空间库，只把对端的封包收进 `meta.mesh_inbox`。
+///
+/// 与 [`round`] 的关系：`round` 要一条**空间连接**（读设置、读名字、落库）；库打不开时那条路走不了
+/// ⇒ 换这一条：只用 `meta.db`（设备钥匙、空间名、inbox 都在里面 ✓）。
+///
+/// 三条口径：
+/// ① **一条都不应用** —— 收下 = 进 inbox，解锁后由 [`drain_inbox`] 应用（S3c-接① ✓）；
+/// ② 游标用 **inbox 里那个对端已收的最大 `device_seq`**（锁着时没有别处记它）；
+/// ③ **收不下也算数**：每个对端的失败原因原样带回去（⛔ 不静默 ✗）。
+pub async fn sealed_round(
+    dir: &std::path::Path,
+    proto_space: &str,
+    db_space: &str,
+    my_device: &str,
+    peers: &[crate::lan::Peer],
+) -> Result<MeshRoundReport, String> {
+    let meta = crate::db::open_meta_conn_at(dir)?;
+    // 空间名：锁着时只能从 meta 读（空间库里那份开不了 ✓）
+    let name: String = meta
+        .query_row(
+            "SELECT name FROM workspaces WHERE id = ?1 AND deleted_at IS NULL",
+            params![db_space],
+            |r| r.get(0),
+        )
+        .unwrap_or_default();
+    let name_sha = if name.trim().is_empty() {
+        String::new()
+    } else {
+        crate::db::sha256_hex(name.trim())
+    };
+    let targets = mesh_peers_by_name(proto_space, &name, my_device, peers);
+    if targets.is_empty() {
+        return Ok(MeshRoundReport {
+            enabled: true,
+            note: "锁着：网段里没有能直接拉的对端（这一轮一个字节都没动）".to_string(),
+            candidates: 0,
+            peers: Vec::new(),
+            window: window_addr(proto_space).map(|a| format!("http://{a}")),
+        });
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut out: Vec<PeerPullReport> = Vec::new();
+    let mut stashed_total = 0usize;
+    for peer in &targets {
+        let since: i64 = meta
+            .query_row(
+                "SELECT COALESCE(MAX(device_seq), 0) FROM mesh_inbox
+                  WHERE space_id = ?1 AND peer_device = ?2",
+                params![db_space, peer.device_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let target = pull_target(proto_space, since, &name_sha);
+        let auth = sign_request(&meta, my_device, proto_space, "GET", &target, crate::db::now_ms())
+            .map(|(ts, sig)| (my_device.to_string(), ts, sig));
+        let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
+        match pull_from_peer(&client, peer, proto_space, since, None, auth_ref, &name_sha).await {
+            Ok((rows, _max)) => {
+                let n = stash_sealed_rows(&meta, db_space, &peer.device_id, &rows).unwrap_or(0);
+                stashed_total += n;
+                out.push(PeerPullReport {
+                    peer: peer.device_id.clone(),
+                    fetched: rows.len(),
+                    // ⚠️ 收下 ≠ 应用：这一档**只存不用** ⇒ applied 恒 0（解锁后 drain 才算应用 ✓）
+                    applied: 0,
+                    cursor: since,
+                    max_seq: 0,
+                    superseded: 0,
+                    awaiting: 0,
+                    items: Vec::new(),
+                    merge: PeerMergeState::NotRun,
+                    error: None,
+                });
+            }
+            Err(e) => out.push(PeerPullReport {
+                peer: peer.device_id.clone(),
+                fetched: 0,
+                applied: 0,
+                cursor: since,
+                max_seq: 0,
+                superseded: 0,
+                awaiting: 0,
+                items: Vec::new(),
+                merge: PeerMergeState::NotRun,
+                error: Some(e),
+            }),
+        }
+    }
+    Ok(MeshRoundReport {
+        enabled: true,
+        note: format!(
+            "锁着：不开空间库，只把封包收进 inbox（这一轮新收 {stashed_total} 条；解锁后自动应用）"
+        ),
+        candidates: targets.len(),
+        peers: out,
+        window: window_addr(proto_space).map(|a| format!("http://{a}")),
+    })
+}
+
 /// ⭐ 2026-10-23（S3c）：把对端搬来的**封包**先存进 `meta.mesh_inbox` —— **不解密、不应用**。
 ///
 /// 为什么要有它：**锁着的那一侧也要能收** ✗ —— 那张表只需要明文库（meta.db），不需要空间库的钥匙 ✓；

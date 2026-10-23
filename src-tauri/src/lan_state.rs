@@ -358,9 +358,27 @@ fn spawn_background_round(
         for (proto_space, db_space, device_level) in pairs {
             // ⭐ 2026-10-11（设备级 ✓）：⭐ 判定**在上面那一处算好**（`mesh::is_device_level_space` ✓）
             //   再传进来 ✗ —— `mesh_round_once` 自己不判 ✓（否则就是第二份口径 ✓；方案 §9.1／§10.3 ✓）。
-            match crate::sync::mesh_round_once(&db.0, &proto_space, &db_space, &dev, &peers, device_level)
-                .await
+            //
+            // ⭐⭐ 2026-10-23（S3c-接②）：**按空间各开各的连接** ✗ —— 以前这里对**每一个**空间都传
+            //   同一个 `&db.0`，而 `mesh::round` 把这个 conn 当"空间连接"用（读设置、读名字、落库）
+            //   ⇒ "10 个空间"其实是**同一份库跑了 10 次**（日志里那 10 条一模一样的拉取就是它 ✓）。
+            //   ⚠️ 顺带接上"锁着也能收"：库打不开时走 `sealed_round`（只进 inbox，不解密不应用 ✓）。
+            let round_result = match crate::db::app_data_dir_ref()
+                .and_then(|dir| crate::db::open_space_conn_at(&db_space, dir).ok())
             {
+                Some(conn) => {
+                    let m = std::sync::Mutex::new(conn);
+                    crate::sync::mesh_round_once(&m, &proto_space, &db_space, &dev, &peers, device_level)
+                        .await
+                }
+                None => match crate::db::app_data_dir_ref() {
+                    Some(dir) => {
+                        crate::mesh::sealed_round(dir, &proto_space, &db_space, &dev, &peers).await
+                    }
+                    None => Err("app data 目录读不到 ⇒ 这一轮连搬运缓存都读不了".to_string()),
+                },
+            };
+            match round_result {
                 Ok(r) => {
                     candidates_total += r.candidates;
                     if r.candidates > 0 {
