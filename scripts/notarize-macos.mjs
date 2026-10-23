@@ -33,7 +33,7 @@
 //   `.app` 的公证走 `ditto -c -k --keepParent` 打的 zip（**必须带 --keepParent**，否则 Apple
 //   看到的不是 bundle 结构，会以 `The archive did not contain a valid app bundle` 拒收）。
 
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -155,12 +155,25 @@ export function verdict({ submit, stapled, spctlOutput, authority }, kind) {
 }
 
 function run(cmd, args) {
-  return execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  // ⚠️ 不能用 execFileSync 的返回值：它只给 stdout，而 `codesign -d --verbose=4` 与 `spctl`
+  // 的正文都在 **stderr**。2026-10-23 CI 上就是因此把已 Accepted/已装订的包误判成
+  // "spctl 空、签名 ad-hoc"（summary 里 `2>&1` 一跑就全对）。这里两条流都收。
+  const r = spawnSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  if (r.error) throw r.error;
+  if (r.status !== 0) {
+    const e = new Error(`${cmd} exited ${r.status}`);
+    e.status = r.status;
+    e.stdout = r.stdout ?? "";
+    e.stderr = r.stderr ?? "";
+    throw e;
+  }
+  return { out: r.stdout ?? "", err: r.stderr ?? "" };
 }
 
 function runAllowFail(cmd, args) {
   try {
-    return { ok: true, out: run(cmd, args), err: "" };
+    const r = run(cmd, args);
+    return { ok: true, out: r.out, err: r.err };
   } catch (e) {
     return { ok: false, out: String(e.stdout ?? ""), err: String(e.stderr ?? e.message ?? "") };
   }
