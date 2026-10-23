@@ -163,6 +163,28 @@ sync.rs:9498  判据 `unrecognized_entity_kinds_are_ignored_loudly_and_never_wed
    ⇒ 要读 `mesh_outbox` 得在 `start()` 时多拿一份 `meta.db` 连接（`db::open_meta_conn_at(dir)`），
    并把「房间 → 空间 id」带进 `State`。⚠️ `start()` 签名一动 ⇒ `open_window_at` 与十几条判据跟着改，
    所以这一半要**单独一片**、别和收侧混在一起。
+
+③ ⚠️ **空间名不能直接塞进 query**：`query_get` **不做 URL 解码**，遇到 `%` / `+` 直接拒绝
+   （`mesh.rs` 里那句"本窗口不做 URL 解码：如实拒绝，不猜"）—— 而空间名里有 `&`（实测：
+   「客户&伙伴」就是本机一个活空间）⇒ 拼进 query 会被当成参数分隔符 ✗。
+   ⇒ 改发 **`&name_sha=<sha256(空间名)>`**（纯 ASCII、不需要解码）；服务端在自己那几行
+   `workspaces` 上逐个比对哈希即可 ✓（空间名本来就在公告里明文广播，哈希不新增暴露 ✓）。
+```
+
+### 7.3 S3b-发 要动的地方（整片做，⛔ 别切一半）
+
+```text
+① `State` 加一格 `locked: Arc<Mutex<HashSet<String>>>`（"我知道、但这一轮开不了"的那些房间）
+    ＋ `MeshHandle::mark_locked()` 与之共享同一个 Arc（`ensure_window` 跳过谁就标谁）
+② `authorized` 的 ②「不在服务范围 ⇒ 403」要放行 `locked` 里的那些（它们是**我的空间**，只是开不了）
+③ `ensure_window`：被跳过的空间**也要载卡**（鉴权只需要卡表，不需要开库 ✗ —— S3a 当时为省事跳过了，
+   这一片必须改回来，否则锁着的那台连"认得你"都做不到 ⇒ 一律 401）
+④ `pull_target` 加 `caps=sealed1` ＋ `name_sha=`（⚠️ 它是**签名覆盖的字符串** ⇒ 签名与发送必须
+   仍然只拼一次，`pull_with_healing` 里那三处调用要一起改）
+⑤ `handle_pull`：拿到不到连接但空间在 `locked` 里 ⇒ 走 `serve_locked_outbox`（读 meta 的 outbox）；
+   没有 caps ⇒ **409 ＋ 一句人话**；没有 name_sha ⇒ 400（⛔ 不猜）
+⑥ 判据：一个"锁着"的空间（用目录占位模拟开不了）＋ 一张卡 ⇒ 带 caps+name_sha 拉到 sealed 行；
+   不带 caps ⇒ 409 且**一条记录都没有**；两边的空间库**零变化**
 ```
 
 > ⚠️ **S1 的更正（我先前那个"7 处"是错的）**：按 `git grep -n "INSERT INTO changes"` 数出 7 处，
