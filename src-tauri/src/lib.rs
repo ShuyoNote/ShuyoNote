@@ -308,10 +308,10 @@ pub fn run_backup_once() -> i32 {
     //    ⇒ ⭐ 这里**照 `setup()` 里那三步**自己来 ✓（⛔ 不多复制别的：不建窗口、不起插件 ✓）
     {
         use tauri::Manager;
-        let app_data_dir = match app.path().app_data_dir() {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("[auto-backup] 拿不到应用数据目录：{e}");
+        let app_data_dir = match db::resolve_app_data_dir(app.path().app_data_dir().ok()) {
+            Some(d) => d,
+            None => {
+                eprintln!("[auto-backup] 拿不到应用数据目录（也没有 SHUYONOTE_DATA_DIR）");
                 return 2;
             }
         };
@@ -467,7 +467,7 @@ pub fn run() {
                 .decode_utf8_lossy()
                 .into_owned();
             let app = ctx.app_handle();
-            let data_dir = app.path().app_data_dir().ok();
+            let data_dir = db::resolve_app_data_dir(app.path().app_data_dir().ok());
             let attachments_dir = data_dir.map(|d| d.join("attachments"));
             // Validate the target is inside the attachments dir. A lexical
             // `starts_with` is NOT a boundary (it doesn't normalize `..`), so:
@@ -597,7 +597,8 @@ pub fn run() {
                 Err(e) => eprintln!("[pdfium] 拿不到资源目录：{e}；打包形态可能找不到 PDFium 动态库"),
             }
 
-            let app_data_dir = app.path().app_data_dir()?;
+            let app_data_dir = db::resolve_app_data_dir(app.path().app_data_dir().ok())
+                .ok_or_else(|| std::io::Error::other("拿不到应用数据目录（也没有 SHUYONOTE_DATA_DIR）"))?;
             let conn = db::init(app_data_dir).map_err(|e| {
                 eprintln!("failed to init db: {e}");
                 std::io::Error::other(e.to_string())
