@@ -537,7 +537,7 @@ export const api = {
    * 界面把它列成勾选清单，勾了才调 `mesh_create_spaces` —— ⛔ 不许在这里顺手建。
    */
   meshMissingSpaces: () =>
-    invoke("mesh_missing_spaces") as Promise<{ name: string; from: string[]; tombstoned: boolean }[]>,
+    invoke("mesh_missing_spaces") as Promise<{ name: string; from: string[]; fromNames: string[]; tombstoned: boolean }[]>,
   /** ⭐ **2026-10-23**：按用户勾的名字建空间（幂等；只认候选表里有的名字）。 */
   meshCreateSpaces: (names: string[]) => invoke("mesh_create_spaces", { names }) as Promise<string[]>,
   /**

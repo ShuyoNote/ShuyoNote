@@ -626,12 +626,30 @@ pub fn peer_spaces_to_create(
 #[serde(rename_all = "camelCase")]
 pub struct MissingPeerSpace {
     pub name: String,
-    /// 哪几台对端报了它（已排序、已去重）—— 界面副标题要写"ZHAIDELL、AMD"
+    /// 哪几台对端报了它（**设备 id**，已排序、已去重）—— 只用来去重/核对，⛔ 不进界面 ✗
     pub from: Vec<String>,
+    /// ⭐ 与 [`from`] **一一对应**的**显示名**（设备名／短标识／「未命名设备」）。
+    /// ⚠️ 界面必须用它，⛔ 不许把设备 id 摆进用户可见的句子（本仓既有规矩）。
+    pub from_names: Vec<String>,
     /// 这个名字在本机**删过**（墓碑）⇒ 界面单列、默认不勾、勾的时候多问一句
     pub tombstoned: bool,
 }
 
+
+/// 一台对端的**显示名** —— ⛔ **不许回落成 `device_id`**（本仓既有规矩：设备 id 不进用户可见的句子）。
+///
+/// 回退链：设备名 ⇒ 「设备 <短标识>」（短标识它自己报的、可显示 ✓）⇒ 「未命名设备」。
+fn display_name_of(a: &crate::lan::LanAnnounce) -> String {
+    let n = a.device_name.trim();
+    if !n.is_empty() {
+        return n.to_string();
+    }
+    let s = a.short_id.trim();
+    if !s.is_empty() {
+        return format!("设备 {s}");
+    }
+    "未命名设备".to_string()
+}
 /// ⭐ **把「对端有、本机没有」的个人空间列出来给人勾** —— 纯函数，不碰库、不建东西。
 ///
 /// 与 [`peer_spaces_to_create`] 的**区别是刻意的**：
@@ -681,6 +699,7 @@ pub fn missing_peer_spaces(
                 Some(row) => {
                     if !row.from.iter().any(|d| d == &dev) {
                         row.from.push(dev.clone());
+                        row.from_names.push(display_name_of(&p.announce));
                     }
                     // 任一台把它当"删过的名字" ⇒ 整行都按墓碑处理（保守方向 ✓）。
                     row.tombstoned = row.tombstoned || tomb;
@@ -688,14 +707,20 @@ pub fn missing_peer_spaces(
                 None => out.push(MissingPeerSpace {
                     name: n.to_string(),
                     from: vec![dev.clone()],
+                    from_names: vec![display_name_of(&p.announce)],
                     tombstoned: tomb,
                 }),
             }
         }
     }
+    // ⚠️ `from` 与 `from_names` 是**平行数组** ⇒ 必须**一起**排序/去重（否则名字会配错设备 ✗）。
     for r in out.iter_mut() {
-        r.from.sort();
-        r.from.dedup();
+        let mut pairs: Vec<(String, String)> =
+            r.from.iter().cloned().zip(r.from_names.iter().cloned()).collect();
+        pairs.sort_by(|a, b| a.0.cmp(&b.0));
+        pairs.dedup_by(|a, b| a.0 == b.0);
+        r.from = pairs.iter().map(|x| x.0.clone()).collect();
+        r.from_names = pairs.iter().map(|x| x.1.clone()).collect();
     }
     // 顺序稳定（判据要能逐字节比 ✓）
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -11075,6 +11100,11 @@ mod missing_peer_spaces_tests {
 
         let prod = got.iter().find(|x| x.name == "产品").unwrap();
         assert_eq!(prod.from, vec!["dev-a", "dev-b"], "两台报同名 ⇒ 一行、出处两台");
+        assert_eq!(
+            prod.from_names,
+            vec!["对端".to_string(), "对端".to_string()],
+            "显示名必须与 from 一一对应（⛔ 界面不许显示设备 id）"
+        );
         assert!(!prod.tombstoned);
     }
 

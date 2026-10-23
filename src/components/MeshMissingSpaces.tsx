@@ -12,7 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 
-type Candidate = { name: string; from: string[]; tombstoned: boolean };
+type Candidate = { name: string; from: string[]; fromNames: string[]; tombstoned: boolean };
 
 const IGNORED_KEY = "shuyo.mesh.ignoredMissingSpaces";
 
@@ -124,7 +124,7 @@ export function MeshMissingSpaces() {
                     {c.tombstoned && <span className="mesh-missing-chip">你删过这个名字</span>}
                   </div>
                   <div className="mesh-missing-sub">
-                    {c.from.join("、")} · 未加密 · 将新建空库
+                    {(c.fromNames.length > 0 ? c.fromNames : c.from).join("、")} · 未加密 · 将新建空库
                   </div>
                 </div>
               </div>
