@@ -1,6 +1,6 @@
 # 锁定态同步：把「同步要读空间库」换成「同步读一份密封副本」
 
-状态：**施工中**（S1＝**不需要重构**（生产只有 1 个写入点）；S2「密封镜像」✅；S3a「一个打不开的空间不许把整扇门按死」✅ 真机验过；**S3b「锁定态真搬运」未开工**（要动 wire 格式）；S4 未开工）
+状态：**施工中**（S1＝**不需要重构**（生产只有 1 个写入点）；S2「密封镜像」✅；S3a「一个打不开的空间不许把整扇门按死」✅ 真机验过；**S3b 的形状已定**（§7.1 能力协商 `caps=sealed1`，⛔ 不靠"旧对端自动忽略"）；S4 未开工）
 证据：`../../src-tauri/src/sync.rs`（`record_change` / `mirror_change_to_mesh_outbox` / `prune_mesh_outbox` ／ 判据 `every_local_change_is_mirrored_into_the_mesh_outbox`）· `../../src-tauri/src/db.rs`（`mesh_outbox` 建表 ＋ `idx_mesh_outbox_age`）· `../../src-tauri/src/mesh.rs`（`ensure_window` 逐空间跳过 ＋ `window_serves` ／ 判据 `a_space_that_cannot_open_does_not_take_the_whole_window_down`）· `../../src-tauri/src/lan_state.rs`（公告按 `window_serves` 过滤）· `../../src-tauri/src/security.rs`（`encrypt_payload` `117` / `wire_keys_for_conn` `142` / `startup_needs_unlock` `312`）· `../../src-tauri/src/keyring.rs`（`wrap` `214` / `unwrap_key` `226`）· `../../src-tauri/src/space_crypto.rs`（`251` 那条「会话未解锁」）· `architecture.md` §同步（「锁定会话时拒绝同步」）· `2026-09-23-encryption-scope-decision.md` §3.3③
 
 ---
@@ -108,15 +108,45 @@
 | **S1** | 把 7 处 `INSERT INTO changes` 收敛成 1 个 helper | —— | ✅ **结论：不需要做**（见下） |
 | **S2** | 写入时封一份到 `mesh_outbox`（＋ 保留期按 7 天关掉） | `sync::tests::every_local_change_is_mirrored_into_the_mesh_outbox`：两次 upsert 同一页 ⇒ 镜像只剩 1 行、`device_seq` ＝ `changes.seq`、解回来是最新那份 ✓（明文空间原样过；密文空间"封得上"那一半归 S3 的真机判据） | ✅ 已落地 |
 | **S3a** | `ensure_window` 逐空间开、**打不开的跳过**；公告按 `window_serves` 过滤（⛔ 不谎报） | 判据 `a_space_that_cannot_open_does_not_take_the_whole_window_down`（能开的在服务、打不开的不算在服务）＋ **真机前后对比**：同一天、同一个锁着的保险柜，改前连报 5 次「窗口起不来…都不宣告」，改后一行「这一轮**少服务一个空间**（其余照常）」＋「网格窗口已启动」，18:49:14 照常发现对端 ✓ | ✅ 已落地 |
-| **S3b** | 窗口在**不开库**的情况下从 `mesh_outbox` 服务；收侧写 `mesh_inbox`（只存不应用） | 一端锁着 ⇒ 对端能拉到行、`mesh_inbox` 有行、**双方空间库零变化**；解锁后一轮 ⇒ 应用成功、块级投影一致 | ⬜ **未开工（要动 wire 格式，见下）** |
+| **S3b** | 窗口在**不开库**的情况下从 `mesh_outbox` 服务；收侧写 `mesh_inbox`（只存不应用） | 形状已定（§7.1 能力协商 `caps=sealed1`）：一端锁着 ⇒ 带 caps 的对端能拉到 sealed 行、`mesh_inbox` 有行、**双方空间库零变化**；不带的**一条都不发**（⛔ 不发一半） | ⬜ **未开工（形状已定）** |
 | **S4** | 解锁后 drain ＋ 水位/体积裁剪 | 解锁后一轮 ⇒ 页出现在库里、两侧**块级投影一致**；超限路径有一条"响亮失败"判据 | ⬜ 未开工 |
 
 > ⚠️ **S3b 的真实障碍（写在这里，免得下一轮重新发现）**：现在的 wire 记录是
 > `{seq, device_id, device_seq, entity, entity_id, op, payload}`，`entity/entity_id/op` **在明文**、
 > 只有 `payload` 是封的（`encrypt_payload`）。而 S2 的 outbox 为了不泄露元数据，把
 > **整条记录**封成了 `sealed` ⇒ 锁定态的窗口**拿不出 `entity_id/op`**，照原格式发就是**编**。
-> ⇒ S3b 必须加一种新记录形态（例：`{device_seq, sealed}` ＋ 一个版本标记），**抬 wire 版本**，
-> 老对端按"不认识 ⇒ 跳过"处理。这条要和 macOS / AMD 约好在同一版上升，否则两次对测都白跑。
+
+### 7.1 ⭐ 探路结论（2026-10-23 实测读代码，owner 拍「先 3 再 1」）
+
+**问**：老对端收到"不认识的记录"会怎样？能不能靠"它自己跳过"做成向后兼容？
+**答**：**不能** —— 它会**跳过，但把游标推到批尾**：
+
+```text
+sync.rs:3955  `_` 那一支：不认识的 (entity, op) 只记一条 `unrecognized`，**照旧忽略**（F7b：不再无声）
+sync.rs:4005  `if change.seq > max_pulled { max_pulled = change.seq }`
+sync.rs:9498  判据 `unrecognized_entity_kinds_are_ignored_loudly_and_never_wedge_the_cursor`
+              断言 `max_pulled == 5`（"游标必须走到批尾 —— 否则下一条读不懂的搭配就是死锁"）
+⇒ 那个被跳过的 `device_seq` **永远不会再拉**；等对方升级，也补不回来（**静默丢一条**）✗
+```
+
+而且"推进游标"是**故意的**（否则一条读不懂的记录会把整条流卡死）⇒ ⛔ 不能改它来迁就我们。
+
+⇒ **S3b 的形状定下来：能力协商，不靠"对方自动忽略"**：
+
+```text
+① 拉取请求带能力：`/mesh/pull?…&caps=sealed1`（新客户端总是带；老客户端不带 ⇒ 我们**看得出它不懂**）
+② 服务侧分两种：
+   · 空间库**开着** ⇒ 照旧从 `changes` 服务（今天的格式，老对端零感知 ✓）
+   · 空间库**打不开**（锁着）⇒ **只给带 `caps=sealed1` 的对端**发 `sealed` 记录；
+     不带的**一条都不发**、回一句明确的话（如 409「这一台锁着，且你不认识封包」）
+     ⛔ 绝不"发一半"：游标会越过被扣下的那几条 ⇒ 那几条就永远丢了 ✗
+③ 收侧：`sealed` 记录只进 `mesh_inbox`（meta.db，密封），**不解密、不落空间库** ⇒ 游标照常前进（它确实收下了）
+④ 解锁后：drain inbox → 解密 → 走**现有** apply（S4）
+```
+
+这条形状的代价比"三方约同一版"低：**老对端不需要升级就先继续用**（只是它会看到一句"对端锁着"），
+新对端一旦升级就自动享受"锁着也能搬"。⚠️ 但它仍然要求**两台新端**都懂 `sealed1` 才真正搬得动
+（一台新一台旧 ⇒ 旧的那台在锁定态只能等）。
 
 > ⚠️ **S1 的更正（我先前那个"7 处"是错的）**：按 `git grep -n "INSERT INTO changes"` 数出 7 处，
 > 但逐处看上下文后：**只有 `sync.rs::record_change` 是生产写入点**，其余 5 处是 `#[cfg(test)]` 夹具
