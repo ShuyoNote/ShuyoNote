@@ -29,4 +29,14 @@ describe("移动端「快速记录」屏：不挂底栏 ＋ 自带回家路", ()
     expect(CAP, "返回键必须真的回首页").toMatch(/setScreen\("home"\)/);
     expect(CAP, "返回键要有可访问名（图标按钮不能只有 ‹）").toMatch(/aria-label="返回首页"/);
   });
+
+  // ⭐ 2026-10-23 第二刀（owner 手机实拍「红圈那截不合适」）：底栏摘掉后**让位必须一起摘**。
+  //   实测症状：`.m-tabshell` 仍留 `padding-bottom: 64px` ⇒ 键盘弹起时那 64px 变成一截死白；
+  //   而 `.mcap-bar` 没写 `flex: none` ⇒ 被压缩到比内容矮 ⇒「段落/标题/列表」下半截被切。
+  it("④ 没有底栏就不许再让位（让位与底栏同生共死）", () => {
+    expect(APP, "未打 --no-tabs 修饰类").toMatch(/m-tabshell m-tabshell--no-tabs/);
+    const css = readFileSync(resolve(__dirname, "..", "App.css"), "utf8");
+    expect(css, "缺 --no-tabs 的 padding 归零").toMatch(/\.m-tabshell--no-tabs\s*\{\s*padding-bottom:\s*0;/);
+    expect(css, "快捷工具栏不许被压缩（flex: none）").toMatch(/\.mcap-bar\s*\{[^}]*flex:\s*none;/);
+  });
 });

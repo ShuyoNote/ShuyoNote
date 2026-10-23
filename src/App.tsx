@@ -955,7 +955,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
  *    留给需要整屏专注、不挂那颗浮「＋」的移动屏（⭐ 参数保留，本轮无调用方 ✓）。
  */
 const wrapMobile = (body: React.ReactNode, opts?: { showFab?: boolean; showTabs?: boolean }) => (
-  <div className="m-tabshell">
+  <div className={opts?.showTabs === false ? "m-tabshell m-tabshell--no-tabs" : "m-tabshell"}>
     {body}
     {/* ⭐ 第二刀：底栏三项（笔记/搜索/我的）＋ 右下浮「＋」。两者都 `position: fixed` ✓，
         所以放在 body 之后即可（不参与 `.m-tabshell` 的 column flex ✓）。
