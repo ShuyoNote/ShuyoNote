@@ -326,6 +326,16 @@ export const api = {
    */
   claimPageLineage: (args: { workspace_id: string; page_id: string }) => invoke("claim_page_lineage", { args }),
   /**
+   * CRDT 阶段 2 · **加密快照上传**（2026-10-23；服务端那一半自 2026-10-02 起就在，提交 `e7245bc`）。
+   *
+   * 快照源＝这个空间的**库文件字节**（走 `backup_db_to`，含 WAL 里还没落盘的行），
+   * 而"服务端解不开"靠的是它**在磁盘上本来就是密文** ⇒ 只对**已加密**的空间成立；
+   * 明文空间**当场拒**（错误里写明理由），⛔ 不传一份"谁拿到谁能读"的字节上去。
+   * `snapshotSeq` ＝ 上传时的 `last_pushed_seq`（服务端要求单调不减，缺 ⇒ 400）。
+   * ⚠️ 时机由调用方定：**自动阈值策略未做**（取决于配额/限流语义，那两项还没定）。
+   */
+  uploadSnapshot: (args: { space_id?: string } = {}) => invoke("sync_upload_snapshot", { args }),
+  /**
    * 冲刺 §11.4 收口（2026-09-23 第 42 轮）：这一页**待并的远端状态**。
    *
    * 桌面 Rust **没有** Yjs（要不要引进 `yrs` 是 S5 阶段 2 的决策）⇒ 它只把同步收到的字节**收下来**，

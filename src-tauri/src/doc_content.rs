@@ -2738,6 +2738,9 @@ pub(crate) struct DocBlock {
     /// **列表逐项**（只有 `list` 节点有）。为什么必须单独给：`blocks::node_text` 拼子节点时
     /// **没有分隔符** ⇒ `text` 里三项是粘在一起的（"…左侧栏 ＋插入内容：…"）⇒ 拿 `text` 切是错的。
     pub items: Vec<String>,
+    /// 图片块的 `src`（只有 `image` 节点有；其它块为空串）。
+    /// ⭐ 2026-10-22 补：没有它，阅读屏只能画一个"这里有一张图"的占位框（owner 报「图片显示有问题」）。
+    pub src: String,
 }
 
 /// 顶层块的 `kind`：`heading` 取 `tag`，其余取 `type`。
@@ -2792,11 +2795,17 @@ pub(crate) fn page_blocks_from_doc(json: &str) -> Result<Vec<DocBlock>, String> 
                 .and_then(|b| b.as_str())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("block-{i}"));
+            let src = child
+                .get("src")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             out.push(DocBlock {
                 block_id,
                 kind,
                 text,
                 items,
+                src,
             });
         }
     }
@@ -2898,7 +2907,7 @@ mod page_blocks_tests {
                 { "type": "listitem", "children": [{ "type": "text", "text": "乙" }] }
             ]},
             { "type": "quote", "children": [{ "type": "text", "text": "引用一句" }] },
-            { "type": "image", "children": [] }
+            { "type": "image", "src": "blob:http://x/abc", "altText": "", "children": [] }
         ]}})
         .to_string();
 
@@ -2914,6 +2923,7 @@ mod page_blocks_tests {
         assert_eq!(list.text, "甲乙", "text 的语义不许被改（查词/摘要吃它）");
         assert_eq!(b[5].kind, "image");
         assert!(b[5].text.is_empty() && b[5].items.is_empty());
+        assert_eq!(b[5].src, "blob:http://x/abc", "图片的 src 必须带出来（否则阅读屏只能画占位框）");
     }
 
     /// 反判据：认不出来的块类型**不许丢** —— 原样带出去（前端自己兜 style），

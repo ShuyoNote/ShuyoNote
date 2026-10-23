@@ -59,6 +59,14 @@ export interface EventDriver {
 /** Convert a local file path into a loadable asset URL. */
 export interface AssetDriver {
   convertFileSrc(path: string): string;
+  /**
+   * 把正文里的附件引用解析成**此刻可用**的展示地址。
+   *
+   * ⭐ 2026-10-23：web 的正文里存的是稳定引用 `asst:<hash>`（见 `lib/assetRef.ts` 文件头），
+   * 解析＝按 hash 从 IndexedDB 取字节、现造一个对象 URL；**桌面**存的是真实路径 ⇒ 原样返回。
+   * 解析不到 ⇒ 返回空串（界面据此画占位框，⛔ 不画碎图）。
+   */
+  resolveRef(src: string): Promise<string>;
 }
 
 /** Host-webview APIs (e.g. OS drag-and-drop onto the window). */

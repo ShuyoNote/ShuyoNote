@@ -1654,6 +1654,15 @@ export function makeInvoke(store: SqliteStore) {
       const args = a.args ?? a;
       return writePageProjectionIfChanged(store, String(args.page_id ?? ""), String(args.doc_json ?? "")) as T;
     }
+    if (cmd === "sync_upload_snapshot") {
+      // 加密快照只对**密文库**有意义：Web 平台既没有空间钥匙，本地库也不是密文
+      // （`sqliteStore` 的 DDL 就是明文 SQLite）⇒ 这里**明确拒绝**。
+      // ⛔ 不许"先传一份明文、反正服务端不解析"：服务端不解析正是**危险**所在 ——
+      //    谁拿到那份字节谁就能读，而它会被长期存放在服务端。
+      throw new Error(
+        "Web 版不能上传加密快照：它没有空间钥匙、本地库也不是密文（服务端只存不解析 ⇒ 传上去就是明文落云）。请在桌面端执行。",
+      );
+    }
     if (cmd === "claim_page_lineage") {
       // 冲刺 S9 接线（2026-09-23）：把"谁先给这一页建 CRDT 血统"的裁定发给同步服务。
       //
@@ -3941,6 +3950,24 @@ export function makeInvoke(store: SqliteStore) {
         (store.query<{ hash: string }>("SELECT DISTINCT hash FROM attachments WHERE page_id IN (SELECT id FROM pages WHERE workspace_id = ? AND deleted_at IS NULL)", [ws.id]) as any[])
           .map((r) => String(r.hash)),
       );
+      // ⭐ 2026-10-23（owner 实拍：手机 web 导出 → 桌面导入 ⇒ 图片碎图）：**还得按正文里的引用兜一遍**。
+      //   快速记录存的附件行 `page_id` 是 null（那一刻还没有页）⇒ 上面那条按 page_id 的查询**看不见它**
+      //   ⇒ 导出的 zip 里没有那几个字节 ⇒ 桌面导入后图当然打不开。
+      //   这里扫正文里的 `asst:<hash>`（web 的稳定引用，见 `lib/assetRef.ts`）把它们补进来。
+      //   ⚠️ 只在**导出副本**上做，不动活库；扫的是本空间未删除页的正文。
+      try {
+        const rows = store.query<{ content: string }>(
+          "SELECT content FROM pages WHERE workspace_id = ? AND deleted_at IS NULL",
+          [ws.id],
+        ) as { content: string }[];
+        for (const row of rows) {
+          for (const m of String(row.content ?? "").matchAll(/asst:([0-9a-f]{8,128})/g)) {
+            refHashes.add(m[1]);
+          }
+        }
+      } catch {
+        /* 正文扫不出来不影响导出：按 page_id 那批照旧 */
+      }
       const pages = (store.query("SELECT id FROM pages WHERE workspace_id = ? AND deleted_at IS NULL", [ws.id]) as any[]).length;
       const atts = await blobStore.entries();
       const candidates = atts.filter((a) => refHashes.size === 0 || refHashes.has(a.hash));
@@ -4388,6 +4415,25 @@ export function createWebPlatform(): Platform {
         const bridge = getMobileBridge();
         if (bridge?.convertFileSrc) return bridge.convertFileSrc(path);
         return path;
+      },
+      /**
+       * ⭐ 2026-10-23：把正文里的 `asst:<hash>` 解析成**此刻可用**的对象 URL。
+       *
+       * 为什么非要"此刻"：`blob:` 地址是 `URL.createObjectURL` 造的，**只活在当前页面会话**。
+       * 正文里若存它，刷新后必然失效（这就是 owner 报的「插的图刷新就没了」）。
+       * 现在正文存的是内容指纹，字节在 IndexedDB（`blobStore`，按 hash 组织）⇒ 每次渲染现造一个。
+       *
+       * ⚠️ 找不到（IndexedDB 被清 / 换设备 / 老数据只有 blob: 死链）⇒ 回**空串**，
+       *    界面据此画占位框（⛔ 不画碎图：碎图像"坏了"，占位框像"这份内容没有可用地址"）。
+       */
+      resolveRef: async (src) => {
+        const { isAssetRef, assetRefHash } = await import("../assetRef");
+        if (!isAssetRef(src)) return src;
+        const hash = assetRefHash(src);
+        const rec = await blobStore.get(hash).catch(() => null);
+        if (!rec) return "";
+        const bytes = rec instanceof Uint8Array ? rec : new Uint8Array(await (rec as Blob).arrayBuffer());
+        return blobUrl(bytes, "") as string;
       },
     },
     webview: {

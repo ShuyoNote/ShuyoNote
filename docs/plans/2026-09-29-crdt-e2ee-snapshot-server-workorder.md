@@ -1,8 +1,21 @@
-# 施工单：E2EE 加密快照的服务端接口（2026-09-29 立，**未开工**）
+# 施工单：E2EE 加密快照的服务端接口（2026-09-29 立；**服务端已实施，客户端已接「上传」一片**）
 
-> **状态**：施工单，**未实施**。上位件：[CRDT 尖刺结论](2026-09-19-crdt-spike-conclusions.md) §4、
+> **状态**：⚠️ **服务端那一半已于 2026-10-02 落地**（服务端仓 `e7245bc`：v17 迁移 ＋
+> `PUT/GET /spaces/{id}/snapshot` ＋ `DELETE /spaces/{id}/deltas`，快照不透明、`snapshotSeq` 必填单调、
+> **先落快照再退役**、没快照 ⇒ 409）。
+> **客户端「上传」切片已于 2026-10-23 接上**：`src-tauri/src/space_snapshot_client.rs`（命令
+> `sync_upload_snapshot`；快照源＝空间库文件字节，走 `backup_db_to`；**明文库当场拒**；
+> Web 平台明确拒绝而不是传明文 —— `web.ts`）。判据：该文件内 3 条 Rust 单测 ＋
+> `src/lib/crdt/snapshotUpload.wiring.test.ts` 4 条。
+> **仍未做** ✗：① 新设备「**先取快照、再取增量**」的冷启动（要动 pull）；② 自动上传的阈值/时机
+> （取决于配额与限流语义，见本文 §2 尾）。⇒ 服务端状态文件仍记 `S14 [部分]`。
+> 本仓可核的判据是**契约门禁**：`node scripts/check-crdt-snapshot-contract.mjs`（3 条路由 ＋ 5 条承重规则）
+> 与 `scripts/lib/crdt-snapshot-contract.mjs`（**单一事实来源**，服务端实现照它核）。
+> 上位件：[CRDT 尖刺结论](2026-09-19-crdt-spike-conclusions.md) §4、
 > [隐私边界交接](2026-09-24-crdt-privacy-handoff.md)、[服务端数据边界](../sync-server-data-boundary.md)。
-> 证据：`../../docs/sync-server-data-boundary.md`（个人空间只落密文 ✓）
+> 证据：`scripts/lib/crdt-snapshot-contract.mjs`（契约本体）＋ `scripts/check-crdt-snapshot-contract.mjs`（门禁）
+> ＋ `src-tauri/src/space_snapshot_client.rs`（客户端上传切片）
+> ＋ `docs/sync-server-data-boundary.md`（个人空间只落密文 ✓）
 
 ## 1. 为什么现在做它（不是"防患于未然"）
 

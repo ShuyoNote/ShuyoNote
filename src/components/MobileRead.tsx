@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { hasLookupChars, normalizeSelection } from "../lib/dictionary/lookup";
 import { pushOverlay } from "../lib/overlayStack";
+import { platform } from "../lib/platform";
 import { useMobileNav } from "../store/mobileNav";
 import { useNotes } from "../store/notes";
 import type { PageBlock } from "../types";
@@ -172,7 +173,34 @@ export function MobileRead({ pageId }: { pageId: string }) {
  * ⚠️ **认不出来的 `kind` 不许丢** —— 落到最后那一支按普通段落渲染（丢了＝内容凭空少一块）。
  * ⚠️ 图片块没有文字：它代表"这里有一张图"的位置（效果图 04 那张虚线占位卡）。
  */
-function BlockView({ b }: { b: PageBlock }) {
+export function BlockView({ b }: { b: PageBlock }) {
+  // ⚠️ 图片的死链兜底：`src` 非空 ≠ 能加载。死链若照画，用户看到的是**碎图图标**
+  //   （看起来像"坏了"）；退成占位框才诚实地表达"这里有一张图，但这份内容没有可用的地址"。
+  const [imgBroken, setImgBroken] = useState(false);
+  // ⭐ 2026-10-23（owner：「web 移动端插的图没保存到本机」）：正文里存的是**稳定引用**
+  //   `asst:<hash>`（web）或**真实路径**（桌面）⇒ 渲染前先解析成"此刻可用"的地址。
+  //   web 那份是每次现造的 object URL，所以刷新后照样能显示；解析不到 ⇒ 空串 ⇒ 占位框。
+  const [imgSrc, setImgSrc] = useState("");
+  useEffect(() => {
+    if (b.kind !== "image") return;
+    let alive = true;
+    setImgBroken(false);
+    if (!b.src) {
+      setImgSrc("");
+      return;
+    }
+    platform.asset
+      .resolveRef(b.src)
+      .then((url) => {
+        if (alive) setImgSrc(url || "");
+      })
+      .catch(() => {
+        if (alive) setImgSrc("");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [b.kind, b.src]);
   switch (b.kind) {
     case "h1":
       return <h1 className="mread-h1">{b.text}</h1>;
@@ -194,7 +222,23 @@ function BlockView({ b }: { b: PageBlock }) {
     case "callout":
       return <div className="mread-callout">{b.text}</div>;
     case "image":
-      return <div className="mread-img">图片</div>;
+      // ⭐ 2026-10-22（owner：「web 移动端快速记录页图片保存显示有问题」）：
+      //   有地址就**真的画那张图**；⛔ 不许一律画占位框（那一版是我上一笔的偷懒）。
+      // ⭐ 2026-10-23：地址来自 `platform.asset.resolveRef(b.src)`（解析完才有值，
+      //   所以首帧必定是占位框 —— 那是**加载中**，不是"没有图"）。
+      //   ⚠️ 仍保留占位框作为兜底：解析不到（空串）或图**加载失败**（`onError`）时如实说
+      //   「这里有一张图」，而不是画碎图图标。
+      return imgSrc && !imgBroken ? (
+        <img
+          className="mread-img-el"
+          src={imgSrc}
+          alt={b.text || "图片"}
+          loading="lazy"
+          onError={() => setImgBroken(true)}
+        />
+      ) : (
+        <div className="mread-img">图片</div>
+      );
     case "horizontalrule":
       return <hr className="mread-hr" />;
     default:

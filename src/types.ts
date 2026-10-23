@@ -564,6 +564,8 @@ export interface PageBlock {
   text: string;
   /** 列表逐项（只有 `kind === "list"` 有） */
   items: string[];
+  /** 图片块的 `src`（其它块为空串）。2026-10-22 补。 */
+  src: string;
 }
 
 export interface SearchBlock {

@@ -155,7 +155,7 @@ fn set_auth_session(c: &Connection, server_url: &str, email: &str, token: &str) 
 }
 
 /// Best-effort read of a per-server session token (`meta.auth_sessions`).
-fn get_auth_token(c: &Connection, server_url: &str) -> Option<String> {
+pub(crate) fn get_auth_token(c: &Connection, server_url: &str) -> Option<String> {
     c.query_row(
         "SELECT token FROM auth_sessions WHERE server_url = ?1",
         params![server_url],
@@ -1235,7 +1235,7 @@ fn row_to_profile(r: &rusqlite::Row<'_>) -> rusqlite::Result<SyncProfile> {
     })
 }
 
-fn get_profile(c: &Connection, ws_id: &str) -> Result<SyncProfile, String> {
+pub(crate) fn get_profile(c: &Connection, ws_id: &str) -> Result<SyncProfile, String> {
     let profile = c
         .query_row(
             &format!("SELECT {PROFILE_COLS} FROM sync_profiles WHERE ws_id = ?1"),
@@ -1359,7 +1359,7 @@ fn base_for(profile: &SyncProfile, peers: &[Peer]) -> String {
 ///
 /// ⚠️ 归属已由 owner 拍板为**应用级单例 ＋ 按需启用**（`lan_state`）：
 /// 未启用时 `peers()` 返回空 ⇒ 这里拿到空 ⇒ **基址逐字节等于今天**（发现层是加分项，不是必经路）。
-fn effective_base(c: &Connection, profile: &SyncProfile) -> String {
+pub(crate) fn effective_base(c: &Connection, profile: &SyncProfile) -> String {
     let peers = match device_id(c) {
         Ok(id) => LanState::global(&id).peers(crate::db::now_ms()),
         // 拿不到 device_id（老库/异常）⇒ **不挡同步**：回落到"没发现到任何对端"。

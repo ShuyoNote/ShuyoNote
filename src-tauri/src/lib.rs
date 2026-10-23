@@ -235,6 +235,7 @@ mod lan_android;
 pub mod relay_client;
 mod security;
 mod storage;
+mod space_snapshot_client;
 mod sync;
 mod tags;
 mod templates;
@@ -952,6 +953,7 @@ pub fn run() {
             // （`POST /sync/lineage-claim`）、同口径。接上它之后这条命令才不是"web 专属"
             // （`scripts/check-web-commands.mjs` 的 `WEB_ONLY_COMMANDS` 已相应撤回）。
             sync::claim_page_lineage,
+            space_snapshot_client::sync_upload_snapshot,
             // B 片 ①-a（2026-09-25）：换设备的**文本搬运**（复制/粘贴、存/读文件）。
             // 同样是**桌面专属**：Web 上没有钥匙柜，也就没有"公开材料"可搬
             // （理由写在 `check-web-commands` 的 `DESKTOP_ONLY_COMMANDS` 里）。

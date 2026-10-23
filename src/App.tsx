@@ -954,12 +954,16 @@ function NoteEditor({ pageId }: { pageId: string }) {
  * ⭐ 2026-10-20：多一个**显式**选项 `showFab`（默认 true ✓，既有调用一个字不改 ✓）——
  *    留给需要整屏专注、不挂那颗浮「＋」的移动屏（⭐ 参数保留，本轮无调用方 ✓）。
  */
-const wrapMobile = (body: React.ReactNode, opts?: { showFab?: boolean }) => (
-  <div className="m-tabshell">
+const wrapMobile = (body: React.ReactNode, opts?: { showFab?: boolean; showTabs?: boolean }) => (
+  <div className={opts?.showTabs === false ? "m-tabshell m-tabshell--no-tabs" : "m-tabshell"}>
     {body}
     {/* ⭐ 第二刀：底栏三项（笔记/搜索/我的）＋ 右下浮「＋」。两者都 `position: fixed` ✓，
-        所以放在 body 之后即可（不参与 `.m-tabshell` 的 column flex ✓）。 */}
-    <MobileTabBar />
+        所以放在 body 之后即可（不参与 `.m-tabshell` 的 column flex ✓）。
+        ⭐ 2026-10-22（owner 手机实拍「编辑时底部标签不该显示」）：多一个显式选项 `showTabs`
+        （默认 true ⇒ 既有调用一个字不改）—— 打字屏要整屏专注：底栏会把快捷工具栏顶到键盘上，
+        而且那三个导航项在"正在写"的时候也用不上。⚠️ 于是那个屏**必须自己留一条回家的路**
+        （`MobileCapture` 左上「‹ 返回」✓，`check-mobile-exit-routes` 也认它）。 */}
+    {opts?.showTabs === false ? null : <MobileTabBar />}
     {opts?.showFab === false ? null : <MobileComposeFab />}
   </div>
 );
@@ -1186,32 +1190,26 @@ function AppShell() {
             aria-hidden
           />
         )}
-      {/* ⭐⭐ 2026-10-20（跨机实测报回）：**桌面主区这些分支必须带 `!isMobile`** ✗ ——
-          它们原本排在手机分支**前面** ⇒ 只要其中任一状态成立（例如上次的看板/关系图被还原、
-          PDF/文件预览还开着、模板中心打开），手机就会渲染**桌面界面** ✗（owner 报的「iOS 上还是桌面」）。
-          ⇒ 这里的 `!isMobile &&` 是**手机优先**的硬边界；新增桌面主区分支时必须照写。
-          ⚠️ 不要用「把手机分支整体提前」来解决 —— 那会动桌面骨架，风险更大。
-          （回归判据：`src/App.mobileBranchOrder.test.ts` ✓） */}
-      {!isMobile && pdfWhere === "inline" ? (
+      {pdfWhere === "inline" ? (
         <div className="main pdf-main"><PdfReader inline /></div>
-      ) : !isMobile && previewWhere === "inline" ? (
+      ) : previewWhere === "inline" ? (
         /* ⚠️ **2026-10-04 加**：⭐ 文件预览在桌面端也进主区 ✓（与上面 PDF 那条**逐字同形** ✓）——
            ⭐ 它顶替的是"文件"视图（预览从文件列表里点开 ✓）⇒ ⭐ 关掉之后回到原来的视图 ✓
            （⭐ `view` 没有被改过 ✓，⭐ patch 只是临时占了主区 ✓）。 */
         <div className="main"><FilePreviewDialog inline /></div>
-      ) : !isMobile && templateOpen ? (
+      ) : templateOpen ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><TemplateCenterView /></Suspense></div>
-      ) : !isMobile && view === "graph" ? (
+      ) : view === "graph" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><GraphView /></Suspense></div>
-      ) : !isMobile && view === "timeline" ? (
+      ) : view === "timeline" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><TimelineReview /></Suspense></div>
-      ) : !isMobile && view === "map" ? (
+      ) : view === "map" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><KnowledgeMap /></Suspense></div>
-      ) : !isMobile && view === "board" ? (
+      ) : view === "board" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><BoardView /></Suspense></div>
-      ) : !isMobile && view === "files" ? (
+      ) : view === "files" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><FileManagerView /></Suspense></div>
-      ) : !isMobile && view === "sync" ? (
+      ) : view === "sync" ? (
         /* ⭐ **P-2a-1（2026-10-13）**：⭐ 同一份内容（`SyncPanel` 的内容体 ✓）也能进**内容区** ✓ ——
            ⚠️ 抽屉那支（触发器 ＋ 浮层）**逐字不变** ✓；这里只是把同一份 JSX 放进 `main` ✓。 */
         <div className="main"><SyncPanel contentOnly /></div>
@@ -1255,8 +1253,11 @@ function AppShell() {
             <MobileHome />
           ),
           /* ⭐ 2026-10-20 重设计：浮「＋」只出现在**首页**（效果图 01 有；02/03/07 没有）
-             ⇒ capture/search 隐藏，避免它压住快捷工具栏/搜索结果。 */
-          { showFab: mobileScreen === "home" },
+             ⇒ capture/search 隐藏，避免它压住快捷工具栏/搜索结果。
+             ⭐ 2026-10-22（owner 手机实拍「编辑时底部标签不该显示」）：**打字屏连底栏也不挂**
+             —— 效果图 02 本来就没有它；键盘弹起时它会把快捷工具栏顶上去。
+             该屏的回家路由它自己的左上「‹ 返回」承担（`MobileCapture` 里那段注释）。 */
+          { showFab: mobileScreen === "home", showTabs: mobileScreen !== "capture" },
         )
       ) : (
         <div className="main empty">

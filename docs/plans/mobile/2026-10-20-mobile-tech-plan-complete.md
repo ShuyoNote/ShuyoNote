@@ -1,8 +1,8 @@
 # 移动端技术方案（完整版）
 
-> 文档编号：`MOBILE-TECH-2026-10-20`　｜　版本：v2.3（完整版；iOS 打包打通 ＋ 视觉落地）
-> 状态：现行（实况基线 2026-10-20；未收口项逐条标注）
-> 基线：应用仓 `dev` ＋ 2026-10-20 工作区改动 · 移动版号 `1.92.21` · Tauri 2（crate 2.11.5 / CLI 2.11.4）· React 18 + TS
+> 文档编号：`MOBILE-TECH-2026-10-20`　｜　版本：v2.4（完整版；1.92.24 实况）
+> 状态：现行（实况基线 2026-10-23；未收口项逐条标注）
+> 基线：应用仓 `dev`（2026-10-23）· 移动版号 `1.92.24` · Tauri 2（crate 2.11.5 / CLI 2.11.4）· React 18 + TS
 > iOS：打包链路已打通（2026-10-20，见 [`2026-10-20-ios-packaging-recipe.md`](./2026-10-20-ios-packaging-recipe.md)）；
 > 界面/真机仍待验。
 > 视觉基线：**2026-10-20 浅色明快卡片版重设计**（[`mockups/2026-10-20-redesign/`](./mockups/2026-10-20-redesign/README.md)）；
@@ -22,23 +22,25 @@
 3. **桥接只有一条**：Tauri IPC（命令 ＋ 事件）。旧稿设想的 uniffi/C ABI **没有落地**，
    仓里也没有 `crates/`。TS 侧的平台抽象是 `src/lib/platform/{index,tauri,web,mobile,shape,commands}.ts`。
 4. **移动 UI 单立**：自有 `.mshell` 外壳、`mobileNav` 屏栈、底部三栏＋浮＋、设置/关于/配对面；
+   10-22 起快速记录屏**不挂底栏**（`.m-tabshell--no-tabs`），浮「＋」只进快速记录屏；
    `App.tsx` 的 `isMobile` 分支之外，桌面**一个字不动**。
 5. **形态判定单一出处**：`shape.ts` 纯函数（768 宽 / 520 高 / `(hover:none)`）；
    布局看宽度、浮层看宽高、能力看指针，三件事分开。
 6. **Android 可构建、可签名、可装机**：CI 出 APK（自检包带测试钩子；发版件不带），
    正式密钥签名并硬比对指纹；只出 arm64-v8a。
-7. **移动版号独立**：`mobile-version.json` → `tauri.properties` → APK 的 `versionName/versionCode`，
+7. **移动版号独立**：`mobile-version.json`（`1.92.24`）→ `tauri.properties` → APK 的 `versionName/versionCode`，
    同时注入前端 `APP_VERSION`；⛔ 不跟桌面共用字段、⛔ 不往回跳。
 8. **同步内核已实现**：服务器 push/pull＋SSE；设备直连 UDP 47821 发现、HTTP 8788 窗口；
    Ed25519 设备身份、配对秘密哈希、20 位对码、人确认后才信任。
 9. **同步端到端只完成一半**：2026-10-20 桌面↔桌面首次搬通（`fetched=8/applied=8`）；
    **手机↔电脑未验**。⛔ 不得把「内核在」写成「同步可用」。
-10. **iOS 打包链路已打通（2026-10-20）**：代理 ＋ 手工组装 4 个 SwiftPM 归档；「显示桌面」已定位到
-    `App.tsx` 桌面分支优先并修复；⛔ 界面/真机仍待验。
+10. **iOS 打包链路已打通（2026-10-20）**：代理 ＋ 手工组装 4 个 SwiftPM 归档；「显示桌面」**仍未定位**
+    （曾试 `!isMobile` 守卫，会破坏手机上的模板中心/文件/PDF，已回退）；⛔ 界面/真机仍待验。
 11. **数据面两条硬教训**：外部多次写入会被自动保存写回（19→3、18→3 块）；`blocks` 表 ≠ `content_json` 块数。
     两条都必须进代码/回归，不是进 Wiki。
-12. **门禁**：注册表 84 条；移动三条基线 `69 / 249 / 826`；需真实 Chromium ＋ dev server；
-    ⛔ 不把「环境不具备」写成绿。
+12. **门禁**：注册表 **85 条**；移动三条基线 `69 / 249 / 826`；2026-10-23 本机读数
+    `mobile-layout 70/70`、`mobile-views 249/249`、`mobile-overlays 815/817`（2 条红）；
+    需真实 Chromium ＋ dev server；⛔ 不把「环境不具备」写成绿。
 
 ---
 
@@ -152,9 +154,9 @@ flowchart TB
 | 屏 | 文件 | 到达方式 | 现在可达 | 备注 |
 |---|---|---|---|---|
 | 01 首页 | `MobileHome.tsx` | `nav`（初值 home） | ✅ | 三入口＋最近笔记 |
-| 02 快速记录 | `MobileCapture.tsx` | `nav`（首页卡） | ✅ | 六项工具栏＋存 |
+| 02 快速记录 | `MobileCapture.tsx` | `nav`（首页卡/浮＋） | ✅ | 六项工具栏＋存；10-22 去底栏＋左上返回；图片接选择器 |
 | 03 搜索 | `MobileSearch.tsx` | `nav`（首页卡/底栏） | ✅ | 真搜索；字段筛选 disabled |
-| 04 阅读 | `MobileRead.tsx` | `currentId` 轴 | ✅ | 不是 `mobileScreen` 轴 |
+| 04 阅读 | `MobileRead.tsx` | `currentId` 轴 | ✅ | 按块类型渲染（`kind`/`items`/`src`）；只读，无编辑入口 |
 | 07 设置 | `MobileSettings.tsx` | `nav`（底栏「我的」/⚙️） | ✅ | 10-14 接线；10-19 同步入口搬入 |
 | 08 设备直连 | `MobilePair.tsx` | `nav`（设置「设备配对」） | ✅ | 三档筛选＋真入口 |
 | 10 关于 | `MobileAbout.tsx` | `flag`（`aboutOpen`） | ✅ | 走旗标轴 |
@@ -200,8 +202,9 @@ COARSE_POINTER_QUERY = "(hover: none)" // 能力：触屏/无 hover
 - `about` 走既有 `aboutOpen` 旗标：设置里的「关于与更新」先 `setScreen("home")` 再 `openAbout()`
   （因为 `settings` 支排在 `aboutOpen` 之前，否则关于屏永远轮不到）。
 - `cameFrom` 由 store 自动记：切到不同屏时记上一屏；返回回来处，兜底 `home`。
-- 底栏「笔记 / 搜索 / 我的」只切三档；`capture` 时「笔记」保持选中。
-- 浮＋：先 `setScreen("home")` 再 `createPage(null)`；否则停在「我的」时新页被设置屏抢走。
+- 底栏「笔记 / 搜索 / 我的」只切三档；**只在首页 / 搜索 / 设置渲染**；`capture` 不挂底栏。
+- 浮＋：只渲染在首页；点它＝`setScreen("capture")`（⛔ 不再 `createPage(null)` 造空页落只读屏）。
+- 屏栈之外：`check-mobile-exit-routes` 机械核每个屏至少有一条回家路；全局「‹ 首页」浮标已于 10-22 删除。
 
 ### 3.3 返回键与浮层
 
@@ -230,8 +233,8 @@ flowchart LR
  └─ .mtab-fab（fixed；56×56；bottom = 56 + sab + 16；z=46）
 ```
 
-- 内容让位**只在 `.m-tabshell` 一处** `padding-bottom`，不逐屏加。
-- 阅读/配对/关于屏不套 `.m-tabshell`（没有底栏，不制造空档）。
+- 内容让位**只在 `.m-tabshell` 一处** `padding-bottom`，不逐屏加；快速记录用 `.m-tabshell--no-tabs`，不预留 64px。
+- 阅读/配对/关于/快速记录屏不套底栏（没有底栏，不制造空档）。
 - 底栏只在「首页/快速记录/搜索/设置」渲染。
 - `transform` 祖先会让 `position:fixed` 浮层偏移，所以外壳不用 `transform` 做转场。
 
@@ -273,14 +276,14 @@ flowchart LR
 | 屏 | 实现要点 | 已知缺口 |
 |---|---|---|
 | 01 首页 | 三入口＋最近 3 条；`icon` 判 URI 走 `<img>`，否则文字 | 深色观感未验 |
-| 02 快速记录 | `markdownToPageContent` ＋ `createPage(..., {select:false})` **一次写完**；清 `currentId` 回首页；工具栏 6 项 | 图片只插 Markdown，未接相册/文件选择器 |
+| 02 快速记录 | `markdownToPageContent` ＋ `createPage(..., {select:false})` **一次写完**；清 `currentId` 回首页；工具栏 6 项；10-22 去底栏＋左上返回；图片走系统选择器→`saveImage`→插真图 | 真机相册权限未验；导出 Markdown 带图未接 |
 | 03 搜索 | `api.search(q,50,false)`；防抖 200ms；`[[…]]` ⇒ `<mark>`；耗时是墙钟 | 字段筛选 disabled；Web 平台不产高亮标记 |
-| 04 阅读 | `getPageBlocks()` 逐块渲染；`MobileDictCard` 浮层；返回键 LIFO | 只拿纯文本块 ⇒ 引用/图片/标题层级不可渲染 |
+| 04 阅读 | `getPageBlocks()` 返回 `kind/items/src`；`BlockView` 按类型渲染 h1–h3/列表/引用/callout/图片/hr；图片死链退占位框；`MobileDictCard` 浮层；返回键 LIFO | 只读，无编辑入口（M-P1-13 排给 windows）；元信息没有文件夹名 |
 | 06 查词 | `lookupWord` 与桌面同一条路；`复制` 走剪贴板 | 英汉词典；`加入词库` disabled；无例句 |
-| 07 设置 | 账户/同步/外观/关于＋高级指向桌面；外观真 `setTheme`；`SyncPanel` 嵌入 | 状态行缺「上次成功时间」 |
-| 08 设备直连 | 三档胶囊（计数同源）、绿卡只拼有出处的词、黄条、设备卡、IP 辅助、接入/重配真入口 | 逐台解除未接；「立即同步」不渲染；旧「信任」disabled 文案过期 |
+| 07 设置 | 账户/同步/空间/外观/关于＋高级指向桌面；外观真 `setTheme`；`SyncPanel` 嵌入；空间包导出/导入并自动切过去；Web 不显示同步卡 | 状态行缺「上次成功时间」；空间包真机未验 |
+| 08 设备直连 | 三档胶囊（计数同源）、绿卡只拼有出处的词、黄条、设备卡、IP 辅助、接入/重配真入口 | 逐台解除未接；「立即同步」不渲染 |
 | 首次配对 | `mesh_trust_prepare` → 后端算码 → 人确认 → `mesh_trust_begin`；`code:null` 如实显示 reason | 真机双机未验 |
-| 09 启动页 | `index.html#app-splash`；版本运行时 `APP_VERSION`；静态层 8/8 对**旧图**；**当前仍是深色** | 浅色重设计未落地；真机冷启动未验 |
+| 09 启动页 | `index.html#app-splash` 已切浅色（光晕/渐变图标/版本行）；版本运行时 `APP_VERSION` | 真机冷启动/淡出未验 |
 | 10 关于 | `aboutFacts` 取 12 项/34 项；许可 661 行；链接两行；更新检查 | 隐私政策/备案占位；导出诊断 disabled |
 
 > ✅ **上表是「行为实现」＋「视觉层已按新图」**：2026-10-20 已落浅色 token/卡片/渐变/胶囊与浅色启动页；
@@ -362,6 +365,20 @@ flowchart LR
 - 备份/恢复：导出/导入已有实现；恢复备份重命名空间时会撞外键（先删父行）等坑已修；
   「悬空引用」自查不再中止导入（2026-10-19 读数：它挡住的是一份本来就有脏数据的备份）。
 - 加密：SQLCipher；密钥来自主口令派生，不落盘。
+
+### 6.4 移动只读块契约（2026-10-22）
+
+`getPageBlocks()` 的返回从 `{block_id,text}` 扩成：
+
+```ts
+{ block_id: string; kind: string; text: string; items: string[]; src: string }
+```
+
+- `kind`：`h1/h2/h3`（heading 的 `tag`）、`paragraph`、`list`、`quote`、`callout`、`image`、
+  `horizontalrule`…；认不出落普通段落（⛔ 不许丢块）。
+- `items`：只有 `list` 有；`text` 里列表项是粘着的，⛔ 不许拿 `text` 切。
+- `src`：只有 `image` 有；为空/加载失败时退占位框（Web 的 `blob:` URL 刷新即死）。
+- Rust `doc_content::DocBlock` 与 TS `pageBlocks.ts` 同口径；两边一起改。
 
 ---
 
@@ -471,11 +488,11 @@ sequenceDiagram
 ### 9.1 版本链（一条，不是两条）
 
 ```text
-mobile-version.json (mobileVersion=1.92.21)
+mobile-version.json (mobileVersion=1.92.24)
   ├─ scripts/write-mobile-version.mjs
   │    ├─ src-tauri/gen/android/app/tauri.properties
-  │    │    tauri.android.versionName=1.92.21
-  │    │    tauri.android.versionCode=1*1000000+92*1000+21=1092021
+  │    │    tauri.android.versionName=1.92.24
+  │    │    tauri.android.versionCode=1*1000000+92*1000+24=1092024
   │    └─ (CI) env MOBILE_APP_VERSION
   │         └─ vite.config.ts define __MOBILE_APP_VERSION__
   │              └─ src/lib/links.ts APP_VERSION
@@ -539,9 +556,10 @@ mobile-version.json (mobileVersion=1.92.21)
   `_kSCDynamicStoreUseSessionKeys`；已 vendored 收窄为 `all(target_vendor="apple", target_os="macos")`；
   仍卡在 `tauri ios build` 需要的 4 个 `.a` 产物生成。
 - owner 同意先放下；⛔ 不为 iOS 去改依赖树（风险大且不是我们的代码）。
-- **2026-10-20 新读数**：打包链路已打通；「iOS 上还是桌面」已定位到 `App.tsx` 桌面主区分支
-  排在手机分支前（看板/关系图/预览等状态一成立就顶掉手机 UI），已加 `!isMobile` 守卫并补回归测试
-  `src/App.mobileBranchOrder.test.ts`。⛔ 真机界面仍待复验。
+- **2026-10-20 新读数**：打包链路已打通。「iOS 上还是桌面」**仍未定位**：曾试给桌面主区分支加
+  `!isMobile` 守卫，但实测会让手机丢失模板中心/文件/PDF 等既有入口（`mobile-layout` 7 红、
+  `mobile-views` 4 红）⇒ **已回退**（`ef8ca237`）。⛔ 真机界面仍待复验；下一步取 iOS 的
+  `window.innerWidth` / UA / 截图，不再用守卫猜。
 
 **重启条件**：上游给出 iOS 适配/新版本，或 tao/tauri 修复 scene 路径；重启前先在真机上量
 「装后进程是否存活」＋「界面是否可见」，⛔ 不用 `devicectl launch` 返回值当界面判据。
@@ -563,7 +581,7 @@ mobile-version.json (mobileVersion=1.92.21)
 
 ### 10.1 门禁全景
 
-- 注册表：`scripts/lib/gates.mjs`，共 **84 条**（contract / smoke / sync / plugin / browser / mobile /
+- 注册表：`scripts/lib/gates.mjs`，共 **85 条**（contract / smoke / sync / plugin / browser / mobile /
   rust / artifact / deploy）。
 - 本地一键：`pnpm verify`（默认纯 Node 组）；`pnpm verify:all` 加 browser；`pnpm verify:rust` 需 cargo
   （以 Linux/CI 为准）。
@@ -576,6 +594,8 @@ mobile-version.json (mobileVersion=1.92.21)
 | `mobile-layout` | **69** | 窄屏布局外壳、竖条、抽屉、遮罩、模板中心入口 | 真 Chromium ＋ `pnpm dev:web`（:5173） |
 | `mobile-views` | **249** | 主区整视图＋属性表＋小控件＋PDF 阅读器真 DOM | 同上 |
 | `mobile-overlays` | **826** | 浮层三类「功能直接不可用且不报错」的坏法（43 / 979 断言量级） | 同上 |
+
+> 2026-10-23 本机实测：**70/70 ／ 249/249 ／ 815（2 红）**；基线是**下限**，⛔ 2 条红不算绿。
 
 ```bash
 # 正确顺序（两条要求互相冲突）
@@ -602,7 +622,8 @@ node scripts/test-report.mjs
 
 1. 手机↔电脑 mesh 端到端；2. 飞行模式；3. 03 高亮（web 不产标记）；4. 06 真词典数据；
 5. 08/首次配对双机；6. 09 真冷启动；7. 深色/横屏/真手指 44px；8. 10 最新发布行；
-9. 同步状态「上次成功时间」；10. 当前 APK 体积/冷启动复量。
+9. 同步状态「上次成功时间」；10. 当前 APK 体积/冷启动复量；11. 手机编辑旧笔记（M-P1-13，未合入）；
+12. 空间包真机（大空间/系统保存对话框/导入后切换）；13. 快速记录图片（相册权限/导出 Markdown 带图）。
 
 ---
 
@@ -615,7 +636,8 @@ node scripts/test-report.mjs
 | 2 | 设置面、关于面、设备直连/首次配对；无死屏 | ✅ 主体 | `check-mobile-screen-reachable`；真机可到 |
 | 3 | 交付单立：版号、CI、验收包、素材清单 | **部分** | 版号/CI/包在；商店端与合规未完成 |
 | 4 | 同步收口：手机↔电脑、融合历史可见/可撤 | **未完成** | 六格读数非 0；真机签字 |
-| 5 | 视觉重设计落地：浅色 token、渐变主卡、白卡、浅底胶囊；不动导航结构 | **已落地（视觉层）**；真机观感待签 | `Mobile*.tsx`/`App.css`/`index.html` 改完；`mobile-layout` 70/70 绿；`mobile-overlays` 2 条既有环境失败；`mobile-views` 4 条旧行为断言待换对象（见需求 §9.4 #12） |
+| 5 | 视觉重设计落地：浅色 token、渐变主卡、白卡、浅底胶囊；不动导航结构 | **已落地（视觉层）**；真机观感待签 | `Mobile*.tsx`/`App.css`/`index.html` 改完；`mobile-layout` 70/70、`mobile-views` 249/249 绿；`mobile-overlays` 2 条失败 |
+| 6 | 交互收口（10-22/23）：快速记录去底栏＋左上返回＋图片选择器；阅读按块渲染；空间包；删浮标＋`check-mobile-exit-routes` | **代码已落地**；真机未验 | 07b/07c 空间卡；`check-mobile-exit-routes` 7 屏全有路；真机大空间/相册权限待验 |
 
 **工作量驱动（不编工期）**：
 
@@ -643,6 +665,8 @@ node scripts/test-report.mjs
 | 9 | 桌面被移动改动带坏 | 移动借用桌面类/状态 | 移动命名空间门禁；`App.tsx` 分支隔离；桌面门禁常跑 |
 | 10 | 一人产能/等待项 | 商店/账号/真机都只有 owner | 先做可自证的部分；把「等 owner」显式列出 |
 | 11 | 设计稿与实现漂移 | 新效果图被当成「已实现」；截图验收拿旧图 | 设计/实现分开写；视觉层已落地（2026-10-20），真机未签前不标「验收完成」；改样式后重跑三条门禁 |
+| 12 | 手机编辑旧笔记被当成已有 | 只读屏没有编辑入口 | M-P1-13 未合入前，⛔ 不写「手机可编辑」；windows 合入后真机验 |
+| 13 | 空间包只验了 Web | 大空间/系统保存对话框/导入切换未验 | 真机分别测小空间/大空间；失败时如实报，不把 Web 当手机 |
 
 ---
 
@@ -696,6 +720,9 @@ node scripts/check-apk-contents.mjs <signed.apk>
 | 移动版号 | [`../../../mobile-version.json`](../../../mobile-version.json) |
 | 效果图 | **现行** [`./mockups/2026-10-20-redesign/README.md`](./mockups/2026-10-20-redesign/README.md)；历史 [`./mockups/README.md`](./mockups/README.md) |
 | iOS 打包配方 | [`./2026-10-20-ios-packaging-recipe.md`](./2026-10-20-ios-packaging-recipe.md) |
+| 只读块契约 | [`../../../src/lib/platform/pageBlocks.ts`](../../../src/lib/platform/pageBlocks.ts)、[`../../../src-tauri/src/doc_content.rs`](../../../src-tauri/src/doc_content.rs) |
+| 空间包导出/导入 | [`../../../src/lib/spaceTransfer.ts`](../../../src/lib/spaceTransfer.ts)、[`../../../src/components/MobileSettings.tsx`](../../../src/components/MobileSettings.tsx) |
+| 移动屏「回家的路」 | [`../../mobile-exit-routes.md`](../../mobile-exit-routes.md) |
 | 设计系统 | [`../../../design/design-system.md`](../../../design/design-system.md) |
 
 ### 13.3 决策索引
@@ -713,13 +740,18 @@ node scripts/check-apk-contents.mjs <signed.apk>
 | 2026-10-14 | 设置/关于入口；owner 参考图 | 07/10 可达 |
 | 2026-10-17 | 20 位码首次配对；一方配对双向通；同名融合第 1 档 | 同步可用性前进 |
 | 2026-10-19 | 底边栏；同步入口搬入设置；配对秘密回落；游标高水位/重拉 | 入口与同步修复 |
-| 2026-10-20 | 「听」撤销；iOS 打包打通（代理＋手工 SwiftPM）；「显示桌面」修复；浅色重设计落地 | iOS 转「界面待验」；视觉层完成 |
+| 2026-10-20 | 「听」撤销；iOS 打包打通（代理＋手工 SwiftPM）；浅色重设计落地 | iOS 转「界面待验」；视觉层完成 |
+| 2026-10-22 | 快速记录去底栏＋返回；图片接选择器；阅读按块渲染；空间包；删浮标＋回家路门禁 | 交互收口；M-P1-12 |
+| 2026-10-23 | 1.92.23/1.92.24 发版；块契约 `kind/items/src`；移动三条本机读数 70/249/815 | 版本基线 1.92.24 |
 
 ### 13.4 变更记录
 
-- **v2.3（2026-10-20）**：iOS 打包链路打通（代理＋手工组装 4 个 SwiftPM 归档，配方单列）；
-  「iOS 显示桌面」定位到 `App.tsx` 桌面主区分支优先并加 `!isMobile` 守卫（回归测试 10 条）；
-  iOS 状态从「暂缓」改为「打包已通／界面待验」。
+- **v2.4（2026-10-23）**：按 `1.92.24` 实况更新。移动屏 02 去底栏＋左上返回＋图片选择器；04 按块类型
+  渲染（`kind/items/src` 契约，新增 §6.4）；07 空间包卡；删全局「‹ 首页」浮标＋
+  `check-mobile-exit-routes`；门禁 84→**85**；版号链 1.92.21→**1.92.24**；移动三条读数 70/249/815（2 红）。
+- **v2.3（2026-10-23 订正）**：iOS 打包链路打通（代理＋手工组装 4 个 SwiftPM 归档，配方单列）。
+  ⚠️ 曾加 `!isMobile` 守卫试图修「iOS 显示桌面」，实测破坏手机模板中心/文件/PDF（layout 7 红、
+  views 4 红）⇒ **已回退**（`ef8ca237`）；iOS 桌面现象改为待真机读数定位。iOS 状态「打包已通／界面待验」。
 - **v2.2（2026-10-20 11:2x）**：视觉重设计**落地到视觉层**：`App.css` 追加移动命名空间覆盖层（浅色 token/
   渐变主卡/白卡/浅底胶囊/底栏与浮＋）、`index.html` 启动页切浅色、`Mobile*.tsx` 补诚实文案；
   capture/search/settings 去掉浮「＋」；删除 08 旧 disabled「信任」按钮。阶段 5 →「已落地（视觉层）／真机待签」。
