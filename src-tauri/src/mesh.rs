@@ -4860,6 +4860,48 @@ mod tests {
         assert_eq!(left, 0, "应用成功的那几条必须从 inbox 删掉（否则会被反复应用）");
     }
 
+    /// ⭐ 2026-10-23（S3c-接②的护栏）：**同一个房间里，别的空间一个字节都不许动**。
+    ///
+    /// 为什么要有它：后台轮改成"逐空间各开各的连接"之后，同一个房间下的多个空间会各拉一轮
+    /// —— 如果合并闸没拦住，同一批记录就会被**重复落进多个空间**（今天真机上碰巧没发生，
+    /// 那不算判据）。这里把"没拦住的后果"钉成红的：两个空间同房间、名字不同、对端只报一个名字。
+    #[test]
+    fn two_spaces_in_the_same_room_never_bleed_into_each_other() {
+        let dir = temp_dir("s3c-same-room");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        let meta = crate::db::open_meta_conn_at(&dir).unwrap();
+        for (id, name) in [("sp-a", "工作"), ("sp-b", "别的")] {
+            meta.execute(
+                "INSERT INTO workspaces (id, name, kind, created_at, updated_at) VALUES (?1, ?2, 'personal', 1, 1)",
+                rusqlite::params![id, name],
+            )
+            .unwrap();
+        }
+        // ⭐ 对端只服务「工作」这一个名字
+        crate::db::pair_device(&meta, "proto-room", "dev-peer", "tok").unwrap();
+        let a = crate::db::open_space_conn_at("sp-a", &dir).unwrap();
+        a.execute("UPDATE workspaces SET name = '工作', kind = 'personal'", []).unwrap();
+        crate::sync::set_meta_state(&a, "device_id", "dev-me").unwrap();
+        let b = crate::db::open_space_conn_at("sp-b", &dir).unwrap();
+        b.execute("UPDATE workspaces SET name = '别的', kind = 'personal'", []).unwrap();
+        crate::sync::set_meta_state(&b, "device_id", "dev-me").unwrap();
+
+        let rows = vec![peer_row(1, &page("p1", "对端的这一页", 10), Some("工作"))];
+
+        // ① 名字对得上的那个空间 ⇒ 收下
+        let ab = absorb_peer_batch(&a, &rows, "dev-peer", "proto-room", false).unwrap();
+        assert!(ab.applied > 0, "同名（工作）必须收下：{ab:?}");
+        let na: i64 = a.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        assert_eq!(na, 1);
+
+        // ② 同房间、但名字不同的那个 ⇒ **一条都不许落库**，水位也不许前进
+        let ab2 = absorb_peer_batch(&b, &rows, "dev-peer", "proto-room", false).unwrap();
+        assert_eq!(ab2.applied, 0, "⛔ 同房间不同名却落库 = 把两个空间悄悄并了：{ab2:?}");
+        assert_eq!(ab2.tail, 0, "被拒的那批不许推进水位（否则它永远补不回来）");
+        let nb: i64 = b.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        assert_eq!(nb, 0, "⛔ 另一个空间被串了：{nb} 页");
+    }
+
     /// ⭐ **判据①**：同名个人空间 ⇒ **融合**（并进本机这一个空间、保留本机 id/名字）＋ **账本一条记录（可读）**。
     ///
     /// 反例（逐字）：把 `absorb_peer_batch` 里的闸去掉（回到"按暗号照收"）时，本判据**仍然绿** ✗ ——
