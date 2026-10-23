@@ -593,6 +593,17 @@ function stepPatchProjectYml(signing) {
     );
   }
 
+  // 4.1b 出口合规（2026-10-23 owner 要求「别再每次问」）：Info.plist 里声明
+  //      `ITSAppUsesNonExemptEncryption=false` ⇒ App Store Connect **不再**对每个 build 弹
+  //      「缺少出口合规证明」。依据：我们用的都是**标准算法**（SQLCipher 的 AES-256/HMAC-SHA、
+  //      国密 SM4/SM3；不是专有算法），符合「标准算法豁免」那一档。
+  //      ⚠️ 幂等：已经有这一行就不动（值必须保持 false；改成 true 要 owner 单独决定）。
+  const propertiesRe = /(\n\s{4}info:\n(?:[^\n]*\n)*?\s{6}properties:\n)/;
+  if (!/ITSAppUsesNonExemptEncryption/.test(yml) && propertiesRe.test(yml)) {
+    yml = yml.replace(propertiesRe, (m) => `${m}        ITSAppUsesNonExemptEncryption: false\n`);
+    changes.push("Info.plist: + ITSAppUsesNonExemptEncryption=false（出口合规不再逐个 build 问答）");
+  }
+
   // 4.2 device 四行 OTHER_LDFLAGS：把 /tmp/ios-swiftpm-libs/ 换成仓内稳定路径
   //     ⚠️ 只改 device 那条；sim 那条在 4.3 单独处理（它原是 Externals/ios-sim-swift）。
   const deviceLineRe = /("OTHER_LDFLAGS\[sdk=iphoneos\*\]":\s*")([^"\n]*)(")/;

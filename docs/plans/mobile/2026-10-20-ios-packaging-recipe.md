@@ -158,3 +158,44 @@ mq768     = true         coarse = true            tauri = true
 - 模拟器运行时只有 **iOS 27.0**，而 SDK 是 27.1 ⇒ Tauri CLI 的精确匹配检查会拦模拟器构建；
   本次诊断用了一个只存在于 `/tmp/fakebin` 的 `xcrun` shim 把版本号"说成" 27.1（不改系统、不联网），
   ⛔ 它只是诊断手段，**不在**打包脚本里。要么装 iOS 27.1 runtime（需联网下载），要么等 Tauri CLI 放宽。
+
+### 6.6 2026-10-23 真机收口（「iOS 显示桌面」定死 + 两个修复 + TestFlight 链路）
+
+**① 真机读数（iPhone 17，公司开发签名探针包）**
+
+```
+修复前：innerWidth/innerHeight = 1200 / 800 ｜ outerWidth = 1200 ｜ screen = 402×874
+        mq768 = false ｜ .mtab-bar 未渲染            ⇒ 渲染的是**桌面布局**
+真因：  src-tauri/src/lib.rs 主窗口 builder 上**无条件**的 `.inner_size(1200.0, 800.0)`
+        ⇒ iOS 窗口被建成 1200×800（不是屏幕尺寸）⇒ CSS 断点全部落进桌面分支
+修复：  该调用改为 `#[cfg(desktop)]`（移动端交给系统铺满屏幕）
+修复后：innerWidth/innerHeight = 402 / 874 ｜ mq768 = true ｜ .mtab-bar/.mhome-head 渲染 ✓
+```
+
+**② 状态栏叠字（修复后暴露出来的第二个坑）**
+
+```
+现象：状态栏时间与 App 标题重叠（截图逐字对比见 _tmp/scratch/iphone-statusbar-overlap.png / …-fixed.png）
+真因：src/lib/viewportInsets.ts 的 installViewportInsets() 启动时**无条件 paint 一次全 0**
+      ⇒ 用内联样式把 :root 的 `--sat: env(safe-area-inset-top)` 覆盖成 0px（iOS 上安全区恒 0）
+修复：只在壳层（Android）真的报送过 inset 之后才重绘；iOS/浏览器保留 env() 兜底
+```
+
+**③ 出口合规不再逐个 build 问答**
+
+`project.yml` 的 `info.properties` 现在由脚本注入 `ITSAppUsesNonExemptEncryption: false`
+（= 声明「不含非豁免加密」；我们用的是标准算法：SQLCipher AES-256/HMAC-SHA、国密 SM4/SM3）。
+⇒ App Store Connect 不再对每个 build 弹「缺少出口合规证明」。
+⚠️ 若哪天引入**专有/自研密码原语**，必须把这一行改回 true 并走 CCATS 流程（owner 决定）。
+
+**④ TestFlight 链路（已验证跑通）**
+
+```bash
+# 1) 递增 build number（ShortVersion 不动）并出公司分发包 + 上传
+node scripts/ios-build.mjs --sign company --build-number 1.92.26 --upload
+# 2) 判据：xcodebuild 原话 `Uploaded package is processing.` + `Upload succeeded.` + `** EXPORT SUCCEEDED **`
+# 3) ASC → ShuyoNote → TestFlight → 内部群组 → 加测试员（cnzen@hotmail.com）→ 加 build
+```
+
+⚠️ 两个 TestFlight 侧的坑：① 内部测试员的 Apple ID 必须是 App Store Connect **团队成员**；
+② 手机号注册的 Apple ID 不能和邮箱账号共用同一个邮箱 —— 卡住时改用**外部测试公开链接**（无需邀请码）。
