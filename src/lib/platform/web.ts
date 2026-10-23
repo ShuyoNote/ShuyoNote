@@ -4398,6 +4398,25 @@ export function createWebPlatform(): Platform {
         if (bridge?.convertFileSrc) return bridge.convertFileSrc(path);
         return path;
       },
+      /**
+       * ⭐ 2026-10-23：把正文里的 `asst:<hash>` 解析成**此刻可用**的对象 URL。
+       *
+       * 为什么非要"此刻"：`blob:` 地址是 `URL.createObjectURL` 造的，**只活在当前页面会话**。
+       * 正文里若存它，刷新后必然失效（这就是 owner 报的「插的图刷新就没了」）。
+       * 现在正文存的是内容指纹，字节在 IndexedDB（`blobStore`，按 hash 组织）⇒ 每次渲染现造一个。
+       *
+       * ⚠️ 找不到（IndexedDB 被清 / 换设备 / 老数据只有 blob: 死链）⇒ 回**空串**，
+       *    界面据此画占位框（⛔ 不画碎图：碎图像"坏了"，占位框像"这份内容没有可用地址"）。
+       */
+      resolveRef: async (src) => {
+        const { isAssetRef, assetRefHash } = await import("../assetRef");
+        if (!isAssetRef(src)) return src;
+        const hash = assetRefHash(src);
+        const rec = await blobStore.get(hash).catch(() => null);
+        if (!rec) return "";
+        const bytes = rec instanceof Uint8Array ? rec : new Uint8Array(await (rec as Blob).arrayBuffer());
+        return blobUrl(bytes, "") as string;
+      },
     },
     webview: {
       onDragDropEvent: async () => () => {},

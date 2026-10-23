@@ -1,11 +1,10 @@
-// 判据：阅读屏的**图片块**必须真的画出那张图（有 `src` 时），没有 `src` 才退成占位框。
+// 判据：阅读屏的**图片块**必须真的画出那张图；`src` 为空或解析不到才退成占位框。
 //
-// 来由（owner 2026-10-22 手机实拍）：「web 版移动端的快速录入页面图片保存显示有问题吧？」
-//   两层原因叠在一起：
+// 来由（owner 2026-10-22）：「web 版移动端的快速录入页面图片保存显示有问题吧？」
 //   ① 契约里**没有 `src`** ⇒ 阅读屏只能画占位框（`mobileReadBlocks` 那笔的偷懒）；
-//   ② web 的 `save_image` 返回的是**一次性 `blob:` URL**（`web.ts` 的 `blobUrl(bytes,mime)`），
-//      存进正文后刷新/换设备就是死链 —— 这一条**本测试管不到**（它需要一条 hash→URL 的解析通道），
-//      在 `docs/known-issues.md` 有记录前先如实写在这里，别让"绿了"看起来像"图片持久化了"。
+//   ② web 的 `save_image` 当时返回**一次性 `blob:` URL** ⇒ 刷新即死（2026-10-23 改成
+//      `asst:<hash>` 稳定引用，渲染时现取 —— 见 `lib/assetRef.ts`）。
+//   ② 的源码级判据在 `src/lib/assetRef.wiring.test.ts`；本文件管 ① 与渲染分支。
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -23,14 +22,21 @@ const mk = (over: Partial<PageBlock>): PageBlock => ({
 });
 
 describe("移动阅读屏 · 图片块", () => {
-  it("① 有 src ⇒ 输出 <img>，且 src 原样进去", () => {
-    const html = renderToStaticMarkup(<BlockView b={mk({ src: "blob:http://x/abc" })} />);
-    expect(html).toContain("<img");
-    expect(html).toContain('src="blob:http://x/abc"');
-    expect(html).toContain("mread-img-el");
+  // ⚠️ 2026-10-23 起渲染是**两步**：先拿 `b.src` 去 `platform.asset.resolveRef` 解析，
+  //   解析出地址才画 <img>（web 那份引用必须现取 object URL —— 见 lib/assetRef.ts）。
+  //   所以 SSR 的首帧**必然是占位框**（effect 没跑）—— 那是"加载中"，不是"没有图"。
+  it("① 首帧（解析未完成）画占位框；解析完成后才画 <img>（源码判据）", () => {
+    const html = renderToStaticMarkup(<BlockView b={mk({ src: "asst:abc123" })} />);
+    expect(html, "首帧应当是占位框（异步解析还没回来）").toContain("mread-img");
+    expect(html).not.toContain("<img");
+    const src = readFileSync(resolve(__dirname, "MobileRead.tsx"), "utf8");
+    expect(src, "必须走平台 resolveRef（web 现造 object URL ／ 桌面原样返回）").toMatch(
+      /platform\.asset\.resolveRef\(b\.src\)/,
+    );
+    expect(src, "<img> 必须吃解析后的地址，而不是原始 b.src").toMatch(/src=\{imgSrc\}/);
   });
 
-  it("② 没有 src ⇒ 退成占位框（如实说「这里有一张图」，不是碎图）", () => {
+  it("② 没有 src ⇒ 占位框（如实说「这里有一张图」，不是碎图）", () => {
     const html = renderToStaticMarkup(<BlockView b={mk({ src: "" })} />);
     expect(html).toContain("mread-img");
     expect(html).not.toContain("<img");

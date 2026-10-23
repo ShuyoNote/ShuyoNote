@@ -5,7 +5,8 @@ import { AlignLeftIcon, CheckIcon, CommentIcon, ImageIcon, ListIcon, OutlineIcon
 import { pushOverlay } from "../lib/overlayStack";
 import { useNotes } from "../store/notes";
 import { api } from "../lib/api";
-import { platform } from "../lib/platform";
+import { isDesktopPlatform, platform } from "../lib/platform";
+import { makeAssetRef } from "../lib/assetRef";
 import { useMobileNav } from "../store/mobileNav";
 
 /**
@@ -118,7 +119,13 @@ export function MobileCapture() {
         mime: file.type || "image/png",
         data: Array.from(data),
       });
-      const src = platform.asset.convertFileSrc(meta.path);
+      // ⭐ 2026-10-23（owner：「web 移动端插的图没保存到本机」）：**web 上不写 blob: 地址**。
+      //   那个地址是 URL.createObjectURL 造的一次性货色，只活在当前页面会话 ⇒ 刷新/换设备即死，
+      //   而字节其实好好躺在 IndexedDB 里、只是正文再没有线索能找回来。
+      //   ⇒ web 存**内容指纹引用** `asst:<hash>`（渲染时按 hash 现取，见 lib/assetRef.ts）；
+      //   ⇒ 桌面存真实文件路径（本来就持久）⇒ 仍走 convertFileSrc，行为一个字没变。
+      const stableRef = isDesktopPlatform() ? null : makeAssetRef(meta.hash);
+      const src = stableRef ?? platform.asset.convertFileSrc(meta.path);
       insert(`![${(file.name || "").replace(/[\]]/g, "")}](${src})\n`);
     } catch (e) {
       setErr(`插图失败：${e instanceof Error ? e.message : String(e)}`);

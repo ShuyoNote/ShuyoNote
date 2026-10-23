@@ -40,6 +40,12 @@ export const tauriPlatform: Platform = {
     // which decrypts at-rest-encrypted attachment bytes in memory (passthrough when off).
     // Tauri resolves the platform-correct URL (Windows: http://attachment.localhost/...).
     convertFileSrc: (path) => tauriConvertFileSrc(path, "attachment"),
+    /**
+     * 桌面端正文里存的是**真实文件路径**（`save_image` 返回它）⇒ 本来就持久，原样返回即可。
+     * ⚠️ 万一是 web 那份稳定引用 `asst:<hash>`（同一个空间在两端口径混过），这里**解析不了** ⇒
+     * 回空串，让界面画占位框 —— ⛔ 不要把 `asst:…` 当路径喂给 `convertFileSrc`（会得到一个坏 URL）。
+     */
+    resolveRef: async (src) => (src.startsWith("asst:") ? "" : src),
   },
   webview: {
     onDragDropEvent: (handler) =>
