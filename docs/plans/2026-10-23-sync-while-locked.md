@@ -1,6 +1,6 @@
 # 锁定态同步：把「同步要读空间库」换成「同步读一份密封副本」
 
-状态：**施工中**（S1＝**不需要重构**；S2「密封镜像」✅；S3a「一个打不开的空间不许把整扇门按死」✅ 真机验过；**S3b-收**「接住封包、先解封再走原路」✅；S3b-发（锁定态从 outbox 发 ＋ 能力协商）⬜ 见 §7.2；S4 未开工）
+状态：**施工中**（S1＝**不需要重构**；S2「密封镜像」✅；S3a「一个打不开的空间不许把整扇门按死」✅ 真机验过；**S3b-收** ✅；**S3b-发** ✅（锁定态只给认得封包的对端发）；**S3c「锁着的那一侧收不了」未开工**；S4 未开工）
 证据：`../../src-tauri/src/sync.rs`（`record_change` / `mirror_change_to_mesh_outbox` / `prune_mesh_outbox` ／ 判据 `every_local_change_is_mirrored_into_the_mesh_outbox`）· `../../src-tauri/src/db.rs`（`mesh_outbox` 建表 ＋ `idx_mesh_outbox_age`）· `../../src-tauri/src/mesh.rs`（`ensure_window` 逐空间跳过 ＋ `window_serves` ／ 判据 `a_space_that_cannot_open_does_not_take_the_whole_window_down`）· `../../src-tauri/src/lan_state.rs`（公告按 `window_serves` 过滤）· `../../src-tauri/src/security.rs`（`encrypt_payload` `117` / `wire_keys_for_conn` `142` / `startup_needs_unlock` `312`）· `../../src-tauri/src/keyring.rs`（`wrap` `214` / `unwrap_key` `226`）· `../../src-tauri/src/space_crypto.rs`（`251` 那条「会话未解锁」）· `architecture.md` §同步（「锁定会话时拒绝同步」）· `2026-09-23-encryption-scope-decision.md` §3.3③
 
 ---
@@ -109,7 +109,8 @@
 | **S2** | 写入时封一份到 `mesh_outbox`（＋ 保留期按 7 天关掉） | `sync::tests::every_local_change_is_mirrored_into_the_mesh_outbox`：两次 upsert 同一页 ⇒ 镜像只剩 1 行、`device_seq` ＝ `changes.seq`、解回来是最新那份 ✓（明文空间原样过；密文空间"封得上"那一半归 S3 的真机判据） | ✅ 已落地 |
 | **S3a** | `ensure_window` 逐空间开、**打不开的跳过**；公告按 `window_serves` 过滤（⛔ 不谎报） | 判据 `a_space_that_cannot_open_does_not_take_the_whole_window_down`（能开的在服务、打不开的不算在服务）＋ **真机前后对比**：同一天、同一个锁着的保险柜，改前连报 5 次「窗口起不来…都不宣告」，改后一行「这一轮**少服务一个空间**（其余照常）」＋「网格窗口已启动」，18:49:14 照常发现对端 ✓ | ✅ 已落地 |
 | **S3b-收** | 收侧能接住 `sealed` 记录：**先解封、再走完全一样的那条路**（合并闸/应用/水位原封不动）；解不开 ⇒ **整批停下**，⛔ 不跳过 | `a_sealed_row_is_unsealed_before_anything_else_looks_at_it`（解开后与普通记录逐字段一样）＋ `a_sealed_row_that_cannot_be_opened_stops_the_batch_instead_of_skipping_it`（解不开必须停）＋ `absorb` 那 4 条旧判据仍绿 | ✅ 已落地（明文空间口径；真封真解的密文半边归真机判据） |
-| **S3b-发** | 锁着时窗口**不开库**、从 `mesh_outbox` 发 `sealed` 行；只发给带 `caps=sealed1` 的对端，不带的**一条都不发**并回一句人话 | 一端锁着 ⇒ 带 caps 的对端拉到 sealed 行、`mesh_inbox` 有行、**双方空间库零变化**；不带的拿不到行（⛔ 不发一半） | ⬜ **未开工**（另见 §7.2 的两个结构细节） |
+| **S3b-发** | 锁着时窗口**不开库**、从 `mesh_outbox` 发 `sealed` 行；只发给带 `caps=sealed1` 的对端，不带的**一条都不发**并回一句人话（409）；带 `name_sha` 找回"该发哪一个空间" | `a_locked_space_only_serves_sealed_rows_to_peers_that_understand_them`：不带 caps ⇒ **409 且零记录**；带 caps＋名字哈希 ⇒ 200 ＋ 封包原样搬出（`device_seq` 也带对）；名字对不上 ⇒ 403 ✓ ／ `window` 那 11 条、`absorb` 4 条、`pull` 6 条旧判据仍绿 | ✅ 已落地 |
+| **S3c** | **锁着的那一侧收不了**（后台那一轮要开库 ⇒ 没有连接 ⇒ 它根本不跑） | 两端都锁着 ⇒ 谁都不同步（这一片要动"没有连接也能跑一轮"） | ⬜ 未开工 |
 | **S4** | 解锁后 drain ＋ 水位/体积裁剪 | 解锁后一轮 ⇒ 页出现在库里、两侧**块级投影一致**；超限路径有一条"响亮失败"判据 | ⬜ 未开工 |
 
 > ⚠️ **S3b 的真实障碍（写在这里，免得下一轮重新发现）**：现在的 wire 记录是
