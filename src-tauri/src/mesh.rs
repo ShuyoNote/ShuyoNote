@@ -68,6 +68,19 @@ pub struct MeshRow {
     pub op: String,
     pub payload: Option<String>,
     pub updated_at: i64,
+    /// ⭐ 2026-10-23（S3b，方案 `docs/plans/2026-10-23-sync-while-locked.md` §7.1）：
+    /// **锁着的那台**发出来的**整条封包** —— `{entity, entity_id, op, payload}` 一起封成一个串。
+    ///
+    /// 为什么要有它：锁着的时候窗口**打不开空间库**，也就拿不出 `entity/entity_id/op` 这三个明文格子；
+    /// 而搬运缓存里存的正是"整条封起来"的那一份 ✓ ⇒ 只能原样发出去，收侧**先解封、再走原来的路** ✓。
+    ///
+    /// ⚠️ 三条边界：
+    /// ① **老对端不认识它** ⇒ serde 忽略这个字段（`MeshRow` 没有 `deny_unknown_fields` ✓）；
+    /// ② 有它时上面四格是**空**（`entity=""`）⇒ 老对端会落进 `_` 分支"跳过但推游标" ✗ ⇒
+    ///    **⛔ 绝不对不认识它的对端发**（能力协商，见 §7.1 ②）；
+    /// ③ `skip_serializing_if` ⇒ 普通的记录**一个字节都不变**（老对端零感知 ✓）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sealed: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +127,8 @@ pub fn serve_own_records(
                 op: r.get(3)?,
                 payload: r.get(4)?,
                 updated_at: r.get(5)?,
+                // 库开着 ⇒ 一律发**明文那三格**（今天的形状，老对端零感知 ✓）
+                sealed: None,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -307,6 +322,43 @@ fn peer_merge_request(
         .space_id(space_id)
 }
 
+/// ⭐ 2026-10-23（S3b）：把"整条封包"（`sealed`）解开成普通 `MeshRow`，**再走原来那条路**。
+///
+/// 口径与"解密失败是 Fatal"同一条（`sync::ApplyFailure::Fatal`）：
+/// ⛔ **解不开就整批停下**（游标不前进、一条都不落库），**绝不**当作"不认识的记录"跳过 ——
+/// 那条路会把游标推到批尾，而这一条从此**永远补不回来**（方案 §7.1 的探路结论，逐字两次）。
+fn unseal_rows(c: &Connection, rows: &[MeshRow]) -> Result<Vec<MeshRow>, String> {
+    #[derive(serde::Deserialize)]
+    struct SealedRecord {
+        entity: String,
+        entity_id: String,
+        op: String,
+        payload: Option<String>,
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        let Some(blob) = r.sealed.as_deref() else {
+            out.push(r.clone());
+            continue;
+        };
+        let plain = crate::security::decrypt_payload(c, blob).map_err(|e| {
+            format!("封包解不开（各端钥匙可能不一致）：{e}（已停下，免得静默丢数据）")
+        })?;
+        let x: SealedRecord =
+            serde_json::from_str(&plain).map_err(|e| format!("封包格式看不懂：{e}"))?;
+        out.push(MeshRow {
+            device_seq: r.device_seq,
+            entity: x.entity,
+            entity_id: x.entity_id,
+            op: x.op,
+            payload: x.payload,
+            updated_at: r.updated_at,
+            sealed: None,
+        });
+    }
+    Ok(out)
+}
+
 /// 把对端给的一批收下并应用。
 ///
 /// ★ 复用 `sync::apply_pulled_changes`（**不在这里长第二份 apply**）：它带着 ③-a 的按戳判序、
@@ -341,6 +393,16 @@ pub fn absorb_peer_batch(
             merge: PeerMergeState::NotRun,
         });
     }
+    // ⭐ 2026-10-23（S3b）：**先解封、再走完全一样的那条路**（合并闸、应用、水位都在下面原封不动）。
+    //   ⚠️ 解不开 ⇒ 直接 `?` 出去（整批不落库、水位不前进）—— ⛔ 绝不当成"不认识的记录"跳过：
+    //      那条路会把游标推到批尾，而这一条就**永远补不回来**了（§7.1 的探路结论）。
+    let unsealed;
+    let rows: &[MeshRow] = if rows.iter().any(|r| r.sealed.is_some()) {
+        unsealed = unseal_rows(c, rows)?;
+        &unsealed
+    } else {
+        rows
+    };
     let incoming: Vec<crate::sync::IncomingChange> = rows
         .iter()
         .map(|r| {
@@ -4126,6 +4188,7 @@ mod tests {
             op: "upsert".to_string(),
             payload: Some(crate::hlc::with_stamp(&serde_json::to_string(&theirs).unwrap(), &later).unwrap()),
             updated_at: 20,
+            sealed: None,
         }];
         let ab = absorb_peer_batch(&c, &rows, "A", "ws", false).unwrap();
         assert_eq!(ab.applied, 1, "{ab:?}");
@@ -4158,6 +4221,7 @@ mod tests {
                     .unwrap(),
             ),
             updated_at: 40,
+            sealed: None,
         }];
         let ab2 = absorb_peer_batch(&c, &rows2, "A", "ws", false).unwrap();
         assert_eq!((ab2.superseded, ab2.awaiting), (0, 1), "本机赢了 ⇒ 远端那一版进「待取回」等裁决：{ab2:?}");
@@ -4222,7 +4286,65 @@ mod tests {
             op: "upsert".to_string(),
             payload: Some(payload),
             updated_at: pg.updated_at,
+            sealed: None,
         }
+    }
+
+    /// ⭐ 2026-10-23（S3b）：**封包必须在任何下游看它之前解开** —— 解开之后与普通记录逐字段一样。
+    ///
+    /// ⚠️ 本判据里的空间是**明文** ⇒ `decrypt_payload` 原样过（封包只是一层"搬家用的盒子"）。
+    /// 密文空间"真封真解"那一半要带钥匙袋的夹具/真机才量得到，这里**不假装**量到了。
+    #[test]
+    fn a_sealed_row_is_unsealed_before_anything_else_looks_at_it() {
+        let c = space_conn("A");
+        let inner = serde_json::json!({
+            "entity": "page",
+            "entity_id": "p1",
+            "op": "upsert",
+            "payload": "{\"id\":\"p1\"}",
+        })
+        .to_string();
+        let rows = vec![MeshRow {
+            device_seq: 7,
+            entity: String::new(),
+            entity_id: String::new(),
+            op: String::new(),
+            payload: None,
+            updated_at: 9,
+            sealed: Some(inner),
+        }];
+        let out = unseal_rows(&c, &rows).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].entity, "page");
+        assert_eq!(out[0].entity_id, "p1");
+        assert_eq!(out[0].op, "upsert");
+        assert_eq!(out[0].payload.as_deref(), Some("{\"id\":\"p1\"}"));
+        assert_eq!(out[0].device_seq, 7, "游标那一格必须原样带过来（水位按它走）");
+        assert!(out[0].sealed.is_none(), "解开之后不许再留封包（否则下游会再解一次）");
+    }
+
+    /// ⭐ 2026-10-23（S3b）：**解不开就停**，⛔ 不许当成"不认识的记录"跳过。
+    ///
+    /// 为什么这是承重的：跳过那条路会把**游标推到批尾**（`sync.rs:4005` ＋ 判据
+    /// `unrecognized_entity_kinds_are_ignored_loudly_and_never_wedge_the_cursor` 明写"必须走到批尾"）
+    /// ⇒ 这一条从此**永远补不回来**（方案 §7.1 的探路结论）。
+    #[test]
+    fn a_sealed_row_that_cannot_be_opened_stops_the_batch_instead_of_skipping_it() {
+        let c = space_conn("A");
+        let rows = vec![MeshRow {
+            device_seq: 3,
+            entity: String::new(),
+            entity_id: String::new(),
+            op: String::new(),
+            payload: None,
+            updated_at: 1,
+            sealed: Some("不是 JSON".to_string()),
+        }];
+        let err = unseal_rows(&c, &rows).unwrap_err();
+        assert!(
+            err.contains("封包格式看不懂"),
+            "解不开必须**停下**（⛔ 不许跳过：游标一越过去就永远补不回来）：{err}"
+        );
     }
 
     /// ⭐ **判据①**：同名个人空间 ⇒ **融合**（并进本机这一个空间、保留本机 id/名字）＋ **账本一条记录（可读）**。
