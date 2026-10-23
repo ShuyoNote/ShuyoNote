@@ -27275,3 +27275,31 @@ button.mset-row:focus-visible {
   flex: 1 1 auto;
   min-width: 0;
 }
+
+/* ⭐ 2026-10-23：「对端有、你没有的空间」（MeshMissingSpaces.tsx）
+   视觉体系：主色 --accent、勾中 --accent-soft、墓碑胶囊 --mark-bg；圆角 8/4/999。 */
+.mesh-missing { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
+.mesh-missing-head { display: flex; align-items: center; gap: 7px; width: 100%; border: none; background: transparent; padding: 2px 0; cursor: pointer; text-align: left; color: var(--text); }
+.mesh-missing-star { color: var(--accent); font-size: 12px; }
+.mesh-missing-title { font-size: 12.5px; font-weight: 600; }
+.mesh-missing-title b { color: var(--accent); }
+.mesh-missing-toggle { margin-left: auto; font-size: 11.5px; color: var(--text-dim); }
+.mesh-missing-body { margin-top: 8px; }
+.mesh-missing-list { border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+.mesh-missing-row { display: flex; gap: 9px; padding: 10px 11px; border-top: 1px solid var(--border); }
+.mesh-missing-row:first-child { border-top: none; }
+.mesh-missing-row.is-on { background: var(--accent-soft); }
+.mesh-missing-cb { width: 16px; height: 16px; margin-top: 1px; flex: none; border-radius: var(--radius-xs); border: 1.5px solid var(--border-strong); background: var(--surface); color: var(--on-accent); font-size: 10px; font-weight: 700; line-height: 1; display: grid; place-items: center; cursor: pointer; }
+.mesh-missing-cb.is-on { background: var(--accent); border-color: var(--accent); }
+.mesh-missing-text { min-width: 0; }
+.mesh-missing-name { font-size: 12.5px; font-weight: 500; line-height: 1.35; word-break: break-word; }
+.mesh-missing-row.is-on .mesh-missing-name { color: var(--accent-strong); }
+.mesh-missing-chip { display: inline-block; margin-left: 6px; padding: 3px 9px; border-radius: var(--radius-full); background: var(--mark-bg); color: #b26a00; font-size: 11px; font-weight: 500; vertical-align: 1px; }
+.mesh-missing-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.mesh-missing-foot { font-size: 11px; color: var(--text-dim); margin: 8px 2px 0; }
+.mesh-missing-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.mesh-missing-ignore { border: none; background: transparent; color: var(--text-dim); font-size: 12px; padding: 8px; border-radius: var(--radius-md); cursor: pointer; }
+.mesh-missing-ignore:hover { background: var(--hover); color: var(--text); }
+.mesh-missing-create { margin-left: auto; border: none; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 500; padding: 8px 14px; border-radius: var(--radius-md); cursor: pointer; }
+.mesh-missing-create:disabled { background: var(--hover); color: var(--text-faint); cursor: default; }
+.mesh-missing-done { margin-top: 8px; font-size: 11.5px; color: var(--success); }

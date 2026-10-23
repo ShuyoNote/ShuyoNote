@@ -533,6 +533,14 @@ export const api = {
   meshSyncNow: (workspaceId?: string | null) =>
     invoke("mesh_sync_now", { workspaceId: workspaceId ?? null }) as Promise<MeshRoundReport>,
   /**
+   * ⭐ **2026-10-23**：「对端有、本机没有」的个人空间候选表（**只读**）。
+   * 界面把它列成勾选清单，勾了才调 `mesh_create_spaces` —— ⛔ 不许在这里顺手建。
+   */
+  meshMissingSpaces: () =>
+    invoke("mesh_missing_spaces") as Promise<{ name: string; from: string[]; tombstoned: boolean }[]>,
+  /** ⭐ **2026-10-23**：按用户勾的名字建空间（幂等；只认候选表里有的名字）。 */
+  meshCreateSpaces: (names: string[]) => invoke("mesh_create_spaces", { names }) as Promise<string[]>,
+  /**
    * ⭐ **P1.5 主件 · A1**（2026-10-13）：设备直连那一屏的**本机读数** ✗ —— ⭐ 只读 ✓。
    *
    * ⚠️ 两条都**没有参数** ✗（读的是"本机"这回事 ✓）。⭐ `announced` 与窗口**同一把尺**

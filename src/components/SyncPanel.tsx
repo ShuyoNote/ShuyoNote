@@ -5,6 +5,7 @@ import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer } from "../lib/api";
+import { MeshMissingSpaces } from "./MeshMissingSpaces";
 import { autoPickPeer } from "../lib/pairTarget"; // ⭐ 常驻判据在 src/lib/pairTarget.test.ts ✓
 import { peerIdentityLine } from "../lib/peerIdentity"; // ⭐ 规格 J21 的**唯一实现**（信任前展示身份 ✓）
 import { toast } from "../store/toast";
@@ -1444,6 +1445,8 @@ export function SyncPanel({
                 }
               })()}
             />
+            {/* ⭐ 2026-10-23：「对端有、你没有的空间」—— 用户勾了才建（默认一个都不勾） */}
+            <MeshMissingSpaces />
             </div>
             {/* 顶部胶囊反映【当前激活空间】的绑定状态（与该空间卡片一致），
                 避免全局 authed 显示"已登录"但当前空间仍显示登录表单的矛盾。 */}
