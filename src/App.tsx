@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { hasBlockContent } from "./lib/blankPage";
-import { isDesktopPlatform } from "./lib/platform";
+import { isDesktopPlatform, isMacDesktopPlatform } from "./lib/platform";
 import { PageTree } from "./components/PageTree";
 import { SyncPanel } from "./components/SyncPanel";
 import { ActivityBar } from "./components/ActivityBar";
@@ -1030,6 +1030,14 @@ function AppShell() {
     };
   }, []);
   const isMobile = useMobile();
+  // ⭐ 2026-10-23（owner 报「系统标题栏好丑」）：macOS 走**原生透明标题栏**
+  //   （`src-tauri/src/lib.rs` 的 `title_bar_style(Overlay) + hidden_title`）。
+  //   `is-macos` 只在「桌面 macOS 且**没开**自绘栏」时挂上 —— 那套 CSS 把每列内容
+  //   整体让出 28px（红绿灯占位），顶栏底色由各列自己的背景提供，不再有一条白条。
+  //   ⛔ 自绘栏（`custom`）开着时不挂：那时窗口无边框、自绘栏自己占 32px（两套不能叠加）。
+  const customTitleBar = useWindowChrome((s) => s.custom);
+  const macNativeChrome = !isMobile && !customTitleBar && isMacDesktopPlatform();
+  const appClass = macNativeChrome ? "app is-macos" : "app";
   // ⭐ 2026-10-10：手机档的**「关于」屏**（效果图 `10-about.svg`，规格 §4.10）——
   // **沿用既有的 `aboutOpen`** ✓（设置 → 关于与更新 ✓／命令面板 ✓），⛔ 不新造入口 ✗；
   // 手机档改渲染 `MobileAbout` ✓，桌面档仍是那个 `AboutDialog` ✓（一个字不动 ✓）。
@@ -1101,8 +1109,9 @@ function AppShell() {
 
   if (standaloneId) {
     return (
-      <div className="app">
-        <TitleBar />
+      <div className={appClass}>
+        {/* 独立页面窗口没有左竖条 ⇒ macOS 上由主区自己让位、拖拽带铺满顶边。 */}
+        <TitleBar standalone />
         <UpdateBanner />
         <div className="app-body">
           <div className="main">
@@ -1148,7 +1157,7 @@ function AppShell() {
   }
 
   return (
-    <div className="app">
+    <div className={appClass}>
       <TitleBar />
       <UpdateBanner />
       {/* ⚠️ 2026-10-01（owner 界面方向之①）：入口搬到**顶端工具栏** ✓ —— 但 `TitleBar`

@@ -21,11 +21,21 @@ pub fn open_page_window(app: AppHandle, page_id: String) -> Result<(), String> {
     // 与主窗口一致：无边框 + 前端自绘标题栏。用户若在设置里关掉自定义
     // 标题栏，前端启动时会 setDecorations(true) 把系统栏恢复回来。
     // `decorations` 是桌面概念，移动端 builder 无此方法，故仅桌面调用。
-    #[cfg(desktop)]
+    // macOS 例外（2026-10-23）：与主窗口同款**原生透明标题栏**（红绿灯浮在内容上）。
+    // 若这里继续无边框，独立窗口在 macOS 上会**一颗红绿灯都没有** ⇒ 关不掉；
+    // 前端对这扇窗也走 `.is-macos` 那套 28px 让位（它没有侧栏，只有 `.main`）。
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .decorations(true)
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
+    #[cfg(all(desktop, not(target_os = "macos")))]
     let builder = builder.decorations(false);
     let win = builder
         .build()
         .map_err(|e| e.to_string())?;
+    // macOS：与主窗口同一套 —— 系统红绿灯藏掉，前端自绘小灯（见 lib.rs / mac_lights.rs）。
+    let _ = crate::mac_lights::hide_native_traffic_lights(&win);
 
     // Focus after a short delay so the window is ready.
     let _ = win.set_focus();

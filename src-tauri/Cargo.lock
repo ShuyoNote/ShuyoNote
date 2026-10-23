@@ -6478,6 +6478,7 @@ dependencies = [
  "minisign-verify",
  "mupdf-sys",
  "native-tls",
+ "objc2",
  "pbkdf2",
  "pdfium-render",
  "percent-encoding",

@@ -20,6 +20,8 @@ export default {
     collapseSidebar: "Hide sidebar",
     minimize: "Minimize",
     maximize: "Maximize",
+    fullscreen: "Full screen",
+    exitFullscreen: "Exit full screen",
     restore: "Restore",
     close: "Close",
     palettePlaceholder: "Type a command or search pages…",

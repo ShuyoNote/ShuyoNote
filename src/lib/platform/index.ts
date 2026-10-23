@@ -11,7 +11,11 @@
 import type { Platform } from "./types";
 import { tauriPlatform } from "./tauri";
 import { createWebPlatform } from "./web";
-import { computeEmailSupported, isMobileUserAgent as isMobileUserAgentPure } from "./capabilities";
+import {
+  computeEmailSupported,
+  isMacDesktopUserAgent as isMacDesktopUserAgentPure,
+  isMobileUserAgent as isMobileUserAgentPure,
+} from "./capabilities";
 
 export type { Platform } from "./types";
 export type {
@@ -47,6 +51,20 @@ export function isDesktopPlatform(): boolean {
  *  拖窄就会误判，两者不是一回事。 */
 export function isMobileUserAgent(ua: string): boolean {
   return isMobileUserAgentPure(ua);
+}
+
+/**
+ * 是否是 **macOS 桌面壳** —— 原生透明标题栏那条路只在它上面开
+ * （`src-tauri/src/lib.rs` 的 `title_bar_style(Overlay)`；Windows/Linux 不动）。
+ *
+ * 判据是 UA（Tauri 没装 `@tauri-apps/plugin-os`），纯函数在 `capabilities.ts`，
+ * 单独可测。⛔ 别拿 `isDesktopPlatform()` 当近似：它只表示"有 Rust 内核"，
+ * Android/iOS 也是真 —— 那两台没有红绿灯。
+ */
+export function isMacDesktopPlatform(): boolean {
+  if (!isTauri()) return false;
+  const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
+  return isMacDesktopUserAgentPure(ua);
 }
 
 /**

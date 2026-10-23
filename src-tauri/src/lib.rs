@@ -241,6 +241,7 @@ mod tags;
 mod templates;
 mod tempdir;
 mod textnorm;
+mod mac_lights;
 mod titlebar;
 mod trash;
 mod updates;
@@ -689,6 +690,24 @@ pub fn run() {
             // 方法（窗口装饰由系统管理），故按平台条件编译——与下面 drag_and_drop 同款写法。
             #[cfg(desktop)]
             let main_builder = main_builder.decorations(true);
+            // ⭐ 2026-10-23（owner 报「系统标题栏好丑」）：macOS 走**原生透明标题栏**。
+            //
+            // 形态＝Finder / 系统应用那一套：标题栏透明、内容铺到窗口顶端、红绿灯浮在
+            // 内容之上、标题文字隐藏。这样就不会再顶着一条"白色空条"——顶栏底色改由
+            // 各列**自己的背景**提供（左竖条/侧栏灰、主区白）：前端 CSS `.is-macos` 把
+            // 每列内容整体下移 28px（红绿灯占位），`<TitleBar>` 在 macOS 且未开自绘栏时
+            // 渲染一条可拖拽的 `.mac-titlebar`（Overlay 下**必须**自己提供 drag-region，
+            // 否则窗口拖不动 —— tauri 文档原话）。
+            // ⛔ Windows 不走这条：那边仍是「默认系统栏 + DWM 染色」（`titlebar.rs`），
+            //    自绘栏（`customTitleBar`）那条 `decorations(false)` 的路也一个字不动。
+            // 标题栏：透明 Overlay + 隐藏文字（内容铺到窗口顶端，见 App.css `.is-macos`）。
+            // 红绿灯由前端自绘（系统那三颗在窗口构建后被 `mac_lights` 藏掉）——
+            // 原生尺寸 macOS 不给改，`traffic_light_position` 实测在这套窗口上也不生效，
+            // 详见 `src/mac_lights.rs` 模块头。
+            #[cfg(target_os = "macos")]
+            let main_builder = main_builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true);
             // 关键：Windows 上内置 drag-drop handler 开着时，HTML5 拖拽
             // API 不可用——data-tauri-drag-region 正是依赖它拖窗口，所以
             // 标题栏拖不动。这里关掉，让标题栏可拖；文件视图需要 OS 拖文件
@@ -722,6 +741,22 @@ pub fn run() {
                 // devtools，看 console 报错（排查 mermaid 等问题）。
                 .devtools(true)
                 .build()?;
+            // macOS：把系统那三颗红绿灯藏掉 —— 它们改不了尺寸，而 owner 要"像微信那样小一号"
+            // ⇒ 由前端 `<MacLights>` 自绘 10px 的小灯（见 `mac_lights` 模块头注释）。
+            let _ = mac_lights::hide_native_traffic_lights(&_window);
+            // 全屏/退出全屏时切换"原生灯 vs 自绘灯"：全屏里系统只在鼠标到顶部时把原生
+            // 标题栏浮出来（微信同款），自绘灯在那条原生标题栏**下面**看不见 ⇒ 全屏改用原生灯。
+            // （owner 2026-10-23：「最大化后，恢复工具栏也要有」/「那部分是空白」。）
+            #[cfg(target_os = "macos")]
+            {
+                let handle = _window.clone();
+                _window.on_window_event(move |event| {
+                    if matches!(event, tauri::WindowEvent::Resized(_)) {
+                        let full = handle.is_fullscreen().unwrap_or(false);
+                        let _ = mac_lights::set_native_traffic_lights_visible(&handle, full);
+                    }
+                });
+            }
 
             // Android：把 HTTPS 的证书校验交给系统证书库。**必须在任何 HTTPS 请求之前**——
             // reqwest 在没初始化时是 **panic 不是报错**。放在这里是因为要从 WebView 才能

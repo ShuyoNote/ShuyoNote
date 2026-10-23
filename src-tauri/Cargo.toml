@@ -206,6 +206,11 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # （随 tauri/tokio 进来，见 `0.61.2`），这里只是**显式声明**并用它调
 # `GetDiskFreeSpaceExW`；Unix/Android 那一侧用同样已在依赖树里的 `libc`（`statvfs`）。
 # 实现与取舍见 `src/disk.rs`。
+[target.'cfg(target_os = "macos")'.dependencies]
+# 只用来 `msg_send!` 把系统那三颗红绿灯 `setHidden:`（自绘小灯替换，见 src/mac_lights.rs）。
+# 版本取 Cargo.lock 里已有的 0.6（随 tauri/tao 进来）⇒ 不引入新的下载。
+objc2 = "0.6"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
