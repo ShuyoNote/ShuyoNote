@@ -611,6 +611,15 @@ pub fn announces_for_with_mesh(
         }
         a.hub_spaces =
             if a.hub_base.is_some() { vec![space.to_string()] } else { Vec::new() };
+        // ⭐ 2026-10-24（macOS 侧抓包定位）：**兜底分支漏了「类别」** ✗ —— `lan.rs:510` 那条
+        //   「代言」分支是填的，而"只开网格、不绑服务端"的个人空间**必走兜底**
+        //   （`announce_for_own_hub` 因 `configured_url` 为空在 `is_lan_base` 那一步返回 `None`）
+        //   ⇒ 公告永远 `hub_space_kinds: []` ⇒ 对端"按名建空间"的 G2 闸（要求逐字 `personal`）
+        //   **永远不过** ⇒ 候选表永远空（2026-10-23 真机实测：names 有、kinds 全是 `[]`）。
+        //   口径与 `lan.rs:510` 同一把：**空才发空**，否则一个元素。
+        if a.hub_base.is_some() && a.hub_space_kinds.is_empty() && !space_kind.is_empty() {
+            a.hub_space_kinds = vec![space_kind.to_string()];
+        }
         out.push(a);
     }
     out
@@ -1089,6 +1098,39 @@ mod mesh_serve_space_tests {
     ///
     /// ⚠️ 红读数（定向变异 β ＝ 入口里把 `&short_id` 恒写成 `""`）⇒ ① 红 ✓；
     /// ⚠️ 红读数（定向变异 γ ＝ "拿不到"回落成 `device_id`）⇒ ③ 红 ✓。
+    /// ⭐ 2026-10-24（macOS 抓包定位）：**兜底分支（只开网格、不绑服务端）也必须带「类别」**。
+    ///
+    /// 红读数（改前逐字）：`hub_space_names:["工作"]` 但 `hub_space_kinds:[]` ⇒ 对端 G2 闸
+    /// （要求逐字 `personal`）永远不过 ⇒「对端有你没有的空间」候选表**永远空**（真机实测）。
+    #[test]
+    fn the_fallback_announce_carries_the_space_kind() {
+        let profiles = vec![(String::new(), String::new(), "ws-personal".to_string())];
+        let bases = vec![("room-123".to_string(), "http://192.168.1.5:8788".to_string())];
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', 'room-123')",
+            [],
+        )
+        .unwrap();
+        // ⚠️ 夹具里那张表的形状比较老（没有 `kind`，而且已经有一行 `ws-personal`）
+        //   ⇒ 先补列、再**改**那一行（⛔ 不是再插一行：`id` 是主键，插会撞）。
+        c.execute("ALTER TABLE meta.workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT ''", [])
+            .expect("夹具要能补 kind 列");
+        c.execute(
+            "UPDATE meta.workspaces SET name = '工作', kind = 'personal' WHERE id = 'ws-personal'",
+            [],
+        )
+        .unwrap();
+        let got = announces_for_this_round(&c, "dev-a", "本机", &profiles, &bases);
+        assert_eq!(got.len(), 1, "前提：开了网格的个人空间要发言（{got:#?}）");
+        assert_eq!(got[0].hub_space_names, vec!["工作".to_string()]);
+        assert_eq!(
+            got[0].hub_space_kinds,
+            vec!["personal".to_string()],
+            "兜底分支也必须带类别（否则对端按名建空间的 G2 闸永远不过）"
+        );
+    }
+
     #[test]
     fn the_short_id_really_lands_in_the_announce_and_missing_stays_honestly_empty() {
         let profiles = vec![(String::new(), String::new(), "ws-personal".to_string())];
