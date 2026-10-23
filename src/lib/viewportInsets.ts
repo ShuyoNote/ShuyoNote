@@ -138,7 +138,12 @@ export function installViewportInsets(doc: Document = document, win: Window = wi
 
   // 键盘弹出/收起时 `visualViewport` 会动（不动的那些环境下这一层是空转），
   // resize 则覆盖旋转、分屏、桌面窗口缩放。
-  const onGeometry = () => paint(doc, win);
+  // ⚠️ 2026-10-23（真机截图定死）：**只在壳层真的报过 inset 之后才重绘** ——
+  //   否则没壳层的平台（iOS / 浏览器）会被这里用全 0 的内联样式覆盖掉
+  //   `:root` 里 `env(safe-area-inset-*)` 的兜底值 ⇒ iOS 状态栏与 App 标题叠字。
+  const onGeometry = () => {
+    if (state.native) paint(doc, win);
+  };
   win.addEventListener("resize", onGeometry);
   win.addEventListener("orientationchange", onGeometry);
   win.visualViewport?.addEventListener("resize", onGeometry);
@@ -150,7 +155,7 @@ export function installViewportInsets(doc: Document = document, win: Window = wi
     set: (payload: unknown) => bridge(payload),
   };
 
-  paint(doc, win);
+  // ⛔ 这里**不要**无条件 paint：`:root` 的 env() 兜底必须留给没壳层的平台（见上）。
 
   return () => {
     installed = false;
