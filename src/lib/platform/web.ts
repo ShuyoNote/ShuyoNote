@@ -3597,6 +3597,10 @@ export function makeInvoke(store: SqliteStore) {
     if (cmd === "lock_encryption" || cmd === "unlock_encryption") {
       return undefined as T;
     }
+    if (cmd === "keyring_status") {
+      // Web 形态没有按空间加密 ⇒ 恒为"没有材料"（⛔ 不假装有）
+      return { has_material: false, spaces: 0, unlocked: false } as T;
+    }
 
     // ---- Storage / cleanup ----
     if (cmd === "storage_stats") {

@@ -1169,6 +1169,7 @@ pub fn run() {
             security::encryption_status,
             security::lock_encryption,
             security::unlock_encryption,
+            security::keyring_status,
             ai::ai_complete,
             ai::ai_probe,
             ai::ai_complete_stream,

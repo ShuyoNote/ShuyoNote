@@ -230,6 +230,7 @@ export const api = {
   // `disable_encryption`，连同"全局一把钥匙"那整套口径与界面）。留下的是**会话级**三条：
   encryptionStatus: () => invoke("encryption_status"),
   lockEncryption: () => invoke("lock_encryption"),
+  keyringStatus: () => invoke("keyring_status"),
   unlockEncryption: (passphrase: string) => invoke("unlock_encryption", { passphrase }),
   getPage: (id: string) => invoke("get_page", { id }),
   listTemplates: (spaceId?: string | null) => invoke("list_templates", { spaceId }),

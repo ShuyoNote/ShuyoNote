@@ -830,6 +830,37 @@ fn encryption_status_of(c: &Connection) -> Result<EncryptionStatus, String> {
     })
 }
 
+/// ⭐ 2026-10-25（B1/B2 真机验收缺的入口）：**钥匙袋（公开材料）状态**。
+///
+/// 为什么需要：`unlock_encryption` 以前只能从"活动空间加密时的锁定屏 / 设置里那一节"进入；
+/// 而 **活动空间是明文** 时那两处都不渲染 ⇒ 本机明明有加密空间在等解锁，用户却找不到入口。
+/// 这个命令给设置页一个独立入口：有没有材料、几个空间、解锁没解锁。
+#[derive(serde::Serialize)]
+pub struct KeyringStatus {
+    /// 本机 meta 里有没有公开材料（钥匙袋）。
+    pub has_material: bool,
+    /// 材料里一共几个空间盒子。
+    pub spaces: usize,
+    /// 这个会话有没有派生过主密钥（＝能不能开盒）。
+    pub unlocked: bool,
+}
+
+#[tauri::command]
+pub fn keyring_status(db: State<Db>) -> Result<KeyringStatus, String> {
+    let c = conn(&db);
+    let material = crate::space_crypto::stored_material(&c)?;
+    let (has_material, spaces) = match material {
+        Some(text) => {
+            let kr = crate::keyring::Keyring::from_json(&text)?;
+            (true, kr.space_ids().len())
+        }
+        None => (false, 0),
+    };
+    let unlocked =
+        !crate::space_crypto::session_masters().is_empty() || crate::space_crypto::session_master().is_some();
+    Ok(KeyringStatus { has_material, spaces, unlocked })
+}
+
 #[tauri::command]
 pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
     let c = conn(&db);

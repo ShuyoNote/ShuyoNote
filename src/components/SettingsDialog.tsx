@@ -13,7 +13,7 @@ import { BackupSettingsPanel } from "./BackupSettingsPanel";
 import { StoragePanel } from "./StoragePanel";
 import { usePlugins } from "../store/plugins";
 import { api } from "../lib/api";
-import { lockVault } from "../lib/vault";
+import { lockVault, unlockVault } from "../lib/vault";
 import { useVault } from "../hooks/useVault";
 import { SpacePrivacySection } from "./SpacePrivacySection";
 import type { SyncProfile, EmailAccount } from "../lib/api";
@@ -1469,6 +1469,35 @@ function SecurityPane() {
   const { activeSpaceEncrypted, locked } = useVault();
   const spaces = useSpaceStore((s) => s.spaces);
   const [busy, setBusy] = useState(false);
+  // ⭐ 2026-10-25：**钥匙袋（公开材料）状态** —— 活动空间是明文时，「会话锁定」那一节不渲染，
+  //   而本机可能仍有加密空间在等解锁（B1/B2 真机验收就卡在这）。所以这里给一个**独立入口**。
+  const [bag, setBag] = useState<{ has_material: boolean; spaces: number; unlocked: boolean } | null>(null);
+  const [bagPass, setBagPass] = useState("");
+  useEffect(() => {
+    let live = true;
+    // ⚠️ 测试里的 `api` mock 可能没有这条新命令 ⇒ 有才调（⛔ 不让旧用例因为新入口整片红）。
+    const fn = api.keyringStatus;
+    if (!fn) return;
+    void fn()
+      .then((s) => { if (live) setBag(s); })
+      .catch(() => { if (live) setBag(null); });
+    return () => { live = false; };
+  }, [locked, activeSpaceEncrypted]);
+
+  const unlockBag = async () => {
+    setBusy(true);
+    try {
+      await unlockVault(bagPass);
+      setBagPass("");
+      toast("已解锁钥匙袋：加密空间现在可以同步", "success");
+      try { setBag((await api.keyringStatus()) ?? null); } catch { /* 刷新失败不影响已解锁 */ }
+      try { await useSpaceStore.getState().load(); } catch { /* 空间列表刷新失败不影响已解锁 */ }
+    } catch (e) {
+      toast(String(e), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const lock = async () => {
     setBusy(true);
@@ -1506,6 +1535,40 @@ function SecurityPane() {
               <button className="set-btn" disabled={busy} onClick={lock}>
                 立即锁定
               </button>
+            )}
+          </div>
+        </section>
+      )}
+      {/* ⭐ 2026-10-25：钥匙袋入口 —— 不依赖"活动空间是否加密"。
+          用途：本机收到对端公开材料后，在这里输一次主口令 ⇒ 解锁时按 id 建出对端的**密文**空间。 */}
+      {bag?.has_material && (
+        <section className="set-section">
+          <div className="set-section-title">钥匙袋（加密空间同步）</div>
+          <div className="set-row">
+            <div className="set-row-text">
+              <div className="set-row-name">
+                {bag.unlocked ? "已解锁" : "未解锁"} · {bag.spaces} 个加密空间
+              </div>
+              <div className="set-row-sub">
+                {bag.unlocked
+                  ? "本会话已拿到主密钥；加密空间可以正常同步。"
+                  : "输入主口令后，本机会按 id 建出对端的加密空间（密文库），并开始拉取密文。"}
+              </div>
+            </div>
+            {!bag.unlocked && (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  className="set-input"
+                  type="password"
+                  placeholder="主口令"
+                  value={bagPass}
+                  disabled={busy}
+                  onChange={(e) => setBagPass(e.target.value)}
+                />
+                <button className="set-btn is-primary" disabled={busy || bagPass.length === 0} onClick={unlockBag}>
+                  解锁
+                </button>
+              </div>
             )}
           </div>
         </section>

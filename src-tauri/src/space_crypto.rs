@@ -159,6 +159,17 @@ pub fn adopt_material(c: &Connection, json: &str, overwrite: bool) -> Result<Ado
     })
 }
 
+/// ⭐ 2026-10-25（Windows 侧实测的坑）：**只落 meta、不碰进程内缓存**的写回。
+///
+/// 为什么不能一律用 `store_keyring`：它会顺手替换进程内的 `KEYRING` 缓存 ——
+/// 若这次写回发生在"解锁之后 / 启动早期"（例如回填空间名、增量并入材料），
+/// 正在用旧袋子解盒子的调用方会突然拿到另一份材料 ⇒ "盒子解不开 / hmac check failed"。
+/// 口径：**落盘为准，内存副本由下一次 `carry_keyring`（解锁那步一定调）刷新**。
+pub fn store_keyring_meta_only(c: &Connection, kr: &Keyring) -> Result<(), String> {
+    sync::set_meta_state(c, META_KEYRING, &kr.to_json()?)?;
+    Ok(())
+}
+
 /// ⭐ 2026-10-24（B1/B2）：**把对端的公开材料并进来**（不覆盖本地盒子）。
 ///
 /// 与 [`adopt_material`] 的分工：
@@ -190,7 +201,8 @@ pub fn merge_material(c: &Connection, json: &str) -> Result<crate::keyring::Merg
     let mut mine = local.expect("上面已判空");
     let report = mine.merge_from(&theirs);
     // 冲突（同空间不同盒子）⇒ ⛔ 不覆盖：原样保留本地。报告里已列出，调用方必须记/显示。
-    store_keyring(c, &mine)?;
+    // ⚠️ 只落 meta（别动进程内缓存：见 `store_keyring_meta_only` 的头注）。
+    store_keyring_meta_only(c, &mine)?;
     Ok(report)
 }
 

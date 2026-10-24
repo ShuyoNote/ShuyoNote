@@ -1297,6 +1297,7 @@ export interface CommandMap {
     };
   };
   lock_encryption: { args: undefined; result: void };
+  keyring_status: { args: undefined; result: { has_material: boolean; spaces: number; unlocked: boolean } };
   unlock_encryption: { args: { passphrase: string }; result: void };
 
   // ---- Templates ----
