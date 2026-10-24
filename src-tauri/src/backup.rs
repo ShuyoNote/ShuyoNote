@@ -11,6 +11,100 @@ pub struct BackupResult {
     /// `备份跳过加密空间 …`，用户拿到一个"看起来成功"的包，**里面却没有那些空间的数据**。
     /// 现在把 `"<spaceId>: <原因>"` 原样带回给调用方，界面必须显示它。
     pub skipped: Vec<String>,
+    /// ⭐ **2026-10-25**：**孤儿库** —— `spaces/*.db` 在磁盘上，但 `meta.workspaces` 里**没有这一行**
+    /// （界面上根本看不到的空间）。它们照样会被打进备份（⛔ 不静默丢一份可能含内容的库 ✗），
+    /// 但必须**点名**：否则"备份 122 MB 里有多少是看不见的库"永远没人知道。
+    #[serde(default)]
+    pub orphans: Vec<String>,
+}
+
+/// 把一次备份的读数压成**一行**（日志与 UI 共用同一句，⛔ 不写第二遍 ✗）。
+///
+/// 形状：`size=<字节> skipped=<n>（<空间: 原因>；…） 孤儿库=<n>（<id>、…）`
+/// —— 括号里只在**非零**时出现（正常那天的日志形状**一个字节都不变** ✓）。
+pub(crate) fn summary_note(size: i64, skipped: &[String], orphans: &[String]) -> String {
+    let mut s = format!("size={size} skipped={}", skipped.len());
+    if !skipped.is_empty() {
+        s.push_str("（");
+        s.push_str(
+            &skipped
+                .iter()
+                .map(|line| short_space_line(line))
+                .collect::<Vec<_>>()
+                .join("；"),
+        );
+        s.push('）');
+    }
+    if !orphans.is_empty() {
+        s.push_str(&format!(
+            " 孤儿库={}（{}）",
+            orphans.len(),
+            orphans
+                .iter()
+                .map(|id| short_space_id(id))
+                .collect::<Vec<_>>()
+                .join("、")
+        ));
+    }
+    s
+}
+
+/// `"<36 位空间 id>: 原因"` ⇒ `"<前 8 位>…: 原因"`（一行日志里塞不下 36 位 × N 条 ✓）。
+fn short_space_line(line: &str) -> String {
+    match line.split_once(':') {
+        // ⚠️ `split_once(':')` 的 `rest` **不含那个冒号** ⇒ 必须自己补回去
+        //   （2026-10-25 实测：漏了它，日志里会变成「99082b5a…空间是密文…」✗）
+        Some((id, rest)) => format!("{}:{}", short_space_id(id), rest),
+        None => line.to_string(),
+    }
+}
+
+fn short_space_id(id: &str) -> String {
+    let id = id.trim();
+    if id.len() > 8 {
+        format!("{}…", &id[..8])
+    } else {
+        id.to_string()
+    }
+}
+
+/// ⭐ **2026-10-25**：哪些 `spaces/*.db` 在 `meta.workspaces` 里**没有行**（孤儿库）。
+///
+/// 为什么要它：备份是**按目录**打的（`snapshot_spaces` 遍历 `spaces/`），不看 meta ⇒
+/// 界面上看不见的库也会进包（真机实测：13 个库 / 9 个活空间 ⇒ 4 个孤儿）。
+/// 口径：⛔ **不因此少打包**（那可能是一份用户内容，只是 meta 行丢了 ✗）；只**如实点名** ✓。
+pub(crate) fn orphan_space_ids(
+    meta_file: &Path,
+    spaces_dir: &Path,
+) -> Result<Vec<String>, String> {
+    let known: std::collections::HashSet<String> = {
+        let c = rusqlite::Connection::open(meta_file).map_err(|e| e.to_string())?;
+        let mut st = c
+            .prepare("SELECT id FROM workspaces")
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    let mut out: Vec<String> = Vec::new();
+    let Ok(rd) = std::fs::read_dir(spaces_dir) else {
+        return Ok(out); // 没有目录 ⇒ 没有孤儿（不是错误 ✓）
+    };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(id) = name.strip_suffix(".db") else {
+            continue;
+        };
+        if id.is_empty() || id.starts_with('.') {
+            continue;
+        }
+        if !known.contains(id) {
+            out.push(id.to_string());
+        }
+    }
+    out.sort();
+    Ok(out)
 }
 
 /// Result of a merge import: how many spaces were imported, and how many had an
@@ -222,6 +316,9 @@ pub async fn export_backup(
     // ★ 被跳过的空间要**带回给用户**（原来只在 stderr 打一行，包看起来是成功的）。
     //   钥匙**按空间**在 `snapshot_spaces` 里各取各的（应用级那把会话钥匙已随应用级加密一起删）。
     let (space_snapshots, skipped) = snapshot_spaces(&spaces_dir, &tmp_root)?;
+    // ⭐ 2026-10-25：**孤儿库**（目录里有 `.db`、`meta.workspaces` 里没有行）——
+    //   它们照样进包（⛔ 不静默丢一份可能含内容的库 ✗），但要**点名**，见 `orphan_space_ids`。
+    let orphans = orphan_space_ids(&meta_file, &spaces_dir)?;
 
     let app2 = app.clone();
     let attachments2 = attachments_dir;
@@ -281,6 +378,7 @@ pub async fn export_backup(
             path: dest_path.clone(),
             size,
             skipped,
+            orphans,
         })
     })
     .await
@@ -385,7 +483,9 @@ pub async fn run_auto_backup_once(app: &tauri::AppHandle) -> crate::auto_backup:
             RunResult::Ok {
                 kept: plan.keep.len(),
                 removed,
-                note: format!("size={} skipped={}", r.size, r.skipped.len()),
+                // ⭐ 2026-10-25：**跳过与孤儿都要点名**（原来只给计数 ⇒ 日志/UI 都看不出
+                //   "是哪个空间、为什么"，和这两天修的"静默"是同一族 ✓）。
+                note: summary_note(r.size, &r.skipped, &r.orphans),
             }
         }
         Err(e) => RunResult::Failed { note: format!("导出失败：{e}") },
@@ -935,12 +1035,18 @@ pub struct AutoBackupRunReport {
 #[tauri::command]
 pub async fn auto_backup_run_now(app: tauri::AppHandle) -> AutoBackupRunReport {
     use crate::auto_backup::RunResult;
-    match run_auto_backup_once(&app).await {
+    let r = match run_auto_backup_once(&app).await {
         RunResult::Ok { kept, removed, note } => AutoBackupRunReport { ran: true, kept, removed, note },
         // ⭐ 跳过／失败都**照实回**（⛔ 不假装跑成功 ✗）
         RunResult::Skipped { note } => AutoBackupRunReport { ran: false, kept: 0, removed: 0, note },
         RunResult::Failed { note } => AutoBackupRunReport { ran: false, kept: 0, removed: 0, note },
-    }
+    };
+    // ⭐⭐ **2026-10-25**：**手动那次也要留一行日志** ——
+    //   真机踩到：点了「立即备份」后，日志里**一条都不多**（自动那趟由 `lib.rs` 打，
+    //   手动这条只把报告回给 UI）⇒ "刚才那次跑没跑、跳了几个、包里有没有那个空间"只能靠猜。
+    //   形状与自动那趟一致（前缀相同），只是多一个 `手动` 标记，便于 grep 区分。
+    eprintln!("[auto-backup] 手动 ｜ {}", r.note);
+    r
 }
 
 #[cfg(test)]
@@ -949,6 +1055,64 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     static TMP_SEQ: AtomicU32 = AtomicU32::new(0);
+
+    /// ⭐ **2026-10-25**：那一行读数必须能**点名**（跳过谁、哪些是孤儿库），
+    /// 而干净那天**形状一个字节都不许变**（老日志/老判据照旧认）。
+    ///
+    /// **变异**：把 `summary_note` 退回 `format!("size={} skipped={}", …)` ⇒ 后两段红。
+    #[test]
+    fn the_summary_note_names_the_skipped_spaces_and_the_orphan_dbs() {
+        // ① 干净：与旧版逐字相同（多一个空格都算破坏）
+        assert_eq!(summary_note(123, &[], &[]), "size=123 skipped=0");
+
+        // ② 有跳过 ⇒ 点名（id 截 8 位），原因原样留着
+        let note = summary_note(
+            9,
+            &["99082b5a-dc25-4712-b2c9-fcff13612e64: 空间是密文但拿不到它的钥匙".to_string()],
+            &[],
+        );
+        assert_eq!(note, "size=9 skipped=1（99082b5a…: 空间是密文但拿不到它的钥匙）");
+
+        // ③ 有孤儿 ⇒ 单独一格点名（⛔ 不混进 skipped：那不是"没备份"，是"界面上看不见"）
+        let note = summary_note(
+            9,
+            &[],
+            &[
+                "245461d6-1de2-4bf0-a946-8076a93e8053".to_string(),
+                "ad6b0daf-zzzz".to_string(),
+            ],
+        );
+        assert_eq!(note, "size=9 skipped=0 孤儿库=2（245461d6…、ad6b0daf…）");
+    }
+
+    /// ⭐ **2026-10-25**：`spaces/*.db` 里有、`meta.workspaces` 里**没有行**的 ⇒ 孤儿库
+    /// （真机实测：13 个库 / 9 个活空间 ⇒ 4 个孤儿，且它们**每次备份都进包**）。
+    ///
+    /// **变异**：把 `known` 那个集合改成空 ⇒ 本判据红（全都算孤儿）。
+    #[test]
+    fn orphan_dbs_are_the_files_without_a_workspace_row() {
+        let dir = uniq_tmp("orphan");
+        std::fs::create_dir_all(dir.join("spaces")).unwrap();
+        let meta = dir.join("meta.db");
+        {
+            let c = rusqlite::Connection::open(&meta).unwrap();
+            c.execute_batch(
+                "CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+                 INSERT INTO workspaces (id) VALUES ('live-a'), ('live-b');",
+            )
+            .unwrap();
+        }
+        for f in ["live-a.db", "live-b.db", "ghost-1.db", "ghost-2.db"] {
+            std::fs::write(dir.join("spaces").join(f), b"x").unwrap();
+        }
+        // `-wal` / `-shm` 不是库文件（⛔ 不许被算成孤儿）
+        std::fs::write(dir.join("spaces").join("live-a.db-wal"), b"x").unwrap();
+        std::fs::write(dir.join("spaces").join("live-a.db-shm"), b"x").unwrap();
+
+        let got = orphan_space_ids(&meta, &dir.join("spaces")).unwrap();
+        assert_eq!(got, vec!["ghost-1".to_string(), "ghost-2".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn uniq_tmp(tag: &str) -> PathBuf {
         let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
