@@ -155,6 +155,39 @@ mod tests {
         c
     }
 
+    /// ⭐ 2026-10-24（真机 bug 的源头）：**清这一页的状态要连"待并项"一起清**。
+    ///
+    /// 现场：`save_page_state` 收到空字节时原来会写 0 字节状态 ⇒ 下次打开那页抛
+    /// `Unexpected end of array`（lib0）。现在空字节走"清"，且必须把 `page_crdt_pending`
+    /// 里那页的待并项也清掉 —— 「采用对端那一版」之后那些待并项已经无意义，
+    /// 留着会让合并路径把**旧的另一条血统**又拉回来。
+    #[test]
+    fn clearing_a_page_state_also_drops_its_pending_rows() {
+        let c = db();
+        write_page_crdt_state(&c, "p1", &[1, 2, 3], 10).unwrap();
+        c.execute(
+            "INSERT INTO page_crdt_pending (page_id, seq, state, updated_at) VALUES ('p1', 1, X'0102', 10)",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO page_crdt_pending (page_id, seq, state, updated_at) VALUES ('p2', 1, X'0304', 10)",
+            [],
+        )
+        .unwrap();
+
+        clear_page_crdt_state(&c, "p1").unwrap();
+
+        assert!(read_page_crdt_state(&c, "p1").unwrap().is_none(), "本页状态必须被清掉");
+        let left: i64 = c
+            .query_row("SELECT COUNT(*) FROM page_crdt_pending WHERE page_id = 'p1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0, "本页的待并项必须一起清掉");
+        let other: i64 = c
+            .query_row("SELECT COUNT(*) FROM page_crdt_pending WHERE page_id = 'p2'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(other, 1, "⛔ 别人的待并项不许被顺手清掉");
+    }
     /// 与前端判据 `pageStateStore.test.ts` ① 成对：**没有 ⇒ None**；写回读**逐字节相同**
     /// （含非 UTF-8 字节 —— 若被当文本存过一道，这里就会不相等）。
     #[test]
