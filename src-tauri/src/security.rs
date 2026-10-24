@@ -854,6 +854,39 @@ pub(crate) fn lock_encryption_impl(conn: &mut Connection, app_data_dir: &Path) -
     }
     crate::space_crypto::set_session_master(None)?;
     LOCKED.store(true, Ordering::SeqCst);
+    // ⭐⭐ **2026-10-24（B）**：**锁必须把网格门一起关掉** ——
+    //   以前这里只换主连接，而"这扇门服务哪些空间"是另一份状态（`mesh::State::conns` 的键）：
+    //   解锁时被塞进去的那条 SQLCipher 连接**不随锁关闭** ⇒ 锁了之后对端照样能把它当明文拉走。
+    //   真机读数（2026-10-24 19:3x，界面已回锁定屏之后）：
+    //     `[19:35:54] [mesh] 公告：发出 3/3 … ｜ 空间 53d6…`（每 30 秒一条，一直在喊）。
+    //   ⚠️ 摘的是**所有密文空间**（不是活动空间那一个）：上面那句 `set_session_master(None)`
+    //      一次掉光所有空间的钥匙 ✓（见 `mesh::lock_encrypted_spaces` 的头注 ✓）。
+    //   ⚠️ 摘不掉就**如实记**（⛔ 不许"锁上了"却把门留在原地还说没事 —— 那正是这一笔要修的形状）。
+    let detached = match crate::mesh::lock_encrypted_spaces(conn, app_data_dir) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "[lock] ⚠️ 上锁时**没能**把密文空间从网格窗口摘掉（门可能还在按明文服务它们）：{e}"
+            );
+            Vec::new()
+        }
+    };
+    eprintln!(
+        "[lock] 会话已锁：主密钥卸载 ✓ ｜ 主连接换成内存库 ✓ ｜ 从网格窗口摘掉 {} 个密文空间{}",
+        detached.len(),
+        if detached.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "：{}",
+                detached
+                    .iter()
+                    .map(|s| crate::lan::mask_space(s))
+                    .collect::<Vec<_>>()
+                    .join("、")
+            )
+        }
+    );
     let _ = std::mem::replace(conn, Connection::open_in_memory().map_err(|e| e.to_string())?);
     let meta = crate::db::meta_path(app_data_dir).display().to_string().replace('\'', "''");
     conn.execute_batch(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""))

@@ -2254,6 +2254,123 @@ pub fn served_spaces(space_id: &str) -> Vec<String> {
     }
 }
 
+/// 判据用：这一号空间有没有被标成「知道、但这一轮开不了」（`locked` 集合）。
+///
+/// ⚠️ 生产路径**不读它**（读的是 `State::is_locked`，那是在锁内判的 ✓）；
+/// 这里只是让判据能**从外面**看见那个标记 —— ⛔ 判据不许为了好测去改产品代码的形状 ✗。
+#[cfg(test)]
+pub(crate) fn is_marked_locked(proto_space: &str) -> bool {
+    match windows().lock() {
+        Ok(g) => g.values().any(|h| {
+            h.locked
+                .lock()
+                .map(|s| s.contains(proto_space))
+                .unwrap_or(false)
+        }),
+        Err(_) => false,
+    }
+}
+
+/// ⭐⭐ **2026-10-24（B：运行期上锁必须摘门）**：会话上锁时，把**所有密文空间**从正在跑的门里摘掉
+/// 并标成 `locked`。回「真的从门里摘下来的」那几个 proto id（排序、去重）。
+///
+/// ## 为什么必须做（真机事故，逐字读数）
+///
+/// ```text
+/// 解锁「保险柜」⇒ served 10→11（它进了窗口的连接表）；
+/// owner 点「锁定」⇒ 界面已回锁定屏，**但门还在服务它**：
+///   [19:35:54] [mesh] 公告：发出 3/3 … ｜ 空间 53d6…
+///   [19:36:24] [mesh] 公告：发出 3/3 … ｜ 空间 53d6…
+/// ⇒ 那条已解锁的 SQLCipher 连接没有随锁关闭 ⇒ 对端照样能把它当明文拉走。
+/// ```
+///
+/// ## 口径（三条，缺一条就会修成半截）
+///
+/// ① **摘"所有密文空间"，不是"活动空间那一个"**：`lock_encryption_impl` 卸的是**会话主密钥**
+///    （`set_session_master(None)`）⇒ 一次掉光所有空间的钥匙。只摘一个，其余照样按明文服务（假修）。
+/// ② **(proto, db) 一律取自 `meta.sync_profiles`** —— 与开窗同一张表（`lan_state::bound_profiles`
+///    是同一把尺 ✓）；⛔ 不从公告/名字反推 ✗。
+/// ③ **"是不是密文"按库文件头判**（`security::space_db_is_encrypted` ✓）—— 与公告里那一格同一个判据。
+///
+/// ⚠️ 摘掉之后**标 `locked`**，不是把人整个拒掉：对端来拉会走"封包"那条路（`serve_locked_outbox`），
+///    而 `sealed` 那一列是 `encrypt_payload` 封的（密文空间用它**自己的**钥匙封，见 `sync.rs`）
+///    ⇒ **锁着仍能同步，但出去的是密文** ✓（S3b 的设计，不是这里的让步）。
+pub fn lock_encrypted_spaces(
+    c: &Connection,
+    dir: &std::path::Path,
+) -> Result<Vec<String>, String> {
+    let encrypted = encrypted_protos(c, dir)?;
+    Ok(detach_from_windows(&encrypted))
+}
+
+/// 「按 `meta.sync_profiles` ＋ 库文件头，本机哪些 proto 空间是**密文**的」——纯挑选，不动门。
+///
+/// ⚠️ 单独一层的理由：判据要能**只验这一步**（挑选错了，后面摘得再对也是摘错人 ✓）。
+fn encrypted_protos(c: &Connection, dir: &std::path::Path) -> Result<Vec<String>, String> {
+    // ① 先把 `(space_id, ws_id)` 原样取出来（⚠️ **不要**直接拿 `space_id` 当"服务的那个空间"：
+    //   个人空间那一列是**空串**，窗口服务它用的是**配对暗号**（`lan_state::window_serve_space` ✓）。
+    //   2026-10-24 实测：保险柜那一行＝ `space_id=''` / `ws_id=99082b5a…`，而公告里的 proto 是 `53d6…`
+    //   ⇒ 按 `space_id` 挑会**挑出 0 个**，于是这个修法会静默无效 ✗（这正是本仓最忌的形状）。
+    let mut raw: Vec<(String, String)> = Vec::new();
+    match c.prepare("SELECT space_id, ws_id FROM meta.sync_profiles") {
+        Ok(mut st) => {
+            let rows = st
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .map_err(|e| format!("查 sync_profiles 失败（这一轮一个空间都没摘）：{e}"))?;
+            for r in rows.flatten() {
+                if !r.1.trim().is_empty() {
+                    raw.push(r);
+                }
+            }
+        }
+        // ⚠️ 没有这张表（老库 / 判据里的裸内存库）⇒ **没有网格空间可摘**，不是错误 ✓。
+        //    ⛔ 也不静默：打一行，别让"本该摘却没摘"变成无声 ✓。
+        Err(e) => {
+            eprintln!("[mesh] 上锁时读不到 sync_profiles（这一轮没摘任何空间，不影响锁本身）：{e}");
+            return Ok(Vec::new());
+        }
+    }
+    // ② 再逐个解析"窗口服务它的那个 id" —— **与开窗同一把尺**（`resolved_space` 是唯一那处解析 ✓）。
+    let mut encrypted: Vec<String> = Vec::new();
+    for (space_id, ws_id) in raw {
+        let proto = crate::lan_state::window_serve_space(c, &space_id, &ws_id);
+        if proto.trim().is_empty() {
+            continue; // 没有暗号/解析不出来 ⇒ 这一行本来就没在服务，没有可摘的 ✓
+        }
+        if crate::security::space_db_is_encrypted(&crate::db::space_db_path(dir, &ws_id)) {
+            encrypted.push(proto);
+        }
+    }
+    encrypted.sort();
+    encrypted.dedup();
+    Ok(encrypted)
+}
+
+/// 把这几号空间从**每一扇门**里摘掉并标 `locked`；回「真从门里摘下来的」那几个。
+///
+/// ⚠️ **不关整扇门**：门里还有别的空间就照常服务（与 `stop_window` 同一条纪律 ✓）。
+fn detach_from_windows(protos: &[String]) -> Vec<String> {
+    let mut done: Vec<String> = Vec::new();
+    let Ok(guard) = windows().lock() else {
+        return done;
+    };
+    for h in guard.values() {
+        for p in protos {
+            // ⚠️ **两件事都要做**：摘连接（否则照旧按明文服务）＋ 标 locked（否则对端连"知道但开不了"
+            //    都拿不到，只会吃 403 ✓）。顺序无所谓，缺一件就是半截 ✓。
+            if h.serves(p) {
+                if h.remove_space(p).is_ok() {
+                    done.push(p.clone());
+                }
+            }
+            h.mark_locked(p);
+        }
+    }
+    done.sort();
+    done.dedup();
+    done
+}
+
 /// ⭐ **U8**：把**这一个空间**从门里摘掉 —— ⚠️ **门里还有别的空间就不关整扇门** ✓。
 ///
 /// T6 的判据就是这条：「**关掉一个空间不许关掉整窗**」✓ ——
@@ -7118,6 +7235,103 @@ mod tests {
         );
         // 收干净：这门注册在全局表里（键＝绑定串），别的判据不能被它影响
         let _ = stop_window("proto-good");
+    }
+
+    /// ⭐⭐ **2026-10-24（B）**：会话上锁 ⇒ 密文空间**真的从门里消失**，**同门的明文空间照常**。
+    ///
+    /// 挡的事故（逐字读数）：界面已回锁定屏之后，门还在每 30 秒喊
+    /// `[19:35:54] [mesh] 公告：发出 3/3 … ｜ 空间 53d6…` ⇒ `served` 里还有它。
+    ///
+    /// **变异**：把 `detach_from_windows` 里那句 `remove_space` 删掉（只留 `mark_locked`）⇒ 本判据立刻红 ——
+    /// 「标了 locked」不等于「不再按明文服务」，这正是 B 与 S3b 的分界 ✓。
+    #[tokio::test]
+    async fn locking_detaches_the_encrypted_space_but_leaves_the_plaintext_one_served() {
+        let dir = temp_dir("b-lock-detach");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        for s in ["s-plain", "s-vault"] {
+            drop(crate::db::open_space_conn_at(s, &dir).unwrap());
+        }
+        let bind = "127.0.0.1:0000";
+        let spaces = vec![
+            ("s-plain".to_string(), "proto-plain".to_string(), false),
+            ("s-vault".to_string(), "proto-vault".to_string(), false),
+        ];
+        ensure_window(&spaces, "dev-me", bind, &dir)
+            .expect("窗口应当起得来")
+            .expect("端口 0 也应当拿到真实地址");
+        assert!(window_serves(bind, "proto-vault"), "前提：两个都先服务着");
+
+        let removed = detach_from_windows(&["proto-vault".to_string()]);
+
+        assert_eq!(removed, vec!["proto-vault".to_string()], "必须报出真的摘了哪一个");
+        assert!(
+            !window_serves(bind, "proto-vault"),
+            "锁上了它就不该还在服务清单里（清单＝`served()`＝公告读的那份）"
+        );
+        assert!(
+            is_marked_locked("proto-vault"),
+            "摘掉的同时要标成「知道但开不了」—— 封包那条路（`is_locked`）要它"
+        );
+        assert!(window_serves(bind, "proto-plain"), "⛔ 不许顺手把同门的明文空间也摘了");
+        let _ = stop_window("proto-plain");
+    }
+
+    /// ⭐⭐ **2026-10-24（B）**：挑选只看**库文件头**（与公告那一格同一判据），⛔ 不看名字/公告格。
+    ///
+    /// ⚠️ **判据里用的就是真机那个形状**：保险柜是**个人空间**（`sync_profiles.space_id` ＝ **空串**），
+    /// 窗口服务它用的是**配对暗号**（`lan_state::window_serve_space` ⇒ `53d6dacb…` 那一号）。
+    /// 若这一处按 `space_id` 挑 ⇒ **挑出 0 个** ⇒ 修法静默无效（2026-10-24 查真库时当场发现 ✓）。
+    ///
+    /// **变异**：把 `window_serve_space(...)` 换回 `space_id` 原样 ⇒ 本判据立刻红（挑不到 `room-vault`）。
+    #[test]
+    fn a_personal_space_is_picked_by_its_room_not_by_the_empty_space_id() {
+        let dir = temp_dir("b-lock-pick");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        // 明文那个（团队档）：真开一个 sqlite（头就是 `SQLite format 3\0`）
+        drop(crate::db::open_space_conn_at("ws-plain", &dir).unwrap());
+        // 密文那个（个人档＝保险柜）：真 SQLCipher 的头**不是** `SQLite format 3\0` ⇒ 造一个同档的文件
+        std::fs::write(crate::db::space_db_path(&dir, "ws-vault"), b"not-a-sqlite-header").unwrap();
+
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-plain', '团队'), ('ws-vault', '保险柜');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES
+                 ('ws-plain', 'proto-team', ''),
+                 ('ws-vault', '',           'room-vault');
+             INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-a');",
+        )
+        .unwrap();
+        // 个人档的"配对暗号"住在设备级那一格（与窗口开窗同一处解析 ✓）
+        crate::mesh::set_mesh_room_device(&c, Some("room-vault")).unwrap();
+
+        let picked = encrypted_protos(&c, &dir).unwrap();
+        // 期望值取自**权威那一处解析**（`window_serve_space` ＝ 窗口开窗用的同一个函数），
+        // ⛔ 不写字面值：个人档解析出来的是**派生的房间号**（真机是 `53d6dacb…` 那一号），
+        //    不是用户填的那串 `mesh_room` ⇒ 写死字面值只会测出"我猜错了"，测不出真 bug。
+        let vault_proto = crate::lan_state::window_serve_space(&c, "", "ws-vault");
+        assert!(
+            !vault_proto.trim().is_empty(),
+            "前提：个人档必须能解析出一个「配对暗号」，否则这个判据什么也没验"
+        );
+        assert_ne!(vault_proto, "ws-vault", "前提：解析出来的不该是库名");
+        assert_eq!(
+            picked,
+            vec![vault_proto],
+            "个人空间必须按**配对暗号**挑出来（按空 `space_id` 挑 ⇒ 一个都挑不到，修法就白修了）"
+        );
+        assert!(
+            !picked.contains(&"proto-team".to_string()),
+            "明文那个⛔ 不许被摘"
+        );
     }
 
     /// ⭐⭐ **矩阵 U8-①：三个空间 ⇒ 一个端口** ＋ **U8-②：每空间独立、不串** ＋
