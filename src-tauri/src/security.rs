@@ -1095,6 +1095,13 @@ pub fn startup_lock(c: &Connection) {
     if let Err(e) = crate::space_crypto::carry_keyring(c) {
         eprintln!("[keyring] 启动载入公开材料失败（解锁时会再报一次）：{e}");
     }
+    // ⭐ 2026-10-24：本地袋子可能**没有空间名**（老路径 / v1 袋建出来的）——
+    //   那样对端拿到公开材料也建不出**同名**空间（只能建"未命名加密空间"，mac 侧 ⑥ 就卡在这）。
+    //   启动时从 `meta.workspaces` 回填一次：只补名字、不动盒子/盐，有变化才写回。
+    //   ⚠️ 写回/升级的那一行日志在 `fill_space_names` 里打（"只抬版本不补名字"也要看得见 ✓）。
+    if let Err(e) = crate::space_crypto::fill_space_names(c) {
+        eprintln!("[keyring] 补空间名/升级公开材料失败（不影响解锁，但对端可能拿不到名字）：{e}");
+    }
     let encrypted = match (
         crate::db::app_data_dir_ref(),
         crate::workspaces::active_workspace_id(c).ok(),
