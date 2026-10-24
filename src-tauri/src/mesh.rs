@@ -3541,10 +3541,12 @@ async fn maybe_report_manifest_gap(
     let peer_manifest = match fetch_peer_manifest(client, peer, space_id, auth_ref, token).await {
         Ok(Some(m)) => m,
         Ok(None) => {
+            // 老对端没有这一档 ⇒ 只压 **30 分钟**（⛔ 不是 6 小时：对方升级后要能很快用上）。
             if let Ok(g) = conn.lock() {
-                let _ = crate::sync::set_meta_state(&g, &stamp_key, &now.to_string());
+                let _ = crate::sync::set_meta_state(&g, &stamp_key, &(now - (TTL_MS - 30 * 60 * 1000)).to_string());
             }
-            return; // 老对端没有这一档
+            eprintln!("[mesh] 对账：对端没有 /mesh/manifest（多半是旧构建）⇒ 30 分钟后再试");
+            return;
         }
         Err(e) => {
             eprintln!("[mesh] 对账（清单）失败（不影响同步）：{e}");
