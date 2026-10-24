@@ -4060,7 +4060,21 @@ let mut unrecognized: Vec<String> = Vec::new();
                                 );
                             }
                         }
-                        let local_stamp_kv = page_stamp(&c, &page.workspace_id, &page.id)
+                        // ⭐ 2026-10-24（真机：同页并发在“只开网格”的形态下**永远不收敛**）：
+                        //   “本页当前那枚戳”的 KV 键是 `hlc_page:<本机 workspace_id>:<page_id>` ——
+                        //   而这里原来用的是**远端载荷里的** `page.workspace_id` ✗。
+                        //   服务器同步时两边空间 id 相同 ⇒ 看不出来；**按名融合的个人空间两边 id 不同**
+                        //   ⇒ 查键永远 miss ⇒ 退回“本地脏就保留本地”那条老路 ⇒ 远端那一版被塞进
+                        //   「待取回的远端版本」、不落库 ⇒ 两边各改一次同页永远合不起来。
+                        //   ⇒ 戳一律按**本机这一页真实的 workspace_id** 查/写（查不到才回落到载荷里的）
+                        let local_ws: String = c
+                            .query_row(
+                                "SELECT workspace_id FROM pages WHERE id = ?1",
+                                params![page.id],
+                                |r| r.get(0),
+                            )
+                            .unwrap_or_else(|_| page.workspace_id.clone());
+                        let local_stamp_kv = page_stamp(&c, &local_ws, &page.id)
                             .map_or(crate::hlc::PayloadStamp::Missing, crate::hlc::PayloadStamp::Ok);
                         let stamp_wins = match crate::hlc::verdict(&local_stamp_kv, &remote_stamp) {
                             crate::hlc::Verdict::ByStamp { remote_wins } => Some(if remote_wins {
@@ -4146,10 +4160,10 @@ let mut unrecognized: Vec<String> = Vec::new();
                                 //   已经落库的这一笔失败（更不许连坐整批）。
                                 let write_back = match (&remote_stamp, &local_stamp_kv) {
                                     (crate::hlc::PayloadStamp::Ok(s), _) => {
-                                        set_page_stamp(&c, &page.workspace_id, &page.id, s)
+                                        set_page_stamp(&c, &local_ws, &page.id, s)
                                     }
                                     (_, crate::hlc::PayloadStamp::Ok(_)) => {
-                                        clear_page_stamp(&c, &page.workspace_id, &page.id)
+                                        clear_page_stamp(&c, &local_ws, &page.id)
                                     }
                                     // 两边本来都没有戳 ⇒ 没什么可动的
                                     _ => Ok(()),
@@ -10086,6 +10100,52 @@ mod tests {
             content_of(&c)
         );
         assert_eq!(page_stamp(&c, "ws", "p1"), Some(late), "赢家是本地 ⇒ 那枚戳不动");
+    }
+
+    /// ⭐ 2026-10-24（真机：**同页并发在“只开网格”的形态下永远不收敛**）：
+    /// 本机那一版戳的 KV 键 = `hlc_page:<**本机** workspace_id>:<page_id>`，而远端载荷里带的
+    /// `workspace_id` 是**它那台**的（按名融合的个人空间两边 id 不同 ✗）。
+    /// 原来读/写都用载荷里那个 ⇒ 查键永久 miss ⇒ 判戳那一步恒走“今天那条路”
+    /// ⇒ 本地脏就保留本地 ⇒ 远端那一版被塞进「待取回的远端版本」、两边永远合不起来
+    /// （真机：owner 在 Windows 落 `WIN-CRDT-0849`，macOS 侧 `dirty=1` 又被原样挡住）。
+    ///
+    /// 判据：两边 `workspace_id` 不同、远端戳更晚 ⇒ **必须采用远端**（且戳写回写在本机那把键上）。
+    /// **变异实测**：把 `local_ws` 那两处换回 `page.workspace_id` ⇒ 本条必红（内容仍是“本地那一版”、
+    /// 「待取回」多一条）。
+    #[test]
+    fn a_peer_stamp_still_wins_when_the_space_ids_differ() {
+        let c = stamped_conn();
+        // 本地这一版：dirty=1（最容易被“本地脏 ⇒ 保留本地”挡住），并在**本机 ws** 那把键上放一枚旧戳
+        seed_local(&c, &page_json("b1", 1, "本地那一版"), 1, 1);
+        let early = stamp_of("ME", 1_000);
+        set_page_stamp(&c, "ws", "p1", &early).unwrap();
+
+        let mut remote = remote_page("p1", &page_json("b1", 1, "远端那一版"));
+        remote.workspace_id = "remote-ws".to_string(); // ⭐ 真实现场：融合同名空间的两边 id 不同
+        let late = stamp_of("PEER", 2_000);
+        apply_pulled_changes(
+            &c,
+            vec![stamped_change(9, &remote, Some(&late))],
+            0,
+            3,
+            crate::doc_content::Ingest::Peer,
+        )
+        .unwrap();
+
+        assert!(
+            content_of(&c).contains("远端那一版"),
+            "戳没生效（按远端 ws 查键 miss ⇒ 退回本地优先）：{}",
+            content_of(&c)
+        );
+        assert_eq!(
+            page_stamp(&c, "ws", "p1"),
+            Some(late),
+            "赢家是远端 ⇒ 戳写回也必须写在本机 ws 那把键上（否则下一轮又 miss）"
+        );
+        let pending: i64 = c
+            .query_row("SELECT COUNT(*) FROM pending_remote_pages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(pending, 0, "戳生效时不该再留「待取回的远端版本」");
     }
 
     /// ★★ 丙-③ **收侧必须把收到的戳并进本机时钟**（HLC 的 `observe`）——
