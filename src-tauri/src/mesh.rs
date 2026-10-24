@@ -41,7 +41,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::hlc;
@@ -3459,8 +3459,26 @@ fn handle_keyring(state: &State) -> Reply {
         );
     };
     let material = match crate::db::open_meta_conn_at(dir) {
-        Ok(meta) => match crate::space_crypto::stored_material(&meta) {
-            Ok(m) => m,
+        // ⚠️ 这里**不能用** `space_crypto::stored_material(&meta)`：它读的是 `meta.sync_state`
+        //   （要求连接已 ATTACH meta），而 `open_meta_conn_at` 给的是**裸 meta 连接** ⇒
+        //   会报 "no such table: meta.sync_state" ⇒ 端点 500 ⇒ 对端永远拿不到材料。
+        Ok(meta) => match meta
+            .query_row("SELECT value FROM sync_state WHERE key = 'keyring'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .optional()
+        {
+            Ok(Some(text)) => match crate::keyring::Keyring::from_json(&text) {
+                Ok(_) => Some(text), // 先验后给：坏材料不许推出去
+                Err(e) => {
+                    return Reply::json(
+                        500,
+                        "Internal Server Error",
+                        json_error(&format!("本机那份公开材料读不懂（⛔ 不推一份坏的上去）：{e}")),
+                    );
+                }
+            },
+            Ok(None) => None,
             Err(e) => {
                 return Reply::json(
                     500,
@@ -3524,7 +3542,8 @@ pub async fn fetch_peer_keyring(
     let status = resp.status();
     let body = resp.text().await.map_err(|e| e.to_string())?;
     if status.as_u16() == 404 {
-        return Ok(None); // 老对端没有这个端点 ⇒ 不是错误
+        eprintln!("[mesh] 取公开材料：对端没有 /mesh/keyring（旧构建？）");
+        return Ok(None);
     }
     if !status.is_success() {
         return Err(format!("取公开材料被拒：HTTP {}：{}", status.as_u16(), body.trim()));
@@ -3532,7 +3551,14 @@ pub async fn fetch_peer_keyring(
     let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("响应不是 JSON：{e}"))?;
     match v.get("material") {
         Some(serde_json::Value::String(s)) if !s.trim().is_empty() => Ok(Some(s.clone())),
-        _ => Ok(None),
+        Some(serde_json::Value::Null) | None => {
+            eprintln!("[mesh] 取公开材料：对端回了空材料（它那边没有钥匙袋？）");
+            Ok(None)
+        }
+        Some(other) => {
+            eprintln!("[mesh] 取公开材料：material 形状不认识：{}", other);
+            Ok(None)
+        }
     }
 }
 
