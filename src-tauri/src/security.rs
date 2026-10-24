@@ -127,7 +127,27 @@ pub fn encrypt_payload(c: &Connection, payload: &str) -> Result<String, String> 
 /// （袋里没有它 ＋ 库文件也不是密文）才原样返回；否则解不开就**报错**（不许把密文当明文读）。
 pub fn decrypt_payload(c: &Connection, payload: &str) -> Result<String, String> {
     match wire_keys_for_conn(c)? {
-        Some(k) => crypto::decrypt_str(payload, &k),
+        Some(k) => match crypto::decrypt_str(payload, &k) {
+            Ok(plain) => Ok(plain),
+            Err(e) => {
+                // ⭐ 2026-10-25（真机：解锁后的加密空间互拉，对端把**明文载荷**发过来）：
+                //   网格这条路上，双方是**已配对**设备；对端已解锁时可能直接发明文 JSON
+                //   （它的库是密文、读出来是明文，沿途按明文送）。我们这边看到的就是
+                //   `Invalid symbol 123, offset 0`（首字符就是 `{`）。
+                //   口径：**只在这种形状下**接受明文（trim 后以 `{`/`[` 开头且能解析成 JSON），
+                //   并**必须打日志**；否则照旧报错（⛔ 不把任意坏串当明文塞进库）。
+                let t = payload.trim_start();
+                let looks_json = t.starts_with('{') || t.starts_with('[');
+                if looks_json && serde_json::from_str::<serde_json::Value>(t).is_ok() {
+                    eprintln!(
+                        "[sync] ⚠️ 加密空间收到的是**明文载荷**（不是密文）：按已配对设备的口径接受它（对端已解锁时可能这样发）"
+                    );
+                    Ok(payload.to_string())
+                } else {
+                    Err(e)
+                }
+            }
+        },
         None => Ok(payload.to_string()),
     }
 }
