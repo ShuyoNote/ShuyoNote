@@ -339,11 +339,12 @@ pub fn run_backup_once() -> i32 {
         return match attachments::migrate_legacy_layout(&dir) {
             Ok(out) => {
                 eprintln!(
-                    "[attachments] headless 布局整理：扫 {} ｜ 复制 {} ｜ 删除 {} ｜ 保留 {} ｜ 读不到的空间 {}",
+                    "[attachments] headless 布局整理：扫 {} ｜ 复制 {} ｜ 删除 {} ｜ 保留 {} ｜ 空目录回收 {} ｜ 读不到的空间 {}",
                     out.scanned,
                     out.copied,
                     out.deleted,
                     out.kept,
+                    out.pruned,
                     out.unreadable_spaces.len()
                 );
                 for n in &out.notes {

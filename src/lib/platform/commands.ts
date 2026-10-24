@@ -1609,6 +1609,8 @@ export interface CommandMap {
       copied: number;
       deleted: number;
       kept: number;
+      /** ⭐ 顺带回收掉的**空目录**数（删文件不删目录 ⇒ 只增不减；2026-10-25 补） */
+      pruned: number;
       unreadable_spaces: string[];
       notes: string[];
     };

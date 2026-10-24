@@ -121,7 +121,7 @@ export function StoragePanel({ label }: { label?: string } = {}) {
         ? ` ｜ 读不到 ${r.unreadable_spaces.length} 个空间 ⇒ 只复制不删`
         : "";
       toast(
-        `布局整理：扫 ${r.scanned} ｜ 复制 ${r.copied} ｜ 删除 ${r.deleted} ｜ 保留 ${r.kept}${tail}`,
+        `布局整理：扫 ${r.scanned} ｜ 复制 ${r.copied} ｜ 删除 ${r.deleted} ｜ 保留 ${r.kept} ｜ 空目录 ${r.pruned}${tail}`,
         "success",
       );
       await refresh();

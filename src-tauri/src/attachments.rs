@@ -181,6 +181,50 @@ pub(crate) fn walk_attachment_files(root: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// ⭐ 回收附件树里的**空目录**（后序删除；⛔ 绝不删根）。回「删了几个」。
+///
+/// ## 为什么需要（2026-10-25 真机）
+///
+/// 删除路径（迁移、`cleanup_orphan_attachments`）**只删文件**，而 `write_attachment_once` 只会**建**目录
+/// ⇒ 于是空目录只增不减：真机量到 261 个目录里 **135 个是空的**
+/// （74 个老桶目录 ＋ 61 个空的空间目录，其中不少对应的空间早就不存在了）。
+///
+/// 代价不是纯观感：`find_attachment_anywhere` 每次按 hash 找文件都要**逐个**读根下这些目录
+/// （95 个顶层、61 个空）⇒ 白付 syscall。而它们**永远不会**再长出文件来（空的空间目录会在下次
+/// `save_image` 时按需重建 ✓）。
+///
+/// ⚠️ 口径：① 只删**空**的；② 深度优先（先删子、再删父）；③ ⛔ 根目录本身不删；
+///    ④ 删不掉只跳过（权限/占用都当"这次先留着"，⛔ 不报错 —— 这是清理，不是业务 ✓）。
+pub(crate) fn prune_empty_attachment_dirs(app_data_dir: &Path) -> usize {
+    prune_empty_dirs_under(&attachments_root(app_data_dir))
+}
+
+/// [`prune_empty_attachment_dirs`] 的"直接给根"版本（给已经有 `att_dir` 的那几处用 ✓）。
+pub(crate) fn prune_empty_dirs_under(root: &Path) -> usize {
+    fn walk(dir: &Path, root: &Path, n: &mut usize) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let entries: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+        for p in entries {
+            if p.is_dir() {
+                walk(&p, root, n);
+            }
+        }
+        // 后序：子目录都处理完了再看自己（⛔ 根不删）
+        if dir != root {
+            if let Ok(mut rd2) = std::fs::read_dir(dir) {
+                if rd2.next().is_none() && std::fs::remove_dir(dir).is_ok() {
+                    *n += 1;
+                }
+            }
+        }
+    }
+    let mut n = 0usize;
+    if root.is_dir() {
+        walk(&root, &root, &mut n);
+    }
+    n
+}
+
 /// ⭐ 一次「整理附件布局」的读数（⛔ 不静默：每一步都要能对账）。
 #[derive(Clone, Default, serde::Serialize)]
 pub struct LegacyLayoutMigration {
@@ -192,6 +236,8 @@ pub struct LegacyLayoutMigration {
     pub deleted: usize,
     /// ⛔ 没删的（有人读不到 / 没有可读引用者 ⇒ 留着）
     pub kept: usize,
+    /// ⭐ 顺带回收掉的**空目录**数（见 `prune_empty_attachment_dirs`）
+    pub pruned: usize,
     /// 打不开的空间（锁着的加密空间）—— 它们一非空，**整批只复制、不删**
     pub unreadable_spaces: Vec<String>,
     /// 逐条说明（谁为什么没搬 / 哪一份复制失败）
@@ -336,6 +382,8 @@ pub(crate) fn migrate_legacy_layout(
             }
         }
     }
+    // ⭐ 2026-10-25：**顺带回收空目录** —— 删完文件后那些空壳没有别的地方会清（见 `prune_empty_attachment_dirs`）。
+    out.pruned = prune_empty_attachment_dirs(app_data_dir);
     Ok(out)
 }
 
@@ -345,11 +393,12 @@ pub async fn attachments_migrate_legacy(app: tauri::AppHandle) -> Result<LegacyL
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let out = migrate_legacy_layout(&dir)?;
     eprintln!(
-        "[attachments] 布局整理：扫 {} ｜ 复制 {} ｜ 删除 {} ｜ 保留 {} ｜ 读不到的空间 {}{}",
+        "[attachments] 布局整理：扫 {} ｜ 复制 {} ｜ 删除 {} ｜ 保留 {} ｜ 空目录回收 {} ｜ 读不到的空间 {}{}",
         out.scanned,
         out.copied,
         out.deleted,
         out.kept,
+        out.pruned,
         out.unreadable_spaces.len(),
         if out.unreadable_spaces.is_empty() {
             String::new()
@@ -359,7 +408,6 @@ pub async fn attachments_migrate_legacy(app: tauri::AppHandle) -> Result<LegacyL
     );
     Ok(out)
 }
-
 #[derive(Clone, serde::Serialize)]
 pub struct ImportProgress {    pub index: usize,
     pub total: usize,
@@ -1916,6 +1964,32 @@ mod cross_space_attachment_tests {
         assert_ne!(p_enc, p_plain, "两边不许共用同一个文件 ✗");
         assert_eq!(std::fs::read(&p_plain).unwrap(), plain, "明文空间那份必须还是明文 ✓");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// ⭐⭐ **2026-10-25**：空目录要能被收掉 —— **只收空的**、**整枝收**、⛔ **根永远不删**。
+    ///
+    /// 真机来由：删文件不删目录 ⇒ 261 个目录里 135 个是空的（74 个老桶 ＋ 61 个空的空间目录）。
+    ///
+    /// **变异**：把 `if dir != root` 去掉 ⇒ 根被删 ⇒ 最后一条断言红。
+    #[test]
+    fn pruning_removes_only_empty_dirs_and_never_the_root() {
+        let dir = temp_dir("prune");
+        let root = attachments_root(&dir);
+        std::fs::create_dir_all(root.join("aa")).unwrap(); // 空桶
+        std::fs::create_dir_all(root.join("bb").join("cc")).unwrap(); // 空的两层
+        std::fs::create_dir_all(root.join("sp-1").join("dd")).unwrap(); // 空间目录里的空桶
+        std::fs::write(root.join("sp-1").join("dd").join("keep.png"), b"x").unwrap(); // 非空
+
+        let n = prune_empty_dirs_under(&root);
+        assert!(root.is_dir(), "⛔ 根目录不许删（那会把整棵树弄没）");
+        assert!(!root.join("aa").exists(), "空桶该收");
+        assert!(!root.join("bb").exists(), "空的两层该整枝收掉");
+        assert!(
+            root.join("sp-1").join("dd").exists(),
+            "有文件的那条不许动（连带它的父目录也不空 ⇒ 留）"
+        );
+        assert!(n >= 3, "至少收掉 aa / cc / bb 三个，实测 {n}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// ⭐⭐ **2026-10-25（C：整理附件布局）**：老布局文件被**一个明文空间**引用 ⇒

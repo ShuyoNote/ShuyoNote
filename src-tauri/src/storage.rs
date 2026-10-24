@@ -568,6 +568,11 @@ pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64
                 let _ = std::fs::remove_file(p);
             }
         }
+        // ⭐ 2026-10-25：删完文件顺手收空目录（否则桶目录只增不减；见 `prune_empty_dirs_under`）
+        let pruned = crate::attachments::prune_empty_dirs_under(&att_dir);
+        if pruned > 0 {
+            eprintln!("[attachments] 清空回收站：顺手回收 {pruned} 个空目录");
+        }
         Ok(freed)
     })
     .await
@@ -915,6 +920,11 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
                 freed += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
                 let _ = std::fs::remove_file(p);
             }
+        }
+        // ⭐ 2026-10-25：删完文件顺手收空目录（否则桶目录只增不减；见 `prune_empty_dirs_under`）
+        let pruned = crate::attachments::prune_empty_dirs_under(&att_dir);
+        if pruned > 0 {
+            eprintln!("[attachments] 清理孤立附件：顺手回收 {pruned} 个空目录");
         }
         Ok(freed)
     })
