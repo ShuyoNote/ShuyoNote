@@ -4435,6 +4435,8 @@ async fn do_pull(
 /// 的两个字段分别喂给两个用途（改前把远端 id 当库名 ⇒ 窗口服务一个空库、一条也换不过去）。
 #[tauri::command]
 pub async fn mesh_sync_now(
+    // ⭐ 2026-10-24：命令面也带 AppHandle —— 拉完若有页被改，要 emit `mesh-applied` 给前端刷新
+    app: tauri::AppHandle,
     db: State<'_, Db>,
     workspace_id: Option<String>,
 ) -> Result<crate::mesh::MeshRoundReport, String> {
@@ -4541,6 +4543,16 @@ pub async fn mesh_sync_now(
         if mesh_history_should_write(&h, last.as_ref(), crate::db::now_ms()) {
             write_sync_history_with(&c, &h.ws_id, h.pushed, h.pulled, h.ok, &h.message, &h.items);
         }
+    }
+    // ⭐ 2026-10-24（页 B 真机：两边各缺一块）：**把“改了哪些页”告诉前端** ——
+    //   网格没有 SSE；不说的话，编辑器里那份旧 doc 之后一保存就盖掉刚并进来的块。
+    let touched = crate::mesh::round_touched_pages(&report);
+    if !touched.is_empty() {
+        use tauri::Emitter;
+        let _ = app.emit(
+            "mesh-applied",
+            serde_json::json!({ "spaceId": scope.db_space, "pages": touched }),
+        );
     }
     Ok(report)
 }

@@ -380,6 +380,16 @@ fn spawn_background_round(
             };
             match round_result {
                 Ok(r) => {
+                    // ⭐ 2026-10-24：后台轮也要告诉前端“改了哪些页”（网格没有 SSE；
+                    //   不刷新的话，编辑器里那份旧 doc 之后一保存就盖掉刚并进来的块）。
+                    let touched = crate::mesh::round_touched_pages(&r);
+                    if !touched.is_empty() {
+                        use tauri::Emitter;
+                        let _ = app2.emit(
+                            "mesh-applied",
+                            serde_json::json!({ "spaceId": db_space, "pages": touched }),
+                        );
+                    }
                     candidates_total += r.candidates;
                     if r.candidates > 0 {
                         found_any = true;

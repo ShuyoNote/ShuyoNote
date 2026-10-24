@@ -348,6 +348,22 @@ function NoteEditor({ pageId }: { pageId: string }) {
     return () => unlisten?.();
   }, []);
 
+  // ⭐ 2026-10-24（真机：页 B 同页并发后两边各缺一块）：**网格那条路没有 SSE** ——
+  //   Rust 后台轮把远端页并进库之后，前端完全不知道；编辑器里那份旧 doc 之后一保存，
+  //   就把刚并进来的块盖掉。这里收到 `mesh-applied` 就刷列表 ＋ 刷新当前页（节流同自动同步那一轮）。
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void platform.event
+      .listen<{ spaceId: string; pages: string[] }>("mesh-applied", () => {
+        void useNotes.getState().loadPages();
+        if (!isLocalEditRecent()) void useNotes.getState().refreshCurrent();
+      })
+      .then((u) => {
+        unlisten = u;
+      });
+    return () => unlisten?.();
+  }, []);
+
   // Restore the team-edition login state on startup (from meta.db session).
   useEffect(() => {
     void useAuth.getState().init();

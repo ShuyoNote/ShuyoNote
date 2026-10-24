@@ -2339,22 +2339,25 @@ fn cap_blocks_list(page_id: Option<&str>, limit: i64) -> CapResult {
         // ★ 读出口走「文档内容」那一层（阶段 0 接口收口）：谓词与原 SQL 逐字相同。
         //   ⚠️ 搬运前的语义是"**任何**取不到（SQL 错误 **或** 页不存在/已软删）都报同一句
         //   `bad_args: 未找到页面`" —— 这里两段 `.map_err` 保留那条语义，不做区分。
-        let content_json: String = crate::doc_content::read(c, &target)
+        //
+        // ⭐ 2026-10-24（真机：**页刚同步下来 `blocks.list` 返回 []，而正文其实在**）：
+        //   这里原来**自己**按 `blockId` 过滤 —— 而「顶层块没有 blockId」是**真实形状**
+        //   （普通页面都没有，见 `doc_content::page_blocks_from_doc` 的说明）⇒ 有正文的页也会返回 []，
+        //   与 2026-10-10 手机阅读屏那次用户可见的错**同形**。
+        //   ⇒ 改走与 Tauri 命令 `get_page_blocks` **同一个提取器**：没有 id 就按位置回退
+        //   `block-<下标>`、空文本块不收（口径只在这一处，⛔ 不许第二份）。
+        let rows = crate::doc_content::page_blocks(c, &target)
             .map_err(|_| format!("bad_args: 未找到页面 {target}"))?
-            .map(|d| d.json)
             .ok_or_else(|| format!("bad_args: 未找到页面 {target}"))?;
-        let v = crate::blocks::parse_json(&content_json).map_err(|e| format!("db_error: {e}"))?;
-        let blocks: Vec<serde_json::Value> = crate::blocks::root_children(&v)
-            .iter()
-            .filter_map(|child| {
-                child.get("blockId").and_then(|b| b.as_str()).map(|id| {
-                    serde_json::json!({
-                        "blockId": id,
-                        "text": crate::blocks::node_text(child).trim(),
-                    })
+        let blocks: Vec<serde_json::Value> = rows
+            .into_iter()
+            .take(limit)
+            .map(|b| {
+                serde_json::json!({
+                    "blockId": b.block_id,
+                    "text": b.text,
                 })
             })
-            .take(limit)
             .collect();
         Ok(serde_json::Value::Array(blocks))
     })
@@ -8190,6 +8193,39 @@ register({ id: "s.run", title: "结构化", run: function () {
             println!("blocks.list {body} -> {n} 块（期望 {want}）");
             assert_eq!(n, want, "参数 {body}");
         }
+    }
+
+    /// ⭐ 2026-10-24（真机：页刚同步下来 `blocks.list` 返回 []，而正文其实在）：
+    /// 「顶层块没有 `blockId`」是**真实形状**（普通页面都没有）—— 这里原来按 `blockId` 过滤，
+    /// 于是**有正文的页也返回 []**（与 2026-10-10 手机阅读屏那次用户可见的错同形）。
+    /// 判据：没有 blockId 的段落也要列出来（id 按位置回退 `block-<下标>`）。
+    #[test]
+    fn blocks_list_lists_paragraphs_without_a_block_id() {
+        let (space, dir) = seed_space("blocks-no-id");
+        let st = state_for_space(&space, &dir);
+        let doc = serde_json::json!({ "root": { "children": [
+            { "type": "paragraph", "children": [{ "type": "text", "text": "第一段" }] },
+            { "type": "paragraph", "children": [{ "type": "text", "text": "第二段" }] },
+        ]}})
+        .to_string();
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at)
+                 VALUES ('pn','s1','无块id',?1,'第一段第二段','page',?2,?2)",
+                params![doc, now_ms()],
+            )
+            .unwrap();
+        }
+        let blocks = call(&st, "blocks.list", r#"{"pageId":"pn"}"#).unwrap();
+        let arr = blocks.as_array().unwrap();
+        assert_eq!(
+            arr.len(), 2,
+            "有正文却返回空（blockId 不是「有没有正文」的判据）：{blocks:?}"
+        );
+        assert_eq!(arr[0]["blockId"], "block-0");
+        assert_eq!(arr[0]["text"], "第一段");
+        assert_eq!(arr[1]["text"], "第二段");
     }
 
     #[test]

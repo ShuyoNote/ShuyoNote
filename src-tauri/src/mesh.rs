@@ -746,6 +746,33 @@ pub struct MeshRoundReport {
     pub window: Option<String>,
 }
 
+/// 这一轮**改到了哪些页**（只读读数：给"同步完刷新当前页"那件事用）。
+///
+/// ⭐ 2026-10-24（真机：同页并发后两边各缺一块）：网格拉取是 **Rust 后台轮**干的，
+/// 应用完远端页**不给前端任何通知** ⇒ 编辑器里那份旧 doc 之后一保存，就把刚并进来的块盖掉。
+/// 服务器那条路有 SSE 通知；网格这条路没有 ⇒ 这里给出"改了哪几页"，由命令面/后台轮
+/// emit `mesh-applied` 事件，前端收到后刷新当前页（与自动同步那一轮同一套节流）。
+///
+/// ⚠️ 只收 `page/upsert`：附件/其它实体不动编辑器；
+/// ⚠️ `applied == 0 && superseded == 0 && awaiting == 0` 的 peer 整台跳过（它这一轮没改任何东西）。
+pub fn round_touched_pages(r: &MeshRoundReport) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for p in &r.peers {
+        if p.applied == 0 && p.superseded == 0 && p.awaiting == 0 {
+            continue;
+        }
+        for it in &p.items {
+            if it.entity == "page"
+                && it.op == "upsert"
+                && !out.iter().any(|x| x == &it.entity_id)
+            {
+                out.push(it.entity_id.clone());
+            }
+        }
+    }
+    out
+}
+
 /// 跟**一台**对端交换一轮：读水位 ⇒ 拉 ⇒ 收下 ⇒ **水位推进到批尾**。
 ///
 /// ⚠️ 锁**不跨 `await`**：读一次、放掉、拉完再拿一次（否则一次网络卡顿会把整个库锁住）。
@@ -7049,4 +7076,71 @@ mod tests {
         assert!(parsed.records.is_empty());
     }
 
+    /// ⭐ 2026-10-24：`round_touched_pages` —— 网格拉完要告诉前端"改了哪些页"，
+    /// 否则编辑器里那份旧 doc 之后一保存，就把刚并进来的块盖掉（真机：页 B 两边各缺一块）。
+    #[test]
+    fn round_touched_pages_lists_the_pages_this_round_changed() {
+        fn item(entity: &str, id: &str, op: &str) -> crate::sync::SyncItem {
+            crate::sync::SyncItem {
+                entity: entity.to_string(),
+                entity_id: id.to_string(),
+                op: op.to_string(),
+                dir: "pull".to_string(),
+                title: String::new(),
+            }
+        }
+        fn peer(
+            applied: usize,
+            superseded: usize,
+            awaiting: usize,
+            items: Vec<crate::sync::SyncItem>,
+        ) -> PeerPullReport {
+            PeerPullReport {
+                peer: "B".to_string(),
+                fetched: items.len(),
+                applied,
+                cursor: 0,
+                max_seq: 0,
+                superseded,
+                awaiting,
+                items,
+                merge: PeerMergeState::Merged,
+                error: None,
+            }
+        }
+        fn report(peers: Vec<PeerPullReport>) -> MeshRoundReport {
+            MeshRoundReport {
+                enabled: true,
+                note: String::new(),
+                candidates: peers.len(),
+                peers,
+                window: None,
+            }
+        }
+
+        // ① 应用了页 ⇒ 收；附件不算；重复的页去重
+        let r = report(vec![peer(
+            2,
+            0,
+            0,
+            vec![
+                item("page", "p1", "upsert"),
+                item("attachment", "a1", "upsert"),
+                item("page", "p1", "upsert"),
+            ],
+        )]);
+        assert_eq!(round_touched_pages(&r), vec!["p1".to_string()]);
+
+        // ② 这一台一个字节都没动 ⇒ 整台跳过（即便 items 里有东西）
+        let r = report(vec![peer(0, 0, 0, vec![item("page", "p1", "upsert")])]);
+        assert!(round_touched_pages(&r).is_empty(), "没改东西的 peer 不许报“改了”");
+
+        // ③ 「等你裁决」（awaiting）也是改了 —— 远端版本进了待取回，编辑器同样要刷新
+        let r = report(vec![peer(0, 0, 1, vec![item("page", "p2", "upsert")])]);
+        assert_eq!(round_touched_pages(&r), vec!["p2".to_string()]);
+
+        // ④ 删除不进（编辑器刷新按页 id 取，删除由列表那条路管）
+        let r = report(vec![peer(1, 0, 0, vec![item("page", "p3", "delete")])]);
+        assert!(round_touched_pages(&r).is_empty());
+    }
 }

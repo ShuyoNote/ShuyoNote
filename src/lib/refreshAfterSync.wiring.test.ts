@@ -41,4 +41,19 @@ describe("同步收口 ⇒ 当前打开的页要重读（接线判据）", () =>
       "useNotes.getState().refreshCurrent()",
     );
   });
+
+  // ⭐ 2026-10-24（真机：页 B 同页并发后两边各缺一块）：**网格那条路没有 SSE** ——
+  //   Rust 后台轮把远端页并进库，前端完全不知道；编辑器里那份旧 doc 之后一保存，
+  //   就把刚并进来的块盖掉。判据：后端两条路都要 emit `mesh-applied`，前端要真的监听并刷新。
+  it("④ 网格（Rust 后台轮/命令面）也发 mesh-applied，前端收到要刷新当前页", () => {
+    const lan = read("src-tauri/src/lan_state.rs");
+    const sync = read("src-tauri/src/sync.rs");
+    expect(lan, "后台轮没发 mesh-applied ⇒ 网格同步后界面永远不知道").toContain('"mesh-applied"');
+    expect(sync, "命令面没发 mesh-applied ⇒ 手动同步那一轮也不会刷新").toContain('"mesh-applied"');
+    const at = app.indexOf('listen<{ spaceId: string; pages: string[] }>("mesh-applied"');
+    expect(at, "前端没监听 mesh-applied").toBeGreaterThan(-1);
+    const body = app.slice(at, at + 700);
+    expect(body, "收到 mesh-applied 没刷新当前页").toContain("refreshCurrent()");
+    expect(body, "没做「正在打字」节流 ⇒ 会在用户打字时重挂编辑器").toContain("isLocalEditRecent()");
+  });
 });
