@@ -286,6 +286,42 @@ impl Keyring {
             .filter(|n| !n.trim().is_empty())
     }
 
+    /// 给**袋里已有的**空间补一个名字（回「真的变了吗」✓）。只补名字，⛔ 不动盒子/盐/参数。
+    ///
+    /// ⚠️ 为什么需要它：本地建出来的袋子 `space_names` 一直是空的（`Keyring::new()` 置空，
+    /// 之后只有"从对端并进来"才会带名字）⇒ 对端拿到材料也**建不出同名空间**，
+    /// 只能建一个"未命名加密空间"（2026-10-24 真机卡在这里 ✓）。
+    ///
+    /// 口径：① 只写它**所在的那一组**（主组与额外组各存各的名字 ✓）；
+    ///      ② 已经是这个名字 ⇒ `false`（调用方据此**不写库** ✓）；
+    ///      ③ 袋里**没有**这个空间 ⇒ `false`（⛔ 不凭空造条目 ✗）。
+    pub fn set_space_name(&mut self, space_id: &str, name: &str) -> bool {
+        let name = name.trim();
+        if name.is_empty() {
+            return false;
+        }
+        let same = |m: &std::collections::BTreeMap<String, String>| {
+            m.get(space_id).map(|n| n.trim() == name).unwrap_or(false)
+        };
+        if self.spaces.contains_key(space_id) {
+            if same(&self.space_names) {
+                return false;
+            }
+            self.space_names.insert(space_id.to_string(), name.to_string());
+            return true;
+        }
+        for g in self.extra_groups.iter_mut() {
+            if g.spaces.contains_key(space_id) {
+                if same(&g.space_names) {
+                    return false;
+                }
+                g.space_names.insert(space_id.to_string(), name.to_string());
+                return true;
+            }
+        }
+        false
+    }
+
     /// 全部空间的 id（各组并集，排序）。
     pub fn space_ids(&self) -> Vec<String> {
         let mut v: Vec<String> = self.spaces.keys().cloned().collect();

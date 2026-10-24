@@ -3450,6 +3450,34 @@ fn query_get(target: &str, key: &str) -> Result<Option<String>, String> {
 /// ① **鉴权与 `/mesh/pull` 同一道门**（`authorized` 已跑在 dispatch 里）—— 未配对/空间不服务 ⇒ 401/403；
 /// ② 返回的是**公开材料**：没有口令、没有裸空间密钥（盒子只有主密钥能解）⇒ 网线上看到它不等于能读；
 /// ③ 没有材料 ⇒ 如实回 `material: null`（⛔ 不编一个空袋子）。
+/// 本机要推给对端的那份**公开材料**：`(原文, 版本)`；`None` ⇒ 本机本来就没有袋子。
+///
+/// ⚠️ **从命令体里抽出来的理由与 `mesh_config_state_at` 同**：挂在命令体里 ⇒ **判据够不着** ✗
+///   —— 而这一格恰恰是"静默不生效"过的地方（见下面 `handle_keyring` 的头注 ✓）。
+///
+/// ⚠️ 读的是**裸 meta 连接**上的 `sync_state`（⛔ 不是 `meta.sync_state` ✗）：
+///   `open_meta_conn_at` 给的就是裸连接，写 `meta.` 前缀会报 "no such table"。
+pub(crate) fn read_public_material(
+    dir: &std::path::Path,
+) -> Result<Option<(String, u16)>, String> {
+    let meta = crate::db::open_meta_conn_at(dir)
+        .map_err(|e| format!("打不开 meta.db（拿不到公开材料）：{e}"))?;
+    let text: Option<String> = meta
+        .query_row("SELECT value FROM sync_state WHERE key = 'keyring'", [], |r| {
+            r.get::<_, String>(0)
+        })
+        .optional()
+        .map_err(|e| format!("本机那份公开材料读不出来（⛔ 不推一份坏的上去）：{e}"))?;
+    let Some(text) = text else {
+        return Ok(None);
+    };
+    // 先验后给：坏的/半截的材料⛔ 不许推出去（推上去等于把对端那份好副本也弄坏）
+    let v = crate::keyring::Keyring::from_json(&text)
+        .map_err(|e| format!("本机那份公开材料读不懂（⛔ 不推一份坏的上去）：{e}"))?
+        .v;
+    Ok(Some((text, v)))
+}
+
 fn handle_keyring(state: &State) -> Reply {
     let Some(dir) = state.cfg.data_dir.as_deref() else {
         return Reply::json(
@@ -3458,47 +3486,11 @@ fn handle_keyring(state: &State) -> Reply {
             json_error("这个窗口没配数据目录 ⇒ 不提供公开材料（设置面该重开一次窗口）"),
         );
     };
-    let material = match crate::db::open_meta_conn_at(dir) {
-        // ⚠️ 这里**不能用** `space_crypto::stored_material(&meta)`：它读的是 `meta.sync_state`
-        //   （要求连接已 ATTACH meta），而 `open_meta_conn_at` 给的是**裸 meta 连接** ⇒
-        //   会报 "no such table: meta.sync_state" ⇒ 端点 500 ⇒ 对端永远拿不到材料。
-        Ok(meta) => match meta
-            .query_row("SELECT value FROM sync_state WHERE key = 'keyring'", [], |r| {
-                r.get::<_, String>(0)
-            })
-            .optional()
-        {
-            Ok(Some(text)) => match crate::keyring::Keyring::from_json(&text) {
-                Ok(_) => Some(text), // 先验后给：坏材料不许推出去
-                Err(e) => {
-                    return Reply::json(
-                        500,
-                        "Internal Server Error",
-                        json_error(&format!("本机那份公开材料读不懂（⛔ 不推一份坏的上去）：{e}")),
-                    );
-                }
-            },
-            Ok(None) => None,
-            Err(e) => {
-                return Reply::json(
-                    500,
-                    "Internal Server Error",
-                    json_error(&format!("本机那份公开材料读不出来（⛔ 不推一份坏的上去）：{e}")),
-                );
-            }
-        },
-        Err(e) => {
-            return Reply::json(
-                500,
-                "Internal Server Error",
-                json_error(&format!("打不开 meta.db（拿不到公开材料）：{e}")),
-            );
-        }
+    let (material, version) = match read_public_material(dir) {
+        Ok(Some((text, v))) => (Some(text), v),
+        Ok(None) => (None, 0),
+        Err(e) => return Reply::json(500, "Internal Server Error", json_error(&e)),
     };
-    let version = material
-        .as_deref()
-        .map(|t| crate::keyring::Keyring::from_json(t).map(|k| k.v).unwrap_or(0))
-        .unwrap_or(0);
     Reply::json(
         200,
         "OK",
@@ -7358,6 +7350,40 @@ mod tests {
             !picked.contains(&"proto-team".to_string()),
             "明文那个⛔ 不许被摘"
         );
+    }
+
+    /// ⭐⭐ **2026-10-24**：`/mesh/keyring` 的取数路径必须能在**裸 meta 连接**上读到东西。
+    ///
+    /// 挡的事故（真机，两轮）：`handle_keyring` 原来调 `space_crypto::stored_material(&meta)`，
+    /// 而它读的是 **`meta.sync_state`**（要求连接已 ATTACH meta）；`open_meta_conn_at` 给的是
+    /// **裸** meta 连接 ⇒ SQL 报 `no such table: meta.sync_state` ⇒ 而 `get_meta_state` 把错误
+    /// **吞成了 `None`** ⇒ 端点回 **200 + `material: null`**（静默，连日志都没有）
+    /// ⇒ 对端永远拿不到公开材料（mac 侧 ⑥ 就卡在这里）。
+    ///
+    /// **变异**：把这段查询改回 `meta.sync_state` ⇒ 本判据红（读成 None）。
+    #[test]
+    fn the_keyring_endpoint_reads_the_material_from_a_bare_meta_connection() {
+        let dir = temp_dir("keyring-endpoint-bare-meta");
+        std::fs::create_dir_all(&dir).unwrap();
+        let bag = concat!(
+            r#"{"v":1,"kdf":{"algo":"argon2id","salt_hex":"00112233445566778899aabbccddeeff","#,
+            r#""m_kib":19456,"t":2,"p":1,"sm_iterations":null},"#,
+            r#""spaces":{"sp-a":{"box_hex":"aabb"}}}"#
+        );
+        {
+            let meta = crate::db::open_meta_conn_at(&dir).unwrap();
+            meta.execute(
+                "INSERT OR REPLACE INTO sync_state (key, value) VALUES ('keyring', ?1)",
+                [bag],
+            )
+            .unwrap();
+        }
+
+        let got = read_public_material(&dir)
+            .expect("读材料不该报错")
+            .expect("裸 meta 连接上必须读得到（曾经这里静默变成 null）");
+        assert_eq!(got.0, bag, "推给对端的必须就是库里那一份原文");
+        assert_eq!(got.1, 1, "版本应当如实报袋子里的 v（v1 就是 1）");
     }
 
     /// ⭐⭐ **矩阵 U8-①：三个空间 ⇒ 一个端口** ＋ **U8-②：每空间独立、不串** ＋
