@@ -147,6 +147,12 @@ pub struct LanAnnounce {
     /// ⚠️ 今天**只发、不用**（判定仍然是"只看名字／回落 id"）；空串 ＝ 这一台没报类别。
     #[serde(default)]
     pub hub_space_kinds: Vec<String>,
+    /// ⭐ 2026-10-24（真机事故：解锁的加密空间被对端按名融合成**明文**空间）：
+    /// **这些空间在对面是不是加密的**（与 `hub_spaces` 一一对应；空 ＝ 没报/老对端）。
+    /// 对端据此**拒绝**把加密空间当普通空间按名建/融合。
+    /// ⚠️ `#[serde(default)]` ⇒ 老对端不发也收得下；⛔ 不升 `WIRE_VERSION`。
+    #[serde(default)]
+    pub hub_space_encrypted: Vec<bool>,
     /// 身份指纹。★ **＝ `device_id`**（owner 2026-09-25 拍板，B 片施工单 §8.3）：
     /// 填的是**应用级事实**（设备标识），**不是**"设备密钥材料的指纹" ——
     /// 它要挡的是**掉包**，不是"同一台设备换了钥匙"。语义不许悄悄改（真需要后者时另立字段）。
@@ -198,6 +204,7 @@ impl Default for LanAnnounce {
             hub_spaces: Vec::new(),
             hub_space_kinds: Vec::new(),
             hub_space_names: Vec::new(),
+            hub_space_encrypted: Vec::new(),
             fp: String::new(),
             trust_ask: String::new(),
             trust_secret: String::new(),
@@ -512,6 +519,8 @@ pub fn announce_for_own_hub(
         } else {
             vec![space_kind.trim().to_string()]
         },
+        // 纯函数拿不到"这个空间是不是加密的" ⇒ 留空（由调用点在之后填，与 pubkey 同一手法）。
+        hub_space_encrypted: Vec::new(),
         // ★ 见上面那段：`fp` ＝ 应用级事实 `device_id`（B 片施工单 §8.3 的收口）。
         fp: dev.to_string(),
     })
@@ -594,6 +603,31 @@ pub fn status_line(
 ///   ⛔ 不猜、⛔ 不把名字错配到别的空间上）；
 /// · 其余字段（base / short_id / pubkey / trust 两格 / fp / device_name / v）**最新一条优先**，
 ///   但新值为空时保留旧的（公告里"没报"不等于"撤回了"）。
+/// ⭐ 2026-10-24：这条公告里"某个空间是不是加密的"（`None` ＝ 没报/对不齐 ⇒ 不知道）。
+///
+/// 匹配口径与 [`serves_space`] 一致：先按 `hub_spaces` 字面量比；再按名字比。
+pub fn announced_encrypted_for(p: &crate::lan::Peer, want: &str, want_name: &str) -> Option<bool> {
+    let a = &p.announce;
+    if a.hub_space_encrypted.len() != a.hub_spaces.len() {
+        return None;
+    }
+    let want = want.trim();
+    for (i, s) in a.hub_spaces.iter().enumerate() {
+        if !want.is_empty() && s.trim() == want {
+            return Some(*a.hub_space_encrypted.get(i).unwrap_or(&false));
+        }
+    }
+    let want_name = want_name.trim();
+    if !want_name.is_empty() && a.hub_space_names.len() == a.hub_spaces.len() {
+        for (i, n) in a.hub_space_names.iter().enumerate() {
+            if n.trim() == want_name {
+                return Some(*a.hub_space_encrypted.get(i).unwrap_or(&false));
+            }
+        }
+    }
+    None
+}
+
 fn merge_announce(old: &LanAnnounce, new: &LanAnnounce) -> LanAnnounce {
     fn triples(a: &LanAnnounce) -> Option<Vec<(String, String, String)>> {
         let aligned = a.hub_space_names.len() == a.hub_spaces.len()
@@ -650,6 +684,24 @@ fn merge_announce(old: &LanAnnounce, new: &LanAnnounce) -> LanAnnounce {
         out.hub_spaces = v.iter().map(|(s, _, _)| s.clone()).collect();
         out.hub_space_names = v.iter().map(|(_, n, _)| n.clone()).collect();
         out.hub_space_kinds = v.iter().map(|(_, _, k)| k.clone()).collect();
+        // ⭐ 2026-10-24：加密标记只在**两边都按 1:1 对齐**时合并；任一侧没报 ⇒ 整格留空（＝不知道）。
+        let enc_aligned = old.hub_space_encrypted.len() == old.hub_spaces.len()
+            && new.hub_space_encrypted.len() == new.hub_spaces.len();
+        if enc_aligned {
+            let find = |a: &LanAnnounce, space: &str| {
+                a.hub_spaces
+                    .iter()
+                    .position(|s| s.trim() == space)
+                    .map(|i| a.hub_space_encrypted[i])
+            };
+            out.hub_space_encrypted = out
+                .hub_spaces
+                .iter()
+                .map(|s| find(new, s).or_else(|| find(old, s)).unwrap_or(false))
+                .collect();
+        } else {
+            out.hub_space_encrypted = Vec::new();
+        }
     } else {
         // 对不齐时只并 `hub_spaces`（名字/类别整格留空）
         let mut spaces: Vec<String> = Vec::new();
@@ -662,6 +714,7 @@ fn merge_announce(old: &LanAnnounce, new: &LanAnnounce) -> LanAnnounce {
         out.hub_spaces = spaces;
         out.hub_space_names = Vec::new();
         out.hub_space_kinds = Vec::new();
+        out.hub_space_encrypted = Vec::new();
     }
     if out.hub_base.as_deref().map(str::trim).unwrap_or("").is_empty() {
         out.hub_base = old.hub_base.clone();
@@ -1152,6 +1205,7 @@ mod tests {
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -1301,6 +1355,7 @@ mod tests {
             hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
             hub_space_kinds: Vec::new(),
             hub_space_names: Vec::new(),
+            hub_space_encrypted: Vec::new(),
             fp: "fp".into(),
             pubkey: String::new(),
         }
@@ -2107,6 +2162,7 @@ mod multi_space_peer_table_tests {
             hub_base: Some(base.to_string()),
             hub_spaces: vec![space.to_string()],
             hub_space_names: vec![name.to_string()],
+            hub_space_encrypted: Vec::new(),
             hub_space_kinds: vec![kind.to_string()],
             fp: device.to_string(),
         }

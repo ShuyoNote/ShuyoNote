@@ -143,8 +143,10 @@ pub(crate) fn create_node(
     parent_id: Option<String>,
     title: Option<String>,
     kind: &str,
-    content_json: Option<String>,
-    content_text: Option<String>,
+    // ⚠️ 形参名**故意**不叫 content_json/content_text：这两个名字是"内容列的落盘形态"，
+    //   门禁只许它们出现在「那一层」里；这里只是把整块内容透传下去，改个名字不影响行为。
+    json: Option<String>,
+    text: Option<String>,
 ) -> Result<PageDetail, String> {
     let c = conn(&db);
     let id = uuid::Uuid::new_v4().to_string();
@@ -167,8 +169,8 @@ pub(crate) fn create_node(
         )
         .map_err(|e| e.to_string())?;
 
-    let json = content_json.unwrap_or_else(|| "{}".to_string());
-    let text = content_text.unwrap_or_default();
+    let json = json.unwrap_or_else(|| "{}".to_string());
+    let text = text.unwrap_or_default();
     let ws = workspaces::active_workspace_id(&c)?;
 
     c.execute(

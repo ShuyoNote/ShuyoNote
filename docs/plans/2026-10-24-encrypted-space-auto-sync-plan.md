@@ -115,6 +115,28 @@ P3 锁着也能被发现/搬运
 
 · 仍待做：**只凭设备卡取公开材料**（两边都只有加密空间且都锁着时的起步）。
 
+## 五之二、真机事故与修法 A（2026-10-24 晚）
+
+```text
+事故：Windows 那台解锁「保险柜」后，它**以名字**出现在公告里 ⇒ 本机"同名融合"把
+      加密空间当普通空间**自动建了一个明文空间**并拉了 7 页可读正文（本地明文副本）。
+处置：本机立刻删掉该空间的库/meta 行/同步档案与 /tmp 备份；复核 `name='保险柜'` 计数 0。
+根因：
+  A1 公告里没有"这个空间是不是加密的"这一格 ⇒ 对端只能按名猜；
+  A2 公告里名字/类别与空间没有强绑定（旧对端可能只发名字）⇒ 只能靠对齐数组；
+  A3 自动建空间闸只看"对端 personal"，不看"对端加密"。
+修法（本笔）：
+  · `LanAnnounce` 新增 `hub_space_encrypted: Vec<bool>`（与 `hub_spaces` 一一对应；空＝没报）。
+  · 公告产出点按**本机库文件头**判加密（`space_db_is_encrypted`）并填这一格；
+    合并公告时只在**两边都对齐**时合并，否则整格留空（＝不知道，⛔ 不猜明文）。
+  · `auto_create_space_decision` 新增 `peer_encrypted` 闸 ⇒ `Skip("peer_encrypted")`
+    （加密对端**绝不**在本机建明文空间；正确路径是公开材料＋解锁后按 id 建密文空间）。
+  · `mesh_peers_by_name` 新增 `local_encrypted`：候选里"一边加密一边明文"**直接跳过并记日志**；
+    老对端没报这一格 ⇒ 照旧按 id/房间配（不把升级期变成断连）。
+  · 判据：`an_encrypted_peer_is_not_paired_with_a_plaintext_local_space`、
+    `the_auto_create_gate_refuses_every_unsafe_case`（新增 peer_encrypted 一格）。
+```
+
 ## 六、安全边界（写死）
 
 ```text

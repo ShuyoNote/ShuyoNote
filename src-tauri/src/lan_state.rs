@@ -614,6 +614,7 @@ pub fn announces_for_with_mesh(
                 hub_base: None,
                 hub_spaces: Vec::new(),
                 hub_space_kinds: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 hub_space_names: if space_name.is_empty() {
                     Vec::new()
                 } else {
@@ -651,6 +652,14 @@ pub fn announces_for_with_mesh(
         //   口径与 `lan.rs:510` 同一把：**空才发空**，否则一个元素。
         if a.hub_base.is_some() && a.hub_space_kinds.is_empty() && !space_kind.is_empty() {
             a.hub_space_kinds = vec![space_kind.to_string()];
+        }
+        // ⭐ 2026-10-24：补"这个空间是否加密"（与 `hub_spaces` 一一对应；取不到目录 ⇒ 留空＝不知道）。
+        if a.hub_spaces.len() == 1 {
+            if let Some(dir) = crate::db::app_data_dir_ref() {
+                a.hub_space_encrypted = vec![crate::security::space_db_is_encrypted(
+                    &crate::db::space_db_path(dir, ws.trim()),
+                )];
+            }
         }
         out.push(a);
     }
@@ -1380,6 +1389,7 @@ mod tests {
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -2027,6 +2037,7 @@ mod short_id_tests {
                 hub_spaces: Vec::new(),
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },

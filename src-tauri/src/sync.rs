@@ -550,10 +550,16 @@ pub fn auto_create_space_decision(
     tombstoned: &[String],
     paired: bool,
     encryption_on: bool,
+    peer_encrypted: bool,
 ) -> AutoCreateSpace {
     let name = peer_name.trim();
     if !paired {
         return AutoCreateSpace::Skip("not_paired");
+    }
+    // ⭐ 2026-10-24（真机：加密空间被按名融合成明文）：**对端这个空间是加密的 ⇒ 绝不按名建明文空间**。
+    //   正确路径是"公开材料 ＋ 解锁后按 id 建密文空间"（见 plan §四）。
+    if peer_encrypted {
+        return AutoCreateSpace::Skip("peer_encrypted");
     }
     // ⚠️ 逐字：`personal` 才建；`team`／空串／别的写法一律不建（⛔ 不猜"没报就是个人"）。
     if peer_kind.trim() != "personal" {
@@ -604,7 +610,8 @@ pub fn peer_spaces_to_create(
         //    短的那一侧缺的格子当空串处理（⛔ 不许越界、⛔ 不许用下标去猜）。
         for (i, name) in p.announce.hub_space_names.iter().enumerate() {
             let kind = p.announce.hub_space_kinds.get(i).map(String::as_str).unwrap_or("");
-            match auto_create_space_decision(name, kind, local, tombstoned, is_paired, encryption_on) {
+            let peer_encrypted = crate::lan::announced_encrypted_for(p, "", name).unwrap_or(false);
+            match auto_create_space_decision(name, kind, local, tombstoned, is_paired, encryption_on, peer_encrypted) {
                 AutoCreateSpace::Create => {
                     let n = name.trim().to_string();
                     if !out.iter().any(|(x, _)| x == &n) {
@@ -1948,7 +1955,11 @@ pub async fn download_attachment(
             } else {
                 String::new()
             };
-            let candidates = crate::mesh::mesh_peers_by_name(&proto, &name, &device, &peers);
+            let local_encrypted = c
+                .path()
+                .map(|p| crate::security::space_db_is_encrypted(std::path::Path::new(p)))
+                .unwrap_or(false);
+            let candidates = crate::mesh::mesh_peers_by_name(&proto, &name, &device, &peers, local_encrypted);
             (candidates, proto)
         }
     };
@@ -3585,7 +3596,11 @@ pub(crate) fn note_pending_trust_asks(
     } else {
         String::new()
     };
-    let candidates = crate::mesh::mesh_peers_by_name(proto_space, &name, my_device, peers);
+    let local_encrypted = c
+        .path()
+        .map(|p| crate::security::space_db_is_encrypted(std::path::Path::new(p)))
+        .unwrap_or(false);
+    let candidates = crate::mesh::mesh_peers_by_name(proto_space, &name, my_device, peers, local_encrypted);
     let row = crate::mesh::paired_row_key(proto_space, device_level);
     let mut registered: Vec<String> = Vec::new();
     for dev in asks {
@@ -5996,6 +6011,7 @@ mod r146_mesh_scope_tests {
                     hub_spaces: vec![scope.space.clone()],
                     hub_space_kinds: Vec::new(),
                     hub_space_names: Vec::new(),
+                    hub_space_encrypted: Vec::new(),
                     fp: "fp".into(),
                     pubkey: peer_pk.clone(),
                 },
@@ -8373,54 +8389,60 @@ mod tests {
 
         // ① 正常：已配对 ＋ 对端 personal ＋ 本机没同名 ⇒ 建
         assert_eq!(
-            auto_create_space_decision("客户", "personal", &local, &none, true, false),
+            auto_create_space_decision("客户", "personal", &local, &none, true, false, false),
             AutoCreateSpace::Create
+        );
+
+        // ①b ⭐ 2026-10-24：**对端那个空间是加密的 ⇒ 绝不按名建明文空间**（真机事故的闸）。
+        assert_eq!(
+            auto_create_space_decision("保险柜", "personal", &local, &none, true, false, true),
+            AutoCreateSpace::Skip("peer_encrypted")
         );
 
         // ② G1：没配对 ⇒ 不建（⛔ 任何情况下都不许未配对设备往本机建空间）
         assert_eq!(
-            auto_create_space_decision("客户", "personal", &local, &none, false, false),
+            auto_create_space_decision("客户", "personal", &local, &none, false, false, false),
             AutoCreateSpace::Skip("not_paired")
         );
 
         // ③ G2：对端是 team ／ 没报类别 ⇒ 不建
         assert_eq!(
-            auto_create_space_decision("客户", "team", &local, &none, true, false),
+            auto_create_space_decision("客户", "team", &local, &none, true, false, false),
             AutoCreateSpace::Skip("not_personal")
         );
         assert_eq!(
-            auto_create_space_decision("客户", "", &local, &none, true, false),
+            auto_create_space_decision("客户", "", &local, &none, true, false, false),
             AutoCreateSpace::Skip("not_personal")
         );
 
         // ④ 本机已有同名**个人**空间 ⇒ 不是"建"，是"路由过去"
         assert_eq!(
-            auto_create_space_decision("运营", "personal", &local, &none, true, false),
+            auto_create_space_decision("运营", "personal", &local, &none, true, false, false),
             AutoCreateSpace::Skip("exists")
         );
         // ⚠️ 边角：本机有同名但那是 **team** ⇒ 仍然算"没有同名个人空间" ⇒ 允许建
         //   （team 与 personal 是两回事；团队空间不参与按名融合 ✓）
         assert_eq!(
-            auto_create_space_decision("产品", "personal", &local, &none, true, false),
+            auto_create_space_decision("产品", "personal", &local, &none, true, false, false),
             AutoCreateSpace::Create
         );
 
         // ⑤ G3 墓碑：这个名字本机删过 ⇒ 不再建（专治"删了又活"）
         let tomb = vec!["客户".to_string()];
         assert_eq!(
-            auto_create_space_decision("客户", "personal", &local, &tomb, true, false),
+            auto_create_space_decision("客户", "personal", &local, &tomb, true, false, false),
             AutoCreateSpace::Skip("tombstoned")
         );
 
         // ⑥ 加密：本机开着加密 ⇒ 不在加密盘上建明文空间
         assert_eq!(
-            auto_create_space_decision("客户", "personal", &local, &none, true, true),
+            auto_create_space_decision("客户", "personal", &local, &none, true, true, false),
             AutoCreateSpace::Skip("encrypted")
         );
 
         // ⑦ 空名 ⇒ 不建
         assert_eq!(
-            auto_create_space_decision("   ", "personal", &local, &none, true, false),
+            auto_create_space_decision("   ", "personal", &local, &none, true, false, false),
             AutoCreateSpace::Skip("no_name")
         );
     }
@@ -9335,6 +9357,7 @@ mod tests {
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -10819,6 +10842,7 @@ mod tests {
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 fp: device.to_string(),
                 pubkey: String::new(),
             },
@@ -11395,6 +11419,7 @@ mod tests {
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 fp: "fp".into(),
                 // ⭐ 2026-10-17：双向登记要**对面那把公钥**（第 3 步之后唯一凭证 ✓）⇒ 夹具必须给合法的 ✓
                 pubkey: "ab".repeat(32),

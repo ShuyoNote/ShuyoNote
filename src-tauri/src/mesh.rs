@@ -617,7 +617,7 @@ pub fn invitable_base_for(
 /// ⚠️ 这里用的是甲-1 那块砖（`LanAnnounce` 的 `hub_base` / `hub_spaces`）：**发现层三档共用**，
 /// 丙 只是把"谁在代言"读成"谁可以被直接拉"。
 pub fn mesh_peers(space_id: &str, my_device: &str, peers: &[crate::lan::Peer]) -> Vec<MeshPeer> {
-    mesh_peers_by_name(space_id, "", my_device, peers)
+    mesh_peers_by_name(space_id, "", my_device, peers, false)
 }
 
 /// ⭐ **2026-10-19（B1 步三）**：[`mesh_peers`] 的**按名**版本 —— 个人空间用这个：
@@ -628,12 +628,28 @@ pub fn mesh_peers_by_name(
     space_name: &str,
     my_device: &str,
     peers: &[crate::lan::Peer],
+    local_encrypted: bool,
 ) -> Vec<MeshPeer> {
     if space_id.trim().is_empty() && space_name.trim().is_empty() {
         return Vec::new();
     }
     let mut out: Vec<MeshPeer> = Vec::new();
     for p in peers {
+        // ⭐ 2026-10-24（真机：加密空间被按名融合成明文）：
+        //   **加密/明文不一致 ⇒ 不配这一对**（⛔ 不把加密空间的内容拉进明文库，反之亦然）。
+        //   对面没报这一格（老对端）⇒ `None` ⇒ 照旧按 id/房间配（不把升级期变成断连）。
+        if let Some(peer_enc) = crate::lan::announced_encrypted_for(p, space_id, space_name) {
+            if peer_enc != local_encrypted {
+                eprintln!(
+                    "[mesh] 跳过对端 {}：空间 {} 的加密状态不一致（对面 {}，本机 {}）⇒ 不配对",
+                    p.announce.device_id.chars().take(8).collect::<String>(),
+                    crate::lan::mask_space(space_id),
+                    if peer_enc { "加密" } else { "明文" },
+                    if local_encrypted { "加密" } else { "明文" },
+                );
+                continue;
+            }
+        }
         let Some(base) = invitable_base_for(space_id, space_name, my_device, p) else {
             continue;
         };
@@ -1619,7 +1635,12 @@ pub async fn round(
             window: None,
         });
     };
-    let candidates = mesh_peers_by_name(space_id, &space_name, my_device, peers);
+    let local_encrypted = conn
+        .lock()
+        .ok()
+        .and_then(|g| g.path().map(|p| crate::security::space_db_is_encrypted(std::path::Path::new(p))))
+        .unwrap_or(false);
+    let candidates = mesh_peers_by_name(space_id, &space_name, my_device, peers, local_encrypted);
     if candidates.is_empty() {
         return Ok(MeshRoundReport {
             enabled: true,
@@ -3853,7 +3874,8 @@ pub async fn sealed_round(
     } else {
         crate::db::sha256_hex(name.trim())
     };
-    let targets = mesh_peers_by_name(proto_space, &name, my_device, peers);
+    let local_encrypted = crate::security::space_db_is_encrypted(&crate::db::space_db_path(dir, db_space));
+    let targets = mesh_peers_by_name(proto_space, &name, my_device, peers, local_encrypted);
     if targets.is_empty() {
         return Ok(MeshRoundReport {
             enabled: true,
@@ -4724,6 +4746,7 @@ mod tests {
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -4783,6 +4806,7 @@ mod tests {
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 fp: device.to_string(),
                 pubkey: String::new(),
             },
@@ -4820,20 +4844,20 @@ mod tests {
     fn peer_selection_is_by_transport_scope_not_by_name() {
         let named = vec![announced_named("B", "http://192.168.1.3:8787", "sp-remote", "产品")];
         assert!(
-            mesh_peers_by_name("sp-local", "产品", "me", &named).is_empty(),
+            mesh_peers_by_name("sp-local", "产品", "me", &named, false).is_empty(),
             "① 对端服务的是**别的**房间 ⇒ ⛔ 不挑（传输作用域不同）"
         );
 
         let same_room_other_name =
             vec![announced_named("C", "http://192.168.1.4:8787", "sp-local", "运营")];
-        let got = mesh_peers_by_name("sp-local", "产品", "me", &same_room_other_name);
+        let got = mesh_peers_by_name("sp-local", "产品", "me", &same_room_other_name, false);
         assert_eq!(got.len(), 1, "② 同一房间、名字不同 ⇒ **要挑中**（名字交给落库那层判）");
         assert_eq!(got[0].device_id, "C");
 
         let old = vec![announced("D", "http://192.168.1.5:8787", &["sp-local"])];
-        assert_eq!(mesh_peers_by_name("sp-local", "产品", "me", &old).len(), 1, "③ 老对端按 id");
+        assert_eq!(mesh_peers_by_name("sp-local", "产品", "me", &old, false).len(), 1, "③ 老对端按 id");
         let old_other = vec![announced("E", "http://192.168.1.6:8787", &["other"])];
-        assert!(mesh_peers_by_name("sp-local", "产品", "me", &old_other).is_empty());
+        assert!(mesh_peers_by_name("sp-local", "产品", "me", &old_other, false).is_empty());
     }
 
     // ─────────────────────────── 服务侧：没有账本 ───────────────────────────
@@ -6034,6 +6058,20 @@ mod tests {
         // ④ 服务端那条也报过错 ⇒ 一并带上（用户要能分辨"服务器没成"与"对端没有"）
         let s = crate::sync::attachment_fetch_failure(Some("服务端 返回 401"), "space-x", 1, &["A：x".to_string()]);
         assert!(s.contains("服务端：服务端 返回 401"), "{s}");
+    }
+
+    /// ⭐ 2026-10-24（真机事故）：**加密空间不许和明文空间配对**（否则内容落进明文库）。
+    #[test]
+    fn an_encrypted_peer_is_not_paired_with_a_plaintext_local_space() {
+        let mut p = lan_peer_of("dev-win", Some("http://10.0.0.9:8788"), &["room-enc"]);
+        p.announce.hub_space_encrypted = vec![true];
+        // 本机明文 ⇒ 拒绝
+        assert!(
+            mesh_peers_by_name("room-enc", "保险柜", "me", &[p.clone()], false).is_empty(),
+            "加密对端不许配明文本机"
+        );
+        // 本机也是加密 ⇒ 允许
+        assert_eq!(mesh_peers_by_name("room-enc", "保险柜", "me", &[p], true).len(), 1);
     }
 
     /// ⭐ 2026-10-24（P3 对账）：`/mesh/manifest` 是真路由；缺页判定是纯函数（可单测）。
