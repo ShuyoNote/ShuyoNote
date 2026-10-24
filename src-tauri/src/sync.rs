@@ -878,6 +878,11 @@ pub(crate) fn create_peer_spaces_by_name(
                 params![format!("mesh_bind:{id}"), b],
             );
         }
+        // ⭐ 2026-10-24（真机现场）：**新空间必须同时有 `sync_profiles` 那一行**，否则它进不了窗口。
+        //   实测：从面板建出来的空间在 `meta.workspaces` 与 `spaces/` 里都有，但 `sync_profiles` 没行
+        //   ⇒ `mesh_cfgs`（＝窗口要服务的清单）里看不到它 ⇒ 用户还得再去设置面点一次保存才生效。
+        //   口径与 `mesh_set_config` 里那句同一件事（那边是"保存时才补"，这里是"建的时候就补"）。
+        ensure_local_profile_row(c, &id).map_err(|e| e.to_string())?;
         created.push(cand.name.clone());
     }
     Ok(created)
