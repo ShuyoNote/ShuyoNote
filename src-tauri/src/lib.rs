@@ -310,7 +310,9 @@ pub fn run_backup_once() -> i32 {
     // ⭐ 无头路径用的是**裸 Builder** ✗ ⇒ 它不带 `run()` 那条链（插件 ＋ `.setup()` ✓）
     //    ⇒ ⭐ `Db` 不会有人托管 ✓ —— 这就是上一轮量到「数据库 5 秒内没就绪 ⇒ 包数 0」的根因 ✓
     //    ⇒ ⭐ 这里**照 `setup()` 里那三步**自己来 ✓（⛔ 不多复制别的：不建窗口、不起插件 ✓）
-    let mut app_data_dir_for_migration: Option<std::path::PathBuf> = None;
+    // ⚠️ 先声明、后赋值（不是 `= None` 再覆盖）—— 否则会多一条 `value assigned is never read` 的警告
+    //    （2026-10-25 实测：那条警告就是这么来的 ✓）
+    let app_data_dir_for_migration: std::path::PathBuf;
     {
         use tauri::Manager;
         let app_data_dir = match db::resolve_app_data_dir(app.path().app_data_dir().ok()) {
@@ -329,14 +331,11 @@ pub fn run_backup_once() -> i32 {
         };
         security::startup_lock(&conn);
         app.manage(Db(Mutex::new(conn)));
-        app_data_dir_for_migration = Some(app_data_dir);
+        app_data_dir_for_migration = app_data_dir;
     }
     // ⭐ 2026-10-25：**分岔只在最后一步**（初始化共用 ⇒ 两条无头路径的"能起得来"口径一致 ✓）
     if mode == CliMode::MigrateAttachments {
-        let Some(dir) = app_data_dir_for_migration else {
-            eprintln!("[attachments] 拿不到应用数据目录 ⇒ 不迁移");
-            return 2;
-        };
+        let dir = app_data_dir_for_migration;
         return match attachments::migrate_legacy_layout(&dir) {
             Ok(out) => {
                 eprintln!(

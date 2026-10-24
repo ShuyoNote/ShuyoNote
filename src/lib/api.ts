@@ -696,6 +696,11 @@ export const api = {
   storageStats: () => invoke("storage_stats"),
   clearTrash: () => invoke("clear_trash"),
   cleanupOrphanAttachments: () => invoke("cleanup_orphan_attachments"),
+  /**
+   * ⭐ 2026-10-25：**整理附件布局**（老布局 → 按空间）。
+   * ⚠️ 加密空间的那些**必须先解锁**才处理（锁着读不到它的库 ⇒ 闸门只让复制、不让删）。
+   */
+  attachmentsMigrateLegacy: () => invoke("attachments_migrate_legacy"),
   /** ⭐ 清孤儿派生行（`att_id` 已不在 `attachments` 里）—— 只清可重建的派生缓存 ✓。 */
   cleanupOrphanDerived: () => invoke("cleanup_orphan_derived"),
   cleanupOldVersions: (maxKeep?: number) => invoke("cleanup_old_versions", { maxKeep }),

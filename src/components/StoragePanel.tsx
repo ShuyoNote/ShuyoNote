@@ -99,8 +99,40 @@ export function StoragePanel({ label }: { label?: string } = {}) {
     }
   };
 
-  const segments = useMemo<Segment[]>(() => {
-    if (!stats) return [];
+  /**
+   * ⭐ 2026-10-25：**整理附件布局**（老布局 → 按空间）。
+   * ⚠️ 与 `run` 分开：它回的不是"释放多少字节"，而是一份**对账读数**（扫／复制／删除／保留／读不到）。
+   * ⚠️ 加密空间那些**必须先解锁**才处理 —— 锁着时闸门只让复制、不让删。
+   */
+  const migrateLayout = async () => {
+    if (
+      !(await confirmDialog({
+        title: "整理附件布局",
+        message:
+          "把老布局（所有空间共用一份）里的附件，按引用者复制进各空间自己的目录。\n只有「每个引用者都各有一份」且「没有打不开的空间」时才删除老文件。\n加密空间需要先解锁才能处理（锁着时只复制、不删）。\n确定继续？",
+        danger: true,
+      }))
+    )
+      return;
+    setBusy(true);
+    try {
+      const r = await api.attachmentsMigrateLegacy();
+      const tail = r.unreadable_spaces.length
+        ? ` ｜ 读不到 ${r.unreadable_spaces.length} 个空间 ⇒ 只复制不删`
+        : "";
+      toast(
+        `布局整理：扫 ${r.scanned} ｜ 复制 ${r.copied} ｜ 删除 ${r.deleted} ｜ 保留 ${r.kept}${tail}`,
+        "success",
+      );
+      await refresh();
+    } catch (e) {
+      toast(`操作失败：${e}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const segments = useMemo<Segment[]>(() => {    if (!stats) return [];
     return [
       { key: "db", label: "数据库", bytes: stats.db_bytes, color: "var(--cat-blue)" },
       {
@@ -263,6 +295,17 @@ export function StoragePanel({ label }: { label?: string } = {}) {
                           }
                         >
                           清理
+                        </button>
+                      </div>
+                      <div className="stg-row">
+                        <div className="stg-row-text">
+                          <div className="stg-row-name">整理附件布局</div>
+                          <div className="stg-row-sub">
+                            把「老布局」（所有空间共用一份）的附件复制进它引用的各空间目录；只有在每个引用者都各有一份、且没有空间读不到时才删老文件
+                          </div>
+                        </div>
+                        <button className="stg-btn" disabled={busy} onClick={() => void migrateLayout()}>
+                          整理
                         </button>
                       </div>
                       <div className="stg-row">
