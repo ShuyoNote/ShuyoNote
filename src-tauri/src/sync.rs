@@ -1084,6 +1084,51 @@ fn absorb_incoming_crdt_state(
 /// ⚠️ `stamp == None` 时**逐字节等于今天**（连代码都是同一处：`doc_content::merge`）——这条由
 /// 既有那一整批 `doc_content` / `sync` 判据看着（它们一条都不带戳）。
 /// ⚠️ 戳**只决定页级**谁赢；块级怎么合仍然在 `apply_remote_page` 里（两侧改不同块 ⇒ 两边都留）。
+/// ⭐ 2026-10-24（真机：**题头图/图标没有同步**）：远端页载荷**没写** `cover` / `icon` /
+/// `cover_height` / `cover_pos` 那几格时，**保留本机现值** ✓。
+///
+/// 为什么必须补这一刀：`PageDetail` 给这四格都挂了 `#[serde(default)]`（'' / 300 / 50），
+/// 老对端的载荷里**根本没有**这几格 ⇒ 反序列化会得到"空封面"的默认值 ⇒ 应用时把本机
+/// 用户设过的封面/图标**抹掉**（那是"没发"被当成"发了个空"）。口径与 `local_space_name`
+/// 那条同一条：**没报 ≠ 报了个空**。
+///
+/// 反过来：载荷里**写了**（哪怕是空串）⇒ 按载荷走 —— 那是用户真的清掉了封面，必须照做。
+fn keep_local_chrome_when_absent(c: &Connection, plain: &str, page: &mut PageDetail) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(plain) else { return };
+    let absent = |k: &str| v.get(k).is_none();
+    if !(absent("cover") || absent("icon") || absent("cover_height") || absent("cover_pos")) {
+        return; // 四格都在 ⇒ 载荷说了算，不用补
+    }
+    let id = page.id.clone();
+    let row = c
+        .query_row(
+            "SELECT cover, icon, cover_height, cover_pos FROM pages WHERE id = ?1",
+            params![id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, f64>(3)?,
+                ))
+            },
+        )
+        .ok();
+    let Some((cover, icon, height, pos)) = row else { return }; // 本机也没有这一页 ⇒ 用载荷（新建页）
+    if absent("cover") {
+        page.cover = cover;
+    }
+    if absent("icon") {
+        page.icon = icon;
+    }
+    if absent("cover_height") {
+        page.cover_height = height;
+    }
+    if absent("cover_pos") {
+        page.cover_pos = pos;
+    }
+}
+
 fn apply_upsert(
     c: &Connection,
     page: &PageDetail,
@@ -1748,6 +1793,21 @@ fn set_attachments_enabled(c: &Connection, ws_id: &str, enabled: bool) -> Result
     Ok(())
 }
 
+/// ⭐ 2026-10-24（图片块同步）：**「跟谁对暗号」那一格** —— 个人档用**解析后的房间**，
+/// 团队档用 `space_id`。第二个返回值 `true` ＝ 设备级/个人档（按名字挑对端）。
+///
+/// 为什么抽成纯函数：这里原来直接拿 `sync_profiles.space_id`，而**个人空间那一列就是空串**
+/// ⇒ 对端那一档整个被跳过（真机：图片块元数据同步过来了，字节却永远取不到）。
+/// 与 2026-10-09 修 `runAutoSyncRound` 那个"个人空间被整批滤掉"是同一族错误。
+pub(crate) fn peer_lookup_space(space_id: &str, resolved_room: &str) -> (String, bool) {
+    let raw = space_id.trim();
+    if raw.is_empty() {
+        (resolved_room.trim().to_string(), true)
+    } else {
+        (raw.to_string(), false)
+    }
+}
+
 /// P6.3「按需取字节」（2026-09-15）：用户**主动**要求下载其中一件附件。
 ///
 /// ★★ 丙-④（2026-09-26）：**字节可以从两个地方来，按"跟谁要哪份"依次试** ——
@@ -1796,7 +1856,10 @@ pub async fn download_attachment(
     }
     let (profile, mime) = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let p = get_profile(&c, &ws_id)?;
+        // ⭐ 2026-10-24（图片块同步）：**不能**要求"一定有一行同步档案" —— 个人空间走网格时
+        //   可能根本没有档案行（窗口按房间服务，不靠档案）；没档案就只剩"对端那一档"，
+        //   那不是错误（丙-④ 的口径："服务器是加分项，不是前提"）。
+        let p = get_profile(&c, &ws_id).ok();
         // 落盘名是 `hash.<ext>`，而 ext 由 mime 决定 —— 只有本地那行元数据知道 mime；
         // 拿不到就退化成 octet-stream（与同步路径的兜底一致）。
         let mime = c
@@ -1812,7 +1875,7 @@ pub async fn download_attachment(
     };
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     // ★ 附件按空间分（owner 2026-09-24 拍板 ②）：单个附件也下到**这个空间自己**的目录里。
-    let attachments_dir: PathBuf = crate::attachments::space_attachments_dir(&app_data_dir, &profile.ws_id);
+    let attachments_dir: PathBuf = crate::attachments::space_attachments_dir(&app_data_dir, &ws_id);
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
     let session_key = {
         let c = db.0.lock().expect("db mutex poisoned");
@@ -1825,16 +1888,17 @@ pub async fn download_attachment(
 
     // ── ① 服务端那条（绑了才走；不绑 ⇒ **不再是错误**，丙-④ 之前这里直接报"请先配置同步服务器"）
     let mut server_err: Option<String> = None;
-    if !profile.server_url.is_empty() {
+    let server_profile = profile.as_ref().filter(|p| !p.server_url.trim().is_empty());
+    if let Some(p) = server_profile {
         // URL 组装规则与 `sync_attachments` **完全一致**（同一个 `attachment_base`，不是各写一遍）。
         // ★ 甲-1 接线：基址也走同一个 `effective_base`（局域网中枢优先）——两处**同源**才不会漂。
         let att_base = {
             let c = db.0.lock().expect("db mutex poisoned");
-            attachment_base(&effective_base(&c, &profile), &profile.space_id)
+            attachment_base(&effective_base(&c, p), &p.space_id)
         };
         let mut req = client.get(format!("{att_base}/attachments/{hash}"));
-        if !profile.token.is_empty() {
-            req = req.bearer_auth(&profile.token);
+        if !p.token.is_empty() {
+            req = req.bearer_auth(&p.token);
         }
         let sent = req.send().await.map_err(|e| format!("服务端请求发不出去：{e}"));
         match sent {
@@ -1859,13 +1923,19 @@ pub async fn download_attachment(
     let (candidates, proto_space) = {
         let c = db.0.lock().expect("db mutex poisoned");
         let device = device_id(&c).unwrap_or_default();
-        let proto = profile.space_id.trim().to_string();
+        let raw_space_id = profile.as_ref().map(|p| p.space_id.trim().to_string()).unwrap_or_default();
+        // ⭐ 2026-10-24（图片块同步的真因之一）：个人档的 `space_id` **就是空串** ⇒ 原来
+        //   `proto.is_empty()` 直接把**对端那一整档**跳过 ✗（个人空间＝设备直连的主用例，
+        //   却永远取不到对端的字节）。⇒ 空 `space_id` 时用**解析后的房间**（与拉取/公告同一把尺：
+        //   `mesh_scope_at` 是那一处的唯一解析）。
+        let resolved_room = mesh_scope_at(&c, Some(&ws_id)).map(|s| s.space).unwrap_or_default();
+        let (proto, device_level) = peer_lookup_space(&raw_space_id, &resolved_room);
         if proto.is_empty() {
             (Vec::new(), proto)
         } else {
             let peers = crate::lan_state::LanState::global(&device).peers(crate::db::now_ms());
             // ⭐ 2026-10-19 修：只有**设备级／个人档**才按名字挑（团队不参与按名融合 ⇒ 传空名回落 id）
-            let name = if crate::mesh::is_device_level_space(&c, &proto) {
+            let name = if device_level || crate::mesh::is_device_level_space(&c, &proto) {
                 crate::sync::local_space_name(&c).unwrap_or_default()
             } else {
                 String::new()
@@ -1877,11 +1947,36 @@ pub async fn download_attachment(
     let mut tried: Vec<String> = Vec::new();
     for p in &candidates {
         // ⭐ **U11（A：门只认卡）**：出示的是**这一台**的那一份配对秘密 ✓（⛔ 共享口令已退役 ✗）
-        let peer_secret = {
+        // ⭐ 2026-10-24（图片块同步）：**同时带一份设备签名** —— 新版配对走设备身份时
+        //   `pair_secret` 可能为空（`secret_sha256` 没值），只带口令 ⇒ 对面 401
+        //   （真机：拉取那条路一直自带签名，所以同步能通、按需取字节却永远失败）。
+        //   签的是 `attachment_target` 那串（与发出去的 target **同一处拼**）。
+        let (peer_secret, auth) = {
             let c = db.0.lock().expect("db mutex poisoned");
-            crate::mesh::pair_secret_for(&c, &proto_space, &p.device_id)
+            let device = device_id(&c).unwrap_or_default();
+            let target = crate::mesh::attachment_target(&proto_space, &hash);
+            let signed = crate::mesh::sign_request(
+                &c,
+                &device,
+                &proto_space,
+                "GET",
+                &target,
+                crate::db::now_ms(),
+            );
+            let secret = crate::mesh::pair_secret_for(&c, &proto_space, &p.device_id);
+            (secret, signed.map(|(ts, sig)| (device, ts, sig)))
         };
-        match crate::mesh::request_attachment_from_peer(&client, p, &proto_space, &hash, peer_secret.as_deref()).await {
+        let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
+        match crate::mesh::request_attachment_from_peer(
+            &client,
+            p,
+            &proto_space,
+            &hash,
+            peer_secret.as_deref(),
+            auth_ref,
+        )
+        .await
+        {
             Ok(resp) => match download_one_attachment(resp, &format!("对端 {}", p.device_id), &item, &attachments_dir, session_key.as_ref(), &db).await {
                 Ok(size) => {
                     return Ok(AttachmentFetch {
@@ -1898,7 +1993,7 @@ pub async fn download_attachment(
     }
 
     // ── ③ 一个都取不到 ⇒ **如实说**，而且要说清是哪一种"取不到"
-    Err(attachment_fetch_failure(server_err.as_deref(), &profile.space_id, candidates.len(), &tried))
+    Err(attachment_fetch_failure(server_err.as_deref(), &proto_space, candidates.len(), &tried))
 }
 
 /// 三个来源都试过之后那句**如实的话**（纯函数 ⇒ 判据能直接钉它，不必起网络）。
@@ -3925,9 +4020,13 @@ let mut unrecognized: Vec<String> = Vec::new();
                     // ⚠️ 解密失败是 `Fatal`（整批中止、游标不前进）—— 与改前一致，见 `ApplyFailure`。
                     let plain = security::decrypt_payload(&c, payload)
                         .map_err(|e| ApplyFailure::Fatal(format!("同步解密失败：{e}（可能各设备 E1 口令/密钥不一致，已停止以免静默丢数据）")))?;
-                    if let Ok(page) = serde_json::from_str::<PageDetail>(&plain) {
+                    if let Ok(mut page) = serde_json::from_str::<PageDetail>(&plain) {
                         // 能解析出 id ⇒ 万一后面应用失败，用**这一版**归档（与 Web 的 pageRowOfChangeForStash 同口径）
                         stash_source = Some(plain.clone());
+                        // ⭐ 2026-10-24：老载荷没有封面/图标那四格 ⇒ 保留本机现值
+                        //   （否则 serde 默认值会把用户设过的题头图/图标抹成空 —— 真机现场：
+                        //    Windows 设了封面，macOS 一收页就被抹掉）。见 `keep_local_chrome_when_absent`。
+                        keep_local_chrome_when_absent(&c, &plain, &mut page);
                         // ★ §11.4 收口（第 42 轮）：载荷里带了 **CRDT 状态** ⇒ **收到就收进旁路表**。
                         //   与"最后用谁的版本"无关（`KeptLocal` 那一支的状态同样不能丢）；真正的合并在
                         //   **打开页面**时由 WebView 里那份唯一实现（`mergeRemotePageState`）做。
@@ -9689,6 +9788,85 @@ mod tests {
         assert!(out.conflicts.is_empty(), "忽略 ≠ 冲突");
     }
 
+    /// ⭐ 2026-10-24（真机：**题头图/图标没有同步**）：页 upsert 的
+    /// `cover` / `icon` / `cover_height` / `cover_pos` 必须真的落库（新建页与已存在页两条路）。
+    /// 而**载荷里没有这几格**（老对端）时，本机现值必须保住 —— ⛔ 不许被 serde 默认值
+    /// （'' / 300 / 50）当成"用户清掉了封面"抹掉（没报 ≠ 报了个空）。
+    ///
+    /// ⚠️ 先写红：① 把 `doc_content::upsert_remote` 列集里那四列去掉 ⇒ 前两段必红；
+    ///   ② 把 `keep_local_chrome_when_absent` 那一步去掉 ⇒ 第三段必红。
+    #[test]
+    fn a_remote_page_upsert_carries_the_page_chrome_into_the_local_row() {
+        let c = pages_conn();
+
+        fn fetch_chrome(c: &Connection, id: &str) -> (String, String, i64, f64) {
+            c.query_row(
+                "SELECT cover, icon, cover_height, cover_pos FROM pages WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap()
+        }
+        fn change_of(seq: i64, page: &PageDetail) -> IncomingChange {
+            IncomingChange {
+                seq,
+                entity: "page".to_string(),
+                entity_id: page.id.clone(),
+                op: "upsert".to_string(),
+                payload: Some(serde_json::to_string(page).unwrap()),
+                updated_at: seq,
+            }
+        }
+
+        // ① 新建页：载荷带题头图 ⇒ 落库后四格都在（改前列集里没有这四列 ⇒ 落默认值）
+        let mut p = remote_page("p1", &page_json("b1", 1, "正文"));
+        p.cover = "url(\"/covers/a.jpg\")".to_string();
+        p.icon = "📕".to_string();
+        p.cover_height = 420;
+        p.cover_pos = 30.0;
+        apply_pulled_changes(&c, vec![change_of(1, &p)], 0, 1_000, crate::doc_content::Ingest::Server)
+            .unwrap();
+        assert_eq!(
+            fetch_chrome(&c, "p1"),
+            ("url(\"/covers/a.jpg\")".to_string(), "📕".to_string(), 420, 30.0),
+            "新建页必须带着题头图/图标落地（⛔ 不是默认空封面）"
+        );
+
+        // ② 已存在页：远端改了封面 ⇒ `ON CONFLICT` 那一段必须把这四列写进去
+        p.cover = "linear-gradient(red,blue)".to_string();
+        p.icon = String::new();
+        p.cover_height = 200;
+        p.cover_pos = 90.0;
+        apply_pulled_changes(&c, vec![change_of(2, &p)], 1_000, 2_000, crate::doc_content::Ingest::Server)
+            .unwrap();
+        assert_eq!(
+            fetch_chrome(&c, "p1"),
+            ("linear-gradient(red,blue)".to_string(), String::new(), 200, 90.0),
+            "已存在页的封面/图标/高度/位置也必须被远端盖上来"
+        );
+
+        // ③ 老对端：载荷里**没有**这四格 ⇒ 保留本机现值（不许被默认值抹掉）
+        let mut old = serde_json::to_value(&p).unwrap();
+        for k in ["cover", "icon", "cover_height", "cover_pos"] {
+            old.as_object_mut().unwrap().remove(k);
+        }
+        let old_change = IncomingChange {
+            seq: 3,
+            entity: "page".to_string(),
+            entity_id: "p1".to_string(),
+            op: "upsert".to_string(),
+            payload: Some(serde_json::to_string(&old).unwrap()),
+            updated_at: 3_000,
+        };
+        apply_pulled_changes(&c, vec![old_change], 2_000, 3_000, crate::doc_content::Ingest::Server)
+            .unwrap();
+        assert_eq!(
+            fetch_chrome(&c, "p1"),
+            ("linear-gradient(red,blue)".to_string(), String::new(), 200, 90.0),
+            "老载荷没带这四格 ⇒ 本机现值必须保住（没报 ≠ 报了个空）"
+        );
+    }
+
     /// ★ 正面：一条落库失败的变更 ⇒ **不连坐**（其余变更照常落库）＋ **游标前进** ＋ **留痕**（归档）。
     #[test]
     fn a_failing_change_is_archived_and_the_batch_continues() {
@@ -11154,4 +11332,34 @@ pub fn mesh_create_spaces(
     let dev = device_id(&c)?;
     let peers = crate::lan_state::LanState::global(&dev).peers(crate::db::now_ms());
     create_peer_spaces_by_name(&c, &dir, &peers, &names)
+}
+#[cfg(test)]
+mod attachment_peer_space_tests {
+    //! ⭐ 2026-10-24（图片块同步的真因之一）：个人档的 `sync_profiles.space_id` **是空串**，
+    //! 而"跟对端对暗号"要的是**解析后的房间**。原来直接拿 `space_id` ⇒ 对端那一整档被跳过
+    //! （真机：图片块元数据同步过来了、字节永远取不到）。判据钉住三种形状。
+    use super::peer_lookup_space;
+
+    #[test]
+    fn a_personal_space_uses_the_resolved_room_and_is_device_level() {
+        assert_eq!(
+            peer_lookup_space("", "123456789Ok,./"),
+            ("123456789Ok,./".to_string(), true),
+            "个人档必须用解析后的房间去问对端（空 space_id 不是「没配」）"
+        );
+    }
+
+    #[test]
+    fn a_team_space_keeps_its_own_space_id() {
+        assert_eq!(
+            peer_lookup_space("team-space-9", "some-room"),
+            ("team-space-9".to_string(), false),
+            "团队档口径不变：按 space_id 对暗号"
+        );
+    }
+
+    #[test]
+    fn a_personal_space_without_a_room_has_no_proto_space() {
+        assert_eq!(peer_lookup_space("", "  "), (String::new(), true), "没暗号 ⇒ 如实为空（不许猜一个）");
+    }
 }

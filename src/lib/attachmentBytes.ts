@@ -38,22 +38,37 @@ import { attachmentFetchHint } from "./attachmentFetchHint";
  */
 const inFlight = new Map<string, Promise<boolean>>();
 
-export function ensureAttachmentBytes(hash: string): Promise<boolean> {
+export interface EnsureAttachmentBytesOptions {
+  /**
+   * ⭐ 2026-10-24（图片块同步）：**渲染期**按需取字节时不要弹 toast ——
+   * 一页里可能有好几张图，每张弹一句会把界面刷满；失败也只在 console 留痕。
+   * 用户显式打开文件那几条路仍然走默认（会弹）。
+   */
+  quiet?: boolean;
+}
+
+export function ensureAttachmentBytes(
+  hash: string,
+  opts: EnsureAttachmentBytesOptions = {},
+): Promise<boolean> {
   if (!hash) return Promise.resolve(false);
   const running = inFlight.get(hash);
   if (running) return running;
-  const p = ensureAttachmentBytesOnce(hash).finally(() => inFlight.delete(hash));
+  const p = ensureAttachmentBytesOnce(hash, opts).finally(() => inFlight.delete(hash));
   inFlight.set(hash, p);
   return p;
 }
 
-async function ensureAttachmentBytesOnce(hash: string): Promise<boolean> {
+async function ensureAttachmentBytesOnce(
+  hash: string,
+  opts: EnsureAttachmentBytesOptions,
+): Promise<boolean> {
   const onDisk = await api.listAttachmentHashes().catch(() => [] as string[]);
   if (onDisk.includes(hash)) return true;
 
   const wsId = useSpaceStore.getState().activeId;
   if (!wsId) {
-    toast("这个文件的字节不在本机，请先选择一个空间再下载", "error");
+    if (!opts.quiet) toast("这个文件的字节不在本机，请先选择一个空间再下载", "error");
     return false;
   }
   try {
@@ -61,12 +76,16 @@ async function ensureAttachmentBytesOnce(hash: string): Promise<boolean> {
     //   所以这句话由 Rust 拼好（`note`）后原样显示。界面自己写死"是从服务器来的"就是**说假话**：
     //   用户明明没连服务器（网格那一档正是为"不连服务器"准备的）。
     const res = await api.downloadAttachment(wsId, hash);
-    toast(res.note, "success");
+    if (!opts.quiet) toast(res.note, "success");
     return true;
   } catch (e) {
     // 原文进 `attachmentFetchHint` 分类：**"取不回"与"暂时取不回"要给不同的下一步**
     // （2026-09-19 社区缺陷帖 #6：404 那类再点一次永远不会成功，界面不该暗示可以重试）。
-    toast(attachmentFetchHint(e), "error");
+    if (opts.quiet) {
+      console.warn("[附件] 渲染期按需取字节失败（不弹 toast）", hash, e);
+    } else {
+      toast(attachmentFetchHint(e), "error");
+    }
     return false;
   }
 }

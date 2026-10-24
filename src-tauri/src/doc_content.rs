@@ -363,9 +363,14 @@ pub fn upsert_remote(
     // ⭐⭐ **2026-10-09（task-8）**：远端那一行**不许**带"本地不存在的引用" ✗ —— 见下面两个锚定函数。
     let workspace_id = anchor_workspace_id(c, &page.workspace_id);
     let parent_id = anchor_parent_id(c, page.parent_id.as_deref());
+    // ⭐ 2026-10-24（真机：**题头图没有同步**）：列集里原来**没有** `cover` / `icon` /
+    //   `cover_height` / `cover_pos` ⇒ 远端那一版应用时这四格被丢掉（新建页落默认值、
+    //   已存在页连 UPDATE 都不碰）⇒ Windows 设了封面，macOS 永远收不到。
+    //   ⚠️ 「老对端载荷里没有这四格」那条保护在**上游**（`sync.rs::apply_pulled_changes` 的
+    //   `keep_local_chrome_when_absent`）—— 不能拿 serde 默认值（''/300/50）把本机封面抹掉。
     c.execute(
-        "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at, sync_seq, dirty)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, 0)
+        "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at, sync_seq, dirty, cover, icon, cover_height, cover_pos)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, 0, ?12, ?13, ?14, ?15)
          ON CONFLICT(id) DO UPDATE SET
            workspace_id = excluded.workspace_id,
            parent_id = excluded.parent_id,
@@ -377,7 +382,11 @@ pub fn upsert_remote(
            updated_at = excluded.updated_at,
            deleted_at = NULL,
            sync_seq = excluded.sync_seq,
-           dirty = 0",
+           dirty = 0,
+           cover = excluded.cover,
+           icon = excluded.icon,
+           cover_height = excluded.cover_height,
+           cover_pos = excluded.cover_pos",
         params![
             page.id,
             workspace_id,
@@ -390,6 +399,10 @@ pub fn upsert_remote(
             page.created_at,
             page.updated_at,
             sync_seq,
+            page.cover,
+            page.icon,
+            page.cover_height,
+            page.cover_pos,
         ],
     )
     .map_err(|e| e.to_string())?;
