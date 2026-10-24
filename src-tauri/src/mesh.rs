@@ -267,12 +267,18 @@ fn peer_merge_decision(
     peer_device: &str,
     space_id: &str,
     device_level: bool,
+    peer_name_hint: Option<&str>,
 ) -> crate::mesh_merge_ledger::BatchMerge {
     use crate::mesh_merge_ledger::{batch_merge_gate, IdentityOracle, PairedDeviceOracle};
 
     let kind = crate::sync::local_space_kind(c);
     let local_name = crate::sync::local_space_name(c).unwrap_or_default();
-    let peer_name = peer_space_name_in_batch(c, rows);
+    // ⭐ 调用方（`pull_and_absorb`）已经知道"这是按哪个名配上的空间" ⇒ 优先用它；
+    //   hint 为空（老调用点/判据）才回退到"从载荷里扫 `_space_name`"的旧口径。
+    let peer_name = peer_name_hint
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .or_else(|| peer_space_name_in_batch(c, rows));
     // ⭐ 身份 = 第一档「本机显式信任过那台」（`mesh_paired_devices`；读法与界面/门同一处 ✓）。
     //   ⚠️ 名单读不出来 ⇒ 空名单 ⇒ 落 `Unknown(NotPaired)` ⇒ **不融合**（保守方向 ✓），并**留痕**。
     let paired: Vec<String> = match paired_devices(c, space_id, device_level) {
@@ -383,6 +389,12 @@ pub fn absorb_peer_batch(
     peer_device: &str,
     space_id: &str,
     device_level: bool,
+    // ⭐ 2026-10-24（真机：全空间验收里「产品/运营」永远 applied=0）：
+    //   **这次拉的是"哪个名字的空间"由调用方说**（它在 `mesh_peers_by_name` 里已经按公告名配过对），
+    //   ⛔ 不从这一批载荷里"扫第一个带 `_space_name` 的记录"反推 ——
+    //   老记录里可能带着**别的**空间名（历史融合留下的），扫到它就会 `RefuseDifferentName`
+    //   ⇒ 每轮重整批、水位不前进、那个空间永远同步不完（实测：280/179 条每轮重拉、applied=0）。
+    peer_name_hint: Option<&str>,
 ) -> Result<Absorbed, String> {
     if rows.is_empty() {
         return Ok(Absorbed {
@@ -423,7 +435,7 @@ pub fn absorb_peer_batch(
     let now = crate::db::now_ms();
 
     // ⭐ 融合闸：先取证（只读），再决定这一批的处置。
-    let merge = match peer_merge_decision(c, rows, peer_device, space_id, device_level) {
+    let merge = match peer_merge_decision(c, rows, peer_device, space_id, device_level, peer_name_hint) {
         crate::mesh_merge_ledger::BatchMerge::Refuse(gate) => {
             eprintln!(
                 "[mesh] **不融合**（{}）：对端 `{}` 的这一批 {} 条**一条都不落库、水位不前进** \
@@ -795,11 +807,11 @@ pub async fn pull_and_absorb(
     // ⭐ 2026-10-23（S3b-发）：本机空间名的哈希 —— 对端**锁着**的时候，它靠这一格找回
     //   "该发我哪一个空间的那一份"（一个房间里可能挤着多个个人空间 ✓）。
     //   ⚠️ 拿不到名字 ⇒ 空串（对端若锁着会回 400 并说明原因，⛔ 不猜 ✗）。
-    let name_sha = {
+    let (name_sha, local_name) = {
         let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
         match crate::sync::local_space_name(&g) {
-            Some(n) if !n.trim().is_empty() => crate::db::sha256_hex(n.trim()),
-            _ => String::new(),
+            Some(n) if !n.trim().is_empty() => (crate::db::sha256_hex(n.trim()), n.trim().to_string()),
+            _ => (String::new(), String::new()),
         }
     };
     // ⭐⭐ **2026-10-20（真机：游标越界 ⇒ 永久静默）**：先按原游标拉；若发现
@@ -944,7 +956,14 @@ pub async fn pull_and_absorb(
         })
         .collect();
     let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-    let ab = absorb_peer_batch(&g, &rows, &peer.device_id, space_id, device_level)?;
+    let ab = absorb_peer_batch(
+        &g,
+        &rows,
+        &peer.device_id,
+        space_id,
+        device_level,
+        if local_name.is_empty() { None } else { Some(local_name.as_str()) },
+    )?;
     // ⭐ 2026-10-20：**归零自愈过的那一轮必须无条件写回** ✗ ——
     //   原规则是 `ab.tail > since`，而 since 还是那个越界值（99999）⇒ 恒 false
     //   ⇒ 数据库里那格**永远是 99999** ⇒ 每轮都要重新探一次（实测就是这么被咬的 ✓）。
@@ -3402,7 +3421,7 @@ pub fn drain_inbox(
             merge: PeerMergeState::NotRun,
         });
     }
-    let out = absorb_peer_batch(c, &rows, peer_device, space_id, device_level)?;
+    let out = absorb_peer_batch(c, &rows, peer_device, space_id, device_level, None)?;
     if out.applied > 0 {
         for r in &rows {
             let _ = c.execute(
@@ -4669,7 +4688,7 @@ mod tests {
         let rows = serve_own_records(&src, "A", 0, 500).unwrap();
         assert_eq!(rows.len(), 2);
 
-        let ab = absorb_peer_batch(&c, &rows, "A", "ws", false).unwrap();
+        let ab = absorb_peer_batch(&c, &rows, "A", "ws", false, None).unwrap();
         assert_eq!(ab.applied, 2);
         assert_eq!(ab.tail, rows.iter().map(|r| r.device_seq).max().unwrap());
         // ★ 丙-⑤：这两条对端都是**本机没有的页** ⇒ 既没有"让给远端"的，也没有"等裁决"的。
@@ -4677,7 +4696,7 @@ mod tests {
         assert_eq!((ab.superseded, ab.awaiting), (0, 0), "{ab:?}");
         // 重复收同一批：幂等（内容不再变）
         let before = content_of(&c, "p1");
-        let ab2 = absorb_peer_batch(&c, &rows, "A", "ws", false).unwrap();
+        let ab2 = absorb_peer_batch(&c, &rows, "A", "ws", false, None).unwrap();
         assert_eq!(content_of(&c, "p1"), before);
         assert_eq!(ab2.applied, 2, "仍然走完 apply（幂等），但内容一字不变");
         // ⚠️ 这里为 0 靠的是 丙-⑤ 在 `doc_content::stash_pending_remote` 里新加的那一句
@@ -4722,7 +4741,7 @@ mod tests {
             updated_at: 20,
             sealed: None,
         }];
-        let ab = absorb_peer_batch(&c, &rows, "A", "ws", false).unwrap();
+        let ab = absorb_peer_batch(&c, &rows, "A", "ws", false, None).unwrap();
         assert_eq!(ab.applied, 1, "{ab:?}");
         assert_eq!(ab.superseded, 1, "戳判远端 ＋ 本机脏 ⇒ 必须报成「你那一版让给了远端」：{ab:?}");
         assert_eq!(ab.awaiting, 0, "远端赢了就没有「等裁决」的东西：{ab:?}");
@@ -4755,7 +4774,7 @@ mod tests {
             updated_at: 40,
             sealed: None,
         }];
-        let ab2 = absorb_peer_batch(&c, &rows2, "A", "ws", false).unwrap();
+        let ab2 = absorb_peer_batch(&c, &rows2, "A", "ws", false, None).unwrap();
         assert_eq!((ab2.superseded, ab2.awaiting), (0, 1), "本机赢了 ⇒ 远端那一版进「待取回」等裁决：{ab2:?}");
         assert!(content_of(&c, "p2").contains("本机更晚的那一版"), "{}", content_of(&c, "p2"));
     }
@@ -5045,13 +5064,13 @@ mod tests {
         let rows = vec![peer_row(1, &page("p1", "对端的这一页", 10), Some("工作"))];
 
         // ① 名字对得上的那个空间 ⇒ 收下
-        let ab = absorb_peer_batch(&a, &rows, "dev-peer", "proto-room", false).unwrap();
+        let ab = absorb_peer_batch(&a, &rows, "dev-peer", "proto-room", false, None).unwrap();
         assert!(ab.applied > 0, "同名（工作）必须收下：{ab:?}");
         let na: i64 = a.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
         assert_eq!(na, 1);
 
         // ② 同房间、但名字不同的那个 ⇒ **一条都不许落库**，水位也不许前进
-        let ab2 = absorb_peer_batch(&b, &rows, "dev-peer", "proto-room", false).unwrap();
+        let ab2 = absorb_peer_batch(&b, &rows, "dev-peer", "proto-room", false, None).unwrap();
         assert_eq!(ab2.applied, 0, "⛔ 同房间不同名却落库 = 把两个空间悄悄并了：{ab2:?}");
         assert_eq!(ab2.tail, 0, "被拒的那批不许推进水位（否则它永远补不回来）");
         let nb: i64 = b.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
@@ -5072,7 +5091,7 @@ mod tests {
         p.workspace_id = "对面那台的空间 id".to_string();
         let rows = vec![peer_row(1, &p, Some("  工作  "))];
 
-        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
         assert_eq!(ab.merge, PeerMergeState::Merged, "⭐ 同名个人空间必须融合：{ab:?}");
         assert_eq!((ab.applied, ab.tail), (1, 1), "融合这一批算收下 ⇒ 水位到批尾：{ab:?}");
         assert!(content_of(&c, "p1").contains("从平板来的"));
@@ -5096,6 +5115,44 @@ mod tests {
         assert_eq!(v.undoable[0].kept_before, 0, "融合前本机没有页");
     }
 
+    /// ⭐ 2026-10-24（真机：全空间验收里「产品/运营」每轮 applied=0）：**公告名才是权威**。
+    ///
+    /// 真机现场：Windows 那两个空间的 `changes` 里混着**老记录**，其中有些载荷带着**别的空间名**
+    /// （历史融合留下的 `_space_name`）。旧实现"从这一批里扫第一个带名的记录"⇒ 扫到那个别的名
+    /// ⇒ `RefuseDifferentName` ⇒ 每轮重整批、水位不前进 ⇒ 那个空间**永远同步不完**
+    /// （读数：280/179 条每轮重拉、applied=0、cursor 恒 0）。
+    /// 正确口径：这次拉的是"哪个名"由**调用方按公告匹配**说（`mesh_peers_by_name` 已经保证同名），
+    /// ⛔ 不从旧载荷里反推。
+    #[test]
+    fn a_batch_with_a_stale_payload_name_is_still_merged_when_the_advertised_name_matches() {
+        let c = space_conn("B");
+        merge_fixture(&c, "产品", "personal", &["平板"]);
+        let mut p = page("p1", "从平板来的", 10);
+        p.workspace_id = "对面那台的空间 id".to_string();
+        // 老记录里带着**别的**空间名（正是真机上被拒的那一批的形状）
+        let rows = vec![peer_row(1, &p, Some("面板验收-20261023"))];
+
+        // ① 调用方说"这次是按公告名「产品」配上的" ⇒ 必须允许并落库
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, Some("产品")).unwrap();
+        assert_eq!(
+            ab.merge,
+            PeerMergeState::Merged,
+            "⛔ 公告名对得上 ⇒ 必须融合（载荷里那个旧名只是历史残留）：{ab:?}"
+        );
+        assert!(ab.applied > 0, "⭐ 融合这一批必须真的落库：{ab:?}");
+        assert!(content_of(&c, "p1").contains("从平板来的"));
+
+        // ② 不给 hint（老调用点/其它路径）⇒ 仍然按旧口径拒绝（⛔ 不猜）
+        let c2 = space_conn("B");
+        merge_fixture(&c2, "产品", "personal", &["平板"]);
+        let ab2 = absorb_peer_batch(&c2, &rows, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
+        assert!(
+            matches!(ab2.merge, PeerMergeState::Refused(_)),
+            "⛔ 没有权威名时不许猜（旧口径保留）：{ab2:?}"
+        );
+        assert_eq!((ab2.applied, ab2.tail), (0, 0), "被拒 ⇒ 一条不落库、水位不前进");
+    }
+
     /// ⭐ **判据②（反向）**：不同名 ⇒ **不融合**：一条都不落库、水位不前进、账本一笔都不记。
     ///
     /// 反例（逐字）：不拒绝而照旧落库 ⇒ `pages` 会多一行（`COUNT(*) = 1`）而本判据当场红 ——
@@ -5106,7 +5163,7 @@ mod tests {
         merge_fixture(&c, "工作", "personal", &["平板"]);
         let rows = vec![peer_row(1, &page("p1", "不该进来", 10), Some("私人"))];
 
-        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
         assert_eq!(
             ab.merge,
             PeerMergeState::Refused(MergeGate::RefuseDifferentName),
@@ -5129,7 +5186,7 @@ mod tests {
         let c = space_conn("B");
         merge_fixture(&c, "工作", "team", &["平板"]);
         let rows = vec![peer_row(1, &page("p1", "团队空间的数据", 10), Some("工作"))];
-        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
         assert_eq!(
             ab.merge,
             PeerMergeState::NotEligible(NotEligibleWhy::NotPersonal(SpaceKind::Team)),
@@ -5144,7 +5201,7 @@ mod tests {
         // ② 未分类（`kind=''`）：读到了，但**不参与**。
         let c = space_conn("B");
         merge_fixture(&c, "工作", "", &["平板"]);
-        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
         assert_eq!(
             ab.merge,
             PeerMergeState::NotEligible(NotEligibleWhy::NotPersonal(SpaceKind::Unclassified)),
@@ -5154,7 +5211,7 @@ mod tests {
 
         // ③ 类别**读不出来**（没有 `meta.workspaces` 那张表）⇒ 判不出 ⇒ 不参与（⛔ 不默认成个人空间）。
         let c = space_conn("B");
-        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
         assert_eq!(
             ab.merge,
             PeerMergeState::NotEligible(NotEligibleWhy::KindUnknown),
@@ -5171,12 +5228,12 @@ mod tests {
         merge_fixture(&c, "工作", "personal", &["平板"]);
         let rows = vec![peer_row(1, &page("p1", "从平板来的", 10), Some("工作"))];
 
-        let first = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        let first = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
         assert_eq!(first.merge, PeerMergeState::Merged);
         let first_at = crate::sync::merge_ledger_view(&c, "工作").unwrap().undoable[0].at_ms;
 
         // 重复接入同一批（同一对设备、同一个名字）⇒ ⭐ 不再记第二笔。
-        let again = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        let again = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
         assert_eq!(
             again.merge,
             PeerMergeState::AlreadyMerged,
@@ -5198,7 +5255,7 @@ mod tests {
         merge_fixture(&c, "工作", "personal", &[]); // 信任名单是空的
         let rows = vec![peer_row(1, &page("p1", "陌生设备的同名空间", 10), Some("工作"))];
 
-        let ab = absorb_peer_batch(&c, &rows, "陌生设备", DEVICE_LEVEL_SPACE, true).unwrap();
+        let ab = absorb_peer_batch(&c, &rows, "陌生设备", DEVICE_LEVEL_SPACE, true, None).unwrap();
         assert_eq!(
             ab.merge,
             PeerMergeState::Refused(MergeGate::RefuseUnknownIdentity),
@@ -5222,7 +5279,7 @@ mod tests {
         merge_fixture(&c, "工作", "personal", &["平板"]);
         let rows = vec![peer_row(1, &page("p1", "老对端来的", 10), None)];
 
-        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true).unwrap();
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
         assert_eq!(
             ab.merge,
             PeerMergeState::NotEligible(NotEligibleWhy::NoPeerName),
