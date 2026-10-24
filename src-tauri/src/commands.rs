@@ -421,6 +421,13 @@ pub fn read_page_state(db: State<Db>, args: PageStateArgs) -> Result<Option<Vec<
 #[tauri::command]
 pub fn save_page_state(db: State<Db>, args: SavePageStateArgs) -> Result<(), String> {
     let c = conn(&db);
+    // ⭐ 2026-10-24：**空字节 ＝ 清掉**，⛔ 不是"存一份空状态"。
+    //   原来把 0 字节写进 `page_crdt` ⇒ 下次打开那页时 lib0 解码当场抛
+    //   `Unexpected end of array`（真机 toast「CRDT 绑定失败」）。
+    //   「采用对端那一版」这条路要的正是"清掉本机状态、按对端投影重建" ✓。
+    if args.state.is_empty() {
+        return crate::page_crdt::clear_page_crdt_state(&c, &args.page_id);
+    }
     crate::page_crdt::write_page_crdt_state(&c, &args.page_id, &args.state, now_ms())
 }
 

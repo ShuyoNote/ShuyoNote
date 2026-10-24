@@ -39,14 +39,17 @@ pub fn write_page_crdt_state(c: &Connection, page_id: &str, state: &[u8], now: i
     Ok(())
 }
 
-/// 清掉这一页的状态（页面被删除/彻底重建时用）⇒ 之后读回 `None`。
+/// 清掉这一页的状态（页面被删除 / **采用对端那一版**时用）⇒ 之后读回 `None`。
 ///
-/// ⚠️ **只服务判据**：命令面今天只接了读 / 写那一对，"清"这一条还没有调用方 ——
-/// 它与前端 `docContent.ts::clearPageCrdtState` **成对存在**（这一层的口径是三条函数配对）。
-/// **删页时该不该清它**是接线决定，不在这里顺手接上；真接的时候删掉下面这一行。
-#[cfg(test)]
+/// ⭐ 2026-10-24（真机 bug）：`save_page_state` 收到**空字节**时改走这里 ——
+/// 原来它会把 0 字节**写进** `page_crdt`，下一次打开那页时 0 字节被当"一份空状态"喂给 lib0
+/// ⇒ `CRDT 绑定失败：Unexpected end of array`（用户只看到一句看不懂的 toast）。
+/// 口径：**空字节 ＝ 清掉**（不是"存一份空状态"）；连 `page_crdt_pending` 里那页的待并项一起清
+/// （"按对端投影重建"时那些待并项已经无意义了）。
 pub fn clear_page_crdt_state(c: &Connection, page_id: &str) -> Result<(), String> {
     c.execute("DELETE FROM page_crdt WHERE page_id = ?1", [page_id])
+        .map_err(|e| e.to_string())?;
+    c.execute("DELETE FROM page_crdt_pending WHERE page_id = ?1", [page_id])
         .map_err(|e| e.to_string())?;
     Ok(())
 }
