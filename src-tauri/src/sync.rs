@@ -684,6 +684,11 @@ pub fn missing_peer_spaces(
         for (i, name) in p.announce.hub_space_names.iter().enumerate() {
             let kind = p.announce.hub_space_kinds.get(i).map(String::as_str).unwrap_or("");
             let n = name.trim();
+            // ⭐ 2026-10-24：加密空间**不进"可建"候选表**（"按名建明文空间"的另一条入口）。
+            //   正确路径＝公开材料 ＋ 解锁后按 id 建密文空间。
+            if crate::lan::announced_encrypted_for(p, "", n).unwrap_or(false) {
+                continue;
+            }
             // G2：只列 personal；team／空／别的写法一律不列（⛔ 不猜"没报就是个人"）。
             if kind.trim() != "personal" || n.is_empty() {
                 continue;
@@ -783,6 +788,22 @@ pub(crate) fn create_missing_peer_spaces(
         out
     };
 
+    // ⭐ 2026-10-24：加密空间不走按名建（等公开材料＋解锁后按 id 建密文空间）—— 但**必须说出来**。
+    let encrypted_skipped = peers
+        .iter()
+        .map(|p| {
+            p.announce
+                .hub_space_names
+                .iter()
+                .filter(|n| crate::lan::announced_encrypted_for(p, "", n).unwrap_or(false))
+                .count()
+        })
+        .sum::<usize>();
+    if encrypted_skipped > 0 {
+        eprintln!(
+            "[mesh] 有 {encrypted_skipped} 个对端加密空间**不按名建**（等公开材料＋解锁后按 id 建密文空间）"
+        );
+    }
     let plan = peer_spaces_to_create(peers, &local, &tombstoned, &paired, encryption_on);
     let mut created: Vec<String> = Vec::new();
     for (name, kind) in plan {
