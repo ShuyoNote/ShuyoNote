@@ -786,7 +786,10 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     .iter()
                     .map(|(s, _, ws)| {
                         let served = window_serve_space(&c, s, ws);
-                        let device_level = crate::mesh::is_device_level_space(&c, &served);
+                        // ⭐ 2026-10-24（全空间方案 P1）：个人档的判据是 **`space_id` 空**
+                        //   （⛔ 不再拿"房间号 == 设备级暗号"反推 —— 个人空间现在一空间一房间号，
+                        //     那条反推会把个人空间误判成团队档 ⇒ 卡从错的行走 ⇒ 401）。
+                        let device_level = s.trim().is_empty();
                         (served, ws.clone(), settings_for_profile(&c, s, ws), device_level)
                     })
                     // ⭐ **2026-10-08（第三笔）**：**没暗号的行不许进开窗名单** ✗ —— 它的"服务空间"是 `''` ✓，
@@ -1122,8 +1125,8 @@ mod mesh_serve_space_tests {
         .unwrap();
         assert_eq!(
             window_serve_space(&c, "", "ws-personal"),
-            "room-123",
-            "个人空间没有 space_id ⇒ 窗口/公告必须报**配对暗号**（报空串 ⇒ 对端永远匹配不上 ✗）"
+            crate::sync::personal_room_for("room-123", "测试"),
+            "个人空间没有 space_id ⇒ 窗口/公告必须报**它的子房间号**（空串 ⇒ 对端永远匹配不上 ✗）"
         );
     }
 
@@ -1145,7 +1148,6 @@ mod mesh_serve_space_tests {
     #[test]
     fn the_fallback_announce_carries_the_space_kind() {
         let profiles = vec![(String::new(), String::new(), "ws-personal".to_string())];
-        let bases = vec![("room-123".to_string(), "http://192.168.1.5:8788".to_string())];
         let c = fixture();
         c.execute(
             "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', 'room-123')",
@@ -1161,6 +1163,9 @@ mod mesh_serve_space_tests {
             [],
         )
         .unwrap();
+        // ⭐ 名字改过 ⇒ 子房间号要**按改后的名字**算（服务空间/公告同一把尺）
+        let served = window_serve_space(&c, "", "ws-personal");
+        let bases = vec![(served, "http://192.168.1.5:8788".to_string())];
         let got = announces_for_this_round(&c, "dev-a", "本机", &profiles, &bases);
         assert_eq!(got.len(), 1, "前提：开了网格的个人空间要发言（{got:#?}）");
         assert_eq!(got[0].hub_space_names, vec!["工作".to_string()]);
@@ -1174,13 +1179,16 @@ mod mesh_serve_space_tests {
     #[test]
     fn the_short_id_really_lands_in_the_announce_and_missing_stays_honestly_empty() {
         let profiles = vec![(String::new(), String::new(), "ws-personal".to_string())];
-        let bases = vec![("room-123".to_string(), "http://192.168.1.5:8788".to_string())];
         let with_room = |c: &rusqlite::Connection| {
             c.execute(
                 "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', 'room-123')",
                 [],
             )
             .unwrap();
+        };
+        // ⭐ 公告的基址键＝**解析后的服务空间**（个人档现在是派生子房间号）
+        let bases_for = |c: &rusqlite::Connection| {
+            vec![(window_serve_space(c, "", "ws-personal"), "http://192.168.1.5:8788".to_string())]
         };
 
         // ① 有短标识 ⇒ 逐字进公告（⭐ 它就是要给对端看的那一格）
@@ -1190,7 +1198,7 @@ mod mesh_serve_space_tests {
         let c = fixture();
         with_room(&c);
         crate::sync::set_meta_state(&c, "short_id", "K7M2Q").unwrap();
-        let got = announces_for_this_round(&c, "dev-a", "本机", &profiles, &bases);
+        let got = announces_for_this_round(&c, "dev-a", "本机", &profiles, &bases_for(&c));
         assert_eq!(got.len(), 1, "前提：开了网格的个人空间要发言（{got:#?}）");
         assert_eq!(
             got[0].short_id, "K7M2Q",
@@ -1201,7 +1209,7 @@ mod mesh_serve_space_tests {
         // ② 没有 ⇒ 生成并落库（自愈 ✓）；第二次必须是同一个（落了库 ✓）
         let c2 = fixture();
         with_room(&c2);
-        let first = announces_for_this_round(&c2, "dev-a", "本机", &profiles, &bases);
+        let first = announces_for_this_round(&c2, "dev-a", "本机", &profiles, &bases_for(&c2));
         assert_eq!(first.len(), 1);
         assert!(
             !first[0].short_id.is_empty() && first[0].short_id != "dev-a",
@@ -1209,7 +1217,7 @@ mod mesh_serve_space_tests {
             first[0].short_id
         );
         assert_eq!(
-            announces_for_this_round(&c2, "dev-a", "本机", &profiles, &bases)[0].short_id,
+            announces_for_this_round(&c2, "dev-a", "本机", &profiles, &bases_for(&c2))[0].short_id,
             first[0].short_id,
             "⭐ 第二次必须一样（说明**落库了** ⇒ 对端看到的是稳定的一个标识 ✓）"
         );
@@ -1218,7 +1226,7 @@ mod mesh_serve_space_tests {
         let c3 = fixture();
         with_room(&c3);
         c3.execute_batch("DROP TABLE meta.sync_state;").unwrap();
-        let got3 = announces_for_this_round(&c3, "dev-a", "本机", &profiles, &bases);
+        let got3 = announces_for_this_round(&c3, "dev-a", "本机", &profiles, &bases_for(&c3));
         assert_eq!(got3.len(), 1, "短标识读不到⛔ 不该连公告一起没了 ✓");
         assert_eq!(
             got3[0].short_id, "",
@@ -1288,13 +1296,15 @@ mod mesh_read_scope_tests {
             [],
         )
         .unwrap();
+        // ⭐ 2026-10-24（全空间方案 P1）：个人空间现在解析成**派生子房间号**（一空间一房间号）。
+        let derived = crate::sync::personal_room_for("room-123", "测试");
         c.execute(
-            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:room-123', '0.0.0.0:8788')",
+            &format!("INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:{derived}', '0.0.0.0:8788')"),
             [],
         )
         .unwrap();
         c.execute(
-            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_token:room-123', 'k7Qm-2pRt')",
+            &format!("INSERT INTO meta.sync_state (key, value) VALUES ('mesh_token:{derived}', 'k7Qm-2pRt')"),
             [],
         )
         .unwrap();

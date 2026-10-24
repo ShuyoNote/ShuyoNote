@@ -1082,7 +1082,38 @@ pub fn paired_row_key<'a>(space: &'a str, device_level: bool) -> &'a str {
 /// ⛔ 不在被调函数里再判一次 ✗ —— 那是第二份口径 ✓）。
 pub fn is_device_level_space(c: &Connection, space: &str) -> bool {
     let s = space.trim();
-    !s.is_empty() && mesh_room_device(c).as_deref() == Some(s)
+    if s.is_empty() {
+        return false;
+    }
+    // ① 旧口径：设备级那一格本身（单空间/未升级的机器）
+    if mesh_room_device(c).as_deref() == Some(s) {
+        return true;
+    }
+    // ⭐ 2026-10-24（全空间方案 P1）：**派生房间**也算设备级/个人档 ——
+    //   个人空间现在是「一空间一房间号」（`sync::personal_room_for(seed, 空间名)`），
+    //   若还只认"房间号 == 设备级暗号"，派生出来的个人空间会被误判成团队档
+    //   ⇒ 配对秘密/卡表从错的行走（真机后果：401 / 按名挑对端失效）。
+    //   这里**只读**、失败就按"不是"（⛔ 不猜）。
+    let seed = mesh_room_device(c).unwrap_or_default();
+    if seed.trim().is_empty() {
+        return false;
+    }
+    //   判"个人档"用**档案行的 `space_id` 空**（与 `mesh_scope_at`/写路径同一把尺），
+    //   ⛔ 不依赖 `kind` 列（老夹具/老库没有它；个人档的判据本来就不是 kind）。
+    let Ok(mut stmt) = c.prepare(
+        "SELECT w.name FROM meta.workspaces w
+         JOIN meta.sync_profiles p ON p.ws_id = w.id
+         WHERE w.deleted_at IS NULL AND TRIM(p.space_id) = ''",
+    ) else {
+        return false;
+    };
+    let names: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default();
+    names
+        .into_iter()
+        .any(|name| crate::sync::personal_room_for(&seed, &name) == s)
 }
 
 pub fn mesh_room_device(c: &Connection) -> Option<String> {
@@ -3637,9 +3668,14 @@ mod direct_sync_tests {
         let c = personal_space_with_room();
         // ① 与 `bound_profiles()` 同一形状：**原始** `space_id`（个人空间＝空串 ✓）。
         let profiles = vec![("".to_string(), "".to_string(), "ws-personal".to_string())];
-        // ② 与 `start()` 同一形状：`mesh_bases` 的键是**解析后**的空间 ✓。
+        // ② 与 `start()` 同一形状：`mesh_bases` 的键是**解析后**的空间 ✓
+        //   （个人档现在是**派生子房间号**：seed＝配对暗号、名＝空间名）。
         let served = crate::lan_state::window_serve_space(&c, "", "ws-personal");
-        assert_eq!(served, "room-123", "前提：个人空间的服务空间就是配对暗号 ✓");
+        assert_eq!(
+            served,
+            crate::sync::personal_room_for("room-123", "测试"),
+            "前提：个人空间的服务空间＝它的子房间号 ✓"
+        );
         let bases = vec![(served.clone(), "http://192.168.43.206:8788".to_string())];
 
         let got = crate::lan_state::announces_for_this_round(&c, "dev-win", "WIN", &profiles, &bases);
@@ -3651,7 +3687,7 @@ mod direct_sync_tests {
         );
         assert_eq!(
             got[0].hub_spaces,
-            vec!["room-123".to_string()],
+            vec![served.clone()],
             "公告报的空间必须是**窗口服务的那个**（报空串 ⇒ `lan::serves_space` 永远匹配不上 ✗）"
         );
         assert_eq!(
@@ -3726,6 +3762,90 @@ mod direct_sync_tests {
         //    （写成字面量就会自己命中自己 —— 与 `lan_state` 那条判据同一个坑 ✓）。
         let forbidden = format!("announces_for_with_mesh(&device_id, &device_name, &{}", "profiles");
         assert!(!code.contains(&forbidden), "公告那一行退回了**原始** `profiles`（个人空间＝空串 ⇒ 0 条公告 ✗）");
+    }
+}
+
+/// ⭐ 2026-10-24（全空间方案 P1）承重判据：**一扇门同时服务多个个人空间**。
+///
+/// 病根复盘：个人空间以前全部解析到**同一个设备级房间号** ⇒ 窗口连接表按 proto 做键
+/// ⇒ 第二个空间 `add_space` 遇到已有键**静默返回 false** ⇒ 一次只服务一个。
+/// 现在每个个人空间有独立子房间号 ⇒ 这扇门的连接表里就该有**多个键**。
+#[cfg(test)]
+mod multi_space_window_tests {
+    use super::*;
+    use std::net::SocketAddr;
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "shuyonote-{name}-{}-{}",
+            std::process::id(),
+            crate::db::now_ms()
+        ));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(crate::db::spaces_dir(&p)).unwrap();
+        p
+    }
+
+    /// 两个个人空间 ⇒ 两个不同的子房间号 ⇒ 同一扇门里**都在服务**（不是后一个把前一个顶掉）。
+    #[test]
+    fn a_window_serves_several_personal_spaces_at_once() {
+        let dir = temp_dir("multi-space-door");
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        for db in ["personal-a", "personal-b"] {
+            drop(crate::db::open_space_conn_at(db, &dir).unwrap());
+        }
+        let seed = "room-123";
+        let room_a = crate::sync::personal_room_for(seed, "工作");
+        let room_b = crate::sync::personal_room_for(seed, "测试");
+        assert_ne!(room_a, room_b, "前提：两个空间必须派生出不同的房间号");
+        // ⚠️ 绑定键取一个**本判据独占**的字符串（注册表的键就是它；撞键＝共用一扇门 ⇒ 判据互相污染）
+        let bind = "127.0.0.1:00";
+        let pairs = vec![
+            ("personal-a".to_string(), room_a.clone(), true),
+            ("personal-b".to_string(), room_b.clone(), true),
+        ];
+        let addr = ensure_window(&pairs, "dev-multi", bind, &dir)
+            .expect("窗口应当起得来")
+            .expect("配了绑定 ⇒ 必须有地址");
+        let _ = SocketAddr::from((Ipv4Addr::LOCALHOST, addr.port()));
+
+        assert!(
+            window_serves(bind, &room_a) && window_serves(bind, &room_b),
+            "⛔ 一扇门必须**同时**服务两个个人空间（房间号 {:?} / {:?}）；实际服务：{:?}",
+            room_a,
+            room_b,
+            served_spaces(&room_a)
+        );
+        // 摘掉一个：另一个必须还在（“关掉一个不许关掉整窗”）
+        stop_window(&room_a).unwrap();
+        assert!(!window_serves(bind, &room_a), "摘掉的那个不再服务");
+        assert!(window_serves(bind, &room_b), "⛔ 摘掉 A 不许把 B 也断了");
+        stop_window(&room_b).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 派生出来的房间号必须仍被认成「个人档」—— 否则配对秘密/卡表会从错的行走（真机后果 401）。
+    #[test]
+    fn a_derived_room_still_counts_as_a_personal_space() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, space_id TEXT NOT NULL DEFAULT '', mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-a', '工作');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-a', '', 'room-123');",
+        )
+        .unwrap();
+        set_mesh_room_device(&c, Some("room-123")).unwrap();
+        let derived = crate::sync::personal_room_for("room-123", "工作");
+        assert!(
+            is_device_level_space(&c, &derived),
+            "⛔ 派生子房间号必须照样认成个人档（否则卡表从团队行载 ⇒ 401）"
+        );
+        assert!(!is_device_level_space(&c, "org-team-space"), "⛔ 团队空间不许被误认");
     }
 }
 
@@ -6629,7 +6749,10 @@ mod tests {
         let c = crate::db::open_space_conn_at("default", &dir).unwrap();
         crate::sync::set_meta_state(&c, "device_id", "dev-peer").unwrap();
         let id = crate::device_key::load_or_create(&c).expect("本机身份");
-        let space = "room-sig-1";
+        // ⭐ 2026-10-24（全空间方案 P1）：个人空间的服务空间＝**派生子房间号**
+        //   （seed＝配对暗号 `room-sig-1`、名＝'个人'）—— 与窗口/网格同一把尺。
+        let space_owned = crate::sync::personal_room_for("room-sig-1", "个人");
+        let space = space_owned.as_str();
         // ⭐ 门那一侧：把**这一台**的公钥登记进这个空间（＝ 第 3 步"允许它来拿我的"那一下 ✓）。
         //   ⚠️⭐ **行键是空串** ✗ —— 个人档的对端表走**设备级那一行** ✓（丙 那套口径 ✓，
         //   与 `remember_peer_card` 用 `paired_row_key` 算出来的**同一把键** ✓）。
@@ -7144,3 +7267,5 @@ mod tests {
         assert!(round_touched_pages(&r).is_empty());
     }
 }
+
+

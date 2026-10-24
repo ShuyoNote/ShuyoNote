@@ -478,6 +478,14 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
     ensure_space_workspace(&conn, &active).map_err(|e| {
         rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e))
     })?;
+    // ⭐ 2026-10-24（全空间方案 P0）：给所有个人空间补同步档案行（幂等）。
+    //   不补 ⇒ 那些空间**不公告、不进轮次**（真机：6 个空间只有 3 个能同步）。
+    //   ⚠️ 失败只记一行：这是"加分项"，不许把启动本身按死（与发现层同一条口径）。
+    match crate::sync::ensure_sync_profiles_for_personal_spaces(&conn) {
+        Ok(0) => {}
+        Ok(n) => eprintln!("[sync] 启动补同步档案：为 {n} 个个人空间补了空档案行"),
+        Err(e) => eprintln!("[sync] 启动补同步档案失败（忽略，继续启动）：{e}"),
+    }
     Ok(conn)
 }
 

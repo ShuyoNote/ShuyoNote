@@ -5240,13 +5240,14 @@ mod mesh_config_state_tests {
             [],
         )
         .unwrap();
+        let derived = crate::sync::personal_room_for("room-123", "测试");
         c.execute(
-            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:room-123', '0.0.0.0:8788')",
+            &format!("INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:{derived}', '0.0.0.0:8788')"),
             [],
         )
         .unwrap();
         c.execute(
-            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_token:room-123', 'k7Qm-2pRt')",
+            &format!("INSERT INTO meta.sync_state (key, value) VALUES ('mesh_token:{derived}', 'k7Qm-2pRt')"),
             [],
         )
         .unwrap();
@@ -5312,8 +5313,9 @@ mod mesh_config_state_tests {
         // 另一个活空间：暗号 ＋ 监听地址都配在**它**那一行上
         c.execute("INSERT INTO meta.workspaces (id, name) VALUES ('ws-other', '另一个空间')", []).unwrap();
         c.execute("INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-other', 'room-123')", []).unwrap();
+        let derived = crate::sync::personal_room_for("room-123", "另一个空间");
         c.execute(
-            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:room-123', '0.0.0.0:8788')",
+            &format!("INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:{derived}', '0.0.0.0:8788')"),
             [],
         )
         .unwrap();
@@ -5466,6 +5468,69 @@ fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScop
 /// ⚠️ **R146（2026-10-08）**：把 `mesh_scope` 的**读数逻辑**拆出来，只为**能被判据直接跑** ✓
 /// （原来它挂在 `State<Db>` 上 ⇒ 判据没法调 ⇒ 这条 bug 才一直没被判据碰到 ✗）。
 /// ⛔ **本步是纯搬迁**：行为与搬迁前**逐字一致** ✓（含那条 guard ✗ —— 先让判据把它照出来 ✓）。
+/// ⭐ 2026-10-24（全空间方案 P0）：**给所有 personal 空间补一行空同步档案**（幂等）。
+///
+/// 为什么必须补：网格的公告与每轮拉取只遍历**有 `sync_profiles` 行**的空间
+/// （真机：6 个空间只有 3 个有行 ⇒ 其余从不公告、从不进轮次）。
+/// 旧版本"面板保存设置"只写 `mesh_bind` 键、不补档案行；新提交只修了「新建/自动建空间」，
+/// **既有空间不会自动补** ⇒ 这里在启动时补一次。
+///
+/// 三条口径：
+/// ① 只补 `kind='personal'` 且**没有行**的（⛔ 不动已有行、⛔ 不改团队空间）；
+/// ② 空档案 ＝ 全默认值（服务器地址/空间 id 都空 ⇒ 个人档＝只走网格，符合个人版）；
+/// ③ 幂等：再跑一次补 0 行；返回**这次补了几行**（给日志/判据）。
+pub fn ensure_sync_profiles_for_personal_spaces(c: &Connection) -> Result<usize, String> {
+    let ids: Vec<String> = {
+        let mut stmt = c
+            .prepare(
+                "SELECT w.id FROM meta.workspaces w
+                 WHERE w.deleted_at IS NULL AND w.kind = 'personal'
+                   AND NOT EXISTS (SELECT 1 FROM meta.sync_profiles p WHERE p.ws_id = w.id)
+                 ORDER BY w.created_at, w.id",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        rows
+    };
+    let mut n = 0usize;
+    for id in ids {
+        let affected = c
+            .execute(
+                "INSERT OR IGNORE INTO meta.sync_profiles (ws_id) VALUES (?1)",
+                rusqlite::params![id],
+            )
+            .map_err(|e| e.to_string())?;
+        n += affected;
+    }
+    Ok(n)
+}
+
+/// ⭐ 2026-10-24（全空间方案 P1）：**每个个人空间一个确定性的子房间号**。
+///
+/// 病根（真机）：个人空间的 `space_id` 是空串 ⇒ 全部解析到**同一个设备级房间号** ⇒
+/// 窗口的连接表（按 proto 做键）里互相覆盖，`add_space` 遇到已有键**静默返回 false**
+/// ⇒ 一台机器的窗口同一时刻只服务**一个**个人空间。
+///
+/// 修法：`room_for(空间) = sha256(seed ‖ 分隔符 ‖ 空间名)[..32]`。
+/// · `seed` ＝ 设备级「配对暗号」（两台填同一个才可能配对成功——本来就要求一样）
+/// · 空间名：融合闸门本来就要求**逐字相同**（owner 2026-10-17 口径）⇒ 用它做稳定键是自洽的
+/// ⇒ 两台对同一个空间算出的值**必然相同**，而不同空间的值**必然不同** ⇒ 窗口天然多键。
+///
+/// ⚠️ 任一为空 ⇒ 回空串（调用方按旧口径回落 / 如实报"还没填暗号"，⛔ 不猜）。
+pub(crate) fn personal_room_for(seed: &str, space_name: &str) -> String {
+    let seed = seed.trim();
+    let name = space_name.trim();
+    if seed.is_empty() || name.is_empty() {
+        return String::new();
+    }
+    let h = crate::db::sha256_hex(&format!("{seed}\u{1f}{name}"));
+    h.chars().take(32).collect()
+}
+
 pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Result<MeshScope, String> {
     // 读法与 `lan_status` 同一套：profiles × 未删除的 workspaces
     let (device_id, rows) = {
@@ -5474,7 +5539,10 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
                 // ⚠️ **2026-10-04 改**（owner：个人空间也要能用设备直连）：把 `mesh_room` 一起读出来 ✓。
                 //   ⭐ 对暗号的值 ＝ `space_id` 非空就用它（团队空间行为不变 ✓），否则用用户填的
                 //   「配对暗号」`mesh_room` ✓（个人空间没有 space_id —— 那是服务器上的组织空间 id）。
-                "SELECT p.space_id, p.ws_id, p.mesh_room FROM sync_profiles p
+                "SELECT p.space_id, p.ws_id, p.mesh_room,
+                        COALESCE((SELECT w.name FROM meta.workspaces w
+                                  WHERE w.id = p.ws_id AND w.deleted_at IS NULL), '')
+                 FROM sync_profiles p
                  WHERE EXISTS (
                      SELECT 1 FROM meta.workspaces w
                      WHERE w.id = p.ws_id AND w.deleted_at IS NULL
@@ -5487,6 +5555,7 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
             r.get::<_, String>(0)?,
             r.get::<_, String>(1)?,
             r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?,
             ))
             })
             .map_err(|e| e.to_string())?
@@ -5497,7 +5566,7 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
     let pick = match workspace_id.filter(|w| !w.is_empty()) {
         Some(want) => rows
             .iter()
-            .find(|(_, ws, _)| ws == want)
+            .find(|(_, ws, _, _)| ws == want)
             .cloned()
             .ok_or_else(|| format!("这个空间没有同步档案（或它不是当前工作区）：{want}"))?,
         None => match rows.len() {
@@ -5518,7 +5587,15 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
     //   ⚠️ 没迁移过（或老机器）⇒ **回退**读旧的逐空间那一份 ✓（⭐ 只读、⛔ 不写 ✗）。
     let personal = pick.0.trim().is_empty();
     let space = if personal {
-        crate::mesh::mesh_room_device(c).unwrap_or_else(|| pick.2.trim().to_string())
+        // ⭐ 2026-10-24（全空间方案 P1）：个人空间**一空间一房间号**（不再是全设备共用一个）。
+        //   seed ＝ 设备级配对暗号（回落旧逐空间那一格）；名字来自 meta.workspaces。
+        let seed = crate::mesh::mesh_room_device(c).unwrap_or_else(|| pick.2.trim().to_string());
+        let derived = personal_room_for(&seed, &pick.3);
+        if derived.is_empty() {
+            seed // 解析不出来 ⇒ 保持旧口径（后面那条空串检查会如实报错）
+        } else {
+            derived
+        }
     } else {
         pick.0.trim().to_string()
     };
@@ -5849,8 +5926,8 @@ mod r146_mesh_scope_tests {
 
         assert_eq!(
             mesh_space_in_use(&c, true).as_deref(),
-            Some("room-dev"),
-            "⛔ 设备级配了绑定 ⇒ 个人空间必须**仍然被服务** ✗（否则它整个不被服务，而且不报错）"
+            Some(crate::sync::personal_room_for("room-dev", "个人").as_str()),
+            "⛔ 设备级配了绑定 ⇒ 个人空间必须**仍然被服务** ✗（服务空间＝它的子房间号）"
         );
     }
 
@@ -5979,14 +6056,12 @@ mod r146_mesh_scope_tests {
         .unwrap();
         crate::mesh::set_mesh_room_device(&c, Some("room-a")).unwrap();
         crate::mesh::migrate_device_level_mesh(&c).unwrap();
-        // 后果① ⭐ 两个个人空间**都**指向设备级那一份 ✓（＝ 用户看到的是**自己**那一份 ✓）
-        for ws in ["ws-a", "ws-b"] {
-            assert_eq!(
-                mesh_scope_at(&c, Some(ws)).unwrap().space,
-                "room-a",
-                "所有个人空间必须指向同一份（设备级）"
-            );
-        }
+        // 后果① ⭐ 每个个人空间指向**自己**的子房间号（一空间一房间号，⛔ 不共用同一个）
+        let a = mesh_scope_at(&c, Some("ws-a")).unwrap().space;
+        let b = mesh_scope_at(&c, Some("ws-b")).unwrap().space;
+        assert_eq!(a, crate::sync::personal_room_for("room-a", "个人 a"));
+        assert_eq!(b, crate::sync::personal_room_for("room-a", "个人 b"));
+        assert_ne!(a, b, "⛔ 两个个人空间不许再共用同一个房间号（全空间方案 P1）");
         // 后果② ⛔ 设备级那一格**不许**拿到那个证明不了的地址 ✗（否则它会摊给这台的所有个人空间 ✓）
         assert_eq!(
             crate::mesh::settings_for(&c, "", true).bind.as_deref(),
@@ -6019,7 +6094,11 @@ mod r146_mesh_scope_tests {
         crate::mesh::set_mesh_bind_for(&c, "", true, Some("0.0.0.0:8788")).unwrap();
 
         let scope = mesh_scope_at(&c, Some("ws-me")).expect("个人档可解析");
-        assert_eq!(scope.space, "room-dev", "解析出来的设备级暗号");
+        assert_eq!(
+            scope.space,
+            crate::sync::personal_room_for("room-dev", "个人"),
+            "解析出来的＝子房间号（seed＝设备级配对暗号、名＝空间名）"
+        );
         // ⭐ 这一句就是 `mesh_sync_now`（`sync.rs:3442`）那一档**真正读的那一处** ✓
         let round_path_cfg = crate::mesh::settings_for(&c, &scope.space, scope.device_level);
         assert_eq!(
@@ -6141,8 +6220,9 @@ mod r146_mesh_scope_tests {
         let a = mesh_scope_at(&c, Some("ws-me-1")).expect("个人档必须解析得出");
         let b = mesh_scope_at(&c, Some("ws-me-2")).expect("个人档必须解析得出");
         assert!(a.device_level && b.device_level, "个人档要认成设备级");
-        assert_eq!(a.space, "room-dev", "个人档要读**设备级那一格**的暗号");
-        assert_eq!(a.space, b.space, "两个个人空间必须共用同一份");
+        assert_eq!(a.space, crate::sync::personal_room_for("room-dev", "个人 1"));
+        assert_eq!(b.space, crate::sync::personal_room_for("room-dev", "个人 2"));
+        assert_ne!(a.space, b.space, "⭐ 一空间一房间号：两个个人空间**不再共用**（全空间方案 P1）");
         let sa = crate::mesh::settings_for(&c, &a.space, a.device_level);
         let sb = crate::mesh::settings_for(&c, &b.space, b.device_level);
         assert_eq!(sa, sb, "两个个人空间读出来的设置必须一样");
@@ -6243,7 +6323,11 @@ mod r146_mesh_scope_tests {
         let got = mesh_scope_at(&c, Some("ws-personal")).unwrap_or_else(|e| {
             panic!("个人空间填了配对暗号就必须认得出它（实测报错：{e}）")
         });
-        assert_eq!(got.space, "room-123", "对暗号的值就该是用户填的 mesh_room ✓");
+        assert_eq!(
+            got.space,
+            personal_room_for("room-123", "测试"),
+            "对暗号的值＝seed ⇒ 派生出**这个空间自己的**子房间号 ✓"
+        );
         assert_eq!(got.db_space, "ws-personal", "本地库名照旧 ✓");
         assert_eq!(got.device, "dev-a", "设备号照旧 ✓");
     }
@@ -8025,6 +8109,92 @@ mod attachment_peer_space_tests {
     }
 }
 
+/// ⭐ 2026-10-24（全空间方案 P0/P1）自带判据：子房间号派生 ＋ 启动补档案行。
+#[cfg(test)]
+mod personal_room_and_backfill_tests {
+    use super::*;
+
+    fn fixture() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (
+                 id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER,
+                 created_at INTEGER NOT NULL DEFAULT 0, kind TEXT NOT NULL DEFAULT ''
+             );",
+        )
+        .unwrap();
+        c
+    }
+
+    /// 派生函数：同一对入参必然同一结果；空间名或种子任一不同 ⇒ 必然不同；空入参 ⇒ 空串（⛔ 不猜）。
+    #[test]
+    fn personal_room_is_deterministic_and_differs_per_space() {
+        let a1 = personal_room_for("room-seed", "工作");
+        let a2 = personal_room_for("room-seed", "工作");
+        let b = personal_room_for("room-seed", "测试");
+        let c = personal_room_for("another-seed", "工作");
+        assert_eq!(a1, a2, "⭐ 两端必须算出同一个值（确定性）");
+        assert_eq!(a1.len(), 32, "取 sha256 前 32 位十六进制（16 字节）");
+        assert!(a1.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a1, b, "⛔ 不同空间不许撞（否则窗口又按同一个键覆盖）");
+        assert_ne!(a1, c, "⛔ 不同配对暗号必须不同（两台暗号不同 ⇒ 对不上，这是对的）");
+        assert_eq!(personal_room_for("", "工作"), "");
+        assert_eq!(personal_room_for("room-seed", "  "), "");
+    }
+
+    /// 启动补档案行：只补 `kind='personal'`、未删除、且**还没有行**的那些；幂等；不动已有行/团队/已删。
+    #[test]
+    fn backfill_gives_every_personal_space_a_profile_row_once() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name, kind, created_at) VALUES
+                ('ws-exists', '已有行', 'personal', 1),
+                ('ws-b',      '个人 B', 'personal', 2),
+                ('ws-c',      '个人 C', 'personal', 3),
+                ('ws-team',   '团队',   'team',     4),
+                ('ws-gone',   '已删',   'personal', 5);
+             UPDATE meta.workspaces SET deleted_at = 99 WHERE id = 'ws-gone';
+             INSERT INTO meta.sync_profiles (ws_id, server_url) VALUES ('ws-exists', 'https://s.example.com');",
+        )
+        .unwrap();
+        let n = ensure_sync_profiles_for_personal_spaces(&c).expect("补档案不许报错");
+        assert_eq!(n, 2, "只补 ws-b / ws-c 两个（已有/团队/已删都不动）");
+        let rows: Vec<(String, String, String)> = {
+            let mut stmt = c
+                .prepare("SELECT ws_id, space_id, server_url FROM meta.sync_profiles ORDER BY ws_id")
+                .unwrap();
+            let out = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            out
+        };
+        assert_eq!(
+            rows,
+            vec![
+                ("ws-b".to_string(), "".to_string(), "".to_string()),
+                ("ws-c".to_string(), "".to_string(), "".to_string()),
+                ("ws-exists".to_string(), "".to_string(), "https://s.example.com".to_string()),
+            ],
+            "⭐ 补的是**空档案**（服务器地址/空间 id 都空 ⇒ 个人档只走网格）＋ 已有行原样不动"
+        );
+        assert_eq!(
+            ensure_sync_profiles_for_personal_spaces(&c).expect("第二次也不许报错"),
+            0,
+            "⛔ 幂等：再跑一次补 0 行"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -9345,13 +9515,14 @@ mod tests {
         crate::mesh::set_mesh_room_device(&c, Some("room-a")).unwrap();
 
         let picked = pick_lan_scope(&c, Some(profile_for("", "https://s.example.com")), None);
+        let want = personal_room_for("room-a", "个人");
         assert_eq!(
             picked,
-            Some(("room-a".to_string(), "https://s.example.com".to_string())),
-            "个人档 ⇒ 必须解析成**公告会报的那个字符串**（配对暗号 `room-a` ✓），⛔ 不是原始空串 ✗"
+            Some((want.clone(), "https://s.example.com".to_string())),
+            "个人档 ⇒ 必须解析成**公告会报的那个字符串**（子房间号），⛔ 不是原始空串 ✗"
         );
         // ⭐ 与公告同名 ⇒ 判定不再被 `!want.is_empty()` 短路 ✓
-        let peer = lan_peer("dev-amd", "http://172.16.174.226:8787", &["room-a"]);
+        let peer = lan_peer("dev-amd", "http://172.16.174.226:8787", &[want.as_str()]);
         assert!(
             crate::lan::serves_space(&picked.unwrap().0, &peer),
             "对端报的就是这个暗号 ⇒ `serves_current` 必须是 **true**（老口径下恒 false ✗）"
@@ -11454,3 +11625,5 @@ mod tests {
     }
     }
 }
+
+

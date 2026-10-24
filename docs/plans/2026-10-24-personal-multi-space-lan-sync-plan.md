@@ -1,6 +1,6 @@
 # 个人版「全空间」局域网多端同步方案（含传输/发现抽象层）
 
-> **状态**：**已立项，未实施**。本文是方案书 ＋ 施工单；P0 可先落地，P1 是核心改动。
+> **状态**：**实施中（P0/P1 已落，单测与门禁全绿；两机真机验收待做）**。本文是方案书 ＋ 施工单 ＋ 实施记录（§九）。
 > **一句话目标**：个人版**不依赖服务器**，让一台机器上的**所有个人空间**（不是一次一个）在局域网内
 > 同时、双向、可收敛地同步到同一个人名下的其它设备。
 > **范围**：客户端为主（`src-tauri/src/{mesh,sync,lan_state,db}.rs`、`src/components/SyncPanel.tsx`）；
@@ -325,6 +325,63 @@ P3（后续）· 改名策略与 UI
    —— 推荐 ②；沉默 ⇒ 按 ① 先行、把接口留成可替换
 2. 稳定键的生成时机：首次融合时生成（推荐）／用户手动确认后生成
 3. P1 是否连 P3 的「按空间状态 UI」一起做（推荐分开，先让同步本身全绿）
+```
+
+---
+
+## 九、实施记录（2026-10-24）
+
+### 已落地
+
+```text
+P0 补档案行（启动迁移）
+  · `sync::ensure_sync_profiles_for_personal_spaces`：只补 `kind='personal'`、未删除、**还没有行**的空间；
+    空档案（服务器地址/空间 id 都空 ⇒ 个人档只走网格）；幂等
+  · `db::init` 启动时调用（失败只记一行，不打断启动 —— 与发现层同一条口径）
+  · 判据：`personal_room_and_backfill_tests::backfill_gives_every_personal_space_a_profile_row_once`
+
+P1 一空间一子房间号
+  · `sync::personal_room_for(seed, 空间名)`：sha256 前 32 位十六进制，确定性、不同空间不同值
+  · `sync::mesh_scope_at` 个人档：改为返回**这个空间自己的**子房间号（seed＝设备级配对暗号，
+    回落旧逐空间那一格；空间名来自 workspaces）⇒ 窗口连接表天然多键、`select_space` 路由不用改
+  · `mesh::is_device_level_space`：派生出来的房间号**也算个人档**（否则配对秘密/卡表从团队行走 ⇒ 401）
+  · `lan_state` 建窗口：个人档判据改用 **`space_id` 空**（⛔ 不再拿"房间号==设备级暗号"反推）
+  · 公告/取数/附件：全部走同一条解析（`window_serve_space` → `mesh_scope_at`），
+    所以一条改完，公告、窗口服务、每轮拉取、按需取字节**用的是同一把尺**
+  · 判据（含先看红的那条）：`multi_space_window_tests::a_window_serves_several_personal_spaces_at_once`
+    （两个个人空间在同一扇门里**都在服务**；摘掉一个不掐断另一个）、
+    `a_derived_room_still_counts_as_a_personal_space`、`r146_mesh_scope_tests::one_device_level_write_...`
+    （改成断言"两个个人空间**不再共用**同一个房间号"）、
+    `direct_sync_tests` / `personal_profile_scope_...`（公告与 scope 同一把尺，期望值改为子房间号）
+```
+
+### 验证读数（2026-10-24 本机）
+
+```text
+· `cargo test --lib`：1164 passed / 3 failed —— 3 条全是 macOS `/var` vs `/private/var` 的
+  `workspaces::tests` **既有**失败（与本笔无关，改动前就是 3 条）
+· `node scripts/test-report.mjs`：66 条门禁全绿
+· `check-doc-content-access`：生产面 560/562（**低于**基线；新测试模块放在文件末的测试尾部之后，
+  遵守"测试不计入替换面"的口径，且没有新增直接访问）
+· `check-plan-status` / `check-doc-links` / `fence-balance`：通过
+```
+
+### ⚠️ 协议变更（升级须知）
+
+```text
+这一版把个人空间的"对暗号值"从**一个共享房间号**改成**每空间派生子房间号** ⇒ 公告里的
+`hub_spaces` 也变了。
+· 两台都升级：各空间的子房间号一致 ⇒ 正常；首轮会从游标 0 重拉（幂等，量大但不丢）
+· 一台没升级：它公告的是旧共享房间号 ⇒ 与本机的子房间号**匹配不上** ⇒
+  如实表现为"网段里没有能直接拉的对端"（⛔ 不会误合并，但也同步不了）
+  ⇒ 真机验收要求**两侧同时**换新版；"对端版本旧"的专门提示留 P3
+```
+
+### 还没做的（P2/P3）
+
+```text
+· P2：两机真机验收矩阵（每空间各建/改一页、附件、封面；双向对账）
+· P3：改名策略（账本稳定键 + 旧记录保留期）、同步面板"按空间状态"、旧对端版本提示
 ```
 
 ---
