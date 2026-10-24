@@ -27343,3 +27343,13 @@ button.mset-row:focus-visible {
   .conflict-banner-lineage .conflict-btn-primary { grid-column: 1 / -1; }
   .conflict-banner-lineage .conflict-btn { width: 100%; text-align: center; }
 }
+/* ⭐ 2026-10-24：主按钮＝唯一无损选项（「另存为新页」）—— 这一档必须**实心**，另两个是描边 */
+.conflict-banner-lineage .conflict-btn.conflict-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 500;
+}
+.conflict-banner-lineage .conflict-btn.conflict-btn-primary:hover {
+  background: var(--accent-strong);
+}
