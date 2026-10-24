@@ -27303,3 +27303,39 @@ button.mset-row:focus-visible {
 .mesh-missing-create { margin-left: auto; border: none; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 500; padding: 8px 14px; border-radius: var(--radius-md); cursor: pointer; }
 .mesh-missing-create:disabled { background: var(--hover); color: var(--text-faint); cursor: default; }
 .mesh-missing-done { margin-top: 8px; font-size: 11.5px; color: var(--success); }
+/* ⭐ 2026-10-24：页级血统冲突条（`LineageConflictBanner`）—— 只覆盖 `.conflict-banner-lineage`。
+   ⚠️ 与块级那条 `.conflict-banner` **共用一套类名** ⇒ 这里**只加作用域覆盖**，⛔ 不动块级那条。 */
+.conflict-banner-lineage {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: var(--warning-soft);
+  border-color: var(--warning-line);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+}
+.conflict-banner-lineage .conflict-lineage-ic {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--warning-line);
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  color: var(--warning);
+}
+.conflict-banner-lineage .conflict-lineage-body { flex: 1; min-width: 0; }
+.conflict-banner-lineage .conflict-banner-title { font-size: 13px; font-weight: 600; }
+.conflict-banner-lineage .conflict-banner-hint { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+.conflict-banner-lineage .conflict-item-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.conflict-banner-lineage .conflict-btn { font-size: 12px; padding: 6px 12px; border-radius: var(--radius-md); }
+.conflict-banner-lineage .conflict-lineage-keep { color: var(--text-dim); }
+
+/* 窄屏（≤520px）：按钮两列，主操作整行 —— ⛔ 不许挤成一列竖排 */
+@media (max-width: 520px) {
+  .conflict-banner-lineage .conflict-item-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .conflict-banner-lineage .conflict-btn-primary { grid-column: 1 / -1; }
+  .conflict-banner-lineage .conflict-btn { width: 100%; text-align: center; }
+}
