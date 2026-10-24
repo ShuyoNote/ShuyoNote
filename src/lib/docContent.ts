@@ -44,6 +44,44 @@ export interface ContentSql {
   run(sql: string, params?: readonly unknown[]): void;
 }
 
+/**
+ * ⭐ 2026-10-24（owner 报「同步了没有自动刷新页面」）：**同步回来之后，当前这一页要不要重挂编辑器**。
+ *
+ * 为什么判据放在这一层：调用方（`store/notes.ts` 的 `refreshCurrent`）不该直接比较正文那两个
+ * 存储字段名 —— `check-doc-content-access` 的口径是"只有这一层可以直接摸它们"。
+ * 比较项＝用户看得见的东西：正文 ＋ 标题 ＋ 封面/图标/高度/位置（后四格是 2026-10-24 那笔
+ * 「题头图没有同步」补上的，同一处判"要不要重挂"才不会漏掉只改封面的那一次）。
+ *
+ * 返回 `true` ⇒ **变了**（调用方负责换 `current` 并 `bumpReload()` 让编辑器重挂）。
+ */
+export function visiblePageChanged(
+  prev: {
+    title: string;
+    content_json: string;
+    cover?: string;
+    icon?: string;
+    cover_height?: number;
+    cover_pos?: number;
+  },
+  next: {
+    title: string;
+    content_json: string;
+    cover?: string;
+    icon?: string;
+    cover_height?: number;
+    cover_pos?: number;
+  },
+): boolean {
+  return (
+    prev.content_json !== next.content_json ||
+    prev.title !== next.title ||
+    (prev.cover ?? "") !== (next.cover ?? "") ||
+    (prev.icon ?? "") !== (next.icon ?? "") ||
+    (prev.cover_height ?? 300) !== (next.cover_height ?? 300) ||
+    (prev.cover_pos ?? 50) !== (next.cover_pos ?? 50)
+  );
+}
+
 /** **唯一读出口**。页面不存在或已软删 ⇒ `null`（"没有"与"出错"由调用方分开处理）。 */
 /**
  * ⭐ **R166**：把**一整段**源码做成**一个** code 块 ✓（⛔ 不按空行／换行拆开 ✗）。

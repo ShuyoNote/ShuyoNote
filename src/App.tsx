@@ -101,6 +101,7 @@ import { api } from "./lib/api";
 import { createDeepLinkHandler } from "./lib/deepLinkDispatch";
 import { useNotes } from "./store/notes";
 import { shouldDropPendingSave } from "./lib/pendingSave";
+import { isLocalEditRecent, markLocalEdit } from "./lib/editIdle";
 import { usePlugins } from "./store/plugins";
 import { emitHostEvent } from "./lib/pluginEvents";
 import { applyThemeTokens, resolveTheme } from "./lib/pluginTheme";
@@ -213,7 +214,14 @@ async function runAutoSyncRound(): Promise<void> {
     }
     // ★ 空闲退避（2026-09-30）：**跑完了才记时**（被闸门拦掉、或忙的时候不算"跑过" ✓）。
     //   口径（什么算"空"、出错怎么算）全在 `lib/syncBackoff.ts` —— 这里只喂两个数 ✓。
-    syncEmptyStreak = roundWasEmpty(syncResults, meshReports) ? syncEmptyStreak + 1 : 0;
+    const empty = roundWasEmpty(syncResults, meshReports);
+    syncEmptyStreak = empty ? syncEmptyStreak + 1 : 0;
+    // ⭐ 2026-10-24（owner 报「同步了没有自动刷新页面」）：这一轮**真的换到了东西** ⇒
+    //   当前打开的页也要重读（`loadPages()` 只换列表；见 `notes.refreshCurrent`）。
+    //   ⚠️ 正在打字时跳过：重挂编辑器会把你还没落库的那几百毫秒换掉（`lib/editIdle.ts`）。
+    if (!empty && !isLocalEditRecent()) {
+      await useNotes.getState().refreshCurrent();
+    }
     syncLastRunAtMs = Date.now();
   } catch (e) {
     // ③ 自动同步失败静默（下次再试），**但留痕**（完全静默的话"改了没传上去"查不到因果）。
@@ -674,6 +682,9 @@ function NoteEditor({ pageId }: { pageId: string }) {
   useEffect(() => {
     let pending: ReturnType<typeof setTimeout> | undefined;
     const off = onAnyLocalEdit(() => {
+      // ⭐ 2026-10-24：记下"刚刚真的在敲" —— 同步回来时用它决定要不要自动重挂当前页
+      //   （见 `lib/editIdle.ts`；只在最近没编辑时才自动刷）。
+      markLocalEdit();
       if (pending) clearTimeout(pending);
       pending = setTimeout(() => {
         pending = undefined;
