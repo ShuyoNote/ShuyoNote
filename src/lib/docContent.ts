@@ -285,10 +285,17 @@ export function readPageCrdtState(db: ContentSql, pageId: string): Uint8Array | 
   const row = db.query<{ state: unknown }>("SELECT state FROM page_crdt WHERE page_id = ?", [pageId])[0];
   if (!row) return null;
   const s = row.state;
-  if (s instanceof Uint8Array) return s;
+  // ⭐ 2026-10-24（真机报错 `CRDT 绑定失败：Unexpected end of array` 定位到的那一格）：
+  //   **0 字节的状态 ＝ 还没有状态**，不是"一份空状态" ✗ —— 交给 lib0 解码会当场抛
+  //   `Unexpected end of array`（编辑器只能弹一句看不懂的 toast）。
+  //   0 字节是从哪来的：`adoptRemote()` 那条路会 `savePageState(pageId, new Uint8Array())`
+  //   （＝"清掉本机 CRDT、按对端投影重建"）⇒ 那一行就是 0 字节。
+  //   ⇒ 这里统一收口成 `null`：所有调用方本来就把 `null` 当"没有状态 ⇒ 从 JSON 播种"✓。
+  if (s instanceof Uint8Array) return s.length === 0 ? null : s;
   // 兜底：驱动若按**二进制字符串**回来（sql.js 的 BLOB 是 Uint8Array，正常走不到这里），
   // 用逐字节 charCode 还原。⚠️ **别用 `Buffer`**：Web 构建里没有它。
   if (typeof s === "string") {
+    if (s.length === 0) return null; // 同上：空串也是"没有状态"
     const out = new Uint8Array(s.length);
     for (let i = 0; i < s.length; i += 1) out[i] = s.charCodeAt(i) & 0xff;
     return out;
