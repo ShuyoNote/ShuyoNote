@@ -3477,15 +3477,34 @@ pub async fn fetch_peer_manifest(
     Ok(Some(out))
 }
 
-/// 纯函数：对端清单里"我这边没有的页"（只算 live；墓碑这次不自动处理）。
-pub fn manifest_missing_ids(local_ids: &std::collections::HashSet<String>, peer: &[(String, i64, bool)]) -> Vec<String> {
-    let mut out: Vec<String> = peer
-        .iter()
-        .filter(|(id, _, deleted)| !deleted && !local_ids.contains(id))
-        .map(|(id, _, _)| id.clone())
-        .collect();
-    out.sort();
-    out
+/// 对账算出来的两类缺口（⛔ 不猜：只报"清单与本地状态明确不一致"的）。
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ManifestGaps {
+    /// 对端 live、我这边**没有这一行** ⇒ 按 id 取回。
+    pub missing_live: Vec<String>,
+    /// 对端**墓碑**、我这边**还是 live** ⇒ 删除没传过来（遗留数据常见）⇒ 补一条 delete。
+    pub peer_deleted_local_live: Vec<String>,
+}
+
+/// 纯函数：对账的两类缺口。
+pub fn manifest_gaps(
+    local_live: &std::collections::HashSet<String>,
+    local_deleted: &std::collections::HashSet<String>,
+    peer: &[(String, i64, bool)],
+) -> ManifestGaps {
+    let mut g = ManifestGaps::default();
+    for (id, _updated_at, deleted) in peer {
+        if *deleted {
+            if local_live.contains(id) {
+                g.peer_deleted_local_live.push(id.clone());
+            }
+        } else if !local_live.contains(id) && !local_deleted.contains(id) {
+            g.missing_live.push(id.clone());
+        }
+    }
+    g.missing_live.sort();
+    g.peer_deleted_local_live.sort();
+    g
 }
 
 /// ⭐ P3：对一次页清单，报告"对端有、我这边没有"的页（6 小时最多一次；只读）。
@@ -3533,22 +3552,36 @@ async fn maybe_report_manifest_gap(
         }
     };
     // ⚠️ 锁必须收在这个块里：下面要 `await` 按 id 取页，`MutexGuard` 不是 `Send`。
-    let missing = {
+    let (gaps, local_dirty) = {
         let Ok(g) = conn.lock() else { return };
-        let local: std::collections::HashSet<String> = match g.prepare("SELECT id FROM pages") {
-            Ok(mut st) => match st.query_map([], |r| r.get::<_, String>(0)) {
-                Ok(it) => it.filter_map(|x| x.ok()).collect(),
+        let mut local_live = std::collections::HashSet::new();
+        let mut local_deleted = std::collections::HashSet::new();
+        let mut dirty: std::collections::HashSet<String> = std::collections::HashSet::new();
+        match g.prepare("SELECT id, deleted_at IS NOT NULL, COALESCE(dirty, 0) FROM pages") {
+            Ok(mut st) => match st.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?, r.get::<_, i64>(2)?))
+            }) {
+                Ok(it) => {
+                    for row in it.filter_map(|x| x.ok()) {
+                        let (id, deleted, d) = row;
+                        if deleted { local_deleted.insert(id); } else {
+                            if d != 0 { dirty.insert(id.clone()); }
+                            local_live.insert(id);
+                        }
+                    }
+                }
                 Err(_) => return,
             },
             Err(_) => return,
-        };
-        let missing = manifest_missing_ids(&local, &peer_manifest);
+        }
+        let gaps = manifest_gaps(&local_live, &local_deleted, &peer_manifest);
         let _ = crate::sync::set_meta_state(&g, &stamp_key, &now.to_string());
-        missing
+        (gaps, dirty)
     };
-    if missing.is_empty() {
+    if gaps.missing_live.is_empty() && gaps.peer_deleted_local_live.is_empty() {
         return;
     }
+    let missing = gaps.missing_live;
     eprintln!(
         "[mesh] ⚠️ 对账：对端 {} 在空间 {} 有 {} 页我这边没有（前 5 个：{:?}）⇒ 按 id 补（本轮最多 {} 页）",
         peer.device_id.chars().take(8).collect::<String>(),
@@ -3558,6 +3591,33 @@ async fn maybe_report_manifest_gap(
         MAX_REPAIR_PER_ROUND
     );
     let mut repaired = 0usize;
+    // ① 对端墓碑、我这边 live ⇒ 补一条 delete（⛔ 本地脏的先不动：那是用户没同步出去的编辑）
+    for id in gaps.peer_deleted_local_live.iter().take(MAX_REPAIR_PER_ROUND) {
+        if local_dirty.contains(id) {
+            eprintln!("[mesh] 对账：{} 对端是墓碑、本地是脏页 ⇒ **不动**（先保住本地编辑）", id.chars().take(8).collect::<String>());
+            continue;
+        }
+        let Ok(g) = conn.lock() else { return };
+        let row = MeshRow {
+            device_seq: 0,
+            entity: "page".to_string(),
+            entity_id: id.clone(),
+            op: "delete".to_string(),
+            payload: None,
+            updated_at: crate::db::now_ms(),
+            sealed: None,
+        };
+        match absorb_peer_batch(&g, &[row], &peer.device_id, space_id, device_level, None) {
+            Ok(ab) => {
+                if ab.applied > 0 {
+                    repaired += ab.applied;
+                    eprintln!("[mesh] 对账补删：{}（对端墓碑 ⇒ 本地落墓碑）", id.chars().take(8).collect::<String>());
+                }
+            }
+            Err(e) => eprintln!("[mesh] 对账补删失败（{id}，不影响同步）：{e}"),
+        }
+    }
+    // ② 对端 live、我这边没有 ⇒ 按 id 取回
     for id in missing.iter().take(MAX_REPAIR_PER_ROUND) {
         let target = format!("/mesh/page?space_id={space_id}&id={id}");
         let auth = {
@@ -5985,16 +6045,21 @@ mod tests {
         assert_eq!(route("POST", "/mesh/page"), Route::Unknown, "只认 GET");
 
         use std::collections::HashSet;
-        let local: HashSet<String> = ["a".to_string(), "b".to_string()].into_iter().collect();
+        let live: HashSet<String> = ["a".to_string(), "f".to_string()].into_iter().collect();
+        let deleted: HashSet<String> = ["g".to_string()].into_iter().collect();
         let peer = vec![
-            ("a".to_string(), 1, false),  // 两边都有
-            ("c".to_string(), 2, false),  // 只对端有 ⇒ 缺
-            ("d".to_string(), 3, true),   // 对端墓碑 ⇒ 这一版不自动删
+            ("a".to_string(), 1, false),  // 两边都 live
+            ("c".to_string(), 2, false),  // 只对端 live ⇒ 缺
+            ("d".to_string(), 3, true),   // 对端墓碑、我这边没有 ⇒ 不动
             ("e".to_string(), 4, false),  // 缺
+            ("f".to_string(), 5, true),   // 对端墓碑、我这边 live ⇒ 补删
+            ("g".to_string(), 6, true),   // 两边都墓碑 ⇒ 不动
         ];
-        assert_eq!(manifest_missing_ids(&local, &peer), vec!["c".to_string(), "e".to_string()]);
+        let g = manifest_gaps(&live, &deleted, &peer);
+        assert_eq!(g.missing_live, vec!["c".to_string(), "e".to_string()]);
+        assert_eq!(g.peer_deleted_local_live, vec!["f".to_string()]);
         // 全都有 ⇒ 空
-        assert!(manifest_missing_ids(&local, &[("a".to_string(), 1, false)]).is_empty());
+        assert_eq!(manifest_gaps(&live, &deleted, &[("a".to_string(), 1, false)]), ManifestGaps::default());
     }
 
     /// ⭐ 2026-10-24（加密空间自动同步 B1）：`/mesh/keyring` 是**真路由**（不是 501/404）。
