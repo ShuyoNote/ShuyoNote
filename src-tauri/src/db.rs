@@ -163,7 +163,7 @@ pub(crate) fn create_space_db_at(dir: &Path, space_id: &str) -> Result<(), Strin
 /// migrated under a mismatched id (e.g. after prior workspace CRUD / migration), every
 /// page insert fails with a FOREIGN KEY error. Seeding the row here (from meta) is
 /// idempotent and makes the active space usable regardless of leftover state.
-fn ensure_space_workspace(c: &Connection, space_id: &str) -> Result<(), String> {
+pub(crate) fn ensure_space_workspace(c: &Connection, space_id: &str) -> Result<(), String> {
     let exists: bool = c
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1)",

@@ -1053,6 +1053,14 @@ async fn maybe_sync_peer_keyring(
                         );
                     }
                     let _ = crate::sync::set_meta_state(&g, &stamp_key, &now.to_string());
+                    // ⭐ P2：如果此刻会话已解锁（主密钥在手），顺手把新并进来的加密空间建出来。
+                    match crate::security::provision_from_current_session(&g) {
+                        Ok(v) if !v.is_empty() => {
+                            eprintln!("[mesh] 依新并入的公开材料自动建了 {} 个加密空间：{:?}", v.len(), v)
+                        }
+                        Ok(_) => {}
+                        Err(e) => eprintln!("[mesh] 自动建加密空间失败（不影响本轮同步）：{e}"),
+                    }
                 }
                 Err(e) => eprintln!("[mesh] 公开材料合并失败（不影响本轮同步）：{e}"),
             }
