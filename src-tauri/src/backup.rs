@@ -18,6 +18,77 @@ pub struct BackupResult {
     pub orphans: Vec<String>,
 }
 
+/// 收尸判据：**0 字节的半个包**或 `.part`，并且**老到不可能是活的**（>1 小时）。
+///
+/// ⚠️ 年龄闸门是这条的命门（2026-10-25 真机）：备份刚开写时 `.part` 就是 0 字节，
+/// 无脑删会删掉**正在写**的那一份。判据把这条钉住（`a_fresh_zero_byte_part_is_not_swept`）。
+fn should_sweep_debris(name: &str, size: u64, age_secs: Option<u64>) -> bool {
+    let old = age_secs.map(|s| s > 3600).unwrap_or(false);
+    let debris = size == 0 || name.ends_with(".part");
+    debris && old
+}
+
+/// 多老的 `.part` 算残留：本机一次备份（约 120 MB）实测 ~90 秒 ⇒ **1 小时**是极宽的余量。
+/// ⚠️ 宁可留久一点：清早了会删掉**正在写**的那一份（两个实例同时跑时就是这个形状 ✓）。
+pub(crate) const STALE_PART_MS: i64 = 60 * 60 * 1000;
+
+/// 这个名字是不是**我们自己**的备份文件（`shuyonote-backup-<毫秒>.zip` / `.zip.part`）。
+///
+/// ⚠️ 只认这个形状：`backups/` 是用户目录，⛔ 不碰任何不是我们写的东西 ✗
+/// （保留分层那一侧也是同一条纪律：只删自己命名的 ✓）。
+fn is_our_backup_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("shuyonote-backup-") else {
+        return false;
+    };
+    let stem = rest
+        .strip_suffix(".zip.part")
+        .or_else(|| rest.strip_suffix(".zip"));
+    match stem {
+        Some(s) => !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()),
+        None => false,
+    }
+}
+
+/// `backups/` 里**超过 `max_age_ms` 的 `.part`**（＝写一半被中断留下的尸体）。
+///
+/// 为什么要有它（2026-10-25 真机）：我 kill 进程时留下一个 **0 字节的 `.part`**，
+/// 而保留分层**只认有效快照**（`.part` 不算）⇒ 它不会被当成备份、也**永远不会被清**。
+pub(crate) fn stale_parts(dir: &Path, now_ms: i64, max_age_ms: i64) -> Vec<PathBuf> {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PathBuf> = Vec::new();
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !name.ends_with(".zip.part") || !is_our_backup_name(&name) {
+            continue;
+        }
+        let Ok(md) = e.metadata() else { continue };
+        let Ok(modified) = md.modified() else { continue };
+        let Ok(age) = modified.duration_since(std::time::UNIX_EPOCH) else {
+            continue;
+        };
+        let mtime_ms = age.as_millis() as i64;
+        if now_ms.saturating_sub(mtime_ms) > max_age_ms {
+            out.push(e.path());
+        }
+    }
+    out.sort();
+    out
+}
+
+/// 清残留 `.part`；回「清掉几个」。⛔ 只删 [`stale_parts`] 点名的那些 ✓。
+fn remove_stale_parts(dir: &Path) -> usize {
+    let now_ms = crate::auto_backup::now_unix() as i64 * 1000;
+    let mut n = 0usize;
+    for p in stale_parts(dir, now_ms, STALE_PART_MS) {
+        if std::fs::remove_file(&p).is_ok() {
+            n += 1;
+        }
+    }
+    n
+}
+
 /// 把一次备份的读数压成**一行**（日志与 UI 共用同一句，⛔ 不写第二遍 ✗）。
 ///
 /// 形状：`size=<字节> skipped=<n>（<空间: 原因>；…） 孤儿库=<n>（<id>、…）`
@@ -408,6 +479,15 @@ pub async fn run_auto_backup_once(app: &tauri::AppHandle) -> crate::auto_backup:
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return RunResult::Failed { note: format!("建备份目录失败：{e}") };
     }
+    // ⭐ 2026-10-25：**先收尸**（写一半被中断留下的 `.part`）——
+    //   保留分层只认"有效快照"，`.part` 不算 ⇒ 它不会被当成备份，也**永远不会被清**（真机见过 0 字节的）。
+    //   ⚠️ 只删 `stale_parts` 点名的那些（≥1 小时 + 名字是我们自己的）⇒ 正在写的那份不会被误删 ✓。
+    match remove_stale_parts(&dir) {
+        0 => {}
+        n => eprintln!(
+            "[auto-backup] 清掉 {n} 个残留 .part（写一半被中断留下的；⛔ 它们从来不算一份备份）"
+        ),
+    }
     // ⚠️ 名字带**毫秒**（同秒两次调度不互相覆盖 ✗）＋ 先写 `.part` ⇒ **成功后才 rename** ✓
     //    （实测：我杀进程时留下过一个 0 MB 的 .zip ✗ —— 那会被保留策略当成"一份有效备份" ✓）
     let stamp = std::time::SystemTime::now()
@@ -449,14 +529,16 @@ pub async fn run_auto_backup_once(app: &tauri::AppHandle) -> crate::auto_backup:
                     }
                     let sz = std::fs::metadata(ent.path()).map(|m| m.len()).unwrap_or(0);
                     if !crate::auto_backup::is_valid_snapshot(&name, sz) {
-                        // ⚠️ 0 字节的 .zip ＝ 老版本留下的半个包 ⇒ 删掉 ✓；`.part` 若是旧的就一起清 ✓
-                        let old = std::fs::metadata(ent.path())
+                        // ⚠️ **必须带年龄闸门**（2026-10-25 真机踩到）：备份**刚开写的那几秒**，
+                        //   `.part` 的大小就是 **0** ⇒ 无脑按 `sz == 0` 删，会删掉**正在写**的那一份
+                        //   （慢盘 / 两个实例同时跑时就会撞上；rename 然后失败，或留下半个包）。
+                        //   ⇒ 只清"老到不可能是活的"那些（>1h，与 `STALE_PART_MS` 同一把尺）。
+                        let age_secs = std::fs::metadata(ent.path())
                             .and_then(|m| m.modified())
                             .ok()
                             .and_then(|t| t.elapsed().ok())
-                            .map(|d| d.as_secs() > 3600)
-                            .unwrap_or(false);
-                        if sz == 0 || (name.ends_with(".part") && old) {
+                            .map(|d| d.as_secs());
+                        if should_sweep_debris(&name, sz, age_secs) {
                             let _ = std::fs::remove_file(ent.path());
                         }
                         continue;
@@ -1053,6 +1135,66 @@ pub async fn auto_backup_run_now(app: tauri::AppHandle) -> AutoBackupRunReport {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// ⭐ **2026-10-25**：**收尸必须带年龄闸门** —— 备份刚开写的几秒，`.part` 就是 **0 字节**。
+    ///
+    /// 真机现场：我建了一个"刚创建、0 字节"的对照 `.part`，结果它在下一趟备份后**消失了** ——
+    /// 旧规则是 `sz == 0 ⇒ 无条件删`（没有年龄条件）⇒ 那正是"删掉正在写的那一份"的形状。
+    ///
+    /// **变异**：把 `should_sweep_debris` 的 `&& old` 去掉 ⇒ 第一条断言红。
+    #[test]
+    fn a_fresh_zero_byte_part_is_not_swept() {
+        // 刚开的备份：0 字节、年龄 3 秒 ⇒ ⛔ 不许删
+        assert!(!should_sweep_debris("shuyonote-backup-1.zip.part", 0, Some(3)));
+        assert!(!should_sweep_debris("shuyonote-backup-1.zip.part", 1024, Some(3)));
+        // 一小时以上的尸体 ⇒ 收
+        assert!(should_sweep_debris("shuyonote-backup-1.zip.part", 1024, Some(7200)));
+        assert!(should_sweep_debris("shuyonote-backup-1.zip.part", 0, Some(7200)));
+        // 0 字节的老 `.zip`（老版本留下的半个包）⇒ 收；新的一律不碰
+        assert!(should_sweep_debris("shuyonote-backup-1.zip", 0, Some(86400)));
+        assert!(!should_sweep_debris("shuyonote-backup-1.zip", 0, Some(3)));
+        // 正常的包（有内容、不是 .part）⇒ 永远不走这条（它由保留分层管）
+        assert!(!should_sweep_debris("shuyonote-backup-1.zip", 999, Some(86400)));
+        // 摸不到 mtime ⇒ **不动**（不猜）
+        assert!(!should_sweep_debris("shuyonote-backup-1.zip.part", 0, None));
+    }
+
+    /// ⭐ **2026-10-25**：`backups/` 里**写一半的 `.part`** 要能被收掉，而且**只能收我们自己命名的**。
+    ///
+    /// 真机来由：我用 `Stop-Process` 杀掉 app 时留下一个 **0 字节 `.part`**；保留分层只认有效快照
+    /// ⇒ 它既不算备份、**也永远不会被清**，白占一个"看起来像备份"的名字。
+    ///
+    /// **变异**：把 `is_our_backup_name` 放宽成"凡 `.zip.part` 都算" ⇒ 本判据里那个 `other.zip.part` 会被收 ⇒ 红。
+    #[test]
+    fn stale_parts_only_collects_our_own_old_ones() {
+        let dir = uniq_tmp("parts");
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 3600);
+        let fresh = std::time::SystemTime::now();
+
+        let mk = |name: &str, when: std::time::SystemTime| {
+            let p = dir.join(name);
+            std::fs::write(&p, b"x").unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&p)
+                .unwrap()
+                .set_modified(when)
+                .unwrap();
+            p
+        };
+        let stale = mk("shuyonote-backup-1792880124215.zip.part", old);
+        mk("shuyonote-backup-1792880954877.zip.part", fresh); // 太新 ⇒ 不动
+        mk("other.zip.part", old); // 不是我们的名字 ⇒ 不动
+        mk("shuyonote-backup-1792880124215.zip", old); // 不是 .part ⇒ 不动
+        mk("shuyonote-backup-abc.zip.part", old); // 名字形状不对 ⇒ 不动
+
+        let now_ms = crate::auto_backup::now_unix() as i64 * 1000;
+        let got = stale_parts(&dir, now_ms, STALE_PART_MS);
+        assert_eq!(got, vec![stale.clone()], "只该收**我们自己的 + 超过 1 小时**的那一个");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     static TMP_SEQ: AtomicU32 = AtomicU32::new(0);
 
