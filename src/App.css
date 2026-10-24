@@ -56,6 +56,8 @@
   --on-danger: #ffffff;
   --success: #00b578;
   --warning: #ff9a2e;
+  --warning-soft: #fff6ea;
+  --warning-line: #ffd9a8;
   --mark-bg: #fff3cc;
   --chip-bg: #eef1f5;
   --code-bg: #f2f3f5;
@@ -133,6 +135,8 @@
   --on-danger: #0b1220;
   --success: #2bd49b;
   --warning: #ffb04d;
+  --warning-soft: rgba(255,176,77,.12);
+  --warning-line: rgba(255,176,77,.35);
   --mark-bg: #4a3f1f;
   --chip-bg: #2f3a44;
   --code-bg: #2a2b2e;
