@@ -986,7 +986,7 @@ pub async fn pull_and_absorb(
     maybe_sync_peer_keyring(conn, client, peer, space_id, token).await;
     // ⭐ P3：顺带对一次"页清单"（只读、6 小时一次）—— 把"你这儿有、我这儿没有"如实打出来。
     //   ⚠️ 这一版**只报告不自动补**（自动按 id 取页是下一步；先让缺口可见，再动手补）。
-    maybe_report_manifest_gap(conn, client, peer, space_id, token).await;
+    maybe_report_manifest_gap(conn, client, peer, space_id, token, device_level).await;
     Ok(PeerPullReport {
         peer: peer.device_id.clone(),
         fetched,
@@ -2416,6 +2416,9 @@ pub enum Route {
     /// ⭐ 2026-10-24（P3 对账）：`GET /mesh/manifest?space_id=…` —— 本机这个空间的**页清单
     /// 元数据**（page id / updated_at / 是否墓碑），只用于"对账找缺"，⛔ 不含标题与正文。
     Manifest,
+    /// ⭐ 2026-10-24（P3 对账）：`GET /mesh/page?space_id=…&id=…` —— **按 id 取单页**。
+    /// 对"从未记账"的页（changes 里没有）也能按**当前状态**重播一次 ⇒ 对账能补回它。
+    Page,
     /// 同步协议里**有**、但**不是网格这一档**的端点 ⇒ `501` ＋ 一句人话。
     NotYet(&'static str),
     /// 协议里根本没有这个路径 ⇒ `404`。
@@ -2430,6 +2433,7 @@ pub fn route(method: &str, target: &str) -> Route {
         "GET" if path == "/mesh/attachment" => Route::Attachment,
         "GET" if path == "/mesh/keyring" => Route::Keyring,
         "GET" if path == "/mesh/manifest" => Route::Manifest,
+        "GET" if path == "/mesh/page" => Route::Page,
         _ => match not_yet(path) {
             Some(what) => Route::NotYet(what),
             None => Route::Unknown,
@@ -3045,6 +3049,7 @@ fn dispatch(state: &State, req: &Request) -> Reply {
         Route::Attachment => handle_attachment(state, &req.target),
         Route::Keyring => handle_keyring(state),
         Route::Manifest => handle_manifest(state, &req.target),
+        Route::Page => handle_page(state, &req.target),
         Route::NotYet(what) => Reply::json(
             501,
             "Not Implemented",
@@ -3490,6 +3495,7 @@ async fn maybe_report_manifest_gap(
     peer: &MeshPeer,
     space_id: &str,
     token: Option<&str>,
+    device_level: bool,
 ) {
     const TTL_MS: i64 = 6 * 60 * 60 * 1000;
     let now = crate::db::now_ms();
@@ -3526,26 +3532,192 @@ async fn maybe_report_manifest_gap(
             return;
         }
     };
-    let Ok(g) = conn.lock() else { return };
-    let Ok(mut st) = g.prepare("SELECT id FROM pages") else { return };
-    let local: std::collections::HashSet<String> = match st.query_map([], |r| r.get::<_, String>(0)) {
-        Ok(it) => it.filter_map(|x| x.ok()).collect(),
-        Err(_) => return,
+    // ⚠️ 锁必须收在这个块里：下面要 `await` 按 id 取页，`MutexGuard` 不是 `Send`。
+    let missing = {
+        let Ok(g) = conn.lock() else { return };
+        let local: std::collections::HashSet<String> = match g.prepare("SELECT id FROM pages") {
+            Ok(mut st) => match st.query_map([], |r| r.get::<_, String>(0)) {
+                Ok(it) => it.filter_map(|x| x.ok()).collect(),
+                Err(_) => return,
+            },
+            Err(_) => return,
+        };
+        let missing = manifest_missing_ids(&local, &peer_manifest);
+        let _ = crate::sync::set_meta_state(&g, &stamp_key, &now.to_string());
+        missing
     };
-    let missing = manifest_missing_ids(&local, &peer_manifest);
-    let _ = crate::sync::set_meta_state(&g, &stamp_key, &now.to_string());
-    if !missing.is_empty() {
-        eprintln!(
-            "[mesh] ⚠️ 对账：对端 {} 在空间 {} 有 {} 页我这边没有（前 5 个：{:?}）—— 这一版只报告，下一步按 id 补",
-            peer.device_id.chars().take(8).collect::<String>(),
-            crate::lan::mask_space(space_id),
-            missing.len(),
-            missing.iter().take(5).collect::<Vec<_>>()
-        );
+    if missing.is_empty() {
+        return;
+    }
+    eprintln!(
+        "[mesh] ⚠️ 对账：对端 {} 在空间 {} 有 {} 页我这边没有（前 5 个：{:?}）⇒ 按 id 补（本轮最多 {} 页）",
+        peer.device_id.chars().take(8).collect::<String>(),
+        crate::lan::mask_space(space_id),
+        missing.len(),
+        missing.iter().take(5).collect::<Vec<_>>(),
+        MAX_REPAIR_PER_ROUND
+    );
+    let mut repaired = 0usize;
+    for id in missing.iter().take(MAX_REPAIR_PER_ROUND) {
+        let target = format!("/mesh/page?space_id={space_id}&id={id}");
+        let auth = {
+            let Ok(g) = conn.lock() else { return };
+            let device_id = crate::sync::device_id(&g).unwrap_or_default();
+            if device_id.trim().is_empty() {
+                return;
+            }
+            match sign_request(&g, &device_id, space_id, "GET", &target, crate::db::now_ms()) {
+                Some((ts, sig)) => Some((device_id, ts, sig)),
+                None => return,
+            }
+        };
+        let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
+        match fetch_peer_page(client, peer, space_id, id, auth_ref, token).await {
+            Ok(Some((payload, updated_at))) => {
+                let Ok(g) = conn.lock() else { return };
+                let local_name = crate::sync::local_space_name(&g).unwrap_or_default();
+                let row = MeshRow {
+                    device_seq: 0,
+                    entity: "page".to_string(),
+                    entity_id: id.clone(),
+                    op: "upsert".to_string(),
+                    payload: Some(payload),
+                    updated_at,
+                    sealed: None,
+                };
+                match absorb_peer_batch(
+                    &g,
+                    &[row],
+                    &peer.device_id,
+                    space_id,
+                    device_level,
+                    if local_name.is_empty() { None } else { Some(local_name.as_str()) },
+                ) {
+                    Ok(ab) => {
+                        repaired += ab.applied;
+                        eprintln!(
+                            "[mesh] 对账补页：{}（对端 {}）⇒ applied={}（冲突照旧进「待取回的远端版本」）",
+                            id.chars().take(8).collect::<String>(),
+                            peer.device_id.chars().take(8).collect::<String>(),
+                            ab.applied
+                        );
+                    }
+                    Err(e) => eprintln!("[mesh] 对账补页失败（{id}，不影响同步）：{e}"),
+                }
+            }
+            Ok(None) => eprintln!("[mesh] 对账补页：{id} 对端也 404（清单与内容不一致？跳过）"),
+            Err(e) => eprintln!("[mesh] 对账补页失败（{id}，不影响同步）：{e}"),
+        }
+    }
+    if repaired > 0 {
+        eprintln!("[mesh] 对账完成：补了 {repaired} 页（空间 {}）", crate::lan::mask_space(space_id));
     }
 }
 
+/// 一轮对账最多补几页（⛔ 不许一次把几万页全拉：对账是修复，不是搬家）。
+const MAX_REPAIR_PER_ROUND: usize = 20;
+
 /// ⭐ P3：对一次页清单，报告"对端有、我这边没有"的页（6 小时最多一次；只读）。
+/// ⭐ P3：**按 id 取单页**（对账补缺用）。
+///
+/// 为什么不用 `/mesh/pull?since=0` 重放：重放依赖 changes 表 —— 而"从未记账"的页
+/// 在重放里根本不存在。这里直接按**当前状态**投影出一份带戳的 upsert 载荷，
+/// 让对端能补回它（走对端现有的合并闸，不是按 id 硬灌）。
+fn handle_page(state: &State, target: &str) -> Reply {
+    let conn = match state.select_space(target) {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let id = match query_get(target, "id") {
+        Ok(Some(v)) if !v.trim().is_empty() => v,
+        Ok(_) => return Reply::json(400, "Bad Request", json_error("缺 id：这一档按页 id 取")),
+        Err(e) => return Reply::json(400, "Bad Request", json_error(&e)),
+    };
+    let g = match conn.lock() {
+        Ok(g) => g,
+        Err(_) => return Reply::json(500, "Internal Server Error", json_error("空间库的锁被毒掉了")),
+    };
+    let page = match crate::commands::fetch_page(&g, &id) {
+        Ok(p) => p,
+        Err(_) => {
+            return Reply::json(
+                404,
+                "Not Found",
+                json_error("这一台没有这一页（404 是「没有」，不是网络故障）"),
+            )
+        }
+    };
+    let updated_at = page.updated_at;
+    let payload = match repair_payload_for_page(&g, &page) {
+        Ok(p) => p,
+        Err(e) => {
+            return Reply::json(
+                500,
+                "Internal Server Error",
+                json_error(&format!("给这一页做「可重播载荷」失败（不猜）：{e}")),
+            )
+        }
+    };
+    Reply::json(
+        200,
+        "OK",
+        serde_json::json!({ "id": page.id, "updated_at": updated_at, "payload": payload }).to_string(),
+    )
+}
+
+/// 把当前页投影成**一份带戳的 upsert 载荷**（与保存路径同形：PageDetail ＋ `_hlc` ＋ `_space_name`）。
+pub(crate) fn repair_payload_for_page(
+    c: &Connection,
+    page: &crate::models::PageDetail,
+) -> Result<String, String> {
+    let mut payload = serde_json::to_string(page).map_err(|e| e.to_string())?;
+    let stamp = crate::sync::local_stamp(c, crate::db::now_ms())?;
+    payload = crate::hlc::with_stamp(&payload, &stamp)?;
+    if let Some(name) = crate::sync::local_space_name(c) {
+        payload = crate::sync::with_space_name(&payload, &name)?;
+    }
+    Ok(payload)
+}
+
+/// 客户端：按 id 取对端一页（对账补缺用）。对端 404 ⇒ `None`。
+pub async fn fetch_peer_page(
+    client: &reqwest::Client,
+    peer: &MeshPeer,
+    space_id: &str,
+    id: &str,
+    auth: Option<(&str, i64, &str)>,
+    token: Option<&str>,
+) -> Result<Option<(String, i64)>, String> {
+    let target = format!("/mesh/page?space_id={space_id}&id={id}");
+    let url = format!("{}{}", peer.base.trim_end_matches('/'), target);
+    let mut req = client.get(&url);
+    if let Some((device_id, ts, sig)) = auth {
+        req = req
+            .header(HDR_DEVICE, device_id)
+            .header(HDR_TS, ts.to_string())
+            .header(HDR_SIG, sig);
+    }
+    if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
+        req = req.bearer_auth(t);
+    }
+    let resp = req.send().await.map_err(|e| format!("按 id 取页失败（{e}）"))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    if status.as_u16() == 404 {
+        return Ok(None);
+    }
+    if !status.is_success() {
+        return Err(format!("按 id 取页被拒：HTTP {}：{}", status.as_u16(), body.trim()));
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("响应不是 JSON：{e}"))?;
+    let payload = v
+        .get("payload")
+        .and_then(|p| p.as_str())
+        .ok_or_else(|| "响应里没有 payload（版本不认识？）".to_string())?;
+    let updated_at = v.get("updated_at").and_then(|x| x.as_i64()).unwrap_or(0);
+    Ok(Some((payload.to_string(), updated_at)))
+}
+
 fn handle_pull(state: &State, target: &str) -> Reply {
     // ⭐ **U8**：**鉴权 ＋ 取哪条连接**一次做完（`select_space` 里就是那条白名单判据 ✓）。
     // ⛔ 别在这里再写一遍 `space != …` ✗ —— 两处判据迟早会漂，而漂的方向是"漏"✗。
@@ -5808,6 +5980,9 @@ mod tests {
         assert_eq!(route("GET", "/mesh/manifest?space_id=s"), Route::Manifest);
         assert_eq!(route("GET", "/mesh/manifest/"), Route::Manifest);
         assert_eq!(route("POST", "/mesh/manifest"), Route::Unknown, "只认 GET");
+        assert_eq!(route("GET", "/mesh/page?space_id=s&id=p"), Route::Page);
+        assert_eq!(route("GET", "/mesh/page/"), Route::Page);
+        assert_eq!(route("POST", "/mesh/page"), Route::Unknown, "只认 GET");
 
         use std::collections::HashSet;
         let local: HashSet<String> = ["a".to_string(), "b".to_string()].into_iter().collect();
