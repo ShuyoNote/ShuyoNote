@@ -638,7 +638,13 @@ fn merge_announce(old: &LanAnnounce, new: &LanAnnounce) -> LanAnnounce {
             }
             Some(v)
         }
-        _ => None,
+        // ⭐ 2026-10-24（真机：候选表整张空了）：**一侧对不齐不该把另一侧也抹掉**。
+        //   原实现 `_ => None` ⇒ 只要**一条**公告的三组不等长，合并后的名字/类别就整格清空
+        //   ⇒ 候选表对**所有空间**都变空（局部故障被放大成全局 ✗）。
+        //   现在：谁对齐就用谁的（⛔ 不拼"有名字没类别"的半套，那会错配）。
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
     };
     if let Some(v) = merged_triples {
         out.hub_spaces = v.iter().map(|(s, _, _)| s.clone()).collect();
@@ -808,14 +814,7 @@ mod bind_retry_tests {
     use super::*;
 
     /// 取一个**空闲的**临时端口号（⭐ 不用 47821 ✗ —— 那会打扰本机真跑着的那份发现层 ✓）。
-    /// ⚠️ `pub(super)`：P0 那三条判据（在 `mod tests` 里 ✓）也复用它 ✓ —— 本片的口径是
-    /// **端口一律 `free_port()`，⛔ 不写死号** ✗。
-    pub(super) async fn free_port() -> u16 {
-        let probe = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
-        port
-    }
+    /// ⚠️ `pub(super)`：P0 那三条判据（在 `    }
 
     /// ★ 判据（2026-10-04 加）：**首次绑不上时不许放弃** ✗ —— 要等到占用者释放后自己绑上 ✓。
     ///
