@@ -1608,6 +1608,72 @@ pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
+/// ⭐ 2026-10-23：**应用数据目录的解析**（`SHUYONOTE_DATA_DIR` 覆盖系统目录）。
+///
+/// 为什么要这个开关：本机要跑"真·双端对测"（两个实例、两份数据、两个端口、回环互指），
+/// 而 `app.path().app_data_dir()` 走的是**系统 KnownFolder**（`%APPDATA%`）—— 它**不读环境变量**
+/// ⇒ 不开这个口子，第二个实例只能和第一个抢同一份 `meta.db`（那不是两台设备，是一台设备自己打架 ✗）。
+///
+/// 三条口径：
+/// ① **不设就逐字不变**（走调用方给的系统目录 ✓）；
+/// ② 设了但指向不存在的路径 ⇒ **照样用它**（由后面的 `init` 去建；⛔ 这里不悄悄回落，
+///    否则"我明明设了"和"其实没生效"分不出来 ✗）；
+/// ③ env 由调用方在本函数里读、但**判据只喂值**（见 `data_dir_override_pick`）⇒ 不打桩 ✓。
+pub fn resolve_app_data_dir(system_dir: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
+    data_dir_override_pick(std::env::var_os("SHUYONOTE_DATA_DIR"), system_dir)
+}
+
+/// ⭐ 上面那支的**纯函数**那一半：给什么用什么（判据直接喂值，⛔ 不动进程环境）。
+pub(crate) fn data_dir_override_pick(
+    over: Option<std::ffi::OsString>,
+    system_dir: Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    let over = over
+        .map(std::path::PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty());
+    over.or(system_dir)
+}
+
+#[cfg(test)]
+mod data_dir_override_tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    /// ⭐ 2026-10-23：**不设就逐字不变**（这是"产品行为没变"的那一条）。
+    #[test]
+    fn without_the_env_var_the_system_dir_wins() {
+        let sys = PathBuf::from("C:/sys/appdata");
+        assert_eq!(
+            data_dir_override_pick(None, Some(sys.clone())),
+            Some(sys),
+            "没设 SHUYONOTE_DATA_DIR ⇒ 必须走系统目录（逐字不变）"
+        );
+    }
+
+    /// ⭐ 设了就用它（哪怕系统目录也在）。
+    #[test]
+    fn the_env_var_overrides_the_system_dir() {
+        let over = PathBuf::from("C:/tmp/second-instance");
+        assert_eq!(
+            data_dir_override_pick(Some(OsString::from(over.clone())), Some(PathBuf::from("C:/sys"))),
+            Some(over),
+            "设了 ⇒ 用它（否则第二个实例会去抢同一份 meta.db）"
+        );
+    }
+
+    /// ⭐ 空串 ＝ 没设（⛔ 不许把"空"当成一个目录）。
+    #[test]
+    fn an_empty_env_var_is_treated_as_unset() {
+        let sys = PathBuf::from("C:/sys");
+        assert_eq!(
+            data_dir_override_pick(Some(OsString::from("")), Some(sys.clone())),
+            Some(sys),
+            "空串必须当「没设」（否则会落在一个空路径上）"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -2164,70 +2230,5 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM changes", [], |r| r.get(0))
             .unwrap();
         assert_eq!(still, 1);
-    }
-}
-
-/// ⭐ 2026-10-23：**应用数据目录的解析**（`SHUYONOTE_DATA_DIR` 覆盖系统目录）。
-///
-/// 为什么要这个开关：本机要跑"真·双端对测"（两个实例、两份数据、两个端口、回环互指），
-/// 而 `app.path().app_data_dir()` 走的是**系统 KnownFolder**（`%APPDATA%`）—— 它**不读环境变量**
-/// ⇒ 不开这个口子，第二个实例只能和第一个抢同一份 `meta.db`（那不是两台设备，是一台设备自己打架 ✗）。
-///
-/// 三条口径：
-/// ① **不设就逐字不变**（走调用方给的系统目录 ✓）；
-/// ② 设了但指向不存在的路径 ⇒ **照样用它**（由后面的 `init` 去建；⛔ 这里不悄悄回落，
-///    否则"我明明设了"和"其实没生效"分不出来 ✗）；
-/// ③ env 由调用方在本函数里读、但**判据只喂值**（见 `data_dir_override_pick`）⇒ 不打桩 ✓。
-pub fn resolve_app_data_dir(system_dir: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
-    data_dir_override_pick(std::env::var_os("SHUYONOTE_DATA_DIR"), system_dir)
-}
-
-/// ⭐ 上面那支的**纯函数**那一半：给什么用什么（判据直接喂值，⛔ 不动进程环境）。
-pub(crate) fn data_dir_override_pick(
-    over: Option<std::ffi::OsString>,
-    system_dir: Option<std::path::PathBuf>,
-) -> Option<std::path::PathBuf> {
-    let over = over
-        .map(std::path::PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty());
-    over.or(system_dir)
-}
-#[cfg(test)]
-mod data_dir_override_tests {
-    use super::*;
-    use std::ffi::OsString;
-    use std::path::PathBuf;
-
-    /// ⭐ 2026-10-23：**不设就逐字不变**（这是"产品行为没变"的那一条）。
-    #[test]
-    fn without_the_env_var_the_system_dir_wins() {
-        let sys = PathBuf::from("C:/sys/appdata");
-        assert_eq!(
-            data_dir_override_pick(None, Some(sys.clone())),
-            Some(sys),
-            "没设 SHUYONOTE_DATA_DIR ⇒ 必须走系统目录（逐字不变）"
-        );
-    }
-
-    /// ⭐ 设了就用它（哪怕系统目录也在）。
-    #[test]
-    fn the_env_var_overrides_the_system_dir() {
-        let over = PathBuf::from("C:/tmp/second-instance");
-        assert_eq!(
-            data_dir_override_pick(Some(OsString::from(over.clone())), Some(PathBuf::from("C:/sys"))),
-            Some(over),
-            "设了 ⇒ 用它（否则第二个实例会去抢同一份 meta.db）"
-        );
-    }
-
-    /// ⭐ 空串 ＝ 没设（⛔ 不许把"空"当成一个目录）。
-    #[test]
-    fn an_empty_env_var_is_treated_as_unset() {
-        let sys = PathBuf::from("C:/sys");
-        assert_eq!(
-            data_dir_override_pick(Some(OsString::from("")), Some(sys.clone())),
-            Some(sys),
-            "空串必须当「没设」（否则会落在一个空路径上）"
-        );
     }
 }

@@ -7881,6 +7881,131 @@ mod merge_by_name_tests {
 }
 
 #[cfg(test)]
+mod missing_peer_spaces_tests {
+    use super::*;
+
+    /// 造一台"对端"：给它一组 (空间名, 类别)。
+    fn peer_with(dev: &str, spaces: &[(&str, &str)]) -> crate::lan::Peer {
+        let mut a = crate::lan::announce_for_own_hub(dev, "对端", "S1D", "http://192.168.1.5:8788", "room", "", "").expect("公告要造得出来");
+        a.hub_space_names = spaces.iter().map(|(n, _)| n.to_string()).collect();
+        a.hub_space_kinds = spaces.iter().map(|(_, k)| k.to_string()).collect();
+        crate::lan::Peer { announce: a, addr: "127.0.0.1".to_string(), seen_at_ms: 0 }
+    }
+
+    fn local(spaces: &[(&str, &str)]) -> Vec<(String, String, String)> {
+        spaces
+            .iter()
+            .enumerate()
+            .map(|(i, (n, k))| (format!("ws-{i}"), n.to_string(), k.to_string()))
+            .collect()
+    }
+
+    /// ⭐ 主判据：只列「配对过 ＋ personal ＋ 有名字 ＋ 本机没有」的；两台报同名只出一行。
+    #[test]
+    fn lists_only_missing_personal_spaces_from_paired_devices_and_dedupes_by_name() {
+        let peers = vec![
+            peer_with("dev-a", &[("产品", "personal"), ("团队甲", "team"), ("", "personal"), ("已有", "personal")]),
+            peer_with("dev-b", &[("产品", "personal"), ("客户&伙伴", "personal")]),
+            peer_with("dev-x", &[("没配对的", "personal")]),
+        ];
+        let got = missing_peer_spaces(
+            &peers,
+            &local(&[("已有", "personal"), ("团队甲", "team")]),
+            &[],
+            &["dev-a".to_string(), "dev-b".to_string()],
+        );
+        let names: Vec<&str> = got.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(names, vec!["产品", "客户&伙伴"], "顺序必须稳定（按名字排）");
+
+        let prod = got.iter().find(|x| x.name == "产品").unwrap();
+        assert_eq!(prod.from, vec!["dev-a", "dev-b"], "两台报同名 ⇒ 一行、出处两台");
+        assert_eq!(
+            prod.from_names,
+            vec!["对端".to_string(), "对端".to_string()],
+            "显示名必须与 from 一一对应（⛔ 界面不许显示设备 id）"
+        );
+        assert!(!prod.tombstoned);
+    }
+
+    /// ⭐ 墓碑：**列出来但打标记**（与"自动建"直接 Skip 不同 —— 这里由人决定"要不要删了又活"）。
+    #[test]
+    fn a_name_that_was_deleted_here_is_listed_but_flagged() {
+        let peers = vec![peer_with("dev-a", &[("旧测试", "personal")])];
+        let got = missing_peer_spaces(&peers, &[], &["旧测试".to_string()], &["dev-a".to_string()]);
+        assert_eq!(got.len(), 1);
+        assert!(got[0].tombstoned, "删过的名字必须打标记（界面默认不勾）");
+    }
+
+    /// ⭐ 本机有加密空间**不该**把整张表清空 —— 用户勾＝知情同意（界面写"未加密"）。
+    #[test]
+    fn an_encrypted_space_on_this_machine_does_not_hide_the_list() {
+        let peers = vec![peer_with("dev-a", &[("产品", "personal")])];
+        let got = missing_peer_spaces(
+            &peers,
+            &local(&[("保险柜", "personal")]), // 本机有个（加密的）个人空间
+            &[],
+            &["dev-a".to_string()],
+        );
+        assert_eq!(got.len(), 1, "加密空间不该把候选表清空：{got:?}");
+    }
+}
+/// ⭐ 2026-10-23（S2 命令面）：界面上那张「对端有、你没有」的候选表。
+///
+/// ⚠️ 它**只读**：不建任何东西、不写库（建是下面那条命令，且必须由用户勾了才调）。
+#[tauri::command]
+pub fn mesh_missing_spaces(db: tauri::State<'_, crate::db::Db>) -> Result<Vec<MissingPeerSpace>, String> {
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    let dev = device_id(&c)?;
+    let peers = crate::lan_state::LanState::global(&dev).peers(crate::db::now_ms());
+    list_missing_peer_spaces(&c, &peers)
+}
+
+/// ⭐ 2026-10-23（S2 命令面）：**按用户勾的名字**建空间（幂等；只认候选表里有的名字）。
+#[tauri::command]
+pub fn mesh_create_spaces(
+    db: tauri::State<'_, crate::db::Db>,
+    names: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let dir = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "app data dir 未初始化".to_string())?
+        .to_path_buf();
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    let dev = device_id(&c)?;
+    let peers = crate::lan_state::LanState::global(&dev).peers(crate::db::now_ms());
+    create_peer_spaces_by_name(&c, &dir, &peers, &names)
+}
+#[cfg(test)]
+mod attachment_peer_space_tests {
+    //! ⭐ 2026-10-24（图片块同步的真因之一）：个人档的 `sync_profiles.space_id` **是空串**，
+    //! 而"跟对端对暗号"要的是**解析后的房间**。原来直接拿 `space_id` ⇒ 对端那一整档被跳过
+    //! （真机：图片块元数据同步过来了、字节永远取不到）。判据钉住三种形状。
+    use super::peer_lookup_space;
+
+    #[test]
+    fn a_personal_space_uses_the_resolved_room_and_is_device_level() {
+        assert_eq!(
+            peer_lookup_space("", "123456789Ok,./"),
+            ("123456789Ok,./".to_string(), true),
+            "个人档必须用解析后的房间去问对端（空 space_id 不是「没配」）"
+        );
+    }
+
+    #[test]
+    fn a_team_space_keeps_its_own_space_id() {
+        assert_eq!(
+            peer_lookup_space("team-space-9", "some-room"),
+            ("team-space-9".to_string(), false),
+            "团队档口径不变：按 space_id 对暗号"
+        );
+    }
+
+    #[test]
+    fn a_personal_space_without_a_room_has_no_proto_space() {
+        assert_eq!(peer_lookup_space("", "  "), (String::new(), true), "没暗号 ⇒ 如实为空（不许猜一个）");
+    }
+}
+
+#[cfg(test)]
 mod tests {
 
     /// ⭐ **2026-10-19（owner 拍「甲」）**：`create_missing_peer_spaces` 四格 ——
@@ -11296,130 +11421,5 @@ mod tests {
             "⛔ 坏账本被当成空账本 = 静默再融一次 ✗"
         );
     }
-    }
-}
-
-#[cfg(test)]
-mod missing_peer_spaces_tests {
-    use super::*;
-
-    /// 造一台"对端"：给它一组 (空间名, 类别)。
-    fn peer_with(dev: &str, spaces: &[(&str, &str)]) -> crate::lan::Peer {
-        let mut a = crate::lan::announce_for_own_hub(dev, "对端", "S1D", "http://192.168.1.5:8788", "room", "", "").expect("公告要造得出来");
-        a.hub_space_names = spaces.iter().map(|(n, _)| n.to_string()).collect();
-        a.hub_space_kinds = spaces.iter().map(|(_, k)| k.to_string()).collect();
-        crate::lan::Peer { announce: a, addr: "127.0.0.1".to_string(), seen_at_ms: 0 }
-    }
-
-    fn local(spaces: &[(&str, &str)]) -> Vec<(String, String, String)> {
-        spaces
-            .iter()
-            .enumerate()
-            .map(|(i, (n, k))| (format!("ws-{i}"), n.to_string(), k.to_string()))
-            .collect()
-    }
-
-    /// ⭐ 主判据：只列「配对过 ＋ personal ＋ 有名字 ＋ 本机没有」的；两台报同名只出一行。
-    #[test]
-    fn lists_only_missing_personal_spaces_from_paired_devices_and_dedupes_by_name() {
-        let peers = vec![
-            peer_with("dev-a", &[("产品", "personal"), ("团队甲", "team"), ("", "personal"), ("已有", "personal")]),
-            peer_with("dev-b", &[("产品", "personal"), ("客户&伙伴", "personal")]),
-            peer_with("dev-x", &[("没配对的", "personal")]),
-        ];
-        let got = missing_peer_spaces(
-            &peers,
-            &local(&[("已有", "personal"), ("团队甲", "team")]),
-            &[],
-            &["dev-a".to_string(), "dev-b".to_string()],
-        );
-        let names: Vec<&str> = got.iter().map(|x| x.name.as_str()).collect();
-        assert_eq!(names, vec!["产品", "客户&伙伴"], "顺序必须稳定（按名字排）");
-
-        let prod = got.iter().find(|x| x.name == "产品").unwrap();
-        assert_eq!(prod.from, vec!["dev-a", "dev-b"], "两台报同名 ⇒ 一行、出处两台");
-        assert_eq!(
-            prod.from_names,
-            vec!["对端".to_string(), "对端".to_string()],
-            "显示名必须与 from 一一对应（⛔ 界面不许显示设备 id）"
-        );
-        assert!(!prod.tombstoned);
-    }
-
-    /// ⭐ 墓碑：**列出来但打标记**（与"自动建"直接 Skip 不同 —— 这里由人决定"要不要删了又活"）。
-    #[test]
-    fn a_name_that_was_deleted_here_is_listed_but_flagged() {
-        let peers = vec![peer_with("dev-a", &[("旧测试", "personal")])];
-        let got = missing_peer_spaces(&peers, &[], &["旧测试".to_string()], &["dev-a".to_string()]);
-        assert_eq!(got.len(), 1);
-        assert!(got[0].tombstoned, "删过的名字必须打标记（界面默认不勾）");
-    }
-
-    /// ⭐ 本机有加密空间**不该**把整张表清空 —— 用户勾＝知情同意（界面写"未加密"）。
-    #[test]
-    fn an_encrypted_space_on_this_machine_does_not_hide_the_list() {
-        let peers = vec![peer_with("dev-a", &[("产品", "personal")])];
-        let got = missing_peer_spaces(
-            &peers,
-            &local(&[("保险柜", "personal")]), // 本机有个（加密的）个人空间
-            &[],
-            &["dev-a".to_string()],
-        );
-        assert_eq!(got.len(), 1, "加密空间不该把候选表清空：{got:?}");
-    }
-}
-/// ⭐ 2026-10-23（S2 命令面）：界面上那张「对端有、你没有」的候选表。
-///
-/// ⚠️ 它**只读**：不建任何东西、不写库（建是下面那条命令，且必须由用户勾了才调）。
-#[tauri::command]
-pub fn mesh_missing_spaces(db: tauri::State<'_, crate::db::Db>) -> Result<Vec<MissingPeerSpace>, String> {
-    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
-    let dev = device_id(&c)?;
-    let peers = crate::lan_state::LanState::global(&dev).peers(crate::db::now_ms());
-    list_missing_peer_spaces(&c, &peers)
-}
-
-/// ⭐ 2026-10-23（S2 命令面）：**按用户勾的名字**建空间（幂等；只认候选表里有的名字）。
-#[tauri::command]
-pub fn mesh_create_spaces(
-    db: tauri::State<'_, crate::db::Db>,
-    names: Vec<String>,
-) -> Result<Vec<String>, String> {
-    let dir = crate::db::app_data_dir_ref()
-        .ok_or_else(|| "app data dir 未初始化".to_string())?
-        .to_path_buf();
-    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
-    let dev = device_id(&c)?;
-    let peers = crate::lan_state::LanState::global(&dev).peers(crate::db::now_ms());
-    create_peer_spaces_by_name(&c, &dir, &peers, &names)
-}
-#[cfg(test)]
-mod attachment_peer_space_tests {
-    //! ⭐ 2026-10-24（图片块同步的真因之一）：个人档的 `sync_profiles.space_id` **是空串**，
-    //! 而"跟对端对暗号"要的是**解析后的房间**。原来直接拿 `space_id` ⇒ 对端那一整档被跳过
-    //! （真机：图片块元数据同步过来了、字节永远取不到）。判据钉住三种形状。
-    use super::peer_lookup_space;
-
-    #[test]
-    fn a_personal_space_uses_the_resolved_room_and_is_device_level() {
-        assert_eq!(
-            peer_lookup_space("", "123456789Ok,./"),
-            ("123456789Ok,./".to_string(), true),
-            "个人档必须用解析后的房间去问对端（空 space_id 不是「没配」）"
-        );
-    }
-
-    #[test]
-    fn a_team_space_keeps_its_own_space_id() {
-        assert_eq!(
-            peer_lookup_space("team-space-9", "some-room"),
-            ("team-space-9".to_string(), false),
-            "团队档口径不变：按 space_id 对暗号"
-        );
-    }
-
-    #[test]
-    fn a_personal_space_without_a_room_has_no_proto_space() {
-        assert_eq!(peer_lookup_space("", "  "), (String::new(), true), "没暗号 ⇒ 如实为空（不许猜一个）");
     }
 }
