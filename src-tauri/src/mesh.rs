@@ -984,6 +984,9 @@ pub async fn pull_and_absorb(
     //   · ⛔ 失败/老对端没有这个端点 ⇒ 只记日志，**不影响这一轮同步**；
     //   · 收到之后由 `merge_material` 决定"整体采纳（新设备）"还是"并成额外组（老设备）"。
     maybe_sync_peer_keyring(conn, client, peer, space_id, token).await;
+    // ⭐ P3：顺带对一次"页清单"（只读、6 小时一次）—— 把"你这儿有、我这儿没有"如实打出来。
+    //   ⚠️ 这一版**只报告不自动补**（自动按 id 取页是下一步；先让缺口可见，再动手补）。
+    maybe_report_manifest_gap(conn, client, peer, space_id, token).await;
     Ok(PeerPullReport {
         peer: peer.device_id.clone(),
         fetched,
@@ -2410,6 +2413,9 @@ pub enum Route {
     /// ⭐ 2026-10-24（加密空间自动同步 B1）：`GET /mesh/keyring?space_id=…` —— 本机那份
     /// **公开材料**（钥匙袋 JSON：盐/参数/每个空间的密文盒子）。它不含口令、不含裸密钥。
     Keyring,
+    /// ⭐ 2026-10-24（P3 对账）：`GET /mesh/manifest?space_id=…` —— 本机这个空间的**页清单
+    /// 元数据**（page id / updated_at / 是否墓碑），只用于"对账找缺"，⛔ 不含标题与正文。
+    Manifest,
     /// 同步协议里**有**、但**不是网格这一档**的端点 ⇒ `501` ＋ 一句人话。
     NotYet(&'static str),
     /// 协议里根本没有这个路径 ⇒ `404`。
@@ -2423,6 +2429,7 @@ pub fn route(method: &str, target: &str) -> Route {
         "GET" if path == "/mesh/pull" => Route::Pull,
         "GET" if path == "/mesh/attachment" => Route::Attachment,
         "GET" if path == "/mesh/keyring" => Route::Keyring,
+        "GET" if path == "/mesh/manifest" => Route::Manifest,
         _ => match not_yet(path) {
             Some(what) => Route::NotYet(what),
             None => Route::Unknown,
@@ -3037,6 +3044,7 @@ fn dispatch(state: &State, req: &Request) -> Reply {
         }
         Route::Attachment => handle_attachment(state, &req.target),
         Route::Keyring => handle_keyring(state),
+        Route::Manifest => handle_manifest(state, &req.target),
         Route::NotYet(what) => Reply::json(
             501,
             "Not Implemented",
@@ -3385,6 +3393,159 @@ pub async fn fetch_peer_keyring(
     }
 }
 
+/// ⭐ 2026-10-24（P3 对账第一步）：**页清单**（只有 id/时间/墓碑，不含内容）。
+///
+/// 用途只有一个：让对端发现"你这儿有、我这儿没有"的页。⛔ 不返回标题、正文、附件 ——
+/// 对账不需要这些，多给一点就是多泄漏一点。
+fn handle_manifest(state: &State, target: &str) -> Reply {
+    let conn = match state.select_space(target) {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let g = match conn.lock() {
+        Ok(g) => g,
+        Err(_) => return Reply::json(500, "Internal Server Error", json_error("空间库的锁被毒掉了")),
+    };
+    let rows: Vec<serde_json::Value> = match g
+        .prepare("SELECT id, updated_at, deleted_at FROM pages ORDER BY updated_at ASC, id ASC")
+        .and_then(|mut st| {
+            st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, Option<i64>>(2)?)))
+                .and_then(|m| m.collect::<Result<Vec<_>, _>>())
+        }) {
+        Ok(v) => v.into_iter()
+            .map(|(id, updated_at, deleted_at)| serde_json::json!({
+                "id": id, "updated_at": updated_at, "deleted": deleted_at.is_some()
+            }))
+            .collect(),
+        Err(e) => {
+            return Reply::json(
+                500,
+                "Internal Server Error",
+                json_error(&format!("读页清单失败（不猜一个空清单）：{e}")),
+            )
+        }
+    };
+    Reply::json(200, "OK", serde_json::json!({ "pages": rows }).to_string())
+}
+
+/// 客户端：取对端的页清单（对账用）。老对端 404 ⇒ `None`（不是错误）。
+pub async fn fetch_peer_manifest(
+    client: &reqwest::Client,
+    peer: &MeshPeer,
+    space_id: &str,
+    auth: Option<(&str, i64, &str)>,
+    token: Option<&str>,
+) -> Result<Option<Vec<(String, i64, bool)>>, String> {
+    let target = format!("/mesh/manifest?space_id={space_id}");
+    let url = format!("{}{}", peer.base.trim_end_matches('/'), target);
+    let mut req = client.get(&url);
+    if let Some((device_id, ts, sig)) = auth {
+        req = req
+            .header(HDR_DEVICE, device_id)
+            .header(HDR_TS, ts.to_string())
+            .header(HDR_SIG, sig);
+    }
+    if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
+        req = req.bearer_auth(t);
+    }
+    let resp = req.send().await.map_err(|e| format!("取页清单失败（{e}）"))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    if status.as_u16() == 404 {
+        return Ok(None);
+    }
+    if !status.is_success() {
+        return Err(format!("取页清单被拒：HTTP {}：{}", status.as_u16(), body.trim()));
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("页清单不是 JSON：{e}"))?;
+    let arr = v
+        .get("pages")
+        .and_then(|p| p.as_array())
+        .ok_or_else(|| "页清单里没有 pages 数组（版本不认识？）".to_string())?;
+    let mut out = Vec::with_capacity(arr.len());
+    for it in arr {
+        let id = it.get("id").and_then(|x| x.as_str()).ok_or("页清单有条目缺 id")?;
+        let updated_at = it.get("updated_at").and_then(|x| x.as_i64()).unwrap_or(0);
+        let deleted = it.get("deleted").and_then(|x| x.as_bool()).unwrap_or(false);
+        out.push((id.to_string(), updated_at, deleted));
+    }
+    Ok(Some(out))
+}
+
+/// 纯函数：对端清单里"我这边没有的页"（只算 live；墓碑这次不自动处理）。
+pub fn manifest_missing_ids(local_ids: &std::collections::HashSet<String>, peer: &[(String, i64, bool)]) -> Vec<String> {
+    let mut out: Vec<String> = peer
+        .iter()
+        .filter(|(id, _, deleted)| !deleted && !local_ids.contains(id))
+        .map(|(id, _, _)| id.clone())
+        .collect();
+    out.sort();
+    out
+}
+
+/// ⭐ P3：对一次页清单，报告"对端有、我这边没有"的页（6 小时最多一次；只读）。
+async fn maybe_report_manifest_gap(
+    conn: &std::sync::Mutex<Connection>,
+    client: &reqwest::Client,
+    peer: &MeshPeer,
+    space_id: &str,
+    token: Option<&str>,
+) {
+    const TTL_MS: i64 = 6 * 60 * 60 * 1000;
+    let now = crate::db::now_ms();
+    let stamp_key = format!("mesh_manifest_checked_at:{}:{}", space_id, peer.device_id);
+    let auth = {
+        let Ok(g) = conn.lock() else { return };
+        let last: i64 = crate::sync::get_meta_state(&g, &stamp_key)
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
+        if now - last < TTL_MS {
+            return;
+        }
+        let device_id = crate::sync::device_id(&g).unwrap_or_default();
+        if device_id.trim().is_empty() {
+            return;
+        }
+        let target = format!("/mesh/manifest?space_id={space_id}");
+        match sign_request(&g, &device_id, space_id, "GET", &target, now) {
+            Some((ts, sig)) => Some((device_id, ts, sig)),
+            None => return,
+        }
+    };
+    let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
+    let peer_manifest = match fetch_peer_manifest(client, peer, space_id, auth_ref, token).await {
+        Ok(Some(m)) => m,
+        Ok(None) => {
+            if let Ok(g) = conn.lock() {
+                let _ = crate::sync::set_meta_state(&g, &stamp_key, &now.to_string());
+            }
+            return; // 老对端没有这一档
+        }
+        Err(e) => {
+            eprintln!("[mesh] 对账（清单）失败（不影响同步）：{e}");
+            return;
+        }
+    };
+    let Ok(g) = conn.lock() else { return };
+    let Ok(mut st) = g.prepare("SELECT id FROM pages") else { return };
+    let local: std::collections::HashSet<String> = match st.query_map([], |r| r.get::<_, String>(0)) {
+        Ok(it) => it.filter_map(|x| x.ok()).collect(),
+        Err(_) => return,
+    };
+    let missing = manifest_missing_ids(&local, &peer_manifest);
+    let _ = crate::sync::set_meta_state(&g, &stamp_key, &now.to_string());
+    if !missing.is_empty() {
+        eprintln!(
+            "[mesh] ⚠️ 对账：对端 {} 在空间 {} 有 {} 页我这边没有（前 5 个：{:?}）—— 这一版只报告，下一步按 id 补",
+            peer.device_id.chars().take(8).collect::<String>(),
+            crate::lan::mask_space(space_id),
+            missing.len(),
+            missing.iter().take(5).collect::<Vec<_>>()
+        );
+    }
+}
+
+/// ⭐ P3：对一次页清单，报告"对端有、我这边没有"的页（6 小时最多一次；只读）。
 fn handle_pull(state: &State, target: &str) -> Reply {
     // ⭐ **U8**：**鉴权 ＋ 取哪条连接**一次做完（`select_space` 里就是那条白名单判据 ✓）。
     // ⛔ 别在这里再写一遍 `space != …` ✗ —— 两处判据迟早会漂，而漂的方向是"漏"✗。
@@ -5639,6 +5800,26 @@ mod tests {
         // ④ 服务端那条也报过错 ⇒ 一并带上（用户要能分辨"服务器没成"与"对端没有"）
         let s = crate::sync::attachment_fetch_failure(Some("服务端 返回 401"), "space-x", 1, &["A：x".to_string()]);
         assert!(s.contains("服务端：服务端 返回 401"), "{s}");
+    }
+
+    /// ⭐ 2026-10-24（P3 对账）：`/mesh/manifest` 是真路由；缺页判定是纯函数（可单测）。
+    #[test]
+    fn the_manifest_endpoint_is_a_route_and_missing_ids_are_computed_purely() {
+        assert_eq!(route("GET", "/mesh/manifest?space_id=s"), Route::Manifest);
+        assert_eq!(route("GET", "/mesh/manifest/"), Route::Manifest);
+        assert_eq!(route("POST", "/mesh/manifest"), Route::Unknown, "只认 GET");
+
+        use std::collections::HashSet;
+        let local: HashSet<String> = ["a".to_string(), "b".to_string()].into_iter().collect();
+        let peer = vec![
+            ("a".to_string(), 1, false),  // 两边都有
+            ("c".to_string(), 2, false),  // 只对端有 ⇒ 缺
+            ("d".to_string(), 3, true),   // 对端墓碑 ⇒ 这一版不自动删
+            ("e".to_string(), 4, false),  // 缺
+        ];
+        assert_eq!(manifest_missing_ids(&local, &peer), vec!["c".to_string(), "e".to_string()]);
+        // 全都有 ⇒ 空
+        assert!(manifest_missing_ids(&local, &[("a".to_string(), 1, false)]).is_empty());
     }
 
     /// ⭐ 2026-10-24（加密空间自动同步 B1）：`/mesh/keyring` 是**真路由**（不是 501/404）。
