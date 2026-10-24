@@ -355,10 +355,20 @@ P1 一空间一子房间号
     `direct_sync_tests` / `personal_profile_scope_...`（公告与 scope 同一把尺，期望值改为子房间号）
 ```
 
+P1 追加：**同一台设备的多条公告必须合并**（真机验收抓出的第二个坑）
+  · 症：一台机器**每个空间发一条**公告；对端表按 `device_id` 做键、原来是**整条替换** ⇒
+    表里永远只剩**最后到的那一条** ⇒ 「一空间一子房间号」落地后，**每台设备每轮只有一个空间**
+    能配上对端（实测：7 个空间里只有最后公告的 `66ac…` 候选 1，其余 6 个候选 0）
+  · 修：`lan::PeerTable::upsert` 改为按 `hub_spaces` **求并集**（名字/类别按同一下标对齐；
+    其余字段"最新优先、空值不覆盖"）＋ 判据 `multi_space_peer_table_tests`（2 条：
+    两空间公告合并成一条对端、同空间新公告不挤掉其它空间）
+  · 修后真机：后台轮 `11 个空间`，7 个空间里 **6 个候选 1**，逐空间收下 12/0/3/4/0/25 条；
+    `工作` 候选 0（Windows 侧没有同名空间 —— 属"名字不同 ⇒ 不同步"的既有口径）
+
 ### 验证读数（2026-10-24 本机）
 
 ```text
-· `cargo test --lib`：1164 passed / 3 failed —— 3 条全是 macOS `/var` vs `/private/var` 的
+· `cargo test --lib`：1167 passed / 3 failed —— 3 条全是 macOS `/var` vs `/private/var` 的
   `workspaces::tests` **既有**失败（与本笔无关，改动前就是 3 条）
 · `node scripts/test-report.mjs`：66 条门禁全绿
 · `check-doc-content-access`：生产面 560/562（**低于**基线；新测试模块放在文件末的测试尾部之后，
