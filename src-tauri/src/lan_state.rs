@@ -229,6 +229,9 @@ pub fn announce_due(last_announce_ms: i64, now_ms: i64, interval_ms: i64) -> boo
 /// 两条路**共用同一套落库**（`sync::mesh_round_once` ✓）⇒ 不会出现"面板跑的记、后台跑的不记" ✗。
 pub const BACKGROUND_ROUND_MS: i64 = 5 * 60 * 1000;
 
+/// 暂停那条日志只打一次（每 5 分钟刷一句会把真日志冲掉）。
+static AUTOSYNC_PAUSED_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// ⭐ **task-12（Lead 拍 B）**：本轮 **`候选 0`** ⇒ 下次约 60 秒再来 ✓（"没找到对端"**不算**"跑过一轮" ✓）。
 pub const BACKGROUND_RETRY_MS: i64 = 60 * 1000;
 
@@ -268,6 +271,25 @@ pub fn background_round_initial_last(started_ms: i64) -> i64 {
 ///   （`meshed` 是**解析后且配了监听地址**的那些 ✓，与发现层同尺 ✓）；
 /// · `last_ms <= 0` ⇒ 第一次就该跑 ✓（复用 `announce_due` 的同一口径 ✓，⛔ 不另立一套 ✗）；
 /// · 到点（≥ [`background_round_interval_ms`]）⇒ 跑 ✓。
+/// ⭐ 2026-10-24：**暂停后台轮**（只为"真并发验收"服务）。
+///
+/// 现场：真并发那一格要靠"两边各写一次、且谁都还没拉到对方的"才能验，而 app 的后台轮
+/// **每 5 分钟自己拉一次** ⇒ 验的人永远在赌"它别在这 5 秒里插进来"（10-24 实测赌输过一次）。
+/// 口径：
+/// · `SHUYONOTE_MESH_AUTOSYNC=0|off|false|no`（大小写不敏感）⇒ **不再自动跑后台轮**；
+/// · **不设 / 其它任何值 ⇒ 逐字不变**（生产行为一个字节不动 ✓）；
+/// · 手动 `mesh_sync_now` **不受影响** ✓ —— 那正是验收要的"先停自动，再手动对齐"。
+pub fn autosync_paused_env(v: Option<&str>) -> bool {
+    matches!(
+        v.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("0") | Some("off") | Some("false") | Some("no")
+    )
+}
+
+/// 读环境变量那一半（判据只喂 `autosync_paused_env`，⛔ 不动进程环境）。
+pub fn autosync_paused() -> bool {
+    autosync_paused_env(std::env::var("SHUYONOTE_MESH_AUTOSYNC").ok().as_deref())
+}
 pub fn background_round_due(last_ms: i64, now_ms: i64, meshed_n: usize, empty_streak: usize) -> bool {
     // ⭐ ① **一个网格空间都没有 ⇒ 不跑** ✓ —— "没配 ⇒ 一个字节都不动"一个字不变 ✓（判据钉着 ✓）。
     if meshed_n == 0 {
@@ -885,7 +907,15 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             //   ⚠️ 三条边界：① 只在**真的开了网格**的空间上跑 ✓（`meshed` ✓ ⇒ ⛔ 没配的一个字节都不动 ✗）；
             //   ② **`spawn`**（⛔ 不阻塞这条每秒的发现循环 ✗ —— 一轮 HTTP 可能十几秒 ✓）；
             //   ③ **同时只跑一轮** ✓（`BACKGROUND_IN_FLIGHT` ＋ RAII 归还 ✓，上一轮没完就跳过 ✓）。
-            if background_round_due(
+            // ⭐ 2026-10-24：**验收开关**（`SHUYONOTE_MESH_AUTOSYNC=0`）—— 只停"自动"，手动同步照旧。
+            if autosync_paused() {
+                if !AUTOSYNC_PAUSED_LOGGED.swap(true, Ordering::SeqCst) {
+                    eprintln!(
+                        "[{}] [mesh] 后台轮：**已暂停**（SHUYONOTE_MESH_AUTOSYNC=0）—— 手动同步不受影响",
+                        lan::log_stamp()
+                    );
+                }
+            } else if background_round_due(
                 last_bg_round_ms,
                 now,
                 meshed.len(),
@@ -1718,6 +1748,22 @@ mod tests {
     /// ★ 判据 ⑨：**广播间隔与存活期的关系** —— 存活期必须**明显大于**广播间隔，
     /// 否则一次丢包（或一次忙等）就会把还在线的设备判死。
     /// 退化了会怎样：网段里两台明明都在，却互相看不见（表现是"时好时坏的直连"）。
+    /// ⭐ 2026-10-24：**验收开关的真值表**（`SHUYONOTE_MESH_AUTOSYNC`）。
+    ///
+    /// 关键三格：① 不设 ⇒ **不暂停**（生产行为逐字不变）；② `0/off/false/no`（大小写与空白都不敏感）
+    /// ⇒ 暂停；③ 其它任意值 ⇒ **不暂停**（⛔ 不许把"设了个没意义的值"当成暂停 —— 那会让生产环境
+    /// 因为一个拼错的环境变量静默停掉同步）。
+    #[test]
+    fn the_autosync_pause_switch_only_accepts_explicit_off_values() {
+        assert!(!autosync_paused_env(None), "不设 ⇒ 不暂停（生产行为不变）");
+        for v in ["0", "off", "FALSE", " No ", "no"] {
+            assert!(autosync_paused_env(Some(v)), "{v:?} 应当暂停");
+        }
+        for v in ["1", "on", "true", "", "maybe", "disable"] {
+            assert!(!autosync_paused_env(Some(v)), "{v:?} **不该**暂停（拼错的环境变量不许静默停同步）");
+        }
+    }
+
     #[test]
     fn the_peer_ttl_outlives_the_announce_interval() {
         assert!(
