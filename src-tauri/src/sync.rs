@@ -4511,14 +4511,32 @@ pub async fn mesh_sync_now(
             }
         }
     };
-    let mut report = crate::mesh::round(
-        &db.0,
-        &scope.space,
-        &scope.device,
-        &peers,
-        scope.device_level,
-    )
-    .await?;
+    // ⭐⭐ **2026-10-24（真机：Windows 在四个空间建的探针页全落进了「面板验收」）**：
+    //   `round` 的 conn 必须是**这个空间自己的库**，⛔ 不是 `db.0`（那永远指向"当前空间"）。
+    //   原来对**非当前空间**手动同步时，`round` 把对端整批写进当前空间库
+    //   ⇒ `anchor_workspace_id` 找不到对端空间 id 就锚到当前空间 ⇒ **四个空间的页全落进一个空间**。
+    //   后台轮（`mesh_round_once`）早在 2026-10-23 就改成"按空间各开各的连接"了，手动这条一直没跟上。
+    let space_conn = match crate::db::app_data_dir_ref()
+        .and_then(|dir| crate::db::open_space_conn_at(&scope.db_space, dir).ok())
+    {
+        Some(conn) => Some(std::sync::Mutex::new(conn)),
+        None => None,
+    };
+    let mut report = match &space_conn {
+        Some(conn) => {
+            crate::mesh::round(conn, &scope.space, &scope.device, &peers, scope.device_level).await?
+        }
+        None => match crate::db::app_data_dir_ref() {
+            Some(dir) => {
+                // 锁着/打不开 ⇒ 走封包那条路（只进 inbox，不解密不应用 ✓）—— 与后台轮同口径。
+                crate::mesh::sealed_round(dir, &scope.space, &scope.db_space, &scope.device, &peers)
+                    .await?
+            }
+            None => {
+                return Err("app data 目录读不到 ⇒ 这一轮连搬运缓存都读不了".to_string());
+            }
+        },
+    };
     report.window = window;
     if report.enabled && report.window.is_none() {
         // 配了地址却没窗口 ⇒ 上面 `ensure_window` 会直接报错，走不到这里；留一句兜底说明。
@@ -4538,10 +4556,13 @@ pub async fn mesh_sync_now(
     //    —— 否则一个一直拉不动的对端会每 60 秒写 4 行、把只有 100 行的历史挤光 ✗
     //    （真机实测：~12 分钟 25 → 77 条 ✓）。"上一条"**从库里读** ✓（零新状态 ✓）。
     if let Some(h) = mesh_history_write(&report, &scope.db_space) {
-        let c = db.0.lock().expect("db mutex poisoned");
-        let last = read_last_mesh_history(&c, &h.ws_id);
-        if mesh_history_should_write(&h, last.as_ref(), crate::db::now_ms()) {
-            write_sync_history_with(&c, &h.ws_id, h.pushed, h.pulled, h.ok, &h.message, &h.items);
+        // ⚠️ `sync_history` 在**空间库**里 ⇒ 必须写进这个空间的库（⛔ 不是当前空间）。
+        if let Some(conn) = &space_conn {
+            let c = conn.lock().expect("space conn mutex poisoned");
+            let last = read_last_mesh_history(&c, &h.ws_id);
+            if mesh_history_should_write(&h, last.as_ref(), crate::db::now_ms()) {
+                write_sync_history_with(&c, &h.ws_id, h.pushed, h.pulled, h.ok, &h.message, &h.items);
+            }
         }
     }
     // ⭐ 2026-10-24（页 B 真机：两边各缺一块）：**把“改了哪些页”告诉前端** ——
