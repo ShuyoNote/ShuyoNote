@@ -291,9 +291,13 @@ fn app_context() -> tauri::Context {
 /// P3：⭐ **无头**跑一次备份 ⇒ 返回退出码（⛔ 不建窗口 ✓；⭐ 也不起周期线程 ✓）
 ///
 /// ⚠️ 退出码口径（⭐ 与仓库的五档契约同向 ✓）：0 成功／1 失败／2 起不来／3 跳过（⭐ "跳过了"不是"通过" ✓）
+///
+/// ⭐ 2026-10-25：同一个入口现在也接 `--migrate-attachments-once`（整理附件布局）。
+///    两条都**不建窗口**、都"跑完就退" ⇒ 共用这一处初始化（各自只调自己那一条 ✓）。
 pub fn run_backup_once() -> i32 {
     use auto_backup::{CliMode, RunResult};
-    if cli_mode_of_args() != CliMode::BackupOnce {
+    let mode = cli_mode_of_args();
+    if mode == CliMode::Normal {
         return 4; // ⭐ 不是无头调用 ⇒ 不该走到这里 ✓
     }
     let app = match tauri::Builder::default().build(app_context()) {
@@ -306,6 +310,7 @@ pub fn run_backup_once() -> i32 {
     // ⭐ 无头路径用的是**裸 Builder** ✗ ⇒ 它不带 `run()` 那条链（插件 ＋ `.setup()` ✓）
     //    ⇒ ⭐ `Db` 不会有人托管 ✓ —— 这就是上一轮量到「数据库 5 秒内没就绪 ⇒ 包数 0」的根因 ✓
     //    ⇒ ⭐ 这里**照 `setup()` 里那三步**自己来 ✓（⛔ 不多复制别的：不建窗口、不起插件 ✓）
+    let mut app_data_dir_for_migration: Option<std::path::PathBuf> = None;
     {
         use tauri::Manager;
         let app_data_dir = match db::resolve_app_data_dir(app.path().app_data_dir().ok()) {
@@ -315,7 +320,7 @@ pub fn run_backup_once() -> i32 {
                 return 2;
             }
         };
-        let conn = match db::init(app_data_dir) {
+        let conn = match db::init(app_data_dir.clone()) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("[auto-backup] 初始化数据库失败：{e}");
@@ -324,6 +329,37 @@ pub fn run_backup_once() -> i32 {
         };
         security::startup_lock(&conn);
         app.manage(Db(Mutex::new(conn)));
+        app_data_dir_for_migration = Some(app_data_dir);
+    }
+    // ⭐ 2026-10-25：**分岔只在最后一步**（初始化共用 ⇒ 两条无头路径的"能起得来"口径一致 ✓）
+    if mode == CliMode::MigrateAttachments {
+        let Some(dir) = app_data_dir_for_migration else {
+            eprintln!("[attachments] 拿不到应用数据目录 ⇒ 不迁移");
+            return 2;
+        };
+        return match attachments::migrate_legacy_layout(&dir) {
+            Ok(out) => {
+                eprintln!(
+                    "[attachments] headless 布局整理：扫 {} ｜ 复制 {} ｜ 删除 {} ｜ 保留 {} ｜ 读不到的空间 {}",
+                    out.scanned,
+                    out.copied,
+                    out.deleted,
+                    out.kept,
+                    out.unreadable_spaces.len()
+                );
+                for n in &out.notes {
+                    eprintln!("[attachments]   · {n}");
+                }
+                for u in &out.unreadable_spaces {
+                    eprintln!("[attachments]   ⛔ 读不到：{u}");
+                }
+                0
+            }
+            Err(e) => {
+                eprintln!("[attachments] 布局整理失败：{e}");
+                1
+            }
+        };
     }
     let r = tauri::async_runtime::block_on(backup::run_auto_backup_once(app.handle()));
     eprintln!("[auto-backup] headless {}", r.note());
@@ -1048,6 +1084,8 @@ pub fn run() {
             attachments::rename_attachment,
             attachments::get_attachment,
             attachments::restore_attachment,
+            // ⭐ 2026-10-25：整理附件布局（把老布局按引用者复制进各空间；见 `migrate_legacy_layout`）
+            attachments::attachments_migrate_legacy,
             bookmark::fetch_bookmark_metadata,
             backlinks::get_backlinks,
             blocks::resolve_block,

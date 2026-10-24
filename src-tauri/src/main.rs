@@ -3,9 +3,10 @@
 
 fn main() {
     // ⭐ P3：无头 `--backup-once` ⇒ 跑一次备份就退出（⛔ 不建窗口 ✓）
+    // ⭐ 2026-10-25：`--migrate-attachments-once` 走**同一条**路（整理附件布局，跑完就退 ✓）
     // 与 `lib.rs` 的 `run()` 里那条子进程分流**同形** ✓（那里是 plugin_host 的 HOST_FLAG ✓）
     if shuyonote_lib::auto_backup::cli_mode(std::env::args().skip(1))
-        == shuyonote_lib::auto_backup::CliMode::BackupOnce
+        != shuyonote_lib::auto_backup::CliMode::Normal
     {
         std::process::exit(shuyonote_lib::run_backup_once());
     }
