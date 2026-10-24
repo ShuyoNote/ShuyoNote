@@ -814,7 +814,14 @@ mod bind_retry_tests {
     use super::*;
 
     /// 取一个**空闲的**临时端口号（⭐ 不用 47821 ✗ —— 那会打扰本机真跑着的那份发现层 ✓）。
-    /// ⚠️ `pub(super)`：P0 那三条判据（在 `    }
+    /// ⚠️ `pub(super)`：P0 那三条判据（在 `mod tests` 里 ✓）也复用它 ✓ —— 本片的口径是
+    /// **端口一律 `free_port()`，⛔ 不写死号** ✗。
+    pub(super) async fn free_port() -> u16 {
+        let probe = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        port
+    }
 
     /// ★ 判据（2026-10-04 加）：**首次绑不上时不许放弃** ✗ —— 要等到占用者释放后自己绑上 ✓。
     ///

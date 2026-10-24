@@ -891,12 +891,17 @@ pub(crate) fn unlock_encryption_impl(
     let t_unlock = std::time::Instant::now();
     // 载入公开材料（坏材料 ⇒ 在这里**报错**，不许静默当成"没有袋子"而降级成明文路径）。
     crate::space_crypto::carry_keyring(conn)?;
-    let master = crate::space_crypto::master_from_passphrase(conn, &passphrase)?;
+    // ⭐ 2026-10-24（B2）：**按组派生**（合并过对端材料时，对各组的盐/参数各派生一次）。
+    let masters = crate::space_crypto::masters_from_passphrase(conn, &passphrase)?;
     // ★ 口令对不对，**由解盒子回答**（袋子没有 / 一个盒子都没有 ⇒ 没什么可解 ⇒ 直接算成功）。
-    if let (Some(m), Some(kr)) = (master, crate::space_crypto::keyring()) {
-        crate::space_crypto::verify_master_against_keyring(&kr, &m)?;
+    if let (Some(ms), Some(kr)) = (masters.as_ref(), crate::space_crypto::keyring()) {
+        crate::space_crypto::verify_masters_against_keyring(&kr, ms)?;
     }
-    crate::space_crypto::set_session_master(master)?;
+    let primary = masters.as_ref().and_then(|ms| ms.first().map(|(_, m)| *m));
+    if let Some(ms) = masters {
+        crate::space_crypto::set_session_masters(ms)?;
+    }
+    crate::space_crypto::set_session_master(primary)?;
     LOCKED.store(false, Ordering::SeqCst);
     let active = crate::workspaces::active_workspace_id(conn)?;
     // Re-open the active space DB keyed — without this PRAGMA key the app would fail to

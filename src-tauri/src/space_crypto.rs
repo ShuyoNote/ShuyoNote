@@ -38,6 +38,13 @@ pub const META_KEYRING: &str = "keyring";
 /// 那一把是**旧的**应用级钥匙（过渡期还要用），这一把只用来解盒子。
 static SESSION_MASTER: Mutex<Option<AppKeys>> = Mutex::new(None);
 
+/// ⭐ 2026-10-24（加密空间自动同步 B2）：**每组公开材料各一把主密钥**（键＝组指纹）。
+///
+/// 为什么：同一个主口令 ＋ 不同的盐/参数 ⇒ **不同的主密钥**。合并了对端的公开材料之后，
+/// 要解它那些盒子，就必须用**它那一组**派生出主密钥 —— 所以解锁时按组各派生一次。
+/// ⚠️ 只活在内存；锁定/退出即清（与 `SESSION_MASTER` 同一纪律：主密钥不落盘）。
+static SESSION_MASTERS: Mutex<Vec<(String, AppKeys)>> = Mutex::new(Vec::new());
+
 /// 本进程当前知道的**公开材料**（解锁/启用时从 meta 载入；锁定时清掉）。
 static KEYRING: Mutex<Option<Keyring>> = Mutex::new(None);
 
@@ -123,10 +130,11 @@ pub fn adopt_material(c: &Connection, json: &str, overwrite: bool) -> Result<Ado
             let theirs = Keyring::from_json(json).map_err(|e| {
                 format!("这份公开材料读不懂（**没有采纳，本机一个字节都没改**）：{e}")
             })?;
-            let local_spaces: Vec<String> = mine.spaces.keys().cloned().collect(); // BTreeMap ⇒ 已升序
+            let local_spaces: Vec<String> = mine.space_ids();
+            let their_ids: Vec<String> = theirs.space_ids();
             let would_lose: Vec<String> = local_spaces
                 .iter()
-                .filter(|id| !theirs.spaces.contains_key(*id))
+                .filter(|id| !their_ids.contains(*id))
                 .cloned()
                 .collect();
             return Ok(AdoptReport {
@@ -140,7 +148,7 @@ pub fn adopt_material(c: &Connection, json: &str, overwrite: bool) -> Result<Ado
     }
     let kr = Keyring::from_json(json)
         .map_err(|e| format!("这份公开材料读不懂（**没有采纳，本机一个字节都没改**）：{e}"))?;
-    let spaces = kr.spaces.len();
+    let spaces = kr.space_ids().len();
     store_keyring(c, &kr)?; // 落 meta ＋ 装进本进程
     Ok(AdoptReport {
         adopted: true,
@@ -149,6 +157,41 @@ pub fn adopt_material(c: &Connection, json: &str, overwrite: bool) -> Result<Ado
         local_spaces: Vec::new(),
         would_lose: Vec::new(),
     })
+}
+
+/// ⭐ 2026-10-24（B1/B2）：**把对端的公开材料并进来**（不覆盖本地盒子）。
+///
+/// 与 [`adopt_material`] 的分工：
+/// · `adopt_material` = **整体采纳**（新设备那一路，`overwrite` 控权）；
+/// · 本函数 = **增量合并**（已经有两份时用；对端那组会作为额外组收下 ⇒ 解锁时按它再派生一次）。
+///
+/// ⚠️ 坏材料 ⇒ `Err` 且**本机一个字节都不改**（先解析、后落库）。
+pub fn merge_material(c: &Connection, json: &str) -> Result<crate::keyring::MergeReport, String> {
+    let theirs = Keyring::from_json(json)
+        .map_err(|e| format!("这份公开材料读不懂（**没有合并，本机一个字节都没改**）：{e}"))?;
+    let local = match stored_material(c)? {
+        Some(text) => Some(Keyring::from_json(&text)?),
+        None => None,
+    };
+    // ⭐ B1：本机**还没有任何盒子**（全新设备）⇒ 整体采纳对端那份（它成为主组）。
+    //   ⛔ 不能走"合并"：本地空袋子自带一个随机盐的主组 ⇒ 会多出一个永远解不开的空组，
+    //   而且主口令会按本地那个盐派生 ⇒ 对端盒子全解不开（这就是 B1 和 B2 的分界）。
+    if local.as_ref().map(|k| k.space_ids().is_empty()).unwrap_or(true) {
+        let groups = theirs.groups().len();
+        let spaces = theirs.space_ids().len();
+        store_keyring(c, &theirs)?;
+        return Ok(crate::keyring::MergeReport {
+            added_groups: groups,
+            added_spaces: spaces,
+            conflicting_spaces: Vec::new(),
+            total_spaces: spaces,
+        });
+    }
+    let mut mine = local.expect("上面已判空");
+    let report = mine.merge_from(&theirs);
+    // 冲突（同空间不同盒子）⇒ ⛔ 不覆盖：原样保留本地。报告里已列出，调用方必须记/显示。
+    store_keyring(c, &mine)?;
+    Ok(report)
 }
 
 /// 本进程当前的公开材料（没有 ⇒ `None`）。
@@ -169,6 +212,25 @@ pub fn keyring_loaded() -> bool {
 /// 这是解锁时"口令对不对"的**唯一**判据（owner 第三轮拍板：哨兵已随应用级加密一起删，
 /// 由解盒子的 AEAD 回答）。袋子里**一个盒子都没有** ⇒ `Ok(())`：
 /// 那等价于"什么都还没加密"，没有可验证的东西，也不该因此报错。
+/// ⭐ B2：**每组各验一次**（每个有盒子的组，都要能用它那把主密钥解开至少一个盒子）。
+///
+/// 为什么要逐组验：合并了对端材料之后，只验主组等于"对端那组没验证"——那边口令/材料坏掉会
+/// 到真正开空间时才暴露；而那时用户已经以为解锁成功了。
+pub fn verify_masters_against_keyring(
+    kr: &Keyring,
+    masters: &[(String, AppKeys)],
+) -> Result<(), String> {
+    for (fp, _kdf, spaces, _names) in kr.groups() {
+        let Some(first) = spaces.keys().next() else { continue };
+        let Some((_, master)) = masters.iter().find(|(id, _)| id == &fp) else {
+            return Err("有一组公开材料没有对应的主密钥（解锁不完整）—— 请重新输一次口令".to_string());
+        };
+        kr.unwrap_key(master, first)
+            .map_err(|_| "打不开：口令不对，或者这把锁被改过 —— 内容没有被解开".to_string())?;
+    }
+    Ok(())
+}
+
 pub fn verify_master_against_keyring(kr: &Keyring, master: &AppKeys) -> Result<(), String> {
     if kr.spaces.is_empty() {
         return Ok(());
@@ -217,7 +279,42 @@ pub fn session_master() -> Option<AppKeys> {
 /// 装上 / 卸下会话主密钥（解锁 → 装；锁定 → 卸）。
 pub fn set_session_master(keys: Option<AppKeys>) -> Result<(), String> {
     *SESSION_MASTER.lock().map_err(|_| "会话锁失效".to_string())? = keys;
+    // 锁定（None）⇒ 各组的派生主密钥也一起卸下（⛔ 不许留一把能解盒子的）。
+    if keys.is_none() {
+        *SESSION_MASTERS.lock().map_err(|_| "会话锁失效".to_string())? = Vec::new();
+    }
     Ok(())
+}
+
+/// ⭐ B2：装上**按组派生**的主密钥表（解锁时由 [`masters_from_passphrase`] 产出）。
+pub fn set_session_masters(masters: Vec<(String, AppKeys)>) -> Result<(), String> {
+    *SESSION_MASTERS.lock().map_err(|_| "会话锁失效".to_string())? = masters;
+    Ok(())
+}
+
+/// ⭐ B2：本会话按组的主密钥（可能为空）。
+pub fn session_masters() -> Vec<(String, AppKeys)> {
+    SESSION_MASTERS.lock().map(|g| g.clone()).unwrap_or_default()
+}
+
+/// ⭐ B2：**一句口令 ⇒ 每组各一把主密钥**（主组在前）。没有袋子 ⇒ `Ok(None)`。
+///
+/// 这是"多组"存在的全部意义：对端的盐/参数也在这里，于是同一个口令能把它那组也解开。
+pub fn masters_from_passphrase(
+    c: &Connection,
+    passphrase: &str,
+) -> Result<Option<Vec<(String, AppKeys)>>, String> {
+    match sync::get_meta_state(c, META_KEYRING) {
+        Some(text) => {
+            let kr = Keyring::from_json(&text)?;
+            let mut out = Vec::new();
+            for (fp, kdf, _, _) in kr.groups() {
+                out.push((fp, kdf.derive_master(passphrase)?));
+            }
+            Ok(Some(out))
+        }
+        None => Ok(None),
+    }
 }
 
 /// 拿一句口令去**推出钥匙袋的主密钥**：meta 里没有袋子 ⇒ `Ok(None)`（不报错，旧路）。
@@ -246,6 +343,11 @@ pub fn space_key(space_id: &str) -> Result<Option<[u8; 32]>, String> {
     };
     if !kr.has(space_id) {
         return Ok(None); // 这个空间不在袋里 ⇒ 旧路（**别的空间的盒子不影响它**）
+    }
+    // ⭐ B2：优先用"按组派生"的主密钥；老路径（只有一把主密钥）保留兜底。
+    let masters = session_masters();
+    if !masters.is_empty() {
+        return Ok(Some(kr.unwrap_key_with_groups(&masters, space_id)?));
     }
     let master = session_master().ok_or_else(|| {
         format!("空间「{space_id}」按钥匙袋是加密的，但会话未解锁（请先输口令）")
@@ -278,7 +380,18 @@ pub fn space_key_for_path(path: &Path) -> Result<Option<[u8; 32]>, String> {
 /// 而谓词**零签名改动** ⇒ 一个禁区都不碰 ✓。
 pub fn space_needs_passphrase(space_id: &str) -> bool {
     match keyring() {
-        Some(kr) if kr.has(space_id) => session_master().is_none(),
+        Some(kr) if kr.has(space_id) => {
+            let masters = session_masters();
+            if !masters.is_empty() {
+                // 有这个空间的那一组，本会话派生过主密钥吗？
+                !kr
+                    .groups()
+                    .iter()
+                    .any(|(fp, _, spaces, _)| spaces.contains_key(space_id) && masters.iter().any(|(m, _)| m == fp))
+            } else {
+                session_master().is_none()
+            }
+        }
         _ => false,
     }
 }
@@ -1430,7 +1543,7 @@ mod tests {
         let (kr, _m) = master("pw");
         let good = kr.to_json().unwrap();
         assert!(Keyring::from_json(&good).is_ok());
-        let bumped = good.replace("\"v\": 1", "\"v\": 99");
+        let bumped = good.replace("\"v\": 2", "\"v\": 99");
         assert!(Keyring::from_json(&bumped).is_err(), "版本不认识要报错");
         assert!(Keyring::from_json("{ not json").is_err());
     }

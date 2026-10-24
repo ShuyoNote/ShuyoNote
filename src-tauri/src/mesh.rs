@@ -955,29 +955,40 @@ pub async fn pull_and_absorb(
             title: crate::sync::item_title(&r.entity, r.payload.as_ref()),
         })
         .collect();
-    let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-    let ab = absorb_peer_batch(
-        &g,
-        &rows,
-        &peer.device_id,
-        space_id,
-        device_level,
-        if local_name.is_empty() { None } else { Some(local_name.as_str()) },
-    )?;
-    // ⭐ 2026-10-20：**归零自愈过的那一轮必须无条件写回** ✗ ——
-    //   原规则是 `ab.tail > since`，而 since 还是那个越界值（99999）⇒ 恒 false
-    //   ⇒ 数据库里那格**永远是 99999** ⇒ 每轮都要重新探一次（实测就是这么被咬的 ✓）。
-    if healed {
-        // ⭐ 自愈那一支**允许倒退**（否则 `ab.tail < since` 会被"水位不许倒退"挡住 ⇒ 白修）
-        reset_peer_cursor(&g, space_id, &peer.device_id, ab.tail)?;
-    } else if ab.tail > since {
-        set_peer_cursor(&g, space_id, &peer.device_id, ab.tail)?;
-    }
+    // ⚠️ 锁的作用域**必须**收在这个块里：下面要 `await` 取公开材料，而 `MutexGuard` 不是 `Send`
+    //   （把 `drop(g)` 写在同一个作用域里，编译器的 Send 分析仍会认为它可能活到 await 之后）。
+    let (ab, cursor_value) = {
+        let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+        let ab = absorb_peer_batch(
+            &g,
+            &rows,
+            &peer.device_id,
+            space_id,
+            device_level,
+            if local_name.is_empty() { None } else { Some(local_name.as_str()) },
+        )?;
+        // ⭐ 2026-10-20：**归零自愈过的那一轮必须无条件写回** ✗ ——
+        //   原规则是 `ab.tail > since`，而 since 还是那个越界值（99999）⇒ 恒 false
+        //   ⇒ 数据库里那格**永远是 99999** ⇒ 每轮都要重新探一次（实测就是这么被咬的 ✓）。
+        if healed {
+            // ⭐ 自愈那一支**允许倒退**（否则 `ab.tail < since` 会被"水位不许倒退"挡住 ⇒ 白修）
+            reset_peer_cursor(&g, space_id, &peer.device_id, ab.tail)?;
+        } else if ab.tail > since {
+            set_peer_cursor(&g, space_id, &peer.device_id, ab.tail)?;
+        }
+        let cursor_value = if healed { ab.tail } else { ab.tail.max(since) };
+        (ab, cursor_value)
+    };
+    // ⭐ 2026-10-24（加密空间自动同步 B1/B2）：顺手把对端那份**公开材料**取回来。
+    //   · 设备级（钥匙袋不属于某一个空间），10 分钟最多取一次；
+    //   · ⛔ 失败/老对端没有这个端点 ⇒ 只记日志，**不影响这一轮同步**；
+    //   · 收到之后由 `merge_material` 决定"整体采纳（新设备）"还是"并成额外组（老设备）"。
+    maybe_sync_peer_keyring(conn, client, peer, space_id, token).await;
     Ok(PeerPullReport {
         peer: peer.device_id.clone(),
         fetched,
         applied: ab.applied,
-        cursor: if healed { ab.tail } else { ab.tail.max(since) },
+        cursor: cursor_value,
         max_seq,
         superseded: ab.superseded,
         awaiting: ab.awaiting,
@@ -985,6 +996,74 @@ pub async fn pull_and_absorb(
         merge: ab.merge,
         error: None,
     })
+}
+
+/// ⭐ B1/B2：取对端的公开材料并合并（10 分钟节流；错只记日志）。
+///
+/// ⚠️ 拿锁只做**短事**（读节流时间、算签名），网络那一截不持锁（本仓老规矩）。
+async fn maybe_sync_peer_keyring(
+    conn: &std::sync::Mutex<Connection>,
+    client: &reqwest::Client,
+    peer: &MeshPeer,
+    space_id: &str,
+    token: Option<&str>,
+) {
+    const TTL_MS: i64 = 10 * 60 * 1000;
+    let now = crate::db::now_ms();
+    let stamp_key = format!("mesh_keyring_synced_at:{}", peer.device_id);
+    let auth = {
+        let Ok(g) = conn.lock() else { return };
+        let last: i64 = crate::sync::get_meta_state(&g, &stamp_key)
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
+        if now - last < TTL_MS {
+            return;
+        }
+        let device_id = crate::sync::device_id(&g).unwrap_or_default();
+        if device_id.trim().is_empty() {
+            return;
+        }
+        let target = format!("/mesh/keyring?space_id={space_id}");
+        match sign_request(&g, &device_id, space_id, "GET", &target, now) {
+            Some((ts, sig)) => Some((device_id, ts, sig)),
+            None => {
+                eprintln!("[mesh] 取公开材料：签名算不出来（跳过这一轮）");
+                return;
+            }
+        }
+    };
+    let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
+    match fetch_peer_keyring(client, peer, space_id, auth_ref, token).await {
+        Ok(Some(material)) => {
+            let Ok(g) = conn.lock() else { return };
+            match crate::space_crypto::merge_material(&g, &material) {
+                Ok(rep) => {
+                    if rep.added_groups > 0 || rep.added_spaces > 0 || !rep.conflicting_spaces.is_empty() {
+                        eprintln!(
+                            "[mesh] 并入对端 {} 的公开材料：组 +{} ｜ 空间 +{} ｜ 冲突 {} 个{}",
+                            peer.device_id.chars().take(8).collect::<String>(),
+                            rep.added_groups,
+                            rep.added_spaces,
+                            rep.conflicting_spaces.len(),
+                            if rep.conflicting_spaces.is_empty() {
+                                String::new()
+                            } else {
+                                format!("（同空间不同盒子，保留本地：{:?}）", rep.conflicting_spaces)
+                            }
+                        );
+                    }
+                    let _ = crate::sync::set_meta_state(&g, &stamp_key, &now.to_string());
+                }
+                Err(e) => eprintln!("[mesh] 公开材料合并失败（不影响本轮同步）：{e}"),
+            }
+        }
+        Ok(None) => {
+            if let Ok(g) = conn.lock() {
+                let _ = crate::sync::set_meta_state(&g, &stamp_key, &now.to_string());
+            }
+        }
+        Err(e) => eprintln!("[mesh] 取对端公开材料失败（不影响本轮同步）：{e}"),
+    }
 }
 
 // ─────────────────────────── 控制面：网格开不开、口令牌、一轮交换 ───────────────────────────
@@ -2320,6 +2399,9 @@ pub enum Route {
     /// 口径与 `/mesh/pull` 同一条：**只服务我有的东西**（没有账本、不去问别人、也不代收）。
     /// 没有 ⇒ `404` ＋ 一句人话（"这一台没有" ≠ "网络故障"，这两件用户的下一步完全不同）。
     Attachment,
+    /// ⭐ 2026-10-24（加密空间自动同步 B1）：`GET /mesh/keyring?space_id=…` —— 本机那份
+    /// **公开材料**（钥匙袋 JSON：盐/参数/每个空间的密文盒子）。它不含口令、不含裸密钥。
+    Keyring,
     /// 同步协议里**有**、但**不是网格这一档**的端点 ⇒ `501` ＋ 一句人话。
     NotYet(&'static str),
     /// 协议里根本没有这个路径 ⇒ `404`。
@@ -2332,6 +2414,7 @@ pub fn route(method: &str, target: &str) -> Route {
     match method.to_ascii_uppercase().as_str() {
         "GET" if path == "/mesh/pull" => Route::Pull,
         "GET" if path == "/mesh/attachment" => Route::Attachment,
+        "GET" if path == "/mesh/keyring" => Route::Keyring,
         _ => match not_yet(path) {
             Some(what) => Route::NotYet(what),
             None => Route::Unknown,
@@ -2945,6 +3028,7 @@ fn dispatch(state: &State, req: &Request) -> Reply {
             handle_pull(state, &req.target)
         }
         Route::Attachment => handle_attachment(state, &req.target),
+        Route::Keyring => handle_keyring(state),
         Route::NotYet(what) => Reply::json(
             501,
             "Not Implemented",
@@ -3199,6 +3283,98 @@ fn query_get(target: &str, key: &str) -> Result<Option<String>, String> {
         }
     }
     Ok(None)
+}
+
+/// ⭐ 2026-10-24（加密空间自动同步 B1）：把**公开材料**（钥匙袋）给已配对的对端。
+///
+/// 三条口径：
+/// ① **鉴权与 `/mesh/pull` 同一道门**（`authorized` 已跑在 dispatch 里）—— 未配对/空间不服务 ⇒ 401/403；
+/// ② 返回的是**公开材料**：没有口令、没有裸空间密钥（盒子只有主密钥能解）⇒ 网线上看到它不等于能读；
+/// ③ 没有材料 ⇒ 如实回 `material: null`（⛔ 不编一个空袋子）。
+fn handle_keyring(state: &State) -> Reply {
+    let Some(dir) = state.cfg.data_dir.as_deref() else {
+        return Reply::json(
+            501,
+            "Not Implemented",
+            json_error("这个窗口没配数据目录 ⇒ 不提供公开材料（设置面该重开一次窗口）"),
+        );
+    };
+    let material = match crate::db::open_meta_conn_at(dir) {
+        Ok(meta) => match crate::space_crypto::stored_material(&meta) {
+            Ok(m) => m,
+            Err(e) => {
+                return Reply::json(
+                    500,
+                    "Internal Server Error",
+                    json_error(&format!("本机那份公开材料读不出来（⛔ 不推一份坏的上去）：{e}")),
+                );
+            }
+        },
+        Err(e) => {
+            return Reply::json(
+                500,
+                "Internal Server Error",
+                json_error(&format!("打不开 meta.db（拿不到公开材料）：{e}")),
+            );
+        }
+    };
+    let version = material
+        .as_deref()
+        .map(|t| crate::keyring::Keyring::from_json(t).map(|k| k.v).unwrap_or(0))
+        .unwrap_or(0);
+    Reply::json(
+        200,
+        "OK",
+        serde_json::json!({ "material": material, "version": version }).to_string(),
+    )
+}
+
+/// 客户端：向对端要一次**公开材料**（B1/B2 的"取"那一半）。
+///
+/// ⚠️ 签名与 `/mesh/pull` 同一套（三格头）；`space_id` 只用于"证明我认得这个空间"的门/签名，
+/// 返回的是**设备级**的公开材料（钥匙袋不属于某一个空间）。
+pub async fn fetch_peer_keyring(
+    client: &reqwest::Client,
+    peer: &MeshPeer,
+    space_id: &str,
+    auth: Option<(&str, i64, &str)>,
+    token: Option<&str>,
+) -> Result<Option<String>, String> {
+    let target = format!("/mesh/keyring?space_id={space_id}");
+    let url = format!("{}{}", peer.base.trim_end_matches('/'), target);
+    let mut req = client.get(&url);
+    if let Some((device_id, ts, sig)) = auth {
+        req = req
+            .header(HDR_DEVICE, device_id)
+            .header(HDR_TS, ts.to_string())
+            .header(HDR_SIG, sig);
+    }
+    if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
+        req = req.bearer_auth(t);
+    }
+    let resp = req.send().await.map_err(|e| {
+        let mut why = e.to_string();
+        let mut src = std::error::Error::source(&e);
+        while let Some(s) = src {
+            why.push_str(" / ");
+            why.push_str(&s.to_string());
+            src = s.source();
+        }
+        format!("取公开材料失败（{why}）")
+    })?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    if status.as_u16() == 404 {
+        return Ok(None); // 老对端没有这个端点 ⇒ 不是错误
+    }
+    if !status.is_success() {
+        return Err(format!("取公开材料被拒：HTTP {}：{}", status.as_u16(), body.trim()));
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("响应不是 JSON：{e}"))?;
+    match v.get("material") {
+        Some(serde_json::Value::String(s)) if !s.trim().is_empty() => Ok(Some(s.clone())),
+        _ => Ok(None),
+    }
 }
 
 fn handle_pull(state: &State, target: &str) -> Reply {
@@ -5455,6 +5631,14 @@ mod tests {
         // ④ 服务端那条也报过错 ⇒ 一并带上（用户要能分辨"服务器没成"与"对端没有"）
         let s = crate::sync::attachment_fetch_failure(Some("服务端 返回 401"), "space-x", 1, &["A：x".to_string()]);
         assert!(s.contains("服务端：服务端 返回 401"), "{s}");
+    }
+
+    /// ⭐ 2026-10-24（加密空间自动同步 B1）：`/mesh/keyring` 是**真路由**（不是 501/404）。
+    #[test]
+    fn the_keyring_endpoint_is_a_route_not_a_not_yet() {
+        assert_eq!(route("GET", "/mesh/keyring?space_id=s"), Route::Keyring);
+        assert_eq!(route("GET", "/mesh/keyring/"), Route::Keyring);
+        assert_eq!(route("POST", "/mesh/keyring"), Route::Unknown, "只认 GET");
     }
 
     /// ★ 丙-④：窗口那条路由**认得**新端点（不认得就会被 `not_yet` 抢走回 501）。
