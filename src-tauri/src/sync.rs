@@ -789,6 +789,9 @@ pub(crate) fn create_missing_peer_spaces(
             let _ = c.execute("DELETE FROM meta.workspaces WHERE id = ?1", params![id]);
             return Err(format!("为「{name}」建库失败（已回滚）：{e}"));
         }
+        // ⭐ 2026-10-24：与面板那条路**同一个补法** —— 新空间必须同时有 `sync_profiles` 行，
+        //   否则 `mesh_cfgs`（窗口要服务的清单）看不到它 ⇒ "建了但一直不同步"，且毫无提示。
+        ensure_local_profile_row(c, &id).map_err(|e| e.to_string())?;
         // ④ 抄网格地址：否则新空间没开网格 ⇒ 永远不拉
         if let Some(bind) = mesh_bind.map(str::trim).filter(|b| !b.is_empty()) {
             let _ = c.execute(
@@ -8069,6 +8072,17 @@ mod tests {
         // ① 建出真库（「客户」是墓碑 ⇒ 只建「产品」）
         let got = create_missing_peer_spaces(&c, &dir, &peers, Some("0.0.0.0:8788"), false).unwrap();
         assert_eq!(got, vec!["产品".to_string()], "墓碑那个名字不许建");
+        // ⭐ 2026-10-24：**建出来的空间必须同时有 `sync_profiles` 行**（否则窗口的 `mesh_cfgs`
+        //   看不到它 ⇒ 表现是"建了但一直不同步"，而且没有任何提示）。
+        let prof: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM meta.sync_profiles p
+                  WHERE p.ws_id = (SELECT id FROM meta.workspaces WHERE name = '产品' AND deleted_at IS NULL)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(prof, 1, "新空间少了 sync_profiles 那一行 ⇒ 它进不了窗口");
         let ws: String = c
             .query_row(
                 "SELECT id FROM meta.workspaces WHERE name = '产品' AND deleted_at IS NULL",
