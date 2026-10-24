@@ -233,12 +233,51 @@ fn finish_page_chrome_update(c: &Connection, id: &str, now: i64) -> Result<PageD
 #[tauri::command]
 pub fn set_page_cover(db: State<Db>, args: SetCoverArgs) -> Result<PageDetail, String> {
     let c = conn(&db);
+    let cover = normalize_cover_value(&args.cover)?;
     c.execute(
         "UPDATE pages SET cover = ?1 WHERE id = ?2 AND deleted_at IS NULL",
-        params![args.cover, args.id],
+        params![cover, args.id],
     )
     .map_err(|e| e.to_string())?;
     finish_page_chrome_update(&c, &args.id, now_ms())
+}
+
+/// ⭐ 2026-10-24（owner 拍「1B」）：**题头图的值在这里归一化**。
+///
+/// 现场：渲染层直接把它当 CSS `background-image` 用（`url("…")` 才有效），
+/// 而写入侧原来**原样存**、却又拒绝 `url(...)` 这种写法 ⇒ 用户怎么存都不显示，
+/// 而且拒绝时只回一句看不懂的错（`EXCEPTION: "Uncaught"`）。
+///
+/// 口径（**只在这里定义一次**）：
+/// · 空 ⇒ 存空串（＝清掉封面）；
+/// · `url(...)` ⇒ 原样存（已经是 CSS 形式）；
+/// · `data:` ⇒ 包成 `url("…")`；
+/// · 其余（裸 key / 相对路径 / hash）⇒ 包成 `url("…")`；
+/// · ⛔ 含双引号或换行的值**拒绝**，并**说明原因**（不再是一句 Uncaught）。
+pub(crate) fn normalize_cover_value(raw: &str) -> Result<String, String> {
+    let v = raw.trim();
+    if v.is_empty() {
+        return Ok(String::new());
+    }
+    let lower = v.to_ascii_lowercase();
+    // ⚠️ 顺序要紧：**先认 `url(...)`**（它本来就可能带引号），再谈"不许带引号"。
+    //   第一版把这条写在前面 ⇒ `url("covers/a.jpg")` 被自己的守卫拒掉（判据当场抓住）。
+    if lower.starts_with("url(") {
+        if !lower.ends_with(')') {
+            return Err(format!(
+                "封面值看起来像 url(...) 但没有闭合的右括号：{}",
+                v.chars().take(40).collect::<String>()
+            ));
+        }
+        return Ok(v.to_string());
+    }
+    if v.contains('"') || v.contains('\n') || v.contains('\r') {
+        return Err(format!(
+            "封面值不能包含双引号或换行（看起来像：{}）。应当是裸文件名、data: URL，或一个带引号的 url(\"...\") 值。",
+            v.chars().take(40).collect::<String>()
+        ));
+    }
+    Ok(format!("url(\"{v}\")"))
 }
 
 #[derive(Deserialize)]
@@ -1377,5 +1416,34 @@ mod page_chrome_sync_tests {
     fn a_missing_page_is_an_error_not_a_silent_success() {
         let c = fixture();
         assert_eq!(finish_page_chrome_update(&c, "nope", 1).unwrap_err(), "页面不存在");
+    }
+}
+
+#[cfg(test)]
+mod cover_normalize_tests {
+    use super::normalize_cover_value;
+
+    /// ⭐ 2026-10-24（owner 拍「1B」）：四种输入各一条判据 —— 这一格曾经"怎么存都不显示"。
+    #[test]
+    fn cover_values_are_normalized_to_css_url() {
+        // 裸文件名（真实现场：`微信头像.jpg`）⇒ 必须包成 url("…")，否则 CSS 无效
+        assert_eq!(normalize_cover_value("微信头像.jpg").unwrap(), "url(\"微信头像.jpg\")");
+        // 相对路径同理
+        assert_eq!(normalize_cover_value("covers/default-cover.jpg").unwrap(), "url(\"covers/default-cover.jpg\")");
+        // data URL ⇒ 包起来（渲染层只认 background-image 形式）
+        assert_eq!(normalize_cover_value("data:image/png;base64,AAAA").unwrap(), "url(\"data:image/png;base64,AAAA\")");
+        // 已经是 url(...) ⇒ **原样**（⛔ 不许套成 url("url(…)")）
+        assert_eq!(normalize_cover_value("url(\"covers/a.jpg\")").unwrap(), "url(\"covers/a.jpg\")");
+        assert_eq!(normalize_cover_value("URL(covers/a.jpg)").unwrap(), "URL(covers/a.jpg)");
+        // 空 ⇒ 清掉封面
+        assert_eq!(normalize_cover_value("   ").unwrap(), "");
+    }
+
+    /// ⛔ 含引号/换行要**拒绝并说明原因**（不再是一句看不懂的 `Uncaught`）。
+    #[test]
+    fn cover_values_with_quotes_or_newlines_are_refused_with_a_reason() {
+        let e = normalize_cover_value("a\".jpg").unwrap_err();
+        assert!(e.contains("双引号") || e.contains("换行"), "错误信息要能看懂：{e}");
+        assert!(normalize_cover_value("a\nb").unwrap_err().contains("换行"));
     }
 }
