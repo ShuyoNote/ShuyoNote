@@ -8043,12 +8043,12 @@ mod tests {
         assert_eq!(v0.pending, 0, "默认没有等采纳的条目");
         assert!(!v0.message.trim().is_empty(), "兜底那档也要给出下一步");
 
-        // ② 对面来问（`note_ask`）⇒ 甲 之下**看到就是采纳** ⇒ 直接 trusted ＋ 有一条等采纳
+        // ② 对面来问（`note_ask`）⇒ **2026-10-26 owner 拍 A：看到 ask 不算信任** ⇒ 仍是 idle ＋ 有一条等采纳
         h.note_ask("dev-peer", now, ttl);
         let v1 = crate::mesh_trust::trust_state_view(h.state(), h.is_active(now), h.pending_asks(now).len());
-        assert_eq!(v1.state, "trusted", "甲：看到对方的「想信任」就是采纳（不再等本机的人点）");
+        assert_eq!(v1.state, "idle", "⛔ 看到对方的「想信任」不许直接变 trusted（R208；要本机也点确认）");
         assert!(v1.active, "这一秒还有进行中的握手");
-        assert_eq!(v1.pending, 1, "有一条正等着被采纳");
+        assert_eq!(v1.pending, 1, "有一条正等着本机的人点确认");
 
         // ③ 本机自己点（`begin`）⇒ 同样 trusted；且**点的一方没有"等采纳"条目** ✓
         let mut h2 = TrustHandshake::default();
@@ -8088,16 +8088,13 @@ mod tests {
         );
     }
 
-    /// ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）**：⭐ 一趟配对 ⇒ **两个方向都通** ✓。
+    /// ⭐⭐ **2026-10-26（owner 拍 A：两边各点一次确认）**：⭐ 单方配对 ⇒ **只开一个方向** ✓；
+    /// 要双向 ⇒ 两边各点一次并确认 ✓。
     ///
-    /// ## ⚠️ 本条**取代** 2026-10-12 那版（原话：「单方信任 ⇒ 同步是单向的」✗）
-    /// owner 2026-10-12 逐字是「『信任这台设备』是『**允许它来拿我的**』」＋「单方信任时，同步就是单向的」✓；
-    /// ⭐ **2026-10-17 owner 改口径**：「**一方配对成功，就双向通**」✓
-    /// ⇒ ⭐ 发起侧点一次（登记对面 ✓）＋ 对面收到 ask 后**互相登记** ✓ ⇒ 两个方向都进得来 ✓。
-    /// ⚠️ 真机来由：AMD 侧配对后拉本机**每一轮 401**（「这张卡不在名册里」✓）——
-    ///    那正是"单方只开一个方向"的形状 ✓。
+    /// ## ⚠️ 本条**取代** 2026-10-17 的「一方配对成功，就双向通」
+    /// 那条会让同网段任何一条 `trust_ask` 被自动登记（R208 安全洞）⇒ 已撤销。
     #[tokio::test]
-    async fn one_pairing_round_opens_both_directions() {
+    async fn one_sided_pairing_opens_only_one_direction_until_the_other_side_confirms() {
         let dir_a = temp_dir("trust-oneway-a");
         let dir_b = temp_dir("trust-oneway-b");
         for d in [&dir_a, &dir_b] {
@@ -8169,26 +8166,48 @@ mod tests {
         // 关掉 A 的门（此刻只有它在服务这个空间 ⇒ 摘的就是它 ✓）
         stop_window(space).unwrap();
 
-        // ─── ② ⭐ **B 收到 A 的「想信任」⇒ 这一侧也登记 A**（owner 2026-10-17：一方配对成功，就双向通 ✓）───
-        //   ⚠️ 生产里这一步是 `sync::note_pending_trust_asks` 做的 ✓（这里直接落那两行，等价 ✓）——
-        //   ⛔ 不再是"B 也点一次"✗：那一侧**不用人再点** ✓。
-        crate::db::pair_pubkey(&cb, "", "dev-a", &ida.public_key_hex()).unwrap();
-        // ⭐ 跑着的门**也要认它** ✗ —— ⛔ 只写库不算 ✗（那正是"配对成功却 401" ✓）
-        crate::mesh::add_paired_pubkey(space, "dev-a", &ida.public_key_hex()).unwrap();
+        // ─── ② owner 2026-10-26 A：B **没有**再点一次 ⇒ A 拉不动 B（单方只开一个方向）───
+        //   ⛔ 不再模拟「收到 ask 自动登记」（那正是 R208 的洞）。
         let addr_b =
             ensure_window(&[("default".to_string(), space.to_string(), true)], "dev-b", "127.0.0.1:0000", &dir_b)
                 .unwrap()
                 .expect("B 的门要起得来");
-        // ⭐ **A 去拿 B 的** ⇒ **必须进得来** ✓（双向已通 ✓；⛔ 门口不用重启 ✗）
         let (ta, sa) = sign(&ca, "dev-a");
-        let both =
-            crate::mesh::pull_from_peer(&crate::mesh_endpoint::LanEndpoint::new(&near("dev-b", addr_b).base, client.clone()), &near("dev-b", addr_b), space, 0, None, Some(("dev-a", ta, &sa)), "")
-                .await;
+        let one_way = crate::mesh::pull_from_peer(
+            &crate::mesh_endpoint::LanEndpoint::new(&near("dev-b", addr_b).base, client.clone()),
+            &near("dev-b", addr_b),
+            space,
+            0,
+            None,
+            Some(("dev-a", ta, &sa)),
+            "",
+        )
+        .await;
         assert!(
-            both.is_ok(),
-            "⭐ **一方配对成功 ⇒ 双向通** ✓（⛔ 不许只开一个方向 ✗；⭐ 门没重启 ✓）：{both:?}"
+            one_way.is_err(),
+            "⛔ 单方配对只开一个方向：A 现在拉 B 必须失败（401）—— 过了就说明「自动双向」又回来了 ✗：{one_way:?}"
         );
 
+        // ─── ③ B 自己也点一次「接入」并确认 ⇒ 双向才通 ✓ ───
+        //   ⚠️ 生产里这一步是 B 的 `mesh_trust_begin`（人点确认）✓；这里直接落那两行 ✓。
+        crate::db::pair_pubkey(&cb, "", "dev-a", &ida.public_key_hex()).unwrap();
+        // ⭐ 跑着的门**也要认它** ✗ —— ⛔ 只写库不算 ✗（那正是"配对成功却 401" ✓）
+        crate::mesh::add_paired_pubkey(space, "dev-a", &ida.public_key_hex()).unwrap();
+        let (ta2, sa2) = sign(&ca, "dev-a");
+        let both = crate::mesh::pull_from_peer(
+            &crate::mesh_endpoint::LanEndpoint::new(&near("dev-b", addr_b).base, client.clone()),
+            &near("dev-b", addr_b),
+            space,
+            0,
+            None,
+            Some(("dev-a", ta2, &sa2)),
+            "",
+        )
+        .await;
+        assert!(
+            both.is_ok(),
+            "⭐ 两边各点一次 ⇒ 双向通 ✓（门不重启也要认出新的那把公钥）：{both:?}"
+        );
         stop_window(space).unwrap();
     }
 

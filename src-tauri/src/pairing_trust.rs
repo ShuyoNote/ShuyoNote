@@ -44,11 +44,11 @@ pub fn state_after_local_confirm(current: TrustState) -> TrustState {
     }
 }
 
-/// ⭐ 对方那边动了（⭐ 它点了 ／ ⭐ 它发来「我想信任你」✓）之后的状态 ✓。
-/// ⭐ 甲 之下**这一侧自动采纳** ✗ ⇒ ⭐ 直接通 ✓（⭐ "不问那台的人" ✓）。
+/// ⭐ 对方那边动了（旧内核的 remote-confirm 一档）之后的状态 ✓。
+/// ⚠️ **2026-10-26（owner 拍 A）之后生产路径不再调用它** ✗ —— 保留只为旧判据/兼容；
+/// ⭐ 真正让状态变 `Trusted` 的只有**本机自己点确认**（`state_after_local_confirm`）✓。
 pub fn state_after_remote_confirm(current: TrustState) -> TrustState {
     match current {
-        // ⭐ 甲：对面动过 ⇒ 自动采纳 ⇒ 直接信 ✓（⭐ 原先"⭐ 只记成 `RemotePending` ✗"已取代 ✓）。
         TrustState::Idle => TrustState::Trusted,
         TrustState::Trusted => TrustState::Trusted,
     }
@@ -68,15 +68,15 @@ pub enum TrustRole {
     Responder,
 }
 
-/// ⭐ 看到对方的「想信任」之后的状态 ✓。
-/// ⭐⭐ **甲** ✗：⭐ 看到就是采纳 ⇒ ⭐ 直接通 ✓（⭐ "不问那台的人" ✓）。
-/// ⚠️ 原先那句"⭐ 看到 ≠ 同意 ✗、⭐ 一定要本机的人再点一下 ✓"**已被 owner 的甲取代** ✗ ✓。
+/// 看到对方的「想信任」之后的状态 ✓。
+/// ⭐⭐ **2026-10-26（owner 拍 A：两边各点一次确认，R208）**：⭐ **看到 ask ≠ 信任** ✓ ——
+/// ⛔ 状态**不变**（`Idle` 仍是 `Idle`）✗；要变成 `Trusted`，必须本机自己点「接入」并确认
+/// （`state_after_local_confirm`）✓。
+/// ⚠️ 旧口径（2026-10-17「一方配对成功，就双向通」）在这里直接 `Trusted`；撤销理由与
+/// DB 那一条同源：同网段一条 ask 就能让人以为已经配对 ✓，而真实名单里什么都没有 ✗。
 pub fn state_after_ask_seen(current: TrustState) -> TrustState {
-    match current {
-        TrustState::Idle => TrustState::Trusted,
-        // ⭐ 已经信任 ⇒ ⭐ 不因"⭐ 又收到一遍广播 ✗"而变化 ✓（⭐ 广播是周期性的 ✓）。
-        TrustState::Trusted => TrustState::Trusted,
-    }
+    // ⭐ 不因"又收到一遍广播"而变化 ✓（广播是周期性的 ✓）；也不因**第一次**看到就变 ✓。
+    current
 }
 
 /// ⭐ 确认时要不要**由我生成**那把配对密钥 ✗ —— ⭐ 只有**被问的那台**生成 ✓。
@@ -99,12 +99,12 @@ pub fn confirm_generates_secret(role: TrustRole) -> bool {
 /// ⇒ ⭐ 甲 的真实形状是：⭐ 点的那一侧 ⭐ 用**已有的令牌**登记对面 ✓（`remember_peer_card` ✓）。
 /// ⭐⭐ **2026-10-13（P-4 片①）按代码实际行为订正** ✗ —— 这一句原来是「另一位收到 `trust_ask` ⇒
 /// ⭐ **自动采纳** ✓」，⚠️ 它**半对半错** ✗（以代码为准，⛔ 不凭注释 ✗）：
-/// · ✅ 还成立的：⭐ 收到 ask ⇒ ⭐ 本机**状态**推进到已信任 ✓（`state_after_ask_seen` ✓，判据
-///   `remote_side_acting_alone_also_reaches_trusted` ✓ 仍在 ✓）；
-/// · ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）** ✗：⭐ 「自动采纳」那半**又成立**了 ✓
-///   —— ⭐ 收到 ask ⇒ ⭐ 这一侧**也把对面登记上** ✓（`sync::note_pending_trust_asks` ⇒
-///   `pair_pubkey` ＋ `add_paired_pubkey` ✓；判据 `receiving_a_trust_ask_registers_the_asker_so_both_directions_work` ✓）。
-///   ⚠️ 2026-10-12 那条「登记只在点的那一侧」**已被推翻** ✓（真机来由：AMD 侧配对后拉本机每轮 401 ✓）。
+/// · ⭐⭐ **2026-10-26（owner 拍 A：两边各点一次确认，R208）** ✗：⭐ 「收到 ask ⇒ 自动采纳」那半**撤销** ✓ ——
+///   `sync::note_pending_trust_asks` 现在**只读 ＋ 日志**，⛔ 一个字节都不写库 ✗；
+///   `state_after_ask_seen` 也**不再把状态推进到 `Trusted`**（看到 ≠ 同意）✓。
+///   ⭐ 要双向 ⇒ 两边各点「接入」并核对确认 ✓（判据 `receiving_a_trust_ask_does_not_register_the_asker`）。
+///   ⚠️ 被撤销的是 2026-10-17 的「一方配对成功，就双向通」（真机来由：AMD 侧配对后拉本机每轮 401 ✓），
+///   不是 2026-10-12 的「登记只在点的那一侧」——后者**现在重新成立** ✓。
 pub const fn one_sided_click_establishes_trust() -> bool {
     true
 }
@@ -605,17 +605,20 @@ mod tests {
     }
 
     #[test]
-    fn remote_side_acting_alone_also_reaches_trusted() {
-        // ⭐ 甲 的另一半：⭐ 对面那条路 ⇒ ⭐ 这一侧**自动采纳** ⇒ ⭐ 直接通 ✓（"不问那台的人" ✓）。
+    fn seeing_the_ask_alone_is_not_trust() {
+        // ⭐⭐ 2026-10-26（owner 拍 A）：⭐ 只看得到「我想信任你」**不算信任** ✓ ——
+        //   要本机自己点「接入」并确认（`state_after_local_confirm`）才进 `Trusted` ✓。
+        assert_eq!(
+            state_after_ask_seen(TrustState::Idle),
+            TrustState::Idle,
+            "⛔ 看到 ask 不许自动变成已信任（那正是 R208 的 UI 版）"
+        );
+        // ⚠️ `state_after_remote_confirm` 是旧内核的一档（生产路径已不走它）⇒ 行为先保留 ✓，
+        //   但它**不能**被 ask 那条路调用（见上）。
         assert_eq!(
             state_after_remote_confirm(TrustState::Idle),
             TrustState::Trusted,
-            "甲：收到对面的确认 ⇒ 自动采纳 ⇒ 直接信"
-        );
-        assert_eq!(
-            state_after_ask_seen(TrustState::Idle),
-            TrustState::Trusted,
-            "甲：看到「我想信任你」那条广播 ⇒ 自动采纳 ⇒ 直接信（⛔ 不要人再点一下）"
+            "旧内核的 remote-confirm 语义保留（生产已无调用点）"
         );
     }
 
@@ -662,11 +665,10 @@ mod tests {
     }
 
     #[test]
-    fn seeing_the_ask_agrees_under_jia() {
-        // ⭐⭐ 甲 之后**反过来了** ✗（原判据名 `seeing_the_ask_is_not_agreeing` ✓ —— ⭐ 改名是为了让翻转看得见 ✓）：
-        //    ⭐ 收到"想信任"那条广播 ⇒ ⭐ 这一侧**自动采纳** ⇒ ⭐ 直接 `Trusted` ✓（"不问那台的人" ✓）。
-        assert_eq!(state_after_ask_seen(TrustState::Idle), TrustState::Trusted);
-        // ⭐ 周期性广播重复到达 ⇒ ⭐ 不把已有状态冲回去 ✓（这一条甲前后都成立 ✓）。
+    fn seeing_the_ask_is_not_agreeing() {
+        // ⭐⭐ 2026-10-26（owner 拍 A）：⭐ 收到"想信任"那条广播 ⇒ **不算同意** ✓ ⇒ 状态不变 ✓。
+        assert_eq!(state_after_ask_seen(TrustState::Idle), TrustState::Idle);
+        // ⭐ 已经信任的那台，周期性广播重复到达也不把状态冲回去 ✓。
         assert_eq!(state_after_ask_seen(TrustState::Trusted), TrustState::Trusted);
     }
 
@@ -1077,24 +1079,23 @@ mod tests {
         assert_eq!(idle.outbound_ask(9_999_999), "", "⭐ 没在等 ⇒ 空 ✓");
     }
 
-    /// ⭐ **判据③（锁，今天已绿 ✓）**：⭐ 收到 ask ⇒ ⭐ **一个字节都不登记** ✓
+    /// ⭐ **判据③（2026-10-26 owner 拍 A：两边各点一次确认）**：⭐ 收到 ask ⇒ ⭐ **一个字节都不登记** ✓
     /// （⭐ 与 `sync.rs` 那两条**同源** ✓ —— 本格只是把"我还认这条"钉在这里 ✓）。
-    /// ⭐ **判据③（**2026-10-17 改口径** ✗）**：⭐ 收到 ask ⇒ ⭐ **这一侧也登记对面** ✓
-    /// （owner 拍「一方配对成功，就双向通」✓ —— ⛔ 不再是 2026-10-12 的"一个字节都不登记"✗）。
+    /// ⚠️ 这一条**取代** 2026-10-17 的「收到 ask ⇒ 这一侧也登记对面」✗（R208 安全洞）。
     #[test]
-    fn receiving_an_ask_registers_reciprocally() {
+    fn receiving_an_ask_does_not_register_reciprocally() {
         let src = include_str!("sync.rs");
         assert!(
             src.contains("pub(crate) fn note_pending_trust_asks("),
             "⭐ 那条**唯一实现**要在 ✓（⭐ 名字改了这条要跟着改 ✓）"
         );
         assert!(
-            src.contains("receiving_a_trust_ask_registers_the_asker_so_both_directions_work"),
-            "⭐ 它是「收到 ask ⇒ 本侧也登记（双向通）」那条判据的名字 ✓"
+            src.contains("receiving_a_trust_ask_does_not_register_the_asker"),
+            "⭐ 它是「收到 ask ⇒ 不自动登记」那条判据的名字 ✓"
         );
         assert!(
-            src.contains("receiving_a_trust_ask_writes_only_the_pubkey_registration"),
-            "⭐ 同上（登记面收窄那条真变异 ✓）"
+            src.contains("receiving_a_trust_ask_writes_nothing"),
+            "⭐ 同上（源码级不写库那条真变异 ✓）"
         );
     }
 

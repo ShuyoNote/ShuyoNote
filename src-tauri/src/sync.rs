@@ -3623,69 +3623,23 @@ pub(crate) fn note_pending_trust_asks(
     if asks.is_empty() {
         return Vec::new();
     }
-    // ② 只认**这一轮、这条空间**的对端 ✓（⛔ 不跨空间 ✗）。
-    //   ⚠️ 判定"这是不是设备级那一格"**只有一处**（`mesh::is_device_level_space` ✓）——
-    //   ⛔ 不在这里反推"个人档还是团队档" ✗（那是第二份口径 ✓）。
-    let device_level = crate::mesh::is_device_level_space(c, proto_space);
-    // ⭐ 2026-10-19 修：只有设备级／个人档才按名字挑（团队不参与按名融合 ⇒ 传空名回落 id）
-    let name = if device_level {
-        crate::sync::local_space_name(c).unwrap_or_default()
-    } else {
-        String::new()
-    };
-    let local_encrypted = c
-        .path()
-        .map(|p| crate::security::space_db_is_encrypted(std::path::Path::new(p)))
-        .unwrap_or(false);
-    let candidates = crate::mesh::mesh_peers_by_name(proto_space, &name, my_device, peers, local_encrypted);
-    let row = crate::mesh::paired_row_key(proto_space, device_level);
-    let mut registered: Vec<String> = Vec::new();
+    // ⭐⭐ **2026-10-26（owner 拍 A：「两边各点一次确认」）** ✗ —— ⛔ **本机不自动登记** ✗。
+    //
+    // 旧口径（2026-10-17「一方配对成功，就双向通」）在这里对**任何**房间号对得上的 ask
+    // 直接 `pair_pubkey` ＋ `add_paired_pubkey` —— 而房间号本来就在局域网广播里
+    // ⇒ 同网段的人发一条「想信任」就能**无交互**被加进"允许拉我内容"的名单（R208，安全洞）。
+    // ⇒ 现在只**如实提示**"对面想配对"；本机也必须自己点「接入」并核对确认，双向才通 ✓。
+    //
+    // ⚠️ 本函数从此**只读 ＋ 日志**：⛔ 一个字节都不写库 ✗（判据按源码文本钉这一条 ✓）。
     for dev in asks {
-        if !candidates.iter().any(|mp| mp.device_id == dev) {
-            eprintln!(
-                "[trust] ⚠️ 一个「想信任」不是**这条空间**的对端（{}）⇒ **不记** ✓（⛔ 不跨空间 ✗）",
-                short(&dev)
-            );
-            continue;
-        }
-        // ⚠️ 登记要**对面那把公钥**（第 3 步之后信任的凭证只有它 ✓）—— 它就在公告里 ✓。
-        let Some(peer) = peers.iter().find(|p| p.announce.device_id.trim() == dev) else {
-            eprintln!(
-                "[trust] ⚠️ 收到「{}」的「想信任」，但在这一轮的表里找不到它的公告 ⇒ **不登记** ✓",
-                short(&dev)
-            );
-            continue;
-        };
-        let pk = peer.announce.pubkey.trim().to_ascii_lowercase();
-        if !crate::device_key::is_public_key_hex(&pk) {
-            eprintln!(
-                "[trust] ⚠️ 收到「{}」的「想信任」，但它**没报公钥**（老版本／没开发现层）\
-                 ⇒ **不登记** ✓（⛔ 不硬凑一个身份 ✗ —— 让它那边换这一版再点一次 ✓）",
-                short(&dev)
-            );
-            continue;
-        }
-        // ⭐ 双向那一半就在这两行 ✗：① 库里"我认哪一台" ② 跑着的门**也要认它**（⛔ 只写库不算 ✗）。
-        if let Err(why) = crate::db::pair_pubkey(c, row, &dev, &pk) {
-            eprintln!("[trust] ⚠️ 双向登记没写成（{}）：{why}", short(&dev));
-            continue;
-        }
-        if let Err(why) = crate::mesh::add_paired_pubkey(proto_space, &dev, &pk) {
-            eprintln!(
-                "[trust] ⚠️ 库里有它、但**跑着的门没认出它**（{}）：{why} \
-                 ⇒ 对面来拉会 401，直到重开这一格",
-                short(&dev)
-            );
-        }
-        crate::lan_state::with_trust(|h| h.note_remote_confirm(now, crate::pairing_trust::TRUST_TTL_MS));
         eprintln!(
-            "[trust] 🔁 收到「{}」的「想信任」⇒ ⭐ **已双向登记** ✓\
-             （owner 2026-10-17：一方配对成功，就双向通 ✓ —— 它现在也能拿你的 ✓）",
-            short(&dev)
+            "[trust] 收到「{}」的「想信任」⇒ ⛔ 本机**不自动登记**             （owner 2026-10-26 拍 A：两边各点一次确认）—— 要在本机也点「接入」并核对确认，双向才通 ✓",
+            dev.chars().take(8).collect::<String>()
         );
-        registered.push(dev);
     }
-    registered
+    // ⚠️ 参数保留（调用点与源码级判据按名字找它 ✓）；本函数现在**只读** ⇒ 不碰库 ✓。
+    let _ = (c, proto_space, my_device, peers);
+    Vec::new()
 }
 
 /// ⭐⭐ **R110（owner 2026-10-02 拍 A）：发起侧真正落库的那一步** —— 「生成时就把对面登记好」✓。
@@ -6060,19 +6014,15 @@ mod r146_mesh_scope_tests {
         );
     }
 
-    /// ⭐⭐ 判据⑨（⭐ **2026-10-17 改口径** ✗）：⭐ **一键信任与"口令"脱钩** ✓ ＋ ⭐ **一方配对成功，就双向通** ✗。
+    /// ⭐⭐ 判据⑨（**2026-10-26 owner 拍 A：两边各点一次确认**）：⭐ **收到 ask ⇒ 本机一个字节都不写** ✓
+    /// ＋ ⭐ 一键信任仍与「口令」脱钩 ✓。
     ///
-    /// ## ⚠️ 本条**取代** 2026-10-12 那版（原话：「收到 ask 那一侧 ⛔ 一个字节都不许写库」✗）
-    /// ⭐ 2026-10-12 owner 逐字是「单方信任 ⇒ 同步就是单向的」✓；
-    /// ⭐ **2026-10-17 owner 改口径**：「**一方配对成功，就双向通**」✓
-    /// ⇒ ⭐ 收到 ask 的这一侧**也把对面登记上**（`pair_pubkey` ＋ `add_paired_pubkey`）✓。
-    /// ⚠️ 真机来由：AMD 侧配对后拉本机**每一轮 401**（「这张卡不在这台的名册里」✓）——
-    ///    单方配对只开了一个方向 ✓。
-    ///
-    /// ⚠️ 登记面**仍然很窄** ✗：⛔ 不写旧那两档（卡哈希 `pair_device` ／ 出示那份 `set_pair_secret` ／
-    ///   门里的共享哈希 `add_paired`）✗ —— ⭐ 第 3 步之后信任的凭证**只有公钥** ✓。
+    /// ## ⚠️ 这一条**取代** 2026-10-17 的「一方配对成功，就双向通」
+    /// 旧口径收到 ask 就 `pair_pubkey` ＋ `add_paired_pubkey`；而房间号在局域网广播里
+    /// ⇒ 同网段任何人发一条 ask 就能**无交互**进入"允许拉我内容"的名单（R208 安全洞）。
+    /// ⭐ 现在只**如实提示**（日志），不登记；要双向 ⇒ 本机也点「接入」并确认 ✓。
     #[test]
-    fn receiving_a_trust_ask_registers_the_asker_so_both_directions_work() {
+    fn receiving_a_trust_ask_does_not_register_the_asker() {
         let c = fixture();
         c.execute_batch(
             "INSERT INTO meta.workspaces (id, name) VALUES ('ws-me', '个人');
@@ -6080,7 +6030,6 @@ mod r146_mesh_scope_tests {
         )
         .unwrap();
         crate::mesh::set_mesh_room_device(&c, Some("room-dev")).unwrap();
-        // ⚠️ **故意连口令都不设** ✗：这条口径与口令无关（⛔ 没口令也照样能双向登记 ✓）
         let scope = mesh_scope_at(&c, Some("ws-me")).expect("个人档可解析");
         assert!(scope.device_level, "个人档要认成设备级");
         crate::lan_state::with_trust(|h| {
@@ -6114,58 +6063,24 @@ mod r146_mesh_scope_tests {
             }],
             9_000_001,
         );
-        assert_eq!(seen, vec!["dev-B".to_string()], "⭐ 登记了哪些要如实报出来 ✓（给日志用 ✓）");
-        // ⭐⭐ 新命门：**这一侧也登记了对面** ✗（公钥那一格 ⇒ 对面来拉不再 401 ✓）
+        assert!(seen.is_empty(), "⛔ 收到 ask **不再自动登记**（owner 2026-10-26 A）：{seen:?}");
         let listed = crate::mesh::paired_devices(&c, &scope.space, scope.device_level).unwrap();
+        assert!(listed.is_empty(), "⛔ 本机名单必须**空**（一个字节都不写）：{listed:?}");
+        let row = crate::mesh::paired_row_key(&scope.space, true);
         assert!(
-            listed.iter().any(|m| m.device_id == "dev-B"),
-            "⭐ 收到 ask ⇒ 本机也要把对面记进名单（owner 2026-10-17：一方配对成功，就双向通 ✓）：{listed:?}"
+            crate::db::paired_pubkeys(&c, &row).unwrap().is_empty(),
+            "⛔ 公钥名单也必须**空**（旧口径会在这里自动登记）"
         );
-        assert_eq!(
-            crate::db::paired_pubkeys(&c, crate::mesh::paired_row_key(&scope.space, true))
-                .unwrap()
-                .len(),
-            1,
-            "⭐ 公钥那一格必须有它（那是第 3 步之后**唯一**的凭证 ✓）"
-        );
-        // ⛔ 旧那一档仍然不写 ✗（登记面收窄，不是回到旧口径 ✓）
         assert!(
-            crate::db::paired_secret_hashes(&c, crate::mesh::paired_row_key(&scope.space, true))
-                .unwrap()
-                .iter()
-                .all(|h| h.is_empty()),
-            "⛔ 旧那一档（哈希）仍然全空 ✗（凭证只有公钥 ✓）"
+            crate::db::paired_secret_hashes(&c, &row).unwrap().iter().all(|h| h.is_empty()),
+            "⛔ 旧那一档（哈希）仍然全空"
+        );
+        // ask 仍留在内核里（界面/日志还能提示；TTL 负责过期）——不是偷偷消费掉
+        assert!(
+            !crate::lan_state::with_trust(|h| h.pending_asks(9_000_002)).is_empty(),
+            "ask 不许被消费掉（消费掉＝用户再也看不到『对面想配对』）"
         );
         crate::lan_state::with_trust(|h| h.clear());
-    }
-
-    /// ⭐⭐ 判据⑤（⭐ **只加判据、一行实现没动** ✗）：⭐ **一个没有档案行的团队空间，它的键不许被搬** ✗。
-    ///
-    /// 症状（Lead 2026-10-11 点名 ✓）：迁移靠 `sync_profiles.space_id` 认"这是不是团队" ✓
-    /// ⇒ ⭐ 若那个团队空间的档案行**不存在**（从没建过 ✓），它的 `mesh_bind:<space_id>` 会被当成
-    /// "不是团队" ⇒ ⭐ **被搬进设备级** ✗ ⇒ 那**真改坏了那个团队空间的设置** ✗（方案明写"团队一个字节不动" ✓）。
-    ///
-    /// ⚠️ **这条第一版就是要它红** ✗ —— ⛔ 实现没动 ✓（先红后绿 ✓）。
-    #[test]
-    fn migration_must_not_take_a_key_that_is_not_provably_personal() {
-        let c = fixture();
-        c.execute_batch(
-            "INSERT INTO meta.workspaces (id, name) VALUES ('ws-team', '团队');
-             -- ⭐ 故意**不建**这个团队空间的档案行 ✗（＝ 从没绑过服务器 ✓）
-             INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:org-nobody', '10.9.9.9:8788');",
-        )
-        .unwrap();
-        crate::mesh::migrate_device_level_mesh(&c).expect("迁移不许报错");
-        assert_eq!(
-            crate::mesh::settings_for(&c, "", true).bind,
-            None,
-            "⛔ 一个**无法证明是个人档**的键不许被搬进设备级 ✗（`org-nobody` 既没档案行、也不在个人那两格里）"
-        );
-        assert_eq!(
-            crate::sync::get_meta_state(&c, "mesh_bind:org-nobody").as_deref(),
-            Some("10.9.9.9:8788"),
-            "⛔ 那个键还要原样留着 ✗"
-        );
     }
 
     /// ⭐ 判据⑦（Lead 第二步 ✓）：⭐ **后果** ✗ —— ⭐ 那一格会不会真让"所有个人空间"都指向
@@ -11519,54 +11434,48 @@ mod tests {
     //      ⭐ 那两条的前提「单方信任 ⇒ 单向」已被 owner 2026-10-17 推翻 ✓），⛔ 旧文不删（留作路标 ✓）。
     // ─────────────────────────────────────────────────────────────────────────────
 
-    /// ⭐ 判据②（**2026-10-17 改口径** ✗）：⭐ 收到 ask ⇒ 这一侧**也要把对面登记上** ✓
-    /// （`pair_pubkey` ＋ `add_paired_pubkey` ✓）—— ⛔ 旧那三档一个字节都不许动 ✗。
+    /// ⭐ 判据②（**2026-10-26 owner 拍 A**）：⭐ 收到 ask 的那一段**不许写库** ✓。
     ///
-    /// **红读数（真变异）**：把函数体里 `pair_pubkey(` 那一行删掉 ⇒ 本判据当场红 ✓（必含项缺失 ✓）。
+    /// ⛔ 源码里不许出现 `pair_pubkey(` / `add_paired_pubkey(`（旧自动登记的两格）✗，
+    /// 也不许出现旧那三档；⭐ 只允许"读 pending + 打日志 + 返回空表" ✓。
     ///
-    /// ⚠️ **必须先剥注释再比** ✗：本函数自己的**文档**里就写着那几个名字 ✓
-    /// （"pair_pubkey" ✓）—— 按整段文本比会**红在自己的说明上** ✓
-    /// （本工作区有原话：门禁要先剥注释再匹配 ✓）。
+    /// ⚠️ **必须先剥注释再比** ✗ —— 本函数文档里会提到那些名字 ✓。
     #[test]
-    fn receiving_a_trust_ask_writes_only_the_pubkey_registration() {
+    fn receiving_a_trust_ask_writes_nothing() {
         let src = include_str!("sync.rs");
         let start =
             src.find("pub(crate) fn note_pending_trust_asks(").expect("这条函数必须在（名字改了就要同步改这里）");
-        // ⚠️ 只取**函数体这一段的代码** ✓：先剥掉 `//` 起头的行 ✓，再压平空白 ✓（rustfmt 会换行 ✓）。
         let code: String = src[start..]
             .lines()
             .filter(|l| !l.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n");
         let flat = code.split_whitespace().collect::<Vec<_>>().join(" ");
-        // ⚠️ 切到**下一个顶层函数**为止 ✓（压平后本函数的签名在最前 ⇒ `nth(1)` 就是本段 ✓）。
         let body = flat.split("pub(crate) fn ").nth(1).unwrap_or("").to_string();
-        // ⭐ 必含：双向登记的那两格（owner 2026-10-17「一方配对成功，就双向通」✓）
-        for needed in ["pair_pubkey(", "add_paired_pubkey("] {
-            assert!(
-                body.contains(needed),
-                "⭐ 收到 ask 这一侧必须写 {needed} ✗ —— ⭐ 否则对面来拉会 401（单方配对只开一个方向 ✓）"
-            );
-        }
-        // ⛔ 禁止：旧那三档（第 3 步之后信任凭证**只有公钥** ✓）
-        for banned in ["remember_peer_card(", "pair_device(", "set_pair_secret(", "add_paired("] {
+        for banned in [
+            "pair_pubkey(",
+            "add_paired_pubkey(",
+            "remember_peer_card(",
+            "pair_device(",
+            "set_pair_secret(",
+            "add_paired(",
+        ] {
             assert!(
                 !body.contains(banned),
-                "⛔ 收到 ask 的这一段里不许出现 {banned} ✗ —— ⭐ 登记面收窄到「公钥」那两格 ✓\
-                 （旧哈希／出示那份／共享哈希都不再是凭证 ✓）"
+                "⛔ 收到 ask 的这一段**一个字节都不许写库**（owner 2026-10-26 A）—— 出现了 {banned}"
             );
         }
+        assert!(body.contains("pending_asks"), "它仍要读 pending 做提示 ✓");
+        assert!(body.contains("Vec::new()"), "返回空表（没有登记任何一台）✓");
     }
 
-    /// ⭐ 成品走一遍（⭐ **2026-10-17 改口径** ✗）：⭐ 收到 ask ⇒ **这一侧也登记对面**（双向通 ✓）
-    ///   ＋ ⭐ 内核状态被推进 ✓ ＋ ⭐ **登记过的不再返回** ✓（公告 30 秒一轮 ⇒ 不会每轮重复登记 ✓）
-    ///   ＋ ⭐ **不跨空间** ✓ ＋ ⭐ **过期 ⇒ 不记** ✓ ＋ ⛔ 旧那三档仍然不写 ✗。
+    /// ⭐ 2026-10-26 owner 拍 A：收到 pending ask ⇒ **只提示、不写库** ✓
+    ///   ＋ 仍不跨空间 ✓ ＋ TTL 过期会清 ✓ ＋ ⛔ 旧三档不写 ✗。
     ///
-    /// ⚠️ 本条**取代** 2026-10-12 那版（原话：「收到 ask ⇒ 只记账、一个字节都不登记」✗）：
-    /// ⭐ owner 2026-10-17 拍「**一方配对成功，就双向通**」✓ ⇒ ⭐ 这一侧也登记 ✓。
-    /// ⚠️ 真机来由：AMD 侧配对后拉本机**每一轮 401**（「这张卡不在名册里」✓）。
+    /// ## ⚠️ 这一条**取代** 2026-10-17 的「收到 ask 就登记对面（双向通）」
+    /// 旧口径是 R208 安全洞的根（同网段一条 ask ⇒ 无交互被加进允许名单）⇒ 现在只读。
     #[test]
-    fn receiving_a_pending_ask_registers_the_asker_and_respects_space_and_ttl() {
+    fn receiving_a_pending_ask_is_noticed_but_never_registers() {
         let _serial =
             crate::lan_state::TRUST_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir =
@@ -11574,10 +11483,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
         drop(crate::db::open_meta_conn_at(&dir).unwrap());
-        // ⚠️ 必须是**空间连接**（生产 `db.0` 的形状 ✓）。
         let c = crate::db::open_space_conn_at("default", &dir).unwrap();
-        // ⚠️ 口令**故意设上** ✗：旧口径下"这一侧要读它才能采纳"✓ ⇒ ⭐ 现在**读都不读** ✓
-        //   （⭐ 于是"没口令也收得下 ask"这件事在这一条判据里也能被顺带钉住 ✓）。
         crate::mesh::set_mesh_token(&c, "proto-x", Some("k7Qm-2pRt")).unwrap();
 
         let peer = |device: &str, spaces: &[&str]| crate::lan::Peer {
@@ -11588,8 +11494,6 @@ mod tests {
                 device_id: device.to_string(),
                 device_name: format!("{device} 的机器"),
                 short_id: String::new(),
-                // ⚠️ 夹具**必须带 `http://`** ✗ —— `lan::is_lan_base` 只认 "http ＋ 私有 IPv4" ✓；
-                //    不带方案名 ⇒ `mesh_peers` 当场判它不可直连 ⇒ 候选为空 ✓（判据当场撞到过 ✓）。
                 hub_base: Some("http://192.168.1.6:8788".to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 hub_space_kinds: Vec::new(),
@@ -11597,7 +11501,6 @@ mod tests {
                 hub_space_encrypted: Vec::new(),
                 room: String::new(),
                 fp: "fp".into(),
-                // ⭐ 2026-10-17：双向登记要**对面那把公钥**（第 3 步之后唯一凭证 ✓）⇒ 夹具必须给合法的 ✓
                 pubkey: "ab".repeat(32),
             },
             addr: "192.168.1.9".into(),
@@ -11609,65 +11512,55 @@ mod tests {
         crate::lan_state::with_trust(|h| h.clear());
         crate::lan_state::with_trust(|h| h.note_ask("dev-B", t, ttl));
 
-        // ① 该登记的 ⇒ ⭐ **双向登记对面** ✓（owner 2026-10-17「一方配对成功，就双向通」✓），
-        //    ⛔ 旧那三档仍然不写 ✗（登记面收窄到「公钥」那两格 ✓）。
+        // ① 不登记：返回空、名单空、公钥空、旧三档空
         let seen = note_pending_trust_asks(&c, "proto-x", "me-dev", &[peer("dev-B", &["proto-x"])], t);
-        assert_eq!(seen, vec!["dev-B".to_string()], "登记了哪一台要如实报出来");
-        let listed = crate::mesh::paired_devices(&c, "proto-x", false).unwrap();
+        assert!(seen.is_empty(), "⛔ 收到 ask 不再登记任何一台（owner 2026-10-26 A）：{seen:?}");
         assert!(
-            listed.iter().any(|m| m.device_id == "dev-B"),
-            "⭐ 收到 ask ⇒ 这一侧也要登记对面（⛔ 否则对面来拉每一轮 401 ✗）：{listed:?}"
-        );
-        assert_eq!(
-            crate::db::paired_pubkeys(&c, "proto-x").unwrap().len(),
-            1,
-            "⭐ 公钥那一格必须有它（第 3 步之后唯一凭证 ✓）"
+            crate::mesh::paired_devices(&c, "proto-x", false).unwrap().is_empty(),
+            "⛔ 本机名单必须空"
         );
         assert!(
-            crate::db::paired_secret_hashes(&c, "proto-x")
-                .unwrap()
-                .iter()
-                .all(|h| h.is_empty()),
-            "⛔ 旧那一档（哈希）仍然全空 ✗（第 3 步之后凭证**只有公钥** ✓）"
+            crate::db::paired_pubkeys(&c, "proto-x").unwrap().is_empty(),
+            "⛔ 公钥名单必须空（旧口径会在这里登记）"
+        );
+        assert!(
+            crate::db::paired_secret_hashes(&c, "proto-x").unwrap().iter().all(|h| h.is_empty()),
+            "⛔ 旧那一档（哈希）仍然全空"
         );
         assert_eq!(
             crate::mesh::pair_secret_for(&c, "proto-x", "dev-B"),
             None,
-            "⛔ 「要出示给它的那一份」仍然不许被写 ✗（旧口径三件之一，已退役 ✓）"
+            "⛔ 「要出示给它的那一份」仍然不许被写"
         );
-        // ② ⭐ 记过的这一条不许再返回 ✓（否则每 30 秒重复记一遍 ✓）
+        // ② ask 仍在（界面可提示）＋ 状态不许被自动推进到 Trusted
         assert!(
-            crate::lan_state::with_trust(|h| h.pending_asks(t + 1)).is_empty(),
-            "记过的这一条不许再被记（公告是周期性的）"
+            !crate::lan_state::with_trust(|h| h.pending_asks(t + 1)).is_empty(),
+            "ask 不许被消费掉（用户还要看得到『对面想配对』）"
         );
         assert_ne!(
             crate::lan_state::with_trust(|h| h.state()),
-            crate::pairing_trust::TrustState::Idle,
-            "记下「对面允许了你」之后状态要推进（界面要读它）"
+            crate::pairing_trust::TrustState::Trusted,
+            "⛔ 不许自动走到「已信任」"
         );
 
-        // ③ ⭐ 不跨空间：同一台**不服务**这条空间 ⇒ ⛔ 不记 ✓
+        // ③ 不跨空间：同一台不服务这条空间 ⇒ 不登记
         crate::lan_state::with_trust(|h| h.clear());
         crate::lan_state::with_trust(|h| h.note_ask("dev-B", t, ttl));
         assert!(
-            crate::mesh::mesh_peers("proto-y", "me-dev", &[peer("dev-B", &["proto-x"])]).is_empty(),
-            "候选为空 ⇒ 它根本不是这条空间的对端"
-        );
-        assert!(
             note_pending_trust_asks(&c, "proto-y", "me-dev", &[], t).is_empty(),
-            "⛔ 不跨空间 ✗"
+            "⛔ 不跨空间"
         );
 
-        // ④ ⭐ 过期 ⇒ ⛔ 不记 ✓（而且那一档**有一行日志** ✓ —— 见函数里的 eprintln ✓）
+        // ④ 过期 ⇒ 清掉（且不登记）
         crate::lan_state::with_trust(|h| h.clear());
-        crate::lan_state::with_trust(|h| h.note_ask("dev-C", t, 1)); // TTL 1 毫秒 ⇒ 立刻过期 ✓
+        crate::lan_state::with_trust(|h| h.note_ask("dev-C", t, 1));
         assert!(
             note_pending_trust_asks(&c, "proto-x", "me-dev", &[], t + 2).is_empty(),
-            "⛔ 过期的不许被记 ✗（一台关过机的对端不许几天后被算数）"
+            "⛔ 过期的不许被登记"
         );
         assert!(
             crate::lan_state::with_trust(|h| h.pending_asks(t + 2)).is_empty(),
-            "过期那一档要被清掉（否则每轮重复报同一条日志）"
+            "过期那一档要被清掉"
         );
 
         crate::lan_state::with_trust(|h| h.clear());

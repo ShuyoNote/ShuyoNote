@@ -503,6 +503,14 @@ P1 追加之三：**手动同步必须用「这个空间自己的连接」**（�
 **判据（本机，可复跑）**：`cargo test --lib room_adoption_tests`（6/6）、
 `cargo test --lib mobile_defaults`（2/2）、`node scripts/test-report.mjs` ⇒ **66 条全过 / 失败 0**（2026-10-26 本机读数）。
 
+> ⚠️ **上面的读数有一条已被后来的拍板取代（保留原文作历史）**：其中「手机点确认后 macOS 自动双向登记」
+> 是 **2026-10-17 旧口径**。2026-10-26 owner 看了 R208（同网段一条 ask 就能无交互被登记）后拍 **A**：
+> ⛔ 撤销自动登记 ⇒ **两边各点一次「接入」并确认，双向才通**。
+> 现行判据：`cargo test --lib trust` 里的 `receiving_a_trust_ask_does_not_register_the_asker`、
+> `receiving_a_trust_ask_writes_nothing`、`receiving_a_pending_ask_is_noticed_but_never_registers`、
+> `one_sided_pairing_opens_only_one_direction_until_the_other_side_confirms`。
+> 细节：`docs/plans/2026-10-11-one-click-trust-decision.md` §7。
+
 ### 10.4 iOS（构建/装机/发现层真机一轮）
 
 > 判据口径：⛔「装上了」不等于「能用」✗。完整读数见 [`../MOBILE.md`](../MOBILE.md) §5.6。

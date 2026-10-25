@@ -199,7 +199,8 @@ impl LanState {
     ///   ⛔ 这一层**不读配置、不写库** ✗ —— `lan.rs:471` 那条仓规（"本层不知道 `SyncProfile`，
     ///   接线那一片才把两边接起来 ✓"）在这里同样成立 ✓。
     ///   ⭐ 真正"采纳"（登记对面 ＋ 推进状态 ✓）在**有 db 的那一层**：`sync.rs` 的网格那一轮 ✓
-    ///   （见 `sync::adopt_pending_trust_asks` ✓）。
+    ///   （见 `sync::note_pending_trust_asks` ✓）。⚠️ **2026-10-26（owner 拍 A）之后它不再自动登记** ✗：
+    ///   只提示"对面想配对"，要本机也点「接入」并确认 ✓。
     ///   ⚠️ 时间取 `p.seen_at_ms` ✗（**调用方传进来的那一下** ✓）—— ⛔ 不在这里另取一次时钟 ✗：
     ///   那样判据固定不了时间 ✓，而且与"看到它的那一刻"会差一截 ✓。
     pub fn observe(&self, p: Peer) -> bool {
@@ -2231,12 +2232,12 @@ mod short_id_tests {
             vec!["dev-b".to_string()],
             "带 ask 的公告必须在核心里看得见（否则'点了没反应'）"
         );
-        // ⭐⭐ 甲（owner 2026-10-11 二次拍板「一端点就通」）：⭐ **看到就是采纳** ✗ ⇒ ⭐ 这里就该是 `Trusted` ✓。
-        //    ⚠️ 原先那句"⭐ 看到 ≠ 信任 ✗、⭐ 记账不许推成 Trusted ✓"**已被甲取代** ✗ ✓。
+        // ⭐⭐ 2026-10-26（owner 拍 A：两边各点一次确认，R208）：⭐ **看到 ask ≠ 信任** ✓ ——
+        //   状态必须留在 `Idle`；要 `Trusted` 得本机自己点「接入」并确认 ✓。
         assert_eq!(
             with_trust(|h| h.state()),
-            crate::pairing_trust::TrustState::Trusted,
-            "甲：收到 ask ⇒ 自动采纳 ⇒ 直接信（⛔ 不要人再点一下）"
+            crate::pairing_trust::TrustState::Idle,
+            "⛔ 收到 ask 不许自动把界面状态推进到「已信任」（R208）"
         );
         with_trust(|h| h.clear());
     }

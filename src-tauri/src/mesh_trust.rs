@@ -57,8 +57,8 @@ pub struct MeshTrustStateView {
 /// ⚠️ 兜底那一档要说**下一步做什么** ✗，⛔ 不是只说"没有" ✗（owner 口径：界面上的话要能照着做 ✓）。
 ///
 /// ⭐⭐ **2026-10-12（第 3 步改口径 ✓）** ✗：⭐ 那两句**声称的是双向** ✗ ⇒ 与 owner 的口径矛盾 ⇒ 换掉 ✓
-/// ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）**：⭐ 这一格的人话也改了 ✗ ——
-/// 配对**一次**两边都通 ✓（收到 ask 的那一侧会在下一次交换里互相登记 ✓），⛔ 不再说"要两台各点一次" ✗。
+/// ⭐⭐ **2026-10-26（owner 拍 A：两边各点一次确认，R208）** ✗：⭐ 撤销 2026-10-17 的「一方配对成功，就双向通」——
+/// 看到 ask **不算配对** ✓；要双向 ⇒ 两边各点「接入」并确认 ✓（这一格的人话也随之改 ✓）。
 pub fn trust_state_view(state: TrustState, active: bool, pending: usize) -> MeshTrustStateView {
     let (state, message) = match state {
         TrustState::Idle => (
@@ -67,7 +67,7 @@ pub fn trust_state_view(state: TrustState, active: bool, pending: usize) -> Mesh
         ),
         TrustState::Trusted => (
             "trusted",
-            "已经配对过（⭐ 一方配对成功 ⇒ 两个方向都通 ✓）—— 谁在名单里看下面那份「这台机器认了 N 台设备」",
+            "已经配对过（⭐ 2026-10-26 owner 拍 A：两边各点一次确认，双向才通 ✓）—— 谁在名单里看下面那份「这台机器认了 N 台设备」",
         ),
     };
     MeshTrustStateView {
@@ -224,7 +224,8 @@ pub fn mesh_trust_begin(
     });
     Ok(MeshTrustOutcome {
         outcome: "trusted".to_string(),
-        message: "配对成功：两边都通了 ✓（对面收到这一轮「想信任」后会自动互相登记 —— 它那边不用再点一次 ✓）"
+        message: "配对成功：这一侧已开（允许它来拿我的）✓\n\
+                  ⚠️ 对面也要点一次「接入」并核对确认，**双向**才通（owner 2026-10-26 拍 A）"
             .to_string(),
     })
 }

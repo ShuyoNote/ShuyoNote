@@ -275,7 +275,7 @@ export function MobilePair() {
                 {words.join(" · ")}
               </span>
               {/* 副文案：**纯文案** ✓ 照图抄 ✓（⛔ 不承载任何读数 ✗）。 */}
-              <span className="mpair-ok-sub">配对一次之后，不用再点任何东西</span>
+              <span className="mpair-ok-sub">两边各确认一次后，不用再点任何东西</span>
             </div>
           );
         })()}
