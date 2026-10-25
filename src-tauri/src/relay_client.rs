@@ -989,6 +989,7 @@ mod tests {
             license_exp: Some(exp),
             license_grace_days: Some(14),
             udp_port: None,
+            relay_only: None,
         }
     }
 
