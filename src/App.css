@@ -27454,3 +27454,17 @@ button.mset-row:focus-visible {
 .set-space-menu{position:absolute;right:0;top:34px;z-index:30;min-width:150px;padding:6px;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 28px rgba(15,20,32,.16);display:flex;flex-direction:column;gap:2px}
 .set-space-menu .set-btn{justify-content:flex-start;border:none;background:transparent;text-align:left;height:32px;font-size:12px}
 .set-space-menu .set-btn:hover:not(:disabled){background:#f3f5f9}
+
+/* ⭐ 2026-10-25 真机对照设计稿：右侧口令行并排 / 行内状态 pill / 当前行弱化边框 */
+.set-security-right{display:flex;flex-direction:column;gap:8px;min-width:0}
+.set-security-row{display:flex;align-items:center;gap:8px}
+.set-security-row .set-input{flex:1 1 auto;min-width:0}
+.set-security-row .set-btn{flex:0 0 auto;width:auto;min-width:84px;white-space:nowrap}
+.set-security-chips{flex-wrap:nowrap;overflow:hidden}
+.set-security-chips span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.set-space-state{font-size:10.5px;line-height:18px;border-radius:999px;padding:1px 8px;flex:0 0 auto}
+.set-space-state.is-enc{color:#0b802f;background:#e8faec}
+.set-space-state.is-plain{color:var(--text-2);background:#f2f3f5}
+.set-space-card.is-active{border-color:#dbe7ff;background:#f5f9ff;box-shadow:inset 3px 0 0 var(--accent)}
+.set-space-crypto.is-enc{color:#0b802f;background:#e8faec;border-color:#c9f0d3}
+.set-space-crypto.is-plain{color:var(--text-2);background:#f2f3f5}

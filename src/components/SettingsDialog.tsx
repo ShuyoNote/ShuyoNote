@@ -29,8 +29,8 @@ import { inputDialog } from "../store/input";
 import { useSpaceStore } from "../store/space";
 // ⭐ 2026-10-10：空间**筛选**（20+ 个空间）—— 与侧栏那个空间切换器**共用这一份**匹配 ✓
 import { filterSpaces } from "../lib/spaceFilter";
-// ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）：与侧栏**同一处**映射（文字标识，⛔ 不只靠颜色）✓
 import { spaceCryptoBadge } from "../lib/spaceSecurity";
+// ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）：与侧栏**同一处**映射（文字标识，⛔ 不只靠颜色）✓
 import { useNotes } from "../store/notes";
 import { withSyncStatus } from "../store/syncStatus";
 import { useAuth } from "../store/auth";
@@ -230,7 +230,7 @@ function SpaceSecurityBanner() {
       <div className="set-security-right">
         <div className="set-security-right-label">{unlocked ? "会话状态" : "主口令"}</div>
         {!unlocked ? (
-          <>
+          <div className="set-security-row">
             <input
               className="set-input"
               type="password"
@@ -243,7 +243,7 @@ function SpaceSecurityBanner() {
             <button className="set-btn is-primary" disabled={busy || bagPass.length === 0} onClick={unlockBag}>
               {busy ? "解锁中…" : "解锁"}
             </button>
-          </>
+          </div>
         ) : activeSpaceEncrypted && !locked ? (
           <button className="set-btn" disabled={busy} onClick={lock}>立即锁定</button>
         ) : (
@@ -403,7 +403,6 @@ function SpacesPane() {
             const active = s.id === activeId;
             const prof = syncProfiles[s.id];
             // ⭐ 2026-10-10：「这个空间加密了吗」那一格 ⇒ 文字标识（与侧栏**同一处**映射 ✓）
-            const crypto = spaceCryptoBadge(s.encrypted_on_disk);
             return (
               <div key={s.id} className={`set-space-card${active ? " is-active" : ""}`}>
                 {/* ⭐ 这一行**可点**：点了就切过去（owner 2026-10-10）✓
@@ -411,7 +410,6 @@ function SpacesPane() {
                     配色面板是它的**兄弟**节点 ⇒ 点色块本来就不会走到这里 ✓。 */}
                 <div
                   className="set-space-row"
-                  title={active ? "当前空间" : `切换到「${s.name}」`}
                   onClick={() => void pick(s.id)}
                 >
                   <span
@@ -424,17 +422,25 @@ function SpacesPane() {
                     <div className="set-row-name">
                       {s.name}
                       {active && <span className="set-tag">当前</span>}
+                      {(() => {
+                        const onDisk = secViews[s.id]?.encrypted_on_disk ?? s.encrypted_on_disk;
+                        const crypto = spaceCryptoBadge(onDisk);
+                        if (crypto.show) {
+                          return (
+                            <span className="set-space-crypto is-enc" title={crypto.title} aria-label={crypto.title}>
+                              {crypto.label}
+                            </span>
+                          );
+                        }
+                        // 读数拿不到（undefined）⇒ 不标；明确明文才给「明文」
+                        return onDisk === false ? <span className="set-space-state is-plain">明文</span> : null;
+                      })()}
                     </div>
                     <div className="set-space-meta">
                       <span className="set-space-scope">个人空间 · 仅附近设备直连</span>
                       {/* ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）——与**侧栏切换器**同一格读数、
                           同一个映射（`spaceCryptoBadge` ✓）⇒ "两处一致"是**结构性**的 ✓。
                           ⚠️ 只显示**文字**（⛔ 不只靠颜色 ✗）；读数拿不到 ⇒ 不显示 ✓。 */}
-                      {crypto.show && (
-                        <span className="set-space-crypto" title={crypto.title} aria-label={crypto.title}>
-                          {crypto.label}
-                        </span>
-                      )}
                       {/* ⭐ 2026-10-10（owner 截图）：这里原来直接显示 `↔ 121.199.8.24` ✗ ——
                           一个公网 IP 摆在设置里，普通用户既看不懂也不需要 ✓。
                           ⇒ 人话「已同步」✓ ＋ ⭐ **完整地址留在 `title` 里** ✓（排障要用 ✓，⛔ 别删它 ✗）。 */}
