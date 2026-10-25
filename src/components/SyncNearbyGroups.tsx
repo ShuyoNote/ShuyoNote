@@ -64,8 +64,11 @@ export function SyncNearbyGroups({
         .filter((s) => s.peers.length > 0 || s.showWhenEmpty !== false)
         .map((s) => (
           <Fragment key={s.testid}>
-            <div className="sync-hint" data-testid={s.testid}>
-              {s.label} · {s.peers.length} 台
+            {/* ⭐ 2026-10-26（owner：「界面不美观，优化一下」）：段标题由"一行灰字"改成
+                「标题 ＋ 数量胶囊」✓ —— 文字仍含原 label（判据只查包含 ✓）；⛔ data-testid 不动 ✗。 */}
+            <div className="sync-hint sync-nearby-group" data-testid={s.testid}>
+              <span className="sync-nearby-group-label">{s.label}</span>
+              <span className="sync-nearby-group-count">{s.peers.length} 台</span>
             </div>
             {s.peers.length === 0 ? (
               // ⭐ 一行高的虚线框 ✓（样式来自 `App.css` 的

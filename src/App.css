@@ -27743,3 +27743,255 @@ button.mset-row:focus-visible {
   font-size: 12px;
 }
 .sync-popover.is-inline .license-block .sync-hint { font-size: 11px; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ⭐ 2026-10-26（owner：「界面不美观，优化一下」）
+   ⭐ 只动**视觉**：设备行从"一长串 span 平铺"改成 **头像 ＋ 主信息 ＋ 右侧动作** 的三段式卡片；
+      段标题加数量胶囊；状态条的三格读数改成小胶囊；按钮统一高度/字号。
+   ⛔ 不动任何 `data-testid`／文案／动作 handler／判定 ✗；⛔ 不引入新颜色 ✗（全走既有主题变量，
+      `color-mix` 把 `--accent` / `--success` 混进 `--surface`，深浅色主题都跟着走 ✓）。
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── ① 设备行：三段式 ─────────────────────────────────────────────────────── */
+.sync-nearby-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.sync-nearby-row:hover {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--surface) 80%, var(--hover));
+}
+.sync-nearby-avatar {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  color: var(--accent-strong);
+  font-size: 14px;
+  font-weight: 650;
+  user-select: none;
+}
+.sync-nearby-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sync-nearby-titleline { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sync-nearby-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+  letter-spacing: 0.1px;
+}
+.sync-nearby-id {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--hover);
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  font-variant-numeric: tabular-nums;
+}
+.sync-nearby-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+/* 行内说明：在卡片里一律左对齐、小一号（原来那条"`> .sync-hint` 贴右"只服务平铺形态 ✓）。 */
+.sync-nearby-meta .sync-hint {
+  margin: 0;
+  text-align: left;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+.sync-nearby-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.sync-nearby-dot.is-ok {
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 16%, transparent);
+}
+.sync-nearby-dot.is-info { background: var(--accent); }
+.sync-nearby-dot.is-warn { background: var(--warning); }
+.sync-nearby-paired {
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--success) 10%, var(--surface));
+  color: var(--success);
+  font-weight: 600;
+}
+/* 原因句：一条**安静的信息条**（⛔ 不再是悬在行里的一段裸文字 ✗）。 */
+.sync-nearby-note {
+  margin-top: 2px;
+  padding: 2px 0 2px 9px;
+  border-left: 2px solid var(--border-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.55;
+  text-align: left;
+}
+.sync-nearby-note.is-warn {
+  border-left-color: var(--warning);
+  background: transparent;
+  color: var(--text-dim);
+  box-shadow: none;
+}
+.sync-nearby-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.sync-nearby-actions .sync-btn {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* 主按钮（接入/重新配对/立即同步）：与既有"已信任卡上的主按钮"同一套强调色 ✓ */
+.sync-popover .sync-nearby-actions .sync-btn:not(.is-ghost) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.sync-popover .sync-nearby-actions .sync-btn:not(.is-ghost):hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+/* 次要按钮（撤销配对）：安静；hover 才露出危险色（⛔ 危险色不常驻 ✗）。 */
+.sync-nearby-actions .sync-btn.is-ghost {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+.sync-nearby-actions .sync-btn.is-ghost:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+/* ── ② 段标题：标题 ＋ 数量胶囊 ───────────────────────────────────────────── */
+.sync-nearby-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 22px 0 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text);
+  letter-spacing: 0.2px;
+}
+.sync-nearby-group-label { flex: none; }
+.sync-nearby-group-count {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* 覆盖既有那条 `.is-inline [data-testid^="nearby-group-"]` 的字号/外边距（本块在文件末尾 ⇒ 后者胜 ✓）。 */
+.sync-popover.is-inline .sync-nearby-group {
+  display: flex;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text);
+  margin: 22px 0 8px;
+}
+
+/* ── ③ 顶部状态条：三格读数做成小胶囊（宽屏上好扫读 ✓） ───────────────────── */
+.sync-popover.is-inline .sync-hero-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  font-size: 11.5px;
+  margin-top: 8px;
+}
+.sync-hero-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+}
+.sync-hero-meta-k { font-size: 10.5px; color: var(--text-faint); }
+.sync-hero-meta-v {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.sync-hero-meta-v.is-strong { color: var(--text); }
+.sync-hero-meta-tag { font-size: 9.5px; color: var(--text-faint); }
+/* 后端那句整句（reach 兜底）不塞进胶囊：它自己就是一句话 ✓ */
+.sync-hero-meta.is-wide {
+  padding: 0;
+  background: transparent;
+  color: var(--text-faint);
+}
+
+/* ── ④ 空段虚线框：收紧、别抢戏 ──────────────────────────────────────────── */
+.sync-popover.is-inline [data-testid^="nearby-group-"] + .sync-empty-state {
+  padding: 10px 12px;
+  margin: 0;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 70%, var(--hover));
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+/* ── ⑤ 窄宽度（含手机上的同步面板）：动作换到第二行、不与名字挤 ───────────── */
+@media (max-width: 720px) {
+  .sync-nearby-row {
+    display: grid;
+    grid-template-columns: 30px minmax(0, 1fr);
+    grid-template-areas:
+      "avatar main"
+      "actions actions";
+    align-items: start;
+    gap: 8px 10px;
+    padding: 11px 12px;
+  }
+  .sync-nearby-avatar { grid-area: avatar; width: 30px; height: 30px; border-radius: 9px; font-size: 13px; }
+  .sync-nearby-main { grid-area: main; }
+  .sync-nearby-actions { grid-area: actions; justify-content: flex-end; }
+}
+

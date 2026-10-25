@@ -1590,132 +1590,119 @@ export function SyncPanel({
                   .filter((p) => NEARBY_GROUPS[nearbyBucket(p)].testid === g.testid)
                   .sort((a, b) => nearbyBucket(a) - nearbyBucket(b)),
               }))}
-              renderPeer={(p) => (
-                <>
-                {/* 名字空的 ⇒ **如实说没报名字**，不许回落成 id 前几位
-                    （`INV-UI-copy-no-internal-ids`；`lan_state.rs` 的 `host_name()` 拿不到就留空）。 */}
-                <span className="sync-nearby-name">{p.device_name || "这台设备没报名字"}</span>
-                {/* ⭐ 2026-10-11（owner：「参照效果图实现」）：⭐ 效果图第 ④ 屏「信任该设备」＋
-                    规格 **J21**「信任前必须展示对方的身份（设备名 ＋ 短标识）」✗ ⇒
-                    ⭐ 这一行**就是"信任前"看得见它的地方** ✓ ⇒ ⭐ 补上短标识 ✓。
-                    ⚠️ 走 `peerIdentityLine` ✓（⭐ 它的**唯一实现** ✓）—— ⭐ 它结构上拿不到 `device_id` ✓
-                       ⇒ ⭐ 不可能回落成设备号 ✓；⭐ 老对端没报短标识时它**如实说**「对方没报短标识」✓
-                       （⭐ 那不是降级处理，⭐ 是那段过渡期的正确答案 ✓）。 */}
-                <span className="sync-hint">{peerIdentityLine(p.device_name, p.short_id)}</span>
-                <span className="sync-hint">{nearbySecondColumn(p)}</span>
-                {/* ⭐ **P-B（2026-10-13）**：把**原因**说全 ✗ —— ⛔ 这两种处境原先都长得像
-                    "对端没服务我" ✗（真正的原因在**我们这一侧** ✓）：
-                    · 没设配对暗号 ⇒ ⭐ 说"本机这个空间还没设暗号" ✓（⛔ **值**一个字符都不出现 ✗）；
-                    · 对端那个空间在本机已删 ⇒ ⭐ 说"已删" ✓（⛔ 过滤有意不动 ✗ —— 只是说出来 ✓）。 */}
-                {p.serves_reason === "no_secret" && (
-                  <span className="sync-hint" data-testid="nearby-no-secret">
-                    本机这个空间还没设配对暗号 —— 没设之前认不出它在服务谁（团队空间则是还没绑组织空间）
-                  </span>
-                )}
-                {p.serves_reason === "space_deleted" && (
-                  <span className="sync-hint" data-testid="nearby-space-deleted">
-                    它服务的那个空间在本机已删 —— 删了就不再直连它；要接着同步得先把那个空间放回来
-                  </span>
-                )}
-                {!p.invitable && p.serves_current && (
-                  // 看得见但拉不到：**如实说为什么**（口径与 `mesh::invitable_base` 同一把尺）。
-                  <span className="sync-hint">它没报可以直连的地址</span>
-                )}
-                {/* ⭐ 效果图那一行的右端：⭐ 「已配对」／⭐ 「配对」✗。
-                    ⚠️ 「已配对」的判据取**本机认过的那份名单**（`duList` ✓，⭐ 与下面「解除」那块
-                       **同一个源** ✓）—— ⛔ 不自己再算一遍"算不算配上了" ✓（⭐ 两份真相迟早各说各话 ✓）。
-                    ⚠️⭐ 「信任这台设备」这一下**今天真做的是**：⭐ 把这一台**指定为这次配对的对端** ✓
-                       （⭐ 复用手边那条「生成投放码 ⇒ 采纳」的路 ✓，⭐ `dpPeer` 就是那个格 ✓）。
-                       ⇒ ⭐ 所以这里**不写**"点一下就通" ✗ —— ⭐ 那句话要等一键握手做出来才算真 ✓
-                          （⛔ 不说假话 ✓，⭐ 本仓最忌这个 ✓）。 */}
-                {p.key_changed === true && p.serves_current ? (
-                  // ⭐ **P-3d（2026-10-13）**：⭐ 钥匙变了 ⇒ 这一行的主动作是**重新配对** ✓
-                  //   （⭐ 复用「接入」那条主路径 ✓：`trustDevice` ⇒ `mesh_trust_begin` ⇒
-                  //   把**新的**那把公钥登记上 ✓ —— ⛔ 不改任何判定语义 ✗，判定仍是 `serves_current` ✓）。
-                  //   ⚠️ 它**不服务当前空间**时 ⇒ 落回下面那句「它服务的是别的空间」✓
-                  //   （⭐ 不在这儿硬塞一颗会动错空间的按钮 ✗）。
-                  <button
-                    className="sync-btn"
-                    data-testid="nearby-repair"
-                    onClick={() => {
-                      if (!activeId) return;
-                      setDpPeer(p.device_id);
-                      void trustDevice([activeId], p);
-                    }}
-                  >
-                    重新配对
-                  </button>
-                ) : duList.some((d) => d.deviceId === p.device_id) ? (
+              renderPeer={(p) => {
+                // ⭐ 2026-10-26（owner：「界面不美观，优化一下」）：⭐ 这一行的**内容与动作一个字没改** ✓，
+                //   只把原来"一长串 span 平铺"改成**三段式**：头像 ＋ 主信息（名字/身份/状态）＋ 右侧动作 ✓。
+                //   ⛔ 六个 data-testid 一个不动 ✗（判据仍按它们取元素 ✓）。
+                const paired = duList.some((d) => d.deviceId === p.device_id);
+                const displayName = p.device_name || "这台设备没报名字";
+                const identity = peerIdentityLine(p.device_name, p.short_id);
+                // 头像只取**名字首字**（⛔ 不取 device_id 的任何前缀 ✗ —— 内部 id 不许进界面）。
+                const unnamed = displayName === "这台设备没报名字" || displayName.trim().startsWith("未命名");
+                const initial = unnamed ? "设" : displayName.trim().slice(0, 1).toUpperCase();
+                const stateTone =
+                  p.key_changed === true ? "warn" : paired ? "ok" : p.serves_current ? "info" : "muted";
+                const showOtherSpace = !paired && !p.serves_current;
+                return (
                   <>
-                    <span className="sync-hint" data-testid="nearby-paired">
-                      已配对
+                    <span className="sync-nearby-avatar" aria-hidden>
+                      {initial}
                     </span>
-                    {/* ⭐⭐ **片 D1b（2026-10-14，owner：「缺撤销配对的按钮」）** ✗：
-                        ⭐ 这台**已经信任** ✓ ⇒ ⭐ 就在它旁边给一颗「撤销配对」✓
-                        （⭐ 未配对的那几支**不显示** ✓）。
-                        ⚠️ ⭐ 它**复用**既有那个 handler（`duUnpair` ✓）⇒ ⭐ **二次确认**
-                        （`confirmDialog` ✓，⭐ 文案含「重新配对」✓）与 ⭐ `api.deviceUnpair`
-                        **都不新增** ✓（⛔ 不写第二套 invoke ✗）；⭐ 样式用**行内** ✓（⛔ 不动样式表 ✗）。 */}
-                                  {/* ⭐ 刀十七①：⭐「已信任」每一台上给一颗**立即同步** ✓ —— ⭐ 复用大卡那颗**同一条**动作（`syncOne(activeRow)` ✓，
-                                      ⚠️ ⭐ 如实注明：⭐ 它按**空间**同步 ✗（⭐ 与那颗逐字同形 ✓），⛔ 不是「按那台设备」✗；
-                                      ⭐ 忙态同一条：⭐ `syncing || !activeRow` ✓；⛔ 不造新参数／不加 Rust 命令 ✗。 */}
-                                  <button
-                                    className="sync-btn"
-                                    data-testid="nearby-sync"
-                                    disabled={meshBusy}
-                                    onClick={() => void syncMeshNow()}
-                                    style={{ marginLeft: 8 }}
-                                  >
-                                    立即同步
-                                  </button>
-                    <button
-                      className="sync-btn"
-                      data-testid="nearby-unpair"
-                      disabled={duBusy === p.device_id}
-                      onClick={() => void duUnpair(p.device_id)}
-                      style={{ marginLeft: 8 }}
-                    >
-                      撤销配对
-                    </button>
+                    <div className="sync-nearby-main">
+                      <div className="sync-nearby-titleline">
+                        {/* 名字空的 ⇒ **如实说没报名字**，不许回落成 id 前几位（内部 id 不进界面）。 */}
+                        <span className="sync-nearby-name">{displayName}</span>
+                        {/* J21：信任前要看得见「设备名 ＋ 短标识」✓ —— 名字已在左边，这枚只放短标识；
+                            ⛔ 老对端没报 ⇒ 如实说「对方没报短标识」✗，⛔ 不回落成 id ✗。
+                            identity 仍由唯一实现 peerIdentityLine 生成，放在 title 里供悬停核对 ✓。 */}
+                        <span className="sync-nearby-id" title={identity}>
+                          {p.short_id ? p.short_id : "对方没报短标识"}
+                        </span>
+                      </div>
+                      <div className="sync-nearby-meta">
+                        <span className={`sync-nearby-dot is-${stateTone}`} aria-hidden />
+                        <span className="sync-hint">{nearbySecondColumn(p)}</span>
+                        {paired && (
+                          <span className="sync-hint sync-nearby-paired" data-testid="nearby-paired">
+                            已配对
+                          </span>
+                        )}
+                        {!p.invitable && p.serves_current && (
+                          <span className="sync-hint">它没报可以直连的地址</span>
+                        )}
+                      </div>
+                      {/* P-B：原因说全（⛔ 两种处境不许都长得像"对端没服务我" ✗；⛔ 不引用任何值 ✗）。 */}
+                      {p.serves_reason === "no_secret" && (
+                        <div className="sync-nearby-note is-warn" data-testid="nearby-no-secret">
+                          本机这个空间还没设配对暗号 —— 没设之前认不出它在服务谁（团队空间则是还没绑组织空间）
+                        </div>
+                      )}
+                      {p.serves_reason === "space_deleted" && (
+                        <div className="sync-nearby-note is-warn" data-testid="nearby-space-deleted">
+                          它服务的那个空间在本机已删 —— 删了就不再直连它；要接着同步得先把那个空间放回来
+                        </div>
+                      )}
+                      {/* ⛔ 不许静默 null ✗：看得见、只是服务别的空间 ⇒ 把这句话放在这一行里说清 ✓。 */}
+                      {showOtherSpace && (
+                        <div className="sync-nearby-note" data-testid="nearby-other-space">
+                          它服务的是别的空间 —— 要在那个空间里点「接入」才动得了它（这一行不动它）
+                        </div>
+                      )}
+                    </div>
+                    <div className="sync-nearby-actions">
+                      {p.key_changed === true && p.serves_current ? (
+                        // P-3d：钥匙变了 ⇒ 主动作是「重新配对」（复用 trustDevice 那一条主路径 ✓）。
+                        <button
+                          className="sync-btn"
+                          data-testid="nearby-repair"
+                          onClick={() => {
+                            if (!activeId) return;
+                            setDpPeer(p.device_id);
+                            void trustDevice([activeId], p);
+                          }}
+                        >
+                          重新配对
+                        </button>
+                      ) : paired ? (
+                        <>
+                          {/* 刀十七①：已信任的每一台都给「立即同步」—— 复用同一条动作（按**空间**同步 ✓）。 */}
+                          <button
+                            className="sync-btn"
+                            data-testid="nearby-sync"
+                            disabled={meshBusy}
+                            onClick={() => void syncMeshNow()}
+                          >
+                            立即同步
+                          </button>
+                          {/* D1b：撤销配对（复用 duUnpair ⇒ 二次确认 ✓，⛔ 不新增命令 ✗）。 */}
+                          <button
+                            className="sync-btn is-ghost"
+                            data-testid="nearby-unpair"
+                            disabled={duBusy === p.device_id}
+                            onClick={() => void duUnpair(p.device_id)}
+                          >
+                            撤销配对
+                          </button>
+                        </>
+                      ) : p.serves_current ? (
+                        // 修 B：这一行自己就是「允许」入口 —— 只打开对码屏，人确认前一个字节都不发 ✓。
+                        <button
+                          className="sync-btn"
+                          data-testid="nearby-allow"
+                          onClick={() => {
+                            if (!activeId) return;
+                            setPairPeer(p);
+                            setPairScreen(true);
+                            void preparePairCode(p);
+                          }}
+                        >
+                          接入
+                        </button>
+                      ) : null}
+                    </div>
                   </>
-                ) : p.serves_current ? (
-                  // ⭐ **修 B（2026-10-13，Lead 拍板 ＋ owner 实测「点不了」）**：
-                  //   ⭐ 这一行**自己**就是「允许」的入口 ✗ —— 走 `trustDevice`（⇒ `mesh_trust_begin` ✓），
-                  //   ⛔ **不经勾选**（`pickedCount`）✗；⛔ 也不再只 `setDpPeer`（那是"指定投放码对端"，
-                  //   点完屏幕上**什么都不变** ⇒ 用户读到的就是"点了没反应" ✓ —— 那正是这一单的词）。
-                  //   ⚠️ 顺带**保留** `setDpPeer`：下面「严格模式（高级）」那条抄码路照旧预选这一台 ✓（老行为不丢 ✓）。
-                  //   ⚠️ 没有活动空间 ⇒ **一个字节都不动** ✓（⛔ 不拿空串／编一个 spaceId 去调 ✗）。
-                  <button
-                    className="sync-btn"
-                    data-testid="nearby-allow"
-                    onClick={() => {
-                      if (!activeId) return;
-                      // ⭐ **P-4 片②b（2026-10-13）**：⭐ **时点挪走了** ✗ ——
-                      //   `setDpPeer(p.device_id)` ＋ `void trustDevice([activeId], p)`
-                      //   这两步**逐字搬进**「码对得上，确认」那个处理里 ✓（⭐ 命令／参数／
-                      //   返回值处理一字未改 ✓）；⭐ 这一下现在**只**记下这一台 ＋ 打开那一屏 ✓
-                      //   ⇒ ⭐ 人**没确认**之前，⭐ 一个字节都不发 ✓。
-                      setPairPeer(p);
-                      setPairScreen(true);
-                      // ⭐ **P-4 片③**：⭐ 就在这一下里取真读数 ✓（⛔ 不用 effect ✗）
-                      // ⭐⭐ **2026-10-17**：⭐ 取码之前**先开一轮比对** ✗（`mesh_trust_prepare` ✓，
-                      //   ⛔ 不登记信任 ✗）—— ⭐ 不先开 ⇒ 后端如实回"没有握手"（owner 真机症状 ✓）。
-                      void preparePairCode(p);
-                    }}
-                  >
-                    接入
-                  </button>
-                ) : (
-                  // ⛔ **不许再静默 `null`** ✗（owner 截图那一行正是这一档 ✓ —— 屏幕上连一个
-                  //   可点的东西都没有，就是"点不了"的**直接原因** ✓）。
-                  //   ⚠️ 也不许写成"网段里没人"／"这一层看不到" ✗ —— 它**看得见、只是服务别的空间** ✓
-                  //   （判据 `SyncPanel.trustDevicePanel.wiring.test.tsx` 第 5 条钉这句 ✓）。
-                  <span className="sync-hint" data-testid="nearby-other-space">
-                    它服务的是别的空间 —— 要在那个空间里点「接入」才动得了它（这一行不动它）
-                  </span>
-                )}
-                </>
-              )}
+                );
+              }}
             />
           )}
 

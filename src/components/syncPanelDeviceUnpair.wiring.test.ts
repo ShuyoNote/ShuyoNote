@@ -26,7 +26,11 @@ function between(text: string, start: string, end: string): string {
  *    「撤销配对」`nearby-unpair` 就是同一件事 ✓，走的仍是**同一条** `duUnpair` ✓）。
  *    ⭐ 按本仓 R192「**换对象不删断言**」✗：⛔ 三条断言一条没删 ✓，只把**对象**换成**主视图那一支** ✓
  *    （口径一字不变：⭐ 逐台、点名那一台、可见处不许出现裸设备号 ✓）。 */
-const block = () => between(SRC, ") : duList.some((d) => d.deviceId === p.device_id) ? (", ") : p.serves_current ? (");
+// ⭐ 2026-10-26（owner：「界面不美观，优化一下」）→ 行结构从"平铺三元表达式"改成
+//    「头像／主信息／动作」三段 ✓ ⇒ 判据**换对象不删断言**（R192）：
+//    起点放到这一行自己的 `const paired = duList.some(...)`，终点仍是「接入」那一支之前 ✓。
+//    断言（已配对是人话 / 不许裸 id / 不许 secret·sha256）一条没删 ✓。
+const block = () => between(SRC, "const paired = duList.some(", ") : p.serves_current ? (");
 
 describe("U11/T5 · 逐台解除", () => {
   it("① 只在**真认了设备**时才出现（不假装有设备）", () => {
@@ -54,8 +58,14 @@ describe("U11/T5 · 逐台解除", () => {
     expect(b).not.toContain(">{p.device_id}");
     expect(b).not.toContain("{p.device_id}<");
     // ⛔ 也不许把哈希搬上来（读数里根本没有它 —— 见 Rust `MeshPairedDevice` ✓）
-    expect(b).not.toContain("secret");
-    expect(b).not.toContain("sha256");
+    // ⭐ 2026-10-26：先剥掉 `data-testid="…"` 属性再看 —— 「不要 secret」这条管的是**可见槽位** ✓，
+    //   而 `data-testid="nearby-no-secret"` 是给判据用的夹具名、不会显示给用户 ✓（旧块不包含那一支，
+    //   结构改了之后它落进同一段里 ⇒ 按本意收窄到"可见内容" ✓，⛔ 断言本身没删 ✗）。
+    const visible = b
+      .replace(/data-testid="[^"]*"/g, "")
+      .replace(/"no_secret"|"space_deleted"/g, "");
+    expect(visible).not.toContain("secret");
+    expect(visible).not.toContain("sha256");
   });
 
   it("③ 解除**必须点名那一台**，且如实回读数（不含判定语）", () => {
@@ -85,7 +95,8 @@ describe("U11/T5 · 逐台解除", () => {
 describe("片 D1b：已信任的卡片上有「撤销配对」", () => {
   const src = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
   const trustedBranch = () => {
-    const at = src.indexOf(") : duList.some((d) => d.deviceId === p.device_id) ? (");
+    // ⭐ 2026-10-26 换对象（同 `block()` 那条注释）：这一段现在从 `const paired = …` 开始 ✓。
+    const at = src.indexOf("const paired = duList.some(");
     if (at < 0) throw new Error("找不到「已信任」那一支");
     return src.slice(at, src.indexOf(") : p.serves_current ? (", at));
   };
