@@ -342,6 +342,44 @@ export function FileManagerView() {
     }
   };
 
+  // ⭐ 2026-10-25（owner：「点击侧边栏的项目，不能触发下载吗？」）：
+  //   打开文件管理/文件夹时，自动把当前列表里**缺失字节**的文件取回来（只做一轮、有 64MB 预算）。
+  //   仍然保留每行的手动下载按钮（失败/超出预算时可手点）。
+  const autoPrefetched = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (typeof api.downloadAttachment !== "function") return;
+    const wsId = useSpaceStore.getState().activeId;
+    if (!wsId) return;
+    const budget = 64 * 1024 * 1024;
+    const missing: AttachmentMeta[] = [];
+    let total = 0;
+    for (const f of files) {
+      if (onDisk.has(f.hash) || autoPrefetched.current.has(f.hash)) continue;
+      if (f.size > budget || total + f.size > budget) continue;
+      total += f.size;
+      missing.push(f);
+    }
+    if (missing.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      let got = 0;
+      for (const f of missing) {
+        if (cancelled) return;
+        autoPrefetched.current.add(f.hash);
+        try {
+          await api.downloadAttachment(wsId, f.hash);
+          got++;
+        } catch {
+          // 对端离线是常态：静默；行上仍显示「未下载」，用户可手点重试。
+        }
+      }
+      if (!cancelled && got > 0) loadOnDisk();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [files, onDisk]);
+
   // Drag OS files into an open folder to upload them (Tauri drag-drop event).
   useEffect(() => {
     const unlisten = platform.webview.onDragDropEvent((event) => {
