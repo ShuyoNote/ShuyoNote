@@ -288,12 +288,6 @@ function SpacesPane() {
   }, []);
   useEffect(() => { void loadSec(); }, [loadSec, spaces.length]);
 
-  // 打开面板时把当前空间滚进列表可视区（列表自己滚，不带动整页）
-  useEffect(() => {
-    const el = listRef.current?.querySelector(".set-space-card.is-active");
-    el?.scrollIntoView({ block: "nearest" });
-  }, [activeId, spaces.length]);
-
   const openCrypto = (id: string, name: string, mode: "enable" | "disable") => {
     setCryptoErr(""); setCryptoPass(""); setCryptoAck(false);
     setCryptoDlg({ id, name, mode });
