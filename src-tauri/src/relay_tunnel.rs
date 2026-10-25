@@ -641,16 +641,54 @@ pub mod iroh_client {
             };
             let st = state.clone();
             tokio::spawn(async move {
-                let Ok(conn) = accepting.await else { return };
-                let Ok((mut send, mut recv)) = conn.accept_bi().await else { return };
-                let Ok(req) = super::read_request(&mut recv).await else { return };
+                // ⭐⭐ **2026-10-25（真机：跨网第一次连上后 `读回应失败：connection lost`）**：
+                //   这里原来四个 `else { return }` **全是静默的** ⇒ 服务端明明知道为什么断，
+                //   却一个字都不打 ⇒ 客户端只看到 connection lost，两端都排不了障。
+                //   ⇒ 每一步失败都留一行（点名是哪一步、原文是什么），⛔ 不改变控制流。
+                let conn = match accepting.await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("[relay] ⚠️ 服务侧：握手失败（{e}）");
+                        return;
+                    }
+                };
+                let (mut send, mut recv) = match conn.accept_bi().await {
+                    Ok(x) => x,
+                    Err(e) => {
+                        eprintln!("[relay] ⚠️ 服务侧：接流失败（{e}）");
+                        return;
+                    }
+                };
+                let req = match super::read_request(&mut recv).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("[relay] ⚠️ 服务侧：读请求失败（{e}）");
+                        return;
+                    }
+                };
+                eprintln!(
+                    "[relay] 服务侧收到：{} {}（头 {} 个）",
+                    req.method,
+                    req.target,
+                    req.headers.len()
+                );
                 let (code, body) = match req.method.as_str() {
                     "GET" | "GET+STREAM" => {
                         crate::mesh::dispatch_tunnel(&st, "GET", &req.target, req.headers.clone())
                     }
                     _ => (405, b"tunnel only serves GET".to_vec()),
                 };
-                let _ = super::write_reply(&mut send, &super::TunnelReply { status: code, body }).await;
+                if code >= 400 {
+                    eprintln!(
+                        "[relay] 服务侧回应 {}（{} 字节）：{}",
+                        code,
+                        body.len(),
+                        String::from_utf8_lossy(&body).chars().take(120).collect::<String>()
+                    );
+                }
+                if let Err(e) = super::write_reply(&mut send, &super::TunnelReply { status: code, body }).await {
+                    eprintln!("[relay] ⚠️ 服务侧：写回应失败（{e}）");
+                }
                 let _ = send.finish();
             });
         }
