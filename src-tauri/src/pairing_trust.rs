@@ -144,6 +144,53 @@ pub fn outbound_may_carry_secret() -> bool {
 ///
 /// ⚠️ 本函数是 ⭐ **纯函数** ✗（⛔ 不读库、⛔ 不取本机公钥 ✗）：本机那把由**调用方**给 ✓
 /// （`device_key` 的 `public_key_hex()` ✓／⭐ 对方那把**就在公告里** ✓）⇒ ⭐ 判据不起宿主就能钉住"两端一致" ✓。
+/// ⭐⭐ **2026-10-25（真机：配对码对不上）**：两端各自生成了自己的 `trust_ask`
+/// ⇒ 各自算出来的码**必然不同**。这里给出**唯一的挑 ask 规则**（两端算出来必须同一个）：
+///
+/// ```text
+/// ① 两边都有 ask ⇒ 按 **device_id 字典序小的一方**那份（确定性，两端算出同一个）
+/// ② 只有一边有 ⇒ 用那一份（另一方还没开始握手时不至于算不出）
+/// ③ 都没有 ⇒ None（⛔ 不拿空串凑一个码）
+/// ```
+///
+/// ⚠️ 为什么不用"谁先点接入"：那个信息今天**不在**两端都能读到的同一份数据里；
+///   而 device_id 两端各有一份（自己的 + 公告里的）⇒ 谁都能算出同一个顺序 ✓。
+pub fn pick_trust_ask<'a>(
+    my_ask: &'a str,
+    peer_ask: &'a str,
+    my_device_id: &str,
+    peer_device_id: &str,
+) -> Option<&'a str> {
+    let mine = my_ask.trim();
+    let theirs = peer_ask.trim();
+    match (mine.is_empty(), theirs.is_empty()) {
+        (true, true) => None,
+        (false, true) => Some(mine),
+        (true, false) => Some(theirs),
+        (false, false) => {
+            // ⚠️ 两端各自比较同一对数 ⇒ 必然选出同一份（字典序小的那台当"发起方"）
+            if my_device_id.trim() <= peer_device_id.trim() {
+                Some(mine)
+            } else {
+                Some(theirs)
+            }
+        }
+    }
+}
+
+/// ⭐ 按 [`pick_trust_ask`] 的规则算码（两端都调它 ⇒ 码一致）。
+pub fn pairing_code_reading_both(
+    my_pubkey_hex: Option<&str>,
+    peer_pubkey_hex: &str,
+    my_ask: &str,
+    peer_ask: &str,
+    my_device_id: &str,
+    peer_device_id: &str,
+) -> PairingCodeReading {
+    let ask = pick_trust_ask(my_ask, peer_ask, my_device_id, peer_device_id).unwrap_or("");
+    pairing_code_reading_of(my_pubkey_hex, peer_pubkey_hex, ask)
+}
+
 pub fn pairing_code_for(my_pubkey_hex: &str, peer_pubkey_hex: &str, trust_ask: &str) -> String {
     let me = my_pubkey_hex.trim().to_ascii_lowercase();
     let peer = peer_pubkey_hex.trim().to_ascii_lowercase();
@@ -1031,5 +1078,56 @@ mod tests {
             src.contains("serves_current: lan::serves_space(space_id, p)"),
             "⛔ 不许拿别的读数去决定「服务不服务我」✗（判定只有 `lan::serves_space` 一条 ✓）"
         );
+    }
+}
+
+
+/// ⭐⭐ **2026-10-25（配对码对不上）判据**：把"两端"的输入互换，**必须算出同一个码**。
+///
+/// 真机现场：两端各自生成 `trust_ask`，各自算 ⇒ 码不同（截图里对不上）。
+/// **变异**：`pick_trust_ask` 改回"总是用我自己的" ⇒ 第一段断言红。
+#[cfg(test)]
+mod pairing_code_agreement_tests {
+    use super::*;
+
+    const MY_PUB: &str = "aaaa0000111122223333444455556666777788889999000011112222333344ff";
+    const PEER_PUB: &str = "bbbb0000111122223333444455556666777788889999000011112222333344ee";
+    const MY_DEV: &str = "11111111-1111-1111-1111-111111111111";
+    const PEER_DEV: &str = "22222222-2222-2222-2222-222222222222";
+
+    #[test]
+    fn both_sides_pick_the_same_ask_and_therefore_the_same_code() {
+        let my_ask = "aaaa1111";
+        let peer_ask = "bbbb2222";
+
+        // A 侧（我=MY，端=PEER）
+        let a = pairing_code_reading_both(
+            Some(MY_PUB), PEER_PUB, my_ask, peer_ask, MY_DEV, PEER_DEV,
+        );
+        // B 侧（我=PEER，端=MY）—— 公钥/设备号/ask 全部互换
+        let b = pairing_code_reading_both(
+            Some(PEER_PUB), MY_PUB, peer_ask, my_ask, PEER_DEV, MY_DEV,
+        );
+
+        let ca = a.code.expect("A 侧应算得出");
+        let cb = b.code.expect("B 侧应算得出");
+        assert_eq!(ca, cb, "两端算出的码必须一致（否则用户永远对不上）");
+    }
+
+    #[test]
+    fn only_one_side_has_an_ask_so_the_other_still_matches() {
+        // 只有我这边有 ask（对方还没开始握手）
+        let a = pairing_code_reading_both(Some(MY_PUB), PEER_PUB, "aaaa1111", "", MY_DEV, PEER_DEV);
+        // 对方视角：它自己的 ask 为空、我的在"peer_ask"里
+        let b = pairing_code_reading_both(Some(PEER_PUB), MY_PUB, "", "aaaa1111", PEER_DEV, MY_DEV);
+        assert_eq!(a.code, b.code);
+        assert!(a.code.is_some());
+    }
+
+    #[test]
+    fn no_ask_anywhere_means_no_code_not_a_fake_one() {
+        let r = pairing_code_reading_both(Some(MY_PUB), PEER_PUB, "", "", MY_DEV, PEER_DEV);
+        assert!(r.code.is_none(), "⛔ 不许拿空串凑一个码");
+        assert!(r.reason.contains("trust_ask"), "要说清原因：{}", r.reason);
     }
 }
