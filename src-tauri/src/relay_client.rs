@@ -482,7 +482,21 @@ pub fn decide_new_connection(cfg: &RelayConfig, now: i64) -> ConnectDecision {
             message: e,
         };
     }
-    let window = config_window(cfg, now);
+    // ⭐⭐ **2026-10-25（真机卡住的那一格）**：许可窗口**先看签名卡**，别只看裸数字。
+    //
+    //   现场（mac 侧逐字）：config.json 里有 `license_file`（签名卡在、能验），但**没有** `license_exp`
+    //   ⇒ 原来这里只调 `config_window` ⇒ 恒 `Unconfigured` ⇒ 每轮跨网停在
+    //     「missing：读不到有效期」，而那张**签好名的卡根本没人看** ✗。
+    //   与状态面（`verified_window`）也是两条口径（T 清单里"probe 只认裸数字"那条）。
+    //   ⇒ 统一：**有签名卡就按验过的卡判**；卡验不过 ⇒ 照实拒（fail-closed，⛔ 不回落到裸数字）；
+    //     只有"没有签名文本"（Placeholder）才回落到裸数字那档（老行为）。
+    let window = match verified_window(cfg, now) {
+        VerifiedLicense::Verified(w) | VerifiedLicense::Placeholder(w) => w,
+        VerifiedLicense::Refused(_) => {
+            // 卡在、但验不过 ⇒ 这一档**没有窗口** ⇒ 按"读不到/不认"拒（fail-closed）
+            LicenseWindow::Unconfigured
+        }
+    };
     if !window.allows_new_connection() {
         // ⭐ 到期只收回「跨网」✓ —— 这里**只**拒绝这条新建的跨网连接，
         //    ⛔ 不返回任何"要动本地数据/本地功能"的指令 ✗
