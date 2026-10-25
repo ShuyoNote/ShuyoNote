@@ -212,8 +212,14 @@ export function LicenseSection() {
         <div className="sync-row-body">
           <div className="sync-att">
             <span className="sync-row-label">跨网同步订阅</span>
-            <span className="sync-row-value">{issuer.why ?? "这一块已关闭"}</span>
+            <span className="sync-row-value">未启用</span>
           </div>
+          <p className="sync-hint" data-testid="license-issuer-why">
+            {issuer.why ?? "没配发卡站地址 —— 这一块功能已关闭（不是网络错误）"}
+          </p>
+          <p className="sync-hint license-dim">
+            到期只停跨网；本机功能与本地数据不受影响。
+          </p>
         </div>
       </div>
     );

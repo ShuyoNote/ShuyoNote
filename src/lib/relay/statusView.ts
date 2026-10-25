@@ -89,7 +89,10 @@ export function relayStatusView(payload: RelayStatus | null | undefined | unknow
       licenseSource: "",
       licenseRefusal: "",
       tone: "muted",
-      note: note || "中继这一档在当前平台不可用（Web 版没有本地中继连接面）",
+      // ⚠️ 2026-10-25：`connectionLabel` 已经用了后端那句 note；这里再给同一句
+      //   ⇒ 界面上「这个版本不含跨网（下一阶段）」会出现两遍（owner 截图）。
+      //   ⇒ 这一档不再重复摆 note；只有 label 没有用上 note 时才补。
+      note: "",
     };
   }
 

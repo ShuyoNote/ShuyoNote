@@ -128,7 +128,6 @@ export function RelayStatusSection() {
           <button className="sync-btn" disabled={busy} onClick={() => void recheck()}>
             {busy ? "正在检查…" : "重新检查"}
           </button>
-          <span className="sync-hint">到期只停跨网；本机功能与本地数据不受影响。</span>
         </div>
         {view.connectionDetail || view.note ? (
           <p className="sync-hint relay-detail">
