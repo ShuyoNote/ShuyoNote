@@ -1459,7 +1459,34 @@ fn migrate_device_level_paired_devices(c: &Connection) -> Result<usize, String> 
 /// 键＝`mesh_pair_secret:<space>:<peer_device_id>`（规格 §3.2 定的形状 ✓）。
 /// ⚠️ 它与"我认谁"（`mesh_paired_devices.secret_sha256` ✓）是**两半**：
 ///   这一半是**我要出示的**，那一半是**别人要出示给我、我存的哈希** ✓。
+/// 配对秘密的三态（**排障要能分开说**，⛔ 别把"键在但值是空串"说成"没有"）。
+///
+/// ⚠️ 真机 2026-10-25：跨网第一次真的去拉对端时报 `secret=**无**（会 401）`，
+///    而库里其实**有**那一格、只是值是空串（又一种"迁移只搬标记没搬值"）——
+///    两者对用户的下一步完全不同：**空串 ⇒ 需要重新配对**，没有 ⇒ 从来没配对过。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PairSecretLookup {
+    /// 找到一份可用的（非空）。
+    Found(String),
+    /// 键存在，但值是空串（⇒ **需要重新配对**，不是因为没配对）。
+    Empty,
+    /// 主格与回落格都没有这一台的记录。
+    Missing,
+}
+
 pub fn pair_secret_for(c: &Connection, space_id: &str, peer_device_id: &str) -> Option<String> {
+    match pair_secret_lookup(c, space_id, peer_device_id) {
+        PairSecretLookup::Found(v) => Some(v),
+        _ => None,
+    }
+}
+
+/// 与 [`pair_secret_for`] **同一套查找**，但把"空串"与"没有"分开报（排障用）。
+pub fn pair_secret_lookup(
+    c: &Connection,
+    space_id: &str,
+    peer_device_id: &str,
+) -> PairSecretLookup {
     // ⭐⭐ **2026-10-19（真机读数）**：**设备级那一格是空串时，回落到旧的房间档那一格** ✗。
     //   现场（windows↔AMD，逐字三行）：
     //     `mesh_pair_secret::94bfb27e…`         = **（空）**
@@ -1468,11 +1495,10 @@ pub fn pair_secret_for(c: &Connection, space_id: &str, peer_device_id: &str) -> 
     //   ⇒ 迁移那一步（`mesh_paired_migrated_to_device_level = 1`）**只搬了标记、没搬值** ⇒
     //     每一轮都拿空串去出示 ⇒ 对端一律 401 ⇒ 用户看到"同步不了"。
     //   ⇒ 读路径上做**回落**（⛔ 不改写库：写路径仍是 `set_pair_secret` 那一处）✓
-    let main = read_setting(c, &format!("mesh_pair_secret:{space_id}"), peer_device_id)
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    if main.is_some() {
-        return main;
+    let main = read_setting(c, &format!("mesh_pair_secret:{space_id}"), peer_device_id);
+    let mut saw_empty = main.as_deref().map(|s| s.trim().is_empty()) == Some(true);
+    if let Some(v) = main.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        return PairSecretLookup::Found(v);
     }
     // 回落：设备级（`space_id` 空）那一格 ↔ 房间档那一格，两边都试一次。
     let legacy_room = legacy_mesh_room(c).unwrap_or_default();
@@ -1483,12 +1509,18 @@ pub fn pair_secret_for(c: &Connection, space_id: &str, peer_device_id: &str) -> 
         }
         if let Some(v) = read_setting(c, &format!("mesh_pair_secret:{sid}"), peer_device_id) {
             let v = v.trim().to_string();
-            if !v.is_empty() {
-                return Some(v);
+            if v.is_empty() {
+                saw_empty = true;
+            } else {
+                return PairSecretLookup::Found(v);
             }
         }
     }
-    None
+    if saw_empty {
+        PairSecretLookup::Empty
+    } else {
+        PairSecretLookup::Missing
+    }
 }
 
 /// 写/清那一份（空 ⇒ 清掉 ✓）。⚠️ **不校验强度**：它由配对流程生成（≥60 bit 的码 ✓），
@@ -1662,9 +1694,15 @@ pub async fn round_candidates(
         // ⭐ **U11（A：门只认卡）**：出示的是**这一台**的那一份配对秘密 ✓
         //    ⛔ 不再用共享口令 ✗（它已退役 ✓）；本地没有这一台的那份 ⇒ 出示 `None`
         //    ⇒ 对端回 401（如实报出来 ✓，⛔ 不是静默跳过 ✗）
-        let secret = {
+        let (secret, secret_note) = {
             let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-            pair_secret_for(&g, paired_row_key(space_id, device_level), &p.device_id)
+            let key = paired_row_key(space_id, device_level).to_string();
+            match pair_secret_lookup(&g, &key, &p.device_id) {
+                PairSecretLookup::Found(v) => (Some(v), "有"),
+                // ⚠️ 分开说：**空串 ⇒ 需要重新配对**（⛔ 不要和"从没配对过"混成一句）
+                PairSecretLookup::Empty => (None, "**空串**（键在、值是空 ⇒ 需要重新配对）"),
+                PairSecretLookup::Missing => (None, "**无**（从未配对过 ⇒ 会 401）"),
+            }
         };
         // ⭐ **2026-10-19（排障用，一行）**：把"这一台拉成了没有 / 出示的是哪一份"打出来 ——
         //   真机那次"收下 0 条"在界面上只显示一句"1 台没拉动"，**说不清是没秘密、401、还是空** ✓。
@@ -1673,7 +1711,7 @@ pub async fn round_candidates(
             "[mesh {}] 拉 {} ⇒ secret={} · space={} · device_level={}",
             crate::db::now_ms(),
             p.device_id,
-            if secret.is_some() { "有" } else { "**无**（会 401）" },
+            secret_note,
             space_id,
             device_level
         );
