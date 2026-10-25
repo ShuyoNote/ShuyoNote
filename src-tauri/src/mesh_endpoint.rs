@@ -33,6 +33,9 @@ pub struct HttpReply {
     pub body: String,
 }
 
+/// 附件那条的字节流（流式：不把整包读进内存）。
+pub type AttachmentBody = std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send + Unpin>>;
+
 /// 端点：**只认"往哪发"，不认"怎么连上的"**。
 ///
 /// ⚠️ `auth` 是"签好的一把"三格头（`device_id` / 时间戳 ms / 签名 hex）——
@@ -44,6 +47,22 @@ pub trait Endpoint: Send + Sync {
         auth: Option<(&'a str, i64, &'a str)>,
         token: Option<&'a str>,
     ) -> Pin<Box<dyn Future<Output = Result<HttpReply, String>> + Send + 'a>>;
+
+    /// 附件那条的**流式** GET：回（状态码，正文流）。
+    ///
+    /// ⚠️ 默认实现是**明确拒绝** —— ⛔ 不许悄悄退回"整包读进内存"：
+    /// 附件事真机上有几百 MB 的（真机：3.4 MB PDF、1.2 MB 图都是常态）。
+    fn get_stream<'a>(
+        &'a self,
+        target: &'a str,
+        auth: Option<(&'a str, i64, &'a str)>,
+        token: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<(u16, AttachmentBody), String>> + Send + 'a>> {
+        Box::pin(async move {
+            let _ = (target, auth, token);
+            Err("这个端点不支持流式（附件暂不能走它）".to_string())
+        })
+    }
 }
 
 /// 局域网直连实现：`base` ＋ `target`，带同一套三格头。

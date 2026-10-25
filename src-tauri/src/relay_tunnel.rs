@@ -265,6 +265,21 @@ impl<R> StreamReplyReader<R> {
     }
 }
 
+impl<R: AsyncRead + Unpin> StreamReplyReader<R> {
+    /// 已经在外面把 status 行读掉了 ⇒ 从这里接着读块。
+    ///
+    /// 附件那条要用它：调用方要先拿 status 判 404/401，再决定要不要往磁盘写字节。
+    pub fn after_status(inner: R, status: u16) -> Self {
+        Self {
+            inner,
+            state: StreamState::ChunkLen,
+            line: Vec::new(),
+            chunk_left: 0,
+            status: Some(status),
+        }
+    }
+}
+
 async fn read_byte<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<u8> {
     let mut b = [0u8; 1];
     let n = r.read(&mut b).await?;
