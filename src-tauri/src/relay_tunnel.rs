@@ -401,9 +401,34 @@ pub mod iroh_tunnel {
     /// ⚠️ `Minimal` 只有在开了 `tls-ring` 时才会装上加密提供者（否则 `bind` 会失败），
     /// 所以 `Cargo.toml` 里 `iroh` 那行显式带了 `features = ["tls-ring"]`。
     pub async fn bind(secret: iroh::SecretKey) -> Result<iroh::Endpoint, String> {
-        iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+        bind_with_relay(secret, None, None).await
+    }
+
+    /// ⭐ **2026-10-25（异网寻址）**：起端点时可以挂到一条**中继**上。
+    ///
+    /// · 给了中继 ⇒ 本机在对端**不在同一网络**时也能被找到（靠中继打洞/转发）
+    /// · ⛔ 不给 ⇒ 只走直连地址（同网才通）—— 与今天的行为一致
+    /// · 租约（token）按上游约定挂在 URL 的 `?token=` 上（`iroh-relay` 认这个查询参数）
+    pub async fn bind_with_relay(
+        secret: iroh::SecretKey,
+        relay: Option<&str>,
+        token: Option<&str>,
+    ) -> Result<iroh::Endpoint, String> {
+        let mut builder = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
             .secret_key(secret)
-            .alpns(vec![ALPN.to_vec()])
+            .alpns(vec![ALPN.to_vec()]);
+        if let Some(r) = relay.map(str::trim).filter(|r| !r.is_empty()) {
+            let mut url = r.to_string();
+            if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
+                let sep = if url.contains('?') { '&' } else { '?' };
+                url = format!("{url}{sep}token={t}");
+            }
+            let u: iroh::RelayUrl = url
+                .parse()
+                .map_err(|e| format!("中继地址解析失败（{url}）：{e}"))?;
+            builder = builder.relay_mode(iroh::RelayMode::custom([u]));
+        }
+        builder
             .bind()
             .await
             .map_err(|e| format!("起 iroh 端点失败：{e}"))
@@ -477,7 +502,12 @@ pub mod iroh_client {
                 Some(bytes) => iroh::SecretKey::from_bytes(&bytes),
                 None => iroh::SecretKey::generate(),
             };
-            let ep = iroh_tunnel::bind(secret).await?;
+            // ⭐ 异网寻址：本机也**挂到中继上**（否则对端只能靠直连地址找到我们）
+            let cfg = crate::relay_client::load_config().ok();
+            let relay_url = cfg.as_ref().and_then(|c| c.url.clone());
+            let lease = cfg.as_ref().and_then(|c| crate::relay_client::token_text(c));
+            let ep = iroh_tunnel::bind_with_relay(secret, relay_url.as_deref(), lease.as_deref())
+                .await?;
             // ⭐ 把本机 node id 打出来（对面要把它填进 `relay/peers.json`）
             eprintln!(
                 "[relay] 隧道端点已起：node_id={}（对面把它填进 relay/peers.json）",
@@ -580,9 +610,10 @@ pub mod iroh_client {
     /// ⚠️ 与局域网窗口**同一套** `mesh::dispatch`（鉴权/路由/租约判定全复用）。
     /// ⚠️ 只在本机构建带 `--features relay` 且配置了中继时才会被调用（见 `mesh::start`）。
     pub async fn serve_forever(state: std::sync::Arc<crate::mesh::State>) -> Result<(), String> {
-        let seed = crate::relay_client::load_config()
-            .ok()
-            .and_then(|cfg| crate::relay_client::device_seed(&cfg).ok());
+        let cfg = crate::relay_client::load_config().ok();
+        let seed = cfg
+            .as_ref()
+            .and_then(|cfg| crate::relay_client::device_seed(cfg).ok());
         let secret = match seed {
             Some(bytes) => iroh::SecretKey::from_bytes(&bytes),
             None => {
@@ -592,7 +623,11 @@ pub mod iroh_client {
                 )
             }
         };
-        let ep = iroh_tunnel::bind(secret).await?;
+        // ⭐ 异网寻址：服务侧也挂到中继上（对端不在同一网络时才找得到我们）
+        let relay_url = cfg.as_ref().and_then(|c| c.url.clone());
+        let lease = cfg.as_ref().and_then(|c| crate::relay_client::token_text(c));
+        let ep = iroh_tunnel::bind_with_relay(secret, relay_url.as_deref(), lease.as_deref())
+            .await?;
         // ⚠️ `addrs` 要填的是 **iroh 的 UDP 地址**（QUIC 走 UDP）—— ⛔ 不是网格窗口的 8788。
         //   所以把 UDP 端口一起打出来（别让人去猜、也别去翻 netstat）。
         eprintln!(

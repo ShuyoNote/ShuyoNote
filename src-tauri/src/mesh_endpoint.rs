@@ -207,11 +207,25 @@ async fn relay_endpoint_for(
             peer.device_id
         ));
     }
-    let addrs: std::collections::BTreeSet<iroh::TransportAddr> = route
+    // ⭐ 2026-10-25（异网寻址）：直连地址 ＋ **中继地址**都要带进 `EndpointAddr`；
+    //   只带 IP 的话，两台机器不在同一网络就互相找不到。
+    let mut addrs: std::collections::BTreeSet<iroh::TransportAddr> = route
         .addrs
         .iter()
         .filter_map(|a| a.parse::<SocketAddr>().ok().map(iroh::TransportAddr::Ip))
         .collect();
+    if let Some(r) = route.relay.as_deref() {
+        let url: iroh::RelayUrl = r
+            .parse()
+            .map_err(|e| format!("路线表里 {} 的 relay 地址 {:?} 解析失败：{e}", peer.device_id, r))?;
+        addrs.insert(iroh::TransportAddr::Relay(url));
+    }
+    if addrs.is_empty() {
+        return Err(format!(
+            "对端 {} 的路线既没有可用直连地址也没有可用 relay 地址 ⇒ 连不上",
+            peer.device_id
+        ));
+    }
     let id_bytes = crate::relay_tunnel::iroh_client::node_id_bytes(&route.node_id)?;
     let id = iroh::PublicKey::from_bytes(&id_bytes)
         .map_err(|e| format!("路线表里 {} 的 node_id 不是合法公钥：{e}", peer.device_id))?;

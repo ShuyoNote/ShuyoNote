@@ -39,9 +39,16 @@ pub struct RelayRoute {
     pub device_id: String,
     /// iroh 公钥（64 位 hex）。
     pub node_id: String,
-    /// 可选的可达地址（**今天只支持 `IP:port` 直连**）。
+    /// 可选的可达地址（`IP:port` 直连；⚠️ 只在我们**同一网络**时有用）。
     #[serde(default)]
     pub addrs: Vec<String>,
+    /// ⭐ **2026-10-25（owner 拍「现在补异网寻址」）**：可选的中继地址
+    /// （如 `http://112.124.60.73:8880`）。
+    ///
+    /// 用途：两台机器**不在同一网络**时，靠它互相找到（走中继打洞/转发），
+    /// ⛔ 只填 `addrs` 是找不到的 —— 那是同一局域网才有效的直连地址。
+    #[serde(default)]
+    pub relay: Option<String>,
 }
 
 /// 路线文件路径：与中继配置同目录（`relay/peers.json`）。
@@ -80,14 +87,37 @@ pub fn parse_routes(raw: &str) -> Result<Vec<RelayRoute>, String> {
         for a in &e.addrs {
             if a.parse::<std::net::SocketAddr>().is_err() {
                 return Err(format!(
-                    "跨网路线表里 {device_id} 的地址 {a:?} 不是 IP:port（今天只支持直连地址）"
+                    "跨网路线表里 {device_id} 的地址 {a:?} 不是 IP:port（直连地址要写成 IP:port）"
                 ));
             }
+        }
+        // ⭐ 中继地址（异网寻址）：给了就必须 http(s):// 开头 —— ⛔ 不许填个主机名糊弄过去
+        let relay = match e.relay {
+            Some(r) => {
+                let r = r.trim().to_string();
+                if r.is_empty() {
+                    None
+                } else if r.starts_with("http://") || r.starts_with("https://") {
+                    Some(r)
+                } else {
+                    return Err(format!(
+                        "跨网路线表里 {device_id} 的 relay 要写成 http(s)://主机:端口，实得 {r:?}"
+                    ));
+                }
+            }
+            None => None,
+        };
+        // ⚠️ 两条都不给 ⇒ 这个对端根本不可达 ⇒ 报错（⛔ 不要生成一个"永远连不上"的候选）
+        if e.addrs.is_empty() && relay.is_none() {
+            return Err(format!(
+                "跨网路线表里 {device_id} 既没有 addrs 也没有 relay ⇒ 它不可达（跨网发现层还没做，别只写 node_id）"
+            ));
         }
         out.push(RelayRoute {
             device_id,
             node_id,
             addrs: e.addrs,
+            relay,
         });
     }
     Ok(out)
@@ -103,6 +133,8 @@ struct RawEntry {
     node_id: String,
     #[serde(default)]
     addrs: Vec<String>,
+    #[serde(default)]
+    relay: Option<String>,
 }
 
 /// 把路线表里的设备变成**网格对端**（纯函数，可单测）：
@@ -294,5 +326,39 @@ mod tests {
     fn broken_json_is_an_error_not_an_empty_table() {
         let err = parse_routes("{not json").expect_err("坏 JSON 必须报错");
         assert!(err.contains("不是合法 JSON"), "{err}");
+    }
+
+    /// ⭐⭐ **2026-10-25（异网寻址判据 ①）**：`relay` 字段能写、能读出来。
+    #[test]
+    fn a_route_may_carry_a_relay_url() {
+        let raw = format!(
+            r#"{{"dev-r": {{"node_id": "{OK_ID}", "relay": "http://112.124.60.73:8880"}}}}"#
+        );
+        let routes = parse_routes(&raw).unwrap();
+        assert_eq!(routes.len(), 1);
+        assert_eq!(
+            routes[0].relay.as_deref(),
+            Some("http://112.124.60.73:8880"),
+            "relay 要原样读出来（异网寻址靠它）"
+        );
+        assert!(routes[0].addrs.is_empty(), "只写 relay 时 addrs 可以为空");
+    }
+
+    /// ⭐ **异网寻址判据 ②**：`relay` 写了但不是 http(s):// ⇒ 报错并点名（⛔ 不猜、不静默丢）。
+    #[test]
+    fn a_relay_without_scheme_is_refused_and_named() {
+        let raw = format!(r#"{{"dev-s": {{"node_id": "{OK_ID}", "relay": "112.124.60.73:8880"}}}}"#);
+        let err = parse_routes(&raw).expect_err("缺 scheme 必须报错");
+        assert!(err.contains("dev-s"), "要点名是哪一条：{err}");
+        assert!(err.contains("http(s)://"), "要说清正确写法：{err}");
+    }
+
+    /// ⭐ **异网寻址判据 ③**：`addrs` 与 `relay` 都不给 ⇒ 明确报"不可达"
+    /// （⛔ 不许生成一个永远连不上的候选）。
+    #[test]
+    fn a_route_with_neither_addrs_nor_relay_is_refused() {
+        let raw = format!(r#"{{"dev-u": {{"node_id": "{OK_ID}"}}}}"#);
+        let err = parse_routes(&raw).expect_err("不可达必须报错");
+        assert!(err.contains("dev-u") && err.contains("不可达"), "{err}");
     }
 }
