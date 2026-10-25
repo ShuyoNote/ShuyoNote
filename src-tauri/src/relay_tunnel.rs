@@ -9,8 +9,9 @@
 //! ## 帧格式（刻意小，且**不靠分隔符扫正文**）
 //!
 //! ```text
-//! 请求：  method "\n"  target "\n"
+//! 请求：  method "\n"  target "\n"  header_count "\n"  (name "\n" value "\n")*
 //! 应答：  status(十进制) "\n"  body_len(十进制) "\n"  body 字节
+//! ⚠️ 头是**必须**的：对端 `mesh::dispatch` 靠三格头/口令鉴权（⛔ 匿名请求一律 401）。
 //! ```
 //!
 //! ⚠️ 正文用**长度前缀**而不是找分隔符：正文里可能含任意字节（JSON 里就有 `\n`）。
@@ -30,11 +31,38 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 pub const MAX_LINE_BYTES: usize = 8 * 1024;
 /// 应答正文上限（附件走**流式**那条另算，不经过本协议）。
 pub const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
+/// 一条请求最多带多少个头（我们自己只用 3 个鉴权头 ＋ 可选 `authorization`）。
+pub const MAX_HEADERS: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TunnelRequest {
     pub method: String,
     pub target: String,
+    /// ⚠️ **HTTP 头也要带过去**：对端 `mesh::dispatch` 的鉴权靠三格头（设备号/时间戳/签名）
+    /// 或会话口令 —— 帧里没有它们，对端就只会看到一条**匿名请求**（一律 401）。
+    pub headers: Vec<(String, String)>,
+}
+
+impl TunnelRequest {
+    pub fn new(method: &str, target: &str) -> Self {
+        Self {
+            method: method.to_string(),
+            target: target.to_string(),
+            headers: Vec::new(),
+        }
+    }
+
+    pub fn with_header(mut self, name: &str, value: &str) -> Self {
+        self.headers.push((name.to_string(), value.to_string()));
+        self
+    }
+
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,7 +104,20 @@ pub async fn write_request<W: AsyncWrite + Unpin>(
     if req.method.contains('\n') || req.target.contains('\n') {
         return Err(bad("method/target 里不许有换行（否则帧就断了）"));
     }
-    w.write_all(format!("{}\n{}\n", req.method, req.target).as_bytes()).await?;
+    let mut head = format!("{}\n{}\n{}\n", req.method, req.target, req.headers.len());
+    for (k, v) in &req.headers {
+        if k.is_empty() {
+            return Err(bad("头名不许为空"));
+        }
+        if k.contains('\n') || v.contains('\n') {
+            return Err(bad("头名/头值里不许有换行"));
+        }
+        head.push_str(k);
+        head.push('\n');
+        head.push_str(v);
+        head.push('\n');
+    }
+    w.write_all(head.as_bytes()).await?;
     w.flush().await
 }
 
@@ -88,7 +129,23 @@ pub async fn read_request<R: AsyncRead + Unpin>(
     if method.is_empty() || target.is_empty() {
         return Err(bad("method/target 不许为空"));
     }
-    Ok(TunnelRequest { method, target })
+    let n_line = read_line(r).await?;
+    let n: usize = n_line
+        .parse()
+        .map_err(|_| bad(format!("头数量不是数字：{n_line:?}")))?;
+    if n > MAX_HEADERS {
+        return Err(bad(format!("头有 {n} 条，超过上限 {MAX_HEADERS}")));
+    }
+    let mut headers = Vec::with_capacity(n);
+    for _ in 0..n {
+        let k = read_line(r).await?;
+        let v = read_line(r).await?;
+        if k.is_empty() {
+            return Err(bad("头名不许为空"));
+        }
+        headers.push((k, v));
+    }
+    Ok(TunnelRequest { method, target, headers })
 }
 
 pub async fn write_reply<W: AsyncWrite + Unpin>(
@@ -222,10 +279,7 @@ mod tests {
         });
         write_request(
             &mut client,
-            &TunnelRequest {
-                method: "GET".into(),
-                target: "/mesh/pull?space_id=sp&since=0".into(),
-            },
+            &TunnelRequest::new("GET", "/mesh/pull?space_id=sp&since=0")
         )
         .await
         .unwrap();
@@ -253,10 +307,8 @@ mod tests {
             })
             .await
         });
-        let sent = TunnelRequest {
-            method: "GET".into(),
-            target: "/mesh/manifest?space_id=abc&x=1".into(),
-        };
+        let sent = TunnelRequest::new("GET", "/mesh/manifest?space_id=abc&x=1")
+            .with_header("x-shuyo-dev", "dev-a");
         write_request(&mut client, &sent).await.unwrap();
         let reply = read_reply(&mut client).await.unwrap();
         h.await.unwrap().unwrap();
@@ -338,10 +390,7 @@ mod tests {
         let reply = request(
             &client_ep,
             peer,
-            &TunnelRequest {
-                method: "GET".into(),
-                target: "/mesh/manifest?space_id=x".into(),
-            },
+            &TunnelRequest::new("GET", "/mesh/manifest?space_id=x")
         )
         .await
         .expect("单机两端点必须能通（直连地址）");
