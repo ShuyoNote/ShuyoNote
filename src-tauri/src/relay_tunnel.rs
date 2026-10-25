@@ -446,10 +446,46 @@ pub mod iroh_tunnel {
                 .map_err(|e| format!("中继地址解析失败（{url}）：{e}"))?;
             builder = builder.relay_mode(iroh::RelayMode::custom([u]));
         }
-        builder
+        let ep = builder
             .bind()
             .await
-            .map_err(|e| format!("起 iroh 端点失败：{e}"))
+            .map_err(|e| format!("起 iroh 端点失败：{e}"))?;
+        // ⭐⭐ **2026-10-25（真机：我们拨得出去、别人拨不进来 ⇒ 要一条"到底挂上 relay 没有"的读数）**：
+        //   起完端点就跟一条**中继状态**的线：每条 relay 打「url ＝ 已连/未连 ＋ 被拒原因」。
+        //   ⚠️ 只打状态，⛔ 不打任何凭证；日志只在这一刻起一条任务，开销可忽略。
+        {
+            use iroh::Watcher as _;
+            let mut w = ep.home_relay_status();
+            tokio::spawn(async move {
+                loop {
+                    let list = w.get();
+                    let parts: Vec<String> = list
+                        .iter()
+                        .map(|r| {
+                            let reason = r.auth_denied_reason().unwrap_or("");
+                            let conn = if r.is_connected() { "已连" } else { "未连" };
+                            if reason.is_empty() {
+                                format!("{}={conn}", r.url())
+                            } else {
+                                format!("{}={conn}（被拒：{reason}）", r.url())
+                            }
+                        })
+                        .collect();
+                    eprintln!(
+                        "[relay] 中继状态：{}",
+                        if parts.is_empty() {
+                            "（还没有任何中继读数）".to_string()
+                        } else {
+                            parts.join(" ｜ ")
+                        }
+                    );
+                    if w.updated().await.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        Ok(ep)
     }
 
     /// 客户端：连对端 → 一条双向流 → 写请求 → 读回应。
