@@ -27729,3 +27729,17 @@ button.mset-row:focus-visible {
 .sync-popover.is-inline > .sync-advanced[open] {
   overflow: visible;
 }
+
+/* ⭐ 2026-10-25 owner：「中继」「跨网同步订阅」两组字体向「同步预算」看齐。
+   「同步预算」是 `.sync-row > summary`（12.5px 标签 ＋ 12px 值 ＋ 11px hint）；
+   而这两组是 `.sync-row-body` 里的行，标签继承了面板正文（比 summary 大）。
+   ⇒ 显式对齐到同一套字号，⛔ 不改文案、⛔ 不动中继胶囊的颜色语义。 */
+.sync-popover.is-inline .relay-status .sync-row-label,
+.sync-popover.is-inline .license-block .sync-row-label {
+  font-size: 12.5px;
+}
+.sync-popover.is-inline .relay-status .sync-row-value,
+.sync-popover.is-inline .license-block .sync-row-value {
+  font-size: 12px;
+}
+.sync-popover.is-inline .license-block .sync-hint { font-size: 11px; }
