@@ -1128,10 +1128,19 @@ describe("片 B：同步面板里也有设备直连那几格", () => {
     expect(src, "⭐ 面板里那一行「空间隐私」已删（与设置的安全面板重复 ✓）").not.toContain(
       "<SpacePrivacySection",
     );
+    // ⭐⭐ **2026-10-25（owner 拍 A：整块从「安全」页删掉）** —— 按 R192「换对象不删断言」：
+    //   这一格原来钉的是"设置那一份**必须还在**"；现在 owner 把它也删了（重复 ＋ 文案里还留着
+    //   已退役的"配对暗号"），⇒ 换上**新的对象**：**两处都不许再挂**，且组件文件本身必须已删。
+    //   ⛔ 不是把断言删掉 ✗ —— 否则"删干净了"就再没人钉。
     const dialogSrc = readFileSync(resolve(__dirname, "SettingsDialog.tsx"), "utf8");
-    expect(dialogSrc, "⭐ 删的是**重复的那一份** ⇒ 设置那一份必须还在（否则这节没人用了 ✓）").toContain(
-      "<SpacePrivacySection",
-    );
+    expect(
+      dialogSrc,
+      "⭐ owner 2026-10-25 拍 A：安全页里那一块也删了（加密入口统一到「设置 · 空间」页）",
+    ).not.toContain("<SpacePrivacySection");
+    expect(
+      existsSync(resolve(__dirname, "SpacePrivacySection.tsx")),
+      "⭐ 组件文件本身也删了（⛔ 不留没人挂的孤儿组件）",
+    ).toBe(false);
     // ⭐ 新增（⭐ 源码级 ⇒ 明标 ✗）：⭐ "设置那边确实没有了" —— 否则"删干净了"没人钉 ✗。
     const dialog = readFileSync(resolve(__dirname, "SettingsDialog.tsx"), "utf8");
     const editorTs = readFileSync(resolve(__dirname, "..", "store", "editor.ts"), "utf8");

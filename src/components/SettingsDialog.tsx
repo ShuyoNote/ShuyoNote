@@ -15,7 +15,6 @@ import { usePlugins } from "../store/plugins";
 import { api } from "../lib/api";
 import { lockVault, refreshVault, unlockVault } from "../lib/vault";
 import { useVault } from "../hooks/useVault";
-import { SpacePrivacySection } from "./SpacePrivacySection";
 import type { SyncProfile, EmailAccount, SpaceSecurityView } from "../lib/api";
 import { emailSupported, isDesktopPlatform } from "../lib/platform";
 // ⭐ 2026-10-08 第 5 招（裁定 A ✓）：个人偏好「隐藏高级项」——纯规则在 lib 里（可单测 ✓）。
@@ -1752,11 +1751,15 @@ function PluginsPane() {
 function SecurityPane() {
   // ⭐ 2026-10-25：会话锁 / 钥匙袋已经抽成 `SpaceSecurityBanner`（空间页顶部复用同一份）。
   //   本页保留给测试与深链，不再复制第二套逻辑。
-  const spaces = useSpaceStore((s) => s.spaces);
+  //
+  // ⭐⭐ **2026-10-25（owner 拍 A：「整块从『安全』页删掉」）**：这里原来还挂着
+  //   「空间隐私」那一节（按空间分类 ＋ 开/关加密 ＋ 团队空间绑服务器）。
+  //   删掉的依据：**同一批动作已经在「设置 · 空间」页**（每行有 明文/已加密 徽标、⋯ 菜单、
+  //   开/关加密的确认框），而本页那一份还留着**已退役**的文案（"填一个配对暗号就行"）。
+  //   ⇒ 两套重复口径迟早打架（今天「去开加密」接错页就是同类事故）。
   return (
     <>
       <SpaceSecurityBanner />
-      <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
     </>
   );
 }
