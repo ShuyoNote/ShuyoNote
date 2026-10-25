@@ -27537,3 +27537,7 @@ button.mset-row:focus-visible {
 .set-space-menu .set-btn svg{flex:0 0 auto}
 /* ⭐ 2026-10-25 owner：筛选空间控件再窄一点 */
 .set-space-head .set-space-filter-wrap{flex:0 0 168px;width:168px}
+/* ⭐ 2026-10-25 owner：筛选框再窄到 120px（为窄框单独收内边距，避免占位被裁） */
+.set-space-head .set-space-filter-wrap{flex:0 0 120px;width:120px}
+.set-space-head .set-space-filter-wrap>svg{left:8px}
+.set-space-head .set-space-filter.sync-input{padding-left:28px;padding-right:18px}
