@@ -2526,9 +2526,16 @@ pub fn local_addrs_named() -> Vec<(String, IpAddr)> {
 ///
 /// ⚠️ **刻意只列"明显不是对端能到的"那几家** ✓：⛔ 不列 Tailscale / ZeroTier 这类 ✗
 /// （它们是**真的网络** ✓，用户可能正要用它们当对端 ✓）。
+///
+/// ⭐ **2026-10-26（iOS 真机读数）**：⭐ 把系统 VPN/隧道网卡也补进来（`utun*` / `ipsec*` /
+/// `pdp_ip*`（蜂窝）/ `tun*` / `tap*`）✗ —— 真机：iPhone 同时有 `en0 = 192.168.0.101`
+/// 与一张 `utun` 的 `10.128.166.117`，而排序**第三档按地址字节** ⇒ `10.*` 排在 `192.*` 前
+/// ⇒ `announced_base` 报出去 **`http://10.128.166.117:8788`** ⇒ 同网段的电脑**永远连不上**，
+/// 且界面上一个字都不会提示 ✗（与 2026-10-09 那次 WSL 抢第一位同形）。
+/// ⚠️ **只是降权、不是排除** ✓（没有别的私有 IPv4 时它们照旧会被报 ✓，虚拟局域网那档不受影响 ✓）。
 fn is_virtual_if_name(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
-    const NEEDLES: [&str; 8] = [
+    const NEEDLES: [&str; 13] = [
         "vethernet",      // Hyper-V / WSL 的 vEthernet
         "hyper-v",
         "wsl",
@@ -2537,6 +2544,11 @@ fn is_virtual_if_name(name: &str) -> bool {
         "default switch", // Hyper-V 默认交换机
         "virtualbox",
         "vmware",
+        "utun",           // macOS/iOS 的 VPN / 隧道（iPhone 真机实测：10.* 会抢 Wi-Fi 的第一位）
+        "ipsec",          // iOS VPN
+        "pdp_ip",         // iOS 蜂窝数据
+        "tun",            // Linux/Android 隧道
+        "tap",
     ];
     NEEDLES.iter().any(|k| n.contains(k))
 }
@@ -4935,6 +4947,7 @@ mod tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                room: String::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -4995,6 +5008,7 @@ mod tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                room: String::new(),
                 fp: device.to_string(),
                 pubkey: String::new(),
             },
@@ -6684,6 +6698,38 @@ mod tests {
         assert_eq!(
             announced_bases_with_named(concrete, &named),
             vec!["http://172.18.224.1:8788".to_string()]
+        );
+    }
+
+    /// ⭐ **2026-10-26（iPhone 真机读数）**：系统 VPN/隧道网卡**不许抢** Wi-Fi 的第一位。
+    ///
+    /// 现场逐字：iPhone 的 `en0 = 192.168.0.101`，另有一张 `utun` 的 `10.128.166.117`；
+    /// 旧排序按地址字节 ⇒ `10.*` 排在 `192.*` 前 ⇒ 报出去的是 `http://10.128.166.117:8788`
+    /// ⇒ 同网段的电脑**永远连不上**（macOS 后台轮日志里那条 `hub_base` 就是它）。
+    ///
+    /// **变异**：把 `utun` / `tun` 从 `is_virtual_if_name` 拿掉 ⇒ 本条**必须红**。
+    #[test]
+    fn a_wildcard_bind_prefers_wifi_over_a_vpn_tunnel_on_ios() {
+        let wild: SocketAddr = "0.0.0.0:8788".parse().unwrap();
+        let named: Vec<(String, IpAddr)> = [
+            ("utun3", "10.128.166.117"),
+            ("en0", "192.168.0.101"),
+        ]
+        .iter()
+        .map(|(n, ip)| (n.to_string(), ip.parse().unwrap()))
+        .collect();
+        let got = announced_bases_with_named(wild, &named);
+        assert_eq!(
+            got.first().map(String::as_str),
+            Some("http://192.168.0.101:8788"),
+            "iPhone 上必须报 Wi-Fi，⛔ 不是 VPN 隧道：{got:?}"
+        );
+        // 降权 ≠ 排除：只有隧道时它照旧会被报（虚拟局域网那一档不受影响）。
+        let only_tunnel: Vec<(String, IpAddr)> =
+            vec![("utun3".to_string(), "100.64.0.7".parse().unwrap())];
+        assert_eq!(
+            announced_bases_with_named(wild, &only_tunnel),
+            vec!["http://100.64.0.7:8788".to_string()]
         );
     }
 
