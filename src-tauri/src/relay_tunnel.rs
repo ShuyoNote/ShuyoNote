@@ -575,6 +575,49 @@ pub mod iroh_client {
         }
     }
 
+    /// ⭐ **2026-10-25（Step 7）**：隧道**服务侧** —— 起端点、接连接、交给本机 dispatch。
+    ///
+    /// ⚠️ 与局域网窗口**同一套** `mesh::dispatch`（鉴权/路由/租约判定全复用）。
+    /// ⚠️ 只在本机构建带 `--features relay` 且配置了中继时才会被调用（见 `mesh::start`）。
+    pub async fn serve_forever(state: std::sync::Arc<crate::mesh::State>) -> Result<(), String> {
+        let seed = crate::relay_client::load_config()
+            .ok()
+            .and_then(|cfg| crate::relay_client::device_seed(&cfg).ok());
+        let secret = match seed {
+            Some(bytes) => iroh::SecretKey::from_bytes(&bytes),
+            None => {
+                return Err(
+                    "没有 relay/config.json 的 device_seed ⇒ 隧道服务侧不起（不静默起一个随机身份的端点）"
+                        .to_string(),
+                )
+            }
+        };
+        let ep = iroh_tunnel::bind(secret).await?;
+        eprintln!(
+            "[relay] 隧道服务侧已起：node_id={}（对面填进 relay/peers.json）",
+            hex(ep.id().as_bytes())
+        );
+        loop {
+            let Some(accepting) = ep.accept().await else {
+                return Err("隧道端点已关".to_string());
+            };
+            let st = state.clone();
+            tokio::spawn(async move {
+                let Ok(conn) = accepting.await else { return };
+                let Ok((mut send, mut recv)) = conn.accept_bi().await else { return };
+                let Ok(req) = super::read_request(&mut recv).await else { return };
+                let (code, body) = match req.method.as_str() {
+                    "GET" | "GET+STREAM" => {
+                        crate::mesh::dispatch_tunnel(&st, "GET", &req.target, req.headers.clone())
+                    }
+                    _ => (405, b"tunnel only serves GET".to_vec()),
+                };
+                let _ = super::write_reply(&mut send, &super::TunnelReply { status: code, body }).await;
+                let _ = send.finish();
+            });
+        }
+    }
+
     /// 隧道里的附件正文流：**把连接与发送端一起拿着**。
     ///
     /// ⚠️ 只留读端不够 —— 连接一丢，QUIC 流就没了；把 `conn`/`send` 跟着流一起活，

@@ -2662,7 +2662,7 @@ pub fn checked_bind(bind: &str) -> Result<SocketAddr, String> {
     Ok(addr)
 }
 
-struct State {
+pub(crate) struct State {
     /// ⭐ **U8（2026-10-01）**：**每个空间一条自己的库连接**（一个空间一份库 ⇒ 服务多空间就要多连接 ✓）。
     ///
     /// ⚠️ **它同时就是"服务范围"**（键＝被服务的 `proto_space` ✓）——
@@ -3007,6 +3007,29 @@ pub fn start(
         served_pulls: served_pulls.clone(),
         locked: locked.clone(),
     });
+
+    // ⭐ 2026-10-25（Step 7）：跨网隧道**服务侧**（只在 `--features relay` 时编）。
+    //   ⚠️ 起不来只打一行日志 —— ⛔ 不许因此影响局域网那条路（它是默认路径）。
+    #[cfg(feature = "relay")]
+    {
+        let st = state.clone();
+        std::thread::Builder::new()
+            .name("relay-tunnel".to_string())
+            .spawn(move || {
+                let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        eprintln!("[relay] 隧道服务侧没起来（运行时建不了）：{e}");
+                        return;
+                    }
+                };
+                if let Err(e) = rt.block_on(crate::relay_tunnel::iroh_client::serve_forever(st)) {
+                    eprintln!("[relay] 隧道服务侧退出：{e}");
+                }
+            })
+            .ok();
+    }
+
     let stop = Arc::new(AtomicBool::new(false));
     let stop_in = stop.clone();
     let join = std::thread::Builder::new()
@@ -3123,6 +3146,19 @@ impl Reply {
     }
 }
 
+/// 隧道服务侧用：把帧里的（method/target/headers）交给**本机同一套** dispatch。
+/// ⚠️ 不为隧道另写路由/鉴权 —— 否则迟早分叉出第二条同步语义。
+pub(crate) fn dispatch_tunnel(
+    state: &State,
+    method: &str,
+    target: &str,
+    headers: Vec<(String, String)>,
+) -> (u16, Vec<u8>) {
+    let req = Request { method: method.to_string(), target: target.to_string(), headers };
+    let reply = dispatch(state, &req);
+    (reply.code, reply.body)
+}
+
 fn respond(sock: &mut TcpStream, reply: &Reply) -> std::io::Result<()> {
     let head = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -3161,7 +3197,7 @@ fn handle_conn(mut sock: TcpStream, state: Arc<State>) -> Result<(), String> {
     respond(&mut sock, &reply).map_err(|e| e.to_string())
 }
 
-fn dispatch(state: &State, req: &Request) -> Reply {
+pub(crate) fn dispatch(state: &State, req: &Request) -> Reply {
     // ⭐ U11：门只认卡，且**分清 401／403**（见 `authorized` 头注 ✓）
     if let Err(r) = authorized(state, req) {
         return r;
