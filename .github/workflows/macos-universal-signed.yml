@@ -17,12 +17,8 @@ name: macOS Universal (signed + notarized)
 #   · push 到 dev 且只改本文件 / notarize 脚本时跑一次（为了还没合 main 也能试）
 
 on:
-  push:
-    branches: ["dev"]
-    paths:
-      - ".github/workflows/macos-universal-signed.yml"
-      - "scripts/notarize-macos.mjs"
-      - "scripts/notarize-macos.test.mjs"
+  # ⚠️ 只在手动触发：这是签名+公证发版档，没有 Apple secrets 时 push 触发只会刷红。
+  # workflow_dispatch 的按钮要求文件已在默认分支 main；合入后用 "Run workflow"（ref 可选 dev/tag）。
   workflow_dispatch:
     inputs:
       ref:
