@@ -210,8 +210,15 @@ pub fn mesh_trust_begin(
     //   （⚠️ 那是**有意的**：口令从此只在"旧那一档"里有意义 ✓ —— 见 `authorized` 那一段 ✓）。
     // ⭐ 那条 ask 照旧发 ✗：⭐ 它的含义变了 —— ⭐ 让**对面知道"你允许了它"** ✓
     //   （⭐ 好让它能如实显示"对面允许你来拿"，⛔ **不是**"它在请求你同意" ✗）。
-    let ask = new_trust_ask();
+    // ⭐⭐ **2026-10-25（owner：「配对码还是不一样」→ 按建议改）**：这里是**第二处**造 ask 的地方，
+    //   原来它**无条件** `new_trust_ask()` ⇒ 每点一次「确认」码就换一串 ⇒ 两端永远在被比较的两串之间漂。
+    //   判据（真机已复现）：同一会话连续调两次，`[pairing]` 行里的 `my_ask` 长度一样但**内容变了**，
+    //   于是码也变（`code=2456…` → `code=8311…`）。
+    //   ⇒ 与 `mesh_trust_prepare` **同一口径**：这一轮已经有 ask（自己发起的／对面发起的）就沿用它，
+    //     只有一发都没有时才新造 ✓。
     let now = crate::lan_state::now_ms();
+    let existing = crate::lan_state::with_trust(|h| h.ask_for(&peer, now));
+    let ask = existing.unwrap_or_else(new_trust_ask);
     crate::lan_state::with_trust(|h| {
         h.begin(&peer, &ask, now, crate::pairing_trust::TRUST_TTL_MS);
     });
