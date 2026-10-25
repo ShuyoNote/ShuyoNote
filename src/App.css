@@ -27527,3 +27527,11 @@ button.mset-row:focus-visible {
 }
 .set-space-status .set-space-crypto,.set-space-status .set-space-state{white-space:nowrap}
 .set-space-row .set-space-more{margin-left:0}
+/* ⭐ 2026-10-25 owner：筛选空间控件靠右 + 与分段水平对齐；行内菜单加 SVG 图标 */
+.set-space-head .set-space-filter-wrap{
+  margin-bottom:0;flex:0 0 200px;width:200px;align-self:center;
+}
+.set-space-head-tools{justify-content:flex-end;align-items:center}
+.set-space-head .set-space-seg{align-self:center;height:36px;align-items:center}
+.set-space-menu .set-btn{display:flex;align-items:center;gap:8px}
+.set-space-menu .set-btn svg{flex:0 0 auto}

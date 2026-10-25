@@ -39,6 +39,8 @@ import { APP_VERSION, APP_LICENSE } from "../lib/links";
 import { useEmailPanel } from "../store/emailPanel";
 import {
   PaletteIcon,
+  ChevronRightIcon,
+  TrashIcon,
   FolderIcon,
   LockIcon,
   PersonIcon,
@@ -472,7 +474,8 @@ function SpacesPane() {
                           title={`切换到「${s.name}」`}
                           onClick={(e) => { e.stopPropagation(); void pick(s.id); }}
                         >
-                          切换
+                          <ChevronRightIcon width={14} height={14} />
+                          <span>切换</span>
                         </button>
                       )}
                       <button
@@ -485,13 +488,15 @@ function SpacesPane() {
                           openCrypto(s.id, s.name, enc ? "disable" : "enable");
                         }}
                       >
-                        {secViews[s.id]?.encrypted_on_disk || s.encrypted_on_disk ? "关闭加密…" : "开启加密…"}
+                        <LockIcon width={14} height={14} />
+                        <span>{secViews[s.id]?.encrypted_on_disk || s.encrypted_on_disk ? "关闭加密…" : "开启加密…"}</span>
                       </button>
                       <button
                         className={`set-btn${colorFor === s.id ? " is-on" : ""}`}
                         onClick={(e) => { e.stopPropagation(); setColorFor((c) => (c === s.id ? null : s.id)); }}
                       >
-                        配色
+                        <PaletteIcon width={14} height={14} />
+                        <span>配色</span>
                       </button>
                       <button
                         className="set-btn is-danger-ghost"
@@ -499,7 +504,8 @@ function SpacesPane() {
                         title={active ? "当前空间不可删除，请先切换到别的空间" : spaces.length <= 1 ? "至少保留一个空间" : "删除该空间"}
                         onClick={(e) => { e.stopPropagation(); void doRemove(s.id, s.name); }}
                       >
-                        删除
+                        <TrashIcon width={14} height={14} />
+                        <span>删除</span>
                       </button>
                     </div>
                   </details>
