@@ -101,6 +101,7 @@ const MAP = {
   "jni-sys": { debs: [], why: "Android/JNI 专属" },
   "dirs-sys": { debs: [], why: "纯 Rust 包装，无系统依赖" },
   "linux-raw-sys": { debs: [], why: "纯 Rust 定义，无系统依赖" },
+  "netlink-sys": { debs: [], why: "iroh（relay feature）在 Linux 上的 netlink 封装；纯 Rust + libc，不需要系统开发包" },
   "js-sys": { debs: [], why: "wasm 绑定，无系统依赖" },
   "web-sys": { debs: [], why: "wasm 绑定，无系统依赖" },
 };
