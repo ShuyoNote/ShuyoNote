@@ -30,7 +30,10 @@
 > `relay_route::append_virtual_peers(&mut candidates)`（⛔ 默认构建什么都不做；路线表坏了只打一行日志、不打断本轮），
 > 跨网对端以 `relay:<node_id>` 的 base 进候选，由 `endpoint_for_peer` 挑成隧道端点。
 > 判据：`routesturn_into_virtual_peers_without_duplicating_lan_peers`（映射＋去重＋base 形态）。
-> ⛔ **仍未做**：许可证门／附件流式／公网跨网真机验收。
+> **Step 4（本笔）**：**许可门接在"建隧道之前"** —— `relay_client::gate_for_new_tunnel(cfg, now)`
+> （与 `decide_new_connection` 同一套判定，翻成可读错误；话术写明"只收回跨网；局域网与本地功能照旧"），
+> `relay_endpoint_for` 在建隧道前先调它 ⇒ 不放行就**连隧道都不建**。判据：`建隧道之前必须先过许可门`。
+> ⛔ **仍未做**：附件流式／公网跨网真机验收。
 > **证据**：`src-tauri/src/mesh_endpoint.rs` ／ `src-tauri/src/relay_tunnel.rs`
 > ／ 判据 `mesh::tests::a_fake_endpoint_is_enough_for_the_manifest_call`
 > ／ `mesh::tests::a_fake_endpoint_is_enough_for_the_pull_call` ／ `mesh::tests` **69 绿** ＋ `sync::tests` **88 绿**

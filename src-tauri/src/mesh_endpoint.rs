@@ -124,6 +124,13 @@ async fn relay_endpoint_for(
     peer: &crate::mesh::MeshPeer,
     node_id: &str,
 ) -> Result<Box<dyn Endpoint + Send>, String> {
+    // ⭐ **许可门在"建隧道之前"**（owner 2026-10-09 拍：到期只收回跨网）——
+    //   判定不过就**连隧道都不建**；错误话术里明说"局域网与本地功能照旧"。
+    {
+        let cfg = crate::relay_client::load_config()
+            .map_err(|e| format!("读不到中继配置（跨网许可判定不了，因而不建隧道）：{e}"))?;
+        crate::relay_client::gate_for_new_tunnel(&cfg, crate::relay_client::now_unix())?;
+    }
     use std::net::SocketAddr;
     let routes = crate::relay_route::load_routes()?;
     let route = crate::relay_route::route_for(&routes, &peer.device_id).ok_or_else(|| {

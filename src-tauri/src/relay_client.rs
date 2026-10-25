@@ -440,6 +440,20 @@ impl ConnectDecision {
     }
 }
 
+/// ⭐ **建隧道之前的许可门**（`Result` 形态 —— 端点工厂要的是 early-return ✓）。
+///
+/// 与 [`decide_new_connection`] **同一套判定**，只是把 `Refuse` 翻成可读错误：
+/// ⛔ 这里**不新建连接**、⛔ 不联网 —— 判定不过就直接拒，**连隧道都不建**。
+/// ⚠️ 口径（owner 2026-10-09 拍）：**到期只收回跨网** ⇒ 错误话术里必须写"局域网与本地功能照旧"。
+pub fn gate_for_new_tunnel(cfg: &RelayConfig, now: i64) -> Result<(), String> {
+    match decide_new_connection(cfg, now) {
+        ConnectDecision::Allow => Ok(()),
+        ConnectDecision::Refuse { code, message } => Err(format!(
+            "跨网不放行（{code}）：{message} —— 只收回跨网；局域网与本地功能照旧"
+        )),
+    }
+}
+
 /// 新建一条跨网连接之前，客户端**自己**先判一遍 ✓（⛔ 不联网 ✓、⛔ 不碰本地数据 ✓）。
 ///
 /// 顺序（固定 ✓，排障时先命中哪一条是确定的 ✓）：
@@ -1013,6 +1027,32 @@ mod tests {
 
     /// ⛔ **读不到有效期时不许编数字** ✗（界面要明说"还没配置" ✓）。
     ///
+    /// ⭐⭐ **2026-10-25（数据面 Step 4 判据）**：**建隧道之前的许可门** ——
+    /// 判定不过时① 给出**可读原因**、② 明确写"只收回跨网、局域网与本地功能照旧"
+    /// （owner 2026-10-09 拍的口径），③ ⛔ 不许出现"客户端不能用"这类话术。
+    ///
+    /// **变异**：把 `gate_for_new_tunnel` 改成永远 `Ok(())` ⇒ 前两条断言红。
+    #[test]
+    fn 建隧道之前必须先过许可门() {
+        // ① 什么都没配 ⇒ not_configured
+        let err = gate_for_new_tunnel(&RelayConfig::default(), NOW).expect_err("没配中继必须拒");
+        assert!(err.contains("not_configured"), "要带机器可读的码：{err}");
+        assert!(err.contains("局域网与本地功能照旧"), "口径必须写清：{err}");
+        assert!(!err.contains("不能用"), "⛔ 不许说客户端不能用：{err}");
+
+        // ② 配了地址但没设备身份 ⇒ 仍然拒（且原因不同）
+        let mut cfg = RelayConfig::default();
+        cfg.url = Some("http://127.0.0.1:8880".to_string());
+        let err = gate_for_new_tunnel(&cfg, NOW).expect_err("缺设备身份必须拒");
+        assert!(err.contains("局域网与本地功能照旧"), "{err}");
+
+        // ③ 三个字段齐了但没租约 ⇒ 拒（"能不能去连"的最后一关）
+        cfg.device_seed_hex = Some("11".repeat(32));
+        cfg.license_exp = Some(NOW + 86_400);
+        let err = gate_for_new_tunnel(&cfg, NOW).expect_err("缺租约必须拒");
+        assert!(err.contains("missing"), "缺租约该报 missing：{err}");
+    }
+
     /// ⭐ **2026-10-12**：原判据断言的是"未接线" ✗ —— 那是**假话**（真因是本机还没配置，
     /// 见 [`LicenseWindow::Unconfigured`] 的注释），且 owner 正是被它读成"功能没做" ✗。
     /// ⇒ 现在钉**两句**：① 仍然如实说「读不到有效期」（⛔ 不许改成编数字 ✗）；
