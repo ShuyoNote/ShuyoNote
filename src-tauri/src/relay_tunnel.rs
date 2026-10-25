@@ -436,15 +436,19 @@ pub mod iroh_tunnel {
                 .map_err(|e| format!("固定 UDP 端口 {p} 失败：{e}"))?;
         }
         if let Some(r) = relay.map(str::trim).filter(|r| !r.is_empty()) {
-            let mut url = r.to_string();
-            if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
-                let sep = if url.contains('?') { '&' } else { '?' };
-                url = format!("{url}{sep}token={t}");
-            }
-            let u: iroh::RelayUrl = url
+            // ⭐⭐ **2026-10-25（真机读数：把租约拼成 `?token=` 时 iroh 一个中继都不建）**：
+            //   带租约 ⇒ `[relay] 中继状态：（还没有任何中继读数）`（等于没配中继 ⇒ 别人拨不进来）
+            //   不带租约 ⇒ `…=未连（被拒：missing）`（中继在，但没凭证）
+            //   ⇒ 凭证**必须走 iroh 自己的配置口** `RelayConfig::with_auth_token`，
+            //     ⛔ 不能拼进 URL（那种 URL 不被认成有效中继配置）。
+            let u: iroh::RelayUrl = r
                 .parse()
-                .map_err(|e| format!("中继地址解析失败（{url}）：{e}"))?;
-            builder = builder.relay_mode(iroh::RelayMode::custom([u]));
+                .map_err(|e| format!("中继地址解析失败（{r}）：{e}"))?;
+            let mut cfg = iroh::RelayConfig::from(u);
+            if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
+                cfg = cfg.with_auth_token(t.to_string());
+            }
+            builder = builder.relay_mode(iroh::RelayMode::Custom(iroh::RelayMap::from_iter([cfg])));
         }
         let ep = builder
             .bind()
