@@ -287,7 +287,7 @@ pub mod iroh_client {
         /// 只给 node id（64 位 hex）—— ⚠️ 没有地址就**只能靠发现层**，
         /// 而发现层还没做（Step 3）⇒ 这条路今天会明确报错，⛔ 不静默地"连不上就一直等"。
         pub async fn connect_by_node_id(node_id_hex: &str) -> Result<Self, String> {
-            let bytes = hex32(node_id_hex)?;
+            let bytes = node_id_bytes(node_id_hex)?;
             let id = iroh::PublicKey::from_bytes(&bytes).map_err(|e| format!("node id 不是合法公钥：{e}"))?;
             Err(format!(
                 "只知道 node id（{}…）还不够：跨网发现层还没做（Step 3）⇒ 没有可达地址",
@@ -332,7 +332,8 @@ pub mod iroh_client {
         }
     }
 
-    fn hex32(s: &str) -> Result<[u8; 32], String> {
+    /// 把 64 位 hex 的 node id 解析成 32 字节公钥（⛔ 长度/字符都要查，不猜）。
+    pub fn node_id_bytes(s: &str) -> Result<[u8; 32], String> {
         let s = s.trim();
         if s.len() != 64 {
             return Err(format!("node id 必须是 64 位 hex（现在是 {} 位）", s.len()));

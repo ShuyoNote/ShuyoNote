@@ -22,6 +22,11 @@
 > （`x-shuyo-dev/ts/sig` ＋ `authorization: Bearer …`）。判据 `the_real_pull_call_runs_over_the_tunnel`：
 > **真的 `pull_from_peer` 跑在隧道上**（服务端断言三格头/口令原样到达，客户端解析出 records/高水位）。
 > ⛔ **仍未做**：接进同步轮次（自动改走隧道）／跨网发现层（只给 node id 今天会明确报错）／许可门／附件流式。
+> **Step 3-1（本笔）**：① `relay_route.rs` —— 跨网**路线表**（`relay/peers.json`：`device_id → node_id(64 hex) ＋ addrs`；
+> 文件不存在＝空表、坏 JSON／坏 node_id／缺端口都**可读报错**） ② `mesh_endpoint::endpoint_for_peer` ——
+> **唯一的"挑传输"处**：`http://…` ⇒ LAN、`relay:<node_id>` ⇒ 隧道（没编入跨网时给可读错误，⛔ 不静默当 LAN）；
+> 两处生产调用点已改成工厂。判据：`relay_route::tests` 5 条 ＋ `a_relay_base_is_not_silently_treated_as_lan`。
+> ⛔ **仍未做**：把路线表**接进回合装配**（后台轮现在只会遍历广播发现到的对端）／许可证门／附件流式／公网跨网真机验收。
 > **证据**：`src-tauri/src/mesh_endpoint.rs` ／ `src-tauri/src/relay_tunnel.rs`
 > ／ 判据 `mesh::tests::a_fake_endpoint_is_enough_for_the_manifest_call`
 > ／ `mesh::tests::a_fake_endpoint_is_enough_for_the_pull_call` ／ `mesh::tests` **69 绿** ＋ `sync::tests` **88 绿**

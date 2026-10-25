@@ -115,6 +115,8 @@ mod mesh_sim;
 mod mesh;
 // ⭐ 2026-10-25（跨网中继「数据面」Step 1a）：端点抽象 —— 同步只认「往哪发」，不认「怎么连上的」
 mod mesh_endpoint;
+// ⭐ 2026-10-25（Step 3-1）：跨网对端的「路线表」（只读 JSON，⛔ 不依赖 iroh）
+mod relay_route;
 // ⭐ 2026-10-25（Step 2b-1）：隧道帧协议 —— 把**原样 HTTP 请求**搬到对端的一条字节流上
 //   （⛔ 不依赖 iroh：入参是 AsyncRead/AsyncWrite，谁给流都行；iroh 接线是 Step 2b-2）
 mod relay_tunnel;

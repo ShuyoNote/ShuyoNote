@@ -817,7 +817,8 @@ pub async fn pull_and_absorb(
     //   ⇒ **归零重拉一次**，并如实记一行（⛔ 不静默、⛔ 不每次轮都重拉：只在这一情形下发生 ✓）。
     let mut healed = false;
     // ⭐ Step 1b：**调用点挑传输实现**（今天只有局域网直连）；下面一处只认端点 ✓
-    let ep = crate::mesh_endpoint::LanEndpoint::new(&peer.base, client.clone());
+    // ⭐ Step 3-1：**挑传输**收敛到一处（局域网 / 跨网隧道）
+    let ep = crate::mesh_endpoint::endpoint_for_peer(peer, client.clone()).await?;
     let (mut rows, mut max_seq) = {
         // ⭐ 签名要在**拿锁的那一小段**里算好 ✗（⛔ 不许跨 await 持锁 ✗）；拿不到身份 ⇒ `None` ✓
         //   （⭐ 那就只剩口令那一档 ✓ —— 与今天逐字相同 ✓）。
@@ -833,7 +834,7 @@ pub async fn pull_and_absorb(
             }
         };
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
-        pull_from_peer(&ep, peer, space_id, since, token, auth_ref, &name_sha).await?
+        pull_from_peer(&*ep, peer, space_id, since, token, auth_ref, &name_sha).await?
     };
     // ⭐ 游标越界 ⇒ 归零重拉一次（只重拉一次；还得再拿锁算签名 ⇒ 与上面同一套）
     if max_seq > 0 && since > max_seq {
@@ -857,7 +858,7 @@ pub async fn pull_and_absorb(
             }
         };
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
-        let again = pull_from_peer(&ep, peer, space_id, 0, token, auth_ref, &name_sha).await?;
+        let again = pull_from_peer(&*ep, peer, space_id, 0, token, auth_ref, &name_sha).await?;
         rows = again.0;
         max_seq = again.1.max(max_seq);
     }
@@ -905,7 +906,7 @@ pub async fn pull_and_absorb(
             let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
             // ⚠️ 探针**不许静默**：进没进、回来几条、错在哪 —— 都要看得见 ✓
             //   （第一版用 `if let Ok` 把 Err 吞了 ⇒ 现场只看到"什么也没发生" ✗）
-            let probe = pull_from_peer(&ep, peer, space_id, 0, token, auth_ref, &name_sha).await;
+            let probe = pull_from_peer(&*ep, peer, space_id, 0, token, auth_ref, &name_sha).await;
             let probe_rows = match probe {
                 Err(e) => {
                     eprintln!(
@@ -983,10 +984,10 @@ pub async fn pull_and_absorb(
     //   · 设备级（钥匙袋不属于某一个空间），10 分钟最多取一次；
     //   · ⛔ 失败/老对端没有这个端点 ⇒ 只记日志，**不影响这一轮同步**；
     //   · 收到之后由 `merge_material` 决定"整体采纳（新设备）"还是"并成额外组（老设备）"。
-    maybe_sync_peer_keyring(conn, &ep, peer, space_id, token).await;
+    maybe_sync_peer_keyring(conn, &*ep, peer, space_id, token).await;
     // ⭐ P3：顺带对一次"页清单"（只读、6 小时一次）—— 把"你这儿有、我这儿没有"如实打出来。
     //   ⚠️ 这一版**只报告不自动补**（自动按 id 取页是下一步；先让缺口可见，再动手补）。
-    maybe_report_manifest_gap(conn, &ep, peer, space_id, token, device_level).await;
+    maybe_report_manifest_gap(conn, &*ep, peer, space_id, token, device_level).await;
     Ok(PeerPullReport {
         peer: peer.device_id.clone(),
         fetched,
@@ -3997,8 +3998,9 @@ pub async fn sealed_round(
             .map(|(ts, sig)| (my_device.to_string(), ts, sig));
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
         // ⭐ Step 1b：每个对端各自一个端点（今天只有局域网直连）
-        let ep = crate::mesh_endpoint::LanEndpoint::new(&peer.base, client.clone());
-        match pull_from_peer(&ep, peer, proto_space, since, None, auth_ref, &name_sha).await {
+        // ⭐ Step 3-1：**挑传输**收敛到一处（局域网 / 跨网隧道）
+    let ep = crate::mesh_endpoint::endpoint_for_peer(peer, client.clone()).await?;
+        match pull_from_peer(&*ep, peer, proto_space, since, None, auth_ref, &name_sha).await {
             Ok((rows, _max)) => {
                 let n = stash_sealed_rows(&meta, db_space, &peer.device_id, &rows).unwrap_or(0);
                 stashed_total += n;

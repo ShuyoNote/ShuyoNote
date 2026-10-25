@@ -99,6 +99,69 @@ impl Endpoint for LanEndpoint {
     }
 }
 
+/// 跨网对端的 base 形态：`relay:<node_id>`（⛔ 不是 http:// —— 它没有"地址"，只有"连谁"）。
+pub const RELAY_BASE_PREFIX: &str = "relay:";
+
+/// **唯一的"挑传输"处**：给一个对端选实现（局域网 / 跨网隧道）。
+///
+/// * `base` 是 `http://…` ⇒ `LanEndpoint`（今天唯一默认路径）
+/// * `base` 是 `relay:<node_id>` ⇒ 跨网（⚠️ 只有 `--features relay` 才编得进来；
+///   没编入时返回**可读错误**，⛔ 不静默当成局域网地址去连）
+///
+/// ⚠️ 跨网那一侧今天仍要**路线表**给出地址（发现层还没做）：只有 node id 连不上 ⇒ 明确报错。
+pub async fn endpoint_for_peer(
+    peer: &crate::mesh::MeshPeer,
+    client: reqwest::Client,
+) -> Result<Box<dyn Endpoint + Send>, String> {
+    let Some(node_id) = peer.base.strip_prefix(RELAY_BASE_PREFIX) else {
+        return Ok(Box::new(LanEndpoint::new(&peer.base, client)));
+    };
+    relay_endpoint_for(peer, node_id).await
+}
+
+#[cfg(feature = "relay")]
+async fn relay_endpoint_for(
+    peer: &crate::mesh::MeshPeer,
+    node_id: &str,
+) -> Result<Box<dyn Endpoint + Send>, String> {
+    use std::net::SocketAddr;
+    let routes = crate::relay_route::load_routes()?;
+    let route = crate::relay_route::route_for(&routes, &peer.device_id).ok_or_else(|| {
+        format!(
+            "对端 {} 要走跨网，但跨网路线表里没有它（peer 的 node_id={}）",
+            peer.device_id, node_id
+        )
+    })?;
+    if route.addrs.is_empty() {
+        return Err(format!(
+            "对端 {} 的路线没有可达地址：跨网发现层还没做（Step 3-2）⇒ 只有 node id 连不上",
+            peer.device_id
+        ));
+    }
+    let addrs: std::collections::BTreeSet<iroh::TransportAddr> = route
+        .addrs
+        .iter()
+        .filter_map(|a| a.parse::<SocketAddr>().ok().map(iroh::TransportAddr::Ip))
+        .collect();
+    let id_bytes = crate::relay_tunnel::iroh_client::node_id_bytes(&route.node_id)?;
+    let id = iroh::PublicKey::from_bytes(&id_bytes)
+        .map_err(|e| format!("路线表里 {} 的 node_id 不是合法公钥：{e}", peer.device_id))?;
+    let ep = crate::relay_tunnel::iroh_client::RelayEndpoint::connect(iroh::EndpointAddr {
+        id,
+        addrs,
+    })
+    .await?;
+    Ok(Box::new(ep))
+}
+
+#[cfg(not(feature = "relay"))]
+async fn relay_endpoint_for(
+    _peer: &crate::mesh::MeshPeer,
+    _node_id: &str,
+) -> Result<Box<dyn Endpoint + Send>, String> {
+    Err("这个构建没编入跨网隧道（需要 --features relay）".to_string())
+}
+
 /// 拼一个 base 与 target（**唯一一处**；`trim_end_matches('/')` 的老口径保持不变 ✓）。
 pub fn join(base: &str, target: &str) -> String {
     format!("{}{}", base.trim_end_matches('/'), target)
@@ -113,5 +176,24 @@ mod tests {
     fn joining_keeps_the_old_shape() {
         assert_eq!(join("http://192.168.0.5:8788", "/mesh/pull?x=1"), "http://192.168.0.5:8788/mesh/pull?x=1");
         assert_eq!(join("http://192.168.0.5:8788/", "/mesh/pull?x=1"), "http://192.168.0.5:8788/mesh/pull?x=1");
+    }
+
+    /// ⭐ **2026-10-25（Step 3-1 判据）**：`relay:` 前缀的对端**不许**被当成局域网地址去连 ——
+    /// 没编入跨网时给**可读错误**（⛔ 不静默、⛔ 不拿一个假 base 去发 HTTP）。
+    ///
+    /// **变异**：把 `endpoint_for_peer` 的前缀判断删掉 ⇒ 它会拿 `relay:xxx` 去拼 URL ⇒ 本判据红
+    /// （LAN 分支返回 Ok，而这里断言的是 Err）。
+    #[cfg(not(feature = "relay"))]
+    #[tokio::test]
+    async fn a_relay_base_is_not_silently_treated_as_lan() {
+        let peer = crate::mesh::MeshPeer {
+            device_id: "dev-x".to_string(),
+            base: format!("{RELAY_BASE_PREFIX}0123456789abcdef"),
+        };
+        let err = match endpoint_for_peer(&peer, reqwest::Client::new()).await {
+            Ok(_) => panic!("relay: 前缀必须走跨网分支（⛔ 不许当 LAN）"),
+            Err(e) => e,
+        };
+        assert!(err.contains("--features relay"), "要说清怎么办：{err}");
     }
 }
