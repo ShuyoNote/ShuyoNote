@@ -133,6 +133,10 @@ pub struct RelayConfig {
     /// 失效时刻（Unix 秒）。⚠️ **占位**：同上 ✓。
     #[serde(default)]
     pub license_exp: Option<i64>,
+    /// ⭐ **2026-10-25（跨网真机：端口每次重启都变 ⇒ 对端 addrs 永远落后）**：
+    /// 固定 iroh 的 UDP 端口（不给 = 随机，与今天行为一致）。
+    #[serde(default)]
+    pub udp_port: Option<u16>,
     /// 宽限天数（缺省 [`DEFAULT_GRACE_DAYS`]）。⚠️ **占位**：同上 ✓。
     #[serde(default)]
     pub license_grace_days: Option<i64>,
@@ -979,6 +983,7 @@ mod tests {
             license_nbf: Some(exp - 30 * 86_400),
             license_exp: Some(exp),
             license_grace_days: Some(14),
+            udp_port: None,
         }
     }
 

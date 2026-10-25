@@ -414,9 +414,27 @@ pub mod iroh_tunnel {
         relay: Option<&str>,
         token: Option<&str>,
     ) -> Result<iroh::Endpoint, String> {
+        bind_with_relay_on_port(secret, relay, token, None).await
+    }
+
+    /// ⭐ **2026-10-25（真机：端口每次重启都变 ⇒ 对端 addrs 永远落后）**：可以**固定 UDP 端口**。
+    ///
+    /// `udp_port=None` ⇒ 随机（与今天行为完全一致 ✓）；给了就绑那个口（IPv4 通配）。
+    /// ⚠️ 端口被占用 ⇒ 如实报错（⛔ 不静默退回随机 —— 那会让"我固定了"变成谎话）。
+    pub async fn bind_with_relay_on_port(
+        secret: iroh::SecretKey,
+        relay: Option<&str>,
+        token: Option<&str>,
+        udp_port: Option<u16>,
+    ) -> Result<iroh::Endpoint, String> {
         let mut builder = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
             .secret_key(secret)
             .alpns(vec![ALPN.to_vec()]);
+        if let Some(p) = udp_port {
+            builder = builder
+                .bind_addr((std::net::Ipv4Addr::UNSPECIFIED, p))
+                .map_err(|e| format!("固定 UDP 端口 {p} 失败：{e}"))?;
+        }
         if let Some(r) = relay.map(str::trim).filter(|r| !r.is_empty()) {
             let mut url = r.to_string();
             if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
@@ -506,7 +524,8 @@ pub mod iroh_client {
             let cfg = crate::relay_client::load_config().ok();
             let relay_url = cfg.as_ref().and_then(|c| c.url.clone());
             let lease = cfg.as_ref().and_then(|c| crate::relay_client::token_text(c));
-            let ep = iroh_tunnel::bind_with_relay(secret, relay_url.as_deref(), lease.as_deref())
+            let udp_port = cfg.as_ref().and_then(|c| c.udp_port);
+            let ep = iroh_tunnel::bind_with_relay_on_port(secret, relay_url.as_deref(), lease.as_deref(), udp_port)
                 .await?;
             // ⭐ 把本机 node id 打出来（对面要把它填进 `relay/peers.json`）
             eprintln!(
@@ -626,7 +645,8 @@ pub mod iroh_client {
         // ⭐ 异网寻址：服务侧也挂到中继上（对端不在同一网络时才找得到我们）
         let relay_url = cfg.as_ref().and_then(|c| c.url.clone());
         let lease = cfg.as_ref().and_then(|c| crate::relay_client::token_text(c));
-        let ep = iroh_tunnel::bind_with_relay(secret, relay_url.as_deref(), lease.as_deref())
+        let udp_port = cfg.as_ref().and_then(|c| c.udp_port);
+        let ep = iroh_tunnel::bind_with_relay_on_port(secret, relay_url.as_deref(), lease.as_deref(), udp_port)
             .await?;
         // ⚠️ `addrs` 要填的是 **iroh 的 UDP 地址**（QUIC 走 UDP）—— ⛔ 不是网格窗口的 8788。
         //   所以把 UDP 端口一起打出来（别让人去猜、也别去翻 netstat）。
