@@ -27666,3 +27666,17 @@ button.mset-row:focus-visible {
 [data-theme="dark"] .backup-auto-grid .backup-auto-item{background:#222326;border-color:var(--border)}
 [data-theme="dark"] .backup-dir-path{background:#222326;border-color:var(--border);color:var(--text-dim)}
 [data-theme="dark"] .backup-auto-badge{background:#2a2b2e;color:var(--text-faint)}
+
+/* ⭐ 2026-10-25（owner 复报：同步面板「高级」展开后下面被裁、滚不到）：
+   外层 flex 滚动在某些窗口尺寸下不生效 —— 给内容区自己加**视口封顶的滚动**，
+   ⛔ 不再依赖父级高度是否被 flex 拉伸。 */
+.main > .sync-panel{overflow:hidden}
+.main > .sync-panel > .sync-popover.is-inline{
+  height:auto;
+  min-height:0;
+  max-height:calc(100vh - 32px);
+  max-height:calc(100dvh - 32px);
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  padding-bottom:32px;
+}
