@@ -27483,3 +27483,27 @@ button.mset-row:focus-visible {
 }
 .set-space-advanced-link:hover{color:var(--text-2);text-decoration:underline}
 .set-advanced-dialog{max-height:min(72vh,720px);overflow:auto;width:min(720px,calc(100vw - 48px))}
+
+/* ⭐ 2026-10-25 对照效果图：空间列表是一张白卡（行间分隔线），不是每行一张卡 */
+.set-space-list{
+  display:flex;flex-direction:column;gap:0;background:var(--card-bg);
+  border:1px solid var(--border);border-radius:18px;overflow:hidden;
+}
+.set-space-list .set-space-card{
+  border:none;border-radius:0;background:transparent;box-shadow:none;
+  border-bottom:1px solid var(--border);
+}
+.set-space-list .set-space-card:last-child{border-bottom:none}
+.set-space-list .set-space-card.is-active{background:#f5f9ff;box-shadow:inset 3px 0 0 var(--accent)}
+.set-space-mark{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;background:#eef3ff;color:var(--accent);flex:0 0 auto}
+.set-space-row{min-height:64px;padding:12px 16px}
+.set-space-row:hover{background:#fafbfd}
+.set-space-list .set-space-card.is-active .set-space-row:hover{background:transparent}
+.set-space-head-tools{flex:0 0 auto}
+.set-space-filter-wrap{flex:0 0 210px}
+.set-security-right{width:280px;max-width:280px;justify-self:end;min-width:0}
+.set-security-row{display:flex;align-items:center;gap:8px;min-width:0}
+.set-security-row .set-input{flex:1 1 auto;min-width:0;width:100%}
+.set-security-row .set-btn{flex:0 0 auto;width:auto;min-width:78px}
+.set-security-chips{display:flex;flex-wrap:nowrap;gap:8px;overflow:hidden}
+.set-security-chips span{flex:0 0 auto;font-size:10px;padding:2px 8px;white-space:nowrap}

@@ -40,6 +40,7 @@ import { useEmailPanel } from "../store/emailPanel";
 import {
   PaletteIcon,
   FolderIcon,
+  LockIcon,
   PersonIcon,
   DatabaseIcon,
   TemplateIcon,
@@ -413,11 +414,10 @@ function SpacesPane() {
                   className="set-space-row"
                   onClick={() => void pick(s.id)}
                 >
-                  <span
-                    className="set-space-mark"
-                    style={s.theme ? { background: s.theme, color: "#fff" } : undefined}
-                  >
-                    {s.name.charAt(0)}
+                  <span className="set-space-mark" style={s.theme ? { background: s.theme, color: "#fff" } : undefined}>
+                    {(secViews[s.id]?.encrypted_on_disk ?? s.encrypted_on_disk)
+                      ? <LockIcon width={18} height={18} />
+                      : <FolderIcon width={18} height={18} />}
                   </span>
                   <div className="set-row-text">
                     <div className="set-row-name">
