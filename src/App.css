@@ -27507,3 +27507,15 @@ button.mset-row:focus-visible {
 .set-security-row .set-btn{flex:0 0 auto;width:auto;min-width:78px}
 .set-security-chips{display:flex;flex-wrap:nowrap;gap:8px;overflow:hidden}
 .set-security-chips span{flex:0 0 auto;font-size:10px;padding:2px 8px;white-space:nowrap}
+
+/* ⭐ 2026-10-25 真机：行内 ⋯ 菜单被列表卡/行卡的 overflow:hidden 裁掉。
+   ⇒ 列表与行卡都允许溢出（圆角靠首/末行自己补），菜单再抬一层 z-index。 */
+.set-space-list{overflow:visible}
+.set-space-list .set-space-card{overflow:visible}
+.set-space-list .set-space-card:first-child{border-radius:18px 18px 0 0}
+.set-space-list .set-space-card:last-child{border-radius:0 0 18px 18px}
+.set-space-list .set-space-card:only-child{border-radius:18px}
+.set-space-list .set-space-card.is-active:first-child{border-radius:18px 18px 0 0}
+.set-space-list .set-space-card.is-active:last-child{border-radius:0 0 18px 18px}
+.set-space-more[open]{z-index:50}
+.set-space-menu{z-index:60}
