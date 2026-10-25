@@ -27381,3 +27381,40 @@ button.mset-row:focus-visible {
 .set-crypto-warn{display:flex;flex-direction:column;gap:6px;background:#fff8f2;border:1px solid #ffe6d1;border-radius:10px;padding:12px;font-size:12px;color:var(--text-2)}
 .set-crypto-err{font-size:12px;color:var(--danger)}
 .set-crypto-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+
+/* ⭐ 2026-10-25 真机修复：滚动容器是 flex 列 ⇒ 子项默认 flex-shrink:1，
+   12 行会被压扁/互相盖住（owner 截图：行卡重叠、按钮上下被切）。
+   ⛔ 不许靠给卡写死高度解决（行内文本换行时会溢出）⇒ 只禁止收缩。 */
+.set-space-list-scroll > .set-space-card { flex: 0 0 auto; }
+.set-space-row { min-height: 56px; }
+.set-space-row .set-row-text { flex: 1 1 auto; min-width: 0; }
+.set-space-row .set-btn { flex: 0 0 auto; white-space: nowrap; }
+
+/* ⭐ 2026-10-25 按设计稿收口：顶部安全卡 + 行内 ⋯ 菜单 + 状态/作用域 meta */
+.set-security-card{
+  background:linear-gradient(135deg,#f7faff 0%,#ffffff 70%);
+  border:1px solid #ecEEf2;border-radius:18px;padding:16px 18px;margin-bottom:16px;
+}
+.set-space-card{position:relative}
+.set-space-row{min-height:60px}
+.set-space-scope{color:var(--text-faint)}
+.set-space-meta{gap:8px;flex-wrap:wrap}
+.set-space-crypto{
+  border:1px solid var(--border);border-radius:999px;padding:1px 8px;
+  font-size:10.5px;line-height:18px;color:var(--text-2);background:#f7f8fa;
+}
+.set-space-crypto:has(+ .set-space-sync){}
+.set-space-more{margin-left:auto;position:relative;flex:0 0 auto}
+.set-space-more>summary{
+  list-style:none;cursor:pointer;width:32px;height:32px;border-radius:8px;
+  display:grid;place-items:center;color:var(--text-faint);font-size:16px;
+}
+.set-space-more>summary::-webkit-details-marker{display:none}
+.set-space-more[open]>summary,.set-space-more>summary:hover{background:var(--fill-soft,#f3f5f9);color:var(--text-2)}
+.set-space-menu{
+  position:absolute;right:0;top:38px;z-index:20;min-width:150px;padding:6px;
+  background:var(--card-bg);border:1px solid var(--border);border-radius:12px;
+  box-shadow:0 12px 28px rgba(15,20,32,.16);display:flex;flex-direction:column;gap:2px;
+}
+.set-space-menu .set-btn{justify-content:flex-start;text-align:left;border:none;background:transparent}
+.set-space-menu .set-btn:hover:not(:disabled){background:var(--fill-soft,#f3f5f9)}

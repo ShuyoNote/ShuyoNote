@@ -407,7 +407,7 @@ describe("设置-空间 · owner 挑的四条（编号／IP／可见切换入口
     const en = readFileSync(resolve(HERE, "../i18n/locales/en.ts"), "utf8");
     expect(zh, "zh 词条里没有「切换」").toMatch(/spacesHint:\s*"[^"]*切换/);
     expect(en, "en 词条里没有 Switch（⛔ 只改 zh 会造出不一致 ✗）").toMatch(
-      /spacesHint:\s*"Switch \/ colors \/ delete \/ migrate"/,
+      /spacesHint:\s*"Switch \/ colors \/ encryption \/ migrate \/ delete"/,
     );
   });
 });

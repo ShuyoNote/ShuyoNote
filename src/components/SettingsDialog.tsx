@@ -206,7 +206,7 @@ function SpaceSecurityBanner() {
   const encryptedName = spaces.find((s) => s.id === activeId)?.name ?? "当前空间";
   if (!activeSpaceEncrypted && !bag?.has_material) return null;
   return (
-    <section className="set-section set-space-security">
+    <section className="set-section set-space-security set-security-card">
       {activeSpaceEncrypted && (
         <>
           <div className="set-section-title">会话锁定（加密空间）</div>
@@ -435,6 +435,7 @@ function SpacesPane() {
                       {active && <span className="set-tag">当前</span>}
                     </div>
                     <div className="set-space-meta">
+                      <span className="set-space-scope">个人空间 · 仅附近设备直连</span>
                       {/* ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）——与**侧栏切换器**同一格读数、
                           同一个映射（`spaceCryptoBadge` ✓）⇒ "两处一致"是**结构性**的 ✓。
                           ⚠️ 只显示**文字**（⛔ 不只靠颜色 ✗）；读数拿不到 ⇒ 不显示 ✓。 */}
@@ -462,52 +463,46 @@ function SpacesPane() {
                       ⚠️ ⭐ **必须 `stopPropagation`** ✗ —— 整行本来就 `onClick={pick}` ✓
                       ⇒ 不拦就会**切两次**（自己那次 ＋ 冒泡那次 ✓）；与「配色」「删除」同一处理 ✓。
                       ⚠️ **当前那一行不显示** ✓（它已经在那儿了，再给个"切过去"很怪 ✓）。 */}
-                  {!active && (
-                    <button
-                      className="set-space-switch set-btn"
-                      title={`切换到「${s.name}」`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void pick(s.id);
-                      }}
-                    >
-                      切换
-                    </button>
-                  )}
-                  <button
-                    className={`set-btn${secViews[s.id]?.encrypted_on_disk || s.encrypted_on_disk ? " is-danger-ghost" : ""}`}
-                    disabled={busy}
-                    title={secViews[s.id]?.key_available === false ? "先解锁钥匙袋才能关闭加密" : undefined}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const enc = secViews[s.id]?.encrypted_on_disk ?? s.encrypted_on_disk;
-                      openCrypto(s.id, s.name, enc ? "disable" : "enable");
-                    }}
-                  >
-                    {secViews[s.id]?.encrypted_on_disk || s.encrypted_on_disk ? "关闭加密…" : "开启加密…"}
-                  </button>
-                  <button
-                    className={`set-btn${colorFor === s.id ? " is-on" : ""}`}
-                    /* ⛔ 配色不切空间：点完只是展开色板（冒泡上去就变成"顺手切走" ✗） */
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setColorFor((c) => (c === s.id ? null : s.id));
-                    }}
-                  >
-                    配色
-                  </button>
-                  <button
-                    className="set-btn is-danger-ghost"
-                    disabled={busy || spaces.length <= 1 || active}
-                    title={active ? "当前空间不可删除，请先切换到别的空间" : spaces.length <= 1 ? "至少保留一个空间" : "删除该空间"}
-                    /* ⛔ 删除**绝不**先切过去（那会"切完再删" —— 灾难 ✓） */
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void doRemove(s.id, s.name);
-                    }}
-                  >
-                    删除
-                  </button>
+                  <details className="set-space-more" onClick={(e) => e.stopPropagation()}>
+                    <summary aria-label={`${s.name} 的更多操作`} title="更多操作">⋯</summary>
+                    <div className="set-space-menu">
+                      {!active && (
+                        <button
+                          className="set-space-switch set-btn"
+                          title={`切换到「${s.name}」`}
+                          onClick={(e) => { e.stopPropagation(); void pick(s.id); }}
+                        >
+                          切换
+                        </button>
+                      )}
+                      <button
+                        className={`set-btn${secViews[s.id]?.encrypted_on_disk || s.encrypted_on_disk ? " is-danger-ghost" : ""}`}
+                        disabled={busy}
+                        title={secViews[s.id]?.key_available === false ? "先解锁钥匙袋才能关闭加密" : undefined}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const enc = secViews[s.id]?.encrypted_on_disk ?? s.encrypted_on_disk;
+                          openCrypto(s.id, s.name, enc ? "disable" : "enable");
+                        }}
+                      >
+                        {secViews[s.id]?.encrypted_on_disk || s.encrypted_on_disk ? "关闭加密…" : "开启加密…"}
+                      </button>
+                      <button
+                        className={`set-btn${colorFor === s.id ? " is-on" : ""}`}
+                        onClick={(e) => { e.stopPropagation(); setColorFor((c) => (c === s.id ? null : s.id)); }}
+                      >
+                        配色
+                      </button>
+                      <button
+                        className="set-btn is-danger-ghost"
+                        disabled={busy || spaces.length <= 1 || active}
+                        title={active ? "当前空间不可删除，请先切换到别的空间" : spaces.length <= 1 ? "至少保留一个空间" : "删除该空间"}
+                        onClick={(e) => { e.stopPropagation(); void doRemove(s.id, s.name); }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </details>
                 </div>
                 {colorFor === s.id && (
                   <div className="set-space-colors">
