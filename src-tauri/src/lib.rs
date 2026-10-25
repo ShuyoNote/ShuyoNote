@@ -1327,3 +1327,45 @@ mod capability_scope_tests {
     }
 }
 
+/// ⭐⭐ **2026-10-25（数据面 Step 2a 判据）**：**`iroh` 只在 `--features relay` 里带**（owner 2026-10-25 拍）。
+///
+/// 为什么判在 `Cargo.toml` 上而不是判 `cfg!`：
+/// `cfg!(feature = "relay")` 在默认测试构建里**恒为假**（那只是"当前这次构建"），
+/// 判它等于什么都没判；真正的风险是**后人把 `relay` 加进 `default = [...]`** ——
+/// 那会让默认产物凭空多出一整套 QUIC/打洞依赖（体积与编译时间），而所有测试照绿。
+///
+/// **变异**：把 `relay` 写进 `default = ["sm-crypto", "relay"]` ⇒ 第一条红；
+/// 删掉 `iroh` 那行的 `optional = true` ⇒ 第二条红。
+#[cfg(test)]
+mod relay_feature_tests {
+    const MANIFEST: &str = include_str!("../Cargo.toml");
+
+    #[test]
+    fn the_relay_feature_is_not_in_the_default_set() {
+        let line = MANIFEST
+            .lines()
+            .find(|l| l.trim_start().starts_with("default ="))
+            .expect("Cargo.toml 里必须有 `default = [...]`");
+        assert!(
+            !line.contains("relay"),
+            "owner 2026-10-25 拍：`iroh` 只在 `--features relay` 里带 ⇒ `default` 不许含 relay：{line}"
+        );
+    }
+
+    #[test]
+    fn the_iroh_dependency_is_optional() {
+        let line = MANIFEST
+            .lines()
+            .find(|l| l.trim_start().starts_with("iroh = "))
+            .expect("Cargo.toml 里必须有 `iroh = { ... }`（隧道要它的 Endpoint）");
+        assert!(
+            line.contains("optional = true"),
+            "`iroh` 必须 optional（否则默认构建也会编它）：{line}"
+        );
+        assert!(
+            line.contains("=1.3.0"),
+            "`iroh` 版本要与 `iroh-relay` 钉同一版（=1.3.0），否则隧道版本头对不上：{line}"
+        );
+    }
+}
+

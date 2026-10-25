@@ -1,12 +1,17 @@
 # 跨网中继「数据面」最小实现方案（2026-10-25）
 
-> **状态**：**实施中 · Step 1b 已做（4 个 JSON 调用点全收敛；只剩附件流式那 1 处）**
-> —— `Endpoint`／`LanEndpoint` 已立；`pull_from_peer`／`fetch_peer_manifest`／`fetch_peer_keyring`／
+> **状态**：**实施中 · Step 2a 已做**（Step 1 全做，只剩附件流式那 1 处；`iroh` 依赖已按 owner 拍的形态接上）
+> —— **Step 1**：`Endpoint`／`LanEndpoint` 已立；`pull_from_peer`／`fetch_peer_manifest`／`fetch_peer_keyring`／
 > `fetch_peer_page` **全部只认端点**（`&dyn Endpoint`），reqwest 与 `peer.base` 收进 `LanEndpoint`。
 > ⛔ **剩下 1 处没迁**：**附件字节**那条（返回 `reqwest::Response`，是**流式**）——
 > 形状（要不要 `get_stream`）还没定，⛔ 不顺手改成整包读入（那会把大附件全读进内存）。
+> **Step 2a**：`iroh = { version = "=1.3.0", optional = true }` ＋ `relay = ["dep:iroh"]`（owner 2026-10-25 拍：
+> **只在 `--features relay` 里带**）⇒ 默认依赖树**没有** `iroh v`（读数：默认 1726 行 / 开 relay 1827 行，差 101 行
+> 就是 iroh 那棵子树），`--features relay` 编得过（46 秒）。**Step 2b（隧道本体）未做**。
 > **证据**：`src-tauri/src/mesh_endpoint.rs` ／ 判据 `mesh::tests::a_fake_endpoint_is_enough_for_the_manifest_call`
-> ／ `mesh::tests::a_fake_endpoint_is_enough_for_the_pull_call` ／ `mesh::tests` **69 绿** ＋ `sync::tests` **88 绿**。
+> ／ `mesh::tests::a_fake_endpoint_is_enough_for_the_pull_call` ／ `mesh::tests` **69 绿** ＋ `sync::tests` **88 绿**
+> ／ `lib.rs::relay_feature_tests`（2 条：`relay` 不在 `default`、`iroh` 必须 optional ＋ 钉 =1.3.0；
+> **变异看过红**：把 `relay` 写进 `default` ⇒ 第一条红并印出原话）。
 > 依据：`docs/plans/2026-10-24-personal-multi-space-lan-sync-plan.md` §四（传输/发现抽象层）／
 > `src-tauri/src/relay_client.rs` 头注（第 1 期已做与未做）／`src/lib/platform/commands.ts`（前端两格已接线）。
 > ⚠️ 本文**不复述**中继仓的规格正文（专有仓 `repos/shuyonote-relay`），也不引用其实现。
