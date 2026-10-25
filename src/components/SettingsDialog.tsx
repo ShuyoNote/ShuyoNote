@@ -1362,7 +1362,7 @@ function AccountPane() {
     <>
       <section className="set-section">
         <div className="set-section-title">本机设备</div>
-        <div className="set-row acct-device-row">
+        <div className="set-row acct-device-row acct-device-stack">
           <div className="set-row-text">
             <div className="set-row-name">设备名</div>
             <div className="set-row-sub">

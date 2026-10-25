@@ -27603,3 +27603,8 @@ button.mset-row:focus-visible {
 .acct-device-edit .set-input{height:34px;font-size:12px}
 .acct-device-edit .set-btn{height:34px;min-width:58px;padding:0 12px;font-size:12px}
 .set-section:has(.acct-device-row) .set-section-title{margin-bottom:2px}
+/* ⭐ 2026-10-25 owner：设备名输入＋保存**单独一行**（标签/说明在上，控件在下） */
+.acct-device-row.acct-device-stack{flex-direction:column;align-items:stretch;gap:8px}
+.acct-device-stack .acct-device-edit{width:100%;max-width:none;gap:8px}
+.acct-device-stack .acct-device-edit .set-input{flex:1 1 auto}
+.acct-device-stack .acct-device-edit .set-btn{flex:0 0 auto}
