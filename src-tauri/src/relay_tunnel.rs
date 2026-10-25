@@ -711,7 +711,17 @@ pub mod iroh_client {
                 if let Err(e) = super::write_reply(&mut send, &super::TunnelReply { status: code, body }).await {
                     eprintln!("[relay] ⚠️ 服务侧：写回应失败（{e}）");
                 }
+                // ⭐⭐ **2026-10-25（真机：请求已经到了对面、我方却 `读回应失败：connection lost`）**：
+                //   对面日志逐字有 `服务侧收到：GET /mesh/pull?…（头 4 个）` ⇒ 请求**到了**，
+                //   但我方读回应时连接已断。原因是这里 `send.finish()` 之后**任务立刻结束**、
+                //   `conn` 随之被丢弃 ⇒ QUIC 连接被**硬关**，回应可能还没刷出去。
+                //   ⇒ finish 之后**等对端把这条流读完/连接关掉**（最多 5 秒，⛔ 不无限等）。
                 let _ = send.finish();
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    conn.closed(),
+                )
+                .await;
             });
         }
     }
