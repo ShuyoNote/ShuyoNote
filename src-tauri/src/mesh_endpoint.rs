@@ -201,12 +201,11 @@ async fn relay_endpoint_for(
             peer.device_id, node_id
         )
     })?;
-    if route.addrs.is_empty() {
-        return Err(format!(
-            "对端 {} 的路线没有可达地址：跨网发现层还没做（Step 3-2）⇒ 只有 node id 连不上",
-            peer.device_id
-        ));
-    }
+    // ⚠️ **2026-10-25（真机：mac 报「路线没有可达地址…Step 3-2」）**：这里原有一道
+    //   `if route.addrs.is_empty() { return Err(...) }` 的**早检查**，它只看 `addrs`（直连 IP）
+    //   ⇒ 只要路线里是"**只填 relay、不填 IP**"（异网的正确写法），就会被这条直接拒掉，
+    //   下面那段"把 relay 也塞进 EndpointAddr"的逻辑永远走不到 ✗。
+    //   ⇒ 删掉它：**统一由下面 `addrs.is_empty()` 那条判**（直连与 relay 都算可达）。
     // ⭐ 2026-10-25（异网寻址）：直连地址 ＋ **中继地址**都要带进 `EndpointAddr`；
     //   只带 IP 的话，两台机器不在同一网络就互相找不到。
     let mut addrs: std::collections::BTreeSet<iroh::TransportAddr> = route
