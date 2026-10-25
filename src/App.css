@@ -27535,3 +27535,5 @@ button.mset-row:focus-visible {
 .set-space-head .set-space-seg{align-self:center;height:36px;align-items:center}
 .set-space-menu .set-btn{display:flex;align-items:center;gap:8px}
 .set-space-menu .set-btn svg{flex:0 0 auto}
+/* ⭐ 2026-10-25 owner：筛选空间控件再窄一点 */
+.set-space-head .set-space-filter-wrap{flex:0 0 168px;width:168px}
