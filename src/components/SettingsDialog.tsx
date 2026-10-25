@@ -276,6 +276,7 @@ function SpacesPane() {
   const [cryptoAck, setCryptoAck] = useState(false);
   const [cryptoBusy, setCryptoBusy] = useState(false);
   const [cryptoErr, setCryptoErr] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const loadSec = useCallback(async () => {
     if (!isDesktopPlatform()) return;
@@ -555,12 +556,21 @@ function SpacesPane() {
         </div>
       </section>
 
-      {/* ⭐ 合并第一步：按空间加密/配对仍然保留，但收进「高级」折叠里（默认收起）。
-          下一步再把「开启/关闭加密」搬到每一行的 ⋯ 里，这里就只留配对/恢复。 */}
-      <details className="set-section set-security-fold">
-        <summary>加密与配对（高级）</summary>
-        <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
-      </details>
+      {/* ⭐ 配对/恢复之类低频项不再占正文（设计稿没有这一块）；收进一个入口里。 */}
+      <button className="set-space-advanced-link" onClick={() => setAdvancedOpen(true)}>
+        配对 / 恢复旧设备…
+      </button>
+      {advancedOpen && (
+        <div className="set-crypto-scrim" onClick={() => setAdvancedOpen(false)}>
+          <div className="set-crypto-dialog set-advanced-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="set-crypto-head">
+              <div className="set-crypto-title">加密 · 配对与恢复</div>
+              <button className="set-close" aria-label="关闭" onClick={() => setAdvancedOpen(false)}>×</button>
+            </div>
+            <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
+          </div>
+        </div>
+      )}
 
       {cryptoDlg && (
         <div className="set-crypto-scrim" onClick={closeCrypto}>

@@ -27468,3 +27468,18 @@ button.mset-row:focus-visible {
 .set-space-card.is-active{border-color:#dbe7ff;background:#f5f9ff;box-shadow:inset 3px 0 0 var(--accent)}
 .set-space-crypto.is-enc{color:#0b802f;background:#e8faec;border-color:#c9f0d3}
 .set-space-crypto.is-plain{color:var(--text-2);background:#f2f3f5}
+/* ⭐ 2026-10-25 按效果图：chips 不缩、单空间迁移合成一条、低频项收进入口 */
+.set-security-chips{flex-wrap:wrap;overflow:visible}
+.set-security-chips span{flex:0 0 auto;max-width:100%;white-space:nowrap;overflow:visible;text-overflow:clip}
+.set-migrate{
+  display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--border);
+  border-radius:12px;background:var(--card-bg);overflow:hidden;
+}
+.set-migrate-card{border:none;border-radius:0;padding:14px 16px;background:transparent}
+.set-migrate-card + .set-migrate-card{border-left:1px solid var(--border)}
+.set-space-advanced-link{
+  border:none;background:transparent;color:var(--text-faint);font-size:11px;
+  padding:4px 2px;text-align:left;cursor:pointer;width:max-content;margin-top:4px
+}
+.set-space-advanced-link:hover{color:var(--text-2);text-decoration:underline}
+.set-advanced-dialog{max-height:min(72vh,720px);overflow:auto;width:min(720px,calc(100vw - 48px))}
