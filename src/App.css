@@ -27519,3 +27519,11 @@ button.mset-row:focus-visible {
 .set-space-list .set-space-card.is-active:last-child{border-radius:0 0 18px 18px}
 .set-space-more[open]{z-index:50}
 .set-space-menu{z-index:60}
+
+/* ⭐ 2026-10-25 owner：明文/已加密要**对齐**（同一条竖线），不要再跟着名字长度漂 */
+.set-space-row .set-row-text{flex:1 1 auto;min-width:0}
+.set-space-status{
+  flex:0 0 84px;width:84px;display:flex;align-items:center;justify-content:flex-start;
+}
+.set-space-status .set-space-crypto,.set-space-status .set-space-state{white-space:nowrap}
+.set-space-row .set-space-more{margin-left:0}

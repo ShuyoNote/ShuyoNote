@@ -423,19 +423,7 @@ function SpacesPane() {
                     <div className="set-row-name">
                       {s.name}
                       {active && <span className="set-tag">当前</span>}
-                      {(() => {
-                        const onDisk = secViews[s.id]?.encrypted_on_disk ?? s.encrypted_on_disk;
-                        const crypto = spaceCryptoBadge(onDisk);
-                        if (crypto.show) {
-                          return (
-                            <span className="set-space-crypto is-enc" title={crypto.title} aria-label={crypto.title}>
-                              {crypto.label}
-                            </span>
-                          );
-                        }
-                        // 读数拿不到（undefined）⇒ 不标；明确明文才给「明文」
-                        return onDisk === false ? <span className="set-space-state is-plain">明文</span> : null;
-                      })()}
+
                     </div>
                     <div className="set-space-meta">
                       <span className="set-space-scope">个人空间 · 仅附近设备直连</span>
@@ -461,6 +449,21 @@ function SpacesPane() {
                       ⚠️ ⭐ **必须 `stopPropagation`** ✗ —— 整行本来就 `onClick={pick}` ✓
                       ⇒ 不拦就会**切两次**（自己那次 ＋ 冒泡那次 ✓）；与「配色」「删除」同一处理 ✓。
                       ⚠️ **当前那一行不显示** ✓（它已经在那儿了，再给个"切过去"很怪 ✓）。 */}
+                  <div className="set-space-status">
+                        {(() => {
+                          const onDisk = secViews[s.id]?.encrypted_on_disk ?? s.encrypted_on_disk;
+                          const crypto = spaceCryptoBadge(onDisk);
+                          if (crypto.show) {
+                            return (
+                              <span className="set-space-crypto is-enc" title={crypto.title} aria-label={crypto.title}>
+                                {crypto.label}
+                              </span>
+                            );
+                          }
+                          // 读数拿不到（undefined）⇒ 不标；明确明文才给「明文」
+                          return onDisk === false ? <span className="set-space-state is-plain">明文</span> : null;
+                        })()}
+                  </div>
                   <details className="set-space-more" onClick={(e) => e.stopPropagation()}>
                     <summary aria-label={`${s.name} 的更多操作`} title="更多操作">⋯</summary>
                     <div className="set-space-menu">
