@@ -277,7 +277,6 @@ function SpacesPane() {
   const [cryptoAck, setCryptoAck] = useState(false);
   const [cryptoBusy, setCryptoBusy] = useState(false);
   const [cryptoErr, setCryptoErr] = useState("");
-  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const loadSec = useCallback(async () => {
     if (!isDesktopPlatform()) return;
@@ -559,22 +558,6 @@ function SpacesPane() {
         </div>
       </section>
 
-      {/* ⭐ 配对/恢复之类低频项不再占正文（设计稿没有这一块）；收进一个入口里。 */}
-      <button className="set-space-advanced-link" onClick={() => setAdvancedOpen(true)}>
-        配对 / 恢复旧设备…
-      </button>
-      {advancedOpen && (
-        <div className="set-crypto-scrim" onClick={() => setAdvancedOpen(false)}>
-          <div className="set-crypto-dialog set-advanced-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="set-crypto-head">
-              <div className="set-crypto-title">加密 · 配对与恢复</div>
-              <button className="set-close" aria-label="关闭" onClick={() => setAdvancedOpen(false)}>×</button>
-            </div>
-            <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
-          </div>
-        </div>
-      )}
-
       {cryptoDlg && (
         <div className="set-crypto-scrim" onClick={closeCrypto}>
           <div className="set-crypto-dialog" onClick={(e) => e.stopPropagation()}>
@@ -624,6 +607,7 @@ function SpacesPane() {
           </div>
         </div>
       )}
+
     </>
   );
 }
