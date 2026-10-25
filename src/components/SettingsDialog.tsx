@@ -1362,11 +1362,11 @@ function AccountPane() {
     <>
       <section className="set-section">
         <div className="set-section-title">本机设备</div>
-        <div className="set-row">
+        <div className="set-row acct-device-row">
           <div className="set-row-text">
             <div className="set-row-name">设备名</div>
             <div className="set-row-sub">
-              附近设备、配对列表里显示的名字。留空 ⇒ 回落到主机名，再没有就是「未命名设备」。
+              附近设备与配对列表里显示的名字；留空 ⇒ 回落主机名，再没有就是「未命名设备」。
             </div>
           </div>
           <div className="acct-device-edit">

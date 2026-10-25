@@ -27595,3 +27595,11 @@ button.mset-row:focus-visible {
 .acct-device-edit .set-btn{flex:0 0 auto;min-width:64px;white-space:nowrap;padding-left:14px;padding-right:14px}
 .acct-device-edit{width:min(420px,52%)}
 .acct-device-edit .set-input{height:38px}
+/* ⭐ 2026-10-25 owner：本机设备整块再收紧（少留白、控件同高、按钮靠右） */
+.acct-device-row{padding:8px 0;min-height:0;align-items:center;gap:16px}
+.acct-device-row .set-row-text{gap:2px}
+.acct-device-row .set-row-sub{line-height:1.45}
+.acct-device-edit{width:min(380px,54%);gap:6px}
+.acct-device-edit .set-input{height:34px;font-size:12px}
+.acct-device-edit .set-btn{height:34px;min-width:58px;padding:0 12px;font-size:12px}
+.set-section:has(.acct-device-row) .set-section-title{margin-bottom:2px}
