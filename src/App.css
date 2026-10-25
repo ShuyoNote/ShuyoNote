@@ -27574,3 +27574,5 @@ button.mset-row:focus-visible {
 .backup-auto-lastrun{font-size:11.5px;color:var(--text-2);line-height:1.6;border-top:1px solid var(--border);padding-top:10px}
 .backup-auto-lastrun-hint{color:var(--text-faint);margin-top:4px}
 .attachment-prefetch{font-size:11px;color:var(--text-faint);margin-left:8px}
+.acct-device-edit{display:flex;align-items:center;gap:8px;flex:0 0 auto;width:min(360px,48%)}
+.acct-device-edit .set-input{flex:1 1 auto;min-width:0}

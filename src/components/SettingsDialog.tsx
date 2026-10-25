@@ -1062,6 +1062,31 @@ function AccountPane() {
   // 邀请码（每组织一个被生成的码）与「凭码加入」输入。
   const [inviteCodes, setInviteCodes] = useState<Record<string, string>>({});
   const [joinCode, setJoinCode] = useState("");
+  // ⭐ 2026-10-25（owner：设备未命名）：“本机设备名”原先没有任何入口 ⇒ 补一个。
+  const [deviceName, setDeviceName] = useState("");
+  const [deviceNameLoaded, setDeviceNameLoaded] = useState(false);
+  const [deviceNameSaving, setDeviceNameSaving] = useState(false);
+  const [deviceNameStatus, setDeviceNameStatus] = useState("");
+  useEffect(() => {
+    let alive = true;
+    void api.getDeviceName()
+      .then((n) => { if (alive) { setDeviceName(n ?? ""); setDeviceNameLoaded(true); } })
+      .catch(() => { if (alive) setDeviceNameLoaded(true); });
+    return () => { alive = false; };
+  }, []);
+  const saveDeviceName = async () => {
+    setDeviceNameSaving(true);
+    setDeviceNameStatus("");
+    try {
+      const effective = await api.setDeviceName(deviceName);
+      setDeviceNameStatus(`已保存；当前生效名：${effective}`);
+      toast(`设备名已更新：${effective}`, "success");
+    } catch (e) {
+      setDeviceNameStatus(`保存失败：${e}`);
+    } finally {
+      setDeviceNameSaving(false);
+    }
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -1335,6 +1360,33 @@ function AccountPane() {
 
   return (
     <>
+      <section className="set-section">
+        <div className="set-section-title">本机设备</div>
+        <div className="set-row">
+          <div className="set-row-text">
+            <div className="set-row-name">设备名</div>
+            <div className="set-row-sub">
+              附近设备、配对列表里显示的名字。留空 ⇒ 回落到主机名，再没有就是「未命名设备」。
+            </div>
+          </div>
+          <div className="acct-device-edit">
+            <input
+              className="set-input"
+              value={deviceName}
+              disabled={!deviceNameLoaded || deviceNameSaving}
+              placeholder="未命名设备"
+              maxLength={40}
+              onChange={(e) => setDeviceName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void saveDeviceName(); }}
+            />
+            <button className="set-btn" disabled={!deviceNameLoaded || deviceNameSaving} onClick={() => void saveDeviceName()}>
+              {deviceNameSaving ? "保存中…" : "保存"}
+            </button>
+          </div>
+        </div>
+        {deviceNameStatus && <div className="set-hint">{deviceNameStatus}</div>}
+      </section>
+
       <section className="set-section">
         <div className="set-section-title">当前组织账号</div>
         {authed ? (
