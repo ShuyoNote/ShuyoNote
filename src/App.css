@@ -27717,3 +27717,15 @@ button.mset-row:focus-visible {
   padding-bottom:32px;
   scrollbar-gutter:stable;
 }
+
+/* ⭐ 2026-10-25 真因（owner 两次复报）：`.sync-popover.is-sync` 是 **flex 列**；
+   内容区虽然被我们做成了滚动层，但它的直接子项（尤其 `.sync-advanced`）默认 `flex-shrink:1`
+   ⇒ 展开的高级卡被**压扁**，再由它自己的 `overflow:hidden` 裁掉 ⇒ 外层怎么滚都看不到。
+   ⇒ 子项一律不许收缩，让内容真正溢出到滚动层里。 */
+.main > .sync-panel > .sync-popover.is-inline > * {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+.sync-popover.is-inline > .sync-advanced[open] {
+  overflow: visible;
+}
