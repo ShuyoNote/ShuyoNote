@@ -26532,6 +26532,15 @@ body.is-plugin-panel-open .main {
   box-shadow: none;
   background: transparent;
   padding: 24px 28px;
+  /* ⭐ 2026-10-25（owner：「高级面板被遮挡了」）：内嵌这档**自己滚**。
+     ⚠️ 之前这里只有 `max-height: none; height: auto` ⇒ 内容比容器高时，底部（「高级」折叠）
+        会被父级 `overflow: hidden` 直接裁掉、且**滚不到**（不是"被别的元素盖住"，是裁切）。
+     修法：把它变成父 flex（`.sync-panel:has(> .is-inline)`）里**可收缩的滚动区**：
+       `flex: 1 1 auto` ＋ `min-height: 0`（经典坑：不写就撑破父级）＋ `overflow-y: auto`。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 /* ⭐ 里面那几层也跟着铺满 ✓（⭐ 只在这档里 ✓）。 */
 .sync-popover.is-inline .sync-group,
