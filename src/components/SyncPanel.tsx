@@ -1455,14 +1455,17 @@ export function SyncPanel({
                   ⇒ ⭐ 没有既有的 `setView` 路可接 ✓ ⇒ 按 Lead 的退路只放按钮 ✓（跳转留下一片 ✓）。 */}
               {/* ⭐ **2026-10-25（owner：「去开加密没有动作」）**：这颗按钮此前**没有 onClick** ——
                   当时按"本片只放按钮、不做跳转"留下的空片 ⇒ 点了一点反应都没有（假按钮）。
-                  现在接**既有**那条路：`openSettings("security")`（`SettingsDialog` 的「安全」页里就是
-                  `SpacePrivacySection`，按空间逐个开加密）＋ 收起这个浮层（`contentOnly` 档不关，
-                  它本来就是内容区的一份）。⛔ 没有新命令、没有新面板。 */}
+                  现在接**既有**那条路：`openSettings("spaces")` —— `SettingsDialog` 的「空间」页
+                  （切换 / 配色 / 加密 / 迁移 / 删除；每行就是那个空间的加密入口）。
+                  ⚠️ **2026-10-25 二次修正（owner 截图）**：先接到「安全」页是**接错了** ——
+                  那一页是"会话锁定 ＋ 按空间加密"，而 owner 要的是**空间列表那一页**。
+                  浮层形态下顺手 `close()` 收起自己；`contentOnly`（左栏内容区）不关。
+                  ⛔ 没有新命令、没有新面板。 */}
               <button
                 className="sync-btn"
                 data-testid="plaintext-go-encrypt"
                 onClick={() => {
-                  useEditorStore.getState().openSettings("security");
+                  useEditorStore.getState().openSettings("spaces");
                   if (!contentOnly) close();
                 }}
               >

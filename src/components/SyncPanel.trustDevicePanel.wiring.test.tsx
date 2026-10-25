@@ -163,7 +163,8 @@ describe("P-3e-1：未加密空间 ⇒ 主动提醒（只说个数）", () => {
     expect(btn, "⭐ 那行提醒里要有一颗「去开加密」✓（今天【红】）").toBeTruthy();
     expect(btn!.textContent ?? "", "⭐ 按钮文案逐字 ✓").toContain("去开加密");
     // ⭐ **2026-10-25（owner：「去开加密没有动作」）**：这颗按钮此前**没有 onClick**（假按钮）。
-    //   判据：点它必须真的打开「设置 · 安全」（`SpacePrivacySection` 挂在那页）。
+    //   判据：点它必须真的打开「设置 · 空间」那一页（每行就是那个空间的加密入口）。
+    //   ⚠️ 2026-10-25 二次修正：先接的「安全」页是**接错了**（owner 截图：要的是空间列表那页）。
     btn!.click();
     expect(
       useEditorStore.getState().settingsOpen,
@@ -171,8 +172,8 @@ describe("P-3e-1：未加密空间 ⇒ 主动提醒（只说个数）", () => {
     ).toBe(true);
     expect(
       useEditorStore.getState().settingsTab,
-      "要落到「安全」那一页",
-    ).toBe("security");
+      "要落到「空间」那一页（切换 / 配色 / 加密 / 迁移 / 删除）",
+    ).toBe("spaces");
   });
 });
 
