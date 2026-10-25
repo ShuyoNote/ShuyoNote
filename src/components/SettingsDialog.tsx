@@ -1365,7 +1365,14 @@ function AccountPane() {
           <div className="set-row-text">
             <div className="set-row-name">设备名</div>
             <div className="set-row-sub">
-              附近设备与配对列表里显示的名字；留空 ⇒ 回落主机名，再没有就是「未命名设备」。
+              {/* ⚠️ **2026-10-25（owner：「为何是未命名设备？而 mac 发现的是 ZHAIDELL」）**：
+                  原文案 ＋ 空输入的 placeholder 都写着「未命名设备」⇒ 看着像"本机没名字"；
+                  但实际广播的是**系统主机名**（这台是 `ZhaiDELL`）—— 那只是**三档回退的最后一档**
+                  （用户没设 ＋ 主机名也读不到时才会出现）。⇒ 把三档说清，⛔ 不让 placeholder 冒充当前名字。 */}
+              附近设备与配对列表里显示的名字。
+              <br />
+              留空 ⇒ 用的是<b>这台电脑的系统名</b>（这台是 <code>ZhaiDELL</code>）；
+              只有系统名也读不到时，才会显示「未命名设备」。
             </div>
           </div>
           <div className="acct-device-edit">
@@ -1373,7 +1380,7 @@ function AccountPane() {
               className="set-input"
               value={deviceName}
               disabled={!deviceNameLoaded || deviceNameSaving}
-              placeholder="未命名设备"
+              placeholder="留空＝用系统名"
               maxLength={40}
               onChange={(e) => setDeviceName(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") void saveDeviceName(); }}
