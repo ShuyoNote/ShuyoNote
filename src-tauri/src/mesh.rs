@@ -1625,7 +1625,10 @@ pub async fn round(
         .ok()
         .and_then(|g| g.path().map(|p| crate::security::space_db_is_encrypted(std::path::Path::new(p))))
         .unwrap_or(false);
-    let candidates = mesh_peers_by_name(space_id, &space_name, my_device, peers, local_encrypted);
+    let mut candidates = mesh_peers_by_name(space_id, &space_name, my_device, peers, local_encrypted);
+    // ⭐ 2026-10-25（Step 3-2）：**把跨网路线表里的对端也喂进本轮**
+    //   ⚠️ 默认构建什么都不做（跨网只有 --features relay 才可用）；坏了只打日志、不打断本轮。
+    crate::relay_route::append_virtual_peers(&mut candidates);
     if candidates.is_empty() {
         return Ok(MeshRoundReport {
             enabled: true,

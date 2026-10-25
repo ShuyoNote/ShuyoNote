@@ -105,6 +105,60 @@ struct RawEntry {
     addrs: Vec<String>,
 }
 
+/// 把路线表里的设备变成**网格对端**（纯函数，可单测）：
+/// * 已在局域网候选里的设备**跳过**（同一设备不该被拉两次）
+/// * base 一律写成 `relay:<node_id>`（由 `mesh_endpoint::endpoint_for_peer` 认这个前缀）
+pub fn virtual_peers_from(
+    routes: &[RelayRoute],
+    already: &std::collections::HashSet<String>,
+) -> Vec<crate::mesh::MeshPeer> {
+    routes
+        .iter()
+        .filter(|r| !already.contains(&r.device_id))
+        .map(|r| crate::mesh::MeshPeer {
+            device_id: r.device_id.clone(),
+            base: format!("{}{}", crate::mesh_endpoint::RELAY_BASE_PREFIX, r.node_id),
+        })
+        .collect()
+}
+
+/// 回合装配用：把路线表里的对端**补进**候选（原地追加）。
+///
+/// ⚠️ **默认构建什么都不做** —— 跨网只有 `--features relay` 才可用，
+/// 否则每轮都会拿着 `relay:` 前缀去撞"没编入跨网"的错误（那是噪音，不是功能）。
+/// ⚠️ 路线表读不了 ⇒ 打一行日志（⛔ 静默吞掉会让人以为"配了却没生效"）。
+pub fn append_virtual_peers(out: &mut Vec<crate::mesh::MeshPeer>) {
+    #[cfg(feature = "relay")]
+    {
+        let routes = match load_routes() {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[mesh] 跨网路线表读不了 ⇒ 本轮不跑跨网：{e}");
+                return;
+            }
+        };
+        if routes.is_empty() {
+            return;
+        }
+        let already: std::collections::HashSet<String> =
+            out.iter().map(|p| p.device_id.clone()).collect();
+        let add = virtual_peers_from(&routes, &already);
+        if !add.is_empty() {
+            eprintln!(
+                "[mesh] 跨网路线表：补了 {} 个对端（{}）",
+                add.len(),
+                add.iter().map(|p| p.device_id.clone()).collect::<Vec<_>>().join("、")
+            );
+            out.extend(add);
+        }
+    }
+    #[cfg(not(feature = "relay"))]
+    {
+        let _ = out;
+        // 默认构建：跨网不可用 ⇒ 不往候选里塞 `relay:` 对端（否则每轮都是报错噪音）
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,6 +201,30 @@ mod tests {
         let raw = format!(r#"{{"dev-y": {{"node_id": "{OK_ID}", "addrs": ["192.168.0.105"]}}}}"#);
         let err = parse_routes(&raw).expect_err("缺端口必须报错");
         assert!(err.contains("dev-y") && err.contains("IP:port"), "{err}");
+    }
+
+    /// ⭐ **Step 3-2 判据**：路线表 → 对端的映射（纯函数）
+    /// * 已在局域网候选里的设备**跳过**（⛔ 拉两次）
+    /// * base 必须是 `relay:<node_id>`（由工厂认这个前缀）
+    #[test]
+    fn routesturn_into_virtual_peers_without_duplicating_lan_peers() {
+        let routes = parse_routes(&format!(
+            r#"{{"dev-a": {{"node_id": "{OK_ID}", "addrs": ["192.168.0.5:8788"]}}}}"#
+        ))
+        .unwrap();
+        assert_eq!(virtual_peers_from(&routes, &Default::default()).len(), 1, "空候选 ⇒ 补一个");
+        let seen: std::collections::HashSet<String> =
+            ["dev-a".to_string()].into_iter().collect();
+        assert!(
+            virtual_peers_from(&routes, &seen).is_empty(),
+            "已经在局域网候选里的设备不许重复补"
+        );
+        let peers = virtual_peers_from(&routes, &Default::default());
+        assert_eq!(
+            peers[0].base,
+            format!("{}{}", crate::mesh_endpoint::RELAY_BASE_PREFIX, OK_ID),
+            "base 必须是 relay:<node_id>（工厂靠它挑传输）"
+        );
     }
 
     /// ⭐ 口径②：坏 JSON ⇒ 报错（⛔ 不当成空表）。

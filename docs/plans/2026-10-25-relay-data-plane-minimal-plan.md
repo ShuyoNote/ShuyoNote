@@ -26,7 +26,11 @@
 > 文件不存在＝空表、坏 JSON／坏 node_id／缺端口都**可读报错**） ② `mesh_endpoint::endpoint_for_peer` ——
 > **唯一的"挑传输"处**：`http://…` ⇒ LAN、`relay:<node_id>` ⇒ 隧道（没编入跨网时给可读错误，⛔ 不静默当 LAN）；
 > 两处生产调用点已改成工厂。判据：`relay_route::tests` 5 条 ＋ `a_relay_base_is_not_silently_treated_as_lan`。
-> ⛔ **仍未做**：把路线表**接进回合装配**（后台轮现在只会遍历广播发现到的对端）／许可证门／附件流式／公网跨网真机验收。
+> **Step 3-2（本笔）**：路线表**接进回合装配** —— `round()` 在 `mesh_peers_by_name(...)` 之后调
+> `relay_route::append_virtual_peers(&mut candidates)`（⛔ 默认构建什么都不做；路线表坏了只打一行日志、不打断本轮），
+> 跨网对端以 `relay:<node_id>` 的 base 进候选，由 `endpoint_for_peer` 挑成隧道端点。
+> 判据：`routesturn_into_virtual_peers_without_duplicating_lan_peers`（映射＋去重＋base 形态）。
+> ⛔ **仍未做**：许可证门／附件流式／公网跨网真机验收。
 > **证据**：`src-tauri/src/mesh_endpoint.rs` ／ `src-tauri/src/relay_tunnel.rs`
 > ／ 判据 `mesh::tests::a_fake_endpoint_is_enough_for_the_manifest_call`
 > ／ `mesh::tests::a_fake_endpoint_is_enough_for_the_pull_call` ／ `mesh::tests` **69 绿** ＋ `sync::tests` **88 绿**
