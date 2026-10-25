@@ -137,6 +137,11 @@ pub struct RelayConfig {
     /// 固定 iroh 的 UDP 端口（不给 = 随机，与今天行为一致）。
     #[serde(default)]
     pub udp_port: Option<u16>,
+    /// ⭐ **2026-10-25（真机：热点 NAT 打洞打不通 ⇒ 连接时通时不通）**：
+    /// `true` ⇒ **只走中继**（关掉直连 IP 传输，`clear_ip_transports`）。
+    /// 不给 = 保持今天的默认（直连 ＋ 中继都试）。
+    #[serde(default)]
+    pub relay_only: Option<bool>,
     /// 宽限天数（缺省 [`DEFAULT_GRACE_DAYS`]）。⚠️ **占位**：同上 ✓。
     #[serde(default)]
     pub license_grace_days: Option<i64>,

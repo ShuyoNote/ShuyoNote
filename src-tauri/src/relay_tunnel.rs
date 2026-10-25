@@ -427,6 +427,19 @@ pub mod iroh_tunnel {
         token: Option<&str>,
         udp_port: Option<u16>,
     ) -> Result<iroh::Endpoint, String> {
+        bind_with_relay_full(secret, relay, token, udp_port, false).await
+    }
+
+    /// ⭐ **2026-10-25（真机：热点 NAT 打不通洞 ⇒ 连接时通时不通）**：
+    /// `relay_only=true` ⇒ **只走中继**（关掉直连 IP 传输）。
+    /// ⚠️ 没配中继时这个开关**无意义**（关掉直连就彻底没路了）⇒ 只有配了中继才生效。
+    pub async fn bind_with_relay_full(
+        secret: iroh::SecretKey,
+        relay: Option<&str>,
+        token: Option<&str>,
+        udp_port: Option<u16>,
+        relay_only: bool,
+    ) -> Result<iroh::Endpoint, String> {
         let mut builder = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
             .secret_key(secret)
             .alpns(vec![ALPN.to_vec()]);
@@ -449,6 +462,10 @@ pub mod iroh_tunnel {
                 cfg = cfg.with_auth_token(t.to_string());
             }
             builder = builder.relay_mode(iroh::RelayMode::Custom(iroh::RelayMap::from_iter([cfg])));
+            // ⭐ 只走中继（真机：热点 NAT 打洞打不通 ⇒ 直连尝试超时，表现为"时通时不通"）
+            if relay_only {
+                builder = builder.clear_ip_transports();
+            }
         }
         let ep = builder
             .bind()
@@ -567,7 +584,8 @@ pub mod iroh_client {
             // ⚠️ 客户端（每次拉对端现起的那一个端点）**不绑固定端口**：
             //   固定端口归**服务侧**（`serve_forever` 那一个端点）独占；
             //   这边再绑同一个口必然 `Failed to bind sockets`（真机 15:53 撞到）。
-            let ep = iroh_tunnel::bind_with_relay_on_port(secret, relay_url.as_deref(), lease.as_deref(), None)
+            let relay_only = cfg.as_ref().and_then(|c| c.relay_only).unwrap_or(false);
+            let ep = iroh_tunnel::bind_with_relay_full(secret, relay_url.as_deref(), lease.as_deref(), None, relay_only)
                 .await?;
             // ⭐ 把本机 node id 打出来（对面要把它填进 `relay/peers.json`）
             eprintln!(
@@ -688,7 +706,8 @@ pub mod iroh_client {
         let relay_url = cfg.as_ref().and_then(|c| c.url.clone());
         let lease = cfg.as_ref().and_then(|c| crate::relay_client::token_text(c));
         let udp_port = cfg.as_ref().and_then(|c| c.udp_port);
-        let ep = iroh_tunnel::bind_with_relay_on_port(secret, relay_url.as_deref(), lease.as_deref(), udp_port)
+        let relay_only = cfg.as_ref().and_then(|c| c.relay_only).unwrap_or(false);
+        let ep = iroh_tunnel::bind_with_relay_full(secret, relay_url.as_deref(), lease.as_deref(), udp_port, relay_only)
             .await?;
         // ⚠️ `addrs` 要填的是 **iroh 的 UDP 地址**（QUIC 走 UDP）—— ⛔ 不是网格窗口的 8788。
         //   所以把 UDP 端口一起打出来（别让人去猜、也别去翻 netstat）。
