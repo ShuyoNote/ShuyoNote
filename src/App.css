@@ -27694,3 +27694,26 @@ button.mset-row:focus-visible {
   background:var(--border-strong);border-radius:8px;border:2px solid transparent;background-clip:padding-box;
 }
 .main > .sync-panel > .sync-popover.is-inline::-webkit-scrollbar-thumb:hover{background:var(--text-faint);background-clip:padding-box}
+
+/* ⭐ 2026-10-25 owner 复报「还是不能滚动」：不再依赖 flex 高度链 ——
+   把内容区钉成父级的**绝对定位滚动层**（inset:0），父级只负责给出可用高度。
+   这样无论内容多高、父级 flex 怎么算，滚动容器都恰好等于可视区域。 */
+.main > .sync-panel{
+  position:relative;
+  flex:1 1 auto;
+  min-height:0;
+  height:100%;
+  overflow:hidden;
+}
+.main > .sync-panel > .sync-popover.is-inline{
+  position:absolute;
+  inset:0;
+  width:auto;
+  height:auto;
+  min-height:0;
+  max-height:none;
+  overflow-y:scroll;
+  overscroll-behavior:contain;
+  padding-bottom:32px;
+  scrollbar-gutter:stable;
+}
