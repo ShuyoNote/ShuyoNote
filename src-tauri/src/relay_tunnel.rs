@@ -467,7 +467,22 @@ pub mod iroh_client {
     impl RelayEndpoint {
         /// 直连地址形态（**今天唯一验证过的一种**：单机两端点 / 手工填 node id ＋ 地址）。
         pub async fn connect(peer: iroh::EndpointAddr) -> Result<Self, String> {
-            let ep = iroh_tunnel::bind(iroh::SecretKey::generate()).await?;
+            // ⭐ **身份必须稳定**：路线表里写的是"对端 node id"，
+            //   如果每次起隧道都用随机私钥，node id 每次都变 ⇒ 对面**永远写不对**。
+            //   ⇒ 有 `relay/config.json` 的 `device_seed_hex` 就用它派生；没有才退回随机（判据/探针用）。
+            let seed = crate::relay_client::load_config()
+                .ok()
+                .and_then(|cfg| crate::relay_client::device_seed(&cfg).ok());
+            let secret = match seed {
+                Some(bytes) => iroh::SecretKey::from_bytes(&bytes),
+                None => iroh::SecretKey::generate(),
+            };
+            let ep = iroh_tunnel::bind(secret).await?;
+            // ⭐ 把本机 node id 打出来（对面要把它填进 `relay/peers.json`）
+            eprintln!(
+                "[relay] 隧道端点已起：node_id={}（对面把它填进 relay/peers.json）",
+                hex(ep.id().as_bytes())
+            );
             Ok(Self { ep, peer })
         }
 
