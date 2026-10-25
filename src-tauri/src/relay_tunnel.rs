@@ -515,10 +515,34 @@ pub mod iroh_tunnel {
         peer: iroh::EndpointAddr,
         req: &TunnelRequest,
     ) -> Result<TunnelReply, String> {
-        let conn = ep
-            .connect(peer, ALPN)
+        // ⭐ **2026-10-25（真机：relay 侧两端都 allow，但连接约一半 `timed out`）**：
+        //   mac 拉我们时通时不通；我方服务端同时出现「服务侧收到」与「握手失败（timed out）」。
+        //   ⇒ 单次尝试不重试 ⇒ 整轮直接失败。这里加**有限重试**（3 次、每次 20 秒上限），
+        //     把"一半概率超时"变成"几乎总能连上"；⛔ 不无限重试（那会把一轮拉成几分钟）。
+        let mut last_err = String::new();
+        let mut conn_opt = None;
+        for attempt in 1..=3 {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(20),
+                ep.connect(peer.clone(), ALPN),
+            )
             .await
-            .map_err(|e| format!("连对端失败：{e}"))?;
+            {
+                Ok(Ok(c)) => {
+                    conn_opt = Some(c);
+                    break;
+                }
+                Ok(Err(e)) => {
+                    last_err = format!("{e}");
+                    eprintln!("[relay] 连对端第 {attempt} 次失败（{last_err}），重试…");
+                }
+                Err(_) => {
+                    last_err = "timed out（单次 20 秒）".to_string();
+                    eprintln!("[relay] 连对端第 {attempt} 次超时（20 秒），重试…");
+                }
+            }
+        }
+        let conn = conn_opt.ok_or_else(|| format!("连对端失败：{last_err}"))?;
         let (mut send, mut recv) = conn.open_bi().await.map_err(|e| format!("开流失败：{e}"))?;
         write_request(&mut send, req)
             .await
