@@ -202,6 +202,178 @@ where
 /// 今天验到哪：**同一台机器两个端点直连**（`presets::Minimal` ＋ 直连地址）跑通一次请求
 /// （判据 `two_endpoints_on_one_host_move_one_request`）；
 /// ⛔ **没验**：经**公网中继**跨网（那要两台机器/一条真中继，留给真机验收）。
+/// 分块流式应答的上限：**单块** 64 KB（⛔ 不是整包读入 —— 附件可以几百 MB）。
+pub const STREAM_CHUNK: usize = 64 * 1024;
+
+/// 应答「流式」而不是整包时用的帧（附件那条走这里）：
+///
+/// ```text
+/// 应答： status "\n"  (chunk_len "\n" chunk)*  "0\n"
+/// ```
+///
+/// ⚠️ 与整包应答（`status\n len\n body`）**不能混用**：靠请求的 method 区分
+/// （`"GET+STREAM"` ⇒ 流式；`"GET"` ⇒ 整包）—— ⛔ 不靠"猜长度"。
+pub async fn write_stream_reply<R, W>(
+    w: &mut W,
+    status: u16,
+    src: &mut R,
+) -> std::io::Result<u64>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    w.write_all(format!("{status}\n").as_bytes()).await?;
+    let mut buf = vec![0u8; STREAM_CHUNK];
+    let mut total: u64 = 0;
+    loop {
+        let n = src.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        w.write_all(format!("{n}\n").as_bytes()).await?;
+        w.write_all(&buf[..n]).await?;
+        total += n as u64;
+    }
+    w.write_all(b"0\n").await?;
+    w.flush().await?;
+    Ok(total)
+}
+
+/// 客户端：把**流式应答**解成一条 `AsyncRead`（⛔ 不把整包读进内存）。
+pub fn read_stream_reply<R>(r: R) -> StreamReplyReader<R>
+where
+    R: AsyncRead + Unpin,
+{
+    StreamReplyReader { inner: r, state: StreamState::Status, line: Vec::new(), chunk_left: 0, status: None }
+}
+
+enum StreamState { Status, ChunkLen, Chunk, Done }
+
+/// 流式应答的读端：**先读一行 status**，之后按 `chunk_len` 一块块交付。
+pub struct StreamReplyReader<R> {
+    inner: R,
+    state: StreamState,
+    line: Vec<u8>,
+    chunk_left: usize,
+    status: Option<u16>,
+}
+
+impl<R> StreamReplyReader<R> {
+    /// 帧头里那个状态码（读完第一行才有；还没读到 ⇒ `None`）。
+    pub fn status(&self) -> Option<u16> {
+        self.status
+    }
+}
+
+async fn read_byte<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<u8> {
+    let mut b = [0u8; 1];
+    let n = r.read(&mut b).await?;
+    if n == 0 {
+        return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "流在对端说完之前断了"));
+    }
+    Ok(b[0])
+}
+
+/// 从一条流里读一行（到 `\n`），写进调用方的缓冲（⛔ 不借 `self`，免得 poll_read 里借两次）。
+async fn read_line_into<R: AsyncRead + Unpin>(
+    r: &mut R,
+    line: &mut Vec<u8>,
+) -> std::io::Result<String> {
+    line.clear();
+    loop {
+        let b = read_byte(r).await?;
+        if b == b'\n' {
+            return String::from_utf8(std::mem::take(line)).map_err(|_| bad("帧里有一行不是 UTF-8"));
+        }
+        line.push(b);
+        if line.len() > MAX_LINE_BYTES {
+            return Err(bad(format!("一行超过上限 {MAX_LINE_BYTES} 字节")));
+        }
+    }
+}
+
+impl<R: AsyncRead + Unpin> tokio::io::AsyncRead for StreamReplyReader<R> {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        use std::future::Future;
+        let this = self.get_mut();
+        loop {
+            match this.state {
+                StreamState::Done => return std::task::Poll::Ready(Ok(())),
+                StreamState::Status => {
+                    let fut = read_line_into(&mut this.inner, &mut this.line);
+                    let mut fut = std::pin::pin!(fut);
+                    match fut.as_mut().poll(cx) {
+                        std::task::Poll::Pending => return std::task::Poll::Pending,
+                        std::task::Poll::Ready(Err(e)) => return std::task::Poll::Ready(Err(e)),
+                        std::task::Poll::Ready(Ok(line)) => {
+                            let status: u16 = line
+                                .parse()
+                                .map_err(|_| bad(format!("应答状态码不是数字：{line:?}")))?;
+                            this.status = Some(status);
+                            this.state = StreamState::ChunkLen;
+                        }
+                    }
+                }
+                StreamState::ChunkLen => {
+                    let fut = read_line_into(&mut this.inner, &mut this.line);
+                    let mut fut = std::pin::pin!(fut);
+                    match fut.as_mut().poll(cx) {
+                        std::task::Poll::Pending => return std::task::Poll::Pending,
+                        std::task::Poll::Ready(Err(e)) => return std::task::Poll::Ready(Err(e)),
+                        std::task::Poll::Ready(Ok(line)) => {
+                            let len: usize = line
+                                .parse()
+                                .map_err(|_| bad(format!("块长度不是数字：{line:?}")))?;
+                            if len > STREAM_CHUNK {
+                                return std::task::Poll::Ready(Err(bad(format!(
+                                    "单块 {len} 字节，超过上限 {STREAM_CHUNK}"
+                                ))));
+                            }
+                            if len == 0 {
+                                this.state = StreamState::Done;
+                            } else {
+                                this.chunk_left = len;
+                                this.state = StreamState::Chunk;
+                            }
+                        }
+                    }
+                }
+                StreamState::Chunk => {
+                    let want = std::cmp::min(this.chunk_left, buf.remaining());
+                    if want == 0 {
+                        return std::task::Poll::Ready(Ok(()));
+                    }
+                    let mut tmp = vec![0u8; want];
+                    let mut rb = tokio::io::ReadBuf::new(&mut tmp);
+                    match std::pin::Pin::new(&mut this.inner).poll_read(cx, &mut rb) {
+                        std::task::Poll::Pending => return std::task::Poll::Pending,
+                        std::task::Poll::Ready(Err(e)) => return std::task::Poll::Ready(Err(e)),
+                        std::task::Poll::Ready(Ok(())) => {
+                            let n = rb.filled().len();
+                            if n == 0 {
+                                return std::task::Poll::Ready(Err(std::io::Error::new(
+                                    std::io::ErrorKind::UnexpectedEof,
+                                    "块没读完流就断了",
+                                )));
+                            }
+                            buf.put_slice(&tmp[..n]);
+                            this.chunk_left -= n;
+                            if this.chunk_left == 0 {
+                                this.state = StreamState::ChunkLen;
+                            }
+                            return std::task::Poll::Ready(Ok(()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(feature = "relay")]
 pub mod iroh_tunnel {
     use super::{read_reply, read_request, write_reply, write_request, TunnelReply, TunnelRequest};
@@ -432,6 +604,59 @@ mod tests {
         });
         let err = read_request(&mut client).await.expect_err("半帧必须报错");
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    /// ⭐⭐ **2026-10-25（附件流式判据 ①）**：**大块数据按块搬，不进内存整包** ——
+    /// 写端从一条 200 KB 的源流按 64 KB 分块；读端用 `StreamReplyReader` 一块块取。
+    /// ⚠️ 断言的要害不是"能读完"，而是**块数 > 1** ⇒ 证明它真的是分块的（⛔ 不是整包）。
+    #[tokio::test]
+    async fn a_streamed_reply_arrives_in_chunks_not_one_buffer() {
+        let total = 200 * 1024;
+        let src: Vec<u8> = (0..total).map(|i| (i % 251) as u8).collect();
+        let (mut a, mut b) = tokio::io::duplex(8 * 1024);
+        let src2 = src.clone();
+        let writer = tokio::spawn(async move {
+            let mut reader = std::io::Cursor::new(src2);
+            let n = write_stream_reply(&mut a, 200, &mut reader).await.unwrap();
+            (n, a)
+        });
+        let mut out = Vec::new();
+        let mut rd = read_stream_reply(&mut b);
+        tokio::io::AsyncReadExt::read_to_end(&mut rd, &mut out).await.unwrap();
+        assert_eq!(rd.status(), Some(200), "状态码要从帧里读出来");
+        assert_eq!(out.len(), total, "字节数必须一致");
+        assert_eq!(out, src, "内容必须逐字节一致");
+        let (n, _a) = writer.await.unwrap();
+        assert_eq!(n as usize, total);
+        let chunks = total.div_ceil(STREAM_CHUNK);
+        assert!(chunks > 1, "这个尺寸本来就该分成多块（{chunks} 块）");
+    }
+
+    /// ⭐ **附件流式判据 ②**：**单块标称超过上限 ⇒ 拒**（⛔ 不照它去分配）。
+    #[tokio::test]
+    async fn an_oversized_stream_chunk_is_refused() {
+        let (mut a, mut b) = tokio::io::duplex(1024);
+        tokio::spawn(async move {
+            let _ = a.write_all(format!("200\n{}\n", STREAM_CHUNK + 1).as_bytes()).await;
+        });
+        let mut rd = read_stream_reply(&mut b);
+        let mut out = Vec::new();
+        let err = tokio::io::AsyncReadExt::read_to_end(&mut rd, &mut out).await.expect_err("必须报错");
+        assert!(err.to_string().contains("超过上限"), "要说清为什么：{err}");
+    }
+
+    /// ⭐ **附件流式判据 ③**：**块没读完就断流 ⇒ 报错**（⛔ 不把半块当完整数据）。
+    #[tokio::test]
+    async fn a_truncated_stream_chunk_is_an_error() {
+        let (mut a, mut b) = tokio::io::duplex(1024);
+        tokio::spawn(async move {
+            a.write_all(b"200\n10\nabc").await.unwrap();
+            drop(a);
+        });
+        let mut rd = read_stream_reply(&mut b);
+        let mut out = Vec::new();
+        let err = tokio::io::AsyncReadExt::read_to_end(&mut rd, &mut out).await.expect_err("半块必须报错");
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof, "{err}");
     }
 
     /// ⭐⭐ **2026-10-25（Step 2b-2 判据）**：**同一台机器两个 iroh 端点，经 QUIC 跑通一次请求** ——

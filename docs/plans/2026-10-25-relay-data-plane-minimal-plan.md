@@ -33,7 +33,13 @@
 > **Step 4（本笔）**：**许可门接在"建隧道之前"** —— `relay_client::gate_for_new_tunnel(cfg, now)`
 > （与 `decide_new_connection` 同一套判定，翻成可读错误；话术写明"只收回跨网；局域网与本地功能照旧"），
 > `relay_endpoint_for` 在建隧道前先调它 ⇒ 不放行就**连隧道都不建**。判据：`建隧道之前必须先过许可门`。
-> ⛔ **仍未做**：附件流式／公网跨网真机验收。
+> **Step 5（本笔，仅协议层）**：附件那条要**流式**（几百 MB 也不整包进内存）⇒ 加「分块应答」帧：
+> `status\n (chunk_len\n chunk)* 0\n` ＋ `StreamReplyReader`（实现 `AsyncRead`，一块块交付）。
+> 三条判据：200 KB 分块往返（断言**块数 > 1**，⛔ 不是整包）、单块超上限**拒**（⛔ 不照它分配）、
+> 块没读完断流 ⇒ `UnexpectedEof`（⛔ 不把半块当完整数据）。
+> ⛔ **仍未做**：把附件**调用点**（`request_attachment_from_peer` → `download_one_attachment`）切到流式端点
+> —— 那是本项最后一步（改动落在 `sync.rs` 的下载路径，风险比协议层高，单独一笔做）。
+> 以及：公网跨网真机验收。
 > **证据**：`src-tauri/src/mesh_endpoint.rs` ／ `src-tauri/src/relay_tunnel.rs`
 > ／ 判据 `mesh::tests::a_fake_endpoint_is_enough_for_the_manifest_call`
 > ／ `mesh::tests::a_fake_endpoint_is_enough_for_the_pull_call` ／ `mesh::tests` **69 绿** ＋ `sync::tests` **88 绿**
