@@ -27680,3 +27680,17 @@ button.mset-row:focus-visible {
   overscroll-behavior:contain;
   padding-bottom:32px;
 }
+
+/* ⭐ 2026-10-25 owner：同步面板**要看到滚动条**（macOS 默认 overlay 滚动条平时不显示）——
+   显式画一条常驻的窄滚动条，并让内容区成为唯一的滚动容器。 */
+.main > .sync-panel > .sync-popover.is-inline{
+  overflow-y:scroll;
+  scrollbar-width:thin;
+  scrollbar-color:var(--border-strong) transparent;
+}
+.main > .sync-panel > .sync-popover.is-inline::-webkit-scrollbar{width:10px}
+.main > .sync-panel > .sync-popover.is-inline::-webkit-scrollbar-track{background:transparent}
+.main > .sync-panel > .sync-popover.is-inline::-webkit-scrollbar-thumb{
+  background:var(--border-strong);border-radius:8px;border:2px solid transparent;background-clip:padding-box;
+}
+.main > .sync-panel > .sync-popover.is-inline::-webkit-scrollbar-thumb:hover{background:var(--text-faint);background-clip:padding-box}
