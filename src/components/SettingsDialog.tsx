@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { useEditorStore, type SettingsTab } from "../store/editor";
@@ -13,10 +13,10 @@ import { BackupSettingsPanel } from "./BackupSettingsPanel";
 import { StoragePanel } from "./StoragePanel";
 import { usePlugins } from "../store/plugins";
 import { api } from "../lib/api";
-import { lockVault, unlockVault } from "../lib/vault";
+import { lockVault, refreshVault, unlockVault } from "../lib/vault";
 import { useVault } from "../hooks/useVault";
 import { SpacePrivacySection } from "./SpacePrivacySection";
-import type { SyncProfile, EmailAccount } from "../lib/api";
+import type { SyncProfile, EmailAccount, SpaceSecurityView } from "../lib/api";
 import { emailSupported, isDesktopPlatform } from "../lib/platform";
 // ⭐ 2026-10-08 第 5 招（裁定 A ✓）：个人偏好「隐藏高级项」——纯规则在 lib 里（可单测 ✓）。
 import { readHideAdvanced, visibleGroups, writeHideAdvanced } from "../lib/settingsNavPref";
@@ -274,6 +274,59 @@ function SpacesPane() {
   // 不用再切回同步面板逐个点开。
   const [syncProfiles, setSyncProfiles] = useState<Record<string, SyncProfile>>({});
   const activeName = spaces.find((s) => s.id === activeId)?.name ?? "当前空间";
+  // ⭐ 2026-10-25：按空间加密读数（每行显示开/关入口；与 SpacePrivacySection 同一命令面）
+  const [secViews, setSecViews] = useState<Record<string, SpaceSecurityView>>({});
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const [cryptoDlg, setCryptoDlg] = useState<{ id: string; name: string; mode: "enable" | "disable" } | null>(null);
+  const [cryptoPass, setCryptoPass] = useState("");
+  const [cryptoAck, setCryptoAck] = useState(false);
+  const [cryptoBusy, setCryptoBusy] = useState(false);
+  const [cryptoErr, setCryptoErr] = useState("");
+
+  const loadSec = useCallback(async () => {
+    if (!isDesktopPlatform()) return;
+    try {
+      const rows = await api.spaceSecurityOverview();
+      const by: Record<string, SpaceSecurityView> = {};
+      for (const r of rows) by[r.space_id] = r;
+      setSecViews(by);
+    } catch { /* 读不到就不显示入口，不影响其它空间管理 */ }
+  }, []);
+  useEffect(() => { void loadSec(); }, [loadSec, spaces.length]);
+
+  // 打开面板时把当前空间滚进列表可视区（列表自己滚，不带动整页）
+  useEffect(() => {
+    const el = listRef.current?.querySelector(".set-space-card.is-active");
+    el?.scrollIntoView({ block: "nearest" });
+  }, [activeId, spaces.length]);
+
+  const openCrypto = (id: string, name: string, mode: "enable" | "disable") => {
+    setCryptoErr(""); setCryptoPass(""); setCryptoAck(false);
+    setCryptoDlg({ id, name, mode });
+  };
+  const closeCrypto = () => { if (!cryptoBusy) setCryptoDlg(null); };
+  const runCrypto = async () => {
+    if (!cryptoDlg) return;
+    if (!cryptoAck) { setCryptoErr("请先勾选下面那句确认"); return; }
+    setCryptoBusy(true); setCryptoErr("");
+    try {
+      if (cryptoDlg.mode === "enable") {
+        await api.enableSpaceEncryption(cryptoDlg.id, cryptoPass.trim() || undefined);
+        toast(`已开启「${cryptoDlg.name}」的加密`, "success");
+      } else {
+        await api.disableSpaceEncryption(cryptoDlg.id);
+        toast(`已关闭「${cryptoDlg.name}」的加密（库已换回明文）`, "success");
+      }
+      await refreshVault();
+      await useSpaceStore.getState().load();
+      await loadSec();
+      setCryptoDlg(null);
+    } catch (e) {
+      setCryptoErr(String(e));
+    } finally {
+      setCryptoBusy(false);
+    }
+  };
 
   useEffect(() => {
     api
@@ -345,7 +398,7 @@ function SpacesPane() {
             </button>
           )}
         </div>
-        <div className="set-space-list set-space-list-scroll">
+        <div className="set-space-list set-space-list-scroll" ref={listRef}>
           {spaces.length === 0 ? (
             <div className="set-space-empty">还没有空间</div>
           ) : shownSpaces.length === 0 ? (
@@ -421,6 +474,18 @@ function SpacesPane() {
                       切换
                     </button>
                   )}
+                  <button
+                    className={`set-btn${secViews[s.id]?.encrypted_on_disk || s.encrypted_on_disk ? " is-danger-ghost" : ""}`}
+                    disabled={busy}
+                    title={secViews[s.id]?.key_available === false ? "先解锁钥匙袋才能关闭加密" : undefined}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const enc = secViews[s.id]?.encrypted_on_disk ?? s.encrypted_on_disk;
+                      openCrypto(s.id, s.name, enc ? "disable" : "enable");
+                    }}
+                  >
+                    {secViews[s.id]?.encrypted_on_disk || s.encrypted_on_disk ? "关闭加密…" : "开启加密…"}
+                  </button>
                   <button
                     className={`set-btn${colorFor === s.id ? " is-on" : ""}`}
                     /* ⛔ 配色不切空间：点完只是展开色板（冒泡上去就变成"顺手切走" ✗） */
@@ -504,6 +569,56 @@ function SpacesPane() {
         <summary>加密与配对（高级）</summary>
         <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
       </details>
+
+      {cryptoDlg && (
+        <div className="set-crypto-scrim" onClick={closeCrypto}>
+          <div className="set-crypto-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="set-crypto-head">
+              <div className="set-crypto-title">
+                {cryptoDlg.mode === "enable" ? `为「${cryptoDlg.name}」开启加密` : `关闭「${cryptoDlg.name}」的加密？`}
+              </div>
+              <button className="set-close" aria-label="关闭" onClick={closeCrypto} disabled={cryptoBusy}>×</button>
+            </div>
+            {cryptoDlg.mode === "enable" ? (
+              <>
+                <div className="set-crypto-steps">
+                  <div><b>1 改写空间库</b><span>这个空间的库会以 SQLCipher 密文重新落盘</span></div>
+                  <div><b>2 包住空间钥匙</b><span>用主口令派生的密钥把空间钥匙装进钥匙袋</span></div>
+                  <div><b>3 同步照常</b><span>锁着时对外只搬 sealed 封包，明文只留在已解锁侧</span></div>
+                </div>
+                <label className="set-crypto-label">主口令（本机已有钥匙袋且已解锁时可留空）</label>
+                <input className="set-input" type="password" value={cryptoPass} disabled={cryptoBusy}
+                  placeholder="至少 8 位；不会上传、不会落盘"
+                  onChange={(e) => setCryptoPass(e.target.value)} />
+                <label className="set-crypto-check">
+                  <input type="checkbox" checked={cryptoAck} disabled={cryptoBusy} onChange={(e) => setCryptoAck(e.target.checked)} />
+                  我记住了主口令 —— 丢失后这个空间无法恢复
+                </label>
+              </>
+            ) : (
+              <>
+                <div className="set-crypto-warn">
+                  <div>库会解密为明文 —— 任何能访问这台电脑的人都可以直接读</div>
+                  <div>同步关系保留；对端仍按它自己的加密设置处理</div>
+                  <div>重新开启加密需要再做一次完整加密（不可撤销）</div>
+                </div>
+                <label className="set-crypto-check">
+                  <input type="checkbox" checked={cryptoAck} disabled={cryptoBusy} onChange={(e) => setCryptoAck(e.target.checked)} />
+                  我理解关闭后数据会以明文形式保存在这台电脑上
+                </label>
+              </>
+            )}
+            {cryptoErr && <div className="set-crypto-err">{cryptoErr}</div>}
+            <div className="set-crypto-foot">
+              <button className="set-btn" onClick={closeCrypto} disabled={cryptoBusy}>取消</button>
+              <button className={`set-btn ${cryptoDlg.mode === "disable" ? "is-danger" : "is-primary"}`}
+                onClick={() => void runCrypto()} disabled={cryptoBusy}>
+                {cryptoBusy ? "处理中…" : cryptoDlg.mode === "enable" ? "开启加密" : "关闭加密"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

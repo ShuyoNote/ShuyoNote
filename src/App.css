@@ -27368,3 +27368,16 @@ button.mset-row:focus-visible {
 .conflict-banner-lineage .conflict-btn.conflict-btn-primary:hover {
   background: var(--accent-strong);
 }
+/* ⭐ 2026-10-25（合并空间页）：行内加密入口 + 开启/关闭加密弹窗 */
+.set-crypto-scrim{position:fixed;inset:0;background:rgba(15,20,32,.45);z-index:80;display:grid;place-items:center}
+.set-crypto-dialog{width:min(640px,calc(100vw - 48px));background:var(--card-bg);border-radius:16px;box-shadow:0 20px 48px rgba(15,20,32,.28);padding:20px 22px;display:flex;flex-direction:column;gap:10px}
+.set-crypto-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.set-crypto-title{font-size:16px;font-weight:600;color:var(--text)}
+.set-crypto-steps{display:flex;flex-direction:column;gap:8px;background:var(--fill-soft,#f8fafd);border:1px solid var(--border);border-radius:10px;padding:12px}
+.set-crypto-steps b{display:block;font-size:12.5px;color:var(--text)}
+.set-crypto-steps span{display:block;font-size:11.5px;color:var(--text-2);margin-top:2px}
+.set-crypto-label{font-size:12px;color:var(--text-2)}
+.set-crypto-check{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text-2);line-height:1.5;cursor:pointer}
+.set-crypto-warn{display:flex;flex-direction:column;gap:6px;background:#fff8f2;border:1px solid #ffe6d1;border-radius:10px;padding:12px;font-size:12px;color:var(--text-2)}
+.set-crypto-err{font-size:12px;color:var(--danger)}
+.set-crypto-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
