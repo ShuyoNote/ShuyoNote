@@ -332,6 +332,25 @@ function SpacesPane() {
 
   // ⭐ 切空间：**只走 store 那一条路**（与侧栏顶部那次完全一致 ✓）。
   // ⛔ 不在这里 `api.setActiveWorkspaceId` ＋ 自己刷新 ✗ —— 那会多出第二条路 ✓。
+  // ⭐ 2026-10-25：⋯ 菜单点背景（或按 Esc）关闭 —— 原生 <details> 不提供这个行为。
+  useEffect(() => {
+    const closeMenus = (e: Event) => {
+      const t = e.target as Element | null;
+      for (const el of document.querySelectorAll<HTMLDetailsElement>(".set-space-more[open]")) {
+        if (!t || !el.contains(t)) el.open = false;
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeMenus(e);
+    };
+    document.addEventListener("mousedown", closeMenus);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", closeMenus);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
   const pick = async (id: string) => {
     // 点"当前"那一行＝无事发生：切空间会连带 `loadPages` ＋ `refreshVault`，白跑一趟没必要
     if (id === activeId) return;
