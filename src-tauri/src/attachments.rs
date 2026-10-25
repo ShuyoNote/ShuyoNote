@@ -1325,7 +1325,7 @@ pub fn move_attachment(db: State<'_, Db>, id: String, new_page_id: String) -> Re
         .query_row(
             "SELECT name, hash, mime, size FROM attachments WHERE id = ?1",
             params![id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?)),
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?)),
         )
         .optional()
         .map_err(|e| e.to_string())?;
@@ -2064,3 +2064,159 @@ mod cross_space_attachment_tests {
     }
 }
 
+
+// ─────────────────────── 附件行补变更记录（一次性修复） ───────────────────────
+
+/// 补变更记录的读数（给人看，不是业务数据）。
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct BackfillReport {
+    /// 扫到几个空间库（打不开的见 `unreadable`）。
+    pub spaces: usize,
+    /// 这些空间里一共多少行附件。
+    pub scanned: usize,
+    /// 实际补了几条 `attachment|upsert`。
+    pub appended: usize,
+    /// 打不开的空间（加密未解锁 / 旧格式）—— ⛔ 不算成功，也不想让它们静默消失。
+    pub unreadable: Vec<String>,
+}
+
+/// ⭐ **2026-10-25（真机事故）**：把某个空间库里的**每一行附件**都补一条 `attachment|upsert`。
+///
+/// ## 为什么会有"有行、没变更"的附件
+///
+/// 早期导入路径直接 `INSERT INTO attachments`，没走 `record_change` ⇒ 这些行**永远不会进同步队列**，
+/// 对端就算游标归零也收不到（真机：濮阳数友 13 个附件里 10 个没有 changes 行）。
+///
+/// ## 为什么是"全部补"而不是"只补缺的"
+///
+/// 对端的游标可能早就越过了老的那几条（真机：mac 侧游标 30，而老的 attachment 变更在 seq 9–11）
+/// ⇒ 只补缺的那 10 条，剩下 3 条**永远跨不过去**。补全部 13 条、新 seq 一律 > 当前最大值，
+/// 对端一次就能收齐。⚠️ 重复补**不会重复建行**（对端按 id 幂等 upsert）⇒ 这条路径可以重复跑。
+///
+/// ⚠️ 它**不动**附件字节、不动页面、不动其他表 —— 只往 `changes` 里追加行。
+pub fn backfill_attachment_changes_in(c: &rusqlite::Connection) -> Result<(usize, usize), String> {
+    let rows: Vec<(String, Option<String>, String, String, String, i64)> = {
+        // ⚠️ 语句与 rows 必须在**同一个块**里活着（借用检查）
+        let mut st = c
+            .prepare("SELECT id, page_id, name, hash, mime, size FROM attachments")
+            .map_err(|e| format!("读附件行失败（{e}）⇒ 什么都没补"))?;
+        let mapped = st
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, i64>(5)?,
+                ))
+            })
+            .map_err(|e| format!("读附件行失败（{e}）⇒ 什么都没补"))?;
+        mapped
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("读附件行失败（{e}）⇒ 什么都没补"))?
+    };
+    let now = crate::db::now_ms();
+    let mut appended = 0usize;
+    for (id, page_id, name, hash, mime, size) in &rows {
+        // ⚠️ payload 必须与正常保存那一路**同形**（见 `save_image` 里那条）
+        let payload = serde_json::json!({
+            "id": id,
+            "page_id": page_id,
+            "name": name,
+            "hash": hash,
+            "mime": mime,
+            "size": size,
+        })
+        .to_string();
+        crate::sync::record_change(c, "attachment", id, "upsert", Some(&payload), now)?;
+        appended += 1;
+    }
+    Ok((rows.len(), appended))
+}
+
+/// 对**全部空间库**做一遍补记（`<app data>/spaces/*.db`）。
+///
+/// ⚠️ 打不开的空间（加密未解锁）不静默跳过 —— 记进 `unreadable` 并如实报数。
+pub fn backfill_attachment_changes_all(app_data_dir: &std::path::Path) -> BackfillReport {
+    let mut out = BackfillReport::default();
+    let dir = app_data_dir.join("spaces");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return out;
+    };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("db") {
+            continue;
+        }
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
+        match rusqlite::Connection::open(&path) {
+            Ok(c) => {
+                // ⚠️ 设备身份在 **meta** 库里（`meta.sync_state`）⇒ 先挂上再补，
+                //    否则 `record_change` 会报"设备 ID 未初始化"（真机第一次跑就撞到了）。
+                let meta = app_data_dir.join("meta.db");
+                if let Err(e) = c.execute(&format!("ATTACH DATABASE ?1 AS meta"), rusqlite::params![meta.to_string_lossy().to_string()]) {
+                    out.unreadable.push(format!("{name}（挂 meta 失败：{e}）"));
+                    continue;
+                }
+                out.spaces += 1;
+                match backfill_attachment_changes_in(&c) {
+                    Ok((scanned, appended)) => {
+                        out.scanned += scanned;
+                        out.appended += appended;
+                    }
+                    Err(e) => out.unreadable.push(format!("{name}（{e}）")),
+                }
+            }
+            Err(_) => out.unreadable.push(name),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod backfill_attachment_changes_tests {
+    use super::*;
+
+    /// ⭐ 判据：**有行没变更**的附件会被补上，且**重复跑会再补一遍**（故意：对端游标可能已越过老 seq）。
+    #[test]
+    fn rows_without_changes_get_an_upsert_and_a_rerun_resends_the_same_rows() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        // 真机上 meta 是 ATTACH 进来的库；测试里同样挂一个内存库并建 `sync_state`
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (ws_id TEXT PRIMARY KEY, last_pushed_seq INTEGER NOT NULL DEFAULT 0);",
+        )
+        .unwrap();
+        crate::db::migrate(&c, "w1").unwrap();
+        // `record_change` 要设备身份（真机上由 `db::migrate` 那条路径种下）
+        crate::sync::set_meta_state(&c, "device_id", "test-dev").unwrap();
+        // 两行附件：模拟"早期导入直接插行、没走 record_change"
+        c.execute("INSERT INTO attachments (id,page_id,name,hash,mime,size,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            rusqlite::params!["a1", "p1", "身份证A.jpg", "h1", "image/jpeg", 100i64, 1i64]).unwrap();
+        c.execute("INSERT INTO attachments (id,page_id,name,hash,mime,size,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            rusqlite::params!["a2", "p1", "声明承诺.jpg", "h2", "image/jpeg", 200i64, 2i64]).unwrap();
+        let before: i64 = c.query_row("SELECT COUNT(*) FROM changes WHERE entity = 'attachment'", [], |r| r.get(0)).unwrap();
+        assert_eq!(before, 0, "前提：这两行本来没有变更记录");
+
+        let (scanned, appended) = backfill_attachment_changes_in(&c).unwrap();
+        assert_eq!((scanned, appended), (2, 2));
+        let after: i64 = c.query_row("SELECT COUNT(*) FROM changes WHERE entity = 'attachment' AND op = 'upsert'", [], |r| r.get(0)).unwrap();
+        assert_eq!(after, 2, "两条都要有 upsert");
+
+        // 再补一遍：**行数不涨、seq 必须涨** —— 因为未推送的同实体 upsert 会被并掉
+        // （`record_change` 的 R139 规矩：删旧行 + 插新行、拿到**新的 seq**）。
+        // 对端看的是 seq（不是本地行数）⇒ 这样它才收得到。
+        let max1: i64 = c.query_row("SELECT COALESCE(MAX(device_seq),0) FROM changes", [], |r| r.get(0)).unwrap();
+        let (_, appended2) = backfill_attachment_changes_in(&c).unwrap();
+        assert_eq!(appended2, 2, "第二次也是每一行都补一遍");
+        let after2: i64 = c.query_row("SELECT COUNT(*) FROM changes WHERE entity = 'attachment' AND op = 'upsert'", [], |r| r.get(0)).unwrap();
+        assert_eq!(after2, 2, "未推送的会被并掉 ⇒ 行数不涨（⛔ 不是堆两倍行）");
+        let max2: i64 = c.query_row("SELECT COALESCE(MAX(device_seq),0) FROM changes", [], |r| r.get(0)).unwrap();
+        assert!(max2 > max1, "但 seq 必须往前（对端靠它判断要不要收）：{max1} → {max2}");
+        // 附件行本身一行都没多
+        let rows: i64 = c.query_row("SELECT COUNT(*) FROM attachments", [], |r| r.get(0)).unwrap();
+        assert_eq!(rows, 2, "⛔ 不许重复建附件行");
+    }
+}

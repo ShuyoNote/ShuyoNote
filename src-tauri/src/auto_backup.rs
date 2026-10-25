@@ -507,6 +507,8 @@ pub enum CliMode {
     BackupOnce,
     /// ⭐ 无头：**整理一次附件布局**就退出（⛔ 不建窗口 ✓；2026-10-25 加）
     MigrateAttachments,
+    /// ⭐ 无头：**给附件行补一次变更记录**就退出（⛔ 不建窗口 ✓；2026-10-25 真机事故）
+    BackfillAttachmentChanges,
 }
 
 /// 那条命令行开关（⭐ 只此一条 ⇒ 判据也只有一条 ✓）
@@ -514,6 +516,8 @@ pub const BACKUP_ONCE_FLAG: &str = "--backup-once";
 
 /// 整理附件布局的无头开关（⭐ 与备份那一条同一形状 ✓）
 pub const MIGRATE_ATTACHMENTS_FLAG: &str = "--migrate-attachments-once";
+/// 附件行补变更记录的无头开关（一次性修复：有行没变更的附件永远进不了同步队列）
+pub const BACKFILL_ATTACHMENT_CHANGES_FLAG: &str = "--backfill-attachment-changes-once";
 
 /// systemd 单元基名（⭐ `.service` 与 `.timer` 共用 ✓）
 pub const SYSTEMD_UNIT: &str = "shuyonote-backup";
@@ -535,6 +539,9 @@ where
         // ⭐ 2026-10-25：整理附件布局也是**无头**的（同样的"跑完就退、不建窗口"）
         if a.as_ref() == MIGRATE_ATTACHMENTS_FLAG {
             return CliMode::MigrateAttachments;
+        }
+        if a.as_ref() == BACKFILL_ATTACHMENT_CHANGES_FLAG {
+            return CliMode::BackfillAttachmentChanges;
         }
     }
     CliMode::Normal

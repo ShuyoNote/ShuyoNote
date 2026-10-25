@@ -11,7 +11,10 @@ fn main() {
     {
         use shuyonote_lib::auto_backup::CliMode;
         let mode = shuyonote_lib::auto_backup::cli_mode(std::env::args().skip(1));
-        if matches!(mode, CliMode::BackupOnce | CliMode::MigrateAttachments) {
+        if matches!(
+            mode,
+            CliMode::BackupOnce | CliMode::MigrateAttachments | CliMode::BackfillAttachmentChanges
+        ) {
             std::process::exit(shuyonote_lib::run_backup_once());
         }
     }

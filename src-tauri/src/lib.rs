@@ -341,6 +341,20 @@ pub fn run_backup_once() -> i32 {
         app_data_dir_for_migration = app_data_dir;
     }
     // ⭐ 2026-10-25：**分岔只在最后一步**（初始化共用 ⇒ 两条无头路径的"能起得来"口径一致 ✓）
+    // ⭐ 2026-10-25（真机事故）：给附件行补一次变更记录就退出
+    if mode == CliMode::BackfillAttachmentChanges {
+        let dir = app_data_dir_for_migration;
+        let out = attachments::backfill_attachment_changes_all(&dir);
+        eprintln!(
+            "[attachments] 补变更记录：空间 {} ｜ 扫到附件 {} 行 ｜ 补了 {} 条 ｜ 打不开 {} 个{}",
+            out.spaces,
+            out.scanned,
+            out.appended,
+            out.unreadable.len(),
+            if out.unreadable.is_empty() { String::new() } else { format!("（{}）", out.unreadable.join("、")) }
+        );
+        return 0;
+    }
     if mode == CliMode::MigrateAttachments {
         let dir = app_data_dir_for_migration;
         return match attachments::migrate_legacy_layout(&dir) {
