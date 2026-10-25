@@ -277,14 +277,27 @@ pub fn pairing_code_reading(
         let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
         crate::sync::device_id(&c).unwrap_or_default()
     };
-    Ok(pairing_code_reading_both(
+    let reading = pairing_code_reading_both(
         my.as_deref(),
         &peer_pubkey,
         &my_ask,
         &peer_ask,
         &my_device_id,
         &peer_device_id,
-    ))
+    );
+    // ⭐ 2026-10-25：**码对不上时唯一的排障入口** —— 打出"算这个码用到的四格"
+    //   （⛔ 不打私钥；公钥只打前 8 位；ask 只打长度）。两端各贴一行就能定位是谁的输入不同。
+    eprintln!(
+        "[pairing] code={} ｜ my_dev={} peer_dev={} ｜ my_ask={}B peer_ask={}B ｜ my_pub={}… peer_pub={}…",
+        reading.code.as_deref().unwrap_or("<读不到>"),
+        &my_device_id[..my_device_id.len().min(8)],
+        &peer_device_id[..peer_device_id.len().min(8)],
+        my_ask.trim().len(),
+        peer_ask.trim().len(),
+        my.as_deref().unwrap_or("").chars().take(8).collect::<String>(),
+        peer_pubkey.chars().take(8).collect::<String>(),
+    );
+    Ok(reading)
 }
 
 /// ⭐ 握手的**默认有效期**（⭐ 毫秒 ✓）—— ⭐ 四个广播周期（⭐ 广播 30 秒一轮 ✓）。
