@@ -1,10 +1,12 @@
 # 跨网中继「数据面」最小实现方案（2026-10-25）
 
-> **状态**：**实施中 · Step 1a 已做** —— 端点抽象（`Endpoint`／`LanEndpoint`）＋ 第一个调用点
-> （`mesh::fetch_peer_manifest`）＋ **假端点判据**已落；**Step 1b 未做**（其余 3 个 JSON 调用点
-> `pull_from_peer`／`fetch_peer_keyring`／`fetch_peer_page`，以及**附件字节那条要流式的**）。
-> **证据**：`src-tauri/src/mesh_endpoint.rs` ／ `src-tauri/src/mesh.rs` 的 `fetch_peer_manifest`
-> ／ 判据 `mesh::tests::a_fake_endpoint_is_enough_for_the_manifest_call`。
+> **状态**：**实施中 · Step 1b 已做（4 个 JSON 调用点全收敛；只剩附件流式那 1 处）**
+> —— `Endpoint`／`LanEndpoint` 已立；`pull_from_peer`／`fetch_peer_manifest`／`fetch_peer_keyring`／
+> `fetch_peer_page` **全部只认端点**（`&dyn Endpoint`），reqwest 与 `peer.base` 收进 `LanEndpoint`。
+> ⛔ **剩下 1 处没迁**：**附件字节**那条（返回 `reqwest::Response`，是**流式**）——
+> 形状（要不要 `get_stream`）还没定，⛔ 不顺手改成整包读入（那会把大附件全读进内存）。
+> **证据**：`src-tauri/src/mesh_endpoint.rs` ／ 判据 `mesh::tests::a_fake_endpoint_is_enough_for_the_manifest_call`
+> ／ `mesh::tests::a_fake_endpoint_is_enough_for_the_pull_call` ／ `mesh::tests` **69 绿** ＋ `sync::tests` **88 绿**。
 > 依据：`docs/plans/2026-10-24-personal-multi-space-lan-sync-plan.md` §四（传输/发现抽象层）／
 > `src-tauri/src/relay_client.rs` 头注（第 1 期已做与未做）／`src/lib/platform/commands.ts`（前端两格已接线）。
 > ⚠️ 本文**不复述**中继仓的规格正文（专有仓 `repos/shuyonote-relay`），也不引用其实现。
