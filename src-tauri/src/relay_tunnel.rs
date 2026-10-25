@@ -517,6 +517,67 @@ pub mod iroh_client {
                 })
             })
         }
+
+        /// 附件那条：**流式**走隧道（请求 method 用 `GET+STREAM`，应答走分块帧）。
+        fn get_stream<'a>(
+            &'a self,
+            target: &'a str,
+            auth: Option<(&'a str, i64, &'a str)>,
+            token: Option<&'a str>,
+        ) -> Pin<Box<dyn Future<Output = Result<(u16, crate::mesh_endpoint::AttachmentBody), String>> + Send + 'a>> {
+            Box::pin(async move {
+                let mut req = TunnelRequest::new("GET+STREAM", target);
+                if let Some((device_id, ts, sig)) = auth {
+                    req = req
+                        .with_header(crate::mesh::HDR_DEVICE, device_id)
+                        .with_header(crate::mesh::HDR_TS, &ts.to_string())
+                        .with_header(crate::mesh::HDR_SIG, sig);
+                }
+                if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
+                    req = req.with_header("authorization", &format!("Bearer {t}"));
+                }
+                let conn = self
+                    .ep
+                    .connect(self.peer.clone(), iroh_tunnel::ALPN)
+                    .await
+                    .map_err(|e| format!("连对端失败：{e}"))?;
+                let (mut send, mut recv) = conn.open_bi().await.map_err(|e| format!("开流失败：{e}"))?;
+                super::write_request(&mut send, &req)
+                    .await
+                    .map_err(|e| format!("写请求失败：{e}"))?;
+                // 先读 status 行（调用方要据此判 404/401，再决定要不要往磁盘写）
+                let status_line = super::read_line(&mut recv)
+                    .await
+                    .map_err(|e| format!("读状态行失败：{e}"))?;
+                let status: u16 = status_line
+                    .parse()
+                    .map_err(|_| format!("应答状态码不是数字：{status_line:?}"))?;
+                let reader = super::StreamReplyReader::after_status(recv, status);
+                let body: crate::mesh_endpoint::AttachmentBody =
+                    Box::pin(RelayBody { _conn: conn, _send: send, reader });
+                Ok((status, body))
+            })
+        }
+    }
+
+    /// 隧道里的附件正文流：**把连接与发送端一起拿着**。
+    ///
+    /// ⚠️ 只留读端不够 —— 连接一丢，QUIC 流就没了；把 `conn`/`send` 跟着流一起活，
+    /// 直到调用方把正文读完（或被丢弃）。
+    pub struct RelayBody {
+        _conn: iroh::endpoint::Connection,
+        _send: iroh::endpoint::SendStream,
+        reader: super::StreamReplyReader<iroh::endpoint::RecvStream>,
+    }
+
+    impl tokio::io::AsyncRead for RelayBody {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::pin::Pin::new(&mut self.reader).poll_read(cx, buf)
+        }
     }
 
     /// 把 64 位 hex 的 node id 解析成 32 字节公钥（⛔ 长度/字符都要查，不猜）。
@@ -619,6 +680,73 @@ mod tests {
         });
         let err = read_request(&mut client).await.expect_err("半帧必须报错");
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    /// ⭐⭐ **2026-10-25（Step 6 判据）**：**附件正文经隧道流式取回** —— 真 QUIC 两个端点，
+    /// 服务端按块写 100 KB，客户端用 `Endpoint::get_stream`（GET+STREAM）逐块读。
+    /// ⚠️ 要害：走的是**同一条隧道帧协议**，⛔ 不是「拼个 URL 直接 reqwest」。
+    #[cfg(feature = "relay")]
+    #[tokio::test]
+    async fn an_attachment_streams_through_the_tunnel() {
+        use crate::mesh_endpoint::Endpoint;
+        use std::net::SocketAddr;
+
+        let server_ep = super::iroh_tunnel::bind(iroh::SecretKey::generate())
+            .await
+            .expect("服务端端点");
+        let port = server_ep
+            .bound_sockets()
+            .iter()
+            .find_map(|s: &SocketAddr| match s {
+                SocketAddr::V4(v4) if v4.port() != 0 => Some(v4.port()),
+                SocketAddr::V6(v6) if v6.port() != 0 => Some(v6.port()),
+                _ => None,
+            })
+            .expect("要有已绑定端口");
+        let addr = iroh::EndpointAddr {
+            id: server_ep.id(),
+            addrs: [iroh::TransportAddr::Ip(SocketAddr::from(([127, 0, 0, 1], port)))]
+                .into_iter()
+                .collect(),
+        };
+        let payload: Vec<u8> = (0..100 * 1024).map(|i| (i % 253) as u8).collect();
+        let expect = payload.clone();
+        // ⚠️ 服务端写完不能立刻 drop 端点（客户端会报 connection lost），
+        //   但也**不能**等 `conn.closed()` —— 客户端在等 `serve.await` ⇒ 会死锁。
+        //   ⇒ 用一个 oneshot 让客户端读完再放服务端走。
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+        let serve = tokio::spawn(async move {
+            let Some(accepting) = server_ep.accept().await else {
+                panic!("端点已关");
+            };
+            let conn = accepting.await.expect("握手");
+            let (mut send, mut recv) = conn.accept_bi().await.expect("接流");
+            let req = super::read_request(&mut recv).await.expect("读请求");
+            assert_eq!(req.method, "GET+STREAM", "附件那条必须走流式 method");
+            let mut src = std::io::Cursor::new(payload);
+            super::write_stream_reply(&mut send, 200, &mut src)
+                .await
+                .expect("写流式应答");
+            let _ = send.finish();
+            let _ = done_rx.await;
+            let _ = &conn;
+        });
+
+        let ep = super::iroh_client::RelayEndpoint::connect(addr)
+            .await
+            .expect("跨网端点");
+        let (status, mut body) = ep
+            .get_stream("/mesh/attachment?space_id=sp&hash=h1", None, None)
+            .await
+            .expect("经隧道取附件");
+        assert_eq!(status, 200);
+        let mut got = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut body, &mut got)
+            .await
+            .expect("读正文");
+        assert_eq!(got, expect, "字节必须逐字节一致");
+        let _ = done_tx.send(());
+        serve.await.expect("服务任务不应 panic");
     }
 
     /// ⭐⭐ **2026-10-25（附件流式判据 ①）**：**大块数据按块搬，不进内存整包** ——

@@ -1938,17 +1938,21 @@ pub async fn download_attachment(
         }
         let sent = req.send().await.map_err(|e| format!("服务端请求发不出去：{e}"));
         match sent {
-            Ok(resp) => match download_one_attachment(resp, "服务端", &item, &attachments_dir, session_key.as_ref(), &db).await {
-                Ok(size) => {
-                    return Ok(AttachmentFetch {
-                        size,
-                        source: "server".to_string(),
-                        peer: None,
-                        note: format!("已从服务器取回这一件（{} 字节）", size),
-                    })
+            Ok(resp) => {
+                // ⭐ Step 6：服务器那条也走同一个下载器 —— 先转成（状态码，正文流）
+                let (st, body) = crate::mesh_endpoint::body_from_reqwest(resp);
+                match download_one_attachment(st, body, "服务端", &item, &attachments_dir, session_key.as_ref(), &db).await {
+                    Ok(size) => {
+                        return Ok(AttachmentFetch {
+                            size,
+                            source: "server".to_string(),
+                            peer: None,
+                            note: format!("已从服务器取回这一件（{} 字节）", size),
+                        })
+                    }
+                    Err(e) => server_err = Some(e),
                 }
-                Err(e) => server_err = Some(e),
-            },
+            }
             Err(e) => server_err = Some(e),
         }
     }
@@ -2017,7 +2021,7 @@ pub async fn download_attachment(
         )
         .await
         {
-            Ok(resp) => match download_one_attachment(resp, &format!("对端 {}", p.device_id), &item, &attachments_dir, session_key.as_ref(), &db).await {
+            Ok((status, body)) => match download_one_attachment(status, body, &format!("对端 {}", p.device_id), &item, &attachments_dir, session_key.as_ref(), &db).await {
                 Ok(size) => {
                     return Ok(AttachmentFetch {
                         size,
@@ -7219,15 +7223,16 @@ pub fn set_sync_budget(db: State<'_, Db>, budget: SyncBudget) -> Result<SyncBudg
 /// `who` 只进错误文案（"服务端返回 404" / "对端 Mate40 返回 404" —— 用户的下一步不一样）。
 #[allow(clippy::too_many_arguments)]
 async fn download_one_attachment(
-    resp: reqwest::Response,
+    status: u16,
+    mut body: crate::mesh_endpoint::AttachmentBody,
     who: &str,
     item: &RemoteAttachment,
     attachments_dir: &Path,
     session_key: Option<&crate::crypto::AppKeys>,
     db: &State<'_, Db>,
 ) -> Result<i64, String> {
-    if !resp.status().is_success() {
-        return Err(format!("{who} 返回 {}", resp.status()));
+    if !(200..300).contains(&status) {
+        return Err(format!("{who} 返回 {status}"));
     }
     let ext = ext_from_mime(&item.mime);
     let path = attachments_dir.join(&item.hash[0..2]).join(format!("{}.{}", item.hash, ext));
@@ -7243,13 +7248,11 @@ async fn download_one_attachment(
         // （`.part` 结尾仍被 `local_set` 排除，不会被当成本地已有字节。）
         let tmp = attachments_dir.join(format!("{}.{}.part", item.hash, uuid::Uuid::new_v4()));
         let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| e.to_string())?;
-        let mut stream = resp.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(chunk) => {
-                    size += chunk.len() as i64;
-                    file.write_all(&chunk).await.map_err(|e| e.to_string())?;
-                }
+        // ⭐ 2026-10-25（Step 6）：正文是**流**（`AsyncRead`），按块搬运 —— 局域网与隧道同一条路。
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            let n = match tokio::io::AsyncReadExt::read(&mut body, &mut buf).await {
+                Ok(n) => n,
                 Err(e) => {
                     // 半成品必须删掉：留着白占磁盘，也让"本轮下了多少"说不清。
                     // （`.part` 已被 `local_set` 排除，不会被当成本地已有，但仍要清。）
@@ -7257,7 +7260,12 @@ async fn download_one_attachment(
                     let _ = std::fs::remove_file(&tmp);
                     return Err(e.to_string());
                 }
+            };
+            if n == 0 {
+                break;
             }
+            size += n as i64;
+            file.write_all(&buf[..n]).await.map_err(|e| e.to_string())?;
         }
         file.flush().await.map_err(|e| e.to_string())?;
         drop(file);
@@ -7639,7 +7647,8 @@ async fn sync_attachments(
                 continue;
             }
         };
-        match download_one_attachment(att_resp, "服务端", item, &attachments_dir, session_key.as_ref(), db).await {
+        let (att_status, att_body) = crate::mesh_endpoint::body_from_reqwest(att_resp);
+        match download_one_attachment(att_status, att_body, "服务端", item, &attachments_dir, session_key.as_ref(), db).await {
             Ok(size) => {
                 bytes_downloaded = bytes_downloaded.saturating_add(size.max(0) as u64);
                 att_items.push(SyncItem { entity: "attachment".to_string(), entity_id: item.hash.clone(), op: "upsert".to_string(), dir: "pull".to_string(), title: String::new() });

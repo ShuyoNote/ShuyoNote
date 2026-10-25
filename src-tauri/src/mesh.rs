@@ -4301,21 +4301,15 @@ pub async fn request_attachment_from_peer(
     //   （真机：拉取能过、按需取字节 401 —— 两条路各用了一套凭证）。
     //   形状同 `pull_from_peer`：由调用方签好再传（签名要拿库锁，⛔ 不许跨 await 持锁）。
     auth: Option<(&str, i64, &str)>,
-) -> Result<reqwest::Response, String> {
+) -> Result<(u16, crate::mesh_endpoint::AttachmentBody), String> {
     // ⚠️ target 只拼一次（`attachment_target`）—— 签的是它、发的也是它（⛔ 两处各拼一份会漂）。
     let target = attachment_target(space_id, hash);
-    let url = format!("{}{}", peer.base.trim_end_matches('/'), target);
-    let mut req = client.get(&url);
-    if let Some((device_id, ts, sig)) = auth {
-        req = req
-            .header(HDR_DEVICE, device_id)
-            .header(HDR_TS, ts.to_string())
-            .header(HDR_SIG, sig);
-    }
-    if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
-        req = req.bearer_auth(t);
-    }
-    req.send().await.map_err(|e| format!("问对端 {} 失败：{e}", peer.device_id))
+    // ⭐ 2026-10-25（数据面 Step 6）：**附件也走端点** —— 局域网与跨网隧道用同一条路，
+    //   区别只在 `endpoint_for_peer` 挑出来的实现（流式接口，⛔ 不整包读进内存）。
+    let ep = crate::mesh_endpoint::endpoint_for_peer(peer, client.clone()).await?;
+    ep.get_stream(&target, auth, token)
+        .await
+        .map_err(|e| format!("问对端 {} 失败：{e}", peer.device_id))
 }
 
 /// ⭐⭐ **2026-10-09（task-8「设备直连」）**：**公告报的空间 == 窗口服务的空间**。
@@ -6111,28 +6105,31 @@ mod tests {
         let pc = mesh_peer("C", &format!("http://{}", win_c.addr()));
 
         // ① 第一台没有 ⇒ 404，而且**说清"这一台没有"**（客户端据此去问下一台）
-        let resp = request_attachment_from_peer(&client, &pa, "space-x", &hash, Some("lan-token"), None).await.unwrap();
-        assert_eq!(resp.status().as_u16(), 404, "第一台没有这份字节");
-        let body = resp.text().await.unwrap();
-        assert!(body.contains("这一台没有"), "404 必须说清是「这一台没有」，不是笼统失败：{body}");
+        let (code, mut body) = request_attachment_from_peer(&client, &pa, "space-x", &hash, Some("lan-token"), None).await.unwrap();
+        assert_eq!(code, 404, "第一台没有这份字节");
+        let mut text = String::new();
+        let _ = tokio::io::AsyncReadExt::read_to_string(&mut body, &mut text).await;
+        assert!(text.contains("这一台没有"), "404 必须说清是「这一台没有」，不是笼统失败：{text}");
 
         // ② 第二台有 ⇒ 200 ＋ **字节逐字节相同**（这就是"按内容从任意一个对等体取到"）
-        let resp = request_attachment_from_peer(&client, &pb, "space-x", &hash, Some("lan-token"), None).await.unwrap();
-        assert_eq!(resp.status().as_u16(), 200, "第二台手上就有这份字节");
-        assert_eq!(resp.bytes().await.unwrap().to_vec(), bytes, "取回来的必须**逐字节**是那一份");
+        let (code, mut body) = request_attachment_from_peer(&client, &pb, "space-x", &hash, Some("lan-token"), None).await.unwrap();
+        assert_eq!(code, 200, "第二台手上就有这份字节");
+        let mut got = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut body, &mut got).await.unwrap();
+        assert_eq!(got, bytes, "取回来的必须**逐字节**是那一份");
 
         // ③ 空间对不上 ⇒ 403（与 pull 同一道门）
-        let resp = request_attachment_from_peer(&client, &pb, "other-space", &hash, Some("lan-token"), None).await.unwrap();
-        assert_eq!(resp.status().as_u16(), 403, "窗口只服务它代言的空间");
+        let (code, _body) = request_attachment_from_peer(&client, &pb, "other-space", &hash, Some("lan-token"), None).await.unwrap();
+        assert_eq!(code, 403, "窗口只服务它代言的空间");
         // ④ 口令不对 ⇒ 401（同一道门，同一句话）
-        let resp = request_attachment_from_peer(&client, &pb, "space-x", &hash, Some("wrong"), None).await.unwrap();
-        assert_eq!(resp.status().as_u16(), 401);
+        let (code, _body) = request_attachment_from_peer(&client, &pb, "space-x", &hash, Some("wrong"), None).await.unwrap();
+        assert_eq!(code, 401);
         // ⑤ 没配数据目录 ⇒ 501（"没配"≠"没有这份文件"）
-        let resp = request_attachment_from_peer(&client, &pc, "space-x", &hash, Some("lan-token"), None).await.unwrap();
-        assert_eq!(resp.status().as_u16(), 501, "没配数据目录要如实说（不是 404）");
+        let (code, _body) = request_attachment_from_peer(&client, &pc, "space-x", &hash, Some("lan-token"), None).await.unwrap();
+        assert_eq!(code, 501, "没配数据目录要如实说（不是 404）");
         // ⑥ 形状不合法的 hash ⇒ 400（它会被拼进文件路径 ⇒ 与产品同一道门）
-        let resp = request_attachment_from_peer(&client, &pb, "space-x", "../../meta.db", Some("lan-token"), None).await.unwrap();
-        assert_eq!(resp.status().as_u16(), 400, "不可信的 hash 必须当场拒绝");
+        let (code, _body) = request_attachment_from_peer(&client, &pb, "space-x", "../../meta.db", Some("lan-token"), None).await.unwrap();
+        assert_eq!(code, 400, "不可信的 hash 必须当场拒绝");
 
         let _ = std::fs::remove_dir_all(&dir_a);
         let _ = std::fs::remove_dir_all(&dir_b);

@@ -36,6 +36,19 @@ pub struct HttpReply {
 /// 附件那条的字节流（流式：不把整包读进内存）。
 pub type AttachmentBody = std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send + Unpin>>;
 
+/// 把一次 reqwest 应答变成（状态码，正文流）——**唯一的一处**转换。
+///
+/// 用途：服务器那条也走同一个下载器（`download_one_attachment` 现在收流，不再收 `Response`）。
+/// ⚠️ 流里出错要**转成 io 错误交上去**（⛔ 不能吞 —— 否则半截文件会被当成完整下载）。
+pub fn body_from_reqwest(resp: reqwest::Response) -> (u16, AttachmentBody) {
+    use futures_util::TryStreamExt;
+    let status = resp.status().as_u16();
+    let stream = resp
+        .bytes_stream()
+        .map_err(|e| std::io::Error::other(format!("附件流中断：{e}")));
+    (status, Box::pin(tokio_util::io::StreamReader::new(stream)))
+}
+
 /// 端点：**只认"往哪发"，不认"怎么连上的"**。
 ///
 /// ⚠️ `auth` 是"签好的一把"三格头（`device_id` / 时间戳 ms / 签名 hex）——
@@ -114,6 +127,36 @@ impl Endpoint for LanEndpoint {
             let status = resp.status().as_u16();
             let body = resp.text().await.map_err(|e| e.to_string())?;
             Ok(HttpReply { status, body })
+        })
+    }
+
+    fn get_stream<'a>(
+        &'a self,
+        target: &'a str,
+        auth: Option<(&'a str, i64, &'a str)>,
+        token: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<(u16, AttachmentBody), String>> + Send + 'a>> {
+        Box::pin(async move {
+            use futures_util::TryStreamExt;
+            let url = join(&self.base, target);
+            let mut req = self.client.get(&url);
+            if let Some((device_id, ts, sig)) = auth {
+                req = req
+                    .header(crate::mesh::HDR_DEVICE, device_id)
+                    .header(crate::mesh::HDR_TS, ts.to_string())
+                    .header(crate::mesh::HDR_SIG, sig);
+            }
+            if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
+                req = req.bearer_auth(t);
+            }
+            let resp = req.send().await.map_err(|e| format!("取附件失败：{e}"))?;
+            let status = resp.status().as_u16();
+            // ⚠️ 错误**不能吞**：流里出错 ⇒ 转成 io::Error 交给读端（否则半截文件会被当成完整下载）
+            let stream = resp
+                .bytes_stream()
+                .map_err(|e| std::io::Error::other(format!("附件流中断：{e}")));
+            let reader = tokio_util::io::StreamReader::new(stream);
+            Ok((status, Box::pin(reader) as AttachmentBody))
         })
     }
 }
