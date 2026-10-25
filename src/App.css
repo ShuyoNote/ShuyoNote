@@ -27608,3 +27608,34 @@ button.mset-row:focus-visible {
 .acct-device-stack .acct-device-edit{width:100%;max-width:none;gap:8px}
 .acct-device-stack .acct-device-edit .set-input{flex:1 1 auto}
 .acct-device-stack .acct-device-edit .set-btn{flex:0 0 auto}
+
+/* ⭐ 2026-10-25 owner：设置-空间面板**深色主题适配**（真机截图里白卡/分段/状态 pill 全是浅色硬编码） */
+[data-theme="dark"] .set-security-card{
+  background:linear-gradient(135deg,#1f232b 0%,#1c1d20 70%);
+  border-color:var(--border);
+}
+[data-theme="dark"] .set-security-right{border-left-color:var(--border)}
+[data-theme="dark"] .set-security-pill.is-ok{color:#7ce3b0;background:rgba(43,212,155,.14)}
+[data-theme="dark"] .set-security-pill.is-warn{color:#ffc078;background:rgba(255,176,77,.14)}
+[data-theme="dark"] .set-security-chips span{background:var(--hover);color:var(--text-dim)}
+[data-theme="dark"] .set-space-list{background:var(--card-bg);border-color:var(--border)}
+[data-theme="dark"] .set-space-list .set-space-card{border-bottom-color:var(--border)}
+[data-theme="dark"] .set-space-list .set-space-card.is-active{background:#1c2a40}
+[data-theme="dark"] .set-space-row:hover{background:var(--hover)}
+[data-theme="dark"] .set-space-list .set-space-card.is-active .set-space-row:hover{background:transparent}
+[data-theme="dark"] .set-space-mark{background:#22304a;color:var(--accent-strong)}
+[data-theme="dark"] .set-space-seg{background:#26272b}
+[data-theme="dark"] .set-space-seg button.is-on{background:#3a3c41;color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.4)}
+[data-theme="dark"] .set-space-crypto{background:#2a2b2e;border-color:#3a3c41;color:var(--text-dim)}
+[data-theme="dark"] .set-space-crypto.is-enc{color:#7ce3b0;background:rgba(43,212,155,.12);border-color:rgba(43,212,155,.3)}
+[data-theme="dark"] .set-space-crypto.is-plain,
+[data-theme="dark"] .set-space-state.is-plain{background:#2a2b2e;color:var(--text-dim)}
+[data-theme="dark"] .set-space-menu{background:var(--surface);border-color:var(--border-strong)}
+[data-theme="dark"] .set-space-status .set-space-crypto,
+[data-theme="dark"] .set-space-status .set-space-state{color:var(--text-2)}
+[data-theme="dark"] .set-security-fold summary{color:var(--text-2)}
+[data-theme="dark"] .set-space-advanced-link{color:var(--text-faint)}
+[data-theme="dark"] .backup-auto-card{background:var(--card-bg);border-color:var(--border)}
+[data-theme="dark"] .backup-auto-grid .backup-auto-item{background:#222326;border-color:var(--border)}
+[data-theme="dark"] .backup-dir-path{background:#222326;border-color:var(--border);color:var(--text-dim)}
+[data-theme="dark"] .backup-auto-badge{background:#2a2b2e;color:var(--text-faint)}
