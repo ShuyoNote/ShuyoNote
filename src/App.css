@@ -27591,3 +27591,7 @@ button.mset-row:focus-visible {
 .attachment-prefetch{font-size:11px;color:var(--text-faint);margin-left:8px}
 .acct-device-edit{display:flex;align-items:center;gap:8px;flex:0 0 auto;width:min(360px,48%)}
 .acct-device-edit .set-input{flex:1 1 auto;min-width:0}
+/* ⭐ 2026-10-25 真机：设备名“保存”按钮被挤成竖排两字 ⇒ 不许收缩、给最小宽 */
+.acct-device-edit .set-btn{flex:0 0 auto;min-width:64px;white-space:nowrap;padding-left:14px;padding-right:14px}
+.acct-device-edit{width:min(420px,52%)}
+.acct-device-edit .set-input{height:38px}
