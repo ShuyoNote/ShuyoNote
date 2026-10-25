@@ -928,8 +928,19 @@ pub fn status_payload_from(
         .map(|c| verified_window(c, now))
         .unwrap_or(VerifiedLicense::Placeholder(LicenseWindow::Unconfigured));
     RelayStatus {
-        available: true,
-        note,
+        // ⭐⭐ **2026-10-25（2.0 不带中继）**：`available` 现在**跟构建走**，不恒 true ✗。
+        //   原因：`relay_client` 这一层**没有** `#[cfg(feature="relay")]` ⇒ 默认构建里它照样编译、照样
+        //   去 probe 中继地址，于是 2.0 包里会显示「已连上中继」，而真正建隧道那条路会报
+        //   「这个构建没编入跨网隧道」⇒ **假状态 ＋ 假按钮**（违反"不许假读数"）。
+        //   ⇒ 非 relay 构建：`available=false` ＋ 一句人话；界面据此把这一档显示成"下一阶段"。
+        available: cfg!(feature = "relay"),
+        note: if cfg!(feature = "relay") {
+            note
+        } else if note.is_empty() {
+            "这个版本不含跨网（下一阶段）".to_string()
+        } else {
+            format!("{note}（这个版本不含跨网，下一阶段）")
+        },
         configured,
         url,
         connection: connection_view(probed.map(|(o, _)| o), probed.map(|(_, at)| at)),

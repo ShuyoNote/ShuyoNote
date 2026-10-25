@@ -78,7 +78,10 @@ export function relayStatusView(payload: RelayStatus | null | undefined | unknow
   if (!p || p.available !== true) {
     return {
       available: false,
-      connectionLabel: "中继这一档在当前平台不可用",
+      // ⭐ 2026-10-25（2.0 不带中继）：这句话要**说清是哪一种"不可用"** ——
+      //   「当前平台不可用」（Web）与「这个版本没编进跨网」（桌面 2.0 包）不是一回事，
+      //   用后端给的 note 优先；没有就落回"下一阶段"那句。
+      connectionLabel: text(p?.note) || "这个版本不含跨网（下一阶段）",
       connectionDetail: "",
       url: null,
       licenseLabel: RELAY_UNREADABLE,
