@@ -167,6 +167,18 @@ impl LanState {
         self.table.snapshot()
     }
 
+    /// ⭐ **2026-10-25（配对码两端要算同一个码）**：只读取某一台对端**这一轮公告里**的 `trust_ask`。
+    ///
+    /// ⚠️ 用 `observed_all()`（**不看网格开关**）：配对屏要能在"已经收到公告、但还没启用网格"时也算得出码。
+    /// ⚠️ 空串/过期 ⇒ `None`（⛔ 不返回一个空 ask —— 那会让配对码变成"没有输入也算得出"）。
+    pub fn trust_ask_of(&self, device_id: &str) -> Option<String> {
+        self.observed_all()
+            .into_iter()
+            .find(|p| p.announce.device_id == device_id)
+            .map(|p| p.announce.trust_ask)
+            .filter(|a| !a.trim().is_empty())
+    }
+
     /// 腾掉过期的行（由周期任务调用）。
     pub fn sweep(&self, now_ms: i64) -> usize {
         self.table.sweep(now_ms)

@@ -266,9 +266,25 @@ pub fn pairing_code_reading(
         crate::device_key::public_key_hex_of(&c)?
     };
     // ⭐ 这一轮那一串：⭐ 没在跟这一台握手 ／ 已过期 ⇒ 空串 ⇒ ⭐ 如实读不到 ✓
-    let ask = crate::lan_state::with_trust(|h| h.ask_for(&peer_device_id, crate::db::now_ms()))
+    let my_ask = crate::lan_state::with_trust(|h| h.ask_for(&peer_device_id, crate::db::now_ms()))
         .unwrap_or_default();
-    Ok(pairing_code_reading_of(my.as_deref(), &peer_pubkey, &ask))
+    // ⭐⭐ **2026-10-25（真机"配对码对不上"）**：还要拿**对方那份 ask**（在它的公告里）。
+    //   只用各自的 ask 算 ⇒ 码必然不同；两端都按 `pick_trust_ask` 挑 ⇒ 同一个。
+    let peer_ask = crate::lan_state::LanState::global("")
+        .trust_ask_of(&peer_device_id)
+        .unwrap_or_default();
+    let my_device_id = {
+        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+        crate::sync::device_id(&c).unwrap_or_default()
+    };
+    Ok(pairing_code_reading_both(
+        my.as_deref(),
+        &peer_pubkey,
+        &my_ask,
+        &peer_ask,
+        &my_device_id,
+        &peer_device_id,
+    ))
 }
 
 /// ⭐ 握手的**默认有效期**（⭐ 毫秒 ✓）—— ⭐ 四个广播周期（⭐ 广播 30 秒一轮 ✓）。
