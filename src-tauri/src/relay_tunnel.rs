@@ -593,9 +593,12 @@ pub mod iroh_client {
             }
         };
         let ep = iroh_tunnel::bind(secret).await?;
+        // ⚠️ `addrs` 要填的是 **iroh 的 UDP 地址**（QUIC 走 UDP）—— ⛔ 不是网格窗口的 8788。
+        //   所以把 UDP 端口一起打出来（别让人去猜、也别去翻 netstat）。
         eprintln!(
-            "[relay] 隧道服务侧已起：node_id={}（对面填进 relay/peers.json）",
-            hex(ep.id().as_bytes())
+            "[relay] 隧道服务侧已起：node_id={} ｜ UDP 地址={:?}（对面填进 relay/peers.json 的 addrs）",
+            hex(ep.id().as_bytes()),
+            ep.bound_sockets()
         );
         loop {
             let Some(accepting) = ep.accept().await else {
