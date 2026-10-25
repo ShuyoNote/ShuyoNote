@@ -27998,5 +27998,5 @@ button.mset-row:focus-visible {
 
 
 /* ⭐ 2026-10-26（owner follow-up：「待配对设备卡片之间留点白，比较好看吧？」）——
-   卡片之间从 12px 放到 14px（⛔ 只动间距，不碰字号/内边距/配色）；窄屏同样受益 ✓。 */
-.sync-popover.is-inline .sync-nearby { gap: 14px; }
+   卡片之间从 12px 放到 **16px**（⛔ 只动间距，不碰字号/内边距/配色）；窄屏同样受益 ✓。 */
+.sync-popover.is-inline .sync-nearby { gap: 16px; }
