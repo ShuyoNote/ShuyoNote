@@ -1601,6 +1601,20 @@ export interface CommandMap {
   };
   clear_trash: { args: undefined; result: number };
   cleanup_orphan_attachments: { args: undefined; result: number };
+  // ⭐ 2026-10-25：整理附件布局（老 → 按空间）；`unreadable_spaces` 非空 ⇒ 只复制、不删
+  attachments_migrate_legacy: {
+    args: undefined;
+    result: {
+      scanned: number;
+      copied: number;
+      deleted: number;
+      kept: number;
+      /** ⭐ 顺带回收掉的**空目录**数（删文件不删目录 ⇒ 只增不减；2026-10-25 补） */
+      pruned: number;
+      unreadable_spaces: string[];
+      notes: string[];
+    };
+  };
   cleanup_orphan_derived: { args: undefined; result: number };
   cleanup_old_versions: { args: { maxKeep?: number }; result: number };
   cleanup_temp_files: { args: undefined; result: number };

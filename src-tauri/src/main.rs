@@ -3,11 +3,17 @@
 
 fn main() {
     // ⭐ P3：无头 `--backup-once` ⇒ 跑一次备份就退出（⛔ 不建窗口 ✓）
+    // ⭐ 2026-10-25：`--migrate-attachments-once` 走**同一条**路（整理附件布局，跑完就退 ✓）
     // 与 `lib.rs` 的 `run()` 里那条子进程分流**同形** ✓（那里是 plugin_host 的 HOST_FLAG ✓）
-    if shuyonote_lib::auto_backup::cli_mode(std::env::args().skip(1))
-        == shuyonote_lib::auto_backup::CliMode::BackupOnce
+    // ⚠️ **逐条点名，不写 `!= Normal`**：`check-headless-backup` 这条静态判据要看到
+    //    `CliMode::BackupOnce` 这个字面量（"分流判据本身"就在那一行）——
+    //    2026-10-25 我改成 `!= Normal` 时 CI 当场红了 ✓（它挡的是"静默不分流"✓）。
     {
-        std::process::exit(shuyonote_lib::run_backup_once());
+        use shuyonote_lib::auto_backup::CliMode;
+        let mode = shuyonote_lib::auto_backup::cli_mode(std::env::args().skip(1));
+        if matches!(mode, CliMode::BackupOnce | CliMode::MigrateAttachments) {
+            std::process::exit(shuyonote_lib::run_backup_once());
+        }
     }
     // ⭐ task-10 ③：`--import <文件>`（Office 导入第一期）—— **冷启动**这一半：
     //    把待导入路径记进本进程（真正交付给前端的那一行在 `lib.rs` 的 `.setup()` 里 ✓）。

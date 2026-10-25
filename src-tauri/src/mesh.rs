@@ -672,7 +672,7 @@ pub fn mesh_peers_by_name(
 /// ⚠️ 签名**过不过**是**对面**的事 ✓：⭐ 这一侧照样把口令也带上 ✓（⭐ 过渡期两档并存 ✓，
 /// 见 `authorized` 那段"等 owner 选 ⓒ 时怎么改"✓）。
 pub async fn pull_from_peer(
-    client: &reqwest::Client,
+    ep: &dyn crate::mesh_endpoint::Endpoint,
     peer: &MeshPeer,
     space_id: &str,
     since: i64,
@@ -684,34 +684,16 @@ pub async fn pull_from_peer(
 ) -> Result<(Vec<MeshRow>, i64), String> {
     // ⚠️ target **只拼一次** ✗：⭐ 签的是它、发的也是它 ✓（⛔ 两处各拼一份 ⇒ 一漂就验不过 ✗）。
     let target = pull_target(space_id, since, name_sha);
-    let url = format!("{}{}", peer.base.trim_end_matches('/'), target);
-    let mut req = client.get(&url);
-    if let Some((device_id, ts, sig)) = auth {
-        req = req
-            .header(HDR_DEVICE, device_id)
-            .header(HDR_TS, ts.to_string())
-            .header(HDR_SIG, sig);
+    // ⭐ Step 1b：只认端点（reqwest 的三格头/错误链都收进 `LanEndpoint` 里了）
+    let reply = ep
+        .get(&target, auth, token)
+        .await
+        .map_err(|e| format!("拉对端 {} 失败：{e}", peer.device_id))?;
+    if !(200..300).contains(&reply.status) {
+        return Err(format!("对端 {} 回了 {}", peer.device_id, reply.status));
     }
-    if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
-        req = req.bearer_auth(t);
-    }
-    let resp = req.send().await.map_err(|e| {
-        // ⚠️ `reqwest::Error` 的 `Display` **只有** "error sending request for url (…)" ——
-        // 真正的原因（连接被拒 / 半截响应 / …）挂在 `source()` 链上。这里**逐层接出来**：
-        // "拉不动"最要紧的就是"为什么"，把原因丢掉等于让人猜（10 台那一档的排查就卡在这）。
-        let mut why = e.to_string();
-        let mut cur: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(&e);
-        while let Some(s) = cur {
-            why.push_str(" ← ");
-            why.push_str(&s.to_string());
-            cur = s.source();
-        }
-        format!("拉对端 {} 失败：{why}", peer.device_id)
-    })?;
-    if !resp.status().is_success() {
-        return Err(format!("对端 {} 回了 {}", peer.device_id, resp.status()));
-    }
-    let body: PullResponse = resp.json().await.map_err(|e| e.to_string())?;
+    let body: PullResponse = serde_json::from_str(&reply.body)
+        .map_err(|e| format!("对端 {} 的拉取响应不是 JSON：{e}", peer.device_id))?;
     // ⚠️ 老对端不带 `max_device_seq` ⇒ 0（`serde(default)`）⇒ 调用方**不会**据此重基 ✓
     Ok((body.records, body.max_device_seq))
 }
@@ -834,6 +816,9 @@ pub async fn pull_and_absorb(
     //   **对端高水位 < 我的游标** ⇒ 说明这格游标不是"对方那条计数"里的值（历史遗留 / 换了空间）
     //   ⇒ **归零重拉一次**，并如实记一行（⛔ 不静默、⛔ 不每次轮都重拉：只在这一情形下发生 ✓）。
     let mut healed = false;
+    // ⭐ Step 1b：**调用点挑传输实现**（今天只有局域网直连）；下面一处只认端点 ✓
+    // ⭐ Step 3-1：**挑传输**收敛到一处（局域网 / 跨网隧道）
+    let ep = crate::mesh_endpoint::endpoint_for_peer(peer, client.clone()).await?;
     let (mut rows, mut max_seq) = {
         // ⭐ 签名要在**拿锁的那一小段**里算好 ✗（⛔ 不许跨 await 持锁 ✗）；拿不到身份 ⇒ `None` ✓
         //   （⭐ 那就只剩口令那一档 ✓ —— 与今天逐字相同 ✓）。
@@ -849,7 +834,7 @@ pub async fn pull_and_absorb(
             }
         };
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
-        pull_from_peer(client, peer, space_id, since, token, auth_ref, &name_sha).await?
+        pull_from_peer(&*ep, peer, space_id, since, token, auth_ref, &name_sha).await?
     };
     // ⭐ 游标越界 ⇒ 归零重拉一次（只重拉一次；还得再拿锁算签名 ⇒ 与上面同一套）
     if max_seq > 0 && since > max_seq {
@@ -873,7 +858,7 @@ pub async fn pull_and_absorb(
             }
         };
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
-        let again = pull_from_peer(client, peer, space_id, 0, token, auth_ref, &name_sha).await?;
+        let again = pull_from_peer(&*ep, peer, space_id, 0, token, auth_ref, &name_sha).await?;
         rows = again.0;
         max_seq = again.1.max(max_seq);
     }
@@ -921,7 +906,7 @@ pub async fn pull_and_absorb(
             let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
             // ⚠️ 探针**不许静默**：进没进、回来几条、错在哪 —— 都要看得见 ✓
             //   （第一版用 `if let Ok` 把 Err 吞了 ⇒ 现场只看到"什么也没发生" ✗）
-            let probe = pull_from_peer(client, peer, space_id, 0, token, auth_ref, &name_sha).await;
+            let probe = pull_from_peer(&*ep, peer, space_id, 0, token, auth_ref, &name_sha).await;
             let probe_rows = match probe {
                 Err(e) => {
                     eprintln!(
@@ -999,10 +984,10 @@ pub async fn pull_and_absorb(
     //   · 设备级（钥匙袋不属于某一个空间），10 分钟最多取一次；
     //   · ⛔ 失败/老对端没有这个端点 ⇒ 只记日志，**不影响这一轮同步**；
     //   · 收到之后由 `merge_material` 决定"整体采纳（新设备）"还是"并成额外组（老设备）"。
-    maybe_sync_peer_keyring(conn, client, peer, space_id, token).await;
+    maybe_sync_peer_keyring(conn, &*ep, peer, space_id, token).await;
     // ⭐ P3：顺带对一次"页清单"（只读、6 小时一次）—— 把"你这儿有、我这儿没有"如实打出来。
     //   ⚠️ 这一版**只报告不自动补**（自动按 id 取页是下一步；先让缺口可见，再动手补）。
-    maybe_report_manifest_gap(conn, client, peer, space_id, token, device_level).await;
+    maybe_report_manifest_gap(conn, &*ep, peer, space_id, token, device_level).await;
     Ok(PeerPullReport {
         peer: peer.device_id.clone(),
         fetched,
@@ -1022,7 +1007,7 @@ pub async fn pull_and_absorb(
 /// ⚠️ 拿锁只做**短事**（读节流时间、算签名），网络那一截不持锁（本仓老规矩）。
 async fn maybe_sync_peer_keyring(
     conn: &std::sync::Mutex<Connection>,
-    client: &reqwest::Client,
+    ep: &dyn crate::mesh_endpoint::Endpoint,
     peer: &MeshPeer,
     space_id: &str,
     token: Option<&str>,
@@ -1052,7 +1037,7 @@ async fn maybe_sync_peer_keyring(
         }
     };
     let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
-    match fetch_peer_keyring(client, peer, space_id, auth_ref, token).await {
+    match fetch_peer_keyring(ep, peer, space_id, auth_ref, token).await {
         Ok(Some(material)) => {
             let Ok(g) = conn.lock() else { return };
             match crate::space_crypto::merge_material(&g, &material) {
@@ -1640,7 +1625,10 @@ pub async fn round(
         .ok()
         .and_then(|g| g.path().map(|p| crate::security::space_db_is_encrypted(std::path::Path::new(p))))
         .unwrap_or(false);
-    let candidates = mesh_peers_by_name(space_id, &space_name, my_device, peers, local_encrypted);
+    let mut candidates = mesh_peers_by_name(space_id, &space_name, my_device, peers, local_encrypted);
+    // ⭐ 2026-10-25（Step 3-2）：**把跨网路线表里的对端也喂进本轮**
+    //   ⚠️ 默认构建什么都不做（跨网只有 --features relay 才可用）；坏了只打日志、不打断本轮。
+    crate::relay_route::append_virtual_peers(&mut candidates);
     if candidates.is_empty() {
         return Ok(MeshRoundReport {
             enabled: true,
@@ -3503,42 +3491,26 @@ fn handle_keyring(state: &State) -> Reply {
 /// ⚠️ 签名与 `/mesh/pull` 同一套（三格头）；`space_id` 只用于"证明我认得这个空间"的门/签名，
 /// 返回的是**设备级**的公开材料（钥匙袋不属于某一个空间）。
 pub async fn fetch_peer_keyring(
-    client: &reqwest::Client,
+    // ⭐ Step 1b：只认端点（同 `fetch_peer_manifest`）
+    ep: &dyn crate::mesh_endpoint::Endpoint,
     peer: &MeshPeer,
     space_id: &str,
     auth: Option<(&str, i64, &str)>,
     token: Option<&str>,
 ) -> Result<Option<String>, String> {
     let target = format!("/mesh/keyring?space_id={space_id}");
-    let url = format!("{}{}", peer.base.trim_end_matches('/'), target);
-    let mut req = client.get(&url);
-    if let Some((device_id, ts, sig)) = auth {
-        req = req
-            .header(HDR_DEVICE, device_id)
-            .header(HDR_TS, ts.to_string())
-            .header(HDR_SIG, sig);
-    }
-    if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
-        req = req.bearer_auth(t);
-    }
-    let resp = req.send().await.map_err(|e| {
-        let mut why = e.to_string();
-        let mut src = std::error::Error::source(&e);
-        while let Some(s) = src {
-            why.push_str(" / ");
-            why.push_str(&s.to_string());
-            src = s.source();
-        }
-        format!("取公开材料失败（{why}）")
-    })?;
-    let status = resp.status();
-    let body = resp.text().await.map_err(|e| e.to_string())?;
-    if status.as_u16() == 404 {
+    let reply = ep
+        .get(&target, auth, token)
+        .await
+        .map_err(|e| format!("取公开材料失败（对端 {}：{e}）", peer.device_id))?;
+    let status = reply.status;
+    let body = reply.body;
+    if status == 404 {
         eprintln!("[mesh] 取公开材料：对端没有 /mesh/keyring（旧构建？）");
         return Ok(None);
     }
-    if !status.is_success() {
-        return Err(format!("取公开材料被拒：HTTP {}：{}", status.as_u16(), body.trim()));
+    if !(200..300).contains(&status) {
+        return Err(format!("取公开材料被拒：HTTP {status}：{}", body.trim()));
     }
     let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("响应不是 JSON：{e}"))?;
     match v.get("material") {
@@ -3591,32 +3563,27 @@ fn handle_manifest(state: &State, target: &str) -> Reply {
 
 /// 客户端：取对端的页清单（对账用）。老对端 404 ⇒ `None`（不是错误）。
 pub async fn fetch_peer_manifest(
-    client: &reqwest::Client,
+    // ⭐ 2026-10-25（Step 1a）：**只认端点**，不认"怎么连上的"——
+    //   局域网实现是 `mesh_endpoint::LanEndpoint`；未来中继隧道给同一个 trait 的另一实现即可，
+    //   ⛔ 本函数不再碰 `reqwest`／`peer.base`（判据见 `a_fake_endpoint_is_enough_for_the_manifest_call`）。
+    ep: &dyn crate::mesh_endpoint::Endpoint,
     peer: &MeshPeer,
     space_id: &str,
     auth: Option<(&str, i64, &str)>,
     token: Option<&str>,
 ) -> Result<Option<Vec<(String, i64, bool)>>, String> {
     let target = format!("/mesh/manifest?space_id={space_id}");
-    let url = format!("{}{}", peer.base.trim_end_matches('/'), target);
-    let mut req = client.get(&url);
-    if let Some((device_id, ts, sig)) = auth {
-        req = req
-            .header(HDR_DEVICE, device_id)
-            .header(HDR_TS, ts.to_string())
-            .header(HDR_SIG, sig);
-    }
-    if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
-        req = req.bearer_auth(t);
-    }
-    let resp = req.send().await.map_err(|e| format!("取页清单失败（{e}）"))?;
-    let status = resp.status();
-    let body = resp.text().await.map_err(|e| e.to_string())?;
-    if status.as_u16() == 404 {
+    let reply = ep
+        .get(&target, auth, token)
+        .await
+        .map_err(|e| format!("取页清单失败（对端 {}：{e}）", peer.device_id))?;
+    let status = reply.status;
+    let body = reply.body;
+    if status == 404 {
         return Ok(None);
     }
-    if !status.is_success() {
-        return Err(format!("取页清单被拒：HTTP {}：{}", status.as_u16(), body.trim()));
+    if !(200..300).contains(&status) {
+        return Err(format!("取页清单被拒：HTTP {status}：{}", body.trim()));
     }
     let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("页清单不是 JSON：{e}"))?;
     let arr = v
@@ -3666,7 +3633,7 @@ pub fn manifest_gaps(
 /// ⭐ P3：对一次页清单，报告"对端有、我这边没有"的页（6 小时最多一次；只读）。
 async fn maybe_report_manifest_gap(
     conn: &std::sync::Mutex<Connection>,
-    client: &reqwest::Client,
+    ep: &dyn crate::mesh_endpoint::Endpoint,
     peer: &MeshPeer,
     space_id: &str,
     token: Option<&str>,
@@ -3694,7 +3661,8 @@ async fn maybe_report_manifest_gap(
         }
     };
     let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
-    let peer_manifest = match fetch_peer_manifest(client, peer, space_id, auth_ref, token).await {
+    // ⭐ Step 1b：传输实现由调用方挑（今天只有 LAN）；到这里只认端点 ✓
+    let peer_manifest = match fetch_peer_manifest(ep, peer, space_id, auth_ref, token).await {
         Ok(Some(m)) => m,
         Ok(None) => {
             // 老对端没有这一档 ⇒ 只压 **30 分钟**（⛔ 不是 6 小时：对方升级后要能很快用上）。
@@ -3790,7 +3758,7 @@ async fn maybe_report_manifest_gap(
             }
         };
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
-        match fetch_peer_page(client, peer, space_id, id, auth_ref, token).await {
+        match fetch_peer_page(ep, peer, space_id, id, auth_ref, token).await {
             Ok(Some((payload, updated_at))) => {
                 let Ok(g) = conn.lock() else { return };
                 let local_name = crate::sync::local_space_name(&g).unwrap_or_default();
@@ -3899,7 +3867,8 @@ pub(crate) fn repair_payload_for_page(
 
 /// 客户端：按 id 取对端一页（对账补缺用）。对端 404 ⇒ `None`。
 pub async fn fetch_peer_page(
-    client: &reqwest::Client,
+    // ⭐ Step 1b：只认端点
+    ep: &dyn crate::mesh_endpoint::Endpoint,
     peer: &MeshPeer,
     space_id: &str,
     id: &str,
@@ -3907,25 +3876,17 @@ pub async fn fetch_peer_page(
     token: Option<&str>,
 ) -> Result<Option<(String, i64)>, String> {
     let target = format!("/mesh/page?space_id={space_id}&id={id}");
-    let url = format!("{}{}", peer.base.trim_end_matches('/'), target);
-    let mut req = client.get(&url);
-    if let Some((device_id, ts, sig)) = auth {
-        req = req
-            .header(HDR_DEVICE, device_id)
-            .header(HDR_TS, ts.to_string())
-            .header(HDR_SIG, sig);
-    }
-    if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
-        req = req.bearer_auth(t);
-    }
-    let resp = req.send().await.map_err(|e| format!("按 id 取页失败（{e}）"))?;
-    let status = resp.status();
-    let body = resp.text().await.map_err(|e| e.to_string())?;
-    if status.as_u16() == 404 {
+    let reply = ep
+        .get(&target, auth, token)
+        .await
+        .map_err(|e| format!("按 id 取页失败（对端 {}：{e}）", peer.device_id))?;
+    let status = reply.status;
+    let body = reply.body;
+    if status == 404 {
         return Ok(None);
     }
-    if !status.is_success() {
-        return Err(format!("按 id 取页被拒：HTTP {}：{}", status.as_u16(), body.trim()));
+    if !(200..300).contains(&status) {
+        return Err(format!("按 id 取页被拒：HTTP {status}：{}", body.trim()));
     }
     let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("响应不是 JSON：{e}"))?;
     let payload = v
@@ -4039,7 +4000,10 @@ pub async fn sealed_round(
         let auth = sign_request(&meta, my_device, proto_space, "GET", &target, crate::db::now_ms())
             .map(|(ts, sig)| (my_device.to_string(), ts, sig));
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
-        match pull_from_peer(&client, peer, proto_space, since, None, auth_ref, &name_sha).await {
+        // ⭐ Step 1b：每个对端各自一个端点（今天只有局域网直连）
+        // ⭐ Step 3-1：**挑传输**收敛到一处（局域网 / 跨网隧道）
+    let ep = crate::mesh_endpoint::endpoint_for_peer(peer, client.clone()).await?;
+        match pull_from_peer(&*ep, peer, proto_space, since, None, auth_ref, &name_sha).await {
             Ok((rows, _max)) => {
                 let n = stash_sealed_rows(&meta, db_space, &peer.device_id, &rows).unwrap_or(0);
                 stashed_total += n;
@@ -6209,6 +6173,104 @@ mod tests {
         assert_eq!(mesh_peers_by_name("room-enc", "保险柜", "me", &[p], true).len(), 1);
     }
 
+    /// ⭐⭐ **2026-10-25（数据面 Step 1a 的判据）**：**一个假端点就够了** ——
+    /// `fetch_peer_manifest` 只认 `Endpoint`，不再碰 reqwest/peer.base。
+    ///
+    /// 这条挡的是「换传输实现时偷偷把同步逻辑也改了」：
+    /// 只要假端点能喂出同样形状的响应、解析结果一致 ⇒ 传输可替换 ✓。
+    ///
+    /// **变异**：把 `fetch_peer_manifest` 改回直接 `reqwest`（签名不要 `ep`）⇒ 本判据编译不过 ⇒ 红。
+    #[tokio::test]
+    async fn a_fake_endpoint_is_enough_for_the_manifest_call() {
+        use crate::mesh_endpoint::{Endpoint, HttpReply};
+        use std::future::Future;
+        use std::pin::Pin;
+        struct Fake {
+            seen: std::sync::Mutex<Vec<String>>,
+        }
+        impl Endpoint for Fake {
+            fn get(
+                &self,
+                target: &str,
+                _auth: Option<(&str, i64, &str)>,
+                _token: Option<&str>,
+            ) -> Pin<Box<dyn Future<Output = Result<HttpReply, String>> + Send + '_>> {
+                self.seen.lock().unwrap().push(target.to_string());
+                Box::pin(async move {
+                    Ok(HttpReply {
+                        status: 200,
+                        body: r#"{"pages":[{"id":"p1","updated_at":11,"deleted":false},
+                                             {"id":"p2","updated_at":22,"deleted":true}]}"#
+                            .to_string(),
+                    })
+                })
+            }
+        }
+        let fake = Fake { seen: std::sync::Mutex::new(Vec::new()) };
+        let peer = MeshPeer { device_id: "dev-x".to_string(), base: "http://not-used.invalid:1".to_string() };
+        let got = fetch_peer_manifest(&fake, &peer, "space-z", None, None)
+            .await
+            .expect("假端点必须够用");
+        assert_eq!(
+            got,
+            Some(vec![
+                ("p1".to_string(), 11, false),
+                ("p2".to_string(), 22, true),
+            ])
+        );
+        assert_eq!(
+            fake.seen.lock().unwrap().as_slice(),
+            ["/mesh/manifest?space_id=space-z"],
+            "端点收到的必须是原样 target（签名与发送同一份 ✓）"
+        );
+    }
+
+    /// ⭐⭐ **2026-10-25（Step 1b 判据）**：`pull_from_peer` 也**只认端点** ——
+    /// 假端点喂一条记录，解析出的 `records`／`max_device_seq` 必须与原 HTTP 路径一致。
+    ///
+    /// **变异**：把签名改回收 `&reqwest::Client` ⇒ 本判据编译不过 ⇒ 红。
+    #[tokio::test]
+    async fn a_fake_endpoint_is_enough_for_the_pull_call() {
+        use crate::mesh_endpoint::{Endpoint, HttpReply};
+        use std::future::Future;
+        use std::pin::Pin;
+        struct Fake {
+            seen: std::sync::Mutex<Vec<String>>,
+        }
+        impl Endpoint for Fake {
+            fn get<'a>(
+                &'a self,
+                target: &'a str,
+                _auth: Option<(&'a str, i64, &'a str)>,
+                _token: Option<&'a str>,
+            ) -> Pin<Box<dyn Future<Output = Result<HttpReply, String>> + Send + 'a>> {
+                self.seen.lock().unwrap().push(target.to_string());
+                Box::pin(async move {
+                    Ok(HttpReply {
+                        status: 200,
+                        body: r#"{"records":[{"device_seq":3,"entity":"page","entity_id":"p1",
+                                              "op":"upsert","payload":null,"updated_at":9}],
+                                  "max_device_seq":7}"#
+                            .to_string(),
+                    })
+                })
+            }
+        }
+        let fake = Fake { seen: std::sync::Mutex::new(Vec::new()) };
+        let peer = MeshPeer { device_id: "dev-x".to_string(), base: "http://not-used.invalid:1".to_string() };
+        let (rows, max) = pull_from_peer(&fake, &peer, "space-z", 0, None, None, "")
+            .await
+            .expect("假端点必须够用");
+        assert_eq!(max, 7, "高水位必须照样读出来（游标越界那条判据靠它）");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].entity_id, "p1");
+        assert_eq!(
+            fake.seen.lock().unwrap().as_slice(),
+            [pull_target("space-z", 0, "").as_str()],
+            "端点收到的必须是**原样 target**（⭐ 签名与发送同一份：断言就用同一个 `pull_target`）"
+        );
+    }
+
     /// ⭐ 2026-10-24（P3 对账）：`/mesh/manifest` 是真路由；缺页判定是纯函数（可单测）。
     #[test]
     fn the_manifest_endpoint_is_a_route_and_missing_ids_are_computed_purely() {
@@ -7783,7 +7845,7 @@ mod tests {
         let (ts2, sig2) = crate::mesh::sign_request(&c, "dev-peer", space, "GET", &out_target, now)
             .expect("签一份");
         let rows = crate::mesh::pull_from_peer(
-            &reqwest::Client::new(),
+            &crate::mesh_endpoint::LanEndpoint::new(&peer.base, reqwest::Client::new()),
             &peer,
             space,
             0,
@@ -7941,7 +8003,7 @@ mod tests {
         // ⭐ **B 来拿 A 的** ⇒ 放行 ✓（⭐ A 允许了它 ✓ —— 这一条就是"单方"的那个方向 ✓）
         let (tb, sb) = sign(&cb, "dev-b");
         let ok = crate::mesh::pull_from_peer(
-            &client,
+            &crate::mesh_endpoint::LanEndpoint::new(&near("dev-a", addr_a).base, client.clone()),
             &near("dev-a", addr_a),
             space,
             0,
@@ -7956,7 +8018,7 @@ mod tests {
         let (tc, sc) =
             crate::mesh::sign_request(&ca, "dev-c", space, "GET", &tgt, crate::db::now_ms()).unwrap();
         let ghost = crate::mesh::pull_from_peer(
-            &client,
+            &crate::mesh_endpoint::LanEndpoint::new(&near("dev-a", addr_a).base, client.clone()),
             &near("dev-a", addr_a),
             space,
             0,
@@ -7982,7 +8044,7 @@ mod tests {
         // ⭐ **A 去拿 B 的** ⇒ **必须进得来** ✓（双向已通 ✓；⛔ 门口不用重启 ✗）
         let (ta, sa) = sign(&ca, "dev-a");
         let both =
-            crate::mesh::pull_from_peer(&client, &near("dev-b", addr_b), space, 0, None, Some(("dev-a", ta, &sa)), "")
+            crate::mesh::pull_from_peer(&crate::mesh_endpoint::LanEndpoint::new(&near("dev-b", addr_b).base, client.clone()), &near("dev-b", addr_b), space, 0, None, Some(("dev-a", ta, &sa)), "")
                 .await;
         assert!(
             both.is_ok(),

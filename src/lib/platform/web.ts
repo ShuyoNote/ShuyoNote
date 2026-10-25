@@ -3653,6 +3653,18 @@ export function makeInvoke(store: SqliteStore) {
       }
       return 0 as T;
     }
+    if (cmd === "attachments_migrate_legacy") {
+      // ⭐ Web 平台没有"文件布局"这回事（附件在 blobStore 里，不是 `<根>/<空间>/<桶>/`）⇒
+      //   如实回零 ＋ 一句为什么，⛔ 不假装做过 ✓（与"环境不具备 ≠ 通过"同一条纪律）。
+      return {
+        scanned: 0,
+        copied: 0,
+        deleted: 0,
+        kept: 0,
+        unreadable_spaces: [],
+        notes: ["Web 平台没有文件布局（附件在 blobStore 里）⇒ 无需整理"],
+      } as T;
+    }
     if (cmd === "cleanup_orphan_attachments") {
       // Free blob bytes whose hash is no longer referenced by any attachment row
       // (content-addressed: a hash can be safely removed only when zero rows use it).
