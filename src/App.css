@@ -46,7 +46,7 @@
   /* 左竖条宽 + 标题栏高：供 fixed 弹层（预览/TOC/PdfReader 等）避开这些 chrome。
      --titlebar-h 三档（由 `<TitleBar>` 运行时写入）：自绘栏 32px ／ macOS 原生透明
      标题栏 28px（红绿灯占位）／ 系统标题栏 0。 */
-  --activity-w: 48px;
+  --activity-w: 52px;
   --titlebar-h: 0px;
 
   /* Semantic */
@@ -319,7 +319,7 @@ html[data-platform="win"] .app-body {
 .is-macos {
   /* 竖条宽＝自绘小灯那一组的宽度（8..54）＋右侧 2px。`--activity-w` 只有一处
      别的消费方（`.fm-preview-overlay` 的 left）⇒ 覆盖它 = 竖条与浮层避让同源。 */
-  --activity-w: 56px;
+  --activity-w: 60px;
   /* 红绿灯占位高度：**只给竖条用**。⛔ 不复用 `--titlebar-h` —— B 版侧栏/主区内容
      顶到窗口顶、浮层也要能从 0 开始，那个变量在 macOS 上是 0（见 `<TitleBar>`）。 */
   --mac-lights-h: 28px;
@@ -576,7 +576,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
  * （这正是把入口从侧栏搬出来的目的）。 */
 .activity-bar {
   flex: none;
-  width: 48px;
+  width: 52px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -627,7 +627,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 }
 .activity-btn {
   position: relative;
-  width: 48px;
+  width: 52px;
   height: 48px;
   display: grid;
   place-items: center;
@@ -700,7 +700,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 }
 .activity-bar .btn-trash {
   position: relative; /* ⭐ 2026-10-18：徽标按这个按钮定位（右上角，与 rail 其余徽标同一格） */
-  width: 48px;
+  width: 52px;
   height: 48px;
   display: grid;
   place-items: center;
