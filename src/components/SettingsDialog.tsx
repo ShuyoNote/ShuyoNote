@@ -43,7 +43,6 @@ import {
   PersonIcon,
   DatabaseIcon,
   TemplateIcon,
-  LockIcon,
   SendIcon,
   SparkleIcon,
   InfoIcon,
@@ -81,7 +80,6 @@ export const TABS: { id: SettingsTab; labelKey: string; hintKey: string; icon: J
   { id: "plugins", labelKey: "settings.plugins", hintKey: "settings.pluginsHint", icon: <TemplateIcon width={16} height={16} />, group: "system" },
   // ⭐ 2026-10-02：官方引擎与按需下载 —— 排在「插件」之后（插件＝第三方扩展 ／ 能力＝官方引擎 ✓）。
   { id: "abilities", labelKey: "settings.abilities", hintKey: "settings.abilitiesHint", icon: <DownloadIcon width={16} height={16} />, group: "ai" },
-  { id: "security", labelKey: "settings.security", hintKey: "settings.securityHint", icon: <LockIcon width={16} height={16} />, group: "system" },
   // ⭐ 2026-10-06（owner 拍板 R89）：外部 AI 接入的开关面 —— 与「安全」同一族（都是"谁能碰我的库"✓）。
   { id: "mcp", labelKey: "settings.mcp", hintKey: "settings.mcpHint", icon: <SendIcon width={16} height={16} />, group: "collab" },
   // ⭐ **2026-10-14**：⭐ 那三格（监听地址／配对暗号／自动开启）**已回到同步面板** ✓ —— 设置面**不再提供** ✓
@@ -158,6 +156,111 @@ function hostLabel(url: string): string {
 //   ⇒ 本页**也**能切了 ✓；⛔ 但**不是**在这里再写一遍"改 active ＋ 刷新" ✗ ——
 //   切空间**只有一条路**：`useSpaceStore.switchTo`（侧栏顶部那次走的就是它 ✓，
 //   它内部已经含 `setActiveWorkspaceId` ＋ `loadPages` ＋ `refreshVault` ✓）。
+// ⭐ 2026-10-25（合并「空间」与「安全」两页）：把会话锁 / 钥匙袋收成「空间」页顶部的一条，
+//   ⛔ 不再让安全页单独列一遍空间 ✗（那一遍与本页的列表是同一份数据的两份显示）。
+//   ⚠️ 判据：导航里不再有「安全」；空间页顶部必须能找到解锁入口（活动空间是明文时也要有）。
+function SpaceSecurityBanner() {
+  const { activeSpaceEncrypted, locked } = useVault();
+  const spaces = useSpaceStore((s) => s.spaces);
+  const activeId = useSpaceStore((s) => s.activeId);
+  const [busy, setBusy] = useState(false);
+  const [bag, setBag] = useState<{ has_material: boolean; spaces: number; unlocked: boolean } | null>(null);
+  const [bagPass, setBagPass] = useState("");
+  useEffect(() => {
+    let live = true;
+    const fn = api.keyringStatus;
+    if (!fn) return;
+    void fn()
+      .then((s) => { if (live) setBag(s); })
+      .catch(() => { if (live) setBag(null); });
+    return () => { live = false; };
+  }, [locked, activeSpaceEncrypted]);
+
+  const unlockBag = async () => {
+    setBusy(true);
+    try {
+      await unlockVault(bagPass);
+      setBagPass("");
+      toast("已解锁钥匙袋：加密空间现在可以同步", "success");
+      try { setBag((await api.keyringStatus()) ?? null); } catch { /* 刷新失败不影响已解锁 */ }
+      try { await useSpaceStore.getState().load(); } catch { /* 空间列表刷新失败不影响已解锁 */ }
+    } catch (e) {
+      toast(String(e), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const lock = async () => {
+    setBusy(true);
+    try {
+      await lockVault();
+      toast("已锁定：界面会切回锁定屏，解锁后才继续同步", "success");
+    } catch (e) {
+      toast(String(e), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const encryptedName = spaces.find((s) => s.id === activeId)?.name ?? "当前空间";
+  if (!activeSpaceEncrypted && !bag?.has_material) return null;
+  return (
+    <section className="set-section set-space-security">
+      {activeSpaceEncrypted && (
+        <>
+          <div className="set-section-title">会话锁定（加密空间）</div>
+          <div className="set-row">
+            <div className="set-row-text">
+              <div className="set-row-name">{locked ? `已加密 · 已锁定 · ${encryptedName}` : `已加密 · 已解锁 · ${encryptedName}`}</div>
+              <div className="set-row-sub">
+                {locked ? "解锁前读不到内容，同步也会被拒绝。" : "锁定会丢弃本会话的主密钥，界面切回锁定屏。"}
+              </div>
+            </div>
+            {!locked && (
+              <button className="set-btn" disabled={busy} onClick={lock}>
+                立即锁定
+              </button>
+            )}
+          </div>
+        </>
+      )}
+      {bag?.has_material && (
+        <>
+          <div className="set-section-title">钥匙袋（加密空间同步）</div>
+          <div className="set-row">
+            <div className="set-row-text">
+              <div className="set-row-name">
+                {bag.unlocked ? "已解锁" : "未解锁"} · {bag.spaces} 个加密空间
+              </div>
+              <div className="set-row-sub">
+                {bag.unlocked
+                  ? "本会话已拿到主密钥；加密空间可以正常同步。"
+                  : "输入主口令后，本机会按 id 建出对端的加密空间（密文库），并开始拉取密文。"}
+              </div>
+            </div>
+            {!bag.unlocked && (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  className="set-input"
+                  type="password"
+                  placeholder="主口令"
+                  value={bagPass}
+                  disabled={busy}
+                  onChange={(e) => setBagPass(e.target.value)}
+                />
+                <button className="set-btn is-primary" disabled={busy || bagPass.length === 0} onClick={unlockBag}>
+                  解锁
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function SpacesPane() {
   const spaces = useSpaceStore((s) => s.spaces);
   const activeId = useSpaceStore((s) => s.activeId);
@@ -214,6 +317,7 @@ function SpacesPane() {
 
   return (
     <>
+      <SpaceSecurityBanner />
       <section className="set-section">
         <div className="set-section-title">全部空间（{spaces.length}）</div>
         {/* ⭐ 2026-10-10：**筛选**（owner：「20+ 个空间怎么办」✓）——
@@ -241,7 +345,7 @@ function SpacesPane() {
             </button>
           )}
         </div>
-        <div className="set-space-list">
+        <div className="set-space-list set-space-list-scroll">
           {spaces.length === 0 ? (
             <div className="set-space-empty">还没有空间</div>
           ) : shownSpaces.length === 0 ? (
@@ -393,6 +497,13 @@ function SpacesPane() {
           </div>
         </div>
       </section>
+
+      {/* ⭐ 合并第一步：按空间加密/配对仍然保留，但收进「高级」折叠里（默认收起）。
+          下一步再把「开启/关闭加密」搬到每一行的 ⋯ 里，这里就只留配对/恢复。 */}
+      <details className="set-section set-security-fold">
+        <summary>加密与配对（高级）</summary>
+        <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
+      </details>
     </>
   );
 }
@@ -1458,122 +1569,12 @@ function PluginsPane() {
 // 留下的「会话锁定」**不是加密作用域的一部分**：它是会话级的（丢掉内存里的主密钥 ⇒ 界面切回
 // 锁定屏、同步被拒），而加密作用域已经是按空间的了。
 function SecurityPane() {
-  // 状态来自 vault 状态中枢（不是本地 useState 的副本）：在这里点「立即锁定」，
-  // 整个界面会立刻切到锁定屏——旧写法只改了设置页自己的状态，用户会继续看着已经
-  // 读不出来的内容（E2 补的就是这一刀）。
-  //
-  // ⚠️ 字段名（2026-10-10）：这里读的是 **`activeSpaceEncrypted`** ——
-  //「**当前活动空间**是不是加密的」✓。⛔ 它**不是**"本机有没有加密空间" ✗ ——
-  // 那条"两个真相源"就是这么来的（`lib/vault.ts` 与这里曾各说一套 ✓）：
-  // 现在**语义只在 `lib/vault.ts` 定义一次** ✓，这里只是用它 ✓，两处说的是同一句话 ✓。
-  const { activeSpaceEncrypted, locked } = useVault();
+  // ⭐ 2026-10-25：会话锁 / 钥匙袋已经抽成 `SpaceSecurityBanner`（空间页顶部复用同一份）。
+  //   本页保留给测试与深链，不再复制第二套逻辑。
   const spaces = useSpaceStore((s) => s.spaces);
-  const [busy, setBusy] = useState(false);
-  // ⭐ 2026-10-25：**钥匙袋（公开材料）状态** —— 活动空间是明文时，「会话锁定」那一节不渲染，
-  //   而本机可能仍有加密空间在等解锁（B1/B2 真机验收就卡在这）。所以这里给一个**独立入口**。
-  const [bag, setBag] = useState<{ has_material: boolean; spaces: number; unlocked: boolean } | null>(null);
-  const [bagPass, setBagPass] = useState("");
-  useEffect(() => {
-    let live = true;
-    // ⚠️ 测试里的 `api` mock 可能没有这条新命令 ⇒ 有才调（⛔ 不让旧用例因为新入口整片红）。
-    const fn = api.keyringStatus;
-    if (!fn) return;
-    void fn()
-      .then((s) => { if (live) setBag(s); })
-      .catch(() => { if (live) setBag(null); });
-    return () => { live = false; };
-  }, [locked, activeSpaceEncrypted]);
-
-  const unlockBag = async () => {
-    setBusy(true);
-    try {
-      await unlockVault(bagPass);
-      setBagPass("");
-      toast("已解锁钥匙袋：加密空间现在可以同步", "success");
-      try { setBag((await api.keyringStatus()) ?? null); } catch { /* 刷新失败不影响已解锁 */ }
-      try { await useSpaceStore.getState().load(); } catch { /* 空间列表刷新失败不影响已解锁 */ }
-    } catch (e) {
-      toast(String(e), "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const lock = async () => {
-    setBusy(true);
-    try {
-      await lockVault();
-      toast("已锁定：界面会切回锁定屏，解锁后才继续同步", "success");
-    } catch (e) {
-      toast(String(e), "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <>
-      {/* ★ owner 2026-09-24 拍板（选项 A）：**本机还没有加密空间时，整节隐藏**。
-          理由：那时这一节既没有动作（`lock_encryption` 会直接报"这个空间没有加密"）、
-          也没有新信息（下面就是空间列表）—— 留着只是占位。
-          ⚠️ 判据是 `activeSpaceEncrypted` ＝ "**活动空间**是不是加密的"（内核读数 ✓）：
-          活动空间加密 ⇒ 有东西可锁 ⇒ 出现 ✓。
-          ⚠️ **⛔ 不要**改成"本机任意一个空间加密就出现" ✗：那会在**明文活动空间**上摆一颗
-          「立即锁定」，而内核 `lock_encryption_impl` 对明文空间是**直接报错拒绝**的
-          （逐字：「这个空间没有加密，没有什么可锁的」）⇒ 那等于给一个按下去就报错的按钮 ✗。 */}
-      {activeSpaceEncrypted && (
-        <section className="set-section">
-          <div className="set-section-title">会话锁定</div>
-          <div className="set-row">
-            <div className="set-row-text">
-              <div className="set-row-name">{locked ? "已加密 · 已锁定" : "已加密 · 已解锁"}</div>
-              <div className="set-row-sub">
-                {locked ? "解锁前读不到内容，同步也会被拒绝。" : "锁定会丢弃本会话的主密钥，界面切回锁定屏。"}
-              </div>
-            </div>
-            {!locked && (
-              <button className="set-btn" disabled={busy} onClick={lock}>
-                立即锁定
-              </button>
-            )}
-          </div>
-        </section>
-      )}
-      {/* ⭐ 2026-10-25：钥匙袋入口 —— 不依赖"活动空间是否加密"。
-          用途：本机收到对端公开材料后，在这里输一次主口令 ⇒ 解锁时按 id 建出对端的**密文**空间。 */}
-      {bag?.has_material && (
-        <section className="set-section">
-          <div className="set-section-title">钥匙袋（加密空间同步）</div>
-          <div className="set-row">
-            <div className="set-row-text">
-              <div className="set-row-name">
-                {bag.unlocked ? "已解锁" : "未解锁"} · {bag.spaces} 个加密空间
-              </div>
-              <div className="set-row-sub">
-                {bag.unlocked
-                  ? "本会话已拿到主密钥；加密空间可以正常同步。"
-                  : "输入主口令后，本机会按 id 建出对端的加密空间（密文库），并开始拉取密文。"}
-              </div>
-            </div>
-            {!bag.unlocked && (
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input
-                  className="set-input"
-                  type="password"
-                  placeholder="主口令"
-                  value={bagPass}
-                  disabled={busy}
-                  onChange={(e) => setBagPass(e.target.value)}
-                />
-                <button className="set-btn is-primary" disabled={busy || bagPass.length === 0} onClick={unlockBag}>
-                  解锁
-                </button>
-              </div>
-            )}
-          </div>
-        </section>
-      )}
-      {/* 名字从空间列表反查（与同步面板同一口径）：面板里显示 UUID 对用户没有意义。 */}
+      <SpaceSecurityBanner />
       <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
     </>
   );

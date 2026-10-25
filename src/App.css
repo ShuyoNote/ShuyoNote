@@ -14480,6 +14480,21 @@ p:has(> .editor-drawing-container) {
   flex-direction: column;
   gap: 8px;
 }
+
+/* ⭐ 2026-10-25（合并「空间」页）：空间多时**只让列表自己滚**，标题/筛选/底部分区不动。
+   ⛔ 不要让整个设置正文再滚一层（双滚动在触控板上最容易"卡在中间"）。 */
+.set-space-list-scroll {
+  max-height: min(56vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+.set-space-list-scroll::-webkit-scrollbar { width: 6px; }
+.set-space-list-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+.set-space-list-scroll::-webkit-scrollbar-track { background: transparent; }
 .set-space-card {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
