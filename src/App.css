@@ -27418,3 +27418,44 @@ button.mset-row:focus-visible {
 }
 .set-space-menu .set-btn{justify-content:flex-start;text-align:left;border:none;background:transparent}
 .set-space-menu .set-btn:hover:not(:disabled){background:var(--fill-soft,#f3f5f9)}
+
+/* ⭐ 2026-10-25 按设计稿重写：顶部安全卡 / 标题+筛选同排 / 行卡 */
+.set-security-card{
+  display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:24px;align-items:center;
+  background:linear-gradient(135deg,#f7faff 0%,#ffffff 70%);
+  border:1px solid #ecEEf2;border-radius:18px;padding:18px 20px;margin:2px 0 18px;
+}
+.set-security-left{min-width:0}
+.set-security-overline{font-size:11px;color:var(--text-faint);letter-spacing:.02em}
+.set-security-title{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:600;margin-top:6px}
+.set-security-pill{font-size:10.5px;font-weight:500;border-radius:999px;padding:2px 9px;line-height:18px}
+.set-security-pill.is-ok{color:#0b802f;background:#e8faec}
+.set-security-pill.is-warn{color:#b45309;background:#fff3e8}
+.set-security-sub{font-size:12px;color:var(--text-2);margin-top:8px}
+.set-security-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.set-security-chips span{font-size:10.5px;color:var(--text-2);background:#f5f7fa;border-radius:999px;padding:3px 10px}
+.set-security-hint{font-size:10.5px;color:var(--text-faint);margin-top:12px}
+.set-security-right{border-left:1px solid #edf0f6;padding-left:20px;display:flex;flex-direction:column;gap:8px}
+.set-security-right-label{font-size:10.5px;color:var(--text-faint)}
+.set-security-right .set-input{height:38px}
+.set-security-right .set-btn{height:38px}
+.set-security-ok{font-size:11px;color:var(--text-2);padding:8px 0}
+
+.set-space-section .set-space-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px;flex-wrap:wrap}
+.set-space-head-title{font-size:15.5px;font-weight:600}
+.set-space-head-title>span{font-size:11px;font-weight:400;color:var(--text-faint);margin-left:6px}
+.set-space-head-tools{display:flex;align-items:center;gap:10px;margin-left:auto}
+.set-space-seg{display:flex;background:#f4f6fa;border-radius:9px;padding:3px;gap:2px}
+.set-space-seg button{border:none;background:transparent;border-radius:7px;padding:5px 10px;font-size:10.5px;color:var(--text-2);cursor:pointer}
+.set-space-seg button.is-on{background:#fff;color:var(--text);box-shadow:0 1px 2px rgba(15,20,32,.08)}
+.set-space-card{border:1px solid var(--border);border-radius:12px;background:var(--card-bg);position:relative;overflow:visible}
+.set-space-card.is-active{background:#f5f9ff;border-color:#cfe0ff;box-shadow:inset 3px 0 0 var(--accent)}
+.set-space-row{display:flex;align-items:center;gap:12px;padding:11px 14px;min-height:60px}
+.set-space-mark{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);font-size:14px;font-weight:600;flex:0 0 auto}
+.set-space-more{margin-left:auto;position:relative;flex:0 0 auto}
+.set-space-more>summary{list-style:none;cursor:pointer;width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--text-faint);font-size:16px;line-height:1}
+.set-space-more>summary::-webkit-details-marker{display:none}
+.set-space-more>summary:hover,.set-space-more[open]>summary{background:#f0f3f8;color:var(--text-2)}
+.set-space-menu{position:absolute;right:0;top:34px;z-index:30;min-width:150px;padding:6px;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 28px rgba(15,20,32,.16);display:flex;flex-direction:column;gap:2px}
+.set-space-menu .set-btn{justify-content:flex-start;border:none;background:transparent;text-align:left;height:32px;font-size:12px}
+.set-space-menu .set-btn:hover:not(:disabled){background:#f3f5f9}

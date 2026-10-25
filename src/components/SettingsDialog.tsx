@@ -163,6 +163,7 @@ function SpaceSecurityBanner() {
   const { activeSpaceEncrypted, locked } = useVault();
   const spaces = useSpaceStore((s) => s.spaces);
   const activeId = useSpaceStore((s) => s.activeId);
+  const activeName = spaces.find((s) => s.id === activeId)?.name ?? "当前空间";
   const [busy, setBusy] = useState(false);
   const [bag, setBag] = useState<{ has_material: boolean; spaces: number; unlocked: boolean } | null>(null);
   const [bagPass, setBagPass] = useState("");
@@ -186,77 +187,69 @@ function SpaceSecurityBanner() {
       try { await useSpaceStore.getState().load(); } catch { /* 空间列表刷新失败不影响已解锁 */ }
     } catch (e) {
       toast(String(e), "error");
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   };
-
   const lock = async () => {
     setBusy(true);
     try {
       await lockVault();
       toast("已锁定：界面会切回锁定屏，解锁后才继续同步", "success");
-    } catch (e) {
-      toast(String(e), "error");
-    } finally {
-      setBusy(false);
-    }
+    } catch (e) { toast(String(e), "error"); } finally { setBusy(false); }
   };
 
-  const encryptedName = spaces.find((s) => s.id === activeId)?.name ?? "当前空间";
   if (!activeSpaceEncrypted && !bag?.has_material) return null;
+  const count = bag?.spaces ?? (activeSpaceEncrypted ? 1 : 0);
+  const unlocked = bag?.unlocked ?? (activeSpaceEncrypted && !locked);
   return (
-    <section className="set-section set-space-security set-security-card">
-      {activeSpaceEncrypted && (
-        <>
-          <div className="set-section-title">会话锁定（加密空间）</div>
-          <div className="set-row">
-            <div className="set-row-text">
-              <div className="set-row-name">{locked ? `已加密 · 已锁定 · ${encryptedName}` : `已加密 · 已解锁 · ${encryptedName}`}</div>
-              <div className="set-row-sub">
-                {locked ? "解锁前读不到内容，同步也会被拒绝。" : "锁定会丢弃本会话的主密钥，界面切回锁定屏。"}
-              </div>
-            </div>
-            {!locked && (
-              <button className="set-btn" disabled={busy} onClick={lock}>
-                立即锁定
-              </button>
-            )}
-          </div>
-        </>
-      )}
-      {bag?.has_material && (
-        <>
-          <div className="set-section-title">钥匙袋（加密空间同步）</div>
-          <div className="set-row">
-            <div className="set-row-text">
-              <div className="set-row-name">
-                {bag.unlocked ? "已解锁" : "未解锁"} · {bag.spaces} 个加密空间
-              </div>
-              <div className="set-row-sub">
-                {bag.unlocked
-                  ? "本会话已拿到主密钥；加密空间可以正常同步。"
-                  : "输入主口令后，本机会按 id 建出对端的加密空间（密文库），并开始拉取密文。"}
-              </div>
-            </div>
-            {!bag.unlocked && (
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input
-                  className="set-input"
-                  type="password"
-                  placeholder="主口令"
-                  value={bagPass}
-                  disabled={busy}
-                  onChange={(e) => setBagPass(e.target.value)}
-                />
-                <button className="set-btn is-primary" disabled={busy || bagPass.length === 0} onClick={unlockBag}>
-                  解锁
-                </button>
-              </div>
-            )}
-          </div>
-        </>
-      )}
+    <section className="set-security-card">
+      <div className="set-security-left">
+        <div className="set-security-overline">加密空间 · 会话锁定</div>
+        <div className="set-security-title">
+          {count} 个加密空间
+          <span className={`set-security-pill ${unlocked ? "is-ok" : "is-warn"}`}>
+            {unlocked ? "已解锁" : "未解锁"}
+          </span>
+        </div>
+        <div className="set-security-sub">
+          {activeSpaceEncrypted && locked
+            ? "已加密 · 已锁定 · 解锁前读不到内容，同步也会被拒绝。"
+            : unlocked
+              ? `${activeSpaceEncrypted ? activeName : "保险柜"} · 本会话已拿到主密钥，可以同步`
+              : "解锁后本机才能读取加密空间，并开始拉取对端密文"}
+        </div>
+        <div className="set-security-chips">
+          <span>SQLCipher 密文落盘</span>
+          <span>仅附近设备直连 · 对端 Windows</span>
+        </div>
+        <div className="set-security-hint">
+          {unlocked
+            ? (activeSpaceEncrypted ? "锁定后本机不再持有钥匙；对外只搬运 sealed 密文。" : "钥匙只在内存里；不写盘、不上传。")
+            : "主口令只在本机内存里使用，不落盘。"}
+        </div>
+      </div>
+      <div className="set-security-right">
+        <div className="set-security-right-label">{unlocked ? "会话状态" : "主口令"}</div>
+        {!unlocked ? (
+          <>
+            <input
+              className="set-input"
+              type="password"
+              placeholder="输入主口令"
+              value={bagPass}
+              disabled={busy}
+              onChange={(e) => setBagPass(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && bagPass.length > 0) void unlockBag(); }}
+            />
+            <button className="set-btn is-primary" disabled={busy || bagPass.length === 0} onClick={unlockBag}>
+              {busy ? "解锁中…" : "解锁"}
+            </button>
+          </>
+        ) : activeSpaceEncrypted && !locked ? (
+          <button className="set-btn" disabled={busy} onClick={lock}>立即锁定</button>
+        ) : (
+          <div className="set-security-ok">已解锁 · 钥匙只在内存</div>
+        )}
+      </div>
     </section>
   );
 }
@@ -269,6 +262,7 @@ function SpacesPane() {
   // ⭐ 2026-10-10：筛选词（owner：「20+ 个空间怎么办」✓）⇒ 只影响**列表显示**：
   //    ⛔ 不动 `spaces`、⛔ 不动"当前空间" ✗（见 `filterSpaces`：签名里根本没有 active ✓）
   const [spaceQuery, setSpaceQuery] = useState("");
+  const [secFilter, setSecFilter] = useState<"all" | "enc" | "plain">("all");
   const shownSpaces = filterSpaces(spaces, spaceQuery);
   // 每个空间的同步目标：让「这个空间到底同不同步、同步到哪」在管理页就能看到，
   // 不用再切回同步面板逐个点开。
@@ -368,47 +362,50 @@ function SpacesPane() {
     }
   };
 
+  const isEnc = (sp: (typeof spaces)[number]) => secViews[sp.id]?.encrypted_on_disk ?? sp.encrypted_on_disk;
+  const visibleSpaces = shownSpaces.filter((sp) =>
+    secFilter === "all" ? true : secFilter === "enc" ? isEnc(sp) : !isEnc(sp),
+  );
+  const encCount = spaces.filter(isEnc).length;
+
   return (
     <>
       <SpaceSecurityBanner />
-      <section className="set-section">
-        <div className="set-section-title">全部空间（{spaces.length}）</div>
-        {/* ⭐ 2026-10-10：**筛选**（owner：「20+ 个空间怎么办」✓）——
-            ⚠️ 与侧栏那个空间切换器**共用同一份匹配**（`src/lib/spaceFilter.ts` ✓），⛔ 不各写一份 ✗。 */}
-        {/* ⭐ 2026-10-11（owner 截图「美化一下筛选空间这个控件」）：外面套一层只为放**放大镜**与
-            **清空**两个附件 ✓ —— ⛔ 输入框自己的类名一个字没改 ✗（`.set-space-filter` 有判据在用 ✓），
-            高度也不许动（本仓规则：可点控件 ≥44px ✓）。 */}
-        <div className="set-space-filter-wrap">
-          <SearchIcon width={16} height={16} />
-          <input
-            className="set-space-filter sync-input"
-            value={spaceQuery}
-            onChange={(e) => setSpaceQuery(e.target.value)}
-            placeholder="筛选空间…"
-            aria-label="筛选空间"
-          />
-          {spaceQuery !== "" && (
-            <button
-              className="set-space-filter-clear"
-              onClick={() => setSpaceQuery("")}
-              aria-label="清空筛选"
-              title="清空筛选"
-            >
-              ×
-            </button>
-          )}
+      <section className="set-section set-space-section">
+        <div className="set-space-head">
+          <div className="set-space-head-title">全部空间 <span>{spaces.length} 个</span></div>
+          <div className="set-space-head-tools">
+            <div className="set-space-filter-wrap">
+              <SearchIcon width={16} height={16} />
+              <input
+                className="set-space-filter sync-input"
+                value={spaceQuery}
+                onChange={(e) => setSpaceQuery(e.target.value)}
+                placeholder="筛选空间…"
+                aria-label="筛选空间"
+              />
+              {spaceQuery !== "" && (
+                <button className="set-space-filter-clear" onClick={() => setSpaceQuery("")} aria-label="清空筛选" title="清空筛选">×</button>
+              )}
+            </div>
+            <div className="set-space-seg" role="tablist" aria-label="按加密状态筛选">
+              <button role="tab" aria-selected={secFilter === "all"} className={secFilter === "all" ? "is-on" : ""} onClick={() => setSecFilter("all")}>全部 {spaces.length}</button>
+              <button role="tab" aria-selected={secFilter === "enc"} className={secFilter === "enc" ? "is-on" : ""} onClick={() => setSecFilter("enc")}>已加密 {encCount}</button>
+              <button role="tab" aria-selected={secFilter === "plain"} className={secFilter === "plain" ? "is-on" : ""} onClick={() => setSecFilter("plain")}>未加密 {spaces.length - encCount}</button>
+            </div>
+          </div>
         </div>
         <div className="set-space-list set-space-list-scroll" ref={listRef}>
           {spaces.length === 0 ? (
             <div className="set-space-empty">还没有空间</div>
-          ) : shownSpaces.length === 0 ? (
+          ) : visibleSpaces.length === 0 ? (
             /* ⛔ 零命中**不许**只给空列表 ✗（用户会以为空间没了 ✓）⇒ 说人话 ＋ 给出路 ✓ */
             <div className="set-space-empty">
               没有匹配的空间
               <button className="set-btn" onClick={() => setSpaceQuery("")}>清空筛选</button>
             </div>
           ) : (
-            shownSpaces.map((s) => {
+            visibleSpaces.map((s) => {
             const active = s.id === activeId;
             const prof = syncProfiles[s.id];
             // ⭐ 2026-10-10：「这个空间加密了吗」那一格 ⇒ 文字标识（与侧栏**同一处**映射 ✓）
