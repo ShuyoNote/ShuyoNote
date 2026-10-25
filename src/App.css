@@ -27544,3 +27544,6 @@ button.mset-row:focus-visible {
 /* ⭐ 2026-10-25 owner：分段控件左右留白再大一点 */
 .set-space-seg{padding:3px 6px;gap:4px}
 .set-space-seg button{padding:5px 12px}
+/* ⭐ 2026-10-25 owner：冲突提示卡片上边加点留白 */
+.conflict-banner{margin-top:14px}
+.sync-conflict-banner{margin-top:16px}
