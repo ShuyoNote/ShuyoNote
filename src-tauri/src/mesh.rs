@@ -1531,7 +1531,28 @@ pub fn set_pair_secret(
     peer_device_id: &str,
     secret: Option<&str>,
 ) -> Result<(), String> {
-    write_setting(c, &format!("mesh_pair_secret:{space_id}"), peer_device_id, secret)
+    // ⭐⭐ **2026-10-25（真机：重启后配对秘密变 0 字符）**：这里原来**允许**把空串写进去
+    //   （`Some("")` 与 `None` 写法不同、但读出来一个样），于是**谁**在启动路径上写了一次空串，
+    //   现场就成了"键在、值空 ⇒ secret=空串 ⇒ 401"，而排障行还会把责任推给"从未配对过"。
+    //   ⇒ 现在把这件事**叫出来**（⛔ 不静默写入）：空串一律按"清掉"处理并留一行日志，
+    //     日志点名 space/设备，下一次真机就能直接定位是谁在清。
+    let normalized = match secret {
+        Some(s) if s.trim().is_empty() => {
+            eprintln!(
+                "[mesh] ⚠️ 配对秘密被写成**空串**（space={:?} peer={}…）⇒ 按「清掉」处理（要的是「这一轮没有秘密」就传 None）",
+                space_id,
+                peer_device_id.chars().take(8).collect::<String>()
+            );
+            None
+        }
+        other => other,
+    };
+    write_setting(
+        c,
+        &format!("mesh_pair_secret:{space_id}"),
+        peer_device_id,
+        normalized,
+    )
 }
 
 pub fn settings(c: &Connection, space_id: &str) -> MeshSettings {
