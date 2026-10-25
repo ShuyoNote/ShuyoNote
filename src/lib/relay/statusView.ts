@@ -31,6 +31,8 @@ export interface RelayStatusView {
   connectionLabel: string;
   /** 连接那一格的补充原因（可空；中继给的原因原样在这儿 ✓）。 */
   connectionDetail: string;
+  /** ⭐ 2026-10-25（owner：面板里看不到中继地址）：配置里的中继地址（没配 ⇒ null）。 */
+  url: string | null;
   /** 图⑧ 那句：「剩余 27 天」／「已到期」／「读不到有效期」（**后端原文** ✓）。 */
   licenseLabel: string;
   /** 后端到底给没给许可证读数 ✓（false ⇒ 界面上那句一定是"读不到" ✓）。 */
@@ -78,6 +80,7 @@ export function relayStatusView(payload: RelayStatus | null | undefined | unknow
       available: false,
       connectionLabel: "中继这一档在当前平台不可用",
       connectionDetail: "",
+      url: null,
       licenseLabel: RELAY_UNREADABLE,
       licenseReadable: false,
       licenseSource: "",
@@ -98,6 +101,8 @@ export function relayStatusView(payload: RelayStatus | null | undefined | unknow
     // 后端给了就**原样**用；没给（形状坏了）⇒ 兜底也**只能**说"未连上" ✓
     connectionLabel: connectionLabel || RELAY_CONNECTION_UNREADABLE,
     connectionDetail,
+    // ⭐ 2026-10-25：地址照抄后端（没配 ⇒ null）
+    url: text(p.url) || null,
     // 后端给了就**原样**用（⛔ 不解析它、⛔ 不按 days_left 重算 ✗）；没给 ⇒ 明说读不到 ✓
     licenseLabel: licenseLabel || RELAY_UNREADABLE,
     licenseReadable: licenseLabel.length > 0 && licenseState !== "missing",
