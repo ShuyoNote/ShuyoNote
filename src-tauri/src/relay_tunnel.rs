@@ -136,6 +136,71 @@ where
     write_reply(w, &reply).await
 }
 
+/// ⭐ **Step 2b-2**：把上面这层帧协议架到 **iroh 的 QUIC 流**上。
+///
+/// ⚠️ 只有 `--features relay` 才编（owner 2026-10-25 拍：默认产物里不出现 `iroh`）。
+/// ⚠️ 本模块**不做**同步语义：它只把「一条流」变成「一次请求/应答」，
+/// 真正的路由/鉴权在对端 `handler` 里（真接线＝本机同一套 `mesh::dispatch`）。
+///
+/// 今天验到哪：**同一台机器两个端点直连**（`presets::Minimal` ＋ 直连地址）跑通一次请求
+/// （判据 `two_endpoints_on_one_host_move_one_request`）；
+/// ⛔ **没验**：经**公网中继**跨网（那要两台机器/一条真中继，留给真机验收）。
+#[cfg(feature = "relay")]
+pub mod iroh_tunnel {
+    use super::{read_reply, read_request, write_reply, write_request, TunnelReply, TunnelRequest};
+
+    /// 隧道专用的 ALPN（与 iroh 上别的协议区分）。
+    pub const ALPN: &[u8] = b"shuyo-mesh-tunnel/1";
+
+    /// 起一个端点：`Minimal` 预设（⛔ 不配中继、不配发现 ⇒ 只走**直连地址**）。
+    ///
+    /// ⚠️ `Minimal` 只有在开了 `tls-ring` 时才会装上加密提供者（否则 `bind` 会失败），
+    /// 所以 `Cargo.toml` 里 `iroh` 那行显式带了 `features = ["tls-ring"]`。
+    pub async fn bind(secret: iroh::SecretKey) -> Result<iroh::Endpoint, String> {
+        iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+            .secret_key(secret)
+            .alpns(vec![ALPN.to_vec()])
+            .bind()
+            .await
+            .map_err(|e| format!("起 iroh 端点失败：{e}"))
+    }
+
+    /// 客户端：连对端 → 一条双向流 → 写请求 → 读回应。
+    pub async fn request(
+        ep: &iroh::Endpoint,
+        peer: iroh::EndpointAddr,
+        req: &TunnelRequest,
+    ) -> Result<TunnelReply, String> {
+        let conn = ep
+            .connect(peer, ALPN)
+            .await
+            .map_err(|e| format!("连对端失败：{e}"))?;
+        let (mut send, mut recv) = conn.open_bi().await.map_err(|e| format!("开流失败：{e}"))?;
+        write_request(&mut send, req)
+            .await
+            .map_err(|e| format!("写请求失败：{e}"))?;
+        let reply = read_reply(&mut recv)
+            .await
+            .map_err(|e| format!("读回应失败：{e}"))?;
+        conn.close(0u32.into(), b"done");
+        Ok(reply)
+    }
+
+    /// 服务侧：接一个连接 → 接一条流 → 读请求 → `handler` → 写回应（一次一条，简单为先）。
+    pub async fn serve_one_conn<H>(conn: iroh::endpoint::Connection, handler: H) -> Result<(), String>
+    where
+        H: FnOnce(&TunnelRequest) -> TunnelReply,
+    {
+        let (mut send, mut recv) = conn.accept_bi().await.map_err(|e| format!("接流失败：{e}"))?;
+        let req = read_request(&mut recv).await.map_err(|e| format!("读请求失败：{e}"))?;
+        let reply = handler(&req);
+        write_reply(&mut send, &reply).await.map_err(|e| format!("写回应失败：{e}"))?;
+        send.finish().map_err(|e| format!("收流失败：{e}"))?;
+        conn.closed().await;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,5 +287,72 @@ mod tests {
         });
         let err = read_request(&mut client).await.expect_err("半帧必须报错");
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    /// ⭐⭐ **2026-10-25（Step 2b-2 判据）**：**同一台机器两个 iroh 端点，经 QUIC 跑通一次请求** ——
+    /// 这是"跨网搬载荷"这条链上**第一次真的用上 iroh**（此前只有帧协议）。
+    ///
+    /// 只走**直连地址**（`presets::Minimal`：不配中继、不配发现）⇒ 离线可跑、进 CI 不需要网络。
+    /// ⛔ 它**不**证明"经公网中继跨网"能通 —— 那要两台机器/一条真中继，留给真机验收。
+    ///
+    /// 跑法：`cargo test --features relay relay_tunnel::tests::two_endpoints`
+    #[cfg(feature = "relay")]
+    #[tokio::test]
+    async fn two_endpoints_on_one_host_move_one_request() {
+        use super::iroh_tunnel::{bind, request, serve_one_conn};
+        use std::net::SocketAddr;
+
+        let client_ep = bind(iroh::SecretKey::generate()).await.expect("客户端端点");
+        let server_ep = bind(iroh::SecretKey::generate()).await.expect("服务端端点");
+        // ⚠️ 不直接用 `server_ep.addr()`：它报的可能是绑定地址（如 0.0.0.0）。
+        //   这里显式取**回环地址**，保证判据在本机可复现。
+        let port = server_ep
+            .bound_sockets()
+            .iter()
+            .find_map(|s: &SocketAddr| match s {
+                SocketAddr::V4(v4) if v4.port() != 0 => Some(v4.port()),
+                SocketAddr::V6(v6) if v6.port() != 0 => Some(v6.port()),
+                _ => None,
+            })
+            .expect("服务端端点必须至少有一个已绑定端口");
+        let peer = iroh::EndpointAddr {
+            id: server_ep.id(),
+            addrs: [iroh::TransportAddr::Ip(SocketAddr::from(([127, 0, 0, 1], port)))]
+                .into_iter()
+                .collect(),
+        };
+
+        let serve = tokio::spawn(async move {
+            let Some(accepting) = server_ep.accept().await else {
+                panic!("端点已关，接不到连接");
+            };
+            let conn = accepting.await.expect("握手");
+            serve_one_conn(conn, |req| TunnelReply {
+                status: 200,
+                body: format!("回你：{}", req.target).into_bytes(),
+            })
+            .await
+            .expect("服务一次");
+        });
+
+        let reply = request(
+            &client_ep,
+            peer,
+            &TunnelRequest {
+                method: "GET".into(),
+                target: "/mesh/manifest?space_id=x".into(),
+            },
+        )
+        .await
+        .expect("单机两端点必须能通（直连地址）");
+        assert_eq!(reply.status, 200);
+        assert_eq!(
+            String::from_utf8(reply.body).unwrap(),
+            "回你：/mesh/manifest?space_id=x",
+            "对端 handler 必须看到**原样 target**"
+        );
+
+        client_ep.close().await;
+        serve.await.expect("服务任务不应 panic");
     }
 }
