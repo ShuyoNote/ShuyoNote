@@ -1316,8 +1316,11 @@ mod tests {
     #[test]
     fn 读数_读不到时不编数字() {
         let st = status_payload_from(Err("还没配置中继：读不到 relay/config.json".to_string()), NOW, None);
-        // ⚠️ "读不到配置" ≠ "这一档不可用"：桌面版这一档本身在岗 ✓（不可用是 Web 版的事 ✓）
-        assert!(st.available);
+        // ⚠️ "读不到配置" ≠ "这一档不可用" —— 但"在岗"与否现在**跟构建走**（2026-10-25）。
+        #[cfg(feature = "relay")]
+        assert!(st.available, "带 relay 特性：这一档在岗（读不到配置只是没配）");
+        #[cfg(not(feature = "relay"))]
+        assert!(!st.available, "不带 relay 的构建：这一档不可用");
         assert!(!st.configured);
         assert_eq!(st.url, None);
         assert_eq!(st.license.state, "missing");
@@ -1377,11 +1380,22 @@ mod tests {
         );
     }
 
-    /// ④ 两格读数的**形状**：`available` 在桌面版为真 ⇒ 界面照常渲染（Web 版由 `web.ts` 回 false ✓）。
+    /// ④ 两格读数的**形状**：`available` 现在**跟构建走**（2026-10-25：非 relay 构建不含隧道 ⇒ 不可用）。
     #[test]
     fn 读数_桌面版这一档可用() {
         let st = status_payload_from(Ok(cfg_ok(NOW + 86_400)), NOW, None);
-        assert!(st.available);
+        // ⭐ 2026-10-25：判据**按构建分档**钉各自的口径（⛔ 不是放宽）：
+        #[cfg(feature = "relay")]
+        assert!(st.available, "带 relay 特性的桌面版：这一档在岗");
+        #[cfg(not(feature = "relay"))]
+        {
+            assert!(!st.available, "不带 relay 的构建：这一档不可用（隧道没编进来）");
+            assert!(
+                st.note.contains("不含跨网"),
+                "要说清为什么不可用，实得：{}",
+                st.note
+            );
+        }
         assert!(st.configured);
     }
 }
