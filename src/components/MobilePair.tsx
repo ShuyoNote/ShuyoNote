@@ -47,6 +47,16 @@ export function MobilePair() {
     nearby: NearbyPeer[];
   } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // ⭐ 2026-10-26（移动端局域网同步）：**手动同步当前空间**的一轮读数。
+  //   ⚠️ 按钮按**空间**同步（`mesh_sync_now(activeId)` ✓），⛔ 不挂在某一台设备上 ✗（那会指错空间 ——
+  //   与 08 屏那条「立即同步不渲染」的旧口径同源 ✓，所以这里放的是**本机同步状态**那张卡里 ✓）。
+  const [syncingNow, setSyncingNow] = useState(false);
+  const [syncReport, setSyncReport] = useState<string | null>(null);
+  // ⭐ 2026-10-26 修（真机暴露的**既存 TDZ bug**）：`pairedIds` 原来声明在 `nearbyGroup` **之后**，
+  //   而"附近设备"一张都听不到时 **sort 的比较器根本不执行** ⇒ 从未触发；一旦手机真的发现了设备
+  //   （正是本次移动端同步功能要做成的事 ✓）⇒ `nearbyGroup` 在 `pairedIds` 初始化前被调用 ⇒
+  //   整屏 `Cannot access '…' before initialization` ✗。⇒ **状态声明提到使用点之前**（声明顺序即执行顺序）。
+  const [pairedIds, setPairedIds] = useState<string[]>([]);
 
   /**
    * 返回：**回来处** ✓（阶段 3 修 —— 原先是**写死** `home` ✗：从设置那行进来的也会被丢回首页 ✓）。
@@ -78,6 +88,34 @@ export function MobilePair() {
   }, [activeId]);
 
   const nearby = status?.nearby ?? [];
+
+  /**
+   * ⭐ **2026-10-26（移动端局域网同步）**：手动同步**当前空间**一轮。
+   *
+   * 口径（与桌面「立即同步」同一支后端命令 ✓）：
+   * · 传 `activeId` ⇒ Rust 按**这个空间自己的连接**拉一轮（`mesh_sync_now` ✓，2026-10-24 修过串空间 ✓）；
+   * · 读数**原样转述**后端那句 `note` ＋ 收下条数（⛔ 不自己按地址/形状另判一档 ✗）；
+   * · 失败**如实显示**（⛔ 不吞 ✗）；
+   * · 跑完重读一次 `lan_status`（对端/窗口读数可能变了 ✓）。
+   */
+  const syncNow = async () => {
+    if (!activeId || syncingNow) return;
+    setSyncingNow(true);
+    setSyncReport(null);
+    try {
+      const r = await api.meshSyncNow(activeId);
+      const applied = r.peers.reduce((n, p) => n + (p.applied ?? 0), 0);
+      setSyncReport(
+        `${r.note}${r.peers.length > 0 ? ` · 本轮收下 ${applied} 条` : ""}`,
+      );
+      const s = await api.lanStatus(activeId);
+      setStatus({ enabled: s.enabled, peers: s.peers, kind: s.kind, line: s.line, nearby: s.nearby ?? [] });
+    } catch (e) {
+      setSyncReport(`这一轮没跑成：${String(e instanceof Error ? e.message : e).slice(0, 160)}`);
+    } finally {
+      setSyncingNow(false);
+    }
+  };
 
   /**
    * ⭐ 【C1】**分组**（照 owner 2026-10-14 参考图 ✓）：已配对 ① → **要重配** ② → 附近 ③。
@@ -145,7 +183,6 @@ export function MobilePair() {
    *    「取**本机认过的那份名单** ✓…⛔ 不自己再算一遍"算不算配上了"✗（两份真相迟早各说各话 ✓）」）。
    * ⚠️ 读不到（还没配／读失败）⇒ **空名单** ✓ ⇒ 绿卡那句「已配对」**不写** ✗（⛔ 不假装有设备 ✗）。
    */
-  const [pairedIds, setPairedIds] = useState<string[]>([]);
   useEffect(() => {
     let alive = true;
     api
@@ -268,6 +305,22 @@ export function MobilePair() {
               {/* ⭐ 2026-10-20 重设计：设计图要求「上次成功时间」。⚠️ 后端没有这个读数
                   （`useSyncStatus` 只给"此刻"）⇒ 只能如实写「暂无读数」，⛔ 不编时间 ✗。 */}
               <p className="mpair-line mpair-dim">上次成功时间：暂无读数 · 失败不吞，原样转述后端读数</p>
+              {/* ⭐ 2026-10-26（移动端局域网同步）：**这个空间的「立即同步」** —— 在手机上第一次
+                  真正有触发入口。⚠️ 桌面那一颗走的是同一条后端命令（`mesh_sync_now` ✓），
+                  所以"手机上点得动、桌面上也点得动"✓；⛔ 这里不新造同步语义 ✗。 */}
+              <button
+                className="mpair-entry"
+                data-testid="mpair-sync-now"
+                disabled={!activeId || syncingNow}
+                onClick={() => void syncNow()}
+              >
+                {syncingNow ? "同步中…" : "立即同步这个空间"}
+              </button>
+              {syncReport && (
+                <p className="mpair-line mpair-dim" data-testid="mpair-sync-report">
+                  {syncReport}
+                </p>
+              )}
             </>
           )}
         </section>
@@ -330,19 +383,21 @@ export function MobilePair() {
                     </span>
                     {/* ⭐ d1：**真入口** ✓ —— 只打开「首次配对」屏 ✓，⛔ 这里**不发任何信任请求** ✗
                         （与桌面 `nearby-allow` 同形 ✓：桌面那一下也只是"记下这一台 ＋ 打开对码屏"✓）。
-                        ⚠️ ⛔ 「立即同步」**仍然不渲染** ✗ —— 它按**空间**同步 ✓，挂到某一台设备上会指错 ✓。 */}
-                    {p.key_changed === true || !pairedIds.includes(p.device_id) ? (
-                      <button
-                        className="mpair-entry"
-                        data-testid={p.key_changed === true ? "mpair-repair" : "mpair-allow"}
-                        onClick={() => {
-                          setPairPeer({ deviceId: p.device_id, deviceName: p.device_name, shortId: p.short_id, pubkey: p.pubkey ?? "" });
-                          setScreen("paircode");
-                        }}
-                      >
-                        {p.key_changed === true ? "重新配对" : "接入"}
-                      </button>
-                    ) : null}
+                        ⭐ **2026-10-26（移动端局域网多端同步）**：⭐ **已配对的那一台也要有入口** ✗ ——
+                        原来配对成功后这一行**一个字都没有** ✗ ⇒ "想再核一次码 / 换过网络再确认"没有路 ✓；
+                        真机验收正好撞上：一端配对后 ask 过期，另一端要等「接入」却无处可点 ⇒ 只能重装 ✗。
+                        ⇒ 已配对 ⇒ 「**重新配对**」（同一条对码路，⛔ 不新增后端 ✗）；未配对 ⇒ 「接入」✓。
+                        ⚠️ ⛔ 「立即同步」仍然**不挂在设备行上** ✗（它按**空间** ✓，挂到某一台会指错 ✓）。 */}
+                    <button
+                      className="mpair-entry"
+                      data-testid={p.key_changed === true || pairedIds.includes(p.device_id) ? "mpair-repair" : "mpair-allow"}
+                      onClick={() => {
+                        setPairPeer({ deviceId: p.device_id, deviceName: p.device_name, shortId: p.short_id, pubkey: p.pubkey ?? "" });
+                        setScreen("paircode");
+                      }}
+                    >
+                      {p.key_changed === true || pairedIds.includes(p.device_id) ? "重新配对" : "接入"}
+                    </button>
                   </span>
                   {/* ⛔ 2026-10-20：旧那颗 disabled 的「信任」按钮已删 —— 它的文案（"后端尚未定形状"）
                       已被 2026-10-17 的真配对流程超前；真入口是上面的「接入 / 重新配对」✓。

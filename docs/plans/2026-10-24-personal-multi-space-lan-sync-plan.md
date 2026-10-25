@@ -1,6 +1,6 @@
 # 个人版「全空间」局域网多端同步方案（含传输/发现抽象层）
 
-> **状态**：**实施中（P0/P1 已落并两机真机验收通过；P2 逐名对账/收尾与 P3 未做）**。本文是方案书 ＋ 施工单 ＋ 实施记录（§九）。
+> **状态**：**实施中（P0/P1 已落并两机真机验收通过；P2 逐名对账/收尾与 P3 未做；2026-10-26 移动端 Android ↔ macOS 真机双向搬通，见 §十）**。本文是方案书 ＋ 施工单 ＋ 实施记录（§九、§十）。
 > **一句话目标**：个人版**不依赖服务器**，让一台机器上的**所有个人空间**（不是一次一个）在局域网内
 > 同时、双向、可收敛地同步到同一个人名下的其它设备。
 > **范围**：客户端为主（`src-tauri/src/{mesh,sync,lan_state,db}.rs`、`src/components/SyncPanel.tsx`）；
@@ -440,6 +440,93 @@ P1 追加之三：**手动同步必须用「这个空间自己的连接」**（�
 ```text
 · P2：两机真机验收矩阵（每空间各建/改一页、附件、封面；双向对账）
 · P3：改名策略（账本稳定键 + 旧记录保留期）、同步面板"按空间状态"、旧对端版本提示
+```
+
+---
+
+## 十、移动端局域网同步落地（2026-10-26，Mate 40 ↔ macOS 真机双向搬通）
+
+> **状态**：Android 端**双向搬通**（下方读数）✓；iOS 构建/真机一轮的结论见 §10.4（以那一节为准，⛔ 不把"能装"写成"能用"）。
+> **范围**：`src-tauri/src/{sync,lan,lan_state,lib}.rs`、`scripts/ios-build.mjs`、`src/components/{MobilePair,MobileSettings}.tsx`。
+> ⚠️ 本轮**未改**协议版本（`WIRE_VERSION` 不动）、**未新增后端命令**（移动端 UI 复用 `mesh_sync_now` / `mesh_set_config` / `mesh_trust_*`）。
+
+### 10.1 三个真机根因（都不是"协议没写"，而是"移动端没有入口/前置"）
+
+```text
+① 移动端没有「设备直连」设置面（桌面那张卡 owner 2026-10-14 删了）
+   ⇒ `mesh_bind` / `mesh_room` 永远空 ⇒ `should_run_discovery` 恒假
+   ⇒ 手机**不发言、`peers()` 恒空** ⇒「附近设备」永远 0 台、配对屏配不了。
+   修：`sync::ensure_mobile_mesh_defaults`（仅 `cfg(mobile)` 启动时幂等补：设备身份 / 自动组名 / `mesh_bind=0.0.0.0:8788` / 档案行）。
+
+② 首次安装的 `default` 空间 `kind` 是**空串**（未分类），而旧补档只认 `kind='personal'`
+   ⇒ 真机读数：手机 `sync_profiles` **0 行** ⇒ 同一条恒假（与 ① 叠加）。
+   修：移动端补档把 `kind=''` 也补上（团队空间一个字节不动）。
+
+③ 两台设备的「同步组名」必须相同，才能派生出同一批子房间号；手机没有地方填组名。
+   修：公告新增**可选** `room`（非秘密；`serde(default)`，不升 `WIRE_VERSION`）；
+       手机只有在"自动组名"档才按 `lan_state::decide_room_adoption` 采用对端组名
+       （唯一非自动组名 > 全是自动取 min > 多个不同非自动 ⇒ 不猜）；
+       用户/桌面设过的组名**永不被广播改掉**（`mesh_room_auto=0`）。
+```
+
+### 10.2 移动端 UI（零新后端命令）
+
+```text
+· 08 屏「本机同步状态」→「立即同步这个空间」（`mesh_sync_now`，与桌面同一支）+ 原样回显 note / 收下条数；
+· 已配对的那一台也有「重新配对」入口：原来配对成功后那一行没有任何入口，
+  ask 120 秒过期后**只能重装**（本轮真机就是这么撞上的）；
+· 移动设置「空间」卡加**空间切换器**（`useSpaceStore.switchTo`）——
+  对端自动建过来的同名空间，手机上原来**到不了**（自动建了也白建）；
+· 修一个**被新功能暴露的既存崩溃**：`MobilePair` 的 `pairedIds` 声明在 `nearbyGroup` 之后，
+  过去"附近 0 台"时比较器不执行所以没炸；手机第一次真的看到设备就整屏
+  `Cannot access '…' before initialization`（TDZ）⇒ 状态声明提到使用点之前。
+```
+
+### 10.3 真机读数（2026-10-26 03:0x–03:1x；Mate 40 ↔ macOS；**隔离测试数据目录**，⛔ 未碰 owner 真实空间）
+
+```text
+· 手机启动：`mesh_room:|auto-5750b1cf5deb0a09`、`mesh_bind:|0.0.0.0:8788`；
+· 听到 macOS 后：`[mesh] 移动端：已采用对端报的**同步组名**（e2e-lan-…）`，`mesh_room_auto=0`；
+· 配对码**独立复核**：手机屏上 `9320 2295 6372 2105 4309`；
+  用 macOS 库里的 `device_identity_sk` 派生公钥 + 手机公告公钥 + 抓包拿到的 `trust_ask`，
+  按 `pairing::check_code` 用 Python 复算 ⇒ **20/20 位相同**（不是"看一眼两边一样"）；
+· 手机点确认后 macOS 自动双向登记：`[trust] 🔁 收到 f7c6bec0 的「想信任」⇒ 已双向登记`；
+· macOS → 手机：手机该空间 **6 页** = macOS 的 5 页（开始/新页面/这是win的笔记/新页面mac/Mac）+ 手机新写 1 页；
+· 手机 → macOS：macOS 后台轮 `拉 f7c6bec0 ⇒ ok fetched=1 applied=1 cursor=1`，
+  macOS 空间 **6 页**且含手机那条「移动端局域网验收 20261026」；
+· ⚠️ 日志里 `secret=**无**（从未配对过 ⇒ 会 401）` 与随后 `ok fetched=1` 并存：
+  那一行只报**旧口令那一档**；第 3 步之后门认的是**签名**（两档并存）⇒ 不矛盾，
+  但排障时容易误读（下一笔建议把日志改成两档分开说）；
+· 同网段还发现第三台 ShuyoNote（另一套空间）—— 未配对、不匹配，未参与本轮。
+```
+
+**判据（本机，可复跑）**：`cargo test --lib room_adoption_tests`（6/6）、
+`cargo test --lib mobile_defaults`（2/2）、`node scripts/test-report.mjs` ⇒ **66 条全过 / 失败 0**（2026-10-26 本机读数）。
+
+### 10.4 iOS（构建/装机/发现层真机一轮）
+
+> 判据口径：⛔「装上了」不等于「能用」✗。完整读数见 [`../MOBILE.md`](../MOBILE.md) §5.6。
+
+```text
+构建/签名：node scripts/ios-build.mjs --sign company --dev ⇒ IPA 32,025,800 B（Apple Development，
+  team D53949JLS2，get-task-allow=true）；Info.plist 里 NSLocalNetworkUsageDescription **在**（本轮由脚本幂等注入）；
+装机/启动：devicectl install ⇒ App installed；launch ⇒ 进程 50s+ 存活，截图为**移动端界面**（阅读屏）。
+
+局域网发现层（真机读数：app 数据容器 + 同网段 macOS 接收日志）：
+  ✓ iPhone 启动后自动补设备级 `mesh_bind=0.0.0.0:8788` 并生成自动组名；
+  ✓ **收到**同网段 macOS 公告并**采用其同步组名**（容器：`mesh_room:|e2e-lan-20261026`、`mesh_room_auto|0`）；
+  ✓ macOS **收到** iPhone 公告（device f925691a，来源 192.168.0.101）；
+  ✓ 真机抓到一个**只在 iOS 出现的缺陷**并修掉：iPhone 的 `en0=192.168.0.101` 与 VPN `utun=10.128.166.117`
+    并存，旧排序按地址字节 ⇒ 报出去的是 `http://10.128.166.117:8788`（同网段电脑**永远连不上**）✗；
+    修 `mesh::is_virtual_if_name` 把 `utun*/ipsec*/pdp_ip*/tun*/tap*` 降权（不排除）✓；
+    重装后 macOS 日志逐字变为 `它报的地址 http://192.168.0.101:8788` ✓。
+
+⛔ 未测到（不许写成通过）：
+  · iOS 上「配对/信任」的**点击路径**：`devicectl` 没有触控注入 ⇒ 未驱动；
+  · 因此 iOS ↔ 桌面的**端到端搬运未签**；只证明到「发现层 + 组名对齐 + 宣称地址可达」。
+  · 本地网络权限无弹窗记录可抓；但收发都通 ⇒ 事实上未被拦截（以后若静默，先查这个权限）。
+⚠️ 本轮**没有**引入 `com.apple.developer.networking.multicast` entitlement（那要 Apple 逐个 App 审批）；
+   本轮经验是：**只做 UDP 广播公告（不收组播）在 iOS 27 真机上不需要它**，加 `NSLocalNetworkUsageDescription` 即可。
 ```
 
 ---

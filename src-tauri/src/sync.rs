@@ -58,6 +58,18 @@ pub fn set_meta_state(c: &Connection, key: &str, value: &str) -> Result<(), Stri
     Ok(())
 }
 
+// ─────────────── ⭐ 2026-10-26：移动端"自动组名"（局域网多端同步的最后一格） ───────────────
+//
+// 一句话：**手机没有桌面那张「设备直连」设置卡** ⇒ 它的组名（`mesh_room`，个人空间子房间号的种子）
+// 由启动时自动生成，并允许被**对端公告里的组名**替换（替换判定是纯函数 `lan_state::decide_room_adoption`）。
+//
+// · `MESH_ROOM_AUTO_KEY` 的值是 `"1"` ＝ "现在这串是自动生成的、可以换" ✓；用户/桌面自己设的组名
+//   没有这个标记 ⇒ **永远不会被广播改掉** ✗（桌面行为零变化 ✓）。
+// · `MESH_ROOM_AUTO_PREFIX` 是自动值的形态（`auto-<16 hex>`）⇒ 即使标记丢了也能识别出来
+//   （迁移旧库时用得上）✓。
+pub const MESH_ROOM_AUTO_KEY: &str = "mesh_room_auto";
+pub const MESH_ROOM_AUTO_PREFIX: &str = "auto-";
+
 // ─────────────── 丙-③（2026-09-25）：本机时钟 ＋ "这一页当前那枚戳" ───────────────
 //
 // 两件都放 `meta.sync_state` 的 KV 里，**不新开 schema 列**：值就是 `Hlc::encode()` 那串
@@ -5165,6 +5177,9 @@ pub fn mesh_set_config(
     //   ⛔ 旧的 `sync_profiles.mesh_room` **不删** ✗（⭐ 可回退 ✓）—— 两条路都留着 ✓。
     if !r.trim().is_empty() {
         crate::mesh::set_mesh_room_device(&c, Some(r))?;
+        // ⭐ 2026-10-26：**用户显式设了组名** ⇒ ⛔ 不再允许被对端公告自动替换 ✗
+        //   （手机自动生成的那一档才有 `mesh_room_auto=1`；这里把它清掉 ⇒ 桌面/用户的选择固定下来 ✓）。
+        let _ = set_meta_state(&c, MESH_ROOM_AUTO_KEY, "0");
     }
     }
     let scope = mesh_scope(&db, workspace_id.as_deref())?;
@@ -5568,6 +5583,59 @@ pub fn ensure_sync_profiles_for_personal_spaces(c: &Connection) -> Result<usize,
         n += affected;
     }
     Ok(n)
+}
+
+/// ⭐⭐ **2026-10-26（移动端局域网多端同步）**：移动端启动时把「设备直连」的**前置**备好（幂等 ✓）。
+///
+/// ## 为什么必须有这一条（真机根因）
+/// 桌面版的局域网直连由用户在一张设置卡里打开（写 `mesh_bind` ＋ `mesh_room`）；而 owner
+/// 2026-10-14 把那张卡**从界面上删了**（口径见 `SyncPanel.tsx:2475` 附近），手机更从来没有过它 ✗
+/// ⇒ 移动端 `should_run_discovery` 恒假（没有 `mesh_bind`、也没有能解析出来的 `mesh_room`）
+/// ⇒ **不发言、不听（`peers()` 恒空）** ⇒ 「附近的设备」永远空、配对屏永远配不了 ✗。
+///
+/// ## 四步（每一步都幂等，只补不覆盖 ✓）
+/// ① **设备身份**：还没有公钥就建一把 —— 公告与信任都要它（写路径上建键，与 `mesh_set_config` 同口径）；
+/// ② **同步组名**：没有就生成 `auto-<16 hex>` 并把 `mesh_room_auto=1` 记下
+///   （⇒ 听到对端组名后**可以**被采用；桌面/用户自己设的组名**不会**被改 ✗）；
+/// ③ **监听地址**：没有就绑 `0.0.0.0:8788`（与桌面默认同一个；⛔ 已有值一个字节不动）；
+/// ④ **同步档案行**：给每个个人空间补一行（`db::init` 已做过一次，这里兜底 —— 建页/公告都要它）。
+///
+/// ⚠️ **只在 `#[cfg(mobile)]` 里调用**（`lib.rs` setup ✓）：桌面不配就不广播，那条隐私口径不变 ✓。
+/// ⚠️ 返回值只用于**日志**：任何一步失败都**不挡应用启动**（发现层是加分项）。
+pub fn ensure_mobile_mesh_defaults(c: &Connection) -> Result<(), String> {
+    // ① 设备身份（公钥随公告走；⛔ 私钥不出本机，这一层不碰密钥内容）。
+    let _ = crate::device_key::load_or_create(c);
+    // ② 同步组名：只在"没有"时生成。⚠️ 生成/迁移都只写**设备级**那一格（空 `space_id` ✓）。
+    let existing = crate::mesh::mesh_room_device(c).unwrap_or_default();
+    if existing.trim().is_empty() {
+        let raw = crate::crypto::key_hex(&crate::crypto::random_32());
+        let room = format!("{MESH_ROOM_AUTO_PREFIX}{}", &raw[..16.min(raw.len())]);
+        crate::mesh::set_mesh_room_device(c, Some(&room))?;
+        set_meta_state(c, MESH_ROOM_AUTO_KEY, "1")?;
+    } else if get_meta_state(c, MESH_ROOM_AUTO_KEY).is_none()
+        && existing.trim().starts_with(MESH_ROOM_AUTO_PREFIX)
+    {
+        // 迁移：上一版没有标记，但形态就是我们自己生成的 ⇒ 补上标记（⛔ 不碰用户设的值）。
+        set_meta_state(c, MESH_ROOM_AUTO_KEY, "1")?;
+    }
+    // ③ 监听地址（设备级那一格；桌面同样是这个默认值）。
+    if crate::mesh::settings_for(c, "", true).bind.is_none() {
+        crate::mesh::set_mesh_bind_for(c, "", true, Some("0.0.0.0:8788"))?;
+    }
+    // ④ 档案行（幂等；失败不拦 —— 下一轮还会补）。
+    //   ⚠️ **移动端要连「默认空间」一起补** ✗：`db.rs` 首次建的 `default` 工作区 `kind` 是**空串**
+    //   （未分类），而 `ensure_sync_profiles_for_personal_spaces` 只认 `kind='personal'`
+    //   ⇒ 真机读数（2026-10-26）：手机上 `sync_profiles` **0 行** ⇒ 发现层恒关、公告一条都不发 ✗。
+    //   ⚠️ 只补 `kind=''` 这一档（团队空间一个字节不动 ✓）；已有行原样不动 ✓。
+    let _ = ensure_sync_profiles_for_personal_spaces(c);
+    let _ = c.execute(
+        "INSERT OR IGNORE INTO meta.sync_profiles (ws_id)
+         SELECT w.id FROM meta.workspaces w
+         WHERE w.deleted_at IS NULL AND COALESCE(w.kind, '') = ''
+           AND NOT EXISTS (SELECT 1 FROM meta.sync_profiles p WHERE p.ws_id = w.id)",
+        [],
+    );
+    Ok(())
 }
 
 /// ⭐ 2026-10-24（全空间方案 P1）：**每个个人空间一个确定性的子房间号**。
@@ -6037,6 +6105,7 @@ mod r146_mesh_scope_tests {
                     hub_space_kinds: Vec::new(),
                     hub_space_names: Vec::new(),
                     hub_space_encrypted: Vec::new(),
+                    room: String::new(),
                     fp: "fp".into(),
                     pubkey: peer_pk.clone(),
                 },
@@ -8260,6 +8329,80 @@ mod personal_room_and_backfill_tests {
             "⛔ 幂等：再跑一次补 0 行"
         );
     }
+
+    /// ⭐ 2026-10-26（移动端局域网同步）：启动默认值 —— **没有就补、补完幂等、形态可辨**。
+    #[test]
+    fn mobile_defaults_fill_the_missing_mesh_prerequisites_once() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name, kind, created_at) VALUES
+                ('ws-mobile', '个人空间', 'personal', 1),
+                ('default',   '默认空间', '',         2);",
+        )
+        .unwrap();
+        ensure_mobile_mesh_defaults(&c).expect("移动端默认值不许报错");
+        // ⭐ 真机读数（2026-10-26）：默认空间的 `kind` 是空串 ⇒ 只补 personal 的旧函数会漏掉它 ⇒
+        //   手机上一行档案都没有 ⇒ 发现层恒关。这里两种空间都必须有行。
+        let rows: Vec<String> = {
+            let mut stmt = c.prepare("SELECT ws_id FROM meta.sync_profiles ORDER BY ws_id").unwrap();
+            stmt.query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(
+            rows,
+            vec!["default".to_string(), "ws-mobile".to_string()],
+            "⭐ 未分类的默认空间也要补档案行，否则手机不发言、配不了对"
+        );
+        let room = crate::mesh::mesh_room_device(&c).expect("组名必须写进**设备级**那一格");
+        assert!(
+            room.starts_with(crate::sync::MESH_ROOM_AUTO_PREFIX),
+            "自动组名必须带可辨前缀：{room}"
+        );
+        assert_eq!(
+            get_meta_state(&c, MESH_ROOM_AUTO_KEY).as_deref(),
+            Some("1"),
+            "自动组名必须打标记（否则永远不会被对端公告替换）"
+        );
+        assert_eq!(
+            crate::mesh::settings_for(&c, "", true).bind.as_deref(),
+            Some("0.0.0.0:8788"),
+            "监听地址必须是设备级默认值"
+        );
+        assert_eq!(
+            ensure_sync_profiles_for_personal_spaces(&c).expect("补档不许报错"),
+            0,
+            "档案行已由默认值那一步补过 ⇒ 再补 0 行"
+        );
+        // 幂等：第二次调用不许改任何一个字节。
+        ensure_mobile_mesh_defaults(&c).expect("第二次也不许报错");
+        assert_eq!(crate::mesh::mesh_room_device(&c).as_deref(), Some(room.as_str()));
+    }
+
+    /// ⭐ 2026-10-26：**用户/桌面设过的组名与地址一个字节都不许被移动端默认值覆盖**。
+    #[test]
+    fn mobile_defaults_never_override_configured_values() {
+        let c = fixture();
+        crate::mesh::set_mesh_room_device(&c, Some("Tashan1973,./")).unwrap();
+        crate::mesh::set_mesh_bind_for(&c, "", true, Some("0.0.0.0:9999")).unwrap();
+        ensure_mobile_mesh_defaults(&c).expect("不许报错");
+        assert_eq!(
+            crate::mesh::mesh_room_device(&c).as_deref(),
+            Some("Tashan1973,./"),
+            "⛔ 用户设的组名不许被自动值盖掉"
+        );
+        assert_eq!(
+            crate::mesh::settings_for(&c, "", true).bind.as_deref(),
+            Some("0.0.0.0:9999"),
+            "⛔ 已有的监听地址不许被换成默认值"
+        );
+        assert_eq!(
+            get_meta_state(&c, MESH_ROOM_AUTO_KEY),
+            None,
+            "用户设的组名**不是**自动值 ⇒ 不许打自动标记（否则会被广播改掉）"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -9388,6 +9531,7 @@ mod tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                room: String::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -10873,6 +11017,7 @@ mod tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                room: String::new(),
                 fp: device.to_string(),
                 pubkey: String::new(),
             },
@@ -11450,6 +11595,7 @@ mod tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                room: String::new(),
                 fp: "fp".into(),
                 // ⭐ 2026-10-17：双向登记要**对面那把公钥**（第 3 步之后唯一凭证 ✓）⇒ 夹具必须给合法的 ✓
                 pubkey: "ab".repeat(32),

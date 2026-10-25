@@ -153,6 +153,23 @@ pub struct LanAnnounce {
     /// ⚠️ `#[serde(default)]` ⇒ 老对端不发也收得下；⛔ 不升 `WIRE_VERSION`。
     #[serde(default)]
     pub hub_space_encrypted: Vec<bool>,
+    /// ⭐⭐ **2026-10-26（移动端局域网同步）**：⭐ 本机的**同步组名**（内部名 `mesh_room`；个人空间
+    /// 子房间号的种子 ✓，见 `sync::personal_room_for`）✗ —— ⭐ 随公告发出去，**不是秘密** ✓
+    /// （`docs/plans/2026-10-11-one-click-trust-decision.md` §6.3 已定口径：「配对暗号」只是
+    /// **空间在广播上的名字** ✓，⛔ 不当凭证 ✗；真正的凭证是设备公钥/签名 ✓）。
+    ///
+    /// ## 为什么要有这一格（移动端真机场景）
+    /// 桌面版的「同步组名」是用户填的（owner 机器上是某个具体值）✗ —— 手机**没有任何界面**
+    /// 能填它，而两台设备**必须**用同一个种子才派生出同一批子房间号（`personal_room_for(seed, 名)` ✓）。
+    /// ⇒ ⭐ 手机先以「自动组名」启动（`auto-…`，同样发在公告里 ✓），听到对端的组名后**采用它**
+    /// （判据与纯函数见 `lan_state::decide_room_adoption`）⇒ ⭐ 用户不用在手机上抄一串名字 ✓，
+    /// 同时**协议不变宽**：申请拉取仍然要过设备签名/配对名单那一关 ✓（房间号只是"在哪见面"✓）。
+    ///
+    /// ⚠️ `#[serde(default)]` ＋ 本结构**没有** `deny_unknown_fields` ⇒ 老对端收发都兼容 ✓
+    /// ⇒ ⛔ **不升 `WIRE_VERSION`** ✗（与 `short_id`／`trust_ask`／`pubkey` 同一个手法 ✓）。
+    /// ⚠️ 空串 ＝ 这台没报组名（老对端／还没配）⇒ 对端**如实**读成"不知道" ✓，⛔ 不猜 ✗。
+    #[serde(default)]
+    pub room: String,
     /// 身份指纹。★ **＝ `device_id`**（owner 2026-09-25 拍板，B 片施工单 §8.3）：
     /// 填的是**应用级事实**（设备标识），**不是**"设备密钥材料的指纹" ——
     /// 它要挡的是**掉包**，不是"同一台设备换了钥匙"。语义不许悄悄改（真需要后者时另立字段）。
@@ -205,6 +222,7 @@ impl Default for LanAnnounce {
             hub_space_kinds: Vec::new(),
             hub_space_names: Vec::new(),
             hub_space_encrypted: Vec::new(),
+            room: String::new(),
             fp: String::new(),
             trust_ask: String::new(),
             trust_secret: String::new(),
@@ -521,6 +539,9 @@ pub fn announce_for_own_hub(
         },
         // 纯函数拿不到"这个空间是不是加密的" ⇒ 留空（由调用点在之后填，与 pubkey 同一手法）。
         hub_space_encrypted: Vec::new(),
+        // ⭐ 2026-10-26：组名同样是**设备级事实** ⇒ 纯函数留空，由 `lan_state::announces_for_this_round`
+        //   **一轮读一次**再统一填 ✓（⛔ 不在这里碰库 ✗，与 `pubkey`／`short_id` 同一手法 ✓）。
+        room: String::new(),
         // ★ 见上面那段：`fp` ＝ 应用级事实 `device_id`（B 片施工单 §8.3 的收口）。
         fp: dev.to_string(),
     })
@@ -1206,6 +1227,7 @@ mod tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                room: String::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -1356,6 +1378,7 @@ mod tests {
             hub_space_kinds: Vec::new(),
             hub_space_names: Vec::new(),
             hub_space_encrypted: Vec::new(),
+            room: String::new(),
             fp: "fp".into(),
             pubkey: String::new(),
         }
@@ -1396,6 +1419,9 @@ mod tests {
         let old: LanAnnounce = serde_json::from_str(json).expect("老对端要被收下");
         assert!(old.hub_space_names.is_empty(), "老对端没有名字 ⇒ 空表");
         assert_eq!(old.hub_spaces, vec!["room-1".to_string()]);
+        // ⭐ 2026-10-26（移动端局域网同步）：老对端也没有「同步组名」这一格 ⇒ 必须照常收下，
+        //   如实读成空串（⛔ 不猜、⛔ 不许拒收 —— 拒收会让升级期里新旧设备互相看不见 ✗）。
+        assert!(old.room.is_empty(), "老对端没报组名 ⇒ 如实空串");
     }
 
     // ────── ⭐ P0 片①（设备直连 · 发现层）：**端口/目标可注入** ＋ 「两个实例互见」 ──────
@@ -2163,6 +2189,7 @@ mod multi_space_peer_table_tests {
             hub_spaces: vec![space.to_string()],
             hub_space_names: vec![name.to_string()],
             hub_space_encrypted: Vec::new(),
+            room: String::new(),
             hub_space_kinds: vec![kind.to_string()],
             fp: device.to_string(),
         }

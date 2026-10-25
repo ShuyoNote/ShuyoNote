@@ -33,6 +33,8 @@ IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理�
 > [`docs/plans/mobile/2026-10-20-mobile-requirements-complete.md`](plans/mobile/2026-10-20-mobile-requirements-complete.md)（需求）
 > 与 [`docs/plans/mobile/2026-10-20-mobile-tech-plan-complete.md`](plans/mobile/2026-10-20-mobile-tech-plan-complete.md)（技术）。
 > 下面按 **2026-10-23 / 1.92.24** 实况更新（底边栏/设置/配对/空间包/块渲染都已前进；iOS 打包已打通、界面待验）。
+> ⭐ **2026-10-26 追加**：**Android ↔ macOS 局域网同步双向真机搬通**（Mate 40；见 `plans/2026-10-24-personal-multi-space-lan-sync-plan.md` §十），
+> 移动端补了「设备直连启动前置 / 自动组名 / 空间切换器 / 立即同步 / 已配对也能重新配对」；iOS 见 §5.6（发现层通、配对 E2E 未签）。
 > 🎨 **视觉基线（2026-10-20）**：owner 选定**浅色明快卡片版**，10 张重设计图（＋ 07b/07c 空间包）在
 > [`plans/mobile/mockups/2026-10-20-redesign/`](plans/mobile/mockups/2026-10-20-redesign/README.md)；
 > ✅ **视觉层已落地（2026-10-20）**：`App.css` 移动覆盖 ＋ `Mobile*.tsx` ＋ `index.html` 启动页；
@@ -44,9 +46,9 @@ IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理�
 | 07 设置 | **已接线** ✓（2026-10-14；10-19 底栏「我的」；10-22 加空间包卡＋Web 不显示同步卡） |
 | 04 阅读 | **按块类型渲染**（2026-10-22：h1–h3/列表/引用/callout/图片/分隔线）；⛔ 仍只读，无编辑入口 |
 | 02 快速记录 | **无底栏＋左上「‹ 返回」**（2026-10-22）；图片按钮真接系统选择器 |
-| 08 设备配对 · 同步 ＋ 首次配对 | **已落地** ✓：三档筛选/绿卡/黄条＋「接入/重新配对」真入口＋20 位对码（人确认后才 `mesh_trust_begin`，2026-10-17）；⛔ 逐台解除/立即同步仍未接 |
+| 08 设备配对 · 同步 ＋ 首次配对 | **已落地** ✓：三档筛选/绿卡/黄条＋「接入/重新配对」真入口＋20 位对码（人确认后才 `mesh_trust_begin`，2026-10-17）；⭐ 2026-10-26：**已配对的设备也有「重新配对」入口**、本机状态卡加「立即同步这个空间」；⛔ 逐台解除仍未接 |
 | 05 待办 | owner 拍「**不做**」✗（台账 **R196**） |
-| iOS | **打包链路已打通（2026-10-20）**；⛔ 界面/真机待验（配方：[`2026-10-20-ios-packaging-recipe.md`](plans/mobile/2026-10-20-ios-packaging-recipe.md)） |
+| iOS | **打包/装机/启动已打通**（2026-10-20 起，2026-10-26 复跑 ✓，真机截图为移动端界面）；⭐ **局域网发现层真机已通**（收到并采用同网段电脑的同步组名、宣称地址已可达，见 §5.6）；⛔ **iOS 的配对点击与端到端搬运未验**（devicectl 无触控注入） |
 
 **主流程（手机档）** ✓：首页 → 快速记录（无底栏；写一条/选图）→ 左上返回回首页 → 最近笔记／搜索 →
 **阅读屏**（按块渲染；选中正文 ⇒ 划词卡片 ✓）→ 底栏「我的」→ 设置里的「设备配对」/「空间」→ 设备直连/首次配对。
@@ -1553,6 +1555,37 @@ xcrun devicectl device process launch --device $UDID cn.shuyo.shuyonote
 · 连接状态自查：`xcrun devicectl list devices --verbose` ⇒
   看 `developerModeStatus: enabled` / `pairingState: paired` / `transportType: wired` ✓
 · ⚠️ 锁屏会挡住操作（会报 `the device was still locked` ⇒ 解锁后重试 ✓）
+```
+
+#### 5.6 ⭐ 2026-10-26：iOS 局域网同步真机一轮（构建/装机/发现层）
+
+> 判据口径：⛔「装上了」不等于「能用」✗ —— 本节把**测到的**与**没测到的**分开写。
+
+```text
+构建/签名（node scripts/ios-build.mjs --sign company --dev）：
+  ✓ IPA 32,025,800 B（sha256 9d7741…），Apple Development: Zhi yong Zhai，
+    team D53949JLS2，iOS Team Provisioning Profile，get-task-allow=true；
+  ✓ Info.plist 里 NSLocalNetworkUsageDescription **在**（脚本幂等注入；此前这份工程**没有**它）；
+  ✓ 装机：devicectl install ⇒ App installed；启动 ⇒ 进程活了 50s+，截图为**移动端界面**（阅读屏）。
+
+局域网发现层（真机读数，来自 app 数据容器 + 同网段 macOS 的接收日志）：
+  ✓ iPhone 启动后自动补了设备级 `mesh_bind=0.0.0.0:8788`，并生成自动组名；
+  ✓ 它**收到了**同网段 macOS 的公告并**采用了对方的同步组名**
+    （容器里 `mesh_room:|e2e-lan-20261026`、`mesh_room_auto|0`）—— 说明 iOS 的收包与
+    「移动端自动组名采用」这条链在真机上成立；
+  ✓ 同网段 macOS **收到了** iPhone 的公告（device f925691a，来源 192.168.0.101）；
+  ⚠️ **本轮抓到一个只在 iOS 上出现的真缺陷并修掉**：iPhone 同时有 `en0=192.168.0.101`
+     与 VPN 隧道 `utun` 的 `10.128.166.117`，排序按地址字节 ⇒ 旧代码报出去的是
+     `http://10.128.166.117:8788`（同网段电脑**永远连不上**，且界面无任何提示）✗；
+     修 `is_virtual_if_name` 把 `utun*/ipsec*/pdp_ip*/tun*/tap*` 降权（不排除）✓；
+     重装后真机日志逐字变为 `它报的地址 http://192.168.0.101:8788` ✓。
+
+⛔ 本轮**没测到**（不许写成通过）：
+  · iOS 上的**配对/信任按钮点击**：`devicectl` 没有触控注入（`simulate` 只有生物识别/位置/状态栏），
+    所以「点接入 → 核码 → 确认」这条 UI 路径在 iOS 上**未驱动**；
+  · 因此 iOS ↔ 桌面的**端到端搬运**未签；目前只证明到「发现层 + 组名对齐 + 宣布地址可达」。
+  · 另：iOS 的本地网络权限**没有弹窗记录可抓**，但上面收发都通了 ⇒ 事实上未被拦截；
+    若哪天真机上发现层全静默，第一件事查这个权限（设置 → 隐私与安全性 → 本地网络）。
 ```
 
 ## 6. 测试与验收

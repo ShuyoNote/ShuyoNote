@@ -61,6 +61,110 @@ pub fn trust_outbound(now_ms: i64) -> (String, String) {
     })
 }
 
+/// ⭐⭐ **2026-10-26（移动端局域网多端同步）**：这一轮该不该把本机的**自动组名**换成对端报的那个。
+///
+/// ## 它解决的是什么（真机根因）
+/// 个人空间的子房间号 ＝ `sha256(组名 ‖ 空间名)`（`sync::personal_room_for` ✓）⇒ **两台设备的组名
+/// 必须一样**才对得上 ✓。桌面版的组名是用户填的；手机**没有地方填** ✗ ⇒ 手机先以 `auto-…`
+/// （同样发在公告里 ✓）启动，听到对端公告里的组名后**采用它** ✓ —— 用户不必在手机上抄一串名字 ✓。
+///
+/// ## 规则（每一条都对应一种真实组合；⛔ 不猜 ✗）
+/// 1. **不是自动组名**（`auto == false`）⇒ `None`：用户/桌面自己设的组名**永远不被广播改掉** ✓；
+/// 2. 对端一个组名都没报（老版本/还没配）⇒ `None`：如实等下一轮 ✓；
+/// 3. 有**唯一**一个非自动组名 ⇒ 采用它（"已经配好的那一台"是权威 ✓）；
+/// 4. 只有自动组名 ⇒ 取 `min(本地, 对端们)`：两台全新手机各自 `auto-…` 时**同时收敛到同一个** ✓
+///    （取 min 是确定性规则 ⇒ 不会各采用对方的、来回摆 ✓）；
+/// 5. 有**多个不同**的非自动组名 ⇒ `None`：不知道该跟哪一组 ⇒ ⛔ 不猜 ✗（调用点会打一行日志 ✓）。
+///
+/// ⚠️ **纯函数**：不碰库、不看网络 ⇒ 判据直接喂值（`room_adoption_tests` ✓）。
+pub(crate) fn decide_room_adoption(local: &str, auto: bool, peer_rooms: &[String]) -> Option<String> {
+    let local = local.trim();
+    if !auto || local.is_empty() {
+        return None;
+    }
+    let mut custom: Vec<&str> = Vec::new();
+    let mut autos: Vec<&str> = Vec::new();
+    for r in peer_rooms {
+        let r = r.trim();
+        if r.is_empty() || r == local {
+            continue;
+        }
+        let bucket = if r.starts_with(crate::sync::MESH_ROOM_AUTO_PREFIX) {
+            &mut autos
+        } else {
+            &mut custom
+        };
+        if !bucket.contains(&r) {
+            bucket.push(r);
+        }
+    }
+    if custom.len() > 1 {
+        return None;
+    }
+    if let Some(only) = custom.first() {
+        return Some((*only).to_string());
+    }
+    if autos.is_empty() {
+        return None;
+    }
+    // 全是自动组名 ⇒ 确定性取最小者（含本地；本地已是最小 ⇒ 不必改）。
+    let mut best = local;
+    for r in autos {
+        if r < best {
+            best = r;
+        }
+    }
+    if best == local {
+        None
+    } else {
+        Some(best.to_string())
+    }
+}
+
+/// ⭐ 2026-10-26：只在移动端跑 —— **按对端公告采用同步组名**（幂等：采用过 ⇒ 标记清掉 ⇒ 不再跑）。
+///
+/// ⚠️ 写库只在这一处：`mesh_room`（设备级那一格）＋ `mesh_room_auto=0`。
+/// ⚠️ 组名**不是秘密**（见 `LanAnnounce::room` 的注释 ✓）⇒ 日志只打前 8 位做排障 ✓。
+#[cfg(mobile)]
+fn maybe_adopt_peer_room(app: &tauri::AppHandle, state: &LanState, now: i64) {
+    use tauri::Manager;
+    let (local, auto) = {
+        let db = app.state::<Db>();
+        let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+        let local = crate::mesh::mesh_room_device(&c).unwrap_or_default();
+        let auto = crate::sync::get_meta_state(&c, crate::sync::MESH_ROOM_AUTO_KEY).as_deref()
+            == Some("1");
+        (local, auto)
+    };
+    if !auto {
+        return;
+    }
+    let rooms: Vec<String> = state
+        // ⚠️ 用 `observed_all()` ✗（⛔ 不用 `peers()`）—— 后者在"发现层还没启用"时恒空，
+        //   而**第一次启用之前**就可能已经收到公告了（真机顺序：先听到、下一轮才 set_enabled ✓）。
+        //   仍按 TTL 过滤 ⇒ 不采用"很久以前听过的"对端组名 ✓。
+        .observed_all()
+        .into_iter()
+        .filter(|p| now.saturating_sub(p.seen_at_ms) <= lan::PEER_TTL_MS)
+        .map(|p| p.announce.room)
+        .filter(|r| !r.trim().is_empty())
+        .collect();
+    let Some(next) = decide_room_adoption(&local, auto, &rooms) else {
+        return;
+    };
+    let db = app.state::<Db>();
+    let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    if let Err(e) = crate::mesh::set_mesh_room_device(&c, Some(&next)) {
+        eprintln!("[mesh] 移动端：采用对端同步组名失败（继续用自动组名）：{e}");
+        return;
+    }
+    let _ = crate::sync::set_meta_state(&c, crate::sync::MESH_ROOM_AUTO_KEY, "0");
+    let short: String = next.chars().take(8).collect();
+    eprintln!(
+        "[mesh] 移动端：已采用对端报的**同步组名**（{short}…）⇒ 下一轮起按同一批子房间号服务/拉取 ✓"
+    );
+}
+
 /// ⭐ 本机的毫秒时间戳 ✓（⭐ 只在这一处算 ✓ —— ⭐ 判定里一律**传进去** ✓，⭐ 判据才好固定时间 ✓）。
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -563,7 +667,23 @@ pub(crate) fn announces_for_this_round(
             .unwrap_or_default(),
         Err(_) => Vec::new(),
     };
-    announces_for_with_mesh(local_device_id, device_name, &short_id, &pubkey, &resolved, mesh_bases, &space_meta)
+    // ⭐⭐ **2026-10-26（移动端局域网同步）**：本机**同步组名**每轮读一次 ✓（与短标识/公钥同一手法 ✓）。
+    //   ⚠️ 它是**设备级事实**（`mesh_room` 的空空间那一格 ✓）⇒ 所有公告报同一个值 ✓（两台设备用同一个种子
+    //   才能派生出同一批子房间号 ✓）。⛔ 读路径**不写**库 ✓；空串 ⇒ 公告里如实留空（老对端/还没配 ✓）。
+    let room = crate::mesh::mesh_room_device(c).unwrap_or_default();
+    let mut out = announces_for_with_mesh(
+        local_device_id,
+        device_name,
+        &short_id,
+        &pubkey,
+        &resolved,
+        mesh_bases,
+        &space_meta,
+    );
+    for a in &mut out {
+        a.room = room.trim().to_string();
+    }
+    out
 }
 
 /// ★ 丙-③-b-2b：**网格开着的那几个空间，公告里报的是我自己的窗口地址。**
@@ -630,6 +750,8 @@ pub fn announces_for_with_mesh(
                 hub_spaces: Vec::new(),
                 hub_space_kinds: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                // ⭐ 2026-10-26：组名由调用点统一填（与 `pubkey` 同一手法 ✓）。
+                room: String::new(),
                 hub_space_names: if space_name.is_empty() {
                     Vec::new()
                 } else {
@@ -793,6 +915,12 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             //    ⚠️ 判别式走 `should_enable(bound_profile_count(..))` —— 与判据用的是**同一把尺**
             //    （不是 `profiles.len()`）：只填了地址还没选空间的行**不许**让我们开始广播。
             let profiles = bound_profiles(&app2);
+            // ⭐⭐ **2026-10-26（移动端）**：先看这一轮听到的对端有没有报**同步组名** —— 手机的组名
+            //   若是自动生成的，就采用对端的（判定在纯函数 `decide_room_adoption` ✓）。
+            //   ⚠️ 必须在下面 `mesh_cfgs` **之前**：同一轮就该按新组名开窗/公告 ✓。
+            //   ⚠️ 只在 `cfg(mobile)` 下调用 ⇒ 桌面行为逐字节不变 ✓。
+            #[cfg(mobile)]
+            maybe_adopt_peer_room(&app2, state, now);
             // ★ 丙-③-b-2b：先看哪几个空间开了网格 ⇒ ① 把窗口确保跑起来 ② 拿**实际绑上的地址**
             //   当公告基址。⚠️ 窗口起不来的那一个**不宣告**（宁可这一轮不露面，也不报一个拉不到的地址）。
             // ⚠️ 发现层开关用的是 `meshed`（**配了**网格的空间），不是 `mesh_bases`（**宣告得出去**的）：
@@ -1201,6 +1329,26 @@ mod mesh_serve_space_tests {
     }
 
     #[test]
+    fn the_announce_carries_the_device_level_room() {
+        // ⭐ 2026-10-26（移动端局域网同步）：房间号（同步组名）必须**真的进公告** ✗ ——
+        //   手机靠这一格采用对端的组名；它若没进线格式，手机上永远只能用自己的 `auto-…`，
+        //   两台设备派生出的子房间号就永远对不上（现象＝"看得到对方、但一条也拉不动"）。
+        let profiles = vec![(String::new(), String::new(), "ws-personal".to_string())];
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', 'room-123')",
+            [],
+        )
+        .unwrap();
+        crate::mesh::set_mesh_room_device(&c, Some("room-123")).unwrap();
+        let bases =
+            vec![(window_serve_space(&c, "", "ws-personal"), "http://192.168.1.5:8788".to_string())];
+        let got = announces_for_this_round(&c, "dev-a", "本机", &profiles, &bases);
+        assert_eq!(got.len(), 1, "前提：开了网格的个人空间要发言（{got:#?}）");
+        assert_eq!(got[0].room, "room-123", "同步组名必须逐字进公告（手机靠它对齐子房间号）");
+    }
+
+    #[test]
     fn the_short_id_really_lands_in_the_announce_and_missing_stays_honestly_empty() {
         let profiles = vec![(String::new(), String::new(), "ws-personal".to_string())];
         let with_room = |c: &rusqlite::Connection| {
@@ -1405,6 +1553,7 @@ mod tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                room: String::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -2053,6 +2202,7 @@ mod short_id_tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                room: String::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -2148,3 +2298,70 @@ mod short_id_tests {
         with_trust(|h| h.clear());
     }
 }
+
+/// ⭐ 2026-10-26：**移动端自动组名采用**的判定 —— 先看红的那几条（每条对应一种真实组合）。
+///
+/// 判据口径（⛔ 不许为了让测试好看而放宽 ✗）：
+/// · 用户/桌面设的组名**一个字节都不许被广播改掉**；
+/// · 唯一一个"已经配好的组名"是权威；多个不同 ⇒ 不猜；
+/// · 两台全新手机 ⇒ **同时**收敛到 `min`（确定性，不许来回摆）。
+#[cfg(test)]
+mod room_adoption_tests {
+    use super::*;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn a_custom_room_is_never_replaced() {
+        assert_eq!(decide_room_adoption("my-group", false, &s(&["other"])), None);
+        assert_eq!(decide_room_adoption("my-group", false, &s(&["auto-aa", "auto-bb"])), None);
+    }
+
+    #[test]
+    fn no_peer_room_means_wait() {
+        assert_eq!(decide_room_adoption("auto-aa", true, &[]), None);
+        assert_eq!(decide_room_adoption("auto-aa", true, &s(&["", "  "])), None);
+    }
+
+    #[test]
+    fn a_single_configured_peer_room_wins_over_the_auto_one() {
+        assert_eq!(
+            decide_room_adoption("auto-aa", true, &s(&["Tashan1973,./"])),
+            Some("Tashan1973,./".to_string())
+        );
+        // 对端既有"配好的"又有自动的 ⇒ 仍然采用那唯一一个配好的 ✓
+        assert_eq!(
+            decide_room_adoption("auto-aa", true, &s(&["Tashan1973,./", "auto-zz"])),
+            Some("Tashan1973,./".to_string())
+        );
+    }
+
+    #[test]
+    fn two_auto_rooms_converge_to_the_same_minimum() {
+        // 两台全新手机：A 看到 B（auto-bb）⇒ 采用 min = auto-aa（不变）；B 看到 A ⇒ 采用 auto-aa。
+        assert_eq!(decide_room_adoption("auto-aa", true, &s(&["auto-bb"])), None);
+        assert_eq!(
+            decide_room_adoption("auto-bb", true, &s(&["auto-aa"])),
+            Some("auto-aa".to_string())
+        );
+        // 收敛之后再看到对方 ⇒ 不再改（幂等 ✓）。
+        assert_eq!(decide_room_adoption("auto-aa", true, &s(&["auto-aa"])), None);
+    }
+
+    #[test]
+    fn two_different_configured_rooms_are_ambiguous_and_not_guessed() {
+        assert_eq!(
+            decide_room_adoption("auto-aa", true, &s(&["group-A", "group-B"])),
+            None,
+            "两个不同的「配好的组名」 ⇒ 不知道跟哪一组，⛔ 不许挑一个"
+        );
+    }
+
+    #[test]
+    fn empty_local_auto_room_does_nothing() {
+        assert_eq!(decide_room_adoption("", true, &s(&["group-A"])), None);
+    }
+}
+

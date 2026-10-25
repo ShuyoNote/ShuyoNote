@@ -604,6 +604,22 @@ function stepPatchProjectYml(signing) {
     changes.push("Info.plist: + ITSAppUsesNonExemptEncryption=false（出口合规不再逐个 build 问答）");
   }
 
+  // 4.1c ⭐ 2026-10-26（移动端局域网同步）：iOS 14 起，**任何访问本地网络的行为**（我们用的是
+  //      UDP 广播发现，`lan_state` ✓）都会触发「本地网络」权限提示；Info.plist 里**没有**
+  //      `NSLocalNetworkUsageDescription` 时系统不会给出有意义的提示、用户也无法授权 ⇒
+  //      发现层静默失败（真机症状：手机永远看不到同网段的电脑 ✗）。
+  //      ⇒ 由本脚本注入（`project.yml` 是生成物、不入库 ⇒ 手改不可复现 ✗ —— 与上面那条同一个手法 ✓）。
+  //      ⚠️ 幂等：已经有这一行就不动 ✓。⚠️ 这条**不是** multicast entitlement
+  //      （`com.apple.developer.networking.multicast`）—— 后者要 Apple 逐个 App 审批，见配方 §7 ✓。
+  if (!/NSLocalNetworkUsageDescription/.test(yml) && propertiesRe.test(yml)) {
+    yml = yml.replace(
+      propertiesRe,
+      (m) =>
+        `${m}        NSLocalNetworkUsageDescription: 用于在同一 Wi-Fi 下发现你自己的设备、在设备之间直接同步笔记（只在本局域网内，不经过服务器；关闭后仍可单机使用）。\n`,
+    );
+    changes.push("Info.plist: + NSLocalNetworkUsageDescription（iOS 本地网络权限；发现层的系统前提）");
+  }
+
   // 4.2 device 四行 OTHER_LDFLAGS：把 /tmp/ios-swiftpm-libs/ 换成仓内稳定路径
   //     ⚠️ 只改 device 那条；sim 那条在 4.3 单独处理（它原是 Externals/ios-sim-swift）。
   const deviceLineRe = /("OTHER_LDFLAGS\[sdk=iphoneos\*\]":\s*")([^"\n]*)(")/;

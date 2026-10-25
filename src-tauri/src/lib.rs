@@ -664,6 +664,27 @@ pub fn run() {
             // launch so the passphrase must be re-entered before any encrypted sync.
             security::startup_lock(&conn);
             app.manage(Db(Mutex::new(conn)));
+            // ⭐⭐ **2026-10-26（移动端局域网同步）**：⭐ 手机/平板**没有桌面那张「设备直连」设置卡** ✗
+            //   （owner 2026-10-14 把那张卡删了）⇒ 移动端要在**启动时**把设备直连的两样前置备好，
+            //   否则发现层永远不发言（`should_run_discovery` 恒假）⇒ 手机在「附近的设备」里
+            //   **一台都看不到**、配对屏也配不了 ✗（真机根因，见 `sync::ensure_mobile_mesh_defaults` ✓）。
+            //
+            //   ⚠️ **只在 `cfg(mobile)` 下做** ✗：桌面版保持「用户不配就不广播」（隐私/噪音口径不变 ✓）。
+            //   ⚠️ 失败**只记一行**、不挡启动（与发现层同一条纪律 ✓）。
+            //   ⚠️ 锁只在这一小块里拿（下面 `lan_state::start` 自己会再拿一次 ⇒ 必须先 drop ✓）。
+            #[cfg(mobile)]
+            {
+                let db = app.state::<Db>();
+                let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+                match crate::sync::ensure_mobile_mesh_defaults(&c) {
+                    Ok(()) => eprintln!(
+                        "[mesh] 移动端：局域网直连前置已就绪（监听地址 ＋ 同步组名）⇒ 发现层会开始发言"
+                    ),
+                    Err(e) => eprintln!(
+                        "[mesh] 移动端：局域网直连前置没备好（发现层这一轮不会发言，其余功能不受影响）：{e}"
+                    ),
+                }
+            }
             // 甲-1 接线第 1 件（2026-09-25）：**启动时就把局域网发现的循环拉起来**。
             //
             // ⚠️ 为什么必须在**这里**（而不是等界面第一次 `lan_status`）：发现层要在

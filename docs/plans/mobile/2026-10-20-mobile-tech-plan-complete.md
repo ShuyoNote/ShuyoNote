@@ -441,7 +441,8 @@ sequenceDiagram
 | 日期/组合 | 读数 | 结论 |
 |---|---|---|
 | 2026-10-20 08:50 Windows↔AMD（桌面） | 后台轮 `fetched=8 / applied=8 / cursor=3950`；7 页并入「运营」；`mesh_merge_ledger_v1` 长度 408 | ✅ **首次端到端搬通**（桌面↔桌面） |
-| 手机↔电脑 | 无端到端读数 | ⛔ **未验**；手机配对 UI 已完成（10-17） |
+| 2026-10-26 03:0x **Mate 40 ↔ macOS** | macOS→手机：手机该空间 6 页 = macOS 5 页 + 手机新写 1 页；手机→macOS：macOS 后台轮 `fetched=1 applied=1 cursor=1`、macOS 空间出现手机那条 | ✅ **手机↔电脑双向搬通**（Android；隔离测试数据目录；详见 [`../2026-10-24-personal-multi-space-lan-sync-plan.md`](../2026-10-24-personal-multi-space-lan-sync-plan.md) §十） |
+| 2026-10-26 iOS | 构建 ＋ 真机一轮的结论见 `docs/MOBILE.md`「iOS 现状」节；⛔ 未通就写未通 | ⚠️ 以那一节为准 |
 | 2026-10-19 之前 | 设备级配对秘密空串 ⇒ 401 ⇒ 「收下 0 条」 | 已修（`eacab1f1`） |
 
 > 2026-10-20 那条读数的来源：跨机信箱

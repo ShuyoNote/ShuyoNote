@@ -175,6 +175,34 @@ export function MobileSettings() {
             ⇒ 效果图 07b/07c 是**目标形态**；本屏的全量重设计由 macOS 侧那批统一做。 */}
         <div className="mset-group">空间</div>
         <p className="mset-note">当前：{activeName}</p>
+        {/* ⭐⭐ **2026-10-26（移动端局域网多端同步）**：**移动端的空间切换器** ✗ ——
+            这一屏原来没有它（注释里也写着"移动端没有空间切换器"），而局域网同步是**按空间**进行的
+            （同名空间才融合 ✓）⇒ 电脑上的「工作／测试…」同步过来之后，手机上**切不过去**就等于
+            那些空间对用户不存在 ✗（自动建了也白建）。⚠️ 走仓库既有的 `useSpaceStore.switchTo`
+            （它会重读页面列表 ＋ 刷新口令锁读数 ✓，⛔ 这里不另写一套 ✗）；切成了就回首页 ✓。 */}
+        <p className="mset-note">切换空间（本机 {spaces.length} 个）</p>
+        {spaces.map((s) => (
+          <button
+            key={s.id}
+            className="mset-row"
+            data-testid={`mset-switch-${s.id}`}
+            onClick={() => {
+              if (s.id === activeId) return;
+              void useSpaceStore
+                .getState()
+                .switchTo(s.id)
+                .then((ok) => {
+                  if (ok) setScreen("home");
+                });
+            }}
+          >
+            <span className="mset-body">
+              <span className="mset-row-title">{s.name}</span>
+              <span className="mset-row-sub">{s.id === activeId ? "使用中" : "点一下切过去"}</span>
+            </span>
+            <span className="mset-go" aria-hidden>{s.id === activeId ? "✓" : "›"}</span>
+          </button>
+        ))}
         <button className="mset-row" onClick={() => void exportCurrentSpace(activeName)}>
           <span className="mset-body">
             <span className="mset-row-title">导出当前空间</span>
