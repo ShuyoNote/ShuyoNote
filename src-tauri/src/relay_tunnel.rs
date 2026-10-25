@@ -524,8 +524,10 @@ pub mod iroh_client {
             let cfg = crate::relay_client::load_config().ok();
             let relay_url = cfg.as_ref().and_then(|c| c.url.clone());
             let lease = cfg.as_ref().and_then(|c| crate::relay_client::token_text(c));
-            let udp_port = cfg.as_ref().and_then(|c| c.udp_port);
-            let ep = iroh_tunnel::bind_with_relay_on_port(secret, relay_url.as_deref(), lease.as_deref(), udp_port)
+            // ⚠️ 客户端（每次拉对端现起的那一个端点）**不绑固定端口**：
+            //   固定端口归**服务侧**（`serve_forever` 那一个端点）独占；
+            //   这边再绑同一个口必然 `Failed to bind sockets`（真机 15:53 撞到）。
+            let ep = iroh_tunnel::bind_with_relay_on_port(secret, relay_url.as_deref(), lease.as_deref(), None)
                 .await?;
             // ⭐ 把本机 node id 打出来（对面要把它填进 `relay/peers.json`）
             eprintln!(
