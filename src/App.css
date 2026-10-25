@@ -26601,6 +26601,33 @@ body.is-plugin-panel-open .main {
   align-self: stretch;
 }
 
+/* ⭐⭐ **2026-10-25（owner：「同步面板加个页面滚动」）**：内容区那一份现在**整页滚** ✓
+ *
+ * 现场（owner 截图）：设置里「高级」展开后，面板一直往下长，**底部状态行被窗口底边裁掉**，
+ *   而且**滚不到**。量下来的链条是：
+ *     `.main`（`overflow: hidden`，flex 列）
+ *       └ `.sync-panel`（基类只有 `position: relative`，**没被 flex 拉伸** ⇒ 高度＝内容高）
+ *           └ `.sync-popover.is-inline`（虽然有 `overflow-y: auto`，但父级高度是 auto ⇒ 它不生效）
+ *   ⇒ 只要把 `.sync-panel` 这一层**接进 flex 链并让它滚**，内层就不必自己滚。
+ *
+ * ⚠️ 为什么让**外层**滚而不是内层：内层一滚，`details[open]` 的锚点与 Tab 顺序都会跟窗口错位；
+ *    而且 owner 要的是"**页面**滚动"（与文件视图那几页同一手感）。
+ * ⛔ 浮层／抽屉／手机 sheet 三档**一字不动**（下面两条只钉 `.main > .sync-panel` 这一种挂法）。
+ */
+.main > .sync-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+.main > .sync-panel > .sync-popover.is-inline {
+  /* 外层已经在滚 ⇒ 内层不要再滚（否则出现"双滚动条"／滚轮先滚内层，看着像卡住）。 */
+  flex: 0 0 auto;
+  overflow-y: visible;
+}
+
 /* ⭐ 刀二十②（美化，照 owner 2026-10-14「参考设计效果图美化界面」）：⭐ **有读数支撑** ✓ ——
    ⭐ CDP 量到状态行 `.sync-hero-state` 是 **17px / 600** ✓ ⇒ ⭐ 它是**整个面板里最大的字** ✗
    （⭐ 比面板标题还大 ✓）⇒ ⭐ **层级倒了**：状态行该是「一行小字 ＋ 一个点」✓、标题领读 ✓
