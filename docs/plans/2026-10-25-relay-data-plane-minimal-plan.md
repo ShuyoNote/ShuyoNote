@@ -1,6 +1,6 @@
 # 跨网中继「数据面」最小实现方案（2026-10-25）
 
-> **状态**：**实施中 · Step 2b-1 已做**（Step 1 全做、Step 2a 已做；隧道**帧协议**已能搬一次原样 HTTP 请求）
+> **状态**：**实施中 · Step 2b-2 已做**（隧道**真的跑起来了**：同机两端点经 iroh QUIC 搬通一次请求；只剩"公网跨网"与"接进同步轮次"两步）
 > —— **Step 1**：`Endpoint`／`LanEndpoint` 已立；`pull_from_peer`／`fetch_peer_manifest`／`fetch_peer_keyring`／
 > `fetch_peer_page` **全部只认端点**（`&dyn Endpoint`），reqwest 与 `peer.base` 收进 `LanEndpoint`。
 > ⛔ **剩下 1 处没迁**：**附件字节**那条（返回 `reqwest::Response`，是**流式**）——
@@ -12,7 +12,11 @@
 > ＋ `serve_one`（读一个请求 → handler → 写回应）；⚠️ 正文用**长度前缀**（正文里就有 `\n`）＋
 > 两个上限（`MAX_LINE_BYTES` 8 KB / `MAX_BODY_BYTES` 64 MB —— 后者挡"对端说 4 GB 就让我们分配"）。
 > 4 条判据（`tokio::io::duplex` 真流）：往返、**请求原样到达 handler**、超长被拒、半帧报错。
-> **Step 2b-2 未做**：建 iroh `Endpoint`（relay url ＋ 设备私钥）＋ 真 QUIC 流 ＋ `RelayEndpoint` 实现同一 trait。
+> **Step 2b-2（本笔）**：`iroh_tunnel` 模块 —— `bind`（`presets::Minimal`：不配中继/发现，只走直连）＋
+> `request`（connect → open_bi → 写请求 → 读回应）＋ `serve_one_conn`（accept_bi → 读 → handler → 写）；
+> `iroh` 那行补 `features = ["tls-ring"]`（`Minimal` 装加密提供者要用它；⛔ 仍 optional、仍不在 default）。
+> **判据**：`two_endpoints_on_one_host_move_one_request` —— 同机 A/B 两端点经 QUIC 跑通一次请求（**0.13 秒**）。
+> ⛔ **仍未验**：经**公网中继**跨网（要两台机器/一条真中继）—— 留给真机验收。
 > **证据**：`src-tauri/src/mesh_endpoint.rs` ／ `src-tauri/src/relay_tunnel.rs`
 > ／ 判据 `mesh::tests::a_fake_endpoint_is_enough_for_the_manifest_call`
 > ／ `mesh::tests::a_fake_endpoint_is_enough_for_the_pull_call` ／ `mesh::tests` **69 绿** ＋ `sync::tests` **88 绿**
