@@ -258,6 +258,98 @@ pub mod iroh_tunnel {
     }
 }
 
+/// ⭐ **Step 2c-1**：把隧道包成**同一个 `Endpoint` trait 的实现** ——
+/// 这样 `pull_from_peer` / `fetch_peer_*` 那些同步调用**一行都不用改**就能走跨网。
+///
+/// ⚠️ 只有 `--features relay` 才编（默认产物里不出现 `iroh`）。
+/// ⚠️ 鉴权：把 `auth`/`token` 变成**同样的三格头/Authorization** 塞进帧里 ——
+///    对端 `mesh::dispatch` 因此看到的是与局域网请求**完全一样**的鉴权材料。
+#[cfg(feature = "relay")]
+pub mod iroh_client {
+    use super::{iroh_tunnel, TunnelReply, TunnelRequest};
+    use crate::mesh_endpoint::{Endpoint, HttpReply};
+    use std::future::Future;
+    use std::pin::Pin;
+
+    /// 一个跨网端点：持有 iroh 端点 ＋ 对端地址（一次构造，多次 `get`）。
+    pub struct RelayEndpoint {
+        ep: iroh::Endpoint,
+        peer: iroh::EndpointAddr,
+    }
+
+    impl RelayEndpoint {
+        /// 直连地址形态（**今天唯一验证过的一种**：单机两端点 / 手工填 node id ＋ 地址）。
+        pub async fn connect(peer: iroh::EndpointAddr) -> Result<Self, String> {
+            let ep = iroh_tunnel::bind(iroh::SecretKey::generate()).await?;
+            Ok(Self { ep, peer })
+        }
+
+        /// 只给 node id（64 位 hex）—— ⚠️ 没有地址就**只能靠发现层**，
+        /// 而发现层还没做（Step 3）⇒ 这条路今天会明确报错，⛔ 不静默地"连不上就一直等"。
+        pub async fn connect_by_node_id(node_id_hex: &str) -> Result<Self, String> {
+            let bytes = hex32(node_id_hex)?;
+            let id = iroh::PublicKey::from_bytes(&bytes).map_err(|e| format!("node id 不是合法公钥：{e}"))?;
+            Err(format!(
+                "只知道 node id（{}…）还不够：跨网发现层还没做（Step 3）⇒ 没有可达地址",
+                &node_id_hex[..8.min(node_id_hex.len())]
+            ))
+            .map_err(|e: String| {
+                let _ = id;
+                e
+            })
+        }
+
+        pub fn peer_id(&self) -> String {
+            hex(&self.peer.id.as_bytes())
+        }
+    }
+
+    impl Endpoint for RelayEndpoint {
+        fn get<'a>(
+            &'a self,
+            target: &'a str,
+            auth: Option<(&'a str, i64, &'a str)>,
+            token: Option<&'a str>,
+        ) -> Pin<Box<dyn Future<Output = Result<HttpReply, String>> + Send + 'a>> {
+            Box::pin(async move {
+                let mut req = TunnelRequest::new("GET", target);
+                // 与 `LanEndpoint` **同一套头**（名字取自 mesh，⛔ 不另立一份）
+                if let Some((device_id, ts, sig)) = auth {
+                    req = req
+                        .with_header(crate::mesh::HDR_DEVICE, device_id)
+                        .with_header(crate::mesh::HDR_TS, &ts.to_string())
+                        .with_header(crate::mesh::HDR_SIG, sig);
+                }
+                if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
+                    req = req.with_header("authorization", &format!("Bearer {t}"));
+                }
+                let TunnelReply { status, body } = iroh_tunnel::request(&self.ep, self.peer.clone(), &req).await?;
+                Ok(HttpReply {
+                    status,
+                    body: String::from_utf8_lossy(&body).into_owned(),
+                })
+            })
+        }
+    }
+
+    fn hex32(s: &str) -> Result<[u8; 32], String> {
+        let s = s.trim();
+        if s.len() != 64 {
+            return Err(format!("node id 必须是 64 位 hex（现在是 {} 位）", s.len()));
+        }
+        let mut out = [0u8; 32];
+        for i in 0..32 {
+            out[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
+                .map_err(|_| "node id 里有非 hex 字符".to_string())?;
+        }
+        Ok(out)
+    }
+
+    fn hex(b: &[u8; 32]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,6 +494,81 @@ mod tests {
         );
 
         client_ep.close().await;
+        serve.await.expect("服务任务不应 panic");
+    }
+
+    /// ⭐⭐ **2026-10-25（Step 2c-1 判据）**：**同一个 `pull_from_peer` 直接跑在隧道上** ——
+    /// 证明"跨网"不是另写一条同步路，而是**换了一个端点**。
+    ///
+    /// 服务端 handler 模拟 `handle_pull` 的响应（一条记录 ＋ 高水位），
+    /// 客户端用 `RelayEndpoint`（实现同一个 `Endpoint` trait）调**真的** `pull_from_peer`。
+    ///
+    /// **变异**：把 `RelayEndpoint::get` 改成不带头 ⇒ 服务端若做鉴权就会 401（本判据里 handler
+    /// 会断言三格头在场，所以那条变异直接红）。
+    #[cfg(feature = "relay")]
+    #[tokio::test]
+    async fn the_real_pull_call_runs_over_the_tunnel() {
+        use super::iroh_client::RelayEndpoint;
+        use std::net::SocketAddr;
+
+        let server_ep = super::iroh_tunnel::bind(iroh::SecretKey::generate())
+            .await
+            .expect("服务端端点");
+        let port = server_ep
+            .bound_sockets()
+            .iter()
+            .find_map(|s: &SocketAddr| match s {
+                SocketAddr::V4(v4) if v4.port() != 0 => Some(v4.port()),
+                SocketAddr::V6(v6) if v6.port() != 0 => Some(v6.port()),
+                _ => None,
+            })
+            .expect("要有已绑定端口");
+        let addr = iroh::EndpointAddr {
+            id: server_ep.id(),
+            addrs: [iroh::TransportAddr::Ip(SocketAddr::from(([127, 0, 0, 1], port)))]
+                .into_iter()
+                .collect(),
+        };
+
+        let serve = tokio::spawn(async move {
+            let Some(accepting) = server_ep.accept().await else {
+                panic!("端点已关");
+            };
+            let conn = accepting.await.expect("握手");
+            super::iroh_tunnel::serve_one_conn(conn, |req| {
+                // ⭐ 鉴权材料必须**原样**到这里（否则真 dispatch 会 401）
+                assert_eq!(req.header(crate::mesh::HDR_DEVICE), Some("dev-a"), "设备头必须在");
+                assert!(req.header(crate::mesh::HDR_TS).is_some(), "时间戳头必须在");
+                assert!(req.header(crate::mesh::HDR_SIG).is_some(), "签名头必须在");
+                assert_eq!(req.header("authorization"), Some("Bearer tok-1"), "口令头必须在");
+                TunnelReply {
+                    status: 200,
+                    body: br#"{"records":[{"device_seq":1,"entity":"page","entity_id":"p9","op":"upsert","payload":null,"updated_at":5}],"max_device_seq":9}"#.to_vec(),
+                }
+            })
+            .await
+            .expect("服务一次");
+        });
+
+        let relay_ep = RelayEndpoint::connect(addr).await.expect("跨网端点");
+        let peer = crate::mesh::MeshPeer {
+            device_id: "dev-a".to_string(),
+            base: "http://unused.invalid:1".to_string(),
+        };
+        let (rows, max_seq) = crate::mesh::pull_from_peer(
+            &relay_ep,
+            &peer,
+            "sp",
+            0,
+            Some("tok-1"),
+            Some(("dev-a", 1_700_000_000_000, "sig-hex")),
+            "",
+        )
+        .await
+        .expect("同一个 pull_from_peer 必须能在隧道上跑通");
+        assert_eq!(max_seq, 9, "高水位必须照样读出来");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].entity_id, "p9");
         serve.await.expect("服务任务不应 panic");
     }
 }

@@ -17,6 +17,11 @@
 > `iroh` 那行补 `features = ["tls-ring"]`（`Minimal` 装加密提供者要用它；⛔ 仍 optional、仍不在 default）。
 > **判据**：`two_endpoints_on_one_host_move_one_request` —— 同机 A/B 两端点经 QUIC 跑通一次请求（**0.13 秒**）。
 > ⛔ **仍未验**：经**公网中继**跨网（要两台机器/一条真中继）—— 留给真机验收。
+> **Step 2c-1（本笔）**：`iroh_client::RelayEndpoint` 实现**同一个 `Endpoint` trait** ⇒
+> `pull_from_peer`／`fetch_peer_*` **一行都不用改**就能走跨网；鉴权头与局域网请求**同一套**
+> （`x-shuyo-dev/ts/sig` ＋ `authorization: Bearer …`）。判据 `the_real_pull_call_runs_over_the_tunnel`：
+> **真的 `pull_from_peer` 跑在隧道上**（服务端断言三格头/口令原样到达，客户端解析出 records/高水位）。
+> ⛔ **仍未做**：接进同步轮次（自动改走隧道）／跨网发现层（只给 node id 今天会明确报错）／许可门／附件流式。
 > **证据**：`src-tauri/src/mesh_endpoint.rs` ／ `src-tauri/src/relay_tunnel.rs`
 > ／ 判据 `mesh::tests::a_fake_endpoint_is_enough_for_the_manifest_call`
 > ／ `mesh::tests::a_fake_endpoint_is_enough_for_the_pull_call` ／ `mesh::tests` **69 绿** ＋ `sync::tests` **88 绿**
