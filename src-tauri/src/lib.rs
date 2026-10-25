@@ -113,6 +113,8 @@ mod mesh_sim;
 // ⚠️ 收据已撤（2026-09-25，③-b-2b）：设置面（`mesh_set_config`）与同步面（`mesh_sync_now`）
 // 两条命令都在 `generate_handler!` 里 ⇒ 这一层**没有只服务判据的死代码**了。
 mod mesh;
+// ⭐ 2026-10-25（跨网中继「数据面」Step 1a）：端点抽象 —— 同步只认「往哪发」，不认「怎么连上的」
+mod mesh_endpoint;
 // 评估用探针（2026-09-30）：量一次**真实网格窗口**的 `/mesh/pull` 在线上多少字节。
 // ⚠️ 它必须待在 crate 内（`mod mesh` 是私有的 ⇒ 外部 crate 拿不到 `start`/`MeshConfig`）；
 //    默认 `#[ignore]`，跑法写在文件头。**它不碰 `mesh.rs`** ✓（那是 AMD 的写域）。

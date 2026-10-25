@@ -3591,32 +3591,27 @@ fn handle_manifest(state: &State, target: &str) -> Reply {
 
 /// 客户端：取对端的页清单（对账用）。老对端 404 ⇒ `None`（不是错误）。
 pub async fn fetch_peer_manifest(
-    client: &reqwest::Client,
+    // ⭐ 2026-10-25（Step 1a）：**只认端点**，不认"怎么连上的"——
+    //   局域网实现是 `mesh_endpoint::LanEndpoint`；未来中继隧道给同一个 trait 的另一实现即可，
+    //   ⛔ 本函数不再碰 `reqwest`／`peer.base`（判据见 `a_fake_endpoint_is_enough_for_the_manifest_call`）。
+    ep: &dyn crate::mesh_endpoint::Endpoint,
     peer: &MeshPeer,
     space_id: &str,
     auth: Option<(&str, i64, &str)>,
     token: Option<&str>,
 ) -> Result<Option<Vec<(String, i64, bool)>>, String> {
     let target = format!("/mesh/manifest?space_id={space_id}");
-    let url = format!("{}{}", peer.base.trim_end_matches('/'), target);
-    let mut req = client.get(&url);
-    if let Some((device_id, ts, sig)) = auth {
-        req = req
-            .header(HDR_DEVICE, device_id)
-            .header(HDR_TS, ts.to_string())
-            .header(HDR_SIG, sig);
-    }
-    if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
-        req = req.bearer_auth(t);
-    }
-    let resp = req.send().await.map_err(|e| format!("取页清单失败（{e}）"))?;
-    let status = resp.status();
-    let body = resp.text().await.map_err(|e| e.to_string())?;
-    if status.as_u16() == 404 {
+    let reply = ep
+        .get(&target, auth, token)
+        .await
+        .map_err(|e| format!("取页清单失败（对端 {}：{e}）", peer.device_id))?;
+    let status = reply.status;
+    let body = reply.body;
+    if status == 404 {
         return Ok(None);
     }
-    if !status.is_success() {
-        return Err(format!("取页清单被拒：HTTP {}：{}", status.as_u16(), body.trim()));
+    if !(200..300).contains(&status) {
+        return Err(format!("取页清单被拒：HTTP {status}：{}", body.trim()));
     }
     let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("页清单不是 JSON：{e}"))?;
     let arr = v
@@ -3694,7 +3689,9 @@ async fn maybe_report_manifest_gap(
         }
     };
     let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
-    let peer_manifest = match fetch_peer_manifest(client, peer, space_id, auth_ref, token).await {
+    // ⭐ 2026-10-25（Step 1a）：调用点自己挑传输实现 —— 今天只有局域网直连这一种。
+    let ep = crate::mesh_endpoint::LanEndpoint::new(&peer.base, client.clone());
+    let peer_manifest = match fetch_peer_manifest(&ep, peer, space_id, auth_ref, token).await {
         Ok(Some(m)) => m,
         Ok(None) => {
             // 老对端没有这一档 ⇒ 只压 **30 分钟**（⛔ 不是 6 小时：对方升级后要能很快用上）。
@@ -6207,6 +6204,58 @@ mod tests {
         );
         // 本机也是加密 ⇒ 允许
         assert_eq!(mesh_peers_by_name("room-enc", "保险柜", "me", &[p], true).len(), 1);
+    }
+
+    /// ⭐⭐ **2026-10-25（数据面 Step 1a 的判据）**：**一个假端点就够了** ——
+    /// `fetch_peer_manifest` 只认 `Endpoint`，不再碰 reqwest/peer.base。
+    ///
+    /// 这条挡的是「换传输实现时偷偷把同步逻辑也改了」：
+    /// 只要假端点能喂出同样形状的响应、解析结果一致 ⇒ 传输可替换 ✓。
+    ///
+    /// **变异**：把 `fetch_peer_manifest` 改回直接 `reqwest`（签名不要 `ep`）⇒ 本判据编译不过 ⇒ 红。
+    #[tokio::test]
+    async fn a_fake_endpoint_is_enough_for_the_manifest_call() {
+        use crate::mesh_endpoint::{Endpoint, HttpReply};
+        use std::future::Future;
+        use std::pin::Pin;
+        struct Fake {
+            seen: std::sync::Mutex<Vec<String>>,
+        }
+        impl Endpoint for Fake {
+            fn get(
+                &self,
+                target: &str,
+                _auth: Option<(&str, i64, &str)>,
+                _token: Option<&str>,
+            ) -> Pin<Box<dyn Future<Output = Result<HttpReply, String>> + Send + '_>> {
+                self.seen.lock().unwrap().push(target.to_string());
+                Box::pin(async move {
+                    Ok(HttpReply {
+                        status: 200,
+                        body: r#"{"pages":[{"id":"p1","updated_at":11,"deleted":false},
+                                             {"id":"p2","updated_at":22,"deleted":true}]}"#
+                            .to_string(),
+                    })
+                })
+            }
+        }
+        let fake = Fake { seen: std::sync::Mutex::new(Vec::new()) };
+        let peer = MeshPeer { device_id: "dev-x".to_string(), base: "http://not-used.invalid:1".to_string() };
+        let got = fetch_peer_manifest(&fake, &peer, "space-z", None, None)
+            .await
+            .expect("假端点必须够用");
+        assert_eq!(
+            got,
+            Some(vec![
+                ("p1".to_string(), 11, false),
+                ("p2".to_string(), 22, true),
+            ])
+        );
+        assert_eq!(
+            fake.seen.lock().unwrap().as_slice(),
+            ["/mesh/manifest?space_id=space-z"],
+            "端点收到的必须是原样 target（签名与发送同一份 ✓）"
+        );
     }
 
     /// ⭐ 2026-10-24（P3 对账）：`/mesh/manifest` 是真路由；缺页判定是纯函数（可单测）。
