@@ -27541,3 +27541,6 @@ button.mset-row:focus-visible {
 .set-space-head .set-space-filter-wrap{flex:0 0 120px;width:120px}
 .set-space-head .set-space-filter-wrap>svg{left:8px}
 .set-space-head .set-space-filter.sync-input{padding-left:28px;padding-right:18px}
+/* ⭐ 2026-10-25 owner：分段控件左右留白再大一点 */
+.set-space-seg{padding:3px 6px;gap:4px}
+.set-space-seg button{padding:5px 12px}
