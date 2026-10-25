@@ -140,16 +140,20 @@ pub fn append_virtual_peers(out: &mut Vec<crate::mesh::MeshPeer>) {
         if routes.is_empty() {
             return;
         }
-        let already: std::collections::HashSet<String> =
-            out.iter().map(|p| p.device_id.clone()).collect();
-        let add = virtual_peers_from(&routes, &already);
-        if !add.is_empty() {
+        // ⭐ 2026-10-25（owner 拍「B」）：路线表里有的设备**优先走跨网**。
+        //   之前是「LAN 候选里已有 ⇒ 跳过」⇒ 同一局域网里 relay 永远不会被触发。
+        //   现在改成：把这些设备从 LAN 候选里**摘掉**，换成 `relay:<node_id>` 并放到最前。
+        let replaced = merge_route_peers(out, &routes);
+        if replaced > 0 {
             eprintln!(
-                "[mesh] 跨网路线表：补了 {} 个对端（{}）",
-                add.len(),
-                add.iter().map(|p| p.device_id.clone()).collect::<Vec<_>>().join("、")
+                "[mesh] 跨网路线表：补了 {replaced} 个对端（{}；优先于 LAN）",
+                routes
+                    .iter()
+                    .filter(|r| out.iter().any(|p| p.device_id == r.device_id && p.base.starts_with(crate::mesh_endpoint::RELAY_BASE_PREFIX)))
+                    .map(|r| r.device_id.clone())
+                    .collect::<Vec<_>>()
+                    .join("、")
             );
-            out.extend(add);
         }
     }
     #[cfg(not(feature = "relay"))]
@@ -157,6 +161,33 @@ pub fn append_virtual_peers(out: &mut Vec<crate::mesh::MeshPeer>) {
         let _ = out;
         // 默认构建：跨网不可用 ⇒ 不往候选里塞 `relay:` 对端（否则每轮都是报错噪音）
     }
+}
+
+/// ⭐ 纯函数（可单测）：把路线表里的设备**优先化** ——
+/// 从 `out` 里摘掉同 `device_id` 的 LAN 候选，再把 `relay:<node_id>` 插到最前。
+/// 返回**实际换成跨网的设备数**（路线表里没有的 LAN 对端保持原样）。
+///
+/// ⚠️ 为什么不再「已有就跳过」：同网验收时 LAN 发现永远先命中 ⇒ relay 那条路
+/// 永远不补、永远测不到（2026-10-25 真机读数）。路线表是**显式配置** ⇒ 它该赢。
+pub fn merge_route_peers(
+    out: &mut Vec<crate::mesh::MeshPeer>,
+    routes: &[RelayRoute],
+) -> usize {
+    if routes.is_empty() {
+        return 0;
+    }
+    let configured: std::collections::HashSet<&str> =
+        routes.iter().map(|r| r.device_id.as_str()).collect();
+    let before = out.len();
+    out.retain(|p| !configured.contains(p.device_id.as_str()));
+    let replaced = before - out.len();
+    let mut virtuals = virtual_peers_from(routes, &Default::default());
+    if virtuals.is_empty() {
+        return replaced;
+    }
+    virtuals.append(out);
+    *out = virtuals;
+    replaced
 }
 
 #[cfg(test)]
@@ -225,6 +256,37 @@ mod tests {
             format!("{}{}", crate::mesh_endpoint::RELAY_BASE_PREFIX, OK_ID),
             "base 必须是 relay:<node_id>（工厂靠它挑传输）"
         );
+    }
+
+    /// ⭐ 2026-10-25（owner 拍「B」）：路线表里的设备**优先走跨网** ——
+    /// 不能因为 LAN 候选里已有同 device_id 就跳过（真机就是这样永远测不到 relay）。
+    #[test]
+    fn configured_routes_replace_the_same_device_lan_candidate_and_go_first() {
+        use crate::mesh::MeshPeer;
+        let routes = parse_routes(&format!(
+            r#"{{"dev-a": {{"node_id": "{OK_ID}", "addrs": ["192.168.0.5:8788"]}}}}"#
+        ))
+        .unwrap();
+        let mut out = vec![
+            MeshPeer { device_id: "dev-b".into(), base: "http://192.168.0.6:8788".into() },
+            MeshPeer { device_id: "dev-a".into(), base: "http://192.168.0.5:8788".into() },
+        ];
+        let replaced = merge_route_peers(&mut out, &routes);
+        assert_eq!(replaced, 1, "dev-a 应从 LAN 被替换成跨网");
+        assert_eq!(out.len(), 2, "不许重复拉同一个 device");
+        assert_eq!(out[0].device_id, "dev-a", "跨网候选必须排在前面");
+        assert!(out[0].base.starts_with(crate::mesh_endpoint::RELAY_BASE_PREFIX));
+        assert_eq!(out[1].device_id, "dev-b", "无关的 LAN 对端要保持原样");
+    }
+
+    /// 路线表为空 ⇒ 一个候选都不动。
+    #[test]
+    fn no_routes_leave_candidates_untouched() {
+        use crate::mesh::MeshPeer;
+        let mut out = vec![MeshPeer { device_id: "dev-a".into(), base: "http://x:1".into() }];
+        assert_eq!(merge_route_peers(&mut out, &[]), 0);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].base, "http://x:1");
     }
 
     /// ⭐ 口径②：坏 JSON ⇒ 报错（⛔ 不当成空表）。
