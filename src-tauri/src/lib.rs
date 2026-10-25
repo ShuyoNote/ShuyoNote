@@ -115,6 +115,9 @@ mod mesh_sim;
 mod mesh;
 // ⭐ 2026-10-25（跨网中继「数据面」Step 1a）：端点抽象 —— 同步只认「往哪发」，不认「怎么连上的」
 mod mesh_endpoint;
+// ⭐ 2026-10-25（Step 2b-1）：隧道帧协议 —— 把**原样 HTTP 请求**搬到对端的一条字节流上
+//   （⛔ 不依赖 iroh：入参是 AsyncRead/AsyncWrite，谁给流都行；iroh 接线是 Step 2b-2）
+mod relay_tunnel;
 // 评估用探针（2026-09-30）：量一次**真实网格窗口**的 `/mesh/pull` 在线上多少字节。
 // ⚠️ 它必须待在 crate 内（`mod mesh` 是私有的 ⇒ 外部 crate 拿不到 `start`/`MeshConfig`）；
 //    默认 `#[ignore]`，跑法写在文件头。**它不碰 `mesh.rs`** ✓（那是 AMD 的写域）。
