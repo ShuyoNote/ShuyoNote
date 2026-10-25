@@ -296,6 +296,14 @@ export function SyncPanel({
   // ⚠️ 只有**当前空间这条档案绑全了**才显示那一行：`lan_status` 没绑定时会回落"第一条绑定"
   //（那是给无参调用兜底的），在面板上显示**别的空间**的地址是错的。
   const activeRow = rows.find((r) => r.ws_id === activeId);
+  // ⭐⭐ **2026-10-25（owner：「立即同步这个按钮不能点」）**：那颗按钮原来复用 `syncOne(activeRow)`，
+  //   而 `syncOne` 是**服务端同步**那条（要求 server_url/token/space_id）；个人空间**永远没有这条档案**
+  //   ⇒ `activeRow` 恒 null ⇒ `disabled={syncing || !activeRow}` 恒真 ⇒ 按钮永远是灰的 ✗。
+  //   ⇒ 局域网这一档的正确动作是 **`mesh_sync_now`**（跑一轮对等拉取，不需要任何服务端配置）。
+  //   ⚠️ 这个 handler **必须留在 `syncOne` 与 `update` 之间**（`syncPanelMesh.wiring` ⑦⑧ 在那一段里
+  //      找 `${rep.note}` 与 `loadPages()`；放到别处会被判成"面板自己拼句子"）。
+  const [meshBusy, setMeshBusy] = useState(false);
+
   // 丙-③-b-2b-2：**网格（对等交换）**那一档的设置面。
   // ⚠️ 三个输入各自独立，保存时按命令面的口径给值（`""` ＝ 清除那一项、`null` ＝ 不动）——
   //   这里**不再自己解释一遍**（两处各解释一次，迟早会有一处说错）。
@@ -679,14 +687,31 @@ export function SyncPanel({
   };
 
   useEffect(() => {
-    if (open) {
+    // ⭐ **2026-10-25（owner：「页面貌似不能自动刷新」）**：这里原来只认 `open`（浮层），
+    //   而左栏那颗「同步」走的是 `contentOnly`（`view === "sync"` ⇒ `<SyncPanel contentOnly />`）
+    //   ⇒ `open` 恒 false ⇒ 这一屏从不 refresh／不读历史 ⇒ 看起来"死的"。
+    //   ⇒ `contentOnly` 也算"看得见"（与上面 lanStatus 那条修法同一口径）。
+    if (open || contentOnly) {
       void refresh();
       // C1/C2 的设备级设置与网络类型（与 profile 列表分开读：它们失败也不该让面板空白）。
       void refreshBudget();
     }
     // 打开面板 / 切换活动空间 / 空间列表变化时，都刷新到当前活动空间。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, activeId, spaces]);
+  }, [open, contentOnly, activeId, spaces]);
+
+  // ⭐ **2026-10-25（owner：「页面貌似不能自动刷新」）**：看得见时**定时**刷新两处读数 ——
+  //   同步历史（后台每轮都会写一条 ⇒ 定时读才看得见"它真的在跑"）＋ 局域网状态（附近/已配对）。
+  //   ⚠️ 15 秒：比后台轮（2 分钟）密得多（用户要"看得见在动"），又不至于每秒打库。
+  useEffect(() => {
+    if ((!open && !contentOnly) || !isDesktopPlatform()) return;
+    const t = window.setInterval(() => {
+      void loadHistory();
+      setLanNonce((n) => n + 1);
+    }, 15_000);
+    return () => window.clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, contentOnly, activeId]);
 
   const save = async (r: EditRow) => {
     try {
@@ -791,6 +816,32 @@ export function SyncPanel({
       }
       setSyncing(false);
       useSyncStatus.getState().end(syncErr);
+    }
+  };
+
+  // ⭐ **2026-10-25（owner：「立即同步这个按钮不能点」）**：局域网那颗按钮的动作 ——
+  //   走 `mesh_sync_now`（不需要服务端配置；个人空间也能点）。
+  //   ⚠️ 位置故意放在 `syncOne` 与 `update` 之间：`syncPanelMesh.wiring` ⑦⑧ 在这一段里
+  //      找 `${rep.note}` 与 `loadPages()`（⛔ 别把它挪走，否则那条源码级判据会红）。
+  const syncMeshNow = async () => {
+    if (meshBusy) return;
+    setMeshBusy(true);
+    setStatus("");
+    useSyncStatus.getState().begin("正在同步（局域网）…");
+    try {
+      const rep = await api.meshSyncNow(activeId ?? null);
+      // 人话**原样来自 Rust**（`rep.note`）—— 面板不许自己遍历读数拼句子。
+      setStatus(`${rep.note}`);
+      useSyncStatus.getState().end();
+      setLanNonce((n) => n + 1);
+      // 网格那轮之后重拉页面列表（换过来的内容不该等切空间才看见）＋ 同步历史跟着刷新。
+      useNotes.getState().loadPages();
+      void loadHistory();
+    } catch (e) {
+      setStatus(`局域网同步失败：${e}`);
+      useSyncStatus.getState().end(String(e));
+    } finally {
+      setMeshBusy(false);
     }
   };
 
@@ -1594,8 +1645,8 @@ export function SyncPanel({
                                   <button
                                     className="sync-btn"
                                     data-testid="nearby-sync"
-                                    disabled={syncing || !activeRow}
-                                    onClick={() => activeRow && void syncOne(activeRow)}
+                                    disabled={meshBusy}
+                                    onClick={() => void syncMeshNow()}
                                     style={{ marginLeft: 8 }}
                                   >
                                     立即同步

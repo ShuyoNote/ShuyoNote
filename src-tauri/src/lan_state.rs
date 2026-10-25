@@ -235,11 +235,14 @@ pub fn announce_due(last_announce_ms: i64, now_ms: i64, interval_ms: i64) -> boo
 
 // ── ⭐⭐ task-12（owner 拍 C「后台每 5 分钟跑一次，打开面板时更勤」）────────────────────────────
 
-/// **后台自主节拍**：多久**不靠界面**跑一轮网格交换（owner 原话「后台每 5 分钟」✓）。
+/// **后台自主节拍**：多久**不靠界面**跑一轮网格交换。
 ///
-/// ⚠️ 它**只管后台那一轮** ✗ —— 面板打开时前端那条路**保留**（更快 ✓，owner 原话「打开面板时更勤」✓）；
+/// ⭐ **2026-10-25（owner：「BACKGROUND_ROUND_MS 调成 120 秒」）**：`5 分钟 → 2 分钟`。
+///   理由：个人版同 WiFi 场景里 5 分钟一轮太慢 —— 改完一台，另一台要等好几分钟才看见。
+///   代价：唤醒从 12 次/小时升到 30 次/小时（每轮只是局域网拉一次，不走外网）。
+/// ⚠️ 它**只管后台那一轮** —— 面板打开时前端那条路更快（owner 原话「打开面板时更勤」）；
 /// 两条路**共用同一套落库**（`sync::mesh_round_once` ✓）⇒ 不会出现"面板跑的记、后台跑的不记" ✗。
-pub const BACKGROUND_ROUND_MS: i64 = 5 * 60 * 1000;
+pub const BACKGROUND_ROUND_MS: i64 = 120 * 1000;
 
 /// 暂停那条日志只打一次（每 5 分钟刷一句会把真日志冲掉）。
 static AUTOSYNC_PAUSED_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
