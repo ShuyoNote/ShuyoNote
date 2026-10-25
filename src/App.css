@@ -1394,6 +1394,12 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 .sync-popover {
   position: fixed;
   width: 320px;
+  /* ⭐ 2026-10-25（owner：「给同步面板添加滚动」）：内容多时**面板自己滚**，⛔ 不许顶出窗口。
+     高度按视口封顶（留 24px 呼吸），滚动留在这层、并有 `overscroll-behavior: contain`
+     ⇒ 滚到底不会把后面的页面/侧栏一起带着滚。 */
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
