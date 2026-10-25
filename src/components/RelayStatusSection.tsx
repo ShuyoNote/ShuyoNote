@@ -98,6 +98,17 @@ export function RelayStatusSection() {
           <span className="sync-row-label">中继</span>
           <span className="sync-row-value relay-connection">{view.connectionLabel}</span>
         </div>
+        {/* ⭐ **2026-10-25（owner：面板里看不到中继信息）**：把**地址**摆出来。
+            ⚠️ 只加"地址"，⛔ 不把有效期搬回来 —— 那条 2026-10-19 的决定仍然成立
+            （许可证/有效期只属于「跨网同步订阅」那一节）。 */}
+        {view.url ? (
+          <div className="sync-att">
+            <span className="sync-row-label">地址</span>
+            <span className="sync-row-value relay-url" data-testid="relay-url">
+              {view.url}
+            </span>
+          </div>
+        ) : null}
         {/* ⭐ 2026-10-19（owner：「中继和跨网订阅不是一回事？」⇒ 拍 A）：**「中继许可证」那一行搬走了** ✗
             —— 许可证/有效期属于**订阅**（`LicenseSection`），中继这一节只回答"连上没有" ✓。
             ⚠️ 别在这里再把有效期加回来：同一件事两处显示，用户会读到两套数（旧界面就是这样 ✗）。
