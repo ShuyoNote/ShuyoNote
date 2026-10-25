@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { emitHostEvent } from "../lib/pluginEvents";
+import { visiblePageChanged } from "../lib/docContent";
 import { api } from "../lib/api";
 import type { PageDetail, PageMeta } from "../types";
 import { useViewStore } from "./view";
@@ -55,6 +56,18 @@ export interface NoteState {
    */
   loadPages: (opts?: { restoreSpaceId?: string }) => Promise<void>;
   openPage: (id: string) => Promise<void>;
+  /**
+   * ⭐ 2026-10-24（owner 报「同步了没有自动刷新页面」）：**重新读当前打开的页**。
+   *
+   * 为什么必须有它：同步路径（服务端 SSE / 网格轮次）原来只调 `loadPages()` —— 那**只换列表**，
+   * 而编辑器读的是 `current`（只在 `openPage` 里赋值）⇒ 远端改了正在看的这一页时**界面纹丝不动**，
+   * 要切页或重启才看得到。
+   *
+   * 返回 `true` = 真的换了（并且已 `bumpReload()` 让编辑器重挂）。**没变 ⇒ 不写 state**，
+   * 也不 bump（否则每一拍都重挂编辑器、光标/滚动全丢）。
+   * ⚠️ 调用时机由 `lib/editIdle.ts` 判（用户正在打字时自动刷新会把他没落库的那几百毫秒换掉）。
+   */
+  refreshCurrent: () => Promise<boolean>;
   createPage: (parentId: string | null, content?: { content_json: string; content_text: string; title?: string }, opts?: { select?: boolean }) => Promise<string | null>;
   createFolder: (parentId: string | null) => Promise<void>;
   createDatabase: (parentId: string | null, title?: string) => Promise<string | null>;
@@ -311,6 +324,24 @@ export const useNotes = create<NoteState>((set, get) => ({
     const next = pages.slice();
     next[i] = merged;
     set({ pages: next });
+    return true;
+  },
+
+  refreshCurrent: async () => {
+    const { currentId } = get();
+    if (!currentId) return false;
+    const fresh = await api.getPage(currentId);
+    const prev = get().current;
+    // ⚠️ 比较走内容层（`visiblePageChanged`）：store 里**不许**直接比正文那两个存储字段名 ——
+    //    `check-doc-content-access` 只允许那一层碰它们（本文件基线 6 处，一处余量都没有）。
+    if (prev && !visiblePageChanged(prev, fresh)) {
+      return false;
+    }
+    // ⚠️ 顺序有讲究：先标"外部写过这一页"（`pendingSave.ts` 靠它丢掉那条**已经旧了**的待保存），
+    //    再换 `current`、再 bump。反过来会让"重挂编辑器 ⇒ 卸载 flush"把远端那版盖回去。
+    get().noteExternalWrite(currentId);
+    set({ current: fresh });
+    get().bumpReload();
     return true;
   },
 

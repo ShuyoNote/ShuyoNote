@@ -334,13 +334,31 @@ pub fn record_change(
                 |r| r.get(0),
             )
             .unwrap_or(0);
-        c.execute(
-            "DELETE FROM changes
-              WHERE entity = ?1 AND entity_id = ?2 AND op = 'upsert'
-                AND device_id = ?3 AND seq > ?4",
-            params![entity, entity_id, did, last_pushed],
-        )
-        .map_err(|e| e.to_string())?;
+        // ⭐ 2026-10-23（S2）：**先选出名单，再按名单删两边** —— 被并掉的这几位，
+        //   `mesh_outbox` 里也要一起消失，否则搬运缓存会重新长成那 672 MB 的形状 ✗
+        //   （它是 `changes` 的**镜像**，⛔ 不是独立账本 ✗）。单连接、无并发写 ⇒ 选出到删之间没有窗口。
+        let doomed: Vec<i64> = {
+            let mut st = c
+                .prepare(
+                    "SELECT seq FROM changes
+                      WHERE entity = ?1 AND entity_id = ?2 AND op = 'upsert'
+                        AND device_id = ?3 AND seq > ?4",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = st
+                .query_map(params![entity, entity_id, did, last_pushed], |r| r.get(0))
+                .map_err(|e| e.to_string())?;
+            rows.filter_map(Result::ok).collect()
+        };
+        if !doomed.is_empty() {
+            let ph = vec!["?"; doomed.len()].join(",");
+            c.execute(
+                &format!("DELETE FROM changes WHERE seq IN ({ph})"),
+                rusqlite::params_from_iter(doomed.iter()),
+            )
+            .map_err(|e| e.to_string())?;
+            prune_mesh_outbox(c, &did, &doomed);
+        }
     }
     c.execute(
         "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at)
@@ -355,7 +373,92 @@ pub fn record_change(
         params![seq],
     )
     .map_err(|e| e.to_string())?;
+    mirror_change_to_mesh_outbox(c, &did, seq, entity, entity_id, op, payload, updated_at);
     Ok(())
+}
+
+/// 这个空间库自己那一行 `id`（`changes`／`sync_profiles` 那几句用的是同一把尺）。
+///
+/// 拿不到（表不在 / 空）⇒ `None`：搬运缓存那两处**按"这一条不搬"处理**，⛔ 不猜 ✗。
+fn space_id_of(c: &Connection) -> Option<String> {
+    c.query_row("SELECT id FROM workspaces LIMIT 1", [], |r| r.get::<_, String>(0))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// 把一条**本地**变更封好放进 `meta.mesh_outbox`（锁定态同步的搬运缓存，方案 §3）。
+///
+/// ⚠️ 四条纪律，缺一条都会变成"第二份真相"✗：
+/// ① **封的是整条记录**（entity / entity_id / op / payload 一起）⇒ 明文库里看不到页 id、看不到 op ✓；
+/// ② 键是 `(space_id, device_id, device_seq)`，`device_seq` 就是 `changes.seq` ⇒ 同一把尺、天然幂等 ✓；
+/// ③ **绝不能失败掉用户这次保存** ✗ —— 镜像丢了只是"那一条锁着时搬不出去"，解锁后按 seq 照旧补得上 ✓；
+/// ④ 但必须**响**（stderr）：静默漏镜像 = "有些东西锁定态永远同步不出去"，而没人知道 ✗。
+fn mirror_change_to_mesh_outbox(
+    c: &Connection,
+    device: &str,
+    seq: i64,
+    entity: &str,
+    entity_id: &str,
+    op: &str,
+    payload: Option<&str>,
+    updated_at: i64,
+) {
+    let Some(space) = space_id_of(c) else {
+        eprintln!("[mesh] 搬运缓存跳过：这个库看不出是哪个空间（不影响保存）");
+        return;
+    };
+    let rec = serde_json::json!({
+        "entity": entity,
+        "entity_id": entity_id,
+        "op": op,
+        "payload": payload,
+    });
+    // 明文空间 ⇒ 原样过（`encrypt_payload` 的既有口径）；密文空间 ⇒ 用**它自己的**钥匙封。
+    let sealed = match crate::security::encrypt_payload(c, &rec.to_string()) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[mesh] 搬运缓存跳过（封不上，不影响保存）：{e}");
+            return;
+        }
+    };
+    if let Err(e) = c.execute(
+        "INSERT OR IGNORE INTO meta.mesh_outbox
+             (space_id, device_id, device_seq, updated_at, sealed, mirrored_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![space, device, seq, updated_at, sealed, crate::db::now_ms()],
+    ) {
+        eprintln!("[mesh] 搬运缓存写入失败（不影响保存）：{e}");
+        return;
+    }
+    // ⚠️ **必须有这一句**：镜像没有上限 ⇒ 明文库会跟着无限长（那 672 MB 的形状 ✗）。
+    //   保留期口径见方案 §6-②（7 天 / 64 MB，先到者）；体积那一半等 S4 的水位裁剪一起做，
+    //   这一处先把**时间**这一半关上（索引 `idx_mesh_outbox_age` 就是为它建的）。
+    if let Err(e) = c.execute(
+        "DELETE FROM meta.mesh_outbox WHERE space_id = ?1 AND mirrored_at < ?2",
+        params![space, crate::db::now_ms() - MESH_OUTBOX_KEEP_MS],
+    ) {
+        eprintln!("[mesh] 搬运缓存过期清理失败（不影响保存）：{e}");
+    }
+}
+
+/// 搬运缓存的时间上限（方案 §6-② 的提案值：**7 天**；体积那一半由 S4 的水位裁剪补上）。
+const MESH_OUTBOX_KEEP_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+/// 从搬运缓存里删掉这几位 —— 名单与 `changes` 那次删除**是同一份**（§ `record_change`）。
+///
+/// ⚠️ 失败只记日志：删不掉只会让缓存变胖，⛔ 不许把用户这次保存弄挂 ✗。
+fn prune_mesh_outbox(c: &Connection, device: &str, seqs: &[i64]) {
+    let Some(space) = space_id_of(c) else { return };
+    for s in seqs {
+        if let Err(e) = c.execute(
+            "DELETE FROM meta.mesh_outbox
+              WHERE space_id = ?1 AND device_id = ?2 AND device_seq = ?3",
+            params![space, device, s],
+        ) {
+            eprintln!("[mesh] 搬运缓存并单失败（不影响保存）：{e}");
+        }
+    }
 }
 
 /// 载荷里那格"**我这边管它叫什么**"（空间名）的字段名。
@@ -447,10 +550,16 @@ pub fn auto_create_space_decision(
     tombstoned: &[String],
     paired: bool,
     encryption_on: bool,
+    peer_encrypted: bool,
 ) -> AutoCreateSpace {
     let name = peer_name.trim();
     if !paired {
         return AutoCreateSpace::Skip("not_paired");
+    }
+    // ⭐ 2026-10-24（真机：加密空间被按名融合成明文）：**对端这个空间是加密的 ⇒ 绝不按名建明文空间**。
+    //   正确路径是"公开材料 ＋ 解锁后按 id 建密文空间"（见 plan §四）。
+    if peer_encrypted {
+        return AutoCreateSpace::Skip("peer_encrypted");
     }
     // ⚠️ 逐字：`personal` 才建；`team`／空串／别的写法一律不建（⛔ 不猜"没报就是个人"）。
     if peer_kind.trim() != "personal" {
@@ -501,7 +610,8 @@ pub fn peer_spaces_to_create(
         //    短的那一侧缺的格子当空串处理（⛔ 不许越界、⛔ 不许用下标去猜）。
         for (i, name) in p.announce.hub_space_names.iter().enumerate() {
             let kind = p.announce.hub_space_kinds.get(i).map(String::as_str).unwrap_or("");
-            match auto_create_space_decision(name, kind, local, tombstoned, is_paired, encryption_on) {
+            let peer_encrypted = crate::lan::announced_encrypted_for(p, "", name).unwrap_or(false);
+            match auto_create_space_decision(name, kind, local, tombstoned, is_paired, encryption_on, peer_encrypted) {
                 AutoCreateSpace::Create => {
                     let n = name.trim().to_string();
                     if !out.iter().any(|(x, _)| x == &n) {
@@ -513,6 +623,119 @@ pub fn peer_spaces_to_create(
         }
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// ⭐ 2026-10-23（owner：「没有的空间，让用户选择哪些可以建立」）：一条**候选**。
+///
+/// ⚠️ 它只回答"能给用户看什么"，⛔ 不代表已经该建（真要建还得用户勾）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MissingPeerSpace {
+    pub name: String,
+    /// 哪几台对端报了它（**设备 id**，已排序、已去重）—— 只用来去重/核对，⛔ 不进界面 ✗
+    pub from: Vec<String>,
+    /// ⭐ 与 [`from`] **一一对应**的**显示名**（设备名／短标识／「未命名设备」）。
+    /// ⚠️ 界面必须用它，⛔ 不许把设备 id 摆进用户可见的句子（本仓既有规矩）。
+    pub from_names: Vec<String>,
+    /// 这个名字在本机**删过**（墓碑）⇒ 界面单列、默认不勾、勾的时候多问一句
+    pub tombstoned: bool,
+}
+
+
+/// 一台对端的**显示名** —— ⛔ **不许回落成 `device_id`**（本仓既有规矩：设备 id 不进用户可见的句子）。
+///
+/// 回退链：设备名 ⇒ 「设备 <短标识>」（短标识它自己报的、可显示 ✓）⇒ 「未命名设备」。
+fn display_name_of(a: &crate::lan::LanAnnounce) -> String {
+    let n = a.device_name.trim();
+    if !n.is_empty() {
+        return n.to_string();
+    }
+    let s = a.short_id.trim();
+    if !s.is_empty() {
+        return format!("设备 {s}");
+    }
+    "未命名设备".to_string()
+}
+/// ⭐ **把「对端有、本机没有」的个人空间列出来给人勾** —— 纯函数，不碰库、不建东西。
+///
+/// 与 [`peer_spaces_to_create`] 的**区别是刻意的**：
+/// · 那个是**替用户建**（四道闸全过才建，且"本机有加密空间"一票否决）；
+/// · 这个是**给用户看**：同样只收「配对过（G1）＋ 对端报 personal（G2）＋ 有名字（G3）＋
+///   本机没有同名个人空间」，但**墓碑也列出来**（打标记，让用户自己决定要不要"删了又活"），
+///   并且**不**因为本机有加密空间就把整张表清空 —— 用户勾＝他知情同意（界面必须写"未加密"）。
+///
+/// 输出：**按名字排序、按名字去重**（两台对端报同一个名字 ⇒ 一行，`from` 里两台）✓。
+pub fn missing_peer_spaces(
+    peers: &[crate::lan::Peer],
+    local: &[(String, String, String)],
+    tombstoned: &[String],
+    paired: &[String],
+) -> Vec<MissingPeerSpace> {
+    let mut out: Vec<MissingPeerSpace> = Vec::new();
+    for p in peers {
+        let dev = p.announce.device_id.trim().to_string();
+        // G1：没信任过这台 ⇒ 它的空间**连名字都不显示**（信任是这一整块的入口）。
+        if !paired.iter().any(|d| d.trim() == dev) {
+            continue;
+        }
+        // ⚠️ 名字与类别是**两个平行数组**（wire 上就是这么发的）⇒ 按名字遍历、类别按下标取，
+        //    取不到当空串（⛔ 不许用下标去猜，⛔ 不许越界）。
+        for (i, name) in p.announce.hub_space_names.iter().enumerate() {
+            let kind = p.announce.hub_space_kinds.get(i).map(String::as_str).unwrap_or("");
+            let n = name.trim();
+            // ⭐ 2026-10-24：加密空间**不进"可建"候选表**（"按名建明文空间"的另一条入口）。
+            //   正确路径＝公开材料 ＋ 解锁后按 id 建密文空间。
+            if crate::lan::announced_encrypted_for(p, "", n).unwrap_or(false) {
+                continue;
+            }
+            // G2：只列 personal；team／空／别的写法一律不列（⛔ 不猜"没报就是个人"）。
+            if kind.trim() != "personal" || n.is_empty() {
+                continue;
+            }
+            // 本机已有同名**个人**空间 ⇒ 不列（那是"路由过去"，⛔ 不是"再建一个"）。
+            let exists = local.iter().any(|(_, ln, lk)| {
+                lk.trim() == "personal"
+                    && crate::mesh_merge_ledger::same_space_name_by_trim(ln, n)
+            });
+            if exists {
+                continue;
+            }
+            let tomb = tombstoned
+                .iter()
+                .any(|t| crate::mesh_merge_ledger::same_space_name_by_trim(t, n));
+            match out
+                .iter_mut()
+                .find(|x| crate::mesh_merge_ledger::same_space_name_by_trim(&x.name, n))
+            {
+                Some(row) => {
+                    if !row.from.iter().any(|d| d == &dev) {
+                        row.from.push(dev.clone());
+                        row.from_names.push(display_name_of(&p.announce));
+                    }
+                    // 任一台把它当"删过的名字" ⇒ 整行都按墓碑处理（保守方向 ✓）。
+                    row.tombstoned = row.tombstoned || tomb;
+                }
+                None => out.push(MissingPeerSpace {
+                    name: n.to_string(),
+                    from: vec![dev.clone()],
+                    from_names: vec![display_name_of(&p.announce)],
+                    tombstoned: tomb,
+                }),
+            }
+        }
+    }
+    // ⚠️ `from` 与 `from_names` 是**平行数组** ⇒ 必须**一起**排序/去重（否则名字会配错设备 ✗）。
+    for r in out.iter_mut() {
+        let mut pairs: Vec<(String, String)> =
+            r.from.iter().cloned().zip(r.from_names.iter().cloned()).collect();
+        pairs.sort_by(|a, b| a.0.cmp(&b.0));
+        pairs.dedup_by(|a, b| a.0 == b.0);
+        r.from = pairs.iter().map(|x| x.0.clone()).collect();
+        r.from_names = pairs.iter().map(|x| x.1.clone()).collect();
+    }
+    // 顺序稳定（判据要能逐字节比 ✓）
+    out.sort_by(|a, b| a.name.cmp(&b.name));
     out
 }
 /// ⭐⭐ **2026-10-19（owner 拍「甲」）**：**替对端建它报了、而本机没有的同名个人空间**。
@@ -565,6 +788,22 @@ pub(crate) fn create_missing_peer_spaces(
         out
     };
 
+    // ⭐ 2026-10-24：加密空间不走按名建（等公开材料＋解锁后按 id 建密文空间）—— 但**必须说出来**。
+    let encrypted_skipped = peers
+        .iter()
+        .map(|p| {
+            p.announce
+                .hub_space_names
+                .iter()
+                .filter(|n| crate::lan::announced_encrypted_for(p, "", n).unwrap_or(false))
+                .count()
+        })
+        .sum::<usize>();
+    if encrypted_skipped > 0 {
+        eprintln!(
+            "[mesh] 有 {encrypted_skipped} 个对端加密空间**不按名建**（等公开材料＋解锁后按 id 建密文空间）"
+        );
+    }
     let plan = peer_spaces_to_create(peers, &local, &tombstoned, &paired, encryption_on);
     let mut created: Vec<String> = Vec::new();
     for (name, kind) in plan {
@@ -578,6 +817,9 @@ pub(crate) fn create_missing_peer_spaces(
             let _ = c.execute("DELETE FROM meta.workspaces WHERE id = ?1", params![id]);
             return Err(format!("为「{name}」建库失败（已回滚）：{e}"));
         }
+        // ⭐ 2026-10-24：与面板那条路**同一个补法** —— 新空间必须同时有 `sync_profiles` 行，
+        //   否则 `mesh_cfgs`（窗口要服务的清单）看不到它 ⇒ "建了但一直不同步"，且毫无提示。
+        ensure_local_profile_row(c, &id).map_err(|e| e.to_string())?;
         // ④ 抄网格地址：否则新空间没开网格 ⇒ 永远不拉
         if let Some(bind) = mesh_bind.map(str::trim).filter(|b| !b.is_empty()) {
             let _ = c.execute(
@@ -587,6 +829,92 @@ pub(crate) fn create_missing_peer_spaces(
             );
         }
         created.push(name);
+    }
+    Ok(created)
+}
+
+/// ⭐ 2026-10-23（owner：「没有的空间，让用户选择哪些可以建立」）：**给界面读的那张候选表**。
+///
+/// 读三样（与 [`create_missing_peer_spaces`] 同一套读法）：本机空间三元组、墓碑、信任名单；
+/// 然后交给纯函数 [`missing_peer_spaces`] 过闸＋去重 ✓。
+///
+/// ⚠️ 这里**不**看"本机有没有加密空间" ✗ —— 那一票否决是"**替**用户建"的闸；
+/// 这张表只是"**给**用户看"，勾不勾由人决定（界面必须写"未加密"）。
+pub(crate) fn list_missing_peer_spaces(
+    c: &Connection,
+    peers: &[crate::lan::Peer],
+) -> Result<Vec<MissingPeerSpace>, String> {
+    let local: Vec<(String, String, String)> = {
+        let mut st = c
+            .prepare("SELECT id, COALESCE(name, ''), COALESCE(kind, '') FROM meta.workspaces WHERE deleted_at IS NULL")
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    let tombstoned: Vec<String> = {
+        let mut st = c
+            .prepare("SELECT COALESCE(name, '') FROM meta.workspaces WHERE deleted_at IS NOT NULL")
+            .map_err(|e| e.to_string())?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    let paired: Vec<String> = {
+        let mut st = c
+            .prepare("SELECT DISTINCT device_id FROM meta.mesh_paired_devices")
+            .map_err(|e| e.to_string())?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    Ok(missing_peer_spaces(peers, &local, &tombstoned, &paired))
+}
+
+/// ⭐ 2026-10-23：**按用户勾的那几个名字建空间** —— 只认"刚才那张候选表里列出来的"那些。
+///
+/// 四条边界：
+/// ① **只建候选表里有的名字** ✗ —— 界面上勾不到的名字，命令也不接受（⛔ 不信任面来的名字一律拒）；
+/// ② 墓碑的名字**允许**（那正是要用户点头才做的事），但同样必须是候选表里列出来的 ✓；
+/// ③ **幂等**：建完再建同名 ⇒ 候选表里已经没了（exists 闸）⇒ 返回空、⛔ 不报错 ✓；
+/// ④ 失败**回滚 meta 那一行**（与 `create_missing_peer_spaces` 同一条：⛔ 不留"有行没库"）。
+pub(crate) fn create_peer_spaces_by_name(
+    c: &Connection,
+    dir: &std::path::Path,
+    peers: &[crate::lan::Peer],
+    names: &[String],
+) -> Result<Vec<String>, String> {
+    let allowed = list_missing_peer_spaces(c, peers)?;
+    // 抄发起这一轮的网格地址（否则新空间"没开网格" ⇒ 永远不拉）—— 与自动建同一口径。
+    let bind: Option<String> = {
+        let s = crate::mesh::settings(c, crate::mesh::DEVICE_LEVEL_SPACE);
+        s.bind.map(|b| b.trim().to_string()).filter(|b| !b.is_empty())
+    };
+    let mut created: Vec<String> = Vec::new();
+    for want in names {
+        let n = want.trim();
+        let Some(cand) = allowed.iter().find(|x| x.name == n) else {
+            continue;
+        };
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = crate::db::now_ms();
+        crate::workspaces::insert_chosen_space(c, &id, &cand.name, "blue", 1.0, now, "personal")?;
+        if let Err(e) = crate::db::create_space_db_at(dir, &id) {
+            let _ = c.execute("DELETE FROM meta.workspaces WHERE id = ?1", params![id]);
+            return Err(format!("为「{}」建库失败（已回滚）：{e}", cand.name));
+        }
+        if let Some(b) = bind.as_deref() {
+            let _ = c.execute(
+                "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![format!("mesh_bind:{id}"), b],
+            );
+        }
+        // ⭐ 2026-10-24（真机现场）：**新空间必须同时有 `sync_profiles` 那一行**，否则它进不了窗口。
+        //   实测：从面板建出来的空间在 `meta.workspaces` 与 `spaces/` 里都有，但 `sync_profiles` 没行
+        //   ⇒ `mesh_cfgs`（＝窗口要服务的清单）里看不到它 ⇒ 用户还得再去设置面点一次保存才生效。
+        //   口径与 `mesh_set_config` 里那句同一件事（那边是"保存时才补"，这里是"建的时候就补"）。
+        ensure_local_profile_row(c, &id).map_err(|e| e.to_string())?;
+        created.push(cand.name.clone());
     }
     Ok(created)
 }
@@ -792,6 +1120,51 @@ fn absorb_incoming_crdt_state(
 /// ⚠️ `stamp == None` 时**逐字节等于今天**（连代码都是同一处：`doc_content::merge`）——这条由
 /// 既有那一整批 `doc_content` / `sync` 判据看着（它们一条都不带戳）。
 /// ⚠️ 戳**只决定页级**谁赢；块级怎么合仍然在 `apply_remote_page` 里（两侧改不同块 ⇒ 两边都留）。
+/// ⭐ 2026-10-24（真机：**题头图/图标没有同步**）：远端页载荷**没写** `cover` / `icon` /
+/// `cover_height` / `cover_pos` 那几格时，**保留本机现值** ✓。
+///
+/// 为什么必须补这一刀：`PageDetail` 给这四格都挂了 `#[serde(default)]`（'' / 300 / 50），
+/// 老对端的载荷里**根本没有**这几格 ⇒ 反序列化会得到"空封面"的默认值 ⇒ 应用时把本机
+/// 用户设过的封面/图标**抹掉**（那是"没发"被当成"发了个空"）。口径与 `local_space_name`
+/// 那条同一条：**没报 ≠ 报了个空**。
+///
+/// 反过来：载荷里**写了**（哪怕是空串）⇒ 按载荷走 —— 那是用户真的清掉了封面，必须照做。
+fn keep_local_chrome_when_absent(c: &Connection, plain: &str, page: &mut PageDetail) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(plain) else { return };
+    let absent = |k: &str| v.get(k).is_none();
+    if !(absent("cover") || absent("icon") || absent("cover_height") || absent("cover_pos")) {
+        return; // 四格都在 ⇒ 载荷说了算，不用补
+    }
+    let id = page.id.clone();
+    let row = c
+        .query_row(
+            "SELECT cover, icon, cover_height, cover_pos FROM pages WHERE id = ?1",
+            params![id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, f64>(3)?,
+                ))
+            },
+        )
+        .ok();
+    let Some((cover, icon, height, pos)) = row else { return }; // 本机也没有这一页 ⇒ 用载荷（新建页）
+    if absent("cover") {
+        page.cover = cover;
+    }
+    if absent("icon") {
+        page.icon = icon;
+    }
+    if absent("cover_height") {
+        page.cover_height = height;
+    }
+    if absent("cover_pos") {
+        page.cover_pos = pos;
+    }
+}
+
 fn apply_upsert(
     c: &Connection,
     page: &PageDetail,
@@ -1456,6 +1829,21 @@ fn set_attachments_enabled(c: &Connection, ws_id: &str, enabled: bool) -> Result
     Ok(())
 }
 
+/// ⭐ 2026-10-24（图片块同步）：**「跟谁对暗号」那一格** —— 个人档用**解析后的房间**，
+/// 团队档用 `space_id`。第二个返回值 `true` ＝ 设备级/个人档（按名字挑对端）。
+///
+/// 为什么抽成纯函数：这里原来直接拿 `sync_profiles.space_id`，而**个人空间那一列就是空串**
+/// ⇒ 对端那一档整个被跳过（真机：图片块元数据同步过来了，字节却永远取不到）。
+/// 与 2026-10-09 修 `runAutoSyncRound` 那个"个人空间被整批滤掉"是同一族错误。
+pub(crate) fn peer_lookup_space(space_id: &str, resolved_room: &str) -> (String, bool) {
+    let raw = space_id.trim();
+    if raw.is_empty() {
+        (resolved_room.trim().to_string(), true)
+    } else {
+        (raw.to_string(), false)
+    }
+}
+
 /// P6.3「按需取字节」（2026-09-15）：用户**主动**要求下载其中一件附件。
 ///
 /// ★★ 丙-④（2026-09-26）：**字节可以从两个地方来，按"跟谁要哪份"依次试** ——
@@ -1504,7 +1892,10 @@ pub async fn download_attachment(
     }
     let (profile, mime) = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let p = get_profile(&c, &ws_id)?;
+        // ⭐ 2026-10-24（图片块同步）：**不能**要求"一定有一行同步档案" —— 个人空间走网格时
+        //   可能根本没有档案行（窗口按房间服务，不靠档案）；没档案就只剩"对端那一档"，
+        //   那不是错误（丙-④ 的口径："服务器是加分项，不是前提"）。
+        let p = get_profile(&c, &ws_id).ok();
         // 落盘名是 `hash.<ext>`，而 ext 由 mime 决定 —— 只有本地那行元数据知道 mime；
         // 拿不到就退化成 octet-stream（与同步路径的兜底一致）。
         let mime = c
@@ -1520,7 +1911,7 @@ pub async fn download_attachment(
     };
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     // ★ 附件按空间分（owner 2026-09-24 拍板 ②）：单个附件也下到**这个空间自己**的目录里。
-    let attachments_dir: PathBuf = crate::attachments::space_attachments_dir(&app_data_dir, &profile.ws_id);
+    let attachments_dir: PathBuf = crate::attachments::space_attachments_dir(&app_data_dir, &ws_id);
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
     let session_key = {
         let c = db.0.lock().expect("db mutex poisoned");
@@ -1533,30 +1924,35 @@ pub async fn download_attachment(
 
     // ── ① 服务端那条（绑了才走；不绑 ⇒ **不再是错误**，丙-④ 之前这里直接报"请先配置同步服务器"）
     let mut server_err: Option<String> = None;
-    if !profile.server_url.is_empty() {
+    let server_profile = profile.as_ref().filter(|p| !p.server_url.trim().is_empty());
+    if let Some(p) = server_profile {
         // URL 组装规则与 `sync_attachments` **完全一致**（同一个 `attachment_base`，不是各写一遍）。
         // ★ 甲-1 接线：基址也走同一个 `effective_base`（局域网中枢优先）——两处**同源**才不会漂。
         let att_base = {
             let c = db.0.lock().expect("db mutex poisoned");
-            attachment_base(&effective_base(&c, &profile), &profile.space_id)
+            attachment_base(&effective_base(&c, p), &p.space_id)
         };
         let mut req = client.get(format!("{att_base}/attachments/{hash}"));
-        if !profile.token.is_empty() {
-            req = req.bearer_auth(&profile.token);
+        if !p.token.is_empty() {
+            req = req.bearer_auth(&p.token);
         }
         let sent = req.send().await.map_err(|e| format!("服务端请求发不出去：{e}"));
         match sent {
-            Ok(resp) => match download_one_attachment(resp, "服务端", &item, &attachments_dir, session_key.as_ref(), &db).await {
-                Ok(size) => {
-                    return Ok(AttachmentFetch {
-                        size,
-                        source: "server".to_string(),
-                        peer: None,
-                        note: format!("已从服务器取回这一件（{} 字节）", size),
-                    })
+            Ok(resp) => {
+                // ⭐ Step 6：服务器那条也走同一个下载器 —— 先转成（状态码，正文流）
+                let (st, body) = crate::mesh_endpoint::body_from_reqwest(resp);
+                match download_one_attachment(st, body, "服务端", &item, &attachments_dir, session_key.as_ref(), &db).await {
+                    Ok(size) => {
+                        return Ok(AttachmentFetch {
+                            size,
+                            source: "server".to_string(),
+                            peer: None,
+                            note: format!("已从服务器取回这一件（{} 字节）", size),
+                        })
+                    }
+                    Err(e) => server_err = Some(e),
                 }
-                Err(e) => server_err = Some(e),
-            },
+            }
             Err(e) => server_err = Some(e),
         }
     }
@@ -1567,30 +1963,65 @@ pub async fn download_attachment(
     let (candidates, proto_space) = {
         let c = db.0.lock().expect("db mutex poisoned");
         let device = device_id(&c).unwrap_or_default();
-        let proto = profile.space_id.trim().to_string();
+        let raw_space_id = profile.as_ref().map(|p| p.space_id.trim().to_string()).unwrap_or_default();
+        // ⭐ 2026-10-24（图片块同步的真因之一）：个人档的 `space_id` **就是空串** ⇒ 原来
+        //   `proto.is_empty()` 直接把**对端那一整档**跳过 ✗（个人空间＝设备直连的主用例，
+        //   却永远取不到对端的字节）。⇒ 空 `space_id` 时用**解析后的房间**（与拉取/公告同一把尺：
+        //   `mesh_scope_at` 是那一处的唯一解析）。
+        let resolved_room = mesh_scope_at(&c, Some(&ws_id)).map(|s| s.space).unwrap_or_default();
+        let (proto, device_level) = peer_lookup_space(&raw_space_id, &resolved_room);
         if proto.is_empty() {
             (Vec::new(), proto)
         } else {
             let peers = crate::lan_state::LanState::global(&device).peers(crate::db::now_ms());
             // ⭐ 2026-10-19 修：只有**设备级／个人档**才按名字挑（团队不参与按名融合 ⇒ 传空名回落 id）
-            let name = if crate::mesh::is_device_level_space(&c, &proto) {
+            let name = if device_level || crate::mesh::is_device_level_space(&c, &proto) {
                 crate::sync::local_space_name(&c).unwrap_or_default()
             } else {
                 String::new()
             };
-            let candidates = crate::mesh::mesh_peers_by_name(&proto, &name, &device, &peers);
+            let local_encrypted = c
+                .path()
+                .map(|p| crate::security::space_db_is_encrypted(std::path::Path::new(p)))
+                .unwrap_or(false);
+            let candidates = crate::mesh::mesh_peers_by_name(&proto, &name, &device, &peers, local_encrypted);
             (candidates, proto)
         }
     };
     let mut tried: Vec<String> = Vec::new();
     for p in &candidates {
         // ⭐ **U11（A：门只认卡）**：出示的是**这一台**的那一份配对秘密 ✓（⛔ 共享口令已退役 ✗）
-        let peer_secret = {
+        // ⭐ 2026-10-24（图片块同步）：**同时带一份设备签名** —— 新版配对走设备身份时
+        //   `pair_secret` 可能为空（`secret_sha256` 没值），只带口令 ⇒ 对面 401
+        //   （真机：拉取那条路一直自带签名，所以同步能通、按需取字节却永远失败）。
+        //   签的是 `attachment_target` 那串（与发出去的 target **同一处拼**）。
+        let (peer_secret, auth) = {
             let c = db.0.lock().expect("db mutex poisoned");
-            crate::mesh::pair_secret_for(&c, &proto_space, &p.device_id)
+            let device = device_id(&c).unwrap_or_default();
+            let target = crate::mesh::attachment_target(&proto_space, &hash);
+            let signed = crate::mesh::sign_request(
+                &c,
+                &device,
+                &proto_space,
+                "GET",
+                &target,
+                crate::db::now_ms(),
+            );
+            let secret = crate::mesh::pair_secret_for(&c, &proto_space, &p.device_id);
+            (secret, signed.map(|(ts, sig)| (device, ts, sig)))
         };
-        match crate::mesh::request_attachment_from_peer(&client, p, &proto_space, &hash, peer_secret.as_deref()).await {
-            Ok(resp) => match download_one_attachment(resp, &format!("对端 {}", p.device_id), &item, &attachments_dir, session_key.as_ref(), &db).await {
+        let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
+        match crate::mesh::request_attachment_from_peer(
+            &client,
+            p,
+            &proto_space,
+            &hash,
+            peer_secret.as_deref(),
+            auth_ref,
+        )
+        .await
+        {
+            Ok((status, body)) => match download_one_attachment(status, body, &format!("对端 {}", p.device_id), &item, &attachments_dir, session_key.as_ref(), &db).await {
                 Ok(size) => {
                     return Ok(AttachmentFetch {
                         size,
@@ -1606,7 +2037,7 @@ pub async fn download_attachment(
     }
 
     // ── ③ 一个都取不到 ⇒ **如实说**，而且要说清是哪一种"取不到"
-    Err(attachment_fetch_failure(server_err.as_deref(), &profile.space_id, candidates.len(), &tried))
+    Err(attachment_fetch_failure(server_err.as_deref(), &proto_space, candidates.len(), &tried))
 }
 
 /// 三个来源都试过之后那句**如实的话**（纯函数 ⇒ 判据能直接钉它，不必起网络）。
@@ -3190,7 +3621,11 @@ pub(crate) fn note_pending_trust_asks(
     } else {
         String::new()
     };
-    let candidates = crate::mesh::mesh_peers_by_name(proto_space, &name, my_device, peers);
+    let local_encrypted = c
+        .path()
+        .map(|p| crate::security::space_db_is_encrypted(std::path::Path::new(p)))
+        .unwrap_or(false);
+    let candidates = crate::mesh::mesh_peers_by_name(proto_space, &name, my_device, peers, local_encrypted);
     let row = crate::mesh::paired_row_key(proto_space, device_level);
     let mut registered: Vec<String> = Vec::new();
     for dev in asks {
@@ -3633,9 +4068,13 @@ let mut unrecognized: Vec<String> = Vec::new();
                     // ⚠️ 解密失败是 `Fatal`（整批中止、游标不前进）—— 与改前一致，见 `ApplyFailure`。
                     let plain = security::decrypt_payload(&c, payload)
                         .map_err(|e| ApplyFailure::Fatal(format!("同步解密失败：{e}（可能各设备 E1 口令/密钥不一致，已停止以免静默丢数据）")))?;
-                    if let Ok(page) = serde_json::from_str::<PageDetail>(&plain) {
+                    if let Ok(mut page) = serde_json::from_str::<PageDetail>(&plain) {
                         // 能解析出 id ⇒ 万一后面应用失败，用**这一版**归档（与 Web 的 pageRowOfChangeForStash 同口径）
                         stash_source = Some(plain.clone());
+                        // ⭐ 2026-10-24：老载荷没有封面/图标那四格 ⇒ 保留本机现值
+                        //   （否则 serde 默认值会把用户设过的题头图/图标抹成空 —— 真机现场：
+                        //    Windows 设了封面，macOS 一收页就被抹掉）。见 `keep_local_chrome_when_absent`。
+                        keep_local_chrome_when_absent(&c, &plain, &mut page);
                         // ★ §11.4 收口（第 42 轮）：载荷里带了 **CRDT 状态** ⇒ **收到就收进旁路表**。
                         //   与"最后用谁的版本"无关（`KeptLocal` 那一支的状态同样不能丢）；真正的合并在
                         //   **打开页面**时由 WebView 里那份唯一实现（`mergeRemotePageState`）做。
@@ -3669,7 +4108,21 @@ let mut unrecognized: Vec<String> = Vec::new();
                                 );
                             }
                         }
-                        let local_stamp_kv = page_stamp(&c, &page.workspace_id, &page.id)
+                        // ⭐ 2026-10-24（真机：同页并发在“只开网格”的形态下**永远不收敛**）：
+                        //   “本页当前那枚戳”的 KV 键是 `hlc_page:<本机 workspace_id>:<page_id>` ——
+                        //   而这里原来用的是**远端载荷里的** `page.workspace_id` ✗。
+                        //   服务器同步时两边空间 id 相同 ⇒ 看不出来；**按名融合的个人空间两边 id 不同**
+                        //   ⇒ 查键永远 miss ⇒ 退回“本地脏就保留本地”那条老路 ⇒ 远端那一版被塞进
+                        //   「待取回的远端版本」、不落库 ⇒ 两边各改一次同页永远合不起来。
+                        //   ⇒ 戳一律按**本机这一页真实的 workspace_id** 查/写（查不到才回落到载荷里的）
+                        let local_ws: String = c
+                            .query_row(
+                                "SELECT workspace_id FROM pages WHERE id = ?1",
+                                params![page.id],
+                                |r| r.get(0),
+                            )
+                            .unwrap_or_else(|_| page.workspace_id.clone());
+                        let local_stamp_kv = page_stamp(&c, &local_ws, &page.id)
                             .map_or(crate::hlc::PayloadStamp::Missing, crate::hlc::PayloadStamp::Ok);
                         let stamp_wins = match crate::hlc::verdict(&local_stamp_kv, &remote_stamp) {
                             crate::hlc::Verdict::ByStamp { remote_wins } => Some(if remote_wins {
@@ -3755,10 +4208,10 @@ let mut unrecognized: Vec<String> = Vec::new();
                                 //   已经落库的这一笔失败（更不许连坐整批）。
                                 let write_back = match (&remote_stamp, &local_stamp_kv) {
                                     (crate::hlc::PayloadStamp::Ok(s), _) => {
-                                        set_page_stamp(&c, &page.workspace_id, &page.id, s)
+                                        set_page_stamp(&c, &local_ws, &page.id, s)
                                     }
                                     (_, crate::hlc::PayloadStamp::Ok(_)) => {
-                                        clear_page_stamp(&c, &page.workspace_id, &page.id)
+                                        clear_page_stamp(&c, &local_ws, &page.id)
                                     }
                                     // 两边本来都没有戳 ⇒ 没什么可动的
                                     _ => Ok(()),
@@ -4022,6 +4475,8 @@ async fn do_pull(
 /// 的两个字段分别喂给两个用途（改前把远端 id 当库名 ⇒ 窗口服务一个空库、一条也换不过去）。
 #[tauri::command]
 pub async fn mesh_sync_now(
+    // ⭐ 2026-10-24：命令面也带 AppHandle —— 拉完若有页被改，要 emit `mesh-applied` 给前端刷新
+    app: tauri::AppHandle,
     db: State<'_, Db>,
     workspace_id: Option<String>,
 ) -> Result<crate::mesh::MeshRoundReport, String> {
@@ -4096,14 +4551,32 @@ pub async fn mesh_sync_now(
             }
         }
     };
-    let mut report = crate::mesh::round(
-        &db.0,
-        &scope.space,
-        &scope.device,
-        &peers,
-        scope.device_level,
-    )
-    .await?;
+    // ⭐⭐ **2026-10-24（真机：Windows 在四个空间建的探针页全落进了「面板验收」）**：
+    //   `round` 的 conn 必须是**这个空间自己的库**，⛔ 不是 `db.0`（那永远指向"当前空间"）。
+    //   原来对**非当前空间**手动同步时，`round` 把对端整批写进当前空间库
+    //   ⇒ `anchor_workspace_id` 找不到对端空间 id 就锚到当前空间 ⇒ **四个空间的页全落进一个空间**。
+    //   后台轮（`mesh_round_once`）早在 2026-10-23 就改成"按空间各开各的连接"了，手动这条一直没跟上。
+    let space_conn = match crate::db::app_data_dir_ref()
+        .and_then(|dir| crate::db::open_space_conn_at(&scope.db_space, dir).ok())
+    {
+        Some(conn) => Some(std::sync::Mutex::new(conn)),
+        None => None,
+    };
+    let mut report = match &space_conn {
+        Some(conn) => {
+            crate::mesh::round(conn, &scope.space, &scope.device, &peers, scope.device_level).await?
+        }
+        None => match crate::db::app_data_dir_ref() {
+            Some(dir) => {
+                // 锁着/打不开 ⇒ 走封包那条路（只进 inbox，不解密不应用 ✓）—— 与后台轮同口径。
+                crate::mesh::sealed_round(dir, &scope.space, &scope.db_space, &scope.device, &peers)
+                    .await?
+            }
+            None => {
+                return Err("app data 目录读不到 ⇒ 这一轮连搬运缓存都读不了".to_string());
+            }
+        },
+    };
     report.window = window;
     if report.enabled && report.window.is_none() {
         // 配了地址却没窗口 ⇒ 上面 `ensure_window` 会直接报错，走不到这里；留一句兜底说明。
@@ -4123,11 +4596,24 @@ pub async fn mesh_sync_now(
     //    —— 否则一个一直拉不动的对端会每 60 秒写 4 行、把只有 100 行的历史挤光 ✗
     //    （真机实测：~12 分钟 25 → 77 条 ✓）。"上一条"**从库里读** ✓（零新状态 ✓）。
     if let Some(h) = mesh_history_write(&report, &scope.db_space) {
-        let c = db.0.lock().expect("db mutex poisoned");
-        let last = read_last_mesh_history(&c, &h.ws_id);
-        if mesh_history_should_write(&h, last.as_ref(), crate::db::now_ms()) {
-            write_sync_history_with(&c, &h.ws_id, h.pushed, h.pulled, h.ok, &h.message, &h.items);
+        // ⚠️ `sync_history` 在**空间库**里 ⇒ 必须写进这个空间的库（⛔ 不是当前空间）。
+        if let Some(conn) = &space_conn {
+            let c = conn.lock().expect("space conn mutex poisoned");
+            let last = read_last_mesh_history(&c, &h.ws_id);
+            if mesh_history_should_write(&h, last.as_ref(), crate::db::now_ms()) {
+                write_sync_history_with(&c, &h.ws_id, h.pushed, h.pulled, h.ok, &h.message, &h.items);
+            }
         }
+    }
+    // ⭐ 2026-10-24（页 B 真机：两边各缺一块）：**把“改了哪些页”告诉前端** ——
+    //   网格没有 SSE；不说的话，编辑器里那份旧 doc 之后一保存就盖掉刚并进来的块。
+    let touched = crate::mesh::round_touched_pages(&report);
+    if !touched.is_empty() {
+        use tauri::Emitter;
+        let _ = app.emit(
+            "mesh-applied",
+            serde_json::json!({ "spaceId": scope.db_space, "pages": touched }),
+        );
     }
     Ok(report)
 }
@@ -4815,13 +5301,14 @@ mod mesh_config_state_tests {
             [],
         )
         .unwrap();
+        let derived = crate::sync::personal_room_for("room-123", "测试");
         c.execute(
-            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:room-123', '0.0.0.0:8788')",
+            &format!("INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:{derived}', '0.0.0.0:8788')"),
             [],
         )
         .unwrap();
         c.execute(
-            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_token:room-123', 'k7Qm-2pRt')",
+            &format!("INSERT INTO meta.sync_state (key, value) VALUES ('mesh_token:{derived}', 'k7Qm-2pRt')"),
             [],
         )
         .unwrap();
@@ -4887,8 +5374,9 @@ mod mesh_config_state_tests {
         // 另一个活空间：暗号 ＋ 监听地址都配在**它**那一行上
         c.execute("INSERT INTO meta.workspaces (id, name) VALUES ('ws-other', '另一个空间')", []).unwrap();
         c.execute("INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-other', 'room-123')", []).unwrap();
+        let derived = crate::sync::personal_room_for("room-123", "另一个空间");
         c.execute(
-            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:room-123', '0.0.0.0:8788')",
+            &format!("INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:{derived}', '0.0.0.0:8788')"),
             [],
         )
         .unwrap();
@@ -5041,6 +5529,69 @@ fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScop
 /// ⚠️ **R146（2026-10-08）**：把 `mesh_scope` 的**读数逻辑**拆出来，只为**能被判据直接跑** ✓
 /// （原来它挂在 `State<Db>` 上 ⇒ 判据没法调 ⇒ 这条 bug 才一直没被判据碰到 ✗）。
 /// ⛔ **本步是纯搬迁**：行为与搬迁前**逐字一致** ✓（含那条 guard ✗ —— 先让判据把它照出来 ✓）。
+/// ⭐ 2026-10-24（全空间方案 P0）：**给所有 personal 空间补一行空同步档案**（幂等）。
+///
+/// 为什么必须补：网格的公告与每轮拉取只遍历**有 `sync_profiles` 行**的空间
+/// （真机：6 个空间只有 3 个有行 ⇒ 其余从不公告、从不进轮次）。
+/// 旧版本"面板保存设置"只写 `mesh_bind` 键、不补档案行；新提交只修了「新建/自动建空间」，
+/// **既有空间不会自动补** ⇒ 这里在启动时补一次。
+///
+/// 三条口径：
+/// ① 只补 `kind='personal'` 且**没有行**的（⛔ 不动已有行、⛔ 不改团队空间）；
+/// ② 空档案 ＝ 全默认值（服务器地址/空间 id 都空 ⇒ 个人档＝只走网格，符合个人版）；
+/// ③ 幂等：再跑一次补 0 行；返回**这次补了几行**（给日志/判据）。
+pub fn ensure_sync_profiles_for_personal_spaces(c: &Connection) -> Result<usize, String> {
+    let ids: Vec<String> = {
+        let mut stmt = c
+            .prepare(
+                "SELECT w.id FROM meta.workspaces w
+                 WHERE w.deleted_at IS NULL AND w.kind = 'personal'
+                   AND NOT EXISTS (SELECT 1 FROM meta.sync_profiles p WHERE p.ws_id = w.id)
+                 ORDER BY w.created_at, w.id",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        rows
+    };
+    let mut n = 0usize;
+    for id in ids {
+        let affected = c
+            .execute(
+                "INSERT OR IGNORE INTO meta.sync_profiles (ws_id) VALUES (?1)",
+                rusqlite::params![id],
+            )
+            .map_err(|e| e.to_string())?;
+        n += affected;
+    }
+    Ok(n)
+}
+
+/// ⭐ 2026-10-24（全空间方案 P1）：**每个个人空间一个确定性的子房间号**。
+///
+/// 病根（真机）：个人空间的 `space_id` 是空串 ⇒ 全部解析到**同一个设备级房间号** ⇒
+/// 窗口的连接表（按 proto 做键）里互相覆盖，`add_space` 遇到已有键**静默返回 false**
+/// ⇒ 一台机器的窗口同一时刻只服务**一个**个人空间。
+///
+/// 修法：`room_for(空间) = sha256(seed ‖ 分隔符 ‖ 空间名)[..32]`。
+/// · `seed` ＝ 设备级「配对暗号」（两台填同一个才可能配对成功——本来就要求一样）
+/// · 空间名：融合闸门本来就要求**逐字相同**（owner 2026-10-17 口径）⇒ 用它做稳定键是自洽的
+/// ⇒ 两台对同一个空间算出的值**必然相同**，而不同空间的值**必然不同** ⇒ 窗口天然多键。
+///
+/// ⚠️ 任一为空 ⇒ 回空串（调用方按旧口径回落 / 如实报"还没填暗号"，⛔ 不猜）。
+pub(crate) fn personal_room_for(seed: &str, space_name: &str) -> String {
+    let seed = seed.trim();
+    let name = space_name.trim();
+    if seed.is_empty() || name.is_empty() {
+        return String::new();
+    }
+    let h = crate::db::sha256_hex(&format!("{seed}\u{1f}{name}"));
+    h.chars().take(32).collect()
+}
+
 pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Result<MeshScope, String> {
     // 读法与 `lan_status` 同一套：profiles × 未删除的 workspaces
     let (device_id, rows) = {
@@ -5049,7 +5600,10 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
                 // ⚠️ **2026-10-04 改**（owner：个人空间也要能用设备直连）：把 `mesh_room` 一起读出来 ✓。
                 //   ⭐ 对暗号的值 ＝ `space_id` 非空就用它（团队空间行为不变 ✓），否则用用户填的
                 //   「配对暗号」`mesh_room` ✓（个人空间没有 space_id —— 那是服务器上的组织空间 id）。
-                "SELECT p.space_id, p.ws_id, p.mesh_room FROM sync_profiles p
+                "SELECT p.space_id, p.ws_id, p.mesh_room,
+                        COALESCE((SELECT w.name FROM meta.workspaces w
+                                  WHERE w.id = p.ws_id AND w.deleted_at IS NULL), '')
+                 FROM sync_profiles p
                  WHERE EXISTS (
                      SELECT 1 FROM meta.workspaces w
                      WHERE w.id = p.ws_id AND w.deleted_at IS NULL
@@ -5062,6 +5616,7 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
             r.get::<_, String>(0)?,
             r.get::<_, String>(1)?,
             r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?,
             ))
             })
             .map_err(|e| e.to_string())?
@@ -5072,7 +5627,7 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
     let pick = match workspace_id.filter(|w| !w.is_empty()) {
         Some(want) => rows
             .iter()
-            .find(|(_, ws, _)| ws == want)
+            .find(|(_, ws, _, _)| ws == want)
             .cloned()
             .ok_or_else(|| format!("这个空间没有同步档案（或它不是当前工作区）：{want}"))?,
         None => match rows.len() {
@@ -5093,7 +5648,15 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
     //   ⚠️ 没迁移过（或老机器）⇒ **回退**读旧的逐空间那一份 ✓（⭐ 只读、⛔ 不写 ✗）。
     let personal = pick.0.trim().is_empty();
     let space = if personal {
-        crate::mesh::mesh_room_device(c).unwrap_or_else(|| pick.2.trim().to_string())
+        // ⭐ 2026-10-24（全空间方案 P1）：个人空间**一空间一房间号**（不再是全设备共用一个）。
+        //   seed ＝ 设备级配对暗号（回落旧逐空间那一格）；名字来自 meta.workspaces。
+        let seed = crate::mesh::mesh_room_device(c).unwrap_or_else(|| pick.2.trim().to_string());
+        let derived = personal_room_for(&seed, &pick.3);
+        if derived.is_empty() {
+            seed // 解析不出来 ⇒ 保持旧口径（后面那条空串检查会如实报错）
+        } else {
+            derived
+        }
     } else {
         pick.0.trim().to_string()
     };
@@ -5424,8 +5987,8 @@ mod r146_mesh_scope_tests {
 
         assert_eq!(
             mesh_space_in_use(&c, true).as_deref(),
-            Some("room-dev"),
-            "⛔ 设备级配了绑定 ⇒ 个人空间必须**仍然被服务** ✗（否则它整个不被服务，而且不报错）"
+            Some(crate::sync::personal_room_for("room-dev", "个人").as_str()),
+            "⛔ 设备级配了绑定 ⇒ 个人空间必须**仍然被服务** ✗（服务空间＝它的子房间号）"
         );
     }
 
@@ -5473,6 +6036,7 @@ mod r146_mesh_scope_tests {
                     hub_spaces: vec![scope.space.clone()],
                     hub_space_kinds: Vec::new(),
                     hub_space_names: Vec::new(),
+                    hub_space_encrypted: Vec::new(),
                     fp: "fp".into(),
                     pubkey: peer_pk.clone(),
                 },
@@ -5554,14 +6118,12 @@ mod r146_mesh_scope_tests {
         .unwrap();
         crate::mesh::set_mesh_room_device(&c, Some("room-a")).unwrap();
         crate::mesh::migrate_device_level_mesh(&c).unwrap();
-        // 后果① ⭐ 两个个人空间**都**指向设备级那一份 ✓（＝ 用户看到的是**自己**那一份 ✓）
-        for ws in ["ws-a", "ws-b"] {
-            assert_eq!(
-                mesh_scope_at(&c, Some(ws)).unwrap().space,
-                "room-a",
-                "所有个人空间必须指向同一份（设备级）"
-            );
-        }
+        // 后果① ⭐ 每个个人空间指向**自己**的子房间号（一空间一房间号，⛔ 不共用同一个）
+        let a = mesh_scope_at(&c, Some("ws-a")).unwrap().space;
+        let b = mesh_scope_at(&c, Some("ws-b")).unwrap().space;
+        assert_eq!(a, crate::sync::personal_room_for("room-a", "个人 a"));
+        assert_eq!(b, crate::sync::personal_room_for("room-a", "个人 b"));
+        assert_ne!(a, b, "⛔ 两个个人空间不许再共用同一个房间号（全空间方案 P1）");
         // 后果② ⛔ 设备级那一格**不许**拿到那个证明不了的地址 ✗（否则它会摊给这台的所有个人空间 ✓）
         assert_eq!(
             crate::mesh::settings_for(&c, "", true).bind.as_deref(),
@@ -5594,7 +6156,11 @@ mod r146_mesh_scope_tests {
         crate::mesh::set_mesh_bind_for(&c, "", true, Some("0.0.0.0:8788")).unwrap();
 
         let scope = mesh_scope_at(&c, Some("ws-me")).expect("个人档可解析");
-        assert_eq!(scope.space, "room-dev", "解析出来的设备级暗号");
+        assert_eq!(
+            scope.space,
+            crate::sync::personal_room_for("room-dev", "个人"),
+            "解析出来的＝子房间号（seed＝设备级配对暗号、名＝空间名）"
+        );
         // ⭐ 这一句就是 `mesh_sync_now`（`sync.rs:3442`）那一档**真正读的那一处** ✓
         let round_path_cfg = crate::mesh::settings_for(&c, &scope.space, scope.device_level);
         assert_eq!(
@@ -5716,8 +6282,9 @@ mod r146_mesh_scope_tests {
         let a = mesh_scope_at(&c, Some("ws-me-1")).expect("个人档必须解析得出");
         let b = mesh_scope_at(&c, Some("ws-me-2")).expect("个人档必须解析得出");
         assert!(a.device_level && b.device_level, "个人档要认成设备级");
-        assert_eq!(a.space, "room-dev", "个人档要读**设备级那一格**的暗号");
-        assert_eq!(a.space, b.space, "两个个人空间必须共用同一份");
+        assert_eq!(a.space, crate::sync::personal_room_for("room-dev", "个人 1"));
+        assert_eq!(b.space, crate::sync::personal_room_for("room-dev", "个人 2"));
+        assert_ne!(a.space, b.space, "⭐ 一空间一房间号：两个个人空间**不再共用**（全空间方案 P1）");
         let sa = crate::mesh::settings_for(&c, &a.space, a.device_level);
         let sb = crate::mesh::settings_for(&c, &b.space, b.device_level);
         assert_eq!(sa, sb, "两个个人空间读出来的设置必须一样");
@@ -5818,7 +6385,11 @@ mod r146_mesh_scope_tests {
         let got = mesh_scope_at(&c, Some("ws-personal")).unwrap_or_else(|e| {
             panic!("个人空间填了配对暗号就必须认得出它（实测报错：{e}）")
         });
-        assert_eq!(got.space, "room-123", "对暗号的值就该是用户填的 mesh_room ✓");
+        assert_eq!(
+            got.space,
+            personal_room_for("room-123", "测试"),
+            "对暗号的值＝seed ⇒ 派生出**这个空间自己的**子房间号 ✓"
+        );
         assert_eq!(got.db_space, "ws-personal", "本地库名照旧 ✓");
         assert_eq!(got.device, "dev-a", "设备号照旧 ✓");
     }
@@ -6652,15 +7223,16 @@ pub fn set_sync_budget(db: State<'_, Db>, budget: SyncBudget) -> Result<SyncBudg
 /// `who` 只进错误文案（"服务端返回 404" / "对端 Mate40 返回 404" —— 用户的下一步不一样）。
 #[allow(clippy::too_many_arguments)]
 async fn download_one_attachment(
-    resp: reqwest::Response,
+    status: u16,
+    mut body: crate::mesh_endpoint::AttachmentBody,
     who: &str,
     item: &RemoteAttachment,
     attachments_dir: &Path,
     session_key: Option<&crate::crypto::AppKeys>,
     db: &State<'_, Db>,
 ) -> Result<i64, String> {
-    if !resp.status().is_success() {
-        return Err(format!("{who} 返回 {}", resp.status()));
+    if !(200..300).contains(&status) {
+        return Err(format!("{who} 返回 {status}"));
     }
     let ext = ext_from_mime(&item.mime);
     let path = attachments_dir.join(&item.hash[0..2]).join(format!("{}.{}", item.hash, ext));
@@ -6676,13 +7248,11 @@ async fn download_one_attachment(
         // （`.part` 结尾仍被 `local_set` 排除，不会被当成本地已有字节。）
         let tmp = attachments_dir.join(format!("{}.{}.part", item.hash, uuid::Uuid::new_v4()));
         let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| e.to_string())?;
-        let mut stream = resp.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(chunk) => {
-                    size += chunk.len() as i64;
-                    file.write_all(&chunk).await.map_err(|e| e.to_string())?;
-                }
+        // ⭐ 2026-10-25（Step 6）：正文是**流**（`AsyncRead`），按块搬运 —— 局域网与隧道同一条路。
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            let n = match tokio::io::AsyncReadExt::read(&mut body, &mut buf).await {
+                Ok(n) => n,
                 Err(e) => {
                     // 半成品必须删掉：留着白占磁盘，也让"本轮下了多少"说不清。
                     // （`.part` 已被 `local_set` 排除，不会被当成本地已有，但仍要清。）
@@ -6690,7 +7260,12 @@ async fn download_one_attachment(
                     let _ = std::fs::remove_file(&tmp);
                     return Err(e.to_string());
                 }
+            };
+            if n == 0 {
+                break;
             }
+            size += n as i64;
+            file.write_all(&buf[..n]).await.map_err(|e| e.to_string())?;
         }
         file.flush().await.map_err(|e| e.to_string())?;
         drop(file);
@@ -7072,7 +7647,8 @@ async fn sync_attachments(
                 continue;
             }
         };
-        match download_one_attachment(att_resp, "服务端", item, &attachments_dir, session_key.as_ref(), db).await {
+        let (att_status, att_body) = crate::mesh_endpoint::body_from_reqwest(att_resp);
+        match download_one_attachment(att_status, att_body, "服务端", item, &attachments_dir, session_key.as_ref(), db).await {
             Ok(size) => {
                 bytes_downloaded = bytes_downloaded.saturating_add(size.max(0) as u64);
                 att_items.push(SyncItem { entity: "attachment".to_string(), entity_id: item.hash.clone(), op: "upsert".to_string(), dir: "pull".to_string(), title: String::new() });
@@ -7476,6 +8052,217 @@ mod merge_by_name_tests {
 }
 
 #[cfg(test)]
+mod missing_peer_spaces_tests {
+    use super::*;
+
+    /// 造一台"对端"：给它一组 (空间名, 类别)。
+    fn peer_with(dev: &str, spaces: &[(&str, &str)]) -> crate::lan::Peer {
+        let mut a = crate::lan::announce_for_own_hub(dev, "对端", "S1D", "http://192.168.1.5:8788", "room", "", "").expect("公告要造得出来");
+        a.hub_space_names = spaces.iter().map(|(n, _)| n.to_string()).collect();
+        a.hub_space_kinds = spaces.iter().map(|(_, k)| k.to_string()).collect();
+        crate::lan::Peer { announce: a, addr: "127.0.0.1".to_string(), seen_at_ms: 0 }
+    }
+
+    fn local(spaces: &[(&str, &str)]) -> Vec<(String, String, String)> {
+        spaces
+            .iter()
+            .enumerate()
+            .map(|(i, (n, k))| (format!("ws-{i}"), n.to_string(), k.to_string()))
+            .collect()
+    }
+
+    /// ⭐ 主判据：只列「配对过 ＋ personal ＋ 有名字 ＋ 本机没有」的；两台报同名只出一行。
+    #[test]
+    fn lists_only_missing_personal_spaces_from_paired_devices_and_dedupes_by_name() {
+        let peers = vec![
+            peer_with("dev-a", &[("产品", "personal"), ("团队甲", "team"), ("", "personal"), ("已有", "personal")]),
+            peer_with("dev-b", &[("产品", "personal"), ("客户&伙伴", "personal")]),
+            peer_with("dev-x", &[("没配对的", "personal")]),
+        ];
+        let got = missing_peer_spaces(
+            &peers,
+            &local(&[("已有", "personal"), ("团队甲", "team")]),
+            &[],
+            &["dev-a".to_string(), "dev-b".to_string()],
+        );
+        let names: Vec<&str> = got.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(names, vec!["产品", "客户&伙伴"], "顺序必须稳定（按名字排）");
+
+        let prod = got.iter().find(|x| x.name == "产品").unwrap();
+        assert_eq!(prod.from, vec!["dev-a", "dev-b"], "两台报同名 ⇒ 一行、出处两台");
+        assert_eq!(
+            prod.from_names,
+            vec!["对端".to_string(), "对端".to_string()],
+            "显示名必须与 from 一一对应（⛔ 界面不许显示设备 id）"
+        );
+        assert!(!prod.tombstoned);
+    }
+
+    /// ⭐ 墓碑：**列出来但打标记**（与"自动建"直接 Skip 不同 —— 这里由人决定"要不要删了又活"）。
+    #[test]
+    fn a_name_that_was_deleted_here_is_listed_but_flagged() {
+        let peers = vec![peer_with("dev-a", &[("旧测试", "personal")])];
+        let got = missing_peer_spaces(&peers, &[], &["旧测试".to_string()], &["dev-a".to_string()]);
+        assert_eq!(got.len(), 1);
+        assert!(got[0].tombstoned, "删过的名字必须打标记（界面默认不勾）");
+    }
+
+    /// ⭐ 本机有加密空间**不该**把整张表清空 —— 用户勾＝知情同意（界面写"未加密"）。
+    #[test]
+    fn an_encrypted_space_on_this_machine_does_not_hide_the_list() {
+        let peers = vec![peer_with("dev-a", &[("产品", "personal")])];
+        let got = missing_peer_spaces(
+            &peers,
+            &local(&[("保险柜", "personal")]), // 本机有个（加密的）个人空间
+            &[],
+            &["dev-a".to_string()],
+        );
+        assert_eq!(got.len(), 1, "加密空间不该把候选表清空：{got:?}");
+    }
+}
+/// ⭐ 2026-10-23（S2 命令面）：界面上那张「对端有、你没有」的候选表。
+///
+/// ⚠️ 它**只读**：不建任何东西、不写库（建是下面那条命令，且必须由用户勾了才调）。
+#[tauri::command]
+pub fn mesh_missing_spaces(db: tauri::State<'_, crate::db::Db>) -> Result<Vec<MissingPeerSpace>, String> {
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    let dev = device_id(&c)?;
+    let peers = crate::lan_state::LanState::global(&dev).peers(crate::db::now_ms());
+    list_missing_peer_spaces(&c, &peers)
+}
+
+/// ⭐ 2026-10-23（S2 命令面）：**按用户勾的名字**建空间（幂等；只认候选表里有的名字）。
+#[tauri::command]
+pub fn mesh_create_spaces(
+    db: tauri::State<'_, crate::db::Db>,
+    names: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let dir = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "app data dir 未初始化".to_string())?
+        .to_path_buf();
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    let dev = device_id(&c)?;
+    let peers = crate::lan_state::LanState::global(&dev).peers(crate::db::now_ms());
+    create_peer_spaces_by_name(&c, &dir, &peers, &names)
+}
+#[cfg(test)]
+mod attachment_peer_space_tests {
+    //! ⭐ 2026-10-24（图片块同步的真因之一）：个人档的 `sync_profiles.space_id` **是空串**，
+    //! 而"跟对端对暗号"要的是**解析后的房间**。原来直接拿 `space_id` ⇒ 对端那一整档被跳过
+    //! （真机：图片块元数据同步过来了、字节永远取不到）。判据钉住三种形状。
+    use super::peer_lookup_space;
+
+    #[test]
+    fn a_personal_space_uses_the_resolved_room_and_is_device_level() {
+        assert_eq!(
+            peer_lookup_space("", "123456789Ok,./"),
+            ("123456789Ok,./".to_string(), true),
+            "个人档必须用解析后的房间去问对端（空 space_id 不是「没配」）"
+        );
+    }
+
+    #[test]
+    fn a_team_space_keeps_its_own_space_id() {
+        assert_eq!(
+            peer_lookup_space("team-space-9", "some-room"),
+            ("team-space-9".to_string(), false),
+            "团队档口径不变：按 space_id 对暗号"
+        );
+    }
+
+    #[test]
+    fn a_personal_space_without_a_room_has_no_proto_space() {
+        assert_eq!(peer_lookup_space("", "  "), (String::new(), true), "没暗号 ⇒ 如实为空（不许猜一个）");
+    }
+}
+
+/// ⭐ 2026-10-24（全空间方案 P0/P1）自带判据：子房间号派生 ＋ 启动补档案行。
+#[cfg(test)]
+mod personal_room_and_backfill_tests {
+    use super::*;
+
+    fn fixture() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (
+                 id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER,
+                 created_at INTEGER NOT NULL DEFAULT 0, kind TEXT NOT NULL DEFAULT ''
+             );",
+        )
+        .unwrap();
+        c
+    }
+
+    /// 派生函数：同一对入参必然同一结果；空间名或种子任一不同 ⇒ 必然不同；空入参 ⇒ 空串（⛔ 不猜）。
+    #[test]
+    fn personal_room_is_deterministic_and_differs_per_space() {
+        let a1 = personal_room_for("room-seed", "工作");
+        let a2 = personal_room_for("room-seed", "工作");
+        let b = personal_room_for("room-seed", "测试");
+        let c = personal_room_for("another-seed", "工作");
+        assert_eq!(a1, a2, "⭐ 两端必须算出同一个值（确定性）");
+        assert_eq!(a1.len(), 32, "取 sha256 前 32 位十六进制（16 字节）");
+        assert!(a1.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a1, b, "⛔ 不同空间不许撞（否则窗口又按同一个键覆盖）");
+        assert_ne!(a1, c, "⛔ 不同配对暗号必须不同（两台暗号不同 ⇒ 对不上，这是对的）");
+        assert_eq!(personal_room_for("", "工作"), "");
+        assert_eq!(personal_room_for("room-seed", "  "), "");
+    }
+
+    /// 启动补档案行：只补 `kind='personal'`、未删除、且**还没有行**的那些；幂等；不动已有行/团队/已删。
+    #[test]
+    fn backfill_gives_every_personal_space_a_profile_row_once() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name, kind, created_at) VALUES
+                ('ws-exists', '已有行', 'personal', 1),
+                ('ws-b',      '个人 B', 'personal', 2),
+                ('ws-c',      '个人 C', 'personal', 3),
+                ('ws-team',   '团队',   'team',     4),
+                ('ws-gone',   '已删',   'personal', 5);
+             UPDATE meta.workspaces SET deleted_at = 99 WHERE id = 'ws-gone';
+             INSERT INTO meta.sync_profiles (ws_id, server_url) VALUES ('ws-exists', 'https://s.example.com');",
+        )
+        .unwrap();
+        let n = ensure_sync_profiles_for_personal_spaces(&c).expect("补档案不许报错");
+        assert_eq!(n, 2, "只补 ws-b / ws-c 两个（已有/团队/已删都不动）");
+        let rows: Vec<(String, String, String)> = {
+            let mut stmt = c
+                .prepare("SELECT ws_id, space_id, server_url FROM meta.sync_profiles ORDER BY ws_id")
+                .unwrap();
+            let out = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            out
+        };
+        assert_eq!(
+            rows,
+            vec![
+                ("ws-b".to_string(), "".to_string(), "".to_string()),
+                ("ws-c".to_string(), "".to_string(), "".to_string()),
+                ("ws-exists".to_string(), "".to_string(), "https://s.example.com".to_string()),
+            ],
+            "⭐ 补的是**空档案**（服务器地址/空间 id 都空 ⇒ 个人档只走网格）＋ 已有行原样不动"
+        );
+        assert_eq!(
+            ensure_sync_profiles_for_personal_spaces(&c).expect("第二次也不许报错"),
+            0,
+            "⛔ 幂等：再跑一次补 0 行"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
 
     /// ⭐ **2026-10-19（owner 拍「甲」）**：`create_missing_peer_spaces` 四格 ——
@@ -7534,6 +8321,17 @@ mod tests {
         // ① 建出真库（「客户」是墓碑 ⇒ 只建「产品」）
         let got = create_missing_peer_spaces(&c, &dir, &peers, Some("0.0.0.0:8788"), false).unwrap();
         assert_eq!(got, vec!["产品".to_string()], "墓碑那个名字不许建");
+        // ⭐ 2026-10-24：**建出来的空间必须同时有 `sync_profiles` 行**（否则窗口的 `mesh_cfgs`
+        //   看不到它 ⇒ 表现是"建了但一直不同步"，而且没有任何提示）。
+        let prof: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM meta.sync_profiles p
+                  WHERE p.ws_id = (SELECT id FROM meta.workspaces WHERE name = '产品' AND deleted_at IS NULL)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(prof, 1, "新空间少了 sync_profiles 那一行 ⇒ 它进不了窗口");
         let ws: String = c
             .query_row(
                 "SELECT id FROM meta.workspaces WHERE name = '产品' AND deleted_at IS NULL",
@@ -7621,54 +8419,60 @@ mod tests {
 
         // ① 正常：已配对 ＋ 对端 personal ＋ 本机没同名 ⇒ 建
         assert_eq!(
-            auto_create_space_decision("客户", "personal", &local, &none, true, false),
+            auto_create_space_decision("客户", "personal", &local, &none, true, false, false),
             AutoCreateSpace::Create
+        );
+
+        // ①b ⭐ 2026-10-24：**对端那个空间是加密的 ⇒ 绝不按名建明文空间**（真机事故的闸）。
+        assert_eq!(
+            auto_create_space_decision("保险柜", "personal", &local, &none, true, false, true),
+            AutoCreateSpace::Skip("peer_encrypted")
         );
 
         // ② G1：没配对 ⇒ 不建（⛔ 任何情况下都不许未配对设备往本机建空间）
         assert_eq!(
-            auto_create_space_decision("客户", "personal", &local, &none, false, false),
+            auto_create_space_decision("客户", "personal", &local, &none, false, false, false),
             AutoCreateSpace::Skip("not_paired")
         );
 
         // ③ G2：对端是 team ／ 没报类别 ⇒ 不建
         assert_eq!(
-            auto_create_space_decision("客户", "team", &local, &none, true, false),
+            auto_create_space_decision("客户", "team", &local, &none, true, false, false),
             AutoCreateSpace::Skip("not_personal")
         );
         assert_eq!(
-            auto_create_space_decision("客户", "", &local, &none, true, false),
+            auto_create_space_decision("客户", "", &local, &none, true, false, false),
             AutoCreateSpace::Skip("not_personal")
         );
 
         // ④ 本机已有同名**个人**空间 ⇒ 不是"建"，是"路由过去"
         assert_eq!(
-            auto_create_space_decision("运营", "personal", &local, &none, true, false),
+            auto_create_space_decision("运营", "personal", &local, &none, true, false, false),
             AutoCreateSpace::Skip("exists")
         );
         // ⚠️ 边角：本机有同名但那是 **team** ⇒ 仍然算"没有同名个人空间" ⇒ 允许建
         //   （team 与 personal 是两回事；团队空间不参与按名融合 ✓）
         assert_eq!(
-            auto_create_space_decision("产品", "personal", &local, &none, true, false),
+            auto_create_space_decision("产品", "personal", &local, &none, true, false, false),
             AutoCreateSpace::Create
         );
 
         // ⑤ G3 墓碑：这个名字本机删过 ⇒ 不再建（专治"删了又活"）
         let tomb = vec!["客户".to_string()];
         assert_eq!(
-            auto_create_space_decision("客户", "personal", &local, &tomb, true, false),
+            auto_create_space_decision("客户", "personal", &local, &tomb, true, false, false),
             AutoCreateSpace::Skip("tombstoned")
         );
 
         // ⑥ 加密：本机开着加密 ⇒ 不在加密盘上建明文空间
         assert_eq!(
-            auto_create_space_decision("客户", "personal", &local, &none, true, true),
+            auto_create_space_decision("客户", "personal", &local, &none, true, true, false),
             AutoCreateSpace::Skip("encrypted")
         );
 
         // ⑦ 空名 ⇒ 不建
         assert_eq!(
-            auto_create_space_decision("   ", "personal", &local, &none, true, false),
+            auto_create_space_decision("   ", "personal", &local, &none, true, false, false),
             AutoCreateSpace::Skip("no_name")
         );
     }
@@ -8167,6 +8971,57 @@ mod tests {
         assert_eq!(payload_of(&c, "p1"), "v6");
     }
 
+    /// ⭐ 2026-10-23（S2，方案 `docs/plans/2026-10-23-sync-while-locked.md` §3）：
+    /// 每条**本地**变更都要在 `meta.mesh_outbox` 留一份**整条记录**的镜像 ✓；
+    /// 并且**被并掉的那些在两边一起消失** ✗ —— 否则搬运缓存会重新长成那 672 MB 的形状
+    /// （它是 `changes` 的镜像，⛔ 不是独立账本 ✗）。
+    #[test]
+    fn every_local_change_is_mirrored_into_the_mesh_outbox() {
+        let c = conn_with_meta();
+        c.execute_batch(
+            "CREATE TABLE changes (
+                 seq INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT NOT NULL, device_seq INTEGER NOT NULL,
+                 entity TEXT NOT NULL, entity_id TEXT NOT NULL, op TEXT NOT NULL, payload TEXT,
+                 updated_at INTEGER NOT NULL, UNIQUE(device_id, device_seq));
+             CREATE TABLE workspaces (id TEXT PRIMARY KEY);
+             INSERT INTO workspaces (id) VALUES ('ws-1');
+             CREATE TABLE meta.mesh_outbox (
+                 space_id TEXT NOT NULL, device_id TEXT NOT NULL, device_seq INTEGER NOT NULL,
+                 updated_at INTEGER NOT NULL, sealed TEXT NOT NULL, mirrored_at INTEGER NOT NULL,
+                 PRIMARY KEY (space_id, device_id, device_seq));",
+        )
+        .unwrap();
+        set_meta_state(&c, KEY_DEVICE_ID, "dev-a").unwrap();
+
+        record_change(&c, "page", "p1", "upsert", Some("v1"), 1).unwrap();
+        record_change(&c, "page", "p1", "upsert", Some("v2"), 2).unwrap();
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM meta.mesh_outbox", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            n, 1,
+            "同实体未推送的 upsert 被并掉 ⇒ 搬运缓存里也必须只剩一份（镜像不是独立账本 ✗）"
+        );
+
+        let (seq, sealed): (i64, String) = c
+            .query_row("SELECT device_seq, sealed FROM meta.mesh_outbox", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        let real: i64 = c
+            .query_row("SELECT seq FROM changes WHERE entity_id = 'p1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(seq, real, "键就是 `changes.seq`（同一把尺 ⇒ 重复镜像天然幂等 ✓）");
+
+        // ⚠️ 本判据里的空间是**明文** ⇒ `encrypt_payload` 原样过 ⇒ 这里能直接解回那条记录。
+        //    密文空间"封得上、且明文库里搜不到"的那一半只能在带钥匙袋的夹具/真机上量（S3 的判据）。
+        let v: serde_json::Value = serde_json::from_str(&sealed).unwrap();
+        assert_eq!(v["entity"], "page");
+        assert_eq!(v["entity_id"], "p1");
+        assert_eq!(v["op"], "upsert");
+        assert_eq!(v["payload"], "v2", "镜像里必须是**最新**那份（与 changes 同一次并单 ✓）");
+    }
+
     /// ★ 与前端 `crdt/claimClient.ts` 的三条口径成对（两侧各一份判据、同一套语义）：
     /// 200/`granted:true` ⇒ 拿到；200/`granted:false`／缺字段 ⇒ denied；
     /// **403 ⇒ denied（是裁定，不是"问不到"）**；401／5xx ⇒ "问不到"；2xx 但载荷读不懂 ⇒ 也"问不到"。
@@ -8532,6 +9387,7 @@ mod tests {
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -8733,13 +9589,14 @@ mod tests {
         crate::mesh::set_mesh_room_device(&c, Some("room-a")).unwrap();
 
         let picked = pick_lan_scope(&c, Some(profile_for("", "https://s.example.com")), None);
+        let want = personal_room_for("room-a", "个人");
         assert_eq!(
             picked,
-            Some(("room-a".to_string(), "https://s.example.com".to_string())),
-            "个人档 ⇒ 必须解析成**公告会报的那个字符串**（配对暗号 `room-a` ✓），⛔ 不是原始空串 ✗"
+            Some((want.clone(), "https://s.example.com".to_string())),
+            "个人档 ⇒ 必须解析成**公告会报的那个字符串**（子房间号），⛔ 不是原始空串 ✗"
         );
         // ⭐ 与公告同名 ⇒ 判定不再被 `!want.is_empty()` 短路 ✓
-        let peer = lan_peer("dev-amd", "http://172.16.174.226:8787", &["room-a"]);
+        let peer = lan_peer("dev-amd", "http://172.16.174.226:8787", &[want.as_str()]);
         assert!(
             crate::lan::serves_space(&picked.unwrap().0, &peer),
             "对端报的就是这个暗号 ⇒ `serves_current` 必须是 **true**（老口径下恒 false ✗）"
@@ -9346,6 +10203,85 @@ mod tests {
         assert!(out.conflicts.is_empty(), "忽略 ≠ 冲突");
     }
 
+    /// ⭐ 2026-10-24（真机：**题头图/图标没有同步**）：页 upsert 的
+    /// `cover` / `icon` / `cover_height` / `cover_pos` 必须真的落库（新建页与已存在页两条路）。
+    /// 而**载荷里没有这几格**（老对端）时，本机现值必须保住 —— ⛔ 不许被 serde 默认值
+    /// （'' / 300 / 50）当成"用户清掉了封面"抹掉（没报 ≠ 报了个空）。
+    ///
+    /// ⚠️ 先写红：① 把 `doc_content::upsert_remote` 列集里那四列去掉 ⇒ 前两段必红；
+    ///   ② 把 `keep_local_chrome_when_absent` 那一步去掉 ⇒ 第三段必红。
+    #[test]
+    fn a_remote_page_upsert_carries_the_page_chrome_into_the_local_row() {
+        let c = pages_conn();
+
+        fn fetch_chrome(c: &Connection, id: &str) -> (String, String, i64, f64) {
+            c.query_row(
+                "SELECT cover, icon, cover_height, cover_pos FROM pages WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap()
+        }
+        fn change_of(seq: i64, page: &PageDetail) -> IncomingChange {
+            IncomingChange {
+                seq,
+                entity: "page".to_string(),
+                entity_id: page.id.clone(),
+                op: "upsert".to_string(),
+                payload: Some(serde_json::to_string(page).unwrap()),
+                updated_at: seq,
+            }
+        }
+
+        // ① 新建页：载荷带题头图 ⇒ 落库后四格都在（改前列集里没有这四列 ⇒ 落默认值）
+        let mut p = remote_page("p1", &page_json("b1", 1, "正文"));
+        p.cover = "url(\"/covers/a.jpg\")".to_string();
+        p.icon = "📕".to_string();
+        p.cover_height = 420;
+        p.cover_pos = 30.0;
+        apply_pulled_changes(&c, vec![change_of(1, &p)], 0, 1_000, crate::doc_content::Ingest::Server)
+            .unwrap();
+        assert_eq!(
+            fetch_chrome(&c, "p1"),
+            ("url(\"/covers/a.jpg\")".to_string(), "📕".to_string(), 420, 30.0),
+            "新建页必须带着题头图/图标落地（⛔ 不是默认空封面）"
+        );
+
+        // ② 已存在页：远端改了封面 ⇒ `ON CONFLICT` 那一段必须把这四列写进去
+        p.cover = "linear-gradient(red,blue)".to_string();
+        p.icon = String::new();
+        p.cover_height = 200;
+        p.cover_pos = 90.0;
+        apply_pulled_changes(&c, vec![change_of(2, &p)], 1_000, 2_000, crate::doc_content::Ingest::Server)
+            .unwrap();
+        assert_eq!(
+            fetch_chrome(&c, "p1"),
+            ("linear-gradient(red,blue)".to_string(), String::new(), 200, 90.0),
+            "已存在页的封面/图标/高度/位置也必须被远端盖上来"
+        );
+
+        // ③ 老对端：载荷里**没有**这四格 ⇒ 保留本机现值（不许被默认值抹掉）
+        let mut old = serde_json::to_value(&p).unwrap();
+        for k in ["cover", "icon", "cover_height", "cover_pos"] {
+            old.as_object_mut().unwrap().remove(k);
+        }
+        let old_change = IncomingChange {
+            seq: 3,
+            entity: "page".to_string(),
+            entity_id: "p1".to_string(),
+            op: "upsert".to_string(),
+            payload: Some(serde_json::to_string(&old).unwrap()),
+            updated_at: 3_000,
+        };
+        apply_pulled_changes(&c, vec![old_change], 2_000, 3_000, crate::doc_content::Ingest::Server)
+            .unwrap();
+        assert_eq!(
+            fetch_chrome(&c, "p1"),
+            ("linear-gradient(red,blue)".to_string(), String::new(), 200, 90.0),
+            "老载荷没带这四格 ⇒ 本机现值必须保住（没报 ≠ 报了个空）"
+        );
+    }
+
     /// ★ 正面：一条落库失败的变更 ⇒ **不连坐**（其余变更照常落库）＋ **游标前进** ＋ **留痕**（归档）。
     #[test]
     fn a_failing_change_is_archived_and_the_batch_continues() {
@@ -9565,6 +10501,52 @@ mod tests {
             content_of(&c)
         );
         assert_eq!(page_stamp(&c, "ws", "p1"), Some(late), "赢家是本地 ⇒ 那枚戳不动");
+    }
+
+    /// ⭐ 2026-10-24（真机：**同页并发在“只开网格”的形态下永远不收敛**）：
+    /// 本机那一版戳的 KV 键 = `hlc_page:<**本机** workspace_id>:<page_id>`，而远端载荷里带的
+    /// `workspace_id` 是**它那台**的（按名融合的个人空间两边 id 不同 ✗）。
+    /// 原来读/写都用载荷里那个 ⇒ 查键永久 miss ⇒ 判戳那一步恒走“今天那条路”
+    /// ⇒ 本地脏就保留本地 ⇒ 远端那一版被塞进「待取回的远端版本」、两边永远合不起来
+    /// （真机：owner 在 Windows 落 `WIN-CRDT-0849`，macOS 侧 `dirty=1` 又被原样挡住）。
+    ///
+    /// 判据：两边 `workspace_id` 不同、远端戳更晚 ⇒ **必须采用远端**（且戳写回写在本机那把键上）。
+    /// **变异实测**：把 `local_ws` 那两处换回 `page.workspace_id` ⇒ 本条必红（内容仍是“本地那一版”、
+    /// 「待取回」多一条）。
+    #[test]
+    fn a_peer_stamp_still_wins_when_the_space_ids_differ() {
+        let c = stamped_conn();
+        // 本地这一版：dirty=1（最容易被“本地脏 ⇒ 保留本地”挡住），并在**本机 ws** 那把键上放一枚旧戳
+        seed_local(&c, &page_json("b1", 1, "本地那一版"), 1, 1);
+        let early = stamp_of("ME", 1_000);
+        set_page_stamp(&c, "ws", "p1", &early).unwrap();
+
+        let mut remote = remote_page("p1", &page_json("b1", 1, "远端那一版"));
+        remote.workspace_id = "remote-ws".to_string(); // ⭐ 真实现场：融合同名空间的两边 id 不同
+        let late = stamp_of("PEER", 2_000);
+        apply_pulled_changes(
+            &c,
+            vec![stamped_change(9, &remote, Some(&late))],
+            0,
+            3,
+            crate::doc_content::Ingest::Peer,
+        )
+        .unwrap();
+
+        assert!(
+            content_of(&c).contains("远端那一版"),
+            "戳没生效（按远端 ws 查键 miss ⇒ 退回本地优先）：{}",
+            content_of(&c)
+        );
+        assert_eq!(
+            page_stamp(&c, "ws", "p1"),
+            Some(late),
+            "赢家是远端 ⇒ 戳写回也必须写在本机 ws 那把键上（否则下一轮又 miss）"
+        );
+        let pending: i64 = c
+            .query_row("SELECT COUNT(*) FROM pending_remote_pages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(pending, 0, "戳生效时不该再留「待取回的远端版本」");
     }
 
     /// ★★ 丙-③ **收侧必须把收到的戳并进本机时钟**（HLC 的 `observe`）——
@@ -9890,6 +10872,7 @@ mod tests {
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 fp: device.to_string(),
                 pubkey: String::new(),
             },
@@ -10466,6 +11449,7 @@ mod tests {
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 fp: "fp".into(),
                 // ⭐ 2026-10-17：双向登记要**对面那把公钥**（第 3 步之后唯一凭证 ✓）⇒ 夹具必须给合法的 ✓
                 pubkey: "ab".repeat(32),
@@ -10717,3 +11701,5 @@ mod tests {
     }
     }
 }
+
+

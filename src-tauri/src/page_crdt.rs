@@ -39,14 +39,17 @@ pub fn write_page_crdt_state(c: &Connection, page_id: &str, state: &[u8], now: i
     Ok(())
 }
 
-/// 清掉这一页的状态（页面被删除/彻底重建时用）⇒ 之后读回 `None`。
+/// 清掉这一页的状态（页面被删除 / **采用对端那一版**时用）⇒ 之后读回 `None`。
 ///
-/// ⚠️ **只服务判据**：命令面今天只接了读 / 写那一对，"清"这一条还没有调用方 ——
-/// 它与前端 `docContent.ts::clearPageCrdtState` **成对存在**（这一层的口径是三条函数配对）。
-/// **删页时该不该清它**是接线决定，不在这里顺手接上；真接的时候删掉下面这一行。
-#[cfg(test)]
+/// ⭐ 2026-10-24（真机 bug）：`save_page_state` 收到**空字节**时改走这里 ——
+/// 原来它会把 0 字节**写进** `page_crdt`，下一次打开那页时 0 字节被当"一份空状态"喂给 lib0
+/// ⇒ `CRDT 绑定失败：Unexpected end of array`（用户只看到一句看不懂的 toast）。
+/// 口径：**空字节 ＝ 清掉**（不是"存一份空状态"）；连 `page_crdt_pending` 里那页的待并项一起清
+/// （"按对端投影重建"时那些待并项已经无意义了）。
 pub fn clear_page_crdt_state(c: &Connection, page_id: &str) -> Result<(), String> {
     c.execute("DELETE FROM page_crdt WHERE page_id = ?1", [page_id])
+        .map_err(|e| e.to_string())?;
+    c.execute("DELETE FROM page_crdt_pending WHERE page_id = ?1", [page_id])
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -152,6 +155,39 @@ mod tests {
         c
     }
 
+    /// ⭐ 2026-10-24（真机 bug 的源头）：**清这一页的状态要连"待并项"一起清**。
+    ///
+    /// 现场：`save_page_state` 收到空字节时原来会写 0 字节状态 ⇒ 下次打开那页抛
+    /// `Unexpected end of array`（lib0）。现在空字节走"清"，且必须把 `page_crdt_pending`
+    /// 里那页的待并项也清掉 —— 「采用对端那一版」之后那些待并项已经无意义，
+    /// 留着会让合并路径把**旧的另一条血统**又拉回来。
+    #[test]
+    fn clearing_a_page_state_also_drops_its_pending_rows() {
+        let c = db();
+        write_page_crdt_state(&c, "p1", &[1, 2, 3], 10).unwrap();
+        c.execute(
+            "INSERT INTO page_crdt_pending (page_id, seq, state, updated_at) VALUES ('p1', 1, X'0102', 10)",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO page_crdt_pending (page_id, seq, state, updated_at) VALUES ('p2', 1, X'0304', 10)",
+            [],
+        )
+        .unwrap();
+
+        clear_page_crdt_state(&c, "p1").unwrap();
+
+        assert!(read_page_crdt_state(&c, "p1").unwrap().is_none(), "本页状态必须被清掉");
+        let left: i64 = c
+            .query_row("SELECT COUNT(*) FROM page_crdt_pending WHERE page_id = 'p1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0, "本页的待并项必须一起清掉");
+        let other: i64 = c
+            .query_row("SELECT COUNT(*) FROM page_crdt_pending WHERE page_id = 'p2'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(other, 1, "⛔ 别人的待并项不许被顺手清掉");
+    }
     /// 与前端判据 `pageStateStore.test.ts` ① 成对：**没有 ⇒ None**；写回读**逐字节相同**
     /// （含非 UTF-8 字节 —— 若被当文本存过一道，这里就会不相等）。
     #[test]

@@ -3,7 +3,7 @@
 // 为什么值得单独测：判错的代价是"入口显示了、点下去必然失败"——
 // 而移动端那条路**在开发机上根本走不到**（开发机是桌面），所以只能靠这里钉住。
 import { describe, expect, it } from "vitest";
-import { computeEmailSupported, isMobileUserAgent } from "./capabilities";
+import { computeEmailSupported, isMacDesktopUserAgent, isMobileUserAgent } from "./capabilities";
 
 describe("isMobileUserAgent", () => {
   it("认得 Android / iOS 的 UA", () => {
@@ -16,6 +16,32 @@ describe("isMobileUserAgent", () => {
     expect(isMobileUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe(false);
     expect(isMobileUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)")).toBe(false);
     expect(isMobileUserAgent("Mozilla/5.0 (X11; Linux x86_64)")).toBe(false);
+  });
+});
+
+describe("isMacDesktopUserAgent（原生透明标题栏只认 macOS 桌面）", () => {
+  // 判错的代价：macOS 上漏判 ⇒ 内容被红绿灯压住；iPad 上误判 ⇒ 白让 28px 且没有红绿灯。
+  const MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)";
+  const WINDOWS = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36";
+
+  it("认得 macOS 桌面（Chrome / WKWebView 两种写法）", () => {
+    expect(isMacDesktopUserAgent(MAC)).toBe(true);
+    expect(isMacDesktopUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/537.36")).toBe(true);
+  });
+
+  it("Windows / Linux 不算 macOS", () => {
+    expect(isMacDesktopUserAgent(WINDOWS)).toBe(false);
+    expect(isMacDesktopUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")).toBe(false);
+  });
+
+  it("**iPadOS 的 Mac 伪装不算**（它的 UA 带 Macintosh + Mobile/）", () => {
+    // 苹果从 iPadOS 13 起让 Safari 报桌面 UA —— 只按 "Macintosh" 判会误挂 macOS 的 CSS。
+    expect(
+      isMacDesktopUserAgent(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      ),
+    ).toBe(false);
+    expect(isMacDesktopUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)")).toBe(false);
   });
 });
 

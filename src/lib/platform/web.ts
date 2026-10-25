@@ -4,7 +4,7 @@ import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
 import { ciphertextRefusalMessage, looksLikeCiphertext } from "../ciphertextSniff";
-import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, recordLineageConflict, unresolvedLineageConflict, resolveLineageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, readPageCrdtState, writePageCrdtState, writePageProjectionIfChanged, type RemotePageRow } from "../docContent";
+import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, recordLineageConflict, unresolvedLineageConflict, resolveLineageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, pageDocJsonInSpace, readPageCrdtState, writePageCrdtState, writePageProjectionIfChanged, type RemotePageRow } from "../docContent";
 import { withCrdtWire, decodeCrdtWire } from "../crdt/wireState";
 import { resolveWorkspaceSyncScope, type ClaimScopeRow } from "../crdt/claimScope";
 import { applyRemoteCrdtState } from "../crdt/plane";
@@ -1753,6 +1753,16 @@ export function makeInvoke(store: SqliteStore) {
         peers: [],
         window: null,
       } as T;
+    }
+    if (cmd === "mesh_missing_spaces") {
+      // ⭐ 2026-10-23：候选表只在桌面版有（它要发现层与配对名单；Web 两样都没有）。
+      //   ⚠️ 回**空表**而不是抛错：这是"这一档没有"，界面照常渲染（⛔ 不是"没有候选"）。
+      return [] as T;
+    }
+    if (cmd === "mesh_create_spaces") {
+      throw new Error(
+        "Web 版没有设备发现层，也没有配对名单 ⇒ 不能替对端建空间（这一档只在桌面版可用）",
+      );
     }
     if (cmd === "mesh_panel_scopes") {
       // ⭐ **P1.5 · A1**（2026-10-13）：设备直连那一屏的**本机读数** ✗。
@@ -3587,6 +3597,10 @@ export function makeInvoke(store: SqliteStore) {
     if (cmd === "lock_encryption" || cmd === "unlock_encryption") {
       return undefined as T;
     }
+    if (cmd === "keyring_status") {
+      // Web 形态没有按空间加密 ⇒ 恒为"没有材料"（⛔ 不假装有）
+      return { has_material: false, spaces: 0, unlocked: false } as T;
+    }
 
     // ---- Storage / cleanup ----
     if (cmd === "storage_stats") {
@@ -3638,6 +3652,18 @@ export function makeInvoke(store: SqliteStore) {
         /* best-effort */
       }
       return 0 as T;
+    }
+    if (cmd === "attachments_migrate_legacy") {
+      // ⭐ Web 平台没有"文件布局"这回事（附件在 blobStore 里，不是 `<根>/<空间>/<桶>/`）⇒
+      //   如实回零 ＋ 一句为什么，⛔ 不假装做过 ✓（与"环境不具备 ≠ 通过"同一条纪律）。
+      return {
+        scanned: 0,
+        copied: 0,
+        deleted: 0,
+        kept: 0,
+        unreadable_spaces: [],
+        notes: ["Web 平台没有文件布局（附件在 blobStore 里）⇒ 无需整理"],
+      } as T;
     }
     if (cmd === "cleanup_orphan_attachments") {
       // Free blob bytes whose hash is no longer referenced by any attachment row
@@ -3955,18 +3981,41 @@ export function makeInvoke(store: SqliteStore) {
       //   ⇒ 导出的 zip 里没有那几个字节 ⇒ 桌面导入后图当然打不开。
       //   这里扫正文里的 `asst:<hash>`（web 的稳定引用，见 `lib/assetRef.ts`）把它们补进来。
       //   ⚠️ 只在**导出副本**上做，不动活库；扫的是本空间未删除页的正文。
+      // ⚠️ 正文**从 `docContent.ts` 那一层取**（`pageDocJsonInSpace`）：列名只该出现在那一层，
+      //    而且第一版在这里直写 SQL 时列名还写错了（写成了 `content`，实际那一列不叫这个），
+      //    又被 catch 吞掉 ⇒ 静默什么都没扫到（"跳过 ≠ 通过"那类错，2026-10-23 当场被抓）。
+      //    现在：列名收口；真出错就**大声说**（console.error），不再假装扫过。
       try {
-        const rows = store.query<{ content: string }>(
-          "SELECT content FROM pages WHERE workspace_id = ? AND deleted_at IS NULL",
-          [ws.id],
-        ) as { content: string }[];
-        for (const row of rows) {
-          for (const m of String(row.content ?? "").matchAll(/asst:([0-9a-f]{8,128})/g)) {
+        const docs = pageDocJsonInSpace(store, ws.id);
+        for (const doc of docs) {
+          for (const m of doc.matchAll(/asst:([0-9a-f]{8,128})/g)) {
             refHashes.add(m[1]);
           }
         }
-      } catch {
-        /* 正文扫不出来不影响导出：按 page_id 那批照旧 */
+        // ⭐ 2026-10-23 第二刀（owner：修复前插的图，"重新导出再导入"也还是打不开）：
+        //   修复前的正文里是**一次性 `blob:` 地址**，没有 hash 可扫 ⇒ 上面那条正则捞不到任何东西。
+        //   但本机 `attachments` 表里**还有那一行**（`name` ＝ 原文件名，`hash` ＝ 内容指纹），
+        //   IndexedDB 里字节也多半还在 ⇒ 于是按**正文里的文件名**（`![IMG_xxx.jpg](...)` 的 alt）
+        //   反查 hash，把字节一起打进包。这是那些老图片唯一还能救回来的路。
+        const byName = new Map<string, string>();
+        for (const r of store.query<{ name: string; hash: string }>(
+          "SELECT name, hash FROM attachments",
+        ) as { name: string; hash: string }[]) {
+          if (r.name && r.hash) byName.set(String(r.name), String(r.hash));
+        }
+        if (byName.size > 0) {
+          for (const doc of docs) {
+            for (const m of doc.matchAll(/!\[([^\]]{1,200})\]\(([^)]{0,300})\)/g)) {
+              const [, alt, src] = m;
+              if (src.startsWith("asst:")) continue; // 上面已经按 hash 收了
+              const hash = byName.get(alt);
+              if (hash) refHashes.add(hash);
+            }
+          }
+        }
+      } catch (e) {
+        // 不静默：正文扫不出来不影响导出（按 page_id 那批照旧），但**必须留下痕迹**
+        console.error("[export] 正文里的附件引用没扫成功，本包可能缺图：", e);
       }
       const pages = (store.query("SELECT id FROM pages WHERE workspace_id = ? AND deleted_at IS NULL", [ws.id]) as any[]).length;
       const atts = await blobStore.entries();

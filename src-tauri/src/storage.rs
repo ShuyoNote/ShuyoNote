@@ -460,9 +460,33 @@ pub(crate) fn other_spaces_referenced_hashes(
 }
 
 /// M14.2 — Permanently delete trash (soft-deleted pages) and release their bytes.
+/// 只删**当前空间目录里**那些 hash 的字节；回 `(释放字节, 只在别处有字节的个数)`。
+///
+/// ⚠️ 为什么"只删自己目录"：附件按空间分（2026-09-24）⇒ 别的空间那份是**另一个文件**，
+///    删它没有任何理由；**老布局**（`<根>/<桶>/`）那份更是"不读别的空间就证明不了安全" ⇒
+///    `None` 分支**不删**、只计数（交给「整理附件布局」，那里有四道闸门）。
+///
+/// 抽成独立函数是为了**可判**：`clear_trash` 是 Tauri 命令，挂在命令体里的逻辑判据够不着。
+pub(crate) fn release_own_attachment_bytes(
+    own_dir: &Path,
+    hashes: &std::collections::HashSet<String>,
+) -> (u64, usize) {
+    let mut freed: u64 = 0;
+    let mut kept_elsewhere = 0usize;
+    for hash in hashes {
+        match crate::attachments::find_path_by_hash(own_dir, hash) {
+            Some(p) => {
+                freed += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+                let _ = std::fs::remove_file(p);
+            }
+            None => kept_elsewhere += 1,
+        }
+    }
+    (freed, kept_elsewhere)
+}
+
 #[tauri::command]
 pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64, String> {    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachment_dir = app_data_dir.join("attachments");
 
     // Collect trash page ids + candidate hashes while locked.
     let (trash_ids, hashes) = {
@@ -490,22 +514,21 @@ pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64
         (ids, hashes)
     };
 
-    // ★ **动手之前**先把"别的空间还引用着什么"读全（2026-09-20 自查，与 F2 同族）：
-    //   读不全（有空间打不开/密钥不符）就**当场失败、一行都不删**。老实现是
-    //   `filter_map(open(...).ok())` ＋ `unwrap_or_default()` ⇒ 读不到的空间等于"它不引用任何附件"
-    //   ⇒ 与它共享的字节被当孤儿真删，对面出现"行在字节不在"（缺陷帖 #6 同一族）。
-    //   当前空间那一份**不在这里扫**：它的行马上要删掉，扫早了会把该释放的字节又算成"还被引用"
-    //   （删完之后直接在手上这条连接上查，见下面 `still_referenced`）。
-    let (current_space, other_refs) = {
+    // ⭐⭐ **2026-10-25（行为修）**：**不再"跨全部空间读引用"** —— 附件自 2026-09-24 起
+    //   按空间分目录（每个空间各存自己那份；同一份内容在两个空间是**两个文件**）
+    //   ⇒ 清空**当前空间**的回收站时，只需要问"当前空间还引用不引用"，删除也只删**当前空间目录里**那份。
+    //
+    //   ⚠️ 老实现为什么要跨全部空间（**两条前提今天都不成立了**）：
+    //     ① 那时删字节是 `find_attachment_anywhere(hash)`（全树按 hash 找）⇒ 会删到**别的空间**那份；
+    //     ② 那时附件是**全局一份** ⇒ "别的空间引用它"确实等于"这份字节还被别人用"。
+    //   ⇒ 现在这两条都不成立，于是"必须打开加密空间才能清空回收站"在这条路径上**是误拦**
+    //     （真机：明文空间清回收站被锁着的「保险柜」挡住，用户报 2026-10-25 ✓）。
+    //   ⚠️ **老布局**（`<根>/<桶>/`）里的那份这里**不删**：不读别的空间就无法证明它安全
+    //     ⇒ 留给「整理附件布局」（那条路有四道闸门）。这条口径对用户是**更安全**的，不是放宽。
+    let current_space = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let current = crate::workspaces::active_workspace_id(&c)?;
-        let other = other_spaces_referenced_hashes(&c, &current).map_err(|unreadable| {
-            // ⭐ 2026-10-11（owner 选乙）：⭐ 点名空间 ＋ ⭐ 说清出路 ＋ ⭐ 说清兜底 ✓（⭐ 一处定义 ✓）
-            unreadable_spaces_message(&unreadable, &space_name_map(&c, &unreadable), "打不开就判断不了哪些附件还有人在用")
-        })?;
-        (current, other)
+        crate::workspaces::active_workspace_id(&c)?
     };
-    let _ = &current_space;
 
     // Delete in a transaction.
     {
@@ -539,13 +562,10 @@ pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64
         tx.commit().map_err(|e| e.to_string())?;
     }
 
-    // Determine which hashes are now orphaned (no longer referenced) before releasing the lock.
-    // ⚠️ **跨全部空间**来问（见 `referenced_hashes` 的注释）：只查当前空间会把**别的空间**
-    // 仍在引用的字节当成孤儿删掉 ⇒ 那边出现「行在字节不在」（2026-09-19 缺陷帖 #6）。
-    // 别的空间那一份已经在上面**严格**扫过（读不到就不许往下走）；这里只补当前空间删完行之后的现状。
+    // 删完行之后，**当前空间**还引用什么（只问这一个空间 ⇒ ⛔ 不需要打开任何别的空间 ✓）。
+    // ⚠️ 别再把它和"别的空间的引用集合"并起来：那正是上面刚拆掉的老模型（会要求空间可读）。
     let orphaned: std::collections::HashSet<String> = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let mut still_referenced = other_refs;
         let mut stmt = c
             .prepare("SELECT DISTINCT hash FROM attachments")
             .map_err(|e| format!("读当前空间的 attachments 失败（{e}）⇒ 字节未回收，附件行已删"))?;
@@ -554,19 +574,25 @@ pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64
             .map_err(|e| format!("读当前空间的 attachments 失败（{e}）⇒ 字节未回收，附件行已删"))?
             .collect::<Result<Vec<String>, _>>()
             .map_err(|e| format!("读当前空间的 attachments 失败（{e}）⇒ 字节未回收，附件行已删"))?;
-        still_referenced.extend(own);
+        let still_referenced: std::collections::HashSet<String> = own.into_iter().collect();
         hashes.iter().filter(|h| !still_referenced.contains(*h)).cloned().collect()
     };
 
-    // Release bytes off the main thread (no DB needed).
-    let att_dir = attachment_dir;
+    // Release bytes off the main thread (no DB needed) —— ⭐ **只删当前空间目录里那份**。
+    let own_dir = crate::attachments::space_attachments_dir(&app_data_dir, &current_space);
     let freed = tauri::async_runtime::spawn_blocking(move || -> Result<u64, String> {
-        let mut freed: u64 = 0;
-        for hash in orphaned {
-            if let Some(p) = crate::attachments::find_attachment_anywhere(&att_dir, &hash) {
-                freed += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-                let _ = std::fs::remove_file(p);
-            }
+        let (freed, kept_elsewhere) =
+            release_own_attachment_bytes(&own_dir, &orphaned);
+        if kept_elsewhere > 0 {
+            eprintln!(
+                "[attachments] 清空回收站：{kept_elsewhere} 个哈希只在老布局里有字节 ⇒ 本次**未删**\
+                 （留给「整理附件布局」；那里才判断得了别的空间引用）"
+            );
+        }
+        // ⭐ 2026-10-25：删完文件顺手收空目录（否则桶目录只增不减；见 `prune_empty_dirs_under`）
+        let pruned = crate::attachments::prune_empty_dirs_under(&own_dir);
+        if pruned > 0 {
+            eprintln!("[attachments] 清空回收站：顺手回收 {pruned} 个空目录");
         }
         Ok(freed)
     })
@@ -916,6 +942,11 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
                 let _ = std::fs::remove_file(p);
             }
         }
+        // ⭐ 2026-10-25：删完文件顺手收空目录（否则桶目录只增不减；见 `prune_empty_dirs_under`）
+        let pruned = crate::attachments::prune_empty_dirs_under(&att_dir);
+        if pruned > 0 {
+            eprintln!("[attachments] 清理孤立附件：顺手回收 {pruned} 个空目录");
+        }
         Ok(freed)
     })
     .await
@@ -929,6 +960,56 @@ mod tests {
     use super::*;
     use crate::db::migrate;
     use rusqlite::Connection;
+
+    /// ⭐⭐ **2026-10-25**：清空回收站**只删当前空间目录里那份** —— 老布局与别的空间那份一个字节都不许动。
+    ///
+    /// 真机来由：明文空间清回收站被锁着的「保险柜」挡下（"清理需要先打开加密空间"）——
+    /// 那条拦的是**旧模型**（全局一份 ＋ 按 hash 全树删）；按空间分之后它既没必要、也不安全（会删到别人那份）。
+    ///
+    /// **变异**：把 `find_path_by_hash(own_dir, …)` 换回 `find_attachment_anywhere(root, …)` ⇒
+    /// 老布局那份会被删 ⇒ 第二条断言红。
+    #[test]
+    fn clearing_trash_only_releases_bytes_inside_the_current_space_dir() {
+        let app = std::env::temp_dir().join(format!("shuyo-trash-scope-{}", uuid::Uuid::new_v4()));
+        let own = crate::attachments::space_attachments_dir(&app, "sp-mine");
+        let other = crate::attachments::space_attachments_dir(&app, "sp-other");
+        let root = crate::attachments::attachments_root(&app);
+        let mine: &[u8] = b"MINE";
+        let hash = crate::dictionary::sha256_hex(mine);
+        let bucket = &hash[..2];
+        // 自己那份、别的空间那份、老布局那份 —— 三处同 hash
+        for d in [&own, &other, &root] {
+            std::fs::create_dir_all(d.join(bucket)).unwrap();
+            std::fs::write(d.join(bucket).join(format!("{hash}.png")), mine).unwrap();
+        }
+        // 只在老布局里有的第二个 hash
+        let legacy_only = crate::dictionary::sha256_hex(b"LEGACY");
+        std::fs::write(
+            root.join(bucket).join(format!("{legacy_only}.png")),
+            b"LEGACY",
+        )
+        .unwrap();
+
+        let hashes: std::collections::HashSet<String> =
+            [hash.clone(), legacy_only.clone()].into_iter().collect();
+        let (freed, kept_elsewhere) = release_own_attachment_bytes(&own, &hashes);
+
+        assert_eq!(freed, mine.len() as u64, "只该释放自己那份的字节");
+        assert!(
+            crate::attachments::find_path_by_hash(&own, &hash).is_none(),
+            "自己那份该删掉"
+        );
+        assert!(
+            crate::attachments::find_path_by_hash(&other, &hash).is_some(),
+            "⛔ 别的空间那份不许动（那是另一个文件）"
+        );
+        assert!(
+            crate::attachments::find_path_by_hash(&root, &hash).is_some(),
+            "⛔ 老布局那份不许动（不读别的空间就证明不了安全）"
+        );
+        assert_eq!(kept_elsewhere, 1, "只在老布局里的那个要记数（留给「整理附件布局」）");
+        let _ = std::fs::remove_dir_all(&app);
+    }
 
     // ⭐⭐ **2026-10-11（owner 拍「甲」）**：⭐ 补副本的合同 —— 四条判据，⭐ 全都钉**结果** ✓：
     //    ⭐ ① 补出来的那份**必须是密文** ✗（⛔ 不是把明文抄一份 ✓）

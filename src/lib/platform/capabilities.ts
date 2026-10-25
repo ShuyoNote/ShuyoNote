@@ -16,6 +16,22 @@ export function isMobileUserAgent(ua: string): boolean {
 }
 
 /**
+ * 纯函数：从 UA 判断是否 **macOS 桌面**（给"原生透明标题栏"那条路用）。
+ *
+ * 为什么需要它：窗口的标题栏形态是**创建期**决定的（`src-tauri/src/lib.rs` 的
+ * `title_bar_style(Overlay)`），而前端要据此把每列内容下移 28px（红绿灯占位）。
+ * 判错的代价是：要么内容被红绿灯压住，要么白让 28px。
+ *
+ * ⚠️ **iPadOS 13+ 的 UA 也写 "Macintosh; Intel Mac OS X"**（苹果故意的），但它一定带
+ * `Mobile/…`；真 Mac 的 WKWebView UA 不带。所以这里两条一起判——否则 iPad 上会误挂
+ * macOS 的 CSS（那台没有红绿灯，纯亏 28px）。
+ */
+export function isMacDesktopUserAgent(ua: string): boolean {
+  if (!/Macintosh|Mac OS X/i.test(ua)) return false;
+  return !/Android|iPhone|iPad|iPod|Mobile\//i.test(ua);
+}
+
+/**
  * 纯函数：聚合邮箱是否可用。**桌面专属**（2026-09-13 定）。
  *
  * 它走 `native-tls`（桌面用系统 TLS），Android 上要为此从源码交叉编译一份 OpenSSL；

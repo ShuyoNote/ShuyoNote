@@ -230,6 +230,7 @@ export const api = {
   // `disable_encryption`，连同"全局一把钥匙"那整套口径与界面）。留下的是**会话级**三条：
   encryptionStatus: () => invoke("encryption_status"),
   lockEncryption: () => invoke("lock_encryption"),
+  keyringStatus: () => invoke("keyring_status"),
   unlockEncryption: (passphrase: string) => invoke("unlock_encryption", { passphrase }),
   getPage: (id: string) => invoke("get_page", { id }),
   listTemplates: (spaceId?: string | null) => invoke("list_templates", { spaceId }),
@@ -533,6 +534,14 @@ export const api = {
   meshSyncNow: (workspaceId?: string | null) =>
     invoke("mesh_sync_now", { workspaceId: workspaceId ?? null }) as Promise<MeshRoundReport>,
   /**
+   * ⭐ **2026-10-23**：「对端有、本机没有」的个人空间候选表（**只读**）。
+   * 界面把它列成勾选清单，勾了才调 `mesh_create_spaces` —— ⛔ 不许在这里顺手建。
+   */
+  meshMissingSpaces: () =>
+    invoke("mesh_missing_spaces") as Promise<{ name: string; from: string[]; fromNames: string[]; tombstoned: boolean }[]>,
+  /** ⭐ **2026-10-23**：按用户勾的名字建空间（幂等；只认候选表里有的名字）。 */
+  meshCreateSpaces: (names: string[]) => invoke("mesh_create_spaces", { names }) as Promise<string[]>,
+  /**
    * ⭐ **P1.5 主件 · A1**（2026-10-13）：设备直连那一屏的**本机读数** ✗ —— ⭐ 只读 ✓。
    *
    * ⚠️ 两条都**没有参数** ✗（读的是"本机"这回事 ✓）。⭐ `announced` 与窗口**同一把尺**
@@ -687,6 +696,11 @@ export const api = {
   storageStats: () => invoke("storage_stats"),
   clearTrash: () => invoke("clear_trash"),
   cleanupOrphanAttachments: () => invoke("cleanup_orphan_attachments"),
+  /**
+   * ⭐ 2026-10-25：**整理附件布局**（老布局 → 按空间）。
+   * ⚠️ 加密空间的那些**必须先解锁**才处理（锁着读不到它的库 ⇒ 闸门只让复制、不让删）。
+   */
+  attachmentsMigrateLegacy: () => invoke("attachments_migrate_legacy"),
   /** ⭐ 清孤儿派生行（`att_id` 已不在 `attachments` 里）—— 只清可重建的派生缓存 ✓。 */
   cleanupOrphanDerived: () => invoke("cleanup_orphan_derived"),
   cleanupOldVersions: (maxKeep?: number) => invoke("cleanup_old_versions", { maxKeep }),

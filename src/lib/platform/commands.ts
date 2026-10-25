@@ -1016,6 +1016,13 @@ export interface CommandMap {
    */
   mesh_sync_now: { args: { workspaceId?: string | null }; result: MeshRoundReport };
   /**
+   * ⭐ **2026-10-23**：「对端有、本机没有」的个人空间候选表（**只读**）。
+   * 界面把它列出来给用户勾，勾了才调下面的 `mesh_create_spaces`。
+   */
+  mesh_missing_spaces: { args: undefined; result: { name: string; from: string[]; tombstoned: boolean }[] };
+  /** ⭐ **2026-10-23**：按用户勾的名字建空间（幂等；只认候选表里有的名字）。 */
+  mesh_create_spaces: { args: { names: string[] }; result: string[] };
+  /**
    * ⭐ **P1.5 主件 · A1**（2026-10-13）：设备直连那一屏的**本机读数** ✗ ——
    * ⭐ **只读** ✓（⛔ 一个字节都不写 ✗、⛔ 一个包都不发 ✗）。
    *
@@ -1290,6 +1297,7 @@ export interface CommandMap {
     };
   };
   lock_encryption: { args: undefined; result: void };
+  keyring_status: { args: undefined; result: { has_material: boolean; spaces: number; unlocked: boolean } };
   unlock_encryption: { args: { passphrase: string }; result: void };
 
   // ---- Templates ----
@@ -1593,6 +1601,20 @@ export interface CommandMap {
   };
   clear_trash: { args: undefined; result: number };
   cleanup_orphan_attachments: { args: undefined; result: number };
+  // ⭐ 2026-10-25：整理附件布局（老 → 按空间）；`unreadable_spaces` 非空 ⇒ 只复制、不删
+  attachments_migrate_legacy: {
+    args: undefined;
+    result: {
+      scanned: number;
+      copied: number;
+      deleted: number;
+      kept: number;
+      /** ⭐ 顺带回收掉的**空目录**数（删文件不删目录 ⇒ 只增不减；2026-10-25 补） */
+      pruned: number;
+      unreadable_spaces: string[];
+      notes: string[];
+    };
+  };
   cleanup_orphan_derived: { args: undefined; result: number };
   cleanup_old_versions: { args: { maxKeep?: number }; result: number };
   cleanup_temp_files: { args: undefined; result: number };

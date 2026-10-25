@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { useEditorStore, type SettingsTab } from "../store/editor";
@@ -13,10 +13,9 @@ import { BackupSettingsPanel } from "./BackupSettingsPanel";
 import { StoragePanel } from "./StoragePanel";
 import { usePlugins } from "../store/plugins";
 import { api } from "../lib/api";
-import { lockVault } from "../lib/vault";
+import { lockVault, refreshVault, unlockVault } from "../lib/vault";
 import { useVault } from "../hooks/useVault";
-import { SpacePrivacySection } from "./SpacePrivacySection";
-import type { SyncProfile, EmailAccount } from "../lib/api";
+import type { SyncProfile, EmailAccount, SpaceSecurityView } from "../lib/api";
 import { emailSupported, isDesktopPlatform } from "../lib/platform";
 // ⭐ 2026-10-08 第 5 招（裁定 A ✓）：个人偏好「隐藏高级项」——纯规则在 lib 里（可单测 ✓）。
 import { readHideAdvanced, visibleGroups, writeHideAdvanced } from "../lib/settingsNavPref";
@@ -29,8 +28,8 @@ import { inputDialog } from "../store/input";
 import { useSpaceStore } from "../store/space";
 // ⭐ 2026-10-10：空间**筛选**（20+ 个空间）—— 与侧栏那个空间切换器**共用这一份**匹配 ✓
 import { filterSpaces } from "../lib/spaceFilter";
-// ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）：与侧栏**同一处**映射（文字标识，⛔ 不只靠颜色）✓
 import { spaceCryptoBadge } from "../lib/spaceSecurity";
+// ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）：与侧栏**同一处**映射（文字标识，⛔ 不只靠颜色）✓
 import { useNotes } from "../store/notes";
 import { withSyncStatus } from "../store/syncStatus";
 import { useAuth } from "../store/auth";
@@ -39,11 +38,13 @@ import { APP_VERSION, APP_LICENSE } from "../lib/links";
 import { useEmailPanel } from "../store/emailPanel";
 import {
   PaletteIcon,
+  ChevronRightIcon,
+  TrashIcon,
   FolderIcon,
+  LockIcon,
   PersonIcon,
   DatabaseIcon,
   TemplateIcon,
-  LockIcon,
   SendIcon,
   SparkleIcon,
   InfoIcon,
@@ -81,7 +82,6 @@ export const TABS: { id: SettingsTab; labelKey: string; hintKey: string; icon: J
   { id: "plugins", labelKey: "settings.plugins", hintKey: "settings.pluginsHint", icon: <TemplateIcon width={16} height={16} />, group: "system" },
   // ⭐ 2026-10-02：官方引擎与按需下载 —— 排在「插件」之后（插件＝第三方扩展 ／ 能力＝官方引擎 ✓）。
   { id: "abilities", labelKey: "settings.abilities", hintKey: "settings.abilitiesHint", icon: <DownloadIcon width={16} height={16} />, group: "ai" },
-  { id: "security", labelKey: "settings.security", hintKey: "settings.securityHint", icon: <LockIcon width={16} height={16} />, group: "system" },
   // ⭐ 2026-10-06（owner 拍板 R89）：外部 AI 接入的开关面 —— 与「安全」同一族（都是"谁能碰我的库"✓）。
   { id: "mcp", labelKey: "settings.mcp", hintKey: "settings.mcpHint", icon: <SendIcon width={16} height={16} />, group: "collab" },
   // ⭐ **2026-10-14**：⭐ 那三格（监听地址／配对暗号／自动开启）**已回到同步面板** ✓ —— 设置面**不再提供** ✓
@@ -158,6 +158,104 @@ function hostLabel(url: string): string {
 //   ⇒ 本页**也**能切了 ✓；⛔ 但**不是**在这里再写一遍"改 active ＋ 刷新" ✗ ——
 //   切空间**只有一条路**：`useSpaceStore.switchTo`（侧栏顶部那次走的就是它 ✓，
 //   它内部已经含 `setActiveWorkspaceId` ＋ `loadPages` ＋ `refreshVault` ✓）。
+// ⭐ 2026-10-25（合并「空间」与「安全」两页）：把会话锁 / 钥匙袋收成「空间」页顶部的一条，
+//   ⛔ 不再让安全页单独列一遍空间 ✗（那一遍与本页的列表是同一份数据的两份显示）。
+//   ⚠️ 判据：导航里不再有「安全」；空间页顶部必须能找到解锁入口（活动空间是明文时也要有）。
+function SpaceSecurityBanner() {
+  const { activeSpaceEncrypted, locked } = useVault();
+  const spaces = useSpaceStore((s) => s.spaces);
+  const activeId = useSpaceStore((s) => s.activeId);
+  const activeName = spaces.find((s) => s.id === activeId)?.name ?? "当前空间";
+  const [busy, setBusy] = useState(false);
+  const [bag, setBag] = useState<{ has_material: boolean; spaces: number; unlocked: boolean } | null>(null);
+  const [bagPass, setBagPass] = useState("");
+  useEffect(() => {
+    let live = true;
+    const fn = api.keyringStatus;
+    if (!fn) return;
+    void fn()
+      .then((s) => { if (live) setBag(s); })
+      .catch(() => { if (live) setBag(null); });
+    return () => { live = false; };
+  }, [locked, activeSpaceEncrypted]);
+
+  const unlockBag = async () => {
+    setBusy(true);
+    try {
+      await unlockVault(bagPass);
+      setBagPass("");
+      toast("已解锁钥匙袋：加密空间现在可以同步", "success");
+      try { setBag((await api.keyringStatus()) ?? null); } catch { /* 刷新失败不影响已解锁 */ }
+      try { await useSpaceStore.getState().load(); } catch { /* 空间列表刷新失败不影响已解锁 */ }
+    } catch (e) {
+      toast(String(e), "error");
+    } finally { setBusy(false); }
+  };
+  const lock = async () => {
+    setBusy(true);
+    try {
+      await lockVault();
+      toast("已锁定：界面会切回锁定屏，解锁后才继续同步", "success");
+    } catch (e) { toast(String(e), "error"); } finally { setBusy(false); }
+  };
+
+  if (!activeSpaceEncrypted && !bag?.has_material) return null;
+  const count = bag?.spaces ?? (activeSpaceEncrypted ? 1 : 0);
+  const unlocked = bag?.unlocked ?? (activeSpaceEncrypted && !locked);
+  return (
+    <section className="set-security-card">
+      <div className="set-security-left">
+        <div className="set-security-overline">加密空间 · 会话锁定</div>
+        <div className="set-security-title">
+          {count} 个加密空间
+          <span className={`set-security-pill ${unlocked ? "is-ok" : "is-warn"}`}>
+            {unlocked ? "已解锁" : "未解锁"}
+          </span>
+        </div>
+        <div className="set-security-sub">
+          {activeSpaceEncrypted && locked
+            ? "已加密 · 已锁定 · 解锁前读不到内容，同步也会被拒绝。"
+            : unlocked
+              ? `${activeSpaceEncrypted ? activeName : "保险柜"} · 本会话已拿到主密钥，可以同步`
+              : "解锁后本机才能读取加密空间，并开始拉取对端密文"}
+        </div>
+        <div className="set-security-chips">
+          <span>SQLCipher 密文落盘</span>
+          <span>仅附近设备直连 · 对端 Windows</span>
+        </div>
+        <div className="set-security-hint">
+          {unlocked
+            ? (activeSpaceEncrypted ? "锁定后本机不再持有钥匙；对外只搬运 sealed 密文。" : "钥匙只在内存里；不写盘、不上传。")
+            : "主口令只在本机内存里使用，不落盘。"}
+        </div>
+      </div>
+      <div className="set-security-right">
+        <div className="set-security-right-label">{unlocked ? "会话状态" : "主口令"}</div>
+        {!unlocked ? (
+          <div className="set-security-row">
+            <input
+              className="set-input"
+              type="password"
+              placeholder="输入主口令"
+              value={bagPass}
+              disabled={busy}
+              onChange={(e) => setBagPass(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && bagPass.length > 0) void unlockBag(); }}
+            />
+            <button className="set-btn is-primary" disabled={busy || bagPass.length === 0} onClick={unlockBag}>
+              {busy ? "解锁中…" : "解锁"}
+            </button>
+          </div>
+        ) : activeSpaceEncrypted && !locked ? (
+          <button className="set-btn" disabled={busy} onClick={lock}>立即锁定</button>
+        ) : (
+          <div className="set-security-ok">已解锁 · 钥匙只在内存</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function SpacesPane() {
   const spaces = useSpaceStore((s) => s.spaces);
   const activeId = useSpaceStore((s) => s.activeId);
@@ -166,11 +264,59 @@ function SpacesPane() {
   // ⭐ 2026-10-10：筛选词（owner：「20+ 个空间怎么办」✓）⇒ 只影响**列表显示**：
   //    ⛔ 不动 `spaces`、⛔ 不动"当前空间" ✗（见 `filterSpaces`：签名里根本没有 active ✓）
   const [spaceQuery, setSpaceQuery] = useState("");
+  const [secFilter, setSecFilter] = useState<"all" | "enc" | "plain">("all");
   const shownSpaces = filterSpaces(spaces, spaceQuery);
   // 每个空间的同步目标：让「这个空间到底同不同步、同步到哪」在管理页就能看到，
   // 不用再切回同步面板逐个点开。
   const [syncProfiles, setSyncProfiles] = useState<Record<string, SyncProfile>>({});
   const activeName = spaces.find((s) => s.id === activeId)?.name ?? "当前空间";
+  // ⭐ 2026-10-25：按空间加密读数（每行显示开/关入口；与 SpacePrivacySection 同一命令面）
+  const [secViews, setSecViews] = useState<Record<string, SpaceSecurityView>>({});
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const [cryptoDlg, setCryptoDlg] = useState<{ id: string; name: string; mode: "enable" | "disable" } | null>(null);
+  const [cryptoPass, setCryptoPass] = useState("");
+  const [cryptoAck, setCryptoAck] = useState(false);
+  const [cryptoBusy, setCryptoBusy] = useState(false);
+  const [cryptoErr, setCryptoErr] = useState("");
+
+  const loadSec = useCallback(async () => {
+    if (!isDesktopPlatform()) return;
+    try {
+      const rows = await api.spaceSecurityOverview();
+      const by: Record<string, SpaceSecurityView> = {};
+      for (const r of rows) by[r.space_id] = r;
+      setSecViews(by);
+    } catch { /* 读不到就不显示入口，不影响其它空间管理 */ }
+  }, []);
+  useEffect(() => { void loadSec(); }, [loadSec, spaces.length]);
+
+  const openCrypto = (id: string, name: string, mode: "enable" | "disable") => {
+    setCryptoErr(""); setCryptoPass(""); setCryptoAck(false);
+    setCryptoDlg({ id, name, mode });
+  };
+  const closeCrypto = () => { if (!cryptoBusy) setCryptoDlg(null); };
+  const runCrypto = async () => {
+    if (!cryptoDlg) return;
+    if (!cryptoAck) { setCryptoErr("请先勾选下面那句确认"); return; }
+    setCryptoBusy(true); setCryptoErr("");
+    try {
+      if (cryptoDlg.mode === "enable") {
+        await api.enableSpaceEncryption(cryptoDlg.id, cryptoPass.trim() || undefined);
+        toast(`已开启「${cryptoDlg.name}」的加密`, "success");
+      } else {
+        await api.disableSpaceEncryption(cryptoDlg.id);
+        toast(`已关闭「${cryptoDlg.name}」的加密（库已换回明文）`, "success");
+      }
+      await refreshVault();
+      await useSpaceStore.getState().load();
+      await loadSec();
+      setCryptoDlg(null);
+    } catch (e) {
+      setCryptoErr(String(e));
+    } finally {
+      setCryptoBusy(false);
+    }
+  };
 
   useEffect(() => {
     api
@@ -185,6 +331,25 @@ function SpacesPane() {
 
   // ⭐ 切空间：**只走 store 那一条路**（与侧栏顶部那次完全一致 ✓）。
   // ⛔ 不在这里 `api.setActiveWorkspaceId` ＋ 自己刷新 ✗ —— 那会多出第二条路 ✓。
+  // ⭐ 2026-10-25：⋯ 菜单点背景（或按 Esc）关闭 —— 原生 <details> 不提供这个行为。
+  useEffect(() => {
+    const closeMenus = (e: Event) => {
+      const t = e.target as Element | null;
+      for (const el of document.querySelectorAll<HTMLDetailsElement>(".set-space-more[open]")) {
+        if (!t || !el.contains(t)) el.open = false;
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeMenus(e);
+    };
+    document.addEventListener("mousedown", closeMenus);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", closeMenus);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
   const pick = async (id: string) => {
     // 点"当前"那一行＝无事发生：切空间会连带 `loadPages` ＋ `refreshVault`，白跑一趟没必要
     if (id === activeId) return;
@@ -212,50 +377,53 @@ function SpacesPane() {
     }
   };
 
+  const isEnc = (sp: (typeof spaces)[number]) => secViews[sp.id]?.encrypted_on_disk ?? sp.encrypted_on_disk;
+  const visibleSpaces = shownSpaces.filter((sp) =>
+    secFilter === "all" ? true : secFilter === "enc" ? isEnc(sp) : !isEnc(sp),
+  );
+  const encCount = spaces.filter(isEnc).length;
+
   return (
     <>
-      <section className="set-section">
-        <div className="set-section-title">全部空间（{spaces.length}）</div>
-        {/* ⭐ 2026-10-10：**筛选**（owner：「20+ 个空间怎么办」✓）——
-            ⚠️ 与侧栏那个空间切换器**共用同一份匹配**（`src/lib/spaceFilter.ts` ✓），⛔ 不各写一份 ✗。 */}
-        {/* ⭐ 2026-10-11（owner 截图「美化一下筛选空间这个控件」）：外面套一层只为放**放大镜**与
-            **清空**两个附件 ✓ —— ⛔ 输入框自己的类名一个字没改 ✗（`.set-space-filter` 有判据在用 ✓），
-            高度也不许动（本仓规则：可点控件 ≥44px ✓）。 */}
-        <div className="set-space-filter-wrap">
-          <SearchIcon width={16} height={16} />
-          <input
-            className="set-space-filter sync-input"
-            value={spaceQuery}
-            onChange={(e) => setSpaceQuery(e.target.value)}
-            placeholder="筛选空间…"
-            aria-label="筛选空间"
-          />
-          {spaceQuery !== "" && (
-            <button
-              className="set-space-filter-clear"
-              onClick={() => setSpaceQuery("")}
-              aria-label="清空筛选"
-              title="清空筛选"
-            >
-              ×
-            </button>
-          )}
+      <SpaceSecurityBanner />
+      <section className="set-section set-space-section">
+        <div className="set-space-head">
+          <div className="set-space-head-title">全部空间 <span>{spaces.length} 个</span></div>
+          <div className="set-space-head-tools">
+            <div className="set-space-filter-wrap">
+              <SearchIcon width={16} height={16} />
+              <input
+                className="set-space-filter sync-input"
+                value={spaceQuery}
+                onChange={(e) => setSpaceQuery(e.target.value)}
+                placeholder="筛选空间…"
+                aria-label="筛选空间"
+              />
+              {spaceQuery !== "" && (
+                <button className="set-space-filter-clear" onClick={() => setSpaceQuery("")} aria-label="清空筛选" title="清空筛选">×</button>
+              )}
+            </div>
+            <div className="set-space-seg" role="tablist" aria-label="按加密状态筛选">
+              <button role="tab" aria-selected={secFilter === "all"} className={secFilter === "all" ? "is-on" : ""} onClick={() => setSecFilter("all")}>全部 {spaces.length}</button>
+              <button role="tab" aria-selected={secFilter === "enc"} className={secFilter === "enc" ? "is-on" : ""} onClick={() => setSecFilter("enc")}>已加密 {encCount}</button>
+              <button role="tab" aria-selected={secFilter === "plain"} className={secFilter === "plain" ? "is-on" : ""} onClick={() => setSecFilter("plain")}>未加密 {spaces.length - encCount}</button>
+            </div>
+          </div>
         </div>
-        <div className="set-space-list">
+        <div className="set-space-list set-space-list-scroll" ref={listRef}>
           {spaces.length === 0 ? (
             <div className="set-space-empty">还没有空间</div>
-          ) : shownSpaces.length === 0 ? (
+          ) : visibleSpaces.length === 0 ? (
             /* ⛔ 零命中**不许**只给空列表 ✗（用户会以为空间没了 ✓）⇒ 说人话 ＋ 给出路 ✓ */
             <div className="set-space-empty">
               没有匹配的空间
               <button className="set-btn" onClick={() => setSpaceQuery("")}>清空筛选</button>
             </div>
           ) : (
-            shownSpaces.map((s) => {
+            visibleSpaces.map((s) => {
             const active = s.id === activeId;
             const prof = syncProfiles[s.id];
             // ⭐ 2026-10-10：「这个空间加密了吗」那一格 ⇒ 文字标识（与侧栏**同一处**映射 ✓）
-            const crypto = spaceCryptoBadge(s.encrypted_on_disk);
             return (
               <div key={s.id} className={`set-space-card${active ? " is-active" : ""}`}>
                 {/* ⭐ 这一行**可点**：点了就切过去（owner 2026-10-10）✓
@@ -263,29 +431,24 @@ function SpacesPane() {
                     配色面板是它的**兄弟**节点 ⇒ 点色块本来就不会走到这里 ✓。 */}
                 <div
                   className="set-space-row"
-                  title={active ? "当前空间" : `切换到「${s.name}」`}
                   onClick={() => void pick(s.id)}
                 >
-                  <span
-                    className="set-space-mark"
-                    style={s.theme ? { background: s.theme, color: "#fff" } : undefined}
-                  >
-                    {s.name.charAt(0)}
+                  <span className="set-space-mark" style={s.theme ? { background: s.theme, color: "#fff" } : undefined}>
+                    {(secViews[s.id]?.encrypted_on_disk ?? s.encrypted_on_disk)
+                      ? <LockIcon width={18} height={18} />
+                      : <FolderIcon width={18} height={18} />}
                   </span>
                   <div className="set-row-text">
                     <div className="set-row-name">
                       {s.name}
                       {active && <span className="set-tag">当前</span>}
+
                     </div>
                     <div className="set-space-meta">
+                      <span className="set-space-scope">个人空间 · 仅附近设备直连</span>
                       {/* ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）——与**侧栏切换器**同一格读数、
                           同一个映射（`spaceCryptoBadge` ✓）⇒ "两处一致"是**结构性**的 ✓。
                           ⚠️ 只显示**文字**（⛔ 不只靠颜色 ✗）；读数拿不到 ⇒ 不显示 ✓。 */}
-                      {crypto.show && (
-                        <span className="set-space-crypto" title={crypto.title} aria-label={crypto.title}>
-                          {crypto.label}
-                        </span>
-                      )}
                       {/* ⭐ 2026-10-10（owner 截图）：这里原来直接显示 `↔ 121.199.8.24` ✗ ——
                           一个公网 IP 摆在设置里，普通用户既看不懂也不需要 ✓。
                           ⇒ 人话「已同步」✓ ＋ ⭐ **完整地址留在 `title` 里** ✓（排障要用 ✓，⛔ 别删它 ✗）。 */}
@@ -305,40 +468,65 @@ function SpacesPane() {
                       ⚠️ ⭐ **必须 `stopPropagation`** ✗ —— 整行本来就 `onClick={pick}` ✓
                       ⇒ 不拦就会**切两次**（自己那次 ＋ 冒泡那次 ✓）；与「配色」「删除」同一处理 ✓。
                       ⚠️ **当前那一行不显示** ✓（它已经在那儿了，再给个"切过去"很怪 ✓）。 */}
-                  {!active && (
-                    <button
-                      className="set-space-switch set-btn"
-                      title={`切换到「${s.name}」`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void pick(s.id);
-                      }}
-                    >
-                      切换
-                    </button>
-                  )}
-                  <button
-                    className={`set-btn${colorFor === s.id ? " is-on" : ""}`}
-                    /* ⛔ 配色不切空间：点完只是展开色板（冒泡上去就变成"顺手切走" ✗） */
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setColorFor((c) => (c === s.id ? null : s.id));
-                    }}
-                  >
-                    配色
-                  </button>
-                  <button
-                    className="set-btn is-danger-ghost"
-                    disabled={busy || spaces.length <= 1 || active}
-                    title={active ? "当前空间不可删除，请先切换到别的空间" : spaces.length <= 1 ? "至少保留一个空间" : "删除该空间"}
-                    /* ⛔ 删除**绝不**先切过去（那会"切完再删" —— 灾难 ✓） */
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void doRemove(s.id, s.name);
-                    }}
-                  >
-                    删除
-                  </button>
+                  <div className="set-space-status">
+                        {(() => {
+                          const onDisk = secViews[s.id]?.encrypted_on_disk ?? s.encrypted_on_disk;
+                          const crypto = spaceCryptoBadge(onDisk);
+                          if (crypto.show) {
+                            return (
+                              <span className="set-space-crypto is-enc" title={crypto.title} aria-label={crypto.title}>
+                                {crypto.label}
+                              </span>
+                            );
+                          }
+                          // 读数拿不到（undefined）⇒ 不标；明确明文才给「明文」
+                          return onDisk === false ? <span className="set-space-state is-plain">明文</span> : null;
+                        })()}
+                  </div>
+                  <details className="set-space-more" onClick={(e) => e.stopPropagation()}>
+                    <summary aria-label={`${s.name} 的更多操作`} title="更多操作">⋯</summary>
+                    <div className="set-space-menu">
+                      {!active && (
+                        <button
+                          className="set-space-switch set-btn"
+                          title={`切换到「${s.name}」`}
+                          onClick={(e) => { e.stopPropagation(); void pick(s.id); }}
+                        >
+                          <ChevronRightIcon width={14} height={14} />
+                          <span>切换</span>
+                        </button>
+                      )}
+                      <button
+                        className={`set-btn${secViews[s.id]?.encrypted_on_disk || s.encrypted_on_disk ? " is-danger-ghost" : ""}`}
+                        disabled={busy}
+                        title={secViews[s.id]?.key_available === false ? "先解锁钥匙袋才能关闭加密" : undefined}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const enc = secViews[s.id]?.encrypted_on_disk ?? s.encrypted_on_disk;
+                          openCrypto(s.id, s.name, enc ? "disable" : "enable");
+                        }}
+                      >
+                        <LockIcon width={14} height={14} />
+                        <span>{secViews[s.id]?.encrypted_on_disk || s.encrypted_on_disk ? "关闭加密…" : "开启加密…"}</span>
+                      </button>
+                      <button
+                        className={`set-btn${colorFor === s.id ? " is-on" : ""}`}
+                        onClick={(e) => { e.stopPropagation(); setColorFor((c) => (c === s.id ? null : s.id)); }}
+                      >
+                        <PaletteIcon width={14} height={14} />
+                        <span>配色</span>
+                      </button>
+                      <button
+                        className="set-btn is-danger-ghost"
+                        disabled={busy || spaces.length <= 1 || active}
+                        title={active ? "当前空间不可删除，请先切换到别的空间" : spaces.length <= 1 ? "至少保留一个空间" : "删除该空间"}
+                        onClick={(e) => { e.stopPropagation(); void doRemove(s.id, s.name); }}
+                      >
+                        <TrashIcon width={14} height={14} />
+                        <span>删除</span>
+                      </button>
+                    </div>
+                  </details>
                 </div>
                 {colorFor === s.id && (
                   <div className="set-space-colors">
@@ -393,6 +581,57 @@ function SpacesPane() {
           </div>
         </div>
       </section>
+
+      {cryptoDlg && (
+        <div className="set-crypto-scrim" onClick={closeCrypto}>
+          <div className="set-crypto-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="set-crypto-head">
+              <div className="set-crypto-title">
+                {cryptoDlg.mode === "enable" ? `为「${cryptoDlg.name}」开启加密` : `关闭「${cryptoDlg.name}」的加密？`}
+              </div>
+              <button className="set-close" aria-label="关闭" onClick={closeCrypto} disabled={cryptoBusy}>×</button>
+            </div>
+            {cryptoDlg.mode === "enable" ? (
+              <>
+                <div className="set-crypto-steps">
+                  <div><b>1 改写空间库</b><span>这个空间的库会以 SQLCipher 密文重新落盘</span></div>
+                  <div><b>2 包住空间钥匙</b><span>用主口令派生的密钥把空间钥匙装进钥匙袋</span></div>
+                  <div><b>3 同步照常</b><span>锁着时对外只搬 sealed 封包，明文只留在已解锁侧</span></div>
+                </div>
+                <label className="set-crypto-label">主口令（本机已有钥匙袋且已解锁时可留空）</label>
+                <input className="set-input" type="password" value={cryptoPass} disabled={cryptoBusy}
+                  placeholder="至少 8 位；不会上传、不会落盘"
+                  onChange={(e) => setCryptoPass(e.target.value)} />
+                <label className="set-crypto-check">
+                  <input type="checkbox" checked={cryptoAck} disabled={cryptoBusy} onChange={(e) => setCryptoAck(e.target.checked)} />
+                  我记住了主口令 —— 丢失后这个空间无法恢复
+                </label>
+              </>
+            ) : (
+              <>
+                <div className="set-crypto-warn">
+                  <div>库会解密为明文 —— 任何能访问这台电脑的人都可以直接读</div>
+                  <div>同步关系保留；对端仍按它自己的加密设置处理</div>
+                  <div>重新开启加密需要再做一次完整加密（不可撤销）</div>
+                </div>
+                <label className="set-crypto-check">
+                  <input type="checkbox" checked={cryptoAck} disabled={cryptoBusy} onChange={(e) => setCryptoAck(e.target.checked)} />
+                  我理解关闭后数据会以明文形式保存在这台电脑上
+                </label>
+              </>
+            )}
+            {cryptoErr && <div className="set-crypto-err">{cryptoErr}</div>}
+            <div className="set-crypto-foot">
+              <button className="set-btn" onClick={closeCrypto} disabled={cryptoBusy}>取消</button>
+              <button className={`set-btn ${cryptoDlg.mode === "disable" ? "is-danger" : "is-primary"}`}
+                onClick={() => void runCrypto()} disabled={cryptoBusy}>
+                {cryptoBusy ? "处理中…" : cryptoDlg.mode === "enable" ? "开启加密" : "关闭加密"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </>
   );
 }
@@ -822,6 +1061,31 @@ function AccountPane() {
   // 邀请码（每组织一个被生成的码）与「凭码加入」输入。
   const [inviteCodes, setInviteCodes] = useState<Record<string, string>>({});
   const [joinCode, setJoinCode] = useState("");
+  // ⭐ 2026-10-25（owner：设备未命名）：“本机设备名”原先没有任何入口 ⇒ 补一个。
+  const [deviceName, setDeviceName] = useState("");
+  const [deviceNameLoaded, setDeviceNameLoaded] = useState(false);
+  const [deviceNameSaving, setDeviceNameSaving] = useState(false);
+  const [deviceNameStatus, setDeviceNameStatus] = useState("");
+  useEffect(() => {
+    let alive = true;
+    void api.getDeviceName()
+      .then((n) => { if (alive) { setDeviceName(n ?? ""); setDeviceNameLoaded(true); } })
+      .catch(() => { if (alive) setDeviceNameLoaded(true); });
+    return () => { alive = false; };
+  }, []);
+  const saveDeviceName = async () => {
+    setDeviceNameSaving(true);
+    setDeviceNameStatus("");
+    try {
+      const effective = await api.setDeviceName(deviceName);
+      setDeviceNameStatus(`已保存；当前生效名：${effective}`);
+      toast(`设备名已更新：${effective}`, "success");
+    } catch (e) {
+      setDeviceNameStatus(`保存失败：${e}`);
+    } finally {
+      setDeviceNameSaving(false);
+    }
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -1095,6 +1359,40 @@ function AccountPane() {
 
   return (
     <>
+      <section className="set-section">
+        <div className="set-section-title">本机设备</div>
+        <div className="set-row acct-device-row acct-device-stack">
+          <div className="set-row-text">
+            <div className="set-row-name">设备名</div>
+            <div className="set-row-sub">
+              {/* ⚠️ **2026-10-25（owner：「为何是未命名设备？而 mac 发现的是 ZHAIDELL」）**：
+                  原文案 ＋ 空输入的 placeholder 都写着「未命名设备」⇒ 看着像"本机没名字"；
+                  但实际广播的是**系统主机名**（这台是 `ZhaiDELL`）—— 那只是**三档回退的最后一档**
+                  （用户没设 ＋ 主机名也读不到时才会出现）。⇒ 把三档说清，⛔ 不让 placeholder 冒充当前名字。 */}
+              附近设备与配对列表里显示的名字。
+              <br />
+              留空 ⇒ 用的是<b>这台电脑的系统名</b>（这台是 <code>ZhaiDELL</code>）；
+              只有系统名也读不到时，才会显示「未命名设备」。
+            </div>
+          </div>
+          <div className="acct-device-edit">
+            <input
+              className="set-input"
+              value={deviceName}
+              disabled={!deviceNameLoaded || deviceNameSaving}
+              placeholder="留空＝用系统名"
+              maxLength={40}
+              onChange={(e) => setDeviceName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void saveDeviceName(); }}
+            />
+            <button className="set-btn" disabled={!deviceNameLoaded || deviceNameSaving} onClick={() => void saveDeviceName()}>
+              {deviceNameSaving ? "保存中…" : "保存"}
+            </button>
+          </div>
+        </div>
+        {deviceNameStatus && <div className="set-hint">{deviceNameStatus}</div>}
+      </section>
+
       <section className="set-section">
         <div className="set-section-title">当前组织账号</div>
         {authed ? (
@@ -1458,60 +1756,17 @@ function PluginsPane() {
 // 留下的「会话锁定」**不是加密作用域的一部分**：它是会话级的（丢掉内存里的主密钥 ⇒ 界面切回
 // 锁定屏、同步被拒），而加密作用域已经是按空间的了。
 function SecurityPane() {
-  // 状态来自 vault 状态中枢（不是本地 useState 的副本）：在这里点「立即锁定」，
-  // 整个界面会立刻切到锁定屏——旧写法只改了设置页自己的状态，用户会继续看着已经
-  // 读不出来的内容（E2 补的就是这一刀）。
+  // ⭐ 2026-10-25：会话锁 / 钥匙袋已经抽成 `SpaceSecurityBanner`（空间页顶部复用同一份）。
+  //   本页保留给测试与深链，不再复制第二套逻辑。
   //
-  // ⚠️ 字段名（2026-10-10）：这里读的是 **`activeSpaceEncrypted`** ——
-  //「**当前活动空间**是不是加密的」✓。⛔ 它**不是**"本机有没有加密空间" ✗ ——
-  // 那条"两个真相源"就是这么来的（`lib/vault.ts` 与这里曾各说一套 ✓）：
-  // 现在**语义只在 `lib/vault.ts` 定义一次** ✓，这里只是用它 ✓，两处说的是同一句话 ✓。
-  const { activeSpaceEncrypted, locked } = useVault();
-  const spaces = useSpaceStore((s) => s.spaces);
-  const [busy, setBusy] = useState(false);
-
-  const lock = async () => {
-    setBusy(true);
-    try {
-      await lockVault();
-      toast("已锁定：界面会切回锁定屏，解锁后才继续同步", "success");
-    } catch (e) {
-      toast(String(e), "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-
+  // ⭐⭐ **2026-10-25（owner 拍 A：「整块从『安全』页删掉」）**：这里原来还挂着
+  //   「空间隐私」那一节（按空间分类 ＋ 开/关加密 ＋ 团队空间绑服务器）。
+  //   删掉的依据：**同一批动作已经在「设置 · 空间」页**（每行有 明文/已加密 徽标、⋯ 菜单、
+  //   开/关加密的确认框），而本页那一份还留着**已退役**的文案（"填一个配对暗号就行"）。
+  //   ⇒ 两套重复口径迟早打架（今天「去开加密」接错页就是同类事故）。
   return (
     <>
-      {/* ★ owner 2026-09-24 拍板（选项 A）：**本机还没有加密空间时，整节隐藏**。
-          理由：那时这一节既没有动作（`lock_encryption` 会直接报"这个空间没有加密"）、
-          也没有新信息（下面就是空间列表）—— 留着只是占位。
-          ⚠️ 判据是 `activeSpaceEncrypted` ＝ "**活动空间**是不是加密的"（内核读数 ✓）：
-          活动空间加密 ⇒ 有东西可锁 ⇒ 出现 ✓。
-          ⚠️ **⛔ 不要**改成"本机任意一个空间加密就出现" ✗：那会在**明文活动空间**上摆一颗
-          「立即锁定」，而内核 `lock_encryption_impl` 对明文空间是**直接报错拒绝**的
-          （逐字：「这个空间没有加密，没有什么可锁的」）⇒ 那等于给一个按下去就报错的按钮 ✗。 */}
-      {activeSpaceEncrypted && (
-        <section className="set-section">
-          <div className="set-section-title">会话锁定</div>
-          <div className="set-row">
-            <div className="set-row-text">
-              <div className="set-row-name">{locked ? "已加密 · 已锁定" : "已加密 · 已解锁"}</div>
-              <div className="set-row-sub">
-                {locked ? "解锁前读不到内容，同步也会被拒绝。" : "锁定会丢弃本会话的主密钥，界面切回锁定屏。"}
-              </div>
-            </div>
-            {!locked && (
-              <button className="set-btn" disabled={busy} onClick={lock}>
-                立即锁定
-              </button>
-            )}
-          </div>
-        </section>
-      )}
-      {/* 名字从空间列表反查（与同步面板同一口径）：面板里显示 UUID 对用户没有意义。 */}
-      <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
+      <SpaceSecurityBanner />
     </>
   );
 }

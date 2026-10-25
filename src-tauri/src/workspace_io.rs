@@ -721,63 +721,96 @@ fn rewrite_asset_refs_in_space_db(
     if let Some(k) = key.as_ref() {
         crate::security::key_conn_with(&conn, k)?;
     }
-    let mut stmt = conn
-        .prepare("SELECT id, content FROM pages WHERE content LIKE '%asst:%'")
-        .map_err(|e| e.to_string())?;
-    let rows: Vec<(String, String)> = stmt
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-    drop(stmt);
+    // ① 文件名 → hash：修复前插的图，正文里只有一次性 `blob:` 地址（没有 hash），
+    //    但附件表里**还有那一行**（`name` ＝ 原文件名）⇒ 按名字反查是它们唯一的活路。
+    let mut by_name: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if let Ok(mut st) = conn.prepare("SELECT name, hash FROM attachments") {
+        if let Ok(it) = st.query_map([], |r| {
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+            ))
+        }) {
+            for row in it.flatten() {
+                if let (Some(n), Some(h)) = row {
+                    if !n.is_empty() && !h.is_empty() {
+                        by_name.insert(n, h);
+                    }
+                }
+            }
+        }
+    }
+    let path_of = |hash: &str| {
+        crate::attachments::find_attachment(app_data_dir, space_id, hash)
+            .map(|p| p.to_string_lossy().to_string())
+    };
+    // ② 只看"可能含图片"的页：有 `asst:`（新）或 image 节点（老）。
+    //   ⚠️ SQL 走 `doc_content` 那一层（列名与"什么算图片页"都收口在那儿；
+    //      2026-10-23 第一版在这里直写、列名还写成 `content` ⇒ 导入当场 Err）。
+    let rows = crate::doc_content::list_pages_with_images(&conn)?;
     let mut changed = 0usize;
     for (id, content) in rows {
         let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&content) else {
             continue; // 坏 JSON 不动（别把用户内容改坏）
         };
-        if rewrite_asst_refs(&mut v, |hash| {
-            crate::attachments::find_attachment(app_data_dir, space_id, hash)
-                .map(|p| p.to_string_lossy().to_string())
-        }) {
+        if rewrite_image_srcs(
+            &mut v,
+            &path_of,
+            |name| by_name.get(name).and_then(|h| path_of(h)),
+        ) {
             let next = serde_json::to_string(&v).map_err(|e| e.to_string())?;
-            conn.execute(
-                "UPDATE pages SET content = ?1 WHERE id = ?2",
-                rusqlite::params![next, id],
-            )
-            .map_err(|e| e.to_string())?;
+            crate::doc_content::write_page_doc_json(&conn, &id, &next)?;
             changed += 1;
         }
     }
     if changed > 0 {
-        eprintln!("[import] 已把 {changed} 页里的 asst: 引用改写成本机路径");
+        eprintln!(
+            "[import] 已把 {changed} 页里的图片地址改写成本机路径（asst: 指纹 ＋ 文件名反查）"
+        );
     }
     Ok(())
 }
 
-/// 递归改写 JSON 里所有 `asst:<hash>` 字符串值；`resolve` 返回 `None` ⇒ 原样保留。
-/// 返回是否有改动（有改动才写回，避免无谓的重排）。
-fn rewrite_asst_refs(v: &mut serde_json::Value, resolve: impl Fn(&str) -> Option<String> + Copy) -> bool {
+/// 递归改写**图片节点**的 `src`：`asst:<hash>` 按指纹解，解不了的（修复前那批一次性 `blob:`）
+/// 按**文件名**（`altText`）去附件表反查。两个 `resolve` 都返回 `None` ⇒ 原样保留（不删、不猜）。
+fn rewrite_image_srcs(
+    v: &mut serde_json::Value,
+    resolve_hash: impl Fn(&str) -> Option<String> + Copy,
+    resolve_name: impl Fn(&str) -> Option<String> + Copy,
+) -> bool {
     match v {
-        serde_json::Value::String(s) => {
-            if let Some(hash) = s.strip_prefix("asst:") {
-                if let Some(path) = resolve(hash) {
-                    *s = path;
-                    return true;
+        serde_json::Value::Object(map) => {
+            let mut any = false;
+            if map.get("type").and_then(|t| t.as_str()) == Some("image") {
+                let alt = map
+                    .get("altText")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                if let Some(src) = map.get("src").and_then(|s| s.as_str()) {
+                    let new = if let Some(hash) = src.strip_prefix("asst:") {
+                        resolve_hash(hash)
+                    } else if !src.is_empty() && std::path::Path::new(src).exists() {
+                        None // 已经是指向真实文件的路径 ⇒ 不动
+                    } else {
+                        // `blob:` 地址 / 空串 ⇒ 按文件名反查（修复前那批图唯一的活路）
+                        resolve_name(&alt)
+                    };
+                    if let Some(p) = new {
+                        map.insert("src".to_string(), serde_json::Value::String(p));
+                        any = true;
+                    }
                 }
             }
-            false
+            for (_, val) in map.iter_mut() {
+                any |= rewrite_image_srcs(val, resolve_hash, resolve_name);
+            }
+            any
         }
         serde_json::Value::Array(items) => {
             let mut any = false;
             for it in items.iter_mut() {
-                any |= rewrite_asst_refs(it, resolve);
-            }
-            any
-        }
-        serde_json::Value::Object(map) => {
-            let mut any = false;
-            for (_, val) in map.iter_mut() {
-                any |= rewrite_asst_refs(val, resolve);
+                any |= rewrite_image_srcs(it, resolve_hash, resolve_name);
             }
             any
         }
@@ -792,26 +825,39 @@ mod tests {
     use std::io::Write;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    // ⭐ 2026-10-23：导入时把 web 的 `asst:<hash>` 改写成真实路径（owner 实拍"导入后图片碎图"）。
+    // ⭐ 2026-10-23：导入时把图片地址改写成真实路径（owner 实拍"导入后图片碎图"）。
+    //   两条路都要管：新数据 `asst:<hash>` 按指纹解；**修复前**那批老数据只有一次性 `blob:`
+    //   地址（没有 hash），只能按**文件名**（altText）去附件表反查 —— 否则那些图永远救不回来。
     #[test]
-    fn asst_refs_are_rewritten_to_local_paths_but_unknown_ones_kept() {
+    fn image_srcs_are_rewritten_by_hash_or_by_file_name() {
         let mut v: serde_json::Value = serde_json::from_str(
             r#"{"root":{"children":[
                  {"type":"image","src":"asst:aaaa1111","altText":"a.jpg"},
                  {"type":"image","src":"asst:deadbeef","altText":"b.jpg"},
+                 {"type":"image","src":"blob:http://x/old-1","altText":"IMG_20261010_130248.jpg"},
+                 {"type":"image","src":"blob:http://x/old-2","altText":"unknown.jpg"},
                  {"type":"paragraph","src":"C:\\old\\keep.png"},
                  {"type":"text","text":"asst:not-a-src-field-keep-me"}]}}"#,
         )
         .unwrap();
-        let changed = rewrite_asst_refs(&mut v, |h| {
-            (h == "aaaa1111").then(|| "C:\\Users\\x\\attachments\\ab\\cd\\aaaa1111.jpg".to_string())
-        });
+        let changed = rewrite_image_srcs(
+            &mut v,
+            |h| {
+                (h == "aaaa1111").then(|| "C:\\Users\\x\\attachments\\ab\\cd\\aaaa1111.jpg".to_string())
+            },
+            |name| {
+                (name == "IMG_20261010_130248.jpg")
+                    .then(|| "C:\\Users\\x\\attachments\\99\\88\\feed.jpg".to_string())
+            },
+        );
         assert!(changed, "应当报告「有改动」");
         let s = serde_json::to_string(&v).unwrap();
-        assert!(s.contains(r#""src":"C:\\Users\\x\\attachments"#), "已知 hash ⇒ 换成真实路径: {s}");
-        assert!(s.contains(r#""src":"asst:deadbeef""#), "找不到字节的引用必须**原样保留**（不删不猜）: {s}");
-        assert!(s.contains(r#""src":"C:\\old\\keep.png""#), "非 asst 的路径不许动: {s}");
-        assert!(s.contains("asst:not-a-src-field-keep-me"), "只认 asst: 前缀的字符串值，但要认得出来: {s}");
+        assert!(s.contains(r#""src":"C:\\Users\\x\\attachments\\ab\\cd\\aaaa1111.jpg""#), "已知 hash ⇒ 真实路径: {s}");
+        assert!(s.contains(r#""src":"asst:deadbeef""#), "找不到字节的 asst 引用必须原样保留: {s}");
+        assert!(s.contains(r#""src":"C:\\Users\\x\\attachments\\99\\88\\feed.jpg""#), "老 blob: 引用要按文件名救回来: {s}");
+        assert!(s.contains(r#""src":"blob:http://x/old-2""#), "名字也对不上 ⇒ 原样保留（不删不猜）: {s}");
+        assert!(s.contains(r#""src":"C:\\old\\keep.png""#), "已经是路径（或非图片节点）的 src 不许动: {s}");
+        assert!(s.contains("asst:not-a-src-field-keep-me"), "非 image 节点里的同形文本不许动: {s}");
     }
 
     static TMP_SEQ: AtomicU32 = AtomicU32::new(0);

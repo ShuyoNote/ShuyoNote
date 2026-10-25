@@ -3,6 +3,7 @@ import { platform } from "../lib/platform";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { useAttachmentsStore } from "../store/attachments";
+import { useSpaceStore } from "../store/space";
 import { usePdfReader } from "../store/pdfReader";
 import type { AttachmentMeta } from "../types";
 
@@ -74,6 +75,56 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
       unlisten?.();
     };
   }, []);
+
+  // ⭐ 2026-10-25（owner：「点击侧边栏的项目，不能触发下载吗？」）：
+  //   打开页面（含 folder 页）时，**自动把该页缺失的附件字节**按需取回来，
+  //   不用再逐个点开预览。只做一轮、有预算上限（64 MB），失败静默（用户仍可手点）。
+  const prefetchStarted = useRef(false);
+  const prefetchAttempted = useRef<Set<string>>(new Set());
+  const [prefetching, setPrefetching] = useState<{ done: number; total: number } | null>(null);
+  useEffect(() => {
+    prefetchStarted.current = false;
+    prefetchAttempted.current.clear();
+    setPrefetching(null);
+  }, [pageId]);
+  useEffect(() => {
+    if (prefetchStarted.current) return;
+    if (typeof api.downloadAttachment !== "function") return;
+    const wsId = useSpaceStore.getState().activeId;
+    if (!wsId) return;
+    const budget = 64 * 1024 * 1024;
+    const missing: AttachmentMeta[] = [];
+    let total = 0;
+    for (const a of attachments) {
+      if (a.path || prefetchAttempted.current.has(a.hash)) continue;
+      if (a.size > budget || total + a.size > budget) continue;
+      total += a.size;
+      missing.push(a);
+    }
+    if (missing.length === 0) return;
+    prefetchStarted.current = true;
+    let cancelled = false;
+    setPrefetching({ done: 0, total: missing.length });
+    void (async () => {
+      for (let i = 0; i < missing.length; i++) {
+        if (cancelled) return;
+        prefetchAttempted.current.add(missing[i].hash);
+        try {
+          await api.downloadAttachment(wsId, missing[i].hash);
+        } catch {
+          // 对端/服务器不在线是常态；这里静默，用户点开文件时还会再试一次并给提示。
+        }
+        if (!cancelled) setPrefetching({ done: i + 1, total: missing.length });
+      }
+      if (!cancelled) {
+        setPrefetching(null);
+        useAttachmentsStore.getState().bump();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [attachments]);
 
   const addFiles = async () => {
     let selected: string | string[] | null;
@@ -155,6 +206,11 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
     <div className="attachment-panel">
       <div className="attachment-head">
         <span className="attachment-title">附件</span>
+        {prefetching && (
+          <span className="attachment-prefetch">
+            正在取回文件 {prefetching.done}/{prefetching.total}…
+          </span>
+        )}
         <button className="attachment-add" onClick={addFiles} disabled={importing}>
           {importing ? "导入中…" : "＋ 添加文件"}
         </button>

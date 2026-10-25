@@ -39,7 +39,8 @@ use serde::{Deserialize, Serialize};
 use crate::crypto::{self, AppKeys};
 
 /// 钥匙袋的格式版本。
-pub const KEYRING_VERSION: u16 = 1;
+pub const KEYRING_VERSION: u16 = 2;
+pub const KEYRING_VERSION_MIN: u16 = 1;
 /// 每空间密钥的长度（32 字节，与 `AppKeys.legacy` 同宽）。
 pub const SPACE_KEY_LEN: usize = 32;
 
@@ -135,11 +136,46 @@ pub struct WrappedBox {
 
 /// **钥匙袋**：公开参数 ＋ 每个空间一个盒子。这一整个 JSON **可以同步/可以放服务端**
 /// （它里面没有口令、也没有裸密钥）。
+/// ⭐ 2026-10-24（加密空间自动同步 B1+B2）：**同一台设备可能持有"多组"公开材料**。
+///
+/// 为什么需要：两台设备各自第一次加密时各自生成过盐/参数（`KdfParams::fresh`）⇒
+/// 同一个主口令在两台推出的是**不同的主密钥**。要把对端那些盒子也解开，就必须**连它的盐/参数一起留**，
+/// 并在解锁时**每组各派生一次**。这就是"多组"，也是 B2（任意设备自动合并）的核心。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyringGroup {
+    pub kdf: KdfParams,
+    pub spaces: BTreeMap<String, WrappedBox>,
+    /// 空间名（只用于"自动建同名空间"；是元数据，不是秘密）。
+    #[serde(default)]
+    pub space_names: BTreeMap<String, String>,
+}
+
+/// **钥匙袋**：公开参数 ＋ 每个空间一个盒子。这一整个 JSON **可以同步/可以放服务端**
+/// （它里面没有口令、也没有裸密钥）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Keyring {
     pub v: u16,
+    /// ⭐ 主组（本机自己最早那一份材料；旧代码直接读 `kdf`/`spaces` 的地方继续有效）。
     pub kdf: KdfParams,
     pub spaces: BTreeMap<String, WrappedBox>,
+    #[serde(default)]
+    pub space_names: BTreeMap<String, String>,
+    /// ⭐ 另外那些组的公开材料（从别的设备合并来的）。
+    #[serde(default)]
+    pub extra_groups: Vec<KeyringGroup>,
+}
+
+/// 一次合并的读数（给日志/界面/判据用；⛔ 不静默）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct MergeReport {
+    /// 新加了几组（对端用了不同的盐/参数）。
+    pub added_groups: usize,
+    /// 新加了几个空间盒子。
+    pub added_spaces: usize,
+    /// 本地已有同空间但盒子不同 ⇒ **保留本地、不覆盖**（可能是两边各自轮换过，要人拍）。
+    pub conflicting_spaces: Vec<String>,
+    /// 合并后一共几个空间盒子（全组合计）。
+    pub total_spaces: usize,
 }
 
 /// 生一把新的**空间密钥**（随机 32 字节）。
@@ -186,6 +222,8 @@ impl Keyring {
             v: KEYRING_VERSION,
             kdf: KdfParams::fresh(),
             spaces: BTreeMap::new(),
+            space_names: BTreeMap::new(),
+            extra_groups: Vec::new(),
         }
     }
 
@@ -197,17 +235,170 @@ impl Keyring {
     /// 从公开材料读回来。**版本不认识 ⇒ 报错**（不猜）。
     pub fn from_json(text: &str) -> Result<Self, String> {
         let parsed: Self = serde_json::from_str(text).map_err(|e| format!("钥匙袋不是合法 JSON：{e}"))?;
-        if parsed.v != KEYRING_VERSION {
+        if parsed.v < KEYRING_VERSION_MIN || parsed.v > KEYRING_VERSION {
             return Err(format!(
-                "钥匙袋版本 {} 本版不认识（本版认到 {KEYRING_VERSION}）—— 请升级应用后再打开",
+                "钥匙袋版本 {} 本版不认识（本版认 {KEYRING_VERSION_MIN}..={KEYRING_VERSION}）—— 请升级应用后再打开",
                 parsed.v
             ));
         }
+        // v1 → v2：旧袋子就是"只有主组、没有额外组"。⛔ 不改它的盐/参数（那会把老盒子解坏）。
         Ok(parsed)
     }
 
     pub fn has(&self, space_id: &str) -> bool {
         self.spaces.contains_key(space_id)
+            || self.extra_groups.iter().any(|g| g.spaces.contains_key(space_id))
+    }
+
+    /// 这一组公开材料的**稳定指纹**（盐/参数决定；用于合并与"这份是谁的"）。
+    pub fn group_fingerprint(kdf: &KdfParams) -> String {
+        let canon = format!(
+            "{}|{}|{}|{}|{}|{:?}",
+            kdf.algo, kdf.salt_hex, kdf.m_kib, kdf.t, kdf.p, kdf.sm_iterations
+        );
+        crate::db::sha256_hex(&canon)
+    }
+
+    /// 本袋子所有组：`(组指纹, 参数, 盒子表, 空间名表)`（主组在前）。
+    pub fn groups(&self) -> Vec<(String, KdfParams, BTreeMap<String, WrappedBox>, BTreeMap<String, String>)> {
+        let mut out = vec![(
+            Self::group_fingerprint(&self.kdf),
+            self.kdf.clone(),
+            self.spaces.clone(),
+            self.space_names.clone(),
+        )];
+        for g in &self.extra_groups {
+            out.push((Self::group_fingerprint(&g.kdf), g.kdf.clone(), g.spaces.clone(), g.space_names.clone()));
+        }
+        out
+    }
+
+    /// 一个空间的名字（有就返回；自动建同名空间用）。
+    pub fn space_name(&self, space_id: &str) -> Option<String> {
+        self.space_names
+            .get(space_id)
+            .cloned()
+            .or_else(|| {
+                self.extra_groups
+                    .iter()
+                    .find_map(|g| g.space_names.get(space_id).cloned())
+            })
+            .filter(|n| !n.trim().is_empty())
+    }
+
+    /// 给**袋里已有的**空间补一个名字（回「真的变了吗」✓）。只补名字，⛔ 不动盒子/盐/参数。
+    ///
+    /// ⚠️ 为什么需要它：本地建出来的袋子 `space_names` 一直是空的（`Keyring::new()` 置空，
+    /// 之后只有"从对端并进来"才会带名字）⇒ 对端拿到材料也**建不出同名空间**，
+    /// 只能建一个"未命名加密空间"（2026-10-24 真机卡在这里 ✓）。
+    ///
+    /// 口径：① 只写它**所在的那一组**（主组与额外组各存各的名字 ✓）；
+    ///      ② 已经是这个名字 ⇒ `false`（调用方据此**不写库** ✓）；
+    ///      ③ 袋里**没有**这个空间 ⇒ `false`（⛔ 不凭空造条目 ✗）。
+    pub fn set_space_name(&mut self, space_id: &str, name: &str) -> bool {
+        let name = name.trim();
+        if name.is_empty() {
+            return false;
+        }
+        let same = |m: &std::collections::BTreeMap<String, String>| {
+            m.get(space_id).map(|n| n.trim() == name).unwrap_or(false)
+        };
+        if self.spaces.contains_key(space_id) {
+            if same(&self.space_names) {
+                return false;
+            }
+            self.space_names.insert(space_id.to_string(), name.to_string());
+            return true;
+        }
+        for g in self.extra_groups.iter_mut() {
+            if g.spaces.contains_key(space_id) {
+                if same(&g.space_names) {
+                    return false;
+                }
+                g.space_names.insert(space_id.to_string(), name.to_string());
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 全部空间的 id（各组并集，排序）。
+    pub fn space_ids(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.spaces.keys().cloned().collect();
+        for g in &self.extra_groups {
+            for id in g.spaces.keys() {
+                if !v.contains(id) {
+                    v.push(id.clone());
+                }
+            }
+        }
+        v.sort();
+        v
+    }
+
+    /// ⭐ B1/B2：**把对端那份公开材料并进来**（⛔ 不覆盖本地已有的盒子）。
+    ///
+    /// 规则：
+    /// · 组指纹相同 ⇒ 同一组，只补"本地没有的空间盒子/名字"；
+    /// · 组指纹不同 ⇒ 新组（对端的盐/参数整个收下，解锁时按它再派生一次主密钥）；
+    /// · 同一空间两边都有但盒子不同 ⇒ **保留本地**并记进 `conflicting_spaces`（轮换冲突要人拍）。
+    /// 幂等：同一份材料重复并入 ⇒ added_* 全 0。
+    pub fn merge_from(&mut self, other: &Keyring) -> MergeReport {
+        let mut report = MergeReport::default();
+        let local_primary_fp = Self::group_fingerprint(&self.kdf);
+        // 本地的组指纹表（主组 + 额外组）
+        let mut known: Vec<String> = vec![local_primary_fp.clone()];
+        known.extend(self.extra_groups.iter().map(|g| Self::group_fingerprint(&g.kdf)));
+        // 先处理远端主组
+        let mut incoming: Vec<KeyringGroup> = vec![KeyringGroup {
+            kdf: other.kdf.clone(),
+            spaces: other.spaces.clone(),
+            space_names: other.space_names.clone(),
+        }];
+        incoming.extend(other.extra_groups.iter().cloned());
+        for g in incoming {
+            let fp = Self::group_fingerprint(&g.kdf);
+            if fp == local_primary_fp {
+                Self::merge_group_spaces(&mut self.spaces, &mut self.space_names, &g, &mut report);
+            } else if let Some(extra) = self
+                .extra_groups
+                .iter_mut()
+                .find(|e| Self::group_fingerprint(&e.kdf) == fp)
+            {
+                Self::merge_group_spaces(&mut extra.spaces, &mut extra.space_names, &g, &mut report);
+            } else {
+                report.added_groups += 1;
+                report.added_spaces += g.spaces.len();
+                self.extra_groups.push(g);
+            }
+        }
+        report.total_spaces = self.space_ids().len();
+        report
+    }
+
+    fn merge_group_spaces(
+        spaces: &mut BTreeMap<String, WrappedBox>,
+        names: &mut BTreeMap<String, String>,
+        incoming: &KeyringGroup,
+        report: &mut MergeReport,
+    ) {
+        for (space, boxed) in &incoming.spaces {
+            match spaces.get(space) {
+                None => {
+                    spaces.insert(space.clone(), boxed.clone());
+                    report.added_spaces += 1;
+                }
+                Some(existing) if existing.box_hex != boxed.box_hex => {
+                    if !report.conflicting_spaces.contains(space) {
+                        report.conflicting_spaces.push(space.clone());
+                    }
+                }
+                Some(_) => {}
+            }
+        }
+        for (space, name) in &incoming.space_names {
+            names.entry(space.clone()).or_insert_with(|| name.clone());
+        }
     }
 
     /// 装一把空间密钥进袋子（已有 ⇒ **覆盖**：轮换走同一条路）。
@@ -224,14 +415,50 @@ impl Keyring {
 
     /// 从袋子里取一把空间密钥。取不出 ⇒ **报错**（绝不回退成明文或空钥匙）。
     pub fn unwrap_key(&self, master: &AppKeys, space_id: &str) -> Result<[u8; SPACE_KEY_LEN], String> {
-        let Some(b) = self.spaces.get(space_id) else {
-            return Err(format!("钥匙袋里没有空间「{space_id}」的盒子"));
-        };
-        let raw = hex::decode(&b.box_hex).map_err(|e| format!("盒子不是合法 hex：{e}"))?;
-        // ⚠️ 这一层**不再拼前缀** ✓（2026-10-10）：它只表示"**某一把钥匙解不开**"⇒ 用**中性措辞** ✓
-        //   —— 前缀由 `space_crypto::verify_master_against_keyring` 那一处给（用户面只在那里出人话 ✓）。
-        let plain = crypto::decrypt(&raw, master).map_err(|e| format!("这个盒子解不开：{e}"))?;
-        open_plaintext(&plain, space_id)
+        // 单主密钥版本（旧调用点）：在各组里找这个空间的盒子，逐个用**这一把**主密钥试。
+        let mut found = false;
+        for (_, _, spaces, _) in self.groups() {
+            let Some(b) = spaces.get(space_id) else { continue };
+            found = true;
+            let raw = hex::decode(&b.box_hex).map_err(|e| format!("盒子不是合法 hex：{e}"))?;
+            if let Ok(plain) = crypto::decrypt(&raw, master) {
+                return open_plaintext(&plain, space_id);
+            }
+        }
+        if found {
+            Err("这个盒子解不开：口令不对，或者这把锁被改过".to_string())
+        } else {
+            Err(format!("钥匙袋里没有空间「{space_id}」的盒子"))
+        }
+    }
+
+    /// ⭐ B2：**用"每组各一把主密钥"解盒子**（主口令只输一次，各组分别派生）。
+    ///
+    /// `masters` 的键是 [`Self::group_fingerprint`]；找不到对应组的主密钥 ⇒ 明确报"这一组没解锁"。
+    pub fn unwrap_key_with_groups(
+        &self,
+        masters: &[(String, AppKeys)],
+        space_id: &str,
+    ) -> Result<[u8; SPACE_KEY_LEN], String> {
+        let mut found = false;
+        for (fp, kdf, spaces, _) in self.groups() {
+            let Some(b) = spaces.get(space_id) else { continue };
+            found = true;
+            let Some((_, master)) = masters.iter().find(|(id, _)| id == &fp) else {
+                let _ = kdf;
+                continue;
+            };
+            let raw = hex::decode(&b.box_hex).map_err(|e| format!("盒子不是合法 hex：{e}"))?;
+            match crypto::decrypt(&raw, master) {
+                Ok(plain) => return open_plaintext(&plain, space_id),
+                Err(_) => continue,
+            }
+        }
+        if found {
+            Err("这个盒子解不开：口令不对，或者这把锁被改过".to_string())
+        } else {
+            Err(format!("钥匙袋里没有空间「{space_id}」的盒子"))
+        }
     }
 
     /// 轮换一个空间的密钥（**只换这一个空间**：主口令与其它空间都不动）—— 这正是"每空间随机密钥"换来的。
@@ -243,7 +470,18 @@ impl Keyring {
 
     /// 扔掉一个空间的盒子（连同它那把密钥）。
     pub fn remove(&mut self, space_id: &str) -> bool {
-        self.spaces.remove(space_id).is_some()
+        let mut removed = self.spaces.remove(space_id).is_some();
+        self.space_names.remove(space_id);
+        for g in &mut self.extra_groups {
+            removed |= g.spaces.remove(space_id).is_some();
+            g.space_names.remove(space_id);
+        }
+        removed
+    }
+
+    /// 整份公开材料的指纹（用于"这份材料变了没有"）。
+    pub fn material_fingerprint(&self) -> String {
+        crate::db::sha256_hex(&self.to_json().unwrap_or_default())
     }
 }
 
@@ -445,7 +683,7 @@ mod tests {
         let json = kr.to_json().unwrap();
 
         // ① 版本不认识 ⇒ 报错（与 wire 的 `crdt_state` 同一纪律）
-        let bumped = json.replace("\"v\": 1", "\"v\": 99");
+        let bumped = json.replace("\"v\": 2", "\"v\": 99");
         assert!(Keyring::from_json(&bumped).is_err());
 
         // ② 参数被改成另一套 ⇒ **在派生之前**就拒绝（否则会伪装成"口令错"）
@@ -492,4 +730,72 @@ mod tests {
         assert!(!kr.remove("a"), "扔第二次是 false，不是错误");
         assert_eq!(kr.unwrap_key(&m, "b").unwrap(), b1, "扔 a 不影响 b");
     }
+    // ── ⭐ 2026-10-24（加密空间自动同步 B1/B2）：多组公开材料 ──────────────────────────
+
+    fn fresh_group(pass: &str) -> (Keyring, AppKeys) {
+        let kr = Keyring::new();
+        let m = kr.kdf.derive_master(pass).unwrap();
+        (kr, m)
+    }
+
+    /// 两套不同盐的公开材料 ⇒ 合并成"一个袋子两组"；幂等；两组的盒子都能用**各自**的主密钥解开。
+    #[test]
+    fn merging_two_materials_keeps_both_groups_and_both_spaces_open() {
+        let (mut a, ma) = fresh_group("同一句口令八字");
+        let (mut b, mb) = fresh_group("同一句口令八字");
+        a.wrap(&ma, "sp-a", &random_space_key()).unwrap();
+        a.space_names.insert("sp-a".into(), "工作".into());
+        b.wrap(&mb, "sp-b", &random_space_key()).unwrap();
+        b.space_names.insert("sp-b".into(), "保险柜".into());
+
+        let r1 = a.merge_from(&b);
+        assert_eq!(r1.added_groups, 1, "不同盐 ⇒ 新组：{r1:?}");
+        assert_eq!(r1.added_spaces, 1);
+        assert_eq!(r1.total_spaces, 2);
+        assert!(r1.conflicting_spaces.is_empty());
+        assert_eq!(a.space_name("sp-b").as_deref(), Some("保险柜"), "空间名随材料一起并进来");
+
+        // 幂等：再并一次什么都不加
+        let r2 = a.merge_from(&b);
+        assert_eq!((r2.added_groups, r2.added_spaces), (0, 0), "{r2:?}");
+
+        // 解锁：一句口令 ⇒ 每组各一把主密钥 ⇒ 两组盒子都解得开
+        let masters: Vec<(String, AppKeys)> = a
+            .groups()
+            .into_iter()
+            .map(|(fp, kdf, _, _)| (fp, kdf.derive_master("同一句口令八字").unwrap()))
+            .collect();
+        assert_eq!(masters.len(), 2);
+        assert!(a.unwrap_key_with_groups(&masters, "sp-a").is_ok());
+        assert!(a.unwrap_key_with_groups(&masters, "sp-b").is_ok());
+        // 少了其中一组的主密钥 ⇒ 那一组明确报"解不开"，另一组照常
+        assert!(a.unwrap_key_with_groups(&masters[..1], "sp-b").is_err());
+    }
+
+    /// 同组同空间、但盒子不同（两边各自轮换过）⇒ **保留本地 + 记冲突**，绝不静默覆盖。
+    #[test]
+    fn a_box_conflict_is_reported_and_the_local_box_is_kept() {
+        let (mut a, ma) = fresh_group("同一句口令八字");
+        a.wrap(&ma, "sp-a", &random_space_key()).unwrap();
+        let local_box = a.spaces["sp-a"].box_hex.clone();
+        // 对端：同一份材料（同盐/参数），但给同一个空间换了盒子
+        let mut b = a.clone();
+        b.wrap(&ma, "sp-a", &random_space_key()).unwrap();
+        assert_ne!(b.spaces["sp-a"].box_hex, local_box);
+
+        let r = a.merge_from(&b);
+        assert_eq!(r.conflicting_spaces, vec!["sp-a".to_string()], "{r:?}");
+        assert_eq!(a.spaces["sp-a"].box_hex, local_box, "⛔ 冲突时不许覆盖本地盒子");
+    }
+
+    /// v1 老袋子（只有 kdf+spaces）必须还能读；读出来就是"一组"。
+    #[test]
+    fn a_v1_material_still_loads_as_one_group() {
+        let v1 = r#"{"v":1,"kdf":{"algo":"argon2id","salt_hex":"00112233445566778899aabbccddeeff","m_kib":65536,"t":2,"p":1,"sm_iterations":null},"spaces":{"sp-old":{"box_hex":"00"}}}"#;
+        let kr = Keyring::from_json(v1).expect("v1 必须还能读");
+        assert_eq!(kr.groups().len(), 1, "v1 = 只有主组");
+        assert!(kr.has("sp-old"));
+        assert_eq!(kr.space_ids(), vec!["sp-old".to_string()]);
+    }
+
 }

@@ -26,6 +26,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use rusqlite::Connection;
+use rusqlite::OptionalExtension;
 
 use crate::crypto::AppKeys;
 use crate::keyring::{random_space_key, Keyring};
@@ -37,6 +38,13 @@ pub const META_KEYRING: &str = "keyring";
 /// 会话里的**主密钥**（＝钥匙袋的 KDF 派生物）。与 `security::SESSION_KEY` 并列：
 /// 那一把是**旧的**应用级钥匙（过渡期还要用），这一把只用来解盒子。
 static SESSION_MASTER: Mutex<Option<AppKeys>> = Mutex::new(None);
+
+/// ⭐ 2026-10-24（加密空间自动同步 B2）：**每组公开材料各一把主密钥**（键＝组指纹）。
+///
+/// 为什么：同一个主口令 ＋ 不同的盐/参数 ⇒ **不同的主密钥**。合并了对端的公开材料之后，
+/// 要解它那些盒子，就必须用**它那一组**派生出主密钥 —— 所以解锁时按组各派生一次。
+/// ⚠️ 只活在内存；锁定/退出即清（与 `SESSION_MASTER` 同一纪律：主密钥不落盘）。
+static SESSION_MASTERS: Mutex<Vec<(String, AppKeys)>> = Mutex::new(Vec::new());
 
 /// 本进程当前知道的**公开材料**（解锁/启用时从 meta 载入；锁定时清掉）。
 static KEYRING: Mutex<Option<Keyring>> = Mutex::new(None);
@@ -54,6 +62,76 @@ pub fn space_id_from_path(path: &Path) -> Option<String> {
         return None;
     }
     Some(stem.to_string())
+}
+
+/// 把**袋子里的空间名**从 `meta.workspaces` 补上（只补缺的；⛔ 不动盒子/盐/参数），
+/// 并把**旧版本**的袋子抬到 `KEYRING_VERSION`。回「补了几个名字」。
+///
+/// ## 为什么需要（2026-10-24 真机卡点）
+///
+/// ```text
+/// 全仓只有三处碰 `space_names`：`Keyring::new()`（置空）、`merge_from`（从对端并进来）、`remove`。
+/// ⇒ 本地建出来的袋子**永远没有名字** ⇒ 对端拿到公开材料也建不出**同名**空间，
+///   只能建「未命名加密空间」（mac 侧 ⑥ 就卡在这一格 ✓）。
+/// ```
+///
+/// ## 四条口径
+///
+/// ① **只补缺的**：已经有名字的不覆盖（那可能是用户在另一台改过的 ✓）；
+/// ② **没东西可改就不写库**（不制造无意义的写 ✓）—— "可改" 含两件：缺名字 **或** `v` 比当前旧；
+/// ③ 写回**直接落 meta**（⛔ 不走 `store_keyring`：那会顺手改写进程内的 `KEYRING` 缓存，
+///    而这是启动时的修数据路径，不该在别人读那份副本时换掉它 ✓）；
+/// ④ ⛔ **不重新 wrap / 不换盐**（换盐＝已有盒子全解不开，这一格最容易做错 ✓）。
+pub fn fill_space_names(c: &Connection) -> Result<usize, String> {
+    let Some(text) = sync::get_meta_state(c, META_KEYRING) else {
+        return Ok(0); // 没有袋子 ⇒ 没什么可补的（不是错误 ✓）
+    };
+    let mut kr = Keyring::from_json(&text)?;
+    let mut added = 0usize;
+    for id in kr.space_ids() {
+        if kr.space_name(&id).is_some() {
+            continue; // 已有名字：不覆盖 ✓
+        }
+        // 名字的唯一来源是 meta.workspaces（与界面显示同一个 ✓）；删掉的空间不算（deleted_at ✓）
+        let name: Option<String> = c
+            .query_row(
+                "SELECT name FROM meta.workspaces WHERE id = ?1 AND deleted_at IS NULL",
+                [&id],
+                |r| r.get(0),
+            )
+            .optional()
+            .ok()
+            .flatten();
+        let Some(name) = name.filter(|n| !n.trim().is_empty()) else {
+            continue; // 查不到名字 ⇒ 跳过（⛔ 不编一个"未命名"塞进袋子 ✗）
+        };
+        if kr.set_space_name(&id, &name) {
+            added += 1;
+        }
+    }
+    // ⚠️ **版本旧也要写回**（2026-10-24 实测踩到）：只按"补了名字"判 ⇒ 名字早补过、版本停在 v1 时
+    //   这条路**整段跳过** ⇒ 对端永远看到 version 1（它就不知道"里面可能有 space_names"）。
+    let needs_bump = kr.v < crate::keyring::KEYRING_VERSION;
+    if added > 0 || needs_bump {
+        let from_v = kr.v;
+        // ⚠️ `to_json` 写的是袋子**自己那个** `v`（不会自己抬版本）⇒ 必须显式抬到当前版本 ✓
+        //   （`from_json` 认 [MIN, VERSION] 这个区间，v2 对我们自己是合法的 ✓）。
+        kr.v = crate::keyring::KEYRING_VERSION;
+        // ⚠️ **故意不走 `store_keyring`**：那个函数会顺手改写进程内的 `KEYRING` 缓存，
+        //   而这条是**启动时的修数据**路径 —— 不该在别人正读那份内存副本时把它换掉。
+        //   （2026-10-24 实测：走 `store_keyring` 时 `security::tests` 有 6 条红，
+        //     全是 SQLCipher `hmac check failed` 那一类"钥匙对不上"的形状 ✓）
+        //   内存副本由下一次 `carry_keyring`（解锁那一步一定会调）刷新 ✓；
+        //   ⛔ 而"推给对端"读的是 **meta**（`read_public_material`），不受影响 ✓。
+        sync::set_meta_state(c, META_KEYRING, &kr.to_json()?)?;
+        // ⚠️ **必须出声**：这次"只抬版本不补名字"的升级在真机上**无声发生过一次**
+        //   （v1 → v2 但日志里一行都没有）⇒ 下一个人只能靠猜。这两件事都得能看见 ✓。
+        eprintln!(
+            "[keyring] 公开材料已升级：v{from_v} → v{} ｜ 补了 {added} 个空间名 ｜ 盒子/盐/参数**一个字节都没动**",
+            crate::keyring::KEYRING_VERSION
+        );
+    }
+    Ok(added)
 }
 
 /// 把公开材料**载入**本进程（解锁/启用时调）。`None` ＝ meta 里没有 ⇒ 保持为空（旧路）。
@@ -123,10 +201,11 @@ pub fn adopt_material(c: &Connection, json: &str, overwrite: bool) -> Result<Ado
             let theirs = Keyring::from_json(json).map_err(|e| {
                 format!("这份公开材料读不懂（**没有采纳，本机一个字节都没改**）：{e}")
             })?;
-            let local_spaces: Vec<String> = mine.spaces.keys().cloned().collect(); // BTreeMap ⇒ 已升序
+            let local_spaces: Vec<String> = mine.space_ids();
+            let their_ids: Vec<String> = theirs.space_ids();
             let would_lose: Vec<String> = local_spaces
                 .iter()
-                .filter(|id| !theirs.spaces.contains_key(*id))
+                .filter(|id| !their_ids.contains(*id))
                 .cloned()
                 .collect();
             return Ok(AdoptReport {
@@ -140,7 +219,7 @@ pub fn adopt_material(c: &Connection, json: &str, overwrite: bool) -> Result<Ado
     }
     let kr = Keyring::from_json(json)
         .map_err(|e| format!("这份公开材料读不懂（**没有采纳，本机一个字节都没改**）：{e}"))?;
-    let spaces = kr.spaces.len();
+    let spaces = kr.space_ids().len();
     store_keyring(c, &kr)?; // 落 meta ＋ 装进本进程
     Ok(AdoptReport {
         adopted: true,
@@ -149,6 +228,53 @@ pub fn adopt_material(c: &Connection, json: &str, overwrite: bool) -> Result<Ado
         local_spaces: Vec::new(),
         would_lose: Vec::new(),
     })
+}
+
+/// ⭐ 2026-10-25（Windows 侧实测的坑）：**只落 meta、不碰进程内缓存**的写回。
+///
+/// 为什么不能一律用 `store_keyring`：它会顺手替换进程内的 `KEYRING` 缓存 ——
+/// 若这次写回发生在"解锁之后 / 启动早期"（例如回填空间名、增量并入材料），
+/// 正在用旧袋子解盒子的调用方会突然拿到另一份材料 ⇒ "盒子解不开 / hmac check failed"。
+/// 口径：**落盘为准，内存副本由下一次 `carry_keyring`（解锁那步一定调）刷新**。
+pub fn store_keyring_meta_only(c: &Connection, kr: &Keyring) -> Result<(), String> {
+    sync::set_meta_state(c, META_KEYRING, &kr.to_json()?)?;
+    Ok(())
+}
+
+/// ⭐ 2026-10-24（B1/B2）：**把对端的公开材料并进来**（不覆盖本地盒子）。
+///
+/// 与 [`adopt_material`] 的分工：
+/// · `adopt_material` = **整体采纳**（新设备那一路，`overwrite` 控权）；
+/// · 本函数 = **增量合并**（已经有两份时用；对端那组会作为额外组收下 ⇒ 解锁时按它再派生一次）。
+///
+/// ⚠️ 坏材料 ⇒ `Err` 且**本机一个字节都不改**（先解析、后落库）。
+pub fn merge_material(c: &Connection, json: &str) -> Result<crate::keyring::MergeReport, String> {
+    let theirs = Keyring::from_json(json)
+        .map_err(|e| format!("这份公开材料读不懂（**没有合并，本机一个字节都没改**）：{e}"))?;
+    let local = match stored_material(c)? {
+        Some(text) => Some(Keyring::from_json(&text)?),
+        None => None,
+    };
+    // ⭐ B1：本机**还没有任何盒子**（全新设备）⇒ 整体采纳对端那份（它成为主组）。
+    //   ⛔ 不能走"合并"：本地空袋子自带一个随机盐的主组 ⇒ 会多出一个永远解不开的空组，
+    //   而且主口令会按本地那个盐派生 ⇒ 对端盒子全解不开（这就是 B1 和 B2 的分界）。
+    if local.as_ref().map(|k| k.space_ids().is_empty()).unwrap_or(true) {
+        let groups = theirs.groups().len();
+        let spaces = theirs.space_ids().len();
+        store_keyring(c, &theirs)?;
+        return Ok(crate::keyring::MergeReport {
+            added_groups: groups,
+            added_spaces: spaces,
+            conflicting_spaces: Vec::new(),
+            total_spaces: spaces,
+        });
+    }
+    let mut mine = local.expect("上面已判空");
+    let report = mine.merge_from(&theirs);
+    // 冲突（同空间不同盒子）⇒ ⛔ 不覆盖：原样保留本地。报告里已列出，调用方必须记/显示。
+    // ⚠️ 只落 meta（别动进程内缓存：见 `store_keyring_meta_only` 的头注）。
+    store_keyring_meta_only(c, &mine)?;
+    Ok(report)
 }
 
 /// 本进程当前的公开材料（没有 ⇒ `None`）。
@@ -169,6 +295,25 @@ pub fn keyring_loaded() -> bool {
 /// 这是解锁时"口令对不对"的**唯一**判据（owner 第三轮拍板：哨兵已随应用级加密一起删，
 /// 由解盒子的 AEAD 回答）。袋子里**一个盒子都没有** ⇒ `Ok(())`：
 /// 那等价于"什么都还没加密"，没有可验证的东西，也不该因此报错。
+/// ⭐ B2：**每组各验一次**（每个有盒子的组，都要能用它那把主密钥解开至少一个盒子）。
+///
+/// 为什么要逐组验：合并了对端材料之后，只验主组等于"对端那组没验证"——那边口令/材料坏掉会
+/// 到真正开空间时才暴露；而那时用户已经以为解锁成功了。
+pub fn verify_masters_against_keyring(
+    kr: &Keyring,
+    masters: &[(String, AppKeys)],
+) -> Result<(), String> {
+    for (fp, _kdf, spaces, _names) in kr.groups() {
+        let Some(first) = spaces.keys().next() else { continue };
+        let Some((_, master)) = masters.iter().find(|(id, _)| id == &fp) else {
+            return Err("有一组公开材料没有对应的主密钥（解锁不完整）—— 请重新输一次口令".to_string());
+        };
+        kr.unwrap_key(master, first)
+            .map_err(|_| "打不开：口令不对，或者这把锁被改过 —— 内容没有被解开".to_string())?;
+    }
+    Ok(())
+}
+
 pub fn verify_master_against_keyring(kr: &Keyring, master: &AppKeys) -> Result<(), String> {
     if kr.spaces.is_empty() {
         return Ok(());
@@ -217,7 +362,42 @@ pub fn session_master() -> Option<AppKeys> {
 /// 装上 / 卸下会话主密钥（解锁 → 装；锁定 → 卸）。
 pub fn set_session_master(keys: Option<AppKeys>) -> Result<(), String> {
     *SESSION_MASTER.lock().map_err(|_| "会话锁失效".to_string())? = keys;
+    // 锁定（None）⇒ 各组的派生主密钥也一起卸下（⛔ 不许留一把能解盒子的）。
+    if keys.is_none() {
+        *SESSION_MASTERS.lock().map_err(|_| "会话锁失效".to_string())? = Vec::new();
+    }
     Ok(())
+}
+
+/// ⭐ B2：装上**按组派生**的主密钥表（解锁时由 [`masters_from_passphrase`] 产出）。
+pub fn set_session_masters(masters: Vec<(String, AppKeys)>) -> Result<(), String> {
+    *SESSION_MASTERS.lock().map_err(|_| "会话锁失效".to_string())? = masters;
+    Ok(())
+}
+
+/// ⭐ B2：本会话按组的主密钥（可能为空）。
+pub fn session_masters() -> Vec<(String, AppKeys)> {
+    SESSION_MASTERS.lock().map(|g| g.clone()).unwrap_or_default()
+}
+
+/// ⭐ B2：**一句口令 ⇒ 每组各一把主密钥**（主组在前）。没有袋子 ⇒ `Ok(None)`。
+///
+/// 这是"多组"存在的全部意义：对端的盐/参数也在这里，于是同一个口令能把它那组也解开。
+pub fn masters_from_passphrase(
+    c: &Connection,
+    passphrase: &str,
+) -> Result<Option<Vec<(String, AppKeys)>>, String> {
+    match sync::get_meta_state(c, META_KEYRING) {
+        Some(text) => {
+            let kr = Keyring::from_json(&text)?;
+            let mut out = Vec::new();
+            for (fp, kdf, _, _) in kr.groups() {
+                out.push((fp, kdf.derive_master(passphrase)?));
+            }
+            Ok(Some(out))
+        }
+        None => Ok(None),
+    }
 }
 
 /// 拿一句口令去**推出钥匙袋的主密钥**：meta 里没有袋子 ⇒ `Ok(None)`（不报错，旧路）。
@@ -246,6 +426,11 @@ pub fn space_key(space_id: &str) -> Result<Option<[u8; 32]>, String> {
     };
     if !kr.has(space_id) {
         return Ok(None); // 这个空间不在袋里 ⇒ 旧路（**别的空间的盒子不影响它**）
+    }
+    // ⭐ B2：优先用"按组派生"的主密钥；老路径（只有一把主密钥）保留兜底。
+    let masters = session_masters();
+    if !masters.is_empty() {
+        return Ok(Some(kr.unwrap_key_with_groups(&masters, space_id)?));
     }
     let master = session_master().ok_or_else(|| {
         format!("空间「{space_id}」按钥匙袋是加密的，但会话未解锁（请先输口令）")
@@ -278,7 +463,18 @@ pub fn space_key_for_path(path: &Path) -> Result<Option<[u8; 32]>, String> {
 /// 而谓词**零签名改动** ⇒ 一个禁区都不碰 ✓。
 pub fn space_needs_passphrase(space_id: &str) -> bool {
     match keyring() {
-        Some(kr) if kr.has(space_id) => session_master().is_none(),
+        Some(kr) if kr.has(space_id) => {
+            let masters = session_masters();
+            if !masters.is_empty() {
+                // 有这个空间的那一组，本会话派生过主密钥吗？
+                !kr
+                    .groups()
+                    .iter()
+                    .any(|(fp, _, spaces, _)| spaces.contains_key(space_id) && masters.iter().any(|(m, _)| m == fp))
+            } else {
+                session_master().is_none()
+            }
+        }
         _ => false,
     }
 }
@@ -682,6 +878,90 @@ mod tests {
         let kr = Keyring::new();
         let m = kr.kdf.derive_master(passphrase).unwrap();
         (kr, m)
+    }
+
+    /// ⭐⭐ **2026-10-24**：本地袋子**没有空间名** ⇒ 从 `meta.workspaces` 补上，**盒子/盐一个字节都不动**，
+    /// 版本随之到 v2。挡的事故：mac 侧拿到我们的公开材料却建不出**同名**空间（只能建"未命名加密空间"）——
+    /// 因为全仓**没有任何生产路径**会写 `space_names`（只有 `new`/`merge_from`/`remove` 碰它）。
+    ///
+    /// **变异**：把 `fill_space_names` 里那次 `store_keyring` 删掉 ⇒ 第一段红（版本仍 1、名字仍空）。
+    #[test]
+    fn filling_names_upgrades_a_v1_bag_to_v2_and_keeps_the_boxes_untouched() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             INSERT INTO meta.workspaces (id, name) VALUES ('sp-vault', '保险柜'), ('sp-gone', '已删');
+             UPDATE meta.workspaces SET deleted_at = 7 WHERE id = 'sp-gone';",
+        )
+        .unwrap();
+        let v1 = concat!(
+            r#"{"v":1,"kdf":{"algo":"argon2id","salt_hex":"00112233445566778899aabbccddeeff","#,
+            r#""m_kib":19456,"t":2,"p":1,"sm_iterations":null},"#,
+            r#""spaces":{"sp-vault":{"box_hex":"aabb"},"sp-gone":{"box_hex":"ccdd"}}}"#
+        );
+        sync::set_meta_state(&c, META_KEYRING, v1).unwrap();
+
+        let added = fill_space_names(&c).unwrap();
+        assert_eq!(added, 1, "只该补**活着且有名字**的那一个（删掉的那个不许补）");
+
+        let after = sync::get_meta_state(&c, META_KEYRING).unwrap();
+        let kr = Keyring::from_json(&after).unwrap();
+        assert_eq!(kr.v, 2, "写回之后版本应当到 v2（KEYRING_VERSION）");
+        assert_eq!(kr.space_name("sp-vault").as_deref(), Some("保险柜"));
+        assert_eq!(
+            kr.spaces.get("sp-vault").map(|b| b.box_hex.as_str()),
+            Some("aabb"),
+            "⛔ 盒子不许被改动"
+        );
+        assert_eq!(
+            kr.spaces.get("sp-gone").map(|b| b.box_hex.as_str()),
+            Some("ccdd"),
+            "⛔ 盒子不许被改动"
+        );
+        assert_eq!(
+            kr.kdf.salt_hex, "00112233445566778899aabbccddeeff",
+            "⛔ 盐不许换（换了＝已有盒子全解不开）"
+        );
+
+        // 幂等：再来一次 ⇒ 0 个变化，且**一个字节都不重写**
+        assert_eq!(fill_space_names(&c).unwrap(), 0, "第二次不该再有变化");
+        assert_eq!(
+            sync::get_meta_state(&c, META_KEYRING).unwrap(),
+            after,
+            "没有变化时⛔ 不许重写库（否则每次启动都在写 meta）"
+        );
+    }
+
+    /// ⭐ **2026-10-24 真机实测补的一条**：**名字已经在、版本还是旧的** ⇒ 仍然要抬版本。
+    ///
+    /// 踩到的现场：第一次修只按"补了名字没有"决定要不要写回 ⇒ 名字早补过、`v` 停在 1 ⇒
+    /// 这条路**整段跳过** ⇒ 对端永远看到 `version: 1`（它就不知道"里面可能有 space_names"）。
+    ///
+    /// **变异**：把 `needs_bump` 那一支删掉 ⇒ 本判据红（版本仍 1）。
+    #[test]
+    fn an_old_bag_is_bumped_to_v2_even_when_the_names_are_already_there() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             INSERT INTO meta.workspaces (id, name) VALUES ('sp-a', '保险柜');",
+        )
+        .unwrap();
+        let v1_with_names = concat!(
+            r#"{"v":1,"kdf":{"algo":"argon2id","salt_hex":"00112233445566778899aabbccddeeff","#,
+            r#""m_kib":19456,"t":2,"p":1,"sm_iterations":null},"#,
+            r#""spaces":{"sp-a":{"box_hex":"aabb"}},"#,
+            r#""space_names":{"sp-a":"保险柜"}}"#
+        );
+        sync::set_meta_state(&c, META_KEYRING, v1_with_names).unwrap();
+
+        assert_eq!(fill_space_names(&c).unwrap(), 0, "名字已经有了，不该再补");
+        let kr = Keyring::from_json(&sync::get_meta_state(&c, META_KEYRING).unwrap()).unwrap();
+        assert_eq!(kr.v, 2, "版本旧的袋子必须被抬到 v2（否则对端永远看到 version 1）");
+        assert_eq!(kr.space_name("sp-a").as_deref(), Some("保险柜"));
     }
 
     /// ⭐ owner 2026-10-10 截图：锁屏那句是**三层套娃** ＋ 把密码学术语直接给用户看 ✗。
@@ -1430,7 +1710,7 @@ mod tests {
         let (kr, _m) = master("pw");
         let good = kr.to_json().unwrap();
         assert!(Keyring::from_json(&good).is_ok());
-        let bumped = good.replace("\"v\": 1", "\"v\": 99");
+        let bumped = good.replace("\"v\": 2", "\"v\": 99");
         assert!(Keyring::from_json(&bumped).is_err(), "版本不认识要报错");
         assert!(Keyring::from_json("{ not json").is_err());
     }

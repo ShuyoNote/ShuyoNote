@@ -5,8 +5,8 @@
 //   ② 本机**没有加密空间** ⇒ **整节隐藏** —— 那时它既没有动作（`lock_encryption` 会直接报
 //      "这个空间没有加密"），也没有新信息（下面就是空间列表），留着只是占位。
 //
-// 为什么值得一条判据：这一节是"设置面板那一节换成按空间"之后**唯一留下来的非按空间内容**，
-// 很容易被后来的人当成"没删干净"又塞回去，或者反过来真删掉（那就没人能手动锁了）。
+// 2026-10-25 owner 拍 A：安全页的「空间隐私」整块删掉（统一到「设置 · 空间」页）；
+// 本文件仍守「会话锁定」那一节的行为。
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -76,8 +76,8 @@ describe("设置 → 安全", () => {
 
     expect(pane(), "有加密空间时应当有「会话锁定」").toContain("会话锁定");
     expect(pane(), "已解锁 ⇒ 给「立即锁定」入口").toContain("立即锁定");
-    // 它仍然只是"设置面板里的一节"，不是把整页占掉
-    expect(document.querySelector(".space-privacy"), "空间隐私那一节照旧在下面").not.toBeNull();
+    // 2026-10-25 owner 拍 A：安全页的「空间隐私」整块删掉，加密入口统一到「设置 · 空间」页
+    expect(document.querySelector(".space-privacy"), "安全页不该再有空间隐私那一节").toBeNull();
   });
 
   it("② 没有加密空间 ⇒ 「会话锁定」**整节隐藏**（没动作就别占位）", async () => {
@@ -86,8 +86,8 @@ describe("设置 → 安全", () => {
 
     expect(pane()).not.toContain("会话锁定");
     expect(pane()).not.toContain("立即锁定");
-    // 首页只剩空间隐私（这才是"设置里那一节换成按空间"的意思）
-    expect(document.querySelector(".space-privacy")).not.toBeNull();
+    // 安全页不再承载空间隐私（已统一到「设置 · 空间」页）
+    expect(document.querySelector(".space-privacy")).toBeNull();
   });
 
   it("③ 锁定时状态行说清后果（而不是给一个按不动的按钮）", async () => {

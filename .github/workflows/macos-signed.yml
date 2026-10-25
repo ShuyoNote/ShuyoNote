@@ -4,7 +4,7 @@ name: macOS (signed + notarized)
 #
 # 为什么单开一个 workflow、而不是直接打开 release.yml 的 macOS 矩阵行：
 #   ① release.yml 是**打 tag 自动触发**的；macOS 那格还带着一堆没有在 runner 上验过的步骤
-#      （静态 OpenSSL 自编、预签嵌套 dylib、公证）。把它塞进 tag 流里，等于让一次发版去试错 ——
+#      （静态 OpenSSL 前缀、预签嵌套 dylib、公证）。把它塞进 tag 流里，等于让一次发版去试错 ——
 #      Android 那次 `ClassNotFoundException` 闪退就是"自检包绿、发版件没验"的代价。
 #   ② 这里是 `workflow_dispatch`（手动）：第一次跑要**有人盯着读日志**，绿了之后再把同样的步骤
 #      搬进 release.yml 的矩阵（搬运时判据不变：`docs/macos-updater.md` §九 的三件证据）。
@@ -45,7 +45,7 @@ permissions:
 jobs:
   build-signed:
     runs-on: macos-latest
-    # 静态 OpenSSL 自编 ~8 分钟 ＋ Rust 全量 ~20–40 分钟 ＋ 公证排队；150 分钟是留够的。
+    # Homebrew 静态 OpenSSL 前缀 ~1 分钟 ＋ Rust 全量 ~20–40 分钟 ＋ 公证排队；150 分钟是留够的。
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
@@ -80,28 +80,25 @@ jobs:
         working-directory: src-tauri
         run: cargo fetch --locked
 
-      - name: 编静态 OpenSSL（macOS 没有系统 OpenSSL）
-        # 为什么不用 Homebrew 的 openssl@3：它默认出**共享库**，而发版件要自包含
-        # （`scripts/sm-library-build.mjs --require-static` 会拒绝带 .dylib 的前缀）。
-        # 版本钉 3.5.4：与仓库里对拍记录中的 `OpenSSL 3.5.4` 同源（docs/RELEASING.md 单一口味一节）。
+      - name: 准备静态 OpenSSL 前缀（Homebrew .a，不自己编）
+        # 2026-10-23 改：原步骤在 GitHub runner 上自编 OpenSSL 3.5.4，第一次 run 就红在这一步
+        # （还没走到签名）。本机实测 Homebrew openssl@3 同时带 libcrypto.a/libssl.a；
+        # 把它复制到一个**只有 .a、没有 .dylib** 的临时前缀，`--require-static` 就能通过。
+        # ⚠️ 这样就不再钉 3.5.4；要严格复现版本，后续可换成 runner 预编的固定前缀。
         run: |
           set -euo pipefail
-          VER=3.5.4
-          PREFIX="$RUNNER_TEMP/openssl-$VER"
-          curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-$VER/openssl-$VER.tar.gz" \
-            -o "$RUNNER_TEMP/openssl-$VER.tar.gz"
-          tar -xzf "$RUNNER_TEMP/openssl-$VER.tar.gz" -C "$RUNNER_TEMP"
-          cd "$RUNNER_TEMP/openssl-$VER"
-          ./Configure --prefix="$PREFIX" no-shared no-tests
-          make -j"$(sysctl -n hw.ncpu)"
-          make install_sw
-          # 显式断言：只有静态库（有 dylib 就说明 --no-shared 没生效）
-          ls -la "$PREFIX/lib"
+          brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+          SRC="$(brew --prefix openssl@3)"
+          PREFIX="$RUNNER_TEMP/openssl-static"
+          rm -rf "$PREFIX"
+          mkdir -p "$PREFIX/lib" "$PREFIX/include"
+          cp "$SRC/lib/libcrypto.a" "$SRC/lib/libssl.a" "$PREFIX/lib/"
+          cp -R "$SRC/include/openssl" "$PREFIX/include/"
           if ls "$PREFIX/lib"/*.dylib >/dev/null 2>&1; then
-            echo "::error::前缀里有 .dylib —— no-shared 没生效，发版件会依赖构建机"
+            echo "::error::前缀里有 .dylib —— 这会链接到构建机的共享库"
             exit 1
           fi
-          ls "$PREFIX/lib/libcrypto.a"
+          ls -lh "$PREFIX/lib"
           echo "OPENSSL_DIR=$PREFIX" >> "$GITHUB_ENV"
 
       - name: 打国密补丁并交给构建步骤（--prepare ＋ --print-env）
@@ -141,9 +138,9 @@ jobs:
         # 修法：打包**之前**把 vendor 里那份签好，Tauri 整份复制时签名跟着走。
         run: |
           set -euo pipefail
-          IDENTITY="$(security find-identity -v -p codesigning build.keychain | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
+          IDENTITY="$(security find-identity -v -p codesigning build.keychain | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | grep "(${APPLE_TEAM_ID})" | head -1)"
           if [ -z "$IDENTITY" ]; then
-            echo "::error::钥匙串里没有 Developer ID Application 身份（证书导入那步的日志里应能看到 find-identity）"
+            echo "::error::钥匙串里没有团队 ${APPLE_TEAM_ID} 的 Developer ID Application 身份（证书导入那步的日志里应能看到 find-identity）"
             exit 1
           fi
           echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
@@ -152,6 +149,8 @@ jobs:
             -s "$IDENTITY" \
             src-tauri/vendor/pdfium/mac-univ/lib/libpdfium.dylib
           codesign -d --verbose=4 src-tauri/vendor/pdfium/mac-univ/lib/libpdfium.dylib 2>&1 | grep -E 'Authority|Timestamp|flags' || true
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: 决定更新器工件开关（没有 TAURI 私钥就关掉）
         # 发版要 `.app.tar.gz` + `.sig` 才能自动更新，而那需要 TAURI_SIGNING_PRIVATE_KEY。
@@ -214,6 +213,7 @@ jobs:
           fi
 
       - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bundle-macos-signed

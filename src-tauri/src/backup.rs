@@ -11,6 +11,171 @@ pub struct BackupResult {
     /// `备份跳过加密空间 …`，用户拿到一个"看起来成功"的包，**里面却没有那些空间的数据**。
     /// 现在把 `"<spaceId>: <原因>"` 原样带回给调用方，界面必须显示它。
     pub skipped: Vec<String>,
+    /// ⭐ **2026-10-25**：**孤儿库** —— `spaces/*.db` 在磁盘上，但 `meta.workspaces` 里**没有这一行**
+    /// （界面上根本看不到的空间）。它们照样会被打进备份（⛔ 不静默丢一份可能含内容的库 ✗），
+    /// 但必须**点名**：否则"备份 122 MB 里有多少是看不见的库"永远没人知道。
+    #[serde(default)]
+    pub orphans: Vec<String>,
+}
+
+/// 收尸判据：**0 字节的半个包**或 `.part`，并且**老到不可能是活的**（>1 小时）。
+///
+/// ⚠️ 年龄闸门是这条的命门（2026-10-25 真机）：备份刚开写时 `.part` 就是 0 字节，
+/// 无脑删会删掉**正在写**的那一份。判据把这条钉住（`a_fresh_zero_byte_part_is_not_swept`）。
+fn should_sweep_debris(name: &str, size: u64, age_secs: Option<u64>) -> bool {
+    let old = age_secs.map(|s| s > 3600).unwrap_or(false);
+    let debris = size == 0 || name.ends_with(".part");
+    debris && old
+}
+
+/// 多老的 `.part` 算残留：本机一次备份（约 120 MB）实测 ~90 秒 ⇒ **1 小时**是极宽的余量。
+/// ⚠️ 宁可留久一点：清早了会删掉**正在写**的那一份（两个实例同时跑时就是这个形状 ✓）。
+pub(crate) const STALE_PART_MS: i64 = 60 * 60 * 1000;
+
+/// 这个名字是不是**我们自己**的备份文件（`shuyonote-backup-<毫秒>.zip` / `.zip.part`）。
+///
+/// ⚠️ 只认这个形状：`backups/` 是用户目录，⛔ 不碰任何不是我们写的东西 ✗
+/// （保留分层那一侧也是同一条纪律：只删自己命名的 ✓）。
+fn is_our_backup_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("shuyonote-backup-") else {
+        return false;
+    };
+    let stem = rest
+        .strip_suffix(".zip.part")
+        .or_else(|| rest.strip_suffix(".zip"));
+    match stem {
+        Some(s) => !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()),
+        None => false,
+    }
+}
+
+/// `backups/` 里**超过 `max_age_ms` 的 `.part`**（＝写一半被中断留下的尸体）。
+///
+/// 为什么要有它（2026-10-25 真机）：我 kill 进程时留下一个 **0 字节的 `.part`**，
+/// 而保留分层**只认有效快照**（`.part` 不算）⇒ 它不会被当成备份、也**永远不会被清**。
+pub(crate) fn stale_parts(dir: &Path, now_ms: i64, max_age_ms: i64) -> Vec<PathBuf> {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PathBuf> = Vec::new();
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !name.ends_with(".zip.part") || !is_our_backup_name(&name) {
+            continue;
+        }
+        let Ok(md) = e.metadata() else { continue };
+        let Ok(modified) = md.modified() else { continue };
+        let Ok(age) = modified.duration_since(std::time::UNIX_EPOCH) else {
+            continue;
+        };
+        let mtime_ms = age.as_millis() as i64;
+        if now_ms.saturating_sub(mtime_ms) > max_age_ms {
+            out.push(e.path());
+        }
+    }
+    out.sort();
+    out
+}
+
+/// 清残留 `.part`；回「清掉几个」。⛔ 只删 [`stale_parts`] 点名的那些 ✓。
+fn remove_stale_parts(dir: &Path) -> usize {
+    let now_ms = crate::auto_backup::now_unix() as i64 * 1000;
+    let mut n = 0usize;
+    for p in stale_parts(dir, now_ms, STALE_PART_MS) {
+        if std::fs::remove_file(&p).is_ok() {
+            n += 1;
+        }
+    }
+    n
+}
+
+/// 把一次备份的读数压成**一行**（日志与 UI 共用同一句，⛔ 不写第二遍 ✗）。
+///
+/// 形状：`size=<字节> skipped=<n>（<空间: 原因>；…） 孤儿库=<n>（<id>、…）`
+/// —— 括号里只在**非零**时出现（正常那天的日志形状**一个字节都不变** ✓）。
+pub(crate) fn summary_note(size: i64, skipped: &[String], orphans: &[String]) -> String {
+    let mut s = format!("size={size} skipped={}", skipped.len());
+    if !skipped.is_empty() {
+        s.push_str("（");
+        s.push_str(
+            &skipped
+                .iter()
+                .map(|line| short_space_line(line))
+                .collect::<Vec<_>>()
+                .join("；"),
+        );
+        s.push('）');
+    }
+    if !orphans.is_empty() {
+        s.push_str(&format!(
+            " 孤儿库={}（{}）",
+            orphans.len(),
+            orphans
+                .iter()
+                .map(|id| short_space_id(id))
+                .collect::<Vec<_>>()
+                .join("、")
+        ));
+    }
+    s
+}
+
+/// `"<36 位空间 id>: 原因"` ⇒ `"<前 8 位>…: 原因"`（一行日志里塞不下 36 位 × N 条 ✓）。
+fn short_space_line(line: &str) -> String {
+    match line.split_once(':') {
+        // ⚠️ `split_once(':')` 的 `rest` **不含那个冒号** ⇒ 必须自己补回去
+        //   （2026-10-25 实测：漏了它，日志里会变成「99082b5a…空间是密文…」✗）
+        Some((id, rest)) => format!("{}:{}", short_space_id(id), rest),
+        None => line.to_string(),
+    }
+}
+
+fn short_space_id(id: &str) -> String {
+    let id = id.trim();
+    if id.len() > 8 {
+        format!("{}…", &id[..8])
+    } else {
+        id.to_string()
+    }
+}
+
+/// ⭐ **2026-10-25**：哪些 `spaces/*.db` 在 `meta.workspaces` 里**没有行**（孤儿库）。
+///
+/// 为什么要它：备份是**按目录**打的（`snapshot_spaces` 遍历 `spaces/`），不看 meta ⇒
+/// 界面上看不见的库也会进包（真机实测：13 个库 / 9 个活空间 ⇒ 4 个孤儿）。
+/// 口径：⛔ **不因此少打包**（那可能是一份用户内容，只是 meta 行丢了 ✗）；只**如实点名** ✓。
+pub(crate) fn orphan_space_ids(
+    meta_file: &Path,
+    spaces_dir: &Path,
+) -> Result<Vec<String>, String> {
+    let known: std::collections::HashSet<String> = {
+        let c = rusqlite::Connection::open(meta_file).map_err(|e| e.to_string())?;
+        let mut st = c
+            .prepare("SELECT id FROM workspaces")
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    let mut out: Vec<String> = Vec::new();
+    let Ok(rd) = std::fs::read_dir(spaces_dir) else {
+        return Ok(out); // 没有目录 ⇒ 没有孤儿（不是错误 ✓）
+    };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(id) = name.strip_suffix(".db") else {
+            continue;
+        };
+        if id.is_empty() || id.starts_with('.') {
+            continue;
+        }
+        if !known.contains(id) {
+            out.push(id.to_string());
+        }
+    }
+    out.sort();
+    Ok(out)
 }
 
 /// Result of a merge import: how many spaces were imported, and how many had an
@@ -222,6 +387,9 @@ pub async fn export_backup(
     // ★ 被跳过的空间要**带回给用户**（原来只在 stderr 打一行，包看起来是成功的）。
     //   钥匙**按空间**在 `snapshot_spaces` 里各取各的（应用级那把会话钥匙已随应用级加密一起删）。
     let (space_snapshots, skipped) = snapshot_spaces(&spaces_dir, &tmp_root)?;
+    // ⭐ 2026-10-25：**孤儿库**（目录里有 `.db`、`meta.workspaces` 里没有行）——
+    //   它们照样进包（⛔ 不静默丢一份可能含内容的库 ✗），但要**点名**，见 `orphan_space_ids`。
+    let orphans = orphan_space_ids(&meta_file, &spaces_dir)?;
 
     let app2 = app.clone();
     let attachments2 = attachments_dir;
@@ -281,6 +449,7 @@ pub async fn export_backup(
             path: dest_path.clone(),
             size,
             skipped,
+            orphans,
         })
     })
     .await
@@ -309,6 +478,15 @@ pub async fn run_auto_backup_once(app: &tauri::AppHandle) -> crate::auto_backup:
     let dir = app_data.join("backups");
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return RunResult::Failed { note: format!("建备份目录失败：{e}") };
+    }
+    // ⭐ 2026-10-25：**先收尸**（写一半被中断留下的 `.part`）——
+    //   保留分层只认"有效快照"，`.part` 不算 ⇒ 它不会被当成备份，也**永远不会被清**（真机见过 0 字节的）。
+    //   ⚠️ 只删 `stale_parts` 点名的那些（≥1 小时 + 名字是我们自己的）⇒ 正在写的那份不会被误删 ✓。
+    match remove_stale_parts(&dir) {
+        0 => {}
+        n => eprintln!(
+            "[auto-backup] 清掉 {n} 个残留 .part（写一半被中断留下的；⛔ 它们从来不算一份备份）"
+        ),
     }
     // ⚠️ 名字带**毫秒**（同秒两次调度不互相覆盖 ✗）＋ 先写 `.part` ⇒ **成功后才 rename** ✓
     //    （实测：我杀进程时留下过一个 0 MB 的 .zip ✗ —— 那会被保留策略当成"一份有效备份" ✓）
@@ -351,14 +529,16 @@ pub async fn run_auto_backup_once(app: &tauri::AppHandle) -> crate::auto_backup:
                     }
                     let sz = std::fs::metadata(ent.path()).map(|m| m.len()).unwrap_or(0);
                     if !crate::auto_backup::is_valid_snapshot(&name, sz) {
-                        // ⚠️ 0 字节的 .zip ＝ 老版本留下的半个包 ⇒ 删掉 ✓；`.part` 若是旧的就一起清 ✓
-                        let old = std::fs::metadata(ent.path())
+                        // ⚠️ **必须带年龄闸门**（2026-10-25 真机踩到）：备份**刚开写的那几秒**，
+                        //   `.part` 的大小就是 **0** ⇒ 无脑按 `sz == 0` 删，会删掉**正在写**的那一份
+                        //   （慢盘 / 两个实例同时跑时就会撞上；rename 然后失败，或留下半个包）。
+                        //   ⇒ 只清"老到不可能是活的"那些（>1h，与 `STALE_PART_MS` 同一把尺）。
+                        let age_secs = std::fs::metadata(ent.path())
                             .and_then(|m| m.modified())
                             .ok()
                             .and_then(|t| t.elapsed().ok())
-                            .map(|d| d.as_secs() > 3600)
-                            .unwrap_or(false);
-                        if sz == 0 || (name.ends_with(".part") && old) {
+                            .map(|d| d.as_secs());
+                        if should_sweep_debris(&name, sz, age_secs) {
                             let _ = std::fs::remove_file(ent.path());
                         }
                         continue;
@@ -385,7 +565,9 @@ pub async fn run_auto_backup_once(app: &tauri::AppHandle) -> crate::auto_backup:
             RunResult::Ok {
                 kept: plan.keep.len(),
                 removed,
-                note: format!("size={} skipped={}", r.size, r.skipped.len()),
+                // ⭐ 2026-10-25：**跳过与孤儿都要点名**（原来只给计数 ⇒ 日志/UI 都看不出
+                //   "是哪个空间、为什么"，和这两天修的"静默"是同一族 ✓）。
+                note: summary_note(r.size, &r.skipped, &r.orphans),
             }
         }
         Err(e) => RunResult::Failed { note: format!("导出失败：{e}") },
@@ -935,12 +1117,18 @@ pub struct AutoBackupRunReport {
 #[tauri::command]
 pub async fn auto_backup_run_now(app: tauri::AppHandle) -> AutoBackupRunReport {
     use crate::auto_backup::RunResult;
-    match run_auto_backup_once(&app).await {
+    let r = match run_auto_backup_once(&app).await {
         RunResult::Ok { kept, removed, note } => AutoBackupRunReport { ran: true, kept, removed, note },
         // ⭐ 跳过／失败都**照实回**（⛔ 不假装跑成功 ✗）
         RunResult::Skipped { note } => AutoBackupRunReport { ran: false, kept: 0, removed: 0, note },
         RunResult::Failed { note } => AutoBackupRunReport { ran: false, kept: 0, removed: 0, note },
-    }
+    };
+    // ⭐⭐ **2026-10-25**：**手动那次也要留一行日志** ——
+    //   真机踩到：点了「立即备份」后，日志里**一条都不多**（自动那趟由 `lib.rs` 打，
+    //   手动这条只把报告回给 UI）⇒ "刚才那次跑没跑、跳了几个、包里有没有那个空间"只能靠猜。
+    //   形状与自动那趟一致（前缀相同），只是多一个 `手动` 标记，便于 grep 区分。
+    eprintln!("[auto-backup] 手动 ｜ {}", r.note);
+    r
 }
 
 #[cfg(test)]
@@ -948,7 +1136,125 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
 
+    /// ⭐ **2026-10-25**：**收尸必须带年龄闸门** —— 备份刚开写的几秒，`.part` 就是 **0 字节**。
+    ///
+    /// 真机现场：我建了一个"刚创建、0 字节"的对照 `.part`，结果它在下一趟备份后**消失了** ——
+    /// 旧规则是 `sz == 0 ⇒ 无条件删`（没有年龄条件）⇒ 那正是"删掉正在写的那一份"的形状。
+    ///
+    /// **变异**：把 `should_sweep_debris` 的 `&& old` 去掉 ⇒ 第一条断言红。
+    #[test]
+    fn a_fresh_zero_byte_part_is_not_swept() {
+        // 刚开的备份：0 字节、年龄 3 秒 ⇒ ⛔ 不许删
+        assert!(!should_sweep_debris("shuyonote-backup-1.zip.part", 0, Some(3)));
+        assert!(!should_sweep_debris("shuyonote-backup-1.zip.part", 1024, Some(3)));
+        // 一小时以上的尸体 ⇒ 收
+        assert!(should_sweep_debris("shuyonote-backup-1.zip.part", 1024, Some(7200)));
+        assert!(should_sweep_debris("shuyonote-backup-1.zip.part", 0, Some(7200)));
+        // 0 字节的老 `.zip`（老版本留下的半个包）⇒ 收；新的一律不碰
+        assert!(should_sweep_debris("shuyonote-backup-1.zip", 0, Some(86400)));
+        assert!(!should_sweep_debris("shuyonote-backup-1.zip", 0, Some(3)));
+        // 正常的包（有内容、不是 .part）⇒ 永远不走这条（它由保留分层管）
+        assert!(!should_sweep_debris("shuyonote-backup-1.zip", 999, Some(86400)));
+        // 摸不到 mtime ⇒ **不动**（不猜）
+        assert!(!should_sweep_debris("shuyonote-backup-1.zip.part", 0, None));
+    }
+
+    /// ⭐ **2026-10-25**：`backups/` 里**写一半的 `.part`** 要能被收掉，而且**只能收我们自己命名的**。
+    ///
+    /// 真机来由：我用 `Stop-Process` 杀掉 app 时留下一个 **0 字节 `.part`**；保留分层只认有效快照
+    /// ⇒ 它既不算备份、**也永远不会被清**，白占一个"看起来像备份"的名字。
+    ///
+    /// **变异**：把 `is_our_backup_name` 放宽成"凡 `.zip.part` 都算" ⇒ 本判据里那个 `other.zip.part` 会被收 ⇒ 红。
+    #[test]
+    fn stale_parts_only_collects_our_own_old_ones() {
+        let dir = uniq_tmp("parts");
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 3600);
+        let fresh = std::time::SystemTime::now();
+
+        let mk = |name: &str, when: std::time::SystemTime| {
+            let p = dir.join(name);
+            std::fs::write(&p, b"x").unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&p)
+                .unwrap()
+                .set_modified(when)
+                .unwrap();
+            p
+        };
+        let stale = mk("shuyonote-backup-1792880124215.zip.part", old);
+        mk("shuyonote-backup-1792880954877.zip.part", fresh); // 太新 ⇒ 不动
+        mk("other.zip.part", old); // 不是我们的名字 ⇒ 不动
+        mk("shuyonote-backup-1792880124215.zip", old); // 不是 .part ⇒ 不动
+        mk("shuyonote-backup-abc.zip.part", old); // 名字形状不对 ⇒ 不动
+
+        let now_ms = crate::auto_backup::now_unix() as i64 * 1000;
+        let got = stale_parts(&dir, now_ms, STALE_PART_MS);
+        assert_eq!(got, vec![stale.clone()], "只该收**我们自己的 + 超过 1 小时**的那一个");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     static TMP_SEQ: AtomicU32 = AtomicU32::new(0);
+
+    /// ⭐ **2026-10-25**：那一行读数必须能**点名**（跳过谁、哪些是孤儿库），
+    /// 而干净那天**形状一个字节都不许变**（老日志/老判据照旧认）。
+    ///
+    /// **变异**：把 `summary_note` 退回 `format!("size={} skipped={}", …)` ⇒ 后两段红。
+    #[test]
+    fn the_summary_note_names_the_skipped_spaces_and_the_orphan_dbs() {
+        // ① 干净：与旧版逐字相同（多一个空格都算破坏）
+        assert_eq!(summary_note(123, &[], &[]), "size=123 skipped=0");
+
+        // ② 有跳过 ⇒ 点名（id 截 8 位），原因原样留着
+        let note = summary_note(
+            9,
+            &["99082b5a-dc25-4712-b2c9-fcff13612e64: 空间是密文但拿不到它的钥匙".to_string()],
+            &[],
+        );
+        assert_eq!(note, "size=9 skipped=1（99082b5a…: 空间是密文但拿不到它的钥匙）");
+
+        // ③ 有孤儿 ⇒ 单独一格点名（⛔ 不混进 skipped：那不是"没备份"，是"界面上看不见"）
+        let note = summary_note(
+            9,
+            &[],
+            &[
+                "245461d6-1de2-4bf0-a946-8076a93e8053".to_string(),
+                "ad6b0daf-zzzz".to_string(),
+            ],
+        );
+        assert_eq!(note, "size=9 skipped=0 孤儿库=2（245461d6…、ad6b0daf…）");
+    }
+
+    /// ⭐ **2026-10-25**：`spaces/*.db` 里有、`meta.workspaces` 里**没有行**的 ⇒ 孤儿库
+    /// （真机实测：13 个库 / 9 个活空间 ⇒ 4 个孤儿，且它们**每次备份都进包**）。
+    ///
+    /// **变异**：把 `known` 那个集合改成空 ⇒ 本判据红（全都算孤儿）。
+    #[test]
+    fn orphan_dbs_are_the_files_without_a_workspace_row() {
+        let dir = uniq_tmp("orphan");
+        std::fs::create_dir_all(dir.join("spaces")).unwrap();
+        let meta = dir.join("meta.db");
+        {
+            let c = rusqlite::Connection::open(&meta).unwrap();
+            c.execute_batch(
+                "CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+                 INSERT INTO workspaces (id) VALUES ('live-a'), ('live-b');",
+            )
+            .unwrap();
+        }
+        for f in ["live-a.db", "live-b.db", "ghost-1.db", "ghost-2.db"] {
+            std::fs::write(dir.join("spaces").join(f), b"x").unwrap();
+        }
+        // `-wal` / `-shm` 不是库文件（⛔ 不许被算成孤儿）
+        std::fs::write(dir.join("spaces").join("live-a.db-wal"), b"x").unwrap();
+        std::fs::write(dir.join("spaces").join("live-a.db-shm"), b"x").unwrap();
+
+        let got = orphan_space_ids(&meta, &dir.join("spaces")).unwrap();
+        assert_eq!(got, vec!["ghost-1".to_string(), "ghost-2".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn uniq_tmp(tag: &str) -> PathBuf {
         let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);

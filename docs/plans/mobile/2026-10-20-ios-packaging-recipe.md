@@ -74,3 +74,128 @@ macOS 侧报回：iOS 包能起，但界面出现**桌面界面**。当时怀疑
 - 平台细节与历史排查：[`../../MOBILE.md`](../../MOBILE.md) 的「iOS 现状」一节。
 - 需求与状态：[`./2026-10-20-mobile-requirements-complete.md`](./2026-10-20-mobile-requirements-complete.md)。
 - 技术方案：[`./2026-10-20-mobile-tech-plan-complete.md`](./2026-10-20-mobile-tech-plan-complete.md)。
+
+---
+
+## 6. 2026-10-23：固化成脚本 ＋ **公司签名**打通（本机 macOS 实跑）
+
+> 状态：施工记录。上一节（10-20）的手工链路已收进 `scripts/ios-build.mjs`，`/tmp` 依赖已消除。
+
+### 6.1 一条命令
+
+```bash
+node scripts/ios-build.mjs                    # 默认 --sign company ⇒ App Store 分发档（公司主体 D53949JLS2）
+node scripts/ios-build.mjs --sign company --dev  # 公司 team 的开发档（Apple Development；需已注册真机）
+node scripts/ios-build.mjs --sign personal    # 显式个人签名（xuechen zhai / 本机调试用；⛔ 不作交付物）
+node scripts/ios-build.mjs --sim --run-sim    # 模拟器构建 + 装/启/截图
+```
+
+退出码：`0` 通过 ／ `1` 失败 ／ `2` **阻塞**（代理、网络、SwiftPM 缓存、签名缺件 —— 不是通过）。
+
+### 6.2 这一版把哪些"手工坑"固化了
+
+| 项 | 10-20 手工做法 | 现在 |
+|---|---|---|
+| SwiftPM 4 个归档 | 手工 `ar rcs` 到 `/tmp/ios-swiftpm-libs/`（`/tmp` 一清就得重来） | 脚本从 `target/<rust-target>/release/build/*/out/swift-rs/**/Intermediates.noindex` 取 .o，装到 **`src-tauri/target/ios-swiftpm-libs/`**（sim 在 `…/sim/`），装库后 `nm -arch arm64 -gU` 回验 |
+| `project.yml` 的链接路径 | 写死 `/tmp/...` | 脚本改成 `$(PROJECT_DIR)/../../target/ios-swiftpm-libs/…`（与机器/用户名无关） |
+| pbxproj 定制 | 靠手工跑 xcodegen | 脚本在改完 project.yml 后**必跑** `xcodegen generate` 并回验 pbxproj 里有新路径 |
+| 版号 | `project.yml` 里写死（实测过期成 1.91.26） | 每次从 `tauri.conf.json` 同步；IPA 再回读校验 |
+| IPA 里的残留 | 12 个 `.o` ＋ `*.swiftmodule/.swiftdoc/.swiftsourceinfo` ＋ `Info.plist.bak-noscene` | `Externals` / `shuyonote_iOS` 两处 `sources.excludes` 补齐 ⇒ 现为 **0 个** |
+| `cargo build --lib` | 直接跑会红在 app 的 cdylib 链接 | 脚本带上 `project.yml` 里那个 `RUSTFLAGS=-C link-arg=-Wl,-undefined,dynamic_lookup`（与 Xcode 侧同一处事实源） |
+
+### 6.3 公司签名（App Store 分发）：为什么不是"直接 `pnpm tauri ios build`"
+
+本机/本队实测（逐字）：
+
+1. `xcodebuild … build`（tauri 的 device 构建第一步）走 **development** 签名 ⇒ 公司 team **0 台注册设备**时：
+   `Communication with Apple failed: Your team has no devices from which to generate a provisioning profile.`
+   `No profiles for 'cn.shuyo.shuyonote' were found: Xcode couldn't find any iOS App Development provisioning profiles matching 'cn.shuyo.shuyonote'.`
+2. 把 `CODE_SIGN_IDENTITY` 改成 `Apple Distribution` 也不行（automatic 签名在 build 阶段按 development 解析）：
+   `has conflicting provisioning settings. shuyonote_iOS is automatically signed for development, but a conflicting code signing identity Apple Distribution has been manually specified.`
+3. ✅ 可行路径（脚本 ⑥ 用的就是它）：**tauri 只归档不签名**（`--no-sign --archive-only`），
+   再由脚本跑
+   `xcodebuild -exportArchive -archivePath <xcarchive> -exportOptionsPlist <method=app-store-connect,teamID=D53949JLS2,signingStyle=automatic> -exportPath <dir> -allowProvisioningUpdates`
+   ⇒ Xcode 用已登录的公司账号**自动创建** `Cloud Managed Apple Distribution` 证书 ＋
+   `iOS Team Store Provisioning Profile: cn.shuyo.shuyonote`（两者均 2027-10-23 到期），并导出分发 IPA。
+   **App Store 描述文件不需要设备**，所以这条路绕开了"0 台设备"。
+
+本机已出包（2026-10-23 19:59，`dab65697`）：
+`build/arm64/ShuyoNote.ipa` ＝ **35,456,557 B**，sha256 `38e6f1123067e7181c26a50426a84370dc2458d668fc22a744122391fa0fc96f`，
+`CFBundleShortVersionString=1.92.25`，签名 `Apple Distribution: Puyang Shuyou … (D53949JLS2)`，
+`get-task-allow=false`、`beta-reports-active=true`。
+⚠️ 它是**分发签名** ⇒ 不能直接装进本机 iPhone 调试；真机调试要 `--sign company --dev`（需先注册设备）。
+
+### 6.4 「iOS 显示桌面界面」：模拟器读数（2026-10-23）
+
+模拟器（iPhone 17 / iOS 27.0 runtime）上这套 `tao 0.35.3` 只有三种态，**都画不出正常画面**：
+
+| `UIApplicationSceneManifest` | 结果（逐字） |
+|---|---|
+| 最小（只有 `UIApplicationSupportsMultipleScenes=false`，= 10-20 真机那份） | `SIGTRAP`：`Application failed to launch: UIScene life cycle is required for apps built with this SDK.` |
+| 完整（＋`UISceneConfigurations`：`TaoScene`/`TaoSceneDelegate`），`false` | 进程活着 ✓、WebView 真的加载并 `didCommitLoadForFrame` ✓，但**全黑** |
+| 完整，`true` | 启动即崩：`EXC_BAD_ACCESS/SIGSEGV`，栈顶 `-[UIApplication _connectUISceneFromFBSScene:transitionContext:]` |
+
+在那张"活着但黑"的态里，用注入探针（只存在于 `/tmp/dist-probe`，未进仓）读到了决定性读数：
+
+```
+UA        = Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 …) … Mobile/15E148   → isMobileUserAgent = true
+innerW/H  = 0 / 0       （appRect 也是 0×0）      screen = 402×874  dpr = 3
+mq768     = true         coarse = true            tauri = true
+渲染      = .mhome-head ✓  .mtab-bar ✓  （手机壳**确实渲染出来了**）
+```
+
+⇒ **前端判定与手机壳都没问题**（`matchMedia(max-width:768px)` 为 true，UA 含 iPhone）；
+黑屏的真因是 **WKWebView 的视口是 0×0**（窗口没接进 scene ⇒ 没有尺寸）。
+⇒ 「真机显示桌面界面」在模拟器**无法复现**（模拟器只到黑屏/崩溃）；它只可能出在**真机那条 legacy 窗口路径**上
+（`tao 0.35.3` 的 `multiple_scenes_enabled()` 读的是 plist 布尔值，最小 manifest ⇒ 走 app-delegate 老路，
+窗口 `setWindowScene:` 不会被调用）——那一条**需要真机读数**才能定死：用 `--frontend-dist` 打一份带探针的包，
+在真机上量 `innerWidth`（>768 即落进桌面分支）。**未验证的猜测不当结论**。
+
+### 6.5 还差的（owner / 上架侧，不是打包链）
+
+- **App Store Connect 应用记录**（上架 / TestFlight 用）——本机没有 ASC API key，需 owner 建。
+- **真机安装**：需插 iPhone（自动注册设备）后 `--sign company --dev`；分发签名的 IPA 不能直接装。
+- 模拟器运行时只有 **iOS 27.0**，而 SDK 是 27.1 ⇒ Tauri CLI 的精确匹配检查会拦模拟器构建；
+  本次诊断用了一个只存在于 `/tmp/fakebin` 的 `xcrun` shim 把版本号"说成" 27.1（不改系统、不联网），
+  ⛔ 它只是诊断手段，**不在**打包脚本里。要么装 iOS 27.1 runtime（需联网下载），要么等 Tauri CLI 放宽。
+
+### 6.6 2026-10-23 真机收口（「iOS 显示桌面」定死 + 两个修复 + TestFlight 链路）
+
+**① 真机读数（iPhone 17，公司开发签名探针包）**
+
+```
+修复前：innerWidth/innerHeight = 1200 / 800 ｜ outerWidth = 1200 ｜ screen = 402×874
+        mq768 = false ｜ .mtab-bar 未渲染            ⇒ 渲染的是**桌面布局**
+真因：  src-tauri/src/lib.rs 主窗口 builder 上**无条件**的 `.inner_size(1200.0, 800.0)`
+        ⇒ iOS 窗口被建成 1200×800（不是屏幕尺寸）⇒ CSS 断点全部落进桌面分支
+修复：  该调用改为 `#[cfg(desktop)]`（移动端交给系统铺满屏幕）
+修复后：innerWidth/innerHeight = 402 / 874 ｜ mq768 = true ｜ .mtab-bar/.mhome-head 渲染 ✓
+```
+
+**② 状态栏叠字（修复后暴露出来的第二个坑）**
+
+```
+现象：状态栏时间与 App 标题重叠（截图逐字对比见 _tmp/scratch/iphone-statusbar-overlap.png / …-fixed.png）
+真因：src/lib/viewportInsets.ts 的 installViewportInsets() 启动时**无条件 paint 一次全 0**
+      ⇒ 用内联样式把 :root 的 `--sat: env(safe-area-inset-top)` 覆盖成 0px（iOS 上安全区恒 0）
+修复：只在壳层（Android）真的报送过 inset 之后才重绘；iOS/浏览器保留 env() 兜底
+```
+
+**③ 出口合规不再逐个 build 问答**
+
+`project.yml` 的 `info.properties` 现在由脚本注入 `ITSAppUsesNonExemptEncryption: false`
+（= 声明「不含非豁免加密」；我们用的是标准算法：SQLCipher AES-256/HMAC-SHA、国密 SM4/SM3）。
+⇒ App Store Connect 不再对每个 build 弹「缺少出口合规证明」。
+⚠️ 若哪天引入**专有/自研密码原语**，必须把这一行改回 true 并走 CCATS 流程（owner 决定）。
+
+**④ TestFlight 链路（已验证跑通）**
+
+```bash
+# 1) 递增 build number（ShortVersion 不动）并出公司分发包 + 上传
+node scripts/ios-build.mjs --sign company --build-number 1.92.26 --upload
+# 2) 判据：xcodebuild 原话 `Uploaded package is processing.` + `Upload succeeded.` + `** EXPORT SUCCEEDED **`
+# 3) ASC → ShuyoNote → TestFlight → 内部群组 → 加测试员（cnzen@hotmail.com）→ 加 build
+```
+
+⚠️ 两个 TestFlight 侧的坑：① 内部测试员的 Apple ID 必须是 App Store Connect **团队成员**；
+② 手机号注册的 Apple ID 不能和邮箱账号共用同一个邮箱 —— 卡住时改用**外部测试公开链接**（无需邀请码）。

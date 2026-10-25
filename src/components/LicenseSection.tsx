@@ -20,38 +20,12 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { cardState, daysLeft, graceDaysLeft, parseCard, pickCurrent } from "../lib/license/card";
 import type { CardState } from "../lib/license/card";
+import { readCards, writeCards, type StoredCard } from "../lib/license/cardStore";
 import { renewDecision } from "../lib/license/renewPrompt";
 import { nowTs, renewBytes } from "../lib/license/signedBytes";
 import { relayStatusView } from "../lib/relay/statusView";
 
-/** 本机存卡的键（只存**卡文本**；私钥在 Rust 侧，⛔ 不进 localStorage）。 */
-const CARDS_KEY = "shuyonote.license.cards";
-
 type Busy = null | "renew" | "paste";
-
-interface StoredCard {
-  text: string;
-}
-
-function readCards(): StoredCard[] {
-  try {
-    const raw = localStorage.getItem(CARDS_KEY);
-    if (!raw) return [];
-    const arr = JSON.parse(raw) as unknown;
-    if (!Array.isArray(arr)) return [];
-    return arr.filter((x): x is StoredCard => typeof (x as StoredCard)?.text === "string");
-  } catch {
-    return [];
-  }
-}
-
-function writeCards(cards: StoredCard[]): void {
-  try {
-    localStorage.setItem(CARDS_KEY, JSON.stringify(cards.slice(-8)));
-  } catch {
-    // 存不进去不该炸界面；下次进来自会显示"没有卡"
-  }
-}
 
 /** 五态 → 那一行字（**停卡那一档的措辞是产品口径**，⛔ 不在这里改词）。 */
 export function stateLine(state: CardState, days: number, grace: number): string {
@@ -112,6 +86,8 @@ export function LicenseSection() {
   const [dev, setDev] = useState<string | null>(null);
   const [issuer, setIssuer] = useState<{ ready: boolean; why?: string } | null>(null);
   const [relayLicense, setRelayLicense] = useState<string | null>(null);
+  // ⭐ 2026-10-25：中继侧**同一份**卡读数（`state`/`days`）—— 本机没有"粘贴卡"时用它兜底显示
+  const [relayLic, setRelayLic] = useState<{ state: string; days: number | null } | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -137,9 +113,22 @@ export function LicenseSection() {
       // 中继侧读数：**只当证据**（⛔ 不拿它当权威 —— 权威是手里那张卡）
       try {
         const st = await api.relayStatus();
-        if (alive) setRelayLicense(relayStatusView(st).licenseLabel);
+        if (alive) {
+          setRelayLicense(relayStatusView(st).licenseLabel);
+          // ⭐ **2026-10-25（owner 截图：明明装了签名卡，这一格还写「还没有卡」）**：
+          //   本机这张卡放在 `relay/license.txt`（后端验过、能算窗口），
+          //   ⛔ **不是** localStorage 那套「粘贴过的卡」⇒ 只看 cardStore 就会误报"没有卡"。
+          //   ⇒ 把中继侧**同一份读数**留在手上：本机没有粘贴卡时，用它如实显示状态与天数。
+          setRelayLic({
+            state: st?.license?.state ?? "",
+            days: st?.license?.days_left ?? null,
+          });
+        }
       } catch {
-        if (alive) setRelayLicense(null);
+        if (alive) {
+          setRelayLicense(null);
+          setRelayLic(null);
+        }
       }
     })();
     const t = window.setInterval(() => setTick((n) => n + 1), 60_000);
@@ -223,15 +212,38 @@ export function LicenseSection() {
         <div className="sync-row-body">
           <div className="sync-att">
             <span className="sync-row-label">跨网同步订阅</span>
-            <span className="sync-row-value">{issuer.why ?? "这一块已关闭"}</span>
+            <span className="sync-row-value">未启用</span>
           </div>
+          <p className="sync-hint" data-testid="license-issuer-why">
+            {issuer.why ?? "没配发卡站地址 —— 这一块功能已关闭（不是网络错误）"}
+          </p>
+          <p className="sync-hint license-dim">
+            到期只停跨网；本机功能与本地数据不受影响。
+          </p>
         </div>
       </div>
     );
   }
 
+  // ⭐ **2026-10-25（owner 截图：装了签名卡还写「还没有卡」）**：
+  //   没有"粘贴卡"（localStorage）时，**兜底用中继侧那份验过的读数**显示真实状态与天数；
+  //   ⛔ 只有两边都读不到时才是「还没有卡」。
+  const relayFallback = (() => {
+    if (!relayLic || !relayLic.state || relayLic.state === "missing") return null;
+    const map: Record<string, CardState> = {
+      ok: "active",
+      grace: "grace",
+      expired: "expired",
+      not_yet: "not-yet",
+      stopped: "stopped",
+    };
+    const mapped = map[relayLic.state];
+    if (!mapped) return null;
+    return stateLine(mapped, relayLic.days ?? 0, relayLic.days ?? 0);
+  })();
   const tone = toneOf(state, days);
-  const pill = !current || !state ? "还没有卡" : stateLine(state, days, grace);
+  const pill =
+    !current || !state ? (relayFallback ?? "还没有卡") : stateLine(state, days, grace);
 
   return (
     <div className={`sync-row relay-status is-${tone} license-block`} data-testid="license-section">

@@ -137,3 +137,27 @@ describe("冲刺 S6b：块身份穿过合并（集合不变、不重复、不新
     expect([...idsInStore(db2)].sort()).toEqual([...once].sort());
   });
 });
+
+// ⭐ 2026-10-23：**合并顺序不影响最终投影** —— 上面 ⑳/㉑ 比的是"块身份集合"，
+// 这里补的是**内容投影**（顺序 + 文本）也与合并顺序无关，且两侧的改动都在。
+// 为什么值得单独钉：id 集合相同 ≠ "内容收敛"（两块都在、但顺序/文本可能各是各的）。
+describe("CRDT 收敛：合并顺序不改变投影", () => {
+  it("㉒ ★ A→B 与 B→A 两次合并 ⇒ 投影**逐字节相同**，且两侧的改动都在", () => {
+    const { stateA, stateB } = twoBranches();
+
+    const db1 = fakeDb().db;
+    mergeRemotePageState(db1, "p1", stateA, 1);
+    mergeRemotePageState(db1, "p1", stateB, 2);
+
+    const db2 = fakeDb().db;
+    mergeRemotePageState(db2, "p1", stateB, 1);
+    mergeRemotePageState(db2, "p1", stateA, 2);
+
+    const j1 = JSON.stringify(projectStateToJson(readPageCrdtState(db1, "p1")!));
+    const j2 = JSON.stringify(projectStateToJson(readPageCrdtState(db2, "p1")!));
+
+    expect(j1).toBe(j2); // ★ 投影一致（与合并顺序无关）
+    expect(j1).toContain("A 加的");
+    expect(j1).toContain("B 加的");
+  });
+});

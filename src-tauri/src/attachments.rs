@@ -181,9 +181,235 @@ pub(crate) fn walk_attachment_files(root: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// ⭐ 回收附件树里的**空目录**（后序删除；⛔ 绝不删根）。回「删了几个」。
+///
+/// ## 为什么需要（2026-10-25 真机）
+///
+/// 删除路径（迁移、`cleanup_orphan_attachments`）**只删文件**，而 `write_attachment_once` 只会**建**目录
+/// ⇒ 于是空目录只增不减：真机量到 261 个目录里 **135 个是空的**
+/// （74 个老桶目录 ＋ 61 个空的空间目录，其中不少对应的空间早就不存在了）。
+///
+/// 代价不是纯观感：`find_attachment_anywhere` 每次按 hash 找文件都要**逐个**读根下这些目录
+/// （95 个顶层、61 个空）⇒ 白付 syscall。而它们**永远不会**再长出文件来（空的空间目录会在下次
+/// `save_image` 时按需重建 ✓）。
+///
+/// ⚠️ 口径：① 只删**空**的；② 深度优先（先删子、再删父）；③ ⛔ 根目录本身不删；
+///    ④ 删不掉只跳过（权限/占用都当"这次先留着"，⛔ 不报错 —— 这是清理，不是业务 ✓）。
+pub(crate) fn prune_empty_attachment_dirs(app_data_dir: &Path) -> usize {
+    prune_empty_dirs_under(&attachments_root(app_data_dir))
+}
+
+/// [`prune_empty_attachment_dirs`] 的"直接给根"版本（给已经有 `att_dir` 的那几处用 ✓）。
+pub(crate) fn prune_empty_dirs_under(root: &Path) -> usize {
+    fn walk(dir: &Path, root: &Path, n: &mut usize) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let entries: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+        for p in entries {
+            if p.is_dir() {
+                walk(&p, root, n);
+            }
+        }
+        // 后序：子目录都处理完了再看自己（⛔ 根不删）
+        if dir != root {
+            if let Ok(mut rd2) = std::fs::read_dir(dir) {
+                if rd2.next().is_none() && std::fs::remove_dir(dir).is_ok() {
+                    *n += 1;
+                }
+            }
+        }
+    }
+    let mut n = 0usize;
+    if root.is_dir() {
+        walk(&root, &root, &mut n);
+    }
+    n
+}
+
+/// ⭐ 一次「整理附件布局」的读数（⛔ 不静默：每一步都要能对账）。
+#[derive(Clone, Default, serde::Serialize)]
+pub struct LegacyLayoutMigration {
+    /// 扫到的**老布局**文件数（`<根>/<桶>/f` 与 `<根>/f`）
+    pub scanned: usize,
+    /// 补进各空间目录的份数（一个 hash 被 N 个空间引用 ⇒ 最多补 N 份）
+    pub copied: usize,
+    /// 删掉的老文件数
+    pub deleted: usize,
+    /// ⛔ 没删的（有人读不到 / 没有可读引用者 ⇒ 留着）
+    pub kept: usize,
+    /// ⭐ 顺带回收掉的**空目录**数（见 `prune_empty_attachment_dirs`）
+    pub pruned: usize,
+    /// 打不开的空间（锁着的加密空间）—— 它们一非空，**整批只复制、不删**
+    pub unreadable_spaces: Vec<String>,
+    /// 逐条说明（谁为什么没搬 / 哪一份复制失败）
+    pub notes: Vec<String>,
+}
+
+/// ⭐⭐ **整理附件布局（全量迁移）**：把**老布局**里的附件按"谁引用它"复制进各空间自己的目录。
+///
+/// ## 为什么是"复制"而不是"搬"
+///
+/// 老布局（2026-09-24 之前）是**全局一份** ⇒ 同一份内容可能被**多个空间**引用；
+/// 而加密空间那份**必须是密文**（它自己的钥匙）。⇒ ⛔ 不能 `mv`：搬走＝别的空间读不到；
+/// ⛔ 也不能只复制给一个空间：其余引用者还是"从根读明文"的老样子。
+///
+/// ## 删除的四道闸门（缺一不删）
+///
+/// ① 这个 hash 的**每个**引用空间都已经各有一份（复制全成功）；
+/// ② 没有任何空间**打不开** —— 锁着的加密空间我们数不到它引用了什么，
+///    那份老文件可能是它**唯一**的副本 ⇒ 删了就是"行在字节不在"；
+/// ③ 老文件本身名字是内容寻址的（64 hex）；
+/// ④ 删除失败只记读数，不抛（迁移是**增量**的，下一趟再来）。
+///
+/// ⇒ 于是最坏情况：**只复制、不删**（多占一份空间，但一个字节都不丢）✓
+pub(crate) fn migrate_legacy_layout(
+    app_data_dir: &Path,
+) -> Result<LegacyLayoutMigration, String> {
+    let root = attachments_root(app_data_dir);
+    let spaces_dir = crate::db::spaces_dir(app_data_dir);
+    let mut out = LegacyLayoutMigration::default();
+
+    // ① 每个空间引用哪些 hash（打不开的记进 `unreadable_spaces`）
+    let mut refs: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut space_ids: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&spaces_dir) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(id) = name.strip_suffix(".db") {
+                if !id.is_empty() && !id.starts_with('.') {
+                    space_ids.push(id.to_string());
+                }
+            }
+        }
+    }
+    space_ids.sort();
+    for id in &space_ids {
+        // ⚠️ 收进一个 Vec 再放（`stmt` 借着 `conn`）—— 直接在外面留 `rows` 会被借用检查挡下。
+        let collected: Result<Vec<String>, String> = (|| {
+            let conn = crate::db::open_space_conn_at(id, app_data_dir)?;
+            let mut st = conn
+                .prepare("SELECT DISTINCT hash FROM attachments")
+                .map_err(|e| e.to_string())?;
+            let rows = st
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(|e| e.to_string())?;
+            Ok(rows.flatten().collect())
+        })();
+        match collected {
+            Ok(hs) => {
+                for h in hs {
+                    refs.entry(h).or_default().push(id.clone());
+                }
+            }
+            Err(e) => out.unreadable_spaces.push(format!("{id}: {e}")),
+        }
+    }
+
+    // ② 老布局文件（相对路径 < 3 段 ⇒ 不在 `<空间>/<桶>/` 之下）
+    let mut legacy: Vec<PathBuf> = walk_attachment_files(&root)
+        .into_iter()
+        .filter(|p| {
+            p.strip_prefix(&root)
+                .map(|r| r.components().count() < 3)
+                .unwrap_or(false)
+        })
+        .collect();
+    legacy.sort();
+    out.scanned = legacy.len();
+
+    // ③ 逐个搬
+    for f in &legacy {
+        let Some(name) = f.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some((hash, ext)) = name.split_once('.') else {
+            continue;
+        };
+        if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue; // 不是内容寻址的名字 ⇒ ⛔ 不碰
+        }
+        let who = refs.get(hash).cloned().unwrap_or_default();
+        if who.is_empty() {
+            out.kept += 1;
+            out.notes.push(format!(
+                "{name}：没有**可读**空间引用它（可能只有锁着的空间在用）⇒ 留着"
+            ));
+            continue;
+        }
+        let mut all_copied = true;
+        for sid in &who {
+            let own = space_attachments_dir(app_data_dir, sid);
+            if find_path_by_hash(&own, hash).is_some() {
+                continue; // 已经有自己那份 ⇒ 幂等
+            }
+            let copy = (|| -> Result<(), String> {
+                let conn = crate::db::open_space_conn_at(sid, app_data_dir)?;
+                let key = crate::security::key_if_enabled(&conn);
+                let enc = crate::security::space_db_is_encrypted(&crate::db::space_db_path(
+                    app_data_dir, sid,
+                ));
+                if enc && key.is_none() {
+                    return Err("空间是密文但这一会话拿不到它的钥匙".to_string());
+                }
+                let bytes = std::fs::read(f).map_err(|e| e.to_string())?;
+                // 双读：明文原样返回；密文才解。⇒ 复制出去的那份与今天读到的**逐字节一致** ✓
+                let plain = crate::security::decrypt_attachment_bytes(key.as_ref(), &bytes)?;
+                write_attachment_once(&own, hash, ext, &plain, key.as_ref())?;
+                Ok(())
+            })();
+            match copy {
+                Ok(()) => out.copied += 1,
+                Err(e) => {
+                    all_copied = false;
+                    out.notes.push(format!("{name} → 空间 {sid} 复制失败：{e}"));
+                }
+            }
+        }
+        if all_copied && out.unreadable_spaces.is_empty() {
+            match std::fs::remove_file(f) {
+                Ok(()) => out.deleted += 1,
+                Err(e) => {
+                    out.kept += 1;
+                    out.notes.push(format!("{name}：删老文件失败（{e}）⇒ 留到下一趟"));
+                }
+            }
+        } else {
+            out.kept += 1;
+            if !out.unreadable_spaces.is_empty() {
+                out.notes.push(format!(
+                    "{name}：有 {} 个空间读不到 ⇒ 只复制、不删（那份可能正是它们唯一的副本）",
+                    out.unreadable_spaces.len()
+                ));
+            }
+        }
+    }
+    // ⭐ 2026-10-25：**顺带回收空目录** —— 删完文件后那些空壳没有别的地方会清（见 `prune_empty_attachment_dirs`）。
+    out.pruned = prune_empty_attachment_dirs(app_data_dir);
+    Ok(out)
+}
+
+/// 命令面：**整理附件布局**（⛔ 不自动跑：会动用户文件 ⇒ 由人显式触发 ✓）。
+#[tauri::command]
+pub async fn attachments_migrate_legacy(app: tauri::AppHandle) -> Result<LegacyLayoutMigration, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let out = migrate_legacy_layout(&dir)?;
+    eprintln!(
+        "[attachments] 布局整理：扫 {} ｜ 复制 {} ｜ 删除 {} ｜ 保留 {} ｜ 空目录回收 {} ｜ 读不到的空间 {}{}",
+        out.scanned,
+        out.copied,
+        out.deleted,
+        out.kept,
+        out.pruned,
+        out.unreadable_spaces.len(),
+        if out.unreadable_spaces.is_empty() {
+            String::new()
+        } else {
+            format!("（只复制不删）：{}", out.unreadable_spaces.join("；"))
+        }
+    );
+    Ok(out)
+}
 #[derive(Clone, serde::Serialize)]
-pub struct ImportProgress {
-    pub index: usize,
+pub struct ImportProgress {    pub index: usize,
     pub total: usize,
     pub name: String,
     pub done: u64,
@@ -1099,7 +1325,7 @@ pub fn move_attachment(db: State<'_, Db>, id: String, new_page_id: String) -> Re
         .query_row(
             "SELECT name, hash, mime, size FROM attachments WHERE id = ?1",
             params![id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?)),
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?)),
         )
         .optional()
         .map_err(|e| e.to_string())?;
@@ -1739,5 +1965,258 @@ mod cross_space_attachment_tests {
         assert_eq!(std::fs::read(&p_plain).unwrap(), plain, "明文空间那份必须还是明文 ✓");
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    /// ⭐⭐ **2026-10-25**：空目录要能被收掉 —— **只收空的**、**整枝收**、⛔ **根永远不删**。
+    ///
+    /// 真机来由：删文件不删目录 ⇒ 261 个目录里 135 个是空的（74 个老桶 ＋ 61 个空的空间目录）。
+    ///
+    /// **变异**：把 `if dir != root` 去掉 ⇒ 根被删 ⇒ 最后一条断言红。
+    #[test]
+    fn pruning_removes_only_empty_dirs_and_never_the_root() {
+        let dir = temp_dir("prune");
+        let root = attachments_root(&dir);
+        std::fs::create_dir_all(root.join("aa")).unwrap(); // 空桶
+        std::fs::create_dir_all(root.join("bb").join("cc")).unwrap(); // 空的两层
+        std::fs::create_dir_all(root.join("sp-1").join("dd")).unwrap(); // 空间目录里的空桶
+        std::fs::write(root.join("sp-1").join("dd").join("keep.png"), b"x").unwrap(); // 非空
+
+        let n = prune_empty_dirs_under(&root);
+        assert!(root.is_dir(), "⛔ 根目录不许删（那会把整棵树弄没）");
+        assert!(!root.join("aa").exists(), "空桶该收");
+        assert!(!root.join("bb").exists(), "空的两层该整枝收掉");
+        assert!(
+            root.join("sp-1").join("dd").exists(),
+            "有文件的那条不许动（连带它的父目录也不空 ⇒ 留）"
+        );
+        assert!(n >= 3, "至少收掉 aa / cc / bb 三个，实测 {n}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐⭐ **2026-10-25（C：整理附件布局）**：老布局文件被**一个明文空间**引用 ⇒
+    /// 复制进它自己的目录，且在没有"读不到的空间"时**删掉老文件**。
+    ///
+    /// **变异**：把 `migrate_legacy_layout` 里那次 `write_attachment_once` 删掉 ⇒
+    /// `copied == 1` 与"空间目录里有一份"两条都红。
+    #[test]
+    fn migrating_copies_a_legacy_file_into_the_referencing_space_then_removes_it() {
+        const H: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let dir = temp_dir("mig-copy");
+        let space = "sp-one";
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        {
+            let c = crate::db::open_space_conn_at(space, &dir).unwrap();
+            c.execute(
+                "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at) \
+                 VALUES ('a1','p1','x.png',?1,'image/png',3,0)",
+                [H],
+            )
+            .unwrap();
+        }
+        let root = attachments_root(&dir);
+        let legacy = bucket_path(&root, H, "png");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, b"abc").unwrap();
+
+        let out = migrate_legacy_layout(&dir).unwrap();
+        assert_eq!(out.scanned, 1, "应当扫到一个老布局文件");
+        assert_eq!(out.copied, 1, "必须给引用它的空间复制一份");
+        assert_eq!(out.deleted, 1, "没有读不到的空间 ⇒ 老文件该删");
+        assert!(!legacy.exists(), "老文件应当已经删掉");
+        let own = find_path_by_hash(&space_attachments_dir(&dir, space), H)
+            .expect("空间目录里应当有它自己那份");
+        assert_eq!(std::fs::read(own).unwrap(), b"abc", "复制出去的内容必须逐字节一致");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐⭐ **2026-10-25（C：安全闸门）**：只要有**一个空间打不开**（锁着的加密空间）⇒
+    /// 老文件**只复制、不删** —— 那份可能正是它唯一的副本，删了就是"行在字节不在"。
+    ///
+    /// **变异**：把 `&& out.unreadable_spaces.is_empty()` 去掉 ⇒ 本判据红。
+    #[test]
+    fn migrating_keeps_the_legacy_file_when_some_space_is_unreadable() {
+        const H: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let dir = temp_dir("mig-keep");
+        let space = "sp-one";
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        {
+            let c = crate::db::open_space_conn_at(space, &dir).unwrap();
+            c.execute(
+                "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at) \
+                 VALUES ('a1','p1','x.png',?1,'image/png',3,0)",
+                [H],
+            )
+            .unwrap();
+        }
+        // 打不开的空间（与"锁着的密文库"同一档：都是 open 不了）
+        std::fs::write(crate::db::spaces_dir(&dir).join("bad.db"), b"not-a-sqlite-header").unwrap();
+        let root = attachments_root(&dir);
+        let legacy = bucket_path(&root, H, "png");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, b"abc").unwrap();
+
+        let out = migrate_legacy_layout(&dir).unwrap();
+        assert!(!out.unreadable_spaces.is_empty(), "前提：那个坏库必须被判成读不到");
+        assert_eq!(out.copied, 1, "复制照做");
+        assert_eq!(out.deleted, 0, "⛔ 有读不到的空间就不许删（那可能是它唯一的副本）");
+        assert!(legacy.exists(), "老文件必须还在");
+        assert_eq!(out.kept, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
+
+// ─────────────────────── 附件行补变更记录（一次性修复） ───────────────────────
+
+/// 补变更记录的读数（给人看，不是业务数据）。
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct BackfillReport {
+    /// 扫到几个空间库（打不开的见 `unreadable`）。
+    pub spaces: usize,
+    /// 这些空间里一共多少行附件。
+    pub scanned: usize,
+    /// 实际补了几条 `attachment|upsert`。
+    pub appended: usize,
+    /// 打不开的空间（加密未解锁 / 旧格式）—— ⛔ 不算成功，也不想让它们静默消失。
+    pub unreadable: Vec<String>,
+}
+
+/// ⭐ **2026-10-25（真机事故）**：把某个空间库里的**每一行附件**都补一条 `attachment|upsert`。
+///
+/// ## 为什么会有"有行、没变更"的附件
+///
+/// 早期导入路径直接 `INSERT INTO attachments`，没走 `record_change` ⇒ 这些行**永远不会进同步队列**，
+/// 对端就算游标归零也收不到（真机：濮阳数友 13 个附件里 10 个没有 changes 行）。
+///
+/// ## 为什么是"全部补"而不是"只补缺的"
+///
+/// 对端的游标可能早就越过了老的那几条（真机：mac 侧游标 30，而老的 attachment 变更在 seq 9–11）
+/// ⇒ 只补缺的那 10 条，剩下 3 条**永远跨不过去**。补全部 13 条、新 seq 一律 > 当前最大值，
+/// 对端一次就能收齐。⚠️ 重复补**不会重复建行**（对端按 id 幂等 upsert）⇒ 这条路径可以重复跑。
+///
+/// ⚠️ 它**不动**附件字节、不动页面、不动其他表 —— 只往 `changes` 里追加行。
+pub fn backfill_attachment_changes_in(c: &rusqlite::Connection) -> Result<(usize, usize), String> {
+    let rows: Vec<(String, Option<String>, String, String, String, i64)> = {
+        // ⚠️ 语句与 rows 必须在**同一个块**里活着（借用检查）
+        let mut st = c
+            .prepare("SELECT id, page_id, name, hash, mime, size FROM attachments")
+            .map_err(|e| format!("读附件行失败（{e}）⇒ 什么都没补"))?;
+        let mapped = st
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, i64>(5)?,
+                ))
+            })
+            .map_err(|e| format!("读附件行失败（{e}）⇒ 什么都没补"))?;
+        mapped
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("读附件行失败（{e}）⇒ 什么都没补"))?
+    };
+    let now = crate::db::now_ms();
+    let mut appended = 0usize;
+    for (id, page_id, name, hash, mime, size) in &rows {
+        // ⚠️ payload 必须与正常保存那一路**同形**（见 `save_image` 里那条）
+        let payload = serde_json::json!({
+            "id": id,
+            "page_id": page_id,
+            "name": name,
+            "hash": hash,
+            "mime": mime,
+            "size": size,
+        })
+        .to_string();
+        crate::sync::record_change(c, "attachment", id, "upsert", Some(&payload), now)?;
+        appended += 1;
+    }
+    Ok((rows.len(), appended))
+}
+
+/// 对**全部空间库**做一遍补记（`<app data>/spaces/*.db`）。
+///
+/// ⚠️ 打不开的空间（加密未解锁）不静默跳过 —— 记进 `unreadable` 并如实报数。
+pub fn backfill_attachment_changes_all(app_data_dir: &std::path::Path) -> BackfillReport {
+    let mut out = BackfillReport::default();
+    let dir = app_data_dir.join("spaces");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return out;
+    };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("db") {
+            continue;
+        }
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
+        match rusqlite::Connection::open(&path) {
+            Ok(c) => {
+                // ⚠️ 设备身份在 **meta** 库里（`meta.sync_state`）⇒ 先挂上再补，
+                //    否则 `record_change` 会报"设备 ID 未初始化"（真机第一次跑就撞到了）。
+                let meta = app_data_dir.join("meta.db");
+                if let Err(e) = c.execute(&format!("ATTACH DATABASE ?1 AS meta"), rusqlite::params![meta.to_string_lossy().to_string()]) {
+                    out.unreadable.push(format!("{name}（挂 meta 失败：{e}）"));
+                    continue;
+                }
+                out.spaces += 1;
+                match backfill_attachment_changes_in(&c) {
+                    Ok((scanned, appended)) => {
+                        out.scanned += scanned;
+                        out.appended += appended;
+                    }
+                    Err(e) => out.unreadable.push(format!("{name}（{e}）")),
+                }
+            }
+            Err(_) => out.unreadable.push(name),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod backfill_attachment_changes_tests {
+    use super::*;
+
+    /// ⭐ 判据：**有行没变更**的附件会被补上，且**重复跑会再补一遍**（故意：对端游标可能已越过老 seq）。
+    #[test]
+    fn rows_without_changes_get_an_upsert_and_a_rerun_resends_the_same_rows() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        // 真机上 meta 是 ATTACH 进来的库；测试里同样挂一个内存库并建 `sync_state`
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (ws_id TEXT PRIMARY KEY, last_pushed_seq INTEGER NOT NULL DEFAULT 0);",
+        )
+        .unwrap();
+        crate::db::migrate(&c, "w1").unwrap();
+        // `record_change` 要设备身份（真机上由 `db::migrate` 那条路径种下）
+        crate::sync::set_meta_state(&c, "device_id", "test-dev").unwrap();
+        // 两行附件：模拟"早期导入直接插行、没走 record_change"
+        c.execute("INSERT INTO attachments (id,page_id,name,hash,mime,size,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            rusqlite::params!["a1", "p1", "身份证A.jpg", "h1", "image/jpeg", 100i64, 1i64]).unwrap();
+        c.execute("INSERT INTO attachments (id,page_id,name,hash,mime,size,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            rusqlite::params!["a2", "p1", "声明承诺.jpg", "h2", "image/jpeg", 200i64, 2i64]).unwrap();
+        let before: i64 = c.query_row("SELECT COUNT(*) FROM changes WHERE entity = 'attachment'", [], |r| r.get(0)).unwrap();
+        assert_eq!(before, 0, "前提：这两行本来没有变更记录");
+
+        let (scanned, appended) = backfill_attachment_changes_in(&c).unwrap();
+        assert_eq!((scanned, appended), (2, 2));
+        let after: i64 = c.query_row("SELECT COUNT(*) FROM changes WHERE entity = 'attachment' AND op = 'upsert'", [], |r| r.get(0)).unwrap();
+        assert_eq!(after, 2, "两条都要有 upsert");
+
+        // 再补一遍：**行数不涨、seq 必须涨** —— 因为未推送的同实体 upsert 会被并掉
+        // （`record_change` 的 R139 规矩：删旧行 + 插新行、拿到**新的 seq**）。
+        // 对端看的是 seq（不是本地行数）⇒ 这样它才收得到。
+        let max1: i64 = c.query_row("SELECT COALESCE(MAX(device_seq),0) FROM changes", [], |r| r.get(0)).unwrap();
+        let (_, appended2) = backfill_attachment_changes_in(&c).unwrap();
+        assert_eq!(appended2, 2, "第二次也是每一行都补一遍");
+        let after2: i64 = c.query_row("SELECT COUNT(*) FROM changes WHERE entity = 'attachment' AND op = 'upsert'", [], |r| r.get(0)).unwrap();
+        assert_eq!(after2, 2, "未推送的会被并掉 ⇒ 行数不涨（⛔ 不是堆两倍行）");
+        let max2: i64 = c.query_row("SELECT COALESCE(MAX(device_seq),0) FROM changes", [], |r| r.get(0)).unwrap();
+        assert!(max2 > max1, "但 seq 必须往前（对端靠它判断要不要收）：{max1} → {max2}");
+        // 附件行本身一行都没多
+        let rows: i64 = c.query_row("SELECT COUNT(*) FROM attachments", [], |r| r.get(0)).unwrap();
+        assert_eq!(rows, 2, "⛔ 不许重复建附件行");
+    }
+}

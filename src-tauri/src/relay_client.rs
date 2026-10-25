@@ -133,6 +133,15 @@ pub struct RelayConfig {
     /// 失效时刻（Unix 秒）。⚠️ **占位**：同上 ✓。
     #[serde(default)]
     pub license_exp: Option<i64>,
+    /// ⭐ **2026-10-25（跨网真机：端口每次重启都变 ⇒ 对端 addrs 永远落后）**：
+    /// 固定 iroh 的 UDP 端口（不给 = 随机，与今天行为一致）。
+    #[serde(default)]
+    pub udp_port: Option<u16>,
+    /// ⭐ **2026-10-25（真机：热点 NAT 打洞打不通 ⇒ 连接时通时不通）**：
+    /// `true` ⇒ **只走中继**（关掉直连 IP 传输，`clear_ip_transports`）。
+    /// 不给 = 保持今天的默认（直连 ＋ 中继都试）。
+    #[serde(default)]
+    pub relay_only: Option<bool>,
     /// 宽限天数（缺省 [`DEFAULT_GRACE_DAYS`]）。⚠️ **占位**：同上 ✓。
     #[serde(default)]
     pub license_grace_days: Option<i64>,
@@ -440,6 +449,20 @@ impl ConnectDecision {
     }
 }
 
+/// ⭐ **建隧道之前的许可门**（`Result` 形态 —— 端点工厂要的是 early-return ✓）。
+///
+/// 与 [`decide_new_connection`] **同一套判定**，只是把 `Refuse` 翻成可读错误：
+/// ⛔ 这里**不新建连接**、⛔ 不联网 —— 判定不过就直接拒，**连隧道都不建**。
+/// ⚠️ 口径（owner 2026-10-09 拍）：**到期只收回跨网** ⇒ 错误话术里必须写"局域网与本地功能照旧"。
+pub fn gate_for_new_tunnel(cfg: &RelayConfig, now: i64) -> Result<(), String> {
+    match decide_new_connection(cfg, now) {
+        ConnectDecision::Allow => Ok(()),
+        ConnectDecision::Refuse { code, message } => Err(format!(
+            "跨网不放行（{code}）：{message} —— 只收回跨网；局域网与本地功能照旧"
+        )),
+    }
+}
+
 /// 新建一条跨网连接之前，客户端**自己**先判一遍 ✓（⛔ 不联网 ✓、⛔ 不碰本地数据 ✓）。
 ///
 /// 顺序（固定 ✓，排障时先命中哪一条是确定的 ✓）：
@@ -468,7 +491,21 @@ pub fn decide_new_connection(cfg: &RelayConfig, now: i64) -> ConnectDecision {
             message: e,
         };
     }
-    let window = config_window(cfg, now);
+    // ⭐⭐ **2026-10-25（真机卡住的那一格）**：许可窗口**先看签名卡**，别只看裸数字。
+    //
+    //   现场（mac 侧逐字）：config.json 里有 `license_file`（签名卡在、能验），但**没有** `license_exp`
+    //   ⇒ 原来这里只调 `config_window` ⇒ 恒 `Unconfigured` ⇒ 每轮跨网停在
+    //     「missing：读不到有效期」，而那张**签好名的卡根本没人看** ✗。
+    //   与状态面（`verified_window`）也是两条口径（T 清单里"probe 只认裸数字"那条）。
+    //   ⇒ 统一：**有签名卡就按验过的卡判**；卡验不过 ⇒ 照实拒（fail-closed，⛔ 不回落到裸数字）；
+    //     只有"没有签名文本"（Placeholder）才回落到裸数字那档（老行为）。
+    let window = match verified_window(cfg, now) {
+        VerifiedLicense::Verified(w) | VerifiedLicense::Placeholder(w) => w,
+        VerifiedLicense::Refused(_) => {
+            // 卡在、但验不过 ⇒ 这一档**没有窗口** ⇒ 按"读不到/不认"拒（fail-closed）
+            LicenseWindow::Unconfigured
+        }
+    };
     if !window.allows_new_connection() {
         // ⭐ 到期只收回「跨网」✓ —— 这里**只**拒绝这条新建的跨网连接，
         //    ⛔ 不返回任何"要动本地数据/本地功能"的指令 ✗
@@ -891,8 +928,19 @@ pub fn status_payload_from(
         .map(|c| verified_window(c, now))
         .unwrap_or(VerifiedLicense::Placeholder(LicenseWindow::Unconfigured));
     RelayStatus {
-        available: true,
-        note,
+        // ⭐⭐ **2026-10-25（2.0 不带中继）**：`available` 现在**跟构建走**，不恒 true ✗。
+        //   原因：`relay_client` 这一层**没有** `#[cfg(feature="relay")]` ⇒ 默认构建里它照样编译、照样
+        //   去 probe 中继地址，于是 2.0 包里会显示「已连上中继」，而真正建隧道那条路会报
+        //   「这个构建没编入跨网隧道」⇒ **假状态 ＋ 假按钮**（违反"不许假读数"）。
+        //   ⇒ 非 relay 构建：`available=false` ＋ 一句人话；界面据此把这一档显示成"下一阶段"。
+        available: cfg!(feature = "relay"),
+        note: if cfg!(feature = "relay") {
+            note
+        } else if note.is_empty() {
+            "这个版本不含跨网（下一阶段）".to_string()
+        } else {
+            format!("{note}（这个版本不含跨网，下一阶段）")
+        },
         configured,
         url,
         connection: connection_view(probed.map(|(o, _)| o), probed.map(|(_, at)| at)),
@@ -951,6 +999,8 @@ mod tests {
             license_nbf: Some(exp - 30 * 86_400),
             license_exp: Some(exp),
             license_grace_days: Some(14),
+            udp_port: None,
+            relay_only: None,
         }
     }
 
@@ -1013,6 +1063,32 @@ mod tests {
 
     /// ⛔ **读不到有效期时不许编数字** ✗（界面要明说"还没配置" ✓）。
     ///
+    /// ⭐⭐ **2026-10-25（数据面 Step 4 判据）**：**建隧道之前的许可门** ——
+    /// 判定不过时① 给出**可读原因**、② 明确写"只收回跨网、局域网与本地功能照旧"
+    /// （owner 2026-10-09 拍的口径），③ ⛔ 不许出现"客户端不能用"这类话术。
+    ///
+    /// **变异**：把 `gate_for_new_tunnel` 改成永远 `Ok(())` ⇒ 前两条断言红。
+    #[test]
+    fn 建隧道之前必须先过许可门() {
+        // ① 什么都没配 ⇒ not_configured
+        let err = gate_for_new_tunnel(&RelayConfig::default(), NOW).expect_err("没配中继必须拒");
+        assert!(err.contains("not_configured"), "要带机器可读的码：{err}");
+        assert!(err.contains("局域网与本地功能照旧"), "口径必须写清：{err}");
+        assert!(!err.contains("不能用"), "⛔ 不许说客户端不能用：{err}");
+
+        // ② 配了地址但没设备身份 ⇒ 仍然拒（且原因不同）
+        let mut cfg = RelayConfig::default();
+        cfg.url = Some("http://127.0.0.1:8880".to_string());
+        let err = gate_for_new_tunnel(&cfg, NOW).expect_err("缺设备身份必须拒");
+        assert!(err.contains("局域网与本地功能照旧"), "{err}");
+
+        // ③ 三个字段齐了但没租约 ⇒ 拒（"能不能去连"的最后一关）
+        cfg.device_seed_hex = Some("11".repeat(32));
+        cfg.license_exp = Some(NOW + 86_400);
+        let err = gate_for_new_tunnel(&cfg, NOW).expect_err("缺租约必须拒");
+        assert!(err.contains("missing"), "缺租约该报 missing：{err}");
+    }
+
     /// ⭐ **2026-10-12**：原判据断言的是"未接线" ✗ —— 那是**假话**（真因是本机还没配置，
     /// 见 [`LicenseWindow::Unconfigured`] 的注释），且 owner 正是被它读成"功能没做" ✗。
     /// ⇒ 现在钉**两句**：① 仍然如实说「读不到有效期」（⛔ 不许改成编数字 ✗）；
@@ -1240,8 +1316,11 @@ mod tests {
     #[test]
     fn 读数_读不到时不编数字() {
         let st = status_payload_from(Err("还没配置中继：读不到 relay/config.json".to_string()), NOW, None);
-        // ⚠️ "读不到配置" ≠ "这一档不可用"：桌面版这一档本身在岗 ✓（不可用是 Web 版的事 ✓）
-        assert!(st.available);
+        // ⚠️ "读不到配置" ≠ "这一档不可用" —— 但"在岗"与否现在**跟构建走**（2026-10-25）。
+        #[cfg(feature = "relay")]
+        assert!(st.available, "带 relay 特性：这一档在岗（读不到配置只是没配）");
+        #[cfg(not(feature = "relay"))]
+        assert!(!st.available, "不带 relay 的构建：这一档不可用");
         assert!(!st.configured);
         assert_eq!(st.url, None);
         assert_eq!(st.license.state, "missing");
@@ -1301,11 +1380,22 @@ mod tests {
         );
     }
 
-    /// ④ 两格读数的**形状**：`available` 在桌面版为真 ⇒ 界面照常渲染（Web 版由 `web.ts` 回 false ✓）。
+    /// ④ 两格读数的**形状**：`available` 现在**跟构建走**（2026-10-25：非 relay 构建不含隧道 ⇒ 不可用）。
     #[test]
     fn 读数_桌面版这一档可用() {
         let st = status_payload_from(Ok(cfg_ok(NOW + 86_400)), NOW, None);
-        assert!(st.available);
+        // ⭐ 2026-10-25：判据**按构建分档**钉各自的口径（⛔ 不是放宽）：
+        #[cfg(feature = "relay")]
+        assert!(st.available, "带 relay 特性的桌面版：这一档在岗");
+        #[cfg(not(feature = "relay"))]
+        {
+            assert!(!st.available, "不带 relay 的构建：这一档不可用（隧道没编进来）");
+            assert!(
+                st.note.contains("不含跨网"),
+                "要说清为什么不可用，实得：{}",
+                st.note
+            );
+        }
         assert!(st.configured);
     }
 }

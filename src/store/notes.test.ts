@@ -234,3 +234,69 @@ describe("notes store · 记住并还原当前文档", () => {
     expect(useNotes.getState().currentId).toBeNull();
   });
 });
+
+describe("notes store · refreshCurrent（⭐ 2026-10-24 owner：「同步了没有自动刷新页面」）", () => {
+  const detail = (over: Partial<import("../types").PageDetail> = {}): import("../types").PageDetail => ({
+    id: "a",
+    workspace_id: "ws1",
+    parent_id: null,
+    title: "A",
+    content_json: '{"root":{"children":[]}}',
+    content_text: "",
+    cover: "",
+    icon: "",
+    cover_height: 300,
+    cover_pos: 50,
+    kind: "page",
+    sort_order: 0,
+    created_at: 1000,
+    updated_at: 1000,
+    ...over,
+  });
+
+  beforeEach(() => {
+    mocks.getPage.mockReset();
+    useNotes.setState({
+      pages: [meta("a")],
+      currentId: "a",
+      current: detail(),
+      reloadTick: 0,
+      lastExternalWrite: null,
+    });
+  });
+
+  it("远端改了正文 ⇒ 换 current、bumpReload（编辑器重挂）、并记一次外部写", async () => {
+    mocks.getPage.mockResolvedValue(detail({ content_json: '{"root":{"children":[1]}}', updated_at: 2000 }));
+
+    const changed = await useNotes.getState().refreshCurrent();
+
+    expect(changed).toBe(true);
+    expect(useNotes.getState().current?.updated_at).toBe(2000);
+    expect(useNotes.getState().reloadTick).toBe(1);
+    expect(useNotes.getState().lastExternalWrite?.pageId).toBe("a");
+  });
+
+  it("封面/图标变了 ⇒ 也算变了（题头图同步之后界面要跟着变）", async () => {
+    mocks.getPage.mockResolvedValue(detail({ cover: 'url("/covers/a.jpg")', icon: "📕" }));
+
+    expect(await useNotes.getState().refreshCurrent()).toBe(true);
+    expect(useNotes.getState().current?.cover).toBe('url("/covers/a.jpg")');
+    expect(useNotes.getState().current?.icon).toBe("📕");
+  });
+
+  it("一模一样 ⇒ 返回 false，**不换 current、不 bump**（否则每一拍都重挂编辑器、光标全丢）", async () => {
+    const before = useNotes.getState().current;
+    mocks.getPage.mockResolvedValue(detail());
+
+    expect(await useNotes.getState().refreshCurrent()).toBe(false);
+    expect(useNotes.getState().current).toBe(before);
+    expect(useNotes.getState().reloadTick).toBe(0);
+    expect(useNotes.getState().lastExternalWrite).toBeNull();
+  });
+
+  it("没有当前页 ⇒ 不发请求", async () => {
+    useNotes.setState({ currentId: null, current: null });
+    expect(await useNotes.getState().refreshCurrent()).toBe(false);
+    expect(mocks.getPage).not.toHaveBeenCalled();
+  });
+});

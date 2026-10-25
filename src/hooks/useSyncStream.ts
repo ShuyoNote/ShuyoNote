@@ -21,6 +21,7 @@ import { platform, isDesktopPlatform } from "../lib/platform";
 import { resolveWorkspaceSyncScope, type ClaimScopeRow } from "../lib/crdt/claimScope";
 import { isNearRealtimeEnabled } from "../lib/nearRealtime";
 import { shouldAutoSyncNow } from "../lib/syncGate";
+import { isLocalEditRecent } from "../lib/editIdle";
 import { withSyncStatus } from "../store/syncStatus";
 // ★ L4a/L4b：帧 `seq` 的解析与跳号判定 —— **两半共用一处实现**（Web 与桌面同一种服务端帧；
 //   桌面那一半在 Rust `sync_stream.rs`，口径逐字对应，见 `lib/streamSeq.ts` 的文件头）。
@@ -65,6 +66,12 @@ export function useSyncStream() {
         // P1：自动同步**必须配对 begin/end**（`withSyncStatus`），否则面板会永远停在"正在同步…"。
         await withSyncStatus("正在同步…", () => api.syncWorkspace(wsId));
         if (!cancelled) await loadPages();
+        // ⭐ 2026-10-24（owner 报「同步了没有自动刷新页面」）：`loadPages()` 只换列表，
+        //   **当前打开的页**要单独重读（`notes.refreshCurrent` 内部"没变就不写 state"）。
+        //   ⚠️ 用户正在打字 ⇒ 跳过（重挂编辑器会吞掉还没落库的那几百毫秒，见 `lib/editIdle.ts`）。
+        if (!cancelled && !isLocalEditRecent()) {
+          await useNotes.getState().refreshCurrent();
+        }
       } catch (e) {
         // 流触发的拉取失败**不静默**：留痕，等下一次事件/轮询再试（不打断用户）。
         console.error("[sync] 变更流触发的同步失败", e);

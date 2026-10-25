@@ -100,20 +100,23 @@ export function LineageConflictBanner({ pageId }: { pageId: string }) {
 
   return (
     <div className="conflict-banner conflict-banner-lineage" role="status">
-      <div className="conflict-banner-head">
-        <span className="conflict-banner-title">{t("lineage.title")}</span>
-        <span className="conflict-banner-hint">{t("lineage.hint")}</span>
-      </div>
-      <div className="conflict-item-actions">
-        <button className="conflict-btn" onClick={() => void keepLocal()}>
-          {t("lineage.keepLocal")}
-        </button>
-        <button className="conflict-btn" onClick={() => void adoptRemote()}>
-          {t("lineage.adoptRemote")}
-        </button>
-        <button className="conflict-btn conflict-btn-primary" onClick={() => void saveAsNew()}>
-          {t("lineage.savedAsNew")}
-        </button>
+      {/* ⭐ 2026-10-24：加了图标块与纵向分层（标题 / 解释 / 按钮），并把**唯一的无损选项**
+          「另存为新页」做成主按钮 —— 三个按钮的后果不同，视觉权重必须说出来 ✓ */}
+      <span className="conflict-lineage-ic" aria-hidden>⚠</span>
+      <div className="conflict-lineage-body">
+        <div className="conflict-banner-title">{t("lineage.title")}</div>
+        <div className="conflict-banner-hint">{t("lineage.hint")}</div>
+        <div className="conflict-item-actions">
+          <button className="conflict-btn conflict-lineage-keep" onClick={() => void keepLocal()}>
+            {t("lineage.keepLocal")}
+          </button>
+          <button className="conflict-btn" onClick={() => void adoptRemote()}>
+            {t("lineage.adoptRemote")}
+          </button>
+          <button className="conflict-btn conflict-btn-primary" onClick={() => void saveAsNew()}>
+            {t("lineage.savedAsNew")}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -41,12 +41,43 @@ pub fn set_issuer(base: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 启动时的地址来源（2026-10-23）：`<app data>/issuer.txt` 优先，其次 `SHUYONOTE_ISSUER_BASE`。
+///
+/// 之前只有 `license_set_issuer` 命令能设，而前端**没有调用点** ⇒ `license_issuer_ready=false`
+/// ⇒ 续期按钮永远不出现。这里给一个不依赖前端的来源（文件便于运维改，环境变量便于测试）。
+fn issuer_base_from_config() -> Option<String> {
+    if let Some(dir) = crate::db::app_data_dir_ref() {
+        let p = dir.join("issuer.txt");
+        if let Ok(s) = std::fs::read_to_string(&p) {
+            let s = s.trim();
+            if !s.is_empty() {
+                return Some(s.to_string());
+            }
+        }
+    }
+    let s = std::env::var("SHUYONOTE_ISSUER_BASE").ok()?;
+    let s = s.trim();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+
 fn issuer_base() -> Result<String, String> {
-    ISSUER_BASE
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or_else(|| "没配发卡站地址 —— 这一块功能已关闭（不是网络错误）".to_string())
+    {
+        let guard = ISSUER_BASE.lock().unwrap();
+        if let Some(b) = guard.as_ref() {
+            return Ok(b.clone());
+        }
+    }
+    if let Some(b) = issuer_base_from_config() {
+        set_issuer(&b)?;
+        if let Some(b) = ISSUER_BASE.lock().unwrap().clone() {
+            return Ok(b);
+        }
+    }
+    Err("没配发卡站地址 —— 这一块功能已关闭（不是网络错误）".to_string())
 }
 
 /// 把 `path`（必须 `/` 开头、可带 query）拼到登记的 base 上，并**复核同源**。

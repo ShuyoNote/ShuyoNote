@@ -44,8 +44,9 @@
   --sidebar-offset: 240px;
 
   /* 左竖条宽 + 标题栏高：供 fixed 弹层（预览/TOC/PdfReader 等）避开这些 chrome。
-     --titlebar-h 由前端在自绘标题栏开启时设为 32px，系统标题栏时 0。 */
-  --activity-w: 48px;
+     --titlebar-h 三档（由 `<TitleBar>` 运行时写入）：自绘栏 32px ／ macOS 原生透明
+     标题栏 28px（红绿灯占位）／ 系统标题栏 0。 */
+  --activity-w: 52px;
   --titlebar-h: 0px;
 
   /* Semantic */
@@ -55,6 +56,8 @@
   --on-danger: #ffffff;
   --success: #00b578;
   --warning: #ff9a2e;
+  --warning-soft: #fff6ea;
+  --warning-line: #ffd9a8;
   --mark-bg: #fff3cc;
   --chip-bg: #eef1f5;
   --code-bg: #f2f3f5;
@@ -132,6 +135,8 @@
   --on-danger: #0b1220;
   --success: #2bd49b;
   --warning: #ffb04d;
+  --warning-soft: rgba(255,176,77,.12);
+  --warning-line: rgba(255,176,77,.35);
   --mark-bg: #4a3f1f;
   --chip-bg: #2f3a44;
   --code-bg: #2a2b2e;
@@ -293,6 +298,95 @@ html[data-platform="win"] .app-body {
   border-top: 1px solid var(--border);
 }
 
+/* ---------------------------------------------------------------------------
+ * macOS 原生透明标题栏（2026-10-23）。
+ *
+ * 窗口以 `titleBarStyle: Overlay + hidden_title` 创建（src-tauri/src/lib.rs）：
+ * 标题栏透明、内容铺到窗口顶端、红绿灯浮在内容之上。
+ *
+ * 布局＝**微信式（B 版，owner 2026-10-23 拍）**：
+ *   · 左竖条 = 这扇窗的"标题栏区域"：三颗小灯画在竖条顶端（**自绘**，比系统的小一号），
+ *     竖条内容（图标）整体下移 `--mac-lights-h`；竖条宽 56px（灯 8..50）。
+ *     系统那三颗原生灯被 `traffic_light_position(-100,14)` 移出可视区（尺寸改不了）。
+ *   · 侧栏 / 主区：**内容顶到窗口顶端**（像微信的列表：搜索框与红绿灯同一水平线）。
+ *   · 拖拽/双击：**不铺任何 DOM**。Overlay 下 tauri 不替你接管拖拽，而竖条顶端又被
+ *     三颗灯占满 ⇒ 由 `<TitleBar>` 在 document 上接 mousedown：整窗顶部 28px 的
+ *     **空白处**都能拖，落在交互控件上就放行（详见 TitleBar.tsx 那段注释）。
+ *
+ * ⚠️ 全部挂在 `.is-macos` 上：自绘栏（Windows/Linux）、Web、手机一个字不变。
+ *    ⛔ Windows/Linux 的竖条仍是 48px。
+ * ------------------------------------------------------------------------- */
+.is-macos {
+  /* 竖条宽＝自绘小灯那一组的宽度（8..54）＋右侧 2px。`--activity-w` 只有一处
+     别的消费方（`.fm-preview-overlay` 的 left）⇒ 覆盖它 = 竖条与浮层避让同源。 */
+  --activity-w: 60px;
+  /* 红绿灯占位高度：**只给竖条用**。⛔ 不复用 `--titlebar-h` —— B 版侧栏/主区内容
+     顶到窗口顶、浮层也要能从 0 开始，那个变量在 macOS 上是 0（见 `<TitleBar>`）。 */
+  --mac-lights-h: 28px;
+}
+.is-macos .activity-bar {
+  width: var(--activity-w);
+  padding-top: calc(2px + var(--mac-lights-h)); /* 原 `padding: 2px 0` */
+}
+/* B 版：这两列不再让位（原来各让 28px 的那条就是被去掉的"空白带"）。 */
+.is-macos .sidebar { padding-top: 0; }
+.is-macos .main { padding-top: 0; }
+/* 独立页面窗口没有左竖条 ⇒ 主区自己让位，否则正文被红绿灯/拖拽带压住。 */
+.is-macos .app-body > .main:first-child { padding-top: var(--mac-lights-h); }
+/* ---- 自绘红绿灯（macOS，2026-10-23）--------------------------------------
+   为什么自绘：macOS 不提供改原生按钮尺寸的 API（`NSWindow` 只暴露位置），
+   而 owner 要"像微信那样小一号" ⇒ 原生三颗被 Rust 侧移到窗口外，这里按
+   10px 直径 / 6px 间距重画（系统的是 12~14px，所以肉眼"小一号"）。
+   交互/观感对齐系统：
+     · 平时是三个纯色圆点；**鼠标移进这一组**才浮出 × − ⤢（和系统一样）；
+     · 窗口失焦 → 全部变灰（`html.mac-blurred`，由 `<TitleBar>` 监听焦点挂上）；
+     · 点按＝关闭 / 最小化 / **全屏**（⌥+点绿键＝缩放，与 macOS 原生一致）；
+     · 它们都是 `<button>` ⇒ 顶部拖拽判定会自动放行，不会把点击当拖窗。 */
+.mac-lights {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: var(--activity-w);
+  height: var(--mac-lights-h);
+  display: flex;
+  align-items: center;
+  /* ⚠️ 2026-10-23 owner：「系统按钮间距小点」⇒ 8 → 6px（微信那组更紧）。
+     ⛔ 不要再往上加：间距超过 8 就回到"散开"的观感。 */
+  gap: 6px;
+  padding-left: 8px;
+  z-index: calc(var(--z-bar) + 1); /* 要压过左竖条 */
+}
+.mac-light {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: default;
+  color: rgba(0, 0, 0, 0.62);
+}
+/* 一圈极淡的内描边：系统灯有，不加会显得"太塑料"。 */
+.mac-light { box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12); }
+.mac-light-close { background: #ff5f57; }
+.mac-light-min { background: #febc2e; }
+.mac-light-zoom { background: #28c840; }
+/* 悬停组内才显字（与系统一致：不在某个点上悬停，是"这一组"一起显）。 */
+.mac-light svg { opacity: 0; width: 6px; height: 6px; display: block; }
+.mac-lights:hover .mac-light svg { opacity: 1; }
+/* 全屏（2026-10-23 owner：「最大化后，恢复工具栏也要有」+「那部分是空白」）：
+   ⚠️ 真因：全屏里系统只在鼠标到顶部时把**原生标题栏**浮出来（微信就是这样），
+   而自绘灯画在 webview 里 ⇒ 正好被那条原生标题栏盖住 ⇒ 看起来是空白。
+   ⇒ 全屏时**藏自绘灯、放原生灯**（由 Rust 侧 `mac_lights::set_native_traffic_lights_visible`
+     在窗口尺寸变化时切换），这样恢复按钮就在原生标题栏里、和别的应用一致。
+   ⛔ 不要再用"把自绘灯往下挪"的方案：原生标题栏会把它盖住，怎么挪都看不到。 */
+html.mac-fullscreen .mac-lights { display: none; }
+/* 失焦：变灰（浅色主题），深色主题单独一档。 */
+html.mac-blurred .mac-light { background: #d6d6d6; }
+html[data-theme="dark"].mac-blurred .mac-light { background: #4a4a4d; }
+html.mac-blurred .mac-light svg { opacity: 0; }
 /* ---------------------------------------------------------------------------
  * 自绘标题栏（桌面端，窗口无边框时渲染）。
  * 高度 32px 与 Windows 系统标题栏一致，按钮 46x32 也沿用系统尺寸——用户的
@@ -482,7 +576,7 @@ html[data-platform="win"] .app-body {
  * （这正是把入口从侧栏搬出来的目的）。 */
 .activity-bar {
   flex: none;
-  width: 48px;
+  width: 52px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -533,7 +627,7 @@ html[data-platform="win"] .app-body {
 }
 .activity-btn {
   position: relative;
-  width: 48px;
+  width: 52px;
   height: 48px;
   display: grid;
   place-items: center;
@@ -606,7 +700,7 @@ html[data-platform="win"] .app-body {
 }
 .activity-bar .btn-trash {
   position: relative; /* ⭐ 2026-10-18：徽标按这个按钮定位（右上角，与 rail 其余徽标同一格） */
-  width: 48px;
+  width: 52px;
   height: 48px;
   display: grid;
   place-items: center;
@@ -1300,6 +1394,12 @@ html[data-platform="win"] .app-body {
 .sync-popover {
   position: fixed;
   width: 320px;
+  /* ⭐ 2026-10-25（owner：「给同步面板添加滚动」）：内容多时**面板自己滚**，⛔ 不许顶出窗口。
+     高度按视口封顶（留 24px 呼吸），滚动留在这层、并有 `overscroll-behavior: contain`
+     ⇒ 滚到底不会把后面的页面/侧栏一起带着滚。 */
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -14386,6 +14486,16 @@ p:has(> .editor-drawing-container) {
   flex-direction: column;
   gap: 8px;
 }
+
+/* ⭐ 2026-10-25（合并「空间」页）：空间多时**只让列表自己滚**，标题/筛选/底部分区不动。
+   ⛔ 不要让整个设置正文再滚一层（双滚动在触控板上最容易"卡在中间"）。 */
+.set-space-list-scroll {
+  /* ⭐ 2026-10-25 owner：空间列表**不再自己滚** —— 全部行铺开，
+     交给设置正文（`.set-body-scroll`）一层滚，避免双层滚动。 */
+  max-height: none;
+  overflow: visible;
+  overscroll-behavior: auto;
+}
 .set-space-card {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -26422,6 +26532,15 @@ body.is-plugin-panel-open .main {
   box-shadow: none;
   background: transparent;
   padding: 24px 28px;
+  /* ⭐ 2026-10-25（owner：「高级面板被遮挡了」）：内嵌这档**自己滚**。
+     ⚠️ 之前这里只有 `max-height: none; height: auto` ⇒ 内容比容器高时，底部（「高级」折叠）
+        会被父级 `overflow: hidden` 直接裁掉、且**滚不到**（不是"被别的元素盖住"，是裁切）。
+     修法：把它变成父 flex（`.sync-panel:has(> .is-inline)`）里**可收缩的滚动区**：
+       `flex: 1 1 auto` ＋ `min-height: 0`（经典坑：不写就撑破父级）＋ `overflow-y: auto`。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 /* ⭐ 里面那几层也跟着铺满 ✓（⭐ 只在这档里 ✓）。 */
 .sync-popover.is-inline .sync-group,
@@ -26480,6 +26599,33 @@ body.is-plugin-panel-open .main {
   height: auto;
   min-height: 0;
   align-self: stretch;
+}
+
+/* ⭐⭐ **2026-10-25（owner：「同步面板加个页面滚动」）**：内容区那一份现在**整页滚** ✓
+ *
+ * 现场（owner 截图）：设置里「高级」展开后，面板一直往下长，**底部状态行被窗口底边裁掉**，
+ *   而且**滚不到**。量下来的链条是：
+ *     `.main`（`overflow: hidden`，flex 列）
+ *       └ `.sync-panel`（基类只有 `position: relative`，**没被 flex 拉伸** ⇒ 高度＝内容高）
+ *           └ `.sync-popover.is-inline`（虽然有 `overflow-y: auto`，但父级高度是 auto ⇒ 它不生效）
+ *   ⇒ 只要把 `.sync-panel` 这一层**接进 flex 链并让它滚**，内层就不必自己滚。
+ *
+ * ⚠️ 为什么让**外层**滚而不是内层：内层一滚，`details[open]` 的锚点与 Tab 顺序都会跟窗口错位；
+ *    而且 owner 要的是"**页面**滚动"（与文件视图那几页同一手感）。
+ * ⛔ 浮层／抽屉／手机 sheet 三档**一字不动**（下面两条只钉 `.main > .sync-panel` 这一种挂法）。
+ */
+.main > .sync-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+.main > .sync-panel > .sync-popover.is-inline {
+  /* 外层已经在滚 ⇒ 内层不要再滚（否则出现"双滚动条"／滚轮先滚内层，看着像卡住）。 */
+  flex: 0 0 auto;
+  overflow-y: visible;
 }
 
 /* ⭐ 刀二十②（美化，照 owner 2026-10-14「参考设计效果图美化界面」）：⭐ **有读数支撑** ✓ ——
@@ -27185,3 +27331,415 @@ button.mset-row:focus-visible {
   flex: 1 1 auto;
   min-width: 0;
 }
+
+/* ⭐ 2026-10-23：「对端有、你没有的空间」（MeshMissingSpaces.tsx）
+   视觉体系：主色 --accent、勾中 --accent-soft、墓碑胶囊 --mark-bg；圆角 8/4/999。 */
+.mesh-missing { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
+.mesh-missing-head { display: flex; align-items: center; gap: 7px; width: 100%; border: none; background: transparent; padding: 2px 0; cursor: pointer; text-align: left; color: var(--text); }
+.mesh-missing-star { color: var(--accent); font-size: 12px; }
+.mesh-missing-title { font-size: 12.5px; font-weight: 600; }
+.mesh-missing-title b { color: var(--accent); }
+.mesh-missing-toggle { margin-left: auto; font-size: 11.5px; color: var(--text-dim); }
+.mesh-missing-body { margin-top: 8px; }
+.mesh-missing-list { border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+.mesh-missing-row { display: flex; gap: 9px; padding: 10px 11px; border-top: 1px solid var(--border); }
+.mesh-missing-row:first-child { border-top: none; }
+.mesh-missing-row.is-on { background: var(--accent-soft); }
+.mesh-missing-cb { width: 16px; height: 16px; margin-top: 1px; flex: none; border-radius: var(--radius-xs); border: 1.5px solid var(--border-strong); background: var(--surface); color: var(--on-accent); font-size: 10px; font-weight: 700; line-height: 1; display: grid; place-items: center; cursor: pointer; }
+.mesh-missing-cb.is-on { background: var(--accent); border-color: var(--accent); }
+.mesh-missing-text { min-width: 0; }
+.mesh-missing-name { font-size: 12.5px; font-weight: 500; line-height: 1.35; word-break: break-word; }
+.mesh-missing-row.is-on .mesh-missing-name { color: var(--accent-strong); }
+.mesh-missing-chip { display: inline-block; margin-left: 6px; padding: 3px 9px; border-radius: var(--radius-full); background: var(--mark-bg); color: #b26a00; font-size: 11px; font-weight: 500; vertical-align: 1px; }
+.mesh-missing-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.mesh-missing-foot { font-size: 11px; color: var(--text-dim); margin: 8px 2px 0; }
+.mesh-missing-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.mesh-missing-ignore { border: none; background: transparent; color: var(--text-dim); font-size: 12px; padding: 8px; border-radius: var(--radius-md); cursor: pointer; }
+.mesh-missing-ignore:hover { background: var(--hover); color: var(--text); }
+.mesh-missing-create { margin-left: auto; border: none; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 500; padding: 8px 14px; border-radius: var(--radius-md); cursor: pointer; }
+.mesh-missing-create:disabled { background: var(--hover); color: var(--text-faint); cursor: default; }
+.mesh-missing-done { margin-top: 8px; font-size: 11.5px; color: var(--success); }
+/* ⭐ 2026-10-24：页级血统冲突条（`LineageConflictBanner`）—— 只覆盖 `.conflict-banner-lineage`。
+   ⚠️ 与块级那条 `.conflict-banner` **共用一套类名** ⇒ 这里**只加作用域覆盖**，⛔ 不动块级那条。 */
+.conflict-banner-lineage {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: var(--warning-soft);
+  border-color: var(--warning-line);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+}
+.conflict-banner-lineage .conflict-lineage-ic {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--warning-line);
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  color: var(--warning);
+}
+.conflict-banner-lineage .conflict-lineage-body { flex: 1; min-width: 0; }
+.conflict-banner-lineage .conflict-banner-title { font-size: 13px; font-weight: 600; }
+.conflict-banner-lineage .conflict-banner-hint { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+.conflict-banner-lineage .conflict-item-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.conflict-banner-lineage .conflict-btn { font-size: 12px; padding: 6px 12px; border-radius: var(--radius-md); }
+.conflict-banner-lineage .conflict-lineage-keep { color: var(--text-dim); }
+
+/* 窄屏（≤520px）：按钮两列，主操作整行 —— ⛔ 不许挤成一列竖排 */
+@media (max-width: 520px) {
+  .conflict-banner-lineage .conflict-item-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .conflict-banner-lineage .conflict-btn-primary { grid-column: 1 / -1; }
+  .conflict-banner-lineage .conflict-btn { width: 100%; text-align: center; }
+}
+/* ⭐ 2026-10-24：主按钮＝唯一无损选项（「另存为新页」）—— 这一档必须**实心**，另两个是描边 */
+.conflict-banner-lineage .conflict-btn.conflict-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 500;
+}
+.conflict-banner-lineage .conflict-btn.conflict-btn-primary:hover {
+  background: var(--accent-strong);
+}
+/* ⭐ 2026-10-25（合并空间页）：行内加密入口 + 开启/关闭加密弹窗 */
+.set-crypto-scrim{position:fixed;inset:0;background:rgba(15,20,32,.45);z-index:80;display:grid;place-items:center}
+.set-crypto-dialog{width:min(640px,calc(100vw - 48px));background:var(--card-bg);border-radius:16px;box-shadow:0 20px 48px rgba(15,20,32,.28);padding:20px 22px;display:flex;flex-direction:column;gap:10px}
+.set-crypto-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.set-crypto-title{font-size:16px;font-weight:600;color:var(--text)}
+.set-crypto-steps{display:flex;flex-direction:column;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px}
+.set-crypto-steps b{display:block;font-size:12.5px;color:var(--text)}
+.set-crypto-steps span{display:block;font-size:11.5px;color:var(--text-2);margin-top:2px}
+.set-crypto-label{font-size:12px;color:var(--text-2)}
+.set-crypto-check{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text-2);line-height:1.5;cursor:pointer}
+.set-crypto-warn{display:flex;flex-direction:column;gap:6px;background:var(--warning-soft);border:1px solid var(--warning-line);border-radius:10px;padding:12px;font-size:12px;color:var(--text-2)}
+.set-crypto-err{font-size:12px;color:var(--danger)}
+.set-crypto-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+
+/* ⭐ 2026-10-25 真机修复：滚动容器是 flex 列 ⇒ 子项默认 flex-shrink:1，
+   12 行会被压扁/互相盖住（owner 截图：行卡重叠、按钮上下被切）。
+   ⛔ 不许靠给卡写死高度解决（行内文本换行时会溢出）⇒ 只禁止收缩。 */
+.set-space-list-scroll > .set-space-card { flex: 0 0 auto; }
+.set-space-row { min-height: 56px; }
+.set-space-row .set-row-text { flex: 1 1 auto; min-width: 0; }
+.set-space-row .set-btn { flex: 0 0 auto; white-space: nowrap; }
+
+/* ⭐ 2026-10-25 按设计稿收口：顶部安全卡 + 行内 ⋯ 菜单 + 状态/作用域 meta */
+.set-security-card{
+  background:linear-gradient(135deg,#f7faff 0%,#ffffff 70%);
+  border:1px solid #ecEEf2;border-radius:18px;padding:16px 18px;margin-bottom:16px;
+}
+.set-space-card{position:relative}
+.set-space-row{min-height:60px}
+.set-space-scope{color:var(--text-faint)}
+.set-space-meta{gap:8px;flex-wrap:wrap}
+.set-space-crypto{
+  border:1px solid var(--border);border-radius:999px;padding:1px 8px;
+  font-size:10.5px;line-height:18px;color:var(--text-2);background:#f7f8fa;
+}
+.set-space-crypto:has(+ .set-space-sync){}
+.set-space-more{margin-left:auto;position:relative;flex:0 0 auto}
+.set-space-more>summary{
+  list-style:none;cursor:pointer;width:32px;height:32px;border-radius:8px;
+  display:grid;place-items:center;color:var(--text-faint);font-size:16px;
+}
+.set-space-more>summary::-webkit-details-marker{display:none}
+.set-space-more[open]>summary,.set-space-more>summary:hover{background:var(--fill-soft,#f3f5f9);color:var(--text-2)}
+.set-space-menu{
+  position:absolute;right:0;top:38px;z-index:20;min-width:150px;padding:6px;
+  background:var(--card-bg);border:1px solid var(--border);border-radius:12px;
+  box-shadow:0 12px 28px rgba(15,20,32,.16);display:flex;flex-direction:column;gap:2px;
+}
+.set-space-menu .set-btn{justify-content:flex-start;text-align:left;border:none;background:transparent}
+.set-space-menu .set-btn:hover:not(:disabled){background:var(--fill-soft,#f3f5f9)}
+
+/* ⭐ 2026-10-25 按设计稿重写：顶部安全卡 / 标题+筛选同排 / 行卡 */
+.set-security-card{
+  display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:24px;align-items:center;
+  background:linear-gradient(135deg,#f7faff 0%,#ffffff 70%);
+  border:1px solid #ecEEf2;border-radius:18px;padding:18px 20px;margin:2px 0 18px;
+}
+.set-security-left{min-width:0}
+.set-security-overline{font-size:11px;color:var(--text-faint);letter-spacing:.02em}
+.set-security-title{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:600;margin-top:6px}
+.set-security-pill{font-size:10.5px;font-weight:500;border-radius:999px;padding:2px 9px;line-height:18px}
+.set-security-pill.is-ok{color:#0b802f;background:#e8faec}
+.set-security-pill.is-warn{color:#b45309;background:#fff3e8}
+.set-security-sub{font-size:12px;color:var(--text-2);margin-top:8px}
+.set-security-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.set-security-chips span{font-size:10.5px;color:var(--text-2);background:#f5f7fa;border-radius:999px;padding:3px 10px}
+.set-security-hint{font-size:10.5px;color:var(--text-faint);margin-top:12px}
+.set-security-right{border-left:1px solid #edf0f6;padding-left:20px;display:flex;flex-direction:column;gap:8px}
+.set-security-right-label{font-size:10.5px;color:var(--text-faint)}
+.set-security-right .set-input{height:38px}
+.set-security-right .set-btn{height:38px}
+.set-security-ok{font-size:11px;color:var(--text-2);padding:8px 0}
+
+.set-space-section .set-space-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px;flex-wrap:wrap}
+.set-space-head-title{font-size:15.5px;font-weight:600}
+.set-space-head-title>span{font-size:11px;font-weight:400;color:var(--text-faint);margin-left:6px}
+.set-space-head-tools{display:flex;align-items:center;gap:10px;margin-left:auto}
+.set-space-seg{display:flex;background:#f4f6fa;border-radius:9px;padding:3px;gap:2px}
+.set-space-seg button{border:none;background:transparent;border-radius:7px;padding:5px 10px;font-size:10.5px;color:var(--text-2);cursor:pointer}
+.set-space-seg button.is-on{background:#fff;color:var(--text);box-shadow:0 1px 2px rgba(15,20,32,.08)}
+.set-space-card{border:1px solid var(--border);border-radius:12px;background:var(--card-bg);position:relative;overflow:visible}
+.set-space-card.is-active{background:#f5f9ff;border-color:#cfe0ff;box-shadow:inset 3px 0 0 var(--accent)}
+.set-space-row{display:flex;align-items:center;gap:12px;padding:11px 14px;min-height:60px}
+.set-space-mark{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);font-size:14px;font-weight:600;flex:0 0 auto}
+.set-space-more{margin-left:auto;position:relative;flex:0 0 auto}
+.set-space-more>summary{list-style:none;cursor:pointer;width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--text-faint);font-size:16px;line-height:1}
+.set-space-more>summary::-webkit-details-marker{display:none}
+.set-space-more>summary:hover,.set-space-more[open]>summary{background:#f0f3f8;color:var(--text-2)}
+.set-space-menu{position:absolute;right:0;top:34px;z-index:30;min-width:150px;padding:6px;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 28px rgba(15,20,32,.16);display:flex;flex-direction:column;gap:2px}
+.set-space-menu .set-btn{justify-content:flex-start;border:none;background:transparent;text-align:left;height:32px;font-size:12px}
+.set-space-menu .set-btn:hover:not(:disabled){background:#f3f5f9}
+
+/* ⭐ 2026-10-25 真机对照设计稿：右侧口令行并排 / 行内状态 pill / 当前行弱化边框 */
+.set-security-right{display:flex;flex-direction:column;gap:8px;min-width:0}
+.set-security-row{display:flex;align-items:center;gap:8px}
+.set-security-row .set-input{flex:1 1 auto;min-width:0}
+.set-security-row .set-btn{flex:0 0 auto;width:auto;min-width:84px;white-space:nowrap}
+.set-security-chips{flex-wrap:nowrap;overflow:hidden}
+.set-security-chips span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.set-space-state{font-size:10.5px;line-height:18px;border-radius:999px;padding:1px 8px;flex:0 0 auto}
+.set-space-state.is-enc{color:#0b802f;background:#e8faec}
+.set-space-state.is-plain{color:var(--text-2);background:#f2f3f5}
+.set-space-card.is-active{border-color:#dbe7ff;background:#f5f9ff;box-shadow:inset 3px 0 0 var(--accent)}
+.set-space-crypto.is-enc{color:#0b802f;background:#e8faec;border-color:#c9f0d3}
+.set-space-crypto.is-plain{color:var(--text-2);background:#f2f3f5}
+/* ⭐ 2026-10-25 按效果图：chips 不缩、单空间迁移合成一条、低频项收进入口 */
+.set-security-chips{flex-wrap:wrap;overflow:visible}
+.set-security-chips span{flex:0 0 auto;max-width:100%;white-space:nowrap;overflow:visible;text-overflow:clip}
+.set-migrate{
+  display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--border);
+  border-radius:12px;background:var(--card-bg);overflow:hidden;
+}
+.set-migrate-card{border:none;border-radius:0;padding:14px 16px;background:transparent}
+.set-migrate-card + .set-migrate-card{border-left:1px solid var(--border)}
+.set-space-advanced-link{
+  border:none;background:transparent;color:var(--text-faint);font-size:11px;
+  padding:4px 2px;text-align:left;cursor:pointer;width:max-content;margin-top:4px
+}
+.set-space-advanced-link:hover{color:var(--text-2);text-decoration:underline}
+.set-advanced-dialog{max-height:min(72vh,720px);overflow:auto;width:min(720px,calc(100vw - 48px))}
+
+/* ⭐ 2026-10-25 对照效果图：空间列表是一张白卡（行间分隔线），不是每行一张卡 */
+.set-space-list{
+  display:flex;flex-direction:column;gap:0;background:var(--card-bg);
+  border:1px solid var(--border);border-radius:18px;overflow:hidden;
+}
+.set-space-list .set-space-card{
+  border:none;border-radius:0;background:transparent;box-shadow:none;
+  border-bottom:1px solid var(--border);
+}
+.set-space-list .set-space-card:last-child{border-bottom:none}
+.set-space-list .set-space-card.is-active{background:#f5f9ff;box-shadow:inset 3px 0 0 var(--accent)}
+.set-space-mark{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;background:#eef3ff;color:var(--accent);flex:0 0 auto}
+.set-space-row{min-height:64px;padding:12px 16px}
+.set-space-row:hover{background:#fafbfd}
+.set-space-list .set-space-card.is-active .set-space-row:hover{background:transparent}
+.set-space-head-tools{flex:0 0 auto}
+.set-space-filter-wrap{flex:0 0 210px}
+.set-security-right{width:280px;max-width:280px;justify-self:end;min-width:0}
+.set-security-row{display:flex;align-items:center;gap:8px;min-width:0}
+.set-security-row .set-input{flex:1 1 auto;min-width:0;width:100%}
+.set-security-row .set-btn{flex:0 0 auto;width:auto;min-width:78px}
+.set-security-chips{display:flex;flex-wrap:nowrap;gap:8px;overflow:hidden}
+.set-security-chips span{flex:0 0 auto;font-size:10px;padding:2px 8px;white-space:nowrap}
+
+/* ⭐ 2026-10-25 真机：行内 ⋯ 菜单被列表卡/行卡的 overflow:hidden 裁掉。
+   ⇒ 列表与行卡都允许溢出（圆角靠首/末行自己补），菜单再抬一层 z-index。 */
+.set-space-list{overflow:visible}
+.set-space-list .set-space-card{overflow:visible}
+.set-space-list .set-space-card:first-child{border-radius:18px 18px 0 0}
+.set-space-list .set-space-card:last-child{border-radius:0 0 18px 18px}
+.set-space-list .set-space-card:only-child{border-radius:18px}
+.set-space-list .set-space-card.is-active:first-child{border-radius:18px 18px 0 0}
+.set-space-list .set-space-card.is-active:last-child{border-radius:0 0 18px 18px}
+.set-space-more[open]{z-index:50}
+.set-space-menu{z-index:60}
+
+/* ⭐ 2026-10-25 owner：明文/已加密要**对齐**（同一条竖线），不要再跟着名字长度漂 */
+.set-space-row .set-row-text{flex:1 1 auto;min-width:0}
+.set-space-status{
+  flex:0 0 84px;width:84px;display:flex;align-items:center;justify-content:flex-start;
+}
+.set-space-status .set-space-crypto,.set-space-status .set-space-state{white-space:nowrap}
+.set-space-row .set-space-more{margin-left:0}
+/* ⭐ 2026-10-25 owner：筛选空间控件靠右 + 与分段水平对齐；行内菜单加 SVG 图标 */
+.set-space-head .set-space-filter-wrap{
+  margin-bottom:0;flex:0 0 200px;width:200px;align-self:center;
+}
+.set-space-head-tools{justify-content:flex-end;align-items:center}
+.set-space-head .set-space-seg{align-self:center;height:36px;align-items:center}
+.set-space-menu .set-btn{display:flex;align-items:center;gap:8px}
+.set-space-menu .set-btn svg{flex:0 0 auto}
+/* ⭐ 2026-10-25 owner：筛选空间控件再窄一点 */
+.set-space-head .set-space-filter-wrap{flex:0 0 168px;width:168px}
+/* ⭐ 2026-10-25 owner：筛选框再窄到 120px（为窄框单独收内边距，避免占位被裁） */
+.set-space-head .set-space-filter-wrap{flex:0 0 120px;width:120px}
+.set-space-head .set-space-filter-wrap>svg{left:8px}
+.set-space-head .set-space-filter.sync-input{padding-left:28px;padding-right:18px}
+/* ⭐ 2026-10-25 owner：分段控件左右留白再大一点 */
+.set-space-seg{padding:3px 6px;gap:4px}
+.set-space-seg button{padding:5px 12px}
+/* ⭐ 2026-10-25 owner：冲突提示卡片上边加点留白 */
+.conflict-banner{margin-top:14px}
+.sync-conflict-banner{margin-top:16px}
+
+/* ⭐ 2026-10-25 owner：数据页「自动备份」重排 + 备份目录打开按钮 */
+.backup-auto-card{
+  margin-top:10px;padding:14px 16px;border:1px solid var(--border);
+  border-radius:14px;background:var(--card-bg);display:flex;flex-direction:column;gap:12px;
+}
+.backup-auto-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.backup-auto-title{font-size:12px;font-weight:700;color:var(--text-2);letter-spacing:.02em}
+.backup-auto-badge{font-size:11px;color:var(--text-faint);background:#f5f7fa;border-radius:999px;padding:2px 10px}
+.backup-auto-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.backup-auto-item{background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:4px}
+.backup-auto-item span{font-size:10.5px;color:var(--text-faint)}
+.backup-auto-item b{font-size:13px;font-weight:600;color:var(--text)}
+.backup-auto-unreadable{font-size:12px;color:var(--text-2);display:flex;flex-direction:column;gap:4px}
+.backup-dir-row{display:flex;align-items:center;gap:10px;min-width:0;border-top:1px solid var(--border);padding-top:10px}
+.backup-dir-label{flex:0 0 auto;font-size:11px;color:var(--text-faint)}
+.backup-dir-path{
+  flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--text-2);
+  background:#f7f8fa;border:1px solid var(--border);border-radius:8px;padding:5px 8px;
+}
+.backup-dir-row .set-btn{flex:0 0 auto}
+.backup-auto-note{font-size:11px;color:var(--text-faint);line-height:1.6}
+.backup-auto-actions{display:flex;gap:8px;flex-wrap:wrap}
+.backup-auto-lastrun{font-size:11.5px;color:var(--text-2);line-height:1.6;border-top:1px solid var(--border);padding-top:10px}
+.backup-auto-lastrun-hint{color:var(--text-faint);margin-top:4px}
+.attachment-prefetch{font-size:11px;color:var(--text-faint);margin-left:8px}
+.acct-device-edit{display:flex;align-items:center;gap:8px;flex:0 0 auto;width:min(360px,48%)}
+.acct-device-edit .set-input{flex:1 1 auto;min-width:0}
+/* ⭐ 2026-10-25 真机：设备名“保存”按钮被挤成竖排两字 ⇒ 不许收缩、给最小宽 */
+.acct-device-edit .set-btn{flex:0 0 auto;min-width:64px;white-space:nowrap;padding-left:14px;padding-right:14px}
+.acct-device-edit{width:min(420px,52%)}
+.acct-device-edit .set-input{height:38px}
+/* ⭐ 2026-10-25 owner：本机设备整块再收紧（少留白、控件同高、按钮靠右） */
+.acct-device-row{padding:8px 0;min-height:0;align-items:center;gap:16px}
+.acct-device-row .set-row-text{gap:2px}
+.acct-device-row .set-row-sub{line-height:1.45}
+.acct-device-edit{width:min(380px,54%);gap:6px}
+.acct-device-edit .set-input{height:34px;font-size:12px}
+.acct-device-edit .set-btn{height:34px;min-width:58px;padding:0 12px;font-size:12px}
+.set-section:has(.acct-device-row) .set-section-title{margin-bottom:2px}
+/* ⭐ 2026-10-25 owner：设备名输入＋保存**单独一行**（标签/说明在上，控件在下） */
+.acct-device-row.acct-device-stack{flex-direction:column;align-items:stretch;gap:8px}
+.acct-device-stack .acct-device-edit{width:100%;max-width:none;gap:8px}
+.acct-device-stack .acct-device-edit .set-input{flex:1 1 auto}
+.acct-device-stack .acct-device-edit .set-btn{flex:0 0 auto}
+
+/* ⭐ 2026-10-25 owner：设置-空间面板**深色主题适配**（真机截图里白卡/分段/状态 pill 全是浅色硬编码） */
+[data-theme="dark"] .set-security-card{
+  background:linear-gradient(135deg,#1f232b 0%,#1c1d20 70%);
+  border-color:var(--border);
+}
+[data-theme="dark"] .set-security-right{border-left-color:var(--border)}
+[data-theme="dark"] .set-security-pill.is-ok{color:#7ce3b0;background:rgba(43,212,155,.14)}
+[data-theme="dark"] .set-security-pill.is-warn{color:#ffc078;background:rgba(255,176,77,.14)}
+[data-theme="dark"] .set-security-chips span{background:var(--hover);color:var(--text-dim)}
+[data-theme="dark"] .set-space-list{background:var(--card-bg);border-color:var(--border)}
+[data-theme="dark"] .set-space-list .set-space-card{border-bottom-color:var(--border)}
+[data-theme="dark"] .set-space-list .set-space-card.is-active{background:#1c2a40}
+[data-theme="dark"] .set-space-row:hover{background:var(--hover)}
+[data-theme="dark"] .set-space-list .set-space-card.is-active .set-space-row:hover{background:transparent}
+[data-theme="dark"] .set-space-mark{background:#22304a;color:var(--accent-strong)}
+[data-theme="dark"] .set-space-seg{background:#26272b}
+[data-theme="dark"] .set-space-seg button.is-on{background:#3a3c41;color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.4)}
+[data-theme="dark"] .set-space-crypto{background:#2a2b2e;border-color:#3a3c41;color:var(--text-dim)}
+[data-theme="dark"] .set-space-crypto.is-enc{color:#7ce3b0;background:rgba(43,212,155,.12);border-color:rgba(43,212,155,.3)}
+[data-theme="dark"] .set-space-crypto.is-plain,
+[data-theme="dark"] .set-space-state.is-plain{background:#2a2b2e;color:var(--text-dim)}
+[data-theme="dark"] .set-space-menu{background:var(--surface);border-color:var(--border-strong)}
+[data-theme="dark"] .set-space-status .set-space-crypto,
+[data-theme="dark"] .set-space-status .set-space-state{color:var(--text-2)}
+[data-theme="dark"] .set-security-fold summary{color:var(--text-2)}
+[data-theme="dark"] .set-space-advanced-link{color:var(--text-faint)}
+[data-theme="dark"] .backup-auto-card{background:var(--card-bg);border-color:var(--border)}
+[data-theme="dark"] .backup-auto-grid .backup-auto-item{background:#222326;border-color:var(--border)}
+[data-theme="dark"] .backup-dir-path{background:#222326;border-color:var(--border);color:var(--text-dim)}
+[data-theme="dark"] .backup-auto-badge{background:#2a2b2e;color:var(--text-faint)}
+
+/* ⭐ 2026-10-25（owner 复报：同步面板「高级」展开后下面被裁、滚不到）：
+   外层 flex 滚动在某些窗口尺寸下不生效 —— 给内容区自己加**视口封顶的滚动**，
+   ⛔ 不再依赖父级高度是否被 flex 拉伸。 */
+.main > .sync-panel{overflow:hidden}
+.main > .sync-panel > .sync-popover.is-inline{
+  height:auto;
+  min-height:0;
+  max-height:calc(100vh - 32px);
+  max-height:calc(100dvh - 32px);
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  padding-bottom:32px;
+}
+
+/* ⭐ 2026-10-25 owner：同步面板**要看到滚动条**（macOS 默认 overlay 滚动条平时不显示）——
+   显式画一条常驻的窄滚动条，并让内容区成为唯一的滚动容器。 */
+.main > .sync-panel > .sync-popover.is-inline{
+  overflow-y:scroll;
+  scrollbar-width:thin;
+  scrollbar-color:var(--border-strong) transparent;
+}
+.main > .sync-panel > .sync-popover.is-inline::-webkit-scrollbar{width:10px}
+.main > .sync-panel > .sync-popover.is-inline::-webkit-scrollbar-track{background:transparent}
+.main > .sync-panel > .sync-popover.is-inline::-webkit-scrollbar-thumb{
+  background:var(--border-strong);border-radius:8px;border:2px solid transparent;background-clip:padding-box;
+}
+.main > .sync-panel > .sync-popover.is-inline::-webkit-scrollbar-thumb:hover{background:var(--text-faint);background-clip:padding-box}
+
+/* ⭐ 2026-10-25 owner 复报「还是不能滚动」：不再依赖 flex 高度链 ——
+   把内容区钉成父级的**绝对定位滚动层**（inset:0），父级只负责给出可用高度。
+   这样无论内容多高、父级 flex 怎么算，滚动容器都恰好等于可视区域。 */
+.main > .sync-panel{
+  position:relative;
+  flex:1 1 auto;
+  min-height:0;
+  height:100%;
+  overflow:hidden;
+}
+.main > .sync-panel > .sync-popover.is-inline{
+  position:absolute;
+  inset:0;
+  width:auto;
+  height:auto;
+  min-height:0;
+  max-height:none;
+  overflow-y:scroll;
+  overscroll-behavior:contain;
+  padding-bottom:32px;
+  scrollbar-gutter:stable;
+}
+
+/* ⭐ 2026-10-25 真因（owner 两次复报）：`.sync-popover.is-sync` 是 **flex 列**；
+   内容区虽然被我们做成了滚动层，但它的直接子项（尤其 `.sync-advanced`）默认 `flex-shrink:1`
+   ⇒ 展开的高级卡被**压扁**，再由它自己的 `overflow:hidden` 裁掉 ⇒ 外层怎么滚都看不到。
+   ⇒ 子项一律不许收缩，让内容真正溢出到滚动层里。 */
+.main > .sync-panel > .sync-popover.is-inline > * {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+.sync-popover.is-inline > .sync-advanced[open] {
+  overflow: visible;
+}
+
+/* ⭐ 2026-10-25 owner：「中继」「跨网同步订阅」两组字体向「同步预算」看齐。
+   「同步预算」是 `.sync-row > summary`（12.5px 标签 ＋ 12px 值 ＋ 11px hint）；
+   而这两组是 `.sync-row-body` 里的行，标签继承了面板正文（比 summary 大）。
+   ⇒ 显式对齐到同一套字号，⛔ 不改文案、⛔ 不动中继胶囊的颜色语义。 */
+.sync-popover.is-inline .relay-status .sync-row-label,
+.sync-popover.is-inline .license-block .sync-row-label {
+  font-size: 12.5px;
+}
+.sync-popover.is-inline .relay-status .sync-row-value,
+.sync-popover.is-inline .license-block .sync-row-value {
+  font-size: 12px;
+}
+.sync-popover.is-inline .license-block .sync-hint { font-size: 11px; }

@@ -44,6 +44,44 @@ export interface ContentSql {
   run(sql: string, params?: readonly unknown[]): void;
 }
 
+/**
+ * ⭐ 2026-10-24（owner 报「同步了没有自动刷新页面」）：**同步回来之后，当前这一页要不要重挂编辑器**。
+ *
+ * 为什么判据放在这一层：调用方（`store/notes.ts` 的 `refreshCurrent`）不该直接比较正文那两个
+ * 存储字段名 —— `check-doc-content-access` 的口径是"只有这一层可以直接摸它们"。
+ * 比较项＝用户看得见的东西：正文 ＋ 标题 ＋ 封面/图标/高度/位置（后四格是 2026-10-24 那笔
+ * 「题头图没有同步」补上的，同一处判"要不要重挂"才不会漏掉只改封面的那一次）。
+ *
+ * 返回 `true` ⇒ **变了**（调用方负责换 `current` 并 `bumpReload()` 让编辑器重挂）。
+ */
+export function visiblePageChanged(
+  prev: {
+    title: string;
+    content_json: string;
+    cover?: string;
+    icon?: string;
+    cover_height?: number;
+    cover_pos?: number;
+  },
+  next: {
+    title: string;
+    content_json: string;
+    cover?: string;
+    icon?: string;
+    cover_height?: number;
+    cover_pos?: number;
+  },
+): boolean {
+  return (
+    prev.content_json !== next.content_json ||
+    prev.title !== next.title ||
+    (prev.cover ?? "") !== (next.cover ?? "") ||
+    (prev.icon ?? "") !== (next.icon ?? "") ||
+    (prev.cover_height ?? 300) !== (next.cover_height ?? 300) ||
+    (prev.cover_pos ?? 50) !== (next.cover_pos ?? 50)
+  );
+}
+
 /** **唯一读出口**。页面不存在或已软删 ⇒ `null`（"没有"与"出错"由调用方分开处理）。 */
 /**
  * ⭐ **R166**：把**一整段**源码做成**一个** code 块 ✓（⛔ 不按空行／换行拆开 ✗）。
@@ -247,10 +285,17 @@ export function readPageCrdtState(db: ContentSql, pageId: string): Uint8Array | 
   const row = db.query<{ state: unknown }>("SELECT state FROM page_crdt WHERE page_id = ?", [pageId])[0];
   if (!row) return null;
   const s = row.state;
-  if (s instanceof Uint8Array) return s;
+  // ⭐ 2026-10-24（真机报错 `CRDT 绑定失败：Unexpected end of array` 定位到的那一格）：
+  //   **0 字节的状态 ＝ 还没有状态**，不是"一份空状态" ✗ —— 交给 lib0 解码会当场抛
+  //   `Unexpected end of array`（编辑器只能弹一句看不懂的 toast）。
+  //   0 字节是从哪来的：`adoptRemote()` 那条路会 `savePageState(pageId, new Uint8Array())`
+  //   （＝"清掉本机 CRDT、按对端投影重建"）⇒ 那一行就是 0 字节。
+  //   ⇒ 这里统一收口成 `null`：所有调用方本来就把 `null` 当"没有状态 ⇒ 从 JSON 播种"✓。
+  if (s instanceof Uint8Array) return s.length === 0 ? null : s;
   // 兜底：驱动若按**二进制字符串**回来（sql.js 的 BLOB 是 Uint8Array，正常走不到这里），
   // 用逐字节 charCode 还原。⚠️ **别用 `Buffer`**：Web 构建里没有它。
   if (typeof s === "string") {
+    if (s.length === 0) return null; // 同上：空串也是"没有状态"
     const out = new Uint8Array(s.length);
     for (let i = 0; i < s.length; i += 1) out[i] = s.charCodeAt(i) & 0xff;
     return out;
@@ -1476,4 +1521,19 @@ export function takeRemoteWholePage(db: ContentSql, row: RemotePageRow, remoteSe
     "UPDATE page_conflicts SET resolved_at = ?, resolved_choice = ? WHERE page_id = ? AND resolved_at IS NULL",
     [Date.now(), "remote", String(row.id)],
   );
+}
+
+/**
+ * ⭐ 2026-10-23（导出漏附件那件事的**收口**）：本空间所有未删除页的**正文 JSON**。
+ *
+ * 为什么要一个函数而不是在 `web.ts` 里写 SQL：`check-doc-content-access` 按字面量计数
+ * （`content_json` 等只减不增），而"列名"本来就该只出现在**这一层**。
+ * 导出时扫附件引用（`asst:` 指纹、以及老数据的文件名兜底）用它拿正文。
+ */
+export function pageDocJsonInSpace(db: ContentSql, workspaceId: string): string[] {
+  const rows = db.query<{ content_json: string | null }>(
+    "SELECT content_json FROM pages WHERE workspace_id = ? AND deleted_at IS NULL",
+    [workspaceId],
+  );
+  return rows.map((r) => String(r.content_json ?? ""));
 }

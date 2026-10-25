@@ -218,52 +218,82 @@ export function BackupSettingsPanel() {
     }
   };
 
-  const lines = backupFactsLines(facts);
+  const unreadable = !facts || facts.unreadableReason !== null;
+  const w = facts?.windows ?? BACKUP_RETENTION;
+  const dir = facts?.dir ?? null;
+  const openDir = async () => {
+    if (!dir) return;
+    try {
+      await platform.opener.openPath(dir);
+    } catch (e) {
+      toast(`打开备份目录失败：${e instanceof Error ? e.message : String(e)}`, "error");
+    }
+  };
 
   return (
-    <div className="backup-auto" style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
-      {/* ⭐ 2026-10-11（owner：「这个界面的字体样式不协调，美化一下」）：
-          ⭐ 原来这里是个**手写的粗体 div** ✗（⭐ `fontWeight: 600` ＋ ⭐ 继承正文字号 ~14-15px ✓）
-          ⇒ ⭐ 比它自己所属的分组标题（`.set-section-title` ＝ ⭐ 12px/700/暗色 ✓）**还大还黑** ✓ ＝ ⭐ 不协调 ✓。
-          ⇒ ⭐ 改成走 CSS 里的 `.backup-auto-title` ✓（⭐ 与分组标题**同一族**：⭐ 同字重 ／ ⭐ 同暗色 ／ ⭐ 同字距 ✓，
-             ⭐ 但不带那条竖条 —— ⭐ 它是**子分组**，⭐ 不该跟父标题抢 ✓）。 */}
-      <div className="backup-auto-title">自动备份</div>
-      <ul className="backup-auto-facts" style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.6 }}>
-        {lines.map((line) => (
-          <li key={line}>{line}</li>
-        ))}
-      </ul>
-      <div className="backup-auto-actions" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        {/* ⭐ 后端真有这条命令了 ⇒ 这个按钮是**真的**（走既有 `run_auto_backup_once` ✓） */}
+    <div className="backup-auto-card">
+      <div className="backup-auto-head">
+        <div className="backup-auto-title">自动备份</div>
+        <div className="backup-auto-badge">
+          {unreadable ? "读数不可用" : `${facts?.count ?? 0} 份 · ${facts?.bytes != null ? formatBytes(facts.bytes) : "—"}`}
+        </div>
+      </div>
+
+      {unreadable ? (
+        <div className="backup-auto-unreadable">
+          <div>上次成功备份：读不到</div>
+          <div>现在有几份 ／ 共多大：读不到</div>
+          <div className="backup-auto-note">{facts?.unreadableReason ?? BACKUP_READINGS_UNAVAILABLE}</div>
+        </div>
+      ) : (
+        <div className="backup-auto-grid">
+          <div className="backup-auto-item">
+            <span>上次成功备份</span>
+            <b>{facts!.lastSuccessUnix === null ? "读不到" : formatUnixLocal(facts!.lastSuccessUnix)}</b>
+          </div>
+          <div className="backup-auto-item">
+            <span>现在有几份</span>
+            <b>{facts!.count === null ? "读不到" : `${facts!.count} 份`}</b>
+          </div>
+          <div className="backup-auto-item">
+            <span>共多大</span>
+            <b>{facts!.bytes === null ? "读不到" : formatBytes(facts!.bytes)}</b>
+          </div>
+        </div>
+      )}
+
+      <div className="backup-dir-row">
+        <span className="backup-dir-label">备份目录</span>
+        <code className="backup-dir-path" title={dir ?? undefined}>
+          {dir ?? "应用数据目录下的 backups/"}
+        </code>
+        <button className="set-btn" onClick={() => void openDir()} disabled={!dir}>打开…</button>
+      </div>
+
+      <div className="backup-auto-note">
+        保留策略：{w.keepDays} 天内每天留 1 份 ／ {w.keepWeeks} 周内每周留 1 份 ／ {w.keepMonths} 个月内每月留 1 份 ／ 更早的删除
+      </div>
+      <div className="backup-auto-note">触发方式：随应用启动先跑一轮，之后每 24 小时再看一次</div>
+
+      <div className="backup-auto-actions">
         <button className="set-btn" onClick={() => void runNow()} disabled={busy}>
           {busy ? "正在备份…" : "立即备份一次"}
         </button>
-        <button className="set-btn" onClick={() => void refresh()} disabled={busy}>
-          刷新读数
-        </button>
+        <button className="set-btn" onClick={() => void refresh()} disabled={busy}>刷新读数</button>
       </div>
+
       {lastRun && (
-        <div className="backup-auto-lastrun" style={{ fontSize: 12, lineHeight: 1.7, opacity: 0.9 }}>
+        <div className="backup-auto-lastrun">
           {lastRun.ran
             ? `刚跑完：保留 ${lastRun.kept} 份 ／ 删除 ${lastRun.removed} 份 —— ${lastRun.note}`
             : `没跑成：${lastRun.note}`}
           {lastRun.ran && (
             <div className="backup-auto-lastrun-hint">
-              ⚠️ 保留策略是「**同一天只留最新一份**」⇒ 刚跑完**份数可能不变**：那说明旧那份被换掉了
-              —— 看上面「**上次成功备份**」那个时刻有没有往前动 ✓
+              保留策略是「同一天只留最新一份」⇒ 刚跑完份数可能不变：那说明旧那份被换掉了 —— 看上面「上次成功备份」的时刻有没有往前动。
             </div>
           )}
         </div>
       )}
-      {/* ⭐ 2026-10-11（owner 截图问「这两部分是不是重复了？」）：⭐ **是重复的** ✗ ——
-          原来这里还有一条 `手动那条路（导出／导入备份）仍在这里：` ＋ 一颗**光秃秃的 ↓ 图标**
-          （`<BackupButton />` **不带 label** ✓）⇒ ⭐ 它和上面那一行的「备份 / 恢复…」是**同一个组件、
-          同一个动作** ✓（⭐ 两处入口 ✗）⇒ ⭐ **删掉这一处** ✓：
-          · ⭐ 上面那处**带文字** ＋ ⭐ 配着说明「导出所有空间与附件为一个包…」✓ ⇒ ⭐ 比一个图标清楚 ✓
-          · ⭐ 而这一处唯一的额外信息（单个空间导出在「空间」页）**早就写在那一行下面** ✓
-            （`SettingsDialog.tsx:121` ✓）⇒ ⛔ **删了不丢任何信息** ✓
-          ⚠️ 判据也跟着反了过来：`BackupSettingsPanel.test.ts` 的 d 原本要求"面板里**要**有 `<BackupButton>`"✗，
-          ⇒ 现在钉「⭐ 面板里**不许**再放第二个入口 ✗」（⭐ 挡住重复入口重新长回来 ✓）。 */}
     </div>
   );
 }

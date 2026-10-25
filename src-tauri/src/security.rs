@@ -127,7 +127,27 @@ pub fn encrypt_payload(c: &Connection, payload: &str) -> Result<String, String> 
 /// （袋里没有它 ＋ 库文件也不是密文）才原样返回；否则解不开就**报错**（不许把密文当明文读）。
 pub fn decrypt_payload(c: &Connection, payload: &str) -> Result<String, String> {
     match wire_keys_for_conn(c)? {
-        Some(k) => crypto::decrypt_str(payload, &k),
+        Some(k) => match crypto::decrypt_str(payload, &k) {
+            Ok(plain) => Ok(plain),
+            Err(e) => {
+                // ⭐ 2026-10-25（真机：解锁后的加密空间互拉，对端把**明文载荷**发过来）：
+                //   网格这条路上，双方是**已配对**设备；对端已解锁时可能直接发明文 JSON
+                //   （它的库是密文、读出来是明文，沿途按明文送）。我们这边看到的就是
+                //   `Invalid symbol 123, offset 0`（首字符就是 `{`）。
+                //   口径：**只在这种形状下**接受明文（trim 后以 `{`/`[` 开头且能解析成 JSON），
+                //   并**必须打日志**；否则照旧报错（⛔ 不把任意坏串当明文塞进库）。
+                let t = payload.trim_start();
+                let looks_json = t.starts_with('{') || t.starts_with('[');
+                if looks_json && serde_json::from_str::<serde_json::Value>(t).is_ok() {
+                    eprintln!(
+                        "[sync] ⚠️ 加密空间收到的是**明文载荷**（不是密文）：按已配对设备的口径接受它（对端已解锁时可能这样发）"
+                    );
+                    Ok(payload.to_string())
+                } else {
+                    Err(e)
+                }
+            }
+        },
         None => Ok(payload.to_string()),
     }
 }
@@ -252,7 +272,7 @@ pub fn space_db_is_encrypted(path: &Path) -> bool {
 }
 
 /// Set a SQLCipher raw key on a freshly-opened connection (`PRAGMA key = "x'hex'"`).
-fn set_cipher_key(conn: &Connection, key: &[u8; 32]) -> Result<(), String> {
+pub(crate) fn set_cipher_key(conn: &Connection, key: &[u8; 32]) -> Result<(), String> {
     let hex = crypto::key_hex(key);
     conn.execute_batch(&format!("PRAGMA key = \"x'{hex}'\";"))
         .map_err(|e| format!("设置 SQLCipher 密钥失败: {e}"))?;
@@ -830,6 +850,37 @@ fn encryption_status_of(c: &Connection) -> Result<EncryptionStatus, String> {
     })
 }
 
+/// ⭐ 2026-10-25（B1/B2 真机验收缺的入口）：**钥匙袋（公开材料）状态**。
+///
+/// 为什么需要：`unlock_encryption` 以前只能从"活动空间加密时的锁定屏 / 设置里那一节"进入；
+/// 而 **活动空间是明文** 时那两处都不渲染 ⇒ 本机明明有加密空间在等解锁，用户却找不到入口。
+/// 这个命令给设置页一个独立入口：有没有材料、几个空间、解锁没解锁。
+#[derive(serde::Serialize)]
+pub struct KeyringStatus {
+    /// 本机 meta 里有没有公开材料（钥匙袋）。
+    pub has_material: bool,
+    /// 材料里一共几个空间盒子。
+    pub spaces: usize,
+    /// 这个会话有没有派生过主密钥（＝能不能开盒）。
+    pub unlocked: bool,
+}
+
+#[tauri::command]
+pub fn keyring_status(db: State<Db>) -> Result<KeyringStatus, String> {
+    let c = conn(&db);
+    let material = crate::space_crypto::stored_material(&c)?;
+    let (has_material, spaces) = match material {
+        Some(text) => {
+            let kr = crate::keyring::Keyring::from_json(&text)?;
+            (true, kr.space_ids().len())
+        }
+        None => (false, 0),
+    };
+    let unlocked =
+        !crate::space_crypto::session_masters().is_empty() || crate::space_crypto::session_master().is_some();
+    Ok(KeyringStatus { has_material, spaces, unlocked })
+}
+
 #[tauri::command]
 pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
     let c = conn(&db);
@@ -854,6 +905,39 @@ pub(crate) fn lock_encryption_impl(conn: &mut Connection, app_data_dir: &Path) -
     }
     crate::space_crypto::set_session_master(None)?;
     LOCKED.store(true, Ordering::SeqCst);
+    // ⭐⭐ **2026-10-24（B）**：**锁必须把网格门一起关掉** ——
+    //   以前这里只换主连接，而"这扇门服务哪些空间"是另一份状态（`mesh::State::conns` 的键）：
+    //   解锁时被塞进去的那条 SQLCipher 连接**不随锁关闭** ⇒ 锁了之后对端照样能把它当明文拉走。
+    //   真机读数（2026-10-24 19:3x，界面已回锁定屏之后）：
+    //     `[19:35:54] [mesh] 公告：发出 3/3 … ｜ 空间 53d6…`（每 30 秒一条，一直在喊）。
+    //   ⚠️ 摘的是**所有密文空间**（不是活动空间那一个）：上面那句 `set_session_master(None)`
+    //      一次掉光所有空间的钥匙 ✓（见 `mesh::lock_encrypted_spaces` 的头注 ✓）。
+    //   ⚠️ 摘不掉就**如实记**（⛔ 不许"锁上了"却把门留在原地还说没事 —— 那正是这一笔要修的形状）。
+    let detached = match crate::mesh::lock_encrypted_spaces(conn, app_data_dir) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "[lock] ⚠️ 上锁时**没能**把密文空间从网格窗口摘掉（门可能还在按明文服务它们）：{e}"
+            );
+            Vec::new()
+        }
+    };
+    eprintln!(
+        "[lock] 会话已锁：主密钥卸载 ✓ ｜ 主连接换成内存库 ✓ ｜ 从网格窗口摘掉 {} 个密文空间{}",
+        detached.len(),
+        if detached.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "：{}",
+                detached
+                    .iter()
+                    .map(|s| crate::lan::mask_space(s))
+                    .collect::<Vec<_>>()
+                    .join("、")
+            )
+        }
+    );
     let _ = std::mem::replace(conn, Connection::open_in_memory().map_err(|e| e.to_string())?);
     let meta = crate::db::meta_path(app_data_dir).display().to_string().replace('\'', "''");
     conn.execute_batch(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""))
@@ -866,6 +950,92 @@ pub fn lock_encryption(db: State<Db>) -> Result<(), String> {
     let mut guard = db.0.lock().map_err(|_| "会话锁失效".to_string())?;
     let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?;
     lock_encryption_impl(&mut *guard, dir)
+}
+
+/// ⭐ 2026-10-24（加密空间自动同步 P2）：**把钥匙袋里、本机还没有的加密空间建出来**。
+///
+/// 背景：新设备收到对端的公开材料后，钥匙袋里有 `(空间 id, 空间名, 盒子)`，但本地没有对应的库。
+/// 解锁拿到主密钥之后，就能用盒子里那把**空间密钥**直接建一个 SQLCipher 空库 ＋ meta 行 ＋
+/// 同步档案 ⇒ 后台轮随后会把它当普通空间一样拉取（密文在传输层照旧是密文）。
+///
+/// 三条边界：
+/// ① **已有 meta 行（含墓碑）⇒ 一律不碰**（⛔ 不复活删掉的空间、⛔ 不覆盖已有库）；
+/// ② 名字/钥匙拿不到 ⇒ 跳过并**记日志**（⛔ 不建一个叫"未命名"的加密空间）；
+/// ③ 同名但不同 id 的空间**不按名合并**（加密空间不做按名融合 —— 它的身份就是那把钥匙）。
+pub(crate) fn provision_spaces_from_keyring(
+    app_data_dir: &Path,
+    c: &Connection,
+    masters: &[(String, crate::crypto::AppKeys)],
+) -> Result<Vec<String>, String> {
+    let Some(kr) = crate::space_crypto::keyring() else {
+        return Ok(Vec::new());
+    };
+    let mut created: Vec<String> = Vec::new();
+    for space_id in kr.space_ids() {
+        let exists: bool = c
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM meta.workspaces WHERE id = ?1)",
+                [&space_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(true);
+        if exists {
+            continue;
+        }
+        let Some(name) = kr.space_name(&space_id) else {
+            eprintln!("[space] 公开材料里的空间 {space_id} 没有名字 ⇒ 不自动建（⛔ 不造未命名加密空间）");
+            continue;
+        };
+        let key = match kr.unwrap_key_with_groups(masters, &space_id) {
+            Ok(k) => k,
+            Err(e) => {
+                eprintln!("[space] 空间 {space_id} 的盒子解不开 ⇒ 不自动建：{e}");
+                continue;
+            }
+        };
+        let path = crate::db::space_db_path(app_data_dir, &space_id);
+        if path.exists() {
+            // 文件在、meta 没行 ⇒ 不猜（可能是别处来的残留）；留给人看日志。
+            eprintln!("[space] 空间 {space_id} 的库文件已存在但 meta 没有它 ⇒ 不自动建（请人工核对）");
+            continue;
+        }
+        let now = crate::db::now_ms();
+        c.execute(
+            "INSERT INTO meta.workspaces
+                (id, name, theme, icon, sort_order, created_at, updated_at, deleted_at, encrypted, cipher_format, kind)
+             VALUES (?1, ?2, '#3370FF', '', 0, ?3, ?3, NULL, 1, 0, 'personal')",
+            rusqlite::params![space_id, name, now],
+        )
+        .map_err(|e| format!("写 meta 空间行失败（{space_id}）：{e}"))?;
+        let conn = Connection::open(&path).map_err(|e| format!("建空间库失败（{space_id}）：{e}"))?;
+        // ⚠️ 顺序：先 key，再建表/写数据 —— SQLCipher 才会把这些页加密。
+        set_cipher_key(&conn, &key)?;
+        crate::db::migrate(&conn, &space_id).map_err(|e| format!("空间库建表失败（{space_id}）：{e}"))?;
+        crate::db::ensure_space_workspace(&conn, &space_id)?;
+        // 同步档案：空档案＝只用网格（个人档），下一轮后台轮就会把它纳入。
+        // ⚠️ 用**外面那个带 meta 的连接**写（新建的空间连接没 ATTACH meta ⇒ 找不到 sync_profiles）。
+        c.execute(
+            "INSERT OR IGNORE INTO meta.sync_profiles (ws_id) VALUES (?1)",
+            rusqlite::params![space_id],
+        )
+        .map_err(|e| format!("写同步档案失败（{space_id}）：{e}"))?;
+        eprintln!("[space] 依公开材料自动建了加密空间「{name}」（{space_id}）");
+        created.push(space_id);
+    }
+    Ok(created)
+}
+
+/// 用**当前会话**（钥匙袋已载入、主密钥已派生）补建缺失的加密空间 —— 解锁之后、以及
+/// 运行中并入了新公开材料之后都调它。
+pub(crate) fn provision_from_current_session(c: &Connection) -> Result<Vec<String>, String> {
+    let Some(dir) = crate::db::app_data_dir_ref() else {
+        return Ok(Vec::new());
+    };
+    let masters = crate::space_crypto::session_masters();
+    if masters.is_empty() {
+        return Ok(Vec::new());
+    }
+    provision_spaces_from_keyring(dir, c, &masters)
 }
 
 /// Unlock the session: verify the passphrase against the meta sentinel, store the derived
@@ -891,17 +1061,29 @@ pub(crate) fn unlock_encryption_impl(
     let t_unlock = std::time::Instant::now();
     // 载入公开材料（坏材料 ⇒ 在这里**报错**，不许静默当成"没有袋子"而降级成明文路径）。
     crate::space_crypto::carry_keyring(conn)?;
-    let master = crate::space_crypto::master_from_passphrase(conn, &passphrase)?;
+    // ⭐ 2026-10-24（B2）：**按组派生**（合并过对端材料时，对各组的盐/参数各派生一次）。
+    let masters = crate::space_crypto::masters_from_passphrase(conn, &passphrase)?;
     // ★ 口令对不对，**由解盒子回答**（袋子没有 / 一个盒子都没有 ⇒ 没什么可解 ⇒ 直接算成功）。
-    if let (Some(m), Some(kr)) = (master, crate::space_crypto::keyring()) {
-        crate::space_crypto::verify_master_against_keyring(&kr, &m)?;
+    if let (Some(ms), Some(kr)) = (masters.as_ref(), crate::space_crypto::keyring()) {
+        crate::space_crypto::verify_masters_against_keyring(&kr, ms)?;
     }
-    crate::space_crypto::set_session_master(master)?;
+    let primary = masters.as_ref().and_then(|ms| ms.first().map(|(_, m)| *m));
+    if let Some(ms) = masters {
+        crate::space_crypto::set_session_masters(ms)?;
+    }
+    crate::space_crypto::set_session_master(primary)?;
     LOCKED.store(false, Ordering::SeqCst);
     let active = crate::workspaces::active_workspace_id(conn)?;
     // Re-open the active space DB keyed — without this PRAGMA key the app would fail to
     // read it after a locked restart. ⚠️ 存量（应用级加密的）库在这一步响亮失败。
     reopen_keyed(conn, &active, app_data_dir)?;
+    // ⭐ 2026-10-24（P2）：解锁成功后，把公开材料里"本机还没有"的加密空间建出来。
+    //   失败只记日志（⛔ 不许让"建一个附加空间失败"把这次解锁按死）。
+    match provision_from_current_session(conn) {
+        Ok(v) if !v.is_empty() => eprintln!("[space] 解锁后自动建了 {} 个加密空间：{:?}", v.len(), v),
+        Ok(_) => {}
+        Err(e) => eprintln!("[space] 解锁后自动建加密空间失败（不影响解锁本身）：{e}"),
+    }
     // ★ 件5：一行**耗时日志**（桌面直接可见；Android 侧看它能不能进 logcat —— 进不了就下一版换落盘）。
     //   读数要点：这里是**一遍 KDF ＋ 解盒子 ＋ 开库**（应用级那条 KDF 已删 ⇒ 比旧读数少一遍）。
     eprintln!(
@@ -932,6 +1114,13 @@ pub fn unlock_encryption(db: State<Db>, passphrase: String) -> Result<(), String
 pub fn startup_lock(c: &Connection) {
     if let Err(e) = crate::space_crypto::carry_keyring(c) {
         eprintln!("[keyring] 启动载入公开材料失败（解锁时会再报一次）：{e}");
+    }
+    // ⭐ 2026-10-24：本地袋子可能**没有空间名**（老路径 / v1 袋建出来的）——
+    //   那样对端拿到公开材料也建不出**同名**空间（只能建"未命名加密空间"，mac 侧 ⑥ 就卡在这）。
+    //   启动时从 `meta.workspaces` 回填一次：只补名字、不动盒子/盐，有变化才写回。
+    //   ⚠️ 写回/升级的那一行日志在 `fill_space_names` 里打（"只抬版本不补名字"也要看得见 ✓）。
+    if let Err(e) = crate::space_crypto::fill_space_names(c) {
+        eprintln!("[keyring] 补空间名/升级公开材料失败（不影响解锁，但对端可能拿不到名字）：{e}");
     }
     let encrypted = match (
         crate::db::app_data_dir_ref(),
@@ -2772,4 +2961,61 @@ mod tests {
             );
         }
     }
+    /// ⭐ 2026-10-24（加密空间自动同步 P2）：**按公开材料自动建加密空间**。
+    ///
+    /// 判据（先看它红）：没有这个函数时，下面那句 `created == ["sp-new"]` 直接不存在；
+    /// 实现后必须同时满足：① meta 行建了；② 库文件是**真密文**（头嗅探）；③ 用盒子里那把
+    /// 空间密钥能打开并读到空表；④ 再跑一次是**幂等**（不重复建）。
+    #[test]
+    fn provisioning_builds_an_encrypted_space_from_the_keyring() {
+        use crate::keyring::{random_space_key, Keyring};
+        let _g = SEC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = uniq_tmp("provision");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("spaces")).unwrap();
+        {
+            let meta = db::open_meta_conn_at(&dir).unwrap();
+            meta.execute(
+                "INSERT INTO workspaces (id, name, created_at, updated_at, kind) VALUES ('default', '默认空间', 1, 1, 'personal')",
+                [],
+            )
+            .unwrap();
+        }
+        let conn = db::open_space_conn_at("default", &dir).unwrap();
+
+        let mut kr = Keyring::new();
+        let master = kr.kdf.derive_master("测试口令八个字").unwrap();
+        let space_key = random_space_key();
+        kr.wrap(&master, "sp-new", &space_key).unwrap();
+        kr.space_names.insert("sp-new".to_string(), "加密测试".to_string());
+        crate::space_crypto::store_keyring(&conn, &kr).unwrap();
+        let masters = vec![(Keyring::group_fingerprint(&kr.kdf), master)];
+
+        let created = provision_spaces_from_keyring(&dir, &conn, &masters).unwrap();
+        assert_eq!(created, vec!["sp-new".to_string()], "应当只建这一个空间");
+
+        // ① meta 行
+        let name: String = conn
+            .query_row("SELECT name FROM meta.workspaces WHERE id = 'sp-new'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(name, "加密测试");
+        // ② 库文件是密文（头嗅探），③ 用盒子里那把钥匙能打开
+        let path = db::space_db_path(&dir, "sp-new");
+        assert!(path.exists(), "库文件要建出来");
+        assert!(space_db_is_encrypted(&path), "⛔ 建出来的必须是密文库，不能悄悄是明文");
+        let opened = Connection::open(&path).unwrap();
+        set_cipher_key(&opened, &space_key).unwrap();
+        let n: i64 = opened.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0, "新空间是空库");
+        // ④ 幂等
+        assert!(
+            provision_spaces_from_keyring(&dir, &conn, &masters).unwrap().is_empty(),
+            "⛔ 第二次不许重复建"
+        );
+        // 收尾：把进程级全局还回去（别污染别的判据）
+        crate::space_crypto::set_session_masters(Vec::new()).unwrap();
+        crate::space_crypto::set_keyring_for_test(None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
 }

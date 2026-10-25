@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLeaseAutoRefresh } from "./lib/license/useLeaseAutoRefresh";
 import { hasBlockContent } from "./lib/blankPage";
-import { isDesktopPlatform } from "./lib/platform";
+import { isDesktopPlatform, isMacDesktopPlatform } from "./lib/platform";
 import { PageTree } from "./components/PageTree";
 import { SyncPanel } from "./components/SyncPanel";
 import { ActivityBar } from "./components/ActivityBar";
@@ -100,6 +101,7 @@ import { api } from "./lib/api";
 import { createDeepLinkHandler } from "./lib/deepLinkDispatch";
 import { useNotes } from "./store/notes";
 import { shouldDropPendingSave } from "./lib/pendingSave";
+import { isLocalEditRecent, markLocalEdit } from "./lib/editIdle";
 import { usePlugins } from "./store/plugins";
 import { emitHostEvent } from "./lib/pluginEvents";
 import { applyThemeTokens, resolveTheme } from "./lib/pluginTheme";
@@ -212,7 +214,14 @@ async function runAutoSyncRound(): Promise<void> {
     }
     // ★ 空闲退避（2026-09-30）：**跑完了才记时**（被闸门拦掉、或忙的时候不算"跑过" ✓）。
     //   口径（什么算"空"、出错怎么算）全在 `lib/syncBackoff.ts` —— 这里只喂两个数 ✓。
-    syncEmptyStreak = roundWasEmpty(syncResults, meshReports) ? syncEmptyStreak + 1 : 0;
+    const empty = roundWasEmpty(syncResults, meshReports);
+    syncEmptyStreak = empty ? syncEmptyStreak + 1 : 0;
+    // ⭐ 2026-10-24（owner 报「同步了没有自动刷新页面」）：这一轮**真的换到了东西** ⇒
+    //   当前打开的页也要重读（`loadPages()` 只换列表；见 `notes.refreshCurrent`）。
+    //   ⚠️ 正在打字时跳过：重挂编辑器会把你还没落库的那几百毫秒换掉（`lib/editIdle.ts`）。
+    if (!empty && !isLocalEditRecent()) {
+      await useNotes.getState().refreshCurrent();
+    }
     syncLastRunAtMs = Date.now();
   } catch (e) {
     // ③ 自动同步失败静默（下次再试），**但留痕**（完全静默的话"改了没传上去"查不到因果）。
@@ -332,6 +341,22 @@ function NoteEditor({ pageId }: { pageId: string }) {
     void platform.event
       .listen<{ error: string }>("persist-error", () => {
         toast("保存失败，更改可能未落盘", "error");
+      })
+      .then((u) => {
+        unlisten = u;
+      });
+    return () => unlisten?.();
+  }, []);
+
+  // ⭐ 2026-10-24（真机：页 B 同页并发后两边各缺一块）：**网格那条路没有 SSE** ——
+  //   Rust 后台轮把远端页并进库之后，前端完全不知道；编辑器里那份旧 doc 之后一保存，
+  //   就把刚并进来的块盖掉。这里收到 `mesh-applied` 就刷列表 ＋ 刷新当前页（节流同自动同步那一轮）。
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void platform.event
+      .listen<{ spaceId: string; pages: string[] }>("mesh-applied", () => {
+        void useNotes.getState().loadPages();
+        if (!isLocalEditRecent()) void useNotes.getState().refreshCurrent();
       })
       .then((u) => {
         unlisten = u;
@@ -673,6 +698,9 @@ function NoteEditor({ pageId }: { pageId: string }) {
   useEffect(() => {
     let pending: ReturnType<typeof setTimeout> | undefined;
     const off = onAnyLocalEdit(() => {
+      // ⭐ 2026-10-24：记下"刚刚真的在敲" —— 同步回来时用它决定要不要自动重挂当前页
+      //   （见 `lib/editIdle.ts`；只在最近没编辑时才自动刷）。
+      markLocalEdit();
       if (pending) clearTimeout(pending);
       pending = setTimeout(() => {
         pending = undefined;
@@ -989,6 +1017,8 @@ function AppShell() {
   const templateOpen = useViewStore((s) => s.view === "templates");
   usePresence();
   useSyncStream();
+  // 中继租约的兜底续期：6 小时一次（面板不常开，光靠面板挂载不够）。
+  useLeaseAutoRefresh();
   // ⭐ M2（施工单 Task W3/W4）：**外部 AI 的写请求**从这条事件进来 —— 默认弹确认、
   //    免确认开关开着时直接落库并留一句看得见的痕 ✓（判断逻辑在 `src/lib/externalDrafts.ts` ✓）。
   useExternalDrafts();
@@ -1030,6 +1060,14 @@ function AppShell() {
     };
   }, []);
   const isMobile = useMobile();
+  // ⭐ 2026-10-23（owner 报「系统标题栏好丑」）：macOS 走**原生透明标题栏**
+  //   （`src-tauri/src/lib.rs` 的 `title_bar_style(Overlay) + hidden_title`）。
+  //   `is-macos` 只在「桌面 macOS 且**没开**自绘栏」时挂上 —— 那套 CSS 把每列内容
+  //   整体让出 28px（红绿灯占位），顶栏底色由各列自己的背景提供，不再有一条白条。
+  //   ⛔ 自绘栏（`custom`）开着时不挂：那时窗口无边框、自绘栏自己占 32px（两套不能叠加）。
+  const customTitleBar = useWindowChrome((s) => s.custom);
+  const macNativeChrome = !isMobile && !customTitleBar && isMacDesktopPlatform();
+  const appClass = macNativeChrome ? "app is-macos" : "app";
   // ⭐ 2026-10-10：手机档的**「关于」屏**（效果图 `10-about.svg`，规格 §4.10）——
   // **沿用既有的 `aboutOpen`** ✓（设置 → 关于与更新 ✓／命令面板 ✓），⛔ 不新造入口 ✗；
   // 手机档改渲染 `MobileAbout` ✓，桌面档仍是那个 `AboutDialog` ✓（一个字不动 ✓）。
@@ -1101,8 +1139,9 @@ function AppShell() {
 
   if (standaloneId) {
     return (
-      <div className="app">
-        <TitleBar />
+      <div className={appClass}>
+        {/* 独立页面窗口没有左竖条 ⇒ macOS 上由主区自己让位、拖拽带铺满顶边。 */}
+        <TitleBar standalone />
         <UpdateBanner />
         <div className="app-body">
           <div className="main">
@@ -1148,7 +1187,7 @@ function AppShell() {
   }
 
   return (
-    <div className="app">
+    <div className={appClass}>
       <TitleBar />
       <UpdateBanner />
       {/* ⚠️ 2026-10-01（owner 界面方向之①）：入口搬到**顶端工具栏** ✓ —— 但 `TitleBar`

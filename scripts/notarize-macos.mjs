@@ -33,7 +33,7 @@
 //   `.app` 的公证走 `ditto -c -k --keepParent` 打的 zip（**必须带 --keepParent**，否则 Apple
 //   看到的不是 bundle 结构，会以 `The archive did not contain a valid app bundle` 拒收）。
 
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -155,15 +155,47 @@ export function verdict({ submit, stapled, spctlOutput, authority }, kind) {
 }
 
 function run(cmd, args) {
-  return execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  // ⚠️ 不能用 execFileSync 的返回值：它只给 stdout，而 `codesign -d --verbose=4` 与 `spctl`
+  // 的正文都在 **stderr**。2026-10-23 CI 上就是因此把已 Accepted/已装订的包误判成
+  // "spctl 空、签名 ad-hoc"（summary 里 `2>&1` 一跑就全对）。这里两条流都收。
+  const r = spawnSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  if (r.error) throw r.error;
+  if (r.status !== 0) {
+    const e = new Error(`${cmd} exited ${r.status}`);
+    e.status = r.status;
+    e.stdout = r.stdout ?? "";
+    e.stderr = r.stderr ?? "";
+    throw e;
+  }
+  return { out: r.stdout ?? "", err: r.stderr ?? "" };
 }
 
 function runAllowFail(cmd, args) {
   try {
-    return { ok: true, out: run(cmd, args), err: "" };
+    const r = run(cmd, args);
+    return { ok: true, out: r.out, err: r.err };
   } catch (e) {
     return { ok: false, out: String(e.stdout ?? ""), err: String(e.stderr ?? e.message ?? "") };
   }
+}
+
+/**
+ * Gatekeeper 的评估结果在 staple 之后可能有短暂延迟（本机 2026-10-23 实测：
+ * 刚 staple 完立刻跑 spctl/codesign 曾拿到空输出，几秒后同一份产物就是 accepted）。
+ * 这不是"随机重试掩盖失败"：每轮仍按同一判据判，超过次数仍原样判红。
+ */
+function sleepMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function retryAllowFail(cmd, args, predicate, { attempts = 12, delayMs = 5000 } = {}) {
+  let last;
+  for (let i = 0; i < attempts; i++) {
+    last = runAllowFail(cmd, args);
+    if (predicate(last)) return last;
+    if (i < attempts - 1) sleepMs(delayMs);
+  }
+  return last;
 }
 
 function redact(args) {
@@ -246,11 +278,15 @@ function notarizeTarget(kind, target, creds, { dryRun }) {
   const stapled = validate.ok && /valid/i.test(`${validate.out}${validate.err}`);
   console.log(`  ${stapled ? "✅" : "❌"} stapler validate${stapled ? "：valid" : `（exit≠0）${(validate.err || validate.out).slice(0, 300)}`}`);
 
-  // ③ Gatekeeper + 身份复核
-  const spctl = runAllowFail("/usr/sbin/spctl", spctlArgs(kind, target));
+  // ③ Gatekeeper + 身份复核（staple 后给系统几秒刷新；判据不变，只是重试）
+  const spctl = retryAllowFail("/usr/sbin/spctl", spctlArgs(kind, target), (r) =>
+    /accepted/i.test(`${r.out}${r.err}`),
+  );
   const spctlOutput = `${spctl.out}${spctl.err}`;
   console.log(`  ${/accepted/i.test(spctlOutput) ? "✅" : "❌"} spctl: ${spctlOutput.trim().split("\n").slice(-1)[0]}`);
-  const details = runAllowFail("codesign", codesignArgs(target));
+  const details = retryAllowFail("codesign", codesignArgs(target), (r) =>
+    /Authority=/.test(`${r.out}${r.err}`),
+  );
   const authority = signingAuthority(`${details.out}${details.err}`);
   console.log(`  ${authority ? "✅" : "❌"} 签名身份：${authority ?? "（没有 Authority，ad-hoc）"}`);
 

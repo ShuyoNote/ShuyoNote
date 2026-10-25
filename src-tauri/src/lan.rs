@@ -147,6 +147,12 @@ pub struct LanAnnounce {
     /// ⚠️ 今天**只发、不用**（判定仍然是"只看名字／回落 id"）；空串 ＝ 这一台没报类别。
     #[serde(default)]
     pub hub_space_kinds: Vec<String>,
+    /// ⭐ 2026-10-24（真机事故：解锁的加密空间被对端按名融合成**明文**空间）：
+    /// **这些空间在对面是不是加密的**（与 `hub_spaces` 一一对应；空 ＝ 没报/老对端）。
+    /// 对端据此**拒绝**把加密空间当普通空间按名建/融合。
+    /// ⚠️ `#[serde(default)]` ⇒ 老对端不发也收得下；⛔ 不升 `WIRE_VERSION`。
+    #[serde(default)]
+    pub hub_space_encrypted: Vec<bool>,
     /// 身份指纹。★ **＝ `device_id`**（owner 2026-09-25 拍板，B 片施工单 §8.3）：
     /// 填的是**应用级事实**（设备标识），**不是**"设备密钥材料的指纹" ——
     /// 它要挡的是**掉包**，不是"同一台设备换了钥匙"。语义不许悄悄改（真需要后者时另立字段）。
@@ -198,6 +204,7 @@ impl Default for LanAnnounce {
             hub_spaces: Vec::new(),
             hub_space_kinds: Vec::new(),
             hub_space_names: Vec::new(),
+            hub_space_encrypted: Vec::new(),
             fp: String::new(),
             trust_ask: String::new(),
             trust_secret: String::new(),
@@ -512,6 +519,8 @@ pub fn announce_for_own_hub(
         } else {
             vec![space_kind.trim().to_string()]
         },
+        // 纯函数拿不到"这个空间是不是加密的" ⇒ 留空（由调用点在之后填，与 pubkey 同一手法）。
+        hub_space_encrypted: Vec::new(),
         // ★ 见上面那段：`fp` ＝ 应用级事实 `device_id`（B 片施工单 §8.3 的收口）。
         fp: dev.to_string(),
     })
@@ -585,6 +594,147 @@ pub fn status_line(
 // ⚠️ 也刻意**不在这里读配置/写库**：本层不知道 `SyncProfile`，接线那一片才把两边接起来。
 
 /// 网段里的**对端表**。按 `device_id` 去重：同一台设备再发声就是**刷新**，不是新增一行。
+/// ⭐ 2026-10-24（全空间方案 P1）：把同一台设备的**多条**公告并成一条（按空间求并集）。
+///
+/// 对齐口径：
+/// · `hub_spaces` 按字符串去重并集（先旧的、后新的，顺序稳定）；
+/// · `hub_space_names` / `hub_space_kinds` 只在**每一条公告的两组数组都按 1:1 对齐**时可用
+///   （老对端可能 `hub_space_names=[]` ⇒ 那一格"不知道" ⇒ 合并结果整格留空，
+///   ⛔ 不猜、⛔ 不把名字错配到别的空间上）；
+/// · 其余字段（base / short_id / pubkey / trust 两格 / fp / device_name / v）**最新一条优先**，
+///   但新值为空时保留旧的（公告里"没报"不等于"撤回了"）。
+/// ⭐ 2026-10-24：这条公告里"某个空间是不是加密的"（`None` ＝ 没报/对不齐 ⇒ 不知道）。
+///
+/// 匹配口径与 [`serves_space`] 一致：先按 `hub_spaces` 字面量比；再按名字比。
+pub fn announced_encrypted_for(p: &crate::lan::Peer, want: &str, want_name: &str) -> Option<bool> {
+    let a = &p.announce;
+    if a.hub_space_encrypted.len() != a.hub_spaces.len() {
+        return None;
+    }
+    let want = want.trim();
+    for (i, s) in a.hub_spaces.iter().enumerate() {
+        if !want.is_empty() && s.trim() == want {
+            return Some(*a.hub_space_encrypted.get(i).unwrap_or(&false));
+        }
+    }
+    let want_name = want_name.trim();
+    if !want_name.is_empty() && a.hub_space_names.len() == a.hub_spaces.len() {
+        for (i, n) in a.hub_space_names.iter().enumerate() {
+            if n.trim() == want_name {
+                return Some(*a.hub_space_encrypted.get(i).unwrap_or(&false));
+            }
+        }
+    }
+    None
+}
+
+fn merge_announce(old: &LanAnnounce, new: &LanAnnounce) -> LanAnnounce {
+    fn triples(a: &LanAnnounce) -> Option<Vec<(String, String, String)>> {
+        let aligned = a.hub_space_names.len() == a.hub_spaces.len()
+            && a.hub_space_kinds.len() == a.hub_spaces.len();
+        if !aligned {
+            return None;
+        }
+        Some(
+            a.hub_spaces
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    (
+                        s.trim().to_string(),
+                        a.hub_space_names[i].trim().to_string(),
+                        a.hub_space_kinds[i].trim().to_string(),
+                    )
+                })
+                .collect(),
+        )
+    }
+    let mut out = new.clone();
+    // 名字/类别：一侧对不齐 ⇒ 整格留空（"不知道"比"错配"好）。
+    let merged_triples = match (triples(old), triples(new)) {
+        (Some(a), Some(b)) => {
+            let mut v: Vec<(String, String, String)> = Vec::new();
+            for (space, name, kind) in a.into_iter().chain(b.into_iter()) {
+                if space.is_empty() {
+                    continue;
+                }
+                match v.iter_mut().find(|(s, _, _)| s == &space) {
+                    Some(slot) => {
+                        if !name.is_empty() {
+                            slot.1 = name;
+                        }
+                        if !kind.is_empty() {
+                            slot.2 = kind;
+                        }
+                    }
+                    None => v.push((space, name, kind)),
+                }
+            }
+            Some(v)
+        }
+        // ⭐ 2026-10-24（真机：候选表整张空了）：**一侧对不齐不该把另一侧也抹掉**。
+        //   原实现 `_ => None` ⇒ 只要**一条**公告的三组不等长，合并后的名字/类别就整格清空
+        //   ⇒ 候选表对**所有空间**都变空（局部故障被放大成全局 ✗）。
+        //   现在：谁对齐就用谁的（⛔ 不拼"有名字没类别"的半套，那会错配）。
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
+    if let Some(v) = merged_triples {
+        out.hub_spaces = v.iter().map(|(s, _, _)| s.clone()).collect();
+        out.hub_space_names = v.iter().map(|(_, n, _)| n.clone()).collect();
+        out.hub_space_kinds = v.iter().map(|(_, _, k)| k.clone()).collect();
+        // ⭐ 2026-10-24：加密标记只在**两边都按 1:1 对齐**时合并；任一侧没报 ⇒ 整格留空（＝不知道）。
+        let enc_aligned = old.hub_space_encrypted.len() == old.hub_spaces.len()
+            && new.hub_space_encrypted.len() == new.hub_spaces.len();
+        if enc_aligned {
+            let find = |a: &LanAnnounce, space: &str| {
+                a.hub_spaces
+                    .iter()
+                    .position(|s| s.trim() == space)
+                    .map(|i| a.hub_space_encrypted[i])
+            };
+            out.hub_space_encrypted = out
+                .hub_spaces
+                .iter()
+                .map(|s| find(new, s).or_else(|| find(old, s)).unwrap_or(false))
+                .collect();
+        } else {
+            out.hub_space_encrypted = Vec::new();
+        }
+    } else {
+        // 对不齐时只并 `hub_spaces`（名字/类别整格留空）
+        let mut spaces: Vec<String> = Vec::new();
+        for s in old.hub_spaces.iter().chain(new.hub_spaces.iter()) {
+            let s = s.trim();
+            if !s.is_empty() && !spaces.iter().any(|x| x == s) {
+                spaces.push(s.to_string());
+            }
+        }
+        out.hub_spaces = spaces;
+        out.hub_space_names = Vec::new();
+        out.hub_space_kinds = Vec::new();
+        out.hub_space_encrypted = Vec::new();
+    }
+    if out.hub_base.as_deref().map(str::trim).unwrap_or("").is_empty() {
+        out.hub_base = old.hub_base.clone();
+    }
+    if out.short_id.trim().is_empty() {
+        out.short_id = old.short_id.clone();
+    }
+    if out.pubkey.trim().is_empty() {
+        out.pubkey = old.pubkey.clone();
+    }
+    if out.trust_ask.trim().is_empty() {
+        out.trust_ask = old.trust_ask.clone();
+        out.trust_secret = old.trust_secret.clone();
+    }
+    if out.device_name.trim().is_empty() {
+        out.device_name = old.device_name.clone();
+    }
+    out
+}
+
 pub struct PeerTable {
     local_device_id: String,
     inner: Mutex<HashMap<String, Peer>>,
@@ -598,12 +748,29 @@ impl PeerTable {
     }
 
     /// 记一条。返回 `false` ＝ **这条是我自己的**（不许进表）。
+    ///
+    /// ⭐ 2026-10-24（全空间方案 P1）：**同一台设备的公告要合并，⛔ 不许后一条覆盖前一条** ✗。
+    ///
+    /// 病根（真机）：一台机器会**每个空间发一条**公告（一条只代言一个空间）⇒ 早先这里
+    /// `insert(device_id, p)` 是**整条替换** ⇒ 表里永远只剩**最后到的那一条** ⇒
+    /// 「一空间一子房间号」推到真机后，每台设备每轮**只有一个空间**能配上对端
+    /// （实测：7 个空间里只有最后公告的那个 `66ac…` 候选 1，其余 6 个候选 0）✓。
+    /// 修法：按 `hub_spaces` 求并集（名字/类别按同一下标对齐），其余"最新一条优先"。
     pub fn upsert(&self, p: Peer) -> bool {
         if p.announce.device_id == self.local_device_id {
             return false;
         }
         let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        g.insert(p.announce.device_id.clone(), p);
+        match g.get_mut(&p.announce.device_id) {
+            Some(old) => {
+                let merged_announce = merge_announce(&old.announce, &p.announce);
+                let addr = if p.addr.trim().is_empty() { old.addr.clone() } else { p.addr.clone() };
+                *old = Peer { announce: merged_announce, addr, seen_at_ms: p.seen_at_ms.max(old.seen_at_ms) };
+            }
+            None => {
+                g.insert(p.announce.device_id.clone(), p);
+            }
+        }
         true
     }
 
@@ -1038,6 +1205,7 @@ mod tests {
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -1187,6 +1355,7 @@ mod tests {
             hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
             hub_space_kinds: Vec::new(),
             hub_space_names: Vec::new(),
+            hub_space_encrypted: Vec::new(),
             fp: "fp".into(),
             pubkey: String::new(),
         }
@@ -1975,6 +2144,85 @@ mod tests {
 }
 
 /// ⭐ 08-b② 的两条硬判据（Lead 照收 ✓）—— **行为**读数，不是注释 ✓。
+
+/// ⭐ 2026-10-24（全空间方案 P1）：**同一台设备每个空间一条公告 ⇒ 对端表必须合并，不是覆盖**。
+#[cfg(test)]
+mod multi_space_peer_table_tests {
+    use super::*;
+
+    fn announce(device: &str, space: &str, name: &str, kind: &str, base: &str) -> LanAnnounce {
+        LanAnnounce {
+            v: WIRE_VERSION,
+            device_id: device.to_string(),
+            device_name: "WIN".to_string(),
+            short_id: "K7M2Q".to_string(),
+            trust_ask: String::new(),
+            trust_secret: String::new(),
+            pubkey: String::new(),
+            hub_base: Some(base.to_string()),
+            hub_spaces: vec![space.to_string()],
+            hub_space_names: vec![name.to_string()],
+            hub_space_encrypted: Vec::new(),
+            hub_space_kinds: vec![kind.to_string()],
+            fp: device.to_string(),
+        }
+    }
+
+    /// 两个空间的公告先后到 ⇒ 表里**一条**对端、**两个**空间都在（否则每轮只有一个空间能配上）。
+    #[test]
+    fn announcements_from_one_device_are_merged_not_replaced() {
+        let t = PeerTable::new("me".to_string());
+        let now = 1_000_000;
+        assert!(t.upsert(Peer {
+            announce: announce("win", "room-a", "工作", "personal", "http://192.168.0.103:8788"),
+            addr: "192.168.0.103".to_string(),
+            seen_at_ms: now,
+        }));
+        assert!(t.upsert(Peer {
+            announce: announce("win", "room-b", "测试", "personal", "http://192.168.0.103:8788"),
+            addr: "192.168.0.103".to_string(),
+            seen_at_ms: now + 10,
+        }));
+        let live = t.live(now + 20);
+        assert_eq!(live.len(), 1, "同一台设备只留一条对端");
+        let a = &live[0].announce;
+        assert_eq!(a.hub_spaces, vec!["room-a".to_string(), "room-b".to_string()]);
+        assert_eq!(a.hub_space_names, vec!["工作".to_string(), "测试".to_string()]);
+        assert_eq!(a.hub_space_kinds, vec!["personal".to_string(), "personal".to_string()]);
+    }
+
+    /// 同一个空间再来一条（换了地址/短标识）⇒ 空间集合不缩水，新值覆盖旧的。
+    #[test]
+    fn a_newer_announce_for_one_space_keeps_the_others() {
+        let t = PeerTable::new("me".to_string());
+        let now = 2_000_000;
+        t.upsert(Peer {
+            announce: announce("win", "room-a", "工作", "personal", "http://192.168.0.103:8788"),
+            addr: "192.168.0.103".to_string(),
+            seen_at_ms: now,
+        });
+        t.upsert(Peer {
+            announce: announce("win", "room-b", "测试", "personal", "http://192.168.0.103:8788"),
+            addr: "192.168.0.103".to_string(),
+            seen_at_ms: now + 1,
+        });
+        let mut newer = announce("win", "room-a", "工作", "personal", "http://192.168.0.104:8788");
+        newer.short_id = "NEWID".to_string();
+        t.upsert(Peer {
+            announce: newer,
+            addr: "192.168.0.104".to_string(),
+            seen_at_ms: now + 2,
+        });
+        let live = t.live(now + 3);
+        assert_eq!(live.len(), 1);
+        let a = &live[0].announce;
+        assert_eq!(a.hub_spaces.len(), 2, "⛔ 同一个空间的新公告不许把别的空间挤掉");
+        assert_eq!(a.hub_base.as_deref(), Some("http://192.168.0.104:8788"), "新地址生效");
+        assert_eq!(a.short_id, "NEWID", "新短标识生效");
+        assert_eq!(a.hub_space_names, vec!["工作".to_string(), "测试".to_string()]);
+    }
+}
+
 #[cfg(test)]
 mod short_id_wire_tests {
     use super::*;
@@ -2101,3 +2349,4 @@ mod short_id_wire_tests {
         assert!(!is_virtual_lan_ipv4("100.128.0.1"));
     }
 }
+

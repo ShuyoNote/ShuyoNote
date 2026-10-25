@@ -2572,9 +2572,15 @@ async function main() {  const executablePath = findChrome();
     //   **48 方块**（`App.css` 的 `.activity-btn { width:48px; height:48px }`，提交 `7bbbb151`）
     //   ⇒ 门禁仍钉 40 是**断言过期**，不是产品回归（本地实测实际值就是 48×48 ✓）。
     //   ⚠️ 窄屏那条 44 的判据一个字没动 ✓（它量的是别的东西，不许被这次改动带松 ✗）。
+    // ⭐ **2026-10-25（owner：「侧边工具栏稍微宽一点，是否合适？」→ 拍「稍微宽一点」）**：
+    //   宽度 **48 → 52**（`.activity-btn { width: 52px; height: 48px }`、`.activity-bar` 与
+    //   `--activity-w` 同步、mac 那档 60；提交 `0c8476ce`）。**高度仍 48** ✓。
+    //   ⇒ 门禁跟着改成 52 是**口径对齐 owner 的决定**，⛔ 不是放宽；窄屏那条 44 仍不动 ✓。
+    //   ⚠️ 先前的红是这条断言过期（`2d88d20b` 的 mobile-layout 报「实际 52×48」）——
+    //     判据要跟着产品决定走，⛔ 不能反过来让产品迁就判据。
     ok(
-      d.activityBtn && d.activityBtn.w === 48 && d.activityBtn.h === 48,
-      `桌面竖条按钮 48×48（实际 ${d.activityBtn?.w}×${d.activityBtn?.h}）——2026-10-17 起是 48 方块；窄屏那条 44 不许漏过去`,
+      d.activityBtn && d.activityBtn.w === 52 && d.activityBtn.h === 48,
+      `桌面竖条按钮 52×48（实际 ${d.activityBtn?.w}×${d.activityBtn?.h}）——2026-10-25 起宽 52、高 48`,
     );
     ok(
       d.toolbarBtn && d.toolbarBtn.w === 28 && d.toolbarBtn.h === 28,

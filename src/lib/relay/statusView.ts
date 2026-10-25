@@ -31,6 +31,8 @@ export interface RelayStatusView {
   connectionLabel: string;
   /** 连接那一格的补充原因（可空；中继给的原因原样在这儿 ✓）。 */
   connectionDetail: string;
+  /** ⭐ 2026-10-25（owner：面板里看不到中继地址）：配置里的中继地址（没配 ⇒ null）。 */
+  url: string | null;
   /** 图⑧ 那句：「剩余 27 天」／「已到期」／「读不到有效期」（**后端原文** ✓）。 */
   licenseLabel: string;
   /** 后端到底给没给许可证读数 ✓（false ⇒ 界面上那句一定是"读不到" ✓）。 */
@@ -76,14 +78,21 @@ export function relayStatusView(payload: RelayStatus | null | undefined | unknow
   if (!p || p.available !== true) {
     return {
       available: false,
-      connectionLabel: "中继这一档在当前平台不可用",
+      // ⭐ 2026-10-25（2.0 不带中继）：这句话要**说清是哪一种"不可用"** ——
+      //   「当前平台不可用」（Web）与「这个版本没编进跨网」（桌面 2.0 包）不是一回事，
+      //   用后端给的 note 优先；没有就落回"下一阶段"那句。
+      connectionLabel: text(p?.note) || "这个版本不含跨网（下一阶段）",
       connectionDetail: "",
+      url: null,
       licenseLabel: RELAY_UNREADABLE,
       licenseReadable: false,
       licenseSource: "",
       licenseRefusal: "",
       tone: "muted",
-      note: note || "中继这一档在当前平台不可用（Web 版没有本地中继连接面）",
+      // ⚠️ 2026-10-25：`connectionLabel` 已经用了后端那句 note；这里再给同一句
+      //   ⇒ 界面上「这个版本不含跨网（下一阶段）」会出现两遍（owner 截图）。
+      //   ⇒ 这一档不再重复摆 note；只有 label 没有用上 note 时才补。
+      note: "",
     };
   }
 
@@ -98,6 +107,8 @@ export function relayStatusView(payload: RelayStatus | null | undefined | unknow
     // 后端给了就**原样**用；没给（形状坏了）⇒ 兜底也**只能**说"未连上" ✓
     connectionLabel: connectionLabel || RELAY_CONNECTION_UNREADABLE,
     connectionDetail,
+    // ⭐ 2026-10-25：地址照抄后端（没配 ⇒ null）
+    url: text(p.url) || null,
     // 后端给了就**原样**用（⛔ 不解析它、⛔ 不按 days_left 重算 ✗）；没给 ⇒ 明说读不到 ✓
     licenseLabel: licenseLabel || RELAY_UNREADABLE,
     licenseReadable: licenseLabel.length > 0 && licenseState !== "missing",

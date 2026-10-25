@@ -1,0 +1,246 @@
+name: macOS Universal (signed + notarized)
+
+# 手动触发的**发版级** macOS universal 档：arm64 + x86_64 → Developer ID 签名 → 公证 → 装订。
+#
+# 为什么单独一条：现有 release.yml / macos-signed.yml 只打当前 runner 的单架构（aarch64），
+# 而 universal 需要两套 Rust target **且** universal 的静态 OpenSSL（SQLCipher 的后端是编译期定的）。
+# 这条工作流把两件事都显式做掉，先手动跑通，再决定是否替换 release.yml 的 mac 格。
+#
+# 需要 5 个仓库 Secrets：
+#   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
+# 可选（自动更新）：
+#   TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+# ⚠️ 没有 Apple Secrets 会失败；没有 TAURI 私钥则只出 app/dmg（不含 .app.tar.gz/.sig），不静默。
+#
+# 触发：
+#   · workflow_dispatch（默认分支 main 上才有按钮；也可在 dev 上直接 "Run workflow"）
+#   · push 到 dev 且只改本文件 / notarize 脚本时跑一次（为了还没合 main 也能试）
+
+on:
+  # ⚠️ 只在手动触发：这是签名+公证发版档，没有 Apple secrets 时 push 触发只会刷红。
+  # workflow_dispatch 的按钮要求文件已在默认分支 main；合入后用 "Run workflow"（ref 可选 dev/tag）。
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "要构建的分支或标签（默认 dev；发版时填 v* tag）"
+        required: false
+        default: "dev"
+      skip_notarization:
+        description: "只签名、不公证（调试用；产物不可对外分发）"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-universal-signed:
+    runs-on: macos-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add macOS universal Rust targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-universal-signed
+
+      - name: Install frontend deps
+        run: pnpm install --no-frozen-lockfile
+
+      - name: 取 Cargo 依赖源码（国密补丁要打在 registry 里那份 SQLCipher 源码上）
+        working-directory: src-tauri
+        run: cargo fetch --locked
+
+      - name: 编 universal 静态 OpenSSL 3.5.4（两架构分别编，再 lipo）
+        # SQLCipher 的页加密后端是**编译期**定的（Apple 默认 CommonCrypto 只有 AES）。
+        # universal 里两个 slice 必须链接同一份 universal OpenSSL，否则 x86_64 那一半会链到
+        # arm64 的同名库路径而失败；所以这里从同一份源码各编一次，再 lipo 成 .a。
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/openssl-universal-src"
+          OUT="$RUNNER_TEMP/openssl-universal"
+          rm -rf "$SRC" "$OUT"
+          mkdir -p "$SRC" "$OUT/lib" "$OUT/include"
+          curl -L --fail --max-time 180 \
+            -o "$RUNNER_TEMP/openssl.tar.gz" \
+            "https://github.com/openssl/openssl/releases/download/openssl-3.5.4/openssl-3.5.4.tar.gz"
+          tar xzf "$RUNNER_TEMP/openssl.tar.gz" -C "$SRC" --strip-components=1
+
+          build_one() {
+            local arch="$1"
+            local target="$2"
+            local dir="$RUNNER_TEMP/openssl-build-$arch"
+            rm -rf "$dir"
+            cp -R "$SRC" "$dir"
+            (
+              cd "$dir"
+              ./Configure no-shared no-tests "$target" --prefix="$RUNNER_TEMP/openssl-$arch"
+              make -j"$(sysctl -n hw.ncpu)"
+              make install_sw
+            )
+            lipo -info "$RUNNER_TEMP/openssl-$arch/lib/libcrypto.a"
+            lipo -info "$RUNNER_TEMP/openssl-$arch/lib/libssl.a"
+          }
+
+          build_one arm64 darwin64-arm64-cc
+          build_one x86_64 darwin64-x86_64-cc
+
+          for lib in libcrypto.a libssl.a; do
+            lipo -create \
+              "$RUNNER_TEMP/openssl-arm64/lib/$lib" \
+              "$RUNNER_TEMP/openssl-x86_64/lib/$lib" \
+              -output "$OUT/lib/$lib"
+            lipo -info "$OUT/lib/$lib"
+          done
+          cp -R "$RUNNER_TEMP/openssl-arm64/include/openssl" "$OUT/include/"
+          if ls "$OUT/lib"/*.dylib >/dev/null 2>&1; then
+            echo "::error::universal OpenSSL 前缀里出现 .dylib —— 会链到构建机共享库"
+            exit 1
+          fi
+          echo "OPENSSL_DIR=$OUT" >> "$GITHUB_ENV"
+          echo "OPENSSL_LIB_DIR=$OUT/lib" >> "$GITHUB_ENV"
+          echo "OPENSSL_INCLUDE_DIR=$OUT/include" >> "$GITHUB_ENV"
+
+      - name: 打国密补丁并交给构建步骤（--prepare ＋ --print-env）
+        # 与 macos-signed.yml 同一条链；--require-static 保证 universal 前缀里只有 .a。
+        run: |
+          set -euo pipefail
+          node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --prepare --require-static
+          node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --print-env >> "$GITHUB_ENV"
+
+      - name: 取 PDFium 运行时（macOS，universal）
+        run: |
+          node scripts/fetch-pdfium.mjs --check --platform mac-univ || node scripts/fetch-pdfium.mjs --platform mac-univ
+
+      - name: Import Apple Developer ID cert + keychain (macOS)
+        run: |
+          CERT="$HOME/AppleDevID.p12"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT"
+          KEYCHAIN="$HOME/build.keychain-db"
+          KEYCHAIN_PASS="ci-$(date +%s)"
+          echo "$KEYCHAIN_PASS" > "$HOME/KC_PASS"
+          security create-keychain -p "$KEYCHAIN_PASS" build.keychain
+          security import "$CERT" -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASS" build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security list-keychains -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASS" build.keychain
+          security find-identity -v -p codesigning build.keychain
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: 预签嵌套 dylib ＋ 导出发版身份
+        run: |
+          set -euo pipefail
+          IDENTITY="$(security find-identity -v -p codesigning build.keychain | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | grep "(${APPLE_TEAM_ID})" | head -1)"
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::钥匙串里没有团队 ${APPLE_TEAM_ID} 的 Developer ID Application 身份"
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          codesign -f --options runtime --timestamp -s "$IDENTITY" \
+            src-tauri/vendor/pdfium/mac-univ/lib/libpdfium.dylib
+          codesign -d --verbose=4 src-tauri/vendor/pdfium/mac-univ/lib/libpdfium.dylib 2>&1 | grep -E 'Authority|Timestamp|flags' || true
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: 决定更新器工件开关（没有 TAURI 私钥就关掉）
+        run: |
+          set -euo pipefail
+          CONFIG="$RUNNER_TEMP/tauri-universal-config.json"
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo '{}' > "$CONFIG"
+            echo "更新器工件：开"
+          else
+            echo '{"bundle":{"createUpdaterArtifacts":false}}' > "$CONFIG"
+            echo "::warning::没有 TAURI_SIGNING_PRIVATE_KEY ⇒ 本次不出 .app.tar.gz/.sig"
+          fi
+          echo "TAURI_BUILD_CONFIG=$CONFIG" >> "$GITHUB_ENV"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
+      - name: 打包 universal（签名）＋ 更新器工件
+        # universal 输出在 target/universal-apple-darwin/release/bundle（不是 target/release）。
+        # 公证交给下一步的显式脚本（本步只传签名身份，不传 APPLE_ID/PASSWORD/TEAM_ID）。
+        run: pnpm tauri build --target universal-apple-darwin --bundles app,dmg --features sm-library --config "$TAURI_BUILD_CONFIG"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: 断言产物真的是 universal（两架构）
+        run: |
+          set -euo pipefail
+          BIN="src-tauri/target/universal-apple-darwin/release/bundle/macos/ShuyoNote.app/Contents/MacOS/shuyonote"
+          ARCHS="$(lipo -archs "$BIN")"
+          echo "shuyonote archs: $ARCHS"
+          case "$ARCHS" in
+            *arm64*) ;;
+            *) echo "::error::产物缺少 arm64"; exit 1 ;;
+          esac
+          case "$ARCHS" in
+            *x86_64*) ;;
+            *) echo "::error::产物缺少 x86_64"; exit 1 ;;
+          esac
+
+      - name: 产物自检（identifier / 版本号 / 深链 / dmg，含签名两格）
+        run: pnpm check:macos-bundle src-tauri/target/universal-apple-darwin/release/bundle
+
+      - name: 公证 ＋ 装订 ＋ Gatekeeper 复核（app 与 dmg）
+        if: ${{ !inputs.skip_notarization }}
+        run: |
+          set -euo pipefail
+          B="src-tauri/target/universal-apple-darwin/release/bundle"
+          APP="$B/macos/ShuyoNote.app"
+          DMG="$(ls "$B"/dmg/*.dmg | head -1)"
+          node scripts/notarize-macos.mjs --app "$APP" --dmg "$DMG"
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: 汇总产物（大小 / 哈希 / 签名与票据读数）
+        if: always()
+        run: |
+          B="src-tauri/target/universal-apple-darwin/release/bundle"
+          echo "=== bundle/macos ==="; ls -la "$B/macos/" || true
+          echo "=== bundle/dmg ==="; ls -la "$B/dmg/" || true
+          APP="$B/macos/ShuyoNote.app"
+          if [ -d "$APP" ]; then
+            BIN="$APP/Contents/MacOS/shuyonote"
+            echo "=== archs ==="; lipo -archs "$BIN" || true
+            echo "=== codesign ==="; codesign -d --verbose=4 "$APP" 2>&1 | grep -E 'Authority|Timestamp|flags' || true
+            echo "=== stapler validate ==="; xcrun stapler validate "$APP" || true
+            echo "=== spctl ==="; /usr/sbin/spctl --assess --type execute -vv "$APP" || true
+            echo "=== sha256 ==="
+            find "$B" -maxdepth 2 -type f \( -name '*.dmg' -o -name '*.tar.gz' -o -name '*.sig' \) -print0 \
+              | xargs -0 shasum -a 256 || true
+          fi
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-macos-universal-signed
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/
+          if-no-files-found: warn

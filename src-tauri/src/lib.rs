@@ -113,6 +113,13 @@ mod mesh_sim;
 // ⚠️ 收据已撤（2026-09-25，③-b-2b）：设置面（`mesh_set_config`）与同步面（`mesh_sync_now`）
 // 两条命令都在 `generate_handler!` 里 ⇒ 这一层**没有只服务判据的死代码**了。
 mod mesh;
+// ⭐ 2026-10-25（跨网中继「数据面」Step 1a）：端点抽象 —— 同步只认「往哪发」，不认「怎么连上的」
+mod mesh_endpoint;
+// ⭐ 2026-10-25（Step 3-1）：跨网对端的「路线表」（只读 JSON，⛔ 不依赖 iroh）
+mod relay_route;
+// ⭐ 2026-10-25（Step 2b-1）：隧道帧协议 —— 把**原样 HTTP 请求**搬到对端的一条字节流上
+//   （⛔ 不依赖 iroh：入参是 AsyncRead/AsyncWrite，谁给流都行；iroh 接线是 Step 2b-2）
+mod relay_tunnel;
 // 评估用探针（2026-09-30）：量一次**真实网格窗口**的 `/mesh/pull` 在线上多少字节。
 // ⚠️ 它必须待在 crate 内（`mod mesh` 是私有的 ⇒ 外部 crate 拿不到 `start`/`MeshConfig`）；
 //    默认 `#[ignore]`，跑法写在文件头。**它不碰 `mesh.rs`** ✓（那是 AMD 的写域）。
@@ -241,6 +248,7 @@ mod tags;
 mod templates;
 mod tempdir;
 mod textnorm;
+mod mac_lights;
 mod titlebar;
 mod trash;
 mod updates;
@@ -290,9 +298,13 @@ fn app_context() -> tauri::Context {
 /// P3：⭐ **无头**跑一次备份 ⇒ 返回退出码（⛔ 不建窗口 ✓；⭐ 也不起周期线程 ✓）
 ///
 /// ⚠️ 退出码口径（⭐ 与仓库的五档契约同向 ✓）：0 成功／1 失败／2 起不来／3 跳过（⭐ "跳过了"不是"通过" ✓）
+///
+/// ⭐ 2026-10-25：同一个入口现在也接 `--migrate-attachments-once`（整理附件布局）。
+///    两条都**不建窗口**、都"跑完就退" ⇒ 共用这一处初始化（各自只调自己那一条 ✓）。
 pub fn run_backup_once() -> i32 {
     use auto_backup::{CliMode, RunResult};
-    if cli_mode_of_args() != CliMode::BackupOnce {
+    let mode = cli_mode_of_args();
+    if mode == CliMode::Normal {
         return 4; // ⭐ 不是无头调用 ⇒ 不该走到这里 ✓
     }
     let app = match tauri::Builder::default().build(app_context()) {
@@ -305,16 +317,19 @@ pub fn run_backup_once() -> i32 {
     // ⭐ 无头路径用的是**裸 Builder** ✗ ⇒ 它不带 `run()` 那条链（插件 ＋ `.setup()` ✓）
     //    ⇒ ⭐ `Db` 不会有人托管 ✓ —— 这就是上一轮量到「数据库 5 秒内没就绪 ⇒ 包数 0」的根因 ✓
     //    ⇒ ⭐ 这里**照 `setup()` 里那三步**自己来 ✓（⛔ 不多复制别的：不建窗口、不起插件 ✓）
+    // ⚠️ 先声明、后赋值（不是 `= None` 再覆盖）—— 否则会多一条 `value assigned is never read` 的警告
+    //    （2026-10-25 实测：那条警告就是这么来的 ✓）
+    let app_data_dir_for_migration: std::path::PathBuf;
     {
         use tauri::Manager;
-        let app_data_dir = match app.path().app_data_dir() {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("[auto-backup] 拿不到应用数据目录：{e}");
+        let app_data_dir = match db::resolve_app_data_dir(app.path().app_data_dir().ok()) {
+            Some(d) => d,
+            None => {
+                eprintln!("[auto-backup] 拿不到应用数据目录（也没有 SHUYONOTE_DATA_DIR）");
                 return 2;
             }
         };
-        let conn = match db::init(app_data_dir) {
+        let conn = match db::init(app_data_dir.clone()) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("[auto-backup] 初始化数据库失败：{e}");
@@ -323,6 +338,49 @@ pub fn run_backup_once() -> i32 {
         };
         security::startup_lock(&conn);
         app.manage(Db(Mutex::new(conn)));
+        app_data_dir_for_migration = app_data_dir;
+    }
+    // ⭐ 2026-10-25：**分岔只在最后一步**（初始化共用 ⇒ 两条无头路径的"能起得来"口径一致 ✓）
+    // ⭐ 2026-10-25（真机事故）：给附件行补一次变更记录就退出
+    if mode == CliMode::BackfillAttachmentChanges {
+        let dir = app_data_dir_for_migration;
+        let out = attachments::backfill_attachment_changes_all(&dir);
+        eprintln!(
+            "[attachments] 补变更记录：空间 {} ｜ 扫到附件 {} 行 ｜ 补了 {} 条 ｜ 打不开 {} 个{}",
+            out.spaces,
+            out.scanned,
+            out.appended,
+            out.unreadable.len(),
+            if out.unreadable.is_empty() { String::new() } else { format!("（{}）", out.unreadable.join("、")) }
+        );
+        return 0;
+    }
+    if mode == CliMode::MigrateAttachments {
+        let dir = app_data_dir_for_migration;
+        return match attachments::migrate_legacy_layout(&dir) {
+            Ok(out) => {
+                eprintln!(
+                    "[attachments] headless 布局整理：扫 {} ｜ 复制 {} ｜ 删除 {} ｜ 保留 {} ｜ 空目录回收 {} ｜ 读不到的空间 {}",
+                    out.scanned,
+                    out.copied,
+                    out.deleted,
+                    out.kept,
+                    out.pruned,
+                    out.unreadable_spaces.len()
+                );
+                for n in &out.notes {
+                    eprintln!("[attachments]   · {n}");
+                }
+                for u in &out.unreadable_spaces {
+                    eprintln!("[attachments]   ⛔ 读不到：{u}");
+                }
+                0
+            }
+            Err(e) => {
+                eprintln!("[attachments] 布局整理失败：{e}");
+                1
+            }
+        };
     }
     let r = tauri::async_runtime::block_on(backup::run_auto_backup_once(app.handle()));
     eprintln!("[auto-backup] headless {}", r.note());
@@ -466,7 +524,7 @@ pub fn run() {
                 .decode_utf8_lossy()
                 .into_owned();
             let app = ctx.app_handle();
-            let data_dir = app.path().app_data_dir().ok();
+            let data_dir = db::resolve_app_data_dir(app.path().app_data_dir().ok());
             let attachments_dir = data_dir.map(|d| d.join("attachments"));
             // Validate the target is inside the attachments dir. A lexical
             // `starts_with` is NOT a boundary (it doesn't normalize `..`), so:
@@ -596,7 +654,8 @@ pub fn run() {
                 Err(e) => eprintln!("[pdfium] 拿不到资源目录：{e}；打包形态可能找不到 PDFium 动态库"),
             }
 
-            let app_data_dir = app.path().app_data_dir()?;
+            let app_data_dir = db::resolve_app_data_dir(app.path().app_data_dir().ok())
+                .ok_or_else(|| std::io::Error::other("拿不到应用数据目录（也没有 SHUYONOTE_DATA_DIR）"))?;
             let conn = db::init(app_data_dir).map_err(|e| {
                 eprintln!("failed to init db: {e}");
                 std::io::Error::other(e.to_string())
@@ -666,8 +725,14 @@ pub fn run() {
             let version = app.package_info().version.to_string();
             let url = WebviewUrl::App("index.html".into());
             let main_builder = WebviewWindowBuilder::new(app, "main", url)
-                .title(format!("ShuyoNote 数友笔记 · v{version}"))
-                .inner_size(1200.0, 800.0);
+                .title(format!("ShuyoNote 数友笔记 · v{version}"));
+            // ⚠️ 2026-10-23（真机读数定死根因）：`inner_size(1200, 800)` 原来是**无条件**的 ⇒
+            // iOS 上窗口也被建成 1200×800（真机探针：`innerWidth=1200 innerHeight=800`，
+            // 而 `screen=[402,874]`）⇒ CSS `@media (max-width:768px)` 为 false ⇒ 手机上
+            // 渲染的是**桌面布局**（手机 tab 栏不出现）。这就是 owner 报的「iOS 上还是桌面界面」。
+            // ⇒ 尺寸只在桌面给；移动端交给系统（窗口默认铺满屏幕）。
+            #[cfg(desktop)]
+            let main_builder = main_builder.inner_size(1200.0, 800.0);
             // 自绘标题栏（前端 <TitleBar />）。做成无边框而不是保留系统栏，
             // 是为了让顶栏能显示「当前页面 · 空间」并与应用配色连成一体。
             // 用户可在 设置 → 外观 关掉，前端会运行时 setDecorations(true)
@@ -689,6 +754,24 @@ pub fn run() {
             // 方法（窗口装饰由系统管理），故按平台条件编译——与下面 drag_and_drop 同款写法。
             #[cfg(desktop)]
             let main_builder = main_builder.decorations(true);
+            // ⭐ 2026-10-23（owner 报「系统标题栏好丑」）：macOS 走**原生透明标题栏**。
+            //
+            // 形态＝Finder / 系统应用那一套：标题栏透明、内容铺到窗口顶端、红绿灯浮在
+            // 内容之上、标题文字隐藏。这样就不会再顶着一条"白色空条"——顶栏底色改由
+            // 各列**自己的背景**提供（左竖条/侧栏灰、主区白）：前端 CSS `.is-macos` 把
+            // 每列内容整体下移 28px（红绿灯占位），`<TitleBar>` 在 macOS 且未开自绘栏时
+            // 渲染一条可拖拽的 `.mac-titlebar`（Overlay 下**必须**自己提供 drag-region，
+            // 否则窗口拖不动 —— tauri 文档原话）。
+            // ⛔ Windows 不走这条：那边仍是「默认系统栏 + DWM 染色」（`titlebar.rs`），
+            //    自绘栏（`customTitleBar`）那条 `decorations(false)` 的路也一个字不动。
+            // 标题栏：透明 Overlay + 隐藏文字（内容铺到窗口顶端，见 App.css `.is-macos`）。
+            // 红绿灯由前端自绘（系统那三颗在窗口构建后被 `mac_lights` 藏掉）——
+            // 原生尺寸 macOS 不给改，`traffic_light_position` 实测在这套窗口上也不生效，
+            // 详见 `src/mac_lights.rs` 模块头。
+            #[cfg(target_os = "macos")]
+            let main_builder = main_builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true);
             // 关键：Windows 上内置 drag-drop handler 开着时，HTML5 拖拽
             // API 不可用——data-tauri-drag-region 正是依赖它拖窗口，所以
             // 标题栏拖不动。这里关掉，让标题栏可拖；文件视图需要 OS 拖文件
@@ -722,6 +805,22 @@ pub fn run() {
                 // devtools，看 console 报错（排查 mermaid 等问题）。
                 .devtools(true)
                 .build()?;
+            // macOS：把系统那三颗红绿灯藏掉 —— 它们改不了尺寸，而 owner 要"像微信那样小一号"
+            // ⇒ 由前端 `<MacLights>` 自绘 10px 的小灯（见 `mac_lights` 模块头注释）。
+            let _ = mac_lights::hide_native_traffic_lights(&_window);
+            // 全屏/退出全屏时切换"原生灯 vs 自绘灯"：全屏里系统只在鼠标到顶部时把原生
+            // 标题栏浮出来（微信同款），自绘灯在那条原生标题栏**下面**看不见 ⇒ 全屏改用原生灯。
+            // （owner 2026-10-23：「最大化后，恢复工具栏也要有」/「那部分是空白」。）
+            #[cfg(target_os = "macos")]
+            {
+                let handle = _window.clone();
+                _window.on_window_event(move |event| {
+                    if matches!(event, tauri::WindowEvent::Resized(_)) {
+                        let full = handle.is_fullscreen().unwrap_or(false);
+                        let _ = mac_lights::set_native_traffic_lights_visible(&handle, full);
+                    }
+                });
+            }
 
             // Android：把 HTTPS 的证书校验交给系统证书库。**必须在任何 HTTPS 请求之前**——
             // reqwest 在没初始化时是 **panic 不是报错**。放在这里是因为要从 WebView 才能
@@ -877,6 +976,8 @@ pub fn run() {
             // 丙-③-b：**对等交换的产品入口**（确认窗口 ＋ 从发现到的对端各拉一轮）
             // ＋ **设置面**（写监听地址 / 口令，并把窗口的开关跟着改）。
             sync::mesh_sync_now,
+            sync::mesh_missing_spaces,
+            sync::mesh_create_spaces,
             sync::mesh_set_config,
             // 阶段 1 · 冲突留痕与裁决（提示 UI 的两个入口；数据在本地表 `page_conflicts`）
             commands::list_page_conflicts,
@@ -1004,6 +1105,8 @@ pub fn run() {
             attachments::rename_attachment,
             attachments::get_attachment,
             attachments::restore_attachment,
+            // ⭐ 2026-10-25：整理附件布局（把老布局按引用者复制进各空间；见 `migrate_legacy_layout`）
+            attachments::attachments_migrate_legacy,
             bookmark::fetch_bookmark_metadata,
             backlinks::get_backlinks,
             blocks::resolve_block,
@@ -1125,6 +1228,7 @@ pub fn run() {
             security::encryption_status,
             security::lock_encryption,
             security::unlock_encryption,
+            security::keyring_status,
             ai::ai_complete,
             ai::ai_probe,
             ai::ai_complete_stream,
@@ -1238,6 +1342,48 @@ mod capability_scope_tests {
         assert!(
             allows.iter().any(|u| u.starts_with("http://")),
             "自建 / 局域网模型服务（Ollama、LM Studio、内网网关）走 http ⇒ 也要放行：{allows:?}"
+        );
+    }
+}
+
+/// ⭐⭐ **2026-10-25（数据面 Step 2a 判据）**：**`iroh` 只在 `--features relay` 里带**（owner 2026-10-25 拍）。
+///
+/// 为什么判在 `Cargo.toml` 上而不是判 `cfg!`：
+/// `cfg!(feature = "relay")` 在默认测试构建里**恒为假**（那只是"当前这次构建"），
+/// 判它等于什么都没判；真正的风险是**后人把 `relay` 加进 `default = [...]`** ——
+/// 那会让默认产物凭空多出一整套 QUIC/打洞依赖（体积与编译时间），而所有测试照绿。
+///
+/// **变异**：把 `relay` 写进 `default = ["sm-crypto", "relay"]` ⇒ 第一条红；
+/// 删掉 `iroh` 那行的 `optional = true` ⇒ 第二条红。
+#[cfg(test)]
+mod relay_feature_tests {
+    const MANIFEST: &str = include_str!("../Cargo.toml");
+
+    #[test]
+    fn the_relay_feature_is_not_in_the_default_set() {
+        let line = MANIFEST
+            .lines()
+            .find(|l| l.trim_start().starts_with("default ="))
+            .expect("Cargo.toml 里必须有 `default = [...]`");
+        assert!(
+            !line.contains("relay"),
+            "owner 2026-10-25 拍：`iroh` 只在 `--features relay` 里带 ⇒ `default` 不许含 relay：{line}"
+        );
+    }
+
+    #[test]
+    fn the_iroh_dependency_is_optional() {
+        let line = MANIFEST
+            .lines()
+            .find(|l| l.trim_start().starts_with("iroh = "))
+            .expect("Cargo.toml 里必须有 `iroh = { ... }`（隧道要它的 Endpoint）");
+        assert!(
+            line.contains("optional = true"),
+            "`iroh` 必须 optional（否则默认构建也会编它）：{line}"
+        );
+        assert!(
+            line.contains("=1.3.0"),
+            "`iroh` 版本要与 `iroh-relay` 钉同一版（=1.3.0），否则隧道版本头对不上：{line}"
         );
     }
 }

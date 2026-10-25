@@ -47,15 +47,15 @@ export function McpAccessPane() {
   // ⛔ 界面文案里**不许**出现 `**加粗**` 与 `✓／✗／⛔` —— 那些是我在仓库里判"过没过"的记号 ✗，
   //   不是给用户看的 ✓（R152 我把它们写进来了 ✓，owner 2026-10-08 指出 ⇒ R158 修 ✓）。
   const LEVELS: Array<[McpStatus["level"], string, string]> = [
-    ["off", "不接", "关掉本机通道：外部请求立刻被拒，之前那枚令牌同时失效。既不读也不写。"],
-    ["read", "只读", "可以读笔记；请求新建页面或追加内容会被明确拒绝。"],
+    ["off", "不接", "完全断开：既不读也不写；旧令牌同时失效。"],
+    ["read", "只读", "能看当前空间的笔记；不能修改。"],
     [
       "read_all",
       "只读（全部空间）",
-      "能读本空间以外的笔记（只读）；写仍然会被拒绝，也不会改动你正在看的那个空间。",
+      "能看所有空间的笔记；不能修改。",
     ],
-    ["write_confirm", "可写（每次确认）", "外部改动先变成一条待你确认的改动，你点确定才会写入。"],
-    ["write_auto", "可写（免确认）", "外部改动直接写入；每一次写都会留一行审计。整页替换仍会先要求你确认。"],
+    ["write_confirm", "可写（每次确认）", "能新建 / 追加内容；每次先问你。"],
+    ["write_auto", "可写（免确认）", "能新建 / 追加内容：直接写入，但每一次写都会留一行审计。整页替换仍会先问你。"],
   ];
   const [showToken, setShowToken] = useState(false);
   const level: McpStatus["level"] = st?.level ?? "off";
@@ -130,16 +130,16 @@ export function McpAccessPane() {
   return (
     <div className="mcp-access">
       <section className="set-section">
-        <div className="set-section-title">接入档位</div>
+        <div className="set-section-title">外部 AI 权限</div>
 
         <div className="set-row">
           <div className="set-row-text">
-            <div className="set-row-name">外部 AI 能做什么</div>
+            <div className="set-row-name">当前权限</div>
             <div className="set-row-sub">{LEVELS.find(([id]) => id === level)?.[2] ?? ""}</div>
           </div>
         </div>
 
-        <div className="ai-settings-tabs" role="tablist" aria-label="外部 AI 接入档位">
+        <div className="ai-settings-tabs" role="tablist" aria-label="外部 AI 权限">
           {LEVELS.map(([id, label]) => (
             <button
               key={id}
@@ -157,27 +157,18 @@ export function McpAccessPane() {
         </div>
 
         <div className="set-hint">
-          切换档位会更换令牌，旧的那枚立即失效。授权范围不会超过「读笔记」与「新建页面／追加内容」。
+          切换档位会换新令牌，旧令牌立即失效。
         </div>
       </section>
 
       <section className="set-section">
         <div className="set-section-title">它能做什么</div>
+        <p className="set-hint"><b>读</b>：页面、搜索、块、反链、附件。</p>
+        <p className="set-hint"><b>写</b>：新建页面 / 追加内容；仅「可写」档，且「每次确认」档会先问你。</p>
+        <p className="set-hint"><b>审计</b>：每次调用记录谁、何时、做了什么、成败。</p>
         <p className="set-hint">
-          {/* ⭐ 2026-10-11（owner 截图「精简这个文案」）：原句 150 字 ⇒ 压到 99 字（−34%），
-              ⚠️ ⛔ **一个事实都没删** ✗ —— 六件仍在：⭐ ① 读的四样 ② 写＝新建页面／追加内容
-              ③ 默认**要你确认** ④ 免确认档直接写入**但每次都留一行审计** ⑤ 审计里看得见
-              「谁 · 何时 · 调了什么 · 成败」⑥ 权限与插件**同一处** ✓。
-              ⭐ 判据只钉**标题与章节顺序**（`McpAccessPane.test.tsx` ③ ✓），段落没人钉 ⇒ 压缩是安全的 ✓。 */}
-          <b>读</b>：列／搜页面、看块与反链、读附件。<b>提改动</b>：新建页面或追加内容 —— 默认要你确认；
-          免确认档直接写入，但每次写都留一行审计。「审计」里看得见每一次调用：谁 · 何时 · 调了什么 · 成败；
-          权限与插件同一处。
-        </p>
-        <p className="set-hint">
-          {/* ⭐ 2026-10-18：把「数据去哪儿」说准 —— 原来只说「只在本机」，容易被读成
-              「内容没出过这台机器」。存储在本机 ≠ 内容没出去：外部 AI 读到什么由它决定，读到的正文会进那个 AI 的服务。 */}
-          <b>数据去哪儿</b>：笔记存在本机，ShuyoNote 自己不上传。但外部 AI 读到什么由它自己决定 ——
-          读到的正文会进入那个 AI 的服务（它若是云端服务商，这部分内容就离开了本机）。
+          <b>数据边界</b>：笔记仍在本机，ShuyoNote 不上传；但外部 AI 读到什么由它决定。
+          云端 AI 收到内容后，这部分内容就离开了本机。
         </p>
       </section>
 

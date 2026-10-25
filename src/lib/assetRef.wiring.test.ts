@@ -46,13 +46,31 @@ describe("附件稳定引用 asst:<hash>", () => {
   });
 
   // ⭐ 2026-10-23（owner 实拍：手机 web 导出 → 桌面导入 ⇒ 图片碎图）：
-  //   两个洞一起补 —— ① 导出按**正文里的引用**兜附件（page_id 是 null 那批看不见）；
-  //   ② 桌面导入把 `asst:<hash>` 落成真实路径（否则编辑器拿它当路径用 ⇒ 碎图）。
-  it("④ 导出要按正文引用兜附件 ＋ 导入要把引用落成本机路径", () => {
+  //   三个洞一起补 —— ① 导出按**正文里的引用**兜附件（page_id 是 null 那批看不见）；
+  //   ② 桌面导入把 `asst:<hash>` 落成真实路径（否则编辑器拿它当路径用 ⇒ 碎图）；
+  //   ③ **修复前**的老图正文里只有一次性 `blob:`（没有 hash）⇒ 只能按**文件名**反查。
+  it("④ 导出按正文引用兜附件 ＋ 导入按 hash 或文件名落成本机路径", () => {
     const web = read("src/lib/platform/web.ts");
-    expect(web, "web 导出没扫正文里的 asst: 引用").toMatch(/matchAll\(\/asst:\(\[0-9a-f\]\{8,128\}\)\/g\)/);
+    // ⭐ 2026-10-24：列名**收口进内容层**了 —— 导出不再直写 `SELECT content_json …`，
+    //   改成 `pageDocJsonInSpace(store, ws.id)`（`src/lib/docContent.ts` 那一层）。
+    //   判据跟着改到这里（否则这条会一直红：它守的是"扫正文用的是那一层、且没写错列名"）：
+    expect(web, "导出扫正文必须经内容层（pageDocJsonInSpace），别在这层直写列名").toMatch(
+      /pageDocJsonInSpace\(store, ws\.id\)/,
+    );
+    expect(web, "导出没按正文里的 asst: 引用兜附件").toMatch(/matchAll\(\/asst:\(\[0-9a-f\]\{8,128\}\)\/g\)/);
+    expect(web, "导出没按文件名兜老图（blob: 那批）").toMatch(/byName\.get\(alt\)/);
+    expect(web, "扫失败不许静默").toMatch(/\[export\] 正文里的附件引用没扫成功/);
     const rs = read("src-tauri/src/workspace_io.rs");
     expect(rs, "桌面导入没调用改写").toMatch(/rewrite_asset_refs_in_space_db\(&target_db/);
-    expect(rs, "找不到字节的引用必须原样保留").toMatch(/rewrite_asst_refs/);
+    // ⭐ 2026-10-24：直写列名已收口进内容层（`doc_content::list_pages_with_images` / `write_page_doc_json`），
+    //   判据跟着改成"必须经那一层"（否则这条会一直红，而它守的东西没丢）。
+    expect(rs, "导入改写必须经内容层读正文（list_pages_with_images）").toMatch(
+      /doc_content::list_pages_with_images\(&conn\)/,
+    );
+    expect(rs, "导入改写必须经内容层写回（write_page_doc_json）").toMatch(
+      /doc_content::write_page_doc_json\(&conn/,
+    );
+    expect(rs, "导入没按文件名兜老图").toMatch(/rewrite_image_srcs/);
+    expect(rs, "按名字反查要真去查附件表").toMatch(/SELECT name, hash FROM attachments/);
   });
 });

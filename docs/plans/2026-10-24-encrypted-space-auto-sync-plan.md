@@ -1,0 +1,153 @@
+# 加密空间「自动同步」（B1＋B2）实施方案
+
+> **状态**：**实施中（P1/P2 已落：钥匙袋 v2 多组、解锁按组派生、公开材料交换合并、解锁后自动建加密空间；P3 锁着盲公告/对账未做）**。
+> **一句话目标**：个人版两台设备之间，**加密空间也能像普通空间一样自动同步**；换新设备**不再手工导出/导入钥匙**，
+> 用户只需要在新设备上**输一次主口令**。
+> **安全红线**：网线上只传**公开材料**（盐/参数/密文盒子/空间名）；⛔ 不传主口令、⛔ 不传裸空间密钥。
+
+---
+
+## 一、为什么不能只靠"搬密文"
+
+```text
+加密空间的密钥 = 每空间随机的 32 字节，被"主密钥"包裹成盒子；主密钥 = 口令 ＋ 盐/参数派生。
+两台设备各自第一次加密时盐不同 ⇒ 同一个口令在两台派生出不同主密钥 ⇒ 对端的盒子解不开。
+⇒ 要"自动"，必须解决三件：① 公开材料要能自动到对端（盐/参数/盒子）；
+   ② 解锁时按"每一组材料"各派生一次主密钥；③ 空间清单（名字/id）也要到，才能建同名空壳。
+```
+
+## 二、两条档位（本方案都做，先 B1 后 B2）
+
+```text
+B1 新设备（本机还没有任何盒子）：整体采纳对端的公开材料（它成为主组）⇒ 输一次口令即可解开全部空间。
+B2 已有设备（本机有自己的盐/盒子）：对端材料作为**额外组**并入；解锁时按组各派生一次主密钥
+   ⇒ 两边的空间都能开；同空间不同盒子（各自轮换过）⇒ **保留本地 + 报冲突**，⛔ 不静默覆盖。
+```
+
+## 三、已完成（P1，2026-10-24）
+
+```text
+1) 钥匙袋 v2（`keyring.rs`）
+   · `Keyring { v:2, kdf, spaces, space_names, extra_groups: [{kdf, spaces, space_names}] }`
+   · `from_json` 仍认 v1（只有主组），⛔ 不改老盐/参数
+   · `merge_from(other) -> MergeReport`：同组补空间盒子；不同组整组收下；冲突保留本地并列出来
+   · `space_names`：自动建同名空间要用的元数据（公开，不含内容）
+2) 解锁按组派生（`space_crypto.rs` + `security.rs`）
+   · `masters_from_passphrase`：一句口令 ⇒ 每组一把主密钥
+   · `verify_masters_against_keyring`：**每组各验一次**（别只验主组）
+   · `session_masters()` + `space_key` 用组指纹匹配；老路径（单主密钥）保留兜底
+3) 公开材料交换（`mesh.rs`）
+   · 服务面：`GET /mesh/keyring?space_id=…`（与 `/mesh/pull` 同一道鉴权；只回公开材料；没有就 `material:null`）
+   · 取用面：`fetch_peer_keyring`（签名同 pull；老对端 404 ⇒ 当作"没有这一档"，不是错误）
+   · 接线：每次成功拉取之后顺手取一次（**10 分钟节流**，失败只记日志、不影响同步）
+   · `merge_material`：本地空袋 ⇒ 整体采纳（B1）；非空 ⇒ 并成额外组（B2）
+4) 判据
+   · `keyring::tests::merging_two_materials_keeps_both_groups_and_both_spaces_open`
+   · `a_box_conflict_is_reported_and_the_local_box_is_kept` / `a_v1_material_still_loads_as_one_group`
+   · `mesh::tests::the_keyring_endpoint_is_a_route_not_a_not_yet`
+```
+
+## 四、P2 已完成（2026-10-24）：解锁后**自动建**加密空间
+
+```text
+· `security::provision_spaces_from_keyring(dir, conn, masters)`：
+  遍历钥匙袋里的空间 ⇒ 本地 meta **没有行**的：名字在 ⇒ 用盒子里那把空间密钥建 SQLCipher 空库
+  ＋ meta.workspaces(personal/encrypted) ＋ 空同步档案行；下一轮后台轮就会像普通空间一样拉密文。
+· 边界：已有 meta 行（含墓碑）一律不碰；没名字/盒子解不开/库文件已存在 ⇒ 跳过并记日志；
+  加密空间**不按名合并**（身份就是那把钥匙，不做同名融合）。
+· 接线：`unlock_encryption_impl` 解锁成功后调一次；运行中并入新公开材料后也调一次
+  （`provision_from_current_session`），失败只记日志、不影响解锁/同步。
+· 判据：`security::tests::provisioning_builds_an_encrypted_space_from_the_keyring`
+  —— meta 行建了 / 库文件**头嗅探是密文** / 用盒中钥匙能打开且空库 / 再跑一次幂等。
+```
+
+## 五、P3 进度（对账第一步已落）
+
+```text
+P2 自动建加密空间（B1 的"零操作"另一半）
+   · 解锁成功后：遍历钥匙袋里的空间 ⇒ 本地没有的，用**盒子里那把空间密钥**建 `<本地空间>.db`
+     （SQLCipher 加密）＋ meta.workspaces 行（personal/encrypted）＋ 空同步档案行
+   · 判据：新设备输一次口令后，加密空间自动出现；随后后台轮自动拉密文并合并
+   · ⚠️ 这一步要动"建库/元数据"路径 ⇒ 必须先在测试空间验，再对真实空间做
+P3 锁着也能被发现/搬运
+   · 锁着时只公告"我有一个空间，名字指纹＋可拉密文"（盲公告）；解锁后对账
+真机验收（需要 owner 参与的那一步）
+   · 两台设备：新设备配对 → 自动收到公开材料 → **用户输一次主口令** → 加密空间出现并自动同步
+   · ⚠️ 主口令只有用户知道；机器无法替用户输（这是这条链路唯一的人工动作）
+```
+
+## 五之一、P3 已完成：对账**第一步**（只读、只报告）
+
+```text
+· 新端点 `GET /mesh/manifest?space_id=…`：只返回 page id / updated_at / 是否墓碑（⛔ 无标题正文）。
+· 客户端 `fetch_peer_manifest`（与 pull 同一套签名；老对端 404 ⇒ 当作"没有这一档"）。
+· 每次成功拉取之后，每 (空间,对端) **6 小时最多一次**取清单，用纯函数
+  `manifest_missing_ids` 算"对端有、我这边没有"的 live 页，**如实打日志**（前 5 个 id）。
+· 判据：路由认得 `/mesh/manifest`；`manifest_missing_ids` 只报 live 缺页、墓碑不自动删。
+· ⚠️ 第一步只报告不自动补。
+
+### P3 第二步（已落）：按 id 取单页 ＋ 自动补齐
+
+```text
+· 新端点 `GET /mesh/page?space_id=…&id=…`：按**当前状态**投影出一份带戳的 upsert 载荷
+  （PageDetail ＋ `_hlc` ＋ `_space_name`）—— 对"从未记账"的页也能重播一次。
+· 客户端 `fetch_peer_page`（404 ⇒ 没有这页，不是错误）。
+· 对账发现缺页时：本轮最多补 **20 页**（`MAX_REPAIR_PER_ROUND`），逐页按 id 取回，
+  再走**现有合并闸**（`absorb_peer_batch`，带本地空间名提示）落库；冲突照旧进「待取回的远端版本」。
+  ⛔ 不写游标（对账是修复，不是搬家）。
+· 判据：`/mesh/page` 是真路由；自带上限与"不推游标"。
+
+### P3 第三步（已落）：**墓碑也对账**
+
+```text
+· 清单能区分 live/墓碑 ⇒ 对账补两类：
+  ① 对端 live、我这边**根本没有这一行** ⇒ 按 id 取回（覆盖"从未记账"的创建）；
+  ② 对端**墓碑**、我这边**仍是 live** ⇒ 补一条 delete（覆盖"删除没记账"的遗留数据）。
+  ⛔ 本地 `dirty=1` 的页**不动**（那是用户没同步出去的编辑，先保住本地）。
+· 纯函数 `manifest_gaps(local_live, local_deleted, peer_manifest)` 产出两类缺口；
+  每类每轮最多 20 条，⛔ 不写游标。
+· 判据：`manifest_gaps` 覆盖"只对端 live / 对端墓碑本地 live / 两边都墓碑 / 两边都 live"。
+```
+
+> 现场依据（与 Windows 对账得到）：那 8 个「演示页」在 Windows 侧**是墓碑**，但 7 条删除
+> **没有记账**（历史数据）⇒ 我侧一直显示 live；82661be4 则是"建了没记账"。两者是同一族
+> （"没记账的本地改动，对端等于不存在"）的两个方向，上面两类对账正好各收一个方向。
+
+· 仍待做：**只凭设备卡取公开材料**（两边都只有加密空间且都锁着时的起步）。
+
+## 五之二、真机事故与修法 A（2026-10-24 晚）
+
+```text
+事故：Windows 那台解锁「保险柜」后，它**以名字**出现在公告里 ⇒ 本机"同名融合"把
+      加密空间当普通空间**自动建了一个明文空间**并拉了 7 页可读正文（本地明文副本）。
+处置：本机立刻删掉该空间的库/meta 行/同步档案与 /tmp 备份；复核 `name='保险柜'` 计数 0。
+根因：
+  A1 公告里没有"这个空间是不是加密的"这一格 ⇒ 对端只能按名猜；
+  A2 公告里名字/类别与空间没有强绑定（旧对端可能只发名字）⇒ 只能靠对齐数组；
+  A3 自动建空间闸只看"对端 personal"，不看"对端加密"。
+修法（本笔）：
+  · `LanAnnounce` 新增 `hub_space_encrypted: Vec<bool>`（与 `hub_spaces` 一一对应；空＝没报）。
+  · 公告产出点按**本机库文件头**判加密（`space_db_is_encrypted`）并填这一格；
+    合并公告时只在**两边都对齐**时合并，否则整格留空（＝不知道，⛔ 不猜明文）。
+  · `auto_create_space_decision` 新增 `peer_encrypted` 闸 ⇒ `Skip("peer_encrypted")`
+    （加密对端**绝不**在本机建明文空间；正确路径是公开材料＋解锁后按 id 建密文空间）。
+  · `mesh_peers_by_name` 新增 `local_encrypted`：候选里"一边加密一边明文"**直接跳过并记日志**；
+    老对端没报这一格 ⇒ 照旧按 id/房间配（不把升级期变成断连）。
+  · 判据：`an_encrypted_peer_is_not_paired_with_a_plaintext_local_space`、
+    `the_auto_create_gate_refuses_every_unsafe_case`（新增 peer_encrypted 一格）。
+```
+
+## 六、安全边界（写死）
+
+```text
+· 公开材料只发给**已配对**设备（`authorized` 同一道门）；未配对 401、空间不服务 403
+· 不覆盖本地盒子：同空间不同盒子只报冲突；整份覆盖只能走显式 `adopt_material(overwrite=true)`
+· 盒子与空间 id 绑定（既有）；坏材料/未知版本 ⇒ 拒绝且本机一个字节不改
+· 主密钥只活内存；锁定/退出即清；日志只记"并了几组/几个空间/冲突几个"，不记材料正文
+· 加密空间**不做锁着对账**、不做按名自动融合；「保险柜」类离线导出/导入仍保留为逃生通道
+```
+
+**依据/关联**：
+`plans/2026-09-23-encryption-scope-decision.md`（三层钥匙袋模型）、
+`plans/2026-10-23-sync-while-locked.md`（锁着时的密封搬运）、
+`src-tauri/src/keyring.rs`、`src-tauri/src/space_crypto.rs`、`src-tauri/src/mesh.rs`。

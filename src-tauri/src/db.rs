@@ -163,7 +163,7 @@ pub(crate) fn create_space_db_at(dir: &Path, space_id: &str) -> Result<(), Strin
 /// migrated under a mismatched id (e.g. after prior workspace CRUD / migration), every
 /// page insert fails with a FOREIGN KEY error. Seeding the row here (from meta) is
 /// idempotent and makes the active space usable regardless of leftover state.
-fn ensure_space_workspace(c: &Connection, space_id: &str) -> Result<(), String> {
+pub(crate) fn ensure_space_workspace(c: &Connection, space_id: &str) -> Result<(), String> {
     let exists: bool = c
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1)",
@@ -478,6 +478,14 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
     ensure_space_workspace(&conn, &active).map_err(|e| {
         rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e))
     })?;
+    // ⭐ 2026-10-24（全空间方案 P0）：给所有个人空间补同步档案行（幂等）。
+    //   不补 ⇒ 那些空间**不公告、不进轮次**（真机：6 个空间只有 3 个能同步）。
+    //   ⚠️ 失败只记一行：这是"加分项"，不许把启动本身按死（与发现层同一条口径）。
+    match crate::sync::ensure_sync_profiles_for_personal_spaces(&conn) {
+        Ok(0) => {}
+        Ok(n) => eprintln!("[sync] 启动补同步档案：为 {n} 个个人空间补了空档案行"),
+        Err(e) => eprintln!("[sync] 启动补同步档案失败（忽略，继续启动）：{e}"),
+    }
     Ok(conn)
 }
 
@@ -520,6 +528,40 @@ pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             --    ⚠️ **加法** ✗：旧行一个不删、旧那一档照旧认 ✓（停认的时点是 owner 的事 ✓，方案 §5① ✓）。
             pubkey        TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (space_id, device_id)
+        );
+        -- ⭐ 2026-10-23（锁定态同步 S2，方案 `docs/plans/2026-10-23-sync-while-locked.md` §3）：
+        --   `changes` 的**密封镜像** —— 唯一用途：**锁着**（空间库打不开）时，网格窗口还能把这半边
+        --   已经封好的记录搬运出去。⚠️ 三条边界（缺一条就变成第二份真相 ✗）：
+        --   ① 只放**本机写下的**那些（`device_id` 在键里 ✓）；
+        --   ② `sealed` 是**整条记录**（entity / entity_id / op / payload 一起封 ✓）⇒ 明文库（meta.db）
+        --      里能看到的只有"哪个空间、哪台机、第几号、什么时候" —— ⛔ 没有页 id、⛔ 没有 op ✗；
+        --   ③ 它是**搬运缓存不是备份** ✗：真相仍在空间库的 `changes` 里 ⇒ 裁掉它**不丢数据** ✓
+        --      （解锁后按 seq 走普通拉取就能补上 ✓）。
+        CREATE TABLE IF NOT EXISTS mesh_outbox (
+            space_id   TEXT NOT NULL,
+            device_id  TEXT NOT NULL,
+            device_seq INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            sealed     TEXT NOT NULL,
+            -- ⭐ 写进镜像的**时刻**（不是页的 updated_at —— 导入进来的老页 updated_at 很旧，
+            --   拿它做保留期会把"刚镜像的"立刻判超期 ✗）。
+            mirrored_at INTEGER NOT NULL,
+            PRIMARY KEY (space_id, device_id, device_seq)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mesh_outbox_age ON mesh_outbox(space_id, mirrored_at);
+        -- ⭐ 2026-10-23（S3c，方案 `docs/plans/2026-10-23-sync-while-locked.md` §7.4）：
+        --   **锁着时收下的封包**（"先存、不解密、不应用"）；解锁后由 `drain` 逐条解封、走现有 apply。
+        -- ⚠️ 三条边界：① 只存**封好的**（⛔ 明文不进这张表 ✗ —— 它是给"库打不开"那一刻用的）；
+        --   ② 主键 `(空间, 对端, device_seq)` ⇒ 重复收同一批天然幂等 ✓；
+        --   ③ **应用成功才删** ✗ —— 删早了是静默丢数据，删晚了只是多占几行 ✓。
+        CREATE TABLE IF NOT EXISTS mesh_inbox (
+            space_id    TEXT NOT NULL,
+            peer_device TEXT NOT NULL,
+            device_seq  INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL,
+            sealed      TEXT NOT NULL,
+            received_at INTEGER NOT NULL,
+            PRIMARY KEY (space_id, peer_device, device_seq)
         );
         CREATE TABLE IF NOT EXISTS sync_state (
             key   TEXT PRIMARY KEY,
@@ -1572,6 +1614,72 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
 
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+/// ⭐ 2026-10-23：**应用数据目录的解析**（`SHUYONOTE_DATA_DIR` 覆盖系统目录）。
+///
+/// 为什么要这个开关：本机要跑"真·双端对测"（两个实例、两份数据、两个端口、回环互指），
+/// 而 `app.path().app_data_dir()` 走的是**系统 KnownFolder**（`%APPDATA%`）—— 它**不读环境变量**
+/// ⇒ 不开这个口子，第二个实例只能和第一个抢同一份 `meta.db`（那不是两台设备，是一台设备自己打架 ✗）。
+///
+/// 三条口径：
+/// ① **不设就逐字不变**（走调用方给的系统目录 ✓）；
+/// ② 设了但指向不存在的路径 ⇒ **照样用它**（由后面的 `init` 去建；⛔ 这里不悄悄回落，
+///    否则"我明明设了"和"其实没生效"分不出来 ✗）；
+/// ③ env 由调用方在本函数里读、但**判据只喂值**（见 `data_dir_override_pick`）⇒ 不打桩 ✓。
+pub fn resolve_app_data_dir(system_dir: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
+    data_dir_override_pick(std::env::var_os("SHUYONOTE_DATA_DIR"), system_dir)
+}
+
+/// ⭐ 上面那支的**纯函数**那一半：给什么用什么（判据直接喂值，⛔ 不动进程环境）。
+pub(crate) fn data_dir_override_pick(
+    over: Option<std::ffi::OsString>,
+    system_dir: Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    let over = over
+        .map(std::path::PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty());
+    over.or(system_dir)
+}
+
+#[cfg(test)]
+mod data_dir_override_tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    /// ⭐ 2026-10-23：**不设就逐字不变**（这是"产品行为没变"的那一条）。
+    #[test]
+    fn without_the_env_var_the_system_dir_wins() {
+        let sys = PathBuf::from("C:/sys/appdata");
+        assert_eq!(
+            data_dir_override_pick(None, Some(sys.clone())),
+            Some(sys),
+            "没设 SHUYONOTE_DATA_DIR ⇒ 必须走系统目录（逐字不变）"
+        );
+    }
+
+    /// ⭐ 设了就用它（哪怕系统目录也在）。
+    #[test]
+    fn the_env_var_overrides_the_system_dir() {
+        let over = PathBuf::from("C:/tmp/second-instance");
+        assert_eq!(
+            data_dir_override_pick(Some(OsString::from(over.clone())), Some(PathBuf::from("C:/sys"))),
+            Some(over),
+            "设了 ⇒ 用它（否则第二个实例会去抢同一份 meta.db）"
+        );
+    }
+
+    /// ⭐ 空串 ＝ 没设（⛔ 不许把"空"当成一个目录）。
+    #[test]
+    fn an_empty_env_var_is_treated_as_unset() {
+        let sys = PathBuf::from("C:/sys");
+        assert_eq!(
+            data_dir_override_pick(Some(OsString::from("")), Some(sys.clone())),
+            Some(sys),
+            "空串必须当「没设」（否则会落在一个空路径上）"
+        );
+    }
 }
 
 #[cfg(test)]

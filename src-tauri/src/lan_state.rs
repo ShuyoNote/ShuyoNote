@@ -167,6 +167,18 @@ impl LanState {
         self.table.snapshot()
     }
 
+    /// ⭐ **2026-10-25（配对码两端要算同一个码）**：只读取某一台对端**这一轮公告里**的 `trust_ask`。
+    ///
+    /// ⚠️ 用 `observed_all()`（**不看网格开关**）：配对屏要能在"已经收到公告、但还没启用网格"时也算得出码。
+    /// ⚠️ 空串/过期 ⇒ `None`（⛔ 不返回一个空 ask —— 那会让配对码变成"没有输入也算得出"）。
+    pub fn trust_ask_of(&self, device_id: &str) -> Option<String> {
+        self.observed_all()
+            .into_iter()
+            .find(|p| p.announce.device_id == device_id)
+            .map(|p| p.announce.trust_ask)
+            .filter(|a| !a.trim().is_empty())
+    }
+
     /// 腾掉过期的行（由周期任务调用）。
     pub fn sweep(&self, now_ms: i64) -> usize {
         self.table.sweep(now_ms)
@@ -223,11 +235,17 @@ pub fn announce_due(last_announce_ms: i64, now_ms: i64, interval_ms: i64) -> boo
 
 // ── ⭐⭐ task-12（owner 拍 C「后台每 5 分钟跑一次，打开面板时更勤」）────────────────────────────
 
-/// **后台自主节拍**：多久**不靠界面**跑一轮网格交换（owner 原话「后台每 5 分钟」✓）。
+/// **后台自主节拍**：多久**不靠界面**跑一轮网格交换。
 ///
-/// ⚠️ 它**只管后台那一轮** ✗ —— 面板打开时前端那条路**保留**（更快 ✓，owner 原话「打开面板时更勤」✓）；
+/// ⭐ **2026-10-25（owner：「BACKGROUND_ROUND_MS 调成 120 秒」）**：`5 分钟 → 2 分钟`。
+///   理由：个人版同 WiFi 场景里 5 分钟一轮太慢 —— 改完一台，另一台要等好几分钟才看见。
+///   代价：唤醒从 12 次/小时升到 30 次/小时（每轮只是局域网拉一次，不走外网）。
+/// ⚠️ 它**只管后台那一轮** —— 面板打开时前端那条路更快（owner 原话「打开面板时更勤」）；
 /// 两条路**共用同一套落库**（`sync::mesh_round_once` ✓）⇒ 不会出现"面板跑的记、后台跑的不记" ✗。
-pub const BACKGROUND_ROUND_MS: i64 = 5 * 60 * 1000;
+pub const BACKGROUND_ROUND_MS: i64 = 120 * 1000;
+
+/// 暂停那条日志只打一次（每 5 分钟刷一句会把真日志冲掉）。
+static AUTOSYNC_PAUSED_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// ⭐ **task-12（Lead 拍 B）**：本轮 **`候选 0`** ⇒ 下次约 60 秒再来 ✓（"没找到对端"**不算**"跑过一轮" ✓）。
 pub const BACKGROUND_RETRY_MS: i64 = 60 * 1000;
@@ -268,6 +286,25 @@ pub fn background_round_initial_last(started_ms: i64) -> i64 {
 ///   （`meshed` 是**解析后且配了监听地址**的那些 ✓，与发现层同尺 ✓）；
 /// · `last_ms <= 0` ⇒ 第一次就该跑 ✓（复用 `announce_due` 的同一口径 ✓，⛔ 不另立一套 ✗）；
 /// · 到点（≥ [`background_round_interval_ms`]）⇒ 跑 ✓。
+/// ⭐ 2026-10-24：**暂停后台轮**（只为"真并发验收"服务）。
+///
+/// 现场：真并发那一格要靠"两边各写一次、且谁都还没拉到对方的"才能验，而 app 的后台轮
+/// **每 5 分钟自己拉一次** ⇒ 验的人永远在赌"它别在这 5 秒里插进来"（10-24 实测赌输过一次）。
+/// 口径：
+/// · `SHUYONOTE_MESH_AUTOSYNC=0|off|false|no`（大小写不敏感）⇒ **不再自动跑后台轮**；
+/// · **不设 / 其它任何值 ⇒ 逐字不变**（生产行为一个字节不动 ✓）；
+/// · 手动 `mesh_sync_now` **不受影响** ✓ —— 那正是验收要的"先停自动，再手动对齐"。
+pub fn autosync_paused_env(v: Option<&str>) -> bool {
+    matches!(
+        v.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("0") | Some("off") | Some("false") | Some("no")
+    )
+}
+
+/// 读环境变量那一半（判据只喂 `autosync_paused_env`，⛔ 不动进程环境）。
+pub fn autosync_paused() -> bool {
+    autosync_paused_env(std::env::var("SHUYONOTE_MESH_AUTOSYNC").ok().as_deref())
+}
 pub fn background_round_due(last_ms: i64, now_ms: i64, meshed_n: usize, empty_streak: usize) -> bool {
     // ⭐ ① **一个网格空间都没有 ⇒ 不跑** ✓ —— "没配 ⇒ 一个字节都不动"一个字不变 ✓（判据钉着 ✓）。
     if meshed_n == 0 {
@@ -358,10 +395,38 @@ fn spawn_background_round(
         for (proto_space, db_space, device_level) in pairs {
             // ⭐ 2026-10-11（设备级 ✓）：⭐ 判定**在上面那一处算好**（`mesh::is_device_level_space` ✓）
             //   再传进来 ✗ —— `mesh_round_once` 自己不判 ✓（否则就是第二份口径 ✓；方案 §9.1／§10.3 ✓）。
-            match crate::sync::mesh_round_once(&db.0, &proto_space, &db_space, &dev, &peers, device_level)
-                .await
+            //
+            // ⭐⭐ 2026-10-23（S3c-接②）：**按空间各开各的连接** ✗ —— 以前这里对**每一个**空间都传
+            //   同一个 `&db.0`，而 `mesh::round` 把这个 conn 当"空间连接"用（读设置、读名字、落库）
+            //   ⇒ "10 个空间"其实是**同一份库跑了 10 次**（日志里那 10 条一模一样的拉取就是它 ✓）。
+            //   ⚠️ 顺带接上"锁着也能收"：库打不开时走 `sealed_round`（只进 inbox，不解密不应用 ✓）。
+            let round_result = match crate::db::app_data_dir_ref()
+                .and_then(|dir| crate::db::open_space_conn_at(&db_space, dir).ok())
             {
+                Some(conn) => {
+                    let m = std::sync::Mutex::new(conn);
+                    crate::sync::mesh_round_once(&m, &proto_space, &db_space, &dev, &peers, device_level)
+                        .await
+                }
+                None => match crate::db::app_data_dir_ref() {
+                    Some(dir) => {
+                        crate::mesh::sealed_round(dir, &proto_space, &db_space, &dev, &peers).await
+                    }
+                    None => Err("app data 目录读不到 ⇒ 这一轮连搬运缓存都读不了".to_string()),
+                },
+            };
+            match round_result {
                 Ok(r) => {
+                    // ⭐ 2026-10-24：后台轮也要告诉前端“改了哪些页”（网格没有 SSE；
+                    //   不刷新的话，编辑器里那份旧 doc 之后一保存就盖掉刚并进来的块）。
+                    let touched = crate::mesh::round_touched_pages(&r);
+                    if !touched.is_empty() {
+                        use tauri::Emitter;
+                        let _ = app2.emit(
+                            "mesh-applied",
+                            serde_json::json!({ "spaceId": db_space, "pages": touched }),
+                        );
+                    }
                     candidates_total += r.candidates;
                     if r.candidates > 0 {
                         found_any = true;
@@ -564,6 +629,7 @@ pub fn announces_for_with_mesh(
                 hub_base: None,
                 hub_spaces: Vec::new(),
                 hub_space_kinds: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 hub_space_names: if space_name.is_empty() {
                     Vec::new()
                 } else {
@@ -593,6 +659,23 @@ pub fn announces_for_with_mesh(
         }
         a.hub_spaces =
             if a.hub_base.is_some() { vec![space.to_string()] } else { Vec::new() };
+        // ⭐ 2026-10-24（macOS 侧抓包定位）：**兜底分支漏了「类别」** ✗ —— `lan.rs:510` 那条
+        //   「代言」分支是填的，而"只开网格、不绑服务端"的个人空间**必走兜底**
+        //   （`announce_for_own_hub` 因 `configured_url` 为空在 `is_lan_base` 那一步返回 `None`）
+        //   ⇒ 公告永远 `hub_space_kinds: []` ⇒ 对端"按名建空间"的 G2 闸（要求逐字 `personal`）
+        //   **永远不过** ⇒ 候选表永远空（2026-10-23 真机实测：names 有、kinds 全是 `[]`）。
+        //   口径与 `lan.rs:510` 同一把：**空才发空**，否则一个元素。
+        if a.hub_base.is_some() && a.hub_space_kinds.is_empty() && !space_kind.is_empty() {
+            a.hub_space_kinds = vec![space_kind.to_string()];
+        }
+        // ⭐ 2026-10-24：补"这个空间是否加密"（与 `hub_spaces` 一一对应；取不到目录 ⇒ 留空＝不知道）。
+        if a.hub_spaces.len() == 1 {
+            if let Some(dir) = crate::db::app_data_dir_ref() {
+                a.hub_space_encrypted = vec![crate::security::space_db_is_encrypted(
+                    &crate::db::space_db_path(dir, ws.trim()),
+                )];
+            }
+        }
         out.push(a);
     }
     out
@@ -727,7 +810,10 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     .iter()
                     .map(|(s, _, ws)| {
                         let served = window_serve_space(&c, s, ws);
-                        let device_level = crate::mesh::is_device_level_space(&c, &served);
+                        // ⭐ 2026-10-24（全空间方案 P1）：个人档的判据是 **`space_id` 空**
+                        //   （⛔ 不再拿"房间号 == 设备级暗号"反推 —— 个人空间现在一空间一房间号，
+                        //     那条反推会把个人空间误判成团队档 ⇒ 卡从错的行走 ⇒ 401）。
+                        let device_level = s.trim().is_empty();
                         (served, ws.clone(), settings_for_profile(&c, s, ws), device_level)
                     })
                     // ⭐ **2026-10-08（第三笔）**：**没暗号的行不许进开窗名单** ✗ —— 它的"服务空间"是 `''` ✓，
@@ -781,7 +867,14 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     Ok(Some(addr)) => match crate::mesh::announced_base(addr) {
                         Some(base) => {
                             // ⭐ 一扇门服务多个空间 ⇒ **每个空间都记一条基址**（公告是按空间发的 ✓）
+                            // ⚠️ 2026-10-23（S3a）：只宣告**这扇门真的在服务**的那些 ——
+                            //   打不开的空间（锁着的加密空间）会被 `ensure_window` 跳过，
+                            //   照着 `pairs` 全播就是**播假话**（对方来拉只会 403/404）✗。
                             for (_, space, _) in pairs {
+                                if !crate::mesh::window_serves(bind, space) {
+                                    eprintln!("[mesh] 不宣告 {space}：这扇门这一轮没在服务它（打不开的库）");
+                                    continue;
+                                }
                                 mesh_bases.push((space.clone(), base.clone()));
                             }
                         }
@@ -841,7 +934,15 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             //   ⚠️ 三条边界：① 只在**真的开了网格**的空间上跑 ✓（`meshed` ✓ ⇒ ⛔ 没配的一个字节都不动 ✗）；
             //   ② **`spawn`**（⛔ 不阻塞这条每秒的发现循环 ✗ —— 一轮 HTTP 可能十几秒 ✓）；
             //   ③ **同时只跑一轮** ✓（`BACKGROUND_IN_FLIGHT` ＋ RAII 归还 ✓，上一轮没完就跳过 ✓）。
-            if background_round_due(
+            // ⭐ 2026-10-24：**验收开关**（`SHUYONOTE_MESH_AUTOSYNC=0`）—— 只停"自动"，手动同步照旧。
+            if autosync_paused() {
+                if !AUTOSYNC_PAUSED_LOGGED.swap(true, Ordering::SeqCst) {
+                    eprintln!(
+                        "[{}] [mesh] 后台轮：**已暂停**（SHUYONOTE_MESH_AUTOSYNC=0）—— 手动同步不受影响",
+                        lan::log_stamp()
+                    );
+                }
+            } else if background_round_due(
                 last_bg_round_ms,
                 now,
                 meshed.len(),
@@ -1048,8 +1149,8 @@ mod mesh_serve_space_tests {
         .unwrap();
         assert_eq!(
             window_serve_space(&c, "", "ws-personal"),
-            "room-123",
-            "个人空间没有 space_id ⇒ 窗口/公告必须报**配对暗号**（报空串 ⇒ 对端永远匹配不上 ✗）"
+            crate::sync::personal_room_for("room-123", "测试"),
+            "个人空间没有 space_id ⇒ 窗口/公告必须报**它的子房间号**（空串 ⇒ 对端永远匹配不上 ✗）"
         );
     }
 
@@ -1064,16 +1165,54 @@ mod mesh_serve_space_tests {
     ///
     /// ⚠️ 红读数（定向变异 β ＝ 入口里把 `&short_id` 恒写成 `""`）⇒ ① 红 ✓；
     /// ⚠️ 红读数（定向变异 γ ＝ "拿不到"回落成 `device_id`）⇒ ③ 红 ✓。
+    /// ⭐ 2026-10-24（macOS 抓包定位）：**兜底分支（只开网格、不绑服务端）也必须带「类别」**。
+    ///
+    /// 红读数（改前逐字）：`hub_space_names:["工作"]` 但 `hub_space_kinds:[]` ⇒ 对端 G2 闸
+    /// （要求逐字 `personal`）永远不过 ⇒「对端有你没有的空间」候选表**永远空**（真机实测）。
+    #[test]
+    fn the_fallback_announce_carries_the_space_kind() {
+        let profiles = vec![(String::new(), String::new(), "ws-personal".to_string())];
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', 'room-123')",
+            [],
+        )
+        .unwrap();
+        // ⚠️ 夹具里那张表的形状比较老（没有 `kind`，而且已经有一行 `ws-personal`）
+        //   ⇒ 先补列、再**改**那一行（⛔ 不是再插一行：`id` 是主键，插会撞）。
+        c.execute("ALTER TABLE meta.workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT ''", [])
+            .expect("夹具要能补 kind 列");
+        c.execute(
+            "UPDATE meta.workspaces SET name = '工作', kind = 'personal' WHERE id = 'ws-personal'",
+            [],
+        )
+        .unwrap();
+        // ⭐ 名字改过 ⇒ 子房间号要**按改后的名字**算（服务空间/公告同一把尺）
+        let served = window_serve_space(&c, "", "ws-personal");
+        let bases = vec![(served, "http://192.168.1.5:8788".to_string())];
+        let got = announces_for_this_round(&c, "dev-a", "本机", &profiles, &bases);
+        assert_eq!(got.len(), 1, "前提：开了网格的个人空间要发言（{got:#?}）");
+        assert_eq!(got[0].hub_space_names, vec!["工作".to_string()]);
+        assert_eq!(
+            got[0].hub_space_kinds,
+            vec!["personal".to_string()],
+            "兜底分支也必须带类别（否则对端按名建空间的 G2 闸永远不过）"
+        );
+    }
+
     #[test]
     fn the_short_id_really_lands_in_the_announce_and_missing_stays_honestly_empty() {
         let profiles = vec![(String::new(), String::new(), "ws-personal".to_string())];
-        let bases = vec![("room-123".to_string(), "http://192.168.1.5:8788".to_string())];
         let with_room = |c: &rusqlite::Connection| {
             c.execute(
                 "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', 'room-123')",
                 [],
             )
             .unwrap();
+        };
+        // ⭐ 公告的基址键＝**解析后的服务空间**（个人档现在是派生子房间号）
+        let bases_for = |c: &rusqlite::Connection| {
+            vec![(window_serve_space(c, "", "ws-personal"), "http://192.168.1.5:8788".to_string())]
         };
 
         // ① 有短标识 ⇒ 逐字进公告（⭐ 它就是要给对端看的那一格）
@@ -1083,7 +1222,7 @@ mod mesh_serve_space_tests {
         let c = fixture();
         with_room(&c);
         crate::sync::set_meta_state(&c, "short_id", "K7M2Q").unwrap();
-        let got = announces_for_this_round(&c, "dev-a", "本机", &profiles, &bases);
+        let got = announces_for_this_round(&c, "dev-a", "本机", &profiles, &bases_for(&c));
         assert_eq!(got.len(), 1, "前提：开了网格的个人空间要发言（{got:#?}）");
         assert_eq!(
             got[0].short_id, "K7M2Q",
@@ -1094,7 +1233,7 @@ mod mesh_serve_space_tests {
         // ② 没有 ⇒ 生成并落库（自愈 ✓）；第二次必须是同一个（落了库 ✓）
         let c2 = fixture();
         with_room(&c2);
-        let first = announces_for_this_round(&c2, "dev-a", "本机", &profiles, &bases);
+        let first = announces_for_this_round(&c2, "dev-a", "本机", &profiles, &bases_for(&c2));
         assert_eq!(first.len(), 1);
         assert!(
             !first[0].short_id.is_empty() && first[0].short_id != "dev-a",
@@ -1102,7 +1241,7 @@ mod mesh_serve_space_tests {
             first[0].short_id
         );
         assert_eq!(
-            announces_for_this_round(&c2, "dev-a", "本机", &profiles, &bases)[0].short_id,
+            announces_for_this_round(&c2, "dev-a", "本机", &profiles, &bases_for(&c2))[0].short_id,
             first[0].short_id,
             "⭐ 第二次必须一样（说明**落库了** ⇒ 对端看到的是稳定的一个标识 ✓）"
         );
@@ -1111,7 +1250,7 @@ mod mesh_serve_space_tests {
         let c3 = fixture();
         with_room(&c3);
         c3.execute_batch("DROP TABLE meta.sync_state;").unwrap();
-        let got3 = announces_for_this_round(&c3, "dev-a", "本机", &profiles, &bases);
+        let got3 = announces_for_this_round(&c3, "dev-a", "本机", &profiles, &bases_for(&c3));
         assert_eq!(got3.len(), 1, "短标识读不到⛔ 不该连公告一起没了 ✓");
         assert_eq!(
             got3[0].short_id, "",
@@ -1181,13 +1320,15 @@ mod mesh_read_scope_tests {
             [],
         )
         .unwrap();
+        // ⭐ 2026-10-24（全空间方案 P1）：个人空间现在解析成**派生子房间号**（一空间一房间号）。
+        let derived = crate::sync::personal_room_for("room-123", "测试");
         c.execute(
-            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:room-123', '0.0.0.0:8788')",
+            &format!("INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:{derived}', '0.0.0.0:8788')"),
             [],
         )
         .unwrap();
         c.execute(
-            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_token:room-123', 'k7Qm-2pRt')",
+            &format!("INSERT INTO meta.sync_state (key, value) VALUES ('mesh_token:{derived}', 'k7Qm-2pRt')"),
             [],
         )
         .unwrap();
@@ -1263,6 +1404,7 @@ mod tests {
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -1641,6 +1783,22 @@ mod tests {
     /// ★ 判据 ⑨：**广播间隔与存活期的关系** —— 存活期必须**明显大于**广播间隔，
     /// 否则一次丢包（或一次忙等）就会把还在线的设备判死。
     /// 退化了会怎样：网段里两台明明都在，却互相看不见（表现是"时好时坏的直连"）。
+    /// ⭐ 2026-10-24：**验收开关的真值表**（`SHUYONOTE_MESH_AUTOSYNC`）。
+    ///
+    /// 关键三格：① 不设 ⇒ **不暂停**（生产行为逐字不变）；② `0/off/false/no`（大小写与空白都不敏感）
+    /// ⇒ 暂停；③ 其它任意值 ⇒ **不暂停**（⛔ 不许把"设了个没意义的值"当成暂停 —— 那会让生产环境
+    /// 因为一个拼错的环境变量静默停掉同步）。
+    #[test]
+    fn the_autosync_pause_switch_only_accepts_explicit_off_values() {
+        assert!(!autosync_paused_env(None), "不设 ⇒ 不暂停（生产行为不变）");
+        for v in ["0", "off", "FALSE", " No ", "no"] {
+            assert!(autosync_paused_env(Some(v)), "{v:?} 应当暂停");
+        }
+        for v in ["1", "on", "true", "", "maybe", "disable"] {
+            assert!(!autosync_paused_env(Some(v)), "{v:?} **不该**暂停（拼错的环境变量不许静默停同步）");
+        }
+    }
+
     #[test]
     fn the_peer_ttl_outlives_the_announce_interval() {
         assert!(
@@ -1894,6 +2052,7 @@ mod short_id_tests {
                 hub_spaces: Vec::new(),
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
+                hub_space_encrypted: Vec::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },

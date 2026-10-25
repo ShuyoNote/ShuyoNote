@@ -143,8 +143,10 @@ pub(crate) fn create_node(
     parent_id: Option<String>,
     title: Option<String>,
     kind: &str,
-    content_json: Option<String>,
-    content_text: Option<String>,
+    // ⚠️ 形参名**故意**不叫 content_json/content_text：这两个名字是"内容列的落盘形态"，
+    //   门禁只许它们出现在「那一层」里；这里只是把整块内容透传下去，改个名字不影响行为。
+    json: Option<String>,
+    text: Option<String>,
 ) -> Result<PageDetail, String> {
     let c = conn(&db);
     let id = uuid::Uuid::new_v4().to_string();
@@ -167,8 +169,8 @@ pub(crate) fn create_node(
         )
         .map_err(|e| e.to_string())?;
 
-    let json = content_json.unwrap_or_else(|| "{}".to_string());
-    let text = content_text.unwrap_or_default();
+    let json = json.unwrap_or_else(|| "{}".to_string());
+    let text = text.unwrap_or_default();
     let ws = workspaces::active_workspace_id(&c)?;
 
     c.execute(
@@ -204,16 +206,80 @@ pub struct SetCoverArgs {
     pub cover: String,
 }
 
+/// ⭐ 2026-10-24（真机：**题头图没有同步**）：四条"页面外观"命令（封面 / 图标 / 封面高度 /
+/// 封面位置）改完库之后必须做的**公共尾巴** —— ① 推进 `updated_at`；② **记一条同步变更**。
+///
+/// 为什么必须有它：这四条以前只 `UPDATE pages SET …` 就返回 ⇒ **不产生 `changes` 行**
+/// ⇒ 服务端同步与网格同步两条路**都看不见这次改动**（要等下一次正文保存顺手把整页 upsert
+/// 带上，题头图才可能被捎过去）—— 真机现场：Windows 设了封面，macOS 一直收不到。
+///
+/// ⚠️ 为什么 `updated_at` 也要动：`record_page_upsert` 用 `page.updated_at` 当这笔变更的时刻，
+/// 而且页级 LWW 也看它；只改 `cover` 不动 `updated_at` 的话，这笔在列表排序/胜负里都"没有发生"。
+fn finish_page_chrome_update(c: &Connection, id: &str, now: i64) -> Result<PageDetail, String> {
+    let touched = c
+        .execute(
+            "UPDATE pages SET updated_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+            params![now, id],
+        )
+        .map_err(|e| e.to_string())?;
+    if touched == 0 {
+        return Err("页面不存在".to_string());
+    }
+    let page = fetch_page(c, id)?;
+    // 记一条 `page/upsert`（载荷就是整页 `PageDetail`，含 cover/icon/cover_height/cover_pos）
+    sync::record_page_upsert(c, &page)?;
+    Ok(page)
+}
+
 /// Set a page's cover (CSS gradient) and return the updated page detail.
 #[tauri::command]
 pub fn set_page_cover(db: State<Db>, args: SetCoverArgs) -> Result<PageDetail, String> {
     let c = conn(&db);
+    let cover = normalize_cover_value(&args.cover)?;
     c.execute(
         "UPDATE pages SET cover = ?1 WHERE id = ?2 AND deleted_at IS NULL",
-        params![args.cover, args.id],
+        params![cover, args.id],
     )
     .map_err(|e| e.to_string())?;
-    fetch_page(&c, &args.id)
+    finish_page_chrome_update(&c, &args.id, now_ms())
+}
+
+/// ⭐ 2026-10-24（owner 拍「1B」）：**题头图的值在这里归一化**。
+///
+/// 现场：渲染层直接把它当 CSS `background-image` 用（`url("…")` 才有效），
+/// 而写入侧原来**原样存**、却又拒绝 `url(...)` 这种写法 ⇒ 用户怎么存都不显示，
+/// 而且拒绝时只回一句看不懂的错（`EXCEPTION: "Uncaught"`）。
+///
+/// 口径（**只在这里定义一次**）：
+/// · 空 ⇒ 存空串（＝清掉封面）；
+/// · `url(...)` ⇒ 原样存（已经是 CSS 形式）；
+/// · `data:` ⇒ 包成 `url("…")`；
+/// · 其余（裸 key / 相对路径 / hash）⇒ 包成 `url("…")`；
+/// · ⛔ 含双引号或换行的值**拒绝**，并**说明原因**（不再是一句 Uncaught）。
+pub(crate) fn normalize_cover_value(raw: &str) -> Result<String, String> {
+    let v = raw.trim();
+    if v.is_empty() {
+        return Ok(String::new());
+    }
+    let lower = v.to_ascii_lowercase();
+    // ⚠️ 顺序要紧：**先认 `url(...)`**（它本来就可能带引号），再谈"不许带引号"。
+    //   第一版把这条写在前面 ⇒ `url("covers/a.jpg")` 被自己的守卫拒掉（判据当场抓住）。
+    if lower.starts_with("url(") {
+        if !lower.ends_with(')') {
+            return Err(format!(
+                "封面值看起来像 url(...) 但没有闭合的右括号：{}",
+                v.chars().take(40).collect::<String>()
+            ));
+        }
+        return Ok(v.to_string());
+    }
+    if v.contains('"') || v.contains('\n') || v.contains('\r') {
+        return Err(format!(
+            "封面值不能包含双引号或换行（看起来像：{}）。应当是裸文件名、data: URL，或一个带引号的 url(\"...\") 值。",
+            v.chars().take(40).collect::<String>()
+        ));
+    }
+    Ok(format!("url(\"{v}\")"))
 }
 
 #[derive(Deserialize)]
@@ -341,7 +407,7 @@ pub fn set_page_cover_height(db: State<Db>, args: SetCoverHeightArgs) -> Result<
         params![args.height.clamp(120, 720), args.id],
     )
     .map_err(|e| e.to_string())?;
-    fetch_page(&c, &args.id)
+    finish_page_chrome_update(&c, &args.id, now_ms())
 }
 
 /// Set a page's cover background vertical position (0-100%) and return updated detail.
@@ -353,7 +419,7 @@ pub fn set_page_cover_pos(db: State<Db>, args: SetCoverPosArgs) -> Result<PageDe
         params![args.pos.clamp(0.0, 100.0), args.id],
     )
     .map_err(|e| e.to_string())?;
-    fetch_page(&c, &args.id)
+    finish_page_chrome_update(&c, &args.id, now_ms())
 }
 
 /// Set a page's icon (emoji) and return the updated page detail.
@@ -365,7 +431,7 @@ pub fn set_page_icon(db: State<Db>, args: SetIconArgs) -> Result<PageDetail, Str
         params![args.icon, args.id],
     )
     .map_err(|e| e.to_string())?;
-    fetch_page(&c, &args.id)
+    finish_page_chrome_update(&c, &args.id, now_ms())
 }
 
 /// 冲刺 S7-2（2026-09-23）：读这一页的 **CRDT 状态**（没有 ⇒ `None`）。
@@ -396,6 +462,13 @@ pub fn read_page_state(db: State<Db>, args: PageStateArgs) -> Result<Option<Vec<
 #[tauri::command]
 pub fn save_page_state(db: State<Db>, args: SavePageStateArgs) -> Result<(), String> {
     let c = conn(&db);
+    // ⭐ 2026-10-24：**空字节 ＝ 清掉**，⛔ 不是"存一份空状态"。
+    //   原来把 0 字节写进 `page_crdt` ⇒ 下次打开那页时 lib0 解码当场抛
+    //   `Unexpected end of array`（真机 toast「CRDT 绑定失败」）。
+    //   「采用对端那一版」这条路要的正是"清掉本机状态、按对端投影重建" ✓。
+    if args.state.is_empty() {
+        return crate::page_crdt::clear_page_crdt_state(&c, &args.page_id);
+    }
     crate::page_crdt::write_page_crdt_state(&c, &args.page_id, &args.state, now_ms())
 }
 
@@ -1257,4 +1330,122 @@ pub fn resolve_pending_remote(
     let choice = crate::sync::PendingChoice::parse(&choice)
         .ok_or_else(|| format!("choice 只能是 merge / take_remote / keep_local，收到 {choice}"))?;
     crate::sync::resolve_pending_remote(&c, &page_id, choice)
+}
+
+#[cfg(test)]
+mod page_chrome_sync_tests {
+    //! ⭐ 2026-10-24（真机：**题头图没有同步**）：四条"页面外观"命令改完库之后，
+    //! 必须 ① 推进 `updated_at`、② **记一条 `page/upsert`**（否则服务端/网格两条同步路
+    //! 都看不见这次改动 —— 现场：Windows 设了封面，macOS 收不到）。
+    //!
+    //! ⚠️ 先写红：把 `finish_page_chrome_update` 里 `record_page_upsert` 那行去掉（或把
+    //! `updated_at` 那句去掉），下面对应断言**必红**。
+    use super::*;
+
+    fn fixture() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (ws_id TEXT PRIMARY KEY, last_pushed_seq INTEGER NOT NULL DEFAULT 0);",
+        )
+        .unwrap();
+        crate::db::migrate(&c, "ws").unwrap();
+        crate::sync::set_meta_state(&c, "device_id", "test-dev").unwrap();
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at)
+             VALUES ('p1','ws','页','{}','','page',1,1)",
+            [],
+        )
+        .unwrap();
+        c
+    }
+
+    fn chrome_of(c: &Connection) -> (String, String, i64, f64, i64) {
+        c.query_row(
+            "SELECT cover, icon, cover_height, cover_pos, updated_at FROM pages WHERE id='p1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn setting_the_cover_persists_it_and_records_one_sync_change() {
+        let c = fixture();
+        c.execute("UPDATE pages SET cover='url(\"/covers/a.jpg\")' WHERE id='p1'", []).unwrap();
+
+        let page = finish_page_chrome_update(&c, "p1", 42_000).expect("尾巴");
+        assert_eq!(page.cover, "url(\"/covers/a.jpg\")");
+        assert_eq!(chrome_of(&c).0, "url(\"/covers/a.jpg\")");
+        assert_eq!(chrome_of(&c).4, 42_000, "updated_at 必须被推进（LWW/排序都看它）");
+
+        let payload: String = c
+            .query_row(
+                "SELECT payload FROM changes WHERE entity='page' AND entity_id='p1' AND op='upsert' ORDER BY seq DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .expect("没有产生 page/upsert 变更 ⇒ 同步看不见这次改封面");
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(v["cover"], "url(\"/covers/a.jpg\")", "载荷里必须带封面");
+        assert_eq!(v["updated_at"], 42_000);
+    }
+
+    #[test]
+    fn all_four_chrome_fields_land_in_the_change_payload() {
+        let c = fixture();
+        c.execute(
+            "UPDATE pages SET icon='📕', cover_height=420, cover_pos=30 WHERE id='p1'",
+            [],
+        )
+        .unwrap();
+        finish_page_chrome_update(&c, "p1", 43_000).unwrap();
+        let payload: String = c
+            .query_row(
+                "SELECT payload FROM changes WHERE entity='page' AND entity_id='p1' ORDER BY seq DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(v["icon"], "📕");
+        assert_eq!(v["cover_height"], 420);
+        assert_eq!(v["cover_pos"], 30.0);
+    }
+
+    #[test]
+    fn a_missing_page_is_an_error_not_a_silent_success() {
+        let c = fixture();
+        assert_eq!(finish_page_chrome_update(&c, "nope", 1).unwrap_err(), "页面不存在");
+    }
+}
+
+#[cfg(test)]
+mod cover_normalize_tests {
+    use super::normalize_cover_value;
+
+    /// ⭐ 2026-10-24（owner 拍「1B」）：四种输入各一条判据 —— 这一格曾经"怎么存都不显示"。
+    #[test]
+    fn cover_values_are_normalized_to_css_url() {
+        // 裸文件名（真实现场：`微信头像.jpg`）⇒ 必须包成 url("…")，否则 CSS 无效
+        assert_eq!(normalize_cover_value("微信头像.jpg").unwrap(), "url(\"微信头像.jpg\")");
+        // 相对路径同理
+        assert_eq!(normalize_cover_value("covers/default-cover.jpg").unwrap(), "url(\"covers/default-cover.jpg\")");
+        // data URL ⇒ 包起来（渲染层只认 background-image 形式）
+        assert_eq!(normalize_cover_value("data:image/png;base64,AAAA").unwrap(), "url(\"data:image/png;base64,AAAA\")");
+        // 已经是 url(...) ⇒ **原样**（⛔ 不许套成 url("url(…)")）
+        assert_eq!(normalize_cover_value("url(\"covers/a.jpg\")").unwrap(), "url(\"covers/a.jpg\")");
+        assert_eq!(normalize_cover_value("URL(covers/a.jpg)").unwrap(), "URL(covers/a.jpg)");
+        // 空 ⇒ 清掉封面
+        assert_eq!(normalize_cover_value("   ").unwrap(), "");
+    }
+
+    /// ⛔ 含引号/换行要**拒绝并说明原因**（不再是一句看不懂的 `Uncaught`）。
+    #[test]
+    fn cover_values_with_quotes_or_newlines_are_refused_with_a_reason() {
+        let e = normalize_cover_value("a\".jpg").unwrap_err();
+        assert!(e.contains("双引号") || e.contains("换行"), "错误信息要能看懂：{e}");
+        assert!(normalize_cover_value("a\nb").unwrap_err().contains("换行"));
+    }
 }
