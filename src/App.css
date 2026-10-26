@@ -28020,7 +28020,7 @@ button.mset-row:focus-visible {
 .mhome { padding: 16px 16px calc(24px + var(--sab, 0px)); gap: 10px; overflow-x: hidden; }
 .mhome-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 46%);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 60%);
   align-items: start;
   gap: 10px;
   margin: 4px 2px 8px;
@@ -28039,7 +28039,6 @@ button.mset-row:focus-visible {
   align-items: center;
   gap: 6px;
   min-height: 34px;
-  max-width: 46%;
   padding: 0 11px;
   border: 1px solid var(--border);
   border-radius: var(--radius-full, 999px);
