@@ -28344,8 +28344,8 @@ button.mset-row:focus-visible {
 .sync-nearby-row.is-pending {
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 10px 12px;
-  padding: 14px 16px;
+  gap: 8px 12px;
+  padding: 12px 14px;
 }
 .sync-nearby-row.is-pending .sync-nearby-avatar {
   width: 38px;
@@ -28355,7 +28355,7 @@ button.mset-row:focus-visible {
   font-weight: 700;
 }
 .sync-nearby-row.is-pending .sync-nearby-main {
-  flex: 1 1 calc(100% - 50px);
+  flex: 1 1 240px;
   min-width: 0;
   gap: 5px;
 }
@@ -28374,10 +28374,18 @@ button.mset-row:focus-visible {
   color: var(--text-dim);
 }
 .sync-nearby-row.is-pending .sync-nearby-actions {
-  flex: 1 1 100%;
+  flex: 0 0 auto;
+  align-self: flex-start;
   justify-content: flex-end;
-  margin-left: 0;
+  margin-left: auto;
   padding-top: 2px;
+}
+@media (max-width: 720px) {
+  .sync-nearby-row.is-pending .sync-nearby-actions {
+    flex: 1 1 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+  }
 }
 .sync-nearby-row.is-pending .sync-nearby-actions .sync-btn {
   height: 34px;
