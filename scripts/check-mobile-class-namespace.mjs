@@ -47,10 +47,13 @@ const SHARED = [
   // `TopTools` 的**移动变体**（`App.tsx:1120` `className={isMobile ? "is-mobile" : "is-web"}` ✓）
   // —— 同一组件的两种皮肤，⛔ 不是"移动借桌面布局" ✗ ⇒ 显式收着 ✓。
   "is-mobile",
+  // 移动设置里的「管理设备」沿用既有 `.btn-sync` 触发器类：浮层几何验收靠它定位同步入口
+  // （`verify-mobile-overlays`），⛔ 不是布局借用 ✗。
+  "btn-sync",
 ];
 
 /** ⭐ 白名单**长度常量** —— 加行必改它 ✓（棘轮的那一半 ✓）。 */
-const SHARED_EXPECTED = 6;
+const SHARED_EXPECTED = 7;
 
 /** 移动命名空间（照各屏的 `.m*` 族 ✓；`mset*` 是设置屏自己的族 ✓；`mtab*` 是底边栏自己的族 ✓）。 */
 const MOBILE_NS = /^m(home|cap|search|read|dict|pair|about|set|settings|note|merge|rail|sync|scroll|pop|sheet|bar|btn|icon|card|head|body|foot|line|list|item|chip|grid|meta|src|dim|empty|title|when|who|count|undo|mark|back|close|actions|hint|err|send|save|draft|tool|filter|result|thumb|dot|time|tag|badge|kbd|seg|toggle|nav|feed|sub|avatar|state|status|row|col|wrap|stack|cover|preview|quote|code|table|tree|pane|overlay|layer|drawer|shell|top|mid|bot|tab)(-|$)/;

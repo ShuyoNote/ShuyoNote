@@ -28299,3 +28299,40 @@ button.mset-row:focus-visible {
 .mpair-entry:disabled { opacity: .5; }
 .mpair-item .mpair-entry { min-height: 38px; }
 .mpair-paired-card .mpair-card-title { font-size: 11px; letter-spacing: .5px; }
+
+/* 设置页「同步」卡（2026-10-26 按效果图 04）：已配对状态 ＋ 立即同步 ＋ 管理设备。 */
+.mset-sync-line { display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: 11px; color: var(--text-dim); }
+.mset-sync-actions { display: flex; gap: 8px; margin-top: 10px; }
+.mset-sync-primary {
+  flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 650;
+  box-shadow: 0 5px 12px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.mset-sync-primary:disabled { opacity: .5; }
+.mset .mset-sync-actions .btn-sync {
+  flex: none;
+  min-width: 0;
+  min-height: 40px;
+  height: 40px;
+  margin: 0;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  box-shadow: none;
+}
+.mset-sync-report { margin: 8px 0 0; font-size: 10.5px; line-height: 1.5; color: var(--text-faint); }

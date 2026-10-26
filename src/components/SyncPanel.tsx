@@ -1645,7 +1645,7 @@ export function SyncPanel({
                       {/* ⛔ 不许静默 null ✗：看得见、只是服务别的空间 ⇒ 把这句话放在这一行里说清 ✓。 */}
                       {showOtherSpace && (
                         <div className="sync-nearby-note" data-testid="nearby-other-space">
-                          它服务的是别的空间 —— 要在那个空间里点「接入」才动得了它（这一行不动它）
+                          它服务的是别的空间 —— 首次配对要两边在同一个空间：先切到它服务的那个空间再点「接入」。配对成功后按<b>设备</b>同步全部个人空间（不是只同步当前空间）。
                         </div>
                       )}
                     </div>

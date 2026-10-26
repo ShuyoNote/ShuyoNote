@@ -8,9 +8,8 @@ import { useNotes } from "../store/notes";
 import { isDesktopPlatform } from "../lib/platform";
 import { exportCurrentSpace, importSpacePackage } from "../lib/spaceTransfer";
 import { pushOverlay } from "../lib/overlayStack";
-import { SyncPanel } from "./SyncPanel";
 import { MobileSpaceSheet } from "./MobileSpaceSheet";
-import { AlertTriangleIcon, CheckIcon, ChevronRightIcon, DeviceIcon, DownloadIcon, InfoIcon, LayersIcon, SwapIcon, UploadIcon, UserIcon, XIcon } from "./icons";
+import { AlertTriangleIcon, CheckIcon, ChevronRightIcon, CloudSyncIcon, DeviceIcon, DownloadIcon, InfoIcon, LayersIcon, RefreshIcon, SwapIcon, UploadIcon, UserIcon, XIcon } from "./icons";
 import { api } from "../lib/api";
 
 /**
@@ -49,7 +48,6 @@ export function MobileSettings() {
   const theme = useTheme((s) => s.theme);
   const setTheme = useTheme((s) => s.setTheme);
   const syncing = useSyncStatus((s) => s.syncing);
-  const message = useSyncStatus((s) => s.message);
   const error = useSyncStatus((s) => s.error);
   const phase = useSyncStatus((s) => s.phase);
   const closeSettings = useEditorStore((s) => s.closeSettings);
@@ -59,6 +57,42 @@ export function MobileSettings() {
   const spaces = useSpaceStore((s) => s.spaces);
   const activeId = useSpaceStore((s) => s.activeId);
   const activeName = spaces.find((s) => s.id === activeId)?.name ?? "当前空间";
+  const pages = useNotes((s) => s.pages);
+  // 同步卡读数：已配对台数（走既有只读形 meshSetConfig）＋ 手动同步一轮。
+  const [meshPaired, setMeshPaired] = useState(0);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncReport, setSyncReport] = useState("");
+  useEffect(() => {
+    let alive = true;
+    if (!isDesktopPlatform()) return;
+    api
+      .meshSetConfig(activeId ?? null)
+      .then((st) => {
+        if (alive) setMeshPaired((st.paired ?? []).length);
+      })
+      .catch(() => {
+        if (alive) setMeshPaired(0);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [activeId]);
+  const syncNow = async () => {
+    if (!activeId || syncBusy) return;
+    setSyncBusy(true);
+    setSyncReport("");
+    try {
+      const r = await api.meshSyncNow(activeId);
+      const applied = r.peers.reduce((n, p) => n + (p.applied ?? 0), 0);
+      setSyncReport(`${r.note}${r.peers.length > 0 ? ` · 本轮收下 ${applied} 条` : ""}`);
+      const st = await api.meshSetConfig(activeId);
+      setMeshPaired((st.paired ?? []).length);
+    } catch (e) {
+      setSyncReport(`这一轮没跑成：${String(e instanceof Error ? e.message : e).slice(0, 160)}`);
+    } finally {
+      setSyncBusy(false);
+    }
+  };
   // 2026-10-26：设备名称（局域网里别人看到的名字）—— 与桌面「设置 → 账户」同一条命令。
   const [deviceName, setDeviceName] = useState("");
   const [deviceNameLoaded, setDeviceNameLoaded] = useState(false);
@@ -126,14 +160,6 @@ export function MobileSettings() {
       }),
     [closeSettings, setScreen],
   );
-
-  const syncLine = error
-    ? `上次失败：${error}`
-    : syncing
-      ? `正在搬运：${message || "…"}`
-      : phase === "done"
-        ? "上次搬运完成"
-        : "尚未成功搬运";
 
   const THEMES = [
     { id: "system" as const, label: "跟随系统" },
@@ -208,28 +234,35 @@ export function MobileSettings() {
           留着就是**假入口**。Web 上那句"不提供多设备同步"的如实说明**移到「空间」卡的脚注**了
           （⛔ 不是删掉不说 ✗）。 */}
       {isDesktopPlatform() && (
-      <section className="mset-card">
+      <section className="mset-card mset-sync-card">
         <div className="mset-group">同步</div>
-        {/* ⭐ 阶段 2（R205）：**真入口** ✓ —— 08「设备配对 · 同步」屏 owner 拍了「走 A」并已落地 ✓
-            ⇒ ⛔ 原来的 `aria-disabled="true"` ＋ 「08 屏还没做」那句注释**已过期** ✗（2026-10-14 更新 ✓）。
-            ⚠️ 于是本屏顺手成了 08 的**第二个门** ✓（另一个是常驻「同步」胶囊 ✓）。 */}
-        <button className="mset-row" onClick={() => setScreen("pair")}>
+        <div className="mset-row">
+          <span className="mset-ico" aria-hidden><CloudSyncIcon width={17} height={17} /></span>
           <span className="mset-body">
             <span className="mset-row-title">设备配对与同步</span>
-            <span className="mset-row-sub">管理附近设备与配对</span>
+            <span className="mset-sync-line">
+              <span className={"mset-dot" + (error ? " is-bad" : syncBusy ? " is-busy" : "")} aria-hidden />
+              {meshPaired > 0 ? `已配对 ${meshPaired} 台` : "尚未配对"}
+              {syncing ? " · 正在同步…" : phase === "done" ? " · 刚刚同步" : error ? " · 上次失败" : ""}
+            </span>
           </span>
-          <span className="mset-go" aria-hidden><ChevronRightIcon width={15} height={15} /></span>
-        </button>
-        {/* ⭐ 2026-10-19 第二刀：主界面那颗同步浮钮已删 ⇒ **搬到设置屏**这里 ✓
-            （`SyncPanel` 自带触发器 ✓，本刀**一个字符都没改它** ✓；手机上点它会进 08 屏 ✓）。 */}
-        <SyncPanel />
-        {/* ⭐ 2026-10-20 重设计：设计图要求显示「上次成功时间」。⚠️ 后端目前**没有**这个读数
-            （`useSyncStatus` 只给"此刻"），所以这里只能如实写「暂无读数」——⛔ 不编一个时间 ✗。 */}
-        <p className="mset-last">上次成功时间：暂无读数（尚无该读数）</p>
-        <div className="mset-status">
-          <span className={"mset-dot" + (error ? " is-bad" : syncing ? " is-busy" : "")} aria-hidden />
-          <span className="mset-status-text">同步状态：{syncLine}</span>
         </div>
+        <div className="mset-sync-actions">
+          <button
+            className="mset-sync-primary"
+            data-testid="mset-sync-now"
+            disabled={!activeId || syncBusy}
+            onClick={() => void syncNow()}
+          >
+            <RefreshIcon width={14} height={14} />
+            {syncBusy ? "同步中…" : "立即同步这个空间"}
+          </button>
+          {/* 保留 `.btn-sync` 这个入口类：移动浮层验收靠它点进配对屏（R192 换对象不删断言）。 */}
+          <button className="btn-sync mset-sync-manage" aria-label="管理设备" onClick={() => setScreen("pair")}>
+            管理设备
+          </button>
+        </div>
+        {syncReport && <p className="mset-sync-report">{syncReport}</p>}
       </section>
       )}
 
@@ -251,7 +284,7 @@ export function MobileSettings() {
           <span className="mset-ico" aria-hidden><LayersIcon width={17} height={17} /></span>
           <span className="mset-body">
             <span className="mset-row-title">{activeName}</span>
-            <span className="mset-row-sub">当前空间 · 本机共 {spaces.length} 个</span>
+            <span className="mset-row-sub">{pages.length} 条笔记 · 使用中 · 本机共 {spaces.length} 个</span>
           </span>
           <span className="mset-go" aria-hidden><CheckIcon width={15} height={15} /></span>
         </div>
