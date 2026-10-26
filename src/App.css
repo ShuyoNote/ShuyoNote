@@ -28005,6 +28005,7 @@ button.mset-row:focus-visible {
    ⚠️ 真因：**真实 DOM 里 `.sync-nearby-row` 是 `.sync-popover` 的直接子节点**，
    仓库里那条 `.sync-nearby { gap: … }` 只有旧样式表在用（React 从来没渲染过这层容器）。
    ⇒ `gap` 落在一个不存在的父节点上，所以卡片贴在一起。
-   修法：把间距落到**相邻行**上（⛔ 不改 DOM 结构，段标题与卡片的兄弟关系判据不受影响 ✓）。 */
-.sync-popover .sync-nearby-row + .sync-nearby-row { margin-top: 14px; }
-.sync-popover.is-inline .sync-nearby-row + .sync-nearby-row { margin-top: 16px; }
+   修法：把间距落到**相邻行**上（⛔ 不改 DOM 结构，段标题与卡片的兄弟关系判据不受影响 ✓）。
+   ⭐ 2026-10-26 二次反馈（owner：「间隙有点大」）⇒ 16px 收到 **10px** ✓。 */
+.sync-popover .sync-nearby-row + .sync-nearby-row { margin-top: 10px; }
+.sync-popover.is-inline .sync-nearby-row + .sync-nearby-row { margin-top: 10px; }
