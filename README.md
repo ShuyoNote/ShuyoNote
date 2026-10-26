@@ -31,6 +31,7 @@
 - **国际 / GitHub Pages**：[https://shuyonote.github.io/ShuyoNote/](https://shuyonote.github.io/ShuyoNote/)
 - **国内 / 自托管主站**：[https://shuyo.cn/app/](https://shuyo.cn/app/)
 - **下载 2.0.0**：[GitHub Releases](https://github.com/ShuyoNote/ShuyoNote/releases/tag/v2.0.0)（Windows / Linux / macOS / Android）
+- **国内镜像 / GitCode**：[GitCode Releases](https://gitcode.com/shuyo-cn/ShuyoNote/releases/tag/v2.0.0)（Windows / Linux / macOS / Android）
 
 > Web 版与桌面版共用同一套前端与数据模型（浏览器端本地优先、离线可用，用 sql.js + IndexedDB）。2.0 起同一 WiFi 多设备直连，Web 版不支持多设备 / 团队同步。
 
