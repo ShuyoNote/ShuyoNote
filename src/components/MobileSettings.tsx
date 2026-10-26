@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useTheme } from "../store/theme";
 import { useSyncStatus } from "../store/syncStatus";
 import { useMobileNav } from "../store/mobileNav";
@@ -8,6 +8,9 @@ import { isDesktopPlatform } from "../lib/platform";
 import { exportCurrentSpace, importSpacePackage } from "../lib/spaceTransfer";
 import { pushOverlay } from "../lib/overlayStack";
 import { SyncPanel } from "./SyncPanel";
+import { MobileSpaceSheet } from "./MobileSpaceSheet";
+import { AlertTriangleIcon, CheckIcon, ChevronRightIcon, DeviceIcon, DownloadIcon, InfoIcon, LayersIcon, SwapIcon, UploadIcon, UserIcon, XIcon } from "./icons";
+import { api } from "../lib/api";
 
 /**
  * **移动端设置**（效果图 `docs/plans/mobile/mockups/07-settings.svg`，规格 §4.7）。
@@ -55,6 +58,42 @@ export function MobileSettings() {
   const spaces = useSpaceStore((s) => s.spaces);
   const activeId = useSpaceStore((s) => s.activeId);
   const activeName = spaces.find((s) => s.id === activeId)?.name ?? "当前空间";
+  // 2026-10-26：设备名称（局域网里别人看到的名字）—— 与桌面「设置 → 账户」同一条命令。
+  const [deviceName, setDeviceName] = useState("");
+  const [deviceNameLoaded, setDeviceNameLoaded] = useState(false);
+  const [deviceNameSaving, setDeviceNameSaving] = useState(false);
+  const [deviceNameStatus, setDeviceNameStatus] = useState("");
+  const [spaceOpen, setSpaceOpen] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    api
+      .getDeviceName()
+      .then((n) => {
+        if (alive) {
+          setDeviceName(n ?? "");
+          setDeviceNameLoaded(true);
+        }
+      })
+      .catch(() => {
+        if (alive) setDeviceNameLoaded(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const saveDeviceName = async () => {
+    setDeviceNameSaving(true);
+    setDeviceNameStatus("");
+    try {
+      const effective = await api.setDeviceName(deviceName);
+      setDeviceName(effective);
+      setDeviceNameStatus(`已保存；当前生效名：${effective}`);
+    } catch (e) {
+      setDeviceNameStatus(`保存失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDeviceNameSaving(false);
+    }
+  };
 
   /**
    * ⭐ **导入完必须自己切过去** —— 移动端**没有空间切换器**（`MobilePair`/`MobilePairCode`
@@ -112,7 +151,7 @@ export function MobileSettings() {
             setScreen("home");
           }}
         >
-          ✕
+          <XIcon width={16} height={16} />
         </button>
       </header>
 
@@ -120,12 +159,44 @@ export function MobileSettings() {
       <section className="mset-card">
         <div className="mset-group">账户</div>
         <div className="mset-row">
-          <span className="mset-ico" aria-hidden>👤</span>
+          <span className="mset-ico" aria-hidden><UserIcon width={17} height={17} /></span>
           <span className="mset-body">
             <span className="mset-row-title">本地账户</span>
             <span className="mset-row-sub">未绑定云端 · 数据只在本机</span>
           </span>
-          <span className="mset-go" aria-hidden>›</span>
+          <span className="mset-go" aria-hidden><ChevronRightIcon width={15} height={15} /></span>
+        </div>
+        {/* ⭐ 2026-10-26（owner：「设备名称在哪里输入」）：局域网里别人看到的名字就在这里改 ✓
+            与桌面「设置 → 账户」同一条 `get/set_device_name` 命令 ✓（⛔ 不新造后端 ✗）。 */}
+        <div className="mset-row mset-name-row">
+          <span className="mset-ico" aria-hidden><DeviceIcon width={17} height={17} /></span>
+          <span className="mset-body">
+            <span className="mset-row-title">设备名称</span>
+            <span className="mset-name-edit">
+              <input
+                className="mset-name-input"
+                value={deviceName}
+                disabled={!deviceNameLoaded || deviceNameSaving}
+                placeholder="留空＝用系统名"
+                maxLength={40}
+                aria-label="设备名称"
+                onChange={(e) => setDeviceName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void saveDeviceName();
+                }}
+              />
+              <button
+                className="mset-name-save"
+                disabled={!deviceNameLoaded || deviceNameSaving}
+                aria-label="保存设备名称"
+                onClick={() => void saveDeviceName()}
+              >
+                <CheckIcon width={14} height={14} />
+              </button>
+            </span>
+            <span className="mset-row-sub">别人在「附近设备」里看到的名字 · 改完点 ✓ 保存</span>
+            {deviceNameStatus && <span className="mset-name-status">{deviceNameStatus}</span>}
+          </span>
         </div>
       </section>
 
@@ -145,7 +216,7 @@ export function MobileSettings() {
             <span className="mset-row-title">设备配对与同步</span>
             <span className="mset-row-sub">管理附近设备与配对</span>
           </span>
-          <span className="mset-go" aria-hidden>›</span>
+          <span className="mset-go" aria-hidden><ChevronRightIcon width={15} height={15} /></span>
         </button>
         {/* ⭐ 2026-10-19 第二刀：主界面那颗同步浮钮已删 ⇒ **搬到设置屏**这里 ✓
             （`SyncPanel` 自带触发器 ✓，本刀**一个字符都没改它** ✓；手机上点它会进 08 屏 ✓）。 */}
@@ -174,48 +245,37 @@ export function MobileSettings() {
             那套要整屏一起换（其余四张卡还都是旧词汇），不是这一笔的事。
             ⇒ 效果图 07b/07c 是**目标形态**；本屏的全量重设计由 macOS 侧那批统一做。 */}
         <div className="mset-group">空间</div>
-        <p className="mset-note">当前：{activeName}</p>
-        {/* ⭐⭐ **2026-10-26（移动端局域网多端同步）**：**移动端的空间切换器** ✗ ——
-            这一屏原来没有它（注释里也写着"移动端没有空间切换器"），而局域网同步是**按空间**进行的
-            （同名空间才融合 ✓）⇒ 电脑上的「工作／测试…」同步过来之后，手机上**切不过去**就等于
-            那些空间对用户不存在 ✗（自动建了也白建）。⚠️ 走仓库既有的 `useSpaceStore.switchTo`
-            （它会重读页面列表 ＋ 刷新口令锁读数 ✓，⛔ 这里不另写一套 ✗）；切成了就回首页 ✓。 */}
-        <p className="mset-note">切换空间（本机 {spaces.length} 个）</p>
-        {spaces.map((s) => (
-          <button
-            key={s.id}
-            className="mset-row"
-            data-testid={`mset-switch-${s.id}`}
-            onClick={() => {
-              if (s.id === activeId) return;
-              void useSpaceStore
-                .getState()
-                .switchTo(s.id)
-                .then((ok) => {
-                  if (ok) setScreen("home");
-                });
-            }}
-          >
-            <span className="mset-body">
-              <span className="mset-row-title">{s.name}</span>
-              <span className="mset-row-sub">{s.id === activeId ? "使用中" : "点一下切过去"}</span>
-            </span>
-            <span className="mset-go" aria-hidden>{s.id === activeId ? "✓" : "›"}</span>
-          </button>
-        ))}
+        <div className="mset-row mset-current-space">
+          <span className="mset-ico" aria-hidden><LayersIcon width={17} height={17} /></span>
+          <span className="mset-body">
+            <span className="mset-row-title">{activeName}</span>
+            <span className="mset-row-sub">当前空间 · 本机共 {spaces.length} 个</span>
+          </span>
+          <span className="mset-go" aria-hidden><CheckIcon width={15} height={15} /></span>
+        </div>
+        <button className="mset-row" onClick={() => setSpaceOpen(true)}>
+          <span className="mset-ico" aria-hidden><SwapIcon width={17} height={17} /></span>
+          <span className="mset-body">
+            <span className="mset-row-title">切换空间</span>
+            <span className="mset-row-sub">切完回首页，显示该空间的全部笔记</span>
+          </span>
+          <span className="mset-go" aria-hidden><ChevronRightIcon width={15} height={15} /></span>
+        </button>
         <button className="mset-row" onClick={() => void exportCurrentSpace(activeName)}>
+          <span className="mset-ico" aria-hidden><DownloadIcon width={17} height={17} /></span>
           <span className="mset-body">
             <span className="mset-row-title">导出当前空间</span>
             <span className="mset-row-sub">zip · 含该空间的附件</span>
           </span>
-          <span className="mset-go" aria-hidden>›</span>
+          <span className="mset-go" aria-hidden><ChevronRightIcon width={15} height={15} /></span>
         </button>
         <button className="mset-row" onClick={() => void importAndSwitch()}>
+          <span className="mset-ico" aria-hidden><UploadIcon width={17} height={17} /></span>
           <span className="mset-body">
             <span className="mset-row-title">导入空间包</span>
             <span className="mset-row-sub">新建 · 不覆盖现有空间</span>
           </span>
-          <span className="mset-go" aria-hidden>›</span>
+          <span className="mset-go" aria-hidden><ChevronRightIcon width={15} height={15} /></span>
         </button>
         {/* ⚠️ 这句是**行为说明**，不是装饰：导入后会自动切到新空间 ✓ */}
         <p className="mset-note">导入成功会自动切到新空间（否则导完看不到）。</p>
@@ -263,11 +323,12 @@ export function MobileSettings() {
             useEditorStore.getState().openAbout();
           }}
         >
+          <span className="mset-ico" aria-hidden><InfoIcon width={17} height={17} /></span>
           <span className="mset-body">
             <span className="mset-row-title">关于与更新</span>
             <span className="mset-row-sub">版本 · 开源许可 · 链接</span>
           </span>
-          <span className="mset-go" aria-hidden>›</span>
+          <span className="mset-go" aria-hidden><ChevronRightIcon width={15} height={15} /></span>
         </button>
         <div className="mset-row">
           <span className="mset-body">
@@ -280,6 +341,7 @@ export function MobileSettings() {
       <section className="mset-card">
         <div className="mset-group">高级</div>
         <div className="mset-row" aria-disabled="true">
+          <span className="mset-ico" aria-hidden><AlertTriangleIcon width={17} height={17} /></span>
           <span className="mset-body">
             <span className="mset-row-title">能力开关 / MCP / 插件管理</span>
           </span>
@@ -289,6 +351,7 @@ export function MobileSettings() {
       </section>
 
       <p className="mset-foot">设置项与桌面端同源，改动不会只落在一端。</p>
+      <MobileSpaceSheet open={spaceOpen} onClose={() => setSpaceOpen(false)} />
     </div>
   );
 }

@@ -1137,9 +1137,31 @@ const DEFAULT_DEVICE_NAME: &str = "未命名设备";
 /// 主机名（公告里的第三个回退档，只给人看）：拿不到就留空，**不编**一个假的
 /// （⇒ 交给 [`resolve_local_name`] 的第三档 ✓）。
 fn host_name() -> String {
-    std::env::var("COMPUTERNAME")
+    let raw = std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let raw = raw.trim();
+    // ⭐⭐ **2026-10-26（owner：「移动端设备名称是未命名」）** ✗：手机上没有
+    // `COMPUTERNAME`/`HOSTNAME`（或只有 `localhost`）⇒ 旧回退链直接落到
+    // `DEFAULT_DEVICE_NAME = 未命名设备` ⇒ 电脑上看到的就是"未命名设备" ✗。
+    // ⭐ 手机档给一个**如实、非空**的平台默认名 ✓（⛔ 不落成 device_id / 哈希 ✗；
+    //   用户可在「我的 → 设备名称」改成自己的名字 ✓）。
+    if !raw.is_empty() && !raw.eq_ignore_ascii_case("localhost") {
+        return raw.to_string();
+    }
+    #[cfg(target_os = "android")]
+    {
+        return "Android 手机".to_string();
+    }
+    #[cfg(target_os = "ios")]
+    {
+        return "iPhone".to_string();
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        // 桌面上主机名拿不到时仍交给回退链第三档（未命名设备）——桌面原有口径 ✓。
+        String::new()
+    }
 }
 
 /// 库里"绑了同步的空间"：`(space_id, server_url, ws_id)`，**只算活工作空间**。

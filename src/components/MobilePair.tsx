@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { pushOverlay } from "../lib/overlayStack";
+import { confirmDialog } from "../store/confirm";
 import { peerIdentityLine } from "../lib/peerIdentity";
 import { useMobileNav } from "../store/mobileNav";
 import { useSpaceStore } from "../store/space";
 // ⭐ 阶段 3：自动同步那格的**唯一判定处** ✓（与 `App.tsx:73` 同源 ✓ ⇒ ⛔ 不抄第二份判定 ✗）。
 import { AUTO_SYNC_CHANGED_EVENT, effectiveAutoSyncMs } from "../lib/syncMode";
 import type { NearbyPeer } from "../lib/platform/commands";
+import { AlertTriangleIcon, ChevronLeftIcon, DeviceIcon, RefreshIcon, XIcon } from "./icons";
 
 /**
  * **移动端「设备配对 · 同步」屏**（效果图 `docs/plans/mobile/mockups/08-pair.svg`，规格 §4.8）。
@@ -57,6 +59,9 @@ export function MobilePair() {
   //   （正是本次移动端同步功能要做成的事 ✓）⇒ `nearbyGroup` 在 `pairedIds` 初始化前被调用 ⇒
   //   整屏 `Cannot access '…' before initialization` ✗。⇒ **状态声明提到使用点之前**（声明顺序即执行顺序）。
   const [pairedIds, setPairedIds] = useState<string[]>([]);
+  const [pairedRows, setPairedRows] = useState<{ deviceId: string; addedAtMs: number }[]>([]);
+  const [selfName, setSelfName] = useState("");
+  const [unpairing, setUnpairing] = useState<string | null>(null);
 
   /**
    * 返回：**回来处** ✓（阶段 3 修 —— 原先是**写死** `home` ✗：从设置那行进来的也会被丢回首页 ✓）。
@@ -114,6 +119,29 @@ export function MobilePair() {
       setSyncReport(`这一轮没跑成：${String(e instanceof Error ? e.message : e).slice(0, 160)}`);
     } finally {
       setSyncingNow(false);
+    }
+  };
+
+  /** 取消配对（逐台解除）—— 复用既有 `device_unpair`，二次确认后只踢这一台。 */
+  const unpair = async (deviceId: string) => {
+    if (!activeId || unpairing) return;
+    const ok = await confirmDialog({
+      title: "取消这一台的配对？",
+      message: "取消后它拉不动你的内容；想再连要重新配对一次。",
+      okLabel: "取消配对",
+      danger: true,
+    });
+    if (!ok) return;
+    setUnpairing(deviceId);
+    try {
+      const r = await api.deviceUnpair(activeId, deviceId);
+      setPairedRows((prev) => prev.filter((d) => d.deviceId !== deviceId));
+      setPairedIds((prev) => prev.filter((d) => d !== deviceId));
+      setSyncReport(`${r.wasPaired ? "已取消这一台的配对。" : "这一台本来就不在名单里。"}${r.note ? ` ${r.note}` : ""}`);
+    } catch (e) {
+      setSyncReport(`没取消成：${String(e instanceof Error ? e.message : e).slice(0, 160)}`);
+    } finally {
+      setUnpairing(null);
     }
   };
 
@@ -188,7 +216,9 @@ export function MobilePair() {
     api
       .meshSetConfig(activeId ?? null)
       .then((st) => {
-        if (alive) setPairedIds((st.paired ?? []).map((d) => d.deviceId));
+        if (!alive) return;
+        setPairedRows(st.paired ?? []);
+        setPairedIds((st.paired ?? []).map((d) => d.deviceId));
       })
       .catch(() => {
         if (alive) setPairedIds([]);
@@ -197,6 +227,21 @@ export function MobilePair() {
       alive = false;
     };
   }, [activeId]);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .getDeviceName()
+      .then((n) => {
+        if (alive) setSelfName(n ?? "");
+      })
+      .catch(() => {
+        /* 读不到不影响配对；设置屏会写明怎么改 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const [autoSyncMs, setAutoSyncMs] = useState(() => effectiveAutoSyncMs());
   useEffect(() => {
@@ -211,10 +256,17 @@ export function MobilePair() {
       <header className="mpair-head">
         {/* ⭐ 阶段 3：文案**不再写"返回首页"** ✗ —— 现在是回**来处** ✓（设置那行进 ⇒ 回设置 ✓；首页进 ⇒ 回首页 ✓）。 */}
         <button className="mpair-back" onClick={goBack} aria-label="返回">
-          ‹
+          <ChevronLeftIcon width={18} height={18} />
         </button>
-        <span className="mpair-head-title">设备直连</span>
+        <span className="mpair-head-title">设备配对</span>
       </header>
+      <div className="mpair-self">
+        <DeviceIcon width={14} height={14} />
+        <span>本机名称：<b>{selfName || "未设置"}</b></span>
+        <button className="mpair-self-edit" onClick={() => setScreen("settings")}>
+          修改
+        </button>
+      </div>
 
       <div className="mpair-scroll">
         {/* ⭐ 【C3】三颗胶囊（过滤器 ✓）：⛔ 数字全部来自 `capCounts`（＝ `nearbyGroup` 同一判据 ✓）；
@@ -282,7 +334,7 @@ export function MobilePair() {
         {/* ⭐ 黄条（照 owner 2026-10-14 参考图 ✓）：只有**真有问题**时才出现 ✓（`N === 0` ⇒ 不渲染 ✗）。 */}
         {unencryptedCount > 0 && (
           <div className="mpair-warn" role="note" data-testid="mpair-unencrypted-warn">
-            <span aria-hidden>⚠</span>
+            <span aria-hidden><AlertTriangleIcon width={16} height={16} /></span>
             <span>
               本机有 <b>{unencryptedCount}</b> 个空间没开加密 ⇒ 内容会在局域网上明文传输
             </span>
@@ -309,11 +361,12 @@ export function MobilePair() {
                   真正有触发入口。⚠️ 桌面那一颗走的是同一条后端命令（`mesh_sync_now` ✓），
                   所以"手机上点得动、桌面上也点得动"✓；⛔ 这里不新造同步语义 ✗。 */}
               <button
-                className="mpair-entry"
+                className="mpair-entry is-primary"
                 data-testid="mpair-sync-now"
                 disabled={!activeId || syncingNow}
                 onClick={() => void syncNow()}
               >
+                <RefreshIcon width={14} height={14} />
                 {syncingNow ? "同步中…" : "立即同步这个空间"}
               </button>
               {syncReport && (
@@ -417,12 +470,46 @@ export function MobilePair() {
         </section>
 
         {/* ④ 逐台解除：同样明标未接 ✓（那侧只有 device_id ＋ 时间，没有名字 ⇒ 显示会说谎 ✗） */}
-        <section className="mpair-card">
+        <section className="mpair-card mpair-paired-card">
           <div className="mpair-card-title">已配对的设备</div>
-          <p className="mpair-line mpair-dim">
-            本屏未接 —— 已配对列表那侧只有「设备标识与时间」，没有名字；规格要求显示「哪台」，
-            所以不拿设备标识凑数。
-          </p>
+          {pairedRows.length === 0 ? (
+            <p className="mpair-line mpair-dim">还没有已配对的设备 —— 从下面「附近的设备」里点「接入」。</p>
+          ) : (
+            <ul className="mpair-list">
+              {pairedRows.map((d) => {
+                const near = nearby.find((p) => p.device_id === d.deviceId);
+                const name = near?.device_name?.trim() || "已配对设备";
+                const short = near?.short_id?.trim() || "";
+                return (
+                  <li key={d.deviceId} className="mpair-item mpair-paired-item">
+                    <span className="mpair-item-main">
+                      <span className="mpair-item-who">{short ? `${name} · ${short}` : name}</span>
+                      <span className="mpair-item-meta">
+                        {near ? "附近 · 已配对" : "已配对 · 现在不在附近"}
+                      </span>
+                    </span>
+                    <span className="mpair-actions">
+                      <button
+                        className="mpair-entry is-primary"
+                        disabled={!activeId || syncingNow}
+                        onClick={() => void syncNow()}
+                      >
+                        <RefreshIcon width={14} height={14} /> 立即同步
+                      </button>
+                      <button
+                        className="mpair-entry mpair-entry-danger"
+                        data-testid="mpair-unpair"
+                        disabled={unpairing === d.deviceId}
+                        onClick={() => void unpair(d.deviceId)}
+                      >
+                        <XIcon width={14} height={14} /> {unpairing === d.deviceId ? "取消中…" : "取消配对"}
+                      </button>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </section>
       </div>
     </div>

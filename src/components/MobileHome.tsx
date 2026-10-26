@@ -1,105 +1,129 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNotes } from "../store/notes";
-import { PageIcon, PenIcon, SearchIcon } from "./icons";
-import { timeAgo } from "../lib/timeAgo";
+import { useSpaceStore } from "../store/space";
 import { useMobileNav } from "../store/mobileNav";
+import { ChevronDownIcon, ChevronRightIcon, PenIcon, SearchIcon, StickyNoteIcon } from "./icons";
+import { MobileSpaceSheet } from "./MobileSpaceSheet";
+import { timeAgo } from "../lib/timeAgo";
 
 /**
- * **移动端首页**（效果图 `docs/plans/mobile/mockups/01-home.svg`，规格 §4.1）。
+ * **移动端首页**（2026-10-26 重设计；效果图见 `_tmp/acceptance/2026-10-26-mobile-lan/`）。
  *
- * 规矩（照规格逐条 ✓，别自己发明 ✗）：
- * - **只有三个入口**：快速记录（主行动）／搜索／最近笔记 —— ⛔ **无页面树、无侧边栏** ✓
- *   （桌面那一套在手机上由 `ActivityBar` 收进抽屉 ✓，本屏不重复它 ✓）
- * - **本屏不写库** ✓：这里只做"入口"，真正落库的是各入口各自的屏 ✓
- * - 对应需求：**M-P0-1**（记一条的入口）、**M-P0-3**（离线可记 —— 三个入口都不依赖网络 ✓）
+ * 本轮改的是**闭环**，不是装饰：
+ * - 顶部有**当前空间**入口（点开「切换空间」面板）—— 切换是局域网同步的前置；
+ * - 「最近笔记」→ **「全部笔记」**：列出当前空间的**所有页**（原来只显示 3 条，
+ *   切完空间经常像“什么都没有”）；
+ * - 图标统一走 `icons.tsx` 的 SVG（⛔ 不再用 emoji 当图标 ✗）。
  *
- * ⚠️ 当前的**如实**状态（不许把没做的写成做了 ✗）：
- * - 「快速记录」现在＝**进 02 屏（`MobileCapture`：输入区 ＋ 6 项工具栏 ＋「存」）** ✓ —— 效果图里的 **02 屏**（键盘上方 6 项快捷工具栏
- *   ＋ 主按钮「存」）**还没实现** ✗，本处是它的前置动作 ✓。
- * - 「搜索」现在＝**进本仓自己的 03 搜索屏**（`src/components/MobileSearch.tsx` ✓，
- *   效果图 `03-search.svg` ✓）—— 2026-10-10 接上 ✓（此前借的是桌面**命令面板** ✗）。
- * - 「最近笔记」现在＝真实的最近 3 条（按 `updated_at` 排 ✓）—— 点开即 **04 屏**（阅读形态待量 ✓）。
+ * 仍然守住原来的规矩：本屏**不写库**；快速记录/搜索各自进自己的屏；无桌面侧边栏。
  */
 export function MobileHome() {
-  // ⚠️ 一律**字段级选择器**（`check-store-subscriptions` 挡整店订阅 ✓）
+  // ⚠️ 一律字段级选择器（check-store-subscriptions 挡整店订阅）。
   const pages = useNotes((s) => s.pages);
   const openPage = useNotes((s) => s.openPage);
   const setScreen = useMobileNav((s) => s.setScreen);
+  const spaces = useSpaceStore((s) => s.spaces);
+  const activeId = useSpaceStore((s) => s.activeId);
+  const [spaceOpen, setSpaceOpen] = useState(false);
 
-  const recent = useMemo(() => {
-    return pages
-      .filter((p) => !p.deleted_at)
-      .slice()
-      .sort((a, b) => b.updated_at - a.updated_at)
-      .slice(0, 3);
-  }, [pages]);
+  const activeName = spaces.find((s) => s.id === activeId)?.name ?? "当前空间";
+  const all = useMemo(
+    () =>
+      pages
+        .filter((p) => !p.deleted_at)
+        .slice()
+        .sort((a, b) => b.updated_at - a.updated_at),
+    [pages],
+  );
 
   return (
     <div className="mshell mhome" data-testid="mobile-home">
       <header className="mhome-head">
-        <h1 className="mhome-title">ShuyoNote</h1>
-        <p className="mhome-sub">本地优先 · 离线可用 · 只记你确定要留的</p>
+        <div className="mhome-headtext">
+          <h1 className="mhome-title">ShuyoNote</h1>
+          <p className="mhome-sub">本地优先 · 离线可用</p>
+        </div>
+        <button
+          className="mhome-space"
+          data-testid="mhome-space"
+          onClick={() => setSpaceOpen(true)}
+          title="切换空间"
+        >
+          <span className="mhome-space-name">{activeName}</span>
+          <ChevronDownIcon width={13} height={13} />
+        </button>
       </header>
 
-      {/* ① 主行动：主色卡（效果图里唯一用 --accent 的那一张 ✓）—— 进「快速记录」屏（02 ✓） */}
+      {/* ① 主行动：快速记录（保持既有入口/文案/类名，门禁靠 .mhome-card + 文案定位） */}
       <button className="mhome-card is-accent" onClick={() => setScreen("capture")}>
-        <span className="mhome-card-icon" aria-hidden><PenIcon width={20} height={20} /></span>
+        <span className="mhome-card-icon" aria-hidden>
+          <PenIcon width={20} height={20} />
+        </span>
         <span className="mhome-card-body">
           <span className="mhome-card-title">快速记录</span>
           <span className="mhome-card-hint">想一句就记一句</span>
         </span>
-        <span className="mhome-card-go" aria-hidden>›</span>
+        <span className="mhome-card-go" aria-hidden>
+          <ChevronRightIcon width={18} height={18} />
+        </span>
       </button>
 
       {/* ② 搜索 */}
       <button className="mhome-card" onClick={() => setScreen("search")}>
-        <span className="mhome-card-icon" aria-hidden><SearchIcon width={20} height={20} /></span>
+        <span className="mhome-card-icon" aria-hidden>
+          <SearchIcon width={20} height={20} />
+        </span>
         <span className="mhome-card-body">
           <span className="mhome-card-title">搜索</span>
           <span className="mhome-card-hint">搜索笔记内容 · 结果来自本机索引</span>
         </span>
-        <span className="mhome-card-go" aria-hidden>›</span>
+        <span className="mhome-card-go" aria-hidden>
+          <ChevronRightIcon width={18} height={18} />
+        </span>
       </button>
 
-      {/* ③ 最近笔记：最多 3 条（效果图第三张卡是**列表** ＋「3 条」计数 ✓） */}
-      <section className="mhome-card mhome-recent" aria-label="最近笔记">
-        <div className="mhome-card-body">
-          <span className="mhome-card-title">
-            最近笔记
-            {recent.length > 0 && <span className="mhome-count">{recent.length} 条</span>}
-          </span>
-          {recent.length === 0 ? (
-            <span className="mhome-card-hint">还没有笔记 —— 点上面「快速记录」写第一条</span>
-          ) : (
-            <ul className="mhome-recent-list">
-              {recent.map((p) => (
-                <li key={p.id}>
-                  <button className="mhome-recent-item" onClick={() => void openPage(p.id)}>
-                    {/* ⭐ 2026-10-10 修：`p.icon` **可能是 URI/图片数据**（本机那条应用自带样例页
-                        「快速上手」的 `icon` 就是 `data:image/svg+xml;base64,…` ✗）——把它当**文字**
-                        渲染会让整串 base64 横着冲出屏幕 ✗（实测 `.mhome` 的 `scrollWidth=17561`，
-                        视口只有 390 ✗）。判据**照抄 `PageTree.tsx:625` 那条现成的口径** ✓
-                        （一处判断、两种形态：图片走 `<img>` ✓，emoji 那种单字符仍走文字 ✓）。 */}
-                    <span className="mhome-recent-icon" aria-hidden>
-                      {p.icon ? (
-                        /^(data:image|https?:|\.svg)/i.test(p.icon) ? (
-                          <img className="mhome-recent-icon-img" src={p.icon} alt="" draggable={false} />
-                        ) : (
-                          p.icon
-                        )
-                      ) : (
-                        <PageIcon width={16} height={16} />
-                      )}
-                    </span>
-                    <span className="mhome-recent-title">{p.title || "未命名"}</span>
-                    <span className="mhome-recent-time">{timeAgo(p.updated_at)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+      {/* ③ 全部笔记：当前空间的**所有**页（不再只显示最近 3 条） */}
+      <section className="mhome-notes" aria-label="全部笔记" data-testid="mhome-notes">
+        <div className="mhome-notes-head">
+          <span className="mhome-notes-title">全部笔记</span>
+          {all.length > 0 && <span className="mhome-count">{all.length} 条</span>}
         </div>
+        {all.length === 0 ? (
+          <div className="mhome-empty">
+            {activeName}里还没有笔记 —— 点上面「快速记录」写第一条。
+          </div>
+        ) : (
+          <ul className="mhome-note-list">
+            {all.map((p) => (
+              <li key={p.id}>
+                <button className="mhome-note-row" onClick={() => void openPage(p.id)}>
+                  <span className="mhome-note-icon" aria-hidden>
+                    {p.icon ? (
+                      /^(data:image|https?:|\.svg)/i.test(p.icon) ? (
+                        <img className="mhome-recent-icon-img" src={p.icon} alt="" draggable={false} />
+                      ) : (
+                        p.icon
+                      )
+                    ) : (
+                      <StickyNoteIcon width={16} height={16} />
+                    )}
+                  </span>
+                  <span className="mhome-note-body">
+                    <span className="mhome-note-title">{p.title || "未命名"}</span>
+                    <span className="mhome-note-time">{timeAgo(p.updated_at)}</span>
+                  </span>
+                  <span className="mhome-note-go" aria-hidden>
+                    <ChevronRightIcon width={15} height={15} />
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="mhome-notes-hint">切换空间后，这里显示该空间的全部笔记；不再只显示最近 3 条。</p>
       </section>
+
+      <MobileSpaceSheet open={spaceOpen} onClose={() => setSpaceOpen(false)} />
     </div>
   );
 }

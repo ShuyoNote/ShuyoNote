@@ -5572,6 +5572,21 @@ pub fn ensure_mobile_mesh_defaults(c: &Connection) -> Result<(), String> {
         // 迁移：上一版没有标记，但形态就是我们自己生成的 ⇒ 补上标记（⛔ 不碰用户设的值）。
         set_meta_state(c, MESH_ROOM_AUTO_KEY, "1")?;
     }
+    // ②b ⭐ 设备名称（2026-10-26）：手机默认名必须是**非空、可读**的 ✓。
+    //   旧行为：`device_name` 没设 ⇒ 公告回退到 `host_name()`；Android/iOS 上它常常是空
+    //   ⇒ 电脑把它显示成「未命名设备」。这里在首次启动写一个平台默认名；
+    //   用户之后在「我的 → 设备名称」改了就以用户值为准（`stored_device_name` 优先 ✓）。
+    #[cfg(target_os = "android")]
+    let mobile_default_name = "Android 手机";
+    #[cfg(target_os = "ios")]
+    let mobile_default_name = "iPhone";
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let mobile_default_name = "";
+    if !mobile_default_name.is_empty()
+        && get_meta_state(c, "device_name").map(|v| v.trim().is_empty()).unwrap_or(true)
+    {
+        set_meta_state(c, "device_name", mobile_default_name)?;
+    }
     // ③ 监听地址（设备级那一格；桌面同样是这个默认值）。
     if crate::mesh::settings_for(c, "", true).bind.is_none() {
         crate::mesh::set_mesh_bind_for(c, "", true, Some("0.0.0.0:8788"))?;

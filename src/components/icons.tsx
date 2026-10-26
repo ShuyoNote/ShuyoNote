@@ -1003,3 +1003,66 @@ export function ReadAnnotateIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/** 人（移动端「我的」／账户；SVG，不用 emoji）。 */
+export function UserIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="8" r="3.2" />
+      <path d="M5.5 20c.7-3.5 3-5.5 6.5-5.5s5.8 2 6.5 5.5" />
+    </Icon>
+  );
+}
+
+/** 本机设备（手机/平板；设备名称那一行）。 */
+export function DeviceIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="7" y="2.5" width="10" height="19" rx="2.2" />
+      <path d="M10.5 18.5h3" />
+    </Icon>
+  );
+}
+
+/** 切换（空间切换那一行）。 */
+export function SwapIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 8h15" />
+      <path d="M15 4l4 4-4 4" />
+      <path d="M20 16H5" />
+      <path d="M9 12l-4 4 4 4" />
+    </Icon>
+  );
+}
+
+/** 空间（多层；空间那一行）。 */
+export function LayersIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 3.5l8.5 4.5-8.5 4.5L3.5 8z" />
+      <path d="M3.5 12l8.5 4.5 8.5-4.5" />
+      <path d="M3.5 16l8.5 4.5 8.5-4.5" />
+    </Icon>
+  );
+}
+
+/** 关闭（移动端设置右上角）。 */
+export function XIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6 6l12 12M18 6L6 18" />
+    </Icon>
+  );
+}
+
+/** 首页（移动底栏/返回首页）。 */
+export function HomeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3.5 11L12 4l8.5 7" />
+      <path d="M6 9.5V20h12V9.5" />
+      <path d="M10 20v-5h4v5" />
+    </Icon>
+  );
+}
