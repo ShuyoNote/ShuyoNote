@@ -28336,3 +28336,52 @@ button.mset-row:focus-visible {
   box-shadow: none;
 }
 .mset-sync-report { margin: 8px 0 0; font-size: 10.5px; line-height: 1.5; color: var(--text-faint); }
+
+/* ⭐ 2026-10-27（owner：只优化**未配对**设备卡片内部布局，别的视觉体系先不动）
+   「待配对」那张卡的内部：原先 note 与右侧「接入」抢宽度（宽一点时 note 被挤成窄条、
+   窄一点时按钮换行后与文字错位）。⇒ 只在 `.is-pending` 上把动作移到**卡片底部**，
+   让名字／状态／说明先占满整行，再在右下角放主按钮；已配对/需重配的卡片不受影响。 */
+.sync-nearby-row.is-pending {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px 12px;
+  padding: 14px 16px;
+}
+.sync-nearby-row.is-pending .sync-nearby-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.sync-nearby-row.is-pending .sync-nearby-main {
+  flex: 1 1 calc(100% - 50px);
+  min-width: 0;
+  gap: 5px;
+}
+.sync-nearby-row.is-pending .sync-nearby-meta { row-gap: 4px; }
+.sync-nearby-row.is-pending .sync-nearby-note {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-left: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 62%, var(--hover));
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+.sync-nearby-row.is-pending .sync-nearby-note.is-warn {
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+  color: var(--text-dim);
+}
+.sync-nearby-row.is-pending .sync-nearby-actions {
+  flex: 1 1 100%;
+  justify-content: flex-end;
+  margin-left: 0;
+  padding-top: 2px;
+}
+.sync-nearby-row.is-pending .sync-nearby-actions .sync-btn {
+  height: 34px;
+  min-width: 88px;
+  padding: 0 16px;
+  border-radius: 10px;
+}

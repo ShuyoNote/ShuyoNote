@@ -78,7 +78,13 @@ export function SyncNearbyGroups({
               </div>
             ) : (
               s.peers.map((p) => (
-                <div className="sync-nearby-row" key={p.device_id}>
+                <div
+                  className={
+                    "sync-nearby-row" +
+                    (s.testid === "nearby-group-pending" ? " is-pending" : "")
+                  }
+                  key={p.device_id}
+                >
                   {renderPeer(p)}
                 </div>
               ))
