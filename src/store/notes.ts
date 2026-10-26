@@ -56,6 +56,8 @@ export interface NoteState {
    */
   loadPages: (opts?: { restoreSpaceId?: string }) => Promise<void>;
   openPage: (id: string) => Promise<void>;
+  /** 关掉当前打开的页（移动端切空间后要回列表，而不是自动打开上次那一页）。 */
+  closePage: () => void;
   /**
    * ⭐ 2026-10-24（owner 报「同步了没有自动刷新页面」）：**重新读当前打开的页**。
    *
@@ -171,6 +173,8 @@ export const useNotes = create<NoteState>((set, get) => ({
       set({ error: String(e), loading: false });
     }
   },
+
+  closePage: () => set({ currentId: null, current: null }),
 
   openPage: async (id) => {
     try {

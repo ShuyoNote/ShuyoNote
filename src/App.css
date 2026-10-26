@@ -28017,19 +28017,22 @@ button.mset-row:focus-visible {
    ════════════════════════════════════════════════════════════════════════════ */
 
 /* ── 首页 ─────────────────────────────────────────────────────────────────── */
-.mhome { padding: 16px 16px calc(24px + var(--sab, 0px)); gap: 10px; }
+.mhome { padding: 16px 16px calc(24px + var(--sab, 0px)); gap: 10px; overflow-x: hidden; }
 .mhome-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
   margin: 4px 2px 8px;
+  min-width: 0;
 }
 .mhome-headtext { min-width: 0; }
 .mhome-title { font-size: 27px; font-weight: 750; letter-spacing: -0.6px; }
 .mhome-sub { margin-top: 4px; font-size: 12px; color: var(--text-faint); }
 .mhome-space {
   flex: none;
+  min-width: 0;
+  overflow: hidden;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -28044,7 +28047,7 @@ button.mset-row:focus-visible {
   font-weight: 600;
   box-shadow: var(--shadow-xs);
 }
-.mhome-space-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mhome-space-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mhome-space svg { flex: none; color: var(--text-faint); }
 
 .mhome-card {

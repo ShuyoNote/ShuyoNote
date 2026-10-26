@@ -4,6 +4,7 @@ import { useSyncStatus } from "../store/syncStatus";
 import { useMobileNav } from "../store/mobileNav";
 import { useEditorStore } from "../store/editor";
 import { useSpaceStore } from "../store/space";
+import { useNotes } from "../store/notes";
 import { isDesktopPlatform } from "../lib/platform";
 import { exportCurrentSpace, importSpacePackage } from "../lib/spaceTransfer";
 import { pushOverlay } from "../lib/overlayStack";
@@ -107,7 +108,8 @@ export function MobileSettings() {
     if (!meta) return; // 取消 / 失败：toast 已经如实报过，不在这里再编一句
     const ok = await useSpaceStore.getState().switchTo(meta.id);
     if (ok) {
-      // 切成了 ⇒ 回首页（首页会渲染**这个空间**的笔记；留在设置屏等于让用户自己找）
+      // 切成了 ⇒ 关掉可能被 loadPages 还原的旧页，再回首页看这个空间的列表。
+      useNotes.getState().closePage();
       setScreen("home");
     }
   };

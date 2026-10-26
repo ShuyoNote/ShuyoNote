@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useMobileNav } from "../store/mobileNav";
 import { useSpaceStore } from "../store/space";
+import { useNotes } from "../store/notes";
 import { CheckIcon, LayersIcon, XIcon } from "./icons";
 
 /**
@@ -35,6 +36,8 @@ export function MobileSpaceSheet({ open, onClose }: { open: boolean; onClose: ()
     const ok = await useSpaceStore.getState().switchTo(id);
     setBusy(null);
     if (ok) {
+      // switchTo 会按“上次打开的那一页”还原；切空间要看到列表 ⇒ 主动关掉当前页再回首页。
+      useNotes.getState().closePage();
       onClose();
       setScreen("home");
     }
