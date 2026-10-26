@@ -1240,6 +1240,38 @@ pub(crate) fn window_serve_space(c: &rusqlite::Connection, space_id: &str, ws_id
     resolved_space(c, space_id, ws_id)
 }
 
+/// ⭐ **2026-10-26（owner：个人版配对不该卡在“同一个空间”）**：本机**所有个人空间**的协议空间 id。
+///
+/// 个人档的信任是**设备级**：`mesh_trust_begin` 写的是设备级那一行；但运行中的门是**按协议空间**存
+/// 公钥的（`mesh::add_paired_pubkey(proto_space, …)`）⇒ 只给当前空间加 ⇒ 别的个人空间仍 401。
+/// 这里只做一件事：把 `sync_profiles.space_id=''` 的个人档逐个解析成协议空间（`window_serve_space`，
+/// 与开窗/公告同一把尺），去重排序；团队档一个都不返回。
+pub(crate) fn personal_proto_spaces(c: &rusqlite::Connection) -> Vec<String> {
+    let mut stmt = match c.prepare(
+        "SELECT p.space_id, p.ws_id FROM meta.sync_profiles p
+         WHERE p.space_id = ''
+           AND EXISTS (
+               SELECT 1 FROM meta.workspaces w
+               WHERE w.id = p.ws_id AND w.deleted_at IS NULL
+           )",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows = match stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+        Ok(rows) => rows,
+        Err(_) => return Vec::new(),
+    };
+    let mut out: Vec<String> = rows
+        .filter_map(|r| r.ok())
+        .map(|(space_id, ws_id)| window_serve_space(c, &space_id, &ws_id))
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 #[cfg(test)]
 mod mesh_serve_space_tests {
     use super::*;
@@ -1286,6 +1318,28 @@ mod mesh_serve_space_tests {
         )
         .unwrap();
         c
+    }
+
+    /// ⭐ **2026-10-26（owner：个人版配对不卡同空间）**：设备级信任要发给**所有个人空间**，
+    /// 团队空间一个都不发。判据：两个个人档 ⇒ 两个子房间号；一个团队档 ⇒ 不出现。
+    #[test]
+    fn personal_proto_spaces_covers_all_personal_but_not_team() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name) VALUES ('ws-two', '第二个'), ('ws-team', '团队');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES
+                 ('ws-personal', '', 'room-123'),
+                 ('ws-two', '', 'room-456'),
+                 ('ws-team', 'team-space', '');",
+        )
+        .unwrap();
+        let got = personal_proto_spaces(&c);
+        let mut want = vec![
+            crate::sync::personal_room_for("room-123", "测试"),
+            crate::sync::personal_room_for("room-456", "第二个"),
+        ];
+        want.sort();
+        assert_eq!(got, want, "只返回个人档解析出的子房间号（团队档不许混进来）");
     }
 
     /// ⭐ 本笔判据：个人空间（`space_id` 空）＋ 暗号有值 ⇒ **窗口报的空间必须是暗号** ✓。

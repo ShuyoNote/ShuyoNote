@@ -204,7 +204,20 @@ pub fn mesh_trust_begin(
     let row = crate::mesh::paired_row_key(&scope.space, scope.device_level);
     crate::db::pair_pubkey(&c, row, &peer, &pk)?;
     // ⭐ 跑着的门**也要认它** ✗ —— ⛔ 只写库不算 ✗（那正是"配对成功却 401" ✓，与 `add_paired` 同一条纪律 ✓）。
-    crate::mesh::add_paired_pubkey(&scope.space, &peer, &pk)?;
+    // ⭐ **2026-10-26（owner：个人版不该卡在同一空间）**：个人档是**设备级信任** ⇒ 当前空间不同也照样能配；
+    //    但门是按协议空间存公钥的 ⇒ 必须给**所有正在运行的个人空间**都加上，否则别的空间仍 401。
+    //    团队档不动（仍是当前空间那一扇门）。
+    if scope.device_level {
+        let mut protos = crate::lan_state::personal_proto_spaces(&c);
+        if !protos.iter().any(|p| p == &scope.space) {
+            protos.push(scope.space.clone());
+        }
+        for proto in protos {
+            let _ = crate::mesh::add_paired_pubkey(&proto, &peer, &pk);
+        }
+    } else {
+        crate::mesh::add_paired_pubkey(&scope.space, &peer, &pk)?;
+    }
     // ⚠️ 口令**不再需要** ✗：旧口径下这里要先把空间的共用口令读出来当"配对密钥" ✓；
     //   ⭐ 第 3 步之后**信任与口令无关** ✓（门认签名 ✓）⇒ ⛔ 没有口令也照样能信任 ✓
     //   （⚠️ 那是**有意的**：口令从此只在"旧那一档"里有意义 ✓ —— 见 `authorized` 那一段 ✓）。

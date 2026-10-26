@@ -1601,7 +1601,13 @@ export function SyncPanel({
                 const unnamed = displayName === "这台设备没报名字" || displayName.trim().startsWith("未命名");
                 const initial = unnamed ? "设" : displayName.trim().slice(0, 1).toUpperCase();
                 const stateTone =
-                  p.key_changed === true ? "warn" : paired ? "ok" : p.serves_current ? "info" : "muted";
+                  p.key_changed === true
+                    ? "warn"
+                    : paired
+                      ? "ok"
+                      : p.serves_current || isPersonalActive
+                        ? "info"
+                        : "muted";
                 const showOtherSpace = !paired && !p.serves_current;
                 return (
                   <>
@@ -1645,12 +1651,14 @@ export function SyncPanel({
                       {/* ⛔ 不许静默 null ✗：看得见、只是服务别的空间 ⇒ 把这句话放在这一行里说清 ✓。 */}
                       {showOtherSpace && (
                         <div className="sync-nearby-note" data-testid="nearby-other-space">
-                          它服务的是别的空间 —— 首次配对要两边在同一个空间：先切到它服务的那个空间再点「接入」。配对成功后按<b>设备</b>同步全部个人空间（不是只同步当前空间）。
+                          {isPersonalActive
+                            ? "它服务的是别的空间 —— 个人版按设备配对：直接点「接入」即可，配对后所有个人空间自动同步，不用切空间。"
+                            : "它服务的是别的空间 —— 团队空间首次配对要两边在同一个组织空间；先切到它服务的那个空间再点「接入」。"}
                         </div>
                       )}
                     </div>
                     <div className="sync-nearby-actions">
-                      {p.key_changed === true && p.serves_current ? (
+                      {p.key_changed === true && (p.serves_current || isPersonalActive) ? (
                         // P-3d：钥匙变了 ⇒ 主动作是「重新配对」（复用 trustDevice 那一条主路径 ✓）。
                         <button
                           className="sync-btn"
@@ -1684,8 +1692,10 @@ export function SyncPanel({
                             撤销配对
                           </button>
                         </>
-                      ) : p.serves_current ? (
+                      ) : p.serves_current || isPersonalActive ? (
                         // 修 B：这一行自己就是「允许」入口 —— 只打开对码屏，人确认前一个字节都不发 ✓。
+                        // ⭐ 2026-10-26：个人档信任是设备级 ⇒ 服务别的空间也能在这里接入（配对后全部个人空间同步）；
+                        // 团队档仍要求服务当前空间。
                         <button
                           className="sync-btn"
                           data-testid="nearby-allow"

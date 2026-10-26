@@ -405,18 +405,26 @@ describe("修 B：那一行**自己**就是「允许」的入口（owner 现场�
     });
   });
 
-  it("5) ⭐ `serves_current = false`（owner 截图那一行）⇒ **必须有可见文案**（⛔ 不许静默 null）", async () => {
+  it("5) ⭐ `serves_current = false` ＋ 个人空间 ⇒ 文案说清「别的空间」＋ **仍给按设备接入**（2026-10-26 owner 拍：个人版不卡同空间）", async () => {
+    // 当前活动空间是**个人**：spaceSecurityOverview 是面板判 kind 的唯一来源（[] ⇒ 兜底团队）。
+    secOverviewSpy.mockResolvedValue([
+      { space_id: "ws-1", kind: "personal", encrypted_on_disk: false, in_keyring: false, key_available: false, gate: {} },
+    ]);
     const el = await openPanelWith([peer(false)]);
     const note = el.querySelector<HTMLElement>('[data-testid="nearby-other-space"]');
     expect(
       note,
-      "⛔ `SyncPanel.tsx:2080` 那种静默 `null` 正是『点不了』的直接原因 ⇒ 必须如实说明它服务的是别的空间 ✓",
+      "⛔ `null` 静默正是『点不了』的直接原因 ⇒ 必须如实说明它服务的是别的空间 ✓",
     ).toBeTruthy();
     expect(note!.textContent ?? "", "文案要说得出来『别的空间』✓").toContain("别的空间");
+    expect(note!.textContent ?? "", "个人版必须说清『按设备配对 + 全部个人空间自动同步』✓").toContain("所有个人空间自动同步");
+    const allow = el.querySelector<HTMLButtonElement>('[data-testid="nearby-allow"]');
     expect(
-      el.querySelector('[data-testid="nearby-allow"]'),
-      "它服务的是别的空间 ⇒ ⛔ 不给「允许」按钮（那会对错的空间动手 ✓）",
-    ).toBeNull();
+      allow,
+      "个人版信任是设备级 ⇒ 服务别的空间也要有「接入」（配对后全部个人空间同步）",
+    ).toBeTruthy();
+    expect(allow!.textContent ?? "", "按钮仍叫「接入」✓").toContain("接入");
+    secOverviewSpy.mockResolvedValue([]);
   });
 });
 

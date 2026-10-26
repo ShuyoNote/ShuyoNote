@@ -30,7 +30,7 @@ function between(text: string, start: string, end: string): string {
 //    「头像／主信息／动作」三段 ✓ ⇒ 判据**换对象不删断言**（R192）：
 //    起点放到这一行自己的 `const paired = duList.some(...)`，终点仍是「接入」那一支之前 ✓。
 //    断言（已配对是人话 / 不许裸 id / 不许 secret·sha256）一条没删 ✓。
-const block = () => between(SRC, "const paired = duList.some(", ") : p.serves_current ? (");
+const block = () => between(SRC, "const paired = duList.some(", ") : p.serves_current || isPersonalActive ? (");
 
 describe("U11/T5 · 逐台解除", () => {
   it("① 只在**真认了设备**时才出现（不假装有设备）", () => {
@@ -98,7 +98,7 @@ describe("片 D1b：已信任的卡片上有「撤销配对」", () => {
     // ⭐ 2026-10-26 换对象（同 `block()` 那条注释）：这一段现在从 `const paired = …` 开始 ✓。
     const at = src.indexOf("const paired = duList.some(");
     if (at < 0) throw new Error("找不到「已信任」那一支");
-    return src.slice(at, src.indexOf(") : p.serves_current ? (", at));
+    return src.slice(at, src.indexOf(") : p.serves_current || isPersonalActive ? (", at));
   };
 
   it("① ⭐（源码级）「已信任」那一支里有「撤销配对」（今天【红】✓）", () => {
