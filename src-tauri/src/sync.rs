@@ -6464,9 +6464,9 @@ pub fn lan_status(
             .and_then(|(_, _, ws)| get_profile(&c, ws).ok());
         pick_lan_scope(&c, explicit, fallback)
     };
-    let (space_id, server_url) = match picked {
-        Some((space, url)) => (space, url),
-        None => (String::new(), String::new()),
+    let (raw_space_id, space_id, server_url) = match picked {
+        Some((raw, space, url)) => (raw, space, url),
+        None => (String::new(), String::new(), String::new()),
     };
     let route = lan::resolve_base(&space_id, &server_url, &peers);
     // ★ 契约字面量由 `LinkKind::as_str` 出（与 `lan::tests` 判据 ⑥ 同一处）：
@@ -6542,7 +6542,7 @@ pub fn lan_status(
             .map(str::to_string)
             .or_else(|| profiles.first().map(|(_, _, ws)| ws.clone()))
             .unwrap_or_default();
-        mesh_config_state_at(&c, &space_id, &ws)?
+        mesh_config_state_at(&c, &raw_space_id, &ws)?
     };
 
     Ok(LanStatus { enabled, peers: peers.len(), kind, line, mesh, nearby })
@@ -6562,12 +6562,23 @@ fn pick_lan_scope(
     c: &Connection,
     explicit: Option<SyncProfile>,
     fallback: Option<SyncProfile>,
-) -> Option<(String, String)> {
+) -> Option<(String, String, String)> {
     let p = explicit.or(fallback)?;
     // ⭐ **甲（2026-10-13）**：把"报哪个空间"换成**公告那一条口径** ✓（`window_serve_space`）
     //   —— 个人档 ⇒ 配对暗号 ✓（不再是原始空串 ✗）；团队档 ⇒ `window_serve_space` **原样返回**
     //   ⇒ 与从前**逐字相同** ✓（`lan_state.rs:953-956` ✓）。
-    Some((crate::lan_state::window_serve_space(c, &p.space_id, &p.ws_id), p.server_url))
+    //
+    // ⭐⭐ **2026-10-26（owner：「监听地址和端口为何是未读到」）** ✗：
+    //   返回**原始 `space_id` 也一起带出去** ✓ —— 状态行用解析后的 ✓，但
+    //   `mesh_config_state_at` 判"设备级／逐空间"必须用**原始**那一列 ✓
+    //   （个人档原始是空串 ⇒ 设备级；拿解析后的子房间号去判 ⇒ 会被当成团队档 ⇒
+    //   `settings_for` 读 `mesh_bind:<子房间号>` 读不到 ⇒ 界面「未读到」✗，
+    //   而窗口其实开着、`announced` 也有值 ✓ —— 就是 owner 截图那个形状 ✓）。
+    Some((
+        p.space_id.clone(),
+        crate::lan_state::window_serve_space(c, &p.space_id, &p.ws_id),
+        p.server_url,
+    ))
 }
 
 /// `lan_status` 的形状（**前端契约**，见 `src/lib/platform/commands.ts` 的同名 interface）。
@@ -9597,12 +9608,12 @@ mod tests {
         // 指定了就报指定那个（**不是**第一条）
         assert_eq!(
             pick_lan_scope(&c, Some(mine.clone()), Some(other.clone())),
-            Some(("sp-mine".to_string(), "https://s.example.com".to_string()))
+            Some(("sp-mine".to_string(), "sp-mine".to_string(), "https://s.example.com".to_string()))
         );
         // 指定的查不到（工作空间没配）⇒ 回落第一条绑定，**不报错**
         assert_eq!(
             pick_lan_scope(&c, None, Some(other.clone())),
-            Some(("sp-other".to_string(), "https://other.example.com".to_string()))
+            Some(("sp-other".to_string(), "sp-other".to_string(), "https://other.example.com".to_string()))
         );
         // 一条都没有 ⇒ None（调用方据此走 `resolve_base("", "")` ⇒ 状态行「尚未绑定」）
         assert_eq!(pick_lan_scope(&c, None, None), None);
@@ -9651,13 +9662,21 @@ mod tests {
         let want = personal_room_for("room-a", "个人");
         assert_eq!(
             picked,
-            Some((want.clone(), "https://s.example.com".to_string())),
+            Some((String::new(), want.clone(), "https://s.example.com".to_string())),
             "个人档 ⇒ 必须解析成**公告会报的那个字符串**（子房间号），⛔ 不是原始空串 ✗"
+        );
+        // ⭐⭐ **2026-10-26（owner：「监听地址和端口为何是未读到」）**：原始 `space_id` 必须原样带出 ✓
+        //   —— `mesh_config_state_at` 靠它判"设备级"（原始空串）✓；拿解析后的子房间号去判
+        //   会被当成团队档 ⇒ `settings_for` 读 `mesh_bind:<子房间号>` 读不到 ⇒ 界面「未读到」✗。
+        assert_eq!(
+            picked.as_ref().unwrap().0,
+            "",
+            "⛔ 原始 space_id 不许被解析后的值覆盖（否则设备级 bind 读不到）"
         );
         // ⭐ 与公告同名 ⇒ 判定不再被 `!want.is_empty()` 短路 ✓
         let peer = lan_peer("dev-amd", "http://172.16.174.226:8787", &[want.as_str()]);
         assert!(
-            crate::lan::serves_space(&picked.unwrap().0, &peer),
+            crate::lan::serves_space(&picked.unwrap().1, &peer),
             "对端报的就是这个暗号 ⇒ `serves_current` 必须是 **true**（老口径下恒 false ✗）"
         );
     }
