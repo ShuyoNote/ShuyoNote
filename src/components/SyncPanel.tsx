@@ -32,6 +32,7 @@ import { isDesktopPlatform, platform } from "../lib/platform";
 // （`**能被别人拉到**` 那种）⇒ 它必须在【渲染边界】过这一道，否则用户看见两个星号。
 // 契约的唯一实现是 `src/lib/inlineMd.tsx`（toast 与 SpacePrivacySection 已在用）⇒ 这里接上它。
 import { inlineMd } from "../lib/inlineMd";
+import { subscribeLanChanged } from "../lib/lanEvents";
 import { isNearRealtimeEnabled, applyNearRealtime } from "../lib/nearRealtime";
 // ★ 2026-09-29（丙档「设备直连」）：**「拉取间隔」这一档** —— 用户可见、可持久化，
 //   读写口径都在 `lib/syncMode.ts` 那一处（面板只调它，不自己碰 localStorage）。
@@ -285,6 +286,11 @@ export function SyncPanel({
           //   ⚠️ 用的是 Rust 判好的两个**结论**（`mesh.enabled` ＝ `cfg.bind.is_some()`、
           //      `syncMode` ＝ 总闸那一档），**不按地址形状自己再判一次档**（判据 ⑭ 钉的是后者）。
           setLanMeshActive(!!st.mesh.enabled);
+        // ⭐ **2026-10-27（owner「go」）**：**已配对名单也跟这次读数走**（同一份 `lan_status.mesh.paired`）
+        //   —— 原来那张名单只在挂载/切空间时读一次 ⇒ 另一台刚配对完，「已配对」那句要等切空间才变 ✗。
+        //   ⚠️ 只有它**真是数组**才覆盖（读不到/老构建给不出 ⇒ 保留上一次的，⛔ 不用 [] 冒充"没有" ✗）。
+        const pairedNow = st.mesh?.paired;
+        if (Array.isArray(pairedNow)) setDuList(pairedNow);
         }
       } catch {
         // 读不到（命令没注册 / 老构建）⇒ 这一行**不显示**，别把它装成"没有发现到对端"。
@@ -717,6 +723,27 @@ export function SyncPanel({
     return () => window.clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, contentOnly, activeId]);
+
+  // ⭐ **2026-10-27（owner「go」）**：后端在局域网读数**真变了**（对端进/出、窗口宣告基址变）时
+  //   推一次 `lan:changed` ⇒ 立刻重读（不必等 5 秒那一拍）。
+  //   ⚠️ 5 秒轮询**保留**兜底：老构建没有这条事件、Web 也没有 ⇒ 取不到就是退订 no-op ✓。
+  useEffect(() => {
+    let alive = true;
+    let off: (() => void) | undefined;
+    void (async () => {
+      const un = await subscribeLanChanged(() => {
+        setLanNonce((n) => n + 1);
+        void loadHistory();
+      });
+      if (alive) off = un;
+      else un();
+    })();
+    return () => {
+      alive = false;
+      off?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const save = async (r: EditRow) => {
     try {
@@ -1188,8 +1215,7 @@ export function SyncPanel({
   }, [isPersonalActive, activeId, lanStatus]);
 
   /** ⭐ 2026-10-27（M2）：开启 / 关闭局域网发现（用户可逆）—— 关闭只清监听地址（配对关系保留 ✓）。 */
-  const lanToggle = async () => {
-    if (!activeId) return;
+  const lanToggle = async () => {    if (!activeId) return;
     try {
       if (lanStatus?.mesh?.enabled) {
         await api.meshSetConfig(activeId, "", null);

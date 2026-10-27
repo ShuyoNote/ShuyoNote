@@ -58,6 +58,21 @@ describe("网格（丙-③-b）· 面板接线", () => {
     );
   });
 
+  it("①d ⭐ 2026-10-27：局域网读数「真变了」后端推一次事件，面板立刻重读（轮询保留兜底）", () => {
+    // 后端：只有**指纹变了**才推（⛔ 不是每条公告都推 ✗ —— 那等于把轮询搬到后端）。
+    const lanStateRs = read("src-tauri/src/lan_state.rs");
+    expect(lanStateRs, "缺事件名 `lan:changed`").toContain('"lan:changed"');
+    expect(lanStateRs, "缺变化指纹（判据锚点）").toContain("lan_change_fingerprint");
+    // 前端：订阅走 lib 那一处（⛔ 别在面板里再写一遍事件名 ✗）。
+    const lanEventsTs = read("src/lib/lanEvents.ts");
+    expect(lanEventsTs, "缺事件名（单一出处）").toContain('const EVENT = "lan:changed"');
+    expect(panel, "面板没订阅 ⇒ 收到事件也不会重读").toContain("subscribeLanChanged(");
+    // 已配对名单**跟 5 秒那条读数走**（同一份 `lan_status.mesh.paired`）——
+    // 原来只在挂载/切空间读一次 ⇒「已配对」那句会停在旧值。
+    expect(panel, "tick 里没有更新 duList ⇒ 已配对名单仍会停在旧值").toContain("setDuList(pairedNow)");
+    expect(panel, "读不到时不许用 [] 冒充「一台都没有」").toContain("if (Array.isArray(pairedNow))");
+  });
+
   it("①b 自动同步也对网格生效（不是只有手点「同步」才换）", () => {
     const app = read("src/App.tsx");
     expect(app, "自动同步那条路没跑网格 ⇒ 用户得手点同步才会换").toContain("api.meshSyncNow(");

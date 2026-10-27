@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use tauri::Manager;
+use tauri::Emitter;
 
 use crate::db::Db;
 use crate::lan::{self, Peer, PeerTable};
@@ -166,6 +167,80 @@ fn maybe_adopt_peer_room(app: &tauri::AppHandle, state: &LanState, now: i64) {
     eprintln!(
         "[mesh] 已采用对端报的**同步组名**（{short}…）⇒ 下一轮起按同一批子房间号服务/拉取 ✓"
     );
+}
+
+/// ⭐ **2026-10-27（owner「go」）**：**局域网读数变没变**的指纹（纯函数 ⇒ 判据直接喂值）。
+///
+/// 组成：对端集合（`device_id@addr`，排序）＋ 窗口宣告基址（`space=base`，排序）。
+/// ⚠️ **刻意不含 `seen_at_ms`** ✗ —— 公告每 30 秒会刷新它，那**不算状态变了**；
+///   否则等于每 30 秒推一次事件（把轮询搬到后端，还更吵）。
+pub(crate) fn lan_change_fingerprint(peers: &[Peer], bases: &[(String, String)]) -> String {
+    let mut ps: Vec<String> = peers
+        .iter()
+        .map(|p| format!("{}@{}", p.announce.device_id, p.addr))
+        .collect();
+    ps.sort();
+    let mut bs: Vec<String> = bases.iter().map(|(s, b)| format!("{s}={b}")).collect();
+    bs.sort();
+    format!("{}\u{1f}{}", ps.join(","), bs.join(","))
+}
+
+#[cfg(test)]
+mod lan_change_fingerprint_tests {
+    use super::*;
+
+    fn peer(dev: &str, addr: &str, seen: i64) -> Peer {
+        let mut a = crate::lan::announce_for_own_hub(
+            dev,
+            "对端",
+            "S1D",
+            "http://192.168.1.5:8788",
+            "room",
+            "",
+            "",
+        )
+        .expect("公告要造得出来");
+        a.device_id = dev.to_string();
+        Peer { announce: a, addr: addr.to_string(), seen_at_ms: seen }
+    }
+
+    /// ① `seen_at` 刷新（公告周期性重发）**不算**变化；② 对端加入/离开、基址变 ⇒ 算变化；③ 顺序无关。
+    #[test]
+    fn the_fingerprint_tracks_membership_and_bases_but_ignores_seen_at() {
+        let a = peer("dev-a", "10.0.0.1", 1);
+        let b = peer("dev-b", "10.0.0.2", 1);
+        let s1 = ("s1".to_string(), "http://10.0.0.1:8788".to_string());
+        let f = lan_change_fingerprint(&[a.clone(), b.clone()], std::slice::from_ref(&s1));
+
+        let mut a2 = a.clone();
+        a2.seen_at_ms = 999_999;
+        assert_eq!(
+            f,
+            lan_change_fingerprint(&[a2, b.clone()], std::slice::from_ref(&s1)),
+            "seen_at 刷新是周期性公告，不算状态变化（⛔ 否则每 30 秒推一次）"
+        );
+        assert_ne!(
+            f,
+            lan_change_fingerprint(&[a.clone()], std::slice::from_ref(&s1)),
+            "对端离开要算变化"
+        );
+        assert_ne!(
+            f,
+            lan_change_fingerprint(&[a.clone(), b.clone(), peer("dev-c", "10.0.0.3", 1)], std::slice::from_ref(&s1)),
+            "对端加入要算变化"
+        );
+        let s2 = ("s1".to_string(), "http://10.0.0.2:8788".to_string());
+        assert_ne!(
+            f,
+            lan_change_fingerprint(&[a.clone(), b.clone()], std::slice::from_ref(&s2)),
+            "窗口宣告基址变了要算变化"
+        );
+        assert_eq!(
+            f,
+            lan_change_fingerprint(&[b, a], std::slice::from_ref(&s1)),
+            "对端顺序不该影响指纹"
+        );
+    }
 }
 
 /// ⭐ 本机的毫秒时间戳 ✓（⭐ 只在这一处算 ✓ —— ⭐ 判定里一律**传进去** ✓，⭐ 判据才好固定时间 ✓）。
@@ -885,6 +960,11 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             }
             v
         };
+        // ⭐ **2026-10-27（owner「go」：面板状态自动刷新）**：**这一轮局域网读数变没变**的指纹 ——
+        //   只在**真变了**（对端加入/离开/换地址，或窗口宣告基址变了）时推一次事件；
+        //   ⛔ 不是每收到一条公告就推 ✗（公告每 30 秒一轮 ⇒ 那样等于把轮询搬到后端，还更吵）。
+        //   ⚠️ 前端收到后**立刻重读一次** `lan_status`（5 秒轮询保留兜底 ⇒ 老构建/Web 照旧）。
+        let mut last_lan_fp: String = String::new();
         loop {
             let now = crate::db::now_ms();
             // ① 收（有超时 ⇒ "网段里没人说话"时循环照常推进，广播与腾表不会被卡住）。
@@ -1016,6 +1096,19 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     },
                     Ok(None) => {}
                     Err(e) => eprintln!("[mesh] 绑定 {bind} 的窗口起不来（它名下这些空间这一轮都不宣告）：{e}"),
+                }
+            }
+            // ⭐ **2026-10-27（owner「go」：面板状态自动刷新）**：**局域网读数真变了**才推一次事件 ——
+            //   对端加入／离开／换地址，或窗口宣告基址变了。⛔ 不是每条公告都推 ✗。
+            //   ⚠️ 前端收到后**立刻重读** `lan_status`（5 秒轮询保留兜底 ⇒ 老构建／Web 照旧）。
+            {
+                let fp = lan_change_fingerprint(&state.peers(now), &mesh_bases);
+                if fp != last_lan_fp {
+                    last_lan_fp = fp;
+                    let _ = app2.emit(
+                        "lan:changed",
+                        serde_json::json!({ "reason": "lan", "hasBases": !mesh_bases.is_empty() }),
+                    );
                 }
             }
             state.set_enabled(should_run_discovery(&profiles, &meshed));
