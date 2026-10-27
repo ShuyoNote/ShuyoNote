@@ -525,7 +525,7 @@ pub fn run() {
                 .into_owned();
             let app = ctx.app_handle();
             let data_dir = db::resolve_app_data_dir(app.path().app_data_dir().ok());
-            let attachments_dir = data_dir.map(|d| d.join("attachments"));
+            let attachments_dir = data_dir.as_ref().map(|d| d.join("attachments"));
             // Validate the target is inside the attachments dir. A lexical
             // `starts_with` is NOT a boundary (it doesn't normalize `..`), so:
             // 1) reject any `..` path component outright, and
@@ -549,11 +549,29 @@ pub fn run() {
                     .unwrap();
             }
             let raw = std::fs::read(&decoded).unwrap_or_default();
+            // ⭐ **2026-10-27（owner：「修」）**：钥匙按**这个附件所属的空间**取 ——
+            //   旧写法拿的是"连接自己"的钥匙；活动空间切走之后连接还停在旧空间 ⇒ 拿到 `None`
+            //   ⇒ 把盘上密文当明文交给 WebView（图片/PDF 就成了打不开的乱码文件）。
             let key = {
                 let db = app.state::<Db>();
                 let c = db.0.lock().expect("db mutex poisoned");
-                security::key_if_enabled(&c)
+                let space = attachments::active_space_id(&c);
+                data_dir
+                    .as_deref()
+                    .and_then(|d| security::key_for_space(d, &space))
             };
+            // ⭐ **2026-10-27（owner：「修」）**：拿不到钥匙、盘上却是**密文** ⇒ 403（⛔ 不把密文交给 WebView ✗）。
+            if key.is_none() && security::looks_like_attachment_ciphertext(&raw) {
+                return tauri::http::Response::builder()
+                    .status(403)
+                    .header(CONTENT_TYPE, "text/plain; charset=utf-8")
+                    .body(Cow::Owned(
+                        "这一件在盘上是密文，但本会话拿不到这个空间的钥匙 —— 先在应用里解锁该空间"
+                            .as_bytes()
+                            .to_vec(),
+                    ))
+                    .unwrap();
+            }
             let out = security::decrypt_attachment_bytes(key.as_ref(), &raw).unwrap_or(raw.clone());
             let ext = Path::new(&decoded)
                 .extension()

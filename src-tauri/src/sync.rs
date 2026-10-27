@@ -1957,10 +1957,10 @@ pub async fn download_attachment(
     // ★ 附件按空间分（owner 2026-09-24 拍板 ②）：单个附件也下到**这个空间自己**的目录里。
     let attachments_dir: PathBuf = crate::attachments::space_attachments_dir(&app_data_dir, &ws_id);
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
-    let session_key = {
-        let c = db.0.lock().expect("db mutex poisoned");
-        security::key_if_enabled(&c)
-    };
+    // ⭐ **2026-10-27（owner：「修」）**：落盘加密要用**这个空间自己的**钥匙 ——
+    //   旧写法读"连接自己"的钥匙（`db.0`）；活动空间与 `ws_id` 不是同一个时拿到 `None`
+    //   ⇒ 明文落进加密空间目录（或反过来），"另存为/渲染"那条链就跟着错。
+    let session_key = crate::security::key_for_space(&app_data_dir, &ws_id);
     let client = reqwest::Client::new();
     // 凭证取法与同步下载保持一致（都用 `profile.token`）：两条路若取不同的 token，就会出现
     // "同步能下、点按钮下不了"这种最难查的不一致。
@@ -7688,10 +7688,8 @@ async fn sync_attachments(
     // server verifies SHA-256 against the claimed (plaintext) hash — so we must
     // decrypt before upload. When encryption is off, stream the plaintext file
     // directly to keep large-file memory usage low.
-    let session_key = {
-        let c = db.0.lock().expect("db mutex poisoned");
-        security::key_if_enabled(&c)
-    };
+    // ⭐ **2026-10-27（owner：「修」）**：钥匙按**本轮同步的这个空间**取（⛔ 不用"连接自己"的钥匙 ✗）。
+    let session_key = crate::security::key_for_space(&app_data_dir, &profile.ws_id);
     for (idx, hash) in up_items.iter().enumerate() {
         // 入口就是关的 ⇒ 本轮不传字节（件数已在上面的初始化里记好），而且**不算"停止"**。
         // ⚠️ 2026-09-15 真机验收修：原先只设了件数、循环照进，于是第一轮循环的开关检查立刻把

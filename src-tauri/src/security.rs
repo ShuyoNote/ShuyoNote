@@ -74,6 +74,29 @@ pub fn key_if_enabled(c: &Connection) -> Option<crypto::AppKeys> {
     crate::space_crypto::space_app_keys_for_path(Path::new(path)).ok().flatten()
 }
 
+/// ⭐ **2026-10-27（owner：「修」）**：**按空间 id 取那一把钥匙** —— ⛔ 不看"连接自己是谁" ✗。
+///
+/// ## 病根（真机读数）
+/// 附件是按 `space_id` 找目录的（`attachments/<空间 id>/…`），而 `key_if_enabled(c)` 用的是
+/// **连接自己的库路径**。两者不是同一个空间时（真机：活动空间切到「保险柜」、而 `Db` 连接还停在
+/// 明文的「2.0测试」）⇒ 返回 `None` ⇒ "另存为"走"未加密 ⇒ 直接 `fs::copy`"那条
+/// ⇒ 用户拿到的是 **105,009 B 的盘上密文**（开头 `53 01`），不是 PNG。
+///
+/// ⇒ 凡"读写某个空间目录里的附件"的路径，钥匙都从这里按**目标空间**取 ✓
+/// （`attachments.rs` 里统一收口在 `space_key_for`）。
+pub fn key_for_space(app_data_dir: &Path, space_id: &str) -> Option<crypto::AppKeys> {
+    if LOCKED.load(Ordering::SeqCst) {
+        return None;
+    }
+    let path = crate::db::space_db_path(app_data_dir, space_id);
+    let encrypted = space_db_is_encrypted(&path)
+        || crate::space_crypto::keyring().map(|k| k.has(space_id)).unwrap_or(false);
+    if !encrypted {
+        return None;
+    }
+    crate::space_crypto::space_app_keys_for_path(&path).ok().flatten()
+}
+
 /// Encrypt attachment BYTES at rest with **this space's** key, ONLY when the space is
 /// encrypted and the session is unlocked. When there is no key (plaintext space / locked)
 /// this passes the bytes through unchanged, so plaintext spaces keep working.
@@ -82,6 +105,15 @@ pub fn encrypt_attachment_bytes(key: Option<&crypto::AppKeys>, data: &[u8]) -> R
         Some(k) => crypto::encrypt(data, k),
         None => Ok(data.to_vec()),
     }
+}
+
+/// ⭐ **2026-10-27（owner：「修」）**：**这段字节看起来是不是我们写的附件密文**（只看头、不解密）。
+///
+/// 用来挡一种最坏结局：**空间锁着（本会话没有它的钥匙）时，把盘上密文当明文交出去** ——
+/// "另存为"得到 105,009 B 的乱码、渲染层得到打不开的图。⇒ 拿不到钥匙 + 看着是密文 ⇒ **拒绝**，
+/// ⛔ 不静默透传 ✗（透传是历史行为：加密关闭时盘上本来就是明文，那一条要保留）。
+pub fn looks_like_attachment_ciphertext(data: &[u8]) -> bool {
+    matches!(crypto::peek_format(data), Some(v) if v != 0)
 }
 
 /// Decrypt attachment bytes read back from disk. When key material is present, tries to

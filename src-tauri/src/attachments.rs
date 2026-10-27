@@ -133,6 +133,16 @@ pub(crate) fn active_space_id(c: &rusqlite::Connection) -> String {
     crate::workspaces::active_workspace_id(c).unwrap_or_default()
 }
 
+/// ⭐ **2026-10-27（owner：「修」）**：**这个空间目录里的附件，用这个空间的钥匙**（一处实现）。
+///
+/// 病根见 [`crate::security::key_for_space`] 的头注：附件目录按 `space_id` 分，而
+/// `key_if_enabled(conn)` 用的是"连接自己的库" —— 两者不一致时会把**密文当明文**交出去
+/// （真机：加密空间附件"另存为"得到 105,009 B 乱码）。⇒ 本文件里凡按空间读写附件，
+/// 钥匙一律走这一处 ✓。
+fn space_key_for(app_data_dir: &Path, space_id: &str) -> Option<crate::crypto::AppKeys> {
+    crate::security::key_for_space(app_data_dir, space_id)
+}
+
 /// **读**一个空间的附件：先在这个空间**自己**的目录里找，找不到再回退到**老的全局布局**
 /// （`<根>/<桶>/…` 与 `<根>/<hash>.<ext>`）。
 ///
@@ -192,6 +202,85 @@ pub(crate) fn is_empty_attachment_shell(
 #[cfg(test)]
 mod empty_shell_tests {
     use super::*;
+
+    /// ⭐ **2026-10-27（owner：「修」）**：**附件命令必须按"这个空间"取钥匙** ——
+    /// 病根是 `key_if_enabled(conn)` 拿"连接自己"的钥匙；活动空间与附件空间不一致时
+    /// 会把**盘上密文**当明文交出去（真机：另存为得到 105,009 B 的乱码）。
+    /// 判据是**源码形状**（命令要真跑就得起 Tauri 窗口，那超出单测边界）：这几个入口里
+    /// 一律走 `space_key_for`，⛔ 不许再出现 `key_if_enabled`。
+    #[test]
+    fn attachment_entry_points_take_the_key_from_the_space() {
+        let src = include_str!("attachments.rs");
+        let slice = |a: &str, b: &str| -> &str {
+            // ⚠️ 用 **rfind**：本判据自己的源码里也写着这些锚点字面量（在文件上方）⇒
+            //    `find` 会先命中判据自己，切出来的片段里当然没有实现。
+            let i = src.rfind(a).unwrap_or_else(|| panic!("没找到锚点 A：{a}"));
+            let j = src[i..].find(b).unwrap_or_else(|| panic!("没找到锚点 B：{b}")) + i;
+            &src[i..j]
+        };
+        for (name, body) in [
+            ("copy_attachment", slice("pub fn copy_attachment", "pub fn list_attachment_hashes")),
+            ("attachment_path", slice("pub fn attachment_path", "pub fn copy_attachment")),
+            ("attachment_bytes", slice("fn attachment_bytes(", "pub fn read_attachment_bytes")),
+        ] {
+            assert!(
+                body.contains("space_key_for(&app_data_dir, &space)"),
+                "{name} 必须按**这个空间**取钥匙（space_key_for）"
+            );
+            assert!(
+                !body.contains("key_if_enabled(&"),
+                "{name} 里不许再拿\"连接自己\"的钥匙（注释里提到它没关系，调用不行）"
+            );
+        }
+        // 协议层（`attachment.localhost` 的解密在 `lib.rs`）也必须按空间取钥匙
+        let lib = include_str!("lib.rs");
+        assert!(
+            lib.contains("security::key_for_space(d, &space)"),
+            "attachment 协议处理器必须按空间取钥匙（否则渲染会把密文当明文）"
+        );
+    }
+
+    /// ⭐ **2026-10-27（owner：「修」）**：**拿不到钥匙时，密文绝不当明文导出** ——
+    /// 真机现场：加密空间附件"另存为"得到 105,009 B 乱码（开头 `53 01`）。
+    /// 现在：看着是密文 + `key=None` ⇒ 报错（说清"先解锁该空间"）；明文照旧直接拷。
+    #[test]
+    fn exporting_a_ciphertext_attachment_without_the_key_is_refused() {
+        let dir = std::env::temp_dir().join(format!("shuyo-export-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let enc = dir.join("enc.bin");
+        std::fs::write(
+            &enc,
+            [crate::crypto::MAGIC, crate::crypto::VERSION_XCHACHA, 1, 2, 3],
+        )
+        .unwrap();
+        assert!(head_is_ciphertext(&enc), "夹具：带密文头的文件要认成密文");
+        assert!(
+            crate::security::looks_like_attachment_ciphertext(&[crate::crypto::MAGIC, 1, 9]),
+            "带 MAGIC 的字节要认成密文"
+        );
+        assert!(
+            !crate::security::looks_like_attachment_ciphertext(b"hello"),
+            "明文不许认成密文"
+        );
+        assert!(
+            !crate::security::looks_like_attachment_ciphertext(&[0x89, b'P', b'N', b'G']),
+            "PNG 头不许认成密文"
+        );
+
+        let out = dir.join("out.bin");
+        let err = export_attachment_to(&enc, &out, None).expect_err("密文 + 无钥匙必须拒绝导出");
+        assert!(err.contains("解锁"), "报错要说清下一步（先解锁该空间）：{err}");
+        assert!(!out.exists(), "⛔ 不许留下一个乱码文件");
+
+        let plain = dir.join("plain.txt");
+        std::fs::write(&plain, b"hello").unwrap();
+        let out2 = dir.join("out2.txt");
+        export_attachment_to(&plain, &out2, None).unwrap();
+        assert_eq!(std::fs::read(&out2).unwrap(), b"hello", "明文空间照旧是纯拷贝");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// 空壳判定：**0 字节明文 ⇒ 空壳**；有内容 ⇒ 不是；**>64 B 不参与判定**（不去解密大文件）。
     #[test]
@@ -691,10 +780,12 @@ pub(crate) fn read_attachment_bytes_at(
 pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs) -> Result<AttachmentMeta, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     // ★ 写入位置与钥匙都**按空间**（两者必须在同一把锁里取，免得中间空间被切走）。
-    let (space, key) = {
+    let space = {
         let c = db.0.lock().expect("db mutex poisoned");
-        (active_space_id(&c), crate::security::key_if_enabled(&c))
+        active_space_id(&c)
     };
+    // ⭐ 2026-10-27（owner：「修」）：钥匙按**这个空间**取（⛔ 不用 `key_if_enabled(conn)` ✗）
+    let key = space_key_for(&app_data_dir, &space);
     let attachments_dir = space_attachments_dir(&app_data_dir, &space);
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
 
@@ -764,10 +855,12 @@ pub fn attachment_path(app: tauri::AppHandle, db: State<'_, Db>, hash: String) -
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     // ★ 按空间找（老位置仍回退）。⚠️ **不做**"满树乱找"：别的空间那一份可能是**另一种密文**
     //   （那把钥匙不属于当前空间），把它交给系统去打开 = 安静地交出一个坏文件。
-    let (space, key) = {
+    let space = {
         let c = db.0.lock().expect("db mutex poisoned");
-        (active_space_id(&c), crate::security::key_if_enabled(&c))
+        active_space_id(&c)
     };
+    // ⭐ 2026-10-27（owner：「修」）：钥匙按**这个空间**取（⛔ 不用 `key_if_enabled(conn)` ✗）
+    let key = space_key_for(&app_data_dir, &space);
     let p = find_attachment(&app_data_dir, &space, &hash).ok_or_else(|| "附件不存在".to_string())?;
     // ⭐ **2026-10-27（owner：「补」）**：**空壳不是"有字节"** —— 如实报缺失，
     //   让渲染那一层去走 `ensureAttachmentBytes` 重取（否则它会拿到一个打不开的路径 ✓）。
@@ -783,10 +876,12 @@ pub fn attachment_path(app: tauri::AppHandle, db: State<'_, Db>, hash: String) -
 #[tauri::command]
 pub fn copy_attachment(app: tauri::AppHandle, db: State<'_, Db>, hash: String, dest_path: String) -> Result<(), String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let (space, key) = {
+    let space = {
         let c = db.0.lock().expect("db mutex poisoned");
-        (active_space_id(&c), crate::security::key_if_enabled(&c))
+        active_space_id(&c)
     };
+    // ⭐ 2026-10-27（owner：「修」）：钥匙按**这个空间**取（⛔ 不用 `key_if_enabled(conn)` ✗）
+    let key = space_key_for(&app_data_dir, &space);
     let p = find_attachment(&app_data_dir, &space, &hash).ok_or("附件不存在")?;
     // Android：保存对话框给的是 `content://` URI，`std::fs::write(uri)` 会 EROFS（真机实测）。
     // 走 SaveTarget：桌面=直接写（行为不变），URI=先写缓存再整份搬进去。
@@ -811,9 +906,19 @@ pub fn copy_attachment(app: tauri::AppHandle, db: State<'_, Db>, hash: String, d
 fn export_attachment_to(src: &Path, write_path: &Path, key: Option<&crate::crypto::AppKeys>) -> Result<(), String> {
     match key {
         // 未加密：磁盘上就是明文 ⇒ 直接拷，别把整份读进内存。
-        None => std::fs::copy(src, write_path)
-            .map(|_| ())
-            .map_err(|e| format!("复制失败: {e}")),
+        // ⭐ 2026-10-27（owner：「修」）：但**先看头** —— 拿不到钥匙、盘上却是密文时
+        //   ⛔ 不能把密文当明文拷出去（"另存为"得到乱码是比报错更坏的结局）✗
+        None => {
+            if head_is_ciphertext(src) {
+                return Err(
+                    "这一件在盘上是**密文**，但本会话拿不到\"这个空间\"的钥匙 —— 先在应用里解锁该空间再另存"
+                        .to_string(),
+                );
+            }
+            std::fs::copy(src, write_path)
+                .map(|_| ())
+                .map_err(|e| format!("复制失败: {e}"))
+        }
         Some(k) => {
             let raw = std::fs::read(src).map_err(|e| e.to_string())?;
             let plain = crate::security::decrypt_attachment_bytes(Some(k), &raw)?;
@@ -822,29 +927,49 @@ fn export_attachment_to(src: &Path, write_path: &Path, key: Option<&crate::crypt
     }
 }
 
+/// 只看**前 8 字节**判断"是不是附件密文"（大文件不整份读）。
+pub(crate) fn head_is_ciphertext(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let mut b = [0u8; 8];
+    match f.read(&mut b) {
+        Ok(n) => crate::security::looks_like_attachment_ciphertext(&b[..n]),
+        Err(_) => false,
+    }
+}
+
 #[tauri::command]
-pub fn list_attachment_hashes(
-    app: tauri::AppHandle,
-    db: State<'_, Db>,
-) -> Result<Vec<String>, String> {
+pub fn list_attachment_hashes(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let root = attachments_root(&app_data_dir);
-    // ⭐ **2026-10-27（owner：「补」）**：空壳（明文 0 字节）**不算"盘上已有"** ——
-    //   这条判据是 `ensureAttachmentBytes` 的短路开关；把它算进去，一次坏下载就永久钉死 ✓。
-    let key = {
-        let c = db.0.lock().expect("db mutex poisoned");
-        crate::security::key_if_enabled(&c)
-    };
     let mut hashes = Vec::new();
     // ★ 递归扫**整棵树**：`<根>/<空间>/<桶>/<hash>.<ext>`（新）、`<根>/<桶>/…` 与 `<根>/<hash>.<ext>`
     //   （老布局）三种都算 —— 这是一条"盘上到底有哪些附件字节"的读数，不该因为分层就漏。
+    // ⭐ **2026-10-27（owner：「修」）**：空壳判定要**按这个文件所属空间**取钥匙 ——
+    //   旧写法只有"连接自己"那一把钥匙 ⇒ 别的加密空间里的空壳用错钥匙解不开（透传成非空）
+    //   ⇒ 被判成"已有字节" ⇒ 又走回"永久不重取"那条 ✗。
     for p in walk_attachment_files(&root) {
         let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         // Ignore stray .part files.
         if name.ends_with(".part") { continue; }
         if let Some(stem) = name.split('.').next() {
             if stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
-                if is_empty_attachment_shell(&p, key.as_ref()) {
+                // 只有小文件才需要解密判空壳（`is_empty_attachment_shell` 内部也只解 ≤64 B）。
+                let small = std::fs::metadata(&p).map(|m| m.len() <= 64).unwrap_or(false);
+                let shell_key = if small {
+                    let space_of_file = p
+                        .strip_prefix(&root)
+                        .ok()
+                        .and_then(|r| r.components().next())
+                        .and_then(|c| c.as_os_str().to_str())
+                        .filter(|s| s.len() == 36)
+                        .map(str::to_string)
+                        .unwrap_or_default();
+                    space_key_for(&app_data_dir, &space_of_file)
+                } else {
+                    None
+                };
+                if is_empty_attachment_shell(&p, shell_key.as_ref()) {
                     // 空壳：报"没有"（下一轮会自动重取；⛔ 不能拿去短路 ✗）
                     continue;
                 }
@@ -860,13 +985,22 @@ pub fn list_attachment_hashes(
 #[tauri::command]
 pub(crate) fn attachment_bytes(app: tauri::AppHandle, db: State<'_, Db>, hash: &str) -> Result<Vec<u8>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let (space, key) = {
+    let space = {
         let c = db.0.lock().expect("db mutex poisoned");
-        (active_space_id(&c), crate::security::key_if_enabled(&c))
+        active_space_id(&c)
     };
+    // ⭐ 2026-10-27（owner：「修」）：钥匙按**这个空间**取（⛔ 不用 `key_if_enabled(conn)` ✗）
+    let key = space_key_for(&app_data_dir, &space);
     // 找不到文件时说清是"文件不在盘上"：这一条最常见的成因是外部把文件删了/移走了，
     // 而数据库里那行还在——笼统的"附件不存在"会让人以为是数据库的问题。
     let raw = read_attachment_bytes_at(&app_data_dir, &space, hash)?;
+    // ⭐ **2026-10-27（owner：「修」）**：拿不到钥匙、盘上却是**密文** ⇒ 拒绝（⛔ 不把密文当明文交出去 ✗）。
+    if key.is_none() && crate::security::looks_like_attachment_ciphertext(&raw) {
+        return Err(
+            "这一件在盘上是**密文**，但本会话拿不到\"这个空间\"的钥匙 —— 先在应用里解锁该空间"
+                .to_string(),
+        );
+    }
     let plain = crate::security::decrypt_attachment_bytes(key.as_ref(), &raw)?;
     // ⭐ **2026-10-27（owner：「补」）**：**空壳不是"0 字节的附件"，是"字节没取到"** ——
     //   如实报缺失（调用方会去重取），⛔ 不把空字节当成内容交给渲染层 ✗。
@@ -905,10 +1039,12 @@ pub fn write_attachment_bytes(
     data: Vec<u8>,
 ) -> Result<AttachmentMeta, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let (space, key) = {
+    let space = {
         let c = db.0.lock().expect("db mutex poisoned");
-        (active_space_id(&c), crate::security::key_if_enabled(&c))
+        active_space_id(&c)
     };
+    // ⭐ 2026-10-27（owner：「修」）：钥匙按**这个空间**取（⛔ 不用 `key_if_enabled(conn)` ✗）
+    let key = space_key_for(&app_data_dir, &space);
     let attachments_dir = space_attachments_dir(&app_data_dir, &space);
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
 
@@ -1006,7 +1142,8 @@ pub fn import_attachment_files(
         if let Some(parent) = final_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
+        // ⭐ 2026-10-27（owner：「修」）：钥匙按**这个空间**取（⛔ 不用 `key_if_enabled(conn)` ✗）
+        let key = space_key_for(&app_data_dir, &space);
         if final_path.exists() {
             // Content-addressed dedup **within this space**: identical file already stored
             // here (leave as-is, the read path decrypts/passthroughs).
