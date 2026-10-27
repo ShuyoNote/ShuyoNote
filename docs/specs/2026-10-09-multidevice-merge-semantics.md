@@ -140,6 +140,25 @@
 - 重复接入同一对设备 ⇒ `changes` **不再增长**，且**不再产生第二份内容**（页面数也不许涨）。
 - 记的是「**融合事实**」（谁＋哪台＋何时），⛔ 不是「每次接入都记一笔」。
 
+## 4-bis. 墓碑（删除）在同步里的胜负 —— **旧 upsert 不许把删掉的页掀活**
+
+> 来由（owner 2026-10-27）：「多端同步时，文件夹和页面的关系乱了／有些删除的页面又出来了」。
+
+- **规则**：应用远端 `page/upsert` 时，若本机这一页**已是墓碑**（`pages.deleted_at` 非空）：
+  - 远端载荷的 `updated_at` **不比删除新** ⇒ ⛔ **不落库**（墓碑胜；这一笔按"已处理"推进游标）；
+  - 远端载荷的 `updated_at` **比删除新** ⇒ ✅ 允许掀墓碑（「删除之后又有人编辑/还原」的真实语义，
+    回收站「还原」正是靠这一条传播到别的设备）。
+- **为什么必须有这一条**：`doc_content::upsert_remote` 落库 SQL 里 `deleted_at = NULL` 是**有意**的
+  （还原要传播），于是**任何**远端 upsert 都有掀墓碑的权力 —— 对端离线/游标落后时它队列里的
+  **历史 upsert** 一到，删掉的页就静默复活（真机现场：`changes` 里 `delete` 在 `upsert` 之后、
+  而页面 `deleted_at IS NULL`）。
+- **判据**（会红）：
+  `sync::tests::a_stale_remote_upsert_does_not_resurrect_a_deleted_page`（旧 upsert ⇒ `KeptTombstone`，墓碑不动）
+  ＋ `sync::tests::a_newer_remote_upsert_still_restores_a_deleted_page`（新 upsert ⇒ 仍能掀墓碑，还原不被挡）。
+  ⚠️ 比的是**墙钟毫秒**（`page.updated_at` vs `deleted_at`），⛔ 不是服务端 `seq`（两条路语义不同）。
+- **落点**：`src-tauri/src/sync.rs::apply_upsert`（判定在合并**之前**）；
+  墓碑取证走 `doc_content::local_deleted_at`。
+
 ## 5. 可撤 ＋ 标来源
 
 ![② 同名空间融合的结果（含「来自平板」来源标记）](../assets/multidevice-2026-10-09/screen2.png)

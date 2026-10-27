@@ -340,6 +340,23 @@ pub fn local_state(c: &Connection, page_id: &str) -> Result<Option<LocalState>, 
     .map_err(|e| e.to_string())
 }
 
+/// 这一页在本机的**墓碑时间**（`deleted_at`，毫秒）；没删过 / 没有这一行 ⇒ `Ok(None)`。
+///
+/// ⭐ 2026-10-27（owner：「多端同步时，有些删除的页面又出来了」）：远端 upsert 的落库 SQL 里
+/// `deleted_at = NULL` 是**有意的**（回收站「还原」也要靠它传播）✗，所以"墓碑该不该被掀掉"
+/// **必须在判定层先问一句** —— 那一句就在这里取证。⛔ 不看墓碑就往 `upsert_remote` 里走，
+/// 旧对端（游标落后/离线期间的旧 upsert）会把删掉的页**静默复活** ✗。
+pub fn local_deleted_at(c: &Connection, page_id: &str) -> Result<Option<i64>, String> {
+    c.query_row(
+        "SELECT deleted_at FROM pages WHERE id = ?1",
+        params![page_id],
+        |row| row.get::<_, Option<i64>>(0),
+    )
+    .optional()
+    .map(|v| v.flatten())
+    .map_err(|e| e.to_string())
+}
+
 /// **远端写入口** —— 合并判定说 `TakeRemote` 之后，把远端那一行落库。
 ///
 /// 与前端侧 `docContent.upsertRemoteContent` 是**同一条 SQL 的两份实现**

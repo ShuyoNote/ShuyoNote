@@ -1087,6 +1087,17 @@ pub enum UpsertApply {
     /// ⚠️ 调用方**必须**为这一支留痕（`doc_content::stash_pending_remote`）—— 否则就是取证里的 L：
     /// 游标过去了、对端那笔编辑再也取不回、层里什么都没有。
     KeptLocal,
+    /// 本机这一页**已是墓碑**，而远端这一版**不比删除新** ⇒ **墓碑胜、不掀**（回收站照原样）。
+    ///
+    /// ⭐ 2026-10-27（owner：「多端同步时，有些删除的页面又出来了」）：真机上有删除后又活过来的页
+    /// （`changes` 里 delete 在 upsert 之后、而页面 `deleted_at IS NULL`）。根因是 `upsert_remote`
+    /// 落库时**无条件** `deleted_at = NULL` —— 那是为了回收站「还原」能传播，但**旧 upsert 不该
+    /// 有同样的权力**：对端离线/游标落后时它队列里的旧 upsert 一到，删掉的页就静默复活了。
+    /// ⇒ 判定层先比一次：远端这一版的 `updated_at` **晚于**本机 `deleted_at` 才允许掀墓碑
+    /// （那才是「删除之后又有人编辑/还原」的真实语义）；否则只记账、不落库。
+    ///
+    /// ⚠️ 调用方**按"已处理"推进游标**：这一笔没有可重试的东西（留着它只会每轮再拉一遍）。
+    KeptTombstone { deleted_at: i64, remote_time: i64 },
 }
 
 /// ★ §11.4 收口（第 42 轮）：把页载荷里的 **CRDT 状态**收进旁路表。
@@ -1184,6 +1195,26 @@ fn apply_upsert(
     stamp: Option<crate::doc_content::StampWins>,
     from: crate::doc_content::Ingest,
 ) -> Result<UpsertApply, String> {
+    // ⭐⭐ 2026-10-27（owner：「多端同步时，有些删除的页面又出来了」）：**墓碑守护必须在合并之前**。
+    //
+    //   为什么：`doc_content::upsert_remote` 的 SQL 里 `deleted_at = NULL` 是**有意**的
+    //   （回收站「还原」要靠它传播），于是只要走到那一步，删掉的页就活了 ——
+    //   而对端**离线期间/游标落后**时队列里的**旧** upsert 会照样走到那一步 ✗。
+    //
+    //   口径（只在这一处）：
+    //     · 本机这一页是墓碑（`deleted_at` 非空）＋ 远端这一版 `updated_at` **不比删除新**
+    //       ⇒ **墓碑胜**：不落库，只回报（`KeptTombstone`）；
+    //     · 远端这一版**比删除新** ⇒ 允许掀墓碑（「删除之后又有人编辑/还原」的真实语义；
+    //       回收站还原也正是靠这一条传播到别的设备）。
+    //
+    //   ⚠️ 比的是**墙钟毫秒**（`page.updated_at` vs `deleted_at`）：两个都是同一台/对端写库那一刻的
+    //      `now_ms()`，不是 `sync_seq`（服务器那条路的 `seq` 是服务端单调号，跟时间没有可比性）。
+    if let Some(deleted_at) = crate::doc_content::local_deleted_at(c, &page.id)? {
+        let remote_time = page.updated_at;
+        if remote_time <= deleted_at {
+            return Ok(UpsertApply::KeptTombstone { deleted_at, remote_time });
+        }
+    }
     // ★ 合并判定搬进「文档内容」那一层（`crate::doc_content::merge`）——**唯一的合并点**：
     // 页级 LWW + dirty 优先本地 + seq 权威；阶段 1/2/3 换块级 LWW、CRDT 时只改那个函数。
     let local = crate::doc_content::local_state(c, &page.id)?;
@@ -4217,6 +4248,17 @@ let mut unrecognized: Vec<String> = Vec::new();
                                         pending_remote_ids.push(page.id.clone());
                                     }
                                 }
+                            }
+                            UpsertApply::KeptTombstone { deleted_at, remote_time } => {
+                                // ⭐ 2026-10-27（owner：「有些删除的页面又出来了」）：墓碑胜。
+                                //   这一笔**不落库**，也没有"等你裁决"的东西可留 —— 它是**旧**的一版
+                                //   （对端离线/游标落后时队列里的历史 upsert），不是"删除之后的新编辑"。
+                                //   ⇒ 按"已处理"推进游标（不推进就会每轮重拉同一笔，且永远推不动）。
+                                eprintln!(
+                                    "[sync] page {} 的远端版本（updated_at={}）**不比本机删除（deleted_at={}）新** \
+                                     ⇒ 墓碑胜，不复活这一页",
+                                    page.id, remote_time, deleted_at
+                                );
                             }
                         }
                         count += 1;
@@ -10068,6 +10110,66 @@ mod tests {
             "应用了且没有未裁决冲突 ⇒ 另一支"
         );
         assert!(local_json(&c, "p1").contains("他改的"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐⭐ 2026-10-27（owner：「多端同步时，有些删除的页面又出来了」）：**旧的远端 upsert 不许掀墓碑**。
+    ///
+    /// 红读数（修前）：`apply_upsert` 直接走 `apply_remote_page`，而 `upsert_remote` 的 SQL 里
+    /// `deleted_at = NULL` 是**有意**的（回收站还原靠它传播）⇒ 对端离线/游标落后时队列里的
+    /// **历史 upsert** 一到，删掉的页就**静默复活**（真机现场：`changes` 里 delete 在 upsert 之后，
+    /// 页面却 `deleted_at IS NULL`）。
+    #[test]
+    fn a_stale_remote_upsert_does_not_resurrect_a_deleted_page() {
+        let (c, dir) = pending_conn("tombstone-stale");
+        // 本机：这一页是墓碑（deleted_at = 2000），已同步过、没有未推送改动
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind,
+                                created_at, updated_at, deleted_at, sync_seq, dirty)
+             VALUES ('p-gone', 'ws', '已删页', ?1, '', 'page', 0, 2000, 2000, 0, 0)",
+            params![page_json("b1", 1, "删之前的内容")],
+        )
+        .unwrap();
+        // 远端：一版比删除**更旧**的 upsert（updated_at = 1000 < 2000）
+        let mut stale = remote_page("p-gone", &page_json("b1", 1, "对端离线时的旧版"));
+        stale.updated_at = 1000;
+        let out = apply_upsert(&c, &stale, 3, None, crate::doc_content::Ingest::Peer).unwrap();
+        assert!(
+            matches!(out, UpsertApply::KeptTombstone { .. }),
+            "旧 upsert ⇒ 必须报『墓碑胜』（修前这里会返回 Applied ⇒ 页面复活）"
+        );
+        let deleted_at: Option<i64> = c
+            .query_row("SELECT deleted_at FROM pages WHERE id='p-gone'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(deleted_at, Some(2000), "墓碑不许被掀掉");
+        assert!(!local_json(&c, "p-gone").contains("旧版"), "内容也不许被旧版覆盖");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 反面（同一条判据的另一半）：**比删除更新的** upsert 仍然要能掀墓碑 ——
+    /// 回收站「还原」正是靠这一条传播到别的设备；⛔ 不许为了挡旧版把还原也挡死。
+    #[test]
+    fn a_newer_remote_upsert_still_restores_a_deleted_page() {
+        let (c, dir) = pending_conn("tombstone-newer");
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind,
+                                created_at, updated_at, deleted_at, sync_seq, dirty)
+             VALUES ('p-back', 'ws', '已删页', ?1, '', 'page', 0, 2000, 2000, 0, 0)",
+            params![page_json("b1", 1, "删之前的内容")],
+        )
+        .unwrap();
+        let mut newer = remote_page("p-back", &page_json("b1", 1, "还原后的内容"));
+        newer.updated_at = 3000; // > deleted_at ⇒ 删除之后的新编辑/还原
+        let out = apply_upsert(&c, &newer, 4, None, crate::doc_content::Ingest::Peer).unwrap();
+        assert!(
+            matches!(out, UpsertApply::Applied { .. }),
+            "更新的远端版本 ⇒ 允许掀墓碑（还原要能传播）：{out:?}"
+        );
+        let deleted_at: Option<i64> = c
+            .query_row("SELECT deleted_at FROM pages WHERE id='p-back'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(deleted_at, None, "还原/新编辑 ⇒ 墓碑被掀掉");
+        assert!(local_json(&c, "p-back").contains("还原后的内容"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
