@@ -331,6 +331,12 @@ export function FileManagerView() {
       // 而不是被静默丢弃（此前根目录拖拽是直接 return）。
       const metas = await api.importAttachmentFiles(folderId ?? null, paths);
       setFiles((prev) => [...metas, ...prev]);
+      // ⭐ 2026-10-27（owner 截图：「文件上传后，出现未下载标识」）：**上传成功要重读盘上字节**。
+      //   为什么必须有这一句：`onDisk` 是"盘上有哪些 hash"的读数，它只在挂载/切换文件夹/取字节成功后刷新；
+      //   刚上传的字节**已经在盘上**，但旧集合里没有它 ⇒ 新行会被误标「未下载」（真机：zip 明明 6 MB 落在
+      //   `attachments/<空间>/f7/<hash>.zip`）。⛔ 别指望"自动预取"那条路帮忙：它只在**取回成功**时才
+      //   `loadOnDisk()`，而个人空间没有服务器、对端也拿不到 ⇒ 它必然失败 ⇒ 标记就再也刷不掉。
+      loadOnDisk();
       useFileManagerStore.getState().bumpRevision();
       toast(`已上传 ${metas.length} 个文件`, "success");
     } catch (e) {
