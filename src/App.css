@@ -1946,6 +1946,32 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 .sync-hero-btn:disabled { opacity: 0.55; cursor: default; }
 .sync-hero-route { font-size: 12px; color: var(--text-dim); }
 
+/* ⭐ **2026-10-27（owner：「关闭局域网同步按钮布局太丑，优化一下」）** ✗：
+   这一枚动作从「状态条下面单独一行」收进**状态行右上角** ✓（`margin-left:auto` 顶过去 ✓）。
+   ⚠️ 刻意**不复用** `.sync-btn` ✗ —— 它有 `min-height: 44px`（给输入框并排用的 ✓），
+   摆在 15px 的状态行旁边会把那一行撑成一堵墙 ✓。这里是小胶囊，**只用既有变量**（⛔ 不写死色值 ✗）。 */
+.sync-hero-action { margin-left: auto; display: inline-flex; align-items: center; }
+.sync-mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.6;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+.sync-mini-btn:hover { background: var(--hover); border-color: var(--border-strong); color: var(--text); }
+.sync-mini-btn:active { background: var(--hover-strong); }
+.sync-mini-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .sync-card {
   display: flex;
   flex-direction: column;
