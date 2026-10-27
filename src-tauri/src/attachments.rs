@@ -162,8 +162,62 @@ pub(crate) fn find_attachment_anywhere(root: &Path, hash: &str) -> Option<PathBu
     find_path_by_hash(root, hash)
 }
 
+/// ⭐ **2026-10-27（owner：「这个页面没有同步完整？」/「补」）**：**空壳附件**判定 ——
+/// 盘上有文件、但**明文是 0 字节**（加密后恰好只剩一个信封）。
+///
+/// ## 为什么必须把它当成"没有"
+/// 真机现场（保险柜·濮阳数友企业支付宝）：一次 **0 字节的附件响应**被落成盘（加密后 42 B），
+/// 而"盘上有没有这个 hash"是 `ensureAttachmentBytes` 的短路判据 ⇒ **空壳让这一件永远不再重取**，
+/// 图片块从此是破图（`naturalWidth=0`）。⇒ 把空壳当"缺失"，下一次渲染就会自动重取 ✓。
+///
+/// ⚠️ 只在文件 **≤64 B** 时才解密（几乎零成本）；大文件不碰
+/// （⛔ 不为了列一遍 hash 去解密几 MB × N ✗ —— 那会把面板拖死）。
+pub(crate) fn is_empty_attachment_shell(
+    path: &Path,
+    key: Option<&crate::crypto::AppKeys>,
+) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else { return false };
+    if meta.len() > 64 {
+        return false;
+    }
+    let Ok(raw) = std::fs::read(path) else { return false };
+    matches!(
+        crate::security::decrypt_attachment_bytes(key, &raw),
+        Ok(plain) if plain.is_empty()
+    )
+}
+
 /// 递归列出附件树里的**所有文件**（三种布局都算：`<根>/<空间>/<桶>/f`、`<根>/<桶>/f`、`<根>/f`）。
 /// 给"不知道空间"的那些路径用：存储统计 / 孤儿清理 / 临时文件清理。
+#[cfg(test)]
+mod empty_shell_tests {
+    use super::*;
+
+    /// 空壳判定：**0 字节明文 ⇒ 空壳**；有内容 ⇒ 不是；**>64 B 不参与判定**（不去解密大文件）。
+    #[test]
+    fn an_empty_plaintext_attachment_counts_as_a_shell() {
+        let dir = std::env::temp_dir().join(format!("shuyo-shell-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let empty = dir.join("empty.bin");
+        std::fs::write(&empty, b"").unwrap();
+        assert!(is_empty_attachment_shell(&empty, None), "0 字节文件必须判成空壳");
+
+        let ok = dir.join("ok.bin");
+        std::fs::write(&ok, b"hello").unwrap();
+        assert!(!is_empty_attachment_shell(&ok, None), "有内容的文件不许判成空壳");
+
+        let big = dir.join("big.bin");
+        std::fs::write(&big, vec![0u8; 128]).unwrap();
+        assert!(
+            !is_empty_attachment_shell(&big, None),
+            ">64 B 的文件不参与空壳判定（⛔ 不为列 hash 去解密大文件 ✗）"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 pub(crate) fn walk_attachment_files(root: &Path) -> Vec<PathBuf> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else { return };
@@ -710,10 +764,17 @@ pub fn attachment_path(app: tauri::AppHandle, db: State<'_, Db>, hash: String) -
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     // ★ 按空间找（老位置仍回退）。⚠️ **不做**"满树乱找"：别的空间那一份可能是**另一种密文**
     //   （那把钥匙不属于当前空间），把它交给系统去打开 = 安静地交出一个坏文件。
-    let space = { let c = db.0.lock().expect("db mutex poisoned"); active_space_id(&c) };
-    find_attachment(&app_data_dir, &space, &hash)
-        .map(|p| p.to_string_lossy().into_owned())
-        .ok_or_else(|| "附件不存在".to_string())
+    let (space, key) = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        (active_space_id(&c), crate::security::key_if_enabled(&c))
+    };
+    let p = find_attachment(&app_data_dir, &space, &hash).ok_or_else(|| "附件不存在".to_string())?;
+    // ⭐ **2026-10-27（owner：「补」）**：**空壳不是"有字节"** —— 如实报缺失，
+    //   让渲染那一层去走 `ensureAttachmentBytes` 重取（否则它会拿到一个打不开的路径 ✓）。
+    if is_empty_attachment_shell(&p, key.as_ref()) {
+        return Err("这一件只有空壳（字节没取到过）—— 需要重新从对端/服务器取回".to_string());
+    }
+    Ok(p.to_string_lossy().into_owned())
 }
 
 /// Copy an attachment (by hash) to a user-chosen destination path (download). When app
@@ -762,9 +823,18 @@ fn export_attachment_to(src: &Path, write_path: &Path, key: Option<&crate::crypt
 }
 
 #[tauri::command]
-pub fn list_attachment_hashes(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+pub fn list_attachment_hashes(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+) -> Result<Vec<String>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let root = attachments_root(&app_data_dir);
+    // ⭐ **2026-10-27（owner：「补」）**：空壳（明文 0 字节）**不算"盘上已有"** ——
+    //   这条判据是 `ensureAttachmentBytes` 的短路开关；把它算进去，一次坏下载就永久钉死 ✓。
+    let key = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        crate::security::key_if_enabled(&c)
+    };
     let mut hashes = Vec::new();
     // ★ 递归扫**整棵树**：`<根>/<空间>/<桶>/<hash>.<ext>`（新）、`<根>/<桶>/…` 与 `<根>/<hash>.<ext>`
     //   （老布局）三种都算 —— 这是一条"盘上到底有哪些附件字节"的读数，不该因为分层就漏。
@@ -774,6 +844,10 @@ pub fn list_attachment_hashes(app: tauri::AppHandle) -> Result<Vec<String>, Stri
         if name.ends_with(".part") { continue; }
         if let Some(stem) = name.split('.').next() {
             if stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
+                if is_empty_attachment_shell(&p, key.as_ref()) {
+                    // 空壳：报"没有"（下一轮会自动重取；⛔ 不能拿去短路 ✗）
+                    continue;
+                }
                 hashes.push(stem.to_string());
             }
         }
@@ -793,7 +867,13 @@ pub(crate) fn attachment_bytes(app: tauri::AppHandle, db: State<'_, Db>, hash: &
     // 找不到文件时说清是"文件不在盘上"：这一条最常见的成因是外部把文件删了/移走了，
     // 而数据库里那行还在——笼统的"附件不存在"会让人以为是数据库的问题。
     let raw = read_attachment_bytes_at(&app_data_dir, &space, hash)?;
-    crate::security::decrypt_attachment_bytes(key.as_ref(), &raw)
+    let plain = crate::security::decrypt_attachment_bytes(key.as_ref(), &raw)?;
+    // ⭐ **2026-10-27（owner：「补」）**：**空壳不是"0 字节的附件"，是"字节没取到"** ——
+    //   如实报缺失（调用方会去重取），⛔ 不把空字节当成内容交给渲染层 ✗。
+    if plain.is_empty() && raw.len() <= 64 {
+        return Err("这一件只有空壳（字节没取到过）—— 需要重新从对端/服务器取回".to_string());
+    }
+    Ok(plain)
 }
 
 #[tauri::command]

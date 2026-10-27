@@ -7324,6 +7324,18 @@ async fn download_one_attachment(
     if !(200..300).contains(&status) {
         return Err(format!("{who} 返回 {status}"));
     }
+    // ⭐ 2026-10-27（owner：「补」）：本机元数据里这一件的**期望大小**（拿不到 ⇒ None）。
+    //   只用来挡"下了一半 / 空响应"；⛔ 不拿它当"唯一真相"（元数据本身可能缺）✗。
+    let expected_size: Option<i64> = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        c.query_row(
+            "SELECT size FROM attachments WHERE hash = ?1 AND size > 0 LIMIT 1",
+            params![item.hash],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+    };
     let ext = ext_from_mime(&item.mime);
     let path = attachments_dir.join(&item.hash[0..2]).join(format!("{}.{}", item.hash, ext));
     if let Some(parent) = path.parent() {
@@ -7359,6 +7371,15 @@ async fn download_one_attachment(
         }
         file.flush().await.map_err(|e| e.to_string())?;
         drop(file);
+        // ⭐⭐ **2026-10-27（owner：「这个页面没有同步完整？」→「补」）**：**空响应不许落盘** ✗。
+        //   真机现场（保险柜·濮阳数友企业支付宝）：对端回了一次 **0 字节**，这里照样 rename 落盘
+        //   ⇒ 加密后只有 42 B 的"空壳" ⇒ 而"盘上有没有这个 hash"是 `ensureAttachmentBytes` 的
+        //   短路判据 ⇒ 图片块永久破图（`naturalWidth=0`）。⇒ 两道门：① 0 字节拒收；
+        //   ② 本机元数据知道期望大小时，字节数对不上也拒收（挡"下了一半"）。
+        if let Err(why) = attachment_size_ok(size, expected_size) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!("{who}：{why}"));
+        }
         std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
         // E1: when at-rest encryption is on, store the downloaded PLAINTEXT
         // encrypted (nonce||ct) like every other attachment, so the read path
@@ -7377,6 +7398,57 @@ async fn download_one_attachment(
         record_downloaded_attachment(&c, &item.hash, &item.mime, size, &format!("{}.{}", item.hash, ext))?;
     }
     Ok(size)
+}
+
+/// ⭐ **2026-10-27（owner：「这个页面没有同步完整？」→「补」）**：下载到的字节数**能不能信** ——
+/// 纯函数（判据直接喂值，不必起网络/写盘）。
+///
+/// ## 两道门（每一道都对应一次真机事故）
+/// 1. **`0` 字节一律拒** ✗ —— 空响应 ≠ "这一件本来就是空的"；落盘就成**空壳**
+///    （加密后只剩一个信封，比如 42 B），而"盘上有没有这个 hash"是 `ensureAttachmentBytes`
+///    的短路判据 ⇒ 一次空响应把这一件**永久钉成破图**（真机：保险柜一张 PNG）。
+/// 2. **与元数据期望大小对不上就拒** ✗ —— 挡"下了一半"被当成完整（截断的 PNG 同样是破图，
+///    而且更难查：文件在、大小像个正常值）。
+///
+/// ⚠️ `expected` 为 `None`（元数据里没这一件 / `size` 记成 0）⇒ **只走第一道门** ✓
+/// （⛔ 不拿猜出来的大小当判据 ✗ —— 那是另一种"编数"）。
+pub(crate) fn attachment_size_ok(size: i64, expected: Option<i64>) -> Result<(), String> {
+    if size <= 0 {
+        return Err(
+            "回了 **0 字节**（空响应）⇒ 不落盘：空壳会骗过「本机已有字节」，把这一件永久钉成破图"
+                .to_string(),
+        );
+    }
+    if let Some(want) = expected {
+        if want > 0 && want != size {
+            return Err(format!(
+                "字节数对不上：本机元数据要 {want}、实际收到 {size} ⇒ 不落盘（避免「下了一半」被当成完整）"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod attachment_size_guard_tests {
+    use super::*;
+
+    /// 0 字节 / 期望对不上 ⇒ 拒；正常 / 没有期望 ⇒ 收。
+    #[test]
+    fn a_zero_or_mismatched_attachment_size_is_refused() {
+        // 真机那个形状：期望 104,960、收到 0 ⇒ 拒（否则落成 42 B 空壳）
+        assert!(attachment_size_ok(0, Some(104_960)).is_err(), "0 字节必须拒（空壳）");
+        assert!(attachment_size_ok(0, None).is_err(), "0 字节即使没有元数据也必须拒");
+        assert!(
+            attachment_size_ok(50_000, Some(104_960)).is_err(),
+            "下了一半必须拒（截断的图片同样是破图，且更难查）"
+        );
+        // 正常：与元数据一致 ⇒ 收；没有元数据 ⇒ 只过第一道门
+        assert!(attachment_size_ok(104_960, Some(104_960)).is_ok(), "大小对上必须收");
+        assert!(attachment_size_ok(123, None).is_ok(), "没有期望大小时不许拿猜的数当判据");
+        // 元数据把 size 记成 0（老行）⇒ 视为"没有期望"，只走第一道门
+        assert!(attachment_size_ok(123, Some(0)).is_ok(), "size=0 的老行不算期望值");
+    }
 }
 
 /// 把"刚下载完字节的附件"记进 `attachments`（**兜底行**），成功返回 `()`。
