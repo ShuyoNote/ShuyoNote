@@ -873,6 +873,12 @@ pub(crate) fn attachment_bytes(app: tauri::AppHandle, db: State<'_, Db>, hash: &
     if plain.is_empty() && raw.len() <= 64 {
         return Err("这一件只有空壳（字节没取到过）—— 需要重新从对端/服务器取回".to_string());
     }
+    // ⭐ **2026-10-27（owner：「彻底解决」）**：**读出来之前先对内容指纹** —— 文件在、大小也对，
+    //   但内容是坏的（截断/串件）时，交给渲染层只会得到"看起来像正常文件"的破图/坏文档；
+    //   如实报错并让调用方去重取，才是能自救的那条路 ✓。
+    if !crate::sync::attachment_digest_ok(hash, &plain) {
+        return Err("这一件字节与**内容指纹**对不上（坏件或被截断）—— 需要重新从对端/服务器取回".to_string());
+    }
     Ok(plain)
 }
 

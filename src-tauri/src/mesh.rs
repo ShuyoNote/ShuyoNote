@@ -4378,7 +4378,27 @@ fn handle_attachment(state: &State, target: &str) -> Reply {
     };
     match crate::attachments::read_attachment_bytes_at(data_dir, &space_id, &hash) {
         Ok(raw) => match crate::security::decrypt_attachment_bytes(key.as_ref(), &raw) {
-            Ok(plain) => Reply::bytes(200, "OK", plain),
+            // ⭐⭐ **2026-10-27（owner：「彻底解决」）**：**不往外发空壳/坏件** ✗ ——
+            //   真机现场：这一台那份是 42 B 的**空壳**（明文 0 字节），却回了 `200` + 0 字节体 ⇒
+            //   对端把它当"成功"落盘 ⇒ 对端也变成空壳（"空壳传染"）。⇒ 空 ⇒ 404（去问别的对端）；
+            //   指纹对不上 ⇒ 500（本机这份坏了，发出去只会让对方看到破图）。
+            Ok(plain) => {
+                if plain.is_empty() {
+                    return Reply::json(
+                        404,
+                        "Not Found",
+                        json_error("这一台手上这份附件是**空壳**（字节没取到过，不是 0 字节的文件）—— 去问别的对端"),
+                    );
+                }
+                if !crate::sync::attachment_digest_ok(&hash, &plain) {
+                    return Reply::json(
+                        500,
+                        "Internal Server Error",
+                        json_error("本机这份字节与**内容指纹**对不上（坏件／被截断）⇒ 不往外发：发出去对方也只会落成破图"),
+                    );
+                }
+                Reply::bytes(200, "OK", plain)
+            }
             Err(e) => Reply::json(500, "Internal Server Error", json_error(&format!("本机这份字节解不开：{e}"))),
         },
         Err(e) => Reply::json(
@@ -6160,7 +6180,10 @@ mod tests {
     #[tokio::test]
     async fn an_attachment_comes_from_whichever_peer_actually_has_it() {
         let bytes: Vec<u8> = b"\x89PNG\r\n\x1a\n-not-a-real-png-but-real-bytes".to_vec();
-        let hash = "ab".repeat(32); // 64 位十六进制（过形状校验）
+        // ⭐ 2026-10-27（owner：「彻底解决」）：hash 必须是**这些字节的 sha256** ——
+        //   服务端现在按内容指纹对账（`handle_attachment`），拿 `"ab"*32` 当指纹会如实回 500。
+        //   ⇒ 夹具顺势改成"真内容寻址"，这才与产品同一条口径 ✓。
+        let hash = crate::db::sha256_hex_bytes(&bytes);
         let dir_a = temp_dir("att-a");
         let dir_b = temp_dir("att-b");
         let a = Arc::new(Mutex::new(space_conn("A")));
@@ -6226,6 +6249,29 @@ mod tests {
         let mut got = Vec::new();
         tokio::io::AsyncReadExt::read_to_end(&mut body, &mut got).await.unwrap();
         assert_eq!(got, bytes, "取回来的必须**逐字节**是那一份");
+
+        // ②b ⭐ **2026-10-27（owner：「彻底解决」）**：**坏件不外发** ——
+        //   真机现场：一台把 42 B 的空壳当 `200` 发出去、对端落盘成空壳（"空壳传染"）。
+        //   现在：内容指纹对不上 ⇒ 500（说清是"指纹对不上"）；空壳 ⇒ 404（说清"这一台手上是空壳"）。
+        std::fs::write(&file, b"corrupted bytes").unwrap();
+        let (code, mut body) =
+            request_attachment_from_peer(&client, &pb, "space-x", &hash, Some("lan-token"), None)
+                .await
+                .unwrap();
+        assert_eq!(code, 500, "指纹对不上必须 500（⛔ 不许把坏件当 200 发出去 ✗）");
+        let mut text = String::new();
+        let _ = tokio::io::AsyncReadExt::read_to_string(&mut body, &mut text).await;
+        assert!(text.contains("内容指纹"), "500 必须说清「内容指纹对不上」：{text}");
+
+        std::fs::write(&file, b"").unwrap();
+        let (code, mut body) =
+            request_attachment_from_peer(&client, &pb, "space-x", &hash, Some("lan-token"), None)
+                .await
+                .unwrap();
+        assert_eq!(code, 404, "空壳必须 404（对端据此去问下一台，⛔ 不是 200 + 0 字节 ✗）");
+        let mut text = String::new();
+        let _ = tokio::io::AsyncReadExt::read_to_string(&mut body, &mut text).await;
+        assert!(text.contains("空壳"), "404 必须说清「空壳」：{text}");
 
         // ③ 空间对不上 ⇒ 403（与 pull 同一道门）
         let (code, _body) = request_attachment_from_peer(&client, &pb, "other-space", &hash, Some("lan-token"), None).await.unwrap();

@@ -8,6 +8,7 @@ use crate::security;
 use futures_util::StreamExt;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tauri::{Emitter, Manager, State};
@@ -7341,6 +7342,12 @@ async fn download_one_attachment(
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
+    // ⭐⭐ **2026-10-27（owner：「彻底解决」）**：盘上那份若是**空壳**，先删掉再下 ——
+    //   否则下面 `if !path.exists()` 会把它当"本机已有字节"直接跳过 ⇒ 下载成功了也修不好 ✓。
+    if path.exists() && crate::attachments::is_empty_attachment_shell(&path, session_key) {
+        eprintln!("[附件] {} 盘上那份是空壳（明文 0 字节）⇒ 先删掉再取回", &item.hash[..12.min(item.hash.len())]);
+        let _ = std::fs::remove_file(&path);
+    }
     let mut size: i64 = 0;
     if !path.exists() {
         // ⚠️ 临时文件名**必须唯一**（2026-09-15 真机验收修）：原先固定用 `<hash>.part`，
@@ -7352,6 +7359,10 @@ async fn download_one_attachment(
         let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| e.to_string())?;
         // ⭐ 2026-10-25（Step 6）：正文是**流**（`AsyncRead`），按块搬运 —— 局域网与隧道同一条路。
         let mut buf = vec![0u8; 64 * 1024];
+        // ⭐⭐ **2026-10-27（owner：「彻底解决」）**：**边搬边算内容指纹** ⇒ 落地前与 `item.hash` 对账。
+        //   这一道最根本：0 字节、截断、串件、对端发了个空壳的密文……**任何"字节不对"都收不进来** ✓
+        //   （前两道 size 检查只是先用更人话的消息挡住最常见的两种）。
+        let mut hasher = Sha256::new();
         loop {
             let n = match tokio::io::AsyncReadExt::read(&mut body, &mut buf).await {
                 Ok(n) => n,
@@ -7367,6 +7378,7 @@ async fn download_one_attachment(
                 break;
             }
             size += n as i64;
+            hasher.update(&buf[..n]);
             file.write_all(&buf[..n]).await.map_err(|e| e.to_string())?;
         }
         file.flush().await.map_err(|e| e.to_string())?;
@@ -7379,6 +7391,20 @@ async fn download_one_attachment(
         if let Err(why) = attachment_size_ok(size, expected_size) {
             let _ = std::fs::remove_file(&tmp);
             return Err(format!("{who}：{why}"));
+        }
+        // ⭐ 2026-10-27（owner：「彻底解决」）：**最终一道** —— 内容指纹对账。
+        let got_hash: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        if !got_hash.eq_ignore_ascii_case(item.hash.trim()) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!(
+                "{who}：字节与**内容指纹**对不上（要 {}…、收到 {}…）⇒ 不落盘（空壳/截断/串件都挡在这里）",
+                &item.hash[..12.min(item.hash.len())],
+                &got_hash[..12.min(got_hash.len())]
+            ));
         }
         std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
         // E1: when at-rest encryption is on, store the downloaded PLAINTEXT
@@ -7429,6 +7455,22 @@ pub(crate) fn attachment_size_ok(size: i64, expected: Option<i64>) -> Result<(),
     Ok(())
 }
 
+/// ⭐ **2026-10-27（owner：「彻底解决」）**：这段字节是不是**这个内容指纹**对应的那一份 —— 纯函数。
+///
+/// 为什么要有它（比"大小对账"更根本）：内容寻址的 hash 是 `sha256(明文)`，所以**只要字节对，
+/// 指纹必然对**；反过来，0 字节 / 截断 / 串件 / 空壳的密文 —— 任何"字节不对"都会在这里露出来。
+/// ⚠️ 十六进制**大小写不敏感**（两边都可能是小写，但不要靠这个假设）。
+pub(crate) fn attachment_digest_ok(expected_hex: &str, bytes: &[u8]) -> bool {
+    let expected = expected_hex.trim();
+    if expected.is_empty() {
+        return false;
+    }
+    let mut h = Sha256::new();
+    h.update(bytes);
+    let got: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    got.eq_ignore_ascii_case(expected)
+}
+
 #[cfg(test)]
 mod attachment_size_guard_tests {
     use super::*;
@@ -7448,6 +7490,24 @@ mod attachment_size_guard_tests {
         assert!(attachment_size_ok(123, None).is_ok(), "没有期望大小时不许拿猜的数当判据");
         // 元数据把 size 记成 0（老行）⇒ 视为"没有期望"，只走第一道门
         assert!(attachment_size_ok(123, Some(0)).is_ok(), "size=0 的老行不算期望值");
+    }
+
+    /// 内容指纹：sha256("hello") 这个**已知值** ⇒ 收；空/错/多一字节 ⇒ 拒；大小写不敏感。
+    #[test]
+    fn the_content_fingerprint_must_match_the_bytes() {
+        // sha256("hello")
+        let h = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+        assert!(attachment_digest_ok(h, b"hello"), "字节对 ⇒ 赢");
+        assert!(
+            attachment_digest_ok(&h.to_uppercase(), b"hello"),
+            "十六进制大小写不敏感"
+        );
+        assert!(
+            !attachment_digest_ok(h, b""),
+            "空字节不可能对得上一个非空内容的指纹 —— 空壳就死在这一行"
+        );
+        assert!(!attachment_digest_ok(h, b"hello!"), "多一字节也要拒");
+        assert!(!attachment_digest_ok("", b"hello"), "空指纹一律不认");
     }
 }
 

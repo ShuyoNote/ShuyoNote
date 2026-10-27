@@ -210,9 +210,17 @@ pub(crate) fn open_space_conn(space_id: &str) -> Result<Connection, String> {
 /// ⚠️ 只有**一处**实现（写入侧 `pair_device` 与校验侧 `mesh::authorized` 共用 ✓）——
 /// 两处各写一份哈希迟早会漂，而漂的方向是"**校验对不上** ⇒ 谁都进不来"或更坏的"漏" ✗。
 pub(crate) fn sha256_hex(s: &str) -> String {
+    sha256_hex_bytes(s.as_bytes())
+}
+
+/// ⭐ **2026-10-27（owner：「彻底解决」）**：`sha256` 的十六进制，**按字节**算 ——
+/// 附件是**内容寻址**的（`hash = sha256(明文)` ✓，`attachments::save_image` 那一行就是这个），
+/// 而附件字节不一定是合法 UTF-8 ⇒ ⛔ 不能借 `sha256_hex(&str)` 那条（会把字节当文本）✗。
+/// ⚠️ 仍然**只有一处实现**（`sha256_hex` 也转调它 ✓）。
+pub(crate) fn sha256_hex_bytes(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
-    h.update(s.as_bytes());
+    h.update(bytes);
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
