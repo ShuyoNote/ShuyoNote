@@ -1000,6 +1000,9 @@ pub fn run() {
             sync::mesh_missing_spaces,
             sync::mesh_create_spaces,
             sync::mesh_set_config,
+            // ⭐ 2026-10-27（owner 拍 M2）：用户**进入「局域网同步」页**时才备好局域网前置
+            //   （设备身份／自动组名／监听地址／档案行）—— ⛔ 不在启动时自动写（桌面隐私口径不变 ✓）。
+            sync::mesh_ensure_defaults,
             // 阶段 1 · 冲突留痕与裁决（提示 UI 的两个入口；数据在本地表 `page_conflicts`）
             commands::list_page_conflicts,
             commands::resolve_page_conflict,

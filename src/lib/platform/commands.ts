@@ -1066,6 +1066,13 @@ export interface CommandMap {
     };
     result: MeshConfigState;
   };
+  /**
+   * ⭐ **2026-10-27（owner 拍 M2）**：**用户进入「局域网同步」页时**才把局域网前置备好
+   * （设备身份／自动组名／监听地址／档案行；只补不覆盖、幂等）。
+   * ⚠️ ⛔ 不在启动时调 —— 桌面保持「用户不配就不广播」那条隐私口径 ✓。
+   * 回的是**读数**（同 `mesh_set_config`）。
+   */
+  mesh_ensure_defaults: { args: { workspaceId?: string | null }; result: MeshConfigState };
 
   // ---- MCP 接入的面板（M1 收口，2026-10-06 ✓）----
   // 面板只要三件事：读状态／开关／轮换令牌 ✓；**通道那半不在这里**（它归 `mcp_channel` ✓）。

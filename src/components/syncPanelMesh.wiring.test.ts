@@ -22,6 +22,11 @@ describe("网格（丙-③-b）· 面板接线", () => {
 
   it("① 面板真的调了命令面那两个命令（少一个就有一半功能点不到）", () => {
     expect(panel, "面板没接 `mesh_set_config` ⇒ 用户没法开网格").toContain("api.meshSetConfig(");
+    // ⭐ 2026-10-27（owner 拍 M2）：**第一次进入本页**要自动备好局域网前置 —— ⛔ 不是启动时（见 ①c）。
+    expect(panel, "没接 `mesh_ensure_defaults` ⇒ 新装/清过数据的桌面用户仍然没有入口").toContain(
+      "api.meshEnsureDefaults(",
+    );
+    expect(commandsTs, "缺 `mesh_ensure_defaults` 的契约条目").toContain("mesh_ensure_defaults:");
     // ★ 2026-09-26 口径收敛：**交换并进「同步」**（原来有一个单独的「立刻交换一轮」按钮）。
     //   所以这条断言从"面板里有这个词"改成"**`syncOne` 那段里有它**" —— 否则把调用挪到别处
     //   （比如某一个已经没人点的按钮里）也照样绿。
@@ -35,6 +40,22 @@ describe("网格（丙-③-b）· 面板接线", () => {
     expect(meshAt, "网格那一步必须放在 catch 之后（＝ finally 里）").toBeGreaterThan(catchAt);
     expect(panel, "「立刻交换一轮」那个按钮应当已经删掉（同一个意图两个动作）").not.toContain("const meshRoundNow");
     expect(panel, "「立刻交换一轮」那个按钮应当已经删掉").not.toContain("void meshRoundNow()");
+  });
+
+  it("①c ⭐ M2 的隐私承载：**不在启动时自动开**、**本机只自动跑一次**、**已配过不写**", () => {
+    // ⭐ 2026-10-27（owner 拍 M2）：桌面「用户不配就不广播」这条口径**一个字不改** ——
+    //   自动备好只发生在**用户进入本页**（组件可见 ⇒ 有 lanStatus）且本机**第一次**。
+    expect(panel, "M2：自动备好必须有一枚本机一次性标记").toContain("LAN_AUTO_CONFIG_KEY");
+    expect(panel, "M2：已配过（mesh.bind 非空）时一个字节都不许写").toContain("if (lanStatus.mesh?.bind) return;");
+    // ⛔ 启动路径（App.tsx）里不许调它 —— 那是 owner 10-14 那条隐私口径的反例。
+    const app = read("src/App.tsx");
+    expect(app, "⛔ 启动路径不许调 mesh_ensure_defaults（桌面保持不配就不广播）").not.toContain("meshEnsureDefaults");
+    // ⛔ 后端也不许在 setup 里加桌面调用（只在移动端那支有）。
+    const libRs = read("src-tauri/src/lib.rs");
+    expect(libRs, "Rust 命令面必须注册 `mesh_ensure_defaults`").toContain("sync::mesh_ensure_defaults,");
+    expect(libRs, "⛔ setup 里不许新增桌面自动调用（只有 cfg(mobile) 那一支）").not.toContain(
+      "crate::sync::ensure_mesh_defaults(&c)",
+    );
   });
 
   it("①b 自动同步也对网格生效（不是只有手点「同步」才换）", () => {
@@ -78,17 +99,16 @@ describe("网格（丙-③-b）· 面板接线", () => {
     expect(panel.slice(at, at + 120), "serverRows 不是按团队过滤的").toContain('r.kind === "team"');
   });
 
-  it("③ 「关掉网格」走清除（`\"\"`），不是 `null` —— **换对象**：那条界面已撤，口径归后端", () => {
+  it("③ 「关掉网格」走清除（`\"\"`），不是 `null` —— **2026-10-27 M2 起界面又有这一颗了**", () => {
     // ⭐ **2026-10-14（owner：先拍删那张卡 ⇒ 再拍「去掉孤儿组件」）** ✗：这一条原来钉的是界面里那句
-    //   `api.meshSetConfig(activeId, "", null)` ✓ —— ⭐ 它住的 `MeshAdvancedForm.tsx` **已删** ✓ ⇒ ⭐ 对象没了 ✓。
-    //   ⭐ 按 R192 换对象：⛔ 不删这条 ✓，换成**现在承重的那两半** ✓：
-    //     · ⛔ 界面里不许再有那句（撤了就是撤了 ✓）；
-    //     · ⭐ 「清除 ＝ 空串、⛔ 不是 `null`」这条口径**在后端仍有承重**（`mesh.rs` 的 `mesh_set_config` ✓）。
-    // ⚠️ **必须先剥注释** ✗ —— 本文件的 `read()` 是**原样读**（不剥 ✓），而面板里那条注释**正是**在讲这句
-    //    调用 ✓（`SyncPanel.tsx` 的 `disableMesh` 那条 ✓）⇒ ⛔ 不剥的话这条判据会被**解释它自己的注释**喂饱 ⇒ 假红 ✓
-    //    （实测：第一版就是这么红的 ✓）。
+    //   `api.meshSetConfig(activeId, "", null)` ✓ —— ⭐ 它住的 `MeshAdvancedForm.tsx` **已删** ✓ ⇒ 对象没了 ✓。
+    // ⭐ **2026-10-27（owner 拍 M2）**：⭐ **界面又有了这一颗**（「关闭局域网同步」✓）—— 但它**不是**
+    //   旧设置卡的复活：只有一枚可逆开关，没有输入框／口令 ✓ ⇒ 这一条**换回"界面里要有它"** ✗
+    //   （R192：换对象、⛔ 不删断言 ✓）。
     const stripped = panel.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
-    expect(stripped, "⛔ 界面里那条清除调用已撤（owner 2026-10-14 拍删 ✓）").not.toContain('api.meshSetConfig(activeId, "", null)');
+    expect(stripped, "M2：界面里「关闭局域网同步」必须走清除（`\"\"`，⛔ 不是 `null`）").toContain(
+      'api.meshSetConfig(activeId, "", null)',
+    );
     const meshRs = readFileSync(resolve(__dirname, "..", "..", "src-tauri", "src", "mesh.rs"), "utf8");
     expect(meshRs, "⭐ 那条口径后端仍在（`mesh_set_config` ✓）").toContain("mesh_set_config");
   });

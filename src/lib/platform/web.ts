@@ -1799,6 +1799,22 @@ export function makeInvoke(store: SqliteStore) {
         note: "Web 版开不了本机端口 ⇒ 网格这一档只在桌面版可用（设置没有落下）",
       } as T;
     }
+    if (cmd === "mesh_ensure_defaults") {
+      // ⭐ 2026-10-27（owner 拍 M2）：**备好局域网前置**在 Web 上同样不可用 ——
+      //   没有发现层、开不了本机端口 ⇒ 回一个"关着 ＋ 为什么"的读数（与 `mesh_set_config` 同一句人话），
+      //   ⛔ 不抛错（界面照常渲染）、⛔ 也不假装写了任何东西。
+      return {
+        enabled: false,
+        bind: null,
+        tokenSet: false,
+        window: null,
+        served: [],
+        paired: [],
+        note: "Web 版开不了本机端口 ⇒ 局域网这一档只在桌面版可用（没有自动开启任何东西）",
+        reach: "Web 版没有本机监听 ⇒ 别人拉不到",
+        announced: null,
+      } as T;
+    }
     if (cmd === "relay_status") {
       // 跨网中继那两格（图⑤「中继」／图⑧「中继许可证」）：Web 上这一档**根本不可用** ——
       // 中继连接面是 Rust 侧的事（上游 iroh-relay 客户端 ＋ 本机配置 ＋ 设备私钥），
