@@ -121,11 +121,14 @@ pub(crate) fn decide_room_adoption(local: &str, auto: bool, peer_rooms: &[String
     }
 }
 
-/// ⭐ 2026-10-26：只在移动端跑 —— **按对端公告采用同步组名**（幂等：采用过 ⇒ 标记清掉 ⇒ 不再跑）。
+/// ⭐ 2026-10-26/27：**按对端公告采用同步组名**（幂等：采用过 ⇒ 标记清掉 ⇒ 不再跑）。
+///
+/// ⚠️ 2026-10-27（owner 拍 M2）：**桌面也跑** —— 但只在"组名是自动生成的（`mesh_room_auto=1`）"时；
+///   桌面用户手填的组名永远不动 ✓。桌面那条 `mesh_room_auto=1` 只可能来自
+///   `mesh_ensure_defaults`（用户**进入该页**时才调）⇒ 桌面默认仍不会采用/广播 ✓。
 ///
 /// ⚠️ 写库只在这一处：`mesh_room`（设备级那一格）＋ `mesh_room_auto=0`。
 /// ⚠️ 组名**不是秘密**（见 `LanAnnounce::room` 的注释 ✓）⇒ 日志只打前 8 位做排障 ✓。
-#[cfg(mobile)]
 fn maybe_adopt_peer_room(app: &tauri::AppHandle, state: &LanState, now: i64) {
     use tauri::Manager;
     let (local, auto) = {
@@ -155,13 +158,13 @@ fn maybe_adopt_peer_room(app: &tauri::AppHandle, state: &LanState, now: i64) {
     let db = app.state::<Db>();
     let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
     if let Err(e) = crate::mesh::set_mesh_room_device(&c, Some(&next)) {
-        eprintln!("[mesh] 移动端：采用对端同步组名失败（继续用自动组名）：{e}");
+        eprintln!("[mesh] 采用对端同步组名失败（继续用自动组名）：{e}");
         return;
     }
     let _ = crate::sync::set_meta_state(&c, crate::sync::MESH_ROOM_AUTO_KEY, "0");
     let short: String = next.chars().take(8).collect();
     eprintln!(
-        "[mesh] 移动端：已采用对端报的**同步组名**（{short}…）⇒ 下一轮起按同一批子房间号服务/拉取 ✓"
+        "[mesh] 已采用对端报的**同步组名**（{short}…）⇒ 下一轮起按同一批子房间号服务/拉取 ✓"
     );
 }
 
@@ -916,11 +919,11 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             //    ⚠️ 判别式走 `should_enable(bound_profile_count(..))` —— 与判据用的是**同一把尺**
             //    （不是 `profiles.len()`）：只填了地址还没选空间的行**不许**让我们开始广播。
             let profiles = bound_profiles(&app2);
-            // ⭐⭐ **2026-10-26（移动端）**：先看这一轮听到的对端有没有报**同步组名** —— 手机的组名
-            //   若是自动生成的，就采用对端的（判定在纯函数 `decide_room_adoption` ✓）。
+            // ⭐⭐ **2026-10-26（移动端）／2026-10-27（桌面 M2）**：先看这一轮听到的对端有没有报
+            //   **同步组名** —— 本机组名若是自动生成的，就采用对端的（判定在纯函数 `decide_room_adoption` ✓）。
             //   ⚠️ 必须在下面 `mesh_cfgs` **之前**：同一轮就该按新组名开窗/公告 ✓。
-            //   ⚠️ 只在 `cfg(mobile)` 下调用 ⇒ 桌面行为逐字节不变 ✓。
-            #[cfg(mobile)]
+            //   ⚠️ 桌面：`mesh_room_auto` 只可能由 `mesh_ensure_defaults` 写（用户进入该页时才调）
+            //      ⇒ 没进过那一页的桌面依旧不受影响 ✓。
             maybe_adopt_peer_room(&app2, state, now);
             // ★ 丙-③-b-2b：先看哪几个空间开了网格 ⇒ ① 把窗口确保跑起来 ② 拿**实际绑上的地址**
             //   当公告基址。⚠️ 窗口起不来的那一个**不宣告**（宁可这一轮不露面，也不报一个拉不到的地址）。

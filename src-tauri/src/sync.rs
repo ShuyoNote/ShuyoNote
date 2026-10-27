@@ -5501,6 +5501,44 @@ fn ensure_local_profile_row(c: &Connection, ws_id: &str) -> rusqlite::Result<usi
     )
 }
 
+/// ⭐ **2026-10-27（owner 拍 M2）**：平台中立的入口名。
+///
+/// 它**就是**移动端启动那四步（设备身份／自动组名／监听地址／档案行），
+/// 桌面在「用户**进入**局域网同步页」时由命令 `mesh_ensure_defaults` 调它。
+/// ⚠️ 名字保留 `ensure_mobile_mesh_defaults`（判据与调用点稳定）；这里只加别名，⛔ 不复制第二份实现。
+pub fn ensure_mesh_defaults(c: &Connection) -> Result<(), String> {
+    ensure_mobile_mesh_defaults(c)
+}
+
+/// ⭐⭐ **2026-10-27（owner 拍 M2）**：**用户进入「局域网同步」页时**才把局域网前置备好 ——
+/// ⛔ 不在启动时自动写（桌面保持"用户不配就不广播"那条隐私口径 ✓）。
+///
+/// 做的事＝[`ensure_mesh_defaults`]（设备身份／自动组名／监听地址／档案行，只补不覆盖 ✓），
+/// 然后**立刻回一次读数**给界面 —— 界面据此把状态条从「未读到」变成真地址，并挂出「已自动开启」。
+/// ⚠️ 幂等：已有值一个字节都不改（判据 `mobile_defaults_never_override_configured_values` ✓）。
+/// ⚠️ 只有**用户动作**会走到这里（前端在该页首次打开且 `mesh.bind == null` 时调一次）⇒ 默认仍是"不广播"。
+#[tauri::command]
+pub fn mesh_ensure_defaults(
+    db: State<'_, Db>,
+    workspace_id: Option<String>,
+) -> Result<crate::mesh::MeshConfigState, String> {
+    let ws = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        ensure_mesh_defaults(&c)?;
+        match workspace_id.as_deref().filter(|w| !w.trim().is_empty()) {
+            Some(w) => w.to_string(),
+            None => crate::workspaces::active_workspace_id(&c)?,
+        }
+    };
+    let c = db.0.lock().expect("db mutex poisoned");
+    let scope = mesh_scope_at(&c, Some(ws.as_str()))?;
+    // ⚠️ **原始** `space_id` 才判得出"设备级"（R211 的口径 ✓ —— 个人档原始是空串）。
+    //   ⛔ 不能拿 `scope.space`（解析后的子房间号）✗ —— 那会被当成团队档去读
+    //   `mesh_bind:<子房间号>` ⇒ 读不到 ⇒ 面板又显示「未读到」✗（＝ R211 那个形状的复发 ✓）。
+    let raw_space = if scope.device_level { "" } else { scope.space.as_str() };
+    mesh_config_state_at(&c, raw_space, &ws)
+}
+
 /// ⚠️ **2026-10-04 加**：⭐ 只挑「哪一行」✗ —— 给 `mesh_set_config` 写**配对暗号**用 ✓。
 /// 与 `mesh_scope` 的区别：它也**不要求** `space_id` ✓（个人空间正是没有它 ✓）。
 fn mesh_target_ws(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<String, String> {
@@ -8385,6 +8423,40 @@ mod personal_room_and_backfill_tests {
             None,
             "用户设的组名**不是**自动值 ⇒ 不许打自动标记（否则会被广播改掉）"
         );
+    }
+
+    /// ⭐ **2026-10-27（owner 拍 M2）**：命令层 `mesh_ensure_defaults` 的后半段 ——
+    /// 备好之后**用原始 `space_id`（空串）读**，才看得到 `enabled=true` / `bind=0.0.0.0:8788`。
+    /// ⚠️ 这条钉住 R211 那个形状：⛔ 拿**解析后的子房间号**当 `space_id` 去读 ⇒ 会被当团队档
+    /// ⇒ `settings_for` 读 `mesh_bind:<子房间号>` 读不到 ⇒ 面板又是「未读到」✗。
+    #[test]
+    fn m2_after_defaults_the_panel_reads_a_real_bind_with_the_raw_space_id() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name, kind, created_at) VALUES ('default','默认空间','',1);",
+        )
+        .unwrap();
+        ensure_mesh_defaults(&c).expect("M2：备好默认值不许报错");
+        // 读数会去查"认了哪些设备"那张表（`mesh_config_state_at` ⇒ `paired_devices`）——
+        // 它住在 meta.db 的主库；本模块的夹具没建它，这一条自带一张最小形状的即可。
+        c.execute_batch(
+            "CREATE TABLE IF NOT EXISTS mesh_paired_devices (
+                 space_id TEXT NOT NULL, device_id TEXT NOT NULL,
+                 secret_sha256 TEXT NOT NULL DEFAULT '', added_at_ms INTEGER NOT NULL DEFAULT 0,
+                 pubkey TEXT NOT NULL DEFAULT '', PRIMARY KEY (space_id, device_id));",
+        )
+        .unwrap();
+        let got = mesh_config_state_at(&c, "", "default").expect("读数不许报错");
+        assert!(got.enabled, "备好之后面板必须看到「已开启」");
+        assert_eq!(
+            got.bind.as_deref(),
+            Some("0.0.0.0:8788"),
+            "面板必须读到设备级那一格的监听地址（空串 space_id ＝ 设备级 ✓）"
+        );
+        // 顺带核一下：这一格的"没有值"必须是**真没配**，不是"读错键"。
+        let seed = crate::mesh::mesh_room_device(&c).unwrap_or_default();
+        let resolved = personal_room_for(&seed, "默认空间");
+        assert!(!resolved.is_empty(), "夹具必须能解析出子房间号");
     }
 }
 

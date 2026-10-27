@@ -161,6 +161,11 @@ const PAIR_CODE_UNAVAILABLE: Reading<string | null> = {
   reason: "还没接上读数（码 ＝ 本机公钥 ＋ 对方公钥 ＋ 这一轮的 trust_ask 算出来的）",
 };
 
+/** ⭐ **2026-10-27（owner 拍 M2）**：本机**只自动备一次**局域网前置 ——
+ *  一旦自动跑过（或用户手动关过），本机不再自动开第二次 ✓。
+ *  ⚠️ 用 localStorage（不是库）✓：它是"这台机器上这个界面的选择"，⛔ 不跟同步、不进备份 ✓。 */
+const LAN_AUTO_CONFIG_KEY = "shuyo.lan-sync-autoconfig.v1";
+
 /** ⭐ **P-3d（2026-10-13）**：设备列表那**三段**的名字与 testid ✓ ——
  *  ⭐ 数组下标 ＝ 段序（`nearbyBucket` 的返回值 ✓）：需要重新配对 ⇒ 已信任 ⇒ 待配对 ✓。 */
 const NEARBY_GROUPS = [
@@ -1153,6 +1158,51 @@ export function SyncPanel({
   //   ⚠️ **刀二十（2026-10-14）**：⭐ `heroState` **不再**用这一格了 ✗ —— 它现在由
   //     「已配对／在线／同步中」三件真事拼成（与当前是个人还是团队无关 ✓）。
   const isPersonalActive = serverRows.length === 0;
+
+  // ⭐⭐ **2026-10-27（owner 拍 M2）**：**第一次进入本页**才把局域网前置备好（设备身份／自动组名／
+  //   监听地址／档案行）—— ⛔ 不在启动时自动开（桌面保持"用户不配就不广播"那条隐私口径 ✓）。
+  //   ⚠️ 只在本机第一次（localStorage 标记）＋ 当前是个人空间 ＋ `mesh.bind` 还没配 时才跑；
+  //   ⚠️ 已经配过 ⇒ 一个字节都不写（`mesh_ensure_defaults` 本身也只补不覆盖 ✓）。
+  const [lanAutoNote, setLanAutoNote] = useState("");
+  useEffect(() => {
+    if (!isDesktopPlatform()) return;
+    if (!isPersonalActive || !activeId || !lanStatus) return;
+    if (lanStatus.mesh?.bind) return;
+    if (localStorage.getItem(LAN_AUTO_CONFIG_KEY) === "1") return;
+    localStorage.setItem(LAN_AUTO_CONFIG_KEY, "1");
+    let alive = true;
+    void (async () => {
+      try {
+        await api.meshEnsureDefaults(activeId);
+        if (!alive) return;
+        setLanAutoNote("已为本机自动开启局域网发现：同一 Wi-Fi 内的设备现在能发现本机（可关闭）");
+        setLanNonce((n) => n + 1);
+      } catch (e) {
+        if (alive) setLanAutoNote(`局域网自动开启失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPersonalActive, activeId, lanStatus]);
+
+  /** ⭐ 2026-10-27（M2）：开启 / 关闭局域网发现（用户可逆）—— 关闭只清监听地址（配对关系保留 ✓）。 */
+  const lanToggle = async () => {
+    if (!activeId) return;
+    try {
+      if (lanStatus?.mesh?.enabled) {
+        await api.meshSetConfig(activeId, "", null);
+        setLanAutoNote("已关闭局域网同步：本机不再被同网络设备发现（配对关系保留）");
+      } else {
+        await api.meshEnsureDefaults(activeId);
+        setLanAutoNote("已开启局域网同步：同一 Wi-Fi 内的设备现在能发现本机");
+      }
+      setLanNonce((n) => n + 1);
+    } catch (e) {
+      setStatus(`局域网同步开/关没成功：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
   // ⚠️ **2026-10-04 改**（owner：「个人空间不显示登录状态文案信息」）：
   //   ⭐ 个人空间**不经过服务器** ⇒ ⭐ 不该说「还没绑同步」✗（那是服务器口径的提醒 ✓）；
   //   ⭐ 它该说的是自己那条路：**附近设备直连** ✓。
@@ -1513,6 +1563,21 @@ export function SyncPanel({
                 }
               })()}
             />
+            {/* ⭐ **2026-10-27（owner 拍 M2）**：局域网发现**可开可关** —— 新用户第一次进这一页时
+                `mesh.bind` 是空的（库里没有），上面那段 effect 会**自动备好**；这颗按钮是**可逆**的
+                那一半（关闭 ＝ `meshSetConfig(activeId, "", null)`，配对关系保留 ✓）。
+                ⚠️ ⓘ 这一行**不是**旧「设备直连设置卡」的复活：不摆输入框、不摆口令，只有一枚开关 ✓。 */}
+            {isPersonalActive && isDesktopPlatform() && (
+              <div
+                className="sync-hint"
+                style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
+              >
+                <button className="sync-btn" data-testid="lan-sync-toggle" onClick={() => void lanToggle()}>
+                  {lanStatus?.mesh?.enabled ? "关闭局域网同步" : "开启局域网同步"}
+                </button>
+                {lanAutoNote && <span data-testid="lan-sync-auto-note">{lanAutoNote}</span>}
+              </div>
+            )}
             {/* ⭐ 2026-10-23：「对端有、你没有的空间」—— 用户勾了才建（默认一个都不勾） */}
             <MeshMissingSpaces />
             </div>

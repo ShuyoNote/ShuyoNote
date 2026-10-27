@@ -573,6 +573,13 @@ export const api = {
       token: token ?? null,
       room: room ?? null,
     }) as Promise<MeshConfigState>,
+  /**
+   * ⭐ **2026-10-27（owner 拍 M2）**：**用户进入「局域网同步」页时**备好局域网前置
+   * （设备身份／自动组名／监听地址／档案行；只补不覆盖、幂等）。
+   * ⚠️ ⛔ 不在启动时调 —— 桌面保持「用户不配就不广播」。
+   */
+  meshEnsureDefaults: (workspaceId?: string | null) =>
+    invoke("mesh_ensure_defaults", { workspaceId: workspaceId ?? null }) as Promise<MeshConfigState>,
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
   // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
   // 传 `server_url` 会被判为「缺少必填键 serverUrl」——这是运行时错误，TS 查不出来，
