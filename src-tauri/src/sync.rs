@@ -4640,6 +4640,12 @@ pub async fn mesh_sync_now(
             "；因对端的服务，新建了空间「{}」",
             created_spaces.join("」「")
         ));
+        // ⭐ 2026-10-28（owner 报「同步后空间列表没有自动刷新」）：**新空间也要告诉前端** ✗ ——
+        //   `mesh-applied` 只带"改了哪些页"，而自动建发生在本函数**开窗之后、`round` 之前**
+        //   ⇒ 这一轮 `report` 里没有那个新空间 ⇒ 前端那条监听收不到 ⇒ 侧栏（`useSpaceStore.spaces`）
+        //   永远不重读，要切空间/重启才看见新空间 ✓。⇒ 单独发一格"空间清单变了"✓。
+        use tauri::Emitter;
+        let _ = app.emit("spaces-changed", serde_json::json!({ "created": created_spaces }));
     }
 
     // ④ ⭐⭐ **2026-10-09（task-8）**：**网格这一轮也记一条 `sync_history`** ✓。

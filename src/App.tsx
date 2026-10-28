@@ -100,6 +100,7 @@ import { useUpdateChecker } from "./lib/useUpdateChecker";
 import { api } from "./lib/api";
 import { createDeepLinkHandler } from "./lib/deepLinkDispatch";
 import { useNotes } from "./store/notes";
+import { useSpaceStore } from "./store/space";
 import { shouldDropPendingSave } from "./lib/pendingSave";
 import { isLocalEditRecent, markLocalEdit } from "./lib/editIdle";
 import { usePlugins } from "./store/plugins";
@@ -357,6 +358,23 @@ function NoteEditor({ pageId }: { pageId: string }) {
       .listen<{ spaceId: string; pages: string[] }>("mesh-applied", () => {
         void useNotes.getState().loadPages();
         if (!isLocalEditRecent()) void useNotes.getState().refreshCurrent();
+      })
+      .then((u) => {
+        unlisten = u;
+      });
+    return () => unlisten?.();
+  }, []);
+
+  // ⭐ 2026-10-28（owner 报「同步后空间列表没有自动刷新」）：**新空间要重读侧栏** ✗ ——
+  //   Rust 的自动建空间发生在 `round` **之前**，所以 `mesh-applied` 那一批页里没有它
+  //   （那条监听只刷页列表/当前页）⇒ 侧栏一直停在旧清单，要切空间/重启才看见新空间 ✓。
+  //   后端在"这一轮真的新建了空间"时单独发一格 `spaces-changed`；这里只做一件事：重读清单 ✓。
+  //   ⚠️ 重读失败只影响"侧栏这一秒显示什么"，不影响同步本身（`load()` 自己 catch 掉 ✓）。
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void platform.event
+      .listen<{ created: string[] }>("spaces-changed", () => {
+        void useSpaceStore.getState().load();
       })
       .then((u) => {
         unlisten = u;

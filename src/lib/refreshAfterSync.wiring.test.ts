@@ -56,4 +56,20 @@ describe("同步收口 ⇒ 当前打开的页要重读（接线判据）", () =>
     expect(body, "收到 mesh-applied 没刷新当前页").toContain("refreshCurrent()");
     expect(body, "没做「正在打字」节流 ⇒ 会在用户打字时重挂编辑器").toContain("isLocalEditRecent()");
   });
+
+  // ⭐ 2026-10-28（owner 报「同步后空间列表没有自动刷新」）：**空间清单也要有人重读** ✗ ——
+  //   自动建空间发生在 `round` **之前** ⇒ 新空间不在 `mesh-applied` 那一批页里
+  //   ⇒ 只刷页列表的话，侧栏（`useSpaceStore.spaces`）永远停在旧清单。
+  //   判据：命令面在"真的新建了空间"时 emit `spaces-changed`；前端监听它并重读空间清单。
+  it("⑤ 网格新建了空间 ⇒ 后端发 spaces-changed，前端重读空间清单", () => {
+    const sync = read("src-tauri/src/sync.rs");
+    expect(sync, "自动建空间之后没发 spaces-changed ⇒ 侧栏永远停在旧清单").toContain(
+      'app.emit("spaces-changed"',
+    );
+    const at = app.indexOf('"spaces-changed"');
+    expect(at, "前端没监听 spaces-changed").toBeGreaterThan(-1);
+    const body = app.slice(at, at + 400);
+    expect(body, "收到 spaces-changed 没重读空间清单").toContain("useSpaceStore.getState().load()");
+    expect(app, "App 没引空间 store").toContain('from "./store/space"');
+  });
 });

@@ -742,7 +742,18 @@ pub async fn pull_from_peer(
         .await
         .map_err(|e| format!("拉对端 {} 失败：{e}", peer.device_id))?;
     if !(200..300).contains(&reply.status) {
-        return Err(format!("对端 {} 回了 {}", peer.device_id, reply.status));
+        // ⭐ 2026-10-28（真机：「加密空间不能同步」历史里只留一句 `对端 … 回了 401` ⇒
+        //   分不清是「没出示」「卡不在这个空间的名单里」还是「签名没过」）：
+        //   对端 4xx/5xx 的**响应体本来就是我们自己拼的人话**（没有凭证），把它一并带出来 ✓。
+        //   ⚠️ 截断 160 字（与 `pull_log_line` 同一口径），⛔ 别让一整页 HTML 进历史 ✗。
+        let tail: String = reply.body.chars().take(160).collect();
+        let tail = tail.trim();
+        return Err(format!(
+            "对端 {} 回了 {}{}",
+            peer.device_id,
+            reply.status,
+            if tail.is_empty() { String::new() } else { format!(" ｜ {tail}") }
+        ));
     }
     let body: PullResponse = serde_json::from_str(&reply.body)
         .map_err(|e| format!("对端 {} 的拉取响应不是 JSON：{e}", peer.device_id))?;
