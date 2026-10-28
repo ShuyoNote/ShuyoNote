@@ -63,7 +63,9 @@ describe("同步收口 ⇒ 当前打开的页要重读（接线判据）", () =>
   //   判据：命令面在"真的新建了空间"时 emit `spaces-changed`；前端监听它并重读空间清单。
   it("⑤ 网格新建了空间 ⇒ 后端发 spaces-changed，前端重读空间清单", () => {
     const sync = read("src-tauri/src/sync.rs");
-    expect(sync, "自动建空间之后没发 spaces-changed ⇒ 侧栏永远停在旧清单").toContain(
+    // ⚠️ 2026-10-29：全仓 rustfmt 会把这句拆成多行 ⇒ 断言先**去掉空白**再找（判据仍是
+    //   「自动建空间之后真的 emit 了 spaces-changed」，不因排版变化假红）。
+    expect(sync.replace(/\s+/g, ""), "自动建空间之后没发 spaces-changed ⇒ 侧栏永远停在旧清单").toContain(
       'app.emit("spaces-changed"',
     );
     const at = app.indexOf('"spaces-changed"');

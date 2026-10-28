@@ -149,7 +149,11 @@ fn candidate_dirs(
     //    **从来不会命中**（Windows 恰好就是 `bin`，所以在本机一直没暴露）。⇒ 改为按候选目录逐个探测。
     if let Some(root) = vendored_default {
         for sub in ["bin", "lib", ""] {
-            out.push(if sub.is_empty() { root.clone() } else { root.join(sub) });
+            out.push(if sub.is_empty() {
+                root.clone()
+            } else {
+                root.join(sub)
+            });
         }
     }
     out
@@ -215,7 +219,11 @@ fn pick_library_dir(candidates: &[PathBuf]) -> Option<PathBuf> {
 #[cfg(debug_assertions)]
 fn vendored_root() -> Option<PathBuf> {
     let platform = if cfg!(target_os = "windows") {
-        if cfg!(target_arch = "aarch64") { "win-arm64" } else { "win-x64" }
+        if cfg!(target_arch = "aarch64") {
+            "win-arm64"
+        } else {
+            "win-x64"
+        }
     } else if cfg!(target_os = "macos") {
         "mac-univ"
     } else if cfg!(target_os = "android") {
@@ -717,7 +725,9 @@ const MIN_BUNDLED_FONT_BYTES: u64 = 1024;
 fn bundled_font_beside(dir: &std::path::Path) -> Option<(String, Vec<u8>)> {
     for name in BUNDLED_FONT_CANDIDATES {
         let path = dir.join(name);
-        let Ok(meta) = std::fs::metadata(&path) else { continue };
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
         if !meta.is_file() || meta.len() < MIN_BUNDLED_FONT_BYTES {
             continue;
         }
@@ -770,7 +780,11 @@ pub fn bundled_font_stats() -> (u64, u64) {
 
 impl BundledCjkFont {
     fn new(face: String, data: Vec<u8>) -> Self {
-        Self { face, data, next_id: 0 }
+        Self {
+            face,
+            data,
+            next_id: 0,
+        }
     }
 
     fn from_library_dir(dir: &std::path::Path) -> Option<Self> {
@@ -846,7 +860,10 @@ mod tests {
         let good = dir_with_lib("good");
         let good2 = dir_with_lib("good2");
 
-        assert_eq!(pick_library_dir(&[empty.clone(), good.clone()]), Some(good.clone()));
+        assert_eq!(
+            pick_library_dir(&[empty.clone(), good.clone()]),
+            Some(good.clone())
+        );
         assert_eq!(pick_library_dir(&[good.clone(), good2]), Some(good.clone()));
         assert_eq!(pick_library_dir(&[empty.clone()]), None);
         assert_eq!(pick_library_dir(&[]), None);
@@ -870,13 +887,7 @@ mod tests {
         #[cfg(not(target_os = "macos"))]
         assert_eq!(
             got,
-            vec![
-                exe,
-                res,
-                vend.join("bin"),
-                vend.join("lib"),
-                vend.clone()
-            ]
+            vec![exe, res, vend.join("bin"), vend.join("lib"), vend.clone()]
         );
         // macOS 多一项 `Contents/Frameworks`，且排在 exe 之前（那是 .app 束的常规位置）。
         #[cfg(target_os = "macos")]
@@ -911,11 +922,16 @@ mod tests {
     #[test]
     fn library_dir_uses_the_registered_resource_dir() {
         // 环境变量优先级最高：它若被设了，本判据的前提就不成立（显式跳过，不假绿也不假红）。
-        if std::env::var("SHUYONOTE_PDFIUM_DIR").map(|v| !v.trim().is_empty()).unwrap_or(false) {
+        if std::env::var("SHUYONOTE_PDFIUM_DIR")
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+        {
             eprintln!("跳过：SHUYONOTE_PDFIUM_DIR 已设，环境变量优先于资源目录");
             return;
         }
-        let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf()));
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|e| e.parent().map(|p| p.to_path_buf()));
         if let Some(d) = &exe_dir {
             if Pdfium::pdfium_platform_library_name_at_path(d).exists() {
                 eprintln!("跳过：测试二进制同目录已有库（它排在资源目录之前）");
@@ -925,7 +941,11 @@ mod tests {
         let dir = dir_with_lib("resdir-e2e");
         // 进程级 OnceLock 只能设一次 ⇒ 只有这一条判据调它（其余判据不碰）。
         set_resource_dir(dir.clone());
-        assert_eq!(library_dir(), dir.clone(), "资源目录登记后 library_dir() 必须命中它");
+        assert_eq!(
+            library_dir(),
+            dir.clone(),
+            "资源目录登记后 library_dir() 必须命中它"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -945,7 +965,10 @@ mod tests {
         ];
         let msg = missing_library_error(lib, &candidates);
 
-        assert!(msg.contains("/nowhere/libpdfium.so"), "要带上找的那个完整路径：{msg}");
+        assert!(
+            msg.contains("/nowhere/libpdfium.so"),
+            "要带上找的那个完整路径：{msg}"
+        );
         assert!(
             msg.contains(&library_file_name().to_string_lossy().to_string()),
             "要写清本平台的文件名（`bin/` 与 `lib/` 各平台不同）：{msg}"
@@ -956,8 +979,14 @@ mod tests {
             msg.find("/vendor/lib").expect("第三个候选要在"),
         );
         assert!(a < b && b < c, "候选必须**按顺序**列（顺序=优先级）：{msg}");
-        assert!(msg.contains("SHUYONOTE_PDFIUM_DIR"), "三条出路里要有环境变量那条：{msg}");
-        assert!(msg.contains("fetch-pdfium.mjs"), "要有开发机那条出路：{msg}");
+        assert!(
+            msg.contains("SHUYONOTE_PDFIUM_DIR"),
+            "三条出路里要有环境变量那条：{msg}"
+        );
+        assert!(
+            msg.contains("fetch-pdfium.mjs"),
+            "要有开发机那条出路：{msg}"
+        );
     }
 
     /// 判据：候选为空时也要说清（不许打出一个**空白清单** —— 那会被读成"没找过任何地方"）。
@@ -993,7 +1022,10 @@ mod tests {
             PdfFontCharacterSet::KoreanHangul,
             PdfFontCharacterSet::Symbol,
         ] {
-            assert!(wants_bundled_font(&cs), "这几类必须兜底（否则非嵌入中文仍旧不显示）");
+            assert!(
+                wants_bundled_font(&cs),
+                "这几类必须兜底（否则非嵌入中文仍旧不显示）"
+            );
         }
         for cs in [
             PdfFontCharacterSet::Ansi,
@@ -1006,7 +1038,10 @@ mod tests {
             PdfFontCharacterSet::Vietnamese,
             PdfFontCharacterSet::EasternEuropean,
         ] {
-            assert!(!wants_bundled_font(&cs), "这几类**不许**答（会挤掉平台字体映射）");
+            assert!(
+                !wants_bundled_font(&cs),
+                "这几类**不许**答（会挤掉平台字体映射）"
+            );
         }
     }
 
@@ -1042,7 +1077,10 @@ mod tests {
                 is_cursive: false,
             })
             .expect("第二次也必须作答");
-        assert_ne!(first.id, second.id, "id 必须唯一（同一 id 会让 PDFium 以为是同一个字体）");
+        assert_ne!(
+            first.id, second.id,
+            "id 必须唯一（同一 id 会让 PDFium 以为是同一个字体）"
+        );
 
         assert!(
             font.provide(PdfiumCustomFontProviderRequest {
@@ -1092,7 +1130,11 @@ mod tests {
             is_cursive: false,
         });
         let (asks2, answers2) = bundled_font_stats();
-        assert_eq!(asks2, asks1 + 1, "非 CJK 也算'被问过'（这是'它到底有没有开火'的证据）");
+        assert_eq!(
+            asks2,
+            asks1 + 1,
+            "非 CJK 也算'被问过'（这是'它到底有没有开火'的证据）"
+        );
         assert_eq!(answers2, answers1, "非 CJK **不许**记作答");
     }
 
@@ -1103,7 +1145,10 @@ mod tests {
     #[test]
     fn bundled_font_is_absent_until_the_file_is_really_there() {
         let empty = dir_without_lib("font-absent");
-        assert!(bundled_font_beside(&empty).is_none(), "目录里没有字体 ⇒ 不许装 provider");
+        assert!(
+            bundled_font_beside(&empty).is_none(),
+            "目录里没有字体 ⇒ 不许装 provider"
+        );
         assert!(BundledCjkFont::from_library_dir(&empty).is_none());
 
         let placeholder = empty.join(BUNDLED_FONT_CANDIDATES[0]);
@@ -1121,7 +1166,10 @@ mod tests {
 
         let missing = scratch("font-missing-dir");
         let _ = fs::remove_dir_all(&missing);
-        assert!(bundled_font_beside(&missing).is_none(), "目录不存在时不许 panic");
+        assert!(
+            bundled_font_beside(&missing).is_none(),
+            "目录不存在时不许 panic"
+        );
 
         let _ = fs::remove_dir_all(&empty);
     }
@@ -1256,7 +1304,11 @@ mod d1_rect_tests {
                 .unwrap_or_else(|e| panic!("裁剪渲染失败（scale={scale}, rect={rect:?}）：{e}"));
             assert_eq!(tw, tw_dev as usize, "块宽不符（scale={scale}）");
             assert_eq!(th, th_dev as usize, "块高不符（scale={scale}）");
-            assert_eq!(tile.len(), tw * th * 4, "块字节数不符（前端按 宽×高×4 校验）");
+            assert_eq!(
+                tile.len(),
+                tw * th * 4,
+                "块字节数不符（前端按 宽×高×4 校验）"
+            );
 
             let (fx, fy) = (x_dev as usize, y_dev as usize);
             let (ratio, mean, tot, maxd, lo, hi) = compare(&tile, tw, th, &full, fw, fx, fy);
@@ -1271,7 +1323,10 @@ mod d1_rect_tests {
                 100.0 * (tw * th) as f64 / (fw * fh) as f64
             );
 
-            assert!(tot > 100, "采样点太少（{tot}）⇒ 这份判据没在验（scale={scale}）");
+            assert!(
+                tot > 100,
+                "采样点太少（{tot}）⇒ 这份判据没在验（scale={scale}）"
+            );
             assert!(
                 hi as i32 - lo as i32 >= 16,
                 "请求的那块几乎是纯色（值域 {lo}..{hi}）⇒ 这条判据比不出内容 ⇒ 它没在验；\
@@ -1314,7 +1369,10 @@ mod d1_rect_tests {
                  请重新核对本模块 D1 那段的结论"
             ),
             Err(err) => {
-                println!("[D1] 第二次 bind_to_library（{}）的原文：{err}", lib.display());
+                println!(
+                    "[D1] 第二次 bind_to_library（{}）的原文：{err}",
+                    lib.display()
+                );
                 assert!(
                     matches!(err, PdfiumError::PdfiumLibraryBindingsAlreadyInitialized),
                     "二次绑定被拒的**理由**变了（现在是 {err:?}）⇒ 裸 FFI 那条路的结论要重新核"
@@ -1323,4 +1381,3 @@ mod d1_rect_tests {
         }
     }
 }
-

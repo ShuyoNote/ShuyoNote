@@ -57,7 +57,9 @@ pub fn load_or_create(c: &Connection) -> Result<DeviceIdentity, String> {
     if let Some(stored) = crate::sync::get_meta_state_any(c, DEVICE_IDENTITY_SK) {
         let t = stored.trim();
         if !t.is_empty() {
-            return Ok(DeviceIdentity { signing: secret_from_hex(t)? });
+            return Ok(DeviceIdentity {
+                signing: secret_from_hex(t)?,
+            });
         }
     }
     let seed = crate::crypto::random_32();
@@ -83,7 +85,9 @@ pub fn public_key_hex_of(c: &Connection) -> Result<Option<String>, String> {
     }
     // ⭐ 连**形状**一起核 ✓：库里那一格坏了 ⇒ 如实报"读不出来" ✓，⛔ 不许当成"没有身份"✗
     //   （两者的处置完全不同 ⇒ 界面上/日志里必须长得不一样 ✓）。
-    Ok(Some(hex::encode(secret_from_hex(t)?.verifying_key().as_bytes())))
+    Ok(Some(hex::encode(
+        secret_from_hex(t)?.verifying_key().as_bytes(),
+    )))
 }
 
 /// ⭐ 那串是不是**形状正确的公钥**（⭐ 32 字节 ⇒ 64 个十六进制字符 ✓）—— ⛔ 不猜、⛔ 不补位 ✗。
@@ -100,11 +104,21 @@ pub fn is_public_key_hex(s: &str) -> bool {
 /// ⚠️ 形状不对（长度／十六进制／点不在曲线上）⇒ ⭐ **如实回 `false`** ✗，⛔ 不 panic ✗ ——
 /// ⭐ 门的输入来自网线 ✓ ⇒ 烂输入是**常态** ✓。
 pub fn verify_hex(public_key_hex: &str, message: &[u8], signature_hex: &str) -> bool {
-    let Ok(pk) = hex::decode(public_key_hex.trim()) else { return false };
-    let Ok(pk_arr) = <[u8; 32]>::try_from(pk.as_slice()) else { return false };
-    let Ok(vk) = VerifyingKey::from_bytes(&pk_arr) else { return false };
-    let Ok(sig) = hex::decode(signature_hex.trim()) else { return false };
-    let Ok(sig_arr) = <[u8; 64]>::try_from(sig.as_slice()) else { return false };
+    let Ok(pk) = hex::decode(public_key_hex.trim()) else {
+        return false;
+    };
+    let Ok(pk_arr) = <[u8; 32]>::try_from(pk.as_slice()) else {
+        return false;
+    };
+    let Ok(vk) = VerifyingKey::from_bytes(&pk_arr) else {
+        return false;
+    };
+    let Ok(sig) = hex::decode(signature_hex.trim()) else {
+        return false;
+    };
+    let Ok(sig_arr) = <[u8; 64]>::try_from(sig.as_slice()) else {
+        return false;
+    };
     let sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
     use ed25519_dalek::Verifier;
     vk.verify(message, &sig).is_ok()
@@ -112,10 +126,15 @@ pub fn verify_hex(public_key_hex: &str, message: &[u8], signature_hex: &str) -> 
 
 /// 十六进制 ⇒ 那一把私钥（⚠️ 报错里 ⛔ **不含**私钥内容 ✗）。
 fn secret_from_hex(t: &str) -> Result<SigningKey, String> {
-    let raw = hex::decode(t)
-        .map_err(|_| "库里那把设备私钥不是十六进制 ⇒ **不猜**（把这一格清掉会换一把新身份，请先确认）".to_string())?;
+    let raw = hex::decode(t).map_err(|_| {
+        "库里那把设备私钥不是十六进制 ⇒ **不猜**（把这一格清掉会换一把新身份，请先确认）"
+            .to_string()
+    })?;
     let seed = <[u8; 32]>::try_from(raw.as_slice()).map_err(|_| {
-        format!("库里那把设备私钥长度不对（{} 字节，应当是 32）⇒ 不猜", raw.len())
+        format!(
+            "库里那把设备私钥长度不对（{} 字节，应当是 32）⇒ 不猜",
+            raw.len()
+        )
     })?;
     Ok(SigningKey::from_bytes(&seed))
 }
@@ -147,7 +166,11 @@ mod tests {
             b.public_key_hex(),
             "⛔ 两次读出来必须是同一把公钥 ✗（每次现生成 ＝ 每次都在换身份 ✓）"
         );
-        assert_eq!(a.public_key_hex().len(), 64, "Ed25519 公钥 ＝ 32 字节 ⇒ 64 个十六进制字符");
+        assert_eq!(
+            a.public_key_hex().len(),
+            64,
+            "Ed25519 公钥 ＝ 32 字节 ⇒ 64 个十六进制字符"
+        );
     }
 
     /// ⭐⭐ 判据②（**这条最要紧**）：⭐ 库里已经有那把 ⇒ ⛔ **一个字节都不许动** ✗。
@@ -168,7 +191,11 @@ mod tests {
         );
         // ⭐ 而且读回来的**确实是那一把**（⛔ 不是"没动库、但用的是新生成的"✗）
         let again = load_or_create(&c).unwrap();
-        assert_eq!(id.public_key_hex(), again.public_key_hex(), "同一把私钥 ⇒ 同一个公钥");
+        assert_eq!(
+            id.public_key_hex(),
+            again.public_key_hex(),
+            "同一把私钥 ⇒ 同一个公钥"
+        );
         assert_eq!(id.public_key_hex().len(), 64);
     }
 
@@ -179,7 +206,11 @@ mod tests {
         let id = load_or_create(&c).unwrap();
         let msg = b"mesh/pull?space_id=room-1&device=dev-a&ts=1700000000";
         let sig = id.sign_hex(msg);
-        assert_eq!(sig.len(), 128, "Ed25519 签名 ＝ 64 字节 ⇒ 128 个十六进制字符");
+        assert_eq!(
+            sig.len(),
+            128,
+            "Ed25519 签名 ＝ 64 字节 ⇒ 128 个十六进制字符"
+        );
         assert!(
             verify_hex(&id.public_key_hex(), msg, &sig),
             "⭐ 自己签的、拿自己的公钥验 ⇒ 必须过 ✓"
@@ -196,9 +227,18 @@ mod tests {
         tampered.replace_range(0..2, flipped);
         // ⭐ 前提**明写出来** ✓：不写这一句，将来谁再把它改成"可能等于原件"的写法，
         //   下面那条断言仍然会**偶发地**绿过去 ✓（本仓老手法：把前提也钉成判据 ✓）。
-        assert_ne!(tampered, sig, "⭐ 前提：这一步必须**真的改掉**它（⛔ 否则下面那条量的是空气 ✗）");
-        assert!(!verify_hex(&id.public_key_hex(), msg, &tampered), "改了签名 ⇒ 不许过");
-        assert!(!verify_hex(&id.public_key_hex(), b"another-message", &sig), "换了消息 ⇒ 不许过");
+        assert_ne!(
+            tampered, sig,
+            "⭐ 前提：这一步必须**真的改掉**它（⛔ 否则下面那条量的是空气 ✗）"
+        );
+        assert!(
+            !verify_hex(&id.public_key_hex(), msg, &tampered),
+            "改了签名 ⇒ 不许过"
+        );
+        assert!(
+            !verify_hex(&id.public_key_hex(), b"another-message", &sig),
+            "换了消息 ⇒ 不许过"
+        );
         let other = load_or_create(&fixture()).unwrap();
         assert!(
             !verify_hex(&other.public_key_hex(), msg, &sig),
@@ -217,7 +257,10 @@ mod tests {
             assert!(!verify_hex(bad, b"x", &sig), "公钥形状不对（{bad}）⇒ false");
         }
         for bad in ["", "zz", &"0".repeat(126)] {
-            assert!(!verify_hex(&id.public_key_hex(), b"x", bad), "签名形状不对（{bad}）⇒ false");
+            assert!(
+                !verify_hex(&id.public_key_hex(), b"x", bad),
+                "签名形状不对（{bad}）⇒ false"
+            );
         }
     }
 

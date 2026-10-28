@@ -71,7 +71,10 @@ pub enum SourcePick {
     /// registry 里有若干版本，但**没有**要的那个 ⇒ 绝不退而求其次。
     VersionMismatch { wanted: String, found: Vec<String> },
     /// 连版本都要不到（`Cargo.lock` 没这个包 / 解析不出）或 registry 里一个都没有。
-    NotFound { wanted: Option<String>, found: Vec<String> },
+    NotFound {
+        wanted: Option<String>,
+        found: Vec<String>,
+    },
 }
 
 /// 私有副本目录（`<repo>/.gm-build/libsqlite3-sys-<ver>/sqlcipher`）—— 2026-09-23「消灭补丁残留」那一格带来的新形态。
@@ -83,7 +86,10 @@ pub enum SourcePick {
 ///   · 老模式：都不是 ⇒ 编译的是 registry 那份（此时补丁必须打在它上面，否则当场失败）。
 pub fn isolation_source_dir(repo_root: &Path, version: Option<&str>) -> Option<(PathBuf, String)> {
     let v = version?;
-    let dir = repo_root.join(".gm-build").join(format!("libsqlite3-sys-{v}")).join("sqlcipher");
+    let dir = repo_root
+        .join(".gm-build")
+        .join(format!("libsqlite3-sys-{v}"))
+        .join("sqlcipher");
     if dir.is_dir() {
         Some((dir, v.to_string()))
     } else {
@@ -107,10 +113,14 @@ pub fn is_under_gm_build(dir: &Path, repo_root: &Path) -> bool {
 pub fn pick_source_dir(registry_srcs: &[PathBuf], wanted: Option<&str>) -> SourcePick {
     let mut found: Vec<(String, PathBuf)> = Vec::new();
     for src in registry_srcs {
-        let Ok(entries) = std::fs::read_dir(src) else { continue };
+        let Ok(entries) = std::fs::read_dir(src) else {
+            continue;
+        };
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            let Some(ver) = name.strip_prefix("libsqlite3-sys-") else { continue };
+            let Some(ver) = name.strip_prefix("libsqlite3-sys-") else {
+                continue;
+            };
             let dir = e.path().join("sqlcipher");
             if dir.is_dir() {
                 found.push((ver.to_string(), dir));
@@ -121,11 +131,17 @@ pub fn pick_source_dir(registry_srcs: &[PathBuf], wanted: Option<&str>) -> Sourc
     let versions: Vec<String> = found.iter().map(|(v, _)| v.clone()).collect();
 
     let Some(wanted) = wanted else {
-        return SourcePick::NotFound { wanted: None, found: versions };
+        return SourcePick::NotFound {
+            wanted: None,
+            found: versions,
+        };
     };
     match found.into_iter().find(|(v, _)| v == wanted) {
         Some((version, dir)) => SourcePick::Found { dir, version },
-        None => SourcePick::VersionMismatch { wanted: wanted.to_string(), found: versions },
+        None => SourcePick::VersionMismatch {
+            wanted: wanted.to_string(),
+            found: versions,
+        },
     }
 }
 
@@ -134,16 +150,18 @@ pub fn find_marker(dir: &Path) -> Option<String> {
     let entries = std::fs::read_dir(dir).ok()?;
     for e in entries.flatten() {
         let p = e.path();
-        let hit = p
-            .extension()
-            .map(|x| x == "c" || x == "h")
-            .unwrap_or(false);
+        let hit = p.extension().map(|x| x == "c" || x == "h").unwrap_or(false);
         if !hit {
             continue;
         }
         if let Ok(text) = std::fs::read_to_string(&p) {
             if text.contains("SQLCIPHER_HMAC_SM3_LABEL") {
-                return Some(p.file_name().unwrap_or_default().to_string_lossy().to_string());
+                return Some(
+                    p.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string(),
+                );
             }
         }
     }
@@ -160,8 +178,14 @@ pub fn find_marker(dir: &Path) -> Option<String> {
 #[allow(dead_code)]
 pub fn registry_src_roots(cargo_home: &Path) -> Vec<PathBuf> {
     let base = cargo_home.join("registry").join("src");
-    let Ok(entries) = std::fs::read_dir(&base) else { return Vec::new() };
-    let mut out: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    let Ok(entries) = std::fs::read_dir(&base) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
     out.sort();
     out
 }
@@ -214,7 +238,10 @@ checksum = "abc"
     #[test]
     fn lock_version_reads_the_right_package() {
         assert_eq!(lock_version(LOCK).as_deref(), Some("0.38.2"));
-        assert_eq!(lock_version("[[package]]\nname = \"serde\"\nversion = \"1\"\n"), None);
+        assert_eq!(
+            lock_version("[[package]]\nname = \"serde\"\nversion = \"1\"\n"),
+            None
+        );
     }
 
     /// ★ 判据（这条就是 macOS 侧那个受控实验的回归）：**registry 里有个 mtime 更新的陈旧版本时，
@@ -234,7 +261,11 @@ checksum = "abc"
         match pick_source_dir(&roots, Some("0.38.2")) {
             SourcePick::Found { dir: d, version } => {
                 assert_eq!(version, "0.38.2", "必须挑锁定的那个版本");
-                assert!(d.ends_with("libsqlite3-sys-0.38.2/sqlcipher"), "挑到了：{}", d.display());
+                assert!(
+                    d.ends_with("libsqlite3-sys-0.38.2/sqlcipher"),
+                    "挑到了：{}",
+                    d.display()
+                );
             }
             other => panic!("应当命中 0.38.2，实际 {other:?}"),
         }
@@ -274,13 +305,21 @@ checksum = "abc"
         let (dir, roots) = tmp_roots("marker", &["0.38.2"]);
         let sc = roots[0].join("libsqlite3-sys-0.38.2").join("sqlcipher");
         assert_eq!(find_marker(&sc), None, "还没打补丁时不该有标记");
-        std::fs::write(sc.join("crypto_openssl.c"), "/* SQLCIPHER_HMAC_SM3_LABEL */\n").unwrap();
+        std::fs::write(
+            sc.join("crypto_openssl.c"),
+            "/* SQLCIPHER_HMAC_SM3_LABEL */\n",
+        )
+        .unwrap();
         assert_eq!(find_marker(&sc).as_deref(), Some("crypto_openssl.c"));
         // 非 .c/.h 不算（别让一个 .txt 里的字面量骗过它）
         let (dir2, roots2) = tmp_roots("marker2", &["0.38.2"]);
         let sc2 = roots2[0].join("libsqlite3-sys-0.38.2").join("sqlcipher");
         std::fs::write(sc2.join("notes.txt"), "SQLCIPHER_HMAC_SM3_LABEL\n").unwrap();
-        assert_eq!(find_marker(&sc2), None, "只有 .c/.h 才算 —— 标记必须出现在会被编译的文件里");
+        assert_eq!(
+            find_marker(&sc2),
+            None,
+            "只有 .c/.h 才算 —— 标记必须出现在会被编译的文件里"
+        );
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&dir2);
     }
@@ -297,10 +336,16 @@ checksum = "abc"
     fn isolation_source_dir_points_at_the_private_copy() {
         let dir = std::env::temp_dir().join(format!("gm-iso-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let sc = dir.join(".gm-build").join("libsqlite3-sys-0.38.2").join("sqlcipher");
+        let sc = dir
+            .join(".gm-build")
+            .join("libsqlite3-sys-0.38.2")
+            .join("sqlcipher");
         std::fs::create_dir_all(&sc).unwrap();
         let got = isolation_source_dir(&dir, Some("0.38.2"));
-        assert_eq!(got.map(|(d, v)| (d, v)), Some((sc.clone(), "0.38.2".to_string())));
+        assert_eq!(
+            got.map(|(d, v)| (d, v)),
+            Some((sc.clone(), "0.38.2".to_string()))
+        );
         // 版本对不上 ⇒ None（绝不退而求其次）
         assert!(isolation_source_dir(&dir, Some("0.30.1")).is_none());
         // 没有版本 ⇒ None
@@ -311,16 +356,34 @@ checksum = "abc"
     #[test]
     fn cargo_home_is_isolated_only_inside_gm_build() {
         let repo = PathBuf::from("/repo");
-        assert!(cargo_home_is_isolated(&repo.join(".gm-build").join("cargo-home"), &repo));
-        assert!(!cargo_home_is_isolated(&PathBuf::from("/Users/x/.cargo"), &repo));
+        assert!(cargo_home_is_isolated(
+            &repo.join(".gm-build").join("cargo-home"),
+            &repo
+        ));
+        assert!(!cargo_home_is_isolated(
+            &PathBuf::from("/Users/x/.cargo"),
+            &repo
+        ));
         // 前缀像但不是（`.gm-build-old`）⇒ 不算 —— 这条防的是"用 starts_with 判字符串"那类假阳性
-        assert!(!cargo_home_is_isolated(&repo.join(".gm-build-old").join("cargo-home"), &repo));
+        assert!(!cargo_home_is_isolated(
+            &repo.join(".gm-build-old").join("cargo-home"),
+            &repo
+        ));
     }
 
     #[test]
     fn is_under_gm_build_recognizes_the_copy_path() {
         let repo = PathBuf::from("/repo");
-        assert!(is_under_gm_build(&repo.join(".gm-build").join("libsqlite3-sys-0.38.2").join("sqlcipher"), &repo));
-        assert!(!is_under_gm_build(&PathBuf::from("/Users/x/.cargo/registry/src/i/libsqlite3-sys-0.38.2/sqlcipher"), &repo));
+        assert!(is_under_gm_build(
+            &repo
+                .join(".gm-build")
+                .join("libsqlite3-sys-0.38.2")
+                .join("sqlcipher"),
+            &repo
+        ));
+        assert!(!is_under_gm_build(
+            &PathBuf::from("/Users/x/.cargo/registry/src/i/libsqlite3-sys-0.38.2/sqlcipher"),
+            &repo
+        ));
     }
 }

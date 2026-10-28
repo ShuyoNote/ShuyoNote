@@ -200,7 +200,10 @@ fn is_index_safe_id(id: &str) -> bool {
         return false;
     }
     let ok = |c: u8| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-';
-    ok(bytes[0]) && bytes[0] != b'-' && bytes[bytes.len() - 1] != b'-' && bytes.iter().all(|&c| ok(c))
+    ok(bytes[0])
+        && bytes[0] != b'-'
+        && bytes[bytes.len() - 1] != b'-'
+        && bytes.iter().all(|&c| ok(c))
 }
 
 /// 粗粒度 semver：`x.y.z`（允许 `-pre` / `+build` 尾巴）。索引里的版本要能与 manifest 对上，
@@ -262,7 +265,10 @@ pub fn parse_index(bytes: &[u8]) -> Result<PluginIndex, String> {
         }
         seen.push(&p.id);
         if parse_version(&p.version).is_none() {
-            return Err(format!("插件 {} 的 version「{}」不是 semver", p.id, p.version));
+            return Err(format!(
+                "插件 {} 的 version「{}」不是 semver",
+                p.id, p.version
+            ));
         }
         if parse_version(&p.api_version).is_none() {
             return Err(format!(
@@ -286,7 +292,10 @@ pub fn parse_index(bytes: &[u8]) -> Result<PluginIndex, String> {
             ));
         }
         if p.license.trim().is_empty() {
-            return Err(format!("插件 {} 没写 license（合规底线，至少要声明）", p.id));
+            return Err(format!(
+                "插件 {} 没写 license（合规底线，至少要声明）",
+                p.id
+            ));
         }
         // `ui` 型插件本版本还跑不了（M11.10 未做）：**明确拒绝**而不是装上去什么都不发生。
         match p.runtime.as_str() {
@@ -327,7 +336,11 @@ pub fn parse_index(bytes: &[u8]) -> Result<PluginIndex, String> {
             return Err(format!(
                 "插件 {} 的 signature 与 publisherKey 必须一起给（现在 {}）",
                 p.id,
-                if has_sig { "只有签名" } else { "只有公钥" }
+                if has_sig {
+                    "只有签名"
+                } else {
+                    "只有公钥"
+                }
             ));
         }
         if has_key {
@@ -351,7 +364,11 @@ pub fn parse_index(bytes: &[u8]) -> Result<PluginIndex, String> {
 ///
 /// **界面上显示的和安装时判定的必须是同一个函数**：展示用一套、安装用另一套，
 /// 就会出现「界面说能装、点了报错」或更糟的「界面说不能装、其实装进去了」。
-pub fn entry_block_reason(entry: &IndexEntry, app_version: &str, revoked_keys: &[RevokedKey]) -> String {
+pub fn entry_block_reason(
+    entry: &IndexEntry,
+    app_version: &str,
+    revoked_keys: &[RevokedKey],
+) -> String {
     if entry.revoked_at.is_some() {
         return if entry.revoked_reason.trim().is_empty() {
             "已被索引撤回".to_string()
@@ -368,7 +385,10 @@ pub fn entry_block_reason(entry: &IndexEntry, app_version: &str, revoked_keys: &
         };
         return format!("发布者密钥已被索引撤回：{why}");
     }
-    if let (Some(app), Some(min)) = (parse_version(app_version), parse_version(&entry.min_app_version)) {
+    if let (Some(app), Some(min)) = (
+        parse_version(app_version),
+        parse_version(&entry.min_app_version),
+    ) {
         if min > app {
             return format!("需要应用 {}+（当前 {app_version}）", entry.min_app_version);
         }
@@ -388,7 +408,11 @@ pub fn key_revoked<'a>(revoked_keys: &'a [RevokedKey], key: &str) -> Option<&'a 
 }
 
 /// 把索引转成界面用的视图：逐条算出"能不能装"，并**说清为什么不能**。
-pub fn index_view(index: &PluginIndex, app_version: &str, signature_verified: Option<bool>) -> PluginIndexView {
+pub fn index_view(
+    index: &PluginIndex,
+    app_version: &str,
+    signature_verified: Option<bool>,
+) -> PluginIndexView {
     let plugins = index
         .plugins
         .iter()
@@ -500,7 +524,10 @@ pub fn extract_package(zip_bytes: &[u8], dest: &Path) -> Result<usize, String> {
         // 解包出一个指向别处的链接再往里写，是绕开下面路径检查的经典手法。
         let mode = entry.unix_mode();
         if mode.is_some_and(|m| m & 0o170000 != 0o100000 && m & 0o170000 != 0o040000) {
-            return Err(format!("包里第 {} 项不是普通文件或目录（拒绝符号链接等）", i + 1));
+            return Err(format!(
+                "包里第 {} 项不是普通文件或目录（拒绝符号链接等）",
+                i + 1
+            ));
         }
         let name = entry.name().to_string();
         let rel = safe_relative_path(&name)?;
@@ -613,14 +640,20 @@ pub fn check_source_url(raw: &str) -> Result<String, String> {
         let host = rest.split(['/', '?', '#']).next().unwrap_or("");
         // 端口要剥掉再比：`localhost:8080` 是本地，`localhost.evil.com` 不是。
         let host_no_port = if host.starts_with('[') {
-            host.split(']').next().map(|h| format!("{h}]")).unwrap_or_default()
+            host.split(']')
+                .next()
+                .map(|h| format!("{h}]"))
+                .unwrap_or_default()
         } else {
             host.split(':').next().unwrap_or("").to_string()
         };
         if host_no_port == "127.0.0.1" || host_no_port == "localhost" || host_no_port == "[::1]" {
             return Ok(url.to_string());
         }
-        return Err("索引 / 插件包地址必须是 https（明文 http 只允许本机回环地址，用于自托调试）".to_string());
+        return Err(
+            "索引 / 插件包地址必须是 https（明文 http 只允许本机回环地址，用于自托调试）"
+                .to_string(),
+        );
     }
     Err("地址必须以 https:// 开头".to_string())
 }
@@ -695,10 +728,14 @@ pub fn parse_index_pubkey(text: &str) -> Result<minisign_verify::PublicKey, Stri
 ///
 /// `pubkey_b64` 是用户信任的那个 key。
 /// **没有内置默认公钥**：信谁是用户的选择（自托 = 自担），这一层只负责"这份签名对不对"。
-pub fn verify_index_signature(index_bytes: &[u8], signature: &str, pubkey_b64: &str) -> Result<(), String> {
+pub fn verify_index_signature(
+    index_bytes: &[u8],
+    signature: &str,
+    pubkey_b64: &str,
+) -> Result<(), String> {
     let pk = parse_index_pubkey(pubkey_b64)?;
-    let sig = minisign_verify::Signature::decode(signature)
-        .map_err(|e| format!("签名不合法：{e}"))?;
+    let sig =
+        minisign_verify::Signature::decode(signature).map_err(|e| format!("签名不合法：{e}"))?;
     pk.verify(index_bytes, &sig, false)
         .map_err(|_| "索引签名校验失败（这份索引不是那个 key 签的，或内容被改过）".to_string())
 }
@@ -770,7 +807,9 @@ mod tests {
         // 版本形状
         let mut e = good_entry("ok-id");
         e.version = "1".into();
-        assert!(parse_index(&index_json(vec![e])).unwrap_err().contains("semver"));
+        assert!(parse_index(&index_json(vec![e]))
+            .unwrap_err()
+            .contains("semver"));
         let mut e = good_entry("ok-id");
         e.api_version = "2.0.0".into();
         let err = parse_index(&index_json(vec![e])).unwrap_err();
@@ -778,26 +817,41 @@ mod tests {
         // 合规与体积
         let mut e = good_entry("ok-id");
         e.license = "  ".into();
-        assert!(parse_index(&index_json(vec![e])).unwrap_err().contains("license"));
+        assert!(parse_index(&index_json(vec![e]))
+            .unwrap_err()
+            .contains("license"));
         let mut e = good_entry("ok-id");
         e.size = MAX_PACKAGE_BYTES + 1;
-        assert!(parse_index(&index_json(vec![e])).unwrap_err().contains("超过上限"));
+        assert!(parse_index(&index_json(vec![e]))
+            .unwrap_err()
+            .contains("超过上限"));
         let mut e = good_entry("ok-id");
         e.sha256 = "not-hex".into();
-        assert!(parse_index(&index_json(vec![e])).unwrap_err().contains("sha256"));
+        assert!(parse_index(&index_json(vec![e]))
+            .unwrap_err()
+            .contains("sha256"));
         // 权限必须带理由（安装界面要显示"权限 + 理由"）
         let mut e = good_entry("ok-id");
         e.permissions[0].reason = "".into();
-        assert!(parse_index(&index_json(vec![e])).unwrap_err().contains("reason"));
+        assert!(parse_index(&index_json(vec![e]))
+            .unwrap_err()
+            .contains("reason"));
         // ui 型本版本跑不了 → 明确拒绝，而不是装上去什么都不发生
         let mut e = good_entry("ok-id");
         e.runtime = "ui".into();
-        assert!(parse_index(&index_json(vec![e])).unwrap_err().contains("ui"));
+        assert!(parse_index(&index_json(vec![e]))
+            .unwrap_err()
+            .contains("ui"));
         // 重复 id
-        let err = parse_index(&index_json(vec![good_entry("dup-id"), good_entry("dup-id")])).unwrap_err();
+        let err = parse_index(&index_json(vec![
+            good_entry("dup-id"),
+            good_entry("dup-id"),
+        ]))
+        .unwrap_err();
         assert!(err.contains("重复"), "{err}");
         // 规范版本
-        let mut idx = serde_json::from_slice::<PluginIndex>(&index_json(vec![good_entry("ok-id")])).unwrap();
+        let mut idx =
+            serde_json::from_slice::<PluginIndex>(&index_json(vec![good_entry("ok-id")])).unwrap();
         idx.index_version = 99;
         let bytes = serde_json::to_vec(&idx).unwrap();
         assert!(parse_index(&bytes).unwrap_err().contains("规范版本"));
@@ -814,7 +868,10 @@ mod tests {
         let view = index_view(&idx, "1.87.0", None);
         assert!(view.plugins[0].revoked && view.plugins[0].blocked.contains("撤回"));
         assert!(view.plugins[1].blocked.contains("需要应用 2.0.0+"));
-        assert_eq!(view.signature_verified, None, "没有签名时要说「没有」，而不是假装验过");
+        assert_eq!(
+            view.signature_verified, None,
+            "没有签名时要说「没有」，而不是假装验过"
+        );
     }
 
     // ---- zip 解包的安全检查 ----
@@ -824,8 +881,8 @@ mod tests {
         let mut buf = Vec::new();
         {
             let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
-            let opts: zip::write::FileOptions<'_, ()> =
-                zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
             for (name, data) in entries {
                 w.start_file(*name, opts).unwrap();
                 w.write_all(data).unwrap();
@@ -880,7 +937,10 @@ mod tests {
         assert!(verify_sha256(bytes, &good).is_ok(), "正确的摘要要过");
         good.replace_range(0..1, if good.starts_with('a') { "b" } else { "a" });
         let err = verify_sha256(bytes, &good).unwrap_err();
-        assert!(err.contains("sha256 不符") && err.contains("拒绝安装"), "{err}");
+        assert!(
+            err.contains("sha256 不符") && err.contains("拒绝安装"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -923,15 +983,25 @@ mod tests {
         // 文档里的样例是**给人照抄的**：它一旦解析不过，"照着抄"就会直接装不上。
         // 所以把它当固定装置：改了规范/校验规则而忘了同步样例，这里就会红。
         let bytes = include_bytes!("../../docs/plugin-index.example.json");
-        let index = parse_index(bytes).unwrap_or_else(|e| panic!("文档里的样例索引应当能解析：{e}"));
+        let index =
+            parse_index(bytes).unwrap_or_else(|e| panic!("文档里的样例索引应当能解析：{e}"));
         assert_eq!(index.plugins.len(), 1);
         let entry = &index.plugins[0];
         assert_eq!(entry.id, "weekly-review");
         assert_eq!(entry.api_version, crate::capabilities_gen::API_VERSION);
-        assert!(!entry.permissions.is_empty(), "样例要演示「权限 + 理由」这项必填");
-        assert!(entry.permissions.iter().all(|p| !p.reason.trim().is_empty()));
+        assert!(
+            !entry.permissions.is_empty(),
+            "样例要演示「权限 + 理由」这项必填"
+        );
+        assert!(entry
+            .permissions
+            .iter()
+            .all(|p| !p.reason.trim().is_empty()));
         let view = index_view(&index, "1.87.0", None);
-        assert_eq!(view.plugins[0].blocked, "", "样例在声明的 minAppVersion 上应当是可安装的");
+        assert_eq!(
+            view.plugins[0].blocked, "",
+            "样例在声明的 minAppVersion 上应当是可安装的"
+        );
         assert_eq!(view.signature_verified, None);
     }
 
@@ -959,9 +1029,8 @@ mod tests {
             .expect("真签名应当通过");
 
         // 内容改一个字节 → 必须拒
-        let err =
-            verify_index_signature(b"Test", &minisign_test_signature(), MINISIGN_TEST_PUBKEY)
-                .unwrap_err();
+        let err = verify_index_signature(b"Test", &minisign_test_signature(), MINISIGN_TEST_PUBKEY)
+            .unwrap_err();
         assert!(err.contains("签名校验失败"), "{err}");
 
         // 换成另一个 key（只改公钥最后一个字节）→ 必须拒，不能"格式对就放行"
@@ -994,8 +1063,12 @@ mod tests {
         verify_index_signature(b"test", &minisign_test_signature(), &file_form)
             .expect("minisign.pub 形式应当同样通过");
         // 前后空白不该影响判定（用户从文档里复制粘贴很常见）
-        verify_index_signature(b"test", &minisign_test_signature(), &format!("  {MINISIGN_TEST_PUBKEY}\n"))
-            .expect("带空白的裸 base64 应当同样通过");
+        verify_index_signature(
+            b"test",
+            &minisign_test_signature(),
+            &format!("  {MINISIGN_TEST_PUBKEY}\n"),
+        )
+        .expect("带空白的裸 base64 应当同样通过");
     }
 
     #[test]
@@ -1004,8 +1077,9 @@ mod tests {
         assert_eq!(fp.len(), 19, "16 位十六进制 + 3 个分隔符：{fp}");
         assert_eq!(fp, publisher_key_fingerprint(MINISIGN_TEST_PUBKEY).unwrap());
         // 文件形式（带注释行）与裸 base64 是同一把 key → 同一个指纹
-        let file_form =
-            format!("untrusted comment: minisign public key E7620F1842B4E81F\n{MINISIGN_TEST_PUBKEY}");
+        let file_form = format!(
+            "untrusted comment: minisign public key E7620F1842B4E81F\n{MINISIGN_TEST_PUBKEY}"
+        );
         assert_eq!(publisher_key_fingerprint(&file_form).unwrap(), fp);
         // 改一个字节就是另一把 key
         let other = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO2";
@@ -1023,7 +1097,10 @@ mod tests {
         };
         // 只有签名、没有公钥 → 索引自己就矛盾
         let err = parse_index(&with("untrusted comment: x\nAAAA", "")).unwrap_err();
-        assert!(err.contains("必须一起给") && err.contains("只有签名"), "{err}");
+        assert!(
+            err.contains("必须一起给") && err.contains("只有签名"),
+            "{err}"
+        );
         // 只有公钥、没有签名
         let err = parse_index(&with("", MINISIGN_TEST_PUBKEY)).unwrap_err();
         assert!(err.contains("只有公钥"), "{err}");
@@ -1042,8 +1119,9 @@ mod tests {
         // 验的是**包字节这一层**的校验路径（而不是索引 JSON 那一层）。
         verify_package_signature(b"test", &minisign_test_signature(), MINISIGN_TEST_PUBKEY)
             .expect("真签名应当通过");
-        let err = verify_package_signature(b"test!", &minisign_test_signature(), MINISIGN_TEST_PUBKEY)
-            .unwrap_err();
+        let err =
+            verify_package_signature(b"test!", &minisign_test_signature(), MINISIGN_TEST_PUBKEY)
+                .unwrap_err();
         assert!(err.contains("发布者签名校验失败"), "{err}");
         let err = verify_package_signature(b"test", "garbage", MINISIGN_TEST_PUBKEY).unwrap_err();
         assert!(err.contains("发布者签名不合法"), "{err}");
@@ -1066,7 +1144,10 @@ mod tests {
         assert_eq!(index.plugins[0].id, "weekly-review");
         // 示例里的 sha256 是占位的 64 个 0：形状对（这正是"形状校验"该干的事）
         assert!(is_hex64(&index.plugins[0].sha256));
-        assert_eq!(index.plugins[0].api_version, crate::capabilities_gen::API_VERSION);
+        assert_eq!(
+            index.plugins[0].api_version,
+            crate::capabilities_gen::API_VERSION
+        );
     }
 
     // ---- 自己有钥匙的一次端到端：真包 + 真签名 ----
@@ -1096,8 +1177,8 @@ mod tests {
         let err = verify_package_signature(&tampered, SIGNED_PKG_SIG, SIGNED_PKG_PUB).unwrap_err();
         assert!(err.contains("发布者签名校验失败"), "{err}");
         // 3) 拿别的 key 来验 → 拒
-        let err = verify_package_signature(SIGNED_PKG, SIGNED_PKG_SIG, MINISIGN_TEST_PUBKEY)
-            .unwrap_err();
+        let err =
+            verify_package_signature(SIGNED_PKG, SIGNED_PKG_SIG, MINISIGN_TEST_PUBKEY).unwrap_err();
         assert!(err.contains("发布者签名校验失败"), "{err}");
         // 4) 这个包本身也得是一个能被解包的合法插件包（否则"验过了"没有意义）
         let dir = crate::plugins::tests_support::temp_dir("signed-pkg");
@@ -1158,7 +1239,11 @@ mod tests {
                 p.size,
                 &p.sha256[..12.min(p.sha256.len())],
                 fingerprint,
-                if blocked.is_empty() { "可安装" } else { blocked.as_str() }
+                if blocked.is_empty() {
+                    "可安装"
+                } else {
+                    blocked.as_str()
+                }
             );
             // 索引里**故意**带撤回条目是合法的（撤回就是拿来拦的），所以只对
             // "没有被撤回声明"的条目断言它不该被拦——否则这个工具会把合法索引判成坏索引。
@@ -1201,7 +1286,10 @@ mod tests {
         extract_package(&bytes, &dir).expect("发布者签过名的包必须能被应用解包");
         let root = resolve_package_root(&dir);
         let manifest = root.join("manifest.json");
-        assert!(manifest.is_file(), "解出来必须能找到 manifest.json（包内根目录结构不对）");
+        assert!(
+            manifest.is_file(),
+            "解出来必须能找到 manifest.json（包内根目录结构不对）"
+        );
         let text = std::fs::read_to_string(&manifest).expect("读 manifest");
         let id = serde_json::from_str::<serde_json::Value>(&text)
             .ok()
@@ -1239,7 +1327,8 @@ mod tests {
 
     #[test]
     fn malformed_signature_material_reports_which_side_is_broken() {
-        let err = verify_index_signature(b"{}", &minisign_test_signature(), "not-a-key").unwrap_err();
+        let err =
+            verify_index_signature(b"{}", &minisign_test_signature(), "not-a-key").unwrap_err();
         assert!(err.contains("公钥不合法"), "{err}");
         let err = verify_index_signature(b"{}", "garbage", MINISIGN_TEST_PUBKEY).unwrap_err();
         assert!(err.contains("签名不合法"), "{err}");
@@ -1296,16 +1385,28 @@ mod tests {
         let mut too_new = good_entry("needs-newer");
         too_new.min_app_version = "2.0.0".into();
         let ok = good_entry("fine");
-        let idx = parse_index(&index_json(vec![revoked.clone(), too_new.clone(), ok.clone()])).unwrap();
+        let idx = parse_index(&index_json(vec![
+            revoked.clone(),
+            too_new.clone(),
+            ok.clone(),
+        ]))
+        .unwrap();
         let view = index_view(&idx, "1.87.0", None);
-        for (entry, shown) in [(&revoked, &view.plugins[0]), (&too_new, &view.plugins[1]), (&ok, &view.plugins[2])] {
+        for (entry, shown) in [
+            (&revoked, &view.plugins[0]),
+            (&too_new, &view.plugins[1]),
+            (&ok, &view.plugins[2]),
+        ] {
             assert_eq!(
                 entry_block_reason(entry, "1.87.0", &[]),
                 shown.blocked,
                 "界面与安装判定必须同源"
             );
         }
-        assert!(!view.plugins[2].publisher_signed, "没写签名就不该显示成「已签名」");
+        assert!(
+            !view.plugins[2].publisher_signed,
+            "没写签名就不该显示成「已签名」"
+        );
         let mut signed = ok.clone();
         signed.signature = "untrusted comment: x\nAAAA".into();
         signed.publisher_key = MINISIGN_TEST_PUBKEY.into();

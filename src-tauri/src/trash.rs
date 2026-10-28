@@ -86,7 +86,8 @@ pub fn list_deleted(db: State<'_, Db>) -> Result<Vec<PageMeta>, String> {
         })
         .map_err(|e| e.to_string())?;
 
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

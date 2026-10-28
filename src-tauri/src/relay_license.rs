@@ -63,8 +63,9 @@ pub struct KeyEntry {
 pub const KEYRING: &[KeyEntry] = &[KeyEntry {
     kid: "shuyo-lic-2026-10",
     public_key: [
-        0x30, 0xea, 0xfc, 0x05, 0x27, 0x84, 0xc4, 0x4c, 0xb4, 0xa2, 0x6a, 0x58, 0x30, 0x27, 0x27, 0x0f,
-        0xbd, 0xb5, 0xb8, 0x6c, 0x8f, 0xcb, 0x1c, 0x06, 0xde, 0x9e, 0x3b, 0x9f, 0x71, 0x0b, 0xba, 0x99,
+        0x30, 0xea, 0xfc, 0x05, 0x27, 0x84, 0xc4, 0x4c, 0xb4, 0xa2, 0x6a, 0x58, 0x30, 0x27, 0x27,
+        0x0f, 0xbd, 0xb5, 0xb8, 0x6c, 0x8f, 0xcb, 0x1c, 0x06, 0xde, 0x9e, 0x3b, 0x9f, 0x71, 0x0b,
+        0xba, 0x99,
     ],
 }];
 
@@ -187,7 +188,10 @@ pub fn verify_license_with(
     if obj.get("v").and_then(|v| v.as_u64()) != Some(FORMAT_VERSION as u64) {
         return Err(bad_shape());
     }
-    let kid = obj.get("kid").and_then(|v| v.as_str()).ok_or_else(bad_shape)?;
+    let kid = obj
+        .get("kid")
+        .and_then(|v| v.as_str())
+        .ok_or_else(bad_shape)?;
     // ① `kid` 查表 ⇒ ⭐ 查不到就拒（fail-closed ✓）
     let entry = keyring
         .iter()
@@ -209,8 +213,14 @@ pub fn verify_license_with(
     vk.verify(signing_message(&version, &payload_b64).as_bytes(), &sig)
         .map_err(|_| LicenseRefusal::BadSignature)?;
     // ③ 取字段（⭐ 类型不对也算形状问题 ✓）
-    let sub = obj.get("sub").and_then(|v| v.as_str()).ok_or_else(bad_shape)?;
-    let jti = obj.get("jti").and_then(|v| v.as_str()).ok_or_else(bad_shape)?;
+    let sub = obj
+        .get("sub")
+        .and_then(|v| v.as_str())
+        .ok_or_else(bad_shape)?;
+    let jti = obj
+        .get("jti")
+        .and_then(|v| v.as_str())
+        .ok_or_else(bad_shape)?;
     let devices = obj
         .get("dev")
         .and_then(|v| v.as_array())
@@ -218,9 +228,18 @@ pub fn verify_license_with(
         .iter()
         .map(|d| d.as_str().map(|s| s.to_string()).ok_or_else(bad_shape))
         .collect::<Result<Vec<String>, LicenseRefusal>>()?;
-    let seats = obj.get("seats").and_then(|v| v.as_i64()).ok_or_else(bad_shape)?;
-    let nbf = obj.get("nbf").and_then(|v| v.as_i64()).ok_or_else(bad_shape)?;
-    let exp = obj.get("exp").and_then(|v| v.as_i64()).ok_or_else(bad_shape)?;
+    let seats = obj
+        .get("seats")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(bad_shape)?;
+    let nbf = obj
+        .get("nbf")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(bad_shape)?;
+    let exp = obj
+        .get("exp")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(bad_shape)?;
     let grace_days = obj
         .get("grace")
         .and_then(|v| v.as_i64())
@@ -365,8 +384,11 @@ fn check_signature(
         .map_err(|_| LicenseRefusal::BadSignature)?;
     let sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
     use ed25519_dalek::Verifier;
-    vk.verify(signing_message_for(prefix, version, payload_b64).as_bytes(), &sig)
-        .map_err(|_| LicenseRefusal::BadSignature)
+    vk.verify(
+        signing_message_for(prefix, version, payload_b64).as_bytes(),
+        &sig,
+    )
+    .map_err(|_| LicenseRefusal::BadSignature)
 }
 
 /// ⭐ 用**指定的** keyring 验一份租约 ✗（⭐ keyring 可注入 ⇒ 判据能自己签一份 ✓）。
@@ -376,7 +398,8 @@ pub fn verify_lease_with(
     device_id: &str,
     keyring: &[KeyEntry],
 ) -> Result<LeaseClaims, LeaseRefusal> {
-    let (version, payload_b64, sig_b64) = split_credential(text, LEASE_PREFIX).map_err(lease_map)?;
+    let (version, payload_b64, sig_b64) =
+        split_credential(text, LEASE_PREFIX).map_err(lease_map)?;
     let payload = URL_SAFE_NO_PAD
         .decode(payload_b64.as_bytes())
         .map_err(|_| LeaseRefusal::BadShape)?;
@@ -513,7 +536,10 @@ mod tests {
         assert!(verify_license(&tampered, now).is_err(), "改过签名必须拒");
     }
 
-    fn payload(extra: Option<(&str, serde_json::Value)>, fields: Option<serde_json::Value>) -> String {
+    fn payload(
+        extra: Option<(&str, serde_json::Value)>,
+        fields: Option<serde_json::Value>,
+    ) -> String {
         let mut map = serde_json::Map::new();
         map.insert("v".into(), serde_json::json!(FORMAT_VERSION));
         map.insert("typ".into(), serde_json::json!("license"));
@@ -542,7 +568,13 @@ mod tests {
         let p64 = B64.encode(payload_json.as_bytes());
         let msg = signing_message(&FORMAT_VERSION.to_string(), &p64);
         let sig = sk.sign(msg.as_bytes());
-        format!("{}{}.{}.{}", LICENSE_PREFIX, FORMAT_VERSION, p64, B64.encode(sig.to_bytes()))
+        format!(
+            "{}{}.{}.{}",
+            LICENSE_PREFIX,
+            FORMAT_VERSION,
+            p64,
+            B64.encode(sig.to_bytes())
+        )
     }
 
     // ─────────────────────── ⭐ 租约那半的判据 ✗ ───────────────────────
@@ -685,16 +717,15 @@ mod tests {
             Err(LeaseRefusal::BadShape)
         );
         // 少一格
-        let mut map: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
-            &lease_payload(
+        let mut map: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&lease_payload(
                 serde_json::json!(["endpoint-1"]),
                 serde_json::json!([CROSSNET_CAP]),
                 1_000,
                 2_000,
                 None,
-            ),
-        )
-        .expect("对象");
+            ))
+            .expect("对象");
         map.remove("typ");
         let missing = mint_lease(&sk, &serde_json::Value::Object(map).to_string());
         assert_eq!(
@@ -742,7 +773,12 @@ mod tests {
         )
         .is_ok());
         assert_eq!(
-            verify_lease_with(&good_lease(&sk), 1_000 + 86_400 + 10, "endpoint-1", &[entry]),
+            verify_lease_with(
+                &good_lease(&sk),
+                1_000 + 86_400 + 10,
+                "endpoint-1",
+                &[entry]
+            ),
             Err(LeaseRefusal::Expired),
             "租约没有宽限 ⇒ 过期就是过期"
         );
@@ -842,7 +878,10 @@ mod tests {
     #[test]
     fn right_now_but_without_the_capability_is_still_refused() {
         let (sk, entry) = judge_key();
-        let no_cap = mint(&sk, &payload(None, Some(serde_json::json!(["something-else"]))));
+        let no_cap = mint(
+            &sk,
+            &payload(None, Some(serde_json::json!(["something-else"]))),
+        );
         assert_eq!(
             verify_license_with(&no_cap, 1_500, &[entry.clone()]),
             Err(LicenseRefusal::NoCrossnetCap)
@@ -860,10 +899,7 @@ mod tests {
     fn the_field_face_is_exact_fourteen_extra_or_missing_is_refused() {
         let (sk, entry) = judge_key();
         // 多一格
-        let extra = mint(
-            &sk,
-            &payload(Some(("sneaky", serde_json::json!(1))), None),
-        );
+        let extra = mint(&sk, &payload(Some(("sneaky", serde_json::json!(1))), None));
         assert_eq!(
             verify_license_with(&extra, 1_500, &[entry.clone()]),
             Err(LicenseRefusal::BadShape)
@@ -878,7 +914,10 @@ mod tests {
             Err(LicenseRefusal::BadShape)
         );
         // 形状不对的几种
-        assert_eq!(verify_license_with("", 1_500, &[entry.clone()]), Err(LicenseRefusal::BadShape));
+        assert_eq!(
+            verify_license_with("", 1_500, &[entry.clone()]),
+            Err(LicenseRefusal::BadShape)
+        );
         assert_eq!(
             verify_license_with("SHUYO-TOK-1.aa.bb", 1_500, &[entry.clone()]),
             Err(LicenseRefusal::BadShape),
@@ -897,7 +936,9 @@ mod tests {
     /// ⭐ 结果必须是 **`Refused`** ✗ —— ⛔ 不许退回裸数字 ✗（⭐ 那等于**绕过验签** ✓）。
     #[test]
     fn the_three_sources_of_the_license_window_are_distinguishable() {
-        use crate::relay_client::{verified_window_with, LicenseWindow, RelayConfig as Cfg, VerifiedLicense};
+        use crate::relay_client::{
+            verified_window_with, LicenseWindow, RelayConfig as Cfg, VerifiedLicense,
+        };
         let (sk, entry) = judge_key();
         // ① 有文本、⭐ 验得过 ⇒ ⭐ `Verified`，⭐ 而且天数来自**验过的声明** ✓
         let good = Cfg {
@@ -926,12 +967,19 @@ mod tests {
             ..Default::default()
         };
         let got = verified_window_with(&placeholder, 1_500, &[entry]);
-        assert!(matches!(got, VerifiedLicense::Placeholder(_)), "实际 {got:?}");
+        assert!(
+            matches!(got, VerifiedLicense::Placeholder(_)),
+            "实际 {got:?}"
+        );
         assert!(!got.is_verified(), "没有签名文本就不许自称验过");
         // ④ ⭐ 生产入口 ⭐（占位 keyring）⭐ 对真文本也必须 `Refused` ✗（fail-closed ✓）
         let prod = crate::relay_client::verified_window(&good, 1_500);
         assert!(matches!(prod, VerifiedLicense::Refused(_)), "实际 {prod:?}");
-        assert_eq!(prod.window(), None, "拒收那一档**没有**窗口（⛔ 不许编一个）");
+        assert_eq!(
+            prod.window(),
+            None,
+            "拒收那一档**没有**窗口（⛔ 不许编一个）"
+        );
     }
 
     /// ⭐ 判据⑪：⭐ **读数那一格**也要分得开 ✗ —— ⭐ 拒收时 ⛔ 不许带天数、⛔ 不许放行跨网 ✓。
@@ -1043,7 +1091,11 @@ mod tests {
                     if (code.contains("use ") || code.contains("extern crate"))
                         && names_us.iter().any(|n| code.contains(n))
                     {
-                        hits.push(format!("{}:{} 引入专有 crate：{code}", path.display(), i + 1));
+                        hits.push(format!(
+                            "{}:{} 引入专有 crate：{code}",
+                            path.display(),
+                            i + 1
+                        ));
                     }
                 }
             }

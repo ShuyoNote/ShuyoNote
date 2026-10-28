@@ -159,7 +159,9 @@ fn require_gm_provider_patch() {
     }
 
     // 外置（预编译）SQLCipher 这条路**还没有可核对的口子** ⇒ 明确拒绝，不拿环境变量冒充事实。
-    if std::env::var_os("SQLCIPHER_INCLUDE_DIR").is_some() || std::env::var_os("SQLCIPHER_LIB_DIR").is_some() {
+    if std::env::var_os("SQLCIPHER_INCLUDE_DIR").is_some()
+        || std::env::var_os("SQLCIPHER_LIB_DIR").is_some()
+    {
         panic!(
             "`sm-library` ＋ 外置 SQLCipher（`SQLCIPHER_INCLUDE_DIR`/`SQLCIPHER_LIB_DIR`）这条路**还没有核对补丁的口子**。\n\
              本脚本只认「cargo 将要编译的那份源码里有 SM3 标签」这一种事实；对预编译产物我无法在这里核对，\n\
@@ -328,20 +330,28 @@ fn resolve_sqlcipher_source() -> Option<(std::path::PathBuf, String, &'static st
 /// 从依赖构建产物里读 `cargo:include=…/libsqlite3-sys-<版本>/sqlcipher`。
 ///
 /// ⚠️ 与 macOS 侧那条纪律一致：**按平台过滤**（同一 target 目录里可能躺着别的平台的产物）。
-fn include_hint_from_build_output(manifest: &std::path::Path) -> Option<(std::path::PathBuf, String)> {
+fn include_hint_from_build_output(
+    manifest: &std::path::Path,
+) -> Option<(std::path::PathBuf, String)> {
     let target = manifest.join("target");
     let host_is_windows = cfg!(windows);
     for profile in ["debug", "release"] {
         let build = target.join(profile).join("build");
-        let Ok(entries) = std::fs::read_dir(&build) else { continue };
+        let Ok(entries) = std::fs::read_dir(&build) else {
+            continue;
+        };
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             if !name.starts_with("libsqlite3-sys-") {
                 continue;
             }
-            let Ok(text) = std::fs::read_to_string(e.path().join("output")) else { continue };
+            let Ok(text) = std::fs::read_to_string(e.path().join("output")) else {
+                continue;
+            };
             for line in text.lines() {
-                let Some(rest) = line.strip_prefix("cargo:include=") else { continue };
+                let Some(rest) = line.strip_prefix("cargo:include=") else {
+                    continue;
+                };
                 // 另一个平台的产物会带盘符/反斜杠（Windows）或 `/`（unix）——按当前平台粗筛
                 let looks_windows = rest.contains('\\') || rest.contains(":\\");
                 if looks_windows != host_is_windows {
@@ -350,11 +360,20 @@ fn include_hint_from_build_output(manifest: &std::path::Path) -> Option<(std::pa
                 let p = std::path::Path::new(rest);
                 // `…/libsqlite3-sys-<版本>/sqlcipher` 或 `…/libsqlite3-sys-<版本>` 都要能认
                 let (dir, ver) = if p.file_name().map(|f| f == "sqlcipher").unwrap_or(false) {
-                    (p.to_path_buf(), p.parent()?.file_name()?.to_string_lossy().to_string())
+                    (
+                        p.to_path_buf(),
+                        p.parent()?.file_name()?.to_string_lossy().to_string(),
+                    )
                 } else {
-                    (p.join("sqlcipher"), p.file_name()?.to_string_lossy().to_string())
+                    (
+                        p.join("sqlcipher"),
+                        p.file_name()?.to_string_lossy().to_string(),
+                    )
                 };
-                let version = ver.strip_prefix("libsqlite3-sys-").unwrap_or(&ver).to_string();
+                let version = ver
+                    .strip_prefix("libsqlite3-sys-")
+                    .unwrap_or(&ver)
+                    .to_string();
                 if dir.is_dir() {
                     return Some((dir, version));
                 }
@@ -392,7 +411,9 @@ fn sqlcipher_source_dir_deprecated_mtime() -> Option<std::path::PathBuf> {
     let registries = std::fs::read_dir(&src_root).ok()?;
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
     for reg in registries.flatten() {
-        let Ok(pkgs) = std::fs::read_dir(reg.path()) else { continue };
+        let Ok(pkgs) = std::fs::read_dir(reg.path()) else {
+            continue;
+        };
         for pkg in pkgs.flatten() {
             let name = pkg.file_name();
             let name = name.to_string_lossy();

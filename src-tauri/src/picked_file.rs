@@ -387,9 +387,14 @@ mod tests {
     /// 把它当文件名显示比显示裸 UUID 更容易让人误以为"这就是原名"。
     #[test]
     fn uri_tail_that_is_only_an_id_is_refused() {
-        assert_eq!(name_from_uri("content://com.android.providers.media.documents/document/image%3A1234"), None);
         assert_eq!(
-            name_from_uri("content://com.android.providers.downloads.documents/document/msf%3A1000000042"),
+            name_from_uri("content://com.android.providers.media.documents/document/image%3A1234"),
+            None
+        );
+        assert_eq!(
+            name_from_uri(
+                "content://com.android.providers.downloads.documents/document/msf%3A1000000042"
+            ),
             None
         );
         // 不是 content:// 的一律不走这条（file:// 有自己的路径语义）
@@ -403,7 +408,10 @@ mod tests {
         assert_eq!(sanitize_name("  a/b\\c\0d  "), "abcd");
         assert_eq!(sanitize_name("../../etc/passwd"), "etcpasswd");
         assert_eq!(sanitize_name("..."), "");
-        assert_eq!(sanitize_name(&"x".repeat(500)).chars().count(), MAX_NAME_CHARS);
+        assert_eq!(
+            sanitize_name(&"x".repeat(500)).chars().count(),
+            MAX_NAME_CHARS
+        );
         // 恢复出来的名字必须已经是消毒过的（`%2F` 那条）
         assert_eq!(
             name_from_uri("content://a.b/document/primary%3AD%2F..%2F..%2Fevil.png").as_deref(),
@@ -464,4 +472,3 @@ mod tests {
         assert_eq!(pf.sniffed(), None);
     }
 }
-

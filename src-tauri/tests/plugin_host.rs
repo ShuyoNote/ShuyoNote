@@ -11,7 +11,7 @@
 //! 不需要数据的东西：返回字符串、`api.log`（走能力通道 → 假应答）、以及订阅一个事件。
 //! 阶段 2 会把能力改成 RPC 回父进程，那时这批断言会跟着长大。
 
-use shuyonote_lib::plugin_host::{HostClient, HostRunRequest, HostRunMode};
+use shuyonote_lib::plugin_host::{HostClient, HostRunMode, HostRunRequest};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -36,7 +36,10 @@ fn req(source: &str, command_id: &str) -> HostRunRequest {
 #[test]
 fn a_real_child_process_runs_plugin_js_and_returns_the_result() {
     let mut client = HostClient::spawn_with_exe(&app_bin()).expect("宿主子进程应当起得来");
-    assert!(client.child_pid > 0, "握手要报上子进程 pid（证明是另一个进程，不是自己）");
+    assert!(
+        client.child_pid > 0,
+        "握手要报上子进程 pid（证明是另一个进程，不是自己）"
+    );
     assert_ne!(
         client.child_pid,
         std::process::id(),
@@ -51,7 +54,10 @@ fn a_real_child_process_runs_plugin_js_and_returns_the_result() {
         ))
         .expect("跑得通");
     assert_eq!(res.message, "来自子进程");
-    assert!(res.drafts.is_null() || res.drafts.as_array().is_some(), "草稿形状原样透传");
+    assert!(
+        res.drafts.is_null() || res.drafts.as_array().is_some(),
+        "草稿形状原样透传"
+    );
 
     // 能力调用**必须回父进程**：`run()` 是"父进程没提供能力服务"的那一版，所以这里要看到
     // 明确的 `cap_no_server`（点名是哪个能力），而不是"插件拿到了数据"。
@@ -93,12 +99,19 @@ fn plugin_errors_come_back_as_a_code_not_a_broken_pipe() {
             "h.boom",
         ))
         .expect("插件抛错不该被当成通道故障");
-    assert!(res.message.contains("炸了"), "用户要看到插件自己的话：{:?}", res.message);
+    assert!(
+        res.message.contains("炸了"),
+        "用户要看到插件自己的话：{:?}",
+        res.message
+    );
     assert!(res.message.contains("执行出错"), "{:?}", res.message);
 
     // 语法错（插件根本没法初始化）才是 Failed：父进程拿到 (code, message)，而不是一句人话。
     let err = client
-        .run(req(r#"register({ id: "h.bad", title: "Bad", run: function () { "#, "h.bad"))
+        .run(req(
+            r#"register({ id: "h.bad", title: "Bad", run: function () { "#,
+            "h.bad",
+        ))
         .expect_err("初始化失败要变成 Err");
     assert!(err.contains("plugin_error"), "错误要带 code：{err}");
     assert!(err.contains("初始化失败"), "错误要说清是初始化：{err}");
@@ -203,7 +216,9 @@ fn recording_server(
     seen: Arc<Mutex<Vec<(String, String)>>>,
 ) -> impl FnMut(&str, &str) -> Result<String, String> {
     move |method: &str, args: &str| {
-        seen.lock().unwrap().push((method.to_string(), args.to_string()));
+        seen.lock()
+            .unwrap()
+            .push((method.to_string(), args.to_string()));
         match method {
             // 返回形状与进程内那条路完全一致（能力的返回值就是 JSON 字符串）
             "pages.count" => Ok("7".into()),
@@ -242,9 +257,17 @@ fn capability_calls_round_trip_through_the_parent() {
 
     let calls = seen.lock().unwrap().clone();
     let methods: Vec<&str> = calls.iter().map(|(m, _)| m.as_str()).collect();
-    assert_eq!(methods, vec!["pages.count", "kv.get"], "父进程要收到这两次请求");
+    assert_eq!(
+        methods,
+        vec!["pages.count", "kv.get"],
+        "父进程要收到这两次请求"
+    );
     // 参数原样过来（shim 会给没有参数的调用带一个空对象）
-    assert!(calls[0].1.parse::<serde_json::Value>().is_ok(), "argsJson 要是合法 JSON：{}", calls[0].1);
+    assert!(
+        calls[0].1.parse::<serde_json::Value>().is_ok(),
+        "argsJson 要是合法 JSON：{}",
+        calls[0].1
+    );
 
     client.shutdown().ok();
 }
@@ -270,7 +293,11 @@ fn capability_errors_come_back_into_the_plugins_js() {
         .expect("被父进程拒绝不该变成通道故障");
 
     assert!(res.message.starts_with("被拒："), "{}", res.message);
-    assert!(res.message.contains("bad_args"), "错误内容要能到插件手里：{}", res.message);
+    assert!(
+        res.message.contains("bad_args"),
+        "错误内容要能到插件手里：{}",
+        res.message
+    );
     assert_eq!(seen.lock().unwrap().len(), 1);
 
     client.shutdown().ok();
@@ -327,8 +354,14 @@ fn killing_the_child_mid_run_ends_the_call_immediately() {
         )
         .expect_err("被杀之后这次调用必须报错");
     let elapsed = t0.elapsed();
-    assert!(elapsed < std::time::Duration::from_secs(3), "要在被杀后立刻返回（实际 {elapsed:?}）");
-    assert!(err.contains("plugin_crash") && err.contains("退出"), "{err}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "要在被杀后立刻返回（实际 {elapsed:?}）"
+    );
+    assert!(
+        err.contains("plugin_crash") && err.contains("退出"),
+        "{err}"
+    );
 
     // 进程真的没了
     let gone = (0..40).all(|_| {
@@ -407,7 +440,10 @@ fn a_host_over_the_rss_limit_is_killed_and_reported_as_out_of_memory() {
         ))
         .expect_err("超限必须报错");
     let elapsed = t0.elapsed();
-    assert!(elapsed < std::time::Duration::from_secs(5), "要在超限后很快返回（实际 {elapsed:?}）");
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "要在超限后很快返回（实际 {elapsed:?}）"
+    );
     assert!(err.contains("out_of_memory"), "{err}");
     assert!(err.contains("已终止"), "{err}");
 

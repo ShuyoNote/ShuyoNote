@@ -44,8 +44,7 @@ fn meta_value(html: &str, key: &str) -> Option<String> {
     let m = re.find(html)?;
     let tag = m.as_str();
     // content="..."
-    let content_re =
-        regex::Regex::new(r#"(?is)content\s*=\s*["']([^"']*)["']"#).ok()?;
+    let content_re = regex::Regex::new(r#"(?is)content\s*=\s*["']([^"']*)["']"#).ok()?;
     if let Some(c) = content_re.captures(tag) {
         let v = c.get(1)?.as_str().trim().to_string();
         if !v.is_empty() {
@@ -198,17 +197,13 @@ async fn fetch_and_parse(url: &str) -> Result<Parsed, String> {
         .build()
         .map_err(|e| e.to_string())?;
 
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| {
-            let msg = describe_err(&e);
-            // 也写一行 logcat：Android 上 toast 是**单行截断**的，而这条错误的根因往往在末尾
-            // （`adb logcat -s RustStdoutStderr` 才能看全）。见 docs/MOBILE.md §2.4。
-            eprintln!("[http] 取网页失败 {url}：{msg}");
-            format!("无法获取网页: {msg}")
-        })?;
+    let resp = client.get(url).send().await.map_err(|e| {
+        let msg = describe_err(&e);
+        // 也写一行 logcat：Android 上 toast 是**单行截断**的，而这条错误的根因往往在末尾
+        // （`adb logcat -s RustStdoutStderr` 才能看全）。见 docs/MOBILE.md §2.4。
+        eprintln!("[http] 取网页失败 {url}：{msg}");
+        format!("无法获取网页: {msg}")
+    })?;
     if !resp.status().is_success() {
         let host = resp.url().host_str().unwrap_or(url).to_string();
         return Ok(Parsed {
@@ -259,9 +254,12 @@ fn resolve_image_url(page_url: &str, img: &str) -> Option<String> {
     Some(img)
 }
 
-async fn get_image(client: &reqwest::Client, page_url: &str, html: &str) -> Option<(Vec<u8>, String)> {
-    let img = meta_value(html, "og:image")
-        .or_else(|| meta_value(html, "twitter:image"))?;
+async fn get_image(
+    client: &reqwest::Client,
+    page_url: &str,
+    html: &str,
+) -> Option<(Vec<u8>, String)> {
+    let img = meta_value(html, "og:image").or_else(|| meta_value(html, "twitter:image"))?;
     let resolved = resolve_image_url(page_url, &img)?;
     let r = client.get(resolved).send().await.ok()?;
     if !r.status().is_success() {
@@ -326,7 +324,10 @@ mod tests {
         assert!(s.contains("tls handshake failed"), "{s}");
         assert!(s.contains("UnknownIssuer"), "根因没被串进来：{s}");
         // 单层错误也不能炸、也不能多出一个空箭头
-        assert_eq!(describe_err(&Leaf), "invalid peer certificate: UnknownIssuer");
+        assert_eq!(
+            describe_err(&Leaf),
+            "invalid peer certificate: UnknownIssuer"
+        );
     }
 
     #[test]
@@ -340,10 +341,19 @@ mod tests {
           <meta property="og:image" content="https://img.example.com/pic.jpg" />
         </head><body></body></html>
         "#;
-        assert_eq!(meta_value(html, "og:title").unwrap(), "时政微观察 | 想人民之所想");
-        assert_eq!(meta_value(html, "og:description").unwrap(), "这是一段摘要。");
+        assert_eq!(
+            meta_value(html, "og:title").unwrap(),
+            "时政微观察 | 想人民之所想"
+        );
+        assert_eq!(
+            meta_value(html, "og:description").unwrap(),
+            "这是一段摘要。"
+        );
         assert_eq!(meta_value(html, "og:site_name").unwrap(), "新浪新闻");
-        assert_eq!(meta_value(html, "og:image").unwrap(), "https://img.example.com/pic.jpg");
+        assert_eq!(
+            meta_value(html, "og:image").unwrap(),
+            "https://img.example.com/pic.jpg"
+        );
         assert_eq!(title_from_html(html), "示例新闻 - 某某站");
         // A meta tag with name= instead of property= still matches.
         assert_eq!(meta_value(html, "description"), None);
@@ -352,7 +362,9 @@ mod tests {
     #[test]
     fn og_title_wins_over_title() {
         let html = r#"<html><head><title>Fallback</title><meta property="og:title" content="OG Title"/></head></html>"#;
-        let title = meta_value(html, "og:title").unwrap_or_else(|| title_from_html(html)).pipe_trim();
+        let title = meta_value(html, "og:title")
+            .unwrap_or_else(|| title_from_html(html))
+            .pipe_trim();
         assert_eq!(title, "OG Title");
     }
 
@@ -368,8 +380,17 @@ mod tests {
 
     #[test]
     fn resolve_image_url_variants() {
-        assert_eq!(resolve_image_url("https://a.com/p/", "//cdn.a.com/i.png").unwrap(), "https://cdn.a.com/i.png");
-        assert_eq!(resolve_image_url("https://a.com/p/x", "/img.png").unwrap(), "https://a.com/img.png");
-        assert_eq!(resolve_image_url("https://a.com/p/", "https://b.com/i.png").unwrap(), "https://b.com/i.png");
+        assert_eq!(
+            resolve_image_url("https://a.com/p/", "//cdn.a.com/i.png").unwrap(),
+            "https://cdn.a.com/i.png"
+        );
+        assert_eq!(
+            resolve_image_url("https://a.com/p/x", "/img.png").unwrap(),
+            "https://a.com/img.png"
+        );
+        assert_eq!(
+            resolve_image_url("https://a.com/p/", "https://b.com/i.png").unwrap(),
+            "https://b.com/i.png"
+        );
     }
 }

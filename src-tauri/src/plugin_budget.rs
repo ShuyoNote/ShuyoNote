@@ -179,9 +179,7 @@ mod tests {
     #[test]
     fn budget_is_restored_after_a_trip() {
         // 超预算 panic 之后（守卫 drop 已恢复），同线程再分配大块内存必须恢复正常。
-        let _ = std::panic::catch_unwind(|| {
-            with_budget(1 << 20, || vec![0u8; 4 << 20].len())
-        });
+        let _ = std::panic::catch_unwind(|| with_budget(1 << 20, || vec![0u8; 4 << 20].len()));
         let v: Vec<u8> = vec![0u8; 4 << 20];
         assert_eq!(v.len(), 4 << 20, "预算没有被恢复，会污染后续普通分配");
     }

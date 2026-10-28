@@ -21,8 +21,8 @@ use tauri::AppHandle;
 
 use crate::capabilities_gen;
 use crate::plugins::{
-    PluginCommandMeta, PluginEventMeta, is_bare_file_name, is_safe_plugin_id, plugins_root,
-    read_manifest, resolve_permissions,
+    is_bare_file_name, is_safe_plugin_id, plugins_root, read_manifest, resolve_permissions,
+    PluginCommandMeta, PluginEventMeta,
 };
 
 /// 入口文件超过这个体积就提醒（插件应当是脚本，不是打包产物）。
@@ -43,10 +43,20 @@ pub struct PluginProblem {
 
 impl PluginProblem {
     fn error(code: &str, message: impl Into<String>, file: Option<&str>) -> Self {
-        Self { code: code.into(), message: message.into(), severity: "error".into(), file: file.map(str::to_string) }
+        Self {
+            code: code.into(),
+            message: message.into(),
+            severity: "error".into(),
+            file: file.map(str::to_string),
+        }
     }
     fn warn(code: &str, message: impl Into<String>, file: Option<&str>) -> Self {
-        Self { code: code.into(), message: message.into(), severity: "warning".into(), file: file.map(str::to_string) }
+        Self {
+            code: code.into(),
+            message: message.into(),
+            severity: "warning".into(),
+            file: file.map(str::to_string),
+        }
     }
 }
 
@@ -165,7 +175,10 @@ fn check_theme_declaration(value: Option<&serde_json::Value>, problems: &mut Vec
 /// - **command 为空 → 错误**：入口就算出现，点了也只会拿到「命令不存在」；
 /// - **extensions 为空 / 不合法 → 提醒**：宿主会忽略这一项（不猜作者想接什么文件），
 ///   插件本身仍然装得上、跑得起来，所以只是提醒。
-fn check_triggers_declaration(value: Option<&serde_json::Value>, problems: &mut Vec<PluginProblem>) {
+fn check_triggers_declaration(
+    value: Option<&serde_json::Value>,
+    problems: &mut Vec<PluginProblem>,
+) {
     let Some(raw) = value.and_then(|v| v.get("triggers")) else {
         return;
     };
@@ -192,8 +205,18 @@ fn check_triggers_declaration(value: Option<&serde_json::Value>, problems: &mut 
     let known: Vec<&str> = capabilities_gen::TRIGGERS.iter().map(|t| t.id).collect();
     for (i, t) in list.iter().enumerate() {
         let at = format!("triggers[{i}]");
-        let kind = t.get("kind").and_then(|k| k.as_str()).unwrap_or_default().trim().to_string();
-        let command = t.get("command").and_then(|c| c.as_str()).unwrap_or_default().trim().to_string();
+        let kind = t
+            .get("kind")
+            .and_then(|k| k.as_str())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let command = t
+            .get("command")
+            .and_then(|c| c.as_str())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
 
         match capabilities_gen::trigger(&kind) {
             None => problems.push(PluginProblem::error(
@@ -262,11 +285,18 @@ fn check_trigger_targets(
     declared_permissions: Option<&[String]>,
     problems: &mut Vec<PluginProblem>,
 ) {
-    let Some(list) = value.and_then(|v| v.get("triggers")).and_then(|t| t.as_array()) else {
+    let Some(list) = value
+        .and_then(|v| v.get("triggers"))
+        .and_then(|t| t.as_array())
+    else {
         return;
     };
     for (i, t) in list.iter().enumerate() {
-        let command = t.get("command").and_then(|c| c.as_str()).unwrap_or_default().trim();
+        let command = t
+            .get("command")
+            .and_then(|c| c.as_str())
+            .unwrap_or_default()
+            .trim();
         if command.is_empty() {
             continue; // 已经在 check_triggers_declaration 里报过
         }
@@ -274,7 +304,11 @@ fn check_trigger_targets(
         // 显式声明了权限、却没写 `export:files` 时提醒一句——否则用户点了会看到权限不足。
         // 只在**显式声明过 permissions** 时提醒：没声明 permissions 的老插件走基线授权，
         // 那是全给的，不会缺这一项。
-        let kind = t.get("kind").and_then(|k| k.as_str()).unwrap_or_default().trim();
+        let kind = t
+            .get("kind")
+            .and_then(|k| k.as_str())
+            .unwrap_or_default()
+            .trim();
         if kind == "export" {
             if let Some(perms) = declared_permissions {
                 if !perms.iter().any(|p| p == "export:files") {
@@ -315,7 +349,10 @@ fn check_trigger_targets(
 /// 只看解析结果，就会报出「必须声明 views 或 theme 之一」这种把作者引向反方向的错误。
 /// 所以这一层专门负责说清「哪一项、写成什么才对」。
 fn check_view_field_shapes(value: Option<&serde_json::Value>, problems: &mut Vec<PluginProblem>) {
-    let Some(list) = value.and_then(|v| v.get("views")).and_then(|v| v.as_array()) else {
+    let Some(list) = value
+        .and_then(|v| v.get("views"))
+        .and_then(|v| v.as_array())
+    else {
         return;
     };
     for (i, vw) in list.iter().enumerate() {
@@ -388,7 +425,10 @@ fn check_view_field_shapes(value: Option<&serde_json::Value>, problems: &mut Vec
 /// 只在**声明式**这一档跑：逻辑档插件的 `views` 整体不生效（已由 `views_ignored` 提醒），
 /// 它的设置是给它自己的代码读的。
 fn check_view_params(value: Option<&serde_json::Value>, problems: &mut Vec<PluginProblem>) {
-    let Some(list) = value.and_then(|v| v.get("views")).and_then(|v| v.as_array()) else {
+    let Some(list) = value
+        .and_then(|v| v.get("views"))
+        .and_then(|v| v.as_array())
+    else {
         return;
     };
     // 设置声明：key → (类型, 候选项)
@@ -398,8 +438,16 @@ fn check_view_params(value: Option<&serde_json::Value>, problems: &mut Vec<Plugi
         .map(|arr| {
             arr.iter()
                 .map(|d| {
-                    let key = d.get("key").and_then(|k| k.as_str()).unwrap_or_default().to_string();
-                    let ty = d.get("type").and_then(|t| t.as_str()).unwrap_or("string").to_string();
+                    let key = d
+                        .get("key")
+                        .and_then(|k| k.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let ty = d
+                        .get("type")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("string")
+                        .to_string();
                     let options = d
                         .get("options")
                         .and_then(|o| o.as_array())
@@ -407,7 +455,9 @@ fn check_view_params(value: Option<&serde_json::Value>, problems: &mut Vec<Plugi
                             a.iter()
                                 .filter_map(|o| match o {
                                     serde_json::Value::String(s) => Some(s.clone()),
-                                    v => v.get("value").and_then(|v| v.as_str()).map(str::to_string),
+                                    v => {
+                                        v.get("value").and_then(|v| v.as_str()).map(str::to_string)
+                                    }
                                 })
                                 .collect()
                         })
@@ -616,23 +666,43 @@ fn validate_declarative(
     if views.len() > crate::plugins::MAX_VIEWS {
         problems.push(PluginProblem::warn(
             "too_many_views",
-            format!("声明了 {} 个视图（上限 {}）：声明是给人看的，堆量只会让插件面板变得难选", views.len(), crate::plugins::MAX_VIEWS),
+            format!(
+                "声明了 {} 个视图（上限 {}）：声明是给人看的，堆量只会让插件面板变得难选",
+                views.len(),
+                crate::plugins::MAX_VIEWS
+            ),
             Some("manifest.json"),
         ));
     }
     let mut seen: Vec<&str> = Vec::new();
     for vw in &views {
         if vw.id.trim().is_empty() {
-            problems.push(PluginProblem::error("view_no_id", "views 里有一项没有 id", Some("manifest.json")));
+            problems.push(PluginProblem::error(
+                "view_no_id",
+                "views 里有一项没有 id",
+                Some("manifest.json"),
+            ));
         } else if seen.contains(&vw.id.as_str()) {
-            problems.push(PluginProblem::warn("view_duplicate", format!("视图 id 重复：{}", vw.id), Some("manifest.json")));
+            problems.push(PluginProblem::warn(
+                "view_duplicate",
+                format!("视图 id 重复：{}", vw.id),
+                Some("manifest.json"),
+            ));
         }
         seen.push(&vw.id);
         if vw.title.trim().is_empty() {
-            problems.push(PluginProblem::warn("view_no_title", format!("视图 {} 没有 title（菜单里会显示成 id）", vw.id), Some("manifest.json")));
+            problems.push(PluginProblem::warn(
+                "view_no_title",
+                format!("视图 {} 没有 title（菜单里会显示成 id）", vw.id),
+                Some("manifest.json"),
+            ));
         }
         if vw.columns.is_empty() {
-            problems.push(PluginProblem::warn("view_no_columns", format!("视图 {} 没有声明 columns（会只显示标题）", vw.id), Some("manifest.json")));
+            problems.push(PluginProblem::warn(
+                "view_no_columns",
+                format!("视图 {} 没有声明 columns（会只显示标题）", vw.id),
+                Some("manifest.json"),
+            ));
         }
         for c in &vw.columns {
             if !crate::plugins::VIEW_COLUMNS.iter().any(|(k, _)| k == c) {
@@ -642,7 +712,11 @@ fn validate_declarative(
                         "视图 {} 声明了宿主不支持的列「{}」（可用：{}）",
                         vw.id,
                         c,
-                        crate::plugins::VIEW_COLUMNS.iter().map(|(k, _)| *k).collect::<Vec<_>>().join(" / ")
+                        crate::plugins::VIEW_COLUMNS
+                            .iter()
+                            .map(|(k, _)| *k)
+                            .collect::<Vec<_>>()
+                            .join(" / ")
                     ),
                     Some("manifest.json"),
                 ));
@@ -652,23 +726,48 @@ fn validate_declarative(
         // （它要看设置声明的类型与候选项，是另一套判断）。
         if let Some(kind) = vw.query.kind.as_ref().and_then(|f| f.literal()) {
             if !crate::plugins::VIEW_KINDS.contains(&kind) {
-                problems.push(PluginProblem::warn("view_bad_kind", format!("视图 {} 的 query.kind「{kind}」不认识（可用：{}）", vw.id, crate::plugins::VIEW_KINDS.join(" / ")), Some("manifest.json")));
+                problems.push(PluginProblem::warn(
+                    "view_bad_kind",
+                    format!(
+                        "视图 {} 的 query.kind「{kind}」不认识（可用：{}）",
+                        vw.id,
+                        crate::plugins::VIEW_KINDS.join(" / ")
+                    ),
+                    Some("manifest.json"),
+                ));
             }
         }
         if let Some(sort) = vw.query.sort.as_ref().and_then(|f| f.literal()) {
             if !crate::plugins::VIEW_SORTS.contains(&sort) {
-                problems.push(PluginProblem::warn("view_bad_sort", format!("视图 {} 的 query.sort「{sort}」不认识（可用：{}）", vw.id, crate::plugins::VIEW_SORTS.join(" / ")), Some("manifest.json")));
+                problems.push(PluginProblem::warn(
+                    "view_bad_sort",
+                    format!(
+                        "视图 {} 的 query.sort「{sort}」不认识（可用：{}）",
+                        vw.id,
+                        crate::plugins::VIEW_SORTS.join(" / ")
+                    ),
+                    Some("manifest.json"),
+                ));
             }
         }
         if let Some(limit) = vw.query.limit.as_ref().and_then(|f| f.literal()) {
             if !(1..=500).contains(&limit) {
-                problems.push(PluginProblem::warn("view_bad_limit", format!("视图 {} 的 query.limit {limit} 超出范围（1–500）", vw.id), Some("manifest.json")));
+                problems.push(PluginProblem::warn(
+                    "view_bad_limit",
+                    format!("视图 {} 的 query.limit {limit} 超出范围（1–500）", vw.id),
+                    Some("manifest.json"),
+                ));
             }
         }
         // 落点（`overlay` 浮层 / `rail` 右侧常驻面板）：不认识的值按浮层处理、视图照样打得开，
         // 所以是**提醒**不是错误——口径与 kind / sort / columns 一致（声明式插件的原则是
         // "永远打得开"）。这里多说一句它按什么处理，作者才知道自己看到的不是他要的形态。
-        if let Some(p) = vw.placement.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        if let Some(p) = vw
+            .placement
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        {
             if !crate::plugins::VIEW_PLACEMENTS.contains(&p) {
                 problems.push(PluginProblem::warn(
                     "view_bad_placement",
@@ -693,7 +792,11 @@ fn validate_declarative(
     // `declarative_no_code`，那是设计如此，不是错误。
     if let Err(e) = read_manifest(dir) {
         if !problems.iter().any(|p| p.severity == "error") {
-            problems.push(PluginProblem::error("loader_rejected", format!("加载器会拒载这个插件：{e}"), None));
+            problems.push(PluginProblem::error(
+                "loader_rejected",
+                format!("加载器会拒载这个插件：{e}"),
+                None,
+            ));
         }
     }
 
@@ -704,7 +807,11 @@ fn validate_declarative(
         id,
         name,
         version,
-        api_version: if api_version.is_empty() { capabilities_gen::API_VERSION.to_string() } else { api_version },
+        api_version: if api_version.is_empty() {
+            capabilities_gen::API_VERSION.to_string()
+        } else {
+            api_version
+        },
         main,
         entry_bytes: 0,
         commands: Vec::new(),
@@ -730,7 +837,11 @@ fn field_str(v: &serde_json::Value, key: &str) -> Option<String> {
 
 /// 校验一个插件目录。**不短路**：所有问题都会出现在 `problems` 里。
 pub fn validate_dir(dir: &Path) -> ValidateReport {
-    let dir_name = dir.file_name().and_then(|s| s.to_str()).unwrap_or_default().to_string();
+    let dir_name = dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+        .to_string();
     let mut problems: Vec<PluginProblem> = Vec::new();
 
     // ---- 1. manifest 能不能读、是不是合法 JSON ----
@@ -775,7 +886,11 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
         main = field_str(v, "main").unwrap_or_else(|| "main.js".to_string());
 
         if id.is_empty() {
-            problems.push(PluginProblem::error("id_missing", "manifest.id 缺失（每个插件必须有唯一 id）", Some("manifest.json")));
+            problems.push(PluginProblem::error(
+                "id_missing",
+                "manifest.id 缺失（每个插件必须有唯一 id）",
+                Some("manifest.json"),
+            ));
         } else if !is_safe_plugin_id(&id) {
             problems.push(PluginProblem::error(
                 "id_unsafe",
@@ -790,10 +905,18 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
             ));
         }
         if name.is_empty() {
-            problems.push(PluginProblem::error("name_missing", "manifest.name 缺失（界面上要显示它）", Some("manifest.json")));
+            problems.push(PluginProblem::error(
+                "name_missing",
+                "manifest.name 缺失（界面上要显示它）",
+                Some("manifest.json"),
+            ));
         }
         if version.is_empty() {
-            problems.push(PluginProblem::warn("version_missing", "建议写 manifest.version（如 \"1.0.0\"），便于用户判断装的是哪版", Some("manifest.json")));
+            problems.push(PluginProblem::warn(
+                "version_missing",
+                "建议写 manifest.version（如 \"1.0.0\"），便于用户判断装的是哪版",
+                Some("manifest.json"),
+            ));
         }
         if api_version.is_empty() {
             problems.push(PluginProblem::warn(
@@ -805,7 +928,12 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
                 Some("manifest.json"),
             ));
         } else {
-            let major = api_version.split('.').next().unwrap_or_default().parse::<u32>().unwrap_or(0);
+            let major = api_version
+                .split('.')
+                .next()
+                .unwrap_or_default()
+                .parse::<u32>()
+                .unwrap_or(0);
             if major != capabilities_gen::API_MAJOR {
                 problems.push(PluginProblem::error(
                     "api_version_unsupported",
@@ -820,7 +948,9 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
         if !is_bare_file_name(&main) {
             problems.push(PluginProblem::error(
                 "main_invalid",
-                format!("manifest.main（{main}）必须是同级文件名：不得含路径分隔符，也不得是 `.`/`..`"),
+                format!(
+                    "manifest.main（{main}）必须是同级文件名：不得含路径分隔符，也不得是 `.`/`..`"
+                ),
                 Some("manifest.json"),
             ));
         }
@@ -829,17 +959,34 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
     // 运行档：从这一步起，声明式与逻辑档走**不同的检查**（前者没有代码，后者没有视图）。
     let runtime = value
         .as_ref()
-        .map(|v| v.get("runtime").and_then(|r| r.as_str()).unwrap_or("logic").to_string())
+        .map(|v| {
+            v.get("runtime")
+                .and_then(|r| r.as_str())
+                .unwrap_or("logic")
+                .to_string()
+        })
         .unwrap_or_else(|| "logic".to_string());
     if runtime != "logic" && runtime != "declarative" {
         problems.push(PluginProblem::error(
             "runtime_unknown",
-            format!("manifest.runtime 不认识：{runtime}（本应用支持 logic / declarative），会被拒载"),
+            format!(
+                "manifest.runtime 不认识：{runtime}（本应用支持 logic / declarative），会被拒载"
+            ),
             Some("manifest.json"),
         ));
     }
     if runtime == "declarative" {
-        return validate_declarative(dir, value.as_ref(), dir_name, id, name, version, api_version, main, problems);
+        return validate_declarative(
+            dir,
+            value.as_ref(),
+            dir_name,
+            id,
+            name,
+            version,
+            api_version,
+            main,
+            problems,
+        );
     }
     if value.as_ref().and_then(|v| v.get("views")).is_some() {
         problems.push(PluginProblem::warn(
@@ -858,7 +1005,11 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
             Ok(md) => {
                 entry_bytes = md.len();
                 if entry_bytes == 0 {
-                    problems.push(PluginProblem::error("main_empty", format!("入口文件 {main} 是空的"), Some(&main)));
+                    problems.push(PluginProblem::error(
+                        "main_empty",
+                        format!("入口文件 {main} 是空的"),
+                        Some(&main),
+                    ));
                 } else if entry_bytes > BIG_ENTRY_BYTES {
                     problems.push(PluginProblem::warn(
                         "main_large",
@@ -887,7 +1038,11 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
             granted = g;
             permissions_baseline = m.permissions.is_none();
             for w in warns {
-                problems.push(PluginProblem::warn("permission_note", w, Some("manifest.json")));
+                problems.push(PluginProblem::warn(
+                    "permission_note",
+                    w,
+                    Some("manifest.json"),
+                ));
             }
             // 这里刻意**不从 `permission_metas` 取**：那个函数只列「实际授予」的权限
             // （安装界面的语义），而校验器要如实列出**作者写了什么**——包括本版本
@@ -898,7 +1053,9 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
                         let p = capabilities_gen::permission(&d.id);
                         permissions.push(PermissionView {
                             id: d.id.clone(),
-                            title: p.map(|p| p.title.to_string()).unwrap_or_else(|| d.id.clone()),
+                            title: p
+                                .map(|p| p.title.to_string())
+                                .unwrap_or_else(|| d.id.clone()),
                             reason: d.reason.clone(),
                             risk: p.map(|p| p.risk.to_string()).unwrap_or_default(),
                             known: p.is_some(),
@@ -935,7 +1092,11 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
                     }
                 }
                 if !dupes.is_empty() {
-                    problems.push(PluginProblem::warn("permission_duplicate", format!("权限重复声明：{}", dupes.join("、")), Some("manifest.json")));
+                    problems.push(PluginProblem::warn(
+                        "permission_duplicate",
+                        format!("权限重复声明：{}", dupes.join("、")),
+                        Some("manifest.json"),
+                    ));
                 }
             }
         }
@@ -961,17 +1122,28 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
                 let mut seen: Vec<&str> = Vec::new();
                 for d in &decls {
                     if d.key.trim().is_empty() {
-                        problems.push(PluginProblem::error("setting_no_key", "settings 里有一项没有 key", Some("manifest.json")));
+                        problems.push(PluginProblem::error(
+                            "setting_no_key",
+                            "settings 里有一项没有 key",
+                            Some("manifest.json"),
+                        ));
                         continue;
                     }
                     if seen.contains(&d.key.as_str()) {
-                        problems.push(PluginProblem::warn("setting_duplicate", format!("设置项 {} 重复声明", d.key), Some("manifest.json")));
+                        problems.push(PluginProblem::warn(
+                            "setting_duplicate",
+                            format!("设置项 {} 重复声明", d.key),
+                            Some("manifest.json"),
+                        ));
                     }
                     seen.push(&d.key);
                     if d.setting_type == "select" && d.options.is_empty() {
                         problems.push(PluginProblem::error(
                             "setting_select_no_options",
-                            format!("设置项 {} 声明为 select 却没有 options（用户将无法选择任何值）", d.key),
+                            format!(
+                                "设置项 {} 声明为 select 却没有 options（用户将无法选择任何值）",
+                                d.key
+                            ),
                             Some("manifest.json"),
                         ));
                     }
@@ -1021,15 +1193,25 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
     // ---- 6. 顶层代码 + 命令注册（真正跑一次 discovery）----
     let mut commands: Vec<PluginCommandMeta> = Vec::new();
     if let Some(src) = &source {
-        let manifest_for_run = value.as_ref().and_then(|v| manifest_from_value(v, &dir_name));
-        let run_id = manifest_for_run.as_ref().map(|m| m.id.clone()).unwrap_or_else(|| dir_name.clone());
+        let manifest_for_run = value
+            .as_ref()
+            .and_then(|v| manifest_from_value(v, &dir_name));
+        let run_id = manifest_for_run
+            .as_ref()
+            .map(|m| m.id.clone())
+            .unwrap_or_else(|| dir_name.clone());
         let perms = if granted.is_empty() && manifest_for_run.is_none() {
             // manifest 完全不可用时也要能报出「顶层代码跑不起来」，给一组基线权限即可。
             crate::plugins::baseline_permission_ids()
         } else {
             granted.clone()
         };
-        match crate::plugins::discover_commands_timed(&run_id, &perms, src, crate::plugins::DISCOVER_TIMEOUT) {
+        match crate::plugins::discover_commands_timed(
+            &run_id,
+            &perms,
+            src,
+            crate::plugins::DISCOVER_TIMEOUT,
+        ) {
             Ok(cmds) => {
                 if cmds.is_empty() {
                     problems.push(PluginProblem::warn(
@@ -1041,7 +1223,11 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
                 let mut seen: Vec<&str> = Vec::new();
                 for c in &cmds {
                     if c.title.trim().is_empty() {
-                        problems.push(PluginProblem::warn("command_no_title", format!("命令 {} 没有 title（命令面板里会显示空）", c.id), Some(&main)));
+                        problems.push(PluginProblem::warn(
+                            "command_no_title",
+                            format!("命令 {} 没有 title（命令面板里会显示空）", c.id),
+                            Some(&main),
+                        ));
                     }
                     // 触发面：只认识注册表里的入口；**没实现的也如实告知**，不静默丢掉
                     for m in &c.menus {
@@ -1078,7 +1264,11 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
                         }
                     }
                     if seen.contains(&c.id.as_str()) {
-                        problems.push(PluginProblem::warn("command_duplicate", format!("命令 id 重复注册：{}", c.id), Some(&main)));
+                        problems.push(PluginProblem::warn(
+                            "command_duplicate",
+                            format!("命令 id 重复注册：{}", c.id),
+                            Some(&main),
+                        ));
                     } else {
                         seen.push(&c.id);
                     }
@@ -1107,7 +1297,11 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
     if let Err(e) = read_manifest(dir).and_then(|m| crate::plugins::load_plugin_source(dir, &m)) {
         let already = problems.iter().any(|p| p.severity == "error");
         if !already {
-            problems.push(PluginProblem::error("loader_rejected", format!("加载器会拒载这个插件：{e}"), None));
+            problems.push(PluginProblem::error(
+                "loader_rejected",
+                format!("加载器会拒载这个插件：{e}"),
+                None,
+            ));
         }
     }
 
@@ -1118,7 +1312,11 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
         id,
         name,
         version,
-        api_version: if api_version.is_empty() { capabilities_gen::API_VERSION.to_string() } else { api_version },
+        api_version: if api_version.is_empty() {
+            capabilities_gen::API_VERSION.to_string()
+        } else {
+            api_version
+        },
         main,
         entry_bytes,
         commands,
@@ -1146,11 +1344,18 @@ fn manifest_from_value(v: &serde_json::Value, dir_name: &str) -> Option<crate::p
     let mut obj = v.clone();
     let m = obj.as_object_mut()?;
     // id 必须是安全的（否则后续用 id 记日志会出问题），缺失时退回目录名
-    if !m.get("id").map(|x| x.as_str().map(is_safe_plugin_id).unwrap_or(false)).unwrap_or(false) {
+    if !m
+        .get("id")
+        .map(|x| x.as_str().map(is_safe_plugin_id).unwrap_or(false))
+        .unwrap_or(false)
+    {
         m.insert("id".into(), serde_json::Value::String(dir_name.to_string()));
     }
     if !m.contains_key("name") {
-        m.insert("name".into(), serde_json::Value::String(dir_name.to_string()));
+        m.insert(
+            "name".into(),
+            serde_json::Value::String(dir_name.to_string()),
+        );
     }
     serde_json::from_value(serde_json::Value::Object(m.clone())).ok()
 }
@@ -1225,7 +1430,10 @@ pub fn plugin_dir_stamp(app: AppHandle) -> Result<String, String> {
     let root = plugins_root(&app)?;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for dir in plugin_dirs(&root) {
-        dir.file_name().unwrap_or_default().to_string_lossy().hash(&mut hasher);
+        dir.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .hash(&mut hasher);
         let mut files: Vec<(String, u64, u128)> = Vec::new();
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for e in entries.flatten() {
@@ -1276,7 +1484,11 @@ mod tests {
         let base = temp_dir(dirname);
         let dir = base.join(dirname);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("manifest.json"), manifest.replace("{dir}", dirname)).unwrap();
+        fs::write(
+            dir.join("manifest.json"),
+            manifest.replace("{dir}", dirname),
+        )
+        .unwrap();
         dir
     }
 
@@ -1289,7 +1501,12 @@ mod tests {
         std::fs::read_to_string(dir.join("manifest.json"))
             .ok()
             .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-            .and_then(|v| v.get("theme").and_then(|t| t.get("tokens")).and_then(|t| t.as_object()).map(|m| !m.is_empty()))
+            .and_then(|v| {
+                v.get("theme")
+                    .and_then(|t| t.get("tokens"))
+                    .and_then(|t| t.as_object())
+                    .map(|m| !m.is_empty())
+            })
             .unwrap_or(false)
     }
 
@@ -1297,7 +1514,8 @@ mod tests {
         r.problems.iter().map(|p| p.code.clone()).collect()
     }
 
-    const OK_MAIN: &str = "register({ id: 'demo.run', title: '演示', run: function () { return 'ok'; } });";
+    const OK_MAIN: &str =
+        "register({ id: 'demo.run', title: '演示', run: function () { return 'ok'; } });";
 
     fn manifest_json(id: &str, extra: &str) -> String {
         format!(
@@ -1337,7 +1555,11 @@ mod tests {
                 assert!(r.permissions.is_empty(), "声明式插件没有代码，不该申请权限");
                 continue;
             }
-            assert!(!r.commands.is_empty(), "示例插件 {} 至少要注册一个命令", d.display());
+            assert!(
+                !r.commands.is_empty(),
+                "示例插件 {} 至少要注册一个命令",
+                d.display()
+            );
             assert!(
                 !r.permissions.is_empty(),
                 "示例插件 {} 应当显式声明权限（示范权限模型）",
@@ -1349,9 +1571,18 @@ mod tests {
                 d.display(),
                 r.permissions
             );
-            assert!(!r.permissions_baseline, "示例插件 {} 不应走基线授权（那会示范成坏习惯）", d.display());
+            assert!(
+                !r.permissions_baseline,
+                "示例插件 {} 不应走基线授权（那会示范成坏习惯）",
+                d.display()
+            );
             for ev in &r.events {
-                assert!(!ev.reason.trim().is_empty(), "示例插件 {} 的事件 {} 应当写 reason（示范给用户看的授权面）", d.display(), ev.id);
+                assert!(
+                    !ev.reason.trim().is_empty(),
+                    "示例插件 {} 的事件 {} 应当写 reason（示范给用户看的授权面）",
+                    d.display(),
+                    ev.id
+                );
             }
             // 导入触发：示例里写了就必须是「干干净净」的——命令注册过、扩展名合法、
             // 没有拿去接一条带参数表单的命令（这些正是作者最容易写错的地方）。
@@ -1386,12 +1617,20 @@ mod tests {
         );
         let r = validate_dir(&dir);
         // 关键：没有 main.js 也**不能**被判成「加载器会拒载」——声明式本来就没有代码
-        assert_eq!(r.errors().count(), 0, "零代码插件不该有错误：{:?}", r.problems);
+        assert_eq!(
+            r.errors().count(),
+            0,
+            "零代码插件不该有错误：{:?}",
+            r.problems
+        );
         assert!(r.ok);
         assert_eq!(r.runtime, "declarative");
         assert_eq!(r.views.len(), 1);
         assert!(r.commands.is_empty());
-        assert!(r.permissions.is_empty(), "没有代码就不该有权限，也不该走基线授权");
+        assert!(
+            r.permissions.is_empty(),
+            "没有代码就不该有权限，也不该走基线授权"
+        );
         assert!(!r.permissions_baseline);
     }
 
@@ -1402,7 +1641,11 @@ mod tests {
             r#"{ "id": "empty-panel", "name": "空面板", "apiVersion": "1.0.0", "runtime": "declarative" }"#,
         );
         let r = validate_dir(&dir);
-        assert!(codes(&r).contains(&"declarative_no_views".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"declarative_no_views".to_string()),
+            "{:?}",
+            r.problems
+        );
         assert!(!r.ok, "没有视图的声明式插件装了什么都不显示，必须报错");
     }
 
@@ -1418,7 +1661,11 @@ mod tests {
         let r = validate_dir(&dir);
         assert!(r.ok, "这些都是提醒而不是错误：{:?}", r.problems);
         for code in ["declarative_has_main", "declarative_has_permissions"] {
-            assert!(codes(&r).contains(&code.to_string()), "应提示 {code}：{:?}", r.problems);
+            assert!(
+                codes(&r).contains(&code.to_string()),
+                "应提示 {code}：{:?}",
+                r.problems
+            );
         }
     }
 
@@ -1429,7 +1676,11 @@ mod tests {
             r#"{ "id": "weird-runtime", "name": "W", "version": "1.0.0", "apiVersion": "1.0.0", "runtime": "wasm" }"#,
         );
         let r = validate_dir(&dir);
-        assert!(codes(&r).contains(&"runtime_unknown".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"runtime_unknown".to_string()),
+            "{:?}",
+            r.problems
+        );
         assert!(!r.ok);
     }
 
@@ -1445,9 +1696,25 @@ mod tests {
                  ] }"#,
         );
         let r = validate_dir(&dir);
-        assert!(r.ok, "列/排序/取值写错都只是提醒（宿主会忽略并按默认来）：{:?}", r.problems);
-        for code in ["view_unknown_column", "view_bad_kind", "view_bad_sort", "view_bad_limit", "view_duplicate", "view_no_title", "view_no_columns"] {
-            assert!(codes(&r).contains(&code.to_string()), "应提示 {code}：{:?}", r.problems);
+        assert!(
+            r.ok,
+            "列/排序/取值写错都只是提醒（宿主会忽略并按默认来）：{:?}",
+            r.problems
+        );
+        for code in [
+            "view_unknown_column",
+            "view_bad_kind",
+            "view_bad_sort",
+            "view_bad_limit",
+            "view_duplicate",
+            "view_no_title",
+            "view_no_columns",
+        ] {
+            assert!(
+                codes(&r).contains(&code.to_string()),
+                "应提示 {code}：{:?}",
+                r.problems
+            );
         }
     }
 
@@ -1476,9 +1743,18 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
             .filter(|p| p.code == "menu_host_args_ignores_params")
             .map(|p| p.message.as_str())
             .collect();
-        assert_eq!(hits.len(), 1, "只有 h.a 该被提醒（h.b 没声明参数、h.c 是 page.context）：{:?}", r.problems);
+        assert_eq!(
+            hits.len(),
+            1,
+            "只有 h.a 该被提醒（h.b 没声明参数、h.c 是 page.context）：{:?}",
+            r.problems
+        );
         assert!(hits[0].contains("h.a"), "{}", hits[0]);
-        assert!(hits[0].contains("file.context") || hits[0].contains("附件右键菜单"), "{}", hits[0]);
+        assert!(
+            hits[0].contains("file.context") || hits[0].contains("附件右键菜单"),
+            "{}",
+            hits[0]
+        );
     }
 
     #[test]
@@ -1503,7 +1779,11 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         fs::write(dir.join("manifest.json"), v.to_string()).unwrap();
         let r = validate_dir(&dir);
         assert!(r.ok, "{:?}", r.problems);
-        assert!(codes(&r).contains(&"views_ignored".to_string()), "有代码的插件声明 views 要说明它不生效：{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"views_ignored".to_string()),
+            "有代码的插件声明 views 要说明它不生效：{:?}",
+            r.problems
+        );
     }
 
     // ---- 作者会犯的错：每种都要报出来，且给稳定的 code ----
@@ -1513,7 +1793,11 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         let dir = plugin("demo-a", &manifest_json("something-else", ""));
         write_main(&dir, "main.js", OK_MAIN);
         let r = validate_dir(&dir);
-        assert!(codes(&r).contains(&"id_mismatch".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"id_mismatch".to_string()),
+            "{:?}",
+            r.problems
+        );
         assert!(!r.ok);
     }
 
@@ -1522,43 +1806,75 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         let dir = plugin("demo-b", &manifest_json("../evil", ""));
         write_main(&dir, "main.js", OK_MAIN);
         let r = validate_dir(&dir);
-        assert!(codes(&r).contains(&"id_unsafe".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"id_unsafe".to_string()),
+            "{:?}",
+            r.problems
+        );
     }
 
     #[test]
     fn unsupported_api_major_is_error() {
         let dir = plugin(
             "demo-c",
-            &manifest_json("demo-c", r#", "permissions": []"#).replace(r#""apiVersion": "1.0.0""#, r#""apiVersion": "2.0.0""#),
+            &manifest_json("demo-c", r#", "permissions": []"#)
+                .replace(r#""apiVersion": "1.0.0""#, r#""apiVersion": "2.0.0""#),
         );
         write_main(&dir, "main.js", OK_MAIN);
         let r = validate_dir(&dir);
-        assert!(codes(&r).contains(&"api_version_unsupported".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"api_version_unsupported".to_string()),
+            "{:?}",
+            r.problems
+        );
     }
 
     #[test]
     fn missing_api_version_is_only_a_warning() {
-        let dir = plugin("demo-d", &manifest_json("demo-d", "").replace(r#", "apiVersion": "1.0.0""#, ""));
+        let dir = plugin(
+            "demo-d",
+            &manifest_json("demo-d", "").replace(r#", "apiVersion": "1.0.0""#, ""),
+        );
         write_main(&dir, "main.js", OK_MAIN);
         let r = validate_dir(&dir);
-        assert!(codes(&r).contains(&"api_version_missing".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"api_version_missing".to_string()),
+            "{:?}",
+            r.problems
+        );
         assert!(r.ok, "缺 apiVersion 只是警告，不该阻断");
     }
 
     #[test]
     fn syntax_error_is_reported_with_boa() {
         let dir = plugin("demo-e", &manifest_json("demo-e", ""));
-        write_main(&dir, "main.js", "register({ id: 'x', title: 'y', run: function () { "); // 少一个 }
+        write_main(
+            &dir,
+            "main.js",
+            "register({ id: 'x', title: 'y', run: function () { ",
+        ); // 少一个 }
         let r = validate_dir(&dir);
-        assert!(codes(&r).contains(&"syntax_error".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"syntax_error".to_string()),
+            "{:?}",
+            r.problems
+        );
         assert!(r.commands.is_empty());
     }
 
     #[test]
     fn missing_entry_file_is_reported() {
-        let dir = plugin("demo-f", &manifest_json("demo-f", r#", "main": "nope.js""#).replace(r#""main": "main.js", "#, ""));
+        let dir = plugin(
+            "demo-f",
+            &manifest_json("demo-f", r#", "main": "nope.js""#)
+                .replace(r#""main": "main.js", "#, ""),
+        );
         let r = validate_dir(&dir);
-        assert!(codes(&r).contains(&"main_missing".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"main_missing".to_string()),
+            "{:?}",
+            r.problems
+        );
     }
 
     #[test]
@@ -1568,7 +1884,11 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("manifest.json"), "{ not json").unwrap();
         let r = validate_dir(&dir);
-        assert!(codes(&r).contains(&"manifest_json".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"manifest_json".to_string()),
+            "{:?}",
+            r.problems
+        );
         assert!(r.errors().count() >= 1);
     }
 
@@ -1584,7 +1904,11 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         write_main(&dir, "main.js", OK_MAIN);
         let r = validate_dir(&dir);
         assert!(r.ok, "未知权限/缺 reason 都只是警告：{:?}", r.problems);
-        let notes: Vec<&PluginProblem> = r.problems.iter().filter(|p| p.code == "permission_note").collect();
+        let notes: Vec<&PluginProblem> = r
+            .problems
+            .iter()
+            .filter(|p| p.code == "permission_note")
+            .collect();
         assert!(
             notes.iter().any(|p| p.message.contains("reason")),
             "缺 reason 应当被指出：{:?}",
@@ -1598,10 +1922,18 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         // 未知权限不授予，已知的才授予
         assert_eq!(r.granted, vec!["read:pages".to_string()]);
         // 声明视图如实反映作者写了什么：不认识的也在列（known=false），理由有没有如实标出
-        let unknown = r.permissions.iter().find(|p| !p.known).expect("应当有一条未知权限");
+        let unknown = r
+            .permissions
+            .iter()
+            .find(|p| !p.known)
+            .expect("应当有一条未知权限");
         assert_eq!(unknown.id, "read:不存在的权限");
         assert!(unknown.has_reason, "这条作者写了 reason");
-        let known = r.permissions.iter().find(|p| p.id == "read:pages").expect("应当有 read:pages");
+        let known = r
+            .permissions
+            .iter()
+            .find(|p| p.id == "read:pages")
+            .expect("应当有 read:pages");
         assert!(known.known);
         assert!(!known.has_reason, "这条作者没写 reason");
     }
@@ -1611,7 +1943,11 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         let dir = plugin("demo-i", &manifest_json("demo-i", ""));
         write_main(&dir, "main.js", "var x = 1; // 忘了调 register");
         let r = validate_dir(&dir);
-        assert!(codes(&r).contains(&"no_commands".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"no_commands".to_string()),
+            "{:?}",
+            r.problems
+        );
         assert!(r.ok, "没有命令只是警告（也许作者正在写）");
     }
 
@@ -1626,7 +1962,11 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         );
         write_main(&dir, "main.js", OK_MAIN);
         let r = validate_dir(&dir);
-        assert!(r.errors().count() >= 1, "加载器会拒载时报告里必须有 error：{:?}", r.problems);
+        assert!(
+            r.errors().count() >= 1,
+            "加载器会拒载时报告里必须有 error：{:?}",
+            r.problems
+        );
         assert!(!r.ok);
     }
 
@@ -1634,9 +1974,16 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
     fn report_shape_carries_author_facing_facts() {
         let dir = plugin(
             "demo-k",
-            &manifest_json("demo-k", r#", "permissions": [ { "id": "read:pages", "reason": "看页面列表" } ]"#),
+            &manifest_json(
+                "demo-k",
+                r#", "permissions": [ { "id": "read:pages", "reason": "看页面列表" } ]"#,
+            ),
         );
-        write_main(&dir, "main.js", "register({ id: 'demo-k.a', title: '甲', run: function(){ return ''; } });");
+        write_main(
+            &dir,
+            "main.js",
+            "register({ id: 'demo-k.a', title: '甲', run: function(){ return ''; } });",
+        );
         let r = validate_dir(&dir);
         assert!(r.ok, "{:?}", r.problems);
         assert_eq!(r.id, "demo-k");
@@ -1658,11 +2005,27 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
                     "--text": "url(http://evil/x.png)" } } }"##,
         );
         let r = validate_dir(&dir);
-        assert!(!r.ok, "非法值必须报错（它会被写进页面样式）：{:?}", r.problems);
-        assert!(codes(&r).contains(&"theme_unknown_token".to_string()), "布局度量要指出不在白名单：{:?}", r.problems);
-        assert!(codes(&r).contains(&"theme_bad_value".to_string()), "url( 必须报错：{:?}", r.problems);
+        assert!(
+            !r.ok,
+            "非法值必须报错（它会被写进页面样式）：{:?}",
+            r.problems
+        );
+        assert!(
+            codes(&r).contains(&"theme_unknown_token".to_string()),
+            "布局度量要指出不在白名单：{:?}",
+            r.problems
+        );
+        assert!(
+            codes(&r).contains(&"theme_bad_value".to_string()),
+            "url( 必须报错：{:?}",
+            r.problems
+        );
         // 合法的那些不该被牵连
-        assert!(r.problems.iter().all(|p| !p.message.contains("--radius")), "{:?}", r.problems);
+        assert!(
+            r.problems.iter().all(|p| !p.message.contains("--radius")),
+            "{:?}",
+            r.problems
+        );
     }
 
     #[test]
@@ -1676,8 +2039,16 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         );
         write_main(&dir, "main.js", OK_MAIN);
         let r = validate_dir(&dir);
-        assert!(codes(&r).contains(&"theme_bad_value".to_string()), "逻辑档插件同样要检查主题：{:?}", r.problems);
-        assert!(codes(&r).contains(&"theme_unknown_token".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"theme_bad_value".to_string()),
+            "逻辑档插件同样要检查主题：{:?}",
+            r.problems
+        );
+        assert!(
+            codes(&r).contains(&"theme_unknown_token".to_string()),
+            "{:?}",
+            r.problems
+        );
     }
 
     // ---- 导入触发（M11.9）----
@@ -1705,16 +2076,39 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         );
         let r = validate_dir(&dir);
         assert!(!r.ok, "kind 不认识 / 没有命令必须是错误：{:?}", r.problems);
-        assert!(codes(&r).contains(&"trigger_unknown_kind".to_string()), "{:?}", r.problems);
-        assert!(codes(&r).contains(&"trigger_no_command".to_string()), "{:?}", r.problems);
-        assert!(codes(&r).contains(&"trigger_no_extensions".to_string()), "{:?}", r.problems);
-        assert!(codes(&r).contains(&"trigger_bad_extension".to_string()), "通配符/空格不是扩展名：{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"trigger_unknown_kind".to_string()),
+            "{:?}",
+            r.problems
+        );
+        assert!(
+            codes(&r).contains(&"trigger_no_command".to_string()),
+            "{:?}",
+            r.problems
+        );
+        assert!(
+            codes(&r).contains(&"trigger_no_extensions".to_string()),
+            "{:?}",
+            r.problems
+        );
+        assert!(
+            codes(&r).contains(&"trigger_bad_extension".to_string()),
+            "通配符/空格不是扩展名：{:?}",
+            r.problems
+        );
         // 严重度：只有「kind 不认识」与「没有命令」是错误，扩展名的问题只是提醒
-        let bad_ext = r.problems.iter().find(|p| p.code == "trigger_bad_extension").unwrap();
+        let bad_ext = r
+            .problems
+            .iter()
+            .find(|p| p.code == "trigger_bad_extension")
+            .unwrap();
         assert_eq!(bad_ext.severity, "warning", "扩展名写错不该让插件装不上");
         // 合法的那条不该被牵连
         assert!(
-            r.problems.iter().all(|p| !p.message.contains("trigger_no_command") || !p.message.contains("triggers[0]")),
+            r.problems
+                .iter()
+                .all(|p| !p.message.contains("trigger_no_command")
+                    || !p.message.contains("triggers[0]")),
             "{:?}",
             r.problems
         );
@@ -1760,7 +2154,11 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         write_main(&dir, "main.js", OK_MAIN); // 只注册了 demo.run
         let r = validate_dir(&dir);
         assert!(r.ok, "装得上、跑得起来，所以只是提醒：{:?}", r.problems);
-        assert!(codes(&r).contains(&"trigger_command_missing".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"trigger_command_missing".to_string()),
+            "{:?}",
+            r.problems
+        );
     }
 
     #[test]
@@ -1782,7 +2180,11 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         );
         let r = validate_dir(&dir);
         assert!(r.ok, "{:?}", r.problems);
-        assert!(codes(&r).contains(&"trigger_command_has_params".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"trigger_command_has_params".to_string()),
+            "{:?}",
+            r.problems
+        );
     }
 
     #[test]
@@ -1805,7 +2207,11 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         );
         let r = validate_dir(&dir);
         assert!(r.ok, "只是提醒：{:?}", r.problems);
-        assert!(codes(&r).contains(&"trigger_export_without_permission".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"trigger_export_without_permission".to_string()),
+            "{:?}",
+            r.problems
+        );
 
         // 声明了就没事
         let ok = plugin(
@@ -1817,7 +2223,11 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
                    ]"#,
             ),
         );
-        write_main(&ok, "main.js", "register({ id: 'exp-ok.export', title: '导出', run: function(){ return ''; } });");
+        write_main(
+            &ok,
+            "main.js",
+            "register({ id: 'exp-ok.export', title: '导出', run: function(){ return ''; } });",
+        );
         let r2 = validate_dir(&ok);
         assert_eq!(r2.errors().count(), 0, "{:?}", r2.problems);
         assert!(
@@ -1839,7 +2249,11 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         );
         let r = validate_dir(&dir);
         assert!(r.ok, "只是提醒（插件本身装得上）：{:?}", r.problems);
-        assert!(codes(&r).contains(&"declarative_has_triggers".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"declarative_has_triggers".to_string()),
+            "{:?}",
+            r.problems
+        );
     }
 
     // ---- 声明式视图的参数化（M11.9 收口）：查询字段引用用户设置 ----
@@ -1862,7 +2276,9 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         let r = validate_dir(&dir);
         assert_eq!(r.errors().count(), 0, "{:?}", r.problems);
         assert!(
-            r.problems.iter().all(|p| !p.code.starts_with("view_param") && p.code != "declarative_setting_unused"),
+            r.problems.iter().all(
+                |p| !p.code.starts_with("view_param") && p.code != "declarative_setting_unused"
+            ),
             "写得对的参数化视图不该有任何话说：{:?}",
             r.problems
         );
@@ -1889,14 +2305,45 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
                                          "kind": { "fromSetting": "nowhere" } } } ] }"#,
         );
         let r = validate_dir(&dir);
-        assert!(!r.ok, "「永远拿不到可用值」的引用必须是错误：{:?}", r.problems);
-        assert!(codes(&r).contains(&"view_param_bad_type".to_string()), "布尔设置当数字用：{:?}", r.problems);
-        assert!(codes(&r).contains(&"view_param_unknown_setting".to_string()), "引用了不存在的设置：{:?}", r.problems);
-        assert!(codes(&r).contains(&"view_param_bad_options".to_string()), "select 的候选项不在白名单里：{:?}", r.problems);
-        assert!(codes(&r).contains(&"view_param_string_source".to_string()), "文本设置驱动数字字段只是提醒：{:?}", r.problems);
-        assert!(codes(&r).contains(&"declarative_setting_unused".to_string()), "没人用的设置要提醒：{:?}", r.problems);
-        let string_source = r.problems.iter().find(|p| p.code == "view_param_string_source").unwrap();
-        assert_eq!(string_source.severity, "warning", "能填对也可能填错，所以只是提醒");
+        assert!(
+            !r.ok,
+            "「永远拿不到可用值」的引用必须是错误：{:?}",
+            r.problems
+        );
+        assert!(
+            codes(&r).contains(&"view_param_bad_type".to_string()),
+            "布尔设置当数字用：{:?}",
+            r.problems
+        );
+        assert!(
+            codes(&r).contains(&"view_param_unknown_setting".to_string()),
+            "引用了不存在的设置：{:?}",
+            r.problems
+        );
+        assert!(
+            codes(&r).contains(&"view_param_bad_options".to_string()),
+            "select 的候选项不在白名单里：{:?}",
+            r.problems
+        );
+        assert!(
+            codes(&r).contains(&"view_param_string_source".to_string()),
+            "文本设置驱动数字字段只是提醒：{:?}",
+            r.problems
+        );
+        assert!(
+            codes(&r).contains(&"declarative_setting_unused".to_string()),
+            "没人用的设置要提醒：{:?}",
+            r.problems
+        );
+        let string_source = r
+            .problems
+            .iter()
+            .find(|p| p.code == "view_param_string_source")
+            .unwrap();
+        assert_eq!(
+            string_source.severity, "warning",
+            "能填对也可能填错，所以只是提醒"
+        );
     }
 
     #[test]
@@ -1911,7 +2358,11 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         );
         let r = validate_dir(&good);
         assert!(r.ok, "{:?}", r.problems);
-        assert!(r.problems.is_empty(), "认识的落点不该有任何提示：{:?}", r.problems);
+        assert!(
+            r.problems.is_empty(),
+            "认识的落点不该有任何提示：{:?}",
+            r.problems
+        );
 
         let bad = declarative_plugin(
             "weird-view",
@@ -1921,8 +2372,16 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         );
         let r = validate_dir(&bad);
         assert!(r.ok, "落点不认识只是提醒，不该拒载：{:?}", r.problems);
-        let p = r.problems.iter().find(|p| p.code == "view_bad_placement").expect("应提示 view_bad_placement");
-        assert!(p.message.contains("sidebar") && p.message.contains("overlay"), "要说清按什么处理：{}", p.message);
+        let p = r
+            .problems
+            .iter()
+            .find(|p| p.code == "view_bad_placement")
+            .expect("应提示 view_bad_placement");
+        assert!(
+            p.message.contains("sidebar") && p.message.contains("overlay"),
+            "要说清按什么处理：{}",
+            p.message
+        );
     }
 
     #[test]
@@ -1937,9 +2396,17 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         );
         let r = validate_dir(&dir);
         assert!(!r.ok, "加载器会拒就必须报错：{:?}", r.problems);
-        let shape = r.problems.iter().find(|p| p.code == "view_field_shape").expect("应提示 view_field_shape");
+        let shape = r
+            .problems
+            .iter()
+            .find(|p| p.code == "view_field_shape")
+            .expect("应提示 view_field_shape");
         assert!(shape.message.contains("placement"), "{}", shape.message);
-        assert!(!codes(&r).contains(&"declarative_no_views".to_string()), "别把形态错报成没写视图：{:?}", r.problems);
+        assert!(
+            !codes(&r).contains(&"declarative_no_views".to_string()),
+            "别把形态错报成没写视图：{:?}",
+            r.problems
+        );
     }
 
     #[test]
@@ -1954,8 +2421,16 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         );
         let r = validate_dir(&dir);
         let shape = r.problems.iter().find(|p| p.code == "view_field_shape");
-        assert!(shape.is_some(), "要说清是哪一项、该写成什么：{:?}", r.problems);
-        assert!(shape.unwrap().message.contains("query.limit"), "{:?}", shape);
+        assert!(
+            shape.is_some(),
+            "要说清是哪一项、该写成什么：{:?}",
+            r.problems
+        );
+        assert!(
+            shape.unwrap().message.contains("query.limit"),
+            "{:?}",
+            shape
+        );
         assert!(
             !codes(&r).contains(&"declarative_no_views".to_string()),
             "别把「写错了形态」报成「没写 views」：{:?}",
@@ -1976,7 +2451,11 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
         );
         let r = validate_dir(&dir);
         assert!(!r.ok, "加载器会拒就必须报错：{:?}", r.problems);
-        assert!(codes(&r).contains(&"loader_rejected".to_string()), "{:?}", r.problems);
+        assert!(
+            codes(&r).contains(&"loader_rejected".to_string()),
+            "{:?}",
+            r.problems
+        );
     }
 
     #[test]
@@ -1996,10 +2475,18 @@ register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "
                               "query": { "sort": { "fromSetting": "a" }, "kind": { "fromSetting": "b" } } } ] }"#,
         );
         let r = validate_dir(&dir);
-        assert_eq!(r.errors().count(), 0, "两种写法都该被收下：{:?}", r.problems);
+        assert_eq!(
+            r.errors().count(),
+            0,
+            "两种写法都该被收下：{:?}",
+            r.problems
+        );
         assert_eq!(r.settings.len(), 2);
         assert_eq!(r.settings[0].options.len(), 2);
         assert_eq!(r.settings[0].options[0].value, "updated_desc");
-        assert_eq!(r.settings[0].options[0].label, "updated_desc", "短写法里取值与显示名是同一个");
+        assert_eq!(
+            r.settings[0].options[0].label, "updated_desc",
+            "短写法里取值与显示名是同一个"
+        );
     }
 }

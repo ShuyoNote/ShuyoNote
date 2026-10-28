@@ -22,7 +22,14 @@ fn origin_of(url: &str) -> Option<String> {
         return None;
     }
     let host = u.host_str()?.to_ascii_lowercase();
-    Some(format!("{}://{}{}", scheme, host, u.port_or_known_default().map(|p| format!(":{p}")).unwrap_or_default()))
+    Some(format!(
+        "{}://{}{}",
+        scheme,
+        host,
+        u.port_or_known_default()
+            .map(|p| format!(":{p}"))
+            .unwrap_or_default()
+    ))
 }
 
 /// 登记发卡站地址（只接受 http/https；留空 = 关闭整块）。
@@ -109,7 +116,8 @@ pub async fn http(
         .timeout(std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS))
         .build()
         .map_err(|e| format!("建不了 HTTP 客户端：{e}"))?;
-    let m = reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| format!("不认识的 HTTP 方法：{method}"))?;
+    let m = reqwest::Method::from_bytes(method.as_bytes())
+        .map_err(|_| format!("不认识的 HTTP 方法：{method}"))?;
     let mut req = client.request(m, &url);
     for (k, v) in headers {
         req = req.header(k, v);
@@ -155,8 +163,11 @@ pub fn apply_lease(lease: &str) -> Result<serde_json::Value, String> {
     }
     cfg["token"] = serde_json::Value::String(text.to_string());
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(&cfg).map_err(|e| e.to_string())?)
-        .map_err(|e| format!("写不了临时配置文件：{e}"))?;
+    std::fs::write(
+        &tmp,
+        serde_json::to_vec_pretty(&cfg).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("写不了临时配置文件：{e}"))?;
     std::fs::rename(&tmp, &path).map_err(|e| format!("落盘中继配置失败：{e}"))?;
 
     Ok(serde_json::json!({
@@ -216,7 +227,10 @@ mod tests {
 
     #[test]
     fn same_origin_and_missing_base() {
-        assert_eq!(origin_of("https://license.shuyo.cn").as_deref(), Some("https://license.shuyo.cn:443"));
+        assert_eq!(
+            origin_of("https://license.shuyo.cn").as_deref(),
+            Some("https://license.shuyo.cn:443")
+        );
         assert!(origin_of("file:///etc/passwd").is_none());
         // 没配 ⇒ 明确拒绝（不是"网络错误"）
         *ISSUER_BASE.lock().unwrap() = None;
@@ -227,7 +241,10 @@ mod tests {
     #[test]
     fn path_must_be_absolute_and_join_keeps_origin() {
         set_issuer("https://license.shuyo.cn").unwrap();
-        assert_eq!(join_url("https://license.shuyo.cn", "/v1/orders").unwrap(), "https://license.shuyo.cn/v1/orders");
+        assert_eq!(
+            join_url("https://license.shuyo.cn", "/v1/orders").unwrap(),
+            "https://license.shuyo.cn/v1/orders"
+        );
         assert!(join_url("https://license.shuyo.cn", "v1/orders").is_err());
         set_issuer("").unwrap();
     }

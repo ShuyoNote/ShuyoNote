@@ -61,7 +61,9 @@ pub fn digest_of(path: &Path) -> Result<Vec<EntryDigest>, String> {
     let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("不是可读的 zip：{e}"))?;
     let mut out: Vec<EntryDigest> = Vec::new();
     for i in 0..zip.len() {
-        let entry = zip.by_index(i).map_err(|e| format!("读第 {i} 条记录失败：{e}"))?;
+        let entry = zip
+            .by_index(i)
+            .map_err(|e| format!("读第 {i} 条记录失败：{e}"))?;
         if entry.is_dir() {
             continue;
         }
@@ -210,7 +212,9 @@ pub fn count_zip_attachments(path: &Path) -> Result<usize, String> {
     let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("不是可读的 zip：{e}"))?;
     let mut n = 0usize;
     for i in 0..zip.len() {
-        let e = zip.by_index(i).map_err(|x| format!("读第 {i} 条失败：{x}"))?;
+        let e = zip
+            .by_index(i)
+            .map_err(|x| format!("读第 {i} 条失败：{x}"))?;
         if e.is_dir() {
             continue;
         }
@@ -361,14 +365,38 @@ mod tests {
     #[test]
     fn diff_finds_missing_extra_and_changed() {
         let a = vec![
-            EntryDigest { name: "meta.db".into(), size: 10, crc32: 1 },
-            EntryDigest { name: "spaces/x.db".into(), size: 20, crc32: 2 },
-            EntryDigest { name: "attachments/aa/1".into(), size: 30, crc32: 3 },
+            EntryDigest {
+                name: "meta.db".into(),
+                size: 10,
+                crc32: 1,
+            },
+            EntryDigest {
+                name: "spaces/x.db".into(),
+                size: 20,
+                crc32: 2,
+            },
+            EntryDigest {
+                name: "attachments/aa/1".into(),
+                size: 30,
+                crc32: 3,
+            },
         ];
         let b = vec![
-            EntryDigest { name: "meta.db".into(), size: 10, crc32: 1 },
-            EntryDigest { name: "spaces/x.db".into(), size: 20, crc32: 999 }, // 内容变了
-            EntryDigest { name: "attachments/bb/2".into(), size: 40, crc32: 4 }, // 多出来的
+            EntryDigest {
+                name: "meta.db".into(),
+                size: 10,
+                crc32: 1,
+            },
+            EntryDigest {
+                name: "spaces/x.db".into(),
+                size: 20,
+                crc32: 999,
+            }, // 内容变了
+            EntryDigest {
+                name: "attachments/bb/2".into(),
+                size: 40,
+                crc32: 4,
+            }, // 多出来的
         ];
         let d = diff(&a, &b);
         assert_eq!(d.missing, vec!["attachments/aa/1".to_string()]);
@@ -443,12 +471,20 @@ mod tests {
     #[test]
     fn attachment_entry_uses_real_package_layout() {
         // ⭐ 真包里看得到的名字（⭐ 直接放根上、没有 attachments/ 前缀 ✓）
-        assert!(is_attachment_entry("cfee6a6df605f017f08e42c186b39ab0083d6bd4b3cf42d8d33165d2492fcbb8.png"));
-        assert!(is_attachment_entry("d0/d0d6e327b93d8e15556cb6f781645b49fb307f780b80858d0d0720f0c09249d8.bin"));
-        assert!(is_attachment_entry("d4/d4cd31b5226d2dd80e371e0893ae919eabf40bcfc9006f03540e590d17d89aab.md"));
+        assert!(is_attachment_entry(
+            "cfee6a6df605f017f08e42c186b39ab0083d6bd4b3cf42d8d33165d2492fcbb8.png"
+        ));
+        assert!(is_attachment_entry(
+            "d0/d0d6e327b93d8e15556cb6f781645b49fb307f780b80858d0d0720f0c09249d8.bin"
+        ));
+        assert!(is_attachment_entry(
+            "d4/d4cd31b5226d2dd80e371e0893ae919eabf40bcfc9006f03540e590d17d89aab.md"
+        ));
         // ⭐ 这两类不是附件 ✓
         assert!(!is_attachment_entry("meta.db"), "⭐ meta.db 不是附件 ✓");
-        assert!(!is_attachment_entry("spaces/8ae910a1-75e6-42b7-943e-0e4ba55747d7.db"));
+        assert!(!is_attachment_entry(
+            "spaces/8ae910a1-75e6-42b7-943e-0e4ba55747d7.db"
+        ));
         assert!(!is_attachment_entry(""));
     }
 
@@ -460,11 +496,25 @@ mod tests {
         };
         let p = std::path::Path::new(&path);
         let d = digest_of(p).expect("真包要读得出来");
-        assert!(d.iter().any(|e| e.name == "meta.db"), "⭐ 真包必须有 meta.db ✓");
-        assert!(d.iter().any(|e| e.name.starts_with("spaces/")), "⭐ 真包必须有 spaces/ ✓");
+        assert!(
+            d.iter().any(|e| e.name == "meta.db"),
+            "⭐ 真包必须有 meta.db ✓"
+        );
+        assert!(
+            d.iter().any(|e| e.name.starts_with("spaces/")),
+            "⭐ 真包必须有 spaces/ ✓"
+        );
         let n = count_zip_attachments(p).expect("数得出来");
-        assert!(n > 0, "⭐ 真包里的附件数**必须 > 0** ✓ —— 这正是我第一版数出 0 的那个 bug ✓");
-        eprintln!("[p2] 真包 {} ｜ 记录 {} 条 ｜ 附件 {} 条 ✓", path, d.len(), n);
+        assert!(
+            n > 0,
+            "⭐ 真包里的附件数**必须 > 0** ✓ —— 这正是我第一版数出 0 的那个 bug ✓"
+        );
+        eprintln!(
+            "[p2] 真包 {} ｜ 记录 {} 条 ｜ 附件 {} 条 ✓",
+            path,
+            d.len(),
+            n
+        );
     }
 
     #[test]
@@ -518,10 +568,16 @@ mod tests {
         let conn = rusqlite::Connection::open(&db).unwrap();
         conn.execute("CREATE TABLE pages (id TEXT, deleted_at TEXT)", [])
             .unwrap();
-        conn.execute("INSERT INTO pages (id, deleted_at) VALUES (?1, NULL)", ["p1"])
-            .unwrap();
-        conn.execute("INSERT INTO pages (id, deleted_at) VALUES (?1, NULL)", ["p2"])
-            .unwrap();
+        conn.execute(
+            "INSERT INTO pages (id, deleted_at) VALUES (?1, NULL)",
+            ["p1"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO pages (id, deleted_at) VALUES (?1, NULL)",
+            ["p2"],
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO pages (id, deleted_at) VALUES (?1, ?2)",
             ["p3", "2026-01-01"],
@@ -564,7 +620,8 @@ pub fn count_pages_in_spaces(spaces_dir: &Path) -> (i64, Vec<String>) {
             .and_then(|s| s.to_str())
             .unwrap_or("?")
             .to_string();
-        match rusqlite::Connection::open_with_flags(&p, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+        match rusqlite::Connection::open_with_flags(&p, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        {
             Ok(c) => match count_pages(&c) {
                 Ok(n) => total += n,
                 Err(e) => notes.push(format!("{name}：{e}")),
@@ -584,7 +641,9 @@ pub fn extract_to_temp(package: &Path, into: &Path) -> Result<usize, String> {
     let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("不是可读的 zip：{e}"))?;
     let mut n = 0usize;
     for i in 0..zip.len() {
-        let mut e = zip.by_index(i).map_err(|x| format!("读第 {i} 条失败：{x}"))?;
+        let mut e = zip
+            .by_index(i)
+            .map_err(|x| format!("读第 {i} 条失败：{x}"))?;
         if e.is_dir() {
             continue;
         }
@@ -607,7 +666,7 @@ pub fn extract_to_temp(package: &Path, into: &Path) -> Result<usize, String> {
 ///
 /// ① 数**真库**：`<app_data>/spaces/*.db` 的页数 ✓ ＋ `<app_data>/attachments` 的文件数 ✓
 /// ② 把包解到临时目录 ⇒ 数包里 `spaces/*.db` 的页数 ✓ ＋ 包里的附件条数 ✓
-/// ③ `compare_counts` 比 ⇒ ⭐ 不一致就如实写进 `problems` ✓ 
+/// ③ `compare_counts` 比 ⇒ ⭐ 不一致就如实写进 `problems` ✓
 pub fn run_drill(app_data: &Path, package: &Path) -> Result<DrillReport, String> {
     // ① 真库
     let (live_pages, live_notes) = count_pages_in_spaces(&app_data.join("spaces"));
@@ -658,7 +717,10 @@ mod p2_drill_tests {
         let dir = std::path::Path::new(&app_data);
         let backups = dir.join("backups");
         let mut newest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
-        for ent in std::fs::read_dir(&backups).expect("要有 backups 目录").flatten() {
+        for ent in std::fs::read_dir(&backups)
+            .expect("要有 backups 目录")
+            .flatten()
+        {
             let p = ent.path();
             if p.extension().and_then(|s| s.to_str()) != Some("zip") {
                 continue;

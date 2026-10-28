@@ -150,8 +150,11 @@ pub fn lineage_conflicts_of(
             "SELECT {COLS} FROM page_lineage_conflicts WHERE page_id = ?1 ORDER BY detected_at, id"
         ))
         .map_err(|e| e.to_string())?;
-    let rows = stmt.query_map(params![page_id], row_of).map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    let rows = stmt
+        .query_map(params![page_id], row_of)
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// ★ **裁决一条**：`choice` 只认 `local` / `saved-as-new`，其余**报错**（**不默认选边** ——
@@ -187,7 +190,8 @@ mod tests {
     /// 真 schema 的临时库（照 `doc_content::tests::conflict_conn` 同一手法：
     /// **别手抄最小表** —— 这里虽然只用这一张，但手工 schema 会掩盖迁移问题）。
     fn conn(tag: &str) -> (Connection, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("shuyonote-lineage-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("shuyonote-lineage-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
         drop(crate::db::open_meta_conn_at(&dir).unwrap());
@@ -208,17 +212,26 @@ mod tests {
     fn records_once_per_fingerprint_pair_and_refreshes_the_snapshot() {
         let (c, dir) = conn("record");
         page(&c, "p1");
-        assert!(record_lineage_conflict(&c, "p1", "7", "42", "{\"v\":1}", 10).unwrap(), "第一次要落一行");
+        assert!(
+            record_lineage_conflict(&c, "p1", "7", "42", "{\"v\":1}", 10).unwrap(),
+            "第一次要落一行"
+        );
         // 同一对再来 ⇒ **不新建**，但快照刷新（对端可能又推了新的一版）
         assert!(!record_lineage_conflict(&c, "p1", "7", "42", "{\"v\":2}", 11).unwrap());
-        let row = unresolved_lineage_conflict(&c, "p1").unwrap().expect("应当有未决");
+        let row = unresolved_lineage_conflict(&c, "p1")
+            .unwrap()
+            .expect("应当有未决");
         assert_eq!(row.remote_doc, "{\"v\":2}", "快照要刷新成最新那一版");
         assert_eq!(row.mine_fp, "7");
         assert_eq!(row.remote_fp, "42");
         assert_eq!(row.resolved_at, None);
         // 换了指纹对（对端另起了一条新血统）⇒ 旧的未决被取代，只剩一条
         assert!(record_lineage_conflict(&c, "p1", "7", "99", "{\"v\":3}", 12).unwrap());
-        assert_eq!(lineage_conflicts_of(&c, "p1").unwrap().len(), 1, "同一页只留一条未决");
+        assert_eq!(
+            lineage_conflicts_of(&c, "p1").unwrap().len(),
+            1,
+            "同一页只留一条未决"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -231,8 +244,14 @@ mod tests {
         let id = unresolved_lineage_conflict(&c, "p1").unwrap().unwrap().id;
         resolve_lineage_conflict(&c, &id, CHOICE_SAVED_AS_NEW, 11).unwrap();
 
-        assert!(!record_lineage_conflict(&c, "p1", "7", "42", "{}", 12).unwrap(), "已裁决过 ⇒ 不再提");
-        assert!(unresolved_lineage_conflict(&c, "p1").unwrap().is_none(), "未决列表必须干净");
+        assert!(
+            !record_lineage_conflict(&c, "p1", "7", "42", "{}", 12).unwrap(),
+            "已裁决过 ⇒ 不再提"
+        );
+        assert!(
+            unresolved_lineage_conflict(&c, "p1").unwrap().is_none(),
+            "未决列表必须干净"
+        );
         // 但**换一条新血统**（新的指纹对）⇒ 那是一件新事，要提
         assert!(record_lineage_conflict(&c, "p1", "7", "100", "{}", 13).unwrap());
         let _ = std::fs::remove_dir_all(&dir);
@@ -247,32 +266,60 @@ mod tests {
         // ⚠️ 2026-09-29 订正（合入 dev 时并入的另一侧同一处改动）：原来的坏值表里有 `"remote"`，
         //    而 `575a58c6` 已把它放开成**合法值**（见本文件 `CHOICE_REMOTE` 与 :165 那个校验）
         //    ⇒ 这条判据自那天起就是红的。**「合法值不许出现在坏值表里」**——这是同一条纪律的另一面。
-        for (i, choice) in [CHOICE_LOCAL, CHOICE_SAVED_AS_NEW, CHOICE_REMOTE].into_iter().enumerate() {
+        for (i, choice) in [CHOICE_LOCAL, CHOICE_SAVED_AS_NEW, CHOICE_REMOTE]
+            .into_iter()
+            .enumerate()
+        {
             let pid = format!("p{i}");
             page(&c, &pid);
             record_lineage_conflict(&c, &pid, "7", "42", "{}", 10).unwrap();
-            let id = unresolved_lineage_conflict(&c, &pid).unwrap().expect("应当有未决").id;
+            let id = unresolved_lineage_conflict(&c, &pid)
+                .unwrap()
+                .expect("应当有未决")
+                .id;
             resolve_lineage_conflict(&c, &id, choice, 11).unwrap();
             let all = lineage_conflicts_of(&c, &pid).unwrap();
             assert_eq!(all.len(), 1);
-            assert_eq!(all[0].resolved_choice.as_deref(), Some(choice), "{choice:?} 应被收下并如实存起来 ✓");
+            assert_eq!(
+                all[0].resolved_choice.as_deref(),
+                Some(choice),
+                "{choice:?} 应被收下并如实存起来 ✓"
+            );
             // 裁决时间要落上、且要落成**实际传进去的那个值** ✓（另一侧更严的断言：`is_some()` 会漏掉"落成别的值"）
             assert_eq!(all[0].resolved_at, Some(11), "裁决时间要落上 ✓");
             // 已裁决的**不能再裁决** ✓
-            assert!(resolve_lineage_conflict(&c, &id, choice, 12).is_err(), "已裁决的再裁决要报错");
+            assert!(
+                resolve_lineage_conflict(&c, &id, choice, 12).is_err(),
+                "已裁决的再裁决要报错"
+            );
         }
 
         // ★ 不默认选边：**第四个**值与"看起来像"的写法一律报错 ✓
         page(&c, "pbad");
         record_lineage_conflict(&c, "pbad", "1", "2", "{}", 10).unwrap();
-        let idbad = unresolved_lineage_conflict(&c, "pbad").unwrap().expect("应当有未决").id;
-        for bad in ["", "whatever", "use-remote", "LOCAL", "saved_as_new", "Remote"] {
-            assert!(resolve_lineage_conflict(&c, &idbad, bad, 13).is_err(), "{bad:?} 不该被接受");
+        let idbad = unresolved_lineage_conflict(&c, "pbad")
+            .unwrap()
+            .expect("应当有未决")
+            .id;
+        for bad in [
+            "",
+            "whatever",
+            "use-remote",
+            "LOCAL",
+            "saved_as_new",
+            "Remote",
+        ] {
+            assert!(
+                resolve_lineage_conflict(&c, &idbad, bad, 13).is_err(),
+                "{bad:?} 不该被接受"
+            );
         }
         // 而合法值仍能收 ⇒ 证明上面那一串拒的是**值本身**，不是"这一行坏了" ✓
         resolve_lineage_conflict(&c, &idbad, CHOICE_REMOTE, 14).unwrap();
         assert_eq!(
-            lineage_conflicts_of(&c, "pbad").unwrap()[0].resolved_choice.as_deref(),
+            lineage_conflicts_of(&c, "pbad").unwrap()[0]
+                .resolved_choice
+                .as_deref(),
             Some(CHOICE_REMOTE)
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -285,7 +332,10 @@ mod tests {
         page(&c, "p2");
         record_lineage_conflict(&c, "p1", "1", "2", "{}", 10).unwrap();
         assert!(unresolved_lineage_conflict(&c, "nope").unwrap().is_none());
-        assert!(unresolved_lineage_conflict(&c, "p2").unwrap().is_none(), "别把冲突记到别的页上");
+        assert!(
+            unresolved_lineage_conflict(&c, "p2").unwrap().is_none(),
+            "别把冲突记到别的页上"
+        );
         assert_eq!(lineage_conflicts_of(&c, "p2").unwrap().len(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }

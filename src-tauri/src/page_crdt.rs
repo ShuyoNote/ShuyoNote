@@ -29,7 +29,12 @@ pub fn read_page_crdt_state(c: &Connection, page_id: &str) -> Result<Option<Vec<
 }
 
 /// 写这一页的状态。同一页只留**最新一份**（主键 upsert，不产生第二行）。
-pub fn write_page_crdt_state(c: &Connection, page_id: &str, state: &[u8], now: i64) -> Result<(), String> {
+pub fn write_page_crdt_state(
+    c: &Connection,
+    page_id: &str,
+    state: &[u8],
+    now: i64,
+) -> Result<(), String> {
     c.execute(
         "INSERT INTO page_crdt (page_id, state, updated_at) VALUES (?1, ?2, ?3)
          ON CONFLICT(page_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at",
@@ -49,8 +54,11 @@ pub fn write_page_crdt_state(c: &Connection, page_id: &str, state: &[u8], now: i
 pub fn clear_page_crdt_state(c: &Connection, page_id: &str) -> Result<(), String> {
     c.execute("DELETE FROM page_crdt WHERE page_id = ?1", [page_id])
         .map_err(|e| e.to_string())?;
-    c.execute("DELETE FROM page_crdt_pending WHERE page_id = ?1", [page_id])
-        .map_err(|e| e.to_string())?;
+    c.execute(
+        "DELETE FROM page_crdt_pending WHERE page_id = ?1",
+        [page_id],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -85,7 +93,13 @@ pub struct PendingCrdtState {
 pub const MAX_PENDING_PER_PAGE: i64 = 24;
 
 /// 收下一条待并的远端状态（同一 `seq` 重复收到 ⇒ 覆盖，天然幂等）。
-pub fn put_pending_state(c: &Connection, page_id: &str, seq: i64, state: &[u8], now: i64) -> Result<(), String> {
+pub fn put_pending_state(
+    c: &Connection,
+    page_id: &str,
+    seq: i64,
+    state: &[u8],
+    now: i64,
+) -> Result<(), String> {
     c.execute(
         "INSERT INTO page_crdt_pending (page_id, seq, state, updated_at) VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(page_id, seq) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at",
@@ -122,13 +136,17 @@ pub fn read_pending_states(c: &Connection, page_id: &str) -> Result<Vec<PendingC
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// 清掉这一页的待并状态（合并完就调）。**返回清了几条**（读数用；0 与"清了"分得开）。
 pub fn clear_pending_states(c: &Connection, page_id: &str) -> Result<usize, String> {
-    c.execute("DELETE FROM page_crdt_pending WHERE page_id = ?1", [page_id])
-        .map_err(|e| e.to_string())
+    c.execute(
+        "DELETE FROM page_crdt_pending WHERE page_id = ?1",
+        [page_id],
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -178,13 +196,24 @@ mod tests {
 
         clear_page_crdt_state(&c, "p1").unwrap();
 
-        assert!(read_page_crdt_state(&c, "p1").unwrap().is_none(), "本页状态必须被清掉");
+        assert!(
+            read_page_crdt_state(&c, "p1").unwrap().is_none(),
+            "本页状态必须被清掉"
+        );
         let left: i64 = c
-            .query_row("SELECT COUNT(*) FROM page_crdt_pending WHERE page_id = 'p1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM page_crdt_pending WHERE page_id = 'p1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(left, 0, "本页的待并项必须一起清掉");
         let other: i64 = c
-            .query_row("SELECT COUNT(*) FROM page_crdt_pending WHERE page_id = 'p2'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM page_crdt_pending WHERE page_id = 'p2'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(other, 1, "⛔ 别人的待并项不许被顺手清掉");
     }
@@ -235,13 +264,37 @@ mod tests {
 
         let got = read_pending_states(&c, "p1").unwrap();
         assert_eq!(got.len(), 2, "两条（seq 7 与 9），重复的 seq 不新增行");
-        assert_eq!(got[0], PendingCrdtState { seq: 7, state: vec![1, 2] });
-        assert_eq!(got[1], PendingCrdtState { seq: 9, state: vec![3, 4, 5] });
+        assert_eq!(
+            got[0],
+            PendingCrdtState {
+                seq: 7,
+                state: vec![1, 2]
+            }
+        );
+        assert_eq!(
+            got[1],
+            PendingCrdtState {
+                seq: 9,
+                state: vec![3, 4, 5]
+            }
+        );
 
-        assert_eq!(clear_pending_states(&c, "p1").unwrap(), 2, "返回清了几条（读数）");
+        assert_eq!(
+            clear_pending_states(&c, "p1").unwrap(),
+            2,
+            "返回清了几条（读数）"
+        );
         assert!(read_pending_states(&c, "p1").unwrap().is_empty());
-        assert_eq!(read_pending_states(&c, "p2").unwrap().len(), 1, "只清这一页");
-        assert_eq!(clear_pending_states(&c, "p1").unwrap(), 0, "再清一次是 0（不是错误）");
+        assert_eq!(
+            read_pending_states(&c, "p2").unwrap().len(),
+            1,
+            "只清这一页"
+        );
+        assert_eq!(
+            clear_pending_states(&c, "p1").unwrap(),
+            0,
+            "再清一次是 0（不是错误）"
+        );
     }
 
     /// 上限：超过 `MAX_PENDING_PER_PAGE` 条 ⇒ 丢最旧的，并**留痕**（不静默）——最新那条一定在。
@@ -253,7 +306,11 @@ mod tests {
         }
         let got = read_pending_states(&c, "p1").unwrap();
         assert_eq!(got.len() as i64, MAX_PENDING_PER_PAGE);
-        assert_eq!(got.last().unwrap().seq, MAX_PENDING_PER_PAGE + 5, "最新那条必须在");
+        assert_eq!(
+            got.last().unwrap().seq,
+            MAX_PENDING_PER_PAGE + 5,
+            "最新那条必须在"
+        );
         assert_eq!(got.first().unwrap().seq, 6, "丢的是最旧的几条");
     }
 }

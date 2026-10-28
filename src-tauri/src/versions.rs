@@ -21,7 +21,13 @@ pub struct PageVersion {
 
 // Snapshot the current content before an update (called by save_page).
 // Dedups consecutive identical snapshots; caps total per page.
-pub fn snapshot_before_save(c: &Connection, page_id: &str, title: &str, content_json: &str, content_text: &str) -> Result<(), String> {
+pub fn snapshot_before_save(
+    c: &Connection,
+    page_id: &str,
+    title: &str,
+    content_json: &str,
+    content_text: &str,
+) -> Result<(), String> {
     // Dedup: skip if the latest snapshot has identical content.
     let last: Option<(String, String, String)> = c
         .query_row(
@@ -80,7 +86,8 @@ pub fn list_versions(db: State<'_, Db>, page_id: String) -> Result<Vec<PageVersi
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -88,7 +95,10 @@ pub fn clear_page_versions(db: State<'_, Db>, page_id: String) -> Result<usize, 
     // 手动清空：删除该页的全部历史快照（保留当前内容；当前页不属于 page_versions）。
     let c = conn(&db);
     let n = c
-        .execute("DELETE FROM page_versions WHERE page_id = ?1", params![page_id])
+        .execute(
+            "DELETE FROM page_versions WHERE page_id = ?1",
+            params![page_id],
+        )
         .map_err(|e| e.to_string())?;
     Ok(n)
 }
@@ -103,7 +113,10 @@ pub fn restore_version(db: State<'_, Db>, version_id: String) -> Result<PageDeta
 ///
 /// 抽成 `_in_conn` 的理由与 `search::read_attachment_text_in_conn` 相同：**判据与命令面必须走
 /// 同一条代码路径**，否则判据测得是"另一份实现"，而漂移恰好发生在没被测的那一份里。
-pub(crate) fn restore_version_in_conn(c: &Connection, version_id: &str) -> Result<PageDetail, String> {
+pub(crate) fn restore_version_in_conn(
+    c: &Connection,
+    version_id: &str,
+) -> Result<PageDetail, String> {
     let (page_id, title, content_json, content_text): (String, String, String, String) = c
         .query_row(
             "SELECT page_id, title, content_json, content_text FROM page_versions WHERE id = ?1",
@@ -168,7 +181,8 @@ mod tests {
     /// `meta.sync_state.device_id`，而 meta 的 schema 只有走仓库自己的入口才有（`open_meta_conn_at`）。
     /// 自己手抄一份建表语句就等于判据测的是"另一套 schema"——那正是这一路一直在避免的漂移。
     fn test_conn(tag: &str) -> (Connection, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("shuyonote-versions-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("shuyonote-versions-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
         // ① 先建 meta.db 的 schema（`open_meta_conn_at` 是仓库自己的入口，幂等）
@@ -210,26 +224,55 @@ mod tests {
         insert_page(&c, "p1", "旧内容", None);
         insert_version(&c, "v1", "p1", "恢复后的内容");
 
-        let before: i64 = c.query_row("SELECT dirty FROM pages WHERE id = ?1", params!["p1"], |r| r.get(0)).unwrap();
+        let before: i64 = c
+            .query_row(
+                "SELECT dirty FROM pages WHERE id = ?1",
+                params!["p1"],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(before, 0, "前置：新页 dirty 应为 0");
 
         let page = restore_version_in_conn(&c, "v1").expect("活页应当能恢复");
         assert_eq!(page.content_text, "恢复后的内容");
 
-        let dirty: i64 = c.query_row("SELECT dirty FROM pages WHERE id = ?1", params!["p1"], |r| r.get(0)).unwrap();
-        assert_eq!(dirty, 1, "★ 恢复必须置 dirty=1（否则推送前的 pull 会静默冲掉这次恢复）");
+        let dirty: i64 = c
+            .query_row(
+                "SELECT dirty FROM pages WHERE id = ?1",
+                params!["p1"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            dirty, 1,
+            "★ 恢复必须置 dirty=1（否则推送前的 pull 会静默冲掉这次恢复）"
+        );
 
         // 恢复前的当前内容要进快照（可逆）——与前端同一条语义
         let versions: i64 = c
-            .query_row("SELECT COUNT(*) FROM page_versions WHERE page_id = ?1", params!["p1"], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM page_versions WHERE page_id = ?1",
+                params!["p1"],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(versions, 2, "应当多出一份『恢复前内容』的快照（历史行 + 本次快照）");
+        assert_eq!(
+            versions, 2,
+            "应当多出一份『恢复前内容』的快照（历史行 + 本次快照）"
+        );
 
         // 本笔改动还应当进 outbox（`record_page_upsert` 本来就有，这里顺手钉住"恢复会被推送"）
         let outbox: i64 = c
-            .query_row("SELECT COUNT(*) FROM changes WHERE entity = 'page' AND entity_id = 'p1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM changes WHERE entity = 'page' AND entity_id = 'p1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert!(outbox >= 1, "恢复后应当有一笔 page 变更进 outbox（否则恢复内容不会被推送）");
+        assert!(
+            outbox >= 1,
+            "恢复后应当有一笔 page 变更进 outbox（否则恢复内容不会被推送）"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -242,11 +285,16 @@ mod tests {
 
         let err = restore_version_in_conn(&c, "v2").unwrap_err();
         assert_eq!(
-            err,
-            "页面不存在或已删除（先还原页面，再恢复它的历史版本）",
+            err, "页面不存在或已删除（先还原页面，再恢复它的历史版本）",
             "错误文案必须与前端 web.ts 逐字一致（便于日后交叉检索两侧是否同一语义）"
         );
-        let text: String = c.query_row("SELECT content_text FROM pages WHERE id = ?1", params!["p2"], |r| r.get(0)).unwrap();
+        let text: String = c
+            .query_row(
+                "SELECT content_text FROM pages WHERE id = ?1",
+                params!["p2"],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(text, "已删页的内容", "被拒之后内容不得被改写");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -278,13 +326,24 @@ mod tests {
 
         restore_version_in_conn(&c, "v1").expect("活页应当能恢复");
 
-        let json: String =
-            c.query_row("SELECT content_json FROM pages WHERE id = 'p1'", [], |r| r.get(0)).unwrap();
+        let json: String = c
+            .query_row("SELECT content_json FROM pages WHERE id = 'p1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         let revs = crate::block_rev::read_top_level_block_revs(&json);
         let by_id = |id: &str| revs.iter().find(|b| b.block_id == id).and_then(|b| b.rev);
         // b1 内容变了 ⇒ maxSeen(3) + 1 = 4；b2 内容没变 ⇒ 保持当前页那个 0
-        assert_eq!(by_id("b1"), Some(4), "改过的那块应当盖成 max+1；实际 JSON = {json}");
-        assert_eq!(by_id("b2"), Some(0), "没改的那块应当保持当前页的 rev；实际 JSON = {json}");
+        assert_eq!(
+            by_id("b1"),
+            Some(4),
+            "改过的那块应当盖成 max+1；实际 JSON = {json}"
+        );
+        assert_eq!(
+            by_id("b2"),
+            Some(0),
+            "没改的那块应当保持当前页的 rev；实际 JSON = {json}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

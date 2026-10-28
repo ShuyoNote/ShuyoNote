@@ -2,8 +2,8 @@ use crate::db::{now_ms, Db};
 use crate::models::{AttachmentMeta, AttachmentRow};
 use crate::sync::record_change;
 use rusqlite::{params, OptionalExtension};
-use sha2::{Digest, Sha256};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use tauri::{Emitter, Manager, State};
 
@@ -29,7 +29,11 @@ fn is_valid_hash(hash: &str) -> bool {
 /// (avoids O(N) scans and per-dir dentry pressure).
 fn bucket_of(hash: &str) -> &str {
     // hash is validated 64-hex elsewhere; guard defensively against short/non-hex.
-    if hash.len() >= 2 { &hash[0..2] } else { "_" }
+    if hash.len() >= 2 {
+        &hash[0..2]
+    } else {
+        "_"
+    }
 }
 
 /// New content-addressed path: `attachments/<hash[0..2]>/<hash>.<ext>`.
@@ -41,7 +45,9 @@ fn bucket_of(hash: &str) -> &str {
 /// ★ 丙-④ 起 `pub(crate)`：网格那条"发附件字节"的判据要按**这个布局**造现场
 /// （判据里手写一遍 `hash[0..2]/hash.ext` 就等于把布局抄成两份，抄的那份迟早会漂）。
 pub(crate) fn bucket_path(attachments_dir: &Path, hash: &str, ext: &str) -> PathBuf {
-    attachments_dir.join(bucket_of(hash)).join(format!("{hash}.{ext}"))
+    attachments_dir
+        .join(bucket_of(hash))
+        .join(format!("{hash}.{ext}"))
 }
 
 /// ⭐ 2026-10-11：把一份附件字节**落盘**那一小段抽到这里 —— 生产（`save_image`）与判据**共用它** ✓
@@ -124,7 +130,11 @@ pub(crate) fn attachments_root(app_data_dir: &Path) -> PathBuf {
 /// ⚠️ 空间 id 进路径前必须过 `db::is_safe_space_id`（挡 `../` 之类）；不合法 ⇒ 落到 `_invalid`，
 /// **绝不**拼出树外的路径。
 pub(crate) fn space_attachments_dir(app_data_dir: &Path, space_id: &str) -> PathBuf {
-    let safe = if crate::db::is_safe_space_id(space_id) { space_id } else { "_invalid" };
+    let safe = if crate::db::is_safe_space_id(space_id) {
+        space_id
+    } else {
+        "_invalid"
+    };
     attachments_root(app_data_dir).join(safe)
 }
 
@@ -185,15 +195,16 @@ pub(crate) fn find_attachment_anywhere(root: &Path, hash: &str) -> Option<PathBu
 ///
 /// ⚠️ 只在文件 **≤64 B** 时才解密（几乎零成本）；大文件不碰
 /// （⛔ 不为了列一遍 hash 去解密几 MB × N ✗ —— 那会把面板拖死）。
-pub(crate) fn is_empty_attachment_shell(
-    path: &Path,
-    key: Option<&crate::crypto::AppKeys>,
-) -> bool {
-    let Ok(meta) = std::fs::metadata(path) else { return false };
+pub(crate) fn is_empty_attachment_shell(path: &Path, key: Option<&crate::crypto::AppKeys>) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
     if meta.len() > 64 {
         return false;
     }
-    let Ok(raw) = std::fs::read(path) else { return false };
+    let Ok(raw) = std::fs::read(path) else {
+        return false;
+    };
     matches!(
         crate::security::decrypt_attachment_bytes(key, &raw),
         Ok(plain) if plain.is_empty()
@@ -218,13 +229,25 @@ mod empty_shell_tests {
             // ⚠️ 用 **rfind**：本判据自己的源码里也写着这些锚点字面量（在文件上方）⇒
             //    `find` 会先命中判据自己，切出来的片段里当然没有实现。
             let i = src.rfind(a).unwrap_or_else(|| panic!("没找到锚点 A：{a}"));
-            let j = src[i..].find(b).unwrap_or_else(|| panic!("没找到锚点 B：{b}")) + i;
+            let j = src[i..]
+                .find(b)
+                .unwrap_or_else(|| panic!("没找到锚点 B：{b}"))
+                + i;
             &src[i..j]
         };
         for (name, body) in [
-            ("copy_attachment", slice("pub fn copy_attachment", "pub fn list_attachment_hashes")),
-            ("attachment_path", slice("pub fn attachment_path", "pub fn copy_attachment")),
-            ("attachment_bytes", slice("fn attachment_bytes(", "pub fn read_attachment_bytes")),
+            (
+                "copy_attachment",
+                slice("pub fn copy_attachment", "pub fn list_attachment_hashes"),
+            ),
+            (
+                "attachment_path",
+                slice("pub fn attachment_path", "pub fn copy_attachment"),
+            ),
+            (
+                "attachment_bytes",
+                slice("fn attachment_bytes(", "pub fn read_attachment_bytes"),
+            ),
         ] {
             assert!(
                 body.contains("space_key_for(&app_data_dir, &space)"),
@@ -254,7 +277,13 @@ mod empty_shell_tests {
         let enc = dir.join("enc.bin");
         std::fs::write(
             &enc,
-            [crate::crypto::MAGIC, crate::crypto::VERSION_XCHACHA, 1, 2, 3],
+            [
+                crate::crypto::MAGIC,
+                crate::crypto::VERSION_XCHACHA,
+                1,
+                2,
+                3,
+            ],
         )
         .unwrap();
         assert!(head_is_ciphertext(&enc), "夹具：带密文头的文件要认成密文");
@@ -273,30 +302,44 @@ mod empty_shell_tests {
 
         let out = dir.join("out.bin");
         let err = export_attachment_to(&enc, &out, None).expect_err("密文 + 无钥匙必须拒绝导出");
-        assert!(err.contains("解锁"), "报错要说清下一步（先解锁该空间）：{err}");
+        assert!(
+            err.contains("解锁"),
+            "报错要说清下一步（先解锁该空间）：{err}"
+        );
         assert!(!out.exists(), "⛔ 不许留下一个乱码文件");
 
         let plain = dir.join("plain.txt");
         std::fs::write(&plain, b"hello").unwrap();
         let out2 = dir.join("out2.txt");
         export_attachment_to(&plain, &out2, None).unwrap();
-        assert_eq!(std::fs::read(&out2).unwrap(), b"hello", "明文空间照旧是纯拷贝");
+        assert_eq!(
+            std::fs::read(&out2).unwrap(),
+            b"hello",
+            "明文空间照旧是纯拷贝"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 空壳判定：**0 字节明文 ⇒ 空壳**；有内容 ⇒ 不是；**>64 B 不参与判定**（不去解密大文件）。
     #[test]
-    fn an_empty_plaintext_attachment_counts_as_a_shell() {        let dir = std::env::temp_dir().join(format!("shuyo-shell-{}", uuid::Uuid::new_v4()));
+    fn an_empty_plaintext_attachment_counts_as_a_shell() {
+        let dir = std::env::temp_dir().join(format!("shuyo-shell-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
 
         let empty = dir.join("empty.bin");
         std::fs::write(&empty, b"").unwrap();
-        assert!(is_empty_attachment_shell(&empty, None), "0 字节文件必须判成空壳");
+        assert!(
+            is_empty_attachment_shell(&empty, None),
+            "0 字节文件必须判成空壳"
+        );
 
         let ok = dir.join("ok.bin");
         std::fs::write(&ok, b"hello").unwrap();
-        assert!(!is_empty_attachment_shell(&ok, None), "有内容的文件不许判成空壳");
+        assert!(
+            !is_empty_attachment_shell(&ok, None),
+            "有内容的文件不许判成空壳"
+        );
 
         let big = dir.join("big.bin");
         std::fs::write(&big, vec![0u8; 128]).unwrap();
@@ -311,7 +354,9 @@ mod empty_shell_tests {
 
 pub(crate) fn walk_attachment_files(root: &Path) -> Vec<PathBuf> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in entries.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -347,7 +392,9 @@ pub(crate) fn prune_empty_attachment_dirs(app_data_dir: &Path) -> usize {
 /// [`prune_empty_attachment_dirs`] 的"直接给根"版本（给已经有 `att_dir` 的那几处用 ✓）。
 pub(crate) fn prune_empty_dirs_under(root: &Path) -> usize {
     fn walk(dir: &Path, root: &Path, n: &mut usize) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
         let entries: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
         for p in entries {
             if p.is_dir() {
@@ -406,9 +453,7 @@ pub struct LegacyLayoutMigration {
 /// ④ 删除失败只记读数，不抛（迁移是**增量**的，下一趟再来）。
 ///
 /// ⇒ 于是最坏情况：**只复制、不删**（多占一份空间，但一个字节都不丢）✓
-pub(crate) fn migrate_legacy_layout(
-    app_data_dir: &Path,
-) -> Result<LegacyLayoutMigration, String> {
+pub(crate) fn migrate_legacy_layout(app_data_dir: &Path) -> Result<LegacyLayoutMigration, String> {
     let root = attachments_root(app_data_dir);
     let spaces_dir = crate::db::spaces_dir(app_data_dir);
     let mut out = LegacyLayoutMigration::default();
@@ -490,7 +535,8 @@ pub(crate) fn migrate_legacy_layout(
                 let conn = crate::db::open_space_conn_at(sid, app_data_dir)?;
                 let key = crate::security::key_if_enabled(&conn);
                 let enc = crate::security::space_db_is_encrypted(&crate::db::space_db_path(
-                    app_data_dir, sid,
+                    app_data_dir,
+                    sid,
                 ));
                 if enc && key.is_none() {
                     return Err("空间是密文但这一会话拿不到它的钥匙".to_string());
@@ -514,7 +560,8 @@ pub(crate) fn migrate_legacy_layout(
                 Ok(()) => out.deleted += 1,
                 Err(e) => {
                     out.kept += 1;
-                    out.notes.push(format!("{name}：删老文件失败（{e}）⇒ 留到下一趟"));
+                    out.notes
+                        .push(format!("{name}：删老文件失败（{e}）⇒ 留到下一趟"));
                 }
             }
         } else {
@@ -534,7 +581,9 @@ pub(crate) fn migrate_legacy_layout(
 
 /// 命令面：**整理附件布局**（⛔ 不自动跑：会动用户文件 ⇒ 由人显式触发 ✓）。
 #[tauri::command]
-pub async fn attachments_migrate_legacy(app: tauri::AppHandle) -> Result<LegacyLayoutMigration, String> {
+pub async fn attachments_migrate_legacy(
+    app: tauri::AppHandle,
+) -> Result<LegacyLayoutMigration, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let out = migrate_legacy_layout(&dir)?;
     eprintln!(
@@ -554,7 +603,8 @@ pub async fn attachments_migrate_legacy(app: tauri::AppHandle) -> Result<LegacyL
     Ok(out)
 }
 #[derive(Clone, serde::Serialize)]
-pub struct ImportProgress {    pub index: usize,
+pub struct ImportProgress {
+    pub index: usize,
     pub total: usize,
     pub name: String,
     pub done: u64,
@@ -687,7 +737,14 @@ fn mime_from_path(path: &Path) -> (String, String) {
         "markdown" => "md",
         other => other,
     };
-    (mime.to_string(), if canonical.is_empty() { "bin".to_string() } else { canonical.to_string() })
+    (
+        mime.to_string(),
+        if canonical.is_empty() {
+            "bin".to_string()
+        } else {
+            canonical.to_string()
+        },
+    )
 }
 
 /// 决定这次导入的 `(mime, ext)`。三层，逐层变弱——**桌面恒走 ①（或它的兜底）**，
@@ -760,8 +817,8 @@ fn copy_and_hash<F: FnMut(u64, u64)>(
     mut on_progress: F,
 ) -> Result<(String, i64), String> {
     let total = std::fs::metadata(src).map(|m| m.len()).unwrap_or(0);
-    let mut input = std::fs::File::open(src)
-        .map_err(|e| format!("无法打开 {}: {e}", src.display()))?;
+    let mut input =
+        std::fs::File::open(src).map_err(|e| format!("无法打开 {}: {e}", src.display()))?;
     let mut output = std::fs::File::create(dst).map_err(|e| e.to_string())?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 1024 * 1024]; // 1 MiB chunks
@@ -797,7 +854,11 @@ pub struct SaveImageArgs {
 /// "file reference card" node, which shows a snapshot of metadata and can open
 /// the file with the system default app).
 #[tauri::command]
-pub fn get_attachment(app: tauri::AppHandle, db: State<'_, Db>, id: String) -> Result<AttachmentMeta, String> {
+pub fn get_attachment(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    id: String,
+) -> Result<AttachmentMeta, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let c = db.0.lock().expect("db mutex poisoned");
     let (name, hash, mime, size): (String, String, String, i64) = c
@@ -811,7 +872,14 @@ pub fn get_attachment(app: tauri::AppHandle, db: State<'_, Db>, id: String) -> R
     let path = find_attachment(&app_data_dir, &active_space_id(&c), &hash)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
-    Ok(AttachmentMeta { id, name, hash, mime, size, path })
+    Ok(AttachmentMeta {
+        id,
+        name,
+        hash,
+        mime,
+        size,
+        path,
+    })
 }
 
 /// 按 hash 在**某个目录**里把文件读出来（"找路径 + 读字节 + 出错怎么说"三件事的纯函数）。
@@ -833,14 +901,17 @@ pub(crate) fn read_attachment_bytes_at(
     space_id: &str,
     hash: &str,
 ) -> Result<Vec<u8>, String> {
-    let path = find_attachment(app_data_dir, space_id, hash).ok_or_else(|| {
-        "附件文件不存在（可能被移动或删除）".to_string()
-    })?;
+    let path = find_attachment(app_data_dir, space_id, hash)
+        .ok_or_else(|| "附件文件不存在（可能被移动或删除）".to_string())?;
     std::fs::read(&path).map_err(|e| format!("读取附件失败：{e}"))
 }
 
 #[tauri::command]
-pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs) -> Result<AttachmentMeta, String> {
+pub fn save_image(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    args: SaveImageArgs,
+) -> Result<AttachmentMeta, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     // ★ 写入位置与钥匙都**按空间**（两者必须在同一把锁里取，免得中间空间被切走）。
     let space = {
@@ -859,7 +930,8 @@ pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs)
     let ext = ext_from_mime(&args.mime);
     // ⭐ 2026-10-11：落盘那几行**抽成一处**（`write_attachment_once`）⇒ 生产与判据**共用同一处** ✓
     //    ⛔ 判据不再"自己抄一份落盘逻辑"（本仓规矩：判据与被判对象同源 ✓）。行为**逐字未变** ✓。
-    let (path, _wrote) = write_attachment_once(&attachments_dir, &hash, ext, &args.data, key.as_ref())?;
+    let (path, _wrote) =
+        write_attachment_once(&attachments_dir, &hash, ext, &args.data, key.as_ref())?;
 
     let c = db.0.lock().expect("db mutex poisoned");
 
@@ -914,7 +986,11 @@ pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs)
 }
 
 #[tauri::command]
-pub fn attachment_path(app: tauri::AppHandle, db: State<'_, Db>, hash: String) -> Result<String, String> {
+pub fn attachment_path(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    hash: String,
+) -> Result<String, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     // ★ 按空间找（老位置仍回退）。⚠️ **不做**"满树乱找"：别的空间那一份可能是**另一种密文**
     //   （那把钥匙不属于当前空间），把它交给系统去打开 = 安静地交出一个坏文件。
@@ -924,7 +1000,8 @@ pub fn attachment_path(app: tauri::AppHandle, db: State<'_, Db>, hash: String) -
     };
     // ⭐ 2026-10-27（owner：「修」）：钥匙按**这个空间**取（⛔ 不用 `key_if_enabled(conn)` ✗）
     let key = space_key_for(&app_data_dir, &space);
-    let p = find_attachment(&app_data_dir, &space, &hash).ok_or_else(|| "附件不存在".to_string())?;
+    let p =
+        find_attachment(&app_data_dir, &space, &hash).ok_or_else(|| "附件不存在".to_string())?;
     // ⭐ **2026-10-27（owner：「补」）**：**空壳不是"有字节"** —— 如实报缺失，
     //   让渲染那一层去走 `ensureAttachmentBytes` 重取（否则它会拿到一个打不开的路径 ✓）。
     if is_empty_attachment_shell(&p, key.as_ref()) {
@@ -937,7 +1014,12 @@ pub fn attachment_path(app: tauri::AppHandle, db: State<'_, Db>, hash: String) -
 /// encryption is on, the bytes are decrypted from disk first so the user gets the
 /// plaintext file (when off, passthrough — the on-disk bytes are already plaintext).
 #[tauri::command]
-pub fn copy_attachment(app: tauri::AppHandle, db: State<'_, Db>, hash: String, dest_path: String) -> Result<(), String> {
+pub fn copy_attachment(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    hash: String,
+    dest_path: String,
+) -> Result<(), String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let space = {
         let c = db.0.lock().expect("db mutex poisoned");
@@ -966,7 +1048,11 @@ pub fn copy_attachment(app: tauri::AppHandle, db: State<'_, Db>, hash: String, d
 /// ⚠️ **加密开启时仍是整块解密**，这里**不做**假优化："流式读 → 整块加密 → 流式写"并不降低
 /// 峰值内存（整块 AEAD 必然要求整个明文同时在内存里）。要真流式得改成分块 AEAD ⇒ 那是 P2b，
 /// 前提是**先真机实测是否真的 OOM**，且要兼容存量附件。
-fn export_attachment_to(src: &Path, write_path: &Path, key: Option<&crate::crypto::AppKeys>) -> Result<(), String> {
+fn export_attachment_to(
+    src: &Path,
+    write_path: &Path,
+    key: Option<&crate::crypto::AppKeys>,
+) -> Result<(), String> {
     match key {
         // 未加密：磁盘上就是明文 ⇒ 直接拷，别把整份读进内存。
         // ⭐ 2026-10-27（owner：「修」）：但**先看头** —— 拿不到钥匙、盘上却是密文时
@@ -993,7 +1079,9 @@ fn export_attachment_to(src: &Path, write_path: &Path, key: Option<&crate::crypt
 /// 只看**前 8 字节**判断"是不是附件密文"（大文件不整份读）。
 pub(crate) fn head_is_ciphertext(path: &Path) -> bool {
     use std::io::Read;
-    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
     let mut b = [0u8; 8];
     match f.read(&mut b) {
         Ok(n) => crate::security::looks_like_attachment_ciphertext(&b[..n]),
@@ -1012,13 +1100,20 @@ pub fn list_attachment_hashes(app: tauri::AppHandle) -> Result<Vec<String>, Stri
     //   旧写法只有"连接自己"那一把钥匙 ⇒ 别的加密空间里的空壳用错钥匙解不开（透传成非空）
     //   ⇒ 被判成"已有字节" ⇒ 又走回"永久不重取"那条 ✗。
     for p in walk_attachment_files(&root) {
-        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let name = p
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         // Ignore stray .part files.
-        if name.ends_with(".part") { continue; }
+        if name.ends_with(".part") {
+            continue;
+        }
         if let Some(stem) = name.split('.').next() {
             if stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
                 // 只有小文件才需要解密判空壳（`is_empty_attachment_shell` 内部也只解 ≤64 B）。
-                let small = std::fs::metadata(&p).map(|m| m.len() <= 64).unwrap_or(false);
+                let small = std::fs::metadata(&p)
+                    .map(|m| m.len() <= 64)
+                    .unwrap_or(false);
                 let shell_key = if small {
                     let space_of_file = p
                         .strip_prefix(&root)
@@ -1046,7 +1141,11 @@ pub fn list_attachment_hashes(app: tauri::AppHandle) -> Result<Vec<String>, Stri
 }
 
 #[tauri::command]
-pub(crate) fn attachment_bytes(app: tauri::AppHandle, db: State<'_, Db>, hash: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn attachment_bytes(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    hash: &str,
+) -> Result<Vec<u8>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let space = {
         let c = db.0.lock().expect("db mutex poisoned");
@@ -1074,7 +1173,10 @@ pub(crate) fn attachment_bytes(app: tauri::AppHandle, db: State<'_, Db>, hash: &
     //   但内容是坏的（截断/串件）时，交给渲染层只会得到"看起来像正常文件"的破图/坏文档；
     //   如实报错并让调用方去重取，才是能自救的那条路 ✓。
     if !crate::sync::attachment_digest_ok(hash, &plain) {
-        return Err("这一件字节与**内容指纹**对不上（坏件或被截断）—— 需要重新从对端/服务器取回".to_string());
+        return Err(
+            "这一件字节与**内容指纹**对不上（坏件或被截断）—— 需要重新从对端/服务器取回"
+                .to_string(),
+        );
     }
     Ok(plain)
 }
@@ -1187,7 +1289,10 @@ pub fn import_attachment_files(
 ) -> Result<Vec<AttachmentMeta>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     // ★ 导入进来的文件落进**当前空间**的目录（老位置只读回退，不再往里写）。
-    let space = { let c = db.0.lock().expect("db mutex poisoned"); active_space_id(&c) };
+    let space = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        active_space_id(&c)
+    };
     let attachments_dir = space_attachments_dir(&app_data_dir, &space);
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
 
@@ -1319,7 +1424,14 @@ pub fn list_page_attachments(
         let path = find_attachment(&app_data_dir, &space, &hash)
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let meta = AttachmentMeta { id, name, hash, mime, size, path };
+        let meta = AttachmentMeta {
+            id,
+            name,
+            hash,
+            mime,
+            size,
+            path,
+        };
         out.push(attachment_row(meta, created_at));
     }
     Ok(out)
@@ -1343,7 +1455,11 @@ fn attachment_row(meta: AttachmentMeta, created_at: i64) -> AttachmentRow {
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0)
     };
-    AttachmentRow { meta, created_at, mtime }
+    AttachmentRow {
+        meta,
+        created_at,
+        mtime,
+    }
 }
 
 /// 文件管理那两列时间的口径判据（**跑不了 `cargo test` 的机器请交给能跑的那两台复核**，
@@ -1399,7 +1515,10 @@ mod attachment_row_tests {
     fn attachment_row_carries_db_created_at_and_only_local_file_mtime() {
         // ① 未下载：path 为空
         let row = attachment_row(meta(""), 1_700_000_000_000);
-        assert_eq!(row.created_at, 1_700_000_000_000, "created_at 来自 DB，永远有");
+        assert_eq!(
+            row.created_at, 1_700_000_000_000,
+            "created_at 来自 DB，永远有"
+        );
         assert_eq!(row.mtime, 0, "未下载没有本地 mtime ⇒ 0（前端显示「—」）");
         assert_eq!(row.meta.name, "营业执照扫描件.png", "meta 字段要原样带出来");
 
@@ -1423,7 +1542,11 @@ mod attachment_row_tests {
         std::fs::write(&f, b"x").unwrap();
         let row = attachment_row(meta(&f.to_string_lossy()), 42);
         assert_eq!(row.created_at, 42);
-        assert!(row.mtime > 0, "本地存在的文件应给出 mtime，实际 {}", row.mtime);
+        assert!(
+            row.mtime > 0,
+            "本地存在的文件应给出 mtime，实际 {}",
+            row.mtime
+        );
         let _ = std::fs::remove_file(&f);
     }
 }
@@ -1462,13 +1585,24 @@ pub fn list_all_pdf_attachments(
         let path = find_attachment(&app_data_dir, &space, &hash)
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
-        out.push(AttachmentMeta { id, name, hash, mime, size, path });
+        out.push(AttachmentMeta {
+            id,
+            name,
+            hash,
+            mime,
+            size,
+            path,
+        });
     }
     Ok(out)
 }
 
 #[tauri::command]
-pub fn remove_attachment(app: tauri::AppHandle, db: State<'_, Db>, id: String) -> Result<usize, String> {
+pub fn remove_attachment(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    id: String,
+) -> Result<usize, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     remove_attachment_inner(&db, &app_data_dir, &id)
 }
@@ -1504,7 +1638,11 @@ fn other_spaces_refs(db: &State<'_, Db>) -> Option<std::collections::HashSet<Str
 
 /// 该 hash 的字节现在可以删吗？**两个条件都满足才行**：当前空间里没有别的行引用它，
 /// **并且**其他空间也没有。单独拎出来是为了让这条跨空间规则有判据守着。
-fn bytes_are_freeable(local_count: i64, other_refs: &Option<std::collections::HashSet<String>>, hash: &str) -> bool {
+fn bytes_are_freeable(
+    local_count: i64,
+    other_refs: &Option<std::collections::HashSet<String>>,
+    hash: &str,
+) -> bool {
     match other_refs {
         Some(set) => local_count == 0 && !set.contains(hash),
         None => false, // 读不全 ⇒ 不删
@@ -1598,7 +1736,11 @@ fn remove_attachment_inner_with(
 /// `if (!row) continue;`）**口径不一致**，而且前端 `FileManagerView.tsx` 的
 /// `if (n !== fileCount)` 那条读数提示**永远不会触发** ✗（等于这个读数一直是死的 ✓）。
 #[tauri::command]
-pub fn remove_attachments(app: tauri::AppHandle, db: State<'_, Db>, ids: Vec<String>) -> Result<usize, String> {
+pub fn remove_attachments(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    ids: Vec<String>,
+) -> Result<usize, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     // 跨空间那一份**只算一次**（批量删除时逐条重算是 O(n×空间数) 次开库）。
     let other_refs = other_spaces_refs(&db);
@@ -1639,7 +1781,14 @@ pub fn move_attachment(db: State<'_, Db>, id: String, new_page_id: String) -> Re
         .query_row(
             "SELECT name, hash, mime, size FROM attachments WHERE id = ?1",
             params![id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            },
         )
         .optional()
         .map_err(|e| e.to_string())?;
@@ -1677,7 +1826,14 @@ pub fn rename_attachment(db: State<'_, Db>, id: String, name: String) -> Result<
         .query_row(
             "SELECT page_id, hash, mime, size FROM attachments WHERE id = ?1",
             params![id],
-            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?)),
+            |r| {
+                Ok((
+                    r.get::<_, Option<String>>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            },
         )
         .optional()
         .map_err(|e| e.to_string())?;
@@ -1733,7 +1889,14 @@ pub fn restore_attachment(
     let path = find_attachment(&app_data_dir, &space, &hash)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
-    Ok(AttachmentMeta { id, name, hash, mime, size, path })
+    Ok(AttachmentMeta {
+        id,
+        name,
+        hash,
+        mime,
+        size,
+        path,
+    })
 }
 
 #[cfg(test)]
@@ -1823,8 +1986,14 @@ mod per_space_layout_tests {
         // 各读各的：谁也不会拿到对方那份
         assert_eq!(find_attachment(&app, "space-a", hash).unwrap(), a);
         assert_eq!(find_attachment(&app, "space-b", hash).unwrap(), b);
-        assert_eq!(read_attachment_bytes_at(&app, "space-a", hash).unwrap(), b"ciphertext written by A");
-        assert_eq!(read_attachment_bytes_at(&app, "space-b", hash).unwrap(), b"plaintext written by B");
+        assert_eq!(
+            read_attachment_bytes_at(&app, "space-a", hash).unwrap(),
+            b"ciphertext written by A"
+        );
+        assert_eq!(
+            read_attachment_bytes_at(&app, "space-b", hash).unwrap(),
+            b"plaintext written by B"
+        );
 
         // 路径也必须**在各自空间目录下**（不是"两个名字指向同一处"）
         assert!(a.starts_with(space_attachments_dir(&app, "space-a")));
@@ -1860,8 +2029,16 @@ mod per_space_layout_tests {
         }
         // 而**写**永远落在空间目录里（`space_attachments_dir` 不改老位置）
         let mine = put(&app, "space-a", hash, b"mine");
-        assert_eq!(read_attachment_bytes_at(&app, "space-a", hash).unwrap(), b"mine", "本空间那份优先");
-        assert_eq!(read_attachment_bytes_at(&app, "space-b", hash).unwrap(), b"legacy bucketed", "别的空间不受影响");
+        assert_eq!(
+            read_attachment_bytes_at(&app, "space-a", hash).unwrap(),
+            b"mine",
+            "本空间那份优先"
+        );
+        assert_eq!(
+            read_attachment_bytes_at(&app, "space-b", hash).unwrap(),
+            b"legacy bucketed",
+            "别的空间不受影响"
+        );
         assert!(mine.starts_with(space_attachments_dir(&app, "space-a")));
 
         let _ = std::fs::remove_dir_all(&app);
@@ -1878,7 +2055,11 @@ mod per_space_layout_tests {
 
         put(&app, "space-a", h_new, b"new layout");
         std::fs::create_dir_all(root.join(&h_old[..2])).unwrap();
-        std::fs::write(root.join(&h_old[..2]).join(format!("{h_old}.bin")), b"old bucketed").unwrap();
+        std::fs::write(
+            root.join(&h_old[..2]).join(format!("{h_old}.bin")),
+            b"old bucketed",
+        )
+        .unwrap();
         std::fs::write(root.join(format!("{h_flat}.bin")), b"old flat").unwrap();
 
         let mut found: Vec<String> = walk_attachment_files(&root)
@@ -1888,13 +2069,26 @@ mod per_space_layout_tests {
         found.sort();
         assert_eq!(
             found,
-            vec![format!("{h_new}.bin"), format!("{h_old}.bin"), format!("{h_flat}.bin")],
+            vec![
+                format!("{h_new}.bin"),
+                format!("{h_old}.bin"),
+                format!("{h_flat}.bin")
+            ],
             "三种布局都要被遍历到（统计/孤儿清理靠它）"
         );
         // `find_attachment_anywhere`：不知道空间时也找得到（存储/清理那两条路用）
-        assert!(find_attachment_anywhere(&root, h_new).is_some(), "新布局找得到");
-        assert!(find_attachment_anywhere(&root, h_old).is_some(), "老桶布局找得到");
-        assert!(find_attachment_anywhere(&root, h_flat).is_some(), "老扁平布局找得到");
+        assert!(
+            find_attachment_anywhere(&root, h_new).is_some(),
+            "新布局找得到"
+        );
+        assert!(
+            find_attachment_anywhere(&root, h_old).is_some(),
+            "老桶布局找得到"
+        );
+        assert!(
+            find_attachment_anywhere(&root, h_flat).is_some(),
+            "老扁平布局找得到"
+        );
 
         let _ = std::fs::remove_dir_all(&app);
     }
@@ -1946,7 +2140,11 @@ mod export_attachment_tests {
 
         export_attachment_to(&src, &dst, None).unwrap();
 
-        assert_eq!(std::fs::read(&dst).unwrap(), payload, "未加密导出必须逐字节相同");
+        assert_eq!(
+            std::fs::read(&dst).unwrap(),
+            payload,
+            "未加密导出必须逐字节相同"
+        );
         // 源文件仍在（导出是"另存一份"，不是"搬走"）。
         assert!(src.exists(), "导出不能动源文件");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1961,11 +2159,19 @@ mod export_attachment_tests {
         let key = crate::crypto::AppKeys::legacy_only([7u8; 32]);
         let plain = b"%PDF-1.7 real content";
         // 磁盘上存密文（与 security::encrypt_attachment_bytes 的落盘格式一致）。
-        std::fs::write(&src, crate::security::encrypt_attachment_bytes(Some(&key), plain).unwrap()).unwrap();
+        std::fs::write(
+            &src,
+            crate::security::encrypt_attachment_bytes(Some(&key), plain).unwrap(),
+        )
+        .unwrap();
 
         export_attachment_to(&src, &dst, Some(&key)).unwrap();
 
-        assert_eq!(std::fs::read(&dst).unwrap(), plain, "加密导出必须解密成明文");
+        assert_eq!(
+            std::fs::read(&dst).unwrap(),
+            plain,
+            "加密导出必须解密成明文"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1991,7 +2197,11 @@ mod export_attachment_tests {
 
         export_attachment_to(&src, &dst, Some(&keys)).unwrap();
 
-        assert_eq!(std::fs::read(&dst).unwrap(), plain, "国密导出必须解密成明文");
+        assert_eq!(
+            std::fs::read(&dst).unwrap(),
+            plain,
+            "国密导出必须解密成明文"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -2019,7 +2229,11 @@ mod picked_mime_tests {
     fn an_extensionless_png_gets_image_png() {
         let src = Path::new("/tmp/picked/41449ced-d44e-4d3c-8e14-7c6733ad042a");
         let sniffed = crate::magic::sniff(PNG_HEAD);
-        assert_eq!(sniffed.map(|m| m.ext), Some("png"), "前提：这段字节确实是 PNG");
+        assert_eq!(
+            sniffed.map(|m| m.ext),
+            Some("png"),
+            "前提：这段字节确实是 PNG"
+        );
 
         let (mime, ext) = mime_and_ext(src, None, sniffed);
         assert_eq!(mime, "image/png");
@@ -2067,7 +2281,11 @@ mod picked_mime_tests {
     #[test]
     fn a_non_canonical_system_mime_must_not_replace_our_canonical_one() {
         assert_eq!(
-            mime_and_ext(Path::new("/tmp/picked/notes.md"), Some("text/x-markdown"), None),
+            mime_and_ext(
+                Path::new("/tmp/picked/notes.md"),
+                Some("text/x-markdown"),
+                None
+            ),
             ("text/markdown".to_string(), "md".to_string())
         );
         assert_eq!(
@@ -2075,7 +2293,11 @@ mod picked_mime_tests {
             ("image/png".to_string(), "png".to_string())
         );
         assert_eq!(
-            mime_and_ext(Path::new("/tmp/picked/a.pdf"), Some("application/x-pdf"), None),
+            mime_and_ext(
+                Path::new("/tmp/picked/a.pdf"),
+                Some("application/x-pdf"),
+                None
+            ),
             ("application/pdf".to_string(), "pdf".to_string())
         );
     }
@@ -2089,10 +2311,22 @@ mod picked_mime_tests {
             ("/tmp/a.jpeg", "image/jpeg", "jpg"),
             ("/tmp/a.zip", "application/zip", "zip"),
             ("/tmp/a.md", "text/markdown", "md"),
-            ("/tmp/a.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"),
+            (
+                "/tmp/a.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "docx",
+            ),
             // 认不出来的扩展名与**没有**扩展名：都是 octet-stream + bin（与今天一致）
-            ("/tmp/a.unknownext", "application/octet-stream", "unknownext"),
-            ("/tmp/41449ced-d44e-4d3c-8e14-7c6733ad042a", "application/octet-stream", "bin"),
+            (
+                "/tmp/a.unknownext",
+                "application/octet-stream",
+                "unknownext",
+            ),
+            (
+                "/tmp/41449ced-d44e-4d3c-8e14-7c6733ad042a",
+                "application/octet-stream",
+                "bin",
+            ),
         ] {
             assert_eq!(
                 mime_and_ext(Path::new(path), None, None),
@@ -2106,7 +2340,10 @@ mod picked_mime_tests {
     /// （否则同一个 hash 的老数据会从 `<hash>.bin` 漂到 `<hash>.png`，多出孤儿文件）。
     #[test]
     fn sniffing_never_overrides_a_real_extension() {
-        let sniffed = Some(Magic { mime: "image/png", ext: "png" });
+        let sniffed = Some(Magic {
+            mime: "image/png",
+            ext: "png",
+        });
         assert_eq!(
             mime_and_ext(Path::new("/tmp/a.pdf"), None, sniffed),
             ("application/pdf".to_string(), "pdf".to_string())
@@ -2125,9 +2362,18 @@ mod picked_mime_tests {
         assert_eq!(repaired_mime("text/markdown", "readme.md"), "text/markdown");
         // ③ **永不降级**：新名字认不出类型时原样保留 —— 否则 `report.pdf` 改成 `report`
         //    就能把 PDF 阅读器弄丢，那是把能用的东西改坏
-        assert_eq!(repaired_mime("application/pdf", "report"), "application/pdf");
-        assert_eq!(repaired_mime("image/png", "whatever.unknownext"), "image/png");
-        assert_eq!(repaired_mime("application/pdf", "41449ced-d44e"), "application/pdf");
+        assert_eq!(
+            repaired_mime("application/pdf", "report"),
+            "application/pdf"
+        );
+        assert_eq!(
+            repaired_mime("image/png", "whatever.unknownext"),
+            "image/png"
+        );
+        assert_eq!(
+            repaired_mime("application/pdf", "41449ced-d44e"),
+            "application/pdf"
+        );
         // ④ 认不出 → 仍然认不出：维持"不知道"，不编
         assert_eq!(repaired_mime(GENERIC_MIME, "file.unknownext"), GENERIC_MIME);
     }
@@ -2147,7 +2393,10 @@ mod picked_mime_tests {
         // 名字是裸 UUID、没有扩展名 —— 与 Android 上落下来的那个临时文件同形
         let bare = dir.join("41449ced-d44e-4d3c-8e14-7c6733ad042a");
         std::fs::write(&bare, PNG_HEAD).unwrap();
-        assert_eq!(crate::magic::sniff_file(&bare).map(|m| m.mime), Some("image/png"));
+        assert_eq!(
+            crate::magic::sniff_file(&bare).map(|m| m.mime),
+            Some("image/png")
+        );
 
         // 读不到的文件返回 None，不 panic（导入路径上"问不到"不能变成"导入失败"）
         assert_eq!(crate::magic::sniff_file(&dir.join("nope")), None);
@@ -2233,7 +2482,8 @@ mod cross_space_attachment_tests {
         write_attachment_once(&plain_dir, &hash, "png", plain, None).unwrap();
 
         // ③ 明文空间把它读回来 —— 生产路径就是"无钥匙 ⇒ `decrypt_attachment_bytes(None, …)` 透传"
-        let p_plain = find_attachment(&root, "space-plain", &hash).expect("明文空间必须找得到自己那份");
+        let p_plain =
+            find_attachment(&root, "space-plain", &hash).expect("明文空间必须找得到自己那份");
         let raw = std::fs::read(&p_plain).unwrap();
         let got = crate::security::decrypt_attachment_bytes(None, &raw).unwrap();
         assert_eq!(
@@ -2272,11 +2522,19 @@ mod cross_space_attachment_tests {
             "⭐ 加密空间那份**不许是明文** ✗（⭐ 也不许复用明文空间那份 ✓ —— 每空间各存自己的 ✓）"
         );
         let got = crate::security::decrypt_attachment_bytes(Some(&k), &raw_enc).unwrap();
-        assert_eq!(got, plain, "而且它必须**解得回原字节**（⛔ 不是随便加密一下就算 ✓）");
+        assert_eq!(
+            got, plain,
+            "而且它必须**解得回原字节**（⛔ 不是随便加密一下就算 ✓）"
+        );
         // ⭐ 明文空间那份仍是明文、⭐ 且与加密那份**不是同一个文件** ✓
-        let p_plain = find_attachment(&root, "space-plain", &hash).expect("明文空间也该找得到自己那份");
+        let p_plain =
+            find_attachment(&root, "space-plain", &hash).expect("明文空间也该找得到自己那份");
         assert_ne!(p_enc, p_plain, "两边不许共用同一个文件 ✗");
-        assert_eq!(std::fs::read(&p_plain).unwrap(), plain, "明文空间那份必须还是明文 ✓");
+        assert_eq!(
+            std::fs::read(&p_plain).unwrap(),
+            plain,
+            "明文空间那份必须还是明文 ✓"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -2338,7 +2596,11 @@ mod cross_space_attachment_tests {
         assert!(!legacy.exists(), "老文件应当已经删掉");
         let own = find_path_by_hash(&space_attachments_dir(&dir, space), H)
             .expect("空间目录里应当有它自己那份");
-        assert_eq!(std::fs::read(own).unwrap(), b"abc", "复制出去的内容必须逐字节一致");
+        assert_eq!(
+            std::fs::read(own).unwrap(),
+            b"abc",
+            "复制出去的内容必须逐字节一致"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2362,22 +2624,31 @@ mod cross_space_attachment_tests {
             .unwrap();
         }
         // 打不开的空间（与"锁着的密文库"同一档：都是 open 不了）
-        std::fs::write(crate::db::spaces_dir(&dir).join("bad.db"), b"not-a-sqlite-header").unwrap();
+        std::fs::write(
+            crate::db::spaces_dir(&dir).join("bad.db"),
+            b"not-a-sqlite-header",
+        )
+        .unwrap();
         let root = attachments_root(&dir);
         let legacy = bucket_path(&root, H, "png");
         std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
         std::fs::write(&legacy, b"abc").unwrap();
 
         let out = migrate_legacy_layout(&dir).unwrap();
-        assert!(!out.unreadable_spaces.is_empty(), "前提：那个坏库必须被判成读不到");
+        assert!(
+            !out.unreadable_spaces.is_empty(),
+            "前提：那个坏库必须被判成读不到"
+        );
         assert_eq!(out.copied, 1, "复制照做");
-        assert_eq!(out.deleted, 0, "⛔ 有读不到的空间就不许删（那可能是它唯一的副本）");
+        assert_eq!(
+            out.deleted, 0,
+            "⛔ 有读不到的空间就不许删（那可能是它唯一的副本）"
+        );
         assert!(legacy.exists(), "老文件必须还在");
         assert_eq!(out.kept, 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
-
 
 // ─────────────────────── 附件行补变更记录（一次性修复） ───────────────────────
 
@@ -2463,13 +2734,20 @@ pub fn backfill_attachment_changes_all(app_data_dir: &std::path::Path) -> Backfi
         if path.extension().and_then(|e| e.to_str()) != Some("db") {
             continue;
         }
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?")
+            .to_string();
         match rusqlite::Connection::open(&path) {
             Ok(c) => {
                 // ⚠️ 设备身份在 **meta** 库里（`meta.sync_state`）⇒ 先挂上再补，
                 //    否则 `record_change` 会报"设备 ID 未初始化"（真机第一次跑就撞到了）。
                 let meta = app_data_dir.join("meta.db");
-                if let Err(e) = c.execute(&format!("ATTACH DATABASE ?1 AS meta"), rusqlite::params![meta.to_string_lossy().to_string()]) {
+                if let Err(e) = c.execute(
+                    &format!("ATTACH DATABASE ?1 AS meta"),
+                    rusqlite::params![meta.to_string_lossy().to_string()],
+                ) {
                     out.unreadable.push(format!("{name}（挂 meta 失败：{e}）"));
                     continue;
                 }
@@ -2511,26 +2789,57 @@ mod backfill_attachment_changes_tests {
             rusqlite::params!["a1", "p1", "身份证A.jpg", "h1", "image/jpeg", 100i64, 1i64]).unwrap();
         c.execute("INSERT INTO attachments (id,page_id,name,hash,mime,size,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
             rusqlite::params!["a2", "p1", "声明承诺.jpg", "h2", "image/jpeg", 200i64, 2i64]).unwrap();
-        let before: i64 = c.query_row("SELECT COUNT(*) FROM changes WHERE entity = 'attachment'", [], |r| r.get(0)).unwrap();
+        let before: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM changes WHERE entity = 'attachment'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(before, 0, "前提：这两行本来没有变更记录");
 
         let (scanned, appended) = backfill_attachment_changes_in(&c).unwrap();
         assert_eq!((scanned, appended), (2, 2));
-        let after: i64 = c.query_row("SELECT COUNT(*) FROM changes WHERE entity = 'attachment' AND op = 'upsert'", [], |r| r.get(0)).unwrap();
+        let after: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM changes WHERE entity = 'attachment' AND op = 'upsert'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(after, 2, "两条都要有 upsert");
 
         // 再补一遍：**行数不涨、seq 必须涨** —— 因为未推送的同实体 upsert 会被并掉
         // （`record_change` 的 R139 规矩：删旧行 + 插新行、拿到**新的 seq**）。
         // 对端看的是 seq（不是本地行数）⇒ 这样它才收得到。
-        let max1: i64 = c.query_row("SELECT COALESCE(MAX(device_seq),0) FROM changes", [], |r| r.get(0)).unwrap();
+        let max1: i64 = c
+            .query_row("SELECT COALESCE(MAX(device_seq),0) FROM changes", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         let (_, appended2) = backfill_attachment_changes_in(&c).unwrap();
         assert_eq!(appended2, 2, "第二次也是每一行都补一遍");
-        let after2: i64 = c.query_row("SELECT COUNT(*) FROM changes WHERE entity = 'attachment' AND op = 'upsert'", [], |r| r.get(0)).unwrap();
+        let after2: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM changes WHERE entity = 'attachment' AND op = 'upsert'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(after2, 2, "未推送的会被并掉 ⇒ 行数不涨（⛔ 不是堆两倍行）");
-        let max2: i64 = c.query_row("SELECT COALESCE(MAX(device_seq),0) FROM changes", [], |r| r.get(0)).unwrap();
-        assert!(max2 > max1, "但 seq 必须往前（对端靠它判断要不要收）：{max1} → {max2}");
+        let max2: i64 = c
+            .query_row("SELECT COALESCE(MAX(device_seq),0) FROM changes", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(
+            max2 > max1,
+            "但 seq 必须往前（对端靠它判断要不要收）：{max1} → {max2}"
+        );
         // 附件行本身一行都没多
-        let rows: i64 = c.query_row("SELECT COUNT(*) FROM attachments", [], |r| r.get(0)).unwrap();
+        let rows: i64 = c
+            .query_row("SELECT COUNT(*) FROM attachments", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(rows, 2, "⛔ 不许重复建附件行");
     }
 }
@@ -2554,7 +2863,11 @@ mod open_temp_name_tests {
         assert_eq!(open_ext_for("x.tar.gz"), "gz");
         // stem：路径分隔符只取最后一段；控制字符替换成 `_`；空 ⇒ attachment；限长 60。
         assert_eq!(open_stem_for("a/b\\c.html"), "c.html", "只取最后一段 ✓");
-        assert_eq!(open_stem_for("../../evil.html"), "evil.html", "⛔ 不许把 .. 带进来 ✗");
+        assert_eq!(
+            open_stem_for("../../evil.html"),
+            "evil.html",
+            "⛔ 不许把 .. 带进来 ✗"
+        );
         assert_eq!(open_stem_for("a\u{1}b"), "a_b", "控制字符 ⇒ _ ✓");
         assert_eq!(open_stem_for("   "), "attachment", "空 ⇒ 兜底名 ✓");
         assert_eq!(open_stem_for("  ..  "), "attachment", "只剩点 ⇒ 兜底 ✓");

@@ -94,7 +94,9 @@ pub fn origin_ok(origin: Option<&str>) -> bool {
     if o.is_empty() {
         return true;
     }
-    let Some(rest) = o.strip_prefix("http://") else { return false };
+    let Some(rest) = o.strip_prefix("http://") else {
+        return false;
+    };
     loopback_host_port_ok(rest)
 }
 
@@ -125,7 +127,9 @@ fn loopback_host_port_ok(hostport: &str) -> bool {
 /// `Authorization: Bearer <token>` 恰好等于本次会话令牌吗 ✓（定长比较 ⇒ 不做提前返回 ✓）。
 pub fn bearer_ok(auth: Option<&str>, token: &str) -> bool {
     let Some(a) = auth else { return false };
-    let Some(got) = a.strip_prefix("Bearer ") else { return false };
+    let Some(got) = a.strip_prefix("Bearer ") else {
+        return false;
+    };
     let (a, b) = (got.as_bytes(), token.as_bytes());
     if a.len() != b.len() {
         return false;
@@ -151,14 +155,28 @@ pub fn resolve_config() -> Option<ChannelConfig> {
     let text = std::fs::read_to_string(&token_file).ok()?;
     let (token, granted) = parse_token_file(&text)?;
     let port_file = std::env::var(PORT_FILE_ENV).ok().unwrap_or_else(|| {
-        let dir = std::path::Path::new(&token_file).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let dir = std::path::Path::new(&token_file)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
         dir.join("mcp-channel.port").to_string_lossy().to_string()
     });
-    Some(ChannelConfig { session_id: session_id_of(&token), token, granted, port_file })
+    Some(ChannelConfig {
+        session_id: session_id_of(&token),
+        token,
+        granted,
+        port_file,
+    })
 }
 
 /// 一次请求的判定与执行 ✓（**纯函数形态**：给定配置 ＋ 请求头 ＋ 请求体 ⇒ 状态码 ＋ 响应体 ✓）。
-pub fn handle_request(cfg: &ChannelConfig, origin: Option<&str>, host: Option<&str>, auth: Option<&str>, body: &str) -> (u16, String) {
+pub fn handle_request(
+    cfg: &ChannelConfig,
+    origin: Option<&str>,
+    host: Option<&str>,
+    auth: Option<&str>,
+    body: &str,
+) -> (u16, String) {
     if !host_ok(host) {
         return (403, json_err("bad_host"));
     }
@@ -175,7 +193,10 @@ pub fn handle_request(cfg: &ChannelConfig, origin: Option<&str>, host: Option<&s
     let Some(method) = v.get("method").and_then(|m| m.as_str()) else {
         return (400, json_err("bad_args"));
     };
-    let args = v.get("args").cloned().unwrap_or_else(|| serde_json::json!({}));
+    let args = v
+        .get("args")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
     let args_json = args.to_string();
     // ⭐ 2026-10-06（M1 收口：把桥接上）：`__tools_list` 是**清单**，不是一次能力调用 ✓ ——
     //    它没有副作用、不碰任何空间/权限 ⇒ **不进** `dispatch_capability` ✓
@@ -185,21 +206,35 @@ pub fn handle_request(cfg: &ChannelConfig, origin: Option<&str>, host: Option<&s
     if method == "__tools_list" {
         // ⭐ M2（Task W2）：写面**只在免确认开关开着时**才拼上去 ✓ —— 关着时外部 agent 连"看都看不到"写工具 ✓
         //    （⛔ 不是"看得到但一调就拒" ✗：面里出现用不了的东西，M1 已经在 `coverage.report` 上踩过一次 ✓）。
-        return (200, format!("{{\"ok\":true,\"result\":{}}}", crate::mcp_host::tools_list_json(has_write_grant(&cfg.granted))));
+        return (
+            200,
+            format!(
+                "{{\"ok\":true,\"result\":{}}}",
+                crate::mcp_host::tools_list_json(has_write_grant(&cfg.granted))
+            ),
+        );
     }
     match crate::mcp_host::handle_external_call(&cfg.session_id, &cfg.granted, method, &args_json) {
         Ok(result) => (200, format!("{{\"ok\":true,\"result\":{}}}", result)),
-        Err(e) => (403, format!("{{\"ok\":false,\"error\":{}}}", serde_json::Value::String(e))),
+        Err(e) => (
+            403,
+            format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                serde_json::Value::String(e)
+            ),
+        ),
     }
 }
 
 fn json_err(code: &str) -> String {
-    format!("{{\"ok\":false,\"error\":{}}}", serde_json::Value::String(code.to_string()))
+    format!(
+        "{{\"ok\":false,\"error\":{}}}",
+        serde_json::Value::String(code.to_string())
+    )
 }
 
 /// 起服务（**开关关着就什么都不做** ✓）。返回实际绑定地址（给测试与日志用 ✓）。
 // ⚠️ 旧的 `start_if_enabled`（阻塞式 accept ＋ 只认 env）已在 2026-10-06 被下面那份**能停、且认配置文件**的实现取代 ✓ —— 不并存两份 ✗。
-
 
 /// 读一条请求 ⇒ 判定 ⇒ 回应 ⇒ 关连接 ✓（本机一跳，不做 keep-alive ✓）。
 fn serve_one(mut stream: TcpStream, cfg: &ChannelConfig) -> std::io::Result<()> {
@@ -252,7 +287,13 @@ fn serve_one(mut stream: TcpStream, cfg: &ChannelConfig) -> std::io::Result<()> 
     if !is_enabled() {
         return respond(&mut stream, 403, &json_err("disabled"));
     }
-    let (code, out) = handle_request(cfg, origin.as_deref(), host.as_deref(), auth.as_deref(), &body);
+    let (code, out) = handle_request(
+        cfg,
+        origin.as_deref(),
+        host.as_deref(),
+        auth.as_deref(),
+        &body,
+    );
     respond(&mut stream, code, &out)
 }
 
@@ -320,16 +361,31 @@ mod tests {
             let (e, g, a) = level_to_config(level, &[]);
             assert_eq!(e, en, "enabled 不对：{level:?}");
             assert_eq!(g, gr, "granted 不对：{level:?}");
-            assert_eq!(a, aw, "allow_write 不对：{level:?} ⛔ 可写待确认档绝不许置真 ✗");
+            assert_eq!(
+                a, aw,
+                "allow_write 不对：{level:?} ⛔ 可写待确认档绝不许置真 ✗"
+            );
         }
-        let (_, g, _) = level_to_config(McpLevel::WriteAuto, &["read:pages".into(), "delete:everything".into()]);
-        assert!(!g.iter().any(|s| s == "delete:everything"), "授权面不许被放大 ✗");
+        let (_, g, _) = level_to_config(
+            McpLevel::WriteAuto,
+            &["read:pages".into(), "delete:everything".into()],
+        );
+        assert!(
+            !g.iter().any(|s| s == "delete:everything"),
+            "授权面不许被放大 ✗"
+        );
         assert_eq!(g.len(), 4, "只该是读三项 ＋ write:pages ✓");
         // ⭐ 跨空间只读：给了就只在 ReadAll 那一档；换到别的读档必须**收回**（⛔ 不靠"以前给过"留着 ✗）
         let (_, g_all, _) = level_to_config(McpLevel::Read, &with_all);
-        assert!(!g_all.iter().any(|s| s == READ_ALL_SCOPE), "换回「只读」必须收回 read:all-spaces");
+        assert!(
+            !g_all.iter().any(|s| s == READ_ALL_SCOPE),
+            "换回「只读」必须收回 read:all-spaces"
+        );
         let (_, g_w, _) = level_to_config(McpLevel::WriteAuto, &with_all);
-        assert!(!g_w.iter().any(|s| s == READ_ALL_SCOPE), "可写档不许顺带保留跨空间读（它不在那一档的授权面里）");
+        assert!(
+            !g_w.iter().any(|s| s == READ_ALL_SCOPE),
+            "可写档不许顺带保留跨空间读（它不在那一档的授权面里）"
+        );
         assert_eq!(level_of(false, &with_write, true), McpLevel::Off);
         assert_eq!(level_of(true, &reads, false), McpLevel::Read);
         assert_eq!(level_of(true, &with_all, false), McpLevel::ReadAll);
@@ -356,15 +412,23 @@ mod tests {
             line.contains("has_write_grant(&cfg.granted)"),
             "工具清单必须跟**权限**走 ✓（现在这行是：{line}）—— 按 allow_write 过滤会把\"可写待确认\"档的写工具误藏 ✗"
         );
-        assert!(!line.contains("allow_write()"), "⛔ 不许按 allow_write() 过滤清单 ✗（那是落库策略 ✓）");
+        assert!(
+            !line.contains("allow_write()"),
+            "⛔ 不许按 allow_write() 过滤清单 ✗（那是落库策略 ✓）"
+        );
         // ⚠️ 也不许在这里 `resolve_config()` 重解析 ✗ —— app 进程没有那两个环境变量 ⇒ 它会回 None
         //    ⇒ `granted=[]` ⇒ 写工具被误藏 ✓（2026-10-08 真机实测抓到的就是这个 ✓）。
-        assert!(!line.contains("resolve_config()"), "⛔ 清单要用这次请求自己的 cfg ✓，不许重解析 ✗");
+        assert!(
+            !line.contains("resolve_config()"),
+            "⛔ 清单要用这次请求自己的 cfg ✓，不许重解析 ✗"
+        );
     }
 
     fn changing_the_level_reissues_the_token_and_is_wired() {
         let src = include_str!("mcp_channel.rs");
-        let start = src.find("pub fn set_level(").expect("函数名改了就要同步改这里 ✓");
+        let start = src
+            .find("pub fn set_level(")
+            .expect("函数名改了就要同步改这里 ✓");
         let body = &src[start..];
         let end = body.find("\npub fn ").unwrap_or(body.len());
         assert!(
@@ -372,7 +436,10 @@ mod tests {
             "换档必须**换令牌** ✓（只写配置 ⇒ 面板读的 granted 来自令牌文件 ⇒ 会「点了没反应」✗）"
         );
         let lib = include_str!("lib.rs");
-        assert!(lib.contains("mcp_channel::mcp_set_level"), "命令必须在 lib.rs 注册 ✓");
+        assert!(
+            lib.contains("mcp_channel::mcp_set_level"),
+            "命令必须在 lib.rs 注册 ✓"
+        );
     }
 
     fn the_write_grant_adds_and_removes_exactly_the_write_scope() {
@@ -391,11 +458,22 @@ mod tests {
             assert!(on.contains(s), "读三项不许被写挤掉 ✓：{s}");
         }
         let off = granted_after_write_grant(&on, false);
-        assert!(!off.contains(&WRITE_SCOPE.to_string()), "收回后不许还有写 ✓");
+        assert!(
+            !off.contains(&WRITE_SCOPE.to_string()),
+            "收回后不许还有写 ✓"
+        );
         assert_eq!(off, read_only, "收回后应当**回到原样** ✓");
         // 旧配置文件可能没有 granted（空清单）⇒ 授权写也要把读三项补齐 ✓
-        assert_eq!(granted_after_write_grant(&[], true).len(), 4, "空清单 ⇒ 读三项 ＋ 写一项 ✓");
-        assert_eq!(granted_after_write_grant(&on, true), on, "重复授权不许重复加 ✓");
+        assert_eq!(
+            granted_after_write_grant(&[], true).len(),
+            4,
+            "空清单 ⇒ 读三项 ＋ 写一项 ✓"
+        );
+        assert_eq!(
+            granted_after_write_grant(&on, true),
+            on,
+            "重复授权不许重复加 ✓"
+        );
     }
 
     /// ⭐ **R147 的接线那一半**（函数对 ≠ 被调用 ✗）：命令面必须**落盘 config** ＋ **换令牌**，且**注册进 `lib.rs`** ✓。
@@ -405,7 +483,9 @@ mod tests {
     #[test]
     fn the_write_grant_is_wired_to_the_config_and_to_a_token_reissue() {
         let src = include_str!("mcp_channel.rs");
-        let start = src.find("pub fn set_write_grant(").expect("函数名改了就要同步改这里 ✓");
+        let start = src
+            .find("pub fn set_write_grant(")
+            .expect("函数名改了就要同步改这里 ✓");
         let body = &src[start..];
         let end = body.find("\npub fn ").unwrap_or(body.len());
         let body = &body[..end];
@@ -438,15 +518,24 @@ mod tests {
         assert!(origin_ok(Some("http://127.0.0.1:5173")));
         assert!(origin_ok(Some("http://localhost:8080")));
         assert!(origin_ok(None), "原生客户端可不发 Origin ✓");
-        assert!(!origin_ok(Some("http://127.0.0.1.evil.com")), "前缀一样但不是回环 ✗");
+        assert!(
+            !origin_ok(Some("http://127.0.0.1.evil.com")),
+            "前缀一样但不是回环 ✗"
+        );
         assert!(!origin_ok(Some("http://127.0.0.10")));
-        assert!(!origin_ok(Some("https://127.0.0.1")), "只认 http（本机一跳 ✓）");
+        assert!(
+            !origin_ok(Some("https://127.0.0.1")),
+            "只认 http（本机一跳 ✓）"
+        );
         assert!(!origin_ok(Some("http://evil.com")));
 
         assert!(host_ok(Some("127.0.0.1")));
         assert!(host_ok(Some("127.0.0.1:9000")));
         assert!(host_ok(Some("localhost:9000")));
-        assert!(!host_ok(Some("127.0.0.1.evil.com")), "DNS rebinding 那一类 ✗");
+        assert!(
+            !host_ok(Some("127.0.0.1.evil.com")),
+            "DNS rebinding 那一类 ✗"
+        );
         assert!(!host_ok(Some("127.0.0.10:9000")));
         assert!(!host_ok(None), "Host 缺失必须拒 ✓");
         assert!(!host_ok(Some("")));
@@ -472,21 +561,70 @@ mod tests {
         assert!(parse_token_file("\n").is_none(), "空文件 ⇒ 没有令牌 ✓");
         assert_eq!(session_id_of("tok-1"), session_id_of("tok-1"));
         assert_ne!(session_id_of("tok-1"), session_id_of("tok-2"));
-        assert!(!session_id_of("tok-1").contains("tok-1"), "会话号里不许出现令牌本身 ✓");
+        assert!(
+            !session_id_of("tok-1").contains("tok-1"),
+            "会话号里不许出现令牌本身 ✓"
+        );
     }
 
     #[test]
     fn request_gate_orders_host_origin_token_then_args() {
         let cfg = cfg();
-        assert_eq!(handle_request(&cfg, None, None, Some("Bearer tok-abc"), "{}").0, 403, "Host 必须在最前 ✓");
-        assert_eq!(handle_request(&cfg, Some("http://evil.com"), Some("127.0.0.1"), Some("Bearer tok-abc"), "{}").0, 403);
-        assert_eq!(handle_request(&cfg, None, Some("127.0.0.1"), Some("Bearer nope"), "{}").0, 401);
-        assert_eq!(handle_request(&cfg, None, Some("127.0.0.1"), Some("Bearer tok-abc"), "不是 JSON").0, 400);
-        assert_eq!(handle_request(&cfg, None, Some("127.0.0.1"), Some("Bearer tok-abc"), "{\"nope\":1}").0, 400);
+        assert_eq!(
+            handle_request(&cfg, None, None, Some("Bearer tok-abc"), "{}").0,
+            403,
+            "Host 必须在最前 ✓"
+        );
+        assert_eq!(
+            handle_request(
+                &cfg,
+                Some("http://evil.com"),
+                Some("127.0.0.1"),
+                Some("Bearer tok-abc"),
+                "{}"
+            )
+            .0,
+            403
+        );
+        assert_eq!(
+            handle_request(&cfg, None, Some("127.0.0.1"), Some("Bearer nope"), "{}").0,
+            401
+        );
+        assert_eq!(
+            handle_request(
+                &cfg,
+                None,
+                Some("127.0.0.1"),
+                Some("Bearer tok-abc"),
+                "不是 JSON"
+            )
+            .0,
+            400
+        );
+        assert_eq!(
+            handle_request(
+                &cfg,
+                None,
+                Some("127.0.0.1"),
+                Some("Bearer tok-abc"),
+                "{\"nope\":1}"
+            )
+            .0,
+            400
+        );
         // 三个都过 ⇒ 真的走到唯一入口 ✓（未知能力 ⇒ 唯一鉴权点给 unknown_capability ⇒ 403 ＋ 留痕 ✓）
-        let (code, body) = handle_request(&cfg, None, Some("127.0.0.1"), Some("Bearer tok-abc"), "{\"method\":\"nope.nope\",\"args\":{}}");
+        let (code, body) = handle_request(
+            &cfg,
+            None,
+            Some("127.0.0.1"),
+            Some("Bearer tok-abc"),
+            "{\"method\":\"nope.nope\",\"args\":{}}",
+        );
         assert_eq!(code, 403);
-        assert!(body.contains("unknown_capability"), "错误码要原样透出 ✓：{body}");
+        assert!(
+            body.contains("unknown_capability"),
+            "错误码要原样透出 ✓：{body}"
+        );
     }
 }
 
@@ -531,7 +669,11 @@ impl Default for FileConfig {
         Self {
             enabled: false,
             // ⚠️ 默认只给**读**权限（M1 是只读接入 ✓）；写随 M2，且 R87 要求免确认写**必须留痕** ✓。
-            granted: vec!["read:pages".to_string(), "read:files".to_string(), "read:backlinks".to_string()],
+            granted: vec![
+                "read:pages".to_string(),
+                "read:files".to_string(),
+                "read:backlinks".to_string(),
+            ],
             // ⛔ 免确认写**默认关** ✓（R87：可以开，不是默认开 ✓）
             allow_write: false,
         }
@@ -562,7 +704,9 @@ pub fn port_path() -> Option<PathBuf> {
 
 /// 读配置：**不存在／读不动／坏 JSON ⇒ 默认值**（＝默认关 ✓）—— 绝不因为配置文件坏了就"默认开" ✗。
 pub fn read_file_config() -> FileConfig {
-    let Some(p) = config_path() else { return FileConfig::default() };
+    let Some(p) = config_path() else {
+        return FileConfig::default();
+    };
     match std::fs::read_to_string(&p) {
         Ok(text) => serde_json::from_str::<FileConfig>(&text).unwrap_or_default(),
         Err(_) => FileConfig::default(),
@@ -606,7 +750,8 @@ pub fn has_write_grant(granted: &[String]) -> bool {
 }
 
 pub fn allow_write() -> bool {
-    std::env::var("SHUYONOTE_MCP_ALLOW_WRITE").ok().as_deref() == Some("on") || read_file_config().allow_write
+    std::env::var("SHUYONOTE_MCP_ALLOW_WRITE").ok().as_deref() == Some("on")
+        || read_file_config().allow_write
 }
 
 /// 改「免确认写」开关（写配置 ✓ ＋ 若正在监听 ⇒ **按新清单重启**，否则刚开的写面要等下次启动才出现 ✗）。
@@ -744,7 +889,10 @@ pub fn read_token() -> Option<String> {
 /// ③ 打包后的资源目录 `<resource>/mcp/index.mjs`（由命令层传进来 ✓；
 ///    ⭐ 2026-10-18 起**真的打进包**了 —— 三份平台包配置都写了
 ///    `"../tools/shuyonote-mcp/index.mjs": "mcp/index.mjs"` ⇒ 安装版也能自动填好路径 ✓）。
-fn resolve_bridge_from(start: &std::path::Path, resource_dir: Option<&std::path::Path>) -> Option<PathBuf> {
+fn resolve_bridge_from(
+    start: &std::path::Path,
+    resource_dir: Option<&std::path::Path>,
+) -> Option<PathBuf> {
     let mut cur = Some(start.to_path_buf());
     let mut hops = 0;
     while let Some(dir) = cur {
@@ -876,8 +1024,12 @@ pub fn status_with_resources(resource_dir: Option<&std::path::Path>) -> McpStatu
 fn start_listener(cfg: ChannelConfig) -> Result<Running, String> {
     let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
         .map_err(|e| format!("绑回环端口失败：{e}"))?;
-    let addr = listener.local_addr().map_err(|e| format!("读端口失败：{e}"))?;
-    listener.set_nonblocking(true).map_err(|e| format!("设非阻塞失败：{e}"))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|e| format!("读端口失败：{e}"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("设非阻塞失败：{e}"))?;
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     // 端口公布 ✓（写文件而不是 stdout/stderr：App 与桥之间没有 stdio 关系 ✓）
@@ -1001,7 +1153,7 @@ pub fn start_if_enabled() -> Option<SocketAddr> {
 #[tauri::command]
 pub fn mcp_status(app: tauri::AppHandle) -> McpStatus {
     use tauri::Manager; // `app.path()` 要这个 trait 在作用域里 ✓
-    // ⭐ 2026-10-18：把打包资源目录也交给解析器（将来桥随包发时直接生效；现在通常是 `None` ✓）
+                        // ⭐ 2026-10-18：把打包资源目录也交给解析器（将来桥随包发时直接生效；现在通常是 `None` ✓）
     let res = app.path().resource_dir().ok();
     status_with_resources(res.as_deref())
 }
@@ -1204,7 +1356,10 @@ mod bridge_path_tests {
         let tag = format!(
             "{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         );
         let repo = std::env::temp_dir().join(format!("shuyonote-bridge-repo-{tag}"));
         let exe_dir = repo.join("src-tauri").join("target").join("debug");
@@ -1275,7 +1430,9 @@ mod bridge_path_tests {
     #[test]
     fn verbatim_paths_are_shown_as_plain_paths() {
         assert_eq!(
-            display_path(std::path::Path::new(r"\\?\C:\Users\x\ShuyoNote\mcp\index.mjs")),
+            display_path(std::path::Path::new(
+                r"\\?\C:\Users\x\ShuyoNote\mcp\index.mjs"
+            )),
             r"C:\Users\x\ShuyoNote\mcp\index.mjs",
             "`\\\\?\\C:\\…` 必须折回 `C:\\…`（安装版面板的配置片段就是这条）"
         );
@@ -1334,7 +1491,10 @@ mod switch_tests {
 
         // ② 关 ⇒ `is_enabled()` 假（⇒ 每个请求会被 `disabled` 拒 ✓）＋ 端口文件被删 ✓
         set_enabled(false).expect("关开关");
-        assert!(!is_enabled(), "关掉之后 `is_enabled()` 必须为假 ⇒ 请求会被 `disabled` 拒 ✓");
+        assert!(
+            !is_enabled(),
+            "关掉之后 `is_enabled()` 必须为假 ⇒ 请求会被 `disabled` 拒 ✓"
+        );
         assert!(
             port_path().map(|p| !p.exists()).unwrap_or(true),
             "关掉要删端口文件 ✓（桥照着它连 ⇒ 文件在就说明还在听 ✗）"

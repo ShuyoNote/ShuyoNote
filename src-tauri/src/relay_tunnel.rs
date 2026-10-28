@@ -121,9 +121,7 @@ pub async fn write_request<W: AsyncWrite + Unpin>(
     w.flush().await
 }
 
-pub async fn read_request<R: AsyncRead + Unpin>(
-    r: &mut R,
-) -> std::io::Result<TunnelRequest> {
+pub async fn read_request<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<TunnelRequest> {
     let method = read_line(r).await?;
     let target = read_line(r).await?;
     if method.is_empty() || target.is_empty() {
@@ -145,14 +143,19 @@ pub async fn read_request<R: AsyncRead + Unpin>(
         }
         headers.push((k, v));
     }
-    Ok(TunnelRequest { method, target, headers })
+    Ok(TunnelRequest {
+        method,
+        target,
+        headers,
+    })
 }
 
 pub async fn write_reply<W: AsyncWrite + Unpin>(
     w: &mut W,
     reply: &TunnelReply,
 ) -> std::io::Result<()> {
-    w.write_all(format!("{}\n{}\n", reply.status, reply.body.len()).as_bytes()).await?;
+    w.write_all(format!("{}\n{}\n", reply.status, reply.body.len()).as_bytes())
+        .await?;
     w.write_all(&reply.body).await?;
     w.flush().await
 }
@@ -167,7 +170,9 @@ pub async fn read_reply<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Tunn
         .parse()
         .map_err(|_| bad(format!("应答正文长度不是数字：{len_line:?}")))?;
     if len > MAX_BODY_BYTES {
-        return Err(bad(format!("应答正文 {len} 字节，超过上限 {MAX_BODY_BYTES}")));
+        return Err(bad(format!(
+            "应答正文 {len} 字节，超过上限 {MAX_BODY_BYTES}"
+        )));
     }
     let mut body = vec![0u8; len];
     r.read_exact(&mut body).await?;
@@ -178,11 +183,7 @@ pub async fn read_reply<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Tunn
 ///
 /// ⚠️ 真接线里 `handler` 必须是**本机同一套 `mesh::dispatch`** —— 这样隧道与局域网
 /// 走的是同一份鉴权/路由/租约判定，⛔ 不会造出"第二条同步语义"。
-pub async fn serve_one<R, W, H>(
-    r: &mut R,
-    w: &mut W,
-    handler: H,
-) -> std::io::Result<()>
+pub async fn serve_one<R, W, H>(r: &mut R, w: &mut W, handler: H) -> std::io::Result<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -213,11 +214,7 @@ pub const STREAM_CHUNK: usize = 64 * 1024;
 ///
 /// ⚠️ 与整包应答（`status\n len\n body`）**不能混用**：靠请求的 method 区分
 /// （`"GET+STREAM"` ⇒ 流式；`"GET"` ⇒ 整包）—— ⛔ 不靠"猜长度"。
-pub async fn write_stream_reply<R, W>(
-    w: &mut W,
-    status: u16,
-    src: &mut R,
-) -> std::io::Result<u64>
+pub async fn write_stream_reply<R, W>(w: &mut W, status: u16, src: &mut R) -> std::io::Result<u64>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -244,10 +241,21 @@ pub fn read_stream_reply<R>(r: R) -> StreamReplyReader<R>
 where
     R: AsyncRead + Unpin,
 {
-    StreamReplyReader { inner: r, state: StreamState::Status, line: Vec::new(), chunk_left: 0, status: None }
+    StreamReplyReader {
+        inner: r,
+        state: StreamState::Status,
+        line: Vec::new(),
+        chunk_left: 0,
+        status: None,
+    }
 }
 
-enum StreamState { Status, ChunkLen, Chunk, Done }
+enum StreamState {
+    Status,
+    ChunkLen,
+    Chunk,
+    Done,
+}
 
 /// 流式应答的读端：**先读一行 status**，之后按 `chunk_len` 一块块交付。
 pub struct StreamReplyReader<R> {
@@ -284,7 +292,10 @@ async fn read_byte<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<u8> {
     let mut b = [0u8; 1];
     let n = r.read(&mut b).await?;
     if n == 0 {
-        return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "流在对端说完之前断了"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "流在对端说完之前断了",
+        ));
     }
     Ok(b[0])
 }
@@ -298,7 +309,8 @@ async fn read_line_into<R: AsyncRead + Unpin>(
     loop {
         let b = read_byte(r).await?;
         if b == b'\n' {
-            return String::from_utf8(std::mem::take(line)).map_err(|_| bad("帧里有一行不是 UTF-8"));
+            return String::from_utf8(std::mem::take(line))
+                .map_err(|_| bad("帧里有一行不是 UTF-8"));
         }
         line.push(b);
         if line.len() > MAX_LINE_BYTES {
@@ -555,14 +567,24 @@ pub mod iroh_tunnel {
     }
 
     /// 服务侧：接一个连接 → 接一条流 → 读请求 → `handler` → 写回应（一次一条，简单为先）。
-    pub async fn serve_one_conn<H>(conn: iroh::endpoint::Connection, handler: H) -> Result<(), String>
+    pub async fn serve_one_conn<H>(
+        conn: iroh::endpoint::Connection,
+        handler: H,
+    ) -> Result<(), String>
     where
         H: FnOnce(&TunnelRequest) -> TunnelReply,
     {
-        let (mut send, mut recv) = conn.accept_bi().await.map_err(|e| format!("接流失败：{e}"))?;
-        let req = read_request(&mut recv).await.map_err(|e| format!("读请求失败：{e}"))?;
+        let (mut send, mut recv) = conn
+            .accept_bi()
+            .await
+            .map_err(|e| format!("接流失败：{e}"))?;
+        let req = read_request(&mut recv)
+            .await
+            .map_err(|e| format!("读请求失败：{e}"))?;
         let reply = handler(&req);
-        write_reply(&mut send, &reply).await.map_err(|e| format!("写回应失败：{e}"))?;
+        write_reply(&mut send, &reply)
+            .await
+            .map_err(|e| format!("写回应失败：{e}"))?;
         send.finish().map_err(|e| format!("收流失败：{e}"))?;
         conn.closed().await;
         Ok(())
@@ -604,13 +626,21 @@ pub mod iroh_client {
             // ⭐ 异网寻址：本机也**挂到中继上**（否则对端只能靠直连地址找到我们）
             let cfg = crate::relay_client::load_config().ok();
             let relay_url = cfg.as_ref().and_then(|c| c.url.clone());
-            let lease = cfg.as_ref().and_then(|c| crate::relay_client::token_text(c));
+            let lease = cfg
+                .as_ref()
+                .and_then(|c| crate::relay_client::token_text(c));
             // ⚠️ 客户端（每次拉对端现起的那一个端点）**不绑固定端口**：
             //   固定端口归**服务侧**（`serve_forever` 那一个端点）独占；
             //   这边再绑同一个口必然 `Failed to bind sockets`（真机 15:53 撞到）。
             let relay_only = cfg.as_ref().and_then(|c| c.relay_only).unwrap_or(false);
-            let ep = iroh_tunnel::bind_with_relay_full(secret, relay_url.as_deref(), lease.as_deref(), None, relay_only)
-                .await?;
+            let ep = iroh_tunnel::bind_with_relay_full(
+                secret,
+                relay_url.as_deref(),
+                lease.as_deref(),
+                None,
+                relay_only,
+            )
+            .await?;
             // ⭐ 把本机 node id 打出来（对面要把它填进 `relay/peers.json`）
             eprintln!(
                 "[relay] 隧道端点已起：node_id={}（对面把它填进 relay/peers.json）",
@@ -623,7 +653,8 @@ pub mod iroh_client {
         /// 而发现层还没做（Step 3）⇒ 这条路今天会明确报错，⛔ 不静默地"连不上就一直等"。
         pub async fn connect_by_node_id(node_id_hex: &str) -> Result<Self, String> {
             let bytes = node_id_bytes(node_id_hex)?;
-            let id = iroh::PublicKey::from_bytes(&bytes).map_err(|e| format!("node id 不是合法公钥：{e}"))?;
+            let id = iroh::PublicKey::from_bytes(&bytes)
+                .map_err(|e| format!("node id 不是合法公钥：{e}"))?;
             Err(format!(
                 "只知道 node id（{}…）还不够：跨网发现层还没做（Step 3）⇒ 没有可达地址",
                 &node_id_hex[..8.min(node_id_hex.len())]
@@ -658,7 +689,8 @@ pub mod iroh_client {
                 if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
                     req = req.with_header("authorization", &format!("Bearer {t}"));
                 }
-                let TunnelReply { status, body } = iroh_tunnel::request(&self.ep, self.peer.clone(), &req).await?;
+                let TunnelReply { status, body } =
+                    iroh_tunnel::request(&self.ep, self.peer.clone(), &req).await?;
                 Ok(HttpReply {
                     status,
                     body: String::from_utf8_lossy(&body).into_owned(),
@@ -672,7 +704,13 @@ pub mod iroh_client {
             target: &'a str,
             auth: Option<(&'a str, i64, &'a str)>,
             token: Option<&'a str>,
-        ) -> Pin<Box<dyn Future<Output = Result<(u16, crate::mesh_endpoint::AttachmentBody), String>> + Send + 'a>> {
+        ) -> Pin<
+            Box<
+                dyn Future<Output = Result<(u16, crate::mesh_endpoint::AttachmentBody), String>>
+                    + Send
+                    + 'a,
+            >,
+        > {
             Box::pin(async move {
                 let mut req = TunnelRequest::new("GET+STREAM", target);
                 if let Some((device_id, ts, sig)) = auth {
@@ -689,7 +727,8 @@ pub mod iroh_client {
                     .connect(self.peer.clone(), iroh_tunnel::ALPN)
                     .await
                     .map_err(|e| format!("连对端失败：{e}"))?;
-                let (mut send, mut recv) = conn.open_bi().await.map_err(|e| format!("开流失败：{e}"))?;
+                let (mut send, mut recv) =
+                    conn.open_bi().await.map_err(|e| format!("开流失败：{e}"))?;
                 super::write_request(&mut send, &req)
                     .await
                     .map_err(|e| format!("写请求失败：{e}"))?;
@@ -701,8 +740,11 @@ pub mod iroh_client {
                     .parse()
                     .map_err(|_| format!("应答状态码不是数字：{status_line:?}"))?;
                 let reader = super::StreamReplyReader::after_status(recv, status);
-                let body: crate::mesh_endpoint::AttachmentBody =
-                    Box::pin(RelayBody { _conn: conn, _send: send, reader });
+                let body: crate::mesh_endpoint::AttachmentBody = Box::pin(RelayBody {
+                    _conn: conn,
+                    _send: send,
+                    reader,
+                });
                 Ok((status, body))
             })
         }
@@ -728,11 +770,19 @@ pub mod iroh_client {
         };
         // ⭐ 异网寻址：服务侧也挂到中继上（对端不在同一网络时才找得到我们）
         let relay_url = cfg.as_ref().and_then(|c| c.url.clone());
-        let lease = cfg.as_ref().and_then(|c| crate::relay_client::token_text(c));
+        let lease = cfg
+            .as_ref()
+            .and_then(|c| crate::relay_client::token_text(c));
         let udp_port = cfg.as_ref().and_then(|c| c.udp_port);
         let relay_only = cfg.as_ref().and_then(|c| c.relay_only).unwrap_or(false);
-        let ep = iroh_tunnel::bind_with_relay_full(secret, relay_url.as_deref(), lease.as_deref(), udp_port, relay_only)
-            .await?;
+        let ep = iroh_tunnel::bind_with_relay_full(
+            secret,
+            relay_url.as_deref(),
+            lease.as_deref(),
+            udp_port,
+            relay_only,
+        )
+        .await?;
         // ⚠️ `addrs` 要填的是 **iroh 的 UDP 地址**（QUIC 走 UDP）—— ⛔ 不是网格窗口的 8788。
         //   所以把 UDP 端口一起打出来（别让人去猜、也别去翻 netstat）。
         eprintln!(
@@ -788,10 +838,15 @@ pub mod iroh_client {
                         "[relay] 服务侧回应 {}（{} 字节）：{}",
                         code,
                         body.len(),
-                        String::from_utf8_lossy(&body).chars().take(120).collect::<String>()
+                        String::from_utf8_lossy(&body)
+                            .chars()
+                            .take(120)
+                            .collect::<String>()
                     );
                 }
-                if let Err(e) = super::write_reply(&mut send, &super::TunnelReply { status: code, body }).await {
+                if let Err(e) =
+                    super::write_reply(&mut send, &super::TunnelReply { status: code, body }).await
+                {
                     eprintln!("[relay] ⚠️ 服务侧：写回应失败（{e}）");
                 }
                 // ⭐⭐ **2026-10-25（真机：请求已经到了对面、我方却 `读回应失败：connection lost`）**：
@@ -800,11 +855,8 @@ pub mod iroh_client {
                 //   `conn` 随之被丢弃 ⇒ QUIC 连接被**硬关**，回应可能还没刷出去。
                 //   ⇒ finish 之后**等对端把这条流读完/连接关掉**（最多 5 秒，⛔ 不无限等）。
                 let _ = send.finish();
-                let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    conn.closed(),
-                )
-                .await;
+                let _ =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), conn.closed()).await;
             });
         }
     }
@@ -869,7 +921,7 @@ mod tests {
         });
         write_request(
             &mut client,
-            &TunnelRequest::new("GET", "/mesh/pull?space_id=sp&since=0")
+            &TunnelRequest::new("GET", "/mesh/pull?space_id=sp&since=0"),
         )
         .await
         .unwrap();
@@ -893,7 +945,10 @@ mod tests {
             let (mut sr, mut sw) = tokio::io::split(server);
             serve_one(&mut sr, &mut sw, move |req| {
                 let _ = tx.take().unwrap().send(req.clone());
-                TunnelReply { status: 204, body: Vec::new() }
+                TunnelReply {
+                    status: 204,
+                    body: Vec::new(),
+                }
             })
             .await
         });
@@ -911,7 +966,9 @@ mod tests {
     async fn an_oversized_body_length_is_refused_not_allocated() {
         let (mut client, mut server) = tokio::io::duplex(1024);
         let w = tokio::spawn(async move {
-            let _ = server.write_all(format!("200\n{}\n", MAX_BODY_BYTES + 1).as_bytes()).await;
+            let _ = server
+                .write_all(format!("200\n{}\n", MAX_BODY_BYTES + 1).as_bytes())
+                .await;
         });
         let err = read_reply(&mut client).await.expect_err("超长必须报错");
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
@@ -954,9 +1011,12 @@ mod tests {
             .expect("要有已绑定端口");
         let addr = iroh::EndpointAddr {
             id: server_ep.id(),
-            addrs: [iroh::TransportAddr::Ip(SocketAddr::from(([127, 0, 0, 1], port)))]
-                .into_iter()
-                .collect(),
+            addrs: [iroh::TransportAddr::Ip(SocketAddr::from((
+                [127, 0, 0, 1],
+                port,
+            )))]
+            .into_iter()
+            .collect(),
         };
         let payload: Vec<u8> = (0..100 * 1024).map(|i| (i % 253) as u8).collect();
         let expect = payload.clone();
@@ -1014,7 +1074,9 @@ mod tests {
         });
         let mut out = Vec::new();
         let mut rd = read_stream_reply(&mut b);
-        tokio::io::AsyncReadExt::read_to_end(&mut rd, &mut out).await.unwrap();
+        tokio::io::AsyncReadExt::read_to_end(&mut rd, &mut out)
+            .await
+            .unwrap();
         assert_eq!(rd.status(), Some(200), "状态码要从帧里读出来");
         assert_eq!(out.len(), total, "字节数必须一致");
         assert_eq!(out, src, "内容必须逐字节一致");
@@ -1029,11 +1091,15 @@ mod tests {
     async fn an_oversized_stream_chunk_is_refused() {
         let (mut a, mut b) = tokio::io::duplex(1024);
         tokio::spawn(async move {
-            let _ = a.write_all(format!("200\n{}\n", STREAM_CHUNK + 1).as_bytes()).await;
+            let _ = a
+                .write_all(format!("200\n{}\n", STREAM_CHUNK + 1).as_bytes())
+                .await;
         });
         let mut rd = read_stream_reply(&mut b);
         let mut out = Vec::new();
-        let err = tokio::io::AsyncReadExt::read_to_end(&mut rd, &mut out).await.expect_err("必须报错");
+        let err = tokio::io::AsyncReadExt::read_to_end(&mut rd, &mut out)
+            .await
+            .expect_err("必须报错");
         assert!(err.to_string().contains("超过上限"), "要说清为什么：{err}");
     }
 
@@ -1047,7 +1113,9 @@ mod tests {
         });
         let mut rd = read_stream_reply(&mut b);
         let mut out = Vec::new();
-        let err = tokio::io::AsyncReadExt::read_to_end(&mut rd, &mut out).await.expect_err("半块必须报错");
+        let err = tokio::io::AsyncReadExt::read_to_end(&mut rd, &mut out)
+            .await
+            .expect_err("半块必须报错");
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof, "{err}");
     }
 
@@ -1079,9 +1147,12 @@ mod tests {
             .expect("服务端端点必须至少有一个已绑定端口");
         let peer = iroh::EndpointAddr {
             id: server_ep.id(),
-            addrs: [iroh::TransportAddr::Ip(SocketAddr::from(([127, 0, 0, 1], port)))]
-                .into_iter()
-                .collect(),
+            addrs: [iroh::TransportAddr::Ip(SocketAddr::from((
+                [127, 0, 0, 1],
+                port,
+            )))]
+            .into_iter()
+            .collect(),
         };
 
         let serve = tokio::spawn(async move {
@@ -1100,7 +1171,7 @@ mod tests {
         let reply = request(
             &client_ep,
             peer,
-            &TunnelRequest::new("GET", "/mesh/manifest?space_id=x")
+            &TunnelRequest::new("GET", "/mesh/manifest?space_id=x"),
         )
         .await
         .expect("单机两端点必须能通（直连地址）");
@@ -1143,9 +1214,12 @@ mod tests {
             .expect("要有已绑定端口");
         let addr = iroh::EndpointAddr {
             id: server_ep.id(),
-            addrs: [iroh::TransportAddr::Ip(SocketAddr::from(([127, 0, 0, 1], port)))]
-                .into_iter()
-                .collect(),
+            addrs: [iroh::TransportAddr::Ip(SocketAddr::from((
+                [127, 0, 0, 1],
+                port,
+            )))]
+            .into_iter()
+            .collect(),
         };
 
         let serve = tokio::spawn(async move {

@@ -148,7 +148,10 @@ pub fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], String> {
 #[allow(dead_code)]
 pub fn derive_app_keys(passphrase: &str, salt: &[u8]) -> Result<AppKeys, String> {
     let legacy = derive_key(passphrase, salt)?;
-    Ok(AppKeys { legacy, sm: derive_sm_keys(passphrase, salt) })
+    Ok(AppKeys {
+        legacy,
+        sm: derive_sm_keys(passphrase, salt),
+    })
 }
 
 #[cfg(feature = "sm-crypto")]
@@ -184,7 +187,10 @@ pub fn derive_app_keys_with(
     let mut legacy = [0u8; 32];
     a.hash_password_into(passphrase.as_bytes(), salt, &mut legacy)
         .map_err(|e| format!("密钥派生失败: {e}"))?;
-    Ok(AppKeys { legacy, sm: derive_sm_keys(passphrase, salt) })
+    Ok(AppKeys {
+        legacy,
+        sm: derive_sm_keys(passphrase, salt),
+    })
 }
 
 /// 这段密钥材料**写新数据**时会用哪个版本。
@@ -294,7 +300,8 @@ fn seal_xchacha(plaintext: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
     let cipher = XChaCha20Poly1305::new(&key);
     let mut nonce_bytes = [0u8; NONCE_LEN];
     OsRng.fill_bytes(&mut nonce_bytes);
-    let nonce = XNonce::try_from(nonce_bytes.as_slice()).map_err(|_| "nonce 长度无效".to_string())?;
+    let nonce =
+        XNonce::try_from(nonce_bytes.as_slice()).map_err(|_| "nonce 长度无效".to_string())?;
     let ct = cipher
         .encrypt(&nonce, plaintext)
         .map_err(|e| format!("加密失败: {e}"))?;
@@ -316,7 +323,9 @@ fn open_aead(payload: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
     let nonce = XNonce::try_from(nonce_bytes).map_err(|_| "nonce 长度无效".to_string())?;
     let key = Key::try_from(key.as_slice()).map_err(|_| "密钥长度无效".to_string())?;
     let cipher = XChaCha20Poly1305::new(&key);
-    cipher.decrypt(&nonce, ct).map_err(|e| format!("解密失败: {e}"))
+    cipher
+        .decrypt(&nonce, ct)
+        .map_err(|e| format!("解密失败: {e}"))
 }
 
 /// 解国密（v2）那一段。**报错也要可操作**：拿不到国密密钥时不能说"数据损坏"，
@@ -326,7 +335,8 @@ fn open_sm(data: &[u8], keys: &AppKeys) -> Result<Vec<u8>, String> {
     match keys.sm.as_ref() {
         Some(sm) => crate::crypto_sm::decrypt(data, &sm.enc, &sm.mac),
         None => Err(
-            "这段密文是国密（v2）格式，但当前会话里没有国密密钥 —— 请用国密版重新解锁本次会话".to_string(),
+            "这段密文是国密（v2）格式，但当前会话里没有国密密钥 —— 请用国密版重新解锁本次会话"
+                .to_string(),
         ),
     }
 }
@@ -424,26 +434,50 @@ mod tests {
         let raw = include_str!("../tests/crypto-legacy-v0.json");
         let fx: Fixture = serde_json::from_str(raw).expect("夹具必须能解析");
         // 「空跑即红」：夹具为空、或缺字段，都要比"用例通过"更早暴露。
-        assert!(fx.cases.len() >= 3, "夹具至少要有 3 格（文本/撞头/二进制），实际 {}", fx.cases.len());
+        assert!(
+            fx.cases.len() >= 3,
+            "夹具至少要有 3 格（文本/撞头/二进制），实际 {}",
+            fx.cases.len()
+        );
         let salt = hex::decode(&fx.salt_hex).unwrap();
         let key = derive_key(&fx.passphrase, &salt).unwrap();
         // 夹具里记的 key 也必须与 KDF 现算的一致 —— 否则"换了 KDF"这件事会被静默吞掉。
-        assert_eq!(key_hex(&key), fx.key_hex, "KDF 变了（夹具记录的 key 与现算不一致）");
+        assert_eq!(
+            key_hex(&key),
+            fx.key_hex,
+            "KDF 变了（夹具记录的 key 与现算不一致）"
+        );
         // ★ 夹具只用 legacy 密钥：**默认构建（国密已默认开启）也必须能读这份老数据**。
         let keys = AppKeys::legacy_only(key);
 
         for c in &fx.cases {
-            assert!(!hex::decode(&c.nonce_hex).unwrap().is_empty(), "用例「{}」没有 nonce", c.name);
+            assert!(
+                !hex::decode(&c.nonce_hex).unwrap().is_empty(),
+                "用例「{}」没有 nonce",
+                c.name
+            );
             if c.kind == "str" {
-                let b64 = c.cipher_b64.as_ref().unwrap_or_else(|| panic!("用例「{}」缺 cipherB64", c.name));
-                let got = decrypt_str(b64, &keys).unwrap_or_else(|e| panic!("用例「{}」解不开：{e}", c.name));
-                assert_eq!(&got, c.expect_plaintext.as_ref().unwrap(), "用例「{}」明文不一致", c.name);
+                let b64 = c
+                    .cipher_b64
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("用例「{}」缺 cipherB64", c.name));
+                let got = decrypt_str(b64, &keys)
+                    .unwrap_or_else(|e| panic!("用例「{}」解不开：{e}", c.name));
+                assert_eq!(
+                    &got,
+                    c.expect_plaintext.as_ref().unwrap(),
+                    "用例「{}」明文不一致",
+                    c.name
+                );
             } else if c.kind == "bytes" {
                 let blob = hex::decode(
-                    c.cipher_hex.as_ref().unwrap_or_else(|| panic!("用例「{}」缺 cipherHex", c.name)),
+                    c.cipher_hex
+                        .as_ref()
+                        .unwrap_or_else(|| panic!("用例「{}」缺 cipherHex", c.name)),
                 )
                 .unwrap();
-                let got = decrypt(&blob, &keys).unwrap_or_else(|e| panic!("用例「{}」解不开：{e}", c.name));
+                let got = decrypt(&blob, &keys)
+                    .unwrap_or_else(|e| panic!("用例「{}」解不开：{e}", c.name));
                 assert_eq!(
                     hex::encode(&got),
                     *c.expect_plain_hex.as_ref().unwrap(),
@@ -461,7 +495,11 @@ mod tests {
         let salt = random_salt();
         let keys = derive_app_keys("hunter2", &salt).unwrap();
         let ct = encrypt(b"hello shuyonote", &keys).unwrap();
-        assert_eq!(&ct[..HEADER_LEN], &[MAGIC, active_format(&keys)], "写出来的版本与 active_format 不一致");
+        assert_eq!(
+            &ct[..HEADER_LEN],
+            &[MAGIC, active_format(&keys)],
+            "写出来的版本与 active_format 不一致"
+        );
         let pt = decrypt(&ct, &keys).unwrap();
         assert_eq!(pt, b"hello shuyonote");
     }
@@ -495,7 +533,11 @@ mod tests {
         assert_eq!(&bin[..HEADER_LEN], &want, "二进制路径没带版本头");
         let text = encrypt_str("payload", &keys).unwrap();
         let decoded = b64_decode(&text).unwrap();
-        assert_eq!(&decoded[..HEADER_LEN], &want, "字符串路径没带版本头（应当 base64(同一套编码)）");
+        assert_eq!(
+            &decoded[..HEADER_LEN],
+            &want,
+            "字符串路径没带版本头（应当 base64(同一套编码)）"
+        );
         assert_eq!(decrypt_str(&text, &keys).unwrap(), "payload");
     }
 
@@ -509,7 +551,10 @@ mod tests {
         let v0 = seal_v0("上一年写的附件".as_bytes(), &key, nonce);
         assert_eq!(decrypt(&v0, &keys).unwrap(), "上一年写的附件".as_bytes());
         // 文本路径同样（老数据是 base64(nonce‖ct)）
-        assert_eq!(decrypt_str(&B64.encode(&v0), &keys).unwrap(), "上一年写的附件");
+        assert_eq!(
+            decrypt_str(&B64.encode(&v0), &keys).unwrap(),
+            "上一年写的附件"
+        );
     }
 
     /// ★★ 最容易漏的一条：老数据的头 24 字节是**随机 nonce**，所以"首字节 == MAGIC、次字节 == 版本号"
@@ -529,7 +574,11 @@ mod tests {
             nonce[0] = MAGIC;
             nonce[1] = v; // 刻意撞上头
             let v0 = seal_v0(&plain, &key, nonce);
-            assert_eq!(&v0[..HEADER_LEN], &[MAGIC, v], "构造失败：这段老数据没撞上 v{v} 的头");
+            assert_eq!(
+                &v0[..HEADER_LEN],
+                &[MAGIC, v],
+                "构造失败：这段老数据没撞上 v{v} 的头"
+            );
             assert_eq!(
                 decrypt(&v0, &keys).unwrap(),
                 plain,
@@ -547,7 +596,10 @@ mod tests {
         blob[1] = 9; // 假装这是 9.0 版应用写的
         let err = decrypt(&blob, &keys).unwrap_err();
         assert!(err.contains("版本 9"), "错误里没写出版本号：{err}");
-        assert!(err.contains("升级"), "错误不可操作（没告诉用户该怎么办）：{err}");
+        assert!(
+            err.contains("升级"),
+            "错误不可操作（没告诉用户该怎么办）：{err}"
+        );
     }
 
     #[test]
@@ -569,7 +621,10 @@ mod tests {
     #[cfg(not(feature = "sm-crypto"))]
     #[test]
     fn default_build_still_writes_v1_and_rejects_v2_with_an_actionable_error() {
-        assert_eq!(CURRENT_FORMAT, VERSION_XCHACHA, "默认构建不写 v2 —— 国密版靠 feature 另发（§0-E）");
+        assert_eq!(
+            CURRENT_FORMAT, VERSION_XCHACHA,
+            "默认构建不写 v2 —— 国密版靠 feature 另发（§0-E）"
+        );
         let keys = derive_app_keys("pw", &random_salt()).unwrap();
         assert_eq!(active_format(&keys), VERSION_XCHACHA);
         let blob = encrypt(b"default stays v1", &keys).unwrap();
@@ -593,7 +648,10 @@ mod tests {
         assert_eq!(CURRENT_FORMAT, VERSION_SM4, "国密构建写 v2");
         let salt = random_salt();
         let keys = derive_app_keys("pw", &salt).unwrap();
-        assert!(keys.sm.is_some(), "国密构建派生出来的密钥材料里必须有那一对独立密钥");
+        assert!(
+            keys.sm.is_some(),
+            "国密构建派生出来的密钥材料里必须有那一对独立密钥"
+        );
         assert_eq!(active_format(&keys), VERSION_SM4);
 
         // ① 新数据：v2，且能往返。

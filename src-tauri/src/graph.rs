@@ -153,9 +153,7 @@ pub fn get_graph(db: State<'_, Db>) -> Result<GraphData, String> {
         .prepare("SELECT source_page_id, target_page_id, kind, target_block_id FROM backlinks")
         .map_err(|e| e.to_string())?;
     let rows: Vec<(String, String, String, String)> = stmt
-        .query_map([], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-        })
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
         .map_err(|e| e.to_string())?
         .collect::<Result<_, _>>()
         .map_err(|e| e.to_string())?;
@@ -214,7 +212,11 @@ pub fn get_graph(db: State<'_, Db>) -> Result<GraphData, String> {
 
     let edges: Vec<GraphEdge> = best
         .into_iter()
-        .map(|((source, target), kind)| GraphEdge { source, target, kind })
+        .map(|((source, target), kind)| GraphEdge {
+            source,
+            target,
+            kind,
+        })
         .collect();
 
     // --- Block-level layer ---

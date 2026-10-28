@@ -58,7 +58,9 @@ fn truncate(s: &str, max_chars: usize) -> String {
 }
 
 fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 #[derive(Deserialize)]
@@ -155,7 +157,8 @@ fn list_pages_brief(c: &Connection, limit: usize) -> Result<Vec<SearchResult>, S
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// Run one search pass against a single connection (a single space's DB).
@@ -200,37 +203,74 @@ pub(crate) fn search_in_conn(
     //   · 带属性过滤时同样要过筛 ✓（否则并集成了绕过过滤的后门 ✗）
     if !text.is_empty() {
         if let Ok(hits) = search_chunks_in_conn(c, text, limit, None, None) {
-            let seen: std::collections::HashSet<String> = results.iter().map(|r| r.id.clone()).collect();
+            let seen: std::collections::HashSet<String> =
+                results.iter().map(|r| r.id.clone()).collect();
             // 过滤口径复算一次（只为并集那几条 ✓）；`filters` 为空时是 None ✓、不额外查库 ✓
             let allowed_ids: Option<std::collections::HashSet<String>> = if filters.is_empty() {
                 None
             } else {
-                Some(pages_matching_filters(c, filters)?.into_iter().map(|x| x.to_string()).collect())
+                Some(
+                    pages_matching_filters(c, filters)?
+                        .into_iter()
+                        .map(|x| x.to_string())
+                        .collect(),
+                )
             };
-            let mut best: std::collections::HashMap<String, (f64, String)> = std::collections::HashMap::new();
+            let mut best: std::collections::HashMap<String, (f64, String)> =
+                std::collections::HashMap::new();
             for h in hits {
-                let pid = match h.page_id.clone() { Some(p) => p, None => continue };
-                if seen.contains(&pid) { continue; }
-                if let Some(a) = &allowed_ids { if !a.contains(&pid) { continue; } }
-                let take = match best.get(&pid) { Some((sc, _)) => h.score > *sc, None => true };
-                if take { best.insert(pid, (h.score, h.snippet.clone())); }
+                let pid = match h.page_id.clone() {
+                    Some(p) => p,
+                    None => continue,
+                };
+                if seen.contains(&pid) {
+                    continue;
+                }
+                if let Some(a) = &allowed_ids {
+                    if !a.contains(&pid) {
+                        continue;
+                    }
+                }
+                let take = match best.get(&pid) {
+                    Some((sc, _)) => h.score > *sc,
+                    None => true,
+                };
+                if take {
+                    best.insert(pid, (h.score, h.snippet.clone()));
+                }
             }
             let mut extra: Vec<(String, SearchResult)> = Vec::new();
             for (pid, (score, snippet)) in best {
-                let mut stmt = match c.prepare("SELECT title FROM pages WHERE id = ?1 AND deleted_at IS NULL") { Ok(x) => x, Err(_) => continue };
-                let title: String = match stmt.query_row(params![&pid], |r| r.get(0)) { Ok(t) => t, Err(_) => continue };
-                extra.push((pid.clone(), SearchResult {
-                    id: pid,
-                    title,
-                    // 标出来源 ⇒ 用户看得出"这条不是正文命中，是附件里的" ✓
-                    snippet: format!("【来自附件】{}", snippet),
-                    space: None,
-                    workspace_id: None,
-                    score: score as f32,
-                }));
+                let mut stmt = match c
+                    .prepare("SELECT title FROM pages WHERE id = ?1 AND deleted_at IS NULL")
+                {
+                    Ok(x) => x,
+                    Err(_) => continue,
+                };
+                let title: String = match stmt.query_row(params![&pid], |r| r.get(0)) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                extra.push((
+                    pid.clone(),
+                    SearchResult {
+                        id: pid,
+                        title,
+                        // 标出来源 ⇒ 用户看得出"这条不是正文命中，是附件里的" ✓
+                        snippet: format!("【来自附件】{}", snippet),
+                        space: None,
+                        workspace_id: None,
+                        score: score as f32,
+                    },
+                ));
             }
             // 稳定序：分高的在前 ✓，同分按 page_id ✓（否则同一查询两次调用顺序可能不同 ⇒ 测试会 flake ✓）
-            extra.sort_by(|a, b| b.1.score.partial_cmp(&a.1.score).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0)));
+            extra.sort_by(|a, b| {
+                b.1.score
+                    .partial_cmp(&a.1.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.0.cmp(&b.0))
+            });
             results.extend(extra.into_iter().map(|(_, r)| r));
         }
     }
@@ -323,9 +363,16 @@ fn keyword_score(query: &str, title: &str, content: &str) -> f32 {
     let content_l = content.to_lowercase();
     let tokens: Vec<&str> = q.split_whitespace().filter(|s| !s.is_empty()).collect();
     if tokens.is_empty() {
-        return if title_l.contains(&q) || content_l.contains(&q) { 1.0 } else { 0.0 };
+        return if title_l.contains(&q) || content_l.contains(&q) {
+            1.0
+        } else {
+            0.0
+        };
     }
-    let hits = tokens.iter().filter(|t| title_l.contains(**t) || content_l.contains(**t)).count();
+    let hits = tokens
+        .iter()
+        .filter(|t| title_l.contains(**t) || content_l.contains(**t))
+        .count();
     hits as f32 / tokens.len() as f32
 }
 
@@ -377,7 +424,11 @@ async fn embed_text(cfg: &EmbedCfg, text: &str) -> Result<Option<Vec<f32>>, Stri
         v["embeddings"][0].as_array()
     };
     let vec: Vec<f32> = arr
-        .map(|a| a.iter().filter_map(|x| x.as_f64().map(|f| f as f32)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_f64().map(|f| f as f32))
+                .collect()
+        })
         .unwrap_or_default();
     Ok(if vec.is_empty() { None } else { Some(vec) })
 }
@@ -448,9 +499,12 @@ async fn search_semantic_async(
         };
         let mut cached: HashMap<String, Vec<f32>> = HashMap::new();
         for (id, title, content) in &pages {
-            if let Some(v) =
-                cached_vector(&c, id, &emb.model, embed_hash(&embedding_text(title, content)))
-            {
+            if let Some(v) = cached_vector(
+                &c,
+                id,
+                &emb.model,
+                embed_hash(&embedding_text(title, content)),
+            ) {
                 cached.insert(id.clone(), v);
             }
         }
@@ -486,7 +540,12 @@ async fn search_semantic_async(
                 score += VECTOR_BONUS * cosine_sim(q, &v);
             }
         }
-        scored.push((score, id.clone(), title.clone(), build_like_snippet(content_text, text, 120)));
+        scored.push((
+            score,
+            id.clone(),
+            title.clone(),
+            build_like_snippet(content_text, text, 120),
+        ));
     }
 
     // Phase 3 (sync, brief lock): write newly-computed cache rows.
@@ -547,7 +606,8 @@ pub async fn search(db: State<'_, Db>, args: SearchArgs) -> Result<Vec<SearchRes
             let rows = stmt
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
                 .map_err(|e| e.to_string())?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?
         };
 
         let mut out: Vec<SearchResult> = Vec::new();
@@ -613,11 +673,7 @@ pub async fn search(db: State<'_, Db>, args: SearchArgs) -> Result<Vec<SearchRes
     Ok(results)
 }
 
-fn search_fts(
-    c: &Connection,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<SearchResult>, String> {
+fn search_fts(c: &Connection, query: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
     // 空格分词：多关键词【都出现】（AND），每词包 phrase 避免 FTS 特殊字符误解析。
     let terms: Vec<String> = query
         .split_whitespace()
@@ -625,7 +681,11 @@ fn search_fts(
         .filter(|t| !t.is_empty())
         .map(|t| format!("\"{}\"", t))
         .collect();
-    let phrase = if terms.is_empty() { "\"\"".to_string() } else { terms.join(" AND ") };
+    let phrase = if terms.is_empty() {
+        "\"\"".to_string()
+    } else {
+        terms.join(" AND ")
+    };
     // ⚠️ **2026-10-01 修的真 bug**（由新的跨平台夹具 `tests/search-parity.json` 的桌面侧当场撞出来 ✓）：
     //   FTS5 的辅助函数（`snippet()` / `bm25()` / `highlight()`）**第一个参数必须是表名，不许用别名** ✗ ——
     //   这里原来写的是 `snippet(f, …)`，而 `f` 只是 `FROM page_fts f` 的别名 ⇒ **prepare 阶段就报
@@ -676,12 +736,17 @@ fn search_fts(
         .query_map(params![phrase, limit as i64], map_row)
         .map_err(|e| e.to_string())?;
 
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 // 多关键词：空格分词，每个词 (title LIKE %词% OR content_text LIKE %词%) 之间 AND——
 // 都出现（子串匹配，不受 trigram 对短中文词不可靠影响）。
-fn search_like_multi(c: &Connection, words: &[&str], limit: usize) -> Result<Vec<SearchResult>, String> {
+fn search_like_multi(
+    c: &Connection,
+    words: &[&str],
+    limit: usize,
+) -> Result<Vec<SearchResult>, String> {
     if words.is_empty() {
         return Ok(vec![]);
     }
@@ -689,7 +754,8 @@ fn search_like_multi(c: &Connection, words: &[&str], limit: usize) -> Result<Vec
     let mut params: Vec<String> = Vec::new();
     for w in words {
         let pat = format!("%{}%", escape_like(w));
-        clauses.push("(p.title LIKE ? ESCAPE '\\' OR p.content_text LIKE ? ESCAPE '\\')".to_string());
+        clauses
+            .push("(p.title LIKE ? ESCAPE '\\' OR p.content_text LIKE ? ESCAPE '\\')".to_string());
         params.push(pat.clone());
         params.push(pat);
     }
@@ -703,7 +769,8 @@ fn search_like_multi(c: &Connection, words: &[&str], limit: usize) -> Result<Vec
     let mut stmt = c.prepare(&sql).map_err(|e| e.to_string())?;
     let q = words.join(" ");
     let limit_i64: i64 = limit as i64;
-    let mut binds: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+    let mut binds: Vec<&dyn rusqlite::ToSql> =
+        params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
     binds.push(&limit_i64 as &dyn rusqlite::ToSql);
     let rows = stmt
         .query_map(rusqlite::params_from_iter(binds), |r| {
@@ -722,14 +789,11 @@ fn search_like_multi(c: &Connection, words: &[&str], limit: usize) -> Result<Vec
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
-fn search_like(
-    c: &Connection,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<SearchResult>, String> {
+fn search_like(c: &Connection, query: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
     let pattern = format!("%{}%", escape_like(query));
     let sql = "SELECT p.id, p.title, p.content_text, w.name FROM pages p
          JOIN meta.workspaces w ON w.id = p.workspace_id
@@ -755,9 +819,9 @@ fn search_like(
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
-
 
 // ---------------------------------------------------------------------------
 // 块级检索（**只读**）—— 接口与判据见信箱 `2026-09-17-retrieval-query-normalization.reply-1`。
@@ -790,7 +854,9 @@ const CHUNK_LIMIT_MAX: usize = 100;
 /// 抽成纯函数只为能被判据直接钉住（原来那一行 `.min(MAX)` 没有下界，`limit=0` 会返回 0 条命中，
 /// 而能力面 `0 ⇒ 1`；两面对同一个逻辑调用的边界语义不该不同）。
 fn chunk_limit_or_default(limit: Option<usize>) -> usize {
-    limit.unwrap_or(CHUNK_LIMIT_DEFAULT).clamp(1, CHUNK_LIMIT_MAX)
+    limit
+        .unwrap_or(CHUNK_LIMIT_DEFAULT)
+        .clamp(1, CHUNK_LIMIT_MAX)
 }
 /// 向量加分上限：**不主导**关键词（与页面级的 `VECTOR_BONUS` 同一个思路）。
 const CHUNK_VECTOR_BONUS: f32 = 6.0;
@@ -870,7 +936,8 @@ fn ensure_chunk_fts(c: &Connection) -> Result<(), String> {
     if chunks == indexed {
         return Ok(());
     }
-    c.execute("DELETE FROM chunk_fts", []).map_err(|e| e.to_string())?;
+    c.execute("DELETE FROM chunk_fts", [])
+        .map_err(|e| e.to_string())?;
     c.execute(
         "INSERT INTO chunk_fts(chunk_id, text) SELECT id, text FROM chunks",
         [],
@@ -887,12 +954,16 @@ fn ensure_chunk_fts(c: &Connection) -> Result<(), String> {
 /// **搜索本身不能因为索引出问题而失败**。
 fn read_chunk_bm25(c: &Connection, query: &str, wanted: &HashSet<&str>) -> HashMap<String, f32> {
     let mut out = HashMap::new();
-    let Some(expr) = chunk_match_expr(query) else { return out };
+    let Some(expr) = chunk_match_expr(query) else {
+        return out;
+    };
     if !table_exists(c, "chunk_fts") {
         INDEX_FALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return out;
     }
-    let Ok(mut stmt) = c.prepare("SELECT chunk_id, bm25(chunk_fts) FROM chunk_fts WHERE chunk_fts MATCH ?1") else {
+    let Ok(mut stmt) =
+        c.prepare("SELECT chunk_id, bm25(chunk_fts) FROM chunk_fts WHERE chunk_fts MATCH ?1")
+    else {
         INDEX_FALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return out;
     };
@@ -967,7 +1038,12 @@ fn table_exists(c: &Connection, name: &str) -> bool {
 ///
 /// 抽成纯函数就是为了能直接测这条规则本身 —— hash 对不上却仍用那条向量，等于"改了内容还在用旧向量"，
 /// 而那正是 `hash` 这一列存在的理由。
-fn chunk_vector_usable(row_model: &str, row_hash: &str, chunk_hash: &str, want_model: &str) -> bool {
+fn chunk_vector_usable(
+    row_model: &str,
+    row_hash: &str,
+    chunk_hash: &str,
+    want_model: &str,
+) -> bool {
     row_model == want_model && !row_hash.is_empty() && row_hash == chunk_hash
 }
 
@@ -1058,9 +1134,12 @@ fn read_chunk_vectors(
     if !table_exists(c, "chunk_embeddings") {
         return out;
     }
-    let by_id: std::collections::HashMap<&str, &str> =
-        rows.iter().map(|r| (r.id.as_str(), r.hash.as_str())).collect();
-    let Ok(mut stmt) = c.prepare("SELECT chunk_id, model, vector, hash FROM chunk_embeddings") else {
+    let by_id: std::collections::HashMap<&str, &str> = rows
+        .iter()
+        .map(|r| (r.id.as_str(), r.hash.as_str()))
+        .collect();
+    let Ok(mut stmt) = c.prepare("SELECT chunk_id, model, vector, hash FROM chunk_embeddings")
+    else {
         return out;
     };
     let Ok(iter) = stmt.query_map([], |r| {
@@ -1075,7 +1154,9 @@ fn read_chunk_vectors(
     };
     for row in iter.flatten() {
         let (id, row_model, vec_s, row_hash) = row;
-        let Some(chunk_hash) = by_id.get(id.as_str()) else { continue };
+        let Some(chunk_hash) = by_id.get(id.as_str()) else {
+            continue;
+        };
         if !chunk_vector_usable(&row_model, &row_hash, chunk_hash, model) {
             continue;
         }
@@ -1204,7 +1285,10 @@ pub(crate) fn read_attachment_text_coverage_in_conn(
     };
     let rows = stmt
         .query_map(params![att_id], |r| {
-            Ok(AttachmentTextCoverageRow { extractor: r.get(0)?, coverage: r.get(1)? })
+            Ok(AttachmentTextCoverageRow {
+                extractor: r.get(0)?,
+                coverage: r.get(1)?,
+            })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
@@ -1239,7 +1323,11 @@ pub(crate) fn read_attachment_text_in_conn(
     limit: usize,
 ) -> Result<Option<AttachmentTextPage>, String> {
     let exists: Option<String> = c
-        .query_row("SELECT id FROM attachments WHERE id = ?1", params![att_id], |r| r.get(0))
+        .query_row(
+            "SELECT id FROM attachments WHERE id = ?1",
+            params![att_id],
+            |r| r.get(0),
+        )
         .ok();
     if exists.is_none() {
         return Ok(None);
@@ -1283,7 +1371,12 @@ pub(crate) fn read_attachment_text_in_conn(
 
     let truncated = (offset as i64 + segments.len() as i64) < total;
     let coverage = read_attachment_text_coverage_in_conn(c, att_id)?;
-    Ok(Some(AttachmentTextPage { segments, total, truncated, coverage }))
+    Ok(Some(AttachmentTextPage {
+        segments,
+        total,
+        truncated,
+        coverage,
+    }))
 }
 
 /// `read_attachment_text` 的参数（命令面；能力面走 `plugins.rs::cap_files_read`，同一条读函数）。
@@ -1311,7 +1404,10 @@ pub async fn read_attachment_text(
         return Err("bad_args: id 不能为空".to_string());
     }
     let off = args.offset.unwrap_or(0).max(0) as usize;
-    let lim = args.limit.unwrap_or(200).clamp(1, MAX_ATT_TEXT_LIMIT as i64) as usize;
+    let lim = args
+        .limit
+        .unwrap_or(200)
+        .clamp(1, MAX_ATT_TEXT_LIMIT as i64) as usize;
     let c = db.0.lock().expect("db mutex poisoned");
     read_attachment_text_in_conn(&c, &args.id, off, lim)
 }
@@ -1353,11 +1449,22 @@ mod tests {
             20,
             "命令面默认值（不是注册表那个 10 —— 两个面各自的契约，见 CHUNK_LIMIT_DEFAULT 的注释）"
         );
-        assert_eq!(chunk_limit_or_default(Some(0)), 1, "0 是合法值，夹到下界（与能力面 clamp(1,100) 一致）");
+        assert_eq!(
+            chunk_limit_or_default(Some(0)),
+            1,
+            "0 是合法值，夹到下界（与能力面 clamp(1,100) 一致）"
+        );
         assert_eq!(chunk_limit_or_default(Some(1)), 1);
         assert_eq!(chunk_limit_or_default(Some(37)), 37);
-        assert_eq!(chunk_limit_or_default(Some(CHUNK_LIMIT_MAX)), CHUNK_LIMIT_MAX);
-        assert_eq!(chunk_limit_or_default(Some(9999)), CHUNK_LIMIT_MAX, "超上限夹到上限");
+        assert_eq!(
+            chunk_limit_or_default(Some(CHUNK_LIMIT_MAX)),
+            CHUNK_LIMIT_MAX
+        );
+        assert_eq!(
+            chunk_limit_or_default(Some(9999)),
+            CHUNK_LIMIT_MAX,
+            "超上限夹到上限"
+        );
     }
 
     use super::*;
@@ -1428,7 +1535,11 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, "p1");
         // snippet 也必须能找到（否则高亮在已折叠的正文里落空）
-        assert!(hits[0].snippet.contains("第一段"), "snippet={}", hits[0].snippet);
+        assert!(
+            hits[0].snippet.contains("第一段"),
+            "snippet={}",
+            hits[0].snippet
+        );
     }
 
     // ---- S1③：跨平台检索一致性夹具（与 Web 侧共读同一份 `tests/search-parity.json`）----
@@ -1515,7 +1626,10 @@ mod tests {
             serde_json::from_str(SEARCH_PARITY_JSON).expect("夹具必须是合法 JSON");
         let pages = fx["pages"].as_array().expect("pages 数组");
         let cases = fx["cases"].as_array().expect("cases 数组");
-        assert!(cases.len() >= 2, "夹具至少要两条用例（一条证明不了跨平台一致 ✓）");
+        assert!(
+            cases.len() >= 2,
+            "夹具至少要两条用例（一条证明不了跨平台一致 ✓）"
+        );
         let mut bad = Vec::new();
         for case in cases {
             let q = case["query"].as_str().expect("query");
@@ -1544,10 +1658,15 @@ mod tests {
     fn search_parity_known_divergences_are_recorded_readings() {
         let fx: serde_json::Value =
             serde_json::from_str(SEARCH_PARITY_JSON).expect("夹具必须是合法 JSON");
-        let divs = fx["knownDivergences"].as_array().expect("knownDivergences 数组");
+        let divs = fx["knownDivergences"]
+            .as_array()
+            .expect("knownDivergences 数组");
         let mut bad = Vec::new();
         for d in divs {
-            let got = parity_hits(d["pages"].as_array().expect("pages"), d["query"].as_str().expect("query"));
+            let got = parity_hits(
+                d["pages"].as_array().expect("pages"),
+                d["query"].as_str().expect("query"),
+            );
             let want = parity_ids(d, "desktop");
             if got != want {
                 bad.push(format!(
@@ -1665,7 +1784,8 @@ mod tests {
         let c = parity_conn();
         add_parity_page(&c, "f1", "会议纪要", "本周会议纪要待办");
         add_parity_page(&c, "f2", "无关", "今天天气");
-        let hits = search_fts(&c, "会议纪要", 10).expect("≥3 字的单词检索必须不报错（辅助函数要用表名 ✓）");
+        let hits = search_fts(&c, "会议纪要", 10)
+            .expect("≥3 字的单词检索必须不报错（辅助函数要用表名 ✓）");
         assert_eq!(
             hits.iter().map(|h| h.id.clone()).collect::<Vec<_>>(),
             vec!["f1"]
@@ -1719,7 +1839,11 @@ mod tests {
                 let header_str = String::from_utf8_lossy(&header);
                 let content_len: usize = header_str
                     .lines()
-                    .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse().ok()))
+                    .find_map(|l| {
+                        l.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .and_then(|v| v.trim().parse().ok())
+                    })
                     .unwrap_or(0);
                 let mut body = vec![0u8; content_len];
                 if content_len > 0 {
@@ -1743,7 +1867,11 @@ mod tests {
         EmbedCfg {
             provider: provider.to_string(),
             base_url: format!("http://127.0.0.1:{}", port),
-            api_key: if provider == "openai" { Some("sk-test".into()) } else { None },
+            api_key: if provider == "openai" {
+                Some("sk-test".into())
+            } else {
+                None
+            },
             model: "m".into(),
         }
     }
@@ -1751,14 +1879,24 @@ mod tests {
     #[tokio::test]
     async fn embed_text_calls_ollama_and_parses() {
         let port = spawn_mock_http(|_| r#"{"embeddings":[[0.1,0.2,0.3]]}"#.to_string());
-        let vec = embed_text(&cfg(port, "ollama"), "hi").await.unwrap().unwrap();
-        assert!((vec[0] - 0.1).abs() < 1e-6 && (vec[1] - 0.2).abs() < 1e-6 && (vec[2] - 0.3).abs() < 1e-6);
+        let vec = embed_text(&cfg(port, "ollama"), "hi")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            (vec[0] - 0.1).abs() < 1e-6
+                && (vec[1] - 0.2).abs() < 1e-6
+                && (vec[2] - 0.3).abs() < 1e-6
+        );
     }
 
     #[tokio::test]
     async fn embed_text_calls_openai_and_parses() {
         let port = spawn_mock_http(|_| r#"{"data":[{"embedding":[0.4,0.5]}]}"#.to_string());
-        let vec = embed_text(&cfg(port, "openai"), "hi").await.unwrap().unwrap();
+        let vec = embed_text(&cfg(port, "openai"), "hi")
+            .await
+            .unwrap()
+            .unwrap();
         assert!((vec[0] - 0.4).abs() < 1e-6 && (vec[1] - 0.5).abs() < 1e-6);
     }
 
@@ -1782,12 +1920,21 @@ mod tests {
             if input.contains("天气") {
                 d[2] = 1.0;
             }
-            format!("{{\"embeddings\":[{}]}}", d.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(","))
+            format!(
+                "{{\"embeddings\":[{}]}}",
+                d.iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
         });
 
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         crate::db::migrate(&conn, "ws").unwrap();
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
         for (id, title, text) in [
             ("a", "会议安排", "本周会议纪要安排"),
             ("b", "项目计划", "开发排期项目进度"),
@@ -1807,7 +1954,12 @@ mod tests {
             .unwrap();
         // 「会议安排」shares the [1,0,0] axis with the query (no literal keyword overlap
         // of 周会纪要), so the vector bonus lifts it above the unrelated pages.
-        assert_eq!(results[0].title, "会议安排", "got: {:#?}", results.iter().map(|r| &r.title).collect::<Vec<_>>());
+        assert_eq!(
+            results[0].title,
+            "会议安排",
+            "got: {:#?}",
+            results.iter().map(|r| &r.title).collect::<Vec<_>>()
+        );
         let sem = results.iter().position(|r| r.title == "会议安排").unwrap();
         for name in ["项目计划", "天气"] {
             if let Some(i) = results.iter().position(|r| r.title == name) {
@@ -1837,7 +1989,16 @@ mod tests {
         c
     }
 
-    fn add_chunk(c: &Connection, id: &str, page: Option<&str>, att: Option<&str>, ord: i64, loc: &str, text: &str, hash: &str) {
+    fn add_chunk(
+        c: &Connection,
+        id: &str,
+        page: Option<&str>,
+        att: Option<&str>,
+        ord: i64,
+        loc: &str,
+        text: &str,
+        hash: &str,
+    ) {
         c.execute(
             "INSERT INTO chunks (id, page_id, att_id, ord, loc, lang, text, hash) VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, ?7)",
             params![id, page, att, ord, loc, text, hash],
@@ -1876,16 +2037,41 @@ mod tests {
     #[test]
     fn chunk_index_follows_writes_through_triggers() {
         let c = chunks_conn_with_fts();
-        add_chunk(&c, "p:p1#0", Some("p1"), None, 0, "", "制度第三十七条 报销流程", "h1");
-        assert_eq!(fts_hits(&c, "第三十七条"), vec!["p:p1#0"], "INSERT 后应当能检索到");
+        add_chunk(
+            &c,
+            "p:p1#0",
+            Some("p1"),
+            None,
+            0,
+            "",
+            "制度第三十七条 报销流程",
+            "h1",
+        );
+        assert_eq!(
+            fts_hits(&c, "第三十七条"),
+            vec!["p:p1#0"],
+            "INSERT 后应当能检索到"
+        );
 
         // UPDATE：旧文本必须**不再**命中，新文本要命中（只删不插或只插不删都会在这里露出来）。
-        c.execute("UPDATE chunks SET text = '制度第三十八条 差旅标准' WHERE id = 'p:p1#0'", []).unwrap();
-        assert!(fts_hits(&c, "第三十七条").is_empty(), "UPDATE 后旧文本不该还命中");
-        assert_eq!(fts_hits(&c, "差旅标准"), vec!["p:p1#0"], "UPDATE 后新文本该命中");
+        c.execute(
+            "UPDATE chunks SET text = '制度第三十八条 差旅标准' WHERE id = 'p:p1#0'",
+            [],
+        )
+        .unwrap();
+        assert!(
+            fts_hits(&c, "第三十七条").is_empty(),
+            "UPDATE 后旧文本不该还命中"
+        );
+        assert_eq!(
+            fts_hits(&c, "差旅标准"),
+            vec!["p:p1#0"],
+            "UPDATE 后新文本该命中"
+        );
 
         // DELETE：整条记录必须从索引里消失（否则会返回一个已经不存在的块 id）。
-        c.execute("DELETE FROM chunks WHERE id = 'p:p1#0'", []).unwrap();
+        c.execute("DELETE FROM chunks WHERE id = 'p:p1#0'", [])
+            .unwrap();
         assert!(fts_hits(&c, "差旅标准").is_empty(), "DELETE 后不该还有残留");
     }
 
@@ -1896,10 +2082,31 @@ mod tests {
     fn ensure_chunk_fts_backfills_a_stale_index() {
         let c = chunks_conn();
         // 先写数据、**后**建索引 —— 正是升级路径的形状。
-        add_chunk(&c, "p:p1#0", Some("p1"), None, 0, "", "报销流程 第一条", "h1");
-        add_chunk(&c, "p:p1#1", Some("p1"), None, 1, "", "差旅标准 第二条", "h2");
+        add_chunk(
+            &c,
+            "p:p1#0",
+            Some("p1"),
+            None,
+            0,
+            "",
+            "报销流程 第一条",
+            "h1",
+        );
+        add_chunk(
+            &c,
+            "p:p1#1",
+            Some("p1"),
+            None,
+            1,
+            "",
+            "差旅标准 第二条",
+            "h2",
+        );
         c.execute_batch(crate::db::CHUNK_FTS_DDL).unwrap();
-        assert!(fts_hits(&c, "报销流程").is_empty(), "刚建好的索引是空的（触发器不追溯历史行）");
+        assert!(
+            fts_hits(&c, "报销流程").is_empty(),
+            "刚建好的索引是空的（触发器不追溯历史行）"
+        );
 
         ensure_chunk_fts(&c).unwrap();
         assert_eq!(fts_hits(&c, "报销流程"), vec!["p:p1#0"]);
@@ -1907,7 +2114,9 @@ mod tests {
 
         // 再跑一次：计数已平 ⇒ 幂等，不做无谓重建。
         ensure_chunk_fts(&c).unwrap();
-        let n: i64 = c.query_row("SELECT COUNT(*) FROM chunk_fts", [], |r| r.get(0)).unwrap();
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM chunk_fts", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 2);
     }
 
@@ -1915,10 +2124,17 @@ mod tests {
     /// 用户随手输入的普通字符串会让查询报错），引号自身双写转义。
     #[test]
     fn chunk_match_expr_quotes_terms_and_rejects_empty() {
-        assert_eq!(chunk_match_expr("报销 流程").as_deref(), Some("\"报销\" \"流程\""));
+        assert_eq!(
+            chunk_match_expr("报销 流程").as_deref(),
+            Some("\"报销\" \"流程\"")
+        );
         assert_eq!(chunk_match_expr("a-b").as_deref(), Some("\"a-b\""));
         assert_eq!(chunk_match_expr("a\"b").as_deref(), Some("\"a\"\"b\""));
-        assert_eq!(chunk_match_expr("   "), None, "空白查询 ⇒ None（跳过 FTS，不是错误）");
+        assert_eq!(
+            chunk_match_expr("   "),
+            None,
+            "空白查询 ⇒ None（跳过 FTS，不是错误）"
+        );
         assert_eq!(chunk_match_expr(""), None);
     }
 
@@ -1930,14 +2146,44 @@ mod tests {
     #[test]
     fn bm25_boost_is_bounded_and_never_changes_the_hit_set() {
         let c = chunks_conn_with_fts();
-        add_chunk(&c, "p:p1#0", Some("p1"), None, 0, "", "报销流程 报销流程", "h1");
-        add_chunk(&c, "p:p1#1", Some("p1"), None, 1, "", "报销流程 附件清单", "h2");
-        add_chunk(&c, "p:p1#2", Some("p1"), None, 2, "", "与查询无关的内容", "h3");
+        add_chunk(
+            &c,
+            "p:p1#0",
+            Some("p1"),
+            None,
+            0,
+            "",
+            "报销流程 报销流程",
+            "h1",
+        );
+        add_chunk(
+            &c,
+            "p:p1#1",
+            Some("p1"),
+            None,
+            1,
+            "",
+            "报销流程 附件清单",
+            "h2",
+        );
+        add_chunk(
+            &c,
+            "p:p1#2",
+            Some("p1"),
+            None,
+            2,
+            "",
+            "与查询无关的内容",
+            "h3",
+        );
         let rows = read_chunks(&c).unwrap();
         let wanted: HashSet<&str> = rows.iter().map(|r| r.id.as_str()).collect();
         let bm25 = read_chunk_bm25(&c, "报销流程", &wanted);
         assert!(!bm25.is_empty(), "FTS 命中的块应当拿到 BM25 分");
-        assert!(bm25.values().all(|v| *v >= 0.0 && *v <= 1.0), "归一化后必须落在 [0,1]");
+        assert!(
+            bm25.values().all(|v| *v >= 0.0 && *v <= 1.0),
+            "归一化后必须落在 [0,1]"
+        );
 
         // ★ 归一化的**形状**也要钉住（第一版只钉了区间 ⇒ 去掉归一化仍绿，变异实测抓到）：
         //   逐块把原始分读出来，断言映射值 == normalize_bm25(原始分)。
@@ -1949,26 +2195,52 @@ mod tests {
                     |r| r.get(0),
                 )
                 .unwrap();
-            assert_eq!(bm25.get(id).copied(), Some(normalize_bm25(raw)), "{id} 必须是归一化后的值");
+            assert_eq!(
+                bm25.get(id).copied(),
+                Some(normalize_bm25(raw)),
+                "{id} 必须是归一化后的值"
+            );
         }
         // 上界是**严格**小于 1（原始分再大也不会到 1），且随原始分单调。
         assert!(normalize_bm25(-3.0) < 1.0, "上界必须严格小于 1");
-        assert!(normalize_bm25(-3.0) > normalize_bm25(-1.0), "原始分越大（越相关）映射值越大");
+        assert!(
+            normalize_bm25(-3.0) > normalize_bm25(-1.0),
+            "原始分越大（越相关）映射值越大"
+        );
         assert_eq!(normalize_bm25(0.0), 0.0);
-        assert_eq!(normalize_bm25(5.0), 0.0, "正的 bm25（不该出现）夹到 0，不产生负加分");
+        assert_eq!(
+            normalize_bm25(5.0),
+            0.0,
+            "正的 bm25（不该出现）夹到 0，不产生负加分"
+        );
 
         let ids = |hits: &[(ChunkRow, f32)]| {
             let mut v: Vec<String> = hits.iter().map(|(r, _)| r.id.clone()).collect();
             v.sort();
             v
         };
-        let without = rank_chunks("报销流程", read_chunks(&c).unwrap(), &HashMap::new(), None, &HashMap::new());
-        let with = rank_chunks("报销流程", read_chunks(&c).unwrap(), &HashMap::new(), None, &bm25);
+        let without = rank_chunks(
+            "报销流程",
+            read_chunks(&c).unwrap(),
+            &HashMap::new(),
+            None,
+            &HashMap::new(),
+        );
+        let with = rank_chunks(
+            "报销流程",
+            read_chunks(&c).unwrap(),
+            &HashMap::new(),
+            None,
+            &bm25,
+        );
         assert_eq!(ids(&without), ids(&with), "BM25 只许改排序，不许改命中集");
 
         // 加分只增不减：同一个块，带 bm25 的分数 ≥ 不带。
         let score_of = |hits: &[(ChunkRow, f32)], id: &str| {
-            hits.iter().find(|(r, _)| r.id == id).map(|(_, s)| *s).unwrap_or(f32::NAN)
+            hits.iter()
+                .find(|(r, _)| r.id == id)
+                .map(|(_, s)| *s)
+                .unwrap_or(f32::NAN)
         };
         for id in ["p:p1#0", "p:p1#1"] {
             assert!(
@@ -1980,10 +2252,20 @@ mod tests {
 
     /// `hash` 对不上就不能用那条向量 —— 否则"改了内容还在用旧向量"，而 `hash` 这列的存在就是为了防这个。
     #[test]
-    fn chunk_vector_is_rejected_when_model_or_hash_disagrees() {        assert!(chunk_vector_usable("m1", "abc", "abc", "m1"));
-        assert!(!chunk_vector_usable("m1", "abc", "abc", "m2"), "模型换了就不能用旧向量");
-        assert!(!chunk_vector_usable("m1", "abc", "def", "m1"), "块内容变了（hash 变）就不能用旧向量");
-        assert!(!chunk_vector_usable("m1", "", "abc", "m1"), "空 hash 视为不可用");
+    fn chunk_vector_is_rejected_when_model_or_hash_disagrees() {
+        assert!(chunk_vector_usable("m1", "abc", "abc", "m1"));
+        assert!(
+            !chunk_vector_usable("m1", "abc", "abc", "m2"),
+            "模型换了就不能用旧向量"
+        );
+        assert!(
+            !chunk_vector_usable("m1", "abc", "def", "m1"),
+            "块内容变了（hash 变）就不能用旧向量"
+        );
+        assert!(
+            !chunk_vector_usable("m1", "", "abc", "m1"),
+            "空 hash 视为不可用"
+        );
     }
 
     /// 查询侧归一化与页面级同口径（否则会"全库搜得到、块搜搜不到"）。
@@ -1996,12 +2278,44 @@ mod tests {
     #[test]
     fn chunk_search_hits_both_owners_and_carries_backlinks() {
         let c = chunks_conn();
-        add_chunk(&c, "page:p1#0", Some("p1"), None, 0, "L1", "周会纪要：本周排期", "h1");
-        add_chunk(&c, "att:a1#0", None, Some("a1"), 0, "p.3", "扫描件里的周会纪要", "h2");
-        add_chunk(&c, "page:p2#0", Some("p2"), None, 0, "L1", "与此无关的内容", "h3");
+        add_chunk(
+            &c,
+            "page:p1#0",
+            Some("p1"),
+            None,
+            0,
+            "L1",
+            "周会纪要：本周排期",
+            "h1",
+        );
+        add_chunk(
+            &c,
+            "att:a1#0",
+            None,
+            Some("a1"),
+            0,
+            "p.3",
+            "扫描件里的周会纪要",
+            "h2",
+        );
+        add_chunk(
+            &c,
+            "page:p2#0",
+            Some("p2"),
+            None,
+            0,
+            "L1",
+            "与此无关的内容",
+            "h3",
+        );
 
         let hits = search_chunks_in_conn(&c, "周会纪要", 10, None, None).unwrap();
-        assert_eq!(hits.len(), 2, "无关的块不该进结果：{:#?}", hits.iter().map(|h| &h.chunk_id).collect::<Vec<_>>());
+        assert_eq!(
+            hits.len(),
+            2,
+            "无关的块不该进结果：{:#?}",
+            hits.iter().map(|h| &h.chunk_id).collect::<Vec<_>>()
+        );
         let page_hit = hits.iter().find(|h| h.chunk_id == "page:p1#0").unwrap();
         assert_eq!(page_hit.page_id.as_deref(), Some("p1"));
         assert_eq!(page_hit.att_id, None);
@@ -2016,23 +2330,41 @@ mod tests {
     #[test]
     fn chunk_search_matches_compat_ideograph_query() {
         let c = chunks_conn();
-        add_chunk(&c, "page:p1#0", Some("p1"), None, 0, "L1", "第一段，第二段。", "h1");
+        add_chunk(
+            &c,
+            "page:p1#0",
+            Some("p1"),
+            None,
+            0,
+            "L1",
+            "第一段，第二段。",
+            "h1",
+        );
         // 先证伪：不归一化的查询搜不到
-        assert!(search_chunks_in_conn(&c, "第\u{2F00}段", 10, None, None).unwrap().is_empty());
+        assert!(search_chunks_in_conn(&c, "第\u{2F00}段", 10, None, None)
+            .unwrap()
+            .is_empty());
         // 走入口归一化后能搜到
         let q = prepare_chunk_query("第\u{2F00}段");
-        assert_eq!(search_chunks_in_conn(&c, &q, 10, None, None).unwrap().len(), 1);
+        assert_eq!(
+            search_chunks_in_conn(&c, &q, 10, None, None).unwrap().len(),
+            1
+        );
     }
 
     #[test]
     fn chunk_search_empty_query_or_missing_table_is_empty_not_error() {
         let c = chunks_conn();
         add_chunk(&c, "page:p1#0", Some("p1"), None, 0, "L1", "周会纪要", "h1");
-        assert!(search_chunks_in_conn(&c, "", 10, None, None).unwrap().is_empty());
+        assert!(search_chunks_in_conn(&c, "", 10, None, None)
+            .unwrap()
+            .is_empty());
 
         // 老库没迁移过 `chunks` ⇒ 空结果（向前兼容），不是报错
         let bare = Connection::open_in_memory().unwrap();
-        assert!(search_chunks_in_conn(&bare, "周会纪要", 10, None, None).unwrap().is_empty());
+        assert!(search_chunks_in_conn(&bare, "周会纪要", 10, None, None)
+            .unwrap()
+            .is_empty());
     }
 
     /// 过期的向量（hash 对不上）**不许**影响排序：结果必须与"纯关键词"完全一致。
@@ -2041,7 +2373,11 @@ mod tests {
         let c = chunks_conn();
         add_chunk(&c, "page:p1#0", Some("p1"), None, 0, "L1", "周会纪要", "h1");
         add_chunk(&c, "page:p2#0", Some("p2"), None, 0, "L1", "周会", "h2");
-        let kw_only: Vec<String> = search_chunks_in_conn(&c, "周会", 10, None, None).unwrap().into_iter().map(|h| h.chunk_id).collect();
+        let kw_only: Vec<String> = search_chunks_in_conn(&c, "周会", 10, None, None)
+            .unwrap()
+            .into_iter()
+            .map(|h| h.chunk_id)
+            .collect();
 
         // 给 p2 塞一条"很相似"的向量，但 hash 是**旧的**
         c.execute(
@@ -2049,19 +2385,30 @@ mod tests {
             params!["page:p2#0", "m1", "[1.0,0.0,0.0]", "stale-hash"],
         )
         .unwrap();
-        let with_stale: Vec<String> = search_chunks_in_conn(&c, "周会", 10, Some(&[1.0, 0.0, 0.0]), Some("m1"))
-            .unwrap()
-            .into_iter()
-            .map(|h| h.chunk_id)
-            .collect();
+        let with_stale: Vec<String> =
+            search_chunks_in_conn(&c, "周会", 10, Some(&[1.0, 0.0, 0.0]), Some("m1"))
+                .unwrap()
+                .into_iter()
+                .map(|h| h.chunk_id)
+                .collect();
         assert_eq!(kw_only, with_stale, "hash 对不上的向量不该被采用");
 
         // 反过来：hash 一致时，向量加分应当生效（否则这条判据证明不了任何事）
-        c.execute("UPDATE chunk_embeddings SET hash = 'h2' WHERE chunk_id = 'page:p2#0'", []).unwrap();
-        let hits = search_chunks_in_conn(&c, "周会", 10, Some(&[1.0, 0.0, 0.0]), Some("m1")).unwrap();
+        c.execute(
+            "UPDATE chunk_embeddings SET hash = 'h2' WHERE chunk_id = 'page:p2#0'",
+            [],
+        )
+        .unwrap();
+        let hits =
+            search_chunks_in_conn(&c, "周会", 10, Some(&[1.0, 0.0, 0.0]), Some("m1")).unwrap();
         let p2 = hits.iter().find(|h| h.chunk_id == "page:p2#0").unwrap();
         let p1 = hits.iter().find(|h| h.chunk_id == "page:p1#0").unwrap();
-        assert!(p2.score > p1.score, "hash 一致时向量加分要生效：p2={} p1={}", p2.score, p1.score);
+        assert!(
+            p2.score > p1.score,
+            "hash 一致时向量加分要生效：p2={} p1={}",
+            p2.score,
+            p1.score
+        );
     }
 
     /// 同分时顺序必须稳定（否则测试会 flake、UI 也会看到顺序忽变）。
@@ -2071,11 +2418,26 @@ mod tests {
         add_chunk(&c, "page:p2#0", Some("p2"), None, 0, "L1", "周会", "h1");
         add_chunk(&c, "page:p1#0", Some("p1"), None, 0, "L1", "周会", "h2");
         add_chunk(&c, "page:p1#1", Some("p1"), None, 1, "L2", "周会", "h3");
-        let a: Vec<String> = search_chunks_in_conn(&c, "周会", 10, None, None).unwrap().into_iter().map(|h| h.chunk_id).collect();
-        let b: Vec<String> = search_chunks_in_conn(&c, "周会", 10, None, None).unwrap().into_iter().map(|h| h.chunk_id).collect();
+        let a: Vec<String> = search_chunks_in_conn(&c, "周会", 10, None, None)
+            .unwrap()
+            .into_iter()
+            .map(|h| h.chunk_id)
+            .collect();
+        let b: Vec<String> = search_chunks_in_conn(&c, "周会", 10, None, None)
+            .unwrap()
+            .into_iter()
+            .map(|h| h.chunk_id)
+            .collect();
         assert_eq!(a, b);
         // 同分按 (page_id, ord) 兜底
-        assert_eq!(a, vec!["page:p1#0".to_string(), "page:p1#1".to_string(), "page:p2#0".to_string()]);
+        assert_eq!(
+            a,
+            vec![
+                "page:p1#0".to_string(),
+                "page:p1#1".to_string(),
+                "page:p2#0".to_string()
+            ]
+        );
     }
 
     // ---- 附件派生文本的读取（`files.read` / `read_attachment_text` 共用那一条函数）----
@@ -2089,14 +2451,22 @@ mod tests {
     /// 不手抄列：抄一份就有一份会漂，而漂的症状是"判据绿、真库红"。
     fn att_text_conn() -> Connection {
         let c = Connection::open_in_memory().unwrap();
-        c.execute_batch("CREATE TABLE attachments (id TEXT PRIMARY KEY);").unwrap();
+        c.execute_batch("CREATE TABLE attachments (id TEXT PRIMARY KEY);")
+            .unwrap();
         for stmt in crate::db::DERIVED_SCHEMA_DDL {
             c.execute_batch(stmt).unwrap();
         }
         c
     }
 
-    fn add_att_text(c: &Connection, att: &str, extractor: &str, seq: i64, text: &str, coverage: &str) {
+    fn add_att_text(
+        c: &Connection,
+        att: &str,
+        extractor: &str,
+        seq: i64,
+        text: &str,
+        coverage: &str,
+    ) {
         c.execute(
             "INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at, coverage) \
              VALUES (?1, ?2, ?3, 'para', ?4, '', 'h1', 1, ?5)",
@@ -2114,27 +2484,62 @@ mod tests {
     fn read_attachment_text_separates_missing_from_empty_and_carries_coverage() {
         let c = att_text_conn();
         // ① 不存在 ⇒ None（调用方回 null），**不是**空页
-        assert!(read_attachment_text_in_conn(&c, "没有这个附件", 0, 200).unwrap().is_none());
+        assert!(read_attachment_text_in_conn(&c, "没有这个附件", 0, 200)
+            .unwrap()
+            .is_none());
 
         // ② 存在但还没抽过 ⇒ 空段 + total 0 + **没有覆盖度读数**
-        c.execute("INSERT INTO attachments (id) VALUES ('a1')", []).unwrap();
-        let page = read_attachment_text_in_conn(&c, "a1", 0, 200).unwrap().unwrap();
+        c.execute("INSERT INTO attachments (id) VALUES ('a1')", [])
+            .unwrap();
+        let page = read_attachment_text_in_conn(&c, "a1", 0, 200)
+            .unwrap()
+            .unwrap();
         assert!(page.segments.is_empty());
         assert_eq!(page.total, 0);
         assert!(!page.truncated);
-        assert!(page.coverage.is_empty(), "没抽过 ⇒ 没有覆盖度（既不是 complete 也不是空字符串一条）");
+        assert!(
+            page.coverage.is_empty(),
+            "没抽过 ⇒ 没有覆盖度（既不是 complete 也不是空字符串一条）"
+        );
 
         // ③ 抽过：两段同一个抽取器（覆盖度去重成**一条**）+ 另一个抽取器没报覆盖度（空串 ⇒ 未知）
-        c.execute("INSERT INTO attachments (id) VALUES ('a2')", []).unwrap();
-        add_att_text(&c, "a2", "pdf.text@1", 0, "第一段", r#"{"complete":false,"gapIndexes":[2]}"#);
-        add_att_text(&c, "a2", "pdf.text@1", 1, "第二段", r#"{"complete":false,"gapIndexes":[2]}"#);
+        c.execute("INSERT INTO attachments (id) VALUES ('a2')", [])
+            .unwrap();
+        add_att_text(
+            &c,
+            "a2",
+            "pdf.text@1",
+            0,
+            "第一段",
+            r#"{"complete":false,"gapIndexes":[2]}"#,
+        );
+        add_att_text(
+            &c,
+            "a2",
+            "pdf.text@1",
+            1,
+            "第二段",
+            r#"{"complete":false,"gapIndexes":[2]}"#,
+        );
         add_att_text(&c, "a2", "pdf.ocr@1", 0, "OCR 段", "");
-        let page = read_attachment_text_in_conn(&c, "a2", 0, 200).unwrap().unwrap();
+        let page = read_attachment_text_in_conn(&c, "a2", 0, 200)
+            .unwrap()
+            .unwrap();
         assert_eq!(page.total, 2 + 1);
         assert_eq!(page.segments.len(), 3);
-        assert_eq!(page.coverage.len(), 2, "覆盖度是每次抽取一份：两段不许出两条");
-        assert_eq!(page.coverage[0].extractor, "pdf.ocr@1", "按 extractor 稳定排序");
-        assert_eq!(page.coverage[0].coverage, "", "没报 ⇒ 空串（未知），**不是** complete");
+        assert_eq!(
+            page.coverage.len(),
+            2,
+            "覆盖度是每次抽取一份：两段不许出两条"
+        );
+        assert_eq!(
+            page.coverage[0].extractor, "pdf.ocr@1",
+            "按 extractor 稳定排序"
+        );
+        assert_eq!(
+            page.coverage[0].coverage, "",
+            "没报 ⇒ 空串（未知），**不是** complete"
+        );
         assert_eq!(page.coverage[1].extractor, "pdf.text@1");
         assert_eq!(
             page.coverage[1].coverage, r#"{"complete":false,"gapIndexes":[2]}"#,
@@ -2142,11 +2547,15 @@ mod tests {
         );
 
         // ④ 分页只影响段，**不影响覆盖度**（覆盖度是整次抽取的读数，不是本页的）
-        let head = read_attachment_text_in_conn(&c, "a2", 0, 1).unwrap().unwrap();
+        let head = read_attachment_text_in_conn(&c, "a2", 0, 1)
+            .unwrap()
+            .unwrap();
         assert_eq!(head.segments.len(), 1);
         assert!(head.truncated, "还有没给的段");
         assert_eq!(head.coverage.len(), 2, "翻到哪一页，覆盖度读数都该是同一份");
-        let tail = read_attachment_text_in_conn(&c, "a2", 5, 200).unwrap().unwrap();
+        let tail = read_attachment_text_in_conn(&c, "a2", 5, 200)
+            .unwrap()
+            .unwrap();
         assert!(tail.segments.is_empty());
         assert!(!tail.truncated, "越界不报错，truncated 为假");
         assert_eq!(tail.coverage.len(), 2);
@@ -2174,11 +2583,22 @@ mod tests {
         )
         .unwrap();
 
-        let page = read_attachment_text_in_conn(&c, "a1", 0, 200).unwrap().unwrap();
-        assert_eq!(page.segments.len(), 1, "段照样读得出来（不许因为少了覆盖度列就整条失败）");
+        let page = read_attachment_text_in_conn(&c, "a1", 0, 200)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            page.segments.len(),
+            1,
+            "段照样读得出来（不许因为少了覆盖度列就整条失败）"
+        );
         assert_eq!(page.segments[0].text, "老库里的段");
-        assert!(page.coverage.is_empty(), "缺列 ⇒ 没有覆盖度读数（未知），不是 complete");
-        assert!(read_attachment_text_coverage_in_conn(&c, "a1").unwrap().is_empty());
+        assert!(
+            page.coverage.is_empty(),
+            "缺列 ⇒ 没有覆盖度读数（未知），不是 complete"
+        );
+        assert!(read_attachment_text_coverage_in_conn(&c, "a1")
+            .unwrap()
+            .is_empty());
     }
 
     /// ★ 判据（2026-09-23，Windows 侧复核补）：**表还没建** ⇒ 空读数（不是错误）。
@@ -2188,7 +2608,12 @@ mod tests {
     #[test]
     fn read_attachment_text_coverage_tolerates_a_missing_table() {
         let c = Connection::open_in_memory().unwrap();
-        assert!(read_attachment_text_coverage_in_conn(&c, "a1").unwrap().is_empty(), "缺表 ⇒ 空读数");
+        assert!(
+            read_attachment_text_coverage_in_conn(&c, "a1")
+                .unwrap()
+                .is_empty(),
+            "缺表 ⇒ 空读数"
+        );
     }
 
     /// ★ 判据（2026-09-23，Windows 侧复核补）：**非结构错误照原样往上抛**。
@@ -2210,6 +2635,9 @@ mod tests {
         let out = read_attachment_text_coverage_in_conn(&c, "a1");
         assert!(out.is_err(), "非结构错误不许被吞成空读数：{out:?}");
         let msg = out.unwrap_err();
-        assert!(msg.contains("no such function"), "要原样带出 SQLite 的话（便于定位）：{msg}");
+        assert!(
+            msg.contains("no such function"),
+            "要原样带出 SQLite 的话（便于定位）：{msg}"
+        );
     }
 }

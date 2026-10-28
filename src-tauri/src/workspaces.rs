@@ -16,9 +16,8 @@ fn row_to_meta(row: &rusqlite::Row) -> rusqlite::Result<WorkspaceMeta> {
     Ok(WorkspaceMeta {
         // ⭐ 2026-10-10（`task-27`）：在这里算**派生读数**（磁盘上是不是密文）⇒ **每个**调用点都拿到 ✓
         //（⛔ 不放调用点 ✗：`row_to_meta` 有两个调用方，漏一个那一处的读数就悄悄是 `None` ✗）。
-        encrypted_on_disk: crate::db::app_data_dir_ref().map(|dir| {
-            crate::security::space_db_is_encrypted(&crate::db::space_db_path(dir, &id))
-        }),
+        encrypted_on_disk: crate::db::app_data_dir_ref()
+            .map(|dir| crate::security::space_db_is_encrypted(&crate::db::space_db_path(dir, &id))),
         id,
         name: row.get(1)?,
         theme: row.get(2)?,
@@ -187,8 +186,14 @@ pub(crate) fn set_park_fail_for_test(on: bool) {
     PARK_FAIL_FOR_TEST.with(|f| f.set(on));
 }
 
-fn park_locked_connection(c: &mut rusqlite::Connection, dir: &std::path::Path) -> Result<(), String> {
-    let meta = crate::db::meta_path(dir).display().to_string().replace('\'', "''");
+fn park_locked_connection(
+    c: &mut rusqlite::Connection,
+    dir: &std::path::Path,
+) -> Result<(), String> {
+    let meta = crate::db::meta_path(dir)
+        .display()
+        .to_string()
+        .replace('\'', "''");
     let fresh = rusqlite::Connection::open_in_memory().map_err(|e| e.to_string())?;
     let _ = std::mem::replace(c, fresh);
     // ⚠️ 注入点**必须在换连接之后** ✗ —— 否则失败发生在"还没换"的状态里 ⇒ 主连接**本来就是好的** ✓
@@ -218,15 +223,19 @@ pub async fn set_active_workspace_id(db: State<'_, Db>, id: String) -> Result<()
 pub async fn get_workspace_name(db: State<'_, Db>) -> Result<String, String> {
     let c = conn(&db);
     let active = active_workspace_id(&c)?;
-    c.query_row("SELECT name FROM meta.workspaces WHERE id = ?1", params![active], |row| row.get(0))
-        .or_else(|_| {
-            c.query_row(
-                "SELECT name FROM meta.workspaces ORDER BY created_at ASC LIMIT 1",
-                [],
-                |row| row.get(0),
-            )
-        })
-        .map_err(|e| e.to_string())
+    c.query_row(
+        "SELECT name FROM meta.workspaces WHERE id = ?1",
+        params![active],
+        |row| row.get(0),
+    )
+    .or_else(|_| {
+        c.query_row(
+            "SELECT name FROM meta.workspaces ORDER BY created_at ASC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// Rename a workspace by id.
@@ -263,7 +272,13 @@ pub async fn set_workspace_settings(
         .execute(
             "UPDATE meta.workspaces SET theme = ?1, icon = ?2, sort_order = ?3, updated_at = ?4
              WHERE id = ?5 AND deleted_at IS NULL",
-            params![theme, icon.unwrap_or_default(), sort_order.unwrap_or(0.0), now_ms(), id],
+            params![
+                theme,
+                icon.unwrap_or_default(),
+                sort_order.unwrap_or(0.0),
+                now_ms(),
+                id
+            ],
         )
         .map_err(|e| e.to_string())?;
     if n == 0 {
@@ -449,12 +464,20 @@ pub async fn create_workspace(
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_ms();
     let trimmed = name.unwrap_or_default().trim().to_string();
-    let name = if trimmed.is_empty() { "新建工作区".to_string() } else { trimmed };
+    let name = if trimmed.is_empty() {
+        "新建工作区".to_string()
+    } else {
+        trimmed
+    };
 
     let count: i64 = {
         let c = conn(&db);
-        c.query_row("SELECT COUNT(*) FROM meta.workspaces WHERE deleted_at IS NULL", [], |r| r.get(0))
-            .map_err(|e| e.to_string())?
+        c.query_row(
+            "SELECT COUNT(*) FROM meta.workspaces WHERE deleted_at IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?
     };
     let theme = ACCENTS[(count as usize) % ACCENTS.len()].to_string();
     let sort_order = (count + 1) as f64;
@@ -575,8 +598,11 @@ pub async fn delete_workspace(db: State<'_, Db>, id: String) -> Result<(), Strin
         return Err("工作空间不存在或已删除".to_string());
     }
     if active == id {
-        c.execute("DELETE FROM meta.sync_state WHERE key = ?1", params![ACTIVE_KEY])
-            .map_err(|e| e.to_string())?;
+        c.execute(
+            "DELETE FROM meta.sync_state WHERE key = ?1",
+            params![ACTIVE_KEY],
+        )
+        .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -631,7 +657,9 @@ fn copy_satellite_rows(
     }
     {
         let mut st = src
-            .prepare("SELECT name, hash, mime, size, created_at FROM attachments WHERE page_id = ?1")
+            .prepare(
+                "SELECT name, hash, mime, size, created_at FROM attachments WHERE page_id = ?1",
+            )
             .map_err(|e| e.to_string())?;
         let rows: Vec<(String, String, String, i64, i64)> = st
             .query_map(params![old_id], |r| {
@@ -644,7 +672,15 @@ fn copy_satellite_rows(
             tgt.execute(
                 "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![uuid::Uuid::new_v4().to_string(), new_id, name, hash, mime, size, created_at],
+                params![
+                    uuid::Uuid::new_v4().to_string(),
+                    new_id,
+                    name,
+                    hash,
+                    mime,
+                    size,
+                    created_at
+                ],
             )
             .map_err(|e| e.to_string())?;
         }
@@ -743,7 +779,8 @@ pub fn copy_page_to_workspace(
 
     let now = now_ms();
     // ⭐ **2026-10-08**：整段包**事务** ✓ —— 以前中途失败会留下"半个副本"（现场：文件夹落库了、孩子全丢 ✓）。
-    tgt.execute_batch("BEGIN IMMEDIATE").map_err(|e| e.to_string())?;
+    tgt.execute_batch("BEGIN IMMEDIATE")
+        .map_err(|e| e.to_string())?;
     for old_id in &order {
         // Fetch source row from the SOURCE connection.
         let (parent, title, content_json, content_text, kind, sort_order, created_at, icon, cover, cover_height, cover_pos): (
@@ -850,8 +887,16 @@ mod tests {
             )
             .unwrap();
         }
-        src.execute("INSERT INTO page_props (page_id, attr_id, value) VALUES ('old', 'a1', 'v1')", []).unwrap();
-        src.execute("INSERT INTO page_tags (page_id, tag_id) VALUES ('old', 't1')", []).unwrap();
+        src.execute(
+            "INSERT INTO page_props (page_id, attr_id, value) VALUES ('old', 'a1', 'v1')",
+            [],
+        )
+        .unwrap();
+        src.execute(
+            "INSERT INTO page_tags (page_id, tag_id) VALUES ('old', 't1')",
+            [],
+        )
+        .unwrap();
         src.execute(
             "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
              VALUES ('att1', 'old', 'a.pdf', 'h1', 'application/pdf', 5, 1)",
@@ -861,21 +906,52 @@ mod tests {
 
         copy_satellite_rows(&src, &tgt, "old", "new").unwrap();
 
-        let props: i64 = tgt.query_row("SELECT COUNT(*) FROM page_props WHERE page_id='new'", [], |r| r.get(0)).unwrap();
-        let tags: i64 = tgt.query_row("SELECT COUNT(*) FROM page_tags WHERE page_id='new'", [], |r| r.get(0)).unwrap();
-        let atts: i64 = tgt.query_row("SELECT COUNT(*) FROM attachments WHERE page_id='new'", [], |r| r.get(0)).unwrap();
-        assert_eq!(props, 1, "属性没复制过去 ✗（跨库时 INSERT…SELECT 会静默插 0 行 ✓）");
+        let props: i64 = tgt
+            .query_row(
+                "SELECT COUNT(*) FROM page_props WHERE page_id='new'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let tags: i64 = tgt
+            .query_row(
+                "SELECT COUNT(*) FROM page_tags WHERE page_id='new'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let atts: i64 = tgt
+            .query_row(
+                "SELECT COUNT(*) FROM attachments WHERE page_id='new'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            props, 1,
+            "属性没复制过去 ✗（跨库时 INSERT…SELECT 会静默插 0 行 ✓）"
+        );
         assert_eq!(tags, 1, "标签没复制过去 ✗");
-        assert_eq!(atts, 1, "附件行没复制过去 ✗（owner 2026-10-08 现场：源 10 个 ⇒ 目标 0 个 ✓）");
+        assert_eq!(
+            atts, 1,
+            "附件行没复制过去 ✗（owner 2026-10-08 现场：源 10 个 ⇒ 目标 0 个 ✓）"
+        );
         // 反向：旧写法若被改回来，这几条会红 ✓
-        let wrong: i64 = tgt.query_row("SELECT COUNT(*) FROM attachments WHERE page_id='old'", [], |r| r.get(0)).unwrap();
+        let wrong: i64 = tgt
+            .query_row(
+                "SELECT COUNT(*) FROM attachments WHERE page_id='old'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(wrong, 0, "目标侧不该出现源 page_id 的行 ✓");
     }
 
     /// 只够 `insert_space_row` 用的最小 `meta.workspaces`（列与 `db::meta_migrate` 同形）。
     fn conn_with_workspaces() -> rusqlite::Connection {
         let c = rusqlite::Connection::open_in_memory().unwrap();
-        c.execute_batch("ATTACH DATABASE ':memory:' AS meta").unwrap();
+        c.execute_batch("ATTACH DATABASE ':memory:' AS meta")
+            .unwrap();
         c.execute_batch(
             "CREATE TABLE meta.workspaces (
                  id TEXT PRIMARY KEY,
@@ -895,7 +971,12 @@ mod tests {
     }
 
     fn kind_of(c: &rusqlite::Connection, id: &str) -> String {
-        c.query_row("SELECT kind FROM meta.workspaces WHERE id = ?1", [id], |r| r.get(0)).unwrap()
+        c.query_row(
+            "SELECT kind FROM meta.workspaces WHERE id = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap()
     }
 
     /// ★ A1 判据：**用户在创建那一刻选的那一类，必须真的落库**（个人 / 团队各一条）。
@@ -921,10 +1002,21 @@ mod tests {
     #[test]
     fn an_unknown_kind_is_refused_instead_of_silently_becoming_unclassified() {
         let c = conn_with_workspaces();
-        for bad in ["", "  ", "tem", "personal!", "team-ish", "1", "Personal Team"] {
+        for bad in [
+            "",
+            "  ",
+            "tem",
+            "personal!",
+            "team-ish",
+            "1",
+            "Personal Team",
+        ] {
             let err = insert_chosen_space(&c, "s-bad", "x", "#e11", 1.0, 1_000, bad)
                 .expect_err("认不出的类型必须报错（静默当未分类＝闸门松开）");
-            assert!(err.contains("personal") && err.contains("team"), "报错要可操作：{err}");
+            assert!(
+                err.contains("personal") && err.contains("team"),
+                "报错要可操作：{err}"
+            );
         }
         let n: i64 = c
             .query_row("SELECT COUNT(*) FROM meta.workspaces", [], |r| r.get(0))
@@ -971,7 +1063,9 @@ mod tests {
         // 先真的开到 A（走同一条路 ✓）⇒ 此后 A 的表在这条连接上是可查的
         let mut c = rusqlite::Connection::open_in_memory().unwrap();
         crate::db::reopen_space_at(&mut c, "space-a", &dir).unwrap();
-        let before: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let before: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
 
         // ① 切 B ⇒ **Err** ✓
         let err = crate::db::reopen_space_at(&mut c, "space-b", &dir)
@@ -1088,7 +1182,10 @@ mod tests {
         // 真 meta 文件（跑一次生产的 `meta_migrate` ⇒ 表都在 ✓），再挂成 `meta` 用
         drop(crate::db::open_meta_conn_at(&dir).unwrap());
         let mut c = rusqlite::Connection::open_in_memory().unwrap();
-        let meta = crate::db::meta_path(&dir).display().to_string().replace('\'', "''");
+        let meta = crate::db::meta_path(&dir)
+            .display()
+            .to_string()
+            .replace('\'', "''");
         c.execute_batch(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""))
             .unwrap();
         insert_new_local_space(&c, "space-a", "A", "#e11", 1.0, 1_000).unwrap();
@@ -1114,7 +1211,8 @@ mod tests {
         );
 
         // ① 切 B ⇒ ⭐ **成功**（这就是"点了没反应"的反面 ✓）
-        switch_active_space(&mut c, "space-b", &dir).expect("切到未解锁的加密空间必须成功，而不是拒绝");
+        switch_active_space(&mut c, "space-b", &dir)
+            .expect("切到未解锁的加密空间必须成功，而不是拒绝");
         // ② 指针**真的改成了 B** ✓
         let active: String = c
             .query_row(
@@ -1170,7 +1268,10 @@ mod tests {
         // 真 meta **文件**（跑一次生产的 migrate ⇒ 表都在 ✓），把它挂成 `meta`；main 就是 A ✓（与生产同形）
         drop(crate::db::open_meta_conn_at(&dir).unwrap());
         let mut c = rusqlite::Connection::open(&a).unwrap();
-        let meta = crate::db::meta_path(&dir).display().to_string().replace('\'', "''");
+        let meta = crate::db::meta_path(&dir)
+            .display()
+            .to_string()
+            .replace('\'', "''");
         c.execute_batch(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""))
             .unwrap();
         insert_new_local_space(&c, "space-a", "A", "#e11", 1.0, 1_000).unwrap();
@@ -1215,7 +1316,9 @@ mod tests {
             "⭐ 主连接被换到那个打不开的空间去了 ✗（指针没变但连接变了 ＝ 界面与连接分家）"
         );
         // 连接仍可用（不只是"路径没变"）
-        let _: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let _: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1241,7 +1344,10 @@ mod tests {
 
         drop(crate::db::open_meta_conn_at(&dir).unwrap());
         let mut c = rusqlite::Connection::open(&a).unwrap();
-        let meta = crate::db::meta_path(&dir).display().to_string().replace('\'', "''");
+        let meta = crate::db::meta_path(&dir)
+            .display()
+            .to_string()
+            .replace('\'', "''");
         c.execute_batch(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""))
             .unwrap();
         insert_new_local_space(&c, "space-a", "A", "#e11", 1.0, 1_000).unwrap();
@@ -1277,7 +1383,9 @@ mod tests {
             a.display().to_string(),
             "⭐ 回滚没做 ⇒ 主连接停在 park 换出的内存库（main 路径为空）✗"
         );
-        let _: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let _: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         // 指针也没被写（失败 ⇒ 一个都不许成 ✓）
         let active: String = c
             .query_row(

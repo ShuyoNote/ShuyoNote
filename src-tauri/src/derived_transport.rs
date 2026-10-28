@@ -37,8 +37,13 @@ pub struct ApplyReport {
 
 /// 派生层的 owner：与 TS 的 `ChunkOwner` **同形**（`page:<id>` 与 `att:<id>` 两类）。
 #[derive(Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
-pub enum DerivedOwner {    Page { page_id: String },
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum DerivedOwner {
+    Page { page_id: String },
     Attachment { att_id: String },
 }
 
@@ -140,7 +145,9 @@ pub enum DerivedQuery {
 
 fn non_empty(what: &str, v: &str) -> Result<(), String> {
     if v.trim().is_empty() {
-        Err(format!("bad_args: {what} 不能为空（空 id 写进去没有任何人能查到）"))
+        Err(format!(
+            "bad_args: {what} 不能为空（空 id 写进去没有任何人能查到）"
+        ))
     } else {
         Ok(())
     }
@@ -211,12 +218,22 @@ pub fn apply_ops(conn: &mut Connection, ops: &[DerivedOp]) -> Result<ApplyReport
         rows += apply_one(&tx, op)?;
     }
     tx.commit().map_err(|e| e.to_string())?;
-    Ok(ApplyReport { ops: ops.len(), rows })
+    Ok(ApplyReport {
+        ops: ops.len(),
+        rows,
+    })
 }
 
 fn apply_one(tx: &Transaction<'_>, op: &DerivedOp) -> Result<usize, String> {
     match op {
-        DerivedOp::ReplaceAttachmentText { att_id, extractor, src_hash, now, coverage, segments } => {
+        DerivedOp::ReplaceAttachmentText {
+            att_id,
+            extractor,
+            src_hash,
+            now,
+            coverage,
+            segments,
+        } => {
             non_empty("att_id", att_id)?;
             non_empty("extractor", extractor)?;
             // ⚠️ 整体替换（不做逐段 diff）：与 `extract/store.ts::replace` 逐字同序 ——
@@ -241,9 +258,13 @@ fn apply_one(tx: &Transaction<'_>, op: &DerivedOp) -> Result<usize, String> {
         }
         DerivedOp::RemoveAttachmentText { att_id } => {
             non_empty("att_id", att_id)?;
-            tx.execute("DELETE FROM attachment_text WHERE att_id = ?1", params![att_id])
-                .map_err(|e| e.to_string())
-        }        DerivedOp::ReplaceChunks { owner, chunks } => {
+            tx.execute(
+                "DELETE FROM attachment_text WHERE att_id = ?1",
+                params![att_id],
+            )
+            .map_err(|e| e.to_string())
+        }
+        DerivedOp::ReplaceChunks { owner, chunks } => {
             non_empty("owner id", owner.id())?;
             let (w, id) = owner.where_clause();
             let deleted = tx
@@ -406,7 +427,11 @@ mod tests {
     }
 
     fn seg(kind: &str, text: &str) -> SegmentIn {
-        SegmentIn { kind: kind.into(), text: text.into(), loc: String::new() }
+        SegmentIn {
+            kind: kind.into(),
+            text: text.into(),
+            loc: String::new(),
+        }
     }
 
     fn chunk(id: &str, att: &str, ord: i64, text: &str) -> ChunkIn {
@@ -427,7 +452,11 @@ mod tests {
             .prepare("SELECT extractor, seq, text FROM attachment_text WHERE att_id = ?1 ORDER BY extractor, seq")
             .unwrap();
         stmt.query_map(params![att], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+            ))
         })
         .unwrap()
         .flatten()
@@ -448,7 +477,11 @@ mod tests {
                 src_hash: "h1".into(),
                 now: 1,
                 coverage: String::new(),
-                segments: vec![seg("para", "第一段"), seg("para", "第二段"), seg("para", "第三段")],
+                segments: vec![
+                    seg("para", "第一段"),
+                    seg("para", "第二段"),
+                    seg("para", "第三段"),
+                ],
             }],
         )
         .unwrap();
@@ -488,7 +521,10 @@ mod tests {
             }],
         )
         .unwrap();
-        assert_eq!(text_rows(&c, "att-1")[0].2, "  前后都有空格  \n第二行\t制表  ");
+        assert_eq!(
+            text_rows(&c, "att-1")[0].2,
+            "  前后都有空格  \n第二行\t制表  "
+        );
     }
 
     /// ★ 判据 2：一批里**任何一条失败 ⇒ 整批回滚**，不留半批。
@@ -510,7 +546,9 @@ mod tests {
                     segments: vec![seg("para", "原有内容")],
                 },
                 DerivedOp::ReplaceChunks {
-                    owner: DerivedOwner::Attachment { att_id: "att-1".into() },
+                    owner: DerivedOwner::Attachment {
+                        att_id: "att-1".into(),
+                    },
                     chunks: vec![chunk("att-1#0", "att-1", 0, "原有的块")],
                 },
             ],
@@ -530,7 +568,9 @@ mod tests {
                     segments: vec![seg("para", "新的内容")],
                 },
                 DerivedOp::ReplaceChunks {
-                    owner: DerivedOwner::Attachment { att_id: "att-1".into() },
+                    owner: DerivedOwner::Attachment {
+                        att_id: "att-1".into(),
+                    },
                     chunks: vec![
                         chunk("att-1#0", "att-1", 0, "第一块"),
                         chunk("att-1#0", "att-1", 1, "同 id 冲突"),
@@ -545,12 +585,21 @@ mod tests {
             vec![("pdf.text@1".to_string(), 0, "原有内容".to_string())],
             "第一批文本必须**原样还在**（回滚，不是半批）"
         );
-        let n: i64 = c.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0)).unwrap();
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 1, "块表也必须回滚到原样");
         let hash: String = c
-            .query_row("SELECT src_hash FROM attachment_text WHERE att_id='att-1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT src_hash FROM attachment_text WHERE att_id='att-1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(hash, "h1", "src_hash 不许变成新值（否则 needsExtract 会误判已完成）");
+        assert_eq!(
+            hash, "h1",
+            "src_hash 不许变成新值（否则 needsExtract 会误判已完成）"
+        );
     }
 
     /// 判据 3：`remove` 只动**那一个 owner**（页面块与附件块互不牵连）。
@@ -561,11 +610,15 @@ mod tests {
             &mut c,
             &[
                 DerivedOp::ReplaceChunks {
-                    owner: DerivedOwner::Attachment { att_id: "att-1".into() },
+                    owner: DerivedOwner::Attachment {
+                        att_id: "att-1".into(),
+                    },
                     chunks: vec![chunk("att-1#0", "att-1", 0, "附件块")],
                 },
                 DerivedOp::ReplaceChunks {
-                    owner: DerivedOwner::Page { page_id: "p1".into() },
+                    owner: DerivedOwner::Page {
+                        page_id: "p1".into(),
+                    },
                     chunks: vec![ChunkIn {
                         id: "p:p1#0".into(),
                         page_id: Some("p1".into()),
@@ -583,7 +636,11 @@ mod tests {
 
         apply_ops(
             &mut c,
-            &[DerivedOp::RemoveChunks { owner: DerivedOwner::Attachment { att_id: "att-1".into() } }],
+            &[DerivedOp::RemoveChunks {
+                owner: DerivedOwner::Attachment {
+                    att_id: "att-1".into(),
+                },
+            }],
         )
         .unwrap();
         let left: Vec<String> = c
@@ -614,14 +671,19 @@ mod tests {
         .is_err());
         assert!(apply_ops(
             &mut c,
-            &[DerivedOp::RemoveChunks { owner: DerivedOwner::Page { page_id: String::new() } }]
+            &[DerivedOp::RemoveChunks {
+                owner: DerivedOwner::Page {
+                    page_id: String::new()
+                }
+            }]
         )
         .is_err());
     }
 
     /// 判据 5：读操作与 store 的读语义对齐（排序稳定、只读）。
     #[test]
-    fn queries_match_the_store_read_semantics() {        let mut c = conn();
+    fn queries_match_the_store_read_semantics() {
+        let mut c = conn();
         apply_ops(
             &mut c,
             &[
@@ -642,7 +704,9 @@ mod tests {
                     segments: vec![seg("para", "a0")],
                 },
                 DerivedOp::ReplaceChunks {
-                    owner: DerivedOwner::Attachment { att_id: "att-1".into() },
+                    owner: DerivedOwner::Attachment {
+                        att_id: "att-1".into(),
+                    },
                     chunks: vec![
                         chunk("att-1#1", "att-1", 1, "第二块"),
                         chunk("att-1#0", "att-1", 0, "第一块"),
@@ -653,7 +717,13 @@ mod tests {
         .unwrap();
 
         // 段：按 (extractor, seq) 稳定排序 ⇒ a@1 在前。
-        let rows = query_rows(&c, &DerivedQuery::AttachmentTextSegments { att_id: "att-1".into() }).unwrap();
+        let rows = query_rows(
+            &c,
+            &DerivedQuery::AttachmentTextSegments {
+                att_id: "att-1".into(),
+            },
+        )
+        .unwrap();
         let arr = rows.as_array().unwrap();
         assert_eq!(arr.len(), 3);
         assert_eq!(arr[0]["extractor"], "a@1");
@@ -661,13 +731,24 @@ mod tests {
         assert_eq!(arr[2]["seq"], 1);
 
         // 块：按 ord 升序（插入顺序是反的）。
-        let rows = query_rows(&c, &DerivedQuery::ChunkRows { owner: DerivedOwner::Attachment { att_id: "att-1".into() } }).unwrap();
+        let rows = query_rows(
+            &c,
+            &DerivedQuery::ChunkRows {
+                owner: DerivedOwner::Attachment {
+                    att_id: "att-1".into(),
+                },
+            },
+        )
+        .unwrap();
         let arr = rows.as_array().unwrap();
         assert_eq!(arr[0]["id"], "att-1#0");
         assert_eq!(arr[1]["ord"], 1);
 
         // stats：块总数 + 按抽取器的段数/字符数。
-        assert_eq!(query_rows(&c, &DerivedQuery::ChunkStats).unwrap()["chunks"], 2);
+        assert_eq!(
+            query_rows(&c, &DerivedQuery::ChunkStats).unwrap()["chunks"],
+            2
+        );
         let st = query_rows(&c, &DerivedQuery::AttachmentTextStats).unwrap();
         let st = st.as_array().unwrap();
         assert_eq!(st[0]["extractor"], "a@1");
@@ -684,28 +765,44 @@ mod tests {
     /// 夹具在 `tests/derived-transport-ops.json`，两侧共用同一份文件。
     #[test]
     fn the_cross_language_fixture_deserializes() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/derived-transport-ops.json");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tests/derived-transport-ops.json"
+        );
         let raw = std::fs::read_to_string(path).expect("读跨语言夹具");
         let v: serde_json::Value = serde_json::from_str(&raw).expect("夹具必须是合法 JSON");
 
         let ops: Vec<DerivedOp> =
             serde_json::from_value(v["ops"].clone()).expect("夹具里的每条 op 都必须能反序列化");
         assert_eq!(ops.len(), 4);
-        let queries: Vec<DerivedQuery> =
-            serde_json::from_value(v["queries"].clone()).expect("夹具里的每条 query 都必须能反序列化");
+        let queries: Vec<DerivedQuery> = serde_json::from_value(v["queries"].clone())
+            .expect("夹具里的每条 query 都必须能反序列化");
         assert_eq!(queries.len(), 5, "加读操作时这份夹具与 TS 侧那半必须同批改");
 
         // 抽样逐字段核对：默认值漂移（比如 loc 没落上）会让这条红。
         match &ops[0] {
-            DerivedOp::ReplaceAttachmentText { att_id, extractor, src_hash, now, coverage, segments } => {
+            DerivedOp::ReplaceAttachmentText {
+                att_id,
+                extractor,
+                src_hash,
+                now,
+                coverage,
+                segments,
+            } => {
                 assert_eq!(att_id, "att-1");
                 assert_eq!(extractor, "pdf.text@1");
                 assert_eq!(src_hash, "sha256:abc");
                 assert_eq!(*now, 1_758_259_200_000);
-                assert_eq!(coverage, r#"{"complete":false,"gapIndexes":[1]}"#, "覆盖度原样过线（不解析、不重拼）");
+                assert_eq!(
+                    coverage, r#"{"complete":false,"gapIndexes":[1]}"#,
+                    "覆盖度原样过线（不解析、不重拼）"
+                );
                 assert_eq!(segments.len(), 2);
                 assert_eq!(segments[0].loc, "p1");
-                assert_eq!(segments[1].text, "第二段  with spaces", "空白必须原样（运输层不许 trim）");
+                assert_eq!(
+                    segments[1].text, "第二段  with spaces",
+                    "空白必须原样（运输层不许 trim）"
+                );
             }
             other => panic!("第一条应当是 replaceAttachmentText，实际 {other:?}"),
         }
@@ -770,12 +867,21 @@ mod tests {
         )
         .unwrap();
 
-        let rows = query_rows(&c, &DerivedQuery::AttachmentTextCoverage { att_id: "att-1".into() }).unwrap();
+        let rows = query_rows(
+            &c,
+            &DerivedQuery::AttachmentTextCoverage {
+                att_id: "att-1".into(),
+            },
+        )
+        .unwrap();
         let arr = rows.as_array().unwrap();
         assert_eq!(arr.len(), 2, "每个抽取器一行（两段不许出两行）");
         // 按 extractor 排序（与 `store.ts::coverageOf` 的 ORDER BY 一致）
         assert_eq!(arr[0]["extractor"], "pdf.ocr@1");
-        assert_eq!(arr[0]["coverage"], "", "没报 ⇒ 空串（未知）；**不是** complete");
+        assert_eq!(
+            arr[0]["coverage"], "",
+            "没报 ⇒ 空串（未知）；**不是** complete"
+        );
         assert_eq!(arr[1]["extractor"], "pdf.text@1");
         assert_eq!(
             arr[1]["coverage"], r#"{"complete":false,"gapIndexes":[2]}"#,
@@ -783,8 +889,17 @@ mod tests {
         );
 
         // 别的附件读到的是它自己那份 ⇒ 证明不是"随便读一张表"
-        let other = query_rows(&c, &DerivedQuery::AttachmentTextCoverage { att_id: "att-2".into() }).unwrap();
-        assert_eq!(other.as_array().unwrap()[0]["coverage"], r#"{"complete":true}"#);
+        let other = query_rows(
+            &c,
+            &DerivedQuery::AttachmentTextCoverage {
+                att_id: "att-2".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            other.as_array().unwrap()[0]["coverage"],
+            r#"{"complete":true}"#
+        );
 
         // 覆盖度随**整体替换**走：重抽一次不报覆盖度 ⇒ 列必须被清成空串（不是留着上一次的）。
         apply_ops(
@@ -799,9 +914,21 @@ mod tests {
             }],
         )
         .unwrap();
-        let rows = query_rows(&c, &DerivedQuery::AttachmentTextCoverage { att_id: "att-1".into() }).unwrap();
+        let rows = query_rows(
+            &c,
+            &DerivedQuery::AttachmentTextCoverage {
+                att_id: "att-1".into(),
+            },
+        )
+        .unwrap();
         let arr = rows.as_array().unwrap();
-        let text_row = arr.iter().find(|r| r["extractor"].as_str() == Some("pdf.text@1")).unwrap();
-        assert_eq!(text_row["coverage"], "", "上一次的覆盖度不许留下来（残值会被读成这次的读数）");
+        let text_row = arr
+            .iter()
+            .find(|r| r["extractor"].as_str() == Some("pdf.text@1"))
+            .unwrap();
+        assert_eq!(
+            text_row["coverage"], "",
+            "上一次的覆盖度不许留下来（残值会被读成这次的读数）"
+        );
     }
 }

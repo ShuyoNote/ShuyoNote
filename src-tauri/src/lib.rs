@@ -5,10 +5,10 @@ mod engine_pack;
 mod activity;
 // MCP 宿主面那半「本机通道」（方向②：桥 → App，App 当服务端 ✓）—— **默认关** ✓，
 // 详见 `mcp_channel.rs` 头部与判据 `scripts/check-mcp-host-channel.mjs` ✓。
-mod mcp_channel;
+mod attachments;
 mod community;
 mod community_publish;
-mod attachments;
+mod mcp_channel;
 // ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 一键信任的**纯函数内核** ✗
 //    —— 判定「要不要两端确认」「收到的确认算不算」✓，⛔ 不碰 IO／网络／密钥 ✓。
 //    出处：`docs/plans/2026-10-11-one-click-trust-decision.md`（第 ① 步 ✓）。
@@ -32,27 +32,27 @@ mod license_http;
 mod mesh_trust;
 // ⭐ **P1.5 主件 · A1**（2026-10-13）：设备直连那一屏的**本机读数**（只读 ✓，⛔ 不动协议 ✗）——
 //    `mesh_panel_scopes`（每个空间"对外宣称"的状态）＋ `mesh_panel_spaces`（本机有哪些空间 ✓；`offer` 待 B 片）。
-mod mesh_panel;
 mod device_key;
+mod mesh_panel;
 // 「能力」按需下载包的落盘（2026-10-02）—— ⚠️ **不信任 webview**：白名单 ＋ 体积上限 ＋
 // sha256 自己再算一遍，三条任一不过就拒收 ✓（见 `abilities.rs` 头部）。
 mod abilities;
 // P0 格式引擎（Kreuzberg v4.10.x，MIT ✓）—— 补 eml/msg/zip/rtf/odt/epub/学术格式那一类；
 // ⛔ 只返回文本、**不写派生表**（派生表唯一写入者仍是 `src/lib/extract/` ✓）。
 // ⚠️ 特性集不含 `chunking`（与 boa_engine 的 icu 依赖互斥 ✗ 实测；见 `Cargo.toml` 注释 ✓）。
-mod extract_kz;
+pub mod auto_backup;
 mod backlinks;
 mod backup;
 mod backup_verify;
-pub mod auto_backup;
+mod extract_kz;
 // Office 导入第一期（task-10 ③）：`--import <文件>` 的解析与交班。
 // ⚠️ 它**必须是 `pub`**：`main.rs`（bin）要用它做冷启动解析 ✓（见那一份的文件头 ✓）。
-pub mod office_import;
 mod block_rev;
 mod blocks;
 mod bookmark;
 mod commands;
 mod crypto;
+pub mod office_import;
 // 国密（SM4-CBC ＋ HMAC-SM3）应用层 AEAD —— **2026-09-20 起是默认特性**（方案 §3.4「无兼容快路」）；
 // 要编旧行为（只写 v1）用 `--no-default-features`。
 // 默认包里它整个不存在 ⇒ 默认构建既不多编一个 crate，也不可能写出 v2 密文。
@@ -70,10 +70,10 @@ mod gm_provider;
 // 就是判据（构建期那一半走的是 `build.rs` 的 `include!`，那是**另一次编译**，与本行无关）
 // ⇒ 声明成 `#[cfg(test)] mod` 比"整模块 `#[allow(dead_code)]`"更诚实：不是"编进来了但没人用"，
 // 而是"没编进去"。8 处逐项豁免（5 个 `#[allow]` ＋ 3 个 `cfg_attr`）随之全部删除。
-#[cfg(test)]
-mod gm_patch_probe;
 mod database;
 mod db;
+#[cfg(test)]
+mod gm_patch_probe;
 // 本地英汉词典（ECDICT）：应用内划词查词第一期，**只读**两条命令。
 // ⚠️ 本模块**不碰**系统钩子/全局划词（owner 2026-10-09 拍"只做应用内划词"），
 //    数据文件不入库（65.9MB，见 `scripts/fetch-ecdict.mjs`）。
@@ -174,19 +174,19 @@ mod deeplink;
 // `isDesktopPlatform()` —— 后者在同步/插件/加密处表示"有没有 Rust 内核"，移动端是要有的。
 #[cfg(desktop)]
 mod email;
-#[cfg(desktop)]
-mod smtp;
 mod graph;
 mod models;
 mod net;
+#[cfg(desktop)]
+mod smtp;
 // 局域网发现（甲-1 纯函数内核）：见 [`lan`] 模块头 —— UDP 收发与「代言」在下一片接线。
 mod lan;
 // 发现层的**归属**：对端表 = 应用级单例 ＋ 按需启用（owner 2026-09-25 拍板，见 workorder §8 ②）。
 mod lan_state;
 // 配对载荷（B 片纯函数内核）：见 [`pairing`] 模块头 —— 二维码 / 短码 PAKE / 界面在接线那一片。
 // ⚠️ 本模块**不含任何密码学**：短码通道必须 PAKE，而选型要单独过一次目（见该文件头）。
-mod pairing;
 mod capabilities_gen;
+mod pairing;
 // MuPDF 光栅化：**2026-09-21 起是构建期特性**（默认不编，见 Cargo.toml 的 `mupdf-rollback`）。
 // PDFium 从 1.91.13 起是默认引擎，这条只剩"一键回滚"；平时不背它那份重量级 C 依赖。
 #[cfg(feature = "mupdf-rollback")]
@@ -211,12 +211,12 @@ mod magic;
 mod android_fs;
 // 「用户选的目标位置」的落地入口（picked_file 的写侧）：Android 的**保存**对话框同样给
 // `content://` URI，`std::fs` 写它会得到 EROFS（真机实测）——这一层负责"先写缓存、再搬进 URI"。
-mod save_target;
 mod plugin_budget;
 pub mod plugin_host;
 mod plugin_index;
 mod plugin_validate;
 mod plugins;
+mod save_target;
 // MCP **宿主面**（M1 · Task 5；R106=A：**进程内模块** ✓）：外部会话那一路**只**把调用转交给
 // 唯一鉴权点 `plugins::dispatch_capability` ✓（自开库/自判权限由 `check-mcp-host-authz` 挡 ✓）。
 mod mcp_host;
@@ -239,23 +239,23 @@ mod lan_android;
 // ⚠️ 只有库级接入：⛔ 今天**没有**注册 Tauri 命令 ✗（那要同步 `commands.ts` ＋ `web.ts`，
 //    门禁 `check-web-commands` 三个方向都查，而那两个文件不在本期写域内）—— 见模块头。
 // `pub`（不是 `mod`）：这一层就是给下一期接线用的**库级接口** ⇒ 不这样做整模块全是 dead_code 警告 ✓
+mod mac_lights;
 pub mod relay_client;
 mod security;
-mod storage;
 mod space_snapshot_client;
+mod storage;
 mod sync;
 mod tags;
-mod templates;
 mod tempdir;
+mod templates;
 mod textnorm;
-mod mac_lights;
 mod titlebar;
 mod trash;
 mod updates;
 mod versions;
+mod wiki_export;
 mod windows;
 mod workspace_io;
-mod wiki_export;
 mod workspaces;
 
 use db::Db;
@@ -351,7 +351,11 @@ pub fn run_backup_once() -> i32 {
             out.scanned,
             out.appended,
             out.unreadable.len(),
-            if out.unreadable.is_empty() { String::new() } else { format!("（{}）", out.unreadable.join("、")) }
+            if out.unreadable.is_empty() {
+                String::new()
+            } else {
+                format!("（{}）", out.unreadable.join("、"))
+            }
         );
         return 0;
     }
@@ -466,14 +470,16 @@ pub fn run() {
             // ⭐ 2026-10-09（task-10 ③）**追加**：`args` 里还有一条 `--import <文件>`（Windows 文件关联那一半）——
             //    deep-link 只认 URL、认不出本地路径 ⇒ 它此前被丢掉 ✗；这里交给 `office_import` 认 ✓
             //    （⛔ 单实例守卫仍由本插件负责 —— 下面那段"禁止多开"的注释口径不变 ✓）。
-            office_import::forward_import_args(&args, |p| { let _ = tauri::Emitter::emit(app, office_import::IMPORT_EVENT, p.to_string()); });
+            office_import::forward_import_args(&args, |p| {
+                let _ = tauri::Emitter::emit(app, office_import::IMPORT_EVENT, p.to_string());
+            });
             //
             // 唤起已有实例到前台：先还原最小化窗口，再抢焦点。否则二次启动时最小化的
             // 实例只是被 set_focus，不会取消最小化/前置，用户以为没响应用户。
             fn raise(w: tauri::WebviewWindow) {
                 let _ = w.unminimize(); // 最小化 → 还原
-                let _ = w.show();       // 确保显示（可能在托盘/隐藏）
-                let _ = w.set_focus();  // 抢焦点到前台
+                let _ = w.show(); // 确保显示（可能在托盘/隐藏）
+                let _ = w.set_focus(); // 抢焦点到前台
             }
             if let Some(w) = app.get_webview_window("main") {
                 raise(w);
@@ -1420,4 +1426,3 @@ mod relay_feature_tests {
         );
     }
 }
-

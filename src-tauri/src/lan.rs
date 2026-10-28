@@ -89,7 +89,11 @@ pub fn append_extra_targets(mut base: Vec<SocketAddr>) -> Vec<SocketAddr> {
 pub fn lan_extra_targets() -> Vec<SocketAddr> {
     std::env::var("SHUYONOTE_LAN_EXTRA_TARGETS")
         .ok()
-        .map(|raw| raw.split(',').filter_map(|s| s.trim().parse::<SocketAddr>().ok()).collect())
+        .map(|raw| {
+            raw.split(',')
+                .filter_map(|s| s.trim().parse::<SocketAddr>().ok())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -364,14 +368,20 @@ pub fn resolve_base(space_id: &str, configured_url: &str, peers: &[Peer]) -> Opt
             if !is_lan_base(base) {
                 continue;
             }
-            return Some(Route { url: base.to_string(), kind: LinkKind::Lan });
+            return Some(Route {
+                url: base.to_string(),
+                kind: LinkKind::Lan,
+            });
         }
     }
     let configured = configured_url.trim().trim_end_matches('/');
     if configured.is_empty() {
         return None;
     }
-    Some(Route { url: configured.to_string(), kind: LinkKind::Configured })
+    Some(Route {
+        url: configured.to_string(),
+        kind: LinkKind::Configured,
+    })
 }
 
 /// ★ 这条公告**服务不服务**这个空间 —— **唯一的一把尺**，凡是"某台设备认不认这个空间"都走它。
@@ -799,7 +809,13 @@ fn merge_announce(old: &LanAnnounce, new: &LanAnnounce) -> LanAnnounce {
         out.hub_space_kinds = Vec::new();
         out.hub_space_encrypted = Vec::new();
     }
-    if out.hub_base.as_deref().map(str::trim).unwrap_or("").is_empty() {
+    if out
+        .hub_base
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
         out.hub_base = old.hub_base.clone();
     }
     if out.short_id.trim().is_empty() {
@@ -827,7 +843,10 @@ impl PeerTable {
     /// `local_device_id` 用来**挡掉自己**：发给回环的公告会原样回到自己手上，
     /// 不挡的话每台设备都会把自己当中枢。
     pub fn new(local_device_id: String) -> Self {
-        Self { local_device_id, inner: Mutex::new(HashMap::new()) }
+        Self {
+            local_device_id,
+            inner: Mutex::new(HashMap::new()),
+        }
     }
 
     /// 记一条。返回 `false` ＝ **这条是我自己的**（不许进表）。
@@ -847,8 +866,16 @@ impl PeerTable {
         match g.get_mut(&p.announce.device_id) {
             Some(old) => {
                 let merged_announce = merge_announce(&old.announce, &p.announce);
-                let addr = if p.addr.trim().is_empty() { old.addr.clone() } else { p.addr.clone() };
-                *old = Peer { announce: merged_announce, addr, seen_at_ms: p.seen_at_ms.max(old.seen_at_ms) };
+                let addr = if p.addr.trim().is_empty() {
+                    old.addr.clone()
+                } else {
+                    p.addr.clone()
+                };
+                *old = Peer {
+                    announce: merged_announce,
+                    addr,
+                    seen_at_ms: p.seen_at_ms.max(old.seen_at_ms),
+                };
             }
             None => {
                 g.insert(p.announce.device_id.clone(), p);
@@ -1037,7 +1064,9 @@ pub fn announce_targets(port: u16, peers: &[Peer]) -> Vec<SocketAddr> {
             continue;
         }
         // 只认字面 IPv4/IPv6（`addr` 是**报文来源**，不是我们编的）。
-        let Ok(ip) = ip.parse::<IpAddr>() else { continue };
+        let Ok(ip) = ip.parse::<IpAddr>() else {
+            continue;
+        };
         let a = SocketAddr::new(ip, port);
         if !out.contains(&a) {
             out.push(a);
@@ -1072,7 +1101,10 @@ pub async fn announce_once(
             .unwrap_or_else(|| "没有目标地址".into());
         return Err(format!("一条公告都没发出去：{why}"));
     }
-    Ok(AnnounceOutcome { targets: targets.to_vec(), failures })
+    Ok(AnnounceOutcome {
+        targets: targets.to_vec(),
+        failures,
+    })
 }
 
 /// ⭐ **2026-10-09（task-8）**：一条公告**发出去之后**的读数。
@@ -1198,7 +1230,10 @@ pub fn announce_recv_line(peer: &Peer, our_spaces: &[String]) -> String {
 /// 今天 `lan_state` 把 `recv_into_within` 的返回值**整个丢掉**（`let _ = …` ✓）⇒ 坏报文、
 /// 自己的回环报文、超长报文，全都**无声** ✓。
 pub fn announce_drop_line(addr: &str, reason: &str) -> String {
-    format!("[{}] [mesh] 收到但**没进表**：来源 {addr} ｜ 原因：{reason}", log_stamp())
+    format!(
+        "[{}] [mesh] 收到但**没进表**：来源 {addr} ｜ 原因：{reason}",
+        log_stamp()
+    )
 }
 
 /// 收**一条**的结果 —— ⛔ 三件事必须**分得开**（以前 `Option` 把前两件混成一个 `None` ✗）。
@@ -1235,7 +1270,10 @@ pub async fn recv_into(
         .map_err(|e| format!("收公告失败：{e}"))?;
     let from = from.ip().to_string();
     if n > MAX_ANNOUNCE_BYTES {
-        return Ok(RecvOutcome::Rejected { from, reason: AnnounceReject::TooLong.reason().to_string() });
+        return Ok(RecvOutcome::Rejected {
+            from,
+            reason: AnnounceReject::TooLong.reason().to_string(),
+        });
     }
     let raw = match std::str::from_utf8(&buf[..n]) {
         Ok(r) => r,
@@ -1316,10 +1354,17 @@ mod tests {
         for peers in [
             vec![],
             vec![peer("dev-a", None, &["sp-1"])],
-            vec![peer("dev-a", Some("http://192.168.1.5:8787"), &["sp-other"])],
+            vec![peer(
+                "dev-a",
+                Some("http://192.168.1.5:8787"),
+                &["sp-other"],
+            )],
         ] {
             let got = resolve_base("sp-1", "https://shuyo.cn/sync", &peers).unwrap();
-            assert_eq!(got.url, "https://shuyo.cn/sync", "没有中枢时不许改变原来的地址");
+            assert_eq!(
+                got.url, "https://shuyo.cn/sync",
+                "没有中枢时不许改变原来的地址"
+            );
             assert_eq!(got.kind, LinkKind::Configured);
         }
     }
@@ -1334,7 +1379,10 @@ mod tests {
             peer("dev-b", Some("http://192.168.1.6:8787"), &["sp-1"]),
         ];
         let got = resolve_base("sp-1", "https://shuyo.cn/sync", &peers).unwrap();
-        assert_eq!(got.url, "http://192.168.1.6:8787", "要跳过不服务本空间的那台");
+        assert_eq!(
+            got.url, "http://192.168.1.6:8787",
+            "要跳过不服务本空间的那台"
+        );
         // 没有任何一台服务它 ⇒ 回落配置地址。
         let got = resolve_base("sp-9", "https://shuyo.cn/sync", &peers).unwrap();
         assert_eq!(got.kind, LinkKind::Configured);
@@ -1345,10 +1393,17 @@ mod tests {
     fn an_announce_is_dropped_when_it_is_malformed_or_from_another_version() {
         let a = peer("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"]).announce;
         let raw = encode_announce(&a).unwrap();
-        assert_eq!(decode_announce(&raw).unwrap(), a, "自己的公告要能原样解回来");
+        assert_eq!(
+            decode_announce(&raw).unwrap(),
+            a,
+            "自己的公告要能原样解回来"
+        );
 
         // 截断（JSON 不完整）
-        assert_eq!(decode_announce(&raw[..raw.len() - 3]), Err(AnnounceReject::BadJson));
+        assert_eq!(
+            decode_announce(&raw[..raw.len() - 3]),
+            Err(AnnounceReject::BadJson)
+        );
         // 不是 JSON
         assert_eq!(decode_announce("hello"), Err(AnnounceReject::BadJson));
         // 版本不认识：**不猜**
@@ -1389,7 +1444,7 @@ mod tests {
         for bad in [
             "https://evil.example.com",
             "http://8.8.8.8:8787",
-            "http://127.0.0.1:8787",   // 回环不是"网段里的别人"
+            "http://127.0.0.1:8787", // 回环不是"网段里的别人"
             "http://192.168.1.5:notaport",
             "http://192.168.1.5:8787/x", // 带路径：host 解析照旧，但下面这条另测
         ] {
@@ -1409,7 +1464,7 @@ mod tests {
         assert!(is_lan_base("http://172.16.3.4:8787"));
         assert!(is_lan_base("http://169.254.1.1:8787"));
         assert!(is_lan_base("http://192.168.1.5")); // 无端口也算（默认端口由拼 URL 那一侧决定）
-        // ⚠️ **D14（owner 2026-09-30：放行 CGNAT）**：`100.64.0.0/10`（Tailscale 默认段）也算。
+                                                    // ⚠️ **D14（owner 2026-09-30：放行 CGNAT）**：`100.64.0.0/10`（Tailscale 默认段）也算。
         assert!(is_lan_base("http://100.100.1.2:8787"));
         assert!(!is_lan_base("http://172.32.0.1:8787")); // 出了 172.16/12
         assert!(!is_lan_base("http://100.63.255.255:8787")); // 出了 100.64/10（下界外一格）
@@ -1466,17 +1521,36 @@ mod tests {
             "personal",
         )
         .expect("局域网地址 ⇒ 应当有公告");
-        assert_eq!(a.hub_space_names, vec!["数友标尺".to_string()], "公告要带空间名");
-        assert_eq!(a.hub_spaces, vec!["room-1".to_string()], "id 那一格不许被名字顶掉");
+        assert_eq!(
+            a.hub_space_names,
+            vec!["数友标尺".to_string()],
+            "公告要带空间名"
+        );
+        assert_eq!(
+            a.hub_spaces,
+            vec!["room-1".to_string()],
+            "id 那一格不许被名字顶掉"
+        );
         assert_eq!(
             a.hub_space_kinds,
             vec!["personal".to_string()],
             "类别也要带上（自动建空间那道闸 G2 要它）"
         );
 
-        let b = announce_for_own_hub("dev-a", "本机", "T3ST1", "http://192.168.1.5:8787", "room-1", "", "")
-            .expect("名字为空也照样有公告");
-        assert!(b.hub_space_names.is_empty(), "空名 ⇒ 不带那一格（⛔ 不塞空串）");
+        let b = announce_for_own_hub(
+            "dev-a",
+            "本机",
+            "T3ST1",
+            "http://192.168.1.5:8787",
+            "room-1",
+            "",
+            "",
+        )
+        .expect("名字为空也照样有公告");
+        assert!(
+            b.hub_space_names.is_empty(),
+            "空名 ⇒ 不带那一格（⛔ 不塞空串）"
+        );
 
         // 老对端：JSON 里根本没有 `hub_space_names` 这一格 ⇒ 必须照常解出来
         let json = r#"{"v":1,"device_id":"dev-b","fp":"dev-b","hub_base":"http://192.168.1.9:8787","hub_spaces":["room-1"]}"#;
@@ -1522,9 +1596,21 @@ mod tests {
             std::env::set_var("SHUYONOTE_LAN_PORT", o);
         }
 
-        assert_eq!(with_env("SHUYONOTE_LAN_PORT", "44444", lan_port), 44444, "设了就要读到");
-        assert_eq!(with_env("SHUYONOTE_LAN_PORT", "不是端口", lan_port), LAN_PORT, "坏值回落常量");
-        assert_eq!(with_env("SHUYONOTE_LAN_PORT", "0", lan_port), LAN_PORT, "0 回落常量");
+        assert_eq!(
+            with_env("SHUYONOTE_LAN_PORT", "44444", lan_port),
+            44444,
+            "设了就要读到"
+        );
+        assert_eq!(
+            with_env("SHUYONOTE_LAN_PORT", "不是端口", lan_port),
+            LAN_PORT,
+            "坏值回落常量"
+        );
+        assert_eq!(
+            with_env("SHUYONOTE_LAN_PORT", "0", lan_port),
+            LAN_PORT,
+            "0 回落常量"
+        );
     }
 
     /// ★ 判据 P0-①b：额外目标缝 —— ⛔ **不设时零影响**（逐字相等 ✓）；设了才追加 ✓；坏段跳过 ✓。
@@ -1543,7 +1629,9 @@ mod tests {
         assert_eq!(
             baseline,
             vec![
-                format!("255.255.255.255:{port}").parse::<SocketAddr>().unwrap(),
+                format!("255.255.255.255:{port}")
+                    .parse::<SocketAddr>()
+                    .unwrap(),
                 format!("127.0.0.1:{port}").parse::<SocketAddr>().unwrap(),
             ],
             "不设变量时，默认目标必须与从前一字不差：{baseline:?}"
@@ -1559,19 +1647,31 @@ mod tests {
         }
 
         // ② 设了：追加在**末尾** ✓（坏段跳过 ✓，不 panic ✓）
-        let injected = with_env("SHUYONOTE_LAN_EXTRA_TARGETS", "127.0.0.1:49999, 192.168.1.9:50000", || {
-            append_extra_targets(default_targets(port))
-        });
-        assert_eq!(injected.len(), baseline.len() + 2, "设了就要追加两条：{injected:?}");
+        let injected = with_env(
+            "SHUYONOTE_LAN_EXTRA_TARGETS",
+            "127.0.0.1:49999, 192.168.1.9:50000",
+            || append_extra_targets(default_targets(port)),
+        );
+        assert_eq!(
+            injected.len(),
+            baseline.len() + 2,
+            "设了就要追加两条：{injected:?}"
+        );
         assert_eq!(
             injected[injected.len() - 1],
             "192.168.1.9:50000".parse::<SocketAddr>().unwrap(),
             "追加在末尾"
         );
-        let bad = with_env("SHUYONOTE_LAN_EXTRA_TARGETS", "不是地址,127.0.0.1:49998", || {
-            append_extra_targets(default_targets(port))
-        });
-        assert_eq!(bad.len(), baseline.len() + 1, "坏段要跳过（不 panic）：{bad:?}");
+        let bad = with_env(
+            "SHUYONOTE_LAN_EXTRA_TARGETS",
+            "不是地址,127.0.0.1:49998",
+            || append_extra_targets(default_targets(port)),
+        );
+        assert_eq!(
+            bad.len(),
+            baseline.len() + 1,
+            "坏段要跳过（不 panic）：{bad:?}"
+        );
     }
 
     /// 收到**对端**为止（⭐ 自己那一轮也会把公告发回自己 —— `default_targets` 里的回环那一条 ✓ ⇒
@@ -1606,20 +1706,28 @@ mod tests {
 
         // A 这一轮的目标 ＝ 「A 自己的端口（广播＋回环 ✓）」＋「注入的 B 端口 ✓」
         // ⚠️ 端口一律 `free_port()`（本片口径 ✓），⛔ 不写死号 ✗；注入那条走**生产那个追加函数** ✓。
-        let targets_a = with_env("SHUYONOTE_LAN_EXTRA_TARGETS", &format!("127.0.0.1:{port_b}"), || {
-            append_extra_targets(default_targets(port_a))
-        });
-        let targets_b = with_env("SHUYONOTE_LAN_EXTRA_TARGETS", &format!("127.0.0.1:{port_a}"), || {
-            append_extra_targets(default_targets(port_b))
-        });
+        let targets_a = with_env(
+            "SHUYONOTE_LAN_EXTRA_TARGETS",
+            &format!("127.0.0.1:{port_b}"),
+            || append_extra_targets(default_targets(port_a)),
+        );
+        let targets_b = with_env(
+            "SHUYONOTE_LAN_EXTRA_TARGETS",
+            &format!("127.0.0.1:{port_a}"),
+            || append_extra_targets(default_targets(port_b)),
+        );
         assert!(
             targets_a.contains(&SocketAddr::from(([127, 0, 0, 1], port_b))),
             "注入目标没进目标表：{targets_a:?}"
         );
 
-        let out_a = announce_once(&sock_a, &targets_a, &announce_of("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"]))
-            .await
-            .expect("A 这一轮至少要发出去一条");
+        let out_a = announce_once(
+            &sock_a,
+            &targets_a,
+            &announce_of("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"]),
+        )
+        .await
+        .expect("A 这一轮至少要发出去一条");
         // ⚠️ `>= 1` 而不是 `== 1`：`255.255.255.255` 在回环 socket 上会被系统拒（实测 os error 10013 ✓）。
         assert!(out_a.sent() >= 1, "A 一条都没发出去：{:?}", out_a.failures);
         let got = wait_for_a_peer(&sock_b, &st_b).await;
@@ -1732,7 +1840,12 @@ mod tests {
         //    ⚠️ 这一条判的是**决策**（真把它送出去要真网段 ⇒ 属 M1／M2 ✓）
         st_hub
             .record_datagram(
-                &encode_announce(&announce_of("dev-peer", Some("http://192.168.1.6:8787"), &["sp-1"])).unwrap(),
+                &encode_announce(&announce_of(
+                    "dev-peer",
+                    Some("http://192.168.1.6:8787"),
+                    &["sp-1"],
+                ))
+                .unwrap(),
                 "192.168.1.6",
                 1_000,
             )
@@ -1747,12 +1860,17 @@ mod tests {
         );
 
         // ⑤ 两侧的表各自解析 ⇒ **都**走局域网路由（＝互见 ✓）
-        let hub_route =
-            resolve_base("sp-1", "https://shuyo.cn/sync", &peers).expect("中枢这一侧应当有局域网路由");
+        let hub_route = resolve_base("sp-1", "https://shuyo.cn/sync", &peers)
+            .expect("中枢这一侧应当有局域网路由");
         assert_eq!(hub_route.kind, LinkKind::Lan);
         st_join
             .record_datagram(
-                &encode_announce(&announce_of("dev-hub", Some("http://192.168.1.5:8787"), &["sp-1"])).unwrap(),
+                &encode_announce(&announce_of(
+                    "dev-hub",
+                    Some("http://192.168.1.5:8787"),
+                    &["sp-1"],
+                ))
+                .unwrap(),
                 "192.168.1.5",
                 1_000,
             )
@@ -1811,12 +1929,17 @@ mod tests {
         let st = crate::lan_state::LanState::new("dev-a".to_string()); // ← 主人就是发公告这台
         st.set_enabled(true);
         let ann = announce_of("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"]);
-        announce_once(&a, &[b.local_addr().unwrap()], &ann).await.unwrap();
+        announce_once(&a, &[b.local_addr().unwrap()], &ann)
+            .await
+            .unwrap();
 
         // ⭐ 2026-10-09（task-8）：⭐ 自己的公告**必须与"这一片什么都没收到"分得开** ✗
         //    （旧版两件都回 `None` ⇒ 日志里同形 ⇒ "收到了但没进表"根本判不出来 ✓）。
         assert!(
-            matches!(recv_into(&b, &st, 1_000).await.unwrap(), RecvOutcome::OwnAnnounce { .. }),
+            matches!(
+                recv_into(&b, &st, 1_000).await.unwrap(),
+                RecvOutcome::OwnAnnounce { .. }
+            ),
             "自己的公告要回 OwnAnnounce（⛔ 不是 Nothing ✗）"
         );
         assert!(st.observed_all().is_empty());
@@ -1850,8 +1973,14 @@ mod tests {
             line.contains("255.255.255.255:47821"),
             "⛔ 部分失败必须**点名到哪一条** ✗（旧实现只留最后一条错误 ＋ 只在全部失败时才报 ✓）：{line}"
         );
-        assert!(line.contains("Permission denied"), "而且要带上**错误原文** ✓：{line}");
-        assert!(line.contains("1234"), "空间要给（打码/前几位即可 ✓）：{line}");
+        assert!(
+            line.contains("Permission denied"),
+            "而且要带上**错误原文** ✓：{line}"
+        );
+        assert!(
+            line.contains("1234"),
+            "空间要给（打码/前几位即可 ✓）：{line}"
+        );
         assert!(
             !line.contains("123456789Ok,./"),
             "⛔ 空间名不许整串打出来 ✗（这是日志，不是协议）：{line}"
@@ -1863,20 +1992,37 @@ mod tests {
     /// ⚠️ 未修时那一行只有"收到公告：来源 …" ⇒ **匹配与否一个字都没有** ✗ ⇒ **必红** ✓。
     #[test]
     fn a_received_announce_from_another_space_says_so_and_why() {
-        let p = peer("94bfb27e-7d25-4b65-8b06-5846c561161c", Some("http://192.168.43.190:8788"), &["别的空间"]);
+        let p = peer(
+            "94bfb27e-7d25-4b65-8b06-5846c561161c",
+            Some("http://192.168.43.190:8788"),
+            &["别的空间"],
+        );
         let line = announce_recv_line(&p, &["123456789Ok,./".to_string()]);
 
-        assert!(line.contains("192.168.1.9"), "来源 IP 要打（不然分不清谁在说话 ✓）：{line}");
-        assert!(line.contains("94bfb27e"), "对端 device_id 前 8 位要打 ✓：{line}");
+        assert!(
+            line.contains("192.168.1.9"),
+            "来源 IP 要打（不然分不清谁在说话 ✓）：{line}"
+        );
+        assert!(
+            line.contains("94bfb27e"),
+            "对端 device_id 前 8 位要打 ✓：{line}"
+        );
         assert!(
             line.contains("不匹配"),
             "⛔「收到了但不会进网格候选」必须说清**为什么** ✗（今天判不了的就是这一格 ✓）：{line}"
         );
 
         // 匹配那一支也要能说 ✓（⛔ 别写成"永远说好话"✗）
-        let same = peer("dev-a", Some("http://192.168.1.5:8788"), &["123456789Ok,./"]);
+        let same = peer(
+            "dev-a",
+            Some("http://192.168.1.5:8788"),
+            &["123456789Ok,./"],
+        );
         let ok = announce_recv_line(&same, &["123456789Ok,./".to_string()]);
-        assert!(ok.contains("匹配") && !ok.contains("不匹配"), "同空间要说「匹配」✓：{ok}");
+        assert!(
+            ok.contains("匹配") && !ok.contains("不匹配"),
+            "同空间要说「匹配」✓：{ok}"
+        );
     }
 
     /// ⭐ **判据 c**：⭐ "收到了但没进表"那一行必须**说得出原因 ＋ 是谁** ✓（⛔ 不许静默 ✗）。
@@ -1884,8 +2030,14 @@ mod tests {
     fn a_dropped_datagram_names_its_source_and_reason() {
         let line = announce_drop_line("192.168.43.190", AnnounceReject::BadJson.reason());
         assert!(line.contains("192.168.43.190"), "来源要有：{line}");
-        assert!(line.contains(AnnounceReject::BadJson.reason()), "原因原文要有：{line}");
-        assert!(line.contains("没进表"), "而且要一眼看出**没有进表** ✓：{line}");
+        assert!(
+            line.contains(AnnounceReject::BadJson.reason()),
+            "原因原文要有：{line}"
+        );
+        assert!(
+            line.contains("没进表"),
+            "而且要一眼看出**没有进表** ✓：{line}"
+        );
     }
 
     /// ⭐ **判据 d（回归闸）**：⭐ 四种收报结果**彼此分得开** ✓ ——
@@ -1907,16 +2059,24 @@ mod tests {
 
         // ② 自己的公告 ⇒ **OwnAnnounce**（⛔ 不是 Nothing ✗）
         let mine = announce_of("dev-b", Some("http://192.168.1.9:8788"), &["sp-1"]);
-        a.send_to(encode_announce(&mine).unwrap().as_bytes(), b.local_addr().unwrap())
-            .await
-            .unwrap();
+        a.send_to(
+            encode_announce(&mine).unwrap().as_bytes(),
+            b.local_addr().unwrap(),
+        )
+        .await
+        .unwrap();
         assert!(
-            matches!(recv_into(&b, &st, 1_000).await.unwrap(), RecvOutcome::OwnAnnounce { .. }),
+            matches!(
+                recv_into(&b, &st, 1_000).await.unwrap(),
+                RecvOutcome::OwnAnnounce { .. }
+            ),
             "自己的公告必须是 OwnAnnounce ✓"
         );
 
         // ③ 坏报文 ⇒ **Rejected{from, reason}**（带来源 ✓）
-        a.send_to(b"{ not json", b.local_addr().unwrap()).await.unwrap();
+        a.send_to(b"{ not json", b.local_addr().unwrap())
+            .await
+            .unwrap();
         match recv_into(&b, &st, 1_000).await.unwrap() {
             RecvOutcome::Rejected { from, reason } => {
                 assert_eq!(from, "127.0.0.1");
@@ -1935,7 +2095,10 @@ mod tests {
         assert!(st.observe(peer("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"])));
         // `peer()` 造的 seen_at_ms = 0
         assert_eq!(st.peers(PEER_TTL_MS).len(), 1, "还没到 TTL 就算还在");
-        assert!(st.peers(PEER_TTL_MS + 1).is_empty(), "过了 TTL 就不该再算数");
+        assert!(
+            st.peers(PEER_TTL_MS + 1).is_empty(),
+            "过了 TTL 就不该再算数"
+        );
         assert_eq!(st.sweep(PEER_TTL_MS + 1), 1, "sweep 要把过期的腾掉");
         assert!(st.observed_all().is_empty(), "腾完表里就该是空的");
 
@@ -1952,7 +2115,10 @@ mod tests {
     #[test]
     fn the_default_targets_cover_broadcast_and_loopback() {
         let t = default_targets(LAN_PORT);
-        assert!(t.iter().any(|a| a.ip().to_string() == "255.255.255.255"), "要发广播");
+        assert!(
+            t.iter().any(|a| a.ip().to_string() == "255.255.255.255"),
+            "要发广播"
+        );
         assert!(t.iter().any(|a| a.ip().is_loopback()), "要有回环那条");
         assert!(t.iter().all(|a| a.port() == LAN_PORT));
     }
@@ -1970,7 +2136,9 @@ mod tests {
         let none = announce_targets(LAN_PORT, &[]);
         assert_eq!(none, default_targets(LAN_PORT));
         assert!(
-            !none.iter().any(|a| a.ip().to_string().starts_with("192.168.")),
+            !none
+                .iter()
+                .any(|a| a.ip().to_string().starts_with("192.168.")),
             "没听过谁的时候不许凭空造地址：{none:?}"
         );
 
@@ -1979,10 +2147,14 @@ mod tests {
         p.addr = "192.168.43.96".to_string();
         let one = announce_targets(LAN_PORT, &[p.clone()]);
         assert!(
-            one.iter().any(|a| a.to_string() == format!("192.168.43.96:{LAN_PORT}")),
+            one.iter()
+                .any(|a| a.to_string() == format!("192.168.43.96:{LAN_PORT}")),
             "已知对端的地址必须在目标里（否则单向发现照旧）：{one:?}"
         );
-        assert!(one.iter().any(|a| a.ip().to_string() == "255.255.255.255"), "广播那条不许丢");
+        assert!(
+            one.iter().any(|a| a.ip().to_string() == "255.255.255.255"),
+            "广播那条不许丢"
+        );
         // 同一台重复 / 回环重复 ⇒ 去重（别自己给自己刷同一条）
         let mut same = p.clone();
         same.announce.device_id = "dev-other".to_string();
@@ -1992,8 +2164,16 @@ mod tests {
         let mut sorted = multi.clone();
         sorted.sort();
         sorted.dedup();
-        assert_eq!(multi.len(), sorted.len(), "目标里有重复 ⇒ 会往同一个地址刷两遍：{multi:?}");
-        assert_eq!(multi.iter().filter(|a| a.ip().is_loopback()).count(), 1, "回环只留一条");
+        assert_eq!(
+            multi.len(),
+            sorted.len(),
+            "目标里有重复 ⇒ 会往同一个地址刷两遍：{multi:?}"
+        );
+        assert_eq!(
+            multi.iter().filter(|a| a.ip().is_loopback()).count(),
+            1,
+            "回环只留一条"
+        );
 
         // 报文来源是外部输入 ⇒ 解析不出来的地址**跳过**（不 panic、也不发出坏目标）
         let mut bad = peer("dev-bad", None, &[]);
@@ -2015,37 +2195,63 @@ mod tests {
     #[test]
     fn an_announce_we_produce_is_always_one_we_would_accept() {
         let cases = [
-            ("http://192.168.1.5:8787", true),  // 该代言
-            ("http://10.0.0.7", true),          // 该代言（不带端口也认）
-            ("http://169.254.1.1:8787", true),  // 该代言（链路本地）
+            ("http://192.168.1.5:8787", true), // 该代言
+            ("http://10.0.0.7", true),         // 该代言（不带端口也认）
+            ("http://169.254.1.1:8787", true), // 该代言（链路本地）
             // ⚠️ **D14（owner 2026-09-30：放行 CGNAT）**：Tailscale 默认段也要能代言 ——
             //    **两把尺一起放宽**才保得住本判据（只改 `mesh::is_lan_only` ⇒ 这里立刻红）。
-            ("http://100.100.1.2:8787", true),  // 该代言（CGNAT 共享段）
-            ("https://shuyo.cn/sync", false),   // 公网 ⇒ 不许代言
-            ("http://127.0.0.1:8787", false),   // 回环不是"网段里的别人" ⇒ 不许代言
-            ("http://172.32.0.1:8787", false),  // 出了 172.16/12 ⇒ 不许代言
+            ("http://100.100.1.2:8787", true), // 该代言（CGNAT 共享段）
+            ("https://shuyo.cn/sync", false),  // 公网 ⇒ 不许代言
+            ("http://127.0.0.1:8787", false),  // 回环不是"网段里的别人" ⇒ 不许代言
+            ("http://172.32.0.1:8787", false), // 出了 172.16/12 ⇒ 不许代言
             ("http://100.128.0.1:8787", false), // 出了 100.64/10 ⇒ 不许代言（D14 不许写宽）
-            ("", false),                        // 没配置 ⇒ 不许代言
+            ("", false),                       // 没配置 ⇒ 不许代言
         ];
         for (url, should_produce) in cases {
             let mine = announce_for_own_hub("dev-me", "本机", "T3ST1", url, "sp-1", "", "");
-            assert_eq!(
-                mine.is_some(),
-                should_produce,
-                "该/不该代言判错了：{url:?}"
-            );
+            assert_eq!(mine.is_some(), should_produce, "该/不该代言判错了：{url:?}");
             let Some(announce) = mine else { continue };
             // 产出侧的东西，交给消费侧 —— 必须被采纳成局域网路由。
-            let peer = Peer { announce, addr: "192.168.1.5".into(), seen_at_ms: 0 };
-            let got = resolve_base("sp-1", "https://shuyo.cn/sync", &[peer])
-                .expect("有对端就该有路由");
-            assert_eq!(got.kind, LinkKind::Lan, "自己发出去的公告被自己跳过了：{url:?}");
-            assert_eq!(got.url, url.trim_end_matches('/'), "采纳的基址必须就是公告里那个");
+            let peer = Peer {
+                announce,
+                addr: "192.168.1.5".into(),
+                seen_at_ms: 0,
+            };
+            let got =
+                resolve_base("sp-1", "https://shuyo.cn/sync", &[peer]).expect("有对端就该有路由");
+            assert_eq!(
+                got.kind,
+                LinkKind::Lan,
+                "自己发出去的公告被自己跳过了：{url:?}"
+            );
+            assert_eq!(
+                got.url,
+                url.trim_end_matches('/'),
+                "采纳的基址必须就是公告里那个"
+            );
         }
 
         // 没有设备身份 / 没有空间身份 ⇒ 代言不成立（空身份只会产出没人能用的公告）。
-        assert!(announce_for_own_hub("", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1", "", "").is_none());
-        assert!(announce_for_own_hub("dev-me", "本机", "T3ST1", "http://192.168.1.5:8787", "  ", "", "").is_none());
+        assert!(announce_for_own_hub(
+            "",
+            "本机",
+            "T3ST1",
+            "http://192.168.1.5:8787",
+            "sp-1",
+            "",
+            ""
+        )
+        .is_none());
+        assert!(announce_for_own_hub(
+            "dev-me",
+            "本机",
+            "T3ST1",
+            "http://192.168.1.5:8787",
+            "  ",
+            "",
+            ""
+        )
+        .is_none());
     }
 
     /// ★ 判据 ⑰（B 片施工单 §8.3 的收口）：**`fp` 真的填了，且填的是 `device_id`**。
@@ -2059,17 +2265,42 @@ mod tests {
     /// "有人顺手把 `fp` 的语义换成密钥指纹"（那会让老接收方读到一串它解释不了的东西）。
     #[test]
     fn the_fingerprint_is_the_device_id_and_is_actually_filled() {
-        let a = announce_for_own_hub("dev-me", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1", "", "")
-            .expect("该代言");
+        let a = announce_for_own_hub(
+            "dev-me",
+            "本机",
+            "T3ST1",
+            "http://192.168.1.5:8787",
+            "sp-1",
+            "",
+            "",
+        )
+        .expect("该代言");
         assert_eq!(a.fp, "dev-me", "fp 必须就是 device_id（不是密钥材料指纹）");
         assert_eq!(a.fp, a.device_id, "两者是同一个应用级事实，不许各填一份");
         // 前后空白照 trim（与 device_id 同一把尺，免得出现"身份一样但 fp 字符串不同"）
-        let b = announce_for_own_hub("  dev-me  ", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1", "", "")
-            .expect("该代言");
+        let b = announce_for_own_hub(
+            "  dev-me  ",
+            "本机",
+            "T3ST1",
+            "http://192.168.1.5:8787",
+            "sp-1",
+            "",
+            "",
+        )
+        .expect("该代言");
         assert_eq!(b.fp, "dev-me");
         assert_eq!(b.fp, b.device_id, "trim 之后两者也必须一致");
         // 空身份 ⇒ 根本产出不了公告（这条与判据 ⑫ 同一支），所以不存在"fp 是空串"的合法产出
-        assert!(announce_for_own_hub("   ", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1", "", "").is_none());
+        assert!(announce_for_own_hub(
+            "   ",
+            "本机",
+            "T3ST1",
+            "http://192.168.1.5:8787",
+            "sp-1",
+            "",
+            ""
+        )
+        .is_none());
     }
 
     /// ★ 判据 ⑬：状态行要能把**三件处置不同的事**分开 —— 走了局域网 / 网段里什么都没有 /
@@ -2079,7 +2310,8 @@ mod tests {
     fn the_status_line_tells_the_three_situations_apart() {
         // ① 走了局域网：点出中枢是谁
         let hub = peer("dev-hub", Some("http://192.168.1.5:8787"), &["sp-1"]);
-        let route = resolve_base("sp-1", "https://shuyo.cn/sync", std::slice::from_ref(&hub)).unwrap();
+        let route =
+            resolve_base("sp-1", "https://shuyo.cn/sync", std::slice::from_ref(&hub)).unwrap();
         let line = status_line(Some(&route), std::slice::from_ref(&hub), "sp-1", 1);
         assert!(line.contains("同一网络"), "{line}");
         assert!(line.contains("dev-hub 的机器"), "要点出中枢是谁：{line}");
@@ -2089,11 +2321,19 @@ mod tests {
         let line = status_line(Some(&route), &[], "sp-1", 0);
         assert!(line.contains("公网"), "{line}");
         assert!(line.contains("0 台"), "{line}");
-        assert!(!line.contains("没有服务这个空间的中枢"), "一个对端都没有时不许说这句：{line}");
+        assert!(
+            !line.contains("没有服务这个空间的中枢"),
+            "一个对端都没有时不许说这句：{line}"
+        );
 
         // ③ 有对端、但都不服务本空间 ⇒ **必须说出来**（与 ② 分开）
         let other = peer("dev-other", Some("http://192.168.1.6:8787"), &["sp-9"]);
-        let route = resolve_base("sp-1", "https://shuyo.cn/sync", std::slice::from_ref(&other)).unwrap();
+        let route = resolve_base(
+            "sp-1",
+            "https://shuyo.cn/sync",
+            std::slice::from_ref(&other),
+        )
+        .unwrap();
         let line = status_line(Some(&route), std::slice::from_ref(&other), "sp-1", 1);
         assert!(
             line.contains("没有服务这个空间的中枢"),
@@ -2114,7 +2354,10 @@ mod tests {
         // 还活着：不许多出那句
         let line = status_line(Some(&route), std::slice::from_ref(&other), "sp-1", 1);
         assert!(line.contains("发现 1 台"), "{line}");
-        assert!(!line.contains("还见过"), "活着的不许算进'来过又走了'：{line}");
+        assert!(
+            !line.contains("还见过"),
+            "活着的不许算进'来过又走了'：{line}"
+        );
         // 已经走了（表里还在、但不发声了）：如实说
         let line = status_line(Some(&route), &[], "sp-1", 1);
         assert!(line.contains("发现 0 台"), "{line}");
@@ -2151,7 +2394,9 @@ mod tests {
     /// —— 那要两台真机（见本文件 §判据 ⑦ 与施工单 §9 末尾那条如实记录）。
     #[tokio::test]
     async fn two_devices_discover_each_other_through_the_production_path() {
-        use crate::lan_state::{announce_due, announces_for, bound_profile_count, ANNOUNCE_INTERVAL_MS};
+        use crate::lan_state::{
+            announce_due, announces_for, bound_profile_count, ANNOUNCE_INTERVAL_MS,
+        };
 
         let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -2159,7 +2404,11 @@ mod tests {
         let b_addr = b.local_addr().unwrap();
 
         // 两台设备各自的档案：地址是**私有网段** ⇒ 有资格代言（`announce_for_own_hub` 的尺）。
-        let profiles = vec![("sp-1".to_string(), "http://192.168.1.5:8787".to_string(), "ws".to_string())];
+        let profiles = vec![(
+            "sp-1".to_string(),
+            "http://192.168.1.5:8787".to_string(),
+            "ws".to_string(),
+        )];
         assert!(bound_profile_count(&profiles) > 0, "有绑定才该发声");
 
         let st_a = crate::lan_state::LanState::new("dev-a".to_string());
@@ -2172,14 +2421,29 @@ mod tests {
         let out_b = announces_for("dev-b", "B 的机器", "T3ST1", &profiles);
         assert_eq!(out_a.len(), 1);
         assert_eq!(out_b.len(), 1);
-        assert!(announce_due(0, 1_000, ANNOUNCE_INTERVAL_MS), "第一轮必须发声");
+        assert!(
+            announce_due(0, 1_000, ANNOUNCE_INTERVAL_MS),
+            "第一轮必须发声"
+        );
         // ★ 产出侧带指纹（B 片 §8.3 的收口）：这条把"协议里那一格不是空的"也串进端到端。
         assert_eq!(out_a[0].fp, "dev-a");
         assert_eq!(out_b[0].fp, "dev-b");
 
         // ② 真发（显式单播到对端，避免依赖广播）+ ③ 真收。
-        assert_eq!(announce_once(&a, &[b_addr], &out_a[0]).await.unwrap().sent(), 1);
-        assert_eq!(announce_once(&b, &[a_addr], &out_b[0]).await.unwrap().sent(), 1);
+        assert_eq!(
+            announce_once(&a, &[b_addr], &out_a[0])
+                .await
+                .unwrap()
+                .sent(),
+            1
+        );
+        assert_eq!(
+            announce_once(&b, &[a_addr], &out_b[0])
+                .await
+                .unwrap()
+                .sent(),
+            1
+        );
         let got_b = match recv_into_within(&b, &st_b, 2_000).await.unwrap() {
             RecvOutcome::Peer(p) => p,
             other => panic!("B 应当收到 A，实际 {other:?}"),
@@ -2223,7 +2487,10 @@ mod tests {
         st.observe(peer("dev-hub", Some("http://192.168.1.5:8787"), &["sp-1"]));
         let want = resolve_base("sp-1", "https://shuyo.cn/sync", &[]).unwrap();
         // 关着：表里明明有那一台，解析也必须与"空网段"一模一样（口径 3 的实测）
-        assert_eq!(resolve_base("sp-1", "https://shuyo.cn/sync", &st.peers(1_000)).unwrap(), want);
+        assert_eq!(
+            resolve_base("sp-1", "https://shuyo.cn/sync", &st.peers(1_000)).unwrap(),
+            want
+        );
         assert!(!st.is_enabled());
         // 开着：同一张表立刻能当路由（开关是唯一的分叉）
         st.set_enabled(true);
@@ -2266,21 +2533,42 @@ mod multi_space_peer_table_tests {
         let t = PeerTable::new("me".to_string());
         let now = 1_000_000;
         assert!(t.upsert(Peer {
-            announce: announce("win", "room-a", "工作", "personal", "http://192.168.0.103:8788"),
+            announce: announce(
+                "win",
+                "room-a",
+                "工作",
+                "personal",
+                "http://192.168.0.103:8788"
+            ),
             addr: "192.168.0.103".to_string(),
             seen_at_ms: now,
         }));
         assert!(t.upsert(Peer {
-            announce: announce("win", "room-b", "测试", "personal", "http://192.168.0.103:8788"),
+            announce: announce(
+                "win",
+                "room-b",
+                "测试",
+                "personal",
+                "http://192.168.0.103:8788"
+            ),
             addr: "192.168.0.103".to_string(),
             seen_at_ms: now + 10,
         }));
         let live = t.live(now + 20);
         assert_eq!(live.len(), 1, "同一台设备只留一条对端");
         let a = &live[0].announce;
-        assert_eq!(a.hub_spaces, vec!["room-a".to_string(), "room-b".to_string()]);
-        assert_eq!(a.hub_space_names, vec!["工作".to_string(), "测试".to_string()]);
-        assert_eq!(a.hub_space_kinds, vec!["personal".to_string(), "personal".to_string()]);
+        assert_eq!(
+            a.hub_spaces,
+            vec!["room-a".to_string(), "room-b".to_string()]
+        );
+        assert_eq!(
+            a.hub_space_names,
+            vec!["工作".to_string(), "测试".to_string()]
+        );
+        assert_eq!(
+            a.hub_space_kinds,
+            vec!["personal".to_string(), "personal".to_string()]
+        );
     }
 
     /// 同一个空间再来一条（换了地址/短标识）⇒ 空间集合不缩水，新值覆盖旧的。
@@ -2289,16 +2577,34 @@ mod multi_space_peer_table_tests {
         let t = PeerTable::new("me".to_string());
         let now = 2_000_000;
         t.upsert(Peer {
-            announce: announce("win", "room-a", "工作", "personal", "http://192.168.0.103:8788"),
+            announce: announce(
+                "win",
+                "room-a",
+                "工作",
+                "personal",
+                "http://192.168.0.103:8788",
+            ),
             addr: "192.168.0.103".to_string(),
             seen_at_ms: now,
         });
         t.upsert(Peer {
-            announce: announce("win", "room-b", "测试", "personal", "http://192.168.0.103:8788"),
+            announce: announce(
+                "win",
+                "room-b",
+                "测试",
+                "personal",
+                "http://192.168.0.103:8788",
+            ),
             addr: "192.168.0.103".to_string(),
             seen_at_ms: now + 1,
         });
-        let mut newer = announce("win", "room-a", "工作", "personal", "http://192.168.0.104:8788");
+        let mut newer = announce(
+            "win",
+            "room-a",
+            "工作",
+            "personal",
+            "http://192.168.0.104:8788",
+        );
         newer.short_id = "NEWID".to_string();
         t.upsert(Peer {
             announce: newer,
@@ -2308,10 +2614,21 @@ mod multi_space_peer_table_tests {
         let live = t.live(now + 3);
         assert_eq!(live.len(), 1);
         let a = &live[0].announce;
-        assert_eq!(a.hub_spaces.len(), 2, "⛔ 同一个空间的新公告不许把别的空间挤掉");
-        assert_eq!(a.hub_base.as_deref(), Some("http://192.168.0.104:8788"), "新地址生效");
+        assert_eq!(
+            a.hub_spaces.len(),
+            2,
+            "⛔ 同一个空间的新公告不许把别的空间挤掉"
+        );
+        assert_eq!(
+            a.hub_base.as_deref(),
+            Some("http://192.168.0.104:8788"),
+            "新地址生效"
+        );
         assert_eq!(a.short_id, "NEWID", "新短标识生效");
-        assert_eq!(a.hub_space_names, vec!["工作".to_string(), "测试".to_string()]);
+        assert_eq!(
+            a.hub_space_names,
+            vec!["工作".to_string(), "测试".to_string()]
+        );
     }
 }
 
@@ -2332,17 +2649,32 @@ mod short_id_wire_tests {
             v = WIRE_VERSION
         );
         let a = decode_announce(&raw).expect("老公告必须照样收得下 ✓");
-        assert_eq!(a.short_id, "", "缺这一格 ⇒ 空串 ✓（界面据此显示「对方没报短标识」✓）");
+        assert_eq!(
+            a.short_id, "",
+            "缺这一格 ⇒ 空串 ✓（界面据此显示「对方没报短标识」✓）"
+        );
         assert_ne!(a.short_id, a.device_id, "⛔ 绝不回落成 device_id ✗");
-        assert_ne!(a.short_id, &a.device_id[..3.min(a.device_id.len())], "⛔ 也不许回落成它的前几位 ✗");
+        assert_ne!(
+            a.short_id,
+            &a.device_id[..3.min(a.device_id.len())],
+            "⛔ 也不许回落成它的前几位 ✗"
+        );
     }
 
     /// ⭐③ **上限真读数**：编码一条**真实形状**的公告 ⇒ 打印字节数 ＋ 断言 ≤ 上限 ✓，
     /// 并把**短标识那一格的增量**也量出来 ✓（Lead 要的那两个数 ✓）。
     #[test]
     fn announce_bytes_reading_with_and_without_short_id() {
-        let a = announce_for_own_hub("dev-me", "本机", "K7M2Q", "http://192.168.1.5:8787", "sp-1", "", "")
-            .expect("这条应当能代言 ✓");
+        let a = announce_for_own_hub(
+            "dev-me",
+            "本机",
+            "K7M2Q",
+            "http://192.168.1.5:8787",
+            "sp-1",
+            "",
+            "",
+        )
+        .expect("这条应当能代言 ✓");
         let with = encode_announce(&a).expect("可编码 ✓");
         let mut b = a.clone();
         b.short_id = String::new();
@@ -2353,8 +2685,16 @@ mod short_id_wire_tests {
             MAX_ANNOUNCE_BYTES,
             with.len() as i64 - without.len() as i64
         );
-        assert!(with.len() <= MAX_ANNOUNCE_BYTES, "公告 {} 字节 ≤ 上限 {}", with.len(), MAX_ANNOUNCE_BYTES);
-        assert!(with.len() > without.len(), "短标识必须真的进了线格式 ✓（不是被 serde 丢掉 ✗）");
+        assert!(
+            with.len() <= MAX_ANNOUNCE_BYTES,
+            "公告 {} 字节 ≤ 上限 {}",
+            with.len(),
+            MAX_ANNOUNCE_BYTES
+        );
+        assert!(
+            with.len() > without.len(),
+            "短标识必须真的进了线格式 ✓（不是被 serde 丢掉 ✗）"
+        );
     }
 
     /// ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 握手那两格的**线兼容**判据 ✓。
@@ -2403,7 +2743,10 @@ mod short_id_wire_tests {
         let mut one = plain.clone();
         one.trust_ask = "ask-1234".into();
         let one = serde_json::to_string(&one).unwrap();
-        assert!(one.len() > without.len(), "trust_ask 必须真的进了线格式（不是被 serde 丢掉）");
+        assert!(
+            one.len() > without.len(),
+            "trust_ask 必须真的进了线格式（不是被 serde 丢掉）"
+        );
 
         let mut both = plain.clone();
         both.trust_ask = "ask-1234".into();
@@ -2412,7 +2755,11 @@ mod short_id_wire_tests {
         let back = decode_announce(&both).expect("自己发的必须解得回来");
         assert_eq!(back.trust_ask, "ask-1234");
         assert_eq!(back.trust_secret, "sek-5678");
-        assert!(both.len() <= MAX_ANNOUNCE_BYTES, "两格加上去也不许撞上限 {}", MAX_ANNOUNCE_BYTES);
+        assert!(
+            both.len() <= MAX_ANNOUNCE_BYTES,
+            "两格加上去也不许撞上限 {}",
+            MAX_ANNOUNCE_BYTES
+        );
     }
 
     /// ⭐ owner 2026-10-11 拍「丙」：⭐ 虚拟局域网**允许直连** ✗，⭐ 但界面上要**如实标注** ✓。
@@ -2421,14 +2768,20 @@ mod short_id_wire_tests {
     fn virtual_lan_range_is_recognised_and_is_the_same_ruler_as_the_private_one() {
         // ⭐ 认得出：`100.64.0.0/10`（Tailscale 默认段 ✓）—— ⭐ 两端都算 ✓。
         assert!(is_virtual_lan_ipv4("100.64.0.1"), "下界内");
-        assert!(is_virtual_lan_ipv4("100.100.1.2"), "Tailscale 常见的 100.100 段");
+        assert!(
+            is_virtual_lan_ipv4("100.100.1.2"),
+            "Tailscale 常见的 100.100 段"
+        );
         assert!(is_virtual_lan_ipv4("100.127.255.254"), "上界内");
         // ⭐ 出了这一段就不是它 ✓（与 D14 那两个边界判据**同口径** ✓）。
         assert!(!is_virtual_lan_ipv4("100.63.255.255"), "下界外一格");
         assert!(!is_virtual_lan_ipv4("100.128.0.1"), "上界外一格");
         // ⚠️ 物理内网**看不出来** ⇒ ⛔ 不许说"是"✗（也不许在界面说"不是"——那是另一条口径 ✓）。
         assert!(!is_virtual_lan_ipv4("192.168.1.5"));
-        assert!(!is_virtual_lan_ipv4("10.0.0.7"), "ZeroTier 默认段与物理内网同形 ⇒ 分辨不了");
+        assert!(
+            !is_virtual_lan_ipv4("10.0.0.7"),
+            "ZeroTier 默认段与物理内网同形 ⇒ 分辨不了"
+        );
         assert!(!is_virtual_lan_ipv4("172.16.5.5"));
         // ⭐ 非法输入一律 false ✓（⛔ 不 panic ✗）。
         assert!(!is_virtual_lan_ipv4(""));
@@ -2436,12 +2789,14 @@ mod short_id_wire_tests {
         assert!(!is_virtual_lan_ipv4("100.64.0.1.2"));
         assert!(!is_virtual_lan_ipv4("abc.def.gh.i"));
         // ⭐ 与"⭐ 允许直连 ✗"那把尺**同一段** ✓：两头必须一致 ✓（不一致 ⇒ 自相矛盾 ✓）。
-        assert!(is_private_ipv4("100.100.1.2"), "同一段必须也允许直连（D14）");
+        assert!(
+            is_private_ipv4("100.100.1.2"),
+            "同一段必须也允许直连（D14）"
+        );
         assert!(!is_private_ipv4("100.128.0.1"));
         assert!(!is_virtual_lan_ipv4("100.128.0.1"));
     }
 }
-
 
 /// ⭐⭐ **2026-10-28（owner 拍 R209-B）**：**线格式**上的三条判据 ——
 /// ① 新公告**不再带设备级组名原值**（连字段名都不出现 ✓）；② 只多一个**布尔**（自动与否）；
@@ -2481,12 +2836,18 @@ mod r209b_wire_tests {
         a.device_id = "dev-a".into();
         a.room_auto = true;
         let json = encode_announce(&a).expect("编码不失败");
-        assert!(json.contains("\"room_auto\":true"), "自动与否那一格要真的进线格式：{json}");
+        assert!(
+            json.contains("\"room_auto\":true"),
+            "自动与否那一格要真的进线格式：{json}"
+        );
         assert!(
             !json.contains("\"room\""),
             "⛔ 自动档也⛔ 不许把种子／组名带上：{json}"
         );
-        assert_eq!(WIRE_VERSION, 1, "⛔ 不升 WIRE_VERSION（老对端照旧收得下 ✓）");
+        assert_eq!(
+            WIRE_VERSION, 1,
+            "⛔ 不升 WIRE_VERSION（老对端照旧收得下 ✓）"
+        );
     }
 
     /// ③-a 老对端**仍然会报** `room` ⇒ 新版本必须照单收下（⛔ 不许当恶意／不许拒收 ✗）。
@@ -2494,7 +2855,10 @@ mod r209b_wire_tests {
     fn a_legacy_announce_that_still_reports_a_room_is_read_verbatim() {
         let json = r#"{"v":1,"device_id":"dev-old","fp":"dev-old","hub_base":"http://192.168.1.9:8788","hub_spaces":["room-1"],"room":"legacy-group-name"}"#;
         let a = decode_announce(json).expect("老对端必须照常收下（⛔ 不许当恶意 ✗）");
-        assert_eq!(a.room, "legacy-group-name", "老那一格如实读出来（只用于老对端兼容那条路）");
+        assert_eq!(
+            a.room, "legacy-group-name",
+            "老那一格如实读出来（只用于老对端兼容那条路）"
+        );
         assert!(
             !a.room_auto,
             "老对端没报自动标记 ⇒ 当作「用户设的」（⛔ 不是猜，是零风险那一侧 ✓）"
@@ -2532,9 +2896,21 @@ mod r209b_wire_tests {
         let old: OldPeerView = serde_json::from_str(&json).expect("老对端必须解得开我们发的东西");
         assert_eq!(old.v, WIRE_VERSION);
         assert_eq!(old.device_id, "dev-a");
-        assert_eq!(old.hub_base.as_deref(), Some("http://192.168.1.5:8788"), "老对端靠它找得到我");
-        assert_eq!(old.hub_spaces, vec!["room-1".to_string()], "老对端靠它判断我服务哪个空间");
-        assert_eq!(old.hub_space_names, vec!["工作".to_string()], "名字那一格照旧");
+        assert_eq!(
+            old.hub_base.as_deref(),
+            Some("http://192.168.1.5:8788"),
+            "老对端靠它找得到我"
+        );
+        assert_eq!(
+            old.hub_spaces,
+            vec!["room-1".to_string()],
+            "老对端靠它判断我服务哪个空间"
+        );
+        assert_eq!(
+            old.hub_space_names,
+            vec!["工作".to_string()],
+            "名字那一格照旧"
+        );
     }
 }
 
@@ -2548,7 +2924,11 @@ mod j9_port_parse_tests {
     fn a_base_with_an_explicit_port_is_parsed() {
         assert_eq!(port_of_base("http://192.168.1.5:8788"), Some(8788));
         assert_eq!(port_of_base("http://10.0.0.7:47999"), Some(47999));
-        assert_eq!(port_of_base("  http://192.168.43.206:8788/  "), Some(8788), "带尾斜杠/空白也认");
+        assert_eq!(
+            port_of_base("  http://192.168.43.206:8788/  "),
+            Some(8788),
+            "带尾斜杠/空白也认"
+        );
         assert_eq!(port_of_base("http://192.168.1.5:1"), Some(1));
         assert_eq!(port_of_base("http://192.168.1.5:65535"), Some(65535));
     }
@@ -2563,15 +2943,27 @@ mod j9_port_parse_tests {
     #[test]
     fn a_bad_url_is_none() {
         assert_eq!(port_of_base(""), None);
-        assert_eq!(port_of_base("https://192.168.1.5:8788"), None, "只认 http://（与 is_lan_base 同一档）");
+        assert_eq!(
+            port_of_base("https://192.168.1.5:8788"),
+            None,
+            "只认 http://（与 is_lan_base 同一档）"
+        );
         assert_eq!(port_of_base("192.168.1.5:8788"), None, "没有 scheme");
         assert_eq!(port_of_base("http://"), None);
         assert_eq!(port_of_base("http://:8788"), None, "没主机");
-        assert_eq!(port_of_base("http://192.168.1.5:0"), None, "端口 0 不可连 ⇒ 当作没报");
+        assert_eq!(
+            port_of_base("http://192.168.1.5:0"),
+            None,
+            "端口 0 不可连 ⇒ 当作没报"
+        );
         assert_eq!(port_of_base("http://192.168.1.5:99999"), None, "越界");
         assert_eq!(port_of_base("http://192.168.1.5:abc"), None);
         assert_eq!(port_of_base("http://192.168.1.5:87 88"), None, "带空白");
-        assert_eq!(port_of_base("http://[::1]:8788"), Some(8788), "方括号 IPv6 的端口也读得出（地址该不该直连另判）");
+        assert_eq!(
+            port_of_base("http://[::1]:8788"),
+            Some(8788),
+            "方括号 IPv6 的端口也读得出（地址该不该直连另判）"
+        );
         assert_eq!(port_of_base("http://[::1]"), None);
     }
 }

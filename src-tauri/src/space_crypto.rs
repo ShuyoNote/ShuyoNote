@@ -258,7 +258,11 @@ pub fn merge_material(c: &Connection, json: &str) -> Result<crate::keyring::Merg
     // ⭐ B1：本机**还没有任何盒子**（全新设备）⇒ 整体采纳对端那份（它成为主组）。
     //   ⛔ 不能走"合并"：本地空袋子自带一个随机盐的主组 ⇒ 会多出一个永远解不开的空组，
     //   而且主口令会按本地那个盐派生 ⇒ 对端盒子全解不开（这就是 B1 和 B2 的分界）。
-    if local.as_ref().map(|k| k.space_ids().is_empty()).unwrap_or(true) {
+    if local
+        .as_ref()
+        .map(|k| k.space_ids().is_empty())
+        .unwrap_or(true)
+    {
         let groups = theirs.groups().len();
         let spaces = theirs.space_ids().len();
         store_keyring(c, &theirs)?;
@@ -304,9 +308,13 @@ pub fn verify_masters_against_keyring(
     masters: &[(String, AppKeys)],
 ) -> Result<(), String> {
     for (fp, _kdf, spaces, _names) in kr.groups() {
-        let Some(first) = spaces.keys().next() else { continue };
+        let Some(first) = spaces.keys().next() else {
+            continue;
+        };
         let Some((_, master)) = masters.iter().find(|(id, _)| id == &fp) else {
-            return Err("有一组公开材料没有对应的主密钥（解锁不完整）—— 请重新输一次口令".to_string());
+            return Err(
+                "有一组公开材料没有对应的主密钥（解锁不完整）—— 请重新输一次口令".to_string(),
+            );
         };
         kr.unwrap_key(master, first)
             .map_err(|_| "打不开：口令不对，或者这把锁被改过 —— 内容没有被解开".to_string())?;
@@ -329,7 +337,9 @@ pub fn verify_master_against_keyring(kr: &Keyring, master: &AppKeys) -> Result<(
     // ⚠️ ⭐ **两种可能都要说** ✗ —— AEAD 解不开时**连程序自己都分不清**是"口令不对"还是"盒子被改过"
     //   （见 `verify_master_against_keyring` 上面那段逐字："口令对不对**由解盒子回答**（AEAD）"✓）
     //   ⇒ ⛔ **不许假装能判出是哪一档** ✗（那会变成编造 ✓）。
-    eprintln!("[space_crypto] 袋子里没有任何一个盒子能被这个主口令解开（原文，排查以它为准）：{last}");
+    eprintln!(
+        "[space_crypto] 袋子里没有任何一个盒子能被这个主口令解开（原文，排查以它为准）：{last}"
+    );
     Err("打不开：口令不对，或者这把锁被改过 —— 内容没有被解开（详细原因已写进日志，排查时以它为准）".to_string())
 }
 
@@ -361,23 +371,32 @@ pub fn session_master() -> Option<AppKeys> {
 
 /// 装上 / 卸下会话主密钥（解锁 → 装；锁定 → 卸）。
 pub fn set_session_master(keys: Option<AppKeys>) -> Result<(), String> {
-    *SESSION_MASTER.lock().map_err(|_| "会话锁失效".to_string())? = keys;
+    *SESSION_MASTER
+        .lock()
+        .map_err(|_| "会话锁失效".to_string())? = keys;
     // 锁定（None）⇒ 各组的派生主密钥也一起卸下（⛔ 不许留一把能解盒子的）。
     if keys.is_none() {
-        *SESSION_MASTERS.lock().map_err(|_| "会话锁失效".to_string())? = Vec::new();
+        *SESSION_MASTERS
+            .lock()
+            .map_err(|_| "会话锁失效".to_string())? = Vec::new();
     }
     Ok(())
 }
 
 /// ⭐ B2：装上**按组派生**的主密钥表（解锁时由 [`masters_from_passphrase`] 产出）。
 pub fn set_session_masters(masters: Vec<(String, AppKeys)>) -> Result<(), String> {
-    *SESSION_MASTERS.lock().map_err(|_| "会话锁失效".to_string())? = masters;
+    *SESSION_MASTERS
+        .lock()
+        .map_err(|_| "会话锁失效".to_string())? = masters;
     Ok(())
 }
 
 /// ⭐ B2：本会话按组的主密钥（可能为空）。
 pub fn session_masters() -> Vec<(String, AppKeys)> {
-    SESSION_MASTERS.lock().map(|g| g.clone()).unwrap_or_default()
+    SESSION_MASTERS
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default()
 }
 
 /// ⭐ B2：**一句口令 ⇒ 每组各一把主密钥**（主组在前）。没有袋子 ⇒ `Ok(None)`。
@@ -432,9 +451,8 @@ pub fn space_key(space_id: &str) -> Result<Option<[u8; 32]>, String> {
     if !masters.is_empty() {
         return Ok(Some(kr.unwrap_key_with_groups(&masters, space_id)?));
     }
-    let master = session_master().ok_or_else(|| {
-        format!("空间「{space_id}」按钥匙袋是加密的，但会话未解锁（请先输口令）")
-    })?;
+    let master = session_master()
+        .ok_or_else(|| format!("空间「{space_id}」按钥匙袋是加密的，但会话未解锁（请先输口令）"))?;
     Ok(Some(kr.unwrap_key(&master, space_id)?))
 }
 
@@ -467,10 +485,9 @@ pub fn space_needs_passphrase(space_id: &str) -> bool {
             let masters = session_masters();
             if !masters.is_empty() {
                 // 有这个空间的那一组，本会话派生过主密钥吗？
-                !kr
-                    .groups()
-                    .iter()
-                    .any(|(fp, _, spaces, _)| spaces.contains_key(space_id) && masters.iter().any(|(m, _)| m == fp))
+                !kr.groups().iter().any(|(fp, _, spaces, _)| {
+                    spaces.contains_key(space_id) && masters.iter().any(|(m, _)| m == fp)
+                })
             } else {
                 session_master().is_none()
             }
@@ -805,7 +822,10 @@ pub fn enable_space(
     //   Windows 上文件被占用时"替换库文件"会 `os error 5`（`convert_space_db` 里同样的换法）。
     let holds = holds_space(conn, space_id);
     if holds {
-        let _ = std::mem::replace(conn, Connection::open_in_memory().map_err(|e| e.to_string())?);
+        let _ = std::mem::replace(
+            conn,
+            Connection::open_in_memory().map_err(|e| e.to_string())?,
+        );
     }
     let converted = crate::security::convert_space_db(&path, true, Some(&key));
     if holds {
@@ -850,7 +870,10 @@ pub fn disable_space(
     let path = crate::db::space_db_path(app_data_dir, space_id);
     let holds = holds_space(conn, space_id);
     if holds {
-        let _ = std::mem::replace(conn, Connection::open_in_memory().map_err(|e| e.to_string())?);
+        let _ = std::mem::replace(
+            conn,
+            Connection::open_in_memory().map_err(|e| e.to_string())?,
+        );
     }
     let converted = crate::security::convert_space_db(&path, false, Some(&key));
     if holds {
@@ -904,7 +927,10 @@ mod tests {
         sync::set_meta_state(&c, META_KEYRING, v1).unwrap();
 
         let added = fill_space_names(&c).unwrap();
-        assert_eq!(added, 1, "只该补**活着且有名字**的那一个（删掉的那个不许补）");
+        assert_eq!(
+            added, 1,
+            "只该补**活着且有名字**的那一个（删掉的那个不许补）"
+        );
 
         let after = sync::get_meta_state(&c, META_KEYRING).unwrap();
         let kr = Keyring::from_json(&after).unwrap();
@@ -960,7 +986,10 @@ mod tests {
 
         assert_eq!(fill_space_names(&c).unwrap(), 0, "名字已经有了，不该再补");
         let kr = Keyring::from_json(&sync::get_meta_state(&c, META_KEYRING).unwrap()).unwrap();
-        assert_eq!(kr.v, 2, "版本旧的袋子必须被抬到 v2（否则对端永远看到 version 1）");
+        assert_eq!(
+            kr.v, 2,
+            "版本旧的袋子必须被抬到 v2（否则对端永远看到 version 1）"
+        );
         assert_eq!(kr.space_name("sp-a").as_deref(), Some("保险柜"));
     }
 
@@ -1010,7 +1039,8 @@ mod tests {
     #[test]
     fn enabling_one_space_leaves_its_neighbour_alone_and_disable_rolls_it_back() {
         let _g = crate::security::SEC_LOCK.lock().unwrap(); // 与 security 的会话态测试串行
-        let dir = std::env::temp_dir().join(format!("shuyonote-spacecrypto-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("shuyonote-spacecrypto-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
         drop(crate::db::open_meta_conn_at(&dir).unwrap());
@@ -1049,15 +1079,25 @@ mod tests {
         assert!(keyring().unwrap().has("sc-a"));
         let st = space_status(&dir, "sc-a");
         assert!(st.encrypted_on_disk, "sc-a 的库应当变成密文");
-        assert!(st.in_keyring && st.key_available, "袋里有它且会话解锁 ⇒ 拿得到钥匙");
+        assert!(
+            st.in_keyring && st.key_available,
+            "袋里有它且会话解锁 ⇒ 拿得到钥匙"
+        );
         let nb = space_status(&dir, "sc-b");
-        assert!(!nb.encrypted_on_disk, "★ 邻座必须**原样**（这正是「按空间」）");
+        assert!(
+            !nb.encrypted_on_disk,
+            "★ 邻座必须**原样**（这正是「按空间」）"
+        );
         assert!(!nb.in_keyring);
         // 标记也要按空间：sc-a = 1，sc-b ≠ 1
         // ⚠️ 写成**函数**而不是闭包：闭包会一直持有 `&c`，后面 `&mut c`（让开连接那条路）就借不动了。
         fn marked(c: &Connection, sid: &str) -> i64 {
-            c.query_row("SELECT COALESCE(encrypted, 0) FROM meta.workspaces WHERE id = ?1", [sid], |r| r.get(0))
-                .unwrap_or(0)
+            c.query_row(
+                "SELECT COALESCE(encrypted, 0) FROM meta.workspaces WHERE id = ?1",
+                [sid],
+                |r| r.get(0),
+            )
+            .unwrap_or(0)
         }
         assert_eq!(marked(&c, "sc-a"), 1);
         assert_ne!(marked(&c, "sc-b"), 1);
@@ -1076,9 +1116,16 @@ mod tests {
             "连接让开之后真的换成了密文"
         );
         // 让开后重开的连接**是可用的**（真按空间钥匙打开了，不是留个坏连接）
-        let n: i64 = own.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
-        assert_eq!(n, 1, "★ 那一行数据在「明文 ⇒ 密文 ⇒ 用空间钥匙打开」的往返里没丢");
-        let title: String = own.query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0)).unwrap();
+        let n: i64 = own
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            n, 1,
+            "★ 那一行数据在「明文 ⇒ 密文 ⇒ 用空间钥匙打开」的往返里没丢"
+        );
+        let title: String = own
+            .query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(title, "机密");
         drop(own);
 
@@ -1089,7 +1136,11 @@ mod tests {
         assert!(err.contains("未解锁"), "{err}");
 
         // ④ 解锁后禁用 ⇒ 只回退这一个：sc-a 回明文、盒子扔掉、邻座仍明文
-        let master = keyring().unwrap().kdf.derive_master("我家猫叫mimi").unwrap();
+        let master = keyring()
+            .unwrap()
+            .kdf
+            .derive_master("我家猫叫mimi")
+            .unwrap();
         set_session_master(Some(master)).unwrap();
         disable_space(&mut c, &dir, "sc-a").unwrap();
         let st = space_status(&dir, "sc-a");
@@ -1100,7 +1151,8 @@ mod tests {
         // 明文库读得开（真回退了，不是只剩个头）
         {
             let n = Connection::open(crate::db::space_db_path(&dir, "sc-a")).unwrap();
-            n.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0)).unwrap();
+            n.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0))
+                .unwrap();
         }
 
         // 收尾
@@ -1226,15 +1278,38 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Personal, "默认就是未分类");
+        assert_eq!(
+            space_kind(&c, "sk-a"),
+            SpaceKind::Personal,
+            "默认就是未分类"
+        );
         set_space_kind(&c, "sk-a", SpaceKind::Personal).unwrap();
         assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Personal);
-        c.execute("UPDATE meta.workspaces SET kind = 'PERSONAL' WHERE id = 'sk-a'", []).unwrap();
+        c.execute(
+            "UPDATE meta.workspaces SET kind = 'PERSONAL' WHERE id = 'sk-a'",
+            [],
+        )
+        .unwrap();
         assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Personal, "大小写不敏感");
-        c.execute("UPDATE meta.workspaces SET kind = '别的' WHERE id = 'sk-a'", []).unwrap();
-        assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Personal, "★ 认不出来 ⇒ 未分类，**不猜**");
-        assert_eq!(space_kind(&c, "不存在"), SpaceKind::Personal, "没那条 ⇒ 未分类");
-        assert!(set_space_kind(&c, "不存在", SpaceKind::Team).is_err(), "写不存在的空间要报错");
+        c.execute(
+            "UPDATE meta.workspaces SET kind = '别的' WHERE id = 'sk-a'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            space_kind(&c, "sk-a"),
+            SpaceKind::Personal,
+            "★ 认不出来 ⇒ 未分类，**不猜**"
+        );
+        assert_eq!(
+            space_kind(&c, "不存在"),
+            SpaceKind::Personal,
+            "没那条 ⇒ 未分类"
+        );
+        assert!(
+            set_space_kind(&c, "不存在", SpaceKind::Team).is_err(),
+            "写不存在的空间要报错"
+        );
         // 取消分类 ⇒ 写回空串
         set_space_kind(&c, "sk-a", SpaceKind::Personal).unwrap();
         assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Personal);
@@ -1259,14 +1334,20 @@ mod tests {
         };
 
         let v = sync_gate_view(&plain, SpaceKind::Personal);
-        assert!(v.allow && !v.unclassified && v.reason.is_empty(), "恒放行：没有原因");
+        assert!(
+            v.allow && !v.unclassified && v.reason.is_empty(),
+            "恒放行：没有原因"
+        );
         let v = sync_gate_view(&enc, SpaceKind::Personal);
-        assert!(v.allow && !v.unclassified && v.reason.is_empty(), "放行：没有原因");
+        assert!(
+            v.allow && !v.unclassified && v.reason.is_empty(),
+            "放行：没有原因"
+        );
         let v = sync_gate_view(&plain, SpaceKind::Team);
         assert!(v.allow && !v.unclassified, "团队：放行且**不算未分类**");
         let v = sync_gate_view(&plain, SpaceKind::Personal);
         // ⚠️ 2026-10-04：「未分类」这一档已删 ⇒ 这条断言随之去掉（个人空间也是恒放行）
-            assert!(v.allow && !v.unclassified, "个人空间：恒放行且不算未分类");
+        assert!(v.allow && !v.unclassified, "个人空间：恒放行且不算未分类");
     }
 
     /// ★★ ③ 0b：**采纳从服务端取回的公开材料** —— 本地已经有袋子时**默认拒绝**
@@ -1286,8 +1367,12 @@ mod tests {
         // 本机这一份（本地口令）：**两个**空间，其中 `adopt-b` 是对面**没有**的
         let mut local = Keyring::new();
         let m_local = local.kdf.derive_master("本机口令八个字").unwrap();
-        local.wrap(&m_local, "adopt-a", &random_space_key()).unwrap();
-        local.wrap(&m_local, "adopt-b", &random_space_key()).unwrap();
+        local
+            .wrap(&m_local, "adopt-a", &random_space_key())
+            .unwrap();
+        local
+            .wrap(&m_local, "adopt-b", &random_space_key())
+            .unwrap();
         store_keyring(&c, &local).unwrap();
         let before = stored_material(&c).unwrap().unwrap();
 
@@ -1297,16 +1382,26 @@ mod tests {
         let mut remote = Keyring::new();
         let m_remote = remote.kdf.derive_master("对端口令八个字").unwrap();
         remote.wrap(&m_remote, "adopt-a", &k_remote).unwrap();
-        remote.wrap(&m_remote, "adopt-c", &random_space_key()).unwrap();
+        remote
+            .wrap(&m_remote, "adopt-c", &random_space_key())
+            .unwrap();
         let remote_json = remote.to_json().unwrap();
 
         // ① 默认**拒绝**覆盖，且一个字节都没改 —— 并且**说得出"会覆盖什么"**
         let r = adopt_material(&c, &remote_json, false).unwrap();
         assert!(!r.adopted && r.already_local, "本地已有袋子 ⇒ 默认不许覆盖");
-        assert_eq!(stored_material(&c).unwrap().unwrap(), before, "★ 一个字节都没改");
+        assert_eq!(
+            stored_material(&c).unwrap().unwrap(),
+            before,
+            "★ 一个字节都没改"
+        );
         // ★ 判据 ③ 的字面要求（2026-09-25 补）：拒绝之外还要摆出代价 ——
         //   否则界面只能问一句空洞的"确定要覆盖吗？"，用户没有依据可判。
-        assert_eq!(r.local_spaces, vec!["adopt-a", "adopt-b"], "要摆出本机已有的空间");
+        assert_eq!(
+            r.local_spaces,
+            vec!["adopt-a", "adopt-b"],
+            "要摆出本机已有的空间"
+        );
         assert_eq!(
             r.would_lose,
             vec!["adopt-b"],
@@ -1324,7 +1419,9 @@ mod tests {
         assert!(r.adopted && !r.already_local && r.spaces == 2, "{r:?}");
 
         // ③ ★ 采纳之后：**只凭那个口令**就能解出盒子里的钥匙
-        let m = master_from_passphrase(&c, "对端口令八个字").unwrap().unwrap();
+        let m = master_from_passphrase(&c, "对端口令八个字")
+            .unwrap()
+            .unwrap();
         assert_eq!(
             keyring().unwrap().unwrap_key(&m, "adopt-a").unwrap(),
             k_remote,
@@ -1348,8 +1445,14 @@ mod tests {
         set_session_master(None).unwrap();
 
         sync::set_meta_state(&c, META_KEYRING, "这不是材料").unwrap();
-        assert!(stored_material(&c).is_err(), "★ 读出来先验：坏材料不许推给服务端");
-        assert!(adopt_material(&c, "也不是材料", true).is_err(), "★ 坏材料不许写进本机");
+        assert!(
+            stored_material(&c).is_err(),
+            "★ 读出来先验：坏材料不许推给服务端"
+        );
+        assert!(
+            adopt_material(&c, "也不是材料", true).is_err(),
+            "★ 坏材料不许写进本机"
+        );
 
         drop(c);
         let _ = std::fs::remove_dir_all(&dir);
@@ -1394,23 +1497,41 @@ mod tests {
 
         let views = space_security_views(&c, &dir).unwrap();
         let ids: Vec<&str> = views.iter().map(|v| v.space_id.as_str()).collect();
-        assert_eq!(ids, vec!["ov-p", "ov-t", "ov-u"], "三个都在、删掉的不在（按 sort_order）");
+        assert_eq!(
+            ids,
+            vec!["ov-p", "ov-t", "ov-u"],
+            "三个都在、删掉的不在（按 sort_order）"
+        );
 
         let p = &views[0];
         assert_eq!(p.kind, "personal");
-        assert_eq!(p.kind.as_str(), SpaceKind::Personal.as_str(), "视图里的串与内部口径是同一个");
-        assert!(p.gate.allow && p.gate.reason.is_empty(), "个人＋没加密 ⇒ 视图层也放行（真拦在绑服务器那一刀）");
+        assert_eq!(
+            p.kind.as_str(),
+            SpaceKind::Personal.as_str(),
+            "视图里的串与内部口径是同一个"
+        );
+        assert!(
+            p.gate.allow && p.gate.reason.is_empty(),
+            "个人＋没加密 ⇒ 视图层也放行（真拦在绑服务器那一刀）"
+        );
         // ★★ 拦人的那句话要说**空间名**，不是内部 id（owner 2026-09-24 截图当场指出：
         //    行头写着"新建工作区"，可理由里却是 `空间「119738aa-…」…`）。
         // ⚠️ 2026-10-04：闸门恒放行 ⇒ 理由恒空串。那两条「理由要带空间名 / 不许出现内部 id」的断言随之去掉；
-            //    ⭐ 现在唯一会拦人的地方是 sync::set_sync_profile ✓，那里的报错仍然带空间名 ✓（改到那边守）。
+        //    ⭐ 现在唯一会拦人的地方是 sync::set_sync_profile ✓，那里的报错仍然带空间名 ✓（改到那边守）。
         // （同上一行：理由恒空 ⇒ 这条也去掉）
         let t = &views[1];
         assert_eq!(t.kind, "team");
         assert!(t.gate.allow && !t.gate.unclassified, "团队 ⇒ 免检放行");
         let u = &views[2];
-        assert_eq!(u.kind.as_str(), SpaceKind::Personal.as_str(), "★ 存量空串 ⇒ 按个人空间处理（保守侧）");
-        assert!(u.gate.allow && !u.gate.unclassified, "★ 放行，且不再算「没管到」（这一档已删）");
+        assert_eq!(
+            u.kind.as_str(),
+            SpaceKind::Personal.as_str(),
+            "★ 存量空串 ⇒ 按个人空间处理（保守侧）"
+        );
+        assert!(
+            u.gate.allow && !u.gate.unclassified,
+            "★ 放行，且不再算「没管到」（这一档已删）"
+        );
         // （理由恒空 ⇒ 这条去掉）
 
         drop(c);
@@ -1433,9 +1554,22 @@ mod tests {
         set_session_master(None).unwrap();
 
         // ① 导入时**没**加密（本机还没解锁/没袋子）⇒ personal ＋ 闸门拦
-        crate::workspaces::insert_imported_space(&c, "imp-a", "导入的甲", "blue", "", 1.0, 1, false)
-            .unwrap();
-        assert_eq!(space_kind(&c, "imp-a"), SpaceKind::Personal, "★ 导入 ⇒ 个人空间");
+        crate::workspaces::insert_imported_space(
+            &c,
+            "imp-a",
+            "导入的甲",
+            "blue",
+            "",
+            1.0,
+            1,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            space_kind(&c, "imp-a"),
+            SpaceKind::Personal,
+            "★ 导入 ⇒ 个人空间"
+        );
         // ⚠️ **2026-10-04 改**：这里原先断言"导入的未加密空间**必须被拦**" ✗ —— 那条分支已随
         //    owner 裁定「个人空间不绑服务器」删掉 ✓（⭐ 拦个人空间改在 `sync::set_sync_profile` ✓）。
         let st = space_status(&dir, "imp-a");
@@ -1477,14 +1611,22 @@ mod tests {
         set_session_master(None).unwrap();
 
         // 走"新建空间"那条路（入口 = 本仓 = 个人版）
-        crate::workspaces::insert_new_local_space(&c, "entry-new", "新空间", "blue", 1.0, 1).unwrap();
+        crate::workspaces::insert_new_local_space(&c, "entry-new", "新空间", "blue", 1.0, 1)
+            .unwrap();
 
         // ① 分类落成 **personal**
-        assert_eq!(space_kind(&c, "entry-new"), SpaceKind::Personal, "本地新建 ⇒ 个人空间");
+        assert_eq!(
+            space_kind(&c, "entry-new"),
+            SpaceKind::Personal,
+            "本地新建 ⇒ 个人空间"
+        );
         // ② 它还没加密 —— ⚠️ **2026-10-04**：这一层**不再拦** ✓（见上面那条注释）
         let st = space_status(&dir, "entry-new");
         assert!(!st.encrypted_on_disk && !st.in_keyring);
-        assert_eq!(sync_gate(&st, space_kind(&c, "entry-new")), SyncGate::Allowed);
+        assert_eq!(
+            sync_gate(&st, space_kind(&c, "entry-new")),
+            SyncGate::Allowed
+        );
         // ③ 按空间加密之后 ⇒ 放行
         let mut c2 = c;
         let _ = crate::space_crypto::enable_space(&mut c2, &dir, "entry-new", Some("我家猫叫mimi"));
@@ -1548,12 +1690,18 @@ mod tests {
             x.execute_batch("ALTER TABLE pages ADD COLUMN zzz_future TEXT NOT NULL DEFAULT '';")
                 .unwrap();
         }
-        assert!(!crate::security::space_db_is_encrypted(&path), "前提：它还是明文");
+        assert!(
+            !crate::security::space_db_is_encrypted(&path),
+            "前提：它还是明文"
+        );
 
         // ① 拒绝转换（而不是静默把那列丢掉）
         let err = enable_space(&mut c, &dir, "fut-a", Some("我家猫叫mimi")).unwrap_err();
         assert!(err.contains("本版不认识的列"), "要说清为什么拒绝：{err}");
-        assert!(!crate::security::space_db_is_encrypted(&path), "拒绝之后文件必须原样（还是明文）");
+        assert!(
+            !crate::security::space_db_is_encrypted(&path),
+            "拒绝之后文件必须原样（还是明文）"
+        );
 
         // ② ★ 这次刚造的盒子**不许留下**（否则界面说"已加密"、闸门放行，而库里是明文）
         assert!(
@@ -1566,11 +1714,25 @@ mod tests {
         // ③ 升级到"认识那一列"的版本（模拟）⇒ 同一次会话里**还能再试**，这次应当成功
         {
             let x = Connection::open(&path).unwrap();
-            x.execute_batch("ALTER TABLE pages DROP COLUMN zzz_future;").unwrap();
+            x.execute_batch("ALTER TABLE pages DROP COLUMN zzz_future;")
+                .unwrap();
         }
         let key = enable_space(&mut c, &dir, "fut-a", None).expect("第一次失败不该锁死这个空间");
         assert!(crate::security::space_db_is_encrypted(&path));
-        assert_eq!(keyring().unwrap().unwrap_key(&keyring().unwrap().kdf.derive_master("我家猫叫mimi").unwrap(), "fut-a").unwrap(), key);
+        assert_eq!(
+            keyring()
+                .unwrap()
+                .unwrap_key(
+                    &keyring()
+                        .unwrap()
+                        .kdf
+                        .derive_master("我家猫叫mimi")
+                        .unwrap(),
+                    "fut-a"
+                )
+                .unwrap(),
+            key
+        );
 
         set_keyring_for_test(None);
         set_session_master(None).unwrap();
@@ -1625,11 +1787,20 @@ mod tests {
 
         let err = enable_space(&mut c, &dir, "enc-a", None).unwrap_err();
         assert!(err.contains("打不开"), "要说清后果：{err}");
-        assert!(err.contains("应用级加密"), "要说清这是应用级加密留下的：{err}");
+        assert!(
+            err.contains("应用级加密"),
+            "要说清这是应用级加密留下的：{err}"
+        );
         assert!(err.contains("公开材料"), "要给出唯一还有救的那条路：{err}");
         // ★ 关键：**一个盒子都没造**
-        assert!(!keyring().unwrap().has("enc-a"), "★ 不许凭空造盒子（造了就打不开）");
-        assert!(crate::security::space_db_is_encrypted(&path), "库文件本身一个字节都不该被动");
+        assert!(
+            !keyring().unwrap().has("enc-a"),
+            "★ 不许凭空造盒子（造了就打不开）"
+        );
+        assert!(
+            crate::security::space_db_is_encrypted(&path),
+            "库文件本身一个字节都不该被动"
+        );
     }
 
     /// ★ 空间 id 只从 `spaces/<id>.db` 反推；不是那种文件就 `None`（**不猜**）。
@@ -1644,14 +1815,39 @@ mod tests {
         //    Unix 那一档用 Unix 路径断言**同一件事**（主干 = 文件名去掉 `.db`）。
         //    ⇒ 这不是降低要求：两个平台各断言各自语义下的同一性质，一条都没少。
         #[cfg(windows)]
-        assert_eq!(space_id_from_path(Path::new(r"C:\x\spaces\s1.db")), Some("s1".into()));
+        assert_eq!(
+            space_id_from_path(Path::new(r"C:\x\spaces\s1.db")),
+            Some("s1".into())
+        );
         #[cfg(not(windows))]
-        assert_eq!(space_id_from_path(Path::new("/x/spaces/s1.db")), Some("s1".into()));
-        assert_eq!(space_id_from_path(Path::new("/x/spaces/活跃空间.db")), Some("活跃空间".into()));
-        assert_eq!(space_id_from_path(Path::new("/x/spaces/")), None, "目录不是库文件");
-        assert_eq!(space_id_from_path(Path::new("/x/spaces/.db")), None, "隐藏名不是空间 id");
-        assert_eq!(space_id_from_path(Path::new("/x/spaces/s1")), None, "没扩展名 ⇒ 不认");
-        assert_eq!(space_id_from_path(Path::new("/x/spaces/s1.sqlite")), None, "不是 .db ⇒ 不认");
+        assert_eq!(
+            space_id_from_path(Path::new("/x/spaces/s1.db")),
+            Some("s1".into())
+        );
+        assert_eq!(
+            space_id_from_path(Path::new("/x/spaces/活跃空间.db")),
+            Some("活跃空间".into())
+        );
+        assert_eq!(
+            space_id_from_path(Path::new("/x/spaces/")),
+            None,
+            "目录不是库文件"
+        );
+        assert_eq!(
+            space_id_from_path(Path::new("/x/spaces/.db")),
+            None,
+            "隐藏名不是空间 id"
+        );
+        assert_eq!(
+            space_id_from_path(Path::new("/x/spaces/s1")),
+            None,
+            "没扩展名 ⇒ 不认"
+        );
+        assert_eq!(
+            space_id_from_path(Path::new("/x/spaces/s1.sqlite")),
+            None,
+            "不是 .db ⇒ 不认"
+        );
     }
 
     /// ★ 没有袋子 ⇒ 一律 `None`（＝旧路，零回归）—— 这是本片最重要的一条。
@@ -1661,9 +1857,14 @@ mod tests {
         set_session_master(None).unwrap();
         *KEYRING.lock().unwrap() = None;
         assert!(space_key("s1").unwrap().is_none());
-        assert!(space_key_for_path(Path::new("/x/spaces/s1.db")).unwrap().is_none());
+        assert!(space_key_for_path(Path::new("/x/spaces/s1.db"))
+            .unwrap()
+            .is_none());
         set_session_master(Some(master("pw").1)).unwrap();
-        assert!(space_key("s1").unwrap().is_none(), "有主密钥但没袋子 ⇒ 仍是旧路");
+        assert!(
+            space_key("s1").unwrap().is_none(),
+            "有主密钥但没袋子 ⇒ 仍是旧路"
+        );
         set_session_master(None).unwrap();
     }
 
@@ -1677,9 +1878,19 @@ mod tests {
         *KEYRING.lock().unwrap() = Some(kr);
         set_session_master(Some(m)).unwrap();
 
-        assert_eq!(space_key("s1").unwrap(), Some(k1), "袋子里的空间用它自己的钥匙");
-        assert_eq!(space_key_for_path(Path::new("/x/spaces/s1.db")).unwrap(), Some(k1));
-        assert!(space_key("s2").unwrap().is_none(), "★ 不在袋子里的空间走旧路，不受牵连");
+        assert_eq!(
+            space_key("s1").unwrap(),
+            Some(k1),
+            "袋子里的空间用它自己的钥匙"
+        );
+        assert_eq!(
+            space_key_for_path(Path::new("/x/spaces/s1.db")).unwrap(),
+            Some(k1)
+        );
+        assert!(
+            space_key("s2").unwrap().is_none(),
+            "★ 不在袋子里的空间走旧路，不受牵连"
+        );
         set_session_master(None).unwrap();
         *KEYRING.lock().unwrap() = None;
     }
@@ -1724,8 +1935,14 @@ mod tests {
         // 模拟第二台设备：只有公开材料 ＋ 口令
         let on_device_b = Keyring::from_json(&public).unwrap();
         let m2 = on_device_b.kdf.derive_master("我家猫叫mimi").unwrap();
-        assert_eq!(m.legacy, m2.legacy, "★ 换设备靠公开材料 ＋ 口令就能推出同一把主密钥");
-        assert_ne!(m.legacy, on_device_b.kdf.derive_master("别的口令").unwrap().legacy);
+        assert_eq!(
+            m.legacy, m2.legacy,
+            "★ 换设备靠公开材料 ＋ 口令就能推出同一把主密钥"
+        );
+        assert_ne!(
+            m.legacy,
+            on_device_b.kdf.derive_master("别的口令").unwrap().legacy
+        );
         // 参数被改过 ⇒ 推出来的是**另一把**主密钥（盒子因此打不开）。
         // ⚠️ 这里**不再是**"拒绝"：守卫已放宽成"参数合理就放行"（owner 件1=B 的前置 —— 不放宽的话，
         //    默认值一抬，所有老袋子会被判"与本版不同"直接打不开）。真正的保护在下一步：

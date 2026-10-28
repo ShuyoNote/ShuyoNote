@@ -39,7 +39,11 @@ impl Device {
     /// ⚠️ 设备**不存自己的名字**：名字是网（`Net`）那张表的键。这台设备身上只有"时钟 ＋ 库 ＋
     /// 发件箱" —— 与本片要验的形状对齐（设备之间不靠任何共享命名活着）。
     fn new(id: &str) -> Self {
-        Device { clock: Hlc::genesis(id), store: BTreeMap::new(), outbox: Vec::new() }
+        Device {
+            clock: Hlc::genesis(id),
+            store: BTreeMap::new(),
+            outbox: Vec::new(),
+        }
     }
 
     /// 本机写一条 ⇒ 产出一枚戳、落进本地库、并放进发件箱（等着被网送出去）。
@@ -101,13 +105,18 @@ pub struct Net {
 impl Net {
     pub fn new(ids: &[&str]) -> Self {
         Net {
-            devices: ids.iter().map(|id| (id.to_string(), Device::new(id))).collect(),
+            devices: ids
+                .iter()
+                .map(|id| (id.to_string(), Device::new(id)))
+                .collect(),
             messages: Vec::new(),
         }
     }
 
     pub fn device_mut(&mut self, id: &str) -> &mut Device {
-        self.devices.get_mut(id).unwrap_or_else(|| panic!("没有这台设备：{id}"))
+        self.devices
+            .get_mut(id)
+            .unwrap_or_else(|| panic!("没有这台设备：{id}"))
     }
 
     /// 把所有设备的发件箱收成消息串（按设备名排序，**确定性**）。
@@ -170,17 +179,26 @@ impl Net {
     }
 
     pub fn projection_of(&self, id: &str) -> String {
-        self.devices.get(id).unwrap_or_else(|| panic!("没有这台设备：{id}")).projection()
+        self.devices
+            .get(id)
+            .unwrap_or_else(|| panic!("没有这台设备：{id}"))
+            .projection()
     }
 
     /// 某一台看到的**活着的记录**（`id -> 内容`）—— 断言用，比读 JSON 好读。
     pub fn live_of(&self, id: &str) -> Vec<(String, String)> {
-        self.devices.get(id).unwrap_or_else(|| panic!("没有这台设备：{id}")).live()
+        self.devices
+            .get(id)
+            .unwrap_or_else(|| panic!("没有这台设备：{id}"))
+            .live()
     }
 
     /// 每台设备各自的投影（按设备名排序）。
     pub fn all_projections(&self) -> Vec<(String, String)> {
-        self.devices.iter().map(|(id, d)| (id.clone(), d.projection())).collect()
+        self.devices
+            .iter()
+            .map(|(id, d)| (id.clone(), d.projection()))
+            .collect()
     }
 }
 
@@ -235,7 +253,11 @@ mod tests {
 
         // ① 每一条戳都是**作者自己发的** —— 这就是"没有号牌"可检验的形态。
         for (src, rec) in net.messages() {
-            assert_eq!(rec.stamp.device_id(), src, "戳只能由作者自己产生，不许有中心代发");
+            assert_eq!(
+                rec.stamp.device_id(),
+                src,
+                "戳只能由作者自己产生，不许有中心代发"
+            );
         }
 
         // ② 四台设备的投影**逐字节相同**。
@@ -247,7 +269,10 @@ mod tests {
         let live = net.live_of("A");
         assert_eq!(live.len(), 2, "只该剩 k1 与 k3：{live:?}");
         assert!(live.iter().any(|(id, _)| id == "k3"));
-        assert!(!live.iter().any(|(id, _)| id == "k2"), "被删掉的钥匙不进投影");
+        assert!(
+            !live.iter().any(|(id, _)| id == "k2"),
+            "被删掉的钥匙不进投影"
+        );
         // 并发那一把：胜负由**设备号**定，四台算出来同一个赢家。
         assert_eq!(net.projection_of("A"), net.projection_of("D"));
     }
@@ -269,7 +294,10 @@ mod tests {
             let dup: Vec<usize> = (0..n).filter(|i| i % 3 == 0).collect();
             net.broadcast(&order, &dup);
             for (id, projection) in net.all_projections() {
-                assert_eq!(projection, reference, "seed={seed} 的设备 {id} 与基准投影不一致");
+                assert_eq!(
+                    projection, reference,
+                    "seed={seed} 的设备 {id} 与基准投影不一致"
+                );
             }
         }
     }
@@ -308,8 +336,15 @@ mod tests {
         let first = net.device_mut("FAST").edit("k", "FAST 先写的", 5_000_000);
         // SLOW 的表慢 3600 秒：它收到之后再改同一把钥匙。
         net.device_mut("SLOW").receive(&first, 4_996_400);
-        let second = net.device_mut("SLOW").edit("k", "SLOW 看到之后改的", 4_996_400);
-        assert!(second.stamp > first.stamp, "因果边必须落在序里：{:?} vs {:?}", second.stamp, first.stamp);
+        let second = net
+            .device_mut("SLOW")
+            .edit("k", "SLOW 看到之后改的", 4_996_400);
+        assert!(
+            second.stamp > first.stamp,
+            "因果边必须落在序里：{:?} vs {:?}",
+            second.stamp,
+            first.stamp
+        );
 
         // FAST 两版都收到（连自己那版也再收一次）⇒ 两侧必须同意 SLOW 那一版赢。
         net.device_mut("FAST").receive(&first, 5_000_000);
@@ -327,9 +362,11 @@ mod tests {
         const HOUR: i64 = 3_600_000;
         const BASE: i64 = 4_000_000;
         let mut net = Net::new(&["A", "B", "C", "D"]);
-        net.device_mut("A").edit("k1", "A 的表快一小时", BASE + HOUR);
+        net.device_mut("A")
+            .edit("k1", "A 的表快一小时", BASE + HOUR);
         net.device_mut("B").edit("k1", "B 的表准", BASE);
-        net.device_mut("C").edit("k2", "C 的表慢一小时", BASE - HOUR);
+        net.device_mut("C")
+            .edit("k2", "C 的表慢一小时", BASE - HOUR);
         net.device_mut("D").remove("k2", BASE - HOUR + 20_000);
         net.collect();
 
@@ -370,9 +407,17 @@ mod tests {
         net.broadcast(&round2, &[1, 1, 2]);
 
         let settled = net.all_projections();
-        let distinct: std::collections::BTreeSet<&String> = settled.iter().map(|(_, p)| p).collect();
-        assert_eq!(distinct.len(), 1, "交替编辑＋乱序投递之后必须收敛：{settled:#?}");
-        assert_eq!(net.live_of("A"), vec![("k1".to_string(), "A 第二轮".to_string())]);
+        let distinct: std::collections::BTreeSet<&String> =
+            settled.iter().map(|(_, p)| p).collect();
+        assert_eq!(
+            distinct.len(),
+            1,
+            "交替编辑＋乱序投递之后必须收敛：{settled:#?}"
+        );
+        assert_eq!(
+            net.live_of("A"),
+            vec![("k1".to_string(), "A 第二轮".to_string())]
+        );
 
         // 再整批重投一遍（重复到达）：一字不变。
         let before = net.projection_of("A");
@@ -436,6 +481,10 @@ mod tests {
             sorted.sort();
             assert_eq!(sorted, (0..6).collect::<Vec<usize>>(), "必须是真排列");
         }
-        assert_ne!(shuffled(6, 1), shuffled(6, 2), "不同种子应该给出不同排列（不是保证，但这里成立）");
+        assert_ne!(
+            shuffled(6, 1),
+            shuffled(6, 2),
+            "不同种子应该给出不同排列（不是保证，但这里成立）"
+        );
     }
 }

@@ -247,7 +247,10 @@ mod tests {
         assert_eq!(startup_from_args(args(&["--import"])), Startup::Normal);
         assert_eq!(startup_from_args(args(&["--import", ""])), Startup::Normal);
         assert_eq!(startup_from_args(args(&["--import="])), Startup::Normal);
-        assert_eq!(startup_from_args(args(&["--import", "\"\""])), Startup::Normal);
+        assert_eq!(
+            startup_from_args(args(&["--import", "\"\""])),
+            Startup::Normal
+        );
     }
 
     #[test]
@@ -283,13 +286,23 @@ mod tests {
         //    （前端此刻可能还没挂载 ⇒ 早先那版 take() 会把路径当场丢掉 ✗）
         let delivered = deliver_pending(|p| seen.borrow_mut().push(format!("wake:{p}")));
         assert_eq!(delivered.as_deref(), Some("C:\\tmp\\x.docx"));
-        assert_eq!(pending_import_count(), 1, "⛔ 交付不许把没被听到的那一次吃掉");
-        assert_eq!(seen.borrow().as_slice(), ["C:\\tmp\\x.docx", "wake:C:\\tmp\\x.docx"]);
+        assert_eq!(
+            pending_import_count(),
+            1,
+            "⛔ 交付不许把没被听到的那一次吃掉"
+        );
+        assert_eq!(
+            seen.borrow().as_slice(),
+            ["C:\\tmp\\x.docx", "wake:C:\\tmp\\x.docx"]
+        );
 
         // ③ 前端挂载时 drain：**取走即空** ✓（⭐ 与深链 `deep_link_take` 同形 ✓）
         assert_eq!(take_pending_imports(), vec!["C:\\tmp\\x.docx".to_string()]);
         assert_eq!(pending_import_count(), 0);
-        assert!(take_pending_imports().is_empty(), "取走即空 ⇒ 第二次必须空 ✓");
+        assert!(
+            take_pending_imports().is_empty(),
+            "取走即空 ⇒ 第二次必须空 ✓"
+        );
 
         // ④ 队列空了之后再来一次叫醒 ⇒ 什么都不发（⛔ 不会重复建页 ✓）
         assert_eq!(deliver_pending(|_| panic!("队列空时不许再叫醒")), None);

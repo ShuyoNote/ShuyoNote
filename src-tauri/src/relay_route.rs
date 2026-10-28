@@ -181,7 +181,8 @@ pub fn append_virtual_peers(out: &mut Vec<crate::mesh::MeshPeer>) {
                 "[mesh] 跨网路线表：补了 {replaced} 个对端（{}；优先于 LAN）",
                 routes
                     .iter()
-                    .filter(|r| out.iter().any(|p| p.device_id == r.device_id && p.base.starts_with(crate::mesh_endpoint::RELAY_BASE_PREFIX)))
+                    .filter(|r| out.iter().any(|p| p.device_id == r.device_id
+                        && p.base.starts_with(crate::mesh_endpoint::RELAY_BASE_PREFIX)))
                     .map(|r| r.device_id.clone())
                     .collect::<Vec<_>>()
                     .join("、")
@@ -201,10 +202,7 @@ pub fn append_virtual_peers(out: &mut Vec<crate::mesh::MeshPeer>) {
 ///
 /// ⚠️ 为什么不再「已有就跳过」：同网验收时 LAN 发现永远先命中 ⇒ relay 那条路
 /// 永远不补、永远测不到（2026-10-25 真机读数）。路线表是**显式配置** ⇒ 它该赢。
-pub fn merge_route_peers(
-    out: &mut Vec<crate::mesh::MeshPeer>,
-    routes: &[RelayRoute],
-) -> usize {
+pub fn merge_route_peers(out: &mut Vec<crate::mesh::MeshPeer>, routes: &[RelayRoute]) -> usize {
     if routes.is_empty() {
         return 0;
     }
@@ -237,9 +235,8 @@ mod tests {
     /// ⭐ 正常一条：node_id 大小写归一、地址校验通过。
     #[test]
     fn one_valid_route_parses() {
-        let raw = format!(
-            r#"{{"dev-abc": {{"node_id": "{OK_ID}", "addrs": ["192.168.0.105:8788"]}}}}"#
-        );
+        let raw =
+            format!(r#"{{"dev-abc": {{"node_id": "{OK_ID}", "addrs": ["192.168.0.105:8788"]}}}}"#);
         let routes = parse_routes(&raw).unwrap();
         assert_eq!(routes.len(), 1);
         assert_eq!(routes[0].device_id, "dev-abc");
@@ -275,9 +272,12 @@ mod tests {
             r#"{{"dev-a": {{"node_id": "{OK_ID}", "addrs": ["192.168.0.5:8788"]}}}}"#
         ))
         .unwrap();
-        assert_eq!(virtual_peers_from(&routes, &Default::default()).len(), 1, "空候选 ⇒ 补一个");
-        let seen: std::collections::HashSet<String> =
-            ["dev-a".to_string()].into_iter().collect();
+        assert_eq!(
+            virtual_peers_from(&routes, &Default::default()).len(),
+            1,
+            "空候选 ⇒ 补一个"
+        );
+        let seen: std::collections::HashSet<String> = ["dev-a".to_string()].into_iter().collect();
         assert!(
             virtual_peers_from(&routes, &seen).is_empty(),
             "已经在局域网候选里的设备不许重复补"
@@ -300,14 +300,22 @@ mod tests {
         ))
         .unwrap();
         let mut out = vec![
-            MeshPeer { device_id: "dev-b".into(), base: "http://192.168.0.6:8788".into() },
-            MeshPeer { device_id: "dev-a".into(), base: "http://192.168.0.5:8788".into() },
+            MeshPeer {
+                device_id: "dev-b".into(),
+                base: "http://192.168.0.6:8788".into(),
+            },
+            MeshPeer {
+                device_id: "dev-a".into(),
+                base: "http://192.168.0.5:8788".into(),
+            },
         ];
         let replaced = merge_route_peers(&mut out, &routes);
         assert_eq!(replaced, 1, "dev-a 应从 LAN 被替换成跨网");
         assert_eq!(out.len(), 2, "不许重复拉同一个 device");
         assert_eq!(out[0].device_id, "dev-a", "跨网候选必须排在前面");
-        assert!(out[0].base.starts_with(crate::mesh_endpoint::RELAY_BASE_PREFIX));
+        assert!(out[0]
+            .base
+            .starts_with(crate::mesh_endpoint::RELAY_BASE_PREFIX));
         assert_eq!(out[1].device_id, "dev-b", "无关的 LAN 对端要保持原样");
     }
 
@@ -315,7 +323,10 @@ mod tests {
     #[test]
     fn no_routes_leave_candidates_untouched() {
         use crate::mesh::MeshPeer;
-        let mut out = vec![MeshPeer { device_id: "dev-a".into(), base: "http://x:1".into() }];
+        let mut out = vec![MeshPeer {
+            device_id: "dev-a".into(),
+            base: "http://x:1".into(),
+        }];
         assert_eq!(merge_route_peers(&mut out, &[]), 0);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].base, "http://x:1");
@@ -347,7 +358,8 @@ mod tests {
     /// ⭐ **异网寻址判据 ②**：`relay` 写了但不是 http(s):// ⇒ 报错并点名（⛔ 不猜、不静默丢）。
     #[test]
     fn a_relay_without_scheme_is_refused_and_named() {
-        let raw = format!(r#"{{"dev-s": {{"node_id": "{OK_ID}", "relay": "112.124.60.73:8880"}}}}"#);
+        let raw =
+            format!(r#"{{"dev-s": {{"node_id": "{OK_ID}", "relay": "112.124.60.73:8880"}}}}"#);
         let err = parse_routes(&raw).expect_err("缺 scheme 必须报错");
         assert!(err.contains("dev-s"), "要点名是哪一条：{err}");
         assert!(err.contains("http(s)://"), "要说清正确写法：{err}");

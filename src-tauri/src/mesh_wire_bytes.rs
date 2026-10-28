@@ -31,7 +31,9 @@ fn spawn_counting_proxy(upstream: SocketAddr) -> (u16, Arc<AtomicUsize>, Arc<Ato
             let Ok(client) = sock else { continue };
             let (u, d) = (u.clone(), d.clone());
             std::thread::spawn(move || {
-                let Ok(server) = TcpStream::connect(upstream) else { return };
+                let Ok(server) = TcpStream::connect(upstream) else {
+                    return;
+                };
                 let (mut cr, mut sw) = (client.try_clone().unwrap(), server.try_clone().unwrap());
                 let uc = u.clone();
                 let t = std::thread::spawn(move || {
@@ -74,7 +76,8 @@ fn spawn_counting_proxy(upstream: SocketAddr) -> (u16, Arc<AtomicUsize>, Arc<Ato
 fn conn_with(device: &str) -> Connection {
     let c = Connection::open_in_memory().unwrap();
     crate::db::migrate(&c, "ws").unwrap();
-    c.execute_batch("ATTACH DATABASE ':memory:' AS meta").unwrap();
+    c.execute_batch("ATTACH DATABASE ':memory:' AS meta")
+        .unwrap();
     c.execute_batch(
         "CREATE TABLE IF NOT EXISTS meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
          CREATE TABLE IF NOT EXISTS meta.sync_profiles (
@@ -160,7 +163,9 @@ async fn mesh_pull_wire_bytes() {
     let (proxy_port, up, down) = spawn_counting_proxy(upstream);
 
     println!("\n============ mesh /mesh/pull 线上字节 ============");
-    println!("窗口 {upstream} ｜ 计数代理 127.0.0.1:{proxy_port} ｜ reqwest = 本 crate 的直接依赖版本");
+    println!(
+        "窗口 {upstream} ｜ 计数代理 127.0.0.1:{proxy_port} ｜ reqwest = 本 crate 的直接依赖版本"
+    );
     println!("库里有 10 条记录，每条原始 payload ≈ 10,000 B（带大量引号）");
 
     let client = reqwest::Client::new();
@@ -209,9 +214,8 @@ async fn mesh_pull_wire_bytes() {
         let mut tu = 0usize;
         let mut td = 0usize;
         // `since` 取最大那条 ⇒ **空轮询**（库里 10 条、游标在最前 ⇒ 一条也不返回 ✓）
-        let url = format!(
-            "http://127.0.0.1:{proxy_port}/mesh/pull?space_id={space}&since=10&limit=1000"
-        );
+        let url =
+            format!("http://127.0.0.1:{proxy_port}/mesh/pull?space_id={space}&since=10&limit=1000");
         for i in 1..=rounds {
             up.store(0, Ordering::Relaxed);
             down.store(0, Ordering::Relaxed);

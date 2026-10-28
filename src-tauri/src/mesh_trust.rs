@@ -85,9 +85,8 @@ pub fn trust_state_view(state: TrustState, active: bool, pending: usize) -> Mesh
 #[tauri::command]
 pub fn mesh_trust_state() -> MeshTrustStateView {
     let now = crate::lan_state::now_ms();
-    let (state, active, pending) = crate::lan_state::with_trust(|h| {
-        (h.state(), h.is_active(now), h.pending_asks(now).len())
-    });
+    let (state, active, pending) =
+        crate::lan_state::with_trust(|h| (h.state(), h.is_active(now), h.pending_asks(now).len()));
     trust_state_view(state, active, pending)
 }
 
@@ -262,7 +261,10 @@ mod tests {
         let a = new_trust_ask();
         let b = new_trust_ask();
         assert_eq!(a.len(), 64, "32 字节 ⇒ 64 个十六进制字符");
-        assert!(a.chars().all(|ch| ch.is_ascii_hexdigit()), "只许十六进制：{a}");
+        assert!(
+            a.chars().all(|ch| ch.is_ascii_hexdigit()),
+            "只许十六进制：{a}"
+        );
         assert_ne!(a, b, "两次握手串不许相同（⛔ 那不是一次性 ✗）");
         // ⚠️ 它是"一次性"的凭据本身 ⇒ ⛔ 不许退化成空串（空串在 `nonce_matches` 里一律不算对上 ✓）。
         assert!(!a.is_empty());

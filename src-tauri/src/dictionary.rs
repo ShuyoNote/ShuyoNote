@@ -173,7 +173,8 @@ pub fn resolve_db_path(env: Option<&Path>, app_data: Option<&Path>) -> Option<Pa
 ///
 /// `expected_bytes == 0` 表示"字节数这条没钉"（样本/联调场景）⇒ 只核 sha256。
 pub fn pack_check(path: &Path, expected_bytes: u64, expected_sha: &str) -> Result<(), String> {
-    let meta = std::fs::metadata(path).map_err(|e| format!("读不到词库文件（{}）：{e}", path.display()))?;
+    let meta = std::fs::metadata(path)
+        .map_err(|e| format!("读不到词库文件（{}）：{e}", path.display()))?;
     if expected_bytes > 0 && meta.len() != expected_bytes {
         return Err(format!(
             "词库文件不完整：{} 字节 ≠ 钉住的 {expected_bytes} 字节（半包/写坏都不会被当成已就绪，请重新下载）",
@@ -224,8 +225,30 @@ pub fn normalize(raw: &str) -> String {
         .trim_matches(|c: char| {
             matches!(
                 c,
-                '"' | '\'' | '“' | '”' | '‘' | '’' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | '.'
-                    | ';' | ':' | '!' | '?' | '。' | '，' | '、' | '：' | '；' | '！' | '？'
+                '"' | '\''
+                    | '“'
+                    | '”'
+                    | '‘'
+                    | '’'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | ','
+                    | '.'
+                    | ';'
+                    | ':'
+                    | '!'
+                    | '?'
+                    | '。'
+                    | '，'
+                    | '、'
+                    | '：'
+                    | '；'
+                    | '！'
+                    | '？'
             )
         })
         .trim()
@@ -478,9 +501,13 @@ pub fn status_at(
                 .to_string(),
         };
     }
-    let entries = open_readonly(path)
-        .ok()
-        .and_then(|c| if table_exists(&c).ok() == Some(true) { count_entries(&c) } else { None });
+    let entries = open_readonly(path).ok().and_then(|c| {
+        if table_exists(&c).ok() == Some(true) {
+            count_entries(&c)
+        } else {
+            None
+        }
+    });
     DictionaryStatus {
         available: true,
         path: Some(path.display().to_string()),
@@ -489,7 +516,9 @@ pub fn status_at(
         source,
         verified,
         message: match entries {
-            Some(n) => format!("本地英汉词库就绪（{n} 条词条）——中文词条不在其中，界面会如实说走 AI。"),
+            Some(n) => {
+                format!("本地英汉词库就绪（{n} 条词条）——中文词条不在其中，界面会如实说走 AI。")
+            }
             None => "词库文件在，但读不出词条数（schema 不认识？）⇒ 界面按「查不到」如实显示。"
                 .to_string(),
         },
@@ -568,7 +597,12 @@ pub async fn dictionary_status(app: tauri::AppHandle) -> DictionaryStatus {
         Some((p, false)) => (Some(p), None), // 开发覆盖口：没有可核的 pin
         None => (None, None),
     };
-    status_at(path.as_deref(), env.as_deref(), app_data.as_deref(), verified)
+    status_at(
+        path.as_deref(),
+        env.as_deref(),
+        app_data.as_deref(),
+        verified,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -583,8 +617,8 @@ pub async fn dictionary_status(app: tauri::AppHandle) -> DictionaryStatus {
 // ⭐ **第 0 片后半（2026-10-14）**：那条链**整段搬到** `engine_pack.rs` ✓ ——
 //   本文件只留**薄适配**（`pack_path` ／ `ecdict_pins` ／ `default_pack_url` ／ `fetch_default_archive` ✓）✓。
 use crate::engine_pack::{
-    decode_blob_json, fetch_archive_from, install_pack_from_archive_with,
-    PackInstallReport, PackPins, MIRROR_BLOBS_API, MIRROR_CONTENTS_API,
+    decode_blob_json, fetch_archive_from, install_pack_from_archive_with, PackInstallReport,
+    PackPins, MIRROR_BLOBS_API, MIRROR_CONTENTS_API,
 };
 // ⚠️ 搬走之后**别的模块仍按老路径用它**（`storage.rs:234/944` 的 `crate::dictionary::sha256_hex` ✓）
 //    ⇒ ⭐ 这里**转出去**（⛔ 不是再写一份 ✗）—— ⭐ 搬移**不改变对外路径** ✓。
@@ -601,9 +635,8 @@ pub const ECDICT_PACK_MIRROR_PATH: &str = "mirror/ecdict/ecdict-en-zh-v1.db.gz";
 /// "**能查的**那份"（库）—— 中间隔了一次**解压**，而解压是可能出错的（半截、错库）。
 /// ⛔ 两套都要核；只核一套就等于"信解压"。
 pub const ECDICT_DB_BYTES: u64 = 89_735_168;
-pub const ECDICT_DB_SHA256: &str = "5dc10a51f33a0a61d4cb4f368a220a50f8bccb8c2ff3488fdadd5eaaaea2bb31";
-
-
+pub const ECDICT_DB_SHA256: &str =
+    "5dc10a51f33a0a61d4cb4f368a220a50f8bccb8c2ff3488fdadd5eaaaea2bb31";
 
 /// 词库的钉子（生产路径用）。
 pub fn ecdict_pins() -> Result<PackPins, String> {
@@ -617,16 +650,12 @@ pub fn ecdict_pins() -> Result<PackPins, String> {
     })
 }
 
-
 /// 默认下载地址：contents API ＋ 相对路径 ＋ `?ref=main`（与前端那条**同一个形状**）。
 ///
 /// ⚠️ **这个文件还没提进镜像仓**（提包归 Lead）⇒ 今天点下载会拿到"取不到"，而不是假装成功。
 pub fn default_pack_url() -> String {
     format!("{MIRROR_CONTENTS_API}{ECDICT_PACK_MIRROR_PATH}?ref=main")
 }
-
-
-
 
 /// 取一份（前端/镜像）并落盘：`url` 不给就用镜像仓那条默认地址。
 ///
@@ -665,7 +694,6 @@ pub async fn dictionary_install_pack(
     report.source = source;
     Ok(report)
 }
-
 
 /// 镜像仓的**两步默认取法** —— ⭐ 端点实测（见 `MIRROR_BLOBS_API` 的注释）：只有 `git/blobs` 成立。
 ///
@@ -721,8 +749,22 @@ mod tests {
         .expect("建表");
         let rows = [
             ("apple", "ˈæpl", "a round fruit", "n. 苹果", "n", "zk gk"),
-            ("note", "nəʊt", "a short written record", "n. 笔记；便条", "n v", "zk"),
-            ("china", "ˈtʃaɪnə", "a country in east asia", "n. 中国", "n", "zk"),
+            (
+                "note",
+                "nəʊt",
+                "a short written record",
+                "n. 笔记；便条",
+                "n v",
+                "zk",
+            ),
+            (
+                "china",
+                "ˈtʃaɪnə",
+                "a country in east asia",
+                "n. 中国",
+                "n",
+                "zk",
+            ),
             ("give up", "", "to stop trying", "phr. 放弃", "phr", ""),
         ];
         for (w, ph, def, tr, pos, tag) in rows {
@@ -743,7 +785,11 @@ mod tests {
         match out {
             LookupOutcome::Found { matched, entry, .. } => {
                 assert_eq!(matched, "apple");
-                assert!(entry.translation.contains("苹果"), "释义应来自夹具：{:?}", entry);
+                assert!(
+                    entry.translation.contains("苹果"),
+                    "释义应来自夹具：{:?}",
+                    entry
+                );
             }
             other => panic!("apple 应当命中，实际 {other:?}"),
         }
@@ -783,14 +829,21 @@ mod tests {
         let p = fixture_file("dict-miss");
         let out = lookup_at(&p, "zzqxwv");
         match out {
-            LookupOutcome::NotFound { kind, message, query } => {
+            LookupOutcome::NotFound {
+                kind,
+                message,
+                query,
+            } => {
                 assert_eq!(kind, MissKind::NotFound);
                 assert_eq!(query, "zzqxwv");
                 assert!(message.contains("未收录"), "必须明说未收录：{message}");
                 assert!(message.contains("AI"), "必须指出可走 AI：{message}");
                 // ⛔ 不许出现任何"看起来像释义"的东西 —— 夹具里那几条释义一个都不许漏出来。
                 for leaked in ["苹果", "笔记", "中国", "fruit", "record", "country"] {
-                    assert!(!message.contains(leaked), "未收录文案里混进了释义「{leaked}」：{message}");
+                    assert!(
+                        !message.contains(leaked),
+                        "未收录文案里混进了释义「{leaked}」：{message}"
+                    );
                 }
             }
             other => panic!("不存在的词必须走未收录那条，实际 {other:?}"),
@@ -814,7 +867,8 @@ mod tests {
                         "{raw} 未收录时必须明说「无法确定」，实际：{message}"
                     );
                     // ⛔ 不许出现夹具里任何一条释义 —— 那才是"编造"。
-                    for leaked in ["苹果", "笔记", "中国", "放弃", "fruit", "record", "country"] {
+                    for leaked in ["苹果", "笔记", "中国", "放弃", "fruit", "record", "country"]
+                    {
                         assert!(
                             !message.contains(leaked),
                             "{raw} 的未收录文案里混进了释义「{leaked}」：{message}"
@@ -1112,7 +1166,10 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("sha256"), "原因里要说清是 sha256：{err}");
-        assert!(err.contains("没有写进你的目录"), "要告诉用户磁盘没动：{err}");
+        assert!(
+            err.contains("没有写进你的目录"),
+            "要告诉用户磁盘没动：{err}"
+        );
         assert!(!dest.exists(), "⛔ 指纹不符时不许留下正式文件");
         assert!(!part.exists(), "⛔ 指纹不符时连 .part 都要清掉");
 
@@ -1131,7 +1188,10 @@ mod tests {
         .unwrap();
         assert_eq!(rep.bytes, bytes.len() as u64);
         assert_eq!(rep.sha256, real_sha);
-        assert!(dest.exists() && !part.exists(), "成功路径：正式文件在、`.part` 已改名");
+        assert!(
+            dest.exists() && !part.exists(),
+            "成功路径：正式文件在、`.part` 已改名"
+        );
         // ⭐ 与下载判据 (b) 配对：装好之后**真的能查到**
         match lookup_at(&dest, "apple") {
             LookupOutcome::Found { entry, .. } => assert!(entry.translation.contains("苹果")),
@@ -1140,7 +1200,10 @@ mod tests {
         // 进度读数：0 → … → 末次 == 总字节；total 照传（这条给了 Content-Length）
         assert_eq!(seen.first().unwrap().0, 0);
         assert_eq!(seen.last().unwrap().0, bytes.len() as u64);
-        assert!(seen.iter().all(|(_, t)| *t == total), "给了 Content-Length 就要如实带上");
+        assert!(
+            seen.iter().all(|(_, t)| *t == total),
+            "给了 Content-Length 就要如实带上"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1154,7 +1217,16 @@ mod tests {
 
         // ① 半包（读到的比钉的少）⇒ 拒绝 ＋ 不留字节
         let mut c = std::io::Cursor::new(&bytes[..bytes.len() - 1]);
-        let err = install_pack_from_reader(&mut c, bytes.len() as u64, &sha, &part, &dest, None, &mut |_, _| {}).unwrap_err();
+        let err = install_pack_from_reader(
+            &mut c,
+            bytes.len() as u64,
+            &sha,
+            &part,
+            &dest,
+            None,
+            &mut |_, _| {},
+        )
+        .unwrap_err();
         assert!(err.contains("不完整"), "{err}");
         assert!(!dest.exists() && !part.exists(), "半包不许留字节");
 
@@ -1162,19 +1234,38 @@ mod tests {
         let mut extra = bytes.clone();
         extra.push(0);
         let mut c = std::io::Cursor::new(&extra);
-        let err = install_pack_from_reader(&mut c, bytes.len() as u64, &sha, &part, &dest, None, &mut |_, _| {}).unwrap_err();
+        let err = install_pack_from_reader(
+            &mut c,
+            bytes.len() as u64,
+            &sha,
+            &part,
+            &dest,
+            None,
+            &mut |_, _| {},
+        )
+        .unwrap_err();
         assert!(err.contains("超过"), "{err}");
         assert!(!dest.exists() && !part.exists(), "超长不许留字节");
 
         // ③ 清单没钉指纹 / 没钉字节数 ⇒ fail-closed（不许"没核就装"）
         let mut c = std::io::Cursor::new(&bytes);
-        assert!(install_pack_from_reader(&mut c, bytes.len() as u64, "", &part, &dest, None, &mut |_, _| {})
-            .unwrap_err()
-            .contains("sha256"));
+        assert!(install_pack_from_reader(
+            &mut c,
+            bytes.len() as u64,
+            "",
+            &part,
+            &dest,
+            None,
+            &mut |_, _| {}
+        )
+        .unwrap_err()
+        .contains("sha256"));
         let mut c = std::io::Cursor::new(&bytes);
-        assert!(install_pack_from_reader(&mut c, 0, &sha, &part, &dest, None, &mut |_, _| {})
-            .unwrap_err()
-            .contains("字节数"));
+        assert!(
+            install_pack_from_reader(&mut c, 0, &sha, &part, &dest, None, &mut |_, _| {})
+                .unwrap_err()
+                .contains("字节数")
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1197,7 +1288,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(rep.bytes, bytes.len() as u64);
-        assert!(seen.iter().all(|(_, t)| t.is_none()), "没给 Content-Length ⇒ total 必须如实为 None");
+        assert!(
+            seen.iter().all(|(_, t)| t.is_none()),
+            "没给 Content-Length ⇒ total 必须如实为 None"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1236,8 +1330,16 @@ mod tests {
                 | (*c.get(2).unwrap_or(&0) as u32);
             out.push(A[(n >> 18 & 63) as usize] as char);
             out.push(A[(n >> 12 & 63) as usize] as char);
-            out.push(if c.len() > 1 { A[(n >> 6 & 63) as usize] as char } else { '=' });
-            out.push(if c.len() > 2 { A[(n & 63) as usize] as char } else { '=' });
+            out.push(if c.len() > 1 {
+                A[(n >> 6 & 63) as usize] as char
+            } else {
+                '='
+            });
+            out.push(if c.len() > 2 {
+                A[(n & 63) as usize] as char
+            } else {
+                '='
+            });
         }
         out
     }
@@ -1263,19 +1365,29 @@ mod tests {
         let part = dir.join("ecdict-en-zh.bin.part");
         let dest = dir.join("ecdict-en-zh.bin");
         let mut seen: Vec<(u64, Option<u64>)> = Vec::new();
-        let rep = install_pack_from_archive_with(&pins, &gz, &part, &dest, &mut |r, t| seen.push((r, t))).unwrap();
+        let rep =
+            install_pack_from_archive_with(&pins, &gz, &part, &dest, &mut |r, t| seen.push((r, t)))
+                .unwrap();
 
         assert_eq!(rep.bytes, db.len() as u64, "报的应当是**解压后**的字节数");
         assert_eq!(rep.sha256, sha256_hex(&db));
         assert!(dest.exists() && !part.exists(), "落盘后 `.part` 必须已改名");
         // ⭐ 关键：磁盘上必须是**解压后的库**（⛔ 不是 gzip 本身）—— "两处同名"那条族的预防。
-        assert_eq!(std::fs::read(&dest).unwrap(), db, "磁盘上的字节必须与原库逐字节相同");
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            db,
+            "磁盘上的字节必须与原库逐字节相同"
+        );
         // 而且真的能查（＝"下载成功 ⇒ 词库可用 ＋ 查询命中"）
         match lookup_at(&dest, "apple") {
             LookupOutcome::Found { entry, .. } => assert!(entry.translation.contains("苹果")),
             other => panic!("装好之后必须查得到，实际 {other:?}"),
         }
-        assert_eq!(seen.last().unwrap().0, db.len() as u64, "进度末次＝解压后的字节数");
+        assert_eq!(
+            seen.last().unwrap().0,
+            db.len() as u64,
+            "进度末次＝解压后的字节数"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1291,22 +1403,28 @@ mod tests {
         // ① 指纹不符
         let mut pins = pins_for(&gz, &db);
         pins.archive_sha = "0".repeat(64);
-        let err = install_pack_from_archive_with(&pins, &gz, &part, &dest, &mut |_, _| {}).unwrap_err();
+        let err =
+            install_pack_from_archive_with(&pins, &gz, &part, &dest, &mut |_, _| {}).unwrap_err();
         assert!(err.contains("压缩包 sha256 不匹配"), "{err}");
         assert!(err.contains("没有写进你的目录"), "{err}");
-        assert!(!dest.exists() && !part.exists(), "压缩包这段拒了 ⇒ 磁盘上不许留字节");
+        assert!(
+            !dest.exists() && !part.exists(),
+            "压缩包这段拒了 ⇒ 磁盘上不许留字节"
+        );
 
         // ② 长度不符（半包）
         let mut pins2 = pins_for(&gz, &db);
         pins2.archive_bytes += 1;
-        let err = install_pack_from_archive_with(&pins2, &gz, &part, &dest, &mut |_, _| {}).unwrap_err();
+        let err =
+            install_pack_from_archive_with(&pins2, &gz, &part, &dest, &mut |_, _| {}).unwrap_err();
         assert!(err.contains("不完整"), "{err}");
         assert!(!dest.exists() && !part.exists());
 
         // ③ 压缩包对了、但**解压后的库**指纹不对 ⇒ 第二段拦下（⛔ 两段都要核）
         let mut pins3 = pins_for(&gz, &db);
         pins3.db_sha = "1".repeat(64);
-        let err = install_pack_from_archive_with(&pins3, &gz, &part, &dest, &mut |_, _| {}).unwrap_err();
+        let err =
+            install_pack_from_archive_with(&pins3, &gz, &part, &dest, &mut |_, _| {}).unwrap_err();
         assert!(err.contains("sha256"), "{err}");
         assert!(!dest.exists() && !part.exists(), "解压段拒了也不许留字节");
 
@@ -1317,7 +1435,8 @@ mod tests {
     fn blob_json_size_must_equal_the_decoded_length() {
         // ⭐ 判据 (d)：`git/blobs` 的 base64 解出来必须**正好**是 JSON 说的 `size`。
         let raw = gzip_of(b"ecdict-blob-fixture");
-        let good = serde_json::json!({ "encoding": "base64", "size": raw.len(), "content": b64(&raw) });
+        let good =
+            serde_json::json!({ "encoding": "base64", "size": raw.len(), "content": b64(&raw) });
         assert_eq!(decode_blob_json(&good).unwrap(), raw, "对得上就放行");
 
         let bad = serde_json::json!({ "encoding": "base64", "size": raw.len() + 1, "content": b64(&raw) });
@@ -1325,10 +1444,14 @@ mod tests {
         assert!(e.contains("size") && e.contains("不符"), "{e}");
 
         let no_size = serde_json::json!({ "encoding": "base64", "content": b64(&raw) });
-        assert!(decode_blob_json(&no_size).unwrap_err().contains("size"), "没 size ⇒ 拒（没核过长度不算校验过）");
+        assert!(
+            decode_blob_json(&no_size).unwrap_err().contains("size"),
+            "没 size ⇒ 拒（没核过长度不算校验过）"
+        );
 
         // ⚠️ 这就是 `contents` 对**大文件**的真实症状（实测：元数据对、content 长度 0）
-        let contents_shape = serde_json::json!({ "encoding": "none", "size": 39_126_809u64, "content": "" });
+        let contents_shape =
+            serde_json::json!({ "encoding": "none", "size": 39_126_809u64, "content": "" });
         let e = decode_blob_json(&contents_shape).unwrap_err();
         assert!(e.contains("base64") || e.contains("空"), "{e}");
     }
@@ -1352,9 +1475,16 @@ mod tests {
 
         let rep = install_pack_from_archive_with(&pins, &gz, &part, &dest, &mut |_, _| {}).unwrap();
         assert_eq!(rep.bytes, db.len() as u64);
-        assert!(dest.exists() && !part.exists(), "装完：正式文件在、`.part` 已改名");
+        assert!(
+            dest.exists() && !part.exists(),
+            "装完：正式文件在、`.part` 已改名"
+        );
         // ⭐ 关键：磁盘上必须是**干净的解压结果**（⛔ 不含一个字节的旧垃圾）
-        assert_eq!(std::fs::read(&dest).unwrap(), db, "旧 `.part` 的字节不许混进结果");
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            db,
+            "旧 `.part` 的字节不许混进结果"
+        );
         match lookup_at(&dest, "apple") {
             LookupOutcome::Found { entry, .. } => assert!(entry.translation.contains("苹果")),
             other => panic!("覆盖之后必须查得到，实际 {other:?}"),
@@ -1374,12 +1504,17 @@ mod tests {
         let mut pins = pins_for(&gz, &db);
         pins.archive_sha = "0".repeat(64); // 指纹不符 ⇒ 必须拒绝
 
-        let err = install_pack_from_archive_with(&pins, &gz, &part, &dest, &mut |_, _| {}).unwrap_err();
+        let err =
+            install_pack_from_archive_with(&pins, &gz, &part, &dest, &mut |_, _| {}).unwrap_err();
         assert!(err.contains("sha256"), "{err}");
 
         // ① 落点不存在 ⇒ 路径解析拿不到它
         assert!(!dest.exists(), "拒绝之后不许留下正式文件");
-        assert_eq!(resolve_db_path(None, Some(&app_data)), None, "拒绝之后不许被解析成词库");
+        assert_eq!(
+            resolve_db_path(None, Some(&app_data)),
+            None,
+            "拒绝之后不许被解析成词库"
+        );
         // ② 状态读数如实说"未就绪"（而不是"可用"）
         let st = status_at(None, None, Some(&app_data), None);
         assert!(!st.available, "校验不过 ⇒ available 必须为 false：{st:?}");
@@ -1393,9 +1528,15 @@ mod tests {
         //    （gzip 39,126,809 / ce0a2cf3…；解压后 89,735,168 / 5dc10a51…）。
         let pins = ecdict_pins().unwrap();
         assert_eq!(pins.archive_bytes, 39_126_809);
-        assert_eq!(pins.archive_sha, "ce0a2cf36c690038ff3d0e4d385ec18c04110db7a34e9bd8ba4ad30d76ee537b");
+        assert_eq!(
+            pins.archive_sha,
+            "ce0a2cf36c690038ff3d0e4d385ec18c04110db7a34e9bd8ba4ad30d76ee537b"
+        );
         assert_eq!(pins.db_bytes, 89_735_168);
-        assert_eq!(pins.db_sha, "5dc10a51f33a0a61d4cb4f368a220a50f8bccb8c2ff3488fdadd5eaaaea2bb31");
+        assert_eq!(
+            pins.db_sha,
+            "5dc10a51f33a0a61d4cb4f368a220a50f8bccb8c2ff3488fdadd5eaaaea2bb31"
+        );
         assert!(ECDICT_PACK_MIRROR_PATH.ends_with("ecdict-en-zh-v1.db.gz"));
     }
 }

@@ -35,7 +35,9 @@ pub(crate) const ECDICT_PACK_BYTES: u64 = 39_126_809;
 /// ⚠️ 将来清单搬进 `src/lib/abilities/manifest.json` 时，这里必须跟着一起搬 ✓）。
 pub(crate) fn expected_sha256(pack_id: &str) -> Option<&'static str> {
     match pack_id {
-        "pdf-engine-win-x64" => Some("808d36da9bc5a3104315fb307c80998121f565ee53953633bf33e80d7429e5ac"),
+        "pdf-engine-win-x64" => {
+            Some("808d36da9bc5a3104315fb307c80998121f565ee53953633bf33e80d7429e5ac")
+        }
         // 本地英汉词库（ECDICT）：**数据不入库**，pack 由 `scripts/fetch-ecdict.mjs` 产出（钉上游
         // commit/blob sha ＋ 报产物 sha256）。⭐ 这里钉的是**镜像仓上那个 gzip 压缩包**的 sha256：
         //   gzip 39,126,809 字节 / ce0a2cf3…537b ⇒ 解压后 89,735,168 字节 / 5dc10a51…aaaea2bb31（见 dictionary.rs）
@@ -137,7 +139,10 @@ pub fn save_ability_pack(
     // 本地审计一条 ✓（谁、何时、多大、什么指纹 ✓ —— 便于日后核对"这份是哪来的"✓）
     let stamp = chrono::Utc::now().to_rfc3339();
     let audit = dir.join("audit.log");
-    let line = format!("{stamp}\tpack={pack_id}\tbytes={}\tsha256={got}\n", bytes.len());
+    let line = format!(
+        "{stamp}\tpack={pack_id}\tbytes={}\tsha256={got}\n",
+        bytes.len()
+    );
     {
         use std::io::Write as _;
         let mut f = std::fs::OpenOptions::new()
@@ -171,8 +176,16 @@ mod tests {
                 | (*c.get(2).unwrap_or(&0) as u32);
             out.push(A[(n >> 18 & 63) as usize] as char);
             out.push(A[(n >> 12 & 63) as usize] as char);
-            out.push(if c.len() > 1 { A[(n >> 6 & 63) as usize] as char } else { '=' });
-            out.push(if c.len() > 2 { A[(n & 63) as usize] as char } else { '=' });
+            out.push(if c.len() > 1 {
+                A[(n >> 6 & 63) as usize] as char
+            } else {
+                '='
+            });
+            out.push(if c.len() > 2 {
+                A[(n & 63) as usize] as char
+            } else {
+                '='
+            });
         }
         out
     }
@@ -181,7 +194,10 @@ mod tests {
     fn base64_decodes_and_refuses_illegal_bytes() {
         assert_eq!(base64_decode("aGVsbG8=").unwrap(), b"hello");
         assert_eq!(base64_decode(&b64(b"abc")).unwrap(), b"abc");
-        assert_eq!(base64_decode(&b64(&[0u8, 255, 1])).unwrap(), vec![0u8, 255, 1]);
+        assert_eq!(
+            base64_decode(&b64(&[0u8, 255, 1])).unwrap(),
+            vec![0u8, 255, 1]
+        );
         // 换行/空白按惯例忽略 ✓（GitCode 返回的 base64 可能带折行 ✓）
         assert_eq!(base64_decode("aGVs\nbG8=").unwrap(), b"hello");
         // ⛔ 非法字符必须**报错**，不许静默丢字节 ✓
@@ -192,17 +208,24 @@ mod tests {
     #[test]
     fn whitelist_only_allows_the_packs_we_shipped() {
         assert!(expected_sha256("pdf-engine-win-x64").is_some());
-        assert!(expected_sha256(ECDICT_PACK_ID).is_some(), "词库 pack 应在白名单里");
+        assert!(
+            expected_sha256(ECDICT_PACK_ID).is_some(),
+            "词库 pack 应在白名单里"
+        );
         // ⚠️ 钉的哈希必须是**真的 64 位十六进制** —— 这个位置最容易留下的坏值不是"没有条目"，
         //    而是"占了位、值是空的/占位的"：那样 `verify_pack` 会把它当成"永远对不上"，
         //    表现是"能力页永远装不上"（而不是报错）。判据 machine-check 一次。
         let sha = expected_sha256(ECDICT_PACK_ID).unwrap();
         assert_eq!(sha.len(), 64, "词库 pin 应当是 64 位十六进制，实际 {sha:?}");
         assert!(
-            sha.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            sha.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
             "词库 pin 应当是小写十六进制，实际 {sha:?}"
         );
-        assert!(ECDICT_PACK_BYTES > 0, "词库 pack 的字节数必须是真的读数（半包判据要用它）");
+        assert!(
+            ECDICT_PACK_BYTES > 0,
+            "词库 pack 的字节数必须是真的读数（半包判据要用它）"
+        );
         // 还没上架的四个 ⇒ 一律拒收 ✓
         for id in ["layout", "vlm-ocr", "embeddings", "transcription"] {
             assert!(expected_sha256(id).is_none(), "{id} 不该在白名单里");

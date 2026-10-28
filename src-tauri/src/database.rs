@@ -1,7 +1,7 @@
+use crate::db::now_ms;
 use crate::db::Db;
 use crate::models::{AttrDef, BoardGroup, DatabaseQuery, DatabaseRow, DbViewMeta, PageMeta};
 use crate::properties::parse_options;
-use crate::db::now_ms;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -31,7 +31,8 @@ fn db_columns(c: &Connection, db_page_id: &str) -> Result<Vec<AttrDef>, String> 
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -106,10 +107,7 @@ pub fn query_database(db: State<'_, Db>, db_page_id: String) -> Result<DatabaseQ
     let mut prop_map: HashMap<String, HashMap<String, String>> = HashMap::new();
     for (page_id, attr_id, value) in all_props {
         if attr_ids.contains(&attr_id) {
-            prop_map
-                .entry(page_id)
-                .or_default()
-                .insert(attr_id, value);
+            prop_map.entry(page_id).or_default().insert(attr_id, value);
         }
     }
 
@@ -164,7 +162,11 @@ pub fn query_database(db: State<'_, Db>, db_page_id: String) -> Result<DatabaseQ
 
 fn db_rule(c: &Connection, db_page_id: &str) -> Result<String, String> {
     let v = c
-        .query_row("SELECT db_rule FROM pages WHERE id = ?1", params![db_page_id], |r| r.get::<_, String>(0))
+        .query_row(
+            "SELECT db_rule FROM pages WHERE id = ?1",
+            params![db_page_id],
+            |r| r.get::<_, String>(0),
+        )
         .optional()
         .map_err(|e| e.to_string())?
         .unwrap_or_else(|| "{}".to_string());
@@ -235,8 +237,7 @@ fn matching_page_ids(c: &Connection, rule: &str) -> Result<Option<Vec<String>>, 
 #[tauri::command]
 pub fn set_db_rule(db: State<'_, Db>, db_page_id: String, rule: String) -> Result<(), String> {
     let c = conn(&db);
-    serde_json::from_str::<serde_json::Value>(&rule)
-        .map_err(|e| format!("规则格式错误: {e}"))?;
+    serde_json::from_str::<serde_json::Value>(&rule).map_err(|e| format!("规则格式错误: {e}"))?;
     let n = c
         .execute(
             "UPDATE pages SET db_rule = ?1 WHERE id = ?2 AND kind = 'database'",
@@ -257,7 +258,10 @@ pub fn get_db_rule(db: State<'_, Db>, db_page_id: String) -> Result<String, Stri
 
 /// Resolve page-reference values (`p:<id>`) to their target page titles.
 #[tauri::command]
-pub fn resolve_refs(db: State<'_, Db>, values: Vec<String>) -> Result<HashMap<String, String>, String> {
+pub fn resolve_refs(
+    db: State<'_, Db>,
+    values: Vec<String>,
+) -> Result<HashMap<String, String>, String> {
     let c = conn(&db);
     let mut out: HashMap<String, String> = HashMap::new();
     for v in values {
@@ -305,7 +309,8 @@ fn list_page_metas(c: &Connection) -> Result<Vec<PageMeta>, String> {
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 // Board grouped by a `select` attribute: one column per option + an "unset" column.
@@ -442,7 +447,15 @@ pub fn save_db_view(db: State<'_, Db>, args: SaveDbViewArgs) -> Result<DbViewMet
     c.execute(
         "INSERT INTO db_views (id, db_page_id, name, view_type, config, sort_order, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![id, args.db_page_id, args.name, args.view_type, args.config, next, now],
+        params![
+            id,
+            args.db_page_id,
+            args.name,
+            args.view_type,
+            args.config,
+            next,
+            now
+        ],
     )
     .map_err(|e| e.to_string())?;
     c.query_row(

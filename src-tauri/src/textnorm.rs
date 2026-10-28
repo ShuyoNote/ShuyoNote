@@ -76,7 +76,15 @@ mod tests {
     fn keeps_everything_else_untouched() {
         // §15.9 的明文口径：这两类**必须**原样保留 —— 这是最容易被"顺手改成整串 NFKC"的地方。
         for s in [
-            "１２３", "ＡＢＣ", "，。！？", "①", "㈱", "ﬁ", "abc 123", "第一段", "",
+            "１２３",
+            "ＡＢＣ",
+            "，。！？",
+            "①",
+            "㈱",
+            "ﬁ",
+            "abc 123",
+            "第一段",
+            "",
         ] {
             assert_eq!(normalize_for_match(s), s, "不该被折：{s}");
         }
@@ -102,13 +110,17 @@ mod tests {
                 .as_array()
                 .expect("in 必须是码点数组")
                 .iter()
-                .map(|v| char::from_u32(v.as_u64().expect("码点必须是整数") as u32).expect("非法码点"))
+                .map(|v| {
+                    char::from_u32(v.as_u64().expect("码点必须是整数") as u32).expect("非法码点")
+                })
                 .collect();
             let want: String = case["out"]
                 .as_array()
                 .expect("out 必须是码点数组")
                 .iter()
-                .map(|v| char::from_u32(v.as_u64().expect("码点必须是整数") as u32).expect("非法码点"))
+                .map(|v| {
+                    char::from_u32(v.as_u64().expect("码点必须是整数") as u32).expect("非法码点")
+                })
                 .collect();
             assert_eq!(normalize_for_match(&input), want, "夹具不一致：{name}");
         }

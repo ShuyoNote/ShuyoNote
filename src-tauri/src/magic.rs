@@ -165,7 +165,10 @@ mod tests {
         ];
         assert_eq!(
             sniff(&png),
-            Some(Magic { mime: "image/png", ext: "png" })
+            Some(Magic {
+                mime: "image/png",
+                ext: "png"
+            })
         );
     }
 
@@ -174,28 +177,46 @@ mod tests {
     fn recognises_the_types_that_gate_real_features() {
         assert_eq!(
             sniff(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n"),
-            Some(Magic { mime: "application/pdf", ext: "pdf" })
+            Some(Magic {
+                mime: "application/pdf",
+                ext: "pdf"
+            })
         );
         assert_eq!(
             sniff(&[0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]),
-            Some(Magic { mime: "application/zip", ext: "zip" })
+            Some(Magic {
+                mime: "application/zip",
+                ext: "zip"
+            })
         );
         assert_eq!(
             sniff(&[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F']),
-            Some(Magic { mime: "image/jpeg", ext: "jpg" })
+            Some(Magic {
+                mime: "image/jpeg",
+                ext: "jpg"
+            })
         );
         assert_eq!(
             sniff(b"GIF89a\x01\x00\x01\x00"),
-            Some(Magic { mime: "image/gif", ext: "gif" })
+            Some(Magic {
+                mime: "image/gif",
+                ext: "gif"
+            })
         );
         assert_eq!(
             sniff(b"RIFF\x24\x00\x00\x00WEBPVP8 "),
-            Some(Magic { mime: "image/webp", ext: "webp" })
+            Some(Magic {
+                mime: "image/webp",
+                ext: "webp"
+            })
         );
         // RIFF 的另一个孩子：WAVE 不能被当成 WebP
         assert_eq!(
             sniff(b"RIFF\x24\x00\x00\x00WAVEfmt "),
-            Some(Magic { mime: "audio/wav", ext: "wav" })
+            Some(Magic {
+                mime: "audio/wav",
+                ext: "wav"
+            })
         );
     }
 
@@ -203,19 +224,34 @@ mod tests {
     /// SVG 必须先于文本被认出来，否则 `image/svg+xml` 会被 `text/plain` 抢走。
     #[test]
     fn text_fallback_does_not_steal_svg() {
-        assert_eq!(sniff(b"# hello\n"), Some(Magic { mime: "text/plain", ext: "txt" }));
+        assert_eq!(
+            sniff(b"# hello\n"),
+            Some(Magic {
+                mime: "text/plain",
+                ext: "txt"
+            })
+        );
         assert_eq!(
             sniff(b"<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"),
-            Some(Magic { mime: "image/svg+xml", ext: "svg" })
+            Some(Magic {
+                mime: "image/svg+xml",
+                ext: "svg"
+            })
         );
         assert_eq!(
             sniff(b"<?xml version=\"1.0\"?>\n<svg width=\"1\"></svg>"),
-            Some(Magic { mime: "image/svg+xml", ext: "svg" })
+            Some(Magic {
+                mime: "image/svg+xml",
+                ext: "svg"
+            })
         );
         // XML 声明后面不是 <svg> ⇒ 只能算文本，不能谎称是图片
         assert_eq!(
             sniff(b"<?xml version=\"1.0\"?>\n<plist></plist>"),
-            Some(Magic { mime: "text/plain", ext: "txt" })
+            Some(Magic {
+                mime: "text/plain",
+                ext: "txt"
+            })
         );
     }
 
@@ -233,7 +269,10 @@ mod tests {
         assert_eq!(sniff(&[0xFF, 0xFB, 0x90, 0x00]), None);
         // BMP/TIFF 这类弱签名**故意不认**（见模块头注释）：退回 octet-stream，与今天一致
         assert_eq!(sniff(b"BM\x36\x00\x00\x00\x00\x00\x00\x00"), None);
-        assert_eq!(sniff(&[0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00]), None);
+        assert_eq!(
+            sniff(&[0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00]),
+            None
+        );
     }
 
     /// 多字节字符被截断在末尾时仍然是文本（读 512 字节正好切在一个中文词中间是常事）。

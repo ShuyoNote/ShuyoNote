@@ -82,7 +82,10 @@ impl SaveTarget {
     /// ——`new()` 需要 `AppHandle`，单测里造不出来，而 `direct()` 不需要。
     /// （`commit()` 需要把内容搬进 URI 的那一半仍然只有真机能验，见模块头注释。）
     pub(crate) fn direct(path: PathBuf) -> Self {
-        Self { write_path: path, staged: None }
+        Self {
+            write_path: path,
+            staged: None,
+        }
     }
 
     /// 解析目标位置。URI 目标会**立刻**在缓存里建中转目录（失败就别开始写）。
@@ -109,7 +112,11 @@ impl SaveTarget {
                 let tmp = dir.join(format!("{tmp_stem}-{}.part", uuid::Uuid::new_v4()));
                 Ok(Self {
                     write_path: tmp.clone(),
-                    staged: Some(Staged { app: app.clone(), uri, tmp }),
+                    staged: Some(Staged {
+                        app: app.clone(),
+                        uri,
+                        tmp,
+                    }),
                 })
             }
         }
@@ -170,11 +177,13 @@ fn copy_into_uri(app: &AppHandle, uri: &str, tmp: &Path) -> Result<(), String> {
     let mut input = std::fs::File::open(tmp).map_err(|e| format!("打开中转文件失败：{e}"))?;
     let mut buf = vec![0u8; 1024 * 1024]; // 1 MiB：备份/空间包可以很大，别整份读进内存
     loop {
-        let n = std::io::Read::read(&mut input, &mut buf).map_err(|e| format!("读取中转文件失败：{e}"))?;
+        let n = std::io::Read::read(&mut input, &mut buf)
+            .map_err(|e| format!("读取中转文件失败：{e}"))?;
         if n == 0 {
             break;
         }
-        out.write_all(&buf[..n]).map_err(|e| format!("写入选中位置失败：{e}"))?;
+        out.write_all(&buf[..n])
+            .map_err(|e| format!("写入选中位置失败：{e}"))?;
     }
     out.flush().map_err(|e| format!("写入选中位置失败：{e}"))?;
     Ok(())
@@ -196,7 +205,11 @@ mod tests {
             "a.zip",
             "C:relative.zip",
         ] {
-            assert_eq!(classify(p), Dest::Path(PathBuf::from(p)), "{p} 必须被判成路径");
+            assert_eq!(
+                classify(p),
+                Dest::Path(PathBuf::from(p)),
+                "{p} 必须被判成路径"
+            );
         }
     }
 
@@ -216,17 +229,26 @@ mod tests {
     /// 与失败表现（用户可能已经在保存对话框里建了文件）。
     #[test]
     fn direct_target_writes_in_place_and_commit_is_a_noop() {
-        let dir = std::env::temp_dir().join(format!("shuyonote-save-target-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("shuyonote-save-target-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let out = dir.join("space.zip");
 
         let target = SaveTarget::direct(out.clone());
-        assert_eq!(target.write_path(), out.as_path(), "桌面必须直接写在目标路径上");
+        assert_eq!(
+            target.write_path(),
+            out.as_path(),
+            "桌面必须直接写在目标路径上"
+        );
         std::fs::write(target.write_path(), b"payload").unwrap();
         target.commit().unwrap();
 
-        assert_eq!(std::fs::read(&out).unwrap(), b"payload", "commit 不该动文件");
+        assert_eq!(
+            std::fs::read(&out).unwrap(),
+            b"payload",
+            "commit 不该动文件"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

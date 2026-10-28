@@ -59,17 +59,28 @@ fn parse_doc(doc_json: &str) -> Option<Value> {
 fn top_children(doc: &Value) -> Vec<Value> {
     doc.pointer("/root/children")
         .and_then(|children| children.as_array())
-        .map(|items| items.iter().filter(|item| item.is_object()).cloned().collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| item.is_object())
+                .cloned()
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 fn block_id_of(node: &Value) -> String {
-    node.get("blockId").and_then(|v| v.as_str()).unwrap_or_default().to_string()
+    node.get("blockId")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// 读一个块对象的 `blockRev`（只认**非负整数**；其余一律 `None` —— 与前端那份同一口径）。
 pub fn block_rev_of(node: &Value) -> Option<i64> {
-    node.get("blockRev").and_then(|v| v.as_i64()).filter(|rev| *rev >= 0)
+    node.get("blockRev")
+        .and_then(|v| v.as_i64())
+        .filter(|rev| *rev >= 0)
 }
 
 /// **规范化内容**：把 `blockRev` 字段（任意层级）去掉，并把对象的键**排序**后序列化。
@@ -80,7 +91,10 @@ pub fn canonical_content(value: &Value) -> String {
         match value {
             Value::Array(items) => Value::Array(items.iter().map(strip).collect()),
             Value::Object(map) => {
-                let mut keys: Vec<&String> = map.keys().filter(|key| key.as_str() != "blockRev").collect();
+                let mut keys: Vec<&String> = map
+                    .keys()
+                    .filter(|key| key.as_str() != "blockRev")
+                    .collect();
                 keys.sort();
                 let mut out = Map::new();
                 for key in keys {
@@ -99,7 +113,10 @@ pub fn read_top_level_block_revs(doc_json: &str) -> Vec<TopLevelBlockRev> {
     match parse_doc(doc_json) {
         Some(doc) => top_children(&doc)
             .iter()
-            .map(|child| TopLevelBlockRev { block_id: block_id_of(child), rev: block_rev_of(child) })
+            .map(|child| TopLevelBlockRev {
+                block_id: block_id_of(child),
+                rev: block_rev_of(child),
+            })
             .collect(),
         None => Vec::new(),
     }
@@ -109,7 +126,11 @@ pub fn read_top_level_block_revs(doc_json: &str) -> Vec<TopLevelBlockRev> {
 ///
 /// ⚠️ 它是"整页"的量，不是"这一块"的量 —— 与裁定 §7 的 `max(整页见过的 rev) + 1` 同一口径。
 pub fn max_block_rev(doc_json: &str) -> i64 {
-    read_top_level_block_revs(doc_json).iter().filter_map(|b| b.rev).max().unwrap_or(0)
+    read_top_level_block_revs(doc_json)
+        .iter()
+        .filter_map(|b| b.rev)
+        .max()
+        .unwrap_or(0)
 }
 
 /// ★ **rev 的写入口**：拿"上一版"（baseline）与"这一版"比一遍，给每个**有身份的顶层块**写 `blockRev`。
@@ -139,7 +160,10 @@ pub fn assign_block_revs(prev_json: &str, next_json: &str) -> String {
 
     let max_seen = max_block_rev(prev_json).max(max_block_rev(next_json));
 
-    if let Some(children) = doc.pointer_mut("/root/children").and_then(|c| c.as_array_mut()) {
+    if let Some(children) = doc
+        .pointer_mut("/root/children")
+        .and_then(|c| c.as_array_mut())
+    {
         for node in children.iter_mut() {
             if !node.is_object() {
                 continue;
@@ -149,10 +173,13 @@ pub fn assign_block_revs(prev_json: &str, next_json: &str) -> String {
                 continue; // 口径 2：没身份就不写
             }
             let prev = prev_by_id.get(&id);
-            let unchanged =
-                prev.map(|p| canonical_content(p) == canonical_content(node)).unwrap_or(false);
+            let unchanged = prev
+                .map(|p| canonical_content(p) == canonical_content(node))
+                .unwrap_or(false);
             let rev = if unchanged {
-                prev.and_then(block_rev_of).or_else(|| block_rev_of(node)).unwrap_or(0)
+                prev.and_then(block_rev_of)
+                    .or_else(|| block_rev_of(node))
+                    .unwrap_or(0)
             } else {
                 max_seen + 1 // 改了 / 新块
             };
@@ -196,14 +223,20 @@ mod tests {
     }
 
     fn rev_of(json_str: &str, block_id: &str) -> Option<i64> {
-        revs_of(json_str).into_iter().find(|(id, _)| id == block_id).and_then(|(_, rev)| rev)
+        revs_of(json_str)
+            .into_iter()
+            .find(|(id, _)| id == block_id)
+            .and_then(|(_, rev)| rev)
     }
 
     #[test]
     fn unchanged_block_keeps_the_baseline_rev() {
         let prev = doc(vec![para("b1", "没动", Some(5))]);
         let next = doc(vec![para("b1", "没动", None)]);
-        assert_eq!(revs_of(&assign_block_revs(&prev, &next)), vec![("b1".to_string(), Some(5))]);
+        assert_eq!(
+            revs_of(&assign_block_revs(&prev, &next)),
+            vec![("b1".to_string(), Some(5))]
+        );
     }
 
     #[test]
@@ -225,8 +258,14 @@ mod tests {
 
     #[test]
     fn new_block_gets_max_seen_plus_one_and_deleted_block_disappears() {
-        let prev = doc(vec![para("b1", "留着", Some(2)), para("b-gone", "被删了", Some(2))]);
-        let next = doc(vec![para("b1", "留着", None), para("b-new", "新来的", None)]);
+        let prev = doc(vec![
+            para("b1", "留着", Some(2)),
+            para("b-gone", "被删了", Some(2)),
+        ]);
+        let next = doc(vec![
+            para("b1", "留着", None),
+            para("b-new", "新来的", None),
+        ]);
         let out = assign_block_revs(&prev, &next);
         assert_eq!(rev_of(&out, "b1"), Some(2));
         assert_eq!(rev_of(&out, "b-new"), Some(3));
@@ -236,7 +275,10 @@ mod tests {
     #[test]
     fn block_without_identity_gets_no_rev() {
         let prev = doc(vec![para("b1", "有身份", Some(1))]);
-        let next = doc(vec![para("b1", "有身份", None), json!({ "type": "paragraph", "children": [] })]);
+        let next = doc(vec![
+            para("b1", "有身份", None),
+            json!({ "type": "paragraph", "children": [] }),
+        ]);
         let out: Value = serde_json::from_str(&assign_block_revs(&prev, &next)).unwrap();
         assert!(out.pointer("/root/children/1/blockRev").is_none());
     }
@@ -283,18 +325,31 @@ mod tests {
     #[test]
     fn dirty_input_is_returned_unchanged() {
         let prev = doc(vec![para("b1", "x", Some(1))]);
-        for bad in ["not json", "{}", "{\"root\":null}", "{\"root\":{\"children\":\"nope\"}}"] {
+        for bad in [
+            "not json",
+            "{}",
+            "{\"root\":null}",
+            "{\"root\":{\"children\":\"nope\"}}",
+        ] {
             assert_eq!(assign_block_revs(&prev, bad), bad);
         }
-        assert!(assign_block_revs("not json", &doc(vec![para("b1", "x", None)])).contains("blockRev"));
+        assert!(
+            assign_block_revs("not json", &doc(vec![para("b1", "x", None)])).contains("blockRev")
+        );
     }
 
     #[test]
     fn stage1_promise_holds_at_this_layer() {
         // 两台设备各改**不同块** ⇒ 两边每个块都有 rev，且各改的那块更大（⇒ 判定层不会落进"缺 rev ⇒ 冲突"）。
         let base = doc(vec![para("b1", "原始一", None), para("b2", "原始二", None)]);
-        let a = assign_block_revs(&base, &doc(vec![para("b1", "A 改的", None), para("b2", "原始二", None)]));
-        let b = assign_block_revs(&base, &doc(vec![para("b1", "原始一", None), para("b2", "B 改的", None)]));
+        let a = assign_block_revs(
+            &base,
+            &doc(vec![para("b1", "A 改的", None), para("b2", "原始二", None)]),
+        );
+        let b = assign_block_revs(
+            &base,
+            &doc(vec![para("b1", "原始一", None), para("b2", "B 改的", None)]),
+        );
 
         assert_eq!(rev_of(&a, "b1"), Some(1));
         assert_eq!(rev_of(&a, "b2"), Some(0));
@@ -322,7 +377,13 @@ mod tests {
     fn max_block_rev_reads_zero_when_unreadable() {
         assert_eq!(max_block_rev("not json"), 0);
         assert_eq!(max_block_rev(&doc(vec![para("b1", "x", None)])), 0);
-        assert_eq!(max_block_rev(&doc(vec![para("b1", "x", Some(3)), para("b2", "y", Some(9))])), 9);
+        assert_eq!(
+            max_block_rev(&doc(vec![
+                para("b1", "x", Some(3)),
+                para("b2", "y", Some(9))
+            ])),
+            9
+        );
     }
 
     #[test]

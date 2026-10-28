@@ -214,9 +214,12 @@ async fn relay_endpoint_for(
         .filter_map(|a| a.parse::<SocketAddr>().ok().map(iroh::TransportAddr::Ip))
         .collect();
     if let Some(r) = route.relay.as_deref() {
-        let url: iroh::RelayUrl = r
-            .parse()
-            .map_err(|e| format!("路线表里 {} 的 relay 地址 {:?} 解析失败：{e}", peer.device_id, r))?;
+        let url: iroh::RelayUrl = r.parse().map_err(|e| {
+            format!(
+                "路线表里 {} 的 relay 地址 {:?} 解析失败：{e}",
+                peer.device_id, r
+            )
+        })?;
         addrs.insert(iroh::TransportAddr::Relay(url));
     }
     if addrs.is_empty() {
@@ -228,11 +231,9 @@ async fn relay_endpoint_for(
     let id_bytes = crate::relay_tunnel::iroh_client::node_id_bytes(&route.node_id)?;
     let id = iroh::PublicKey::from_bytes(&id_bytes)
         .map_err(|e| format!("路线表里 {} 的 node_id 不是合法公钥：{e}", peer.device_id))?;
-    let ep = crate::relay_tunnel::iroh_client::RelayEndpoint::connect(iroh::EndpointAddr {
-        id,
-        addrs,
-    })
-    .await?;
+    let ep =
+        crate::relay_tunnel::iroh_client::RelayEndpoint::connect(iroh::EndpointAddr { id, addrs })
+            .await?;
     Ok(Box::new(ep))
 }
 
@@ -256,8 +257,14 @@ mod tests {
     /// 拼接口径：base 末尾有/没有 `/` 结果一致；target 原样接在后面。
     #[test]
     fn joining_keeps_the_old_shape() {
-        assert_eq!(join("http://192.168.0.5:8788", "/mesh/pull?x=1"), "http://192.168.0.5:8788/mesh/pull?x=1");
-        assert_eq!(join("http://192.168.0.5:8788/", "/mesh/pull?x=1"), "http://192.168.0.5:8788/mesh/pull?x=1");
+        assert_eq!(
+            join("http://192.168.0.5:8788", "/mesh/pull?x=1"),
+            "http://192.168.0.5:8788/mesh/pull?x=1"
+        );
+        assert_eq!(
+            join("http://192.168.0.5:8788/", "/mesh/pull?x=1"),
+            "http://192.168.0.5:8788/mesh/pull?x=1"
+        );
     }
 
     /// ⭐ **2026-10-25（Step 3-1 判据）**：`relay:` 前缀的对端**不许**被当成局域网地址去连 ——

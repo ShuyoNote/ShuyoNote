@@ -74,7 +74,11 @@ pub struct Hlc {
 impl Hlc {
     /// 一台设备的起点（`(0, 0, device_id)`）。**不读表**：真正的第一戳由 `tick` 产生。
     pub fn genesis(device_id: impl Into<String>) -> Self {
-        Hlc { wall_ms: 0, counter: 0, device_id: device_id.into() }
+        Hlc {
+            wall_ms: 0,
+            counter: 0,
+            device_id: device_id.into(),
+        }
     }
 
     /// 本机产生一个事件 ⇒ 返回新戳（也把本地时钟推进到它）。
@@ -158,7 +162,10 @@ impl Hlc {
     /// 于是 SQLite 里可以直接 `ORDER BY stamp` / 建索引排序，**不用解析**。
     /// `device_id` 里**可以有冒号**（解码时只切前两个）。
     pub fn encode(&self) -> String {
-        format!("{:019}:{:010}:{}", self.wall_ms, self.counter, self.device_id)
+        format!(
+            "{:019}:{:010}:{}",
+            self.wall_ms, self.counter, self.device_id
+        )
     }
 
     /// 读回一枚戳。**只认规范形态**：解出来之后必须能重新编码成**同一个字符串**，否则 `None`。
@@ -176,7 +183,11 @@ impl Hlc {
         if wall_ms < 0 || device_id.is_empty() {
             return None;
         }
-        let hlc = Hlc { wall_ms, counter, device_id };
+        let hlc = Hlc {
+            wall_ms,
+            counter,
+            device_id,
+        };
         if hlc.encode() == s {
             Some(hlc)
         } else {
@@ -208,11 +219,21 @@ pub struct StampedRecord {
 #[cfg(test)]
 impl StampedRecord {
     pub fn upsert(id: impl Into<String>, stamp: Hlc, body: impl Into<String>) -> Self {
-        StampedRecord { id: id.into(), stamp, body: body.into(), tombstone: false }
+        StampedRecord {
+            id: id.into(),
+            stamp,
+            body: body.into(),
+            tombstone: false,
+        }
     }
 
     pub fn delete(id: impl Into<String>, stamp: Hlc) -> Self {
-        StampedRecord { id: id.into(), stamp, body: String::new(), tombstone: true }
+        StampedRecord {
+            id: id.into(),
+            stamp,
+            body: String::new(),
+            tombstone: true,
+        }
     }
 }
 
@@ -235,7 +256,10 @@ pub fn winner<'a>(a: &'a StampedRecord, b: &'a StampedRecord) -> &'a StampedReco
 /// 两条性质：**幂等**（同一条再来一次，一字不变）与**与到达顺序无关**（先来后到不影响结果）。
 /// 靠的是 `winner` 这个全序，而不是"本地那版优先"或"先到者优先"。
 #[cfg(test)]
-pub fn merge_record(store: &mut std::collections::BTreeMap<String, StampedRecord>, rec: StampedRecord) {
+pub fn merge_record(
+    store: &mut std::collections::BTreeMap<String, StampedRecord>,
+    rec: StampedRecord,
+) {
     /// 库里现有那一版该不该让位 —— **只看数据**，不看它是本地还是远端、也不看谁先到。
     fn incoming_wins(rec: &StampedRecord, current: &StampedRecord) -> bool {
         winner(rec, current) == rec
@@ -268,7 +292,11 @@ pub fn projection(store: &std::collections::BTreeMap<String, StampedRecord>) -> 
     let live: Vec<Live> = store
         .values()
         .filter(|rec| !rec.tombstone)
-        .map(|rec| Live { id: &rec.id, stamp: &rec.stamp, body: &rec.body })
+        .map(|rec| Live {
+            id: &rec.id,
+            stamp: &rec.stamp,
+            body: &rec.body,
+        })
         .collect();
     serde_json::to_string(&live).expect("投影由本层构造，序列化不可能失败")
 }
@@ -318,7 +346,9 @@ pub fn stamp_of_payload(payload_json: &str) -> PayloadStamp {
             // 有一项、形状也对，但**不是一枚合法的戳** ⇒ 不猜（短写、缺格、负数都会被 `decode` 拒掉）。
             None => PayloadStamp::Malformed(format!("`{HLC_PAYLOAD_FIELD}` 不是一枚合法的戳：{s}")),
         },
-        Some(other) => PayloadStamp::Malformed(format!("`{HLC_PAYLOAD_FIELD}` 应当是字符串，收到 {other}")),
+        Some(other) => {
+            PayloadStamp::Malformed(format!("`{HLC_PAYLOAD_FIELD}` 应当是字符串，收到 {other}"))
+        }
     }
 }
 
@@ -326,11 +356,15 @@ pub fn stamp_of_payload(payload_json: &str) -> PayloadStamp {
 /// **不是 JSON ⇒ 响亮报错**（那是我们自己的载荷坏了，不该猜）；JSON 但非对象 ⇒ **原样返回**
 /// （形态是别人定的，包一层会改掉它的字节）。
 pub fn with_stamp(payload_json: &str, stamp: &Hlc) -> Result<String, String> {
-    let mut value: serde_json::Value = serde_json::from_str(payload_json).map_err(|e| e.to_string())?;
+    let mut value: serde_json::Value =
+        serde_json::from_str(payload_json).map_err(|e| e.to_string())?;
     let Some(obj) = value.as_object_mut() else {
         return Ok(payload_json.to_string());
     };
-    obj.insert(HLC_PAYLOAD_FIELD.to_string(), serde_json::Value::String(stamp.encode()));
+    obj.insert(
+        HLC_PAYLOAD_FIELD.to_string(),
+        serde_json::Value::String(stamp.encode()),
+    );
     serde_json::to_string(&value).map_err(|e| e.to_string())
 }
 
@@ -398,7 +432,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn hlc(wall: i64, counter: u32, device: &str) -> Hlc {
-        Hlc { wall_ms: wall, counter, device_id: device.to_string() }
+        Hlc {
+            wall_ms: wall,
+            counter,
+            device_id: device.to_string(),
+        }
     }
 
     /// 本机事件：**单调递增**，且物理钟不动时也递增（靠计数器）。
@@ -428,7 +466,10 @@ mod tests {
         let remote = fast.tick(5_000_000);
         let mut slow = Hlc::genesis("SLOW");
         let mine = slow.observe(&remote, 4_996_400); // 本机的表慢 3600 秒
-        assert!(mine > remote, "因果边必须落在序里：{mine:?} 应当 > {remote:?}");
+        assert!(
+            mine > remote,
+            "因果边必须落在序里：{mine:?} 应当 > {remote:?}"
+        );
         // 再产生一个本地事件：照样压在因果链后面。
         assert!(slow.tick(4_996_400) > mine);
     }
@@ -455,12 +496,19 @@ mod tests {
         let sa = a.tick(7);
         let sb = b.tick(7);
         assert_eq!((sa.wall_ms(), sa.counter()), (sb.wall_ms(), sb.counter()));
-        assert_ne!(sa, sb, "同一毫秒并发的两枚戳必须不同，否则全序就塌成'谁先到'");
+        assert_ne!(
+            sa, sb,
+            "同一毫秒并发的两枚戳必须不同，否则全序就塌成'谁先到'"
+        );
         // 两边对胜负的判断一致（这是"收敛"的前提，不是"正好"）。
         let a_rec = StampedRecord::upsert("k", sa, "A 的内容");
         let b_rec = StampedRecord::upsert("k", sb, "B 的内容");
         assert_eq!(winner(&a_rec, &b_rec).stamp.device_id(), "B");
-        assert_eq!(winner(&b_rec, &a_rec).stamp.device_id(), "B", "换个顺序算，赢家还是同一个");
+        assert_eq!(
+            winner(&b_rec, &a_rec).stamp.device_id(),
+            "B",
+            "换个顺序算，赢家还是同一个"
+        );
     }
 
     /// 全序是**真的全序**：反对称 ＋ 传递（拿一批戳穷举对拍）。
@@ -495,7 +543,13 @@ mod tests {
     /// 编码：往返逐字节相同，且**字典序 == HLC 序**。
     #[test]
     fn encode_round_trips_and_sorts_like_the_order() {
-        let mut all = vec![hlc(0, 0, "A"), hlc(1, 0, "A"), hlc(1, 1, "A"), hlc(1, 1, "B"), hlc(9_999_999_999, 42, "z")];
+        let mut all = vec![
+            hlc(0, 0, "A"),
+            hlc(1, 0, "A"),
+            hlc(1, 1, "A"),
+            hlc(1, 1, "B"),
+            hlc(9_999_999_999, 42, "z"),
+        ];
         all.sort();
         let encoded: Vec<String> = all.iter().map(Hlc::encode).collect();
         let mut by_string = encoded.clone();
@@ -503,7 +557,10 @@ mod tests {
         assert_eq!(encoded, by_string, "定长编码下，字典序必须与 Ord 一致");
 
         for stamp in &all {
-            assert_eq!(&Hlc::decode(&stamp.encode()).expect("自己编码的必须能读回"), stamp);
+            assert_eq!(
+                &Hlc::decode(&stamp.encode()).expect("自己编码的必须能读回"),
+                stamp
+            );
         }
         // 设备号里带冒号也能往返（解码只切前两格）。
         let odd = hlc(5, 1, "dev:with:colons");
@@ -514,11 +571,26 @@ mod tests {
     #[test]
     fn decode_refuses_anything_that_is_not_canonical() {
         assert_eq!(Hlc::decode("1000:1:A"), None, "短写会破坏字典序承诺 ⇒ 不收");
-        assert_eq!(Hlc::decode("0000000000000001000:0000000001"), None, "缺设备号");
-        assert_eq!(Hlc::decode("0000000000000001000:0000000001:"), None, "设备号是空的");
-        assert_eq!(Hlc::decode("-000000000000000001:0000000000:A"), None, "负毫秒");
+        assert_eq!(
+            Hlc::decode("0000000000000001000:0000000001"),
+            None,
+            "缺设备号"
+        );
+        assert_eq!(
+            Hlc::decode("0000000000000001000:0000000001:"),
+            None,
+            "设备号是空的"
+        );
+        assert_eq!(
+            Hlc::decode("-000000000000000001:0000000000:A"),
+            None,
+            "负毫秒"
+        );
         // 设备号里**可以**有冒号：只切前两格（这条同时钉住"多余冒号不当作格式错误"）。
-        assert_eq!(Hlc::decode("0000000000000001000:0000000001:A:多余"), Some(hlc(1_000, 1, "A:多余")));
+        assert_eq!(
+            Hlc::decode("0000000000000001000:0000000001:A:多余"),
+            Some(hlc(1_000, 1, "A:多余"))
+        );
         assert_eq!(Hlc::decode("不是戳"), None);
         assert_eq!(Hlc::decode(""), None);
     }
@@ -526,7 +598,11 @@ mod tests {
     /// 计数器用满 ⇒ **不发出重复的戳**（宁可多走一毫秒）。
     #[test]
     fn an_exhausted_counter_advances_the_wall_instead_of_repeating_a_stamp() {
-        let mut c = Hlc { wall_ms: 1_000, counter: u32::MAX, device_id: "A".to_string() };
+        let mut c = Hlc {
+            wall_ms: 1_000,
+            counter: u32::MAX,
+            device_id: "A".to_string(),
+        };
         let next = c.tick(999); // 表停在这一毫秒里
         assert_eq!(next, hlc(1_001, 0, "A"));
         assert!(next > hlc(1_000, u32::MAX, "A"));
@@ -557,18 +633,27 @@ mod tests {
             merge_record(&mut two, rec.clone()); // 重复投递
         }
         assert_eq!(projection(&one), projection(&two));
-        assert!(projection(&one).contains("A 后来的"), "后到的因果版本必须赢");
+        assert!(
+            projection(&one).contains("A 后来的"),
+            "后到的因果版本必须赢"
+        );
     }
 
     /// 墓碑：**带着戳**、进了库、但**不进投影**（＝删掉了）。
     #[test]
     fn a_tombstone_wins_by_its_stamp_and_leaves_the_projection() {
         let mut store = BTreeMap::new();
-        merge_record(&mut store, StampedRecord::upsert("k", hlc(10, 0, "A"), "内容"));
+        merge_record(
+            &mut store,
+            StampedRecord::upsert("k", hlc(10, 0, "A"), "内容"),
+        );
         merge_record(&mut store, StampedRecord::delete("k", hlc(11, 0, "B")));
         assert_eq!(projection(&store), "[]");
         // 一条**旧的**编辑迟到 ⇒ 不许把删掉的东西复活。
-        merge_record(&mut store, StampedRecord::upsert("k", hlc(9, 0, "C"), "迟到的旧内容"));
+        merge_record(
+            &mut store,
+            StampedRecord::upsert("k", hlc(9, 0, "C"), "迟到的旧内容"),
+        );
         assert_eq!(projection(&store), "[]");
         assert_eq!(store.len(), 1, "墓碑留在库里，只是不进投影");
     }
@@ -577,8 +662,14 @@ mod tests {
     #[test]
     fn the_projection_is_canonical_bytes() {
         let mut store = BTreeMap::new();
-        merge_record(&mut store, StampedRecord::upsert("k2", hlc(2, 0, "A"), "二"));
-        merge_record(&mut store, StampedRecord::upsert("k1", hlc(1, 0, "A"), "一"));
+        merge_record(
+            &mut store,
+            StampedRecord::upsert("k2", hlc(2, 0, "A"), "二"),
+        );
+        merge_record(
+            &mut store,
+            StampedRecord::upsert("k1", hlc(1, 0, "A"), "一"),
+        );
         assert_eq!(
             projection(&store),
             r#"[{"id":"k1","stamp":{"wallMs":1,"counter":0,"deviceId":"A"},"body":"一"},{"id":"k2","stamp":{"wallMs":2,"counter":0,"deviceId":"A"},"body":"二"}]"#
@@ -608,7 +699,10 @@ mod tests {
     /// ★ 三种情形**分得开**：没有 / 有且合法 / 有但坏（**不猜**）。
     #[test]
     fn the_three_stamp_states_are_told_apart() {
-        assert_eq!(stamp_of_payload(&payload("没有这一项")), PayloadStamp::Missing);
+        assert_eq!(
+            stamp_of_payload(&payload("没有这一项")),
+            PayloadStamp::Missing
+        );
         assert_eq!(
             stamp_of_payload(r#"{"id":"p1","_hlc":null}"#),
             PayloadStamp::Missing,
@@ -617,7 +711,7 @@ mod tests {
         // 形状不对 / 值不合法 ⇒ **Malformed**（不是 Missing：混成一种就会静默当成"老对端"）
         for bad in [
             r#"{"_hlc":123}"#,
-            r#"{"_hlc":"1000:1:A"}"#,       // 短写（`decode` 只认规范形态）
+            r#"{"_hlc":"1000:1:A"}"#, // 短写（`decode` 只认规范形态）
             r#"{"_hlc":"0000000000000001000:0000000001:"}"#, // 空设备号
             r#"{"_hlc":["x"]}"#,
         ] {
@@ -647,7 +741,11 @@ mod tests {
         let one = with_stamp(&payload("同"), &hlc(10, 0, "A")).unwrap();
         let two = with_stamp(&payload("同"), &hlc(20, 0, "B")).unwrap();
         assert_ne!(one, two);
-        assert_eq!(without_stamp(&one), without_stamp(&two), "只差一枚戳 ⇒ 内容必须相同");
+        assert_eq!(
+            without_stamp(&one),
+            without_stamp(&two),
+            "只差一枚戳 ⇒ 内容必须相同"
+        );
         // 与"键序不同"也无关（serde_json 默认键序 ⇒ 两侧都走同一条规范化）
         let reordered = r#"{"content_json":"{}","title":"同","id":"p1"}"#;
         assert_eq!(without_stamp(&one), without_stamp(reordered));
@@ -658,10 +756,19 @@ mod tests {
     fn both_sides_stamped_is_decided_by_the_stamp_and_is_order_independent() {
         let early = PayloadStamp::Ok(hlc(1_000, 0, "A"));
         let late = PayloadStamp::Ok(hlc(1_001, 0, "B"));
-        assert_eq!(verdict(&early, &late), Verdict::ByStamp { remote_wins: true });
-        assert_eq!(verdict(&late, &early), Verdict::ByStamp { remote_wins: false });
+        assert_eq!(
+            verdict(&early, &late),
+            Verdict::ByStamp { remote_wins: true }
+        );
+        assert_eq!(
+            verdict(&late, &early),
+            Verdict::ByStamp { remote_wins: false }
+        );
         // 同一枚戳再来一次 ⇒ **不算更新**（幂等：本地留着，别把同一版又写一遍）
-        assert_eq!(verdict(&late, &late), Verdict::ByStamp { remote_wins: false });
+        assert_eq!(
+            verdict(&late, &late),
+            Verdict::ByStamp { remote_wins: false }
+        );
         // 同一毫秒并发 ⇒ 由**设备号**分开（判序是全序，不会平局）
         let a = PayloadStamp::Ok(hlc(7, 0, "A"));
         let b = PayloadStamp::Ok(hlc(7, 0, "B"));

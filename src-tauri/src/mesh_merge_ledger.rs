@@ -119,9 +119,7 @@ pub fn normalize_space_name(raw: &str) -> String {
         // ② 首尾 + ③ 折半角
         let c = match ch {
             '\u{3000}' => ' ',
-            '\u{ff01}'..='\u{ff5e}' => {
-                char::from_u32(ch as u32 - 0xfee0).unwrap_or(ch)
-            }
+            '\u{ff01}'..='\u{ff5e}' => char::from_u32(ch as u32 - 0xfee0).unwrap_or(ch),
             _ => ch,
         };
         if c.is_whitespace() {
@@ -594,9 +592,7 @@ pub fn undo_merge_at(
     let idx = st
         .merges
         .iter()
-        .position(|r| {
-            r.id == req.merge_id && r.name_key == name_key && r.peer_device == peer
-        })
+        .position(|r| r.id == req.merge_id && r.name_key == name_key && r.peer_device == peer)
         .ok_or(LedgerError::NoSuchMerge(req.merge_id))?;
 
     if st.merges[idx].undone_at_ms.is_some() {
@@ -897,11 +893,7 @@ fn unesc(s: &str) -> Result<String, String> {
 }
 
 fn esc_list(items: &[String]) -> String {
-    items
-        .iter()
-        .map(|s| esc(s))
-        .collect::<Vec<_>>()
-        .join(",")
+    items.iter().map(|s| esc(s)).collect::<Vec<_>>().join(",")
 }
 
 fn unesc_list(s: &str) -> Result<Vec<String>, String> {
@@ -1035,10 +1027,20 @@ mod tests {
             MergeOutcome::Recorded(r) => r.id,
             other => panic!("第一次融合应当 Recorded，实际 {other:?}"),
         };
-        assert_eq!(l.view("工作").unwrap().undoable_count(), 1, "这时应显示「1 条已融合（可撤销）」");
+        assert_eq!(
+            l.view("工作").unwrap().undoable_count(),
+            1,
+            "这时应显示「1 条已融合（可撤销）」"
+        );
 
-        let out = l.undo(2_000, &UndoRequest::personal("工作", "平板", id)).expect("应当撤得动");
-        assert_eq!(out.removed, vec!["t1", "t2"], "⭐ 撤销要动的就是当初并进来的那几行");
+        let out = l
+            .undo(2_000, &UndoRequest::personal("工作", "平板", id))
+            .expect("应当撤得动");
+        assert_eq!(
+            out.removed,
+            vec!["t1", "t2"],
+            "⭐ 撤销要动的就是当初并进来的那几行"
+        );
         assert_eq!(out.kept, 2, "⭐ 撤完的读数要对上「融合前」＝本机原有 2 条");
         assert_eq!(out.other_undoable, 0, "撤完这一格不该再有可撤的");
         assert!(
@@ -1047,7 +1049,10 @@ mod tests {
         );
         // ⭐ 撤完还能再融（⛔ 不是单向门）。
         assert!(
-            matches!(l.record(3_000, &req).expect("撤完应当还能融"), MergeOutcome::Recorded(_)),
+            matches!(
+                l.record(3_000, &req).expect("撤完应当还能融"),
+                MergeOutcome::Recorded(_)
+            ),
             "撤销之后必须还能再融一次"
         );
     }
@@ -1058,14 +1063,20 @@ mod tests {
         let store = MemStore::new();
         let l = MergeLedger::new(&store);
         let first = match l
-            .record(1_000, &MergeRequest::personal("工作", "平板").moved(["t1"]).kept(2))
+            .record(
+                1_000,
+                &MergeRequest::personal("工作", "平板").moved(["t1"]).kept(2),
+            )
             .unwrap()
         {
             MergeOutcome::Recorded(r) => r.id,
             other => panic!("{other:?}"),
         };
         let second = match l
-            .record(2_000, &MergeRequest::personal("工作", "手机").moved(["u1"]).kept(3))
+            .record(
+                2_000,
+                &MergeRequest::personal("工作", "手机").moved(["u1"]).kept(3),
+            )
             .unwrap()
         {
             MergeOutcome::Recorded(r) => r.id,
@@ -1082,7 +1093,10 @@ mod tests {
             !out.removed.contains(&"t1".to_string()),
             "⛔ 不许把另一次（平板那次）的行也撤掉"
         );
-        assert_eq!(out.other_undoable, 1, "平板那一笔必须**原样留着**（它还该可撤）");
+        assert_eq!(
+            out.other_undoable, 1,
+            "平板那一笔必须**原样留着**（它还该可撤）"
+        );
 
         // 反着再来一遍：撤第一次 ⇒ 只动 t1。
         let out1 = l
@@ -1127,7 +1141,11 @@ mod tests {
             );
         }
 
-        assert_eq!(store.load_count(), before_loads, "⛔ 团队/未分类**连读都不该读**");
+        assert_eq!(
+            store.load_count(),
+            before_loads,
+            "⛔ 团队/未分类**连读都不该读**"
+        );
         assert_eq!(store.save_count(), before_saves, "⛔ 一次都不许写");
         assert_eq!(store.state_text(), before_text, "⛔ 逐字节都不许变");
         assert_eq!(
@@ -1145,7 +1163,10 @@ mod tests {
         let store = MemStore::new();
         let l = MergeLedger::new(&store);
         let req = MergeRequest::personal("工作", "平板").moved(["t1"]).kept(2);
-        assert!(matches!(l.record(1_000, &req).unwrap(), MergeOutcome::Recorded(_)));
+        assert!(matches!(
+            l.record(1_000, &req).unwrap(),
+            MergeOutcome::Recorded(_)
+        ));
         let merges_before = store.peek().merges.len();
 
         // ⭐ 标记 ⇒ 今后不再每次融合。
@@ -1176,7 +1197,8 @@ mod tests {
 
         // ⭐ 必须可解除（⛔ 不许单向不可逆）。
         assert!(matches!(
-            l.release_permanent(4_000, &personal("工作", "平板")).unwrap(),
+            l.release_permanent(4_000, &personal("工作", "平板"))
+                .unwrap(),
             ReleaseOutcome::Released(_)
         ));
         assert!(l.view("工作").unwrap().permanent_peers.is_empty());
@@ -1184,10 +1206,15 @@ mod tests {
             l.record(5_000, &req).expect("解除后应当又能融"),
             MergeOutcome::Recorded(_)
         ));
-        assert_eq!(store.peek().merges.len(), merges_before + 1, "解除后融的是**新的一笔**");
+        assert_eq!(
+            store.peek().merges.len(),
+            merges_before + 1,
+            "解除后融的是**新的一笔**"
+        );
         // ⛔ 没标过的解除如实报"没有"，⛔ 不当成功。
         assert_eq!(
-            l.release_permanent(6_000, &personal("工作", "平板")).unwrap(),
+            l.release_permanent(6_000, &personal("工作", "平板"))
+                .unwrap(),
             ReleaseOutcome::NotMarked
         );
     }
@@ -1201,7 +1228,10 @@ mod tests {
             .moved(["t1"])
             .kept(1)
             .idem("reconnect-2026-10-10T09:00");
-        assert!(matches!(l.record(1_000, &req).unwrap(), MergeOutcome::Recorded(_)));
+        assert!(matches!(
+            l.record(1_000, &req).unwrap(),
+            MergeOutcome::Recorded(_)
+        ));
         assert!(matches!(
             l.record(1_500, &req).unwrap(),
             MergeOutcome::SkippedDuplicate(_)
@@ -1210,7 +1240,10 @@ mod tests {
         assert_eq!(store.save_count(), 1, "⭐ 跳过时⛔ 不该写库");
         // 换一次接入（新的键）⇒ 这才是"又融了一次"。
         let again = req.clone().idem("reconnect-2026-10-10T10:00");
-        assert!(matches!(l.record(2_000, &again).unwrap(), MergeOutcome::Recorded(_)));
+        assert!(matches!(
+            l.record(2_000, &again).unwrap(),
+            MergeOutcome::Recorded(_)
+        ));
         assert_eq!(store.peek().merges.len(), 2);
     }
 
@@ -1218,22 +1251,46 @@ mod tests {
     #[test]
     fn f_name_normalization_is_what_makes_by_name_real() {
         let a = normalize_space_name("工作");
-        for variant in ["工作", "工作 ", " 工作", "工 作", "　工作　", "工作\u{200b}"] {
+        for variant in [
+            "工作",
+            "工作 ",
+            " 工作",
+            "工 作",
+            "　工作　",
+            "工作\u{200b}",
+        ] {
             assert_eq!(
                 normalize_space_name(variant),
-                if variant == "工 作" { "工 作".to_string() } else { a.clone() },
+                if variant == "工 作" {
+                    "工 作".to_string()
+                } else {
+                    a.clone()
+                },
                 "归一后应当同名：{variant:?}"
             );
         }
         assert_eq!(normalize_space_name("ＡＢＣ"), "abc", "全角＋大小写都归掉");
-        assert_eq!(normalize_space_name("  A\t\tB  "), "a b", "内部空白折成一个半角空格");
-        assert_eq!(normalize_space_name("工作"), "工作", "CJK 原样（不做简繁/异体）");
+        assert_eq!(
+            normalize_space_name("  A\t\tB  "),
+            "a b",
+            "内部空白折成一个半角空格"
+        );
+        assert_eq!(
+            normalize_space_name("工作"),
+            "工作",
+            "CJK 原样（不做简繁/异体）"
+        );
 
         // ⭐ 归一**只用于判等**：库里存的名字仍是用户写的那串。
         let store = MemStore::new();
         let l = MergeLedger::new(&store);
         match l
-            .record(1_000, &MergeRequest::personal("　工作 ", "平板").moved(["t1"]).kept(0))
+            .record(
+                1_000,
+                &MergeRequest::personal("　工作 ", "平板")
+                    .moved(["t1"])
+                    .kept(0),
+            )
             .unwrap()
         {
             MergeOutcome::Recorded(r) => {
@@ -1244,7 +1301,11 @@ mod tests {
         }
         // 名字写法不同、归一后同名 ⇒ 读数落在同一格。
         assert_eq!(l.undoable("工作").unwrap().len(), 1);
-        assert_eq!(l.undoable("ＡＢＣ").unwrap().len(), 0, "不同名⛔ 不许串到同一格");
+        assert_eq!(
+            l.undoable("ＡＢＣ").unwrap().len(),
+            0,
+            "不同名⛔ 不许串到同一格"
+        );
     }
 
     /// ⭐ i) **简繁不算同名**（owner 2026-10-10 拍定）—— ⛔ 不许自动融。
@@ -1256,7 +1317,10 @@ mod tests {
     fn i_simplified_and_traditional_are_not_the_same_name() {
         let simp = normalize_space_name("读书笔记");
         let trad = normalize_space_name("讀書筆記");
-        assert_ne!(simp, trad, "⭐ 简繁**不许**归到同一个 key（owner 拍：不算同名）");
+        assert_ne!(
+            simp, trad,
+            "⭐ 简繁**不许**归到同一个 key（owner 拍：不算同名）"
+        );
         // ⚠️ 顺带钉住"那对同形字"的事实，免得下一个人又拿它当夹具：
         assert_eq!(
             normalize_space_name("工作"),
@@ -1268,8 +1332,13 @@ mod tests {
         let l = MergeLedger::new(&store);
         // 简体那一格融了一次 …
         assert!(matches!(
-            l.record(1_000, &MergeRequest::personal("读书笔记", "平板").moved(["t1"]).kept(1))
-                .unwrap(),
+            l.record(
+                1_000,
+                &MergeRequest::personal("读书笔记", "平板")
+                    .moved(["t1"])
+                    .kept(1)
+            )
+            .unwrap(),
             MergeOutcome::Recorded(_)
         ));
         // … ⛔ 繁体那一格**看不到**它（不融）。
@@ -1278,16 +1347,29 @@ mod tests {
             0,
             "⭐ 繁体名必须**看不到**简体名那一次融合（不许悄悄融在一起）"
         );
-        assert_eq!(l.undoable("读书笔记").unwrap().len(), 1, "简体那一格自己记得住");
+        assert_eq!(
+            l.undoable("读书笔记").unwrap().len(),
+            1,
+            "简体那一格自己记得住"
+        );
         // 繁体名下**另记一笔** ⇒ 两条各自独立（这正是"最安全"的样子）。
         let out = l
-            .record(2_000, &MergeRequest::personal("讀書筆記", "平板").moved(["t2"]).kept(1))
+            .record(
+                2_000,
+                &MergeRequest::personal("讀書筆記", "平板")
+                    .moved(["t2"])
+                    .kept(1),
+            )
             .unwrap();
         match out {
             MergeOutcome::Recorded(r) => assert_eq!(r.name_key, trad, "繁体那笔用繁体自己的 key"),
             other => panic!("繁体名下应当**另**记一笔，实际 {other:?}"),
         }
-        assert_eq!(store.peek().merges.len(), 2, "⭐ 两个名字 ⇒ **两笔**（⛔ 不是一笔）");
+        assert_eq!(
+            store.peek().merges.len(),
+            2,
+            "⭐ 两个名字 ⇒ **两笔**（⛔ 不是一笔）"
+        );
         assert_eq!(l.undoable("读书笔记").unwrap().len(), 1);
         assert_eq!(l.undoable("讀書筆記").unwrap().len(), 1);
     }
@@ -1309,7 +1391,11 @@ mod tests {
             .unwrap();
         let text = store.state_text();
         let back = decode_state(&text).expect("自己的编码必须读得回来");
-        assert_eq!(back, store.peek(), "⭐ 编解码必须无损（含制表符/逗号/换行/反斜杠）");
+        assert_eq!(
+            back,
+            store.peek(),
+            "⭐ 编解码必须无损（含制表符/逗号/换行/反斜杠）"
+        );
         assert_eq!(encode_state(&back), text, "再编码一次应当逐字节相同");
         // 空串＝还没有账本；版本不认识⇒报错（⛔ 不猜）。
         assert_eq!(decode_state("").unwrap(), LedgerState::default());
@@ -1322,7 +1408,10 @@ mod tests {
         let store = MemStore::new();
         let l = MergeLedger::new(&store);
         let id = match l
-            .record(1_000, &MergeRequest::personal("工作", "平板").moved(["t1"]).kept(2))
+            .record(
+                1_000,
+                &MergeRequest::personal("工作", "平板").moved(["t1"]).kept(2),
+            )
             .unwrap()
         {
             MergeOutcome::Recorded(r) => r.id,
@@ -1347,15 +1436,43 @@ mod tests {
     #[test]
     fn j_identity_gate_truth_table_never_lets_the_name_decide() {
         let pairs = [
-            (SamePerson::Yes(IdentityBasis::PairedDevice), true, MergeGate::Allow), // Q3
-            (SamePerson::Yes(IdentityBasis::PairedDevice), false, MergeGate::RefuseDifferentName),
-            (SamePerson::No(IdentityBasis::Account("bob".into())), true, MergeGate::RefuseDifferentPerson), // Q2
-            (SamePerson::No(IdentityBasis::Account("bob".into())), false, MergeGate::RefuseDifferentPerson),
-            (SamePerson::Unknown(WhyUnknown::NotPaired), true, MergeGate::RefuseUnknownIdentity), // Q1
-            (SamePerson::Unknown(WhyUnknown::NotPaired), false, MergeGate::RefuseUnknownIdentity),
+            (
+                SamePerson::Yes(IdentityBasis::PairedDevice),
+                true,
+                MergeGate::Allow,
+            ), // Q3
+            (
+                SamePerson::Yes(IdentityBasis::PairedDevice),
+                false,
+                MergeGate::RefuseDifferentName,
+            ),
+            (
+                SamePerson::No(IdentityBasis::Account("bob".into())),
+                true,
+                MergeGate::RefuseDifferentPerson,
+            ), // Q2
+            (
+                SamePerson::No(IdentityBasis::Account("bob".into())),
+                false,
+                MergeGate::RefuseDifferentPerson,
+            ),
+            (
+                SamePerson::Unknown(WhyUnknown::NotPaired),
+                true,
+                MergeGate::RefuseUnknownIdentity,
+            ), // Q1
+            (
+                SamePerson::Unknown(WhyUnknown::NotPaired),
+                false,
+                MergeGate::RefuseUnknownIdentity,
+            ),
         ];
         for (id, same_name, want) in pairs {
-            assert_eq!(merge_gate(&id, same_name), want, "身份 {id:?} ＋ 同名={same_name}");
+            assert_eq!(
+                merge_gate(&id, same_name),
+                want,
+                "身份 {id:?} ＋ 同名={same_name}"
+            );
         }
         // ⭐⭐ **反向断言（Q4）**：把"名字相同"当同一人 ⇒ 上面那张表就红。
         //    这里把它写成一条**只依赖身份**的断言：允许融 ⟺ 身份是 `Yes`（⛔ 与名字无关）。
@@ -1377,7 +1494,10 @@ mod tests {
     fn k_unknown_and_no_are_two_different_refusals() {
         let unknown = merge_gate(&SamePerson::Unknown(WhyUnknown::NotPaired), true);
         let no = merge_gate(&SamePerson::No(IdentityBasis::Account("bob".into())), true);
-        assert_ne!(unknown, no, "⭐ 「判不出」与「判得出、但不是同一人」**不是一回事** ⇒ 理由不许合并");
+        assert_ne!(
+            unknown, no,
+            "⭐ 「判不出」与「判得出、但不是同一人」**不是一回事** ⇒ 理由不许合并"
+        );
         assert_eq!(unknown, MergeGate::RefuseUnknownIdentity);
         assert_eq!(no, MergeGate::RefuseDifferentPerson);
         // ⚠️ 三态也不是 Option<bool>：`Unknown` 带着**为什么**（如实说，⛔ 不糊成一句"未知"）。
@@ -1393,7 +1513,9 @@ mod tests {
     #[test]
     fn l_paired_oracle_is_conservative_and_says_unknown_when_unpaired() {
         let paired = vec!["平板".to_string()];
-        let oracle = PairedDeviceOracle { paired_devices: &paired };
+        let oracle = PairedDeviceOracle {
+            paired_devices: &paired,
+        };
         assert_eq!(
             oracle.same_person("平板", "工作"),
             SamePerson::Yes(IdentityBasis::PairedDevice)
@@ -1418,8 +1540,15 @@ mod tests {
     #[test]
     fn m_same_name_is_trim_exact_not_shape_folded() {
         // ⭐ 该算同名的：只差首尾空白（含全角空格）。
-        for (a, b) in [("工作", "工作"), (" 工作 ", "工作"), ("工作", "\u{3000}工作\u{3000}")] {
-            assert!(same_space_name_by_trim(a, b), "trim 后逐字相等 ⇒ 同名：{a:?} / {b:?}");
+        for (a, b) in [
+            ("工作", "工作"),
+            (" 工作 ", "工作"),
+            ("工作", "\u{3000}工作\u{3000}"),
+        ] {
+            assert!(
+                same_space_name_by_trim(a, b),
+                "trim 后逐字相等 ⇒ 同名：{a:?} / {b:?}"
+            );
         }
         // ⭐⭐ **反向**：形状不同**不算**同名（Lead 2026-10-17 补充口径：不做全半角／大小写折叠）。
         for (a, b) in [

@@ -98,7 +98,11 @@ fn space_open_err(e: &dyn std::fmt::Display, space_id: &str) -> String {
     crate::security::cipher_open_error(&e.to_string(), &format!("空间 {space_id} 的库"))
 }
 
-pub(crate) fn reopen_space_at(c: &mut Connection, space_id: &str, dir: &Path) -> Result<(), String> {
+pub(crate) fn reopen_space_at(
+    c: &mut Connection,
+    space_id: &str,
+    dir: &Path,
+) -> Result<(), String> {
     if !is_safe_space_id(space_id) {
         return Err("非法空间 id".to_string());
     }
@@ -227,7 +231,12 @@ pub(crate) fn sha256_hex_bytes(bytes: &[u8]) -> String {
 /// 记一行「**我认这台设备**」（已有 ⇒ **覆盖**＝重新配对 ✓）。
 ///
 /// ⛔ **落库的是哈希** ✗ —— 传进来的明文**只用来算哈希**，⛔ 不写进任何一列 ✓。
-pub(crate) fn pair_device(conn: &Connection, space_id: &str, device_id: &str, secret: &str) -> Result<(), String> {
+pub(crate) fn pair_device(
+    conn: &Connection,
+    space_id: &str,
+    device_id: &str,
+    secret: &str,
+) -> Result<(), String> {
     conn.execute(
         "INSERT INTO mesh_paired_devices (space_id, device_id, secret_sha256, added_at_ms)
          VALUES (?1, ?2, ?3, ?4)
@@ -264,7 +273,10 @@ pub(crate) fn unpair_device(
 }
 
 /// 这个空间**认哪些卡**（窗口开的时候**载一次** ✓；⛔ 不开窗 ✗）。
-pub(crate) fn paired_secret_hashes(conn: &Connection, space_id: &str) -> Result<Vec<String>, String> {
+pub(crate) fn paired_secret_hashes(
+    conn: &Connection,
+    space_id: &str,
+) -> Result<Vec<String>, String> {
     let mut stmt = conn
         .prepare("SELECT secret_sha256 FROM mesh_paired_devices WHERE space_id = ?1")
         .map_err(|e| e.to_string())?;
@@ -328,7 +340,8 @@ pub(crate) fn paired_pubkeys(
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 pub(crate) fn open_meta_conn_at(dir: &Path) -> Result<Connection, String> {
@@ -357,9 +370,12 @@ fn open_space_conn_inner(space_id: &str, dir: &Path) -> Result<Connection, Strin
     let conn = Connection::open(&path).map_err(|e| e.to_string())?;
     // E1: key the connection if this space's DB is encrypted at rest.
     security::key_space_conn(&conn, &path)?;
-    conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| e.to_string())?;
-    conn.pragma_update(None, "synchronous", "NORMAL").map_err(|e| e.to_string())?;
-    conn.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "synchronous", "NORMAL")
+        .map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "foreign_keys", "ON")
+        .map_err(|e| e.to_string())?;
     // Only migrate if the file is empty/brand new; an existing DB migrates idempotently.
     migrate(&conn, space_id).map_err(|e| e.to_string())?;
     let meta = meta_path(dir).display().to_string().replace('\'', "''");
@@ -397,7 +413,11 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
             .ok()
             .unwrap_or_else(|| {
                 meta_conn
-                    .query_row("SELECT id FROM workspaces ORDER BY created_at ASC, id ASC LIMIT 1", [], |r| r.get(0))
+                    .query_row(
+                        "SELECT id FROM workspaces ORDER BY created_at ASC, id ASC LIMIT 1",
+                        [],
+                        |r| r.get(0),
+                    )
                     .unwrap_or_else(|_| "default".to_string())
             });
         meta_conn
@@ -409,7 +429,11 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
         // App-level device id lives in meta (shared across every space), so the
         // sync outbox from all spaces claims the SAME physical device.
         let dev_count: i64 = meta_conn
-            .query_row("SELECT COUNT(*) FROM sync_state WHERE key = 'device_id'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM sync_state WHERE key = 'device_id'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap_or(0);
         if dev_count == 0 {
             meta_conn.execute(
@@ -428,10 +452,12 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
                 params![ACTIVE_KEY],
                 |r| r.get(0),
             )
-            .map_err(|_| rusqlite::Error::SqliteFailure(
-                rusqlite::ffi::Error::new(1),
-                Some("no active workspace".to_string()),
-            ))?
+            .map_err(|_| {
+                rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(1),
+                    Some("no active workspace".to_string()),
+                )
+            })?
     };
 
     // E1 startup gate: if **the active space's own DB file** is SQLCipher-encrypted and the
@@ -448,7 +474,10 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
     //   而任何**密文**空间（按空间的或旧路的）照样被拦。库文件不存在（新空间还没落库）⇒ 嗅不出来 ⇒ 不拦。
     if security::startup_needs_unlock(&space_db_path(&app_data_dir, &active)) {
         let conn = Connection::open_in_memory()?;
-        let meta = meta_path(&app_data_dir).display().to_string().replace('\'', "''");
+        let meta = meta_path(&app_data_dir)
+            .display()
+            .to_string()
+            .replace('\'', "''");
         conn.execute(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""), [])
             .map_err(|e| {
                 eprintln!("failed to attach meta db (locked startup): {e}");
@@ -464,14 +493,16 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
     let conn = Connection::open(&space_path)?;
     // If the active space DB is encrypted (only possible when already unlocked), key
     // it before any pragma/query runs. For the common disabled case this is a no-op.
-    security::key_space_conn(&conn, &space_path).map_err(|e| {
-        rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e))
-    })?;
+    security::key_space_conn(&conn, &space_path)
+        .map_err(|e| rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e)))?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     migrate(&conn, &active)?;
-    let meta = meta_path(&app_data_dir).display().to_string().replace('\'', "''");
+    let meta = meta_path(&app_data_dir)
+        .display()
+        .to_string()
+        .replace('\'', "''");
     conn.execute(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""), [])
         .map_err(|e| {
             eprintln!("failed to attach meta db: {e}");
@@ -483,9 +514,8 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
     // Startup path must also ensure the active space DB owns its workspace row, or
     // pages.workspace_id's FK to workspaces(id) fails on the very first page insert
     // when a space DB carries leftover/mismatched workspace rows.
-    ensure_space_workspace(&conn, &active).map_err(|e| {
-        rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e))
-    })?;
+    ensure_space_workspace(&conn, &active)
+        .map_err(|e| rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e)))?;
     // ⭐ 2026-10-24（全空间方案 P0）：给所有个人空间补同步档案行（幂等）。
     //   不补 ⇒ 那些空间**不公告、不进轮次**（真机：6 个空间只有 3 个能同步）。
     //   ⚠️ 失败只记一行：这是"加分项"，不许把启动本身按死（与发现层同一条口径）。
@@ -722,7 +752,8 @@ pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
     // 迁移 plugin_state 的 `plugin_enabled::{id}` → plugin_install 行。
     // 幂等：目标行已存在就不覆盖（enabled 是用户选择，不能被迁移重置）。
     {
-        let mut stmt = conn.prepare("SELECT key, value FROM plugin_state WHERE key LIKE 'plugin_enabled::%'")?;
+        let mut stmt =
+            conn.prepare("SELECT key, value FROM plugin_state WHERE key LIKE 'plugin_enabled::%'")?;
         let rows: Vec<(String, String)> = stmt
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
             .filter_map(|r| r.ok())
@@ -738,7 +769,10 @@ pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
                 )?;
             }
         }
-        conn.execute("DELETE FROM plugin_state WHERE key LIKE 'plugin_enabled::%'", [])?;
+        conn.execute(
+            "DELETE FROM plugin_state WHERE key LIKE 'plugin_enabled::%'",
+            [],
+        )?;
     }
     // 授权快照（M11.9 收口）：用户在启用插件那一刻看到并同意的那份"能力面"（权限 + 事件），
     // 以 JSON 存在这里。插件文件被换成声明更大的版本时，宿主据此**暂停它**并要求用户重新确认
@@ -751,7 +785,10 @@ pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         |row| row.get(0),
     )?;
     if has_approved == 0 {
-        conn.execute("ALTER TABLE plugin_install ADD COLUMN approved_json TEXT", [])?;
+        conn.execute(
+            "ALTER TABLE plugin_install ADD COLUMN approved_json TEXT",
+            [],
+        )?;
     }
     // E1 per-space at-rest encryption marker (idempotent for existing meta.db).
     //
@@ -775,7 +812,10 @@ pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         |row| row.get(0),
     )?;
     if has_icon == 0 {
-        conn.execute("ALTER TABLE workspaces ADD COLUMN icon TEXT NOT NULL DEFAULT ''", [])?;
+        conn.execute(
+            "ALTER TABLE workspaces ADD COLUMN icon TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
     }
     let has_sort_order: i64 = conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'sort_order'",
@@ -783,7 +823,10 @@ pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         |row| row.get(0),
     )?;
     if has_sort_order == 0 {
-        conn.execute("ALTER TABLE workspaces ADD COLUMN sort_order REAL NOT NULL DEFAULT 0", [])?;
+        conn.execute(
+            "ALTER TABLE workspaces ADD COLUMN sort_order REAL NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
     let has_deleted_at: i64 = conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'deleted_at'",
@@ -799,7 +842,10 @@ pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         |row| row.get(0),
     )?;
     if has_enc == 0 {
-        conn.execute("ALTER TABLE workspaces ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0", [])?;
+        conn.execute(
+            "ALTER TABLE workspaces ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
     // §0-C 的空间算法标识（幂等，老 meta.db 也要补上）。
     let has_cipher_format: i64 = conn.query_row(
@@ -829,7 +875,10 @@ pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         |row| row.get(0),
     )?;
     if has_kind == 0 {
-        conn.execute("ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT ''", [])?;
+        conn.execute(
+            "ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
     }
     // sync_history.items was added later; backfill on pre-existing meta dbs.
     let has_items: i64 = conn.query_row(
@@ -838,7 +887,10 @@ pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         |row| row.get(0),
     )?;
     if has_items == 0 {
-        conn.execute("ALTER TABLE sync_history ADD COLUMN items TEXT NOT NULL DEFAULT ''", [])?;
+        conn.execute(
+            "ALTER TABLE sync_history ADD COLUMN items TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
     }
     // P6.1「每空间开关」：老库补列。**DEFAULT 1 是有意的**——升级不能静默改变同步范围
     // （"按需取字节"必须是用户主动选择）。见 docs/plans/2026-09-15-attachment-on-demand-plan.md §五.4
@@ -853,40 +905,39 @@ pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             [],
         )?;
     }
-          // ⚠️ **2026-10-04 加**（owner：「加一个配对暗号输入框」）：⭐ 个人空间的「配对暗号」列 ✗。
-          //   判据与上面那几条迁移同一套：先问 `pragma_table_info` 有没有这一列，没有才加 ✓（幂等 ✓）。
-          //   ⚠️ **位置要紧**：必须在上面那个 `if has_att_switch == 0 { … }` **外面** —— 放里面的话只有
-          //   `sync_attachments` 列缺失时才跑（这台机器早就有）⇒ 列永远加不上，而 `mesh_scope` 已在读它
-          //   ⇒ 一打开同步面板就 SQL 报错。
-      let has_mesh_room: i64 = conn.query_row(
-          "SELECT COUNT(*) FROM pragma_table_info('sync_profiles') WHERE name = 'mesh_room'",
-          [],
-          |row| row.get(0),
-          )?;
-      if has_mesh_room == 0 {
-          conn.execute(
-              "ALTER TABLE sync_profiles ADD COLUMN mesh_room TEXT NOT NULL DEFAULT ''",
-              [],
-          )?;
-          }
-      // ⭐ 2026-10-12（设备身份第 2 步）：⭐ 对端表补 `pubkey` 列 ✗ ——
-      //   与上面那几条迁移**同一套**：先问 `pragma_table_info`，没有才加 ✓（**幂等** ✓）。
-      //   ⚠️ **加法** ✗：老机器上那些行 `pubkey` 就是空串 ⇒ ⭐ 它们照旧走"认哈希"那一档 ✓
-      //   （⛔ 一个字节都不动 ✗ ⇒ 旧配对不会因为这次升级失效 ✓）。
-      let has_paired_pubkey: i64 = conn.query_row(
-          "SELECT COUNT(*) FROM pragma_table_info('mesh_paired_devices') WHERE name = 'pubkey'",
-          [],
-          |row| row.get(0),
-          )?;
-      if has_paired_pubkey == 0 {
-          conn.execute(
-              "ALTER TABLE mesh_paired_devices ADD COLUMN pubkey TEXT NOT NULL DEFAULT ''",
-              [],
-          )?;
-          }
+    // ⚠️ **2026-10-04 加**（owner：「加一个配对暗号输入框」）：⭐ 个人空间的「配对暗号」列 ✗。
+    //   判据与上面那几条迁移同一套：先问 `pragma_table_info` 有没有这一列，没有才加 ✓（幂等 ✓）。
+    //   ⚠️ **位置要紧**：必须在上面那个 `if has_att_switch == 0 { … }` **外面** —— 放里面的话只有
+    //   `sync_attachments` 列缺失时才跑（这台机器早就有）⇒ 列永远加不上，而 `mesh_scope` 已在读它
+    //   ⇒ 一打开同步面板就 SQL 报错。
+    let has_mesh_room: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('sync_profiles') WHERE name = 'mesh_room'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_mesh_room == 0 {
+        conn.execute(
+            "ALTER TABLE sync_profiles ADD COLUMN mesh_room TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    // ⭐ 2026-10-12（设备身份第 2 步）：⭐ 对端表补 `pubkey` 列 ✗ ——
+    //   与上面那几条迁移**同一套**：先问 `pragma_table_info`，没有才加 ✓（**幂等** ✓）。
+    //   ⚠️ **加法** ✗：老机器上那些行 `pubkey` 就是空串 ⇒ ⭐ 它们照旧走"认哈希"那一档 ✓
+    //   （⛔ 一个字节都不动 ✗ ⇒ 旧配对不会因为这次升级失效 ✓）。
+    let has_paired_pubkey: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('mesh_paired_devices') WHERE name = 'pubkey'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_paired_pubkey == 0 {
+        conn.execute(
+            "ALTER TABLE mesh_paired_devices ADD COLUMN pubkey TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
     Ok(())
 }
-
 
 // ---------------------------------------------------------------------------
 // 派生文本层（P1/P2）：`attachment_text` / `chunks` / `chunk_embeddings` + 三条索引。
@@ -1190,11 +1241,13 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
     if !changes_has_seq && changes_has_id {
         conn.execute("ALTER TABLE changes RENAME COLUMN id TO seq", [])?;
     }
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_changes_seq ON changes(seq)", [])?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_changes_seq ON changes(seq)",
+        [],
+    )?;
 
     // Backfill FTS index if it was just created (empty) but pages already exist.
-    let fts_count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM page_fts", [], |row| row.get(0))?;
+    let fts_count: i64 = conn.query_row("SELECT COUNT(*) FROM page_fts", [], |row| row.get(0))?;
     if fts_count == 0 {
         conn.execute(
             "INSERT INTO page_fts (page_id, title, body)
@@ -1208,7 +1261,8 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         let mut stmt = conn.prepare("PRAGMA table_info(pages)")?;
         let mut cols = stmt.query_map([], |row| row.get::<_, String>(1))?;
         cols.any(|c| c.map(|name| name == "kind").unwrap_or(false))
-    };    if !has_kind {
+    };
+    if !has_kind {
         conn.execute(
             "ALTER TABLE pages ADD COLUMN kind TEXT NOT NULL DEFAULT 'page'",
             [],
@@ -1469,7 +1523,10 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         |row| row.get(0),
     )?;
     if ws_has_icon == 0 {
-        conn.execute("ALTER TABLE workspaces ADD COLUMN icon TEXT NOT NULL DEFAULT ''", [])?;
+        conn.execute(
+            "ALTER TABLE workspaces ADD COLUMN icon TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
     }
     let ws_has_sort: i64 = conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'sort_order'",
@@ -1477,7 +1534,10 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         |row| row.get(0),
     )?;
     if ws_has_sort == 0 {
-        conn.execute("ALTER TABLE workspaces ADD COLUMN sort_order REAL NOT NULL DEFAULT 0", [])?;
+        conn.execute(
+            "ALTER TABLE workspaces ADD COLUMN sort_order REAL NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
     // ★ 隐私边界第 2 步（2026-09-23）：个人/团队空间的**本地分类标记**。
     // 存量库补列时**默认空串 = 未分类** ⇒ 闸门对未分类一律放行（老库行为一字不变）。
@@ -1487,7 +1547,10 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         |row| row.get(0),
     )?;
     if ws_has_kind == 0 {
-        conn.execute("ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT ''", [])?;
+        conn.execute(
+            "ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
     }
     // ⭐ 2026-10-22（与上面 `changes.id → seq` 同一次报障）：**Web 版的 `workspaces` 只有
     // `id/name/theme/icon` 四列**（它把"空间的创建/修改时间"交给 meta 库），而桌面侧这张表
@@ -1500,7 +1563,10 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         |row| row.get(0),
     )?;
     if ws_has_created == 0 {
-        conn.execute("ALTER TABLE workspaces ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0", [])?;
+        conn.execute(
+            "ALTER TABLE workspaces ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
     let ws_has_updated: i64 = conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'updated_at'",
@@ -1508,7 +1574,10 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         |row| row.get(0),
     )?;
     if ws_has_updated == 0 {
-        conn.execute("ALTER TABLE workspaces ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0", [])?;
+        conn.execute(
+            "ALTER TABLE workspaces ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
 
     // Membership rule for database pages (query-type database: auto-collect by rule).
@@ -1518,7 +1587,10 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         |row| row.get(0),
     )?;
     if pages_has_db_rule == 0 {
-        conn.execute("ALTER TABLE pages ADD COLUMN db_rule TEXT NOT NULL DEFAULT '{}'", [])?;
+        conn.execute(
+            "ALTER TABLE pages ADD COLUMN db_rule TEXT NOT NULL DEFAULT '{}'",
+            [],
+        )?;
     }
 
     // Sync seq-based LWW: sync_seq = last accepted remote change seq; dirty = has
@@ -1530,7 +1602,10 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         |row| row.get(0),
     )?;
     if pages_has_sync_seq == 0 {
-        conn.execute("ALTER TABLE pages ADD COLUMN sync_seq INTEGER NOT NULL DEFAULT 0", [])?;
+        conn.execute(
+            "ALTER TABLE pages ADD COLUMN sync_seq INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
     let pages_has_dirty: i64 = conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('pages') WHERE name = 'dirty'",
@@ -1538,7 +1613,10 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         |row| row.get(0),
     )?;
     if pages_has_dirty == 0 {
-        conn.execute("ALTER TABLE pages ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0", [])?;
+        conn.execute(
+            "ALTER TABLE pages ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
 
     // 阶段 1（B1，2026-09-22）· **正文列"待重建"标记**：合并产物 / 冲突裁决都是"内容拼出来的"，
@@ -1551,7 +1629,10 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         |row| row.get(0),
     )?;
     if pages_has_text_stale == 0 {
-        conn.execute("ALTER TABLE pages ADD COLUMN text_stale INTEGER NOT NULL DEFAULT 0", [])?;
+        conn.execute(
+            "ALTER TABLE pages ADD COLUMN text_stale INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
 
     // Tag custom color (hex like "#c2410c"). NULL = use deterministic auto color.
@@ -1571,7 +1652,10 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         |row| row.get(0),
     )?;
     if tags_has_sort == 0 {
-        conn.execute("ALTER TABLE tags ADD COLUMN sort_order REAL NOT NULL DEFAULT 0", [])?;
+        conn.execute(
+            "ALTER TABLE tags ADD COLUMN sort_order REAL NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
     // Attribute (属性) order — add attr_defs.sort_order idempotently (旧库补列).
     let attrs_has_sort: i64 = conn.query_row(
@@ -1580,7 +1664,10 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         |row| row.get(0),
     )?;
     if attrs_has_sort == 0 {
-        conn.execute("ALTER TABLE attr_defs ADD COLUMN sort_order REAL NOT NULL DEFAULT 0", [])?;
+        conn.execute(
+            "ALTER TABLE attr_defs ADD COLUMN sort_order REAL NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
     // 去掉系统预置的三个状态标签（未完成/进行中/已完成）——含旧库已插入的。
     conn.execute(
@@ -1600,8 +1687,7 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
     // Seed the workspace row for THIS space DB. Each space DB is single-space,
     // so pages.workspace_id = space_id must satisfy the FK (pages references
     // workspaces). Previously this hard-coded 'default', which broke create_workspace.
-    let count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM workspaces", [], |row| row.get(0))?;
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM workspaces", [], |row| row.get(0))?;
     if count == 0 {
         let now = now_ms();
         conn.execute(
@@ -1672,7 +1758,10 @@ mod data_dir_override_tests {
     fn the_env_var_overrides_the_system_dir() {
         let over = PathBuf::from("C:/tmp/second-instance");
         assert_eq!(
-            data_dir_override_pick(Some(OsString::from(over.clone())), Some(PathBuf::from("C:/sys"))),
+            data_dir_override_pick(
+                Some(OsString::from(over.clone())),
+                Some(PathBuf::from("C:/sys"))
+            ),
             Some(over),
             "设了 ⇒ 用它（否则第二个实例会去抢同一份 meta.db）"
         );
@@ -1737,7 +1826,10 @@ mod tests {
                     |r| r.get(0),
                 )
                 .unwrap();
-            assert_eq!(rows, 1, "没补 space-new 自己那一行 ⇒ 之后插页会 FOREIGN KEY 失败");
+            assert_eq!(
+                rows, 1,
+                "没补 space-new 自己那一行 ⇒ 之后插页会 FOREIGN KEY 失败"
+            );
         }
 
         // ② 幂等：塞一页，再调一次，数据还在
@@ -1754,7 +1846,9 @@ mod tests {
         {
             let c = Connection::open(&p).unwrap();
             let n: i64 = c
-                .query_row("SELECT COUNT(*) FROM pages WHERE id = 'pg-1'", [], |r| r.get(0))
+                .query_row("SELECT COUNT(*) FROM pages WHERE id = 'pg-1'", [], |r| {
+                    r.get(0)
+                })
                 .unwrap();
             assert_eq!(n, 1, "幂等失败：第二次调用把数据清了");
         }
@@ -1808,9 +1902,17 @@ mod tests {
             .map(|b| b.trim().to_string())
             .filter(|b| b.starts_with("CREATE TABLE") || b.starts_with("CREATE INDEX"))
             .collect();
-        assert_eq!(ddl.len(), 6, "schema.ts 里应有 6 条 DDL（三条表 + 三条索引），实际解析出 {} 条：{ddl:#?}", ddl.len());
+        assert_eq!(
+            ddl.len(),
+            6,
+            "schema.ts 里应有 6 条 DDL（三条表 + 三条索引），实际解析出 {} 条：{ddl:#?}",
+            ddl.len()
+        );
 
-        let mine: Vec<String> = DERIVED_SCHEMA_DDL.iter().map(|s| s.trim().to_string()).collect();
+        let mine: Vec<String> = DERIVED_SCHEMA_DDL
+            .iter()
+            .map(|s| s.trim().to_string())
+            .collect();
         assert_eq!(mine.len(), ddl.len(), "两边的 DDL 条数不一致");
         for (i, (a, b)) in mine.iter().zip(ddl.iter()).enumerate() {
             assert_eq!(a, b, "第 {} 条 DDL 与 schema.ts 漂移了", i + 1);
@@ -1833,7 +1935,11 @@ mod tests {
             assert_eq!(n, 1, "缺表：{name}");
         }
         // 索引也要在（否则块级检索按 page_id/att_id 过滤会退化成全表扫）
-        for name in ["idx_attachment_text_src", "idx_chunks_page", "idx_chunks_att"] {
+        for name in [
+            "idx_attachment_text_src",
+            "idx_chunks_page",
+            "idx_chunks_att",
+        ] {
             let n: i64 = conn
                 .query_row(
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
@@ -1895,13 +2001,24 @@ mod tests {
             .unwrap();
         assert_eq!(has, 1, "meta_migrate 没有给 workspaces 补 cipher_format 列");
         let v: i64 = conn
-            .query_row("SELECT cipher_format FROM workspaces WHERE id = 'ws'", [], |r| r.get(0))
+            .query_row(
+                "SELECT cipher_format FROM workspaces WHERE id = 'ws'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(v, 0, "存量空间必须是 0（未记录）：不能凭空断言它是哪一版密文");
+        assert_eq!(
+            v, 0,
+            "存量空间必须是 0（未记录）：不能凭空断言它是哪一版密文"
+        );
         // 幂等：再跑一次不报错，值不变。
         meta_migrate(&conn).unwrap();
         let again: i64 = conn
-            .query_row("SELECT cipher_format FROM workspaces WHERE id = 'ws'", [], |r| r.get(0))
+            .query_row(
+                "SELECT cipher_format FROM workspaces WHERE id = 'ws'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(again, 0);
     }
@@ -1939,7 +2056,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(has, 1, "meta_migrate 没有给 mesh_paired_devices 补 pubkey 列");
+        assert_eq!(
+            has, 1,
+            "meta_migrate 没有给 mesh_paired_devices 补 pubkey 列"
+        );
         let pk: String = conn
             .query_row(
                 "SELECT pubkey FROM mesh_paired_devices WHERE device_id = 'dev-old'",
@@ -1947,7 +2067,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(pk, "", "⛔ 存量行不许凭空得到一把公钥 ✗（空串 ＝ 它还是旧那一档 ✓）");
+        assert_eq!(
+            pk, "",
+            "⛔ 存量行不许凭空得到一把公钥 ✗（空串 ＝ 它还是旧那一档 ✓）"
+        );
         let hash: String = conn
             .query_row(
                 "SELECT secret_sha256 FROM mesh_paired_devices WHERE device_id = 'dev-old'",
@@ -1955,13 +2078,19 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(hash, "hash-old", "⛔ 旧那一档那列一个字节都不许动 ✗（加法迁移 ✓）");
+        assert_eq!(
+            hash, "hash-old",
+            "⛔ 旧那一档那列一个字节都不许动 ✗（加法迁移 ✓）"
+        );
         // ⭐ 幂等：再跑一次不报错、值不变 ✓
         meta_migrate(&conn).unwrap();
         assert_eq!(
-            conn.query_row("SELECT pubkey FROM mesh_paired_devices WHERE device_id = 'dev-old'", [], |r| r
-                .get::<_, String>(0))
-                .unwrap(),
+            conn.query_row(
+                "SELECT pubkey FROM mesh_paired_devices WHERE device_id = 'dev-old'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
             ""
         );
     }
@@ -1996,15 +2125,29 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(has, 1, "meta_migrate 没有给 sync_profiles 补 sync_attachments 列");
+        assert_eq!(
+            has, 1,
+            "meta_migrate 没有给 sync_profiles 补 sync_attachments 列"
+        );
         let v: i64 = conn
-            .query_row("SELECT sync_attachments FROM sync_profiles WHERE ws_id = 'ws'", [], |r| r.get(0))
+            .query_row(
+                "SELECT sync_attachments FROM sync_profiles WHERE ws_id = 'ws'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(v, 1, "存量 profile 的开关必须是 1（开）：升级不能改变同步范围");
+        assert_eq!(
+            v, 1,
+            "存量 profile 的开关必须是 1（开）：升级不能改变同步范围"
+        );
         // 幂等：再跑一次不报错，值不变。
         meta_migrate(&conn).unwrap();
         let again: i64 = conn
-            .query_row("SELECT sync_attachments FROM sync_profiles WHERE ws_id = 'ws'", [], |r| r.get(0))
+            .query_row(
+                "SELECT sync_attachments FROM sync_profiles WHERE ws_id = 'ws'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(again, 1);
     }
@@ -2043,7 +2186,11 @@ mod tests {
         .unwrap();
         // The page also appears when queried.
         let n: i64 = conn
-            .query_row("SELECT COUNT(*) FROM pages WHERE workspace_id = 'ws-abc123'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM pages WHERE workspace_id = 'ws-abc123'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(n, 1);
     }
@@ -2066,7 +2213,11 @@ mod tests {
         )
         .unwrap();
         let n: i64 = c
-            .query_row("SELECT COUNT(*) FROM pages WHERE workspace_id = ?1", params![second], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM pages WHERE workspace_id = ?1",
+                params![second],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(n, 1);
         drop(c);
@@ -2090,7 +2241,11 @@ mod tests {
         .unwrap();
         // The main conn is currently pointing at the second space.
         let main_now: i64 = c
-            .query_row("SELECT COUNT(*) FROM pages WHERE workspace_id = ?1", params![second], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM pages WHERE workspace_id = ?1",
+                params![second],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(main_now, 1);
 
@@ -2100,12 +2255,20 @@ mod tests {
         // Open an independent conn to the second space and read its page.
         let other = open_space_conn(second).unwrap();
         let n: i64 = other
-            .query_row("SELECT COUNT(*) FROM pages WHERE workspace_id = ?1", params![second], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM pages WHERE workspace_id = ?1",
+                params![second],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(n, 1);
         // And the main ('default') conn has no page for the second space.
         let main_def: i64 = c
-            .query_row("SELECT COUNT(*) FROM pages WHERE workspace_id = ?1", params![second], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM pages WHERE workspace_id = ?1",
+                params![second],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(main_def, 0);
 
@@ -2155,7 +2318,10 @@ mod tests {
         // ① 切 B ⇒ **Err** ✓
         let err = crate::workspaces::switch_active_space(&mut c, "space-b", &dir)
             .expect_err("切到一个没钥匙的加密空间居然成功了");
-        assert!(!err.contains("file is not a database"), "英文原文漏给用户了：{err}");
+        assert!(
+            !err.contains("file is not a database"),
+            "英文原文漏给用户了：{err}"
+        );
         // ② **指针没被改走** ✓
         let ptr: String = c
             .query_row(
@@ -2171,7 +2337,11 @@ mod tests {
             .expect("主连接被弄坏了 —— 这正是 owner 那个 bug");
         // ④ **之后照常能列空间** ✓（＝"列不出空间/活动空间是空的"那两条症状不会再发生 ✓）
         let listed: i64 = c
-            .query_row("SELECT COUNT(*) FROM meta.workspaces WHERE deleted_at IS NULL", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM meta.workspaces WHERE deleted_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
             .expect("失败之后列不出空间了");
         assert_eq!((pages, listed), (0, 2));
         let _ = std::fs::remove_dir_all(&dir);
@@ -2217,7 +2387,9 @@ mod tests {
 
         // ① 列名按语义纠正，且**值没被改**（原 id=1 的自增游标仍是 1）
         let seq: i64 = c
-            .query_row("SELECT seq FROM changes WHERE entity_id = 'p1'", [], |r| r.get(0))
+            .query_row("SELECT seq FROM changes WHERE entity_id = 'p1'", [], |r| {
+                r.get(0)
+            })
             .expect("changes.seq 没补上（Web 包打不开的第一个原因）");
         assert_eq!(seq, 1, "改名把游标值改掉了");
         let idx: i64 = c
@@ -2238,7 +2410,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(cols, 2, "workspaces 的时间列没补齐（Web 包打不开的第二个原因）");
+        assert_eq!(
+            cols, 2,
+            "workspaces 的时间列没补齐（Web 包打不开的第二个原因）"
+        );
 
         // ③ 幂等：桌面自己的库再跑一遍不报错、数据不动
         migrate(&c, "ws-web").expect("第二次迁移应当无害（幂等）");

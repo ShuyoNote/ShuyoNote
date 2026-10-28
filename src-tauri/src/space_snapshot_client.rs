@@ -119,7 +119,9 @@ pub async fn sync_upload_snapshot(
             .ok_or("拿不到这个空间的钥匙（先解锁再上传）")?;
         let profile = crate::sync::get_profile(&c, &sid)?;
         if profile.space_id.is_empty() {
-            return Err("这个空间还没绑定同步（档案里没有远端 space）：先配对/登录再谈快照".to_string());
+            return Err(
+                "这个空间还没绑定同步（档案里没有远端 space）：先配对/登录再谈快照".to_string(),
+            );
         }
         let bytes = read_db_bytes_encrypted(&c, &key)?;
         let base = crate::sync::effective_base(&c, &profile);

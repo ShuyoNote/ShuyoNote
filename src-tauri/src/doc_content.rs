@@ -119,7 +119,11 @@ pub fn write_text(c: &Connection, page_id: &str, text: &str) -> Result<(), Strin
 /// 仍是旧正文 —— 正是这次修复要消灭的东西，而且更隐蔽（列看着对、搜索不对）。
 /// ⚠️ 两条出口都要**清掉"待重建"标记**（B1）：① 真的修了；② 算出来与库里那份**相同**
 /// （合并可能并没有改动这一页的正文 ⇒ 它本来就不该留在队列里）。
-pub fn refresh_page_text_if_stale(c: &Connection, page_id: &str, derived: &str) -> Result<bool, String> {
+pub fn refresh_page_text_if_stale(
+    c: &Connection,
+    page_id: &str,
+    derived: &str,
+) -> Result<bool, String> {
     let Some(cur) = read(c, page_id)? else {
         return Ok(false);
     };
@@ -208,9 +212,11 @@ pub fn write_page_projection(c: &Connection, page_id: &str, json: &str) -> Resul
 /// ⚠️ **只服务判据**（生产路径今天不读它）：加回生产调用方时编译器会立刻说话。
 #[cfg(test)]
 pub fn text_stale(c: &Connection, page_id: &str) -> Result<Option<bool>, String> {
-    c.query_row("SELECT COALESCE(text_stale, 0) FROM pages WHERE id = ?1", params![page_id], |row| {
-        Ok(row.get::<_, i64>(0)? != 0)
-    })
+    c.query_row(
+        "SELECT COALESCE(text_stale, 0) FROM pages WHERE id = ?1",
+        params![page_id],
+        |row| Ok(row.get::<_, i64>(0)? != 0),
+    )
     .optional()
     .map_err(|e| e.to_string())
 }
@@ -297,7 +303,9 @@ pub fn stale_text_queue(c: &Connection, limit: usize) -> Result<StaleTextQueue, 
             })
         })
         .map_err(|e| e.to_string())?;
-    let pages = rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    let pages = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
     Ok(StaleTextQueue { total, pages })
 }
 
@@ -461,8 +469,12 @@ fn anchor_workspace_id(c: &Connection, want: &str) -> String {
 
 /// 本机这个空间**自己**的 id（`main.workspaces` 里那一行 ✓；真库实测恰好一行 ✓）。
 fn local_space_id(c: &Connection) -> Option<String> {
-    c.query_row("SELECT id FROM workspaces ORDER BY rowid ASC LIMIT 1", [], |r| r.get::<_, String>(0))
-        .ok()
+    c.query_row(
+        "SELECT id FROM workspaces ORDER BY rowid ASC LIMIT 1",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
 }
 
 /// ⭐⭐ **2026-10-09（task-8）**：远端页带的 `parent_id` 锚到**本地真有的那一页** ✓。
@@ -496,7 +508,9 @@ fn anchor_parent_id(c: &Connection, want: Option<&str>) -> Option<String> {
 
 /// 本连接上外键**现在开不开**（读不出来 ⇒ 按"开着"处理：宁可写 NULL 也别丢整行 ✓）。
 fn foreign_keys_on(c: &Connection) -> bool {
-    c.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, i64>(0)).map(|v| v != 0).unwrap_or(true)
+    c.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, i64>(0))
+        .map(|v| v != 0)
+        .unwrap_or(true)
 }
 
 /// 本地有没有这一行？**表都不在 / 读不出来 ⇒ `None`**（＝判不了 ⇒ 调用方保持原样 ✓）。
@@ -784,7 +798,12 @@ pub fn merge_blocks(
             });
         }
 
-        blocks.push(MergedBlock { block_id: id.to_string(), choice, json, rev });
+        blocks.push(MergedBlock {
+            block_id: id.to_string(),
+            choice,
+            json,
+            rev,
+        });
     }
 
     BlockMergeOutcome { blocks, conflicts }
@@ -854,7 +873,11 @@ pub fn block_snapshots(doc_json: &str) -> Option<Vec<BlockSnapshot>> {
         if !child.is_object() {
             return None;
         }
-        let block_id = child.get("blockId").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+        let block_id = child
+            .get("blockId")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
         if block_id.is_empty() {
             return None; // 规则 ②
         }
@@ -898,7 +921,9 @@ pub fn apply_block_snapshots(doc_json: &str, blocks: &[MergedBlock]) -> Option<S
         }
         children.push(node);
     }
-    doc.get_mut("root")?.as_object_mut()?.insert("children".to_string(), serde_json::Value::Array(children));
+    doc.get_mut("root")?
+        .as_object_mut()?
+        .insert("children".to_string(), serde_json::Value::Array(children));
     Some(doc.to_string())
 }
 
@@ -926,7 +951,8 @@ pub enum RemoteMerge {
 /// ⚠️ **已知边界**：`content_text` 仍是页级胜方那一份，可能与合并后的 JSON 不一致
 /// （派生文本要编辑器语义，不能在同步路径里现算）—— 见前端同名函数的注释。
 pub fn merge_remote_content(local_json: &str, remote_json: &str) -> RemoteMerge {
-    let (Some(local_blocks), Some(remote_blocks)) = (block_snapshots(local_json), block_snapshots(remote_json))
+    let (Some(local_blocks), Some(remote_blocks)) =
+        (block_snapshots(local_json), block_snapshots(remote_json))
     else {
         return RemoteMerge::NotApplicable;
     };
@@ -1051,7 +1077,10 @@ pub fn record_page_conflicts(
 }
 
 /// 这一页**未裁决**的冲突（按发现时间；提示 UI 就用它）。
-pub fn unresolved_page_conflicts(c: &Connection, page_id: &str) -> Result<Vec<PageConflict>, String> {
+pub fn unresolved_page_conflicts(
+    c: &Connection,
+    page_id: &str,
+) -> Result<Vec<PageConflict>, String> {
     let mut stmt = c
         .prepare(
             "SELECT id, page_id, block_id, reason, local_json, remote_json, detected_at, resolved_at, resolved_choice
@@ -1073,7 +1102,8 @@ pub fn unresolved_page_conflicts(c: &Connection, page_id: &str) -> Result<Vec<Pa
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// ★ **裁决一处冲突**：把选中的那一版写回该块、**盖新 rev**（baseline = 当前页）、落库并标记已决。
@@ -1106,7 +1136,11 @@ pub fn resolve_page_conflict(
     let next = replace_block_content(&page.json, &block_id, &chosen)
         .ok_or_else(|| "这一块已不在页面里（页面在裁决前又变过）".to_string())?;
     let stamped = crate::block_rev::assign_block_revs(&page.json, &next);
-    let content = DocContent { title: page.title, json: stamped, text: page.text };
+    let content = DocContent {
+        title: page.title,
+        json: stamped,
+        text: page.text,
+    };
     let now = crate::db::now_ms();
     write(c, &page_id, &content, now)?;
     derive(c, &page_id, &content)?;
@@ -1237,7 +1271,10 @@ pub struct PendingRemoteQueue {
 /// 序列化形态天然会差一点（键序 / 规范化；`mesh.rs` 那边的 `projection_of` 头注记着同一件事）。
 /// 拿字节比会把"同一份文档"判成不同 ⇒ 假账照样记下来（第一版就是这么写的，一到重放就露馅）。
 fn same_document(a: &str, b: &str) -> bool {
-    match (serde_json::from_str::<serde_json::Value>(a), serde_json::from_str::<serde_json::Value>(b)) {
+    match (
+        serde_json::from_str::<serde_json::Value>(a),
+        serde_json::from_str::<serde_json::Value>(b),
+    ) {
         (Ok(x), Ok(y)) => x == y,
         _ => a == b,
     }
@@ -1304,7 +1341,9 @@ pub fn stash_pending_remote(
 /// 待取回的远端版本队列（`limit` 由调用方夹住 —— 这是界面列表，不是批量作业）。
 pub fn pending_remote_queue(c: &Connection, limit: usize) -> Result<PendingRemoteQueue, String> {
     let total: i64 = c
-        .query_row("SELECT COUNT(*) FROM pending_remote_pages", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM pending_remote_pages", [], |row| {
+            row.get(0)
+        })
         .map_err(|e| e.to_string())?;
     let mut stmt = c
         .prepare(
@@ -1323,12 +1362,17 @@ pub fn pending_remote_queue(c: &Connection, limit: usize) -> Result<PendingRemot
             })
         })
         .map_err(|e| e.to_string())?;
-    let pages = rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    let pages = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
     Ok(PendingRemoteQueue { total, pages })
 }
 
 /// 这一页**待取回**的那一版：`(seq, 整页 JSON)`。没有 ⇒ `Ok(None)`。
-pub fn pending_remote_payload(c: &Connection, page_id: &str) -> Result<Option<(i64, String)>, String> {
+pub fn pending_remote_payload(
+    c: &Connection,
+    page_id: &str,
+) -> Result<Option<(i64, String)>, String> {
     c.query_row(
         "SELECT seq, payload FROM pending_remote_pages WHERE page_id = ?1",
         params![page_id],
@@ -1342,8 +1386,11 @@ pub fn pending_remote_payload(c: &Connection, page_id: &str) -> Result<Option<(i
 ///
 /// ⚠️ **没存着就一次写库都不做**（绝大多数页面走这条，与 `clear_text_stale` 同一口径）。
 pub fn clear_pending_remote(c: &Connection, page_id: &str) -> Result<(), String> {
-    c.execute("DELETE FROM pending_remote_pages WHERE page_id = ?1", params![page_id])
-        .map_err(|e| e.to_string())?;
+    c.execute(
+        "DELETE FROM pending_remote_pages WHERE page_id = ?1",
+        params![page_id],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1698,7 +1745,10 @@ mod tests {
                 items
                     .iter()
                     .map(|n| {
-                        n.pointer("/children/0/text").and_then(|t| t.as_str()).unwrap_or_default().to_string()
+                        n.pointer("/children/0/text")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or_default()
+                            .to_string()
                     })
                     .collect()
             })
@@ -1716,23 +1766,44 @@ mod tests {
 
     #[test]
     fn block_snapshots_splits_and_drops_rev() {
-        let blocks = block_snapshots(&jdoc(vec![jblk(Some("b1"), Some(3), "甲"), jblk(Some("b2"), None, "乙")]))
-            .expect("应当能拆出块表");
-        assert_eq!(blocks.iter().map(|b| b.block_id.as_str()).collect::<Vec<_>>(), vec!["b1", "b2"]);
-        assert_eq!(blocks.iter().map(|b| b.rev).collect::<Vec<_>>(), vec![Some(3), None]);
+        let blocks = block_snapshots(&jdoc(vec![
+            jblk(Some("b1"), Some(3), "甲"),
+            jblk(Some("b2"), None, "乙"),
+        ]))
+        .expect("应当能拆出块表");
+        assert_eq!(
+            blocks
+                .iter()
+                .map(|b| b.block_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["b1", "b2"]
+        );
+        assert_eq!(
+            blocks.iter().map(|b| b.rev).collect::<Vec<_>>(),
+            vec![Some(3), None]
+        );
         assert!(!blocks[0].json.contains("blockRev"), "片段里不许带 rev");
     }
 
     #[test]
     fn block_snapshots_bails_when_a_block_has_no_identity() {
         // 老内容（还没补种身份）⇒ 不合并，回落今天的行为。
-        assert!(block_snapshots(&jdoc(vec![jblk(Some("b1"), Some(1), "甲"), jblk(None, None, "乙")])).is_none());
+        assert!(block_snapshots(&jdoc(vec![
+            jblk(Some("b1"), Some(1), "甲"),
+            jblk(None, None, "乙")
+        ]))
+        .is_none());
         assert!(block_snapshots(&jdoc(vec![jblk(Some(""), Some(1), "甲")])).is_none());
     }
 
     #[test]
     fn block_snapshots_bails_on_dirty_json() {
-        for bad in ["not json", "{}", "{\"root\":null}", "{\"root\":{\"children\":\"nope\"}}"] {
+        for bad in [
+            "not json",
+            "{}",
+            "{\"root\":null}",
+            "{\"root\":{\"children\":\"nope\"}}",
+        ] {
             assert!(block_snapshots(bad).is_none(), "{bad} 应当拆不出来");
         }
     }
@@ -1764,8 +1835,14 @@ mod tests {
 
     #[test]
     fn merge_remote_content_keeps_both_sides_edits() {
-        let local = jdoc(vec![jblk(Some("b1"), Some(2), "A 改的"), jblk(Some("b2"), Some(1), "b2 原始")]);
-        let remote = jdoc(vec![jblk(Some("b1"), Some(1), "b1 原始"), jblk(Some("b2"), Some(2), "B 改的")]);
+        let local = jdoc(vec![
+            jblk(Some("b1"), Some(2), "A 改的"),
+            jblk(Some("b2"), Some(1), "b2 原始"),
+        ]);
+        let remote = jdoc(vec![
+            jblk(Some("b1"), Some(1), "b1 原始"),
+            jblk(Some("b2"), Some(2), "B 改的"),
+        ]);
 
         let RemoteMerge::Merged { json: merged, .. } = merge_remote_content(&local, &remote) else {
             panic!("两端各改不同块 ⇒ 必须能合");
@@ -1786,8 +1863,20 @@ mod tests {
             RemoteMerge::Conflicted(conflicts) => {
                 assert_eq!(conflicts.len(), 1);
                 assert_eq!(conflicts[0].reason, ConflictReason::SameRevDifferentContent);
-                assert_eq!(conflicts[0].local_json.as_deref().map(|j| j.contains("我改的")), Some(true));
-                assert_eq!(conflicts[0].remote_json.as_deref().map(|j| j.contains("他改的")), Some(true));
+                assert_eq!(
+                    conflicts[0]
+                        .local_json
+                        .as_deref()
+                        .map(|j| j.contains("我改的")),
+                    Some(true)
+                );
+                assert_eq!(
+                    conflicts[0]
+                        .remote_json
+                        .as_deref()
+                        .map(|j| j.contains("他改的")),
+                    Some(true)
+                );
             }
             other => panic!("同 rev 不同内容应当是冲突，实际 {other:?}"),
         }
@@ -1813,8 +1902,14 @@ mod tests {
     fn merge_remote_content_output_survives_assign_block_revs() {
         // 承重：合并产物是"下一次保存的 baseline"。物化时丢了 rev ⇒ assign_block_revs 会把每块
         // 当成"老客户端产物"重新盖 0/1 ⇒ rev 倒退 ⇒ 下一次合并的胜负判断就错了。
-        let local = jdoc(vec![jblk(Some("b1"), Some(4), "A 改的"), jblk(Some("b2"), Some(1), "b2 原始")]);
-        let remote = jdoc(vec![jblk(Some("b1"), Some(1), "b1 原始"), jblk(Some("b2"), Some(5), "B 改的")]);
+        let local = jdoc(vec![
+            jblk(Some("b1"), Some(4), "A 改的"),
+            jblk(Some("b2"), Some(1), "b2 原始"),
+        ]);
+        let remote = jdoc(vec![
+            jblk(Some("b1"), Some(1), "b1 原始"),
+            jblk(Some("b2"), Some(5), "B 改的"),
+        ]);
         let RemoteMerge::Merged { json: merged, .. } = merge_remote_content(&local, &remote) else {
             panic!("应当能合");
         };
@@ -1830,7 +1925,8 @@ mod tests {
     /// 手抄的 schema 少了那几张表就会在 `derive` 上炸 —— 那测的就是"另一套 schema"了
     /// （`versions.rs` 的 `test_conn` 记过同一条教训）。
     fn conflict_conn(tag: &str) -> (Connection, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("shuyonote-conflicts-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("shuyonote-conflicts-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
         drop(crate::db::open_meta_conn_at(&dir).unwrap());
@@ -1872,12 +1968,25 @@ mod tests {
             )
             .unwrap();
         assert_eq!(json, new, "投影必须**当场**跟上（这就是「少走的那一步」）");
-        assert_eq!(stale, 1, "正文那一半要留痕（补算器在打开页面时按编辑器语义算）");
-        assert_eq!(dirty, 0, "★ **不是保存**：标脏就会把刚收下的对端内容当本机改动推上去");
+        assert_eq!(
+            stale, 1,
+            "正文那一半要留痕（补算器在打开页面时按编辑器语义算）"
+        );
+        assert_eq!(
+            dirty, 0,
+            "★ **不是保存**：标脏就会把刚收下的对端内容当本机改动推上去"
+        );
         let blocks: i64 = c
-            .query_row("SELECT COUNT(*) FROM blocks WHERE page_id = 'p1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM blocks WHERE page_id = 'p1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(blocks, 2, "块图要**当场**重建（桌面是物化表；Web 才是按需扫列）");
+        assert_eq!(
+            blocks, 2,
+            "块图要**当场**重建（桌面是物化表；Web 才是按需扫列）"
+        );
         let versions: i64 = c
             .query_row("SELECT COUNT(*) FROM page_versions", [], |r| r.get(0))
             .unwrap();
@@ -1900,11 +2009,19 @@ mod tests {
             "内容没变 ⇒ 无事可做（返回 false，不写库）"
         );
         let stale: i64 = c
-            .query_row("SELECT COALESCE(text_stale, 0) FROM pages WHERE id = 'p1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COALESCE(text_stale, 0) FROM pages WHERE id = 'p1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(stale, 0, "没变连「待重建」都不许打（那会让补算器白跑一趟）");
         let blocks: i64 = c
-            .query_row("SELECT COUNT(*) FROM blocks WHERE page_id = 'p1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM blocks WHERE page_id = 'p1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(blocks, 0, "块图也不许被重建（白干）");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1939,8 +2056,12 @@ mod tests {
 
     #[test]
     fn replace_block_content_swaps_one_block_only() {
-        let doc = jdoc(vec![jblk(Some("b1"), Some(1), "旧"), jblk(Some("b2"), Some(1), "别动")]);
-        let out = replace_block_content(&doc, "b1", &jblk(Some("b1"), None, "新").to_string()).unwrap();
+        let doc = jdoc(vec![
+            jblk(Some("b1"), Some(1), "旧"),
+            jblk(Some("b2"), Some(1), "别动"),
+        ]);
+        let out =
+            replace_block_content(&doc, "b1", &jblk(Some("b1"), None, "新").to_string()).unwrap();
         assert_eq!(bodies_of(&out), vec!["新", "别动"]);
         // 块不在这一版里 ⇒ None（裁决时据此拒绝，而不是悄悄什么都不做）
         assert!(replace_block_content(&doc, "nope", "{}").is_none());
@@ -1977,7 +2098,10 @@ mod tests {
     #[test]
     fn resolving_a_conflict_writes_the_chosen_side_with_a_new_rev() {
         let (c, dir) = conflict_conn("resolve");
-        let current = jdoc(vec![jblk(Some("b1"), Some(3), "远端赢了的那版"), jblk(Some("b2"), Some(0), "别动")]);
+        let current = jdoc(vec![
+            jblk(Some("b1"), Some(3), "远端赢了的那版"),
+            jblk(Some("b2"), Some(0), "别动"),
+        ]);
         insert_conflict_page(&c, "p1", &current);
         record_page_conflicts(
             &c,
@@ -1995,12 +2119,17 @@ mod tests {
         // 裁决"留本地" ⇒ 该块换回本地那一版，并且**盖了新 rev**（maxSeen(3)+1 = 4）
         resolve_page_conflict(&c, &id, ConflictChoice::Local).unwrap();
 
-        let json: String =
-            c.query_row("SELECT content_json FROM pages WHERE id = 'p1'", [], |r| r.get(0)).unwrap();
+        let json: String = c
+            .query_row("SELECT content_json FROM pages WHERE id = 'p1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(bodies_of(&json), vec!["我原来改的", "别动"]);
         assert_eq!(revs_of(&json), vec![Some(4), Some(0)]);
         // 裁决 = 一笔本地编辑（要被推上去）
-        let dirty: i64 = c.query_row("SELECT dirty FROM pages WHERE id = 'p1'", [], |r| r.get(0)).unwrap();
+        let dirty: i64 = c
+            .query_row("SELECT dirty FROM pages WHERE id = 'p1'", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(dirty, 1);
         // 标成已决，不再出现在未决列表里
         assert!(unresolved_page_conflicts(&c, "p1").unwrap().is_empty());
@@ -2021,7 +2150,10 @@ mod tests {
              );",
         )
         .unwrap();
-        let old = jdoc(vec![jblk(Some("b1"), None, "原始一"), jblk(Some("b2"), None, "原始二")]);
+        let old = jdoc(vec![
+            jblk(Some("b1"), None, "原始一"),
+            jblk(Some("b2"), None, "原始二"),
+        ]);
         c.execute(
             "INSERT INTO pages (id, title, content_json, content_text) VALUES ('p1','标题',?1,'')",
             rusqlite::params![old],
@@ -2029,7 +2161,10 @@ mod tests {
         .unwrap();
 
         // 改一块再保存 ⇒ 改过的那块 `max+1 (=1)`，没改的那块盖 `0`（"有身份 ⇒ 一定有 rev"）
-        let next = jdoc(vec![jblk(Some("b1"), None, "改过"), jblk(Some("b2"), None, "原始二")]);
+        let next = jdoc(vec![
+            jblk(Some("b1"), None, "改过"),
+            jblk(Some("b2"), None, "原始二"),
+        ]);
         let stamped = stamp_block_revs(&c, "p1", &next).unwrap();
 
         assert_eq!(revs_of(&stamped), vec![Some(1), Some(0)]);
@@ -2042,7 +2177,10 @@ mod tests {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch("CREATE TABLE pages (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', content_json TEXT NOT NULL DEFAULT '', content_text TEXT NOT NULL DEFAULT '', deleted_at INTEGER);").unwrap();
         let next = jdoc(vec![jblk(Some("b1"), None, "新")]);
-        assert_eq!(revs_of(&stamp_block_revs(&c, "nope", &next).unwrap()), vec![Some(1)]);
+        assert_eq!(
+            revs_of(&stamp_block_revs(&c, "nope", &next).unwrap()),
+            vec![Some(1)]
+        );
     }
 
     #[test]
@@ -2087,11 +2225,32 @@ mod tests {
     /// 基线加一 ⇒ 编号追不上远端已经见过的编号 ⇒ **远端更旧的编辑会在随后一次合并里静默赢过本地的新编辑**。
     #[test]
     fn identical_content_with_divergent_revs_converges_to_max() {
-        for (l, r, want) in [(Some(2), Some(4), Some(4)), (Some(4), Some(2), Some(4)), (Some(7), None, Some(7)), (None, None, None)] {
-            let out = merge_blocks(&[blk("b1", l, "逐字一样")], &[blk("b1", r, "逐字一样")], MergeDecision::TakeRemote);
-            assert_eq!(pick(&out, "b1").choice, BlockChoice::Identical, "l={l:?} r={r:?}");
-            assert_eq!(pick(&out, "b1").rev, want, "l={l:?} r={r:?} 必须取较大的 rev（不许本地优先）");
-            assert!(!out.has_conflicts(), "内容逐字相同不该提示：{:?}", out.conflicts);
+        for (l, r, want) in [
+            (Some(2), Some(4), Some(4)),
+            (Some(4), Some(2), Some(4)),
+            (Some(7), None, Some(7)),
+            (None, None, None),
+        ] {
+            let out = merge_blocks(
+                &[blk("b1", l, "逐字一样")],
+                &[blk("b1", r, "逐字一样")],
+                MergeDecision::TakeRemote,
+            );
+            assert_eq!(
+                pick(&out, "b1").choice,
+                BlockChoice::Identical,
+                "l={l:?} r={r:?}"
+            );
+            assert_eq!(
+                pick(&out, "b1").rev,
+                want,
+                "l={l:?} r={r:?} 必须取较大的 rev（不许本地优先）"
+            );
+            assert!(
+                !out.has_conflicts(),
+                "内容逐字相同不该提示：{:?}",
+                out.conflicts
+            );
         }
     }
 
@@ -2105,20 +2264,33 @@ mod tests {
         let b_local = jdoc(vec![jblk(Some("b1"), Some(2), "一样")]);
         let a_remote = jdoc(vec![jblk(Some("b1"), Some(4), "一样")]);
 
-        let RemoteMerge::Merged { json: merged, .. } = merge_remote_content(&b_local, &a_remote) else {
+        let RemoteMerge::Merged { json: merged, .. } = merge_remote_content(&b_local, &a_remote)
+        else {
             panic!("同内容应当算 identical（合得上）");
         };
-        assert_eq!(revs_of(&merged), vec![Some(4)], "B 这边必须把 4 记下来（不是 2）");
+        assert_eq!(
+            revs_of(&merged),
+            vec![Some(4)],
+            "B 这边必须把 4 记下来（不是 2）"
+        );
 
         // 之后各自改这一块：A 从 4 加一到 5；B 从**合并产物的 4** 加一到 5（两份实现是同一个纯函数）。
-        let a_next = crate::block_rev::assign_block_revs(&a_remote, &jdoc(vec![jblk(Some("b1"), None, "A 改的")]));
-        let b_next = crate::block_rev::assign_block_revs(&merged, &jdoc(vec![jblk(Some("b1"), None, "B 改的")]));
+        let a_next = crate::block_rev::assign_block_revs(
+            &a_remote,
+            &jdoc(vec![jblk(Some("b1"), None, "A 改的")]),
+        );
+        let b_next = crate::block_rev::assign_block_revs(
+            &merged,
+            &jdoc(vec![jblk(Some("b1"), None, "B 改的")]),
+        );
         assert_eq!(revs_of(&a_next), vec![Some(5)]);
         assert_eq!(revs_of(&b_next), vec![Some(5)]);
 
         // ⇒ 下一次合并：同 rev、不同内容 ⇒ **冲突（看得见）**，不是"远端静默赢"。
         match merge_remote_content(&b_next, &a_next) {
-            RemoteMerge::Conflicted(c) => assert_eq!(c[0].reason, ConflictReason::SameRevDifferentContent),
+            RemoteMerge::Conflicted(c) => {
+                assert_eq!(c[0].reason, ConflictReason::SameRevDifferentContent)
+            }
             other => panic!("应当提示冲突，实际 {other:?}"),
         }
     }
@@ -2134,7 +2306,11 @@ mod tests {
         );
         assert_eq!(pick(&out, "b1").choice, BlockChoice::Remote);
         assert_eq!(pick(&out, "b1").json, "远端改过的");
-        assert_eq!(pick(&out, "b1").rev, Some(3), "合并后这一块的 rev 变成远端那个（≥1）");
+        assert_eq!(
+            pick(&out, "b1").rev,
+            Some(3),
+            "合并后这一块的 rev 变成远端那个（≥1）"
+        );
         assert!(!out.has_conflicts(), "0 是『最旧』不是『判不了』⇒ 不许提示");
 
         // ③ 0 绝不是"新版本"：改过的块一定拿到 **≥1**（`maxSeen + 1`），本层不会写出新的 0。
@@ -2167,15 +2343,25 @@ mod tests {
         .expect("应当能装回去");
 
         let doc: serde_json::Value = serde_json::from_str(&merged).unwrap();
-        assert_eq!(doc.pointer("/root/children/0/blockRev").and_then(|v| v.as_i64()), Some(4));
-        assert!(doc.pointer("/root/children/0/children/0/blockRev").is_none(), "嵌层同名键会被剥掉（今天的边界）");
         assert_eq!(
-            doc.pointer("/root/children/0/children/0/blockId").and_then(|v| v.as_str()),
+            doc.pointer("/root/children/0/blockRev")
+                .and_then(|v| v.as_i64()),
+            Some(4)
+        );
+        assert!(
+            doc.pointer("/root/children/0/children/0/blockRev")
+                .is_none(),
+            "嵌层同名键会被剥掉（今天的边界）"
+        );
+        assert_eq!(
+            doc.pointer("/root/children/0/children/0/blockId")
+                .and_then(|v| v.as_str()),
             Some("nested-1"),
             "嵌层的**内容**（身份、文字）一个都不许动"
         );
         assert_eq!(
-            doc.pointer("/root/children/0/children/0/children/0/text").and_then(|v| v.as_str()),
+            doc.pointer("/root/children/0/children/0/children/0/text")
+                .and_then(|v| v.as_str()),
             Some("引用里的字")
         );
     }
@@ -2217,8 +2403,17 @@ mod tests {
 
         let unresolved = |c: &Connection| unresolved_page_conflicts(c, "p1").unwrap().len();
         // ① 第一次应用 ⇒ 1 条未决
-        apply_remote_page(&c, &remote_page("p1", &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]), "远端正文"), 9, Ingest::Server)
-            .unwrap();
+        apply_remote_page(
+            &c,
+            &remote_page(
+                "p1",
+                &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]),
+                "远端正文",
+            ),
+            9,
+            Ingest::Server,
+        )
+        .unwrap();
         assert_eq!(unresolved(&c), 1);
 
         // ② 重连 / 重放同一格 ⇒ **不增长**（"同一 (页, 块) 覆盖不堆积"）
@@ -2251,7 +2446,11 @@ mod tests {
 
         let conflicted = apply_remote_page(
             &c,
-            &remote_page("p1", &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]), "远端正文"),
+            &remote_page(
+                "p1",
+                &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]),
+                "远端正文",
+            ),
             9,
             Ingest::Server,
         )
@@ -2260,19 +2459,29 @@ mod tests {
             RemoteMerge::Conflicted(cf) => assert_eq!(cf.len(), 1),
             other => panic!("同 rev 不同内容 ⇒ 必须回报冲突，实际 {other:?}"),
         }
-        assert_eq!(unresolved_page_conflicts(&c, "p1").unwrap().len(), 1, "而且必须留痕");
+        assert_eq!(
+            unresolved_page_conflicts(&c, "p1").unwrap().len(),
+            1,
+            "而且必须留痕"
+        );
 
         // 另一个页面：两端各改不同块 ⇒ 回报 `Merged`（没有冲突要裁决）
         insert_conflict_page(
             &c,
             "p2",
-            &jdoc(vec![jblk(Some("b1"), Some(2), "A 改的"), jblk(Some("b2"), Some(1), "b2 原始")]),
+            &jdoc(vec![
+                jblk(Some("b1"), Some(2), "A 改的"),
+                jblk(Some("b2"), Some(1), "b2 原始"),
+            ]),
         );
         let merged = apply_remote_page(
             &c,
             &remote_page(
                 "p2",
-                &jdoc(vec![jblk(Some("b1"), Some(1), "b1 原始"), jblk(Some("b2"), Some(2), "B 改的")]),
+                &jdoc(vec![
+                    jblk(Some("b1"), Some(1), "b1 原始"),
+                    jblk(Some("b2"), Some(2), "B 改的"),
+                ]),
                 "远端正文",
             ),
             9,
@@ -2280,7 +2489,10 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(merged, RemoteMerge::Merged { .. }));
-        assert!(unresolved_page_conflicts(&c, "p2").unwrap().is_empty(), "合得上就不该留一条要裁决的痕");
+        assert!(
+            unresolved_page_conflicts(&c, "p2").unwrap().is_empty(),
+            "合得上就不该留一条要裁决的痕"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2293,13 +2505,19 @@ mod tests {
         insert_conflict_page(
             &c,
             "p1",
-            &jdoc(vec![jblk(Some("b1"), Some(2), "本地改的"), jblk(Some("b2"), Some(1), "b2 原始")]),
+            &jdoc(vec![
+                jblk(Some("b1"), Some(2), "本地改的"),
+                jblk(Some("b2"), Some(1), "b2 原始"),
+            ]),
         );
         apply_remote_page(
             &c,
             &remote_page(
                 "p1",
-                &jdoc(vec![jblk(Some("b1"), Some(1), "b1 原始"), jblk(Some("b2"), Some(2), "远端改的")]),
+                &jdoc(vec![
+                    jblk(Some("b1"), Some(1), "b1 原始"),
+                    jblk(Some("b2"), Some(2), "远端改的"),
+                ]),
                 "远端那一份正文",
             ),
             9,
@@ -2307,11 +2525,29 @@ mod tests {
         )
         .unwrap();
 
-        let json: String = c.query_row("SELECT content_json FROM pages WHERE id='p1'", [], |r| r.get(0)).unwrap();
-        let text: String = c.query_row("SELECT content_text FROM pages WHERE id='p1'", [], |r| r.get(0)).unwrap();
-        assert_eq!(bodies_of(&json), vec!["本地改的", "远端改的"], "合并产物：两边的编辑都在");
-        assert_eq!(text, "远端那一份正文", "正文列这一刻仍是远端那一份（已知边界，如实钉住）");
-        assert_ne!(text, "本地改的远端改的", "它不是合并产物的派生文本 —— 别把它当成一致");
+        let json: String = c
+            .query_row("SELECT content_json FROM pages WHERE id='p1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let text: String = c
+            .query_row("SELECT content_text FROM pages WHERE id='p1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            bodies_of(&json),
+            vec!["本地改的", "远端改的"],
+            "合并产物：两边的编辑都在"
+        );
+        assert_eq!(
+            text, "远端那一份正文",
+            "正文列这一刻仍是远端那一份（已知边界，如实钉住）"
+        );
+        assert_ne!(
+            text, "本地改的远端改的",
+            "它不是合并产物的派生文本 —— 别把它当成一致"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2333,9 +2569,16 @@ mod tests {
             .unwrap()
         };
         assert_eq!(fts_hits(&c, "旧的正文"), 1);
-        assert_eq!(fts_hits(&c, "刚合并进来的字"), 0, "先证伪：修复之前那条路（单词 ≥3 字）确实搜不到");
+        assert_eq!(
+            fts_hits(&c, "刚合并进来的字"),
+            0,
+            "先证伪：修复之前那条路（单词 ≥3 字）确实搜不到"
+        );
 
-        assert!(refresh_page_text_if_stale(&c, "p1", "刚合并进来的字").unwrap(), "不同 ⇒ 要修");
+        assert!(
+            refresh_page_text_if_stale(&c, "p1", "刚合并进来的字").unwrap(),
+            "不同 ⇒ 要修"
+        );
 
         // ① 层里的读出口与算出来的那一份**逐字节一致**（AMD 的判据形状）
         assert_eq!(read(&c, "p1").unwrap().unwrap().text, "刚合并进来的字");
@@ -2361,13 +2604,19 @@ mod tests {
         insert_conflict_page(
             &c,
             "p1",
-            &jdoc(vec![jblk(Some("b1"), Some(2), "本地改的"), jblk(Some("b2"), Some(1), "b2 原始")]),
+            &jdoc(vec![
+                jblk(Some("b1"), Some(2), "本地改的"),
+                jblk(Some("b2"), Some(1), "b2 原始"),
+            ]),
         );
         let merged = apply_remote_page(
             &c,
             &remote_page(
                 "p1",
-                &jdoc(vec![jblk(Some("b1"), Some(1), "b1 原始"), jblk(Some("b2"), Some(2), "远端改的")]),
+                &jdoc(vec![
+                    jblk(Some("b1"), Some(1), "b1 原始"),
+                    jblk(Some("b2"), Some(2), "远端改的"),
+                ]),
                 "远端正文",
             ),
             9,
@@ -2375,28 +2624,50 @@ mod tests {
         )
         .unwrap();
         assert!(
-            matches!(merged, RemoteMerge::Merged { kept_local: true, .. }),
+            matches!(
+                merged,
+                RemoteMerge::Merged {
+                    kept_local: true,
+                    ..
+                }
+            ),
             "这一路必须留下本地块：{merged:?}"
         );
-        assert_eq!(text_stale(&c, "p1").unwrap(), Some(true), "合并产物 ⇒ 正文待重建");
+        assert_eq!(
+            text_stale(&c, "p1").unwrap(),
+            Some(true),
+            "合并产物 ⇒ 正文待重建"
+        );
 
         // ② 冲突回落（用远端原样）⇒ 不打
         insert_conflict_page(&c, "p2", &jdoc(vec![jblk(Some("b1"), Some(2), "我改的")]));
         let conflicted = apply_remote_page(
             &c,
-            &remote_page("p2", &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]), "远端正文"),
+            &remote_page(
+                "p2",
+                &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]),
+                "远端正文",
+            ),
             9,
             Ingest::Server,
         )
         .unwrap();
         assert!(matches!(conflicted, RemoteMerge::Conflicted(_)));
-        assert_eq!(text_stale(&c, "p2").unwrap(), Some(false), "回落页级 LWW ⇒ 正文就是内容那一份");
+        assert_eq!(
+            text_stale(&c, "p2").unwrap(),
+            Some(false),
+            "回落页级 LWW ⇒ 正文就是内容那一份"
+        );
 
         // ③ 没什么可合（老内容）⇒ 也不打
         insert_conflict_page(&c, "p3", &jdoc(vec![jblk(None, None, "老")]));
         let na = apply_remote_page(
             &c,
-            &remote_page("p3", &jdoc(vec![jblk(Some("b1"), Some(1), "新")]), "远端正文"),
+            &remote_page(
+                "p3",
+                &jdoc(vec![jblk(Some("b1"), Some(1), "新")]),
+                "远端正文",
+            ),
             9,
             Ingest::Server,
         )
@@ -2411,16 +2682,30 @@ mod tests {
         insert_conflict_page(&c, "p4", &jdoc(vec![jblk(Some("b1"), Some(7), "一模一样")]));
         let same = apply_remote_page(
             &c,
-            &remote_page("p4", &jdoc(vec![jblk(Some("b1"), Some(7), "一模一样")]), "一模一样"),
+            &remote_page(
+                "p4",
+                &jdoc(vec![jblk(Some("b1"), Some(7), "一模一样")]),
+                "一模一样",
+            ),
             9,
             Ingest::Server,
         )
         .unwrap();
         assert!(
-            matches!(same, RemoteMerge::Merged { kept_local: false, .. }),
+            matches!(
+                same,
+                RemoteMerge::Merged {
+                    kept_local: false,
+                    ..
+                }
+            ),
             "什么都没变的那一次不许报成「留下了本地块」：{same:?}"
         );
-        assert_eq!(text_stale(&c, "p4").unwrap(), Some(false), "产物 == 远端 ⇒ 正文列与内容一致 ⇒ 不打标记");
+        assert_eq!(
+            text_stale(&c, "p4").unwrap(),
+            Some(false),
+            "产物 == 远端 ⇒ 正文列与内容一致 ⇒ 不打标记"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2431,7 +2716,10 @@ mod tests {
         insert_conflict_page(
             &c,
             "p1",
-            &jdoc(vec![jblk(Some("b1"), Some(3), "远端赢了的那版"), jblk(Some("b2"), Some(0), "别动")]),
+            &jdoc(vec![
+                jblk(Some("b1"), Some(3), "远端赢了的那版"),
+                jblk(Some("b2"), Some(0), "别动"),
+            ]),
         );
         record_page_conflicts(
             &c,
@@ -2446,14 +2734,21 @@ mod tests {
         .unwrap();
         let id = unresolved_page_conflicts(&c, "p1").unwrap()[0].id.clone();
         resolve_page_conflict(&c, &id, ConflictChoice::Local).unwrap();
-        assert_eq!(text_stale(&c, "p1").unwrap(), Some(true), "裁决换了内容 ⇒ 正文待重建");
+        assert_eq!(
+            text_stale(&c, "p1").unwrap(),
+            Some(true),
+            "裁决换了内容 ⇒ 正文待重建"
+        );
 
         let q = stale_text_queue(&c, 10).unwrap();
         assert_eq!(q.total, 1);
         assert_eq!(q.pages.len(), 1);
         assert_eq!(q.pages[0].page_id, "p1");
         assert_eq!(q.pages[0].title, "页");
-        assert!(q.pages[0].doc_json.contains("我原来改的"), "队列要把文档 JSON 带出来给补算器");
+        assert!(
+            q.pages[0].doc_json.contains("我原来改的"),
+            "队列要把文档 JSON 带出来给补算器"
+        );
         // `limit` 夹到 ≥1（后台动作也不许一次把整库拖进来）
         assert_eq!(stale_text_queue(&c, 0).unwrap().pages.len(), 1);
 
@@ -2476,9 +2771,16 @@ mod tests {
         mark_text_stale(&c, "p1").unwrap();
         assert_eq!(text_stale(&c, "p1").unwrap(), Some(true));
 
-        assert!(!refresh_page_text_if_stale(&c, "p1", "").unwrap(), "相同 ⇒ 不写正文");
+        assert!(
+            !refresh_page_text_if_stale(&c, "p1", "").unwrap(),
+            "相同 ⇒ 不写正文"
+        );
 
-        assert_eq!(text_stale(&c, "p1").unwrap(), Some(false), "但标记必须清掉（它不该留在队列里）");
+        assert_eq!(
+            text_stale(&c, "p1").unwrap(),
+            Some(false),
+            "但标记必须清掉（它不该留在队列里）"
+        );
         assert_eq!(stale_text_queue(&c, 10).unwrap().total, 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2499,11 +2801,20 @@ mod tests {
         )
         .unwrap();
         mark_text_stale(&c, "db1").unwrap();
-        assert_eq!(text_stale(&c, "db1").unwrap(), Some(false), "数据库页不该被打上待重建");
+        assert_eq!(
+            text_stale(&c, "db1").unwrap(),
+            Some(false),
+            "数据库页不该被打上待重建"
+        );
 
         // ② 队列侧（双保险）：存量库里已经被标过的数据库页也不列出来
-        c.execute("UPDATE pages SET text_stale = 1 WHERE id = 'db1'", []).unwrap();
-        assert_eq!(stale_text_queue(&c, 10).unwrap().total, 0, "存量标记也不许把数据库页带进来");
+        c.execute("UPDATE pages SET text_stale = 1 WHERE id = 'db1'", [])
+            .unwrap();
+        assert_eq!(
+            stale_text_queue(&c, 10).unwrap().total,
+            0,
+            "存量标记也不许把数据库页带进来"
+        );
         assert!(stale_text_queue(&c, 10).unwrap().pages.is_empty());
 
         // ③ 回归守护：普通页面照旧（别把整类页面一起排除掉）
@@ -2542,23 +2853,44 @@ mod tests {
         let (c, dir) = conflict_conn("pending-newest");
         insert_conflict_page(&c, "p1", &jdoc(vec![jblk(Some("b1"), Some(1), "本地")]));
 
-        stash_pending_remote(&c, &stashed_page("p1", &jdoc(vec![jblk(Some("b1"), Some(2), "远端旧")]), "页"), 7, 100).unwrap();
-        stash_pending_remote(&c, &stashed_page("p1", &jdoc(vec![jblk(Some("b1"), Some(3), "远端新")]), "页"), 9, 200).unwrap();
+        stash_pending_remote(
+            &c,
+            &stashed_page("p1", &jdoc(vec![jblk(Some("b1"), Some(2), "远端旧")]), "页"),
+            7,
+            100,
+        )
+        .unwrap();
+        stash_pending_remote(
+            &c,
+            &stashed_page("p1", &jdoc(vec![jblk(Some("b1"), Some(3), "远端新")]), "页"),
+            9,
+            200,
+        )
+        .unwrap();
 
         let q = pending_remote_queue(&c, 10).unwrap();
         assert_eq!(q.total, 1, "同一页只许一条");
         assert_eq!(q.pages.len(), 1);
         assert_eq!(q.pages[0].seq, 9, "留最新那一版的 seq");
         assert_eq!(q.pages[0].stashed_at, 200);
-        let (seq, payload) = pending_remote_payload(&c, "p1").unwrap().expect("这一页有待取回的版本");
+        let (seq, payload) = pending_remote_payload(&c, "p1")
+            .unwrap()
+            .expect("这一页有待取回的版本");
         assert_eq!(seq, 9);
-        assert!(payload.contains("远端新"), "payload 是被覆盖后的那一版：{payload}");
+        assert!(
+            payload.contains("远端新"),
+            "payload 是被覆盖后的那一版：{payload}"
+        );
         assert!(!payload.contains("远端旧"));
 
         // `limit` 只影响**这一批**，`total` 仍是全量（界面要说"还有 N 页"）。
         // ⚠️ 夹取发生在命令面（`list_pending_remote_pages` 的 `limit.unwrap_or(20)`）。
         assert_eq!(pending_remote_queue(&c, 1).unwrap().pages.len(), 1);
-        assert_eq!(pending_remote_queue(&c, 0).unwrap().pages.len(), 0, "SQL LIMIT 0 ⇒ 这一批是空的");
+        assert_eq!(
+            pending_remote_queue(&c, 0).unwrap().pages.len(),
+            0,
+            "SQL LIMIT 0 ⇒ 这一批是空的"
+        );
         assert_eq!(pending_remote_queue(&c, 0).unwrap().total, 1, "但总数照旧");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2577,7 +2909,11 @@ mod tests {
 
         // ① 逐字相同 ⇒ 不记（记了就是"采用了也没变化"的假账）
         stash_pending_remote(&c, &stashed_page("p1", &same, "页"), 3, 100).unwrap();
-        assert_eq!(pending_remote_queue(&c, 10).unwrap().total, 0, "与本地逐字相同 ⇒ 不进清单");
+        assert_eq!(
+            pending_remote_queue(&c, 10).unwrap().total,
+            0,
+            "与本地逐字相同 ⇒ 不进清单"
+        );
 
         // ② 正文变了 ⇒ **照旧记**（这条判断不是把这条路关掉：它正是 B 方案要留的那条痕）
         let other = jdoc(vec![jblk(Some("b1"), Some(2), "远端另一版")]);
@@ -2588,7 +2924,11 @@ mod tests {
 
         // ③ 只有**标题**变了（正文一样）⇒ 也要记：用户裁决的是"整页用谁的"，不只是正文
         stash_pending_remote(&c, &stashed_page("p1", &other, "新标题"), 5, 300).unwrap();
-        assert_eq!(pending_remote_queue(&c, 10).unwrap().pages[0].seq, 5, "标题差异同样要裁决");
+        assert_eq!(
+            pending_remote_queue(&c, 10).unwrap().pages[0].seq,
+            5,
+            "标题差异同样要裁决"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2625,9 +2965,17 @@ mod tests {
             }],
         )
         .unwrap();
-        assert_eq!(unresolved_page_conflicts(&c, "p1").unwrap().len(), 1, "前置：有一条未裁决");
+        assert_eq!(
+            unresolved_page_conflicts(&c, "p1").unwrap().len(),
+            1,
+            "前置：有一条未裁决"
+        );
 
-        let remote = stashed_page("p1", &jdoc(vec![jblk(Some("b1"), Some(9), "远端赢了")]), "远端标题");
+        let remote = stashed_page(
+            "p1",
+            &jdoc(vec![jblk(Some("b1"), Some(9), "远端赢了")]),
+            "远端标题",
+        );
         take_remote_page(&c, &remote, 11, Ingest::Server).unwrap();
 
         let cur = read(&c, "p1").unwrap().unwrap();
@@ -2635,7 +2983,11 @@ mod tests {
         assert!(cur.json.contains("远端赢了"));
         assert!(!cur.json.contains("本地"), "整页覆盖：本地那一版不在了");
         let (seq, dirty): (i64, i64) = c
-            .query_row("SELECT sync_seq, dirty FROM pages WHERE id = 'p1'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .query_row(
+                "SELECT sync_seq, dirty FROM pages WHERE id = 'p1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .unwrap();
         assert_eq!(seq, 11, "记的是远端那个 seq");
         assert_eq!(dirty, 0, "远端应用 ⇒ 没有未推送改动");
@@ -2664,19 +3016,34 @@ mod tests {
         let (c, dir) = conflict_conn("fk-workspace");
         // 本机这个空间自己的 id（`main.workspaces` 在真机上**只有那一行** ✓，我核过真库 ✓）
         let local: String = c
-            .query_row("SELECT id FROM workspaces ORDER BY rowid ASC LIMIT 1", [], |r| r.get(0))
+            .query_row(
+                "SELECT id FROM workspaces ORDER BY rowid ASC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
 
-        let mut page = remote_page("p-remote", &jdoc(vec![jblk(Some("b1"), Some(1), "远端")]), "远端页");
+        let mut page = remote_page(
+            "p-remote",
+            &jdoc(vec![jblk(Some("b1"), Some(1), "远端")]),
+            "远端页",
+        );
         page.workspace_id = "对端那台的空间-本地没有".to_string();
         upsert_remote(&c, &page, 7, Ingest::Server).expect(
             "⛔ 远端带对端 workspace_id ⇒ 真机当场炸：FOREIGN KEY constraint failed（裁决/合并全废）",
         );
 
         let got: String = c
-            .query_row("SELECT workspace_id FROM pages WHERE id = 'p-remote'", [], |r| r.get(0))
+            .query_row(
+                "SELECT workspace_id FROM pages WHERE id = 'p-remote'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(got, local, "必须锚到**本机这个空间**的 id（⛔ 不许原样写对端那个 ✗）");
+        assert_eq!(
+            got, local,
+            "必须锚到**本机这个空间**的 id（⛔ 不许原样写对端那个 ✗）"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2686,24 +3053,44 @@ mod tests {
     #[test]
     fn a_remote_page_whose_parent_has_not_arrived_survives() {
         let (c, dir) = conflict_conn("fk-parent");
-        let mut page = remote_page("p-child", &jdoc(vec![jblk(Some("b1"), Some(1), "子")]), "子页");
+        let mut page = remote_page(
+            "p-child",
+            &jdoc(vec![jblk(Some("b1"), Some(1), "子")]),
+            "子页",
+        );
         page.parent_id = Some("父页-还没到".to_string());
 
         // ① 外键**开着**（＝裁决那条路 ✓）：写 NULL，但**必须落库** ✓
         c.pragma_update(None, "foreign_keys", "ON").unwrap();
-        upsert_remote(&c, &page, 8, Ingest::Server).expect("父页没到 ⇒ ⛔ 不许因此整行落不了库（真机 38/40 就是这种 ✗）");
+        upsert_remote(&c, &page, 8, Ingest::Server)
+            .expect("父页没到 ⇒ ⛔ 不许因此整行落不了库（真机 38/40 就是这种 ✗）");
         let got: Option<String> = c
-            .query_row("SELECT parent_id FROM pages WHERE id = 'p-child'", [], |r| r.get(0))
+            .query_row(
+                "SELECT parent_id FROM pages WHERE id = 'p-child'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(got, None, "外键开着 ⇒ 写 NULL（父页到了自己会落，链接以后再说 ✓）");
+        assert_eq!(
+            got, None,
+            "外键开着 ⇒ 写 NULL（父页到了自己会落，链接以后再说 ✓）"
+        );
 
         // ② 外键**关着**（＝批量应用期间 ✓）：**保留引用** ✓（父页就在同一批里稍后到达 ✓）
         c.pragma_update(None, "foreign_keys", "OFF").unwrap();
-        let mut p2 = remote_page("p-child2", &jdoc(vec![jblk(Some("b1"), Some(1), "子2")]), "子页2");
+        let mut p2 = remote_page(
+            "p-child2",
+            &jdoc(vec![jblk(Some("b1"), Some(1), "子2")]),
+            "子页2",
+        );
         p2.parent_id = Some("父页-稍后到".to_string());
         upsert_remote(&c, &p2, 9, Ingest::Server).expect("外键关着 ⇒ 引用直接写进去 ✓");
         let got2: Option<String> = c
-            .query_row("SELECT parent_id FROM pages WHERE id = 'p-child2'", [], |r| r.get(0))
+            .query_row(
+                "SELECT parent_id FROM pages WHERE id = 'p-child2'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(
             got2.as_deref(),
@@ -2713,14 +3100,30 @@ mod tests {
 
         // ③ **正向对照**：父页真在本地 ⇒ 链接必须保住 ✓（别把"存在"也 NULL 掉 ✓）
         c.pragma_update(None, "foreign_keys", "ON").unwrap();
-        insert_conflict_page(&c, "p-ok-parent", &jdoc(vec![jblk(Some("b1"), Some(1), "父")]));
-        let mut p3 = remote_page("p-child3", &jdoc(vec![jblk(Some("b1"), Some(1), "子3")]), "子页3");
+        insert_conflict_page(
+            &c,
+            "p-ok-parent",
+            &jdoc(vec![jblk(Some("b1"), Some(1), "父")]),
+        );
+        let mut p3 = remote_page(
+            "p-child3",
+            &jdoc(vec![jblk(Some("b1"), Some(1), "子3")]),
+            "子页3",
+        );
         p3.parent_id = Some("p-ok-parent".to_string());
         upsert_remote(&c, &p3, 10, Ingest::Server).unwrap();
         let got3: Option<String> = c
-            .query_row("SELECT parent_id FROM pages WHERE id = 'p-child3'", [], |r| r.get(0))
+            .query_row(
+                "SELECT parent_id FROM pages WHERE id = 'p-child3'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(got3.as_deref(), Some("p-ok-parent"), "父页在 ⇒ 链接一个字都不许改 ✓");
+        assert_eq!(
+            got3.as_deref(),
+            Some("p-ok-parent"),
+            "父页在 ⇒ 链接一个字都不许改 ✓"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2732,7 +3135,8 @@ mod tests {
         insert_conflict_page(&c, "p1", &jdoc(vec![jblk(Some("b1"), Some(1), "本地")]));
         mark_page_dirty(&c, "p1").unwrap();
         let dirty = |c: &Connection| -> i64 {
-            c.query_row("SELECT dirty FROM pages WHERE id = 'p1'", [], |r| r.get(0)).unwrap()
+            c.query_row("SELECT dirty FROM pages WHERE id = 'p1'", [], |r| r.get(0))
+                .unwrap()
         };
         assert_eq!(dirty(&c), 1);
         // 远端应用会把它压回 0（这就是"合并之后要重新标上"的原因）
@@ -2865,12 +3269,12 @@ mod page_blocks_tests {
     /// **实测抓到的真实形状**：顶层 `paragraph` **没有** `blockId` ✗（键与线上一致 ✓）。
     fn real_shape_doc() -> String {
         json!({ "root": {
-            "type": "root", "version": 1, "direction": "ltr", "format": "", "indent": 0,
-            "children": [
-                { "type": "paragraph", "version": 1, "direction": "ltr", "format": "",
-                  "indent": 0, "textFormat": 0, "textStyle": "",
-                  "children": [{ "type": "text", "text": "The apple is red.", "version": 1 }] }
-            ]}})
+        "type": "root", "version": 1, "direction": "ltr", "format": "", "indent": 0,
+        "children": [
+            { "type": "paragraph", "version": 1, "direction": "ltr", "format": "",
+              "indent": 0, "textFormat": 0, "textStyle": "",
+              "children": [{ "type": "text", "text": "The apple is red.", "version": 1 }] }
+        ]}})
         .to_string()
     }
 
@@ -2953,7 +3357,10 @@ mod page_blocks_tests {
         assert_eq!(list.text, "甲乙", "text 的语义不许被改（查词/摘要吃它）");
         assert_eq!(b[5].kind, "image");
         assert!(b[5].text.is_empty() && b[5].items.is_empty());
-        assert_eq!(b[5].src, "blob:http://x/abc", "图片的 src 必须带出来（否则阅读屏只能画占位框）");
+        assert_eq!(
+            b[5].src, "blob:http://x/abc",
+            "图片的 src 必须带出来（否则阅读屏只能画占位框）"
+        );
     }
 
     /// 反判据：认不出来的块类型**不许丢** —— 原样带出去（前端自己兜 style），

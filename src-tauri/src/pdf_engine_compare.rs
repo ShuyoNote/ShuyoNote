@@ -58,11 +58,16 @@ const MAX_CHANNEL_DIFF: u8 = 8;
 const MAX_OVER_RATIO: f64 = 0.005;
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures").join("pdf")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("pdf")
 }
 
 fn out_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("pdf-compare")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("pdf-compare")
 }
 
 /// 夹具里那个矩形用的**纯蓝**（`0 0 1 rg`）。用来把"页面里的图形"从"文字墨迹"里减掉 ——
@@ -88,8 +93,7 @@ const FIXTURE_RECT_RGB: (u8, u8, u8) = (0, 0, 255);
 ///   · **不能**升成硬判据：它反映的是"这个平台的 PDFium 有没有字体后端"（环境相关的产品缺陷），
 ///     不是代码回归 —— 放进常开门禁会在 Linux 上长期红，久了就没人再看红（我们吃过一次）。
 fn non_rect_ink(rgba: &[u8]) -> usize {
-    rgba
-        .chunks_exact(4)
+    rgba.chunks_exact(4)
         .filter(|p| p[3] != 0 && (p[0], p[1], p[2]) != FIXTURE_RECT_RGB)
         .count()
 }
@@ -187,11 +191,24 @@ fn pdfium_matches_mupdf_on_fixtures() {
         .filter(|p| p.extension().map(|x| x == "pdf").unwrap_or(false))
         .collect();
     files.sort();
-    assert!(!files.is_empty(), "样本目录为空：{}（先跑 node scripts/make-pdf-fixtures.mjs）", dir.display());
+    assert!(
+        !files.is_empty(),
+        "样本目录为空：{}（先跑 node scripts/make-pdf-fixtures.mjs）",
+        dir.display()
+    );
 
     println!(
         "\n{:<16} {:>11} {:>6} {:>9} {:>6} {:>9} {:>10} {:>9} {:>24}  {}",
-        "样本", "尺寸", "RGB差", "RGB超阈", "A差", "A超阈", "语义不一致", "双透明", "非矩形墨迹(只报告)", "结论"
+        "样本",
+        "尺寸",
+        "RGB差",
+        "RGB超阈",
+        "A差",
+        "A超阈",
+        "语义不一致",
+        "双透明",
+        "非矩形墨迹(只报告)",
+        "结论"
     );
     println!(
         "（RGB 那两列**按像素**统计、是硬判据；A/语义/双透明/非矩形墨迹四列只报告，理由见文件头判据 2 与 `non_rect_ink`）"
@@ -226,7 +243,19 @@ fn pdfium_matches_mupdf_on_fixtures() {
                     why.push(format!("PDFium 渲染失败：{e}"));
                 }
                 let msg = format!("{name}: {}", why.join(" / "));
-                println!("{:<16} {:>11} {:>6} {:>9} {:>6} {:>9} {:>10} {:>9} {:>24}  ❌ {}", name, "-", "-", "-", "-", "-", "-", "-", "-", why.join(" / "));
+                println!(
+                    "{:<16} {:>11} {:>6} {:>9} {:>6} {:>9} {:>10} {:>9} {:>24}  ❌ {}",
+                    name,
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    why.join(" / ")
+                );
                 failures.push(msg);
                 continue;
             }
@@ -236,7 +265,9 @@ fn pdfium_matches_mupdf_on_fixtures() {
 
         // 判据 1：尺寸必须完全相等。
         if (mw, mh) != (pw, ph) {
-            let msg = format!("{name}: 尺寸不等 MuPDF={mw}×{mh} / PDFium={pw}×{ph}（不等就不进像素比对）");
+            let msg = format!(
+                "{name}: 尺寸不等 MuPDF={mw}×{mh} / PDFium={pw}×{ph}（不等就不进像素比对）"
+            );
             println!(
                 "{:<16} {:>11} {:>6} {:>9} {:>6} {:>9} {:>10} {:>9} {:>24}  ❌ 尺寸不等 MuPDF={mw}×{mh} / PDFium={pw}×{ph}",
                 name, "不等", "-", "-", "-", "-", "-", "-", "-"
@@ -250,7 +281,11 @@ fn pdfium_matches_mupdf_on_fixtures() {
         let _ = fs::write(out.join(format!("{name}.pdfium.rgba")), &p_rgba);
 
         if m_rgba.len() != p_rgba.len() {
-            let msg = format!("{name}: 尺寸相同但字节数不同 MuPDF={} / PDFium={}", m_rgba.len(), p_rgba.len());
+            let msg = format!(
+                "{name}: 尺寸相同但字节数不同 MuPDF={} / PDFium={}",
+                m_rgba.len(),
+                p_rgba.len()
+            );
             println!(
                 "{:<16} {:>11} {:>6} {:>9} {:>6} {:>9} {:>10} {:>9}  ❌ 字节数不匹配 {}",
                 name,
@@ -437,7 +472,10 @@ mod tests {
         assert_eq!(d.rgb_over, 0.0);
         assert_eq!(d.alpha_max, 240);
         assert_eq!(d.alpha_over, 0.5);
-        assert_eq!(d.alpha_semantics, 0.0, "15 不是 0/255 的翻转，不算语义不一致");
+        assert_eq!(
+            d.alpha_semantics, 0.0,
+            "15 不是 0/255 的翻转，不算语义不一致"
+        );
     }
 
     #[test]
@@ -472,7 +510,10 @@ mod tests {
         // 透明像素**不管什么颜色**都不算墨迹（alpha 才是"画没画"的判据）。
         assert_eq!(non_rect_ink(&buf(&[[255, 255, 255, 0], [9, 9, 9, 0]])), 0);
         // 与 `text.pdf` 的真实形态对齐：Helvetica（非纯蓝）整行都算。
-        assert_eq!(non_rect_ink(&buf(&[BLUE, [10, 10, 10, 255], [200, 200, 200, 255]])), 2);
+        assert_eq!(
+            non_rect_ink(&buf(&[BLUE, [10, 10, 10, 255], [200, 200, 200, 255]])),
+            2
+        );
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::crypto;
-use crate::db::{Db, space_db_path};
+use crate::db::{space_db_path, Db};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::path::Path;
@@ -42,7 +42,9 @@ fn encryption_enabled(c: &Connection) -> bool {
         return true;
     }
     match crate::space_crypto::space_id_from_path(p) {
-        Some(id) => crate::space_crypto::keyring().map(|k| k.has(&id)).unwrap_or(false),
+        Some(id) => crate::space_crypto::keyring()
+            .map(|k| k.has(&id))
+            .unwrap_or(false),
         None => false,
     }
 }
@@ -71,7 +73,9 @@ pub fn key_if_enabled(c: &Connection) -> Option<crypto::AppKeys> {
         return None;
     }
     let path = c.path().filter(|p| !p.is_empty())?;
-    crate::space_crypto::space_app_keys_for_path(Path::new(path)).ok().flatten()
+    crate::space_crypto::space_app_keys_for_path(Path::new(path))
+        .ok()
+        .flatten()
 }
 
 /// ⭐ **2026-10-27（owner：「修」）**：**按空间 id 取那一把钥匙** —— ⛔ 不看"连接自己是谁" ✗。
@@ -90,17 +94,24 @@ pub fn key_for_space(app_data_dir: &Path, space_id: &str) -> Option<crypto::AppK
     }
     let path = crate::db::space_db_path(app_data_dir, space_id);
     let encrypted = space_db_is_encrypted(&path)
-        || crate::space_crypto::keyring().map(|k| k.has(space_id)).unwrap_or(false);
+        || crate::space_crypto::keyring()
+            .map(|k| k.has(space_id))
+            .unwrap_or(false);
     if !encrypted {
         return None;
     }
-    crate::space_crypto::space_app_keys_for_path(&path).ok().flatten()
+    crate::space_crypto::space_app_keys_for_path(&path)
+        .ok()
+        .flatten()
 }
 
 /// Encrypt attachment BYTES at rest with **this space's** key, ONLY when the space is
 /// encrypted and the session is unlocked. When there is no key (plaintext space / locked)
 /// this passes the bytes through unchanged, so plaintext spaces keep working.
-pub fn encrypt_attachment_bytes(key: Option<&crypto::AppKeys>, data: &[u8]) -> Result<Vec<u8>, String> {
+pub fn encrypt_attachment_bytes(
+    key: Option<&crypto::AppKeys>,
+    data: &[u8],
+) -> Result<Vec<u8>, String> {
     match key {
         Some(k) => crypto::encrypt(data, k),
         None => Ok(data.to_vec()),
@@ -120,7 +131,10 @@ pub fn looks_like_attachment_ciphertext(data: &[u8]) -> bool {
 /// decrypt (**双读**：v0 无头 / v1 XChaCha20 / v2 国密，由密文头分派); if it fails the bytes
 /// were plaintext (pre-encryption data, or encryption was off when saved), so they are
 /// returned unchanged.
-pub fn decrypt_attachment_bytes(key: Option<&crypto::AppKeys>, data: &[u8]) -> Result<Vec<u8>, String> {
+pub fn decrypt_attachment_bytes(
+    key: Option<&crypto::AppKeys>,
+    data: &[u8],
+) -> Result<Vec<u8>, String> {
     match key {
         Some(k) => {
             // ★ §0-C：**先看头**。这一段如果"看着就是密文、但版本本构建解不开"（典型：老版本应用遇到
@@ -232,7 +246,9 @@ pub fn payload_format(payload: &str) -> Option<u8> {
 ///
 /// 为什么必须"整批"：逐条失败会**应用一半**（游标停在中途），用户看到的是"同步了一部分、
 /// 剩下的一直报错"，而真正的原因是"这版应用读不了那个空间的数据"。
-pub fn ensure_payloads_supported<'a>(payloads: impl IntoIterator<Item = &'a str>) -> Result<(), String> {
+pub fn ensure_payloads_supported<'a>(
+    payloads: impl IntoIterator<Item = &'a str>,
+) -> Result<(), String> {
     let mut bad: Option<u8> = None;
     for p in payloads {
         // 只对"看着像我们写的密文"的载荷下结论：明文载荷 peek 出 None ⇒ 放行。
@@ -331,7 +347,9 @@ pub(crate) fn set_cipher_key(conn: &Connection, key: &[u8; 32]) -> Result<(), St
 ///      自己的问题，让后面的读去失败 ⇒ 由 `cipher_open_error` 翻成"两因一果"的可操作文本）。
 #[cfg(feature = "sm-library")]
 fn apply_gm_page_settings(conn: &Connection) -> Result<(), String> {
-    use crate::gm_provider::{library_recognizes_gm_labels, read_gm_cipher_status, set_gm_cipher_labels};
+    use crate::gm_provider::{
+        library_recognizes_gm_labels, read_gm_cipher_status, set_gm_cipher_labels,
+    };
     if !library_recognizes_gm_labels() {
         return Err(
             "这份构建的 SQLCipher **不认识** `HMAC_SM3` / `PBKDF2_HMAC_SM3`（内存库回显不是国密标签）——\n\
@@ -342,7 +360,9 @@ fn apply_gm_page_settings(conn: &Connection) -> Result<(), String> {
         );
     }
     set_gm_cipher_labels(conn).map_err(|e| {
-        format!("库级国密参数设置失败（{e}）—— 这个构建带 `sm-library`，按约定必须用 SM3 页 MAC/库 KDF")
+        format!(
+            "库级国密参数设置失败（{e}）—— 这个构建带 `sm-library`，按约定必须用 SM3 页 MAC/库 KDF"
+        )
     })?;
     match read_gm_cipher_status(conn) {
         Ok(crate::gm_provider::GmProviderStatus::Applied { .. }) => Ok(()),
@@ -408,7 +428,8 @@ fn legacy_who(space_id: Option<&str>) -> String {
 /// SQLCipher「这个库打不开」的**两种**原始报错 —— 实测这两句在**口令错**与**页参数/页加密算法不同**
 /// 两种情况里**完全不可区分**（2026-09-20 探针：512 字节页库用默认参数打开 ⇒ `file is not a database`；
 /// 同一个库用**错口令**打开 ⇒ **一字不差的同一句**；另一种参数不匹配 ⇒ `database disk image is malformed`）。
-pub(crate) const CIPHER_OPEN_RAW: [&str; 2] = ["file is not a database", "database disk image is malformed"];
+pub(crate) const CIPHER_OPEN_RAW: [&str; 2] =
+    ["file is not a database", "database disk image is malformed"];
 
 /// 把「库打不开」的原始报错翻成**可操作**的文本（**两因一果**）。
 ///
@@ -479,8 +500,10 @@ fn rebuild_space_db(
         // (sqlcipher_export returns NULL on success — we only care that it didn't error.)
         src.execute_batch("SELECT sqlcipher_export('target');")
             .map_err(|e| format!("sqlcipher_export 失败: {e}"))?;
-        src.execute_batch("DETACH DATABASE target;").map_err(|e| format!("DETACH 目标库失败: {e}"))?;
-        src.close().map_err(|(_c, e)| format!("关闭源连接失败: {e}"))?;
+        src.execute_batch("DETACH DATABASE target;")
+            .map_err(|e| format!("DETACH 目标库失败: {e}"))?;
+        src.close()
+            .map_err(|(_c, e)| format!("关闭源连接失败: {e}"))?;
         return Ok(());
     }
 
@@ -526,8 +549,12 @@ fn rebuild_space_db(
                  AND name NOT LIKE 'chunk_fts%' ORDER BY name",
             )
             .map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |r| r.get(0)).map_err(|e| e.to_string())?;
-        rows.map(|r| r.map_err(|e| e.to_string())).collect::<Result<_, _>>().map_err(|e| e.to_string())?
+        let rows = stmt
+            .query_map([], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        rows.map(|r| r.map_err(|e| e.to_string()))
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?
     };
     // migrate() seeds the target's `workspaces` row with the space id; drop it so the
     // source's real workspace row replaces it without a UNIQUE conflict.
@@ -546,18 +573,30 @@ fn rebuild_space_db(
     for t in &tables {
         let src_cols = table_columns(&dst, &format!("plain.\"{t}\""))?;
         let dst_cols = table_columns(&dst, &format!("main.\"{t}\""))?;
-        let missing_in_target: Vec<&String> =
-            src_cols.iter().filter(|c| !dst_cols.iter().any(|d| d.eq_ignore_ascii_case(c))).collect();
+        let missing_in_target: Vec<&String> = src_cols
+            .iter()
+            .filter(|c| !dst_cols.iter().any(|d| d.eq_ignore_ascii_case(c)))
+            .collect();
         if !missing_in_target.is_empty() {
             return Err(format!(
                 "表 {t} 里有本版不认识的列（{}）—— 这个库比本版**新**，硬转换会丢数据 ⇒ 拒绝转换。\
                  请升级应用后再开/关这个空间的加密。",
-                missing_in_target.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                missing_in_target
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
-        let common: Vec<&String> =
-            src_cols.iter().filter(|c| dst_cols.iter().any(|d| d.eq_ignore_ascii_case(c))).collect();
-        let cols = common.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        let common: Vec<&String> = src_cols
+            .iter()
+            .filter(|c| dst_cols.iter().any(|d| d.eq_ignore_ascii_case(c)))
+            .collect();
+        let cols = common
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         dst.execute(
             &format!("INSERT INTO main.\"{t}\" ({cols}) SELECT {cols} FROM plain.\"{t}\""),
             [],
@@ -574,7 +613,8 @@ fn rebuild_space_db(
     )
     .map_err(|e| format!("重建全文索引失败: {e}"))?;
 
-    dst.close().map_err(|(_c, e)| format!("关闭目标库失败: {e}"))?;
+    dst.close()
+        .map_err(|(_c, e)| format!("关闭目标库失败: {e}"))?;
     Ok(())
 }
 
@@ -587,13 +627,21 @@ fn table_columns(conn: &Connection, qualified_table: &str) -> Result<Vec<String>
     let stmt = conn
         .prepare(&format!("SELECT * FROM {qualified_table} LIMIT 0"))
         .map_err(|e| format!("读列名失败（{qualified_table}）：{e}"))?;
-    Ok(stmt.column_names().into_iter().map(|s| s.to_string()).collect())
+    Ok(stmt
+        .column_names()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect())
 }
 
 /// Convert a space DB file between plaintext and SQLCipher-encrypted at rest,
 /// atomically replacing the file. `to_encrypted` selects the target state; `key`
 /// is required when encrypting. No-op if the file is already in the target state.
-pub fn convert_space_db(path: &Path, to_encrypted: bool, key: Option<&[u8; 32]>) -> Result<(), String> {
+pub fn convert_space_db(
+    path: &Path,
+    to_encrypted: bool,
+    key: Option<&[u8; 32]>,
+) -> Result<(), String> {
     let cur_enc = space_db_is_encrypted(path);
     if cur_enc == to_encrypted {
         return Ok(());
@@ -629,7 +677,9 @@ pub fn convert_space_db(path: &Path, to_encrypted: bool, key: Option<&[u8; 32]>)
             let k = key.ok_or("加密迁移需要密钥".to_string())?;
             set_cipher_key(&vc, k)?;
         }
-        vc.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0))
+        vc.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| {
+            r.get::<_, i64>(0)
+        })
     };
     if readable.is_err() {
         let _ = std::fs::remove_file(&tmp);
@@ -658,7 +708,9 @@ pub fn convert_space_db(path: &Path, to_encrypted: bool, key: Option<&[u8; 32]>)
             let k = key.ok_or("加密迁移需要密钥".to_string())?;
             set_cipher_key(&vc, k)?;
         }
-        vc.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0))
+        vc.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| {
+            r.get::<_, i64>(0)
+        })
     };
     if sw.is_err() {
         std::fs::write(path, &backup).ok();
@@ -686,14 +738,22 @@ fn reopen_keyed(c: &mut Connection, space_id: &str, app_data_dir: &Path) -> Resu
 /// space DBs are SQLCipher-encrypted (set on a successful **per-space** enable/disable).
 /// The open path keys a connection when the file is detected as encrypted at rest (header
 /// sniff is the ground truth); the marker is explicit bookkeeping per the plan.
-pub(crate) fn set_space_encrypted_marked(c: &Connection, space_id: &str, enc: bool) -> Result<(), String> {
+pub(crate) fn set_space_encrypted_marked(
+    c: &Connection,
+    space_id: &str,
+    enc: bool,
+) -> Result<(), String> {
     // §0-C：除了 encrypted 标记，还记下"这个空间的数据是哪一版密文"（启用时 = 本构建写出去的那版；
     // 关闭时清 0）。**必须有这一列**：光靠密文头，老端要读到某一条时才知道读不了。
     c.execute(
         "UPDATE meta.workspaces SET encrypted = ?1, cipher_format = ?2 WHERE id = ?3",
         params![
             if enc { 1 } else { 0 },
-            if enc { crypto::CURRENT_FORMAT as i64 } else { 0 },
+            if enc {
+                crypto::CURRENT_FORMAT as i64
+            } else {
+                0
+            },
             space_id
         ],
     )
@@ -716,7 +776,8 @@ pub fn sync_gate(c: &Connection) -> Result<(), String> {
 }
 
 #[derive(Serialize)]
-pub struct EncryptionStatus {    pub enabled: bool,
+pub struct EncryptionStatus {
+    pub enabled: bool,
     /// ⭐ **"当前这个活动空间现在读不出来（需要口令）"** —— ⚠️ **不是**"整个会话锁着" ✗
     /// （owner 2026-10-10 拍 A：明文空间与加密空间必须**各算各的** ✓）。
     /// 算法 ＝ `active_space.encrypted_on_disk && !active_space.key_available` ✓
@@ -839,7 +900,8 @@ fn encryption_status_of(c: &Connection) -> Result<EncryptionStatus, String> {
     //   —— 它的 `c.path()` 是空的 ⇒ 只看连接会把"已加密但锁着"读成"没开加密" ⇒ 解锁屏不出现、
     //   用户直接对着一个读不出来的外壳。旧版靠应用级标志（meta 里那个 `ENC_ENABLED`）躲过这一条，
     //   而那个标志已随应用级加密一起删 ⇒ 这里按活动空间的文件头 ＋ 盒子补上。
-    let enabled = encryption_enabled(c) || active_space.encrypted_on_disk || active_space.in_keyring;
+    let enabled =
+        encryption_enabled(c) || active_space.encrypted_on_disk || active_space.in_keyring;
     // ⭐ 2026-10-10（owner 拍 A：「用户从明文空间，切换到加密空间怎么办？」）：
     //   `locked` 这一格**从"进程级的会话锁"改成"**这个活动空间**现在读不出来（需要口令）"** ✓。
     //   算法 ＝ **活动空间是密的 且 本会话拿不到它的钥匙** ✓ ——
@@ -857,9 +919,10 @@ fn encryption_status_of(c: &Connection) -> Result<EncryptionStatus, String> {
     let needs_passphrase = active_space_needs_passphrase(&active_space);
     // ★ 第 2 步：闸门裁决（同一份读数 ＋ 本地分类标记 ⇒ 视图）。
     let active_space_gate = match active_id.as_deref() {
-        Some(sid) => {
-            crate::space_crypto::sync_gate_view(&active_space, crate::space_crypto::space_kind(c, sid))
-        }
+        Some(sid) => crate::space_crypto::sync_gate_view(
+            &active_space,
+            crate::space_crypto::space_kind(c, sid),
+        ),
         None => crate::space_crypto::SyncGateView {
             allow: true,
             unclassified: true,
@@ -908,9 +971,13 @@ pub fn keyring_status(db: State<Db>) -> Result<KeyringStatus, String> {
         }
         None => (false, 0),
     };
-    let unlocked =
-        !crate::space_crypto::session_masters().is_empty() || crate::space_crypto::session_master().is_some();
-    Ok(KeyringStatus { has_material, spaces, unlocked })
+    let unlocked = !crate::space_crypto::session_masters().is_empty()
+        || crate::space_crypto::session_master().is_some();
+    Ok(KeyringStatus {
+        has_material,
+        spaces,
+        unlocked,
+    })
 }
 
 #[tauri::command]
@@ -928,7 +995,10 @@ pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
 /// （`space_crypto::SESSION_MASTER`）—— 空间钥匙是它解盒子解出来的，主密钥一走就再也拿不到。
 /// 袋子的**公开材料**留着无妨（它本来就是公开的），而且留着才能让"未解锁"与"袋里没有它"
 /// 在报错时分开说。
-pub(crate) fn lock_encryption_impl(conn: &mut Connection, app_data_dir: &Path) -> Result<(), String> {
+pub(crate) fn lock_encryption_impl(
+    conn: &mut Connection,
+    app_data_dir: &Path,
+) -> Result<(), String> {
     if LOCKED.load(Ordering::SeqCst) {
         return Ok(()); // 已经锁着：幂等（此时的连接本来就是那把内存连接，再"锁"一次没有意义）
     }
@@ -970,8 +1040,14 @@ pub(crate) fn lock_encryption_impl(conn: &mut Connection, app_data_dir: &Path) -
             )
         }
     );
-    let _ = std::mem::replace(conn, Connection::open_in_memory().map_err(|e| e.to_string())?);
-    let meta = crate::db::meta_path(app_data_dir).display().to_string().replace('\'', "''");
+    let _ = std::mem::replace(
+        conn,
+        Connection::open_in_memory().map_err(|e| e.to_string())?,
+    );
+    let meta = crate::db::meta_path(app_data_dir)
+        .display()
+        .to_string()
+        .replace('\'', "''");
     conn.execute_batch(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""))
         .map_err(|e| format!("锁定时重置连接失败: {e}"))?;
     Ok(())
@@ -1015,7 +1091,9 @@ pub(crate) fn provision_spaces_from_keyring(
             continue;
         }
         let Some(name) = kr.space_name(&space_id) else {
-            eprintln!("[space] 公开材料里的空间 {space_id} 没有名字 ⇒ 不自动建（⛔ 不造未命名加密空间）");
+            eprintln!(
+                "[space] 公开材料里的空间 {space_id} 没有名字 ⇒ 不自动建（⛔ 不造未命名加密空间）"
+            );
             continue;
         };
         let key = match kr.unwrap_key_with_groups(masters, &space_id) {
@@ -1028,7 +1106,9 @@ pub(crate) fn provision_spaces_from_keyring(
         let path = crate::db::space_db_path(app_data_dir, &space_id);
         if path.exists() {
             // 文件在、meta 没行 ⇒ 不猜（可能是别处来的残留）；留给人看日志。
-            eprintln!("[space] 空间 {space_id} 的库文件已存在但 meta 没有它 ⇒ 不自动建（请人工核对）");
+            eprintln!(
+                "[space] 空间 {space_id} 的库文件已存在但 meta 没有它 ⇒ 不自动建（请人工核对）"
+            );
             continue;
         }
         let now = crate::db::now_ms();
@@ -1039,10 +1119,12 @@ pub(crate) fn provision_spaces_from_keyring(
             rusqlite::params![space_id, name, now],
         )
         .map_err(|e| format!("写 meta 空间行失败（{space_id}）：{e}"))?;
-        let conn = Connection::open(&path).map_err(|e| format!("建空间库失败（{space_id}）：{e}"))?;
+        let conn =
+            Connection::open(&path).map_err(|e| format!("建空间库失败（{space_id}）：{e}"))?;
         // ⚠️ 顺序：先 key，再建表/写数据 —— SQLCipher 才会把这些页加密。
         set_cipher_key(&conn, &key)?;
-        crate::db::migrate(&conn, &space_id).map_err(|e| format!("空间库建表失败（{space_id}）：{e}"))?;
+        crate::db::migrate(&conn, &space_id)
+            .map_err(|e| format!("空间库建表失败（{space_id}）：{e}"))?;
         crate::db::ensure_space_workspace(&conn, &space_id)?;
         // 同步档案：空档案＝只用网格（个人档），下一轮后台轮就会把它纳入。
         // ⚠️ 用**外面那个带 meta 的连接**写（新建的空间连接没 ATTACH meta ⇒ 找不到 sync_profiles）。
@@ -1112,7 +1194,9 @@ pub(crate) fn unlock_encryption_impl(
     // ⭐ 2026-10-24（P2）：解锁成功后，把公开材料里"本机还没有"的加密空间建出来。
     //   失败只记日志（⛔ 不许让"建一个附加空间失败"把这次解锁按死）。
     match provision_from_current_session(conn) {
-        Ok(v) if !v.is_empty() => eprintln!("[space] 解锁后自动建了 {} 个加密空间：{:?}", v.len(), v),
+        Ok(v) if !v.is_empty() => {
+            eprintln!("[space] 解锁后自动建了 {} 个加密空间：{:?}", v.len(), v)
+        }
         Ok(_) => {}
         Err(e) => eprintln!("[space] 解锁后自动建加密空间失败（不影响解锁本身）：{e}"),
     }
@@ -1190,7 +1274,11 @@ mod tests {
     static TMP_SEQ: AtomicU32 = AtomicU32::new(0);
     fn uniq_tmp(tag: &str) -> PathBuf {
         let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("shuy_{tag}_{}_{}_{seq}", std::process::id(), db::now_ms()))
+        std::env::temp_dir().join(format!(
+            "shuy_{tag}_{}_{}_{seq}",
+            std::process::id(),
+            db::now_ms()
+        ))
     }
 
     // LOCKED / 钥匙袋 / 会话主密钥 are process-wide statics. These tests set them, so they
@@ -1242,8 +1330,12 @@ mod tests {
         // Main connection re-opens the space DB, then ATTACHes meta as `meta`.
         let conn = Connection::open(&space_path).unwrap();
         let meta_sql = meta_path.display().to_string().replace('\'', "''");
-        conn.execute_batch(&format!("ATTACH DATABASE '{meta_sql}' AS meta")).unwrap();
-        let tmp = Temp { _dir: dir, _meta_conn: Connection::open(&meta_path).unwrap() };
+        conn.execute_batch(&format!("ATTACH DATABASE '{meta_sql}' AS meta"))
+            .unwrap();
+        let tmp = Temp {
+            _dir: dir,
+            _meta_conn: Connection::open(&meta_path).unwrap(),
+        };
         (tmp, conn)
     }
 
@@ -1324,7 +1416,9 @@ mod tests {
         {
             let c = Connection::open(&space_path).unwrap();
             key_space_conn(&c, &space_path).unwrap();
-            let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+            let n: i64 = c
+                .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(n, 1, "袋里有它 ⇒ 按空间取钥匙读得开");
         }
 
@@ -1335,7 +1429,8 @@ mod tests {
             let c = Connection::open(&space_path).unwrap();
             let _ = key_space_conn(&c, &space_path);
             assert!(
-                c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0)).is_err(),
+                c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0))
+                    .is_err(),
                 "盒子里的钥匙不是它那把 ⇒ 必须读不开"
             );
         }
@@ -1352,7 +1447,8 @@ mod tests {
             );
             assert!(err.contains("旧钥匙"), "要说清不会退回旧钥匙：{err}");
             assert!(
-                c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0)).is_err(),
+                c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0))
+                    .is_err(),
                 "报错之后连接也不能读开"
             );
         }
@@ -1378,7 +1474,11 @@ mod tests {
         // ① 没有袋子 ⇒ 明文空间 ⇒ 原样（不加密，也不报错）
         crate::space_crypto::set_keyring_for_test(None);
         crate::space_crypto::set_session_master(None).unwrap();
-        assert_eq!(encrypt_payload(&c, "abc").unwrap(), "abc", "没开加密 ⇒ 原样");
+        assert_eq!(
+            encrypt_payload(&c, "abc").unwrap(),
+            "abc",
+            "没开加密 ⇒ 原样"
+        );
 
         // ② 袋子里有这个空间 ⇒ 用**它自己的**钥匙（不是任何"全局钥匙"—— 那种东西已经没了）
         let space_key = crate::keyring::random_space_key();
@@ -1395,7 +1495,11 @@ mod tests {
             crate::crypto::decrypt_str(&sealed, &crypto::AppKeys::legacy_only([9u8; 32])).is_err(),
             "不是别的钥匙（否则就是没按空间）"
         );
-        assert_eq!(decrypt_payload(&c, &sealed).unwrap(), "机密", "收回来也要解得开");
+        assert_eq!(
+            decrypt_payload(&c, &sealed).unwrap(),
+            "机密",
+            "收回来也要解得开"
+        );
 
         // ③ 锁着（主密钥卸下）⇒ **报错**，绝不静默放明文
         crate::space_crypto::set_session_master(None).unwrap();
@@ -1404,7 +1508,10 @@ mod tests {
             Err(e) => e,
         };
         assert!(err.contains("未解锁"), "{err}");
-        assert!(decrypt_payload(&c, &sealed).is_err(), "锁着也不许把密文当明文读");
+        assert!(
+            decrypt_payload(&c, &sealed).is_err(),
+            "锁着也不许把密文当明文读"
+        );
 
         // ④ 收尾：清干净（别留给别的判据）
         crate::space_crypto::set_keyring_for_test(None);
@@ -1437,16 +1544,25 @@ mod tests {
         let c = Connection::open(&space_path).unwrap();
 
         let err = encrypt_payload(&c, "机密").unwrap_err();
-        assert!(err.contains("应用级加密"), "要说清是应用级加密的存量库：{err}");
+        assert!(
+            err.contains("应用级加密"),
+            "要说清是应用级加密的存量库：{err}"
+        );
         assert!(err.contains("旧钥匙"), "要说清不会退回旧钥匙：{err}");
         assert!(err.contains("明文"), "要说清不会把明文发出去：{err}");
         // 收回来那一半同样不许"把密文当明文读"
-        assert!(decrypt_payload(&c, "一段载荷").is_err(), "读这一半也不许放行");
+        assert!(
+            decrypt_payload(&c, "一段载荷").is_err(),
+            "读这一半也不许放行"
+        );
 
         // 没有袋子（＝读老库那台机器）同样是响亮失败，而不是"当明文"
         crate::space_crypto::set_keyring_for_test(None);
         crate::space_crypto::set_session_master(None).unwrap();
-        assert!(encrypt_payload(&c, "机密").is_err(), "没有袋子也要报错，不许当明文");
+        assert!(
+            encrypt_payload(&c, "机密").is_err(),
+            "没有袋子也要报错，不许当明文"
+        );
 
         drop(c);
         let _ = std::fs::remove_dir_all(&dir);
@@ -1473,7 +1589,10 @@ mod tests {
         // ② 袋里有它（哪怕文件还是明文）⇒ 算加密（"这个空间本该是密的"）
         let boxed_key = crate::keyring::random_space_key();
         crate::space_crypto::set_space_box_for_test("sc-flag", &boxed_key, "pw");
-        assert!(encryption_enabled(&c), "★ 袋里有它 ⇒ 这个空间是加密的（按空间）");
+        assert!(
+            encryption_enabled(&c),
+            "★ 袋里有它 ⇒ 这个空间是加密的（按空间）"
+        );
         crate::space_crypto::set_keyring_for_test(None);
 
         // ③ 启动闸门：明文 ⇒ 不用解锁；换成密文 ⇒ 没钥匙就要解锁；有钥匙（袋里有它 ＋ 会话解锁）就不用
@@ -1485,7 +1604,10 @@ mod tests {
         assert!(space_db_is_encrypted(&path));
         assert!(startup_needs_unlock(&path), "密文库 ＋ 没有钥匙 ⇒ 走解锁屏");
         crate::space_crypto::set_space_box_for_test("sc-flag", &key, "pw");
-        assert!(!startup_needs_unlock(&path), "袋里有它 ＋ 会话已解锁 ⇒ 不用再拦");
+        assert!(
+            !startup_needs_unlock(&path),
+            "袋里有它 ＋ 会话已解锁 ⇒ 不用再拦"
+        );
         // ★ 反过来：袋子在、会话**没解锁**（主密钥卸下）⇒ 仍然要拦（而且不是静默地放它开）
         crate::space_crypto::set_session_master(None).unwrap();
         assert!(startup_needs_unlock(&path), "袋里有它但会话锁着 ⇒ 还是要拦");
@@ -1526,15 +1648,20 @@ mod tests {
         // 无钥读不开。
         {
             let c = Connection::open(&encp).unwrap();
-            assert!(c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0)).is_err());
+            assert!(c
+                .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0))
+                .is_err());
         }
         // 错钥读不开（★ 这一支在接线构建里曾被我第一版接线**误诊**成"构建没有 provider 补丁"，
         //   见 `apply_gm_page_settings` 的注释）。
         let wrong = crypto::derive_key("wrong-pass", &salt).unwrap();
         {
             let c = Connection::open(&encp).unwrap();
-            c.execute_batch(&format!("PRAGMA key = \"x'{}';\"", crypto::key_hex(&wrong))).unwrap();
-            assert!(c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0)).is_err());
+            c.execute_batch(&format!("PRAGMA key = \"x'{}';\"", crypto::key_hex(&wrong)))
+                .unwrap();
+            assert!(c
+                .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0))
+                .is_err());
         }
         // 对钥（走开库路径 key_space_conn）读得开。
         // ★ owner 第三轮拍板之后：钥匙来自**这个空间自己的盒子**（id 从文件名 `enc.db` 反推）。
@@ -1542,9 +1669,13 @@ mod tests {
         {
             let c = Connection::open(&encp).unwrap();
             key_space_conn(&c, &encp).unwrap();
-            let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+            let n: i64 = c
+                .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(n, 1);
-            let t: String = c.query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0)).unwrap();
+            let t: String = c
+                .query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(t, "hi");
         }
         // ♻️ 别把进程级全局留给别的判据（袋子/主密钥）
@@ -1570,7 +1701,8 @@ mod tests {
             {
                 let c = Connection::open(&src).unwrap();
                 let e = legacy.display().to_string().replace('\'', "''");
-                c.execute_batch(&format!("ATTACH DATABASE '{e}' AS enc KEY \"x'{hex}'\";")).unwrap();
+                c.execute_batch(&format!("ATTACH DATABASE '{e}' AS enc KEY \"x'{hex}'\";"))
+                    .unwrap();
                 let _ = c.query_row("SELECT sqlcipher_export('enc')", [], |r| r.get::<_, i64>(0));
                 c.execute_batch("DETACH DATABASE enc;").unwrap();
                 c.close().unwrap();
@@ -1580,11 +1712,15 @@ mod tests {
             // 先用**裸钥**（＝写它的那套参数）确认真能读开，并问出"这份构建的默认是不是 SM3"
             let defaults_are_sm3 = {
                 let bare = Connection::open(&legacy).unwrap();
-                bare.execute_batch(&format!("PRAGMA key = \"x'{hex}'\";")).unwrap();
+                bare.execute_batch(&format!("PRAGMA key = \"x'{hex}'\";"))
+                    .unwrap();
                 let st = crate::gm_provider::read_gm_cipher_status(&bare).unwrap();
                 let read: Result<i64, _> =
                     bare.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0));
-                assert!(read.is_ok(), "裸钥读不开自己写出来的库 ⇒ 夹具/构建有问题：{read:?}");
+                assert!(
+                    read.is_ok(),
+                    "裸钥读不开自己写出来的库 ⇒ 夹具/构建有问题：{read:?}"
+                );
                 st.is_applied()
             };
 
@@ -1634,14 +1770,21 @@ mod tests {
             //   ⇒ 改成：原文**进日志**（见 `cipher_open_error` 里那行 `eprintln!`），
             //     文本里那句"已写进日志"告诉排查的人去哪看 ✓
             //   ⛔ 别把这条读成"断言被改松了"——它**变严了**：从"必须含原文"改成"必须不含原文" ✓
-            assert!(!out.contains(raw), "原始报错不许进用户面（只进日志）：{out}");
+            assert!(
+                !out.contains(raw),
+                "原始报错不许进用户面（只进日志）：{out}"
+            );
             for m in CIPHER_OPEN_RAW {
                 assert!(!out.contains(m), "原文碎片「{m}」不许进用户面：{out}");
             }
             assert!(out.contains("日志"), "要说清原始报错去哪看（日志）：{out}");
         }
         // 认不出的错误 ⇒ 原样返回（不套解释）
-        for raw in ["unable to open database file", "disk I/O error", "some other failure"] {
+        for raw in [
+            "unable to open database file",
+            "disk I/O error",
+            "some other failure",
+        ] {
             assert_eq!(cipher_open_error(raw, "空间 s1 的库"), raw);
         }
     }
@@ -1666,11 +1809,17 @@ mod tests {
         let path = crate::db::space_db_path(&dir, "s1");
         {
             let c = Connection::open(&path).unwrap();
-            c.execute_batch(&format!("PRAGMA key = \"x'{hex}'\";")).unwrap();
+            c.execute_batch(&format!("PRAGMA key = \"x'{hex}'\";"))
+                .unwrap();
             // 先 key 再设非默认页大小（探针 O1 形态）⇒ 这份文件的页参数与本构建的默认**不同**
             c.execute_batch("PRAGMA cipher_page_size = 512;").unwrap();
-            c.execute_batch("CREATE TABLE t (a INTEGER); INSERT INTO t VALUES (1);").unwrap();
-            assert_eq!(c.query_row("SELECT COUNT(*) FROM t", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+            c.execute_batch("CREATE TABLE t (a INTEGER); INSERT INTO t VALUES (1);")
+                .unwrap();
+            assert_eq!(
+                c.query_row("SELECT COUNT(*) FROM t", [], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                1
+            );
             c.close().unwrap();
         }
         // `open_space_conn_at` 会用**这个空间自己的钥匙**给连接加钥 ⇒ 这里按真实解锁后的状态
@@ -1713,9 +1862,13 @@ mod tests {
         {
             let c = Connection::open(&space).unwrap();
             key_space_conn(&c, &space).unwrap();
-            let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+            let n: i64 = c
+                .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(n, 1);
-            let title: String = c.query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0)).unwrap();
+            let title: String = c
+                .query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(title, "hi");
         }
         // Decrypt back to plaintext (disable) and verify it reads without a key.
@@ -1725,7 +1878,9 @@ mod tests {
         crate::space_crypto::set_session_master(None).unwrap();
         {
             let c = Connection::open(&space).unwrap();
-            let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+            let n: i64 = c
+                .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(n, 1);
         }
         // No temp files left behind.
@@ -1735,7 +1890,10 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().to_string())
             .filter(|n| n.contains("_conv_"))
             .collect::<Vec<_>>();
-        assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+        assert!(
+            leftovers.is_empty(),
+            "temp files left behind: {leftovers:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1766,7 +1924,9 @@ mod tests {
         crate::space_crypto::set_space_box_for_test("default", &key, "pw");
         let c = Connection::open(&space).unwrap();
         key_space_conn(&c, &space).unwrap();
-        let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 1);
         drop(c);
         crate::space_crypto::set_keyring_for_test(None);
@@ -1805,7 +1965,8 @@ mod tests {
         let meta_sql = meta_path.display().to_string().replace('\'', "''");
         // Main app connection: active space + meta attached.
         let mut conn = Connection::open(&space_path).unwrap();
-        conn.execute_batch(&format!("ATTACH DATABASE '{meta_sql}' AS meta")).unwrap();
+        conn.execute_batch(&format!("ATTACH DATABASE '{meta_sql}' AS meta"))
+            .unwrap();
         crate::space_crypto::set_keyring_for_test(None);
         crate::space_crypto::set_session_master(None).unwrap();
 
@@ -1813,11 +1974,22 @@ mod tests {
         crate::space_crypto::enable_space(&mut conn, &dir, "default", Some("pass1234")).unwrap();
         assert!(space_db_is_encrypted(&space_path));
         assert!(encryption_enabled(&conn));
-        assert!(crate::space_crypto::keyring().unwrap().has("default"), "应当装了盒子");
-        let marker: i64 = conn.query_row("SELECT encrypted FROM meta.workspaces WHERE id='default'", [], |r| r.get(0)).unwrap();
+        assert!(
+            crate::space_crypto::keyring().unwrap().has("default"),
+            "应当装了盒子"
+        );
+        let marker: i64 = conn
+            .query_row(
+                "SELECT encrypted FROM meta.workspaces WHERE id='default'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(marker, 1);
         // The active space is reopened keyed, so the main conn can read it.
-        let n: i64 = conn.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 1);
         // Simulate the app restart: drop the enable-time connection entirely (a real
         // restart closes every handle to the space before re-opening locked).
@@ -1830,14 +2002,20 @@ mod tests {
         // A fresh connection to the encrypted space WITHOUT the key cannot read it.
         {
             let fresh = Connection::open(&space_path).unwrap();
-            assert!(fresh.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0)).is_err());
+            assert!(fresh
+                .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0))
+                .is_err());
         }
         // Wrong passphrase fails — ★ 而且**由解盒子回答**，不是旧文案「口令不正确」
         //（那句来自已被删掉的哨兵）。锁定态主连接是内存库 ＋ meta（与 db::init 的启动闸门同一形状）。
         let mut bad = Connection::open_in_memory().unwrap();
-        bad.execute_batch(&format!("ATTACH DATABASE '{meta_sql}' AS meta KEY \"\"")).unwrap();
+        bad.execute_batch(&format!("ATTACH DATABASE '{meta_sql}' AS meta KEY \"\""))
+            .unwrap();
         let bad_err = unlock_encryption_impl(&mut bad, &dir, "wrong-pass".to_string()).unwrap_err();
-        assert!(bad_err.contains("打不开"), "错口令要说清是盒子打不开：{bad_err}");
+        assert!(
+            bad_err.contains("打不开"),
+            "错口令要说清是盒子打不开：{bad_err}"
+        );
         assert!(
             !bad_err.contains("口令不正确"),
             "旧文案（来自已删的哨兵）不许再出现：{bad_err}"
@@ -1845,25 +2023,42 @@ mod tests {
 
         // ---- UNLOCK（全新锁定态主连接 -> 按盒子重开这个空间）----
         let mut locked = Connection::open_in_memory().unwrap();
-        locked.execute_batch(&format!("ATTACH DATABASE '{meta_sql}' AS meta KEY \"\"")).unwrap();
+        locked
+            .execute_batch(&format!("ATTACH DATABASE '{meta_sql}' AS meta KEY \"\""))
+            .unwrap();
         unlock_encryption_impl(&mut locked, &dir, "pass1234".to_string()).unwrap();
         assert_eq!(LOCKED.load(Ordering::SeqCst), false);
-        let n: i64 = locked.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let n: i64 = locked
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 1);
         // User data is lossless across the encrypt->unlock round trip.
-        let ws_name: String = locked.query_row("SELECT name FROM workspaces WHERE id='default'", [], |r| r.get(0)).unwrap();
+        let ws_name: String = locked
+            .query_row("SELECT name FROM workspaces WHERE id='default'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(ws_name, "默认空间");
-        let title: String = locked.query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0)).unwrap();
+        let title: String = locked
+            .query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(title, "hello");
 
         // ---- DISABLE（按空间换回明文）----
         crate::space_crypto::disable_space(&mut locked, &dir, "default").unwrap();
         assert!(!space_db_is_encrypted(&space_path));
-        let n: i64 = locked.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let n: i64 = locked
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 1);
         assert!(!encryption_enabled(&locked));
-        assert!(!crate::space_crypto::keyring().unwrap().has("default"), "盒子要扔掉");
-        let title2: String = locked.query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0)).unwrap();
+        assert!(
+            !crate::space_crypto::keyring().unwrap().has("default"),
+            "盒子要扔掉"
+        );
+        let title2: String = locked
+            .query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(title2, "hello");
         drop(locked);
 
@@ -1922,12 +2117,26 @@ mod tests {
         {
             let c = Connection::open(&space).unwrap();
             key_space_conn(&c, &space).unwrap();
-            let title: String = c.query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0)).unwrap();
+            let title: String = c
+                .query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(title, "hello", "★ 老库转换后数据没丢");
-            let name: String = c.query_row("SELECT name FROM workspaces WHERE id='old-space'", [], |r| r.get(0)).unwrap();
+            let name: String = c
+                .query_row(
+                    "SELECT name FROM workspaces WHERE id='old-space'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
             assert_eq!(name, "老空间");
             // 目标 schema 的后加列都在（老库缺的那一列由迁移补上）
-            let kind: String = c.query_row("SELECT COALESCE(kind,'') FROM workspaces WHERE id='old-space'", [], |r| r.get(0)).unwrap();
+            let kind: String = c
+                .query_row(
+                    "SELECT COALESCE(kind,'') FROM workspaces WHERE id='old-space'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
             assert_eq!(kind, "", "老库缺的列取默认值（空串＝未分类）");
         }
         // 也能转回来（两个方向同一段拷贝代码）
@@ -1973,22 +2182,42 @@ mod tests {
         convert_space_db(&space_path, true, Some(&key)).unwrap();
         crate::space_crypto::set_space_box_for_test("default", &key, "pw");
         let conn = crate::db::open_space_conn_at("default", &dir).unwrap();
-        let n: i64 = conn.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 1);
         // ★ 逐表拷贝排除索引表之后，**索引本身必须还在**（两条机制：拷 `chunks` 时触发器维护；
         //   兜底是读取路径上的 `ensure_chunk_fts()`）。只测"不炸了"是不够的 ——
         //   索引静默丢了的话，症状是"搜索悄悄变差"，没有任何报错。
-        let chunks_n: i64 = conn.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0)).unwrap();
-        let indexed_n: i64 = conn.query_row("SELECT COUNT(*) FROM chunk_fts", [], |r| r.get(0)).unwrap();
-        assert_eq!(chunks_n, 1, "转换后 chunks 行数不对（拷贝漏了派生层？）");
-        assert_eq!(indexed_n, chunks_n, "转换后块级 FTS 索引与 chunks 行数不一致（索引被拷坏或丢了）");
-        let chunk_hit: i64 = conn
-            .query_row("SELECT COUNT(*) FROM chunk_fts WHERE chunk_fts MATCH 'chunk'", [], |r| r.get(0))
+        let chunks_n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(chunk_hit, 1, "转换后块级全文检索查不到那行（索引没被维护/重建）");
+        let indexed_n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chunk_fts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(chunks_n, 1, "转换后 chunks 行数不对（拷贝漏了派生层？）");
+        assert_eq!(
+            indexed_n, chunks_n,
+            "转换后块级 FTS 索引与 chunks 行数不一致（索引被拷坏或丢了）"
+        );
+        let chunk_hit: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunk_fts WHERE chunk_fts MATCH 'chunk'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            chunk_hit, 1,
+            "转换后块级全文检索查不到那行（索引没被维护/重建）"
+        );
         // Full-text search still works post-encryption (the migration rebuilds page_fts).
         let fts: i64 = conn
-            .query_row("SELECT COUNT(*) FROM page_fts WHERE page_fts MATCH 'hello'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM page_fts WHERE page_fts MATCH 'hello'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(fts, 1);
         let _ = std::fs::remove_dir_all(&dir);
@@ -2018,21 +2247,28 @@ mod tests {
         }
         let meta_sql = meta_path.display().to_string().replace('\'', "''");
         let mut conn = Connection::open(&space_path).unwrap();
-        conn.execute_batch(&format!("ATTACH DATABASE '{meta_sql}' AS meta")).unwrap();
+        conn.execute_batch(&format!("ATTACH DATABASE '{meta_sql}' AS meta"))
+            .unwrap();
         crate::space_crypto::set_keyring_for_test(None);
         crate::space_crypto::set_session_master(None).unwrap();
         // enable（按空间）-> encrypted + keyed
         crate::space_crypto::enable_space(&mut conn, &dir, "default", Some("pass1234")).unwrap();
-        let n: i64 = conn.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 1);
         // lock -> connection becomes in-memory+meta, space NOT readable
         lock_encryption_impl(&mut conn, &dir).unwrap();
         assert_eq!(LOCKED.load(Ordering::SeqCst), true);
-        assert!(conn.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0)).is_err());
+        assert!(conn
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0))
+            .is_err());
         // meta is still accessible (app shell) —— ★ 而且**公开材料**也读得到：
         // 这正是"锁定态还能说清自己为什么打不开"的前提（旧版这里看的是应用级标志，已删）。
         assert!(
-            crate::space_crypto::stored_material(&conn).unwrap().is_some(),
+            crate::space_crypto::stored_material(&conn)
+                .unwrap()
+                .is_some(),
             "锁定时 meta 里的公开材料仍须可读（界面要靠它说清状态）"
         );
         // ★ `enabled` 的读数也不再依赖那个应用级标志：锁定时主连接是内存库 ⇒ 看**活动空间自己**
@@ -2044,7 +2280,9 @@ mod tests {
         // unlock -> reopens keyed space, readable again
         unlock_encryption_impl(&mut conn, &dir, "pass1234".to_string()).unwrap();
         assert_eq!(LOCKED.load(Ordering::SeqCst), false);
-        let n: i64 = conn.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 1);
         drop(conn);
         crate::space_crypto::set_keyring_for_test(None);
@@ -2057,7 +2295,11 @@ mod tests {
     ///
     /// ⚠️ owner 第三轮拍板之后，"已解锁的加密空间"**只有这一种造法** —— 应用级那把钥匙、
     /// 那个应用级标志、以及那个哨兵都已经删掉了，任何"再造一条应用级状态"的写法都是**假的**。
-    fn enable_space_meta(c: &Connection, space_id: &str, pass: &str) -> (crypto::AppKeys, [u8; 32]) {
+    fn enable_space_meta(
+        c: &Connection,
+        space_id: &str,
+        pass: &str,
+    ) -> (crypto::AppKeys, [u8; 32]) {
         let key = crypto::random_32();
         let master = crate::space_crypto::set_space_box_for_test(space_id, &key, pass);
         // 公开材料也写进 meta（真机那条路是 `store_keyring`）—— 让夹具更接近真实形态。
@@ -2090,7 +2332,10 @@ mod tests {
         let key_hex = crypto::key_hex(&space_key);
         let material =
             sync::get_meta_state(&c, crate::space_crypto::META_KEYRING).unwrap_or_default();
-        assert!(!material.contains(&key_hex), "meta 的公开材料里出现了裸空间钥匙");
+        assert!(
+            !material.contains(&key_hex),
+            "meta 的公开材料里出现了裸空间钥匙"
+        );
         let leaked: i64 = c
             .query_row(
                 "SELECT COUNT(*) FROM sync_state WHERE value LIKE ?1",
@@ -2115,7 +2360,8 @@ mod tests {
     #[test]
     fn payload_format_is_readable_without_the_key() {
         let keys = crypto::derive_app_keys("pw", &crypto::random_salt()).unwrap();
-        let v1 = crypto::encrypt_str("payload", &crypto::AppKeys::legacy_only(keys.legacy)).unwrap();
+        let v1 =
+            crypto::encrypt_str("payload", &crypto::AppKeys::legacy_only(keys.legacy)).unwrap();
         assert_eq!(payload_format(&v1), Some(crypto::VERSION_XCHACHA));
         // 明文 JSON（加密未开时的载荷）：看着不像密文 ⇒ None ⇒ **放行**（绝不能拦）
         assert_eq!(payload_format(r#"{"id":"p1","title":"晴"}"#), None);
@@ -2136,7 +2382,10 @@ mod tests {
         assert!(ensure_payloads_supported([v1.as_str(), r#"{"a":1}"#]).is_ok());
         // ② 只要**有一段** v2 ⇒ 整批拒绝，且错误**可操作**（说清换国密版）
         let err = ensure_payloads_supported([v1.as_str(), v2.as_str()]).unwrap_err();
-        assert!(err.contains("整批拒绝"), "错误里要说清'一条都没应用'：{err}");
+        assert!(
+            err.contains("整批拒绝"),
+            "错误里要说清'一条都没应用'：{err}"
+        );
         assert!(err.contains("国密版"), "错误不可操作：{err}");
     }
 
@@ -2164,7 +2413,11 @@ mod tests {
             "启用后必须记下'本构建写的是哪一版'（§0-C 的空间算法标识）"
         );
         set_space_encrypted_marked(&c, "default", false).unwrap();
-        assert_eq!(space_format(&c, "default"), None, "关闭后要清掉，别留下让人误判的旧值");
+        assert_eq!(
+            space_format(&c, "default"),
+            None,
+            "关闭后要清掉，别留下让人误判的旧值"
+        );
     }
 
     /// ★ 空间级守卫：**记录在案的版本本构建解不开 ⇒ 用这个空间之前就拒绝**（不是读到某条才发现）。
@@ -2174,13 +2427,19 @@ mod tests {
         let _g = SEC_LOCK.lock().unwrap();
         let (_t, c) = temp_ws();
         // 直接写一个"国密空间"的记录（模拟：这个空间的数据是国密版写下的）
-        c.execute("UPDATE meta.workspaces SET cipher_format = ?1 WHERE id = 'default'", [crypto::VERSION_SM4])
-            .unwrap();
+        c.execute(
+            "UPDATE meta.workspaces SET cipher_format = ?1 WHERE id = 'default'",
+            [crypto::VERSION_SM4],
+        )
+        .unwrap();
         let err = ensure_space_format_supported(&c, "default").unwrap_err();
         assert!(err.contains("国密版"), "错误不可操作：{err}");
         // 而且 sync_gate 会把它挡在**同步之前**
         let gate = sync_gate(&c).unwrap_err();
-        assert!(gate.contains("国密版"), "同步前就该拒绝，而不是逐条解密失败：{gate}");
+        assert!(
+            gate.contains("国密版"),
+            "同步前就该拒绝，而不是逐条解密失败：{gate}"
+        );
     }
 
     /// 国密构建下同一个空间记录必须**放行**（它自己就是写 v2 的那一版）。
@@ -2189,8 +2448,11 @@ mod tests {
     fn space_guard_allows_v2_in_the_sm_build() {
         let _g = SEC_LOCK.lock().unwrap();
         let (_t, c) = temp_ws();
-        c.execute("UPDATE meta.workspaces SET cipher_format = ?1 WHERE id = 'default'", [crypto::VERSION_SM4])
-            .unwrap();
+        c.execute(
+            "UPDATE meta.workspaces SET cipher_format = ?1 WHERE id = 'default'",
+            [crypto::VERSION_SM4],
+        )
+        .unwrap();
         assert!(ensure_space_format_supported(&c, "default").is_ok());
         assert!(sync_gate(&c).is_ok());
     }
@@ -2201,13 +2463,20 @@ mod tests {
     #[test]
     fn attachment_bytes_of_an_unsupported_format_are_refused_not_passed_through() {
         let keys = crypto::derive_app_keys("pw", &crypto::random_salt()).unwrap();
-        let v1 = crypto::encrypt(b"from an older build", &crypto::AppKeys::legacy_only(keys.legacy)).unwrap();
+        let v1 = crypto::encrypt(
+            b"from an older build",
+            &crypto::AppKeys::legacy_only(keys.legacy),
+        )
+        .unwrap();
         let mut v2 = v1.clone();
         v2[1] = crypto::VERSION_SM4; // 伪造"国密版写下的附件"
         let err = decrypt_attachment_bytes(Some(&keys), &v2).unwrap_err();
         assert!(err.contains("国密版"), "必须拒绝并说清怎么办：{err}");
         // 而**真的明文**（历史行为）仍要透传：加密未开时存的就是明文
-        assert_eq!(decrypt_attachment_bytes(Some(&keys), b"plain file bytes").unwrap(), b"plain file bytes");
+        assert_eq!(
+            decrypt_attachment_bytes(Some(&keys), b"plain file bytes").unwrap(),
+            b"plain file bytes"
+        );
         // 认得出的版本但解不开（口令不同）也仍旧透传，别把老行为改坏
         let wrong = crypto::derive_app_keys("other", &crypto::random_salt()).unwrap();
         assert_eq!(decrypt_attachment_bytes(Some(&wrong), &v1).unwrap(), v1);
@@ -2309,7 +2578,11 @@ mod tests {
         // ① 附件静置（含同步上传/下载共用的那条入口）：拿**真派生**的钥匙 ⇒ 必须是 v2
         let att = b"attachment bytes for the national-crypto path";
         let enc = encrypt_attachment_bytes(Some(&keys), att).unwrap();
-        assert_eq!(&enc[..2], &[crypto::MAGIC, crypto::VERSION_SM4], "附件没写成国密");
+        assert_eq!(
+            &enc[..2],
+            &[crypto::MAGIC, crypto::VERSION_SM4],
+            "附件没写成国密"
+        );
         assert_eq!(decrypt_attachment_bytes(Some(&keys), &enc).unwrap(), att);
 
         // ② **空间级**路径（同步载荷）刻意是 v1：空间钥匙是随机的 32 字节，没有 SM 派生链。
@@ -2335,7 +2608,9 @@ mod tests {
         //    老（v1）盒子在国密构建里也解得开 —— 老袋子升级后不会打不开（§4 第 6 条）。
         let mut modern = crate::keyring::Keyring::new();
         let master = modern.kdf.derive_master("supersecret").unwrap();
-        modern.wrap(&master, "盒-a", &crate::keyring::random_space_key()).unwrap();
+        modern
+            .wrap(&master, "盒-a", &crate::keyring::random_space_key())
+            .unwrap();
         let v2_box = hex::decode(&modern.spaces["盒-a"].box_hex).unwrap();
         assert_eq!(
             &v2_box[..2],
@@ -2345,7 +2620,11 @@ mod tests {
         // 同一个空间钥匙，用**老构建那种 v1 盒子**包起来 ⇒ 国密构建仍要解得开
         let mut legacy = crate::keyring::Keyring::new();
         legacy
-            .wrap(&crypto::AppKeys::legacy_only(master.legacy), "盒-a", &space_key)
+            .wrap(
+                &crypto::AppKeys::legacy_only(master.legacy),
+                "盒-a",
+                &space_key,
+            )
             .unwrap();
         let v1_box = hex::decode(&legacy.spaces["盒-a"].box_hex).unwrap();
         assert_eq!(
@@ -2389,7 +2668,8 @@ mod tests {
     fn gen_sm4_page_fixture() {
         let hex = crypto::key_hex(&[7u8; 32]);
         let key_sql = format!("PRAGMA key = \"x'{hex}'\";");
-        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/sqlcipher-sm4-page-fixture.db");
+        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/sqlcipher-sm4-page-fixture.db");
         let _ = std::fs::remove_file(&out);
         {
             let c = Connection::open(&out).unwrap();
@@ -2423,7 +2703,8 @@ mod tests {
     fn gen_backend_fixture() {
         let hex = crypto::key_hex(&[7u8; 32]);
         let key_sql = format!("PRAGMA key = \"x'{hex}'\";");
-        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/sqlcipher-backend-fixture.db");
+        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/sqlcipher-backend-fixture.db");
         let _ = std::fs::remove_file(&out);
         {
             let c = Connection::open(&out).unwrap();
@@ -2457,7 +2738,9 @@ mod tests {
         {
             let c = Connection::open(&path).unwrap();
             c.execute_batch(&key_sql).unwrap();
-            let v: String = c.query_row("SELECT v FROM t WHERE id=1", [], |r| r.get(0)).unwrap();
+            let v: String = c
+                .query_row("SELECT v FROM t WHERE id=1", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(v, "secret");
         }
         let _ = std::fs::remove_file(&path);
@@ -2476,12 +2759,21 @@ mod tests {
     #[test]
     fn the_manual_fixture_generators_keep_their_attributes_next_to_them() {
         let src = include_str!("security.rs");
-        for name in ["gen_legacy_db_fixtures", "gen_sm4_page_fixture", "gen_backend_fixture"] {
+        for name in [
+            "gen_legacy_db_fixtures",
+            "gen_sm4_page_fixture",
+            "gen_backend_fixture",
+        ] {
             let at = src
                 .find(&format!("fn {name}()"))
                 .unwrap_or_else(|| panic!("生成器不见了：{name}"));
             // 往前取 400 个**字符**：`&str` 按**字节**切会在多字节字符中间 panic。
-            let start = src[..at].char_indices().rev().nth(400).map(|(i, _)| i).unwrap_or(0);
+            let start = src[..at]
+                .char_indices()
+                .rev()
+                .nth(400)
+                .map(|(i, _)| i)
+                .unwrap_or(0);
             let window = &src[start..at];
             assert_eq!(
                 window.matches("\n    #[test]").count(),
@@ -2605,8 +2897,10 @@ mod tests {
             for t in &fresh_tables {
                 let want = table_columns(fresh_c, &format!("\"{t}\"")).unwrap();
                 let got = table_columns(old_c, &format!("\"{t}\"")).unwrap_or_default();
-                let missing: Vec<&String> =
-                    want.iter().filter(|c| !got.iter().any(|g| g.eq_ignore_ascii_case(c))).collect();
+                let missing: Vec<&String> = want
+                    .iter()
+                    .filter(|c| !got.iter().any(|g| g.eq_ignore_ascii_case(c)))
+                    .collect();
                 assert!(
                     missing.is_empty(),
                     "★ {what} 的表 {t} 迁移后缺列 {missing:?} —— 多半是「加了列却忘了幂等 ALTER」\
@@ -2618,11 +2912,17 @@ mod tests {
         // ---- ④ 功能面 ----
         // (a) 老数据还在
         let title: String = old_space
-            .query_row("SELECT title FROM pages WHERE id = 'legacy-p1'", [], |r| r.get(0))
+            .query_row("SELECT title FROM pages WHERE id = 'legacy-p1'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(title, "老页面", "迁移不能动数据");
         let ws_name: String = old_meta
-            .query_row("SELECT name FROM workspaces WHERE id = 'legacy-a'", [], |r| r.get(0))
+            .query_row(
+                "SELECT name FROM workspaces WHERE id = 'legacy-a'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(ws_name, "老空间 A");
         // (b) 分类写得进（`meta.workspaces.kind` 那条漏 ALTER 就是死在这一步）。
@@ -2633,8 +2933,12 @@ mod tests {
             crate::space_crypto::SpaceKind::Personal,
             "老库补的列取默认值＝未分类（行为一字不变）"
         );
-        crate::space_crypto::set_space_kind(&old_space, "legacy-a", crate::space_crypto::SpaceKind::Personal)
-            .unwrap();
+        crate::space_crypto::set_space_kind(
+            &old_space,
+            "legacy-a",
+            crate::space_crypto::SpaceKind::Personal,
+        )
+        .unwrap();
         assert_eq!(
             crate::space_crypto::space_kind(&old_space, "legacy-a"),
             crate::space_crypto::SpaceKind::Personal
@@ -2649,7 +2953,9 @@ mod tests {
         {
             let c = Connection::open(&old_space_path).unwrap();
             key_space_conn(&c, &old_space_path).unwrap();
-            let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+            let n: i64 = c
+                .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(n, 1, "老库加密之后数据仍读得到");
         }
         convert_space_db(&old_space_path, false, Some(&key)).unwrap();
@@ -2692,17 +2998,32 @@ mod tests {
     /// 为什么"读得开还要写得进"：页参数不一致时，**读**可能侥幸通过而**写回**才炸
     /// （既有判据的老经验），所以这里把写也验一遍。
     fn probe_page_cipher_fixture(bytes: &[u8], tag: &str) -> Result<usize, String> {
-        assert!(bytes.len() > 4096, "{tag} 夹具不见了或太小（{} 字节）", bytes.len());
-        assert_ne!(&bytes[..16], b"SQLite format 3\0", "{tag} 夹具是**明文** SQLite —— 那样它证明不了任何东西");
+        assert!(
+            bytes.len() > 4096,
+            "{tag} 夹具不见了或太小（{} 字节）",
+            bytes.len()
+        );
+        assert_ne!(
+            &bytes[..16],
+            b"SQLite format 3\0",
+            "{tag} 夹具是**明文** SQLite —— 那样它证明不了任何东西"
+        );
         let dir = uniq_tmp(&format!("fix-{tag}"));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("fixture.db");
         std::fs::write(&path, bytes).unwrap();
         let c = Connection::open(&path).unwrap();
-        c.execute_batch(&format!("PRAGMA key = \"x'{}'\";", crypto::key_hex(&[7u8; 32]))).unwrap();
+        c.execute_batch(&format!(
+            "PRAGMA key = \"x'{}'\";",
+            crypto::key_hex(&[7u8; 32])
+        ))
+        .unwrap();
         let rows: Result<Vec<(String, String, String)>, _> = c
             .prepare("SELECT id, title, content_text FROM pages ORDER BY id")
-            .and_then(|mut st| st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect());
+            .and_then(|mut st| {
+                st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                    .collect()
+            });
         let rows = match rows {
             Ok(r) => r,
             Err(e) => return Err(e.to_string()),
@@ -2710,14 +3031,27 @@ mod tests {
         assert_eq!(
             rows,
             vec![
-                ("p1".to_string(), "后端无关性夹具".to_string(), "由创建时的 provider 写下的密文".to_string()),
-                ("p2".to_string(), "第二行".to_string(), "确认多行与顺序".to_string()),
+                (
+                    "p1".to_string(),
+                    "后端无关性夹具".to_string(),
+                    "由创建时的 provider 写下的密文".to_string()
+                ),
+                (
+                    "p2".to_string(),
+                    "第二行".to_string(),
+                    "确认多行与顺序".to_string()
+                ),
             ],
             "{tag} 夹具读出来的内容不对"
         );
-        c.execute("INSERT INTO pages VALUES ('p3','本构建新写的','仍然可写')", [])
-            .map_err(|e| format!("{tag} 夹具读得开但**写不进**：{e}"))?;
-        let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).map_err(|e| e.to_string())?;
+        c.execute(
+            "INSERT INTO pages VALUES ('p3','本构建新写的','仍然可写')",
+            [],
+        )
+        .map_err(|e| format!("{tag} 夹具读得开但**写不进**：{e}"))?;
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
         let _ = std::fs::remove_dir_all(&dir);
         Ok(n as usize)
     }
@@ -2749,24 +3083,38 @@ mod tests {
     /// 现在决定可读性的是**页加密算法**，不是 provider。两份夹具 + 异或，把这个性质**双向**钉住。
     #[test]
     fn exactly_one_page_cipher_fixture_opens_and_the_other_is_refused() {
-        let aes = probe_page_cipher_fixture(include_bytes!("../tests/sqlcipher-backend-fixture.db"), "aes-page");
-        let sm4 = probe_page_cipher_fixture(include_bytes!("../tests/sqlcipher-sm4-page-fixture.db"), "sm4-page");
+        let aes = probe_page_cipher_fixture(
+            include_bytes!("../tests/sqlcipher-backend-fixture.db"),
+            "aes-page",
+        );
+        let sm4 = probe_page_cipher_fixture(
+            include_bytes!("../tests/sqlcipher-sm4-page-fixture.db"),
+            "sm4-page",
+        );
         match (&aes, &sm4) {
             (Ok(n), Err(e)) => {
-                assert!(e.contains("file is not a database"), "SM4 夹具被拒的理由不该是别的：{e}");
+                assert!(
+                    e.contains("file is not a database"),
+                    "SM4 夹具被拒的理由不该是别的：{e}"
+                );
                 println!(
                     "本构建的**页加密** = **AES 页**（AES 夹具读开且可写，{n} 行；SM4 夹具按预期拒绝：{e}）\
                      —— 页 MAC/库 KDF 不在这一条里（夹具是裸钥写的，见本条判据的注释）"
                 );
             }
             (Err(e), Ok(n)) => {
-                assert!(e.contains("file is not a database"), "AES 夹具被拒的理由不该是别的：{e}");
+                assert!(
+                    e.contains("file is not a database"),
+                    "AES 夹具被拒的理由不该是别的：{e}"
+                );
                 println!(
                     "本构建的**页加密** = **SM4 页**（SM4 夹具读开且可写，{n} 行；AES 夹具按预期拒绝：{e}）\
                      —— 页 MAC/库 KDF 不在这一条里（夹具是裸钥写的，见本条判据的注释）"
                 );
             }
-            (Ok(_), Ok(_)) => panic!("两份页加密不同的夹具**都能开** ⇒ 「页加密是库文件属性」不成立，或某份夹具写错了"),
+            (Ok(_), Ok(_)) => panic!(
+                "两份页加密不同的夹具**都能开** ⇒ 「页加密是库文件属性」不成立，或某份夹具写错了"
+            ),
             (Err(a), Err(b)) => panic!("两种都开不了 ⇒ 夹具/密钥/构建有问题：aes={a}；sm4={b}"),
         }
     }
@@ -2798,8 +3146,8 @@ mod tests {
         raw.execute_batch(&key_sql).unwrap();
         let status = crate::gm_provider::read_gm_cipher_status(&raw).unwrap();
         let defaults_are_sm3 = status.is_applied();
-        let raw_read: Result<i64, _> = raw
-            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0));
+        let raw_read: Result<i64, _> =
+            raw.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0));
         // 页加密不同的话裸钥就开不了（AES 页构建里读 SM4 夹具）⇒ 那种构建上这条判据只报状态
         let page_cipher_matches = raw_read.is_ok();
         drop(raw);
@@ -2846,7 +3194,11 @@ mod tests {
     // ══════════════════════════════════════════════════════════════════════════
 
     /// 造一个活动空间读数（只给这几条判据用 ✓）。
-    fn status(encrypted_on_disk: bool, in_keyring: bool, key_available: bool) -> crate::space_crypto::SpaceCryptoStatus {
+    fn status(
+        encrypted_on_disk: bool,
+        in_keyring: bool,
+        key_available: bool,
+    ) -> crate::space_crypto::SpaceCryptoStatus {
         crate::space_crypto::SpaceCryptoStatus {
             space_id: "sp-t".to_string(),
             name: "测试空间".to_string(),
@@ -2871,8 +3223,14 @@ mod tests {
     /// ⭐ b) **加密空间且本会话没有它的钥匙 ⇒ 需要口令**（＝切过去就该弹锁屏 ✓）。
     #[test]
     fn 加密活动空间_没钥匙_需要口令() {
-        assert!(active_space_needs_passphrase(&status(true, true, false)), "袋里有盒子但会话没解锁 ⇒ 要口令");
-        assert!(active_space_needs_passphrase(&status(true, false, false)), "★ 异常形态：密的但袋里没盒子 ⇒ 也要拦");
+        assert!(
+            active_space_needs_passphrase(&status(true, true, false)),
+            "袋里有盒子但会话没解锁 ⇒ 要口令"
+        );
+        assert!(
+            active_space_needs_passphrase(&status(true, false, false)),
+            "★ 异常形态：密的但袋里没盒子 ⇒ 也要拦"
+        );
     }
 
     /// ⭐ c) **解锁之后 ⇒ 不再需要口令**（钥匙到手 ✓）。
@@ -2890,7 +3248,10 @@ mod tests {
         let unlocked_one = status(true, true, true); // 刚才解锁的那个
         let other_encrypted = status(true, true, false); // 另一个：盒子在，但会话没给它钥匙
         assert!(!active_space_needs_passphrase(&unlocked_one));
-        assert!(active_space_needs_passphrase(&other_encrypted), "★ 不许顺手把别的加密空间也算解锁");
+        assert!(
+            active_space_needs_passphrase(&other_encrypted),
+            "★ 不许顺手把别的加密空间也算解锁"
+        );
     }
 
     /// ⭐ e) **"异常形态要拦，正常形态不能多拦"** —— `encrypted_on_disk` 是**必要条件** ✓。
@@ -2917,7 +3278,8 @@ mod tests {
             .find(|l| l.trim_start().starts_with("let enabled ="))
             .expect("找不到 `let enabled = …` 那一行（结构变了？）");
         assert!(
-            line.contains("active_space.encrypted_on_disk") && line.contains("active_space.in_keyring"),
+            line.contains("active_space.encrypted_on_disk")
+                && line.contains("active_space.in_keyring"),
             "`enabled` 的两个半边必须都在（密的／袋里有盒子）—— 实际：{line}"
         );
     }
@@ -2959,12 +3321,18 @@ mod tests {
     fn d1_读活动空间失败_取保守态() {
         let bare = Connection::open_in_memory().unwrap(); // ⛔ 不 ATTACH meta ⇒ 读活动空间必 Err ✓
         let st = encryption_status_of(&bare).expect("保守态不该报错（界面要留在能输口令那一屏 ✓）");
-        assert!(st.locked, "⭐ 读不到当前是哪个空间 ⇒ 必须保守拦（locked: true）");
+        assert!(
+            st.locked,
+            "⭐ 读不到当前是哪个空间 ⇒ 必须保守拦（locked: true）"
+        );
         assert!(
             st.enabled,
             "⭐ enabled 也得 true —— 前端闸门是「activeSpaceEncrypted && locked」⇒ 只给 locked 不够 ✓"
         );
-        assert!(!st.active_space_gate.allow, "⭐ 这一格要如实说「拦」（allow: false）");
+        assert!(
+            !st.active_space_gate.allow,
+            "⭐ 这一格要如实说「拦」（allow: false）"
+        );
         assert!(
             !st.active_space.key_available,
             "保守态要当作「拿不到钥匙」✓（否则与那个纯函数的口径分家 ✗）"
@@ -3019,7 +3387,8 @@ mod tests {
         let master = kr.kdf.derive_master("测试口令八个字").unwrap();
         let space_key = random_space_key();
         kr.wrap(&master, "sp-new", &space_key).unwrap();
-        kr.space_names.insert("sp-new".to_string(), "加密测试".to_string());
+        kr.space_names
+            .insert("sp-new".to_string(), "加密测试".to_string());
         crate::space_crypto::store_keyring(&conn, &kr).unwrap();
         let masters = vec![(Keyring::group_fingerprint(&kr.kdf), master)];
 
@@ -3028,20 +3397,31 @@ mod tests {
 
         // ① meta 行
         let name: String = conn
-            .query_row("SELECT name FROM meta.workspaces WHERE id = 'sp-new'", [], |r| r.get(0))
+            .query_row(
+                "SELECT name FROM meta.workspaces WHERE id = 'sp-new'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(name, "加密测试");
         // ② 库文件是密文（头嗅探），③ 用盒子里那把钥匙能打开
         let path = db::space_db_path(&dir, "sp-new");
         assert!(path.exists(), "库文件要建出来");
-        assert!(space_db_is_encrypted(&path), "⛔ 建出来的必须是密文库，不能悄悄是明文");
+        assert!(
+            space_db_is_encrypted(&path),
+            "⛔ 建出来的必须是密文库，不能悄悄是明文"
+        );
         let opened = Connection::open(&path).unwrap();
         set_cipher_key(&opened, &space_key).unwrap();
-        let n: i64 = opened.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let n: i64 = opened
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 0, "新空间是空库");
         // ④ 幂等
         assert!(
-            provision_spaces_from_keyring(&dir, &conn, &masters).unwrap().is_empty(),
+            provision_spaces_from_keyring(&dir, &conn, &masters)
+                .unwrap()
+                .is_empty(),
             "⛔ 第二次不许重复建"
         );
         // 收尾：把进程级全局还回去（别污染别的判据）
@@ -3049,5 +3429,4 @@ mod tests {
         crate::space_crypto::set_keyring_for_test(None);
         let _ = std::fs::remove_dir_all(&dir);
     }
-
 }

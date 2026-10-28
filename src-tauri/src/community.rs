@@ -62,7 +62,14 @@ pub fn check_post_url(raw: &str, hosts: &[&str]) -> Result<String, String> {
         // 回环在这里比在插件索引那边更危险——链接是**网页发出的**，
         // 一个用户恰好访问的页面就能让应用去 fetch 本机地址。
         let scheme = url.split("://").next().unwrap_or("").to_ascii_lowercase();
-        return Err(format!("只接受 https 地址（现在是 {}）", if scheme.is_empty() { "未知协议" } else { scheme.as_str() }));
+        return Err(format!(
+            "只接受 https 地址（现在是 {}）",
+            if scheme.is_empty() {
+                "未知协议"
+            } else {
+                scheme.as_str()
+            }
+        ));
     }
     let rest = &url["https://".len()..];
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
@@ -80,7 +87,11 @@ pub fn check_post_url(raw: &str, hosts: &[&str]) -> Result<String, String> {
     }
     let host = host.to_ascii_lowercase();
     if !hosts.iter().any(|h| h.eq_ignore_ascii_case(&host)) {
-        return Err(format!("只接受这些来源：{}（现在是 {}）", hosts.join("、"), host));
+        return Err(format!(
+            "只接受这些来源：{}（现在是 {}）",
+            hosts.join("、"),
+            host
+        ));
     }
     Ok(url.to_string())
 }
@@ -88,8 +99,11 @@ pub fn check_post_url(raw: &str, hosts: &[&str]) -> Result<String, String> {
 /// 解析帖子 JSON（纯函数）。缺字段是**报错**而不是填空：
 /// 一篇没有来路的空笔记比失败更糟。
 pub fn parse_post(json: &str) -> Result<CommunityPost, String> {
-    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("帖子 JSON 解析失败：{e}"))?;
-    let obj = v.as_object().ok_or_else(|| "帖子接口返回的不是一个 JSON 对象".to_string())?;
+    let v: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("帖子 JSON 解析失败：{e}"))?;
+    let obj = v
+        .as_object()
+        .ok_or_else(|| "帖子接口返回的不是一个 JSON 对象".to_string())?;
     let get_str = |key: &str| -> String {
         obj.get(key)
             .map(|x| match x {
@@ -120,7 +134,10 @@ pub fn parse_post(json: &str) -> Result<CommunityPost, String> {
         return Err("帖子 JSON 缺少 body_markdown（正文源码）".to_string());
     }
     if title.chars().count() > 300 {
-        return Err(format!("帖子标题过长（{} 字，上限 300）", title.chars().count()));
+        return Err(format!(
+            "帖子标题过长（{} 字，上限 300）",
+            title.chars().count()
+        ));
     }
     // 帖子里的 url 是写进笔记的"来源"，必须也是同一个白名单里的地址。
     check_post_url(&url, COMMUNITY_HOSTS).map_err(|e| format!("帖子里的 url 不可信：{e}"))?;
@@ -143,11 +160,19 @@ pub fn parse_post(json: &str) -> Result<CommunityPost, String> {
         author: get_str("author"),
         created_at: {
             let a = get_str("created_at");
-            if a.is_empty() { get_str("createdAt") } else { a }
+            if a.is_empty() {
+                get_str("createdAt")
+            } else {
+                a
+            }
         },
         updated_at: {
             let a = get_str("updated_at");
-            if a.is_empty() { get_str("updatedAt") } else { a }
+            if a.is_empty() {
+                get_str("updatedAt")
+            } else {
+                a
+            }
         },
         tags,
         url,
@@ -178,12 +203,12 @@ async fn get_capped(
         .send()
         .await
         .map_err(|e| {
-        if e.is_connect() || e.is_timeout() {
-            format!("取不到这篇帖子：无法连接到 {url}（网络或地址不可达）")
-        } else {
-            format!("取不到这篇帖子：{e}")
-        }
-    })?;
+            if e.is_connect() || e.is_timeout() {
+                format!("取不到这篇帖子：无法连接到 {url}（网络或地址不可达）")
+            } else {
+                format!("取不到这篇帖子：{e}")
+            }
+        })?;
     let landed = resp.url().to_string();
     // 状态码如实上报：**别让 401/404 被压成一句"网络错误"**（这正是前端 fetch 的病）。
     if !resp.status().is_success() {
@@ -200,7 +225,11 @@ async fn get_capped(
         .to_ascii_lowercase();
     if !ctype.contains("json") {
         // 不内置 HTML 正文抽取（社区方案第七节）：拿到网页就说清"这不是 JSON"。
-        let got = if ctype.is_empty() { "未提供".to_string() } else { ctype.clone() };
+        let got = if ctype.is_empty() {
+            "未提供".to_string()
+        } else {
+            ctype.clone()
+        };
         return Err(format!(
             "这个地址返回的不是 JSON（Content-Type: {got}）——应用已经带着 `Accept: application/json` 去要了；\
              社区侧要么在**同一个帖子页地址**上按 Accept 返回 JSON，要么给出 JSON 的 alternate 链接"
@@ -322,7 +351,8 @@ mod tests {
 
     // 帖子里那条 url 必须是白名单里的 https 地址（它是写进笔记的"来源"）；
     // 抓取用的是回环夹具，两者不需要相同——这里测的是"取数机制"。
-    const POST_BODY: &str = r#"{"id":1,"title":"t","body_markdown":"b","url":"https://community.shuyo.cn/post/x"}"#;
+    const POST_BODY: &str =
+        r#"{"id":1,"title":"t","body_markdown":"b","url":"https://community.shuyo.cn/post/x"}"#;
 
     // ---- 抓取的**取数机制**（真环回服务器）----
     //
@@ -386,33 +416,52 @@ mod tests {
         let (bytes, _) = get_capped(&client(), &url, MAX_POST_JSON_BYTES)
             .await
             .expect("带着 Accept: application/json 去要，就该拿到 JSON");
-        assert_eq!(parse_post(&String::from_utf8(bytes).unwrap()).unwrap().id, "1");
+        assert_eq!(
+            parse_post(&String::from_utf8(bytes).unwrap()).unwrap().id,
+            "1"
+        );
     }
 
     #[tokio::test]
     async fn html_answer_says_how_to_fix_it() {
         // 只回 HTML 的服务器（当前社区的真实表现）：错误信息要说清"我们已经在要 JSON 了"。
         let url = serve_once(with_body("<html>页面</html>", "text/html; charset=utf-8"));
-        let err = get_capped(&client(), &url, MAX_POST_JSON_BYTES).await.unwrap_err();
+        let err = get_capped(&client(), &url, MAX_POST_JSON_BYTES)
+            .await
+            .unwrap_err();
         assert!(err.contains("返回的不是 JSON"), "{err}");
-        assert!(err.contains("Accept: application/json"), "要说清我们已经在要 JSON：{err}");
+        assert!(
+            err.contains("Accept: application/json"),
+            "要说清我们已经在要 JSON：{err}"
+        );
     }
 
     #[tokio::test]
     async fn capped_get_reports_status_content_type_and_size_honestly() {
         // 401 要如实说 401：前端 fetch 那条路上它会变成一句 "Failed to fetch"（实测）
-        let url = serve_once("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string());
-        let err = get_capped(&client(), &url, MAX_POST_JSON_BYTES).await.unwrap_err();
+        let url = serve_once(
+            "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_string(),
+        );
+        let err = get_capped(&client(), &url, MAX_POST_JSON_BYTES)
+            .await
+            .unwrap_err();
         assert!(err.contains("HTTP 401"), "{err}");
 
         // 404 同理
-        let url = serve_once("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string());
-        let err = get_capped(&client(), &url, MAX_POST_JSON_BYTES).await.unwrap_err();
+        let url = serve_once(
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+        );
+        let err = get_capped(&client(), &url, MAX_POST_JSON_BYTES)
+            .await
+            .unwrap_err();
         assert!(err.contains("HTTP 404"), "{err}");
 
         // 返回网页 → 说"不是 JSON"，不抽正文
         let url = serve_once(with_body("<html></html>", "text/html"));
-        let err = get_capped(&client(), &url, MAX_POST_JSON_BYTES).await.unwrap_err();
+        let err = get_capped(&client(), &url, MAX_POST_JSON_BYTES)
+            .await
+            .unwrap_err();
         assert!(err.contains("返回的不是 JSON"), "{err}");
 
         // 体积超限（Content-Length 就超）
@@ -425,9 +474,16 @@ mod tests {
 
         // 正常 JSON：拿到字节与**落地地址**
         let url = serve_once(with_body(POST_BODY, "application/json"));
-        let (bytes, landed) = get_capped(&client(), &url, MAX_POST_JSON_BYTES).await.expect("必须取到");
+        let (bytes, landed) = get_capped(&client(), &url, MAX_POST_JSON_BYTES)
+            .await
+            .expect("必须取到");
         assert!(landed.starts_with("http://127.0.0.1"));
-        assert_eq!(parse_post(&String::from_utf8(bytes).expect("utf8")).expect("解析").id, "1");
+        assert_eq!(
+            parse_post(&String::from_utf8(bytes).expect("utf8"))
+                .expect("解析")
+                .id,
+            "1"
+        );
     }
 
     /// **活的契约判据**（默认忽略，要联网）：社区那边的 JSON 表示必须真的被**这里的解析器**吃下去。
@@ -468,7 +524,9 @@ mod tests {
         let url = format!("https://community.shuyo.cn/post/{slug}");
         let post = fetch_post_with_hosts(&url, COMMUNITY_HOSTS)
             .await
-            .unwrap_or_else(|e| panic!("社区应给出可解析的帖子 JSON（Accept: application/json）：{e}"));
+            .unwrap_or_else(|e| {
+                panic!("社区应给出可解析的帖子 JSON（Accept: application/json）：{e}")
+            });
         assert!(!post.title.trim().is_empty(), "标题不能为空");
         assert!(!post.body_markdown.trim().is_empty(), "正文源码不能为空");
         assert!(
@@ -476,7 +534,10 @@ mod tests {
             "id 应是数字（社区约好用 id 当稳定键），实际「{}」",
             post.id
         );
-        assert_eq!(post.url, url, "url 应是站内绝对地址（相对路径会被 check_post_url 拒掉）");
+        assert_eq!(
+            post.url, url,
+            "url 应是站内绝对地址（相对路径会被 check_post_url 拒掉）"
+        );
         assert!(
             !post.body_markdown.contains("<p>"),
             "给的应是**落库源码**而不是渲染后的 HTML"

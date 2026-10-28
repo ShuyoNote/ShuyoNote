@@ -20,8 +20,8 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use tauri::Manager;
 use tauri::Emitter;
+use tauri::Manager;
 
 use crate::db::Db;
 use crate::lan::{self, Peer, PeerTable};
@@ -78,7 +78,11 @@ pub fn trust_outbound(now_ms: i64) -> (String, String) {
 /// 5. 有**多个不同**的非自动组名 ⇒ `None`：不知道该跟哪一组 ⇒ ⛔ 不猜 ✗（调用点会打一行日志 ✓）。
 ///
 /// ⚠️ **纯函数**：不碰库、不看网络 ⇒ 判据直接喂值（`room_adoption_tests` ✓）。
-pub(crate) fn decide_room_adoption(local: &str, auto: bool, peer_rooms: &[String]) -> Option<String> {
+pub(crate) fn decide_room_adoption(
+    local: &str,
+    auto: bool,
+    peer_rooms: &[String],
+) -> Option<String> {
     let local = local.trim();
     if !auto || local.is_empty() {
         return None;
@@ -167,9 +171,7 @@ fn maybe_adopt_peer_room(app: &tauri::AppHandle, state: &LanState, now: i64) {
     //   全部作废 ✓ —— 清掉，让各空间按新种子重新派生（⛔ 不清会让"种子换了、房间号还是旧的"✗）。
     let _ = crate::sync::clear_room_covers(&c);
     let short: String = next.chars().take(8).collect();
-    eprintln!(
-        "[mesh] 已采用对端报的**同步组名**（{short}…）⇒ 下一轮起按同一批子房间号服务/拉取 ✓"
-    );
+    eprintln!("[mesh] 已采用对端报的**同步组名**（{short}…）⇒ 下一轮起按同一批子房间号服务/拉取 ✓");
 }
 
 /// ⭐⭐ **2026-10-28（owner 拍 R209-B）**：对端给的一条**「房间号报价」** ——
@@ -266,7 +268,8 @@ pub(crate) fn maybe_cover_peer_spaces(app: &tauri::AppHandle, state: &LanState, 
     {
         let db = app.state::<Db>();
         let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
-        let auto = crate::sync::get_meta_state(&c, crate::sync::MESH_ROOM_AUTO_KEY).as_deref() == Some("1");
+        let auto = crate::sync::get_meta_state(&c, crate::sync::MESH_ROOM_AUTO_KEY).as_deref()
+            == Some("1");
         if !auto {
             return;
         }
@@ -338,15 +341,17 @@ pub(crate) fn cover_spaces_from_offers(
         };
         // ⚠️ 必须先落到一个 `let` 上再当块尾表达式 ✗ —— 直接 `match stmt.query_map(...)` 当尾巴
         //   会被 E0597（`stmt` 活得不够久：临时值在块尾析构时还借着 `stmt` ✓）。
-        let rows = match stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
-            Ok(rows) => rows.filter_map(|r| r.ok()).collect::<Vec<_>>(),
-            Err(_) => return 0,
-        };
+        let rows =
+            match stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+                Ok(rows) => rows.filter_map(|r| r.ok()).collect::<Vec<_>>(),
+                Err(_) => return 0,
+            };
         rows
     };
     // ⚠️ 本机组名是不是自动的**再读一次** ✓：`cover_spaces_from_offers` 也可能被别的入口调
     //   （判据直接喂它 ✓）⇒ 这条闸放在**写之前**，而不是只在 `maybe_cover_peer_spaces` 的门里 ✓。
-    let auto = crate::sync::get_meta_state(c, crate::sync::MESH_ROOM_AUTO_KEY).as_deref() == Some("1");
+    let auto =
+        crate::sync::get_meta_state(c, crate::sync::MESH_ROOM_AUTO_KEY).as_deref() == Some("1");
     if !auto {
         return 0;
     }
@@ -410,7 +415,11 @@ mod lan_change_fingerprint_tests {
         )
         .expect("公告要造得出来");
         a.device_id = dev.to_string();
-        Peer { announce: a, addr: addr.to_string(), seen_at_ms: seen }
+        Peer {
+            announce: a,
+            addr: addr.to_string(),
+            seen_at_ms: seen,
+        }
     }
 
     /// ① `seen_at` 刷新（公告周期性重发）**不算**变化；② 对端加入/离开、基址变 ⇒ 算变化；③ 顺序无关。
@@ -435,7 +444,10 @@ mod lan_change_fingerprint_tests {
         );
         assert_ne!(
             f,
-            lan_change_fingerprint(&[a.clone(), b.clone(), peer("dev-c", "10.0.0.3", 1)], std::slice::from_ref(&s1)),
+            lan_change_fingerprint(
+                &[a.clone(), b.clone(), peer("dev-c", "10.0.0.3", 1)],
+                std::slice::from_ref(&s1)
+            ),
             "对端加入要算变化"
         );
         let s2 = ("s1".to_string(), "http://10.0.0.2:8788".to_string());
@@ -469,7 +481,10 @@ pub struct LanState {
 impl LanState {
     /// 造一个（测试与"想自己持有一份"的调用方用）。**生产路径请走 [`LanState::global`]**。
     pub fn new(local_device_id: String) -> Self {
-        Self { table: PeerTable::new(local_device_id), enabled: AtomicBool::new(false) }
+        Self {
+            table: PeerTable::new(local_device_id),
+            enabled: AtomicBool::new(false),
+        }
     }
 
     /// 进程级的唯一一份。`local_device_id` 只在**第一次**调用时用得上（之后忽略）——
@@ -524,12 +539,21 @@ impl LanState {
     /// ⚠️ **解码只在这一处**：`recv_into` 不再自己 `decode_announce` 一遍 —— 两处各解一次
     /// 迟早会漂（那种漂的表现是"某一种坏报文在一处被丢、在另一处被收下"）。
     /// ⚠️ **`decode_announce` 一个字节都没动**（它的"不认识就不猜"是承重的）。
-    pub fn record_datagram(&self, raw: &str, from_ip: &str, now_ms: i64) -> Result<Option<Peer>, String> {
+    pub fn record_datagram(
+        &self,
+        raw: &str,
+        from_ip: &str,
+        now_ms: i64,
+    ) -> Result<Option<Peer>, String> {
         let announce = match crate::lan::decode_announce(raw) {
             Ok(a) => a,
             Err(r) => return Err(r.reason().to_string()),
         };
-        let peer = Peer { announce, addr: from_ip.to_string(), seen_at_ms: now_ms };
+        let peer = Peer {
+            announce,
+            addr: from_ip.to_string(),
+            seen_at_ms: now_ms,
+        };
         if !self.observe(peer.clone()) {
             return Ok(None);
         }
@@ -637,7 +661,8 @@ pub fn announce_due(last_announce_ms: i64, now_ms: i64, interval_ms: i64) -> boo
 pub const BACKGROUND_ROUND_MS: i64 = 120 * 1000;
 
 /// 暂停那条日志只打一次（每 5 分钟刷一句会把真日志冲掉）。
-static AUTOSYNC_PAUSED_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static AUTOSYNC_PAUSED_LOGGED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// ⭐ **task-12（Lead 拍 B）**：本轮 **`候选 0`** ⇒ 下次约 60 秒再来 ✓（"没找到对端"**不算**"跑过一轮" ✓）。
 pub const BACKGROUND_RETRY_MS: i64 = 60 * 1000;
@@ -697,7 +722,12 @@ pub fn autosync_paused_env(v: Option<&str>) -> bool {
 pub fn autosync_paused() -> bool {
     autosync_paused_env(std::env::var("SHUYONOTE_MESH_AUTOSYNC").ok().as_deref())
 }
-pub fn background_round_due(last_ms: i64, now_ms: i64, meshed_n: usize, empty_streak: usize) -> bool {
+pub fn background_round_due(
+    last_ms: i64,
+    now_ms: i64,
+    meshed_n: usize,
+    empty_streak: usize,
+) -> bool {
     // ⭐ ① **一个网格空间都没有 ⇒ 不跑** ✓ —— "没配 ⇒ 一个字节都不动"一个字不变 ✓（判据钉着 ✓）。
     if meshed_n == 0 {
         return false;
@@ -797,8 +827,15 @@ fn spawn_background_round(
             {
                 Some(conn) => {
                     let m = std::sync::Mutex::new(conn);
-                    crate::sync::mesh_round_once(&m, &proto_space, &db_space, &dev, &peers, device_level)
-                        .await
+                    crate::sync::mesh_round_once(
+                        &m,
+                        &proto_space,
+                        &db_space,
+                        &dev,
+                        &peers,
+                        device_level,
+                    )
+                    .await
                 }
                 None => match crate::db::app_data_dir_ref() {
                     Some(dir) => {
@@ -831,7 +868,11 @@ fn spawn_background_round(
                         crate::lan::mask_space(&proto_space),
                         r.candidates,
                         pulled,
-                        if bad > 0 { format!("（{bad} 台没拉动，见历史那一行 ✓）") } else { String::new() }
+                        if bad > 0 {
+                            format!("（{bad} 台没拉动，见历史那一行 ✓）")
+                        } else {
+                            String::new()
+                        }
                     );
                 }
                 Err(e) => eprintln!(
@@ -852,7 +893,9 @@ fn spawn_background_round(
         // ⭐ **task-12（Lead 批）**：把"这一轮看到了什么"**落进库** ✓ ——
         //   ① `候选 0` 与 ② `看到了但没什么可拉` **再也不用猜** ✓（⭐ 日志会被句柄弄丢 ✗，⭐ 库里的键不会 ✓）。
         {
-            let heard = BACKGROUND_HEARD_TOTAL.load(Ordering::SeqCst).saturating_sub(heard_before);
+            let heard = BACKGROUND_HEARD_TOTAL
+                .load(Ordering::SeqCst)
+                .saturating_sub(heard_before);
             let db_read = app2.state::<Db>();
             let c = db_read.0.lock().unwrap_or_else(|e| e.into_inner());
             for (key, value) in background_round_readings(candidates_total, heard) {
@@ -882,7 +925,15 @@ pub fn announces_for(
     short_id: &str,
     profiles: &[(String, String, String)],
 ) -> Vec<lan::LanAnnounce> {
-    announces_for_with_mesh(local_device_id, device_name, short_id, "", profiles, &[], &[])
+    announces_for_with_mesh(
+        local_device_id,
+        device_name,
+        short_id,
+        "",
+        profiles,
+        &[],
+        &[],
+    )
 }
 
 /// ⭐★ **2026-10-09（task-8「设备直连」）**：**这一轮该发哪些公告** —— 产品路径的**唯一入口** ✓。
@@ -931,7 +982,9 @@ pub(crate) fn announces_for_this_round(
     //       ⛔ 读路径不许写库 ✗（本仓老规矩 ✓）。
     //    拿不到（还没建过 / 那一格坏了）⇒ ⭐ **如实用空串** ✓：⭐ 对端按"这台没有身份"处理 ✓，
     //    ⛔ 绝不回落成任何猜测 ✗（⭐ 与"对方没报短标识"同一套处置 ✓）。
-    let pubkey = crate::device_key::public_key_hex_of(c).unwrap_or_default().unwrap_or_default();
+    let pubkey = crate::device_key::public_key_hex_of(c)
+        .unwrap_or_default()
+        .unwrap_or_default();
     // ⭐ 本笔的修：把档案里的 `space_id` 换成**解析后的空间**（个人空间 ⇒ 配对暗号 ✓）——
     //   与窗口服务（`window_serve_space` ✓）和 `mesh_bases` 的键**同一把尺** ✓。
     //   ⚠️ 红读数（改前逐字的行为 ＝ 下面这行换成 `profiles.to_vec()`）：
@@ -962,7 +1015,8 @@ pub(crate) fn announces_for_this_round(
     //   对端改从公告里的**派生房间号**（`hub_spaces` 那几格 ✓）**逐空间覆盖**
     //   （`decide_space_room_coverage` ／ `maybe_cover_peer_spaces` ✓）。
     //   只发一个**布尔**："本机组名是不是自动生成的"（`room_auto` ✓ —— ⛔ 不含任何值 ✗）。
-    let room_auto = crate::sync::get_meta_state(c, crate::sync::MESH_ROOM_AUTO_KEY).as_deref() == Some("1");
+    let room_auto =
+        crate::sync::get_meta_state(c, crate::sync::MESH_ROOM_AUTO_KEY).as_deref() == Some("1");
     let mut out = announces_for_with_mesh(
         local_device_id,
         device_name,
@@ -1022,42 +1076,53 @@ pub fn announces_for_with_mesh(
         // 只填了地址还没选空间 ⇒ 不发言（与 `bound_profile_count` 同一把尺：算不算绑上）。
         // ★ 丙-③-b-2b：**例外是"这个空间开了网格"** —— 那种情况下本来就不需要服务端地址
         //   （宣告的是我自己的窗口），它正是靠这一支才在网段里露面的。
-        let mesh_base = mesh_bases.iter().find(|(s, _)| s.trim() == space).map(|(_, b)| b.trim());
+        let mesh_base = mesh_bases
+            .iter()
+            .find(|(s, _)| s.trim() == space)
+            .map(|(_, b)| b.trim());
         if !is_fully_bound(space_id, server_url) && mesh_base.is_none() {
             continue;
         }
-        let mut a = lan::announce_for_own_hub(dev, device_name, short_id, url, space, space_name, space_kind)
-            .unwrap_or_else(|| lan::LanAnnounce {
-                v: lan::WIRE_VERSION,
-                device_id: dev.to_string(),
-                device_name: device_name.trim().to_string(),
-                // ⭐ 08-b②：那一格**同样显式给**（这个兜底分支也是产出点 ✓）
-                short_id: short_id.trim().to_string(),
-                // ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 与上面那个产出点**同口径** ✓
-                //    —— ⭐ 这个兜底分支也**不携带**握手意图 ✓（⭐ 它只是"⭐ 我在，⭐ 但我没代言 ✗"✓）。
-                trust_ask: String::new(),
-                trust_secret: String::new(),
-                // ⭐ 2026-10-11（设备身份 ✓）：⭐ 这个兜底分支也**留空** ✓ ——
-                //   ⭐ 公钥由调用点在**这之后**统一填 ✓（两个产出点同一句 ✓）。
-                pubkey: String::new(),
-                hub_base: None,
-                hub_spaces: Vec::new(),
-                hub_space_kinds: Vec::new(),
-                hub_space_encrypted: Vec::new(),
-                // ⭐ 2026-10-26：组名由调用点统一填（与 `pubkey` 同一手法 ✓）。
-                room: String::new(),
-                // ⭐ R209-B：兜底分支同样不报组名（由调用点填"自动与否"那一格 ✓）。
-                room_auto: false,
-                hub_space_names: if space_name.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![space_name.to_string()]
-                },
-                // ★ 存在声明也带指纹（owner 2026-09-25 拍板，B 片施工单 §8.3）：那台设备可能
-                //   **没资格代言**（`hub_base: None`），而 `fp` 留空会让它在"谁在说话"这件事上
-                //   完全隐形 —— 掉包判据要看的就是这个。
-                fp: dev.to_string(),
-            });
+        let mut a = lan::announce_for_own_hub(
+            dev,
+            device_name,
+            short_id,
+            url,
+            space,
+            space_name,
+            space_kind,
+        )
+        .unwrap_or_else(|| lan::LanAnnounce {
+            v: lan::WIRE_VERSION,
+            device_id: dev.to_string(),
+            device_name: device_name.trim().to_string(),
+            // ⭐ 08-b②：那一格**同样显式给**（这个兜底分支也是产出点 ✓）
+            short_id: short_id.trim().to_string(),
+            // ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 与上面那个产出点**同口径** ✓
+            //    —— ⭐ 这个兜底分支也**不携带**握手意图 ✓（⭐ 它只是"⭐ 我在，⭐ 但我没代言 ✗"✓）。
+            trust_ask: String::new(),
+            trust_secret: String::new(),
+            // ⭐ 2026-10-11（设备身份 ✓）：⭐ 这个兜底分支也**留空** ✓ ——
+            //   ⭐ 公钥由调用点在**这之后**统一填 ✓（两个产出点同一句 ✓）。
+            pubkey: String::new(),
+            hub_base: None,
+            hub_spaces: Vec::new(),
+            hub_space_kinds: Vec::new(),
+            hub_space_encrypted: Vec::new(),
+            // ⭐ 2026-10-26：组名由调用点统一填（与 `pubkey` 同一手法 ✓）。
+            room: String::new(),
+            // ⭐ R209-B：兜底分支同样不报组名（由调用点填"自动与否"那一格 ✓）。
+            room_auto: false,
+            hub_space_names: if space_name.is_empty() {
+                Vec::new()
+            } else {
+                vec![space_name.to_string()]
+            },
+            // ★ 存在声明也带指纹（owner 2026-09-25 拍板，B 片施工单 §8.3）：那台设备可能
+            //   **没资格代言**（`hub_base: None`），而 `fp` 留空会让它在"谁在说话"这件事上
+            //   完全隐形 —— 掉包判据要看的就是这个。
+            fp: dev.to_string(),
+        });
         // ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 把"⭐ 我想信任谁 ✗"／"⭐ 我给谁的那把 ✗"带上 ✓。
         //    ⚠️ 在**调用点之后**填 ✗（⭐ `announce_for_own_hub` 是纯函数 ✓，⭐ 它不该知道进程状态 ✓）；
         //    ⭐ 于是**两个产出点**（⭐ 代言那条 ＋ ⭐ 上面那个兜底 ✓）走的是**同一句** ✓，⛔ 不会各写一套 ✓。
@@ -1075,8 +1140,11 @@ pub fn announces_for_with_mesh(
         if let Some(base) = mesh_base.filter(|b| !b.is_empty()) {
             a.hub_base = Some(base.to_string());
         }
-        a.hub_spaces =
-            if a.hub_base.is_some() { vec![space.to_string()] } else { Vec::new() };
+        a.hub_spaces = if a.hub_base.is_some() {
+            vec![space.to_string()]
+        } else {
+            Vec::new()
+        };
         // ⭐ 2026-10-24（macOS 侧抓包定位）：**兜底分支漏了「类别」** ✗ —— `lan.rs:510` 那条
         //   「代言」分支是填的，而"只开网格、不绑服务端"的个人空间**必走兜底**
         //   （`announce_for_own_hub` 因 `configured_url` 为空在 `is_lan_base` 那一步返回 `None`）
@@ -1104,7 +1172,10 @@ pub fn announces_for_with_mesh(
 /// ⚠️ 为什么必须加这一支：发现层的开关原来只看"绑了同步的空间数"，
 /// 而**"只开网格、不绑服务端"**恰恰是丙 要支持的那种配置 ⇒ 不加这一支，
 /// 那台设备**既不听也不喊**，网格永远找不到它（而每一片单测都照绿）。
-pub fn should_run_discovery(profiles: &[(String, String, String)], meshed_spaces: &[String]) -> bool {
+pub fn should_run_discovery(
+    profiles: &[(String, String, String)],
+    meshed_spaces: &[String],
+) -> bool {
     should_enable(bound_profile_count(profiles)) || !meshed_spaces.is_empty()
 }
 
@@ -1154,10 +1225,10 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         //    见下面 ③ 里 `lan::announce_targets` 那段注释（真机抓到的单向发现）。
         let state = LanState::global(&device_id);
         let mut last_announce_ms: i64 = 0;
-    // ⭐ **task-12**：后台那一轮的**上一次跑的时刻** —— ⭐ 起算值刻意**不是 0** ✗：
-    //   真机日志显示"启动后 3 秒就跑第一轮 ⇒ 候选 0（对端公告 27 秒后才到）⇒ 白跑一次 ✓"
-    //   ⇒ 从 `background_round_initial_last()` 起算 ⇒ 第一轮落在**启动后约 45 秒** ✓。
-    let mut last_bg_round_ms: i64 = background_round_initial_last(crate::db::now_ms());
+        // ⭐ **task-12**：后台那一轮的**上一次跑的时刻** —— ⭐ 起算值刻意**不是 0** ✗：
+        //   真机日志显示"启动后 3 秒就跑第一轮 ⇒ 候选 0（对端公告 27 秒后才到）⇒ 白跑一次 ✓"
+        //   ⇒ 从 `background_round_initial_last()` 起算 ⇒ 第一轮落在**启动后约 45 秒** ✓。
+        let mut last_bg_round_ms: i64 = background_round_initial_last(crate::db::now_ms());
         // ⭐ **2026-10-09（task-8）**：本机**在用**哪些空间（解析后 ✓）—— 只为**日志**里
         //   「这条公告与本机空间匹不匹配」那一句判定 ✓（⛔ 不参与任何路由决策 ✗）。
         //   ⚠️ 先取一次再进循环：否则第一片收到的公告会报"本机还没有可匹配的空间"（假读数 ✗）。
@@ -1202,7 +1273,10 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 Ok(lan::RecvOutcome::OwnAnnounce { from }) => {
                     eprintln!(
                         "{}",
-                        lan::announce_drop_line(&from, "这是**我自己**的公告（回环回来的）⇒ 有意丢弃")
+                        lan::announce_drop_line(
+                            &from,
+                            "这是**我自己**的公告（回环回来的）⇒ 有意丢弃"
+                        )
                     );
                 }
                 Ok(lan::RecvOutcome::Rejected { from, reason }) => {
@@ -1248,7 +1322,12 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                         //   （⛔ 不再拿"房间号 == 设备级暗号"反推 —— 个人空间现在一空间一房间号，
                         //     那条反推会把个人空间误判成团队档 ⇒ 卡从错的行走 ⇒ 401）。
                         let device_level = s.trim().is_empty();
-                        (served, ws.clone(), settings_for_profile(&c, s, ws), device_level)
+                        (
+                            served,
+                            ws.clone(),
+                            settings_for_profile(&c, s, ws),
+                            device_level,
+                        )
                     })
                     // ⭐ **2026-10-08（第三笔）**：**没暗号的行不许进开窗名单** ✗ —— 它的"服务空间"是 `''` ✓，
                     //   而 `''` 会去读 **`mesh_bind:` 那个空键**（写入路径**永远写不出来** ✓ ⇒ 只可能是更早版本残留 ✓）
@@ -1283,13 +1362,15 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             let mut by_bind: std::collections::BTreeMap<String, Vec<(String, String, bool)>> =
                 std::collections::BTreeMap::new();
             for (space, ws, cfg, device_level) in &mesh_cfgs {
-                let Some(bind) = cfg.bind.as_deref().map(str::trim).filter(|b| !b.is_empty()) else {
+                let Some(bind) = cfg.bind.as_deref().map(str::trim).filter(|b| !b.is_empty())
+                else {
                     continue;
                 };
-                by_bind
-                    .entry(bind.to_string())
-                    .or_default()
-                    .push((ws.clone(), space.clone(), *device_level));
+                by_bind.entry(bind.to_string()).or_default().push((
+                    ws.clone(),
+                    space.clone(),
+                    *device_level,
+                ));
             }
             for (bind, pairs) in &by_bind {
                 // ⚠️ 取不到 app data 目录 ⇒ **如实说、这一轮不开窗**（⛔ 不静默跳过 ✗）
@@ -1363,8 +1444,10 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 //    服务的是**只有测试才有的形态**（两个发现实体同机互指 ✓，见那函数的注释 ✓）。
                 //    ⚠️ 底下那句 `announce_targets(lan::LAN_PORT, &state.peers(now))` **保持逐字不变** ✗
                 //    （有判据按源码逐字钉它 ✓）。
-                let targets =
-                    lan::append_extra_targets(lan::announce_targets(lan::LAN_PORT, &state.peers(now)));
+                let targets = lan::append_extra_targets(lan::announce_targets(
+                    lan::LAN_PORT,
+                    &state.peers(now),
+                ));
                 // ⭐ **2026-10-09（task-8）**：走**唯一入口** `announces_for_this_round` ✓ ——
                 //    它在发之前把 `space_id` 换成**解析后的空间**（个人空间 ⇒ 配对暗号 ✓）。
                 //    ⛔ 不要再退回"把 `profiles` 直接喂给 `announces_for_with_mesh`" ✗
@@ -1385,7 +1468,10 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     match lan::announce_once(&sock, &targets, &a).await {
                         Ok(o) => eprintln!(
                             "{}",
-                            lan::announce_send_line(&o, a.hub_spaces.first().map(String::as_str).unwrap_or(""))
+                            lan::announce_send_line(
+                                &o,
+                                a.hub_spaces.first().map(String::as_str).unwrap_or("")
+                            )
                         ),
                         Err(e) => eprintln!("[mesh] 公告一条都没发出去：{e}"),
                     }
@@ -1414,7 +1500,9 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             ) {
                 last_bg_round_ms = now;
                 match spawn_background_round(&app2, &device_id, &mesh_cfgs, &state.peers(now)) {
-                    Some(what) => eprintln!("[{}] [mesh] 后台一轮：开跑（{what}）", lan::log_stamp()),
+                    Some(what) => {
+                        eprintln!("[{}] [mesh] 后台一轮：开跑（{what}）", lan::log_stamp())
+                    }
                     None => eprintln!(
                         "[{}] [mesh] 后台一轮：**跳过** —— 上一轮还没跑完（5 分钟后再来 ✓）",
                         lan::log_stamp()
@@ -1674,7 +1762,10 @@ mod mesh_serve_space_tests {
             crate::sync::personal_room_for("room-456", "第二个"),
         ];
         want.sort();
-        assert_eq!(got, want, "只返回个人档解析出的子房间号（团队档不许混进来）");
+        assert_eq!(
+            got, want,
+            "只返回个人档解析出的子房间号（团队档不许混进来）"
+        );
     }
 
     /// ⭐ 本笔判据：个人空间（`space_id` 空）＋ 暗号有值 ⇒ **窗口报的空间必须是暗号** ✓。
@@ -1720,8 +1811,11 @@ mod mesh_serve_space_tests {
         .unwrap();
         // ⚠️ 夹具里那张表的形状比较老（没有 `kind`，而且已经有一行 `ws-personal`）
         //   ⇒ 先补列、再**改**那一行（⛔ 不是再插一行：`id` 是主键，插会撞）。
-        c.execute("ALTER TABLE meta.workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT ''", [])
-            .expect("夹具要能补 kind 列");
+        c.execute(
+            "ALTER TABLE meta.workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .expect("夹具要能补 kind 列");
         c.execute(
             "UPDATE meta.workspaces SET name = '工作', kind = 'personal' WHERE id = 'ws-personal'",
             [],
@@ -1758,8 +1852,10 @@ mod mesh_serve_space_tests {
         )
         .unwrap();
         crate::mesh::set_mesh_room_device(&c, Some("room-123")).unwrap();
-        let bases =
-            vec![(window_serve_space(&c, "", "ws-personal"), "http://192.168.1.5:8788".to_string())];
+        let bases = vec![(
+            window_serve_space(&c, "", "ws-personal"),
+            "http://192.168.1.5:8788".to_string(),
+        )];
         let got = announces_for_this_round(&c, "dev-a", "本机", &profiles, &bases);
         assert_eq!(got.len(), 1, "前提：开了网格的个人空间要发言（{got:#?}）");
         assert!(
@@ -1792,7 +1888,10 @@ mod mesh_serve_space_tests {
         };
         // ⭐ 公告的基址键＝**解析后的服务空间**（个人档现在是派生子房间号）
         let bases_for = |c: &rusqlite::Connection| {
-            vec![(window_serve_space(c, "", "ws-personal"), "http://192.168.1.5:8788".to_string())]
+            vec![(
+                window_serve_space(c, "", "ws-personal"),
+                "http://192.168.1.5:8788".to_string(),
+            )]
         };
 
         // ① 有短标识 ⇒ 逐字进公告（⭐ 它就是要给对端看的那一格）
@@ -1808,7 +1907,10 @@ mod mesh_serve_space_tests {
             got[0].short_id, "K7M2Q",
             "⭐ 短标识没进公告 ⇒ 对端全都显示「对方没报短标识」✗"
         );
-        assert_ne!(got[0].short_id, got[0].device_id, "⛔ 不许回落成 device_id 前几位");
+        assert_ne!(
+            got[0].short_id, got[0].device_id,
+            "⛔ 不许回落成 device_id 前几位"
+        );
 
         // ② 没有 ⇒ 生成并落库（自愈 ✓）；第二次必须是同一个（落了库 ✓）
         let c2 = fixture();
@@ -1836,7 +1938,10 @@ mod mesh_serve_space_tests {
             got3[0].short_id, "",
             "拿不到就得**如实说没有** ✓（⛔ 不许编一个 / ⛔ 不许回落 device_id）"
         );
-        assert_ne!(got3[0].short_id, got3[0].device_id, "⛔ 更不许回落成 device_id");
+        assert_ne!(
+            got3[0].short_id, got3[0].device_id,
+            "⛔ 更不许回落成 device_id"
+        );
     }
 
     /// 反向：团队空间照旧用 `space_id` ✓（不许串味 ✓）。
@@ -1848,7 +1953,11 @@ mod mesh_serve_space_tests {
             [],
         )
         .unwrap();
-        assert_eq!(window_serve_space(&c, "team-9", "ws-personal"), "team-9", "团队空间口径不变 ✓");
+        assert_eq!(
+            window_serve_space(&c, "team-9", "ws-personal"),
+            "team-9",
+            "团队空间口径不变 ✓"
+        );
     }
 
     /// 反向：个人空间**没填暗号** ⇒ 保持旧口径（回落 `space_id`）✓（放宽 ≠ 乱认 ✓）。
@@ -1860,7 +1969,11 @@ mod mesh_serve_space_tests {
             [],
         )
         .unwrap();
-        assert_eq!(window_serve_space(&c, "", "ws-personal"), "", "没暗号 ⇒ 保持旧口径 ✓");
+        assert_eq!(
+            window_serve_space(&c, "", "ws-personal"),
+            "",
+            "没暗号 ⇒ 保持旧口径 ✓"
+        );
     }
 }
 
@@ -1936,7 +2049,11 @@ mod mesh_read_scope_tests {
         )
         .unwrap();
         let st = settings_for_profile(&c, "team-9", "ws-personal");
-        assert_eq!(st.bind.as_deref(), Some("0.0.0.0:8788"), "团队空间口径不变 ✓");
+        assert_eq!(
+            st.bind.as_deref(),
+            Some("0.0.0.0:8788"),
+            "团队空间口径不变 ✓"
+        );
     }
 
     /// 反向②：个人空间但**暗号也是空** ⇒ **保持旧口径**（回落到 `space_id` ＝ 空串）✓ ——
@@ -2011,10 +2128,22 @@ mod tests {
         let rows = background_round_readings(0, 3);
         assert_eq!(rows.len(), 2, "两个读数都要 ✓（⭐ 少一个就又要猜 ✗）");
         let got: Vec<(&str, String)> = rows.into_iter().collect();
-        assert_eq!(got[0], ("mesh_bg_last_candidates", "0".to_string()), "候选数要落库 ✓");
-        assert_eq!(got[1], ("mesh_bg_last_heard", "3".to_string()), "收到的公告条数要落库 ✓");
+        assert_eq!(
+            got[0],
+            ("mesh_bg_last_candidates", "0".to_string()),
+            "候选数要落库 ✓"
+        );
+        assert_eq!(
+            got[1],
+            ("mesh_bg_last_heard", "3".to_string()),
+            "收到的公告条数要落库 ✓"
+        );
         // ⭐ 就是这一格：⭐ 收到了 3 条公告、⭐ 却一台候选都没有 ⇒ ⭐ "看见了但对不上" ✓（不是"没看见"✗）
-        assert_eq!(background_round_readings(2, 0)[0].1, "2", "看到了能拉的 ⇒ 候选数如实 ✓");
+        assert_eq!(
+            background_round_readings(2, 0)[0].1,
+            "2",
+            "看到了能拉的 ⇒ 候选数如实 ✓"
+        );
     }
 
     /// ⭐ **task-12 判据 a**：⭐ **不打开任何面板也要有轮次** ✓（可注入时钟 ✓）。
@@ -2027,9 +2156,15 @@ mod tests {
             "⛔ 没有后台节拍 ⇒ 关掉面板就一轮都不跑 ✗（真机实测：8+ 分钟零连接 ✓）"
         );
         // ② 到点 ⇒ 跑
-        assert!(background_round_due(1_000, 1_000 + BACKGROUND_ROUND_MS, 1, 0), "到点必须跑 ✓");
+        assert!(
+            background_round_due(1_000, 1_000 + BACKGROUND_ROUND_MS, 1, 0),
+            "到点必须跑 ✓"
+        );
         // ③ 没到点 ⇒ 不跑（⛔ 也不能退化成"每秒一次" ✗）
-        assert!(!background_round_due(1_000, 1_000 + BACKGROUND_ROUND_MS - 1, 1, 0), "没到点不跑 ✓");
+        assert!(
+            !background_round_due(1_000, 1_000 + BACKGROUND_ROUND_MS - 1, 1, 0),
+            "没到点不跑 ✓"
+        );
     }
 
     /// ⭐ **task-12（Lead 拍 B）**：⭐ **`候选 0` ⇒ 下次 < 5 分钟** ✓（"没找到对端"**不算**"跑过一轮" ✓）。
@@ -2042,17 +2177,30 @@ mod tests {
             BACKGROUND_RETRY_MS,
             "⛔ 空手也要等满 5 分钟 ⇒ 对端 27 秒后才出现，白等一轮 ✗"
         );
-        assert!(background_round_interval_ms(1) < BACKGROUND_ROUND_MS, "必须**短于**常态 ✓");
+        assert!(
+            background_round_interval_ms(1) < BACKGROUND_ROUND_MS,
+            "必须**短于**常态 ✓"
+        );
     }
 
     /// ⭐ **task-12（Lead 拍上限）**：⭐ **连续 5 次仍 `候选 0` ⇒ 退回 5 分钟** ✓
     /// —— ⛔ 别在"网段里根本没有对端"的地方每 60 秒空转一小时 ✗。
     #[test]
     fn a_long_empty_streak_gives_up_the_fast_retry() {
-        assert_eq!(background_round_interval_ms(BACKGROUND_EMPTY_GIVE_UP), BACKGROUND_ROUND_MS);
-        assert_eq!(background_round_interval_ms(BACKGROUND_EMPTY_GIVE_UP + 9), BACKGROUND_ROUND_MS);
+        assert_eq!(
+            background_round_interval_ms(BACKGROUND_EMPTY_GIVE_UP),
+            BACKGROUND_ROUND_MS
+        );
+        assert_eq!(
+            background_round_interval_ms(BACKGROUND_EMPTY_GIVE_UP + 9),
+            BACKGROUND_ROUND_MS
+        );
         // ⭐ 反向：**上一轮找到了对端**（streak 0）⇒ 常态 5 分钟 ✓（⛔ 不许永久停在 60 秒 ✗）
-        assert_eq!(background_round_interval_ms(0), BACKGROUND_ROUND_MS, "找到对端 ⇒ 回到常态 ✓");
+        assert_eq!(
+            background_round_interval_ms(0),
+            BACKGROUND_ROUND_MS,
+            "找到对端 ⇒ 回到常态 ✓"
+        );
     }
 
     /// ⭐ **task-12**：⭐ **启动后第一轮不是"立刻"** ✓ —— 实测启动后 3 秒跑 ⇒ `候选 0`（对端公告 27 秒后才到）
@@ -2079,10 +2227,19 @@ mod tests {
     /// "没配 ⇒ 一个字节都不动"这条口径**一个字不变** ✓。
     #[test]
     fn a_background_round_never_runs_when_no_space_has_the_mesh() {
-        assert!(!background_round_due(0, 1_000_000, 0, 0), "⭐ 没配网格 ⇒ 后台**不许**碰任何东西 ✗");
-        assert!(!background_round_due(0, i64::MAX, 0, 0), "⛔ 时间再久也一样：没有空间就没有轮次 ✗");
+        assert!(
+            !background_round_due(0, 1_000_000, 0, 0),
+            "⭐ 没配网格 ⇒ 后台**不许**碰任何东西 ✗"
+        );
+        assert!(
+            !background_round_due(0, i64::MAX, 0, 0),
+            "⛔ 时间再久也一样：没有空间就没有轮次 ✗"
+        );
         // ⚠️ 连"空手在重试"也一样不跑 ✓（⭐ 否则"没配 + 刚空手"会绕开这一关 ✗）
-        assert!(!background_round_due(0, i64::MAX, 0, 1), "空手重试那支也不许碰没配的空间 ✗");
+        assert!(
+            !background_round_due(0, i64::MAX, 0, 1),
+            "空手重试那支也不许碰没配的空间 ✗"
+        );
     }
 
     /// 判据 ①：**默认是关的**（新进程不会一上来就往网段里发声）。
@@ -2133,20 +2290,31 @@ mod tests {
         let st = LanState::new("dev-me".into());
         st.set_enabled(true);
         // ① 合法公告 ⇒ 收了、记了，且**还回来的是入库的那一条**
-        let raw = crate::lan::encode_announce(&peer_of("dev-a", "http://192.168.1.5:8787", &["sp-1"]).announce)
-            .unwrap();
-        let got = st.record_datagram(&raw, "192.168.1.9", 1_000).unwrap().expect("合法公告要入库");
+        let raw = crate::lan::encode_announce(
+            &peer_of("dev-a", "http://192.168.1.5:8787", &["sp-1"]).announce,
+        )
+        .unwrap();
+        let got = st
+            .record_datagram(&raw, "192.168.1.9", 1_000)
+            .unwrap()
+            .expect("合法公告要入库");
         assert_eq!(got.announce.device_id, "dev-a");
         assert_eq!(got.addr, "192.168.1.9", "来源地址取自收到的那个 ip");
         assert_eq!(st.observed_all().len(), 1);
         // ② 自己的公告（回环）⇒ `Ok(None)`（不是错误，也不入表）
-        let own = crate::lan::encode_announce(&peer_of("dev-me", "http://192.168.1.4:8787", &["sp-1"]).announce)
-            .unwrap();
-        assert_eq!(st.record_datagram(&own, "192.168.1.4", 1_000).unwrap(), None);
+        let own = crate::lan::encode_announce(
+            &peer_of("dev-me", "http://192.168.1.4:8787", &["sp-1"]).announce,
+        )
+        .unwrap();
+        assert_eq!(
+            st.record_datagram(&own, "192.168.1.4", 1_000).unwrap(),
+            None
+        );
         assert_eq!(st.observed_all().len(), 1, "自己的公告不许进表");
         // ③ 不合法 ⇒ 报**公告**那一句，且**一个字节都不入表**
         assert_eq!(
-            st.record_datagram("{ 这不是 json", "192.168.1.9", 1_000).unwrap_err(),
+            st.record_datagram("{ 这不是 json", "192.168.1.9", 1_000)
+                .unwrap_err(),
             crate::lan::AnnounceReject::BadJson.reason(),
         );
         assert_eq!(st.observed_all().len(), 1);
@@ -2184,7 +2352,9 @@ mod tests {
     // ---- 丙-③-b-2b：网格开着时，公告报的是**我自己的窗口** ----
 
     fn mesh_bases_of(rows: &[(&str, &str)]) -> Vec<(String, String)> {
-        rows.iter().map(|(s, b)| (s.to_string(), b.to_string())).collect()
+        rows.iter()
+            .map(|(s, b)| (s.to_string(), b.to_string()))
+            .collect()
     }
 
     /// ★ 丙-③-b-2b：**只开网格、不绑服务端**的空间 —— 它照样要发言，而且报的是**我自己的窗口**。
@@ -2195,10 +2365,16 @@ mod tests {
     #[test]
     fn a_mesh_only_space_is_announced_and_opens_the_discovery_layer() {
         let profiles = profiles_of(&[("sp-1", "")]); // **没有**服务端地址
-        assert!(!should_enable(bound_profile_count(&profiles)), "前提：按甲的口径它没绑");
+        assert!(
+            !should_enable(bound_profile_count(&profiles)),
+            "前提：按甲的口径它没绑"
+        );
         let bases = mesh_bases_of(&[("sp-1", "http://192.168.1.5:8788")]);
 
-        assert!(should_run_discovery(&profiles, &["sp-1".to_string()]), "开了网格 ⇒ 发现层要起");
+        assert!(
+            should_run_discovery(&profiles, &["sp-1".to_string()]),
+            "开了网格 ⇒ 发现层要起"
+        );
         let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &bases, &[]);
         assert_eq!(got.len(), 1, "{got:#?}");
         assert_eq!(got[0].hub_base.as_deref(), Some("http://192.168.1.5:8788"));
@@ -2213,7 +2389,11 @@ mod tests {
         let bases = mesh_bases_of(&[("sp-1", "http://10.0.0.7:9000")]);
         let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &bases, &[]);
         assert_eq!(got.len(), 1);
-        assert_eq!(got[0].hub_base.as_deref(), Some("http://10.0.0.7:9000"), "覆盖成我自己的窗口");
+        assert_eq!(
+            got[0].hub_base.as_deref(),
+            Some("http://10.0.0.7:9000"),
+            "覆盖成我自己的窗口"
+        );
     }
 
     /// ★ 没开网格 ⇒ **两道口径都是老样子**（走的是**同一段代码**：`mesh_bases` 传空）。
@@ -2248,7 +2428,10 @@ mod tests {
         let pk = "ab".repeat(32);
         let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", &pk, &profiles, &[], &[]);
         assert_eq!(got.len(), 1, "{got:#?}");
-        assert_eq!(got[0].pubkey, pk, "⛔ 公告里必须是**传进来那把公钥** ✗（⛔ 不是它自己算的 ✗）");
+        assert_eq!(
+            got[0].pubkey, pk,
+            "⛔ 公告里必须是**传进来那把公钥** ✗（⛔ 不是它自己算的 ✗）"
+        );
         // ⭐ 过一遍**线格式**（编／解）⇒ 逐字还在 ✓（⭐ 老对端读不读得动由下一条管 ✓）
         let raw = crate::lan::encode_announce(&got[0]).expect("编码");
         let back = crate::lan::decode_announce(&raw).expect("解码");
@@ -2256,17 +2439,25 @@ mod tests {
         // ⭐ 没身份（空串）⇒ **照旧发得出来** ✓（⛔ 不因为"没有身份"就不发言 ✗）
         let none = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &[], &[]);
         assert_eq!(none.len(), 1, "没有身份也要照旧发言（发现与身份是两件事）");
-        assert_eq!(none[0].pubkey, "", "没有身份 ⇒ 如实地是空串 ✓（⛔ 不猜成任何东西 ✗）");
+        assert_eq!(
+            none[0].pubkey, "",
+            "没有身份 ⇒ 如实地是空串 ✓（⛔ 不猜成任何东西 ✗）"
+        );
     }
 
     /// ⭐ 老对端**不发**这一格 ⇒ 收得下 ✓ ＋ ⭐ **不升 `WIRE_VERSION`** ✓
     /// （⭐ 与 `short_id`（08-b②）／`trust_ask` 同一个手法 ✓：可选字段 ＋ 不 `deny_unknown_fields` ✓）。
     #[test]
     fn an_older_announce_without_a_public_key_still_decodes() {
-        let raw = r#"{"v":1,"device_id":"dev-a","device_name":"甲","short_id":"T3ST1","fp":"dev-a"}"#;
+        let raw =
+            r#"{"v":1,"device_id":"dev-a","device_name":"甲","short_id":"T3ST1","fp":"dev-a"}"#;
         let a = crate::lan::decode_announce(raw).expect("老公告必须收得下");
         assert_eq!(a.pubkey, "", "⛔ 没发那一格 ⇒ 空串 ✓，⛔ 不猜 ✗");
-        assert_eq!(a.v, crate::lan::WIRE_VERSION, "⭐ 加一个可选字段**不升版本** ✓");
+        assert_eq!(
+            a.v,
+            crate::lan::WIRE_VERSION,
+            "⭐ 加一个可选字段**不升版本** ✓"
+        );
     }
 
     /// ★ 判据 ⑥（口径 2 的直接上游）：**"绑了同步"才算绑** —— 只填了地址还没选空间
@@ -2277,7 +2468,10 @@ mod tests {
         assert_eq!(bound_profile_count(&[]), 0);
         assert!(!should_enable(bound_profile_count(&[])));
         // 有地址没空间 / 有空间没地址 / 全是空白 ⇒ 都不算
-        assert_eq!(bound_profile_count(&profiles_of(&[("", "http://192.168.1.5:8787")])), 0);
+        assert_eq!(
+            bound_profile_count(&profiles_of(&[("", "http://192.168.1.5:8787")])),
+            0
+        );
         assert_eq!(bound_profile_count(&profiles_of(&[("sp-1", "")])), 0);
         assert_eq!(bound_profile_count(&profiles_of(&[("  ", "  ")])), 0);
         // 两条都齐 ⇒ 算一条（空白的那些不把数字灌高）
@@ -2285,7 +2479,10 @@ mod tests {
             bound_profile_count(&profiles_of(&[("sp-1", "https://s.example.com"), ("", "")])),
             1
         );
-        assert!(should_enable(bound_profile_count(&profiles_of(&[("sp-1", "https://s.example.com")]))));
+        assert!(should_enable(bound_profile_count(&profiles_of(&[(
+            "sp-1",
+            "https://s.example.com"
+        )]))));
     }
 
     /// ★ 判据 ⑦（口径 2 的下游）：**没绑定就一条公告都不产出**；绑了才产出，
@@ -2294,18 +2491,33 @@ mod tests {
     fn we_announce_only_the_spaces_that_are_actually_bound() {
         assert!(announces_for("dev-me", "本机", "T3ST1", &[]).is_empty());
         assert!(
-            announces_for("dev-me", "本机", "T3ST1", &profiles_of(&[("", "http://192.168.1.5:8787")])).is_empty(),
+            announces_for(
+                "dev-me",
+                "本机",
+                "T3ST1",
+                &profiles_of(&[("", "http://192.168.1.5:8787")])
+            )
+            .is_empty(),
             "只填了地址没选空间 ⇒ 不许发言（产出的公告没人能用）"
         );
         // 没有设备身份 ⇒ 一条都不发（`decode_announce` 会以 NoDeviceId 丢掉它）
-        assert!(announces_for("  ", "本机", "T3ST1", &profiles_of(&[("sp-1", "http://192.168.1.5:8787")])).is_empty());
+        assert!(announces_for(
+            "  ",
+            "本机",
+            "T3ST1",
+            &profiles_of(&[("sp-1", "http://192.168.1.5:8787")])
+        )
+        .is_empty());
 
         // 两个空间、地址是私有网段 ⇒ 两条，各自代言各自的空间
         let got = announces_for(
             "dev-me",
             "本机",
             "T3ST1",
-            &profiles_of(&[("sp-1", "http://192.168.1.5:8787"), ("sp-2", "http://192.168.1.5:8787")]),
+            &profiles_of(&[
+                ("sp-1", "http://192.168.1.5:8787"),
+                ("sp-2", "http://192.168.1.5:8787"),
+            ]),
         );
         assert_eq!(got.len(), 2);
         assert_eq!(got[0].hub_spaces, vec!["sp-1".to_string()]);
@@ -2322,10 +2534,18 @@ mod tests {
     /// 而它明明还在听。
     #[test]
     fn a_device_with_nothing_to_vouch_for_still_says_it_is_here() {
-        let got = announces_for("dev-me", "本机", "T3ST1", &profiles_of(&[("sp-1", "https://s.example.com")]));
+        let got = announces_for(
+            "dev-me",
+            "本机",
+            "T3ST1",
+            &profiles_of(&[("sp-1", "https://s.example.com")]),
+        );
         assert_eq!(got.len(), 1, "没得代言也要露面（否则别人看不见这台设备）");
         assert_eq!(got[0].hub_base, None, "公网地址 ⇒ 不代言");
-        assert!(got[0].hub_spaces.is_empty(), "不代言就不带空间（`resolve_base` 只认 hub_base 那一条）");
+        assert!(
+            got[0].hub_spaces.is_empty(),
+            "不代言就不带空间（`resolve_base` 只认 hub_base 那一条）"
+        );
         assert_eq!(got[0].device_id, "dev-me");
         // ★ 存在声明**也带指纹**（owner 2026-09-25 拍板）：没资格代言的设备同样要说清"我是谁"，
         //   否则它在"谁在说话"这件事上对 B 片的掉包判据完全隐形。
@@ -2377,7 +2597,10 @@ mod tests {
             assert!(autosync_paused_env(Some(v)), "{v:?} 应当暂停");
         }
         for v in ["1", "on", "true", "", "maybe", "disable"] {
-            assert!(!autosync_paused_env(Some(v)), "{v:?} **不该**暂停（拼错的环境变量不许静默停同步）");
+            assert!(
+                !autosync_paused_env(Some(v)),
+                "{v:?} **不该**暂停（拼错的环境变量不许静默停同步）"
+            );
         }
     }
 
@@ -2390,13 +2613,28 @@ mod tests {
             ANNOUNCE_INTERVAL_MS
         );
         // 到点判别式本身：还没喊过 ⇒ 立刻喊；喊过 ⇒ 要等满一个间隔
-        assert!(announce_due(0, 1_000, ANNOUNCE_INTERVAL_MS), "第一轮就要露面，别等一个间隔");
-        assert!(!announce_due(10_000, 10_000 + ANNOUNCE_INTERVAL_MS - 1, ANNOUNCE_INTERVAL_MS));
-        assert!(announce_due(10_000, 10_000 + ANNOUNCE_INTERVAL_MS, ANNOUNCE_INTERVAL_MS));
+        assert!(
+            announce_due(0, 1_000, ANNOUNCE_INTERVAL_MS),
+            "第一轮就要露面，别等一个间隔"
+        );
+        assert!(!announce_due(
+            10_000,
+            10_000 + ANNOUNCE_INTERVAL_MS - 1,
+            ANNOUNCE_INTERVAL_MS
+        ));
+        assert!(announce_due(
+            10_000,
+            10_000 + ANNOUNCE_INTERVAL_MS,
+            ANNOUNCE_INTERVAL_MS
+        ));
         // 时刻回绕（系统时钟被调回去）⇒ **不 panic、也不狂喊**（`saturating_sub` 夹到 0，
         // 于是"再等一个间隔"；宁可晚一轮，也不要在时钟乱跳时往网段里刷公告）。
         assert!(!announce_due(10_000, 5, ANNOUNCE_INTERVAL_MS));
-        assert_eq!(announce_due(10_000, i64::MIN, ANNOUNCE_INTERVAL_MS), false, "极端回绕也不许 panic");
+        assert_eq!(
+            announce_due(10_000, i64::MIN, ANNOUNCE_INTERVAL_MS),
+            false,
+            "极端回绕也不许 panic"
+        );
     }
 }
 
@@ -2411,13 +2649,19 @@ mod device_name_tests {
 
     #[test]
     fn user_set_name_wins() {
-        assert_eq!(resolve_local_name(Some("书房的那台"), "MacBook-Pro"), "书房的那台");
+        assert_eq!(
+            resolve_local_name(Some("书房的那台"), "MacBook-Pro"),
+            "书房的那台"
+        );
     }
 
     #[test]
     fn blank_stored_name_falls_back_to_host() {
         // 用户清空一次（或数据里是空白）⇒ 回到主机名 ✓，**不是**空串 ✗
-        assert_eq!(resolve_local_name(Some("   "), "MacBook-Pro"), "MacBook-Pro");
+        assert_eq!(
+            resolve_local_name(Some("   "), "MacBook-Pro"),
+            "MacBook-Pro"
+        );
         assert_eq!(resolve_local_name(None, "MacBook-Pro"), "MacBook-Pro");
     }
 
@@ -2425,7 +2669,10 @@ mod device_name_tests {
     fn never_blank_when_host_is_missing_too() {
         // ⭐ 这就是修前的那条错：两档都拿不到 ⇒ 旧 `host_name()` 返回 **空串** ✗
         let n = resolve_local_name(None, "");
-        assert!(!n.trim().is_empty(), "本机名**永远不许是空白** ✗（对端会显示成没名字）");
+        assert!(
+            !n.trim().is_empty(),
+            "本机名**永远不许是空白** ✗（对端会显示成没名字）"
+        );
         assert_eq!(n, DEFAULT_DEVICE_NAME);
         assert_eq!(resolve_local_name(Some("  "), "   "), DEFAULT_DEVICE_NAME);
     }
@@ -2434,9 +2681,14 @@ mod device_name_tests {
     fn never_looks_like_a_device_id_prefix() {
         // ⛔ 规格逐字不许用 `device_id`（或其前几位/哈希）当兜底 ✓ ⇒ 兜底值里不许像 uuid/hex ✗
         let fallback = resolve_local_name(None, "");
-        assert!(!fallback.contains('-'), "兜底名里不许出现 uuid 形状的连字符 ✗");
         assert!(
-            fallback.chars().all(|c| !c.is_ascii_hexdigit() || !c.is_ascii()),
+            !fallback.contains('-'),
+            "兜底名里不许出现 uuid 形状的连字符 ✗"
+        );
+        assert!(
+            fallback
+                .chars()
+                .all(|c| !c.is_ascii_hexdigit() || !c.is_ascii()),
             "兜底名不许是纯 ascii 十六进制（那就是 id 前几位的形状 ✗）"
         );
     }
@@ -2463,8 +2715,11 @@ pub fn set_device_name(db: tauri::State<'_, Db>, name: String) -> Result<String,
     let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        c.execute("DELETE FROM meta.sync_state WHERE key = ?1", rusqlite::params![KEY_DEVICE_NAME])
-            .map_err(|e| e.to_string())?;
+        c.execute(
+            "DELETE FROM meta.sync_state WHERE key = ?1",
+            rusqlite::params![KEY_DEVICE_NAME],
+        )
+        .map_err(|e| e.to_string())?;
     } else {
         crate::sync::set_meta_state(&c, KEY_DEVICE_NAME, trimmed)?;
     }
@@ -2505,7 +2760,8 @@ fn new_short_id() -> String {
 fn short_id_or_init(existing: Option<&str>) -> String {
     if let Some(v) = existing {
         let v = v.trim();
-        let ok = (4..=6).contains(&v.len()) && v.chars().all(|c| SHORT_ID_ALPHABET.contains(&(c as u8)));
+        let ok =
+            (4..=6).contains(&v.len()) && v.chars().all(|c| SHORT_ID_ALPHABET.contains(&(c as u8)));
         if ok {
             return v.to_string();
         }
@@ -2532,7 +2788,11 @@ mod short_id_tests {
     fn length_is_within_4_to_6() {
         for _ in 0..64 {
             let id = new_short_id();
-            assert!((4..=6).contains(&id.len()), "短标识长度必须在 4–6，实际 {}", id.len());
+            assert!(
+                (4..=6).contains(&id.len()),
+                "短标识长度必须在 4–6，实际 {}",
+                id.len()
+            );
         }
     }
 
@@ -2540,7 +2800,11 @@ mod short_id_tests {
     fn is_random_two_calls_differ() {
         // 32⁵ ≈ 3.3×10⁷ ⇒ 连测 16 对，撞上的概率可忽略 ✓（真撞了说明随机源没在动 ✗）
         for _ in 0..16 {
-            assert_ne!(new_short_id(), new_short_id(), "连续两次生成相同 ⇒ 不是随机 ✗");
+            assert_ne!(
+                new_short_id(),
+                new_short_id(),
+                "连续两次生成相同 ⇒ 不是随机 ✗"
+            );
         }
     }
 
@@ -2552,8 +2816,14 @@ mod short_id_tests {
         // 取一批生成值，都不许出现在 device_id 里（大写字母表 ⇒ 与小写 uuid 天然不重叠 ✓）
         for _ in 0..32 {
             let id = new_short_id();
-            assert!(!device_id.contains(&id), "短标识不许是 device_id 的片段 ✗：{id}");
-            assert!(!device_id.to_uppercase().contains(&id), "短标识不许是 device_id 的派生 ✗：{id}");
+            assert!(
+                !device_id.contains(&id),
+                "短标识不许是 device_id 的片段 ✗：{id}"
+            );
+            assert!(
+                !device_id.to_uppercase().contains(&id),
+                "短标识不许是 device_id 的派生 ✗：{id}"
+            );
         }
     }
 
@@ -2562,13 +2832,19 @@ mod short_id_tests {
         // ⭐ "重启后不变"的**规则本身**：已有合法值 ⇒ 原样返回 ✓（不重新生成 ✗）
         let stored = "K7M2Q";
         assert_eq!(short_id_or_init(Some(stored)), stored);
-        assert_eq!(short_id_or_init(Some("  K7M2Q  ")), stored, "空白要折掉再判定 ✓");
+        assert_eq!(
+            short_id_or_init(Some("  K7M2Q  ")),
+            stored,
+            "空白要折掉再判定 ✓"
+        );
         // 库里是空/非法（老库、被手改过）⇒ 补一个新生成的 ✓（那也算"重启后有个稳定值" ✓）
         let healed = short_id_or_init(Some(""));
         assert!((4..=6).contains(&healed.len()));
         let healed2 = short_id_or_init(Some("abc")); // 小写/太短 ⇒ 非法 ✓
         assert!((4..=6).contains(&healed2.len()));
-        assert!(healed2.chars().all(|c| SHORT_ID_ALPHABET.contains(&(c as u8))));
+        assert!(healed2
+            .chars()
+            .all(|c| SHORT_ID_ALPHABET.contains(&(c as u8))));
     }
 
     /// ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 出站那两格的**接线**判据 ✓。
@@ -2602,7 +2878,11 @@ mod short_id_tests {
 
         with_trust(|h| h.clear());
         with_trust(|h| h.note_ask("dev-a", base, ttl));
-        assert_eq!(trust_outbound(base + 1_500).1, "", "还没人点过 ⇒ 不许有 secret");
+        assert_eq!(
+            trust_outbound(base + 1_500).1,
+            "",
+            "还没人点过 ⇒ 不许有 secret"
+        );
         with_trust(|h| h.confirm("dev-a", "sek-1", base + 2_000, ttl));
         assert_eq!(trust_outbound(base + 3_000).1, "sek-1", "人点过之后才有");
         assert_eq!(
@@ -2654,7 +2934,10 @@ mod short_id_tests {
         with_trust(|h| h.clear());
         let st = LanState::new("me-dev".to_string());
         let t = 5_000_000_i64;
-        assert!(st.observe(peer_with_ask("dev-b", "ask-1", t)), "别人的公告 ⇒ 记进对端表 ✓");
+        assert!(
+            st.observe(peer_with_ask("dev-b", "ask-1", t)),
+            "别人的公告 ⇒ 记进对端表 ✓"
+        );
         assert_eq!(
             with_trust(|h| h.pending_asks(t + 1)),
             vec!["dev-b".to_string()],
@@ -2684,7 +2967,10 @@ mod short_id_tests {
         with_trust(|h| h.clear());
         let st = LanState::new("me-dev".to_string());
         let t = 5_000_000_i64;
-        assert!(!st.observe(peer_with_ask("me-dev", "ask-self", t)), "自己的公告 ⇒ upsert 回 false ✓");
+        assert!(
+            !st.observe(peer_with_ask("me-dev", "ask-self", t)),
+            "自己的公告 ⇒ upsert 回 false ✓"
+        );
         assert!(
             with_trust(|h| h.pending_asks(t + 1)).is_empty(),
             "⛔ 自己的公告不许给自己记账 ✗（否则本机会采纳自己）"
@@ -2749,8 +3035,14 @@ mod room_adoption_tests {
 
     #[test]
     fn a_custom_room_is_never_replaced() {
-        assert_eq!(decide_room_adoption("my-group", false, &s(&["other"])), None);
-        assert_eq!(decide_room_adoption("my-group", false, &s(&["auto-aa", "auto-bb"])), None);
+        assert_eq!(
+            decide_room_adoption("my-group", false, &s(&["other"])),
+            None
+        );
+        assert_eq!(
+            decide_room_adoption("my-group", false, &s(&["auto-aa", "auto-bb"])),
+            None
+        );
     }
 
     #[test]
@@ -2775,13 +3067,19 @@ mod room_adoption_tests {
     #[test]
     fn two_auto_rooms_converge_to_the_same_minimum() {
         // 两台全新手机：A 看到 B（auto-bb）⇒ 采用 min = auto-aa（不变）；B 看到 A ⇒ 采用 auto-aa。
-        assert_eq!(decide_room_adoption("auto-aa", true, &s(&["auto-bb"])), None);
+        assert_eq!(
+            decide_room_adoption("auto-aa", true, &s(&["auto-bb"])),
+            None
+        );
         assert_eq!(
             decide_room_adoption("auto-bb", true, &s(&["auto-aa"])),
             Some("auto-aa".to_string())
         );
         // 收敛之后再看到对方 ⇒ 不再改（幂等 ✓）。
-        assert_eq!(decide_room_adoption("auto-aa", true, &s(&["auto-aa"])), None);
+        assert_eq!(
+            decide_room_adoption("auto-aa", true, &s(&["auto-aa"])),
+            None
+        );
     }
 
     #[test]
@@ -2798,7 +3096,6 @@ mod room_adoption_tests {
         assert_eq!(decide_room_adoption("", true, &s(&["group-A"])), None);
     }
 }
-
 
 /// ⭐⭐ **2026-10-28（owner 拍 R209-B）**：**广播不带设备级组名，改从对端派生房间号逐空间覆盖**。
 ///
@@ -2847,8 +3144,12 @@ mod space_room_coverage_tests {
 
     fn set_seed(c: &rusqlite::Connection, room: &str, auto: bool) {
         crate::mesh::set_mesh_room_device(c, Some(room)).unwrap();
-        crate::sync::set_meta_state(c, crate::sync::MESH_ROOM_AUTO_KEY, if auto { "1" } else { "0" })
-            .unwrap();
+        crate::sync::set_meta_state(
+            c,
+            crate::sync::MESH_ROOM_AUTO_KEY,
+            if auto { "1" } else { "0" },
+        )
+        .unwrap();
     }
 
     fn offer(room: &str, auto: bool) -> PeerRoomOffer {
@@ -2869,7 +3170,12 @@ mod space_room_coverage_tests {
     fn bases(c: &rusqlite::Connection) -> Vec<(String, String)> {
         profiles()
             .iter()
-            .map(|(_, _, ws)| (window_serve_space(c, "", ws), "http://192.168.1.5:8788".to_string()))
+            .map(|(_, _, ws)| {
+                (
+                    window_serve_space(c, "", ws),
+                    "http://192.168.1.5:8788".to_string(),
+                )
+            })
             .collect()
     }
 
@@ -2882,7 +3188,10 @@ mod space_room_coverage_tests {
         let got = announces_for_this_round(&c, "dev-a", "本机", &profiles(), &bases(&c));
         assert_eq!(got.len(), 2, "夹具前提：两个个人空间各一条公告");
         for a in &got {
-            assert!(a.room.is_empty(), "⛔ 设备级组名不许再进公告（这一格现在恒空）");
+            assert!(
+                a.room.is_empty(),
+                "⛔ 设备级组名不许再进公告（这一格现在恒空）"
+            );
             assert!(!a.room_auto, "用户设的种子 ⇒ room_auto=false");
             let json = crate::lan::encode_announce(a).expect("编码不失败");
             assert!(
@@ -2901,9 +3210,15 @@ mod space_room_coverage_tests {
         let got = announces_for_this_round(&c, "dev-a", "本机", &profiles(), &bases(&c));
         for a in &got {
             let json = crate::lan::encode_announce(a).expect("编码不失败");
-            assert!(!json.contains("auto-b81746df0bdb701b"), "⛔ 自动组名的值也不许上广播：{json}");
+            assert!(
+                !json.contains("auto-b81746df0bdb701b"),
+                "⛔ 自动组名的值也不许上广播：{json}"
+            );
             assert!(a.room_auto, "自动档要如实报（对端据此决定能不能跟）");
-            assert!(json.contains("\"room_auto\":true"), "那一格要真的进线格式：{json}");
+            assert!(
+                json.contains("\"room_auto\":true"),
+                "那一格要真的进线格式：{json}"
+            );
         }
     }
 
@@ -2915,10 +3230,17 @@ mod space_room_coverage_tests {
         let before = window_serve_space(&c, "", "ws-work");
         // 桌面那台「用户设的种子」⇒ 它的公告里 `hub_spaces` 就是派生房间号（老版本公告同样有这一格 ✓）。
         let desktop_room = crate::sync::personal_room_for("Tashan1973,./", "工作");
-        assert_ne!(before, desktop_room, "夹具前提：两台本来对不上（各派生各的）");
+        assert_ne!(
+            before, desktop_room,
+            "夹具前提：两台本来对不上（各派生各的）"
+        );
 
         let offers = vec![("工作".to_string(), offer(&desktop_room, false))];
-        assert_eq!(cover_spaces_from_offers(&c, &offers), 1, "应覆盖**一个**空间");
+        assert_eq!(
+            cover_spaces_from_offers(&c, &offers),
+            1,
+            "应覆盖**一个**空间"
+        );
         assert_eq!(
             window_serve_space(&c, "", "ws-work"),
             desktop_room,
@@ -2935,13 +3257,20 @@ mod space_room_coverage_tests {
             crate::sync::room_cover_for(&c, "ws-two").is_none(),
             "⛔ 名字没对上 ⇒ 不许覆盖别的空间"
         );
-        assert_eq!(window_serve_space(&c, "", "ws-two"), crate::sync::personal_room_for("auto-aa", "第二个"));
-        assert!(crate::sync::room_cover_for(&c, "ws-team").is_none(), "⛔ 团队空间不参与");
+        assert_eq!(
+            window_serve_space(&c, "", "ws-two"),
+            crate::sync::personal_room_for("auto-aa", "第二个")
+        );
+        assert!(
+            crate::sync::room_cover_for(&c, "ws-team").is_none(),
+            "⛔ 团队空间不参与"
+        );
         assert_eq!(window_serve_space(&c, "", "ws-team"), "team-space");
         // 公告里报的必须是覆盖后的房间号（否则对端还是找不到我）
         let got = announces_for_this_round(&c, "dev-a", "本机", &profiles(), &bases(&c));
         assert!(
-            got.iter().any(|a| a.hub_spaces.iter().any(|s| s == &desktop_room)),
+            got.iter()
+                .any(|a| a.hub_spaces.iter().any(|s| s == &desktop_room)),
             "公告必须报覆盖后的房间号：{:?}",
             got.iter().map(|a| a.hub_spaces.clone()).collect::<Vec<_>>()
         );
@@ -2952,13 +3281,20 @@ mod space_room_coverage_tests {
         let c = fixture();
         set_seed(&c, "my-group", false);
         let before = window_serve_space(&c, "", "ws-work");
-        let offers = vec![("工作".to_string(), offer("11111111111111111111111111111111", true))];
+        let offers = vec![(
+            "工作".to_string(),
+            offer("11111111111111111111111111111111", true),
+        )];
         assert_eq!(
             cover_spaces_from_offers(&c, &offers),
             0,
             "⛔ 用户/桌面设过的组名永不被对端公告改掉"
         );
-        assert_eq!(window_serve_space(&c, "", "ws-work"), before, "一个字节都不许变");
+        assert_eq!(
+            window_serve_space(&c, "", "ws-work"),
+            before,
+            "一个字节都不许变"
+        );
     }
 
     #[test]
@@ -2967,11 +3303,22 @@ mod space_room_coverage_tests {
         let c = fixture();
         set_seed(&c, "auto-aa", true);
         let derived = crate::sync::personal_room_for("auto-aa", "工作");
-        let offers = vec![("工作".to_string(), offer("22222222222222222222222222222222", false))];
+        let offers = vec![(
+            "工作".to_string(),
+            offer("22222222222222222222222222222222", false),
+        )];
         assert_eq!(cover_spaces_from_offers(&c, &offers), 1);
         assert_ne!(window_serve_space(&c, "", "ws-work"), derived);
-        assert_eq!(crate::sync::clear_room_covers(&c).unwrap(), 1, "只清覆盖那一行");
-        assert_eq!(window_serve_space(&c, "", "ws-work"), derived, "回到按本机种子派生");
+        assert_eq!(
+            crate::sync::clear_room_covers(&c).unwrap(),
+            1,
+            "只清覆盖那一行"
+        );
+        assert_eq!(
+            window_serve_space(&c, "", "ws-work"),
+            derived,
+            "回到按本机种子派生"
+        );
     }
 
     // ── ② 的纯函数规则（与 decide_room_adoption 同一套语义） ─────────────────
@@ -3011,14 +3358,23 @@ mod space_room_coverage_tests {
             "本机已经是 min ⇒ ⛔ 不改（两边最终都停在同一个值 ✓）"
         );
         // 收敛之后 ⇒ 不再改（幂等 ✓）
-        assert_eq!(decide_space_room_coverage("1111", true, &[offer("1111", true)]), None);
+        assert_eq!(
+            decide_space_room_coverage("1111", true, &[offer("1111", true)]),
+            None
+        );
     }
 
     #[test]
     fn nothing_is_guessed_without_a_local_room_or_a_peer() {
-        assert_eq!(decide_space_room_coverage("", true, &[offer("1111", false)]), None);
+        assert_eq!(
+            decide_space_room_coverage("", true, &[offer("1111", false)]),
+            None
+        );
         assert_eq!(decide_space_room_coverage("1111", true, &[]), None);
-        assert_eq!(decide_space_room_coverage("1111", true, &[offer("  ", false)]), None);
+        assert_eq!(
+            decide_space_room_coverage("1111", true, &[offer("  ", false)]),
+            None
+        );
     }
 
     // ── ③ 旧版对端兼容：老公告仍能驱动覆盖 ＋ 老结构仍读得懂我们的公告 ─────────
@@ -3028,15 +3384,20 @@ mod space_room_coverage_tests {
         set_seed(&c, "auto-aa", true);
         // 老版本对端的公告：`room` 里**仍然有种子**（老版本就是发的），`room_auto` 那一格不存在 ✓
         let old_json = r#"{"v":1,"device_id":"dev-old","fp":"dev-old","hub_base":"http://192.168.1.9:8788","hub_spaces":["abcdefabcdefabcdefabcdefabcdefab"],"hub_space_names":["工作"],"hub_space_kinds":["personal"],"room":"legacy-group-name"}"#;
-        let a = crate::lan::decode_announce(old_json).expect("老公告必须照常收下（⛔ 不许当恶意 ✗）");
-        assert!(!a.room_auto, "老对端没报自动标记 ⇒ 当作「用户设的」（零风险那一侧）");
+        let a =
+            crate::lan::decode_announce(old_json).expect("老公告必须照常收下（⛔ 不许当恶意 ✗）");
+        assert!(
+            !a.room_auto,
+            "老对端没报自动标记 ⇒ 当作「用户设的」（零风险那一侧）"
+        );
         // 新代码**只用** hub_spaces + 名字 + 类别 来报价（⛔ 不再读它报的 room 去采用种子 ✗）
         let offers: Vec<(String, PeerRoomOffer)> = a
             .hub_space_names
             .iter()
             .enumerate()
             .filter(|(i, n)| {
-                a.hub_space_kinds.get(*i).map(|k| k.trim()) == Some("personal") && !n.trim().is_empty()
+                a.hub_space_kinds.get(*i).map(|k| k.trim()) == Some("personal")
+                    && !n.trim().is_empty()
             })
             .map(|(i, n)| {
                 (
@@ -3048,7 +3409,11 @@ mod space_room_coverage_tests {
                 )
             })
             .collect();
-        assert_eq!(cover_spaces_from_offers(&c, &offers), 1, "老对端也能把房间号对齐过去");
+        assert_eq!(
+            cover_spaces_from_offers(&c, &offers),
+            1,
+            "老对端也能把房间号对齐过去"
+        );
         assert_eq!(
             window_serve_space(&c, "", "ws-work"),
             "abcdefabcdefabcdefabcdefabcdefab",

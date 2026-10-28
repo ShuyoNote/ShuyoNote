@@ -44,10 +44,12 @@ fn safe_entry_name(raw: &str) -> String {
     let base = raw.rsplit(['/', '\\']).next().unwrap_or("").trim();
     let cleaned: String = base
         .chars()
-        .map(|c| if matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*') || (c as u32) < 0x20 {
-            '_'
-        } else {
-            c
+        .map(|c| {
+            if matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*') || (c as u32) < 0x20 {
+                '_'
+            } else {
+                c
+            }
         })
         .collect();
     let cleaned = cleaned.trim_matches(['.', ' ']).to_string();

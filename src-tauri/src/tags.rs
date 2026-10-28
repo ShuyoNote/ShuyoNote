@@ -30,7 +30,8 @@ pub fn list_tags(db: State<'_, Db>) -> Result<Vec<Tag>, String> {
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -41,21 +42,31 @@ pub fn create_tag(db: State<'_, Db>, name: String) -> Result<Tag, String> {
         return Err("标签名不能为空".to_string());
     }
     let existing: Option<String> = c
-        .query_row("SELECT id FROM tags WHERE name = ?1", params![name], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT id FROM tags WHERE name = ?1",
+            params![name],
+            |row| row.get(0),
+        )
         .optional()
         .map_err(|e| e.to_string())?;
     let id = match existing {
         Some(id) => id,
         None => {
             let id = uuid::Uuid::new_v4().to_string();
-            c.execute("INSERT INTO tags (id, name) VALUES (?1, ?2)", params![id, name])
-                .map_err(|e| e.to_string())?;
+            c.execute(
+                "INSERT INTO tags (id, name) VALUES (?1, ?2)",
+                params![id, name],
+            )
+            .map_err(|e| e.to_string())?;
             id
         }
     };
-    Ok(Tag { id, name, color: None, page_count: 0 })
+    Ok(Tag {
+        id,
+        name,
+        color: None,
+        page_count: 0,
+    })
 }
 
 #[tauri::command]
@@ -98,11 +109,19 @@ pub fn rename_tag(db: State<'_, Db>, tag_id: String, name: String) -> Result<Tag
                 |r| r.get(0),
             )
             .map_err(|e| e.to_string())?;
-        return Ok(Tag { id: other_id, name, color: None, page_count: count });
+        return Ok(Tag {
+            id: other_id,
+            name,
+            color: None,
+            page_count: count,
+        });
     }
 
-    c.execute("UPDATE tags SET name = ?1 WHERE id = ?2", params![name, tag_id])
-        .map_err(|e| e.to_string())?;
+    c.execute(
+        "UPDATE tags SET name = ?1 WHERE id = ?2",
+        params![name, tag_id],
+    )
+    .map_err(|e| e.to_string())?;
     let count: i64 = c
         .query_row(
             "SELECT COUNT(*) FROM page_tags pt JOIN pages p ON p.id = pt.page_id AND p.deleted_at IS NULL WHERE pt.tag_id = ?1",
@@ -110,16 +129,30 @@ pub fn rename_tag(db: State<'_, Db>, tag_id: String, name: String) -> Result<Tag
             |r| r.get(0),
         )
         .map_err(|e| e.to_string())?;
-    Ok(Tag { id: tag_id, name, color: None, page_count: count })
+    Ok(Tag {
+        id: tag_id,
+        name,
+        color: None,
+        page_count: count,
+    })
 }
 
 /// Set a tag's custom color (hex like "#c2410c"). Pass empty/null to clear → auto.
 #[tauri::command]
-pub fn set_tag_color(db: State<'_, Db>, tag_id: String, color: Option<String>) -> Result<(), String> {
+pub fn set_tag_color(
+    db: State<'_, Db>,
+    tag_id: String,
+    color: Option<String>,
+) -> Result<(), String> {
     let c = conn(&db);
-    let trimmed = color.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-    c.execute("UPDATE tags SET color = ?1 WHERE id = ?2", params![trimmed, tag_id])
-        .map_err(|e| e.to_string())?;
+    let trimmed = color
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    c.execute(
+        "UPDATE tags SET color = ?1 WHERE id = ?2",
+        params![trimmed, tag_id],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -152,7 +185,8 @@ pub fn page_tags(db: State<'_, Db>, page_id: String) -> Result<Vec<Tag>, String>
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -165,9 +199,11 @@ pub fn add_tag(db: State<'_, Db>, page_id: String, name: String) -> Result<Tag, 
 
     // Get or create the tag.
     let tag_id: Option<String> = c
-        .query_row("SELECT id FROM tags WHERE name = ?1", params![name], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT id FROM tags WHERE name = ?1",
+            params![name],
+            |row| row.get(0),
+        )
         .optional()
         .map_err(|e| e.to_string())?;
 
@@ -175,8 +211,11 @@ pub fn add_tag(db: State<'_, Db>, page_id: String, name: String) -> Result<Tag, 
         Some(id) => id,
         None => {
             let id = uuid::Uuid::new_v4().to_string();
-            c.execute("INSERT INTO tags (id, name) VALUES (?1, ?2)", params![id, name])
-                .map_err(|e| e.to_string())?;
+            c.execute(
+                "INSERT INTO tags (id, name) VALUES (?1, ?2)",
+                params![id, name],
+            )
+            .map_err(|e| e.to_string())?;
             id
         }
     };
@@ -237,7 +276,8 @@ fn pages_by_tag_impl(c: &rusqlite::Connection, tag_id: &str) -> Result<Vec<PageM
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -259,7 +299,8 @@ pub fn board_data(db: State<'_, Db>) -> Result<Vec<BoardColumn>, String> {
                 })
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
     };
 
     let mut columns = Vec::new();
@@ -301,13 +342,17 @@ pub fn board_data(db: State<'_, Db>) -> Result<Vec<BoardColumn>, String> {
                 })
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
     };
     // 「未分类」放在最左（固定，不随标签列排序）。
-    columns.insert(0, BoardColumn {
-        tag: None,
-        pages: untagged,
-    });
+    columns.insert(
+        0,
+        BoardColumn {
+            tag: None,
+            pages: untagged,
+        },
+    );
 
     Ok(columns)
 }
@@ -358,7 +403,8 @@ pub fn reorder_card(
         let rows = stmt
             .query_map(params![tag_id, page_id], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
     };
 
     // Insert the moved page at the position of before_page_id (or append at end).
@@ -377,7 +423,8 @@ pub fn reorder_card(
         .prepare("UPDATE pages SET sort_order = ?1 WHERE id = ?2")
         .map_err(|e| e.to_string())?;
     for (i, pid) in ordered.iter().enumerate() {
-        stmt.execute(params![i as f64, pid]).map_err(|e| e.to_string())?;
+        stmt.execute(params![i as f64, pid])
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -399,7 +446,8 @@ pub fn reorder_tag(
         let rows = stmt
             .query_map(params![tag_id], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
     };
     if let Some(before) = before_tag_id.as_deref() {
         if let Some(pos) = ordered.iter().position(|id| id == before) {
@@ -416,7 +464,8 @@ pub fn reorder_tag(
         .prepare("UPDATE tags SET sort_order = ?1 WHERE id = ?2")
         .map_err(|e| e.to_string())?;
     for (i, tid) in ordered.iter().enumerate() {
-        stmt.execute(params![i as f64, tid]).map_err(|e| e.to_string())?;
+        stmt.execute(params![i as f64, tid])
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }

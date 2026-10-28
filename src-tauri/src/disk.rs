@@ -58,7 +58,11 @@ mod imp {
     pub(super) fn available_bytes(path: &Path) -> Option<u64> {
         use std::os::windows::ffi::OsStrExt;
 
-        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         // 传给系统的是**要查询的路径**（文件或目录都行，取它所在卷）。查不到就退到
         // 它自己；两者都查不到才算失败。
         let mut free_to_caller: u64 = 0;
@@ -97,7 +101,8 @@ mod tests {
     fn reports_a_positive_available_size_on_this_machine() {
         let tmp = std::env::temp_dir();
         let avail = available_bytes(&tmp);
-        let avail = avail.unwrap_or_else(|| panic!("查不到 {} 的剩余空间（平台分支写错了？）", tmp.display()));
+        let avail = avail
+            .unwrap_or_else(|| panic!("查不到 {} 的剩余空间（平台分支写错了？）", tmp.display()));
         assert!(avail > 0, "剩余空间应大于 0，实际 {avail}");
     }
 

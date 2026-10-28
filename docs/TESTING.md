@@ -235,6 +235,11 @@ node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要
      三个工具链读数一致 ⇒ 与工具链无关）。
      ⇒ 纪律：**fmt/lint 这类"没有输出=通过"的工具，必须先确认它真的跑了**（看退出码 + 看它有没有报
      "找不到清单/编译失败"），不能只看有没有 diff 行。
+   - **2026-10-29（owner 拍全仓 fmt）**：已按上面的正确跑法格式化；但**刻意保留两处例外**：
+     `src-tauri/src/capabilities_gen.rs`（生成物，必须与 `gen-capabilities` 逐字节一致 ⇒ 重排会让
+     `check-capabilities` 红）与 `src-tauri/src/plugins.rs`（`check-capabilities` 按**原排版**解析
+     dispatch 的 match 臂：重排后它会把参数口径读错 ⇒ 假红）。
+     ⇒ `cargo fmt --check` 现在**只**报这两个文件；⛔ 别为了"清零"去改门禁或改生成物。
    ⇒ 纪律：**要判成败就单独跑一次、把退出码取在命令本身上**（`cmd > log 2>&1; echo $?`），
    再让**日志**去做筛选；筛选的输出**永远不能**当成败依据。
    ⚠️ **更正（2026-09-20，macOS 侧指出）**：本条初稿把"macOS 侧那条假红"当成"管道取错退出码"的例子 ——

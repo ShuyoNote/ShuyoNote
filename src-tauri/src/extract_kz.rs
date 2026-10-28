@@ -133,7 +133,10 @@ mod tests {
         }
         // 缺口那一族都能补 ✓
         assert_eq!(mime_for("", "x.zip").as_deref(), Some("application/zip"));
-        assert_eq!(mime_for("", "x.epub").as_deref(), Some("application/epub+zip"));
+        assert_eq!(
+            mime_for("", "x.epub").as_deref(),
+            Some("application/epub+zip")
+        );
         assert_eq!(mime_for("", "x.tex").as_deref(), Some("application/x-tex"));
         // ⛔ 认不出 ⇒ **拒收**（宁可不抽，也不把二进制当文本写进库 ✓）
         assert!(mime_for("application/octet-stream", "x.unknown").is_none());

@@ -65,7 +65,8 @@ pub async fn list_pages(db: State<'_, Db>) -> Result<Vec<PageMeta>, String> {
         })
         .map_err(|e| e.to_string())?;
 
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// M10.4b 打磨 — 列出指定工作空间的页面（供「跨空间复制选父级」的目标空间文件夹树）。
@@ -95,7 +96,8 @@ pub fn list_workspace_pages(workspace_id: String) -> Result<Vec<PageMeta>, Strin
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -320,7 +322,10 @@ pub struct ListPdfAnnotationsArgs {
 
 /// Save (upsert) the annotation list for an attachment page; return the saved list.
 #[tauri::command]
-pub fn save_pdf_annotations(db: State<Db>, args: SavePdfAnnotationsArgs) -> Result<serde_json::Value, String> {
+pub fn save_pdf_annotations(
+    db: State<Db>,
+    args: SavePdfAnnotationsArgs,
+) -> Result<serde_json::Value, String> {
     let c = conn(&db);
     let now = now_ms();
     let payload = args.annotations.to_string();
@@ -351,7 +356,10 @@ pub fn save_pdf_annotations(db: State<Db>, args: SavePdfAnnotationsArgs) -> Resu
 
 /// List all annotation pages for an attachment (ordered by page index).
 #[tauri::command]
-pub fn list_pdf_annotations(db: State<Db>, args: ListPdfAnnotationsArgs) -> Result<Vec<serde_json::Value>, String> {
+pub fn list_pdf_annotations(
+    db: State<Db>,
+    args: ListPdfAnnotationsArgs,
+) -> Result<Vec<serde_json::Value>, String> {
     let c = conn(&db);
     let mut stmt = c
         .prepare(
@@ -370,7 +378,8 @@ pub fn list_pdf_annotations(db: State<Db>, args: ListPdfAnnotationsArgs) -> Resu
             }))
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// List every annotated page across all attachments, most recently updated first
@@ -395,12 +404,16 @@ pub fn list_all_pdf_annotations(db: State<Db>) -> Result<Vec<serde_json::Value>,
             }))
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// Set a page's cover height (px) and return the updated page detail.
 #[tauri::command]
-pub fn set_page_cover_height(db: State<Db>, args: SetCoverHeightArgs) -> Result<PageDetail, String> {
+pub fn set_page_cover_height(
+    db: State<Db>,
+    args: SetCoverHeightArgs,
+) -> Result<PageDetail, String> {
     let c = conn(&db);
     c.execute(
         "UPDATE pages SET cover_height = ?1 WHERE id = ?2 AND deleted_at IS NULL",
@@ -525,7 +538,9 @@ pub fn enable_space_encryption(
     db: State<Db>,
     args: SpaceEncryptionArgs,
 ) -> Result<[u8; 32], String> {
-    let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
+    let dir = crate::db::app_data_dir_ref()
+        .ok_or("app data dir not initialised")?
+        .to_path_buf();
     let mut c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
     crate::space_crypto::enable_space(&mut c, &dir, &args.space_id, args.passphrase.as_deref())
 }
@@ -533,7 +548,9 @@ pub fn enable_space_encryption(
 /// ★ 同上（另一半）：**按空间禁用** —— 只把它自己的库换回明文、扔掉它的盒子（别的空间不受影响）。
 #[tauri::command]
 pub fn disable_space_encryption(db: State<Db>, args: SpaceIdArgs) -> Result<(), String> {
-    let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
+    let dir = crate::db::app_data_dir_ref()
+        .ok_or("app data dir not initialised")?
+        .to_path_buf();
     let mut c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
     crate::space_crypto::disable_space(&mut c, &dir, &args.space_id)
 }
@@ -580,7 +597,9 @@ pub fn set_space_kind(db: State<Db>, args: SpaceKindArgs) -> Result<(), String> 
 pub fn space_security_overview(
     db: State<Db>,
 ) -> Result<Vec<crate::space_crypto::SpaceSecurityView>, String> {
-    let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
+    let dir = crate::db::app_data_dir_ref()
+        .ok_or("app data dir not initialised")?
+        .to_path_buf();
     let c = conn(&db);
     crate::space_crypto::space_security_views(&c, &dir)
 }
@@ -611,8 +630,7 @@ pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String
     let now = now_ms();
 
     // Read current values for fields not provided. 走「文档内容」那一层（阶段 0 接口收口）。
-    let cur = crate::doc_content::read(&c, &args.id)?
-        .ok_or_else(|| "页面不存在".to_string())?;
+    let cur = crate::doc_content::read(&c, &args.id)?.ok_or_else(|| "页面不存在".to_string())?;
 
     let content = crate::doc_content::DocContent {
         title: args.title.unwrap_or(cur.title),
@@ -672,7 +690,9 @@ pub fn delete_page(db: State<Db>, id: String) -> Result<(), String> {
         // Delete change: embed the node's title so sync-history 明细 can show a
         // name (deleted entities have no living row). Best-effort; empty payload OK.
         let title: String = c
-            .query_row("SELECT title FROM pages WHERE id = ?1", params![pid], |r| r.get(0))
+            .query_row("SELECT title FROM pages WHERE id = ?1", params![pid], |r| {
+                r.get(0)
+            })
             .unwrap_or_default();
         let payload = if title.is_empty() {
             None
@@ -820,7 +840,11 @@ pub struct PdfPagePayload {
 /// ⚠️ 没编 MuPDF 的构建里，MuPDF + rect 会先被 `ensure_mupdf_available()` 拦下（那句话更贴切）；
 /// 编了 MuPDF 时由 [`MUPDF_NO_RECT`] 拒绝（原因见 [`engine_supports_rect`] 的注释）。
 #[tauri::command]
-pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: RenderPdfPageArgs) -> Result<PdfPagePayload, String> {
+pub async fn render_pdf_page(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    args: RenderPdfPageArgs,
+) -> Result<PdfPagePayload, String> {
     let hash: String = {
         let c = conn(&db);
         c.query_row(
@@ -882,14 +906,15 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
     // 两条路径都**归一成紧凑 RGBA**（前端按 宽×高×4 校验字节数）：
     //  · MuPDF 出的是带行填充的缓冲 ⇒ 还要 `compact_rgba`；
     //  · PDFium 的 `as_rgba_bytes()` **本来就是紧凑的** ⇒ 不需要那一步（见 pdfium_native.rs 模块头第 1 条）。
-    let (compact, w, h) = tauri::async_runtime::spawn_blocking(
-        move || -> Result<(Vec<u8>, usize, usize), String> {
+    let (compact, w, h) =
+        tauri::async_runtime::spawn_blocking(move || -> Result<(Vec<u8>, usize, usize), String> {
             match engine {
                 PdfEngine::Mupdf => {
                     #[cfg(feature = "mupdf-rollback")]
                     {
-                        let (rgba, w, h, stride) =
-                            unsafe { crate::pdf_native::render_page(&hash, &bytes, page_index, scale) }?;
+                        let (rgba, w, h, stride) = unsafe {
+                            crate::pdf_native::render_page(&hash, &bytes, page_index, scale)
+                        }?;
                         Ok((crate::pdf_native::compact_rgba(&rgba, w, h, stride)?, w, h))
                     }
                     // 没编 MuPDF 的构建走不到这里（上面已返回）——保留一句可读的错，别写成 unreachable!()。
@@ -921,10 +946,9 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
                     }
                 }
             }
-        },
-    )
-    .await
-    .map_err(|e| format!("render task failed: {e}"))??;
+        })
+        .await
+        .map_err(|e| format!("render task failed: {e}"))??;
     let width = u32::try_from(w).map_err(|_| format!("PDF: 页面宽度 {w} 超出范围"))?;
     let height = u32::try_from(h).map_err(|_| format!("PDF: 页面高度 {h} 超出范围"))?;
     // ⛔⭐ **2026-10-15（owner：「pdf 放大很卡」）** ✗ —— ⭐ 实测：过桥的是**原始 RGBA 的 base64**：
@@ -982,7 +1006,8 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
 /// —— 必须一句话说清"现在没有它 + 换哪个开关 + 想要它怎么构建"。
 /// （编了 `mupdf-rollback` 的构建里这句话没有调用点，但那是有意的：判据与文档都指着它。）
 #[cfg_attr(feature = "mupdf-rollback", allow(dead_code))]
-pub(crate) const MUPDF_NOT_COMPILED: &str = "这个构建没有编入 MuPDF（构建期特性 `mupdf-rollback`，2026-09-21 起默认不编）。\
+pub(crate) const MUPDF_NOT_COMPILED: &str =
+    "这个构建没有编入 MuPDF（构建期特性 `mupdf-rollback`，2026-09-21 起默认不编）。\
 现在请把 SHUYONOTE_PDF_ENGINE 设为 pdfium（或删掉这个环境变量）用默认引擎；\
 若确实要用 MuPDF 回滚，请用带 `--features mupdf-rollback` 重新构建的安装包。";
 
@@ -1068,7 +1093,10 @@ mod pdf_engine_tests {
     fn explicit_values_win_and_are_case_insensitive() {
         assert_eq!(PdfEngine::from_env_value(Some("pdfium")), PdfEngine::Pdfium);
         assert_eq!(PdfEngine::from_env_value(Some("PDFium")), PdfEngine::Pdfium);
-        assert_eq!(PdfEngine::from_env_value(Some(" pdfium ")), PdfEngine::Pdfium);
+        assert_eq!(
+            PdfEngine::from_env_value(Some(" pdfium ")),
+            PdfEngine::Pdfium
+        );
         assert_eq!(PdfEngine::from_env_value(Some("mupdf")), PdfEngine::Mupdf);
         assert_eq!(PdfEngine::from_env_value(Some("MuPDF")), PdfEngine::Mupdf);
     }
@@ -1076,8 +1104,19 @@ mod pdf_engine_tests {
     /// 认不出的值（含空串）⇒ 默认，不报错。失败面：把 `""` 当成"显式指定了某个引擎"。
     #[test]
     fn unknown_or_empty_values_fall_back_to_default() {
-        for v in [Some(""), Some("   "), Some("pdf"), Some("1"), Some("true"), Some("pdfiumm")] {
-            assert_eq!(PdfEngine::from_env_value(v), PdfEngine::Pdfium, "value={v:?}");
+        for v in [
+            Some(""),
+            Some("   "),
+            Some("pdf"),
+            Some("1"),
+            Some("true"),
+            Some("pdfiumm"),
+        ] {
+            assert_eq!(
+                PdfEngine::from_env_value(v),
+                PdfEngine::Pdfium,
+                "value={v:?}"
+            );
         }
     }
 
@@ -1088,7 +1127,11 @@ mod pdf_engine_tests {
     #[test]
     fn explicit_mupdf_always_rolls_back() {
         assert_eq!(PdfEngine::from_env_value(Some("mupdf")), PdfEngine::Mupdf);
-        assert_ne!(PdfEngine::DEFAULT, PdfEngine::Mupdf, "P5 之后默认不再是 MuPDF；若改成 MuPDF 请同步改这条与上面那条");
+        assert_ne!(
+            PdfEngine::DEFAULT,
+            PdfEngine::Mupdf,
+            "P5 之后默认不再是 MuPDF；若改成 MuPDF 请同步改这条与上面那条"
+        );
     }
 
     /// ★ **2026-09-21 的新不变式**：MuPDF 是构建期特性（默认不编）⇒ 显式要它却编不出时，
@@ -1156,8 +1199,15 @@ mod render_rect_args_tests {
 
     #[test]
     fn a_rect_of_the_wrong_shape_is_refused_not_guessed() {
-        for bad in [r#"[1,2,3]"#, r#"[1,2,3,4,5]"#, r#"[1,2,3,"x"]"#, r#"{"x":1}"#, r#""1,2,3,4""#] {
-            let json = format!(r#"{{"attachment_id":"a","page_index":0,"scale":1.0,"rect":{bad}}}"#);
+        for bad in [
+            r#"[1,2,3]"#,
+            r#"[1,2,3,4,5]"#,
+            r#"[1,2,3,"x"]"#,
+            r#"{"x":1}"#,
+            r#""1,2,3,4""#,
+        ] {
+            let json =
+                format!(r#"{{"attachment_id":"a","page_index":0,"scale":1.0,"rect":{bad}}}"#);
             assert!(
                 parse(&json).is_err(),
                 "形状不对必须报错（⛔ 不许就近取四个）：{bad}"
@@ -1188,8 +1238,14 @@ mod render_rect_args_tests {
 
     #[test]
     fn refusing_rect_says_what_to_do() {
-        assert!(MUPDF_NO_RECT.contains("pdfium"), "要说清现在该用哪个引擎：{MUPDF_NO_RECT}");
-        assert!(MUPDF_NO_RECT.contains("整页"), "要给出前端可用的退路（退回整页）：{MUPDF_NO_RECT}");
+        assert!(
+            MUPDF_NO_RECT.contains("pdfium"),
+            "要说清现在该用哪个引擎：{MUPDF_NO_RECT}"
+        );
+        assert!(
+            MUPDF_NO_RECT.contains("整页"),
+            "要给出前端可用的退路（退回整页）：{MUPDF_NO_RECT}"
+        );
     }
 }
 
@@ -1267,7 +1323,11 @@ pub fn resolve_lineage_conflict(
 ///
 /// 落库那一笔是**一次本地编辑**（`dirty = 1`）⇒ 会被推上去 —— "留本地"就是这么生效的。
 #[tauri::command]
-pub fn resolve_page_conflict(db: State<Db>, conflict_id: String, choice: String) -> Result<(), String> {
+pub fn resolve_page_conflict(
+    db: State<Db>,
+    conflict_id: String,
+    choice: String,
+) -> Result<(), String> {
     let c = conn(&db);
     let choice = match choice.as_str() {
         "local" => crate::doc_content::ConflictChoice::Local,
@@ -1373,12 +1433,20 @@ mod page_chrome_sync_tests {
     #[test]
     fn setting_the_cover_persists_it_and_records_one_sync_change() {
         let c = fixture();
-        c.execute("UPDATE pages SET cover='url(\"/covers/a.jpg\")' WHERE id='p1'", []).unwrap();
+        c.execute(
+            "UPDATE pages SET cover='url(\"/covers/a.jpg\")' WHERE id='p1'",
+            [],
+        )
+        .unwrap();
 
         let page = finish_page_chrome_update(&c, "p1", 42_000).expect("尾巴");
         assert_eq!(page.cover, "url(\"/covers/a.jpg\")");
         assert_eq!(chrome_of(&c).0, "url(\"/covers/a.jpg\")");
-        assert_eq!(chrome_of(&c).4, 42_000, "updated_at 必须被推进（LWW/排序都看它）");
+        assert_eq!(
+            chrome_of(&c).4,
+            42_000,
+            "updated_at 必须被推进（LWW/排序都看它）"
+        );
 
         let payload: String = c
             .query_row(
@@ -1417,7 +1485,10 @@ mod page_chrome_sync_tests {
     #[test]
     fn a_missing_page_is_an_error_not_a_silent_success() {
         let c = fixture();
-        assert_eq!(finish_page_chrome_update(&c, "nope", 1).unwrap_err(), "页面不存在");
+        assert_eq!(
+            finish_page_chrome_update(&c, "nope", 1).unwrap_err(),
+            "页面不存在"
+        );
     }
 }
 
@@ -1429,14 +1500,29 @@ mod cover_normalize_tests {
     #[test]
     fn cover_values_are_normalized_to_css_url() {
         // 裸文件名（真实现场：`微信头像.jpg`）⇒ 必须包成 url("…")，否则 CSS 无效
-        assert_eq!(normalize_cover_value("微信头像.jpg").unwrap(), "url(\"微信头像.jpg\")");
+        assert_eq!(
+            normalize_cover_value("微信头像.jpg").unwrap(),
+            "url(\"微信头像.jpg\")"
+        );
         // 相对路径同理
-        assert_eq!(normalize_cover_value("covers/default-cover.jpg").unwrap(), "url(\"covers/default-cover.jpg\")");
+        assert_eq!(
+            normalize_cover_value("covers/default-cover.jpg").unwrap(),
+            "url(\"covers/default-cover.jpg\")"
+        );
         // data URL ⇒ 包起来（渲染层只认 background-image 形式）
-        assert_eq!(normalize_cover_value("data:image/png;base64,AAAA").unwrap(), "url(\"data:image/png;base64,AAAA\")");
+        assert_eq!(
+            normalize_cover_value("data:image/png;base64,AAAA").unwrap(),
+            "url(\"data:image/png;base64,AAAA\")"
+        );
         // 已经是 url(...) ⇒ **原样**（⛔ 不许套成 url("url(…)")）
-        assert_eq!(normalize_cover_value("url(\"covers/a.jpg\")").unwrap(), "url(\"covers/a.jpg\")");
-        assert_eq!(normalize_cover_value("URL(covers/a.jpg)").unwrap(), "URL(covers/a.jpg)");
+        assert_eq!(
+            normalize_cover_value("url(\"covers/a.jpg\")").unwrap(),
+            "url(\"covers/a.jpg\")"
+        );
+        assert_eq!(
+            normalize_cover_value("URL(covers/a.jpg)").unwrap(),
+            "URL(covers/a.jpg)"
+        );
         // 空 ⇒ 清掉封面
         assert_eq!(normalize_cover_value("   ").unwrap(), "");
     }
@@ -1445,7 +1531,10 @@ mod cover_normalize_tests {
     #[test]
     fn cover_values_with_quotes_or_newlines_are_refused_with_a_reason() {
         let e = normalize_cover_value("a\".jpg").unwrap_err();
-        assert!(e.contains("双引号") || e.contains("换行"), "错误信息要能看懂：{e}");
+        assert!(
+            e.contains("双引号") || e.contains("换行"),
+            "错误信息要能看懂：{e}"
+        );
         assert!(normalize_cover_value("a\nb").unwrap_err().contains("换行"));
     }
 }
