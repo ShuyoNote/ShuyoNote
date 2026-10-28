@@ -2956,6 +2956,13 @@ select.sync-input {
   display: none;
 }
 
+/* ⭐ 2026-10-28：与 `PageTree` 里 `usePopover({ width: 260, align: "right" })` 钉同一个宽度 ——
+   菜单**右缘与按钮右缘对齐**（向左展开）；两边写成同一个数才逐像素对齐 ✓。
+   ⚠️ 只作用于桌面（`:not(.is-sheet)`）：窄屏那条 is-sheet 是底部弹层，宽度归媒体查询管 ✓。 */
+.sidebar-header .new-menu-dropdown:not(.is-sheet) {
+  width: 260px;
+}
+
 .new-menu-dropdown {
   position: fixed;
   background: var(--bg);

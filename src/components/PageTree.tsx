@@ -1039,7 +1039,10 @@ export function PageTree(_props: {
     contentRef: newMenuContentRef,
     toggle: toggleNewMenu,
     close: closeNewMenu,
-  } = usePopover<HTMLButtonElement>();
+    // ⭐ 2026-10-28：菜单**右对齐**到标题行右侧那颗「新建」——
+    //   宽度与 CSS 里 `.sidebar-header .new-menu-dropdown` 钉同一个值（260px）⇒ 右缘逐像素对齐；
+    //   默认的左对齐会让它越过侧栏边界盖到正文上（owner 实测「新建的弹出菜单位置不对」）✓。
+  } = usePopover<HTMLButtonElement>({ width: 260, align: "right" });
   // Sidebar resizable width (persisted), applied as --sidebar-w so overlays follow.
   const SIDEBAR_W_KEY = "shuyonote.sidebarWidth";
   const loadSidebarWidth = () => {
