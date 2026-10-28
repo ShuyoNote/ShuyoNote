@@ -1705,8 +1705,17 @@ pub async fn round(
     //   "收到了、也存住了、就是不用" ✗）。⚠️ 放在真正拉取**之前**：这一轮后面的 pull
     //   才有机会看到"已经应用过的"那份；⚠️ drain 失败**不拦这一轮**（下一轮还会再来 ✓）。
     if let Ok(g) = conn.lock() {
+        // ⭐⭐ **2026-10-28（owner「清理」／真机：解锁后"补应用"从未生效、inbox 行永残留）**：
+        //   键不一致 —— `sealed_round` 收封包时按**本地空间 id** 存
+        //   （`stash_sealed_rows(&meta, db_space, …)`），而这里原来传的是本函数的 `space_id`
+        //   ＝ **对暗号的 proto**（调用方传 `scope.space`）⇒ `drain_inbox` 按 proto 去查
+        //   `meta.mesh_inbox.space_id`，**一条都查不到** ✗ ⇒ `applied` 恒 0、行永远残留，
+        //   解锁后真实生效的其实只有"正常拉取"那条路（真机 2026-10-28：页面是融合路径并进来的，
+        //   drain 一个字都没说过）。
+        //   ⇒ 这里改成与**存的那一侧同一把尺**：这条连接自己那个空间库的 id。
+        let drain_space = crate::sync::space_id_of(&g).unwrap_or_else(|| space_id.to_string());
         for p in peers {
-            match drain_inbox(&g, space_id, &p.announce.device_id, device_level) {
+            match drain_inbox(&g, &drain_space, &p.announce.device_id, device_level) {
                 Ok(ab) if ab.applied > 0 => eprintln!(
                     "[mesh] 解锁后补应用：对端 {} ｜ {} 条",
                     p.announce.device_id, ab.applied
@@ -6388,6 +6397,91 @@ mod tests {
         assert_eq!(after, before + 2, "应用之后空间库里必须有这两页");
         let left: i64 = meta.query_row("SELECT COUNT(*) FROM mesh_inbox", [], |r| r.get(0)).unwrap();
         assert_eq!(left, 0, "应用成功的那几条必须从 inbox 删掉（否则会被反复应用）");
+    }
+
+    /// ⭐⭐ **2026-10-28（owner「清理」／真机：解锁后「补应用」从未生效、inbox 行永残留）**：
+    /// **存的时候用哪把键，drain 就必须用同一把** ✗。
+    ///
+    /// 真机现场：`sealed_round` 收封包按**本地空间 id** 存（`stash_sealed_rows(&meta, db_space, …)`），
+    /// 而 `round` 里补应用那一句原来传的是**对暗号的 proto** ⇒ `drain_inbox` 按 proto 查
+    /// `meta.mesh_inbox.space_id`，**一条都查不到** ⇒ `applied` 恒 0、行永远残留；
+    /// 解锁后页面能出来其实靠的是"正常拉取/同名融合"那条路，drain 一个字都没说。
+    ///
+    /// 判据两条一起看，才能把那把"错键"的形状钉住：
+    ///   ① **用 proto 去 drain ⇒ 0 条应用、行还在**（＝旧行为的读数）；
+    ///   ② **用本地空间 id 去 drain ⇒ 应用成功、行被删**（＝修后的读数，也是 `round` 现在传的那把）。
+    #[test]
+    fn drain_uses_the_same_space_key_that_stash_used() {
+        let dir = temp_dir("s3c-inbox-key");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        let meta = crate::db::open_meta_conn_at(&dir).unwrap();
+        meta.execute(
+            "INSERT INTO workspaces (id, name, created_at, updated_at) VALUES ('sp-a', '工作', 1, 1)",
+            [],
+        )
+        .unwrap();
+        // 对暗号的 proto ＝ proto-a；本地空间 id ＝ sp-a —— **故意让两者不同**（真机就是这样）
+        crate::db::pair_device(&meta, "proto-a", "dev-peer", "tok").unwrap();
+        let c = crate::db::open_space_conn_at("sp-a", &dir).unwrap();
+        c.execute("UPDATE workspaces SET name = '工作'", []).unwrap();
+        crate::sync::set_meta_state(&c, "device_id", "dev-me").unwrap();
+
+        let mk = |id: &str, seq: i64| MeshRow {
+            device_seq: seq,
+            entity: String::new(),
+            entity_id: String::new(),
+            op: String::new(),
+            payload: None,
+            updated_at: 1,
+            sealed: Some(
+                serde_json::json!({
+                    "entity": "page",
+                    "entity_id": id,
+                    "op": "upsert",
+                    // ⚠️ `payload` 必须是**字符串**（封包就是"记录本身 JSON 的字符串"，
+                    //    与上面那条既有判据同一个形状；写成对象 ⇒ "封包格式看不懂"）。
+                    "payload": serde_json::to_string(&page(id, "锁着时收到的", 10)).unwrap(),
+                })
+                .to_string(),
+            ),
+        };
+        let rows = vec![mk("p-key", 1)];
+        // 存的那一侧用**本地空间 id**（与 `sealed_round` 一致）
+        assert_eq!(stash_sealed_rows(&meta, "sp-a", "dev-peer", &rows).unwrap(), 1);
+
+        // ① 旧行为的形状：拿 **proto** 去 drain ⇒ 一条都查不到、行还在
+        let ab = drain_inbox(&c, "proto-a", "dev-peer", false).unwrap();
+        assert_eq!(ab.applied, 0, "键不一致时一条都不该应用（这就是真机那个 applied=0）：{ab:?}");
+        let left: i64 = meta.query_row("SELECT COUNT(*) FROM mesh_inbox", [], |r| r.get(0)).unwrap();
+        assert_eq!(left, 1, "错键这一侧读不到行 ⇒ 行会永残留（真机现场）");
+
+        // ② 修后的形状：拿**本地空间 id**（`round` 现在用 `space_id_of` 取的就是它）
+        let ab = drain_inbox(&c, "sp-a", "dev-peer", false).unwrap();
+        assert_eq!(ab.applied, 1, "同一把尺 ⇒ 必须真的应用：{ab:?}");
+        let left: i64 = meta.query_row("SELECT COUNT(*) FROM mesh_inbox", [], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0, "应用成功必须删行（否则解锁后永远清不掉）");
+
+        // ③ 再钉一句**调用点**（否则"drain 会用本地 id"这件事只在测试里成立，
+        //    真机上 `round` 又传回 proto 也没人拦）—— 源码文本、剥注释后比。
+        let src = include_str!("mesh.rs");
+        let start = src.find("pub async fn round(").expect("round 必须在");
+        let rest = &src[start..];
+        let end = rest.find("\n/// ★ **产品入口").unwrap_or(rest.len());
+        let code: String = rest[..end]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let flat = code.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat.contains("space_id_of("),
+            "⛔ `round` 里 drain 必须用本地空间 id（`sync::space_id_of`）—— \
+             用 proto 会和 `stash_sealed_rows` 存的那把键错开（真机：applied 恒 0、行永残留）"
+        );
+        assert!(
+            !flat.contains(concat!("drain_inbox(&g, ", "space_id,")),
+            "⛔ 别把 proto 当 inbox 的键传进 drain_inbox ✗"
+        );
     }
 
     /// ⭐ 2026-10-23（S3c-接②的护栏）：**同一个房间里，别的空间一个字节都不许动**。
