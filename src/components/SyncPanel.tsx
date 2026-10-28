@@ -1396,9 +1396,25 @@ export function SyncPanel({
    *     `duList` 的 ✓，两处不会各说各话 ✓）；`duList` 仍管三段设备的分段 ✓（那是另一件事）。
    * ⚠️ **读不到 ≠ 0**：`lanStatus` 还没来 ⇒ 三格都显示「未读到」，⛔ 不拿 0 冒充 ✗
    *   （口径在 `personalSyncReadout.ts` 的 `countFrom()` **只有一处** ✓）。
-   * ⚠️ 诊断句（J9：两端参数不一致必须解释原因）**只在**「已信任 N 台、这一轮附近一台都没有」
-   *   那个形状下出现 ✓（owner 2026-10-14 删的是**常显**的那条长句 ⇒ 本条按那个决定收敛 ✓）。
+   * ⚠️ 诊断句（J9：两端参数不一致必须解释原因）：⭐ **2026-10-29（owner 拍 B）起是"精确比对"** ✗ ——
+   *   两端都读得到端口且不等 ⇒ 直接给「本机 :X / 对方 :Y」✓；对端没报 ⇒ 说没法比对 ✓；
+   *   本机读不到 ⇒ 说本机未读到 ✓；⭐ 都不适用时才落回**原因清单**（「已信任 N 台、这一轮附近 0 台」
+   *   那个形状 —— owner 2026-10-14 删的是**常显**的长句 ⇒ 原因清单仍按那个决定收敛 ✓）。
+   *   两种都由 `personalSyncReadout.ts` 的 `discoveryDiagnosis` **一处**决定 ✓（这里只传读数 ✓）。
    */
+  /** ⭐⭐ **2026-10-29（owner 拍 J9「精确端口读数」）**：本机端口 ← `mesh.bind`（形如 `0.0.0.0:8788`）
+   *  拆出来的那一段 ✓ —— 只认 1–65535 的整数字面量，拆不出来／越界 ⇒ `null`（⛔ 不猜 8788 ✗）。 */
+  const localMeshPort = (() => {
+    const raw = splitMeshBind(lanStatus?.mesh?.bind ?? "").port;
+    if (!/^\d{1,5}$/.test(raw)) return null;
+    const n = Number(raw);
+    return n >= 1 && n <= 65535 ? n : null;
+  })();
+  /** ⭐ J9：只比对**和这个空间有关**的对端（服务当前空间／本机已信任）——
+   *  ⛔ 不拿同网段里的陌生人凑数 ✗（那会把"另一个人的端口不同"当成"我的两端不一致" ✓）。 */
+  const comparablePeers = nearby.filter(
+    (p) => p.serves_current || duList.some((d) => d.deviceId === p.device_id),
+  );
   const personalReadout = personalSyncReadout({
     route: {
       syncMode,
@@ -1410,6 +1426,9 @@ export function SyncPanel({
     trusted: lanStatus ? lanStatus.mesh?.paired : null,
     discoveryOn: !!lanStatus?.enabled,
     nearbyCount: Array.isArray(lanStatus?.nearby) ? lanStatus.nearby.length : null,
+    // ⭐ J9 精确比对的两半：本机端口（只来自 `mesh.bind`）／对端公告里的端口（`announced_port`）
+    localPort: localMeshPort,
+    peerPorts: comparablePeers.map((p) => p.announced_port ?? null),
   });
   /** ⭐ **R176-A ③**：「高级」里端口那一格用的两个值 —— ⛔ **不写死默认端口** ✗：
    *  端口值只来自 `lanStatus.mesh.bind`（Rust 预置的那一份 ✓），读不到就空着并由界面如实说「未读到」✓。 */

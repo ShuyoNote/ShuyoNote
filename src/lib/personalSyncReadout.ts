@@ -138,30 +138,72 @@ export interface DiscoveryDiagnosisInput {
   trusted: ReadoutCount;
   /** 这一轮**附近看见**的台数（`nearby.length`；读不到 ⇒ `null`）。 */
   nearbyCount: number | null;
+  /**
+   * ⭐ **2026-10-29（owner 拍 J9「精确端口读数」）**：⭐ **本机端口** ✗ ——
+   * 从 `lanStatus.mesh.bind`（形如 `0.0.0.0:8788`）解析出来的那个数字 ✓；
+   * 读不到／拆不出来 ⇒ `null`（⛔ 不猜 ✗）。
+   */
+  localPort: number | null;
+  /**
+   * ⭐ **2026-10-29**：**每台对端公告里的端口**（`NearbyPeer.announced_port` ✓，Rust 从
+   * `hub_base` 解析 ✓）。`null`／`undefined` ＝ 那一台**没报端口**（老版本／没有显式端口）✓。
+   * ⚠️ 顺序无所谓；**同值去重**在函数里做 ✓。
+   */
+  peerPorts?: ReadonlyArray<number | null | undefined>;
+}
+
+/** ⭐ J9 精确比对的三句**口径**（⛔ 不在组件里各写一份 ✗）。 */
+export const PEER_PORT_MISSING = "对方没报端口（旧版本没法比对）";
+export const LOCAL_PORT_UNREAD = "本机端口未读到，没法比对对方报的端口";
+
+/** ⭐ J9 精确比对：两端都有端口且不等时那一句（端口号**可以显示** ✓，⛔ 不带 ip／设备号／暗号 ✗）。 */
+export function portMismatchNotice(localPort: number, peerPort: number): string {
+  return `端口不一致：本机 :${localPort} / 对方 :${peerPort}`;
 }
 
 /**
- * ⭐ **J9**：「两端发现参数不一致（端口／网段）⇒ 界面**必须解释原因**」
+ * ⭐ **J9**：「两端发现参数不一致 ⇒ 界面**必须解释原因**」—— **2026-10-29 owner 拍 B：精确比对** ✓。
  *
- * 诚实边界（写下来免得下一个人以为它"能判出两端端口不同"）：**界面判不出**对端端口 ——
- * `NearbyPeer` 里没有对端端口那一格（只有 `addr`，且只是排障用、默认不显示 ✓）。而**端口一旦不同，
- * 两端根本收不到对方的公告** ⇒ 现场表现为「已信任 N 台，但这一轮一台都没出现在附近」✓。
- * ⇒ 这里只在**那个形状**下工作：把那几条**可能的原因**逐条说出来（⭐ 含「端口」与「同一网络」✓），
- *    ⛔ 不许只印一句「连不上」✗（J9 的红线就是这一句）。
+ * ## 它现在能说什么（三句精确的 ＋ 原来那句原因清单）
+ * 1. **两端都有端口且不等** ⇒ `端口不一致：本机 :8788 / 对方 :47999` ✓
+ *    （端口号来自两处**真读数**：本机 `mesh.bind`／对端 `NearbyPeer.announced_port` ✓）；
+ * 2. **对端没报端口**（那一台是旧版本／公告里没有显式端口）⇒ 老实说"没法比对" ✓
+ *    —— ⛔ 不拿本机端口替它凑一个 ✗；
+ * 3. **本机端口读不到** ⇒ 说"本机未读到" ✓（⛔ 不猜 8788 ✗）。
+ * 4. 以上都不适用、又落在「已信任 N 台但这一轮附近 0 台」那个形状 ⇒ 仍给**原因清单** ✓
+ *    （⭐ 这是 2026-10-28 那版，保留 —— 那种形状下**没有对端读数可比** ✓）。
  *
- * 返回 `null` 的四种情形（都是"没什么可说"，⛔ 不是"读不到当没有" ✗）：
- * · 发现层关着（此时主视图那句已经在说"没在找"✓）；
- * · 已信任 0 台（没有"该出现却没出现"的期望 ✓）；
- * · 这一轮附近**真看见了**设备（没有不一致的迹象 ✓）；
- * · 读数**读不到**（`trusted` 或 `nearbyCount` 不可知 ⇒ 没有结论 ✓）。
+ * ## 优先级（写死，判据逐条钉）
+ * 发现层关 ⇒ `null`（此时主视图那句已经在说"没在找"✓）→
+ * 端口不等 → 对端没报 → 本机未读到 → 原因清单 → `null`。
+ * ⚠️ 前三条只在**真有对端**时才有意义（`peerPorts` 里得有一条）；没对端时它们全是空话 ✗。
  *
- * ⚠️ 文案纪律：**自己写的 JSX／字符串**里不用 Markdown 的 `**…**`（会在界面上原样显示星号 ✗），
- *    也不引用任何内部标识（⛔ 设备号／暗号／地址都不出现 ✓）。
- * ⚠️ 2026-10-14 owner 删过一条**常显**的同类提示（那句「AP 隔离」长句）⇒ 本条按那个决定收敛：
- *    它**只在上述形状下出现**、且措辞不复用那句（判据 `syncPanelMesh.wiring.test.ts` ⑨b 钉着旧词）。
+ * ## 诚实边界
+ * 端口**相同**不能证明"一定能连上"（还有网络隔离／没配对／对面没服务这个空间 ✓）⇒ 相等时这里
+ * **不给端口原因**，交给原来那句清单 ✓（⛔ 别把"相等"说成"没问题"✗）。
+ *
+ * ⚠️ 文案纪律：自己写的字符串不用 Markdown 的 `**…**` ✓；⛔ 不出现 ip／`device_id`／暗号 ✗；
+ *    端口号是**唯一的数字**且它是用户可以自己改的那个值 ✓。
  */
 export function discoveryDiagnosis(i: DiscoveryDiagnosisInput): string | null {
   if (!i.discoveryOn) return null;
+  const peers = (i.peerPorts ?? []).map((p) => (typeof p === "number" && Number.isFinite(p) ? p : null));
+  const known = peers.filter((p): p is number => p !== null);
+  const local = i.localPort;
+  // ① 两端都有端口且不等 ⇒ 精确句（端口号来自两处真读数 ✓）
+  if (local !== null && local !== undefined && known.length > 0) {
+    const other = known.find((p) => p !== local);
+    if (other !== undefined) return portMismatchNotice(local, other);
+  }
+  // ② 对端报了公告但**没报端口** ⇒ 如实说没法比对（⛔ 不拿本机端口替它 ✗）
+  if (local !== null && local !== undefined && peers.length > 0 && known.length === 0) {
+    return PEER_PORT_MISSING;
+  }
+  // ③ 本机端口读不到、但对端报了 ⇒ 说清是本机这一侧读不到
+  if ((local === null || local === undefined) && known.length > 0) {
+    return LOCAL_PORT_UNREAD;
+  }
+  // ④ 落到原来那个形状（已信任 N 台、这一轮附近 0 台 ⇒ 没有对端读数可比，只能给原因清单）
   if (i.trusted.kind === "unread") return null;
   if (i.trusted.n === 0) return null;
   if (i.nearbyCount === null || i.nearbyCount === undefined) return null;
@@ -182,6 +224,10 @@ export function personalSyncReadout(args: {
   trusted: MaybeRead<readonly unknown[]>;
   discoveryOn: boolean;
   nearbyCount: number | null;
+  /** ⭐ J9（2026-10-29）：本机端口（`mesh.bind` 解析出的数字；读不到 ⇒ `null`）。 */
+  localPort: number | null;
+  /** ⭐ J9（2026-10-29）：每台对端的 `announced_port`（`null` ＝ 那一台没报）。 */
+  peerPorts: ReadonlyArray<number | null | undefined>;
 }): PersonalSyncReadout {
   const served = countFrom(args.served);
   const trusted = countFrom(args.trusted);
@@ -189,7 +235,13 @@ export function personalSyncReadout(args: {
     route: routeReading(args.route),
     served,
     trusted,
-    diagnosis: discoveryDiagnosis({ discoveryOn: args.discoveryOn, trusted, nearbyCount: args.nearbyCount }),
+    diagnosis: discoveryDiagnosis({
+      discoveryOn: args.discoveryOn,
+      trusted,
+      nearbyCount: args.nearbyCount,
+      localPort: args.localPort,
+      peerPorts: args.peerPorts,
+    }),
   };
 }
 

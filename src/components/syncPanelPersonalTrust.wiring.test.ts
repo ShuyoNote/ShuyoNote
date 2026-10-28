@@ -85,9 +85,11 @@ describe("R176-A ④：三格读数在主视图里，值全部来自真读数", 
     expect(block, "「已信任几台」必须来自 `mesh.paired`").toContain(
       "trusted: lanStatus ? lanStatus.mesh?.paired : null",
     );
-    // J9 的两个输入：发现层开没开 ＋ 附近看见几台
+    // J9 的四个输入：发现层开没开 ＋ 附近看见几台 ＋ **精确端口比对的两半**（2026-10-29 owner 拍 B）
     expect(block).toContain("discoveryOn:");
     expect(block).toContain("nearbyCount:");
+    expect(block, "⭐ J9 精确比对：本机端口要**从 `mesh.bind` 拆出来**（⛔ 不猜 8788 ✗）").toContain("localPort:");
+    expect(block, "⭐ J9 精确比对：对端端口要来自 `announced_port`（⛔ 不从 addr 猜 ✗）").toContain("peerPorts:");
     // ⛔ 读不到不许当 0：上面那两处 `: null` 就是"读不到"的表达 ✓
     expect(block, "⛔ 不许拿 `?? []` 把「读不到」变成「0 台」").not.toMatch(/\?\?\s*\[\]/);
   });

@@ -21,10 +21,13 @@ import {
   ROUTE_SERVER,
   UNTRUST_LABEL,
   UNTRUST_SCOPE_NOTE,
+  LOCAL_PORT_UNREAD,
+  PEER_PORT_MISSING,
   countFrom,
   countText,
   discoveryDiagnosis,
   personalSyncReadout,
+  portMismatchNotice,
   portTextToBind,
   readoutCells,
   routeReading,
@@ -104,6 +107,8 @@ describe("J13 · 「能读的状态」必须出现走的是哪条路（⛔ 永�
       trusted: [{ deviceId: "d1" }],
       discoveryOn: true,
       nearbyCount: 1,
+      localPort: 8788,
+      peerPorts: [8788],
     });
     expect(r.route).toBe(ROUTE_DIRECT);
     expect(r.served).toEqual({ kind: "ok", n: 2 });
@@ -116,6 +121,8 @@ describe("J13 · 「能读的状态」必须出现走的是哪条路（⛔ 永�
       trusted: null,
       discoveryOn: false,
       nearbyCount: null,
+      localPort: null,
+      peerPorts: [],
     });
     expect(empty.route).toBe(READOUT_UNREAD);
     expect(empty.served.kind).toBe("unread");
@@ -124,28 +131,84 @@ describe("J13 · 「能读的状态」必须出现走的是哪条路（⛔ 永�
   });
 });
 
-describe("J9 · 两端发现参数不一致 ⇒ 界面必须解释原因（⛔ 不许只印「连不上」）", () => {
-  it("① 已信任 2 台、这一轮一台都没出现 ⇒ 必须把原因说出来（含「端口」与「同一网络」）", () => {
-    const d = discoveryDiagnosis({ discoveryOn: true, trusted: { kind: "ok", n: 2 }, nearbyCount: 0 });
-    expect(d, "⭐ 这个形状下必须有话（J9 的红线就是只剩「连不上」）").toBeTruthy();
-    const text = d!;
-    expect(text, "必须说出**端口**这条原因（J9 逐字点名）").toContain("端口");
-    expect(text, "必须说清是**同一个网络**的问题（J9 逐字点名网段）").toContain("同一个网络");
-    expect(text, "必须带上那台数（用户看得出「该出现几台」）").toContain("2");
-    // ⛔ 不许只印一句「连不上」（那正是 J9 要消灭的形状）
-    expect(text.trim()).not.toBe("连不上");
-    expect(text).not.toBe("connection refused");
-    expectNoMarkdownBold(text, "J9 的诊断句");
-    // ⛔ 不引用内部标识（设备号／地址／暗号一个都不许出现）
-    expect(text).not.toMatch(/[0-9a-f]{16,}/i);
+describe("J9 · 两端发现参数不一致 ⇒ 界面给**精确**原因（2026-10-29 owner 拍 B）", () => {
+  const base = { discoveryOn: true, trusted: { kind: "ok" as const, n: 1 }, nearbyCount: 1 };
+
+  it("① 端口不一致 ⇒ 精确句「本机 :X / 对方 :Y」（两个数都来自真读数）", () => {
+    const d = discoveryDiagnosis({ ...base, localPort: 8788, peerPorts: [47999] });
+    expect(d, "⭐ 两边都有端口且不等 ⇒ 必须给精确句，⛔ 不许只说「连不上」").toBe(
+      portMismatchNotice(8788, 47999),
+    );
+    expect(d).toContain(":8788");
+    expect(d).toContain(":47999");
+    // ⛔ 不显示 ip / 设备号 / 暗号（端口号是**唯一**允许的数字）
+    expect(d).not.toMatch(/192\.168|10\.\d+\.|\bdev-|\bauto-|[0-9a-f]{16,}/i);
+    expectNoMarkdownBold(d!, "J9 精确句");
+    // 多台里有任一不同 ⇒ 仍然报（取第一台不同的，确定性）
+    expect(discoveryDiagnosis({ ...base, localPort: 8788, peerPorts: [8788, 9000] })).toBe(
+      portMismatchNotice(8788, 9000),
+    );
   });
 
-  it("② 五种「没什么可说」的形状一律不摆诊断句（⛔ 不许空话常显）", () => {
-    expect(discoveryDiagnosis({ discoveryOn: false, trusted: { kind: "ok", n: 2 }, nearbyCount: 0 })).toBeNull();
-    expect(discoveryDiagnosis({ discoveryOn: true, trusted: { kind: "ok", n: 0 }, nearbyCount: 0 })).toBeNull();
-    expect(discoveryDiagnosis({ discoveryOn: true, trusted: { kind: "ok", n: 2 }, nearbyCount: 1 })).toBeNull();
-    expect(discoveryDiagnosis({ discoveryOn: true, trusted: { kind: "unread" }, nearbyCount: 0 })).toBeNull();
-    expect(discoveryDiagnosis({ discoveryOn: true, trusted: { kind: "ok", n: 2 }, nearbyCount: null })).toBeNull();
+  it("② 端口相等 ⇒ **不给**端口原因（相等 ≠ 没问题，交给原因清单/无话）", () => {
+    // 相等 ＋ 附近看得见 ⇒ 没有可说的
+    expect(discoveryDiagnosis({ ...base, localPort: 8788, peerPorts: [8788, 8788] })).toBeNull();
+    // 相等 ＋ 已信任 2 台但附近 0 台 ⇒ 仍给原来那句原因清单（这种形状下没有对端读数可比）
+    const d = discoveryDiagnosis({
+      discoveryOn: true,
+      trusted: { kind: "ok", n: 2 },
+      nearbyCount: 0,
+      localPort: 8788,
+      peerPorts: [],
+    });
+    expect(d, "⭐ 精确比对不适用时，原因清单要留着（2026-10-28 那版）").toContain("同一个网络");
+    expect(d).toContain("端口");
+    expect(d).not.toContain("端口不一致");
+  });
+
+  it("③ 对端没报端口 ⇒ 说「没法比对」，⛔ 不拿本机端口替它凑一个", () => {
+    const d = discoveryDiagnosis({ ...base, localPort: 8788, peerPorts: [null, undefined] });
+    expect(d).toBe(PEER_PORT_MISSING);
+    expect(d).toContain("没报端口");
+    expect(d, "⛔ 不许把本机端口写成对方的").not.toContain("8788");
+  });
+
+  it("④ 本机端口读不到 ⇒ 说「本机端口未读到」", () => {
+    const d = discoveryDiagnosis({ ...base, localPort: null, peerPorts: [8788] });
+    expect(d).toBe(LOCAL_PORT_UNREAD);
+    expect(d).toContain("本机端口未读到");
+  });
+
+  it("⑤ 发现层关 / 没有对端 ⇒ 三句精确话一句都不许出现", () => {
+    expect(discoveryDiagnosis({ ...base, discoveryOn: false, localPort: 8788, peerPorts: [47999] })).toBeNull();
+    // 没有对端读数（peerPorts 空）⇒ 端口不可比 ⇒ 落到原因清单 / null（不许硬说"不一致"）
+    expect(
+      discoveryDiagnosis({ discoveryOn: true, trusted: { kind: "ok", n: 2 }, nearbyCount: 2, localPort: 8788, peerPorts: [] }),
+    ).toBeNull();
+    // 读不到（trusted unread / nearbyCount null）⇒ 仍是 null
+    expect(
+      discoveryDiagnosis({ discoveryOn: true, trusted: { kind: "unread" }, nearbyCount: 0, localPort: 8788, peerPorts: [] }),
+    ).toBeNull();
+    expect(
+      discoveryDiagnosis({ discoveryOn: true, trusted: { kind: "ok", n: 2 }, nearbyCount: null, localPort: 8788, peerPorts: [] }),
+    ).toBeNull();
+  });
+
+  it("⑥ 原因清单那一版仍在（含「端口」「同一网络」「N 台」，⛔ 不出现内部标识）", () => {
+    const d = discoveryDiagnosis({
+      discoveryOn: true,
+      trusted: { kind: "ok", n: 2 },
+      nearbyCount: 0,
+      localPort: 8788,
+      peerPorts: [],
+    });
+    expect(d).toBeTruthy();
+    expect(d).toContain("同一个网络");
+    expect(d).toContain("端口");
+    expect(d).toContain("2");
+    expect(d!.trim()).not.toBe("连不上");
+    expect(d).not.toMatch(/192\.168|\bdev-|\bauto-|[0-9a-f]{16,}/i);
+    expectNoMarkdownBold(d!, "J9 原因清单");
   });
 });
 

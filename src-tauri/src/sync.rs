@@ -7103,6 +7103,17 @@ pub struct NearbyPeer {
     pub short_id: String,
     /// 收到它公告的来源地址（ip，不含端口）。⚠️ 默认**不显示**，只用于排障（规格 §3.4）。
     pub addr: String,
+    /// ⭐⭐ **2026-10-29（owner 拍 J9「精确端口读数」）**：⭐ 对端公告里 **`hub_base` 的端口** ✗ ——
+    /// 界面据此把 J9 从"原因清单"升级成**精确比对**（「本机 :8788 / 对方 :47999」✓）。
+    ///
+    /// ⚠️ 解析规则**只有一处**（`lan::port_of_base` ✓）：
+    /// · `hub_base` 有显式端口 ⇒ `Some(u16)` ✓；
+    /// · 没报 `hub_base`／没有显式端口／坏 URL ⇒ `None` ✓ —— ⛔ **绝不按 http 默认 80 猜一个** ✗
+    ///   （"它没说" 与 "它是 80" 是两件事；猜了会把用户引到错的方向 ✓）。
+    /// ⚠️ 它是**端口号**（可以显示 ✓），⛔ 不是地址、⛔ 不含 ip／设备号／暗号 ✗。
+    /// ⚠️ `Option<u16>` ＋ 本结构**没有** `rename_all` ⇒ 线格式是 `"announced_port":8788` 或 `null`
+    ///   （snake_case ✓，与其余字段一致 ✓ —— ⛔ 不许只给这一格加 `rename_all` ✗）。
+    pub announced_port: Option<u16>,
     /// **它自己声明**在服务哪些空间（`LanAnnounce.hub_spaces`，远端 `space_id`）。
     /// 这是"这台设备跟我有没有共同空间"的**唯一**依据；**界面不许自己算**这条交集。
     pub spaces: Vec<String>,
@@ -7247,6 +7258,9 @@ pub(crate) fn nearby_of_with(
                 device_name: p.announce.device_name.trim().to_string(),
                 short_id: p.announce.short_id.trim().to_string(),
                 addr: p.addr.trim().to_string(),
+                // ⭐ 2026-10-29（J9 精确端口）：只从 `hub_base` 解析（`lan::port_of_base` 一处实现 ✓）；
+                //   ⛔ 解析不出就是 `None`（⛔ 拿 `addr` 猜、⛔ 拿本机端口凑 ✗）。
+                announced_port: p.announce.hub_base.as_deref().and_then(lan::port_of_base),
                 serves_current: lan::serves_space(space_id, p),
                 serves_reason: serves_reason(space_id, &spaces, deleted_hints).to_string(),
                 invitable: crate::mesh::invitable_base(space_id, my_device, p).is_some(),
@@ -12513,5 +12527,88 @@ mod meta_state_any_shape_tests {
             .query_row("SELECT COUNT(*) FROM main.sync_state", [], |r| r.get(0))
             .unwrap();
         assert_eq!(space_own, 0, "⛔ 空间自己那份 sync_state 不许被写 ✗");
+    }
+}
+
+/// ⭐⭐ **2026-10-29（owner 拍 J9「精确端口读数」）**：`NearbyPeer.announced_port` 的判据 ——
+/// ① 对端公告里**有端口** ⇒ 读数里有那个数字 ✓；② 没端口／没报 `hub_base` ⇒ `None`（⛔ 不猜 ✗）；
+/// ③ **线格式真的带这一格**（`LanStatus` 的 `nearby` 是 snake_case，且这一格必须出现 ——
+///   `null` 也算出现 ✓，否则前端读到的永远是「老版本」✓）。
+#[cfg(test)]
+mod j9_announced_port_tests {
+    use super::*;
+
+    fn peer_with_base(device: &str, base: Option<&str>) -> lan::Peer {
+        let mut a = lan::LanAnnounce::default();
+        a.device_id = device.to_string();
+        a.device_name = "对端".to_string();
+        a.hub_base = base.map(|b| b.to_string());
+        lan::Peer {
+            announce: a,
+            addr: "192.168.1.9".to_string(),
+            seen_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn the_port_comes_from_the_announce_and_is_never_guessed() {
+        let got = nearby_of(&[peer_with_base("dev-a", Some("http://192.168.1.9:8788"))], "me", "sp");
+        assert_eq!(got[0].announced_port, Some(8788), "对端公告的端口要如实上抛");
+        // 老对端没报端口 / 根本没报 hub_base ⇒ None（⛔ 不按 80 猜、⛔ 不拿本机端口凑 ✗）
+        let got = nearby_of(&[peer_with_base("dev-a", Some("http://192.168.1.9"))], "me", "sp");
+        assert_eq!(got[0].announced_port, None, "没有显式端口 ⇒ None（不猜）");
+        let got = nearby_of(&[peer_with_base("dev-a", None)], "me", "sp");
+        assert_eq!(got[0].announced_port, None, "没报 hub_base ⇒ None");
+        let got = nearby_of(&[peer_with_base("dev-a", Some("nonsense"))], "me", "sp");
+        assert_eq!(got[0].announced_port, None, "坏 URL ⇒ None");
+    }
+
+    /// 空网格读数（只为把 `LanStatus` 拼完整 —— 本判据只关心 `nearby` 那一段的线格式 ✓）。
+    fn empty_mesh() -> crate::mesh::MeshConfigState {
+        crate::mesh::MeshConfigState {
+            enabled: false,
+            bind: None,
+            token_set: false,
+            window: None,
+            served: Vec::new(),
+            paired: Vec::new(),
+            note: String::new(),
+            reach: String::new(),
+            announced: None,
+        }
+    }
+
+    fn status_with(nearby: Vec<NearbyPeer>) -> LanStatus {
+        LanStatus {
+            enabled: false,
+            peers: 0,
+            kind: String::new(),
+            line: String::new(),
+            mesh: empty_mesh(),
+            nearby,
+        }
+    }
+
+    #[test]
+    fn the_lan_status_json_really_carries_the_announced_port() {
+        // ⭐ 判据要求的是「`LanStatus` 的 JSON 里真的带这一格」⇒ 这里**序列化整个 LanStatus** ✓
+        //   （只序列化 `nearby` 那一段证明不了它没被外层结构弄丢 ✓）。
+        let got = nearby_of(&[peer_with_base("dev-a", Some("http://192.168.1.9:47999"))], "me", "sp");
+        let json = serde_json::to_string(&status_with(got)).expect("序列化不失败");
+        assert!(
+            json.contains("\"nearby\":[{"),
+            "前提：`nearby` 必须是对象数组（不是被压成字符串）：{json}"
+        );
+        assert!(
+            json.contains("\"announced_port\":47999"),
+            "LanStatus 的线格式里必须真的有这一格（snake_case ✓）：{json}"
+        );
+        // 读不到时**这一格也要在**（`null`）—— 否则前端只能读到 undefined，分不清"老构建"与"没报"
+        let none = nearby_of(&[peer_with_base("dev-a", None)], "me", "sp");
+        let json = serde_json::to_string(&status_with(none)).expect("序列化不失败");
+        assert!(
+            json.contains("\"announced_port\":null"),
+            "没报也要显式给出 null（⛔ 别让这一格凭空消失 ✗）：{json}"
+        );
     }
 }

@@ -72,7 +72,7 @@ describe("R176-A ④：三格读数真的摆到屏上（值／单位／读不到
   });
 
   it("④ J9 的诊断句：有就必须渲染，没有就一个空壳都不留", () => {
-    const d = discoveryDiagnosis({ discoveryOn: true, trusted: { kind: "ok", n: 2 }, nearbyCount: 0 });
+    const d = discoveryDiagnosis({ discoveryOn: true, trusted: { kind: "ok", n: 2 }, nearbyCount: 0, localPort: 8788, peerPorts: [] });
     expect(d, "夹具前提：这个形状本该出诊断句").toBeTruthy();
     const withD = render({ route: ROUTE_DIRECT, served: { kind: "ok", n: 1 }, trusted: { kind: "ok", n: 2 }, diagnosis: d });
     expect(withD.querySelector('[data-testid="discovery-diagnosis"]')?.textContent).toBe(d);
@@ -87,7 +87,7 @@ describe("R176-A ④：三格读数真的摆到屏上（值／单位／读不到
       route: READOUT_UNREAD,
       served: { kind: "unread" },
       trusted: { kind: "unread" },
-      diagnosis: discoveryDiagnosis({ discoveryOn: true, trusted: { kind: "ok", n: 1 }, nearbyCount: 0 }),
+      diagnosis: discoveryDiagnosis({ discoveryOn: true, trusted: { kind: "ok", n: 1 }, nearbyCount: 0, localPort: 8788, peerPorts: [] }),
     });
     const text = el.textContent ?? "";
     expect(text).not.toContain("**");

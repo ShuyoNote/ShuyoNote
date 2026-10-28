@@ -405,6 +405,38 @@ pub fn serves_space_name(name: &str, p: &Peer) -> bool {
         .any(|n| crate::mesh_merge_ledger::same_space_name_by_trim(n, want))
 }
 
+/// ⭐ **2026-10-29（owner 拍 J9「精确端口读数」）**：从一条公告的 `hub_base` 里取**端口** —— 纯函数。
+///
+/// ## 为什么单列一个函数
+/// 界面要能精确说「本机 :8788 / 对方 :47999」（**J9**）⇒ 那个数字必须来自**对端公告**，
+/// 而公告里只有 `hub_base` 这一格（形如 `http://192.168.1.5:8788` ✓）。
+/// 解析规则（⛔ **一条都不猜** ✗）：
+/// · `http://192.168.1.5:8788` ⇒ `Some(8788)` ✓；
+/// · **没有显式端口**（`http://192.168.1.5`）⇒ `None` —— ⛔ 不按"http 默认 80"补一个 ✗
+///   （那会把"它没说"变成"它是 80"，用户会被引到错的方向 ✓）；
+/// · 不是 `http://` 前缀、端口不是数字、端口 `0`／越界、带空白 ⇒ `None` ✓。
+///
+/// ⚠️ 它**只判得出端口** ✗：地址本身该不该直连由 [`is_lan_base`] 判（两把尺别混 ✓）。
+/// ⚠️ 返回值**可以显示给用户**（一个端口号，不含 ip／设备号／暗号 ✓）。
+pub fn port_of_base(url: &str) -> Option<u16> {
+    let rest = url.trim().strip_prefix("http://")?;
+    let hostport = rest.split('/').next().unwrap_or("");
+    if hostport.is_empty() || hostport.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let (host, port) = hostport.rsplit_once(':')?;
+    if host.is_empty() {
+        return None;
+    }
+    let p: u16 = port.parse().ok()?;
+    // 端口 0 不是可连的端口 ⇒ 与"没报"同一个处置（⛔ 不猜 ✗）。
+    if p == 0 {
+        None
+    } else {
+        Some(p)
+    }
+}
+
 /// 这个基址是不是**局域网**地址（`http://<私有 IPv4>[:port]`）。
 ///
 /// 口径：**只认 http ＋ 私有 IPv4**。刻意不支持 IPv6 与主机名 —— 它们要额外解析一步，
@@ -2503,5 +2535,43 @@ mod r209b_wire_tests {
         assert_eq!(old.hub_base.as_deref(), Some("http://192.168.1.5:8788"), "老对端靠它找得到我");
         assert_eq!(old.hub_spaces, vec!["room-1".to_string()], "老对端靠它判断我服务哪个空间");
         assert_eq!(old.hub_space_names, vec!["工作".to_string()], "名字那一格照旧");
+    }
+}
+
+/// ⭐ **2026-10-29（owner 拍 J9「精确端口读数」）**：`port_of_base` 的判据 ——
+/// 有端口 / 无端口 / 坏 URL 全都**各有一条**（⛔ 不许"解析不出来就当 80"✗）。
+#[cfg(test)]
+mod j9_port_parse_tests {
+    use super::*;
+
+    #[test]
+    fn a_base_with_an_explicit_port_is_parsed() {
+        assert_eq!(port_of_base("http://192.168.1.5:8788"), Some(8788));
+        assert_eq!(port_of_base("http://10.0.0.7:47999"), Some(47999));
+        assert_eq!(port_of_base("  http://192.168.43.206:8788/  "), Some(8788), "带尾斜杠/空白也认");
+        assert_eq!(port_of_base("http://192.168.1.5:1"), Some(1));
+        assert_eq!(port_of_base("http://192.168.1.5:65535"), Some(65535));
+    }
+
+    #[test]
+    fn no_explicit_port_is_none_and_never_defaulted() {
+        // ⛔ 不按 http 默认 80 补一个数字 ✗（"它没说" ≠ "它是 80"）
+        assert_eq!(port_of_base("http://192.168.1.5"), None);
+        assert_eq!(port_of_base("http://192.168.1.5/"), None);
+    }
+
+    #[test]
+    fn a_bad_url_is_none() {
+        assert_eq!(port_of_base(""), None);
+        assert_eq!(port_of_base("https://192.168.1.5:8788"), None, "只认 http://（与 is_lan_base 同一档）");
+        assert_eq!(port_of_base("192.168.1.5:8788"), None, "没有 scheme");
+        assert_eq!(port_of_base("http://"), None);
+        assert_eq!(port_of_base("http://:8788"), None, "没主机");
+        assert_eq!(port_of_base("http://192.168.1.5:0"), None, "端口 0 不可连 ⇒ 当作没报");
+        assert_eq!(port_of_base("http://192.168.1.5:99999"), None, "越界");
+        assert_eq!(port_of_base("http://192.168.1.5:abc"), None);
+        assert_eq!(port_of_base("http://192.168.1.5:87 88"), None, "带空白");
+        assert_eq!(port_of_base("http://[::1]:8788"), Some(8788), "方括号 IPv6 的端口也读得出（地址该不该直连另判）");
+        assert_eq!(port_of_base("http://[::1]"), None);
     }
 }
