@@ -29,3 +29,17 @@ export async function fetchLocalAttachmentPath(hash: string): Promise<string> {
   await api.downloadAttachment(wsId, hash);
   return await api.attachmentPath(hash);
 }
+
+/**
+ * ⭐ **2026-10-28（owner：「在侧边栏打开一个 html 文件失败」）**：**打开**（用系统默认应用）也要走同一条路。
+ *
+ * 症状：点「打开」⇒ toast「正在用系统默认应用打开…」⇒ 紧接「打开失败：Not allowed to open path」。
+ * 真因：`path` 为空时**照样**调了 `open_path("")` —— 插件把空串当"不在允许范围" ⇒ 那句英文 ✗
+ * （与「在文件夹中显示」同一族：**本机没字节**却被当成"路径非法"）。
+ * ⇒ 先按需取回再打开；取不回就抛 `NOT_DOWNLOADED_HINT`（调用方 toast 它 ✓）。
+ */
+export async function ensureLocalAttachmentPath(path: string, hash?: string): Promise<string> {
+  if (path) return path;
+  if (!hash) throw new Error(NOT_DOWNLOADED_HINT);
+  return await fetchLocalAttachmentPath(hash);
+}
