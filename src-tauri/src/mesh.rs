@@ -1705,20 +1705,27 @@ pub async fn round(
     //   "收到了、也存住了、就是不用" ✗）。⚠️ 放在真正拉取**之前**：这一轮后面的 pull
     //   才有机会看到"已经应用过的"那份；⚠️ drain 失败**不拦这一轮**（下一轮还会再来 ✓）。
     if let Ok(g) = conn.lock() {
-        // ⭐⭐ **2026-10-28（owner「清理」／真机：解锁后"补应用"从未生效、inbox 行永残留）**：
-        //   键不一致 —— `sealed_round` 收封包时按**本地空间 id** 存
-        //   （`stash_sealed_rows(&meta, db_space, …)`），而这里原来传的是本函数的 `space_id`
-        //   ＝ **对暗号的 proto**（调用方传 `scope.space`）⇒ `drain_inbox` 按 proto 去查
-        //   `meta.mesh_inbox.space_id`，**一条都查不到** ✗ ⇒ `applied` 恒 0、行永远残留，
-        //   解锁后真实生效的其实只有"正常拉取"那条路（真机 2026-10-28：页面是融合路径并进来的，
-        //   drain 一个字都没说过）。
-        //   ⇒ 这里改成与**存的那一侧同一把尺**：这条连接自己那个空间库的 id。
-        let drain_space = crate::sync::space_id_of(&g).unwrap_or_else(|| space_id.to_string());
-        for p in peers {
-            match drain_inbox(&g, &drain_space, &p.announce.device_id, device_level) {
+// ⭐⭐ **2026-10-28（真机：解锁后 pendingInbox 仍 4 条／inbox 行永残留）** —— 两个真因一起修：
+//   ① **键不一致**：sealed_round 收封包时按**本地空间 id** 存（stash_sealed_rows(&meta, db_space, …)），
+//      而这里原来传的是本函数的 space_id ＝ **对暗号的 proto**（调用方传 scope.space）
+//      ⇒ 按 proto 去查 meta.mesh_inbox.space_id **一条都查不到** ✗（windows 侧独立复现并修了这一半 ✓）；
+//   ② **只看在线对端**：收下的封包与「这一秒谁在线」无关，原来只遍历 peers
+//      ⇒ 对端一离线，解锁后自动应用**永远不跑** ✗（最坏的静默失败：收了、存了、就是不用）。
+//   ⇒ 键用**这条连接自己那个空间库的 id**；扫描面 = 在线对端 ∪ inbox 里出现过的 peer_device（去重保序）。
+let drain_space = crate::sync::space_id_of(&g).unwrap_or_else(|| space_id.to_string());
+let online: Vec<String> = peers.iter().map(|p| p.announce.device_id.clone()).collect();
+let mut inbox_ids: Vec<String> = Vec::new();
+if let Ok(mut st) = g.prepare("SELECT DISTINCT peer_device FROM meta.mesh_inbox WHERE space_id = ?1") {
+    if let Ok(rows) = st.query_map(params![drain_space], |r| r.get::<_, String>(0)) {
+        inbox_ids.extend(rows.flatten());
+    }
+}
+for dev in drain_targets(&online, &inbox_ids) {
+    match drain_inbox(&g, &drain_space, &dev, device_level) {
+
                 Ok(ab) if ab.applied > 0 => eprintln!(
-                    "[mesh] 解锁后补应用：对端 {} ｜ {} 条",
-                    p.announce.device_id, ab.applied
+                    "[mesh] 解锁后补应用：对端 {dev} ｜ {} 条",
+                    ab.applied
                 ),
                 Ok(_) => {}
                 Err(e) => eprintln!("[mesh] 补应用失败（这一轮照常继续）：{e}"),
@@ -3414,6 +3421,20 @@ fn pull_diag(state: &State, req: &Request) -> String {
         "diag: served={served} locked={locked} pk_for_dev={pk} dev={dev8} ｜ cardbook=[{}] ｜ serves=[{}] ｜ locked=[{}]",
         known.join(","), conns.join(","), locked_keys.join(",")
     )
+}
+/// ⭐ **2026-10-28（真机：解锁后 pendingInbox 不降）**：补应用该扫**谁** ——
+/// **在线对端 ∪ inbox 里出现过的 peer_device**（去重，在线那些保持原序在前）✓。
+/// 来由：原来只扫 `peers` ⇒ 对端离线时「解锁后自动应用」永远不跑（收了、存了、就是不用 ✗）。
+pub(crate) fn drain_targets(online: &[String], inbox_ids: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for id in online.iter().chain(inbox_ids.iter()) {
+        let t = id.trim();
+        if t.is_empty() || out.iter().any(|x| x == t) {
+            continue;
+        }
+        out.push(t.to_string());
+    }
+    out
 }
 pub(crate) fn dispatch(state: &State, req: &Request) -> Reply {
     let routed = route(&req.method, &req.target);
@@ -9432,5 +9453,31 @@ mod pull_log_tests {
         let fail = pull_log_line("/mesh/pull?space_id=s1&since=0", 403, br#"{"error":"not served"}"#);
         assert!(fail.contains("⇒ 403"), "{fail}");
         assert!(fail.contains("not served"), "失败要带一句原因：{fail}");
+    }
+}
+
+#[cfg(test)]
+mod drain_targets_tests {
+    use super::*;
+
+    /// ⭐ **2026-10-28（真机：解锁后 pendingInbox 不降）**：补应用的扫描面必须是
+    /// **在线对端 ∪ inbox 里出现过的 peer**（去重、保序）—— 只扫在线对端 ⇒ 对端离线时
+    /// 「解锁后自动应用」永远不跑（收了、存了、就是不用 ✗）。
+    #[test]
+    fn inbox_peers_are_drained_even_when_offline() {
+        let online = vec!["dev-a".to_string()];
+        let inbox = vec!["dev-b".to_string(), "dev-a".to_string(), " ".to_string(), "dev-b".to_string()];
+        assert_eq!(
+            drain_targets(&online, &inbox),
+            vec!["dev-a".to_string(), "dev-b".to_string()],
+            "在线在前 ✓、inbox 里离线那台也要在 ✓、去重去空 ✓"
+        );
+        // 一个都不在线也要扫（真机就是这一格：两台都没开）
+        assert_eq!(
+            drain_targets(&[], &["dev-b".to_string()]),
+            vec!["dev-b".to_string()],
+            "⛔ 不许因为 peers 空就一条都不补应用 ✗"
+        );
+        assert!(drain_targets(&[], &[]).is_empty());
     }
 }
