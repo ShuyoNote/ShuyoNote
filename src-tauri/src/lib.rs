@@ -887,13 +887,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // ⛔ **2026-10-29（owner 拍：团队功能第二阶段 A）**：⭐ 原来这里注册着 **32 条 `sync::team_*`** ✗
-            //   —— `shuyonote-sync-server` 已归档、零用户 ⇒ **前端契约与 UI 已删除**（`commands.ts`/`web.ts`/`api.ts`
-            //   与各 UI 调用点一并移除 ✓）。
-            //   ⚠️ **Rust 后端代码/函数/单测全部保留** ✓（`sync.rs` 里那 32 个 `pub async fn team_*` 原样在，
-            //   企业版仍引用本仓契约 ✓）；这里只是**不再注册为 IPC** ⇒ `check-web-commands` 的方向 2
-            //   （Rust 注册的命令必须在 CommandMap 声明）自然成立 ✓。
-            //   ⛔ 别为了省事把 Rust 那两个函数段删掉 ✗；也⛔ 别把门禁改成"忽略 team_" ✗。
+            // ⛔ **2026-10-29（owner 拍：团队功能第三阶段）**：⭐ 这里原来注册着 **32 条 `sync::team_*`** ✗
+            //   —— `shuyonote-sync-server` 已归档、零用户 ⇒ **前端契约/UI（第二阶段）＋ Rust 团队实现（第三阶段）
+            //   都已删除** ✓（`sync.rs` 里那 31 个 `team_*` 函数、9 个 `Team*` 类型、配套 helper 全部移除 ✓；
+            //   第二阶段先只摘了 IPC、第三阶段把实现也删了 ✓）。
+            //   ⚠️ **`sync_profiles` / 工作区同步 / `space_id`（含历史 `SpaceKind::Team`）保留** ✓ ——
+            //   个人同步与历史团队空间数据仍要读得懂 ✓；**`docs/specs/**`（含企业 IM）保留**（企业版引用 ✓）。
+            //   ⛔ 别再在这里补注册 ✗；⛔ 也别把门禁改成"忽略 team_" ✗。
 
             abilities::save_ability_pack,
             storage::cleanup_orphan_derived,
