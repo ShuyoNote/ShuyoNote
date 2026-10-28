@@ -674,6 +674,14 @@ pub fn run() {
 
             let app_data_dir = db::resolve_app_data_dir(app.path().app_data_dir().ok())
                 .ok_or_else(|| std::io::Error::other("拿不到应用数据目录（也没有 SHUYONOTE_DATA_DIR）"))?;
+            // ⭐⭐ **2026-10-28（owner：「本机备份 全空间打包，要能原样恢复」）**：
+            //   「原样恢复」是**重启生效**的 —— 在**打开任何库之前**把 staging 换上来
+            //   （当前数据整份挪到 `restore-prev-<毫秒>/`，⛔ 不删 ✗）。失败不影响启动（如实打一行）。
+            match crate::backup::apply_staged_restore(&app_data_dir) {
+                Ok(Some(note)) => eprintln!("[restore] {note}"),
+                Ok(None) => {}
+                Err(e) => eprintln!("[restore] ⚠️ 暂存的恢复没应用成（按原样继续启动）：{e}"),
+            }
             let conn = db::init(app_data_dir).map_err(|e| {
                 eprintln!("failed to init db: {e}");
                 std::io::Error::other(e.to_string())
@@ -1203,6 +1211,9 @@ pub fn run() {
             versions::clear_page_versions,
             backup::export_backup,
             backup::import_backup,
+            // ⭐ 2026-10-28（owner：「本机备份 全空间打包，要能原样恢复」）：
+            //   替换式恢复 —— 解到 staging，**重启后**在打开任何库之前整份替换（旧数据另存一份）
+            backup::restore_backup_replace,
             backup::write_text_file,
             backup::write_binary_file,
             backup::read_text_file,

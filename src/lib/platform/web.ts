@@ -3885,6 +3885,14 @@ export function makeInvoke(store: SqliteStore) {
       // （保持与桌面 export_backup 同一个返回契约，界面无需分平台判断）。
       return { path: name, size: zip.length, skipped: [] } as T;
     }
+    if (cmd === "restore_backup_replace") {
+      // ⭐ **2026-10-28（owner：「本机备份 全空间打包，要能原样恢复」）**：
+      //   替换式恢复靠"应用数据目录整份换掉"，Web 版没有这个目录（数据在 IndexedDB/localStorage）
+      //   ⇒ **如实拒绝**（⛔ 不假装成功 ✗）；Web 上请用「导入备份（合并）」。
+      throw new Error(
+        "Web 版没有本机数据目录 ⇒ 「原样恢复（替换）」只在桌面版可用；请在 Web 上用「导入备份（合并）」",
+      );
+    }
     if (cmd === "import_backup") {
       // Merge import: each space in the backup (spaces/<id>.db, or a legacy single
       // shuyonote.db) is imported as a NEW space (never overwrites existing ones),

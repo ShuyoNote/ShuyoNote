@@ -847,6 +847,9 @@ export const api = {
     invoke("export_backup", { destPath }),
   importBackup: (srcPath: string) =>
     invoke("import_backup", { srcPath }),
+  /** ⭐ 2026-10-28：**替换式原样恢复**（解到 staging，下次启动生效；旧数据另存一份）。 */
+  restoreBackupReplace: (srcPath: string) =>
+    invoke("restore_backup_replace", { srcPath }),
   exportWorkspace: (destPath: string) =>
     invoke("export_workspace", { destPath }),
   exportWiki: (destPath: string, files: { name: string; content: string }[]) =>

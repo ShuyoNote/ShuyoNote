@@ -1727,6 +1727,13 @@ export interface CommandMap {
     };
   };
   import_backup: { args: { srcPath: string }; result: { imported: number; renamed: number } };
+  /**
+   * ⭐ **2026-10-28（owner：「本机备份 全空间打包，要能原样恢复」）**：
+   * **替换式恢复** —— 备份先解到 staging，**重启后**在打开任何库之前整份替换
+   * （当前数据另存到 `restore-prev-…/`，不删）。
+   * 与 `import_backup`（合并、重名改 id）是**两条不同的动作** ✓。
+   */
+  restore_backup_replace: { args: { srcPath: string }; result: { staged: boolean; note: string } };
   // ⭐ R138（2026-10-08，owner 选 A）：导出快照会**裁掉同步日志的历史**
   // ⇒ 多两格如实报告裁了多少（⛔ 不许静默：用户得知道包里少了什么 ✓）。
   export_workspace: {
