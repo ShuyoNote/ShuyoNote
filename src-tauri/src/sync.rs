@@ -2005,6 +2005,8 @@ pub async fn download_attachment(
     //   ⇒ 明文落进加密空间目录（或反过来），"另存为/渲染"那条链就跟着错。
     let session_key = crate::security::key_for_space(&app_data_dir, &ws_id);
     let client = reqwest::Client::new();
+    // ⭐ 对端附件走**局域网直连**：与网格同一把尺，显式绕开系统代理（否则系统代理一开就全部 Connection refused）。
+    let mesh_client = crate::mesh::mesh_http_client();
     // 凭证取法与同步下载保持一致（都用 `profile.token`）：两条路若取不同的 token，就会出现
     // "同步能下、点按钮下不了"这种最难查的不一致。
     let item = RemoteAttachment { hash: hash.clone(), mime };
@@ -2099,7 +2101,7 @@ pub async fn download_attachment(
         };
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
         match crate::mesh::request_attachment_from_peer(
-            &client,
+            &mesh_client,
             p,
             &proto_space,
             &hash,

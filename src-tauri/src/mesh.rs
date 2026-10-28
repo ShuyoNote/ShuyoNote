@@ -1762,6 +1762,19 @@ for dev in drain_targets(&online, &inbox_ids) {
     round_candidates(conn, space_id, candidates, device_level).await
 }
 
+/// 局域网网格用的 HTTP 客户端：**显式绕过系统代理**。
+///
+/// 2026-10-28 真机 root cause：macOS 系统代理被打开（`HTTPProxy=127.0.0.1:7890`），
+/// 而 `reqwest` 会读系统代理；本机 7890 没有进程 ⇒ 拉对端一律 `Connection refused`，
+/// 但同一 URL 用 curl（不读系统代理）却通 ⇒ 面板上看起来“对端在线、同步不了”。
+/// 网格是**局域网直连**，⛔ 不该走代理 ✗；`no_proxy()` 只作用于这一支，服务端同步不动。
+pub(crate) fn mesh_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 /// `round` 的**后半**：对端由调用方给，只做"逐个拉 ＋ 不连坐 ＋ 把读数整理成人话"。
 ///
 /// ⚠️ 为什么把这一半单独开出来：**本机判据只能用回环地址**（`127/8`），
@@ -1777,7 +1790,7 @@ pub async fn round_candidates(
     candidates: Vec<MeshPeer>,
     device_level: bool,
 ) -> Result<MeshRoundReport, String> {
-    let client = reqwest::Client::new();
+    let client = mesh_http_client();
     let mut out: Vec<PeerPullReport> = Vec::with_capacity(candidates.len());
     for p in &candidates {
         // ⭐ **U11（A：门只认卡）**：出示的是**这一台**的那一份配对秘密 ✓
@@ -3869,7 +3882,7 @@ pub fn retry_pending_revokes(app: &tauri::AppHandle, peers: &[crate::lan::Peer])
         let app2 = app.clone();
         tauri::async_runtime::spawn(async move {
             use tauri::Manager as _;
-            let client = reqwest::Client::new();
+            let client = mesh_http_client();
             for space in spaces {
                 // 签名：拿库锁 → **立刻放**（⛔ 不跨 await 持锁 ✗）
                 let signed = {
@@ -4618,6 +4631,7 @@ pub async fn sealed_round(
         });
     }
     let client = reqwest::Client::builder()
+        .no_proxy()
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .map_err(|e| e.to_string())?;
@@ -5887,7 +5901,7 @@ mod tests {
             local_edit(&c, &page("p1", "甲写的", 1_000));
         }
         // ② B 去拉 A（**没有中枢**，直接拉）
-        let client = reqwest::Client::new();
+        let client = mesh_http_client();
         let report = pull_and_absorb(
             &b,
             &client,
@@ -6888,7 +6902,7 @@ mod tests {
         )
         .unwrap();
 
-        let client = reqwest::Client::new();
+        let client = mesh_http_client();
         let pa = mesh_peer("A", &format!("http://{}", win_a.addr()));
         let pb = mesh_peer("B", &format!("http://{}", win_b.addr()));
         let pc = mesh_peer("C", &format!("http://{}", win_c.addr()));
@@ -7509,7 +7523,7 @@ mod tests {
             local_edit(&c, &page("p1", "乙在通配窗口上写的", 1_000));
         }
         // ③ A 去拉 —— 通配窗口**在回环上也听** ⇒ "拉得通"（回环是本档的下界，见头注）
-        let client = reqwest::Client::new();
+        let client = mesh_http_client();
         let report = pull_and_absorb(
             &a,
             &client,
@@ -8869,7 +8883,7 @@ mod tests {
         let (ts2, sig2) = crate::mesh::sign_request(&c, "dev-peer", space, "GET", &out_target, now)
             .expect("签一份");
         let rows = crate::mesh::pull_from_peer(
-            &crate::mesh_endpoint::LanEndpoint::new(&peer.base, reqwest::Client::new()),
+            &crate::mesh_endpoint::LanEndpoint::new(&peer.base, mesh_http_client()),
             &peer,
             space,
             0,
@@ -9006,7 +9020,7 @@ mod tests {
             device_id: dev.to_string(),
             base: format!("http://{addr}"),
         };
-        let client = reqwest::Client::new();
+        let client = mesh_http_client();
         let sign = |c: &Connection, dev: &str| {
             let target = crate::mesh::pull_target(space, 0, "");
             let (ts, sig) =
