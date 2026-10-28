@@ -8323,7 +8323,10 @@ mod tests {
     /// AEAD）⇒ 如果没人钉住"换过的材料 ⇒ 打不开"，"服务端可以悄悄换盒子"这个洞就没人守。
     #[test]
     fn a_server_that_hands_over_a_different_bag_makes_the_second_device_fail_loudly() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        // 2026-10-29：panic 会让 SEC_LOCK 中毒、连累后续用例（CI #1440 实测）⇒ 中毒也继续跑。
+        let _g = crate::security::SEC_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = temp_dir("swapped");
         let c = crate::db::open_space_conn_at("default", &dir).unwrap();
         crate::space_crypto::set_keyring_for_test(None);
@@ -8355,7 +8358,18 @@ mod tests {
         let master = crate::space_crypto::master_from_passphrase(&c, "我的口令八个字")
             .unwrap()
             .unwrap();
-        match crate::space_crypto::keyring().unwrap().unwrap_key(&master, "default") {
+        // ⚠️ 2026-10-29（CI #1440 实测的 flake）：这里原来读**进程内全局** `keyring()` ——
+        //   并行跑的别条用例（`set_keyring_for_test(None)` / 载入别的库）会把它换掉或清空，
+        //   而 `SEC_LOCK` 只串行"会动全局"的用例、挡不住更早的 panic 留下的 poisoned 锁
+        //   （实测：`keyring()` 返回 None ⇒ 这条用例在 `unwrap()` 上崩，并把 SEC_LOCK 毒化 ⇒
+        //    紧接着的 `the_sync_bind_gate_…` 又因 `PoisonError` 假红）。
+        //   ⇒ 判据真正要验的是"**采纳进这台设备的材料**用我的口令解不开" ⇒ 从**本机落盘**读，
+        //   ⛔ 不依赖进程缓存（缓存是性能设施、不是契约）；断言强度不变。
+        let local_text = crate::space_crypto::stored_material(&c)
+            .unwrap()
+            .expect("采纳之后本机 meta 里必须有公开材料");
+        let ring = crate::keyring::Keyring::from_json(&local_text).unwrap();
+        match ring.unwrap_key(&master, "default") {
             Ok(k) => panic!(
                 "★ 换过的盒子竟然解开了（拿到 {} 字节的钥匙）—— 这条判据塌了",
                 k.len()
@@ -9577,7 +9591,10 @@ mod tests {
     /// ⭐ 真正拦住"个人空间绑服务器"的是 `set_sync_profile` ✓（见那里装的真拦 ✓）。
     #[test]
     fn the_sync_bind_gate_blocks_only_personal_spaces_without_encryption() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        // 2026-10-29：同上 —— 别让别条用例的 panic 把这一条也毒成假红。
+        let _g = crate::security::SEC_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (c, dir) = pending_conn("syncgate");
         c.execute(
             "INSERT INTO meta.workspaces (id, name, created_at, updated_at) VALUES ('ws', '甲', 1, 1)",
