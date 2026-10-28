@@ -31,7 +31,7 @@
 - **国际 / GitHub Pages**：[https://shuyonote.github.io/ShuyoNote/](https://shuyonote.github.io/ShuyoNote/)
 - **国内 / 自托管主站**：[https://shuyo.cn/app/](https://shuyo.cn/app/)
 
-> Web 版与桌面版共用同一套前端与数据模型（浏览器端本地优先、离线可用，用 sql.js + IndexedDB）。多设备 / 团队同步需在桌面版配置自建 `shuyonote-sync-server` 后使用。
+> Web 版与桌面版共用同一套前端与数据模型（浏览器端本地优先、离线可用，用 sql.js + IndexedDB）。**个人多设备同步用「设备直连」**（局域网 / 虚拟局域网，数据不过服务器；跨网另需自部署中继，尚未进正式包）；**多人协作（团队 / 企业）**才需在桌面版配置自建 `shuyonote-sync-server`。
 
 **社区**：[community.shuyo.cn](https://community.shuyo.cn) ——
 使用问题、经验分享、插件配方与更新公告都在这里。
@@ -45,7 +45,7 @@
 - **AI 可选、本地优先**：可接本地 Ollama / OpenAI 兼容端点，**默认关闭**（隐私）；语义检索 + 流式内联起草 + 侧边栏问答 + 思考过程流式。
 - **独有的邮箱聚合**：打通多账号 IMAP，邮件即笔记——聚合收件箱、按账号/月份筛选、一键存为笔记 / 任务、AI 总结。
 - **免费 + 开源**：核心功能永久免费；客户端 **AGPL-3.0 开源**，插件、主题、模板可扩展。
-- **可自托管、多设备同步**：多设备 / 团队同步用自建 `shuyonote-sync-server`（无云锁定，可私有部署）；outbox 增量 + 服务端 seq 基准的 LWW 合并（**同一页同时编辑按服务端顺序保留一方**，页级 LWW、非 CRDT；被覆盖一方可从**每页 50 份版本历史**取回）。⚠️ **这是「多设备一致」，不是「实时协作」。**
+- **可自托管、多设备同步**：**个人多设备**用「设备直连」（局域网 / 虚拟局域网，数据不过服务器；跨网另需自部署中继，尚未进正式包，详见「多设备同步」一节）；**多人协作（团队 / 企业）**用自建 `shuyonote-sync-server`（无云锁定，可私有部署），服务端同步是 outbox 增量 + 服务端 seq 基准的 LWW 合并（**同一页同时编辑按服务端顺序保留一方**，页级 LWW、非 CRDT；被覆盖一方可从**每页 50 份版本历史**取回）。⚠️ **这是「多设备一致」，不是「实时协作」。**
 - **全平台**：桌面（Tauri + Rust）+ 浏览器（Web）同一套前端；同一份数据多端可用。**Android 移动端正在做**（Tauri 原生壳，与桌面同一份 Rust 内核，所以加密/附件/插件/同步这些能力都在；执行计划见 移动端上线计划（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`））；iOS 随后。
 
 ## 截图 / 演示
@@ -295,7 +295,9 @@ pnpm tauri build   # 打包桌面安装包
 
 > **仅桌面版**。Web 版（浏览器）不支持多设备同步与团队版，跨设备交换请用备份 / 导出 zip。原因与「若要开启」的路线见 [Web 同步能力边界](docs/web-sync-boundary.md)。
 >
-> 客户端（本仓库）是 **AGPL-3.0 开源**。多设备/团队实时同步需要 **shuyonote-sync-server**——它是**独立的商业授权组件**（私有仓库，不随本客户端开源）。部署与使用文档见其仓库 [`docs/deploy.md`](https://gitcode.com/shuyo-cn/shuyonote-sync-server/blob/main/docs/deploy.md)（该仓库仅对授权者可见）。
+> ⭐ **个人多设备同步不需要服务端**：用「设备直连」（局域网 / 虚拟局域网，数据不过服务器；跨网另需自部署中继，尚未进正式包）。下面这一节讲的是**多人协作（团队 / 企业）**那条服务端路线。
+>
+> 客户端（本仓库）是 **AGPL-3.0 开源**。**团队/多人**同步需要 **shuyonote-sync-server**——它是**独立的商业授权组件**（私有仓库，不随本客户端开源）。部署与使用文档见其仓库 [`docs/deploy.md`](https://gitcode.com/shuyo-cn/shuyonote-sync-server/blob/main/docs/deploy.md)（该仓库仅对授权者可见）。
 
 ### 1. 在应用中配置（客户端侧）
 
