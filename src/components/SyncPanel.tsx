@@ -5,6 +5,7 @@ import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer, type SpaceSyncState } from "../lib/api";
+import { startEncryptedAdopt } from "../lib/encryptedAdopt";
 import { MeshMissingSpaces } from "./MeshMissingSpaces";
 import { autoPickPeer } from "../lib/pairTarget"; // ⭐ 常驻判据在 src/lib/pairTarget.test.ts ✓
 import { peerIdentityLine } from "../lib/peerIdentity"; // ⭐ 规格 J21 的**唯一实现**（信任前展示身份 ✓）
@@ -1911,12 +1912,26 @@ export function SyncPanel({
                 );
               })}
               {spaceSync.pendingAdopt > 0 && (
-                <div
-                  className="sync-hint sync-empty-state"
-                  style={{ paddingLeft: 12 }}
-                  data-testid="encrypted-pending-adopt"
-                >
-                  对端还有 {spaceSync.pendingAdopt} 个加密空间没接入本机：解锁一次后会自动接进来
+                <div className="sync-enc-adopt" data-testid="encrypted-pending-adopt">
+                  <span className="sync-hint">
+                    对端还有 {spaceSync.pendingAdopt} 个加密空间没接入本机
+                  </span>
+                  {/* ⭐ 2026-10-28（owner 选 A）：**一次性口令接入** —— 输一次口令，解锁后后端自动
+                      依公开材料建空间；这里只负责问口令 + 重读读数 ✓（⛔ 口令不落日志 ✗）。 */}
+                  <button
+                    className="sync-btn"
+                    data-testid="encrypted-adopt-open"
+                    onClick={() =>
+                      startEncryptedAdopt(spaceSync.pendingAdopt, {
+                        refresh: async () => {
+                          const next = await api.spaceSyncState();
+                          setSpaceSync(next);
+                        },
+                      })
+                    }
+                  >
+                    接入 {spaceSync.pendingAdopt} 个
+                  </button>
                 </div>
               )}
             </div>

@@ -90,6 +90,9 @@ export function InputDialog() {
         <input
           ref={inputRef}
           className="input-dialog-field"
+          // ⭐ 2026-10-28：口令那一档走遮点（`type=password`）—— ⛔ 明文摆在屏幕上不行 ✗
+          type={options.type ?? "text"}
+          autoComplete={options.type === "password" ? "current-password" : undefined}
           placeholder={options.placeholder ?? ""}
           defaultValue={options.defaultValue ?? ""}
           onKeyDown={(e) => {

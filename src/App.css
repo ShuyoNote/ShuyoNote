@@ -28430,3 +28430,20 @@ button.mset-row:focus-visible {
   color: var(--warning);
 }
 .sync-enc-row .sync-nearby-id { font-variant-numeric: tabular-nums; }
+
+
+/* ── 加密空间·一次性口令接入（2026-10-28，owner 选 A）─────────────────────────
+   一行提示 ＋ 一颗主按钮；虚线框表示"还没接进来"，与"已接入卡片"区分开 ✓。 */
+.sync-enc-adopt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 70%, var(--hover));
+}
+.sync-enc-adopt .sync-hint { margin: 0; text-align: left; }
+.sync-enc-adopt .sync-btn { flex: none; }
