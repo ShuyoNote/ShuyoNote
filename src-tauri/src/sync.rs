@@ -393,7 +393,13 @@ pub fn record_change(
 /// 这个空间库自己那一行 `id`（`changes`／`sync_profiles` 那几句用的是同一把尺）。
 ///
 /// 拿不到（表不在 / 空）⇒ `None`：搬运缓存那两处**按"这一条不搬"处理**，⛔ 不猜 ✗。
-fn space_id_of(c: &Connection) -> Option<String> {
+///
+/// ⭐ 2026-10-28（amd 真机：`/mesh/attachment` 回 404，而本机盘上**明明有**那份字节）：
+/// 网格那扇门是**一门服务多个空间**的，每条连接各自绑一个空间库 ⇒ **"这条连接是哪个空间"
+/// 只能这样读**（`main.workspaces` 那一行）。⛔ 别用 `attachments::active_space_id(c)` ✗ ——
+/// 那是**全局活动空间**（界面上当前打开的那个），服务端拿它找附件目录 ⇒ 非活动空间的附件
+/// 一律「不存在」✗，而攻击面也很直白：拿错目录就可能把**别的空间**的字节发出去。
+pub(crate) fn space_id_of(c: &Connection) -> Option<String> {
     c.query_row("SELECT id FROM workspaces LIMIT 1", [], |r| r.get::<_, String>(0))
         .ok()
         .map(|s| s.trim().to_string())

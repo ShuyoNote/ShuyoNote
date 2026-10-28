@@ -139,7 +139,10 @@ pub(crate) fn active_space_id(c: &rusqlite::Connection) -> String {
 /// `key_if_enabled(conn)` 用的是"连接自己的库" —— 两者不一致时会把**密文当明文**交出去
 /// （真机：加密空间附件"另存为"得到 105,009 B 乱码）。⇒ 本文件里凡按空间读写附件，
 /// 钥匙一律走这一处 ✓。
-fn space_key_for(app_data_dir: &Path, space_id: &str) -> Option<crate::crypto::AppKeys> {
+///
+/// ⭐ 2026-10-28：**网格服务端也要走这一处** —— `/mesh/attachment` 收到的是"某个空间"的请求，
+/// 钥匙必须按**那个空间**取（`mesh::handle_attachment`），⛔ 不是按连接/全局活动空间取。
+pub(crate) fn space_key_for(app_data_dir: &Path, space_id: &str) -> Option<crate::crypto::AppKeys> {
     crate::security::key_for_space(app_data_dir, space_id)
 }
 

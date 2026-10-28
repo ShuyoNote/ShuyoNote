@@ -2775,8 +2775,9 @@ impl State {
     ///
     /// ⚠️ 三条写在这里，因为它们是**这一片的安全面** ✓：
     ///   ① **白名单**：`?space_id=` 不在 `conns` 里 ⇒ 403（**绝不**退回"随便挑一个"✗）；
-    ///   ② **连接按空间取**：`handle_attachment` 的空间 id 是**从这条连接的 meta 里读的**
-    ///      ⇒ 取错连接 ＝ **把别人的附件字节发出去** ✗；
+    ///   ② **连接按空间取**：`handle_attachment` 的空间 id 是**从这条连接自己那个空间库**
+    ///      （`main.workspaces` 那一行）读的 ⇒ 取错连接 ＝ **把别人的附件字节发出去** ✗；
+    ///      ⛔ 不许用 `attachments::active_space_id`（**全局活动空间**，随界面切空间而变 ✗）。
     ///   ③ **省略 `?space_id=` 的语义**（⚠️ **显式决定**，2026-10-01）：**只服务一个空间**时用它
     ///      （向后兼容旧客户端 ✓）；**服务多个**时 ⇒ **400**（说不清要哪个 ⇒ ⛔ **不猜** ✗）。
     ///      既有判据 `the_space_id_gate_refuses_by_default_and_never_leaks_before_refusing` 钉着它 ✓。
@@ -4690,12 +4691,22 @@ fn handle_attachment(state: &State, target: &str) -> Reply {
             json_error("这个窗口没配数据目录 ⇒ 不服务附件字节（设置面该重开一次窗口）"),
         );
     };
-    // 附件按**空间**分目录，而"本地空间 id"只能从这条连接的 meta 里读（真机上它 ≠ 对暗号的 id）。
+    // 附件按**空间**分目录，而"本地空间 id"只能从**这条连接自己那个空间库**里读
+    // （真机上它 ≠ 对暗号的 id）。
     // ⚠️ **U8**：这里的 `conn` 必须是 `select_space` 挑出来的**那个空间自己那条** ✓（见上面的头注）。
-    let (space_id, key) = match conn.lock() {
-        Ok(g) => (crate::attachments::active_space_id(&g), crate::security::key_if_enabled(&g)),
+    //
+    // ⭐⭐ **2026-10-28（amd 真机：明明盘上有字节，`/mesh/attachment` 却回 404）**：
+    //   这里原来取的是 `attachments::active_space_id(&g)` —— 那是**全局活动空间**（用户界面上
+    //   当前打开的那个），⛔ 不是这条连接绑的空间 ✗。后果两条：
+    //     ① 非活动空间的附件一律在**别人的目录**里找 ⇒ 404「这一台没有这份字节」（而本机其实有）；
+    //     ② 真正危险的一面：拿错目录就有把**别的空间**的字节发出去的可能（跨空间泄漏）。
+    //   ⇒ 空间 id 改成读 `sync::space_id_of(&g)`（这条连接的 `main.workspaces` 那一行）；
+    //     钥匙也按**那个空间**取（`attachments::space_key_for`，与 2026-10-27 那笔同一条口径）。
+    let space_id = match conn.lock() {
+        Ok(g) => crate::sync::space_id_of(&g).unwrap_or_default(),
         Err(_) => return Reply::json(500, "Internal Server Error", json_error("空间库的锁被毒掉了")),
     };
+    let key = crate::attachments::space_key_for(data_dir, &space_id);
     match crate::attachments::read_attachment_bytes_at(data_dir, &space_id, &hash) {
         Ok(raw) => match crate::security::decrypt_attachment_bytes(key.as_ref(), &raw) {
             // ⭐⭐ **2026-10-27（owner：「彻底解决」）**：**不往外发空壳/坏件** ✗ ——
@@ -6509,10 +6520,13 @@ mod tests {
         let a = Arc::new(Mutex::new(space_conn("A")));
         let b = Arc::new(Mutex::new(space_conn("B")));
         // B 的盘上有这份字节 —— 写的位置走**产品那条布局**（`space_attachments_dir` ＋ `bucket_path`），
-        // 空间 id 也用那一侧自己的读法（`active_space_id`），免得判据手抄一份布局。
+        // 空间 id 也读**服务端同一个来源**（`sync::space_id_of` ＝ 这条连接自己那个空间库）；
+        // ⚠️ 2026-10-28 改：原来这里读 `active_space_id`（全局活动空间），而服务端已改成按
+        //   **连接自己的空间**找目录 ⇒ 夹具跟着改，否则夹具会按"活动空间"写、服务端按"自己的空间"读
+        //   （真机就是这么 404 的；夹具必须与生产同一把尺，⛔ 不许各读各的 ✗）。
         let (space_of_b, bucket) = {
             let g = b.lock().unwrap();
-            let space = crate::attachments::active_space_id(&g);
+            let space = crate::sync::space_id_of(&g).unwrap_or_default();
             let root = crate::attachments::space_attachments_dir(&dir_b, &space);
             (space, root)
         };
@@ -9009,6 +9023,45 @@ mod tests {
         // ④ 删除不进（编辑器刷新按页 id 取，删除由列表那条路管）
         let r = report(vec![peer(1, 0, 0, vec![item("page", "p3", "delete")])]);
         assert!(round_touched_pages(&r).is_empty());
+    }
+
+    /// ⭐⭐ **2026-10-28（amd 真机：`/mesh/attachment` 回 404，而本机盘上明明有那份字节）**：
+    /// 服务附件时"这是哪个空间"必须读**这条连接自己那个空间库**（`main.workspaces`），
+    /// ⛔ 不许读全局活动空间（`attachments::active_space_id`）—— 两者是两回事：
+    /// 前者是"这扇门的这条连接绑哪个空间"，后者随**用户在界面上切空间**而变
+    /// ⇒ 非活动空间的附件会被判"这一台没有"，而拿错目录还可能把**别的空间**的字节发出去。
+    ///
+    /// 判据形状抄 `receiving_a_trust_ask_writes_nothing`：读源码、剥注释再比（本函数文档里
+    /// 会提到旧名字 ✓，不剥就会假红 ✗）。
+    #[test]
+    fn serving_an_attachment_reads_the_connections_own_space() {
+        let src = include_str!("mesh.rs");
+        let start = src
+            .find("fn handle_attachment(")
+            .expect("handle_attachment 必须在（改了名字要同步改这里）");
+        // ⚠️ 必须**截到本函数为止**：`active_space_id(` 在本文件别处仍有合法用法
+        //    （比如 App 自己那条按"活动空间"读字节的路）⇒ 整段到尾扫就会假红 ✗。
+        let rest = &src[start..];
+        let end = rest
+            .find("pub async fn request_attachment_from_peer")
+            .expect("handle_attachment 后面紧跟的就是 request_attachment_from_peer（改了要同步改这里）");
+        let code: String = rest[..end]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let flat = code.split_whitespace().collect::<Vec<_>>().join(" ");
+        let body = flat.split("fn handle_attachment(").nth(1).unwrap_or("").to_string();
+        assert!(
+            body.contains("space_id_of("),
+            "⛔ 服务附件必须按**这条连接自己的空间**找目录（`sync::space_id_of`）—— \
+             用全局活动空间会让非活动空间的附件一律 404"
+        );
+        assert!(
+            !body.contains("active_space_id("),
+            "⛔ 不许用 `attachments::active_space_id`（全局活动空间）找附件目录 —— \
+             它随界面切空间而变：非活动空间 404，拿错目录还可能跨空间发字节"
+        );
     }
 }
 
