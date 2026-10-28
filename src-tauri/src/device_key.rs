@@ -54,7 +54,7 @@ impl DeviceIdentity {
 /// ⛔ **已有那把一个字节都不动** ✗（建新的 ＝ 换身份 ＝ 已建立的信任**全部失效** ✓，
 /// 而且**不会有任何报错** ✗ —— 只在对端那边变成"谁都进不来" ✓）。
 pub fn load_or_create(c: &Connection) -> Result<DeviceIdentity, String> {
-    if let Some(stored) = crate::sync::get_meta_state(c, DEVICE_IDENTITY_SK) {
+    if let Some(stored) = crate::sync::get_meta_state_any(c, DEVICE_IDENTITY_SK) {
         let t = stored.trim();
         if !t.is_empty() {
             return Ok(DeviceIdentity { signing: secret_from_hex(t)? });
@@ -63,7 +63,7 @@ pub fn load_or_create(c: &Connection) -> Result<DeviceIdentity, String> {
     let seed = crate::crypto::random_32();
     let signing = SigningKey::from_bytes(&seed);
     // ⚠️ 先落库再返回 ✗：⛔ 不能"先用着、晚点再存"✗ —— 那样一次崩溃就换了一次身份 ✓。
-    crate::sync::set_meta_state(c, DEVICE_IDENTITY_SK, &hex::encode(seed))?;
+    crate::sync::set_meta_state_any(c, DEVICE_IDENTITY_SK, &hex::encode(seed))?;
     Ok(DeviceIdentity { signing })
 }
 
@@ -74,7 +74,7 @@ pub fn load_or_create(c: &Connection) -> Result<DeviceIdentity, String> {
 ///
 /// ⭐ 2026-10-12：它也是**抄码那条路**要的那一格 ✓（载荷里带本机公钥 ⇒ 对面导入即登记 ✓）。
 pub fn public_key_hex_of(c: &Connection) -> Result<Option<String>, String> {
-    let Some(stored) = crate::sync::get_meta_state(c, DEVICE_IDENTITY_SK) else {
+    let Some(stored) = crate::sync::get_meta_state_any(c, DEVICE_IDENTITY_SK) else {
         return Ok(None);
     };
     let t = stored.trim();

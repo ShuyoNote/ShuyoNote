@@ -49,6 +49,29 @@ pub fn get_meta_state(c: &Connection, key: &str) -> Option<String> {
     .flatten()
 }
 
+/// ⭐ **2026-10-28（真机：锁态同步永远 401 的根因）**：**两种连接形状都能读** ——
+/// 生产连接是"空间库 ＋ ATTACH meta" ⇒ `meta.sync_state` ✓；
+/// `open_meta_conn_at` 给的是**裸 meta** ⇒ 限定名报 `no such table` ✓。
+/// 只给**需要跨两种形状**的调用方用（`device_key::load_or_create` → `mesh::sign_request` ✓）。
+/// ⚠️ 顺序：先**限定名**；**只有它报错**才回退到不带限定的名字 ✓ ——
+///   因为空间库里自己也有 `sync_state` 表（⛔ 无条件先读不带的会读错那份 ✗）。
+pub fn get_meta_state_any(c: &Connection, key: &str) -> Option<String> {
+    if let Ok(v) = c.query_row(
+        "SELECT value FROM meta.sync_state WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
+    ) {
+        return Some(v);
+    }
+    c.query_row(
+        "SELECT value FROM sync_state WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+}
 pub fn set_meta_state(c: &Connection, key: &str, value: &str) -> Result<(), String> {
     c.execute(
         "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
@@ -59,6 +82,20 @@ pub fn set_meta_state(c: &Connection, key: &str, value: &str) -> Result<(), Stri
     Ok(())
 }
 
+/// ⭐ 2026-10-28：`set_meta_state` 的"两种连接形状都能写"版本（口径同 [`get_meta_state_any`]）✓。
+/// ⚠️ 顺序：先 `meta.sync_state`；**只有它失败**才回退 ✓（空间库自己也有 `sync_state` ✗）。
+pub fn set_meta_state_any(c: &Connection, key: &str, value: &str) -> Result<(), String> {
+    let mk = |t: &str| {
+        format!("INSERT INTO {t} (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    };
+    match c.execute(&mk("meta.sync_state"), params![key, value]) {
+        Ok(_) => Ok(()),
+        Err(e) => c
+            .execute(&mk("sync_state"), params![key, value])
+            .map(|_| ())
+            .map_err(|_| e.to_string()),
+    }
+}
 // ─────────────── ⭐ 2026-10-26：移动端"自动组名"（局域网多端同步的最后一格） ───────────────
 //
 // 一句话：**手机没有桌面那张「设备直连」设置卡** ⇒ 它的组名（`mesh_room`，个人空间子房间号的种子）
@@ -12377,5 +12414,43 @@ mod encrypted_sync_note_tests {
         // ④ 对端在服务 ⇒ 可以说"能拉"
         assert!(encrypted_sync_note(true, 1, 1, 0).contains("可以直接拉取"));
         assert!(encrypted_sync_note(true, 1, 1, 5).contains("待应用"));
+    }
+}
+
+#[cfg(test)]
+mod meta_state_any_shape_tests {
+    use super::*;
+
+    /// ⭐⭐ **2026-10-28（真机：锁态同步永远 401 的根因）**：`get/set_meta_state` 在**裸 meta** 连接上
+    /// 也必须能用（`mesh::sign_request` 的私钥就是从那儿读的 ⇒ 读不到就**不带签名**发请求 ⇒ 对端 401 ✓）；
+    /// 而在**空间库 ＋ ATTACH meta** 形状上仍必须落在 `meta.sync_state`（⛔ 不许写进空间自己那份 ✗）。
+    #[test]
+    fn meta_state_reads_and_writes_on_both_connection_shapes() {
+        // ① 裸 meta 形状（`open_meta_conn_at` 给的就是它：main 就是 meta.db）
+        let bare = Connection::open_in_memory().unwrap();
+        bare.execute_batch("CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+            .unwrap();
+        set_meta_state_any(&bare, "device_identity_sk", "aa").unwrap();
+        assert_eq!(get_meta_state_any(&bare, "device_identity_sk").as_deref(), Some("aa"));
+
+        // ② 空间库 ＋ ATTACH meta 形状（生产连接）：写读都必须在 meta 那一侧
+        let space = Connection::open_in_memory().unwrap();
+        space
+            .execute_batch(
+                "ATTACH DATABASE ':memory:' AS meta;
+                 CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 CREATE TABLE main.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+            )
+            .unwrap();
+        set_meta_state_any(&space, "k", "v-space").unwrap();
+        assert_eq!(get_meta_state_any(&space, "k").as_deref(), Some("v-space"));
+        let in_meta: String = space
+            .query_row("SELECT value FROM meta.sync_state WHERE key='k'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(in_meta, "v-space", "⛔ 必须写进 meta.sync_state ✗");
+        let space_own: i64 = space
+            .query_row("SELECT COUNT(*) FROM main.sync_state", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(space_own, 0, "⛔ 空间自己那份 sync_state 不许被写 ✗");
     }
 }

@@ -3347,16 +3347,86 @@ fn handle_conn(mut sock: TcpStream, state: Arc<State>) -> Result<(), String> {
     respond(&mut sock, &reply).map_err(|e| e.to_string())
 }
 
+/// ⭐ **2026-10-28（owner：「一步到位」· P2 观测缺口）**：**入站拉取**的一行读数（纯函数 ✓）。
+///
+/// 形状：`[mesh] 入站拉取：space=<前 8 位> since=<n> caps_sealed1=<bool> ⇒ <code>`，
+/// 封包通道追加 `sealed_rows=<n>`，失败追加一句被截断的原因 ✓。
+///
+/// ⚠️ **不打 `name_sha`、不打签名/口令**（都可能被当成凭证面）✓；
+/// ⚠️ 调用点只在两种情形调用（带 `caps=sealed1` / 任何 4xx·5xx）⇒ 不刷屏 ✓。
+fn pull_log_line(target: &str, code: u16, body: &[u8]) -> String {
+    let space: String = query_get(target, "space_id")
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+        .chars()
+        .take(8)
+        .collect();
+    let since = query_get(target, "since").ok().flatten().unwrap_or_default();
+    let sealed_cap = caps_has_sealed1(target);
+    let body_text = String::from_utf8_lossy(body);
+    let tail = if code >= 400 {
+        format!(" ｜ {}", body_text.chars().take(160).collect::<String>())
+    } else if sealed_cap {
+        format!(" ｜ sealed_rows={}", body_text.matches("\"sealed\":").count())
+    } else {
+        String::new()
+    };
+    format!("[mesh] 入站拉取：space={space} since={since} caps_sealed1={sealed_cap} ⇒ {code}{tail}")
+}
+
+/// ⭐ **2026-10-28（P2 观测缺口·第二格）**：入站拉取的**门内读数** ——
+/// `served` / `locked` / **这把请求带的 device_id 在该空间的卡册里有没有公钥**。
+/// 来由：真机 401 只能读到"两样都没有/都不对"，分不清是"空间没进这扇门"还是"卡没载进来"。
+fn pull_diag(state: &State, req: &Request) -> String {
+    let space = query_get(&req.target, "space_id").ok().flatten().unwrap_or_default();
+    let dev = req.header(HDR_DEVICE).map(str::trim).unwrap_or("");
+    let (served, locked, pk) = (
+        state.serves(&space),
+        state.is_locked(&space),
+        state
+            .paired
+            .lock()
+            .ok()
+            .and_then(|g| g.get(&space).map(|c| c.pubkeys.contains_key(dev)))
+            .unwrap_or(false),
+    );
+    let dev8: String = dev.chars().take(8).collect();
+    // ⭐ 第二层诊断：这扇门**手上到底有哪些 key**（卡册 / 连接 / 锁着集合各取前 8 位）——
+    //   来由：真机 401 的 diag 显示 `served=false locked=true pk=false`，但"谁把 locked 标上的"说不清 ⇒ 先把集合打出来。
+    let short = |k: &String| -> String { k.chars().take(8).collect() };
+    let mut known: Vec<String> = state.paired.lock().ok().map(|g| g.keys().map(short).collect()).unwrap_or_default();
+    known.sort();
+    let mut conns: Vec<String> = state.conns.lock().ok().map(|g| g.keys().map(short).collect()).unwrap_or_default();
+    conns.sort();
+    let mut locked_keys: Vec<String> = state.locked.lock().ok().map(|g| g.iter().map(short).collect()).unwrap_or_default();
+    locked_keys.sort();
+    format!(
+        "diag: served={served} locked={locked} pk_for_dev={pk} dev={dev8} ｜ cardbook=[{}] ｜ serves=[{}] ｜ locked=[{}]",
+        known.join(","), conns.join(","), locked_keys.join(",")
+    )
+}
 pub(crate) fn dispatch(state: &State, req: &Request) -> Reply {
-    // ⭐ U11：门只认卡，且**分清 401／403**（见 `authorized` 头注 ✓）
+    let routed = route(&req.method, &req.target);
+    // ⭐ 2026-10-28（owner：「一步到位」· P2 观测缺口）：**入站拉取要留一行读数** ✗ ——
+    //   来由（真机）：锁态实验两边都看不见"请求到没到"（成功不写 `sync_history`、失败不打日志）
+    //   ⇒ 只能靠猜。这里只补**读数**，⛔ 不改协议 ✗。
     if let Err(r) = authorized(state, req) {
+        if matches!(&routed, Route::Pull) {
+            eprintln!("{} ｜ {}", pull_log_line(&req.target, r.code, &r.body), pull_diag(state, req));
+        }
         return r;
     }
-    match route(&req.method, &req.target) {
+    match routed {
         Route::Pull => {
             // ★ **T-10**：**在线上真的发生过**的拉取在这里计数（`authorized` 之后 ⇒ 只数被服务的）。
             state.served_pulls.fetch_add(1, Ordering::Relaxed);
-            handle_pull(state, &req.target)
+            let reply = handle_pull(state, &req.target);
+            // ⚠️ 只打两种：封包通道（要验"P2 第二半"）与任何失败 —— 否则每个空间每轮都刷屏 ✓
+            if caps_has_sealed1(&req.target) || reply.code >= 400 {
+                eprintln!("{} ｜ {}", pull_log_line(&req.target, reply.code, &reply.body), pull_diag(state, req));
+            }
+            reply
         }
         Route::Attachment => handle_attachment(state, &req.target),
         Route::Keyring => handle_keyring(state),
@@ -9242,5 +9312,31 @@ mod sealed_caps_tests {
             flat.contains("write_sync_history_with("),
             "⛔ 锁态轮必须写 sync_history —— 否则日志里那句「见历史那一行」是空指针（真机 2026-10-28 就是 0 行）"
         );
+    }
+}
+
+#[cfg(test)]
+mod pull_log_tests {
+    use super::*;
+
+    /// ⭐ **2026-10-28（owner：「一步到位」· P2 观测缺口）**：这一行必须**够判**"谁、要什么、回来什么"，
+    /// 且⛔ **不许把 `name_sha` 打出来** ✗（凭证面）—— 来由：锁态实验两边都看不到请求到没到 ✓。
+    #[test]
+    fn the_inbound_pull_line_says_who_asked_and_what_came_back() {
+        let ok_line = pull_log_line(
+            "/mesh/pull?space_id=53d6dacb5daeafc580795bdefe2535bd&since=7&limit=10&caps=sealed1&name_sha=deadbeef",
+            200,
+            br#"{"records":[{"sealed":"xx"}]}"#,
+        );
+        assert!(ok_line.contains("space=53d6dacb"), "{ok_line}");
+        assert!(ok_line.contains("since=7"), "{ok_line}");
+        assert!(ok_line.contains("caps_sealed1=true"), "{ok_line}");
+        assert!(ok_line.contains("⇒ 200"), "{ok_line}");
+        assert!(ok_line.contains("sealed_rows=1"), "{ok_line}");
+        assert!(!ok_line.contains("name_sha"), "⛔ 不许把 name_sha 打出来：{ok_line}");
+        assert!(!ok_line.contains("deadbeef"), "⛔ 连值也不许：{ok_line}");
+        let fail = pull_log_line("/mesh/pull?space_id=s1&since=0", 403, br#"{"error":"not served"}"#);
+        assert!(fail.contains("⇒ 403"), "{fail}");
+        assert!(fail.contains("not served"), "失败要带一句原因：{fail}");
     }
 }
