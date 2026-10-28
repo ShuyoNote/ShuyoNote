@@ -374,11 +374,11 @@ impl TrustHandshake {
     /// ⭐⭐ **2026-10-13（P-4 片①）按代码实际行为订正** ✗ —— 上面那段「采纳（登记对面 ＋ 推进状态）
     /// 在 `sync.rs`」⚠️ **两头都不准** ✗（以代码为准，⛔ 不凭注释 ✗）：
     /// · ⛔ "推进状态在 sync.rs" ✗ —— ⭐ 它就在**本函数紧下面那一行**（`state_after_ask_seen` ✓）；
-    /// · ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）** ✗：⭐ "登记对面在 sync.rs" 那半**又成立**了 ✓
-    ///   —— ⭐ 这一侧收到 ask ⇒ `sync::note_pending_trust_asks` 会登记对面 ✓
-    ///   （判据 `sync.rs` 的 `receiving_a_trust_ask_registers_the_asker_so_both_directions_work` ✓
-    ///   ＋ `receiving_a_pending_ask_registers_the_asker_and_respects_space_and_ttl` ✓）。
-    ///   ⚠️ 2026-10-12 的「收到 ask 一个字节都不登记」**已被 owner 推翻** ✓（真机来由：AMD 侧 401 ✓）。
+    /// · ⛔ "收到 ask ⇒ `sync::note_pending_trust_asks` 会登记对面" ✗ —— **2026-10-26 owner 拍 A（R208）
+    ///   撤销了 2026-10-17 的「一方配对成功，就双向通」** ⇒ 现在那一层**只读 ＋ 日志，一个字节都不写库**
+    ///   （判据 `sync::tests::receiving_a_trust_ask_writes_nothing` 按源码文本钉住）。
+    ///   ⚠️ 2026-10-17 那条真机来由（AMD 侧 401）仍然成立，但**解法换了**：两边各点一次「接入」确认；
+    ///   ⛔ 不是单方自动登记（旧判据名 `receiving_a_trust_ask_registers_the_asker_…` 已不存在）。
     pub fn note_ask(&mut self, peer_device_id: &str, now_ms: i64, ttl_ms: i64) {
         // ⚠️ 兼容旧调用点（⭐ 只记"谁问的" ✓）；⭐ 要算比对码的那条路走 [`Self::note_ask_with`] ✓
         self.note_ask_with(peer_device_id, "", now_ms, ttl_ms);
