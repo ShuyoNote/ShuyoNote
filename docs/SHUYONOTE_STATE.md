@@ -9,6 +9,7 @@
 > **Mac 那一侧是否同样收敛未核实**，所以那半句保持原样、没有替它猜一个新路径。
 > ⛔ **2026-10-29（owner 拍）：`shuyonote-sync-server` 已归档**（被独立闭源企业版 `shuyonote-enterprise-server`
 > 取代）⇒ 本客户端团队功能**冻结**：界面不再提供新建 / 配置入口，仅保留旧配置兼容（已存在档案仍可同步 ✓）。
+> ⚠️ **`shuyonote-sync-server` 无用户**（owner 2026-10-29）⇒ 这条兼容路径只是**历史/开发参考**，**不是产品承诺**。
 > 它的现状文档见 `shuyonote-sync-server/docs/SYNC_SERVER_STATE.md`（**历史 / 归档仓**）；**跨平台开发接续（环境事实、待办与下一步、
 > 换到 Mac 怎么接）见 `docs/SESSION_CONTINUE.md`（服务端仓库）**——本文件只写"现状"，不写操作步骤。
 > ★ **三机协作（2026-09 起）**：Mac / Windows / AMD 三台机器并行推进，**信道是信箱仓 `ShuyoNote-collab`**
