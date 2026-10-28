@@ -804,11 +804,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 
 /* 折叠态（56px）：顶部动作与底部栏都改纵向排列、只留图标。
    底部栏此前在折叠时整块不渲染，回收站/模板/设置/关于全点不到——现在保留。 */
-.sidebar-collapsed .sidebar-header-actions {
-  flex-direction: column;
-  gap: 4px;
-  padding: 0 4px 8px;
-}
+
 .sidebar-collapsed .sidebar-actions-group {
   flex-direction: column;
   gap: 4px;
@@ -825,13 +821,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   display: none;
 }
 
-.sidebar-header-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  padding: 0 12px 10px;
-}
+
 
 .sidebar-actions-group {
   display: flex;
@@ -846,6 +836,9 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* ⭐ 2026-10-28：新建按钮收进这一行后，标题（flex:1）与它之间留 6px ——
+     避免"贴在一起"；同步点（`.sidebar-sync-pill`）在场时也一样 ✓。 */
+  gap: 6px;
 }
 
 .sidebar-title {
@@ -1343,13 +1336,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   color: var(--text);
 }
 
-.sidebar-header-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  padding: 0 12px 10px;
-}
+
 
 .sidebar-actions-group {
   display: flex;
@@ -2950,6 +2937,23 @@ select.sync-input {
 
 .new-menu {
   position: relative;
+}
+
+/* ⭐ **2026-10-28（owner 选 A）：新建收进空间标题行右侧** ——
+   原来是 `.sidebar-header-actions` 里一条独占横带（28px+10px 高），而那一行只剩它一个孩子
+   ⇒ 视觉上像"错行的树行"（左缘 ~20px，与树标题 ~56px、空间名 ~52px 都不对齐）✓。
+   现在：与空间名同基线、贴右缘；`flex:none` 保证标题的 `flex:1` 不会把它挤走 ✓。
+   ⚠️ 图标态只有 28×28：文字标签仍在 DOM（读屏可读），侧栏里 `display:none` ⇒ 靠 `title`/`aria-label` ✓。
+   ⚠️ 折叠态由 `.sidebar-collapsed .sidebar-header { justify-content:center }` 居中，入口不丢 ✓。 */
+.sidebar-header .new-menu {
+  flex: none;
+}
+.sidebar-header .btn-new {
+  width: 28px;
+  padding: 0;
+}
+.sidebar-header .btn-new-label {
+  display: none;
 }
 
 .new-menu-dropdown {
