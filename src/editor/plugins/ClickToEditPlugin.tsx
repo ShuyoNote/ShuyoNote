@@ -14,13 +14,27 @@ import { isBlockGestureExcluded } from "../blockGestures";
 // A mousedown on a genuinely blank target — the page background / contenteditable
 // root / margins, or an empty block with no visible text — arms the marquee.
 const BLOCK_TAGS = "p,h1,h2,h3,h4,h5,h6,li,blockquote,pre,td,th";
+/** 表格单元格：**空单元格也是文字区**（点它要落光标），⛔ 不许当成"空白安全区"起框选 ✗。 */
+const CELL_TAGS = new Set(["TD", "TH"]);
 
-function isSafeMarqueeTarget(t: EventTarget | null): boolean {
+/**
+ * ⭐ **2026-10-28（owner：「表格的空单元格，鼠标不能点击聚焦输入？」）**：**空单元格 ⇒ 不是框选安全区** ✗ ——
+ *
+ * 来由（真机）：点在空单元格上时这里判"没有可见文字 ⇒ 空白安全区" ⇒ `onMouseDown` 里
+ * `e.preventDefault()` **把浏览器落光标那一步抢掉了** ✗；抬鼠标时那段"最近块落光标"找的是
+ * **顶层块**（表格本身），不是**格子里** ⇒ 用户看到的就是"点了没反应、打不了字"✗。
+ * ⇒ 单元格（`td/th`）一律交给浏览器/Lexical 原生处理 ✓（它们本来就是可编辑文字区）。
+ */
+export function isSafeMarqueeTarget(t: EventTarget | null): boolean {
   if (!(t instanceof Node)) return false;
   if (t.nodeType === Node.TEXT_NODE) return false; // on a glyph → normal text selection
   const el = t as HTMLElement;
+  // ⭐ 只要点在**单元格里**（含格内空段落/内边距）⇒ 一律不是框选安全区 ✓
+  if (el.closest("td,th")) return false;
   const block = el.closest(BLOCK_TAGS);
   if (block) {
+    // ⭐ 单元格里**永远不是**框选安全区（空也算文字区）✓
+    if (CELL_TAGS.has(block.tagName)) return false;
     // Inside a block: if it has visible text, it's a 文字区 → text selection.
     // An empty block (no text) is still blank → marquee allowed.
     if ((block.textContent || "").trim().length > 0) return false;
