@@ -163,10 +163,219 @@ fn maybe_adopt_peer_room(app: &tauri::AppHandle, state: &LanState, now: i64) {
         return;
     }
     let _ = crate::sync::set_meta_state(&c, crate::sync::MESH_ROOM_AUTO_KEY, "0");
+    // ⭐ **2026-10-28（R209-B）**：设备级种子换了 ⇒ 逐空间覆盖（相对**旧种子**派生出来的那些）
+    //   全部作废 ✓ —— 清掉，让各空间按新种子重新派生（⛔ 不清会让"种子换了、房间号还是旧的"✗）。
+    let _ = crate::sync::clear_room_covers(&c);
     let short: String = next.chars().take(8).collect();
     eprintln!(
         "[mesh] 已采用对端报的**同步组名**（{short}…）⇒ 下一轮起按同一批子房间号服务/拉取 ✓"
     );
+}
+
+/// ⭐⭐ **2026-10-28（owner 拍 R209-B）**：对端给的一条**「房间号报价」** ——
+/// 它公告里某个**个人空间**的派生房间号（`hub_spaces` 那一格 ✓）＋ "那串种子是自动生成的吗"。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PeerRoomOffer {
+    /// 对端那一格的**派生房间号**（`personal_room_for(seed, 名字)` 的产物，或老口径的种子本身）。
+    /// ⚠️ 它**就是对端窗口/拉取用的那个协议空间** ⇒ 本机覆盖成它，两边才在同一个房间见面 ✓。
+    pub room: String,
+    /// 对端那串种子是不是**自动生成**的（`LanAnnounce.room_auto` ✓；老对端不发 ⇒ `false` ＝ 用户设的）。
+    pub auto: bool,
+}
+
+/// ⭐⭐ **2026-10-28（owner 拍 R209-B）**：**一个空间该不该被对端的派生房间号覆盖** —— 纯函数。
+///
+/// ## 它取代了什么
+/// 原来 `decide_room_adoption` 判的是**设备级种子**（对端把种子原样报在广播里 ⇒ 手机直接采用它）。
+/// owner 2026-10-28 拍 B：⛔ 种子不上广播 ✗ ⇒ 改为逐空间：本机拿对端公告里的**派生房间号**
+/// 覆盖自己这个空间（存储见 `sync::set_room_cover` ✓）。规则与原来**同一套语义** ✓：
+///
+/// 1. ⛔ **用户/桌面自己设的组名永不被覆盖** ✗ —— 判据是"本机这串是不是自动生成的"（`local_auto`）；
+/// 2. 对端里只要有一个是"用户设的"（`auto=false`）⇒ 采用它（**用户意图优先** ✓）；
+/// 3. 有**多个不同**的用户设值 ⇒ `None`：不知道跟哪个 ⇒ ⛔ 不猜 ✗（与 `decide_room_adoption` ⑸ 同一条）；
+/// 4. 全是自动的 ⇒ 取 `min(本机, 对端们)` ⇒ 两台新设备**同时收敛到同一个**、不会来回摆 ✓；
+/// 5. 已经等于结论 ⇒ `None`（幂等，不写库 ✓）。
+///
+/// ⚠️ 与 `decide_room_adoption` 的差别只有一个：**比较的是派生房间号，不是种子** ✓ ——
+///   所以它**先**要求对端报了空间名（否则本机不知道这份报价对应哪个本地空间 ✓，调用点按名匹配）。
+/// ⚠️ 空串（本机这个空间还没有房间号）⇒ `None`（没有可比的东西，⛔ 不猜 ✗）。
+pub(crate) fn decide_space_room_coverage(
+    local_room: &str,
+    local_auto: bool,
+    offers: &[PeerRoomOffer],
+) -> Option<String> {
+    let local = local_room.trim();
+    if !local_auto || local.is_empty() {
+        return None;
+    }
+    let mut custom: Vec<&str> = Vec::new();
+    let mut autos: Vec<&str> = Vec::new();
+    for o in offers {
+        let r = o.room.trim();
+        if r.is_empty() || r == local {
+            continue;
+        }
+        let bucket = if o.auto { &mut autos } else { &mut custom };
+        if !bucket.contains(&r) {
+            bucket.push(r);
+        }
+    }
+    if custom.len() > 1 {
+        return None;
+    }
+    if let Some(only) = custom.first() {
+        return Some((*only).to_string());
+    }
+    if autos.is_empty() {
+        return None;
+    }
+    // 全是自动的 ⇒ 确定性取最小者（含本地）⇒ 两边各自算一遍会得到同一个值 ✓。
+    let mut best = local;
+    for r in autos {
+        if r < best {
+            best = r;
+        }
+    }
+    if best == local {
+        None
+    } else {
+        Some(best.to_string())
+    }
+}
+
+/// ⭐⭐ **2026-10-28（owner 拍 R209-B）**：**按对端的派生房间号逐空间覆盖**（幂等）。
+///
+/// ## 做什么
+/// 对**本机每一个个人空间**：按**空间名**去对端公告里找报价（`hub_spaces` ＋ `hub_space_names`
+/// ＋ `hub_space_kinds` 三格按 1:1 对齐才算 ✓），用 [`decide_space_room_coverage`] 定一个结论，
+/// 有结论就写进 `mesh_room_cover:<ws_id>`（`sync::set_room_cover` ✓）。
+/// ⇒ 之后 `sync::mesh_scope_at`（窗口/公告/拉取**唯一**的解析处 ✓）就按覆盖值走 ✓
+/// （`window_serve_space` 也是它 ⇒ 不需要在别处再改一遍 ✓）。
+///
+/// ## 三条纪律（每一条都有判据钉着）
+/// ① ⛔ **本机组名是用户设的 ⇒ 一个字节都不改** ✗（`MESH_ROOM_AUTO_KEY != "1"` ⇒ 直接返回）；
+/// ② ⛔ **只认"个人空间"的报价** ✗（`hub_space_kinds[i] == "personal"`；团队空间那一格是服务器上的
+///    组织空间 id，拿它覆盖个人空间是串档 ✓ —— 不知道类别就不采用，零风险那一侧）；
+/// ③ **以读到的公告为唯一依据** ✗（⛔ 不自己分配房间号、⛔ 不改对端 ✓）；写库只写**覆盖那一格** ✓。
+///
+/// ⚠️ 读路径**不写库**那条老规矩的例外说明：本函数**不是**读路径（它是发现循环里的一步，与
+///   `maybe_adopt_peer_room` 同一位置 ✓），且它只在"有结论且结论不同"时写 ✓（幂等 ✓）。
+pub(crate) fn maybe_cover_peer_spaces(app: &tauri::AppHandle, state: &LanState, now: i64) {
+    use tauri::Manager;
+    // ① 本机组名是自动的才允许被覆盖（用户设的永远不动 ✓）。
+    {
+        let db = app.state::<Db>();
+        let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+        let auto = crate::sync::get_meta_state(&c, crate::sync::MESH_ROOM_AUTO_KEY).as_deref() == Some("1");
+        if !auto {
+            return;
+        }
+    }
+    // ② 对端报价（只收"局域网可达 ＋ 报了名字和类别 ＋ 类别＝personal"的那些 ✓）。
+    //    ⚠️ 用 `observed_all()` 而**不是** `peers()`：理由与 `maybe_adopt_peer_room` 逐字相同 ✓
+    //      （发现层还没启用时 `peers()` 恒空，而第一次启用**之前**就可能已经收到公告了 ✓）。
+    let mut offers: Vec<(String, PeerRoomOffer)> = Vec::new();
+    for p in state.observed_all() {
+        if now.saturating_sub(p.seen_at_ms) > lan::PEER_TTL_MS {
+            continue;
+        }
+        let a = &p.announce;
+        let base = a.hub_base.as_deref().unwrap_or("").trim();
+        if !lan::is_lan_base(base) {
+            continue;
+        }
+        if a.hub_spaces.is_empty() || a.hub_spaces.len() != a.hub_space_names.len() {
+            // 对不齐 ⇒ 不知道哪一格叫什么 ⇒ 不采用（⛔ 不错配 ✗）。
+            continue;
+        }
+        for (i, room) in a.hub_spaces.iter().enumerate() {
+            let room = room.trim();
+            let name = a.hub_space_names[i].trim();
+            let kind = a.hub_space_kinds.get(i).map(|k| k.trim()).unwrap_or("");
+            if room.is_empty() || name.is_empty() || kind != "personal" {
+                continue;
+            }
+            offers.push((
+                name.to_string(),
+                PeerRoomOffer {
+                    room: room.to_string(),
+                    auto: a.room_auto,
+                },
+            ));
+        }
+    }
+    if offers.is_empty() {
+        return;
+    }
+    let db = app.state::<Db>();
+    let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = cover_spaces_from_offers(&c, &offers);
+}
+
+/// [`maybe_cover_peer_spaces`] 的**可测那一半**：拿到 `(空间名, 报价)` ⇒ 逐空间决定并写覆盖。
+///
+/// 为什么拆出来（与 `decide_room_adoption`／`mesh_scope_at` 同一手法 ✓）：命令/进程那一层拿的是
+/// `AppHandle` ⇒ 单测跑不起来 ✗ ⇒ 真正"写哪一格、写成什么"的口径就会**判据够不着** ✓。
+///
+/// 返回**真正改了几个空间**（幂等：再跑一次 ⇒ `0` ✓；判据直接钉这条）。
+pub(crate) fn cover_spaces_from_offers(
+    c: &rusqlite::Connection,
+    offers: &[(String, PeerRoomOffer)],
+) -> usize {
+    if offers.is_empty() {
+        return 0;
+    }
+    let spaces: Vec<(String, String)> = {
+        let mut stmt = match c.prepare(
+            "SELECT p.ws_id, COALESCE(w.name, '')
+             FROM meta.sync_profiles p
+             JOIN meta.workspaces w ON w.id = p.ws_id AND w.deleted_at IS NULL
+             WHERE p.space_id = ''
+             ORDER BY p.ws_id",
+        ) {
+            Ok(s) => s,
+            Err(_) => return 0,
+        };
+        // ⚠️ 必须先落到一个 `let` 上再当块尾表达式 ✗ —— 直接 `match stmt.query_map(...)` 当尾巴
+        //   会被 E0597（`stmt` 活得不够久：临时值在块尾析构时还借着 `stmt` ✓）。
+        let rows = match stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect::<Vec<_>>(),
+            Err(_) => return 0,
+        };
+        rows
+    };
+    // ⚠️ 本机组名是不是自动的**再读一次** ✓：`cover_spaces_from_offers` 也可能被别的入口调
+    //   （判据直接喂它 ✓）⇒ 这条闸放在**写之前**，而不是只在 `maybe_cover_peer_spaces` 的门里 ✓。
+    let auto = crate::sync::get_meta_state(c, crate::sync::MESH_ROOM_AUTO_KEY).as_deref() == Some("1");
+    if !auto {
+        return 0;
+    }
+    let mut adopted = 0usize;
+    for (ws, name) in spaces {
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let local_room = window_serve_space(c, "", &ws);
+        let mine: Vec<PeerRoomOffer> = offers
+            .iter()
+            .filter(|(n, _)| crate::mesh_merge_ledger::same_space_name_by_trim(n, name))
+            .map(|(_, o)| o.clone())
+            .collect();
+        let Some(next) = decide_space_room_coverage(&local_room, true, &mine) else {
+            continue;
+        };
+        if let Err(e) = crate::sync::set_room_cover(c, &ws, Some(&next)) {
+            eprintln!("[mesh] 采用对端派生房间号失败（这个空间继续用本机派生的）：{e}");
+            continue;
+        }
+        adopted += 1;
+        let short: String = next.chars().take(8).collect();
+        eprintln!(
+            "[mesh] 已按对端的**派生房间号**覆盖这个空间（{short}…）⇒ 下一轮起在这个房间见面 ✓"
+        );
+    }
+    adopted
 }
 
 /// ⭐ **2026-10-27（owner「go」）**：**局域网读数变没变**的指纹（纯函数 ⇒ 判据直接喂值）。
@@ -746,10 +955,14 @@ pub(crate) fn announces_for_this_round(
             .unwrap_or_default(),
         Err(_) => Vec::new(),
     };
-    // ⭐⭐ **2026-10-26（移动端局域网同步）**：本机**同步组名**每轮读一次 ✓（与短标识/公钥同一手法 ✓）。
-    //   ⚠️ 它是**设备级事实**（`mesh_room` 的空空间那一格 ✓）⇒ 所有公告报同一个值 ✓（两台设备用同一个种子
-    //   才能派生出同一批子房间号 ✓）。⛔ 读路径**不写**库 ✓；空串 ⇒ 公告里如实留空（老对端/还没配 ✓）。
-    let room = crate::mesh::mesh_room_device(c).unwrap_or_default();
+    // ⭐⭐ **2026-10-28（owner 拍 R209-B）：⛔ 本机同步组名不再进广播** ✗ ——
+    //   原来这里每轮读一次 `mesh_room` 并填进 `a.room`；那一格是**设备级种子**
+    //   （所有个人空间的子房间号都由它派生）⇒ 发一次等于把"以后每个空间会叫什么"的种子送出去 ✓。
+    //   ⇒ 现在**一个值都不发** ✓（`LanAnnounce.room` 新版本恒空、编码时整格省略 ✓）；
+    //   对端改从公告里的**派生房间号**（`hub_spaces` 那几格 ✓）**逐空间覆盖**
+    //   （`decide_space_room_coverage` ／ `maybe_cover_peer_spaces` ✓）。
+    //   只发一个**布尔**："本机组名是不是自动生成的"（`room_auto` ✓ —— ⛔ 不含任何值 ✗）。
+    let room_auto = crate::sync::get_meta_state(c, crate::sync::MESH_ROOM_AUTO_KEY).as_deref() == Some("1");
     let mut out = announces_for_with_mesh(
         local_device_id,
         device_name,
@@ -760,7 +973,9 @@ pub(crate) fn announces_for_this_round(
         &space_meta,
     );
     for a in &mut out {
-        a.room = room.trim().to_string();
+        // ⚠️ 不留任何兼容尾巴：`room` 一律空 ✓（⛔ 别"只对老对端发"✗ —— 那还是发 ✓）。
+        a.room = String::new();
+        a.room_auto = room_auto;
     }
     out
 }
@@ -831,6 +1046,8 @@ pub fn announces_for_with_mesh(
                 hub_space_encrypted: Vec::new(),
                 // ⭐ 2026-10-26：组名由调用点统一填（与 `pubkey` 同一手法 ✓）。
                 room: String::new(),
+                // ⭐ R209-B：兜底分支同样不报组名（由调用点填"自动与否"那一格 ✓）。
+                room_auto: false,
                 hub_space_names: if space_name.is_empty() {
                     Vec::new()
                 } else {
@@ -1005,6 +1222,11 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             //   ⚠️ 桌面：`mesh_room_auto` 只可能由 `mesh_ensure_defaults` 写（用户进入该页时才调）
             //      ⇒ 没进过那一页的桌面依旧不受影响 ✓。
             maybe_adopt_peer_room(&app2, state, now);
+            // ⭐⭐ **2026-10-28（owner 拍 R209-B）**：⭐ 组名不再上广播 ⇒ 本机改从对端公告里的
+            //   **派生房间号**逐空间覆盖 ✓（`decide_space_room_coverage` 纯函数 ＋ 判据 ✓）。
+            //   ⚠️ 放在老那条**之后** ✓：老对端仍会报种子，走上面那条路就已经对齐（而且它会把
+            //   `mesh_room_auto` 置 0 ⇒ 本函数下一轮直接跳过 ✓）—— 两条路不会互相打架 ✓。
+            maybe_cover_peer_spaces(&app2, state, now);
             // ★ 丙-③-b-2b：先看哪几个空间开了网格 ⇒ ① 把窗口确保跑起来 ② 拿**实际绑上的地址**
             //   当公告基址。⚠️ 窗口起不来的那一个**不宣告**（宁可这一轮不露面，也不报一个拉不到的地址）。
             // ⚠️ 发现层开关用的是 `meshed`（**配了**网格的空间），不是 `mesh_bases`（**宣告得出去**的）：
@@ -1519,10 +1741,15 @@ mod mesh_serve_space_tests {
     }
 
     #[test]
-    fn the_announce_carries_the_device_level_room() {
-        // ⭐ 2026-10-26（移动端局域网同步）：房间号（同步组名）必须**真的进公告** ✗ ——
-        //   手机靠这一格采用对端的组名；它若没进线格式，手机上永远只能用自己的 `auto-…`，
-        //   两台设备派生出的子房间号就永远对不上（现象＝"看得到对方、但一条也拉不动"）。
+    fn the_announce_no_longer_carries_the_device_level_room() {
+        // ⭐⭐ **2026-10-28（owner 拍 R209-B）：这一条被**反转**了** ✗ ——
+        //   2026-10-26 那一版要求"组名必须逐字进公告"（手机靠它采用对端种子 ✓）；
+        //   owner 2026-10-28 拍 B：⛔ 设备级组名不上广播 ✗，改为"对端从公告里的**派生房间号**
+        //   逐空间覆盖"（见 `space_room_coverage_tests` ✓）。
+        //   ⭐ 按本仓 R192「换对象不删断言」✗：⛔ 断言没删 ✓，钉成**新事实** ✓：
+        //     · 那一格**恒空**（⛔ 不许"只对老对端发"✗ —— 那还是发 ✓）；
+        //     · 手机自动对齐换的**载体仍在公告里**：`hub_spaces` 就是派生房间号 ✓；
+        //     · 只多一个可选的布尔（`room_auto`）＋ ⛔ 不升 `WIRE_VERSION` ✓。
         let profiles = vec![(String::new(), String::new(), "ws-personal".to_string())];
         let c = fixture();
         c.execute(
@@ -1535,7 +1762,22 @@ mod mesh_serve_space_tests {
             vec![(window_serve_space(&c, "", "ws-personal"), "http://192.168.1.5:8788".to_string())];
         let got = announces_for_this_round(&c, "dev-a", "本机", &profiles, &bases);
         assert_eq!(got.len(), 1, "前提：开了网格的个人空间要发言（{got:#?}）");
-        assert_eq!(got[0].room, "room-123", "同步组名必须逐字进公告（手机靠它对齐子房间号）");
+        assert!(
+            got[0].room.is_empty(),
+            "⛔ 设备级组名不许再进公告（R209-B：这一格现在恒空 ✓）"
+        );
+        let json = crate::lan::encode_announce(&got[0]).expect("编码不失败");
+        assert!(
+            !json.contains("room-123"),
+            "⛔ 广播报文里出现了设备级 room 原值：{json}"
+        );
+        // ⭐ 自动对齐要的"派生房间号"仍在（它就是要拿去当协议空间的那一格 ✓）
+        assert_eq!(
+            got[0].hub_spaces,
+            vec![crate::sync::personal_room_for("room-123", "测试")],
+            "派生房间号必须还在公告里（手机靠它逐空间覆盖 ✓）"
+        );
+        assert!(!got[0].room_auto, "手填/迁移来的种子 ⇒ 自动那一格 false ✓");
     }
 
     #[test]
@@ -1735,6 +1977,7 @@ mod tests {
                 trust_ask: String::new(),
                 trust_secret: String::new(),
                 v: WIRE_VERSION,
+                room_auto: false,
                 device_id: device.to_string(),
                 device_name: device.to_string(),
                 short_id: "T3ST1".into(),
@@ -2384,6 +2627,7 @@ mod short_id_tests {
                 trust_ask: ask.to_string(),
                 trust_secret: String::new(),
                 v: crate::lan::WIRE_VERSION,
+                room_auto: false,
                 device_id: device.to_string(),
                 device_name: device.to_string(),
                 short_id: "T3ST1".into(),
@@ -2555,3 +2799,260 @@ mod room_adoption_tests {
     }
 }
 
+
+/// ⭐⭐ **2026-10-28（owner 拍 R209-B）**：**广播不带设备级组名，改从对端派生房间号逐空间覆盖**。
+///
+/// ## 本组钉的三条（R209-B 的判据 ①②③）
+/// ① **编码层**：广播报文里**不再出现设备级组名原值**（连那一格都不出现 ✓）；
+/// ② **自动对齐仍在**：本机（自动组名）拿对端公告里的**派生房间号**覆盖自己的空间 ⇒
+///    `window_serve_space`（窗口/公告/拉取**唯一**解析处 ✓）立刻变成那个房间号 ⇒
+///    ⭐ 用户什么都不用填，两边又在同一个房间见面 ✓；
+/// ③ **旧版对端兼容**：老公告（`room` 仍有值）照常读 ✓、仍能驱动覆盖 ✓；
+///    **老对端读我们的公告**也照常（线格式只少了可选的 `room`、多了可选 `room_auto` ✓）。
+///
+/// ⚠️ 为什么判据落在**函数级**而不是"起两栈" ✗：本机起两个发现实体要绑两个 UDP 端口，
+///   而 `LAN_PORT` 是常量（`lan.rs` 里那段探针记录过：第二次绑必然失败 ✓）⇒ 两栈判据**本机造不出来**
+///   ✓。这里是能真跑的那一层：**编码** ＋ **DB 里的解析结果**（＝窗口/拉取吃的那一份 ✓）。
+///   真机双端（手机 ↔ 电脑）仍未验收 —— 如实记在提交说明里 ✓。
+#[cfg(test)]
+mod space_room_coverage_tests {
+    use super::*;
+
+    fn fixture() -> rusqlite::Connection {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (
+                 id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
+                 kind TEXT NOT NULL DEFAULT '', deleted_at INTEGER
+             );
+             INSERT INTO meta.workspaces (id, name, kind) VALUES
+                 ('ws-work', '工作', 'personal'),
+                 ('ws-two', '第二个', 'personal'),
+                 ('ws-team', '团队', 'team');
+             INSERT INTO meta.sync_profiles (ws_id, space_id) VALUES
+                 ('ws-work', ''), ('ws-two', ''), ('ws-team', 'team-space');
+             INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-a');",
+        )
+        .unwrap();
+        c
+    }
+
+    fn set_seed(c: &rusqlite::Connection, room: &str, auto: bool) {
+        crate::mesh::set_mesh_room_device(c, Some(room)).unwrap();
+        crate::sync::set_meta_state(c, crate::sync::MESH_ROOM_AUTO_KEY, if auto { "1" } else { "0" })
+            .unwrap();
+    }
+
+    fn offer(room: &str, auto: bool) -> PeerRoomOffer {
+        PeerRoomOffer {
+            room: room.to_string(),
+            auto,
+        }
+    }
+
+    fn profiles() -> Vec<(String, String, String)> {
+        vec![
+            (String::new(), String::new(), "ws-work".to_string()),
+            (String::new(), String::new(), "ws-two".to_string()),
+        ]
+    }
+
+    /// 公告/窗口要的 `mesh_bases` 键是**解析后的房间号**（与 `window_serve_space` 同一把尺 ✓）。
+    fn bases(c: &rusqlite::Connection) -> Vec<(String, String)> {
+        profiles()
+            .iter()
+            .map(|(_, _, ws)| (window_serve_space(c, "", ws), "http://192.168.1.5:8788".to_string()))
+            .collect()
+    }
+
+    // ── ① 编码层：组名原值不上广播 ─────────────────────────────────────────────
+    #[test]
+    fn the_device_seed_never_reaches_the_wire_and_only_the_auto_flag_does() {
+        let c = fixture();
+        // 用户设的种子（最容易"顺手填回去"的那一档 ✓）
+        set_seed(&c, "distinct-user-seed-R209B", false);
+        let got = announces_for_this_round(&c, "dev-a", "本机", &profiles(), &bases(&c));
+        assert_eq!(got.len(), 2, "夹具前提：两个个人空间各一条公告");
+        for a in &got {
+            assert!(a.room.is_empty(), "⛔ 设备级组名不许再进公告（这一格现在恒空）");
+            assert!(!a.room_auto, "用户设的种子 ⇒ room_auto=false");
+            let json = crate::lan::encode_announce(a).expect("编码不失败");
+            assert!(
+                !json.contains("distinct-user-seed-R209B"),
+                "⛔ 广播报文里出现了设备级 room 原值：{json}"
+            );
+            assert!(
+                !json.contains("\"room\""),
+                "空那一格连**字段名**都不该出现（否则就是「以后还会填回去」的形状）：{json}"
+            );
+            assert_eq!(a.v, crate::lan::WIRE_VERSION, "⛔ 不升 WIRE_VERSION");
+        }
+
+        // 自动档：只多发一个布尔，⛔ 不含值
+        set_seed(&c, "auto-b81746df0bdb701b", true);
+        let got = announces_for_this_round(&c, "dev-a", "本机", &profiles(), &bases(&c));
+        for a in &got {
+            let json = crate::lan::encode_announce(a).expect("编码不失败");
+            assert!(!json.contains("auto-b81746df0bdb701b"), "⛔ 自动组名的值也不许上广播：{json}");
+            assert!(a.room_auto, "自动档要如实报（对端据此决定能不能跟）");
+            assert!(json.contains("\"room_auto\":true"), "那一格要真的进线格式：{json}");
+        }
+    }
+
+    // ── ② 自动对齐：用对端的派生房间号覆盖本地空间 ─────────────────────────────
+    #[test]
+    fn a_peer_derived_room_covers_this_space_so_both_sides_meet_again() {
+        let c = fixture();
+        set_seed(&c, "auto-aa", true);
+        let before = window_serve_space(&c, "", "ws-work");
+        // 桌面那台「用户设的种子」⇒ 它的公告里 `hub_spaces` 就是派生房间号（老版本公告同样有这一格 ✓）。
+        let desktop_room = crate::sync::personal_room_for("Tashan1973,./", "工作");
+        assert_ne!(before, desktop_room, "夹具前提：两台本来对不上（各派生各的）");
+
+        let offers = vec![("工作".to_string(), offer(&desktop_room, false))];
+        assert_eq!(cover_spaces_from_offers(&c, &offers), 1, "应覆盖**一个**空间");
+        assert_eq!(
+            window_serve_space(&c, "", "ws-work"),
+            desktop_room,
+            "⭐ 自动对齐仍在：手机不用填任何东西，窗口/公告/拉取都改到这个房间号"
+        );
+        // 幂等：已经对齐 ⇒ 不再写库
+        assert_eq!(
+            cover_spaces_from_offers(&c, &offers),
+            0,
+            "已经对齐 ⇒ ⛔ 不再写库（每轮都写＝永远在动）"
+        );
+        // ⭐ 逐空间：另一个名字没被报价 ⇒ 一个字不动；团队空间更不许碰
+        assert!(
+            crate::sync::room_cover_for(&c, "ws-two").is_none(),
+            "⛔ 名字没对上 ⇒ 不许覆盖别的空间"
+        );
+        assert_eq!(window_serve_space(&c, "", "ws-two"), crate::sync::personal_room_for("auto-aa", "第二个"));
+        assert!(crate::sync::room_cover_for(&c, "ws-team").is_none(), "⛔ 团队空间不参与");
+        assert_eq!(window_serve_space(&c, "", "ws-team"), "team-space");
+        // 公告里报的必须是覆盖后的房间号（否则对端还是找不到我）
+        let got = announces_for_this_round(&c, "dev-a", "本机", &profiles(), &bases(&c));
+        assert!(
+            got.iter().any(|a| a.hub_spaces.iter().any(|s| s == &desktop_room)),
+            "公告必须报覆盖后的房间号：{:?}",
+            got.iter().map(|a| a.hub_spaces.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_user_set_seed_is_never_covered() {
+        let c = fixture();
+        set_seed(&c, "my-group", false);
+        let before = window_serve_space(&c, "", "ws-work");
+        let offers = vec![("工作".to_string(), offer("11111111111111111111111111111111", true))];
+        assert_eq!(
+            cover_spaces_from_offers(&c, &offers),
+            0,
+            "⛔ 用户/桌面设过的组名永不被对端公告改掉"
+        );
+        assert_eq!(window_serve_space(&c, "", "ws-work"), before, "一个字节都不许变");
+    }
+
+    #[test]
+    fn dropping_the_covers_returns_to_the_locally_derived_room() {
+        // 设备级种子换了一族（老对端兼容那条路 `maybe_adopt_peer_room` 会调它）⇒ 覆盖必须作废 ✓
+        let c = fixture();
+        set_seed(&c, "auto-aa", true);
+        let derived = crate::sync::personal_room_for("auto-aa", "工作");
+        let offers = vec![("工作".to_string(), offer("22222222222222222222222222222222", false))];
+        assert_eq!(cover_spaces_from_offers(&c, &offers), 1);
+        assert_ne!(window_serve_space(&c, "", "ws-work"), derived);
+        assert_eq!(crate::sync::clear_room_covers(&c).unwrap(), 1, "只清覆盖那一行");
+        assert_eq!(window_serve_space(&c, "", "ws-work"), derived, "回到按本机种子派生");
+    }
+
+    // ── ② 的纯函数规则（与 decide_room_adoption 同一套语义） ─────────────────
+    #[test]
+    fn a_single_configured_peer_room_wins() {
+        assert_eq!(
+            decide_space_room_coverage("2222", true, &[offer("1111", false)]),
+            Some("1111".to_string())
+        );
+        // 配好的 ＋ 自动的 ⇒ 仍取那唯一一个"配好的"
+        assert_eq!(
+            decide_space_room_coverage("3333", true, &[offer("1111", false), offer("2222", true)]),
+            Some("1111".to_string())
+        );
+    }
+
+    #[test]
+    fn two_different_configured_peer_rooms_are_ambiguous_and_not_guessed() {
+        assert_eq!(
+            decide_space_room_coverage("3333", true, &[offer("1111", false), offer("2222", false)]),
+            None,
+            "两个不同的用户设值 ⇒ 不知道跟哪个 ⇒ ⛔ 不许挑一个"
+        );
+    }
+
+    #[test]
+    fn two_auto_rooms_converge_to_the_same_minimum() {
+        // 两台全新设备各自自动 ⇒ 两边各自算一遍必须得到**同一个**值（⛔ 不许来回摆 ✗）
+        assert_eq!(
+            decide_space_room_coverage("2222", true, &[offer("1111", true)]),
+            Some("1111".to_string())
+        );
+        // 反方向：本机已经是 min ⇒ **不动**（两边算出来是同一个结论：都用 "1111" ✓）
+        assert_eq!(
+            decide_space_room_coverage("1111", true, &[offer("2222", true)]),
+            None,
+            "本机已经是 min ⇒ ⛔ 不改（两边最终都停在同一个值 ✓）"
+        );
+        // 收敛之后 ⇒ 不再改（幂等 ✓）
+        assert_eq!(decide_space_room_coverage("1111", true, &[offer("1111", true)]), None);
+    }
+
+    #[test]
+    fn nothing_is_guessed_without_a_local_room_or_a_peer() {
+        assert_eq!(decide_space_room_coverage("", true, &[offer("1111", false)]), None);
+        assert_eq!(decide_space_room_coverage("1111", true, &[]), None);
+        assert_eq!(decide_space_room_coverage("1111", true, &[offer("  ", false)]), None);
+    }
+
+    // ── ③ 旧版对端兼容：老公告仍能驱动覆盖 ＋ 老结构仍读得懂我们的公告 ─────────
+    #[test]
+    fn an_old_style_announce_still_drives_the_cover() {
+        let c = fixture();
+        set_seed(&c, "auto-aa", true);
+        // 老版本对端的公告：`room` 里**仍然有种子**（老版本就是发的），`room_auto` 那一格不存在 ✓
+        let old_json = r#"{"v":1,"device_id":"dev-old","fp":"dev-old","hub_base":"http://192.168.1.9:8788","hub_spaces":["abcdefabcdefabcdefabcdefabcdefab"],"hub_space_names":["工作"],"hub_space_kinds":["personal"],"room":"legacy-group-name"}"#;
+        let a = crate::lan::decode_announce(old_json).expect("老公告必须照常收下（⛔ 不许当恶意 ✗）");
+        assert!(!a.room_auto, "老对端没报自动标记 ⇒ 当作「用户设的」（零风险那一侧）");
+        // 新代码**只用** hub_spaces + 名字 + 类别 来报价（⛔ 不再读它报的 room 去采用种子 ✗）
+        let offers: Vec<(String, PeerRoomOffer)> = a
+            .hub_space_names
+            .iter()
+            .enumerate()
+            .filter(|(i, n)| {
+                a.hub_space_kinds.get(*i).map(|k| k.trim()) == Some("personal") && !n.trim().is_empty()
+            })
+            .map(|(i, n)| {
+                (
+                    n.trim().to_string(),
+                    PeerRoomOffer {
+                        room: a.hub_spaces[i].trim().to_string(),
+                        auto: a.room_auto,
+                    },
+                )
+            })
+            .collect();
+        assert_eq!(cover_spaces_from_offers(&c, &offers), 1, "老对端也能把房间号对齐过去");
+        assert_eq!(
+            window_serve_space(&c, "", "ws-work"),
+            "abcdefabcdefabcdefabcdefabcdefab",
+            "⭐ 旧版对端兼容不破：老公告里的派生房间号照样能对上"
+        );
+    }
+}

@@ -105,6 +105,11 @@ pub const WIRE_VERSION: u32 = 1;
 /// 单条公告的**字节上限**。UDP 报文本来就不该大；超过一律丢弃（防被灌爆）。
 pub const MAX_ANNOUNCE_BYTES: usize = 8 * 1024;
 
+/// `serde(skip_serializing_if)` 用：`false` 不写进线格式（缺省＝`false`，老对端不加这一格也等价 ✓）。
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 /// 一条**公告**：某台设备在这个网段里喊「我是谁 ＋ 我替哪个服务端代言（可选）」。
 ///
 /// `hub_base` / `hub_spaces` 是**代言**这一侧的字段：常开的那台设备广播「本网段的服务端在
@@ -153,10 +158,11 @@ pub struct LanAnnounce {
     /// ⚠️ `#[serde(default)]` ⇒ 老对端不发也收得下；⛔ 不升 `WIRE_VERSION`。
     #[serde(default)]
     pub hub_space_encrypted: Vec<bool>,
-    /// ⭐⭐ **2026-10-26（移动端局域网同步）**：⭐ 本机的**同步组名**（内部名 `mesh_room`；个人空间
-    /// 子房间号的种子 ✓，见 `sync::personal_room_for`）✗ —— ⭐ 随公告发出去，**不是秘密** ✓
-    /// （`docs/plans/2026-10-11-one-click-trust-decision.md` §6.3 已定口径：「配对暗号」只是
-    /// **空间在广播上的名字** ✓，⛔ 不当凭证 ✗；真正的凭证是设备公钥/签名 ✓）。
+    /// ⭐⭐ **2026-10-26（移动端局域网同步）· 已按 2026-10-28 R209-B 收窄**：⭐ 本机的**同步组名**
+    /// （内部名 `mesh_room`；个人空间子房间号的种子 ✓，见 `sync::personal_room_for`）✗。
+    /// ⚠️ **历史（不删）**：2026-10-26 起它曾**随公告发出去**，当时的依据是
+    /// 「`docs/plans/2026-10-11-one-click-trust-decision.md` §6.3：配对暗号只是**空间在广播上的名字**，
+    /// ⛔ 不当凭证」✓ —— ⭐ 但 owner **2026-10-28 拍 B** 把"名字"这一半也收回了（见下面那节 ✓）。
     ///
     /// ## 为什么要有这一格（移动端真机场景）
     /// 桌面版的「同步组名」是用户填的（owner 机器上是某个具体值）✗ —— 手机**没有任何界面**
@@ -165,11 +171,32 @@ pub struct LanAnnounce {
     /// （判据与纯函数见 `lan_state::decide_room_adoption`）⇒ ⭐ 用户不用在手机上抄一串名字 ✓，
     /// 同时**协议不变宽**：申请拉取仍然要过设备签名/配对名单那一关 ✓（房间号只是"在哪见面"✓）。
     ///
+    /// ## ⛔ 2026-10-28（owner 拍 **R209-B**）：**这一格不再广播** ✗
+    /// 理由：它是**设备级**组名（所有个人空间共用同一个种子）⇒ 发一次等于把"以后新建的每个空间
+    /// 会叫什么房间号"的种子一起送出去；而它原本只在库里、从不上网，用户也可能把它当口令复用
+    /// ⇒ owner 拍 B：**不上广播种子**，改为「对端从公告里的**派生房间号**逐空间覆盖」
+    /// （见 `lan_state::decide_space_room_coverage` ＋ `sync::room_cover_for` ✓）。
+    ///
+    /// ⚠️ 这一格**保留仅为读** ✓：老版本对端仍会报它（`#[serde(default)]` ⇒ 收得下 ✓）——
+    ///   新代码用它的唯一去处是**老对端兼容**那条路（`lan_state::maybe_adopt_peer_room` ✓）。
+    /// ⭐ 新版本**永远留空** ⇒ 编码时 `skip_serializing_if` 连那一格都不出现 ✓
+    ///   ⇒ 判据「广播报文里不再出现设备级 room 原值」是**机判**的 ✓。
     /// ⚠️ `#[serde(default)]` ＋ 本结构**没有** `deny_unknown_fields` ⇒ 老对端收发都兼容 ✓
     /// ⇒ ⛔ **不升 `WIRE_VERSION`** ✗（与 `short_id`／`trust_ask`／`pubkey` 同一个手法 ✓）。
-    /// ⚠️ 空串 ＝ 这台没报组名（老对端／还没配）⇒ 对端**如实**读成"不知道" ✓，⛔ 不猜 ✗。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub room: String,
+    /// ⭐⭐ **2026-10-28（owner 拍 R209-B）**：⭐ 本机**同步组名是不是自动生成的那一档**（`mesh_room_auto=1`）✗
+    /// —— ⭐ **只是一个布尔** ✓，⛔ 不含组名／种子／任何值 ✗（判据：广播里不出现 room 原值 ✓）。
+    ///
+    /// ## 它为什么必须存在（取代原来"看 room 是不是 `auto-` 前缀"）
+    /// 原来对端据此判"这一位的组名是自动的（可以跟）/ 用户设的（别动）"（见 `decide_room_adoption` ✓）。
+    /// 组名不上广播之后，对端**看不到值**了 ⇒ 但"能不能跟"这件事仍要知道 ✓：
+    /// · `true` ＝ 我这串是自动生成的 ⇒ 对端**可以**按确定性规则跟我对齐 ✓；
+    /// · `false`（缺省）＝ 用户/桌面设的 ⇒ 对端**只能**跟着我，⛔ 不许把我拉走 ✗。
+    /// ⚠️ 老对端不发这一格 ⇒ `false` ＝ **当作"用户设的"** ✓ —— 这是**零风险**的那一侧
+    ///   （它只让新端更保守：去跟对方，而不是让对方跟自己）✓；⛔ 不升 `WIRE_VERSION`、⛔ 不当恶意 ✗。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub room_auto: bool,
     /// 身份指纹。★ **＝ `device_id`**（owner 2026-09-25 拍板，B 片施工单 §8.3）：
     /// 填的是**应用级事实**（设备标识），**不是**"设备密钥材料的指纹" ——
     /// 它要挡的是**掉包**，不是"同一台设备换了钥匙"。语义不许悄悄改（真需要后者时另立字段）。
@@ -223,6 +250,7 @@ impl Default for LanAnnounce {
             hub_space_names: Vec::new(),
             hub_space_encrypted: Vec::new(),
             room: String::new(),
+            room_auto: false,
             fp: String::new(),
             trust_ask: String::new(),
             trust_secret: String::new(),
@@ -539,9 +567,11 @@ pub fn announce_for_own_hub(
         },
         // 纯函数拿不到"这个空间是不是加密的" ⇒ 留空（由调用点在之后填，与 pubkey 同一手法）。
         hub_space_encrypted: Vec::new(),
-        // ⭐ 2026-10-26：组名同样是**设备级事实** ⇒ 纯函数留空，由 `lan_state::announces_for_this_round`
-        //   **一轮读一次**再统一填 ✓（⛔ 不在这里碰库 ✗，与 `pubkey`／`short_id` 同一手法 ✓）。
+        // ⛔ **2026-10-28（R209-B）**：组名**永远不进公告** ⇒ 纯函数就留空 ✓、调用点也**不再填** ✓
+        //   （"只发一个布尔"那一格 `room_auto` 由 `lan_state::announces_for_this_round` 填 ✓）。
         room: String::new(),
+        // ⭐ 2026-10-28（R209-B）：纯函数拿不到"组名是不是自动的" ⇒ 留 `false`，由调用点填 ✓。
+        room_auto: false,
         // ★ 见上面那段：`fp` ＝ 应用级事实 `device_id`（B 片施工单 §8.3 的收口）。
         fp: dev.to_string(),
     })
@@ -1228,6 +1258,7 @@ mod tests {
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
                 room: String::new(),
+                room_auto: false,
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -1379,6 +1410,7 @@ mod tests {
             hub_space_names: Vec::new(),
             hub_space_encrypted: Vec::new(),
             room: String::new(),
+            room_auto: false,
             fp: "fp".into(),
             pubkey: String::new(),
         }
@@ -2190,6 +2222,7 @@ mod multi_space_peer_table_tests {
             hub_space_names: vec![name.to_string()],
             hub_space_encrypted: Vec::new(),
             room: String::new(),
+            room_auto: false,
             hub_space_kinds: vec![kind.to_string()],
             fp: device.to_string(),
         }
@@ -2377,3 +2410,98 @@ mod short_id_wire_tests {
     }
 }
 
+
+/// ⭐⭐ **2026-10-28（owner 拍 R209-B）**：**线格式**上的三条判据 ——
+/// ① 新公告**不再带设备级组名原值**（连字段名都不出现 ✓）；② 只多一个**布尔**（自动与否）；
+/// ③ **老对端兼容不破**（老公告照常读 ✓／我们发的东西老结构照样解得开 ✓）。
+///
+/// ⚠️ 这是**编码层**判据（R209-B 判据①）：它挡的是"改着改着又把种子顺手填回去"
+/// （那一格曾经是 `a.room = room.to_string()` 的写法 ✓）。行为级（自动对齐）在
+/// `lan_state::space_room_coverage_tests` ✓。
+#[cfg(test)]
+mod r209b_wire_tests {
+    use super::*;
+
+    /// ① 新发送方：`room` 恒空 ⇒ 线格式里**连这一格都不出现**（`skip_serializing_if` ✓）。
+    #[test]
+    fn a_new_announce_never_carries_a_device_room_value() {
+        let mut a = LanAnnounce::default();
+        a.device_id = "dev-a".into();
+        a.room = String::new();
+        let json = encode_announce(&a).expect("编码不失败");
+        assert!(
+            !json.contains("\"room\""),
+            "⛔ 空 room 连字段名都不该出现在广播里：{json}"
+        );
+        assert!(
+            !json.contains("room_auto"),
+            "`room_auto=false` ⇒ 省略（老对端读到缺省＝false，等价 ✓）：{json}"
+        );
+        let back = decode_announce(&json).expect("自己发的必须解得回来");
+        assert!(back.room.is_empty());
+        assert!(!back.room_auto);
+    }
+
+    /// ② 自动档只多发一个**布尔**，⛔ 不许顺手把种子带上。
+    #[test]
+    fn an_auto_flag_goes_on_the_wire_but_never_the_value() {
+        let mut a = LanAnnounce::default();
+        a.device_id = "dev-a".into();
+        a.room_auto = true;
+        let json = encode_announce(&a).expect("编码不失败");
+        assert!(json.contains("\"room_auto\":true"), "自动与否那一格要真的进线格式：{json}");
+        assert!(
+            !json.contains("\"room\""),
+            "⛔ 自动档也⛔ 不许把种子／组名带上：{json}"
+        );
+        assert_eq!(WIRE_VERSION, 1, "⛔ 不升 WIRE_VERSION（老对端照旧收得下 ✓）");
+    }
+
+    /// ③-a 老对端**仍然会报** `room` ⇒ 新版本必须照单收下（⛔ 不许当恶意／不许拒收 ✗）。
+    #[test]
+    fn a_legacy_announce_that_still_reports_a_room_is_read_verbatim() {
+        let json = r#"{"v":1,"device_id":"dev-old","fp":"dev-old","hub_base":"http://192.168.1.9:8788","hub_spaces":["room-1"],"room":"legacy-group-name"}"#;
+        let a = decode_announce(json).expect("老对端必须照常收下（⛔ 不许当恶意 ✗）");
+        assert_eq!(a.room, "legacy-group-name", "老那一格如实读出来（只用于老对端兼容那条路）");
+        assert!(
+            !a.room_auto,
+            "老对端没报自动标记 ⇒ 当作「用户设的」（⛔ 不是猜，是零风险那一侧 ✓）"
+        );
+        assert_eq!(a.v, WIRE_VERSION);
+    }
+
+    /// ③-b 老对端**读到我们发的**东西：它那套结构只有老字段 ⇒ 必须解析成功，
+    /// 且**路由要用的那几格还在**（`hub_base`／`hub_spaces`／名字）。
+    ///
+    /// ⚠️ 用"只声明老字段的结构"模拟老对端解码器 ✓（serde 默认忽略未知字段 ✓）——
+    ///   这正是今天新旧混跑时的真实形状 ✓。
+    #[test]
+    fn an_old_peer_can_still_parse_our_announce_and_route() {
+        #[derive(serde::Deserialize)]
+        struct OldPeerView {
+            v: u32,
+            device_id: String,
+            hub_base: Option<String>,
+            hub_spaces: Vec<String>,
+            #[serde(default)]
+            hub_space_names: Vec<String>,
+        }
+        let a = announce_for_own_hub(
+            "dev-a",
+            "本机",
+            "T3ST1",
+            "http://192.168.1.5:8788",
+            "room-1",
+            "工作",
+            "personal",
+        )
+        .expect("公告要造得出来");
+        let json = encode_announce(&a).expect("编码不失败");
+        let old: OldPeerView = serde_json::from_str(&json).expect("老对端必须解得开我们发的东西");
+        assert_eq!(old.v, WIRE_VERSION);
+        assert_eq!(old.device_id, "dev-a");
+        assert_eq!(old.hub_base.as_deref(), Some("http://192.168.1.5:8788"), "老对端靠它找得到我");
+        assert_eq!(old.hub_spaces, vec!["room-1".to_string()], "老对端靠它判断我服务哪个空间");
+        assert_eq!(old.hub_space_names, vec!["工作".to_string()], "名字那一格照旧");
+    }
+}

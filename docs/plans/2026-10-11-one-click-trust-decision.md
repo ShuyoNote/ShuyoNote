@@ -162,3 +162,56 @@ owner 2026-10-11 逐字：**「确定：点一下就通」** ⇒ 个人空间配
 · ⚠️ 曾用于论证 2026-10-17 的真机 401（"对面不点就单向"）**不是要撤销那条新口径的理由**：
   它恰好说明"单向"是**预期行为**，不是故障 ✓。
 ```
+
+## 8. ⭐⭐ 2026-10-28 owner 拍 R209-B：**同步组名不再上局域网广播**
+
+> ⚠️ §6.3 那段"配对暗号会随公告发到网段上 ⇒ 它只是名字、不是秘密"是 **2026-10-11 的口径** ✓；
+> 本节是一笔**后来收窄**：⭐ 不是推翻"它不是凭证"（那条仍然成立 ✓），而是 ⛔ **不再把它发出去** ✗
+> （"不是秘密"不等于"该主动广播" —— 那个推理在 2026-10-26 为手机自动对齐用过一次 ✓，owner 2026-10-28 收回 ✓）。
+
+### 8.1 拍的是什么
+
+```text
+⭐ owner 2026-10-28 逐字（台账 R209 行）：⛔ 不把设备级「同步组名」放进局域网广播；
+   改成本机从对端派生房间号做逐空间覆盖。
+⇒ 台账里三个选项，取 **B**：
+   A（现状）每轮把 `LanAnnounce.room` 带上 —— 协议最顺、已真机验证，但种子**上网** ✗；
+   ⭐ B 不上广播种子，改为采用对端**派生房间号**做逐空间覆盖；
+   C 只对手机、且只发首启随机组名。
+```
+
+**为什么 B 能做到而不用动协议**：公告里**本来就有**对端每个个人空间的
+**派生房间号**（`hub_spaces` —— 别人必须知道"去哪个房间见面" ✓）⇒ 对端不需要种子，
+只要拿到"这个空间的房间号"就够了 ✓（种子是**派生它**用的，不是路由用的 ✓）。
+
+### 8.2 落地（哪些函数／判据）
+
+```text
+· 发：`announces_for_this_round` **不再填** `room`（恒空；`skip_serializing_if` ⇒ 线格式里连字段名都不出现 ✓）；
+      只多发一个布尔 `room_auto`（"本机组名是不是自动生成的" —— 对端据此决定能不能跟 ✓，⛔ 不含值 ✗）；
+      ⛔ 不升 `WIRE_VERSION`（`serde(default)` ⇒ 老对端照旧收发 ✓）。
+· 收：`lan_state::decide_space_room_coverage`（纯函数）＋ `cover_spaces_from_offers`（写库那一半）
+      ⇒ 逐空间写 `meta.sync_state.mesh_room_cover:<ws_id>`（`sync::set_room_cover` ✓）；
+      ⭐ `sync::mesh_scope_at`（窗口/公告/拉取**唯一**解析处 ✓）**覆盖优先** ⇒ 一处改、全链路一致 ✓。
+· 兼容：老对端仍会报 `room` ⇒ 老那条 `maybe_adopt_peer_room`／`decide_room_adoption` **原样保留** ✓
+      （它只处理"对端报了种子"的老公告）；新对端不报 ⇒ 走逐空间覆盖 ✓。
+      反过来：老对端读我们的公告，只少一个可选格、多一个可选格 ⇒ 照常解得开 ✓。
+· 清账：用户显式设组名（`mesh_set_config(room=…)`）或设备级种子被采用 ⇒ `clear_room_covers` ✓
+      （⛔ 不许"种子换了、房间号还是旧的" ✗）。
+```
+
+### 8.3 判据（会红的，本机可跑）
+
+```text
+① `lan::r209b_wire_tests::a_new_announce_never_carries_a_device_room_value`（线格式里连 `room` 字段名都没有）
+   ＋ `lan_state::space_room_coverage_tests::the_device_seed_never_reaches_the_wire_and_only_the_auto_flag_does`
+   （用一条**有辨识度的种子**构造公告 ⇒ 报文里不许出现那个串）
+② `lan_state::space_room_coverage_tests::a_peer_derived_room_covers_this_space_so_both_sides_meet_again`
+   （覆盖后 `window_serve_space` **就是**对端的派生房间号 ⇒ 两边又在同一个房间；幂等；团队空间不动）
+③ `lan::r209b_wire_tests::a_legacy_announce_that_still_reports_a_room_is_read_verbatim`
+   ＋ `…::an_old_peer_can_still_parse_our_announce_and_route`（老结构读我们发的东西）
+   ＋ `…::an_old_style_announce_still_drives_the_cover`（老公告仍能驱动覆盖）
+```
+
+⚠️ **仍未验收**：⭐ **真机双端**（手机 ↔ 电脑）自动对齐 —— 本机起不了两个发现实体
+（`LAN_PORT` 是常量，第二绑必然失败，见 `lan.rs` 里那段探针记录）⇒ 上面①②③都是**编码层／DB 解析层**判据 ✓。

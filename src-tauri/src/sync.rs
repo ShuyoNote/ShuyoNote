@@ -5346,6 +5346,10 @@ pub fn mesh_set_config(
         //   （手机自动生成的那一档才有 `mesh_room_auto=1`；这里把它清掉 ⇒ 桌面/用户的选择固定下来 ✓）。
         let _ = set_meta_state(&c, MESH_ROOM_AUTO_KEY, "0");
     }
+    // ⭐ **2026-10-28（R209-B）**：⭐ 用户动了组名这一格 ⇒ **逐空间覆盖全部作废** ✗ ——
+    //   覆盖是从"旧种子"那一族派生出来的房间号 ✓；种子改了（或清空）还留着覆盖 ⇒
+    //   会出现"种子换了、房间号还是旧的"✗（自相矛盾）。⇒ 一律清掉、回到按本机派生 ✓。
+    let _ = clear_room_covers(&c);
     }
     let scope = mesh_scope(&db, workspace_id.as_deref())?;
     let cfg = {
@@ -5878,6 +5882,43 @@ pub(crate) fn personal_room_for(seed: &str, space_name: &str) -> String {
     h.chars().take(32).collect()
 }
 
+/// ⭐⭐ **2026-10-28（owner 拍 R209-B）**：**逐空间覆盖**的房间号 —— KV 键（`meta.sync_state` ✓）。
+///
+/// 为什么单独一个键、而不是改 `sync_profiles.mesh_room`（那一格是**旧的逐空间种子** ✓）：
+/// · 旧那一格有历史语义（老版本的种子／回落值 ✓）⇒ 改它的含义＝**静默改用户的设置** ✗；
+/// · 覆盖是"从对端公告里学来的一个**协议房间号**"（不是种子 ✓、不该参与派生 ✓）；
+/// ⇒ 另开一格，读法**只在一处**（[`room_cover_for`] ✓），写路径也**只在一处**（[`set_room_cover`] ✓）。
+/// ⚠️ 键里带 `ws_id`（本机空间 id ✓）⇒ 覆盖是**逐空间**的 ✓（owner 拍 B 的"逐空间覆盖"就是这个形状）。
+pub(crate) fn room_cover_key(ws_id: &str) -> String {
+    format!("mesh_room_cover:{}", ws_id.trim())
+}
+
+/// 读某个本机空间被覆盖成的协议房间号（没有／空串 ⇒ `None` ＝ 走老口径派生 ✓）。
+pub(crate) fn room_cover_for(c: &Connection, ws_id: &str) -> Option<String> {
+    get_meta_state(c, &room_cover_key(ws_id))
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// 写／清某个本机空间的覆盖（`None` 或空串 ＝ 清掉 ⇒ 回到"按本机种子派生" ✓）。
+pub(crate) fn set_room_cover(c: &Connection, ws_id: &str, room: Option<&str>) -> Result<(), String> {
+    let key = room_cover_key(ws_id);
+    match room.map(str::trim).filter(|r| !r.is_empty()) {
+        Some(r) => set_meta_state(c, &key, r),
+        None => c
+            .execute("DELETE FROM meta.sync_state WHERE key = ?1", params![key])
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+    }
+}
+
+/// 清掉**全部**逐空间覆盖（设备级种子换了一族 ⇒ 覆盖全部作废 ✓）。
+/// 返回清掉几行（给日志/判据 ✓）。
+pub(crate) fn clear_room_covers(c: &Connection) -> Result<usize, String> {
+    c.execute("DELETE FROM meta.sync_state WHERE key LIKE 'mesh_room_cover:%'", [])
+        .map_err(|e| e.to_string())
+}
+
 pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Result<MeshScope, String> {
     // 读法与 `lan_status` 同一套：profiles × 未删除的 workspaces
     let (device_id, rows) = {
@@ -5934,14 +5975,22 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
     //   ⚠️ 没迁移过（或老机器）⇒ **回退**读旧的逐空间那一份 ✓（⭐ 只读、⛔ 不写 ✗）。
     let personal = pick.0.trim().is_empty();
     let space = if personal {
-        // ⭐ 2026-10-24（全空间方案 P1）：个人空间**一空间一房间号**（不再是全设备共用一个）。
-        //   seed ＝ 设备级配对暗号（回落旧逐空间那一格）；名字来自 meta.workspaces。
-        let seed = crate::mesh::mesh_room_device(c).unwrap_or_else(|| pick.2.trim().to_string());
-        let derived = personal_room_for(&seed, &pick.3);
-        if derived.is_empty() {
-            seed // 解析不出来 ⇒ 保持旧口径（后面那条空串检查会如实报错）
-        } else {
-            derived
+        // ⭐⭐ **2026-10-28（owner 拍 R209-B）**：⭐ **逐空间覆盖优先** ✗ ——
+        //   覆盖值是对端公告里的**派生房间号**（`lan_state::maybe_cover_peer_spaces` 写 ✓）；
+        //   有它 ⇒ 本机这个空间就去那个房间见面 ✓（⛔ 不再从种子派生，否则两边永远对不上 ✗）。
+        match room_cover_for(c, &pick.1) {
+            Some(cover) => cover,
+            None => {
+                // ⭐ 2026-10-24（全空间方案 P1）：个人空间**一空间一房间号**（不再是全设备共用一个）。
+                //   seed ＝ 设备级配对暗号（回落旧逐空间那一格）；名字来自 meta.workspaces。
+                let seed = crate::mesh::mesh_room_device(c).unwrap_or_else(|| pick.2.trim().to_string());
+                let derived = personal_room_for(&seed, &pick.3);
+                if derived.is_empty() {
+                    seed // 解析不出来 ⇒ 保持旧口径（后面那条空串检查会如实报错）
+                } else {
+                    derived
+                }
+            }
         }
     } else {
         pick.0.trim().to_string()
@@ -6319,6 +6368,7 @@ mod r146_mesh_scope_tests {
                     hub_space_names: Vec::new(),
                     hub_space_encrypted: Vec::new(),
                     room: String::new(),
+                    room_auto: false,
                     fp: "fp".into(),
                     pubkey: peer_pk.clone(),
                 },
@@ -10035,6 +10085,7 @@ mod tests {
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
                 room: String::new(),
+                room_auto: false,
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -11589,6 +11640,7 @@ mod tests {
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
                 room: String::new(),
+                room_auto: false,
                 fp: device.to_string(),
                 pubkey: String::new(),
             },
@@ -12159,6 +12211,7 @@ mod tests {
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
                 room: String::new(),
+                room_auto: false,
                 fp: "fp".into(),
                 pubkey: "ab".repeat(32),
             },
