@@ -1111,6 +1111,11 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     );
                 }
             }
+            // ⭐ **2026-10-28（owner：「可否一方取消配对，另一方自动也取消？」）**：
+            //   **待发撤回**（本机撤销了谁、还没送到）在这一轮试一次 ——
+            //   对面在线就立刻送达（它也会把本机从名单删掉）、不在线就留着等它上线 ✓。
+            //   ⚠️ 函数内部有 5 秒节流 ⇒ 每 1 秒的切片不会被它拖慢 ✓。
+            crate::mesh::retry_pending_revokes(&app2, &state.peers(now));
             state.set_enabled(should_run_discovery(&profiles, &meshed));
             // ③ 到点就喊一轮。
             if state.is_enabled() && announce_due(last_announce_ms, now, ANNOUNCE_INTERVAL_MS) {

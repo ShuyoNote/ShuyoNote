@@ -5067,6 +5067,70 @@ mod mesh_history_tests {
 ///    关掉时**立刻松口**（`stop_window`），不留一个还在听着的窗口。
 ///
 /// ⚠️ 回的是**读数**（`MeshConfigState`）—— 含"**别人拉不拉得到**"那句人话，**不含口令本身**。
+// ═══════ ⭐ 2026-10-28（owner：「可否一方取消配对，另一方自动也取消？」）═══════
+//
+// 待发撤回队列：**本机撤销了谁**（还没送达的）。撤销的那一刻本地已经生效 ✓，
+// 这一格只负责"把这条消息送到对面，让它也把本机从它名单里删掉"。
+//
+// ⚠️ 存 `meta.sync_state` 的一次性 KV ✓ —— ⛔ 不新开表 ✗：这是**临时队列**（送达即删），
+//   给它加一次 meta 迁移不划算，而且 KV 已经有成熟的读写两处实现 ✓。
+pub(crate) const PENDING_REVOKES_KEY: &str = "mesh_pending_revokes";
+
+/// 一条待发撤回。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub(crate) struct PendingRevoke {
+    /// 被本机撤销的那台（`device_id`）。
+    pub device: String,
+    /// 什么时候撤的（毫秒）—— 只用于"久到明显送不到了"时如实放弃（⛔ 不无限重试 ✗）。
+    pub at_ms: i64,
+}
+
+pub(crate) fn pending_revokes(c: &Connection) -> Vec<PendingRevoke> {
+    let Some(raw) = get_meta_state(c, PENDING_REVOKES_KEY) else {
+        return Vec::new();
+    };
+    let t = raw.trim();
+    if t.is_empty() {
+        return Vec::new();
+    }
+    // 坏数据 ⇒ 当成空（⛔ 不让它把整条链路卡死 ✗；下一次写入会覆盖它 ✓）。
+    serde_json::from_str(t).unwrap_or_default()
+}
+
+pub(crate) fn set_pending_revokes(c: &Connection, list: &[PendingRevoke]) -> Result<(), String> {
+    let s = serde_json::to_string(list).map_err(|e| e.to_string())?;
+    set_meta_state(c, PENDING_REVOKES_KEY, &s)
+}
+
+/// 记一条待发撤回（**幂等**：同一台已有条目 ⇒ 不重复加、也不刷新时刻）。
+pub(crate) fn enqueue_pending_revoke(c: &Connection, device_id: &str) -> Result<(), String> {
+    let dev = device_id.trim();
+    if dev.is_empty() {
+        return Ok(());
+    }
+    let mut list = pending_revokes(c);
+    if list.iter().any(|p| p.device == dev) {
+        return Ok(());
+    }
+    list.push(PendingRevoke {
+        device: dev.to_string(),
+        at_ms: crate::db::now_ms(),
+    });
+    set_pending_revokes(c, &list)
+}
+
+/// 送达（或确认不需要送）⇒ 删掉这一条。
+pub(crate) fn clear_pending_revoke(c: &Connection, device_id: &str) -> Result<(), String> {
+    let mut list = pending_revokes(c);
+    let dev = device_id.trim();
+    let before = list.len();
+    list.retain(|p| p.device != dev);
+    if list.len() == before {
+        return Ok(());
+    }
+    set_pending_revokes(c, &list)
+}
+
 /// ⭐ **U11/T5（2026-10-02）**：**逐台解除** —— 只把那**一台**踢出去 ✓。
 ///
 /// 做四件（缺任何一件都不算 ✓）：
@@ -5076,6 +5140,10 @@ mod mesh_history_tests {
 ///   ④ 回一个**读数**（还认几台 ✓）—— 界面要能如实说"这台还认我吗" ✓
 ///
 /// ⚠️ **只影响那一台** ✗：别的设备照常 ✓，⛔ **不必给所有设备换口令**（那正是 U11 要消灭的旧办法 ✓）。
+///
+/// ⭐⭐ **2026-10-28（owner：「可否一方取消配对，另一方自动也取消？」）**：这里多记一条**待发撤回**
+/// （见上面那段 `PENDING_REVOKES_KEY` 的头注 ✓）—— 本机撤销立刻生效 ✓，然后由
+/// `mesh::retry_pending_revokes` 把「我撤销了你」**签名送达**对面，让对面也把本机从它名单里删掉 ✓。
 #[tauri::command]
 pub fn device_unpair(
     db: State<'_, Db>,
@@ -5122,12 +5190,63 @@ pub(crate) fn device_unpair_at(
     //   （＝ 上一轮查出来的"删了等于没删"✓，只是换到公钥那一档 ✓）。
     //   ⚠️ 与上面那句**同一个键**（`scope.space` ＝ 门服务的空间 ✓）。
     crate::mesh::forget_paired_device(&scope.space, &peer)?;
+    // ⭐ 2026-10-28：记一条**待发撤回**（本地已经生效 ✓；送不送得到由 `mesh::retry_pending_revokes` 负责 ✓）。
+    //   ⚠️ 只在"本来就配过"时记 ✗ —— 没卡可撤时不去打扰对面 ✓。
+    if hash.is_some() {
+        enqueue_pending_revoke(c, &peer)?;
+    }
     let paired = crate::db::paired_device_count(c, &row)?;
     Ok(crate::mesh::MeshPairedState {
         peer: peer,
         was_paired: hash.is_some(),
         paired_count: paired,
         note: "已解除这一台：它现在**拉不动你**了（别人不受影响 ✓，也**不用**给所有设备换口令 ✓）。".to_string(),
+    })
+}
+
+/// ⭐ **2026-10-28（owner：「可否一方取消配对，另一方自动也取消？」）**：**门那一侧**执行
+/// 「对方撤销了本机」 —— 与本地点「撤销配对」是**同一件事**，但这一侧**没有** `workspace_id` 可传
+/// （请求只给了它服务的那个 `space`），也**不需要**去解析 `mesh_scope`（那要求本机有同步档案 ✓；
+/// 而窗口服务的空间本来就已经有行 ✓ —— 但判据里/老机器上可能没有 ⇒ 这里**按行键试**，⛔ 不猜 ✗）。
+///
+/// ## 与 `device_unpair_at` 的唯一差别
+/// · 行键**两种都试**：设备级 `""`（个人档 ✓）／`proto_space`（团队档 ✓）—— 先命中哪个撤哪个 ✓；
+/// · ⛔ **不记待发撤回** ✗：这是"对方已撤销本机"，再回送一条只会变成互相回声 ✓。
+pub(crate) fn device_unpair_served(
+    c: &Connection,
+    proto_space: &str,
+    peer_device_id: &str,
+) -> Result<crate::mesh::MeshPairedState, String> {
+    let peer = peer_device_id.trim().to_string();
+    if peer.is_empty() {
+        return Err("要解除哪一台？给一个 device_id".to_string());
+    }
+    let mut row_used: Option<String> = None;
+    let mut hash: Option<String> = None;
+    for row in ["", proto_space] {
+        if let Some(h) = crate::db::unpair_device(c, row, &peer)? {
+            row_used = Some(row.to_string());
+            hash = Some(h);
+            break;
+        }
+    }
+    // 秘密与两档卡表：个人档用 ``、团队档用 `proto_space` —— **两把键都清**（⛔ 只清一半 ＝ 还能从另一半进来 ✗）
+    for row in ["", proto_space] {
+        crate::mesh::set_pair_secret(c, row, &peer, None)?;
+    }
+    if let Some(h) = hash.as_deref() {
+        crate::mesh::forget_paired(proto_space, h)?;
+    }
+    crate::mesh::forget_paired_device(proto_space, &peer)?;
+    let paired = match row_used.as_deref() {
+        Some(r) => crate::db::paired_device_count(c, r)?,
+        None => crate::db::paired_device_count(c, "")?,
+    };
+    Ok(crate::mesh::MeshPairedState {
+        peer,
+        was_paired: hash.is_some(),
+        paired_count: paired,
+        note: "对方已撤销配对：本机也把它从名单里删掉了（双向都断）。".to_string(),
     })
 }
 

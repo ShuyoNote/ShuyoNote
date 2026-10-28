@@ -2616,6 +2616,10 @@ pub enum Route {
     /// ⭐ 2026-10-24（P3 对账）：`GET /mesh/page?space_id=…&id=…` —— **按 id 取单页**。
     /// 对"从未记账"的页（changes 里没有）也能按**当前状态**重播一次 ⇒ 对账能补回它。
     Page,
+    /// ⭐ **2026-10-28（owner：「可否一方取消配对，另一方自动也取消？」）**：
+    /// `GET /mesh/revoked?space_id=…` —— **对方撤销了本机** ⇒ 本机也把对方从名单里删掉 ✓。
+    /// ⚠️ 这个端点**只认签名那一档**（见 `authorized_signed` ✓）。
+    Revoke,
     /// 同步协议里**有**、但**不是网格这一档**的端点 ⇒ `501` ＋ 一句人话。
     NotYet(&'static str),
     /// 协议里根本没有这个路径 ⇒ `404`。
@@ -2631,6 +2635,7 @@ pub fn route(method: &str, target: &str) -> Route {
         "GET" if path == "/mesh/keyring" => Route::Keyring,
         "GET" if path == "/mesh/manifest" => Route::Manifest,
         "GET" if path == "/mesh/page" => Route::Page,
+        "GET" if path == "/mesh/revoked" => Route::Revoke,
         _ => match not_yet(path) {
             Some(what) => Route::NotYet(what),
             None => Route::Unknown,
@@ -3283,6 +3288,7 @@ pub(crate) fn dispatch(state: &State, req: &Request) -> Reply {
         Route::Keyring => handle_keyring(state),
         Route::Manifest => handle_manifest(state, &req.target),
         Route::Page => handle_page(state, &req.target),
+        Route::Revoke => handle_revoked(state, req),
         Route::NotYet(what) => Reply::json(
             501,
             "Not Implemented",
@@ -3418,6 +3424,320 @@ fn authorized(state: &State, req: &Request) -> Result<(), Reply> {
         ))
     }
 }
+
+// ─────── ⭐ 2026-10-28（owner：「可否一方取消配对，另一方自动也取消？」）───────
+//
+// ## 它是什么（撤回的**通知**那一半）
+// A 撤销 B ⇒ A 本地**立刻**生效 ✓；再由 A 把「我把你撤销了」**签名**送到 B 的门。
+// B 用**它手里还留着的** A 的公钥卡验签 ✓ ⇒ B 也执行同一次撤销 ⇒ **双向都断** ✓。
+//
+// ## 三条口径
+// 1. ⛔ **只认签名那一档** ✗（`authorized_signed`）：口令那一档在这里**不收** ✗ ——
+//    否则"知道口令的人"能冒充任何 device_id 去撤别人的配对（＝把 U11 消灭掉的洞换个门开回来 ✗）。
+// 2. **幂等** ✓：已经不在名单里 ⇒ 还是 200（调用方据此清掉待发）✓。
+// 3. ⚠️ 只撤**那一台** ✓（复用 `sync::device_unpair_at` —— 与本地撤销**同一处实现** ✓）。
+
+/// 撤销端点的 target（⭐ **一处拼** ✗：签的是它、发的也是它 ✓）。
+pub(crate) fn revoke_target(space_id: &str) -> String {
+    format!("/mesh/revoked?space_id={space_id}")
+}
+
+/// 撤回的送达结论（⭐ **纯函数**分类 ⇒ 判据够得着 ✓）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RevokeOutcome {
+    /// 对面执行了（或**它本来就不认我了** ⇒ 目标已达成 ✓）
+    Delivered,
+    /// 对面是**老版本**（没有这个端点）⇒ 如实记一句、⛔ 不再无限重试 ✗
+    Unsupported,
+    /// 没送到（网络 / 5xx）⇒ **保留待发**，下一轮再试 ✓
+    Failed,
+}
+
+pub(crate) fn classify_revoke_reply(status: u16) -> RevokeOutcome {
+    match status {
+        200 | 401 => RevokeOutcome::Delivered,
+        404 => RevokeOutcome::Unsupported,
+        _ => RevokeOutcome::Failed,
+    }
+}
+
+/// **只要签名那一档**的鉴权（撤回端点专用 —— ⛔ 口令那一档在这里不收 ✗）。
+///
+/// 成功 ⇒ `(被服务的空间, 调用者 device_id)` ✓。
+fn authorized_signed(state: &State, req: &Request) -> Result<(String, String), Reply> {
+    // ① 定位空间（与 `select_space` 同一口径：多个空间时**必须**带 `?space_id=`，⛔ 不猜 ✗）
+    let space = match query_get(&req.target, "space_id") {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            let guard = match state.conns.lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    return Err(Reply::json(500, "Internal Server Error", json_error("空间连接表的锁被毒掉了")))
+                }
+            };
+            match guard.len() {
+                1 => guard.keys().next().cloned().unwrap_or_default(),
+                _ => {
+                    return Err(Reply::json(
+                        400,
+                        "Bad Request",
+                        json_error("这个窗口服务**多个**空间 ⇒ 请求必须带 `?space_id=`（说不清要哪个，不猜）"),
+                    ))
+                }
+            }
+        }
+        Err(e) => return Err(Reply::json(400, "Bad Request", json_error(&e))),
+    };
+    if !(state.serves(&space) || state.is_locked(&space)) {
+        return Err(Reply::json(
+            403,
+            "Forbidden",
+            json_error(&format!("这个窗口不服务空间 {space}（不是「没带证件」，是「这不是我的空间」）")),
+        ));
+    }
+    // ② 三格头必须齐（⛔ 缺格不猜 ✗）
+    let dev = req
+        .header(HDR_DEVICE)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            Reply::json(
+                401,
+                "Unauthorized",
+                json_error("撤回**只接受签名那一档**（口令那一档在这里不收）：缺设备号"),
+            )
+        })?;
+    let ts = req
+        .header(HDR_TS)
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .ok_or_else(|| {
+            Reply::json(401, "Unauthorized", json_error("撤回只接受签名那一档：缺时间戳"))
+        })?;
+    let sig = req
+        .header(HDR_SIG)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| Reply::json(401, "Unauthorized", json_error("撤回只接受签名那一档：缺签名")))?;
+    let now = crate::db::now_ms();
+    if (now - ts).abs() > AUTH_WINDOW_MS {
+        return Err(Reply::json(
+            401,
+            "Unauthorized",
+            json_error("这份签名**过期**了（或对端时钟偏得太多）"),
+        ));
+    }
+    // ③ 用**它自己的**公钥验签（⛔ 不认口令 ⇒ 撤不了别人 ✗）
+    let pk = match state.paired.lock() {
+        Ok(g) => g.get(&space).and_then(|c| c.pubkeys.get(dev).cloned()),
+        Err(_) => None,
+    };
+    let Some(pk) = pk else {
+        return Err(Reply::json(
+            401,
+            "Unauthorized",
+            json_error("这个空间里**没有登记过这台设备的公钥**（没被信任过，或已被逐台解除）"),
+        ));
+    };
+    let msg = auth_message(dev, &space, ts, &req.method, &req.target);
+    if !crate::device_key::verify_hex(&pk, msg.as_bytes(), sig) {
+        return Err(Reply::json(
+            401,
+            "Unauthorized",
+            json_error("签名对不上（不是这台签的，或这条请求被改过）"),
+        ));
+    }
+    Ok((space, dev.to_string()))
+}
+
+/// `GET /mesh/revoked?space_id=…`：**对方撤销了本机** ⇒ 本机也把对方从名单里删掉 ✓。
+fn handle_revoked(state: &State, req: &Request) -> Reply {
+    let (space, dev) = match authorized_signed(state, req) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if !state.serves(&space) {
+        // 锁着的空间：这个窗口开不了库 ⇒ 撤不了（⛔ 不许假装成功 ✗）。
+        return Reply::json(
+            503,
+            "Service Unavailable",
+            json_error("这个空间在**本机这一轮是锁着的**（开不了库）⇒ 现在执行不了撤销，请解锁后再试"),
+        );
+    }
+    let conn = match state.select_space(&req.target) {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let guard = match conn.lock() {
+        Ok(g) => g,
+        Err(_) => return Reply::json(500, "Internal Server Error", json_error("空间库的锁被毒掉了")),
+    };
+    match crate::sync::device_unpair_served(&guard, &space, &dev) {
+        Ok(st) => {
+            eprintln!(
+                "[mesh] 收到「对方撤销配对」：{}… ⇒ 已把它从本机名单删掉（这个空间还剩 {} 台）",
+                &dev[..dev.len().min(8)],
+                st.paired_count
+            );
+            Reply::json(
+                200,
+                "OK",
+                serde_json::json!({
+                    "ok": true,
+                    "wasPaired": st.was_paired,
+                    "pairedCount": st.paired_count,
+                })
+                .to_string(),
+            )
+        }
+        Err(e) => Reply::json(
+            500,
+            "Internal Server Error",
+            json_error(&format!("本机执行撤销失败：{e}")),
+        ),
+    }
+}
+
+/// 送**一次**撤回（⚠️ 签名在外面签好传进来 ⇒ 这一层**不拿库锁跨 await** ✓）。
+pub(crate) async fn deliver_revoke_once(
+    peer: &MeshPeer,
+    space: &str,
+    device_id: &str,
+    ts: i64,
+    sig: &str,
+    client: &reqwest::Client,
+) -> Result<RevokeOutcome, String> {
+    let target = revoke_target(space);
+    let ep = crate::mesh_endpoint::endpoint_for_peer(peer, client.clone()).await?;
+    let reply = ep.get(&target, Some((device_id, ts, sig)), None).await?;
+    Ok(classify_revoke_reply(reply.status))
+}
+
+/// 待发撤回的**执行器**（由 `lan_state` 主循环调用 ✓；5 秒节流 ✓）。
+///
+/// ## 时机与边界
+/// · 对面**在线**（公告里有它）⇒ 立刻送；送达（200/401）⇒ 清掉待发 ✓；
+/// · 对面是**老版本**（404）⇒ 如实记一句、清掉待发（⛔ 不无限重试 ✗）；
+/// · 对面**不在线** ⇒ 待发留着，它一上线下一轮就送 ✓；
+/// · 等了 **72 小时**还没送到 ⇒ 如实放弃并记一句（⛔ 不让队列无限长 ✗）。
+pub fn retry_pending_revokes(app: &tauri::AppHandle, peers: &[crate::lan::Peer]) {
+    use tauri::Manager as _;
+    const THROTTLE_MS: i64 = 5_000;
+    const GIVE_UP_MS: i64 = 72 * 3600 * 1000;
+    let now = crate::db::now_ms();
+    if now.saturating_sub(LAST_REVOKE_ATTEMPT_MS.load(Ordering::SeqCst)) < THROTTLE_MS {
+        return;
+    }
+    let pending = {
+        let db = app.state::<crate::db::Db>();
+        let c = match db.0.lock() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        crate::sync::pending_revokes(&c)
+    };
+    if pending.is_empty() {
+        return;
+    }
+    let mut jobs: Vec<(MeshPeer, Vec<String>, String)> = Vec::new();
+    for p in &pending {
+        if now.saturating_sub(p.at_ms) > GIVE_UP_MS {
+            eprintln!(
+                "[mesh] 撤回通知：{}… 等了 72 小时还没送到（对面一直没上线？）⇒ 如实放弃（可在对面手动撤销）",
+                &p.device[..p.device.len().min(8)]
+            );
+            let db = app.state::<crate::db::Db>();
+            if let Ok(c) = db.0.lock() {
+                let _ = crate::sync::clear_pending_revoke(&c, &p.device);
+            }
+            continue;
+        }
+        let Some(pr) = peers
+            .iter()
+            .find(|x| x.announce.device_id.trim() == p.device.trim())
+        else {
+            continue;
+        };
+        let Some(base) = pr
+            .announce
+            .hub_base
+            .as_deref()
+            .map(str::trim)
+            .filter(|b| !b.is_empty() && crate::lan::is_lan_base(b))
+        else {
+            continue;
+        };
+        if pr.announce.hub_spaces.is_empty() {
+            continue;
+        }
+        jobs.push((
+            MeshPeer {
+                device_id: p.device.clone(),
+                base: base.trim_end_matches('/').to_string(),
+            },
+            pr.announce.hub_spaces.clone(),
+            p.device.clone(),
+        ));
+    }
+    if jobs.is_empty() {
+        return;
+    }
+    LAST_REVOKE_ATTEMPT_MS.store(now, Ordering::SeqCst);
+    for (peer, spaces, dev) in jobs {
+        let app2 = app.clone();
+        tauri::async_runtime::spawn(async move {
+            use tauri::Manager as _;
+            let client = reqwest::Client::new();
+            for space in spaces {
+                // 签名：拿库锁 → **立刻放**（⛔ 不跨 await 持锁 ✗）
+                let signed = {
+                    let db = app2.state::<crate::db::Db>();
+                    let c = match db.0.lock() {
+                        Ok(c) => c,
+                        Err(_) => return,
+                    };
+                    let my_dev = crate::sync::device_id(&c).unwrap_or_default();
+                    if my_dev.trim().is_empty() {
+                        None
+                    } else {
+                        let target = revoke_target(&space);
+                        sign_request(&c, &my_dev, &space, "GET", &target, crate::db::now_ms())
+                            .map(|(ts, sig)| (my_dev, ts, sig))
+                    }
+                };
+                let Some((my_dev, ts, sig)) = signed else { return };
+                match deliver_revoke_once(&peer, &space, &my_dev, ts, &sig, &client).await {
+                    Ok(RevokeOutcome::Delivered) => {
+                        let db = app2.state::<crate::db::Db>();
+                        if let Ok(c) = db.0.lock() {
+                            let _ = crate::sync::clear_pending_revoke(&c, &dev);
+                        }
+                        eprintln!(
+                            "[mesh] 撤回通知已送达：{}… ⇒ 对面也把本机从它名单里删掉了 ✓",
+                            &dev[..dev.len().min(8)]
+                        );
+                        return;
+                    }
+                    Ok(RevokeOutcome::Unsupported) => {
+                        let db = app2.state::<crate::db::Db>();
+                        if let Ok(c) = db.0.lock() {
+                            let _ = crate::sync::clear_pending_revoke(&c, &dev);
+                        }
+                        eprintln!(
+                            "[mesh] 撤回通知：{}… 那台是**老版本**（没有这个端点）⇒ 只能它在那边手动撤销（已不再重试）",
+                            &dev[..dev.len().min(8)]
+                        );
+                        return;
+                    }
+                    Ok(RevokeOutcome::Failed) | Err(_) => continue, // 换下一个空间 / 下一轮再试
+                }
+            }
+        });
+    }
+}
+
+/// 待发撤回的节流（毫秒时间戳；`0` ＝ 启动后还没试过）。
+static LAST_REVOKE_ATTEMPT_MS: std::sync::atomic::AtomicI64 =
+    std::sync::atomic::AtomicI64::new(0);
 
 // ─────────────── ⭐ 2026-10-12（设备身份第 2 步）：请求签名 ✗ ───────────────
 
@@ -6549,6 +6869,29 @@ mod tests {
         (code, body)
     }
 
+    /// ⭐ 2026-10-28：三格签名 **＋** Bearer（用来钉"撤回端点**不收**口令那一档" ✓）。
+    fn http_get_signed_with_token(
+        addr: SocketAddr,
+        target: &str,
+        device_id: &str,
+        ts: i64,
+        sig: &str,
+        token: &str,
+    ) -> (u16, String) {
+        let mut sock = TcpStream::connect(addr).expect("connect");
+        let req = format!(
+            "GET {target} HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {token}\r\n{HDR_DEVICE}: {device_id}\r\n{HDR_TS}: {ts}\r\n{HDR_SIG}: {sig}\r\nConnection: close\r\n\r\n"
+        );
+        sock.write_all(req.as_bytes()).unwrap();
+        sock.flush().unwrap();
+        let mut raw = Vec::new();
+        sock.read_to_end(&mut raw).unwrap();
+        let text = String::from_utf8_lossy(&raw).to_string();
+        let code = text.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let body = text.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+        (code, body)
+    }
+
     /// ⭐ 2026-10-12（设备身份第 2 步）：发一条**带签名**的 GET ✗（⛔ 不带任何口令 ✗）。
     ///
     /// ⚠️ `ts` 由调用方给 ✗ ⇒ ⭐ 时间窗那一档能被判据**固定** ✓（本仓老规矩：判定里一律传时间 ✓）。
@@ -7797,6 +8140,166 @@ mod tests {
         // ⭐ 而且**不必给所有设备换口令** ✓ —— dev-C 用的还是它原来那一份 ✓
 
         crate::mesh::stop_window("proto-x").unwrap();
+    }
+
+    /// ⭐ **2026-10-28（owner：「一方取消配对，另一方自动也取消？」）**：待发撤回队列 ——
+    /// **幂等、可删**；送达分类是纯函数（⛔ 不靠网络就能钉住"什么算送到" ✓）。
+    #[test]
+    fn pending_revokes_are_recorded_deduped_and_cleared() {
+        let dir = temp_dir("mesh-pending-rev");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("default", &dir).unwrap();
+        crate::sync::set_meta_state(&c, "device_id", "dev-host").unwrap();
+        assert!(crate::sync::pending_revokes(&c).is_empty());
+        crate::sync::enqueue_pending_revoke(&c, "dev-b").unwrap();
+        crate::sync::enqueue_pending_revoke(&c, "dev-b").unwrap();
+        assert_eq!(crate::sync::pending_revokes(&c).len(), 1, "同一台不许重复记（幂等）✓");
+        crate::sync::enqueue_pending_revoke(&c, "dev-c").unwrap();
+        assert_eq!(crate::sync::pending_revokes(&c).len(), 2);
+        crate::sync::clear_pending_revoke(&c, "dev-b").unwrap();
+        let left = crate::sync::pending_revokes(&c);
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].device, "dev-c");
+        // 送达分类（纯函数）
+        assert_eq!(classify_revoke_reply(200), RevokeOutcome::Delivered);
+        assert_eq!(
+            classify_revoke_reply(401),
+            RevokeOutcome::Delivered,
+            "它已经不认我了 ⇒ 目标已达成 ✓"
+        );
+        assert_eq!(
+            classify_revoke_reply(404),
+            RevokeOutcome::Unsupported,
+            "老版本（没有这个端点）⇒ 如实说、⛔ 不无限重试 ✗"
+        );
+        assert_eq!(
+            classify_revoke_reply(500),
+            RevokeOutcome::Failed,
+            "没送到 ⇒ 留着下一轮再试 ✓"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐ **2026-10-28**：`device_unpair_at` 撤销时**记一条待发撤回**（只有真配过才记 ✓）。
+    #[test]
+    fn unpairing_records_a_pending_revoke_for_the_peer() {
+        // 自带夹具（与 `sync::device_level_paired_tests::fixture` 同形 ✓）：`mesh_scope_at` 要的那几张表。
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             CREATE TABLE meta.mesh_paired_devices (
+                 space_id TEXT NOT NULL, device_id TEXT NOT NULL, added_at_ms INTEGER NOT NULL DEFAULT 0,
+                 secret_sha256 TEXT NOT NULL DEFAULT '',
+                 pubkey TEXT NOT NULL DEFAULT '', PRIMARY KEY (space_id, device_id)
+             );
+             INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-host');
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-a', '个人');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-a', '', 'room-p');",
+        )
+        .unwrap();
+        // 设备级那一行（个人档 ✓）：一台**真配过**的。
+        crate::db::pair_pubkey(&c, "", "dev-b", &"ab".repeat(32)).unwrap();
+        // ① 没配过的那一台：撤销不该记（⛔ 不去打扰对面 ✗）
+        crate::sync::device_unpair_at(&c, Some("ws-a"), "dev-ghost").unwrap();
+        assert!(
+            crate::sync::pending_revokes(&c).is_empty(),
+            "没配过 ⇒ 不记待发 ✓"
+        );
+        // ② 真配过：撤销 ⇒ 记一条（送达由 `retry_pending_revokes` 负责 ✓）
+        crate::sync::device_unpair_at(&c, Some("ws-a"), "dev-b").unwrap();
+        let list = crate::sync::pending_revokes(&c);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].device, "dev-b");
+        assert!(list[0].at_ms > 0);
+    }
+
+    /// ⭐⭐ **2026-10-28（owner：「一方取消配对，另一方自动也取消？」）**：
+    /// **签名撤回 ⇒ 门真把那一台摘掉**（不是"看起来撤了"✗）。
+    #[tokio::test]
+    async fn a_signed_revoke_makes_the_door_drop_that_device() {
+        let dir = temp_dir("mesh-revoke-door");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("default", &dir).unwrap();
+        crate::sync::set_meta_state(&c, "device_id", "dev-host").unwrap();
+        let guest = crate::device_key::load_or_create(&c).expect("本机身份");
+        let space_owned = crate::sync::personal_room_for("room-rev-1", "个人");
+        let space = space_owned.as_str();
+        // 门那一侧：登记 guest 的公钥（设备级行 ""，与个人档同一把键 ✓）
+        crate::db::pair_pubkey(&c, "", "dev-guest", &guest.public_key_hex()).unwrap();
+        assert_eq!(crate::db::paired_device_count(&c, "").unwrap(), 1);
+        let pairs = [("default".to_string(), space.to_string(), true)];
+        let bound = ensure_window(&pairs, "dev-host", "0.0.0.0:000", &dir)
+            .unwrap()
+            .expect("窗口应当起得来");
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, bound.port()));
+        let target = crate::mesh::revoke_target(space);
+        let now = crate::db::now_ms();
+        // ① 签名对 ⇒ 200 ＋ 本机那张卡真被摘
+        let (ts, sig) = crate::mesh::sign_request(&c, "dev-guest", space, "GET", &target, now)
+            .expect("签一份");
+        let (code, body) = http_get_signed(addr, &target, "dev-guest", ts, &sig);
+        assert_eq!(code, 200, "签名对 ⇒ 必须执行撤回：{body}");
+        assert!(
+            body.contains("\"wasPaired\":true"),
+            "响应要说清它本来在名单里：{body}"
+        );
+        assert_eq!(
+            crate::db::paired_device_count(&c, "").unwrap(),
+            0,
+            "⛔ 卡必须被摘 ✗（不是「看起来撤了」✓）"
+        );
+        // ② 摘掉之后**正常拉取**再签一份 ⇒ 401（这一台已经不被认了 ✓）
+        let pull = format!("/mesh/pull?space_id={space}&since=0&limit=10");
+        let (ts2, sig2) = crate::mesh::sign_request(&c, "dev-guest", space, "GET", &pull, crate::db::now_ms())
+            .expect("签一份");
+        let (code, _) = http_get_signed(addr, &pull, "dev-guest", ts2, &sig2);
+        assert_eq!(code, 401, "撤回之后它必须拉不动了 ✗");
+        crate::mesh::stop_window(space).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐⭐ **2026-10-28**：**撤回端点只收签名那一档** ——
+    /// 光有"旧那一档"的口令**撤不了别人**（⛔ 那是把 U11 的洞换个门开回来 ✗）。
+    #[tokio::test]
+    async fn the_revoke_endpoint_never_accepts_the_legacy_token() {
+        let dir = temp_dir("mesh-revoke-token");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("default", &dir).unwrap();
+        crate::sync::set_meta_state(&c, "device_id", "dev-host").unwrap();
+        let space = crate::sync::personal_room_for("room-rev-2", "个人");
+        let conn = Arc::new(Mutex::new(c));
+        let cfg = MeshConfig {
+            bind: "127.0.0.1:0".into(),
+            device_id: "dev-host".into(),
+            data_dir: Some(dir.clone()),
+        };
+        // 这一扇门只有**旧那一档**（口令哈希），没有公钥卡。
+        let win = start1s_card(&space, "lan-token", cfg, conn).unwrap();
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, win.addr().port()));
+        let target = crate::mesh::revoke_target(&space);
+        let now = crate::db::now_ms();
+        let fake = "00".repeat(64);
+        // ① 口令对了 + 冒充一个 device_id ⇒ **仍然 401**（撤回端点不收口令那一档）
+        let (code, body) =
+            http_get_signed_with_token(addr, &target, "dev-guest", now, &fake, "lan-token");
+        assert_eq!(code, 401, "⛔ 撤回端点不收口令那一档 ✗：{body}");
+        // ② 门本身照常（那次尝试没把门弄坏）
+        let pull = format!("/mesh/pull?space_id={space}&since=0&limit=10");
+        let (code, _) = http_get(addr, &pull, Some("lan-token"));
+        assert_eq!(code, 200, "口令那一档**拉取**照常 ✓");
+        crate::mesh::stop_window(&space).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// ⭐⭐ **R109 缺的那一环：U11 的端到端判据** ——
