@@ -11,14 +11,10 @@ import { useViewStore } from "../store/view";
 import { useTemplates } from "../store/templates";
 import { toast } from "../store/toast";
 import { HistoryPanel } from "./HistoryPanel";
-import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon, SendIcon, ListIcon, CommentIcon, BellIcon, MicIcon, CopyIcon } from "./icons";
+import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon, SendIcon, ListIcon, MicIcon, CopyIcon } from "./icons";
 import { useSpeechInput } from "../editor/useSpeechInput";
 import { interimBubbleStyle } from "../lib/speechInput";
 import { useRightPanel } from "../store/rightPanel";
-// ⭐ 2026-10-18（owner：「那就去掉通知」）：**通知**只在团队空间出现 —— 规则在 `lib/syncTag.ts`
-//    （⛔ 本文件不许自己写 `kind === "team"` ✗：那是第二份真相，`src/types.ts:497` 明写）。
-import { useSpaceStore } from "../store/space";
-import { showsNotifications } from "../lib/syncTag";
 import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
 import { CommunityPublishDialog } from "./CommunityPublishDialog";
@@ -84,12 +80,6 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
   //    ⚠️ 只有「讨论 / 通知」是**必须**补的 —— 它们此前**只有**那条工具栏进得去
   //    （命令面板里当时没有对应命令，编辑器的 TOC 则另有入口 ✓）。
   //    ⚠️ 与「目录」那颗同一个 store（`useRightPanel` ✓）：store 内部互斥，⛔ 不会有两份状态 ✗。
-  const openComments = useRightPanel((s) => s.openComments);
-  // ⭐ 2026-10-18（owner：「那就去掉通知」）：**个人空间不出现「通知」** ✓ ——
-  //    判据＝`showsNotifications(当前空间 kind)`（规则只在 `lib/syncTag.ts` 一处 ✓）。
-  //    ⚠️ 订阅一律取字段（返回的是字符串，不是对象）⇒ 不会因数组换引用而重渲染 ✓。
-  const activeSpaceKind = useSpaceStore((s) => s.spaces.find((w) => w.id === s.activeId)?.kind);
-  const withNotifications = showsNotifications(activeSpaceKind);
   const [exportOpen, setExportOpen] = useState(false);
   // ⭐ 2026-10-07（owner：「**更多弹窗弹出位置不对**」✗）：那条菜单是 `position: fixed` ＋
   //   **写死的 `top: 34px; right: 8px`** ✗ ⇒ 锚的是**视口右上角**、不是这颗 ⋯ 按钮 ✓
@@ -381,31 +371,6 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
         </button>
         {exportOpen && (
           <div className="editor-more-menu" style={menuStyle}>
-            {/* ⭐ 2026-10-06：顶端工具栏撤掉后，「讨论 / 通知」的**可见**入口在这里
-                （命令面板另有 `panels.comments` / `panels.notifications` 两条 ✓）。
-                ⚠️ 这两颗与「目录」共用同一个右栏槽位 ⇒ 打开会顶掉目录/AI ✓（store 内部互斥 ✓）。 */}
-            <button
-              className="toolbar-menu-item"
-              onClick={() => { setExportOpen(false); openComments(true, "comments"); }}
-              title={t("editor.discuss")}
-            >
-              <CommentIcon /> {t("editor.discuss")}
-            </button>
-            {/* ⭐ 2026-10-18（owner：「那就去掉通知」）：**这一颗只在团队空间渲染** ✓。
-                · 个人空间 ⇒ 不渲染（通知的数据面是团队侧的：`NotificationCenter.tsx` 读
-                  `teamListNotifications`，用途是"有人 @ 了你" ⇒ 个人空间里它基本恒空 ✓）；
-                · 团队空间 ⇒ 照旧 ✓；「讨论」不受影响（它还能当页内旁注用 ✓）。
-                ⚠️ 判据走 `showsNotifications(activeSpaceKind)`，⛔ 这里不写 `kind === "team"` ✗。 */}
-            {withNotifications && (
-              <button
-                className="toolbar-menu-item"
-                onClick={() => { setExportOpen(false); openComments(true, "notifications"); }}
-                title={t("editor.notifications")}
-                data-testid="menu-notifications"
-              >
-                <BellIcon /> {t("editor.notifications")}
-              </button>
-            )}
             <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); copyMarkdown(); }} title={t("editor.copyMarkdown")}>
               <CopyIcon /> {t("editor.copyMarkdown")}
             </button>

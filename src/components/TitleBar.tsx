@@ -1,14 +1,11 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { PresenceBar } from "./PresenceBar";
 import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
 import { useWindowChrome } from "../store/windowChrome";
-import { useAuth } from "../store/auth";
 import { isDesktopPlatform, isMacDesktopPlatform } from "../lib/platform";
-import { api, type SyncProfile } from "../lib/api";
+import { api } from "../lib/api";
 import { overlayDepth } from "../lib/overlayStack";
-import { showsServerTag, syncTagColor, syncTagTitle } from "../lib/syncTag";
 // ⚠️ 2026-10-01（owner 界面方向之①）：**右侧工具条撤掉** ⇒ 它的入口搬到这条标题栏上 ✓；
 //    入口本身抽在 `TopTools` 里 ✓ —— 因为**手机上标题栏不渲染** ✓，而 owner 要求两端都有 ✓
 //    （同一个组件在 `App.tsx` 的 `.app` 顶部再渲染一处 ✓，⛔ 不各写一份 ✗）。
@@ -89,15 +86,8 @@ export function TitleBar({ standalone = false }: { standalone?: boolean } = {}) 
   const pages = useNotes((s) => s.pages);
   const spaces = useSpaceStore((s) => s.spaces);
   const activeSpaceId = useSpaceStore((s) => s.activeId);
-  // ⭐ 2026-10-10：当前空间的**分类**（`personal`／`team`／`""`）—— 用来判那个同步标识显不显示 ✓
-  //    （⛔ 不在这里写 `kind === "team"` ✗：规则只有一处 `showsServerTag` ✓）
-  const activeSpaceKind = spaces.find((s) => s.id === activeSpaceId)?.kind;
   const [maximized, setMaximized] = useState(false);
   const [focused, setFocused] = useState(true);
-  const [syncProfile, setSyncProfile] = useState<SyncProfile | null>(null);
-  // 登录/登出（auth store 的 authed 变化）也会影响同步目标，订阅它以便登录后
-  // 标题栏同步胶囊即时出现，无需刷新页面。
-  const authed = useAuth((s) => s.authed);
 
   const desktop = isDesktopPlatform();
   // ⭐ 2026-10-23：macOS 走原生透明标题栏（红绿灯浮在内容上，见 src-tauri/src/lib.rs）。
@@ -111,24 +101,6 @@ export function TitleBar({ standalone = false }: { standalone?: boolean } = {}) 
   //     红绿灯的让位由 `.is-macos` 的 `--mac-lights-h` 只作用在左竖条上；
   //   · macOS 独立页面窗口 28 —— 它没有左竖条，主区自己让位（`main:first-child`）。
   const nativeChromeH = desktop && !showsOwnBar && macNative ? (standalone ? 28 : 0) : 0;
-
-  // 当前空间的同步目标（换空间 / 登录状态变化时重新拉取）。失败静默：顶栏没有同步芯片而已。
-  useEffect(() => {
-    if (!desktop || !custom || !activeSpaceId) {
-      setSyncProfile(null);
-      return;
-    }
-    let alive = true;
-    api
-      .listSyncProfiles()
-      .then((list) => {
-        if (alive) setSyncProfile(list.find((p) => p.ws_id === activeSpaceId) ?? null);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [desktop, custom, activeSpaceId, authed]);
 
   const spaceName = spaces.find((s) => s.id === activeSpaceId)?.name ?? "";
   const pageTitle = pages.find((p) => p.id === currentId)?.title?.trim();
@@ -303,29 +275,6 @@ export function TitleBar({ standalone = false }: { standalone?: boolean } = {}) 
       <div className="titlebar-title" data-tauri-drag-region title={label}>
         {label}
       </div>
-      <PresenceBar />
-      {/* 同步状态搬到顶栏：自绘标题栏腾出来的这条空间总得有用处，顺带让侧栏
-          少一行。颜色与侧栏空间行、同步面板共用 syncTag 的同一套编码。
-          ⚠️ **2026-10-10（owner 拍 C）**：平时**只留颜色点** —— ⛔ 地址不再渲染成文字 ✗，
-          只在 `title`/`aria-label` 里给（悬停看得见 ＋ 读屏读得到 ✓）。
-          ⚠️ 同日 owner 补的口径：⭐ **个人空间没有服务器 ⇒ 一个字节都不显示** ✗
-          ⇒ 这里多一道 `showsServerTag(activeSpaceKind, …)`（规则只有那一处实现 ✓）。 */}
-      {syncProfile?.server_url &&
-        syncProfile?.token &&
-        showsServerTag(activeSpaceKind, syncProfile.server_url) && (
-        <div
-          className="titlebar-sync"
-          data-tauri-drag-region
-          title={syncTagTitle(syncProfile.server_url)}
-        >
-          <span
-            className="titlebar-sync-dot"
-            role="img"
-            aria-label={syncTagTitle(syncProfile.server_url)}
-            style={{ background: syncTagColor(syncProfile.server_url) }}
-          />
-        </div>
-      )}
       {/* ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条竖向工具条撤掉 ⇒ 入口搬进**这一行** ✓
           （组件在 `TopTools.tsx` ✓ —— 手机上标题栏不渲染，所以 `App.tsx` 顶部另渲染一处 ✓，
           两处共用同一个组件 ✓，⛔ 不各写一份 ✗）。

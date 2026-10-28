@@ -53,25 +53,23 @@ describe("chooseDialog（单选一问一答）", () => {
 describe("PageTree 的接线（文本级：防止有人把这一问删掉或改成只问名字）", () => {
   const src = readFileSync("src/components/PageTree.tsx", "utf8");
 
-  it("④ ★ 新建空间时**真的问**分类，并把用户选的传给 store（不是写死 personal）", () => {
-    expect(src, "PageTree 里没有 chooseDialog ⇒ 分类那一问被删了").toContain("await chooseDialog(");
-    expect(src, "store.create 没带上用户选的那一类 ⇒ 分类落成默认值").toContain(
-      "useSpaceStore.getState().create(name, kind)",
+  it("④ ★ 第二阶段（2026-10-29）：新建空间**不再问分类**，直接建个人空间", () => {
+    // ⭐ **2026-10-29（owner 拍第二阶段 A）：团队 UI 已删除** ✗ ⇒ `chooseDialog` 那一问整段移除 ✓
+    //   ⇒ ⛔ 断言不是"删掉"✗：翻转成**拆除判据**（R192「换对象不删断言」✓）：
+    expect(src, "⛔ 分类那一问还在 ⇒ 团队入口没删干净").not.toContain("await chooseDialog(");
+    expect(src, "⛔ `value: \"team\"` 还在 ⇒ 团队选项没删干净").not.toContain('value: "team"');
+    expect(src, "新建空间必须**显式**建个人空间（⛔ 不是靠默认值蒙对）").toContain(
+      'useSpaceStore.getState().create(name, "personal")',
     );
-    // 「个人」是推荐项，但不许把它写成**唯一**项（团队空间必须也选得到）
-    expect(src).toContain('value: "personal"');
-    expect(src).toContain('value: "team"');
   });
 
-  it("⑤ ★ 只有桌面端才问（Web 没有钥匙柜 ⇒ 那里的分类没有下游）＋ ⭐ 团队冻结时**不问**", () => {
-    // ⭐ **2026-10-29（owner 拍：团队功能冻结）**：条件多了"没冻结"那一半（唯一开关
-    //   `lib/edition.ts::teamConfigEntryVisible()`）—— 口径不变：Web 不问；冻结期也不问
-    //   （新建一律个人空间；`value: "team"` 那段代码仍留着，解冻即回来 ✓）。
-    expect(src).toMatch(
-      /if \(isDesktopPlatform\(\) && teamConfigEntryVisible\(\)\) \{[\s\S]{0,400}?await chooseDialog\(/,
+  it("⑤ ⭐ 也不再有任何「桌面/Web 分支」的意义（分类问句已删；Web 仍然能建空间）", () => {
+    // 第二阶段之后这里**没有**分类可问 ⇒ 条件判断整段不在；留下的只该是"建个人空间"那一步 ✓
+    expect(src, "⛔ 又出现了 `isDesktopPlatform() { …chooseDialog…` 的老分支").not.toMatch(
+      /isDesktopPlatform\(\)[\s\S]{0,200}?chooseDialog\(/,
     );
-    // ⛔ 不许退化回"只看桌面"（那等于团队冻结在这条入口上失效 ✗）
-    expect(src).not.toMatch(/if \(isDesktopPlatform\(\)\) \{[\s\S]{0,200}?await chooseDialog\(/);
+    // 空间仍建得出来（⛔ 别把"删分类问句"做成"删新建空间" ✗）
+    expect(src).toContain('useSpaceStore.getState().create(name, "personal")');
   });
 
   it("⑥ 取消要能走通：问名字那一步**不是**只挂 onSubmit（取消也必须兑现）", () => {

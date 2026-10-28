@@ -24,19 +24,11 @@ import { readHideAdvanced, visibleGroups, writeHideAdvanced } from "../lib/setti
 import { accountKey } from "../lib/emailAccount";
 import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
-import { inputDialog } from "../store/input";
 import { useSpaceStore } from "../store/space";
 // ⭐ 2026-10-10：空间**筛选**（20+ 个空间）—— 与侧栏那个空间切换器**共用这一份**匹配 ✓
 import { filterSpaces } from "../lib/spaceFilter";
 import { spaceCryptoBadge } from "../lib/spaceSecurity";
 // ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）：与侧栏**同一处**映射（文字标识，⛔ 不只靠颜色）✓
-import { useNotes } from "../store/notes";
-import { withSyncStatus } from "../store/syncStatus";
-import { useAuth } from "../store/auth";
-// ⭐ **2026-10-29（owner 拍）：团队功能冻结** —— `shuyonote-sync-server` 已归档、由独立闭源企业版取代；
-//   这一页里的「组织账号 / 组织管理」属于团队侧**新建/配置**入口 ⇒ 冻结时隐藏 ✓
-//   （⛔ 不删代码、⛔ 不动契约 ✓；唯一开关在 `lib/edition.ts`）。
-import { TEAM_EDITION_ARCHIVED_NOTE, teamConfigEntryVisible } from "../lib/edition";
 import { exportCurrentSpace, importSpacePackage, removeSpace } from "../lib/spaceTransfer";
 import { APP_VERSION, APP_LICENSE } from "../lib/links";
 import { useEmailPanel } from "../store/emailPanel";
@@ -149,13 +141,6 @@ const SPACE_ACCENTS = [
   "#3370FF", "#00B578", "#FF8A1E", "#7B61FF", "#00A9C7", "#D9A300", "#F54A45", "#646A73",
 ];
 
-function hostLabel(url: string): string {
-  try {
-    return new URL(url).host.replace(/^www\./, "");
-  } catch {
-    return url.replace(/^https?:\/\//, "").split("/")[0] || url || "(未设置服务器)";
-  }
-}
 
 // 「空间」页：空间管理（**切换** / 配色 / 删除 / 导出 / 导入）。
 // ⚠️ **2026-10-10（owner 亲口要求）**：「设置-空间面板要可以切换空间，效果等同于在侧边栏的空间切换。」
@@ -1045,29 +1030,9 @@ function EmailPane() {
 // 「账户」页：登录身份（低频、全局）。同步操作仍在同步面板——那是高频、
 // 需要状态常驻可见的动作。这里只做「我是谁、连了哪些服务器」。
 function AccountPane() {
-  const spaces = useSpaceStore((s) => s.spaces);
-  // 逐字段订阅（`clear` 是动作，引用恒定；本面板是设置中心里很大的一个子面板，
-  // 不该被 auth store 的无关字段唤醒）。
-  const authed = useAuth((s) => s.authed);
-  /** ⭐ 2026-10-29（团队冻结）：团队侧**新建/配置**入口还显不显示 —— 只读 `lib/edition.ts` 那一个开关 ✓。 */
-  const teamConfigVisible = teamConfigEntryVisible();
-  const serverUrl = useAuth((s) => s.serverUrl);
-  const token = useAuth((s) => s.token);
-  const email = useAuth((s) => s.email);
-  const clear = useAuth((s) => s.clear);
-  const [groups, setGroups] = useState<{ server_url: string; wss: { ws_id: string; name: string; spaceId: string; token: string }[] }[]>([]);
-  const [status, setStatus] = useState("");
-  const [syncing, setSyncing] = useState(false);
-  // P0 org management state (research group leader). Members are per-org so
-  // several groups can coexist without their member lists bleeding into each other.
-  const [orgs, setOrgs] = useState<{ id: string; name: string; role: string; owner_id: string }[]>([]);
-  const [orgMembers, setOrgMembers] = useState<Record<string, { members: { user_id: string; email: string; role: string; disabled: boolean }[]; pending: { email: string; status: string }[] }>>({});
-  const [inviteEmail, setInviteEmail] = useState<Record<string, string>>({});
-  const [orgStatus, setOrgStatus] = useState("");
-  // 邀请码（每组织一个被生成的码）与「凭码加入」输入。
-  const [inviteCodes, setInviteCodes] = useState<Record<string, string>>({});
-  const [joinCode, setJoinCode] = useState("");
-  // ⭐ 2026-10-25（owner：设备未命名）：“本机设备名”原先没有任何入口 ⇒ 补一个。
+  // ⭐ **2026-10-29（owner 拍第二阶段）：团队 UI 已删除** ✗ —— 这一页只剩**本机设备名**。
+  //   ⛔ 账号登录 / 组织管理 / 按服务器分组的同步身份 / 团队会话全部移除 ✓（Rust 后端保留、
+  //   `team_*` 前端契约已删；个人空间的同步在「同步」面板，不在这里 ✓）。
   const [deviceName, setDeviceName] = useState("");
   const [deviceNameLoaded, setDeviceNameLoaded] = useState(false);
   const [deviceNameSaving, setDeviceNameSaving] = useState(false);
@@ -1079,9 +1044,9 @@ function AccountPane() {
       .catch(() => { if (alive) setDeviceNameLoaded(true); });
     return () => { alive = false; };
   }, []);
+
   const saveDeviceName = async () => {
     setDeviceNameSaving(true);
-    setDeviceNameStatus("");
     try {
       const effective = await api.setDeviceName(deviceName);
       setDeviceNameStatus(`已保存；当前生效名：${effective}`);
@@ -1093,276 +1058,6 @@ function AccountPane() {
     }
   };
 
-  const refresh = useCallback(async () => {
-    try {
-      const profiles = await api.listSyncProfiles();
-      const name = new Map(spaces.map((s) => [s.id, s.name]));
-      const byServer = new Map<string, { ws_id: string; name: string; spaceId: string; token: string }[]>();
-      for (const p of profiles) {
-        const key = p.server_url || "(未设置服务器)";
-        if (!byServer.has(key)) byServer.set(key, []);
-        byServer.get(key)!.push({
-          ws_id: p.ws_id,
-          name: name.get(p.ws_id) ?? p.ws_id,
-          spaceId: p.space_id,
-          token: p.token,
-        });
-      }
-      setGroups(Array.from(byServer.entries()).map(([server_url, wss]) => ({ server_url, wss })));
-    } catch (e) {
-      setStatus(String(e));
-    }
-  }, [spaces]);
-
-  const logout = async () => {
-    if (!serverUrl) return;
-    setStatus("");
-    try {
-      await api.teamLogout(serverUrl);
-      // 全局登出：清空所有绑定空间的 sync_token/space_id（保留 server_url 供再登录），
-      // 否则标题栏胶囊仍显示旧 token 的同步目标，不会随登出消失。
-      const profiles = await api.listSyncProfiles();
-      for (const p of profiles) {
-        await api.setSyncProfile(p.ws_id, { server_url: p.server_url }).catch(() => {});
-      }
-      clear();
-      setStatus("已登出当前账号");
-      await refresh();
-    } catch (e) {
-      setStatus(`登出失败：${e}`);
-    }
-  };
-
-  // 注销自己（毕业交接）：账号作废 + 数据交组长。不可逆，需二次确认。
-  const deactivateSelf = async () => {
-    if (!serverUrl || !token) { setStatus("请先登录组织账号"); return; }
-    const ok = await confirmDialog({
-      title: "注销账号",
-      message: `注销后无法再登录，但你的数据会转交给所属组织的组长。确定注销「${hostLabel(serverUrl)}」上的这个账号？`,
-      danger: true,
-    });
-    if (!ok) return;
-    setStatus("");
-    try {
-      await api.teamDeactivateAccount(serverUrl, token);
-      clear();
-      setStatus("账号已注销。数据已转交组长。");
-      await refresh();
-    } catch (e) {
-      setStatus(`注销失败：${e}`);
-    }
-  };
-
-  const syncGroup = async (g: { server_url: string; wss: { ws_id: string }[] }) => {
-    setSyncing(true);
-    setStatus("");
-    try {
-      // P1（2026-09-15）：**这里的同步也要配对 begin/end**——它同样会拉到附件，
-      // 而 Rust 的进度事件会把 `useSyncStatus` 置成"正在同步"；不套 `withSyncStatus`
-      // 就会在设置里同步完之后把面板留在"正在同步…"（真机上实测过这条路漏）。
-      const { ok, fail } = await withSyncStatus(`正在同步「${hostLabel(g.server_url)}」…`, async () => {
-        let ok = 0;
-        let fail = 0;
-        for (const w of g.wss) {
-          const r = await api.syncWorkspace(w.ws_id);
-          if (r.error) fail++;
-          else ok++;
-        }
-        return { ok, fail };
-      });
-      setStatus(`「${hostLabel(g.server_url)}」同步：成功 ${ok}，失败 ${fail}`);
-      await useNotes.getState().loadPages();
-    } catch (e) {
-      setStatus(String(e));
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  // ---- P0 org management handlers ----
-  const base = serverUrl;
-
-  const loadOrgs = useCallback(async (sv: string, tk: string) => {
-    try {
-      setOrgs(await api.teamListOrgs(sv, tk));
-    } catch (e) {
-      setOrgStatus(`组织拉取失败：${e}`);
-    }
-  }, []);
-
-  const createOrg = async () => {
-    if (!base || !token) { setOrgStatus("请先登录组织账号"); return; }
-    // 用应用内 inputDialog（替代丑的原生 prompt）。
-    inputDialog({
-      title: "新建组织",
-      placeholder: "组织名称",
-      defaultValue: "",
-      onSubmit: async (name) => {
-        const n = name.trim();
-        if (!n) return;
-        try {
-          await api.teamCreateOrg(base, token, n);
-          await loadOrgs(base, token);
-          setOrgStatus("组织已创建");
-        } catch (e) {
-          setOrgStatus(`创建失败：${e}`);
-        }
-      },
-    });
-  };
-
-  const loadMemberList = useCallback(async (orgId: string) => {
-    if (!base || !token) return;
-    try {
-      const members = await api.teamListOrgMembers(base, token, orgId);
-      setOrgMembers((prev) => ({ ...prev, [orgId]: members }));
-    } catch (e) {
-      setOrgStatus(`成员拉取失败：${e}`);
-    }
-  }, [base, token]);
-
-  // P0: load orgs on mount / auth change.
-  useEffect(() => {
-    void refresh();
-    if (base && token) void loadOrgs(base, token);
-  }, [base, token, refresh, loadOrgs]);
-
-  // Fetch each org's members whenever orgs change. 任一成员可读成员列表（只读），
-  // 所以每个组织都拉；但管理操作（邀请/移除/改角色）需 admin（UI 用 o.role 限定）。
-  useEffect(() => {
-    if (!base || !token) return;
-    for (const o of orgs) void loadMemberList(o.id);
-  }, [orgs, base, token, loadMemberList]);
-
-  const inviteMember = async (orgId: string) => {
-    if (!base || !token) return;
-    const email = (inviteEmail[orgId] ?? "").trim();
-    if (!email) { setOrgStatus("请输入被邀请者邮箱"); return; }
-    try {
-      await api.teamInviteOrgMember(base, token, orgId, email, "member");
-      setInviteEmail((prev) => ({ ...prev, [orgId]: "" }));
-      await loadMemberList(orgId);
-      setOrgStatus("已邀请");
-    } catch (e) {
-      setOrgStatus(`邀请失败：${e}`);
-    }
-  };
-
-  const approveInvite = async (orgId: string, email: string) => {
-    if (!base || !token) return;
-    try {
-      await api.teamApproveOrgInvite(base, token, orgId, email);
-      await loadMemberList(orgId);
-      setOrgStatus(`已批准 ${email}`);
-    } catch (e) {
-      setOrgStatus(`批准失败：${e}`);
-    }
-  };
-
-  const rejectInvite = async (orgId: string, email: string) => {
-    if (!base || !token) return;
-    try {
-      await api.teamRejectOrgInvite(base, token, orgId, email);
-      await loadMemberList(orgId);
-      setOrgStatus(`已拒绝 ${email}`);
-    } catch (e) {
-      setOrgStatus(`拒绝失败：${e}`);
-    }
-  };
-
-  const toggleActive = async (orgId: string, m: { user_id: string; disabled: boolean }) => {
-    if (!base || !token) return;
-    try {
-      await api.teamSetOrgMemberActive(base, token, orgId, m.user_id, m.disabled);
-      await loadMemberList(orgId);
-      setOrgStatus(m.disabled ? "已启用" : "已停用");
-    } catch (e) {
-      setOrgStatus(`状态切换失败：${e}`);
-    }
-  };
-
-  const removeMember = async (orgId: string, userId: string) => {
-    if (!base || !token) return;
-    try {
-      await api.teamRemoveOrgMember(base, token, orgId, userId);
-      await loadMemberList(orgId);
-      setOrgStatus("已移除成员（数据保留）");
-    } catch (e) {
-      setOrgStatus(`移除失败：${e}`);
-    }
-  };
-
-  // 组长注销组员（毕业交接）：账号作废 + 数据交组长。不可逆，二次确认。
-  const deactivateMember = async (orgId: string, userId: string, email: string) => {
-    if (!base || !token) return;
-    const ok = await confirmDialog({
-      title: "注销成员",
-      message: `注销「${email}」后其无法再登录，但数据会转交给组长。确定注销该成员？`,
-      danger: true,
-    });
-    if (!ok) return;
-    try {
-      await api.teamDeactivateOrgMember(base, token, orgId, userId);
-      await loadMemberList(orgId);
-      setOrgStatus(`已注销 ${email}（数据已转交组长）`);
-    } catch (e) {
-      setOrgStatus(`注销失败：${e}`);
-    }
-  };
-
-  // 组长生成/重置邀请码（每个组织一个，显示出来让组长复制转发）。
-  const generateInviteCode = async (orgId: string, orgName: string) => {
-    if (!base || !token) return;
-    try {
-      const code = await api.teamGenerateOrgInviteCode(base, token, orgId);
-      setInviteCodes((prev) => ({ ...prev, [orgId]: code }));
-      // 生成后自动复制到剪贴板，组长直接可用（不用手动选中复制）。
-      try {
-        await navigator.clipboard.writeText(code);
-        setOrgStatus(`已生成「${orgName}」邀请码：${code}（已复制）`);
-      } catch {
-        setOrgStatus(`已生成「${orgName}」邀请码：${code}`);
-      }
-    } catch (e) {
-      setOrgStatus(`生成邀请码失败：${e}`);
-    }
-  };
-
-  // 用户凭邀请码加入组织（码即授权，直接入组）。
-  const joinByCode = async () => {
-    if (!base || !token) { setOrgStatus("请先登录组织账号"); return; }
-    const code = joinCode.trim();
-    if (!code) { setOrgStatus("请输入邀请码"); return; }
-    try {
-      await api.teamJoinOrgByCode(base, token, code);
-      setJoinCode("");
-      setOrgStatus("已加入组织");
-      await loadOrgs(base, token);
-    } catch (e) {
-      setOrgStatus(`加入失败：${e}`);
-    }
-  };
-
-  // 组长在组织下创建共享空间：调 create_space 带 org_id，组员自动可访问。
-  const createOrgSpace = async (orgId: string, orgName: string) => {
-    if (!base || !token) return;
-    inputDialog({
-      title: `在「${orgName}」创建共享空间`,
-      placeholder: "空间名称",
-      defaultValue: "",
-      onSubmit: async (name) => {
-        const n = name.trim();
-        if (!n) return;
-        try {
-          const sp = await api.teamCreateSpace(base, token, n, orgId);
-          setOrgStatus(`已在「${orgName}」创建共享空间「${sp.name}」`);
-        } catch (e) {
-          setOrgStatus(`创建共享空间失败：${e}`);
-        }
-      },
-    });
-  };
-
   return (
     <>
       <section className="set-section">
@@ -1371,13 +1066,9 @@ function AccountPane() {
           <div className="set-row-text">
             <div className="set-row-name">设备名</div>
             <div className="set-row-sub">
-              {/* ⚠️ **2026-10-25（owner：「为何是未命名设备？而 mac 发现的是 ZHAIDELL」）**：
-                  原文案 ＋ 空输入的 placeholder 都写着「未命名设备」⇒ 看着像"本机没名字"；
-                  但实际广播的是**系统主机名**（这台是 `ZhaiDELL`）—— 那只是**三档回退的最后一档**
-                  （用户没设 ＋ 主机名也读不到时才会出现）。⇒ 把三档说清，⛔ 不让 placeholder 冒充当前名字。 */}
               附近设备与配对列表里显示的名字。
               <br />
-              留空 ⇒ 用的是<b>这台电脑的系统名</b>（这台是 <code>ZhaiDELL</code>）；
+              留空 ⇒ 用的是<b>这台电脑的系统名</b>；
               只有系统名也读不到时，才会显示「未命名设备」。
             </div>
           </div>
@@ -1398,214 +1089,9 @@ function AccountPane() {
         </div>
         {deviceNameStatus && <div className="set-hint">{deviceNameStatus}</div>}
       </section>
-
-      {/* ⭐ 2026-10-29（团队冻结）：**未登录 ⇒ 这一节整个不渲染** ✗（不再提供"登录团队账号"这条新路径）；
-          已登录（旧配置用户）⇒ 照旧显示身份 ✓，但操作按钮见下面的冻结门 ✓。 */}
-      {(teamConfigVisible || authed) && (
-      <section className="set-section">
-        <div className="set-section-title">当前组织账号</div>
-        {authed ? (
-          <div className="acct-login-card">
-            <span className="set-status-dot set-dot-on" />
-            <div className="set-row-text">
-              <div className="set-row-name">{email || hostLabel(serverUrl)}</div>
-              <div className="set-row-sub">{email ? `${hostLabel(serverUrl)} · 已登录` : `已登录 · ${hostLabel(serverUrl)}`}</div>
-            </div>
-            {/* ⭐ 2026-10-29（团队冻结）：⛔ 注销/登出**不再显示** ✗ —— 登录入口已隐藏，
-                点登出 = 旧配置再也登不回来（把老用户的同步弄坏 ✗）。要看/改账号请用旧版本客户端或企业版 ✓。 */}
-            {teamConfigVisible && (
-              <span className="acct-actions">
-                <button className="set-btn is-danger" onClick={() => void deactivateSelf()}>注销账号</button>
-                <button className="set-btn" onClick={() => void logout()}>登出</button>
-              </span>
-            )}
-          </div>
-        ) : (
-          <div className="acct-login-card">
-            <span className="set-status-dot" />
-            <div className="set-row-text">
-              <div className="set-row-name">未登录组织账号</div>
-              <div className="set-row-sub">在侧栏「同步」里登录或注册后，这里会显示当前身份</div>
-            </div>
-          </div>
-        )}
-        {!teamConfigVisible && (
-          <p className="set-hint" data-testid="team-frozen-settings-note">{TEAM_EDITION_ARCHIVED_NOTE}</p>
-        )}
-      </section>
-      )}
-
-      <section className="set-section">
-        <div className="set-section-title">
-          <span>同步身份（按服务器分组）</span>
-          {/* 去同步：关闭设置中心返回主界面（侧栏「同步」面板常驻）。 */}
-          <button className="set-btn" style={{ marginLeft: "auto" }} onClick={() => useEditorStore.getState().closeSettings()}>
-            去同步
-          </button>
-        </div>
-        {groups.length === 0 ? (
-          <p className="set-hint">
-            尚无同步身份。在侧栏「同步」里为某个空间配置服务器并登录后，会按服务器在此分组显示。
-          </p>
-        ) : (
-          <div className="set-list">
-            {groups.map((g) => (
-              <div key={g.server_url} className="set-group">
-                <div className="set-group-head">
-                  <span className="set-row-name">{hostLabel(g.server_url)}</span>
-                  <button className="set-btn" disabled={syncing} onClick={() => void syncGroup(g)}>
-                    {syncing ? "同步中…" : "同步该组"}
-                  </button>
-                </div>
-                {g.wss.map((w) => (
-                  <div key={w.ws_id} className="set-group-item">
-                    <span className="set-group-item-name">
-                      {w.name}
-                      <span className="set-chip-inline">{w.spaceId ? "空间" : "单用户"}</span>
-                    </span>
-                    <span className="set-chip-inline on">{w.token ? "已认证" : "未认证"}</span>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        )}
-        {status && <div className="set-status-line">{status}</div>}
-      </section>
-
-      {/* ⭐ 2026-10-29（团队冻结）：**「组织管理」整节隐藏** ✗ —— 里面全是"新建组织 / 凭码入组 /
-          邀请成员 / 注销成员"这类**新建/配置**动作；⛔ 不删代码 ✗（`teamConfigVisible` 一改回 true 就回来）。 */}
-      {teamConfigVisible && (
-      <section className="set-section">
-        <div className="set-section-title">组织管理</div>
-        {!isDesktopPlatform() ? (
-          <p className="set-hint">Web 版不支持组织管理，请用桌面版。</p>
-        ) : authed ? (
-          <>
-            <div className="set-row">
-              <div className="set-row-text">
-                <div className="set-row-name">我的组织</div>
-                <div className="set-row-sub">组长可集中管理组内账号与角色</div>
-              </div>
-              <button className="set-btn" onClick={() => void createOrg()}>新建组织</button>
-            </div>
-            {/* 凭邀请码加入组织：新用户拿到组长发的码，输入即入组（码即授权）。 */}
-            <div className="org-join">
-              <input
-                className="sync-input"
-                placeholder="有邀请码？输入并加入组织"
-                value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value)}
-              />
-              <button className="sync-btn" onClick={() => void joinByCode()}>加入</button>
-            </div>
-            {orgs.length === 0 ? (
-              <div className="org-empty-help">
-                <p className="set-hint"><b>你还没加入任何组织。</b>加入方式（任选其一）：</p>
-                <ul className="org-empty-list">
-                  <li><b>有邀请码</b>：在上方输入组长发的<b>组织邀请码</b>，点「加入」即入组。</li>
-                  <li><b>被组长邀请</b>：等组长在成员管理里邀请你，<b>批准后</b>你就成为成员。</li>
-                  <li><b>被加为空间成员</b>：组长把你加进某个空间成员，就能<b>绑定空间同步</b>（多设备）。
-                    <div className="org-empty-note">提示：加入组织 ≠ 能同步空间——还需组长把你加为<b>空间成员</b>。</div>
-                  </li>
-                </ul>
-                <p className="set-hint">如果你是要<b>新建组织当组长</b>，点右上「新建组织」。</p>
-              </div>
-            ) : (
-              <div className="set-list">
-                {orgs.map((o) => {
-                  const data = orgMembers[o.id];
-                  const members = data?.members ?? [];
-                  const pending = data?.pending ?? [];
-                  const email = inviteEmail[o.id] ?? "";
-                  return (
-                    <div key={o.id} className="set-group">
-                      <div className="set-group-head">
-                        <span className="set-row-name">{o.name}</span>
-                        <span className="set-row-sub">
-                          {o.role === "admin" ? "组长" : "成员"} · {members.length} 人
-                        </span>
-                        {o.role === "admin" && (
-                          <button className="set-btn" onClick={() => void createOrgSpace(o.id, o.name)}>创建共享空间</button>
-                        )}
-                      </div>
-                      {o.role === "admin" && (
-                        <div className="org-invite-code">
-                          <span className="set-row-sub">邀请码：{inviteCodes[o.id] || "未生成"}</span>
-                          <button className="set-btn" onClick={() => void generateInviteCode(o.id, o.name)}>
-                            {inviteCodes[o.id] ? "重新生成" : "生成邀请码"}
-                          </button>
-                        </div>
-                      )}
-                      {pending.length > 0 && (
-                        <div className="org-members org-pending">
-                          <div className="org-pending-title">待加入</div>
-                          {pending.map((p) => (
-                            <div key={p.email} className="set-group-item">
-                              <span className="org-email">{p.email}</span>
-                              <span className="set-row-sub">待批准</span>
-                              <span className="org-actions">
-                                <button className="set-btn" onClick={() => void approveInvite(o.id, p.email)}>批准</button>
-                                <button className="set-btn" onClick={() => void rejectInvite(o.id, p.email)}>拒绝</button>
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {members.length > 0 ? (
-                        <div className="org-members">
-                          {members.map((m) => (
-                            <div key={m.user_id} className="set-group-item">
-                              <span className="org-email">{m.email}</span>
-                              <span className="set-row-sub">
-                                {m.role === "admin" ? "组长" : "成员"}{m.disabled ? " · 已停用" : ""}
-                              </span>
-                              <span className="org-actions">
-                                {o.role === "admin" && (
-                                  <>
-                                    <button className="set-btn" onClick={() => void toggleActive(o.id, m)}>
-                                      {m.disabled ? "启用" : "停用"}
-                                    </button>
-                                    <button className="set-btn is-danger" onClick={() => void deactivateMember(o.id, m.user_id, m.email)}>
-                                      注销
-                                    </button>
-                                    <button className="set-btn" onClick={() => void removeMember(o.id, m.user_id)}>移除</button>
-                                  </>
-                                )}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="set-hint">还没有成员。</p>
-                      )}
-                      {o.role === "admin" && (
-                        <div className="org-invite">
-                          <input
-                            className="sync-input"
-                            placeholder="成员邮箱"
-                            value={email}
-                            onChange={(e) => setInviteEmail((prev) => ({ ...prev, [o.id]: e.target.value }))}
-                          />
-                          <button className="sync-btn" onClick={() => void inviteMember(o.id)}>邀请</button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {orgStatus && <div className="set-status-line">{orgStatus}</div>}
-          </>
-        ) : (
-          <p className="set-hint">未登录组织账号，无法管理组织。在侧栏「同步」里登录。</p>
-        )}
-      </section>
-      )}
     </>
   );
 }
-
 
 function AppearancePane() {
   // 逐字段订阅（`setTheme`/`setAccent` 是动作，引用恒定）。

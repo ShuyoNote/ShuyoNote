@@ -19,11 +19,9 @@ import {
   type Reading,
 } from "../lib/trustDevicePanelReadings";
 import { useSpaceStore } from "../store/space";
-import { useAuth } from "../store/auth";
 import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
 import { useSyncStatus } from "../store/syncStatus";
-import { inputDialog } from "../store/input";
 // ⭐ **P-3c**：⭐ 二次确认走**仓内既有**那个件 ✓（⛔ 原生 `confirm` ✗ —— 本仓 `confirm` 只出现在配对
 //   那条路的 `need_confirm` 上 ✓，它不是弹窗 ✓）；⛔ 不自造一个 ✗（样式/文案归 owner ✓）。
 import { confirmDialog } from "../store/confirm";
@@ -55,10 +53,6 @@ import { SyncAdvancedFold } from "./SyncAdvancedFold";
 //   ⚠️ 全部是**纯函数／常量**（唯一实现 `src/lib/personalSyncReadout.ts` ✓）——
 //   面板只负责把读数传进去、把结果摆出来（⛔ 不在这里拼句子 ✗：那正是旧 `heroRoute` 被删的原因之一 ✓）。
 import { SyncReadout } from "./SyncReadout";
-// ⭐ **2026-10-29（owner 拍）：团队功能冻结** —— `shuyonote-sync-server` 已归档、被独立闭源企业版取代；
-//   本仓（个人版客户端）**隐藏"新建/配置团队"入口**，但 ⛔ 不删代码、不动契约、不破旧配置 ✗。
-//   ⚠️ 唯一开关在 `lib/edition.ts`（`teamConfigEntryVisible()`）—— ⛔ 别在这一屏另写 true/false ✗。
-import { TEAM_EDITION_ARCHIVED_NOTE, teamConfigEntryVisible } from "../lib/edition";
 import {
   PASSWORD_AUTO_HINT,
   PASSWORD_AUTO_VALUE,
@@ -107,10 +101,6 @@ const relTime = (ts: number) => {
 };
 const fmtDuration = (ms: number) => (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + " 秒";
 /** C1：本次下载量说成人话（只用来展示，精度不重要）。 */
-const fmtMb = (bytes: number) => {
-  const mib = bytes / (1024 * 1024);
-  return mib >= 1 ? `${mib.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
-};
 /** ★ 2026-09-29（IA）：「同步方式」那一行的右侧摘要值。
  *  三档的文案与下面 <select> 里的 <option> **逐字一致** —— 不新造词，也不拍扁成
  *  「自动（推荐）」那种说法（拍扁了就说不清用户现在到底在哪一档）。 */
@@ -124,48 +114,14 @@ const SYNC_MODE_TEXT: Record<SyncMode, string> = {
  *  ⇒ 摘要值念出来与展开后那个下拉里选中的一项**是同一个说法**。 */
 const optMb = (n: number) => (n >= 1024 && n % 1024 === 0 ? `${n / 1024} GB` : `${n} MB`);
 
-interface ServerSpace {
-  id: string;
-  name: string;
-  role: string;
-  owner_id: string;
-}
-
-interface ServerMember {
-  user_id: string;
-  email: string;
-  role: string;
-}
-
 interface EditRow {
   ws_id: string;
   name: string;
-  /** ⚠️ **2026-10-04 加**：⭐ 空间分类 ✓ —— 服务器那一段只列**团队空间**要用它。
-   *  ⭐ 来源＝`api.spaceSecurityOverview()`（那边现成有 `kind` ✓，不用改 Rust ✓）。
-   *  ⚠️ 取不到时**兜底当团队** ✓ —— 宁可多给一个入口（后端真拦在 `set_sync_profile` ✓），
-   *  也不要让团队空间看不到「创建组织空间」而卡住 ✓。 */
+  /** 空间分类：只用来判断"当前是不是个人空间"（团队 UI 已删；字段保留是因为 sync_profiles 里有它 ✓）。 */
   kind: "personal" | "team";
   server_url: string;
   token: string;
   space_id: string;
-  // Login-to-get-token (U3): email/password are transient (never persisted); the
-  // resulting token fills `token`. `remoteSpaces` caches the spaces the account
-  // joined (from GET /spaces) so the 空间 ID 可以下拉绑定.
-  loginEmail: string;
-  loginPassword: string;
-  // 注册邀请码（仅注册 tab 用，注册时传给服务端 /auth/register）。
-  loginRegisterCode: string;
-  // 登录/注册 tab（login | register）。
-  authMode: "login" | "register";
-  remoteSpaces: ServerSpace[];
-  // M27 成员管理（选中空间且已登录后可用）：members 列表 + 邀请表单。
-  members: ServerMember[];
-  memberOpen: boolean;
-  inviteEmail: string;
-  inviteRole: string;
-  // P6.1 每空间「附件同步」开关（默认 true）。**只控制附件字节**，笔记正文 / 标题 /
-  // 结构等元数据照常同步 ⇒ 关掉后另一端「看得见但打不开」。
-  syncAttachments: boolean;
 }
 
 // Per-workspace sync targets (S8): each local workspace binds to its own remote
@@ -228,7 +184,6 @@ export function SyncPanel({
   useOverlayLayer("sync", open, () => close());
   const spaces = useSpaceStore((s) => s.spaces);
   const activeId = useSpaceStore((s) => s.activeId);
-  const authEmail = useAuth((s) => s.email);
   const [rows, setRows] = useState<EditRow[]>([]);
   // 自动同步间隔（毫秒；0=关闭），存 localStorage 供 App 级定时器使用。
   // ⚠️ 写入口只有 `writeAutoSyncMs`（它会顺便**广播**，让 App 那条定时器重挂 —— 否则面板改了档
@@ -550,7 +505,6 @@ export function SyncPanel({
   // ⚠️ 这里原来还有一个 `meshRoundNow()`（配一个「立刻交换一轮」按钮）。2026-09-26 **口径收敛**：
   //    交换并进「同步」（见 `syncOne` 里那一段）⇒ 函数与按钮**一起删掉**，不留在那儿当"看起来
   //    还该有个按钮"的线索（本仓对死代码的纪律在 TS 这半边同样适用）。
-  const [syncing, setSyncing] = useState(false);
   // C1 预算刹车：设备级设置（null = 还没读到，此时不渲染这一块）。
   const [budget, setBudget] = useState<SyncBudget | null>(null);
   const [budgetBusy, setBudgetBusy] = useState(false);
@@ -569,7 +523,6 @@ export function SyncPanel({
   const attTotal = useSyncStatus((s) => s.attTotal);
   const attName = useSyncStatus((s) => s.attName);
   const syncDurationMs = useSyncStatus((s) => s.durationMs);
-  const [loggingIn, setLoggingIn] = useState(false);
   const [history, setHistory] = useState<{ ws_id: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string; title: string }[] }[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [detailOpenIdx, setDetailOpenIdx] = useState<number | null>(null);
@@ -693,23 +646,8 @@ export function SyncPanel({
         ids = Array.from(new Set([...spaces.map((s) => s.id), ...profileIds]));
       }
       const byWs = new Map<string, SyncProfile>(profiles.map((p) => [p.ws_id, p]));
-      // 同步/保存过（有 server_url）的空间，默认填入上次登录的邮箱。
-      const serverEmail = new Map<string, string>();
-      // 已绑定空间的可选项（remoteSpaces）：有 token 时拉取，保证 space_id 能
-      // 匹配到名称显示下拉（否则刷新后变回手填裸 id）。
-      const remoteByServer = new Map<string, ServerSpace[]>();
-      for (const id of ids) {
-        const p = byWs.get(id);
-        const sv = p?.server_url;
-        if (sv && !serverEmail.has(sv) && !remoteByServer.has(sv)) {
-          const em = await api.teamGetServerEmail(sv).catch(() => "");
-          if (em) serverEmail.set(sv, em);
-          if (p?.token) {
-            const list = await api.teamListSpaces(sv, p.token).catch(() => [] as ServerSpace[]);
-            remoteByServer.set(sv, list);
-          }
-        }
-      }
+      // ⭐ 2026-10-29（第二阶段）：只留**个人同步**需要的几格；团队那套（登录邮箱 / 远程空间列表 /
+      //   成员 / 附件开关）连人带调用一起删了 ✓ —— ⛔ 不再发任何 `team_*` 命令 ✗。
       setRows(
         ids.map((id) => {
           const p = byWs.get(id);
@@ -720,18 +658,6 @@ export function SyncPanel({
             server_url: p?.server_url ?? "",
             token: p?.token ?? "",
             space_id: p?.space_id ?? "",
-            // 有 server_url 时预填上次登录邮箱；否则空。
-            loginEmail: p?.server_url ? (serverEmail.get(p.server_url) ?? "") : "",
-            loginPassword: "",
-            loginRegisterCode: "",
-            authMode: "login",
-            remoteSpaces: p?.server_url ? (remoteByServer.get(p.server_url) ?? []) : [],
-            members: [],
-            memberOpen: false,
-            inviteEmail: "",
-            inviteRole: "editor",
-            // 缺省 1（开）：老库升级上来没有这一列时的存量行为必须保持不变。
-            syncAttachments: (p?.sync_attachments ?? 1) === 1,
           };
         }),
       );
@@ -835,111 +761,7 @@ export function SyncPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const save = async (r: EditRow) => {
-    try {
-      await api.setSyncProfile(r.ws_id, { server_url: r.server_url, token: r.token || undefined, space_id: r.space_id || undefined, email: r.loginEmail.trim() || undefined });
-      setStatus(`已保存「${r.name}」`);
-    } catch (e) {
-      setStatus(String(e));
-    }
-  };
 
-  const syncOne = async (r: EditRow) => {
-    // 点「同步」先做前置校验，规范数据才发后端，避免无效请求 / 误导性报错。
-    if (!r.server_url.trim()) { setStatus("请先填服务器地址"); return; }
-    if (!r.token) { setStatus("请先登录（没有账号请先「注册」）"); return; }
-    if (!r.space_id) { setStatus(`请先绑定组织空间${r.remoteSpaces.length ? "（在上方下拉选择一个）" : "（还没有空间就点「创建空间」，或让管理员邀请你加入）"}`); return; }
-    setSyncing(true);
-    setStatus("");
-    useSyncStatus.getState().begin("正在同步…");
-    // B2（2026-09-15）：**必须配对 end()**。此前只有 `web.ts` 调 `end()`，桌面 / Android 走
-    // Rust 命令、不会自己调 ⇒ store 的 `syncing` **永远是 true**，于是面板一直显示"正在同步…"，
-    // 而下面那些 `setStatus("…同步完成…")` 的结果文案被 `syncStatus.syncing` 的分支挡住、永远看不到。
-    // 把错误一并带出去，让 `end()` 能落到 `phase: "error"`。
-    //
-    // 这一步同时是 **P6.1（每空间开关）的前置**：P6.1 要求"中途关掉开关 ⇒ 面板报告
-    // *因开关关闭而停止*"，而没有结束态就没有地方显示停止原因。
-    let syncErr: string | null = null;
-    try {
-      const res = await api.syncWorkspace(r.ws_id);
-      if (res.error) {
-        syncErr = String(res.error);
-        setStatus(`「${r.name}」同步失败：${res.error}`);
-      } else {
-        // P6.1：开关关闭（或同步途中被关掉）时，引擎会跳过附件并在返回值里带 paused
-        // 标记。不显示这一句的话，"附件没同步"看起来就像同步失败 / 丢文件。
-        // ⚠️ 停止时文案**不能出现"同步完成"**（§六 验收 #8 明确要求"因开关关闭而停止"
-        // 而不是"同步完成"）——否则用户以为附件也都对齐了。
-        // "未上传 N 个 / 未下载 M 个"来自引擎的两份清单差集（§六 验收 #4）。
-        const bits = [
-          res.attachments_skipped_upload > 0 ? `未上传 ${res.attachments_skipped_upload} 个` : "",
-          res.attachments_skipped_download > 0 ? `未下载 ${res.attachments_skipped_download} 个` : "",
-          // C1：被单文件阈值挡下的（不是"停止"，是"轮不到"）。
-          res.attachments_skipped_too_large > 0 ? `${res.attachments_skipped_too_large} 个超过单文件上限` : "",
-          // C1：**本该传但没传成**的——必须单独说，否则就是静默丢件。
-          res.attachments_failed > 0 ? `${res.attachments_failed} 个传输失败` : "",
-          res.attachments_bytes_downloaded > 0 ? `本次下载 ${fmtMb(res.attachments_bytes_downloaded)}` : "",
-        ].filter(Boolean).join(" / ");
-        const att = bits ? `（${bits}）` : "";
-        // C1：停止原因要说清是**哪一种**——"附件同步已关闭"和"磁盘要满了"对用户是两件事。
-        const stopReason =
-          res.attachments_paused_reason === "disk_floor"
-            ? "同步已停止：磁盘余量低于下限（可在下方调低「磁盘余量下限」）"
-            : res.attachments_paused_reason === "run_cap"
-              ? "同步已停止：已达「本次下载总量上限」"
-              : "同步已停止：途中关闭了附件同步";
-        setStatus(
-          res.attachments_paused
-            ? `「${r.name}」${stopReason}，已下载的附件保留${att}；上传 ${res.pushed} / 拉取 ${res.pulled}`
-            : bits
-              ? `「${r.name}」同步完成${att}：上传 ${res.pushed} / 拉取 ${res.pulled}`
-              : `「${r.name}」同步完成：上传 ${res.pushed} / 拉取 ${res.pulled}`,
-        );
-        // P0.1：有同页冲突（本地未推送 + 服务端新 seq）→ 提示用户选择。
-        const c = (res.conflicts ?? []) as { entity_id: string; title: string }[];
-        if (c.length > 0) {
-          setConflicts(c.map((x) => ({ ws_id: r.ws_id, entity_id: x.entity_id, title: x.title })));
-        }
-      }
-      await useNotes.getState().loadPages();
-      await loadHistory();
-      await loadPendingRemote();
-    } catch (e) {
-      syncErr = String(e);
-      setStatus(`「${r.name}」同步失败：${e}`);
-    } finally {
-      // ★ 丙-③-b（2026-09-26 口径收敛）：**网格那一档并进「同步」**——同一个按钮，服务端那条走完
-      //   再对这个空间跑一轮对等交换（原来它有一个单独的「立刻交换一轮」按钮：一个意图两个动作）。
-      //
-      // ⚠️ ⚠️ **必须放在 `finally` 里，不许放在 `try` 里** —— 真机上实测踩过：服务端那条**抛错**时
-      //   （现场是"会话已失效，请重新登录"），`try` 里剩下的语句**一行都不会跑** ⇒ 网格这一档被
-      //   连坐跳过，而它**根本不依赖服务端**（网格是客户端之间直连）。与 `round` 里那条
-      //   "一只对端拉不动不连坐"是同一条纪律。
-      // ⚠️ 只在**这一行就是面板上显示的那行**、且网格真开着时才跑：`lanStatus.mesh` 是**当前那条档案**
-      //   的读数（面板只为它显示网格那一块），拿别行的 ws_id 去跑会与读数对不上。
-      // ⚠️ "没配网格 ⇒ 一个字节都不动"由 Rust 侧（`mesh_sync_now` 早退）保证，这里**不重判一遍**。
-      if (lanStatus?.mesh.enabled && r.ws_id === activeId) {
-        try {
-          const rep = await api.meshSyncNow(r.ws_id);
-          // ⚠️ `rep.note` **自带**「网格：」前缀（Rust 拼好的人话）—— 这里别再写一遍，
-          //    否则真机上会看到 `网格：网格：拉了 1 台对端`（第一版就是这么出去的）。
-          // ★ 丙-⑤（2026-09-26）：`rep.note` 里现在还会带上"**你本机那一版让给了远端**
-          //    （已存进版本历史）"与"**有几页等你裁决**"—— 同样由 Rust 拼，这里**不重判**。
-          setStatus((prev) => `${prev}${prev ? "；" : ""}${rep.note}`);
-          // ★★ 丙-⑤：**网格这一轮也换了数据**，所以那两份清单必须跟着刷新。
-          //   它们是在上面 `try` 里读的 —— 也就是**网格开跑之前**。不补这一下的话，用户刚被
-          //   告知"有 2 页等你裁决"，而下面「待取回的远端版本」那一段**还是空的**（页面列表
-          //   同样停在交换前）：通知与现场对不上，用户只会以为那两页丢了。
-          await useNotes.getState().loadPages();
-          await loadPendingRemote();
-        } catch (e) {
-          setStatus((prev) => `${prev}${prev ? "；" : ""}网格交换失败：${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
-      setSyncing(false);
-      useSyncStatus.getState().end(syncErr);
-    }
-  };
 
   // ⭐ **2026-10-25（owner：「立即同步这个按钮不能点」）**：局域网那颗按钮的动作 ——
   //   走 `mesh_sync_now`（不需要服务端配置；个人空间也能点）。
@@ -956,8 +778,11 @@ export function SyncPanel({
       setStatus(`${rep.note}`);
       useSyncStatus.getState().end();
       setLanNonce((n) => n + 1);
-      // 网格那轮之后重拉页面列表（换过来的内容不该等切空间才看见）＋ 同步历史跟着刷新。
+      // 网格那轮之后重拉页面列表（换过来的内容不该等切空间才看见）＋ 待取回清单 ＋ 同步历史。
+      // ⚠️ 2026-10-29（第二阶段）：这三句原来在 `syncOne`（服务端同步）的收尾里 —— 那条路随团队 UI
+      //    一起删了 ⇒ 网格这一轮**自己**补齐（否则"刚说有页等你裁决、那一段还是空的"会复发 ✗）。
       useNotes.getState().loadPages();
+      await loadPendingRemote();
       void loadHistory();
     } catch (e) {
       setStatus(`局域网同步失败：${e}`);
@@ -967,266 +792,9 @@ export function SyncPanel({
     }
   };
 
-  const update = (ws_id: string, field: keyof EditRow, value: string) =>
-    setRows((rs) => rs.map((r) => (r.ws_id === ws_id ? { ...r, [field]: value } : r)));
-
-  // P6.1 每空间「附件同步」开关。两条容易踩的坑，都在这里挡掉：
-  //
-  // ① **必须走窄命令 `setSyncAttachments`，不能顺手用 `setSyncProfile`**：后者的语义是
-  //    "没传的字段 = 清空"（Rust `sync.rs` 的 `token.as_deref().unwrap_or("")`，web.ts 同
-  //    语义），为了存一个开关而调用它会把该行的 token / space_id 一起抹掉。
-  // ② **必须立即落盘，不能等用户点「保存」**：这个开关的用途之一就是"同步跑到一半关掉
-  //    刹车"，同步引擎读的是数据库里的值；只存在面板 state 里的话，跑到一半关 = 关了个
-  //    寂寞，得等下一次点「同步」才生效。落盘失败要把 UI 回滚，否则显示成"已关"其实没关。
-  const setAttachments = async (r: EditRow, enabled: boolean) => {
-    setRows((rs) => rs.map((x) => (x.ws_id === r.ws_id ? { ...x, syncAttachments: enabled } : x)));
-    try {
-      await api.setSyncAttachments(r.ws_id, enabled);
-      setStatus(
-        enabled
-          ? `「${r.name}」已开启附件同步`
-          : `「${r.name}」已关闭附件同步：同步时只走笔记内容，不传附件文件`,
-      );
-    } catch (e) {
-      setRows((rs) => rs.map((x) => (x.ws_id === r.ws_id ? { ...x, syncAttachments: !enabled } : x)));
-      setStatus(`附件同步开关保存失败：${e}`);
-    }
-  };
-
-  // 登录与注册共用的收尾：token 落到该行 + auth store + **落盘**，并尽力拉一次
-  // 空间列表（列表失败不回滚会话——token 已有效，用户仍可手填空间 id）。
-  //
-  // 自动保存是必须的：此前登录只把 token 放进面板的临时 state，用户不点「保存」
-  // 就关掉面板等于白登一次——而「刚登录完还要再点保存」本身就不该存在。
-  // 同服务器其它空间的绑定指向旧账号 token：登录（换账号）后统一覆盖为当前 token，
-  // 避免残留旧账号会话导致 401/数据错乱。保留各自 server_url。
-  const cleanOtherServerTokens = async (base: string, token: string) => {
-    const profiles = await api.listSyncProfiles();
-    const target = profiles.filter((p) => p.server_url === base);
-    for (const p of target) {
-      await api.setSyncProfile(p.ws_id, { server_url: base, token, space_id: p.space_id }).catch(() => {});
-    }
-  };
-
-  const applySession = async (r: EditRow, base: string, token: string, what: string) => {
-    const list = await api.teamListSpaces(base, token).catch(() => [] as ServerSpace[]);
-    setRows((rs) =>
-      rs.map((x) => (x.ws_id === r.ws_id ? { ...x, server_url: base, token, loginPassword: "", remoteSpaces: list } : x)),
-    );
-    useAuth.getState().setSession(base, token, r.loginEmail?.trim());
-    let saved = true;
-    try {
-      await api.setSyncProfile(r.ws_id, {
-        server_url: base,
-        token,
-        space_id: r.space_id || undefined,
-      });
-    } catch (e) {
-      saved = false;
-      console.error("auto-save sync profile failed", e);
-    }
-    // 同服务器其它空间的绑定指向旧账号 token：登录（换账号）后统一覆盖为当前 token，
-    // 避免残留旧账号的会话导致 401/数据错乱（这也是之前 401 的同类根源）。
-    // 保留各自 server_url，仅更新 token/space。
-    await cleanOtherServerTokens(base, token).catch((e) => console.error("clean other sync tokens failed", e));
-    setStatus(
-      saved
-        ? `${what}成功「${r.name}」，已保存${list.length ? `，可选空间 ${list.length} 个` : ""}`
-        : `${what}成功，但保存失败——请手动点「保存」`,
-    );
-  };
-
-  const login = async (r: EditRow) => {
-    const base = r.server_url.trim().replace(/\/+$/, "");
-    if (!base) { setStatus("请先填服务器地址"); return; }
-    if (!r.loginEmail.trim() || !r.loginPassword) { setStatus("请输入邮箱和密码"); return; }
-    setLoggingIn(true);
-    setStatus("");
-    try {
-      // 走 Rust 代理命令（绕 WebView2 CORS）：服务端无 CORS 层，前端 fetch 会被拦。
-      const { token } = await api.teamLogin(base, r.loginEmail.trim(), r.loginPassword);
-      if (!token) throw new Error("服务器未返回 token");
-      await applySession(r, base, token, "登录");
-    } catch (e: any) {
-      const msg = String(e?.message ?? e);
-      const noAuth = e?.status === 401 || /401/.test(msg);
-      setStatus(
-        noAuth ? "登录失败：邮箱或密码不对（没有账号请先「注册」）" : `登录失败：${msg}`,
-      );
-    } finally {
-      setLoggingIn(false);
-    }
-  };
-
-  // 注册：在该服务器开新账号。服务端 /auth/register 成功后直接下发会话 token，
-  // 所以注册即登录，不需要再点一次登录。密码规则与服务端一致（≥8 位）。
-  const register = async (r: EditRow) => {
-    const base = r.server_url.trim().replace(/\/+$/, "");
-    if (!base) { setStatus("请先填服务器地址"); return; }
-    if (!r.loginEmail.trim() || !r.loginPassword) { setStatus("请输入邮箱和密码"); return; }
-    if (r.loginPassword.length < 8) { setStatus("注册失败：密码至少 8 位"); return; }
-    // 邀请码必填：客户端直接拦下，不打扰服务端（也避免控制台 400）。
-    if (!r.loginRegisterCode.trim()) { setStatus("注册失败：请输入「注册邀请码」（向管理员索取，如 SHUYOABC）"); return; }
-    setLoggingIn(true);
-    setStatus("");
-    try {
-      const { token } = await api.teamRegister(base, r.loginEmail.trim(), r.loginPassword, null, r.loginRegisterCode.trim() || null);
-      if (!token) throw new Error("服务器未返回 token");
-      await applySession(r, base, token, "注册");
-    } catch (e: any) {
-      const msg = String(e?.message ?? e);
-      const st = e?.status;
-      let hint = st === 409 || /409/.test(msg) ? "该邮箱已注册，请直接「登录」"
-        : st === 400 || /400/.test(msg) ? "请输入「注册邀请码」（向管理员索取，如 SHUYOABC）且密码 ≥ 8 位"
-        : st === 401 || /401/.test(msg) ? "登录失败：邮箱或密码不对（没有账号请先「注册」）"
-        : `注册失败：${msg}`;
-      setStatus(hint);
-    } finally {
-      setLoggingIn(false);
-    }
-  };
-
-  // ---- M27 成员管理 handlers ----
-  const toggleMembers = (r: EditRow) => {
-    setRows((rs) => rs.map((x) => (x.ws_id === r.ws_id ? { ...x, memberOpen: !x.memberOpen } : x)));
-    if (!r.memberOpen && r.space_id && r.token) void loadMembers(r);
-  };
-
-  const loadMembers = async (r: EditRow) => {
-    const base = r.server_url.trim().replace(/\/+$/, "");
-    if (!base || !r.space_id || !r.token) { setStatus("请先登录并绑定空间"); return; }
-    setStatus("");
-    try {
-      const members = await api.teamListMembers(base, r.token, r.space_id);
-      setRows((rs) => rs.map((x) => (x.ws_id === r.ws_id ? { ...x, members } : x)));
-    } catch (e) {
-      setStatus(`成员拉取失败：${e}`);
-    }
-  };
-
-  const inviteMember = async (r: EditRow) => {
-    const base = r.server_url.trim().replace(/\/+$/, "");
-    if (!base || !r.space_id || !r.token) { setStatus("请先登录并绑定空间"); return; }
-    if (!r.inviteEmail.trim()) { setStatus("请输入被邀请者邮箱"); return; }
-    setStatus("");
-    const email = r.inviteEmail.trim();
-    const role = r.inviteRole;
-    try {
-      await api.teamInviteMember(base, r.token, r.space_id, email, role);
-      await loadMembers({ ...r, inviteEmail: "" });
-      setStatus(`已邀请 ${email}`);
-    } catch (e) {
-      const msg = String(e);
-      // 服务端空间邀请要求用户已注册；未注册返回 404。给友好提示。
-      setStatus(
-        /404|Not Found|not found/i.test(msg)
-          ? `「${email}」尚未注册：请让对方先注册账号，或由组长发送邀请码邀请`
-          : `邀请失败：${msg}`,
-      );
-    }
-  };
-
-  const removeMember = async (r: EditRow, userId: string) => {
-    const base = r.server_url.trim().replace(/\/+$/, "");
-    try {
-      await api.teamRemoveMember(base, r.token, r.space_id, userId);
-      await loadMembers(r);
-      setStatus("已移除成员");
-    } catch (e) {
-      setStatus(`移除失败：${e}`);
-    }
-  };
-
-  const setMemberRole = async (r: EditRow, email: string, role: string) => {
-    const base = r.server_url.trim().replace(/\/+$/, "");
-    try {
-      await api.teamSetMemberRole(base, r.token, r.space_id, email, role);
-      await loadMembers(r);
-      setStatus("已更新角色");
-    } catch (e) {
-      setStatus(`更新角色失败：${e}`);
-    }
-  };
-
-  const logout = async (r: EditRow) => {
-    const base = r.server_url.trim().replace(/\/+$/, "");
-    setStatus("");
-    try {
-      await api.teamLogout(base);
-      setRows((rs) =>
-        rs.map((x) => (x.ws_id === r.ws_id ? { ...x, token: "", space_id: "", remoteSpaces: [], members: [], memberOpen: false } : x)),
-      );
-      useAuth.getState().clear();
-      // 同样要落盘：否则重开面板时 refresh() 会把旧 token 从库里读回来，
-      // 看起来像「登出了又自己登回去」。
-      await api.setSyncProfile(r.ws_id, { server_url: base }).catch((e) => {
-        console.error("clear sync profile failed", e);
-      });
-      // 登出成功不显示「已登出」——回到登录表单本身已说明状态，提示是多余噪音。
-      setStatus("");
-    } catch (e) {
-      setStatus(`登出失败：${e}`);
-    }
-  };
-
-  // 选中空间即落盘：与登录同理——「选完还要再点保存」是多余的一步，
-  // 忘了点就等于没绑。手填服务器地址/令牌仍走「保存」按钮。
-  const pickSpace = async (r: EditRow, spaceId: string) => {
-    update(r.ws_id, "space_id", spaceId);
-    const base = r.server_url.trim().replace(/\/+$/, "");
-    if (!base) return;
-    try {
-      await api.setSyncProfile(r.ws_id, {
-        server_url: base,
-        token: r.token || undefined,
-        space_id: spaceId || undefined,
-      });
-      const name = r.remoteSpaces.find((x) => x.id === spaceId)?.name;
-      setStatus(spaceId ? `已绑定空间「${name ?? spaceId}」` : "已解除空间绑定");
-    } catch (e) {
-      setStatus(`保存失败：${e}`);
-    }
-  };
-
-  // 创建组织空间：当前登录账号在服务器上新建一个空间，创建后自动绑定。
-  // 新注册账号往往没有任何空间，必须直接给入口，否则「登录了却不知道选什么/填什么」。
-  const createSpace = async (r: EditRow) => {
-    const base = r.server_url.trim().replace(/\/+$/, "");
-    if (!base || !r.token) { setStatus("请先登录再创建组织空间"); return; }
-    inputDialog({
-      title: "创建组织空间",
-      placeholder: "空间名称",
-      defaultValue: "",
-      onSubmit: async (name) => {
-        const n = name.trim();
-        if (!n) return;
-        try {
-          const sp = await api.teamCreateSpace(base, r.token, n);
-          const ids = Array.isArray(r.remoteSpaces) ? r.remoteSpaces : [];
-          setRows((rs) => rs.map((x) => (x.ws_id === r.ws_id ? { ...x, remoteSpaces: [...ids, sp], space_id: sp.id } : x)));
-          await api.setSyncProfile(r.ws_id, { server_url: base, token: r.token, space_id: sp.id }).catch(() => {});
-          setStatus(`已创建组织空间「${sp.name}」并绑定`);
-        } catch (e) {
-          setStatus(`创建组织空间失败：${e}`);
-        }
-      },
-    });
-  };
-
-  // 当前用户在该绑定空间的角色是否可管理成员（admin/owner）。viewer/editor 只读。
-  const canManageSpace = (r: EditRow): boolean => {
-    const role = r.remoteSpaces.find((x) => x.id === r.space_id)?.role ?? "";
-    return role === "admin" || role === "owner";
-  };
-
-  // 状态条只有一行文案，按语义上色：失败=红、提示性前置条件=黄、其余=绿。
   const statusKind = (s: string): "ok" | "err" | "warn" =>
     /失败|错误|不支持|不存在|无效/.test(s) ? "err" : /^请/.test(s) ? "warn" : "ok";
 
-  const roleClass = (role: string) =>
-    ["owner", "admin", "editor", "viewer"].includes(role) ? `role-${role}` : "role-viewer";
-
-  const initial = (s: string) => (s.trim()[0] ?? "?").toUpperCase();
 
   /**
    * ★★ 丙-⑤（2026-09-26）：**侧栏那颗「同步」上的数字角标** —— "有几页等你裁决"。
@@ -1275,9 +843,6 @@ export function SyncPanel({
   //   ⚠️ **刀二十（2026-10-14）**：⭐ `heroState` **不再**用这一格了 ✗ —— 它现在由
   //     「已配对／在线／同步中」三件真事拼成（与当前是个人还是团队无关 ✓）。
   const isPersonalActive = serverRows.length === 0;
-  /** ⭐ 2026-10-29（owner 拍）：**团队配置入口还显不显示** —— 只读 `lib/edition.ts` 那一个开关 ✓。
-   *  ⚠️ 它只关"新建/改配置"那几块；**已存在**的团队档案照旧显示状态/照旧同步 ✓（下面那些 `同步` 不动 ✓）。 */
-  const teamConfigVisible = teamConfigEntryVisible();
 
   // ⭐⭐ **2026-10-27（owner 拍 M2）**：**第一次进入本页**才把局域网前置备好（设备身份／自动组名／
   //   监听地址／档案行）—— ⛔ 不在启动时自动开（桌面保持"用户不配就不广播"那条隐私口径 ✓）。
@@ -1382,7 +947,6 @@ export function SyncPanel({
   // 否则会出现"行上写关、点开复选框却是开的"。
   const wifiText = (budget?.wifi_only ?? true) ? "开" : "关";
   // 服务器：owner 明确「未绑定时显示『未绑定』」（不是空白，也不是占位 URL）。
-  const serverText = activeRow?.server_url.trim() || "未绑定";
   const totalOff = syncMode === "off";
   // 附近设备那一块要的读数（**列表只有一处来源**：`lanStatus.nearby`，与 `peers` 同一次读数）。
   // ⚠️ `Array.isArray` 那一层是给**老 Rust 构建**留的：读数里没有这一项时，界面说"看不到这一层"，
@@ -1502,7 +1066,7 @@ export function SyncPanel({
     //   它只在点「立即同步」时置真（657／744 行 ✓）⇒ ⭐ **后台自动同步在跑时它不变** ✗
     //   （而同文件 1256 行的脉冲点用的是**真信号** `liveSyncing` ＝ `useSyncStatus` ✓）
     //   ⇒ ⭐ 两处都用同一把尺：**引擎说在跑，或本机这一下在跑** ✓。
-    if (liveSyncing || syncing) return `正在同步…（已配对 ${n} 台）`;
+    if (liveSyncing) return `正在同步…（已配对 ${n} 台）`;
     // ⚠️ ⭐ 这里原来写的是「**正在**自动同步」✗ —— 而走到这一支时**并没有**同步在跑 ✓
     //   ⇒ 那是把"开关是开的"说成了"正在发生" ✓。
     // ⭐⭐ **2026-10-14（owner：「怎么修改？」）** ✗：只改动词还不够 ✓ —— 那句话仍然**没说
@@ -1519,7 +1083,7 @@ export function SyncPanel({
   // ⭐ 同上：**同步关掉了就该无色** ✗ —— 否则会出现"绿点 ＋ 同步已关"这种自相矛盾的画面 ✓。
   // ⭐ 跟上面对齐："在跑"一律用 `liveSyncing || syncing` ✓（⛔ 别让圆点和那句话用两把尺 ✗）。
   const heroDot =
-    syncMode === "off" ? "" : liveSyncing || syncing ? " is-busy" : meshPaired && meshOnline ? " is-ok" : "";
+    syncMode === "off" ? "" : liveSyncing ? " is-busy" : meshPaired && meshOnline ? " is-ok" : "";
   const nearbySecondColumn = (p: NearbyPeer) => {
     if (p.serves_current) return `附近 · 服务 ${mySpaceName}`;
     // ⭐ **P-B（2026-10-13）**：⭐ 先把**原因**说出来 ✗ —— ⛔ 不许把"本机没设暗号"／"那个空间已删"
@@ -1797,16 +1361,6 @@ export function SyncPanel({
             {/* ⭐ 2026-10-23：「对端有、你没有的空间」—— 用户勾了才建（默认一个都不勾） */}
             <MeshMissingSpaces />
             </div>
-            {/* 顶部胶囊反映【当前激活空间】的绑定状态（与该空间卡片一致），
-                避免全局 authed 显示"已登录"但当前空间仍显示登录表单的矛盾。 */}
-            {/* ⚠️ **2026-10-04 改**（owner：「去掉个人空间的登录状态」）：⭐ 个人空间下**整枚藏掉** ✗ ——
-                它不经过服务器 ⇒ 没有"登录"这回事 ✓（原来会显示一枚「未登录」，看着像出了故障 ✓）。
-                ⚠️ 团队空间照旧 ✓（那一枚反映的是**当前激活空间**的绑定状态 ✓）。 */}
-            {!isPersonalActive && (
-                          <span className={`sync-chip${rows.some((r) => r.ws_id === activeId && r.token) ? " is-on" : ""}`}>
-                            {rows.some((r) => r.ws_id === activeId && r.token) ? "已登录" : "未登录"}
-                          </span>
-            )}
           </header>
 
           {!nearbyReadable || !lanStatus.enabled ? (
@@ -2434,333 +1988,6 @@ export function SyncPanel({
               {/* ⚠️ **2026-10-04 改**（owner：「个人空间不显示登录状态文案信息」）：
                   ⭐ 个人空间**整行不显示** ✗ —— 这一行的摘要写的是「未绑定」（服务器口径 ✓），
                   而个人空间根本不经过服务器 ✓（owner 裁定），它的远程路径是下面的**设备直连** ✓。 */}
-              {!isPersonalActive && (
-              <details className="sync-row">
-                <summary>
-                  <span className="sync-row-label">服务器</span>
-                  {/* ⚠️ **2026-10-04**：摘要也按 `serverRows` 算 ✓ —— 否则个人空间会把值算进去、
-                      而下面一张卡都没有（看起来像坏了）✓。 */}
-                  <span className="sync-row-value" title={serverText}>
-                    {totalOff ? `${serverText} · 当前不自动同步` : serverText}
-                  </span>
-                  <span className="sync-row-caret" aria-hidden>›</span>
-                </summary>
-                <div className="sync-row-body">
-                  {/* ⚠️ **2026-10-04 改**（owner：「个人空间不显示服务器同步内容」）：
-                      ⭐ 这一段装的是**服务器 / 账号 / 组织空间 / 成员管理** ✓ ⇒ ⭐ 只列**团队空间** ✓。
-                      ⭐ 个人空间不该出现在这里（它不经过服务器 —— owner 裁定「个人空间不绑服务器」✓），
-                      而它的远程路径是下面那块**设备直连** ✓。 */}
-                  {serverRows.length === 0 && <div className="sync-empty-state">还没有可配置的团队空间</div>}
-                  {serverRows.map((r) => {
-                    const myRole = r.remoteSpaces.find((x) => x.id === r.space_id)?.role ?? "";
-                    const state = r.server_url && r.space_id ? "bound" : r.server_url ? "partial" : "none";
-                    return (
-                      <section key={r.ws_id} className="sync-card">
-                        <div className="sync-card-head">
-                          <span className="sync-card-avatar" aria-hidden>{initial(r.name)}</span>
-                          <span className="sync-card-name" title={r.name}>{r.name}</span>
-                          <span className={`sync-state is-${state}`}>
-                            {state === "bound" ? "已绑定" : state === "partial" ? "待选空间" : "未配置"}
-                          </span>
-                        </div>
-
-                        {/* ⭐ 2026-10-29（团队冻结）：这张卡上只要还显示着团队空间，就说明一句**为什么**
-                            配置格是只读的（⛔ 不弹窗 ✗；旧配置仍可同步这一点也写在这里 ✓）。 */}
-                        {!teamConfigVisible && (
-                          <p className="sync-hint" data-testid="team-frozen-note">
-                            {TEAM_EDITION_ARCHIVED_NOTE}
-                          </p>
-                        )}
-
-                        <div className="sync-field">
-                          <label htmlFor={`sync-srv-${r.ws_id}`}>服务器</label>
-                          {teamConfigVisible ? (
-                            <input
-                              id={`sync-srv-${r.ws_id}`}
-                              className="sync-input"
-                              value={r.server_url}
-                              placeholder="http://localhost:8787"
-                              onChange={(e) => update(r.ws_id, "server_url", e.target.value)}
-                            />
-                          ) : (
-                            // ⭐ 冻结 ⇒ **只读**（旧配置照旧显示 ✓，但不再提供"改地址"这条新配置路径 ✗）
-                            <span className="sync-hint" data-testid="team-server-readonly">
-                              {r.server_url || "未配置"}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* 已拿到令牌就不再堆登录表单——只留一枚「已登录」胶囊 + 登出。 */}
-                        {r.token ? (
-                          <div className="sync-account">
-                            <span className="sync-account-dot" aria-hidden />
-                            <div className="sync-account-text">
-                              <b>{authEmail || "已登录"}</b>
-                              <span title={r.server_url}>{r.server_url || "—"}</span>
-                            </div>
-                            {/* 管理账号/组织：跳转到设置中心「账户」页（登录身份、组织管理、注销）。
-                                ⭐ 2026-10-29（团队冻结）：这两个动作都**不再显示** ✗ —— 团队配置入口已隐藏，
-                                "登出"会让旧用户**再也登不回来**（登录表单也不显示了）⇒ 那是把旧配置弄坏 ✓。
-                                旧账号的状态照旧显示在上面（只读）✓。 */}
-                            {teamConfigVisible && (
-                              <>
-                                <button className="sync-btn ghost" onClick={() => useEditorStore.getState().openSettings("account")}>管理</button>
-                                <button className="sync-btn ghost" onClick={() => void logout(r)}>登出</button>
-                              </>
-                            )}
-                          </div>
-                        ) : teamConfigVisible ? (
-                          <div className="sync-field">
-                            <label htmlFor={`sync-mail-${r.ws_id}`}>账号</label>
-                            {/* 登录/注册 tab：登录只需邮箱+密码；注册需额外 注册邀请码。 */}
-                            <div className="sync-auth-tabs">
-                              <button
-                                className={`sync-tab${r.authMode === "login" ? " on" : ""}`}
-                                onClick={() => update(r.ws_id, "authMode", "login")}
-                              >登录</button>
-                              <button
-                                className={`sync-tab${r.authMode === "register" ? " on" : ""}`}
-                                onClick={() => update(r.ws_id, "authMode", "register")}
-                              >注册</button>
-                            </div>
-                            <div className="sync-auth-grid">
-                              <input
-                                id={`sync-mail-${r.ws_id}`}
-                                className="sync-input"
-                                value={r.loginEmail}
-                                placeholder="邮箱"
-                                autoComplete="username"
-                                onChange={(e) => update(r.ws_id, "loginEmail", e.target.value)}
-                              />
-                              <input
-                                className="sync-input"
-                                type="password"
-                                value={r.loginPassword}
-                                placeholder="密码"
-                                autoComplete="current-password"
-                                onChange={(e) => update(r.ws_id, "loginPassword", e.target.value)}
-                              />
-                            </div>
-                            {r.authMode === "register" && (
-                              <div className="sync-field" style={{ marginTop: 8 }}>
-                                <label htmlFor={`sync-regcode-${r.ws_id}`}>注册邀请码（必填）</label>
-                                <input
-                                  id={`sync-regcode-${r.ws_id}`}
-                                  className="sync-input"
-                                  value={r.loginRegisterCode}
-                                  placeholder="比如：SHUYOABC"
-                                  onChange={(e) => update(r.ws_id, "loginRegisterCode", e.target.value)}
-                                />
-                                <p className="sync-hint">
-                                  {r.server_url ? "注册必须有邀请码。把服务端管理员给你的邀请码填到这里（填错或留空会注册失败）。" : "需先填服务器地址。"}
-                                </p>
-                              </div>
-                            )}
-                            <div className="sync-auth-btns">
-                              {r.authMode === "login" ? (
-                                <button className="sync-btn primary" disabled={loggingIn || !r.server_url} onClick={() => login(r)}>
-                                  {loggingIn ? "处理中…" : "登录"}
-                                </button>
-                              ) : (
-                                <button className="sync-btn primary" disabled={loggingIn || !r.server_url} onClick={() => register(r)}>
-                                  {loggingIn ? "处理中…" : "注册"}
-                                </button>
-                              )}
-                            </div>
-                            <p className="sync-hint">密码 ≥8 位，注册成功即自动登录。</p>
-                          </div>
-                        ) : null}
-
-                        <div className="sync-field">
-                          <label htmlFor={`sync-space-${r.ws_id}`}>组织空间</label>
-                          {teamConfigVisible ? (
-                            <>
-                            {r.remoteSpaces.length > 0 ? (
-                              <div className="sync-space-row">
-                                <select
-                                  id={`sync-space-${r.ws_id}`}
-                                  className="sync-input"
-                                  value={r.space_id}
-                                  onChange={(e) => void pickSpace(r, e.target.value)}
-                                >
-                                  <option value="">选择我加入的空间…</option>
-                                  {r.remoteSpaces.map((sp) => (
-                                    <option key={sp.id} value={sp.id}>{sp.name}</option>
-                                  ))}
-                                </select>
-                                {myRole && <span className={`sync-role ${roleClass(myRole)}`}>{myRole}</span>}
-                              </div>
-                            ) : (
-                              <input
-                                id={`sync-space-${r.ws_id}`}
-                                className="sync-input"
-                                value={r.space_id}
-                                placeholder="组织空间 id（多设备同步需绑定一个组织空间）"
-                                onChange={(e) => update(r.ws_id, "space_id", e.target.value)}
-                              />
-                            )}
-                            {/* 已登录但还没有可绑定的组织空间 → 引导 + 创建入口，避免卡住 */}
-                            {r.token && r.remoteSpaces.length === 0 && (
-                              <div className="sync-space-guide">
-                                <p className="sync-hint">还没有组织空间。点「创建空间」新建一个，或让管理员邀请你加入。</p>
-                                <button className="sync-btn primary" onClick={() => createSpace(r)}>创建空间</button>
-                              </div>
-                            )}
-                            {/* 已登录、有空间可选但还没选 → 轻引导 */}
-                            {r.token && !r.space_id && r.remoteSpaces.length > 0 && (
-                              <p className="sync-hint">请在上面下拉选择一个组织空间，才能同步。</p>
-                            )}
-                            </>
-                          ) : (
-                            /* ⭐ 2026-10-29（团队冻结）：**只读显示旧绑定** ✓ —— 不再有下拉（选空间＝新配置 ✗）、
-                               ⛔ 也没有「创建空间」入口 ✗；已绑定的那个名字照旧显示 ✓。 */
-                            <span className="sync-hint" data-testid="team-space-readonly">
-                              {r.space_id
-                                ? `已绑定：${r.remoteSpaces.find((x) => x.id === r.space_id)?.name ?? "（名称未读到）"}`
-                                : "未绑定"}
-                            </span>
-                          )}
-                        </div>
-
-                        {teamConfigVisible && r.space_id && r.token && canManageSpace(r) && (
-                          <div className="sync-field">
-                            <button
-                              className="sync-members-toggle"
-                              aria-expanded={r.memberOpen}
-                              onClick={() => toggleMembers(r)}
-                            >
-                              <span>成员管理</span>
-                              {r.members.length > 0 && <span className="sync-members-count">{r.members.length}</span>}
-                              <span className={`sync-caret${r.memberOpen ? " is-open" : ""}`} aria-hidden>▾</span>
-                            </button>
-                            {r.memberOpen && (
-                              <div className="sync-members">
-                                {r.members.length === 0 ? (
-                                  <div className="sync-members-empty">还没有成员</div>
-                                ) : (
-                                  r.members.map((m) => {
-                                    const canManage = canManageSpace(r);
-                                    const isOwnerRow = m.role === "owner";
-                                    return (
-                                      <div key={m.user_id} className="sync-member">
-                                        <span className="sync-member-avatar" aria-hidden>{initial(m.email)}</span>
-                                        <span className="sync-member-email" title={m.email}>{m.email}</span>
-                                        <select
-                                          className={`sync-member-role ${roleClass(m.role)}`}
-                                          value={m.role}
-                                          aria-label={`${m.email} 的角色`}
-                                          disabled={!canManage || isOwnerRow}
-                                          onChange={(e) => void setMemberRole(r, m.email, e.target.value)}
-                                        >
-                                          <option value="viewer">viewer</option>
-                                          <option value="editor">editor</option>
-                                          <option value="admin">admin</option>
-                                        </select>
-                                        <button
-                                          className="sync-member-remove"
-                                          title={isOwnerRow ? "空间所有者不可移除" : "移除成员"}
-                                          aria-label={`移除 ${m.email}`}
-                                          disabled={!canManage || isOwnerRow}
-                                          onClick={() => void removeMember(r, m.user_id)}
-                                        >
-                                          ✕
-                                        </button>
-                                      </div>
-                                    );
-                                  })
-                                )}
-                                <div className="sync-invite">
-                                  <input
-                                    className="sync-input"
-                                    value={r.inviteEmail}
-                                    placeholder="被邀请者邮箱"
-                                    disabled={!canManageSpace(r)}
-                                    onChange={(e) => update(r.ws_id, "inviteEmail", e.target.value)}
-                                  />
-                                  <select
-                                    className="sync-input sync-invite-role"
-                                    value={r.inviteRole}
-                                    aria-label="邀请角色"
-                                    disabled={!canManageSpace(r)}
-                                    onChange={(e) => update(r.ws_id, "inviteRole", e.target.value)}
-                                  >
-                                    <option value="viewer">viewer</option>
-                                    <option value="editor">editor</option>
-                                    <option value="admin">admin</option>
-                                  </select>
-                                  <button className="sync-btn" disabled={!canManageSpace(r)} onClick={() => void inviteMember(r)}>
-                                    邀请
-                                  </button>
-                                </div>
-                                {!canManageSpace(r) && (
-                                  <p className="sync-hint">只有 admin / owner 能邀请成员或改角色。</p>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {/* 手动令牌是老配置法的后路，默认收起，避免面板一眼全是输入框。
-                            两用途：① 团队版临时贴一个会话 token；② **「个人自建同步」那一档**
-                            （服务端由自己部署、没有账号）—— 把服务端 CLI 签发的那把 `sk_…` 设备密钥
-                            贴进来即可，**不需要注册/登录**（服务端侧见 sync-server 的 K1：
-                            `--issue-device-key`，持钥即拥有该空间）。 */}
-                        {/* ⭐ 2026-10-29（团队冻结）：这个折叠是**新配置入口**（手贴 token / 设备密钥）⇒ 冻结时不显示 ✗；
-                            ⛔ 不删代码 ✗（`teamConfigVisible` 一改回 true 就回来 ✓）；已配置的 token 照旧在库里/照旧同步 ✓。 */}
-                        {teamConfigVisible && (
-                        <details className="sync-advanced">
-                          <summary>高级：手动填令牌 / 设备密钥{r.token ? "（已填）" : ""}</summary>
-                          <input
-                            className="sync-input"
-                            type="password"
-                            value={r.token}
-                            placeholder="组织 token，或个人自建部署签发的 sk_ 密钥"
-                            onChange={(e) => update(r.ws_id, "token", e.target.value)}
-                          />
-                          <div className="sync-hint">
-                            自己部署服务端（无账号）时：在服务器上跑
-                            <code> --issue-device-key</code> 拿到一串 <code>sk_…</code>，贴到这里即可；丢了只能重新签发。
-                          </div>
-                        </details>
-                        )}
-
-                        {/* P6.1 每空间附件开关：默认开。关掉只影响附件**字节**，元数据照常
-                            同步——另一端能看到附件条目但打不开，所以文案要说清后果而不是
-                            写成"不同步附件"（那听起来像附件也跟着消失）。 */}
-                        <div className="sync-att">
-                          <div className="sync-att-text">
-                            <div className="sync-att-name">同步附件文件</div>
-                            <div className="sync-hint">
-                              关闭后只同步笔记内容，不传图片 / 附件文件（省流量与磁盘；另一端会看到附件但打不开）。
-                              改变立即生效，正在同步的任务会在传完当前文件后停下。
-                            </div>
-                          </div>
-                          <input
-                            type="checkbox"
-                            checked={r.syncAttachments}
-                            aria-label={`同步「${r.name}」的附件文件`}
-                            onChange={(e) => void setAttachments(r, e.target.checked)}
-                          />
-                        </div>
-
-                        <div className="sync-card-actions">
-                          {/* 登录/注册与选空间都会自动落盘，这里的「保存」只用于手填
-                              服务器地址或手动粘贴令牌的情况。 */}
-                          {teamConfigVisible && (
-                            <button className="sync-btn" onClick={() => save(r)} title="保存手填的服务器地址 / 令牌">
-                              保存
-                            </button>
-                          )}
-                          <button className="sync-btn primary" disabled={syncing} onClick={() => syncOne(r)}>
-                            {syncing ? "同步中…" : "同步"}
-                          </button>
-                        </div>
-                      </section>
-                    );
-                  })}
-                </div>
-              </details>
-              )}
 
 
             </div>
@@ -2956,7 +2183,7 @@ export function SyncPanel({
               不变量 `INV-UI-sync-panel-persistent-chrome` ✓）。判据：`syncControls.wiring` ⑧ ✓。
               ⚠️ 移动版那条门禁（`verify-mobile-views.mjs`）对「没有 `.sync-foot`」本来就写好了
               **不算通过也不算红** 的分支 ✓ ⇒ 这一改不会让它假红 ✓。 */}
-          {(syncing || status) && (
+          {(liveSyncing || status) && (
             <footer className="sync-foot">
 
               {/* 甲-1 接线第 3 件：**局域网发现的读数**（施工单 §2 ④）＋ 丙-③-b 的**网格读数**。
@@ -2980,7 +2207,7 @@ export function SyncPanel({
                   ⚠️ 读数那句人话来自 Rust（`mesh::config_state`）—— 界面**不**自己判断
                   "别人拉不拉得到"（那要按地址形状判档，而档位只许由 Rust 出，与上面那条同一纪律）。 */}
 
-              {syncing ? (
+              {liveSyncing ? (
                 <div className={`sync-status is-progress${syncPhase === "error" ? " is-err" : ""}`}>
                   <div className="sync-progress-row">
                     <span className="sync-spin" aria-hidden />

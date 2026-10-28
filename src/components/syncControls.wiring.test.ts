@@ -126,7 +126,7 @@ describe("面板底那条常驻状态条（`.sync-foot`）", () => {
     expect(
       panel,
       "⛔ `.sync-foot` 必须按「有没有话说」挂 ✗ —— 否则它会渲染成一条 25px 高的空横线（真机实测 ✓）",
-    ).toContain("{(syncing || status) && (");
+    ).toContain("{(liveSyncing || status) && (");
     // 反：⛔ 不许把 `.sync-foot` 留成**无条件**挂在面板里（那样横线又回来了 ✗）。
     //   ⚠️ 判据取**它上一条语句**（⛔ 不是缩进 ✗ —— 缩进判不出"有没有条件" ✓，第一版就写错了 ✓）。
     const at = panel.indexOf('<footer className="sync-foot">');
@@ -135,7 +135,7 @@ describe("面板底那条常驻状态条（`.sync-foot`）", () => {
     expect(
       above,
       "⛔ 页脚上一条必须是那个条件 ✗（否则它又**无条件**挂了 ⇒ 空横线回来 ✓）",
-    ).toBe("{(syncing || status) && (");
+    ).toBe("{(liveSyncing || status) && (");
   });
 });
 

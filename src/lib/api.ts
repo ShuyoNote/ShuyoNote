@@ -587,77 +587,12 @@ export const api = {
    */
   meshEnsureDefaults: (workspaceId?: string | null) =>
     invoke("mesh_ensure_defaults", { workspaceId: workspaceId ?? null }) as Promise<MeshConfigState>,
-  // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
-  // ⚠️ 2026-10-29（owner 拍）：sync-server 已归档、团队功能冻结 ⇒ 这些 team_* API **保留**只为
-  //   **旧配置兼容**（⛔ 不删、⛔ 不退契约 ✗）；新配置入口已从界面上隐藏（`lib/edition.ts` ✓）。
   // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
   // 传 `server_url` 会被判为「缺少必填键 serverUrl」——这是运行时错误，TS 查不出来，
   // 所以 CommandMap 里也按 camelCase 声明，并由 check-web-commands 兜底校验。
-  teamRegister: (server_url: string, email: string, password: string, display?: string | null, register_code?: string | null) =>
-    invoke("team_register", { serverUrl: server_url, email, password, display, registerCode: register_code }),
-  teamLogin: (server_url: string, email: string, password: string) =>
-    invoke("team_login", { serverUrl: server_url, email, password }),
-  teamLogout: (server_url: string) => invoke("team_logout", { serverUrl: server_url }),
-  teamListSpaces: (server_url: string, token: string) =>
-    invoke("team_list_spaces", { serverUrl: server_url, token }),
-  teamCreateSpace: (server_url: string, token: string, name: string, org_id?: string | null) =>
-    invoke("team_create_space", { serverUrl: server_url, token, name, orgId: org_id }),
-  teamListMembers: (server_url: string, token: string, space_id: string) =>
-    invoke("team_list_members", { serverUrl: server_url, token, spaceId: space_id }),
-  teamInviteMember: (server_url: string, token: string, space_id: string, email: string, role: string) =>
-    invoke("team_invite_member", { serverUrl: server_url, token, spaceId: space_id, email, role }),
-  teamSetMemberRole: (server_url: string, token: string, space_id: string, email: string, role: string) =>
-    invoke("team_set_member_role", { serverUrl: server_url, token, spaceId: space_id, email, role }),
-  teamRemoveMember: (server_url: string, token: string, space_id: string, user_id: string) =>
-    invoke("team_remove_member", { serverUrl: server_url, token, spaceId: space_id, userId: user_id }),
-  teamGetSession: () => invoke("team_get_session"),
-  teamGetMe: (server_url: string, token: string) =>
-    invoke("team_get_me", { serverUrl: server_url, token }),
-  teamGetServerEmail: (server_url: string) =>
-    invoke("team_get_server_email", { serverUrl: server_url }),
   listSyncHistory: (limit?: number) => invoke("list_sync_history", { limit }),
   clearSyncHistory: () => invoke("clear_sync_history"),
   // P0 org management (research group) — desktop only (Web driver throws).
-  teamListOrgs: (server_url: string, token: string) =>
-    invoke("team_list_orgs", { serverUrl: server_url, token }),
-  teamCreateOrg: (server_url: string, token: string, name: string) =>
-    invoke("team_create_org", { serverUrl: server_url, token, name }),
-  teamListOrgMembers: (server_url: string, token: string, org_id: string) =>
-    invoke("team_list_org_members", { serverUrl: server_url, token, orgId: org_id }),
-  teamInviteOrgMember: (server_url: string, token: string, org_id: string, email: string, role: string) =>
-    invoke("team_invite_org_member", { serverUrl: server_url, token, orgId: org_id, email, role }),
-  teamSetOrgMemberActive: (server_url: string, token: string, org_id: string, user_id: string, active: boolean) =>
-    invoke("team_set_org_member_active", { serverUrl: server_url, token, orgId: org_id, userId: user_id, active }),
-  teamRemoveOrgMember: (server_url: string, token: string, org_id: string, user_id: string) =>
-    invoke("team_remove_org_member", { serverUrl: server_url, token, orgId: org_id, userId: user_id }),
-  teamApproveOrgInvite: (server_url: string, token: string, org_id: string, email: string) =>
-    invoke("team_approve_org_invite", { serverUrl: server_url, token, orgId: org_id, email }),
-  teamRejectOrgInvite: (server_url: string, token: string, org_id: string, email: string) =>
-    invoke("team_reject_org_invite", { serverUrl: server_url, token, orgId: org_id, email }),
-  teamDeactivateAccount: (server_url: string, token: string) =>
-    invoke("team_deactivate_account", { serverUrl: server_url, token }),
-  teamDeactivateOrgMember: (server_url: string, token: string, org_id: string, user_id: string) =>
-    invoke("team_deactivate_org_member", { serverUrl: server_url, token, orgId: org_id, userId: user_id }),
-  teamGenerateOrgInviteCode: (server_url: string, token: string, org_id: string) =>
-    invoke("team_generate_org_invite_code", { serverUrl: server_url, token, orgId: org_id }),
-  teamJoinOrgByCode: (server_url: string, token: string, code: string) =>
-    invoke("team_join_org_by_code", { serverUrl: server_url, token, code }),
-  teamPresenceBeat: (server_url: string, token: string, space_id: string, page_id?: string | null, device_id?: string | null) =>
-    invoke("team_presence_beat", { serverUrl: server_url, token, spaceId: space_id, pageId: page_id ?? null, deviceId: device_id ?? null }),
-  teamOnline: (server_url: string, token: string, space_id: string) =>
-    invoke("team_online", { serverUrl: server_url, token, spaceId: space_id }),
-  teamListComments: (server_url: string, token: string, space_id: string, page_id: string) =>
-    invoke("team_list_comments", { serverUrl: server_url, token, spaceId: space_id, pageId: page_id }),
-  teamAddComment: (server_url: string, token: string, space_id: string, page_id: string, body: string, parent_id?: string | null, mentions?: string[]) =>
-    invoke("team_add_comment", { serverUrl: server_url, token, spaceId: space_id, pageId: page_id, body, parentId: parent_id ?? null, mentions: mentions ?? [] }),
-  teamDeleteComment: (server_url: string, token: string, space_id: string, comment_id: string) =>
-    invoke("team_delete_comment", { serverUrl: server_url, token, spaceId: space_id, commentId: comment_id }),
-  teamListNotifications: (server_url: string, token: string) =>
-    invoke("team_list_notifications", { serverUrl: server_url, token }),
-  teamSeenNotification: (server_url: string, token: string, id: string) =>
-    invoke("team_seen_notification", { serverUrl: server_url, token, id }),
-  teamSeenAllNotifications: (server_url: string, token: string) =>
-    invoke("team_seen_all_notifications", { serverUrl: server_url, token }),
   saveImage: async (args: {
     page_id: string | null;
     name: string | null;

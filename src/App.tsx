@@ -63,7 +63,6 @@ import { ConflictBanner } from "./components/ConflictBanner";
 import { LineageConflictBanner } from "./components/LineageConflictBanner";
 import { TextRepairRunner } from "./components/TextRepairRunner";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
-import { CommentsDrawer } from "./components/CommentsDrawer";
 import { InlineAiDraftBar } from "./components/InlineAiDraftBar";
 import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
@@ -74,7 +73,6 @@ import { useIconPicker } from "./store/iconPicker";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { PanelBoundary } from "./components/PanelBoundary";
 import { Editor } from "./editor/Editor";
-import { usePresence } from "./hooks/usePresence";
 import { useSyncStream } from "./hooks/useSyncStream";
 import { useSyncProgress } from "./hooks/useSyncProgress";
 import { useExternalDrafts } from "./hooks/useExternalDrafts";
@@ -120,7 +118,6 @@ import { useFileManagerStore } from "./store/fileManager";
 import { usePropertyUiStore } from "./store/propertyUi";
 import { toast } from "./store/toast";
 import { platform } from "./lib/platform";
-import { useAuth } from "./store/auth";
 import { withSyncStatus } from "./store/syncStatus";
 import "./App.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
@@ -384,7 +381,6 @@ function NoteEditor({ pageId }: { pageId: string }) {
 
   // Restore the team-edition login state on startup (from meta.db session).
   useEffect(() => {
-    void useAuth.getState().init();
   }, []);
 
   // `shuyonote://` 的投递：把"操作系统交给应用的那条 URL"送进应用内接入缝。
@@ -1033,7 +1029,6 @@ function AppShell() {
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
   const templateOpen = useViewStore((s) => s.view === "templates");
-  usePresence();
   useSyncStream();
   // 中继租约的兜底续期：6 小时一次（面板不常开，光靠面板挂载不够）。
   useLeaseAutoRefresh();
@@ -1198,7 +1193,6 @@ function AppShell() {
           <ConfirmDialog />
           <InputDialog />
           <AiAssistantPanel />
-          <CommentsDrawer />
         </PanelBoundary>
       </div>
     );
@@ -1349,7 +1343,6 @@ function AppShell() {
         <InputDialog />
         <MarkdownExportDialog />
         <AiAssistantPanel />
-        <CommentsDrawer />
         {/* 阶段 1 · B1：正文索引补算（合并/裁决过的页面在后台补上；应用启动与每次同步结束后跑一趟） */}
         <TextRepairRunner />
         <ShortcutsPanel />

@@ -27,17 +27,15 @@ describe("网格（丙-③-b）· 面板接线", () => {
       "api.meshEnsureDefaults(",
     );
     expect(commandsTs, "缺 `mesh_ensure_defaults` 的契约条目").toContain("mesh_ensure_defaults:");
-    // ★ 2026-09-26 口径收敛：**交换并进「同步」**（原来有一个单独的「立刻交换一轮」按钮）。
-    //   所以这条断言从"面板里有这个词"改成"**`syncOne` 那段里有它**" —— 否则把调用挪到别处
-    //   （比如某一个已经没人点的按钮里）也照样绿。
-    const syncOne = panel.slice(panel.indexOf("const syncOne"), panel.indexOf("const update"));
-    expect(syncOne, "「同步」那条路没有跑网格 ⇒ 用户点同步时网格不动").toContain("api.meshSyncNow(");
-    // ★ 它在 `finally` 里，**不在 `try` 里** —— 真机实测踩过：服务端那条抛错（"会话已失效"）时
-    //   `try` 里剩下的语句一行都不跑 ⇒ 网格被**连坐**跳过，而它根本不依赖服务端。
-    const catchAt = syncOne.indexOf("} catch (e) {");
-    const meshAt = syncOne.indexOf("api.meshSyncNow(");
-    expect(catchAt, "`syncOne` 里没找到 catch（结构变了？）").toBeGreaterThan(-1);
-    expect(meshAt, "网格那一步必须放在 catch 之后（＝ finally 里）").toBeGreaterThan(catchAt);
+    // ⭐ **2026-10-29（第二阶段：团队 UI 已删）**：原来的 `syncOne`（服务端同步那条）**整条没了** ✓
+    //   ⇒ ⭐ 按 R192「换对象不删断言」：网格那一轮现在只在 **`syncMeshNow`**（「立即同步」那颗）里 ✓
+    //   （⛔ 断言没删：仍然要求"面板里有一条真的跑 `mesh_sync_now` 的路" ✓）。
+    const meshFn = panel.slice(panel.indexOf("const syncMeshNow"), panel.indexOf("const statusKind"));
+    expect(meshFn, "「立即同步」那条路没有跑网格 ⇒ 用户点同步时网格不动").toContain("api.meshSyncNow(");
+    expect(meshFn, "网格那条路失败要如实说（⛔ 不许静默）").toContain("} catch (e) {");
+    expect(meshFn, "失败也要把 busy 复位（否则按钮永远灰着）").toContain("} finally {");
+    const meshAt = meshFn.indexOf("api.meshSyncNow(");
+    expect(meshFn.slice(meshAt), "网格那轮之后要重读「待取回的远端版本」").toContain("await loadPendingRemote()");
     expect(panel, "「立刻交换一轮」那个按钮应当已经删掉（同一个意图两个动作）").not.toContain("const meshRoundNow");
     expect(panel, "「立刻交换一轮」那个按钮应当已经删掉").not.toContain("void meshRoundNow()");
   });
@@ -105,13 +103,22 @@ describe("网格（丙-③-b）· 面板接线", () => {
     );
   });
 
-  it("②b ⭐ 服务器那一段只列团队空间（个人空间不显示服务器同步内容）", () => {
-    // owner 2026-10-04：「个人空间不显示服务器同步内容」。
-    // 判据取"那里用的是 serverRows（按 kind 过滤）"这个形状；不给个人空间列服务器卡。
-    expect(panel, "服务器那一段没用 serverRows ⇒ 个人空间也会被列进去").toContain("{serverRows.map((r) => {");
+  it("②b ⭐ 服务器那一段**已随团队 UI 一起删除**；个人/团队的判定仍按 kind（第二阶段）", () => {
+    // ⭐ **2026-10-29（owner 拍第二阶段 A）**：团队 UI ＋ `team_*` 前端契约**已删** ✓ ⇒
+    //   原来这一条钉的是"服务器那一段只列团队空间"（`{serverRows.map(...)`）—— 那段 JSX **已经不在了** ✓。
+    //   ⭐ 按 R192「换对象不删断言」：⛔ 不是把这条删掉 ✓，换成**现在承重的两半** ✓：
+    //     · ⛔ 那段 UI 不许回来（`{serverRows.map` 出现 ⇒ 团队卡又接上了 ✗）；
+    //     · ✅ `kind === "team"` 那条**判定**仍在岗（`isPersonalActive` 用它决定主视图给哪一套 ✓）。
+    expect(panel, "⛔ 团队服务器卡又回来了（第二阶段已删 UI）").not.toContain("{serverRows.map(");
     const at = panel.indexOf("const serverRows =");
-    expect(at, "没有 serverRows 的定义").toBeGreaterThan(-1);
+    expect(at, "`serverRows` 的定义没了 ⇒ 个人空间判定跟着完蛋").toBeGreaterThan(-1);
     expect(panel.slice(at, at + 120), "serverRows 不是按团队过滤的").toContain('r.kind === "team"');
+    // ⛔ 团队那些新建/配置入口一个都不许在面板里（字符串级兜底；组件级已在删除清单里 ✓）
+    //   ⚠️ 必须剥注释再判（本仓踩过：解释这件事的注释会喂饱 `toContain` ⇒ 假绿/假红 ✓）
+    const code = panel.replace(/\/\/[^\n]*/g, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+    for (const bad of ["创建空间", "成员管理", "登录", "注册"]) {
+      expect(code, `⛔ 面板里还有团队入口文案「${bad}」`).not.toContain(bad);
+    }
   });
 
   it("③ 「关掉网格」走清除（`\"\"`），不是 `null` —— **2026-10-27 M2 起界面又有这一颗了**", () => {
@@ -192,8 +199,9 @@ describe("网格（丙-③-b）· 面板接线", () => {
   // 而且**说到了就必须做得到**：通知是「有 2 页等你裁决」，下面那一段却还是空的 —— 用户只会
   // 以为那两页丢了（那份清单是在网格**开跑之前**读的）。
   it("⑦ 人话来自 Rust（面板不自己数 superseded/awaiting 拼句子）", () => {
-    const syncOne = panel.slice(panel.indexOf("const syncOne"), panel.indexOf("const update"));
-    expect(syncOne, "网格那轮的结果没有原样显示 `rep.note`").toContain("${rep.note}");
+    // ⭐ 2026-10-29：`syncOne` 已删 ⇒ 对象换成 `syncMeshNow`（R192 换对象不删断言 ✓）
+    const meshFn = panel.slice(panel.indexOf("const syncMeshNow"), panel.indexOf("const statusKind"));
+    expect(meshFn, "网格那轮的结果没有原样显示 `rep.note`").toContain("${rep.note}");
     // 面板**不许**自己遍历 `rep.peers` 去数「输了几页」：那是第二份真相（Rust 里刚数过一遍）。
     expect(panel, "面板自己遍历网格读数拼句子了（应当是 `rep.note` 原文）").not.toContain("rep.peers");
     // 两侧成对：Rust `PeerPullReport` 新加的两项必须在契约里（否则界面拿到的是 undefined）。
@@ -202,10 +210,11 @@ describe("网格（丙-③-b）· 面板接线", () => {
   });
 
   it("⑧ 网格那轮之后两份清单跟着刷新（不然通知与现场对不上）", () => {
-    const syncOne = panel.slice(panel.indexOf("const syncOne"), panel.indexOf("const update"));
-    const meshAt = syncOne.indexOf("api.meshSyncNow(");
-    expect(meshAt, "`syncOne` 里没有网格那一轮（结构变了？）").toBeGreaterThan(-1);
-    const after = syncOne.slice(meshAt);
+    // ⭐ 2026-10-29：对象从 `syncOne` 换成 `syncMeshNow`（团队 UI 删了；网格这条路仍在 ✓）
+    const meshFn = panel.slice(panel.indexOf("const syncMeshNow"), panel.indexOf("const statusKind"));
+    const meshAt = meshFn.indexOf("api.meshSyncNow(");
+    expect(meshAt, "`syncMeshNow` 里没有网格那一轮（结构变了？）").toBeGreaterThan(-1);
+    const after = meshFn.slice(meshAt);
     // ⚠️ 断言必须落在**网格那一轮之后**：`try` 里那两个刷新调用在网格**之前**跑
     //    （服务端那条走完就读），拿它们冒充就是「测了个寂寞」。
     expect(after, "网格那轮之后没重拉页面列表 ⇒ 换过来的内容要切一次空间才看得见").toContain(

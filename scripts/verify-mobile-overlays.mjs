@@ -303,7 +303,8 @@ const OVERLAYS = [
   //    ⚠️ 全 21 层里**只有 TOC 不锁**（逐个核过 hook 的调用方 ✓），所以只给它标 ✓。
   { id: "toc", label: "目录", root: ".toc-panel", box: ".toc-panel", sheet: false, fullscreen: true, noScrollLock: true },
   { id: "ai", label: "AI 助手", root: ".ai-panel", box: ".ai-panel", sheet: false, fullscreen: true },
-  { id: "comments", label: "评论 / 通知", root: ".comments-drawer", box: ".comments-drawer", sheet: false, fullscreen: true },
+  // ⚠️ 2026-10-29（第二阶段）：`comments` 那一层随团队 UI 一起删了（`CommentsDrawer.tsx` 已移除 ✓）——
+  //   清单里留着它就是"幽灵条目"：`check-overlay-registry` 会红 ✓。
   { id: "markdownImport", label: "Markdown 导入", root: ".markdown-import-overlay", box: ".markdown-import", sheet: true, optional: true },
   { id: "cover", label: "题头图", root: ".cover-overlay", box: ".cover-picker", sheet: true, optional: true },
   // 2026-09-15 第二轮：`.history-popover` 原来是 `position:absolute` 的 320px 锚定浮层，

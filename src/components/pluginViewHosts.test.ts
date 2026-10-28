@@ -99,14 +99,14 @@ describe("声明式视图的两种落点", () => {
     });
     usePlugins.setState({ plugins: [plugin([RAIL_VIEW, OVERLAY_VIEW])] });
     usePluginViewStore.setState({ pluginId: null, pluginName: "", view: null });
-    useRightPanel.setState({ ai: false, toc: false, comments: false, plugin: null });
+    useRightPanel.setState({ ai: false, toc: false, plugin: null });
   });
 
   afterEach(() => {
     if (root) flushSync(() => root!.unmount());
     root = null;
     useNotes.setState({ openPage: realOpenPage, loadPages: realLoadPages });
-    useRightPanel.setState({ ai: false, toc: false, comments: false, plugin: null });
+    useRightPanel.setState({ ai: false, toc: false, plugin: null });
     usePluginViewStore.setState({ pluginId: null, pluginName: "", view: null });
     document.body.classList.remove("is-plugin-panel-open");
     document.body.innerHTML = "";

@@ -5,7 +5,7 @@ import { platform } from "../lib/platform";
 import { NOT_DOWNLOADED_HINT, fetchLocalAttachmentPath, openAttachmentWithSystem } from "../lib/localBytesHint";
 import { usePopover } from "../hooks/usePopover";
 import { isMobileViewport } from "../hooks/useMobile";
-import { api, type SyncProfile } from "../lib/api";
+import { api } from "../lib/api";
 import { isNodeExpanded, rememberNodeExpanded } from "../lib/treeMemory";
 import { useNotes } from "../store/notes";
 import { PluginMenuItems } from "./PluginMenuItems";
@@ -43,23 +43,16 @@ import { useSpaceStore } from "../store/space";
 import { useEditorStore } from "../store/editor";
 import { usePdfReader } from "../store/pdfReader";
 import { useFilePreview } from "../store/filePreview";
-import { useAuth } from "../store/auth";
 import { useTreeSelection } from "../store/treeSelection";
 import { useTreeDrag } from "../store/treeDrag";
 import { useActivity } from "../store/activity";
-import { useWindowChrome } from "../store/windowChrome";
-import { showsServerTag, syncTagColor, syncTagTitle } from "../lib/syncTag";
 // ⭐ 2026-10-10：空间**筛选**（20+ 个空间时"眼睛在长列表里找"）—— 与设置-空间列表**共用这一份** ✓
 import { filterSpaces } from "../lib/spaceFilter";
 // ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）：那一格的**唯一**映射（文字标识，⛔ 不只靠颜色）✓
 import { spaceCryptoBadge } from "../lib/spaceSecurity";
 import * as reorder from "../lib/treeReorder";
 import { confirmDialog } from "../store/confirm";
-import { inputDialog, chooseDialog, useInputStore } from "../store/input";
-import { isDesktopPlatform } from "../lib/platform";
-// ⭐ **2026-10-29（owner 拍）：团队功能冻结** —— 新建空间时**不再问"个人/团队"**（唯一的开关在
-//   `lib/edition.ts` ✓；⛔ 别在这里另写一个 true/false ✗）。已存在的团队空间照旧显示/同步 ✓。
-import { teamConfigEntryVisible } from "../lib/edition";
+import { inputDialog, useInputStore } from "../store/input";
 
 /**
  * ★ A1：「新建空间」第一步 —— 问名字。`null` ＝ 用户取消。
@@ -1033,7 +1026,6 @@ export function PageTree(_props: {
   // 侧栏是否展开由左侧竖条控制（搜索是弹层，不改变侧栏内容）。
   const sidebarOpen = useActivity((s) => s.sidebarOpen);
   // 自绘标题栏开着时，同步状态显示在顶栏，侧栏不再重复一份。
-  const customTitleBar = useWindowChrome((s) => s.custom);
   const {
     open: newMenuOpen,
     pos: newMenuPos,
@@ -1125,52 +1117,15 @@ export function PageTree(_props: {
   const [workspaceName, setWorkspaceName] = useState("默认空间");
   // 空间面板比默认弹层宽，把尺寸告知 usePopover，靠边打开才不会被裁切。
   const spaceChooser = usePopover<HTMLButtonElement>({ width: 380, minSpace: 400 });
-  const [syncProfiles, setSyncProfiles] = useState<Record<string, SyncProfile>>({});
   // ⭐ 2026-10-10：空间切换器里的**筛选词**（owner：「20+ 个空间怎么办」✓）。
   //    ⚠️ 与设置-空间列表共用同一份匹配（`src/lib/spaceFilter.ts` ✓）—— ⛔ 不各写一份 ✗。
   const [spaceQuery, setSpaceQuery] = useState("");
-  const isDesktop = useMemo(() => (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window), []);
-  // 登录/登出（auth store 的 authed 变化）会影响各空间的同步 token：登出后
-  // ListSyncProfiles 里 server_url 仍在但 token 被清空，侧栏胶囊要随登出消失。
-  const authed = useAuth((s) => s.authed);
-
-  // Load sync identities when the space switcher opens so the per-space tags
-  // stay fresh (SyncPanel edits update sync_profiles).
-  useEffect(() => {
-    if (!spaceChooser.open) return;
-    api
-      .listSyncProfiles()
-      .then((list) => {
-        const byWs: Record<string, SyncProfile> = {};
-        for (const p of list) byWs[p.ws_id] = p;
-        setSyncProfiles(byWs);
-      })
-      .catch(() => {});
-  }, [spaceChooser.open]);
-
   const spaces = useSpaceStore((s) => s.spaces);
   const activeSpaceId = useSpaceStore((s) => s.activeId);
   const activeSpace = spaces.find((s) => s.id === activeSpaceId);
   // ⭐ 2026-10-10：切换器里的**筛选**（空串 ⇒ 原样全列 ✓；⛔ 不排序 ✗、⛔ 不碰当前空间 ✗）
   const shownSpaces = filterSpaces(spaces, spaceQuery);
   const activeTheme = activeSpace?.theme ?? "";
-  const activeSyncProfile = activeSpaceId ? syncProfiles[activeSpaceId] : undefined;
-
-  // Also load identities when the active space changes so the header pill
-  // ("当前同步目标") reflects the current space's sync target. Reload on auth
-  // change too, so logout immediately hides the pill.
-  useEffect(() => {
-    if (!isDesktop) return;
-    api
-      .listSyncProfiles()
-      .then((list) => {
-        const byWs: Record<string, SyncProfile> = {};
-        for (const p of list) byWs[p.ws_id] = p;
-        setSyncProfiles(byWs);
-      })
-      .catch(() => {});
-  }, [activeSpaceId, isDesktop, authed]);
-
   useEffect(() => {
     api
       .getWorkspaceName()
@@ -1219,38 +1174,9 @@ export function PageTree(_props: {
       return;
     }
 
-    let kind: "personal" | "team" = "personal";
-    // ⭐⭐ **2026-10-29（owner 拍）：团队功能冻结** ✗ —— `shuyonote-sync-server` 已归档、
-    //   团队/企业能力由独立闭源企业版承载 ⇒ 本仓**不再提供"新建团队空间"这条新用户路径** ✓。
-    //   ⚠️ 做法是**跳过这个选择框**（不是删掉选项代码 ✓ —— 冻结不删，见 `lib/edition.ts`；
-    //      `teamConfigEntryVisible()` 一改回 true ⇒ 整段原样回来 ✓）。
-    //   ⚠️ 已存在的团队空间**一个字节不动** ✓（它们不经过这里；分类只决定**新建**那一刻 ✓）。
-    if (isDesktopPlatform() && teamConfigEntryVisible()) {
-      const picked = await chooseDialog({
-        title: `「${name}」是哪一类空间？`,
-        choices: [
-          {
-            value: "personal",
-            label: "个人空间（推荐）",
-            hint: "只有我自己用。要先给这个空间设主口令才能绑同步（服务端只存密文）。",
-          },
-          {
-            value: "team",
-            label: "团队空间",
-            hint: "要和别人协作。服务端存明文以便合并/检索，不接受零知识。",
-          },
-        ],
-      });
-      if (picked === null) {
-        spaceChooser.close();
-        return;
-      }
-      kind = picked === "team" ? "team" : "personal";
-    }
-    // ⚠️ 冻结时**跳过上面那一问** ⇒ `kind` 保持初始值 `"personal"` ✓（新建一律个人空间；
-    //   ⛔ 不加 toast/提示框 ✗ —— 用户没问，弹一句"团队不能建了"只会吓人；说明在 README / docs ✓）。
-
-    const ok = await useSpaceStore.getState().create(name, kind);
+    // ⭐ **2026-10-29（owner 拍第二阶段）：团队 UI 已删除** ⇒ 新建空间**只可能是个人空间**，
+    //   不再问"个人/团队"（`chooseDialog` 那一段连同 `kind` 一起移除 ✓；⛔ 不留死代码 ✗）。
+    const ok = await useSpaceStore.getState().create(name, "personal");
     if (ok) {
       await useNotes.getState().loadPages();
       const newActive = useSpaceStore.getState().activeId;
@@ -1448,32 +1374,6 @@ export function PageTree(_props: {
             <span className="sidebar-title-caret">▾</span>
           </button>
         )}
-        {/* 同步状态：自绘标题栏开着时由 <TitleBar /> 承担（顶栏本就要有内容，
-            也省下侧栏一行）；关掉自绘标题栏用系统栏时，这里补回来，否则这条
-            信息会整个消失。
-            只在「已登录(有 token)」时展示，与 TitleBar 一致——登出后 sync_profiles
-            行仍保留 server_url（供再登录），不能据此判定「已同步」。
-            ⚠️ **2026-10-10（owner 拍 C）**：平时**只留颜色点** —— ⛔ 不再把地址渲染成文字 ✗
-            （以前服务器是 IP 时，这里就摊出那个 IP），地址只在 `title`/`aria-label` 里给 ✓。
-            ⚠️ 同日 owner 补的更准的口径：**个人空间没有服务器 ⇒ 一个字节都不显示** ✗
-            ⇒ 这里多一道 `showsServerTag(activeSpace.kind, …)`（规则只有那一处实现 ✓）。 */}
-        {!collapsed &&
-          isDesktop &&
-          !customTitleBar &&
-          activeSyncProfile?.token &&
-          showsServerTag(activeSpace?.kind, activeSyncProfile.server_url) && (
-          <div
-            className="sidebar-sync-pill"
-            title={syncTagTitle(activeSyncProfile.server_url)}
-          >
-            <span
-              className="sidebar-sync-dot"
-              role="img"
-              aria-label={syncTagTitle(activeSyncProfile.server_url)}
-              style={{ background: syncTagColor(activeSyncProfile.server_url) }}
-            />
-          </div>
-        )}
         {spaceChooser.open && (
           <div
             ref={spaceChooser.contentRef}
@@ -1513,7 +1413,6 @@ export function PageTree(_props: {
               ) : (
                 shownSpaces.map((s) => {
                   const active = s.id === activeSpaceId;
-                  const prof = syncProfiles[s.id];
                   // ⭐ 2026-10-10：「这个空间加密了吗」那一格 ⇒ 文字标识（映射只有一处 ✓）
                   const crypto = spaceCryptoBadge(s.encrypted_on_disk);
                   return (
@@ -1554,34 +1453,7 @@ export function PageTree(_props: {
                                 {crypto.label}
                               </span>
                             )}
-                            {isDesktop && prof && showsServerTag(s.kind, prof.server_url) ? (
-                              /* ⚠️ **2026-10-10（owner 拍 C）**：这里以前是一枚**写着地址的文字胶囊** ✗
-                                 —— 服务器是 IP 时，那一行右侧就摊出那个 IP（owner 截图里就是它）✓。
-                                 现在只留一个**颜色点**：地址进 `title`/`aria-label`（悬停与读屏 ✓），
-                                 平时一个字节的地址都不渲染 ✓。
-                                 ⚠️ 形状改了但**颜色编码没动**：仍是同一个 `syncTagColor(server_url)` ✓
-                                 （同地址在三处必须同色 ✓）。CSS 归别人那几条线 ⇒ 这个点的尺寸/圆角
-                                 走**行内样式**，⛔ 不动 `App.css` ✗。
-                                 ⚠️ **2026-10-10 加大门**：`showsServerTag(s.kind, …)` ⇒
-                                 ⭐ 个人空间（如截图里那个「工作」）**连这个点都不显示** ✓
-                                 —— 落到 `else` 那一支「仅本机」（对它而言是实话 ✓）。 */
-                              <span
-                                className="space-item-sync-dot"
-                                role="img"
-                                title={syncTagTitle(prof.server_url)}
-                                aria-label={syncTagTitle(prof.server_url)}
-                                style={{
-                                  background: syncTagColor(prof.server_url),
-                                  width: 7,
-                                  height: 7,
-                                  borderRadius: "50%",
-                                  display: "inline-block",
-                                  flex: "none",
-                                }}
-                              />
-                            ) : (
-                              <span className="space-item-local">仅本机</span>
-                            )}
+                            <span className="space-item-local">仅本机</span>
                           </div>
                         </div>
                         <div className="space-item-ops" onClick={(e) => e.stopPropagation()}>

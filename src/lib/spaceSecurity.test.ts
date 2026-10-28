@@ -102,8 +102,12 @@ describe("加密标识 · 接线（侧栏空间切换器那一行）", () => {
 
   it("④ 回归：「仅本机／已同步」那一格**一个字不许变**（owner 没要求动它）", () => {
     expect(pageTreeCode, "同步状态那一格被动了").toContain("仅本机");
-    // ⭐ 与 `task-22` 那条（个人空间不显示服务器点）也不许打架：那条规则仍在岗 ✓
-    expect(pageTreeCode, "task-22 那条规则被弄掉了").toContain("showsServerTag(");
+    // ⭐ **2026-10-29（owner 拍第二阶段）：团队 UI 已删除** ✗ —— `showsServerTag` 那条规则的对象
+    //   （团队服务器的颜色点）**连同 `lib/syncTag.ts` 一起没了** ✓。
+    //   ⭐ 按 R192「换对象不删断言」：⛔ 不是把这条删掉 ✓，换成**钉死拆除本身** ✓：
+    //     · ⛔ 面板/侧栏里不许再出现服务器同步点（`showsServerTag` 不再被引）；
+    //     · ✅ 「仅本机」那一格仍固定渲染（个人空间本来就不该有服务器标识 ✓）。
+    expect(pageTreeCode, "⛔ 侧栏又引回了 `showsServerTag`（团队同步点已删）").not.toContain("showsServerTag");
   });
 });
 

@@ -1517,48 +1517,40 @@ export interface CommandMap {
    *  两者混同就会把桌面的自动同步也一起关掉。 */
   network_type: { args: undefined; result: string };
 
-  // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
-  // ⚠️ 2026-10-29（owner 拍）：sync-server 已归档、团队功能冻结 ⇒ 这些命令**保留**只为**旧配置兼容**
-  //   （⛔ 不删命令、⛔ 不退契约 ✗ —— Rust 侧同名命令仍在；新配置入口已隐藏，见 `src/lib/edition.ts`）。
-  // 参数键一律 camelCase：Tauri 2 只认 camelCase，再映射到 Rust 的 snake_case 形参。
-  // （result 里的字段来自 serde 序列化的 Rust 结构体，仍是 snake_case。）
-  team_register: { args: { serverUrl: string; email: string; password: string; display?: string | null; registerCode?: string | null }; result: { token: string } };
-  team_login: { args: { serverUrl: string; email: string; password: string }; result: { token: string } };
-  team_logout: { args: { serverUrl: string }; result: void };
-  team_list_spaces: { args: { serverUrl: string; token: string }; result: { id: string; name: string; role: string; owner_id: string }[] };
-  team_create_space: { args: { serverUrl: string; token: string; name: string; orgId?: string | null }; result: { id: string; name: string; role: string; owner_id: string } };
-  team_list_members: { args: { serverUrl: string; token: string; spaceId: string }; result: { user_id: string; email: string; role: string }[] };
-  team_invite_member: { args: { serverUrl: string; token: string; spaceId: string; email: string; role: string }; result: void };
-  team_set_member_role: { args: { serverUrl: string; token: string; spaceId: string; email: string; role: string }; result: void };
-  team_remove_member: { args: { serverUrl: string; token: string; spaceId: string; userId: string }; result: void };
-  team_get_session: { args: undefined; result: { server_url: string; token: string } };
-  team_get_me: { args: { serverUrl: string; token: string }; result: { email: string } };
-  team_get_server_email: { args: { serverUrl: string }; result: string | null };
+
+
+
+
+
+
+
+
+
+
+
+
   list_sync_history: { args: { limit?: number }; result: { ws_id: string; ws_name: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string; title: string }[] }[] };
   clear_sync_history: { args: undefined; result: void };
-  // ---- P0 org management (research group) ----
-  team_list_orgs: { args: { serverUrl: string; token: string }; result: { id: string; name: string; role: string; owner_id: string }[] };
-  team_create_org: { args: { serverUrl: string; token: string; name: string }; result: { id: string; name: string; role: string; owner_id: string } };
-  team_list_org_members: { args: { serverUrl: string; token: string; orgId: string }; result: { members: { user_id: string; email: string; role: string; disabled: boolean }[]; pending: { email: string; status: string }[] } };
-  team_invite_org_member: { args: { serverUrl: string; token: string; orgId: string; email: string; role: string }; result: void };
-  team_set_org_member_active: { args: { serverUrl: string; token: string; orgId: string; userId: string; active: boolean }; result: void };
-  team_remove_org_member: { args: { serverUrl: string; token: string; orgId: string; userId: string }; result: void };
-  team_approve_org_invite: { args: { serverUrl: string; token: string; orgId: string; email: string }; result: void };
-  team_reject_org_invite: { args: { serverUrl: string; token: string; orgId: string; email: string }; result: void };
-  team_deactivate_account: { args: { serverUrl: string; token: string }; result: void };
-  team_deactivate_org_member: { args: { serverUrl: string; token: string; orgId: string; userId: string }; result: void };
-  team_generate_org_invite_code: { args: { serverUrl: string; token: string; orgId: string }; result: string };
-  team_join_org_by_code: { args: { serverUrl: string; token: string; code: string }; result: void };
 
-  // ---- Near-realtime collaboration (P0.2 presence / P1 comments+notifications / P1.5 SSE) ----
-  team_presence_beat: { args: { serverUrl: string; token: string; spaceId: string; pageId?: string | null; deviceId?: string | null }; result: { ok: boolean; last_seen_at: number } };
-  team_online: { args: { serverUrl: string; token: string; spaceId: string }; result: { user_id: string; email?: string | null; page_id?: string | null; last_seen_at: number }[] };
-  team_list_comments: { args: { serverUrl: string; token: string; spaceId: string; pageId: string }; result: { id: string; parent_id?: string | null; author_id: string; body: string; created_at: number }[] };
-  team_add_comment: { args: { serverUrl: string; token: string; spaceId: string; pageId: string; body: string; parentId?: string | null; mentions?: string[] }; result: { id: string; created_at: number; notifications: string[] } };
-  team_delete_comment: { args: { serverUrl: string; token: string; spaceId: string; commentId: string }; result: void };
-  team_list_notifications: { args: { serverUrl: string; token: string }; result: { id: string; kind: string; actor_id: string; space_id?: string | null; page_id?: string | null; comment_id?: string | null; text: string; seen: number; created_at: number }[] };
-  team_seen_notification: { args: { serverUrl: string; token: string; id: string }; result: void };
-  team_seen_all_notifications: { args: { serverUrl: string; token: string }; result: void };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   // ---- Properties / Database ----
   list_attr_defs: { args: undefined; result: AttrDef[] };
