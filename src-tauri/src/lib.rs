@@ -887,6 +887,14 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // ⛔ **2026-10-29（owner 拍：团队功能第二阶段 A）**：⭐ 原来这里注册着 **32 条 `sync::team_*`** ✗
+            //   —— `shuyonote-sync-server` 已归档、零用户 ⇒ **前端契约与 UI 已删除**（`commands.ts`/`web.ts`/`api.ts`
+            //   与各 UI 调用点一并移除 ✓）。
+            //   ⚠️ **Rust 后端代码/函数/单测全部保留** ✓（`sync.rs` 里那 32 个 `pub async fn team_*` 原样在，
+            //   企业版仍引用本仓契约 ✓）；这里只是**不再注册为 IPC** ⇒ `check-web-commands` 的方向 2
+            //   （Rust 注册的命令必须在 CommandMap 声明）自然成立 ✓。
+            //   ⛔ 别为了省事把 Rust 那两个函数段删掉 ✗；也⛔ 别把门禁改成"忽略 team_" ✗。
+
             abilities::save_ability_pack,
             storage::cleanup_orphan_derived,
             // ⭐ 2026-10-11：只读附件引用体检（⭐ 报表，⛔ 不删不改 ✓）—— 用来把"加密空间有没有引用老明文"说死 ✓
@@ -1090,18 +1098,6 @@ pub fn run() {
             // C2 网络闸门（2026-09-15）：Android 上真查网络类型，其它平台回 "n/a"（闸门不适用）。
             net::network_type,
             sync::sync_workspace,
-            sync::team_register,
-            sync::team_login,
-            sync::team_logout,
-            sync::team_list_spaces,
-            sync::team_create_space,
-            sync::team_list_members,
-            sync::team_invite_member,
-            sync::team_set_member_role,
-            sync::team_remove_member,
-            sync::team_get_session,
-            sync::team_get_me,
-            sync::team_get_server_email,
             // 冲刺 CRDT S9（2026-09-23）：**血统 claim** —— 桌面侧与 web 侧同端点
             // （`POST /sync/lineage-claim`）、同口径。接上它之后这条命令才不是"web 专属"
             // （`scripts/check-web-commands.mjs` 的 `WEB_ONLY_COMMANDS` 已相应撤回）。
@@ -1121,26 +1117,6 @@ pub fn run() {
             sync::device_pair_import,
             sync::list_sync_history,
             sync::clear_sync_history,
-            sync::team_list_orgs,
-            sync::team_create_org,
-            sync::team_list_org_members,
-            sync::team_invite_org_member,
-            sync::team_set_org_member_active,
-            sync::team_remove_org_member,
-            sync::team_approve_org_invite,
-            sync::team_reject_org_invite,
-            sync::team_deactivate_account,
-            sync::team_deactivate_org_member,
-            sync::team_generate_org_invite_code,
-            sync::team_join_org_by_code,
-            sync::team_presence_beat,
-            sync::team_online,
-            sync::team_list_comments,
-            sync::team_add_comment,
-            sync::team_delete_comment,
-            sync::team_list_notifications,
-            sync::team_seen_notification,
-            sync::team_seen_all_notifications,
             attachments::save_image,
             attachments::attachment_path,
             attachments::copy_attachment,
