@@ -1518,6 +1518,8 @@ export interface CommandMap {
   network_type: { args: undefined; result: string };
 
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
+  // ⚠️ 2026-10-29（owner 拍）：sync-server 已归档、团队功能冻结 ⇒ 这些命令**保留**只为**旧配置兼容**
+  //   （⛔ 不删命令、⛔ 不退契约 ✗ —— Rust 侧同名命令仍在；新配置入口已隐藏，见 `src/lib/edition.ts`）。
   // 参数键一律 camelCase：Tauri 2 只认 camelCase，再映射到 Rust 的 snake_case 形参。
   // （result 里的字段来自 serde 序列化的 Rust 结构体，仍是 snake_case。）
   team_register: { args: { serverUrl: string; email: string; password: string; display?: string | null; registerCode?: string | null }; result: { token: string } };

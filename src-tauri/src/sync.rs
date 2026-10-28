@@ -2275,6 +2275,12 @@ pub fn set_sync_config(db: State<'_, Db>, args: SyncConfigArgs) -> Result<(), St
 }
 
 // ---- M27 团队版认证（客户端）----
+// ⚠️⚠️ **2026-10-29（owner 拍）：`shuyonote-sync-server` 已归档** ✗ —— 被独立闭源企业版
+//   `shuyonote-enterprise-server`（PostgreSQL）取代 ⇒ 本仓（个人版 AGPL 客户端）的**团队功能冻结**：
+//   ⛔ **不再新增功能** ✗、⛔ **不删这些命令、不退契约** ✗；它们（和下面整段"团队空间 / 成员"）**保留**，
+//   只为**旧 sync-server 配置兼容**（已存在的团队空间旧档案仍走原配置同步 ✓）。
+//   ⭐ 界面上的**新建/配置入口**已按唯一开关 `src/lib/edition.ts::TEAM_EDITION_ARCHIVED` 隐藏 ✓
+//   （判据：`src/lib/edition.test.ts` ＋ `src/components/teamEditionFrozen.wiring.test.tsx`）。
 // 对齐 sync-server `/auth/register` `/auth/login` `/auth/logout`。成功后把会话
 // token 写入 meta.sync_state（复用 KEY_TOKEN），前端 auth store 据此维持登录态。
 

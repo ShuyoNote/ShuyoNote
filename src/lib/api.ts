@@ -588,6 +588,8 @@ export const api = {
   meshEnsureDefaults: (workspaceId?: string | null) =>
     invoke("mesh_ensure_defaults", { workspaceId: workspaceId ?? null }) as Promise<MeshConfigState>,
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
+  // ⚠️ 2026-10-29（owner 拍）：sync-server 已归档、团队功能冻结 ⇒ 这些 team_* API **保留**只为
+  //   **旧配置兼容**（⛔ 不删、⛔ 不退契约 ✗）；新配置入口已从界面上隐藏（`lib/edition.ts` ✓）。
   // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
   // 传 `server_url` 会被判为「缺少必填键 serverUrl」——这是运行时错误，TS 查不出来，
   // 所以 CommandMap 里也按 camelCase 声明，并由 check-web-commands 兜底校验。

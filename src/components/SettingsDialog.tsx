@@ -33,6 +33,10 @@ import { spaceCryptoBadge } from "../lib/spaceSecurity";
 import { useNotes } from "../store/notes";
 import { withSyncStatus } from "../store/syncStatus";
 import { useAuth } from "../store/auth";
+// ⭐ **2026-10-29（owner 拍）：团队功能冻结** —— `shuyonote-sync-server` 已归档、由独立闭源企业版取代；
+//   这一页里的「组织账号 / 组织管理」属于团队侧**新建/配置**入口 ⇒ 冻结时隐藏 ✓
+//   （⛔ 不删代码、⛔ 不动契约 ✓；唯一开关在 `lib/edition.ts`）。
+import { TEAM_EDITION_ARCHIVED_NOTE, teamConfigEntryVisible } from "../lib/edition";
 import { exportCurrentSpace, importSpacePackage, removeSpace } from "../lib/spaceTransfer";
 import { APP_VERSION, APP_LICENSE } from "../lib/links";
 import { useEmailPanel } from "../store/emailPanel";
@@ -1045,6 +1049,8 @@ function AccountPane() {
   // 逐字段订阅（`clear` 是动作，引用恒定；本面板是设置中心里很大的一个子面板，
   // 不该被 auth store 的无关字段唤醒）。
   const authed = useAuth((s) => s.authed);
+  /** ⭐ 2026-10-29（团队冻结）：团队侧**新建/配置**入口还显不显示 —— 只读 `lib/edition.ts` 那一个开关 ✓。 */
+  const teamConfigVisible = teamConfigEntryVisible();
   const serverUrl = useAuth((s) => s.serverUrl);
   const token = useAuth((s) => s.token);
   const email = useAuth((s) => s.email);
@@ -1393,6 +1399,9 @@ function AccountPane() {
         {deviceNameStatus && <div className="set-hint">{deviceNameStatus}</div>}
       </section>
 
+      {/* ⭐ 2026-10-29（团队冻结）：**未登录 ⇒ 这一节整个不渲染** ✗（不再提供"登录团队账号"这条新路径）；
+          已登录（旧配置用户）⇒ 照旧显示身份 ✓，但操作按钮见下面的冻结门 ✓。 */}
+      {(teamConfigVisible || authed) && (
       <section className="set-section">
         <div className="set-section-title">当前组织账号</div>
         {authed ? (
@@ -1402,10 +1411,14 @@ function AccountPane() {
               <div className="set-row-name">{email || hostLabel(serverUrl)}</div>
               <div className="set-row-sub">{email ? `${hostLabel(serverUrl)} · 已登录` : `已登录 · ${hostLabel(serverUrl)}`}</div>
             </div>
-            <span className="acct-actions">
-              <button className="set-btn is-danger" onClick={() => void deactivateSelf()}>注销账号</button>
-              <button className="set-btn" onClick={() => void logout()}>登出</button>
-            </span>
+            {/* ⭐ 2026-10-29（团队冻结）：⛔ 注销/登出**不再显示** ✗ —— 登录入口已隐藏，
+                点登出 = 旧配置再也登不回来（把老用户的同步弄坏 ✗）。要看/改账号请用旧版本客户端或企业版 ✓。 */}
+            {teamConfigVisible && (
+              <span className="acct-actions">
+                <button className="set-btn is-danger" onClick={() => void deactivateSelf()}>注销账号</button>
+                <button className="set-btn" onClick={() => void logout()}>登出</button>
+              </span>
+            )}
           </div>
         ) : (
           <div className="acct-login-card">
@@ -1416,7 +1429,11 @@ function AccountPane() {
             </div>
           </div>
         )}
+        {!teamConfigVisible && (
+          <p className="set-hint" data-testid="team-frozen-settings-note">{TEAM_EDITION_ARCHIVED_NOTE}</p>
+        )}
       </section>
+      )}
 
       <section className="set-section">
         <div className="set-section-title">
@@ -1456,6 +1473,9 @@ function AccountPane() {
         {status && <div className="set-status-line">{status}</div>}
       </section>
 
+      {/* ⭐ 2026-10-29（团队冻结）：**「组织管理」整节隐藏** ✗ —— 里面全是"新建组织 / 凭码入组 /
+          邀请成员 / 注销成员"这类**新建/配置**动作；⛔ 不删代码 ✗（`teamConfigVisible` 一改回 true 就回来）。 */}
+      {teamConfigVisible && (
       <section className="set-section">
         <div className="set-section-title">组织管理</div>
         {!isDesktopPlatform() ? (
@@ -1581,6 +1601,7 @@ function AccountPane() {
           <p className="set-hint">未登录组织账号，无法管理组织。在侧栏「同步」里登录。</p>
         )}
       </section>
+      )}
     </>
   );
 }

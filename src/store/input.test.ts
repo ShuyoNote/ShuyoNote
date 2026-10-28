@@ -63,8 +63,15 @@ describe("PageTree 的接线（文本级：防止有人把这一问删掉或改�
     expect(src).toContain('value: "team"');
   });
 
-  it("⑤ ★ 只有桌面端才问（Web 没有钥匙柜 ⇒ 那里的分类没有下游）", () => {
-    expect(src).toMatch(/if \(isDesktopPlatform\(\)\) \{[\s\S]{0,400}?await chooseDialog\(/);
+  it("⑤ ★ 只有桌面端才问（Web 没有钥匙柜 ⇒ 那里的分类没有下游）＋ ⭐ 团队冻结时**不问**", () => {
+    // ⭐ **2026-10-29（owner 拍：团队功能冻结）**：条件多了"没冻结"那一半（唯一开关
+    //   `lib/edition.ts::teamConfigEntryVisible()`）—— 口径不变：Web 不问；冻结期也不问
+    //   （新建一律个人空间；`value: "team"` 那段代码仍留着，解冻即回来 ✓）。
+    expect(src).toMatch(
+      /if \(isDesktopPlatform\(\) && teamConfigEntryVisible\(\)\) \{[\s\S]{0,400}?await chooseDialog\(/,
+    );
+    // ⛔ 不许退化回"只看桌面"（那等于团队冻结在这条入口上失效 ✗）
+    expect(src).not.toMatch(/if \(isDesktopPlatform\(\)\) \{[\s\S]{0,200}?await chooseDialog\(/);
   });
 
   it("⑥ 取消要能走通：问名字那一步**不是**只挂 onSubmit（取消也必须兑现）", () => {

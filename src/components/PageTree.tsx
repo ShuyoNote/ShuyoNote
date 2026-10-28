@@ -57,6 +57,9 @@ import * as reorder from "../lib/treeReorder";
 import { confirmDialog } from "../store/confirm";
 import { inputDialog, chooseDialog, useInputStore } from "../store/input";
 import { isDesktopPlatform } from "../lib/platform";
+// ⭐ **2026-10-29（owner 拍）：团队功能冻结** —— 新建空间时**不再问"个人/团队"**（唯一的开关在
+//   `lib/edition.ts` ✓；⛔ 别在这里另写一个 true/false ✗）。已存在的团队空间照旧显示/同步 ✓。
+import { teamConfigEntryVisible } from "../lib/edition";
 
 /**
  * ★ A1：「新建空间」第一步 —— 问名字。`null` ＝ 用户取消。
@@ -1217,7 +1220,12 @@ export function PageTree(_props: {
     }
 
     let kind: "personal" | "team" = "personal";
-    if (isDesktopPlatform()) {
+    // ⭐⭐ **2026-10-29（owner 拍）：团队功能冻结** ✗ —— `shuyonote-sync-server` 已归档、
+    //   团队/企业能力由独立闭源企业版承载 ⇒ 本仓**不再提供"新建团队空间"这条新用户路径** ✓。
+    //   ⚠️ 做法是**跳过这个选择框**（不是删掉选项代码 ✓ —— 冻结不删，见 `lib/edition.ts`；
+    //      `teamConfigEntryVisible()` 一改回 true ⇒ 整段原样回来 ✓）。
+    //   ⚠️ 已存在的团队空间**一个字节不动** ✓（它们不经过这里；分类只决定**新建**那一刻 ✓）。
+    if (isDesktopPlatform() && teamConfigEntryVisible()) {
       const picked = await chooseDialog({
         title: `「${name}」是哪一类空间？`,
         choices: [
@@ -1239,6 +1247,8 @@ export function PageTree(_props: {
       }
       kind = picked === "team" ? "team" : "personal";
     }
+    // ⚠️ 冻结时**跳过上面那一问** ⇒ `kind` 保持初始值 `"personal"` ✓（新建一律个人空间；
+    //   ⛔ 不加 toast/提示框 ✗ —— 用户没问，弹一句"团队不能建了"只会吓人；说明在 README / docs ✓）。
 
     const ok = await useSpaceStore.getState().create(name, kind);
     if (ok) {

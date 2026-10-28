@@ -55,6 +55,10 @@ import { SyncAdvancedFold } from "./SyncAdvancedFold";
 //   ⚠️ 全部是**纯函数／常量**（唯一实现 `src/lib/personalSyncReadout.ts` ✓）——
 //   面板只负责把读数传进去、把结果摆出来（⛔ 不在这里拼句子 ✗：那正是旧 `heroRoute` 被删的原因之一 ✓）。
 import { SyncReadout } from "./SyncReadout";
+// ⭐ **2026-10-29（owner 拍）：团队功能冻结** —— `shuyonote-sync-server` 已归档、被独立闭源企业版取代；
+//   本仓（个人版客户端）**隐藏"新建/配置团队"入口**，但 ⛔ 不删代码、不动契约、不破旧配置 ✗。
+//   ⚠️ 唯一开关在 `lib/edition.ts`（`teamConfigEntryVisible()`）—— ⛔ 别在这一屏另写 true/false ✗。
+import { TEAM_EDITION_ARCHIVED_NOTE, teamConfigEntryVisible } from "../lib/edition";
 import {
   PASSWORD_AUTO_HINT,
   PASSWORD_AUTO_VALUE,
@@ -1271,6 +1275,9 @@ export function SyncPanel({
   //   ⚠️ **刀二十（2026-10-14）**：⭐ `heroState` **不再**用这一格了 ✗ —— 它现在由
   //     「已配对／在线／同步中」三件真事拼成（与当前是个人还是团队无关 ✓）。
   const isPersonalActive = serverRows.length === 0;
+  /** ⭐ 2026-10-29（owner 拍）：**团队配置入口还显不显示** —— 只读 `lib/edition.ts` 那一个开关 ✓。
+   *  ⚠️ 它只关"新建/改配置"那几块；**已存在**的团队档案照旧显示状态/照旧同步 ✓（下面那些 `同步` 不动 ✓）。 */
+  const teamConfigVisible = teamConfigEntryVisible();
 
   // ⭐⭐ **2026-10-27（owner 拍 M2）**：**第一次进入本页**才把局域网前置备好（设备身份／自动组名／
   //   监听地址／档案行）—— ⛔ 不在启动时自动开（桌面保持"用户不配就不广播"那条隐私口径 ✓）。
@@ -2457,15 +2464,30 @@ export function SyncPanel({
                           </span>
                         </div>
 
+                        {/* ⭐ 2026-10-29（团队冻结）：这张卡上只要还显示着团队空间，就说明一句**为什么**
+                            配置格是只读的（⛔ 不弹窗 ✗；旧配置仍可同步这一点也写在这里 ✓）。 */}
+                        {!teamConfigVisible && (
+                          <p className="sync-hint" data-testid="team-frozen-note">
+                            {TEAM_EDITION_ARCHIVED_NOTE}
+                          </p>
+                        )}
+
                         <div className="sync-field">
                           <label htmlFor={`sync-srv-${r.ws_id}`}>服务器</label>
-                          <input
-                            id={`sync-srv-${r.ws_id}`}
-                            className="sync-input"
-                            value={r.server_url}
-                            placeholder="http://localhost:8787"
-                            onChange={(e) => update(r.ws_id, "server_url", e.target.value)}
-                          />
+                          {teamConfigVisible ? (
+                            <input
+                              id={`sync-srv-${r.ws_id}`}
+                              className="sync-input"
+                              value={r.server_url}
+                              placeholder="http://localhost:8787"
+                              onChange={(e) => update(r.ws_id, "server_url", e.target.value)}
+                            />
+                          ) : (
+                            // ⭐ 冻结 ⇒ **只读**（旧配置照旧显示 ✓，但不再提供"改地址"这条新配置路径 ✗）
+                            <span className="sync-hint" data-testid="team-server-readonly">
+                              {r.server_url || "未配置"}
+                            </span>
+                          )}
                         </div>
 
                         {/* 已拿到令牌就不再堆登录表单——只留一枚「已登录」胶囊 + 登出。 */}
@@ -2476,11 +2498,18 @@ export function SyncPanel({
                               <b>{authEmail || "已登录"}</b>
                               <span title={r.server_url}>{r.server_url || "—"}</span>
                             </div>
-                            {/* 管理账号/组织：跳转到设置中心「账户」页（登录身份、组织管理、注销）。 */}
-                            <button className="sync-btn ghost" onClick={() => useEditorStore.getState().openSettings("account")}>管理</button>
-                            <button className="sync-btn ghost" onClick={() => void logout(r)}>登出</button>
+                            {/* 管理账号/组织：跳转到设置中心「账户」页（登录身份、组织管理、注销）。
+                                ⭐ 2026-10-29（团队冻结）：这两个动作都**不再显示** ✗ —— 团队配置入口已隐藏，
+                                "登出"会让旧用户**再也登不回来**（登录表单也不显示了）⇒ 那是把旧配置弄坏 ✓。
+                                旧账号的状态照旧显示在上面（只读）✓。 */}
+                            {teamConfigVisible && (
+                              <>
+                                <button className="sync-btn ghost" onClick={() => useEditorStore.getState().openSettings("account")}>管理</button>
+                                <button className="sync-btn ghost" onClick={() => void logout(r)}>登出</button>
+                              </>
+                            )}
                           </div>
-                        ) : (
+                        ) : teamConfigVisible ? (
                           <div className="sync-field">
                             <label htmlFor={`sync-mail-${r.ws_id}`}>账号</label>
                             {/* 登录/注册 tab：登录只需邮箱+密码；注册需额外 注册邀请码。 */}
@@ -2540,48 +2569,60 @@ export function SyncPanel({
                             </div>
                             <p className="sync-hint">密码 ≥8 位，注册成功即自动登录。</p>
                           </div>
-                        )}
+                        ) : null}
 
                         <div className="sync-field">
                           <label htmlFor={`sync-space-${r.ws_id}`}>组织空间</label>
-                          {r.remoteSpaces.length > 0 ? (
-                            <div className="sync-space-row">
-                              <select
+                          {teamConfigVisible ? (
+                            <>
+                            {r.remoteSpaces.length > 0 ? (
+                              <div className="sync-space-row">
+                                <select
+                                  id={`sync-space-${r.ws_id}`}
+                                  className="sync-input"
+                                  value={r.space_id}
+                                  onChange={(e) => void pickSpace(r, e.target.value)}
+                                >
+                                  <option value="">选择我加入的空间…</option>
+                                  {r.remoteSpaces.map((sp) => (
+                                    <option key={sp.id} value={sp.id}>{sp.name}</option>
+                                  ))}
+                                </select>
+                                {myRole && <span className={`sync-role ${roleClass(myRole)}`}>{myRole}</span>}
+                              </div>
+                            ) : (
+                              <input
                                 id={`sync-space-${r.ws_id}`}
                                 className="sync-input"
                                 value={r.space_id}
-                                onChange={(e) => void pickSpace(r, e.target.value)}
-                              >
-                                <option value="">选择我加入的空间…</option>
-                                {r.remoteSpaces.map((sp) => (
-                                  <option key={sp.id} value={sp.id}>{sp.name}</option>
-                                ))}
-                              </select>
-                              {myRole && <span className={`sync-role ${roleClass(myRole)}`}>{myRole}</span>}
-                            </div>
+                                placeholder="组织空间 id（多设备同步需绑定一个组织空间）"
+                                onChange={(e) => update(r.ws_id, "space_id", e.target.value)}
+                              />
+                            )}
+                            {/* 已登录但还没有可绑定的组织空间 → 引导 + 创建入口，避免卡住 */}
+                            {r.token && r.remoteSpaces.length === 0 && (
+                              <div className="sync-space-guide">
+                                <p className="sync-hint">还没有组织空间。点「创建空间」新建一个，或让管理员邀请你加入。</p>
+                                <button className="sync-btn primary" onClick={() => createSpace(r)}>创建空间</button>
+                              </div>
+                            )}
+                            {/* 已登录、有空间可选但还没选 → 轻引导 */}
+                            {r.token && !r.space_id && r.remoteSpaces.length > 0 && (
+                              <p className="sync-hint">请在上面下拉选择一个组织空间，才能同步。</p>
+                            )}
+                            </>
                           ) : (
-                            <input
-                              id={`sync-space-${r.ws_id}`}
-                              className="sync-input"
-                              value={r.space_id}
-                              placeholder="组织空间 id（多设备同步需绑定一个组织空间）"
-                              onChange={(e) => update(r.ws_id, "space_id", e.target.value)}
-                            />
-                          )}
-                          {/* 已登录但还没有可绑定的组织空间 → 引导 + 创建入口，避免卡住 */}
-                          {r.token && r.remoteSpaces.length === 0 && (
-                            <div className="sync-space-guide">
-                              <p className="sync-hint">还没有组织空间。点「创建空间」新建一个，或让管理员邀请你加入。</p>
-                              <button className="sync-btn primary" onClick={() => createSpace(r)}>创建空间</button>
-                            </div>
-                          )}
-                          {/* 已登录、有空间可选但还没选 → 轻引导 */}
-                          {r.token && !r.space_id && r.remoteSpaces.length > 0 && (
-                            <p className="sync-hint">请在上面下拉选择一个组织空间，才能同步。</p>
+                            /* ⭐ 2026-10-29（团队冻结）：**只读显示旧绑定** ✓ —— 不再有下拉（选空间＝新配置 ✗）、
+                               ⛔ 也没有「创建空间」入口 ✗；已绑定的那个名字照旧显示 ✓。 */
+                            <span className="sync-hint" data-testid="team-space-readonly">
+                              {r.space_id
+                                ? `已绑定：${r.remoteSpaces.find((x) => x.id === r.space_id)?.name ?? "（名称未读到）"}`
+                                : "未绑定"}
+                            </span>
                           )}
                         </div>
 
-                        {r.space_id && r.token && canManageSpace(r) && (
+                        {teamConfigVisible && r.space_id && r.token && canManageSpace(r) && (
                           <div className="sync-field">
                             <button
                               className="sync-members-toggle"
@@ -2664,6 +2705,9 @@ export function SyncPanel({
                             （服务端由自己部署、没有账号）—— 把服务端 CLI 签发的那把 `sk_…` 设备密钥
                             贴进来即可，**不需要注册/登录**（服务端侧见 sync-server 的 K1：
                             `--issue-device-key`，持钥即拥有该空间）。 */}
+                        {/* ⭐ 2026-10-29（团队冻结）：这个折叠是**新配置入口**（手贴 token / 设备密钥）⇒ 冻结时不显示 ✗；
+                            ⛔ 不删代码 ✗（`teamConfigVisible` 一改回 true 就回来 ✓）；已配置的 token 照旧在库里/照旧同步 ✓。 */}
+                        {teamConfigVisible && (
                         <details className="sync-advanced">
                           <summary>高级：手动填令牌 / 设备密钥{r.token ? "（已填）" : ""}</summary>
                           <input
@@ -2678,6 +2722,7 @@ export function SyncPanel({
                             <code> --issue-device-key</code> 拿到一串 <code>sk_…</code>，贴到这里即可；丢了只能重新签发。
                           </div>
                         </details>
+                        )}
 
                         {/* P6.1 每空间附件开关：默认开。关掉只影响附件**字节**，元数据照常
                             同步——另一端能看到附件条目但打不开，所以文案要说清后果而不是
@@ -2701,9 +2746,11 @@ export function SyncPanel({
                         <div className="sync-card-actions">
                           {/* 登录/注册与选空间都会自动落盘，这里的「保存」只用于手填
                               服务器地址或手动粘贴令牌的情况。 */}
-                          <button className="sync-btn" onClick={() => save(r)} title="保存手填的服务器地址 / 令牌">
-                            保存
-                          </button>
+                          {teamConfigVisible && (
+                            <button className="sync-btn" onClick={() => save(r)} title="保存手填的服务器地址 / 令牌">
+                              保存
+                            </button>
+                          )}
                           <button className="sync-btn primary" disabled={syncing} onClick={() => syncOne(r)}>
                             {syncing ? "同步中…" : "同步"}
                           </button>

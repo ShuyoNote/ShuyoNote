@@ -7,7 +7,9 @@
 > ⚠️ **2026-09-27 Windows 侧工作区收敛**：六个仓从 `<zhai>\` 收进 `<zhai>\repos\`（worktree 收进 `<zhai>\worktrees\`，
 > 后来也已回收）。**上行的旧写法 `C:\Users\cnzen\zhai\ShuyoNote` 在 Windows 上已失效**；
 > **Mac 那一侧是否同样收敛未核实**，所以那半句保持原样、没有替它猜一个新路径。
-> 服务端现状见 `shuyonote-sync-server/docs/SYNC_SERVER_STATE.md`；**跨平台开发接续（环境事实、待办与下一步、
+> ⛔ **2026-10-29（owner 拍）：`shuyonote-sync-server` 已归档**（被独立闭源企业版 `shuyonote-enterprise-server`
+> 取代）⇒ 本客户端团队功能**冻结**：界面不再提供新建 / 配置入口，仅保留旧配置兼容（已存在档案仍可同步 ✓）。
+> 它的现状文档见 `shuyonote-sync-server/docs/SYNC_SERVER_STATE.md`（**历史 / 归档仓**）；**跨平台开发接续（环境事实、待办与下一步、
 > 换到 Mac 怎么接）见 `docs/SESSION_CONTINUE.md`（服务端仓库）**——本文件只写"现状"，不写操作步骤。
 > ★ **三机协作（2026-09 起）**：Mac / Windows / AMD 三台机器并行推进，**信道是信箱仓 `ShuyoNote-collab`**
 > （不是本文档）。每轮开工前先 `git -C ../shuyo-collab pull` → 读 `STATUS.md` 三侧区块 → 只回挂
@@ -43,7 +45,9 @@
   （插件 API / 模板套用那类入口目前还没接，属已知遗留）。
   `dev` 工作区的 `package.json` 版本号落后于交付线是**预期的**：bump 发生在发布线上
   （口径见 [RELEASING](RELEASING.md) ④）。
-- **许可证**：客户端 **AGPL-3.0**；配套自建同步服务端 **商业**（`shuyonote-sync-server`，见其仓库）。
+- **许可证**：客户端 **AGPL-3.0**；配套自建同步服务端 ~~商业~~（⛔ **2026-10-29 起：`shuyonote-sync-server` 已归档**，
+  不再作为在售服务端；团队 / 企业能力由独立闭源企业版 `shuyonote-enterprise-server` 承载。本客户端团队功能冻结＝
+  界面不再提供新建 / 配置入口，仅保留旧配置兼容；⛔ 不删代码 / 不退契约 ✗）。
 
 ## 2. 已实现核心功能（里程碑 M1–M27）
 
