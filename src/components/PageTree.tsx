@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { clampSidebarWidth, dragOutcome, normalizeStoredWidth } from "../lib/sidebarDrag";
 import { platform } from "../lib/platform";
+import { NOT_DOWNLOADED_HINT, fetchLocalAttachmentPath } from "../lib/localBytesHint";
 import { usePopover } from "../hooks/usePopover";
 import { isMobileViewport } from "../hooks/useMobile";
 import { api, type SyncProfile } from "../lib/api";
@@ -247,11 +248,27 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
     platform.opener.openPath(f.path).catch((e) => toast(`打开失败：${e}`, "error"));
   };
 
-  /** ⭐ 「在文件夹中显示」—— 与文件管理器那边同一条平台调用 ✓（`revealItemInDir` ✓）。 */
+  /** ⭐ 「在文件夹中显示」—— 与文件管理器那边同一条平台调用 ✓（`revealItemInDir` ✓）。
+   *
+   * ⭐ **2026-10-28（owner：「在文件夹中打开失效了」）**：`path` 为空**不是"没事发生"** ✗ ——
+   * 它等于「这一件在本机**还没有字节**」（附件是按需取字节的：数据库里有行、盘上可能没有文件 ✓）。
+   * 原来这里 `if (!path) return;` **静默什么都不做** ⇒ 用户看到的就是"按钮失效了" ✗。
+   * ⇒ 现在如实说一句（并告诉下一步：先在页面里打开它一次，字节会取回 ✓）。
+   */
   const revealFile = async (f: AttachmentMeta) => {
-    if (!f.path) return;
+    // ⭐ **2026-10-28（owner：「在文件夹中打开失效了」）**：本机**还没有字节**时，先按需取回，再显示 ✓
+    //   （原来 `if (!f.path) return;` 静默什么都不做 ⇒ 用户以为按钮坏了 ✗）。
+    let path = f.path;
+    if (!path) {
+      try {
+        path = await fetchLocalAttachmentPath(f.hash);
+      } catch (e) {
+        toast(`取回失败：${e instanceof Error ? e.message : String(e)}（${NOT_DOWNLOADED_HINT}）`, "error");
+        return;
+      }
+    }
     try {
-      await platform.opener.revealItemInDir(f.path);
+      await platform.opener.revealItemInDir(path);
     } catch (e) {
       toast(`打开失败：${e}`, "error");
     }

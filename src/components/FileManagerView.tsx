@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { platform } from "../lib/platform";
+import { NOT_DOWNLOADED_HINT, fetchLocalAttachmentPath } from "../lib/localBytesHint";
 import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
 import { useFileManagerStore } from "../store/fileManager";
@@ -438,10 +439,24 @@ export function FileManagerView() {
       toast(`打开失败：${e}`, "error");
     }
   };
-  const revealFile = async (path: string) => {
-    if (!path) return;
+  const revealFile = async (path: string, hash?: string) => {
+    // ⭐ **2026-10-28（owner：「在文件夹中打开失效了」）**：本机**还没有字节**时，先按需取回，再显示 ✓
+    //   （原来 `if (!path) return;` 静默什么都不做 ⇒ 看起来就是"按钮坏了" ✗）。
+    let local = path;
+    if (!local) {
+      if (!hash) {
+        toast(NOT_DOWNLOADED_HINT, "info");
+        return;
+      }
+      try {
+        local = await fetchLocalAttachmentPath(hash);
+      } catch (e) {
+        toast(`取回失败：${e instanceof Error ? e.message : String(e)}（${NOT_DOWNLOADED_HINT}）`, "error");
+        return;
+      }
+    }
     try {
-      await platform.opener.revealItemInDir(path);
+      await platform.opener.revealItemInDir(local);
     } catch (e) {
       toast(`打开失败：${e}`, "error");
     }
@@ -1251,7 +1266,7 @@ export function FileManagerView() {
                         title="在文件夹中显示"
                         onClick={(e) => {
                           e.stopPropagation();
-                          revealFile(row.file!.path);
+                          revealFile(row.file!.path, row.file!.hash);
                         }}
                       >
                         📂
@@ -1339,7 +1354,7 @@ export function FileManagerView() {
                   {row.file && !onDisk.has(row.file.hash)
                     ? ctxItem(<DownloadIcon width={14} height={14} />, "从服务器下载", () => { void fetchBytes(row.file!); closeCtx(); })
                     : ctxItem(<DownloadIcon width={14} height={14} />, "下载", () => { downloadFile(row.file!); closeCtx(); })}
-                  {ctxItem(<FolderIcon width={14} height={14} />, "在文件夹中显示", () => { revealFile(row.file!.path); closeCtx(); })}
+                  {ctxItem(<FolderIcon width={14} height={14} />, "在文件夹中显示", () => { revealFile(row.file!.path, row.file!.hash); closeCtx(); })}
                   {/* 窄屏把行内那六个小按钮收进了这一份面板，所以面板必须**功能完整**：
                       少一项就等于"手机上某个动作消失了"——那比按钮小更糟。 */}
                   {row.file!.mime === "application/pdf" &&
