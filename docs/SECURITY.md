@@ -107,6 +107,8 @@
 - **锁定态附件明文落盘**（`attachments.rs:223/381/456` + `sync.rs:1636`，E1 静置一致性）。
 - **邮箱 IMAP 凭据明文落盘**（`email.rs:1140-1159`、`:1185-1187`）：`app_data_dir/email-account.json` **只在 E1 开启且解锁**时用会话密钥加密；E1 关闭（默认关）即明文 JSON，且加密**失败**会**静默回退明文**（`:1151`/`:1153` 的 `unwrap_or_else(|_| a.password.clone())`）。IMAP 应用密码通常一次生成、长期有效、可读全部历史邮件，属高价值凭据；任何以该用户身份运行的进程可直接读取，用户备份/网盘同步 AppData 即等于上传邮箱密码。修法：OS 凭据库（stronghold / Keychain / Windows Credential Manager / libsecret）或默认加密；最低限度应把静默回退改为**拒绝保存并报错**。**待修，独立排期。**
 - **同步 HTTP 客户端 26 处 `Client::new()` 无超时**（`sync.rs`）；`team_login`/`team_register` 账号口令可发给任意前端可控 URL。
+  ⚠️ **2026-10-29**：`team_login`/`team_register` 已随第三阶段删除（sync-server 归档）；本条目保留为**历史风险记录**，
+  "同步 HTTP 客户端无超时"那半仍按现状评估。
 - **AI/书签/嵌入 SSRF + API key 外泄**（`ai.rs`/`search.rs`/`bookmark.rs`）：`base_url` 无 host/scheme 校验，可指向 `169.254`/内网并带 key。
 - **backup 三个无约束 text/binary 读/写命令 + copy_attachment `dest_path`**（`backup.rs:496-516`、`attachments.rs:293`）。
 - **ATTACH KEY 缺闭合引号**（`security.rs:194`，潜伏——正常路径当前不可达）。
