@@ -2998,6 +2998,15 @@ impl MeshHandle {
         }
         let conn = crate::db::open_space_conn_at(db_space, dir)?;
         guard.insert(proto_space.to_string(), Arc::new(Mutex::new(conn)));
+        // ⭐⭐ **2026-10-28（真机：`diag served=true locked=true` 两种状态同时为真）**：**加进来了就把 locked 摘掉** ✗ ——
+        //   锁着时 `mark_locked(proto)` 会把它记进 `locked`；解锁后 `ensure_window` 走"已开"分支
+        //   把连接加回来（`add_space` ✓），但**没人把 locked 清掉** ⇒ 这个空间同时"在服务"且"锁着"
+        //   ⇒ `window_locked()` 会对一个开着的空间说"锁着"（面板/日志误导），
+        //   而且 `authorized`／`handle_pull` 里 `serves || locked` 的分支优先级也跟着含混 ✓。
+        //   ⇒ 连接真的进来了 ⇒ 这个空间**不再锁着**（摘标记在**成功之后**，失败不动它 ✓）。
+        if let Ok(mut lg) = self.locked.lock() {
+            lg.remove(proto_space);
+        }
         Ok(true)
     }
 
@@ -9479,5 +9488,51 @@ mod drain_targets_tests {
             "⛔ 不许因为 peers 空就一条都不补应用 ✗"
         );
         assert!(drain_targets(&[], &[]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod locked_mark_tests {
+    use super::*;
+
+    fn tmp(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "shuyo-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|x| x.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// ⭐ **2026-10-28（真机 `diag served=true locked=true` 两种状态同时为真）**：
+    /// 锁着时 `mark_locked(proto)` 记进集合；解锁后连接被 `add_space` 加回来，
+    /// 但**没人摘 locked** ⇒ 空间同时"在服务"且"锁着" ⇒ `window_locked()` 会对开着的空间说"锁着"✗。
+    /// 判据：加成功 ⇒ 立刻不再是 locked（⛔ 失败不动它 ✗）。
+    #[test]
+    fn a_space_that_gets_served_is_no_longer_marked_locked() {
+        let dir = tmp("locked-mark-clear");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_space_conn_at("default", &dir).unwrap());
+        let cfg = MeshConfig {
+            bind: "127.0.0.1:0".into(),
+            device_id: "dev".into(),
+            data_dir: Some(dir.clone()),
+        };
+        let h = start(
+            cfg,
+            Arc::new(Mutex::new(std::collections::HashMap::new())),
+            Arc::new(Mutex::new(CardBook::new())),
+        )
+        .expect("窗口应当起得来");
+        let proto = "proto-locked";
+        h.mark_locked(proto);
+        assert!(h.is_locked(proto), "前提：先标上锁着");
+        h.add_space("default", proto, &dir).expect("库开得开 ⇒ 加成功");
+        assert!(!h.is_locked(proto), "⛔ 连接进来了就不该再说自己锁着 ✗");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
