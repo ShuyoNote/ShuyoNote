@@ -3,7 +3,9 @@
 // ## 这一笔删了什么、保留什么（判据就钉这两半）
 // · **删**：`team_*` 的 **CommandMap 契约**／`web.ts` stub／`api.ts` 包装／**所有团队 UI**
 //   （团队服务器卡、账号/组织管理、评论/通知/在线状态、空间同步点、团队新建项）以及**专属组件/模块**。
-// · **留**：⭐ **Rust 后端代码、函数、单测**（`src-tauri/src/sync.rs` 里那 32 个 `pub async fn team_*` **原样在** ✓）；
+// · **第三阶段再删**：⭐ **Rust 团队实现**（`src-tauri/src/sync.rs` 里那 31 个 `team_*` 函数、9 个 `Team*` 类型、
+//   `AuthUserId`/`parse_team_me`/`presence_page_id_gated` 等 helper）也**已删除** ✓；
+// · **永远留**：⭐ `sync_profiles`/工作区同步/`space_id`（含历史 `SpaceKind::Team`）＝个人同步与旧数据要用；
 //   ⭐ `specs/`、**企业 IM 规格/判据**（企业版仍引用本仓契约 ✓）。
 // · **做法**：把 32 条从 `src-tauri/src/lib.rs` 的 `generate_handler!` **摘掉**（不再注册 IPC ✓）——
 //   这样 `check-web-commands` 的三方向自然成立，⛔ **不用改门禁** ✗。
@@ -73,26 +75,33 @@ describe("第二阶段：`team_*` 前端契约已删除（⛔ 不再有任何 IP
   });
 });
 
-describe("第二阶段：⭐ 保留面（Rust 后端 / specs / 企业 IM 契约）—— ⛔ 不许跟着删掉", () => {
-  it("① Rust 后端那 32 个 `team_*` **函数/单测原样保留**（只是不注册 IPC）", () => {
+describe("第三阶段：Rust 团队实现**也已删除**；⭐ 保留面（sync_profiles / 历史团队空间语义 / specs / 企业 IM）⛔ 不许跟着删", () => {
+  it("① ⛔ Rust 里不再有 `team_*` 函数、`Team*` 类型、`auth_user_id`/`parse_team_me` 那套账号身份 helper", () => {
     const rust = read("src-tauri/src/sync.rs");
-    // 抽查 8 条覆盖 auth / space-member / org / presence-comments-notifications 四族
-    for (const fn of [
-      "pub async fn team_register(",
-      "pub async fn team_login(",
-      "pub async fn team_list_spaces(",
-      "pub async fn team_invite_member(",
-      "pub async fn team_create_org(",
-      "pub async fn team_join_org_by_code(",
-      "pub async fn team_presence_beat(",
-      "pub async fn team_list_comments(",
-      "pub async fn team_list_notifications(",
+    const code = stripComments(rust);
+    // ⭐ 第三阶段（owner 2026-10-29）：团队实现整个删掉 ✓（第二阶段只删前端契约）
+    expect(code, "⛔ Rust 里还有 `team_*` 函数（第三阶段应删）").not.toMatch(/fn team_[a-z_]+\s*\(/);
+    expect(code, "⛔ Rust 里还有 `Team*` 类型（第三阶段应删）").not.toMatch(/struct Team[A-Z][A-Za-z]*/);
+    expect(code, "⛔ 账号身份 helper 没删干净（`AuthUserId`/`auth_user_id` 只服务团队账号）").not.toMatch(/AuthUserId|fn auth_user_id/);
+    expect(code, "⛔ `parse_team_me`/`fetch_me_user_id` 没删干净（只服务团队 /auth/me）").not.toMatch(/parse_team_me|fetch_me_user_id/);
+    expect(code, "⛔ presence 的 `page_id` 隐私闸只服务团队在线状态 ⇒ 应随团队一起删").not.toMatch(/presence_page_id_gated/);
+  });
+
+  it("①b ⭐ **必须保留**：`sync_profiles` 机制与历史团队空间语义（⛔ 删了个人同步/旧数据会坏 ✗）", () => {
+    const rust = stripComments(read("src-tauri/src/sync.rs"));
+    for (const keep of [
+      "pub struct SyncProfile",
+      "fn get_profile(",
+      "fn list_profiles(",
+      "pub fn set_sync_profile(",
     ]) {
-      expect(rust, `⛔ Rust 后端被删了：${fn}（第二阶段只删前端契约，⛔ 不删后端 ✗）`).toContain(fn);
+      expect(rust, `⛔ 个人同步/旧档案要用它，被误删：${keep}`).toContain(keep);
     }
-    // 总数兜底：仓里至少还有 30 个 team_* 函数（正常是 32；少一两个说明被误删）
-    const n = (rust.match(/pub async fn team_[a-z_]+\(/g) ?? []).length;
-    expect(n, `⛔ Rust 的 team_* 函数只剩 ${n} 个（应 ≥30 ⇒ 后端被删过头）`).toBeGreaterThanOrEqual(30);
+    // 历史团队空间数据仍要读得懂：`SpaceKind::Team` 与 `space_id` 解析分支保留（另在 space_crypto/lan_state 里）
+    const metrics = stripComments(read("src-tauri/src/space_crypto.rs"));
+    expect(metrics, "⛔ `SpaceKind::Team` 被删了 ⇒ 历史团队空间数据读不懂").toContain("Team");
+    const lanState = stripComments(read("src-tauri/src/lan_state.rs"));
+    expect(lanState, "⛔ 团队空间按 space_id 服务的那条分支被删了").toContain("space_id");
   });
 
   it("② specs / 企业 IM 规格 / 边界判据都还在（企业版仍引用）", () => {
@@ -113,20 +122,25 @@ describe("第二阶段：⭐ 保留面（Rust 后端 / specs / 企业 IM 契约�
   });
 });
 
-describe("第二阶段：文档口径（README / docs）不再承诺「旧配置仍可使用/可同步」", () => {
-  it("① README 写明：团队 UI/前端契约已删、Rust 不注册 IPC、能力归企业版", () => {
+describe("第三阶段：文档口径（README / docs）—— 团队 UI/前端契约/**Rust 实现**都已删，specs 保留", () => {
+  it("① README 写明：Rust 团队实现也已删除、能力归企业版、specs 契约保留", () => {
     const readme = read("README.md");
     expect(readme, "README 没写「已删除/已移除」").toMatch(/已删(除|掉)|已移除/);
-    expect(readme, "README 没写 Rust 后端保留但不注册 IPC").toContain("不注册 IPC");
+    expect(readme, "README 没写「Rust 团队实现也已删除」（第三阶段）").toContain("Rust 团队实现也已删除");
     expect(readme, "README 没写企业版 enterprise-server").toContain("enterprise-server");
+    expect(readme, "README 要写清 specs/企业 IM 契约保留").toMatch(/specs|企业 IM/);
+    // ⛔ 第二阶段那句「Rust 后端保留」必须消失（否则与新事实矛盾）
+    expect(readme, "⛔ README 还在说「Rust 后端保留」").not.toMatch(/Rust 后端(代码)?保留/);
   });
 
-  it("② docs/README 与 SHUYONOTE_STATE 同一口径（且历史规格保留）", () => {
+  it("② docs/README 与 SHUYONOTE_STATE 同一口径（Rust 已删 ＋ 历史规格/契约保留）", () => {
     for (const f of ["docs/README.md", "docs/SHUYONOTE_STATE.md"]) {
       const s = read(f);
       expect(s, `${f} 没写「已删除/已移除」`).toMatch(/已删(除|掉)|已移除/);
-      expect(s, `${f} 没写「不注册 IPC」`).toMatch(/不(再)?注册 IPC/);
+      expect(s, `${f} 没写「Rust 团队实现也已删除」`).toContain("Rust 团队实现也已删除");
       expect(s, `${f} 要写清历史规格/契约保留`).toMatch(/保留/);
+      expect(s, `${f} 还在说「Rust 后端保留」`).not.toMatch(/Rust 后端(代码)?保留/);
     }
   });
 });
+
