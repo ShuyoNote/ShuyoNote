@@ -1696,6 +1696,10 @@ export function makeInvoke(store: SqliteStore) {
       }
       return { granted: res?.granted === true } as T;
     }
+    if (cmd === "space_sync_state") {
+      // ⭐ 2026-10-28：Web 没有钥匙袋/加密空间这一档 ⇒ 如实回"没有"（⛔ 不假装有读数 ✗）。
+      return { encrypted: [], pendingAdopt: 0, peersTotal: 0 } as T;
+    }
     if (cmd === "lan_status") {
       // 甲-1 接线第 3 件：局域网发现的读数。**Web 上没有发现层**（UDP 收发在 Rust 侧，
       // 见 `src-tauri/src/lan.rs`）—— 所以这里如实回"配置地址那一档 ＋ 局域网不可用"，

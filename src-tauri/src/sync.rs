@@ -6629,6 +6629,153 @@ mod r146_mesh_scope_tests {
 /// ★ 甲-1 接线第 3 件：**局域网的读数 ＋ 状态行**（施工单 §2 ④）。
 ///
 /// 口径（简报 §7）：**「没走成直连」必须是一个可断言的结果，不是静默降级** ——
+// ═══ ⭐ 2026-10-28（owner：「一步到位」· P1）**加密空间同步状态** ═══
+//
+// 目标：把用户看到的"没数据"拆成**可分辨**的几种原因（本机锁着 / 对端锁着 / 对端不在线 / 可以拉），
+// 并顺手给出"解锁后会自动接入 N 个空间"的读数 —— ⛔ 不再让三种完全不同的原因长得一样 ✗。
+
+/// 一个加密空间的可见状态（界面直接显示 `note`）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EncryptedSpaceSync {
+    pub ws_id: String,
+    pub name: String,
+    /// 本机会话能不能打开它（＝已解锁 / 锁着）
+    pub unlocked: bool,
+    /// 对暗号的房间号（空 ⇒ 还没配同步档）
+    pub room: String,
+    /// 锁着时收下的封包条数（解锁后自动应用）
+    pub pending_inbox: i64,
+    /// 附近**正在宣告这个房间**的对端（显示名；空 ⇒ 没人服务它）
+    pub peers_serving: Vec<String>,
+    pub peers_total: usize,
+    /// 一句人话（⛔ 不含内部 id ✗）
+    pub note: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpaceSyncState {
+    pub encrypted: Vec<EncryptedSpaceSync>,
+    /// 钥匙袋里有、本机还没建的空间数（解锁后会自动"依公开材料建" ✓）
+    pub pending_adopt: usize,
+    pub peers_total: usize,
+}
+
+/// ⭐ **纯函数**：一句人话原因 —— 判据够得着（⛔ 不依赖网络/宿主 ✗）。
+pub(crate) fn encrypted_sync_note(
+    unlocked: bool,
+    peers_total: usize,
+    peers_serving: usize,
+    pending_inbox: i64,
+) -> String {
+    if !unlocked {
+        return if pending_inbox > 0 {
+            format!("本机锁着：已收 {pending_inbox} 条封包，解锁后自动应用")
+        } else {
+            "本机锁着：只能收封包（不解密）；解锁后自动补应用".to_string()
+        };
+    }
+    if peers_total == 0 {
+        return "附近没有能问的对端（两台放同一 Wi-Fi、都打开局域网同步）".to_string();
+    }
+    if peers_serving == 0 {
+        return "对端没在宣告这个空间 —— 多半它那边还锁着；它解锁后会自动开始拉".to_string();
+    }
+    if pending_inbox > 0 {
+        format!("对端在服务这个空间；另有 {pending_inbox} 条已收封包待应用（解锁后自动）")
+    } else {
+        "对端在服务这个空间：可以直接拉取".to_string()
+    }
+}
+
+fn peer_display_name(p: &crate::lan::Peer) -> String {
+    let n = p.announce.device_name.trim();
+    if !n.is_empty() {
+        n.to_string()
+    } else {
+        p.announce.short_id.trim().to_string()
+    }
+}
+
+#[tauri::command]
+pub fn space_sync_state(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+) -> Result<SpaceSyncState, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let now = crate::db::now_ms();
+    let peers = crate::lan_state::LanState::global("").peers(now);
+    let c = db.0.lock().expect("db mutex poisoned");
+    let rows: Vec<(String, String)> = {
+        let mut stmt = c
+            .prepare(
+                "SELECT id, name FROM meta.workspaces WHERE deleted_at IS NULL ORDER BY created_at ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let it = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        it.filter_map(Result::ok).collect()
+    };
+    let all_ids: std::collections::HashSet<String> =
+        rows.iter().map(|(id, _)| id.clone()).collect();
+    let mut encrypted: Vec<EncryptedSpaceSync> = Vec::new();
+    for (ws_id, name) in &rows {
+        let path = crate::db::space_db_path(&dir, ws_id);
+        if !crate::security::space_db_is_encrypted(&path) {
+            continue;
+        }
+        let unlocked = crate::security::key_for_space(&dir, ws_id).is_some();
+        let room = mesh_scope_at(&c, Some(ws_id))
+            .map(|s| s.space)
+            .unwrap_or_default();
+        let inbox: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM meta.mesh_inbox WHERE space_id = ?1",
+                params![ws_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let mut serving: Vec<String> = Vec::new();
+        if !room.is_empty() {
+            for p in &peers {
+                if p.announce.hub_spaces.iter().any(|s| s == &room) {
+                    serving.push(peer_display_name(p));
+                }
+            }
+        }
+        let note = encrypted_sync_note(unlocked, peers.len(), serving.len(), inbox);
+        encrypted.push(EncryptedSpaceSync {
+            ws_id: ws_id.clone(),
+            name: name.clone(),
+            unlocked,
+            room,
+            pending_inbox: inbox,
+            peers_serving: serving,
+            peers_total: peers.len(),
+            note,
+        });
+    }
+    // 钥匙袋里有、本机还没建 ⇒ 解锁后会自动"依公开材料建"（P3 的读数；⛔ 不在这里建 ✗）
+    let pending_adopt = crate::space_crypto::stored_material(&c)
+        .ok()
+        .flatten()
+        .and_then(|t| crate::keyring::Keyring::from_json(&t).ok())
+        .map(|kr| {
+            kr.space_ids()
+                .into_iter()
+                .filter(|id| !all_ids.contains(id))
+                .count()
+        })
+        .unwrap_or(0);
+    Ok(SpaceSyncState {
+        encrypted,
+        pending_adopt,
+        peers_total: peers.len(),
+    })
+}
+
 /// 所以这里回的是 `lan::status_line` 的**原文**加几个可断言的读数，界面直接显示：
 ///   · `enabled`：发现层现在开着吗（没绑同步 ⇒ 关，广播/监听整条不起）；
 ///   · `peers`：**活着**的对端数（过 TTL 的不算 —— 与地址解析用的是同一把尺）。
@@ -12206,3 +12353,26 @@ mod tests {
 }
 
 
+
+#[cfg(test)]
+mod encrypted_sync_note_tests {
+    use super::*;
+
+    /// ⭐ **2026-10-28（owner：「一步到位」·P1）**：**"为什么没数据"必须能分辨** ✗ ——
+    /// 这四条就是界面上那四句话的判据（同一句错位＝把"对面锁着"说成"你没解锁" ✗）。
+    #[test]
+    fn the_note_tells_the_four_causes_apart() {
+        // ① 本机锁着（有没有已收封包是两句话）
+        assert!(encrypted_sync_note(false, 1, 0, 0).contains("本机锁着"));
+        assert!(encrypted_sync_note(false, 1, 0, 7).contains("已收 7 条封包"));
+        // ② 附近没有对端
+        assert!(encrypted_sync_note(true, 0, 0, 0).contains("附近没有能问的对端"));
+        // ③ 对端在线但没宣告这个空间（＝它那边锁着）—— 今天那次误会的真因
+        let note = encrypted_sync_note(true, 1, 0, 0);
+        assert!(note.contains("对端没在宣告这个空间"), "逐字：{note}");
+        assert!(note.contains("锁着"), "要能指向「那边锁着」：{note}");
+        // ④ 对端在服务 ⇒ 可以说"能拉"
+        assert!(encrypted_sync_note(true, 1, 1, 0).contains("可以直接拉取"));
+        assert!(encrypted_sync_note(true, 1, 1, 5).contains("待应用"));
+    }
+}

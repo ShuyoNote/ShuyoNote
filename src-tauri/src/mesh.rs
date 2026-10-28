@@ -135,6 +135,58 @@ pub fn serve_own_records(
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
+/// ⭐⭐ **2026-10-28（owner：「一步到位」·P2）**：**加密空间的记录，直接发封好的整条** ✗。
+///
+/// ## 为什么必须有它（今天那次"我解锁了为什么没数据"的另一半）
+/// 原来只有**锁着那一侧**会用封包（`serve_locked_outbox`）；**开着那一侧**一律发**明文**
+/// ⇒ 一个**锁着**的对端来拉，`stash_sealed_rows` 只收 `sealed` 行 ⇒ **一条都存不下** ✗
+/// ⇒ "一端锁着 ⇒ 永远拉不到"，哪怕对面早就解锁了 ✓。
+/// ⇒ 现在：加密空间 + 对端带 `caps=sealed1` ⇒ 这里**逐条封好**（`encrypt_payload`，用**这个空间自己的**钥匙）
+/// 再发 ⇒ 锁着的那台能先收进 `mesh_inbox`，解锁后 `drain_inbox` 自动补应用 ✓。
+///
+/// ⚠️ 封的是**整条记录**（entity/entity_id/op/payload 一起）—— 与 `mirror_change_to_mesh_outbox`
+/// 同一个形状（`unseal_rows` 解出来就走原来那条 apply 路径 ✓）。
+pub fn serve_own_records_sealed(
+    c: &Connection,
+    own_device: &str,
+    since: i64,
+    limit: i64,
+) -> Result<Vec<MeshRow>, String> {
+    let plain = serve_own_records(c, own_device, since, limit)?;
+    let mut out = Vec::with_capacity(plain.len());
+    for r in plain {
+        let rec = serde_json::json!({
+            "entity": r.entity,
+            "entity_id": r.entity_id,
+            "op": r.op,
+            "payload": r.payload,
+        });
+        // 明文空间不会走到这里（调用方只在"这个空间是密文"时才用这一支）；
+        // 真走到了也只是原样透传 `encrypt_payload` 的既有口径 ✓。
+        let sealed = crate::security::encrypt_payload(c, &rec.to_string())?;
+        out.push(MeshRow {
+            device_seq: r.device_seq,
+            entity: String::new(),
+            entity_id: String::new(),
+            op: String::new(),
+            payload: None,
+            updated_at: r.updated_at,
+            sealed: Some(sealed),
+        });
+    }
+    Ok(out)
+}
+
+/// 请求里带没带"我认得封包"（`caps=sealed1`，用逗号分隔可组合）。
+pub(crate) fn caps_has_sealed1(target: &str) -> bool {
+    query_get(target, "caps")
+        .ok()
+        .flatten()
+        .map(|caps| caps.split(',').any(|c| c.trim() == "sealed1"))
+        .unwrap_or(false)
+}
+
+
 /// 我这一栏 `changes.device_seq` 的**高水位**（没有行 ⇒ 0）。
 ///
 /// ⭐ **2026-10-20**：只给 `/mesh/pull` 的响应带一格用（见 `PullResponse::max_device_seq`）。
@@ -2004,6 +2056,18 @@ pub fn window_serves(bind: &str, proto_space: &str) -> bool {
     h.served().iter().any(|s| s == proto_space)
 }
 
+/// ⭐ **2026-10-28（owner：「一步到位」·P2）**：这个空间是不是"**我知道、但这一轮锁着开不了**"
+/// —— 给公告那一侧用：**锁着也照样宣告房间**（只发封包、不发明文 ✓）。
+///
+/// 为什么必须宣告：不宣告 ⇒ 对端 candidates=0 ⇒ 封包通道**根本没有入口** ⇒
+/// 用户看到的就是今天那句"我解锁了为什么没数据"（其实是**那边锁着**）✗。
+pub fn window_locked(bind: &str, proto_space: &str) -> bool {
+    let bind = bind.trim();
+    let Ok(g) = windows().lock() else { return false };
+    let Some(h) = g.get(bind) else { return false };
+    h.is_locked(proto_space)
+}
+
 /// ⭐ **U8 的便利包装**（设置面那两条命令用 ✓）：从 `MeshSettings` 取绑定/口令、目录取 app data ✓。
 ///
 /// ⚠️ 窗口级的口令按 **R3 的裁定**取（调用方给的那一份＝「最早那个空间」✓）。
@@ -2884,6 +2948,15 @@ impl MeshHandle {
     pub fn mark_locked(&self, proto_space: &str) {
         if let Ok(mut g) = self.locked.lock() {
             g.insert(proto_space.to_string());
+        }
+    }
+
+    /// ⭐ **2026-10-28（owner：「一步到位」·P2）**：这个空间是不是"我知道，但这一轮锁着" ——
+    /// 给公告那一侧用（**锁着也宣告房间**，只发封包 ✓）。
+    pub fn is_locked(&self, proto_space: &str) -> bool {
+        match self.locked.lock() {
+            Ok(g) => g.contains(proto_space),
+            Err(_) => false,
         }
     }
 
@@ -4358,7 +4431,19 @@ fn handle_pull(state: &State, target: &str) -> Reply {
     };
     // ⭐ 2026-10-20：把**我这一栏的高水位**一起发出去（收侧据此判断"游标是不是越界了"）。
     let max_device_seq = max_own_device_seq(&g, &state.cfg.device_id).unwrap_or(0);
-    match serve_own_records(&g, &state.cfg.device_id, since, limit) {
+    // ⭐⭐ **2026-10-28（owner：「一步到位」·P2）**：**加密空间对认得封包的对端，直接发封包** ✓
+    //   ⇒ 一个**锁着**的对端也能先收下、解锁后自动补应用（原来明文会被 `stash_sealed_rows` 跳过 ⇒ 白跑）。
+    let sealed_ok = caps_has_sealed1(target);
+    let encrypted = g
+        .path()
+        .map(|p| crate::security::space_db_is_encrypted(std::path::Path::new(p)))
+        .unwrap_or(false);
+    let served = if encrypted && sealed_ok {
+        serve_own_records_sealed(&g, &state.cfg.device_id, since, limit)
+    } else {
+        serve_own_records(&g, &state.cfg.device_id, since, limit)
+    };
+    match served {
         Ok(records) => Reply::json(
             200,
             "OK",
@@ -9066,3 +9151,19 @@ mod tests {
 }
 
 
+
+#[cfg(test)]
+mod sealed_caps_tests {
+    use super::*;
+
+    /// ⭐ **2026-10-28（owner：「一步到位」·P2）**：只有带 `caps=sealed1` 的对端才配收封包 ——
+    /// 老对端收到封包会**跳过它并推游标**（那一条从此补不回来），所以这一格必须严格 ✓。
+    #[test]
+    fn only_peers_that_advertise_sealed1_get_sealed_rows() {
+        assert!(caps_has_sealed1("/mesh/pull?space_id=a&since=0&limit=10&caps=sealed1&name_sha=x"));
+        assert!(caps_has_sealed1("/mesh/pull?caps=lan,sealed1&name_sha=x"), "逗号组合也认 ✓");
+        assert!(!caps_has_sealed1("/mesh/pull?space_id=a&since=0&limit=10"));
+        assert!(!caps_has_sealed1("/mesh/pull?caps=lan&name_sha=x"));
+        assert!(!caps_has_sealed1("/mesh/pull?caps=sealed10"), "⛔ 前缀像不算 ✗");
+    }
+}

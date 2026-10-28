@@ -4,7 +4,7 @@ import { useMobileNav } from "../store/mobileNav";
 import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
-import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer } from "../lib/api";
+import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer, type SpaceSyncState } from "../lib/api";
 import { MeshMissingSpaces } from "./MeshMissingSpaces";
 import { autoPickPeer } from "../lib/pairTarget"; // ⭐ 常驻判据在 src/lib/pairTarget.test.ts ✓
 import { peerIdentityLine } from "../lib/peerIdentity"; // ⭐ 规格 J21 的**唯一实现**（信任前展示身份 ✓）
@@ -254,6 +254,10 @@ export function SyncPanel({
   // 发现层是进程常驻的（`setup` 里就起了），面板关着就没人看这一行（少一次 IPC/秒）。
   // ⚠️ `line` 是 Rust 侧 `lan::status_line` 的**原文**，这里**只显示、不解释**（档位由 Route 决定）。
   const [lanStatus, setLanStatus] = useState<LanStatus | null>(null);
+  /** ⭐ **2026-10-28（owner：「一步到位」·P1）**：**加密空间的逐条同步状态** ——
+   *  "为什么没数据"要能分辨：本机锁着／对端锁着／对端不在线／可以拉（见 `space_sync_state` ✓）。
+   *  ⚠️ 与 `lanStatus` 同一拍（5 秒）读；读不到 ⇒ `null`（⛔ 不拿空数组冒充"没有加密空间" ✗）。 */
+  const [spaceSync, setSpaceSync] = useState<SpaceSyncState | null>(null);
   /** ⭐ 2026-10-19（owner：「配对成功后，页面不能自动刷新」）—— 强制再读一次局域网读数。
    *
    *  真因：配对成功那条路只弹了一句 toast，**没有重新读 `lan_status`** ⇒ 那一行还停在「待配对」，
@@ -278,6 +282,14 @@ export function SyncPanel({
     const tick = async () => {
       try {
         const st = await api.lanStatus(activeId);
+        // ⭐ 2026-10-28（P1）：**加密空间逐条状态**同一拍读 —— 它与 `lan_status` 是两件事：
+        //   一个说"附近有谁"，一个说"加密空间为什么没数据"（本机锁着／对端锁着／可以拉）。
+        try {
+          const enc = await api.spaceSyncState();
+          if (alive) setSpaceSync(enc);
+        } catch {
+          if (alive) setSpaceSync(null);
+        }
         if (alive) {
           setLanStatus(st);
           // ★ 2026-09-29：把"局域网这一档开着吗"喂给 `syncMode`（它就是 `App` 那个自动同步
@@ -296,8 +308,7 @@ export function SyncPanel({
         // 读不到（命令没注册 / 老构建）⇒ 这一行**不显示**，别把它装成"没有发现到对端"。
         if (alive) setLanStatus(null);
       }
-    };
-    void tick();
+    };    void tick();
     const timer = window.setInterval(() => void tick(), 5000);
     return () => {
       alive = false;
@@ -1855,6 +1866,27 @@ export function SyncPanel({
                 );
               }}
             />
+          )}
+
+          {/* ⭐⭐ **2026-10-28（owner：「一步到位」·P1）**：**加密空间同步状态** ✗ ——
+              把"没数据"拆成可分辨的原因（本机锁着／对端锁着／对端不在线／可以拉），
+              ⛔ 不让三种完全不同的原因长得一样 ✗。数据源：后端 `space_sync_state`（5 秒一拍）。 */}
+          {spaceSync && (spaceSync.encrypted.length > 0 || spaceSync.pendingAdopt > 0) && (
+            <div className="set-section" data-testid="encrypted-sync-state">
+              <div className="set-section-title">加密空间同步</div>
+              {spaceSync.encrypted.map((s) => (
+                <div key={s.wsId} className="sync-hint" data-testid="encrypted-sync-row">
+                  <b>{s.name}</b>
+                  {s.unlocked ? " · 已解锁" : " · 锁着"}
+                  {` — ${s.note}`}
+                </div>
+              ))}
+              {spaceSync.pendingAdopt > 0 && (
+                <div className="sync-hint" data-testid="encrypted-pending-adopt">
+                  对端还有 {spaceSync.pendingAdopt} 个加密空间没接入本机：解锁一次后会自动接进来
+                </div>
+              )}
+            </div>
           )}
 
           {/* ⭐⭐ **owner 2026-10-14** ✗：⭐ 对码屏**搬进主视图** ✓ —— ⭐ 原来它住在下面那个

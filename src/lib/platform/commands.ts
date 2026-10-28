@@ -1007,6 +1007,27 @@ export interface CommandMap {
   //    那一支），而不是假装发现了谁。契约形状与 `src-tauri/src/sync.rs::LanStatus` 逐字段相同。
   lan_status: { args: { workspaceId?: string | null }; result: LanStatus };
   /**
+   * ⭐ **2026-10-28（owner：「一步到位」·P1）**：**加密空间的逐条同步状态** ——
+   * 说清"为什么没数据"（本机锁着 / 对端锁着 / 对端不在线 / 可以拉），并给出"解锁后会自动接入 N 个空间"。
+   */
+  space_sync_state: {
+    args: undefined;
+    result: {
+      encrypted: {
+        wsId: string;
+        name: string;
+        unlocked: boolean;
+        room: string;
+        pendingInbox: number;
+        peersServing: string[];
+        peersTotal: number;
+        note: string;
+      }[];
+      pendingAdopt: number;
+      peersTotal: number;
+    };
+  };
+  /**
    * 丙-③-b ③：**对等交换（网格）跑一轮** —— 确认本机窗口 ＋ 从发现到的对端各拉一批。
    *
    * ⚠️ **两侧都实现**（不登记成 web 专属）：Web 平台**既没有发现层、也开不了本机端口**

@@ -24,6 +24,8 @@ const invoke = <K extends keyof CommandMap>(
 // from "../lib/api"` 拿到的类型少了新字段、`tsc` 报 TS2339——而这还是**报错**的那种；
 // 同一个原因造成的静默不一致（比如 `conflicts` 曾经只在一边有）连报错都没有。
 export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult, LanStatus } from "./platform/commands";
+/** ⭐ 2026-10-28：加密空间逐条同步状态（"为什么没数据"的读数）—— 契约在 `commands.ts` 一处。 */
+export type SpaceSyncState = CommandMap["space_sync_state"]["result"];
 export type { MeshRoundReport, MeshPeerPullReport, MeshConfigState } from "./platform/commands";
 export type { NearbyPeer } from "./platform/commands";
 export type { DevicePairExportOutcome, DevicePairImportOutcome, DeviceUnpairOutcome } from "./platform/commands";
@@ -525,6 +527,11 @@ export const api = {
    */
   lanStatus: (workspaceId?: string | null) =>
     invoke("lan_status", { workspaceId: workspaceId ?? null }) as Promise<LanStatus>,
+  /**
+   * ⭐ **2026-10-28（owner：「一步到位」·P1）**：**加密空间的逐条同步状态** ——
+   * 说清"为什么没数据"（本机锁着／对端锁着／对端不在线／可以拉）。
+   */
+  spaceSyncState: () => invoke("space_sync_state") as Promise<SpaceSyncState>,
   /**
    * 丙-③-b ③：**对等交换（网格）跑一轮**。
    *

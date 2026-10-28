@@ -1084,6 +1084,18 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                             //   照着 `pairs` 全播就是**播假话**（对方来拉只会 403/404）✗。
                             for (_, space, _) in pairs {
                                 if !crate::mesh::window_serves(bind, space) {
+                                    // ⭐⭐ **2026-10-28（owner：「一步到位」·P2）**：**锁着也宣告房间** ✓
+                                    //   ⇒ 对端知道"这台在服务这个房间的封包" ⇒ 能来拉
+                                    //   （它拉到的是封包，解锁后 `drain_inbox` 自动补应用 ✓）。
+                                    //   ⛔ 不宣告 ⇒ 对端 candidates=0 ⇒ 封包通道根本没入口 ✗
+                                    //   （用户看到的就是"我解锁了为什么没数据"—— 其实那边锁着）。
+                                    if crate::mesh::window_locked(bind, space) {
+                                        eprintln!(
+                                            "[mesh] 宣告 {space}（**锁着**：只发封包、不发明文 —— 对端收到后解锁会自动应用）"
+                                        );
+                                        mesh_bases.push((space.clone(), base.clone()));
+                                        continue;
+                                    }
                                     eprintln!("[mesh] 不宣告 {space}：这扇门这一轮没在服务它（打不开的库）");
                                     continue;
                                 }
