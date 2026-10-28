@@ -60,12 +60,14 @@ const COARSE_POINTER_QUERY = (() => {
   return m[1];
 })();
 const replacesDesktopEditor = (vp) => vp.width <= MOBILE_BREAKPOINT_PX;
-/** 挂在**桌面编辑器工具条**上的右栏三块面板（窄视口上它们的入口已不存在 ⇒ 搬到桌面档 ✓）。 */
-const RIGHT_PANELS = [
-  { kind: "discuss", name: "讨论" },
-  { kind: "notify", name: "通知" },
-  { kind: "toc", name: "目录" },
-];
+/** 挂在**桌面编辑器工具条**上的右栏面板。
+ *
+ * ⚠️ **2026-10-29（owner 拍团队功能第二阶段 A）**：「讨论 / 通知」随团队 UI 一起删了
+ * （`CommentsPanel` / `NotificationCenter` 已移除，`rightPanel` 里那两页也没了）⇒ 本清单
+ * 只剩「目录」。⛔ 不是"少测了两条"：下面桌面段改成**反向判据** —— 「⋯ 更多」里
+ * **不许**再出现「讨论 / 通知」（团队入口已删除，别被谁接回来）。
+ */
+const RIGHT_PANELS = [{ kind: "toc", name: "目录" }];
 
 const shotsArg = process.argv.indexOf("--shots");
 const SHOTS = shotsArg > -1 ? process.argv[shotsArg + 1] : null;
@@ -867,6 +869,32 @@ async function main() {
       ok(dg.docWidth <= dg.winWidth, `桌面无横向溢出（文档宽=${dg.docWidth}）`);
       await shot(desktop, `07-desktop-panel-${p.kind}`);
     }
+
+    // ⭐ 2026-10-29（owner 拍第二阶段 A）：团队面板（讨论 / 通知）已随团队 UI 删除 ⇒
+    //    这里从"入口存在"翻成**反向判据**：桌面「⋯ 更多」里**不许**再出现它们。
+    //    ⛔ 不是删断言（R192）：同一件事换了对象 —— 原来问"在不在"，现在问"该没的还在不在"。
+    const teamEntriesGone = await desktop.evaluate(() => {
+      const more = document.querySelector(".editor-toolbar-more .toolbar-btn");
+      if (!more) return { opened: false, discuss: false, notify: false };
+      more.click();
+      const texts = Array.from(document.querySelectorAll(".editor-more-menu .toolbar-menu-item")).map(
+        (x) => x.textContent || "",
+      );
+      return {
+        opened: true,
+        discuss: texts.some((t) => t.includes("讨论")),
+        notify: texts.some((t) => t.includes("通知")),
+      };
+    });
+    ok(teamEntriesGone.opened, "桌面 · 编辑器工具条「⋯ 更多」可打开（团队面板删除后仍要有这个入口）");
+    ok(
+      !teamEntriesGone.discuss && !teamEntriesGone.notify,
+      `桌面 · 「⋯ 更多」里不再有团队面板「讨论 / 通知」（实测 讨论=${teamEntriesGone.discuss} 通知=${teamEntriesGone.notify}）`,
+    );
+    await desktop.evaluate(() => {
+      const more = document.querySelector(".editor-toolbar-more .toolbar-btn");
+      if (more) more.click();
+    });
 
     // ⭐ 2026-10-18（owner：「那就去掉通知」）**收尾那一向**：切回个人空间 ⇒ 「通知」必须**不出现**。
     //    为什么要有这一条：上面那一档为了让几何断言跑全，把空间**临时切成 team** 了 ⇒

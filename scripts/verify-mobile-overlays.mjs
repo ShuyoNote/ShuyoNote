@@ -462,11 +462,6 @@ async function openOverlay(which) {
         m.useRightPanel.getState().openAi(true);
         return true;
       }
-      case "comments": {
-        const m = await store("/src/store/rightPanel.ts");
-        m.useRightPanel.getState().openComments(true);
-        return true;
-      }
       case "markdownImport": {
         // 需要先有打开的页面（工具栏才在）。建页是异步的，所以**轮询**等触发器出现，
         // 而不是睡固定时长。
@@ -594,7 +589,6 @@ async function closeAllOverlays() {
   const rp = (await store("/src/store/rightPanel.ts")).useRightPanel.getState();
   rp.openToc(false);
   rp.openAi(false);
-  rp.openComments(false);
   // usePopover 驱动的这几个（搜索 / 回收站 / 同步 / 版本历史）：它们是**组件本地状态**，
   // 既没有 store 也不一定吃 Escape，最稳的是再点一次触发器关掉（`.click()` 对隐藏元素也生效）。
   // 不关的话它们会一直留在浮层栈里（它们都会登记），后面的
