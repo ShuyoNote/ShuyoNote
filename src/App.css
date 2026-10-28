@@ -28419,3 +28419,14 @@ button.mset-row:focus-visible {
   padding: 0 16px;
   border-radius: 10px;
 }
+
+
+/* ── 加密空间同步（2026-10-28，owner：「同步面板适配一下视觉体系」）──────────────
+   本块用回「附近设备」那套零件（段标题＋数量胶囊、sync-nearby-row 卡片、状态点、sync-chip），
+   这里只补三格：行间距、锁着时头像的警示底色、待应用胶囊的数字对齐。 */
+.sync-enc-row + .sync-enc-row { margin-top: 8px; }
+.sync-enc-row.is-locked .sync-nearby-avatar {
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  color: var(--warning);
+}
+.sync-enc-row .sync-nearby-id { font-variant-numeric: tabular-nums; }

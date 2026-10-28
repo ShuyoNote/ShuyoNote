@@ -1868,21 +1868,54 @@ export function SyncPanel({
             />
           )}
 
-          {/* ⭐⭐ **2026-10-28（owner：「一步到位」·P1）**：**加密空间同步状态** ✗ ——
-              把"没数据"拆成可分辨的原因（本机锁着／对端锁着／对端不在线／可以拉），
-              ⛔ 不让三种完全不同的原因长得一样 ✗。数据源：后端 `space_sync_state`（5 秒一拍）。 */}
+          {/* ⭐⭐ **2026-10-28（owner：「同步面板适配一下视觉体系」）**：本块**用回**面板既有的那套零件 ✗ ——
+              「段标题 ＋ 数量胶囊」＋「`sync-nearby-row` 卡片（头像/主信息/状态点/胶囊）」✓，
+              ⛔ 不再是一根蓝条配一行灰字（那是另一套视觉语言，和上下两段不是一家人 ✗）。 */}
           {spaceSync && (spaceSync.encrypted.length > 0 || spaceSync.pendingAdopt > 0) && (
-            <div className="set-section" data-testid="encrypted-sync-state">
-              <div className="set-section-title">加密空间同步</div>
-              {spaceSync.encrypted.map((s) => (
-                <div key={s.wsId} className="sync-hint" data-testid="encrypted-sync-row">
-                  <b>{s.name}</b>
-                  {s.unlocked ? " · 已解锁" : " · 锁着"}
-                  {` — ${s.note}`}
-                </div>
-              ))}
+            <div data-testid="encrypted-sync-state">
+              <div className="sync-hint sync-nearby-group">
+                <span className="sync-nearby-group-label">加密空间同步</span>
+                <span className="sync-nearby-group-count">{spaceSync.encrypted.length} 个</span>
+              </div>
+              {spaceSync.encrypted.map((s) => {
+                // 头像只取**空间名首字**（⛔ 不把内部 id 放进界面 ✗，与「附近设备」同一条纪律）
+                const initial = (s.name || "?").trim().slice(0, 1);
+                const tone = s.unlocked ? (s.peersServing.length > 0 ? "ok" : "info") : "warn";
+                return (
+                  <div
+                    key={s.wsId}
+                    className={"sync-nearby-row sync-enc-row" + (s.unlocked ? "" : " is-locked")}
+                    data-testid="encrypted-sync-row"
+                  >
+                    <span className="sync-nearby-avatar" aria-hidden>
+                      {initial}
+                    </span>
+                    <div className="sync-nearby-main">
+                      <div className="sync-nearby-titleline">
+                        <span className="sync-nearby-name">{s.name}</span>
+                        <span className={"sync-chip" + (s.unlocked ? " is-on" : "")}>
+                          {s.unlocked ? "已解锁" : "锁着"}
+                        </span>
+                        {s.pendingInbox > 0 && (
+                          <span className="sync-nearby-id" title="已收下的封包，解锁后自动应用">
+                            {s.pendingInbox} 条待应用
+                          </span>
+                        )}
+                      </div>
+                      <div className="sync-nearby-meta">
+                        <span className={`sync-nearby-dot is-${tone}`} aria-hidden />
+                        <span className="sync-hint">{s.note}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
               {spaceSync.pendingAdopt > 0 && (
-                <div className="sync-hint" data-testid="encrypted-pending-adopt">
+                <div
+                  className="sync-hint sync-empty-state"
+                  style={{ paddingLeft: 12 }}
+                  data-testid="encrypted-pending-adopt"
+                >
                   对端还有 {spaceSync.pendingAdopt} 个加密空间没接入本机：解锁一次后会自动接进来
                 </div>
               )}
