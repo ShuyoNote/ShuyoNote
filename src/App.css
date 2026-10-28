@@ -27969,6 +27969,23 @@ button.mset-row:focus-visible {
   font-size: 11.5px;
   margin-top: 8px;
 }
+/* ── ④ **R176-A（owner 2026-10-28 拍 A）「能读的状态」**：状态条下面那三格读数 ────────
+   走哪条路 ／ 服务几个空间 ／ 已信任几台（`SyncReadout.tsx` ✓）。
+   ⚠️ 三枚胶囊**复用**上面那套 `.sync-hero-meta*`（它们是全局的 ✓）—— 这条只负责**外层排布**：
+      与 `.sync-popover.is-inline .sync-hero-sub` 同一份手感（flex ＋ wrap ＋ 小间距 ✓），
+      因为状态条那行是被 popover 作用域包着的、本块在**同一容器**里但**不在**那条规则的选择器下 ✓。
+   ⚠️ 只用既有变量／`color-mix`（不新增色值），与状态条那几条同一套 ✓。 */
+.sync-readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  font-size: 11.5px;
+  margin-top: 8px;
+}
+.sync-readout .sync-nearby-note {
+  flex: 1 1 100%;
+}
 .sync-hero-meta {
   display: inline-flex;
   align-items: baseline;

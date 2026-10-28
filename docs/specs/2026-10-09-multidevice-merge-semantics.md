@@ -308,6 +308,15 @@
 > `an_untrusted_device_cannot_merge_even_with_the_same_name`（身份闸）；判据闸本身另有 `mesh_merge_ledger` 的 m／n 两条。
 > ⚠️ **仍然没有**的：J5（可撤的界面入口与撤回读数）、J6（归一/名字显示面）；且以上都是**库级/函数级**判据，
 > ⛔ **不是**真机两端验收（那要两台新构建）。
+>
+> ⭐⭐ **2026-10-28 更新（owner 拍 R176-A 的落地）**：**J9／J10／J12／J13** 现在有**会红的 vitest 判据**，
+> 判据载体是 `src/lib/personalSyncReadout.test.ts`（纯函数层：路线／三格读数／端口校验／J9 诊断句／
+> 不再信任的文案）＋ `src/components/syncPanelPersonalTrust.wiring.test.ts`（面板接线层：三格读数真的挂在
+> 主视图、默认流程零端口输入与零密码输入、端口只在「高级」、解除那条路**只发** `device_unpair`、
+> Rust `device_unpair_at` 只动信任表／卡表）＋ `src/components/SyncReadout.test.tsx`（真渲染三层）。
+> **J11** 只到**源码级**（Rust 那半边必须 `forget_paired` ＋ `forget_paired_device` 两档都摘卡）——
+> ⛔ **不是**"对方再发一次 `/mesh/pull` 被拒"的真机验收（那要两台机器）。⚠️ 每一条的"会红"都做过真变异
+> （见各文件头部的变异说明），但仍**不等于**真机两端验收已做。
 
 | id | 判据 | 命令／读数 | 期望 |
 |---|---|---|---|

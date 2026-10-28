@@ -51,6 +51,20 @@ import {
 import { SyncStatusStrip } from "./SyncStatusStrip";
 import { SyncNearbyGroups } from "./SyncNearbyGroups";
 import { SyncAdvancedFold } from "./SyncAdvancedFold";
+// ⭐ **R176-A（owner 2026-10-28 拍 A）**：④「能读的状态」那一屏 ＋ ②③⑤ 的文案与校验。
+//   ⚠️ 全部是**纯函数／常量**（唯一实现 `src/lib/personalSyncReadout.ts` ✓）——
+//   面板只负责把读数传进去、把结果摆出来（⛔ 不在这里拼句子 ✗：那正是旧 `heroRoute` 被删的原因之一 ✓）。
+import { SyncReadout } from "./SyncReadout";
+import {
+  PASSWORD_AUTO_HINT,
+  PASSWORD_AUTO_VALUE,
+  PORT_ADVANCED_HINT,
+  PORT_INVALID_TEXT,
+  UNTRUST_LABEL,
+  UNTRUST_SCOPE_NOTE,
+  personalSyncReadout,
+  portTextToBind,
+} from "../lib/personalSyncReadout";
 // ⭐⭐ **2026-10-14（owner 拍「整张卡连输入框一起去掉」）** ✗：⭐ `MeshAdvancedForm` 的挂载点
 //    **已从本面板删掉** ✓ ⇒ ⛔ 这里不再 import 它 ✗（那个组件仍在仓里 ✓、它自己的 7 条判据照旧 ✓，
 //    但**没有挂载点** ⇒ 孤儿组件 ✓ —— 与 `TrustDevicePanel` 同一形状 ✓，去留等 owner 一句话 ✓）。
@@ -267,6 +281,19 @@ export function SyncPanel({
    *  （并重挂定时器）。⚠️ 只"再读一次"，⛔ 不在这里自己改列表（列表唯一来源仍是后端 `lanStatus.nearby`）。
    *  判据：`syncPanelDevicePair.wiring.test.ts` 的「配对成功后要重读」那一条。 */
   const [lanNonce, setLanNonce] = useState(0);
+  /**
+   * ⭐ **R176-A（owner 2026-10-28 拍 A）③**：**「高级」里那一格端口**的草稿。
+   *
+   * ⚠️ `null` ＝ **跟着读数走** ✓（显示的是 `lanStatus.mesh.bind` 拆出来的真端口 ✓）——
+   *    用户没动过就⛔ 不自己造一个值 ✗（界面写死默认值＝跟系统报出来的真实端口打架，
+   *    与 `SyncStatusStrip.tsx` 头部那条纪律同源 ✓）。
+   * ⚠️ 端口**只在「高级」里出现** ✓（J12：默认流程零手输端口）；主界面那三格只显示读数 ✓。
+   */
+  const [meshPortDraft, setMeshPortDraft] = useState<string | null>(null);
+  // 切空间 ⇒ 端口跟着那一份读数走（⛔ 不把上一个空间的草稿带过去 ✗）。
+  useEffect(() => {
+    setMeshPortDraft(null);
+  }, [activeId]);
   useEffect(() => {
     // ⚠️⭐ **2026-10-14（owner 连问三次「同步面板还是旧的」的第二个、也是真正的机械原因）** ✗ ——
     // ⭐ 这一行原来是 `if (!open || !isDesktopPlatform()) return;` ✓ ⇒ ⭐ ⭐ **只有浮层打开时才读** ✗。
@@ -373,7 +400,10 @@ export function SyncPanel({
       title: "解除这一台？",
       // ⚠️ 这里是**纯文本**（不是 JSX ✓）⇒ ⛔ **不能**用 `<b>` ✗、也⛔ **不能**用 Markdown 的 `**…**`
       //   （那句话会把星号原样显示出来 ✓ —— `syncPanelMesh.wiring.test.ts` ⑨c 那条规矩管的正是它 ✓）。
-      message: "解除后它会拉不动你的内容，想再连要重新配对一次。",
+      // ⭐ **R176-A（owner 2026-10-28 拍 A）⑤**：两个承诺都写进这句 ✓ ——
+      //   ① **不删数据**：笔记和附件**一个字节都不会删** ✓（owner 最怕"取消信任把笔记删了"）；
+      //   ② 想再连要**重新配对** ✓（解除 ≠ 永久失联 ✓；旧判据 `syncPanelDeviceUnpair` ② 钉的就是这个词 ✓）。
+      message: "不再信任后，这一台拉不动你的内容了；笔记和附件一个字节都不会删。想再连要重新配对一次。",
     });
     if (!ok) return;
     setDuBusy(deviceId);
@@ -1287,6 +1317,34 @@ export function SyncPanel({
       setStatus(`局域网同步开/关没成功：${e instanceof Error ? e.message : String(e)}`);
     }
   };
+
+  /**
+   * ⭐ **R176-A（owner 2026-10-28 拍 A）③**：**「高级」里改端口**（主界面不出现输入框 ✓）。
+   *
+   * ⚠️ 只改**端口**那一半 ✗：地址还是**当前绑定里那个**（用户不动它 ✓ —— 界面在 2026-10-14
+   *   已经按 owner 的决定撤掉了填地址的入口，本笔⛔ 不把它加回来 ✗）。
+   * ⚠️ 校验在 `portTextToBind()`（纯函数、有单测 ✓）：⛔ 不合格就**不发**命令 ✗，并给一句可操作的人话 ✓。
+   * ⚠️ 走的是**既有**那条 `api.meshSetConfig(ws, bind, null)` ✓（⛔ 不新增后端命令 ✗）。
+   */
+  const saveMeshPort = async () => {
+    if (!activeId) return;
+    const { addr, port } = splitMeshBind(lanStatus?.mesh?.bind ?? "");
+    const shown = meshPortDraft ?? port;
+    const bind = portTextToBind(addr, shown);
+    if (!bind) {
+      setStatus(PORT_INVALID_TEXT);
+      return;
+    }
+    try {
+      await api.meshSetConfig(activeId, bind, null);
+      // ⚠️ 说**结果**、不说"已生效"那种判语 ✓：真正的判据是下一拍读数（`lanNonce` 立刻重读一次 ✓）。
+      toast(`端口已改成 ${shown.trim()}：同一网络里的设备下一次广播就能看到`);
+      setMeshPortDraft(null);
+      setLanNonce((n) => n + 1);
+    } catch (e) {
+      setStatus(`端口没改成：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
   // ⚠️ **2026-10-04 改**（owner：「个人空间不显示登录状态文案信息」）：
   //   ⭐ 个人空间**不经过服务器** ⇒ ⭐ 不该说「还没绑同步」✗（那是服务器口径的提醒 ✓）；
   //   ⭐ 它该说的是自己那条路：**附近设备直连** ✓。
@@ -1324,6 +1382,39 @@ export function SyncPanel({
   //    **不许**把"读不到列表"渲染成"网段里没人"（空数组与"不可用"长得一样、含义相反）。
   const nearbyReadable = Array.isArray(lanStatus?.nearby);
   const nearby = lanStatus?.nearby ?? [];
+
+  /**
+   * ⭐⭐ **R176-A（owner 2026-10-28 拍 A）④「能读的状态」** ✗ —— 那个面板里的三格读数：
+   * 「这一轮走的是：**设备直连**」／「服务 **N** 个空间」／「本机：已信任 **N** 台」✓
+   * （判据：`src/lib/personalSyncReadout.test.ts` 钉纯函数、`syncPanelPersonalTrust.wiring.test.ts`
+   * 钉这里的挂载点与「值全部来自读数」✓）。
+   *
+   * ⚠️ 读数来源（**每一格都点得出处**，⛔ 不新造读数／⛔ 不遍历列表自己拼句子 ✗）：
+   *   · 走哪条路 ← `lanStatus.kind`（Rust `LinkKind`）／`lanStatus.mesh.enabled`；
+   *   · 服务几个空间 ← `lanStatus.mesh.served`（Rust 排过序的那份名单 ✓ 只取长度）；
+   *   · 已信任几台 ← `lanStatus.mesh.paired`（⭐ 与 `duList` **同一格**：`tick` 里就是用这一格写
+   *     `duList` 的 ✓，两处不会各说各话 ✓）；`duList` 仍管三段设备的分段 ✓（那是另一件事）。
+   * ⚠️ **读不到 ≠ 0**：`lanStatus` 还没来 ⇒ 三格都显示「未读到」，⛔ 不拿 0 冒充 ✗
+   *   （口径在 `personalSyncReadout.ts` 的 `countFrom()` **只有一处** ✓）。
+   * ⚠️ 诊断句（J9：两端参数不一致必须解释原因）**只在**「已信任 N 台、这一轮附近一台都没有」
+   *   那个形状下出现 ✓（owner 2026-10-14 删的是**常显**的那条长句 ⇒ 本条按那个决定收敛 ✓）。
+   */
+  const personalReadout = personalSyncReadout({
+    route: {
+      syncMode,
+      kind: lanStatus?.kind ?? null,
+      meshEnabled: lanStatus?.mesh?.enabled ?? null,
+      bind: lanStatus?.mesh?.bind ?? null,
+    },
+    served: lanStatus ? lanStatus.mesh?.served : null,
+    trusted: lanStatus ? lanStatus.mesh?.paired : null,
+    discoveryOn: !!lanStatus?.enabled,
+    nearbyCount: Array.isArray(lanStatus?.nearby) ? lanStatus.nearby.length : null,
+  });
+  /** ⭐ **R176-A ③**：「高级」里端口那一格用的两个值 —— ⛔ **不写死默认端口** ✗：
+   *  端口值只来自 `lanStatus.mesh.bind`（Rust 预置的那一份 ✓），读不到就空着并由界面如实说「未读到」✓。 */
+  const bindPort = splitMeshBind(lanStatus?.mesh?.bind ?? "").port;
+  const shownPort = meshPortDraft ?? bindPort;
 
   // ⭐ **2026-10-08（owner：「附近设备同步流程太繁琐了，能简化吗？」）**：
   //   **附近恰好一台时自动选中它** ✓ —— 选中它走的是正路（本机生成时就登记 ⇒
@@ -1666,6 +1757,17 @@ export function SyncPanel({
                 }
               })()}
             />
+            {/* ⭐⭐ **R176-A（owner 2026-10-28 拍 A）④「能读的状态」** ✗：状态条下面**紧挨着**摆那三格
+                ——「这一轮走的是：设备直连」／「服务 N 个空间」／「本机：已信任 N 台」✓
+                （⭐ 个人版专属：团队档那条路是服务器，规模读数的口径不同 ✓ ⇒ 只在个人空间显示 ✓；
+                  ⛔ 值一个都不写死 ✗ —— 全由 `personalReadout` 从真读数算出来 ✓）。
+                ⚠️ 为什么单立一个组件（`SyncReadout.tsx`）：状态条那三格是**网络层**读数
+                （监听地址／端口／报出去的是），这三格是**规模与路线**读数 —— 各管各的来源，
+                混进一个组件迟早有人拿状态条的值去凑规模 ✓。
+                ⚠️ 与 2026-10-14 那次删除的区别（如实记）：那次删的是旧面板里**四条变体**拼出的
+                `heroRoute` 那行；本轮按 R176-A 把它列成**必有项**，用**逐格可点名来源**的三格回来 ✓
+                （旧判据「`heroRoute` 不许再出现」仍然绿 —— 它钉的是旧标识 ✓）。 */}
+            {isPersonalActive && isDesktopPlatform() && <SyncReadout {...personalReadout} />}
             {/* ⭐ 2026-10-23：「对端有、你没有的空间」—— 用户勾了才建（默认一个都不勾） */}
             <MeshMissingSpaces />
             </div>
@@ -1790,6 +1892,16 @@ export function SyncPanel({
                           <span className="sync-hint">它没报可以直连的地址</span>
                         )}
                       </div>
+                      {/* ⭐⭐ **R176-A（owner 2026-10-28 拍 A）⑤** ✗：「不再信任」的**语义写在按钮旁** ✓ ——
+                          ⭐ 只停止同步、⭐ **本机数据一个字节都不动**（owner 最怕的是"取消信任把笔记删了"✓）。
+                          ⚠️ 口径唯一实现在 `../lib/personalSyncReadout`（`UNTRUST_SCOPE_NOTE` ✓）——
+                          ⛔ 不在这里再写一句近义的 ✗（两份写法迟早漂开 ✓）。
+                          ⚠️ 这一句**只给已信任的那一台看** ✓（没认过的设备没有"不再信任"这回事 ✓）。 */}
+                      {paired && (
+                        <div className="sync-nearby-note" data-testid="untrust-scope-note">
+                          {UNTRUST_SCOPE_NOTE}
+                        </div>
+                      )}
                       {/* P-B：原因说全（⛔ 两种处境不许都长得像"对端没服务我" ✗；⛔ 不引用任何值 ✗）。 */}
                       {p.serves_reason === "no_secret" && (
                         <div className="sync-nearby-note is-warn" data-testid="nearby-no-secret">
@@ -1835,14 +1947,17 @@ export function SyncPanel({
                           >
                             立即同步
                           </button>
-                          {/* D1b：撤销配对（复用 duUnpair ⇒ 二次确认 ✓，⛔ 不新增命令 ✗）。 */}
+                          {/* D1b：撤销配对（复用 duUnpair ⇒ 二次确认 ✓，⛔ 不新增命令 ✗）。
+                              ⭐ **R176-A ①⑤（owner 2026-10-28）**：字改成 owner 逐字给的「不再信任」✓
+                              （⛔ 动作与二次确认一个字没改 ✗）；语义句在**同一张卡**上紧挨着
+                              （`untrust-scope-note` ✓ —— 只停同步、本机数据一个字节都不动 ✓）。 */}
                           <button
                             className="sync-btn is-ghost"
                             data-testid="nearby-unpair"
                             disabled={duBusy === p.device_id}
                             onClick={() => void duUnpair(p.device_id)}
                           >
-                            撤销配对
+                            {UNTRUST_LABEL}
                           </button>
                         </>
                       ) : p.serves_current || isPersonalActive ? (
@@ -2190,6 +2305,61 @@ export function SyncPanel({
                   <span className="sync-hint sync-auto-hint">{syncModeHint(syncMode)}</span>
                 </div>
               </details>
+
+              {/* ⭐⭐ **R176-A（owner 2026-10-28 拍 A）②③** ✗：个人版那两格**只在这里**（「高级」里）——
+                  · **广播端口**：⭐ 预置好了、**默认藏起来**（主界面一个端口输入都没有 ⇒ J12
+                    「首次同步零手输端口」✓）；⭐ 只在「高级」里**能改** ✓；两端改成不同端口后彼此看不到
+                    ⇒ 状态里会把原因说出来（J9，见 `SyncReadout` 的诊断句 ✓）。
+                    ⚠️ 只改端口那一半：地址还是**当前绑定里那个**（界面在 2026-10-14 已按 owner
+                    的决定撤掉填地址的入口，本笔⛔ 不加回来 ✗）。
+                  · **同步密码**：⭐ **自动派生**、用户**不用知道**它 ⇒ 这一格**只读**一句「自动生成 · 不用你填」✓
+                    （⛔ 没有手填框 ✗ —— 口径与理由见 `personalSyncReadout.ts` 里那段"为什么没有手动入口"✓）。
+                  ⚠️ 只在**个人空间 ＋ 桌面**出现：团队档的远程路径是服务器，端口/密码不是它的事 ✓。 */}
+              {isPersonalActive && isDesktopPlatform() && (
+                <>
+                  <details className="sync-row" data-testid="mesh-port-row">
+                    <summary>
+                      <span className="sync-row-label">广播端口</span>
+                      <span className="sync-row-value">{bindPort || "未读到"}</span>
+                      <span className="sync-row-caret" aria-hidden>›</span>
+                    </summary>
+                    <div className="sync-row-body">
+                      <div className="sync-field">
+                        <label htmlFor="sync-mesh-port">端口</label>
+                        <input
+                          id="sync-mesh-port"
+                          className="sync-input"
+                          data-testid="mesh-port-input"
+                          value={shownPort}
+                          inputMode="numeric"
+                          placeholder="预置值（读到这里就能改）"
+                          disabled={!bindPort}
+                          onChange={(e) => setMeshPortDraft(e.target.value)}
+                        />
+                        <button
+                          className="sync-btn"
+                          data-testid="mesh-port-save"
+                          disabled={!bindPort}
+                          onClick={() => void saveMeshPort()}
+                        >
+                          保存端口
+                        </button>
+                      </div>
+                      <p className="sync-hint">{PORT_ADVANCED_HINT}</p>
+                    </div>
+                  </details>
+                  <details className="sync-row" data-testid="mesh-password-row">
+                    <summary>
+                      <span className="sync-row-label">同步密码</span>
+                      <span className="sync-row-value">{PASSWORD_AUTO_VALUE}</span>
+                      <span className="sync-row-caret" aria-hidden>›</span>
+                    </summary>
+                    <div className="sync-row-body">
+                      <p className="sync-hint">{PASSWORD_AUTO_HINT}</p>
+                    </div>
+                  </details>
+                </>
+              )}
 
               {/* ★ 2026-09-29（规格 §9.2）：**总闸关了要说出来** —— 而且要说清"设备直连也停着"。
                   owner 原话「服务器不灰」，但他要求**在值旁边标明**「当前不自动同步」，不许让用户
