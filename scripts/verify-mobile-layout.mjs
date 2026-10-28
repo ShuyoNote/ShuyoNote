@@ -729,6 +729,15 @@ async function main() {
     await desktop.setViewport(DESKTOP);
     await desktop.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
     await sleep(2500);
+    // ⭐ 2026-10-29（CI #1438 实测）：`networkidle2` 只保证网络静了，**不保证 React 壳已挂载** ——
+    //    CI 冷启动时首屏偶发读到 `.sidebar=null` / `.activity-bar=null`，紧接着点
+    //    `.sidebar-toggle-btn` 直接抛「No element found」把整个桌面段腰斩（上一跑同一脚本是绿的）。
+    //    ⇒ 这里**只等渲染完成**（最多 20s），⛔ 不改任何断言、不放宽任何期望（壳真没起来仍会红 ✓）。
+    for (let i = 0; i < 80; i++) {
+      const ready = await desktop.evaluate(() => !!document.querySelector(".sidebar-toggle-btn"));
+      if (ready) break;
+      await sleep(250);
+    }
 
     console.log(`\n【桌面 ${DESKTOP.width}x${DESKTOP.height}】`);
     s = await desktop.evaluate(probe);
