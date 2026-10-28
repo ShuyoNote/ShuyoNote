@@ -157,3 +157,57 @@ describe("扫描器：注释与字符串里的花括号/属性都不算数", () 
     expect(rustTestTailStart(src)).toBeNull();
   });
 });
+
+// ⭐ 2026-10-28（真机：mesh.rs / sync.rs 的"新增文件直接引用"假红）：
+//   这两个文件有几个 `#[cfg(test)] mod`，但**只有最后一个到文件尾** ⇒ 旧规则只切尾部那一个，
+//   前面那些测试模块里的 token 被算成生产面。这一组钉住"非尾部/嵌套也切、生产前后仍计数"。
+describe("productionText：**非文件尾部**的 `#[cfg(test)]` item 也要切（2026-10-28）", () => {
+  it("前部有一个测试模块、后面还有生产代码 ⇒ 模块被切、后面的生产代码仍计数", () => {
+    const src = [
+      "pub fn before() {}",
+      "#[cfg(test)]",
+      "mod early_tests {",
+      "    #[test]",
+      '    fn t() { let _ = "content_json"; }',
+      "}",
+      "",
+      'pub fn after() -> &\'static str { "SELECT content_text FROM pages" }',
+    ].join("\n");
+    const out = productionText("src-tauri/src/a.rs", src);
+    expect(out).not.toContain("content_json"); // 测试模块里那一处被切掉
+    expect(out).toContain("content_text"); // 后面那段生产代码仍计数
+    expect(out).not.toContain("early_tests");
+    expect(out).toContain("pub fn after");
+  });
+
+  it("嵌套在别的模块里的 `#[cfg(test)]` 也切（区间被正确配对）", () => {
+    const src = [
+      "mod inner {",
+      "    pub fn f() {}",
+      "    #[cfg(test)]",
+      "    mod t {",
+      "        #[test]",
+      '        fn x() { let _ = "content_json"; }',
+      "    }",
+      "}",
+      'pub fn s(x: &str) -> &str { x }',
+    ].join("\n");
+    const out = productionText("src-tauri/src/a.rs", src);
+    expect(out).toContain("mod inner {");
+    expect(out).not.toContain("content_json");
+    expect(out).toContain("pub fn s");
+  });
+
+  it("测试模块里出现的 `#[cfg(test)]` 假属性（在字符串里）不额外切", () => {
+    const src = [
+      "pub fn f() {}",
+      "#[cfg(test)]",
+      "mod tests {",
+      '    fn t() { let _ = "#[cfg(test)]"; }',
+      "}",
+    ].join("\n");
+    const out = productionText("src-tauri/src/a.rs", src);
+    expect(out).toContain("pub fn f");
+    expect(out).not.toContain("mod tests");
+  });
+});
