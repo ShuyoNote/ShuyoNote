@@ -669,6 +669,9 @@ export const api = {
     return meta;
   },
   attachmentPath: (hash: string) => invoke("attachment_path", { hash }),
+  /** ⭐ 2026-10-28：按原始文件名/扩展名落一份临时副本（给系统默认应用打开用）。 */
+  prepareAttachmentOpen: (hash: string, name: string) =>
+    invoke("prepare_attachment_open", { hash, name }),
   /** 让 Windows 系统标题栏跟随应用主题（非 Windows / Web 为空实现）。 */
   setTitlebarTheme: (dark: boolean, caption?: string, text?: string) =>
     invoke("set_titlebar_theme", { dark, caption: caption ?? null, text: text ?? null }),

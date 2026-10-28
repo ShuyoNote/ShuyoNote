@@ -284,8 +284,7 @@ mod empty_shell_tests {
 
     /// 空壳判定：**0 字节明文 ⇒ 空壳**；有内容 ⇒ 不是；**>64 B 不参与判定**（不去解密大文件）。
     #[test]
-    fn an_empty_plaintext_attachment_counts_as_a_shell() {
-        let dir = std::env::temp_dir().join(format!("shuyo-shell-{}", uuid::Uuid::new_v4()));
+    fn an_empty_plaintext_attachment_counts_as_a_shell() {        let dir = std::env::temp_dir().join(format!("shuyo-shell-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
 
         let empty = dir.join("empty.bin");
@@ -572,7 +571,68 @@ fn ext_from_mime_opt(mime: &str) -> Option<&'static str> {
         "image/webp" => Some("webp"),
         "image/svg+xml" => Some("svg"),
         "application/pdf" => Some("pdf"),
+        // ⭐ **2026-10-28（owner：「打开 html 变成 BIN 文件」）**：同步进来的附件按 mime 定扩展名，
+        //   这张表原来只有图片/PDF ⇒ `text/html` 落成 `.bin` ⇒ 系统拿它当二进制（Firefox 弹"保存文件"）✗。
+        //   ⇒ 补齐最常见的几类（⛔ 不认识的一律仍落 `.bin`：那是**如实**的"我不知道这是什么"✓）。
+        "text/html" => Some("html"),
+        "text/plain" => Some("txt"),
+        "text/markdown" => Some("md"),
+        "text/csv" => Some("csv"),
+        "text/css" => Some("css"),
+        "application/json" => Some("json"),
+        "application/javascript" | "text/javascript" => Some("js"),
+        "application/zip" => Some("zip"),
+        "application/msword" => Some("doc"),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => Some("docx"),
+        "application/vnd.ms-excel" => Some("xls"),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => Some("xlsx"),
+        "application/vnd.ms-powerpoint" => Some("ppt"),
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => Some("pptx"),
         _ => None,
+    }
+}
+
+/// ⭐ **2026-10-28（owner：「打开 html 变成 BIN 文件」）**：**交给系统打开时**用的扩展名 ——
+/// 从**原始文件名**取（`xxx.html` ⇒ `html`），只认 `[a-z0-9]{1,8}`；拿不到 ⇒ `bin`。
+///
+/// ⚠️ 为什么按**文件名**而不是 mime：用户看到的"这一件是什么"就是名字 ✓；而 mime 可能缺失/是老值 ✓。
+/// ⛔ 不把用户文件名直接拼进路径 ✗（见 [`open_stem_for`]）。
+pub(crate) fn open_ext_for(name: &str) -> String {
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let ok = (1..=8).contains(&ext.len()) && ext.chars().all(|c| c.is_ascii_alphanumeric());
+    if ok {
+        ext
+    } else {
+        "bin".to_string()
+    }
+}
+
+/// 给系统打开用的**文件名前缀**：只留字母/数字/汉字/空格/`-`/`_`/`.`，去掉路径分隔符与控制字符；
+/// 限长 60（按字符）；空 ⇒ `attachment`。
+///
+/// ⚠️ 安全面：这个名字会被拼进临时文件路径 ⇒ ⛔ 不许出现 `/`、`\`、`..` 这些（去掉 ⇄ 替换成 `_` ✓）。
+pub(crate) fn open_stem_for(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let mut out = String::new();
+    for ch in base.chars() {
+        if out.chars().count() >= 60 {
+            break;
+        }
+        if ch.is_alphanumeric() || ch == ' ' || ch == '-' || ch == '_' || ch == '.' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    let trimmed = out.trim_matches([' ', '.']).to_string();
+    if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
+        "attachment".to_string()
+    } else {
+        trimmed
     }
 }
 
@@ -1027,6 +1087,34 @@ pub fn read_attachment_bytes(
     // 白白让 IPC 与 webview 各扛一次巨型 JSON 解析。图片/PDF 这类"要完整字节"的
     // 调用点都受益。（纯函数 `attachment_bytes` 留给 Rust 侧自己用的调用点。）
     Ok(tauri::ipc::Response::new(attachment_bytes(app, db, &hash)?))
+}
+
+/// ⭐ **2026-10-28（owner：「打开 html 变成 BIN 文件」）**：把这一件**以正确的文件名/扩展名**
+/// 落到临时目录，返回那个路径（由界面交给系统默认应用打开 ✓）。
+///
+/// ## 为什么必须另落一份
+/// 附件是**内容寻址**存的（`<hash>.<ext>`）✓，而**同步进来的**那些扩展名是由 mime 推的 ——
+/// 老表里没有 `text/html` ⇒ 落成 `<hash>.bin` ✗ ⇒ 系统把它当二进制（Firefox 直接弹"保存文件"）。
+/// ⇒ 打开时按**原始文件名**取扩展名，写一份到临时目录再打开；⛔ 不改盘上那份（内容寻址的名字不许动 ✗）。
+#[tauri::command]
+pub fn prepare_attachment_open(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    hash: String,
+    name: String,
+) -> Result<String, String> {
+    if !is_valid_hash(&hash) {
+        return Err("附件哈希无效".to_string());
+    }
+    let bytes = attachment_bytes(app, db, &hash)?;
+    let ext = open_ext_for(&name);
+    let stem = open_stem_for(&name);
+    let path = crate::tempdir::file(&stem, &ext);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -2441,5 +2529,35 @@ mod backfill_attachment_changes_tests {
         // 附件行本身一行都没多
         let rows: i64 = c.query_row("SELECT COUNT(*) FROM attachments", [], |r| r.get(0)).unwrap();
         assert_eq!(rows, 2, "⛔ 不许重复建附件行");
+    }
+}
+
+#[cfg(test)]
+mod open_temp_name_tests {
+    use super::*;
+
+    /// ⭐ **2026-10-28（owner：「打开 html 变成 BIN 文件」）**：交给系统打开时
+    /// **按原始文件名取扩展名**（`xxx.html` ⇒ `html`），且**文件名前缀是安全的**（⛔ 不拼路径分隔符 ✗）。
+    #[test]
+    fn the_open_copy_keeps_a_usable_extension_and_a_safe_stem() {
+        assert_eq!(open_ext_for("ShuyoNote企业版-权限管理.html"), "html");
+        assert_eq!(open_ext_for("A.HTML"), "html", "大小写不敏感 ✓");
+        assert_eq!(open_ext_for("没有扩展名"), "bin", "没扩展名 ⇒ bin ✓");
+        assert_eq!(
+            open_ext_for("x.weird_ext_123"),
+            "bin",
+            "超长/不安全的扩展名 ⇒ bin（⛔ 不拼进路径）✓"
+        );
+        assert_eq!(open_ext_for("x.tar.gz"), "gz");
+        // stem：路径分隔符只取最后一段；控制字符替换成 `_`；空 ⇒ attachment；限长 60。
+        assert_eq!(open_stem_for("a/b\\c.html"), "c.html", "只取最后一段 ✓");
+        assert_eq!(open_stem_for("../../evil.html"), "evil.html", "⛔ 不许把 .. 带进来 ✗");
+        assert_eq!(open_stem_for("a\u{1}b"), "a_b", "控制字符 ⇒ _ ✓");
+        assert_eq!(open_stem_for("   "), "attachment", "空 ⇒ 兜底名 ✓");
+        assert_eq!(open_stem_for("  ..  "), "attachment", "只剩点 ⇒ 兜底 ✓");
+        assert!(
+            open_stem_for(&"长".repeat(200)).chars().count() <= 60,
+            "限长 60 字符（防超长文件名）✓"
+        );
     }
 }

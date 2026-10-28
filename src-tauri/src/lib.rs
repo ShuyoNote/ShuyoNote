@@ -1144,6 +1144,8 @@ pub fn run() {
             attachments::copy_attachment,
             attachments::list_attachment_hashes,
             attachments::read_attachment_bytes,
+            // ⭐ 2026-10-28（owner：「打开 html 变成 BIN 文件」）：按原始文件名落一份临时副本再交给系统
+            attachments::prepare_attachment_open,
             attachments::write_attachment_bytes,
             legacy_convert::convert_legacy_office,
             attachments::import_attachment_files,

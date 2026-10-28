@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { platform } from "../lib/platform";
-import { NOT_DOWNLOADED_HINT, ensureLocalAttachmentPath, fetchLocalAttachmentPath } from "../lib/localBytesHint";
+import { NOT_DOWNLOADED_HINT, fetchLocalAttachmentPath, openAttachmentWithSystem } from "../lib/localBytesHint";
 import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
 import { useFileManagerStore } from "../store/fileManager";
@@ -431,20 +431,13 @@ export function FileManagerView() {
     setMoving(null);
   };
 
-  const openFile = async (path: string, hash?: string) => {
-    // ⭐ **2026-10-28（owner：「在侧边栏打开一个 html 文件失败」）**：本机没字节时**先取回再打开** ✓
-    //   （原来 `if (!path) return;` 静默 ⇒ 或者对空串调 openPath ⇒ 「Not allowed to open path」✗）。
-    let local = path;
+  const openFile = async (file: AttachmentMeta) => {
+    // ⭐ **2026-10-28（owner：「在侧边栏打开一个 html 文件失败」／「打开 html 变成 BIN 文件」）**：
+    //   先确保本机有字节（没有就取回），再按**原始文件名**落临时副本交给系统 ✓（不再 `.bin`）。
     try {
-      local = await ensureLocalAttachmentPath(path, hash);
+      await openAttachmentWithSystem(file.path, file.hash, file.name);
     } catch (e) {
       toast(`打开失败：${e instanceof Error ? e.message : String(e)}`, "error");
-      return;
-    }
-    try {
-      await platform.opener.openPath(local);
-    } catch (e) {
-      toast(`打开失败：${e}`, "error");
     }
   };
   const revealFile = async (path: string, hash?: string) => {
@@ -758,7 +751,7 @@ export function FileManagerView() {
         useFilePreview.getState().open(row.file!);
       } else {
         toast("正在用系统默认应用打开…", "info");
-        openFile(row.file!.path, row.file!.hash);
+        openFile(row.file!);
       }
     } else if (row.kind === "folder") {
       setFolderId(row.pageId!);

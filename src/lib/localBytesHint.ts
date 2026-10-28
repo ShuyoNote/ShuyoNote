@@ -11,6 +11,7 @@
  * ⛔ 文案只此一处 ✗（三处各写一份迟早漂）。
  */
 import { api } from "./api";
+import { platform } from "./platform";
 import { useSpaceStore } from "../store/space";
 
 export const NOT_DOWNLOADED_HINT =
@@ -42,4 +43,22 @@ export async function ensureLocalAttachmentPath(path: string, hash?: string): Pr
   if (path) return path;
   if (!hash) throw new Error(NOT_DOWNLOADED_HINT);
   return await fetchLocalAttachmentPath(hash);
+}
+
+/**
+ * ⭐ **2026-10-28（owner：「打开 html 变成 BIN 文件」）**：**交给系统默认应用打开**。
+ *
+ * ① 本机没字节 ⇒ 先按需取回（见 [`ensureLocalAttachmentPath`]）；
+ * ② **按原始文件名/扩展名**落一份临时副本（`prepare_attachment_open`）再打开 ——
+ *    盘上那份是内容寻址的 `<hash>.bin`，直接打开会被系统当二进制（Firefox 弹"保存文件"）✗；
+ * ③ ⛔ 不改盘上那份 ✗（内容寻址的文件名不许动）。
+ */
+export async function openAttachmentWithSystem(
+  path: string,
+  hash: string,
+  name: string,
+): Promise<void> {
+  if (!path) await fetchLocalAttachmentPath(hash);
+  const prepared = await api.prepareAttachmentOpen(hash, name);
+  await platform.opener.openPath(prepared);
 }

@@ -1370,6 +1370,12 @@ export interface CommandMap {
   // ---- Attachments ----
   save_image: { args: { args: { page_id: string | null; name: string | null; mime: string; data: number[] } }; result: AttachmentMeta };
   attachment_path: { args: { hash: string }; result: string };
+  /**
+   * ⭐ **2026-10-28（owner：「打开 html 变成 BIN 文件」）**：把这一件**以原始文件名/扩展名**
+   * 落一份临时副本，返回该路径（界面再交给系统默认应用打开）——
+   * 盘上那份是内容寻址的 `<hash>.bin`，直接打开会被系统当成二进制 ✗。
+   */
+  prepare_attachment_open: { args: { hash: string; name: string }; result: string };
   get_attachment: { args: { id: string }; result: AttachmentMeta };
   /** 原始字节以 ArrayBuffer 回传（Rust 侧用 tauri::ipc::Response），不走 JSON 数字数组。 */
   read_attachment_bytes: { args: { hash: string }; result: ArrayBuffer };

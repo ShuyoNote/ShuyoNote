@@ -2599,6 +2599,10 @@ export function makeInvoke(store: SqliteStore) {
       }
       return "" as T;
     }
+    if (cmd === "prepare_attachment_open") {
+      // ⭐ 2026-10-28：桌面才有"交给系统默认应用打开"这一档 —— Web 版如实拒绝（⛔ 不假装成功 ✗）。
+      throw new Error("Web 版没有系统默认应用可用 ⇒ 「用系统程序打开」只在桌面版有效");
+    }
     if (cmd === "get_attachment") {
       const id = String(a.id ?? "");
       const row = store.query<{ id: string; page_id: string | null; name: string; hash: string; mime: string; size: number }>(

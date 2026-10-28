@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { platform } from "../lib/platform";
-import { NOT_DOWNLOADED_HINT, ensureLocalAttachmentPath, fetchLocalAttachmentPath } from "../lib/localBytesHint";
+import { NOT_DOWNLOADED_HINT, fetchLocalAttachmentPath, openAttachmentWithSystem } from "../lib/localBytesHint";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { useAttachmentsStore } from "../store/attachments";
@@ -161,19 +161,11 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
       void usePdfReader.getState().openPdf(a.id, a.name);
       return;
     }
-    // ⭐ **2026-10-28（owner：「在侧边栏打开一个 html 文件失败」）**：本机没字节 ⇒ **先取回再打开** ✓
-    //   （原来 `if (!a.path) return;` 静默；直接 openPath 空串会拿到「Not allowed to open path」✗）。
-    let local: string;
+    // ⭐ **2026-10-28（owner：「打开 html 变成 BIN 文件」）**：按**原始文件名**落一份临时副本再打开 ✓
     try {
-      local = await ensureLocalAttachmentPath(a.path, a.hash);
+      await openAttachmentWithSystem(a.path, a.hash, a.name);
     } catch (e) {
       toast(`打开失败：${e instanceof Error ? e.message : String(e)}`, "error");
-      return;
-    }
-    try {
-      await platform.opener.openPath(local);
-    } catch (e) {
-      toast(`打开失败：${e}`, "error");
     }
   };
 

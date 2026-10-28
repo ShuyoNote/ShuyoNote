@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { clampSidebarWidth, dragOutcome, normalizeStoredWidth } from "../lib/sidebarDrag";
 import { platform } from "../lib/platform";
-import { NOT_DOWNLOADED_HINT, ensureLocalAttachmentPath, fetchLocalAttachmentPath } from "../lib/localBytesHint";
+import { NOT_DOWNLOADED_HINT, fetchLocalAttachmentPath, openAttachmentWithSystem } from "../lib/localBytesHint";
 import { usePopover } from "../hooks/usePopover";
 import { isMobileViewport } from "../hooks/useMobile";
 import { api, type SyncProfile } from "../lib/api";
@@ -245,12 +245,11 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
     }
     // 其它类型（office/zip/csv 等）无内置预览，用系统默认应用打开——明确提示。
     toast("正在用系统默认应用打开…", "info");
-    // ⭐ 2026-10-28（owner：「在侧边栏打开一个 html 文件失败」）：本机没字节 ⇒ 先取回再打开 ✓
-    //   （原来直接 `openPath(f.path)` ⇒ 空串时拿到「Not allowed to open path」✗）。
+    // ⭐ 2026-10-28（owner：「在侧边栏打开一个 html 文件失败」／「打开 html 变成 BIN 文件」）：
+    //   本机没字节 ⇒ 先取回；再按**原始文件名**落临时副本 ⇒ 交给系统默认应用 ✓（不再 `.bin` ✓）。
     void (async () => {
       try {
-        const local = await ensureLocalAttachmentPath(f.path, f.hash);
-        await platform.opener.openPath(local);
+        await openAttachmentWithSystem(f.path, f.hash, f.name);
       } catch (e) {
         toast(`打开失败：${e instanceof Error ? e.message : String(e)}`, "error");
       }
