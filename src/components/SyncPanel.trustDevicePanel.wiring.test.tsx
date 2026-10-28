@@ -1314,11 +1314,16 @@ describe("P-4 片③：屏上那份 `pairCode` 换成**真读数**", () => {
       invokeSpy.mock.calls.some((c) => c[0] === "mesh_trust_begin"),
       "⛔ 人还没确认 ⇒ 不许登记信任 ✗（`mesh_trust_begin` 必须只出现在确认那一下 ✓）",
     ).toBe(false);
-    expect(pairingCodeReadingSpy, "⭐ 点「接入」⇒ **恰好一次** ✓").toHaveBeenCalledTimes(1);
-    expect(pairingCodeReadingSpy, "⭐ 实参必须是**那一台** ✓（⛔ 不传 space_id ✗ —— 空间不参与派生 ✓）").toHaveBeenCalledWith({
+    // ⭐ **2026-10-28（owner：「配对码老是对不上？」）**：点「接入」这一下仍然**只取一次**不会连发；
+    //   ⭐ 但**屏开着时每 2 秒会重取**（让两端输入齐了以后收敛到同一个码 ✓）——
+    //   ⇒ 这里锁的是"**第一次**取码的参数"与"没有 begin"，不再锁总次数（次数由轮询决定 ✓）。
+    expect(pairingCodeReadingSpy, "⭐ 点「接入」⇒ 至少取一次 ✓").toHaveBeenCalled();
+    expect(pairingCodeReadingSpy, "⭐ 实参必须是**那一台** ✓（⛔ 不传 space_id ✗ —— 空间不参与派生 ✓）").toHaveBeenNthCalledWith(1, {
       peerDeviceId: "dev-amd",
       peerPubkey: PEER_PUBKEY,
     });
+    // ⭐ 收敛的承重：那串码在屏开着时会**再取**（2 秒轮询／`lan:changed`）——
+    //   判据放在下面 ⑤（用假时钟推进 2 秒 ⇒ 第二次取码，且参数不变 ✓）。
   });
 
   it("④ 锁（今天已绿 ✓）：屏上仍没有「继续／自动通过」＋ ⭐ 确认仍是闸门（`trustDevice` 只在确认那一下）", () => {
@@ -1330,5 +1335,36 @@ describe("P-4 片③：屏上那份 `pairCode` 换成**真读数**", () => {
     expect(atConfirm, "夹具前提：确认那颗在 ✓").toBeGreaterThan(-1);
     expect(atTrust, "夹具前提：那一次调用在 ✓").toBeGreaterThan(-1);
     expect(atConfirm, "⭐ 确认仍是**闸门**：调用必须排在确认那颗**之后** ✓（⛔ 不许提前 ✗）").toBeLessThan(atTrust);
+  });
+
+  // ⭐⭐ **2026-10-28（owner：「配对码老是对不上？」）**：**屏开着 ⇒ 码会自己重取**（两端输入齐了就收敛）。
+  //
+  //  真机根因：码 ＝ f(双方公钥, **这一轮 trust_ask**)，而对面那串要等它的公告（30 秒一轮）才到本机；
+  //  码原来只在点「接入」那一下取一次 ⇒ 先点的那台用"只有自己那串"算、后点的那台用"两串都有"算
+  //  ⇒ 两个码永远不同，而且屏上不刷新（重试也一样）✗。
+  it("⑤ 对码屏开着 ⇒ 2 秒后**再取一次**码（收敛）；关屏 ⇒ 不再取（2026-10-28 新增）", async () => {
+    pairingCodeReadingSpy.mockResolvedValue({ code: "1111 2222 3333 4444 5555", reason: "ok" });
+    const el = await openPanelWith([peer(true)]);
+    await clickAndSettle(el.querySelector<HTMLElement>('[data-testid="nearby-allow"]')!);
+    // ⏱ 真实的 2 秒轮询（不注入假时钟：与其它判据同一套真时间轴）
+    await vi.waitFor(
+      () =>
+        expect(
+          pairingCodeReadingSpy.mock.calls.length,
+          "⛔ 屏开着却只取过一次 ⇒ 对面那串到了也不会更新 ✗",
+        ).toBeGreaterThanOrEqual(2),
+      { timeout: 4_000 },
+    );
+    expect(
+      pairingCodeReadingSpy,
+      "⭐ 轮询取的是**同一台**（实参不许漂 ✓）",
+    ).toHaveBeenNthCalledWith(2, { peerDeviceId: "dev-amd", peerPubkey: PEER_PUBKEY });
+    const before = pairingCodeReadingSpy.mock.calls.length;
+    el.querySelector<HTMLElement>('[data-testid="pair-cancel"]')!.click();
+    await new Promise((r) => setTimeout(r, 2_300));
+    expect(
+      pairingCodeReadingSpy.mock.calls.length,
+      "⛔ 屏关了还继续取 ⇒ 多余请求（轮询没停）✗",
+    ).toBe(before);
   });
 });

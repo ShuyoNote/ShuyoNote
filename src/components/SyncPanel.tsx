@@ -428,6 +428,50 @@ export function SyncPanel({
       setPairReading({ kind: "unavailable", reason: `取比对码失败：${String(e)}` });
     }
   };
+  /** ⭐ **2026-10-28（owner：「配对码老是对不上？」）**：对码屏开着的时候**重取**码
+   *  （⛔ 不抢调用方给的读数 —— 这个函数只给下面那条轮询/事件用 ✓）。 */
+  const refreshPairCode = async (peer: NearbyPeer) => {
+    try {
+      const got = await api.pairingCodeReading({ peerDeviceId: peer.device_id, peerPubkey: peer.pubkey });
+      setPairReading(
+        got.code ? { kind: "ok", value: got.code } : { kind: "unavailable", reason: got.reason },
+      );
+    } catch (e) {
+      setPairReading({ kind: "unavailable", reason: `取比对码失败：${String(e)}` });
+    }
+  };
+  /**
+   * ⭐⭐ **2026-10-28（owner：「配对码老是对不上？」）**：**对码屏开着时，码会自己收敛**。
+   *
+   * ## 真机根因（"老是对不上"的正面）
+   * 比对码 ＝ `f(本机公钥, 对方公钥, **这一轮的 trust_ask**)` ✓；"这一轮那串"是**两端各发一次**的，
+   * 对面那串要等它的**公告**（`ANNOUNCE_INTERVAL_MS` = 30 秒一轮）才到本机。
+   * 码原来 ⛔ **只在点「接入」那一下取一次** ✗ ⇒ 先点的那台用"只有自己那串"算、
+   * 后点的那台用"两串都有、按 device_id 挑一遍"算 ⇒ **两个码永远不同**；
+   * 屏上也不刷新 ⇒ 重试也一样（每次看到的都是那一刻算的码）✗。
+   * ⇒ 现在：屏开着 ⇒ 每 2 秒／每收到一次 `lan:changed` 重取；两端的输入一旦齐了，
+   *  **两端会收敛到同一个码** ✓。屏一关 ⇒ 立刻停（不多发请求）✓。
+   */
+  useEffect(() => {
+    if (!pairScreen || !pairPeer) return;
+    let alive = true;
+    let off: (() => void) | undefined;
+    const tick = () => {
+      if (alive) void refreshPairCode(pairPeer);
+    };
+    const t = window.setInterval(tick, 2_000);
+    void (async () => {
+      const un = await subscribeLanChanged(tick);
+      if (alive) off = un;
+      else un();
+    })();
+    return () => {
+      alive = false;
+      window.clearInterval(t);
+      off?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pairScreen, pairPeer]);
   /** ⭐⭐ **2026-10-17**：⭐ 点「接入」＝ ⭐ 先**开一轮比对** ✗，再取码 ✓。
    *
    *  ⚠️ 为什么必须多这一步（owner 真机："点接入了，也没有（码）"✗）：⭐ 比对码 ＝
