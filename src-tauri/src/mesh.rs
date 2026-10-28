@@ -4486,9 +4486,23 @@ pub async fn sealed_round(
     let local_encrypted = crate::security::space_db_is_encrypted(&crate::db::space_db_path(dir, db_space));
     let targets = mesh_peers_by_name(proto_space, &name, my_device, peers, local_encrypted);
     if targets.is_empty() {
+        let note = "锁着：网段里没有能直接拉的对端（这一轮一个字节都没动）".to_string();
+        // ⭐ 2026-10-28（owner「继续」／amd 锁态实验）：**锁着这条路的读数必须可见** ✗ ——
+        //   原来这里连一行日志都不打、历史也不写 ⇒ 真机上只能看到外面那句
+        //   「候选 1 ｜ 收下 0 条（1 台没拉动，见历史那一行）」，而"历史那一行"是**空指针**。
+        eprintln!("[mesh] {note}");
+        crate::sync::write_sync_history_with(
+            &meta,
+            db_space,
+            0,
+            0,
+            true,
+            &format!("设备直连（网格·锁态）：{note}"),
+            &[],
+        );
         return Ok(MeshRoundReport {
             enabled: true,
-            note: "锁着：网段里没有能直接拉的对端（这一轮一个字节都没动）".to_string(),
+            note,
             candidates: 0,
             peers: Vec::new(),
             window: window_addr(proto_space).map(|a| format!("http://{a}")),
@@ -4548,11 +4562,41 @@ pub async fn sealed_round(
             }),
         }
     }
+    // ⭐ 2026-10-28（owner「继续」／amd 锁态实验）：**每一台对端的成败都打一行，整轮结论也打一行，
+    //   并写进 `sync_history`** ✗ —— 原来锁着这条路：日志只有外面那句「候选 1 ｜ 收下 0 条
+    //   （1 台没拉动，见历史那一行 ✓）」，而实际上**这里一行没打、历史也一个字没写** ⇒
+    //   真机实验时"为什么 0 条"完全不可见（amd 2026-10-28 那轮就是这么卡住的）。
+    //   ⛔ 不许静默：失败原因逐台原样打出来（401/403/没封包/空，用户下一步完全不同）。
+    for p in &out {
+        match &p.error {
+            Some(e) => eprintln!(
+                "[mesh] 锁着：拉对端 {} ｜ ⛔ 失败：{e}（已收 {} 条）",
+                p.peer, p.fetched
+            ),
+            None => eprintln!(
+                "[mesh] 锁着：拉对端 {} ｜ ✓ 收下 {} 条（封包进 inbox，解锁后应用）",
+                p.peer, p.fetched
+            ),
+        }
+    }
+    let note = format!(
+        "锁着：不开空间库，只把封包收进 inbox（这一轮新收 {stashed_total} 条；解锁后自动应用）"
+    );
+    eprintln!("[mesh] {note}");
+    let ok = out.iter().all(|p| p.error.is_none());
+    let failures: Vec<String> = out
+        .iter()
+        .filter_map(|p| p.error.as_ref().map(|e| format!("对端 {}：{e}", p.peer)))
+        .collect();
+    let detail = if failures.is_empty() {
+        format!("设备直连（网格·锁态）：{note}")
+    } else {
+        format!("设备直连（网格·锁态）：{note} ｜ {}", failures.join("；"))
+    };
+    crate::sync::write_sync_history_with(&meta, db_space, 0, stashed_total, ok, &detail, &[]);
     Ok(MeshRoundReport {
         enabled: true,
-        note: format!(
-            "锁着：不开空间库，只把封包收进 inbox（这一轮新收 {stashed_total} 条；解锁后自动应用）"
-        ),
+        note,
         candidates: targets.len(),
         peers: out,
         window: window_addr(proto_space).map(|a| format!("http://{a}")),
@@ -9165,5 +9209,38 @@ mod sealed_caps_tests {
         assert!(!caps_has_sealed1("/mesh/pull?space_id=a&since=0&limit=10"));
         assert!(!caps_has_sealed1("/mesh/pull?caps=lan&name_sha=x"));
         assert!(!caps_has_sealed1("/mesh/pull?caps=sealed10"), "⛔ 前缀像不算 ✗");
+    }
+
+    /// ⭐ 2026-10-28（owner「继续」／amd 锁态实验）：**锁着那一轮必须留下可读的读数** ✗ ——
+    /// 真机现场（amd 建页后一轮）：日志只有「候选 1 ｜ 收下 0 条（1 台没拉动，见历史那一行 ✓）」，
+    /// 而 `sync_history` 里那个空间**全表 0 行** ⇒ "为什么 0 条"完全不可见，两边只能互相猜。
+    ///
+    /// 判据（源码文本、剥注释后比 —— 本函数文档里会提到这些名字 ✓）：
+    ///   · `sealed_round` 函数体里要有 `eprintln!`（逐台成败 ＋ 整轮结论）；
+    ///   · 要有 `write_sync_history_with(`（锁态轮也进历史，别让"见历史那一行"是空指针）。
+    #[test]
+    fn the_locked_round_says_why_and_writes_history() {
+        let src = include_str!("mesh.rs");
+        let start = src
+            .find("pub async fn sealed_round(")
+            .expect("sealed_round 必须在（改了名字要同步改这里）");
+        let rest = &src[start..];
+        let end = rest
+            .find("\npub fn stash_sealed_rows(")
+            .expect("sealed_round 后面紧跟 stash_sealed_rows（改了要同步改这里）");
+        let code: String = rest[..end]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let flat = code.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat.contains("eprintln!"),
+            "⛔ 锁态轮必须把每台对端的成败与整轮结论打进日志 —— 否则真机只有一句「1 台没拉动」，只能猜"
+        );
+        assert!(
+            flat.contains("write_sync_history_with("),
+            "⛔ 锁态轮必须写 sync_history —— 否则日志里那句「见历史那一行」是空指针（真机 2026-10-28 就是 0 行）"
+        );
     }
 }

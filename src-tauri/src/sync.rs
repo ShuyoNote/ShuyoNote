@@ -7372,7 +7372,10 @@ fn write_sync_history(
 /// 在今天**不可能成立**的真因 —— 判据本身没写错，是这一侧缺了一条写入 ✓）。
 ///
 /// 口径与改前**逐字相同**（同一条 INSERT、同一个"只留最近 100 条" ✓）；新增的只是**调用方**。
-fn write_sync_history_with(
+///
+/// ⭐ 2026-10-28（owner「继续」／amd 锁态实验）：**锁着时那一轮**（`mesh::sealed_round`）也要写进来 ——
+/// 它手上只有 `&meta`（没有 `State<Db>`、也不需要空间库钥匙）⇒ 所以这一层是 `&Connection` ✓。
+pub(crate) fn write_sync_history_with(
     c: &Connection,
     ws_id: &str,
     pushed: usize,
