@@ -1,0 +1,92 @@
+// L2：CSS 卫生的「只减不增」判据（2026-10-29，owner：「app.css 是否有必要整理」→ 整理 + 上机器判据）。
+//
+// 为什么这条要存在：`src/App.css` 一度 28,610 行 / 8,828 行注释 / 4,518 条规则，其中
+//   ① 36 处 `!important` —— 每多一处，下一次改样式就多一层"为什么不生效"；
+//   ② 同一选择器在**同一上下文**里被定义多次（今天实测还有 79 组）⇒ 谁生效取决于**源码顺序**。
+//      2026-10-29 的真事故：`.sync-device-name-input { min-height: 28px }` 被 100 行后
+//      `.sync-input { min-height: 44px }` **按顺序压掉**，owner 截图里看到的还是 44。
+//   ⇒ 这两项从今天起**只减不增**：想加，先改这里的基线并在 PR 里写明为什么（改基线不是错，偷偷改才是）。
+//
+// ⚠️ 口径：这是**vitest 测试**（挂在本仓既有 `vitest` 门禁上），不是新注册的 `check-*.mjs` ——
+//   后者按仓规要走 `scripts/lib/gates.mjs` 注册 + 工作区变异证据账本，成本与收益不成比例（本判据只读一个文件）。
+//   ⚠️ 它**不修** CSS，只在有人把这两项加上去时报红。
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const CSS_PATH = resolve(here, "../../src/App.css");
+const css = readFileSync(CSS_PATH, "utf8");
+
+/** 2026-10-29 实测基线（「只减不增」）。加一条 `!important` 会让它红 —— 那是**有意的**。 */
+const BASELINE_IMPORTANT = 36;
+/** 2026-10-29 实测基线：同上下文同选择器被定义多次的组数。 */
+const BASELINE_DUP_GROUPS = 79;
+
+function countImportant(text: string): number {
+  return (text.match(/!important/g) ?? []).length;
+}
+
+/** 扫出「同一 @media/@supports 上下文里，同一选择器文本出现 >1 次」的组数。 */
+function countDuplicateGroups(text: string): number {
+  const rules: { ctx: string; sel: string }[] = [];
+  const stack: string[] = [];
+  let i = 0;
+  let selStart = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === "{") {
+      const header = text.slice(selStart, i).trim();
+      if (header.startsWith("@")) {
+        stack.push(header);
+        i++;
+        selStart = i;
+        continue;
+      }
+      let depth = 1;
+      let j = i + 1;
+      while (j < text.length && depth > 0) {
+        if (text[j] === "{") depth++;
+        else if (text[j] === "}") depth--;
+        j++;
+      }
+      rules.push({ ctx: stack.join(" / "), sel: header });
+      i = j;
+      selStart = j;
+      continue;
+    }
+    if (ch === "}") {
+      stack.pop();
+      i++;
+      selStart = i;
+      continue;
+    }
+    if (ch === ";") selStart = i + 1;
+    i++;
+  }
+  const seen = new Map<string, number>();
+  for (const r of rules) {
+    const key = `${r.ctx}\u0000${r.sel}`;
+    seen.set(key, (seen.get(key) ?? 0) + 1);
+  }
+  return [...seen.values()].filter((n) => n > 1).length;
+}
+
+describe("App.css 卫生：!important 与重复选择器「只减不增」", () => {
+  it(`① !important 不超过基线 ${BASELINE_IMPORTANT} 处（加一处就会红）`, () => {
+    const n = countImportant(css);
+    expect(
+      n,
+      `!important 从 ${BASELINE_IMPORTANT} 涨到 ${n}。要么删掉新增的那处，要么在本次改动里说明为什么必须加、并同步改 BASELINE_IMPORTANT。`,
+    ).toBeLessThanOrEqual(BASELINE_IMPORTANT);
+  });
+
+  it(`② 同一上下文里重复定义的选择器不超过基线 ${BASELINE_DUP_GROUPS} 组`, () => {
+    const n = countDuplicateGroups(css);
+    expect(
+      n,
+      `重复选择器组从 ${BASELINE_DUP_GROUPS} 涨到 ${n}。同一选择器写两处＝谁生效看源码顺序（2026-10-29 已因此踩过 .sync-input 的 min-height）。合并到一处，或说明为什么必须分开。`,
+    ).toBeLessThanOrEqual(BASELINE_DUP_GROUPS);
+  });
+});
