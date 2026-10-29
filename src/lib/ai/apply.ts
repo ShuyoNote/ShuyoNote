@@ -3,6 +3,9 @@
 // makes the "draft → confirm → commit" boundary explicit and hard to bypass.
 
 import { api } from "../api";
+import { platform } from "../platform";
+import { importDocumentPackage } from "../docPackageTransfer";
+import { uploadAttachmentFromPicker } from "../attachmentUpload";
 import { appendBlocksToJson, pageJsonFromText } from "./lexical";
 import { appendFence, fenceDoc, stampTopLevelBlockIds, templateContentFields } from "../docContent";
 import { markdownToPageContent } from "../mdPreview";
@@ -362,6 +365,47 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
         ...templateContentFields(tpl),
       });
       return { ok: true, message: `已用模板「${tpl.name}」新建页面`, page };
+    }
+
+    // ⭐ B2-补遗-1（2026-10-29）：受控上传通道（系统文件选择框）＋ import.docpackage ＋ detach
+    case "upload_attachment": {
+      const pageId = String(p.pageId ?? "");
+      if (!pageId) return { ok: false, message: "upload_attachment 需要 pageId" };
+      const hint = typeof p.nameHint === "string" && p.nameHint ? p.nameHint : undefined;
+      const r = await uploadAttachmentFromPicker(pageId, hint, {
+        pickFile: async () => {
+          const picked = await platform.dialog.open({ title: "选择要上传的文件", multiple: false });
+          return typeof picked === "string" && picked ? picked : null;
+        },
+        importFiles: (pid, paths) => api.importAttachmentFiles(pid, paths),
+        listAttachments: (pid) => api.listPageAttachments(pid),
+        rename: (id, name) => api.renameAttachment(id, name),
+        remove: async (id) => {
+          await api.removeAttachment(id);
+        },
+      });
+      if (r.kind === "ok") {
+        return {
+          ok: true,
+          message: `已上传「${r.name}」（sha256=${r.sha256.slice(0, 12)}…，${r.size} 字节）`,
+        };
+      }
+      if (r.kind === "cancelled") return { ok: false, message: "cancelled: 用户取消了文件选择（没有上传任何东西）" };
+      return { ok: false, message: r.kind === "needs_confirm" ? r.message : r.message };
+    }
+
+    case "import_docpackage": {
+      const parentId = typeof p.parentId === "string" && p.parentId ? p.parentId : null;
+      const r = await importDocumentPackage(parentId);
+      if (r.ok) return { ok: true, message: r.message };
+      return { ok: false, message: r.canceled ? "cancelled: 用户取消了导入（没有新建任何页面）" : r.message };
+    }
+
+    case "detach_attachment": {
+      const attId = String(p.attId ?? "");
+      if (!attId) return { ok: false, message: "detach_attachment 需要 attId" };
+      await api.detachAttachment(attId);
+      return { ok: true, message: "已把附件从页面摘除（文件保留，变为未整理）" };
     }
 
     default:

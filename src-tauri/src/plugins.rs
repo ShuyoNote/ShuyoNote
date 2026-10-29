@@ -3978,6 +3978,100 @@ fn cap_templates_apply(
     )
 }
 
+// ── B2-补遗-1（2026-10-29）：受控上传通道（**系统文件选择框**）＋ import.docpackage ＋ files.detach ──
+//
+// 三条仍只产草稿（`mediate:"draft"`）：真正的"选文件 / 读包 / 置空 page_id"发生在用户**确认草稿之后**
+// 的 apply 步骤 —— 文件路径只能来自**用户在系统对话框里亲自选**（⛔ Agent 给不了 paths）：
+//   · upload：`platform.dialog.open` → `import_attachment_files`（既有内容寻址写入）→ 同名 `-N`；
+//   · import.docpackage：M1 的 `importDocumentPackage`（它自己弹选择框、读包、永远新建）；
+//   · detach：新命令 `detach_attachment`（`page_id = NULL`，保留字节）。
+
+/// `files.upload_to_page`：再确认后由**用户选文件**上传并绑定到该页。
+fn cap_files_upload(
+    page_id: &str,
+    name: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (title, _) = live_target(page_id)?;
+    let hint = name.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(h) = hint {
+        if h.chars().count() > 255 {
+            return Err("bad_args: 期望文件名超过 255 字上限".to_string());
+        }
+    }
+    structural_draft(
+        dry_run,
+        format!("upload_attachment:{}", page_id.trim()),
+        match hint {
+            Some(h) => format!("上传附件到「{title}」（期望文件名「{h}」；**需要你亲自选文件**）"),
+            None => format!("上传附件到「{title}」（**需要你亲自选文件**）"),
+        },
+        serde_json::json!({
+            "kind": "upload_attachment",
+            "pageId": page_id.trim(),
+            "nameHint": hint,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `import.docpackage`：确认后由用户选 `.shuyodoc`，复用 M1 读包，**永远新建**。
+fn cap_import_docpackage(
+    parent_id: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let parent = parent_id.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(p) = parent {
+        live_target(p).map_err(|_| format!("not_found: 上级节点 {p} 不存在或已删除"))?;
+    }
+    structural_draft(
+        dry_run,
+        "import_docpackage".to_string(),
+        "导入 .shuyodoc（**需要你亲自选文件**；永远新建、不覆盖）".to_string(),
+        serde_json::json!({
+            "kind": "import_docpackage",
+            "parentId": parent,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `files.detach`：把附件从页面摘掉（`page_id = NULL` ⇒ 未整理；**字节保留**）。
+fn cap_files_detach(
+    att_id: &str,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (name, _hash, page) = attachment_meta(att_id)?;
+    let Some(page) = page else {
+        return Err(format!(
+            "bad_args: 附件「{name}」已经是未整理状态（无需再摘除）"
+        ));
+    };
+    structural_draft(
+        dry_run,
+        format!("detach_attachment:{}", att_id.trim()),
+        format!("把附件「{name}」从页面 {page} 摘除（保留文件，变未整理）"),
+        serde_json::json!({
+            "kind": "detach_attachment",
+            "attId": att_id.trim(),
+            "fromPageId": page,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
 fn cap_properties_list(space_id: Option<&str>) -> CapResult {
     with_conn_for_space(space_id, |c| {
         let mut stmt = c
@@ -4822,6 +4916,25 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         "templates.apply" => cap_templates_apply(
             &arg_str("templateId")?,
             arg_opt_str("parentId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "files.upload_to_page" => cap_files_upload(
+            &arg_str("pageId")?,
+            arg_opt_str("name").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "import.docpackage" => cap_import_docpackage(
+            arg_opt_str("parentId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "files.detach" => cap_files_detach(
+            &arg_str("attId")?,
             arg_opt_str("spaceId").as_deref(),
             arg_bool(args.get("dryRun"), false),
             arg_opt_str("clientRequestId").as_deref(),
@@ -14364,4 +14477,62 @@ register({ id: "s.run", title: "结构化", run: function () {
         b1c_cleanup(&f);
     }
 
+    /// ⭐ B2-补遗-1：detach 置空 page_id（字节不变）、重复 detach 拒绝；upload/import dryRun 不产草稿；目标校验。
+    #[test]
+    fn b2x_upload_import_detach_controls() {
+        let f = b1c_fixture("b2x");
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        let (att, hash): (String, String) = with_read_conn(|c| {
+            c.query_row(
+                "SELECT id, hash FROM attachments WHERE page_id IS NOT NULL AND hash IS NOT NULL LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .unwrap();
+        let (out, drafts) = with_external_caller("b2x-detach", &g, || {
+            with_fresh_drafts(|| dispatch_capability("files.detach", &format!(r#"{{"attId":"{att}"}}"#)))
+        });
+        out.expect("detach 应产草稿");
+        assert_eq!(drafts.len(), 1);
+        // 执行落库那一步（命令内层）——摘除后 page_id=NULL、hash 不变
+        with_read_conn(|c| crate::attachments::detach_attachment_row(c, &att).map(|_| ()))
+            .expect("detach 应成功");
+        let (page_after, hash_after): (Option<String>, String) = with_read_conn(|c| {
+            c.query_row(
+                "SELECT page_id, hash FROM attachments WHERE id = ?1",
+                params![att],
+                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?)),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .unwrap();
+        assert!(page_after.is_none(), "page_id 必须置空");
+        assert_eq!(hash_after, hash, "sha/字节指纹必须不变");
+        let e = with_external_caller("b2x-detach2", &g, || {
+            dispatch_capability("files.detach", &format!(r#"{{"attId":"{att}"}}"#))
+        })
+        .expect_err("已未整理必须明确拒绝");
+        assert!(e.contains("bad_args"), "{e}");
+        let (o, d) = with_external_caller("b2x-upload", &g, || {
+            with_fresh_drafts(|| dispatch_capability("files.upload_to_page", r#"{"pageId":"p1","dryRun":true}"#))
+        });
+        let v: serde_json::Value = serde_json::from_str(&o.expect("dryRun 应 OK")).unwrap();
+        assert_eq!(v["dryRun"], true);
+        assert!(d.is_empty(), "dryRun 不产草稿");
+        let e = with_external_caller("b2x-upload2", &g, || {
+            dispatch_capability("files.upload_to_page", r#"{"pageId":"nope"}"#)
+        })
+        .expect_err("页不存在必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        let (o2, d2) = with_external_caller("b2x-import", &g, || {
+            with_fresh_drafts(|| dispatch_capability("import.docpackage", r#"{"dryRun":true}"#))
+        });
+        let v2: serde_json::Value = serde_json::from_str(&o2.expect("dryRun 应 OK")).unwrap();
+        assert_eq!(v2["dryRun"], true);
+        assert!(d2.is_empty(), "dryRun 不产草稿");
+        b1c_cleanup(&f);
+    }
 }

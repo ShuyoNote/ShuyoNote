@@ -1,4 +1,4 @@
-# 插件 API（v1.9.0）
+# 插件 API（v1.10.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.9.0",
+  "apiVersion": "1.10.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.9.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.10.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -145,6 +145,9 @@ register({
 | `files.rename` | `api.files.rename(attId, name, expectedSha, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.9.0 |
 | `files.delete` | `api.files.delete(attId, expectedSha, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.9.0 |
 | `templates.apply` | `api.templates.apply(templateId, parentId, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.9.0 |
+| `files.upload_to_page` | `api.files.upload_to_page(pageId, name, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.10.0 |
+| `import.docpackage` | `api.import.docpackage(parentId, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.10.0 |
+| `files.detach` | `api.files.detach(attId, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.10.0 |
 | `folders.create` | `api.folders.create(title, parentId, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.7.0 |
 | `nodes.move` | `api.nodes.move(id, newParentId, sortOrder, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.7.0 |
 | `nodes.rename` | `api.nodes.rename(id, title, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.7.0 |
@@ -630,6 +633,46 @@ register({
   - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
   - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
 
+### `files.upload_to_page` — 上传附件到页面（用户选文件）
+
+- 调用：`api.files.upload_to_page(pageId, name, spaceId, dryRun, clientRequestId)`
+- 权限：`write:files`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会往页面写附件 → 先给用户看草稿并确认；确认后由**用户亲自选文件**
+- 返回：{drafted,summary}——**不代表已上传**；确认后系统会弹文件选择框，取消 ⇒ 不落任何东西
+- 参数：
+  - `pageId`: `string` —— 
+  - `name`: `string`（可选） —— 期望的文件名（可选；同名自动 `-N` 不覆盖）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `import.docpackage` — 导入 .shuyodoc（用户选文件）
+
+- 调用：`api.import.docpackage(parentId, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会新建页面 → 先给用户看草稿并确认；确认后由**用户亲自选 .shuyodoc**
+- 返回：{drafted,summary}——**不代表已导入**；确认后弹选择框，取消 ⇒ cancelled
+- 参数：
+  - `parentId`: `string`（可选） —— 新页的父节点 id；省略=顶层
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `files.detach` — 从页面摘除附件（保留文件）
+
+- 调用：`api.files.detach(attId, spaceId, dryRun, clientRequestId)`
+- 权限：`write:files`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 改附件归属 → 先给用户看草稿并确认
+- 返回：{drafted,summary}——**不代表已摘除**
+- 参数：
+  - `attId`: `string` —— 
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
 ### `folders.create` — 新建文件夹（草稿确认）
 
 - 调用：`api.folders.create(title, parentId, spaceId, dryRun, clientRequestId)`
@@ -977,7 +1020,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.9.0",
+  "runtime": "declarative", "apiVersion": "1.10.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },

@@ -1486,6 +1486,7 @@ export interface CommandMap {
   remove_attachments: { args: { ids: string[] }; result: number };
   move_attachment: { args: { id: string; newPageId: string }; result: void };
   rename_attachment: { args: { id: string; name: string }; result: void };
+  detach_attachment: { args: { id: string }; result: void };
   restore_attachment: { args: { targetPageId: string; sourceId: string }; result: AttachmentMeta };
 
   // ---- Sync ----

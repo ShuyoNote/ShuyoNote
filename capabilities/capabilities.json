@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "apiVersion": "1.9.0",
+  "apiVersion": "1.10.0",
   "notes": "插件能力注册表——单一事实源。scripts/gen-capabilities.mjs 由本文件生成：JS shim（api.*）、Rust 绑定表、作者类型包、作者文档；scripts/check-capabilities.mjs 校验一致性与完整性。改能力请改这里，不要手改生成物。",
   "permissions": [
     {
@@ -1914,6 +1914,157 @@
       },
       "desc": "用模板新建一页（模板内容原样复制；⛔ 不覆盖任何已有页面）。参数: templateId (来自 templates.list), parentId (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。",
       "mcpDesc": "用模板新建一页。参数: templateId(来自 templates_list), parentId(可选,省略=顶层)。永远**新建**、不覆盖。写操作 ⇒ 只产草稿等确认；`dryRun`/`clientRequestId` 同上。",
+      "ai": true
+    },
+    {
+      "kind": "write",
+      "scope": "current-space",
+      "mediate": "draft",
+      "since": "1.10.0",
+      "id": "files.upload_to_page",
+      "title": "上传附件到页面（用户选文件）",
+      "permission": "write:files",
+      "jsPath": [
+        "files",
+        "upload_to_page"
+      ],
+      "rust": "cap_files_upload",
+      "mediateWhy": "会往页面写附件 → 先给用户看草稿并确认；确认后由**用户亲自选文件**",
+      "args": [
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": false,
+          "desc": "期望的文件名（可选；同名自动 `-N` 不覆盖）"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        {
+          "name": "dryRun",
+          "type": "boolean",
+          "required": false,
+          "desc": "只演练不产草稿、不落库、不记审计"
+        },
+        {
+          "name": "clientRequestId",
+          "type": "string",
+          "required": false,
+          "desc": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ drafted: true; summary: string }",
+        "desc": "{drafted,summary}——**不代表已上传**；确认后系统会弹文件选择框，取消 ⇒ 不落任何东西"
+      },
+      "desc": "上传一个本地文件作为页面附件。**文件由用户在系统选择框里亲自选**（⛔ Agent 不能给路径）。参数: pageId, name (可选期望文件名;同名自动 `-N`), spaceId, dryRun, clientRequestId。>10MB ⇒ 明确 needs_confirm（本批限额）；用户取消 ⇒ cancelled（不静默成功）。写操作 ⇒ 草稿确认。",
+      "mcpDesc": "上传附件到页面。⚠️ **确认后系统会弹文件选择框，由用户亲自选文件**（⛔ 不接受任意路径）；同名自动 `-N` 不覆盖；>10MB ⇒ `needs_confirm`；用户取消 ⇒ `cancelled`。参数: pageId, name(可选)。写操作 ⇒ 只产草稿等确认。",
+      "ai": true
+    },
+    {
+      "kind": "write",
+      "scope": "current-space",
+      "mediate": "draft",
+      "since": "1.10.0",
+      "id": "import.docpackage",
+      "title": "导入 .shuyodoc（用户选文件）",
+      "permission": "write:pages",
+      "jsPath": [
+        "import",
+        "docpackage"
+      ],
+      "rust": "cap_import_docpackage",
+      "mediateWhy": "会新建页面 → 先给用户看草稿并确认；确认后由**用户亲自选 .shuyodoc**",
+      "args": [
+        {
+          "name": "parentId",
+          "type": "string",
+          "required": false,
+          "desc": "新页的父节点 id；省略=顶层"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        {
+          "name": "dryRun",
+          "type": "boolean",
+          "required": false,
+          "desc": "只演练不产草稿、不落库、不记审计"
+        },
+        {
+          "name": "clientRequestId",
+          "type": "string",
+          "required": false,
+          "desc": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ drafted: true; summary: string }",
+        "desc": "{drafted,summary}——**不代表已导入**；确认后弹选择框，取消 ⇒ cancelled"
+      },
+      "desc": "导入一个 `.shuyodoc`（复用它自己的读包/校验；**永远新建、不覆盖**）。**文件由用户在系统选择框里亲自选**。参数: parentId (可选), spaceId, dryRun, clientRequestId。坏包 ⇒ 错误原文点名条目；取消 ⇒ cancelled。写操作 ⇒ 草稿确认。",
+      "mcpDesc": "导入 `.shuyodoc`：确认后由用户亲自选文件（⛔ 不接受路径）；**永远新建、不覆盖**；坏包 ⇒ 错误原文（点名条目）；取消 ⇒ `cancelled`。参数: parentId(可选)。写操作 ⇒ 只产草稿等确认。",
+      "ai": true
+    },
+    {
+      "kind": "write",
+      "scope": "current-space",
+      "mediate": "draft",
+      "since": "1.10.0",
+      "id": "files.detach",
+      "title": "从页面摘除附件（保留文件）",
+      "permission": "write:files",
+      "jsPath": [
+        "files",
+        "detach"
+      ],
+      "rust": "cap_files_detach",
+      "mediateWhy": "改附件归属 → 先给用户看草稿并确认",
+      "args": [
+        {
+          "name": "attId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        {
+          "name": "dryRun",
+          "type": "boolean",
+          "required": false,
+          "desc": "只演练不产草稿、不落库、不记审计"
+        },
+        {
+          "name": "clientRequestId",
+          "type": "string",
+          "required": false,
+          "desc": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ drafted: true; summary: string }",
+        "desc": "{drafted,summary}——**不代表已摘除**"
+      },
+      "desc": "把附件从页面摘掉、**保留文件字节**（`page_id = NULL` ⇒ 未整理）。与 `files.delete` 是两件事。参数: attId, spaceId, dryRun, clientRequestId。已经未整理 ⇒ 明确 `bad_args`（不假装成功）。写操作 ⇒ 草稿确认。",
+      "mcpDesc": "把附件从页面摘除（**保留文件**，变未整理）——与删除分开。参数: attId。已经是未整理 ⇒ `bad_args`。写操作 ⇒ 只产草稿等确认。",
       "ai": true
     },
     {

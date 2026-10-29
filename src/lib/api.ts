@@ -674,6 +674,8 @@ export const api = {
   purgeDeletedWorkspaces: () => invoke("purge_deleted_workspaces"),
   moveAttachment: (id: string, newPageId: string) =>
     invoke("move_attachment", { id, newPageId }),
+  // ⭐ B2-补遗-1：从页面摘除附件（page_id=NULL，保留文件）
+  detachAttachment: (id: string) => invoke("detach_attachment", { id }),
   renameAttachment: (id: string, name: string) => invoke("rename_attachment", { id, name }),
   restoreAttachment: (targetPageId: string, sourceId: string) =>
     invoke("restore_attachment", { targetPageId, sourceId }),

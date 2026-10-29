@@ -286,6 +286,14 @@ export interface PluginApi {
    * 返回：{drafted,summary}——**不代表已删除**
    */
     delete(attId: string, expectedSha?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
+  /** 上传附件到页面（用户选文件）（权限 `write:files`；1.10.0 起）
+   * 返回：{drafted,summary}——**不代表已上传**；确认后系统会弹文件选择框，取消 ⇒ 不落任何东西
+   */
+    upload_to_page(pageId: string, name?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
+  /** 从页面摘除附件（保留文件）（权限 `write:files`；1.10.0 起）
+   * 返回：{drafted,summary}——**不代表已摘除**
+   */
+    detach(attId: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
   /** 下载附件（返回句柄）（权限 `export:files`；1.5.0 起）
    * 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
    */
@@ -349,6 +357,12 @@ export interface PluginApi {
    */
     apply(templateId: string, parentId?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
   };
+  import: {
+  /** 导入 .shuyodoc（用户选文件）（权限 `write:pages`；1.10.0 起）
+   * 返回：{drafted,summary}——**不代表已导入**；确认后弹选择框，取消 ⇒ cancelled
+   */
+    docpackage(parentId?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
+  };
   folders: {
   /** 新建文件夹（草稿确认）（权限 `write:pages`；1.7.0 起）
    * 返回：{drafted,summary,spaceId}——**不代表已创建**
@@ -397,4 +411,4 @@ export interface PluginApi {
   };
 }
 
-export declare const SDK_API_VERSION: "1.9.0";
+export declare const SDK_API_VERSION: "1.10.0";

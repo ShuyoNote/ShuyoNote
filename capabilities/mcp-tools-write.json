@@ -429,6 +429,99 @@
   },
   {
     "kind": "write",
+    "name": "files_upload_to_page",
+    "capabilityId": "files.upload_to_page",
+    "description": "上传附件到页面。⚠️ **确认后系统会弹文件选择框，由用户亲自选文件**（⛔ 不接受任意路径）；同名自动 `-N` 不覆盖；>10MB ⇒ `needs_confirm`；用户取消 ⇒ `cancelled`。参数: pageId, name(可选)。写操作 ⇒ 只产草稿等确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pageId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "期望的文件名（可选；同名自动 `-N` 不覆盖）"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产草稿、不落库、不记审计"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      },
+      "required": [
+        "pageId"
+      ]
+    },
+    "permission": "write:files"
+  },
+  {
+    "kind": "write",
+    "name": "import_docpackage",
+    "capabilityId": "import.docpackage",
+    "description": "导入 `.shuyodoc`：确认后由用户亲自选文件（⛔ 不接受路径）；**永远新建、不覆盖**；坏包 ⇒ 错误原文（点名条目）；取消 ⇒ `cancelled`。参数: parentId(可选)。写操作 ⇒ 只产草稿等确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "parentId": {
+          "type": "string",
+          "description": "新页的父节点 id；省略=顶层"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产草稿、不落库、不记审计"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      },
+      "required": []
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "files_detach",
+    "capabilityId": "files.detach",
+    "description": "把附件从页面摘除（**保留文件**，变未整理）——与删除分开。参数: attId。已经是未整理 ⇒ `bad_args`。写操作 ⇒ 只产草稿等确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "attId": {
+          "type": "string"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产草稿、不落库、不记审计"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      },
+      "required": [
+        "attId"
+      ]
+    },
+    "permission": "write:files"
+  },
+  {
+    "kind": "write",
     "name": "folders_create",
     "capabilityId": "folders.create",
     "description": "新建一个文件夹节点（不是页面）。参数: title(必填), parentId(可选,省略=顶层)。写操作 ⇒ **只产生草稿**（`{drafted:true, summary, spaceId}`），用户确认后才落库；`dryRun:true` 只演练不产生草稿；`spaceId` 本版只支持当前空间。",
