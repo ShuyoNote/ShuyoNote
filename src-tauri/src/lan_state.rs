@@ -2698,14 +2698,18 @@ mod device_name_tests {
 //
 // ⚠️ 落库位置与 `device_id` **同一张表**（`meta.sync_state` ✓，走 `crate::sync::get_meta_state`
 //   ／`set_meta_state` ✓）⇒ **不需要迁移** ✓。
-// ⚠️ 语义：**没设过 ⇒ `None`** ✓（界面据此显示"用的是主机名"✓，⛔ 不编一个假名字 ✗）；
-//    **设成空串 ⇒ 等于清掉**设置 ✓（回退链接管 ✓），⛔ 不落一个空值 ✗（那会让对端显示空白 ✗）。
+// ⚠️ 语义：**设成空串 ⇒ 等于清掉**设置 ✓（回退链接管 ✓），⛔ 不落一个空值 ✗（那会让对端显示空白 ✗）。
 
-/// 读**用户设的**本机名（没设过／被清空 ⇒ `None` ✓）。
+/// 读**本机名（生效名）**：用户设过就用它 ⇒ 否则**系统名** ⇒ 都拿不到才「未命名设备」。
+///
+/// ⭐ **2026-10-29（owner）**：原来这里只回「用户设的」（没设过 ⇒ `None`），于是「设置 → 账户」的
+/// 设备名输入框只能空着 + 一句占位「留空 = 用系统名」✗。现在回**生效名** ⇒ 输入框直接预填系统名 ✓。
+/// ⚠️ 形状仍是 `Option<String>`（`commands.ts` 的契约面**不变**）：这一版**恒回 `Some(生效名)`**；
+///    老构建可能回 `None`（＝当时的「没设过」）⇒ 前端仍按"可能为空"处理 ✓。
 #[tauri::command]
 pub fn get_device_name(db: tauri::State<'_, Db>) -> Result<Option<String>, String> {
     let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
-    Ok(stored_device_name(&c))
+    Ok(Some(local_device_name(&c)))
 }
 
 /// 设本机名；`name` 为空白 ⇒ **清掉设置** ✓。返回**落库后真正生效的名字** ✓

@@ -98,6 +98,9 @@ export function MobileSettings() {
   const [deviceNameLoaded, setDeviceNameLoaded] = useState(false);
   const [deviceNameSaving, setDeviceNameSaving] = useState(false);
   const [deviceNameStatus, setDeviceNameStatus] = useState("");
+  /** ⭐ 2026-10-29：与桌面同一条口径 —— 后端回**生效名**（没设过 ⇒ 系统名），
+   *  保存时"没改"就存空串（继续跟随系统名），⛔ 不把系统名固化下来 ✓。 */
+  const [deviceNameBaseline, setDeviceNameBaseline] = useState("");
   const [spaceOpen, setSpaceOpen] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -105,7 +108,9 @@ export function MobileSettings() {
       .getDeviceName()
       .then((n) => {
         if (alive) {
-          setDeviceName(n ?? "");
+          const effective = n ?? "";
+          setDeviceName(effective);
+          setDeviceNameBaseline(effective);
           setDeviceNameLoaded(true);
         }
       })
@@ -120,9 +125,12 @@ export function MobileSettings() {
     setDeviceNameSaving(true);
     setDeviceNameStatus("");
     try {
-      const effective = await api.setDeviceName(deviceName);
+      const typed = deviceName.trim();
+      const toSave = typed === deviceNameBaseline.trim() ? "" : typed;
+      const effective = await api.setDeviceName(toSave);
       setDeviceName(effective);
-      setDeviceNameStatus(`已保存；当前生效名：${effective}`);
+      setDeviceNameBaseline(effective);
+      setDeviceNameStatus(`已保存；当前生效：${effective}`);
     } catch (e) {
       setDeviceNameStatus(`保存失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -205,7 +213,7 @@ export function MobileSettings() {
                 className="mset-name-input"
                 value={deviceName}
                 disabled={!deviceNameLoaded || deviceNameSaving}
-                placeholder="留空＝用系统名"
+                placeholder="系统名"
                 maxLength={40}
                 aria-label="设备名称"
                 onChange={(e) => setDeviceName(e.target.value)}

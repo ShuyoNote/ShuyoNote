@@ -1037,10 +1037,20 @@ function AccountPane() {
   const [deviceNameLoaded, setDeviceNameLoaded] = useState(false);
   const [deviceNameSaving, setDeviceNameSaving] = useState(false);
   const [deviceNameStatus, setDeviceNameStatus] = useState("");
+  /** ⭐ 2026-10-29（owner）：**当前生效名**（后端回的就是它：用户设的 ⇒ 否则系统名）。
+   *  保存时拿它判断"用户到底改没改" —— 没改 ⇒ 存空串（继续跟随系统名），⛔ 不把系统名固化下来 ✓。 */
+  const [deviceNameBaseline, setDeviceNameBaseline] = useState("");
   useEffect(() => {
     let alive = true;
     void api.getDeviceName()
-      .then((n) => { if (alive) { setDeviceName(n ?? ""); setDeviceNameLoaded(true); } })
+      .then((n) => {
+        if (!alive) return;
+        // ⭐ 2026-10-29：后端现在回**生效名**（没设过 ⇒ 系统名）⇒ 输入框直接预填 ✓。
+        const effective = n ?? "";
+        setDeviceName(effective);
+        setDeviceNameBaseline(effective);
+        setDeviceNameLoaded(true);
+      })
       .catch(() => { if (alive) setDeviceNameLoaded(true); });
     return () => { alive = false; };
   }, []);
@@ -1048,8 +1058,13 @@ function AccountPane() {
   const saveDeviceName = async () => {
     setDeviceNameSaving(true);
     try {
-      const effective = await api.setDeviceName(deviceName);
-      setDeviceNameStatus(`已保存；当前生效名：${effective}`);
+      // ⭐ 与"当前生效名"一致 ⇒ 存空串（＝清掉设置、继续跟随系统名）✓。
+      const typed = deviceName.trim();
+      const toSave = typed === deviceNameBaseline.trim() ? "" : typed;
+      const effective = await api.setDeviceName(toSave);
+      setDeviceName(effective);
+      setDeviceNameBaseline(effective);
+      setDeviceNameStatus(`已保存；当前生效：${effective}`);
       toast(`设备名已更新：${effective}`, "success");
     } catch (e) {
       setDeviceNameStatus(`保存失败：${e}`);
@@ -1066,10 +1081,7 @@ function AccountPane() {
           <div className="set-row-text">
             <div className="set-row-name">设备名</div>
             <div className="set-row-sub">
-              附近设备与配对列表里显示的名字。
-              <br />
-              留空 ⇒ 用的是<b>这台电脑的系统名</b>；
-              只有系统名也读不到时，才会显示「未命名设备」。
+              默认用<b>这台电脑的系统名</b>；改成别的就按你写的显示。
             </div>
           </div>
           <div className="acct-device-edit">
@@ -1077,7 +1089,7 @@ function AccountPane() {
               className="set-input"
               value={deviceName}
               disabled={!deviceNameLoaded || deviceNameSaving}
-              placeholder="留空＝用系统名"
+              placeholder="系统名"
               maxLength={40}
               onChange={(e) => setDeviceName(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") void saveDeviceName(); }}
