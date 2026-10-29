@@ -5,10 +5,10 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `5f7cb6b4e6f2c6ee1fe09c97a5d62e0135b0b5dfe052e86f0d0f1bc9e162e384` |
-| `apiVersion` | 1.3.0 |
+| 注册表 sha256 | `e7b75677ba8710c0cb336ebddd38ae516f436e1378f61ad16e1f6cb656a535cb` |
+| `apiVersion` | 1.4.0 |
 | 取用条件 | `ai === true` **且** `kind === "read"` |
-| 条数 | **15** |
+| 条数 | **17** |
 | 生成命令 | `node scripts/gen-agent-tool-surface.mjs --phase m1` |
 
 | id | scope | permission | desc |
@@ -16,6 +16,8 @@
 | backlinks.list | current-space | read:backlinks | 查询哪些页面反向链接到目标页面。参数: pageId (可选, 省略=当前打开的页面)。返回引用它的页面列表。 |
 | blocks.list | current-space | read:pages | 列出页面中的所有顶级块(每块 id + 文本)。参数: pageId (可选, 省略=当前打开的页面), limit (可选)。返回块数组，可用于定位具体块。 |
 | coverage.report | current-space | read:files | 检查**整个库**的索引覆盖：哪些内容真的进了检索面、哪些没进、哪些**进了但没抽全**。参数: 无。返回 {summary, report}：`summary` 是一行中文摘要（可直接展示）；`report.attachments` 给出 已索引/没抽全/未索引 的计数与分类，`report.gaps` 给出**明细**（每条含 `reason` 与一句「该怎么办」）。⚠️ 三个必须分清的口径：① **没抽到 ≠ 文件里没有**（`no_content` 可能是空文件/加密/纯图）；② **页面正文空 ≠ 这页内容没被索引**（图片/附件/数据库块由附件侧负责）；③ **`partial` 是「搜得到，但只覆盖了一部分」**（典型：混合 PDF 只抽到正文页）—— 别把「已索引 N/N」读成「内容全在检索面里」。**缺口列表可能被截断**（看 `gapsTotal` 与 `gapsTruncated`）。 ★ **只有 AI 宿主**能实现它（`host: frontend`）：判「没人认领这种格式」必须以 TS 侧的抽取器注册表为准，Rust 侧再长一份就是两份实现、而漂移不会报错 ⇒ 它不进插件 shim／插件类型包／Rust 绑定表，插件调不到。 |
+| db.rows | current-space | read:pages | 读取一个**数据库页的行**：`{pageId, spaceId, total, returned, rows:[{id, values:{<columnId>: <原始值>}}], truncated, note}`。⚠️ **values 是数据库里存的原始值**（字符串），本工具⛔ **不重算公式列/汇总列** ⇒ 可能与界面里显示的计算值不同（`note` 里也写着这句）；要展示计算值请看界面或自己算。`total` 是**过滤后**的总行数（不受 limit 影响，可用它判断翻页到没到头）。**简单 where**（多条 AND）：`[{field, op, value?}]`，`field` 是**列 id 或列名（id 优先，列名须完全一致；必须来自 db_schema 报出的列）**，`op` 白名单 `= != > >= < <= in contains is_null`（`in` 的 value 必须是数组；`is_null` 不需要 value）；写错字段/操作符/形状 ⇒ `invalid_args` 并**点名第几条**（不会静默返回空）。可选 `viewId` 套用该视图保存的**标题过滤与排序**。`limit` 默认 100、上限 500，`offset` 默认 0（分页在宿主侧执行）；响应体超过 200 KB ⇒ 提前截断并 `truncated:true`。默认读**当前空间**；给了 spaceId 就读那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: pageId (必填), viewId (可选), where (可选), limit (可选, 默认 100, 上限 500), offset (可选, 默认 0), spaceId (可选)。 |
+| db.schema | current-space | read:pages | 读取一个**数据库页**的结构：`{pageId, spaceId, views:[{id,name,type}], columns:[{id,name,type,isFormula?,isRollup?}], relations:[{id,name,type}]}`。列与视图与界面**同一条查询**（同一份数据库元数据），所以名字/顺序/类型都对得上。**公式列**带 `isFormula:true`、**汇总列**带 `isRollup:true` —— 本工具只**标明**它们是计算列，⛔ **不计算任何值**；`relations` 是关系列（`type:ref`，取值形如 `p:<pageId>`，要标题得自己按 id 再查）。默认读**当前空间**；给了 spaceId 就读那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: pageId (必填), spaceId (可选)。 |
 | files.list | current-space | read:files | 列出页面附件。参数: pageId (可选, 省略=当前打开的页面)。返回文件名/类型/大小。 |
 | files.read | current-space | read:files | 读取某个附件的**派生文本**（抽取结果，**不含原文字节**）。参数: id (必填), offset/limit (可选分页)。返回 {segments, total, truncated, coverage}；**还没抽过 ⇒ segments 空 + total 0**（不是失败，别据此断言文件里没有内容）。`truncated` 说的是「这一页没给全」，而 `coverage` 说的是「**抽取本身**有没有承认没抽全」（§15.10：成功 ≠ 抽全了）：coverage 里每个抽取器一条 `{extractor, coverage}`，`coverage` 是原始 JSON（如 `{"complete":false,"gapIndexes":[2]}`），**空字符串或空数组都表示「未知」，不许读成「完整」**。 |
 | files.search | current-space | read:files | 在已抽取的文件内容里做块级检索（含扫描件/文档正文）。参数: query (必填), limit (可选, 默认 10)。返回 {chunkId, pageId, attId, loc, snippet, score}：pageId/attId 用来回链到原文位置。 |

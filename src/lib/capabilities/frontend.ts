@@ -157,6 +157,243 @@ const FILES_SEARCH_LIMIT_MAX = 100;
 const FILES_READ_LIMIT_DEFAULT = 200;
 const FILES_READ_LIMIT_MAX = 1000;
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// B1b（2026-10-29）：`db.schema` / `db.rows` 的**应用内 AI 面**这一侧
+//
+// ⚠️ 口径的**权威实现在 Rust**（`src-tauri/src/database.rs` 的 `parse_row_filters` /
+//    `query_db_rows`）：那边把 where 编成参数化 SQL、LIMIT/OFFSET 也在 SQL 里。这一侧没有
+//    SQL 口（命令面是 `queryDatabase(dbPageId)`，返回全部行），所以这里按**逐字相同的语义**
+//    在内存里做同一件事（未知字段/坏操作符/in 非数组 ⇒ 同样 `invalid_args` 并点名第几条）。
+//    ⛔ 改一侧必须改另一侧 —— 两边给出不同答案而都不报错，正是本仓最忌的形状。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** `db.rows` 的 `limit` 默认值与上限（注册表 `default: 100`、Rust `clamp(1, 500)`）。 */
+const DB_ROWS_LIMIT_DEFAULT = 100;
+const DB_ROWS_LIMIT_MAX = 500;
+/** `db.rows` 响应体上限（与 Rust `MAX_DB_ROWS_BYTES` 同一个数：矩阵 §7「文本 ≤200 KB/次」）。 */
+const DB_ROWS_MAX_BYTES = 200 * 1024;
+/** `where` 操作符白名单（与 Rust `FilterOp` 同一个集合；矩阵 §4.4）。 */
+const DB_WHERE_OPS = ["=", "!=", ">", ">=", "<", "<=", "in", "contains", "is_null"] as const;
+
+type DbColumn = { id: string; name: string; attr_type: string };
+type DbRowFilter = {
+  colId: string;
+  op: string;
+  value: string;
+  values: string[];
+  numeric: boolean;
+};
+
+/** 标量 → 原始值字符串（与 Rust `scalar_text` 同口径）。 */
+function dbScalarText(v: unknown): string | null {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return null;
+}
+
+function dbJsonKind(v: unknown): string {
+  if (v === null || v === undefined) return "null";
+  if (Array.isArray(v)) return "数组";
+  switch (typeof v) {
+    case "boolean":
+      return "布尔";
+    case "number":
+      return "数字";
+    case "string":
+      return "字符串";
+    default:
+      return "对象";
+  }
+}
+
+/** where 解析＋**按列校验**（未知字段 / 坏操作符 / in 非数组 ⇒ 人话 invalid_args，点名第几条）。 */
+function parseDbWhere(
+  whereArg: unknown,
+  columns: DbColumn[],
+): { filters: DbRowFilter[] } | { error: string } {
+  if (whereArg === undefined || whereArg === null) return { filters: [] };
+  if (!Array.isArray(whereArg)) {
+    return { error: "invalid_args: where 必须是数组（[{field,op,value?}, …]，多条之间是 AND）" };
+  }
+  const filters: DbRowFilter[] = [];
+  for (let i = 0; i < whereArg.length; i++) {
+    const item = whereArg[i];
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return { error: `invalid_args: where[${i}] 必须是对象（{field,op,value?}），收到 ${dbJsonKind(item)}` };
+    }
+    const obj = item as Record<string, unknown>;
+    const field = String(obj.field ?? "").trim();
+    if (!field) {
+      return { error: `invalid_args: where[${i}] 缺 field（列 id 或列名；先用 db.schema 看这个库有哪些列）` };
+    }
+    const op = String(obj.op ?? "").trim();
+    if (!op) {
+      return { error: `invalid_args: where[${i}] 缺 op（白名单：${DB_WHERE_OPS.join(" ")}）` };
+    }
+    if (!(DB_WHERE_OPS as readonly string[]).includes(op)) {
+      return { error: `invalid_args: where[${i}] 的操作符「${op}」不在白名单（${DB_WHERE_OPS.join(" ")}）` };
+    }
+    // 列解析：**id 优先，其次列名**（与 Rust 逐字同口径）。
+    const col = columns.find((c) => c.id === field) ?? columns.find((c) => c.name === field);
+    if (!col) {
+      return {
+        error: `invalid_args: where[${i}] 的字段「${field}」不是这个库的列 —— 先用 db.schema 看列（id 或列名都接受；列名必须与实际名字完全一致）`,
+      };
+    }
+    let value = "";
+    const values: string[] = [];
+    if (op === "is_null") {
+      // is_null 不需要 value（给了也不看）
+    } else if (op === "in") {
+      if (obj.value === undefined) {
+        return { error: `invalid_args: where[${i}] 的 in 需要 value 数组` };
+      }
+      if (!Array.isArray(obj.value)) {
+        return { error: `invalid_args: where[${i}] 的 in 的 value 必须是**数组**（收到 ${dbJsonKind(obj.value)}）` };
+      }
+      if (obj.value.length === 0) {
+        return { error: `invalid_args: where[${i}] 的 in 的 value 是空数组 —— 它永远匹配不到任何行；要不就别加这条` };
+      }
+      for (const it of obj.value) {
+        const t = dbScalarText(it);
+        if (t === null) {
+          return {
+            error: `invalid_args: where[${i}] 的 in 的数组元素必须是字符串/数字/布尔（收到 ${dbJsonKind(it)}）`,
+          };
+        }
+        values.push(t);
+      }
+    } else {
+      if (obj.value === undefined) {
+        return { error: `invalid_args: where[${i}] 的「${op}」需要 value` };
+      }
+      const t = dbScalarText(obj.value);
+      if (t === null) {
+        return { error: `invalid_args: where[${i}] 的 value 必须是字符串/数字/布尔（收到 ${dbJsonKind(obj.value)}）` };
+      }
+      value = t;
+    }
+    filters.push({ colId: col.id, op, value, values, numeric: col.attr_type === "number" });
+  }
+  return { filters };
+}
+
+/** 解析后的数值（与 SQL `CAST(x AS REAL)` / 界面 `parseFloat` 同口径：非数字 ⇒ 0）。 */
+function dbNumeric(raw: string): number {
+  const n = parseFloat(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** 行值（缺失 = 空串，与 Rust `COALESCE(expr, '')` 同口径）。 */
+function dbRawValue(row: { values: Record<string, string> }, colId: string): string {
+  return row.values[colId] ?? "";
+}
+
+/** 一行是否满足全部 where（AND；与 Rust 生成的 SQL 同一个语义）。 */
+function dbRowMatches(row: { values: Record<string, string> }, filters: DbRowFilter[]): boolean {
+  for (const f of filters) {
+    const raw = dbRawValue(row, f.colId);
+    switch (f.op) {
+      case "=":
+        if (raw !== f.value) return false;
+        break;
+      case "!=":
+        if (raw === f.value) return false;
+        break;
+      case ">":
+      case ">=":
+      case "<":
+      case "<=": {
+        // 数值列按数值比，其余按文本序（与 SQL 侧同一分支）。
+        const a = f.numeric ? dbNumeric(raw) : raw;
+        const b = f.numeric ? dbNumeric(f.value) : f.value;
+        const ok =
+          f.op === ">" ? a > b : f.op === ">=" ? a >= b : f.op === "<" ? a < b : a <= b;
+        if (!ok) return false;
+        break;
+      }
+      case "in": {
+        const a = f.numeric ? dbNumeric(raw) : raw;
+        const hit = f.values.some((v) => (f.numeric ? dbNumeric(v) === a : v === a));
+        if (!hit) return false;
+        break;
+      }
+      case "contains":
+        if (!raw.includes(f.value)) return false;
+        break;
+      case "is_null":
+        if (raw !== "") return false;
+        break;
+      default:
+        return false;
+    }
+  }
+  return true;
+}
+
+/** 视图配置里的标题过滤（与界面同口径：逗号 = OR、空格 = AND）。 */
+function dbTitleFilterGroups(raw: string): string[][] {
+  const key = raw.trim().toLowerCase();
+  if (!key) return [];
+  return key
+    .split(/[，,]/)
+    .map((g) => g.split(/\s+/).filter(Boolean))
+    .filter((g) => g.length > 0);
+}
+
+/** 视图的标题过滤（`DatabaseView.tsx` 的 `rows` useMemo 逐字同口径）。 */
+function dbPassesViewFilter(title: string, rawFilter: string): boolean {
+  const groups = dbTitleFilterGroups(rawFilter);
+  if (groups.length === 0) return true;
+  const t = title.toLowerCase();
+  return groups.some((g) => g.every((k) => t.includes(k)));
+}
+
+/** 视图的排序（与界面同口径：`__title` 或列 id；数值列按数值，其余 `localeCompare("zh")`）。 */
+function dbSortRows(
+  rows: { id: string; title: string; values: Record<string, string> }[],
+  columns: DbColumn[],
+  cfg: { key: string; dir: number },
+): { id: string; title: string; values: Record<string, string> }[] {
+  const { key, dir } = cfg;
+  if (!key) return rows;
+  const col = columns.find((c) => c.id === key);
+  if (key !== "__title" && !col) return rows; // 界面同样：认不出的列 ⇒ 等于没排序
+  return [...rows].sort((a, b) => {
+    if (key === "__title") return String(a.title ?? "").localeCompare(String(b.title ?? ""), "zh") * dir;
+    const av = dbRawValue(a, key);
+    const bv = dbRawValue(b, key);
+    if (col?.attr_type === "number") return (dbNumeric(av) - dbNumeric(bv)) * dir;
+    return av.localeCompare(bv, "zh") * dir;
+  });
+}
+
+/** 读视图配置里的 `{filter, sort}`（坏 JSON ⇒ 两项都没有，与界面一致）。 */
+function dbViewCfg(config: string): { filter: string; sort: { key: string; dir: number } | null } {
+  try {
+    const cfg = JSON.parse(config) as Record<string, unknown>;
+    const filter = typeof cfg.filter === "string" ? cfg.filter : "";
+    const s = cfg.sort as { key?: unknown; dir?: unknown } | undefined;
+    const key = typeof s?.key === "string" ? s.key.trim() : "";
+    const dir = typeof s?.dir === "number" && s.dir < 0 ? -1 : 1;
+    return { filter, sort: key ? { key, dir } : null };
+  } catch {
+    return { filter: "", sort: null };
+  }
+}
+
+/** 跨空间的诚实回话（应用内 AI 没有跨空间数据库命令；⛔ 不静默回落当前空间）。 */
+async function dbSpaceUnsupported(spaceId: string, what: string): Promise<{ ok: false; error: string } | null> {
+  if (!spaceId) return null;
+  const active = await api.getActiveWorkspaceId();
+  if (spaceId === active) return null;
+  return {
+    ok: false,
+    error: `应用内 AI 暂不支持跨空间${what}（命令面没有这一条）；外部接入请用「只读（全部空间）」档`,
+  };
+}
+
 export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   // ⭐ 2026-10-17：`pages.list` 进 AI/MCP 面 —— 外部 agent 以前**只能搜索**，
   // 搜不到就等于"库里没有"（没有第二条发现通路）。排序口径与 Rust 侧 `cap_pages_list` 一致：
@@ -315,6 +552,126 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     }
     const defs = await api.listAttrDefs();
     return { ok: true, properties: defs.map((d) => ({ id: d.id, name: d.name, type: d.attr_type })) };
+  },
+
+  // ⭐ B1b（2026-10-29）：数据库结构（列/视图/关系列）。与 Rust `cap_db_schema` **同一份数据**：
+  //   列走 `getDbColumns`、视图走 `listDbViews`（UI 用的就是这两条命令）⇒ 名字/顺序/类型对得上。
+  //   公式/汇总列只**标明**（isFormula/isRollup），⛔ 不计算（矩阵 §13.2-6）。
+  "db.schema": async (args) => {
+    const pageId = String(args.pageId ?? "").trim();
+    if (!pageId) return { ok: false, error: "invalid_args: 缺少参数 pageId（数据库页 id）" };
+    const spaceId = String(args.spaceId ?? "").trim();
+    const unsupported = await dbSpaceUnsupported(spaceId, "读数据库结构");
+    if (unsupported) return unsupported;
+    // 页面必须真的存在、且是**数据库**（命令面不会替我们校验 ⇒ 不校验就会把"空列"当成"空库"）。
+    const pages = await api.listPages();
+    const page = pages.find((p) => p.id === pageId);
+    if (!page) {
+      return {
+        ok: false,
+        error: `invalid_args: 找不到页面「${pageId}」（可能已删除，或 id 不是本空间的）—— 先用 pages.tree / pages.list 确认`,
+      };
+    }
+    if (page.kind !== "database") {
+      return {
+        ok: false,
+        error: `invalid_args: pageId「${pageId}」不是数据库页（kind=${page.kind}）—— 本应用的数据库是 kind=database 的页面节点；先用 pages.tree 找到它`,
+      };
+    }
+    const [columns, views] = await Promise.all([api.getDbColumns(pageId), api.listDbViews(pageId)]);
+    return {
+      ok: true,
+      pageId,
+      spaceId: spaceId || (await api.getActiveWorkspaceId()),
+      views: views.map((v) => ({ id: v.id, name: v.name, type: v.view_type })),
+      columns: columns.map((c) => ({
+        id: c.id,
+        name: c.name,
+        type: c.attr_type,
+        ...(c.attr_type === "formula" ? { isFormula: true } : {}),
+        ...(c.attr_type === "rollup" ? { isRollup: true } : {}),
+      })),
+      relations: columns
+        .filter((c) => c.attr_type === "ref")
+        .map((c) => ({ id: c.id, name: c.name, type: c.attr_type })),
+    };
+  },
+
+  // ⭐ B1b（2026-10-29）：数据库行（**只给原始值**，⛔ 不重算公式/汇总）。
+  //   ⚠️ 这一侧的「权威实现」在 Rust（SQL 侧过滤＋分页）；这里按逐字相同的语义在内存里做，
+  //   因为应用内 AI 的命令面只有 `queryDatabase(dbPageId)`（返回全部行）。两边必须同步改。
+  "db.rows": async (args) => {
+    const pageId = String(args.pageId ?? "").trim();
+    if (!pageId) return { ok: false, error: "invalid_args: 缺少参数 pageId（数据库页 id）" };
+    const spaceId = String(args.spaceId ?? "").trim();
+    const unsupported = await dbSpaceUnsupported(spaceId, "读数据库行");
+    if (unsupported) return unsupported;
+    const limit = intArg(args, "limit", DB_ROWS_LIMIT_DEFAULT, 1, DB_ROWS_LIMIT_MAX);
+    const offset = Math.max(0, intOr(args.offset, 0));
+    const pages = await api.listPages();
+    const page = pages.find((p) => p.id === pageId);
+    if (!page) {
+      return {
+        ok: false,
+        error: `invalid_args: 找不到页面「${pageId}」（可能已删除，或 id 不是本空间的）—— 先用 pages.tree / pages.list 确认`,
+      };
+    }
+    if (page.kind !== "database") {
+      return {
+        ok: false,
+        error: `invalid_args: pageId「${pageId}」不是数据库页（kind=${page.kind}）—— 本应用的数据库是 kind=database 的页面节点`,
+      };
+    }
+    const q = await api.queryDatabase(pageId);
+    const columns: DbColumn[] = q.columns.map((c) => ({ id: c.id, name: c.name, attr_type: c.attr_type }));
+    const parsed = parseDbWhere(args.where, columns);
+    if ("error" in parsed) return { ok: false, error: parsed.error };
+
+    // 视图：必须是**这个库**的视图（认不出就明确拒，⛔ 不静默当成"没有视图"）。
+    let viewCfg: { filter: string; sort: { key: string; dir: number } | null } = { filter: "", sort: null };
+    const viewId = String(args.viewId ?? "").trim();
+    if (viewId) {
+      const views = await api.listDbViews(pageId);
+      const v = views.find((x) => x.id === viewId);
+      if (!v) {
+        return { ok: false, error: `invalid_args: viewId「${viewId}」不是这个库的视图 —— 先用 db.schema 看 views` };
+      }
+      viewCfg = dbViewCfg(v.config);
+    }
+
+    let rows = q.rows
+      .filter((r) => dbRowMatches({ values: r.values }, parsed.filters))
+      .map((r) => ({ id: r.page_id, title: r.title, values: r.values }));
+    if (viewCfg.filter) rows = rows.filter((r) => dbPassesViewFilter(r.title, viewCfg.filter));
+    if (viewCfg.sort) rows = dbSortRows(rows, columns, viewCfg.sort);
+
+    const total = rows.length;
+    const available = Math.max(0, total - offset);
+    const slice = rows.slice(offset, offset + limit).map((r) => ({ id: r.id, values: r.values }));
+    let truncated = slice.length < available;
+    const note =
+      "values 是**原始值**（数据库里存的字符串），本工具**不重算公式/汇总** —— " +
+      "可能与界面里显示的计算值不同；`truncated:true` 表示本次没给全（调 limit/offset 翻页，或缩小 where）。";
+    let body = {
+      ok: true,
+      pageId,
+      spaceId: spaceId || (await api.getActiveWorkspaceId()),
+      total,
+      returned: slice.length,
+      rows: slice,
+      truncated,
+      note,
+    };
+    const bytes = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).length;
+    if (bytes(body) > DB_ROWS_MAX_BYTES) {
+      while (body.rows.length > 0) {
+        body.rows.pop();
+        body.returned = body.rows.length;
+        body.truncated = true;
+        if (bytes(body) <= DB_ROWS_MAX_BYTES) break;
+      }
+    }
+    return body;
   },
 
   "pages.get": async (args) => {

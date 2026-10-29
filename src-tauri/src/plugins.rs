@@ -2052,13 +2052,22 @@ fn cap_pages_search(q: &str, limit: i64, space_id: Option<&str>) -> CapResult {
 ///
 /// ⚠️ 信封里的 `spaceId` 必须是**这次真正搜的那个空间**（`spaceId` 参数给了就是它 ✓）——
 /// 否则"跨空间搜 A、信封说 B"比没有信封更糟 ✗。
-pub(crate) fn space_scope_snapshot_of(space_id: Option<&str>) -> Result<serde_json::Value, String> {
-    let target = space_id
+/// 这次读的是**哪个空间**（`spaceId` 省略/空 ⇒ 活动空间）—— 供响应体回填 `spaceId` 用。
+///
+/// ⚠️ 它只**读快照**、不判权限：跨空间那道门仍在 [`with_conn_for_space`] 里（唯一一处 ✓）。
+/// 拆出来是因为 B1b 的 `db.schema` / `db.rows` 与 `pages.tree` / 检索信封都要"响应里带
+/// **真正读的那个空间**"，⛔ 不能让三处各抄一遍"参数回声"（那会把"跨空间读 A、信封说 B"变成常态）。
+fn target_space_id(space_id: Option<&str>) -> String {
+    space_id
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .or_else(|| RUN_STATE.with(|s| s.borrow().read_space.clone()))
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+pub(crate) fn space_scope_snapshot_of(space_id: Option<&str>) -> Result<serde_json::Value, String> {
+    let target = target_space_id(space_id);
     with_conn_for_space(space_id, |c| {
         let name: Option<String> = c
             .query_row(
@@ -2545,6 +2554,165 @@ fn cap_pages_tree(space_id: Option<&str>, limit: i64) -> CapResult {
     })
 }
 
+/// `db.schema`（B1b，2026-10-29）：一个数据库页的**结构**（列 / 视图 / 关系列）。
+///
+/// 「与 UI 同源」不是形容词 —— 它**复用** UI 那两条查询：
+/// 列走 `database::db_columns`（= `getDbColumns` 的 SQL）、视图走 `database::db_views`
+/// （= `listDbViews` 的 SQL）⇒ ⛔ 这里不写第二份查询（两份必然漂，而漂了不会报错）。
+///
+/// 三条口径：
+///   ① **公式/汇总列只标类型、不计算**（矩阵 §13.2-6 / §4.4）：`isFormula:true` / `isRollup:true`
+///      是给调用方的**信号**（"这一列不是原始值，要算你自己算或看界面"），⛔ 这里不算；
+///   ② `relations` ＝ `type = "ref"` 的那些列（本应用的"关系列"就是它，取值形如 `p:<pageId>`）；
+///   ③ `spaceId` 省略 ⇒ 活动空间；给了就走 [`with_conn_for_space`] 那道**跨空间门**
+///      （没有 `read:all-spaces` ⇒ 明确 `permission_denied`，⛔ 不静默回落当前空间）。
+fn cap_db_schema(page_id: &str, space_id: Option<&str>) -> CapResult {
+    let space = target_space_id(space_id);
+    with_conn_for_space(space_id, |c| {
+        crate::database::require_db_page(c, page_id)?;
+        let columns = crate::database::db_columns(c, page_id)?;
+        let views = crate::database::db_views(c, page_id)?;
+        let cols: Vec<serde_json::Value> = columns
+            .iter()
+            .map(|a| {
+                let mut v = serde_json::json!({
+                    "id": a.id,
+                    "name": a.name,
+                    "type": a.attr_type,
+                });
+                // ⚠️ 只**标明**，不计算（见函数注释 ①）。
+                if a.attr_type == "formula" {
+                    v["isFormula"] = serde_json::json!(true);
+                }
+                if a.attr_type == "rollup" {
+                    v["isRollup"] = serde_json::json!(true);
+                }
+                v
+            })
+            .collect();
+        let relations: Vec<serde_json::Value> = columns
+            .iter()
+            .filter(|a| a.attr_type == "ref")
+            .map(|a| {
+                serde_json::json!({
+                    "id": a.id,
+                    "name": a.name,
+                    "type": a.attr_type,
+                })
+            })
+            .collect();
+        let view_list: Vec<serde_json::Value> = views
+            .iter()
+            .map(|v| {
+                serde_json::json!({
+                    "id": v.id,
+                    "name": v.name,
+                    "type": v.view_type,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({
+            "pageId": page_id.trim(),
+            "spaceId": space,
+            "views": view_list,
+            "columns": cols,
+            "relations": relations,
+        }))
+    })
+}
+
+/// `db.rows` 单次响应体的上限（矩阵 §7「文本返回 ≤200 KB/次」）—— 超了就**截断并如实标**
+/// （⛔ 不悄悄丢：调用方得知道它看到的不全）。
+const MAX_DB_ROWS_BYTES: usize = 200 * 1024;
+
+/// `db.rows`（B1b，2026-10-29）：一个数据库页的**行**，只给**原始值**。
+///
+/// 三条硬口径：
+///   ① **过滤与分页全在 Rust（SQL）侧**（[`crate::database::query_db_rows`]）：`where` 编成
+///      参数化 WHERE、`LIMIT/OFFSET` 编进 SQL ⇒ ⛔ 不「拉全表回 JS 侧再筛」；
+///   ② **只给原始值**：值就是 `page_props.value` / 标签名原样字符串，⛔ 不重算公式/汇总 ——
+///      回话里的 `note` 必须把这句话说出来（矩阵 §13.2-6：「可能与界面计算值不同」）；
+///   ③ `where` 的字段**必须**来自 `db.schema` 报出的列（id 或列名；**id 优先**，列名在空间内 UNIQUE），
+///      操作符白名单见 [`crate::database::WHERE_OPS_TEXT`]；越界/未知字段/坏操作符 ⇒ `invalid_args`
+///      （人话 ＋ 点名第几条），⛔ 不许 500 / 静默返回空。
+fn cap_db_rows(
+    page_id: &str,
+    view_id: Option<&str>,
+    where_value: Option<&serde_json::Value>,
+    limit: i64,
+    offset: i64,
+    space_id: Option<&str>,
+) -> CapResult {
+    // 默认 100、上限 500（矩阵：分页参数由**这一层**夹取，SQL 只看见夹过的值）。
+    let limit = limit.clamp(1, 500);
+    let offset = offset.max(0);
+    let space = target_space_id(space_id);
+    with_conn_for_space(space_id, |c| {
+        crate::database::require_db_page(c, page_id)?;
+        let columns = crate::database::db_columns(c, page_id)?;
+        let filters = crate::database::parse_row_filters(where_value, &columns)?;
+        // `viewId`：必须是**这个库**的视图 —— 认不出来就明确拒（⛔ 不静默当成"没有视图"，
+        // 那会让调用方以为过滤生效了而其实没有）。
+        let view = match view_id.map(str::trim).filter(|s| !s.is_empty()) {
+            None => None,
+            Some(vid) => {
+                let views = crate::database::db_views(c, page_id)?;
+                Some(views.into_iter().find(|v| v.id == vid).ok_or_else(|| {
+                    format!("invalid_args: viewId「{vid}」不是这个库的视图 —— 先用 db.schema 看 views")
+                })?)
+            }
+        };
+        let page =
+            crate::database::query_db_rows(c, page_id, &filters, view.as_ref(), limit, offset)?;
+        let total = page.total;
+        let mut rows: Vec<serde_json::Value> = page
+            .rows
+            .into_iter()
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.page_id,
+                    "values": r.values,
+                })
+            })
+            .collect();
+        // 本次窗口还剩多少行没给（= 过滤后总数 － offset）：`truncated` 只由它和 200 KB 两件事决定。
+        let available = (total - offset).max(0);
+        let mut truncated = (rows.len() as i64) < available;
+        let note = "values 是**原始值**（page_props / 标签表的原样字符串），本工具**不重算公式/汇总** —— \
+                    可能与界面里显示的计算值不同；`truncated:true` 表示本次没给全（调 limit/offset 翻页，\
+                    或缩小 where）。";
+        let envelope = |rows: &[serde_json::Value], truncated: bool| {
+            serde_json::json!({
+                "pageId": page_id.trim(),
+                "spaceId": space,
+                "total": total,
+                "returned": rows.len(),
+                "rows": rows,
+                "truncated": truncated,
+                "note": note,
+            })
+        };
+        let mut body = envelope(&rows, truncated);
+        // 200 KB 上限：从尾部丢行直到装得下（至少保证空 rows 也装得下 ⇒ 循环必然终止）。
+        let too_big = |v: &serde_json::Value| {
+            serde_json::to_string(v)
+                .map(|s| s.len() > MAX_DB_ROWS_BYTES)
+                .unwrap_or(false)
+        };
+        if too_big(&body) {
+            while !rows.is_empty() {
+                rows.pop();
+                truncated = true;
+                body = envelope(&rows, truncated);
+                if !too_big(&body) {
+                    break;
+                }
+            }
+        }
+        Ok(body)
+    })
+}
+
 /// `properties.set`：**不写库**，只产出草稿（改的是既有页面的属性）。
 fn cap_properties_set(attr_id: &str, value: &str, page_id: Option<&str>) -> CapResult {
     if attr_id.trim().is_empty() {
@@ -2894,6 +3062,17 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         "settings.get" => cap_settings_get(&arg_str("key")?),
         "blocks.list" => cap_blocks_list(arg_opt_str("pageId").as_deref(), arg_i64("limit", 100)),
         "properties.list" => cap_properties_list(arg_opt_str("spaceId").as_deref()),
+        // B1b（2026-10-29）：数据库结构化读 —— 两条都是 `read:pages`、都支持可选 `spaceId`
+        // （跨空间门在 `with_conn_for_space` 里，与 pages.list / pages.tree 同一处）。
+        "db.schema" => cap_db_schema(&arg_str("pageId")?, arg_opt_str("spaceId").as_deref()),
+        "db.rows" => cap_db_rows(
+            &arg_str("pageId")?,
+            arg_opt_str("viewId").as_deref(),
+            args.get("where"),
+            arg_i64("limit", 100),
+            arg_i64("offset", 0),
+            arg_opt_str("spaceId").as_deref(),
+        ),
         "properties.set" => cap_properties_set(
             &arg_str("attrId")?,
             &arg_str("value")?,
@@ -10963,6 +11142,515 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert_eq!(tree["spaceId"], "b1a-other");
         assert_eq!(tree["spaceName"], "别处空间");
         assert_eq!(tree["nodes"].as_array().unwrap().len(), 2);
+        unpoint_cap_search(&dir);
+    }
+
+    // ---- B1b（2026-10-29）`db.schema` / `db.rows` 的**数据级**判据 -----------------------------
+    //
+    // 挂载级那一半（工具面里在不在、「不接」档是否逐条 permission_denied）在 `mcp_host.rs`。
+    // 这里钉的是数据语义：列/视图/关系列与 UI 同源、公式列只标不算、where 五种操作符、
+    // 坏输入逐条点名、分页切片、200 KB 截断、跨空间两档。
+    //
+    // 夹具：当前空间 b1b-space（名称「夹具空间」）——
+    //   · 数据库页 db1（kind=database）＋ 4 个数据行 r1..r4（kind=page，updated_at 递减）
+    //     和 1 个普通页 plain1（用来验"pageId 不是数据库页"）；
+    //   · 列：a1 状态(select) / a2 分数(number) / a3 备注(text) / a5 公式(formula) /
+    //     a6 关联(ref) / a7 标签列(tag)；
+    //   · 视图：v1 表格（无过滤）、v2「只看甲」（标题过滤「甲」＋按标题升序）；
+    //   · 行值：r1{a1 进行中, a2 10, a3 甲备注, a5 **a1+a2**（原始值，不是计算值）, a6 p:r2}
+    //           r2{a1 完成, a2 20, a3 乙备注, a6 p:r1}；r3{a1 进行中, a2 30}；r4 无属性；
+    //   · r1 打标签 t1 待办 ＋ t2 重要（标签列原始值 = "待办, 重要"）。
+    //   另一个空间 b1b-other（名称「别处空间」）：数据库页 odb1 ＋ 1 个数据行 orow。
+    fn b1b_fixture(tag: &str) -> PathBuf {
+        let dir = cap_search_dir(tag);
+        {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES ('b1b-space', '夹具空间', '#000', '', 1, 1, 1)",
+                [],
+            )
+            .unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES ('b1b-other', '别处空间', '#000', '', 2, 2, 2)",
+                [],
+            )
+            .unwrap();
+        }
+        {
+            let c = crate::db::open_space_conn_at("b1b-space", &dir).unwrap();
+            for (id, title, kind, at) in [
+                ("db1", "任务库", "database", 200),
+                ("plain1", "普通页", "folder", 201),
+                ("r1", "甲", "page", 104),
+                ("r2", "乙", "page", 103),
+                ("r3", "丙", "page", 102),
+                ("r4", "丁", "page", 101),
+            ] {
+                c.execute(
+                    "INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at)
+                     VALUES (?1, 'b1b-space', NULL, ?2, ?3, 0, ?4, ?4)",
+                    params![id, title, kind, at],
+                )
+                .unwrap();
+            }
+            for (id, name, ty, ord) in [
+                ("a1", "状态", "select", 0.0),
+                ("a2", "分数", "number", 1.0),
+                ("a3", "备注", "text", 2.0),
+                ("a5", "公式", "formula", 3.0),
+                ("a6", "关联", "ref", 4.0),
+                ("a7", "标签列", "tag", 5.0),
+            ] {
+                c.execute(
+                    "INSERT INTO attr_defs (id, name, type, options, sort_order, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, '[]', ?4, 1, 1)",
+                    params![id, name, ty, ord],
+                )
+                .unwrap();
+                c.execute(
+                    "INSERT INTO database_columns (db_page_id, attr_id, sort_order) VALUES ('db1', ?1, ?2)",
+                    params![id, ord],
+                )
+                .unwrap();
+            }
+            c.execute(
+                "INSERT INTO db_views (id, db_page_id, name, view_type, config, sort_order, created_at)
+                 VALUES ('v1', 'db1', '表格', 'table', '{}', 0, 1)",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO db_views (id, db_page_id, name, view_type, config, sort_order, created_at)
+                 VALUES ('v2', 'db1', '只看甲', 'table',
+                         '{\"filter\":\"甲\",\"sort\":{\"key\":\"__title\",\"dir\":1}}', 1, 1)",
+                [],
+            )
+            .unwrap();
+            for (page, attr, value) in [
+                ("r1", "a1", "进行中"),
+                ("r1", "a2", "10"),
+                ("r1", "a3", "甲备注"),
+                // ⚠️ 公式列的**原始值**故意存一个能看出来的串：本工具必须原样返回它、
+                //    ⛔ 不许把它算成 10+?（矩阵 §13.2-6：db.rows 只给原始值）。
+                ("r1", "a5", "a1+a2"),
+                ("r1", "a6", "p:r2"),
+                ("r2", "a1", "完成"),
+                ("r2", "a2", "20"),
+                ("r2", "a3", "乙备注"),
+                ("r2", "a6", "p:r1"),
+                ("r3", "a1", "进行中"),
+                ("r3", "a2", "30"),
+            ] {
+                c.execute(
+                    "INSERT INTO page_props (page_id, attr_id, value) VALUES (?1, ?2, ?3)",
+                    params![page, attr, value],
+                )
+                .unwrap();
+            }
+            c.execute("INSERT INTO tags (id, name) VALUES ('t1', '待办')", [])
+                .unwrap();
+            c.execute("INSERT INTO tags (id, name) VALUES ('t2', '重要')", [])
+                .unwrap();
+            c.execute("INSERT INTO page_tags (page_id, tag_id) VALUES ('r1', 't1')", [])
+                .unwrap();
+            c.execute("INSERT INTO page_tags (page_id, tag_id) VALUES ('r1', 't2')", [])
+                .unwrap();
+        }
+        {
+            let c = crate::db::open_space_conn_at("b1b-other", &dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at)
+                 VALUES ('odb1', 'b1b-other', NULL, '别处的库', 'database', 0, 1, 1)",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at)
+                 VALUES ('orow', 'b1b-other', NULL, '别处的行', 'page', 0, 2, 2)",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO attr_defs (id, name, type, options, sort_order, created_at, updated_at)
+                 VALUES ('da1', '名字', 'text', '[]', 0, 1, 1)",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO database_columns (db_page_id, attr_id, sort_order) VALUES ('odb1', 'da1', 0)",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO page_props (page_id, attr_id, value) VALUES ('orow', 'da1', '别的')",
+                [],
+            )
+            .unwrap();
+        }
+        dir
+    }
+
+    /// 在夹具上追加一行「巨大」的数据行（给 200 KB 截断用）：它 updated_at 最小 ⇒ 排最后，
+    /// 截断时先被丢掉的正是它（这样断言能同时看到 total 不变、returned 变少、truncated:true）。
+    fn b1b_add_huge_row(dir: &std::path::Path) {
+        let c = crate::db::open_space_conn_at("b1b-space", dir).unwrap();
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at)
+             VALUES ('r5', 'b1b-space', NULL, '戊', 'page', 0, 100, 100)",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO page_props (page_id, attr_id, value) VALUES ('r5', 'a3', ?1)",
+            params!["x".repeat(210 * 1024)],
+        )
+        .unwrap();
+    }
+
+    /// ⭐ 判据 1：`db.schema` 的列/视图/关系列与 UI **同源**（同一份 fixture 的真值），
+    /// 且**公式列 `isFormula:true`**、原始值里那个公式串**没被计算**（下一用例断言值）。
+    #[test]
+    fn b1b_db_schema_reports_columns_views_and_relations_like_the_ui() {
+        let dir = b1b_fixture("b1b-schema");
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let out = with_external_caller("b1b-schema", &granted, || {
+            dispatch_capability("db.schema", r#"{"pageId":"db1"}"#)
+        })
+        .expect("db.schema 在只读档必须可调");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["pageId"], "db1");
+        assert_eq!(v["spaceId"], "b1b-space");
+        // 视图：与 list_db_views 同一条 SQL（顺序 sort_order → created_at）
+        let views = v["views"].as_array().expect("views 必须是数组");
+        assert_eq!(views.len(), 2);
+        assert_eq!(views[0]["id"], "v1");
+        assert_eq!(views[0]["name"], "表格");
+        assert_eq!(views[0]["type"], "table");
+        assert_eq!(views[1]["id"], "v2");
+        assert_eq!(views[1]["name"], "只看甲");
+        // 列：顺序 = database_columns.sort_order；类型原样；公式列带 isFormula
+        let cols = v["columns"].as_array().expect("columns 必须是数组");
+        let ids: Vec<&str> = cols.iter().map(|c| c["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["a1", "a2", "a3", "a5", "a6", "a7"]);
+        assert_eq!(cols[0]["name"], "状态");
+        assert_eq!(cols[0]["type"], "select");
+        assert_eq!(cols[1]["type"], "number");
+        assert_eq!(
+            cols[3]["isFormula"],
+            serde_json::json!(true),
+            "公式列必须标明 isFormula:true（矩阵 §13.2-6）"
+        );
+        assert!(
+            cols[3].get("isRollup").is_none(),
+            "公式列不该带 isRollup"
+        );
+        // 关系列单列在 relations 里（type=ref 的那些）
+        let rels = v["relations"].as_array().expect("relations 必须是数组");
+        assert_eq!(rels.len(), 1, "夹具里只有 a6 是 ref 关系列");
+        assert_eq!(rels[0]["id"], "a6");
+        assert_eq!(rels[0]["name"], "关联");
+        assert_eq!(rels[0]["type"], "ref");
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ 判据 1（值那一半）＋ 判据 2（无 where ⇒ 行数 = 表行数、total 正确）：
+    /// 只给**原始值** —— 公式列的 "a1+a2" 原样返回（⛔ 不计算），标签列的原始值是拼好的名字。
+    #[test]
+    fn b1b_db_rows_without_where_returns_every_row_and_the_raw_values() {
+        let dir = b1b_fixture("b1b-all");
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let out = with_external_caller("b1b-all", &granted, || {
+            dispatch_capability("db.rows", r#"{"pageId":"db1"}"#)
+        })
+        .expect("db.rows 在只读档必须可调");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["pageId"], "db1");
+        assert_eq!(v["spaceId"], "b1b-space");
+        assert_eq!(v["total"], 4, "夹具里 db1 有 4 个数据行");
+        assert_eq!(v["returned"], 4);
+        assert_eq!(v["truncated"], serde_json::json!(false));
+        let rows = v["rows"].as_array().unwrap();
+        // 默认顺序：updated_at DESC（r1 最新）
+        let ids: Vec<&str> = rows.iter().map(|r| r["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["r1", "r2", "r3", "r4"]);
+        // 原始值：公式列**原样**（⛔ 不是 10 或 "10+…" 的计算结果）
+        assert_eq!(rows[0]["values"]["a5"], "a1+a2", "公式列只给原始值");
+        assert_eq!(rows[0]["values"]["a1"], "进行中");
+        assert_eq!(rows[0]["values"]["a2"], "10");
+        assert_eq!(
+            rows[0]["values"]["a7"], "待办, 重要",
+            "标签列原始值 = 标签名按名字排序后逗号相连（与 queryDatabase 一致）"
+        );
+        assert_eq!(rows[0]["values"]["a6"], "p:r2", "关系列原样给 p:<id>");
+        // 4 号行没有任何属性 ⇒ values 是空对象（不是编一堆空串）
+        assert_eq!(rows[3]["values"], serde_json::json!({}));
+        // 回话必须**说出**"原始值、可能与界面计算值不同"（矩阵 §13.2-6）
+        assert!(
+            v["note"].as_str().unwrap_or_default().contains("原始值"),
+            "note 必须说明只给原始值：{v}"
+        );
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ 判据 2：`where` 单条件 / 多条件 AND 各一条（字段**id 与列名**都接受）。
+    #[test]
+    fn b1b_db_rows_where_single_and_multi_conditions() {
+        let dir = b1b_fixture("b1b-where");
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let (one, two) = with_external_caller("b1b-where", &granted, || {
+            (
+                // 单条件：用**列名**匹配
+                dispatch_capability(
+                    "db.rows",
+                    r#"{"pageId":"db1","where":[{"field":"状态","op":"=","value":"进行中"}]}"#,
+                ),
+                // 多条件 AND：用**列 id**（数值列按数值比较）
+                dispatch_capability(
+                    "db.rows",
+                    r#"{"pageId":"db1","where":[{"field":"a1","op":"=","value":"进行中"},{"field":"a2","op":">","value":15}]}"#,
+                ),
+            )
+        });
+        let one: serde_json::Value = serde_json::from_str(&one.unwrap()).unwrap();
+        assert_eq!(one["total"], 2, "状态=进行中 ⇒ r1/r3");
+        let ids: Vec<&str> = one["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["r1", "r3"]);
+        let two: serde_json::Value = serde_json::from_str(&two.unwrap()).unwrap();
+        assert_eq!(two["total"], 1, "进行中 AND 分数>15 ⇒ 只剩 r3");
+        assert_eq!(two["rows"][0]["id"], "r3");
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ 判据 2：`in` / `contains` / `is_null` 各一条。
+    #[test]
+    fn b1b_db_rows_supports_in_contains_and_is_null() {
+        let dir = b1b_fixture("b1b-ops");
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let (in_r, contains_r, null_r) = with_external_caller("b1b-ops", &granted, || {
+            (
+                dispatch_capability(
+                    "db.rows",
+                    r#"{"pageId":"db1","where":[{"field":"a1","op":"in","value":["完成"]}]}"#,
+                ),
+                dispatch_capability(
+                    "db.rows",
+                    r#"{"pageId":"db1","where":[{"field":"a3","op":"contains","value":"甲备"}]}"#,
+                ),
+                dispatch_capability(
+                    "db.rows",
+                    r#"{"pageId":"db1","where":[{"field":"a2","op":"is_null"}]}"#,
+                ),
+            )
+        });
+        let in_v: serde_json::Value = serde_json::from_str(&in_r.unwrap()).unwrap();
+        assert_eq!(in_v["total"], 1);
+        assert_eq!(in_v["rows"][0]["id"], "r2");
+        let contains_v: serde_json::Value = serde_json::from_str(&contains_r.unwrap()).unwrap();
+        assert_eq!(contains_v["total"], 1);
+        assert_eq!(contains_v["rows"][0]["id"], "r1");
+        let null_v: serde_json::Value = serde_json::from_str(&null_r.unwrap()).unwrap();
+        assert_eq!(null_v["total"], 1, "没有分数的只有 r4");
+        assert_eq!(null_v["rows"][0]["id"], "r4");
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ 判据 3：坏输入逐条 `invalid_args`（未知字段 / 坏操作符 / `in` 非数组 / where 非数组），
+    /// **点名第几条**，且⛔ 不许 Ok(空数组) 伪装成"没有匹配"。
+    #[test]
+    fn b1b_db_rows_invalid_inputs_are_named_not_swallowed() {
+        let dir = b1b_fixture("b1b-bad");
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let cases = [
+            (
+                "unknown-field",
+                r#"{"pageId":"db1","where":[{"field":"不存在的列","op":"=","value":"x"}]}"#,
+                "不存在的列",
+            ),
+            (
+                "bad-op",
+                r#"{"pageId":"db1","where":[{"field":"a1","op":"like","value":"x"}]}"#,
+                "like",
+            ),
+            (
+                "in-not-array",
+                r#"{"pageId":"db1","where":[{"field":"a1","op":"in","value":"进行中"}]}"#,
+                "数组",
+            ),
+            (
+                "where-not-array",
+                r#"{"pageId":"db1","where":{"field":"a1","op":"=","value":"x"}}"#,
+                "where 必须是数组",
+            ),
+        ];
+        for (label, args, needle) in cases {
+            let r = with_external_caller(label, &granted, || dispatch_capability("db.rows", args));
+            let e = r.expect_err(&format!("{label} 必须被拒（⛔ 不许 500 / 静默空）：{args}"));
+            assert!(
+                e.contains("invalid_args"),
+                "{label} 的错误码必须是 invalid_args：{e}"
+            );
+            assert!(
+                e.contains(needle),
+                "{label} 的判语必须点名问题（要含「{needle}」）：{e}"
+            );
+            assert!(
+                e.contains("where[0]") || label == "where-not-array",
+                "{label} 要点名第几条：{e}"
+            );
+        }
+        // pageId 指向普通页 / 不存在 ⇒ 也是 invalid_args（不是 500、也不是"空库"）
+        for (label, args) in [
+            ("not-db", r#"{"pageId":"plain1"}"#),
+            ("missing-page", r#"{"pageId":"nope"}"#),
+        ] {
+            let r = with_external_caller(label, &granted, || dispatch_capability("db.schema", args));
+            let e = r.expect_err(&format!("{label} 必须被拒"));
+            assert!(e.contains("invalid_args"), "{label}：{e}");
+        }
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ 判据 4（前半）：`limit=2&offset=2` ⇒ 正确切片、`total` 不变（分页在 Rust 侧执行）。
+    #[test]
+    fn b1b_db_rows_paginates_with_limit_and_offset() {
+        let dir = b1b_fixture("b1b-page");
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let out = with_external_caller("b1b-page", &granted, || {
+            dispatch_capability("db.rows", r#"{"pageId":"db1","limit":2,"offset":2}"#)
+        })
+        .expect("带 limit/offset 的 db.rows 必须可调");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["total"], 4, "total 是过滤后的总行数（不受 limit 影响）");
+        assert_eq!(v["returned"], 2);
+        let ids: Vec<&str> = v["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["r3", "r4"], "offset=2 跳过 r1/r2 后是 r3/r4");
+        assert_eq!(
+            v["truncated"],
+            serde_json::json!(false),
+            "这一页正好把剩下的给完了 ⇒ 不算截断"
+        );
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ 判据 4（后半）：响应体超 200 KB ⇒ **提前截断并 `truncated:true`**（total 不变）。
+    #[test]
+    fn b1b_db_rows_truncates_the_body_at_200kb_and_says_so() {
+        let dir = b1b_fixture("b1b-big");
+        b1b_add_huge_row(&dir);
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let out = with_external_caller("b1b-big", &granted, || {
+            dispatch_capability("db.rows", r#"{"pageId":"db1"}"#)
+        })
+        .expect("db.rows 必须可调");
+        assert!(
+            out.len() <= 200 * 1024,
+            "响应体必须 ≤200KB（实际 {} 字节）",
+            out.len()
+        );
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["total"], 5, "total 仍是真实行数（不因截断变）");
+        assert_eq!(
+            v["truncated"],
+            serde_json::json!(true),
+            "撞了 200KB 上限必须如实标 truncated"
+        );
+        assert!(
+            (v["returned"].as_i64().unwrap()) < 5,
+            "至少要丢掉那行巨大的（returned={}）",
+            v["returned"]
+        );
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ 判据 5：带 `spaceId` 在「只读」档 ⇒ **两条工具都明确拒**（点名 `read:all-spaces`）；
+    /// 「只读（全部空间）」档 ⇒ **真能读别的空间**（读到的是那个空间的库/行，不是当前空间）。
+    #[test]
+    fn b1b_db_tools_follow_the_cross_space_permission_gate() {
+        let dir = b1b_fixture("b1b-cross");
+        point_cap_search_at(&dir, "b1b-space");
+        let read = crate::mcp_channel::default_read_scopes();
+        let cases = [
+            ("db.schema", r#"{"pageId":"odb1","spaceId":"b1b-other"}"#),
+            ("db.rows", r#"{"pageId":"odb1","spaceId":"b1b-other"}"#),
+        ];
+        let denied: Vec<Result<String, String>> = with_external_caller("b1b-cross-read", &read, || {
+            cases
+                .iter()
+                .map(|(m, a)| dispatch_capability(m, a))
+                .collect()
+        });
+        for ((method, _), r) in cases.iter().zip(denied.iter()) {
+            let e = r
+                .as_ref()
+                .expect_err(&format!("{method} 在只读档带 spaceId 必须被拒"));
+            assert!(
+                e.contains("permission_denied"),
+                "{method} 必须是 permission_denied：{e}"
+            );
+            assert!(
+                e.contains("read:all-spaces"),
+                "{method} 的拒绝要点名缺 read:all-spaces：{e}"
+            );
+        }
+        // 只读（全部空间）档
+        let mut all = read.clone();
+        all.push(crate::mcp_channel::READ_ALL_SCOPE.to_string());
+        let (schema, rows) = with_external_caller("b1b-cross-all", &all, || {
+            (
+                dispatch_capability("db.schema", r#"{"pageId":"odb1","spaceId":"b1b-other"}"#),
+                dispatch_capability("db.rows", r#"{"pageId":"odb1","spaceId":"b1b-other"}"#),
+            )
+        });
+        let schema: serde_json::Value =
+            serde_json::from_str(&schema.expect("全部空间档必须能读跨空间结构")).unwrap();
+        assert_eq!(schema["spaceId"], "b1b-other");
+        assert_eq!(schema["columns"].as_array().unwrap().len(), 1);
+        assert_eq!(schema["columns"][0]["name"], "名字");
+        let rows: serde_json::Value =
+            serde_json::from_str(&rows.expect("全部空间档必须能读跨空间行")).unwrap();
+        assert_eq!(rows["spaceId"], "b1b-other");
+        assert_eq!(rows["total"], 1);
+        assert_eq!(rows["rows"][0]["id"], "orow");
+        assert_eq!(rows["rows"][0]["values"]["da1"], "别的");
+        unpoint_cap_search(&dir);
+    }
+
+    /// `viewId`：套用视图保存的**标题过滤**（与界面同口径）——认不出的 viewId ⇒ `invalid_args`。
+    #[test]
+    fn b1b_db_rows_applies_the_saved_view_filter() {
+        let dir = b1b_fixture("b1b-view");
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let (ok_r, bad_r) = with_external_caller("b1b-view", &granted, || {
+            (
+                dispatch_capability("db.rows", r#"{"pageId":"db1","viewId":"v2"}"#),
+                dispatch_capability("db.rows", r#"{"pageId":"db1","viewId":"nope"}"#),
+            )
+        });
+        let v: serde_json::Value = serde_json::from_str(&ok_r.unwrap()).unwrap();
+        assert_eq!(v["total"], 1, "v2 的标题过滤「甲」只留 r1");
+        assert_eq!(v["rows"][0]["id"], "r1");
+        let e = bad_r.expect_err("认不出的 viewId 必须被拒（⛔ 不静默当成没有视图）");
+        assert!(e.contains("invalid_args") && e.contains("nope"), "{e}");
         unpoint_cap_search(&dir);
     }
 }

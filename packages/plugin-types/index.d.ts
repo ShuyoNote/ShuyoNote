@@ -167,6 +167,16 @@ export interface PluginApi {
    */
     update(id: string, markdown?: string, content?: string, title?: string): { drafted: true; summary: string };
   };
+  db: {
+  /** 读取数据库结构（权限 `read:pages`；1.4.0 起）
+   * 返回：{pageId, spaceId, views:[{id,name,type}], columns:[{id,name,type,isFormula?,isRollup?}], relations:[{id,name,type}]}：列与视图与界面**同一条查询**（getDbColumns / listDbViews）；公式列带 isFormula:true、汇总列带 isRollup:true（**只标明类型，本工具不计算任何值**）；relations 是 type=ref 的关系列（取值形如 `p:<pageId>`）
+   */
+    schema(pageId: string, spaceId?: string): { pageId: string; spaceId: string; views: { id: string; name: string; type: string }[]; columns: { id: string; name: string; type: string; isFormula?: boolean; isRollup?: boolean }[]; relations: { id: string; name: string; type: string }[] };
+  /** 读取数据库行（原始值）（权限 `read:pages`；1.4.0 起）
+   * 返回：{pageId, spaceId, total, returned, rows:[{id, values:{<columnId>: <原始值>}}], truncated, note}：total 是**过滤后**的总行数（不受 limit 影响）；values **只给原始值**（原始字符串），⛔ **不重算公式/汇总** ⇒ 可能与界面里显示的计算值不同（note 里有这句）；truncated=true 表示本次没给全（还有更多行，或响应体撞了 200 KB 上限）
+   */
+    rows(pageId: string, viewId?: string, where?: { field: string; op: string; value?: string | number | boolean | (string | number | boolean)[] }[], limit?: number, offset?: number, spaceId?: string): { pageId: string; spaceId: string; total: number; returned: number; rows: { id: string; values: Record<string, string> }[]; truncated: boolean; note: string };
+  };
   tags: {
   /** 列出本空间标签（权限 `read:tags`；1.0.0 起）
    * 返回：[{id, name, page_count}]：page_count 是**这个空间里**打了该标签的页面数（不含已删除页面）
@@ -265,4 +275,4 @@ export interface PluginApi {
   };
 }
 
-export declare const SDK_API_VERSION: "1.3.0";
+export declare const SDK_API_VERSION: "1.4.0";

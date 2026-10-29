@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "apiVersion": "1.3.0",
+  "apiVersion": "1.4.0",
   "notes": "插件能力注册表——单一事实源。scripts/gen-capabilities.mjs 由本文件生成：JS shim（api.*）、Rust 绑定表、作者类型包、作者文档；scripts/check-capabilities.mjs 校验一致性与完整性。改能力请改这里，不要手改生成物。",
   "permissions": [
     {
@@ -387,6 +387,103 @@
       "rust": "cap_pages_tree",
       "desc": "一次读取**整个空间的页面树**（结构视图）：返回 {spaceId, spaceName, nodes:[{id,title,kind,parentId,order}], total, truncated}。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒), limit (可选, 默认 2000, 上限 2000)。数据与 pages.list **同一张表、同一口径**（未删除的全部节点，含文件夹与数据库），只是一次给出层级与排序。",
       "mcpDesc": "一次读取**整个空间的页面树**（结构视图）：{spaceId, spaceName, nodes:[{id,title,kind,parentId,order}], total, truncated}。节点与 pages_list **同一集合**（未删除的页面/数据库/文件夹），按树顺序给出 parentId 与 order；`kind` 是 page / database / folder。默认读**当前空间**；给了 spaceId 就读那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。超过 limit（默认与上限都是 2000 节点）⇒ `truncated:true`（如实说，别把截断的树当全量）。参数: spaceId (可选), limit (可选, 默认 2000, 上限 2000)。",
+      "ai": true
+    },
+    {
+      "id": "db.schema",
+      "title": "读取数据库结构",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:pages",
+      "since": "1.4.0",
+      "jsPath": [
+        "db",
+        "schema"
+      ],
+      "args": [
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": true,
+          "desc": "数据库页 id（**必填**）。本应用的数据库是 `kind=database` 的页面节点（在 pages.tree / pages.list 里看得到）；⛔ 不是「数据库块所在的那篇普通笔记」"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ pageId: string; spaceId: string; views: { id: string; name: string; type: string }[]; columns: { id: string; name: string; type: string; isFormula?: boolean; isRollup?: boolean }[]; relations: { id: string; name: string; type: string }[] }",
+        "desc": "{pageId, spaceId, views:[{id,name,type}], columns:[{id,name,type,isFormula?,isRollup?}], relations:[{id,name,type}]}：列与视图与界面**同一条查询**（getDbColumns / listDbViews）；公式列带 isFormula:true、汇总列带 isRollup:true（**只标明类型，本工具不计算任何值**）；relations 是 type=ref 的关系列（取值形如 `p:<pageId>`）"
+      },
+      "rust": "cap_db_schema",
+      "desc": "读取一个**数据库页**的结构：列、视图、关系列。参数: pageId (必填：kind=database 的页面节点 id), spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。返回 {pageId, spaceId, views:[{id,name,type}], columns:[{id,name,type,isFormula?,isRollup?}], relations:[{id,name,type}]} —— 公式/汇总列**只标类型、不计算**；关系列（type=ref）单列在 relations 里。",
+      "mcpDesc": "读取一个**数据库页**的结构：`{pageId, spaceId, views:[{id,name,type}], columns:[{id,name,type,isFormula?,isRollup?}], relations:[{id,name,type}]}`。列与视图与界面**同一条查询**（同一份数据库元数据），所以名字/顺序/类型都对得上。**公式列**带 `isFormula:true`、**汇总列**带 `isRollup:true` —— 本工具只**标明**它们是计算列，⛔ **不计算任何值**；`relations` 是关系列（`type:ref`，取值形如 `p:<pageId>`，要标题得自己按 id 再查）。默认读**当前空间**；给了 spaceId 就读那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: pageId (必填), spaceId (可选)。",
+      "ai": true
+    },
+    {
+      "id": "db.rows",
+      "title": "读取数据库行（原始值）",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:pages",
+      "since": "1.4.0",
+      "jsPath": [
+        "db",
+        "rows"
+      ],
+      "args": [
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": true,
+          "desc": "数据库页 id（**必填**）。本应用的数据库是 `kind=database` 的页面节点"
+        },
+        {
+          "name": "viewId",
+          "type": "string",
+          "required": false,
+          "desc": "视图 id（可选；省略 = 不加视图过滤）。给了就套用该视图保存的**标题过滤与排序**（与界面同一个视图配置）；认不出的 id ⇒ invalid_args，不会静默忽略"
+        },
+        {
+          "name": "where",
+          "type": "array",
+          "required": false,
+          "ts": "{ field: string; op: string; value?: string | number | boolean | (string | number | boolean)[] }[]",
+          "desc": "简单条件数组（可选；不传 = 全部行）。形状：[{field, op, value?}]，多条之间是 **AND**；field 是列 id 或列名（**id 优先**，列名须完全一致；列必须来自 db.schema）；op 白名单 = != > >= < <= in contains is_null；in 的 value 必须是数组；is_null 不需要 value。越界/未知字段/坏操作符 ⇒ invalid_args（点名声哪条）"
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "required": false,
+          "default": 100,
+          "desc": "本页最多返回多少行（默认 100，上限 500）；分页在宿主侧执行"
+        },
+        {
+          "name": "offset",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "desc": "跳过多少行（默认 0）；与 limit 一起翻页"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ pageId: string; spaceId: string; total: number; returned: number; rows: { id: string; values: Record<string, string> }[]; truncated: boolean; note: string }",
+        "desc": "{pageId, spaceId, total, returned, rows:[{id, values:{<columnId>: <原始值>}}], truncated, note}：total 是**过滤后**的总行数（不受 limit 影响）；values **只给原始值**（原始字符串），⛔ **不重算公式/汇总** ⇒ 可能与界面里显示的计算值不同（note 里有这句）；truncated=true 表示本次没给全（还有更多行，或响应体撞了 200 KB 上限）"
+      },
+      "rust": "cap_db_rows",
+      "desc": "读取一个**数据库页**的行（**只给原始值**，⛔ 不重算公式/汇总；回话里的 note 会说明「可能与界面计算值不同」）。参数: pageId (必填), viewId (可选：套用视图保存的标题过滤与排序), where (可选：简单条件数组，多条 AND，字段必须来自 db.schema，操作符白名单 = != > >= < <= in contains is_null), limit (可选, 默认 100, 上限 500), offset (可选, 默认 0), spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。返回 {pageId, spaceId, total, returned, rows:[{id, values}], truncated, note}；过滤与分页在宿主（Rust）侧执行，超过 200 KB 会截断并如实标 truncated。",
+      "mcpDesc": "读取一个**数据库页的行**：`{pageId, spaceId, total, returned, rows:[{id, values:{<columnId>: <原始值>}}], truncated, note}`。⚠️ **values 是数据库里存的原始值**（字符串），本工具⛔ **不重算公式列/汇总列** ⇒ 可能与界面里显示的计算值不同（`note` 里也写着这句）；要展示计算值请看界面或自己算。`total` 是**过滤后**的总行数（不受 limit 影响，可用它判断翻页到没到头）。**简单 where**（多条 AND）：`[{field, op, value?}]`，`field` 是**列 id 或列名（id 优先，列名须完全一致；必须来自 db_schema 报出的列）**，`op` 白名单 `= != > >= < <= in contains is_null`（`in` 的 value 必须是数组；`is_null` 不需要 value）；写错字段/操作符/形状 ⇒ `invalid_args` 并**点名第几条**（不会静默返回空）。可选 `viewId` 套用该视图保存的**标题过滤与排序**。`limit` 默认 100、上限 500，`offset` 默认 0（分页在宿主侧执行）；响应体超过 200 KB ⇒ 提前截断并 `truncated:true`。默认读**当前空间**；给了 spaceId 就读那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: pageId (必填), viewId (可选), where (可选), limit (可选, 默认 100, 上限 500), offset (可选, 默认 0), spaceId (可选)。",
       "ai": true
     },
     {
