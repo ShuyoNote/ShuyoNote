@@ -28607,3 +28607,6 @@ button.mset-row:focus-visible {
 }
 .sync-enc-adopt .sync-hint { margin: 0; text-align: left; }
 .sync-enc-adopt .sync-btn { flex: none; }
+
+/* 2026-10-29 (owner: keep-alive): when EmailPanel is closed it stays mounted; hide the portal root by attribute. */
+.email-page[hidden] { display: none !important; }

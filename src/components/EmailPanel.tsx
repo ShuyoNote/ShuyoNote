@@ -1805,9 +1805,12 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
         </button>
       )}
 
-      {open &&
-        createPortal(
-          <div ref={pageRef} className="email-page" role="dialog" aria-label="邮箱">
+      {/* ⭐ **2026-10-29（owner：点侧栏邮件总要重拉 · 方案 B「保活」）**：portal 现在就**常驻**，
+          关闭时用 `hidden` 藏（`.email-page[hidden]` 见 App.css）—— DOM 不销毁 ⇒ 滚动位置、
+          选中的邮件、列表全部保留 ✓。⛔ 别改回 `open &&`：那等于每次关闭都丢掉整棵 DOM ✗。
+          ⚠️ 隐藏期间不轮询：下面所有定时/拉取 effect 仍以 `open` 为门 ✓。 */}
+      {createPortal(
+          <div ref={pageRef} className="email-page" role="dialog" aria-label="邮箱" hidden={!open} aria-hidden={!open}>
             <header className="email-page-head" ref={pageHeadRef}>
               <div className="email-page-title">
                 <span className="email-page-title-text">邮箱</span>

@@ -148,6 +148,13 @@ export function ActivityBar() {
    * ⚠️ 另按能力口径加**桌面门** ✓（邮箱是**桌面版独有**能力 ✓ —— 见 `lib/platform/capabilities.ts:22` ✓）。
    */
   const mailOpen = useEmailPanel((s) => s.open);
+  /** ⭐ **2026-10-29（owner：点侧栏邮件总要重拉 · 方案 B「保活」）**：面板**只挂一次**、
+   *  关闭时靠 `hidden` 藏起来（⛔ 不再卸载 ✗）⇒ 滚动位置、选中的邮件、列表 DOM 全留着。
+   *  ⚠️ 第一次点开之前不挂（省内存）；隐藏期间**不轮询**：`EmailPanel` 内部定时/拉取都以 store 的 `open` 为门。 */
+  const [mailEverOpened, setMailEverOpened] = useState(mailOpen);
+  useEffect(() => {
+    if (mailOpen) setMailEverOpened(true);
+  }, [mailOpen]);
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -288,7 +295,9 @@ export function ActivityBar() {
             ⛔⭐ **同一笔的第二个坑（owner：「乱了」）** ✗：`EmailPanel` **自带一颗"低调入口"按钮**
             （`.btn-sync` ＋ `email-unread-badge` ✓）⇒ ⭐ 必须传 `withTrigger={false}` ✗，
             否则栏里**多出一颗入口**、`99+` 徽标直接糊到内容区边上 ✓（真机实测 ✓）。 */}
-        {isDesktopPlatform() && mailOpen && <EmailPanel withTrigger={false} />}
+        {/* ⭐ 2026-10-29（方案 B「保活」）：开过一次后**常驻挂载**，关闭时由 `EmailPanel` 用
+            `hidden` 藏起来（见它里面 `.email-page[hidden]` 那条 CSS）。 */}
+        {isDesktopPlatform() && mailEverOpened && <EmailPanel withTrigger={false} />}
         {ITEMS.map((it) => {
           const on = activity === it.id;
           return (
