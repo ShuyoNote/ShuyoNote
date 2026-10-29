@@ -1244,6 +1244,11 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
               ⚠️ ⭐ 取不到就如实说「未读到」✗（那一句在 `SyncStatusStrip.tsx` 里**只有一处** ✓）。
               ⚠️ 旧注释这里写着「本轮不动那张大卡」✗ —— ⭐ 那张卡**已经不在**了 ✓（`9edc0a44` 拆的 ✓），
                  ⭐ 现在「立即同步」在**已信任的卡片**上 ✓（`nearby-sync` ✓）。 */}
+            {/* ⭐⭐ **2026-10-29（owner：「同步面板感觉乱糟糟」）**：状态条 ＋ 三格读数 ＋ 设备名
+                原来是**三块各自漂着**的东西（绿卡／一排胶囊／一个输入行）⇒ 各自抢注意力。
+                现在收进**同一个状态卡**（`.sync-status-card`）：一条状态、一排读数、一行设备名，
+                视觉上是一个整体；卡片底色/描边由外层给，里面的 `sync-hero-card` 退成透明（见 App.css）。 */}
+            <div className="sync-status-card">
             <SyncStatusStrip
               dotClass={heroDot}
               state={heroState}
@@ -1320,6 +1325,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                 </button>
               </div>
             )}
+            </div>
             {/* ⭐ 2026-10-23：「对端有、你没有的空间」—— 用户勾了才建（默认一个都不勾） */}
             <MeshMissingSpaces />
             </div>

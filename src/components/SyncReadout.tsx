@@ -35,9 +35,16 @@ export function SyncReadout({ route, served, trusted, diagnosis }: SyncReadoutPr
         </span>
       ))}
       {diagnosis && (
-        <div className="sync-nearby-note is-warn" role="note" data-testid="discovery-diagnosis">
-          {diagnosis}
-        </div>
+        // ⭐ **2026-10-29（owner：「同步面板感觉乱糟糟」）**：那句「本机已信任 N 台，但这一轮一台都
+        //   没出现在附近。常见原因 ①②③…」原来**整段摊在主视图里**（三行长文），把下面的设备名/分组
+        //   全压下去了。现在收进 `<details>`：默认只留一行「为什么？」；点开仍是**原文**（⛔ 一个字没删 ✗）。
+        //   ⚠️ `data-testid` 仍在**正文**那个 div 上（判据读的是它的 textContent，等于原文 ✓）。
+        <details className="sync-readout-why">
+          <summary>为什么这一轮附近没有已配对设备？</summary>
+          <div className="sync-nearby-note is-warn" role="note" data-testid="discovery-diagnosis">
+            {diagnosis}
+          </div>
+        </details>
       )}
     </div>
   );
