@@ -12,6 +12,11 @@ export default defineConfig({
     port: 5173,
     strictPort: false,
     open: true,
+    // ⭐ 2026-10-29：与 `vite.config.ts` 同一条 —— 原子写留下的 `.CHANGELOG.md.<pid>.<uuid>.tmpdir/`
+    //   会让文件监听报 EBUSY 并弄挂 dev server（Web 那档同样会挂）⇒ 忽略这些一次性临时物。
+    watch: {
+      ignored: ["**/.*.tmpdir/**", "**/*.tmp"],
+    },
   },
   // 恢复代码分割（去掉 inlineDynamicImports）：此前把全部动态 import 内联进主 bundle
   // 导致首屏单 10MB。用 base:"./" 保证 chunk 相对路径在 /app/ 子路径下正确加载，
