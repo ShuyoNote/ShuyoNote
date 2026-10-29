@@ -1962,24 +1962,32 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 
 /* ⭐ 2026-10-29（owner 选 B）：设备名搬进「局域网同步」—— 一行「标签 ＋ 输入 ＋ 保存」。
    它原来住在「设置 → 账户」（整页只剩这一格，已撤）；这里紧跟在状态读数之后，
-   因为它影响的是"同网段的设备在「附近的设备」里看到你叫什么" ✓。 */
+   因为它影响的是"同网段的设备在「附近的设备」里看到你叫什么" ✓。
+   ⭐ 2026-10-29 第二版（owner：「文本框尺寸不协调」）：⭐ 输入框不再 `flex:1` 撑满整行 ——
+   一个 240px 的名字不该占 600px 宽。现在**定宽 220**（刚好容得下 40 字上限的绝大多数名字、
+   又不和右侧那颗胶囊按钮抢），高度沿用 `.sync-input` 的 44 命中区；圆角/底色走面板既有变量
+   （`--radius-sm` / `--surface`），与上面两排读数胶囊同一套视觉体系 ✓。 */
 .sync-device-name {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 10px;
+  gap: 10px;
+  margin-top: 12px;
 }
 .sync-device-name-label {
   flex: none;
-  color: var(--text-dim);
+  min-width: 3em;
+  color: var(--text-faint);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
 }
 .sync-device-name-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: 280px;
-  width: auto;
+  flex: 0 0 auto;
+  width: 220px;
+  max-width: 220px;
+  padding: 0 10px;
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
 }
 .sync-mini-btn:active { background: var(--hover-strong); }
 .sync-mini-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
