@@ -123,3 +123,33 @@
 - **B1（只读）追加**：`files.stat`、`files.list_orphan`、`files.download`；
 - **B2（写）追加**：`folders.create`、`nodes.move/rename/delete`、`files.upload/attach/rename/delete`；
 - 新增一条**跨块不变式**：「附件被正文引用时，删除必须被拒并点名引用位置」——这是最容易静默出事的点。
+
+### 6.4 页面附件（page-bound）：和"未整理附件"要分开看
+
+事实：UI 里"页面附件"就是 **`pages.*` 的一条附件行**（`AttachmentPanel`：列已上传附件、可移除）。它和 §6.2 的"未整理（`page_id IS NULL`）"是同一张表的两态，但**能力语义不同**：页面附件带"归属页"，移除 ≠ 删除文件本身。
+
+现状：读侧只有 `files.list(pageId)` 与 `files.read(attId)`（派生文本）；**"上传到页 / 从页移除 / 换页 / 重命名 / 下载原字节 / 重新抽取 / 文档转笔记"全部没有**。
+
+| 能力 | 档位 | 理由 / 判据 |
+|---|---|---|
+| `files.list(pageId)` | 现 ✓ | 已有（页面附件清单） |
+| `files.read(attId)` | 现 ✓ | 已有（**派生文本**，不是原字节） |
+| `files.stat(attId)` | **P0** | 补原名/MIME/size/sha256/抽取状态/所属页；判据：与 `files.list` 一致 |
+| `files.download(attId)` | **P0 边缘** | 原字节 TTL 句柄；⛔ 不把字节塞上下文；只本人可读；判据：句柄取回的 sha 等于 `files.stat.sha256` |
+| `files.extract_status(attId)` | **P0** | 抽取是否完整（对应 `files.read` 的 coverage）；判据：与 `coverage.report` 同口径 |
+| `files.upload_to_page(pageId, bytes)` | **P1** | 上传即绑定该页（与孤儿上传区分）；判据：sha 自证、`files.list(pageId)` 可见、审计一条 |
+| `files.detach(attId)` | **P1** | **从页摘除但保留文件**（变"未整理"）；判据：`files.list(pageId)` 不再有、`files.list_orphan` 有、字节不变；⛔ 不是删除 |
+| `files.move(attId, toPageId)` | **P1** | 换归属页；判据：源页清单少一条、目标页多一条、attId 与 sha 不变 |
+| `files.delete(attId)` | **P1** | 真删（软删进回收站）；**引用检查**：正文仍引用该 sha ⇒ 拒绝并点名；判据同 §6.2 |
+| `files.rename(attId, name)` | **P1** | 只改原名元数据；sha/字节不变 |
+| `files.convert_to_note(attId)` | **P1（专议）** | UI 已有"转成笔记"（docx/docm）；Agent 触发会**新建一页**⇒ 带草稿确认；判据：新建页、原附件不动 |
+| `files.reextract(attId)` | **P1（专议）** | 重跑抽取（可能耗时/耗算力）⇒ 要限流与"进行中"状态；判据：完成后 coverage 更新、幂等 |
+| 预览 / 拖拽 / 面板布局 | **✗** | 纯 UI 面，不属能力面 |
+
+**页面附件专属红线**：
+1. **`detach` 与 `delete` 必须是两条**（UI 现在只有"移除附件"一个动作、且**没有确认框**）——Agent 侧必须能区分"摘掉归属"与"删掉文件"，⛔ 不许用一个工具两用；
+2. 删除/摘除前必须做**引用检查**（正文里按 sha 引用的图/文件）；
+3. `files.upload_to_page` 必须校验 **大小/MIME 上限** 与**同名不覆盖**；
+4. 任何写操作返回 `attId` 与 `pageId`，便于 Agent 链式调用（上传→写正文引用）。
+
+**对 §3 分批的影响**：B1 追加 `files.stat / files.download / files.extract_status`；B2 追加 `files.upload_to_page / files.detach / files.move / files.rename`；B2 专议 `files.convert_to_note / files.reextract`。
