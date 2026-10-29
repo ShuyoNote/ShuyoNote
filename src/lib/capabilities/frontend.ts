@@ -199,6 +199,124 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     return { ok: true, pages: rows.map((r) => ({ id: r.id, title: r.title, snippet: r.snippet })) };
   },
 
+  // ⭐ B1a（2026-10-29）：`page.current` 进 AI/MCP 面。与 `pages.get` **同口径**（整页窗口截到上限、
+  //   块锚点、`rev`）；「当前页」由宿主 ctx 给（UI store 不进这一层，见 targetPage 的注释）。
+  //   ⚠️ 没有打开的页面 ⇒ **如实**回 `opened:false`，⛔ 不拿"最近改过的一页"冒充（那会让 AI
+  //   对着错误的页面总结）。插件面那条 ABI 不变（仍返回原始内容字符串，见 Rust `cap_page_current`）。
+  "page.current": async (args, ctx) => {
+    const id = ctx?.currentPageId ?? "";
+    if (!id) {
+      return {
+        ok: true,
+        opened: false,
+        note: "当前没有打开的页面 —— 要读具体页面请先用 pages.list 发现 id、再用 pages.get 读。",
+      };
+    }
+    let p: Awaited<ReturnType<typeof api.getPage>> | null = null;
+    try {
+      p = await api.getPage(id);
+    } catch {
+      p = null; // 页面不在了 / 不是页面节点（get_page 对非页面如实拒）⇒ 下面如实回 opened:false
+    }
+    if (!p) {
+      return {
+        ok: true,
+        opened: false,
+        note: `当前页 ${id} 读不到（可能已删除或不是页面节点）—— 请用 pages.list 重新发现。`,
+      };
+    }
+    const includeAnchors = boolArg(args, "includeAnchors", true);
+    const raw = String(p.content_text ?? "");
+    const total = codePointLength(raw);
+    const meta = pageReadMeta(p);
+    const rev = await pageRev(meta.updatedAt, meta.docJson);
+    const text =
+      includeAnchors && meta.docJson !== null
+        ? annotatedWindow(raw, blockEndOffsets(meta.docJson, raw), 0, MAX_PAGE_TEXT_LIMIT)
+        : sliceByCodePoints(raw, 0, MAX_PAGE_TEXT_LIMIT);
+    return {
+      ok: true,
+      opened: true,
+      page: {
+        id: p.id,
+        title: p.title,
+        content_text: text,
+        kind: p.kind,
+        chars_total: total,
+        truncated: total > MAX_PAGE_TEXT_LIMIT,
+        ...(rev ? { rev } : {}),
+      },
+    };
+  },
+
+  // ⭐ B1a（2026-10-29）：本空间未删除**节点数**（与 pages.list 同一集合：文件夹/数据库也算一个）——
+  //   判据要求 `pages_count == listPages.length` ⇒ 直接数同一份清单，⛔ 不另写一遍口径。
+  "pages.count": async (args) => {
+    const spaceId = String(args.spaceId ?? "").trim();
+    const rows = spaceId ? await api.listWorkspacePages(spaceId) : await api.listPages();
+    return { ok: true, count: rows.length };
+  },
+
+  // ⭐ B1a：整棵空间树。与 Rust `cap_pages_tree` **同一集合、同一顺序**（`listPages` 已是
+  //   sort_order → created_at 的树顺序）—— 这里只做映射，⛔ 不再二次排序（否则 Web 与桌面两种树）。
+  "pages.tree": async (args) => {
+    const spaceId = String(args.spaceId ?? "").trim();
+    const limit = intArg(args, "limit", 2000, 1, 2000);
+    const rows = spaceId ? await api.listWorkspacePages(spaceId) : await api.listPages();
+    const target = spaceId || (await api.getActiveWorkspaceId());
+    const spaceName = target
+      ? (await api.listWorkspaces()).find((s) => s.id === target)?.name ?? ""
+      : "";
+    const nodes = rows.slice(0, limit).map((p) => ({
+      id: p.id,
+      title: p.title,
+      kind: p.kind,
+      parentId: p.parent_id ?? null,
+      order: p.sort_order ?? 0,
+    }));
+    return {
+      ok: true,
+      spaceId: target,
+      spaceName,
+      nodes,
+      total: rows.length,
+      truncated: nodes.length < rows.length,
+    };
+  },
+
+  // ⭐ B1a：标签清单（字段与 Rust `cap_tags_list` 一致）。⚠️ 命令面只有 `list_tags`（本空间）⇒
+  //   给了**别的**空间就如实说不支持，⛔ 不静默回落当前空间（那会让调用方以为读到的是那个空间）。
+  "tags.list": async (args) => {
+    const spaceId = String(args.spaceId ?? "").trim();
+    if (spaceId) {
+      const active = await api.getActiveWorkspaceId();
+      if (spaceId !== active) {
+        return {
+          ok: false,
+          error: "应用内 AI 暂不支持跨空间列标签（命令面没有这一条）；外部接入请用「只读（全部空间）」档",
+        };
+      }
+    }
+    const tags = await api.listTags();
+    return { ok: true, tags: tags.map((t) => ({ id: t.id, name: t.name, page_count: t.page_count ?? 0 })) };
+  },
+
+  // ⭐ B1a：属性定义（Rust 侧返回字段叫 `type`，TS 侧类型名是 `attr_type` ⇒ 只在这里换名）
+  "properties.list": async (args) => {
+    const spaceId = String(args.spaceId ?? "").trim();
+    if (spaceId) {
+      const active = await api.getActiveWorkspaceId();
+      if (spaceId !== active) {
+        return {
+          ok: false,
+          error: "应用内 AI 暂不支持跨空间列属性定义（命令面没有这一条）；外部接入请用「只读（全部空间）」档",
+        };
+      }
+    }
+    const defs = await api.listAttrDefs();
+    return { ok: true, properties: defs.map((d) => ({ id: d.id, name: d.name, type: d.attr_type })) };
+  },
+
   "pages.get": async (args) => {
     const id = String(args.id ?? "");
     if (!id) return { ok: false, error: "pages.get 需要 id" };

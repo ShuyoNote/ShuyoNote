@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "apiVersion": "1.2.0",
+  "apiVersion": "1.3.0",
   "notes": "插件能力注册表——单一事实源。scripts/gen-capabilities.mjs 由本文件生成：JS shim（api.*）、Rust 绑定表、作者类型包、作者文档；scripts/check-capabilities.mjs 校验一致性与完整性。改能力请改这里，不要手改生成物。",
   "permissions": [
     {
@@ -179,13 +179,23 @@
         "page",
         "current"
       ],
-      "args": [],
+      "args": [
+        {
+          "name": "includeAnchors",
+          "type": "boolean",
+          "required": false,
+          "default": true,
+          "desc": "是否在正文里给每个顶层块后插一行块锚点注释（可选，默认 true；与 pages.get 同口径）。**插件面忽略它**（api.page.current 仍返回原始内容字符串）"
+        }
+      ],
       "returns": {
         "type": "string",
-        "desc": "当前页的 content_json 原始字符串（未解析；插件自行 JSON.parse）"
+        "desc": "**插件面**：当前页正文的原始内容字符串（未解析；插件自行 JSON.parse）；没有打开页面时返回空串。**外部/MCP 面**（`page_current`）与 pages.get 同口径：{id, title, content_text, kind, chars_total, offset, limit, rev?}；没有打开的页面时返回 {opened:false, note}（如实说，不编造）"
       },
       "rust": "cap_page_current",
-      "desc": "读取当前打开页面的正文（Lexical content_json 的原始字符串）。没有打开页面时返回空串。"
+      "desc": "读取当前打开页面的正文。**插件面**返回原始内容字符串（没有打开页面时返回空串）；外部/MCP 面返回与 pages.get 同口径的结构化正文。参数: includeAnchors (可选, 默认 true，仅外部/MCP 面与页面锚点有关；插件面忽略)。",
+      "mcpDesc": "读取**当前打开的页面**的正文纯文本（与 pages_get 同口径：整页窗口上限 20000 字符、includeAnchors 默认 true 加块锚点、带 rev 乐观并发令牌）。⚠️ **外部接入拿不到界面里「当前页」这个状态**：没有打开的页面时**如实**返回 `{opened:false, note:「…」}`，不会编造一页；要读具体页面请用 pages_list 发现 id、再 pages_get。参数: includeAnchors (可选, 默认 true)。",
+      "ai": true
     },
     {
       "id": "pages.count",
@@ -198,13 +208,22 @@
         "pages",
         "count"
       ],
-      "args": [],
+      "args": [
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间"
+        }
+      ],
       "returns": {
         "type": "number",
-        "desc": "本空间未删除页面的数量"
+        "desc": "该空间未删除节点的数量（与 pages.list 的集合同口径：页面/数据库/文件夹各算一个节点）"
       },
       "rust": "cap_pages_count",
-      "desc": "本空间未删除页面的数量。"
+      "desc": "本空间未删除节点的数量（与 pages.list 的集合同口径：页面/数据库/文件夹各算一个）。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。",
+      "mcpDesc": "本空间**未删除节点的数量**（与 pages_list 同口径：页面/数据库/文件夹各算一个）。默认只数**当前空间**；给了 spaceId 就数那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选)。",
+      "ai": true
     },
     {
       "id": "pages.list",
@@ -335,6 +354,42 @@
       "ai": true
     },
     {
+      "id": "pages.tree",
+      "title": "读取空间页面树",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:pages",
+      "since": "1.3.0",
+      "jsPath": [
+        "pages",
+        "tree"
+      ],
+      "args": [
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间"
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "required": false,
+          "default": 2000,
+          "desc": "最多返回多少个节点（默认 2000，上限 2000；超出 ⇒ truncated:true）"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ spaceId: string; spaceName: string; nodes: { id: string; title: string; kind: string; parentId: string | null; order: number }[]; total: number; truncated: boolean }",
+        "desc": "{spaceId, spaceName, nodes:[{id,title,kind,parentId,order}], total, truncated}：一次给出整个空间的层级（kind = page/database/folder；parentId=null 是顶层；order = 树里的排序值）。节点按树顺序（sort_order → created_at）排列；超过 limit ⇒ truncated:true 并给 total"
+      },
+      "rust": "cap_pages_tree",
+      "desc": "一次读取**整个空间的页面树**（结构视图）：返回 {spaceId, spaceName, nodes:[{id,title,kind,parentId,order}], total, truncated}。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒), limit (可选, 默认 2000, 上限 2000)。数据与 pages.list **同一张表、同一口径**（未删除的全部节点，含文件夹与数据库），只是一次给出层级与排序。",
+      "mcpDesc": "一次读取**整个空间的页面树**（结构视图）：{spaceId, spaceName, nodes:[{id,title,kind,parentId,order}], total, truncated}。节点与 pages_list **同一集合**（未删除的页面/数据库/文件夹），按树顺序给出 parentId 与 order；`kind` 是 page / database / folder。默认读**当前空间**；给了 spaceId 就读那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。超过 limit（默认与上限都是 2000 节点）⇒ `truncated:true`（如实说，别把截断的树当全量）。参数: spaceId (可选), limit (可选, 默认 2000, 上限 2000)。",
+      "ai": true
+    },
+    {
       "id": "tags.list",
       "title": "列出本空间标签",
       "kind": "read",
@@ -345,14 +400,23 @@
         "tags",
         "list"
       ],
-      "args": [],
+      "args": [
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间"
+        }
+      ],
       "returns": {
         "type": "array",
         "ts": "{ id: string; name: string; page_count: number }[]",
-        "desc": "[{id, name, page_count}]"
+        "desc": "[{id, name, page_count}]：page_count 是**这个空间里**打了该标签的页面数（不含已删除页面）"
       },
       "rust": "cap_tags_list",
-      "desc": "列出本空间用到的标签及各自的页面数。返回 [{id, name, page_count}]。"
+      "desc": "列出本空间用到的标签及各自的页面数。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。返回 [{id, name, page_count}]。",
+      "mcpDesc": "列出本空间用到的**标签及各自的页面数**：`[{id, name, page_count}]`（page_count 不含已删除页面）。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选)。",
+      "ai": true
     },
     {
       "id": "blocks.list",
@@ -838,14 +902,23 @@
         "properties",
         "list"
       ],
-      "args": [],
+      "args": [
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间"
+        }
+      ],
       "returns": {
         "type": "array",
         "ts": "{ id: string; name: string; type: string }[]",
         "desc": "[{id, name, type}]——插件据此找到要写的属性 id"
       },
       "rust": "cap_properties_list",
-      "desc": "列出本空间的属性定义 [{id, name, type}]。**写属性要的是 id**（properties.set 的第一个参数），所以通常先调它按名字找 id。"
+      "desc": "列出本空间的属性定义 [{id, name, type}]。**写属性要的是 id**（properties.set 的第一个参数），所以通常先调它按名字找 id。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。",
+      "mcpDesc": "列出本空间的**属性定义** `[{id, name, type}]`（写属性时要的是 id；读数据库/属性值前先用它找 id）。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选)。",
+      "ai": true
     },
     {
       "id": "properties.set",

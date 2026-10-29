@@ -15,6 +15,30 @@ export interface AiCapabilityMeta {
 
 export const AI_TOOL_META: AiCapabilityMeta[] = [
   {
+    id: "page.current",
+    description: "读取当前打开页面的正文。**插件面**返回原始内容字符串（没有打开页面时返回空串）；外部/MCP 面返回与 pages.get 同口径的结构化正文。参数: includeAnchors (可选, 默认 true，仅外部/MCP 面与页面锚点有关；插件面忽略)。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "includeAnchors": { type: "boolean" },
+      },
+      required: [],
+    },
+    isWrite: false,
+  },
+  {
+    id: "pages.count",
+    description: "本空间未删除节点的数量（与 pages.list 的集合同口径：页面/数据库/文件夹各算一个）。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "spaceId": { type: "string" },
+      },
+      required: [],
+    },
+    isWrite: false,
+  },
+  {
     id: "pages.list",
     description: "列出页面（id / 标题 / 创建时间 / 更新时间），按更新时间倒序；不含正文。默认本空间；可用 spaceId 指定别的空间（需「只读（全部空间）」档）。**搜索之外的发现通路**：不知道关键词、或检索返回空时，先用它看这个空间里有什么。参数: limit (可选, 默认 50, 上限 200), spaceId (可选)。",
     argsSchema: {
@@ -53,6 +77,31 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       "limit": { type: "number" },
       },
       required: ["q"],
+    },
+    isWrite: false,
+  },
+  {
+    id: "pages.tree",
+    description: "一次读取**整个空间的页面树**（结构视图）：返回 {spaceId, spaceName, nodes:[{id,title,kind,parentId,order}], total, truncated}。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒), limit (可选, 默认 2000, 上限 2000)。数据与 pages.list **同一张表、同一口径**（未删除的全部节点，含文件夹与数据库），只是一次给出层级与排序。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "spaceId": { type: "string" },
+      "limit": { type: "number" },
+      },
+      required: [],
+    },
+    isWrite: false,
+  },
+  {
+    id: "tags.list",
+    description: "列出本空间用到的标签及各自的页面数。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。返回 [{id, name, page_count}]。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "spaceId": { type: "string" },
+      },
+      required: [],
     },
     isWrite: false,
   },
@@ -159,6 +208,18 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       required: ["text"],
     },
     isWrite: true,
+  },
+  {
+    id: "properties.list",
+    description: "列出本空间的属性定义 [{id, name, type}]。**写属性要的是 id**（properties.set 的第一个参数），所以通常先调它按名字找 id。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "spaceId": { type: "string" },
+      },
+      required: [],
+    },
+    isWrite: false,
   },
   {
     id: "pages.importMarkdown",

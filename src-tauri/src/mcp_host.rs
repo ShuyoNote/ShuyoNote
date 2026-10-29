@@ -415,6 +415,84 @@ mod tests {
         );
         assert_eq!(rows[0].error_code.as_deref(), Some("permission_denied"));
     }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // B1a（2026-10-29）· 只读扩容的**挂载级**判据（工具面 ＋ 权限门 ＋ 当前页如实）
+    //   数据级的三条（节点数/父子/截断、跨空间、count==listPages.length）在
+    //   `plugins.rs` 的 tests 里（那里有真夹具空间；这里是宿主面这一层）。
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /// ⭐ **表驱动**：这 5 条 B1a 工具在「不接」档（`granted` 为空）必须**逐条**
+    /// `permission_denied`，且拒绝消息里点名的是**注册表里写着的那条权限**
+    /// （⛔ 不在测试里手抄权限名 —— 从注册表查，改了它这里自动跟）。
+    #[test]
+    fn b1a_tools_are_denied_table_driven_without_the_read_grant() {
+        let cases = [
+            "page.current",
+            "pages.count",
+            "pages.tree",
+            "tags.list",
+            "properties.list",
+        ];
+        for method in cases {
+            let cap = crate::capabilities_gen::lookup(method)
+                .unwrap_or_else(|| panic!("注册表里必须有 {method} ✓"));
+            let perm = cap.permission.expect("只读能力也有权限门 ✓");
+            let session = format!("b1a-denied-{}", method.replace('.', "-"));
+            let err = match handle_external_call(&session, &[], method, "{}") {
+                Ok(v) => panic!("{method} 在无授权时**必须被拒**，实际成功：{v}"),
+                Err(e) => e,
+            };
+            assert!(
+                err.contains("permission_denied"),
+                "{method} 在无授权时必须 permission_denied：{err}"
+            );
+            assert!(
+                err.contains(perm),
+                "{method} 的拒绝必须点名缺哪个权限 {perm}：{err}"
+            );
+            let rows = audit_of(&format!("external:{session}"));
+            assert_eq!(
+                rows.len(),
+                1,
+                "{method} 被拒也必须留痕 ✓（拿到 {} 条）",
+                rows.len()
+            );
+            assert_eq!(rows[0].error_code.as_deref(), Some("permission_denied"));
+        }
+    }
+
+    /// ⭐ 判据 6：**没有打开的页面 ⇒ 如实说**（不报 500 形状的错、⛔ 不编造一页）。
+    ///
+    /// 为什么挂在这一层：外部接入**拿不到**界面里「当前页」这个状态（`RunState.current_page_id`
+    /// 只在插件运行时被装进来）⇒ 这条工具在外部面上**必然**走 no-page 分支；
+    /// 判据要钉的正是"它没为了有东西返回而编一个页面 id"。
+    #[test]
+    fn b1a_page_current_says_there_is_no_open_page_instead_of_inventing_one() {
+        let granted = crate::mcp_channel::default_read_scopes();
+        let out = handle_external_call("b1a-current-1", &granted, "page.current", "{}")
+            .expect("没有打开的页面**不是错误**（不许报 500 形状的错 ✓）");
+        let v: serde_json::Value = serde_json::from_str(&out).expect("回话必须是 JSON ✓");
+        assert_eq!(
+            v["opened"],
+            serde_json::json!(false),
+            "必须如实说没有打开的页面：{v}"
+        );
+        assert!(
+            v.get("id").is_none(),
+            "⛔ 不许编造一页（回话里不许有 id）：{v}"
+        );
+        assert!(
+            v["note"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("没有打开的页面"),
+            "note 要直说「没有打开的页面」：{v}"
+        );
+        let rows = audit_of("external:b1a-current-1");
+        assert_eq!(rows.len(), 1, "成功调用也要留一行审计 ✓");
+        assert!(rows[0].ok);
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════━━
@@ -474,6 +552,73 @@ mod tools_list_tests {
             assert!(
                 added.iter().any(|x| *x == n),
                 "新多出来的必须含写工具 {n} ✓（实际多出 {added:?}）"
+            );
+        }
+    }
+
+    /// ⭐ **B1a（2026-10-29）判据 1**：5 条只读扩容工具**必须在** `tools/list` 里；
+    /// 且清单里的每个 `capabilityId` 都能在注册表里查到、都是 `read`、都不是 `host:frontend`
+    /// —— 面与注册表**同源**（⛔ 不是手搓的第二套工具表）。
+    ///
+    /// 变异（会红）：把 `genMcpTools` 的 `c.ai` 过滤去掉/把注册表里某条的 `ai` 关掉并重新生成
+    /// ⇒ 对应那条不在清单里 ⇒ 本测试第一条断言红。
+    #[test]
+    fn b1a_readonly_tools_are_listed_and_every_entry_matches_the_registry() {
+        let off = names(&tools_list_json(false));
+        for n in [
+            "page_current",
+            "pages_count",
+            "pages_tree",
+            "tags_list",
+            "properties_list",
+        ] {
+            assert!(
+                off.iter().any(|x| x == n),
+                "B1a 工具 {n} 必须在读面清单里 ✓（实际 {off:?}）"
+            );
+        }
+        // 生成物与注册表同源：每一条都查得到、都是读能力、都不是 host:frontend
+        let v: serde_json::Value =
+            serde_json::from_str(&tools_list_json(false)).expect("工具清单必须是合法 JSON ✓");
+        let arr = v.as_array().expect("工具清单是裸数组 ✓");
+        assert!(!arr.is_empty(), "扫到 0 条不等于干净 ✗");
+        for t in arr {
+            let id = t["capabilityId"]
+                .as_str()
+                .unwrap_or_else(|| panic!("清单必须带 capabilityId ✓：{t}"));
+            let cap = crate::capabilities_gen::lookup(id)
+                .unwrap_or_else(|| panic!("清单里的 {id} 不在注册表里 ✗（面与注册表漂了）"));
+            assert_eq!(cap.kind, "read", "读面清单里混进了非读能力 {id} ✗");
+            // ⚠️ `host: "frontend"` 的能力**根本不在 Rust 绑定表里**（生成器就跳过它）⇒
+            //    `lookup` 能查到它，本身已证明"宿主面真能服务它"（M1 在 coverage.report 上踩过：
+            //    面里列了、一调 unknown_capability ✗）。这条口径由 `check-capabilities` §2c 再钉一遍。
+        }
+    }
+
+    /// ⭐ **B1a 判据 7（零写）**：`editor.insertText` / `user.notify` / `kv.*` / `settings.get` /
+    /// `log.write` / `spaces.switch` **仍然不在**任何一份 MCP 工具清单里（读面与写面都查）。
+    /// 它们要么是注册表里的 ✗ 项、要么是插件私有面 —— 出现在面上就是"外部 AI 能碰应用状态"。
+    #[test]
+    fn b1a_surface_still_excludes_every_forbidden_tool() {
+        let off = names(&tools_list_json(false));
+        let on = names(&tools_list_json(true));
+        for forbidden in [
+            "editor_insertText",
+            "user_notify",
+            "kv_get",
+            "kv_set",
+            "kv_remove",
+            "settings_get",
+            "log_write",
+            "spaces_switch",
+        ] {
+            assert!(
+                !off.iter().any(|x| x == forbidden),
+                "⛔ 不暴露清单里的 {forbidden} 出现在读面 ✗：{off:?}"
+            );
+            assert!(
+                !on.iter().any(|x| x == forbidden),
+                "⛔ 不暴露清单里的 {forbidden} 出现在写面 ✗：{on:?}"
             );
         }
     }

@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **外部 AI（MCP）只读扩容 B1a —— 工具 13 → 18（读面 +5，写面不变）**：新增 `page_current`（当前页正文，与 `pages_get` 同口径；外部接入看不到界面「当前页」时**如实**回 `opened:false`，不编造页面）、`pages_count`（与 `pages_list` **同一集合**计数）、`tags_list`、`properties_list`、`pages_tree`（一次给出整棵空间树 `{spaceId, spaceName, nodes:[{id,title,kind,parentId,order}], total, truncated}`，超过 2000 节点如实标 `truncated`）。只读档即可用；带 `spaceId` 的五条跨空间需「只读（全部空间）」档（未开该档 ⇒ 明确 `permission_denied`）。默认关不变。**插件 API `apiVersion` 1.2.0 → 1.3.0**（新增能力 `pages.tree`；按 `check-api-surface-version` 口径升版并重记 `_generated/api-surface.json`）。`coverage_report` **不进** MCP 面（它 `host:frontend`，接 MCP 需前端桥，留待后续）。判据：Rust 挂载级（工具面 2 条＋权限门表驱动）＋ 数据级（只读档可调、`count == listPages.length`、树父子/kind/截断、跨空间两档、无当前页如实）；`check-capabilities` / `check-agent-surface` / `check-generated-artifacts` / `check-api-surface-version` 全 0；`npx tsc --noEmit` 0。
 - **「关于」里能看到本机设备名** —— 关于窗在「版本 / 许可」两枚胶囊下面多一行「本机设备：<名字>」，就是「附近设备／已配对列表」里别人看到的那句；**只读**（改名字仍在「设置 → 账户」，那里现在也会直接预填系统名）。读不到就不显示这一行（⛔ 不编一个名字、也不显示设备号）。判据：`src/components/aboutDialog.test.ts` **11/11**（含"读不到 ⇒ 那一行不出现"）＋ 版本/许可仍是**两枚**胶囊（设备名不做成第三枚）。
 - **撤销配对变成「双向自动」** —— 以前一方点「撤销配对」只断一半（它拉不动你了，你仍能拉它；对面也根本不知道你撤了）。现在：撤销那一刻记一条**待发撤回**，用**设备签名**（只认签名那一档，口令不行）送到对面的网格窗口 `GET /mesh/revoked`；对面**验签通过**后也把本机从它名单里删掉 ⇒ **双向都断**。对面离线 ⇒ 等它上线（公告 ≤30 秒）再送；等了 72 小时还没送到就如实放弃并记一行（可在对面手动撤销）；对面是**老版本**（没有这个端点）⇒ 记一行「只能手动撤销」、不再重试。已同步的页面/附件**不删**（撤销信任 ≠ 删内容）。
 - **「原样恢复」（替换全部数据，重启生效）** —— 备份菜单里除「导入备份（合并）」外新增一条：把全库备份**整份替换**回来（全部空间 ＋ 附件 ＋ 元数据，含锁着的加密空间），**下一次启动**才生效；当前数据会先**整份另存**到应用数据目录的 `restore-prev-…/`（不删，可手动找回）。合并不动现有空间，替换才"备份时什么样、恢复后就是什么样"。

@@ -1639,14 +1639,49 @@ type CapResult = Result<serde_json::Value, String>;
 /// 为什么要上限：这是给 AI/插件读的一页正文，单次几十万字会把上下文一口气撑爆。
 const MAX_PAGE_TEXT_LIMIT: i64 = 20_000;
 
-fn cap_page_current() -> CapResult {
-    Ok(serde_json::Value::String(
-        RUN_STATE.with(|s| s.borrow().current_page_json.clone()),
-    ))
+fn cap_page_current(include_anchors: bool) -> CapResult {
+    if !is_external_caller() {
+        return Ok(serde_json::Value::String(
+            RUN_STATE.with(|s| s.borrow().current_page_json.clone()),
+        ));
+    }
+    let current = RUN_STATE.with(|s| s.borrow().current_page_id.clone());
+    let Some(id) = current else {
+        return Ok(serde_json::json!({
+            "opened": false,
+            "note": "当前没有打开的页面（外部接入拿不到界面里「当前页」这个状态）—— \
+                     要读具体页面请先用 pages.list 发现 id，再用 pages.get 读；\
+                     这条工具不会为了「有东西返回」而编造一页。",
+        }));
+    };
+    cap_pages_get(&id, 0, MAX_PAGE_TEXT_LIMIT, include_anchors)
 }
 
-fn cap_pages_count() -> CapResult {
-    Ok(serde_json::json!(RUN_STATE.with(|s| s.borrow().page_count)))
+/// 一个空间里**未删除节点**的数量 —— 与 `pages.list` / `listPages` 同一条 SQL 口径。
+///
+/// ⚠️ **只此一处**：`pages.count` 与检索信封 `space_scope_snapshot_of` 都走它
+/// （两份 `COUNT(*)` 必然漂，而漂了不会报错——只会让两个工具对同一个空间给出两个页数）。
+fn count_nodes_in_space(c: &rusqlite::Connection) -> Result<i64, String> {
+    c.query_row(
+        "SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL",
+        [],
+        |r| r.get(0),
+    )
+    .map_err(|e| format!("db_error: {e}"))
+}
+
+/// `pages.count`：本空间未删除节点的数量。
+///
+/// 两条路的**读数来源**不同（B1a）：插件面沿用 `RunState.page_count`（宿主在 run 时用同一条
+/// SQL 在同一个库上算好的快照 ⇒ 读数等价，ABI 逐字节不变）；外部/MCP 面**没有**那份快照
+/// ⇒ 按库实算（与 `pages.list` 同一口径，判据要求 `pages_count == listPages.length`）。
+/// `spaceId` 给了就走 [`with_conn_for_space`]（跨空间那道门在那边，没有 `read:all-spaces`
+/// 会**明确拒**，⛔ 不静默回落到当前空间）。
+fn cap_pages_count(space_id: Option<&str>) -> CapResult {
+    if space_id.is_none() && !is_external_caller() {
+        return Ok(serde_json::json!(RUN_STATE.with(|s| s.borrow().page_count)));
+    }
+    with_conn_for_space(space_id, count_nodes_in_space).map(|n| serde_json::json!(n))
 }
 
 fn cap_editor_insert_text(text: &str) -> CapResult {
@@ -1674,6 +1709,16 @@ fn cap_log_write(message: &str, level: &str) -> CapResult {
 
 /// 当前调用方有没有这个 scope（插件来自 manifest 的授权；外部来自令牌的 `granted` ✓）。
 fn has_scope(id: &str) -> bool {
+    // ⭐ B1a（2026-10-29）修：两条路的授权**来源不同** ——
+    //   外部（MCP）在 `EXTERNAL_CALLER.granted`（令牌文件里那一行），插件在 `RunState.permissions`。
+    //   ⚠️ 之前这里**只看** RunState ⇒ 外部调用永远读不到 `read:all-spaces` ⇒
+    //   「只读（全部空间）」档的跨空间（`pages.list` / `pages.search` 的 `spaceId`，以及 B1a 的
+    //   `pages.count` / `pages.tree` / `tags.list` / `properties.list`）在 MCP 面**一调就拒**，
+    //   而插件那条路的测试全绿（本仓最忌的形状：判据只覆盖了一条路）。
+    //   ⛔ 这**不是**放宽：两处都只回答"这次调用被授予了什么"，判定仍只在 `dispatch_capability` 一处 ✓。
+    if let Some((_, granted)) = EXTERNAL_CALLER.with(|c| c.borrow().clone()) {
+        return granted.iter().any(|p| p == id);
+    }
     RUN_STATE.with(|s| s.borrow().permissions.iter().any(|p| p == id))
 }
 
@@ -2022,13 +2067,7 @@ pub(crate) fn space_scope_snapshot_of(space_id: Option<&str>) -> Result<serde_js
                 |r| r.get(0),
             )
             .ok();
-        let page_count: i64 = c
-            .query_row(
-                "SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL",
-                [],
-                |r| r.get(0),
-            )
-            .map_err(|e| format!("db_error: {e}"))?;
+        let page_count: i64 = count_nodes_in_space(c)?;
         Ok(serde_json::json!({
             "spaceId": target,
             "spaceName": name.unwrap_or_default(),
@@ -2037,8 +2076,10 @@ pub(crate) fn space_scope_snapshot_of(space_id: Option<&str>) -> Result<serde_js
     })
 }
 
-fn cap_tags_list() -> CapResult {
-    with_read_conn(|c| {
+fn cap_tags_list(space_id: Option<&str>) -> CapResult {
+    // `space_id` 省略 ⇒ [`with_read_conn`]（与旧行为逐字节相同）；给了 ⇒ 跨空间那道门在
+    // [`with_conn_for_space`] 里（没有 `read:all-spaces` 会明确拒 ✓）。
+    with_conn_for_space(space_id, |c| {
         let mut stmt = c
             .prepare(
                 "SELECT t.id, t.name, COUNT(pt.page_id) FROM tags t
@@ -2434,8 +2475,9 @@ fn cap_blocks_append(page_id: Option<&str>, text: &str, fence: Option<&str>) -> 
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
 }
 
-fn cap_properties_list() -> CapResult {
-    with_read_conn(|c| {
+fn cap_properties_list(space_id: Option<&str>) -> CapResult {
+    // 与 `tags.list` 同形：省略 ⇒ 当前连接（旧行为不变）；给了 ⇒ 跨空间那道门在 with_conn_for_space ✓
+    with_conn_for_space(space_id, |c| {
         let mut stmt = c
             .prepare("SELECT id, name, type FROM attr_defs ORDER BY sort_order, name")
             .map_err(|e| format!("db_error: {e}"))?;
@@ -2451,6 +2493,55 @@ fn cap_properties_list() -> CapResult {
             .filter_map(|r| r.ok())
             .collect();
         Ok(serde_json::Value::Array(rows))
+    })
+}
+
+/// `pages.tree`（B1a，2026-10-29）：一次给出**整个空间**的树结构。
+///
+/// 为什么不再新建 Rust 命令（可行性核对 B1a 的硬口径「零新建命令」）：
+/// 它读的就是 `listPages`（`commands.rs::list_pages`）**同一张表、同一组列** —— 只是把
+/// `parent_id` / `kind` / `sort_order` 一起带出来并由调用方拼树。⛔ 没有第二套查询口径：
+/// 计数走 [`count_nodes_in_space`]（与 `pages.list` 同一条 SQL），节点走下面这一条 SELECT。
+///
+/// 三条判据（挂载级）：① 节点数 == `pages.list` 的页数；② `parentId` / `kind` / `order` 与库一致；
+/// ③ 超过 `limit`（默认与上限都是 2000）⇒ `truncated:true` 并给 `total`（如实说，别把截断当全量）。
+fn cap_pages_tree(space_id: Option<&str>, limit: i64) -> CapResult {
+    let limit = limit.clamp(1, 2000);
+    // 目标空间 id／名字 ＋ 跨空间那道门：与检索信封**同一条解析**（`space_scope_snapshot_of` ✓）。
+    //   先取快照再开连接：`spaceId` 必须回的是**真正读的那个空间**，不是"参数原样回声"。
+    let snap = space_scope_snapshot_of(space_id)?;
+    let space = snap["spaceId"].as_str().unwrap_or_default().to_string();
+    let name = snap["spaceName"].as_str().unwrap_or_default().to_string();
+    with_conn_for_space(space_id, move |c| {
+        let total = count_nodes_in_space(c)?;
+        let mut stmt = c
+            .prepare(
+                "SELECT id, title, kind, parent_id, sort_order FROM pages WHERE deleted_at IS NULL
+                 ORDER BY sort_order ASC, created_at ASC, id ASC LIMIT ?1",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let nodes: Vec<serde_json::Value> = stmt
+            .query_map(rusqlite::params![limit], |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, String>(0)?,
+                    "title": r.get::<_, String>(1)?,
+                    "kind": r.get::<_, String>(2)?,
+                    "parentId": r.get::<_, Option<String>>(3)?,
+                    "order": r.get::<_, f64>(4)?,
+                }))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        // `total` 是**库里真实的节点数**（不是本次返回数）—— 截断与否只能由它判 ✓
+        let returned = nodes.len() as i64;
+        Ok(serde_json::json!({
+            "spaceId": space,
+            "spaceName": name,
+            "nodes": nodes,
+            "total": total,
+            "truncated": returned < total,
+        }))
     })
 }
 
@@ -2577,6 +2668,16 @@ pub(crate) fn with_external_caller<T>(session_id: &str, granted: &[String], f: i
     let out = f();
     EXTERNAL_CALLER.with(|c| *c.borrow_mut() = prev);
     out
+}
+
+/// 这次调用是不是**外部宿主（MCP）**发起的 ✓（= `EXTERNAL_CALLER` 有值）。
+///
+/// ⚠️ 用途**只有一个**（B1a，2026-10-29）：少数能力的**读数来源**在两条路上不同 ——
+/// 插件面沿用宿主在 run 时给的快照（`RunState.page_count` / `current_page_json`，ABI 不变），
+/// 外部面没有那份快照 ⇒ 必须按库实算 / 如实说"没有当前页"。
+/// ⛔ **不许**用它改任何权限判定（权限仍然只在 `dispatch_capability` 一处判 ✓）。
+fn is_external_caller() -> bool {
+    EXTERNAL_CALLER.with(|c| c.borrow().is_some())
 }
 
 /// ⭐ **2026-10-08**：把「**当前空间**」装进这条线程的 `RUN_STATE` ✓ —— 外部（MCP）那条路缺的就是这一步 ✗。
@@ -2762,8 +2863,9 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
     };
 
     let out = match cap.id {
-        "page.current" => cap_page_current(),
-        "pages.count" => cap_pages_count(),
+        "page.current" => cap_page_current(arg_bool(args.get("includeAnchors"), true)),
+        "pages.count" => cap_pages_count(arg_opt_str("spaceId").as_deref()),
+        "pages.tree" => cap_pages_tree(arg_opt_str("spaceId").as_deref(), arg_i64("limit", 2000)),
         "pages.list" => cap_pages_list(arg_i64("limit", 50), arg_opt_str("spaceId").as_deref()),
         // `includeAnchors` 走 **可选** 读法（`args.get`）—— 注册表声明它是可选、默认 true，
         // 而 `arg_bool` 同时认 `true/false` 与 `"true"/"false"`（插件 shim 传的是字符串）。
@@ -2778,7 +2880,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_i64("limit", 8),
             arg_opt_str("spaceId").as_deref(),
         ),
-        "tags.list" => cap_tags_list(),
+        "tags.list" => cap_tags_list(arg_opt_str("spaceId").as_deref()),
         "backlinks.list" => cap_backlinks_list(arg_opt_str("pageId").as_deref()),
         "files.list" => cap_files_list(arg_opt_str("pageId").as_deref()),
         "files.search" => cap_files_search(&arg_str("query")?, arg_i64("limit", 10)),
@@ -2791,7 +2893,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         // 声明为 space 才落加密库，声明为 app 才落 meta.db（明文）。
         "settings.get" => cap_settings_get(&arg_str("key")?),
         "blocks.list" => cap_blocks_list(arg_opt_str("pageId").as_deref(), arg_i64("limit", 100)),
-        "properties.list" => cap_properties_list(),
+        "properties.list" => cap_properties_list(arg_opt_str("spaceId").as_deref()),
         "properties.set" => cap_properties_set(
             &arg_str("attrId")?,
             &arg_str("value")?,
@@ -10616,6 +10718,251 @@ register({ id: "s.run", title: "结构化", run: function () {
         let hits = cap_files_search("周会纪要", 10).unwrap();
         assert_eq!(hits, serde_json::json!([]), "空库 ⇒ 空数组（不是错误、也不是 null）");
 
+        unpoint_cap_search(&dir);
+    }
+    // ---- B1a（2026-10-29）只读扩容的**数据级**判据 -------------------------------------------
+    //
+    // 为什么放在这一层：跨空间/权限/计数/树形都发生在能力层（`cap_*` ＋ `with_conn_for_space`），
+    // 而夹具空间只有这里搭得起来（`cap_search_dir` ＋ `point_cap_search_at` 是既有的夹具口径 ✓）。
+    // 挂载级那一半（工具面 / 「不接」档的表驱动拒绝 / 当前页如实）在 `mcp_host.rs` 的测试里。
+    //
+    // 夹具：当前空间 4 个节点（folder f1 → page p1/p2，顶层 database db1）＋ 1 个标签 ＋ 1 个属性定义；
+    //       另一个空间 2 个页面（跨空间判据要读它，并且要能分辨"读的是哪个空间"）。
+
+    fn b1a_fixture(tag: &str) -> PathBuf {
+        let dir = cap_search_dir(tag);
+        // meta：空间名字（tree 的 spaceName 从这里读，⛔ 不是参数回声）
+        {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES ('b1a-space', '夹具空间', '#000', '', 1, 1, 1)",
+                [],
+            )
+            .unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES ('b1a-other', '别处空间', '#000', '', 2, 2, 2)",
+                [],
+            )
+            .unwrap();
+        }
+        // 当前空间：4 个节点 ＋ 标签 ＋ 属性定义
+        {
+            let c = crate::db::open_space_conn_at("b1a-space", &dir).unwrap();
+            for (id, parent, title, kind, order, at) in [
+                ("f1", None, "资料", "folder", 0.0, 10),
+                ("p1", Some("f1"), "第一页", "page", 1.0, 11),
+                ("p2", Some("f1"), "第二页", "page", 2.0, 12),
+                ("db1", None, "任务库", "database", 3.0, 13),
+            ] {
+                c.execute(
+                    "INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at)
+                     VALUES (?1, 'b1a-space', ?2, ?3, ?4, ?5, ?6, ?6)",
+                    params![id, parent, title, kind, order, at],
+                )
+                .unwrap();
+            }
+            c.execute("INSERT INTO tags (id, name) VALUES ('t1', '待办')", [])
+                .unwrap();
+            c.execute(
+                "INSERT INTO page_tags (page_id, tag_id) VALUES ('p1', 't1')",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO attr_defs (id, name, type, options, sort_order, created_at, updated_at)
+                 VALUES ('a1', '状态', 'select', '[]', 0, 1, 1)",
+                [],
+            )
+            .unwrap();
+        }
+        // 另一个空间：2 个页面
+        {
+            let c = crate::db::open_space_conn_at("b1a-other", &dir).unwrap();
+            for (id, at) in [("x1", 20), ("x2", 21)] {
+                c.execute(
+                    "INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at)
+                     VALUES (?1, 'b1a-other', NULL, ?1, 'page', 0, ?2, ?2)",
+                    params![id, at],
+                )
+                .unwrap();
+            }
+        }
+        dir
+    }
+
+    /// ⭐ **判据 2 / 5 / 6**（只读档可调 ＋ `count == listPages.length` ＋ 无当前页如实）：
+    /// 用 `mcp_channel::default_read_scopes()` —— 也就是「只读」档**真实**给出的授权面 ——
+    /// 在夹具空间上逐条真调这 5 条工具。
+    #[test]
+    fn b1a_read_level_serves_every_new_tool_on_the_current_space() {
+        let dir = b1a_fixture("b1a-read");
+        point_cap_search_at(&dir, "b1a-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let (cur, count, tags, props, tree, listed) =
+            with_external_caller("b1a-read", &granted, || {
+                (
+                    dispatch_capability("page.current", "{}"),
+                    dispatch_capability("pages.count", "{}"),
+                    dispatch_capability("tags.list", "{}"),
+                    dispatch_capability("properties.list", "{}"),
+                    dispatch_capability("pages.tree", "{}"),
+                    dispatch_capability("pages.list", r#"{"limit":200}"#),
+                )
+            });
+
+        // ① 没有打开的页面 ⇒ 如实（不是错误、⛔ 不编一页）
+        let cur: serde_json::Value =
+            serde_json::from_str(&cur.expect("page.current 在只读档必须可调")).unwrap();
+        assert_eq!(
+            cur["opened"],
+            serde_json::json!(false),
+            "外部没有当前页 ⇒ 必须如实说：{cur}"
+        );
+        assert!(cur.get("id").is_none(), "⛔ 不许编造页面 id：{cur}");
+
+        // ② pages.count 必须等于 listPages.length（判据 5）
+        let count: i64 = serde_json::from_str(&count.expect("pages.count 应可调")).unwrap();
+        let listed: Vec<serde_json::Value> =
+            serde_json::from_str(&listed.expect("pages.list 应可调")).unwrap();
+        assert_eq!(
+            count as usize,
+            listed.len(),
+            "pages_count 必须与 listPages.length 一致"
+        );
+        assert_eq!(count, 4, "夹具里当前空间有 4 个未删除节点");
+
+        // ③ tags.list 形状与页面数（[{id,name,page_count}]）
+        let tags: Vec<serde_json::Value> =
+            serde_json::from_str(&tags.expect("tags.list 应可调")).unwrap();
+        assert_eq!(tags.len(), 1, "夹具里只有 1 个标签");
+        assert_eq!(tags[0]["id"], "t1");
+        assert_eq!(tags[0]["name"], "待办");
+        assert_eq!(tags[0]["page_count"], 1, "该标签只挂在 p1 上");
+
+        // ④ properties.list 形状 [{id,name,type}]
+        let props: Vec<serde_json::Value> =
+            serde_json::from_str(&props.expect("properties.list 应可调")).unwrap();
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0]["id"], "a1");
+        assert_eq!(props[0]["type"], "select");
+
+        // ⑤ pages.tree：节点数 ＝ listPages 页数、父子与 kind 正确（判据 4 的前两半）
+        let tree: serde_json::Value =
+            serde_json::from_str(&tree.expect("pages.tree 应可调")).unwrap();
+        assert_eq!(tree["spaceId"], "b1a-space");
+        assert_eq!(
+            tree["spaceName"], "夹具空间",
+            "空间名要真读 meta（不是参数回声）"
+        );
+        assert_eq!(tree["total"], 4);
+        assert_eq!(tree["truncated"], serde_json::json!(false));
+        let nodes = tree["nodes"].as_array().expect("nodes 必须是数组");
+        assert_eq!(nodes.len(), listed.len(), "节点数必须等于 listPages 的页数");
+        // 顺序＝树顺序（sort_order → created_at）：f1, p1, p2, db1
+        let ids: Vec<&str> = nodes.iter().map(|n| n["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["f1", "p1", "p2", "db1"]);
+        assert_eq!(nodes[0]["kind"], "folder");
+        assert!(
+            nodes[0]["parentId"].is_null(),
+            "顶层节点的 parentId 必须是 null"
+        );
+        assert_eq!(nodes[1]["kind"], "page");
+        assert_eq!(nodes[1]["parentId"], "f1", "p1 的父级是文件夹 f1");
+        assert_eq!(nodes[3]["kind"], "database");
+        assert_eq!(
+            nodes[1]["order"],
+            serde_json::json!(1.0),
+            "order 必须是树里的排序值"
+        );
+
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ **判据 4 后半**：超过 `limit` ⇒ `truncated:true` 并给 `total`（如实说，别把截断当全量）。
+    #[test]
+    fn b1a_pages_tree_marks_truncation_honestly() {
+        let dir = b1a_fixture("b1a-tree");
+        point_cap_search_at(&dir, "b1a-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let (cut, full) = with_external_caller("b1a-tree", &granted, || {
+            (
+                dispatch_capability("pages.tree", r#"{"limit":2}"#),
+                dispatch_capability("pages.tree", r#"{"limit":2000}"#),
+            )
+        });
+        let cut: serde_json::Value = serde_json::from_str(&cut.unwrap()).unwrap();
+        assert_eq!(
+            cut["nodes"].as_array().unwrap().len(),
+            2,
+            "limit=2 ⇒ 只回 2 个节点"
+        );
+        assert_eq!(cut["total"], 4, "total 是库里真实的节点数（不是返回数）");
+        assert_eq!(
+            cut["truncated"],
+            serde_json::json!(true),
+            "被截断必须如实标 true"
+        );
+        let full: serde_json::Value = serde_json::from_str(&full.unwrap()).unwrap();
+        assert_eq!(full["nodes"].as_array().unwrap().len(), 4);
+        assert_eq!(full["truncated"], serde_json::json!(false));
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ **判据 3**：带 `spaceId` 在「只读」档 ⇒ **明确拒**（permission_denied 且点名 `read:all-spaces`）；
+    /// 在「只读（全部空间）」档 ⇒ **真能读那个空间**（读数与当前空间不同，否则"读到了"没法证）。
+    #[test]
+    fn b1a_cross_space_needs_read_all_and_then_reads_the_other_space() {
+        let dir = b1a_fixture("b1a-cross");
+        point_cap_search_at(&dir, "b1a-space");
+        let read = crate::mcp_channel::default_read_scopes();
+        let cases = [
+            ("pages.count", r#"{"spaceId":"b1a-other"}"#),
+            ("pages.tree", r#"{"spaceId":"b1a-other"}"#),
+            ("tags.list", r#"{"spaceId":"b1a-other"}"#),
+            ("properties.list", r#"{"spaceId":"b1a-other"}"#),
+        ];
+        let denied: Vec<Result<String, String>> =
+            with_external_caller("b1a-cross-read", &read, || {
+                cases
+                    .iter()
+                    .map(|(m, a)| dispatch_capability(m, a))
+                    .collect()
+            });
+        for ((method, _), r) in cases.iter().zip(denied.iter()) {
+            let e = r
+                .as_ref()
+                .expect_err(&format!("{method} 在只读档带 spaceId 必须被拒"));
+            assert!(
+                e.contains("permission_denied"),
+                "{method} 必须是 permission_denied：{e}"
+            );
+            assert!(
+                e.contains("read:all-spaces"),
+                "{method} 的拒绝要点名缺 read:all-spaces：{e}"
+            );
+        }
+        // 只读（全部空间）档
+        let mut all = read.clone();
+        all.push(crate::mcp_channel::READ_ALL_SCOPE.to_string());
+        let (count, tree) = with_external_caller("b1a-cross-all", &all, || {
+            (
+                dispatch_capability("pages.count", r#"{"spaceId":"b1a-other"}"#),
+                dispatch_capability("pages.tree", r#"{"spaceId":"b1a-other"}"#),
+            )
+        });
+        let count: i64 =
+            serde_json::from_str(&count.expect("全部空间档必须能读跨空间计数")).unwrap();
+        assert_eq!(
+            count, 2,
+            "读到的必须是**那个**空间的页数（2），不是当前空间（4）"
+        );
+        let tree: serde_json::Value =
+            serde_json::from_str(&tree.expect("全部空间档必须能读跨空间树")).unwrap();
+        assert_eq!(tree["spaceId"], "b1a-other");
+        assert_eq!(tree["spaceName"], "别处空间");
+        assert_eq!(tree["nodes"].as_array().unwrap().len(), 2);
         unpoint_cap_search(&dir);
     }
 }
