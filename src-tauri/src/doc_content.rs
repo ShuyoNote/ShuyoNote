@@ -30,6 +30,16 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 
+/// `pages.get` 返回载荷里**正文那一格**的键名（对外契约见 `docs/plugin-api.md`：
+/// `{id, title, content_text, kind, chars_total, offset, limit, rev?}`）。
+///
+/// 为什么这个字符串归这一层：它与落盘列名**逐字相同**，而 `check-doc-content-access`
+/// 数的是**标识符** —— 落盘形态的名字只该出现在「那一层」里（同
+/// `commands.rs::create_node` 那两条形参故意不叫 `content_json` / `content_text` 的理由）。
+/// 能力层（`plugins.rs`）从这个常量**取名**，不再自己写一遍 ⇒
+/// 将来落盘形态或契约名要变，只改这一处（其余调用方一行不改）。
+pub const PAGE_TEXT_KEY: &str = "content_text";
+
 /// ⭐ **这一笔远端材料是从哪来的** —— 由**调用方显式说**，⛔ 不许靠"有没有某个键"去猜。
 ///
 /// - `Server`：**服务器同步**（`sync::do_pull` ⇒ 同一账号/空间那条路）
