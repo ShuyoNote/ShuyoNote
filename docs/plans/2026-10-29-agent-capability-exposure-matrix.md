@@ -43,7 +43,7 @@
 | files.export | export:files | **Wc** | B1 | 要用户点保存框 |
 | editor.insertText | write:page.current | **✗** | — | 即时生效、插用户光标处 ⇒ 干扰打字 |
 | spaces.switch | write:pages | **✗**（B3 再议） | B3 | 改用户所在空间，副作用大 |
-| user.notify | — | **Wc（B3）** | B3 | 弹提示 ⇒ 限流（§5） |
+| user.notify | — | **✗** | — | 会往用户屏幕弹提示（打扰）⇒ 不暴露（2026-10-29 拍） |
 | kv.get/set/remove、settings.get、log.write | kv:own / — | **✗** | — | 插件私有面 |
 
 ## 3. 新增能力
@@ -79,7 +79,7 @@
 |---|---|---|
 | **B1 只读扩容** | §2 的 R ＋ §3 的 R/Wc 只读族（含导出/下载句柄、files.export、templates.list） | 零写路径改动；每条挂载级判据；§7 元判据全绿 |
 | **B2 写扩容＋回滚** | blocks.*、pages.move/rename、nodes.delete＋trash.restore、pages.revert、tags.add/remove、properties.set/unset、db.rows_write/delete、files.upload_to_page/detach/move/rename/delete、templates.apply、import.docpackage | 全部带 expectedRev/expectedSha＋dryRun；冲突必拒；审计一条/次；§7 全绿 |
-| **B3 专议** | spaces.switch、user.notify、files.convert_to_note/reextract、批量 | owner 拍"允许打扰/耗时" |
+| **B3 专议** | spaces.switch、files.convert_to_note/reextract、批量 | owner 拍"允许打扰/耗时" |
 | **✗** | editor.insertText、kv.*、settings.get、log.write、任意 SQL/HTTP/路径、永久删除 | §7.2 红测试 |
 
 ## 5. 拒绝/打扰的统一判据（v1 不一致，这里定死）
@@ -101,7 +101,7 @@
 5. 每个写调用恰 1 条审计（批量合并也要有条数上限）。
 
 ### 7.2 不暴露清单红测试
-出现以下任一 ⇒ 失败：能力 id ∈ {editor.insertText、kv.*、settings.get、log.write}；描述含"任意 SQL/任意 URL/按路径读取"；任何"永久删除/清空回收站"；任何返回**裸字节**而非句柄的下载工具。
+出现以下任一 ⇒ 失败：能力 id ∈ {editor.insertText、user.notify、kv.*、settings.get、log.write}；描述含"任意 SQL/任意 URL/按路径读取"；任何"永久删除/清空回收站"；任何返回**裸字节**而非句柄的下载工具。
 
 ### 7.3 跨块不变式
 引用检查（附件被正文引用 ⇒ delete 拒绝并点名）；树不变式（move 后无环/无孤儿/父级顺序正确）；回滚不变式（revert 后逐字一致 ＋ 新增回滚审计）。
@@ -114,12 +114,14 @@
 
 批量 ≤50/次；文本返回上限 200 KB/次（超出分页）；下载句柄 TTL 120s、单次；大文件阈值 >10 MB 或 >20 文件需确认；`user.notify` ≤3 条/分钟/会话；读单页上限沿用现状（200 条 / 20000 字符）。
 
-## 10. 待拍（更新版）
+## 10. 已拍（2026-10-29，owner）
 
-1. B1 是否**默认开只读**（含"跨空间只读"档）？还是保持默认关、用户开？
-2. `files.export` / `export.*` 放 B1（Wc）可以吗？
-3. `user.notify` 只允许 B3 ＋ 限流，同意吗？
-4. `db.rows` 过滤：沿用界面搜索口径，还是给简单 `where`（字段+操作符+值）？
+| # | 问题 | 结论 | 落地影响 |
+|---|---|---|---|
+| 1 | B1 只读默认开吗 | **默认关**（保持现状：档位＝`off`，用户手动开） | B1 不改默认档；只增加可用能力，不改"默认关"口径 |
+| 2 | 导出/下载放哪批 | **放 B1** | `files.export` / `export.markdown` / `export.docpackage` / `files.download` 都归 B1；因需用户点保存/取句柄，级别为 **Wc** |
+| 3 | `user.notify` 给不给 | **不给（✗）** | 从 §2 的 `Wc（B3）` 改判 **✗**；从 §4 B3 移除；补进 §7.2 不暴露清单红测试 |
+| 4 | `db.rows` 过滤语法 | **简单 `where`**（字段 ＋ 操作符 ＋ 值） | v1 操作符白名单 `= != > >= < <= in contains is_null`；字段必须是 `db.schema` 报出的列；⛔ 不接受任意表达式/SQL；超出白名单 ⇒ `invalid_args`；⛔ 不重算公式/汇总列 |
 
 ## 修订记录（v1 → v2）
 
