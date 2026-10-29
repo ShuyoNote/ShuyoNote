@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "apiVersion": "1.7.0",
+  "apiVersion": "1.8.0",
   "notes": "插件能力注册表——单一事实源。scripts/gen-capabilities.mjs 由本文件生成：JS shim（api.*）、Rust 绑定表、作者类型包、作者文档；scripts/check-capabilities.mjs 校验一致性与完整性。改能力请改这里，不要手改生成物。",
   "permissions": [
     {
@@ -1091,6 +1091,201 @@
       },
       "rust": "cap_blocks_append",
       "desc": "向现存页面追加一个或多个段落(按换行分段)。参数: text (必填正文), pageId (可选, 省略=当前打开的页面)。这是写操作，返回草稿供用户确认。",
+      "ai": true
+    },
+    {
+      "kind": "write",
+      "scope": "current-space",
+      "mediate": "draft",
+      "since": "1.8.0",
+      "id": "blocks.patch",
+      "title": "整块替换（草稿确认）",
+      "permission": "write:pages",
+      "jsPath": [
+        "blocks",
+        "patch"
+      ],
+      "rust": "cap_blocks_patch",
+      "mediateWhy": "替换既有块内容 → 先给用户看草稿并确认",
+      "args": [
+        {
+          "name": "blockId",
+          "type": "string",
+          "required": true,
+          "desc": "要替换的**顶层**块 id（来自 blocks.list / pages.get 的锚点）"
+        },
+        {
+          "name": "markdown",
+          "type": "string",
+          "required": false,
+          "desc": "新块内容（Markdown，经应用自己的解析转块）——与 text 二选一"
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "required": false,
+          "desc": "新块内容（纯文本）——与 markdown 二选一"
+        },
+        {
+          "name": "expectedRev",
+          "type": "string",
+          "required": false,
+          "desc": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带 currentRev ＋ 当前 markdown 带锚点），⛔ 不覆盖"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        {
+          "name": "dryRun",
+          "type": "boolean",
+          "required": false,
+          "desc": "只演练不产草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, applied:false, would}`"
+        },
+        {
+          "name": "clientRequestId",
+          "type": "string",
+          "required": false,
+          "desc": "幂等键：同 id 重复调用只落一次、只审一条（进程内 10 分钟）"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ drafted: true; applied: false; rev: string; changed: string[] }",
+        "desc": "{drafted,applied:false,rev,changed}——**不代表已写入**（用户确认后才落库）"
+      },
+      "desc": "整块替换：把某个顶层块换成新的 Markdown/纯文本，**块 id 保持不变**。参数: blockId (必填), markdown 或 text (二选一), expectedRev (可选但强烈建议), spaceId (可选;本版只当前空间), dryRun, clientRequestId。写操作 ⇒ 返回草稿等用户确认。",
+      "mcpDesc": "整块替换（顶层块）：blockId(必填) + markdown 或 text(二选一) + expectedRev(可选但强烈建议)。**块 id 不变**。写操作 ⇒ 只产草稿（返回 `{drafted:true,applied:false,rev,changed}`，用户确认后才落库）；`rev` 变/冲突 ⇒ `rev_conflict` 带 currentRev 与当前 markdown（带锚点）；`dryRun` 只演练。",
+      "ai": true
+    },
+    {
+      "kind": "write",
+      "scope": "current-space",
+      "mediate": "draft",
+      "since": "1.8.0",
+      "id": "blocks.insert",
+      "title": "插入块（草稿确认）",
+      "permission": "write:pages",
+      "jsPath": [
+        "blocks",
+        "insert"
+      ],
+      "rust": "cap_blocks_insert",
+      "mediateWhy": "往页面里插入内容 → 先给用户看草稿并确认",
+      "args": [
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": false,
+          "desc": "目标页面 id；省略时必须给 afterBlockId"
+        },
+        {
+          "name": "afterBlockId",
+          "type": "string",
+          "required": false,
+          "desc": "插在这个块之后；省略=页首（给了它时可省 pageId）"
+        },
+        {
+          "name": "markdown",
+          "type": "string",
+          "required": false,
+          "desc": "新块内容（Markdown，经应用自己的解析转块）——与 text 二选一"
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "required": false,
+          "desc": "新块内容（纯文本）——与 markdown 二选一"
+        },
+        {
+          "name": "expectedRev",
+          "type": "string",
+          "required": false,
+          "desc": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带 currentRev ＋ 当前 markdown 带锚点），⛔ 不覆盖"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        {
+          "name": "dryRun",
+          "type": "boolean",
+          "required": false,
+          "desc": "只演练不产草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, applied:false, would}`"
+        },
+        {
+          "name": "clientRequestId",
+          "type": "string",
+          "required": false,
+          "desc": "幂等键：同 id 重复调用只落一次、只审一条（进程内 10 分钟）"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ drafted: true; applied: false; rev: string; newBlockId: string }",
+        "desc": "{drafted,applied:false,rev,newBlockId}——**不代表已插入**；确认后新块 id 即生效"
+      },
+      "desc": "在某块之后插入新块（缺省页首）。参数: pageId 或 afterBlockId（至少一个）, markdown 或 text (二选一), expectedRev (可选但强烈建议), spaceId, dryRun, clientRequestId。返回 `newBlockId`（确认后即可拿它继续 patch/delete）。写操作 ⇒ 返回草稿等确认。",
+      "mcpDesc": "插入块：pageId 或 afterBlockId(至少一个) + markdown/text(二选一) + expectedRev。返回 `newBlockId`（用户确认后即可用它继续 patch/delete）。写操作 ⇒ 只产草稿；`dryRun` 只演练；冲突 ⇒ `rev_conflict` 带当前 markdown。",
+      "ai": true
+    },
+    {
+      "kind": "write",
+      "scope": "current-space",
+      "mediate": "draft",
+      "since": "1.8.0",
+      "id": "blocks.delete",
+      "title": "删除块（草稿确认）",
+      "permission": "write:pages",
+      "jsPath": [
+        "blocks",
+        "delete"
+      ],
+      "rust": "cap_blocks_delete",
+      "mediateWhy": "删除既有块内容 → 先给用户看草稿并确认",
+      "args": [
+        {
+          "name": "blockId",
+          "type": "string",
+          "required": true,
+          "desc": "要删除的顶层块 id"
+        },
+        {
+          "name": "expectedRev",
+          "type": "string",
+          "required": false,
+          "desc": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带 currentRev ＋ 当前 markdown 带锚点），⛔ 不覆盖"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        {
+          "name": "dryRun",
+          "type": "boolean",
+          "required": false,
+          "desc": "只演练不产草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, applied:false, would}`"
+        },
+        {
+          "name": "clientRequestId",
+          "type": "string",
+          "required": false,
+          "desc": "幂等键：同 id 重复调用只落一次、只审一条（进程内 10 分钟）"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ drafted: true; applied: false; rev: string; changed: string[] }",
+        "desc": "{drafted,applied:false,rev,changed}——**不代表已删除**"
+      },
+      "desc": "删除一个顶层块（不留空占位）。参数: blockId (必填), expectedRev (可选但强烈建议), spaceId, dryRun, clientRequestId。写操作 ⇒ 返回草稿等确认。",
+      "mcpDesc": "删除顶层块（不留空占位）。参数: blockId + expectedRev。写操作 ⇒ 只产草稿；`dryRun` 只演练；冲突 ⇒ `rev_conflict` 带 currentMarkdown。",
       "ai": true
     },
     {

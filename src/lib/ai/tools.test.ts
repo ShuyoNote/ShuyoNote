@@ -88,6 +88,10 @@ const EXPECTED = [
   "tags.remove",
   "properties.set",
   "properties.unset",
+  // ⭐ B2-块（2026-10-29）
+  "blocks.patch",
+  "blocks.insert",
+  "blocks.delete",
 ];
 
 describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实现）", () => {

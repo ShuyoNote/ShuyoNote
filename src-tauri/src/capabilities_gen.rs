@@ -17,7 +17,7 @@ pub struct Capability {
     pub rust: &'static str,
 }
 
-pub const API_VERSION: &str = "1.7.0";
+pub const API_VERSION: &str = "1.8.0";
 pub const API_MAJOR: u32 = 1;
 
 pub const CAPABILITIES: &[Capability] = &[
@@ -45,6 +45,9 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "editor.insertText", kind: "write", scope: "current-space", permission: Some("write:page.current"), since: "1.0.0", mediate: "immediate", rust: "cap_editor_insert_text" },
     Capability { id: "pages.create", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.0.0", mediate: "draft", rust: "cap_pages_create" },
     Capability { id: "blocks.append", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.0.0", mediate: "draft", rust: "cap_blocks_append" },
+    Capability { id: "blocks.patch", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.8.0", mediate: "draft", rust: "cap_blocks_patch" },
+    Capability { id: "blocks.insert", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.8.0", mediate: "draft", rust: "cap_blocks_insert" },
+    Capability { id: "blocks.delete", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.8.0", mediate: "draft", rust: "cap_blocks_delete" },
     Capability { id: "user.notify", kind: "host", scope: "app", permission: None, since: "1.0.0", mediate: "-", rust: "cap_user_notify" },
     Capability { id: "kv.get", kind: "read", scope: "app", permission: Some("kv:own"), since: "1.0.0", mediate: "-", rust: "cap_kv_get" },
     Capability { id: "kv.set", kind: "write", scope: "app", permission: Some("kv:own"), since: "1.0.0", mediate: "immediate", rust: "cap_kv_set" },

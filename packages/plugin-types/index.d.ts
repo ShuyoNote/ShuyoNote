@@ -226,6 +226,18 @@ export interface PluginApi {
    * 返回：{drafted: true, summary}——**不代表已写入**
    */
     append(text: string, pageId?: string, fence?: string, expectedRev?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
+  /** 整块替换（草稿确认）（权限 `write:pages`；1.8.0 起）
+   * 返回：{drafted,applied:false,rev,changed}——**不代表已写入**（用户确认后才落库）
+   */
+    patch(blockId: string, markdown?: string, text?: string, expectedRev?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; applied: false; rev: string; changed: string[] };
+  /** 插入块（草稿确认）（权限 `write:pages`；1.8.0 起）
+   * 返回：{drafted,applied:false,rev,newBlockId}——**不代表已插入**；确认后新块 id 即生效
+   */
+    insert(pageId?: string, afterBlockId?: string, markdown?: string, text?: string, expectedRev?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; applied: false; rev: string; newBlockId: string };
+  /** 删除块（草稿确认）（权限 `write:pages`；1.8.0 起）
+   * 返回：{drafted,applied:false,rev,changed}——**不代表已删除**
+   */
+    delete(blockId: string, expectedRev?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; applied: false; rev: string; changed: string[] };
   };
   backlinks: {
   /** 列出反链（权限 `read:backlinks`；1.0.0 起）
@@ -367,4 +379,4 @@ export interface PluginApi {
   };
 }
 
-export declare const SDK_API_VERSION: "1.7.0";
+export declare const SDK_API_VERSION: "1.8.0";

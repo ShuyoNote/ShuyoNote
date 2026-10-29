@@ -33,7 +33,8 @@ pub(crate) const BRIDGE_EVENT: &str = "mcp:frontend-tool-request";
 /// 等应答的上限（默认 5 秒；判据用短超时注入，⛔ 不真等 5 秒）。
 const TIMEOUT_MS: u64 = 5_000;
 /// **方法白名单**：只有这几个方法能被能力层调用（⛔ 任意方法名 ⇒ `bad_args`）。
-const ALLOWED_METHODS: &[&str] = &["export.markdown", "export.docpackage", "coverage.report"];
+const ALLOWED_METHODS: &[&str] =
+    &["export.markdown", "export.docpackage", "coverage.report", "markdown.render"];
 
 /// 前端算出来的一件东西：建议文件名 ＋ 字节。
 #[derive(Debug, Clone)]
@@ -260,6 +261,15 @@ mod tests {
                 }
                 "coverage.report" => {
                     let _ = respond(&id, "报告", b"{\"ok\":true}".to_vec());
+                }
+                "markdown.render" => {
+                    let _ = respond(
+                        &id,
+                        "markdown.json",
+                        "{\"markdown\":\"current markdown\\n<!-- b:blk1 -->\"}"
+                            .as_bytes()
+                            .to_vec(),
+                    );
                 }
                 _ => {}
             }

@@ -9,7 +9,7 @@ import { markdownToPageContent } from "../mdPreview";
 import { importMarkdownGuard } from "../docContent";
 import { contentTextOf } from "./lexicalContent";
 import { pageRev } from "../capabilities/pageAnchors";
-import { docJsonOfPage } from "../docContent";
+import { jsonTextOf, docJsonOfPage, saveFieldsWithChildren, topChildren } from "../docContent";
 import { serializeByKey } from "../serializeByKey";
 import { useSpaceStore } from "../../store/space";
 import type { PageDetail } from "../../types";
@@ -31,6 +31,26 @@ async function revProblem(pageId: string, expected: unknown): Promise<string | n
     return `rev_conflict：expectedRev=${expected}，当前 rev=${cur}（请重新读一遍再改）`;
   }
   return null;
+}
+
+/** 把一段 Markdown/纯文本变成"新块数组"；首个块强制用给定 id（patch 要求 id 不变），其余新 id。 */
+function blocksFromInput(
+  markdown: string | undefined,
+  plain: string | undefined,
+  firstId?: string,
+): Array<Record<string, unknown>> {
+  const built =
+    markdown && markdown.trim()
+      ? (() => {
+          const doc = markdownToPageContent(markdown);
+          return doc ? topChildren(jsonTextOf(doc)) : [];
+        })()
+      : topChildren(jsonTextOf(pageJsonFromText(plain ?? "", uid)));
+  if (built.length === 0) return built;
+  return built.map((b, i) => ({
+    ...b,
+    blockId: i === 0 && firstId ? firstId : typeof b.blockId === "string" && b.blockId ? b.blockId : uid(),
+  }));
 }
 
 export async function applyDraft(payload: unknown): Promise<ApplyResult> {
@@ -247,6 +267,62 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       await api.removePageProp(pageId, attrId);
       const page = await api.getPage(pageId);
       return { ok: true, message: "已去掉属性", page };
+    }
+
+    case "blocks_patch": {
+      const pageId = String(p.pageId ?? "");
+      const blockId = String(p.blockId ?? "").trim();
+      if (!pageId || !blockId) return { ok: false, message: "blocks_patch 参数不完整" };
+      const rp = await revProblem(pageId, p.expectedRev);
+      if (rp) return { ok: false, message: rp };
+      const page = await api.getPage(pageId);
+      if (!page) return { ok: false, message: "目标页面不存在" };
+      const children = topChildren(docJsonOfPage(page));
+      const at = children.findIndex((b) => String((b as { blockId?: unknown }).blockId ?? "") === blockId);
+      if (at < 0) return { ok: false, message: `块 ${blockId} 不在这一页的顶层` };
+      const next = blocksFromInput(p.markdown, p.plain, blockId);
+      if (next.length === 0) return { ok: false, message: "新块内容为空" };
+      children.splice(at, 1, ...next);
+      const saved = await api.savePage({ id: pageId, ...saveFieldsWithChildren(docJsonOfPage(page), children) });
+      return { ok: true, message: `已替换块「${blockId}」`, page: saved };
+    }
+
+    case "blocks_insert": {
+      const pageId = String(p.pageId ?? "");
+      const afterBlockId = typeof p.afterBlockId === "string" && p.afterBlockId ? p.afterBlockId : null;
+      const firstId = typeof p.newBlockId === "string" && p.newBlockId ? p.newBlockId : undefined;
+      if (!pageId) return { ok: false, message: "blocks_insert 需要 pageId" };
+      const rp = await revProblem(pageId, p.expectedRev);
+      if (rp) return { ok: false, message: rp };
+      const page = await api.getPage(pageId);
+      if (!page) return { ok: false, message: "目标页面不存在" };
+      const children = topChildren(docJsonOfPage(page));
+      const at = afterBlockId
+        ? children.findIndex((b) => String((b as { blockId?: unknown }).blockId ?? "") === afterBlockId) + 1
+        : 0;
+      if (afterBlockId && at === 0) return { ok: false, message: `块 ${afterBlockId} 不在这一页的顶层` };
+      const next = blocksFromInput(p.markdown, p.plain, firstId);
+      if (next.length === 0) return { ok: false, message: "新块内容为空" };
+      children.splice(at, 0, ...next);
+      const saved = await api.savePage({ id: pageId, ...saveFieldsWithChildren(docJsonOfPage(page), children) });
+      return { ok: true, message: "已插入新块", page: saved };
+    }
+
+    case "blocks_delete": {
+      const pageId = String(p.pageId ?? "");
+      const blockId = String(p.blockId ?? "").trim();
+      if (!pageId || !blockId) return { ok: false, message: "blocks_delete 参数不完整" };
+      const rp = await revProblem(pageId, p.expectedRev);
+      if (rp) return { ok: false, message: rp };
+      const page = await api.getPage(pageId);
+      if (!page) return { ok: false, message: "目标页面不存在" };
+      const children = topChildren(docJsonOfPage(page));
+      const at = children.findIndex((b) => String((b as { blockId?: unknown }).blockId ?? "") === blockId);
+      if (at < 0) return { ok: false, message: `块 ${blockId} 不在这一页的顶层` };
+      if (children.length <= 1) return { ok: false, message: "这是最后一个顶层块 —— 不制造空页面" };
+      children.splice(at, 1);
+      const saved = await api.savePage({ id: pageId, ...saveFieldsWithChildren(docJsonOfPage(page), children) });
+      return { ok: true, message: `已删除块「${blockId}」`, page: saved };
     }
 
     default:

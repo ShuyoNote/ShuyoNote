@@ -1,14 +1,14 @@
 {
-  "apiVersion": "1.7.0",
+  "apiVersion": "1.8.0",
   "registryVersion": 1,
-  "fingerprint": "b875a62a64f9734e2f13e3f8bdf4efdd13541450d35ab19f70ae2f0d91ddf4ce",
+  "fingerprint": "f510fad4f8100510c694148686a178d5b770654c459226b7cd8dac03b3406650",
   "counts": {
-    "total": 50,
+    "total": 53,
     "read": 29,
-    "write": 19,
+    "write": 22,
     "host": 2,
     "aiRead": 27,
-    "aiWrite": 14
+    "aiWrite": 17
   },
   "at": "2026-10-29",
   "by": "check-api-surface-version --update"

@@ -1,4 +1,4 @@
-# 插件 API（v1.7.0）
+# 插件 API（v1.8.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.7.0",
+  "apiVersion": "1.8.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.7.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.8.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -127,6 +127,9 @@ register({
 | `editor.insertText` | `api.editor.insertText(text)` | `write:page.current` | `current-space` | 即时 | void | 1.0.0 |
 | `pages.create` | `api.pages.create(title, content, parentId, fence, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `blocks.append` | `api.blocks.append(text, pageId, fence, expectedRev, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `blocks.patch` | `api.blocks.patch(blockId, markdown, text, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.8.0 |
+| `blocks.insert` | `api.blocks.insert(pageId, afterBlockId, markdown, text, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.8.0 |
+| `blocks.delete` | `api.blocks.delete(blockId, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.8.0 |
 | `user.notify` | `api.notify(message)` | — | `app` | — | void | 1.0.0 |
 | `kv.get` | `api.kv.get(key, scope)` | `kv:own` | `app` | — | string | 1.0.0 |
 | `kv.set` | `api.kv.set(key, value, scope)` | `kv:own` | `app` | 即时 | void | 1.0.0 |
@@ -405,6 +408,53 @@ register({
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
   - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+
+### `blocks.patch` — 整块替换（草稿确认）
+
+- 调用：`api.blocks.patch(blockId, markdown, text, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 替换既有块内容 → 先给用户看草稿并确认
+- 返回：{drafted,applied:false,rev,changed}——**不代表已写入**（用户确认后才落库）
+- 参数：
+  - `blockId`: `string` —— 要替换的**顶层**块 id（来自 blocks.list / pages.get 的锚点）
+  - `markdown`: `string`（可选） —— 新块内容（Markdown，经应用自己的解析转块）——与 text 二选一
+  - `text`: `string`（可选） —— 新块内容（纯文本）——与 markdown 二选一
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带 currentRev ＋ 当前 markdown 带锚点），⛔ 不覆盖
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, applied:false, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条（进程内 10 分钟）
+
+### `blocks.insert` — 插入块（草稿确认）
+
+- 调用：`api.blocks.insert(pageId, afterBlockId, markdown, text, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 往页面里插入内容 → 先给用户看草稿并确认
+- 返回：{drafted,applied:false,rev,newBlockId}——**不代表已插入**；确认后新块 id 即生效
+- 参数：
+  - `pageId`: `string`（可选） —— 目标页面 id；省略时必须给 afterBlockId
+  - `afterBlockId`: `string`（可选） —— 插在这个块之后；省略=页首（给了它时可省 pageId）
+  - `markdown`: `string`（可选） —— 新块内容（Markdown，经应用自己的解析转块）——与 text 二选一
+  - `text`: `string`（可选） —— 新块内容（纯文本）——与 markdown 二选一
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带 currentRev ＋ 当前 markdown 带锚点），⛔ 不覆盖
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, applied:false, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条（进程内 10 分钟）
+
+### `blocks.delete` — 删除块（草稿确认）
+
+- 调用：`api.blocks.delete(blockId, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 删除既有块内容 → 先给用户看草稿并确认
+- 返回：{drafted,applied:false,rev,changed}——**不代表已删除**
+- 参数：
+  - `blockId`: `string` —— 要删除的顶层块 id
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带 currentRev ＋ 当前 markdown 带锚点），⛔ 不覆盖
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, applied:false, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条（进程内 10 分钟）
 
 ### `user.notify` — 向用户显示一条提示
 
@@ -864,7 +914,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.7.0",
+  "runtime": "declarative", "apiVersion": "1.8.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },
