@@ -372,7 +372,12 @@ function EmailBodyFrame({ html }: { html: string }) {
      table 保持固有宽度，超宽由 iframe 自身横向滚动承担（见下面的 overflow-x ✓）。 */
   table { border-collapse: collapse; }
   td, th { vertical-align: top; }
-  th { text-align: left; }
+  /* ⭐⭐ **2026-10-29 第二版（上一版没治住：GitHub 邮件里 \`Status\` 仍竖排）**：
+     ⚠️ 真因不是 table 宽度，而是 **body 上那条 \`word-break: break-word\` 被 th 继承**：
+     GitHub 的表头列本身只有十几像素宽（它给圆点留的列），于是 "Status" 被逐字符断行 ⇒ 竖排 ✗。
+     ⇒ 表头**不许断词、不许折行**：列宽由表头文字撑开（table-layout:auto 下浏览器会把这列加宽）✓。
+     ⚠️ 只对 th 生效，正文（td）仍保留断词，长 URL 不会撑破版面 ✓。 */
+  th { text-align: left; white-space: nowrap; word-break: normal; overflow-wrap: normal; }
   /* 邮件里常见的"单元格里套段落"：把段落外距压平，否则每格都是大段空隙（表格式通知的观感问题） */
   td > p, th > p { margin: 0 0 6px; }
   td > p:last-child, th > p:last-child { margin-bottom: 0; }

@@ -44,5 +44,9 @@ describe("邮件正文：沙箱 iframe 渲染", () => {
     expect(code, "⛔ 不许再给 table 加 max-width:100%（会把列压塌）").not.toMatch(/table\s*\{[^}]*max-width\s*:\s*100%/);
     expect(code, "单元格顶部对齐（列不被拉歪）").toContain("td, th { vertical-align: top; }");
     expect(code, "宽邮件允许横向滚动，而不是压扁").toContain("overflow-x: auto");
+    // ⭐ 2026-10-29 第二版：上一版（撤 table max-width）**没治住** GitHub 邮件的竖排 `Status`。
+    //   真因是 `body{word-break:break-word}` 被 th 继承 + 表头列只有十几像素宽 ⇒ 逐字符断行。
+    expect(code, "表头必须 nowrap（否则单字竖排）").toMatch(/th\s*\{[^}]*white-space:\s*nowrap/);
+    expect(code, "表头必须 word-break: normal（⛔ 别再逐字符断）").toMatch(/th\s*\{[^}]*word-break:\s*normal/);
   });
 });
