@@ -59,6 +59,9 @@ export function McpAccessPane() {
   ];
   const [showToken, setShowToken] = useState(false);
   const level: McpStatus["level"] = st?.level ?? "off";
+  // ⭐ 空态：占位句是**人话**、不是令牌 ⇒ 单独一档样式（2026-10-29 owner 截图：
+  //   等宽字体里的中文回退会把占位撑得又大又重，跟下面真实的令牌不是一种东西）。
+  const emptyToken = !st?.token;
 
   const setLevel = async (next: McpStatus["level"]) => {
     setBusy(true);
@@ -202,7 +205,7 @@ export function McpAccessPane() {
         </p>
         {/* ⭐ R158：**默认打码** ✓ —— 这枚令牌原来整串铺在这里 ✗，而 owner 两次把这个面板截图发出来 ✓，
             令牌每次完整进对话 ✗ ⇒ 默认只显示点，点「显示」才展开 ✓。 */}
-        <div className="mcp-access-token">
+        <div className={`mcp-access-token${emptyToken ? " is-empty" : ""}`}>
           <code className="mcp-access-token-text">
             {!st?.token
               ? "（还没有 —— 打开开关时会自动生成）"

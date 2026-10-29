@@ -105,6 +105,29 @@ describe("McpAccessPane：外部 AI 接入的档位面", () => {
     expect(document.body.textContent).toContain("已关闭");
   });
 
+  it("★ 空令牌时令牌框走空态样式（is-empty）—— 占位句不该用等宽大字", async () => {
+    mount();
+    await tick();
+    await tick();
+    const box = document.querySelector(".mcp-access-token");
+    expect(box, "令牌框必须在").toBeTruthy();
+    expect(
+      box!.classList.contains("is-empty"),
+      "空令牌要带 is-empty（CSS 用它把占位句改成界面正文字体/弱化色，而不是等宽大字）",
+    ).toBe(true);
+    expect(box!.textContent).toContain("还没有");
+  });
+
+  it("★ 有令牌时不是空态样式（真令牌仍走等宽 12px）", async () => {
+    mocks.mcpStatus.mockResolvedValue(STATUS_ON);
+    mount();
+    await tick();
+    await tick();
+    const box = document.querySelector(".mcp-access-token");
+    expect(box, "令牌框必须在").toBeTruthy();
+    expect(box!.classList.contains("is-empty"), "有令牌时不该带空态类").toBe(false);
+  });
+
   it("★ 点档位真的调 `mcp_set_level`（不是只改本地 state ✗）", async () => {
     mount();
     await tick();

@@ -24641,26 +24641,43 @@ body.is-plugin-panel-open .main {
 }
 .mcp-access-token {
   margin: 8px 0 10px;
-  padding: 9px 11px;
+  padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
   overflow-x: auto;
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  box-sizing: border-box;
 }
 .mcp-access-token-text {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12.5px;
+  font-size: 12px;
+  line-height: 1.6;
   letter-spacing: 0.02em;
   word-break: break-all;
   color: var(--text);
 }
+/* ⭐ 2026-10-29（owner 截图）：空态那一句**是人话、不是令牌** ✗ ——
+   它原来跟真令牌共用等宽字体，而等宽字体没有中文字形 ⇒ 回退到系统中文，
+   在同样 12.5px 下看着又大又重、像一句标题 ✓。⇒ 空态单独一档：界面正文字体＋弱化色，
+   真令牌仍走等宽（两件事视觉上分开）。 */
+.mcp-access-token.is-empty .mcp-access-token-text {
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0;
+  color: var(--text-faint);
+}
 /* ⚠️ 令牌块里的 `<code>` **也会**命中上面那条 `.mcp-access code`（`0,1,1` 比 `.mcp-access-token-text`
-   的 `0,1,0` 更专）⇒ 不加这一条，令牌会被那圈"行内代码"的小字号和底衬盖掉 ✗
-   （实测截图里量到 11.5px，而不是这里写的 12.5px ✓）。 */
+   的 `0,1,0` 更专）⇒ 不加这一条，令牌会被那圈"行内代码"的小字号和底衬盖掉 ✗。
+   ⚠️ 2026-10-29 修：这里原来是 `font-size: inherit` —— 但 `inherit` 继承的是**父 div**
+   （面板正文，约 15–16px），**不是** `.mcp-access-token-text` 的 12.5px ✗ ⇒ owner 截图里
+   令牌框的字比提示语大一圈。现在**显式给 12px**，与真令牌/空态一处口径。 */
 .mcp-access .mcp-access-token code {
   padding: 0;
   background: transparent;
-  font-size: inherit;
+  font-size: 12px;
 }
 .mcp-access-snippet {
   margin: 8px 0 10px;
