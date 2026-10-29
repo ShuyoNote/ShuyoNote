@@ -1,155 +1,135 @@
-# 方案：把更多 ShuyoNote 能力暴露给外部 Agent —— 能力暴露矩阵（评审稿）
+# 方案：把更多 ShuyoNote 能力暴露给外部 Agent —— 能力暴露矩阵（v2 · 评审后修订）
 
-状态：方案待评审（未开始实现）—— 本文只做"暴露多少、暴露到什么权限"的一次性拍板清单，不写代码。
+状态：待评审 v2（未开始实现）—— 相对 v1 的改动见文末「修订记录」；本文只定"暴露什么、什么档、怎么判"，不写代码。
 
-关联：`capabilities/capabilities.json`（能力注册表，**单一事实源**）、`src-tauri/src/mcp_channel.rs`（本机通道：默认关、只绑回环、token 文件、权限位）、`docs/plans/2026-10-29-agent-block-write-p2.md`（块级写面）、`docs/plans/2026-10-29-shuyodoc-m1.md`（导出/导入格式）。
+关联：`capabilities/capabilities.json`（注册表＝单一事实源）、`src-tauri/src/mcp_channel.rs`（默认关/只绑回环/token/权限位）、`docs/plans/2026-10-29-agent-block-write-p2.md`、`docs/plans/2026-10-29-shuyodoc-m1.md`。
 
-## 0. 原则（先立规矩，再谈清单）
+## 0. 适用范围
 
-1. **注册表驱动**：能力先写进 `capabilities.json`（`id/kind/scope/permission/desc/mcpDesc/returns`），MCP 才看得见；⛔ 不在 MCP 侧手搓第二套工具表。
-2. **三档权限**：`只读` / `读写` / `管理`；按 **空间级** 作用域授予，默认最窄。
-3. **写必须可撤回**：`expectedRev` ＋ `dryRun` ＋ 草稿确认（沿用 P2）＋ 审计一条；⛔ 不给"无痕静默写"。
-4. **地址稳定**：pageId / blockId / attId / spaceId / dbId / rowId 全暴露；文本匹配只能当兜底。
-5. **不暴露危险面**：任意 SQL、任意 HTTP、文件系统路径、密钥/设置写入、批量删除、插件管理。
-6. **省 token**：优先"结构 + 增量"（`pages.tree`、`changes_since`），而不是让 Agent 反复拉全文。
+**本册只覆盖「个人版」**（单用户、本机、空间级权限）。团队/企业空间不适用——那里要先回答"Agent 以谁的身份写 / 角色权限 / 审计给谁看"（§8）。目标不是全暴露，而是用最小面覆盖常见工作流（读→总结→改块→整理结构→传附件）。
 
-## 1. 现有注册表 29 条 × MCP 暴露 × 建议档位
+## 1. 两个正交维度（替代 v1 混用的 P0/P1/P2/边缘/专议）
 
-图例：`现` = 已在 MCP（13 个工具覆盖）；`P0` = 只读扩容（先做）；`P1` = 写扩容（P2 块级写之后）；`P2` = 高风险/需专议；`✗` = 不暴露。
+| 级别 | 含义 |
+|---|---|
+| **R** | 只读 |
+| **W** | 写：必须 `expectedRev`/`expectedSha` ＋ 审计；默认权限关 |
+| **Wc** | 写 ＋ **需用户当场确认**（草稿或系统保存框） |
+| **✗** | 不暴露（进 §7.2 红测试清单） |
 
-| 能力 id | kind | 建议 | 理由（一句话） |
-|---|---|---|---|
-| pages.list | read | 现 ✓ | 已有 |
-| pages.get | read | 现 ✓ | 已有（P1 已加 `rev` + 块锚点） |
-| pages.search | read | 现 ✓ | 已有 |
-| page.current | read | P0 | 补"当前页"入口，Agent 不必先问 id（⚠️ 只读，不跟随写） |
-| blocks.list | read | 现 ✓ | 已有 |
-| backlinks.list | read | 现 ✓ | 已有 |
-| files.list | read | 现 ✓ | 已有 |
-| files.search | read | 现 ✓ | 已有 |
-| files.read | read | 现 ✓ | 已有（派生文本） |
-| tags.list | read | **P0** | 注册表有、MCP 没暴露；标签是低成本高价值索引 |
-| coverage.report | read | **P0** | 让 Agent 知道"哪些内容没进检索面"，避免瞎断言 |
-| properties.list | read | **P0** | 属性是数据库/看板的读前门；只读零风险 |
-| spaces.list | read | 现 ✓ | 已有 |
-| pages.create | write | 现 ✓ | 已有（草稿确认） |
-| pages.importMarkdown | write | 现 ✓ | 已有（整页，粗粒度） |
-| pages.update | write | 现 ✓ | 已有（整页替换，粗粒度）；**P2 落地后建议降级/收窄** |
-| blocks.append | write | 现 ✓ | 已有（尾部追加） |
-| tags.add | write | **P1** | 与 `tags.list` 配对；单点写、易审计 |
-| properties.set | write | **P1** | 与 `properties.list` 配对；需校验 type 与 attrId |
-| editor.insertText | write | **✗** | **即时生效、不进草稿、插入到用户光标处** ⇒ 会干扰正在打字的人，风险最高 |
-| files.export | write | **P0 边缘** | 写文件但**要用户点保存**；只允许文本、路径由用户选 ⇒ 可放 P0（带用户确认） |
-| spaces.switch | write | **P2** | 会改变用户界面所在的"当前空间"，副作用大；要专议（或干脆不做） |
-| kv.get / kv.set / kv.remove | read/write | **✗** | 插件私有数据，与外部 Agent 无关 |
-| settings.get | read | **✗** | 同上 |
-| user.notify | host | **✗（或 P1 专议）** | 能往用户屏幕弹消息 ⇒ 可做"任务完成通知"，但要防刷屏 |
-| log.write | host | **✗** | 插件日志面，外部 Agent 不该写 |
+`needs_user_confirm` 与级别正交（W 也可能加）。**批次**：B1 只读扩容 → B2 写扩容＋回滚 → B3 专议。
 
-## 2. 需要**新增**的能力（现在注册表里没有，但价值高）
+## 2. 现有 29 条注册表能力（permission 逐条列出）
 
-| 新能力 | 档位 | 为什么 | 判据（建议） |
-|---|---|---|---|
-| `pages.tree` | **P0** | 一次拿空间结构（标题/父子/kind），比 `pages.list` 循环省 token | 与 `pages.list` 的页集合一致；层级与页面树 UI 一致 |
-| `changes_since(rev)` | **P0** | 有了 `rev`，Agent 只读"变过的块"（省 token、可轮询） | 同页两次读 rev 相同 ⇒ 空；改一块 ⇒ 只回该块 |
-| `db.schema` / `db.rows`（只读） | **P0** | **数据库块现在对 Agent 完全不可见**，这是最大空白 | 列/视图结构可与 UI 对照；分页/过滤在服务端执行 |
-| `versions.list` / `version.get` | **P0** | 读历史版本（只读），支撑"改坏了能查" | 历史条数与 UI 一致；读旧版不改现状 |
-| `trash.list` | **P0** | 让 Agent 知道页面在回收站、不是丢了 | 与 UI 回收站一致；**⛔ 不给恢复写**（P1 再说） |
-| `export.markdown` / `export.docpackage` | **P0** | 导出能力刚做完（`.shuyodoc`），应作为**字节下载句柄**暴露（⛔ 不塞 base64 进上下文） | 导出→再导入往返一致；句柄有 TTL、只本人可用 |
-| `blocks.patch / insert / delete` | **P1** | 已有 P2 方案 | 见 P2 文档 7 条判据 |
-| `pages.move / pages.rename` | **P1** | 结构整理常用 | 移动后 id 不变、`pages.tree` 反映新父级 |
-| `db.rows_write` | **P1** | 写入表格行（按 schema 校验） | 类型/必填校验；写后 rev 变；冲突必拒 |
-| `attachment.upload` | **P1** | 附件上传（大小/类型上限） | 内容寻址 sha 一致；不覆盖同名 |
+| 能力 id | permission | 级别 | 批次 | 说明 |
+|---|---|---|---|---|
+| pages.list / pages.get / pages.search / pages.count | read:pages | 现✓ | — | 已有 |
+| page.current | read:page.current | **R** | B1 | 补"当前页"入口（只读） |
+| blocks.list | read:pages | 现✓ | — | 已有 |
+| backlinks.list | read:backlinks | 现✓ | — | 已有 |
+| files.list / files.search / files.read | read:files | 现✓ | — | 已有（含派生文本） |
+| coverage.report | read:files | **R** | B1 | "哪些内容没进检索面" |
+| tags.list | read:tags | **R** | B1 | 注册表有、MCP 未暴露 |
+| properties.list | read:properties | **R** | B1 | 数据库/属性读前门 |
+| spaces.list | read:pages | 现✓ | — | 已有 |
+| pages.create | write:pages | 现✓ | — | 草稿确认 |
+| pages.importMarkdown | write:pages | 现✓ | — | 整页，粗粒度 |
+| pages.update | write:pages | 现✓（收窄待定） | — | 整页替换；块级写落地后建议降为 Wc |
+| blocks.append | write:pages | 现✓ | — | 尾部追加 |
+| tags.add | write:tags | **W** | B2 | 与 tags.list 配对 |
+| tags.remove（新增） | write:tags | **W** | B2 | v1 漏（不对称） |
+| properties.set | write:properties | **W** | B2 | 校验 attrId/类型 |
+| properties.unset（新增） | write:properties | **W** | B2 | v1 漏 |
+| files.export | export:files | **Wc** | B1 | 要用户点保存框 |
+| editor.insertText | write:page.current | **✗** | — | 即时生效、插用户光标处 ⇒ 干扰打字 |
+| spaces.switch | write:pages | **✗**（B3 再议） | B3 | 改用户所在空间，副作用大 |
+| user.notify | — | **Wc（B3）** | B3 | 弹提示 ⇒ 限流（§5） |
+| kv.get/set/remove、settings.get、log.write | kv:own / — | **✗** | — | 插件私有面 |
 
-## 3. 分批与验收（每批单独可合入）
+## 3. 新增能力
 
-| 批次 | 内容 | 判据（批级） |
+| 能力 | permission | 级别 | 批次 | 判据要点 |
+|---|---|---|---|---|
+| `pages.tree` | read:pages | R | B1 | 与 pages.list 集合一致、层级与树 UI 一致 |
+| `changes_since(pages:{pageId:rev})` | read:pages | R | B1 | **页面级游标**（不再假装空间级 rev）；同 rev 两次读⇒空；改一块⇒只回该块 |
+| `db.schema` / `db.rows`（只读） | read:pages | R | B1 | 数据库块最大空白；v1 只给原始值，⛔ 不重算公式/汇总 |
+| `versions.list` / `version.get` | read:versions | R | B1 | 与版本 UI 一致；读旧版不改现状 |
+| `trash.list` | read:trash | R | B1 | 与回收站 UI 一致；本批不给恢复 |
+| `files.stat` | read:files | R | B1 | sha/mime/size/pageId/抽取状态；与 files.list 一致 |
+| `files.extract_status` | read:files | R | B1 | 与 coverage.report 同口径 |
+| `files.list_orphan` | read:files | R | B1 | `page_id IS NULL`；**.shuyodoc 导入会造这种资产** |
+| `files.download` | export:files | **Wc** | B1 | 句柄单次+TTL120s；取回 sha == stat.sha256；⛔ 不塞上下文 |
+| `export.markdown` / `export.docpackage` | export:files | **Wc** | B1 | 句柄；`.shuyodoc` 已实现（M1）⇒ 不需对话框 |
+| `blocks.patch/insert/delete` | write:pages | W | B2 | 见 P2 七条判据 |
+| `pages.move` / `pages.rename`（**节点通用**） | write:pages | W | B2 | id 不变；**环检测必拒**（不许移进自己子孙） |
+| `nodes.delete`（软删） | write:pages | W | **B2** | 进回收站、可恢复、引用检查 |
+| `trash.restore` | write:pages | W | **B2（与软删同批）** | v1 丢 B3 是错的：不能"能删不能恢复" |
+| `pages.revert(rev)` / `audit.revert(auditId)` | write:pages | W | **B2** | 回滚后逐字一致；**新增回滚审计**（不删原记录） |
+| `files.upload_to_page` | write:files | W | B2 | sha 自证、同名不覆盖、大小/MIME 上限 |
+| `files.detach` | write:files | W | B2 | 摘归属但保留文件（⛔ 与 delete 分开） |
+| `files.move` / `files.rename` / `files.delete` | write:files | W | B2 | delete 做**引用检查**：正文引用则拒绝并点名 |
+| `db.rows_write` / `db.rows_delete` | write:pages | W | B2 | 类型/必填校验；v1 不写公式列 |
+| `templates.list` / `templates.apply` | read:pages / write:pages | R / Wc | B1/B2 | apply 建页要草稿确认 |
+| `import.docpackage` | write:pages | **Wc** | B2 | 复用 M1 读包＋永远新建；失败原文照显示 |
+| `files.convert_to_note` / `files.reextract` | write:pages | Wc | B3 | 新建页/耗算力 ⇒ 专议＋限流 |
+
+## 4. 分批
+
+| 批次 | 内容 | 批级判据 |
 |---|---|---|
-| **B1（只读扩容）** | `tags.list`、`coverage.report`、`properties.list`、`files.export`、新增 `pages.tree` / `changes_since` / `db.schema+db.rows` / `versions.*` / `trash.list` / 导出句柄 | 每条有挂载级判据；**零写路径**改动；`check-capabilities` / `check-agent-surface` / `check-mcp-host-authz` 全绿 |
-| **B2（写扩容）** | `tags.add`、`properties.set`、`blocks.patch/insert/delete`、`pages.move/rename`、`db.rows_write`、`attachment.upload` | 全部带 `expectedRev` + `dryRun`；并发冲突必拒；审计一条/次；权限关 ⇒ `permission_denied` |
-| **B3（专议）** | `spaces.switch`、`user.notify`、`trash.restore`、`pages.delete`（软删） | 需要 owner 明确"允许 Agent 移动用户视线/通知"的口径 |
-| **不做** | `editor.insertText`、`kv.*`、`settings.get`、`log.write`、任意 SQL/HTTP/路径、永久删除 | 写进本文件的"不暴露"清单，防以后有人顺手加 |
+| **B1 只读扩容** | §2 的 R ＋ §3 的 R/Wc 只读族（含导出/下载句柄、files.export、templates.list） | 零写路径改动；每条挂载级判据；§7 元判据全绿 |
+| **B2 写扩容＋回滚** | blocks.*、pages.move/rename、nodes.delete＋trash.restore、pages.revert、tags.add/remove、properties.set/unset、db.rows_write/delete、files.upload_to_page/detach/move/rename/delete、templates.apply、import.docpackage | 全部带 expectedRev/expectedSha＋dryRun；冲突必拒；审计一条/次；§7 全绿 |
+| **B3 专议** | spaces.switch、user.notify、files.convert_to_note/reextract、批量 | owner 拍"允许打扰/耗时" |
+| **✗** | editor.insertText、kv.*、settings.get、log.write、任意 SQL/HTTP/路径、永久删除 | §7.2 红测试 |
 
-## 4. 暴露层的通用机制（B1 就要做，避免每条重复造）
+## 5. 拒绝/打扰的统一判据（v1 不一致，这里定死）
 
-1. **`capabilities.describe` 工具**：返回"当前授权档位 + 可用工具 + 每条一句话 + 版本"，让 Agent 自发现；
-2. **权限与空间作用域**：只读/读写分档，`spaceId` 限定；`只读（全部空间）` 单独一档（现有 `pages.search` 已用这个口径）；
-3. **审计可读**：`audit.tail`（只读最近 N 条：谁/什么工具/改了哪些 id），让 Agent 能自检、也让用户能追；
-4. **限流与体积上限**：每工具每分钟上限、返回体上限、分页强制（⛔ 不给"一次拉全库"）；
-5. **错误形状统一**：`{code, message, hint}`，`code` 固定枚举（`rev_conflict` / `permission_denied` / `not_found` / `invalid_args` / `too_large`）。
+任一条满足 ⇒ 不暴露或降为 Wc：① **改用户正在进行的操作**（光标处插入、切空间）；② **绕过草稿确认**（即时生效）；③ **不可撤销**。
+按此重判：`user.notify` 满足 ① ⇒ B3 + **限流 ≤3 条/分钟/会话**；`files.delete` 不满足 ③（软删可恢复）⇒ 可 B2，但必须引用检查。
 
-## 5. 待拍
+## 6. 数据外泄约束（v1 最大安全漏）
 
-1. **要不要给 Agent "当前空间之外的只读"**（现有 `只读（全部空间）` 档已存在，是否默认开）？
-2. `files.export` 放 P0 可以吗（它要用户点保存，属"半自动"）？
-3. `user.notify` 是否允许 Agent 主动弹提示（防刷屏需要限流阈值）？
-4. B1 里 `db.schema/db.rows` 的**过滤语法**：沿用界面搜索口径，还是给一套简单 `where`？
+凡返回**原字节**或**落盘**（files.download / export.* / files.export）：返回**句柄**而非字节——128bit 随机、**单次可用**、**TTL 120s**、绑定会话；判据：二次使用失败、过期失败、跨会话取不到；**>10 MB 或 >20 个文件** ⇒ 追加用户确认；审计记"导出/下载了哪个对象"，⛔ 不记内容。
 
-## 6. 文件夹与附件：矩阵漏掉的两块（2026-10-29 owner 追问补）
+## 7. 判据矩阵
 
-### 6.1 文件夹（页面树节点）
+### 7.1 元判据（对注册表全量跑）
+1. 表驱动：每条已暴露能力，权限关 ⇒ 必 `permission_denied`；
+2. 表驱动：每个 W/Wc 能力必须在"写操作元数据"清单里（expectedRev/expectedSha/dryRun/审计）；
+3. 表驱动：每个 R 能力必须有分页/上限参数；
+4. 工具声明的能力 id ⊆ 会话已授予权限；
+5. 每个写调用恰 1 条审计（批量合并也要有条数上限）。
 
-事实：**文件夹就是页面树节点**（`kind=folder`），但能力面上和"页面"不是一回事——现有注册表只有 `pages.create`（建**页**），**没有任何"建文件夹 / 移动 / 重命名 / 删除"的能力** ⇒ 外部 Agent 能在空间里写字，却**不能整理结构**。
+### 7.2 不暴露清单红测试
+出现以下任一 ⇒ 失败：能力 id ∈ {editor.insertText、kv.*、settings.get、log.write}；描述含"任意 SQL/任意 URL/按路径读取"；任何"永久删除/清空回收站"；任何返回**裸字节**而非句柄的下载工具。
 
-| 能力 | 档位 | 理由 / 判据 |
-|---|---|---|
-| `folders.create`（parentId + title） | **P1** | 与 `pages.create` 同族；判据：kind=folder、父级正确、`pages.tree` 立刻反映 |
-| `nodes.move`（page/folder 通用，含跨层） | **P1** | 用"节点"而非仅页面（否则文件夹永远挪不动）；判据：id 不变、父级/顺序正确、**⛔ 不许移进自己的子孙**（环检测必拒） |
-| `nodes.rename` | **P1** | 判据：标题变、id 与内容不变 |
-| `nodes.delete`（**软删进回收站**） | **P1** | 与 UI 一致；判据：进回收站、`trash.list` 可见、可恢复；⛔ 永久删除不暴露 |
-| `pages.tree` | **P0**（见 §2） | 文件夹能力的读前门：先看见树才能整理 |
+### 7.3 跨块不变式
+引用检查（附件被正文引用 ⇒ delete 拒绝并点名）；树不变式（move 后无环/无孤儿/父级顺序正确）；回滚不变式（revert 后逐字一致 ＋ 新增回滚审计）。
 
-**安全**：移动/删除必须做**环检测**与**引用检查**（被块引用/反链的节点软删时如实提示"有 N 处引用"）；批量移动单次上限；⛔ 不给"清空文件夹"。
+## 8. 团队/企业空间（本册不覆盖，只列前置问题）
 
-### 6.2 附件
+① Agent 以谁的身份写（用户 token / 服务账号 / 租户级 Agent）；② 企业角色能否被继承、跨空间越权怎么挡；③ 审计合规与保留期；④ 租户内容不得被外部 Agent 带出（与 §6 叠加）。四条不落，企业版不开 Agent 写面。
 
-事实：读侧已有 `files.list/search/read`（派生文本与 coverage），**写侧与"文件本身"的操作几乎空白**。
+## 9. 默认数值（v1 全是"待定"，这里落默认）
 
-| 能力 | 档位 | 理由 / 判据 |
-|---|---|---|
-| `files.stat`（sha256/mime/size/page_id/抽取状态） | **P0** | 读前门；判据：与 `files.list` 一致、sha 与字节自证 |
-| `files.list_orphan`（`page_id IS NULL` 的"未整理"） | **P0** | **我们自己的 .shuyodoc 导入就产生这种资产** ⇒ 不暴露它，Agent 永远找不到刚导入的图 |
-| `files.upload`（字节 → 内容寻址入库） | **P1** | 判据：sha 一致、同名不覆盖、大小/MIME 上限、返回 attId |
-| `files.attach`（把孤儿附件挂到某页） | **P1** | 正好补导入留下的 `page_id=null`；判据：挂后 `files.list(pageId)` 可见、正文按 hash 解析到该附件 |
-| `files.rename`（只改元数据原名） | **P1** | 内容寻址不变；判据：原名变、sha 与字节不变 |
-| `files.delete` | **P1** | 必须**引用检查**：正文仍引用该 sha ⇒ **拒绝或要求先摘引用**（⛔ 不静默留断链）；软删 |
-| `files.download`（字节句柄） | **P0 边缘** | 与 `export.*` 同族：返回 TTL 句柄，⛔ 不把字节塞进上下文；只本人可读 |
-| `files.bulk` / `files.purge` | **✗ / B3** | 批量与永久删除不暴露（风险 > 收益） |
+批量 ≤50/次；文本返回上限 200 KB/次（超出分页）；下载句柄 TTL 120s、单次；大文件阈值 >10 MB 或 >20 文件需确认；`user.notify` ≤3 条/分钟/会话；读单页上限沿用现状（200 条 / 20000 字符）。
 
-**共同红线**：⛔ 不暴露磁盘路径；⛔ 不暴露"按路径读任意文件"；写操作带 `expectedRev`（页面级）或 `expectedSha`（附件级）；上传/删除进审计；单次批量 ≤ 50（建议值）。
+## 10. 待拍（更新版）
 
-### 6.3 对 §3 分批的影响
+1. B1 是否**默认开只读**（含"跨空间只读"档）？还是保持默认关、用户开？
+2. `files.export` / `export.*` 放 B1（Wc）可以吗？
+3. `user.notify` 只允许 B3 ＋ 限流，同意吗？
+4. `db.rows` 过滤：沿用界面搜索口径，还是给简单 `where`（字段+操作符+值）？
 
-- **B1（只读）追加**：`files.stat`、`files.list_orphan`、`files.download`；
-- **B2（写）追加**：`folders.create`、`nodes.move/rename/delete`、`files.upload/attach/rename/delete`；
-- 新增一条**跨块不变式**：「附件被正文引用时，删除必须被拒并点名引用位置」——这是最容易静默出事的点。
+## 修订记录（v1 → v2）
 
-### 6.4 页面附件（page-bound）：和"未整理附件"要分开看
-
-事实：UI 里"页面附件"就是 **`pages.*` 的一条附件行**（`AttachmentPanel`：列已上传附件、可移除）。它和 §6.2 的"未整理（`page_id IS NULL`）"是同一张表的两态，但**能力语义不同**：页面附件带"归属页"，移除 ≠ 删除文件本身。
-
-现状：读侧只有 `files.list(pageId)` 与 `files.read(attId)`（派生文本）；**"上传到页 / 从页移除 / 换页 / 重命名 / 下载原字节 / 重新抽取 / 文档转笔记"全部没有**。
-
-| 能力 | 档位 | 理由 / 判据 |
-|---|---|---|
-| `files.list(pageId)` | 现 ✓ | 已有（页面附件清单） |
-| `files.read(attId)` | 现 ✓ | 已有（**派生文本**，不是原字节） |
-| `files.stat(attId)` | **P0** | 补原名/MIME/size/sha256/抽取状态/所属页；判据：与 `files.list` 一致 |
-| `files.download(attId)` | **P0 边缘** | 原字节 TTL 句柄；⛔ 不把字节塞上下文；只本人可读；判据：句柄取回的 sha 等于 `files.stat.sha256` |
-| `files.extract_status(attId)` | **P0** | 抽取是否完整（对应 `files.read` 的 coverage）；判据：与 `coverage.report` 同口径 |
-| `files.upload_to_page(pageId, bytes)` | **P1** | 上传即绑定该页（与孤儿上传区分）；判据：sha 自证、`files.list(pageId)` 可见、审计一条 |
-| `files.detach(attId)` | **P1** | **从页摘除但保留文件**（变"未整理"）；判据：`files.list(pageId)` 不再有、`files.list_orphan` 有、字节不变；⛔ 不是删除 |
-| `files.move(attId, toPageId)` | **P1** | 换归属页；判据：源页清单少一条、目标页多一条、attId 与 sha 不变 |
-| `files.delete(attId)` | **P1** | 真删（软删进回收站）；**引用检查**：正文仍引用该 sha ⇒ 拒绝并点名；判据同 §6.2 |
-| `files.rename(attId, name)` | **P1** | 只改原名元数据；sha/字节不变 |
-| `files.convert_to_note(attId)` | **P1（专议）** | UI 已有"转成笔记"（docx/docm）；Agent 触发会**新建一页**⇒ 带草稿确认；判据：新建页、原附件不动 |
-| `files.reextract(attId)` | **P1（专议）** | 重跑抽取（可能耗时/耗算力）⇒ 要限流与"进行中"状态；判据：完成后 coverage 更新、幂等 |
-| 预览 / 拖拽 / 面板布局 | **✗** | 纯 UI 面，不属能力面 |
-
-**页面附件专属红线**：
-1. **`detach` 与 `delete` 必须是两条**（UI 现在只有"移除附件"一个动作、且**没有确认框**）——Agent 侧必须能区分"摘掉归属"与"删掉文件"，⛔ 不许用一个工具两用；
-2. 删除/摘除前必须做**引用检查**（正文里按 sha 引用的图/文件）；
-3. `files.upload_to_page` 必须校验 **大小/MIME 上限** 与**同名不覆盖**；
-4. 任何写操作返回 `attId` 与 `pageId`，便于 Agent 链式调用（上传→写正文引用）。
-
-**对 §3 分批的影响**：B1 追加 `files.stat / files.download / files.extract_status`；B2 追加 `files.upload_to_page / files.detach / files.move / files.rename`；B2 专议 `files.convert_to_note / files.reextract`。
+1. 档位统一为 **R/W/Wc/✗ ＋ B1/B2/B3**（删 P0/P1/P2/边缘/专议混用）；
+2. 新增 **permission 列**（逐条来自注册表）；
+3. 补 **回滚**（pages.revert / audit.revert）进 B2；
+4. **删除与恢复同批**（nodes.delete＋trash.restore 均 B2）；
+5. `changes_since` 改**页面级游标**语义；
+6. 统一 `files.*` 命名（删 `attachment.upload` 别名）；
+7. 补对称写：tags.remove、properties.unset、db.rows_delete、templates.*、import.docpackage；
+8. 明确**数据外泄约束**并作为判据；
+9. 新增 §5 统一拒绝/打扰判据，重判 editor.insertText（✗）与 user.notify（B3+限流）；
+10. 新增 §7 判据矩阵、§9 默认数值、§8 团队空间前置问题。
