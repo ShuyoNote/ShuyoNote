@@ -1764,6 +1764,151 @@ fn cap_pages_list(limit: i64, space_id: Option<&str>) -> CapResult {
     })
 }
 
+/// `pages.get` 的 `rev`（P1 读面，2026-10-29）：`<updated_at 毫秒>:<正文 JSON 的 sha256 前 8 位小写>`。
+///
+/// 它是**乐观并发令牌**，不是时间戳语义（P2 的写面原样带回它做冲突判定）：
+/// - 只用更新时间 ⇒ **同一毫秒**内的两次写会给出同一个令牌（并发窗口）；
+/// - 只用内容指纹 ⇒ 把内容改回原样时令牌**复现**（回退后旧令牌又"有效"）。
+/// 两半拼起来才同时挡住这两种。
+///
+/// 算不出（拿不到正文 JSON）⇒ `None`：调用方**如实不带这个键**，⛔ 不编一个。
+fn page_rev(updated_at: i64, doc_json: Option<&str>) -> Option<String> {
+    let doc = doc_json?;
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(doc.as_bytes());
+    let hex = hex::encode(h.finalize());
+    Some(format!("{updated_at}:{}", &hex[..8]))
+}
+
+/// 收集一个节点下的**文本叶子**（按文档顺序）：`text` 叶子贡献自己的文本，
+/// `linebreak` / `tab` 各贡献一个字符。
+///
+/// 为什么只认这三种：这正是 Lexical `$getRoot().getTextContent()` 里"文本由谁贡献"的固定集合。
+/// 自定义叶子的 `getTextContent` 覆盖（图片 / 公式 / 绘图…）⛔ **不在 Rust 里再抄一份** ——
+/// 那会变成第二份实现，且必然与编辑器漂移；它们的位置由下面的**逐叶子顺序对齐**自然跨过。
+fn collect_text_leaves(node: &serde_json::Value, out: &mut Vec<String>) {
+    match node.get("type").and_then(|v| v.as_str()) {
+        Some("text") => {
+            if let Some(t) = node.get("text").and_then(|v| v.as_str()) {
+                if !t.is_empty() {
+                    out.push(t.to_string());
+                }
+            }
+            return;
+        }
+        Some("linebreak") => {
+            out.push("\n".to_string());
+            return;
+        }
+        Some("tab") => {
+            out.push("\t".to_string());
+            return;
+        }
+        _ => {}
+    }
+    if let Some(children) = node.get("children").and_then(|c| c.as_array()) {
+        for child in children {
+            collect_text_leaves(child, out);
+        }
+    }
+}
+
+/// 每个**有块 id 的顶层块**的结束位置（按 Unicode 码点计数 —— 与分页同一条口径）。
+///
+/// 怎么定位：把该块的文本叶子按文档顺序，在正文里**逐片往后对齐**（从上一块的结束处开始找）。
+/// 为什么不是"把整块文本拼起来找整串"：正文由编辑器的 `$getRoot().getTextContent()` 派生，
+/// 块内**非行内**子节点之间是 `\n\n`（列表项之间就是），与朴素拼接不同 ⇒ 整串匹配在列表/嵌套块上
+/// 必然落空；**逐叶子**对齐天然跨过这些分隔符（判据里的列表用例钉的就是这一条）。
+///
+/// ⚠️ 两条边界必须写明（别把"尽力而为"读成"精确"）：
+/// 1. 边界取到"该块最后一个文本叶子结束"为止 —— 块尾的**装饰**（图片/公式等）不算进去；
+///    没有文本叶子的块（空段落、纯图片块）⇒ 边界＝块的**起点**；
+/// 2. 某片叶子在正文里找不到（例如正文文本列还没重建、与 JSON 不是同一代）⇒ **跳过这一片**，
+///    ⛔ 不去猜位置（猜出来的锚点会指到别的块上，比没有更糟）。
+fn block_end_offsets(doc_json: &str, text: &str) -> Vec<(String, usize)> {
+    let Ok(v) = crate::blocks::parse_json(doc_json) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    // 两个游标：`byte` 是正文里的**字节**位置，`chr` 是同一位置的**码点**位置。
+    // （`str::find` 走字节、分页/窗口走码点 ⇒ 必须成对推进，否则 emoji 一出现就错位。）
+    let mut byte = 0usize;
+    let mut chr = 0usize;
+    for block in crate::blocks::root_children(&v) {
+        let id = block
+            .get("blockId")
+            .and_then(|b| b.as_str())
+            .unwrap_or("")
+            .to_string();
+        let mut leaves = Vec::new();
+        collect_text_leaves(block, &mut leaves);
+        for leaf in leaves {
+            if let Some(rel) = text[byte..].find(&leaf) {
+                let at = byte + rel;
+                chr += text[byte..at].chars().count() + leaf.chars().count();
+                byte = at + leaf.len();
+            }
+        }
+        // 没有块 id 的块**给不了锚点**（不可寻址）—— 但它照样推进游标，否则后面全错位。
+        if !id.is_empty() {
+            out.push((id, chr));
+        }
+    }
+    out
+}
+
+/// 把块锚点**只插进本次返回的窗口**里 —— 块尾落在窗口内的块才标注（判据：分页截断时
+/// ⛔ 不许给没返回的块加锚点）。每个锚点一整行 HTML 注释 `<!-- b:<块 id> -->`，
+/// 前面补一个空行（与正文自己的 `\n\n` 接上就是"块后一空行 + 锚点行"）；**正文一个字不改**。
+fn annotated_window(chars: &[char], boundaries: &[(String, usize)], off: usize, lim: usize) -> String {
+    let total = chars.len();
+    let start = off.min(total);
+    let end = off.saturating_add(lim).min(total);
+    let mut out = String::new();
+    let mut pos = start;
+    for (id, at) in boundaries {
+        let at = *at;
+        // 块尾不在本窗 ⇒ 不标注（⛔ 不给没返回的块加锚点）。
+        if at < start || at > end {
+            continue;
+        }
+        // 上一窗刚好读到块尾（`at == start` 且不是第一窗）⇒ 那个块不在本窗里，别重复标。
+        if at == start && start > 0 {
+            continue;
+        }
+        // 防御：块尾必须单调（对齐算法保证），真乱序就跳过 —— ⛔ 不把锚点乱插。
+        if at < pos {
+            continue;
+        }
+        out.extend(&chars[pos..at]);
+        out.push_str("\n\n<!-- b:");
+        out.push_str(id);
+        out.push_str(" -->");
+        pos = at;
+    }
+    out.extend(&chars[pos..end]);
+    out
+}
+
+/// 布尔参数的取值口径（`pages.get` 的 `includeAnchors` 用）：
+/// 真布尔 / 字符串 `"true"`·`"false"`·`"1"`·`"0"` / 数字（非 0 为真）都认，其它 ⇒ 默认值。
+///
+/// 为什么必须认字符串：插件 shim 是生成器按 `String(...)` 传布尔的 ⇒ 插件写 `false` 时
+/// 桌面上收到的是 `"false"`；不认它的话"显式关"与"没传"在两条路上是同一个结果。
+fn arg_bool(v: Option<&serde_json::Value>, default: bool) -> bool {
+    match v {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" => true,
+            "false" | "0" => false,
+            _ => default,
+        },
+        Some(serde_json::Value::Number(n)) => n.as_i64().map(|i| i != 0).unwrap_or(default),
+        _ => default,
+    }
+}
+
 /// `pages.get`：读一页的标题与正文。**支持分页**（`offset`/`limit`）。
 ///
 /// 口径（两条都必须写清，否则调用方会算错窗口）：
@@ -1775,36 +1920,51 @@ fn cap_pages_list(limit: i64, space_id: Option<&str>) -> CapResult {
 ///
 /// 返回值里带 `chars_total` / `offset` / `limit` 三个读数：**只读了窗口就当整页用**是这类工具
 /// 最常见的误用，而调用方光看返回正文的长度分不出"读完了"还是"被截了"。
-fn cap_pages_get(id: &str, offset: i64, limit: i64) -> CapResult {
+///
+/// ⭐ **P1 读面（2026-10-29）另加两样**（见方案 `docs/plans/2026-10-29-agent-block-write-p2.md`）：
+/// - `rev`：乐观并发令牌（形状见 [`page_rev`]）。**不受 `includeAnchors` 影响** ——
+///   它是 P2 写面的前置，读面一关开关就拿不到令牌的话，省 token 就得放弃并发安全；
+/// - **块锚点**：每个顶层块后一行 `<!-- b:<块 id> -->`，`includeAnchors`（默认 true）可关。
+///   锚点**只**插在本次窗口里，且**不改变正文任何字符** —— 关掉时正文与旧行为逐字节相同。
+///
+/// ⚠️ `chars_total` / `offset` / `limit` 量的始终是**正文**（不含锚点行）——
+/// 调用方按 `offset + 返回正文字数` 翻页的口径因此一个字没变（锚点行不该被算进"读了几个字"）。
+fn cap_pages_get(id: &str, offset: i64, limit: i64, include_anchors: bool) -> CapResult {
     let off = offset.max(0) as usize;
     let lim = limit.clamp(1, MAX_PAGE_TEXT_LIMIT) as usize;
     with_read_conn(|c| {
-        use rusqlite::OptionalExtension;
-        let row: Option<(String, String, String)> = c
-            .query_row(
-                "SELECT title, content_text, kind FROM pages WHERE id = ?1 AND deleted_at IS NULL",
-                params![id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .optional()
-            .map_err(|e| format!("db_error: {e}"))?;
-        let Some((title, text, kind)) = row else {
+        // 读一页只走「那一层」的一次读（内容 ＋ 读面要的两个标量来自**同一行**）：
+        // `rev` 的两半必须配对，分两次查就有读到两代数据的窗口。
+        let Some(row) = crate::doc_content::read_with_meta(c, id).map_err(|e| format!("db_error: {e}"))? else {
             return Ok(serde_json::Value::Null);
         };
+        let text = row.content.text;
+        let doc_json = row.content.json;
         // ⚠️ 先收成 `Vec<char>` 再切：`skip/take` 按**字符**走，与 TS 侧的 `Array.from` 同口径。
         // （若按字节切，中文会被切坏；若按 UTF-16 码元切，emoji 会被切坏 —— 两种都试过是错的。）
         let chars: Vec<char> = text.chars().collect();
         let chars_total = chars.len();
         let window: String = chars.iter().skip(off).take(lim).collect();
-        Ok(serde_json::json!({
+        // 开关关掉 ⇒ 正文就是**旧行为的那个字符串**（逐字节相同，锚点一个字都不加）。
+        let body = if include_anchors {
+            let boundaries = block_end_offsets(&doc_json, &text);
+            annotated_window(&chars, &boundaries, off, lim)
+        } else {
+            window
+        };
+        let mut out = serde_json::json!({
             "id": id,
-            "title": title,
-            "content_text": window,
-            "kind": kind,
+            "title": row.content.title,
+            "content_text": body,
+            "kind": row.kind,
             "chars_total": chars_total,
             "offset": off,
             "limit": lim,
-        }))
+        });
+        if let Some(rev) = page_rev(row.updated_at, Some(&doc_json)) {
+            out["rev"] = serde_json::json!(rev);
+        }
+        Ok(out)
     })
 }
 
@@ -2603,7 +2763,14 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         "page.current" => cap_page_current(),
         "pages.count" => cap_pages_count(),
         "pages.list" => cap_pages_list(arg_i64("limit", 50), arg_opt_str("spaceId").as_deref()),
-        "pages.get" => cap_pages_get(&arg_str("id")?, arg_i64("offset", 0), arg_i64("limit", 6000)),
+        // `includeAnchors` 走 **可选** 读法（`args.get`）—— 注册表声明它是可选、默认 true，
+        // 而 `arg_bool` 同时认 `true/false` 与 `"true"/"false"`（插件 shim 传的是字符串）。
+        "pages.get" => cap_pages_get(
+            &arg_str("id")?,
+            arg_i64("offset", 0),
+            arg_i64("limit", 6000),
+            arg_bool(args.get("includeAnchors"), true),
+        ),
         "pages.search" => cap_pages_search(
             &arg_str("q")?,
             arg_i64("limit", 8),
@@ -7898,6 +8065,255 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(
             call(&st, "pages.get", r#"{"id":"nope"}"#).unwrap().is_null(),
             "不存在的页面仍然是 null"
+        );
+    }
+
+    // ---- P1 读面（2026-10-29）：`rev` ＋ 块锚点 ----
+    //
+    // 四条判据对应方案 `docs/plans/2026-10-29-agent-block-write-p2.md` 的 P1：
+    //   ① 锚点数 = 返回范围内顶层块数；② `includeAnchors:false` ⇒ 正文逐字节不变；
+    //   ③ `rev` 形状合法 ＋ 同一页两次读相同 ＋ 内容改一次就变；④ 分页截断只标返回的块。
+
+    /// 把 `p1` 改造成 **3 个顶层块**（甲/乙/丙）的页面，三块的 id 是 `blk1`/`blk2`/`blk3`。
+    fn seed_three_block_page(tag: &str, updated_at: i64) -> (String, PathBuf) {
+        let (space, dir) = seed_space(tag);
+        let doc = serde_json::json!({
+            "root": { "children": [
+                { "type": "paragraph", "blockId": "blk1", "children": [{ "type": "text", "text": "甲" }] },
+                { "type": "paragraph", "blockId": "blk2", "children": [{ "type": "text", "text": "乙" }] },
+                { "type": "paragraph", "blockId": "blk3", "children": [{ "type": "text", "text": "丙" }] },
+            ]}
+        })
+        .to_string();
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "UPDATE pages SET content_json = ?1, content_text = ?2, updated_at = ?3 WHERE id = 'p1'",
+                params![doc, "甲\n\n乙\n\n丙", updated_at],
+            )
+            .unwrap();
+        }
+        (space, dir)
+    }
+
+    /// 块锚点整行的形状：`<!-- b:<块 id> -->`。
+    const ANCHOR_PREFIX: &str = "<!-- b:";
+
+    /// 判据 ①：锚点数**恰等于**该页顶层块数（3 块 ⇒ 3 个锚点），且去掉锚点行后正文**逐字节**不变。
+    #[test]
+    fn pages_get_emits_one_block_anchor_per_top_level_block() {
+        let (space, dir) = seed_three_block_page("pages-get-anchors", 1_700_000_000_000);
+        let st = state_for_space(&space, &dir);
+        let got = call(&st, "pages.get", r#"{"id":"p1"}"#).unwrap();
+        let body = got["content_text"].as_str().unwrap();
+
+        assert_eq!(
+            body.matches(ANCHOR_PREFIX).count(),
+            3,
+            "锚点数必须等于顶层块数（3）：{body}"
+        );
+        for id in ["blk1", "blk2", "blk3"] {
+            assert!(
+                body.contains(&format!("<!-- b:{id} -->")),
+                "缺块 {id} 的锚点：{body}"
+            );
+        }
+        // 锚点**只加注释**：把每个 `\n\n<!-- b:… -->` 剥掉之后必须回到原文（逐字节）。
+        let mut plain = body.to_string();
+        while let Some(i) = plain.find(ANCHOR_PREFIX) {
+            // 回退到它前面那个空行（锚点插入形如 `\n\n<!-- b:id -->`）
+            let start = plain[..i].rfind("\n\n").unwrap_or(i);
+            let end = plain[i..].find(" -->").expect("锚点必须闭合") + i + " -->".len();
+            plain.replace_range(start..end, "");
+        }
+        assert_eq!(plain, "甲\n\n乙\n\n丙", "剥掉锚点后必须是原文：{body}");
+    }
+
+    /// 判据 ②：`includeAnchors:false` ⇒ 正文与**旧行为逐字节相同**（开关真能关掉、不是"少加一点"）。
+    #[test]
+    fn pages_get_include_anchors_false_keeps_the_body_byte_identical() {
+        let (space, dir) = seed_three_block_page("pages-get-no-anchors", 1_700_000_000_001);
+        let st = state_for_space(&space, &dir);
+        let got = call(&st, "pages.get", r#"{"id":"p1","includeAnchors":false}"#).unwrap();
+        let body = got["content_text"].as_str().unwrap();
+        assert_eq!(body, "甲\n\n乙\n\n丙", "includeAnchors:false ⇒ 正文必须逐字节不变");
+        assert!(!body.contains(ANCHOR_PREFIX), "关掉之后不许残留锚点：{body}");
+        // 既有读数一个都不许变（锚点不计入字数）
+        assert_eq!(got["chars_total"].as_u64().unwrap(), 7);
+        assert_eq!(got["offset"].as_i64().unwrap(), 0);
+        assert_eq!(got["limit"].as_i64().unwrap(), 6000);
+        assert_eq!(got["kind"].as_str().unwrap(), "page");
+        // 插件 shim 按 `String(...)` 传布尔 ⇒ **字符串形态的 false 也必须认**
+        let got2 = call(&st, "pages.get", r#"{"id":"p1","includeAnchors":"false"}"#).unwrap();
+        assert_eq!(
+            got2["content_text"].as_str().unwrap(),
+            body,
+            "字符串 \"false\" 必须与布尔 false 同效（插件 shim 传的是字符串）"
+        );
+    }
+
+    /// 判据 ③：`rev` 形状合法、同一页两次读**相同**、内容改一次就**变**；算不出时如实不带。
+    #[test]
+    fn pages_get_rev_is_a_stable_fingerprint_that_changes_with_content() {
+        let updated_at = 1_700_000_000_123i64;
+        let (space, dir) = seed_three_block_page("pages-get-rev", updated_at);
+        let st = state_for_space(&space, &dir);
+
+        let one = call(&st, "pages.get", r#"{"id":"p1","includeAnchors":false}"#).unwrap();
+        let two = call(&st, "pages.get", r#"{"id":"p1"}"#).unwrap();
+        let rev = one["rev"].as_str().expect("能算出来就必须带 rev").to_string();
+        assert_eq!(
+            two["rev"].as_str().unwrap(),
+            rev,
+            "同一页两次读 rev 必须相同（与 includeAnchors 开关无关）"
+        );
+        // 形状：`^\d+:[0-9a-f]{8}$`
+        let (ms, fp) = rev.split_once(':').expect("rev 必须是一个冒号两半");
+        assert!(
+            !ms.is_empty() && ms.chars().all(|c| c.is_ascii_digit()),
+            "rev 前半必须是毫秒整数：{rev}"
+        );
+        assert_eq!(ms, updated_at.to_string(), "rev 前半就是 updated_at 毫秒");
+        assert_eq!(fp.len(), 8, "rev 后半必须是 8 位：{rev}");
+        assert!(
+            fp.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "rev 后半必须是小写十六进制：{rev}"
+        );
+
+        // **只**改正文 JSON（`updated_at` 一个字不动）⇒ 指纹那半必须变 ⇒ rev 变。
+        // 这条钉的是"内容变了令牌就变"，不靠时间戳碰巧不同。
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "UPDATE pages SET content_json = ?1 WHERE id = 'p1'",
+                params![r#"{"root":{"children":[]}}"#],
+            )
+            .unwrap();
+        }
+        let three = call(&st, "pages.get", r#"{"id":"p1"}"#).unwrap();
+        assert_ne!(
+            three["rev"].as_str().unwrap(),
+            rev,
+            "内容改过一次之后 rev 必须变化"
+        );
+
+        // 算不出 ⇒ **不带这个键**（⛔ 不编一个）：纯函数层面直接钉"拿不到正文原文时没有 rev"。
+        assert!(
+            page_rev(updated_at, None).is_none(),
+            "拿不到正文原文时 rev 必须算不出（如实不带），不是编一个"
+        );
+        // 空正文**是算得出来的**（空串也有指纹）—— 别把"空"当成"算不出"。
+        assert_eq!(
+            page_rev(1, Some("")).unwrap(),
+            "1:e3b0c442",
+            "空串的 sha256 前 8 位是 e3b0c442"
+        );
+    }
+
+    /// 判据 ④：分页截断时**只给返回范围内的块**加锚点（⛔ 不给没返回的块加）。
+    #[test]
+    fn pages_get_anchors_only_cover_the_returned_window() {
+        let (space, dir) = seed_three_block_page("pages-get-anchor-window", 1_700_000_000_002);
+        let st = state_for_space(&space, &dir);
+
+        // 第一窗 `0..5` = "甲\n\n乙\n"：块 1、块 2 落在窗内，块 3 没返回。
+        let first = call(&st, "pages.get", r#"{"id":"p1","offset":0,"limit":5}"#).unwrap();
+        let b1 = first["content_text"].as_str().unwrap();
+        assert_eq!(
+            b1.matches(ANCHOR_PREFIX).count(),
+            2,
+            "窗口只装得下 2 个完整的块 ⇒ 只能是 2 个锚点：{b1}"
+        );
+        assert!(b1.contains("<!-- b:blk1 -->") && b1.contains("<!-- b:blk2 -->"));
+        assert!(
+            !b1.contains("blk3"),
+            "块 3 没返回 ⇒ ⛔ 不许给它加锚点：{b1}"
+        );
+
+        // 第二窗从块 2 的块尾开始：上一窗读完的块**不重复标注**，只有块 3 的锚点。
+        let second = call(&st, "pages.get", r#"{"id":"p1","offset":4,"limit":10}"#).unwrap();
+        let b2 = second["content_text"].as_str().unwrap();
+        assert_eq!(
+            b2.matches(ANCHOR_PREFIX).count(),
+            1,
+            "第二窗只该有块 3 的锚点（块 2 上一窗已读完）：{b2}"
+        );
+        assert!(b2.contains("<!-- b:blk3 -->"), "第二窗必须标块 3：{b2}");
+        assert!(!b2.contains("blk2"), "块 2 不该在第二窗重复标注：{b2}");
+    }
+
+    /// 锚点与 `rev` 的**跨语言**判据：与 TS 侧（`src/lib/capabilities/pageAnchors.test.ts`）
+    /// 读**同一份夹具** `tests/pages-get-anchors-parity.json`。
+    ///
+    /// 为什么共用一份：桌面走 Rust、Web 走 TS，同一个外部 agent 在两条路上必须拿到同一种锚点与令牌；
+    /// 这种漂移**没有编译期信号**（谁把"块尾落在窗内"改成"块起点落在窗内"都能跑通、都不报错）。
+    /// 夹具里期望值是**照口径独立算**出来的（不是拿本实现跑一遍抄回去）。
+    #[test]
+    fn pages_get_anchors_and_rev_follow_the_shared_fixture() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            #[serde(rename = "docJson")]
+            doc_json: String,
+            #[serde(rename = "contentText")]
+            content_text: String,
+            offset: i64,
+            limit: i64,
+            #[serde(rename = "includeAnchors")]
+            include_anchors: bool,
+            #[serde(rename = "expectAnchors")]
+            expect_anchors: usize,
+            #[serde(rename = "expectText")]
+            expect_text: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct RevCase {
+            #[serde(rename = "updatedAt")]
+            updated_at: i64,
+            #[serde(rename = "docJson")]
+            doc_json: String,
+            expect: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            cases: Vec<Case>,
+            rev: RevCase,
+        }
+        let fixture: Fixture =
+            serde_json::from_str(include_str!("../../tests/pages-get-anchors-parity.json"))
+                .expect("夹具必须能解析（改了结构就要同步改两侧）");
+        assert!(fixture.cases.len() >= 8, "夹具不能是空的");
+
+        for (i, c) in fixture.cases.iter().enumerate() {
+            let chars: Vec<char> = c.content_text.chars().collect();
+            let off = c.offset.max(0) as usize;
+            let lim = (c.limit.max(1) as usize).min(MAX_PAGE_TEXT_LIMIT as usize);
+            let window: String = chars.iter().skip(off).take(lim).collect();
+            let got = if c.include_anchors {
+                let boundaries = block_end_offsets(&c.doc_json, &c.content_text);
+                annotated_window(&chars, &boundaries, off, lim)
+            } else {
+                window.clone()
+            };
+            assert_eq!(got, c.expect_text, "用例[{i}] {}（锚点正文）", c.name);
+            assert_eq!(
+                got.matches(ANCHOR_PREFIX).count(),
+                c.expect_anchors,
+                "用例[{i}] {}（锚点数）",
+                c.name
+            );
+            // `includeAnchors:false` 的用例必须**逐字节**等于窗口本身（判据 ②）。
+            if !c.include_anchors {
+                assert_eq!(got, window, "用例[{i}] {}（关掉锚点后必须逐字节不变）", c.name);
+            }
+        }
+
+        // `rev`：同一形状、同一算法（`<updated_at>:<sha256 前 8 位>`）。
+        assert_eq!(
+            page_rev(fixture.rev.updated_at, Some(&fixture.rev.doc_json)).unwrap(),
+            fixture.rev.expect,
+            "rev 的跨语言口径（TS 侧读同一份夹具）"
         );
     }
 

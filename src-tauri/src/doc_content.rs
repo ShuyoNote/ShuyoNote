@@ -74,6 +74,43 @@ pub fn read(c: &Connection, page_id: &str) -> Result<Option<DocContent>, String>
     .map_err(|e| e.to_string())
 }
 
+/// 一页内容 ＋ 读面要的两个**标量**（`kind` / `updated_at`）—— 一次查询出来。
+///
+/// 为什么读面非得走这一层而不是自己再拼一条 SQL：落盘两列的直接访问**只减不增**
+/// （门禁 `check-doc-content-access` 按文件计数），读面的 `rev` 又**必须**让
+/// 「更新时间」与「正文指纹」来自**同一行**（分两次查就有读到两代数据的窗口 ⇒ 令牌是假的）。
+///
+/// 为什么另立一个结构而不往 [`DocContent`] 里加字段：`DocContent` 是写路径的单位
+/// （`write` 只吃 title/json/text），给它加两个只有读面用的标量，会让**所有**构造点
+/// 都跟着改（同步/合并/测试夹具十几处）；读面自己的标量放读面自己的结构里。
+pub struct DocContentWithMeta {
+    pub content: DocContent,
+    pub kind: String,
+    pub updated_at: i64,
+}
+
+/// 读面的**唯一读出口**：页面不存在或已软删 ⇒ `Ok(None)`（与 [`read`] 同一支）。
+pub fn read_with_meta(c: &Connection, page_id: &str) -> Result<Option<DocContentWithMeta>, String> {
+    c.query_row(
+        "SELECT title, content_json, content_text, kind, updated_at
+         FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+        params![page_id],
+        |row| {
+            Ok(DocContentWithMeta {
+                content: DocContent {
+                    title: row.get(0)?,
+                    json: row.get(1)?,
+                    text: row.get(2)?,
+                },
+                kind: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+}
+
 /// **唯一写入口**（本地保存那条路）。
 ///
 /// `dirty = 1` 是**同步契约**的一部分，不是随手写的：`sync::apply_upsert` 的

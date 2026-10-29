@@ -6,7 +6,7 @@
 | 源 | 值 |
 |---|---|
 | 注册表文件 | `capabilities/capabilities.json` |
-| 注册表 sha256 | `48c469a0ff9db8a79485ccb2156ec96b72c75791aca04a7d88afe98a4c3481a5` |
+| 注册表 sha256 | `000621b57c62148f090d4726048cbec00c78a2e32ca8d8567bad1e113a2424cb` |
 | `registryVersion` | 1 |
 | `apiVersion` | 1.2.0 |
 | 能力条数 | **29**（按 `kind`：host 2 / read 16 / write 11） |
@@ -30,7 +30,7 @@
 | page.current | read | current-space | read:page.current |  |  | 读取当前打开页面的正文（Lexical content_json 的原始字符串）。没有打开页面时返回空串。 |
 | pages.count | read | current-space | read:pages |  |  | 本空间未删除页面的数量。 |
 | pages.create | write | current-space | write:pages | ✓ | ✓ | 新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。 |
-| pages.get | read | current-space | read:pages | ✓ |  | 读取单个页面的标题与正文纯文本。参数: id (必填), offset/limit (可选分页，按**字符/Unicode 标量**计数)。**必须看 `chars_total` 与返回长度判断是否读全**：只读了窗口就当整页用，是这类工具最常见的误用。 |
+| pages.get | read | current-space | read:pages | ✓ |  | 读取单个页面的标题与正文纯文本。参数: id (必填), offset/limit (可选分页，按**字符/Unicode 标量**计数), includeAnchors (可选，默认 true：给每个顶层块后加一行 `<!-- b:<blockId> -->` 锚点，传 false 关掉且正文逐字节不变)。**必须看 `chars_total` 与返回长度判断是否读全**：只读了窗口就当整页用，是这类工具最常见的误用。⚠️ 锚点行**不计入** `chars_total`/`offset`：翻页用 `offset + limit`（夹到 `chars_total`）推算，⛔ 别数返回正文的字符数。返回值另带 `rev`（乐观并发令牌，形如 `<更新时间毫秒>:<正文指纹前 8 位>`；按块写回时要原样带回）。 |
 | pages.importMarkdown | write | current-space | write:pages | ✓ | ✓ | 导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。 |
 | pages.list | read | current-space | read:pages | ✓ |  | 列出页面（id / 标题 / 创建时间 / 更新时间），按更新时间倒序；不含正文。默认本空间；可用 spaceId 指定别的空间（需「只读（全部空间）」档）。**搜索之外的发现通路**：不知道关键词、或检索返回空时，先用它看这个空间里有什么。参数: limit (可选, 默认 50, 上限 200), spaceId (可选)。 |
 | pages.search | read | current-space | read:pages | ✓ |  | 在本空间检索页面（可用 spaceId 指定别的空间，需「只读（全部空间）」档）：关键词用空格分隔 ⇒ 全部出现才算命中（与应用内搜索同一个引擎，含正文与附件抽取文本）。参数: q (必填), limit (可选, 默认 8), spaceId (可选)。返回 [{id,title,snippet}]；**空数组 = 该空间没有命中，不是失败**。 |

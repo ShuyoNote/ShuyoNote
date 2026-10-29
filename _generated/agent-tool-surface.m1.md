@@ -5,7 +5,7 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `48c469a0ff9db8a79485ccb2156ec96b72c75791aca04a7d88afe98a4c3481a5` |
+| 注册表 sha256 | `000621b57c62148f090d4726048cbec00c78a2e32ca8d8567bad1e113a2424cb` |
 | `apiVersion` | 1.2.0 |
 | 取用条件 | `ai === true` **且** `kind === "read"` |
 | 条数 | **10** |
@@ -19,7 +19,7 @@
 | files.list | current-space | read:files | 列出页面附件。参数: pageId (可选, 省略=当前打开的页面)。返回文件名/类型/大小。 |
 | files.read | current-space | read:files | 读取某个附件的**派生文本**（抽取结果，**不含原文字节**）。参数: id (必填), offset/limit (可选分页)。返回 {segments, total, truncated, coverage}；**还没抽过 ⇒ segments 空 + total 0**（不是失败，别据此断言文件里没有内容）。`truncated` 说的是「这一页没给全」，而 `coverage` 说的是「**抽取本身**有没有承认没抽全」（§15.10：成功 ≠ 抽全了）：coverage 里每个抽取器一条 `{extractor, coverage}`，`coverage` 是原始 JSON（如 `{"complete":false,"gapIndexes":[2]}`），**空字符串或空数组都表示「未知」，不许读成「完整」**。 |
 | files.search | current-space | read:files | 在已抽取的文件内容里做块级检索（含扫描件/文档正文）。参数: query (必填), limit (可选, 默认 10)。返回 {chunkId, pageId, attId, loc, snippet, score}：pageId/attId 用来回链到原文位置。 |
-| pages.get | current-space | read:pages | 读取单个页面的标题与正文纯文本（分页，按字符计数；**必须看 chars_total 判断读全没有**）。⚠️ 返回值里**没有块身份**：要把结论锚定到具体段落，另调 blocks_list 拿各块的 blockId，再在笔记里用块引用（这样页面被改/删时引用会显式失效）。参数: id (必填), offset/limit (可选, 默认 6000, 上限 20000)。 |
+| pages.get | current-space | read:pages | 读取单个页面的标题与正文（分页，按字符计数；**必须看 chars_total 判断读全没有**）。**默认带块锚点**：每个顶层块后一行 `<!-- b:<块 id> -->`（HTML 注释，不破坏渲染；锚点数 = 本次返回范围内的顶层块数，分页截断时**只标注已返回的块**）—— 可把结论锚定到具体段落。传 includeAnchors:false ⇒ 正文与旧行为**逐字节相同**（省 token）。另带 `rev`（乐观并发令牌，形如 `<更新时间毫秒>:<正文指纹前 8 位>`）：同一页两次读相同、内容改一次就变；按块写回时原样带回。⚠️ 算不出时**不带** rev（不编）。⚠️ **锚点行不计入 chars_total / offset**：翻页请用 `offset + limit`（夹到 chars_total）推算，⛔ 别数返回正文的字符数（会把锚点行算进去 ⇒ 跳字）。参数: id (必填), offset/limit (可选, 默认 6000, 上限 20000), includeAnchors (可选, 默认 true)。 |
 | pages.list | current-space | read:pages | 列出页面（id、标题、创建与更新时间），按**最近更新**倒序，不含正文。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。这是**搜索之外的发现通路**：pages_search 返回空、或不知道该搜什么词时，先调它把那个空间最近改过的页面看一遍。参数: limit (可选, 默认 50, 上限 200), spaceId (可选)。 |
 | pages.search | current-space | read:pages | 检索页面：关键词用空格分隔 ⇒ **全部出现**才算命中（不是连续子串匹配）。默认只搜**当前空间**；给了 spaceId 就搜那个空间（只读，需要用户把外部接入开到「只读（全部空间）」档），**不会改变你界面上的活动空间**。返回 {matched（本次返回条数，受 limit 截断）, results:[{id,title,snippet}], scope:{spaceId,spaceName,pageCount}}；matched=0 时另给 hint —— 空结果只说明**这个**空间没命中，不代表别的空间没有。 |
 | spaces.list | app | read:pages | 列出所有空间及当前激活空间（切换空间前先看 id/名称）。只读，不改变任何状态。 |

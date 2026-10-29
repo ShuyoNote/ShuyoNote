@@ -11,7 +11,8 @@
 import { codePointLength, sliceByCodePoints } from "../textSnippet";
 import { api } from "../api";
 import { coverageReportTool, scanLibraryCoverage } from "../libraryCoverage";
-import { fenceDoc, importMarkdownArgs } from "../docContent";
+import { fenceDoc, importMarkdownArgs, pageReadMeta } from "../docContent";
+import { annotatedWindow, blockEndOffsets, pageRev } from "./pageAnchors";
 import { pageJsonFromText } from "../ai/lexical";
 import type { DraftResult } from "../ai/types";
 import type { CoverageStores } from "../extract/coverageReport";
@@ -82,6 +83,25 @@ function intArg(
   max = Number.MAX_SAFE_INTEGER,
 ): number {
   return Math.min(max, Math.max(min, intOr(args[name], def)));
+}
+
+/**
+ * 布尔参数的统一读法（与 Rust 侧 `arg_bool` 同一口径）：真布尔 / `"true"`·`"false"`·`"1"`·`"0"`
+ * / 数字（非 0 为真）都认，其它回落默认值。
+ *
+ * 为什么认字符串：插件 shim 由生成器按 `String(...)` 传布尔 ⇒ 插件写 `false` 时收到的是 `"false"`；
+ * 不认它的话"显式关"与"没传"在两条路径上是同一个结果（默认 true 时尤其看不出来）。
+ */
+function boolArg(args: Record<string, unknown>, name: string, def: boolean): boolean {
+  const v = args[name];
+  if (typeof v === "boolean") return v;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    if (s === "true" || s === "1") return true;
+    if (s === "false" || s === "0") return false;
+  }
+  if (typeof v === "number") return v !== 0;
+  return def;
 }
 
 /**
@@ -197,11 +217,25 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     // 给的是 1 ⇒ 同一个调用在两条路径上返回 6000 字与 1 字。这类"边界差一个"的坑靠 `Number.isFinite` 判。
     const offset = intArg(args, "offset", 0, 0);
     const limit = intArg(args, "limit", PAGE_TEXT_LIMIT, 1, MAX_PAGE_TEXT_LIMIT);
-    const text = sliceByCodePoints(raw, offset, limit);
-    const returned = codePointLength(text);
+    const window = sliceByCodePoints(raw, offset, limit);
+    // ⚠️ `returned` / `truncated` / note 里的字数**一律量正文窗口**，不含锚点行：
+    // 锚点是我们加的注释，不该被算成"用户读到了几个字"，否则翻页口径（offset+returned）就变了。
+    const returned = codePointLength(window);
     // `truncated` 的含义是"**还没读完**"（窗口没够到正文末尾），而不是"这页太长"：
     // 翻到最后一页时它必须是 false，否则模型会以为还有内容、无限翻下去。
     const truncated = offset + returned < total;
+
+    // ⭐ P1 读面（2026-10-29）：**块锚点**（默认开）＋ `rev`（乐观并发令牌，不受开关影响）。
+    //   · 锚点只插在本次窗口里 ⇒ 分页截断时不会给没返回的块加锚点；
+    //   · 关掉开关 ⇒ 正文**逐字节**等于旧行为（读面省 token 的通道）；
+    //   · `rev` 的两样输入只经 `docContent` 那一层取（落盘列名别处不许碰，见 `check-doc-content-access`）。
+    const includeAnchors = boolArg(args, "includeAnchors", true);
+    const meta = pageReadMeta(p);
+    const rev = await pageRev(meta.updatedAt, meta.docJson);
+    const text =
+      includeAnchors && meta.docJson !== null
+        ? annotatedWindow(raw, blockEndOffsets(meta.docJson, raw), offset, limit)
+        : window;
 
     // ⚠️ **"成功"不等于"读全了"** —— 与抽取层的 `ExtractCoverage` 同一条原则（方案 §15.10）。
     // 原先截断后只在末尾补一个 `…`，有两个问题：
@@ -231,6 +265,7 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
         offset,
         limit,
         chars_returned: returned,
+        ...(rev ? { rev } : {}),
         ...(parts.length ? { note: parts.join("") } : {}),
       },
     };
