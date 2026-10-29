@@ -39,9 +39,9 @@ import { isMobileOverlayViewport } from "./useMobile";
 // `isMobileOverlayViewport()`（宽 ≤768 **或** 高 ≤520），与 CSS 的
 // `@media (max-width: 768px), (max-height: 520px)` 一一对应。
 export function usePopover<T extends HTMLElement = HTMLButtonElement>(
-  opts: { width?: number; minSpace?: number } = {},
+  opts: { width?: number; minSpace?: number; align?: "left" | "right" } = {},
 ) {
-  const { width = 340, minSpace = 360 } = opts;
+  const { width = 340, minSpace = 360, align = "left" } = opts;
   const [open, setOpen] = useState(false);
   const [isSheet, setIsSheet] = useState<boolean>(() => isMobileOverlayViewport());
   // 窄屏走底部弹层：`pos` 为空对象，内联样式什么都不设，
@@ -69,7 +69,12 @@ export function usePopover<T extends HTMLElement = HTMLButtonElement>(
     const originHeight = cbRect ? cbRect.height : window.innerHeight;
 
     // 目标是**视口坐标**，再折算回包含块坐标（`left: L` ⇒ 视口 x = originX + L）。
-    const wantX = Math.max(8, Math.min(rect.left, window.innerWidth - width));
+    // ⭐ `align:"right"`（2026-10-28）：右缘对齐触发器的**右缘** —— 贴在右侧的按钮
+    //   （如侧栏标题行里的「新建」）必须让菜单**向左**展开；默认的左对齐会让它越过
+    //   侧栏边界、盖到正文上（owner 实测「新建的弹出菜单位置不对」）。固定 `width`
+    //   由调用方给（两侧用它折算），菜单自己的宽度也在 CSS 里钉成同一个值 ✓。
+    const wanted = align === "right" ? rect.right - width : rect.left;
+    const wantX = Math.max(8, Math.min(wanted, window.innerWidth - width));
     const left = wantX - originX;
     const belowSpace = window.innerHeight - rect.bottom;
     // Anchor the trigger near the viewport bottom? Open UPWARD (bottom-anchored)
@@ -83,7 +88,7 @@ export function usePopover<T extends HTMLElement = HTMLButtonElement>(
     } else {
       setPos({ left, top: rect.bottom + 6 - originY });
     }
-  }, [width, minSpace]);
+  }, [width, minSpace, align]);
 
   const toggle = useCallback(() => {
     if (open) {

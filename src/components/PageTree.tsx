@@ -1034,7 +1034,10 @@ export function PageTree(_props: {
     contentRef: newMenuContentRef,
     toggle: toggleNewMenu,
     close: closeNewMenu,
-  } = usePopover<HTMLButtonElement>();
+    // ⭐ 2026-10-28：菜单**右对齐**到标题行右侧那颗「新建」——
+    //   宽度与 CSS 里 `.sidebar-header .new-menu-dropdown` 钉同一个值（260px）⇒ 右缘逐像素对齐；
+    //   默认的左对齐会让它越过侧栏边界盖到正文上（owner 实测「新建的弹出菜单位置不对」）✓。
+  } = usePopover<HTMLButtonElement>({ width: 260, align: "right" });
   // Sidebar resizable width (persisted), applied as --sidebar-w so overlays follow.
   const SIDEBAR_W_KEY = "shuyonote.sidebarWidth";
   const loadSidebarWidth = () => {
@@ -1374,6 +1377,67 @@ export function PageTree(_props: {
             <span className="sidebar-title-caret">▾</span>
           </button>
         )}
+        {/* ⭐ **2026-10-28（owner 选 A）：「新建」收进空间标题行右侧** ——
+            以前它在 `.sidebar-header-actions` 里**独占一条横带**，而那一行只剩它一个孩子
+            （同步/邮箱已收进左栏）⇒ 视觉上像一条「错行的树行」：左缘 ~20px，与树标题 ~56px、
+            空间名 ~52px 都不对齐；还白占 28px+10px 的高度 ✓。
+            现在：与空间名同基线、贴右缘；点开仍是「页面／文件夹／数据库」三选一（菜单本身一行没改）✓。
+            ⚠️ **图标态**：文字标签仍在 DOM（读屏仍在），侧栏里默认 `display:none` ⇒ 靠 `title`/`aria-label`
+            说清它是「新建」✓（⛔ 不靠颜色/形状让人猜 ✗）。
+            ⚠️ **折叠态（56px）**：标题按钮与同步点都不渲染，这层靠 `.sidebar-collapsed .sidebar-header`
+            的 `justify-content:center` **居中显示** ⇒ 入口不丢 ✓（原 `sidebar-header-actions` 那条折叠规则
+            已随之删除 ✓）。 */}
+        <div className="new-menu">
+          <button ref={newMenuRef} className="btn-new" onClick={toggleNewMenu} title={t("common.new")} aria-label={t("common.new")}>
+            <PlusIcon width={16} height={16} strokeWidth={2.2} />
+            <span className="btn-new-label">{t("common.new")}</span>
+          </button>
+          {newMenuOpen && (
+            <div ref={newMenuContentRef} className={`new-menu-dropdown${newMenuIsSheet ? " is-sheet" : ""}`} style={{ top: newMenuPos.top, left: newMenuPos.left }}>
+              <div className="new-menu-title">新建</div>
+              <button
+                className="new-menu-item"
+                onClick={() => {
+                  closeNewMenu();
+                  void useNotes.getState().createPage(null);
+                }}
+              >
+                <span className="new-menu-icon"><PageIcon /></span>
+                <span className="new-menu-body">
+                  <span className="new-menu-name">页面</span>
+                  <span className="new-menu-desc">{t("trees.blankPage")}</span>
+                </span>
+                <kbd className="new-menu-kbd">Ctrl+N</kbd>
+              </button>
+              <button
+                className="new-menu-item"
+                onClick={() => {
+                  closeNewMenu();
+                  void useNotes.getState().createFolder(null);
+                }}
+              >
+                <span className="new-menu-icon"><FolderIcon /></span>
+                <span className="new-menu-body">
+                  <span className="new-menu-name">文件夹</span>
+                  <span className="new-menu-desc">归类嵌套页面 · 也可存放文件</span>
+                </span>
+              </button>
+              <button
+                className="new-menu-item"
+                onClick={() => {
+                  closeNewMenu();
+                  void useNotes.getState().createDatabase(null);
+                }}
+              >
+                <span className="new-menu-icon"><DatabaseIcon /></span>
+                <span className="new-menu-body">
+                  <span className="new-menu-name">数据库</span>
+                  <span className="new-menu-desc">表格 / 画廊 / 看板</span>
+                </span>
+              </button>
+            </div>
+          )}
+        </div>
         {spaceChooser.open && (
           <div
             ref={spaceChooser.contentRef}
@@ -1495,66 +1559,6 @@ export function PageTree(_props: {
             </footer>
           </div>
         )}
-        </div>
-        <div className="sidebar-header-actions">
-          {/* ⭐ **2026-10-14（片 3a）**：⭐ **同步／邮箱已收进左栏** ✗ —— 它们是**全局功能**（⛔ 不随空间变 ✗）
-              ⇒ 不再挂在「当前空间」这个头下面 ✓（⭐ 旧注释那句"同步与当前空间强相关"是**旧口径** ✗，已改 ✓）。
-              ⚠️ 搜索那一半**仍为真** ✓：搜索已收编进左侧竖条（`activity=search` ✓），这里不放第二个搜索入口 ✓；
-                 Ctrl+K 命令面板照旧 ✓。
-              ⚠️ 这层 `sidebar-header-actions` **留着** ✓ —— 它现在只为 `new-menu` 撑排布 ✓（⭐ 没收进 3a ✗）。 */}
-          <div className="new-menu">
-            {/* 「新建」是侧栏最高频动作，做成带文字的整行按钮：比一个蓝色实心
-                方块克制，也比纯图标好认（点开是页面/文件夹/数据库三选一）。 */}
-            <button ref={newMenuRef} className="btn-new" onClick={toggleNewMenu} title={t("common.new")} aria-label={t("common.new")}>
-              <PlusIcon width={15} height={15} strokeWidth={2.2} />
-              <span className="btn-new-label">{t("common.new")}</span>
-            </button>
-            {newMenuOpen && (
-              <div ref={newMenuContentRef} className={`new-menu-dropdown${newMenuIsSheet ? " is-sheet" : ""}`} style={{ top: newMenuPos.top, left: newMenuPos.left }}>
-                <div className="new-menu-title">新建</div>
-                <button
-                  className="new-menu-item"
-                  onClick={() => {
-                    closeNewMenu();
-                    void useNotes.getState().createPage(null);
-                  }}
-                >
-                  <span className="new-menu-icon"><PageIcon /></span>
-                  <span className="new-menu-body">
-                    <span className="new-menu-name">页面</span>
-                    <span className="new-menu-desc">{t("trees.blankPage")}</span>
-                  </span>
-                  <kbd className="new-menu-kbd">Ctrl+N</kbd>
-                </button>
-                <button
-                  className="new-menu-item"
-                  onClick={() => {
-                    closeNewMenu();
-                    void useNotes.getState().createFolder(null);
-                  }}
-                >
-                  <span className="new-menu-icon"><FolderIcon /></span>
-                  <span className="new-menu-body">
-                    <span className="new-menu-name">文件夹</span>
-                    <span className="new-menu-desc">归类嵌套页面 · 也可存放文件</span>
-                  </span>
-                </button>
-                <button
-                  className="new-menu-item"
-                  onClick={() => {
-                    closeNewMenu();
-                    void useNotes.getState().createDatabase(null);
-                  }}
-                >
-                  <span className="new-menu-icon"><DatabaseIcon /></span>
-                  <span className="new-menu-body">
-                    <span className="new-menu-name">数据库</span>
-                    <span className="new-menu-desc">表格 / 画廊 / 看板</span>
-                  </span>
-                </button>
-              </div>
-            )}
-          </div>
         </div>
       <div className="sidebar-tree" ref={treeContainerRef}>
         {loading && pages.length === 0 ? (
