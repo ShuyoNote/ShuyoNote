@@ -342,6 +342,8 @@ node scripts/test-report.mjs --list                                             
 | [plans/mobile/2026-10-08-mobile-requirements.md](plans/mobile/2026-10-08-mobile-requirements.md) | ⚠️ **历史稿（2026-10-08）**：移动端需求初版（**立项待裁决**／P0×6＋P1×5＋P2×4／最小切片）。**已被 2026-10-20 完整版取代**；其中「立项待裁决」「设备直连一轮都没搬过」等句子已过期 |
 | [plans/mobile/2026-10-08-mobile-tech-plan.md](plans/mobile/2026-10-08-mobile-tech-plan.md) | ⚠️ **历史稿（2026-10-08）**：旧技术方案（**切 `crates/core`＋uniffi** 路线，**未采用**；435 处/78 文件已过期）。**已被 2026-10-20 完整版技术方案取代**，保留作分析存档 |
 | [plans/mobile/2026-10-08-mobile-spec.md](plans/mobile/2026-10-08-mobile-spec.md) | ⚠️ **历史稿（2026-10-08，2026-10-10 更新过屏状态）**：把需求/效果图/技术方案合并的自足总篇。**需求与范围以 2026-10-20 完整版为准**；旧稿的「8 屏已落地」「07 先不接」「08 只读 v1」已被后续改动超前 |
+| [plans/2026-10-29-shuyodoc-m1.md](plans/2026-10-29-shuyodoc-m1.md) | 单文档包 .shuyodoc M1 方案（只做单篇/导入永远新建/不带评论历史；含导入侧 7 条拒绝项与往返判据） |
+| [plans/2026-10-29-agent-block-write-p2.md](plans/2026-10-29-agent-block-write-p2.md) | 外部 Agent 块级写面 P2 方案（锚点读面 + patch/insert/delete + expectedRev 冲突必拒 + 审计/权限） |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
 > 「还差 **0b** 公开材料可同步」**已作废** —— 0b 那条（经服务器搬钥匙袋）**已整条删除**

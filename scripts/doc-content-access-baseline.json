@@ -67,5 +67,6 @@
   "src/store/notes.ts": 6,
   "src/store/templates.ts": 2,
   "src/templates/index.ts": 7,
-  "src/types.ts": 5
+  "src/types.ts": 5,
+  "src/lib/docPackageOpen.ts": 5
 }
