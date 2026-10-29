@@ -280,10 +280,11 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "coverage.report",
-    description: "检查**整个库**的索引覆盖：哪些内容真的进了检索面、哪些没进、哪些**进了但没抽全**。参数: 无。返回 {summary, report}：`summary` 是一行中文摘要（可直接展示）；`report.attachments` 给出 已索引/没抽全/未索引 的计数与分类，`report.gaps` 给出**明细**（每条含 `reason` 与一句「该怎么办」）。⚠️ 三个必须分清的口径：① **没抽到 ≠ 文件里没有**（`no_content` 可能是空文件/加密/纯图）；② **页面正文空 ≠ 这页内容没被索引**（图片/附件/数据库块由附件侧负责）；③ **`partial` 是「搜得到，但只覆盖了一部分」**（典型：混合 PDF 只抽到正文页）—— 别把「已索引 N/N」读成「内容全在检索面里」。**缺口列表可能被截断**（看 `gapsTotal` 与 `gapsTruncated`）。 ★ **只有 AI 宿主**能实现它（`host: frontend`）：判「没人认领这种格式」必须以 TS 侧的抽取器注册表为准，Rust 侧再长一份就是两份实现、而漂移不会报错 ⇒ 它不进插件 shim／插件类型包／Rust 绑定表，插件调不到。",
+    description: "检查**整个库**的索引覆盖：哪些内容真的进了检索面、哪些没进、哪些**进了但没抽全**。参数: spaceId (可选；只接受当前空间 —— 报告目前是当前空间的派生层口径，跨空间未接，给别的空间 ⇒ bad_args)。返回 {ok, summary, report}：`summary` 是一行中文摘要（可直接展示）；`report.attachments` 给出 已索引/没抽全/未索引 的计数与分类，`report.gaps` 给出**明细**（每条含 `reason` 与一句「该怎么办」）。⚠️ 三个必须分清的口径：① **没抽到 ≠ 文件里没有**（`no_content` 可能是空文件/加密/纯图）；② **页面正文空 ≠ 这页内容没被索引**（图片/附件/数据库块由附件侧负责）；③ **`partial` 是「搜得到，但只覆盖了一部分」**（典型：混合 PDF 只抽到正文页）—— 别把「已索引 N/N」读成「内容全在检索面里」。**缺口列表可能被截断**（看 `gapsTotal` 与 `gapsTruncated`）。★ 实现只有 TS 那一份（判「没人认领这种格式」必须以 TS 侧抽取器注册表为准；Rust 侧再长一份就是两份实现、而漂移不会报错）⇒ 外部/插件面经 **Rust→前端桥** 取回同一函数的输出（2026-10-29 B3）。",
     argsSchema: {
       type: "object",
       properties: {
+      "spaceId": { type: "string" },
       },
       required: [],
     },
@@ -351,6 +352,31 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       "handle": { type: "string" },
       },
       required: ["handle"],
+    },
+    isWrite: false,
+  },
+  {
+    id: "export.markdown",
+    description: "把一页导出成 Markdown、或把整个空间导出成 zip，**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。参数: pageId (可选，单页 ⇒ .md) / spaceId (可选，整空间 ⇒ 含附件的 .zip；跨空间需「只读（全部空间）」档) —— 两者**只能给一个**。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm（本批未接确认 UI，不静默导出）。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "pageId": { type: "string" },
+      "spaceId": { type: "string" },
+      },
+      required: [],
+    },
+    isWrite: false,
+  },
+  {
+    id: "export.docpackage",
+    description: "把一页打包成 `.shuyodoc` 并**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。**只支持单页**（与界面「导出为 .shuyodoc」同口径）。参数: pageId (必填)。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "pageId": { type: "string" },
+      },
+      required: ["pageId"],
     },
     isWrite: false,
   },

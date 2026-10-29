@@ -181,6 +181,93 @@ function splitAssetPath(path: string): { hash: string; ext: string } {
 // 导出
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** 打包 `.shuyodoc` 时能注入的读依赖（B3 的前端桥用；不注入就全走既有 `api`）。 */
+export interface DocPackageBuildDeps {
+  getPage?: (id: string) => Promise<PageDetail>;
+  listPageAttachments?: (id: string) => Promise<AttachmentMeta[]>;
+  readAttachmentBytes?: (hash: string) => Promise<ArrayBuffer | Uint8Array>;
+}
+
+/** 只**算出来**的一只 `.shuyodoc`（不弹框、不落盘）。 */
+export interface BuiltDocPackage {
+  bytes: Uint8Array;
+  title: string;
+  assetCount: number;
+  unreadable: number;
+  notices: string[];
+}
+
+/**
+ * 只**算字节**：读页 → 收集附件（页附件 ∪ 正文引用）→ `buildDocumentPackage`。
+ *
+ * 为什么单独抽出来（B3，2026-10-29）：界面「导出为 .shuyodoc」与外部 MCP 的
+ * `export.docpackage`（经 Rust→前端桥）必须走**同一份**收集/打包逻辑；各写一遍就会出现
+ * "界面带走 3 个附件、MCP 只带走 2 个"这种没人会发现的漂移。⛔ 不在这里判格式（格式归
+ * `docPackWriter.ts`）。
+ */
+export async function buildPageDocPackageBytes(
+  pageId: string,
+  deps: DocPackageBuildDeps = {},
+): Promise<BuiltDocPackage> {
+  const getPage = deps.getPage ?? ((id: string) => api.getPage(id) as unknown as Promise<PageDetail>);
+  const listAttachments = deps.listPageAttachments ?? ((id: string) => api.listPageAttachments(id));
+  const readBytes = deps.readAttachmentBytes ?? ((hash: string) => api.readAttachmentBytes(hash));
+  const page = await getPage(pageId);
+  if (!page || typeof page.id !== "string") {
+    throw new Error(`not_found: 页面 ${pageId} 不存在或已被删`);
+  }
+  const title = String(page.title ?? "").trim() || "未命名";
+  // 正文经 `docContent.ts` 那一层取（⛔ 不在这里提存储列名 —— `check-doc-content-access` 只减不增）。
+  const docJson = docJsonOfPage(page);
+
+  // 资产 = 页附件（显式挂在这页上的）∪ 正文引用（可能挂在别的页/未整理，但正文要用）
+  const notices: string[] = [];
+  let attached: AttachmentMeta[] = [];
+  try {
+    attached = await listAttachments(pageId);
+  } catch (e) {
+    notices.push(`页附件清单没列出来（${messageOf(e)}）⇒ 只带正文引用到的附件`);
+  }
+  const refs = assetRefsInDocJson(docJson);
+  const wanted = new Map<string, { mime?: string | null; name?: string | null }>();
+  for (const a of attached) {
+    if (!a || typeof a.hash !== "string" || !SHA_RE.test(a.hash)) continue;
+    wanted.set(a.hash.toLowerCase(), { mime: a.mime, name: a.name });
+  }
+  for (const [hash, mime] of refs) {
+    if (!wanted.has(hash)) wanted.set(hash, { mime });
+  }
+
+  const assets: DocumentPackageAsset[] = [];
+  const unreadable: string[] = [];
+  for (const [hash, meta] of wanted) {
+    try {
+      const raw = await readBytes(hash);
+      const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+      if (bytes.byteLength === 0) {
+        unreadable.push(hash);
+        continue;
+      }
+      // 路径形状由写侧校验（`assets/<sha256>.<ext>`）；hash 来自数据库/正文，这里已限成 64 hex。
+      assets.push({ path: `${ASSETS_PREFIX}${hash}.${assetExtOf(meta)}`, bytes });
+    } catch {
+      // 拿不到字节（没同步到本机 / 盘上被删）⇒ **不装进包**，但如实报数（⛔ 不假装带走）
+      unreadable.push(hash);
+    }
+  }
+
+  const zip = await buildDocumentPackage({
+    documentId: page.id,
+    title,
+    createdAt: isoOf(page.created_at),
+    updatedAt: isoOf(page.updated_at),
+    docJson,
+    assets,
+    sourceAppVersion: APP_VERSION,
+  });
+  return { bytes: zip, title, assetCount: assets.length, unreadable: unreadable.length, notices };
+}
+
 /**
  * 把一页导出成 `<标题>.shuyodoc`（选路径 ⇒ 读正文/附件 ⇒ 写包 ⇒ 落盘）。
  *
@@ -191,10 +278,6 @@ export async function exportPageAsDocPackage(pageId: string): Promise<DocPackage
   try {
     const page = (await api.getPage(pageId)) as PageDetail;
     if (!page || typeof page.id !== "string") return { ok: false, message: "导出失败：读不到这一页（页面不存在或已被删）" };
-    const title = String(page.title ?? "").trim() || "未命名";
-    // 正文经 `docContent.ts` 那一层取（⛔ 不在这里提存储列名 —— `check-doc-content-access` 只减不增）。
-    // 空正文 ⇒ `{}`：包里得有一个合法 JSON 对象（`buildDocumentPackage` 会如实拒空串）。
-    const docJson = docJsonOfPage(page);
 
     // 保存路径：走**现有**那条（桌面 dialog ＋ write_binary_file；Web 是下载）。
     // ⚠️ **先弹框、再读附件**：用户取消时一个字节都不读（大文档的附件读取很贵，
@@ -206,58 +289,14 @@ export async function exportPageAsDocPackage(pageId: string): Promise<DocPackage
     });
     if (!path) return { ok: false, canceled: true, message: "已取消导出" };
 
-    // 资产 = 页附件（显式挂在这页上的）∪ 正文引用（可能挂在别的页/未整理，但正文要用）
-    const notices: string[] = [];
-    let attached: AttachmentMeta[] = [];
-    try {
-      attached = await api.listPageAttachments(pageId);
-    } catch (e) {
-      notices.push(`页附件清单没列出来（${messageOf(e)}）⇒ 只带正文引用到的附件`);
-    }
-    const refs = assetRefsInDocJson(docJson);
-    const wanted = new Map<string, { mime?: string | null; name?: string | null }>();
-    for (const a of attached) {
-      if (!a || typeof a.hash !== "string" || !SHA_RE.test(a.hash)) continue;
-      wanted.set(a.hash.toLowerCase(), { mime: a.mime, name: a.name });
-    }
-    for (const [hash, mime] of refs) {
-      if (!wanted.has(hash)) wanted.set(hash, { mime });
-    }
-
-    const assets: DocumentPackageAsset[] = [];
-    const unreadable: string[] = [];
-    for (const [hash, meta] of wanted) {
-      try {
-        const raw = await api.readAttachmentBytes(hash);
-        const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
-        if (bytes.byteLength === 0) {
-          unreadable.push(hash);
-          continue;
-        }
-        // 路径形状由写侧校验（`assets/<sha256>.<ext>`）；hash 来自数据库/正文，这里已限成 64 hex。
-        assets.push({ path: `${ASSETS_PREFIX}${hash}.${assetExtOf(meta)}`, bytes });
-      } catch {
-        // 拿不到字节（没同步到本机 / 盘上被删）⇒ **不装进包**，但如实报数（⛔ 不假装带走）
-        unreadable.push(hash);
-      }
-    }
-
     // 保存路径已经问过（见上）⇒ 这里直接打包（`buildDocumentPackage` 会自证资产 sha）。
-    const zip = await buildDocumentPackage({
-      documentId: page.id,
-      title,
-      createdAt: isoOf(page.created_at),
-      updatedAt: isoOf(page.updated_at),
-      docJson,
-      assets,
-      sourceAppVersion: APP_VERSION,
-    });
-    await api.writeBinaryFile(path as string, Array.from(zip));
+    const built = await buildPageDocPackageBytes(pageId, { getPage: async () => page });
+    await api.writeBinaryFile(path as string, Array.from(built.bytes));
 
-    const bits = [`${assets.length} 个附件`];
-    if (unreadable.length) bits.push(`${unreadable.length} 个附件字节取不到 ⇒ 没装进包（正文里仍引用它们，没静默删）`);
-    bits.push(...notices);
-    return { ok: true, message: `已导出「${title}」到 ${path}（${bits.join("；")}）` };
+    const bits = [`${built.assetCount} 个附件`];
+    if (built.unreadable) bits.push(`${built.unreadable} 个附件字节取不到 ⇒ 没装进包（正文里仍引用它们，没静默删）`);
+    bits.push(...built.notices);
+    return { ok: true, message: `已导出「${built.title}」到 ${path}（${bits.join("；")}）` };
   } catch (e) {
     // 「原样」：`buildDocumentPackage` 的拒绝语自带来源前缀（`buildDocumentPackage: …`），
     // 磁盘/IPC 的错误也自带原因 ⇒ 不再包一层"导出失败：…"把它盖掉。

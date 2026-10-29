@@ -11,7 +11,7 @@
 import { codePointLength, sliceByCodePoints } from "../textSnippet";
 import { api } from "../api";
 import { coverageReportTool, scanLibraryCoverage } from "../libraryCoverage";
-import { fenceDoc, importMarkdownArgs, pageReadMeta } from "../docContent";
+import { draftBodyFields, fenceDoc, importMarkdownArgs, pageReadMeta, recordedText, textField } from "../docContent";
 import { annotatedWindow, blockEndOffsets, pageRev } from "./pageAnchors";
 import { pageJsonFromText } from "../ai/lexical";
 import type { DraftResult } from "../ai/types";
@@ -463,7 +463,7 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
       };
     }
     const includeAnchors = boolArg(args, "includeAnchors", true);
-    const raw = String(p.content_text ?? "");
+    const raw = recordedText(p);
     const total = codePointLength(raw);
     const meta = pageReadMeta(p);
     const rev = await pageRev(meta.updatedAt, meta.docJson);
@@ -477,7 +477,7 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
       page: {
         id: p.id,
         title: p.title,
-        content_text: text,
+        ...textField(text),
         kind: p.kind,
         chars_total: total,
         truncated: total > MAX_PAGE_TEXT_LIMIT,
@@ -686,7 +686,7 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     //   · 这里若先 trim，`offset=6000` 在两条路径上指向的**不是同一个字符**
     //     ⇒ 调用方按同一条规则翻页会漏字/重字，而这种错**只在正文首尾有空白时**才出现（极难发现）。
     // 返回忠实原文也顺带满足"截断不改写文本"的既有原则（见下）。
-    const raw = String(p.content_text ?? "");
+    const raw = recordedText(p);
     const total = codePointLength(raw); // 按码点计数，emoji 不会被算成 2
     // ⚠️ **别用 `|| 默认值`**：`limit=0` 是 falsy，会被换成 6000，而 Rust 侧 `limit.clamp(1, ·)`
     // 给的是 1 ⇒ 同一个调用在两条路径上返回 6000 字与 1 字。这类"边界差一个"的坑靠 `Number.isFinite` 判。
@@ -734,7 +734,7 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
       page: {
         id: p.id,
         title: p.title,
-        content_text: text,
+        ...textField(text),
         truncated,
         chars_total: total,
         offset,
@@ -844,7 +844,7 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     const rows = await api.listVersions(pageId);
     const v = rows.find((x) => x.id === versionId);
     if (!v) return { ok: false, error: `not_found: 页面 ${pageId} 没有版本 ${versionId}` };
-    const raw = String(v.content_text ?? "");
+    const raw = recordedText(v);
     const total = codePointLength(raw);
     const window = sliceByCodePoints(raw, offset, limit);
     return {
@@ -854,7 +854,7 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
         versionId,
         at: v.created_at,
         title: v.title,
-        content_text: window,
+        ...textField(window),
         chars_total: total,
         offset,
         limit,
@@ -967,18 +967,30 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   },
 
   /**
-   * `coverage.report` —— **只有 AI 宿主实现的能力**（注册表里 `host: "frontend"`，插件调不到）。
+   * `coverage.report` —— 实现在 TS（抽取器注册表那一侧），**外部/插件面经 Rust→前端桥**取同一份输出。
    *
-   * 为什么没有 Rust 那半：报告要判"**没人认领这种格式**（`no_extractor`）"，而"谁认领什么格式"
+   * 为什么必须只有一份：报告要判"**没人认领这种格式**（`no_extractor`）"，而"谁认领什么格式"
    * 的唯一事实源是 TS 侧的抽取器注册表（`extract/registry.ts`）。Rust 侧再长一份就是两份实现，
-   * 而它们的漂移**不会报错**（只会让 AI 与插件看到两种答案）——这正是本方案一直在防的事。
+   * 而它们的漂移**不会报错** ⇒ 2026-10-29（B3）起由桥把这一份结果搬给 MCP 面（⛔ 不复制逻辑）。
    * ⇒ 这里**复用**现成的三层：`ctx.derivedStores()`（配对 store）→ `scanLibraryCoverage`（取材）
    * → `coverageReportTool`（形状），一行新逻辑都不写。
    *
    * ⚠️ **store 是 `ctx` 注入的，不是这里 `import { platform }`**：这层会被 `smoke-web` 的
    * AI 核心包静态打包，而那个包只装纯逻辑 —— 见 `AiToolContext.derivedStores` 的注释。
+   * ⚠️ `spaceId`（B3）：报告是**当前空间**的派生层口径 ⇒ 只接受当前空间，给别的空间明确 `bad_args`
+   * （⛔ 不假装支持跨空间，也不静默回落）。
    */
-  "coverage.report": async (_args, ctx) => {
+  "coverage.report": async (args, ctx) => {
+    const spaceId = String(args.spaceId ?? "").trim();
+    if (spaceId) {
+      const active = await api.getActiveWorkspaceId();
+      if (spaceId !== active) {
+        return {
+          ok: false,
+          error: "bad_args: 覆盖率报告只覆盖当前空间（跨空间未接）—— 省略 spaceId 即当前空间",
+        };
+      }
+    }
     const getStores = ctx?.derivedStores;
     if (!getStores) {
       return { ok: false, error: "这条路径没有派生层存储，索引覆盖报告不可用（桌面版/已启用本地库才有）" };
@@ -988,18 +1000,43 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     return coverageReportTool(await scanLibraryCoverage(stores));
   },
 
+  // ⭐ B3：导出类 —— **句柄表在 Rust 侧、只服务外部/插件面**；应用内 AI 面没有句柄通道
+  //   （与 `files.download` / `blobs.fetch` 同一条诚实边界）。参数仍逐条读（⛔ 不许"声明了不读"）。
+  "export.markdown": async (args) => {
+    const pageId = String(args.pageId ?? "").trim();
+    const spaceId = String(args.spaceId ?? "").trim();
+    const target = pageId ? `页面 ${pageId}` : spaceId ? `空间 ${spaceId}` : "（未指定目标）";
+    return {
+      ok: false,
+      error:
+        `应用内 AI 面不提供导出句柄（${target}）—— 句柄表在 Rust 侧、绑定外部/插件会话；` +
+        "要文件请用文件管理的导出入口，外部接入用 export_markdown + blobs_fetch。",
+    };
+  },
+
+  "export.docpackage": async (args) => {
+    const pageId = String(args.pageId ?? "").trim();
+    if (!pageId) return { ok: false, error: "export.docpackage 需要 pageId" };
+    return {
+      ok: false,
+      error:
+        "应用内 AI 面不提供导出句柄（.shuyodoc）—— 句柄表在 Rust 侧、绑定外部/插件会话；" +
+        "要文件请用页面右键「导出为 .shuyodoc」，外部接入用 export_docpackage + blobs_fetch。",
+    };
+  },
+
   "pages.create": async (args) => {
     const title = String(args.title ?? "").trim();
     if (!title) return { ok: false, error: "pages.create 需要 title" };
     // ⭐ R166：带 `fence` ⇒ **一整块** code 块 ✓（⛔ 不拆块 ✗）
     const fence = typeof args.fence === "string" && args.fence ? args.fence : null;
-    const { content_json, content_text } = fence
+    const body = fence
       ? fenceDoc(fence, String(args.content ?? ""), makeId)
       : pageJsonFromText(String(args.content ?? ""), makeId);
     const parentId = typeof args.parentId === "string" && args.parentId ? args.parentId : null;
     return draft(`create_page:${title}`, `新建页面「${title}」`, {
       kind: "create_page",
-      args: { parent_id: parentId, title, content_json, content_text },
+      args: { parent_id: parentId, title, ...draftBodyFields(body) },
     });
   },
 

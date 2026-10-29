@@ -1,4 +1,4 @@
-# 插件 API（v1.5.0）
+# 插件 API（v1.6.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.5.0",
+  "apiVersion": "1.6.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.5.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.6.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -123,6 +123,7 @@ register({
 | `files.stat` | `api.files.stat(attId)` | `read:files` | `current-space` | — | object | 1.5.0 |
 | `files.extract_status` | `api.files.extract_status(attId)` | `read:files` | `current-space` | — | object | 1.5.0 |
 | `files.list_orphan` | `api.files.list_orphan(limit, offset)` | `read:files` | `current-space` | — | object | 1.5.0 |
+| `coverage.report` | `api.coverage.report(spaceId)` | `read:files` | `current-space` | — | object | 1.92.0 |
 | `editor.insertText` | `api.editor.insertText(text)` | `write:page.current` | `current-space` | 即时 | void | 1.0.0 |
 | `pages.create` | `api.pages.create(title, content, parentId, fence)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `blocks.append` | `api.blocks.append(text, pageId, fence)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
@@ -138,6 +139,8 @@ register({
 | `files.export` | `api.files.export(fileName, content)` | `export:files` | `app` | **草稿确认** | object | 1.0.0 |
 | `files.download` | `api.files.download(attId)` | `export:files` | `current-space` | — | object | 1.5.0 |
 | `blobs.fetch` | `api.blobs.fetch(handle)` | `export:files` | `current-space` | — | object | 1.5.0 |
+| `export.markdown` | `api.export.markdown(pageId, spaceId)` | `export:files` | `current-space` | — | object | 1.6.0 |
+| `export.docpackage` | `api.export.docpackage(pageId)` | `export:files` | `current-space` | — | object | 1.6.0 |
 | `pages.importMarkdown` | `api.pages.importMarkdown(title, markdown, parentId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `pages.update` | `api.pages.update(id, markdown, content, title)` | `write:pages` | `current-space` | **草稿确认** | object | 1.1.0 |
 | `spaces.list` | `api.spaces.list()` | `read:pages` | `app` | — | object | 1.1.0 |
@@ -347,6 +350,15 @@ register({
   - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（默认 50，上限 200）
   - `offset`: `number`（可选），默认 `0` —— 跳过前多少条（默认 0；分页用）
 
+### `coverage.report` — 索引覆盖报告
+
+- 调用：`api.coverage.report(spaceId)`
+- 权限：`read:files`
+- scope：`current-space`
+- 返回：**一行摘要**（可直接念给用户）＋ 结构化明细：`pages`/`attachments`/`derived`/`chunks` 四组计数与 `gaps` 明细。`attachments.partial` ＝ **搜得到但没抽全**的数量（§15.10）；`gaps[].reason` 是分类：`no_extractor`（没人认领这种格式）/ `no_content`（认领了但抽出来是空）/ `not_chunked`（抽到了没切块）/ `page_empty`（页面正文空）/ `partial`（已索引但抽取器报了缺口）。**缺口只列前若干条**：`gapsTotal` 是总数、`gapsTruncated` 说明是否被截断
+- 参数：
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。⚠️ 覆盖率报告是**全库派生层**的当前空间口径：跨空间暂不支持 ⇒ 给了别的空间会明确 `bad_args`（⛔ 不假装支持）
+
 ### `editor.insertText` — 向当前页插入纯文本
 
 - 调用：`api.editor.insertText(text)`
@@ -502,6 +514,25 @@ register({
 - 参数：
   - `handle`: `string` —— 句柄（from files.download / export.*）
 
+### `export.markdown` — 导出 Markdown（句柄）
+
+- 调用：`api.export.markdown(pageId, spaceId)`
+- 权限：`export:files`
+- scope：`current-space`
+- 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
+- 参数：
+  - `pageId`: `string`（可选） —— 单页导出：页面 id（与 spaceId 只能给一个）
+  - `spaceId`: `string`（可选） —— 整空间导出：空间 id（与 pageId 只能给一个；跨空间需「只读（全部空间）」档，否则明确拒）
+
+### `export.docpackage` — 导出 .shuyodoc（句柄）
+
+- 调用：`api.export.docpackage(pageId)`
+- 权限：`export:files`
+- scope：`current-space`
+- 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
+- 参数：
+  - `pageId`: `string` —— 要导出的页面 id（单页；文件夹没有正文 ⇒ bad_args）
+
 ### `pages.importMarkdown` — 导入 Markdown 为一页（草稿确认）
 
 - 调用：`api.pages.importMarkdown(title, markdown, parentId)`
@@ -544,22 +575,6 @@ register({
 - 参数：
   - `id`: `string`（可选） —— 目标空间 id（与 name 二选一；都传时以 id 为准）
   - `name`: `string`（可选） —— 目标空间名称（如「运营」）；重名时报错要求改用 id
-
-## 4b. 只有 AI 宿主可用的工具（**插件调不到**）
-
-这些能力**不暴露给插件**（不在 `api.*` 里、也不在 `@shuyonote/plugin-types` 里）：它们的实现只有**应用内的 AI 宿主**那一侧有。原因写在注册表里每条能力的 `desc` 与方案的裁定里 —— 典型是「要读**抽取器注册表**（TS 侧的事实源），而 Rust 侧再长一份就是两份实现」。
-
-| 工具 | 返回 | 自 |
-|---|---|---|
-| `coverage.report` | object | 1.92.0 |
-
-### `coverage.report` — 索引覆盖报告
-
-- **调用方**：只有 AI 宿主（无 `api.*` 入口）
-- 权限：`read:files`
-- scope：`current-space`
-- 返回：**一行摘要**（可直接念给用户）＋ 结构化明细：`pages`/`attachments`/`derived`/`chunks` 四组计数与 `gaps` 明细。`attachments.partial` ＝ **搜得到但没抽全**的数量（§15.10）；`gaps[].reason` 是分类：`no_extractor`（没人认领这种格式）/ `no_content`（认领了但抽出来是空）/ `not_chunked`（抽到了没切块）/ `page_empty`（页面正文空）/ `partial`（已索引但抽取器报了缺口）。**缺口只列前若干条**：`gapsTotal` 是总数、`gapsTruncated` 说明是否被截断
-- 说明：检查**整个库**的索引覆盖：哪些内容真的进了检索面、哪些没进、哪些**进了但没抽全**。参数: 无。返回 {summary, report}：`summary` 是一行中文摘要（可直接展示）；`report.attachments` 给出 已索引/没抽全/未索引 的计数与分类，`report.gaps` 给出**明细**（每条含 `reason` 与一句「该怎么办」）。⚠️ 三个必须分清的口径：① **没抽到 ≠ 文件里没有**（`no_content` 可能是空文件/加密/纯图）；② **页面正文空 ≠ 这页内容没被索引**（图片/附件/数据库块由附件侧负责）；③ **`partial` 是「搜得到，但只覆盖了一部分」**（典型：混合 PDF 只抽到正文页）—— 别把「已索引 N/N」读成「内容全在检索面里」。**缺口列表可能被截断**（看 `gapsTotal` 与 `gapsTruncated`）。 ★ **只有 AI 宿主**能实现它（`host: frontend`）：判「没人认领这种格式」必须以 TS 侧的抽取器注册表为准，Rust 侧再长一份就是两份实现、而漂移不会报错 ⇒ 它不进插件 shim／插件类型包／Rust 绑定表，插件调不到。
 
 ## 4.5 命令参数（宿主渲染表单）
 
@@ -706,7 +721,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.5.0",
+  "runtime": "declarative", "apiVersion": "1.6.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },

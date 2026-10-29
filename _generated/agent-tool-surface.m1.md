@@ -5,10 +5,10 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `8912f8978dbbf633d22f1bd0938935cdaeb004c8d5678a6918ab4f6f5c9fa0d6` |
-| `apiVersion` | 1.5.0 |
+| 注册表 sha256 | `7cf908eef185f0fa6c93648e01c76849e39307e4f7e3cd74789b167cfcc84a65` |
+| `apiVersion` | 1.6.0 |
 | 取用条件 | `ai === true` **且** `kind === "read"` |
-| 条数 | **25** |
+| 条数 | **27** |
 | 生成命令 | `node scripts/gen-agent-tool-surface.mjs --phase m1` |
 
 | id | scope | permission | desc |
@@ -16,9 +16,11 @@
 | backlinks.list | current-space | read:backlinks | 查询哪些页面反向链接到目标页面。参数: pageId (可选, 省略=当前打开的页面)。返回引用它的页面列表。 |
 | blobs.fetch | current-space | export:files | 句柄消费方（**唯一落盘处**）：把 `files_download`（以及将来 `export_*`）给的句柄换成文件，写进**应用数据目录下的 `exports/`**（文件名会清洗；⛔ **不接受任意目标路径**），返回 `{path, size, sha256}`。句柄**单次使用**、**120 秒**有效、绑定**本会话** —— 二次使用 / 过期 / 别的会话 ⇒ `not_found`。参数: handle (必填)。 |
 | blocks.list | current-space | read:pages | 列出页面中的所有顶级块(每块 id + 文本)。参数: pageId (可选, 省略=当前打开的页面), limit (可选)。返回块数组，可用于定位具体块。 |
-| coverage.report | current-space | read:files | 检查**整个库**的索引覆盖：哪些内容真的进了检索面、哪些没进、哪些**进了但没抽全**。参数: 无。返回 {summary, report}：`summary` 是一行中文摘要（可直接展示）；`report.attachments` 给出 已索引/没抽全/未索引 的计数与分类，`report.gaps` 给出**明细**（每条含 `reason` 与一句「该怎么办」）。⚠️ 三个必须分清的口径：① **没抽到 ≠ 文件里没有**（`no_content` 可能是空文件/加密/纯图）；② **页面正文空 ≠ 这页内容没被索引**（图片/附件/数据库块由附件侧负责）；③ **`partial` 是「搜得到，但只覆盖了一部分」**（典型：混合 PDF 只抽到正文页）—— 别把「已索引 N/N」读成「内容全在检索面里」。**缺口列表可能被截断**（看 `gapsTotal` 与 `gapsTruncated`）。 ★ **只有 AI 宿主**能实现它（`host: frontend`）：判「没人认领这种格式」必须以 TS 侧的抽取器注册表为准，Rust 侧再长一份就是两份实现、而漂移不会报错 ⇒ 它不进插件 shim／插件类型包／Rust 绑定表，插件调不到。 |
+| coverage.report | current-space | read:files | 检查**整个库的索引覆盖**：哪些内容真的进了检索面、哪些没进、哪些**进了但没抽全**。返回 `{ok, summary, report}`：`summary` 是一行中文摘要（可直接念给用户）；`report.attachments` 给 已索引/没抽全/未索引 的计数与分类，`report.gaps` 给**明细**（每条含 `reason`）。⚠️ 三条口径别读错：① **没抽到 ≠ 文件里没有**（`no_content` 可能是空文件/加密/纯图）；② **页面正文空 ≠ 这页内容没被索引**（图片/附件/数据库块由附件侧负责）；③ **`partial` = 搜得到但只覆盖一部分**。缺口列表可能被截断（看 `gapsTotal` / `gapsTruncated`）。⚠️ 报告是**当前空间**的派生层口径：`spaceId` 只接受当前空间（跨空间未接，给别的空间 ⇒ `bad_args`）。参数: spaceId (可选)。 ★ 若 `frontend_unavailable` / `frontend_timeout`：应用窗口没挂载或前端忙 ⇒ 报告需要**前端在运行**（它不是纯 Rust 能算的）。 |
 | db.rows | current-space | read:pages | 读取一个**数据库页的行**：`{pageId, spaceId, total, returned, rows:[{id, values:{<columnId>: <原始值>}}], truncated, note}`。⚠️ **values 是数据库里存的原始值**（字符串），本工具⛔ **不重算公式列/汇总列** ⇒ 可能与界面里显示的计算值不同（`note` 里也写着这句）；要展示计算值请看界面或自己算。`total` 是**过滤后**的总行数（不受 limit 影响，可用它判断翻页到没到头）。**简单 where**（多条 AND）：`[{field, op, value?}]`，`field` 是**列 id 或列名（id 优先，列名须完全一致；必须来自 db_schema 报出的列）**，`op` 白名单 `= != > >= < <= in contains is_null`（`in` 的 value 必须是数组；`is_null` 不需要 value）；写错字段/操作符/形状 ⇒ `invalid_args` 并**点名第几条**（不会静默返回空）。可选 `viewId` 套用该视图保存的**标题过滤与排序**。`limit` 默认 100、上限 500，`offset` 默认 0（分页在宿主侧执行）；响应体超过 200 KB ⇒ 提前截断并 `truncated:true`。默认读**当前空间**；给了 spaceId 就读那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: pageId (必填), viewId (可选), where (可选), limit (可选, 默认 100, 上限 500), offset (可选, 默认 0), spaceId (可选)。 |
 | db.schema | current-space | read:pages | 读取一个**数据库页**的结构：`{pageId, spaceId, views:[{id,name,type}], columns:[{id,name,type,isFormula?,isRollup?}], relations:[{id,name,type}]}`。列与视图与界面**同一条查询**（同一份数据库元数据），所以名字/顺序/类型都对得上。**公式列**带 `isFormula:true`、**汇总列**带 `isRollup:true` —— 本工具只**标明**它们是计算列，⛔ **不计算任何值**；`relations` 是关系列（`type:ref`，取值形如 `p:<pageId>`，要标题得自己按 id 再查）。默认读**当前空间**；给了 spaceId 就读那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: pageId (必填), spaceId (可选)。 |
+| export.docpackage | current-space | export:files | 把**一页**打包成 `.shuyodoc`（单页；与界面「导出为 .shuyodoc」同一份格式实现）并**只回句柄**：`{handle, name, size, sha256, expiresAt}`。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`。 |
+| export.markdown | current-space | export:files | 把内容导出成文件并**只回句柄**（不把字节塞进上下文）：`{handle, name, size, sha256, expiresAt}`。两种口径（**只能给一个**）：`pageId` ⇒ 该页的单个 `.md`（与界面「导出为 Markdown」同口径）；`spaceId` ⇒ 该空间整份 `.zip`（Markdown ＋ 附件，与界面「导出本空间」同口径；跨空间需要「只读（全部空间）」档）。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落应用数据目录的 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`（本批未接确认 UI，不静默导出）。 |
 | files.download | current-space | export:files | 把附件取成一个**句柄**（**只回句柄、不回字节**）：`{handle, name, size, sha256, expiresAt}`。句柄 128bit 随机、**单次使用**、**120 秒**有效、绑定**本会话**；要拿到文件用 `blobs_fetch`（只会写进应用自己的导出目录）。不存在 ⇒ `not_found`；超过 10MB ⇒ `needs_confirm`（本批未接确认 UI，不静默下载）。参数: attId (必填)。 |
 | files.extract_status | current-space | read:files | 读一个附件的**抽取完整度**（单文件口径）：`{attId, name, extracted, segments, extractors:[{extractor, coverage}]}`。`coverage` 是抽取器报的**原始覆盖度**，空串 = **未知**（⛔ 不许读成「完整」）；`extracted:false` 只说明还没抽过，不代表文件里没有内容。不存在 ⇒ `not_found`。参数: attId (必填)。 |
 | files.list | current-space | read:files | 列出页面附件。参数: pageId (可选, 省略=当前打开的页面)。返回文件名/类型/大小。 |

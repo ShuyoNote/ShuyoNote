@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "apiVersion": "1.5.0",
+  "apiVersion": "1.6.0",
   "notes": "插件能力注册表——单一事实源。scripts/gen-capabilities.mjs 由本文件生成：JS shim（api.*）、Rust 绑定表、作者类型包、作者文档；scripts/check-capabilities.mjs 校验一致性与完整性。改能力请改这里，不要手改生成物。",
   "permissions": [
     {
@@ -929,15 +929,23 @@
         "coverage",
         "report"
       ],
-      "args": [],
+      "args": [
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。⚠️ 覆盖率报告是**全库派生层**的当前空间口径：跨空间暂不支持 ⇒ 给了别的空间会明确 `bad_args`（⛔ 不假装支持）"
+        }
+      ],
       "returns": {
         "type": "object",
         "ts": "{ ok: true; summary: string; report: { pages: { total: number; indexed: number; empty: number }; attachments: { total: number; extracted: number; indexed: number; partial: number; notIndexed: number; byReason: Record<string, number> }; derived: { extractors: number; segments: number; chars: number }; chunks: { total: number }; gaps: { kind: string; id: string; reason: string; detail: string }[]; gapsTotal: number; gapsTruncated: boolean; note: string } } | { ok: false; error: string }",
         "desc": "**一行摘要**（可直接念给用户）＋ 结构化明细：`pages`/`attachments`/`derived`/`chunks` 四组计数与 `gaps` 明细。`attachments.partial` ＝ **搜得到但没抽全**的数量（§15.10）；`gaps[].reason` 是分类：`no_extractor`（没人认领这种格式）/ `no_content`（认领了但抽出来是空）/ `not_chunked`（抽到了没切块）/ `page_empty`（页面正文空）/ `partial`（已索引但抽取器报了缺口）。**缺口只列前若干条**：`gapsTotal` 是总数、`gapsTruncated` 说明是否被截断"
       },
-      "host": "frontend",
-      "desc": "检查**整个库**的索引覆盖：哪些内容真的进了检索面、哪些没进、哪些**进了但没抽全**。参数: 无。返回 {summary, report}：`summary` 是一行中文摘要（可直接展示）；`report.attachments` 给出 已索引/没抽全/未索引 的计数与分类，`report.gaps` 给出**明细**（每条含 `reason` 与一句「该怎么办」）。⚠️ 三个必须分清的口径：① **没抽到 ≠ 文件里没有**（`no_content` 可能是空文件/加密/纯图）；② **页面正文空 ≠ 这页内容没被索引**（图片/附件/数据库块由附件侧负责）；③ **`partial` 是「搜得到，但只覆盖了一部分」**（典型：混合 PDF 只抽到正文页）—— 别把「已索引 N/N」读成「内容全在检索面里」。**缺口列表可能被截断**（看 `gapsTotal` 与 `gapsTruncated`）。 ★ **只有 AI 宿主**能实现它（`host: frontend`）：判「没人认领这种格式」必须以 TS 侧的抽取器注册表为准，Rust 侧再长一份就是两份实现、而漂移不会报错 ⇒ 它不进插件 shim／插件类型包／Rust 绑定表，插件调不到。",
-      "ai": true
+      "desc": "检查**整个库**的索引覆盖：哪些内容真的进了检索面、哪些没进、哪些**进了但没抽全**。参数: spaceId (可选；只接受当前空间 —— 报告目前是当前空间的派生层口径，跨空间未接，给别的空间 ⇒ bad_args)。返回 {ok, summary, report}：`summary` 是一行中文摘要（可直接展示）；`report.attachments` 给出 已索引/没抽全/未索引 的计数与分类，`report.gaps` 给出**明细**（每条含 `reason` 与一句「该怎么办」）。⚠️ 三个必须分清的口径：① **没抽到 ≠ 文件里没有**（`no_content` 可能是空文件/加密/纯图）；② **页面正文空 ≠ 这页内容没被索引**（图片/附件/数据库块由附件侧负责）；③ **`partial` 是「搜得到，但只覆盖了一部分」**（典型：混合 PDF 只抽到正文页）—— 别把「已索引 N/N」读成「内容全在检索面里」。**缺口列表可能被截断**（看 `gapsTotal` 与 `gapsTruncated`）。★ 实现只有 TS 那一份（判「没人认领这种格式」必须以 TS 侧抽取器注册表为准；Rust 侧再长一份就是两份实现、而漂移不会报错）⇒ 外部/插件面经 **Rust→前端桥** 取回同一函数的输出（2026-10-29 B3）。",
+      "ai": true,
+      "rust": "cap_coverage_report",
+      "mcpDesc": "检查**整个库的索引覆盖**：哪些内容真的进了检索面、哪些没进、哪些**进了但没抽全**。返回 `{ok, summary, report}`：`summary` 是一行中文摘要（可直接念给用户）；`report.attachments` 给 已索引/没抽全/未索引 的计数与分类，`report.gaps` 给**明细**（每条含 `reason`）。⚠️ 三条口径别读错：① **没抽到 ≠ 文件里没有**（`no_content` 可能是空文件/加密/纯图）；② **页面正文空 ≠ 这页内容没被索引**（图片/附件/数据库块由附件侧负责）；③ **`partial` = 搜得到但只覆盖一部分**。缺口列表可能被截断（看 `gapsTotal` / `gapsTruncated`）。⚠️ 报告是**当前空间**的派生层口径：`spaceId` 只接受当前空间（跨空间未接，给别的空间 ⇒ `bad_args`）。参数: spaceId (可选)。 ★ 若 `frontend_unavailable` / `frontend_timeout`：应用窗口没挂载或前端忙 ⇒ 报告需要**前端在运行**（它不是纯 Rust 能算的）。"
     },
     {
       "id": "editor.insertText",
@@ -1455,6 +1463,70 @@
       "rust": "cap_blobs_fetch",
       "desc": "句柄消费方（**唯一落盘处**）：把句柄换成文件，写到应用数据目录下的 exports/，返回 {path, size, sha256}。句柄单次、120 秒有效、绑定本会话；二次使用/过期/别的会话 ⇒ not_found。参数: handle (必填)。",
       "mcpDesc": "句柄消费方（**唯一落盘处**）：把 `files_download`（以及将来 `export_*`）给的句柄换成文件，写进**应用数据目录下的 `exports/`**（文件名会清洗；⛔ **不接受任意目标路径**），返回 `{path, size, sha256}`。句柄**单次使用**、**120 秒**有效、绑定**本会话** —— 二次使用 / 过期 / 别的会话 ⇒ `not_found`。参数: handle (必填)。",
+      "ai": true
+    },
+    {
+      "id": "export.markdown",
+      "title": "导出 Markdown（句柄）",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "export:files",
+      "since": "1.6.0",
+      "jsPath": [
+        "export",
+        "markdown"
+      ],
+      "args": [
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": false,
+          "desc": "单页导出：页面 id（与 spaceId 只能给一个）"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "整空间导出：空间 id（与 pageId 只能给一个；跨空间需「只读（全部空间）」档，否则明确拒）"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ handle: string; name: string; size: number; sha256: string; expiresAt: number }",
+        "desc": "{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件"
+      },
+      "rust": "cap_export_markdown",
+      "desc": "把一页导出成 Markdown、或把整个空间导出成 zip，**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。参数: pageId (可选，单页 ⇒ .md) / spaceId (可选，整空间 ⇒ 含附件的 .zip；跨空间需「只读（全部空间）」档) —— 两者**只能给一个**。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm（本批未接确认 UI，不静默导出）。",
+      "mcpDesc": "把内容导出成文件并**只回句柄**（不把字节塞进上下文）：`{handle, name, size, sha256, expiresAt}`。两种口径（**只能给一个**）：`pageId` ⇒ 该页的单个 `.md`（与界面「导出为 Markdown」同口径）；`spaceId` ⇒ 该空间整份 `.zip`（Markdown ＋ 附件，与界面「导出本空间」同口径；跨空间需要「只读（全部空间）」档）。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落应用数据目录的 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`（本批未接确认 UI，不静默导出）。",
+      "ai": true
+    },
+    {
+      "id": "export.docpackage",
+      "title": "导出 .shuyodoc（句柄）",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "export:files",
+      "since": "1.6.0",
+      "jsPath": [
+        "export",
+        "docpackage"
+      ],
+      "args": [
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": true,
+          "desc": "要导出的页面 id（单页；文件夹没有正文 ⇒ bad_args）"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ handle: string; name: string; size: number; sha256: string; expiresAt: number }",
+        "desc": "{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件"
+      },
+      "rust": "cap_export_docpackage",
+      "desc": "把一页打包成 `.shuyodoc` 并**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。**只支持单页**（与界面「导出为 .shuyodoc」同口径）。参数: pageId (必填)。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm。",
+      "mcpDesc": "把**一页**打包成 `.shuyodoc`（单页；与界面「导出为 .shuyodoc」同一份格式实现）并**只回句柄**：`{handle, name, size, sha256, expiresAt}`。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`。",
       "ai": true
     },
     {

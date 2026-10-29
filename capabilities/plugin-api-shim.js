@@ -56,6 +56,9 @@ var api = {
     export: function(fileName, content) { return __capCall("files.export", { fileName: fileName === undefined ? undefined : String(fileName), content: content === undefined ? undefined : String(content) }); },
     download: function(attId) { return __capCall("files.download", { attId: attId === undefined ? undefined : String(attId) }); }
   },
+  coverage: {
+    report: function(spaceId) { return __capCall("coverage.report", { spaceId: spaceId === undefined ? undefined : String(spaceId) }); }
+  },
   editor: {
     insertText: function(text) { return __capCall("editor.insertText", { text: text === undefined ? undefined : String(text) }); }
   },
@@ -75,6 +78,10 @@ var api = {
   log: function(message, level) { return __capCall("log.write", { message: message === undefined ? undefined : String(message), level: level === undefined ? "info" : String(level) }); },
   blobs: {
     fetch: function(handle) { return __capCall("blobs.fetch", { handle: handle === undefined ? undefined : String(handle) }); }
+  },
+  export: {
+    markdown: function(pageId, spaceId) { return __capCall("export.markdown", { pageId: pageId === undefined ? undefined : String(pageId), spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
+    docpackage: function(pageId) { return __capCall("export.docpackage", { pageId: pageId === undefined ? undefined : String(pageId) }); }
   },
   spaces: {
     list: function() { return __capCall("spaces.list", {}); },

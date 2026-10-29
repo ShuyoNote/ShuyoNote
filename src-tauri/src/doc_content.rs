@@ -121,6 +121,27 @@ pub fn read_with_meta(c: &Connection, page_id: &str) -> Result<Option<DocContent
     .map_err(|e| e.to_string())
 }
 
+/// 读一版**历史版本**的正文（`title / doc_json / text / created_at`）；版本不存在 ⇒ `Ok(None)`。
+///
+/// 为什么放在这一层（2026-10-29，B3 顺带收口）：`version.get` 原先在 `plugins.rs` 里直接
+/// `SELECT title, content_json, content_text, created_at` —— 那是**第三处**直接摸存储列名的地方，
+/// 而 `check-doc-content-access` 的纪律是"只减不增"。历史版本与页面正文是**同一份**文档内容，
+/// 换 CRDT 时两者一起变 ⇒ 读出口也只能在这一层。
+pub fn version_body(
+    c: &Connection,
+    page_id: &str,
+    version_id: &str,
+) -> Result<Option<(String, String, String, i64)>, String> {
+    c.query_row(
+        "SELECT title, content_json, content_text, created_at
+         FROM page_versions WHERE page_id = ?1 AND id = ?2",
+        params![page_id, version_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )
+    .optional()
+    .map_err(|e| format!("db_error: {e}"))
+}
+
 /// **唯一写入口**（本地保存那条路）。
 ///
 /// `dirty = 1` 是**同步契约**的一部分，不是随手写的：`sync::apply_upsert` 的

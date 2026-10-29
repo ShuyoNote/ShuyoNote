@@ -754,6 +754,28 @@ export function blockSnapshotsOf(docJson: string): BlockSnapshot[] | undefined {
  *
  * 空值兜底成 `{}`：与工作区导出（`exportWorkspaceToMarkdown`）**同一个兜底** ✓。
  */
+
+/**
+ * 记录（页面/历史版本）里的**正文字符串** —— 存储列名只许在这一层出现
+ * （`check-doc-content-access` 只减不增；别处一律经它取）。
+ */
+export function recordedText(rec: { content_text?: string | null }): string {
+  return String(rec.content_text ?? "");
+}
+
+/** 读面回话里的正文键（字段名是**接口形状**；存储键名只许在这一层写）。 */
+export function textField(text: string): { content_text: string } {
+  return { content_text: text };
+}
+
+/** 新建页草稿的两个正文键（`content_json` / `content_text` 只许在这一层出现）。 */
+export function draftBodyFields(body: { content_json: string; content_text: string }): {
+  content_json: string;
+  content_text: string;
+} {
+  return { content_json: body.content_json, content_text: body.content_text };
+}
+
 export function docJsonOfPage(page: { content_json?: string | null }): string {
   return page.content_json || "{}";
 }

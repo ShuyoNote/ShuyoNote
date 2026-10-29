@@ -47,6 +47,11 @@ export const NOTE_ID_PREFIXES = [
   //   句柄落进应用自己的 `exports/`（⛔ 不接受任意路径）。与前面几条同一条判断：属于清单遗漏。
   //   ⛔ 别在这里加 `fs.` / `exec.` / `net.` / `sql.` 这类（那才是这条规则要挡的 ✗）。
   "versions.", "version.", "trash.", "blobs.",
+  // ⭐ 2026-10-29（B3）：`export.markdown` / `export.docpackage` 是**导出**能力 —— 产物只有句柄
+  //   （字节经 `blobs.fetch` 落进应用自己的 `exports/`），⛔ 不接受任意路径、也不改任何笔记。
+  //   与前面几条同一条判断：属于**清单遗漏**，不是安全边界放宽。
+  //   ⛔ 别在这里加 `fs.` / `exec.` / `net.` / `sql.` 这类（那才是这条规则要挡的 ✗）。
+  "export.",
 ];
 export const ALLOWED_AI_KINDS = ["read", "write"];
 export const ALLOWED_AI_SCOPE = "current-space";

@@ -255,6 +255,12 @@ export interface PluginApi {
    */
     download(attId: string): { handle: string; name: string; size: number; sha256: string; expiresAt: number };
   };
+  coverage: {
+  /** 索引覆盖报告（权限 `read:files`；1.92.0 起）
+   * 返回：**一行摘要**（可直接念给用户）＋ 结构化明细：`pages`/`attachments`/`derived`/`chunks` 四组计数与 `gaps` 明细。`attachments.partial` ＝ **搜得到但没抽全**的数量（§15.10）；`gaps[].reason` 是分类：`no_extractor`（没人认领这种格式）/ `no_content`（认领了但抽出来是空）/ `not_chunked`（抽到了没切块）/ `page_empty`（页面正文空）/ `partial`（已索引但抽取器报了缺口）。**缺口只列前若干条**：`gapsTotal` 是总数、`gapsTruncated` 说明是否被截断
+   */
+    report(spaceId?: string): { ok: true; summary: string; report: { pages: { total: number; indexed: number; empty: number }; attachments: { total: number; extracted: number; indexed: number; partial: number; notIndexed: number; byReason: Record<string, number> }; derived: { extractors: number; segments: number; chars: number }; chunks: { total: number }; gaps: { kind: string; id: string; reason: string; detail: string }[]; gapsTotal: number; gapsTruncated: boolean; note: string } } | { ok: false; error: string };
+  };
   editor: {
   /** 向当前页插入纯文本（权限 `write:page.current`；1.0.0 起）
    */
@@ -303,6 +309,16 @@ export interface PluginApi {
    */
     fetch(handle: string): { path: string; size: number; sha256: string };
   };
+  export: {
+  /** 导出 Markdown（句柄）（权限 `export:files`；1.6.0 起）
+   * 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
+   */
+    markdown(pageId?: string, spaceId?: string): { handle: string; name: string; size: number; sha256: string; expiresAt: number };
+  /** 导出 .shuyodoc（句柄）（权限 `export:files`；1.6.0 起）
+   * 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
+   */
+    docpackage(pageId: string): { handle: string; name: string; size: number; sha256: string; expiresAt: number };
+  };
   spaces: {
   /** 列出空间（含当前空间）（权限 `read:pages`；1.1.0 起）
    * 返回：当前空间 id ＋ 全部未删除空间
@@ -315,4 +331,4 @@ export interface PluginApi {
   };
 }
 
-export declare const SDK_API_VERSION: "1.5.0";
+export declare const SDK_API_VERSION: "1.6.0";
