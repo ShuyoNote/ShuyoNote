@@ -21,8 +21,12 @@ const css = readFileSync(CSS_PATH, "utf8");
 
 /** 2026-10-29 实测基线（「只减不增」）。加一条 `!important` 会让它红 —— 那是**有意的**。 */
 const BASELINE_IMPORTANT = 36;
-/** 2026-10-29 实测基线：同上下文同选择器被定义多次的组数。 */
-const BASELINE_DUP_GROUPS = 79;
+/** 2026-10-29 实测基线：同上下文同选择器被定义多次的组数。
+ *  ⚠️ 2026-10-29 修正：79 是在 `chore(css)` 合并脚本留下 **232 行孤立 `.`** 时量的 ——
+ *  那些 `.` 让本文件的解析器把上下文读串了（同一份 CSS 真实组数是 81）。
+ *  孤立 `.` 已删（lightningcss 直接报 SyntaxError，macOS/Android 构建红）⇒ 基线按**真实值** 81 记；
+ *  之后仍然**只减不增**。 */
+const BASELINE_DUP_GROUPS = 81;
 
 function countImportant(text: string): number {
   return (text.match(/!important/g) ?? []).length;
