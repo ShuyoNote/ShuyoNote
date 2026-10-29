@@ -374,7 +374,11 @@ mod tests {
             !g.iter().any(|s| s == "delete:everything"),
             "授权面不许被放大 ✗"
         );
-        assert_eq!(g.len(), 4, "只该是读三项 ＋ write:pages ✓");
+        assert_eq!(
+            g.len(),
+            default_read_scopes().len() + 1,
+            "只该是**默认读 scope 全家** ＋ write:pages ✓（B1a 起读档多了 tags/properties/page.current 三条）"
+        );
         // ⭐ 跨空间只读：给了就只在 ReadAll 那一档；换到别的读档必须**收回**（⛔ 不靠"以前给过"留着 ✗）
         let (_, g_all, _) = level_to_config(McpLevel::Read, &with_all);
         assert!(
@@ -443,19 +447,17 @@ mod tests {
     }
 
     fn the_write_grant_adds_and_removes_exactly_the_write_scope() {
-        let read_only = vec![
-            "read:pages".to_string(),
-            "read:files".to_string(),
-            "read:backlinks".to_string(),
-        ];
+        // ⭐ B1a：读档的授权面 = `default_read_scopes()`（2026-10-29 起含 tags / properties /
+        //   page.current 三条新读 scope）—— ⛔ 不再在测试里手抄三个字符串（会与实现漂）。
+        let read_only = default_read_scopes();
         let on = granted_after_write_grant(&read_only, true);
         assert!(
             on.contains(&WRITE_SCOPE.to_string()),
             "授权后必须含写 ✓（否则写面还是打不开 ✗）"
         );
-        assert_eq!(on.len(), 4, "只该多出那一项 ✓");
+        assert_eq!(on.len(), read_only.len() + 1, "只该多出那一项 ✓");
         for s in &read_only {
-            assert!(on.contains(s), "读三项不许被写挤掉 ✓：{s}");
+            assert!(on.contains(s), "读 scope 不许被写挤掉 ✓：{s}");
         }
         let off = granted_after_write_grant(&on, false);
         assert!(
@@ -463,17 +465,54 @@ mod tests {
             "收回后不许还有写 ✓"
         );
         assert_eq!(off, read_only, "收回后应当**回到原样** ✓");
-        // 旧配置文件可能没有 granted（空清单）⇒ 授权写也要把读三项补齐 ✓
+        // 旧配置文件可能没有 granted（空清单）⇒ 授权写也要把默认读 scope 补齐 ✓
         assert_eq!(
             granted_after_write_grant(&[], true).len(),
-            4,
-            "空清单 ⇒ 读三项 ＋ 写一项 ✓"
+            default_read_scopes().len() + 1,
+            "空清单 ⇒ 默认读全家 ＋ 写一项 ✓"
         );
         assert_eq!(
             granted_after_write_grant(&on, true),
             on,
             "重复授权不许重复加 ✓"
         );
+    }
+
+    /// ⭐ **B1a**：升级来的旧授权快照（只有三个读 scope）要能**补齐新读 scope**，
+    /// 且⛔ 不顺手放大到 `read:all-spaces` / `write:pages`（那两条只由档位显式给 ✓）。
+    #[test]
+    fn an_old_grant_snapshot_gets_the_new_read_scopes_but_not_more() {
+        let old = vec![
+            "read:pages".to_string(),
+            "read:files".to_string(),
+            "read:backlinks".to_string(),
+        ];
+        let now = granted_with_default_reads(&old);
+        for s in ["read:tags", "read:properties", "read:page.current"] {
+            assert!(
+                now.iter().any(|x| x == s),
+                "旧快照必须补上 {s} ✓（否则 tags_list / properties_list / page_current 一调就拒 ✗）"
+            );
+        }
+        for s in [READ_ALL_SCOPE, WRITE_SCOPE] {
+            assert!(!now.iter().any(|x| x == s), "⛔ 补读不许顺手放大到 {s} ✗");
+        }
+        assert_eq!(now.len(), default_read_scopes().len());
+        // 已有项**原样在前**，缺的按 `default_read_scopes()` 的顺序追加（不是重新排序 ✓）
+        let want = [
+            "read:pages",
+            "read:files",
+            "read:backlinks",
+            "read:tags",
+            "read:properties",
+            "read:page.current",
+        ];
+        assert_eq!(
+            now,
+            want.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            "已有项原样在前、缺的按默认读顺序追加 ✓"
+        );
+        assert_eq!(granted_with_default_reads(&now), now, "补齐必须幂等 ✓");
     }
 
     /// ⭐ **R147 的接线那一半**（函数对 ≠ 被调用 ✗）：命令面必须**落盘 config** ＋ **换令牌**，且**注册进 `lib.rs`** ✓。
@@ -669,11 +708,9 @@ impl Default for FileConfig {
         Self {
             enabled: false,
             // ⚠️ 默认只给**读**权限（M1 是只读接入 ✓）；写随 M2，且 R87 要求免确认写**必须留痕** ✓。
-            granted: vec![
-                "read:pages".to_string(),
-                "read:files".to_string(),
-                "read:backlinks".to_string(),
-            ],
+            // ⭐ B1a：不再手抄一份读清单 —— 与 `default_read_scopes()` **同源**（否则新增读能力时
+            //   这里会静默漏掉，症状正是「新工具列在面上、一调就拒」）。
+            granted: default_read_scopes(),
             // ⛔ 免确认写**默认关** ✓（R87：可以开，不是默认开 ✓）
             allow_write: false,
         }
@@ -782,13 +819,38 @@ pub(crate) const WRITE_SCOPE: &str = "write:pages";
 /// ⚠️ 默认**不给** ✓；插件 manifest **声明不了**它（不在注册表里）⇒ 插件面永远跨不了空间 ✓。
 pub(crate) const READ_ALL_SCOPE: &str = "read:all-spaces";
 
-/// 默认的**读**三项 ✓ —— 与 `FileConfig::default()` 同一份口径 ✓（只读是 M1 的边界 ✓）。
+/// 默认的**读** scope 全家 ✓ —— 「只读」及以上各档都会带上它们（只读是 M1 的边界 ✓）。
+///
+/// ⭐ **B1a（2026-10-29）加后三条**：只读档新增了 `tags_list` / `properties_list` / `page_current`
+/// 三个工具，它们分别要 `read:tags` / `read:properties` / `read:page.current` ——
+/// 不把这三个 scope 放进读档，工具就会**列在面上却一调就 `permission_denied`**
+/// （「面 = 此刻真能调的能力」；M1 在 `coverage.report` 上踩过同形 ✗）。
+/// 三条都是注册表里的 low risk 读权限、都限 `current-space` ⇒ 读档的语义面没被放大。
 pub(crate) fn default_read_scopes() -> Vec<String> {
     vec![
         "read:pages".to_string(),
         "read:files".to_string(),
         "read:backlinks".to_string(),
+        "read:tags".to_string(),
+        "read:properties".to_string(),
+        "read:page.current".to_string(),
     ]
+}
+
+/// 把「默认读 scope 全家」补齐到一份授权清单上 —— **只补读** ✓。
+///
+/// 为什么要它（B1a）：读档的授权是**令牌/配置文件里的快照**；上一版写下的那份只有三个读
+/// scope ⇒ 升级后新工具「列在面上、一调就拒」。起通道前补一次（并落盘），用户不必手动重选档位。
+/// ⛔ **不补** `read:all-spaces` / `write:pages` —— 那两条仍只由档位显式给（见 [`level_to_config`]）。
+/// 顺序：已有项原样保留，缺的按 [`default_read_scopes`] 的顺序追加（幂等 ✓）。
+pub(crate) fn granted_with_default_reads(base: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = base.to_vec();
+    for s in default_read_scopes() {
+        if !out.contains(&s) {
+            out.push(s);
+        }
+    }
+    out
 }
 
 /// ⭐ **纯函数**：把「授权写」这一档施加到一份权限清单上 ✓ ——
@@ -799,12 +861,9 @@ pub(crate) fn default_read_scopes() -> Vec<String> {
 /// · `on=true` ⇒ 确保含 `write:pages` ✓（已有不重复 ✓）；`on=false` ⇒ **移除**它 ✓（收回 ✓）；
 /// · **清单里别的东西一律不动** ✓（将来加了别的 scope 也不会被这一档吃掉 ✓）。
 pub(crate) fn granted_after_write_grant(base: &[String], on: bool) -> Vec<String> {
-    let mut out: Vec<String> = base.to_vec();
-    for s in default_read_scopes() {
-        if !out.contains(&s) {
-            out.push(s);
-        }
-    }
+    // ⭐ B1a：读 scope 的补齐与「起通道前那次补齐」共用一处（`granted_with_default_reads` ✓）——
+    //    否则"哪些读永远在"会有两份清单，必然漂。
+    let mut out: Vec<String> = granted_with_default_reads(base);
     let w = WRITE_SCOPE.to_string();
     if on {
         if !out.contains(&w) {
@@ -1002,6 +1061,9 @@ pub fn status_with_resources(resource_dir: Option<&std::path::Path>) -> McpStatu
         None => (None, file.granted.clone()),
     };
     let addr = current_addr();
+    // ⭐ B1a：令牌文件里那一行可能还是升级前写下的旧快照（缺 `read:tags` 等新读 scope）——
+    //   面板按**实际授权面**显示（与鉴权时 `ChannelConfig.granted` 同一口径：只补读 ✓）。
+    let granted = granted_with_default_reads(&granted);
     McpStatus {
         enabled: is_enabled(),
         running: addr.is_some(),
@@ -1092,6 +1154,14 @@ pub fn set_enabled(enabled: bool) -> Result<McpStatus, String> {
     let was_enabled = read_file_config().enabled;
     let mut cfg = read_file_config();
     cfg.enabled = true;
+    // ⭐ B1a（2026-10-29）：旧配置里的 `granted` 是**写下来的快照**，可能缺后来新增的读 scope
+    //   （`read:tags` / `read:properties` / `read:page.current`）⇒ 起通道前**补齐并落盘**（只补读 ✓）。
+    //   ⚠️ **不主动换令牌**：鉴权用的是这里拼出来的 `ChannelConfig.granted`（见下），令牌文件里那一行
+    //   只用于面板展示；升级时换令牌会把已经配好的外部客户端踢掉（它们多半在启动时读一次令牌）。
+    let upgraded = granted_with_default_reads(&cfg.granted);
+    if upgraded != cfg.granted {
+        cfg.granted = upgraded;
+    }
     write_file_config(&cfg)?;
     if !was_enabled || token_path().map(|p| p.exists()).unwrap_or(false) == false {
         write_new_token(&cfg.granted)?;

@@ -32,6 +32,11 @@ export const INTERNAL_MARKERS = [
 export const NOTE_ID_PREFIXES = [
   "pages.", "blocks.", "backlinks.", "files.", "coverage.",
   "tags.", "links.", "search.", "media.", "attachments.", "spaces.",
+  // ⭐ 2026-10-29（B1a，owner 拍 A）：`page.current` / `properties.list` 是**笔记域**能力
+  //   （当前页正文 / 属性定义），此前不在白名单里只是因为它们一直没挂 `ai:true`（清单遗漏），
+  //   不是安全边界的例外 —— 这条规则本意挡的是 fs/网络/命令类能力。
+  //   ⛔ 别在这里加 `fs.` / `exec.` / `net.` 这类（那才是它要挡的 ✗）。
+  "page.", "properties.",
 ];
 export const ALLOWED_AI_KINDS = ["read", "write"];
 export const ALLOWED_AI_SCOPE = "current-space";

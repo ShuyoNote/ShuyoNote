@@ -1,5 +1,37 @@
 [
   {
+    "name": "page_current",
+    "capabilityId": "page.current",
+    "description": "读取**当前打开的页面**的正文纯文本（与 pages_get 同口径：整页窗口上限 20000 字符、includeAnchors 默认 true 加块锚点、带 rev 乐观并发令牌）。⚠️ **外部接入拿不到界面里「当前页」这个状态**：没有打开的页面时**如实**返回 `{opened:false, note:「…」}`，不会编造一页；要读具体页面请用 pages_list 发现 id、再 pages_get。参数: includeAnchors (可选, 默认 true)。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "includeAnchors": {
+          "type": "boolean",
+          "description": "是否在正文里给每个顶层块后插一行块锚点注释（可选，默认 true；与 pages.get 同口径）。**插件面忽略它**（api.page.current 仍返回原始内容字符串）"
+        }
+      },
+      "required": []
+    },
+    "permission": "read:page.current"
+  },
+  {
+    "name": "pages_count",
+    "capabilityId": "pages.count",
+    "description": "本空间**未删除节点的数量**（与 pages_list 同口径：页面/数据库/文件夹各算一个）。默认只数**当前空间**；给了 spaceId 就数那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选)。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间"
+        }
+      },
+      "required": []
+    },
+    "permission": "read:pages"
+  },
+  {
     "name": "pages_list",
     "capabilityId": "pages.list",
     "description": "列出页面（id、标题、创建与更新时间），按**最近更新**倒序，不含正文。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。这是**搜索之外的发现通路**：pages_search 返回空、或不知道该搜什么词时，先调它把那个空间最近改过的页面看一遍。参数: limit (可选, 默认 50, 上限 200), spaceId (可选)。",
@@ -74,6 +106,42 @@
       ]
     },
     "permission": "read:pages"
+  },
+  {
+    "name": "pages_tree",
+    "capabilityId": "pages.tree",
+    "description": "一次读取**整个空间的页面树**（结构视图）：{spaceId, spaceName, nodes:[{id,title,kind,parentId,order}], total, truncated}。节点与 pages_list **同一集合**（未删除的页面/数据库/文件夹），按树顺序给出 parentId 与 order；`kind` 是 page / database / folder。默认读**当前空间**；给了 spaceId 就读那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。超过 limit（默认与上限都是 2000 节点）⇒ `truncated:true`（如实说，别把截断的树当全量）。参数: spaceId (可选), limit (可选, 默认 2000, 上限 2000)。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间"
+        },
+        "limit": {
+          "type": "number",
+          "description": "最多返回多少个节点（默认 2000，上限 2000；超出 ⇒ truncated:true）"
+        }
+      },
+      "required": []
+    },
+    "permission": "read:pages"
+  },
+  {
+    "name": "tags_list",
+    "capabilityId": "tags.list",
+    "description": "列出本空间用到的**标签及各自的页面数**：`[{id, name, page_count}]`（page_count 不含已删除页面）。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选)。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间"
+        }
+      },
+      "required": []
+    },
+    "permission": "read:tags"
   },
   {
     "name": "blocks_list",
@@ -174,6 +242,22 @@
       ]
     },
     "permission": "read:files"
+  },
+  {
+    "name": "properties_list",
+    "capabilityId": "properties.list",
+    "description": "列出本空间的**属性定义** `[{id, name, type}]`（写属性时要的是 id；读数据库/属性值前先用它找 id）。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选)。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间"
+        }
+      },
+      "required": []
+    },
+    "permission": "read:properties"
   },
   {
     "name": "spaces_list",

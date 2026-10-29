@@ -1,4 +1,4 @@
-# 插件 API（v1.2.0）
+# 插件 API（v1.3.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.2.0",
+  "apiVersion": "1.3.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.2.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.3.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -101,12 +101,13 @@ register({
 
 | 能力 | 签名 | 需要权限 | scope | 写入中介 | 返回 | 自 |
 |---|---|---|---|---|---|---|
-| `page.current` | `api.page.current()` | `read:page.current` | `current-space` | — | string | 1.0.0 |
-| `pages.count` | `api.pages.count()` | `read:pages` | `current-space` | — | number | 1.0.0 |
+| `page.current` | `api.page.current(includeAnchors)` | `read:page.current` | `current-space` | — | string | 1.0.0 |
+| `pages.count` | `api.pages.count(spaceId)` | `read:pages` | `current-space` | — | number | 1.0.0 |
 | `pages.list` | `api.pages.list(limit, spaceId)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `pages.get` | `api.pages.get(id, offset, limit, includeAnchors)` | `read:pages` | `current-space` | — | object | 1.0.0 |
 | `pages.search` | `api.pages.search(q, spaceId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
-| `tags.list` | `api.tags.list()` | `read:tags` | `current-space` | — | array | 1.0.0 |
+| `pages.tree` | `api.pages.tree(spaceId, limit)` | `read:pages` | `current-space` | — | object | 1.3.0 |
+| `tags.list` | `api.tags.list(spaceId)` | `read:tags` | `current-space` | — | array | 1.0.0 |
 | `blocks.list` | `api.blocks.list(pageId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | — | array | 1.0.0 |
 | `files.list` | `api.files.list(pageId)` | `read:files` | `current-space` | — | array | 1.0.0 |
@@ -120,7 +121,7 @@ register({
 | `kv.set` | `api.kv.set(key, value, scope)` | `kv:own` | `app` | 即时 | void | 1.0.0 |
 | `kv.remove` | `api.kv.remove(key, scope)` | `kv:own` | `app` | 即时 | void | 1.0.0 |
 | `settings.get` | `api.settings.get(key)` | `kv:own` | `app` | — | string | 1.0.0 |
-| `properties.list` | `api.properties.list()` | `read:properties` | `current-space` | — | array | 1.0.0 |
+| `properties.list` | `api.properties.list(spaceId)` | `read:properties` | `current-space` | — | array | 1.0.0 |
 | `properties.set` | `api.properties.set(attrId, value, pageId)` | `write:properties` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `tags.add` | `api.tags.add(name, pageId)` | `write:tags` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `log.write` | `api.log(message, level)` | — | `app` | — | void | 1.0.0 |
@@ -132,17 +133,21 @@ register({
 
 ### `page.current` — 读取当前页
 
-- 调用：`api.page.current()`
+- 调用：`api.page.current(includeAnchors)`
 - 权限：`read:page.current`
 - scope：`current-space`
-- 返回：当前页的 content_json 原始字符串（未解析；插件自行 JSON.parse）
+- 返回：**插件面**：当前页正文的原始内容字符串（未解析；插件自行 JSON.parse）；没有打开页面时返回空串。**外部/MCP 面**（`page_current`）与 pages.get 同口径：{id, title, content_text, kind, chars_total, offset, limit, rev?}；没有打开的页面时返回 {opened:false, note}（如实说，不编造）
+- 参数：
+  - `includeAnchors`: `boolean`（可选），默认 `true` —— 是否在正文里给每个顶层块后插一行块锚点注释（可选，默认 true；与 pages.get 同口径）。**插件面忽略它**（api.page.current 仍返回原始内容字符串）
 
 ### `pages.count` — 本空间页面总数
 
-- 调用：`api.pages.count()`
+- 调用：`api.pages.count(spaceId)`
 - 权限：`read:pages`
 - scope：`current-space`
-- 返回：本空间未删除页面的数量
+- 返回：该空间未删除节点的数量（与 pages.list 的集合同口径：页面/数据库/文件夹各算一个节点）
+- 参数：
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
 
 ### `pages.list` — 列出本空间页面
 
@@ -177,12 +182,24 @@ register({
   - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
   - `limit`: `number`（可选），默认 `8` —— 最多返回多少条（上限 100）
 
+### `pages.tree` — 读取空间页面树
+
+- 调用：`api.pages.tree(spaceId, limit)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：{spaceId, spaceName, nodes:[{id,title,kind,parentId,order}], total, truncated}：一次给出整个空间的层级（kind = page/database/folder；parentId=null 是顶层；order = 树里的排序值）。节点按树顺序（sort_order → created_at）排列；超过 limit ⇒ truncated:true 并给 total
+- 参数：
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
+  - `limit`: `number`（可选），默认 `2000` —— 最多返回多少个节点（默认 2000，上限 2000；超出 ⇒ truncated:true）
+
 ### `tags.list` — 列出本空间标签
 
-- 调用：`api.tags.list()`
+- 调用：`api.tags.list(spaceId)`
 - 权限：`read:tags`
 - scope：`current-space`
-- 返回：[{id, name, page_count}]
+- 返回：[{id, name, page_count}]：page_count 是**这个空间里**打了该标签的页面数（不含已删除页面）
+- 参数：
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
 
 ### `blocks.list` — 列出页面块
 
@@ -319,10 +336,12 @@ register({
 
 ### `properties.list` — 列出属性定义
 
-- 调用：`api.properties.list()`
+- 调用：`api.properties.list(spaceId)`
 - 权限：`read:properties`
 - scope：`current-space`
 - 返回：[{id, name, type}]——插件据此找到要写的属性 id
+- 参数：
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
 
 ### `properties.set` — 设置页面属性（草稿确认）
 
@@ -572,7 +591,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.2.0",
+  "runtime": "declarative", "apiVersion": "1.3.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },

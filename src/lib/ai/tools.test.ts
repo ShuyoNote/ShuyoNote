@@ -11,6 +11,13 @@ vi.mock("../api", () => ({
     searchChunks: vi.fn(),
     readAttachmentText: vi.fn(),
     createPage: vi.fn(),
+    // ⭐ B1a（2026-10-29）：5 条只读扩容工具的依赖（应用内 AI 面这一侧）
+    listPages: vi.fn(),
+    listWorkspacePages: vi.fn(),
+    getActiveWorkspaceId: vi.fn(),
+    listWorkspaces: vi.fn(),
+    listTags: vi.fn(),
+    listAttrDefs: vi.fn(),
   },
 }));
 
@@ -41,6 +48,12 @@ const EXPECTED = [
   //    依据是面板「外部 AI 接入」的档位文案：「只读（全部空间）…**也不会改动你正在看的那个空间**」。
   //    ⇒ 与 `check-agent-surface` 的「`ai:true` 只许 `current-space`」同一条口径：
   //      看见有哪些空间可以（`spaces.list` 是显式例外），**替人切换不行** ✓。
+  // ⭐ B1a（2026-10-29）：只读扩容 5 条进 AI/MCP 面（注册表 `ai:true`；MCP 清单由同一份注册表生成）
+  "page.current",
+  "pages.count",
+  "pages.tree",
+  "properties.list",
+  "tags.list",
 ];
 
 describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实现）", () => {
@@ -141,6 +154,45 @@ describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实�
     expect(r.ok).toBe(false);
     expect(String(r.error)).toContain("pages.search");
     expect(api.search).not.toHaveBeenCalled();
+  });
+
+  // ⭐ B1a（2026-10-29）：5 条只读扩容工具在**应用内 AI 面**的这一侧（MCP 侧在 Rust 判据里）
+  it("B1a·page.current：没有当前页 ⇒ 如实 opened:false（⛔ 不编一页、不碰 api）", async () => {
+    const r = (await getAiTool("page.current")!.run({}, { currentPageId: null, pages: [] })) as Record<string, any>;
+    expect(r.ok).toBe(true);
+    expect(r.opened).toBe(false);
+    expect(r.page).toBeUndefined();
+    expect(api.getPage).not.toHaveBeenCalled();
+  });
+
+  it("B1a·pages.count / pages.tree：与 listPages 同一集合（count==length、父子与 kind 一致）", async () => {
+    vi.mocked(api.listPages).mockResolvedValue([
+      { id: "f1", title: "资料", kind: "folder", parent_id: null, sort_order: 0 },
+      { id: "p1", title: "第一页", kind: "page", parent_id: "f1", sort_order: 1 },
+    ] as never);
+    const count = (await getAiTool("pages.count")!.run({}, CTX)) as Record<string, any>;
+    expect(count).toEqual({ ok: true, count: 2 });
+
+    const tree = (await getAiTool("pages.tree")!.run({}, CTX)) as Record<string, any>;
+    expect(tree.ok).toBe(true);
+    expect(tree.nodes.map((n: any) => n.id)).toEqual(["f1", "p1"]);
+    expect(tree.nodes[0].kind).toBe("folder");
+    expect(tree.nodes[1].parentId).toBe("f1");
+    expect(tree.total).toBe(2);
+    expect(tree.truncated).toBe(false);
+  });
+
+  it("B1a·tags.list / properties.list：字段与注册表一致（type 来自 attr_type）", async () => {
+    vi.mocked(api.listTags).mockResolvedValue([{ id: "t1", name: "待办", page_count: 3 }] as never);
+    vi.mocked(api.listAttrDefs).mockResolvedValue([
+      { id: "a1", name: "状态", attr_type: "select", options: [] },
+    ] as never);
+
+    const tags = (await getAiTool("tags.list")!.run({}, CTX)) as Record<string, any>;
+    expect(tags.tags[0]).toEqual({ id: "t1", name: "待办", page_count: 3 });
+
+    const props = (await getAiTool("properties.list")!.run({}, CTX)) as Record<string, any>;
+    expect(props.properties[0]).toEqual({ id: "a1", name: "状态", type: "select" });
   });
 });
 

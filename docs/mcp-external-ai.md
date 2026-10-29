@@ -20,7 +20,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | 档位（界面名） | 内部 id | 能做什么 | 建议 |
 |---|---|---|---|
 | 不接 | `off` | 通道关闭 | 平常不用时选它 |
-| 只读 | `read` | 读**当前空间**的页面/搜索/块/反链/附件 | 让 AI 总结、问答时够用 |
+| 只读 | `read` | 读**当前空间**的页面/搜索/块/反链/附件/当前页/标签/属性定义/页面树 | 让 AI 总结、问答时够用 |
 | 只读（全部空间） | `read_all` | 同上，跨所有空间（加密空间锁着时读不到内容） | 需要跨空间检索时开 |
 | 可写（每次确认） | `write_confirm` | 新建/追加直接写；**整页替换会先问你** | **要写就用这个（推荐）** |
 | 可写（免确认） | `write_auto` | 所有写操作**直接落库、不询问**；每次写仍留一行审计 | ⚠️ 只在刚备份过、且信任该 AI 时短开 |
@@ -57,7 +57,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 4. 怎么验证通没通
 
-1. 让 AI **列工具**：应看到 **13 个**——`pages_list` / `pages_get` / `pages_search` / `pages_create` / `pages_update` / `pages_importMarkdown` / `blocks_list` / `blocks_append` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `spaces_list`；
+1. 让 AI **列工具**：应看到 **读面 14 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `tags_list` / `properties_list` / `spaces_list`；切到**可写**档后再多 **4 个写面**（共 **18 个**）：`pages_create` / `pages_update` / `pages_importMarkdown` / `blocks_append`；
 2. 让它读一篇：「列出运营空间最近修改的 3 篇笔记」；
 3. 能读出来说明链路通；**被拒**通常说明档位不够（见 §6）；
 4. 每次调用都会**记一行审计**（谁/何时/做了什么/成败）。
@@ -66,8 +66,9 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 | 工具 | 需要的档位 |
 |---|---|
-| `spaces_list`、`pages_list`、`pages_get`、`pages_search`、`blocks_list`、`backlinks_list`、`files_list`、`files_search`、`files_read` | 只读及以上 |
-| `pages_search` 带 `spaceId`（跨空间） | **只读（全部空间）**及以上 |
+| `spaces_list`、`pages_list`、`pages_get`、`pages_search`、`pages_count`、`pages_tree`、`tags_list`、`properties_list`、`blocks_list`、`backlinks_list`、`files_list`、`files_search`、`files_read` | 只读及以上 |
+| `pages_search` / `pages_list` / `pages_count` / `pages_tree` / `tags_list` / `properties_list` 带 `spaceId`（跨空间） | **只读（全部空间）**及以上（未开该档却带 `spaceId` ⇒ 明确 `permission_denied`，不会悄悄当成当前空间） |
+| `page_current`（**没有 `spaceId`**） | 只读及以上；⚠️ 外部接入看不到界面里「当前页」这个状态时**如实回 `opened:false`**（不会编造一页） |
 | `pages_create`、`blocks_append`、`pages_importMarkdown` | `可写（每次确认）`及以上 |
 | `pages_update`（整页替换） | `可写（每次确认）`：会先弹确认 |
 
@@ -106,4 +107,5 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 10. 版本
 
+- 2026-10-29：只读扩容（B1a）—— MCP 工具 **13 → 18**（读面 14 / 写面 4）：新增 `page_current`、`pages_count`、`tags_list`、`properties_list`、`pages_tree`（一次给出整棵空间树，超限如实标 `truncated`）。`coverage_report` **仍不在** MCP 面上（它是应用内 AI 宿主能力，接 MCP 需要前端桥，留待后续）。`apiVersion` 1.2.0 → **1.3.0**。
 - 2026-10-29：首版（配合 `pages_get` 的 `rev`＋块锚点、`.shuyodoc` 导出导入落地后的对外说明）。

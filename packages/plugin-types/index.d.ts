@@ -129,15 +129,15 @@ export declare function register(cmd: PluginCommand): void;
 export interface PluginApi {
   page: {
   /** 读取当前页（权限 `read:page.current`；1.0.0 起）
-   * 返回：当前页的 content_json 原始字符串（未解析；插件自行 JSON.parse）
+   * 返回：**插件面**：当前页正文的原始内容字符串（未解析；插件自行 JSON.parse）；没有打开页面时返回空串。**外部/MCP 面**（`page_current`）与 pages.get 同口径：{id, title, content_text, kind, chars_total, offset, limit, rev?}；没有打开的页面时返回 {opened:false, note}（如实说，不编造）
    */
-    current(): string;
+    current(includeAnchors?: boolean): string;
   };
   pages: {
   /** 本空间页面总数（权限 `read:pages`；1.0.0 起）
-   * 返回：本空间未删除页面的数量
+   * 返回：该空间未删除节点的数量（与 pages.list 的集合同口径：页面/数据库/文件夹各算一个节点）
    */
-    count(): number;
+    count(spaceId?: string): number;
   /** 列出本空间页面（权限 `read:pages`；1.0.0 起）
    * 返回：[{id, title, created_at, updated_at}]，按更新时间倒序；不含正文。时间都是毫秒时间戳
    */
@@ -150,6 +150,10 @@ export interface PluginApi {
    * 返回：[{id, title, snippet}]：多词按「全部出现」筛（AND），单词走全文索引（按相关度）、短词走子串；附件里的命中会带「【来自附件】」前缀。**空数组 = 本空间没有命中，不是失败**
    */
     search(q: string, spaceId?: string, limit?: number): { id: string; title: string; snippet: string }[];
+  /** 读取空间页面树（权限 `read:pages`；1.3.0 起）
+   * 返回：{spaceId, spaceName, nodes:[{id,title,kind,parentId,order}], total, truncated}：一次给出整个空间的层级（kind = page/database/folder；parentId=null 是顶层；order = 树里的排序值）。节点按树顺序（sort_order → created_at）排列；超过 limit ⇒ truncated:true 并给 total
+   */
+    tree(spaceId?: string, limit?: number): { spaceId: string; spaceName: string; nodes: { id: string; title: string; kind: string; parentId: string | null; order: number }[]; total: number; truncated: boolean };
   /** 新建页面（草稿确认）（权限 `write:pages`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
    */
@@ -165,9 +169,9 @@ export interface PluginApi {
   };
   tags: {
   /** 列出本空间标签（权限 `read:tags`；1.0.0 起）
-   * 返回：[{id, name, page_count}]
+   * 返回：[{id, name, page_count}]：page_count 是**这个空间里**打了该标签的页面数（不含已删除页面）
    */
-    list(): { id: string; name: string; page_count: number }[];
+    list(spaceId?: string): { id: string; name: string; page_count: number }[];
   /** 给页面加标签（草稿确认）（权限 `write:tags`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已写入**
    */
@@ -239,7 +243,7 @@ export interface PluginApi {
   /** 列出属性定义（权限 `read:properties`；1.0.0 起）
    * 返回：[{id, name, type}]——插件据此找到要写的属性 id
    */
-    list(): { id: string; name: string; type: string }[];
+    list(spaceId?: string): { id: string; name: string; type: string }[];
   /** 设置页面属性（草稿确认）（权限 `write:properties`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已写入**
    */
@@ -261,4 +265,4 @@ export interface PluginApi {
   };
 }
 
-export declare const SDK_API_VERSION: "1.2.0";
+export declare const SDK_API_VERSION: "1.3.0";
