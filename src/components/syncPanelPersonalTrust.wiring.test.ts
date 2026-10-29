@@ -154,7 +154,10 @@ describe("J13：密码自动（用户不用知道密码就能接入）＋ 状态
     // ⚠️ 边界（如实记）：面板**主视图**里另有一条「一次性口令接入」的向导（加密空间恢复那条路，
     //    走 `inputDialog` 问口令）—— 那是**加密空间**的口令，不是同步密码 ⇒ 本判据只钉
     //    「信任/配对那几条路**不碰**任何密码」，⛔ 不把那条既有的功能一起判红 ✗。
-    for (const fnName of ["const trustDevice = async", "const preparePairCode", "const duUnpair = async"]) {
+    // ⭐ **2026-10-29（R176-A）**：`const preparePairCode` **已整条撤掉**（屏上不再显示 20 位比对码，
+    //    那条路连同 2 秒重取一起删了）⇒ 这里不再从源码里切它；判据本意（信任/配对路不碰密码）
+    //    仍由 `trustDevice` 与 `duUnpair` 两条承重 ✓。
+    for (const fnName of ["const trustDevice = async", "const duUnpair = async"]) {
       const fn = between(SRC, fnName, "\n  };");
       expect(fn, `⛔ ${fnName} 那条路碰了密码/口令（用户不该被要求知道密码）`).not.toMatch(/口令|密码|token/);
     }

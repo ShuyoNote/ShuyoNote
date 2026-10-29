@@ -4,7 +4,7 @@
 //    （两个孤儿一起清：它 ＋ `MeshAdvancedForm.tsx` ✓）。⇒ ⭐ 本文件现在的对象是**三件事** ✓，
 //    ⛔ 断言一条没删（**换对象** ✓ —— 本仓 R192）：
 //      · ⭐ 那五条读数的**口径**（读不到 ⇒ 说读不到，⛔ 不拿 0 冒充 ✓）—— 归 `../lib/trustDevicePanelReadings` ✓；
-//      · ⭐ 面板里**两条主路径**（`nearby-allow` ⇒ 对码屏 ⇒ `mesh_trust_begin` ✓）；
+//      · ⭐ 面板里**两条主路径**（`nearby-allow` ⇒ **确认身份**那一屏 ⇒ `mesh_trust_begin` ✓）；
 //      · ⭐ 那两个组件**不许回来**（孤儿正是 owner 让清的 ✓）＋ ⭐ 后端命令面**一个字节没动** ✓。
 //
 // ⭐ 两半都用机器判：
@@ -262,12 +262,13 @@ describe("信任设备那一屏 · 挂载 ＋ 读不到（task 派单）", () =>
     expect(TRUST_READINGS_UNAVAILABLE_REASON.length, "⭐ 「读不到」那句原因仍在 ✓").toBeGreaterThan(0);
   });
 
-  it("3) ⭐ 接线：面板里那两条主路径都在（「接入」＝对码屏 ＋ ⭐ 对码屏**不在收起的折叠里**）", () => {
+  it("3) ⭐ 接线：面板里那两条主路径都在（「接入」＝**确认身份**那一屏 ＋ ⭐ 它**不在收起的折叠里**）", () => {
     // ⭐⭐ **owner 2026-10-14 拍删「附近设备」那一行** ✗ ⇒ `TrustDevicePanel` 的挂载点与「严格模式（高级）」
     //    那一折**一起走了** ✓（`device-pair` ／ `device-pair-advanced` 都不在了 ✓）。⭐ 按本仓 R192
     //    「**换对象不删断言**」✗：⛔ 不是把这条删掉 ✓，换成**现在承重的那三件** ✓：
     //      ① 「附近的设备」那一行自己那颗「接入」（`nearby-allow` ✓）＋「服务别的空间」那句（`nearby-other-space` ✓）；
-    //      ② ⭐ **对码屏**（`pair-code-screen` ✓）—— 它就是「接入」之后的落点 ✓；
+    //      ② ⭐ **确认身份那一屏**（`pair-identity-screen` ✓）—— 它就是「接入」之后的落点 ✓
+    //         （⚠️ **R176-A（2026-10-29）**：⭐ 旧的「逐位比对那一屏」已撤 ✗ ⇒ 对象换成这一屏 ✓）；
     //      ③ ⭐ `mesh_trust_begin` 那条命令**仍在岗** ✓（`trustDevice` ✓）。
     expect(SYNC_PANEL_SRC, "「附近的设备」那一行没给「允许」入口 ⇒ 又回到『点不了』✗").toContain(
       'data-testid="nearby-allow"',
@@ -278,18 +279,18 @@ describe("信任设备那一屏 · 挂载 ＋ 读不到（task 派单）", () =>
     expect(SYNC_PANEL_SRC, "没接「信任这台设备」那条命令（owner 拍的甲：一端点就通）").toContain(
       MESH_TRUST_BEGIN_COMMAND,
     );
-    expect(SYNC_PANEL_SRC, "「接入」之后那一屏（对码）不见了 ⇒ 主路径断了").toContain(
-      'data-testid="pair-code-screen"',
+    expect(SYNC_PANEL_SRC, "「接入」之后那一屏（确认身份）不见了 ⇒ 主路径断了").toContain(
+      'data-testid="pair-identity-screen"',
     );
-    // ⭐⭐ **这一条是 2026-10-14 修掉那个真缺陷的守卫** ✗（当天实测：对码屏住在**收起的**「高级」折叠里
-    //    ⇒ 用户在主视图点「接入」**什么都看不见** ✓）：⭐ 对码屏必须排在**那个折叠之前** ✓。
-    const pairAt = SYNC_PANEL_SRC.indexOf('data-testid="pair-code-screen"');
+    // ⭐⭐ **这一条是 2026-10-14 修掉那个真缺陷的守卫** ✗（当天实测：那一屏住在**收起的**「高级」折叠里
+    //    ⇒ 用户在主视图点「接入」**什么都看不见** ✓）：⭐ 它必须排在**那个折叠之前** ✓。
+    const pairAt = SYNC_PANEL_SRC.indexOf('data-testid="pair-identity-screen"');
     const foldAt = SYNC_PANEL_SRC.indexOf("<SyncAdvancedFold>");
-    expect(pairAt, "夹具前提：对码屏要在").toBeGreaterThan(-1);
+    expect(pairAt, "夹具前提：那一屏要在").toBeGreaterThan(-1);
     expect(foldAt, "夹具前提：那个「高级」折叠要在").toBeGreaterThan(-1);
     expect(
       pairAt,
-      "⛔ 对码屏又跑进那个**默认收起**的折叠里了 ✗ ⇒ 主视图点「接入」用户看不见（2026-10-14 真机实测过 ✓）",
+      "⛔ 那一屏又跑进那个**默认收起**的折叠里了 ✗ ⇒ 主视图点「接入」用户看不见（2026-10-14 真机实测过 ✓）",
     ).toBeLessThan(foldAt);
   });
 });
@@ -318,13 +319,10 @@ function peer(servesCurrent: boolean, over: Partial<NearbyPeer> = {}): NearbyPee
   } as NearbyPeer;
 }
 
-/** 打开面板（`usePopover` 起始是关的 ⇒ 点它自己那颗触发器 `.btn-sync` ✓）并等 `lan_status` 那条 effect 落地 ✓。 */
-async function openPanelWith(
-  nearby: NearbyPeer[],
-  // ⭐ **P-4 片②a** 起多收一个可选的 `pairCode`（⭐ 那一屏要显示的比对码 ✓）—— ⚠️ 不传 ⇒
-  // `SyncPanel` 的**默认**占位（如实「读不到」✓）⇒ ⭐ 既有调用点一个字不动 ✓。
-  props: { pairCode?: { kind: "ok"; value: string | null } | { kind: "unavailable"; reason: string } } = {},
-): Promise<HTMLElement> {
+/** 打开面板（`usePopover` 起始是关的 ⇒ 点它自己那颗触发器 `.btn-sync` ✓）并等 `lan_status` 那条 effect 落地 ✓。
+ *  ⚠️ **R176-A（2026-10-29）**：⛔ 不再收那份「要显示的长串」prop ✗ —— 面板已没有那个 prop ✓
+ *     （⭐ 屏上只显示身份行 ✓，而身份行取自**那台设备的公告** ✓）。 */
+async function openPanelWith(nearby: NearbyPeer[]): Promise<HTMLElement> {
   lanStatusSpy.mockResolvedValue({
     enabled: true,
     peers: nearby.length,
@@ -336,7 +334,7 @@ async function openPanelWith(
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  flushSync(() => root!.render(<SyncPanel {...props} />));
+  flushSync(() => root!.render(<SyncPanel />));
   const trigger = host.querySelector<HTMLButtonElement>(".btn-sync");
   if (!trigger) throw new Error("夹具失败：面板没渲染出触发器（`.btn-sync`）—— 不是判据红");
   flushSync(() => trigger.dispatchEvent(new MouseEvent("click", { bubbles: true })));
@@ -379,13 +377,13 @@ describe("修 B：那一行**自己**就是「允许」的入口（owner 现场�
       await Promise.resolve();
       flushSync(() => {});
     }
-    // ⭐ **P-4 片②b（2026-10-13）**：⭐ 这一下**不再**直接调它了 ✗ —— ⭐ 时点挪到「码对得上，确认」之后 ✓
+    // ⭐ **P-4 片②b（2026-10-13）**：⭐ 这一下**不再**直接调它了 ✗ —— ⭐ 时点挪到「就是这台，确认」之后 ✓
     //   （⭐ 断言**一条没删** ✓ —— 按本仓 R192「换对象不删断言」：只是把"点它"换成"点它 ⇒ 再点确认" ✓，
     //    下面参数那一格照旧逐字 ✓）。
     const confirm = el.querySelector<HTMLElement>('[data-testid="pair-confirm"]');
     expect(
       confirm,
-      "⭐ 点「接入」之后那一屏要开（P-4 片②a ✓）⇒ 「码对得上，确认」那颗要在 ✓",
+      "⭐ 点「接入」之后那一屏要开 ✓ ⇒ 「就是这台，确认」那颗要在 ✓",
     ).toBeTruthy();
     flushSync(() => confirm!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     for (let i = 0; i < 4; i++) {
@@ -808,18 +806,26 @@ describe("P-2c：那段文本不是一次性的（说实话 ＋ 改错注释）"
     vi.spyOn(platform.executor, "invoke").mockImplementation(invokeSpy as never);
   });
 
-  it("① ⭐ 说实话那句 ＋ 改掉错注释（今天【红】；⚠️ **源码级**，见下）", async () => {
+  it("①（**换对象**，R176-A）：那句「不是一次性的」的界面**整块不在了** ⇒ ⛔ 别留成没人渲染的孤儿", async () => {
     // ⚠️⭐ **如实说明**：本该是**DOM 级**（"界面文本含"）✗ —— 但这一块的渲染被 `activeRow` 挡着，
     //   而本文件那份**共享** `api` 桩把 `listSyncProfiles` 定为 `[]` ✗ ⇒ 那条**设备配对**那一块
     //   压根不渲染（实测 ✓：渲染出的文本里没有「要点」那一句 ✓）。
     //   ⛔ 改那个共享桩会**动到别的组**（P-B／P-2a／P-2b 都吃它 ✓）⇒ 本片按仓内既有的
     //   **源码级接线判据**同形来判 ✓（`syncPanelMesh.wiring.test.ts` 就是这一形态 ✓）；
     //   ⭐ **DOM 级那一条留给下一片**（把夹具补成"有一条 profile"再说 ✓）。
+    //
+    // ⭐⭐ **R176-A（2026-10-29）**：那句「不是一次性的」原来**只**住在「确认身份」那一屏的
+    //   尾部说明里 ✓ —— ⭐ 那一屏现在**只显示身份行 ＋ 两句说明** ✗ ⇒ 它**没有渲染点了** ✓。
+    //   ⭐ 按本仓 R192「**换对象不删断言**」✗：⛔ 不是把断言删掉 ✗，而是**换成现在承重的两件** ✓：
+    //     · ⛔ 那段载荷／文本的界面已撤 ⇒ 那句**不许留成一句没人渲染的孤儿** ✗（留着只会让下一个人
+    //       以为界面还在说它 ✓）；
+    //     · ⛔ 那句**错注释**（「显示比对码（**一次性**」）依旧一个字都不许回来 ✗ —— 载荷里
+    //       **没有** nonce／时间戳／有效期 ✓，采纳侧也**幂等** ✓（这条事实不随界面一起过期 ✓）。
     const src = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
     expect(
       src,
-      "⭐ 必须有一句用户看得见的实话：这段文本／这串码**不是一次性的** ✓（今天【红】：没有 ✓）",
-    ).toContain("不是一次性的");
+      "⛔ 那段文本／载荷的界面已整块撤掉 ⇒ ⛔ 别把「不是一次性的」留成一句没人渲染的孤儿 ✗",
+    ).not.toContain("不是一次性的");
     expect(
       src,
       "⛔ 那句错注释「显示比对码（**一次性**」必须改掉 ✗ —— 载荷里没有 nonce／有效期 ✓（今晚实测 ✓）",
@@ -900,39 +906,33 @@ describe("P-3c：「解除信任」先二次确认（源码级，理由见上）
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ⭐⭐ **P-4 片②a（2026-10-13）**：⭐ 「**对码**」那一屏 ✗ —— ⭐ 本片**只到"屏能开"** ✓。
+// ⭐⭐ **R176-A（2026-10-29，owner 拍）**：⭐ 这一屏**只显示「设备名 ＋ 短标识」** ✗ ——
+//   ⛔ 屏上不再有任何要人逐位比对的长串 ✗（旧的 20 位那一串、它的读数、2 秒轮询、
+//   「先开一轮」那一步 **整条撤掉** ✓）。
 //
-// ⚠️ 范围（⛔ 别越界 ✗）：⭐ 本片＝**新增**一个可选 prop（`pairCode` ✓）＋ 一屏 ✓；
-//   ⛔ **不改** `trustDevice` 的**调用时点** ✗（⭐ 那是**片②b** ✓）⇒ ⭐ 本片只保证「接入」那一下
-//   **顺手把屏打开** ✓（`setPairScreen(true)` ✓），`setDpPeer`／`trustDevice` 逐字不动 ✓。
+// ⚠️ 口径（⛔ 一条都不许松 ✗）：
+//   · ⭐ 身份行**唯一实现** ＝ `peerIdentityLine(device_name, short_id)` ✓
+//     （⛔ 自己拼 ✗、⛔ 把 `device_id` 显示出来 ✗）；
+//   · ⭐ 屏上**零「码」字** ✓、**零数字** ✓（那一串已经撤了 ✓）；
+//   · ⭐ 对端**没报短标识** ⇒ 如实说「对方没报短标识」✓（⛔ 不回落成设备号 ✗）；
+//   · ⛔ 屏上**没有**「继续／自动通过」一类入口 ✗（状态机里**没有"自动通过"这一格** ✓）。
 //
-// ⚠️ ⭐ 口径（⛔ 一条都不许松 ✗）：
-//   · ⭐ **分组 ＝ 5 组 × 4 位** ✓（`pairing.rs:369` 的 `format!("{n:020}")` ＋ `:371` 的 `.chunks(4)` ✓
-//     ⇒ 屏上写 `XXXX-XXXX-XXXX-XXXX-XXXX` ✓，⛔ 不是 4 组 ✗）；
-//   · ⭐ `kind === "ok"` 才渲染那串码 ✓；⭐ `unavailable` ⇒ **如实说为什么** ✓（⛔ 不编一个码 ✗）；
-//   · ⛔ 屏上**没有**「继续／自动通过」一类入口 ✗（⭐ 仓里逐字：状态机里**没有"自动通过"这一格** ✓）；
-//   · ⭐ **6 位码今天不做、且已决定不做** ✗（⭐ 它需要 PAKE ✓；`mesh.rs:825` 逐字「6 位数字…搜索空间只有 10^6」✗）⇒
-//     ⭐ 屏上如实说「这是**比对码**（20 位、5 组）—— 这是**现在的做法**；6 位码需要 PAKE，**已决定不做**」✓
-//     （⭐ **2026-10-13 owner 拍板** ✓ —— ⛔ 旧那句"要等 PAKE 落地"是**过期承诺** ✗，已删 ✓）。
-//
-// ⚠️ **本组只有 ① 与 ③ 是先红后绿** ✓（⭐ ③ 钉的那一段**是本片加的** ⇒ ⚠️ **实测它随本片一起红** ✗
-//   ⇒ ⛔ 不许标成"锁" ✗ —— 如实标"本片的一部分" ✓）；⭐ **② 才是锁**（今天已绿 ✓，⛔ 不是本片的修 ✗ ——
-//   ⭐ 实测：整份 `SyncPanel.tsx` 里 `自动通过` **只出现在我新加的注释里** ✓ ⇒ ⭐ 必须先**剥注释**再判 ✓，
-//   而 `继续` 只出现在**严格模式那条既有文案**里 ✓ ⇒ ⭐ ② 只判「自动通过」＋ 那条停态守卫 ✓，
-//   ⛔ 不许拿整份文件判「继续」✗（那会假红 ✓））。
+// ⚠️ **本组原来钉的是「P-4 片②a 对码那一屏」**（三串 20 位、5 组 × 4 位 ✓）—— 那三条**已过时** ✗。
+//   ⭐ 按本仓 R192「**换对象不删断言**」✗：⛔ 不是关掉 ✗，是**改成新判据** ✓
+//   （对象＝身份行／零字零数字／对端没报短标识 ✓）。
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** 我那一屏那一段源码（⭐ 从它的 testid 起到 window 末 ✓，且**先整份剥注释再切** ✓）。
+/** 那一屏那一段源码（⭐ 从它的 testid 起到 window 末 ✓，且**先整份剥注释再切** ✓）。
  *  ⚠️ 顺序不能反 ✗ —— ⭐ 先切再剥的话，窗口里那个**没闭合**的块注释（JSX 注释 ✓）会把
  *  它后面的**注释文本**当成 JSX 留下 ⇒ ⭐ 实测报出 `**局域网发现的读数**` 这种**假红** ✓。 */
 function pairScreenCode(): string {
   const stripped = SYNC_PANEL_SRC.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
-  const at = stripped.indexOf('data-testid="pair-code-screen"');
-  if (at < 0) throw new Error("SyncPanel.tsx 里找不到 `pair-code-screen`（屏还没加？）");
+  const at = stripped.indexOf('data-testid="pair-identity-screen"');
+  if (at < 0) throw new Error("SyncPanel.tsx 里找不到 `pair-identity-screen`（屏还没加？）");
   return stripped.slice(at, at + 2200);
 }
 
-describe("P-4 片②a：对码那一屏（只显示、不下结论）", () => {
+describe("R176-A：确认身份那一屏（只显示设备名 ＋ 短标识）", () => {
   beforeEach(() => {
     localStorage.setItem(AUTO_SYNC_KEY, "300000");
     useSpaceStore.setState({ spaces: [], activeId: "ws-1" });
@@ -942,78 +942,86 @@ describe("P-4 片②a：对码那一屏（只显示、不下结论）", () => {
     );
     vi.spyOn(platform.executor, "invoke").mockImplementation(invokeSpy as never);
     meshSetConfigSpy.mockReset();
+    pairingCodeReadingSpy.mockReset();
   });
 
-  it("① ⭐ 桩给一个固定的 20 位码 ⇒ 屏上出现**那串**（5 组 × 4 位）＋ `pair-confirm`（今天【红】✓）", async () => {
-    // ⭐ 20 位、按 4 位一组 ⇒ **5 组** ✓（与 `pairing.rs` 的 `format!("{n:020}")` ＋ `.chunks(4)` 同形 ✓）
-    const CODE = "1234 5678 9012 3456 7890";
-    const el = await openPanelWith([peer(true)], { pairCode: { kind: "ok", value: CODE } });
-    expect(CODE.trim().split(/\s+/).length, "夹具前提：桩给的是 5 组 × 4 位 ✓").toBe(5);
-    expect(CODE.replace(/\s/g, "").length, "夹具前提：一共 20 位 ✓").toBe(20);
-
+  it("① ⭐ 点「接入」⇒ 身份行含**设备名 ＋ 短标识**；屏上**零数字**、**零「码」字**；`mesh_trust_begin` 零调用", async () => {
+    const el = await openPanelWith([peer(true)]);
     const allow = el.querySelector<HTMLButtonElement>('[data-testid="nearby-allow"]');
     expect(allow, "夹具前提：那一行的「接入」要在 ✓").toBeTruthy();
-    // ⭐ 本片只保证"**屏能开**" ✓：由「接入」那一下顺手打开 ✓
-    flushSync(() => allow!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    for (let i = 0; i < 3; i++) {
-      await Promise.resolve();
-      flushSync(() => {});
-    }
+    await clickAndSettle(allow!);
 
-    const screen = el.querySelector<HTMLElement>('[data-testid="pair-code-screen"]');
+    const screen = el.querySelector<HTMLElement>('[data-testid="pair-identity-screen"]');
     expect(
       screen,
-      "⭐ 「接入」那一下之后，对码那一屏必须**开** ✓（今天【红】：没有这一屏 ✗；" +
-        "⚠️ 本片**不改** `trustDevice` 的时点 ✓ —— 那归片②b ✓）",
+      "⭐ 点「接入」⇒ 那一屏必须**开** ✓（R176-A：对象＝确认身份 ✓）",
     ).toBeTruthy();
+    const idRow = screen!.querySelector<HTMLElement>('[data-testid="pair-device-identity"]');
+    expect(idRow, "⭐ 身份行必须在 ✓（`data-testid=\"pair-device-identity\"` ✓）").toBeTruthy();
+    expect(idRow!.textContent ?? "", "⭐ 身份行要含**设备名** ✓").toContain("ZHAI-AMD");
+    expect(idRow!.textContent ?? "", "⭐ 身份行要含**短标识** ✓").toContain("2QS2T");
+
+    const text = screen!.textContent ?? "";
+    // ⚠️ 判据是「**没有那一串 20 位数字**」✗ —— ⛔ 不是"一个数字都不许有" ✗：
+    //   ⭐ 短标识本身可能**带数字**（夹具里就是 `2QS2T` ✓），那是对方的身份、不是要比对的那一串 ✓。
+    //   ⇒ 判据取**形状**：屏上不许出现**连续 4 位及以上**的数字串（旧的 20 位正是 4 位一组 ✓）。
     expect(
-      screen!.querySelector('[data-testid="pair-code-value"]')?.textContent ?? "",
-      "⭐ 屏上必须**逐字**显示那串码 ✓（⛔ 不是编一个／也不是空白 ✗）",
-    ).toContain(CODE);
+      text,
+      `⛔ 屏上不许出现那一串（连续 4 位及以上的数字 ✗）—— 实测屏上文字：${JSON.stringify(text)}`,
+    ).not.toMatch(/\d{4}/);
     expect(
-      screen!.querySelector('[data-testid="pair-confirm"]'),
-      "⭐ 「码对得上，确认」那颗按钮必须在 ✓",
-    ).toBeTruthy();
-    expect(screen!.querySelector('[data-testid="pair-cancel"]'), "⭐ 「取消」也要在 ✓").toBeTruthy();
-    // ⭐ 三句如实都要在（⭐ 一句都不许省 ✗）
-    const notes = screen!.querySelector('[data-testid="pair-code-notes"]')?.textContent ?? "";
-    // ⭐ **2026-10-13（owner 拍「不要 pake 了，就 20 位比对码」）**：⭐ **换主语不换断言** ✓ ——
-    //   ⛔ 一条都不删，只把"6 位码要等 PAKE"那半 ✗ 改成**改后为真**的话 ✓。
-    expect(notes, "⭐ 必须说清它是**比对码**（20 位／5 组）＋ 这是**现在的做法** ✓").toContain("比对码");
-    expect(notes, "⭐ 要说清位数与分组（20 位）✓").toContain("20 位");
-    expect(notes, "⭐ 要如实说 PAKE **已决定不做** ✓（⛔ 不再承诺「以后会变短」✗）").toContain(
-      "已决定不做",
-    );
-    expect(notes, "⛔ 屏上**不许**再出现「等 PAKE 落地」那类**过期承诺** ✗").not.toContain("等 PAKE");
-    expect(notes, "⭐ 必须说清它含窗口口令 ⇒ 只发你自己那台 ✓").toContain("只发你自己那台");
-    expect(notes, "⭐ 必须说清它**不是一次性的** ✓").toContain("不是一次性的");
+      text.replace(/\D/g, "").length,
+      `⛔ 屏上的数字总数不许到那一串的量级（20 位 ✓）—— 实测：${JSON.stringify(text)}`,
+    ).toBeLessThan(8);
+    expect(
+      text,
+      `⛔ 屏上不许出现「码」字 ✗ —— 实测屏上文字：${JSON.stringify(text)}`,
+    ).not.toContain("码");
+    expect(
+      trustBeginCalls(),
+      "⛔ 人**还没确认** ⇒ ⛔ 一个字节都不许发 ✗（`mesh_trust_begin` 必须零调用 ✓）",
+    ).toBe(0);
+    expect(
+      pairingCodeReadingSpy,
+      "⛔ 那条「读那一串」的路**已撤** ✗ ⇒ `api.pairingCodeReading` 一次都不许被调用 ✓",
+    ).not.toHaveBeenCalled();
+    expect(
+      invokeSpy.mock.calls.some((c) => c[0] === "mesh_trust_prepare"),
+      "⛔ 「先开一轮」那一步**已撤** ✗ ⇒ `mesh_trust_prepare` 一次都不许被调用 ✓",
+    ).toBe(false);
   });
 
-  it("② 锁（今天已绿 ✓，⛔ 不是本片的修 ✗）：整份 `SyncPanel.tsx` 里**没有**「自动通过」这类说法", () => {
-    // ⚠️ ⭐ 实测口径（⛔ 不许拿整份文件判「继续」✗ —— 严格模式那条**既有文案**里本来就有「继续」✓ ⇒ 会假红 ✓）：
-    // ⭐ 「自动通过」这一格全份文件（**先剥注释** ✓）**一次都不许出现** ✓。
+  it("② ⭐ 对端**没报短标识** ⇒ 屏上**如实**出现「对方没报短标识」（⛔ 不回落成设备号 ✗）", async () => {
+    const el = await openPanelWith([peer(true, { short_id: "" })]);
+    await clickAndSettle(el.querySelector<HTMLElement>('[data-testid="nearby-allow"]')!);
+    const idRow = el.querySelector<HTMLElement>('[data-testid="pair-identity-screen"] [data-testid="pair-device-identity"]');
+    expect(idRow, "夹具前提：身份行要在 ✓").toBeTruthy();
+    expect(
+      idRow!.textContent ?? "",
+      "⭐ 对端没报短标识 ⇒ **恰好**这句如实文案 ✓（`src/lib/peerIdentity.ts` 的唯一实现 ✓）",
+    ).toContain("对方没报短标识");
+    expect(
+      idRow!.textContent ?? "",
+      "⛔ 不许把 `device_id` 拿来凑一格（`INV-UI-copy-no-internal-ids` ✓）",
+    ).not.toContain("dev-amd");
+  });
+
+  it("③ 锁：没有「继续／自动通过」入口；对不上时**只说一句**（停在「取消」）＋ JSX 里没有 Markdown 粗体", () => {
+    // ⭐ 「自动通过」这一格全份文件（**先剥注释** ✓）**一次都不许出现** ✓
+    //   （⛔ 不许拿整份文件判「继续」✗ —— 严格模式那条**既有文案**里本来就有「继续」✓ ⇒ 会假红 ✓）。
     const code = SYNC_PANEL_SRC.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
     expect(
       code,
       "⛔ 不许出现「自动通过」✗（⭐ 仓里逐字：状态机里**没有这一格** ✓ ⇒ 界面也不许长出一个 ✓）",
     ).not.toContain("自动通过");
-    // ⭐ **2026-10-14（owner 拍删「附近设备」那一行）** ✗：这一条原来钉的是 `dpOutcome === "stopped"`
-    //    （严格模式那条投放码路的「停」态 ✓）—— ⭐ 那条整块**已删** ✓。⭐ 按 R192「换对象不删断言」✗：
-    //    ⛔ 不是把这条删掉 ✓，换成**现在承重的那条「停」** ✓ —— ⭐ 对码屏上码对不上时**只说一句**、
-    //    ⛔ 不给任何「继续」入口 ✓（口径一字不变：**停就是停** ✓）。
-    expect(
-      code,
-      "⭐ 反面也要钉：**停态就是停态** ✓（`pair-code-mismatch` 那句『两边的码不一样 ⇒ 先别确认』不许被拆掉 ✓）",
-    ).toContain('data-testid="pair-code-mismatch"');
-  });
-
-  it("③（**本片的一部分**，⛔ 不是锁 ✗ —— 实测随本片一起红 ✓）：我这一屏里没有「继续」入口、也没有 Markdown `**…**`", () => {
-    const code = pairScreenCode();
-    expect(
-      code,
-      "⛔ 屏上不许出现「继续」入口 ✗（⭐ 对不上时只能**说文案**、⛔ 不给任何「接着走」的按钮 ✓）",
-    ).not.toContain("继续");
-    const bad = code.match(/\*\*[^*\n]{1,40}\*\*/g);
+    const screen = pairScreenCode();
+    expect(screen, "⛔ 这一屏里不许有「继续」入口 ✗").not.toContain("继续");
+    expect(screen, "⛔ 也不许有「自动通过」✗").not.toContain("自动通过");
+    // ⭐ 按 R192「换对象不删断言」：原来钉的那句「两边不一样 ⇒ 先别确认」已随那一串一起撤 ✗
+    //   ⇒ ⭐ 换成**现在承重的那条「停」** ✓：对不上时**只说一句**、⛔ 不给任何「接着走」的按钮 ✓。
+    expect(screen, "⭐ 停态还是要说话：对不上 ⇒ 只点「取消」✓").toContain("对不上就点「取消」");
+    expect(screen, "⭐ 「取消」那颗必须在 ✓").toContain('data-testid="pair-cancel"');
+    const bad = screen.match(/\*\*[^*\n]{1,40}\*\*/g);
     expect(
       bad,
       `⛔ 我这一屏的 JSX 里出现了 Markdown 粗体：${bad?.[0]} ⇒ 请用 <b> 包起来 ✓（⭐ 今晚刚踩过 ✓）`,
@@ -1023,7 +1031,7 @@ describe("P-4 片②a：对码那一屏（只显示、不下结论）", () => {
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ⭐⭐ **P-4 片②b（2026-10-13）**：⭐ **只挪时点** ✗ —— `trustDevice([activeId], p)` 那一次调用
-//   从「接入」搬进「码对得上，确认」✓（⭐ 命令名／参数／返回值处理**一字未改** ✓）。
+//   从「接入」搬进「就是这台，确认」✓（⭐ 命令名／参数／返回值处理**一字未改** ✓）。
 //
 // ⭐ 数次数的地方＝ ⭐ `platform.executor.invoke`（桩＝ `invokeSpy` ✓）—— ⭐ 真因：`trustDevice`
 //   自己就是走它调的（`SyncPanel.tsx:1291` 逐字 `await platform.executor.invoke(MESH_TRUST_BEGIN_COMMAND, {…})` ✓）
@@ -1042,8 +1050,7 @@ const trustBeginCalls = () =>
 /** 点一下那颗 ＋ 等微任务落地（⭐ 与既有那几条同一手法 ✓）。 */
 async function clickAndSettle(el: HTMLElement) {
   flushSync(() => el.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-  // ⭐ P-4 片③（2026-10-14）：⭐ 点击路径里多一次 api 往返（⇒ 两条 await 续体）⇒ ⛔ 3 拍不够 ✗
-  //   —— ⚠️ 实测：3 拍时屏上停在「正在取这一轮的比对码…」(＝状态进了渲染 ✓，只是**结果还没回来** ✗) ✓
+  // ⭐ 点击路径里可能多一次 api 往返（⇒ 两条 await 续体）⇒ ⛔ 3 拍不够 ✗ ⇒ 8 拍（照旧 ✓）。
   await new Promise((r) => setTimeout(r, 0)); // 让 api 那条宏任务级往返落地 ✓
   for (let i = 0; i < 8; i++) {
     await Promise.resolve();
@@ -1183,30 +1190,31 @@ describe("片 B：同步面板里也有设备直连那几格", () => {
     meshSetConfigSpy.mockReset();
   });
 
-  const okCode = () => ({ pairCode: { kind: "ok" as const, value: "1234 5678 9012 3456 7890" } });
-
-  it("① ⭐ 点「接入」⇒ `mesh_trust_begin` **零调用**（今天【红】：那一它就调了 ✓）", async () => {
-    const el = await openPanelWith([peer(true)], okCode());
+  it("① ⭐ 点「接入」⇒ `mesh_trust_begin` **零调用**（人还没确认 ✓）", async () => {
+    const el = await openPanelWith([peer(true)]);
     const allow = el.querySelector<HTMLElement>('[data-testid="nearby-allow"]');
     expect(allow, "夹具前提：那一行的「接入」要在 ✓").toBeTruthy();
     await clickAndSettle(allow!);
     expect(
-      el.querySelector('[data-testid="pair-code-screen"]'),
-      "⭐ 点「接入」只**开屏** ✓（⭐ 那是片②a 的既有行为 ✓）",
+      el.querySelector('[data-testid="pair-identity-screen"]'),
+      "⭐ 点「接入」只**开屏** ✓（确认身份那一屏 ✓）",
     ).toBeTruthy();
     expect(
       trustBeginCalls(),
-      "⛔ 人**还没确认** ⇒ ⛔ 一个字节都不许发 ✗（⭐ 今天【红】：那一就调了 `mesh_trust_begin` ✓）",
+      "⛔ 人**还没确认** ⇒ ⛔ 一个字节都不许发 ✗（`mesh_trust_begin` 零调用 ✓）",
     ).toBe(0);
   });
 
-  it("② ⭐ 点「码对得上，确认」⇒ **恰好多一次**（今天【红】：那一下什么都不做 ✓）", async () => {
-    const el = await openPanelWith([peer(true)], okCode());
+  it("② ⭐ 点「就是这台，确认」⇒ `mesh_trust_begin` **恰好多一次**", async () => {
+    const el = await openPanelWith([peer(true)]);
     const allow = el.querySelector<HTMLElement>('[data-testid="nearby-allow"]');
     await clickAndSettle(allow!);
     const before = trustBeginCalls();
     const confirm = el.querySelector<HTMLElement>('[data-testid="pair-confirm"]');
-    expect(confirm, "⭐ 「码对得上，确认」要在 ✓").toBeTruthy();
+    expect(confirm, "⭐ 「就是这台，确认」要在 ✓").toBeTruthy();
+    expect(confirm!.textContent ?? "", "⭐ 那颗按钮的文案 ＝「就是这台，确认」✓").toContain(
+      "就是这台，确认",
+    );
     await clickAndSettle(confirm!);
     expect(
       trustBeginCalls() - before,
@@ -1214,17 +1222,17 @@ describe("片 B：同步面板里也有设备直连那几格", () => {
     ).toBe(1);
   });
 
-  it("③ ⭐ 点「取消」⇒ 零调用 ＋ 屏关掉（今天【红】：接入那一已调过一次 ✓）", async () => {
-    const el = await openPanelWith([peer(true)], okCode());
+  it("③ ⭐ 点「取消」⇒ 零调用 ＋ 屏关掉", async () => {
+    const el = await openPanelWith([peer(true)]);
     const allow = el.querySelector<HTMLElement>('[data-testid="nearby-allow"]');
     await clickAndSettle(allow!);
     const cancel = el.querySelector<HTMLElement>('[data-testid="pair-cancel"]');
     expect(cancel, "⭐ 「取消」要在 ✓").toBeTruthy();
     await clickAndSettle(cancel!);
-    expect(el.querySelector('[data-testid="pair-code-screen"]'), "⭐ 取消 ⇒ 那一屏要**关掉** ✓").toBeNull();
+    expect(el.querySelector('[data-testid="pair-identity-screen"]'), "⭐ 取消 ⇒ 那一屏要**关掉** ✓").toBeNull();
     expect(
       trustBeginCalls(),
-      "⛔ 从「接入」到「取消」这一路**一个字节都不许发** ✗（⭐ 今天【红】：接入那一就发了 ✓）",
+      "⛔ 从「接入」到「取消」这一路**一个字节都不许发** ✗",
     ).toBe(0);
   });
 
@@ -1237,16 +1245,17 @@ describe("片 B：同步面板里也有设备直连那几格", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ⭐⭐ **P-4 片③（2026-10-14）**：⭐ 屏上那份 `pairCode` 从**占位**换成 ⭐ **真读数** ✗ ——
-//   点「接入」之后 ⭐ 调 `api.pairingCodeReading(p.device_id, p.pubkey)` ✓，⭐ 映射成那个 `Reading`：
-//   ⭐ `code` 有值 ⇒ `kind: "ok"` ✓；⭐ `code: null` ⇒ `kind: "unavailable"` ⭐ **带命令给的人话原因** ✓
-//   （⛔ 不自编原因 ✗）；⭐ 还没回来 ⇒ ⭐ **不许显示假码** ✗（维持「读取中」那种如实态 ✓）。
-// ⚠️ ⭐ **不注入 prop 时才自己取** ✗：⭐ 调用方给了 `pairCode` ⇒ ⛔ 不抢它的 ✗
-//   （⭐ 于是片②a／②b 那些当锁的判据照旧可控 ✓）。
-// ⚠️ **①②③ 都是今天的红** ✓（⭐ 今天屏上永远是那个占位 ⇒ 桩改不了它 ✓）；⭐ **④ 是锁** ✓。
+// ⭐⭐ **R176-A（2026-10-29，owner 拍）**：⭐ 那一屏**不再有「读那一串」这条路** ✗ ——
+//   旧的一组钉的是「命令给了那一串 ⇒ 逐字上屏／读不到 ⇒ 如实说原因／2 秒重取收敛」✓，
+//   ⭐ 那几条**已过时** ✗（路整条撤了 ✓）。⭐ 按本仓 R192「**换对象不删断言**」✗：
+//   ⛔ 不是关掉 ✗，是**改成新判据** ✓：
+//     · ⭐ 屏上只有**身份行**（设备名 ＋ 短标识 ✓），**零数字／零「码」字** ✓；
+//     · ⭐ 对端没报短标识 ⇒ 如实说 ✓（见上一组 ② ✓）；
+//     · ⛔ `api.pairingCodeReading` **与「先开一轮」那条命令一次都没被调用** ✗（撤干净了 ✓）；
+//     · ⭐ 「确认」仍是**闸门** ✓（`trustDevice` 只在确认那一下 ✓）。
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe("P-4 片③：屏上那份 `pairCode` 换成**真读数**", () => {
+describe("R176-A：撤掉「读那一串」那条路（判据换成身份行）", () => {
   beforeEach(() => {
     localStorage.setItem(AUTO_SYNC_KEY, "300000");
     useSpaceStore.setState({ spaces: [], activeId: "ws-1" });
@@ -1259,74 +1268,30 @@ describe("P-4 片③：屏上那份 `pairCode` 换成**真读数**", () => {
     pairingCodeReadingSpy.mockReset();
   });
 
-  it("① ⭐ 命令给了码 ⇒ 屏上出现**那串**（5 组 × 4 位）（今天【红】：屏上只有占位 ✓）", async () => {
-    pairingCodeReadingSpy.mockResolvedValue({ code: "4829-1377-6021-5489-0376", reason: "ok" });
+  it("① ⭐ 屏开着（含 2 秒以后）：`pairingCodeReading` **零调用**、`mesh_trust_prepare` **零调用**", async () => {
     const el = await openPanelWith([peer(true)]);
-    const allow = el.querySelector<HTMLElement>('[data-testid="nearby-allow"]');
-    await clickAndSettle(allow!);
-    // ⭐ P-4 片③：⭐ 取值是**点击路径里的一次 api 往返** ✓ ⇒ ⭐ 用 waitFor 等它落地 ✓
-    //   （⛔ 固定拍数在**整套并发**下不够 ✗ —— 实测：单跑绿、整套跑红 ✓）。
-    let shown = "";
-    await vi.waitFor(() => {
-      shown =
-        el.querySelector<HTMLElement>('[data-testid="pair-code-value"]')?.textContent ?? "";
-      expect(shown, "⭐ 命令给的码必须**逐字**上屏 ✓（今天【红】：屏上还是那个占位 ✗）").toContain(
-        "4829-1377-6021-5489-0376",
-      );
-    });
-    // ⭐ 分组形状：**5 组 × 4 位数字** ✓（⭐ 后端用空格 ✓、⭐ 桩里那串用连字符 ✓ ⇒ 两种都认 ✓）
-    const groups = shown.trim().split(/[\s-]+/);
-    expect(groups.length, "⭐ 5 组 ✓（与后端 `chunks(4)` 的**组数**一致 ✓）").toBe(5);
+    await clickAndSettle(el.querySelector<HTMLElement>('[data-testid="nearby-allow"]')!);
     expect(
-      groups.every((g) => /^\d{4}$/.test(g)),
-      `⛔ 每组必须是 4 位数字 ✗（实测 ${JSON.stringify(groups)}）`,
-    ).toBe(true);
-  });
-
-  it("② ⭐ 命令说读不到 ⇒ 屏上出现**那句原因**、且**一个码都没有**（今天【红】✓）", async () => {
-    pairingCodeReadingSpy.mockResolvedValue({ code: null, reason: "本机还没生成设备密钥" });
-    const el = await openPanelWith([peer(true)]);
-    await clickAndSettle(el.querySelector<HTMLElement>('[data-testid="nearby-allow"]')!);
-    // ⭐ 同上：等那一趟 api 落地 ✓（⛔ 固定拍数在整套并发下不够 ✗）
-    await vi.waitFor(() => {
-      const box = el.querySelector<HTMLElement>('[data-testid="pair-code-unavailable"]');
-      expect(box, "⭐ 读不到 ⇒ 必须走「如实说原因」那一支 ✓").toBeTruthy();
-      expect(box!.textContent ?? "", "⭐ **命令给的那句原因**要逐字在屏上 ✓（⛔ 不许自编 ✗）").toContain(
-        "本机还没生成设备密钥",
-      );
-    });
-    expect(el.querySelector('[data-testid="pair-code-value"]'), "⛔ 读不到时**一个码都不许出现** ✗").toBeNull();
-  });
-
-  it("③ ⭐ 点「接入」⇒ 先开一轮比对、再取码，且 `pairingCodeReading` **恰好一次**（今天【红】✓）", async () => {
-    pairingCodeReadingSpy.mockResolvedValue({ code: null, reason: "先放着" });
-    const el = await openPanelWith([peer(true)]);
-    expect(pairingCodeReadingSpy, "⛔ 还没点就不许取 ✗").not.toHaveBeenCalled();
-    await clickAndSettle(el.querySelector<HTMLElement>('[data-testid="nearby-allow"]')!);
-    // ⭐⭐ **2026-10-17**：⭐ 取码之前必须先 `mesh_trust_prepare` ✗（⭐ 不开一轮 ⇒ 后端没有
-    //   `trust_ask` ⇒ 屏上永远"读不到" ✓ —— owner 真机症状 ✓）；而它⛔ **不是** `mesh_trust_begin`
-    //   （登记信任仍然只在「码对得上，确认」那一下 ✓）。
+      el.querySelector('[data-testid="pair-identity-screen"]'),
+      "夹具前提：那一屏要开着 ✓",
+    ).toBeTruthy();
+    expect(
+      pairingCodeReadingSpy,
+      "⛔ 那条「读那一串」的路**已撤** ✗ ⇒ `api.pairingCodeReading` 一次都不许被调用 ✓",
+    ).not.toHaveBeenCalled();
     expect(
       invokeSpy.mock.calls.some((c) => c[0] === "mesh_trust_prepare"),
-      "⭐ 点「接入」必须先开一轮比对 ✓（`mesh_trust_prepare`）",
-    ).toBe(true);
-    expect(
-      invokeSpy.mock.calls.some((c) => c[0] === "mesh_trust_begin"),
-      "⛔ 人还没确认 ⇒ 不许登记信任 ✗（`mesh_trust_begin` 必须只出现在确认那一下 ✓）",
+      "⛔ 「先开一轮」那一步**已撤** ✗ ⇒ `mesh_trust_prepare` 一次都不许被调用 ✓",
     ).toBe(false);
-    // ⭐ **2026-10-28（owner：「配对码老是对不上？」）**：点「接入」这一下仍然**只取一次**不会连发；
-    //   ⭐ 但**屏开着时每 2 秒会重取**（让两端输入齐了以后收敛到同一个码 ✓）——
-    //   ⇒ 这里锁的是"**第一次**取码的参数"与"没有 begin"，不再锁总次数（次数由轮询决定 ✓）。
-    expect(pairingCodeReadingSpy, "⭐ 点「接入」⇒ 至少取一次 ✓").toHaveBeenCalled();
-    expect(pairingCodeReadingSpy, "⭐ 实参必须是**那一台** ✓（⛔ 不传 space_id ✗ —— 空间不参与派生 ✓）").toHaveBeenNthCalledWith(1, {
-      peerDeviceId: "dev-amd",
-      peerPubkey: PEER_PUBKEY,
-    });
-    // ⭐ 收敛的承重：那串码在屏开着时会**再取**（2 秒轮询／`lan:changed`）——
-    //   判据放在下面 ⑤（用假时钟推进 2 秒 ⇒ 第二次取码，且参数不变 ✓）。
+    // ⭐ 旧的那条「屏开着每 2 秒重取」也**随那条路一起撤了** ✓ —— ⛔ 不许又悄悄回来 ✗。
+    await new Promise((r) => setTimeout(r, 2_300));
+    expect(
+      pairingCodeReadingSpy,
+      "⛔ 屏开着也不许再取 ✗（2 秒轮询已随那条路一起撤 ✓）",
+    ).not.toHaveBeenCalled();
   });
 
-  it("④ 锁（今天已绿 ✓）：屏上仍没有「继续／自动通过」＋ ⭐ 确认仍是闸门（`trustDevice` 只在确认那一下）", () => {
+  it("② 锁：⛔ 屏上仍没有「继续／自动通过」＋ ⭐ 「确认」仍是**闸门**（`trustDevice` 只在确认那一下）", () => {
     const code = pairScreenCode();
     expect(code, "⛔ 仍然不许有「继续」入口 ✗").not.toContain("继续");
     expect(code, "⛔ 仍然不许有「自动通过」✗").not.toContain("自动通过");
@@ -1337,34 +1302,22 @@ describe("P-4 片③：屏上那份 `pairCode` 换成**真读数**", () => {
     expect(atConfirm, "⭐ 确认仍是**闸门**：调用必须排在确认那颗**之后** ✓（⛔ 不许提前 ✗）").toBeLessThan(atTrust);
   });
 
-  // ⭐⭐ **2026-10-28（owner：「配对码老是对不上？」）**：**屏开着 ⇒ 码会自己重取**（两端输入齐了就收敛）。
-  //
-  //  真机根因：码 ＝ f(双方公钥, **这一轮 trust_ask**)，而对面那串要等它的公告（30 秒一轮）才到本机；
-  //  码原来只在点「接入」那一下取一次 ⇒ 先点的那台用"只有自己那串"算、后点的那台用"两串都有"算
-  //  ⇒ 两个码永远不同，而且屏上不刷新（重试也一样）✗。
-  it("⑤ 对码屏开着 ⇒ 2 秒后**再取一次**码（收敛）；关屏 ⇒ 不再取（2026-10-28 新增）", async () => {
-    pairingCodeReadingSpy.mockResolvedValue({ code: "1111 2222 3333 4444 5555", reason: "ok" });
-    const el = await openPanelWith([peer(true)]);
-    await clickAndSettle(el.querySelector<HTMLElement>('[data-testid="nearby-allow"]')!);
-    // ⏱ 真实的 2 秒轮询（不注入假时钟：与其它判据同一套真时间轴）
-    await vi.waitFor(
-      () =>
-        expect(
-          pairingCodeReadingSpy.mock.calls.length,
-          "⛔ 屏开着却只取过一次 ⇒ 对面那串到了也不会更新 ✗",
-        ).toBeGreaterThanOrEqual(2),
-      { timeout: 4_000 },
-    );
-    expect(
-      pairingCodeReadingSpy,
-      "⭐ 轮询取的是**同一台**（实参不许漂 ✓）",
-    ).toHaveBeenNthCalledWith(2, { peerDeviceId: "dev-amd", peerPubkey: PEER_PUBKEY });
-    const before = pairingCodeReadingSpy.mock.calls.length;
-    el.querySelector<HTMLElement>('[data-testid="pair-cancel"]')!.click();
-    await new Promise((r) => setTimeout(r, 2_300));
-    expect(
-      pairingCodeReadingSpy.mock.calls.length,
-      "⛔ 屏关了还继续取 ⇒ 多余请求（轮询没停）✗",
-    ).toBe(before);
+  it("③ 锁（源码级）：`SyncPanel.tsx`（**先剥注释** ✓）里那条路**一个字都不剩**", () => {
+    // ⚠️ 剥注释再判 ✗：解释「这次撤掉了什么」的注释会提到旧名字 ✓ ⇒ 不剥就会**假红**
+    //   （⭐ 本仓踩过同型的坑 ✓，这次也真踩到：`pairingCodeReading` 那四个字就在注释里 ✓）。
+    const code = SYNC_PANEL_SRC.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const bad of [
+      "pairingCodeReading",
+      "mesh_trust_prepare",
+      "MESH_TRUST_PREPARE_COMMAND",
+      "pair-code-",
+      "PAIR_CODE_UNAVAILABLE",
+      "pairCode",
+      "preparePairCode",
+      "refreshPairCode",
+      "fetchPairCode",
+    ]) {
+      expect(code, `⛔ \`${bad}\` 还在 ⇒ 那条路没撤干净 ✗`).not.toContain(bad);
+    }
   });
 });

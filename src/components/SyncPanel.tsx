@@ -13,11 +13,10 @@ import { toast } from "../store/toast";
 // ⭐ **2026-10-14**：⭐ `MeshAdvancedForm` **又回到面板了** ✓（⭐ 设备级那三格在 `:2120` 一带 ✓）——
 //   ⚠️ 旧注释那句"已搬到「设置 · 同步」⇒ 面板不再引它"是**旧口径** ✗，已改 ✓；⭐ 设置那边已去掉 ✓。
 // ⚠️ **2026-10-14**：`Reading` 现在从**读数那个 lib** 引 ✓（它原来住 `TrustDevicePanel.tsx` ✓，而那个组件**已删** ✓）。
-import {
-  MESH_TRUST_BEGIN_COMMAND,
-  MESH_TRUST_PREPARE_COMMAND,
-  type Reading,
-} from "../lib/trustDevicePanelReadings";
+// ⚠️ **R176-A（2026-10-29）**：⭐ 屏上那份「要人逐位比对的长串」**已撤** ✗ ⇒ 这里不再引
+//   它的读数类型、也不再引「先开一轮」那条命令常数 ✓（⭐ 信任前只展示**身份行** ✓ —— 唯一实现是
+//   `../lib/peerIdentity.ts` ✓，见下面那一屏 ✓）。
+import { MESH_TRUST_BEGIN_COMMAND } from "../lib/trustDevicePanelReadings";
 import { useSpaceStore } from "../store/space";
 import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
@@ -128,15 +127,6 @@ interface EditRow {
 // (server + token + space_id), so one person can sync different spaces to
 // different servers/accounts (multi-server × multi-space).
 
-/** ⭐ **P-4 片②a（2026-10-13）**：那一屏要显示的**比对码** ✗ —— ⭐ 默认**如实「读不到」** ✓
- *  （手法照上面 `TRUST_DEVICE_READINGS` 那条 ✓：⭐ 模块级常量 ⇒ 不必每帧新建对象 ✓）。
- *  ⚠️ ⛔ **不许编一个码** ✗ —— ⭐ 码由 `pairing_trust::pairing_code_for`（片① 已入库 ✓）算 ✓，
- *  ⭐ 而**接线**归**下一片**（片②b ✓）⇒ ⭐ 今天这一屏只会如实说"读不到" ✓。 */
-const PAIR_CODE_UNAVAILABLE: Reading<string | null> = {
-  kind: "unavailable",
-  reason: "还没接上读数（码 ＝ 本机公钥 ＋ 对方公钥 ＋ 这一轮的 trust_ask 算出来的）",
-};
-
 /** ⭐ **2026-10-27（owner 拍 M2）**：本机**只自动备一次**局域网前置 ——
  *  一旦自动跑过（或用户手动关过），本机不再自动开第二次 ✓。
  *  ⚠️ 用 localStorage（不是库）✓：它是"这台机器上这个界面的选择"，⛔ 不跟同步、不进备份 ✓。 */
@@ -170,10 +160,7 @@ const splitMeshBind = (bind: string): { addr: string; port: string } => {
 /** ⭐ **P-2a-1（2026-10-13）**：`contentOnly` ⇒ ⭐ **只渲染内容体**（⛔ 不带抽屉触发器 ✗、
  *  ⛔ 不带浮层定位 ✗）⇒ 让**同一份 JSX** 也能放进内容区（`App.tsx` 的 `view === "sync"` 那一支 ✓）。
  *  ⚠️ 默认 `false` ⇒ ⭐ **抽屉那支逐字不变** ✓（一行 JSX 都没搬 ✓）。 */
-export function SyncPanel({
-  contentOnly = false,
-  pairCode = PAIR_CODE_UNAVAILABLE,
-}: { contentOnly?: boolean; pairCode?: Reading<string | null> } = {}) {
+export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {}) {
   // 面板比默认弹层宽/高，把实际尺寸告诉 usePopover，靠边打开时才不会被切掉。
   const { open, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>({
     width: 452,
@@ -392,106 +379,13 @@ export function SyncPanel({
   // ⚠️ **三步两态，且有一步是"停"**（`U2`／`U3`）：
   // 未加密空间那条提醒的读数（N ＝ 没开加密的空间数 ✓；⛔ 读不到 ⇒ `null`，⛔ 不拿 0 冒充 ✓）。
   const [plaintextCount, setPlaintextCount] = useState<number | null>(null);
-  /** ⭐ **P-4 片②a**：那一屏（对码）开着没 ✓ —— ⭐ 由「接入」那一下**顺手打开** ✓
-   *  （⚠️ 本片⛔ **不动** `trustDevice` 的调用时点 ✗ —— 那是片②b ✓）。 */
+  /** ⭐ **R176-A（2026-10-29）**：那一屏（**确认身份** ✓）开着没 —— ⭐ 由「接入」那一下打开 ✓。 */
   const [pairScreen, setPairScreen] = useState(false);
   /** ⭐ **P-4 片②b（2026-10-13）**：⭐ 这一轮要对的是**哪一台** ✗ —— ⭐ 「接入」那一下记下来 ✓，
-   *  ⭐ 「码对得上，确认」那一下才拿它去调 `trustDevice` ✓（⭐ 取消 ⇒ 清掉、一个字节都不发 ✓）。 */
+   *  ⭐ 「就是这台，确认」那一下才拿它去调 `trustDevice` ✓（⭐ 取消 ⇒ 清掉、一个字节都不发 ✓）。
+   *  ⚠️ **R176-A**：屏上要显示的就是它的**设备名 ＋ 短标识** ✓ —— ⛔ 不显示 `device_id` ✗
+   *  （唯一实现是 `peerIdentityLine(device_name, short_id)` ✓，见 `../lib/peerIdentity.ts` ✓）。 */
   const [pairPeer, setPairPeer] = useState<NearbyPeer | null>(null);
-  /** ⭐ **P-4 片③（2026-10-14）**：⭐ 屏上**真正**显示的那一格 ✗ —— ⭐ 起点＝prop ✓（⭐ 调用方给了就用它的 ✓）。
-   *  ⚠️ ⭐ 只有那份是**占位**时，屏才**自己**去取真读数 ✓（⛔ 否则会抢调用方给的那份 ✗ ⇒
-   *  片②a／②b 那几条**当锁**的判据就不可控了 ✓）。 */
-  const [pairReading, setPairReading] = useState<Reading<string | null>>(pairCode);
-  /** ⭐ **(乙)：取值就在「点『接入』」这一下里发起** ✗ —— ⛔ **不用 `useEffect`** ✗
-   *  （⭐ 真因：⭐ 在 `createRoot` 无 `act` 的夹具里，effect 里那次 `setState` **走不到渲染** ✗；
-   *   ⭐ 而点击处理里的 promise 续体落在夹具等的那几拍之内 ✓）。
-   *  ⚠️ 还没回来 ⇒ ⭐ **先置成「读取中」那种如实态** ✓（⛔ 不许显示一个假码 ✗）。
-   *  ⚠️ 调用方已经给了读数（`pairCode !== 占位`）⇒ ⭐ **一个字节都不取** ✓。
-   */
-  const fetchPairCode = async (peer: NearbyPeer) => {
-    if (pairCode !== PAIR_CODE_UNAVAILABLE) return; // ⭐ 调用方给了读数 ⇒ 不抢它的 ✓
-    setPairReading({ kind: "unavailable", reason: "正在取这一轮的比对码…" });
-    try {
-      // ⭐ 两个实参就是**那一台** ✓（⭐ 对方公钥＝`NearbyPeer.pubkey` ✓ 与命令侧同一个源 ✓；
-      //    ⛔ 不传 `space_id` ✗ —— ⭐ 空间不参与派生 ✓）。
-      // ⚠️ 形状＝**一个对象** ✓（⭐ 与 api.ts 那个包装一致 ✓ —— 上一片就是这么写的 ✓）
-      const got = await api.pairingCodeReading({
-        peerDeviceId: peer.device_id,
-        peerPubkey: peer.pubkey,
-      });
-      setPairReading(
-        got.code
-          ? { kind: "ok", value: got.code }
-          : // ⭐ `code: null` ＝ **读不到** ⇒ ⭐ 用**命令给的那句人话原因** ✓（⛔ 自己编一个 ✗）
-            { kind: "unavailable", reason: got.reason },
-      );
-    } catch (e) {
-      setPairReading({ kind: "unavailable", reason: `取比对码失败：${String(e)}` });
-    }
-  };
-  /** ⭐ **2026-10-28（owner：「配对码老是对不上？」）**：对码屏开着的时候**重取**码
-   *  （⛔ 不抢调用方给的读数 —— 这个函数只给下面那条轮询/事件用 ✓）。 */
-  const refreshPairCode = async (peer: NearbyPeer) => {
-    try {
-      const got = await api.pairingCodeReading({ peerDeviceId: peer.device_id, peerPubkey: peer.pubkey });
-      setPairReading(
-        got.code ? { kind: "ok", value: got.code } : { kind: "unavailable", reason: got.reason },
-      );
-    } catch (e) {
-      setPairReading({ kind: "unavailable", reason: `取比对码失败：${String(e)}` });
-    }
-  };
-  /**
-   * ⭐⭐ **2026-10-28（owner：「配对码老是对不上？」）**：**对码屏开着时，码会自己收敛**。
-   *
-   * ## 真机根因（"老是对不上"的正面）
-   * 比对码 ＝ `f(本机公钥, 对方公钥, **这一轮的 trust_ask**)` ✓；"这一轮那串"是**两端各发一次**的，
-   * 对面那串要等它的**公告**（`ANNOUNCE_INTERVAL_MS` = 30 秒一轮）才到本机。
-   * 码原来 ⛔ **只在点「接入」那一下取一次** ✗ ⇒ 先点的那台用"只有自己那串"算、
-   * 后点的那台用"两串都有、按 device_id 挑一遍"算 ⇒ **两个码永远不同**；
-   * 屏上也不刷新 ⇒ 重试也一样（每次看到的都是那一刻算的码）✗。
-   * ⇒ 现在：屏开着 ⇒ 每 2 秒／每收到一次 `lan:changed` 重取；两端的输入一旦齐了，
-   *  **两端会收敛到同一个码** ✓。屏一关 ⇒ 立刻停（不多发请求）✓。
-   */
-  useEffect(() => {
-    if (!pairScreen || !pairPeer) return;
-    let alive = true;
-    let off: (() => void) | undefined;
-    const tick = () => {
-      if (alive) void refreshPairCode(pairPeer);
-    };
-    const t = window.setInterval(tick, 2_000);
-    void (async () => {
-      const un = await subscribeLanChanged(tick);
-      if (alive) off = un;
-      else un();
-    })();
-    return () => {
-      alive = false;
-      window.clearInterval(t);
-      off?.();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pairScreen, pairPeer]);
-  /** ⭐⭐ **2026-10-17**：⭐ 点「接入」＝ ⭐ 先**开一轮比对** ✗，再取码 ✓。
-   *
-   *  ⚠️ 为什么必须多这一步（owner 真机："点接入了，也没有（码）"✗）：⭐ 比对码 ＝
-   *  `f(本机公钥, 对面公钥, 这一轮 trust_ask)` ✓，而 `trust_ask` 原来**只在 `mesh_trust_begin`
-   *  （登记 ＋ 广播）里生成** ✗ ⇒ ⭐ 不先开一轮就取码 ⇒ 后端如实回"这一轮没有进行中的握手" ✓。
-   *  ⭐ 所以「接入」只**开一轮**（不登记 ✓）、「码对得上，确认」才登记 ✓（⛔ 人没确认之前不登记 ✗）。
-   *  ⚠️ 只有桌面有发现层（Web 没有 UDP 那一层 ✓）⇒ 非桌面走到这里会如实失败 ⇒ 走 catch ✓。 */
-  const preparePairCode = async (peer: NearbyPeer) => {
-    if (pairCode !== PAIR_CODE_UNAVAILABLE) return; // ⭐ 调用方给了读数 ⇒ 不抢它的 ✓
-    setPairReading({ kind: "unavailable", reason: "正在发起这一轮比对…" });
-    try {
-      await platform.executor.invoke(MESH_TRUST_PREPARE_COMMAND, {
-        peerDeviceId: peer.device_id,
-      });
-      await fetchPairCode(peer);
-    } catch (e) {
-      setPairReading({ kind: "unavailable", reason: `发起比对失败：${String(e)}` });
-    }
-  };
   /**
    * ⭐ **R110（owner 2026-10-02 拍 A）**：**这段码给哪一台**（空 ＝ 不指定 ✓）。
    * ⚠️ 存的是**对方的 `device_id`**（进载荷、也用于本机先登记 ✓）—— 但**屏幕上只显示短码** ✓：
@@ -1541,9 +1435,11 @@ export function SyncPanel({
                           </button>
                         </>
                       ) : p.serves_current || isPersonalActive ? (
-                        // 修 B：这一行自己就是「允许」入口 —— 只打开对码屏，人确认前一个字节都不发 ✓。
+                        // 修 B：这一行自己就是「允许」入口 —— 只打开**确认身份**那一屏，人确认前一个字节都不发 ✓。
                         // ⭐ 2026-10-26：个人档信任是设备级 ⇒ 服务别的空间也能在这里接入（配对后全部个人空间同步）；
                         // 团队档仍要求服务当前空间。
+                        // ⭐ **R176-A（2026-10-29）**：⭐ 这里**只**记下那一台 ＋ 开屏 ✓ ——
+                        //   ⛔ 不再先调任何命令 ✗（旧的那一步「先开一轮」已撤 ✓）。
                         <button
                           className="sync-btn"
                           data-testid="nearby-allow"
@@ -1551,7 +1447,6 @@ export function SyncPanel({
                             if (!activeId) return;
                             setPairPeer(p);
                             setPairScreen(true);
-                            void preparePairCode(p);
                           }}
                         >
                           接入
@@ -1632,43 +1527,31 @@ export function SyncPanel({
             </div>
           )}
 
-          {/* ⭐⭐ **owner 2026-10-14** ✗：⭐ 对码屏**搬进主视图** ✓ —— ⭐ 原来它住在下面那个
+          {/* ⭐⭐ **owner 2026-10-14** ✗：⭐ 这一屏**搬进主视图** ✓ —— ⭐ 原来它住在下面那个
               **默认收起**的「高级」折叠里 ✗ ⇒ ⭐ 主视图那张卡上点「接入」，用户**什么都看不见** ✓
               （真机实测 ✓）。⭐ 现在它排在**三段设备之后、折叠之前** ✓（图上它就是独立的一屏 ✓）。 */}
           {/* ══════════════════════════════════════════════════════════════════════
-              ⭐⭐ **P-4 片②a（2026-10-13）**：⭐ 「**对码**」那一屏 ✗ —— ⭐ 由「接入」那一下打开 ✓。
-              ⚠️ ⭐ **只显示、不下结论** ✓：⭐ `kind === "ok"` 才渲染那串码 ✓，⭐ 读不到 ⇒
-                 ⭐ **如实说为什么** ✓（⛔ 不编一个码 ✗）。
-              ⚠️ ⭐ **分组 ＝ 5 组 × 4 位** ✓（`pairing.rs:369` 的 `format!("{n:020}")` ＋ `:371` 的
-                 `.chunks(4)` ✓ ⇒ 屏上写 `XXXX-XXXX-XXXX-XXXX-XXXX` ✓，⛔ 不是 4 组 ✗）。
-              ⛔ 屏上**没有**任何「继续／自动通过」一类入口 ✗（⭐ 仓里逐字：状态机里**没有"自动通过"这一格** ✓）。
+              ⭐⭐ **R176-A（2026-10-29，owner 拍）**：⭐ 这一屏**只显示「设备名 ＋ 短标识」** ✗ ——
+              ⛔ 屏上不再有任何要人逐位比对的长串 ✗（那一串连同它的读数／轮询／准备那一步
+              一起撤掉了 ✓）。⭐ 信任靠**两边各点一次「接入」、再各点一次「确认」** ✓。
+              ⚠️ 身份行走**唯一实现** `peerIdentityLine(device_name, short_id)` ✓ ——
+              ⛔ 自己拼 ✗／⛔ 把 `device_id` 显示出来 ✗（`src/lib/peerIdentity.ts` ✓）。
+              ⛔ 屏上没有任何「继续／自动通过」一类入口 ✗（状态机里没有这一格 ✓）。
               ══════════════════════════════════════════════════════════════════════ */}
-          {pairScreen && (
-            <div className="set-section" data-testid="pair-code-screen">
-              <div className="set-section-title">两台设备核对这串码</div>
+          {pairScreen && pairPeer && (
+            <div className="set-section" data-testid="pair-identity-screen">
+              <div className="set-section-title">确认是这台设备吗</div>
 
-              {pairReading.kind === "unavailable" ? (
-                <div className="sync-status is-warn" data-testid="pair-code-unavailable">
-                  读不到比对码（{pairReading.reason}）
-                </div>
-              ) : pairReading.value === null ? (
-                <div className="sync-hint" data-testid="pair-code-empty">这一轮还没有比对码</div>
-              ) : (
-                <div
-                  className="sync-status"
-                  data-testid="pair-code-value"
-                  // ⚠️ 大字（⭐ 只为"念得清" ✓）：⭐ 不新造 CSS 类 ✗（行内样式与别处同一手法 ✓）
-                  style={{ fontSize: 22, letterSpacing: 2, fontWeight: 700, wordBreak: "break-all" }}
-                >
-                  {pairReading.value}
-                </div>
-              )}
+              {/* ⚠️ 对端**没报短标识**时这句由唯一实现如实说 ✓（⛔ 不回落成设备号 ✗）。 */}
+              <div className="sync-status" data-testid="pair-device-identity">
+                {peerIdentityLine(pairPeer.device_name, pairPeer.short_id)}
+              </div>
 
               <div className="sync-hint">
-                两边一样 ⇒ 点「确认」 ✓
+                两台设备上各点一次「接入」，再各点一次「确认」就会通。
               </div>
-              <div className="sync-hint" data-testid="pair-code-mismatch">
-                ⚠️ 不一样 ⇒ 先别确认（可能连到别的设备）✓
+              <div className="sync-hint">
+                对不上就点「取消」—— 同一个网段里可能有别的设备。
               </div>
 
               <div className="sync-field">
@@ -1676,10 +1559,9 @@ export function SyncPanel({
                   className="sync-btn primary"
                   data-testid="pair-confirm"
                   type="button"
-                  // ⭐ **P-4 片②b（2026-10-13）**：⭐ **原来那两步搬到这里** ✗ —— 逐字是
+                  // ⭐ **P-4 片②b（2026-10-13）**：那两步**逐字不动** ✓ ——
                   //   `setDpPeer(peer.device_id)` ＋ `void trustDevice([activeId], peer)` ✓
-                  //   （⚠️ ⭐ 命令名 `mesh_trust_begin`／参数 `{spaceId, peerDeviceId, peerPubkey}`／
-                  //    ⭐ 而「点完再读一次后端那一格」那一下**已随信任读数那一屏一起删掉** ✓（见 `trustDevice` ✓））。
+                  //   （命令名 `mesh_trust_begin`／参数 `{spaceId, peerDeviceId, peerPubkey}` 一字未改 ✓）。
                   onClick={() => {
                     const peer = pairPeer;
                     if (!activeId || !peer) return;
@@ -1688,13 +1570,13 @@ export function SyncPanel({
                     setPairScreen(false);
                   }}
                 >
-                  码对得上，确认
+                  就是这台，确认
                 </button>
                 <button
                   className="sync-btn"
                   data-testid="pair-cancel"
                   type="button"
-                  // ⭐ P-4 片②b：⭐ 取消 ⇒ 关屏 ＋ ⭐ **一个字节都不发** ✓（⛔ 不调任何东西 ✗）
+                  // ⭐ **P-4 片②b**：取消 ⇒ 关屏 ＋ ⭐ **一个字节都不发** ✓（⛔ 不调任何东西 ✗）
                   onClick={() => {
                     setPairPeer(null);
                     setPairScreen(false);
@@ -1703,20 +1585,9 @@ export function SyncPanel({
                   取消
                 </button>
               </div>
-
-              {/* ⚠️ 三句如实（⭐ 一句都不许省 ✗）：⭐ 这是"比对码"✓／⭐ 它含窗口口令 ⇒
-                  只发自己那台 ✓／⭐ 它**不是一次性的** ✓。⛔ JSX 里不用 Markdown `**…**` ✗（用 <b> ✓）。
-                  ⭐ **2026-10-13（owner 拍「不要 pake 了，就 20 位比对码」）**：⭐ **不做 PAKE** ✗ ⇒
-                    ⛔ 旧那句"更短的 6 位码**要等** PAKE 落地"是一句**过期的承诺** ✗（已删 ✓）；
-                    ⭐ 这串 20 位比对码**就是现在的做法** ✓（⛔ 不再有"以后换 6 位"的暗示 ✗）。 */}
-              <div className="sync-hint" data-testid="pair-code-notes">
-                这是<b>比对码</b>（20 位、5 组）；6 位码要 PAKE —— <b>已决定不做</b> ✓
-                <br />
-                <b>含窗口口令</b> ⇒ <b>只发你自己那台</b> ✓；<b>不是一次性的</b> ⇒ 用后建议换窗口口令 ✓
-              </div>
             </div>
           )}
-          {/* ⭐ **刀二十（2026-10-14，owner 设计图）** ✗：⭐ 主视图到三段设备（＋对码屏）为止 ✓
+          {/* ⭐ **刀二十（2026-10-14，owner 设计图）** ✗：⭐ 主视图到三段设备（＋那一屏）为止 ✓
               ⇒ ⭐ **其余全部**收进**一个**默认收起的折叠 ✓（⛔ 不再有几个并排的折 ✗）。
               ⚠️ 里面的 JSX **一个字都没搬走** ✗ —— 那些源码级判据（`syncPanelMesh.wiring` ／
                  `syncPanelDevicePair.wiring` ／ `syncPanelDeviceUnpair.wiring` ／
