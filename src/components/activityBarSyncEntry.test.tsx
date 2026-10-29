@@ -266,11 +266,15 @@ describe("2026-10-14 事故：左栏「邮箱」点了没反应（组件在、�
     ).toContain("<EmailPanel withTrigger={false} />");
   });
 
-  it("② ⭐ 而且必须**开着才挂**（那个组件关着**不会**自己隐藏 ✗）", () => {
+  it("② ⭐ 保活：开过一次就常驻挂载，但**关着时必须自己藏**（⛔ 不许一直显示）", () => {
     const bar = src("ActivityBar.tsx");
-    // 实测：`EmailPanel` 根节点没有「`!open` ⇒ 不渲染」那一层 ✓（`!open` 只出现在 effect 里 ✓）
-    // ⇒ ⛔ 无条件挂会**一直显示** ✗ ⇒ ⭐ 宿主这一行必须带 `mailOpen` ✓。
-    expect(bar, "⭐ 挂载那一行要带 mailOpen ✓（⛔ 不许无条件挂 ✗）").toMatch(/\{[^\n]*mailOpen[^\n]*<EmailPanel/);
+    // ⭐ **2026-10-29 换对象（方案 B「保活」）**：旧口径是「`mailOpen && <EmailPanel/>` 才挂」——
+    //   那等于每次关闭都卸载整棵 DOM（滚动位置/选中邮件全丢）。现在改成「开过一次就常驻」，
+    //   于是**必须**由组件自己负责"关着时藏起来" ⇒ 下面两条一起钉：
+    expect(bar, "⭐ 挂载条件要改成「开过一次」（mailEverOpened ✓）").toMatch(/\{[^\n]*mailEverOpened[^\n]*<EmailPanel/);
     expect(bar, "⭐ 那个开关要从 store 取（单一来源 ✓）").toContain("useEmailPanel((s) => s.open)");
+    const panel = src("EmailPanel.tsx");
+    expect(panel, "⛔ 关着时必须用 hidden 藏（否则保活＝一直显示 ✗）").toContain("hidden={!open}");
+    expect(panel, "⛔ 不许再写 `open && createPortal`（那等于关一次丢一次 DOM ✗）").not.toMatch(/\{\s*open\s*&&\s*\n?\s*createPortal/);
   });
 });
