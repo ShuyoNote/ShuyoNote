@@ -84,3 +84,42 @@
 2. `files.export` 放 P0 可以吗（它要用户点保存，属"半自动"）？
 3. `user.notify` 是否允许 Agent 主动弹提示（防刷屏需要限流阈值）？
 4. B1 里 `db.schema/db.rows` 的**过滤语法**：沿用界面搜索口径，还是给一套简单 `where`？
+
+## 6. 文件夹与附件：矩阵漏掉的两块（2026-10-29 owner 追问补）
+
+### 6.1 文件夹（页面树节点）
+
+事实：**文件夹就是页面树节点**（`kind=folder`），但能力面上和"页面"不是一回事——现有注册表只有 `pages.create`（建**页**），**没有任何"建文件夹 / 移动 / 重命名 / 删除"的能力** ⇒ 外部 Agent 能在空间里写字，却**不能整理结构**。
+
+| 能力 | 档位 | 理由 / 判据 |
+|---|---|---|
+| `folders.create`（parentId + title） | **P1** | 与 `pages.create` 同族；判据：kind=folder、父级正确、`pages.tree` 立刻反映 |
+| `nodes.move`（page/folder 通用，含跨层） | **P1** | 用"节点"而非仅页面（否则文件夹永远挪不动）；判据：id 不变、父级/顺序正确、**⛔ 不许移进自己的子孙**（环检测必拒） |
+| `nodes.rename` | **P1** | 判据：标题变、id 与内容不变 |
+| `nodes.delete`（**软删进回收站**） | **P1** | 与 UI 一致；判据：进回收站、`trash.list` 可见、可恢复；⛔ 永久删除不暴露 |
+| `pages.tree` | **P0**（见 §2） | 文件夹能力的读前门：先看见树才能整理 |
+
+**安全**：移动/删除必须做**环检测**与**引用检查**（被块引用/反链的节点软删时如实提示"有 N 处引用"）；批量移动单次上限；⛔ 不给"清空文件夹"。
+
+### 6.2 附件
+
+事实：读侧已有 `files.list/search/read`（派生文本与 coverage），**写侧与"文件本身"的操作几乎空白**。
+
+| 能力 | 档位 | 理由 / 判据 |
+|---|---|---|
+| `files.stat`（sha256/mime/size/page_id/抽取状态） | **P0** | 读前门；判据：与 `files.list` 一致、sha 与字节自证 |
+| `files.list_orphan`（`page_id IS NULL` 的"未整理"） | **P0** | **我们自己的 .shuyodoc 导入就产生这种资产** ⇒ 不暴露它，Agent 永远找不到刚导入的图 |
+| `files.upload`（字节 → 内容寻址入库） | **P1** | 判据：sha 一致、同名不覆盖、大小/MIME 上限、返回 attId |
+| `files.attach`（把孤儿附件挂到某页） | **P1** | 正好补导入留下的 `page_id=null`；判据：挂后 `files.list(pageId)` 可见、正文按 hash 解析到该附件 |
+| `files.rename`（只改元数据原名） | **P1** | 内容寻址不变；判据：原名变、sha 与字节不变 |
+| `files.delete` | **P1** | 必须**引用检查**：正文仍引用该 sha ⇒ **拒绝或要求先摘引用**（⛔ 不静默留断链）；软删 |
+| `files.download`（字节句柄） | **P0 边缘** | 与 `export.*` 同族：返回 TTL 句柄，⛔ 不把字节塞进上下文；只本人可读 |
+| `files.bulk` / `files.purge` | **✗ / B3** | 批量与永久删除不暴露（风险 > 收益） |
+
+**共同红线**：⛔ 不暴露磁盘路径；⛔ 不暴露"按路径读任意文件"；写操作带 `expectedRev`（页面级）或 `expectedSha`（附件级）；上传/删除进审计；单次批量 ≤ 50（建议值）。
+
+### 6.3 对 §3 分批的影响
+
+- **B1（只读）追加**：`files.stat`、`files.list_orphan`、`files.download`；
+- **B2（写）追加**：`folders.create`、`nodes.move/rename/delete`、`files.upload/attach/rename/delete`；
+- 新增一条**跨块不变式**：「附件被正文引用时，删除必须被拒并点名引用位置」——这是最容易静默出事的点。
