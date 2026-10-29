@@ -13,6 +13,7 @@ import {
   setAllowExternal,
 } from "../lib/links";
 import { openExternalUrl } from "../lib/openExternal";
+import { api } from "../lib/api";
 import { fetchUpdateManifest, debugUpdateVersion, updateStatus, RELEASES_URL, type UpdateState } from "../lib/updates";
 import { checkDesktopUpdate, fetchUpdateManifestNative, installAndroidUpdate, type UpdateProgress } from "../lib/updater";
 import { isDesktop, detectFromDeployed } from "../lib/useUpdateChecker";
@@ -44,6 +45,23 @@ export function AboutDialog() {
   const [updating, setUpdating] = useState(false);
   const [progress, setProgress] = useState<UpdateProgress | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  /** ⭐ **2026-10-29（owner）**：「关于」也显示**本机设备名** —— 它就是「附近设备／已配对列表」里
+   *  别人看到的那一句（"我是谁"），与版本/许可同处一屏 ✓。
+   *  ⚠️ 这里**只读**：改名字在「设置 → 账户」✓（⛔ 不在关于窗里再开一个输入口 ✗）。
+   *  ⚠️ 读不到 ⇒ **不显示这一行**（⛔ 不编一个名字、也不显示设备号 ✗）。 */
+  const [deviceName, setDeviceName] = useState("");
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    // ⚠️ 用 `Promise.resolve().then(...)` 而不是直接 `void api.getDeviceName()`：宿主没有 invoke
+    //    （纯 Web 夹具 / 测试）时它是**同步抛**的，同步抛不经过 `.catch` ⇒ 会炸在 effect 里。
+    //    包一层 ⇒ 同步抛变成 rejection ⇒ 走下面那条"读不到就不显示"的如实路径 ✓。
+    void Promise.resolve()
+      .then(() => api.getDeviceName())
+      .then((n) => { if (alive) setDeviceName((n ?? "").trim()); })
+      .catch(() => { /* 读不到 ⇒ 这一行不出现（如实） */ });
+    return () => { alive = false; };
+  }, [open]);
 
   useEffect(() => {
     if (open) setAllow(getAllowExternal());
@@ -247,6 +265,11 @@ export function AboutDialog() {
             <span className="about-pill about-pill-version">v{APP_VERSION}</span>
             <span className="about-pill about-pill-license">{APP_LICENSE}</span>
           </div>
+          {deviceName && (
+            <div className="about-device" data-testid="about-device-name">
+              本机设备：<b>{deviceName}</b>
+            </div>
+          )}
         </div>
 
         <div className="about-section about-update-row">
