@@ -325,6 +325,59 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
     isWrite: true,
   },
   {
+    id: "blocks.patch",
+    description: "整块替换：把某个顶层块换成新的 Markdown/纯文本，**块 id 保持不变**。参数: blockId (必填), markdown 或 text (二选一), expectedRev (可选但强烈建议), spaceId (可选;本版只当前空间), dryRun, clientRequestId。写操作 ⇒ 返回草稿等用户确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "blockId": { type: "string" },
+      "markdown": { type: "string" },
+      "text": { type: "string" },
+      "expectedRev": { type: "string" },
+      "spaceId": { type: "string" },
+      "dryRun": { type: "boolean" },
+      "clientRequestId": { type: "string" },
+      },
+      required: ["blockId"],
+    },
+    isWrite: true,
+  },
+  {
+    id: "blocks.insert",
+    description: "在某块之后插入新块（缺省页首）。参数: pageId 或 afterBlockId（至少一个）, markdown 或 text (二选一), expectedRev (可选但强烈建议), spaceId, dryRun, clientRequestId。返回 `newBlockId`（确认后即可拿它继续 patch/delete）。写操作 ⇒ 返回草稿等确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "pageId": { type: "string" },
+      "afterBlockId": { type: "string" },
+      "markdown": { type: "string" },
+      "text": { type: "string" },
+      "expectedRev": { type: "string" },
+      "spaceId": { type: "string" },
+      "dryRun": { type: "boolean" },
+      "clientRequestId": { type: "string" },
+      },
+      required: [],
+    },
+    isWrite: true,
+  },
+  {
+    id: "blocks.delete",
+    description: "删除一个顶层块（不留空占位）。参数: blockId (必填), expectedRev (可选但强烈建议), spaceId, dryRun, clientRequestId。写操作 ⇒ 返回草稿等确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "blockId": { type: "string" },
+      "expectedRev": { type: "string" },
+      "spaceId": { type: "string" },
+      "dryRun": { type: "boolean" },
+      "clientRequestId": { type: "string" },
+      },
+      required: ["blockId"],
+    },
+    isWrite: true,
+  },
+  {
     id: "properties.list",
     description: "列出本空间的属性定义 [{id, name, type}]。**写属性要的是 id**（properties.set 的第一个参数），所以通常先调它按名字找 id。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。",
     argsSchema: {

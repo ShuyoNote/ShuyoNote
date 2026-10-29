@@ -3553,6 +3553,237 @@ fn cap_properties_unset(
     )
 }
 
+// ── B2-块（2026-10-29）：blocks.patch / insert / delete ──
+//
+// 仍然**只产草稿**（M2 的写能力只能是 `mediate:"draft"`；落库只有 `src/lib/ai/apply.ts` 一处，
+// Markdown→块的解析也只在前端那一份 `markdownToPageContent` 里）。Rust 这一侧做四件事：
+// ① 顶层块寻址（用 `doc_content::block_snapshots` 既有读法，⛔ 不另写一份块解析）；
+// ② 并发令牌（`updated_at:sha8`）与 **`rev_conflict` 带 currentRev ＋ 当前 markdown（带锚点）**
+//    —— markdown 由前端桥算（`markdown.render`），前端未挂载时如实退回"正文带锚点"；
+// ③ `dryRun`：不产草稿、不记审计；④ 返回 `rev` / `changed` / `newBlockId`（确认后即可继续用）。
+
+/// 块 → 页面（`blocks` 是派生化表；用它定位比让调用方传 pageId 少一个必填参数）。
+fn block_page_of(block_id: &str) -> Result<String, String> {
+    let bid = block_id.trim();
+    if bid.is_empty() {
+        return Err("bad_args: 需要 blockId".to_string());
+    }
+    with_read_conn(|c| {
+        use rusqlite::OptionalExtension;
+        c.query_row(
+            "SELECT page_id FROM blocks WHERE block_id = ?1",
+            params![bid],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))?
+        .ok_or_else(|| format!("not_found: 块 {bid} 不存在（用 blocks.list 查）"))
+    })
+}
+
+/// 该页的**顶层**块 id（顺序即文档顺序）；页不存在 ⇒ `not_found`。
+fn top_blocks_of(page_id: &str) -> Result<Vec<String>, String> {
+    let pid = page_id.trim();
+    with_read_conn(|c| {
+        let Some(m) = crate::doc_content::read_with_meta(c, pid)? else {
+            return Err(format!("not_found: 页面 {pid} 不存在或已删除"));
+        };
+        match crate::doc_content::block_snapshots(&m.content.json) {
+            Some(bs) => Ok(bs.into_iter().map(|b| b.block_id).collect()),
+            None => Err(
+                "bad_args: 页面结构不支持块级寻址（顶层块缺少 blockId）—— 可先用 pages.update 整页重写一次".to_string(),
+            ),
+        }
+    })
+}
+
+/// 写前的并发校验；冲突 ⇒ `rev_conflict`，**带 currentRev 与当前 markdown（带锚点）**。
+///
+/// markdown 用**前端桥**算（Rust 没有 markdown 渲染器 —— ⛔ 不在这里造第二份）；前端没挂载时
+/// 如实退化成正文（带 `<!-- b:… -->` 锚点），并说明为什么。
+fn blocks_rev_guard(page_id: &str, expected: Option<&str>) -> Result<String, String> {
+    let cur = with_read_conn(|c| page_rev_of(c, page_id))?
+        .ok_or_else(|| format!("not_found: 页面 {page_id} 不存在或已删除"))?;
+    if let Some(exp) = expected.map(str::trim).filter(|s| !s.is_empty()) {
+        if exp != cur {
+            let md = crate::frontend_tool::call(
+                "markdown.render",
+                &serde_json::json!({ "pageId": page_id }).to_string(),
+            )
+            .ok()
+            .and_then(|r| serde_json::from_slice::<serde_json::Value>(&r.bytes).ok())
+            .and_then(|v| v["markdown"].as_str().map(str::to_string))
+            .unwrap_or_else(|| {
+                "（前端未挂载 ⇒ 取不到 markdown；可用 pages.get 的 includeAnchors 正文带锚点来 diff）"
+                    .to_string()
+            });
+            let current = with_read_conn(|c| {
+                let Some(m) = crate::doc_content::read_with_meta(c, page_id)? else {
+                    return Ok(String::new());
+                };
+                Ok(m.content.text)
+            })?;
+            return Err(format!(
+                "rev_conflict: expectedRev={exp}，当前 rev={cur}\ncurrentRev={cur}\n当前 markdown（带块锚点）：\n{md}\n当前正文（带锚点）：\n{current}"
+            ));
+        }
+    }
+    Ok(cur)
+}
+
+/// 块内容入参：`markdown` 与 `text` **二选一**（都空 ⇒ `bad_args`；都非空 ⇒ 以 markdown 为准并提示）。
+fn block_body_arg(markdown: Option<&str>, text: Option<&str>) -> Result<(String, bool), String> {
+    let md = markdown.map(str::trim).filter(|s| !s.is_empty());
+    let tx = text.map(str::trim).filter(|s| !s.is_empty());
+    match (md, tx) {
+        (None, None) => Err("bad_args: 需要 markdown 或 text 之一（新块内容）".to_string()),
+        (Some(m), _) => {
+            if m.len() > 200 * 1024 {
+                return Err("bad_args: 新块内容超过 200KB 上限，请拆分".to_string());
+            }
+            Ok((m.to_string(), true))
+        }
+        (None, Some(t)) => {
+            if t.len() > 200 * 1024 {
+                return Err("bad_args: 新块内容超过 200KB 上限，请拆分".to_string());
+            }
+            Ok((t.to_string(), false))
+        }
+    }
+}
+
+/// `blocks.patch`：整块替换（块 id 不变）。
+fn cap_blocks_patch(
+    block_id: &str,
+    markdown: Option<&str>,
+    text: Option<&str>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let page = block_page_of(block_id)?;
+    let tops = top_blocks_of(&page)?;
+    let bid = block_id.trim().to_string();
+    if !tops.iter().any(|b| b == &bid) {
+        return Err(format!("not_found: 块 {bid} 不是页面 {page} 的顶层块"));
+    }
+    let (body, is_md) = block_body_arg(markdown, text)?;
+    let rev = blocks_rev_guard(&page, expected_rev)?;
+    let mut would = serde_json::json!({
+        "kind": "blocks_patch", "pageId": page, "blockId": bid,
+        "expectedRev": rev, "spaceId": space,
+    });
+    would[if is_md { "markdown" } else { "plain" }] = serde_json::json!(body);
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true, "applied": false, "rev": rev, "changed": [bid],
+            "would": would, "summary": "整块替换（演练）",
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
+    let summary = format!("替换块「{bid}」");
+    push_draft(format!("blocks_patch:{page}:{bid}"), summary.clone(), would);
+    Ok(serde_json::json!({
+        "drafted": true, "applied": false, "awaiting_confirm": true,
+        "rev": rev, "changed": [bid], "spaceId": space, "summary": summary,
+        "note": "草稿已生成，用户确认后才落库（applied 仍为 false）",
+    }))
+}
+
+/// `blocks.insert`：在某块之后插入（缺省页首）；返回 `newBlockId`（确认后即可用）。
+fn cap_blocks_insert(
+    page_id: Option<&str>,
+    after_block_id: Option<&str>,
+    markdown: Option<&str>,
+    text: Option<&str>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let after = after_block_id.map(str::trim).filter(|s| !s.is_empty());
+    let page = match (page_id.map(str::trim).filter(|s| !s.is_empty()), after) {
+        (Some(p), _) => p.to_string(),
+        (None, Some(a)) => block_page_of(a)?,
+        (None, None) => {
+            return Err("bad_args: 需要 pageId 或 afterBlockId 之一（至少给一个）".to_string())
+        }
+    };
+    let tops = top_blocks_of(&page)?;
+    if let Some(a) = after {
+        if !tops.iter().any(|b| b == a) {
+            return Err(format!("not_found: 块 {a} 不是页面 {page} 的顶层块"));
+        }
+    }
+    let (body, is_md) = block_body_arg(markdown, text)?;
+    let rev = blocks_rev_guard(&page, expected_rev)?;
+    let new_block_id = uuid::Uuid::new_v4().to_string();
+    let mut would = serde_json::json!({
+        "kind": "blocks_insert", "pageId": page, "afterBlockId": after,
+        "newBlockId": new_block_id, "expectedRev": rev, "spaceId": space,
+    });
+    would[if is_md { "markdown" } else { "plain" }] = serde_json::json!(body);
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true, "applied": false, "rev": rev,
+            "newBlockId": new_block_id, "would": would,
+            "summary": "插入块（演练）",
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
+    let summary = format!("在页面「{page}」插入块");
+    push_draft(format!("blocks_insert:{page}:{new_block_id}"), summary.clone(), would);
+    Ok(serde_json::json!({
+        "drafted": true, "applied": false, "awaiting_confirm": true,
+        "rev": rev, "newBlockId": new_block_id, "spaceId": space, "summary": summary,
+        "note": "草稿已生成，用户确认后才落库（applied 仍为 false）；确认后 newBlockId 即生效",
+    }))
+}
+
+/// `blocks.delete`：删除一个顶层块（不留空占位）。
+fn cap_blocks_delete(
+    block_id: &str,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let page = block_page_of(block_id)?;
+    let tops = top_blocks_of(&page)?;
+    let bid = block_id.trim().to_string();
+    if !tops.iter().any(|b| b == &bid) {
+        return Err(format!("not_found: 块 {bid} 不是页面 {page} 的顶层块"));
+    }
+    if tops.len() <= 1 {
+        return Err(
+            "bad_args: 这是页面上最后一个顶层块 —— 删掉会留下空页面（⛔ 不制造空块/空页）".to_string(),
+        );
+    }
+    let rev = blocks_rev_guard(&page, expected_rev)?;
+    let would = serde_json::json!({
+        "kind": "blocks_delete", "pageId": page, "blockId": bid,
+        "expectedRev": rev, "spaceId": space,
+    });
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true, "applied": false, "rev": rev, "changed": [bid],
+            "would": would, "summary": "删除块（演练）",
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
+    let summary = format!("删除块「{bid}」");
+    push_draft(format!("blocks_delete:{page}:{bid}"), summary.clone(), would);
+    Ok(serde_json::json!({
+        "drafted": true, "applied": false, "awaiting_confirm": true,
+        "rev": rev, "changed": [bid], "spaceId": space, "summary": summary,
+        "note": "草稿已生成，用户确认后才落库（applied 仍为 false）",
+    }))
+}
+
 fn cap_properties_list(space_id: Option<&str>) -> CapResult {
     with_conn_for_space(space_id, |c| {
         let mut stmt = c
@@ -4342,6 +4573,32 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             &arg_str("text")?,
             arg_opt_str("fence").as_deref(),
             arg_opt_str("expectedRev").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "blocks.patch" => cap_blocks_patch(
+            &arg_str("blockId")?,
+            arg_opt_str("markdown").as_deref(),
+            arg_opt_str("text").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "blocks.insert" => cap_blocks_insert(
+            arg_opt_str("pageId").as_deref(),
+            arg_opt_str("afterBlockId").as_deref(),
+            arg_opt_str("markdown").as_deref(),
+            arg_opt_str("text").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "blocks.delete" => cap_blocks_delete(
+            &arg_str("blockId")?,
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
             arg_bool(args.get("dryRun"), false),
             arg_opt_str("clientRequestId").as_deref(),
         ),
@@ -13678,5 +13935,144 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(e.contains("not_found"), "{e}");
         b1c_cleanup(&f);
     }
+
+    // ── B2-块（2026-10-29）：blocks.patch/insert/delete ──
+    fn b2_blocks_fixture(tag: &str) -> B1cFixture {
+        let f = b1c_fixture(tag);
+        let doc = r#"{"root":{"type":"root","children":[
+            {"type":"paragraph","blockId":"blk1","children":[{"type":"text","text":"第一块"}]},
+            {"type":"paragraph","blockId":"blk2","children":[{"type":"text","text":"第二块"}]}
+        ]}}"#;
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute(
+                "UPDATE pages SET content_json = ?1, content_text = '第一块\\n第二块' WHERE id = 'p1'",
+                params![doc],
+            )
+            .unwrap();
+            for (i, bid) in ["blk1", "blk2"].iter().enumerate() {
+                c.execute(
+                    "INSERT INTO blocks (block_id, page_id, created_at, updated_at) VALUES (?1, 'p1', ?2, ?2)",
+                    params![bid, 10 + i as i64],
+                )
+                .unwrap();
+            }
+        }
+        point_cap_search_at(&f.dir, &f.space);
+        f
+    }
+
+    fn p1_rev() -> String {
+        with_read_conn(|c| page_rev_of(c, "p1")).unwrap().unwrap()
+    }
+
+    /// ⭐ 判据 ④：`rev_conflict` 必须带 `currentRev` ＋ **当前 markdown（带锚点）**；正确 rev 才产草稿。
+    #[test]
+    fn b2_blocks_patch_conflict_carries_rev_and_markdown() {
+        let f = b2_blocks_fixture("b2b-patch");
+        crate::frontend_tool::install_test_frontend_for_tests();
+        let g = b2_granted();
+        // 先让当前 rev 变一下，再用一个肯定过期的 expectedRev
+        with_external_caller("b2b-patch-0", &g, || {
+            dispatch_capability("blocks.patch", r#"{"blockId":"blk1","markdown":"新内容","expectedRev":"0:deadbeef"}"#)
+        })
+        .expect_err("过期 rev 必须 rev_conflict");
+        let e = with_external_caller("b2b-patch", &g, || {
+            dispatch_capability("blocks.patch", r#"{"blockId":"blk1","markdown":"新内容","expectedRev":"0:deadbeef"}"#)
+        })
+        .expect_err("过期 rev 必须 rev_conflict");
+        assert!(e.contains("rev_conflict"), "{e}");
+        assert!(e.contains("currentRev="), "必须带 currentRev：{e}");
+        assert!(e.contains("当前 markdown"), "必须带当前 markdown：{e}");
+        assert!(e.contains("current markdown"), "markdown 由前端桥给：{e}");
+        // 正确 rev ⇒ 产草稿，payload 里块 id 不变
+        let rev = p1_rev();
+        let args = format!(
+            r#"{{"blockId":"blk1","markdown":"新内容","expectedRev":"{rev}"}}"#
+        );
+        let (out, drafts) = with_external_caller("b2b-patch-ok", &g, || {
+            with_fresh_drafts(|| dispatch_capability("blocks.patch", &args))
+        });
+        let v: serde_json::Value = serde_json::from_str(&out.expect("正确 rev 应产草稿")).unwrap();
+        assert_eq!(v["applied"], false, "M2：确认前 applied 必须 false：{v}");
+        assert_eq!(v["changed"], serde_json::json!(["blk1"]));
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].payload["blockId"], "blk1");
+        assert_eq!(drafts[0].payload["kind"], "blocks_patch");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 ⑤/⑨：`dryRun` 不产草稿；`spaceId` 跨空间 ⇒ 拒并点名 write:all-spaces；
+    /// insert 返回 `newBlockId`、delete 拒绝删最后一个块。
+    #[test]
+    fn b2_blocks_insert_delete_dryrun_and_space_wall() {
+        let f = b2_blocks_fixture("b2b-ins");
+        crate::frontend_tool::install_test_frontend_for_tests();
+        let g = b2_granted();
+        let rev = p1_rev();
+        // dryRun：不产草稿
+        let args = format!(r#"{{"pageId":"p1","afterBlockId":"blk1","markdown":"插入","expectedRev":"{rev}","dryRun":true}}"#);
+        let (out, drafts) = with_external_caller("b2b-ins-dry", &g, || {
+            with_fresh_drafts(|| dispatch_capability("blocks.insert", &args))
+        });
+        let v: serde_json::Value = serde_json::from_str(&out.expect("dryRun 应 OK")).unwrap();
+        assert_eq!(v["dryRun"], true);
+        assert!(drafts.is_empty(), "dryRun 不许产草稿");
+        // 真实 insert：返回 newBlockId
+        let args2 = format!(r#"{{"pageId":"p1","afterBlockId":"blk1","markdown":"插入","expectedRev":"{rev}"}}"#);
+        let (out2, drafts2) = with_external_caller("b2b-ins", &g, || {
+            with_fresh_drafts(|| dispatch_capability("blocks.insert", &args2))
+        });
+        let v2: serde_json::Value = serde_json::from_str(&out2.expect("insert 应 OK")).unwrap();
+        assert!(v2["newBlockId"].as_str().unwrap_or("").len() > 8, "{v2}");
+        assert_eq!(drafts2.len(), 1);
+        // delete：删 blk2 可以；只剩一个块时再删 ⇒ 拒绝（不造空页）
+        let args3 = format!(r#"{{"blockId":"blk2","expectedRev":"{rev}"}}"#);
+        with_external_caller("b2b-del", &g, || {
+            with_fresh_drafts(|| dispatch_capability("blocks.delete", &args3))
+        })
+        .0
+        .expect("删 blk2 应产草稿");
+        // 跨空间 spaceId ⇒ 拒并点名
+        let e = with_external_caller("b2b-space", &g, || {
+            dispatch_capability("blocks.patch", r#"{"blockId":"blk1","markdown":"x","spaceId":"别的空间"}"#)
+        })
+        .expect_err("跨空间必须拒");
+        assert!(e.contains("permission_denied") && e.contains("write:all-spaces"), "{e}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 ③/⑦：写能力只产草稿时**不落库**；成功调用恰一条审计（与全局口径同一条）。
+    #[test]
+    fn b2_blocks_calls_audit_once_and_never_write_before_confirm() {
+        let f = b2_blocks_fixture("b2b-audit");
+        crate::frontend_tool::install_test_frontend_for_tests();
+        let g = b2_granted();
+        let before: String = with_read_conn(|c| {
+            c.query_row("SELECT content_text FROM pages WHERE id='p1'", [], |r| r.get(0))
+                .map_err(|e| e.to_string())
+        })
+        .unwrap();
+        let rev = p1_rev();
+        let args = format!(r#"{{"blockId":"blk1","markdown":"改掉","expectedRev":"{rev}"}}"#);
+        let session = "b2b-audit-1";
+        let (out, _drafts) = with_external_caller(session, &g, || {
+            with_fresh_drafts(|| dispatch_capability("blocks.patch", &args))
+        });
+        out.expect("应产草稿");
+        let after: String = with_read_conn(|c| {
+            c.query_row("SELECT content_text FROM pages WHERE id='p1'", [], |r| r.get(0))
+                .map_err(|e| e.to_string())
+        })
+        .unwrap();
+        assert_eq!(before, after, "确认前**不许**落库（两态应当相同）");
+        let rows: Vec<_> = crate::plugins::plugin_audit(Some("external".to_string()), Some(200))
+            .into_iter()
+            .filter(|e| e.source == format!("external:{session}"))
+            .collect();
+        assert_eq!(rows.len(), 1, "恰好一条审计");
+        b1c_cleanup(&f);
+    }
+
 }
 

@@ -1147,6 +1147,71 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
       { kind: "append_block", pageId, text, fence: args.fence ?? null, expectedRev, clientRequestId },
     );
   },
+  // ⭐ B2-块（2026-10-29）：块级写 —— 全部草稿确认；正文转换仍只在前端那一份（apply.ts）。
+  "blocks.patch": async (args) => {
+    const blockId = String(args.blockId ?? "").trim();
+    const markdown = typeof args.markdown === "string" ? args.markdown : "";
+    const text = typeof args.text === "string" ? args.text : "";
+    const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!blockId) return { ok: false, error: "blocks.patch 需要 blockId" };
+    if (!markdown.trim() && !text.trim()) return { ok: false, error: "blocks.patch 需要 markdown 或 text" };
+    if (dryRun) return { ok: true, dryRun: true, applied: false, would: { kind: "blocks_patch", blockId, expectedRev }, clientRequestId, spaceId };
+    return draft(`blocks_patch:${blockId}`, `替换块 ${blockId}`, {
+      kind: "blocks_patch",
+      blockId,
+      markdown: markdown.trim() ? markdown : undefined,
+      plain: markdown.trim() ? undefined : text,
+      expectedRev,
+      clientRequestId,
+      spaceId,
+    });
+  },
+
+  "blocks.insert": async (args) => {
+    const pageId = String(args.pageId ?? "").trim();
+    const afterBlockId = typeof args.afterBlockId === "string" && args.afterBlockId ? args.afterBlockId : null;
+    const markdown = typeof args.markdown === "string" ? args.markdown : "";
+    const text = typeof args.text === "string" ? args.text : "";
+    const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!pageId && !afterBlockId) return { ok: false, error: "blocks.insert 需要 pageId 或 afterBlockId" };
+    if (!markdown.trim() && !text.trim()) return { ok: false, error: "blocks.insert 需要 markdown 或 text" };
+    const newBlockId = `blk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    if (dryRun) return { ok: true, dryRun: true, applied: false, newBlockId, would: { kind: "blocks_insert", pageId, afterBlockId, expectedRev }, clientRequestId, spaceId };
+    return draft(`blocks_insert:${pageId || afterBlockId}`, `在页面插入块`, {
+      kind: "blocks_insert",
+      pageId,
+      afterBlockId,
+      newBlockId,
+      markdown: markdown.trim() ? markdown : undefined,
+      plain: markdown.trim() ? undefined : text,
+      expectedRev,
+      clientRequestId,
+      spaceId,
+    });
+  },
+
+  "blocks.delete": async (args) => {
+    const blockId = String(args.blockId ?? "").trim();
+    const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!blockId) return { ok: false, error: "blocks.delete 需要 blockId" };
+    if (dryRun) return { ok: true, dryRun: true, applied: false, would: { kind: "blocks_delete", blockId, expectedRev }, clientRequestId, spaceId };
+    return draft(`blocks_delete:${blockId}`, `删除块 ${blockId}`, {
+      kind: "blocks_delete",
+      blockId,
+      expectedRev,
+      clientRequestId,
+      spaceId,
+    });
+  },
 
   // ⭐ B2-结构（2026-10-29）：节点/文件夹/回收站/回退/标签移除/属性去掉。
   //   全部返回**草稿**（落库只有 ai/apply.ts 一处）；dryRun 只回"会做什么"、不生成草稿。

@@ -6,10 +6,10 @@
 | 源 | 值 |
 |---|---|
 | 注册表文件 | `capabilities/capabilities.json` |
-| 注册表 sha256 | `4aa2ba0f33df3eba84affca59481327b612c3757c6e956d70dc9c63fc96b7941` |
+| 注册表 sha256 | `fd2f46a2e182068eb54bf2c904b43944994082cf9a9d9d279b0f402a48a04d9a` |
 | `registryVersion` | 1 |
-| `apiVersion` | 1.7.0 |
-| 能力条数 | **50**（按 `kind`：host 2 / read 29 / write 19） |
+| `apiVersion` | 1.8.0 |
+| 能力条数 | **53**（按 `kind`：host 2 / read 29 / write 22） |
 | 生成命令 | `node scripts/gen-knowledge-ontology.mjs` |
 
 | id | kind | scope | permission | ai | mediate | desc |
@@ -17,7 +17,10 @@
 | backlinks.list | read | current-space | read:backlinks | ✓ |  | 查询哪些页面反向链接到目标页面。参数: pageId (可选, 省略=当前打开的页面)。返回引用它的页面列表。 |
 | blobs.fetch | read | current-space | export:files | ✓ |  | 句柄消费方（**唯一落盘处**）：把句柄换成文件，写到应用数据目录下的 exports/，返回 {path, size, sha256}。句柄单次、120 秒有效、绑定本会话；二次使用/过期/别的会话 ⇒ not_found。参数: handle (必填)。 |
 | blocks.append | write | current-space | write:pages | ✓ | ✓ | 向现存页面追加一个或多个段落(按换行分段)。参数: text (必填正文), pageId (可选, 省略=当前打开的页面)。这是写操作，返回草稿供用户确认。 |
+| blocks.delete | write | current-space | write:pages | ✓ | ✓ | 删除一个顶层块（不留空占位）。参数: blockId (必填), expectedRev (可选但强烈建议), spaceId, dryRun, clientRequestId。写操作 ⇒ 返回草稿等确认。 |
+| blocks.insert | write | current-space | write:pages | ✓ | ✓ | 在某块之后插入新块（缺省页首）。参数: pageId 或 afterBlockId（至少一个）, markdown 或 text (二选一), expectedRev (可选但强烈建议), spaceId, dryRun, clientRequestId。返回 `newBlockId`（确认后即可拿它继续 patch/delete）。写操作 ⇒ 返回草稿等确认。 |
 | blocks.list | read | current-space | read:pages | ✓ |  | 列出页面中的所有顶级块(每块 id + 文本)。参数: pageId (可选, 省略=当前打开的页面), limit (可选)。返回块数组，可用于定位具体块。 |
+| blocks.patch | write | current-space | write:pages | ✓ | ✓ | 整块替换：把某个顶层块换成新的 Markdown/纯文本，**块 id 保持不变**。参数: blockId (必填), markdown 或 text (二选一), expectedRev (可选但强烈建议), spaceId (可选;本版只当前空间), dryRun, clientRequestId。写操作 ⇒ 返回草稿等用户确认。 |
 | coverage.report | read | current-space | read:files | ✓ |  | 检查**整个库**的索引覆盖：哪些内容真的进了检索面、哪些没进、哪些**进了但没抽全**。参数: spaceId (可选；只接受当前空间 —— 报告目前是当前空间的派生层口径，跨空间未接，给别的空间 ⇒ bad_args)。返回 {ok, summary, report}：`summary` 是一行中文摘要（可直接展示）；`report.attachments` 给出 已索引/没抽全/未索引 的计数与分类，`report.gaps` 给出**明细**（每条含 `reason` 与一句「该怎么办」）。⚠️ 三个必须分清的口径：① **没抽到 ≠ 文件里没有**（`no_content` 可能是空文件/加密/纯图）；② **页面正文空 ≠ 这页内容没被索引**（图片/附件/数据库块由附件侧负责）；③ **`partial` 是「搜得到，但只覆盖了一部分」**（典型：混合 PDF 只抽到正文页）—— 别把「已索引 N/N」读成「内容全在检索面里」。**缺口列表可能被截断**（看 `gapsTotal` 与 `gapsTruncated`）。★ 实现只有 TS 那一份（判「没人认领这种格式」必须以 TS 侧抽取器注册表为准；Rust 侧再长一份就是两份实现、而漂移不会报错）⇒ 外部/插件面经 **Rust→前端桥** 取回同一函数的输出（2026-10-29 B3）。 |
 | db.rows | read | current-space | read:pages | ✓ |  | 读取一个**数据库页**的行（**只给原始值**，⛔ 不重算公式/汇总；回话里的 note 会说明「可能与界面计算值不同」）。参数: pageId (必填), viewId (可选：套用视图保存的标题过滤与排序), where (可选：简单条件数组，多条 AND，字段必须来自 db.schema，操作符白名单 = != > >= < <= in contains is_null), limit (可选, 默认 100, 上限 500), offset (可选, 默认 0), spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。返回 {pageId, spaceId, total, returned, rows:[{id, values}], truncated, note}；过滤与分页在宿主（Rust）侧执行，超过 200 KB 会截断并如实标 truncated。 |
 | db.schema | read | current-space | read:pages | ✓ |  | 读取一个**数据库页**的结构：列、视图、关系列。参数: pageId (必填：kind=database 的页面节点 id), spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。返回 {pageId, spaceId, views:[{id,name,type}], columns:[{id,name,type,isFormula?,isRollup?}], relations:[{id,name,type}]} —— 公式/汇总列**只标类型、不计算**；关系列（type=ref）单列在 relations 里。 |

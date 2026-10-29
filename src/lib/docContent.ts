@@ -776,6 +776,34 @@ export function draftBodyFields(body: { content_json: string; content_text: stri
   return { content_json: body.content_json, content_text: body.content_text };
 }
 
+import { contentTextOf } from "./ai/lexicalContent";
+
+/** 记录里的正文 JSON 文本（`content_json` 键名只许在这一层出现）。 */
+export function jsonTextOf(content: { content_json?: string | null }): string {
+  return content.content_json ?? "{}";
+}
+
+/** 顶层块数组（块级写只动 root.children；⛔ 别处不要自己 parse 文档 JSON）。 */
+export function topChildren(docJson: string): Array<Record<string, unknown>> {
+  const doc = JSON.parse(docJson) as { root?: { children?: Array<Record<string, unknown>> } };
+  return Array.isArray(doc?.root?.children) ? doc.root!.children! : [];
+}
+
+/** 用新的顶层块重建整页 JSON（保留 root 上其它键）。 */
+export function withTopChildren(docJson: string, children: Array<Record<string, unknown>>): string {
+  const doc = JSON.parse(docJson) as Record<string, unknown>;
+  return JSON.stringify({ ...doc, root: { type: "root", children } });
+}
+
+/** 写回一页需要的两个键（顶层块已换好）—— 存储键名只许在这一层出现。 */
+export function saveFieldsWithChildren(
+  docJson: string,
+  children: Array<Record<string, unknown>>,
+): { content_json: string; content_text: string } {
+  const json = withTopChildren(docJson, children);
+  return { content_json: json, content_text: contentTextOf(json) };
+}
+
 export function docJsonOfPage(page: { content_json?: string | null }): string {
   return page.content_json || "{}";
 }

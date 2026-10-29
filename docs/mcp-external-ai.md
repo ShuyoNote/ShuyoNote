@@ -57,7 +57,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 4. 怎么验证通没通
 
-1. 让 AI **列工具**：应看到 **读面 27 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows`；切到**可写**档后再多 **14 个写面**（共 **41 个**）：`pages_create` / `pages_update` / `pages_importMarkdown` / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset`；
+1. 让 AI **列工具**：应看到 **读面 27 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows`；切到**可写**档后再多 **17 个写面**（共 **44 个**）：`pages_create` / `pages_update` / `pages_importMarkdown` / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset` / `blocks_patch` / `blocks_insert` / `blocks_delete`；
 2. 让它读一篇：「列出运营空间最近修改的 3 篇笔记」；
 3. 能读出来说明链路通；**被拒**通常说明档位不够（见 §6）；
 4. 每次调用都会**记一行审计**（谁/何时/做了什么/成败）。
@@ -82,6 +82,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | `trash_restore`（从回收站恢复） | 可写；草稿确认。活着的节点 ⇒ `bad_args`（不需要恢复）；不存在 ⇒ `not_found` |
 | `pages_revert`（回退到历史版本） | 可写；草稿确认。**只能回退到仍在版本历史里的版本**（超出保留期/已清理 ⇒ `not_found`）；⛔ 不删原写审计 |
 | `tags_add` / `tags_remove` / `properties_set` / `properties_unset` | 可写；草稿确认。目标页不存在 ⇒ `not_found`；标签/属性不存在 ⇒ `not_found`；数字属性给非数字 ⇒ `bad_args` |
+| `blocks_patch` / `blocks_insert` / `blocks_delete`（块级写） | 可写；草稿确认（`mediate:"draft"`）。按**顶层块 id** 寻址；`patch` 后**块 id 不变**；`insert` 返回 `newBlockId`（确认后即可继续用）；`delete` 不留空块、不许删最后一个块。`expectedRev` 不一致 ⇒ `rev_conflict` **带 currentRev ＋ 当前 markdown（带块锚点）**；`dryRun` 只演练；`clientRequestId` 幂等 |
 | `pages_create`、`blocks_append`、`pages_importMarkdown` | `可写（每次确认）`及以上 |
 | `pages_update`（整页替换） | `可写（每次确认）`：会先弹确认 |
 
@@ -106,6 +107,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - **导出/下载走句柄**：这类工具**只回句柄、不回字节**（句柄 128bit 随机、单次、120 秒、绑当前会话）；`blobs_fetch` 把句柄换成文件，**只落进应用数据目录下的 `exports/`**（文件名已清洗，**不接受任意目标路径**），落盘前复核 sha256。⛔ 别把 `exports/` 当成"给 AI 的任意写盘口子"；
 - **三条「前端桥」能力**（`export_markdown` / `export_docpackage` / `coverage_report`）：它们**唯一实现在前端**（Markdown/`.shuyodoc` 渲染、抽取器注册表），Rust 只负责**把请求转给应用窗口、等它算完**（默认 **5 秒**超时，**不重试、不缓存**）。⇒ **应用没开**或窗口忙时会回 `frontend_unavailable`（没挂载，立刻返回）/ `frontend_timeout`（挂着但这次没回）——这是**如实失败**，不是"空成功"；等窗口可用后重试即可。⛔ 桥不会执行任意前端代码（方法白名单固定三条）；
 - **写一致性与幂等**：所有写工具都是**草稿确认**（不经你确认不落库）；支持 `expectedRev`（`updated_at:sha8`，与 `pages.get` 的 `rev` 同一形态）——不一致 ⇒ `rev_conflict`（带当前 rev，⛔ 不覆盖）；`dryRun:true` 只回"会做什么"（不产草稿、不记审计）；`clientRequestId` 同 id 重复调用只落一次、只审一条（进程内 10 分钟）；写 `spaceId` 本版**只支持当前空间**（别的空间 ⇒ `permission_denied`，需 `write:all-spaces` 档，默认关）；
+- **块级写的边界**：`blocks_*` 只动**顶层块**（不做整篇锚点对齐、不做嵌套块编辑）；`applied` 在调用时**永远是 false** —— 写能力都是草稿确认，用户确认后才落库；`rev_conflict` 里的 markdown 由应用窗口算（窗口没开时退回正文带锚点，如实说明）；
 - **企业版**：团队/租户空间的 Agent 写面临时**不在本指南范围**（身份、角色、审计合规、数据边界四问未定，见能力矩阵 §8）。
 
 ## 8. 推荐配置（一句话版）
@@ -122,6 +124,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - 清单与档位判据：[能力暴露矩阵](plans/2026-10-29-agent-capability-exposure-matrix.md)；块级写方案：[P2 方案](plans/2026-10-29-agent-block-write-p2.md)。
 
 ## 10. 版本
+
+- 2026-10-29：**块级写 B2-块 —— MCP 工具 41 → 44（读面 27 / 写面 17）**：新增 `blocks_patch`（整块替换，**块 id 不变**）、`blocks_insert`（在某块后插入，返回 `newBlockId`）、`blocks_delete`（删顶层块，不留空块）。全部草稿确认（`mediate:"draft"`）；`expectedRev` 不一致 ⇒ `rev_conflict` **带 currentRev ＋ 当前 markdown（带锚点）**；`dryRun`/`clientRequestId` 与 B2-结构同一条口径。`apiVersion` 1.7.0 → **1.8.0**。
 
 - 2026-10-29：**写扩容 B2-结构 —— MCP 工具 31 → 41（读面 27 / 写面 14）**：新增 `folders_create`、`nodes_move`、`nodes_rename`、`nodes_delete`（软删；非空 ⇒ 拒绝并点名 N，⛔ 不递归删）、`trash_restore`、`pages_revert`（只能回退到仍在版本历史里的版本）、`tags_remove`、`properties_unset`；同时把既有的 `tags_add` / `properties_set` 一并进写面。全部 `mediate:"draft"`（落库仍只有 `ai/apply.ts` 一处）；写一致性：`expectedRev` / `dryRun` / `clientRequestId`（幂等，同 id 只落一次、只审一条）。`apiVersion` 1.6.0 → **1.7.0**。
 - 2026-10-29：**前端桥（B3）—— MCP 工具 28 → 31（读面 24 → 27，写面 4）**：新增 `export_markdown`（`pageId` ⇒ 单页 `.md`；`spaceId` ⇒ 整空间 zip 含附件；⚠️ 整空间只支持当前空间）、`export_docpackage`（单页 `.shuyodoc`）、`coverage_report`（索引覆盖率报告，直接回 JSON）。三条**唯一实现都在 TS**，经 **Rust→前端桥**取回（方法白名单 3 条、默认 **5 秒**超时；前端没挂载 ⇒ 立刻 `frontend_unavailable`，挂着不回 ⇒ `frontend_timeout`，⛔ 不挂死、不空成功）；两个导出**复用 B1c 的同一张句柄表**（单次/TTL 120s/绑会话，落盘仍只经 `blobs_fetch` → `exports/`）。`coverage_report` 从「M1 时因 `host:"frontend"` 不许进 MCP 面」**改判为正式进面**（`apiVersion` 1.5.0 → **1.6.0**）。

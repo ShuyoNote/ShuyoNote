@@ -21,7 +21,7 @@
 import { api } from "./api";
 import { platform } from "./platform";
 import { docJsonOfPage } from "./docContent";
-import { markdownDocumentForPage, sanitizeName } from "./exportMarkdown";
+import { markdownDocumentForPage, pageContentToMarkdown, sanitizeName } from "./exportMarkdown";
 import { bundleTooLargeMessage, collectWorkspaceBundlePages, prepareBundle } from "./exportMarkdownBundle";
 import { buildPageDocPackageBytes } from "./docPackageTransfer";
 import { coverageReportTool, scanLibraryCoverage } from "./libraryCoverage";
@@ -102,6 +102,8 @@ export async function runFrontendTool(
       return exportDocPackage(args, deps);
     case "coverage.report":
       return coverageReport(deps);
+    case "markdown.render":
+      return renderMarkdownWithAnchors(args, deps);
     default:
       throw new Error(`bad_args: 不支持的前端工具 ${method}`);
   }
@@ -198,6 +200,30 @@ async function coverageReport(deps: FrontendToolDeps): Promise<FrontendToolResul
  *
  * 返回反注册函数（卸载时把监听一起摘掉；`ready` 标记是进程级的，不回收 —— 窗口重载会再报一次）。
  */
+/** 渲染一页的当前 markdown（每个顶层块后带 `<!-- b:<blockId> -->` 锚点）。 */
+async function renderMarkdownWithAnchors(
+  args: Record<string, unknown>,
+  deps: FrontendToolDeps,
+): Promise<FrontendToolResult> {
+  const pageId = String(args.pageId ?? "").trim();
+  if (!pageId) throw new Error("bad_args: markdown.render 需要 pageId");
+  const page = await deps.getPage(pageId);
+  if (!page) throw new Error(`not_found: 页面 ${pageId} 不存在`);
+  const doc = JSON.parse(docJsonOfPage(page)) as {
+    root?: { children?: Array<Record<string, unknown>> };
+  };
+  const children = Array.isArray(doc?.root?.children) ? doc.root!.children! : [];
+  const parts = children.map((c) => {
+    const id = String((c as { blockId?: unknown }).blockId ?? "");
+    const md = pageContentToMarkdown(JSON.stringify({ root: { type: "root", children: [c] } }));
+    return id ? `${md}\n<!-- b:${id} -->` : md;
+  });
+  return {
+    name: "markdown.json",
+    bytes: new TextEncoder().encode(JSON.stringify({ markdown: parts.join("\n\n") })),
+  };
+}
+
 export function registerMcpFrontendTools(): () => void {
   let unlisten: (() => void) | undefined;
   let alive = true;

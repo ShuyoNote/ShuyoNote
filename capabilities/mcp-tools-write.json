@@ -78,6 +78,129 @@
   },
   {
     "kind": "write",
+    "name": "blocks_patch",
+    "capabilityId": "blocks.patch",
+    "description": "整块替换（顶层块）：blockId(必填) + markdown 或 text(二选一) + expectedRev(可选但强烈建议)。**块 id 不变**。写操作 ⇒ 只产草稿（返回 `{drafted:true,applied:false,rev,changed}`，用户确认后才落库）；`rev` 变/冲突 ⇒ `rev_conflict` 带 currentRev 与当前 markdown（带锚点）；`dryRun` 只演练。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "blockId": {
+          "type": "string",
+          "description": "要替换的**顶层**块 id（来自 blocks.list / pages.get 的锚点）"
+        },
+        "markdown": {
+          "type": "string",
+          "description": "新块内容（Markdown，经应用自己的解析转块）——与 text 二选一"
+        },
+        "text": {
+          "type": "string",
+          "description": "新块内容（纯文本）——与 markdown 二选一"
+        },
+        "expectedRev": {
+          "type": "string",
+          "description": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带 currentRev ＋ 当前 markdown 带锚点），⛔ 不覆盖"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, applied:false, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同 id 重复调用只落一次、只审一条（进程内 10 分钟）"
+        }
+      },
+      "required": [
+        "blockId"
+      ]
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "blocks_insert",
+    "capabilityId": "blocks.insert",
+    "description": "插入块：pageId 或 afterBlockId(至少一个) + markdown/text(二选一) + expectedRev。返回 `newBlockId`（用户确认后即可用它继续 patch/delete）。写操作 ⇒ 只产草稿；`dryRun` 只演练；冲突 ⇒ `rev_conflict` 带当前 markdown。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pageId": {
+          "type": "string",
+          "description": "目标页面 id；省略时必须给 afterBlockId"
+        },
+        "afterBlockId": {
+          "type": "string",
+          "description": "插在这个块之后；省略=页首（给了它时可省 pageId）"
+        },
+        "markdown": {
+          "type": "string",
+          "description": "新块内容（Markdown，经应用自己的解析转块）——与 text 二选一"
+        },
+        "text": {
+          "type": "string",
+          "description": "新块内容（纯文本）——与 markdown 二选一"
+        },
+        "expectedRev": {
+          "type": "string",
+          "description": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带 currentRev ＋ 当前 markdown 带锚点），⛔ 不覆盖"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, applied:false, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同 id 重复调用只落一次、只审一条（进程内 10 分钟）"
+        }
+      },
+      "required": []
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "blocks_delete",
+    "capabilityId": "blocks.delete",
+    "description": "删除顶层块（不留空占位）。参数: blockId + expectedRev。写操作 ⇒ 只产草稿；`dryRun` 只演练；冲突 ⇒ `rev_conflict` 带 currentMarkdown。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "blockId": {
+          "type": "string",
+          "description": "要删除的顶层块 id"
+        },
+        "expectedRev": {
+          "type": "string",
+          "description": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带 currentRev ＋ 当前 markdown 带锚点），⛔ 不覆盖"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, applied:false, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同 id 重复调用只落一次、只审一条（进程内 10 分钟）"
+        }
+      },
+      "required": [
+        "blockId"
+      ]
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
     "name": "properties_set",
     "capabilityId": "properties.set",
     "description": "设置某个页面的属性值。参数: attrId (必填, 从 properties.list 拿), value (必填), pageId (可选, 省略=当前打开的页面)。这是写操作，返回草稿供用户确认。",
