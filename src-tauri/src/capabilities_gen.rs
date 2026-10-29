@@ -17,7 +17,7 @@ pub struct Capability {
     pub rust: &'static str,
 }
 
-pub const API_VERSION: &str = "1.8.0";
+pub const API_VERSION: &str = "1.9.0";
 pub const API_MAJOR: u32 = 1;
 
 pub const CAPABILITIES: &[Capability] = &[
@@ -58,6 +58,10 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "tags.add", kind: "write", scope: "current-space", permission: Some("write:tags"), since: "1.0.0", mediate: "draft", rust: "cap_tags_add" },
     Capability { id: "log.write", kind: "host", scope: "app", permission: None, since: "1.0.0", mediate: "-", rust: "cap_log_write" },
     Capability { id: "files.export", kind: "write", scope: "app", permission: Some("export:files"), since: "1.0.0", mediate: "draft", rust: "cap_files_export" },
+    Capability { id: "files.move", kind: "write", scope: "current-space", permission: Some("write:files"), since: "1.9.0", mediate: "draft", rust: "cap_files_move" },
+    Capability { id: "files.rename", kind: "write", scope: "current-space", permission: Some("write:files"), since: "1.9.0", mediate: "draft", rust: "cap_files_rename" },
+    Capability { id: "files.delete", kind: "write", scope: "current-space", permission: Some("write:files"), since: "1.9.0", mediate: "draft", rust: "cap_files_delete" },
+    Capability { id: "templates.apply", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.9.0", mediate: "draft", rust: "cap_templates_apply" },
     Capability { id: "folders.create", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.7.0", mediate: "draft", rust: "cap_folders_create" },
     Capability { id: "nodes.move", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.7.0", mediate: "draft", rust: "cap_nodes_move" },
     Capability { id: "nodes.rename", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.7.0", mediate: "draft", rust: "cap_nodes_rename" },
@@ -100,6 +104,7 @@ pub const PERMISSION_LIST: &[Permission] = &[
     Permission { id: "export:files", title: "把内容保存成文件", risk: "medium" },
     Permission { id: "read:versions", title: "读取历史版本", risk: "low" },
     Permission { id: "read:trash", title: "读取回收站", risk: "low" },
+    Permission { id: "write:files", title: "移动/改名/删除附件", risk: "medium" },
 ];
 
 pub fn permission(id: &str) -> Option<&'static Permission> {

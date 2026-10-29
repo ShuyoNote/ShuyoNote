@@ -804,6 +804,14 @@ export function saveFieldsWithChildren(
   return { content_json: json, content_text: contentTextOf(json) };
 }
 
+/** 模板 → 建页要的两个正文键（存储键名只许在这一层出现）。 */
+export function templateContentFields(tpl: { content_json: string; content_text?: string }): {
+  content_json: string;
+  content_text: string;
+} {
+  return { content_json: tpl.content_json, content_text: tpl.content_text ?? "" };
+}
+
 export function docJsonOfPage(page: { content_json?: string | null }): string {
   return page.content_json || "{}";
 }

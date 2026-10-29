@@ -3784,6 +3784,200 @@ fn cap_blocks_delete(
     }))
 }
 
+// ── B2-附件与模板（2026-10-29）：files.move / rename / delete（引用检查）＋ templates.apply ──
+//
+// 仍然只产草稿（`mediate:"draft"`）；落库由 `src/lib/ai/apply.ts` 在用户确认后走**既有命令**
+// （`move_attachment` / `rename_attachment` / `remove_attachment` / `createPage`）。
+// ⛔ 本批**不做** `files.upload_to_page` 与 `import.docpackage`：MCP 面没有受控的"原始字节/文件"
+//    入口（⛔ 不接受任意路径）；要做得单独建受控上传通道（见报告降级）。
+
+fn attachment_meta(id: &str) -> Result<(String, String, Option<String>), String> {
+    let att = id.trim();
+    if att.is_empty() {
+        return Err("bad_args: 需要 attId".to_string());
+    }
+    with_read_conn(|c| {
+        use rusqlite::OptionalExtension;
+        c.query_row(
+            "SELECT name, hash, page_id FROM attachments WHERE id = ?1",
+            params![att],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))?
+        .ok_or_else(|| format!("not_found: 附件 {att} 不存在"))
+    })
+}
+
+fn check_expected_sha(hash: &str, expected: Option<&str>) -> Result<(), String> {
+    if let Some(exp) = expected.map(str::trim).filter(|s| !s.is_empty()) {
+        if exp != hash {
+            return Err(format!(
+                "rev_conflict: expectedSha={exp}，当前 sha={hash}（请先用 files.stat 重新读）"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `files.move`：改附件归属（字节不动）。
+fn cap_files_move(
+    att_id: &str,
+    to_page_id: &str,
+    expected_sha: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (name, hash, from) = attachment_meta(att_id)?;
+    let (ptitle, _) = live_target(to_page_id).map_err(|_| format!("not_found: 目标页面 {to_page_id} 不存在或已删除"))?;
+    check_expected_sha(&hash, expected_sha)?;
+    structural_draft(
+        dry_run,
+        format!("move_attachment:{}", att_id.trim()),
+        format!("把附件「{name}」移到「{ptitle}」（原归属：{}）", from.as_deref().unwrap_or("未整理")),
+        serde_json::json!({
+            "kind": "move_attachment",
+            "attId": att_id.trim(),
+            "toPageId": to_page_id.trim(),
+            "expectedSha": hash,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `files.rename`：改显示名（按界面同一条 mime 修复规则；⛔ 不动字节）。
+fn cap_files_rename(
+    att_id: &str,
+    name: &str,
+    expected_sha: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let new_name = name.trim();
+    if new_name.is_empty() {
+        return Err("bad_args: 重命名附件需要 name".to_string());
+    }
+    if new_name.chars().count() > 255 {
+        return Err("bad_args: 附件名超过 255 字上限".to_string());
+    }
+    let (old, hash, _) = attachment_meta(att_id)?;
+    check_expected_sha(&hash, expected_sha)?;
+    structural_draft(
+        dry_run,
+        format!("rename_attachment:{}", att_id.trim()),
+        format!("把附件「{old}」改名为「{new_name}」"),
+        serde_json::json!({
+            "kind": "rename_attachment",
+            "attId": att_id.trim(),
+            "name": new_name,
+            "expectedSha": hash,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `files.delete`：**先做正文引用检查**（`attachment://<sha>`）——还有引用 ⇒ 拒绝并点名页面。
+fn cap_files_delete(
+    att_id: &str,
+    expected_sha: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (name, hash, _) = attachment_meta(att_id)?;
+    check_expected_sha(&hash, expected_sha)?;
+    let needle = format!("attachment://{hash}");
+    let refs: Vec<String> = with_read_conn(|c| {
+        let mut stmt = c
+            .prepare("SELECT id, title FROM pages WHERE deleted_at IS NULL")
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        let mut hits = Vec::new();
+        for (id, title) in rows {
+            if let Some(doc) = crate::doc_content::read(c, &id)? {
+                if doc.json.contains(&needle) {
+                    hits.push(title);
+                }
+            }
+        }
+        Ok(hits)
+    })?;
+    if !refs.is_empty() {
+        return Err(format!(
+            "bad_args: 附件「{name}」仍被正文引用（{} 页：{}）—— 请先从正文删掉引用再删（⛔ 不静默删）",
+            refs.len(),
+            refs.join("、")
+        ));
+    }
+    structural_draft(
+        dry_run,
+        format!("delete_attachment:{}", att_id.trim()),
+        format!("删除附件「{name}」（正文已无引用）"),
+        serde_json::json!({
+            "kind": "delete_attachment",
+            "attId": att_id.trim(),
+            "expectedSha": hash,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `templates.apply`：用模板**新建**一页（永远新建、⛔ 不覆盖）。
+fn cap_templates_apply(
+    template_id: &str,
+    parent_id: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let tid = template_id.trim();
+    if tid.is_empty() {
+        return Err("bad_args: 需要 templateId".to_string());
+    }
+    let parent = parent_id.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(p) = parent {
+        live_target(p).map_err(|_| format!("not_found: 上级节点 {p} 不存在或已删除"))?;
+    }
+    let name: Option<String> = with_read_conn(|c| {
+        use rusqlite::OptionalExtension;
+        c.query_row(
+            "SELECT name FROM meta.templates WHERE id = ?1",
+            params![tid],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))
+    })?;
+    let Some(name) = name else {
+        return Err(format!("not_found: 模板 {tid} 不存在（先用 templates.list 查）"));
+    };
+    structural_draft(
+        dry_run,
+        format!("apply_template:{tid}"),
+        format!("用模板「{name}」新建一页"),
+        serde_json::json!({
+            "kind": "apply_template",
+            "templateId": tid,
+            "parentId": parent,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
 fn cap_properties_list(space_id: Option<&str>) -> CapResult {
     with_conn_for_space(space_id, |c| {
         let mut stmt = c
@@ -4598,6 +4792,36 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         "blocks.delete" => cap_blocks_delete(
             &arg_str("blockId")?,
             arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "files.move" => cap_files_move(
+            &arg_str("attId")?,
+            &arg_str("toPageId")?,
+            arg_opt_str("expectedSha").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "files.rename" => cap_files_rename(
+            &arg_str("attId")?,
+            &arg_str("name")?,
+            arg_opt_str("expectedSha").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "files.delete" => cap_files_delete(
+            &arg_str("attId")?,
+            arg_opt_str("expectedSha").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "templates.apply" => cap_templates_apply(
+            &arg_str("templateId")?,
+            arg_opt_str("parentId").as_deref(),
             arg_opt_str("spaceId").as_deref(),
             arg_bool(args.get("dryRun"), false),
             arg_opt_str("clientRequestId").as_deref(),
@@ -13742,6 +13966,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         g.push("write:pages".to_string());
         g.push("write:tags".to_string());
         g.push("write:properties".to_string());
+        g.push("write:files".to_string());
         g
     }
 
@@ -14074,5 +14299,69 @@ register({ id: "s.run", title: "结构化", run: function () {
         b1c_cleanup(&f);
     }
 
-}
+    /// ⭐ B2-附件与模板（2026-10-29）：引用检查、dryRun、目标校验、模板 not_found。
+    #[test]
+    fn b2_files_delete_checks_references_and_dryrun_is_side_effect_free() {
+        let f = b1c_fixture("b2f-files");
+        point_cap_search_at(&f.dir, &f.space);
+        let (att_id, hash): (String, String) = with_read_conn(|c| {
+            c.query_row(
+                "SELECT id, hash FROM attachments WHERE hash IS NOT NULL LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .unwrap();
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            let doc = format!(
+                r#"{{"root":{{"type":"root","children":[{{"type":"paragraph","blockId":"b1","children":[{{"type":"text","text":"见附件 attachment://{hash}"}}]}}]}}}}"#
+            );
+            c.execute("UPDATE pages SET content_json = ?1 WHERE id = 'p1'", params![doc])
+                .unwrap();
+        }
+        let g = b2_granted();
+        let args = format!(r#"{{"attId":"{att_id}"}}"#);
+        let e = with_external_caller("b2f-ref", &g, || {
+            dispatch_capability("files.delete", &args)
+        })
+        .expect_err("正文仍引用 ⇒ 必须拒绝");
+        assert!(e.contains("bad_args") && e.contains("仍被正文引用"), "{e}");
+        assert!(e.contains("第一页"), "必须点名引用页面：{e}");
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute("UPDATE pages SET content_json = '{}' WHERE id = 'p1'", [])
+                .unwrap();
+        }
+        let dry = format!(r#"{{"attId":"{att_id}","dryRun":true}}"#);
+        let (out, drafts) = with_external_caller("b2f-dry", &g, || {
+            with_fresh_drafts(|| dispatch_capability("files.delete", &dry))
+        });
+        let v: serde_json::Value = serde_json::from_str(&out.expect("dryRun 应 OK")).unwrap();
+        assert_eq!(v["dryRun"], true);
+        assert!(drafts.is_empty(), "dryRun 不许产草稿");
+        let (out2, drafts2) = with_external_caller("b2f-del", &g, || {
+            with_fresh_drafts(|| dispatch_capability("files.delete", &args))
+        });
+        out2.expect("无引用应产草稿");
+        assert_eq!(drafts2.len(), 1);
+        let e = with_external_caller("b2f-move", &g, || {
+            dispatch_capability("files.move", r#"{"attId":"x","toPageId":"nope"}"#)
+        })
+        .expect_err("附件不存在必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        let e = with_external_caller("b2f-rename", &g, || {
+            dispatch_capability("files.rename", &format!(r#"{{"attId":"{att_id}","name":"  "}}"#))
+        })
+        .expect_err("空名必须 bad_args");
+        assert!(e.contains("bad_args"), "{e}");
+        let e = with_external_caller("b2f-tpl", &g, || {
+            dispatch_capability("templates.apply", r#"{"templateId":"nope"}"#)
+        })
+        .expect_err("模板不存在必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        b1c_cleanup(&f);
+    }
 
+}

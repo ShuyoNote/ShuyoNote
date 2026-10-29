@@ -6,10 +6,10 @@
 | 源 | 值 |
 |---|---|
 | 注册表文件 | `capabilities/capabilities.json` |
-| 注册表 sha256 | `fd2f46a2e182068eb54bf2c904b43944994082cf9a9d9d279b0f402a48a04d9a` |
+| 注册表 sha256 | `c929983b974cedadec1630fed3328ca02ca75f599dae4f07f2913d5f594f269a` |
 | `registryVersion` | 1 |
-| `apiVersion` | 1.8.0 |
-| 能力条数 | **53**（按 `kind`：host 2 / read 29 / write 22） |
+| `apiVersion` | 1.9.0 |
+| 能力条数 | **57**（按 `kind`：host 2 / read 29 / write 26） |
 | 生成命令 | `node scripts/gen-knowledge-ontology.mjs` |
 
 | id | kind | scope | permission | ai | mediate | desc |
@@ -27,12 +27,15 @@
 | editor.insertText | write | current-space | write:page.current |  | ✓ | 把一段纯文本插入到当前页的光标处（没有光标则追加到页尾）。**即时生效**，不进草稿确认——它只动你正在编辑的这一页。参数: text (必填)。 |
 | export.docpackage | read | current-space | export:files | ✓ |  | 把一页打包成 `.shuyodoc` 并**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。**只支持单页**（与界面「导出为 .shuyodoc」同口径）。参数: pageId (必填)。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm。 |
 | export.markdown | read | current-space | export:files | ✓ |  | 把一页导出成 Markdown、或把整个空间导出成 zip，**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。参数: pageId (可选，单页 ⇒ .md) / spaceId (可选，整空间 ⇒ 含附件的 .zip；跨空间需「只读（全部空间）」档) —— 两者**只能给一个**。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm（本批未接确认 UI，不静默导出）。 |
+| files.delete | write | current-space | write:files | ✓ | ✓ | 删除一行附件（**先做正文引用检查**：还有页面正文按 `attachment://<sha>` 引用它 ⇒ 拒绝并点名页面）。参数: attId, expectedSha (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。 |
 | files.download | read | current-space | export:files | ✓ |  | 把附件字节取成一个**句柄**（不把字节塞进上下文）：{handle, name, size, sha256, expiresAt}。句柄单次、120 秒有效、绑定本会话；要落盘用 blobs.fetch。参数: attId (必填)。⚠️ >10MB 会返回 needs_confirm（本批未接确认 UI，不静默下载）。 |
 | files.export | write | app | export:files |  | ✓ | 把文本内容保存成文件：用户点「保存」才写。参数: fileName (必填, 建议的文件名), content (必填, 要写入的文本)。 |
 | files.extract_status | read | current-space | read:files | ✓ |  | 读一个附件的**抽取完整度**（单文件口径）：{attId, name, extracted, segments, extractors:[{extractor, coverage}]}。coverage 是原始 JSON 字符串，空串 = 未知，⛔ 空不等于完整。参数: attId (必填)。 |
 | files.list | read | current-space | read:files | ✓ |  | 列出页面附件。参数: pageId (可选, 省略=当前打开的页面)。返回文件名/类型/大小。 |
 | files.list_orphan | read | current-space | read:files | ✓ |  | 列出**未整理附件**（没有挂到任何页面的附件）: {files:[{attId,name,mime,size,sha256,createdAt}], total}。参数: limit (可选, 默认 50, 上限 200), offset (可选, 默认 0)。 |
+| files.move | write | current-space | write:files | ✓ | ✓ | 把附件移到另一个页面/文件夹（改归属，字节不动）。参数: attId, toPageId, expectedSha (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。 |
 | files.read | read | current-space | read:files | ✓ |  | 读取某个附件的**派生文本**（抽取结果，**不含原文字节**）。参数: id (必填), offset/limit (可选分页)。返回 {segments, total, truncated, coverage}；**还没抽过 ⇒ segments 空 + total 0**（不是失败，别据此断言文件里没有内容）。`truncated` 说的是「这一页没给全」，而 `coverage` 说的是「**抽取本身**有没有承认没抽全」（§15.10：成功 ≠ 抽全了）：coverage 里每个抽取器一条 `{extractor, coverage}`，`coverage` 是原始 JSON（如 `{"complete":false,"gapIndexes":[2]}`），**空字符串或空数组都表示「未知」，不许读成「完整」**。 |
+| files.rename | write | current-space | write:files | ✓ | ✓ | 重命名附件的显示名（字节/内容指纹不变）。参数: attId, name, expectedSha (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。 |
 | files.search | read | current-space | read:files | ✓ |  | 在已抽取的文件内容里做块级检索（含扫描件/文档正文）。参数: query (必填), limit (可选, 默认 10)。返回 {chunkId, pageId, attId, loc, snippet, score}：pageId/attId 用来回链到原文位置。 |
 | files.stat | read | current-space | read:files | ✓ |  | 读一个附件的元数据：{attId, pageId, name, mime, size, sha256, spaceId}。sha256 是真实的内容指纹（附件就是按它内容寻址存的）。参数: attId (必填)。 |
 | folders.create | write | current-space | write:pages | ✓ | ✓ | 在页面树里新建一个**文件夹**（不是页面，没有正文）。参数: title (必填), parentId (可选=顶层), spaceId (可选;本版只支持当前空间), dryRun (可选), clientRequestId (可选)。写操作 ⇒ 返回草稿等用户确认。 |
@@ -62,6 +65,7 @@
 | tags.add | write | current-space | write:tags | ✓ | ✓ | 给页面加一个标签。参数: name (必填, 不带 #), pageId (可选, 省略=当前打开的页面)。标签不需要预先创建。这是写操作，返回草稿供用户确认。 |
 | tags.list | read | current-space | read:tags | ✓ |  | 列出本空间用到的标签及各自的页面数。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。返回 [{id, name, page_count}]。 |
 | tags.remove | write | current-space | write:tags | ✓ | ✓ | 把某个标签从页面上**摘掉**（不删标签本身）。参数: name (必填), pageId (可选;省略=当前页), expectedRev (可选), spaceId (可选;本版只支持当前空间), dryRun, clientRequestId。标签不存在/页面没有它 ⇒ `not_found`。写操作 ⇒ 返回草稿等确认。 |
+| templates.apply | write | current-space | write:pages | ✓ | ✓ | 用模板新建一页（模板内容原样复制；⛔ 不覆盖任何已有页面）。参数: templateId (来自 templates.list), parentId (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。 |
 | trash.list | read | current-space | read:trash | ✓ |  | 列出回收站里已软删除的页面（不含正文，也不恢复/清空）。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒), limit (可选, 默认 50, 上限 200)。 |
 | trash.restore | write | current-space | write:pages | ✓ | ✓ | 从回收站恢复一个已软删的节点。参数: id (必填), spaceId (可选;本版只支持当前空间), dryRun, clientRequestId。⛔ 活着的节点 ⇒ `bad_args`（它不需要恢复）。写操作 ⇒ 返回草稿等确认。 |
 | user.notify | host | app | — |  |  | 给用户弹一条提示。参数: message (必填)。命令执行结束后显示；插件没有 console，这是给人看的那条路（写日志用 log.write）。 |

@@ -1212,6 +1212,53 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
       spaceId,
     });
   },
+  // ⭐ B2-附件与模板（2026-10-29）：全部草稿确认
+  "files.move": async (args) => {
+    const attId = String(args.attId ?? "").trim();
+    const toPageId = String(args.toPageId ?? "").trim();
+    const expectedSha = typeof args.expectedSha === "string" ? args.expectedSha : "";
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!attId || !toPageId) return { ok: false, error: "files.move 需要 attId 与 toPageId" };
+    if (dryRun) return { ok: true, dryRun: true, would: { kind: "move_attachment", attId, toPageId, expectedSha }, clientRequestId, spaceId };
+    return draft(`move_attachment:${attId}`, `移动附件 ${attId}`, { kind: "move_attachment", attId, toPageId, expectedSha, clientRequestId, spaceId });
+  },
+
+  "files.rename": async (args) => {
+    const attId = String(args.attId ?? "").trim();
+    const name = String(args.name ?? "").trim();
+    const expectedSha = typeof args.expectedSha === "string" ? args.expectedSha : "";
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!attId || !name) return { ok: false, error: "files.rename 需要 attId 与 name" };
+    if (dryRun) return { ok: true, dryRun: true, would: { kind: "rename_attachment", attId, name }, clientRequestId, spaceId };
+    return draft(`rename_attachment:${attId}`, `把附件改名为「${name}」`, { kind: "rename_attachment", attId, name, expectedSha, clientRequestId, spaceId });
+  },
+
+  "files.delete": async (args) => {
+    const attId = String(args.attId ?? "").trim();
+    const expectedSha = typeof args.expectedSha === "string" ? args.expectedSha : "";
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!attId) return { ok: false, error: "files.delete 需要 attId" };
+    if (dryRun) return { ok: true, dryRun: true, would: { kind: "delete_attachment", attId, expectedSha }, clientRequestId, spaceId };
+    return draft(`delete_attachment:${attId}`, `删除附件 ${attId}`, { kind: "delete_attachment", attId, expectedSha, clientRequestId, spaceId });
+  },
+
+  "templates.apply": async (args) => {
+    const templateId = String(args.templateId ?? "").trim();
+    const parentId = typeof args.parentId === "string" && args.parentId ? args.parentId : null;
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!templateId) return { ok: false, error: "templates.apply 需要 templateId" };
+    if (dryRun) return { ok: true, dryRun: true, would: { kind: "apply_template", templateId, parentId }, clientRequestId, spaceId };
+    return draft(`apply_template:${templateId}`, `用模板 ${templateId} 新建页面`, { kind: "apply_template", templateId, parentId, clientRequestId, spaceId });
+  },
+
 
   // ⭐ B2-结构（2026-10-29）：节点/文件夹/回收站/回退/标签移除/属性去掉。
   //   全部返回**草稿**（落库只有 ai/apply.ts 一处）；dryRun 只回"会做什么"、不生成草稿。

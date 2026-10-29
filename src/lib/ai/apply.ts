@@ -4,7 +4,7 @@
 
 import { api } from "../api";
 import { appendBlocksToJson, pageJsonFromText } from "./lexical";
-import { appendFence, fenceDoc, stampTopLevelBlockIds } from "../docContent";
+import { appendFence, fenceDoc, stampTopLevelBlockIds, templateContentFields } from "../docContent";
 import { markdownToPageContent } from "../mdPreview";
 import { importMarkdownGuard } from "../docContent";
 import { contentTextOf } from "./lexicalContent";
@@ -323,6 +323,45 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       children.splice(at, 1);
       const saved = await api.savePage({ id: pageId, ...saveFieldsWithChildren(docJsonOfPage(page), children) });
       return { ok: true, message: `已删除块「${blockId}」`, page: saved };
+    }
+
+    // ⭐ B2-附件与模板（2026-10-29）：附件归属/改名/删除（引用检查已在能力层做）＋ 模板建页
+    case "move_attachment": {
+      const attId = String(p.attId ?? "");
+      const toPageId = String(p.toPageId ?? "");
+      if (!attId || !toPageId) return { ok: false, message: "move_attachment 参数不完整" };
+      await api.moveAttachment(attId, toPageId);
+      return { ok: true, message: "已移动附件" };
+    }
+
+    case "rename_attachment": {
+      const attId = String(p.attId ?? "");
+      const name = String(p.name ?? "").trim();
+      if (!attId || !name) return { ok: false, message: "rename_attachment 参数不完整" };
+      await api.renameAttachment(attId, name);
+      return { ok: true, message: `已把附件改名为「${name}」` };
+    }
+
+    case "delete_attachment": {
+      const attId = String(p.attId ?? "");
+      if (!attId) return { ok: false, message: "delete_attachment 需要 attId" };
+      await api.removeAttachment(attId);
+      return { ok: true, message: "已删除附件条目（字节仍按内容寻址保留，除非没有任何引用）" };
+    }
+
+    case "apply_template": {
+      const templateId = String(p.templateId ?? "");
+      const parentId = typeof p.parentId === "string" && p.parentId ? p.parentId : null;
+      if (!templateId) return { ok: false, message: "apply_template 需要 templateId" };
+      const templates = await api.listTemplates();
+      const tpl = templates.find((x) => x.id === templateId);
+      if (!tpl) return { ok: false, message: "模板不存在（可先刷新模板列表）" };
+      const page = await api.createPage({
+        parent_id: parentId,
+        title: tpl.name,
+        ...templateContentFields(tpl),
+      });
+      return { ok: true, message: `已用模板「${tpl.name}」新建页面`, page };
     }
 
     default:
