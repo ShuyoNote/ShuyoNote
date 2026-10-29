@@ -3272,15 +3272,27 @@ mod tests {
     #[test]
     fn enabled_那一格仍按活动空间算_两个半边都在() {
         // 把 `encryption_status` 里那一行的**源码**钉住：两个半边缺一 ⇒ 红 ✓
+        // ⚠️ 2026-10-29（全仓 rustfmt 后）：这一行会被**折成多行** ⇒ 原来只取
+        //   `starts_with("let enabled =")` 那一行会漏掉后半边（假红）。改成从该行起
+        //   **一直读到语句结束的 `;`**，再去空白比对；判据（两个半边都在）不变。
         let src = include_str!("security.rs");
-        let line = src
+        let idx = src
             .lines()
-            .find(|l| l.trim_start().starts_with("let enabled ="))
+            .position(|l| l.trim_start().starts_with("let enabled ="))
             .expect("找不到 `let enabled = …` 那一行（结构变了？）");
+        let mut stmt = String::new();
+        for l in src.lines().skip(idx) {
+            stmt.push_str(l);
+            stmt.push('\n');
+            if l.contains(';') {
+                break;
+            }
+        }
+        let compact = stmt.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
-            line.contains("active_space.encrypted_on_disk")
-                && line.contains("active_space.in_keyring"),
-            "`enabled` 的两个半边必须都在（密的／袋里有盒子）—— 实际：{line}"
+            compact.contains("active_space.encrypted_on_disk")
+                && compact.contains("active_space.in_keyring"),
+            "`enabled` 的两个半边必须都在（密的／袋里有盒子）—— 实际：{compact}"
         );
     }
 
