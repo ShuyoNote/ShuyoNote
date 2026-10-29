@@ -31,6 +31,7 @@ import { isDesktopPlatform, platform } from "../lib/platform";
 // 契约的唯一实现是 `src/lib/inlineMd.tsx`（toast 与 SpacePrivacySection 已在用）⇒ 这里接上它。
 import { inlineMd } from "../lib/inlineMd";
 import { subscribeLanChanged } from "../lib/lanEvents";
+import { meshProgressText, meshRoundSummaryText } from "../lib/meshRoundSummary";
 import { isNearRealtimeEnabled, applyNearRealtime } from "../lib/nearRealtime";
 // ★ 2026-09-29（丙档「设备直连」）：**「拉取间隔」这一档** —— 用户可见、可持久化，
 //   读写口径都在 `lib/syncMode.ts` 那一处（面板只调它，不自己碰 localStorage）。
@@ -458,9 +459,11 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   const attTotal = useSyncStatus((s) => s.attTotal);
   const attName = useSyncStatus((s) => s.attName);
   const syncDurationMs = useSyncStatus((s) => s.durationMs);
-  const [history, setHistory] = useState<{ ws_id: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string; title: string }[] }[]>([]);
+  const [history, setHistory] = useState<{ ws_id: string; ws_name: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string; title: string }[] }[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [detailOpenIdx, setDetailOpenIdx] = useState<number | null>(null);
+  // A+C（owner 2026-10-29）：失败那条正在重试 / 复制诊断时的忙碌位。
+  const [retryingHistory, setRetryingHistory] = useState<number | null>(null);
   // P0.1 同页冲突提示：sync_workspace 返回的 dirty 冲突页，用户选择保留/采用。
   const [conflicts, setConflicts] = useState<{ ws_id: string; entity_id: string; title: string }[]>([]);
   // ★ B 方案（2026-09-22）：**待取回的远端版本**（页级保留本地时存下来的那一版）。
@@ -630,7 +633,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   // 同步历史（最新 15 条）。
   const loadHistory = async () => {
     try {
-      const h = await api.listSyncHistory(15).catch(() => [] as { ws_id: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string; title: string }[] }[]);
+      const h = await api.listSyncHistory(15).catch(() => [] as { ws_id: string; ws_name: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string; title: string }[] }[]);
       if (h.length) setHistory(h);
     } catch (e) {
       setStatus(String(e));
@@ -705,12 +708,21 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   const syncMeshNow = async () => {
     if (meshBusy) return;
     setMeshBusy(true);
-    setStatus("");
-    useSyncStatus.getState().begin("正在同步（局域网）…");
+    // ⭐ A（owner 2026-10-29）：**本轮进度** —— 手动同步一次一个空间（`mesh_sync_now(workspace_id)`），
+    //   所以不说"第 N/M 个空间"（那不存在）；说真话：本空间、附近几台、已几秒。
+    const spaceName = activeRow?.name?.trim() || "这个空间";
+    const nearbyCount = Array.isArray(lanStatus?.nearby) ? lanStatus.nearby.length : 0;
+    const startedAt = Date.now();
+    const progress = () => meshProgressText(spaceName, nearbyCount, Date.now() - startedAt);
+    setStatus(progress());
+    useSyncStatus.getState().begin(progress());
+    const timer = setInterval(() => setStatus(progress()), 500);
     try {
       const rep = await api.meshSyncNow(activeId ?? null);
+      clearInterval(timer);
       // 人话**原样来自 Rust**（`rep.note`）—— 面板不许自己遍历读数拼句子。
-      setStatus(`${rep.note}`);
+      // ⭐ A：只补一格它没说的数——「本轮收下几页」（没有收到 ⇒ 空串，不补废话）。
+      setStatus(`${rep.note}${meshRoundSummaryText(rep.applied)}`);
       useSyncStatus.getState().end();
       setLanNonce((n) => n + 1);
       // 网格那轮之后重拉页面列表（换过来的内容不该等切空间才看见）＋ 待取回清单 ＋ 同步历史。
@@ -720,10 +732,58 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
       await loadPendingRemote();
       void loadHistory();
     } catch (e) {
+      clearInterval(timer);
       setStatus(`局域网同步失败：${e}`);
       useSyncStatus.getState().end(String(e));
     } finally {
+      clearInterval(timer);
       setMeshBusy(false);
+    }
+  };
+
+  // ⭐ C（owner 2026-10-29）：失败历史行的**行内动作** —— 只对"设备直连（网格）"那类记录给重试
+  //   （服务端那条路已随团队 UI 归档；重试它没有后端可打）。复制诊断不含任何内部 id。
+  const retryMeshHistory = async (idx: number, h: (typeof history)[number]) => {
+    if (retryingHistory !== null) return;
+    setRetryingHistory(idx);
+    setStatus(`正在重试「${h.ws_name?.trim() || "这个空间"}」…`);
+    try {
+      const rep = await api.meshSyncNow(h.ws_id);
+      setStatus(`重试完成：${rep.note}${meshRoundSummaryText(rep.applied)}`);
+      await loadPendingRemote();
+      useNotes.getState().loadPages();
+      await loadHistory();
+    } catch (e) {
+      setStatus(`重试失败：${e}`);
+    } finally {
+      setRetryingHistory(null);
+    }
+  };
+
+  const copyHistoryDiagnostics = async (h: (typeof history)[number]) => {
+    const lines = [
+      `时间：${new Date(h.at).toLocaleString("zh-CN")}`,
+      `空间：${h.ws_name?.trim() || "这个空间"}`,
+      `结果：${h.ok ? "成功" : "失败"}`,
+      `送出 / 收下：↑ ${h.pushed} / ↓ ${h.pulled}`,
+      ...(h.message ? [`说明：${h.message}`] : []),
+      ...(h.items.length
+        ? [
+            "明细：",
+            ...h.items.slice(0, 30).map((it) => {
+              const dir = it.dir === "push" ? "↑" : "↓";
+              const op = it.op === "delete" ? "删除" : "变更";
+              return `${dir} ${entityLabel(it.entity)} ${op} ${it.title || "（无标题）"}`;
+            }),
+            ...(h.items.length > 30 ? [`…等 ${h.items.length - 30} 项`] : []),
+          ]
+        : []),
+    ];
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      toast("诊断信息已复制（不含任何内部标识）", "success");
+    } catch (e) {
+      toast(`复制失败：${e}`, "error");
     }
   };
 
@@ -1987,6 +2047,27 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                                   )}
                                 </div>
                                 {h.message && <div className="sync-history-msg">{h.message}</div>}
+                                {!h.ok && (
+                                  <div className="sync-history-actions">
+                                    {h.message.startsWith("设备直连（网格") && (
+                                      <button
+                                        className="sync-history-action"
+                                        data-testid="sync-history-retry"
+                                        disabled={retryingHistory !== null}
+                                        onClick={() => void retryMeshHistory(i, h)}
+                                      >
+                                        {retryingHistory === i ? "重试中…" : "重试"}
+                                      </button>
+                                    )}
+                                    <button
+                                      className="sync-history-action"
+                                      data-testid="sync-history-copy"
+                                      onClick={() => void copyHistoryDiagnostics(h)}
+                                    >
+                                      复制诊断
+                                    </button>
+                                  </div>
+                                )}
                                 {open && (
                                   <div className="sync-history-items">
                                     {h.items.slice(0, 30).map((it, j) => (

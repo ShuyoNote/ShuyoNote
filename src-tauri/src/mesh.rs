@@ -838,6 +838,9 @@ pub struct MeshRoundReport {
     pub note: String,
     /// 发现层里**够格当网格对端**的台数（＝下面 `peers` 的行数）。
     pub candidates: usize,
+    /// ⭐ 2026-10-29：本轮**真的收下**的页数（各对端 `applied` 之和）—— **Rust 侧算好的读数**，
+    /// 界面只显示、⛔ 不许自己遍历 `peers` 数（`syncPanelMesh.wiring` ⑦ 钉着"面板不自己数"）。
+    pub applied: usize,
     pub peers: Vec<PeerPullReport>,
     /// 本机窗口**实际**绑在哪儿（没开 ⇒ `None`）。⚠️ 它由**命令面**填（`round` 本身不开窗）。
     pub window: Option<String>,
@@ -1830,6 +1833,7 @@ pub async fn round(
             enabled: false,
             note: "没有配网格监听地址 ⇒ 网格这一档关着（这一轮一个字节都没动）".to_string(),
             candidates: 0,
+            applied: 0,
             peers: Vec::new(),
             window: None,
         });
@@ -1853,6 +1857,7 @@ pub async fn round(
             note: "网格开着，但这个网段里没有能直接拉的对端（没人代言这个空间 / 只有我自己）"
                 .to_string(),
             candidates: 0,
+            applied: 0,
             peers: Vec::new(),
             window: None,
         });
@@ -1951,6 +1956,7 @@ pub async fn round_candidates(
         enabled: true,
         note,
         candidates: out.len(),
+        applied: out.iter().map(|p| p.applied).sum(),
         peers: out,
         window: None,
     })
@@ -5021,6 +5027,7 @@ pub async fn sealed_round(
             enabled: true,
             note,
             candidates: 0,
+            applied: 0,
             peers: Vec::new(),
             window: window_addr(proto_space).map(|a| format!("http://{a}")),
         });
@@ -5123,6 +5130,7 @@ pub async fn sealed_round(
         enabled: true,
         note,
         candidates: targets.len(),
+        applied: 0, // 锁态只收封包、不解密应用 ⇒ 没有"收下的页"
         peers: out,
         window: window_addr(proto_space).map(|a| format!("http://{a}")),
     })
@@ -10581,6 +10589,7 @@ mod tests {
                 enabled: true,
                 note: String::new(),
                 candidates: peers.len(),
+                applied: peers.iter().map(|p| p.applied).sum(),
                 peers,
                 window: None,
             }

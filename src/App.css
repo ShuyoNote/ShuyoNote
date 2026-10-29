@@ -2837,6 +2837,28 @@ select.sync-input {
   font-size: 11px; color: var(--danger);
   word-break: break-word;
 }
+/* ⭐ A+C（owner 2026-10-29）：失败历史行的行内动作（重试 / 复制诊断）—— 小、安静、不抢"清空"。 */
+.sync-history-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.sync-history-action {
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+.sync-history-action:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.sync-history-action:disabled { opacity: 0.55; cursor: default; }
 .sync-history-detail-toggle {
   border: none;
   background: transparent;

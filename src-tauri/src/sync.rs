@@ -4480,6 +4480,7 @@ mod mesh_history_tests {
             enabled,
             note: format!("网格：拉了 {} 台对端", peers.len()),
             candidates: peers.len(),
+            applied: peers.iter().map(|p| p.applied).sum(),
             peers,
             window: None,
         }
