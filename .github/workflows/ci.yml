@@ -216,6 +216,12 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: 确保 rustfmt（rust 组的 fmt 门禁用它）
+        # `dtolnay/rust-toolchain@stable` 的默认 profile 带 rustfmt；这一行是**显式钉住**：
+        # 将来换 toolchain / 有人把 profile 改成 minimal 时，红在这一步（一眼看懂），
+        # 而不是让 `check-rustfmt` 在 rust 组里报「环境不具备」。
+        run: rustup component add rustfmt
+
       - name: Linux system deps
         run: |
           sudo apt-get update
