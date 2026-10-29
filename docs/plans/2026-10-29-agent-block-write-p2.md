@@ -1,6 +1,6 @@
 # 方案：外部 Agent 的**块级写面**（P2）—— 寻址、版本校验、审计
 
-状态：方案确认（未开始实现）—— 前置：P1（md 读投影 + 块锚点）尚未落地；owner 2026-10-29 已定「Agent 要读写」。
+状态：方案确认（未开始实现）—— 前置：P1（md 读投影 + 块锚点）尚未落地；owner 2026-10-29 要求「Agent 要读写」。
 
 关联：本仓 MCP 写入口现状（`pages_create` / `blocks_append` / `pages_importMarkdown` / `pages_update`，2026-10-29 实测 13 个工具）与 `.shuyodoc` M1 格式层（`src/lib/docPackage*.ts`）。
 
