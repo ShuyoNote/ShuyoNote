@@ -56,7 +56,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 85 条（contract 58 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 29 条 · 命令 Rust 275 / web 249 / CommandMap 276
+门禁 86 条（contract 58 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 9 / artifact 3 / deploy 1）· 能力 29 条 · 命令 Rust 275 / web 249 / CommandMap 276
 基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 3585 · smoke-web 365 · check-pdf-reload 8 · check-panel-layout 61 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 68 · mobile-overlays 756 · mobile-views 249 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
@@ -111,6 +111,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-plan-status` | **每篇方案头部要有 `状态：`，且"报完成"不许空口无凭**：判据只两条 —— ① `docs/plans/*.md` 的**头部**（第一个 `## ` 标题之前）必须有 `状态：` 字段；② 取值含 `已完成/已实现/已收口/已落地/已拍板/已定` 的，必须带 `证据：`，且证据里用**反引号或 markdown 链接**写出的每个仓内相对路径都要**真实存在**。2026-09-27 盘点 91 篇时实测出这条的由来：**「写状态」是 `2026-08-24` 才成为习惯的** —— 08-24 起头部统一是 `> 目标版本：…` ＋ `> 状态：规划（建议）。…`，而 08-22 及更早那批**根本没有这一行**；全文扫出 **51 篇缺状态行 ＋ 13 篇自报完成却无证据**。后果不是洁癖：那批里好几篇的功能**早已落地**（`roadmap.md` 有 `✅ M9（v1.13.0）`…`✅ M14（v1.37.0）`，都带版本号），**可它们在文档里和「未实装」长得一模一样** ⇒ 分不出哪些还有效，于是同一件事会被第二次立项。旧账冻结在 `scripts/plan-status-baseline.json`（**只减不增**）。⚠️ **状态取值是自由文本，门禁不发明词表** —— 它的第一版编了一个词表，据此把 24 篇判成"状态词非法"，而仓库实际在用的词有十几种（`已收口` `已实现` `已拍板` `已定` `规划` `提议` `施工单` `决策/建议` `进度口径` `待拍板` …）⇒ 已改成"没见过的词只提醒、不判红"；第一版还有第二个错：扫**全文**找状态，把正文里别的 `状态：` 字段误判成方案状态 ⇒ 现在只在**头部**找。**它不判状态对不对**（那是语义，靠人），只保证声明不空口 |
 | mobile | `mobile-views` | 主区整视图 ＋ 属性表 ＋ 小控件 ＋ **PDF 阅读器真 DOM**：窄屏下"整块视图不能用"这类坏法，布局门禁照不到 |
 | rust | `gm-conformance` | 国密对拍：这条线**同时保两份 SM4 实现**（应用层 RustCrypto / 库级 Tongsuo）⇒ 漂移的后果是"跨设备读不出对方的数据"，而它没有任何编译期信号 |
+| rust | `check-rustfmt` | **Rust 格式不再裸奔**（2026-10-29 owner：「给 CI 加上 fmt 步骤」）：跑 `cargo fmt --check`，只允许两个**登记例外** —— `capabilities_gen.rs`（生成物，必须与生成器逐字节一致）与 `plugins.rs`（`check-capabilities` 按原排版解析 dispatch 的 match 臂）。⛔ 新增例外要写理由；⛔ 别把「命令没跑起来」当成「0 处问题」（不是通过） |
 | rust | `rust-no-sm-crypto` | **回滚通道**：`--no-default-features`（不编国密）仍要能编译 ＋ 全量单测通过 —— 它是"一行可逆"那个承诺的实现，没人编就会腐烂 |
 | rust | `check-sys-deps-linux` | 上面那条的 **deb 实查**版：硬判据只能来自 `ci.yml` 的 `Linux system deps` 步，逐条按 `dpkg` 实查（表里凭空要求 CI 不装的包 ⇒ 门禁自己就是假话）。挂在 rust 组是因为**只有**这个 job 装了 Tauri 那套系统包 |
 | smoke | `tsc` | 类型错误 |
