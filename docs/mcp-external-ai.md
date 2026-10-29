@@ -20,7 +20,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | 档位（界面名） | 内部 id | 能做什么 | 建议 |
 |---|---|---|---|
 | 不接 | `off` | 通道关闭 | 平常不用时选它 |
-| 只读 | `read` | 读**当前空间**的页面/搜索/块/反链/附件/当前页/标签/属性定义/页面树 | 让 AI 总结、问答时够用 |
+| 只读 | `read` | 读**当前空间**的页面/搜索/块/反链/附件/当前页/标签/属性定义/页面树/**数据库结构与行** | 让 AI 总结、问答时够用 |
 | 只读（全部空间） | `read_all` | 同上，跨所有空间（加密空间锁着时读不到内容） | 需要跨空间检索时开 |
 | 可写（每次确认） | `write_confirm` | 新建/追加直接写；**整页替换会先问你** | **要写就用这个（推荐）** |
 | 可写（免确认） | `write_auto` | 所有写操作**直接落库、不询问**；每次写仍留一行审计 | ⚠️ 只在刚备份过、且信任该 AI 时短开 |
@@ -57,7 +57,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 4. 怎么验证通没通
 
-1. 让 AI **列工具**：应看到 **读面 14 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `tags_list` / `properties_list` / `spaces_list`；切到**可写**档后再多 **4 个写面**（共 **18 个**）：`pages_create` / `pages_update` / `pages_importMarkdown` / `blocks_append`；
+1. 让 AI **列工具**：应看到 **读面 16 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `tags_list` / `properties_list` / `spaces_list` / `db_schema` / `db_rows`；切到**可写**档后再多 **4 个写面**（共 **20 个**）：`pages_create` / `pages_update` / `pages_importMarkdown` / `blocks_append`；
 2. 让它读一篇：「列出运营空间最近修改的 3 篇笔记」；
 3. 能读出来说明链路通；**被拒**通常说明档位不够（见 §6）；
 4. 每次调用都会**记一行审计**（谁/何时/做了什么/成败）。
@@ -69,6 +69,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | `spaces_list`、`pages_list`、`pages_get`、`pages_search`、`pages_count`、`pages_tree`、`tags_list`、`properties_list`、`blocks_list`、`backlinks_list`、`files_list`、`files_search`、`files_read` | 只读及以上 |
 | `pages_search` / `pages_list` / `pages_count` / `pages_tree` / `tags_list` / `properties_list` 带 `spaceId`（跨空间） | **只读（全部空间）**及以上（未开该档却带 `spaceId` ⇒ 明确 `permission_denied`，不会悄悄当成当前空间） |
 | `page_current`（**没有 `spaceId`**） | 只读及以上；⚠️ 外部接入看不到界面里「当前页」这个状态时**如实回 `opened:false`**（不会编造一页） |
+| `db_schema`（数据库的**列/视图/关系列**） | 只读及以上。公式列带 `isFormula:true`、汇总列带 `isRollup:true`，**只标类型、不计算**；带 `spaceId` 跨空间 ⇒ **只读（全部空间）**及以上（未开该档 ⇒ 明确 `permission_denied`，不会悄悄当成当前空间） |
+| `db_rows`（数据库**行**） | 只读及以上。`where` 的字段必须来自 `db_schema` 报出的列（id 或列名），操作符白名单 `= != > >= < <= in contains is_null`，写错 ⇒ `invalid_args` 并点名第几条；**只给原始值**（⛔ 不重算公式/汇总，可能与界面计算值不同）；`limit` 默认 100/上限 500；带 `spaceId` 跨空间 ⇒ **只读（全部空间）**及以上（未开 ⇒ `permission_denied`） |
 | `pages_create`、`blocks_append`、`pages_importMarkdown` | `可写（每次确认）`及以上 |
 | `pages_update`（整页替换） | `可写（每次确认）`：会先弹确认 |
 
@@ -102,10 +104,11 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 ## 9. 后续路线（会改变本指南的地方）
 
 - **块级写面（P2）**：新增 `blocks_patch/insert/delete`，带 `expectedRev` 冲突校验与 `dryRun` —— 粒度从"整页替换"降到"按块改"；
-- **只读扩容（B1）**：数据库/大纲/历史版本/增量变更（`changes_since`）/附件 stat 等；
+- **只读扩容（B1）**：大纲/历史版本/增量变更（`changes_since`）/附件 stat 等（**数据库结构/行已在 B1b 落地**）；
 - 清单与档位判据：[能力暴露矩阵](plans/2026-10-29-agent-capability-exposure-matrix.md)；块级写方案：[P2 方案](plans/2026-10-29-agent-block-write-p2.md)。
 
 ## 10. 版本
 
+- 2026-10-29：只读扩容（B1b）—— MCP 工具 **18 → 20**（读面 16 / 写面 4）：新增 `db_schema`（数据库的列/视图/关系列；公式列 `isFormula:true`、汇总列 `isRollup:true`，**只标类型不计算**）与 `db_rows`（行数据，**只给原始值**，⛔ 不重算公式/汇总；简单 `where` 白名单 ＋ `limit`/`offset` 分页在宿主侧执行，响应体超 200 KB 如实标 `truncated`）。`apiVersion` 1.3.0 → **1.4.0**。
 - 2026-10-29：只读扩容（B1a）—— MCP 工具 **13 → 18**（读面 14 / 写面 4）：新增 `page_current`、`pages_count`、`tags_list`、`properties_list`、`pages_tree`（一次给出整棵空间树，超限如实标 `truncated`）。`coverage_report` **仍不在** MCP 面上（它是应用内 AI 宿主能力，接 MCP 需要前端桥，留待后续）。`apiVersion` 1.2.0 → **1.3.0**。
 - 2026-10-29：首版（配合 `pages_get` 的 `rev`＋块锚点、`.shuyodoc` 导出导入落地后的对外说明）。

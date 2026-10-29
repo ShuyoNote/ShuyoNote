@@ -37,6 +37,11 @@ export const NOTE_ID_PREFIXES = [
   //   不是安全边界的例外 —— 这条规则本意挡的是 fs/网络/命令类能力。
   //   ⛔ 别在这里加 `fs.` / `exec.` / `net.` 这类（那才是它要挡的 ✗）。
   "page.", "properties.",
+  // ⭐ 2026-10-29（B1b）：`db.schema` / `db.rows` 是**笔记域**能力（数据库的列/视图/行原始值，
+  //   就是笔记库里的结构化内容）—— 与上一行同一条判断：白名单此前只收 `pages.` 等前缀，
+  //   而 `db.*` 一直没挂 `ai:true`，属于**清单遗漏**，不是安全边界的例外。
+  //   ⛔ 别在这里加 `fs.` / `exec.` / `net.` / `sql.` 这类（任意 SQL 仍是矩阵 §9.2 的红线 ✗）。
+  "db.",
 ];
 export const ALLOWED_AI_KINDS = ["read", "write"];
 export const ALLOWED_AI_SCOPE = "current-space";

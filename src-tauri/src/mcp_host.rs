@@ -462,6 +462,42 @@ mod tests {
         }
     }
 
+    /// ⭐ **B1b（2026-10-29）判据 5（挂载级那一半）**：`db.schema` / `db.rows` 在「不接」档
+    /// （`granted` 为空）必须**逐条** `permission_denied`，且拒绝消息点名的是**注册表里
+    /// 写着的那条权限**（`read:pages`；⛔ 不在测试里手抄 —— 注册表改了这里自动跟）。
+    ///
+    /// 变异（会红）：把 `db.schema` 的 `permission` 改成 `null` ⇒ 它变成"无需权限"⇒ 这条的第一断
+    /// 言红（说明这一格真的由注册表驱动）。
+    #[test]
+    fn b1b_db_tools_are_denied_table_driven_without_the_read_grant() {
+        for method in ["db.schema", "db.rows"] {
+            let cap = crate::capabilities_gen::lookup(method)
+                .unwrap_or_else(|| panic!("注册表里必须有 {method} ✓"));
+            let perm = cap.permission.expect("只读能力也有权限门 ✓");
+            let session = format!("b1b-denied-{}", method.replace('.', "-"));
+            let err = match handle_external_call(&session, &[], method, "{}") {
+                Ok(v) => panic!("{method} 在无授权时**必须被拒**，实际成功：{v}"),
+                Err(e) => e,
+            };
+            assert!(
+                err.contains("permission_denied"),
+                "{method} 在无授权时必须 permission_denied：{err}"
+            );
+            assert!(
+                err.contains(perm),
+                "{method} 的拒绝必须点名缺哪个权限 {perm}：{err}"
+            );
+            let rows = audit_of(&format!("external:{session}"));
+            assert_eq!(
+                rows.len(),
+                1,
+                "{method} 被拒也必须留痕 ✓（拿到 {} 条）",
+                rows.len()
+            );
+            assert_eq!(rows[0].error_code.as_deref(), Some("permission_denied"));
+        }
+    }
+
     /// ⭐ 判据 6：**没有打开的页面 ⇒ 如实说**（不报 500 形状的错、⛔ 不编造一页）。
     ///
     /// 为什么挂在这一层：外部接入**拿不到**界面里「当前页」这个状态（`RunState.current_page_id`
@@ -571,6 +607,9 @@ mod tools_list_tests {
             "pages_tree",
             "tags_list",
             "properties_list",
+            // ⭐ B1b（2026-10-29）：数据库只读两条也在读面清单里（同一份注册表生成 ✓）
+            "db_schema",
+            "db_rows",
         ] {
             assert!(
                 off.iter().any(|x| x == n),

@@ -18,6 +18,10 @@ vi.mock("../api", () => ({
     listWorkspaces: vi.fn(),
     listTags: vi.fn(),
     listAttrDefs: vi.fn(),
+    // ⭐ B1b（2026-10-29）：数据库读两条的依赖（应用内 AI 面这一侧）
+    getDbColumns: vi.fn(),
+    listDbViews: vi.fn(),
+    queryDatabase: vi.fn(),
   },
 }));
 
@@ -54,6 +58,9 @@ const EXPECTED = [
   "pages.tree",
   "properties.list",
   "tags.list",
+  // ⭐ B1b（2026-10-29）：数据库只读两条进 AI/MCP 面（注册表 `ai:true`，MCP 清单同源生成）
+  "db.schema",
+  "db.rows",
 ];
 
 describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实现）", () => {
@@ -193,6 +200,79 @@ describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实�
 
     const props = (await getAiTool("properties.list")!.run({}, CTX)) as Record<string, any>;
     expect(props.properties[0]).toEqual({ id: "a1", name: "状态", type: "select" });
+  });
+
+  // ⭐ B1b（2026-10-29）：数据库只读两条在**应用内 AI 面**这一侧（MCP 侧的权威实现在 Rust）
+  const DB_COLUMNS = [
+    { id: "a1", name: "状态", attr_type: "select", options: [] },
+    { id: "a2", name: "分数", attr_type: "number", options: [] },
+    { id: "a5", name: "公式", attr_type: "formula", options: [] },
+    { id: "a6", name: "关联", attr_type: "ref", options: [] },
+  ];
+  const DB_ROWS = [
+    { page_id: "r1", title: "甲", values: { a1: "进行中", a2: "10", a5: "a1+a2", a6: "p:r2" } },
+    { page_id: "r2", title: "乙", values: { a1: "完成", a2: "20" } },
+    { page_id: "r3", title: "丙", values: { a1: "进行中", a2: "30" } },
+  ];
+  const mockDb = () => {
+    vi.mocked(api.listPages).mockResolvedValue([
+      { id: "db1", title: "任务库", kind: "database", parent_id: null, sort_order: 0 },
+    ] as never);
+    vi.mocked(api.getDbColumns).mockResolvedValue(DB_COLUMNS as never);
+    vi.mocked(api.listDbViews).mockResolvedValue([
+      { id: "v1", db_page_id: "db1", name: "表格", view_type: "table", config: "{}", sort_order: 0, created_at: 1 },
+    ] as never);
+    vi.mocked(api.queryDatabase).mockResolvedValue({ columns: DB_COLUMNS, rows: DB_ROWS } as never);
+  };
+
+  it("B1b·db.schema：列/视图与 UI 同源；公式列只标 isFormula（⛔ 不计算）", async () => {
+    mockDb();
+    const r = (await getAiTool("db.schema")!.run({ pageId: "db1" }, CTX)) as Record<string, any>;
+    expect(r.ok).toBe(true);
+    expect(r.views).toEqual([{ id: "v1", name: "表格", type: "table" }]);
+    expect(r.columns.map((c: any) => c.id)).toEqual(["a1", "a2", "a5", "a6"]);
+    expect(r.columns[2].isFormula).toBe(true);
+    expect(r.columns[2].value).toBeUndefined();
+    expect(r.relations).toEqual([{ id: "a6", name: "关联", type: "ref" }]);
+  });
+
+  it("B1b·db.rows：只给原始值（公式列不算）＋ where/分页在宿主侧生效", async () => {
+    mockDb();
+    const all = (await getAiTool("db.rows")!.run({ pageId: "db1" }, CTX)) as Record<string, any>;
+    expect(all.ok).toBe(true);
+    expect(all.total).toBe(3);
+    expect(all.rows[0].values.a5).toBe("a1+a2");
+    expect(String(all.note)).toContain("原始值");
+
+    // 单条件（列名）＋ AND（列 id，数值列按数值比）
+    const one = (await getAiTool("db.rows")!.run(
+      { pageId: "db1", where: [{ field: "a1", op: "=", value: "进行中" }, { field: "a2", op: ">", value: 15 }] },
+      CTX,
+    )) as Record<string, any>;
+    expect(one.total).toBe(1);
+    expect(one.rows[0].id).toBe("r3");
+
+    // 分页：limit/offset 在宿主侧切片，total 不变
+    const page = (await getAiTool("db.rows")!.run({ pageId: "db1", limit: 2, offset: 1 }, CTX)) as Record<string, any>;
+    expect(page.total).toBe(3);
+    expect(page.rows.map((r: any) => r.id)).toEqual(["r2", "r3"]);
+    expect(page.truncated).toBe(false);
+  });
+
+  it("B1b·db.rows：坏 where 逐条 invalid_args 并点名（⛔ 不许静默返回空）", async () => {
+    mockDb();
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ pageId: "db1", where: [{ field: "不存在的列", op: "=", value: 1 }] }, "不存在的列"],
+      [{ pageId: "db1", where: [{ field: "a1", op: "like", value: "x" }] }, "like"],
+      [{ pageId: "db1", where: [{ field: "a1", op: "in", value: "进行中" }] }, "数组"],
+    ];
+    for (const [args, needle] of cases) {
+      const r = (await getAiTool("db.rows")!.run(args, CTX)) as Record<string, any>;
+      expect(r.ok).toBe(false);
+      expect(String(r.error)).toContain("invalid_args");
+      expect(String(r.error)).toContain(needle);
+      expect(String(r.error)).toContain("where[0]");
+    }
   });
 });
 

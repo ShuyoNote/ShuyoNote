@@ -1,4 +1,4 @@
-# 插件 API（v1.3.0）
+# 插件 API（v1.4.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.3.0",
+  "apiVersion": "1.4.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.3.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.4.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -107,6 +107,8 @@ register({
 | `pages.get` | `api.pages.get(id, offset, limit, includeAnchors)` | `read:pages` | `current-space` | — | object | 1.0.0 |
 | `pages.search` | `api.pages.search(q, spaceId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `pages.tree` | `api.pages.tree(spaceId, limit)` | `read:pages` | `current-space` | — | object | 1.3.0 |
+| `db.schema` | `api.db.schema(pageId, spaceId)` | `read:pages` | `current-space` | — | object | 1.4.0 |
+| `db.rows` | `api.db.rows(pageId, viewId, where, limit, offset, spaceId)` | `read:pages` | `current-space` | — | object | 1.4.0 |
 | `tags.list` | `api.tags.list(spaceId)` | `read:tags` | `current-space` | — | array | 1.0.0 |
 | `blocks.list` | `api.blocks.list(pageId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | — | array | 1.0.0 |
@@ -191,6 +193,30 @@ register({
 - 参数：
   - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
   - `limit`: `number`（可选），默认 `2000` —— 最多返回多少个节点（默认 2000，上限 2000；超出 ⇒ truncated:true）
+
+### `db.schema` — 读取数据库结构
+
+- 调用：`api.db.schema(pageId, spaceId)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：{pageId, spaceId, views:[{id,name,type}], columns:[{id,name,type,isFormula?,isRollup?}], relations:[{id,name,type}]}：列与视图与界面**同一条查询**（getDbColumns / listDbViews）；公式列带 isFormula:true、汇总列带 isRollup:true（**只标明类型，本工具不计算任何值**）；relations 是 type=ref 的关系列（取值形如 `p:<pageId>`）
+- 参数：
+  - `pageId`: `string` —— 数据库页 id（**必填**）。本应用的数据库是 `kind=database` 的页面节点（在 pages.tree / pages.list 里看得到）；⛔ 不是「数据库块所在的那篇普通笔记」
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
+
+### `db.rows` — 读取数据库行（原始值）
+
+- 调用：`api.db.rows(pageId, viewId, where, limit, offset, spaceId)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：{pageId, spaceId, total, returned, rows:[{id, values:{<columnId>: <原始值>}}], truncated, note}：total 是**过滤后**的总行数（不受 limit 影响）；values **只给原始值**（原始字符串），⛔ **不重算公式/汇总** ⇒ 可能与界面里显示的计算值不同（note 里有这句）；truncated=true 表示本次没给全（还有更多行，或响应体撞了 200 KB 上限）
+- 参数：
+  - `pageId`: `string` —— 数据库页 id（**必填**）。本应用的数据库是 `kind=database` 的页面节点
+  - `viewId`: `string`（可选） —— 视图 id（可选；省略 = 不加视图过滤）。给了就套用该视图保存的**标题过滤与排序**（与界面同一个视图配置）；认不出的 id ⇒ invalid_args，不会静默忽略
+  - `where`: `array`（可选） —— 简单条件数组（可选；不传 = 全部行）。形状：[{field, op, value?}]，多条之间是 **AND**；field 是列 id 或列名（**id 优先**，列名须完全一致；列必须来自 db.schema）；op 白名单 = != > >= < <= in contains is_null；in 的 value 必须是数组；is_null 不需要 value。越界/未知字段/坏操作符 ⇒ invalid_args（点名声哪条）
+  - `limit`: `number`（可选），默认 `100` —— 本页最多返回多少行（默认 100，上限 500）；分页在宿主侧执行
+  - `offset`: `number`（可选），默认 `0` —— 跳过多少行（默认 0）；与 limit 一起翻页
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
 
 ### `tags.list` — 列出本空间标签
 
@@ -591,7 +617,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.3.0",
+  "runtime": "declarative", "apiVersion": "1.4.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },

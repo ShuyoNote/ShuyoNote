@@ -53,6 +53,12 @@ const jsSig = (cap) => `api.${cap.jsPath.join(".")}(${cap.args.map((a) => a.name
 /** JS 侧实参 → 传给 __cap 的对象字面量片段。 */
 function argExpr(a) {
   const coerce = a.type === "number" ? "Number" : "String";
+  // ⭐ B1b（2026-10-29）：`where` 是**数组**（复合值）—— ⛔ 不能 `String()` 强转
+  //   （`String([{…}])` ⇒ `"[object Object]"`，宿主拿到的是垃圾）。复合值原样递给
+  //   `JSON.stringify(args)` 即可（shim 的下游就是 JSON）。
+  if (a.type === "array" || a.type === "object") {
+    return `${a.name}: ${a.name} === undefined ? undefined : ${a.name}`;
+  }
   // 关键：`undefined` 必须原样传下去（JSON.stringify 会丢掉这个键），
   // 否则 String(undefined) = "undefined" 会让宿主把"没传参"当成"传了个字符串"，
   // 变成静默的错误输入（曾把 api.blocks.append("文本") 的文本当成 pageId）。
@@ -384,7 +390,8 @@ export function genTypes(reg) {
     node[path[path.length - 1]] = cap;
   }
   const tsType = (t) =>
-    ({ string: "string", number: "number", boolean: "boolean", void: "void" })[t] ?? "unknown";
+    ({ string: "string", number: "number", boolean: "boolean", void: "void", array: "unknown[]", object: "Record<string, unknown>" })[t] ??
+    "unknown";
   const emitTs = (obj, indent) => {
     const pad = " ".repeat(indent);
     return Object.entries(obj)
@@ -393,7 +400,7 @@ export function genTypes(reg) {
           const params = val.args
             .map((a) => {
               const opt = a.required === false ? "?" : "";
-              const t = a.enum ? a.enum.map((e) => JSON.stringify(e)).join(" | ") : tsType(a.type);
+              const t = a.enum ? a.enum.map((e) => JSON.stringify(e)).join(" | ") : (a.ts ?? tsType(a.type));
               return `${a.name}${opt}: ${t}`;
             })
             .join(", ");
@@ -1152,11 +1159,18 @@ export function genMcpTools(reg, kind = "read") {
     // ⭐ 2026-10-06（M2 · Task W1）：同一个函数也用来生成**写面**清单 ✓（`kind` 参数 ✓）。
   //    读面清单的字节**不许变**（M1 的硬判据盯着它 ✓）⇒ 写面才带 `kind` 字段 ✓。
   const tools = reg.capabilities.filter((c) => c.ai && c.kind === kind && c.host !== "frontend");
-  const jsonType = (t) => ({ string: "string", number: "number", boolean: "boolean" })[t] ?? "string";
+  // ⭐ B1b（2026-10-29）：`array` 参数（`db.rows` 的 `where`）要生成**真正的 JSON Schema 数组**
+  //   —— 以前这里只有标量三型，其它一律回落 `"string"` ⇒ 外部 agent 会以为要传字符串
+  //   （`String([{…}])` 的坑在 shim 那侧也有，同一个原因）。元素类型先统一 `object`
+  //   （`where` 的元素就是 `{field,op,value}`）。
+  const jsonType = (t) =>
+    ({ string: "string", number: "number", boolean: "boolean", array: "array", object: "object" })[t] ??
+    "string";
   const list = tools.map((c) => {
     const properties = {};
     for (const a of c.args ?? []) {
       properties[a.name] = { type: jsonType(a.type) };
+      if (a.type === "array") properties[a.name].items = { type: "object" };
       if (a.enum) properties[a.name].enum = a.enum;
       if (a.desc) properties[a.name].description = a.desc;
     }

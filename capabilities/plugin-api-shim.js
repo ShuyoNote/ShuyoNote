@@ -22,6 +22,10 @@ var api = {
     importMarkdown: function(title, markdown, parentId) { return __capCall("pages.importMarkdown", { title: title === undefined ? undefined : String(title), markdown: markdown === undefined ? undefined : String(markdown), parentId: parentId === undefined ? undefined : String(parentId) }); },
     update: function(id, markdown, content, title) { return __capCall("pages.update", { id: id === undefined ? undefined : String(id), markdown: markdown === undefined ? undefined : String(markdown), content: content === undefined ? undefined : String(content), title: title === undefined ? undefined : String(title) }); }
   },
+  db: {
+    schema: function(pageId, spaceId) { return __capCall("db.schema", { pageId: pageId === undefined ? undefined : String(pageId), spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
+    rows: function(pageId, viewId, where, limit, offset, spaceId) { return __capCall("db.rows", { pageId: pageId === undefined ? undefined : String(pageId), viewId: viewId === undefined ? undefined : String(viewId), where: where === undefined ? undefined : where, limit: limit === undefined ? 100 : Number(limit), offset: offset === undefined ? 0 : Number(offset), spaceId: spaceId === undefined ? undefined : String(spaceId) }); }
+  },
   tags: {
     list: function(spaceId) { return __capCall("tags.list", { spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
     add: function(name, pageId) { return __capCall("tags.add", { name: name === undefined ? undefined : String(name), pageId: pageId === undefined ? undefined : String(pageId) }); }
