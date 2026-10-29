@@ -38,7 +38,7 @@
 | blocks.list | read:pages | 现✓ | — | 已有 |
 | backlinks.list | read:backlinks | 现✓ | — | 已有 |
 | files.list / files.search / files.read | read:files | 现✓ | — | 已有（派生文本） |
-| coverage.report | read:files | R | B1 | "哪些没进检索面" |
+| coverage.report | read:files | R | **B3** | `host:"frontend"`，`check-capabilities` §2c 禁止进 MCP 面 ⇒ 需先建「Rust→前端」请求/应答桥（2026-10-29 决定） |
 | tags.list | read:tags | R | B1 | 注册表有、MCP 未暴露 |
 | properties.list | read:properties | R | B1 | 数据库/属性读前门 |
 | spaces.list | read:pages | 现✓ | — | 已有 |
@@ -183,7 +183,7 @@
 6. **数据库写范围**：`db.rows_write/delete` v1 **只支持简单表格（table）的原始列**；⛔ 不写关系列/公式列/汇总列；`db.rows` 明确标注"**原始值**，可能与界面计算值不同"。
 
 ### 13.3 结构性调整
-7. **B1 拆三段**：**B1a**（纯读：`page.current`/`pages.count`/`tags.list`/`properties.list`/`coverage.report`/`pages.tree`）→ **B1b**（`db.schema`/`db.rows`＋简单 where）→ **B1c**（`versions.*`/`trash.list`/`files.stat`/`files.extract_status`/`files.list_orphan`/`files.download`/`export.*`/`files.export`/`blobs.fetch`）。三段各自可合入、可回滚。
+7. **B1 拆三段**：**B1a**（纯读：`page.current`/`pages.count`/`tags.list`/`properties.list`/`pages.tree`（`coverage.report` 改判 B3：需前端桥））→ **B1b**（`db.schema`/`db.rows`＋简单 where）→ **B1c**（`versions.*`/`trash.list`/`files.stat`/`files.extract_status`/`files.list_orphan`/`files.download`/`export.*`/`files.export`/`blobs.fetch`）。三段各自可合入、可回滚。
 8. **`nodes.delete` 语义**：删**非空文件夹** ⇒ **拒绝**并提示"N 个子项"（⛔ 不递归删）；空文件夹或页面 ⇒ 软删进回收站。
 9. **`changes_since` 响应形状**：`{pageId, rev, changedBlocks:[{blockId, op:"update"|"insert"}], deletedBlockIds:[]}`；强制 `limit`（默认 100，上限 500）；无变化 ⇒ 空数组。
 10. **`audit.tail`（R / B1a）**：只读最近 N 条（默认 20，上限 100）：`{at, tool, capability, targets:[ids], ok}`；**只回本会话 + 本机**；⛔ 不回内容正文、不回其他用户会话。
@@ -195,3 +195,11 @@
 ### 13.5 v3.1 的开工顺序（替代 §12）
 
 1. **可行性核对**（已完成，见文档）→ 2. **B1a**（纯读 6 个，零新建命令）→ 3. **B1b**（db 读＋where，需扩展 `query_database` 过滤）→ 4. **B1c**（导出/下载＋句柄消费方）→ 5. **B2**（写＋回滚＋删除/恢复，`blocks.*` 另立 P2 实现任务）。
+
+### 13.6 门禁前缀（A 方案，2026-10-29 拍）
+
+`page.current` / `properties.list` 挂 `ai:true` 时被 `check-agent-surface` §4「笔记域前缀白名单」判红 —— 原因是 `NOTE_ID_PREFIXES` 漏了 `page.` / `properties.`，**不是安全边界问题**（该规则本意挡 fs/网络类能力）。
+
+- **决定：A** —— 给 `NOTE_ID_PREFIXES` 补 `"page."`、`"properties."` 两个笔记域前缀，保住「应用内 AI 面 ＝ MCP 面同一套」，⛔ 不面分裂；
+- 改门禁脚本必须附**变异证据**（账本 `_repo_mutations`）：删掉 `"page."` ⇒ 门禁必红（逐字 `ai:true 的能力「page.current」不在**笔记域**前缀集里`）⇒ 还原必绿；
+- `coverage.report` 从 B1a 移出、改判 **B3**：它是 `host:"frontend"`，而 `check-capabilities` §2c 明令前端宿主能力不得进 MCP 清单 ⇒ 要接必须先建「Rust→前端」请求/应答桥（超出 B1a 范围，⛔ 不手改生成物硬塞）。

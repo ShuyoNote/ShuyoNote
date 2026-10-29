@@ -51,3 +51,8 @@
 - **B1a**（`page.current`/`pages.count`/`tags.list`/`properties.list`/`coverage.report`/`pages.tree`）：**零新建命令**（tree/count 可用 listPages 组装，建议专用但非阻塞）；
 - **B1b**（`db.schema`/`db.rows`）：需先定 `query_database` 过滤方案；
 - **B1c**（versions/trash/files 读/导出/下载/`blobs.fetch`）：需 **新建 `blobs.fetch`** ＋ 确认附件 sha 字段。
+
+## 追加结论（2026-10-29）
+
+- `coverage.report`：**B1a 不做**（改判 B3）。理由是 `host:"frontend"`（Rust 按设计没实现），而 `check-capabilities` §2c 明令前端宿主能力**不得出现在 MCP 清单**（M1 拍板：面里不许有调不通的工具）。要接必须先建「Rust→前端」请求/应答桥 ＋ 新命令 ⇒ 超出「零新建命令」，单独立项。
+- `page.current` / `properties.list` 的 `ai:true` 前缀冲突：**通过补 `NOTE_ID_PREFIXES`（A 方案）解决**，属门禁清单遗漏，不是放宽安全边界（见矩阵 §13.6）。
