@@ -417,6 +417,19 @@ describe("片 D1a-1：0 台时也渲染三段标题", () => {
     ).not.toContain("还没发现别的设备");
   });
 
+  it("①e ⭐ A+C（owner 2026-10-29）：同步中给本轮进度；失败历史行可重试/复制诊断", () => {
+    const panelSrc = read("src/components/SyncPanel.tsx");
+    const meshFn = panelSrc.slice(panelSrc.indexOf("const syncMeshNow"), panelSrc.indexOf("const statusKind"));
+    expect(meshFn, "同步中要有本轮进度（不是空白）").toContain("meshProgressText(");
+    expect(meshFn, "完成时补「收下几页」").toContain("meshRoundSummaryText(rep.applied)");
+    expect(meshFn, "⛔ 面板仍不许自己遍历 peers 数（用 Rust 的 applied）").not.toContain("rep.peers");
+    expect(meshFn, "进度要真的在跑（定时刷新）").toContain("setInterval(");
+    expect(panelSrc, "失败历史行要有「重试」").toContain("sync-history-retry");
+    expect(panelSrc, "失败历史行要有「复制诊断」").toContain("sync-history-copy");
+    expect(panelSrc, "重试真的调 mesh_sync_now（带那个空间的 id）").toContain("api.meshSyncNow(h.ws_id)");
+    expect(panelSrc, "只对失败行给动作").toContain("!h.ok");
+  });
+
   it("② 锁（今天已绿 ✓）：`NEARBY_GROUPS` 三条 label 逐字未变 ＋ 另两支逐字未变", () => {
     expect(src, "⭐ 三条 label 逐字 ✓").toContain('{ testid: "nearby-group-keychanged", label: "需要重新配对" }');
     expect(src, "⭐ 三条 label 逐字 ✓").toContain('{ testid: "nearby-group-trusted", label: "已信任" }');

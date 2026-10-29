@@ -308,6 +308,8 @@ export interface MeshRoundReport {
   /** **说得出为什么**：用户要能分辨"没开"／"开了但网段里没人"／"有人但都拉不动"。 */
   note: string;
   candidates: number;
+  /** ⭐ 2026-10-29：本轮**真的收下**的页数（Rust 侧各对端 `applied` 之和）。 */
+  applied: number;
   peers: MeshPeerPullReport[];
   /** 本机窗口**实际**绑在哪儿（没开 ⇒ `null`）。 */
   window: string | null;
