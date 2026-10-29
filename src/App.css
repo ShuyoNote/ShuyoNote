@@ -27843,7 +27843,13 @@ button.mset-row:focus-visible {
 /* ── ① 设备行：三段式 ─────────────────────────────────────────────────────── */
 .sync-nearby-row {
   display: flex;
-  align-items: center;
+  /* ⭐ 2026-10-29（owner 截图）：这里原来吃到了上面那条老规则的 `flex-wrap: wrap` ✗ ——
+     而 `.sync-nearby-main` 的 flex-basis 是 auto（内容宽，含那句很长的「不再信任」说明）
+     ⇒ 一行塞不下时**头像独占一行、名字落到第二行、按钮再落到第三行** ✓（截图正是这样）。
+     ⇒ 三段式卡片必须 `nowrap`：头像/主信息/动作同一行，说明在中间那列自己换行 ✓。
+     窄屏（手机面板）仍保留换行：见下面 `@media` ✓。 */
+  flex-wrap: nowrap;
+  align-items: flex-start;
   gap: 12px;
   padding: 12px 14px;
   border: 1px solid var(--border);
@@ -27957,6 +27963,9 @@ button.mset-row:focus-visible {
   align-items: center;
   gap: 8px;
   margin-left: auto;
+  /* 三段式：动作与名字**顶对齐**（原来 `align-items:center` 会把两颗按钮浮到卡片中线，
+     下面还有一行说明时看着像脱开了 ✓）。窄屏走 720px 那条 grid，不受影响。 */
+  align-self: flex-start;
 }
 .sync-nearby-actions .sync-btn {
   height: 30px;
