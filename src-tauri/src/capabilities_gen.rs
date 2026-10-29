@@ -17,7 +17,7 @@ pub struct Capability {
     pub rust: &'static str,
 }
 
-pub const API_VERSION: &str = "1.9.0";
+pub const API_VERSION: &str = "1.10.0";
 pub const API_MAJOR: u32 = 1;
 
 pub const CAPABILITIES: &[Capability] = &[
@@ -62,6 +62,9 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "files.rename", kind: "write", scope: "current-space", permission: Some("write:files"), since: "1.9.0", mediate: "draft", rust: "cap_files_rename" },
     Capability { id: "files.delete", kind: "write", scope: "current-space", permission: Some("write:files"), since: "1.9.0", mediate: "draft", rust: "cap_files_delete" },
     Capability { id: "templates.apply", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.9.0", mediate: "draft", rust: "cap_templates_apply" },
+    Capability { id: "files.upload_to_page", kind: "write", scope: "current-space", permission: Some("write:files"), since: "1.10.0", mediate: "draft", rust: "cap_files_upload" },
+    Capability { id: "import.docpackage", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.10.0", mediate: "draft", rust: "cap_import_docpackage" },
+    Capability { id: "files.detach", kind: "write", scope: "current-space", permission: Some("write:files"), since: "1.10.0", mediate: "draft", rust: "cap_files_detach" },
     Capability { id: "folders.create", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.7.0", mediate: "draft", rust: "cap_folders_create" },
     Capability { id: "nodes.move", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.7.0", mediate: "draft", rust: "cap_nodes_move" },
     Capability { id: "nodes.rename", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.7.0", mediate: "draft", rust: "cap_nodes_rename" },

@@ -1813,6 +1813,64 @@ pub fn move_attachment(db: State<'_, Db>, id: String, new_page_id: String) -> Re
     Ok(())
 }
 
+/// 把附件从页面**摘掉**（`page_id` 置 NULL ⇒ 变"未整理"，**保留文件字节**）。
+///
+/// ⚠️ 与 delete 是两件事：delete 删这一行、字节只在没有任何引用时才释放；detach 只改归属。
+pub(crate) fn detach_attachment_row(
+    c: &rusqlite::Connection,
+    id: &str,
+) -> Result<Option<(String, Option<String>, String, i64)>, String> {
+    use rusqlite::OptionalExtension;
+    let page: Option<Option<String>> = c
+        .query_row("SELECT page_id FROM attachments WHERE id = ?1", params![id], |r| {
+            r.get::<_, Option<String>>(0)
+        })
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some(page) = page else {
+        return Err("附件不存在".to_string());
+    };
+    if page.is_none() {
+        return Err("附件已经是未整理状态（无需再摘除）".to_string());
+    }
+    c.execute("UPDATE attachments SET page_id = NULL WHERE id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
+    let meta = c
+        .query_row(
+            "SELECT name, hash, mime, size FROM attachments WHERE id = ?1",
+            params![id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(meta.map(|(name, hash, mime, size)| (name, hash, mime, size)))
+}
+
+/// 命令内层：置空 + 记一条同步变更（需要 device id）。
+pub(crate) fn detach_attachment_inner(c: &rusqlite::Connection, id: &str) -> Result<(), String> {
+    let meta = detach_attachment_row(c, id)?;
+    if let Some((name, hash, mime, size)) = meta {
+        let now = now_ms();
+        let payload = serde_json::json!({ "id": id, "page_id": serde_json::Value::Null, "name": name, "hash": hash, "mime": mime, "size": size }).to_string();
+        record_change(c, "attachment", id, "upsert", Some(&payload), now)?;
+    }
+    Ok(())
+}
+
+/// 桌面命令：把附件从页面摘掉（变未整理，保留字节）。
+#[tauri::command]
+pub fn detach_attachment(db: State<'_, Db>, id: String) -> Result<(), String> {
+    let c = db.0.lock().expect("db mutex poisoned");
+    detach_attachment_inner(&c, &id)
+}
+
 /// Rename an attachment's display name (bytes/hash unchanged).
 ///
 /// ## mime 随不随改名变（2026-09-17 定的语义，别改回去）

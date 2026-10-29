@@ -491,6 +491,52 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
     isWrite: true,
   },
   {
+    id: "files.upload_to_page",
+    description: "上传一个本地文件作为页面附件。**文件由用户在系统选择框里亲自选**（⛔ Agent 不能给路径）。参数: pageId, name (可选期望文件名;同名自动 `-N`), spaceId, dryRun, clientRequestId。>10MB ⇒ 明确 needs_confirm（本批限额）；用户取消 ⇒ cancelled（不静默成功）。写操作 ⇒ 草稿确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "pageId": { type: "string" },
+      "name": { type: "string" },
+      "spaceId": { type: "string" },
+      "dryRun": { type: "boolean" },
+      "clientRequestId": { type: "string" },
+      },
+      required: ["pageId"],
+    },
+    isWrite: true,
+  },
+  {
+    id: "import.docpackage",
+    description: "导入一个 `.shuyodoc`（复用它自己的读包/校验；**永远新建、不覆盖**）。**文件由用户在系统选择框里亲自选**。参数: parentId (可选), spaceId, dryRun, clientRequestId。坏包 ⇒ 错误原文点名条目；取消 ⇒ cancelled。写操作 ⇒ 草稿确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "parentId": { type: "string" },
+      "spaceId": { type: "string" },
+      "dryRun": { type: "boolean" },
+      "clientRequestId": { type: "string" },
+      },
+      required: [],
+    },
+    isWrite: true,
+  },
+  {
+    id: "files.detach",
+    description: "把附件从页面摘掉、**保留文件字节**（`page_id = NULL` ⇒ 未整理）。与 `files.delete` 是两件事。参数: attId, spaceId, dryRun, clientRequestId。已经未整理 ⇒ 明确 `bad_args`（不假装成功）。写操作 ⇒ 草稿确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "attId": { type: "string" },
+      "spaceId": { type: "string" },
+      "dryRun": { type: "boolean" },
+      "clientRequestId": { type: "string" },
+      },
+      required: ["attId"],
+    },
+    isWrite: true,
+  },
+  {
     id: "folders.create",
     description: "在页面树里新建一个**文件夹**（不是页面，没有正文）。参数: title (必填), parentId (可选=顶层), spaceId (可选;本版只支持当前空间), dryRun (可选), clientRequestId (可选)。写操作 ⇒ 返回草稿等用户确认。",
     argsSchema: {

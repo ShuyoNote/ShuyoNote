@@ -57,7 +57,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 4. 怎么验证通没通
 
-1. 让 AI **列工具**：应看到 **读面 27 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows`；切到**可写**档后再多 **21 个写面**（共 **48 个**）：`pages_create` / `pages_update` / `pages_importMarkdown` / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset` / `blocks_patch` / `blocks_insert` / `blocks_delete`；
+1. 让 AI **列工具**：应看到 **读面 27 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows`；切到**可写**档后再多 **24 个写面**（共 **51 个**）：`pages_create` / `pages_update` / `pages_importMarkdown` / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset` / `blocks_patch` / `blocks_insert` / `blocks_delete`；
 2. 让它读一篇：「列出运营空间最近修改的 3 篇笔记」；
 3. 能读出来说明链路通；**被拒**通常说明档位不够（见 §6）；
 4. 每次调用都会**记一行审计**（谁/何时/做了什么/成败）。
@@ -84,6 +84,9 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | `tags_add` / `tags_remove` / `properties_set` / `properties_unset` | 可写；草稿确认。目标页不存在 ⇒ `not_found`；标签/属性不存在 ⇒ `not_found`；数字属性给非数字 ⇒ `bad_args` |
 | `blocks_patch` / `blocks_insert` / `blocks_delete`（块级写） | 可写；草稿确认（`mediate:"draft"`）。按**顶层块 id** 寻址；`patch` 后**块 id 不变**；`insert` 返回 `newBlockId`（确认后即可继续用）；`delete` 不留空块、不许删最后一个块。`expectedRev` 不一致 ⇒ `rev_conflict` **带 currentRev ＋ 当前 markdown（带块锚点）**；`dryRun` 只演练；`clientRequestId` 幂等 |
 | `files_move` / `files_rename` / `files_delete`（附件写） | 可写；草稿确认。`files_delete` **先做正文引用检查**：正文仍按 `attachment://<sha>` 引用 ⇒ `bad_args` 并点名页面（⛔ 不静默删）；`expectedSha` 可选，不一致 ⇒ `rev_conflict` |
+| `files_upload_to_page`（受控上传） | 可写；草稿确认。⚠️ **确认后由用户亲自在系统文件选择框里选文件**（⛔ Agent 不能给路径）；同名自动 `-N` 不覆盖；>10MB ⇒ `needs_confirm`；取消 ⇒ `cancelled` |
+| `import_docpackage`（导入 .shuyodoc） | 可写；草稿确认。**用户亲自选文件**；**永远新建、不覆盖**；坏包 ⇒ 错误原文（点名条目）；取消 ⇒ `cancelled` |
+| `files_detach`（摘除附件、保留文件） | 可写；草稿确认。`page_id = NULL` ⇒ 变未整理（`files_list_orphan` 可见、页清单不可见）；sha/字节不变；已未整理 ⇒ `bad_args` |
 | `templates_apply`（模板建页） | 可写；草稿确认。永远**新建**、⛔ 不覆盖；模板不存在 ⇒ `not_found` |
 | `pages_create`、`blocks_append`、`pages_importMarkdown` | `可写（每次确认）`及以上 |
 | `pages_update`（整页替换） | `可写（每次确认）`：会先弹确认 |
@@ -111,6 +114,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - **写一致性与幂等**：所有写工具都是**草稿确认**（不经你确认不落库）；支持 `expectedRev`（`updated_at:sha8`，与 `pages.get` 的 `rev` 同一形态）——不一致 ⇒ `rev_conflict`（带当前 rev，⛔ 不覆盖）；`dryRun:true` 只回"会做什么"（不产草稿、不记审计）；`clientRequestId` 同 id 重复调用只落一次、只审一条（进程内 10 分钟）；写 `spaceId` 本版**只支持当前空间**（别的空间 ⇒ `permission_denied`，需 `write:all-spaces` 档，默认关）；
 - **块级写的边界**：`blocks_*` 只动**顶层块**（不做整篇锚点对齐、不做嵌套块编辑）；`applied` 在调用时**永远是 false** —— 写能力都是草稿确认，用户确认后才落库；`rev_conflict` 里的 markdown 由应用窗口算（窗口没开时退回正文带锚点，如实说明）；
 - **附件与模板写的边界**：`files_delete` 不做静默删除（正文仍引用 ⇒ 拒绝并点名）；`files_upload_to_page` / `import_docpackage` **本批不做**（MCP 面没有受控的原始字节/文件入口，⛔ 不接受任意路径）；`db_rows_write/delete` **本批不做**（需要新的数据库行写命令，属单独小批次）；
+- **上传/导入走系统文件选择框**：`files_upload_to_page` / `import_docpackage` **不接受 Agent 传的任何路径**，确认草稿后由**用户亲自选文件**；用户取消 ⇒ `cancelled`（不静默成功/失败）；>10MB 上传 ⇒ `needs_confirm`。
 - **企业版**：团队/租户空间的 Agent 写面临时**不在本指南范围**（身份、角色、审计合规、数据边界四问未定，见能力矩阵 §8）。
 
 ## 8. 推荐配置（一句话版）
@@ -127,6 +131,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - 清单与档位判据：[能力暴露矩阵](plans/2026-10-29-agent-capability-exposure-matrix.md)；块级写方案：[P2 方案](plans/2026-10-29-agent-block-write-p2.md)。
 
 ## 10. 版本
+
+- 2026-10-29：**B2-补遗-1（受控上传通道）—— MCP 工具 48 → 51（读面 27 / 写面 24）**：新增 `files_upload_to_page`（**用户亲自在系统文件选择框选文件**；同名 `-N`；>10MB ⇒ `needs_confirm`；取消 ⇒ `cancelled`）、`import_docpackage`（用户选 `.shuyodoc`，复用 M1 读包，**永远新建**）、`files_detach`（`page_id=NULL`、保留字节，新增命令 `detach_attachment`）。`apiVersion` 1.9.0 → **1.10.0**。
 
 - 2026-10-29：**附件与模板写 —— MCP 工具 44 → 48（读面 27 / 写面 21）**：新增 `files_move` / `files_rename` / `files_delete`（**正文引用检查**：仍被 `attachment://<sha>` 引用 ⇒ 拒绝并点名页面）与 `templates_apply`（模板建页、永远新建）。全部草稿确认；`expectedSha`/`dryRun`/`clientRequestId` 沿用同一口径。`apiVersion` 1.8.0 → **1.9.0**。⚠️ `files_upload_to_page` / `import_docpackage` / `db_rows_write` / `db_rows_delete` **本批未做**（缺受控字节通道 / 数据库行写命令），见报告降级。
 

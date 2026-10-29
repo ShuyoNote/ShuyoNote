@@ -60,6 +60,9 @@ export const NOTE_ID_PREFIXES = [
   // ⭐ 2026-10-29（B2-附件与模板）：`templates.apply` 是用**本库模板**建页（笔记域），
   //   ⛔ 不是 fs/网络类；同属清单遗漏。
   "templates.",
+  // ⭐ 2026-10-29（B2-补遗-1）：`import.docpackage` 是**本库文档包**导入（永远新建页），
+  //   文件由用户在系统选择框里亲自选 —— 属笔记域；同属清单遗漏。
+  "import.",
 ];
 export const ALLOWED_AI_KINDS = ["read", "write"];
 export const ALLOWED_AI_SCOPE = "current-space";

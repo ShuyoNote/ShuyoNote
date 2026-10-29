@@ -1258,6 +1258,37 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     if (dryRun) return { ok: true, dryRun: true, would: { kind: "apply_template", templateId, parentId }, clientRequestId, spaceId };
     return draft(`apply_template:${templateId}`, `用模板 ${templateId} 新建页面`, { kind: "apply_template", templateId, parentId, clientRequestId, spaceId });
   },
+  // ⭐ B2-补遗-1（2026-10-29）：受控上传通道（用户选文件）＋ 导入文档包 ＋ 附件 detach
+  "files.upload_to_page": async (args) => {
+    const pageId = String(args.pageId ?? "").trim();
+    const name = typeof args.name === "string" ? args.name : "";
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!pageId) return { ok: false, error: "files.upload_to_page 需要 pageId" };
+    if (dryRun) return { ok: true, dryRun: true, would: { kind: "upload_attachment", pageId, nameHint: name || null }, clientRequestId, spaceId };
+    return draft(`upload_attachment:${pageId}`, `上传附件到页面（需要你亲自选文件）`, { kind: "upload_attachment", pageId, nameHint: name || null, clientRequestId, spaceId });
+  },
+
+  "import.docpackage": async (args) => {
+    const parentId = typeof args.parentId === "string" && args.parentId ? args.parentId : null;
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (dryRun) return { ok: true, dryRun: true, would: { kind: "import_docpackage", parentId }, clientRequestId, spaceId };
+    return draft("import_docpackage", "导入 .shuyodoc（需要你亲自选文件；永远新建）", { kind: "import_docpackage", parentId, clientRequestId, spaceId });
+  },
+
+  "files.detach": async (args) => {
+    const attId = String(args.attId ?? "").trim();
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!attId) return { ok: false, error: "files.detach 需要 attId" };
+    if (dryRun) return { ok: true, dryRun: true, would: { kind: "detach_attachment", attId }, clientRequestId, spaceId };
+    return draft(`detach_attachment:${attId}`, `把附件从页面摘除（保留文件）`, { kind: "detach_attachment", attId, clientRequestId, spaceId });
+  },
+
 
 
   // ⭐ B2-结构（2026-10-29）：节点/文件夹/回收站/回退/标签移除/属性去掉。

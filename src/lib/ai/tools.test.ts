@@ -97,6 +97,10 @@ const EXPECTED = [
   "files.rename",
   "files.delete",
   "templates.apply",
+  // ⭐ B2-补遗-1（2026-10-29）
+  "files.upload_to_page",
+  "import.docpackage",
+  "files.detach",
 ];
 
 describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实现）", () => {

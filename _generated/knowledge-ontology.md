@@ -6,10 +6,10 @@
 | 源 | 值 |
 |---|---|
 | 注册表文件 | `capabilities/capabilities.json` |
-| 注册表 sha256 | `c929983b974cedadec1630fed3328ca02ca75f599dae4f07f2913d5f594f269a` |
+| 注册表 sha256 | `d265720d8828f2c6416d674db1a9745cd84db6f1524cad4a6069027b2cd3e248` |
 | `registryVersion` | 1 |
-| `apiVersion` | 1.9.0 |
-| 能力条数 | **57**（按 `kind`：host 2 / read 29 / write 26） |
+| `apiVersion` | 1.10.0 |
+| 能力条数 | **60**（按 `kind`：host 2 / read 29 / write 29） |
 | 生成命令 | `node scripts/gen-knowledge-ontology.mjs` |
 
 | id | kind | scope | permission | ai | mediate | desc |
@@ -28,6 +28,7 @@
 | export.docpackage | read | current-space | export:files | ✓ |  | 把一页打包成 `.shuyodoc` 并**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。**只支持单页**（与界面「导出为 .shuyodoc」同口径）。参数: pageId (必填)。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm。 |
 | export.markdown | read | current-space | export:files | ✓ |  | 把一页导出成 Markdown、或把整个空间导出成 zip，**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。参数: pageId (可选，单页 ⇒ .md) / spaceId (可选，整空间 ⇒ 含附件的 .zip；跨空间需「只读（全部空间）」档) —— 两者**只能给一个**。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm（本批未接确认 UI，不静默导出）。 |
 | files.delete | write | current-space | write:files | ✓ | ✓ | 删除一行附件（**先做正文引用检查**：还有页面正文按 `attachment://<sha>` 引用它 ⇒ 拒绝并点名页面）。参数: attId, expectedSha (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。 |
+| files.detach | write | current-space | write:files | ✓ | ✓ | 把附件从页面摘掉、**保留文件字节**（`page_id = NULL` ⇒ 未整理）。与 `files.delete` 是两件事。参数: attId, spaceId, dryRun, clientRequestId。已经未整理 ⇒ 明确 `bad_args`（不假装成功）。写操作 ⇒ 草稿确认。 |
 | files.download | read | current-space | export:files | ✓ |  | 把附件字节取成一个**句柄**（不把字节塞进上下文）：{handle, name, size, sha256, expiresAt}。句柄单次、120 秒有效、绑定本会话；要落盘用 blobs.fetch。参数: attId (必填)。⚠️ >10MB 会返回 needs_confirm（本批未接确认 UI，不静默下载）。 |
 | files.export | write | app | export:files |  | ✓ | 把文本内容保存成文件：用户点「保存」才写。参数: fileName (必填, 建议的文件名), content (必填, 要写入的文本)。 |
 | files.extract_status | read | current-space | read:files | ✓ |  | 读一个附件的**抽取完整度**（单文件口径）：{attId, name, extracted, segments, extractors:[{extractor, coverage}]}。coverage 是原始 JSON 字符串，空串 = 未知，⛔ 空不等于完整。参数: attId (必填)。 |
@@ -38,7 +39,9 @@
 | files.rename | write | current-space | write:files | ✓ | ✓ | 重命名附件的显示名（字节/内容指纹不变）。参数: attId, name, expectedSha (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。 |
 | files.search | read | current-space | read:files | ✓ |  | 在已抽取的文件内容里做块级检索（含扫描件/文档正文）。参数: query (必填), limit (可选, 默认 10)。返回 {chunkId, pageId, attId, loc, snippet, score}：pageId/attId 用来回链到原文位置。 |
 | files.stat | read | current-space | read:files | ✓ |  | 读一个附件的元数据：{attId, pageId, name, mime, size, sha256, spaceId}。sha256 是真实的内容指纹（附件就是按它内容寻址存的）。参数: attId (必填)。 |
+| files.upload_to_page | write | current-space | write:files | ✓ | ✓ | 上传一个本地文件作为页面附件。**文件由用户在系统选择框里亲自选**（⛔ Agent 不能给路径）。参数: pageId, name (可选期望文件名;同名自动 `-N`), spaceId, dryRun, clientRequestId。>10MB ⇒ 明确 needs_confirm（本批限额）；用户取消 ⇒ cancelled（不静默成功）。写操作 ⇒ 草稿确认。 |
 | folders.create | write | current-space | write:pages | ✓ | ✓ | 在页面树里新建一个**文件夹**（不是页面，没有正文）。参数: title (必填), parentId (可选=顶层), spaceId (可选;本版只支持当前空间), dryRun (可选), clientRequestId (可选)。写操作 ⇒ 返回草稿等用户确认。 |
+| import.docpackage | write | current-space | write:pages | ✓ | ✓ | 导入一个 `.shuyodoc`（复用它自己的读包/校验；**永远新建、不覆盖**）。**文件由用户在系统选择框里亲自选**。参数: parentId (可选), spaceId, dryRun, clientRequestId。坏包 ⇒ 错误原文点名条目；取消 ⇒ cancelled。写操作 ⇒ 草稿确认。 |
 | kv.get | read | app | kv:own |  |  | 读取插件自己的私有数据。参数: key (必填), scope (可选, 默认 space)。没存过返回 null。与 api.settings 的区别：settings 是**用户**设的、插件只读；kv 是插件自己存的。 |
 | kv.remove | write | app | kv:own |  | ✓ | 删掉插件自己的一条私有数据。参数: key (必填), scope (可选, 默认 space)。即时生效。 |
 | kv.set | write | app | kv:own |  | ✓ | 写插件自己的私有数据。参数: key (必填), value (必填), scope (可选, 默认 space = 随空间加密；'app' = 明文 meta 库，别放敏感内容)。**即时生效**：只动插件自己的数据，不碰笔记内容，所以不走草稿确认。 |
