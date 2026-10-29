@@ -118,6 +118,9 @@ const settle = async () => {
 };
 
 beforeEach(() => {
+  // ⭐ 2026-10-29：面板的「跨挂载列表缓存」挂在 globalThis 上（真机上用来避免每次点开都重拉），
+  // 但测试里必须每条用例从零开始 —— 否则上一条的缓存会让这一条**不发请求**、判据全乱。
+  delete (globalThis as unknown as { __emailListCache?: unknown }).__emailListCache;
   mocks.listAccounts.mockReset();
   mocks.listFolders.mockReset();
   mocks.listMonths.mockReset();

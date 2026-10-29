@@ -748,8 +748,17 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
       setErr("请先在 设置 → 邮箱 配置 IMAP 账号");
       return;
     }
-    // ⭐ A（2026-10-21）：60 秒内已经拉过、且手上还有列表 ⇒ **不重复拉** ✓
-    if (Date.now() - lastFetchAtRef.current < FETCH_TTL_MS && list.length > 0) return;
+    // ⭐ 2026-10-29：**缓存优先** —— 先把手上的列表摆出来（⛔ 不白屏），再决定要不要拉。
+    if (list.length === 0 && cache.list.length > 0) {
+      setList(cache.list);
+      setUnread(cache.unread);
+      setHasMore(cache.hasMore);
+      if (cache.fetchedAt > 0) setFetchedAt(cache.fetchedAt);
+      lastFetchAtRef.current = cache.at;
+      if (!active) void selectEmail(cache.list[0]);
+    }
+    // ⭐ A（2026-10-21）：TTL 内且手上已有列表 ⇒ **不重复拉** ✓（缓存跨挂载存活后这条才真的生效）
+    if (Date.now() - lastFetchAtRef.current < FETCH_TTL_MS && (list.length > 0 || cache.list.length > 0)) return;
     void fetchInbox();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -783,8 +792,20 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
   // ⭐⭐ **2026-10-21（owner：每次点邮箱都重新拉 / 定时有没有用）**：
   //   A：**60 秒内打开过就不重复拉**（列表已在前端状态里）—— 再点开**立刻出列表** ✓
   //   C：把 `fetched_at` 显示成「上次收取 HH:MM」，用户能看出后台定时在不在跑 ✓
-  const FETCH_TTL_MS = 60 * 1000;
-  const lastFetchAtRef = useRef<number>(0);
+  // ⭐⭐ **2026-10-29（owner：「每次点侧栏邮件都要重新拉」）**：上一版的 TTL 挂在 `useRef` 上，
+  // 而面板由 `ActivityBar` 的 `mailOpen && <EmailPanel/>` 卸载 ⇒ **ref 每次归零、TTL 永远不成立** ✗。
+  // 现在把「上次拉到的列表」挂到 `globalThis`（**只在本进程内存里，退出即失**，⛔ 不落盘 ✗）⇒
+  // 再点开**先摆缓存、再静默刷新**；5 分钟内直接不拉。
+  const FETCH_TTL_MS = 5 * 60 * 1000;
+  type EmailListCache = { at: number; list: EmailMeta[]; unread: number; fetchedAt: number; hasMore: boolean };
+  const cache = ((globalThis as unknown as { __emailListCache?: EmailListCache }).__emailListCache ??= {
+    at: 0,
+    list: [],
+    unread: 0,
+    fetchedAt: 0,
+    hasMore: false,
+  });
+  const lastFetchAtRef = useRef<number>(cache.at);
 
   const fetchInbox = async (
     af: string[] = accountFilter,
@@ -804,6 +825,12 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
       // 拉不到的账号如实显示（后端 `errors`）：否则"少了一个账号的信"看起来就像"没有新邮件"。
       setAccountErrors(agg.errors ?? []);
       setHasMore(agg.emails.length >= PAGE_SIZE);
+      // ⭐ 2026-10-29：这一份写进**跨挂载缓存**（下次点开先摆它，⛔ 不白屏）
+      cache.at = Date.now();
+      cache.list = agg.emails;
+      cache.unread = agg.unread;
+      cache.fetchedAt = typeof agg.fetched_at === "number" && agg.fetched_at > 0 ? agg.fetched_at : cache.fetchedAt;
+      cache.hasMore = agg.emails.length >= PAGE_SIZE;
       if (agg.emails.length === 0) {
         const failed = (agg.errors ?? []).map((e) => e.account.split("|")[1] ?? e.account);
         setErr(failed.length > 0 ? `未拉到邮件（${failed.join("、")} 拉取失败，见下方具体原因）` : "未拉到邮件（检查账号 / 认证）");
