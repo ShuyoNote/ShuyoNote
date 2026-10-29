@@ -1492,12 +1492,6 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   color: var(--text-dim);
   cursor: pointer;
 }
-.sync-advanced > summary::-webkit-details-marker {
-  display: none;
-}
-.sync-advanced > summary:hover {
-  color: var(--accent);
-}
 .sync-advanced[open] > summary {
   color: var(--text);
 }
@@ -1603,15 +1597,6 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--card-bg);
-}
-.sync-nearby-name {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12.5px;
-  color: var(--text);
 }
 /* 第二列说明与右侧动作都靠 `margin-left:auto` 推到右边；换行时动作自己落到下一行。
    ⚠️ 说明这一格要能换行（窄屏下"没报可以直连的地址"那一截不许被裁掉）⇒ `flex: 0 1 auto`。 */
@@ -2515,7 +2500,6 @@ select.sync-input {
 .sync-history-title {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
 }
-.sync-history-at { font-size: 12px; color: var(--text-dim); }
 .sync-history-stats { display: inline-flex; gap: 5px; }
 .sync-stat {
   font-size: 11px; padding: 1px 6px; border-radius: 6px;
@@ -9122,12 +9106,6 @@ select.prop-value {
   animation: pop 0.16s ease;
 }
 
-.insert-columns-label {
-  font-size: 11px;
-  color: var(--text-dim);
-  margin-bottom: 8px;
-}
-
 /* Feishu-style count track: a single row of vertical bars; the bars up to the
    selected count are highlighted (blue = on, others = dark), like the reference
    "选择栏数" picker. Hovering a bar selects that many columns. */
@@ -12029,12 +12007,6 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
-.db-gantt-head,
-.db-gantt-row {
-  display: flex;
-  align-items: stretch;
-  min-width: 100%;
-}
 .db-gantt-row {
   transition: background var(--transition-fast);
 }
@@ -12668,7 +12640,6 @@ p:has(> .editor-drawing-container) {
 .tc-preview { height: 150px; display: flex; flex-direction: column; overflow: hidden; }
 /* 题头图(封面照片)顶部。 */
 .tc-preview-cover { height: 74px; flex: none; background-size: cover; background-position: center 25%; }
-.tc-pv-card { background: #fff; flex: 1; padding: 10px 12px; width: 100%; display: flex; flex-direction: column; gap: 6px; }
 .tc-pv-card { background: #fff; flex: 1; padding: 10px 12px; width: 100%; display: flex; flex-direction: column; gap: 6px; }
 .tc-pv-title { height: 10px; width: 55%; border-radius: 2px; background: #e3e6eb; }
 .tc-pv-line { height: 6px; border-radius: 2px; background: #eef0f4; }
@@ -13712,16 +13683,6 @@ p:has(> .editor-drawing-container) {
 }
 .set-space-card:hover {
   border-color: var(--border-strong);
-}
-.set-space-card.is-active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-.set-space-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
 }
 /* ⭐ 2026-10-10（owner 要求"设置里点一行就切换"）：那一行**可点** ⇒ 给鼠标反馈。
    ⚠️ **只给"能切的那一行"**：当前空间那一行点了无事发生（`pick()` 直接返回 ⇒ 不白跑
@@ -14789,10 +14750,6 @@ p:has(> .editor-drawing-container) {
   padding: 2px 3px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-}
-.fm-file-actions button:hover {
-  color: var(--text);
-  background: var(--hover);
 }
 /* 只属于窄屏的形态（见文件末尾"文件视图窄屏适配"那段）：
    · `.fm-btn-icon` —— 操作行按钮里的图标（桌面隐藏，桌面照旧只有文字标签）。
@@ -23793,9 +23750,6 @@ body.is-plugin-panel-open .main {
   flex-direction: column;
   gap: 12px;
 }
-.mhome-head {
-  margin: 6px 2px 10px;
-}
 .mhome-title {
   margin: 0;
   font-size: 30px;
@@ -25263,9 +25217,6 @@ body.is-plugin-panel-open .main {
   padding: 6px 0;
   border-bottom: 1px solid var(--border);
 }
-.mpair-item:last-child {
-  border-bottom: 0;
-}
 .mpair-item-main {
   flex: 1 1 auto;
   min-width: 0;
@@ -25775,17 +25726,6 @@ body.is-plugin-panel-open .main {
   padding: 20px 16px calc(26px + var(--sab));
   gap: 12px;
 }
-.mhome-head {
-  margin: 2px 2px 8px;
-}
-.mhome-title {
-  font-size: 26px;
-  letter-spacing: -0.4px;
-}
-.mhome-sub {
-  margin-top: 5px;
-  font-size: 13px;
-}
 .mshell .mhome-card {
   min-height: 84px;
   padding: 16px;
@@ -25812,17 +25752,8 @@ body.is-plugin-panel-open .main {
   background: var(--bg-sidebar);
   font-size: 20px;
 }
-.mhome-card.is-accent .mhome-card-icon {
-  background: rgba(255, 255, 255, 0.18);
-}
-.mhome-card-title {
-  font-size: 18px;
-}
 .mhome-card.is-accent .mhome-card-title {
   font-size: 19px;
-}
-.mhome-card-hint {
-  font-size: 12.5px;
 }
 .
 .
@@ -25895,30 +25826,9 @@ body.is-plugin-panel-open .main {
 .mset-close {
   background: var(--bg-sidebar);
 }
-.mset-card {
-  border-radius: 16px;
-  padding: 14px 16px;
-  box-shadow: var(--shadow-xs);
-}
-.mset-group {
-  margin-bottom: 8px;
-}
 .mset-row {
   min-height: 48px;
   gap: 12px;
-}
-.mset-ico {
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.mset-row-title {
-  font-size: 15.5px;
-}
-.mset-row-sub {
-  font-size: 12.5px;
 }
 .mset-seg {
   gap: 4px;
@@ -26029,16 +25939,6 @@ body.is-plugin-panel-open .main {
   border-radius: 16px;
   padding: 16px;
   box-shadow: var(--shadow-xs);
-}
-.mpair-item {
-  padding: 12px 0;
-}
-.mpair-entry {
-  min-height: 44px;
-  border-radius: 999px;
-}
-.mpair-cap {
-  min-height: 36px;
 }
 .mpair-nonearby {
   border-radius: 14px;
@@ -26238,7 +26138,6 @@ button.mset-row:focus-visible {
    12 行会被压扁/互相盖住（owner 截图：行卡重叠、按钮上下被切）。
    ⛔ 不许靠给卡写死高度解决（行内文本换行时会溢出）⇒ 只禁止收缩。 */
 .set-space-list-scroll > .set-space-card { flex: 0 0 auto; }
-.set-space-row { min-height: 56px; }
 .set-space-row .set-row-text { flex: 1 1 auto; min-width: 0; }
 .set-space-row .set-btn { flex: 0 0 auto; white-space: nowrap; }
 
@@ -26247,8 +26146,6 @@ button.mset-row:focus-visible {
   background:linear-gradient(135deg,#f7faff 0%,#ffffff 70%);
   border:1px solid #ecEEf2;border-radius:18px;padding:16px 18px;margin-bottom:16px;
 }
-.set-space-card{position:relative}
-.set-space-row{min-height:60px}
 .set-space-scope{color:var(--text-faint)}
 .set-space-meta{gap:8px;flex-wrap:wrap}
 .set-space-crypto{
@@ -26256,20 +26153,7 @@ button.mset-row:focus-visible {
   font-size:10.5px;line-height:18px;color:var(--text-2);background:#f7f8fa;
 }
 .set-space-crypto:has(+ .set-space-sync){}
-.set-space-more{margin-left:auto;position:relative;flex:0 0 auto}
-.set-space-more>summary{
-  list-style:none;cursor:pointer;width:32px;height:32px;border-radius:8px;
-  display:grid;place-items:center;color:var(--text-faint);font-size:16px;
-}
-.set-space-more>summary::-webkit-details-marker{display:none}
 .set-space-more[open]>summary,.set-space-more>summary:hover{background:var(--fill-soft,#f3f5f9);color:var(--text-2)}
-.set-space-menu{
-  position:absolute;right:0;top:38px;z-index:20;min-width:150px;padding:6px;
-  background:var(--card-bg);border:1px solid var(--border);border-radius:12px;
-  box-shadow:0 12px 28px rgba(15,20,32,.16);display:flex;flex-direction:column;gap:2px;
-}
-.set-space-menu .set-btn{justify-content:flex-start;text-align:left;border:none;background:transparent}
-.set-space-menu .set-btn:hover:not(:disabled){background:var(--fill-soft,#f3f5f9)}
 
 /* ⭐ 2026-10-25 按设计稿重写：顶部安全卡 / 标题+筛选同排 / 行卡 */
 .set-security-card{
@@ -26301,7 +26185,6 @@ button.mset-row:focus-visible {
 .set-space-seg button{border:none;background:transparent;border-radius:7px;padding:5px 10px;font-size:10.5px;color:var(--text-2);cursor:pointer}
 .set-space-seg button.is-on{background:#fff;color:var(--text);box-shadow:0 1px 2px rgba(15,20,32,.08)}
 .set-space-card{border:1px solid var(--border);border-radius:12px;background:var(--card-bg);position:relative;overflow:visible}
-.set-space-card.is-active{background:#f5f9ff;border-color:#cfe0ff;box-shadow:inset 3px 0 0 var(--accent)}
 .set-space-row{display:flex;align-items:center;gap:12px;padding:11px 14px;min-height:60px}
 .set-space-mark{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);font-size:14px;font-weight:600;flex:0 0 auto}
 .set-space-more{margin-left:auto;position:relative;flex:0 0 auto}
@@ -26314,11 +26197,7 @@ button.mset-row:focus-visible {
 
 /* ⭐ 2026-10-25 真机对照设计稿：右侧口令行并排 / 行内状态 pill / 当前行弱化边框 */
 .set-security-right{display:flex;flex-direction:column;gap:8px;min-width:0}
-.set-security-row{display:flex;align-items:center;gap:8px}
-.set-security-row .set-input{flex:1 1 auto;min-width:0}
 .set-security-row .set-btn{flex:0 0 auto;width:auto;min-width:84px;white-space:nowrap}
-.set-security-chips{flex-wrap:nowrap;overflow:hidden}
-.set-security-chips span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .set-space-state{font-size:10.5px;line-height:18px;border-radius:999px;padding:1px 8px;flex:0 0 auto}
 .set-space-state.is-enc{color:#0b802f;background:#e8faec}
 .set-space-state.is-plain{color:var(--text-2);background:#f2f3f5}
@@ -26431,8 +26310,6 @@ button.mset-row:focus-visible {
 .acct-device-edit .set-input{flex:1 1 auto;min-width:0}
 /* ⭐ 2026-10-25 真机：设备名“保存”按钮被挤成竖排两字 ⇒ 不许收缩、给最小宽 */
 .acct-device-edit .set-btn{flex:0 0 auto;min-width:64px;white-space:nowrap;padding-left:14px;padding-right:14px}
-
-.acct-device-edit .set-input{height:38px}
 /* ⭐ 2026-10-25 owner：本机设备整块再收紧（少留白、控件同高、按钮靠右） */
 .acct-device-row{padding:8px 0;min-height:0;align-items:center;gap:16px}
 .acct-device-row .set-row-text{gap:2px}
@@ -26482,15 +26359,6 @@ button.mset-row:focus-visible {
    外层 flex 滚动在某些窗口尺寸下不生效 —— 给内容区自己加**视口封顶的滚动**，
    ⛔ 不再依赖父级高度是否被 flex 拉伸。 */
 .main > .sync-panel{overflow:hidden}
-.main > .sync-panel > .sync-popover.is-inline{
-  height:auto;
-  min-height:0;
-  max-height:calc(100vh - 32px);
-  max-height:calc(100dvh - 32px);
-  overflow-y:auto;
-  overscroll-behavior:contain;
-  padding-bottom:32px;
-}
 
 /* ⭐ 2026-10-25 owner：同步面板**要看到滚动条**（macOS 默认 overlay 滚动条平时不显示）——
    显式画一条常驻的窄滚动条，并让内容区成为唯一的滚动容器。 */
