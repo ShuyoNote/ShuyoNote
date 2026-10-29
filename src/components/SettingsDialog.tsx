@@ -38,7 +38,6 @@ import {
   TrashIcon,
   FolderIcon,
   LockIcon,
-  PersonIcon,
   DatabaseIcon,
   TemplateIcon,
   SendIcon,
@@ -72,7 +71,8 @@ export const SETTINGS_GROUPS: { id: SettingsGroup; labelKey: string }[] = [
 export const TABS: { id: SettingsTab; labelKey: string; hintKey: string; icon: JSX.Element; group: SettingsGroup }[] = [
   { id: "appearance", labelKey: "settings.appearance", hintKey: "settings.appearanceHint", icon: <PaletteIcon width={16} height={16} />, group: "basic" },
   { id: "spaces", labelKey: "settings.spaces", hintKey: "settings.spacesHint", icon: <FolderIcon width={16} height={16} />, group: "collab" },
-  { id: "account", labelKey: "settings.account", hintKey: "settings.accountHint", icon: <PersonIcon width={16} height={16} />, group: "basic" },
+  // ⭐ **2026-10-29（owner 选 B）**：「账户」页**整页撤掉** ✗ —— 团队 UI 删除后它只剩「设备名」一格，
+  //   而设备名已搬进**同步面板 → 局域网同步**（它影响的是"附近设备里怎么显示你"）✓。
   { id: "email", labelKey: "settings.email", hintKey: "settings.emailHint", icon: <InboxIcon width={16} height={16} />, group: "collab" },
   { id: "data", labelKey: "settings.data", hintKey: "settings.dataHint", icon: <DatabaseIcon width={16} height={16} />, group: "basic" },
   { id: "plugins", labelKey: "settings.plugins", hintKey: "settings.pluginsHint", icon: <TemplateIcon width={16} height={16} />, group: "system" },
@@ -1027,84 +1027,6 @@ function EmailPane() {
   );
 }
 
-// 「账户」页：登录身份（低频、全局）。同步操作仍在同步面板——那是高频、
-// 需要状态常驻可见的动作。这里只做「我是谁、连了哪些服务器」。
-function AccountPane() {
-  // ⭐ **2026-10-29（owner 拍第二阶段）：团队 UI 已删除** ✗ —— 这一页只剩**本机设备名**。
-  //   ⛔ 账号登录 / 组织管理 / 按服务器分组的同步身份 / 团队会话全部移除 ✓（Rust 后端保留、
-  //   `team_*` 前端契约已删；个人空间的同步在「同步」面板，不在这里 ✓）。
-  const [deviceName, setDeviceName] = useState("");
-  const [deviceNameLoaded, setDeviceNameLoaded] = useState(false);
-  const [deviceNameSaving, setDeviceNameSaving] = useState(false);
-  const [deviceNameStatus, setDeviceNameStatus] = useState("");
-  /** ⭐ 2026-10-29（owner）：**当前生效名**（后端回的就是它：用户设的 ⇒ 否则系统名）。
-   *  保存时拿它判断"用户到底改没改" —— 没改 ⇒ 存空串（继续跟随系统名），⛔ 不把系统名固化下来 ✓。 */
-  const [deviceNameBaseline, setDeviceNameBaseline] = useState("");
-  useEffect(() => {
-    let alive = true;
-    void api.getDeviceName()
-      .then((n) => {
-        if (!alive) return;
-        // ⭐ 2026-10-29：后端现在回**生效名**（没设过 ⇒ 系统名）⇒ 输入框直接预填 ✓。
-        const effective = n ?? "";
-        setDeviceName(effective);
-        setDeviceNameBaseline(effective);
-        setDeviceNameLoaded(true);
-      })
-      .catch(() => { if (alive) setDeviceNameLoaded(true); });
-    return () => { alive = false; };
-  }, []);
-
-  const saveDeviceName = async () => {
-    setDeviceNameSaving(true);
-    try {
-      // ⭐ 与"当前生效名"一致 ⇒ 存空串（＝清掉设置、继续跟随系统名）✓。
-      const typed = deviceName.trim();
-      const toSave = typed === deviceNameBaseline.trim() ? "" : typed;
-      const effective = await api.setDeviceName(toSave);
-      setDeviceName(effective);
-      setDeviceNameBaseline(effective);
-      setDeviceNameStatus(`已保存；当前生效：${effective}`);
-      toast(`设备名已更新：${effective}`, "success");
-    } catch (e) {
-      setDeviceNameStatus(`保存失败：${e}`);
-    } finally {
-      setDeviceNameSaving(false);
-    }
-  };
-
-  return (
-    <>
-      <section className="set-section">
-        <div className="set-section-title">本机设备</div>
-        <div className="set-row acct-device-row acct-device-stack">
-          <div className="set-row-text">
-            <div className="set-row-name">设备名</div>
-            <div className="set-row-sub">
-              默认用<b>这台电脑的系统名</b>；改成别的就按你写的显示。
-            </div>
-          </div>
-          <div className="acct-device-edit">
-            <input
-              className="set-input"
-              value={deviceName}
-              disabled={!deviceNameLoaded || deviceNameSaving}
-              placeholder="系统名"
-              maxLength={40}
-              onChange={(e) => setDeviceName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") void saveDeviceName(); }}
-            />
-            <button className="set-btn" disabled={!deviceNameLoaded || deviceNameSaving} onClick={() => void saveDeviceName()}>
-              {deviceNameSaving ? "保存中…" : "保存"}
-            </button>
-          </div>
-        </div>
-        {deviceNameStatus && <div className="set-hint">{deviceNameStatus}</div>}
-      </section>
-    </>
-  );
-}
-
 function AppearancePane() {
   // 逐字段订阅（`setTheme`/`setAccent` 是动作，引用恒定）。
   const theme = useTheme((s) => s.theme);
@@ -1434,7 +1356,6 @@ export function SettingsDialog() {
             <div className="set-body-inner">
             {tab === "appearance" && <AppearancePane />}
             {tab === "spaces" && <SpacesPane />}
-            {tab === "account" && <AccountPane />}
             {tab === "email" && <EmailPane />}
             {tab === "data" && <DataPane />}
             {tab === "plugins" && <PluginsPane />}
