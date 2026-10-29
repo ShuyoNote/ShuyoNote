@@ -1955,12 +1955,14 @@ fn cap_pages_get(id: &str, offset: i64, limit: i64, include_anchors: bool) -> Ca
         let mut out = serde_json::json!({
             "id": id,
             "title": row.content.title,
-            "content_text": body,
             "kind": row.kind,
             "chars_total": chars_total,
             "offset": off,
             "limit": lim,
         });
+        // 正文那一格的**键名**归「那一层」（`doc_content::PAGE_TEXT_KEY` 的说明）——
+        // 能力层不再自己写一遍落盘形态的名字；值本来就来自同一层的 `read_with_meta`。
+        out[crate::doc_content::PAGE_TEXT_KEY] = serde_json::json!(body);
         if let Some(rev) = page_rev(row.updated_at, Some(&doc_json)) {
             out["rev"] = serde_json::json!(rev);
         }
