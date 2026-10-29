@@ -34,6 +34,9 @@ function closeOtherTreeMenus() {
 }
 import { toast } from "../store/toast";
 import { importOfficeAttachmentAsPage } from "../lib/office/pickOfficeFile";
+// ⭐ 2026-10-29（M1 最后一段）：页行右键「导出为 .shuyodoc」——
+// 写包走 `buildDocumentPackage`、落盘走 `write_binary_file`，两条都是现成的（见该文件头）。
+import { exportPageAsDocPackage } from "../lib/docPackageTransfer";
 import type { AppView } from "../store/view";
 import type { AttachmentMeta, PageMeta, WorkspaceMeta } from "../types";
 import { useFileManagerStore } from "../store/fileManager";
@@ -833,6 +836,22 @@ startRename();
                   }}
                 >
                   <span className="menu-icon"><MenuIcon d={ICON.folder} /></span><span className="menu-text">{t("trees.newSubFolder")}</span>
+                </button>
+              )}
+              {/* ⭐ 2026-10-29（owner 方案 `docs/plans/2026-10-29-shuyodoc-m1.md`，M1）：导出单文档包。
+                  ⚠️ **文件夹没有正文** ⇒ 不给这一项（`api.getPage(folder)` 会被后端如实拒）；
+                     数据库页有正文块 ⇒ 照常可导。
+                  ⚠️ 正文/资产/落盘全在 `lib/docPackageTransfer.ts`（⛔ 这里不碰存储列、不自己打包）。
+                  ⚠️ 失败**原样**显示 `message`（该层已经把 `Error.message` 带回来了，⛔ 不吞、不换措辞）。 */}
+              {!isFolder && (
+                <button
+                  onClick={async () => {
+                    setMenuOpen(false);
+                    const outcome = await exportPageAsDocPackage(node.id);
+                    toast(outcome.message, outcome.ok ? "success" : "error");
+                  }}
+                >
+                  <span className="menu-icon"><MenuIcon d={ICON.fileDown} /></span><span className="menu-text">导出为 .shuyodoc</span>
                 </button>
               )}
               <PluginMenuItems

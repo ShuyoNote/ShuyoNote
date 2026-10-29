@@ -645,6 +645,14 @@ export const api = {
   /** pageId 传 null 列出空间根下的「未整理」文件（page_id IS NULL）。 */
   listPageAttachments: (pageId: string | null) =>
     invoke("list_page_attachments", { pageId }),
+  /**
+   * ⭐ 2026-10-29：把**已经知道 hash** 的字节写进附件库（内容寻址 ＋ 去重，桌面/Web 同一份语义）。
+   * 用在 `.shuyodoc` 导入：包的 `assets/<sha256>.<ext>` 文件名里已带 sha，不必再算一遍
+   * （也⛔ 不走 `save_image` —— 那张 mime 表只认图片/PDF 那几类，别的会落成 `.bin`）。
+   * 命令本身早就在（`write_attachment_bytes`，同步下载附件那条路在用），这里只是补个前端入口。
+   */
+  writeAttachmentBytes: (args: { hash: string; mime: string; name: string; data: number[] }) =>
+    invoke("write_attachment_bytes", { ...args }),
   removeAttachment: (id: string) => invoke("remove_attachment", { id }),
   removeAttachments: (ids: string[]) => invoke("remove_attachments", { ids }),
   storageStats: () => invoke("storage_stats"),

@@ -108,7 +108,7 @@ describe("① 企业版 → 个人版：企业版生成的 .shuyodoc 必须能�
     const r = await openDocumentPackage(await unzipDocument(zip));
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const { manifest, notices, assets, contentJson } = r.pkg;
+    const { manifest, notices, assets, docJson } = r.pkg;
     // 企业版 manifest 字段逐条认出来
     expect(manifest.format).toBe(DOC_FORMAT);
     expect(manifest.format_version).toBe(DOC_FORMAT_VERSION);
@@ -126,7 +126,7 @@ describe("① 企业版 → 个人版：企业版生成的 .shuyodoc 必须能�
     expect(assets[0].path).toMatch(/^assets\/[0-9a-f]{64}\.txt$/);
     expect(dec(assets[0].bytes)).toContain("数友互导夹具");
     await expect(sha256Hex(assets[0].bytes)).resolves.toBe(assets[0].path.slice("assets/".length, -".txt".length));
-    expect(contentJson).toContain("企业版生成的 .shuyodoc");
+    expect(docJson).toContain("企业版生成的 .shuyodoc");
     // 企业版包带 checksums ⇒ 校验通过、没有降级提示
     expect(notices).toEqual([]);
   });
@@ -224,7 +224,7 @@ describe("② 个人版 → 企业版：写出物必须逐字对齐企业版口�
     expect(r.pkg.manifest.source).toBe("personal");
     expect(r.pkg.manifest.document_id).toBe("doc-personal-fixture-1");
     expect(r.pkg.assets).toHaveLength(1);
-    expect(r.pkg.contentJson).toContain("个人版正文");
+    expect(r.pkg.docJson).toContain("个人版正文");
     expect(r.pkg.notices).toEqual([]);
   });
 

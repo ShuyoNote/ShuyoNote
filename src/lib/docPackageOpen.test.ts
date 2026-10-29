@@ -27,7 +27,7 @@ describe("打开 .shuyodoc（整包完整性）", () => {
     if (r.ok) {
       expect(r.pkg.manifest.title).toBe("周报");
       expect(r.pkg.assets).toHaveLength(1);
-      expect(r.pkg.contentJson).toContain("root");
+      expect(r.pkg.docJson).toContain("root");
     }
   });
 
@@ -89,6 +89,6 @@ describe("打开 .shuyodoc（整包完整性）", () => {
     );
     const r = await openDocumentPackage(entries);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(JSON.parse(r.pkg.contentJson)).toEqual(rich);
+    if (r.ok) expect(JSON.parse(r.pkg.docJson)).toEqual(rich);
   });
 });

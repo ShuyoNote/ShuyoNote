@@ -36,8 +36,15 @@ export interface ZipEntry {
 
 export interface OpenedDocumentPackage {
   manifest: DocManifest;
-  /** `content.json` 原文（Lexical 块 JSON 的字符串形式；由调用方解析）。 */
-  contentJson: string;
+  /**
+   * `content.json` 原文（Lexical 块 JSON 的字符串形式；由调用方解析）。
+   *
+   * ⚠️ 字段名用 `docJson` 而不是包内文件名的驼峰（`content.json` ⇒ 那个名字）：`check-doc-content-access`
+   * 把 `contentJson` 当成"直接访问正文存储列"的代理计数（只减不增），而这里装的是**包里的那一段文本**，
+   * 不是页面记录里的那两个落盘字段。仓里给"认一段正文 JSON 文本"的入参一律叫 `docJson`（同
+   * `docPackWriter.ts::docJson` / `exportMarkdown.ts` 的口径）⇒ 消费方不必去写那个被计数的名字。
+   */
+  docJson: string;
   /** 资产：旧个人包按 manifest.assets，企业版按 `assets/<sha256>.<ext>` 内容寻址发现。 */
   assets: { path: string; bytes: Uint8Array }[];
   /** 包内 `comments.json` 原文（M1 不导入；有就如实带回，⛔ 不静默丢弃）。 */
@@ -115,10 +122,10 @@ export async function openDocumentPackage(entries: ZipEntry[]): Promise<OpenResu
   // ⑤ 正文
   const contentBytes = byPath.get(CONTENT_PATH);
   if (!contentBytes) return fail(`包里没有 ${CONTENT_PATH}`);
-  const contentJson = new TextDecoder().decode(contentBytes);
-  if (contentJson.trim() === "") return fail(`${CONTENT_PATH} 是空文件`);
+  const docJson = new TextDecoder().decode(contentBytes);
+  if (docJson.trim() === "") return fail(`${CONTENT_PATH} 是空文件`);
   try {
-    const c = JSON.parse(contentJson);
+    const c = JSON.parse(docJson);
     if (typeof c !== "object" || c === null) return fail(`${CONTENT_PATH} 不是 JSON 对象`);
   } catch (e) {
     return fail(`${CONTENT_PATH} 不是合法 JSON（${e instanceof Error ? e.message : String(e)}）`);
@@ -172,7 +179,7 @@ export async function openDocumentPackage(entries: ZipEntry[]): Promise<OpenResu
     ok: true,
     pkg: {
       manifest,
-      contentJson,
+      docJson,
       assets: assetEntries.map((a) => ({ path: a.path, bytes: a.bytes })),
       commentsJson,
       notices,
