@@ -8,6 +8,8 @@ import { appendFence, fenceDoc, stampTopLevelBlockIds } from "../docContent";
 import { markdownToPageContent } from "../mdPreview";
 import { importMarkdownGuard } from "../docContent";
 import { contentTextOf } from "./lexicalContent";
+import { pageRev } from "../capabilities/pageAnchors";
+import { docJsonOfPage } from "../docContent";
 import { serializeByKey } from "../serializeByKey";
 import { useSpaceStore } from "../../store/space";
 import type { PageDetail } from "../../types";
@@ -16,6 +18,19 @@ export interface ApplyResult {
   ok: boolean;
   message: string;
   page?: PageDetail;
+}
+
+/** 写前乐观并发校验：草稿带了 `expectedRev` 就必须与当前一致（不一致 ⇒ 拒，⛔ 不覆盖）。 */
+async function revProblem(pageId: string, expected: unknown): Promise<string | null> {
+  if (typeof expected !== "string" || !expected.trim()) return null;
+  const page = await api.getPage(pageId);
+  if (!page) return `目标页面 ${pageId} 不存在`;
+  const cur = await pageRev(page.updated_at, docJsonOfPage(page));
+  if (!cur) return "算不出当前 rev（正文读不到）";
+  if (cur !== expected) {
+    return `rev_conflict：expectedRev=${expected}，当前 rev=${cur}（请重新读一遍再改）`;
+  }
+  return null;
 }
 
 export async function applyDraft(payload: unknown): Promise<ApplyResult> {
@@ -70,6 +85,8 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       return serializeByKey(`page:${pageId}`, async () => {
         const cur = await api.getPage(pageId);
         if (!cur) return { ok: false, message: "目标页面不存在" };
+        const rp = await revProblem(pageId, p.expectedRev);
+        if (rp) return { ok: false, message: rp };
         let built;
         if (md.trim()) {
           const g = importMarkdownGuard(md);
@@ -108,6 +125,8 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       return serializeByKey(`page:${pageId}`, async () => {
         const cur = await api.getPage(pageId);
         if (!cur) return { ok: false, message: "目标页面不存在" };
+        const rp = await revProblem(pageId, p.expectedRev);
+        if (rp) return { ok: false, message: rp };
         // 串行区里重读一次：拿到的是**前一个任务写完**的那份 ✓（外部编辑不会被盖 ✗）。
         // ⚠️ 只在这里点一次名 ✓ —— 那个列名在 `apply.ts` 里是有基线配额的（基线只许变小 ✗）
         const curJson = String(cur.content_json ?? "");
@@ -125,6 +144,8 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const pageId = String(p.pageId ?? p.args?.pageId ?? "");
       const attrId = String(p.attrId ?? "");
       if (!pageId || !attrId) return { ok: false, message: "set_page_prop 参数不完整" };
+      const rp = await revProblem(pageId, p.expectedRev);
+      if (rp) return { ok: false, message: rp };
       await api.setPageProp({ page_id: pageId, attr_id: attrId, value: String(p.value ?? "") });
       // 回读一次：调用方据此刷新当前页（属性面板共用同一份内存数据）。
       const page = await api.getPage(pageId);
@@ -135,9 +156,97 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const pageId = String(p.pageId ?? p.args?.pageId ?? "");
       const name = String(p.name ?? "").trim();
       if (!pageId || !name) return { ok: false, message: "add_tag 参数不完整" };
+      const rp = await revProblem(pageId, p.expectedRev);
+      if (rp) return { ok: false, message: rp };
       await api.addTag(pageId, name);
       const page = await api.getPage(pageId);
       return { ok: true, message: `已加标签「${name}」`, page };
+    }
+
+    // ⭐ B2-结构（2026-10-29）：节点/文件夹/回收站/回退/标签移除/属性去掉
+    case "create_folder": {
+      const title = String(p.title ?? "").trim();
+      if (!title) return { ok: false, message: "create_folder 需要 title" };
+      const folder = await api.createFolder({ parent_id: p.parent_id ?? null, title });
+      return { ok: true, message: `已创建文件夹「${folder.title ?? title}」` };
+    }
+
+    case "move_node": {
+      const id = String(p.id ?? "");
+      if (!id) return { ok: false, message: "move_node 需要 id" };
+      const rp = await revProblem(id, p.expectedRev);
+      if (rp) return { ok: false, message: rp };
+      await api.movePage({
+        id,
+        new_parent_id: p.newParentId ?? null,
+        sort_order: Number.isFinite(Number(p.sortOrder)) ? Number(p.sortOrder) : 0,
+      });
+      return { ok: true, message: "已移动节点" };
+    }
+
+    case "rename_node": {
+      const id = String(p.id ?? "");
+      const title = String(p.title ?? "").trim();
+      if (!id || !title) return { ok: false, message: "rename_node 参数不完整" };
+      const rp = await revProblem(id, p.expectedRev);
+      if (rp) return { ok: false, message: rp };
+      const page = await api.savePage({ id, title });
+      return { ok: true, message: `已改名为「${page.title}」`, page };
+    }
+
+    case "delete_node": {
+      const id = String(p.id ?? "");
+      if (!id) return { ok: false, message: "delete_node 需要 id" };
+      const rp = await revProblem(id, p.expectedRev);
+      if (rp) return { ok: false, message: rp };
+      await api.deletePage(id);
+      return { ok: true, message: "已移入回收站（可恢复）" };
+    }
+
+    case "restore_page": {
+      const id = String(p.id ?? "");
+      if (!id) return { ok: false, message: "restore_page 需要 id" };
+      await api.restorePage(id);
+      return { ok: true, message: "已从回收站恢复" };
+    }
+
+    case "revert_page": {
+      const pageId = String(p.pageId ?? "");
+      const versionId = String(p.versionId ?? "");
+      if (!pageId || !versionId) return { ok: false, message: "revert_page 参数不完整" };
+      const rp = await revProblem(pageId, p.expectedRev);
+      if (rp) return { ok: false, message: rp };
+      const page = await api.restoreVersion(versionId);
+      return { ok: true, message: `已回退到版本 ${versionId}`, page };
+    }
+
+    case "remove_tag": {
+      const pageId = String(p.pageId ?? "");
+      const name = String(p.name ?? "").trim();
+      const tagId = String(p.tagId ?? "");
+      if (!pageId) return { ok: false, message: "remove_tag 需要 pageId" };
+      const rp = await revProblem(pageId, p.expectedRev);
+      if (rp) return { ok: false, message: rp };
+      let resolved = tagId;
+      if (!resolved && name) {
+        const tags = await api.listTags();
+        resolved = tags.find((x) => x.name === name)?.id ?? "";
+      }
+      if (!resolved) return { ok: false, message: `找不到标签「${name || tagId}」` };
+      await api.removeTag(pageId, resolved);
+      const page = await api.getPage(pageId);
+      return { ok: true, message: `已移除标签「${name || resolved}」`, page };
+    }
+
+    case "unset_page_prop": {
+      const pageId = String(p.pageId ?? "");
+      const attrId = String(p.attrId ?? "");
+      if (!pageId || !attrId) return { ok: false, message: "unset_page_prop 参数不完整" };
+      const rp = await revProblem(pageId, p.expectedRev);
+      if (rp) return { ok: false, message: rp };
+      await api.removePageProp(pageId, attrId);
+      const page = await api.getPage(pageId);
+      return { ok: true, message: "已去掉属性", page };
     }
 
     default:

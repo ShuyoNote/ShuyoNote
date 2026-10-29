@@ -519,6 +519,43 @@ fn push_run_audit(
     if let Some(last) = q.back() { persist_audit_line(last); }
 }
 
+/// ⭐ B2（2026-10-29）：写能力的**幂等表** —— 同一 `clientRequestId` 重复调用只落一次、只审计一条。
+///
+/// 为什么放在进程内存里：外部客户端的重试常发生在同一 App 生命周期内（超时/重连）；
+/// 跨重启的"绝对一次"要落盘表＋迁移，本版不做（如实：重启后同 id 会再执行一次）。
+static IDEMPOTENT_WRITES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, String)>>,
+> = std::sync::OnceLock::new();
+const IDEMPOTENT_TTL_SECS: u64 = 600;
+const IDEMPOTENT_CAPACITY: usize = 256;
+
+fn idempotent_lookup(key: &str) -> Option<String> {
+    let map = IDEMPOTENT_WRITES
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut g = map.lock().unwrap_or_else(|e| e.into_inner());
+    let now = std::time::Instant::now();
+    g.retain(|_, (at, _)| now.duration_since(*at).as_secs() < IDEMPOTENT_TTL_SECS);
+    g.get(key).map(|(_, out)| out.clone())
+}
+
+fn idempotent_remember(key: &str, out: &str) {
+    let map = IDEMPOTENT_WRITES
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut g = map.lock().unwrap_or_else(|e| e.into_inner());
+    let now = std::time::Instant::now();
+    g.retain(|_, (at, _)| now.duration_since(*at).as_secs() < IDEMPOTENT_TTL_SECS);
+    if g.len() >= IDEMPOTENT_CAPACITY {
+        if let Some(old) = g
+            .iter()
+            .min_by_key(|(_, (at, _))| *at)
+            .map(|(k, _)| k.clone())
+        {
+            g.remove(&old);
+        }
+    }
+    g.insert(key.to_string(), (now, out.to_string()));
+}
+
 fn push_audit(source: &str, plugin_id: &str, capability: &str, scope: &str, ok: bool, error_code: Option<String>) {
     let mut q = PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner());
     if q.len() >= PLUGIN_AUDIT_CAPACITY {
@@ -2313,11 +2350,21 @@ fn cap_pages_create(
     parent_id: Option<&str>,
     fence: Option<&str>,
     markdown: Option<bool>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
 ) -> CapResult {
     if title.trim().is_empty() {
         return Err("bad_args: 新建页面需要 title".to_string());
     }
     let summary = format!("新建页面「{title}」");
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true,
+            "summary": summary,
+            "would": { "kind": "create_page", "title": title, "parentId": parent_id },
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
     push_draft(
         format!("create_page:{title}"),
         summary.clone(),
@@ -2334,7 +2381,13 @@ fn cap_pages_create(
 /// ⚠️ 解析**不在这里** ✗ —— Rust 侧没有 markdown 解析器 ✓；这里只把原文放进草稿 ✓，
 /// 由**应用自己**那条导入路径（`markdownToPageContent` ✓，`src/lib/mdPreview.ts:79` ✓）
 /// 在落库那一刻转成块 ✓ ⇒ 不另写第二份解析器 ✓（两份必然漂移 ✗）。
-fn cap_pages_import_markdown(title: &str, markdown: &str, parent_id: Option<&str>) -> CapResult {
+fn cap_pages_import_markdown(
+    title: &str,
+    markdown: &str,
+    parent_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
     if title.trim().is_empty() {
         return Err("bad_args: 导入 Markdown 需要 title".to_string());
     }
@@ -2346,7 +2399,7 @@ fn cap_pages_import_markdown(title: &str, markdown: &str, parent_id: Option<&str
         return Err("bad_args: markdown 超过 200KB 上限，请拆分后再导入".to_string());
     }
     // 守卫做完就**委托**给既有的建页那条路 ✓（少写一份 payload ⇒ 也不多写任何列名 ✓）
-    cap_pages_create(title, text, parent_id, None, Some(true))
+    cap_pages_create(title, text, parent_id, None, Some(true), dry_run, _client_request_id)
 }
 
 /// `pages.update`：**不写库**，只产出草稿（**整页替换**，走前端既有的 Markdown 导入管道）。
@@ -2362,6 +2415,9 @@ fn cap_pages_update(
     title: Option<&str>,
     markdown: Option<&str>,
     content: Option<&str>,
+    expected_rev: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
 ) -> CapResult {
     let id = page_id.trim();
     if id.is_empty() {
@@ -2394,6 +2450,15 @@ fn cap_pages_update(
         Some(t) => format!("更新页面「{label}」（整页替换，标题改为「{t}」）"),
         None => format!("更新页面「{label}」（整页替换）"),
     };
+    let rev = check_expected_rev(&id, expected_rev)?;
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true,
+            "summary": summary,
+            "would": { "kind": "update_page", "pageId": id, "expectedRev": rev },
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
     push_draft(
         format!("update_page:{id}"),
         summary.clone(),
@@ -2497,18 +2562,37 @@ fn cap_spaces_switch(id: Option<&str>, name: Option<&str>) -> CapResult {
 }
 
 /// `blocks.append`：**不写库**，只产出草稿。省略 pageId 时用当前打开的页面。
-fn cap_blocks_append(page_id: Option<&str>, text: &str, fence: Option<&str>) -> CapResult {
+fn cap_blocks_append(
+    page_id: Option<&str>,
+    text: &str,
+    fence: Option<&str>,
+    expected_rev: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
     if text.trim().is_empty() {
         return Err("bad_args: 追加内容需要 text".to_string());
     }
     let target = target_page_or_current(page_id)?;
+    let target_title = live_target(&target)
+        .map(|(t, _)| t)
+        .unwrap_or_else(|_| target.clone());
+    let rev = check_expected_rev(&target, expected_rev)?;
     let title = RUN_STATE.with(|s| {
         // 顺手把目标页标题查出来给用户看（只读，不改状态）；查不到就用 id。
         let _ = s.borrow().plugin_id.clone();
         String::new()
     });
     let _ = title;
-    let summary = format!("向页面 {target} 追加内容");
+    let summary = format!("向页面「{target_title}」追加内容");
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true,
+            "summary": summary,
+            "would": { "kind": "append_block", "pageId": target, "expectedRev": rev, "bytes": text.len() },
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
     push_draft(
         format!("append_block:{target}"),
         summary.clone(),
@@ -2993,6 +3077,482 @@ fn cap_coverage_report(space_id: Option<&str>) -> CapResult {
         .map_err(|e| format!("bad_args: 前端覆盖率报告不是合法 JSON（{e}）"))
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// B2-结构（2026-10-29）· **节点/文件夹/回收站/回滚/标签/属性**的写能力
+//
+//   全部是 `mediate: "draft"`（写能力只能是这样，见 `check-capabilities` 的 M2 那一段）：
+//   Rust 只做「校验目标 ＋ 产出草稿」，**落库仍然只有一处**（`src/lib/ai/apply.ts`）。
+//   四条贯穿口径（矩阵 §4）：
+//     ① `spaceId` 可选：省略/等于当前 ⇒ 当前空间；给别的空间 ⇒ `permission_denied`
+//        （`write:all-spaces` 档本版默认关，⛔ 不静默回落）；
+//     ② `expectedRev`（`updated_at:sha8`）：不一致 ⇒ `rev_conflict`（带当前 rev，⛔ 不覆盖）；
+//     ③ `dryRun`：**不产出草稿**、不审计（P2 判据 4），回「会做什么」；
+//     ④ `clientRequestId`：同 id 重复调用只落一次/只审计一条（在 `dispatch_capability` 那一层做）。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// 写目标空间（§4.1）。`write:all-spaces` 目前**没有任何档位授予**（默认关）。
+fn write_target_space(space_id: Option<&str>) -> Result<String, String> {
+    let current = target_space_id(None);
+    let want = space_id.map(str::trim).filter(|s| !s.is_empty());
+    match want {
+        None => Ok(current),
+        Some(s) if s == current => Ok(current),
+        Some(_) => {
+            if has_scope("write:all-spaces") {
+                Err(
+                    "bad_args: 跨空间写本批未接（草稿落库只走当前空间连接）—— 省略 spaceId 即当前空间"
+                        .to_string(),
+                )
+            } else {
+                Err(
+                    "permission_denied: 带 spaceId 写别的空间需要权限 write:all-spaces\
+                     （『可写（全部空间）』档，本版默认关）—— 省略 spaceId 即当前空间"
+                        .to_string(),
+                )
+            }
+        }
+    }
+}
+
+/// 当前页的乐观并发令牌：`<updated_at 毫秒>:<正文 JSON 的 sha256 前 8 位>`（与读面同一形态）。
+fn page_rev_of(c: &rusqlite::Connection, page_id: &str) -> Result<Option<String>, String> {
+    let Some(m) = crate::doc_content::read_with_meta(c, page_id)? else {
+        return Ok(None);
+    };
+    let digest = crate::mcp_blobs::sha256_hex(m.content.json.as_bytes());
+    Ok(Some(format!("{}:{}", m.updated_at, &digest[..8])))
+}
+
+/// 校验 `expectedRev`（给了就必须与当前一致；没给就只取当前值）。页不存在 ⇒ `not_found`。
+fn check_expected_rev(page_id: &str, expected: Option<&str>) -> Result<String, String> {
+    let exp = expected.map(str::trim).filter(|s| !s.is_empty());
+    let cur = match with_read_conn(|c| page_rev_of(c, page_id)) {
+        Ok(v) => v,
+        // 没给 expectedRev 时**容忍**"读不到当前空间"（老草稿路径本来就不碰库；⛔ 不把它变成硬失败）
+        Err(e) if exp.is_none() => return Ok(e),
+        Err(e) => return Err(e),
+    };
+    let Some(cur) = cur else {
+        return Err(format!("not_found: 页面 {page_id} 不存在或已删除"));
+    };
+    if let Some(exp) = exp {
+        if exp != cur {
+            return Err(format!(
+                "rev_conflict: expectedRev={exp}，当前 rev={cur}；请重新读 pages.get 再重试（currentRev={cur}）"
+            ));
+        }
+    }
+    Ok(cur)
+}
+
+/// 读活页的 `(title, kind)`；不存在/已软删 ⇒ `not_found`（写能力的目标校验统一走这一条）。
+fn live_target(page_id: &str) -> Result<(String, String), String> {
+    let pid = page_id.trim();
+    if pid.is_empty() {
+        return Err("bad_args: 需要 pageId".to_string());
+    }
+    with_read_conn(|c| {
+        let Some(m) = crate::doc_content::read_with_meta(c, pid)? else {
+            return Err(format!("not_found: 页面 {pid} 不存在或已删除"));
+        };
+        Ok((m.content.title, m.kind))
+    })
+}
+
+/// 直接子项数（只数活着的子项；删除/移动前的提示与"非空文件夹拒绝"都靠它）。
+fn live_children_count(c: &rusqlite::Connection, page_id: &str) -> Result<i64, String> {
+    c.query_row(
+        "SELECT COUNT(*) FROM pages WHERE parent_id = ?1 AND deleted_at IS NULL",
+        params![page_id],
+        |r| r.get(0),
+    )
+    .map_err(|e| format!("db_error: {e}"))
+}
+
+/// 反链条数（删/移之前的如实提示；⛔ 不用它当"阻断"，矩阵只要求如实提示）。
+fn backlink_count(c: &rusqlite::Connection, page_id: &str) -> Result<i64, String> {
+    c.query_row(
+        "SELECT COUNT(*) FROM backlinks b JOIN pages p ON b.source_page_id = p.id
+         WHERE b.target_page_id = ?1 AND b.target_block_id = '' AND p.deleted_at IS NULL",
+        params![page_id],
+        |r| r.get(0),
+    )
+    .map_err(|e| format!("db_error: {e}"))
+}
+
+/// 写草稿（结构写统一出口）：`dryRun` ⇒ 不产出草稿、回"会做什么"。
+fn structural_draft(
+    dry_run: bool,
+    key: String,
+    summary: String,
+    payload: serde_json::Value,
+    space_id: &str,
+) -> CapResult {
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true,
+            "summary": summary,
+            "would": payload,
+            "spaceId": space_id,
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
+    push_draft(key, summary.clone(), payload);
+    Ok(serde_json::json!({
+        "drafted": true,
+        "summary": summary,
+        "spaceId": space_id,
+    }))
+}
+
+/// `folders.create`：在页面树里建一个文件夹（**没有**正文；不是页面）。
+fn cap_folders_create(
+    title: &str,
+    parent_id: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("bad_args: 新建文件夹需要 title".to_string());
+    }
+    if title.chars().count() > 200 {
+        return Err("bad_args: 文件夹标题超过 200 字上限".to_string());
+    }
+    let parent = parent_id.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(p) = parent {
+        live_target(p).map_err(|_| format!("not_found: 上级节点 {p} 不存在或已删除"))?;
+    }
+    structural_draft(
+        dry_run,
+        format!("create_folder:{parent:?}:{title}"),
+        format!("新建文件夹「{title}」"),
+        serde_json::json!({
+            "kind": "create_folder",
+            "parent_id": parent,
+            "title": title,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `nodes.move`：移动节点（页面或文件夹 = 同一个 `movePage`；文件夹也是页面树节点）。
+fn cap_nodes_move(
+    id: &str,
+    new_parent_id: Option<&str>,
+    sort_order: i64,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (title, _kind) = live_target(id)?;
+    let target = new_parent_id.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(p) = target {
+        // 环检测：不能移到自己或自己的后代下面（沿 parent 向上走，遇到自己 ⇒ 拒）
+        let (ptitle, _) = live_target(p).map_err(|_| format!("not_found: 新上级 {p} 不存在或已删除"))?;
+        if p == id.trim() {
+            return Err("bad_args: 不能把节点移到自己下面（会成环）".to_string());
+        }
+        let rev = check_expected_rev(id, expected_rev)?;
+        let mut cur = p.to_string();
+        for _ in 0..1000 {
+            let parent: Option<String> = with_read_conn(|c| {
+                c.query_row(
+                    "SELECT parent_id FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+                    params![cur],
+                    |r| r.get::<_, Option<String>>(0),
+                )
+                .map_err(|e| format!("db_error: {e}"))
+            })?;
+            match parent {
+                None => break,
+                Some(up) if up == id.trim() => {
+                    return Err(format!(
+                        "bad_args: 不能把「{title}」移到它自己的后代「{ptitle}」下面（会成环；currentRev={rev}）"
+                    ));
+                }
+                Some(up) => cur = up,
+            }
+        }
+    }
+    let rev = check_expected_rev(id, expected_rev)?;
+    let backlinks = with_read_conn(|c| backlink_count(c, id))?;
+    structural_draft(
+        dry_run,
+        format!("move_node:{}", id.trim()),
+        match target {
+            Some(p) => format!("移动「{title}」到节点 {p} 下面（反链 {backlinks} 条）"),
+            None => format!("移动「{title}」到顶层（反链 {backlinks} 条）"),
+        },
+        serde_json::json!({
+            "kind": "move_node",
+            "id": id.trim(),
+            "newParentId": target,
+            "sortOrder": sort_order,
+            "expectedRev": rev,
+            "backlinks": backlinks,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `nodes.rename`：只改标题（正文不动）。落库那步仍走 `savePage`（快照＋同步变更同一条路）。
+fn cap_nodes_rename(
+    id: &str,
+    title: &str,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (old_title, _kind) = live_target(id)?;
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("bad_args: 重命名需要 title".to_string());
+    }
+    if title.chars().count() > 200 {
+        return Err("bad_args: 标题超过 200 字上限".to_string());
+    }
+    let rev = check_expected_rev(id, expected_rev)?;
+    structural_draft(
+        dry_run,
+        format!("rename_node:{}", id.trim()),
+        format!("把「{old_title}」改名为「{title}」"),
+        serde_json::json!({
+            "kind": "rename_node",
+            "id": id.trim(),
+            "title": title,
+            "expectedRev": rev,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `nodes.delete`：**软删**（进回收站，可恢复）。非空（有任何活着的子项）⇒ **拒绝并点名 N**。
+fn cap_nodes_delete(
+    id: &str,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (title, _kind) = live_target(id)?;
+    let children = with_read_conn(|c| live_children_count(c, id))?;
+    if children > 0 {
+        return Err(format!(
+            "bad_args: 「{title}」还有 {children} 个子项 —— 请先移走或删除它们（⛔ 不递归删）"
+        ));
+    }
+    let rev = check_expected_rev(id, expected_rev)?;
+    let backlinks = with_read_conn(|c| backlink_count(c, id))?;
+    structural_draft(
+        dry_run,
+        format!("delete_node:{}", id.trim()),
+        format!("删除「{title}」（移入回收站，可恢复；反链 {backlinks} 条）"),
+        serde_json::json!({
+            "kind": "delete_node",
+            "id": id.trim(),
+            "expectedRev": rev,
+            "backlinks": backlinks,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `trash.restore`：从回收站恢复（**只有**回收站里的节点可恢复；活着的 ⇒ `bad_args`）。
+fn cap_trash_restore(
+    id: &str,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let pid = id.trim();
+    if pid.is_empty() {
+        return Err("bad_args: 需要 id".to_string());
+    }
+    let row: Option<(String, Option<i64>)> = with_read_conn(|c| {
+        use rusqlite::OptionalExtension;
+        c.query_row(
+            "SELECT title, deleted_at FROM pages WHERE id = ?1",
+            params![pid],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?)),
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))
+    })?;
+    let Some((title, deleted_at)) = row else {
+        return Err(format!("not_found: 节点 {pid} 不存在"));
+    };
+    if deleted_at.is_none() {
+        return Err(format!(
+            "bad_args: 「{title}」不在回收站（它还活着）—— 不需要恢复"
+        ));
+    }
+    structural_draft(
+        dry_run,
+        format!("restore_page:{pid}"),
+        format!("从回收站恢复「{title}」"),
+        serde_json::json!({
+            "kind": "restore_page",
+            "id": pid,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `pages.revert`：回退到**仍在版本历史里**的某一版（超出保留期/不存在 ⇒ `not_found`）。
+fn cap_pages_revert(
+    page_id: &str,
+    version_id: &str,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (title, _kind) = live_target(page_id)?;
+    let vid = version_id.trim();
+    if vid.is_empty() {
+        return Err("bad_args: 需要 versionId".to_string());
+    }
+    // 版本必须属于这一页（版本历史是回滚的**唯一**目标；⛔ 不跨页回滚、⛔ 不删原写审计）
+    let belongs: Option<String> = with_read_conn(|c| {
+        use rusqlite::OptionalExtension;
+        c.query_row(
+            "SELECT title FROM page_versions WHERE page_id = ?1 AND id = ?2",
+            params![page_id.trim(), vid],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))
+    })?;
+    if belongs.is_none() {
+        return Err(format!(
+            "not_found: 页面 {page_id} 的版本历史里没有 {vid}（超出保留期/已被清理）"
+        ));
+    }
+    let rev = check_expected_rev(page_id, expected_rev)?;
+    structural_draft(
+        dry_run,
+        format!("revert_page:{}:{vid}", page_id.trim()),
+        format!("把「{title}」回退到版本 {vid}（回退本身也会留一条新版本/审计）"),
+        serde_json::json!({
+            "kind": "revert_page",
+            "pageId": page_id.trim(),
+            "versionId": vid,
+            "expectedRev": rev,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `tags.remove`：把某个标签从一页上摘掉（**不删标签本身**；删除标签是另一件事）。
+fn cap_tags_remove(
+    name: &str,
+    page_id: Option<&str>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("bad_args: 移除标签需要 name".to_string());
+    }
+    let target = target_page_or_current(page_id)?;
+    let (title, _) = live_target(&target)?;
+    let tag_id: Option<String> = with_read_conn(|c| {
+        use rusqlite::OptionalExtension;
+        c.query_row("SELECT id FROM tags WHERE name = ?1", params![name], |r| r.get(0))
+            .optional()
+            .map_err(|e| format!("db_error: {e}"))
+    })?;
+    let Some(tag_id) = tag_id else {
+        return Err(format!("not_found: 没有名为「{name}」的标签"));
+    };
+    let linked: i64 = with_read_conn(|c| {
+        c.query_row(
+            "SELECT COUNT(*) FROM page_tags WHERE page_id = ?1 AND tag_id = ?2",
+            params![target, tag_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("db_error: {e}"))
+    })?;
+    if linked == 0 {
+        return Err(format!("not_found: 页面「{title}」没有标签「{name}」"));
+    }
+    let rev = check_expected_rev(&target, expected_rev)?;
+    structural_draft(
+        dry_run,
+        format!("remove_tag:{target}:{name}"),
+        format!("把标签「{name}」从页面「{title}」上摘掉"),
+        serde_json::json!({
+            "kind": "remove_tag",
+            "pageId": target,
+            "tagId": tag_id,
+            "name": name,
+            "expectedRev": rev,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `properties.unset`：去掉页面上的一个属性值（属性定义仍在；**不删定义**）。
+fn cap_properties_unset(
+    attr_id: &str,
+    page_id: Option<&str>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let attr_id = attr_id.trim();
+    if attr_id.is_empty() {
+        return Err("bad_args: 去掉属性需要 attrId".to_string());
+    }
+    let target = target_page_or_current(page_id)?;
+    let (title, _) = live_target(&target)?;
+    let attr_name: Option<String> = with_read_conn(|c| {
+        use rusqlite::OptionalExtension;
+        c.query_row("SELECT name FROM attr_defs WHERE id = ?1", params![attr_id], |r| r.get(0))
+            .optional()
+            .map_err(|e| format!("db_error: {e}"))
+    })?;
+    let Some(attr_name) = attr_name else {
+        return Err(format!("not_found: 属性 {attr_id} 不存在（先用 properties.list 查）"));
+    };
+    let rev = check_expected_rev(&target, expected_rev)?;
+    structural_draft(
+        dry_run,
+        format!("unset_page_prop:{target}:{attr_id}"),
+        format!("去掉页面「{title}」的属性「{attr_name}」"),
+        serde_json::json!({
+            "kind": "unset_page_prop",
+            "pageId": target,
+            "attrId": attr_id,
+            "expectedRev": rev,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
 fn cap_properties_list(space_id: Option<&str>) -> CapResult {
     with_conn_for_space(space_id, |c| {
         let mut stmt = c
@@ -3222,34 +3782,81 @@ fn cap_db_rows(
 }
 
 /// `properties.set`：**不写库**，只产出草稿（改的是既有页面的属性）。
-fn cap_properties_set(attr_id: &str, value: &str, page_id: Option<&str>) -> CapResult {
-    if attr_id.trim().is_empty() {
+fn cap_properties_set(
+    attr_id: &str,
+    value: &str,
+    page_id: Option<&str>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let attr_id = attr_id.trim();
+    if attr_id.is_empty() {
         return Err("bad_args: 设置属性需要 attrId".to_string());
     }
     let target = target_page_or_current(page_id)?;
-    let summary = format!("给页面 {target} 设置属性 {attr_id} = {value}");
-    push_draft(
+    let (title, _) = live_target(&target)?;
+    // 属性定义必须存在（⛔ 不接受"随手编一个 attrId"）；类型校验：数字属性必须是数字。
+    let attr: Option<(String, String)> = with_read_conn(|c| {
+        use rusqlite::OptionalExtension;
+        c.query_row(
+            "SELECT name, type FROM attr_defs WHERE id = ?1",
+            params![attr_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))
+    })?;
+    let Some((attr_name, attr_type)) = attr else {
+        return Err(format!("not_found: 属性 {attr_id} 不存在（先用 properties.list 查）"));
+    };
+    if attr_type == "number" && value.trim().parse::<f64>().is_err() {
+        return Err(format!(
+            "bad_args: 属性「{attr_name}」是数字类型，值「{value}」不是数字"
+        ));
+    }
+    let rev = check_expected_rev(&target, expected_rev)?;
+    structural_draft(
+        dry_run,
         format!("set_page_prop:{target}:{attr_id}"),
-        summary.clone(),
-        serde_json::json!({ "kind": "set_page_prop", "pageId": target, "attrId": attr_id, "value": value }),
-    );
-    Ok(serde_json::json!({ "drafted": true, "summary": summary }))
+        format!("给页面「{title}」设置属性「{attr_name}」= {value}"),
+        serde_json::json!({
+            "kind": "set_page_prop", "pageId": target, "attrId": attr_id,
+            "value": value, "expectedRev": rev, "spaceId": space,
+        }),
+        &space,
+    )
 }
 
 /// `tags.add`：**不写库**，只产出草稿（标签不存在时由落库那一步新建）。
-fn cap_tags_add(name: &str, page_id: Option<&str>) -> CapResult {
+fn cap_tags_add(
+    name: &str,
+    page_id: Option<&str>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
     let name = name.trim();
     if name.is_empty() {
         return Err("bad_args: 加标签需要 name".to_string());
     }
     let target = target_page_or_current(page_id)?;
-    let summary = format!("给页面 {target} 加标签「{name}」");
-    push_draft(
+    let (title, _) = live_target(&target)?;
+    let rev = check_expected_rev(&target, expected_rev)?;
+    structural_draft(
+        dry_run,
         format!("add_tag:{target}:{name}"),
-        summary.clone(),
-        serde_json::json!({ "kind": "add_tag", "pageId": target, "name": name }),
-    );
-    Ok(serde_json::json!({ "drafted": true, "summary": summary }))
+        format!("给页面「{title}」加标签「{name}」"),
+        serde_json::json!({
+            "kind": "add_tag", "pageId": target, "name": name,
+            "expectedRev": rev, "spaceId": space,
+        }),
+        &space,
+    )
 }
 
 /// `blocks.list`：列出页面顶级块（id + 文本）。
@@ -3538,6 +4145,24 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         }
     };
 
+    // ⭐ B2（2026-10-29）：写能力的 **dryRun / clientRequestId** 统一在这一层处理
+    //   （与唯一鉴权点同一处；⛔ 不让每个新写能力各自实现一遍 —— 那必然漏）。
+    let is_write = cap.kind == "write";
+    let dry_run = arg_bool(args.get("dryRun"), false);
+    let idem_key: Option<String> = if is_write {
+        args.get("clientRequestId")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|id| format!("{source}|{method}|{id}"))
+    } else {
+        None
+    };
+    if let Some(key) = idem_key.as_ref() {
+        if let Some(hit) = idempotent_lookup(key) {
+            return Ok(hit);
+        }
+    }
     let out = match cap.id {
         "page.current" => cap_page_current(arg_bool(args.get("includeAnchors"), true)),
         "pages.count" => cap_pages_count(arg_opt_str("spaceId").as_deref()),
@@ -3607,18 +4232,96 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             &arg_str("attrId")?,
             &arg_str("value")?,
             arg_opt_str("pageId").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
         ),
-        "tags.add" => cap_tags_add(&arg_str("name")?, arg_opt_str("pageId").as_deref()),
+        "properties.unset" => cap_properties_unset(
+            &arg_str("attrId")?,
+            arg_opt_str("pageId").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "tags.add" => cap_tags_add(
+            &arg_str("name")?,
+            arg_opt_str("pageId").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "tags.remove" => cap_tags_remove(
+            &arg_str("name")?,
+            arg_opt_str("pageId").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        // B2-结构：文件夹 / 节点移动/改名/软删 / 回收站恢复 / 版本回退
+        "folders.create" => cap_folders_create(
+            &arg_str("title")?,
+            arg_opt_str("parentId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "nodes.move" => cap_nodes_move(
+            &arg_str("id")?,
+            arg_opt_str("newParentId").as_deref(),
+            arg_i64("sortOrder", 0),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "nodes.rename" => cap_nodes_rename(
+            &arg_str("id")?,
+            &arg_str("title")?,
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "nodes.delete" => cap_nodes_delete(
+            &arg_str("id")?,
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "trash.restore" => cap_trash_restore(
+            &arg_str("id")?,
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "pages.revert" => cap_pages_revert(
+            &arg_str("pageId")?,
+            &arg_str("versionId")?,
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
         "pages.importMarkdown" => cap_pages_import_markdown(
             &arg_str("title")?,
             &arg_str("markdown")?,
             arg_opt_str("parentId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
         ),
         "pages.update" => cap_pages_update(
             &arg_str("id")?,
             arg_opt_str("title").as_deref(),
             arg_opt_str("markdown").as_deref(),
             arg_opt_str("content").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
         ),
         "spaces.list" => cap_spaces_list(),
         "spaces.switch" => cap_spaces_switch(
@@ -3631,11 +4334,16 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_opt_str("parentId").as_deref(),
             arg_opt_str("fence").as_deref(),
             None,
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
         ),
         "blocks.append" => cap_blocks_append(
             arg_opt_str("pageId").as_deref(),
             &arg_str("text")?,
             arg_opt_str("fence").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
         ),
         "editor.insertText" => cap_editor_insert_text(&arg_str("text")?),
         "user.notify" => cap_user_notify(&arg_str("message")?),
@@ -3650,12 +4358,23 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
     };
     match out {
         Ok(v) => {
-            push_audit(&source, &plugin_id, method, cap.scope, true, None);
-            serde_json::to_string(&v).map_err(|e| e.to_string())
+            // dryRun：不产生草稿（各 cap 自己保证）＋ **审计不加**（P2 判据 4）
+            if !dry_run {
+                push_audit(&source, &plugin_id, method, cap.scope, true, None);
+            }
+            let text = serde_json::to_string(&v).map_err(|e| e.to_string())?;
+            if !dry_run {
+                if let Some(key) = idem_key.as_ref() {
+                    idempotent_remember(key, &text);
+                }
+            }
+            Ok(text)
         }
         Err(e) => {
-            let code = error_code_of(&e);
-            push_audit(&source, &plugin_id, method, cap.scope, false, code);
+            if !dry_run {
+                let code = error_code_of(&e);
+                push_audit(&source, &plugin_id, method, cap.scope, false, code);
+            }
             Err(e)
         }
     }
@@ -12757,6 +13476,206 @@ register({ id: "s.run", title: "结构化", run: function () {
             t0.elapsed()
         );
         crate::frontend_tool::set_ready_for_tests(true);
+        b1c_cleanup(&f);
+    }
+
+    // ── B2-结构（2026-10-29）：节点/文件夹/回收站/回退/标签/属性 的写判据 ──
+    fn b2_granted() -> Vec<String> {
+        let mut g = crate::mcp_channel::default_read_scopes();
+        g.push("write:pages".to_string());
+        g.push("write:tags".to_string());
+        g.push("write:properties".to_string());
+        g
+    }
+
+    /// ⭐ 判据 ②：删**非空文件夹** ⇒ 拒绝并点名 N 个子项（⛔ 不递归删）。
+    #[test]
+    fn b2_deleting_a_non_empty_folder_is_refused_with_the_child_count() {
+        let f = b1c_fixture("b2-nonempty");
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('f1', ?1, NULL, '资料', '{}', '', 'folder', 0, 10, 10)",
+                params![f.space],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('c1', ?1, 'f1', '子页', '{}', '', 'page', 0, 11, 11)",
+                params![f.space],
+            )
+            .unwrap();
+        }
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        let e = with_external_caller("b2-nonempty", &g, || {
+            dispatch_capability("nodes.delete", r#"{"id":"f1"}"#)
+        })
+        .expect_err("非空文件夹必须拒绝");
+        assert!(e.contains("bad_args"), "{e}");
+        assert!(e.contains("1 个子项"), "必须点名 N 个子项：{e}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 ③：`nodes.move` 成环 ⇒ 拒绝；成功时草稿里有新父级与 id（id 不变）。
+    #[test]
+    fn b2_move_rejects_cycles_and_drafts_the_new_parent() {
+        let f = b1c_fixture("b2-move");
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('f1', ?1, NULL, '资料', '{}', '', 'folder', 0, 10, 10)",
+                params![f.space],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('c1', ?1, 'f1', '子页', '{}', '', 'page', 0, 11, 11)",
+                params![f.space],
+            )
+            .unwrap();
+        }
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        // f1 → 自己的子页 c1 下面 ⇒ 成环
+        let e = with_external_caller("b2-move", &g, || {
+            dispatch_capability("nodes.move", r#"{"id":"f1","newParentId":"c1"}"#)
+        })
+        .expect_err("成环必须拒绝");
+        assert!(e.contains("bad_args") && e.contains("环"), "{e}");
+        // 正常移动：c1 → 顶层
+        let (out, drafts) = with_external_caller("b2-move-ok", &g, || {
+            with_fresh_drafts(|| dispatch_capability("nodes.move", r#"{"id":"c1","newParentId":null}"#))
+        });
+        out.expect("正常移动应产出草稿");
+        assert_eq!(drafts.len(), 1, "应恰好一条草稿");
+        let p = drafts[0].payload.clone();
+        assert_eq!(p["kind"], "move_node");
+        assert_eq!(p["id"], "c1");
+        assert!(p["newParentId"].is_null(), "顶层 ⇒ null：{p}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 ④：`pages.revert` 只能回退到**版本历史里**的版本；超期/不存在 ⇒ `not_found`。
+    #[test]
+    fn b2_revert_only_accepts_versions_still_in_history() {
+        let f = b1c_fixture("b2-revert");
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute(
+                "INSERT INTO page_versions (id, page_id, title, content_json, content_text, created_at)
+                 VALUES ('b2v1', 'p1', '标题', '{}', '正文', 9)",
+                [],
+            )
+            .unwrap();
+        }
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        let (out, drafts) = with_external_caller("b2-revert", &g, || {
+            with_fresh_drafts(|| dispatch_capability("pages.revert", r#"{"pageId":"p1","versionId":"b2v1"}"#))
+        });
+        out.expect("版本还在历史里 ⇒ 应产出草稿");
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].payload["kind"], "revert_page");
+        // 不存在的版本 ⇒ not_found（⛔ 不假装成功）
+        let e = with_external_caller("b2-revert-miss", &g, || {
+            dispatch_capability("pages.revert", r#"{"pageId":"p1","versionId":"nope"}"#)
+        })
+        .expect_err("版本不在历史里必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 ⑤ + idempotency：`dryRun` 不产草稿、不审计；同一 `clientRequestId` 只落一次、只审一条。
+    #[test]
+    fn b2_dry_run_and_client_request_id_behave() {
+        let f = b1c_fixture("b2-dry");
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        let session = "b2-dry-run";
+        let (out, drafts) = with_external_caller(session, &g, || {
+            with_fresh_drafts(|| dispatch_capability("nodes.delete", r#"{"id":"p1","dryRun":true}"#))
+        });
+        let v: serde_json::Value = serde_json::from_str(&out.expect("dryRun 应 OK")).unwrap();
+        assert_eq!(v["dryRun"], true, "{v}");
+        assert!(drafts.is_empty(), "dryRun 不许产草稿：{drafts:?}");
+        let rows = crate::plugins::plugin_audit(Some("external".to_string()), Some(200))
+            .into_iter()
+            .filter(|e| e.source == format!("external:{session}"))
+            .count();
+        assert_eq!(rows, 0, "dryRun 不记审计");
+        // clientRequestId：两次调用只产一条草稿、只审一条
+        let args = r#"{"id":"p1","clientRequestId":"req-b2-struct-1"}"#;
+        let (o1, d1) = with_external_caller("b2-idem", &g, || {
+            with_fresh_drafts(|| dispatch_capability("nodes.delete", args))
+        });
+        let (o2, d2) = with_external_caller("b2-idem", &g, || {
+            with_fresh_drafts(|| dispatch_capability("nodes.delete", args))
+        });
+        assert_eq!(o1.unwrap(), o2.unwrap(), "同 id 第二次必须返回同一结果");
+        assert_eq!(d1.len(), 1, "第一次产一条草稿");
+        assert_eq!(d2.len(), 0, "同 id 第二次**不许**再产草稿");
+        let rows: Vec<_> = crate::plugins::plugin_audit(Some("external".to_string()), Some(200))
+            .into_iter()
+            .filter(|e| e.source == "external:b2-idem")
+            .collect();
+        assert_eq!(rows.len(), 1, "同 id 只审一条（实际 {} 条）", rows.len());
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 ①/⑤：成功的结构写 ⇒ 恰好一条审计；标签/属性的目标校验。
+    #[test]
+    fn b2_structural_writes_audit_once_and_validate_targets() {
+        let f = b1c_fixture("b2-audit");
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute("INSERT INTO tags (id, name) VALUES ('t1', '标签甲')", [])
+                .unwrap();
+            c.execute("INSERT INTO page_tags (page_id, tag_id) VALUES ('p1', 't1')", [])
+                .unwrap();
+            c.execute(
+                "INSERT INTO attr_defs (id, name, type, sort_order, created_at, updated_at) VALUES ('a1', '评分', 'number', 0, 1, 1)",
+                [],
+            )
+            .unwrap();
+        }
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        let session = "b2-audit-1";
+        with_external_caller(session, &g, || {
+            dispatch_capability("folders.create", r#"{"title":"新文件夹"}"#)
+        })
+        .expect("建文件夹应 OK");
+        let rows: Vec<_> = crate::plugins::plugin_audit(Some("external".to_string()), Some(200))
+            .into_iter()
+            .filter(|e| e.source == format!("external:{session}"))
+            .collect();
+        assert_eq!(rows.len(), 1, "每次写恰一条审计（实际 {}）", rows.len());
+        assert!(rows[0].ok);
+        // tags.remove：不存在的标签 ⇒ not_found；存在 ⇒ 草稿
+        let e = with_external_caller("b2-audit-2", &g, || {
+            dispatch_capability("tags.remove", r#"{"pageId":"p1","name":"没有这个"}"#)
+        })
+        .expect_err("不存在的标签必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        let (out, drafts) = with_external_caller("b2-audit-3", &g, || {
+            with_fresh_drafts(|| dispatch_capability("tags.remove", r#"{"pageId":"p1","name":"标签甲"}"#))
+        });
+        out.expect("移除已存在的标签应产草稿");
+        assert_eq!(drafts.len(), 1);
+        // properties.set：数字属性给非数字 ⇒ bad_args；properties.unset 不存在 ⇒ not_found
+        let e = with_external_caller("b2-audit-4", &g, || {
+            dispatch_capability("properties.set", r#"{"pageId":"p1","attrId":"a1","value":"不是数字"}"#)
+        })
+        .expect_err("数字属性给非数字必须 bad_args");
+        assert!(e.contains("bad_args"), "{e}");
+        let e = with_external_caller("b2-audit-5", &g, || {
+            dispatch_capability("properties.unset", r#"{"pageId":"p1","attrId":"nope"}"#)
+        })
+        .expect_err("不存在的属性必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
         b1c_cleanup(&f);
     }
 }

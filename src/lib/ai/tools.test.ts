@@ -77,6 +77,17 @@ const EXPECTED = [
   // ⭐ B3（2026-10-29）：前端桥三条（导出走句柄；覆盖率报告直接回 JSON）
   "export.markdown",
   "export.docpackage",
+  // ⭐ B2-结构（2026-10-29）：节点/文件夹/回收站/回退/标签/属性写（全部草稿确认）
+  "folders.create",
+  "nodes.move",
+  "nodes.rename",
+  "nodes.delete",
+  "trash.restore",
+  "pages.revert",
+  "tags.add",
+  "tags.remove",
+  "properties.set",
+  "properties.unset",
 ];
 
 describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实现）", () => {

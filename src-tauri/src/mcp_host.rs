@@ -651,6 +651,69 @@ mod tests {
             assert_eq!(cap.kind, "read", "读面里混进了非读能力 {id} ✗");
         }
     }
+
+    /// ⭐ **B2-结构（2026-10-29）挂载级判据**：14 条写工具在「不接」档逐条 `permission_denied`，
+    /// 且点名的权限来自注册表；带 `spaceId` 写别的空间 ⇒ 点名缺 `write:all-spaces`。
+    #[test]
+    fn b2_write_tools_are_denied_table_driven_and_space_id_needs_write_all() {
+        let methods = [
+            "pages.create",
+            "pages.update",
+            "pages.importMarkdown",
+            "blocks.append",
+            "folders.create",
+            "nodes.move",
+            "nodes.rename",
+            "nodes.delete",
+            "trash.restore",
+            "pages.revert",
+            "tags.add",
+            "tags.remove",
+            "properties.set",
+            "properties.unset",
+        ];
+        for method in methods {
+            let cap = crate::capabilities_gen::lookup(method)
+                .unwrap_or_else(|| panic!("注册表里必须有 {method} ✓"));
+            let perm = cap.permission.expect("写能力也有权限门 ✓");
+            let session = format!("b2-denied-{}", method.replace('.', "-"));
+            let err = match handle_external_call(&session, &[], method, "{}") {
+                Ok(v) => panic!("{method} 在无授权时**必须被拒**，实际成功：{v}"),
+                Err(e) => e,
+            };
+            assert!(
+                err.contains("permission_denied"),
+                "{method} 在无授权时必须 permission_denied：{err}"
+            );
+            assert!(
+                err.contains(perm),
+                "{method} 的拒绝必须点名缺哪个权限 {perm}：{err}"
+            );
+            assert_eq!(
+                audit_of(&format!("external:{session}")).len(),
+                1,
+                "{method} 被拒也必须留痕 ✓"
+            );
+        }
+        // ② 有写权限、但带**别的空间**的 spaceId ⇒ permission_denied 并点名 write:all-spaces
+        let mut granted = crate::mcp_channel::default_read_scopes();
+        granted.push("write:pages".to_string());
+        granted.push("write:tags".to_string());
+        granted.push("write:properties".to_string());
+        let err = match handle_external_call(
+            "b2-space-id-wall",
+            &granted,
+            "nodes.move",
+            r#"{"id":"p1","spaceId":"别的空间"}"#,
+        ) {
+            Ok(v) => panic!("带别的空间 spaceId 必须被拒，实际成功：{v}"),
+            Err(e) => e,
+        };
+        assert!(
+            err.contains("permission_denied") && err.contains("write:all-spaces"),
+            "跨空间写必须点名 write:all-spaces：{err}"
+        );
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════━━
@@ -783,6 +846,46 @@ mod tools_list_tests {
             assert!(
                 !on.iter().any(|x| x == forbidden),
                 "⛔ 不暴露清单里的 {forbidden} 出现在写面 ✗：{on:?}"
+            );
+        }
+    }
+
+    /// ⭐ **B2-结构（2026-10-29）判据 7**：零写红测试改判成「**预期写工具白名单**」——
+    /// 读面里⛔ 一个写工具都不许有；写面**正好**是这 14 条（旧 4 ＋ B2 的 10），多一条少一条都红。
+    /// （不是删掉旧测试：它挡的"写能力悄悄多出来"正是要保留的语义，只是从"一条都没有"升级成白名单。）
+    #[test]
+    fn b2_write_surface_is_exactly_the_expected_whitelist() {
+        const EXPECTED_WRITE: [&str; 14] = [
+            "pages_create",
+            "pages_update",
+            "pages_importMarkdown",
+            "blocks_append",
+            "folders_create",
+            "nodes_move",
+            "nodes_rename",
+            "nodes_delete",
+            "trash_restore",
+            "pages_revert",
+            "tags_add",
+            "tags_remove",
+            "properties_set",
+            "properties_unset",
+        ];
+        let off = names(&tools_list_json(false));
+        let on = names(&tools_list_json(true));
+        let added: Vec<&String> = on.iter().filter(|n| !off.iter().any(|x| x == *n)).collect();
+        let mut got: Vec<String> = added.iter().map(|s| (*s).clone()).collect();
+        got.sort();
+        let mut want: Vec<String> = EXPECTED_WRITE.iter().map(|s| s.to_string()).collect();
+        want.sort();
+        assert_eq!(
+            got, want,
+            "写面必须**正好**是预期白名单（多/少都红）——got={got:?}"
+        );
+        for n in EXPECTED_WRITE {
+            assert!(
+                !off.iter().any(|x| x == n),
+                "读写面分离：读面里不该出现写工具 {n}：{off:?}"
             );
         }
     }
