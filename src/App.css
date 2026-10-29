@@ -18591,6 +18591,18 @@ p:has(> .editor-drawing-container) {
   color: var(--accent);
   background: var(--accent-soft);
 }
+/* ⭐ 2026-10-29（owner）：「关于」里的一句「本机设备：<名字>」—— 只读（改在设置 → 账户）。
+   与上面那两枚胶囊同处一屏，但**不做成第三枚胶囊**：版本/许可是"这一版是什么"，
+   设备名是"我是谁"，两者不该看起来是同一类格子 ✓。 */
+.about-device {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.about-device b {
+  color: var(--text-dim);
+  font-weight: 600;
+}
 .about-section {
   border-top: 1px solid var(--border);
   padding: 14px 0;
