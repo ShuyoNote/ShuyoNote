@@ -1151,11 +1151,24 @@ pub(crate) fn attachment_bytes(
         let c = db.0.lock().expect("db mutex poisoned");
         active_space_id(&c)
     };
+    plain_bytes_of(&app_data_dir, &space, hash)
+}
+
+/// 一个附件的**明文字节**（按空间取钥匙 → 读盘 → 解密 → 空壳/内容指纹校验）。
+///
+/// ⭐ B1c（2026-10-29）：从 [`attachment_bytes`] 里**抽出来**的 —— 能力层（`files.download`
+/// 的句柄登记）没有 `AppHandle`/`State`，但它必须与界面走**同一条**字节口径
+/// （尤其"密文不许当明文交出去""坏件不交"这两条）⇒ 抽成 `pub(crate)`，⛔ 不抄第二份。
+pub(crate) fn plain_bytes_of(
+    app_data_dir: &Path,
+    space: &str,
+    hash: &str,
+) -> Result<Vec<u8>, String> {
     // ⭐ 2026-10-27（owner：「修」）：钥匙按**这个空间**取（⛔ 不用 `key_if_enabled(conn)` ✗）
-    let key = space_key_for(&app_data_dir, &space);
+    let key = space_key_for(app_data_dir, space);
     // 找不到文件时说清是"文件不在盘上"：这一条最常见的成因是外部把文件删了/移走了，
     // 而数据库里那行还在——笼统的"附件不存在"会让人以为是数据库的问题。
-    let raw = read_attachment_bytes_at(&app_data_dir, &space, hash)?;
+    let raw = read_attachment_bytes_at(app_data_dir, space, hash)?;
     // ⭐ **2026-10-27（owner：「修」）**：拿不到钥匙、盘上却是**密文** ⇒ 拒绝（⛔ 不把密文当明文交出去 ✗）。
     if key.is_none() && crate::security::looks_like_attachment_ciphertext(&raw) {
         return Err(

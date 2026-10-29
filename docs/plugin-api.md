@@ -1,4 +1,4 @@
-# 插件 API（v1.4.0）
+# 插件 API（v1.5.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.4.0",
+  "apiVersion": "1.5.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.4.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.5.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -96,6 +96,8 @@ register({
 | `write:properties` | 设置页面属性：给页面设置属性值；**写入前会先给你看草稿并等你确认** | medium |
 | `write:tags` | 给页面加标签：给页面加标签；**写入前会先给你看草稿并等你确认** | medium |
 | `export:files` | 把内容保存成文件：存到哪、存不存都由你在系统保存对话框里定（插件只能给一个建议文件名，给不了路径）。**导出的文件是明文**，不随空间的加密一起保护 | medium |
+| `read:versions` | 读取历史版本：读取页面的历史版本清单与某个版本的正文（只读；不会回滚任何内容） | low |
+| `read:trash` | 读取回收站：读取已软删除页面的清单（标题与删除时间；不含正文，也不恢复/清空） | low |
 
 ## 4. 能力（`api.*`）
 
@@ -109,12 +111,18 @@ register({
 | `pages.tree` | `api.pages.tree(spaceId, limit)` | `read:pages` | `current-space` | — | object | 1.3.0 |
 | `db.schema` | `api.db.schema(pageId, spaceId)` | `read:pages` | `current-space` | — | object | 1.4.0 |
 | `db.rows` | `api.db.rows(pageId, viewId, where, limit, offset, spaceId)` | `read:pages` | `current-space` | — | object | 1.4.0 |
+| `versions.list` | `api.versions.list(pageId, limit)` | `read:versions` | `current-space` | — | array | 1.5.0 |
+| `version.get` | `api.version.get(pageId, versionId, offset, limit, includeAnchors)` | `read:versions` | `current-space` | — | object | 1.5.0 |
+| `trash.list` | `api.trash.list(spaceId, limit)` | `read:trash` | `current-space` | — | array | 1.5.0 |
 | `tags.list` | `api.tags.list(spaceId)` | `read:tags` | `current-space` | — | array | 1.0.0 |
 | `blocks.list` | `api.blocks.list(pageId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | — | array | 1.0.0 |
 | `files.list` | `api.files.list(pageId)` | `read:files` | `current-space` | — | array | 1.0.0 |
 | `files.search` | `api.files.search(query, limit)` | `read:files` | `current-space` | — | array | 1.1.0 |
 | `files.read` | `api.files.read(id, offset, limit)` | `read:files` | `current-space` | — | object | 1.1.0 |
+| `files.stat` | `api.files.stat(attId)` | `read:files` | `current-space` | — | object | 1.5.0 |
+| `files.extract_status` | `api.files.extract_status(attId)` | `read:files` | `current-space` | — | object | 1.5.0 |
+| `files.list_orphan` | `api.files.list_orphan(limit, offset)` | `read:files` | `current-space` | — | object | 1.5.0 |
 | `editor.insertText` | `api.editor.insertText(text)` | `write:page.current` | `current-space` | 即时 | void | 1.0.0 |
 | `pages.create` | `api.pages.create(title, content, parentId, fence)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `blocks.append` | `api.blocks.append(text, pageId, fence)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
@@ -128,6 +136,8 @@ register({
 | `tags.add` | `api.tags.add(name, pageId)` | `write:tags` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `log.write` | `api.log(message, level)` | — | `app` | — | void | 1.0.0 |
 | `files.export` | `api.files.export(fileName, content)` | `export:files` | `app` | **草稿确认** | object | 1.0.0 |
+| `files.download` | `api.files.download(attId)` | `export:files` | `current-space` | — | object | 1.5.0 |
+| `blobs.fetch` | `api.blobs.fetch(handle)` | `export:files` | `current-space` | — | object | 1.5.0 |
 | `pages.importMarkdown` | `api.pages.importMarkdown(title, markdown, parentId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `pages.update` | `api.pages.update(id, markdown, content, title)` | `write:pages` | `current-space` | **草稿确认** | object | 1.1.0 |
 | `spaces.list` | `api.spaces.list()` | `read:pages` | `app` | — | object | 1.1.0 |
@@ -218,6 +228,39 @@ register({
   - `offset`: `number`（可选），默认 `0` —— 跳过多少行（默认 0）；与 limit 一起翻页
   - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
 
+### `versions.list` — 列出页面历史版本
+
+- 调用：`api.versions.list(pageId, limit)`
+- 权限：`read:versions`
+- scope：`current-space`
+- 返回：[{versionId, at(毫秒时间戳), title}]，按时间倒序；不含正文（读正文用 version.get）
+- 参数：
+  - `pageId`: `string` —— 页面 id
+  - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（默认 50，上限 200）
+
+### `version.get` — 读取某个历史版本
+
+- 调用：`api.version.get(pageId, versionId, offset, limit, includeAnchors)`
+- 权限：`read:versions`
+- scope：`current-space`
+- 返回：与 pages.get 同口径的正文窗口（{pageId, versionId, at, title, 正文字段, chars_total, offset, limit}；版本不存在 ⇒ not_found）
+- 参数：
+  - `pageId`: `string` —— 页面 id
+  - `versionId`: `string` —— 版本 id（从 versions.list 取）
+  - `offset`: `number`（可选），默认 `0` —— 从第几个**字符**开始（默认 0；按 Unicode 标量计数）
+  - `limit`: `number`（可选），默认 `6000` —— 最多返回多少字符（默认 6000，上限 20000）
+  - `includeAnchors`: `boolean`（可选），默认 `true` —— 是否在每个顶层块后插块锚点注释（可选，默认 true；与 pages.get 同口径）
+
+### `trash.list` — 列出回收站
+
+- 调用：`api.trash.list(spaceId, limit)`
+- 权限：`read:trash`
+- scope：`current-space`
+- 返回：[{pageId, title, deletedAt(毫秒时间戳)}]，按删除时间倒序；不含正文
+- 参数：
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
+  - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（默认 50，上限 200）
+
 ### `tags.list` — 列出本空间标签
 
 - 调用：`api.tags.list(spaceId)`
@@ -275,6 +318,34 @@ register({
   - `id`: `string` —— 附件 id
   - `offset`: `number`（可选），默认 `0` —— 从第几段开始（默认 0）
   - `limit`: `number`（可选），默认 `200` —— 最多返回多少段（上限 1000）
+
+### `files.stat` — 附件元数据（含 sha256）
+
+- 调用：`api.files.stat(attId)`
+- 权限：`read:files`
+- scope：`current-space`
+- 返回：{attId, pageId, name, mime, size, sha256, spaceId}；sha256 是内容指纹（附件按它内容寻址）
+- 参数：
+  - `attId`: `string` —— 附件 id
+
+### `files.extract_status` — 附件抽取完整度
+
+- 调用：`api.files.extract_status(attId)`
+- 权限：`read:files`
+- scope：`current-space`
+- 返回：{attId, name, extracted, segments, extractors:[{extractor, coverage}]}；coverage 是抽取器报的**原始覆盖度 JSON**，空串=未知（⛔ 不等于完整）
+- 参数：
+  - `attId`: `string` —— 附件 id
+
+### `files.list_orphan` — 列出未整理附件
+
+- 调用：`api.files.list_orphan(limit, offset)`
+- 权限：`read:files`
+- scope：`current-space`
+- 返回：{files:[{attId,name,mime,size,sha256,createdAt}], total}；files 是**没有挂到任何页面**的附件（pageId 为空）
+- 参数：
+  - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（默认 50，上限 200）
+  - `offset`: `number`（可选），默认 `0` —— 跳过前多少条（默认 0；分页用）
 
 ### `editor.insertText` — 向当前页插入纯文本
 
@@ -412,6 +483,24 @@ register({
 - 参数：
   - `fileName`: `string` —— 建议的文件名（只给名字——路径里的目录会被去掉，文件存哪里由用户在保存对话框里定）
   - `content`: `string` —— 要写入的内容（单文件上限 4 MiB，一次运行最多 4 个文件）
+
+### `files.download` — 下载附件（返回句柄）
+
+- 调用：`api.files.download(attId)`
+- 权限：`export:files`
+- scope：`current-space`
+- 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
+- 参数：
+  - `attId`: `string` —— 附件 id
+
+### `blobs.fetch` — 把句柄落成文件
+
+- 调用：`api.blobs.fetch(handle)`
+- 权限：`export:files`
+- scope：`current-space`
+- 返回：{path, size, sha256}：文件落在**应用数据目录下的 exports/**（文件名已清洗；⛔ 不接受任意目标路径）；sha256 与句柄声明一致
+- 参数：
+  - `handle`: `string` —— 句柄（from files.download / export.*）
 
 ### `pages.importMarkdown` — 导入 Markdown 为一页（草稿确认）
 
@@ -617,7 +706,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.4.0",
+  "runtime": "declarative", "apiVersion": "1.5.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },
@@ -852,6 +941,8 @@ register({
 | `plugin_error` | 插件自身抛错 |
 | `quota_exceeded` | 插件私有数据超出配额（每个 scope 256 KiB） |
 | `plugin_crash` | 插件把宿主解释器进程搞崩了（原生崩溃 / abort）：这次调用被终止，应用本身不受影响 |
+| `not_found` | 目标不存在（页面/版本/附件/句柄），或句柄已用过/已过期/不属于本会话 |
+| `needs_confirm` | 这个动作需要用户当场确认 —— 本批未接确认 UI 的动作会明确返回它，⛔ 不静默执行（例如 >10MB 的下载） |
 
 ## 8. 兼容与老写法
 

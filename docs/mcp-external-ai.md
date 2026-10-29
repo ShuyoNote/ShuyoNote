@@ -20,7 +20,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | 档位（界面名） | 内部 id | 能做什么 | 建议 |
 |---|---|---|---|
 | 不接 | `off` | 通道关闭 | 平常不用时选它 |
-| 只读 | `read` | 读**当前空间**的页面/搜索/块/反链/附件/当前页/标签/属性定义/页面树/**数据库结构与行** | 让 AI 总结、问答时够用 |
+| 只读 | `read` | 读**当前空间**的页面/搜索/块/反链/附件/当前页/标签/属性定义/页面树/**数据库结构与行**/**历史版本与回收站**/附件元数据/导出下载句柄 | 让 AI 总结、问答时够用 |
 | 只读（全部空间） | `read_all` | 同上，跨所有空间（加密空间锁着时读不到内容） | 需要跨空间检索时开 |
 | 可写（每次确认） | `write_confirm` | 新建/追加直接写；**整页替换会先问你** | **要写就用这个（推荐）** |
 | 可写（免确认） | `write_auto` | 所有写操作**直接落库、不询问**；每次写仍留一行审计 | ⚠️ 只在刚备份过、且信任该 AI 时短开 |
@@ -57,7 +57,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 4. 怎么验证通没通
 
-1. 让 AI **列工具**：应看到 **读面 16 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `tags_list` / `properties_list` / `spaces_list` / `db_schema` / `db_rows`；切到**可写**档后再多 **4 个写面**（共 **20 个**）：`pages_create` / `pages_update` / `pages_importMarkdown` / `blocks_append`；
+1. 让 AI **列工具**：应看到 **读面 24 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows`；切到**可写**档后再多 **4 个写面**（共 **28 个**）：`pages_create` / `pages_update` / `pages_importMarkdown` / `blocks_append`；
 2. 让它读一篇：「列出运营空间最近修改的 3 篇笔记」；
 3. 能读出来说明链路通；**被拒**通常说明档位不够（见 §6）；
 4. 每次调用都会**记一行审计**（谁/何时/做了什么/成败）。
@@ -71,6 +71,10 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | `page_current`（**没有 `spaceId`**） | 只读及以上；⚠️ 外部接入看不到界面里「当前页」这个状态时**如实回 `opened:false`**（不会编造一页） |
 | `db_schema`（数据库的**列/视图/关系列**） | 只读及以上。公式列带 `isFormula:true`、汇总列带 `isRollup:true`，**只标类型、不计算**；带 `spaceId` 跨空间 ⇒ **只读（全部空间）**及以上（未开该档 ⇒ 明确 `permission_denied`，不会悄悄当成当前空间） |
 | `db_rows`（数据库**行**） | 只读及以上。`where` 的字段必须来自 `db_schema` 报出的列（id 或列名），操作符白名单 `= != > >= < <= in contains is_null`，写错 ⇒ `invalid_args` 并点名第几条；**只给原始值**（⛔ 不重算公式/汇总，可能与界面计算值不同）；`limit` 默认 100/上限 500；带 `spaceId` 跨空间 ⇒ **只读（全部空间）**及以上（未开 ⇒ `permission_denied`） |
+| `versions_list` / `version_get`（历史版本） | 只读及以上。`version_get` 与 `pages_get` 同一套字符分页/块锚点口径；版本不存在 ⇒ `not_found`。**只读，不回滚** |
+| `trash_list`（回收站） | 只读及以上。只读的**清单**（`deletedAt` 倒序）；⛔ 不恢复、不清空。带 `spaceId` 跨空间 ⇒ **只读（全部空间）**及以上 |
+| `files_stat` / `files_extract_status` / `files_list_orphan`（附件元数据） | 只读及以上。`files_stat` 给真 `sha256`；`files_extract_status` 的 `coverage` 是**原始覆盖度**（空 = 未知，⛔ 不等于完整）；`files_list_orphan` 只列**未挂到页面**的附件（只读，不清理） |
+| `files_download` / `blobs_fetch`（导出/下载句柄） | 只读及以上（需要 `export:files`；只读档已含）。`files_download` **只回句柄不回字节**：句柄 128bit 随机、**单次**、**120 秒**、绑当前会话；`blobs_fetch` 把句柄换成文件，**只写进应用数据目录下的 `exports/`**（文件名会清洗；⛔ **不接受任意目标路径**），sha256 与句柄一致。二次使用/过期/别的会话 ⇒ `not_found`；>10MB ⇒ `needs_confirm`（本批没有确认 UI，不静默下载） |
 | `pages_create`、`blocks_append`、`pages_importMarkdown` | `可写（每次确认）`及以上 |
 | `pages_update`（整页替换） | `可写（每次确认）`：会先弹确认 |
 
@@ -92,6 +96,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - **令牌**：会话级、从本地文件读、权限位最小化；**不要**把 `token` 文件内容贴进任何聊天或配置共享；
 - **数据边界**：笔记本体仍在你的本机，ShuyoNote **不上传**；但**外部 AI 读到什么由它决定**——云端模型收到内容后，这部分内容就离开了本机；
 - **免确认档的风险**：AI 的写操作不询问直接落库；可撤销的手段是**历史版本/回收站/审计**（写坏了先看历史，不要靠"再让 AI 改回来"）；
+- **导出/下载走句柄**：这类工具**只回句柄、不回字节**（句柄 128bit 随机、单次、120 秒、绑当前会话）；`blobs_fetch` 把句柄换成文件，**只落进应用数据目录下的 `exports/`**（文件名已清洗，**不接受任意目标路径**），落盘前复核 sha256。⛔ 别把 `exports/` 当成"给 AI 的任意写盘口子"；
 - **企业版**：团队/租户空间的 Agent 写面临时**不在本指南范围**（身份、角色、审计合规、数据边界四问未定，见能力矩阵 §8）。
 
 ## 8. 推荐配置（一句话版）
@@ -109,6 +114,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 10. 版本
 
+- 2026-10-29：只读扩容（B1c）—— MCP 工具 **20 → 28**（读面 24 / 写面 4）：新增 `versions_list` / `version_get`（历史版本，`version_get` 与 `pages_get` 同口径、**只读不回滚**）、`trash_list`（回收站清单，⛔ 不恢复/不清空）、`files_stat`（附件元数据，含真 `sha256`）、`files_extract_status`（单文件抽取完整度，覆盖度原样透出：未知 ≠ 完整）、`files_list_orphan`（未挂到页面的附件），以及**导出/下载句柄** `files_download` / `blobs_fetch`（只回句柄不回字节：128bit 随机、**单次**、**TTL 120 秒**、绑会话；`blobs_fetch` 只落进应用数据目录的 `exports/`，文件名清洗、**不接受任意路径**、sha256 复核；>10MB ⇒ `needs_confirm`）。`apiVersion` 1.4.0 → **1.5.0**。
 - 2026-10-29：只读扩容（B1b）—— MCP 工具 **18 → 20**（读面 16 / 写面 4）：新增 `db_schema`（数据库的列/视图/关系列；公式列 `isFormula:true`、汇总列 `isRollup:true`，**只标类型不计算**）与 `db_rows`（行数据，**只给原始值**，⛔ 不重算公式/汇总；简单 `where` 白名单 ＋ `limit`/`offset` 分页在宿主侧执行，响应体超 200 KB 如实标 `truncated`）。`apiVersion` 1.3.0 → **1.4.0**。
 - 2026-10-29：只读扩容（B1a）—— MCP 工具 **13 → 18**（读面 14 / 写面 4）：新增 `page_current`、`pages_count`、`tags_list`、`properties_list`、`pages_tree`（一次给出整棵空间树，超限如实标 `truncated`）。`coverage_report` **仍不在** MCP 面上（它是应用内 AI 宿主能力，接 MCP 需要前端桥，留待后续）。`apiVersion` 1.2.0 → **1.3.0**。
 - 2026-10-29：首版（配合 `pages_get` 的 `rev`＋块锚点、`.shuyodoc` 导出导入落地后的对外说明）。

@@ -817,6 +817,155 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     };
   },
 
+  // ⭐ B1c（2026-10-29）：版本快照 / 回收站 / 附件元数据（只读）＋ 导出/下载句柄。
+  //   ⚠️ 句柄类的**唯一实现**在 Rust（`mcp_blobs`：单次/TTL 120s/绑会话）；前端没有"造句柄"的通道
+  //   ⇒ `files.download` / `blobs.fetch` 在应用内面**如实报不可用**（⛔ 不发明一个前端句柄，
+  //   那种句柄 blobs.fetch 兑换不了）。插件面走 Rust dispatch，句柄是真的。
+  "versions.list": async (args) => {
+    const pageId = String(args.pageId ?? "").trim();
+    if (!pageId) return { ok: false, error: "versions.list 需要 pageId" };
+    const limit = intArg(args, "limit", 50, 1, 200);
+    const rows = await api.listVersions(pageId);
+    return {
+      ok: true,
+      versions: rows.slice(0, limit).map((v) => ({ versionId: v.id, at: v.created_at, title: v.title })),
+    };
+  },
+
+  "version.get": async (args) => {
+    const pageId = String(args.pageId ?? "").trim();
+    const versionId = String(args.versionId ?? "").trim();
+    if (!pageId || !versionId) return { ok: false, error: "version.get 需要 pageId 与 versionId" };
+    const offset = intArg(args, "offset", 0, 0);
+    const limit = intArg(args, "limit", 6000, 1, 20000);
+    // `includeAnchors` 在这里**不适用**（命令面只给纯文本、没有结构化块）—— 但要读这个参数：
+    // 让调用方知道"我传了 true 却没拿到锚点"是有原因的，而不是工具悄悄违约。
+    const includeAnchors = boolArg(args, "includeAnchors", true);
+    const rows = await api.listVersions(pageId);
+    const v = rows.find((x) => x.id === versionId);
+    if (!v) return { ok: false, error: `not_found: 页面 ${pageId} 没有版本 ${versionId}` };
+    const raw = String(v.content_text ?? "");
+    const total = codePointLength(raw);
+    const window = sliceByCodePoints(raw, offset, limit);
+    return {
+      ok: true,
+      version: {
+        pageId,
+        versionId,
+        at: v.created_at,
+        title: v.title,
+        content_text: window,
+        chars_total: total,
+        offset,
+        limit,
+        ...(includeAnchors
+          ? { note: "应用内面拿不到版本的结构化正文 ⇒ 块锚点只有外部/插件面给得出（这里不带锚点行）" }
+          : {}),
+      },
+    };
+  },
+
+  "trash.list": async (args) => {
+    const spaceId = String(args.spaceId ?? "").trim();
+    const limit = intArg(args, "limit", 50, 1, 200);
+    if (spaceId) {
+      const active = await api.getActiveWorkspaceId();
+      if (spaceId !== active) {
+        return {
+          ok: false,
+          error: "应用内 AI 暂不支持跨空间列回收站（命令面没有这一条）；外部接入请用「只读（全部空间）」档",
+        };
+      }
+    }
+    const rows = await api.listDeleted();
+    return {
+      ok: true,
+      pages: rows.slice(0, limit).map((p) => ({ pageId: p.id, title: p.title, deletedAt: p.deleted_at ?? 0 })),
+    };
+  },
+
+  "files.stat": async (args) => {
+    const attId = String(args.attId ?? "").trim();
+    if (!attId) return { ok: false, error: "files.stat 需要 attId" };
+    const a = await api.getAttachment(attId);
+    if (!a) return { ok: false, error: `not_found: 附件 ${attId} 不存在` };
+    const spaceId = await api.getActiveWorkspaceId();
+    return {
+      ok: true,
+      file: {
+        attId: a.id,
+        // ⚠️ `get_attachment` 不返回 pageId（命令契约里没有这个字段）⇒ 如实给 null，⛔ 不编一个。
+        pageId: null,
+        name: a.name,
+        mime: a.mime,
+        size: a.size,
+        sha256: a.hash,
+        spaceId,
+      },
+    };
+  },
+
+  "files.extract_status": async (args) => {
+    const attId = String(args.attId ?? "").trim();
+    if (!attId) return { ok: false, error: "files.extract_status 需要 attId" };
+    // limit=1 只借它拿 total 与 coverage（段内容不要）
+    const page = await api.readAttachmentText(attId, 0, 1);
+    if (!page) return { ok: false, error: `not_found: 附件 ${attId} 不存在` };
+    const a = await api.getAttachment(attId);
+    return {
+      ok: true,
+      status: {
+        attId,
+        name: a?.name ?? "",
+        extracted: page.total > 0,
+        segments: page.total,
+        extractors: (page.coverage ?? []).map((c) => ({ extractor: c.extractor, coverage: c.coverage })),
+        note: "coverage 是抽取器报的**原始覆盖度**：空串/空数组 = 未知，⛔ 不许读成「完整」；extracted:false 只说明还没抽过。",
+      },
+    };
+  },
+
+  "files.list_orphan": async (args) => {
+    const limit = intArg(args, "limit", 50, 1, 200);
+    const offset = intArg(args, "offset", 0, 0);
+    // `listPageAttachments(null)` 就是 `page_id IS NULL`（与 Rust 侧同一条 SQL 的过滤条件）
+    const rows = await api.listPageAttachments(null);
+    return {
+      ok: true,
+      files: rows.slice(offset, offset + limit).map((a) => ({
+        attId: a.id,
+        name: a.name,
+        mime: a.mime,
+        size: a.size,
+        sha256: a.hash,
+        createdAt: a.created_at ?? 0,
+      })),
+      total: rows.length,
+    };
+  },
+
+  "files.download": async (args) => {
+    const attId = String(args.attId ?? "").trim();
+    if (!attId) return { ok: false, error: "files.download 需要 attId" };
+    return {
+      ok: false,
+      error:
+        "应用内 AI 面不提供下载句柄（句柄表在 Rust 侧、绑定外部/插件会话）—— " +
+        "要读附件文本用 files.read；要原文件请在文件管理里另存。外部接入用 files_download + blobs_fetch。",
+    };
+  },
+
+  "blobs.fetch": async (args) => {
+    const handle = String(args.handle ?? "").trim();
+    if (!handle) return { ok: false, error: "blobs.fetch 需要 handle" };
+    return {
+      ok: false,
+      error:
+        "应用内 AI 面没有句柄通道（句柄只能由外部接入/插件面兑换，本面也造不出来）—— " +
+        "外部接入请调 blobs_fetch；应用内要落文件请用文件管理的另存/导出。",
+    };
+  },
+
   /**
    * `coverage.report` —— **只有 AI 宿主实现的能力**（注册表里 `host: "frontend"`，插件调不到）。
    *

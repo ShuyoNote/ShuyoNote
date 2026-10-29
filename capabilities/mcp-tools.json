@@ -191,6 +191,83 @@
     "permission": "read:pages"
   },
   {
+    "name": "versions_list",
+    "capabilityId": "versions.list",
+    "description": "列出某个页面的**历史版本**：`[{versionId, at, title}]`（按时间倒序，最多 200 条），不含正文 —— 要读某个版本的内容再调 version_get。参数: pageId (必填), limit (可选, 默认 50, 上限 200)。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pageId": {
+          "type": "string",
+          "description": "页面 id"
+        },
+        "limit": {
+          "type": "number",
+          "description": "最多返回多少条（默认 50，上限 200）"
+        }
+      },
+      "required": [
+        "pageId"
+      ]
+    },
+    "permission": "read:versions"
+  },
+  {
+    "name": "version_get",
+    "capabilityId": "version.get",
+    "description": "读取某个**历史版本**的正文（与 pages_get 同一套字符分页与块锚点口径；**只读，不回滚**）。返回 {pageId, versionId, at, title, 正文窗口, chars_total, offset, limit}；版本不存在 ⇒ `not_found`。参数: pageId (必填), versionId (必填), offset/limit (可选, 默认 6000, 上限 20000), includeAnchors (可选, 默认 true)。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pageId": {
+          "type": "string",
+          "description": "页面 id"
+        },
+        "versionId": {
+          "type": "string",
+          "description": "版本 id（从 versions.list 取）"
+        },
+        "offset": {
+          "type": "number",
+          "description": "从第几个**字符**开始（默认 0；按 Unicode 标量计数）"
+        },
+        "limit": {
+          "type": "number",
+          "description": "最多返回多少字符（默认 6000，上限 20000）"
+        },
+        "includeAnchors": {
+          "type": "boolean",
+          "description": "是否在每个顶层块后插块锚点注释（可选，默认 true；与 pages.get 同口径）"
+        }
+      },
+      "required": [
+        "pageId",
+        "versionId"
+      ]
+    },
+    "permission": "read:versions"
+  },
+  {
+    "name": "trash_list",
+    "capabilityId": "trash.list",
+    "description": "列出**回收站**里已软删除的页面：`[{pageId, title, deletedAt}]`（按删除时间倒序，不含正文），**只读 —— 不恢复、不清空**。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选), limit (可选, 默认 50, 上限 200)。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间"
+        },
+        "limit": {
+          "type": "number",
+          "description": "最多返回多少条（默认 50，上限 200）"
+        }
+      },
+      "required": []
+    },
+    "permission": "read:trash"
+  },
+  {
     "name": "tags_list",
     "capabilityId": "tags.list",
     "description": "列出本空间用到的**标签及各自的页面数**：`[{id, name, page_count}]`（page_count 不含已删除页面）。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选)。",
@@ -307,6 +384,62 @@
     "permission": "read:files"
   },
   {
+    "name": "files_stat",
+    "capabilityId": "files.stat",
+    "description": "读一个**附件的元数据**：`{attId, pageId, name, mime, size, sha256, spaceId}`；`sha256` 是真实的内容指纹（附件按它内容寻址）。不存在 ⇒ `not_found`。参数: attId (必填)。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "attId": {
+          "type": "string",
+          "description": "附件 id"
+        }
+      },
+      "required": [
+        "attId"
+      ]
+    },
+    "permission": "read:files"
+  },
+  {
+    "name": "files_extract_status",
+    "capabilityId": "files.extract_status",
+    "description": "读一个附件的**抽取完整度**（单文件口径）：`{attId, name, extracted, segments, extractors:[{extractor, coverage}]}`。`coverage` 是抽取器报的**原始覆盖度**，空串 = **未知**（⛔ 不许读成「完整」）；`extracted:false` 只说明还没抽过，不代表文件里没有内容。不存在 ⇒ `not_found`。参数: attId (必填)。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "attId": {
+          "type": "string",
+          "description": "附件 id"
+        }
+      },
+      "required": [
+        "attId"
+      ]
+    },
+    "permission": "read:files"
+  },
+  {
+    "name": "files_list_orphan",
+    "capabilityId": "files.list_orphan",
+    "description": "列出**未整理附件**（没有挂到任何页面上的文件）：`{files:[{attId, name, mime, size, sha256, createdAt}], total}`。这是**发现孤儿附件**（例如 .shuyodoc 导入后留下的）的入口 —— 只读，不会清理/删除任何文件。参数: limit (可选, 默认 50, 上限 200), offset (可选, 默认 0)。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "number",
+          "description": "最多返回多少条（默认 50，上限 200）"
+        },
+        "offset": {
+          "type": "number",
+          "description": "跳过前多少条（默认 0；分页用）"
+        }
+      },
+      "required": []
+    },
+    "permission": "read:files"
+  },
+  {
     "name": "properties_list",
     "capabilityId": "properties.list",
     "description": "列出本空间的**属性定义** `[{id, name, type}]`（写属性时要的是 id；读数据库/属性值前先用它找 id）。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选)。",
@@ -321,6 +454,42 @@
       "required": []
     },
     "permission": "read:properties"
+  },
+  {
+    "name": "files_download",
+    "capabilityId": "files.download",
+    "description": "把附件取成一个**句柄**（**只回句柄、不回字节**）：`{handle, name, size, sha256, expiresAt}`。句柄 128bit 随机、**单次使用**、**120 秒**有效、绑定**本会话**；要拿到文件用 `blobs_fetch`（只会写进应用自己的导出目录）。不存在 ⇒ `not_found`；超过 10MB ⇒ `needs_confirm`（本批未接确认 UI，不静默下载）。参数: attId (必填)。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "attId": {
+          "type": "string",
+          "description": "附件 id"
+        }
+      },
+      "required": [
+        "attId"
+      ]
+    },
+    "permission": "export:files"
+  },
+  {
+    "name": "blobs_fetch",
+    "capabilityId": "blobs.fetch",
+    "description": "句柄消费方（**唯一落盘处**）：把 `files_download`（以及将来 `export_*`）给的句柄换成文件，写进**应用数据目录下的 `exports/`**（文件名会清洗；⛔ **不接受任意目标路径**），返回 `{path, size, sha256}`。句柄**单次使用**、**120 秒**有效、绑定**本会话** —— 二次使用 / 过期 / 别的会话 ⇒ `not_found`。参数: handle (必填)。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "description": "句柄（from files.download / export.*）"
+        }
+      },
+      "required": [
+        "handle"
+      ]
+    },
+    "permission": "export:files"
   },
   {
     "name": "spaces_list",

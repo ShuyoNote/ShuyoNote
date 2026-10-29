@@ -42,6 +42,11 @@ export const NOTE_ID_PREFIXES = [
   //   而 `db.*` 一直没挂 `ai:true`，属于**清单遗漏**，不是安全边界的例外。
   //   ⛔ 别在这里加 `fs.` / `exec.` / `net.` / `sql.` 这类（任意 SQL 仍是矩阵 §9.2 的红线 ✗）。
   "db.",
+  // ⭐ 2026-10-29（B1c）：`versions.*`（历史版本快照）、`trash.*`（回收站清单）、`blobs.*`（导出/下载
+  //   句柄的消费方）同样都是**笔记域**能力 —— 版本/回收站是笔记库自己的数据，`blobs.fetch` 只把
+  //   句柄落进应用自己的 `exports/`（⛔ 不接受任意路径）。与前面几条同一条判断：属于清单遗漏。
+  //   ⛔ 别在这里加 `fs.` / `exec.` / `net.` / `sql.` 这类（那才是这条规则要挡的 ✗）。
+  "versions.", "version.", "trash.", "blobs.",
 ];
 export const ALLOWED_AI_KINDS = ["read", "write"];
 export const ALLOWED_AI_SCOPE = "current-space";

@@ -498,6 +498,68 @@ mod tests {
         }
     }
 
+    /// ⭐ **B1c（2026-10-29）挂载级判据**：
+    /// ① 8 条新工具在「不接」档（`granted` 为空）**逐条** `permission_denied`，且点名的权限来自注册表；
+    /// ② **句柄类**（`files.download` / `blobs.fetch`）在"只读档但**没有** `export:files`"时必须拒
+    ///    —— 这是矩阵 §6「原字节只走句柄」的权限门那一半。
+    #[test]
+    fn b1c_tools_are_denied_table_driven_and_handles_need_the_export_scope() {
+        let methods = [
+            "versions.list",
+            "version.get",
+            "trash.list",
+            "files.stat",
+            "files.extract_status",
+            "files.list_orphan",
+            "files.download",
+            "blobs.fetch",
+        ];
+        for method in methods {
+            let cap = crate::capabilities_gen::lookup(method)
+                .unwrap_or_else(|| panic!("注册表里必须有 {method} ✓"));
+            let perm = cap.permission.expect("只读能力也有权限门 ✓");
+            let session = format!("b1c-denied-{}", method.replace('.', "-"));
+            let err = match handle_external_call(&session, &[], method, "{}") {
+                Ok(v) => panic!("{method} 在无授权时**必须被拒**，实际成功：{v}"),
+                Err(e) => e,
+            };
+            assert!(
+                err.contains("permission_denied"),
+                "{method} 在无授权时必须 permission_denied：{err}"
+            );
+            assert!(
+                err.contains(perm),
+                "{method} 的拒绝必须点名缺哪个权限 {perm}：{err}"
+            );
+            assert_eq!(
+                audit_of(&format!("external:{session}")).len(),
+                1,
+                "{method} 被拒也必须留痕 ✓"
+            );
+        }
+        // ② 句柄类：只读档但**收回** `export:files` ⇒ 必须拒（⛔ 不看"别的读权限在不在"）
+        let mut read = crate::mcp_channel::default_read_scopes();
+        read.retain(|s| s != "export:files");
+        for (method, args) in [
+            ("files.download", r#"{"attId":"a1"}"#),
+            ("blobs.fetch", r#"{"handle":"whatever"}"#),
+        ] {
+            let err = match handle_external_call(
+                &format!("b1c-noexport-{}", method.replace('.', "-")),
+                &read,
+                method,
+                args,
+            ) {
+                Ok(v) => panic!("{method} 没有 export:files 时必须被拒，实际成功：{v}"),
+                Err(e) => e,
+            };
+            assert!(
+                err.contains("permission_denied") && err.contains("export:files"),
+                "{method} 没有 export:files 必须点名拒：{err}"
+            );
+        }
+    }
+
     /// ⭐ 判据 6：**没有打开的页面 ⇒ 如实说**（不报 500 形状的错、⛔ 不编造一页）。
     ///
     /// 为什么挂在这一层：外部接入**拿不到**界面里「当前页」这个状态（`RunState.current_page_id`
@@ -528,6 +590,54 @@ mod tests {
         let rows = audit_of("external:b1a-current-1");
         assert_eq!(rows.len(), 1, "成功调用也要留一行审计 ✓");
         assert!(rows[0].ok);
+    }
+    /// ⭐ **B1c（2026-10-29）判据 1**：8 条新工具在**读面**清单里；清单与注册表同源
+    /// （每条 capabilityId 查得到、都是 read）；且**一条写页/写块工具都没有**（零写红测试）。
+    #[test]
+    fn b1c_tools_are_listed_and_no_write_page_tool_leaks() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(&tools_list_json(false)).expect("工具清单必须是合法 JSON ✓");
+        let off: Vec<String> = parsed
+            .as_array()
+            .expect("工具清单是裸数组 ✓")
+            .iter()
+            .map(|t| t["name"].as_str().unwrap_or_default().to_string())
+            .collect();
+        for n in [
+            "versions_list",
+            "version_get",
+            "trash_list",
+            "files_stat",
+            "files_extract_status",
+            "files_list_orphan",
+            "files_download",
+            "blobs_fetch",
+        ] {
+            assert!(
+                off.iter().any(|x| x == n),
+                "B1c 工具 {n} 必须在读面清单里 ✓（实际 {off:?}）"
+            );
+        }
+        // 零写：B1c 一条写页/写块工具都不许有
+        for forbidden in [
+            "pages_create",
+            "pages_update",
+            "pages_importMarkdown",
+            "blocks_append",
+            "editor_insertText",
+        ] {
+            assert!(
+                !off.iter().any(|x| x == forbidden),
+                "⛔ 读面里出现了写页/写块工具 {forbidden} ✗"
+            );
+        }
+        // 与注册表同源
+        for t in parsed.as_array().expect("裸数组 ✓") {
+            let id = t["capabilityId"].as_str().unwrap_or_default();
+            let cap = crate::capabilities_gen::lookup(id)
+                .unwrap_or_else(|| panic!("清单里的 {id} 不在注册表里 ✗"));
+            assert_eq!(cap.kind, "read", "读面里混进了非读能力 {id} ✗");
+        }
     }
 }
 
