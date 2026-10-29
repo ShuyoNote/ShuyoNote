@@ -15,6 +15,9 @@ import { useFilePreview } from "../store/filePreview";
 import type { AttachmentMeta, PageMeta } from "../types";
 import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon, DownloadIcon, TrashIcon, UploadIcon, HistoryIcon } from "./icons";
 import { importOfficeAttachmentAsPage } from "../lib/office/pickOfficeFile";
+// ⭐ 2026-10-29（M1 最后一段）：文件区「导入文档包」—— 选 `.shuyodoc` ⇒ 解包校验 ⇒ **新建一页**。
+// 整条流程（选文件 / 解 zip / 整包校验 / 资产入库 / 建页）都在那一层，⛔ 这里不自己解包、不手写库。
+import { importDocumentPackage } from "../lib/docPackageTransfer";
 import { PluginMenuItems } from "./PluginMenuItems";
 import { fileContextArgs } from "../lib/pluginMenus";
 import { attachmentFetchHint } from "../lib/attachmentFetchHint";
@@ -172,6 +175,8 @@ export function FileManagerView() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [files, setFiles] = useState<AttachmentMeta[]>([]);
   const [importing, setImporting] = useState(false);
+  /** 导入 `.shuyodoc` 的进行中态（与"上传文件"分开：两条路互不禁用，但各自不许重入）。 */
+  const [importingDoc, setImportingDoc] = useState(false);
   const [fileQuery, setFileQuery] = useState("");
   const [dragging, setDragging] = useState(false);
   const [moving, setMoving] = useState<AttachmentMeta | null>(null);
@@ -320,6 +325,29 @@ export function FileManagerView() {
     const paths = Array.isArray(selectedPath) ? selectedPath : selectedPath ? [selectedPath] : [];
     if (paths.length === 0) return;
     await importPaths(paths);
+  };
+
+  /**
+   * ⭐ 2026-10-29（owner 方案 `docs/plans/2026-10-29-shuyodoc-m1.md`，M1）：导入一个 `.shuyodoc`。
+   *
+   * 口径（owner 已拍）：**永远新建一页**、同名也新建、⛔ 不覆盖任何已有页面；父级＝当前所在文件夹 / 空间根。
+   * 结果句由 `lib/docPackageTransfer.ts` 给（失败时那句话是 `openDocumentPackage` 的**原文**：
+   * 它已经点名"哪个条目、为什么"）⇒ 这里**原样** toast，⛔ 不换措辞、⛔ 不吞。
+   */
+  const importDocPackage = async () => {
+    if (importingDoc) return;
+    setImportingDoc(true);
+    try {
+      const outcome = await importDocumentPackage(folderId ?? null);
+      toast(outcome.message, outcome.ok ? "success" : "error");
+      if (outcome.ok) {
+        // 新页既在页面树里（`useNotes.loadPages` 已由那一层刷新），也可能带附件 ⇒ 顺带重读本目录
+        loadFiles();
+        useFileManagerStore.getState().bumpRevision();
+      }
+    } finally {
+      setImportingDoc(false);
+    }
   };
 
   const importPaths = async (paths: string[]) => {
@@ -907,6 +935,19 @@ export function FileManagerView() {
           >
             <UploadIcon className="fm-btn-icon" width={18} height={18} />
             <span className="fm-btn-text">{importing ? t("files.uploading") : `＋ ${t("files.upload")}`}</span>
+          </button>
+          {/* ⭐ 2026-10-29（M1）：导入 `.shuyodoc` 文档包 —— 与「上传」并列（同一块「往这里放东西」的动作区）。
+              ⚠️ 文案与提示**都说清"新建"**：owner 定的口径是"导入永远新建、同名也新建"，
+                 ⛔ 不许让用户以为它会覆盖/合并已有页面。 */}
+          <button
+            className="fm-btn"
+            onClick={importDocPackage}
+            disabled={importingDoc}
+            title="导入 .shuyodoc 文档包（新建一页，同名也新建，不会覆盖已有页面）"
+            aria-label="导入文档包"
+          >
+            <DownloadIcon className="fm-btn-icon" width={18} height={18} />
+            <span className="fm-btn-text">{importingDoc ? "正在导入…" : "导入文档包"}</span>
           </button>
           <div className="fm-view-toggle" role="group" aria-label="视图切换">
             <button

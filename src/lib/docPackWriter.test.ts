@@ -198,7 +198,7 @@ describe("① 往返：写出的包必须能被本仓读回（manifest / 正文 
     expect(r.ok).toBe(true);
     if (!r.ok) return;
 
-    const { manifest, contentJson, assets, notices } = r.pkg;
+    const { manifest, docJson, assets, notices } = r.pkg;
     // manifest：企业版 10 字段全在，且 source 是我们自己
     expect(manifest.format).toBe(DOC_FORMAT);
     expect(manifest.format_version).toBe(DOC_FORMAT_VERSION);
@@ -214,8 +214,8 @@ describe("① 往返：写出的包必须能被本仓读回（manifest / 正文 
     expect(manifest.assets).toEqual([]);
 
     // 正文原样（不解析、不改写、不重排）
-    expect(contentJson).toBe(CONTENT_JSON);
-    expect(JSON.parse(contentJson)).toEqual(LEXICAL_CONTENT);
+    expect(docJson).toBe(CONTENT_JSON);
+    expect(JSON.parse(docJson)).toEqual(LEXICAL_CONTENT);
 
     // 资产：路径 / 字节 / sha 自证
     expect(assets).toHaveLength(1);
@@ -417,7 +417,7 @@ describe("⑦ 无资产也能导；正文/标题不合法 ⇒ 拒绝写", () => 
     if (r.ok) {
       expect(r.pkg.manifest.assets).toEqual([]);
       expect(r.pkg.assets).toEqual([]);
-      expect(r.pkg.contentJson).toBe(CONTENT_JSON);
+      expect(r.pkg.docJson).toBe(CONTENT_JSON);
       expect(r.pkg.notices).toEqual([]);
     }
     // assets 字段省略（undefined）与空数组等价
@@ -437,7 +437,7 @@ describe("⑦ 无资产也能导；正文/标题不合法 ⇒ 拒绝写", () => 
     const asObject = await buildDocumentPackage(await baseInput({ docJson: LEXICAL_CONTENT }));
     const roundTrip = await openDocumentPackage(await unzipDocument(asObject));
     expect(roundTrip.ok).toBe(true);
-    if (roundTrip.ok) expect(JSON.parse(roundTrip.pkg.contentJson)).toEqual(LEXICAL_CONTENT);
+    if (roundTrip.ok) expect(JSON.parse(roundTrip.pkg.docJson)).toEqual(LEXICAL_CONTENT);
 
     // 标题为空 ⇒ 复用格式层校验（⛔ 不写读端会拒的包）
     await expect(buildDocumentPackage(await baseInput({ title: "" }))).rejects.toThrow(/title/);

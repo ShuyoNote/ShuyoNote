@@ -45,6 +45,7 @@
   "src/lib/columnsText.ts": 2,
   "src/lib/communityImport.ts": 14,
   "src/lib/communitySave.ts": 2,
+  "src/lib/docPackageOpen.ts": 1,
   "src/lib/drawingText.ts": 1,
   "src/lib/emailRichNote.ts": 13,
   "src/lib/exportMarkdown.ts": 1,
@@ -67,6 +68,5 @@
   "src/store/notes.ts": 6,
   "src/store/templates.ts": 2,
   "src/templates/index.ts": 7,
-  "src/types.ts": 5,
-  "src/lib/docPackageOpen.ts": 5
+  "src/types.ts": 5
 }
