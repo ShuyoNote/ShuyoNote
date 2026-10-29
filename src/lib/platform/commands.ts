@@ -1378,6 +1378,8 @@ export interface CommandMap {
       segments: { extractor: string; kind: string; text: string; loc: string }[];
       total: number;
       truncated: boolean;
+      /** 每个抽取器上次报的覆盖度（Rust `AttachmentTextPage.coverage`；空 = 未知，⛔ 不等于完整）。 */
+      coverage: { extractor: string; coverage: string }[];
     } | null;
   };
   /** 派生文本层的**桌面运输通道**（⚠️ **桌面专属**：Web 平台 TS 直接跑 sql.js，故 web.ts 故意不实现，

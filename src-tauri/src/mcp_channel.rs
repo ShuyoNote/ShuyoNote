@@ -506,6 +506,10 @@ mod tests {
             "read:tags",
             "read:properties",
             "read:page.current",
+            // B1c：版本/回收站/只读导出
+            "read:versions",
+            "read:trash",
+            "export:files",
         ];
         assert_eq!(
             now,
@@ -825,7 +829,10 @@ pub(crate) const READ_ALL_SCOPE: &str = "read:all-spaces";
 /// 三个工具，它们分别要 `read:tags` / `read:properties` / `read:page.current` ——
 /// 不把这三个 scope 放进读档，工具就会**列在面上却一调就 `permission_denied`**
 /// （「面 = 此刻真能调的能力」；M1 在 `coverage.report` 上踩过同形 ✗）。
-/// 三条都是注册表里的 low risk 读权限、都限 `current-space` ⇒ 读档的语义面没被放大。
+/// ⭐ **B1c（2026-10-29）再加三条**：`versions_list` / `version_get`（`read:versions`）、
+/// `trash_list`（`read:trash`）、导出/下载句柄（`export:files`）—— 它们同样**不写笔记**：
+/// 句柄只会被 `blobs_fetch` 落进应用自己的 `exports/`，所以算只读档。
+/// 全部都是注册表里的 low risk 权限、都限 `current-space` ⇒ 读档的语义面没被放大。
 pub(crate) fn default_read_scopes() -> Vec<String> {
     vec![
         "read:pages".to_string(),
@@ -834,6 +841,10 @@ pub(crate) fn default_read_scopes() -> Vec<String> {
         "read:tags".to_string(),
         "read:properties".to_string(),
         "read:page.current".to_string(),
+        // B1c：版本快照 / 回收站清单 / 导出句柄（只读动作，见函数注释）
+        "read:versions".to_string(),
+        "read:trash".to_string(),
+        "export:files".to_string(),
     ]
 }
 

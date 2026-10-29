@@ -17,7 +17,7 @@ pub struct Capability {
     pub rust: &'static str,
 }
 
-pub const API_VERSION: &str = "1.4.0";
+pub const API_VERSION: &str = "1.5.0";
 pub const API_MAJOR: u32 = 1;
 
 pub const CAPABILITIES: &[Capability] = &[
@@ -29,12 +29,18 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "pages.tree", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.3.0", mediate: "-", rust: "cap_pages_tree" },
     Capability { id: "db.schema", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.4.0", mediate: "-", rust: "cap_db_schema" },
     Capability { id: "db.rows", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.4.0", mediate: "-", rust: "cap_db_rows" },
+    Capability { id: "versions.list", kind: "read", scope: "current-space", permission: Some("read:versions"), since: "1.5.0", mediate: "-", rust: "cap_versions_list" },
+    Capability { id: "version.get", kind: "read", scope: "current-space", permission: Some("read:versions"), since: "1.5.0", mediate: "-", rust: "cap_version_get" },
+    Capability { id: "trash.list", kind: "read", scope: "current-space", permission: Some("read:trash"), since: "1.5.0", mediate: "-", rust: "cap_trash_list" },
     Capability { id: "tags.list", kind: "read", scope: "current-space", permission: Some("read:tags"), since: "1.0.0", mediate: "-", rust: "cap_tags_list" },
     Capability { id: "blocks.list", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.0.0", mediate: "-", rust: "cap_blocks_list" },
     Capability { id: "backlinks.list", kind: "read", scope: "current-space", permission: Some("read:backlinks"), since: "1.0.0", mediate: "-", rust: "cap_backlinks_list" },
     Capability { id: "files.list", kind: "read", scope: "current-space", permission: Some("read:files"), since: "1.0.0", mediate: "-", rust: "cap_files_list" },
     Capability { id: "files.search", kind: "read", scope: "current-space", permission: Some("read:files"), since: "1.1.0", mediate: "-", rust: "cap_files_search" },
     Capability { id: "files.read", kind: "read", scope: "current-space", permission: Some("read:files"), since: "1.1.0", mediate: "-", rust: "cap_files_read" },
+    Capability { id: "files.stat", kind: "read", scope: "current-space", permission: Some("read:files"), since: "1.5.0", mediate: "-", rust: "cap_files_stat" },
+    Capability { id: "files.extract_status", kind: "read", scope: "current-space", permission: Some("read:files"), since: "1.5.0", mediate: "-", rust: "cap_files_extract_status" },
+    Capability { id: "files.list_orphan", kind: "read", scope: "current-space", permission: Some("read:files"), since: "1.5.0", mediate: "-", rust: "cap_files_list_orphan" },
     Capability { id: "editor.insertText", kind: "write", scope: "current-space", permission: Some("write:page.current"), since: "1.0.0", mediate: "immediate", rust: "cap_editor_insert_text" },
     Capability { id: "pages.create", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.0.0", mediate: "draft", rust: "cap_pages_create" },
     Capability { id: "blocks.append", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.0.0", mediate: "draft", rust: "cap_blocks_append" },
@@ -48,6 +54,8 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "tags.add", kind: "write", scope: "current-space", permission: Some("write:tags"), since: "1.0.0", mediate: "draft", rust: "cap_tags_add" },
     Capability { id: "log.write", kind: "host", scope: "app", permission: None, since: "1.0.0", mediate: "-", rust: "cap_log_write" },
     Capability { id: "files.export", kind: "write", scope: "app", permission: Some("export:files"), since: "1.0.0", mediate: "draft", rust: "cap_files_export" },
+    Capability { id: "files.download", kind: "read", scope: "current-space", permission: Some("export:files"), since: "1.5.0", mediate: "-", rust: "cap_files_download" },
+    Capability { id: "blobs.fetch", kind: "read", scope: "current-space", permission: Some("export:files"), since: "1.5.0", mediate: "-", rust: "cap_blobs_fetch" },
     Capability { id: "pages.importMarkdown", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.0.0", mediate: "draft", rust: "cap_pages_import_markdown" },
     Capability { id: "pages.update", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.1.0", mediate: "draft", rust: "cap_pages_update" },
     Capability { id: "spaces.list", kind: "read", scope: "app", permission: Some("read:pages"), since: "1.1.0", mediate: "-", rust: "cap_spaces_list" },
@@ -76,6 +84,8 @@ pub const PERMISSION_LIST: &[Permission] = &[
     Permission { id: "write:properties", title: "设置页面属性", risk: "medium" },
     Permission { id: "write:tags", title: "给页面加标签", risk: "medium" },
     Permission { id: "export:files", title: "把内容保存成文件", risk: "medium" },
+    Permission { id: "read:versions", title: "读取历史版本", risk: "low" },
+    Permission { id: "read:trash", title: "读取回收站", risk: "low" },
 ];
 
 pub fn permission(id: &str) -> Option<&'static Permission> {

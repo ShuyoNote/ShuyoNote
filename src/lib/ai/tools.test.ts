@@ -22,6 +22,10 @@ vi.mock("../api", () => ({
     getDbColumns: vi.fn(),
     listDbViews: vi.fn(),
     queryDatabase: vi.fn(),
+    // ⭐ B1c（2026-10-29）：版本/回收站/附件元数据（应用内 AI 面这一侧）
+    listVersions: vi.fn(),
+    listDeleted: vi.fn(),
+    getAttachment: vi.fn(),
   },
 }));
 
@@ -61,6 +65,15 @@ const EXPECTED = [
   // ⭐ B1b（2026-10-29）：数据库只读两条进 AI/MCP 面（注册表 `ai:true`，MCP 清单同源生成）
   "db.schema",
   "db.rows",
+  // ⭐ B1c（2026-10-29）：版本/回收站/附件元数据 + 导出/下载句柄（8 条；句柄两条在应用内面如实报不可用）
+  "versions.list",
+  "version.get",
+  "trash.list",
+  "files.stat",
+  "files.extract_status",
+  "files.list_orphan",
+  "files.download",
+  "blobs.fetch",
 ];
 
 describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实现）", () => {
@@ -273,6 +286,78 @@ describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实�
       expect(String(r.error)).toContain(needle);
       expect(String(r.error)).toContain("where[0]");
     }
+  });
+
+  // ⭐ B1c（2026-10-29）：版本 / 回收站 / 附件元数据（应用内面这一侧）
+  it("B1c·versions.list / version.get：清单倒序、正文窗口与 pages.get 同口径；查不到 ⇒ not_found", async () => {
+    vi.mocked(api.listVersions).mockResolvedValue([
+      { id: "v2", page_id: "p1", title: "第二版", content_text: "乙".repeat(30), created_at: 200 },
+      { id: "v1", page_id: "p1", title: "第一版", content_text: "甲".repeat(30), created_at: 100 },
+    ] as never);
+    const list = (await getAiTool("versions.list")!.run({ pageId: "p1", limit: 10 }, CTX)) as Record<string, any>;
+    expect(list.versions.map((v: any) => v.versionId)).toEqual(["v2", "v1"]);
+    expect(list.versions[0].at).toBe(200);
+
+    const one = (await getAiTool("version.get")!.run({ pageId: "p1", versionId: "v1", offset: 0, limit: 5 }, CTX)) as Record<string, any>;
+    expect(one.ok).toBe(true);
+    expect(one.version.content_text).toHaveLength(5);
+    expect(one.version.chars_total).toBe(30);
+    expect(one.version.title).toBe("第一版");
+    expect(String(one.version.note)).toContain("锚点");
+
+    const missing = (await getAiTool("version.get")!.run({ pageId: "p1", versionId: "nope" }, CTX)) as Record<string, any>;
+    expect(missing.ok).toBe(false);
+    expect(String(missing.error)).toContain("not_found");
+  });
+
+  it("B1c·trash.list / files.stat / files.extract_status / files.list_orphan：形状与字段", async () => {
+    vi.mocked(api.listDeleted).mockResolvedValue([
+      { id: "p9", title: "删掉的页", deleted_at: 123 } as never,
+    ] as never);
+    vi.mocked(api.getAttachment).mockResolvedValue({
+      id: "a1",
+      name: "扫描件.pdf",
+      hash: "sha-abc",
+      mime: "application/pdf",
+      size: 42,
+      path: "",
+    } as never);
+    vi.mocked(api.readAttachmentText).mockResolvedValue({
+      segments: [{ extractor: "pdf.text@1", kind: "text", text: "甲", loc: "p.1" }],
+      total: 3,
+      truncated: true,
+      coverage: [{ extractor: "pdf.text@1", coverage: '{"complete":false}' }],
+    } as never);
+    vi.mocked(api.listPageAttachments).mockResolvedValue([
+      { id: "a1", name: "扫描件.pdf", hash: "h1", mime: "application/pdf", size: 42, path: "", created_at: 7 },
+      { id: "a2", name: "孤儿.zip", hash: "h2", mime: "application/zip", size: 8, path: "", created_at: 6 },
+    ] as never);
+
+    const trash = (await getAiTool("trash.list")!.run({ limit: 10 }, CTX)) as Record<string, any>;
+    expect(trash.pages[0]).toEqual({ pageId: "p9", title: "删掉的页", deletedAt: 123 });
+
+    const stat = (await getAiTool("files.stat")!.run({ attId: "a1" }, CTX)) as Record<string, any>;
+    expect(stat.file.sha256).toBe("sha-abc");
+    expect(stat.file.mime).toBe("application/pdf");
+
+    const ex = (await getAiTool("files.extract_status")!.run({ attId: "a1" }, CTX)) as Record<string, any>;
+    expect(ex.status.extracted).toBe(true);
+    expect(ex.status.segments).toBe(3);
+    expect(ex.status.extractors).toEqual([{ extractor: "pdf.text@1", coverage: '{"complete":false}' }]);
+
+    const orphan = (await getAiTool("files.list_orphan")!.run({ limit: 1, offset: 1 }, CTX)) as Record<string, any>;
+    expect(orphan.total).toBe(2);
+    expect(orphan.files.map((f: any) => f.attId)).toEqual(["a2"]);
+    expect(orphan.files[0].sha256).toBe("h2");
+  });
+
+  it("B1c·files.download / blobs.fetch：应用内面没有句柄通道 ⇒ 如实说（⛔ 不发明前端句柄）", async () => {
+    const dl = (await getAiTool("files.download")!.run({ attId: "a1" }, CTX)) as Record<string, any>;
+    expect(dl.ok).toBe(false);
+    expect(String(dl.error)).toContain("句柄");
+    const fetch = (await getAiTool("blobs.fetch")!.run({ handle: "abc" }, CTX)) as Record<string, any>;
+    expect(fetch.ok).toBe(false);
+    expect(String(fetch.error)).toContain("句柄");
   });
 });
 

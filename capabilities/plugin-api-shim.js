@@ -26,6 +26,15 @@ var api = {
     schema: function(pageId, spaceId) { return __capCall("db.schema", { pageId: pageId === undefined ? undefined : String(pageId), spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
     rows: function(pageId, viewId, where, limit, offset, spaceId) { return __capCall("db.rows", { pageId: pageId === undefined ? undefined : String(pageId), viewId: viewId === undefined ? undefined : String(viewId), where: where === undefined ? undefined : where, limit: limit === undefined ? 100 : Number(limit), offset: offset === undefined ? 0 : Number(offset), spaceId: spaceId === undefined ? undefined : String(spaceId) }); }
   },
+  versions: {
+    list: function(pageId, limit) { return __capCall("versions.list", { pageId: pageId === undefined ? undefined : String(pageId), limit: limit === undefined ? 50 : Number(limit) }); }
+  },
+  version: {
+    get: function(pageId, versionId, offset, limit, includeAnchors) { return __capCall("version.get", { pageId: pageId === undefined ? undefined : String(pageId), versionId: versionId === undefined ? undefined : String(versionId), offset: offset === undefined ? 0 : Number(offset), limit: limit === undefined ? 6000 : Number(limit), includeAnchors: includeAnchors === undefined ? true : String(includeAnchors) }); }
+  },
+  trash: {
+    list: function(spaceId, limit) { return __capCall("trash.list", { spaceId: spaceId === undefined ? undefined : String(spaceId), limit: limit === undefined ? 50 : Number(limit) }); }
+  },
   tags: {
     list: function(spaceId) { return __capCall("tags.list", { spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
     add: function(name, pageId) { return __capCall("tags.add", { name: name === undefined ? undefined : String(name), pageId: pageId === undefined ? undefined : String(pageId) }); }
@@ -41,7 +50,11 @@ var api = {
     list: function(pageId) { return __capCall("files.list", { pageId: pageId === undefined ? undefined : String(pageId) }); },
     search: function(query, limit) { return __capCall("files.search", { query: query === undefined ? undefined : String(query), limit: limit === undefined ? 10 : Number(limit) }); },
     read: function(id, offset, limit) { return __capCall("files.read", { id: id === undefined ? undefined : String(id), offset: offset === undefined ? 0 : Number(offset), limit: limit === undefined ? 200 : Number(limit) }); },
-    export: function(fileName, content) { return __capCall("files.export", { fileName: fileName === undefined ? undefined : String(fileName), content: content === undefined ? undefined : String(content) }); }
+    stat: function(attId) { return __capCall("files.stat", { attId: attId === undefined ? undefined : String(attId) }); },
+    extract_status: function(attId) { return __capCall("files.extract_status", { attId: attId === undefined ? undefined : String(attId) }); },
+    list_orphan: function(limit, offset) { return __capCall("files.list_orphan", { limit: limit === undefined ? 50 : Number(limit), offset: offset === undefined ? 0 : Number(offset) }); },
+    export: function(fileName, content) { return __capCall("files.export", { fileName: fileName === undefined ? undefined : String(fileName), content: content === undefined ? undefined : String(content) }); },
+    download: function(attId) { return __capCall("files.download", { attId: attId === undefined ? undefined : String(attId) }); }
   },
   editor: {
     insertText: function(text) { return __capCall("editor.insertText", { text: text === undefined ? undefined : String(text) }); }
@@ -60,6 +73,9 @@ var api = {
     set: function(attrId, value, pageId) { return __capCall("properties.set", { attrId: attrId === undefined ? undefined : String(attrId), value: value === undefined ? undefined : String(value), pageId: pageId === undefined ? undefined : String(pageId) }); }
   },
   log: function(message, level) { return __capCall("log.write", { message: message === undefined ? undefined : String(message), level: level === undefined ? "info" : String(level) }); },
+  blobs: {
+    fetch: function(handle) { return __capCall("blobs.fetch", { handle: handle === undefined ? undefined : String(handle) }); }
+  },
   spaces: {
     list: function() { return __capCall("spaces.list", {}); },
     switch: function(id, name) { return __capCall("spaces.switch", { id: id === undefined ? undefined : String(id), name: name === undefined ? undefined : String(name) }); }

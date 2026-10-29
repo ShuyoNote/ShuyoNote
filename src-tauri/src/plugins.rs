@@ -1975,44 +1975,77 @@ fn arg_bool(v: Option<&serde_json::Value>, default: bool) -> bool {
 /// ⚠️ `chars_total` / `offset` / `limit` 量的始终是**正文**（不含锚点行）——
 /// 调用方按 `offset + 返回正文字数` 翻页的口径因此一个字没变（锚点行不该被算进"读了几个字"）。
 fn cap_pages_get(id: &str, offset: i64, limit: i64, include_anchors: bool) -> CapResult {
-    let off = offset.max(0) as usize;
-    let lim = limit.clamp(1, MAX_PAGE_TEXT_LIMIT) as usize;
     with_read_conn(|c| {
         // 读一页只走「那一层」的一次读（内容 ＋ 读面要的两个标量来自**同一行**）：
         // `rev` 的两半必须配对，分两次查就有读到两代数据的窗口。
-        let Some(row) = crate::doc_content::read_with_meta(c, id).map_err(|e| format!("db_error: {e}"))? else {
+        let Some(row) =
+            crate::doc_content::read_with_meta(c, id).map_err(|e| format!("db_error: {e}"))?
+        else {
             return Ok(serde_json::Value::Null);
         };
-        let text = row.content.text;
-        let doc_json = row.content.json;
-        // ⚠️ 先收成 `Vec<char>` 再切：`skip/take` 按**字符**走，与 TS 侧的 `Array.from` 同口径。
-        // （若按字节切，中文会被切坏；若按 UTF-16 码元切，emoji 会被切坏 —— 两种都试过是错的。）
-        let chars: Vec<char> = text.chars().collect();
-        let chars_total = chars.len();
-        let window: String = chars.iter().skip(off).take(lim).collect();
-        // 开关关掉 ⇒ 正文就是**旧行为的那个字符串**（逐字节相同，锚点一个字都不加）。
-        let body = if include_anchors {
-            let boundaries = block_end_offsets(&doc_json, &text);
-            annotated_window(&chars, &boundaries, off, lim)
-        } else {
-            window
-        };
-        let mut out = serde_json::json!({
-            "id": id,
-            "title": row.content.title,
-            "kind": row.kind,
-            "chars_total": chars_total,
-            "offset": off,
-            "limit": lim,
-        });
-        // 正文那一格的**键名**归「那一层」（`doc_content::PAGE_TEXT_KEY` 的说明）——
-        // 能力层不再自己写一遍落盘形态的名字；值本来就来自同一层的 `read_with_meta`。
-        out[crate::doc_content::PAGE_TEXT_KEY] = serde_json::json!(body);
-        if let Some(rev) = page_rev(row.updated_at, Some(&doc_json)) {
+        Ok(text_window_value(
+            id,
+            &row.content.title,
+            &row.kind,
+            &row.content.text,
+            &row.content.json,
+            Some(row.updated_at),
+            offset,
+            limit,
+            include_anchors,
+        ))
+    })
+}
+
+/// **正文窗口的唯一构造**（`pages.get` 与 B1c 的 `version.get` 共用）。
+///
+/// 为什么必须共用：这两条工具的返回值是同一份契约（`chars_total`/`offset`/`limit` 只量正文、
+/// 锚点只插本窗、`rev` 可选）。各写一份的话，"锚点行算不算进 offset"这类口径会一边一个样，
+/// 而**两侧都能跑、都返回合理结果** —— 与 2026-09-18 那次 `limit` 默认值漂移同族。
+///
+/// `rev_at`：`Some(更新时间)` ⇒ 按 [`page_rev`] 生成 `rev`；`None` ⇒ 不带（版本没有"更新时间"）。
+fn text_window_value(
+    id: &str,
+    title: &str,
+    kind: &str,
+    text: &str,
+    doc_json: &str,
+    rev_at: Option<i64>,
+    offset: i64,
+    limit: i64,
+    include_anchors: bool,
+) -> serde_json::Value {
+    let off = offset.max(0) as usize;
+    let lim = limit.clamp(1, MAX_PAGE_TEXT_LIMIT) as usize;
+    // ⚠️ 先收成 `Vec<char>` 再切：`skip/take` 按**字符**走，与 TS 侧的 `Array.from` 同口径。
+    // （若按字节切，中文会被切坏；若按 UTF-16 码元切，emoji 会被切坏 —— 两种都试过是错的。）
+    let chars: Vec<char> = text.chars().collect();
+    let chars_total = chars.len();
+    let window: String = chars.iter().skip(off).take(lim).collect();
+    // 开关关掉 ⇒ 正文就是**旧行为的那个字符串**（逐字节相同，锚点一个字都不加）。
+    let body = if include_anchors {
+        let boundaries = block_end_offsets(doc_json, text);
+        annotated_window(&chars, &boundaries, off, lim)
+    } else {
+        window
+    };
+    let mut out = serde_json::json!({
+        "id": id,
+        "title": title,
+        "kind": kind,
+        "chars_total": chars_total,
+        "offset": off,
+        "limit": lim,
+    });
+    // 正文那一格的**键名**归「那一层」（`doc_content::PAGE_TEXT_KEY` 的说明）——
+    // 能力层不再自己写一遍落盘形态的名字。
+    out[crate::doc_content::PAGE_TEXT_KEY] = serde_json::json!(body);
+    if let Some(at) = rev_at {
+        if let Some(rev) = page_rev(at, Some(doc_json)) {
             out["rev"] = serde_json::json!(rev);
         }
-        Ok(out)
-    })
+    }
+    out
 }
 
 /// `pages.search`：在本空间检索页面。
@@ -2482,6 +2515,335 @@ fn cap_blocks_append(page_id: Option<&str>, text: &str, fence: Option<&str>) -> 
         serde_json::json!({ "kind": "append_block", "pageId": target, "text": text, "fence": fence }),
     );
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// B1c（2026-10-29）· 只读扩容（版本／回收站／附件元数据）＋ 导出/下载**句柄**
+//
+//   ⛔ 本批**不写页面/块**：没有任何 `UPDATE pages` / `INSERT` / 草稿路径改动；
+//   导出/下载只回**句柄**（字节不塞上下文），句柄表与唯一落盘处都在 `crate::mcp_blobs`
+//   （单次 / TTL 120s / 绑会话 / 只写 `<appdata>/exports/`，⛔ 不接受任意目标路径）。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// 下载类工具的**单文件上限**（矩阵 §7：「>10 MB 需用户确认」）。
+///
+/// 本批没有"用户确认 UI"这条通道 ⇒ 超过就**明确报 `needs_confirm`**（⛔ 不静默下载、也不静默截断）。
+const MAX_INLINE_DOWNLOAD_BYTES: i64 = 10 * 1024 * 1024;
+
+/// 当前调用方身份（句柄绑会话用）：外部 ⇒ `external:<会话号>`；插件 ⇒ `plugin:<插件 id>`。
+///
+/// ⚠️ 只有两条路，且**绝不拿 token 原文**当身份（token 不进任何记录 —— 与审计那条口径同源）。
+pub(crate) fn caller_identity() -> String {
+    EXTERNAL_CALLER
+        .with(|c| c.borrow().clone())
+        .map(|(src, _)| src)
+        .unwrap_or_else(|| {
+            format!(
+                "plugin:{}",
+                RUN_STATE.with(|s| s.borrow().plugin_id.clone())
+            )
+        })
+}
+
+/// 当前读连接对应的**空间 id**（附件/版本都是空间内的数据；导出落盘要按它取钥匙）。
+fn current_read_space_id() -> Result<String, String> {
+    RUN_STATE
+        .with(|s| s.borrow().read_space.clone())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "space_unknown: 无法确定当前空间，数据能力不可用".to_string())
+}
+
+/// `versions.list`：页面历史版本清单（不含正文；正文用 `version.get`）。
+fn cap_versions_list(page_id: &str, limit: i64) -> CapResult {
+    let page = page_id.trim();
+    if page.is_empty() {
+        return Err("bad_args: 需要 pageId".to_string());
+    }
+    let limit = limit.clamp(1, 200);
+    with_read_conn(|c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT id, title, created_at FROM page_versions
+                 WHERE page_id = ?1 ORDER BY created_at DESC LIMIT ?2",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows: Vec<serde_json::Value> = stmt
+            .query_map(params![page, limit], |r| {
+                Ok(serde_json::json!({
+                    "versionId": r.get::<_, String>(0)?,
+                    "title": r.get::<_, String>(1)?,
+                    "at": r.get::<_, i64>(2)?,
+                }))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::Value::Array(rows))
+    })
+}
+
+/// `version.get`：某个历史版本的正文（与 `pages.get` **同一份**窗口口径，见 [`text_window_value`]）。
+///
+/// 只读：版本表是**快照**，这里一个字都不会回滚（回滚是 B2 的 `pages.revert`，本批不做）。
+fn cap_version_get(
+    page_id: &str,
+    version_id: &str,
+    offset: i64,
+    limit: i64,
+    include_anchors: bool,
+) -> CapResult {
+    let page = page_id.trim();
+    let vid = version_id.trim();
+    if page.is_empty() {
+        return Err("bad_args: 需要 pageId".to_string());
+    }
+    if vid.is_empty() {
+        return Err("bad_args: 需要 versionId".to_string());
+    }
+    with_read_conn(|c| {
+        use rusqlite::OptionalExtension;
+        let row: Option<(String, String, String, i64)> = c
+            .query_row(
+                "SELECT title, content_json, content_text, created_at FROM page_versions
+                 WHERE page_id = ?1 AND id = ?2",
+                params![page, vid],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()
+            .map_err(|e| format!("db_error: {e}"))?;
+        let Some((title, doc_json, text, at)) = row else {
+            // ⚠️ 不存在 ⇒ `not_found`（⛔ 不返回空正文冒充"这个版本是空的"）。
+            return Err(format!("not_found: 页面 {page} 没有版本 {vid}"));
+        };
+        let mut v = text_window_value(
+            page,
+            &title,
+            "version",
+            &text,
+            &doc_json,
+            None,
+            offset,
+            limit,
+            include_anchors,
+        );
+        v["pageId"] = serde_json::json!(page);
+        v["versionId"] = serde_json::json!(vid);
+        v["at"] = serde_json::json!(at);
+        Ok(v)
+    })
+}
+
+/// `trash.list`：回收站（软删页面）清单 —— 只读，⛔ 不恢复、不清空。
+fn cap_trash_list(space_id: Option<&str>, limit: i64) -> CapResult {
+    let limit = limit.clamp(1, 200);
+    with_conn_for_space(space_id, |c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT id, title, deleted_at FROM pages
+                 WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT ?1",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows: Vec<serde_json::Value> = stmt
+            .query_map(params![limit], |r| {
+                Ok(serde_json::json!({
+                    "pageId": r.get::<_, String>(0)?,
+                    "title": r.get::<_, String>(1)?,
+                    "deletedAt": r.get::<_, i64>(2)?,
+                }))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::Value::Array(rows))
+    })
+}
+
+/// 附件在库里的那一行（**唯一一处**列顺序）：`(hash, name, mime, size, page_id)`。
+fn attachment_row_of(c: &rusqlite::Connection, att_id: &str) -> Result<AttachmentRowMeta, String> {
+    use rusqlite::OptionalExtension;
+    let row = c
+        .query_row(
+            "SELECT hash, name, mime, size, page_id FROM attachments WHERE id = ?1",
+            params![att_id],
+            |r| {
+                Ok(AttachmentRowMeta {
+                    hash: r.get(0)?,
+                    name: r.get(1)?,
+                    mime: r.get(2)?,
+                    size: r.get(3)?,
+                    page_id: r.get(4)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))?;
+    row.ok_or_else(|| format!("not_found: 附件 {att_id} 不存在"))
+}
+
+struct AttachmentRowMeta {
+    hash: String,
+    name: String,
+    mime: String,
+    size: i64,
+    page_id: Option<String>,
+}
+
+/// `files.stat`：附件元数据（`sha256` = 附件的内容指纹，附件就是按它内容寻址的）。
+fn cap_files_stat(att_id: &str) -> CapResult {
+    let att = att_id.trim();
+    if att.is_empty() {
+        return Err("bad_args: 需要 attId".to_string());
+    }
+    let space = target_space_id(None);
+    with_read_conn(|c| {
+        let row = attachment_row_of(c, att)?;
+        Ok(serde_json::json!({
+            "attId": att,
+            "pageId": row.page_id,
+            "name": row.name,
+            "mime": row.mime,
+            "size": row.size,
+            "sha256": row.hash,
+            "spaceId": space,
+        }))
+    })
+}
+
+/// `files.extract_status`：单个附件的**抽取完整度**。
+///
+/// 复用 [`crate::search::read_attachment_text_in_conn`]（与 `files.read` 同一处）：
+/// `coverage` 原样透出 —— 空串 = **未知**（⛔ 不许读成"完整"，§15.10 的口径）。
+fn cap_files_extract_status(att_id: &str) -> CapResult {
+    let att = att_id.trim();
+    if att.is_empty() {
+        return Err("bad_args: 需要 attId".to_string());
+    }
+    with_read_conn(|c| {
+        let row = attachment_row_of(c, att)?;
+        let Some(page) = crate::search::read_attachment_text_in_conn(c, att, 0, 0)
+            .map_err(|e| format!("db_error: {e}"))?
+        else {
+            return Err(format!("not_found: 附件 {att} 不存在"));
+        };
+        let extractors: Vec<serde_json::Value> = page
+            .coverage
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "extractor": r.extractor,
+                    "coverage": r.coverage,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({
+            "attId": att,
+            "name": row.name,
+            "extracted": page.total > 0,
+            "segments": page.total,
+            "extractors": extractors,
+            "note": "coverage 是抽取器报的**原始覆盖度**：空串/空数组 = 未知，⛔ 不许读成「完整」；\
+                     extracted:false 只说明还没抽过，不代表文件里没有内容。",
+        }))
+    })
+}
+
+/// `files.list_orphan`：未整理附件（`page_id IS NULL`）—— 只读，⛔ 不清理/删除。
+fn cap_files_list_orphan(limit: i64, offset: i64) -> CapResult {
+    let limit = limit.clamp(1, 200);
+    let offset = offset.max(0);
+    with_read_conn(|c| {
+        let total: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM attachments WHERE page_id IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let mut stmt = c
+            .prepare(
+                "SELECT id, name, mime, size, hash, created_at FROM attachments
+                 WHERE page_id IS NULL ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let files: Vec<serde_json::Value> = stmt
+            .query_map(params![limit, offset], |r| {
+                Ok(serde_json::json!({
+                    "attId": r.get::<_, String>(0)?,
+                    "name": r.get::<_, String>(1)?,
+                    "mime": r.get::<_, String>(2)?,
+                    "size": r.get::<_, i64>(3)?,
+                    "sha256": r.get::<_, String>(4)?,
+                    "createdAt": r.get::<_, i64>(5)?,
+                }))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::json!({ "files": files, "total": total }))
+    })
+}
+
+/// `files.download`：把附件字节取成**句柄**（⛔ 不回字节）。
+///
+/// 三道：① 附件要在库里；② 字节走**与界面同一条**明文口径（`attachments::plain_bytes_of`：
+/// 按空间取钥匙/解密/空壳/内容指纹）；③ >10 MB ⇒ `needs_confirm`（本批没有确认 UI，⛔ 不静默下载）。
+fn cap_files_download(att_id: &str) -> CapResult {
+    let att = att_id.trim();
+    if att.is_empty() {
+        return Err("bad_args: 需要 attId".to_string());
+    }
+    let row = with_read_conn(|c| attachment_row_of(c, att))?;
+    if row.size > MAX_INLINE_DOWNLOAD_BYTES {
+        return Err(format!(
+            "needs_confirm: 附件「{}」{} 字节，超过 10MB 上限 —— 本批未接用户确认 UI，不能静默下载",
+            row.name, row.size
+        ));
+    }
+    let space = current_read_space_id()?;
+    let app_data = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+    let bytes = crate::attachments::plain_bytes_of(app_data, &space, &row.hash)?;
+    if bytes.len() as i64 > MAX_INLINE_DOWNLOAD_BYTES {
+        return Err(format!(
+            "needs_confirm: 附件「{}」实际 {} 字节，超过 10MB 上限 —— 本批未接用户确认 UI，不能静默下载",
+            row.name,
+            bytes.len()
+        ));
+    }
+    let (handle, expires_at, meta) = crate::mcp_blobs::put(
+        &caller_identity(),
+        crate::mcp_blobs::BlobMeta {
+            name: row.name.clone(),
+            mime: row.mime.clone(),
+            size: 0,
+            sha256: String::new(),
+            space_id: space,
+        },
+        bytes,
+    )?;
+    Ok(serde_json::json!({
+        "handle": handle,
+        "name": meta.name,
+        "size": meta.size,
+        "sha256": meta.sha256,
+        "expiresAt": expires_at,
+    }))
+}
+
+/// `blobs.fetch`：**句柄消费方**（本批唯一落盘处）。
+///
+/// 句柄单次、TTL 120s、绑会话（三条都在 [`crate::mcp_blobs`]）；落盘只进
+/// `<appdata>/exports/`（文件名清洗、不覆盖、sha 复核）—— ⛔ 调用方给不了路径。
+fn cap_blobs_fetch(handle: &str) -> CapResult {
+    let h = handle.trim();
+    if h.is_empty() {
+        return Err("bad_args: 需要 handle".to_string());
+    }
+    let (meta, bytes) = crate::mcp_blobs::take(&caller_identity(), h)?;
+    let app_data = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+    let (path, size, sha256) = crate::mcp_blobs::write_to_exports(app_data, &meta, &bytes)?;
+    Ok(serde_json::json!({ "path": path, "size": size, "sha256": sha256 }))
 }
 
 fn cap_properties_list(space_id: Option<&str>) -> CapResult {
@@ -3053,6 +3415,21 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         "files.list" => cap_files_list(arg_opt_str("pageId").as_deref()),
         "files.search" => cap_files_search(&arg_str("query")?, arg_i64("limit", 10)),
         "files.read" => cap_files_read(&arg_str("id")?, arg_i64("offset", 0), arg_i64("limit", 200)),
+        // B1c（2026-10-29）：版本／回收站／附件元数据 ＋ 导出/下载句柄
+        "versions.list" => cap_versions_list(&arg_str("pageId")?, arg_i64("limit", 50)),
+        "version.get" => cap_version_get(
+            &arg_str("pageId")?,
+            &arg_str("versionId")?,
+            arg_i64("offset", 0),
+            arg_i64("limit", 6000),
+            arg_bool(args.get("includeAnchors"), true),
+        ),
+        "trash.list" => cap_trash_list(arg_opt_str("spaceId").as_deref(), arg_i64("limit", 50)),
+        "files.stat" => cap_files_stat(&arg_str("attId")?),
+        "files.extract_status" => cap_files_extract_status(&arg_str("attId")?),
+        "files.list_orphan" => cap_files_list_orphan(arg_i64("limit", 50), arg_i64("offset", 0)),
+        "files.download" => cap_files_download(&arg_str("attId")?),
+        "blobs.fetch" => cap_blobs_fetch(&arg_str("handle")?),
         "files.export" => cap_files_export(&arg_str("fileName")?, &arg_str("content")?),
         "kv.get" => cap_kv_get(&arg_str("key")?, &scope_arg(&args)),
         "kv.set" => cap_kv_set(&arg_str("key")?, &arg_str("value")?, &scope_arg(&args)),
@@ -11652,6 +12029,396 @@ register({ id: "s.run", title: "结构化", run: function () {
         let e = bad_r.expect_err("认不出的 viewId 必须被拒（⛔ 不静默当成没有视图）");
         assert!(e.contains("invalid_args") && e.contains("nope"), "{e}");
         unpoint_cap_search(&dir);
+    }
+    // ---- B1c（2026-10-29）只读（版本/回收站/附件）＋ 导出/下载句柄 ----
+    //
+    // 夹具：一个空间里 2 页（p1 有历史版本；p2 在回收站）＋ 4 个附件
+    //   a1 挂 p1（有派生文本/覆盖度）、a2/a4 未整理、a3 名字带 `../`（文件名清洗判据）、
+    //   a4 只在库里标成 >10MB（needs_confirm 判据，不需要真造 11MB 字节）。
+    // 附件的**字节**落在测试 app-data 目录里（能力层按全局 app data 取字节，与生产同一条路）。
+    struct B1cFixture {
+        dir: PathBuf,
+        space: String,
+        app_data: PathBuf,
+        a3_hash: String,
+        a3_bytes: Vec<u8>,
+    }
+
+    fn b1c_write_attachment(
+        app_data: &std::path::Path,
+        space: &str,
+        hash: &str,
+        ext: &str,
+        bytes: &[u8],
+    ) {
+        let dir = crate::attachments::space_attachments_dir(app_data, space);
+        let path = crate::attachments::bucket_path(&dir, hash, ext);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+    }
+
+    fn b1c_fixture(tag: &str) -> B1cFixture {
+        let dir = cap_search_dir(tag);
+        let space = format!("b1c-{tag}");
+        let app_data = crate::db::ensure_test_app_data_dir().to_path_buf();
+        {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES (?1, '夹具空间', '#000', '', 1, 1, 1)",
+                params![space],
+            )
+            .unwrap();
+        }
+        let a3_bytes = b"dirty name payload".to_vec();
+        let a3_hash = crate::mcp_blobs::sha256_hex(&a3_bytes);
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            // 页面：p1 正常、p2 软删（回收站）
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '第一页', '{}', '甲乙丙丁戊', 'page', 0, 10, 10)",
+                params![space],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
+                 VALUES ('p2', ?1, NULL, '删掉的页', '{}', '', 'page', 1, 11, 11, 123)",
+                params![space],
+            )
+            .unwrap();
+            // 历史版本：正文 5 字，content_json 里有一个带 blockId 的顶层块（用来验锚点）
+            let doc = r#"{"root":{"type":"root","children":[{"type":"paragraph","children":[{"type":"text","text":"甲乙丙丁戊"}],"blockId":"b-ver"}]}}"#;
+            c.execute(
+                "INSERT INTO page_versions (id, page_id, title, content_json, content_text, created_at)
+                 VALUES ('v1', 'p1', '第一版', ?1, '甲乙丙丁戊', 100)",
+                params![doc],
+            )
+            .unwrap();
+            // 附件：a1 挂 p1；a2 未整理；a3 名字带 ../（清洗判据）；a4 未整理且标成 11MB
+            let a1_bytes = b"hello attachment".to_vec();
+            let a1_hash = crate::mcp_blobs::sha256_hex(&a1_bytes);
+            c.execute(
+                "INSERT INTO attachments (id, page_id, name, mime, size, hash, created_at)
+                 VALUES ('a1', 'p1', '扫描件.pdf', 'application/pdf', ?1, ?2, 50)",
+                params![a1_bytes.len() as i64, a1_hash],
+            )
+            .unwrap();
+            let a2_bytes = b"orphan".to_vec();
+            let a2_hash = crate::mcp_blobs::sha256_hex(&a2_bytes);
+            c.execute(
+                "INSERT INTO attachments (id, page_id, name, mime, size, hash, created_at)
+                 VALUES ('a2', NULL, '孤儿.txt', 'text/plain', ?1, ?2, 40)",
+                params![a2_bytes.len() as i64, a2_hash],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO attachments (id, page_id, name, mime, size, hash, created_at)
+                 VALUES ('a3', 'p1', '../../逃逸.pdf', 'application/pdf', ?1, ?2, 30)",
+                params![a3_bytes.len() as i64, a3_hash],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO attachments (id, page_id, name, mime, size, hash, created_at)
+                 VALUES ('a4', NULL, '大件.bin', 'application/octet-stream', ?1, 'deadbeef', 20)",
+                params![11 * 1024 * 1024_i64],
+            )
+            .unwrap();
+            // a1 的派生文本 ＋ 覆盖度（unknown ≠ complete：这里给一份"没抽全"的原始 JSON）
+            c.execute(
+                "INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at, coverage)
+                 VALUES ('a1', 'pdf.text@1', 0, 'para', '甲', 'p.1', ?1, 1, '{\"complete\":false}')",
+                params![a1_hash],
+            )
+            .unwrap();
+        }
+        b1c_write_attachment(
+            &app_data,
+            &space,
+            &crate::mcp_blobs::sha256_hex(b"hello attachment"),
+            "pdf",
+            b"hello attachment",
+        );
+        b1c_write_attachment(
+            &app_data,
+            &space,
+            &crate::mcp_blobs::sha256_hex(b"orphan"),
+            "txt",
+            b"orphan",
+        );
+        b1c_write_attachment(&app_data, &space, &a3_hash, "pdf", &a3_bytes);
+        B1cFixture {
+            dir,
+            space,
+            app_data,
+            a3_hash,
+            a3_bytes,
+        }
+    }
+
+    fn b1c_cleanup(f: &B1cFixture) {
+        unpoint_cap_search(&f.dir);
+        let _ = std::fs::remove_dir_all(crate::attachments::space_attachments_dir(
+            &f.app_data,
+            &f.space,
+        ));
+    }
+
+    /// ⭐ 判据：版本清单形状 ＋ `version.get` 与 `pages.get` **同一套窗口/锚点口径**；
+    /// 版本不存在 ⇒ `not_found`（⛔ 不返回空正文冒充）。
+    #[test]
+    fn b1c_versions_list_and_get_share_the_pages_get_window() {
+        let f = b1c_fixture("b1c-ver");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let (list, part, whole, missing) = with_external_caller("b1c-ver", &granted, || {
+            (
+                dispatch_capability("versions.list", r#"{"pageId":"p1"}"#),
+                dispatch_capability(
+                    "version.get",
+                    r#"{"pageId":"p1","versionId":"v1","offset":1,"limit":2}"#,
+                ),
+                dispatch_capability(
+                    "version.get",
+                    r#"{"pageId":"p1","versionId":"v1","includeAnchors":false}"#,
+                ),
+                dispatch_capability("version.get", r#"{"pageId":"p1","versionId":"nope"}"#),
+            )
+        });
+        let list: Vec<serde_json::Value> =
+            serde_json::from_str(&list.expect("versions.list 应可调")).unwrap();
+        assert_eq!(list.len(), 1, "夹具里 p1 只有 1 个历史版本");
+        assert_eq!(list[0]["versionId"], "v1");
+        assert_eq!(list[0]["at"], 100);
+        assert_eq!(list[0]["title"], "第一版");
+
+        let v: serde_json::Value =
+            serde_json::from_str(&part.expect("version.get 应可调")).unwrap();
+        assert_eq!(v["pageId"], "p1");
+        assert_eq!(v["versionId"], "v1");
+        assert_eq!(v["at"], 100);
+        assert_eq!(
+            v["chars_total"], 5,
+            "chars_total 量的是整页字符数（不是本窗）"
+        );
+        assert_eq!(v["offset"], 1);
+        assert_eq!(v["limit"], 2);
+        assert_eq!(
+            v[crate::doc_content::PAGE_TEXT_KEY],
+            serde_json::json!("乙丙"),
+            "按字符切窗口（码点，不是字节）"
+        );
+        // includeAnchors=false ⇒ 正文逐字等于纯文本（不带锚点行）
+        let w: serde_json::Value =
+            serde_json::from_str(&whole.expect("version.get 应可调")).unwrap();
+        assert_eq!(
+            w[crate::doc_content::PAGE_TEXT_KEY],
+            serde_json::json!("甲乙丙丁戊")
+        );
+        // 默认 includeAnchors=true ⇒ 带一行块锚点（与 pages.get 同一个构造）
+        let anchored = with_external_caller("b1c-ver-anchored", &granted, || {
+            dispatch_capability("version.get", r#"{"pageId":"p1","versionId":"v1"}"#)
+        });
+        let a: serde_json::Value = serde_json::from_str(&anchored.unwrap()).unwrap();
+        assert!(
+            a[crate::doc_content::PAGE_TEXT_KEY]
+                .as_str()
+                .unwrap_or_default()
+                .contains("<!-- b:b-ver -->"),
+            "默认要在块后加锚点：{a}"
+        );
+        let e = missing.expect_err("不存在的版本必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据：回收站只列软删页面；空态是**空数组**（不是错误）。
+    #[test]
+    fn b1c_trash_list_lists_only_soft_deleted_pages() {
+        let f = b1c_fixture("b1c-trash");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let out = with_external_caller("b1c-trash", &granted, || {
+            dispatch_capability("trash.list", "{}")
+        });
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&out.expect("trash.list 应可调")).unwrap();
+        assert_eq!(rows.len(), 1, "夹具里只有 p2 在回收站");
+        assert_eq!(rows[0]["pageId"], "p2");
+        assert_eq!(rows[0]["deletedAt"], 123);
+        assert!(
+            rows.iter().all(|r| r["pageId"] != "p1"),
+            "没删的页面不许出现在回收站里"
+        );
+        // 空态：把 p2 恢复 ⇒ 空数组
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute("UPDATE pages SET deleted_at = NULL WHERE id = 'p2'", [])
+                .unwrap();
+        }
+        let empty = with_external_caller("b1c-trash-2", &granted, || {
+            dispatch_capability("trash.list", "{}")
+        });
+        let empty_val: serde_json::Value =
+            serde_json::from_str(&empty.expect("空回收站不是错误")).unwrap();
+        assert_eq!(
+            empty_val,
+            serde_json::json!([]),
+            "空态必须是空数组（不是错误、也不是 null）"
+        );
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据：附件元数据 / 抽取完整度 / 未整理列表的形状；不存在 ⇒ `not_found`。
+    #[test]
+    fn b1c_files_metadata_shapes_and_not_found() {
+        let f = b1c_fixture("b1c-meta");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let (stat, stat_missing, extract, extract_missing, orphan) =
+            with_external_caller("b1c-meta", &granted, || {
+                (
+                    dispatch_capability("files.stat", r#"{"attId":"a1"}"#),
+                    dispatch_capability("files.stat", r#"{"attId":"nope"}"#),
+                    dispatch_capability("files.extract_status", r#"{"attId":"a1"}"#),
+                    dispatch_capability("files.extract_status", r#"{"attId":"nope"}"#),
+                    dispatch_capability("files.list_orphan", r#"{"limit":200,"offset":0}"#),
+                )
+            });
+        let s: serde_json::Value = serde_json::from_str(&stat.expect("files.stat 应可调")).unwrap();
+        assert_eq!(s["attId"], "a1");
+        assert_eq!(s["pageId"], "p1");
+        assert_eq!(s["name"], "扫描件.pdf");
+        assert_eq!(s["mime"], "application/pdf");
+        assert_eq!(
+            s["sha256"],
+            serde_json::json!(crate::mcp_blobs::sha256_hex(b"hello attachment")),
+            "sha256 必须是真内容指纹"
+        );
+        assert_eq!(s["spaceId"], f.space);
+        assert!(stat_missing.unwrap_err().contains("not_found"));
+
+        let x: serde_json::Value =
+            serde_json::from_str(&extract.expect("files.extract_status 应可调")).unwrap();
+        assert_eq!(x["attId"], "a1");
+        assert_eq!(x["extracted"], serde_json::json!(true));
+        assert_eq!(x["segments"], 1);
+        assert_eq!(x["extractors"][0]["extractor"], "pdf.text@1");
+        assert!(
+            x["extractors"][0]["coverage"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("complete"),
+            "覆盖度要原样透出（未知≠完整）：{x}"
+        );
+        assert!(extract_missing.unwrap_err().contains("not_found"));
+
+        let o: serde_json::Value =
+            serde_json::from_str(&orphan.expect("files.list_orphan 应可调")).unwrap();
+        assert_eq!(o["total"], 2, "未整理的是 a2 与 a4");
+        let ids: Vec<&str> = o["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["attId"].as_str().unwrap())
+            .collect();
+        assert!(ids.contains(&"a2") && ids.contains(&"a4"), "实际 {ids:?}");
+        assert!(!ids.contains(&"a1"), "挂在页面上的附件不算未整理");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据（句柄）：**单次 / 绑会话 / 落盘只在 exports/＋文件名清洗 / sha 一致 / 不接受任意路径**。
+    ///
+    /// TTL 那一条在 `mcp_blobs` 的单元判据里用"测试专用过期"验（⛔ 不真等 120 秒）。
+    #[test]
+    fn b1c_handle_is_single_use_session_bound_and_cleans_the_file_name() {
+        let f = b1c_fixture("b1c-handle");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        // 会话 A 拿句柄
+        let got = with_external_caller("b1c-sess-a", &granted, || {
+            dispatch_capability("files.download", r#"{"attId":"a3"}"#)
+        });
+        let v: serde_json::Value =
+            serde_json::from_str(&got.expect("files.download 应可调")).unwrap();
+        assert!(v.get("bytes").is_none(), "⛔ 句柄类**不许**回字节：{v}");
+        let handle = v["handle"].as_str().unwrap().to_string();
+        assert!(handle.len() >= 32, "句柄要够长（128bit+ 随机）：{handle}");
+        assert_eq!(v["sha256"], serde_json::json!(f.a3_hash));
+        assert_eq!(v["size"], f.a3_bytes.len() as i64);
+        assert!(
+            v["expiresAt"].as_i64().unwrap_or(0) > 0,
+            "要回 expiresAt：{v}"
+        );
+
+        // 会话 B 兑换不了（而且**不会**把 A 的句柄消耗掉）
+        let cross = with_external_caller("b1c-sess-b", &granted, || {
+            dispatch_capability("blobs.fetch", &format!(r#"{{"handle":"{handle}"}}"#))
+        });
+        assert!(
+            cross.unwrap_err().contains("not_found"),
+            "别的会话的句柄必须 not_found"
+        );
+
+        // 会话 A 第一次兑换成功：落在 exports/、文件名清洗、**额外传的 destPath 被忽略**
+        let fetch = with_external_caller("b1c-sess-a", &granted, || {
+            dispatch_capability(
+                "blobs.fetch",
+                &format!(r#"{{"handle":"{handle}","destPath":"C:\\Windows\\evil.txt"}}"#),
+            )
+        });
+        let g: serde_json::Value =
+            serde_json::from_str(&fetch.expect("blobs.fetch 应可调")).unwrap();
+        let path = std::path::PathBuf::from(g["path"].as_str().unwrap());
+        let exports = crate::mcp_blobs::exports_dir(&f.app_data);
+        assert_eq!(
+            path.parent(),
+            Some(exports.as_path()),
+            "⛔ 必须落在 exports/ 里（任意目标路径不被接受）：{path:?}"
+        );
+        assert_eq!(
+            path.file_name().unwrap().to_string_lossy(),
+            "逃逸.pdf",
+            "文件名要清洗（目录部分被摘掉）"
+        );
+        assert_eq!(
+            g["sha256"],
+            serde_json::json!(f.a3_hash),
+            "sha256 与句柄一致"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            f.a3_bytes,
+            "落盘字节必须一致"
+        );
+
+        // 二次使用 ⇒ 已作废
+        let again = with_external_caller("b1c-sess-a", &granted, || {
+            dispatch_capability("blobs.fetch", &format!(r#"{{"handle":"{handle}"}}"#))
+        });
+        assert!(
+            again.unwrap_err().contains("not_found"),
+            "句柄单次使用：第二次必须失败"
+        );
+
+        // 清理：落盘文件与附件夹具
+        let _ = std::fs::remove_file(&path);
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据：>10MB **明确报 `needs_confirm`**（本批没有确认 UI ⇒ ⛔ 不静默下载）。
+    #[test]
+    fn b1c_download_over_10mb_says_needs_confirm() {
+        let f = b1c_fixture("b1c-big");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let err = with_external_caller("b1c-big", &granted, || {
+            dispatch_capability("files.download", r#"{"attId":"a4"}"#)
+        })
+        .expect_err(">10MB 必须报错");
+        assert!(err.contains("needs_confirm"), "必须是 needs_confirm：{err}");
+        assert!(err.contains("10MB"), "要说清是 10MB 上限：{err}");
+        b1c_cleanup(&f);
     }
 }
 

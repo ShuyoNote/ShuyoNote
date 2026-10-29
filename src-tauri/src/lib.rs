@@ -220,6 +220,8 @@ mod save_target;
 // MCP **宿主面**（M1 · Task 5；R106=A：**进程内模块** ✓）：外部会话那一路**只**把调用转交给
 // 唯一鉴权点 `plugins::dispatch_capability` ✓（自开库/自判权限由 `check-mcp-host-authz` 挡 ✓）。
 mod mcp_host;
+// ⭐ B1c（2026-10-29）：导出/下载**句柄表**与唯一落盘处（`exports/`）——纯内存、单次、TTL 120s、绑会话。
+mod mcp_blobs;
 mod properties;
 mod search;
 // 派生文本层的**唯一运输通道**（桌面）：TS 的索引代码靠它把 `attachment_text`/`chunks` 写进
