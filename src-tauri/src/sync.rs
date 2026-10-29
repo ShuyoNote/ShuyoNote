@@ -10582,6 +10582,12 @@ mod tests {
         let _g = crate::security::SEC_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // 2026-10-29（CI no-sm 实测的 flake）：`pending_conn` 会**新建一个库**，而建库会吃
+        //   **进程级** 钥匙袋/会话状态 ⇒ 并行用例若刚好留着别的空间的钥匙，新库会被加密封住，
+        //   随后 `sync_bind_gate` 一读就报「库是密文…」⇒ 假红。⇒ 建库前先把这两格清空；
+        //   `SEC_LOCK` 保证清理期间没有别的用例改它们。
+        crate::space_crypto::set_keyring_for_test(None);
+        crate::space_crypto::set_session_master(None).unwrap();
         let (c, dir) = pending_conn("syncgate");
         c.execute(
             "INSERT INTO meta.workspaces (id, name, created_at, updated_at) VALUES ('ws', '甲', 1, 1)",
