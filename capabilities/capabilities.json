@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "apiVersion": "1.8.0",
+  "apiVersion": "1.9.0",
   "notes": "插件能力注册表——单一事实源。scripts/gen-capabilities.mjs 由本文件生成：JS shim（api.*）、Rust 绑定表、作者类型包、作者文档；scripts/check-capabilities.mjs 校验一致性与完整性。改能力请改这里，不要手改生成物。",
   "permissions": [
     {
@@ -86,6 +86,12 @@
       "title": "读取回收站",
       "risk": "low",
       "desc": "读取已软删除页面的清单（标题与删除时间；不含正文，也不恢复/清空）"
+    },
+    {
+      "id": "write:files",
+      "title": "移动/改名/删除附件",
+      "risk": "medium",
+      "desc": "改附件的归属/显示名，或删除附件条目（**正文仍引用时拒绝**；写入前会先给你看草稿并等你确认）"
     }
   ],
   "events": [
@@ -1681,6 +1687,234 @@
       "mediate": "draft",
       "mediateWhy": "会把内容写到笔记之外的文件里：这条能力不直接写盘——先收集，等命令跑完由用户在系统保存对话框里逐个选位置（取消＝不写），与写能力的草稿确认同一个中介思路",
       "desc": "把文本内容保存成文件：用户点「保存」才写。参数: fileName (必填, 建议的文件名), content (必填, 要写入的文本)。"
+    },
+    {
+      "kind": "write",
+      "scope": "current-space",
+      "mediate": "draft",
+      "since": "1.9.0",
+      "id": "files.move",
+      "title": "移动附件（草稿确认）",
+      "permission": "write:files",
+      "jsPath": [
+        "files",
+        "move"
+      ],
+      "rust": "cap_files_move",
+      "mediateWhy": "改附件归属 → 先给用户看草稿并确认",
+      "args": [
+        {
+          "name": "attId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "toPageId",
+          "type": "string",
+          "required": true,
+          "desc": "目标页面/文件夹 id"
+        },
+        {
+          "name": "expectedSha",
+          "type": "string",
+          "required": false,
+          "desc": "附件内容指纹（`hash`，来自 files.stat 的 sha256）；不一致 ⇒ `rev_conflict`"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        {
+          "name": "dryRun",
+          "type": "boolean",
+          "required": false,
+          "desc": "只演练不产草稿、不落库、不记审计"
+        },
+        {
+          "name": "clientRequestId",
+          "type": "string",
+          "required": false,
+          "desc": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ drafted: true; summary: string }",
+        "desc": "{drafted,summary}——**不代表已移动**"
+      },
+      "desc": "把附件移到另一个页面/文件夹（改归属，字节不动）。参数: attId, toPageId, expectedSha (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。",
+      "mcpDesc": "把附件移到别的页面/文件夹（改归属；内容不变）。参数: attId, toPageId, expectedSha(可选)。写操作 ⇒ 只产草稿等确认；可配 `dryRun`/`clientRequestId`。",
+      "ai": true
+    },
+    {
+      "kind": "write",
+      "scope": "current-space",
+      "mediate": "draft",
+      "since": "1.9.0",
+      "id": "files.rename",
+      "title": "重命名附件（草稿确认）",
+      "permission": "write:files",
+      "jsPath": [
+        "files",
+        "rename"
+      ],
+      "rust": "cap_files_rename",
+      "mediateWhy": "改附件显示名 → 先给用户看草稿并确认",
+      "args": [
+        {
+          "name": "attId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "desc": "新显示名（≤255 字；扩展名会影响 mime，与界面同一条规则）"
+        },
+        {
+          "name": "expectedSha",
+          "type": "string",
+          "required": false,
+          "desc": "附件内容指纹（`hash`，来自 files.stat 的 sha256）；不一致 ⇒ `rev_conflict`"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        {
+          "name": "dryRun",
+          "type": "boolean",
+          "required": false,
+          "desc": "只演练不产草稿、不落库、不记审计"
+        },
+        {
+          "name": "clientRequestId",
+          "type": "string",
+          "required": false,
+          "desc": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ drafted: true; summary: string }",
+        "desc": "{drafted,summary}——**不代表已改名**"
+      },
+      "desc": "重命名附件的显示名（字节/内容指纹不变）。参数: attId, name, expectedSha (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。",
+      "mcpDesc": "重命名附件（只改显示名；按界面同一条 mime 修复规则）。参数: attId, name, expectedSha(可选)。写操作 ⇒ 只产草稿等确认。",
+      "ai": true
+    },
+    {
+      "kind": "write",
+      "scope": "current-space",
+      "mediate": "draft",
+      "since": "1.9.0",
+      "id": "files.delete",
+      "title": "删除附件（草稿确认，先做引用检查）",
+      "permission": "write:files",
+      "jsPath": [
+        "files",
+        "delete"
+      ],
+      "rust": "cap_files_delete",
+      "mediateWhy": "删附件会影响用户数据 → 先给用户看草稿并确认；可恢复由应用既有路径决定",
+      "args": [
+        {
+          "name": "attId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "expectedSha",
+          "type": "string",
+          "required": false,
+          "desc": "附件内容指纹（`hash`，来自 files.stat 的 sha256）；不一致 ⇒ `rev_conflict`"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        {
+          "name": "dryRun",
+          "type": "boolean",
+          "required": false,
+          "desc": "只演练不产草稿、不落库、不记审计"
+        },
+        {
+          "name": "clientRequestId",
+          "type": "string",
+          "required": false,
+          "desc": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ drafted: true; summary: string }",
+        "desc": "{drafted,summary}——**不代表已删除**"
+      },
+      "desc": "删除一行附件（**先做正文引用检查**：还有页面正文按 `attachment://<sha>` 引用它 ⇒ 拒绝并点名页面）。参数: attId, expectedSha (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。",
+      "mcpDesc": "删除附件条目。⚠️ **正文仍在引用它 ⇒ 明确拒绝并点名是哪些页面**（不静默删）；字节在该 hash 仍被别处引用时会保留。参数: attId, expectedSha(可选)。写操作 ⇒ 只产草稿等确认。",
+      "ai": true
+    },
+    {
+      "kind": "write",
+      "scope": "current-space",
+      "mediate": "draft",
+      "since": "1.9.0",
+      "id": "templates.apply",
+      "title": "套用模板建页（草稿确认）",
+      "permission": "write:pages",
+      "jsPath": [
+        "templates",
+        "apply"
+      ],
+      "rust": "cap_templates_apply",
+      "mediateWhy": "会新建页面 → 先给用户看草稿并确认",
+      "args": [
+        {
+          "name": "templateId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "parentId",
+          "type": "string",
+          "required": false,
+          "desc": "新页的父节点 id；省略=顶层"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        {
+          "name": "dryRun",
+          "type": "boolean",
+          "required": false,
+          "desc": "只演练不产草稿、不落库、不记审计"
+        },
+        {
+          "name": "clientRequestId",
+          "type": "string",
+          "required": false,
+          "desc": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ drafted: true; summary: string }",
+        "desc": "{drafted,summary}——**不代表已建页**"
+      },
+      "desc": "用模板新建一页（模板内容原样复制；⛔ 不覆盖任何已有页面）。参数: templateId (来自 templates.list), parentId (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。",
+      "mcpDesc": "用模板新建一页。参数: templateId(来自 templates_list), parentId(可选,省略=顶层)。永远**新建**、不覆盖。写操作 ⇒ 只产草稿等确认；`dryRun`/`clientRequestId` 同上。",
+      "ai": true
     },
     {
       "kind": "write",

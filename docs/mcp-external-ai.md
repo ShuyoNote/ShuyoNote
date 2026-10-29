@@ -57,7 +57,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 4. 怎么验证通没通
 
-1. 让 AI **列工具**：应看到 **读面 27 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows`；切到**可写**档后再多 **17 个写面**（共 **44 个**）：`pages_create` / `pages_update` / `pages_importMarkdown` / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset` / `blocks_patch` / `blocks_insert` / `blocks_delete`；
+1. 让 AI **列工具**：应看到 **读面 27 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows`；切到**可写**档后再多 **21 个写面**（共 **48 个**）：`pages_create` / `pages_update` / `pages_importMarkdown` / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset` / `blocks_patch` / `blocks_insert` / `blocks_delete`；
 2. 让它读一篇：「列出运营空间最近修改的 3 篇笔记」；
 3. 能读出来说明链路通；**被拒**通常说明档位不够（见 §6）；
 4. 每次调用都会**记一行审计**（谁/何时/做了什么/成败）。
@@ -83,6 +83,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | `pages_revert`（回退到历史版本） | 可写；草稿确认。**只能回退到仍在版本历史里的版本**（超出保留期/已清理 ⇒ `not_found`）；⛔ 不删原写审计 |
 | `tags_add` / `tags_remove` / `properties_set` / `properties_unset` | 可写；草稿确认。目标页不存在 ⇒ `not_found`；标签/属性不存在 ⇒ `not_found`；数字属性给非数字 ⇒ `bad_args` |
 | `blocks_patch` / `blocks_insert` / `blocks_delete`（块级写） | 可写；草稿确认（`mediate:"draft"`）。按**顶层块 id** 寻址；`patch` 后**块 id 不变**；`insert` 返回 `newBlockId`（确认后即可继续用）；`delete` 不留空块、不许删最后一个块。`expectedRev` 不一致 ⇒ `rev_conflict` **带 currentRev ＋ 当前 markdown（带块锚点）**；`dryRun` 只演练；`clientRequestId` 幂等 |
+| `files_move` / `files_rename` / `files_delete`（附件写） | 可写；草稿确认。`files_delete` **先做正文引用检查**：正文仍按 `attachment://<sha>` 引用 ⇒ `bad_args` 并点名页面（⛔ 不静默删）；`expectedSha` 可选，不一致 ⇒ `rev_conflict` |
+| `templates_apply`（模板建页） | 可写；草稿确认。永远**新建**、⛔ 不覆盖；模板不存在 ⇒ `not_found` |
 | `pages_create`、`blocks_append`、`pages_importMarkdown` | `可写（每次确认）`及以上 |
 | `pages_update`（整页替换） | `可写（每次确认）`：会先弹确认 |
 
@@ -108,6 +110,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - **三条「前端桥」能力**（`export_markdown` / `export_docpackage` / `coverage_report`）：它们**唯一实现在前端**（Markdown/`.shuyodoc` 渲染、抽取器注册表），Rust 只负责**把请求转给应用窗口、等它算完**（默认 **5 秒**超时，**不重试、不缓存**）。⇒ **应用没开**或窗口忙时会回 `frontend_unavailable`（没挂载，立刻返回）/ `frontend_timeout`（挂着但这次没回）——这是**如实失败**，不是"空成功"；等窗口可用后重试即可。⛔ 桥不会执行任意前端代码（方法白名单固定三条）；
 - **写一致性与幂等**：所有写工具都是**草稿确认**（不经你确认不落库）；支持 `expectedRev`（`updated_at:sha8`，与 `pages.get` 的 `rev` 同一形态）——不一致 ⇒ `rev_conflict`（带当前 rev，⛔ 不覆盖）；`dryRun:true` 只回"会做什么"（不产草稿、不记审计）；`clientRequestId` 同 id 重复调用只落一次、只审一条（进程内 10 分钟）；写 `spaceId` 本版**只支持当前空间**（别的空间 ⇒ `permission_denied`，需 `write:all-spaces` 档，默认关）；
 - **块级写的边界**：`blocks_*` 只动**顶层块**（不做整篇锚点对齐、不做嵌套块编辑）；`applied` 在调用时**永远是 false** —— 写能力都是草稿确认，用户确认后才落库；`rev_conflict` 里的 markdown 由应用窗口算（窗口没开时退回正文带锚点，如实说明）；
+- **附件与模板写的边界**：`files_delete` 不做静默删除（正文仍引用 ⇒ 拒绝并点名）；`files_upload_to_page` / `import_docpackage` **本批不做**（MCP 面没有受控的原始字节/文件入口，⛔ 不接受任意路径）；`db_rows_write/delete` **本批不做**（需要新的数据库行写命令，属单独小批次）；
 - **企业版**：团队/租户空间的 Agent 写面临时**不在本指南范围**（身份、角色、审计合规、数据边界四问未定，见能力矩阵 §8）。
 
 ## 8. 推荐配置（一句话版）
@@ -124,6 +127,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - 清单与档位判据：[能力暴露矩阵](plans/2026-10-29-agent-capability-exposure-matrix.md)；块级写方案：[P2 方案](plans/2026-10-29-agent-block-write-p2.md)。
 
 ## 10. 版本
+
+- 2026-10-29：**附件与模板写 —— MCP 工具 44 → 48（读面 27 / 写面 21）**：新增 `files_move` / `files_rename` / `files_delete`（**正文引用检查**：仍被 `attachment://<sha>` 引用 ⇒ 拒绝并点名页面）与 `templates_apply`（模板建页、永远新建）。全部草稿确认；`expectedSha`/`dryRun`/`clientRequestId` 沿用同一口径。`apiVersion` 1.8.0 → **1.9.0**。⚠️ `files_upload_to_page` / `import_docpackage` / `db_rows_write` / `db_rows_delete` **本批未做**（缺受控字节通道 / 数据库行写命令），见报告降级。
 
 - 2026-10-29：**块级写 B2-块 —— MCP 工具 41 → 44（读面 27 / 写面 17）**：新增 `blocks_patch`（整块替换，**块 id 不变**）、`blocks_insert`（在某块后插入，返回 `newBlockId`）、`blocks_delete`（删顶层块，不留空块）。全部草稿确认（`mediate:"draft"`）；`expectedRev` 不一致 ⇒ `rev_conflict` **带 currentRev ＋ 当前 markdown（带锚点）**；`dryRun`/`clientRequestId` 与 B2-结构同一条口径。`apiVersion` 1.7.0 → **1.8.0**。
 

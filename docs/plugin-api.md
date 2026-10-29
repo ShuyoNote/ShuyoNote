@@ -1,4 +1,4 @@
-# 插件 API（v1.8.0）
+# 插件 API（v1.9.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.8.0",
+  "apiVersion": "1.9.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.8.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.9.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -98,6 +98,7 @@ register({
 | `export:files` | 把内容保存成文件：存到哪、存不存都由你在系统保存对话框里定（插件只能给一个建议文件名，给不了路径）。**导出的文件是明文**，不随空间的加密一起保护 | medium |
 | `read:versions` | 读取历史版本：读取页面的历史版本清单与某个版本的正文（只读；不会回滚任何内容） | low |
 | `read:trash` | 读取回收站：读取已软删除页面的清单（标题与删除时间；不含正文，也不恢复/清空） | low |
+| `write:files` | 移动/改名/删除附件：改附件的归属/显示名，或删除附件条目（**正文仍引用时拒绝**；写入前会先给你看草稿并等你确认） | medium |
 
 ## 4. 能力（`api.*`）
 
@@ -140,6 +141,10 @@ register({
 | `tags.add` | `api.tags.add(name, pageId, expectedRev, spaceId, dryRun, clientRequestId)` | `write:tags` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `log.write` | `api.log(message, level)` | — | `app` | — | void | 1.0.0 |
 | `files.export` | `api.files.export(fileName, content)` | `export:files` | `app` | **草稿确认** | object | 1.0.0 |
+| `files.move` | `api.files.move(attId, toPageId, expectedSha, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.9.0 |
+| `files.rename` | `api.files.rename(attId, name, expectedSha, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.9.0 |
+| `files.delete` | `api.files.delete(attId, expectedSha, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.9.0 |
+| `templates.apply` | `api.templates.apply(templateId, parentId, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.9.0 |
 | `folders.create` | `api.folders.create(title, parentId, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.7.0 |
 | `nodes.move` | `api.nodes.move(id, newParentId, sortOrder, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.7.0 |
 | `nodes.rename` | `api.nodes.rename(id, title, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.7.0 |
@@ -567,6 +572,64 @@ register({
   - `fileName`: `string` —— 建议的文件名（只给名字——路径里的目录会被去掉，文件存哪里由用户在保存对话框里定）
   - `content`: `string` —— 要写入的内容（单文件上限 4 MiB，一次运行最多 4 个文件）
 
+### `files.move` — 移动附件（草稿确认）
+
+- 调用：`api.files.move(attId, toPageId, expectedSha, spaceId, dryRun, clientRequestId)`
+- 权限：`write:files`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 改附件归属 → 先给用户看草稿并确认
+- 返回：{drafted,summary}——**不代表已移动**
+- 参数：
+  - `attId`: `string` —— 
+  - `toPageId`: `string` —— 目标页面/文件夹 id
+  - `expectedSha`: `string`（可选） —— 附件内容指纹（`hash`，来自 files.stat 的 sha256）；不一致 ⇒ `rev_conflict`
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `files.rename` — 重命名附件（草稿确认）
+
+- 调用：`api.files.rename(attId, name, expectedSha, spaceId, dryRun, clientRequestId)`
+- 权限：`write:files`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 改附件显示名 → 先给用户看草稿并确认
+- 返回：{drafted,summary}——**不代表已改名**
+- 参数：
+  - `attId`: `string` —— 
+  - `name`: `string` —— 新显示名（≤255 字；扩展名会影响 mime，与界面同一条规则）
+  - `expectedSha`: `string`（可选） —— 附件内容指纹（`hash`，来自 files.stat 的 sha256）；不一致 ⇒ `rev_conflict`
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `files.delete` — 删除附件（草稿确认，先做引用检查）
+
+- 调用：`api.files.delete(attId, expectedSha, spaceId, dryRun, clientRequestId)`
+- 权限：`write:files`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 删附件会影响用户数据 → 先给用户看草稿并确认；可恢复由应用既有路径决定
+- 返回：{drafted,summary}——**不代表已删除**
+- 参数：
+  - `attId`: `string` —— 
+  - `expectedSha`: `string`（可选） —— 附件内容指纹（`hash`，来自 files.stat 的 sha256）；不一致 ⇒ `rev_conflict`
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `templates.apply` — 套用模板建页（草稿确认）
+
+- 调用：`api.templates.apply(templateId, parentId, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会新建页面 → 先给用户看草稿并确认
+- 返回：{drafted,summary}——**不代表已建页**
+- 参数：
+  - `templateId`: `string` —— 
+  - `parentId`: `string`（可选） —— 新页的父节点 id；省略=顶层
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
 ### `folders.create` — 新建文件夹（草稿确认）
 
 - 调用：`api.folders.create(title, parentId, spaceId, dryRun, clientRequestId)`
@@ -914,7 +977,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.8.0",
+  "runtime": "declarative", "apiVersion": "1.9.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },

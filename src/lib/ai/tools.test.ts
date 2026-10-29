@@ -92,6 +92,11 @@ const EXPECTED = [
   "blocks.patch",
   "blocks.insert",
   "blocks.delete",
+  // ⭐ B2-附件与模板（2026-10-29）
+  "files.move",
+  "files.rename",
+  "files.delete",
+  "templates.apply",
 ];
 
 describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实现）", () => {

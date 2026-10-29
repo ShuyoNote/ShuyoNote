@@ -60,6 +60,9 @@ var api = {
     extract_status: function(attId) { return __capCall("files.extract_status", { attId: attId === undefined ? undefined : String(attId) }); },
     list_orphan: function(limit, offset) { return __capCall("files.list_orphan", { limit: limit === undefined ? 50 : Number(limit), offset: offset === undefined ? 0 : Number(offset) }); },
     export: function(fileName, content) { return __capCall("files.export", { fileName: fileName === undefined ? undefined : String(fileName), content: content === undefined ? undefined : String(content) }); },
+    move: function(attId, toPageId, expectedSha, spaceId, dryRun, clientRequestId) { return __capCall("files.move", { attId: attId === undefined ? undefined : String(attId), toPageId: toPageId === undefined ? undefined : String(toPageId), expectedSha: expectedSha === undefined ? undefined : String(expectedSha), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); },
+    rename: function(attId, name, expectedSha, spaceId, dryRun, clientRequestId) { return __capCall("files.rename", { attId: attId === undefined ? undefined : String(attId), name: name === undefined ? undefined : String(name), expectedSha: expectedSha === undefined ? undefined : String(expectedSha), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); },
+    delete: function(attId, expectedSha, spaceId, dryRun, clientRequestId) { return __capCall("files.delete", { attId: attId === undefined ? undefined : String(attId), expectedSha: expectedSha === undefined ? undefined : String(expectedSha), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); },
     download: function(attId) { return __capCall("files.download", { attId: attId === undefined ? undefined : String(attId) }); }
   },
   coverage: {
@@ -83,6 +86,9 @@ var api = {
     unset: function(attrId, pageId, expectedRev, spaceId, dryRun, clientRequestId) { return __capCall("properties.unset", { attrId: attrId === undefined ? undefined : String(attrId), pageId: pageId === undefined ? undefined : String(pageId), expectedRev: expectedRev === undefined ? undefined : String(expectedRev), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); }
   },
   log: function(message, level) { return __capCall("log.write", { message: message === undefined ? undefined : String(message), level: level === undefined ? "info" : String(level) }); },
+  templates: {
+    apply: function(templateId, parentId, spaceId, dryRun, clientRequestId) { return __capCall("templates.apply", { templateId: templateId === undefined ? undefined : String(templateId), parentId: parentId === undefined ? undefined : String(parentId), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); }
+  },
   folders: {
     create: function(title, parentId, spaceId, dryRun, clientRequestId) { return __capCall("folders.create", { title: title === undefined ? undefined : String(title), parentId: parentId === undefined ? undefined : String(parentId), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); }
   },

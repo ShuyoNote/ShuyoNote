@@ -283,6 +283,152 @@
   },
   {
     "kind": "write",
+    "name": "files_move",
+    "capabilityId": "files.move",
+    "description": "把附件移到别的页面/文件夹（改归属；内容不变）。参数: attId, toPageId, expectedSha(可选)。写操作 ⇒ 只产草稿等确认；可配 `dryRun`/`clientRequestId`。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "attId": {
+          "type": "string"
+        },
+        "toPageId": {
+          "type": "string",
+          "description": "目标页面/文件夹 id"
+        },
+        "expectedSha": {
+          "type": "string",
+          "description": "附件内容指纹（`hash`，来自 files.stat 的 sha256）；不一致 ⇒ `rev_conflict`"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产草稿、不落库、不记审计"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      },
+      "required": [
+        "attId",
+        "toPageId"
+      ]
+    },
+    "permission": "write:files"
+  },
+  {
+    "kind": "write",
+    "name": "files_rename",
+    "capabilityId": "files.rename",
+    "description": "重命名附件（只改显示名；按界面同一条 mime 修复规则）。参数: attId, name, expectedSha(可选)。写操作 ⇒ 只产草稿等确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "attId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "新显示名（≤255 字；扩展名会影响 mime，与界面同一条规则）"
+        },
+        "expectedSha": {
+          "type": "string",
+          "description": "附件内容指纹（`hash`，来自 files.stat 的 sha256）；不一致 ⇒ `rev_conflict`"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产草稿、不落库、不记审计"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      },
+      "required": [
+        "attId",
+        "name"
+      ]
+    },
+    "permission": "write:files"
+  },
+  {
+    "kind": "write",
+    "name": "files_delete",
+    "capabilityId": "files.delete",
+    "description": "删除附件条目。⚠️ **正文仍在引用它 ⇒ 明确拒绝并点名是哪些页面**（不静默删）；字节在该 hash 仍被别处引用时会保留。参数: attId, expectedSha(可选)。写操作 ⇒ 只产草稿等确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "attId": {
+          "type": "string"
+        },
+        "expectedSha": {
+          "type": "string",
+          "description": "附件内容指纹（`hash`，来自 files.stat 的 sha256）；不一致 ⇒ `rev_conflict`"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产草稿、不落库、不记审计"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      },
+      "required": [
+        "attId"
+      ]
+    },
+    "permission": "write:files"
+  },
+  {
+    "kind": "write",
+    "name": "templates_apply",
+    "capabilityId": "templates.apply",
+    "description": "用模板新建一页。参数: templateId(来自 templates_list), parentId(可选,省略=顶层)。永远**新建**、不覆盖。写操作 ⇒ 只产草稿等确认；`dryRun`/`clientRequestId` 同上。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string"
+        },
+        "parentId": {
+          "type": "string",
+          "description": "新页的父节点 id；省略=顶层"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产草稿、不落库、不记审计"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
     "name": "folders_create",
     "capabilityId": "folders.create",
     "description": "新建一个文件夹节点（不是页面）。参数: title(必填), parentId(可选,省略=顶层)。写操作 ⇒ **只产生草稿**（`{drafted:true, summary, spaceId}`），用户确认后才落库；`dryRun:true` 只演练不产生草稿；`spaceId` 本版只支持当前空间。",

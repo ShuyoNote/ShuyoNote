@@ -57,6 +57,9 @@ export const NOTE_ID_PREFIXES = [
   //   与前面几条同一条判断：属于**清单遗漏**，不是安全边界放宽。
   //   ⛔ 别在这里加 `fs.` / `exec.` / `net.` / `sql.` 这类（那才是这条规则要挡的 ✗）。
   "nodes.", "folders.",
+  // ⭐ 2026-10-29（B2-附件与模板）：`templates.apply` 是用**本库模板**建页（笔记域），
+  //   ⛔ 不是 fs/网络类；同属清单遗漏。
+  "templates.",
 ];
 export const ALLOWED_AI_KINDS = ["read", "write"];
 export const ALLOWED_AI_SCOPE = "current-space";

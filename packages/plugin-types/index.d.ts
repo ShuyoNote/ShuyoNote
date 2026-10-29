@@ -274,6 +274,18 @@ export interface PluginApi {
    * 返回：{queued: true, bytes}——**不代表已保存**：命令跑完后宿主会弹保存对话框逐个问你，点了取消就什么都没写
    */
     export(fileName: string, content: string): { queued: true; bytes: number };
+  /** 移动附件（草稿确认）（权限 `write:files`；1.9.0 起）
+   * 返回：{drafted,summary}——**不代表已移动**
+   */
+    move(attId: string, toPageId: string, expectedSha?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
+  /** 重命名附件（草稿确认）（权限 `write:files`；1.9.0 起）
+   * 返回：{drafted,summary}——**不代表已改名**
+   */
+    rename(attId: string, name: string, expectedSha?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
+  /** 删除附件（草稿确认，先做引用检查）（权限 `write:files`；1.9.0 起）
+   * 返回：{drafted,summary}——**不代表已删除**
+   */
+    delete(attId: string, expectedSha?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
   /** 下载附件（返回句柄）（权限 `export:files`；1.5.0 起）
    * 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
    */
@@ -331,6 +343,12 @@ export interface PluginApi {
    * 返回：进插件日志环形缓冲，可在插件面板查看
    */
   log(message: string, level?: "info" | "warn" | "error"): void;
+  templates: {
+  /** 套用模板建页（草稿确认）（权限 `write:pages`；1.9.0 起）
+   * 返回：{drafted,summary}——**不代表已建页**
+   */
+    apply(templateId: string, parentId?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
+  };
   folders: {
   /** 新建文件夹（草稿确认）（权限 `write:pages`；1.7.0 起）
    * 返回：{drafted,summary,spaceId}——**不代表已创建**
@@ -379,4 +397,4 @@ export interface PluginApi {
   };
 }
 
-export declare const SDK_API_VERSION: "1.8.0";
+export declare const SDK_API_VERSION: "1.9.0";

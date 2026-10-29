@@ -5,10 +5,10 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `fd2f46a2e182068eb54bf2c904b43944994082cf9a9d9d279b0f402a48a04d9a` |
-| `apiVersion` | 1.8.0 |
+| 注册表 sha256 | `c929983b974cedadec1630fed3328ca02ca75f599dae4f07f2913d5f594f269a` |
+| `apiVersion` | 1.9.0 |
 | 取用条件 | `ai === true` **且** `kind === "write"` |
-| 条数 | **17** |
+| 条数 | **21** |
 | 生成命令 | `node scripts/gen-agent-tool-surface.mjs --phase m2` |
 
 | id | scope | permission | desc |
@@ -17,6 +17,9 @@
 | blocks.delete | current-space | write:pages | 删除顶层块（不留空占位）。参数: blockId + expectedRev。写操作 ⇒ 只产草稿；`dryRun` 只演练；冲突 ⇒ `rev_conflict` 带 currentMarkdown。 |
 | blocks.insert | current-space | write:pages | 插入块：pageId 或 afterBlockId(至少一个) + markdown/text(二选一) + expectedRev。返回 `newBlockId`（用户确认后即可用它继续 patch/delete）。写操作 ⇒ 只产草稿；`dryRun` 只演练；冲突 ⇒ `rev_conflict` 带当前 markdown。 |
 | blocks.patch | current-space | write:pages | 整块替换（顶层块）：blockId(必填) + markdown 或 text(二选一) + expectedRev(可选但强烈建议)。**块 id 不变**。写操作 ⇒ 只产草稿（返回 `{drafted:true,applied:false,rev,changed}`，用户确认后才落库）；`rev` 变/冲突 ⇒ `rev_conflict` 带 currentRev 与当前 markdown（带锚点）；`dryRun` 只演练。 |
+| files.delete | current-space | write:files | 删除附件条目。⚠️ **正文仍在引用它 ⇒ 明确拒绝并点名是哪些页面**（不静默删）；字节在该 hash 仍被别处引用时会保留。参数: attId, expectedSha(可选)。写操作 ⇒ 只产草稿等确认。 |
+| files.move | current-space | write:files | 把附件移到别的页面/文件夹（改归属；内容不变）。参数: attId, toPageId, expectedSha(可选)。写操作 ⇒ 只产草稿等确认；可配 `dryRun`/`clientRequestId`。 |
+| files.rename | current-space | write:files | 重命名附件（只改显示名；按界面同一条 mime 修复规则）。参数: attId, name, expectedSha(可选)。写操作 ⇒ 只产草稿等确认。 |
 | folders.create | current-space | write:pages | 新建一个文件夹节点（不是页面）。参数: title(必填), parentId(可选,省略=顶层)。写操作 ⇒ **只产生草稿**（`{drafted:true, summary, spaceId}`），用户确认后才落库；`dryRun:true` 只演练不产生草稿；`spaceId` 本版只支持当前空间。 |
 | nodes.delete | current-space | write:pages | **软删**一个节点（进回收站，可恢复）。参数: id(必填), expectedRev(可选)。⚠️ 还有子项 ⇒ `bad_args` 并点名 N（⛔ 不递归删）；返回里带 `backlinks` 数。写操作 ⇒ 只产生草稿等用户确认。 |
 | nodes.move | current-space | write:pages | 移动节点（页面或文件夹都算）。参数: id(必填), newParentId(可选,省略=顶层), sortOrder(可选), expectedRev(可选)。**环检测**：移到自己的后代下面 ⇒ `bad_args`；返回里带 `backlinks` 数（如实提示）。写操作 ⇒ 只产生草稿等用户确认；`dryRun`/`clientRequestId` 同上。 |
@@ -29,4 +32,5 @@
 | properties.unset | current-space | write:properties | 去掉页面的属性值（不删属性定义）。参数: attrId(必填), pageId(可选,省略=当前页)。属性不存在 ⇒ `not_found`。写操作 ⇒ 只产生草稿等用户确认。 |
 | tags.add | current-space | write:tags | 给页面加一个标签。参数: name (必填, 不带 #), pageId (可选, 省略=当前打开的页面)。标签不需要预先创建。这是写操作，返回草稿供用户确认。 |
 | tags.remove | current-space | write:tags | 把标签从页面移除（不删标签本身）。参数: name(必填), pageId(可选,省略=当前页)。标签不存在/该页没有它 ⇒ `not_found`。写操作 ⇒ 只产生草稿等用户确认。 |
+| templates.apply | current-space | write:pages | 用模板新建一页。参数: templateId(来自 templates_list), parentId(可选,省略=顶层)。永远**新建**、不覆盖。写操作 ⇒ 只产草稿等确认；`dryRun`/`clientRequestId` 同上。 |
 | trash.restore | current-space | write:pages | 从回收站恢复节点。参数: id(必填)。活着的节点 ⇒ `bad_args`；不存在 ⇒ `not_found`。写操作 ⇒ 只产生草稿等用户确认；`dryRun`/`clientRequestId` 同上。 |

@@ -425,6 +425,72 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
     isWrite: true,
   },
   {
+    id: "files.move",
+    description: "把附件移到另一个页面/文件夹（改归属，字节不动）。参数: attId, toPageId, expectedSha (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "attId": { type: "string" },
+      "toPageId": { type: "string" },
+      "expectedSha": { type: "string" },
+      "spaceId": { type: "string" },
+      "dryRun": { type: "boolean" },
+      "clientRequestId": { type: "string" },
+      },
+      required: ["attId", "toPageId"],
+    },
+    isWrite: true,
+  },
+  {
+    id: "files.rename",
+    description: "重命名附件的显示名（字节/内容指纹不变）。参数: attId, name, expectedSha (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "attId": { type: "string" },
+      "name": { type: "string" },
+      "expectedSha": { type: "string" },
+      "spaceId": { type: "string" },
+      "dryRun": { type: "boolean" },
+      "clientRequestId": { type: "string" },
+      },
+      required: ["attId", "name"],
+    },
+    isWrite: true,
+  },
+  {
+    id: "files.delete",
+    description: "删除一行附件（**先做正文引用检查**：还有页面正文按 `attachment://<sha>` 引用它 ⇒ 拒绝并点名页面）。参数: attId, expectedSha (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "attId": { type: "string" },
+      "expectedSha": { type: "string" },
+      "spaceId": { type: "string" },
+      "dryRun": { type: "boolean" },
+      "clientRequestId": { type: "string" },
+      },
+      required: ["attId"],
+    },
+    isWrite: true,
+  },
+  {
+    id: "templates.apply",
+    description: "用模板新建一页（模板内容原样复制；⛔ 不覆盖任何已有页面）。参数: templateId (来自 templates.list), parentId (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "templateId": { type: "string" },
+      "parentId": { type: "string" },
+      "spaceId": { type: "string" },
+      "dryRun": { type: "boolean" },
+      "clientRequestId": { type: "string" },
+      },
+      required: ["templateId"],
+    },
+    isWrite: true,
+  },
+  {
     id: "folders.create",
     description: "在页面树里新建一个**文件夹**（不是页面，没有正文）。参数: title (必填), parentId (可选=顶层), spaceId (可选;本版只支持当前空间), dryRun (可选), clientRequestId (可选)。写操作 ⇒ 返回草稿等用户确认。",
     argsSchema: {
