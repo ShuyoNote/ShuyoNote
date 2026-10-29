@@ -346,6 +346,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-10-29-shuyodoc-m1.md](plans/2026-10-29-shuyodoc-m1.md) | 单文档包 .shuyodoc M1 方案（只做单篇/导入永远新建/不带评论历史；含导入侧 7 条拒绝项与往返判据） |
 | [plans/2026-10-29-agent-block-write-p2.md](plans/2026-10-29-agent-block-write-p2.md) | 外部 Agent 块级写面 P2 方案（锚点读面 + patch/insert/delete + expectedRev 冲突必拒 + 审计/权限） |
 | [plans/2026-10-29-agent-capability-exposure-matrix.md](plans/2026-10-29-agent-capability-exposure-matrix.md) | 能力暴露矩阵（29 条注册表能力 × MCP 现状 × P0/P1/不暴露档位，含新增能力与分批验收） |
+| [plans/2026-10-29-mcp-capability-feasibility.md](plans/2026-10-29-mcp-capability-feasibility.md) | 能力暴露底层可行性核对（B1 前置）：逐条「已有命令/需扩展/需新建/不做」 |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
 > 「还差 **0b** 公开材料可同步」**已作废** —— 0b 那条（经服务器搬钥匙袋）**已整条删除**

@@ -1,6 +1,6 @@
 # 外部 Agent 能力暴露矩阵（v3 · 定稿）
 
-状态：方案定稿（实现未开始）—— 决策收录于 §11；实现从 B1 起步。
+状态：v3.1 开工稿（B1a 待实现）—— v3 的 12 处修订见 §13，可行性核对见配套文档。
 本文是**唯一版本**（v1/v2 的评审记录已并入本文，不再保留两份）。
 
 关联：`capabilities/capabilities.json`（注册表＝单一事实源）· `src-tauri/src/mcp_channel.rs`（默认关/只绑回环/令牌/权限位）· [`mcp-external-ai.md`](../mcp-external-ai.md)（面向用户的配置指南）· [`2026-10-29-agent-block-write-p2.md`](2026-10-29-agent-block-write-p2.md)（块级写面）。
@@ -32,7 +32,8 @@
 
 | 能力 id | permission | 级别 | 批次 | 备注 |
 |---|---|---|---|---|
-| pages.list / pages.get / pages.search / pages.count | read:pages | 现✓ | — | 已有；`get` 已带 `rev`＋块锚点 |
+| pages.list / pages.get / pages.search | read:pages | 现✓ | — | 已有；`get` 已带 `rev`＋块锚点 |
+| pages.count | read:pages | **R** | **B1a** | v3 误标「现✓」——MCP 实际没有 `pages_count`（13 个工具里没有它） |
 | page.current | read:page.current | R | B1 | 补"当前页"入口 |
 | blocks.list | read:pages | 现✓ | — | 已有 |
 | backlinks.list | read:backlinks | 现✓ | — | 已有 |
@@ -71,7 +72,6 @@
 | `templates.list` | read:pages | R | B1 | — |
 | `templates.apply` | write:pages | Wc | B2 | 建页要草稿确认 |
 | `blocks.patch / insert / delete` | write:pages | W | B2 | 见 P2 七条判据 |
-| `pages.move` / `pages.rename`（**节点通用**） | write:pages | W | B2 | id 不变；**环检测必拒** |
 | `nodes.delete`（软删） | write:pages | W | **B2** | 进回收站、可恢复、引用检查 |
 | `trash.restore` | write:pages | W | **B2（与软删同批）** | 不许"能删不能恢复" |
 | `pages.revert(rev)` / `audit.revert(auditId)` | write:pages | W | **B2** | 回滚后逐字一致 + 新增回滚审计 |
@@ -167,3 +167,31 @@
 ## 12. 下一步
 
 **B1 开工**（只读，不改写路径）：按 §8 清单逐条实现，每能力一条挂载级判据 ＋ §9.1 元判据一起跑。之后 B2（块级写＋回滚），再谈企业版。
+
+## 13. v3.1 修订（2026-10-29 自审后，开工前必读）
+
+> 本节修 12 处问题；前面各节与本节的冲突**以本节为准**。可行性核对见 [`2026-10-29-mcp-capability-feasibility.md`](2026-10-29-mcp-capability-feasibility.md)。
+
+### 13.1 事实更正
+1. **`pages.count` 不是"现✓"**：MCP 实际工具只有 13 个，没有 `pages_count` ⇒ 改判 **R / B1a**（低风险，补上即可）。
+2. **`pages.move` 与 `nodes.move` 重复**：统一为 **`nodes.move`**（`movePage` 底层已存在，文件夹是页面节点，同一个调用可移两者）。
+
+### 13.2 设计补齐
+3. **句柄消费方**：新增 **`blobs.fetch(handle, destPath?)`**（`Wc`）：把导出/下载句柄换成文件（用户选保存位置）；判据：句柄单次、TTL 120s、跨会话失败、二次使用失败。**没有它，B1c 的导出/下载不算完成。**
+4. **幂等键**：所有 W/Wc 增加可选 `clientRequestId`；同 id 重复调用返回**同一结果**（不重复落库）；判据：同 id 连发两次 ⇒ 只落一次、`audit` 只一条。
+5. **回滚保留策略**：`pages.revert(rev)` 只能回退到**仍在版本历史里**的 rev；默认保留 **每页最近 20 版 且 30 天内**（与 `cleanupOldVersions` 对齐）；超出 ⇒ `not_found`（⛔ 不假装成功）。
+6. **数据库写范围**：`db.rows_write/delete` v1 **只支持简单表格（table）的原始列**；⛔ 不写关系列/公式列/汇总列；`db.rows` 明确标注"**原始值**，可能与界面计算值不同"。
+
+### 13.3 结构性调整
+7. **B1 拆三段**：**B1a**（纯读：`page.current`/`pages.count`/`tags.list`/`properties.list`/`coverage.report`/`pages.tree`）→ **B1b**（`db.schema`/`db.rows`＋简单 where）→ **B1c**（`versions.*`/`trash.list`/`files.stat`/`files.extract_status`/`files.list_orphan`/`files.download`/`export.*`/`files.export`/`blobs.fetch`）。三段各自可合入、可回滚。
+8. **`nodes.delete` 语义**：删**非空文件夹** ⇒ **拒绝**并提示"N 个子项"（⛔ 不递归删）；空文件夹或页面 ⇒ 软删进回收站。
+9. **`changes_since` 响应形状**：`{pageId, rev, changedBlocks:[{blockId, op:"update"|"insert"}], deletedBlockIds:[]}`；强制 `limit`（默认 100，上限 500）；无变化 ⇒ 空数组。
+10. **`audit.tail`（R / B1a）**：只读最近 N 条（默认 20，上限 100）：`{at, tool, capability, targets:[ids], ok}`；**只回本会话 + 本机**；⛔ 不回内容正文、不回其他用户会话。
+
+### 13.4 实现前必须核实的
+11. **能力面指纹**：新增 capability 会改 `check-api-surface-version` 的指纹 ⇒ **每批开工前先确认是否需要 `apiVersion` 升级**（升版本要写 changelog + 判据），不要等门禁红才处理。
+12. **底层接口逐条核实**：见可行性文档（结论摘要：`trash/versions/files/tags/properties/folder/move/delete/restore/export/import` 大多**已有 api**；`audit.tail`、`blobs.fetch`、`db where`、`blocks.*`、`changes_since`、`templates.apply` **需新建**）。
+
+### 13.5 v3.1 的开工顺序（替代 §12）
+
+1. **可行性核对**（已完成，见文档）→ 2. **B1a**（纯读 6 个，零新建命令）→ 3. **B1b**（db 读＋where，需扩展 `query_database` 过滤）→ 4. **B1c**（导出/下载＋句柄消费方）→ 5. **B2**（写＋回滚＋删除/恢复，`blocks.*` 另立 P2 实现任务）。
