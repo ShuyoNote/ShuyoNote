@@ -1,6 +1,6 @@
 # 外部 Agent 能力暴露矩阵（v3 · 定稿）
 
-状态：已拍板（未开始实现）。**暴露什么 / 什么档 / 什么批次 / 怎么判** 已全部定稿；实现从 **B1** 开始。
+状态：方案定稿（实现未开始）—— 决策收录于 §11；实现从 B1 起步。
 本文是**唯一版本**（v1/v2 的评审记录已并入本文，不再保留两份）。
 
 关联：`capabilities/capabilities.json`（注册表＝单一事实源）· `src-tauri/src/mcp_channel.rs`（默认关/只绑回环/令牌/权限位）· [`mcp-external-ai.md`](../mcp-external-ai.md)（面向用户的配置指南）· [`2026-10-29-agent-block-write-p2.md`](2026-10-29-agent-block-write-p2.md)（块级写面）。
