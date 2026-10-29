@@ -1980,24 +1980,25 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   font-size: 11.5px;
   font-weight: 500;
 }
-.sync-device-name-input {
+/* ⚠️ 选择器必须写**两段**（`.sync-input.sync-device-name-input`）—— ⛔ 单写 `.sync-device-name-input`
+   会被后面（第 2095 行附近）的 `.sync-input { min-height: 44px }` **按源码顺序压掉** ✗：
+   实测 owner 截图里输入框仍是 44 高、而宽度 170 已生效 ⇒ 就是这条顺序坑 ✓。 */
+.sync-input.sync-device-name-input {
   flex: 0 0 auto;
-  /* ⭐ 2026-10-29 第四版（owner：「高度和宽度缩小」）：⭐ 它不是表单页的主角，而是状态卡里
-     一行轻量设置 ⇒ **170×28**（再小就点不准、放不下 40 字上限的长名字）。44px 命中区那条
-     属于**移动端触摸档**（`verify-mobile-views`），桌面面板这里按鼠标命中即可 ✓。
-     `.sync-input` 还带着 44 的 `min-height` ⇒ 这里必须同时写 `min-height` 覆盖它 ✓。 */
+  /* ⭐ 2026-10-29 第五版（owner：「这个控件高度小一半」）：⭐ 44 → **24**（≈ 一半）✓——
+     它是状态卡里一行轻量设置，不是表单页主角；宽度仍 170（够放常见设备名）✓。 */
   width: 170px;
   max-width: 170px;
-  min-height: 28px;
-  height: 28px;
+  min-height: 24px;
+  height: 24px;
   padding: 0 8px;
   font-size: 12.5px;
   border-radius: var(--radius-sm);
   background: var(--surface);
 }
 .sync-device-name .sync-mini-btn {
-  /* 与左边输入框**同一水平线**（28px）—— ⛔ 不让一行里出现两种高度 ✗ */
-  min-height: 28px;
+  /* 与左边输入框**同一水平线**（24px）—— ⛔ 不让一行里出现两种高度 ✗ */
+  min-height: 24px;
   padding: 0 10px;
   align-self: center;
 }
