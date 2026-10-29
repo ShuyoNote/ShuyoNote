@@ -759,6 +759,30 @@ export function docJsonOfPage(page: { content_json?: string | null }): string {
 }
 
 /**
+ * ⭐ **读面（`pages.get` 的 P1）要的两样标量**：正文 JSON 原文 ＋ 更新时间。
+ *
+ * 为什么要单立一个（而不是让能力层自己 `page.content_json` 一下）：直接提那两个落盘字段名的
+ * 地方**只许减**（判据 `check-doc-content-access.mjs`）⇒ 读面的 `rev`（指纹的一半）与块锚点
+ * （块 id 只在 JSON 里）都从**这一层**取，别处不再出现列名。
+ *
+ * ⚠️ **「算不出」要能如实表达**：`docJson` 拿不到时是 `null`，**不是** `"{}"`
+ * —— 拿 `"{}"` 兜底会算出一个**假指纹**，比没有 `rev` 更糟（调用方会拿它当真令牌去写）。
+ * 与 `docJsonOfPage` 的分工：那个是"导出/发布"的口径（空 ⇒ `{}` 也能导出），这个是令牌口径。
+ */
+export function pageReadMeta(page: {
+  content_json?: string | null;
+  updated_at?: number | null;
+}): { docJson: string | null; updatedAt: number | null } {
+  return {
+    docJson: typeof page.content_json === "string" ? page.content_json : null,
+    updatedAt:
+      typeof page.updated_at === "number" && Number.isFinite(page.updated_at)
+        ? Math.trunc(page.updated_at)
+        : null,
+  };
+}
+
+/**
  * 从一条**同步载荷**里取出那段正文 JSON ✓（载荷是页面详情的序列化：这个键是**字符串** ✓）。
  *
  * 为什么放在这一层（而不是让 `activityBlocks.ts` 自己去解）：全仓直接提这个字段名的地方**只许减**

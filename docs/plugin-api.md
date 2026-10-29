@@ -104,7 +104,7 @@ register({
 | `page.current` | `api.page.current()` | `read:page.current` | `current-space` | — | string | 1.0.0 |
 | `pages.count` | `api.pages.count()` | `read:pages` | `current-space` | — | number | 1.0.0 |
 | `pages.list` | `api.pages.list(limit, spaceId)` | `read:pages` | `current-space` | — | array | 1.0.0 |
-| `pages.get` | `api.pages.get(id, offset, limit)` | `read:pages` | `current-space` | — | object | 1.0.0 |
+| `pages.get` | `api.pages.get(id, offset, limit, includeAnchors)` | `read:pages` | `current-space` | — | object | 1.0.0 |
 | `pages.search` | `api.pages.search(q, spaceId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `tags.list` | `api.tags.list()` | `read:tags` | `current-space` | — | array | 1.0.0 |
 | `blocks.list` | `api.blocks.list(pageId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
@@ -156,14 +156,15 @@ register({
 
 ### `pages.get` — 读取指定页面
 
-- 调用：`api.pages.get(id, offset, limit)`
+- 调用：`api.pages.get(id, offset, limit, includeAnchors)`
 - 权限：`read:pages`
 - scope：`current-space`
-- 返回：{id, title, content_text(**已按 offset/limit 切好的窗口**), kind, chars_total(整页字符数), offset, limit}；不存在返回 null
+- 返回：{id, title, content_text(**已按 offset/limit 切好的窗口**；默认还带块锚点注释行), kind, chars_total(整页字符数), offset, limit, rev?(可选：`<updated_at 毫秒>:<正文指纹 sha256 前 8 位小写>`，拿不到正文时**不带**这个键)}；不存在返回 null
 - 参数：
   - `id`: `string` —— 页面 id
   - `offset`: `number`（可选），默认 `0` —— 从第几个**字符**开始（默认 0；按 Unicode 标量计数，不是 UTF-16 码元）
   - `limit`: `number`（可选），默认 `6000` —— 最多返回多少字符（默认 6000，上限 20000）
+  - `includeAnchors`: `boolean`（可选），默认 `true` —— 是否在正文里给每个顶层块后插一行块锚点注释 `<!-- b:<blockId> -->`（可选，默认 true）；传 false ⇒ 返回的正文与旧行为**逐字节相同**（不占额外 token）
 
 ### `pages.search` — 搜索本空间页面
 

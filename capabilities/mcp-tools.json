@@ -22,7 +22,7 @@
   {
     "name": "pages_get",
     "capabilityId": "pages.get",
-    "description": "读取单个页面的标题与正文纯文本（分页，按字符计数；**必须看 chars_total 判断读全没有**）。⚠️ 返回值里**没有块身份**：要把结论锚定到具体段落，另调 blocks_list 拿各块的 blockId，再在笔记里用块引用（这样页面被改/删时引用会显式失效）。参数: id (必填), offset/limit (可选, 默认 6000, 上限 20000)。",
+    "description": "读取单个页面的标题与正文（分页，按字符计数；**必须看 chars_total 判断读全没有**）。**默认带块锚点**：每个顶层块后一行 `<!-- b:<块 id> -->`（HTML 注释，不破坏渲染；锚点数 = 本次返回范围内的顶层块数，分页截断时**只标注已返回的块**）—— 可把结论锚定到具体段落。传 includeAnchors:false ⇒ 正文与旧行为**逐字节相同**（省 token）。另带 `rev`（乐观并发令牌，形如 `<更新时间毫秒>:<正文指纹前 8 位>`）：同一页两次读相同、内容改一次就变；按块写回时原样带回。⚠️ 算不出时**不带** rev（不编）。⚠️ **锚点行不计入 chars_total / offset**：翻页请用 `offset + limit`（夹到 chars_total）推算，⛔ 别数返回正文的字符数（会把锚点行算进去 ⇒ 跳字）。参数: id (必填), offset/limit (可选, 默认 6000, 上限 20000), includeAnchors (可选, 默认 true)。",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -37,6 +37,10 @@
         "limit": {
           "type": "number",
           "description": "最多返回多少字符（默认 6000，上限 20000）"
+        },
+        "includeAnchors": {
+          "type": "boolean",
+          "description": "是否在正文里给每个顶层块后插一行块锚点注释 `<!-- b:<blockId> -->`（可选，默认 true）；传 false ⇒ 返回的正文与旧行为**逐字节相同**（不占额外 token）"
         }
       },
       "required": [

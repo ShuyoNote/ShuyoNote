@@ -6,7 +6,7 @@
   "src-tauri/src/email.rs": 2,
   "src-tauri/src/graph.rs": 2,
   "src-tauri/src/models.rs": 4,
-  "src-tauri/src/plugins.rs": 7,
+  "src-tauri/src/plugins.rs": 5,
   "src-tauri/src/search.rs": 12,
   "src-tauri/src/security.rs": 1,
   "src-tauri/src/storage.rs": 4,
