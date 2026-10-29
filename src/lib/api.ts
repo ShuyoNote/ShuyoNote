@@ -742,6 +742,8 @@ export const api = {
   restoreVersion: (versionId: string) => invoke("restore_version", { versionId }),
   clearPageVersions: (pageId: string) => invoke("clear_page_versions", { pageId }),
   // 08-a②（2026-10-10）：本机名（08 去码化配对里"信任前显示设备名 ＋ 短标识"的那一半 ✓）。
+  // ⭐ 2026-10-29：`get_device_name` 现在回的是**生效名**（用户设的 ⇒ 否则系统名 ⇒ 否则「未命名设备」），
+  //   所以「设置 → 账户」的设备名输入框可以直接预填；形状仍是 `string | null`（老构建可能回 null）。
   getDeviceName: () => invoke("get_device_name", undefined),
   setDeviceName: (name: string) => invoke("set_device_name", { name }),
   // ---- 阶段 1 · 冲突留痕与裁决（提示 UI 用这两个入口）----
