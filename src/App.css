@@ -1984,10 +1984,23 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   flex: 0 0 auto;
   width: 220px;
   max-width: 220px;
-  padding: 0 10px;
+  /* ⭐ 2026-10-29 第三版（owner：「文本框高度小一点，看起来协调」）：⭐ `.sync-input` 的
+     44px 命中区是给**手指/触摸**那一档的（`verify-mobile-views` 扫的是移动端视图）；这一屏是
+     **桌面局域网面板**、旁边那颗保存按钮本身就是 11.5px 的小胶囊 ⇒ 44px 的输入框在那一排里
+     像个"大块头" ✓。现在 32px：与两排读数胶囊（≈22–24px）＋ 保存胶囊同一条水平线，
+     鼠标命中区仍然够用（移动端另有自己的设备名输入，不受这条影响 ✓）。 */
+  min-height: 32px;
+  height: 32px;
+  padding: 0 9px;
   font-size: 13px;
   border-radius: var(--radius-sm);
   background: var(--surface);
+}
+.sync-device-name .sync-mini-btn {
+  /* 与左边输入框**同一水平线**（32px）—— ⛔ 不让一行里出现 32 与 22 两种高度 ✗ */
+  min-height: 32px;
+  padding: 0 12px;
+  align-self: center;
 }
 .sync-mini-btn:active { background: var(--hover-strong); }
 .sync-mini-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
