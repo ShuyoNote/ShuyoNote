@@ -1,8 +1,10 @@
 import { create } from "zustand";
 import type { LexicalEditor } from "lexical";
 
-/** 设置中心的标签页 id（单一来源，SettingsDialog 与命令面板共用）。 */
-export type SettingsTab = "appearance" | "spaces" | "account" | "email" | "data" | "plugins" | "abilities" | "security" | "ai" | "about" | "mcp";
+/** 设置中心的标签页 id（单一来源，SettingsDialog 与命令面板共用）。
+ *  ⭐ 2026-10-29（owner 选 B）：`"account"` **已移除** —— 团队 UI 删完后那一页只剩「设备名」，
+ *  设备名搬进同步面板（局域网同步），整页撤掉 ✓。 */
+export type SettingsTab = "appearance" | "spaces" | "email" | "data" | "plugins" | "abilities" | "security" | "ai" | "about" | "mcp";
 
 // Holds the active LexicalEditor instance so components outside the editor
 // tree (e.g. the top toolbar) can run editor commands, plus a pending

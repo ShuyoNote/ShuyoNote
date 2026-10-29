@@ -215,6 +215,47 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   // 发现层是进程常驻的（`setup` 里就起了），面板关着就没人看这一行（少一次 IPC/秒）。
   // ⚠️ `line` 是 Rust 侧 `lan::status_line` 的**原文**，这里**只显示、不解释**（档位由 Route 决定）。
   const [lanStatus, setLanStatus] = useState<LanStatus | null>(null);
+  /** ⭐ **2026-10-29（owner 选 B）：设备名从「设置 → 账户」搬到这里** ✗ ——
+   *  它影响的是"同网段的设备在「附近的设备」里看到你叫什么"，属**局域网同步**这一档；
+   *  而团队 UI 删掉之后「账户」页只剩这一格 ⇒ 整页撤掉（`SettingsDialog` 同步删 `AccountPane`）✓。
+   *  ⚠️ 口径沿用当时那一版：后端回**生效名**（没设过 ⇒ 系统名）；保存时**没改** ⇒ 存空串
+   *  （继续跟随系统名），⛔ 不把系统名固化成用户设置 ✗。 */
+  const [deviceName, setDeviceName] = useState("");
+  const [deviceNameBaseline, setDeviceNameBaseline] = useState("");
+  const [deviceNameLoaded, setDeviceNameLoaded] = useState(false);
+  const [deviceNameSaving, setDeviceNameSaving] = useState(false);
+  useEffect(() => {
+    // 与 `lan_status` 同一档门槛（浮层打开 或 内容区那一份），⛔ 关着就不读 ✗。
+    if ((!open && !contentOnly) || !isDesktopPlatform()) return;
+    let alive = true;
+    // ⚠️ 包一层 `Promise.resolve()`：纯 Web 夹具里没有 invoke，直接调是**同步抛**、不经过 `.catch`。
+    void Promise.resolve()
+      .then(() => api.getDeviceName())
+      .then((n) => {
+        if (!alive) return;
+        const effective = (n ?? "").trim();
+        setDeviceName(effective);
+        setDeviceNameBaseline(effective);
+        setDeviceNameLoaded(true);
+      })
+      .catch(() => { if (alive) setDeviceNameLoaded(true); });
+    return () => { alive = false; };
+  }, [open, contentOnly]);
+  const saveDeviceName = async () => {
+    setDeviceNameSaving(true);
+    try {
+      const typed = deviceName.trim();
+      // ⭐ 与"当前生效名"一致 ⇒ 存空串（＝清掉设置、继续跟随系统名）✓。
+      const effective = await api.setDeviceName(typed === deviceNameBaseline.trim() ? "" : typed);
+      setDeviceName(effective);
+      setDeviceNameBaseline(effective);
+      setStatus(`设备名已更新：${effective}`);
+    } catch (e) {
+      setStatus(`设备名保存失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDeviceNameSaving(false);
+    }
+  };
   /** ⭐ **2026-10-28（owner：「一步到位」·P1）**：**加密空间的逐条同步状态** ——
    *  "为什么没数据"要能分辨：本机锁着／对端锁着／对端不在线／可以拉（见 `space_sync_state` ✓）。
    *  ⚠️ 与 `lanStatus` 同一拍（5 秒）读；读不到 ⇒ `null`（⛔ 不拿空数组冒充"没有加密空间" ✗）。 */
@@ -1252,6 +1293,33 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                 `heroRoute` 那行；本轮按 R176-A 把它列成**必有项**，用**逐格可点名来源**的三格回来 ✓
                 （旧判据「`heroRoute` 不许再出现」仍然绿 —— 它钉的是旧标识 ✓）。 */}
             {isPersonalActive && isDesktopPlatform() && <SyncReadout {...personalReadout} />}
+            {/* ⭐ **2026-10-29（owner 选 B）：设备名搬进「局域网同步」** ✗ ——
+                它就是「附近的设备／已配对列表」里别人看到的名字；原来住在「设置 → 账户」，
+                而团队 UI 删掉后那一页只剩这一格 ⇒ 整页撤掉，改在这里 ✓。
+                ⚠️ 保存时"没改"⇒ 存空串（继续跟随系统名），与当时设置页同一条口径 ✓。 */}
+            {isDesktopPlatform() && (
+              <div className="sync-device-name" data-testid="sync-device-name">
+                <span className="sync-device-name-label">设备名</span>
+                <input
+                  className="sync-input sync-device-name-input"
+                  value={deviceName}
+                  disabled={!deviceNameLoaded || deviceNameSaving}
+                  placeholder="系统名"
+                  maxLength={40}
+                  aria-label="设备名（同网段的设备看到的名字）"
+                  onChange={(e) => setDeviceName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") void saveDeviceName(); }}
+                />
+                <button
+                  className="sync-mini-btn"
+                  data-testid="sync-device-name-save"
+                  disabled={!deviceNameLoaded || deviceNameSaving}
+                  onClick={() => void saveDeviceName()}
+                >
+                  {deviceNameSaving ? "保存中…" : "保存"}
+                </button>
+              </div>
+            )}
             {/* ⭐ 2026-10-23：「对端有、你没有的空间」—— 用户勾了才建（默认一个都不勾） */}
             <MeshMissingSpaces />
             </div>
