@@ -1970,36 +1970,35 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 .sync-device-name {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 12px;
+  gap: 8px;
+  margin-top: 10px;
 }
 .sync-device-name-label {
   flex: none;
   min-width: 3em;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 500;
 }
 .sync-device-name-input {
   flex: 0 0 auto;
-  width: 220px;
-  max-width: 220px;
-  /* ⭐ 2026-10-29 第三版（owner：「文本框高度小一点，看起来协调」）：⭐ `.sync-input` 的
-     44px 命中区是给**手指/触摸**那一档的（`verify-mobile-views` 扫的是移动端视图）；这一屏是
-     **桌面局域网面板**、旁边那颗保存按钮本身就是 11.5px 的小胶囊 ⇒ 44px 的输入框在那一排里
-     像个"大块头" ✓。现在 32px：与两排读数胶囊（≈22–24px）＋ 保存胶囊同一条水平线，
-     鼠标命中区仍然够用（移动端另有自己的设备名输入，不受这条影响 ✓）。 */
-  min-height: 32px;
-  height: 32px;
-  padding: 0 9px;
-  font-size: 13px;
+  /* ⭐ 2026-10-29 第四版（owner：「高度和宽度缩小」）：⭐ 它不是表单页的主角，而是状态卡里
+     一行轻量设置 ⇒ **170×28**（再小就点不准、放不下 40 字上限的长名字）。44px 命中区那条
+     属于**移动端触摸档**（`verify-mobile-views`），桌面面板这里按鼠标命中即可 ✓。
+     `.sync-input` 还带着 44 的 `min-height` ⇒ 这里必须同时写 `min-height` 覆盖它 ✓。 */
+  width: 170px;
+  max-width: 170px;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12.5px;
   border-radius: var(--radius-sm);
   background: var(--surface);
 }
 .sync-device-name .sync-mini-btn {
-  /* 与左边输入框**同一水平线**（32px）—— ⛔ 不让一行里出现 32 与 22 两种高度 ✗ */
-  min-height: 32px;
-  padding: 0 12px;
+  /* 与左边输入框**同一水平线**（28px）—— ⛔ 不让一行里出现两种高度 ✗ */
+  min-height: 28px;
+  padding: 0 10px;
   align-self: center;
 }
 .sync-mini-btn:active { background: var(--hover-strong); }
