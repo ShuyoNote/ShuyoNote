@@ -1753,12 +1753,15 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   user-select: none;
 }
 .sync-empty-state {
-  padding: 24px 12px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--text-dim);
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-md);
+  /* ⭐ **2026-10-29（owner：「同步面板感觉乱糟糟」）**：0 台的两段原来是**两个大虚线空盒**
+     （上下各 24px 内边距 ＋ dashed 边框）⇒ 一屏里"没有设备"占掉半屏，还和真正的内容抢注意力。
+     现在只留**一行灰字**（左对齐）；有设备时各段照旧是卡片 ✓。 */
+  padding: 2px 12px 6px;
+  text-align: left;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  border: none;
+  border-radius: 0;
 }
 /* 空间隐私（②b）：同步面板里那一节「这个空间敢不敢绑同步」。
  * ⚠️ 与 `.sync-card` 同族（同一屏里上下相邻）⇒ 沿用同一套变量与圆角，别另起一套视觉语言。
@@ -26752,6 +26755,29 @@ body.is-plugin-panel-open .main {
   border-radius: var(--radius-lg);
   padding: 14px 18px;
 }
+/* ⭐ **2026-10-29（owner：「同步面板感觉乱糟糟」）**：状态条 ＋ 三格读数 ＋ 设备名 原来是
+   三块各漂各的（绿卡／一排胶囊／一个输入行）⇒ 现在收进**同一张状态卡**：外卡给底色/描边，
+   里面那条绿卡的背景与内边距退成 0（否则就是卡里套卡、两层底色打架 ✓）。 */
+.sync-status-card {
+  margin-top: 10px;
+}
+.sync-popover.is-inline .sync-status-card {
+  background: color-mix(in srgb, var(--success) 7%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--radius-lg);
+  padding: 12px 16px;
+}
+.sync-popover.is-inline .sync-status-card .sync-hero-card {
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+}
+.sync-status-card .sync-readout {
+  margin-top: 10px;
+}
+.sync-status-card .sync-device-name {
+  margin-top: 12px;
+}
 .sync-popover.is-inline .sync-hero-state { letter-spacing: 0.2px; font-weight: 600; font-size: 15px; }
 /* ⭐ **2026-10-14（owner：「这部分不协调」）** ✗：⭐ 读数显示卡里两行**只差 1px**（13.5 vs 12.5 ✓）
    ⇒ 状态行压不住小字行 ✓，而小字行本体又很长 ⇒ 一团 ✗。⇒ ⭐ 小字行降到 11.5px ✓（明确次要 ✓）。
@@ -28056,6 +28082,31 @@ button.mset-row:focus-visible {
 }
 .sync-readout .sync-nearby-note {
   flex: 1 1 100%;
+}
+/* ⭐ 2026-10-29（owner：「同步面板感觉乱糟糟」）：诊断长文（"本机已信任 N 台，但这一轮一台都没
+   出现在附近。常见原因 ①②③…"）收进 `<details>` ⇒ 默认只留一行「为什么…？」，点开仍是原文。
+   这样主视图里读数的下面不再压着一堵三行的墙 ✓。 */
+.sync-readout-why {
+  flex: 1 1 100%;
+}
+.sync-readout-why > summary {
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.6;
+  list-style: none;
+}
+.sync-readout-why > summary::-webkit-details-marker {
+  display: none;
+}
+.sync-readout-why > summary::before {
+  content: "▸ ";
+}
+.sync-readout-why[open] > summary::before {
+  content: "▾ ";
+}
+.sync-readout-why .sync-nearby-note {
+  margin-top: 4px;
 }
 .sync-hero-meta {
   display: inline-flex;
