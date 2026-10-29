@@ -103,6 +103,7 @@ CHANGELOG.md                     # 版本变更日志
 |---|---|
 | [architecture.md](architecture.md) | **系统架构**：前端 / 平台 driver（桌面 Tauri + 浏览器 Web）/ Rust 后端 / SQLite & 存储布局 / 同步服务端分层；数据模型、一致性边界与 ADR |
 | [web-sync-boundary.md](web-sync-boundary.md) | **Web 同步能力边界**：Web 版为何不支持多设备同步的四层原因（服务端不挂 CORS / 同步引擎在 Rust / 存储模型不匹配 / 凭证信任边界）、用户可见表现与代码出处、桌面 vs Web 能力对照、若要开启的前置条件与 W1–W4 分阶段路线 |
+| [mcp-external-ai.md](mcp-external-ai.md) | **外部 AI 接入（MCP）配置指南**：五档权限、客户端配置、验证与排错、安全与数据边界、推荐配置 |
 | [design-philosophy.md](design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器；从需求、定位、竞品对比、各功能方案与设计系统提炼的完整信条、取舍与边界 |
 | [realtime-collab-analysis.md](realtime-collab-analysis.md) | **实时协同（多人同页协作编辑）利弊分析**：区分「近实时」vs「块级 CRDT」两档成本；好处（对齐竞品 / 不丢内容 / 实时感知）与代价（富块难合并 / 服务端 WebSocket / 离线×实时并存 / E2E 冲突 / 非购买点核心）；分阶段建议（近期近实时、长期最小 CRDT、个人空间保留 E2E）与决策记录 |
 | [free-edition-field-test.md](free-edition-field-test.md) | **免费版上门实测清单（两台真机）**：逐条步骤 ＋ 每条的"通过的样子"与"失败取什么证据"；⭐⭐ 第 7 步是**硬证据**（**拔掉外网仍能同步** ⇒ 证明不经服务器）；含加密空间再走一遍、四种**已知会失败但不是缺陷**的情形（跨网段/AP 隔离/防火墙/虚拟网段）、回读数的固定格式 ｜ ⚠️ 这是**人手验收**，⛔ 不许当"已通过" |
