@@ -222,6 +222,9 @@ mod save_target;
 mod mcp_host;
 // ⭐ B1c（2026-10-29）：导出/下载**句柄表**与唯一落盘处（`exports/`）——纯内存、单次、TTL 120s、绑会话。
 mod mcp_blobs;
+// ⭐ B1c 收尾（2026-10-29）：**Rust → 前端**的请求/应答桥 —— 导出类能力（唯一实现是 TS）按句柄交付时
+// 靠它把前端算好的字节取回来；⛔ 不在 Rust 里重写一份导出（两套实现会漂）。方法白名单 + 15s 超时。
+mod frontend_tool;
 mod properties;
 mod search;
 // 派生文本层的**唯一运输通道**（桌面）：TS 的索引代码靠它把 `attachment_text`/`chunks` 写进
@@ -754,6 +757,15 @@ pub fn run() {
                         "mcp:external-drafts",
                         serde_json::json!({ "source": source, "payload": payload }),
                     );
+                });
+            }
+            // ⭐ B1c 收尾：**前端桥出口** —— 能力层（`export.markdown` / `export.docpackage`）需要前端
+            // 用现成的 TS 实现算字节，这里装上事件出口（与上面草稿出口同一处、同一形态）。
+            {
+                let h = app.handle().clone();
+                frontend_tool::set_emitter(move |event, payload| {
+                    use tauri::Emitter;
+                    let _ = h.emit(event, payload.to_string());
                 });
             }
             match mcp_channel::start_if_enabled() {
@@ -1292,6 +1304,9 @@ pub fn run() {
   mcp_channel::mcp_set_write_grant,
   mcp_channel::mcp_set_level,
   mcp_channel::mcp_log_apply_result,
+  // ⭐ B1c 收尾 / B3：前端桥的两条（就绪信号 ＋ 结果回执；桌面专属 —— Web 没有本机 MCP 通道）
+  frontend_tool::mcp_frontend_tool_ready,
+  frontend_tool::mcp_frontend_tool_respond,
   // 本地英汉词典（ECDICT）第一期：**只读**两条 —— 查词 ＋ 状态读数。
   // ⚠️ 与 `check-web-commands.mjs` 的 `DESKTOP_ONLY_COMMANDS` 登记**不同**：
   //    这里**两条平台都要**（Web 侧同一条命令面走 sql.js 直查 —— 词典数据是普通 SQLite，

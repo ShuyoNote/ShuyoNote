@@ -114,6 +114,10 @@ const DESKTOP_ONLY_COMMANDS = new Map([
   //   ⚠️ 与上面那条的区别：⭐ 上面那条**只读** ✓，⭐ 这条**会写** ✓（⭐ 只往各空间自己目录写，⛔ 不删老那份 ✓）。
   ["adopt_legacy_refs_for_encrypted_spaces", "桌面专属：给加密空间补老明文的加密副本（要该空间的会话钥匙，且往它的附件目录写；Web 没有钥匙柜也没有分空间的加密附件树）"],
   ["mcp_set_level", "桌面专属：MCP 面板的四档选择（Web 上没有本机通道可开）"],
+  // ⭐ B3（2026-10-29）：Rust→前端桥的两条（就绪信号 ＋ 结果回执）。导出/覆盖率报告要用前端那份
+  // **唯一实现**；Web 上既没有本机 MCP 通道、也没有"Rust 叫前端算"这条桥 ⇒ 没有实现对象。
+  ["mcp_frontend_tool_ready", "桌面专属：前端桥就绪信号（Web 没有本机 MCP 通道，这条桥不会被调用）"],
+  ["mcp_frontend_tool_respond", "桌面专属：前端桥结果回执（同上；Web 侧没有等待前端结果的 Rust 调用方）"],
   // 隐私边界第 1 步（2026-09-23）：**按空间**启用/禁用加密 —— **桌面专属**。
   // 理由：Web 平台没有钥匙柜（E2EE 在浏览器里是空操作，见 `docs/web-sync-boundary.md`），
   // 而加密空间在 Web 上由 `src/lib/ciphertextSniff.ts` **明确拒掉**（提示去桌面端）⇒

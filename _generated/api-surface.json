@@ -1,13 +1,13 @@
 {
-  "apiVersion": "1.5.0",
+  "apiVersion": "1.6.0",
   "registryVersion": 1,
-  "fingerprint": "56a014656f29ae9cd96687652830182bc7d047c806af9605a4632d4267da0705",
+  "fingerprint": "04cfa257690303c7d794a50b51890395d41ae8ae91c3cc5e61f3d162b0acd55b",
   "counts": {
-    "total": 40,
-    "read": 27,
+    "total": 42,
+    "read": 29,
     "write": 11,
     "host": 2,
-    "aiRead": 25,
+    "aiRead": 27,
     "aiWrite": 4
   },
   "at": "2026-10-29",

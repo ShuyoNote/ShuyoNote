@@ -498,10 +498,11 @@ mod tests {
         }
     }
 
-    /// ⭐ **B1c（2026-10-29）挂载级判据**：
-    /// ① 8 条新工具在「不接」档（`granted` 为空）**逐条** `permission_denied`，且点名的权限来自注册表；
-    /// ② **句柄类**（`files.download` / `blobs.fetch`）在"只读档但**没有** `export:files`"时必须拒
-    ///    —— 这是矩阵 §6「原字节只走句柄」的权限门那一半。
+    /// ⭐ **B1c/B3（2026-10-29）挂载级判据**：
+    /// ① 这些只读工具在「不接」档（`granted` 为空）**逐条** `permission_denied`，且点名的权限来自注册表；
+    /// ② **句柄类**（`files.download` / `blobs.fetch` / 两个 `export.*`）在"只读档但**没有** `export:files`"
+    ///    时必须拒 —— 这是矩阵 §6「原字节只走句柄」的权限门那一半；
+    /// ③ `coverage.report` 要 `read:files`（B3 起它不再是 host:frontend 的幽灵能力）。
     #[test]
     fn b1c_tools_are_denied_table_driven_and_handles_need_the_export_scope() {
         let methods = [
@@ -513,6 +514,10 @@ mod tests {
             "files.list_orphan",
             "files.download",
             "blobs.fetch",
+            // B3
+            "export.markdown",
+            "export.docpackage",
+            "coverage.report",
         ];
         for method in methods {
             let cap = crate::capabilities_gen::lookup(method)
@@ -543,6 +548,9 @@ mod tests {
         for (method, args) in [
             ("files.download", r#"{"attId":"a1"}"#),
             ("blobs.fetch", r#"{"handle":"whatever"}"#),
+            // B3：两个导出也是「句柄类」，同样只认 `export:files`
+            ("export.markdown", r#"{"pageId":"p1"}"#),
+            ("export.docpackage", r#"{"pageId":"p1"}"#),
         ] {
             let err = match handle_external_call(
                 &format!("b1c-noexport-{}", method.replace('.', "-")),
@@ -591,7 +599,7 @@ mod tests {
         assert_eq!(rows.len(), 1, "成功调用也要留一行审计 ✓");
         assert!(rows[0].ok);
     }
-    /// ⭐ **B1c（2026-10-29）判据 1**：8 条新工具在**读面**清单里；清单与注册表同源
+    /// ⭐ **B1c/B3（2026-10-29）判据 1**：新工具在**读面**清单里；清单与注册表同源
     /// （每条 capabilityId 查得到、都是 read）；且**一条写页/写块工具都没有**（零写红测试）。
     #[test]
     fn b1c_tools_are_listed_and_no_write_page_tool_leaks() {
@@ -612,6 +620,10 @@ mod tests {
             "files_list_orphan",
             "files_download",
             "blobs_fetch",
+            // B3：前端桥三条
+            "export_markdown",
+            "export_docpackage",
+            "coverage_report",
         ] {
             assert!(
                 off.iter().any(|x| x == n),
@@ -673,9 +685,12 @@ mod tools_list_tests {
         }
         // ② 读面永远是那 7 条 ✓（写面开关不影响读面 ✓）
         assert!(off.len() >= 7, "读面至少 7 条 ✓（实际 {}）", off.len());
+        // ⭐ B3（2026-10-29）改判：`coverage.report` 以前是 `host:"frontend"`、**不在面上**
+        //   （M1 修过："面里不许有调不通的工具"）；现在它有了 **Rust→前端桥** ⇒ 它**该在**面上，
+        //   而且点开就是真能调（前端没挂载时会立刻 `frontend_unavailable`，不会挂死）。
         assert!(
-            !off.iter().any(|x| x == "coverage_report"),
-            "host=frontend 的那条**不在**面上 ✓（M1 修过 ✓）"
+            off.iter().any(|x| x == "coverage_report"),
+            "B3 起 coverage_report 必须**在**读面上（经前端桥真能调）：{off:?}"
         );
         // ③ 开关**开着**时：两个写工具都在 ✓，且正好多出写面那 2 条 ✓
         for n in ["pages_create", "blocks_append"] {

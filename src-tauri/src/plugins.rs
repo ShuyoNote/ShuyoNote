@@ -2601,16 +2601,8 @@ fn cap_version_get(
         return Err("bad_args: 需要 versionId".to_string());
     }
     with_read_conn(|c| {
-        use rusqlite::OptionalExtension;
-        let row: Option<(String, String, String, i64)> = c
-            .query_row(
-                "SELECT title, content_json, content_text, created_at FROM page_versions
-                 WHERE page_id = ?1 AND id = ?2",
-                params![page, vid],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .optional()
-            .map_err(|e| format!("db_error: {e}"))?;
+        // 正文两列只经 `doc_content` 那一层读（`check-doc-content-access` 只减不增）
+        let row = crate::doc_content::version_body(c, page, vid)?;
         let Some((title, doc_json, text, at)) = row else {
             // ⚠️ 不存在 ⇒ `not_found`（⛔ 不返回空正文冒充"这个版本是空的"）。
             return Err(format!("not_found: 页面 {page} 没有版本 {vid}"));
@@ -2846,8 +2838,162 @@ fn cap_blobs_fetch(handle: &str) -> CapResult {
     Ok(serde_json::json!({ "path": path, "size": size, "sha256": sha256 }))
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// B3（2026-10-29）· **前端桥**能力的宿主侧：导出（句柄）＋ 覆盖率报告（JSON）
+//
+//   这三条能力的**唯一实现都在 TS**（Markdown/包渲染、抽取器注册表）。Rust 这一侧只做三件事：
+//   ① 目标校验（页/空间存在、不是文件夹；跨空间门沿用 `with_conn_for_space` 那套）；
+//   ② 通过 `crate::frontend_tool` 向前端要结果（方法白名单 / 5s 超时 / 前端没挂载立刻报）；
+//   ③ 导出类把字节登记进**同一张**句柄表（`mcp_blobs`，单次/TTL 120s/绑会话）。
+//   ⛔ 这里**不复制**任何 Markdown/zip/覆盖率计算逻辑（两份实现必然漂）。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// 导出类工具的**目标页校验**（只读）：页要存在、不能是文件夹。
+///
+/// 为什么要先校验：不存在/文件夹这两种情况**根本不该白跑一次前端**（大导出很贵），
+/// 而且错误码必须是稳定的 `not_found` / `bad_args`（⛔ 不把前端那句中文当错误码用）。
+fn export_target_page(page_id: &str) -> Result<String, String> {
+    let pid = page_id.trim();
+    if pid.is_empty() {
+        return Err("bad_args: 需要 pageId".to_string());
+    }
+    with_read_conn(|c| {
+        use rusqlite::OptionalExtension;
+        let kind: Option<String> = c
+            .query_row(
+                "SELECT kind FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+                params![pid],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| format!("db_error: {e}"))?;
+        let Some(kind) = kind else {
+            return Err(format!("not_found: 页面 {pid} 不存在或已删除"));
+        };
+        if kind == "folder" {
+            return Err(format!(
+                "bad_args: 「{pid}」是文件夹，没有正文可导出（要整棵子树请用空间导出）"
+            ));
+        }
+        Ok(pid.to_string())
+    })
+}
+
+/// 把前端算好的导出**收成句柄**（⛔ 不回字节；句柄表与 `files.download` **同一张**）。
+///
+/// >10 MB ⇒ `needs_confirm`（与 `files.download` 同一条：本批没有确认 UI，⛔ 不静默交付大文件）；
+/// 0 字节 ⇒ `bad_args`（⛔ 不创建一个"看起来成功"的空文件）。
+fn export_handle_from_reply(reply: crate::frontend_tool::BridgeReply, mime: &str) -> CapResult {
+    if reply.bytes.is_empty() {
+        return Err("bad_args: 前端算出的导出是 0 字节（拒绝创建一个空文件）".to_string());
+    }
+    if reply.bytes.len() as i64 > MAX_INLINE_DOWNLOAD_BYTES {
+        return Err(format!(
+            "needs_confirm: 导出 {} 字节，超过 10MB 上限 —— 本批未接用户确认 UI，不能静默导出",
+            reply.bytes.len()
+        ));
+    }
+    let name = if reply.name.trim().is_empty() {
+        "导出文件".to_string()
+    } else {
+        reply.name.trim().to_string()
+    };
+    let space = target_space_id(None);
+    let (handle, expires_at, meta) = crate::mcp_blobs::put(
+        &caller_identity(),
+        crate::mcp_blobs::BlobMeta {
+            name,
+            mime: mime.to_string(),
+            size: 0,
+            sha256: String::new(),
+            space_id: space,
+        },
+        reply.bytes,
+    )?;
+    Ok(serde_json::json!({
+        "handle": handle,
+        "name": meta.name,
+        "size": meta.size,
+        "sha256": meta.sha256,
+        "expiresAt": expires_at,
+    }))
+}
+
+/// `export.markdown`（B3）：Markdown **句柄**。
+///
+/// * `pageId` ⇒ **单页** `.md`（与界面「导出为 Markdown」同口径：`pageContentToMarkdown` ＋ 标题头注释）；
+/// * `spaceId` ⇒ **整个空间**的 `.zip`（与界面「导出本空间为 Markdown ＋ 附件」同口径，附件一并带走）。
+/// 两个**只能给一个**（给两个/都不给 ⇒ `bad_args`，⛔ 不猜）。
+/// ⚠️ 整空间目前**只支持当前空间**：前端拿页面/附件都走当前空间连接（跨空间读取没有命令面入口）
+/// ⇒ 别的空间明确 `bad_args`（⛔ 不假装支持、也不静默导错空间）。
+fn cap_export_markdown(page_id: Option<&str>, space_id: Option<&str>) -> CapResult {
+    let page = page_id.map(str::trim).filter(|s| !s.is_empty());
+    let space = space_id.map(str::trim).filter(|s| !s.is_empty());
+    match (page, space) {
+        (Some(_), Some(_)) => Err(
+            "bad_args: pageId 与 spaceId 只能给一个（单页导出 vs 整空间导出）".to_string(),
+        ),
+        (None, None) => {
+            Err("bad_args: 需要 pageId 或 spaceId（单页导出 vs 整空间导出）".to_string())
+        }
+        (Some(pid), None) => {
+            let page = export_target_page(pid)?;
+            let args = serde_json::json!({ "pageId": page }).to_string();
+            let reply = crate::frontend_tool::call("export.markdown", &args)?;
+            export_handle_from_reply(reply, "text/markdown")
+        }
+        (None, Some(sid)) => {
+            let current = target_space_id(None);
+            if sid != current {
+                return Err(
+                    "bad_args: 整空间导出目前只支持当前空间（跨空间读取没有命令面入口）—— 请在应用里切到那个空间再导出"
+                        .to_string(),
+                );
+            }
+            // 空间名给前端做文件名（读 meta；读不到就退回中性名 —— 与界面同一条退法）
+            let snap = space_scope_snapshot_of(None)?;
+            let name = snap["spaceName"].as_str().unwrap_or("").to_string();
+            let args = serde_json::json!({ "spaceId": current, "spaceName": name }).to_string();
+            let reply = crate::frontend_tool::call("export.markdown", &args)?;
+            export_handle_from_reply(reply, "application/zip")
+        }
+    }
+}
+
+/// `export.docpackage`（B3）：`.shuyodoc` **句柄**（**只支持单页** —— 与 M1/UI 同口径）。
+///
+/// 打包仍走 `docPackWriter.ts::buildDocumentPackage`（企业版 reader 已验过的格式层），
+/// Rust 不碰格式（⛔ 不在这里再实现一遍 zip/checksums）。
+fn cap_export_docpackage(page_id: &str) -> CapResult {
+    let page = export_target_page(page_id)?;
+    let args = serde_json::json!({ "pageId": page }).to_string();
+    let reply = crate::frontend_tool::call("export.docpackage", &args)?;
+    export_handle_from_reply(reply, "application/zip")
+}
+
+/// `coverage.report`（B3）：**直接返回 JSON**（不进句柄表 —— 它是读数，不是文件）。
+///
+/// 前端用同一份 `scanLibraryCoverage` ＋ `coverageReportTool` 算出来（与界面「检查索引覆盖」、
+/// 应用内 AI 面**同一个函数**）；Rust 只解析再原样透出（⛔ 不改字段、不重算）。
+/// ⚠️ 覆盖率报告是**当前空间**的派生层口径：`spaceId` 只接受当前空间（别的空间 ⇒ `bad_args`，
+/// ⛔ 不假装支持跨空间）。
+fn cap_coverage_report(space_id: Option<&str>) -> CapResult {
+    let current = target_space_id(None);
+    if let Some(sid) = space_id.map(str::trim).filter(|s| !s.is_empty()) {
+        if sid != current {
+            return Err(
+                "bad_args: 覆盖率报告只覆盖当前空间（跨空间未接）—— 省略 spaceId 即当前空间"
+                    .to_string(),
+            );
+        }
+    }
+    let args = serde_json::json!({ "spaceId": current }).to_string();
+    let reply = crate::frontend_tool::call("coverage.report", &args)?;
+    serde_json::from_slice(&reply.bytes)
+        .map_err(|e| format!("bad_args: 前端覆盖率报告不是合法 JSON（{e}）"))
+}
+
 fn cap_properties_list(space_id: Option<&str>) -> CapResult {
-    // 与 `tags.list` 同形：省略 ⇒ 当前连接（旧行为不变）；给了 ⇒ 跨空间那道门在 with_conn_for_space ✓
     with_conn_for_space(space_id, |c| {
         let mut stmt = c
             .prepare("SELECT id, name, type FROM attr_defs ORDER BY sort_order, name")
@@ -3430,6 +3576,13 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         "files.list_orphan" => cap_files_list_orphan(arg_i64("limit", 50), arg_i64("offset", 0)),
         "files.download" => cap_files_download(&arg_str("attId")?),
         "blobs.fetch" => cap_blobs_fetch(&arg_str("handle")?),
+        // B3：导出（句柄，复用同一张句柄表）＋覆盖率报告（JSON）
+        "export.markdown" => cap_export_markdown(
+            arg_opt_str("pageId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+        ),
+        "export.docpackage" => cap_export_docpackage(&arg_str("pageId")?),
+        "coverage.report" => cap_coverage_report(arg_opt_str("spaceId").as_deref()),
         "files.export" => cap_files_export(&arg_str("fileName")?, &arg_str("content")?),
         "kv.get" => cap_kv_get(&arg_str("key")?, &scope_arg(&args)),
         "kv.set" => cap_kv_set(&arg_str("key")?, &arg_str("value")?, &scope_arg(&args)),
@@ -11119,7 +11272,10 @@ register({ id: "s.run", title: "结构化", run: function () {
     fn cap_search_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("shuyonote-capsearch-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        if let Err(e) = std::fs::create_dir_all(crate::db::spaces_dir(&dir)) {
+            // 判据里**说清是哪个路径**（Windows 上 PermissionDenied 常常是"路径不对"的伪装）
+            panic!("建夹具目录失败 {e}：{dir:?}（temp={:?}）", std::env::temp_dir());
+        }
         drop(crate::db::open_meta_conn_at(&dir).unwrap());
         dir
     }
@@ -12418,6 +12574,189 @@ register({ id: "s.run", title: "结构化", run: function () {
         .expect_err(">10MB 必须报错");
         assert!(err.contains("needs_confirm"), "必须是 needs_confirm：{err}");
         assert!(err.contains("10MB"), "要说清是 10MB 上限：{err}");
+        b1c_cleanup(&f);
+    }
+
+    // ---- B3（2026-10-29）前端桥：导出（句柄，复用同一张句柄表）＋ 覆盖率报告（JSON） ----
+    //
+    // 桥的另一半（真前端）在 `frontend_tool.rs` 的假前端里（按方法回固定字节）⇒ 这里验的是
+    // 「能力层 → 桥 → 句柄/JSON」这条接线，以及**失败面**（前端不在 ⇒ 立刻 frontend_unavailable）。
+    fn b3_frontend() {
+        crate::frontend_tool::install_test_frontend_for_tests();
+    }
+
+    fn b3_json(s: String) -> serde_json::Value {
+        serde_json::from_str(&s).expect("回话必须是 JSON ✓")
+    }
+
+    /// ⭐ 判据 3（Markdown 侧）：`export.markdown` 回**句柄**、字节可被 `blobs.fetch` 取回、
+    /// 句柄仍是**单次**（与 `files.download` 共用同一张表）。
+    #[test]
+    fn b3_export_markdown_page_returns_a_single_use_handle() {
+        let _serial = crate::frontend_tool::test_lock();
+        b3_frontend();
+        let f = b1c_fixture("b3-md");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let got = with_external_caller("b3-md", &granted, || {
+            dispatch_capability("export.markdown", r#"{"pageId":"p1"}"#)
+        });
+        let v = b3_json(got.expect("export.markdown 应可调"));
+        assert_eq!(v["name"], "测试.md", "文件名由前端给：{v}");
+        assert!(v.get("bytes").is_none(), "⛔ 句柄类不许回字节：{v}");
+        assert_eq!(
+            v["sha256"],
+            serde_json::json!(crate::mcp_blobs::sha256_hex("# 测试\n".as_bytes())),
+            "sha256 必须按**前端交回的字节**算：{v}"
+        );
+        let handle = v["handle"].as_str().unwrap().to_string();
+        // 取回：落盘内容逐字节等于前端给的字节
+        let fetched = with_external_caller("b3-md", &granted, || {
+            dispatch_capability("blobs.fetch", &format!(r#"{{"handle":"{handle}"}}"#))
+        });
+        let g = b3_json(fetched.expect("blobs.fetch 应可调"));
+        let path = g["path"].as_str().unwrap().to_string();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            "# 测试\n".as_bytes(),
+            "落盘字节必须等于前端交回的字节"
+        );
+        assert_eq!(g["sha256"], v["sha256"], "两处 sha256 必须一致");
+        // 单次：第二次必须失败（句柄表与 files.download 是同一张）
+        let again = with_external_caller("b3-md", &granted, || {
+            dispatch_capability("blobs.fetch", &format!(r#"{{"handle":"{handle}"}}"#))
+        });
+        assert!(
+            again.unwrap_err().contains("not_found"),
+            "句柄单次使用：第二次必须 not_found"
+        );
+        let _ = std::fs::remove_file(&path);
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ `export.markdown` 的目标口径：pageId / spaceId **只能给一个**；整空间只支持当前空间。
+    #[test]
+    fn b3_export_markdown_target_rules_are_explicit() {
+        let _serial = crate::frontend_tool::test_lock();
+        b3_frontend();
+        let f = b1c_fixture("b3-md-rules");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        // 整空间（当前空间）⇒ 可以
+        let ok = with_external_caller("b3-md-rules", &granted, || {
+            dispatch_capability("export.markdown", &format!(r#"{{"spaceId":"{}"}}"#, f.space))
+        });
+        assert!(ok.is_ok(), "当前空间的整空间导出应可调：{:?}", ok.err());
+        // 两个都给 / 都不给 / 别的空间 ⇒ bad_args（⛔ 不猜）
+        let cases = [
+            r#"{"pageId":"p1","spaceId":"x"}"#.to_string(),
+            r#"{}"#.to_string(),
+            r#"{"spaceId":"别的空间"}"#.to_string(),
+        ];
+        for args in cases {
+            let e = with_external_caller("b3-md-rules", &granted, || {
+                dispatch_capability("export.markdown", &args)
+            })
+            .expect_err("非法目标必须 bad_args");
+            assert!(e.contains("bad_args"), "{args} ⇒ {e}");
+        }
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 3（`.shuyodoc` 侧）＋ 目标校验：页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`。
+    #[test]
+    fn b3_export_docpackage_returns_handle_and_validates_the_target() {
+        let _serial = crate::frontend_tool::test_lock();
+        b3_frontend();
+        let f = b1c_fixture("b3-dp");
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('f1', ?1, NULL, '资料', '{}', '', 'folder', 0, 10, 10)",
+                params![f.space],
+            )
+            .unwrap();
+        }
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let got = with_external_caller("b3-dp", &granted, || {
+            dispatch_capability("export.docpackage", r#"{"pageId":"p1"}"#)
+        });
+        let v = b3_json(got.expect("export.docpackage 应可调"));
+        assert_eq!(v["name"], "测试.shuyodoc", "文件名由前端给：{v}");
+        assert!(v.get("handle").is_some() && v.get("bytes").is_none());
+        assert_eq!(
+            v["sha256"],
+            serde_json::json!(crate::mcp_blobs::sha256_hex(b"PK-test")),
+            "sha 必须按字节算：{v}"
+        );
+        // 不存在 ⇒ not_found；文件夹 ⇒ bad_args
+        let missing = with_external_caller("b3-dp", &granted, || {
+            dispatch_capability("export.docpackage", r#"{"pageId":"p2"}"#)
+        })
+        .expect_err("已删除的页必须 not_found");
+        assert!(missing.contains("not_found"), "{missing}");
+        let folder = with_external_caller("b3-dp", &granted, || {
+            dispatch_capability("export.docpackage", r#"{"pageId":"f1"}"#)
+        })
+        .expect_err("文件夹必须 bad_args");
+        assert!(folder.contains("bad_args"), "{folder}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 7：`coverage.report` **原样透出前端那份 JSON**（⛔ Rust 不改字段/不重算），
+    /// 且 `spaceId` 只接受当前空间（别的空间 ⇒ `bad_args`）。
+    #[test]
+    fn b3_coverage_report_returns_frontend_json_verbatim() {
+        let _serial = crate::frontend_tool::test_lock();
+        b3_frontend();
+        let f = b1c_fixture("b3-cov");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let got = with_external_caller("b3-cov", &granted, || {
+            dispatch_capability("coverage.report", "{}")
+        });
+        let v = b3_json(got.expect("coverage.report 应可调"));
+        assert_eq!(
+            v,
+            serde_json::json!({ "ok": true }),
+            "必须**逐字段**等于前端给的 JSON：{v}"
+        );
+        // 当前空间 ⇒ 可以；别的空间 ⇒ bad_args
+        let same = with_external_caller("b3-cov", &granted, || {
+            dispatch_capability("coverage.report", &format!(r#"{{"spaceId":"{}"}}"#, f.space))
+        });
+        assert!(same.is_ok(), "当前空间应可调：{:?}", same.err());
+        let other = with_external_caller("b3-cov", &granted, || {
+            dispatch_capability("coverage.report", r#"{"spaceId":"别的空间"}"#)
+        })
+        .expect_err("别的空间必须 bad_args");
+        assert!(other.contains("bad_args"), "{other}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 2：**前端不在** ⇒ 立刻 `frontend_unavailable`（⛔ 不许挂死、也不许空成功）。
+    #[test]
+    fn b3_export_without_a_mounted_frontend_says_frontend_unavailable() {
+        let _serial = crate::frontend_tool::test_lock();
+        b3_frontend();
+        crate::frontend_tool::set_ready_for_tests(false);
+        let f = b1c_fixture("b3-unavail");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let t0 = std::time::Instant::now();
+        let e = with_external_caller("b3-unavail", &granted, || {
+            dispatch_capability("export.markdown", r#"{"pageId":"p1"}"#)
+        })
+        .expect_err("前端没挂载必须报错");
+        assert!(e.contains("frontend_unavailable"), "{e}");
+        assert!(
+            t0.elapsed() < std::time::Duration::from_millis(1000),
+            "没有前端时**不许**等满超时（实际 {:?}）",
+            t0.elapsed()
+        );
+        crate::frontend_tool::set_ready_for_tests(true);
         b1c_cleanup(&f);
     }
 }

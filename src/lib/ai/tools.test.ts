@@ -74,6 +74,9 @@ const EXPECTED = [
   "files.list_orphan",
   "files.download",
   "blobs.fetch",
+  // ⭐ B3（2026-10-29）：前端桥三条（导出走句柄；覆盖率报告直接回 JSON）
+  "export.markdown",
+  "export.docpackage",
 ];
 
 describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实现）", () => {

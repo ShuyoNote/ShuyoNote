@@ -41,7 +41,6 @@
   "src/lib/ai/preview.ts": 1,
   "src/lib/api.ts": 6,
   "src/lib/applyDraftAndRefresh.ts": 4,
-  "src/lib/capabilities/frontend.ts": 6,
   "src/lib/columnsText.ts": 2,
   "src/lib/communityImport.ts": 14,
   "src/lib/communitySave.ts": 2,
