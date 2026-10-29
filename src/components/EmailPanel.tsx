@@ -366,9 +366,20 @@ function EmailBodyFrame({ html }: { html: string }) {
   html, body { margin: 0; padding: 0; background: transparent; }
   body { color: ${text}; font: 15px/1.7 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; word-break: break-word; }
   img { max-width: 100%; height: auto; }
-  table { max-width: 100%; border-collapse: collapse; }
+  /* ⭐ **2026-10-29（owner：「邮件阅读区排版还有瑕疵」· 方案 A）**：⛔ 不再给 table 加
+     \`max-width:100%\` ✗ —— 通知类邮件（GitHub 等）是**老式 table 布局 + 固定像素宽**，
+     压到容器宽时列会塌成 1 字（截图里 \`Status\` 被挤成竖排 ✗）。现在**尊重邮件原宽**：
+     table 保持固有宽度，超宽由 iframe 自身横向滚动承担（见下面的 overflow-x ✓）。 */
+  table { border-collapse: collapse; }
+  td, th { vertical-align: top; }
+  th { text-align: left; }
+  /* 邮件里常见的"单元格里套段落"：把段落外距压平，否则每格都是大段空隙（表格式通知的观感问题） */
+  td > p, th > p { margin: 0 0 6px; }
+  td > p:last-child, th > p:last-child { margin-bottom: 0; }
   a { color: ${link}; }
   blockquote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid rgba(128,128,128,.45); color: inherit; }
+  /* ⭐ 宽邮件（≥600px 固定宽那种）允许横向滚动，而不是压扁它 */
+  html, body { overflow-x: auto; }
 </style></head><body>${html}</body></html>`;
 
   return (

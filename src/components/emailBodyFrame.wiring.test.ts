@@ -37,4 +37,12 @@ describe("邮件正文：沙箱 iframe 渲染", () => {
     expect(code, "应当保留 data-src 占位逻辑").toContain("data-src");
     expect(code, "应当保留「显示图片」入口").toContain("显示图片");
   });
+
+  it("⑤ 表格布局：尊重邮件原宽（⛔ 不再 table max-width:100%），列对齐与横滚都在", () => {
+    // 2026-10-29 事故：通知类邮件是老式 table + 固定宽；给 table 压 max-width:100% 会让列塌成 1 字
+    // （GitHub 通知邮件里的 `Status` 被挤成竖排）。判据钉三件：
+    expect(code, "⛔ 不许再给 table 加 max-width:100%（会把列压塌）").not.toMatch(/table\s*\{[^}]*max-width\s*:\s*100%/);
+    expect(code, "单元格顶部对齐（列不被拉歪）").toContain("td, th { vertical-align: top; }");
+    expect(code, "宽邮件允许横向滚动，而不是压扁").toContain("overflow-x: auto");
+  });
 });
