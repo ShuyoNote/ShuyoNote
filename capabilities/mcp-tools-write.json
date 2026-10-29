@@ -21,6 +21,14 @@
         "fence": {
           "type": "string",
           "description": "块类型：填 mermaid 时把这次内容作为**一整块** mermaid 图源码写入（编辑器会把它升级成图块）；省略＝按普通段落。"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
         }
       },
       "required": [
@@ -48,6 +56,18 @@
         "fence": {
           "type": "string",
           "description": "块类型：填 mermaid 时把这次内容作为**一整块** mermaid 图源码写入（编辑器会把它升级成图块）；省略＝按普通段落。"
+        },
+        "expectedRev": {
+          "type": "string",
+          "description": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
         }
       },
       "required": [
@@ -55,6 +75,388 @@
       ]
     },
     "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "properties_set",
+    "capabilityId": "properties.set",
+    "description": "设置某个页面的属性值。参数: attrId (必填, 从 properties.list 拿), value (必填), pageId (可选, 省略=当前打开的页面)。这是写操作，返回草稿供用户确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "attrId": {
+          "type": "string",
+          "description": "属性定义 id（由 api.properties.list() 得到）"
+        },
+        "value": {
+          "type": "string"
+        },
+        "pageId": {
+          "type": "string",
+          "description": "目标页面 id；省略=当前页"
+        },
+        "expectedRev": {
+          "type": "string",
+          "description": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        }
+      },
+      "required": [
+        "attrId",
+        "value"
+      ]
+    },
+    "permission": "write:properties"
+  },
+  {
+    "kind": "write",
+    "name": "tags_add",
+    "capabilityId": "tags.add",
+    "description": "给页面加一个标签。参数: name (必填, 不带 #), pageId (可选, 省略=当前打开的页面)。标签不需要预先创建。这是写操作，返回草稿供用户确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "标签名（不存在则新建）"
+        },
+        "pageId": {
+          "type": "string",
+          "description": "目标页面 id；省略=当前页"
+        },
+        "expectedRev": {
+          "type": "string",
+          "description": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "permission": "write:tags"
+  },
+  {
+    "kind": "write",
+    "name": "folders_create",
+    "capabilityId": "folders.create",
+    "description": "新建一个文件夹节点（不是页面）。参数: title(必填), parentId(可选,省略=顶层)。写操作 ⇒ **只产生草稿**（`{drafted:true, summary, spaceId}`），用户确认后才落库；`dryRun:true` 只演练不产生草稿；`spaceId` 本版只支持当前空间。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "文件夹名"
+        },
+        "parentId": {
+          "type": "string",
+          "description": "上级节点 id；省略=顶层"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        }
+      },
+      "required": [
+        "title"
+      ]
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "nodes_move",
+    "capabilityId": "nodes.move",
+    "description": "移动节点（页面或文件夹都算）。参数: id(必填), newParentId(可选,省略=顶层), sortOrder(可选), expectedRev(可选)。**环检测**：移到自己的后代下面 ⇒ `bad_args`；返回里带 `backlinks` 数（如实提示）。写操作 ⇒ 只产生草稿等用户确认；`dryRun`/`clientRequestId` 同上。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "要移动的节点 id（页面或文件夹）"
+        },
+        "newParentId": {
+          "type": "string",
+          "description": "新上级节点 id；省略/null=移到顶层"
+        },
+        "sortOrder": {
+          "type": "number",
+          "description": "同级排序位（默认 0）"
+        },
+        "expectedRev": {
+          "type": "string",
+          "description": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "nodes_rename",
+    "capabilityId": "nodes.rename",
+    "description": "给节点改名（只改标题）。参数: id(必填), title(必填,≤200 字), expectedRev(可选)。写操作 ⇒ 只产生草稿等用户确认；`dryRun`/`clientRequestId` 同样支持。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string",
+          "description": "新标题（≤200 字）"
+        },
+        "expectedRev": {
+          "type": "string",
+          "description": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ]
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "nodes_delete",
+    "capabilityId": "nodes.delete",
+    "description": "**软删**一个节点（进回收站，可恢复）。参数: id(必填), expectedRev(可选)。⚠️ 还有子项 ⇒ `bad_args` 并点名 N（⛔ 不递归删）；返回里带 `backlinks` 数。写操作 ⇒ 只产生草稿等用户确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "要软删的节点 id"
+        },
+        "expectedRev": {
+          "type": "string",
+          "description": "乐观并发令牌（`updated_at:sha8`）"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "trash_restore",
+    "capabilityId": "trash.restore",
+    "description": "从回收站恢复节点。参数: id(必填)。活着的节点 ⇒ `bad_args`；不存在 ⇒ `not_found`。写操作 ⇒ 只产生草稿等用户确认；`dryRun`/`clientRequestId` 同上。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "回收站里的节点 id"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略=当前空间；本版只支持当前空间）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "pages_revert",
+    "capabilityId": "pages.revert",
+    "description": "回退到历史版本。参数: pageId(必填), versionId(必填), expectedRev(可选)。版本不在该页历史里 ⇒ `not_found`（⛔ 不假装成功）。写操作 ⇒ 只产生草稿等用户确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pageId": {
+          "type": "string"
+        },
+        "versionId": {
+          "type": "string",
+          "description": "版本 id（来自 versions.list）"
+        },
+        "expectedRev": {
+          "type": "string",
+          "description": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        }
+      },
+      "required": [
+        "pageId",
+        "versionId"
+      ]
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "tags_remove",
+    "capabilityId": "tags.remove",
+    "description": "把标签从页面移除（不删标签本身）。参数: name(必填), pageId(可选,省略=当前页)。标签不存在/该页没有它 ⇒ `not_found`。写操作 ⇒ 只产生草稿等用户确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "标签名（不带 #）"
+        },
+        "pageId": {
+          "type": "string",
+          "description": "目标页面 id；省略=当前页"
+        },
+        "expectedRev": {
+          "type": "string",
+          "description": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "permission": "write:tags"
+  },
+  {
+    "kind": "write",
+    "name": "properties_unset",
+    "capabilityId": "properties.unset",
+    "description": "去掉页面的属性值（不删属性定义）。参数: attrId(必填), pageId(可选,省略=当前页)。属性不存在 ⇒ `not_found`。写操作 ⇒ 只产生草稿等用户确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "attrId": {
+          "type": "string",
+          "description": "属性定义 id（来自 properties.list）"
+        },
+        "pageId": {
+          "type": "string",
+          "description": "目标页面 id；省略=当前页"
+        },
+        "expectedRev": {
+          "type": "string",
+          "description": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        }
+      },
+      "required": [
+        "attrId"
+      ]
+    },
+    "permission": "write:properties"
   },
   {
     "kind": "write",
@@ -75,6 +477,14 @@
         "parentId": {
           "type": "string",
           "description": "父页面 id；不传就放在顶层。"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
         }
       },
       "required": [
@@ -107,6 +517,18 @@
         "title": {
           "type": "string",
           "description": "新标题；省略=保留原标题"
+        },
+        "expectedRev": {
+          "type": "string",
+          "description": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
         }
       },
       "required": [

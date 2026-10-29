@@ -52,6 +52,11 @@ export const NOTE_ID_PREFIXES = [
   //   与前面几条同一条判断：属于**清单遗漏**，不是安全边界放宽。
   //   ⛔ 别在这里加 `fs.` / `exec.` / `net.` / `sql.` 这类（那才是这条规则要挡的 ✗）。
   "export.",
+  // ⭐ 2026-10-29（B2-结构）：`folders.create` / `nodes.move|rename|delete` 是**笔记域**能力 ——
+  //   它们整理的就是页面树（文件夹＝kind=folder 的页面节点），⛔ 不碰库外东西。
+  //   与前面几条同一条判断：属于**清单遗漏**，不是安全边界放宽。
+  //   ⛔ 别在这里加 `fs.` / `exec.` / `net.` / `sql.` 这类（那才是这条规则要挡的 ✗）。
+  "nodes.", "folders.",
 ];
 export const ALLOWED_AI_KINDS = ["read", "write"];
 export const ALLOWED_AI_SCOPE = "current-space";

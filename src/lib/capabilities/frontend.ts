@@ -1028,6 +1028,11 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   "pages.create": async (args) => {
     const title = String(args.title ?? "").trim();
     if (!title) return { ok: false, error: "pages.create 需要 title" };
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (dryRun) {
+      return { ok: true, dryRun: true, would: { kind: "create_page", title }, clientRequestId };
+    }
     // ⭐ R166：带 `fence` ⇒ **一整块** code 块 ✓（⛔ 不拆块 ✗）
     const fence = typeof args.fence === "string" && args.fence ? args.fence : null;
     const body = fence
@@ -1045,6 +1050,11 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   "pages.importMarkdown": async (args) => {
     const title = String(args.title ?? "").trim();
     if (!title) return { ok: false, error: "pages.importMarkdown 需要 title" };
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (dryRun) {
+      return { ok: true, dryRun: true, would: { kind: "create_page", title, markdown: true }, clientRequestId };
+    }
     const built = importMarkdownArgs(title, String(args.markdown ?? ""), typeof args.parentId === "string" && args.parentId ? args.parentId : null);
     if (!built.ok) return { ok: false, error: built.error };
     return draft(`import_markdown:${title}`, `导入 Markdown 新建页面「${title}」`, {
@@ -1059,6 +1069,12 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   "pages.update": async (args) => {
     const id = String(args.id ?? "").trim();
     if (!id) return { ok: false, error: "pages.update 需要 id" };
+    const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (dryRun) {
+      return { ok: true, dryRun: true, would: { kind: "update_page", pageId: id, expectedRev }, clientRequestId };
+    }
     const markdown = typeof args.markdown === "string" ? args.markdown : "";
     const content = typeof args.content === "string" ? args.content : "";
     const title = typeof args.title === "string" && args.title.trim() ? args.title.trim() : null;
@@ -1074,6 +1090,8 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
       kind: "update_page",
       pageId: id,
       title,
+      expectedRev,
+      clientRequestId,
       ...body,
     });
   },
@@ -1117,10 +1135,212 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     const text = String(args.text ?? "").trim();
     if (!pageId) return { ok: false, error: "blocks.append 需要 pageId" };
     if (!text) return { ok: false, error: "blocks.append 需要 text" };
+    const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (dryRun) {
+      return { ok: true, dryRun: true, would: { kind: "append_block", pageId, expectedRev }, clientRequestId };
+    }
     return draft(
       `append_block:${pageId}:${text.slice(0, 24)}`,
       `向页面追加 ${text.split("\n").filter((s) => s.trim()).length} 个段落`,
-      { kind: "append_block", pageId, text, fence: args.fence ?? null },
+      { kind: "append_block", pageId, text, fence: args.fence ?? null, expectedRev, clientRequestId },
     );
+  },
+
+  // ⭐ B2-结构（2026-10-29）：节点/文件夹/回收站/回退/标签移除/属性去掉。
+  //   全部返回**草稿**（落库只有 ai/apply.ts 一处）；dryRun 只回"会做什么"、不生成草稿。
+  "folders.create": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const title = String(args.title ?? "").trim();
+    const parentId = typeof args.parentId === "string" && args.parentId ? args.parentId : null;
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!title) return { ok: false, error: "folders.create 需要 title" };
+    if (dryRun) return { ok: true, dryRun: true, would: { kind: "create_folder", title, parentId }, clientRequestId, spaceId };
+    return draft(`create_folder:${parentId ?? "root"}:${title}`, `新建文件夹「${title}」`, {
+      kind: "create_folder",
+      title,
+      parent_id: parentId,
+      clientRequestId,
+      spaceId,
+    });
+  },
+
+  "nodes.move": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const id = String(args.id ?? "").trim();
+    const newParentId = typeof args.newParentId === "string" && args.newParentId ? args.newParentId : null;
+    const sortOrder = Number.isFinite(Number(args.sortOrder)) ? Number(args.sortOrder) : 0;
+    const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!id) return { ok: false, error: "nodes.move 需要 id" };
+    if (dryRun) {
+      return { ok: true, dryRun: true, would: { kind: "move_node", id, newParentId, sortOrder, expectedRev }, clientRequestId, spaceId };
+    }
+    return draft(`move_node:${id}`, `移动节点 ${id}`, {
+      kind: "move_node",
+      id,
+      newParentId,
+      sortOrder,
+      expectedRev,
+      clientRequestId,
+      spaceId,
+    });
+  },
+
+  "nodes.rename": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const id = String(args.id ?? "").trim();
+    const title = String(args.title ?? "").trim();
+    const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!id || !title) return { ok: false, error: "nodes.rename 需要 id 和 title" };
+    if (dryRun) return { ok: true, dryRun: true, would: { kind: "rename_node", id, title, expectedRev }, clientRequestId, spaceId };
+    return draft(`rename_node:${id}`, `把节点 ${id} 改名为「${title}」`, {
+      kind: "rename_node",
+      id,
+      title,
+      expectedRev,
+      clientRequestId,
+      spaceId,
+    });
+  },
+
+  "nodes.delete": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const id = String(args.id ?? "").trim();
+    const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!id) return { ok: false, error: "nodes.delete 需要 id" };
+    if (dryRun) return { ok: true, dryRun: true, would: { kind: "delete_node", id, expectedRev }, clientRequestId, spaceId };
+    return draft(`delete_node:${id}`, `删除节点 ${id}（移入回收站，可恢复）`, {
+      kind: "delete_node",
+      id,
+      expectedRev,
+      clientRequestId,
+      spaceId,
+    });
+  },
+
+  "trash.restore": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const id = String(args.id ?? "").trim();
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!id) return { ok: false, error: "trash.restore 需要 id" };
+    if (dryRun) return { ok: true, dryRun: true, would: { kind: "restore_page", id }, clientRequestId, spaceId };
+    return draft(`restore_page:${id}`, `从回收站恢复 ${id}`, {
+      kind: "restore_page",
+      id,
+      clientRequestId,
+      spaceId,
+    });
+  },
+
+  "pages.revert": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const pageId = String(args.pageId ?? "").trim();
+    const versionId = String(args.versionId ?? "").trim();
+    const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!pageId || !versionId) return { ok: false, error: "pages.revert 需要 pageId 和 versionId" };
+    if (dryRun) {
+      return { ok: true, dryRun: true, would: { kind: "revert_page", pageId, versionId, expectedRev }, clientRequestId, spaceId };
+    }
+    return draft(`revert_page:${pageId}:${versionId}`, `把页面 ${pageId} 回退到版本 ${versionId}`, {
+      kind: "revert_page",
+      pageId,
+      versionId,
+      expectedRev,
+      clientRequestId,
+      spaceId,
+    });
+  },
+
+  "tags.add": async (args, ctx) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const pageId = targetPage(args, ctx);
+    const name = String(args.name ?? "").trim();
+    const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!pageId || !name) return { ok: false, error: "tags.add 需要 name（与 pageId/当前页）" };
+    if (dryRun) return { ok: true, dryRun: true, would: { kind: "add_tag", pageId, name, expectedRev }, clientRequestId, spaceId };
+    return draft(`add_tag:${pageId}:${name}`, `给页面加标签「${name}」`, {
+      kind: "add_tag",
+      pageId,
+      name,
+      expectedRev,
+      clientRequestId,
+      spaceId,
+    });
+  },
+
+  "tags.remove": async (args, ctx) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const pageId = targetPage(args, ctx);
+    const name = String(args.name ?? "").trim();
+    const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!pageId || !name) return { ok: false, error: "tags.remove 需要 name（与 pageId/当前页）" };
+    if (dryRun) return { ok: true, dryRun: true, would: { kind: "remove_tag", pageId, name, expectedRev }, clientRequestId, spaceId };
+    return draft(`remove_tag:${pageId}:${name}`, `从页面移除标签「${name}」`, {
+      kind: "remove_tag",
+      pageId,
+      name,
+      expectedRev,
+      clientRequestId,
+      spaceId,
+    });
+  },
+
+  "properties.set": async (args, ctx) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const pageId = targetPage(args, ctx);
+    const attrId = String(args.attrId ?? "").trim();
+    const value = String(args.value ?? "");
+    const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!pageId || !attrId) return { ok: false, error: "properties.set 需要 attrId（与 pageId/当前页）" };
+    if (dryRun) {
+      return { ok: true, dryRun: true, would: { kind: "set_page_prop", pageId, attrId, value, expectedRev }, clientRequestId, spaceId };
+    }
+    return draft(`set_page_prop:${pageId}:${attrId}`, `给页面设置属性 ${attrId} = ${value}`, {
+      kind: "set_page_prop",
+      pageId,
+      attrId,
+      value,
+      expectedRev,
+      clientRequestId,
+      spaceId,
+    });
+  },
+
+  "properties.unset": async (args, ctx) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const pageId = targetPage(args, ctx);
+    const attrId = String(args.attrId ?? "").trim();
+    const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!pageId || !attrId) return { ok: false, error: "properties.unset 需要 attrId（与 pageId/当前页）" };
+    if (dryRun) {
+      return { ok: true, dryRun: true, would: { kind: "unset_page_prop", pageId, attrId, expectedRev }, clientRequestId, spaceId };
+    }
+    return draft(`unset_page_prop:${pageId}:${attrId}`, `去掉页面的属性 ${attrId}`, {
+      kind: "unset_page_prop",
+      pageId,
+      attrId,
+      expectedRev,
+      clientRequestId,
+      spaceId,
+    });
   },
 };

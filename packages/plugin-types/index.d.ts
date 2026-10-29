@@ -157,15 +157,19 @@ export interface PluginApi {
   /** 新建页面（草稿确认）（权限 `write:pages`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
    */
-    create(title: string, content?: string, parentId?: string, fence?: string): { drafted: true; summary: string };
+    create(title: string, content?: string, parentId?: string, fence?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
+  /** 回退到历史版本（草稿确认）（权限 `write:pages`；1.7.0 起）
+   * 返回：{drafted,summary,spaceId}——**不代表已回退**
+   */
+    revert(pageId: string, versionId: string, expectedRev?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string; spaceId: string };
   /** 导入 Markdown 为一页（草稿确认）（权限 `write:pages`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
    */
-    importMarkdown(title: string, markdown: string, parentId?: string): { drafted: true; summary: string };
+    importMarkdown(title: string, markdown: string, parentId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
   /** 更新已有页面（整页替换 / 草稿确认）（权限 `write:pages`；1.1.0 起）
    * 返回：{drafted: true, summary}——**草稿已产出**，用户确认后才落库
    */
-    update(id: string, markdown?: string, content?: string, title?: string): { drafted: true; summary: string };
+    update(id: string, markdown?: string, content?: string, title?: string, expectedRev?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
   };
   db: {
   /** 读取数据库结构（权限 `read:pages`；1.4.0 起）
@@ -194,6 +198,10 @@ export interface PluginApi {
    * 返回：[{pageId, title, deletedAt(毫秒时间戳)}]，按删除时间倒序；不含正文
    */
     list(spaceId?: string, limit?: number): { pageId: string; title: string; deletedAt: number }[];
+  /** 从回收站恢复（草稿确认）（权限 `write:pages`；1.7.0 起）
+   * 返回：{drafted,summary,spaceId}——**不代表已恢复**
+   */
+    restore(id: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string; spaceId: string };
   };
   tags: {
   /** 列出本空间标签（权限 `read:tags`；1.0.0 起）
@@ -203,7 +211,11 @@ export interface PluginApi {
   /** 给页面加标签（草稿确认）（权限 `write:tags`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已写入**
    */
-    add(name: string, pageId?: string): { drafted: true; summary: string };
+    add(name: string, pageId?: string, expectedRev?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
+  /** 从页面移除标签（草稿确认）（权限 `write:tags`；1.7.0 起）
+   * 返回：{drafted,summary,spaceId}——**不代表已移除**
+   */
+    remove(name: string, pageId?: string, expectedRev?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string; spaceId: string };
   };
   blocks: {
   /** 列出页面块（权限 `read:pages`；1.0.0 起）
@@ -213,7 +225,7 @@ export interface PluginApi {
   /** 向页面追加内容（草稿确认）（权限 `write:pages`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已写入**
    */
-    append(text: string, pageId?: string, fence?: string): { drafted: true; summary: string };
+    append(text: string, pageId?: string, fence?: string, expectedRev?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
   };
   backlinks: {
   /** 列出反链（权限 `read:backlinks`；1.0.0 起）
@@ -297,12 +309,36 @@ export interface PluginApi {
   /** 设置页面属性（草稿确认）（权限 `write:properties`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已写入**
    */
-    set(attrId: string, value: string, pageId?: string): { drafted: true; summary: string };
+    set(attrId: string, value: string, pageId?: string, expectedRev?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
+  /** 去掉页面属性（草稿确认）（权限 `write:properties`；1.7.0 起）
+   * 返回：{drafted,summary,spaceId}——**不代表已去掉**
+   */
+    unset(attrId: string, pageId?: string, expectedRev?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string; spaceId: string };
   };
   /** 写作者侧日志（无需权限；1.0.0 起）
    * 返回：进插件日志环形缓冲，可在插件面板查看
    */
   log(message: string, level?: "info" | "warn" | "error"): void;
+  folders: {
+  /** 新建文件夹（草稿确认）（权限 `write:pages`；1.7.0 起）
+   * 返回：{drafted,summary,spaceId}——**不代表已创建**
+   */
+    create(title: string, parentId?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string; spaceId: string };
+  };
+  nodes: {
+  /** 移动节点（草稿确认）（权限 `write:pages`；1.7.0 起）
+   * 返回：{drafted,summary,spaceId}——**不代表已移动**
+   */
+    move(id: string, newParentId?: string, sortOrder?: number, expectedRev?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string; spaceId: string };
+  /** 节点改名（草稿确认）（权限 `write:pages`；1.7.0 起）
+   * 返回：{drafted,summary,spaceId}——**不代表已改名**
+   */
+    rename(id: string, title: string, expectedRev?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string; spaceId: string };
+  /** 软删节点（草稿确认）（权限 `write:pages`；1.7.0 起）
+   * 返回：{drafted,summary,spaceId}——**不代表已删**
+   */
+    delete(id: string, expectedRev?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string; spaceId: string };
+  };
   blobs: {
   /** 把句柄落成文件（权限 `export:files`；1.5.0 起）
    * 返回：{path, size, sha256}：文件落在**应用数据目录下的 exports/**（文件名已清洗；⛔ 不接受任意目标路径）；sha256 与句柄声明一致
@@ -331,4 +367,4 @@ export interface PluginApi {
   };
 }
 
-export declare const SDK_API_VERSION: "1.6.0";
+export declare const SDK_API_VERSION: "1.7.0";
