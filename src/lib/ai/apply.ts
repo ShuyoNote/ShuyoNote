@@ -341,7 +341,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const attId = String(p.attId ?? "");
       const toPageId = String(p.toPageId ?? "");
       if (!attId || !toPageId) return { ok: false, message: "move_attachment 参数不完整" };
-      await api.moveAttachment(attId, toPageId);
+      await api.moveAttachment(attId, toPageId, typeof p.spaceId === "string" ? p.spaceId : undefined);
       return { ok: true, message: "已移动附件" };
     }
 

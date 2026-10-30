@@ -4046,8 +4046,19 @@ fn cap_files_move(
     _client_request_id: Option<&str>,
 ) -> CapResult {
     let space = write_target_space(space_id)?;
-    let (name, hash, from) = attachment_meta(att_id)?;
-    let (ptitle, _) = live_target(to_page_id).map_err(|_| format!("not_found: 目标页面 {to_page_id} 不存在或已删除"))?;
+    let (name, hash, from) = if space == target_space_id(None) {
+        attachment_meta(att_id)?
+    } else {
+        with_conn_for_space(Some(&space), |c| attachment_meta_in(c, att_id))?
+    };
+    // toPageId 必须属于**同一个目标空间**（否则 bad_args，不回落当前空间）
+    let (ptitle, _) = if space == target_space_id(None) {
+        live_target(to_page_id).map_err(|_| format!("not_found: 目标页面 {to_page_id} 不存在或已删除"))?
+    } else {
+        with_conn_for_space(Some(&space), |c| live_target_in(c, to_page_id)).map_err(|_| {
+            format!("bad_args: 目标页 {to_page_id} 不在该空间（或已删除）—— 不回落当前空间")
+        })?
+    };
     check_expected_sha(&hash, expected_sha)?;
     structural_draft(
         dry_run,
@@ -5511,6 +5522,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
                         | "blocks.delete"
                         | "files.rename"
                         | "files.delete"
+                        | "files.move"
                 ) {
                     return Err(format!(
                         "bad_args: {method} 暂不支持跨空间（v1 只支持 pages.create；目标空间 {space} 未写入）"
