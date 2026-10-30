@@ -1203,10 +1203,17 @@ pub fn read_attachment_bytes(
     space_id: Option<String>,
 ) -> Result<tauri::ipc::Response, String> {
     if let Some(space) = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        let active = { let c = db.0.lock().expect("db mutex poisoned"); active_space_id(&c) };
+        let active = {
+            let c = db.0.lock().expect("db mutex poisoned");
+            active_space_id(&c)
+        };
         if space != active {
             let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-            return Ok(tauri::ipc::Response::new(read_attachment_bytes_at(&app_data_dir, space, &hash)?));
+            return Ok(tauri::ipc::Response::new(read_attachment_bytes_at(
+                &app_data_dir,
+                space,
+                &hash,
+            )?));
         }
     }
     // 用 `Response` 回原始字节（JS 侧拿到 ArrayBuffer）而不是 `Vec<u8>`：
@@ -1413,24 +1420,46 @@ pub fn list_page_attachments(
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let target = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
     if let Some(space) = target {
-        let active = { let c = db.0.lock().expect("db mutex poisoned"); active_space_id(&c) };
+        let active = {
+            let c = db.0.lock().expect("db mutex poisoned");
+            active_space_id(&c)
+        };
         if space != active {
-            let c = crate::db::open_space_conn_at(space, &app_data_dir).map_err(|e| format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}"))?;
+            let c = crate::db::open_space_conn_at(space, &app_data_dir).map_err(|e| {
+                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+            })?;
             let space_owned = space.to_string();
-            let sql = if page_id.is_some() { "SELECT id, name, hash, mime, size, created_at FROM attachments WHERE page_id = ?1 ORDER BY created_at DESC" } else { "SELECT id, name, hash, mime, size, created_at FROM attachments WHERE page_id IS NULL ORDER BY created_at DESC" };
+            let sql = if page_id.is_some() {
+                "SELECT id, name, hash, mime, size, created_at FROM attachments WHERE page_id = ?1 ORDER BY created_at DESC"
+            } else {
+                "SELECT id, name, hash, mime, size, created_at FROM attachments WHERE page_id IS NULL ORDER BY created_at DESC"
+            };
             let _ = space_owned;
             let mut stmt = c.prepare(sql).map_err(|e| e.to_string())?;
             let read_row = |r: &rusqlite::Row| -> rusqlite::Result<AttachmentRow> {
                 Ok(AttachmentRow {
-                    meta: AttachmentMeta { id: r.get(0)?, name: r.get(1)?, hash: r.get(2)?, mime: r.get(3)?, size: r.get(4)?, path: String::new() },
+                    meta: AttachmentMeta {
+                        id: r.get(0)?,
+                        name: r.get(1)?,
+                        hash: r.get(2)?,
+                        mime: r.get(3)?,
+                        size: r.get(4)?,
+                        path: String::new(),
+                    },
                     created_at: r.get(5)?,
                     mtime: 0, // 跨空间读取不保证本地字节在位 ⇒ 如实给 0（前端显示「—」）
                 })
             };
             let rows: Vec<AttachmentRow> = if let Some(pid) = &page_id {
-                stmt.query_map(params![pid], read_row).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect()
+                stmt.query_map(params![pid], read_row)
+                    .map_err(|e| e.to_string())?
+                    .filter_map(|r| r.ok())
+                    .collect()
             } else {
-                stmt.query_map([], read_row).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect()
+                stmt.query_map([], read_row)
+                    .map_err(|e| e.to_string())?
+                    .filter_map(|r| r.ok())
+                    .collect()
             };
             return Ok(rows);
         }
@@ -1654,16 +1683,26 @@ pub(crate) fn delete_attachment_cross_space(
         format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
     })?;
     if crate::plugins::cross_space_write_disabled() {
-        return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+        return Err(
+            "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                .to_string(),
+        );
     }
     let hash: Option<String> = c
-        .query_row("SELECT hash FROM attachments WHERE id = ?1", params![id], |r| r.get(0))
+        .query_row(
+            "SELECT hash FROM attachments WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
         .optional()
         .map_err(|e| e.to_string())?;
     let Some(hash) = hash else { return Ok(0) };
     let refs = cross_space_refs(&c, app_data_dir, &hash, id)?;
     if !refs.is_empty() {
-        return Err(format!("bad_args: 附件仍被其它空间引用（{}）—— 先删引用再删", refs.join("、")));
+        return Err(format!(
+            "bad_args: 附件仍被其它空间引用（{}）—— 先删引用再删",
+            refs.join("、")
+        ));
     }
     let empty = Some(std::collections::HashSet::<String>::new());
     remove_attachment_in_with(&c, app_data_dir, id, space, &empty)
@@ -1683,7 +1722,8 @@ pub fn remove_attachment(
             crate::workspaces::active_workspace_id(&c)?
         };
         if space != active {
-            return delete_attachment_cross_space(&app_data_dir, &id, space);        }
+            return delete_attachment_cross_space(&app_data_dir, &id, space);
+        }
     }
     remove_attachment_inner(&db, &app_data_dir, &id)
 }
@@ -1767,7 +1807,12 @@ fn remove_attachment_inner_with(
 
 /// ⭐ v3-A1：跨空间删除前的引用扫描（**目标空间之外** + 目标空间自身都查）。
 /// 命中 ⇒ bad_args 点名；任何空间读不到 ⇒ **拒绝删除**（宁留勿删，不当作没引用）。
-fn cross_space_refs(c_target: &rusqlite::Connection, app_data_dir: &Path, hash: &str, except_id: &str) -> Result<Vec<String>, String> {
+fn cross_space_refs(
+    c_target: &rusqlite::Connection,
+    app_data_dir: &Path,
+    hash: &str,
+    except_id: &str,
+) -> Result<Vec<String>, String> {
     let needle = format!("attachment://{hash}");
     let spaces: Vec<String> = c_target
         .prepare("SELECT id FROM meta.workspaces WHERE deleted_at IS NULL")
@@ -1797,17 +1842,27 @@ fn cross_space_refs(c_target: &rusqlite::Connection, app_data_dir: &Path, hash: 
     scan("目标空间", c_target)?;
     for space in spaces {
         let is_target: bool = c_target
-            .query_row("SELECT value FROM meta.sync_state WHERE key='__none__'", [], |_| Ok(String::new()))
+            .query_row(
+                "SELECT value FROM meta.sync_state WHERE key='__none__'",
+                [],
+                |_| Ok(String::new()),
+            )
             .is_err(); // 占位，下面用 active 对比
         let _ = is_target;
         let conn = match crate::db::open_space_conn_at(&space, app_data_dir) {
             Ok(c) => c,
             Err(e) => {
-                return Err(format!("bad_args: 有空间「{space}」无法确认引用（{e}）—— 宁留勿删，先解锁/修复再删"));
+                return Err(format!(
+                    "bad_args: 有空间「{space}」无法确认引用（{e}）—— 宁留勿删，先解锁/修复再删"
+                ));
             }
         };
         let target_space: String = conn
-            .query_row("SELECT value FROM meta.sync_state WHERE key='__x__'", [], |_| Ok(String::new()))
+            .query_row(
+                "SELECT value FROM meta.sync_state WHERE key='__x__'",
+                [],
+                |_| Ok(String::new()),
+            )
             .unwrap_or_default();
         let _ = target_space;
         scan(&format!("空间 {space}"), &conn)?;
@@ -1825,8 +1880,7 @@ pub(crate) fn remove_attachment_in_with(
     space: &str,
     other_refs: &Option<std::collections::HashSet<String>>,
 ) -> Result<usize, String> {
-
-        let hash: Option<String> = c
+    let hash: Option<String> = c
         .query_row(
             "SELECT hash FROM attachments WHERE id = ?1",
             params![id],
@@ -1914,7 +1968,10 @@ pub fn move_attachment(
         };
         if space != active {
             if crate::plugins::cross_space_write_disabled() {
-                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+                return Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                );
             }
             let app_data = crate::db::app_data_dir_ref()
                 .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
@@ -1986,9 +2043,11 @@ pub(crate) fn detach_attachment_row(
 ) -> Result<Option<(String, Option<String>, String, i64)>, String> {
     use rusqlite::OptionalExtension;
     let page: Option<Option<String>> = c
-        .query_row("SELECT page_id FROM attachments WHERE id = ?1", params![id], |r| {
-            r.get::<_, Option<String>>(0)
-        })
+        .query_row(
+            "SELECT page_id FROM attachments WHERE id = ?1",
+            params![id],
+            |r| r.get::<_, Option<String>>(0),
+        )
         .optional()
         .map_err(|e| e.to_string())?;
     let Some(page) = page else {
@@ -1997,8 +2056,11 @@ pub(crate) fn detach_attachment_row(
     if page.is_none() {
         return Err("附件已经是未整理状态（无需再摘除）".to_string());
     }
-    c.execute("UPDATE attachments SET page_id = NULL WHERE id = ?1", params![id])
-        .map_err(|e| e.to_string())?;
+    c.execute(
+        "UPDATE attachments SET page_id = NULL WHERE id = ?1",
+        params![id],
+    )
+    .map_err(|e| e.to_string())?;
     let meta = c
         .query_row(
             "SELECT name, hash, mime, size FROM attachments WHERE id = ?1",
@@ -2043,7 +2105,10 @@ pub fn detach_attachment(
         };
         if space != active {
             if crate::plugins::cross_space_write_disabled() {
-                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+                return Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                );
             }
             let app_data = crate::db::app_data_dir_ref()
                 .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
@@ -2093,7 +2158,10 @@ pub fn rename_attachment(
         };
         if space != active {
             if crate::plugins::cross_space_write_disabled() {
-                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+                return Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                );
             }
             let app_data = crate::db::app_data_dir_ref()
                 .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;

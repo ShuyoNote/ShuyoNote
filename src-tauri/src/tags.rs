@@ -196,15 +196,28 @@ pub fn add_tag(
     name: String,
     space_id: Option<String>,
 ) -> Result<Tag, String> {
-    let target = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let target = space_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
     if let Some(space) = target {
-        let active = { let c = conn(&db); crate::workspaces::active_workspace_id(&c)? };
+        let active = {
+            let c = conn(&db);
+            crate::workspaces::active_workspace_id(&c)?
+        };
         if space != active {
             if crate::plugins::cross_space_write_disabled() {
-                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+                return Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                );
             }
-            let app = crate::db::app_data_dir_ref().ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
-            let tc = crate::db::open_space_conn_at(&space, app).map_err(|e| format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}"))?;
+            let app = crate::db::app_data_dir_ref()
+                .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let tc = crate::db::open_space_conn_at(&space, app).map_err(|e| {
+                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+            })?;
             return add_tag_in(&tc, &page_id, &name);
         }
     }
@@ -262,15 +275,28 @@ pub fn remove_tag(
     tag_id: String,
     space_id: Option<String>,
 ) -> Result<(), String> {
-    let target = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let target = space_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
     if let Some(space) = target {
-        let active = { let c = conn(&db); crate::workspaces::active_workspace_id(&c)? };
+        let active = {
+            let c = conn(&db);
+            crate::workspaces::active_workspace_id(&c)?
+        };
         if space != active {
             if crate::plugins::cross_space_write_disabled() {
-                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+                return Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                );
             }
-            let app = crate::db::app_data_dir_ref().ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
-            let tc = crate::db::open_space_conn_at(&space, app).map_err(|e| format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}"))?;
+            let app = crate::db::app_data_dir_ref()
+                .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let tc = crate::db::open_space_conn_at(&space, app).map_err(|e| {
+                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+            })?;
             return remove_tag_in(&tc, &page_id, &tag_id);
         }
     }

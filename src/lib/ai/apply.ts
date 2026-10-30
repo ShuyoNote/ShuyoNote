@@ -264,8 +264,8 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
         resolved = tags.find((x) => x.name === name)?.id ?? "";
       }
       if (!resolved) return { ok: false, message: `找不到标签「${name || tagId}」` };
-      await api.removeTag(pageId, resolved);
-      const page = await api.getPage(pageId);
+      await api.removeTag(pageId, resolved, typeof p.spaceId === "string" ? p.spaceId : undefined);
+      const page = await api.getPage(pageId, typeof p.spaceId === "string" ? p.spaceId : undefined);
       return { ok: true, message: `已移除标签「${name || resolved}」`, page };
     }
 
@@ -275,8 +275,8 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (!pageId || !attrId) return { ok: false, message: "unset_page_prop 参数不完整" };
       const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
-      await api.removePageProp(pageId, attrId);
-      const page = await api.getPage(pageId);
+      await api.removePageProp(pageId, attrId, typeof p.spaceId === "string" ? p.spaceId : undefined);
+      const page = await api.getPage(pageId, typeof p.spaceId === "string" ? p.spaceId : undefined);
       return { ok: true, message: "已去掉属性", page };
     }
 
