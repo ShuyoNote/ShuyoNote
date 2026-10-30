@@ -412,7 +412,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
     case "detach_attachment": {
       const attId = String(p.attId ?? "");
       if (!attId) return { ok: false, message: "detach_attachment 需要 attId" };
-      await api.detachAttachment(attId);
+      await api.detachAttachment(attId, typeof p.spaceId === "string" ? p.spaceId : undefined);
       return { ok: true, message: "已把附件从页面摘除（文件保留，变为未整理）" };
     }
 

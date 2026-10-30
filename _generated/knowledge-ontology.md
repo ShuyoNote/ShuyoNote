@@ -6,9 +6,9 @@
 | 源 | 值 |
 |---|---|
 | 注册表文件 | `capabilities/capabilities.json` |
-| 注册表 sha256 | `4fae183ba097dfef3aaf73e53dd1ca86c1bf9f31c3a7ea32c9e0524225408dbf` |
+| 注册表 sha256 | `de0fc52cbad8b14f254c5e841a63874384e9d1dbfa976b6d196e839723624475` |
 | `registryVersion` | 1 |
-| `apiVersion` | 1.21.0 |
+| `apiVersion` | 1.22.0 |
 | 能力条数 | **70**（按 `kind`：host 2 / read 36 / write 32） |
 | 生成命令 | `node scripts/gen-knowledge-ontology.mjs` |
 

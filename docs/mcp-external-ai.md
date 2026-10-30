@@ -138,6 +138,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 10. 版本
 
+- 2026-10-30：**跨空间写 v3-A1 第四项 —— `files_detach` 支持目标空间**（`apiVersion` 1.22.0）：`files.rename/delete/move/detach` 已支持跨空间；detach 只把目标空间附件的 `page_id` 置 NULL，**保留字节**（sha/大小不变）；已未整理再次 detach ⇒ `bad_args`；目标空间 `changes`/审计 `spaceId`；其余 unsupported。
+
 - 2026-10-30：**跨空间写 v3-A1 第三项 —— `files_move` 支持目标空间**（`apiVersion` 1.21.0）：`files.rename`/`files.delete`/`files.move` 已支持跨空间；move 只允许把附件移到**同一目标空间内**的活页（`toPageId` 跨空间/不存在 ⇒ `bad_args`，不回落）；目标空间写 `changes`、审计带 `spaceId`；其余写工具仍 `bad_args: 暂不支持跨空间`。
 
 - 2026-10-30：**跨空间写 v3-A1 扩展 —— `files_delete` 支持目标空间**（`apiVersion` 1.20.0）：`files.rename`/`files.delete` 已支持跨空间；**引用保护语义**：删除前扫**目标空间之外的所有空间**（页正文 `attachment://sha` 与同 hash 附件行），命中 ⇒ `bad_args` 点名空间/页面；**任一空间打不开/锁着 ⇒ 拒绝删除**（无法确认引用，宁留勿删）；通过后才删行/释放字节；目标空间写 `changes`、审计带 `spaceId`。其余写工具仍 `bad_args: 暂不支持跨空间`。
