@@ -135,6 +135,8 @@ export function genRust(reg) {
   l.push("    pub mediate: &'static str,");
   l.push("    /// 实现函数名（在 plugins.rs 里），供 check-capabilities 做覆盖校验。");
   l.push("    pub rust: &'static str,");
+  l.push("    /// ⭐ AI 不可见空间清单只遮蔽 AI 面（ai:true）能力。");
+  l.push("    pub ai: bool,");
   l.push("}");
   l.push("");
   l.push(`pub const API_VERSION: &str = ${JSON.stringify(reg.apiVersion)};`);
@@ -150,7 +152,7 @@ export function genRust(reg) {
     l.push(
       `    Capability { id: ${JSON.stringify(c.id)}, kind: ${JSON.stringify(c.kind)}, scope: ${JSON.stringify(
         c.scope,
-      )}, permission: ${perm}, since: ${JSON.stringify(c.since)}, mediate: ${JSON.stringify(c.mediate ?? "-")}, rust: ${JSON.stringify(c.rust)} },`,
+      )}, permission: ${perm}, since: ${JSON.stringify(c.since)}, mediate: ${JSON.stringify(c.mediate ?? "-")}, rust: ${JSON.stringify(c.rust)}, ai: ${c.ai ? "true" : "false"} },`,
     );
   }
   l.push("];");

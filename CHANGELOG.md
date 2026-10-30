@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **AI 不可见空间清单**：`mcp_hidden_spaces_get/set`；清单存本机 `meta.db`（不随同步走、换机重配）；AI 面读写命中 ⇒ `permission_denied`（点名「AI 不可见」）；`spaces_list` 过滤、当前空间被隐藏时连当前空间调用也拒绝；用户侧不受影响；清空即恢复；`SHUYONOTE_AI_HIDDEN_SPACES=off` 可跳过。插件 API `apiVersion` 1.17.0 → **1.18.0**。
 - **跨空间写 v2 —— `write_all` 扩读 ＋ 改目标空间**：`write_all` 档同时授予 `read:all-spaces`；`pages_get`/`blocks_list` 加 `spaceId`；白名单 `pages.update`/`blocks.append/patch/delete` 由 `apply.ts` 取目标页后按原合并路径处理、命令按目标空间开可写连接（复用 `save_page_in`，不复制副作用）；目标锁着 ⇒ `permission_denied`；审计带 `spaceId`；回滚开关双向生效。`apiVersion` 1.16.0 → **1.17.0**。
 - **跨空间写 v1 —— `pages_create` 可写入指定空间**：`write_all` 档（`write:all-spaces`）下 `pages.create` 带 `spaceId` 时真实写入目标空间：可写连接复用 `create_node_in` 同一份逻辑（`pages` ＋ `changes` 同写，派生/版本走既有路径），**当前空间完全不变**；跨空间 v1 **只支持 pages.create**，其它写工具带 `spaceId` ⇒ `bad_args: … 暂不支持跨空间`（不回落）；目标空间锁着 ⇒ `permission_denied`（locked）；回滚开关 `SHUYONOTE_MCP_CROSS_SPACE_WRITE=0`；审计行带 `spaceId`；面板确认框标出目标空间名。插件 API `apiVersion` 1.15.0 → **1.16.0**。
 - **MCP P2 能力补齐 —— 工具 60 → 61**：`audit_tail` 加可选 `onlyWrites`（默认 false 保持兼容；true 只回写类调用；面板最近审计用 true）；新增只读能力 `pages.changes_since`（工具 `changes_since`，页级增量：`since` 为 ms/ISO，返回 `{pages:[{pageId,title,rev,updatedAt,kind}],truncated}`，limit 默认 50/上限 200，v1 **不做块级 diff**，跨空间口径同 `pages_list`）；新增 `src-tauri/src/cap_limits.rs` 把 200KB 响应体、分页默认/上限、句柄 TTL 收敛成单一常量模块，能力层引用它。插件 API `apiVersion` 1.14.0 → **1.15.0**。

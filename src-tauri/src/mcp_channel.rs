@@ -1342,8 +1342,8 @@ pub enum McpLevel {
     WriteConfirm,
     /// 可写、**免确认** ✓（直接落库；⚠️ 每一次写仍留一行审计 ✓）。
     WriteAuto,
-    /// ⭐ P1（2026-10-30）：可写（**全部空间**）—— 含 `write:pages` ＋ `write:all-spaces`，
-    /// 免确认；⛔ **不给** `read:all-spaces`（"能写到看不见的空间"不等于能读它）。
+    /// ⭐ v2（owner 拍板「甲」）：可写（全部空间）= `write:pages` ＋ `write:all-spaces`
+    /// **同时给** `read:all-spaces`（要读目标页才能合并/改已有页面）；加密空间内容仍不可见。
     WriteAll,
 }
 

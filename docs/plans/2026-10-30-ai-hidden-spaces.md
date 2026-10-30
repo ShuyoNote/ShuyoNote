@@ -20,6 +20,7 @@
 - 写入做校验：只接受 `spaces_list` 里存在的空间 id、去重、上限 500 条，非法 id ⇒ `bad_args`；
 - 读取时**丢弃已删除空间**（空间没了就自然不在清单里，不需要清理任务也不报错）；
 - ⛔ 不新建配置文件、不落明文到仓库；清单随 `meta.db` 一起在本机（备份/恢复自动带上）。
+- **同步口径（已核实，2026-10-30）**：`meta.sync_state` **不参与空间同步**。证据：`sync.rs` 注释「Only these go to meta: device_id + server_url + token. Per-workspace state (E2EE keys, sync cursor) stays in the space DB own sync_state」——同步只搬空间库（changes/页面），meta 只是本机共享 KV。⇒ **清单是本机的，换机后 AI 遮蔽偏好要重配**；备份/恢复会带上 meta.db，但这不是设备间同步。
 
 ## 2. 对谁生效
 

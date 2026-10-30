@@ -74,6 +74,9 @@ export function McpAccessPane() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [showToken, setShowToken] = useState(false);
+  const [spaces, setSpaces] = useState<Array<{ id: string; name: string }>>([]);
+  const [hidden, setHidden] = useState<string[]>([]);
+  const [hiddenSaving, setHiddenSaving] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -98,6 +101,11 @@ export function McpAccessPane() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // ⭐ AI 不可见空间清单：空间列表（勾选列表用）
+  useEffect(() => {
+    void api.listWorkspaces().then((ws) => setSpaces(ws.map((w) => ({ id: w.id, name: w.name })))).catch(() => setSpaces([]));
+  }, []);
 
   const level: McpStatus["level"] = st?.level ?? "off";
   const granted = st?.granted ?? [];
@@ -128,6 +136,19 @@ export function McpAccessPane() {
       setErr(String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const saveHidden = async () => {
+    setHiddenSaving(true);
+    try {
+      const r = await api.mcpHiddenSpacesSet(hidden);
+      setHidden(r.spaceIds ?? hidden);
+      toast("AI 不可见空间清单已保存", "success");
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setHiddenSaving(false);
     }
   };
 
@@ -304,6 +325,41 @@ export function McpAccessPane() {
         </details>
       </section>
 
+      {/* ⑦ AI 不可见空间清单 */}
+      <section className="set-section">
+        <div className="set-section-title">AI 不可见空间</div>
+        <p className="set-hint">勾选后 AI 既不能读也不能写该空间；你自己不受影响。隐藏 ≠ 加密。</p>
+        <p className="set-hint">清单只保存在本机（不随设备同步）；换机后需要重配。</p>
+        {level === "off" ? (
+          <p className="set-hint">（先选一个外部接入档位才能编辑）</p>
+        ) : null}
+        <ul data-testid="mcp-hidden-spaces">
+          {spaces.length === 0 ? (
+            <li className="set-hint">（未隐藏任何空间）</li>
+          ) : (
+            spaces.map((s) => (
+              <li key={s.id} className="set-row-sub">
+                <label>
+                  <input
+                    type="checkbox"
+                    aria-label={`隐藏空间 ${s.name}`}
+                    checked={hidden.includes(s.id)}
+                    disabled={level === "off" || hiddenSaving}
+                    onChange={(e) => setHidden(e.target.checked ? [...hidden, s.id] : hidden.filter((x) => x !== s.id))}
+                  />{' '}
+                  {s.name}
+                  <code> {s.id}</code>
+                </label>
+              </li>
+            ))
+          )}
+        </ul>
+        <div className="set-actions">
+          <button className="set-btn" data-testid="mcp-hidden-save" disabled={level === "off" || hiddenSaving} onClick={() => void saveHidden()}>
+            保存清单
+          </button>
+        </div>
+      </section>
       {/* ④ 草稿 */}
       <section className="set-section">
         <div className="set-section-title">最近草稿（5 条）</div>

@@ -318,6 +318,23 @@ fn finish_page_chrome_update(c: &Connection, id: &str, now: i64) -> Result<PageD
     Ok(page)
 }
 
+/// ⭐ AI 不可见空间清单：读（默认空；丢弃已删空间）。
+#[tauri::command]
+pub fn mcp_hidden_spaces_get(db: State<Db>) -> Result<serde_json::Value, String> {
+    let c = conn(&db);
+    Ok(serde_json::json!({ "spaceIds": crate::plugins::ai_hidden_spaces_in(&c) }))
+}
+
+/// ⭐ AI 不可见空间清单：写（校验存在/去重/≤500）。
+#[tauri::command]
+pub fn mcp_hidden_spaces_set(
+    db: State<Db>,
+    space_ids: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    let c = conn(&db);
+    let clean = crate::plugins::ai_hidden_spaces_set_in(&c, space_ids)?;
+    Ok(serde_json::json!({ "spaceIds": clean }))
+}
 /// Set a page's cover (CSS gradient) and return the updated page detail.
 #[tauri::command]
 pub fn set_page_cover(db: State<Db>, args: SetCoverArgs) -> Result<PageDetail, String> {
