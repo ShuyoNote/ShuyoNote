@@ -1794,6 +1794,7 @@ export interface CommandMap {
   import_workspace: { args: { srcPath: string; name?: string | null }; result: WorkspaceMeta };
   write_text_file: { args: { path: string; content: string }; result: void };
   write_binary_file: { args: { path: string; data: number[] }; result: void };
+  read_binary_file: { args: { path: string }; result: number[] };
   read_text_file: { args: { path: string }; result: string };
   open_page_window: { args: { pageId: string }; result: void };
   /** 系统标题栏染色（仅 Windows 生效；caption/text 为 #RRGGBB 或 null）。 */

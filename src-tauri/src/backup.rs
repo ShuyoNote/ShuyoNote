@@ -1241,6 +1241,16 @@ pub fn write_binary_file(app: tauri::AppHandle, path: String, data: Vec<u8>) -> 
 ///
 /// 修法照 `import_backup` 的同一条路：**先 `picked_file::materialize` 落成真实临时路径**
 /// （桌面原样返回 ⇒ 桌面行为逐字不变），再读。
+/// ⭐ M2e：读本机文件原始字节（导入 .shuyospace 用；路径来自系统文件选择框）。
+#[tauri::command]
+pub fn read_binary_file(path: String) -> Result<Vec<u8>, String> {
+    let p = std::path::Path::new(&path);
+    if !p.is_file() {
+        return Err(format!("文件不存在：{path}"));
+    }
+    std::fs::read(p).map_err(|e| format!("读取文件失败：{e}"))
+}
+
 #[tauri::command]
 pub fn read_text_file(app: tauri::AppHandle, path: String) -> Result<String, String> {
     let picked = crate::picked_file::materialize(&app, &path)?;

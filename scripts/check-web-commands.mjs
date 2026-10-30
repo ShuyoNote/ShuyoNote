@@ -129,6 +129,8 @@ const DESKTOP_ONLY_COMMANDS = new Map([
   ["mcp_download_grant", "桌面专属：下载超限确认额度（Web 没有本机 MCP 信道/进程内额度表）"],
   // ⭐ M2c：空间包导入落库走 SQLite 事务（Web 无本地空间库/门禁不涉）
   ["space_package_import", "桌面专属：空间包导入写本地 SQLite（Web 无本地空间库）"],
+  // ⭐ M2e：导入空间包时读本机文件字节（Web 无本地文件系统）
+  ["read_binary_file", "桌面专属：读本机文件原始字节（Web 无本地文件系统）"],
   // ⭐ B2-补遗-1：把附件从页面摘除（page_id=NULL）。Web 上附件表走 sql.js、没有"未整理附件"这一层，
   //   且这条命令只服务本机 MCP 写面 ⇒ 桌面专属。
   ["detach_attachment", "桌面专属：把附件从页面摘除（Web 没有本机 MCP 写面；未整理附件这一层只在桌面附件树里）"],
