@@ -97,3 +97,48 @@ describe("App.css 卫生：!important 与重复选择器「只减不增」", () 
     ).toBeLessThanOrEqual(BASELINE_DUP_GROUPS);
   });
 });
+
+describe("S2-c 状态类守卫（静态级联）", () => {
+  const css = readFileSync("src/App.css", "utf8");
+  const lines = css.split("\n");
+  const ruleOf = (sel: string) => {
+    const i = lines.findIndex((l) => l.trim() === sel + " {");
+    expect(i, "找不到规则 " + sel).toBeGreaterThanOrEqual(0);
+    let depth = 0;
+    let body = "";
+    for (let j = i; j < lines.length; j++) {
+      depth += (lines[j].match(/{/g) || []).length;
+      depth -= (lines[j].match(/}/g) || []).length;
+      body += lines[j] + "\n";
+      if (depth === 0) break;
+    }
+    return body;
+  };
+
+  it("① 5 条状态规则不含 !important", () => {
+    for (const sel of [
+      ".board-card.board-card-dragging",
+      ".tree-row.tree-row-selected",
+      ".editor-content > .block-selected.block-selected",
+      ".tag-color-pick.tag-color-clear",
+      ".db-item.db-item-active",
+    ]) {
+      expect(ruleOf(sel), sel).not.toContain("!important");
+    }
+  });
+
+  it("② 基类规则在状态规则之前（同特异性时后者生效）", () => {
+    const idx = (sel: string) => {
+      const i = lines.findIndex((l) => l.trim() === sel + " {");
+      expect(i, "找不到规则 " + sel).toBeGreaterThanOrEqual(0);
+      return i;
+    };
+    for (const [base, state] of [
+      [".board-card", ".board-card.board-card-dragging"],
+      [".tree-row", ".tree-row.tree-row-selected"],
+      [".tag-color-pick", ".tag-color-pick.tag-color-clear"],
+    ]) {
+      expect(idx(base), base + " 应在 " + state + " 之前").toBeLessThan(idx(state));
+    }
+  });
+});
