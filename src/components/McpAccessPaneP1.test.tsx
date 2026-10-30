@@ -19,6 +19,9 @@ const mocks = vi.hoisted(() => ({
   mcpRotateToken: vi.fn(),
   mcpRecentDrafts: vi.fn(),
   mcpRecentAudit: vi.fn(),
+  mcpHiddenSpacesGet: vi.fn(),
+  mcpHiddenSpacesSet: vi.fn(),
+  listWorkspaces: vi.fn(),
 }));
 vi.mock("../lib/api", () => ({ api: mocks }));
 
@@ -63,6 +66,9 @@ beforeEach(() => {
   mocks.mcpRotateToken.mockResolvedValue({ ...STATUS_ON, token: "cafebabe" });
   mocks.mcpRecentDrafts.mockResolvedValue([]);
   mocks.mcpRecentAudit.mockResolvedValue([]);
+  mocks.mcpHiddenSpacesGet.mockResolvedValue({ spaceIds: [] });
+  mocks.mcpHiddenSpacesSet.mockResolvedValue({ spaceIds: [] });
+  mocks.listWorkspaces.mockResolvedValue([]);
   Object.defineProperty(navigator, "clipboard", {
     value: { writeText: vi.fn().mockResolvedValue(undefined) },
     configurable: true,

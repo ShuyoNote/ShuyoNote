@@ -122,6 +122,9 @@ const DESKTOP_ONLY_COMMANDS = new Map([
   // ⭐ P1（2026-10-30）：面板的只读读数（Web 没有本机 MCP 信道/状态表）。
   ["mcp_recent_drafts", "桌面专属：最近草稿（Web 没有本机 MCP 草稿状态表）"],
   ["mcp_recent_audit", "桌面专属：最近审计（Web 没有本机 MCP 审计环）"],
+  // ⭐ AI 不可见空间清单（本机 meta.db；Web 没有本机 MCP 信道）
+  ["mcp_hidden_spaces_get", "桌面专属：AI 不可见空间清单（Web 没有本机 MCP 信道/meta.db 偏好）"],
+  ["mcp_hidden_spaces_set", "桌面专属：AI 不可见空间清单（Web 没有本机 MCP 信道/meta.db 偏好）"],
   // ⭐ B2-补遗-1：把附件从页面摘除（page_id=NULL）。Web 上附件表走 sql.js、没有"未整理附件"这一层，
   //   且这条命令只服务本机 MCP 写面 ⇒ 桌面专属。
   ["detach_attachment", "桌面专属：把附件从页面摘除（Web 没有本机 MCP 写面；未整理附件这一层只在桌面附件树里）"],

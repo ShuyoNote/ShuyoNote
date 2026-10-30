@@ -142,6 +142,9 @@ export const api = {
   mcpRecentDrafts: (limit?: number) => invoke("mcp_recent_drafts", { limit }),
   mcpRecentAudit: (limit?: number, onlyWrites?: boolean) =>
     invoke("mcp_recent_audit", { limit, onlyWrites }),
+  // ⭐ AI 不可见空间清单
+  mcpHiddenSpacesGet: () => invoke("mcp_hidden_spaces_get"),
+  mcpHiddenSpacesSet: (spaceIds: string[]) => invoke("mcp_hidden_spaces_set", { spaceIds }),
   // ⭐ B3（2026-10-29）：Rust→前端桥的两条（桌面专属 —— Web 没有本机 MCP 通道，也没有这条桥）
   mcpFrontendToolReady: () => invoke("mcp_frontend_tool_ready"),
   mcpFrontendToolRespond: (args: { requestId: string; name: string; data: number[]; error?: string | null }) =>

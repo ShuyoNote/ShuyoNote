@@ -1777,6 +1777,84 @@ fn with_target_space<T>(
     with_conn_for_space(Some(space_id), f)
 }
 
+/// ⭐ AI 不可见空间清单：meta.sync_state 一行 JSON（默认空 = 不隐藏任何空间）。
+/// 已核实**不参与空间同步**（sync.rs：meta 只放 device_id/server_url/token）⇒ 本机偏好。
+pub(crate) fn ai_hidden_spaces_in(c: &rusqlite::Connection) -> Vec<String> {
+    let raw: Option<String> = c
+        .query_row(
+            "SELECT value FROM meta.sync_state WHERE key = 'ai_hidden_spaces'",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    let Some(raw) = raw else { return Vec::new() };
+    let mut ids: Vec<String> = serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default();
+    // 读时丢弃已删/不存在的空间（空间没了就自然不在清单里）
+    ids.retain(|id| {
+        c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM meta.workspaces WHERE id = ?1 AND deleted_at IS NULL)",
+            params![id],
+            |r| r.get::<_, bool>(0),
+        )
+        .unwrap_or(false)
+    });
+    ids
+}
+
+/// 遮蔽总开关：`SHUYONOTE_AI_HIDDEN_SPACES=off` ⇒ 跳过判断（清单保留）。
+pub(crate) fn ai_hidden_spaces_enabled() -> bool {
+    !matches!(
+        std::env::var("SHUYONOTE_AI_HIDDEN_SPACES")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "off" | "0" | "false" | "no"
+    )
+}
+
+fn hidden_spaces_now() -> Vec<String> {
+    if !ai_hidden_spaces_enabled() { return Vec::new(); }
+    with_read_conn(|c| Ok(ai_hidden_spaces_in(c))).unwrap_or_default()
+}
+
+pub(crate) fn ai_hidden_refusal(space: &str) -> String {
+    format!("permission_denied: 空间「{space}」在 AI 不可见清单里（AI 不可见）")
+}
+
+/// 写清单（commands 层复用）：校验存在/去重/≤500。
+pub(crate) fn ai_hidden_spaces_set_in(
+    c: &rusqlite::Connection,
+    space_ids: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let mut clean: Vec<String> = Vec::new();
+    for raw in space_ids {
+        let id = raw.trim().to_string();
+        if id.is_empty() { continue; }
+        let exists: bool = c
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM meta.workspaces WHERE id = ?1 AND deleted_at IS NULL)",
+                params![id],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        if !exists {
+            return Err(format!("bad_args: 空间「{id}」不存在（先用 spaces.list 看 id）"));
+        }
+        if !clean.contains(&id) { clean.push(id); }
+    }
+    if clean.len() > 500 {
+        return Err("bad_args: AI 不可见空间最多 500 个".to_string());
+    }
+    let json = serde_json::to_string(&clean).map_err(|e| e.to_string())?;
+    c.execute(
+        "INSERT INTO meta.sync_state (key, value) VALUES ('ai_hidden_spaces', ?1)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![json],
+    )
+    .map_err(|e| format!("db_error: {e}"))?;
+    Ok(clean)
+}
 fn has_scope(id: &str) -> bool {
     // ⭐ B1a（2026-10-29）修：两条路的授权**来源不同** ——
     //   外部（MCP）在 `EXTERNAL_CALLER.granted`（令牌文件里那一行），插件在 `RunState.permissions`。
@@ -5371,6 +5449,16 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
     if let Some(key) = idem_key.as_ref() {
         if let Some(hit) = idempotent_lookup(key) {
             return Ok(hit);
+        }
+    }
+    // ⭐ AI 不可见空间清单：唯一拦截点（读/写/跨空间统一；只对 ai:true 能力）
+    if cap.ai && ai_hidden_spaces_enabled() {
+        let target = arg_opt_str("spaceId")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| target_space_id(None));
+        if method != "spaces.list" && hidden_spaces_now().iter().any(|s| s == &target) {
+            return Err(ai_hidden_refusal(&target));
         }
     }
     // ⭐ 跨空间写 v1 守卫（单一处）：
@@ -15820,6 +15908,97 @@ register({ id: "s.run", title: "结构化", run: function () {
         }).expect_err("开关关着必须拒");
         assert!(e.contains("关闭"), "{e}");
         std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ AI 不可见空间清单：默认空不改变行为；隐藏空间后读写拒、spaces.list 过滤、当前空间隐藏拒、清空恢复。
+    #[test]
+    fn ai_hidden_spaces_mask_only_ai_surface() {
+        let f = b1c_fixture("hidden");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "hidden-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,'二','#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+            m.execute("INSERT OR REPLACE INTO sync_state (key, value) VALUES ('ai_hidden_spaces','[]')", []).unwrap();
+        }
+        let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+        c.execute(
+            "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+             VALUES ('p1', ?1, NULL, '二页', '{}', 'x', 'page', 0, 10, 10)",
+            params![second],
+        )
+        .unwrap();
+        drop(c);
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        let read = |sid: &str| with_external_caller("hidden", &g, || {
+            dispatch_capability("pages.get", &format!(r#"{{"id":"p1","spaceId":"{sid}"}}"#))
+        });
+        // 默认空 ⇒ 与不带清单一致（能读）
+        assert!(read(second).is_ok(), "默认空清单不应影响读");
+        let hide = |ids: &[&str]| {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            let json = serde_json::to_string(ids).unwrap();
+            m.execute("INSERT OR REPLACE INTO sync_state (key, value) VALUES ('ai_hidden_spaces', ?1)", params![json]).unwrap();
+        };
+        hide(&[second]);
+        let e = read(second).expect_err("隐藏空间必须拒");
+        assert!(e.contains("AI 不可见") && e.contains("permission_denied"), "{e}");
+        for method in ["pages.list", "blocks.list"] {
+            let e = with_external_caller("hidden", &g, || {
+                dispatch_capability(method, &format!(r#"{{"pageId":"p1","spaceId":"{second}"}}"#))
+            })
+            .expect_err("读必须拒");
+            assert!(e.contains("AI 不可见"), "{method}: {e}");
+        }
+        let e = with_external_caller("hidden", &g, || {
+            dispatch_capability("blocks.patch", &format!(r#"{{"pageId":"p1","blockId":"b1","markdown":"x","spaceId":"{second}"}}"#))
+        })
+        .expect_err("写必须拒");
+        assert!(e.contains("AI 不可见"), "{e}");
+        let spaces = with_external_caller("hidden", &g, || dispatch_capability("spaces.list", "{}")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&spaces).unwrap();
+        assert!(
+            !v["spaces"].as_array().unwrap().iter().any(|s| s["spaceId"] == second),
+            "spaces.list 不能含隐藏空间"
+        );
+        // 当前空间隐藏 ⇒ 不带 spaceId 也拒
+        hide(&[second, &f.space]);
+        let e = with_external_caller("hidden", &g, || dispatch_capability("pages.list", "{}"))
+            .expect_err("当前空间隐藏必须拒");
+        assert!(e.contains("AI 不可见"), "{e}");
+        let e = with_external_caller("hidden", &g, || dispatch_capability("pages.create", r#"{"title":"x"}"#))
+            .expect_err("当前空间隐藏写必须拒");
+        assert!(e.contains("AI 不可见"), "{e}");
+        // 用户侧不受影响：meta 里空间行仍存在，用户路径（非 dispatch）可读
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            let n: i64 = m.query_row("SELECT COUNT(*) FROM workspaces WHERE id = ?1", params![second], |r| r.get(0)).unwrap();
+            assert_eq!(n, 1, "用户侧空间仍在");
+        }
+        // 清空 ⇒ 恢复
+        hide(&[]);
+        assert!(read(second).is_ok(), "清空清单必须立即恢复");
+        // env off ⇒ 跳过
+        hide(&[second]);
+        std::env::set_var("SHUYONOTE_AI_HIDDEN_SPACES", "off");
+        assert!(read(second).is_ok(), "env off 应跳过遮蔽");
+        std::env::remove_var("SHUYONOTE_AI_HIDDEN_SPACES");
+        // 写清单校验：非法 id / 超 500
+        {
+            let m = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            let e = crate::plugins::ai_hidden_spaces_set_in(&m, vec!["nope".to_string()]).unwrap_err();
+            assert!(e.contains("bad_args"), "{e}");
+            let many: Vec<String> = (0..501).map(|i| format!("s{i}")).collect();
+            let e = crate::plugins::ai_hidden_spaces_set_in(&m, many).unwrap_err();
+            assert!(e.contains("bad_args"), "{e}");
+        }
         b1c_cleanup(&f);
     }
 }

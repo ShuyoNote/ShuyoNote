@@ -1120,6 +1120,8 @@ export interface CommandMap {
   mcp_draft_state: { args: { draftId: string; state: string }; result: void };
   mcp_recent_drafts: { args: { limit?: number }; result: unknown[] };
   mcp_recent_audit: { args: { limit?: number; onlyWrites?: boolean }; result: unknown[] };
+  mcp_hidden_spaces_get: { args: undefined; result: { spaceIds: string[] } };
+  mcp_hidden_spaces_set: { args: { spaceIds: string[] }; result: { spaceIds: string[] } };
   // ⭐ B3（2026-10-29）：Rust→前端桥 —— 就绪信号 ＋ 结果回执（桌面专属：Web 没有本机 MCP 通道）
   mcp_frontend_tool_ready: { args: undefined; result: void };
   mcp_frontend_tool_respond: {

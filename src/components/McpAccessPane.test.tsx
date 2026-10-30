@@ -31,6 +31,9 @@ vi.mock("../lib/api", () => ({
     mcpRotateToken: mocks.mcpRotateToken,
     mcpRecentDrafts: async () => [],
     mcpRecentAudit: async () => [],
+    mcpHiddenSpacesGet: async () => ({ spaceIds: [] }),
+    mcpHiddenSpacesSet: async () => ({ spaceIds: [] }),
+    listWorkspaces: async () => [],
   },
 }));
 
