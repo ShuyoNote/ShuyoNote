@@ -7,7 +7,7 @@ import { platform } from "../platform";
 import { importDocumentPackage } from "../docPackageTransfer";
 import { uploadAttachmentFromPicker } from "../attachmentUpload";
 import { appendBlocksToJson, pageJsonFromText } from "./lexical";
-import { appendFence, fenceDoc, stampTopLevelBlockIds, templateContentFields } from "../docContent";
+import { appendFence, fenceDoc, stampTopLevelBlockIds, templateContentFields, emptyPageContent } from "../docContent";
 import { markdownToPageContent } from "../mdPreview";
 import { importMarkdownGuard } from "../docContent";
 import { contentTextOf } from "./lexicalContent";
@@ -406,6 +406,48 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (!attId) return { ok: false, message: "detach_attachment 需要 attId" };
       await api.detachAttachment(attId);
       return { ok: true, message: "已把附件从页面摘除（文件保留，变为未整理）" };
+    }
+
+    // ⭐ B2-补遗-2（2026-10-29）：数据库行写入/删除 —— 行是数据库页的**子页面**（title + page_props），
+    //   所以落库复用**既有命令**（createPage / setPageProp / deletePage），零新写库入口。
+    case "db_rows_write": {
+      const pageId = String(p.pageId ?? "");
+      const rows = Array.isArray(p.rows) ? (p.rows as Array<Record<string, unknown>>) : [];
+      if (!pageId || rows.length === 0) return { ok: false, message: "db_rows_write 参数不完整" };
+      const rp = await revProblem(pageId, p.expectedRev);
+      if (rp) return { ok: false, message: rp };
+      let changed = 0;
+      for (const row of rows) {
+        const rowId = typeof row.rowId === "string" && row.rowId ? row.rowId : "";
+        let target = rowId;
+        if (!target) {
+          const title = String(row.title ?? "").trim();
+          const created = await api.createPage({ parent_id: pageId, title, ...emptyPageContent() });
+          target = created.id;
+        } else if (typeof row.title === "string" && row.title.trim()) {
+          await api.savePage({ id: target, title: row.title.trim() });
+        }
+        const props = Array.isArray(row.props) ? (row.props as Array<Record<string, unknown>>) : [];
+        for (const prop of props) {
+          await api.setPageProp({
+            page_id: target,
+            attr_id: String(prop.attrId ?? ""),
+            value: String(prop.value ?? ""),
+          });
+        }
+        changed += 1;
+      }
+      return { ok: true, message: `已写入数据库行（${changed} 行）` };
+    }
+
+    case "db_rows_delete": {
+      const pageId = String(p.pageId ?? "");
+      const rowIds = Array.isArray(p.rowIds) ? (p.rowIds as unknown[]).map((x) => String(x)) : [];
+      if (!pageId || rowIds.length === 0) return { ok: false, message: "db_rows_delete 参数不完整" };
+      const rp = await revProblem(pageId, p.expectedRev);
+      if (rp) return { ok: false, message: rp };
+      for (const id of rowIds) await api.deletePage(id);
+      return { ok: true, message: `已删除数据库行（${rowIds.length} 行）` };
     }
 
     default:

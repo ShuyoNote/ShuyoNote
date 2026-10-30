@@ -124,6 +124,40 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
     isWrite: false,
   },
   {
+    id: "db.rows_write",
+    description: "写数据库行（**只支持简单表格的原始列**：text/number/date/select/tag；⛔ 关系/公式/汇总列）。参数: pageId, rows, expectedRev, spaceId, dryRun, clientRequestId。校验：列必须来自 db.schema；number 列必须数字、date 列形如 YYYY-MM-DD、select 必须在选项里；新增行必须有 title；未知列/禁用列 ⇒ `bad_args` 点名第几行第几列。写操作 ⇒ 草稿确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "pageId": { type: "string" },
+      "rows": { type: "string" },
+      "expectedRev": { type: "string" },
+      "spaceId": { type: "string" },
+      "dryRun": { type: "boolean" },
+      "clientRequestId": { type: "string" },
+      },
+      required: ["pageId"],
+    },
+    isWrite: true,
+  },
+  {
+    id: "db.rows_delete",
+    description: "删除数据库行（软删，走页面删除那条路）。参数: pageId, rowIds, expectedRev, spaceId, dryRun, clientRequestId。行不存在/不属于该表 ⇒ `not_found` 并点名（⛔ 不静默跳过）。写操作 ⇒ 草稿确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "pageId": { type: "string" },
+      "rowIds": { type: "string" },
+      "expectedRev": { type: "string" },
+      "spaceId": { type: "string" },
+      "dryRun": { type: "boolean" },
+      "clientRequestId": { type: "string" },
+      },
+      required: ["pageId"],
+    },
+    isWrite: true,
+  },
+  {
     id: "versions.list",
     description: "列出某个页面的历史版本（最多 200 条）：返回 [{versionId, at, title}]，按时间倒序；不含正文，读正文请用 version.get。参数: pageId (必填), limit (可选, 默认 50, 上限 200)。",
     argsSchema: {

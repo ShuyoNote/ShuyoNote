@@ -1288,6 +1288,31 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     if (dryRun) return { ok: true, dryRun: true, would: { kind: "detach_attachment", attId }, clientRequestId, spaceId };
     return draft(`detach_attachment:${attId}`, `把附件从页面摘除（保留文件）`, { kind: "detach_attachment", attId, clientRequestId, spaceId });
   },
+  // ⭐ B2-补遗-2（2026-10-29）：数据库行写入/删除（只简单表格原始列；行=子页面）
+  "db.rows_write": async (args) => {
+    const pageId = String(args.pageId ?? "").trim();
+    const rows = Array.isArray(args.rows) ? args.rows : [];
+    const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!pageId || rows.length === 0) return { ok: false, error: "db.rows_write 需要 pageId 与非空 rows" };
+    if (dryRun) return { ok: true, dryRun: true, applied: false, would: { kind: "db_rows_write", pageId, rows, expectedRev }, clientRequestId, spaceId };
+    return draft(`db_rows_write:${pageId}`, `数据库行写入（${rows.length} 行草稿）`, { kind: "db_rows_write", pageId, rows, expectedRev, clientRequestId, spaceId });
+  },
+
+  "db.rows_delete": async (args) => {
+    const pageId = String(args.pageId ?? "").trim();
+    const rowIds = Array.isArray(args.rowIds) ? args.rowIds : [];
+    const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!pageId || rowIds.length === 0) return { ok: false, error: "db.rows_delete 需要 pageId 与非空 rowIds" };
+    if (dryRun) return { ok: true, dryRun: true, applied: false, would: { kind: "db_rows_delete", pageId, rowIds, expectedRev }, clientRequestId, spaceId };
+    return draft(`db_rows_delete:${pageId}`, `删除数据库行（${rowIds.length} 行草稿）`, { kind: "db_rows_delete", pageId, rowIds, expectedRev, clientRequestId, spaceId });
+  },
+
 
 
 

@@ -180,6 +180,14 @@ export interface PluginApi {
    * 返回：{pageId, spaceId, total, returned, rows:[{id, values:{<columnId>: <原始值>}}], truncated, note}：total 是**过滤后**的总行数（不受 limit 影响）；values **只给原始值**（原始字符串），⛔ **不重算公式/汇总** ⇒ 可能与界面里显示的计算值不同（note 里有这句）；truncated=true 表示本次没给全（还有更多行，或响应体撞了 200 KB 上限）
    */
     rows(pageId: string, viewId?: string, where?: { field: string; op: string; value?: string | number | boolean | (string | number | boolean)[] }[], limit?: number, offset?: number, spaceId?: string): { pageId: string; spaceId: string; total: number; returned: number; rows: { id: string; values: Record<string, string> }[]; truncated: boolean; note: string };
+  /** 数据库行写入（草稿确认）（权限 `write:pages`；1.11.0 起）
+   * 返回：{drafted,applied:false,changed}——**不代表已写入**
+   */
+    rows_write(pageId: string, rows?: unknown[], expectedRev?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; applied: false; changed: string[] };
+  /** 数据库行删除（草稿确认）（权限 `write:pages`；1.11.0 起）
+   * 返回：{drafted,applied:false,changed}——**不代表已删除**
+   */
+    rows_delete(pageId: string, rowIds?: unknown[], expectedRev?: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; applied: false; changed: string[] };
   };
   versions: {
   /** 列出页面历史版本（权限 `read:versions`；1.5.0 起）
@@ -411,4 +419,4 @@ export interface PluginApi {
   };
 }
 
-export declare const SDK_API_VERSION: "1.10.0";
+export declare const SDK_API_VERSION: "1.11.0";

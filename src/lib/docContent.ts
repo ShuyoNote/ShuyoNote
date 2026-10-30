@@ -812,6 +812,11 @@ export function templateContentFields(tpl: { content_json: string; content_text?
   return { content_json: tpl.content_json, content_text: tpl.content_text ?? "" };
 }
 
+/** 空白页的正文两键（新建"数据库行页面"时用；存储键名只在这一层）。 */
+export function emptyPageContent(): { content_json: string; content_text: string } {
+  return { content_json: '{"root":{"type":"root","children":[]}}', content_text: "" };
+}
+
 export function docJsonOfPage(page: { content_json?: string | null }): string {
   return page.content_json || "{}";
 }

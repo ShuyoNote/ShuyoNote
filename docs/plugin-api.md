@@ -1,4 +1,4 @@
-# 插件 API（v1.10.0）
+# 插件 API（v1.11.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.10.0",
+  "apiVersion": "1.11.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.10.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.11.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -112,6 +112,8 @@ register({
 | `pages.tree` | `api.pages.tree(spaceId, limit)` | `read:pages` | `current-space` | — | object | 1.3.0 |
 | `db.schema` | `api.db.schema(pageId, spaceId)` | `read:pages` | `current-space` | — | object | 1.4.0 |
 | `db.rows` | `api.db.rows(pageId, viewId, where, limit, offset, spaceId)` | `read:pages` | `current-space` | — | object | 1.4.0 |
+| `db.rows_write` | `api.db.rows_write(pageId, rows, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.11.0 |
+| `db.rows_delete` | `api.db.rows_delete(pageId, rowIds, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.11.0 |
 | `versions.list` | `api.versions.list(pageId, limit)` | `read:versions` | `current-space` | — | array | 1.5.0 |
 | `version.get` | `api.version.get(pageId, versionId, offset, limit, includeAnchors)` | `read:versions` | `current-space` | — | object | 1.5.0 |
 | `trash.list` | `api.trash.list(spaceId, limit)` | `read:trash` | `current-space` | — | array | 1.5.0 |
@@ -249,6 +251,36 @@ register({
   - `limit`: `number`（可选），默认 `100` —— 本页最多返回多少行（默认 100，上限 500）；分页在宿主侧执行
   - `offset`: `number`（可选），默认 `0` —— 跳过多少行（默认 0）；与 limit 一起翻页
   - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
+
+### `db.rows_write` — 数据库行写入（草稿确认）
+
+- 调用：`api.db.rows_write(pageId, rows, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会新建/修改表格行（页面）→ 先给用户看草稿并确认
+- 返回：{drafted,applied:false,changed}——**不代表已写入**
+- 参数：
+  - `pageId`: `string` —— 数据库页 id
+  - `rows`: `array`（可选） —— 数组（**调用时必须提供**；缺失/空 ⇒ `bad_args`）——行数组：每行 `{rowId?（有=改，无=增）, title?（新增行必填）, values:{<columnId|列名>: 原始值}}`
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `db.rows_delete` — 数据库行删除（草稿确认）
+
+- 调用：`api.db.rows_delete(pageId, rowIds, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会删除表格行（页面）→ 先给用户看草稿并确认
+- 返回：{drafted,applied:false,changed}——**不代表已删除**
+- 参数：
+  - `pageId`: `string` —— 数据库页 id
+  - `rowIds`: `array`（可选） —— 数组（**调用时必须提供**；缺失/空 ⇒ `bad_args`）——要删的行 id 列表（必须是该数据库页的子行）
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
 
 ### `versions.list` — 列出页面历史版本
 
@@ -1020,7 +1052,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.10.0",
+  "runtime": "declarative", "apiVersion": "1.11.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },

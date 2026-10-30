@@ -681,6 +681,8 @@ mod tests {
             "files.upload_to_page",
             "import.docpackage",
             "files.detach",
+            "db.rows_write",
+            "db.rows_delete",
         ];
         for method in methods {
             let cap = crate::capabilities_gen::lookup(method)
@@ -865,7 +867,7 @@ mod tools_list_tests {
     /// （不是删掉旧测试：它挡的"写能力悄悄多出来"正是要保留的语义，只是从"一条都没有"升级成白名单。）
     #[test]
     fn b2_write_surface_is_exactly_the_expected_whitelist() {
-        const EXPECTED_WRITE: [&str; 24] = [
+        const EXPECTED_WRITE: [&str; 26] = [
             "pages_create",
             "pages_update",
             "pages_importMarkdown",
@@ -890,6 +892,8 @@ mod tools_list_tests {
             "files_upload_to_page",
             "import_docpackage",
             "files_detach",
+            "db_rows_write",
+            "db_rows_delete",
         ];
         let off = names(&tools_list_json(false));
         let on = names(&tools_list_json(true));

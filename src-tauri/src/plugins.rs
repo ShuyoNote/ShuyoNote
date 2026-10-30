@@ -4072,6 +4072,244 @@ fn cap_files_detach(
     )
 }
 
+// ── B2-补遗-2（2026-10-29）：db.rows_write / db.rows_delete ──
+//
+// **事实核对**（与矩阵假设不同，按代码实况实现）：数据库的"行"是**数据库页的子页面**
+// （`pages.parent_id = 数据库页` ＋ `page_props`），**不是正文 JSON 里的 db 块** ——
+// `database.rs::query_db_rows` 就是从 `pages` 装配出来的。
+// ⇒ apply 侧用**既有**命令落库（`createPage` / `setPageProp` / `deletePage`），**零新写库入口**；
+//   Rust 这一侧只做**列/类型/必填校验**并产出**规范化后的草稿值**。
+
+/// 允许写的列类型（只支持简单表格的原始列）。
+const DB_WRITABLE_TYPES: &[&str] = &["text", "number", "date", "select", "tag"];
+
+fn db_col_of<'a>(
+    columns: &'a [crate::models::AttrDef],
+    key: &str,
+) -> Option<&'a crate::models::AttrDef> {
+    columns
+        .iter()
+        .find(|c| c.id == key)
+        .or_else(|| columns.iter().find(|c| c.name == key))
+}
+
+/// 规范化一个值；失败 ⇒ 说清"第几行第几列、为什么"。
+fn db_normalize_value(
+    row_no: usize,
+    col: &crate::models::AttrDef,
+    raw: &serde_json::Value,
+) -> Result<String, String> {
+    let label = format!("第 {} 行的列「{}」", row_no, col.name);
+    match col.attr_type.as_str() {
+        "formula" => Err(format!("{label} 是**公式列** —— 本工具只写原始列（⛔ 不重算公式）")),
+        "rollup" => Err(format!("{label} 是**汇总列** —— 本工具只写原始列（⛔ 不重算汇总）")),
+        "ref" => Err(format!("{label} 是**关系列** —— 本工具只支持简单表格原始列")),
+        t if !DB_WRITABLE_TYPES.contains(&t) => {
+            Err(format!("{label} 的类型「{t}」不在支持范围（只支持 text/number/date/select/tag）"))
+        }
+        "number" => {
+            let n = raw
+                .as_f64()
+                .or_else(|| raw.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+                .ok_or_else(|| format!("{label} 是数字列，值 {raw} 不是数字"))?;
+            if !n.is_finite() {
+                return Err(format!("{label} 是数字列，值必须是有限数"));
+            }
+            // 与界面一致：数字列里存的是**文本**形态
+            Ok(if n.fract() == 0.0 {
+                format!("{}", n as i64)
+            } else {
+                format!("{n}")
+            })
+        }
+        "date" => {
+            let s = raw.as_str().unwrap_or("");
+            let b = s.as_bytes();
+            let ok = b.len() >= 10
+                && b[4] == b'-'
+                && b[7] == b'-'
+                && b[..4].iter().all(|c| c.is_ascii_digit())
+                && b[5..7].iter().all(|c| c.is_ascii_digit())
+                && b[8..10].iter().all(|c| c.is_ascii_digit());
+            if !ok {
+                return Err(format!("{label} 是日期列，值必须是 YYYY-MM-DD 形态（收到 {raw}）"));
+            }
+            Ok(s.to_string())
+        }
+        "select" => {
+            let s = raw.as_str().unwrap_or("");
+            if !col.options.iter().any(|o| o == s) {
+                return Err(format!(
+                    "{label} 是单选列，值「{s}」不在选项里（可选：{}）",
+                    col.options.join(" / ")
+                ));
+            }
+            Ok(s.to_string())
+        }
+        _ => Ok(match raw {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        }),
+    }
+}
+
+fn cap_db_rows_write(
+    page_id: &str,
+    rows: Option<&serde_json::Value>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let pid = page_id.trim();
+    if pid.is_empty() {
+        return Err("bad_args: 需要 pageId（数据库页）".to_string());
+    }
+    let list = rows
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "bad_args: rows 必须是数组".to_string())?;
+    if list.is_empty() {
+        return Err("bad_args: rows 不能为空".to_string());
+    }
+    let (columns, normalized) = with_read_conn(|c| {
+        crate::database::require_db_page(c, pid)?;
+        let columns = crate::database::db_columns(c, pid)?;
+        let mut out: Vec<serde_json::Value> = Vec::new();
+        for (i, row) in list.iter().enumerate() {
+            let no = i + 1;
+            let obj = row
+                .as_object()
+                .ok_or_else(|| format!("bad_args: 第 {no} 行不是对象"))?;
+            let row_id = obj.get("rowId").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty());
+            let title = obj.get("title").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty());
+            if let Some(rid) = row_id {
+                let exists: bool = c
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM pages WHERE id = ?1 AND parent_id = ?2 AND deleted_at IS NULL)",
+                        params![rid, pid],
+                        |r| r.get(0),
+                    )
+                    .map_err(|e| format!("db_error: {e}"))?;
+                if !exists {
+                    return Err(format!("not_found: 第 {no} 行的 rowId「{rid}」不是该数据库页的行"));
+                }
+            } else if title.is_none() {
+                return Err(format!("bad_args: 第 {no} 行是新增行 ⇒ 必须有 title"));
+            }
+            let values = obj
+                .get("values")
+                .and_then(|v| v.as_object())
+                .ok_or_else(|| format!("bad_args: 第 {no} 行缺少 values 对象"))?;
+            let mut props: Vec<serde_json::Value> = Vec::new();
+            for (key, raw) in values {
+                let col = db_col_of(&columns, key)
+                    .ok_or_else(|| format!("bad_args: 第 {no} 行：未知列「{key}」（可用 db.schema 查列 id/名字）"))?;
+                let value = db_normalize_value(no, col, raw)?;
+                props.push(serde_json::json!({ "attrId": col.id, "value": value }));
+            }
+            let mut row_out = serde_json::json!({ "props": props });
+            if let Some(rid) = row_id {
+                row_out["rowId"] = serde_json::json!(rid);
+            }
+            if let Some(t) = title {
+                row_out["title"] = serde_json::json!(t);
+            }
+            out.push(row_out);
+        }
+        Ok((columns.len(), out))
+    })?;
+    let _ = columns;
+    let rev = blocks_rev_guard(pid, expected_rev)?;
+    let changed: Vec<String> = normalized
+        .iter()
+        .filter_map(|r| r.get("rowId").and_then(|v| v.as_str()).map(str::to_string))
+        .collect();
+    let new_rows = normalized.len() - changed.len();
+    let payload = serde_json::json!({
+        "kind": "db_rows_write",
+        "pageId": pid,
+        "rows": normalized,
+        "expectedRev": rev,
+        "spaceId": space,
+    });
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true, "applied": false, "rev": rev,
+            "changed": changed, "newRows": new_rows, "would": payload,
+            "summary": "数据库行写入（演练）",
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
+    let summary = format!("数据库行写入（改 {} 行 / 增 {} 行）", changed.len(), new_rows);
+    push_draft(format!("db_rows_write:{pid}"), summary.clone(), payload);
+    Ok(serde_json::json!({
+        "drafted": true, "applied": false, "awaiting_confirm": true,
+        "rev": rev, "changed": changed, "newRows": new_rows,
+        "spaceId": space, "summary": summary,
+        "note": "草稿已生成，用户确认后才落库（applied 仍为 false）",
+    }))
+}
+
+fn cap_db_rows_delete(
+    page_id: &str,
+    row_ids: Option<&serde_json::Value>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let pid = page_id.trim();
+    if pid.is_empty() {
+        return Err("bad_args: 需要 pageId（数据库页）".to_string());
+    }
+    let ids: Vec<String> = row_ids
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "bad_args: rowIds 必须是数组".to_string())?
+        .iter()
+        .filter_map(|v| v.as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+        .collect();
+    if ids.is_empty() {
+        return Err("bad_args: rowIds 不能为空".to_string());
+    }
+    with_read_conn(|c| {
+        crate::database::require_db_page(c, pid)?;
+        for rid in &ids {
+            let exists: bool = c
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pages WHERE id = ?1 AND parent_id = ?2 AND deleted_at IS NULL)",
+                    params![rid, pid],
+                    |r| r.get(0),
+                )
+                .map_err(|e| format!("db_error: {e}"))?;
+            if !exists {
+                return Err(format!("not_found: 行「{rid}」不是该数据库页的行（已删或不存在）"));
+            }
+        }
+        Ok(())
+    })?;
+    let rev = blocks_rev_guard(pid, expected_rev)?;
+    let payload = serde_json::json!({
+        "kind": "db_rows_delete", "pageId": pid, "rowIds": ids,
+        "expectedRev": rev, "spaceId": space,
+    });
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true, "applied": false, "rev": rev, "changed": ids,
+            "would": payload, "summary": "数据库行删除（演练）",
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
+    let summary = format!("删除数据库行（{} 行）", ids.len());
+    push_draft(format!("db_rows_delete:{pid}"), summary.clone(), payload);
+    Ok(serde_json::json!({
+        "drafted": true, "applied": false, "awaiting_confirm": true,
+        "rev": rev, "changed": ids, "spaceId": space, "summary": summary,
+        "note": "草稿已生成，用户确认后才落库（applied 仍为 false）",
+    }))
+}
+
 fn cap_properties_list(space_id: Option<&str>) -> CapResult {
     with_conn_for_space(space_id, |c| {
         let mut stmt = c
@@ -4935,6 +5173,22 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         ),
         "files.detach" => cap_files_detach(
             &arg_str("attId")?,
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "db.rows_write" => cap_db_rows_write(
+            &arg_str("pageId")?,
+            args.get("rows"),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "db.rows_delete" => cap_db_rows_delete(
+            &arg_str("pageId")?,
+            args.get("rowIds"),
+            arg_opt_str("expectedRev").as_deref(),
             arg_opt_str("spaceId").as_deref(),
             arg_bool(args.get("dryRun"), false),
             arg_opt_str("clientRequestId").as_deref(),

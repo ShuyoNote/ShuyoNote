@@ -1,6 +1,90 @@
 [
   {
     "kind": "write",
+    "name": "db_rows_write",
+    "capabilityId": "db.rows_write",
+    "description": "写数据库行（只支持**简单表格原始列**；⛔ 关系/公式/汇总列）。参数: pageId, rows=[{rowId?（有=改，无=增）, title?（新增必填）, values:{列id或列名: 原始值}}], expectedRev。未知列/禁用列/类型不符/新增缺 title ⇒ `bad_args` 点名第几行第几列；写后可用 db_rows 读回。写操作 ⇒ 只产草稿等确认（`applied:false`）。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pageId": {
+          "type": "string",
+          "description": "数据库页 id"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "数组（**调用时必须提供**；缺失/空 ⇒ `bad_args`）——行数组：每行 `{rowId?（有=改，无=增）, title?（新增行必填）, values:{<columnId|列名>: 原始值}}`"
+        },
+        "expectedRev": {
+          "type": "string",
+          "description": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产草稿、不落库、不记审计"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      },
+      "required": [
+        "pageId"
+      ]
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "db_rows_delete",
+    "capabilityId": "db.rows_delete",
+    "description": "删除数据库行。参数: pageId, rowIds（必须是该数据库页的子行）。行不存在/不属于该表 ⇒ `not_found` 点名（⛔ 不静默跳过）；写操作 ⇒ 只产草稿等确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pageId": {
+          "type": "string",
+          "description": "数据库页 id"
+        },
+        "rowIds": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "数组（**调用时必须提供**；缺失/空 ⇒ `bad_args`）——要删的行 id 列表（必须是该数据库页的子行）"
+        },
+        "expectedRev": {
+          "type": "string",
+          "description": "乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产草稿、不落库、不记审计"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同 id 重复调用只落一次、只审一条"
+        }
+      },
+      "required": [
+        "pageId"
+      ]
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
     "name": "pages_create",
     "capabilityId": "pages.create",
     "description": "新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。",

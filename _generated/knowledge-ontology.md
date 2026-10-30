@@ -6,10 +6,10 @@
 | 源 | 值 |
 |---|---|
 | 注册表文件 | `capabilities/capabilities.json` |
-| 注册表 sha256 | `d265720d8828f2c6416d674db1a9745cd84db6f1524cad4a6069027b2cd3e248` |
+| 注册表 sha256 | `6f2f59f1994ec6fe4f7b4dd0201ac5d14d57aead921ed4eb6d5c2761aa73f38f` |
 | `registryVersion` | 1 |
-| `apiVersion` | 1.10.0 |
-| 能力条数 | **60**（按 `kind`：host 2 / read 29 / write 29） |
+| `apiVersion` | 1.11.0 |
+| 能力条数 | **62**（按 `kind`：host 2 / read 29 / write 31） |
 | 生成命令 | `node scripts/gen-knowledge-ontology.mjs` |
 
 | id | kind | scope | permission | ai | mediate | desc |
@@ -23,6 +23,8 @@
 | blocks.patch | write | current-space | write:pages | ✓ | ✓ | 整块替换：把某个顶层块换成新的 Markdown/纯文本，**块 id 保持不变**。参数: blockId (必填), markdown 或 text (二选一), expectedRev (可选但强烈建议), spaceId (可选;本版只当前空间), dryRun, clientRequestId。写操作 ⇒ 返回草稿等用户确认。 |
 | coverage.report | read | current-space | read:files | ✓ |  | 检查**整个库**的索引覆盖：哪些内容真的进了检索面、哪些没进、哪些**进了但没抽全**。参数: spaceId (可选；只接受当前空间 —— 报告目前是当前空间的派生层口径，跨空间未接，给别的空间 ⇒ bad_args)。返回 {ok, summary, report}：`summary` 是一行中文摘要（可直接展示）；`report.attachments` 给出 已索引/没抽全/未索引 的计数与分类，`report.gaps` 给出**明细**（每条含 `reason` 与一句「该怎么办」）。⚠️ 三个必须分清的口径：① **没抽到 ≠ 文件里没有**（`no_content` 可能是空文件/加密/纯图）；② **页面正文空 ≠ 这页内容没被索引**（图片/附件/数据库块由附件侧负责）；③ **`partial` 是「搜得到，但只覆盖了一部分」**（典型：混合 PDF 只抽到正文页）—— 别把「已索引 N/N」读成「内容全在检索面里」。**缺口列表可能被截断**（看 `gapsTotal` 与 `gapsTruncated`）。★ 实现只有 TS 那一份（判「没人认领这种格式」必须以 TS 侧抽取器注册表为准；Rust 侧再长一份就是两份实现、而漂移不会报错）⇒ 外部/插件面经 **Rust→前端桥** 取回同一函数的输出（2026-10-29 B3）。 |
 | db.rows | read | current-space | read:pages | ✓ |  | 读取一个**数据库页**的行（**只给原始值**，⛔ 不重算公式/汇总；回话里的 note 会说明「可能与界面计算值不同」）。参数: pageId (必填), viewId (可选：套用视图保存的标题过滤与排序), where (可选：简单条件数组，多条 AND，字段必须来自 db.schema，操作符白名单 = != > >= < <= in contains is_null), limit (可选, 默认 100, 上限 500), offset (可选, 默认 0), spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。返回 {pageId, spaceId, total, returned, rows:[{id, values}], truncated, note}；过滤与分页在宿主（Rust）侧执行，超过 200 KB 会截断并如实标 truncated。 |
+| db.rows_delete | write | current-space | write:pages | ✓ | ✓ | 删除数据库行（软删，走页面删除那条路）。参数: pageId, rowIds, expectedRev, spaceId, dryRun, clientRequestId。行不存在/不属于该表 ⇒ `not_found` 并点名（⛔ 不静默跳过）。写操作 ⇒ 草稿确认。 |
+| db.rows_write | write | current-space | write:pages | ✓ | ✓ | 写数据库行（**只支持简单表格的原始列**：text/number/date/select/tag；⛔ 关系/公式/汇总列）。参数: pageId, rows, expectedRev, spaceId, dryRun, clientRequestId。校验：列必须来自 db.schema；number 列必须数字、date 列形如 YYYY-MM-DD、select 必须在选项里；新增行必须有 title；未知列/禁用列 ⇒ `bad_args` 点名第几行第几列。写操作 ⇒ 草稿确认。 |
 | db.schema | read | current-space | read:pages | ✓ |  | 读取一个**数据库页**的结构：列、视图、关系列。参数: pageId (必填：kind=database 的页面节点 id), spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。返回 {pageId, spaceId, views:[{id,name,type}], columns:[{id,name,type,isFormula?,isRollup?}], relations:[{id,name,type}]} —— 公式/汇总列**只标类型、不计算**；关系列（type=ref）单列在 relations 里。 |
 | editor.insertText | write | current-space | write:page.current |  | ✓ | 把一段纯文本插入到当前页的光标处（没有光标则追加到页尾）。**即时生效**，不进草稿确认——它只动你正在编辑的这一页。参数: text (必填)。 |
 | export.docpackage | read | current-space | export:files | ✓ |  | 把一页打包成 `.shuyodoc` 并**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。**只支持单页**（与界面「导出为 .shuyodoc」同口径）。参数: pageId (必填)。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm。 |

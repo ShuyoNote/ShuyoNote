@@ -5,10 +5,10 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `d265720d8828f2c6416d674db1a9745cd84db6f1524cad4a6069027b2cd3e248` |
-| `apiVersion` | 1.10.0 |
+| 注册表 sha256 | `6f2f59f1994ec6fe4f7b4dd0201ac5d14d57aead921ed4eb6d5c2761aa73f38f` |
+| `apiVersion` | 1.11.0 |
 | 取用条件 | `ai === true` **且** `kind === "write"` |
-| 条数 | **24** |
+| 条数 | **26** |
 | 生成命令 | `node scripts/gen-agent-tool-surface.mjs --phase m2` |
 
 | id | scope | permission | desc |
@@ -17,6 +17,8 @@
 | blocks.delete | current-space | write:pages | 删除顶层块（不留空占位）。参数: blockId + expectedRev。写操作 ⇒ 只产草稿；`dryRun` 只演练；冲突 ⇒ `rev_conflict` 带 currentMarkdown。 |
 | blocks.insert | current-space | write:pages | 插入块：pageId 或 afterBlockId(至少一个) + markdown/text(二选一) + expectedRev。返回 `newBlockId`（用户确认后即可用它继续 patch/delete）。写操作 ⇒ 只产草稿；`dryRun` 只演练；冲突 ⇒ `rev_conflict` 带当前 markdown。 |
 | blocks.patch | current-space | write:pages | 整块替换（顶层块）：blockId(必填) + markdown 或 text(二选一) + expectedRev(可选但强烈建议)。**块 id 不变**。写操作 ⇒ 只产草稿（返回 `{drafted:true,applied:false,rev,changed}`，用户确认后才落库）；`rev` 变/冲突 ⇒ `rev_conflict` 带 currentRev 与当前 markdown（带锚点）；`dryRun` 只演练。 |
+| db.rows_delete | current-space | write:pages | 删除数据库行。参数: pageId, rowIds（必须是该数据库页的子行）。行不存在/不属于该表 ⇒ `not_found` 点名（⛔ 不静默跳过）；写操作 ⇒ 只产草稿等确认。 |
+| db.rows_write | current-space | write:pages | 写数据库行（只支持**简单表格原始列**；⛔ 关系/公式/汇总列）。参数: pageId, rows=[{rowId?（有=改，无=增）, title?（新增必填）, values:{列id或列名: 原始值}}], expectedRev。未知列/禁用列/类型不符/新增缺 title ⇒ `bad_args` 点名第几行第几列；写后可用 db_rows 读回。写操作 ⇒ 只产草稿等确认（`applied:false`）。 |
 | files.delete | current-space | write:files | 删除附件条目。⚠️ **正文仍在引用它 ⇒ 明确拒绝并点名是哪些页面**（不静默删）；字节在该 hash 仍被别处引用时会保留。参数: attId, expectedSha(可选)。写操作 ⇒ 只产草稿等确认。 |
 | files.detach | current-space | write:files | 把附件从页面摘除（**保留文件**，变未整理）——与删除分开。参数: attId。已经是未整理 ⇒ `bad_args`。写操作 ⇒ 只产草稿等确认。 |
 | files.move | current-space | write:files | 把附件移到别的页面/文件夹（改归属；内容不变）。参数: attId, toPageId, expectedSha(可选)。写操作 ⇒ 只产草稿等确认；可配 `dryRun`/`clientRequestId`。 |

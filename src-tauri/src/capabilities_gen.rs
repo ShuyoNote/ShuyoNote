@@ -17,7 +17,7 @@ pub struct Capability {
     pub rust: &'static str,
 }
 
-pub const API_VERSION: &str = "1.10.0";
+pub const API_VERSION: &str = "1.11.0";
 pub const API_MAJOR: u32 = 1;
 
 pub const CAPABILITIES: &[Capability] = &[
@@ -29,6 +29,8 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "pages.tree", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.3.0", mediate: "-", rust: "cap_pages_tree" },
     Capability { id: "db.schema", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.4.0", mediate: "-", rust: "cap_db_schema" },
     Capability { id: "db.rows", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.4.0", mediate: "-", rust: "cap_db_rows" },
+    Capability { id: "db.rows_write", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.11.0", mediate: "draft", rust: "cap_db_rows_write" },
+    Capability { id: "db.rows_delete", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.11.0", mediate: "draft", rust: "cap_db_rows_delete" },
     Capability { id: "versions.list", kind: "read", scope: "current-space", permission: Some("read:versions"), since: "1.5.0", mediate: "-", rust: "cap_versions_list" },
     Capability { id: "version.get", kind: "read", scope: "current-space", permission: Some("read:versions"), since: "1.5.0", mediate: "-", rust: "cap_version_get" },
     Capability { id: "trash.list", kind: "read", scope: "current-space", permission: Some("read:trash"), since: "1.5.0", mediate: "-", rust: "cap_trash_list" },
