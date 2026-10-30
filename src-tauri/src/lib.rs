@@ -6,10 +6,10 @@ mod activity;
 // MCP 宿主面那半「本机通道」（方向②：桥 → App，App 当服务端 ✓）—— **默认关** ✓，
 // 详见 `mcp_channel.rs` 头部与判据 `scripts/check-mcp-host-channel.mjs` ✓。
 mod attachments;
-mod space_import;
 mod community;
 mod community_publish;
 mod mcp_channel;
+mod space_import;
 // ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 一键信任的**纯函数内核** ✗
 //    —— 判定「要不要两端确认」「收到的确认算不算」✓，⛔ 不碰 IO／网络／密钥 ✓。
 //    出处：`docs/plans/2026-10-11-one-click-trust-decision.md`（第 ① 步 ✓）。

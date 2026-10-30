@@ -54,7 +54,11 @@ const KINDS: &[&str] = &["page", "folder", "database"];
 pub(crate) const IMPORT_MAX_TOTAL_BYTES: usize = 256 * 1024 * 1024;
 pub(crate) const IMPORT_MAX_ENTRIES: usize = 10000;
 
-fn check_import_limits(payload: &ImportPayload, max_entries: usize, max_total: usize) -> Result<(), String> {
+fn check_import_limits(
+    payload: &ImportPayload,
+    max_entries: usize,
+    max_total: usize,
+) -> Result<(), String> {
     let entries = payload.nodes.len() + payload.files.len();
     if entries > max_entries {
         return Err(format!("E_LIMIT: 条目数 {entries} 超过上限 {max_entries}"));
@@ -101,7 +105,10 @@ pub(crate) fn import_space_package_in(
     for n in &payload.nodes {
         if let Some(p) = &n.parent_old_id {
             if !seen.contains(p) {
-                return Err(format!("bad_args: 节点 {} 的 parent 不存在 {}", n.old_id, p));
+                return Err(format!(
+                    "bad_args: 节点 {} 的 parent 不存在 {}",
+                    n.old_id, p
+                ));
             }
         }
     }
@@ -134,13 +141,22 @@ pub(crate) fn import_space_package_in(
     )?;
     let cleanup = |space_id: &str| {
         if let Ok(m) = crate::db::open_meta_conn_at(app_data) {
-            let _ = m.execute("DELETE FROM workspaces WHERE id = ?1", rusqlite::params![space_id]);
+            let _ = m.execute(
+                "DELETE FROM workspaces WHERE id = ?1",
+                rusqlite::params![space_id],
+            );
         }
         let p = crate::db::space_db_path(app_data, space_id);
-        for f in [p.clone(), p.with_extension("db-wal"), p.with_extension("db-shm")] {
+        for f in [
+            p.clone(),
+            p.with_extension("db-wal"),
+            p.with_extension("db-shm"),
+        ] {
             let _ = std::fs::remove_file(f);
         }
-        let _ = std::fs::remove_dir_all(crate::attachments::space_attachments_dir(app_data, space_id));
+        let _ = std::fs::remove_dir_all(crate::attachments::space_attachments_dir(
+            app_data, space_id,
+        ));
     };
     if let Err(e) = crate::db::create_space_db_at(app_data, &space_id) {
         cleanup(&space_id);
@@ -162,7 +178,9 @@ pub(crate) fn import_space_package_in(
             let mut cur = payload.nodes[i].parent_old_id.clone();
             while let Some(p) = cur {
                 depth += 1;
-                cur = pos.get(&p).and_then(|&j| payload.nodes[j].parent_old_id.clone());
+                cur = pos
+                    .get(&p)
+                    .and_then(|&j| payload.nodes[j].parent_old_id.clone());
             }
             depth
         });
@@ -204,7 +222,13 @@ pub(crate) fn import_space_package_in(
                 }
             }
             let dir = crate::attachments::space_attachments_dir(app_data, &space_id);
-            crate::attachments::write_attachment_once(&dir, &f.sha256, &ext_of(&f.name), &f.bytes, None)?;
+            crate::attachments::write_attachment_once(
+                &dir,
+                &f.sha256,
+                &ext_of(&f.name),
+                &f.bytes,
+                None,
+            )?;
             let new_page = match &f.page_old_id {
                 Some(p) => id_map.get(p).cloned(),
                 None => None,
@@ -219,7 +243,9 @@ pub(crate) fn import_space_package_in(
                     new_page,
                     f.name,
                     f.sha256,
-                    f.mime.clone().unwrap_or_else(|| "application/octet-stream".to_string()),
+                    f.mime
+                        .clone()
+                        .unwrap_or_else(|| "application/octet-stream".to_string()),
                     f.bytes.len() as i64,
                     now
                 ],
@@ -237,7 +263,9 @@ pub(crate) fn import_space_package_in(
         }
         for (title, n) in title_count.iter() {
             if *n > 1 {
-                warnings.push(format!("wikilink-ambiguous: [[{title}]] 命中 {n} 个同名节点，双链未改写（请人工指认）"));
+                warnings.push(format!(
+                    "wikilink-ambiguous: [[{title}]] 命中 {n} 个同名节点，双链未改写（请人工指认）"
+                ));
             }
         }
         for n in &payload.nodes {
@@ -249,11 +277,18 @@ pub(crate) fn import_space_package_in(
                     }
                 }
                 for (sha, id) in att_map.iter() {
-                    rewritten = rewritten.replace(&format!("attachment://{sha}"), &format!("attachment://{id}"));
+                    rewritten = rewritten.replace(
+                        &format!("attachment://{sha}"),
+                        &format!("attachment://{id}"),
+                    );
                 }
                 if rewritten != *orig {
                     // 正文写入走 `doc_content` 层（门禁：⛔ 不许在本文件直摸存储列）。
-                    crate::doc_content::write_page_doc_json(&tx, &id_map[n.old_id.as_str()], &rewritten)?;
+                    crate::doc_content::write_page_doc_json(
+                        &tx,
+                        &id_map[n.old_id.as_str()],
+                        &rewritten,
+                    )?;
                 }
             }
         }
@@ -304,16 +339,41 @@ mod tests {
         ImportPayload {
             space_name: "导入空间".into(),
             nodes: vec![
-                ImportNode { old_id: "f".into(), parent_old_id: None, kind: "folder".into(), title: "夹".into(), doc_json: None },
-                ImportNode { old_id: "p".into(), parent_old_id: Some("f".into()), kind: "page".into(), title: "页".into(), doc_json: Some("{\"root\":{\"children\":[]}}".into()) },
-                ImportNode { old_id: "d".into(), parent_old_id: None, kind: "database".into(), title: "库".into(), doc_json: Some("{\"root\":{},\"db\":{\"tables\":[]}}".into()) },
+                ImportNode {
+                    old_id: "f".into(),
+                    parent_old_id: None,
+                    kind: "folder".into(),
+                    title: "夹".into(),
+                    doc_json: None,
+                },
+                ImportNode {
+                    old_id: "p".into(),
+                    parent_old_id: Some("f".into()),
+                    kind: "page".into(),
+                    title: "页".into(),
+                    doc_json: Some("{\"root\":{\"children\":[]}}".into()),
+                },
+                ImportNode {
+                    old_id: "d".into(),
+                    parent_old_id: None,
+                    kind: "database".into(),
+                    title: "库".into(),
+                    doc_json: Some("{\"root\":{},\"db\":{\"tables\":[]}}".into()),
+                },
             ],
-            files: vec![ImportFile { sha256: crate::db::sha256_hex_bytes(b"abc"), name: "a.pdf".into(), mime: Some("application/pdf".into()), page_old_id: Some("p".into()), bytes: b"abc".to_vec() }],
+            files: vec![ImportFile {
+                sha256: crate::db::sha256_hex_bytes(b"abc"),
+                name: "a.pdf".into(),
+                mime: Some("application/pdf".into()),
+                page_old_id: Some("p".into()),
+                bytes: b"abc".to_vec(),
+            }],
         }
     }
 
     fn dir(tag: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("shuyo-space-import-{tag}-{}", uuid::Uuid::new_v4()));
+        let d =
+            std::env::temp_dir().join(format!("shuyo-space-import-{tag}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(crate::db::spaces_dir(&d)).unwrap();
         {
             let m = crate::db::open_meta_conn_at(&d).unwrap();
@@ -332,28 +392,67 @@ mod tests {
         assert_eq!(r.documents, 2);
         assert_eq!(r.attachments, 1);
         let c = crate::db::open_space_conn_at(&r.space_id, &d).unwrap();
-        let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |x| x.get(0)).unwrap();
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |x| x.get(0))
+            .unwrap();
         assert_eq!(n, 3);
-        let ids: Vec<String> = c.prepare("SELECT id FROM pages").unwrap().query_map([], |x| x.get(0)).unwrap().filter_map(|x| x.ok()).collect();
-        assert!(!ids.contains(&"f".to_string()) && !ids.contains(&"p".to_string()), "id 必须全换新");
+        let ids: Vec<String> = c
+            .prepare("SELECT id FROM pages")
+            .unwrap()
+            .query_map([], |x| x.get(0))
+            .unwrap()
+            .filter_map(|x| x.ok())
+            .collect();
+        assert!(
+            !ids.contains(&"f".to_string()) && !ids.contains(&"p".to_string()),
+            "id 必须全换新"
+        );
         // 父子重映射：page 的 parent 是 folder 的新 id，且 folder 无 parent
-        let folder_new: String = c.query_row("SELECT id FROM pages WHERE title='夹'", [], |x| x.get(0)).unwrap();
-        let page_parent: Option<String> = c.query_row("SELECT parent_id FROM pages WHERE title='页'", [], |x| x.get(0)).unwrap();
+        let folder_new: String = c
+            .query_row("SELECT id FROM pages WHERE title='夹'", [], |x| x.get(0))
+            .unwrap();
+        let page_parent: Option<String> = c
+            .query_row("SELECT parent_id FROM pages WHERE title='页'", [], |x| {
+                x.get(0)
+            })
+            .unwrap();
         assert_eq!(page_parent, Some(folder_new.clone()));
-        let folder_parent: Option<String> = c.query_row("SELECT parent_id FROM pages WHERE id=?1", rusqlite::params![folder_new], |x| x.get(0)).unwrap();
+        let folder_parent: Option<String> = c
+            .query_row(
+                "SELECT parent_id FROM pages WHERE id=?1",
+                rusqlite::params![folder_new],
+                |x| x.get(0),
+            )
+            .unwrap();
         assert_eq!(folder_parent, None);
         // 空文件夹保留
-        let empty: i64 = c.query_row("SELECT COUNT(*) FROM pages WHERE id=?1", rusqlite::params![&folder_new], |x| x.get(0)).unwrap();
+        let empty: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM pages WHERE id=?1",
+                rusqlite::params![&folder_new],
+                |x| x.get(0),
+            )
+            .unwrap();
         assert_eq!(empty, 1);
         // 附件行 + 字节
-        let (hash, size, name): (String, i64, String) = c.query_row("SELECT hash,size,name FROM attachments", [], |x| Ok((x.get(0)?, x.get(1)?, x.get(2)?))).unwrap();
+        let (hash, size, name): (String, i64, String) = c
+            .query_row("SELECT hash,size,name FROM attachments", [], |x| {
+                Ok((x.get(0)?, x.get(1)?, x.get(2)?))
+            })
+            .unwrap();
         assert_eq!(hash, crate::db::sha256_hex_bytes(b"abc"));
         assert_eq!(size, 3);
         assert_eq!(name, "a.pdf");
         assert!(crate::attachments::find_attachment(&d, &r.space_id, &hash).is_some());
         // meta 有且只有这个空间
         let m = crate::db::open_meta_conn_at(&d).unwrap();
-        let exists: i64 = m.query_row("SELECT COUNT(*) FROM workspaces WHERE id=?1", rusqlite::params![r.space_id], |x| x.get(0)).unwrap();
+        let exists: i64 = m
+            .query_row(
+                "SELECT COUNT(*) FROM workspaces WHERE id=?1",
+                rusqlite::params![r.space_id],
+                |x| x.get(0),
+            )
+            .unwrap();
         assert_eq!(exists, 1);
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -363,12 +462,19 @@ mod tests {
         let _serial = serial();
         let d = dir("fail");
         let m = crate::db::open_meta_conn_at(&d).unwrap();
-        let before: i64 = m.query_row("SELECT COUNT(*) FROM workspaces", [], |x| x.get(0)).unwrap();
+        let before: i64 = m
+            .query_row("SELECT COUNT(*) FROM workspaces", [], |x| x.get(0))
+            .unwrap();
         let e = import_space_package_in(&d, &payload(), true).expect_err("注入失败必须回滚");
         assert!(e.contains("injected"), "{e}");
-        let after: i64 = m.query_row("SELECT COUNT(*) FROM workspaces", [], |x| x.get(0)).unwrap();
+        let after: i64 = m
+            .query_row("SELECT COUNT(*) FROM workspaces", [], |x| x.get(0))
+            .unwrap();
         assert_eq!(before, after, "失败后不许留下空间行");
-        let spaces: Vec<_> = std::fs::read_dir(crate::db::spaces_dir(&d)).unwrap().filter_map(|x| x.ok()).collect();
+        let spaces: Vec<_> = std::fs::read_dir(crate::db::spaces_dir(&d))
+            .unwrap()
+            .filter_map(|x| x.ok())
+            .collect();
         assert!(spaces.is_empty(), "失败后不许残留空间库/附件目录");
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -381,27 +487,82 @@ mod tests {
         let p = ImportPayload {
             space_name: "链接空间".into(),
             nodes: vec![
-                ImportNode { old_id: "old-a".into(), parent_old_id: None, kind: "page".into(), title: "甲".into(),
-                    doc_json: Some(format!(r#"{{"root":{{"text":"see old-b and [[乙]] attachment://{sha}"}}}}"#)) },
-                ImportNode { old_id: "old-b".into(), parent_old_id: None, kind: "page".into(), title: "乙".into(),
-                    doc_json: Some(r#"{"root":{"text":"back old-a"}}"#.into()) },
-                ImportNode { old_id: "old-c".into(), parent_old_id: None, kind: "page".into(), title: "同名".into(), doc_json: Some(r#"{"root":{}}"#.into()) },
-                ImportNode { old_id: "old-d".into(), parent_old_id: None, kind: "page".into(), title: "同名".into(), doc_json: Some(r#"{"root":{}}"#.into()) },
+                ImportNode {
+                    old_id: "old-a".into(),
+                    parent_old_id: None,
+                    kind: "page".into(),
+                    title: "甲".into(),
+                    doc_json: Some(format!(
+                        r#"{{"root":{{"text":"see old-b and [[乙]] attachment://{sha}"}}}}"#
+                    )),
+                },
+                ImportNode {
+                    old_id: "old-b".into(),
+                    parent_old_id: None,
+                    kind: "page".into(),
+                    title: "乙".into(),
+                    doc_json: Some(r#"{"root":{"text":"back old-a"}}"#.into()),
+                },
+                ImportNode {
+                    old_id: "old-c".into(),
+                    parent_old_id: None,
+                    kind: "page".into(),
+                    title: "同名".into(),
+                    doc_json: Some(r#"{"root":{}}"#.into()),
+                },
+                ImportNode {
+                    old_id: "old-d".into(),
+                    parent_old_id: None,
+                    kind: "page".into(),
+                    title: "同名".into(),
+                    doc_json: Some(r#"{"root":{}}"#.into()),
+                },
             ],
-            files: vec![ImportFile { sha256: sha.clone(), name: "x.bin".into(), mime: None, page_old_id: Some("old-a".into()), bytes: attach }],
+            files: vec![ImportFile {
+                sha256: sha.clone(),
+                name: "x.bin".into(),
+                mime: None,
+                page_old_id: Some("old-a".into()),
+                bytes: attach,
+            }],
         };
         let r = import_space_package_in(&d, &p, false).expect("import");
-        assert!(r.warnings.iter().any(|w| w.contains("wikilink-ambiguous") && w.contains("同名")), "{:?}", r.warnings);
+        assert!(
+            r.warnings
+                .iter()
+                .any(|w| w.contains("wikilink-ambiguous") && w.contains("同名")),
+            "{:?}",
+            r.warnings
+        );
         let c = crate::db::open_space_conn_at(&r.space_id, &d).unwrap();
-        let new_b: String = c.query_row("SELECT id FROM pages WHERE title='乙'", [], |x| x.get(0)).unwrap();
-        let new_att: String = c.query_row("SELECT id FROM attachments", [], |x| x.get(0)).unwrap();
-        let content: String = c.query_row("SELECT content_json FROM pages WHERE title='甲'", [], |x| x.get(0)).unwrap();
+        let new_b: String = c
+            .query_row("SELECT id FROM pages WHERE title='乙'", [], |x| x.get(0))
+            .unwrap();
+        let new_att: String = c
+            .query_row("SELECT id FROM attachments", [], |x| x.get(0))
+            .unwrap();
+        let content: String = c
+            .query_row(
+                "SELECT content_json FROM pages WHERE title='甲'",
+                [],
+                |x| x.get(0),
+            )
+            .unwrap();
         assert!(content.contains(&new_b), "内部链接应指向新 id");
         assert!(content.contains(&new_att), "attachment:// 应指向新附件 id");
-        let all: Vec<String> = c.prepare("SELECT content_json FROM pages").unwrap().query_map([], |x| x.get(0)).unwrap().filter_map(|x| x.ok()).collect();
+        let all: Vec<String> = c
+            .prepare("SELECT content_json FROM pages")
+            .unwrap()
+            .query_map([], |x| x.get(0))
+            .unwrap()
+            .filter_map(|x| x.ok())
+            .collect();
         assert!(all.iter().all(|s| !s.contains("old-")), "旧 id 不许残留");
         let rows = crate::plugins::plugin_audit(Some("app.package.import".to_string()), None);
-        let mine = rows.iter().find(|x| x.scope.contains(&r.space_id)).expect("审计应有本次导入一条");
+        let mine = rows
+            .iter()
+            .find(|x| x.scope.contains(&r.space_id))
+            .expect("审计应有本次导入一条");
         assert!(mine.scope.contains("warnings"), "{}", mine.scope);
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -410,25 +571,33 @@ mod tests {
     fn space_import_failure_writes_no_audit() {
         let _serial = serial();
         let d = dir("noaudit2");
-        let before = crate::plugins::plugin_audit(Some("app.package.import".to_string()), None).len();
+        let before =
+            crate::plugins::plugin_audit(Some("app.package.import".to_string()), None).len();
         let _ = import_space_package_in(&d, &payload(), true);
-        let after = crate::plugins::plugin_audit(Some("app.package.import".to_string()), None).len();
+        let after =
+            crate::plugins::plugin_audit(Some("app.package.import".to_string()), None).len();
         assert_eq!(before, after, "失败回滚时不许写审计");
         let _ = std::fs::remove_dir_all(&d);
     }
-
 
     #[test]
     fn space_import_payload_limits() {
         let p = payload();
         // 条目数：nodes(3)+files(1)=4
-        assert!(check_import_limits(&p, 4, usize::MAX).is_ok(), "边界恰好通过");
-        assert!(check_import_limits(&p, 3, usize::MAX).expect_err("超条目").contains("E_LIMIT"));
+        assert!(
+            check_import_limits(&p, 4, usize::MAX).is_ok(),
+            "边界恰好通过"
+        );
+        assert!(check_import_limits(&p, 3, usize::MAX)
+            .expect_err("超条目")
+            .contains("E_LIMIT"));
         let total = p.files.iter().map(|f| f.bytes.len()).sum::<usize>()
-            + p.nodes.iter().map(|n| n.doc_json.as_ref().map(|s| s.len()).unwrap_or(0)).sum::<usize>();
+            + p.nodes
+                .iter()
+                .map(|n| n.doc_json.as_ref().map(|s| s.len()).unwrap_or(0))
+                .sum::<usize>();
         assert!(check_import_limits(&p, 4, total).is_ok(), "边界恰好通过");
         let e = check_import_limits(&p, 4, total - 1).expect_err("超总量");
         assert!(e.contains("E_LIMIT"), "{e}");
     }
-
 }
