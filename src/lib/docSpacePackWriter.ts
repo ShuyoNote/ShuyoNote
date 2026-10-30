@@ -1,8 +1,8 @@
 // ⭐ M2a：`.shuyospace` 空间包**导出**（纯格式层；不碰 UI/数据库）。
 //
 // 按 `docs/plans/2026-10-30-package-format-final.md` §2/§9（企业版裁决后）：
-//   · manifest：format/format_version/features/min_reader_version/source/source_app_version/
-//     space{id,name,type,created_at}/encrypted（写侧**不写** checksums_sha256；字段仅读侧容忍）
+//   · manifest：format/format_version/min_reader_version(整数 1)/source/source_app_version/
+//     space{id,name,type,created_at}/encrypted（附录 A：不放 features；不写 checksums_sha256）
 //   · tree.json：children 顺序/成员为权威；空文件夹写 `[]`；file 条目**保留 name/mime**（§9 撤回去名）
 //   · documents/<id>/document.shuyodoc：**内层复用文档包写侧**（内层禁止再嵌套）
 //   · files/<sha256>.<lower-ext>：附件字节（内容寻址、平铺、扩展名小写）
@@ -23,8 +23,7 @@ export const MANIFEST_PATH = "manifest.json";
 export const TREE_PATH = "tree.json";
 export const ATTACHMENTS_PATH = "attachments.json";
 export const CHECKSUMS_PATH = "checksums.json";
-export const SPACE_FEATURES = ["db-namespace", "checksums-self"] as const;
-export const SPACE_MIN_READER = "1.1";
+export const SPACE_MIN_READER = 1;
 /** 与文档包一致（§9：统一 1980-01-01，对齐服务端 0x0021）。 */
 const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
 
@@ -167,7 +166,7 @@ export async function buildSpacePackage(input: BuildSpacePackageInput): Promise<
       kind: n.kind,
       title: n.title,
       parent_id: n.parentId,
-      ...(docPath ? { document: docPath } : {}),
+      ...(docPath ? { document: n.id } : {}),
     };
     if (!docPath) continue;
     let docJson = n.docJson ?? JSON.stringify({ root: { type: "root", children: [] } });
@@ -192,7 +191,7 @@ export async function buildSpacePackage(input: BuildSpacePackageInput): Promise<
   const tree = {
     format: TREE_FORMAT,
     version: TREE_VERSION,
-    roots: roots.map((n) => ({ type: "node", id: n.id })),
+    roots: roots.map((n) => n.id),
     nodes: treeNodes,
     children: Object.fromEntries(nodes.map((n) => [n.id, n.children])),
   };
@@ -219,7 +218,6 @@ export async function buildSpacePackage(input: BuildSpacePackageInput): Promise<
   const manifest = {
     format: SPACE_FORMAT,
     format_version: SPACE_FORMAT_VERSION,
-    features: [...SPACE_FEATURES],
     min_reader_version: SPACE_MIN_READER,
     source: input.source ?? "personal",
     source_app_version: input.sourceAppVersion ?? "0.0.0",

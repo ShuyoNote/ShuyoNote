@@ -98,7 +98,7 @@ project.shuyospace           # zip；store-only；固定时间戳
   signature.json                         # 可选
 ```
 
-### 2.1 manifest（空间包）
+### 2.1 manifest（空间包；附录 A：min_reader_version 是整数、features 省略）
 
 ```json
 {
@@ -116,8 +116,8 @@ project.shuyospace           # zip；store-only；固定时间戳
 
 ### 2.2 tree.json —— 结构唯一真相
 
-- `format:"shuyonote.tree"`、`version:1`；`roots` 非空且与 `parent_id:null` 一致。
-- `nodes`: `id → {kind, title, parent_id, document?}`；`kind ∈ page|folder|database`，未知 ⇒ 拒收并列清单。
+- `format:"shuyonote.tree"`、`version:1`；`roots` 是**节点 id 字符串数组**（附录 A）且与 `parent_id:null` 一致。
+- `nodes`: `id → {kind, title, parent_id, document?}`（`document` 是 **doc id**，不是路径；内层仍是 `documents/<doc_id>/document.shuyodoc`）；`kind ∈ page|folder|database`，未知 ⇒ 拒收并列清单。
 - ⭐ **权威规则（新增，定死）**：`children` 的**顺序**与**成员关系**为权威；`parent_id` 必须与之一致。
   - 不一致 ⇒ **默认拒收**（错误列出冲突节点）；只有显式 `repairTree:true`（导入工具选项）才按 `children` 重建并记 `warning: tree-repaired`。
   - 有 `parent_id` 但 `children` 未列 ⇒ 视为"顺序缺省"：按 `title` 排序补到父末尾，记 `warning: child-order-missing`（**这与"冲突"不同**，不拒收）。
@@ -212,6 +212,8 @@ E_ATOMIC            导入中途失败（已回滚）
 > 这三条一旦确认，M1.1 与 M2 可并行开工，**不再需要 v2**。
 
 ## 9. 企业版裁决（2026-10-30 已收，**以本节为准**）
+
+> **2026-10-30 企业版裁定 A：空间包按附录 A 形状**（`roots` 字符串数组、`document` 为 doc id、`min_reader_version` 整数 1、省略 `features`／未知 feature 只 warning）。个人版已按此改 fixture 与写/读侧。
 
 两条企业版线（`windows/enterprise` ＋ `amd/enterprise`）已合并答复，**采纳 4 处修改**，本文件前面冲突处以本节为准：
 

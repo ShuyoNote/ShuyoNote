@@ -97,7 +97,7 @@ async function rebuild(): Promise<Map<string, Uint8Array>> {
     ],
     files: [{ sha256: attachSha, name: "样例.txt", mime: "text/plain", bytes: attachBytes }],
   });
-  out.set("personal-sample.shuyospace", space.bytes);
+  out.set("personal-sample-appendixA.shuyospace", space.bytes);
   return out;
 }
 

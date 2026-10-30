@@ -6,15 +6,15 @@
 import {
   CHECKSUMS_PATH,
   MANIFEST_PATH,
-  READER_VERSION,
   checkEntryPath,
-  versionGt,
   verifyChecksums,
 } from "./docPackage";
 import { openDocumentPackage, type ZipEntry } from "./docPackageOpen";
 import { unzipDocument } from "./docZip";
 
 export const SPACE_FORMAT = "shuyonote.space";
+/** 附录 A：读端支持到 format 1；旧包字符串 "1.1" 兼容读并 warning。 */
+const MAX_READER = 1;
 export const TREE_PATH = "tree.json";
 export const ATTACHMENTS_PATH = "attachments.json";
 const KINDS = new Set(["page", "folder", "database"]);
@@ -78,8 +78,19 @@ export async function openSpacePackage(
   if (manifest.format_version !== 1) return fail("E_MANIFEST: format_version 只支持 1");
   if (manifest.encrypted === true) return fail("E_MANIFEST: 该包已加密，当前版本不支持");
   const mr = manifest.min_reader_version;
-  if (typeof mr === "string" && versionGt(mr, READER_VERSION)) {
-    return fail(`E_VERSION: 需要读端 ≥ ${mr}（本版 ${READER_VERSION}），请升级后再导入`);
+  if (mr !== undefined) {
+    if (typeof mr === "string") {
+      const n = Number.parseFloat(mr);
+      if (Number.isNaN(n) || n > MAX_READER) return fail(`E_VERSION: 需要读端 ≥ ${mr}（本版 ${MAX_READER}），请升级后再导入`);
+      warnings.push(`min-reader-string: 旧包用字符串 "${mr}"；按 ${MAX_READER} 兼容读`);
+    } else if (typeof mr !== "number" || mr > MAX_READER) {
+      return fail(`E_VERSION: 需要读端 ≥ ${String(mr)}（本版 ${MAX_READER}），请升级后再导入`);
+    }
+  }
+  const features = manifest.features;
+  if (features !== undefined) {
+    if (!Array.isArray(features)) return fail("E_MANIFEST: features 必须是数组");
+    for (const f of features) warnings.push(`unknown-feature: ${String(f)}（忽略，不拒整包）`);
   }
   const space = manifest.space as Record<string, unknown> | undefined;
   if (!space || typeof space.id !== "string" || typeof space.name !== "string") {
@@ -120,9 +131,10 @@ export async function openSpacePackage(
   if (tree.format !== "shuyonote.tree" || tree.version !== 1) return fail("E_TREE: tree format/version 不认识");
   const rawNodes = tree.nodes as Record<string, Record<string, unknown>> | undefined;
   const rawChildren = tree.children as Record<string, unknown[]> | undefined;
-  const roots = tree.roots as Array<{ type?: string; id?: string }> | undefined;
+  const rawRoots = tree.roots as unknown;
   if (!rawNodes || typeof rawNodes !== "object") return fail("E_TREE: nodes 必须是对象");
-  if (!Array.isArray(roots) || roots.length === 0) return fail("E_TREE: roots 不能为空");
+  if (!Array.isArray(rawRoots) || rawRoots.length === 0) return fail("E_TREE: roots 不能为空");
+  const roots = rawRoots.map((x) => (typeof x === "string" ? x : (x as { id?: string })?.id));
   const nodes = new Map<string, SpaceTreeNode>();
   for (const [id, n] of Object.entries(rawNodes)) {
     const kind = n.kind;
@@ -167,10 +179,10 @@ export async function openSpacePackage(
       }
     }
   }
-  const rootIds = roots.map((r) => r?.id);
-  for (const r of roots) {
-    if (!r || r.type !== "node" || typeof r.id !== "string" || !nodes.has(r.id)) return fail("E_TREE: roots 条目必须是现有节点 {type:node,id}");
-    if (nodes.get(r.id)!.parent_id !== null) return fail(`E_TREE: root ${r.id} 的 parent_id 必须为 null`);
+  const rootIds = roots as string[];
+  for (const id of rootIds) {
+    if (typeof id !== "string" || !nodes.has(id)) return fail(`E_TREE: roots 里的节点不存在（${String(id)}）`);
+    if (nodes.get(id)!.parent_id !== null) return fail(`E_TREE: root ${id} 的 parent_id 必须为 null`);
   }
   for (const [id, n] of nodes) {
     if (n.parent_id === null && !rootIds.includes(id)) return fail(`E_TREE: 节点 ${id} 是根但不在 roots 里`);
@@ -199,8 +211,8 @@ export async function openSpacePackage(
     state.set(id, 2);
     return null;
   };
-  for (const r of roots) {
-    const err = walk(r.id!, 1);
+  for (const id of rootIds) {
+    const err = walk(id, 1);
     if (err) return fail(err);
   }
 
@@ -240,7 +252,8 @@ export async function openSpacePackage(
   const documents = new Map<string, string>();
   for (const [id, n] of nodes) {
     if (n.kind === "folder") continue;
-    const path = n.documentPath ?? `documents/${id}/document.shuyodoc`;
+    const docId = n.documentPath && !n.documentPath.includes("/") ? n.documentPath : id;
+    const path = n.documentPath && n.documentPath.includes("/") ? n.documentPath : `documents/${docId}/document.shuyodoc`;
     const bytes = byPath.get(path);
     if (!bytes) return fail(`E_CONTENT: 节点 ${id} 缺内层文档包（${path}）`);
     let innerEntries: ZipEntry[];

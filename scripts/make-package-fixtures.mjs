@@ -125,11 +125,11 @@ try {
     ],
     files: [{ sha256: attachSha, name: "样例.txt", mime: "text/plain", bytes: attachBytes }],
   });
-  writeFileSync(join(outDir, "personal-sample.shuyospace"), space.bytes);
+  writeFileSync(join(outDir, "personal-sample-appendixA.shuyospace"), space.bytes);
   const spaceEntries = await docZip.unzipDocument(space.bytes);
   const spaceOpened = await spaceOpen.openSpacePackage(spaceEntries, {});
   results.push({
-    name: "personal-sample.shuyospace",
+    name: "personal-sample-appendixA.shuyospace",
     bytes: space.bytes.byteLength,
     sha256: sha256(space.bytes),
     warnings: space.warnings,

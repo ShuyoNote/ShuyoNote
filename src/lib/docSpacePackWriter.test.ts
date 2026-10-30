@@ -60,8 +60,8 @@ describe("M2a · .shuyospace 导出", () => {
     const manifest = JSON.parse(new TextDecoder().decode(byPath(entries, MANIFEST_PATH).bytes));
     expect(manifest.format).toBe(SPACE_FORMAT);
     expect(manifest.format_version).toBe(1);
-    expect(manifest.features).toContain("db-namespace");
-    expect(manifest.min_reader_version).toBe("1.1");
+    expect(manifest.features).toBeUndefined();
+    expect(manifest.min_reader_version).toBe(1);
     expect(manifest.space).toEqual({ id: "sp1", name: "团队空间", type: "team", createdAt: "2026-10-30T00:00:00.000Z" });
     expect(manifest.checksums_sha256).toBeUndefined(); // 写侧不再写（仅读侧容忍）
     const sums = JSON.parse(new TextDecoder().decode(byPath(entries, CHECKSUMS_PATH).bytes)) as { files: Record<string, string> };
@@ -73,7 +73,7 @@ describe("M2a · .shuyospace 导出", () => {
     const entries = await unzipDocument(r.bytes);
     const tree = JSON.parse(new TextDecoder().decode(byPath(entries, TREE_PATH).bytes));
     expect(tree.format).toBe("shuyonote.tree");
-    expect(tree.roots).toEqual([{ type: "node", id: "p1" }, { type: "node", id: "f1" }]);
+    expect(tree.roots).toEqual(["p1", "f1"]);
     expect(tree.children.f1).toEqual([]);
     const fileChild = tree.children.p1.find((c: { type: string }) => c.type === "file");
     expect(fileChild.name).toBe("A.PDF");
