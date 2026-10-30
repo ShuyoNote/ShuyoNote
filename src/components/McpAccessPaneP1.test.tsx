@@ -83,7 +83,11 @@ function mount() {
   root = createRoot(document.getElementById("host")!);
   flushSync(() => root!.render(React.createElement(McpAccessPane)));
 }
-const tabs = () => Array.from(document.querySelectorAll<HTMLElement>('[role="tab"]'));
+// 2026-10-31（跨空间支持矩阵改版）：档位从横向 tab 改成**单选卡**（`role="radiogroup"` +
+// `role="radio"` + `aria-checked`，见设计稿）；判据的**语义不变**（六个档位都在、只有一个选中、
+// 选中项来自后端 `level`、点击走同一个 `mcp_set_level`）——只把取值钩子从 `role="tab"`
+// 换成 `role="radio"`（`is-on` 类保留）。
+const tabs = () => Array.from(document.querySelectorAll<HTMLElement>('[role="radio"]'));
 const tab = (label: string) => tabs().find((t) => (t.textContent || "").includes(label)) as HTMLElement;
 
 describe("MCP 接入面板（P1）", () => {

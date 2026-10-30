@@ -120,6 +120,9 @@ import { toast } from "./store/toast";
 import { platform } from "./lib/platform";
 import { withSyncStatus } from "./store/syncStatus";
 import "./App.css";
+// MCP 接入面板（跨空间支持矩阵改版）的专用样式：不写进 App.css（那条文件在收缩），
+// 也不用内联样式 —— 全部收在独立文件里，放在 App.css **之后**以便覆盖同特异性的旧类。
+import "./styles/mcp-panel.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
