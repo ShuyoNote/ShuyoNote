@@ -474,7 +474,7 @@ async function checkProperties(page, vp, tag) {
   //    第 5 条是**时间**类型（值控件是 `.prop-datetime`，见下面那条"不许留死空白"的断言）。
   for (const name of ["作者", "来源", "发布于", "存于", DATETIME_PROP]) {
     const clicked = await safeEval(page, () => {
-      const b = Array.from(document.querySelectorAll(".page-action-btn")).find((x) =>
+      const b = Array.from(document.querySelectorAll(".page-action-btn, .prop-add-head, [aria-label=\"添加标签\"]")).find((x) =>
         (x.textContent || "").includes("添加属性"),
       );
       if (b) b.click();
@@ -508,7 +508,7 @@ async function checkProperties(page, vp, tag) {
   //     第一版网格错位就是它引起的（下一行的名字被填进同一行的第 3 列）。
   //     不加它，这一段量到的全是"三个孩子"的正常行——**根本盖不到那个 bug**。
   await safeEval(page, () => {
-    const b = Array.from(document.querySelectorAll(".page-action-btn")).find((x) =>
+    const b = Array.from(document.querySelectorAll(".page-action-btn, .prop-add-head, [aria-label=\"添加标签\"]")).find((x) =>
       (x.textContent || "").includes("添加标签"),
     );
     if (b) b.click();
