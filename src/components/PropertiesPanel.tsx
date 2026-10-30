@@ -411,17 +411,20 @@ function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string)
           <a className="prop-link" href={u.href} target="_blank" rel="noreferrer" title={u.href}>
             {u.display}
           </a>
-          <button
-            type="button"
-            className="prop-link-copy"
-            title="复制链接"
-            onClick={() => void navigator.clipboard?.writeText(u.copyText)}
-          >
-            复制
-          </button>
-          <button type="button" className="prop-link-edit" title="编辑" onClick={() => setEditing(true)}>
-            编辑
-          </button>
+          <span className="prop-note">发布到社区时会同时写进正文最前面（用于去重与导出）</span>
+          <span className="prop-link-actions">
+            <button
+              type="button"
+              className="prop-link-copy"
+              title="复制链接"
+              onClick={() => void navigator.clipboard?.writeText(u.copyText)}
+            >
+              复制
+            </button>
+            <button type="button" className="prop-link-edit" title="编辑" onClick={() => setEditing(true)}>
+              编辑
+            </button>
+          </span>
         </span>
       );
     }
@@ -441,9 +444,12 @@ function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string)
     const f = formatDateTime(prop.value);
     if (f && !editing) {
       return (
-        <button type="button" className="prop-temporal" title={f.iso} onClick={() => setEditing(true)}>
+        <span className="prop-temporal" title={f.iso}>
           {f.absolute} · {f.relative} · {f.timezone}
-        </button>
+          <button type="button" className="prop-edit-hint" onClick={() => setEditing(true)}>
+            编辑
+          </button>
+        </span>
       );
     }
     if (editing) {
