@@ -117,6 +117,8 @@ const DESKTOP_ONLY_COMMANDS = new Map([
   // ⭐ B3（2026-10-29）：Rust→前端桥的两条（就绪信号 ＋ 结果回执）。导出/覆盖率报告要用前端那份
   // **唯一实现**；Web 上既没有本机 MCP 通道、也没有"Rust 叫前端算"这条桥 ⇒ 没有实现对象。
   ["mcp_frontend_tool_ready", "桌面专属：前端桥就绪信号（Web 没有本机 MCP 通道，这条桥不会被调用）"],
+  // ⭐ UX-①（2026-10-30）：apply 侧回写草稿状态。Web 没有本机 MCP 写面也没草稿状态表 ⇒ 桌面专属。
+  ["mcp_draft_state", "桌面专属：回写 MCP 草稿状态（Web 没有本机 MCP 信道/草稿状态表）"],
   // ⭐ B2-补遗-1：把附件从页面摘除（page_id=NULL）。Web 上附件表走 sql.js、没有"未整理附件"这一层，
   //   且这条命令只服务本机 MCP 写面 ⇒ 桌面专属。
   ["detach_attachment", "桌面专属：把附件从页面摘除（Web 没有本机 MCP 写面；未整理附件这一层只在桌面附件树里）"],

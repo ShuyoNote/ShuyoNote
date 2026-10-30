@@ -6,14 +6,15 @@
 | 源 | 值 |
 |---|---|
 | 注册表文件 | `capabilities/capabilities.json` |
-| 注册表 sha256 | `6f2f59f1994ec6fe4f7b4dd0201ac5d14d57aead921ed4eb6d5c2761aa73f38f` |
+| 注册表 sha256 | `800bf44c8c0c4478f38c2a6101ceb2f2072e5abff1af6b21d8d195da42de73db` |
 | `registryVersion` | 1 |
-| `apiVersion` | 1.11.0 |
-| 能力条数 | **62**（按 `kind`：host 2 / read 29 / write 31） |
+| `apiVersion` | 1.12.0 |
+| 能力条数 | **64**（按 `kind`：host 2 / read 31 / write 31） |
 | 生成命令 | `node scripts/gen-knowledge-ontology.mjs` |
 
 | id | kind | scope | permission | ai | mediate | desc |
 |---|---|---|---|---|---|---|
+| audit.tail | read | current-space | read:pages | ✓ |  | 读**本会话**最近 N 条审计（默认 20 / 上限 100）：`{at,tool,capabilityId,ok,code}`。⛔ 不回正文、不回别的会话。参数: limit。 |
 | backlinks.list | read | current-space | read:backlinks | ✓ |  | 查询哪些页面反向链接到目标页面。参数: pageId (可选, 省略=当前打开的页面)。返回引用它的页面列表。 |
 | blobs.fetch | read | current-space | export:files | ✓ |  | 句柄消费方（**唯一落盘处**）：把句柄换成文件，写到应用数据目录下的 exports/，返回 {path, size, sha256}。句柄单次、120 秒有效、绑定本会话；二次使用/过期/别的会话 ⇒ not_found。参数: handle (必填)。 |
 | blocks.append | write | current-space | write:pages | ✓ | ✓ | 向现存页面追加一个或多个段落(按换行分段)。参数: text (必填正文), pageId (可选, 省略=当前打开的页面)。这是写操作，返回草稿供用户确认。 |
@@ -26,6 +27,7 @@
 | db.rows_delete | write | current-space | write:pages | ✓ | ✓ | 删除数据库行（软删，走页面删除那条路）。参数: pageId, rowIds, expectedRev, spaceId, dryRun, clientRequestId。行不存在/不属于该表 ⇒ `not_found` 并点名（⛔ 不静默跳过）。写操作 ⇒ 草稿确认。 |
 | db.rows_write | write | current-space | write:pages | ✓ | ✓ | 写数据库行（**只支持简单表格的原始列**：text/number/date/select/tag；⛔ 关系/公式/汇总列）。参数: pageId, rows, expectedRev, spaceId, dryRun, clientRequestId。校验：列必须来自 db.schema；number 列必须数字、date 列形如 YYYY-MM-DD、select 必须在选项里；新增行必须有 title；未知列/禁用列 ⇒ `bad_args` 点名第几行第几列。写操作 ⇒ 草稿确认。 |
 | db.schema | read | current-space | read:pages | ✓ |  | 读取一个**数据库页**的结构：列、视图、关系列。参数: pageId (必填：kind=database 的页面节点 id), spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。返回 {pageId, spaceId, views:[{id,name,type}], columns:[{id,name,type,isFormula?,isRollup?}], relations:[{id,name,type}]} —— 公式/汇总列**只标类型、不计算**；关系列（type=ref）单列在 relations 里。 |
+| drafts.status | read | current-space | read:pages | ✓ |  | 查一条草稿当前状态：pending（等用户确认）/ applied（已落库）/ rejected（用户拒绝）/ expired（10 分钟没确认）。参数: draftId。⚠️ 只回**本会话**的草稿；别的会话/不存在 ⇒ not_found。 |
 | editor.insertText | write | current-space | write:page.current |  | ✓ | 把一段纯文本插入到当前页的光标处（没有光标则追加到页尾）。**即时生效**，不进草稿确认——它只动你正在编辑的这一页。参数: text (必填)。 |
 | export.docpackage | read | current-space | export:files | ✓ |  | 把一页打包成 `.shuyodoc` 并**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。**只支持单页**（与界面「导出为 .shuyodoc」同口径）。参数: pageId (必填)。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm。 |
 | export.markdown | read | current-space | export:files | ✓ |  | 把一页导出成 Markdown、或把整个空间导出成 zip，**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。参数: pageId (可选，单页 ⇒ .md) / spaceId (可选，整空间 ⇒ 含附件的 .zip；跨空间需「只读（全部空间）」档) —— 两者**只能给一个**。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm（本批未接确认 UI，不静默导出）。 |

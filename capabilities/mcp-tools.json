@@ -268,6 +268,40 @@
     "permission": "read:trash"
   },
   {
+    "name": "drafts_status",
+    "capabilityId": "drafts.status",
+    "description": "查一条草稿当前状态：pending（等用户确认）/ applied（已落库）/ rejected（用户拒绝）/ expired（10 分钟没确认）。参数: draftId。⚠️ 只回**本会话**的草稿；别的会话/不存在 ⇒ not_found。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "draftId": {
+          "type": "string",
+          "description": "写工具返回的 draftId"
+        }
+      },
+      "required": [
+        "draftId"
+      ]
+    },
+    "permission": "read:pages"
+  },
+  {
+    "name": "audit_tail",
+    "capabilityId": "audit.tail",
+    "description": "读**本会话**最近 N 条审计（默认 20 / 上限 100）：`{at,tool,capabilityId,ok,code}`。⛔ 不回正文、不回别的会话。参数: limit。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "number",
+          "description": "最近 N 条（默认 20，上限 100）"
+        }
+      },
+      "required": []
+    },
+    "permission": "read:pages"
+  },
+  {
     "name": "tags_list",
     "capabilityId": "tags.list",
     "description": "列出本空间用到的**标签及各自的页面数**：`[{id, name, page_count}]`（page_count 不含已删除页面）。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选)。",

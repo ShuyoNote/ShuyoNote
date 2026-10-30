@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "apiVersion": "1.11.0",
+  "apiVersion": "1.12.0",
   "notes": "插件能力注册表——单一事实源。scripts/gen-capabilities.mjs 由本文件生成：JS shim（api.*）、Rust 绑定表、作者类型包、作者文档；scripts/check-capabilities.mjs 校验一致性与完整性。改能力请改这里，不要手改生成物。",
   "permissions": [
     {
@@ -752,6 +752,62 @@
       "rust": "cap_trash_list",
       "desc": "列出回收站里已软删除的页面（不含正文，也不恢复/清空）。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒), limit (可选, 默认 50, 上限 200)。",
       "mcpDesc": "列出**回收站**里已软删除的页面：`[{pageId, title, deletedAt}]`（按删除时间倒序，不含正文），**只读 —— 不恢复、不清空**。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选), limit (可选, 默认 50, 上限 200)。",
+      "ai": true
+    },
+    {
+      "kind": "read",
+      "scope": "current-space",
+      "since": "1.12.0",
+      "id": "drafts.status",
+      "title": "查草稿状态",
+      "permission": "read:pages",
+      "jsPath": [
+        "drafts",
+        "status"
+      ],
+      "rust": "cap_drafts_status",
+      "args": [
+        {
+          "name": "draftId",
+          "type": "string",
+          "required": true,
+          "desc": "写工具返回的 draftId"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ draftId: string; state: 'pending'|'applied'|'rejected'|'expired'; at: number; tool: string; capabilityId: string }",
+        "desc": "该草稿的当前状态（只回本会话）"
+      },
+      "desc": "查一条草稿当前状态：pending（等用户确认）/ applied（已落库）/ rejected（用户拒绝）/ expired（10 分钟没确认）。参数: draftId。⚠️ 只回**本会话**的草稿；别的会话/不存在 ⇒ not_found。",
+      "ai": true
+    },
+    {
+      "kind": "read",
+      "scope": "current-space",
+      "since": "1.12.0",
+      "id": "audit.tail",
+      "title": "最近审计",
+      "permission": "read:pages",
+      "jsPath": [
+        "audit",
+        "tail"
+      ],
+      "rust": "cap_audit_tail",
+      "args": [
+        {
+          "name": "limit",
+          "type": "number",
+          "required": false,
+          "desc": "最近 N 条（默认 20，上限 100）"
+        }
+      ],
+      "returns": {
+        "type": "array",
+        "ts": "{ at: number; tool: string; capabilityId: string; ok: boolean; code: string|null }[]",
+        "desc": "本会话最近 N 条审计（⛔ 不含正文）"
+      },
+      "desc": "读**本会话**最近 N 条审计（默认 20 / 上限 100）：`{at,tool,capabilityId,ok,code}`。⛔ 不回正文、不回别的会话。参数: limit。",
       "ai": true
     },
     {

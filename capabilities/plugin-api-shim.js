@@ -39,6 +39,12 @@ var api = {
     list: function(spaceId, limit) { return __capCall("trash.list", { spaceId: spaceId === undefined ? undefined : String(spaceId), limit: limit === undefined ? 50 : Number(limit) }); },
     restore: function(id, spaceId, dryRun, clientRequestId) { return __capCall("trash.restore", { id: id === undefined ? undefined : String(id), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); }
   },
+  drafts: {
+    status: function(draftId) { return __capCall("drafts.status", { draftId: draftId === undefined ? undefined : String(draftId) }); }
+  },
+  audit: {
+    tail: function(limit) { return __capCall("audit.tail", { limit: limit === undefined ? undefined : Number(limit) }); }
+  },
   tags: {
     list: function(spaceId) { return __capCall("tags.list", { spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
     add: function(name, pageId, expectedRev, spaceId, dryRun, clientRequestId) { return __capCall("tags.add", { name: name === undefined ? undefined : String(name), pageId: pageId === undefined ? undefined : String(pageId), expectedRev: expectedRev === undefined ? undefined : String(expectedRev), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); },

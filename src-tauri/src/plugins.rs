@@ -4310,6 +4310,161 @@ fn cap_db_rows_delete(
     }))
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// UX-①（2026-10-30）：写闭环 —— `draftId`（写工具返回）＋ `drafts.status` ＋ `audit.tail`
+//
+// 三条口径：
+//   · `draftId` 在**产草稿那一刻**生成（同一次调用稳定；`dryRun` 不生成），并写进交给前端的
+//     draft payload ⇒ apply 侧确认/拒绝后回写状态（`mcp_draft_state` 命令）；
+//   · 状态只有 pending → applied/rejected；超过 TTL（10 分钟）读作 `expired`（⛔ 不删记录，
+//     也不把"没见过"说成过期）；查询**只回本会话**；
+//   · `audit.tail` 只读**本会话**最近 N 条（默认 20 / 上限 100），⛔ 不回正文、不回别的会话。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const DRAFT_STATE_TTL_MS: i64 = 10 * 60 * 1000;
+const DRAFT_STATE_CAPACITY: usize = 512;
+
+struct DraftStateRow {
+    source: String,
+    tool: String,
+    capability: String,
+    state: String,
+    at_ms: i64,
+    expires_ms: i64,
+}
+
+static DRAFT_STATES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, DraftStateRow>>,
+> = std::sync::OnceLock::new();
+
+fn draft_states() -> &'static std::sync::Mutex<std::collections::HashMap<String, DraftStateRow>> {
+    DRAFT_STATES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// dispatch 产出草稿后调用：登记 pending，并把 `draftId` 写进**最后一条**草稿的 payload。
+pub(crate) fn attach_draft_id(id: &str, source: &str, tool: &str, capability: &str) {
+    let now = now_ms();
+    if let Ok(mut g) = draft_states().lock() {
+        if g.len() >= DRAFT_STATE_CAPACITY {
+            if let Some(old) = g
+                .iter()
+                .min_by_key(|(_, r)| r.at_ms)
+                .map(|(k, _)| k.clone())
+            {
+                g.remove(&old);
+            }
+        }
+        g.insert(
+            id.to_string(),
+            DraftStateRow {
+                source: source.to_string(),
+                tool: tool.to_string(),
+                capability: capability.to_string(),
+                state: "pending".to_string(),
+                at_ms: now,
+                expires_ms: now + DRAFT_STATE_TTL_MS,
+            },
+        );
+    }
+    RUN_STATE.with(|s| {
+        let mut st = s.borrow_mut();
+        if let Some(last) = st.drafts.last_mut() {
+            last.payload["draftId"] = serde_json::json!(id);
+        }
+    });
+}
+
+/// 前端回写：pending → applied / rejected（其它状态值 ⇒ `bad_args`）。
+pub(crate) fn mark_draft_state(id: &str, state: &str) -> Result<(), String> {
+    let st = state.trim();
+    if st != "applied" && st != "rejected" {
+        return Err("bad_args: state 只能是 applied / rejected".to_string());
+    }
+    let mut g = draft_states()
+        .lock()
+        .map_err(|_| "internal: 草稿状态表锁坏了".to_string())?;
+    let Some(row) = g.get_mut(id.trim()) else {
+        return Err(format!("not_found: 草稿 {} 不存在（可能已过期被清）", id.trim()));
+    };
+    if row.state != "pending" {
+        return Ok(()); // 幂等：重复回写按最后一次语义忽略（⛔ 不报错打断 apply 收尾）
+    }
+    if now_ms() > row.expires_ms {
+        return Err(format!("not_found: 草稿 {} 已过期，状态不再回写", id.trim()));
+    }
+    row.state = st.to_string();
+    Ok(())
+}
+
+/// Tauri 命令：apply 侧（确认/拒绝后）回写草稿状态。桌面专属。
+#[tauri::command]
+pub fn mcp_draft_state(draft_id: String, state: String) -> Result<(), String> {
+    mark_draft_state(&draft_id, &state)
+}
+
+fn draft_state_view(id: &str) -> Result<serde_json::Value, String> {
+    let caller = caller_identity();
+    let g = draft_states()
+        .lock()
+        .map_err(|_| "internal: 草稿状态表锁坏了".to_string())?;
+    let Some(row) = g.get(id.trim()) else {
+        return Err(format!("not_found: 草稿 {} 不存在（换会话后不可见）", id.trim()));
+    };
+    // 只回**本人会话**（外部 = external:<session>；插件 = plugin:<id>）
+    if row.source != caller {
+        return Err(format!("not_found: 草稿 {} 不存在（别的会话的草稿不可见）", id.trim()));
+    }
+    let expired = now_ms() > row.expires_ms && row.state == "pending";
+    Ok(serde_json::json!({
+        "draftId": id.trim(),
+        "state": if expired { "expired" } else { row.state.as_str() },
+        "at": row.at_ms,
+        "tool": row.tool,
+        "capabilityId": row.capability,
+    }))
+}
+
+/// `drafts.status`（读）：一条草稿的当前状态（只回本会话）。
+fn cap_drafts_status(draft_id: &str) -> CapResult {
+    if draft_id.trim().is_empty() {
+        return Err("bad_args: 需要 draftId".to_string());
+    }
+    draft_state_view(draft_id)
+}
+
+/// `audit.tail`（读）：**本会话**最近 N 条审计（默认 20 / 上限 100；⛔ 不含正文）。
+fn cap_audit_tail(limit: i64) -> CapResult {
+    let limit = limit.clamp(1, 100) as usize;
+    let caller = caller_identity();
+    let (source_filter, plugin_filter): (Option<String>, Option<String>) =
+        match caller.strip_prefix("external:") {
+            Some(session) => (Some(format!("external:{session}")), None),
+            None => (
+                Some("plugin".to_string()),
+                caller.strip_prefix("plugin:").map(str::to_string),
+            ),
+        };
+    let rows: Vec<serde_json::Value> =
+        crate::plugins::plugin_audit(None, Some(2000))
+            .into_iter()
+            .filter(|e| source_filter.as_deref().map(|s| e.source == s).unwrap_or(false))
+            .filter(|e| plugin_filter.as_deref().map(|p| e.plugin_id == p).unwrap_or(true))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|e| {
+                serde_json::json!({
+                    "at": e.at_ms,
+                    "tool": e.capability,
+                    "capabilityId": e.capability,
+                    "ok": e.ok,
+                    "code": e.error_code,
+                })
+            })
+            .collect();
+    let start = rows.len().saturating_sub(limit);
+    Ok(serde_json::json!(rows[start..].to_vec()))
+}
+
 fn cap_properties_list(space_id: Option<&str>) -> CapResult {
     with_conn_for_space(space_id, |c| {
         let mut stmt = c
@@ -5193,6 +5348,8 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_bool(args.get("dryRun"), false),
             arg_opt_str("clientRequestId").as_deref(),
         ),
+        "drafts.status" => cap_drafts_status(&arg_str("draftId")?),
+        "audit.tail" => cap_audit_tail(arg_i64("limit", 20)),
         "editor.insertText" => cap_editor_insert_text(&arg_str("text")?),
         "user.notify" => cap_user_notify(&arg_str("message")?),
         "log.write" => {
@@ -5205,7 +5362,13 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         }
     };
     match out {
-        Ok(v) => {
+        Ok(mut v) => {
+            // ⭐ UX-①（2026-10-30）：产出草稿的写调用 ⇒ 生成 draftId（dryRun 不产草稿 ⇒ 不加）
+            if !dry_run && v.get("drafted").and_then(|x| x.as_bool()) == Some(true) {
+                let id = uuid::Uuid::new_v4().to_string();
+                attach_draft_id(&id, &source, method, cap.id);
+                v["draftId"] = serde_json::json!(id);
+            }
             // dryRun：不产生草稿（各 cap 自己保证）＋ **审计不加**（P2 判据 4）
             if !dry_run {
                 push_audit(&source, &plugin_id, method, cap.scope, true, None);
@@ -14787,6 +14950,59 @@ register({ id: "s.run", title: "结构化", run: function () {
         let v2: serde_json::Value = serde_json::from_str(&o2.expect("dryRun 应 OK")).unwrap();
         assert_eq!(v2["dryRun"], true);
         assert!(d2.is_empty(), "dryRun 不产草稿");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ UX-①：写工具返回 draftId；drafts.status 四态；audit.tail 只回本人会话。
+    #[test]
+    fn ux1_draft_id_status_and_audit_tail_are_session_scoped() {
+        let f = b1c_fixture("ux1");
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        let (out, drafts) = with_external_caller("ux1-w", &g, || {
+            with_fresh_drafts(|| dispatch_capability("pages.create", r#"{"title":"x"}"#))
+        });
+        let v: serde_json::Value = serde_json::from_str(&out.expect("应产草稿")).unwrap();
+        let draft_id = v["draftId"].as_str().unwrap_or("").to_string();
+        assert!(!draft_id.is_empty(), "写工具必须返回 draftId：{v}");
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].payload["draftId"], draft_id);
+        let (out2, d2) = with_external_caller("ux1-dry", &g, || {
+            with_fresh_drafts(|| dispatch_capability("pages.create", r#"{"title":"x","dryRun":true}"#))
+        });
+        let v2: serde_json::Value = serde_json::from_str(&out2.expect("dryRun OK")).unwrap();
+        assert!(v2.get("draftId").is_none(), "dryRun 不生成 draftId");
+        assert!(d2.is_empty());
+        let st = |id: &str| -> serde_json::Value {
+            with_external_caller("ux1-w", &g, || crate::plugins::cap_drafts_status(id)).unwrap()
+        };
+        assert_eq!(st(&draft_id)["state"], "pending");
+        crate::plugins::mark_draft_state(&draft_id, "applied").expect("回写 applied");
+        assert_eq!(st(&draft_id)["state"], "applied");
+        assert_eq!(st(&draft_id)["capabilityId"], "pages.create");
+        crate::plugins::attach_draft_id("ux1-rej", "external:ux1-w", "pages.create", "pages.create");
+        crate::plugins::mark_draft_state("ux1-rej", "rejected").expect("回写 rejected");
+        assert_eq!(st("ux1-rej")["state"], "rejected");
+        crate::plugins::attach_draft_id("ux1-exp", "external:ux1-w", "pages.create", "pages.create");
+        if let Ok(mut map) = crate::plugins::draft_states().lock() {
+            if let Some(r) = map.get_mut("ux1-exp") {
+                r.expires_ms = 1;
+            }
+        }
+        assert_eq!(st("ux1-exp")["state"], "expired");
+        let other = with_external_caller("ux1-other", &g, || {
+            crate::plugins::cap_drafts_status(&draft_id)
+        });
+        assert!(other.unwrap_err().contains("not_found"), "别的会话必须看不到");
+        let tail = |sid: &str| -> serde_json::Value {
+            with_external_caller(sid, &g, || crate::plugins::cap_audit_tail(100)).unwrap()
+        };
+        let before = tail("ux1-w").as_array().unwrap().len();
+        assert!(before > 0, "本会话应有审计");
+        with_external_caller("ux1-stranger", &g, || dispatch_capability("pages.count", "{}"))
+            .unwrap();
+        let after = tail("ux1-w");
+        assert_eq!(after.as_array().unwrap().len(), before, "别的会话审计不许出现");
         b1c_cleanup(&f);
     }
 }

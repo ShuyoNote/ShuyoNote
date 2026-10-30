@@ -135,6 +135,9 @@ export const api = {
   mcpSetLevel: (level: string) => invoke("mcp_set_level", { level }),
   // ⭐ 2026-10-08（R150）：把前端那条路的落库结果写进 mcp/apply.log（可诊断 ✓）
   mcpLogApplyResult: (line: string) => invoke("mcp_log_apply_result", { line }),
+  // ⭐ UX-①（2026-10-30）：apply 侧回写草稿状态（applied / rejected）——桌面专属
+  mcpDraftState: (draftId: string, state: string) =>
+    invoke("mcp_draft_state", { draftId, state }),
   // ⭐ B3（2026-10-29）：Rust→前端桥的两条（桌面专属 —— Web 没有本机 MCP 通道，也没有这条桥）
   mcpFrontendToolReady: () => invoke("mcp_frontend_tool_ready"),
   mcpFrontendToolRespond: (args: { requestId: string; name: string; data: number[]; error?: string | null }) =>

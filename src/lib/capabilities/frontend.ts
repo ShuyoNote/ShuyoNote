@@ -1098,6 +1098,20 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
 
   // ⭐ spaces.list / spaces.switch（2026-10-17）：MCP / AI 宿主都要能看见并切换空间。
   //   list：只读两跳（listWorkspaces + active id）；switch：只产出草稿，真正切换走 store（唯一实现）。
+  // ⭐ UX-①（2026-10-30）：drafts.status / audit.tail —— 本机 MCP 面的闭环读数；
+  //   应用内 AI 面没有"草稿状态表/本会话审计"这条通道 ⇒ 如实说不可用（⛔ 不编造）。
+  "drafts.status": async (args) => {
+    const draftId = String(args.draftId ?? "").trim();
+    if (!draftId) return { ok: false, error: "drafts.status 需要 draftId" };
+    return { ok: false, error: "应用内 AI 面不提供 MCP 草稿状态（draftId 只在外部门户/插件面生成）" };
+  },
+
+  "audit.tail": async (args) => {
+    const raw = Number(args.limit ?? 20);
+    const limit = Number.isFinite(raw) ? Math.max(1, Math.min(100, Math.trunc(raw))) : 20;
+    return { ok: false, error: `应用内 AI 面不提供 MCP 审计环（limit=${limit} 只在外部门户/插件面可用）` };
+  },
+
   "spaces.list": async () => {
     const [spaces, active] = await Promise.all([api.listWorkspaces(), api.getActiveWorkspaceId()]);
     return {

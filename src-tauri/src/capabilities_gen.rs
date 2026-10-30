@@ -17,7 +17,7 @@ pub struct Capability {
     pub rust: &'static str,
 }
 
-pub const API_VERSION: &str = "1.11.0";
+pub const API_VERSION: &str = "1.12.0";
 pub const API_MAJOR: u32 = 1;
 
 pub const CAPABILITIES: &[Capability] = &[
@@ -34,6 +34,8 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "versions.list", kind: "read", scope: "current-space", permission: Some("read:versions"), since: "1.5.0", mediate: "-", rust: "cap_versions_list" },
     Capability { id: "version.get", kind: "read", scope: "current-space", permission: Some("read:versions"), since: "1.5.0", mediate: "-", rust: "cap_version_get" },
     Capability { id: "trash.list", kind: "read", scope: "current-space", permission: Some("read:trash"), since: "1.5.0", mediate: "-", rust: "cap_trash_list" },
+    Capability { id: "drafts.status", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.12.0", mediate: "-", rust: "cap_drafts_status" },
+    Capability { id: "audit.tail", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.12.0", mediate: "-", rust: "cap_audit_tail" },
     Capability { id: "tags.list", kind: "read", scope: "current-space", permission: Some("read:tags"), since: "1.0.0", mediate: "-", rust: "cap_tags_list" },
     Capability { id: "blocks.list", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.0.0", mediate: "-", rust: "cap_blocks_list" },
     Capability { id: "backlinks.list", kind: "read", scope: "current-space", permission: Some("read:backlinks"), since: "1.0.0", mediate: "-", rust: "cap_backlinks_list" },

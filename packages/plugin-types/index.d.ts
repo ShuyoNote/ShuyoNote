@@ -211,6 +211,18 @@ export interface PluginApi {
    */
     restore(id: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string; spaceId: string };
   };
+  drafts: {
+  /** 查草稿状态（权限 `read:pages`；1.12.0 起）
+   * 返回：该草稿的当前状态（只回本会话）
+   */
+    status(draftId: string): { draftId: string; state: 'pending'|'applied'|'rejected'|'expired'; at: number; tool: string; capabilityId: string };
+  };
+  audit: {
+  /** 最近审计（权限 `read:pages`；1.12.0 起）
+   * 返回：本会话最近 N 条审计（⛔ 不含正文）
+   */
+    tail(limit?: number): { at: number; tool: string; capabilityId: string; ok: boolean; code: string|null }[];
+  };
   tags: {
   /** 列出本空间标签（权限 `read:tags`；1.0.0 起）
    * 返回：[{id, name, page_count}]：page_count 是**这个空间里**打了该标签的页面数（不含已删除页面）
@@ -419,4 +431,4 @@ export interface PluginApi {
   };
 }
 
-export declare const SDK_API_VERSION: "1.11.0";
+export declare const SDK_API_VERSION: "1.12.0";

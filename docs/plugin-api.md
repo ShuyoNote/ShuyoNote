@@ -1,4 +1,4 @@
-# 插件 API（v1.11.0）
+# 插件 API（v1.12.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.11.0",
+  "apiVersion": "1.12.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.11.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.12.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -117,6 +117,8 @@ register({
 | `versions.list` | `api.versions.list(pageId, limit)` | `read:versions` | `current-space` | — | array | 1.5.0 |
 | `version.get` | `api.version.get(pageId, versionId, offset, limit, includeAnchors)` | `read:versions` | `current-space` | — | object | 1.5.0 |
 | `trash.list` | `api.trash.list(spaceId, limit)` | `read:trash` | `current-space` | — | array | 1.5.0 |
+| `drafts.status` | `api.drafts.status(draftId)` | `read:pages` | `current-space` | — | object | 1.12.0 |
+| `audit.tail` | `api.audit.tail(limit)` | `read:pages` | `current-space` | — | array | 1.12.0 |
 | `tags.list` | `api.tags.list(spaceId)` | `read:tags` | `current-space` | — | array | 1.0.0 |
 | `blocks.list` | `api.blocks.list(pageId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | — | array | 1.0.0 |
@@ -314,6 +316,24 @@ register({
 - 参数：
   - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
   - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（默认 50，上限 200）
+
+### `drafts.status` — 查草稿状态
+
+- 调用：`api.drafts.status(draftId)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：该草稿的当前状态（只回本会话）
+- 参数：
+  - `draftId`: `string` —— 写工具返回的 draftId
+
+### `audit.tail` — 最近审计
+
+- 调用：`api.audit.tail(limit)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：本会话最近 N 条审计（⛔ 不含正文）
+- 参数：
+  - `limit`: `number`（可选） —— 最近 N 条（默认 20，上限 100）
 
 ### `tags.list` — 列出本空间标签
 
@@ -1052,7 +1072,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.11.0",
+  "runtime": "declarative", "apiVersion": "1.12.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },

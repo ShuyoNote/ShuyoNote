@@ -104,6 +104,9 @@ const EXPECTED = [
   // ⭐ B2-补遗-2（2026-10-29）
   "db.rows_write",
   "db.rows_delete",
+  // ⭐ UX-①（2026-10-30）
+  "drafts.status",
+  "audit.tail",
 ];
 
 describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实现）", () => {

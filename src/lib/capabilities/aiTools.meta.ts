@@ -200,6 +200,30 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
     isWrite: false,
   },
   {
+    id: "drafts.status",
+    description: "查一条草稿当前状态：pending（等用户确认）/ applied（已落库）/ rejected（用户拒绝）/ expired（10 分钟没确认）。参数: draftId。⚠️ 只回**本会话**的草稿；别的会话/不存在 ⇒ not_found。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "draftId": { type: "string" },
+      },
+      required: ["draftId"],
+    },
+    isWrite: false,
+  },
+  {
+    id: "audit.tail",
+    description: "读**本会话**最近 N 条审计（默认 20 / 上限 100）：`{at,tool,capabilityId,ok,code}`。⛔ 不回正文、不回别的会话。参数: limit。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "limit": { type: "number" },
+      },
+      required: [],
+    },
+    isWrite: false,
+  },
+  {
     id: "tags.list",
     description: "列出本空间用到的标签及各自的页面数。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。返回 [{id, name, page_count}]。",
     argsSchema: {
