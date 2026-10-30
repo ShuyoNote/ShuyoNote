@@ -818,11 +818,6 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 
 
 
-.sidebar-actions-group {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
 
 /* 空间标题行：整行可点、更大的色块与名称——它是侧栏的「门牌」，
    之前 22px 色块 + 14px 文字在 264px 宽里显得局促。 */
@@ -1585,9 +1580,6 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   font-size: 12px;
   color: var(--text-dim);
   cursor: pointer;
-}
-.sync-advanced > summary::-webkit-details-marker {
-  display: none;
 }
 .sync-advanced > summary:hover {
   color: var(--accent);
@@ -8369,10 +8361,6 @@ select.prop-value {
   margin: 0;
   padding: 0;
 }
-.editor-table-cell > p {
-  margin: 0;
-  padding: 0;
-}
 
 .editor-table-cell-header {
   background: var(--bg-sidebar);
@@ -9700,22 +9688,7 @@ select.prop-value {
 
 /* Second-level submenu (分栏 count picker). Fixed position, opens to the RIGHT
    of the 分栏 row (anchored via inline top/left from its rect). */
-.insert-columns-sub {
-  position: fixed;
-  z-index: 70;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  box-shadow: var(--shadow-md);
-  padding: 8px;
-  animation: pop 0.16s ease;
-}
 
-.insert-columns-label {
-  font-size: 11px;
-  color: var(--text-dim);
-  margin-bottom: 8px;
-}
 
 /* Feishu-style count track: a single row of vertical bars; the bars up to the
    selected count are highlighted (blue = on, others = dark), like the reference
@@ -12834,16 +12807,6 @@ p:has(> .editor-drawing-container) {
   gap: 6px;
 }
 /* 甘特图视图：任务条 + 时间轴。 */
-.db-gantt {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  /* 外围框线。 */
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
 .db-gantt-head,
 .db-gantt-row {
   display: flex;
@@ -13501,7 +13464,6 @@ p:has(> .editor-drawing-container) {
 .tc-preview { height: 150px; display: flex; flex-direction: column; overflow: hidden; }
 /* 题头图(封面照片)顶部。 */
 .tc-preview-cover { height: 74px; flex: none; background-size: cover; background-position: center 25%; }
-.tc-pv-card { background: #fff; flex: 1; padding: 10px 12px; width: 100%; display: flex; flex-direction: column; gap: 6px; }
 .tc-pv-card { background: #fff; flex: 1; padding: 10px 12px; width: 100%; display: flex; flex-direction: column; gap: 6px; }
 .tc-pv-title { height: 10px; width: 55%; border-radius: 2px; background: #e3e6eb; }
 .tc-pv-line { height: 6px; border-radius: 2px; background: #eef0f4; }
@@ -15716,10 +15678,6 @@ p:has(> .editor-drawing-container) {
   padding: 2px 3px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-}
-.fm-file-actions button:hover {
-  color: var(--text);
-  background: var(--hover);
 }
 /* 只属于窄屏的形态（见文件末尾"文件视图窄屏适配"那段）：
    · `.fm-btn-icon` —— 操作行按钮里的图标（桌面隐藏，桌面照旧只有文字标签）。
@@ -27585,7 +27543,6 @@ button.mset-row:focus-visible {
    ⛔ 不许靠给卡写死高度解决（行内文本换行时会溢出）⇒ 只禁止收缩。 */
 .set-space-list-scroll > .set-space-card { flex: 0 0 auto; }
 .set-space-row { min-height: 56px; }
-.set-space-row .set-row-text { flex: 1 1 auto; min-width: 0; }
 .set-space-row .set-btn { flex: 0 0 auto; white-space: nowrap; }
 
 /* ⭐ 2026-10-25 按设计稿收口：顶部安全卡 + 行内 ⋯ 菜单 + 状态/作用域 meta */
@@ -27602,12 +27559,10 @@ button.mset-row:focus-visible {
   font-size:10.5px;line-height:18px;color:var(--text-2);background:#f7f8fa;
 }
 .set-space-crypto:has(+ .set-space-sync){}
-.set-space-more{margin-left:auto;position:relative;flex:0 0 auto}
 .set-space-more>summary{
   list-style:none;cursor:pointer;width:32px;height:32px;border-radius:8px;
   display:grid;place-items:center;color:var(--text-faint);font-size:16px;
 }
-.set-space-more>summary::-webkit-details-marker{display:none}
 .set-space-more[open]>summary,.set-space-more>summary:hover{background:var(--fill-soft,#f3f5f9);color:var(--text-2)}
 .set-space-menu{
   position:absolute;right:0;top:38px;z-index:20;min-width:150px;padding:6px;
