@@ -6080,7 +6080,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         "files.stat" => cap_files_stat(&arg_str("attId")?, arg_opt_str("spaceId").as_deref()),
         "files.extract_status" => {
             cap_files_extract_status(&arg_str("attId")?, arg_opt_str("spaceId").as_deref())
-        }
+        },
         "files.list_orphan" => cap_files_list_orphan(
             arg_i64("limit", 50),
             arg_i64("offset", 0),
@@ -6088,7 +6088,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         ),
         "files.download" => {
             cap_files_download(&arg_str("attId")?, arg_opt_str("spaceId").as_deref())
-        }
+        },
         "blobs.fetch" => cap_blobs_fetch(&arg_str("handle")?),
         // B3：导出（句柄，复用同一张句柄表）＋覆盖率报告（JSON）
         "export.markdown" => cap_export_markdown(
@@ -6246,11 +6246,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         "templates.list" => cap_templates_list(),
         "pages.create" => cap_pages_create(
             &arg_str("title")?,
-            &args
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
+            arg_opt_str("content").as_deref().unwrap_or(""),
             arg_opt_str("parentId").as_deref(),
             arg_opt_str("fence").as_deref(),
             None,
