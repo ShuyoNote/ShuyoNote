@@ -1735,7 +1735,6 @@ fn remove_attachment_inner_with(
 /// 命中 ⇒ bad_args 点名；任何空间读不到 ⇒ **拒绝删除**（宁留勿删，不当作没引用）。
 fn cross_space_refs(c_target: &rusqlite::Connection, app_data_dir: &Path, hash: &str, except_id: &str) -> Result<Vec<String>, String> {
     let needle = format!("attachment://{hash}");
-    let like = format!("%{needle}%");
     let spaces: Vec<String> = c_target
         .prepare("SELECT id FROM meta.workspaces WHERE deleted_at IS NULL")
         .map_err(|e| format!("db_error: {e}"))?
@@ -1745,15 +1744,7 @@ fn cross_space_refs(c_target: &rusqlite::Connection, app_data_dir: &Path, hash: 
         .collect();
     let mut hits: Vec<String> = Vec::new();
     let mut scan = |label: &str, c: &rusqlite::Connection| -> Result<(), String> {
-        let mut stmt = c
-            .prepare("SELECT title FROM pages WHERE deleted_at IS NULL AND content_json LIKE ?1")
-            .map_err(|e| e.to_string())?;
-        let titles: Vec<String> = stmt
-            .query_map(params![like], |r| r.get::<_, String>(0))
-            .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect();
-        for t in titles {
+        for (_pid, t) in crate::doc_content::pages_referencing_attachment(c, &needle)? {
             hits.push(format!("{label}：{t}"));
         }
         let n: i64 = c

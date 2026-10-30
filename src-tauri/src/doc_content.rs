@@ -68,6 +68,30 @@ pub struct DocContent {
 }
 
 /// **唯一读出口**。页面不存在或已软删 ⇒ `Ok(None)`（**不**在这里报错：是"没有"还是"出错"由调用方决定）。
+/// ⭐ v3-A1：按内容片段找**活页**（附件引用扫描用；唯一合法入口）。
+/// 返回 (page_id, title)；正文读取走本层 `read`，⛔ 调用方不要直接摸存储键名。
+pub(crate) fn pages_referencing_attachment(
+    c: &rusqlite::Connection,
+    needle: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let ids: Vec<String> = c
+        .prepare("SELECT id FROM pages WHERE deleted_at IS NULL")
+        .map_err(|e| e.to_string())?
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    let mut hits = Vec::new();
+    for id in ids {
+        if let Some(doc) = read(c, &id)? {
+            if doc.json.contains(needle) {
+                hits.push((id, doc.title));
+            }
+        }
+    }
+    Ok(hits)
+}
+
 pub fn read(c: &Connection, page_id: &str) -> Result<Option<DocContent>, String> {
     c.query_row(
         "SELECT title, content_json, content_text FROM pages WHERE id = ?1 AND deleted_at IS NULL",
