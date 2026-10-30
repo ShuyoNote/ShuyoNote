@@ -7,7 +7,7 @@ import { TagRow } from "./TagBar";
 // 「时间」属性的编辑器单独一个文件（**一行只有一个可见输入框**，见那边的头注）：
 // 它原来长在这里、且一行并排两个框 —— owner 2026-09-21 的截图问的就是那个。
 import { DatetimeValueEditor } from "./DatetimeValueEditor";
-import { formatDateTime, formatUrl } from "../lib/propFormat";
+import { formatDateTime, formatPerson, formatUrl } from "../lib/propFormat";
 
 // 「时间」= 日期 + 时刻（attr_type = "datetime"），与只到日的"日期"并列。
 const TYPES = ["text", "number", "date", "datetime", "checkbox", "select", "multi"] as const;
@@ -392,6 +392,17 @@ function renderSystemValue(p: PageProp): string {
 
 function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string) => void }) {
   const [editing, setEditing] = useState(false);
+  if (/^(作者|author)$/i.test(prop.name)) {
+    const person = formatPerson(prop.value);
+    if (person && !editing) {
+      return (
+        <span className="prop-person" aria-label="作者" onClick={() => setEditing(true)} title="点击编辑">
+          <span className="prop-person-avatar">{person.initial}</span>
+          {person.label}
+        </span>
+      );
+    }
+  }
   if (prop.name === "来源") {
     const u = formatUrl(prop.value);
     if (u && !editing) {

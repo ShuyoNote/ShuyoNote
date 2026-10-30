@@ -64,7 +64,7 @@ import { LineageConflictBanner } from "./components/LineageConflictBanner";
 import { TextRepairRunner } from "./components/TextRepairRunner";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
 import { InlineAiDraftBar } from "./components/InlineAiDraftBar";
-import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
+import { SmileIcon, ImageIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
 import { LockScreen } from "./components/LockScreen";
 import { useVault } from "./hooks/useVault";
@@ -116,7 +116,6 @@ import { usePdfReader } from "./store/pdfReader";
 import { useFilePreview } from "./store/filePreview";
 import { pdfPlacement } from "./lib/pdfPlacement";
 import { useFileManagerStore } from "./store/fileManager";
-import { usePropertyUiStore } from "./store/propertyUi";
 import { toast } from "./store/toast";
 import { platform } from "./lib/platform";
 import { withSyncStatus } from "./store/syncStatus";
@@ -885,22 +884,6 @@ function NoteEditor({ pageId }: { pageId: string }) {
               onClick={() => setCoverOpen(true)}
             >
               <ImageIcon className="page-action-icon" /> {current?.cover ? "更换题头图" : "添加题头图"}
-            </button>
-            <button
-              className="page-action-btn"
-              onClick={() => usePropertyUiStore.getState().requestAddProp()}
-            >
-              <PropertyIcon className="page-action-icon" /> 添加属性
-            </button>
-            <button
-              className="page-action-btn"
-              onClick={(e) => {
-                const r = e.currentTarget.getBoundingClientRect();
-                usePropertyUiStore.getState().setTagAnchor({ top: r.bottom, left: r.left, width: r.width });
-                usePropertyUiStore.getState().requestAddTag();
-              }}
-            >
-              <TagIcon className="page-action-icon" /> 添加标签
             </button>
           </div>
           <div className="editor-head">
