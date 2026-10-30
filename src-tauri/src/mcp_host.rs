@@ -867,34 +867,35 @@ mod tools_list_tests {
     /// （不是删掉旧测试：它挡的"写能力悄悄多出来"正是要保留的语义，只是从"一条都没有"升级成白名单。）
     #[test]
     fn b2_write_surface_is_exactly_the_expected_whitelist() {
-        const EXPECTED_WRITE: [&str; 26] = [
-            "pages_create",
-            "pages_update",
-            "pages_importMarkdown",
-            "blocks_append",
-            "folders_create",
-            "nodes_move",
-            "nodes_rename",
-            "nodes_delete",
-            "trash_restore",
-            "pages_revert",
-            "tags_add",
-            "tags_remove",
-            "properties_set",
-            "properties_unset",
-            "blocks_patch",
-            "blocks_insert",
-            "blocks_delete",
-            "files_move",
-            "files_rename",
-            "files_delete",
-            "templates_apply",
-            "files_upload_to_page",
-            "import_docpackage",
-            "files_detach",
-            "db_rows_write",
-            "db_rows_delete",
-        ];
+        const EXPECTED_WRITE: [&str; 27] = [
+    "blocks_append",
+    "blocks_delete",
+    "blocks_insert",
+    "blocks_patch",
+    "db_rows_delete",
+    "db_rows_write",
+    "files_delete",
+    "files_detach",
+    "files_move",
+    "files_rename",
+    "files_upload_to_page",
+    "folders_create",
+    "import_docpackage",
+    "nodes_delete",
+    "nodes_move",
+    "nodes_rename",
+    "pages_create",
+    "pages_importMarkdown",
+    "pages_import_markdown",
+    "pages_revert",
+    "pages_update",
+    "properties_set",
+    "properties_unset",
+    "tags_add",
+    "tags_remove",
+    "templates_apply",
+    "trash_restore",
+];
         let off = names(&tools_list_json(false));
         let on = names(&tools_list_json(true));
         let added: Vec<&String> = on.iter().filter(|n| !off.iter().any(|x| x == *n)).collect();
@@ -1048,6 +1049,19 @@ mod w3_draft_tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let _dir = crate::db::ensure_test_app_data_dir();
+        let dir = _dir.to_path_buf();
+        {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            let space: String = m
+                .query_row("SELECT id FROM workspaces WHERE deleted_at IS NULL LIMIT 1", [], |r| r.get(0))
+                .unwrap();
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at) VALUES (?1, ?2, NULL, 'p', '{}', 'x', 'page', 0, 10, 10)",
+                rusqlite::params!["p-update-1", space],
+            )
+            .unwrap();
+        }
         let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen2 = seen.clone();
@@ -1095,6 +1109,18 @@ mod w3_draft_tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let dir = crate::db::ensure_test_app_data_dir().to_path_buf();
+        {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            let space: String = m
+                .query_row("SELECT id FROM workspaces WHERE deleted_at IS NULL LIMIT 1", [], |r| r.get(0))
+                .unwrap();
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at) VALUES (?1, ?2, NULL, 'p', '{}', 'x', 'page', 0, 10, 10)",
+                rusqlite::params!["p-update-auto", space],
+            )
+            .unwrap();
+        }
         let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen2 = seen.clone();
