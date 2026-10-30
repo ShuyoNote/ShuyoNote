@@ -52,8 +52,8 @@ export interface FrontendToolResult {
 /** 桥要用的依赖（可注入 ⇒ 判据能测；默认走真 `api` / `platform`）。 */
 export interface FrontendToolDeps {
   getPage: (id: string, spaceId?: string) => Promise<PageDetail>;
-  listPageAttachments: (id: string) => Promise<AttachmentMeta[]>;
-  readAttachmentBytes: (hash: string) => Promise<ArrayBuffer | Uint8Array>;
+  listPageAttachments: (id: string, spaceId?: string) => Promise<AttachmentMeta[]>;
+  readAttachmentBytes: (hash: string, spaceId?: string) => Promise<ArrayBuffer | Uint8Array>;
   getActiveWorkspaceId: () => Promise<string>;
   derivedStores?: () => Promise<CoverageStores | undefined>;
 }
@@ -61,8 +61,8 @@ export interface FrontendToolDeps {
 export function defaultFrontendToolDeps(): FrontendToolDeps {
   return {
     getPage: (id, spaceId) => api.getPage(id, spaceId) as unknown as Promise<PageDetail>,
-    listPageAttachments: (id) => api.listPageAttachments(id),
-    readAttachmentBytes: (hash) => api.readAttachmentBytes(hash),
+    listPageAttachments: (id, spaceId) => api.listPageAttachments(id, spaceId),
+    readAttachmentBytes: (hash, spaceId) => api.readAttachmentBytes(hash, spaceId),
     getActiveWorkspaceId: () => api.getActiveWorkspaceId(),
     ...(platform.derivedStores
       ? {
@@ -165,14 +165,15 @@ async function exportDocPackage(
   deps: FrontendToolDeps,
 ): Promise<FrontendToolResult> {
   const pageId = String(args.pageId ?? "").trim();
+  const spaceId = String(args.spaceId ?? "").trim();
   if (!pageId) throw new Error("bad_args: export.docpackage 需要 pageId");
   // 先读一次页面：文件夹没有正文（与单页 Markdown 同一条拒绝口径）
-  const page = await deps.getPage(pageId);
+  const page = await deps.getPage(pageId, spaceId || undefined);
   if (!page) throw new Error(`not_found: 页面 ${pageId} 不存在或已读取失败`);
   if (page.kind === "folder") {
     throw new Error(`bad_args: 「${page.title || pageId}」是文件夹，没有正文可导出`);
   }
-  const built = await buildPageDocPackageBytes(pageId, deps);
+  const built = await buildPageDocPackageBytes(pageId, spaceId ? { ...deps, listPageAttachments: (id) => deps.listPageAttachments(id, spaceId), readAttachmentBytes: (h) => deps.readAttachmentBytes(h, spaceId) } : deps);
   const limit = bridgeLimitError(built.assetCount, built.bytes.length);
   if (limit) throw new Error(limit);
   return { name: `${sanitizeName(built.title)}.shuyodoc`, bytes: built.bytes };

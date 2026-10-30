@@ -641,7 +641,7 @@ export const api = {
   getAttachment: (id: string) => invoke("get_attachment", { id }),
   // Read an attachment's PLAINTEXT bytes by hash (decrypts at-rest-encrypted
   // bytes, unlike read_text_file which reads the raw on-disk path).
-  readAttachmentBytes: (hash: string) => invoke("read_attachment_bytes", { hash }),
+  readAttachmentBytes: (hash: string, spaceId?: string) => invoke("read_attachment_bytes", { hash, spaceId }),
   fetchBookmarkMetadata: (url: string) =>
     invoke("fetch_bookmark_metadata", { url }),
   copyAttachment: (hash: string, destPath: string) =>
@@ -658,8 +658,8 @@ export const api = {
     return metas;
   },
   /** pageId 传 null 列出空间根下的「未整理」文件（page_id IS NULL）。 */
-  listPageAttachments: (pageId: string | null) =>
-    invoke("list_page_attachments", { pageId }),
+  listPageAttachments: (pageId: string | null, spaceId?: string) =>
+    invoke("list_page_attachments", { pageId, spaceId }),
   /**
    * ⭐ 2026-10-29：把**已经知道 hash** 的字节写进附件库（内容寻址 ＋ 去重，桌面/Web 同一份语义）。
    * 用在 `.shuyodoc` 导入：包的 `assets/<sha256>.<ext>` 文件名里已带 sha，不必再算一遍
