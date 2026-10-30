@@ -72,5 +72,6 @@ describe("R151：同一页的并发追加不许互相覆盖", () => {
     expect(pendingKeyCount()).toBe(2);
     const outs = await both;
     expect(outs.every((o) => o.ok)).toBe(true);
+    void api;
   });
 });

@@ -6,6 +6,7 @@ mod activity;
 // MCP 宿主面那半「本机通道」（方向②：桥 → App，App 当服务端 ✓）—— **默认关** ✓，
 // 详见 `mcp_channel.rs` 头部与判据 `scripts/check-mcp-host-channel.mjs` ✓。
 mod attachments;
+mod space_import;
 mod community;
 mod community_publish;
 mod mcp_channel;
@@ -998,6 +999,7 @@ pub fn run() {
   commands::mcp_hidden_spaces_get,
   commands::mcp_hidden_spaces_set,
   plugins::mcp_download_grant,
+  space_import::space_package_import,
             // 冲刺 CRDT S7-2（2026-09-23）：每页 CRDT 状态的读/写（`page_crdt` 表）。
             // 与前端 `api.readPageState` / `api.savePageState` 成对 —— 接上之后**桌面**才真正
             // 与 Web 同行为（在此之前它俩只登记为 web 专用，桌面上每次打开页面都会绑定失败）。

@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **包格式 M2c：`.shuyospace` 导入落库**（Rust 单命令事务）：新建空间、拓扑序建节点/内层文档、附件 sha 落盘去重、父子重映射；失败原子回滚（meta/库/附件目录全清）；前端胶水复用 `openSpacePackage` 并透传 warnings。判据 2 Rust + 1 前端。
 - **包格式 M2b 读侧骨架**：`.shuyospace` 读侧整包校验（checksums 覆盖 manifest/缺则拒）、manifest/tree（kind/环/深度/children-parent 冲突）/attachments/内层文档包（禁再嵌包）/id_map 仅提示；新增 10 条判据，包判据 68 条全绿。导入落库（新建 id/id_map 重算/原子/审计）下一批。
 - **包 checksums 口径修正**：写侧不再写 `checksums_sha256`；`checksums.json` 覆盖 `manifest.json`（附录 A.1，企业版会校验漏登记）。读侧仍容忍旧包的 `checksums_sha256`（v1.1 不验）。
 - **包格式 M2a：`.shuyospace` 空间包导出**（纯格式层 `docSpacePackWriter.ts`）：manifest（features/min_reader_version/space/checksums_sha256）、tree（children 权威、空文件夹、§9 file 条目保留 name）、内层 document.shuyodoc（复用文档包写侧、禁再嵌套）、files/<sha>.<小写扩展>、attachments.json（tree 名称为准）、checksums；固定 1980-01-01＋store-only 可复现；不写 id_map。新增 9 条判据，包判据 58 条全绿。
