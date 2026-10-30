@@ -3991,6 +3991,22 @@ fn cap_blocks_delete(
 // ⛔ 本批**不做** `files.upload_to_page` 与 `import.docpackage`：MCP 面没有受控的"原始字节/文件"
 //    入口（⛔ 不接受任意路径）；要做得单独建受控上传通道（见报告降级）。
 
+pub(crate) fn attachment_meta_in(
+    c: &rusqlite::Connection,
+    id: &str,
+) -> Result<(String, String, Option<String>), String> {
+    use rusqlite::OptionalExtension;
+    let att = id.trim();
+    c.query_row(
+        "SELECT name, hash, page_id FROM attachments WHERE id = ?1",
+        params![att],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
+    )
+    .optional()
+    .map_err(|e| format!("db_error: {e}"))?
+    .ok_or_else(|| format!("not_found: 附件 {att} 不存在（该空间内）"))
+}
+
 fn attachment_meta(id: &str) -> Result<(String, String, Option<String>), String> {
     let att = id.trim();
     if att.is_empty() {
@@ -4065,7 +4081,12 @@ fn cap_files_rename(
     if new_name.chars().count() > 255 {
         return Err("bad_args: 附件名超过 255 字上限".to_string());
     }
-    let (old, hash, _) = attachment_meta(att_id)?;
+    let (old, hash, _) = if space == target_space_id(None) {
+        attachment_meta(att_id)?
+    } else {
+        // 跨空间：源附件必须在**目标空间**里，否则 not_found 点名（不回落当前空间）
+        with_conn_for_space(Some(&space), |c| attachment_meta_in(c, att_id))?
+    };
     check_expected_sha(&hash, expected_sha)?;
     structural_draft(
         dry_run,
@@ -4075,6 +4096,7 @@ fn cap_files_rename(
             "kind": "rename_attachment",
             "attId": att_id.trim(),
             "name": new_name,
+            "spaceId": space,
             "expectedSha": hash,
             "spaceId": space,
         }),
@@ -5477,7 +5499,12 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
                 }
                 if !matches!(
                     method,
-                    "pages.create" | "pages.update" | "blocks.append" | "blocks.patch" | "blocks.delete"
+                    "pages.create"
+                        | "pages.update"
+                        | "blocks.append"
+                        | "blocks.patch"
+                        | "blocks.delete"
+                        | "files.rename"
                 ) {
                     return Err(format!(
                         "bad_args: {method} 暂不支持跨空间（v1 只支持 pages.create；目标空间 {space} 未写入）"
@@ -16081,6 +16108,91 @@ register({ id: "s.run", title: "结构化", run: function () {
         let read_back = crate::plugins::ai_hidden_spaces_in(&c2);
         assert_eq!(read_back, stored, "落盘读回一致");
         set_key(Some("[]"));
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ A1：files.rename 跨空间（目标空间内改名；当前空间四计数不变；缺档/unsupported/开关）。
+    #[test]
+    fn a1_files_rename_cross_space() {
+        let f = b1c_fixture("a1");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "a1-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute("INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','a1-dev')", []).ok();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,'二','#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '二页', '{}', 'x', 'page', 0, 10, 10)",
+                params![second],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO attachments (id, page_id, name, mime, size, hash, created_at)
+                 VALUES ('a1','p1','旧名.txt','text/plain',3,?1,10)",
+                params!["a".repeat(64)],
+            )
+            .unwrap();
+        }
+        let snap = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (q("SELECT COUNT(*) FROM pages"), q("SELECT COUNT(*) FROM changes"), q("SELECT COUNT(*) FROM page_versions"), q("SELECT COUNT(*) FROM attachments"))
+        };
+        let before = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); snap(&c) };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        let (out, drafts) = with_external_caller("a1-w", &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability("files.rename", &format!(r#"{{"attId":"a1","name":"新名.txt","spaceId":"{second}"}}"#))
+            })
+        });
+        out.expect("应产草稿");
+        assert_eq!(drafts[0].payload["spaceId"], second);
+        // 模拟 apply：目标空间单连接实现
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            crate::attachments::rename_attachment_in(&c, "a1", "新名.txt").expect("目标空间改名应成功");
+            let name: String = c.query_row("SELECT name FROM attachments WHERE id='a1'", [], |r| r.get(0)).unwrap();
+            assert_eq!(name, "新名.txt", "目标空间附件必须真改名");
+            let ch: i64 = c.query_row("SELECT COUNT(*) FROM changes WHERE entity='attachment'", [], |r| r.get(0)).unwrap();
+            assert!(ch >= 1, "目标空间 changes 必须有附件变更记录");
+        }
+        let after = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); snap(&c) };
+        assert_eq!(before, after, "当前空间四计数逐项不变");
+        // 缺档 ⇒ 点名 write:all-spaces
+        let e = with_external_caller("a1-no", &b2_granted(), || {
+            dispatch_capability("files.rename", &format!(r#"{{"attId":"a1","name":"x.txt","spaceId":"{second}"}}"#))
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        // 源附件不在目标空间 ⇒ not_found
+        let e = with_external_caller("a1-miss", &g, || {
+            dispatch_capability("files.rename", &format!(r#"{{"attId":"没有","name":"x.txt","spaceId":"{second}"}}"#))
+        })
+        .expect_err("目标空间没有该附件必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        // unsupported：files.move 仍不在白名单
+        let e = with_external_caller("a1-fm", &g, || {
+            dispatch_capability("files.move", &format!(r#"{{"attId":"a1","toPageId":"p1","spaceId":"{second}"}}"#))
+        })
+        .expect_err("未支持工具必须 unsupported");
+        assert!(e.contains("暂不支持跨空间"), "{e}");
+        // 回滚开关
+        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        let e = with_external_caller("a1-off", &g, || {
+            dispatch_capability("files.rename", &format!(r#"{{"attId":"a1","name":"x.txt","spaceId":"{second}"}}"#))
+        })
+        .expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
         b1c_cleanup(&f);
     }
 }
