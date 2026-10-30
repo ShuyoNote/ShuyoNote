@@ -102,6 +102,11 @@ export function McpAccessPane() {
     void refresh();
   }, [refresh]);
 
+  // ⭐ AI 不可见空间清单：回读已保存清单（重开面板仍勾选）
+  useEffect(() => {
+    void api.mcpHiddenSpacesGet().then((r) => setHidden(r.spaceIds ?? [])).catch(() => setHidden([]));
+  }, []);
+
   // ⭐ AI 不可见空间清单：空间列表（勾选列表用）
   useEffect(() => {
     void api.listWorkspaces().then((ws) => setSpaces(ws.map((w) => ({ id: w.id, name: w.name })))).catch(() => setSpaces([]));
