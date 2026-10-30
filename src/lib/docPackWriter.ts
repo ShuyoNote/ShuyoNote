@@ -59,10 +59,17 @@ export interface BuildDocumentPackageInput {
 }
 
 /**
- * 写进 zip 的固定时间戳：1980-01-02 UTC（DOS 时间下界之后）。
+ * 写进 zip 的固定时间戳：**本地** 1980-01-01 00:00（DOS 时间下界，编码成 0x0021）。
+ *
+ * ⚠️ **必须用本地时间构造，不能用 `Date.UTC(...)`**（2026-10-31 实测的真 bug）：
+ * fflate 的 `zipSync` 取 mtime 后用的是 **本地** getter（`dt.getFullYear()`/`getHours()`…），
+ * 所以 `new Date(Date.UTC(1980,0,1))` 在 +08:00 与 UTC 两个时区会编码出**不同的 DOS 时间字段**
+ * ⇒ 同样的输入写出**不同字节**。CI 是 UTC、开发机是 +08:00 ⇒ 夹具字节稳定判据
+ * （`packageFixtures.test.ts`）在 CI 上必红，而本机永远绿 ✗。
+ * 用本地时间构造后，两地 getter 读到的年月日时分秒**都一样** ⇒ 逐字节相同 ✓。
  * 固定它 ⇒ **同一份输入写出逐字节相同的包**（checksums 可复现）；读端不看时间字段。
  */
-const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
+const ZIP_EPOCH = new Date(1980, 0, 1, 0, 0, 0);
 
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 

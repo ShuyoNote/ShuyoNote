@@ -24,8 +24,10 @@ export const TREE_PATH = "tree.json";
 export const ATTACHMENTS_PATH = "attachments.json";
 export const CHECKSUMS_PATH = "checksums.json";
 export const SPACE_MIN_READER = 1;
-/** 与文档包一致（§9：统一 1980-01-01，对齐服务端 0x0021）。 */
-const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
+/** 与文档包一致（§9：统一 1980-01-01，对齐服务端 0x0021）。
+ *  ⚠️ 必须是**本地时间**构造：fflate 用本地 getter 编码 DOS 字段，`Date.UTC` 会让 +08:00 与 UTC
+ *  写出不同字节（2026-10-31 实测：CI=UTC 时夹具字节稳定判据必红，本机绿）。详见 `docPackWriter.ts` 的同名注释。 */
+const ZIP_EPOCH = new Date(1980, 0, 1, 0, 0, 0);
 
 export type SpaceNodeKind = "page" | "folder" | "database";
 export type SpaceChild =

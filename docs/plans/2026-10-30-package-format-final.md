@@ -268,7 +268,8 @@ warnings=[id-map-ignored]（预期）；parent/children/附件名/大小/mime/sh
 ## 样例包夹具证据（2026-10-30）
 
 - 生成器：`scripts/make-package-fixtures.mjs`（vite `ssrLoadModule` 直接加载本仓 TS 写侧，无新依赖；默认输出 `src/lib/__fixtures__/package-fixtures/`，同目录 `fixtures.json` 记录 size/sha256）。
-- 入库 4 个真实包（sha256 与 lead 生成一致）：`personal-minimal.shuyodoc` 1086 B `6ec4812b…`、`personal-with-attachment.shuyodoc` 1546 B `b43fa8ad…`、`personal-database.shuyodoc` 1192 B `d013b759…`、`personal-sample.shuyospace` 5528 B `1f768006…`。
+- 入库 4 个真实包（`fixtures.json` 为准）：`personal-minimal.shuyodoc` 1086 B `9ff3809f…`、`personal-with-attachment.shuyodoc` 1546 B `62284416…`、`personal-database.shuyodoc` 1192 B `47be8b86…`、`personal-sample-appendixA.shuyospace` 5280 B `e1b8688f…`。
+  - ⚠️ **2026-10-31 重新生成过一次**（旧 sha 为 `6ec4812b…` 等）：写侧的固定时间戳原来用 `Date.UTC(1980,0,1)`，而 fflate 编码 DOS 时间字段用的是**本地** getter ⇒ +08:00 与 UTC 会写出不同字节（CI 是 UTC，本机是 +08:00）⇒ `packageFixtures.test.ts` 的"重新生成逐字节相等"在 CI 上必红、本机永远绿。改成**本地构造** `new Date(1980,0,1,0,0,0)` 后两地字节一致，夹具按新字节重新入库。
 - 判据：`src/lib/packageFixtures.test.ts`（3 条：清单 size/sha 一致；**重新生成逐字节相等**；3 个文档包走 `openDocumentPackage`、空间包走 `openSpacePackage` 读回）。
 
 ## M2c 引用重写/审计证据（2026-10-30）
