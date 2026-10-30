@@ -356,7 +356,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
     case "delete_attachment": {
       const attId = String(p.attId ?? "");
       if (!attId) return { ok: false, message: "delete_attachment 需要 attId" };
-      await api.removeAttachment(attId);
+      await api.removeAttachment(attId, typeof p.spaceId === "string" ? p.spaceId : undefined);
       return { ok: true, message: "已删除附件条目（字节仍按内容寻址保留，除非没有任何引用）" };
     }
 

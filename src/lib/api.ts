@@ -668,7 +668,8 @@ export const api = {
    */
   writeAttachmentBytes: (args: { hash: string; mime: string; name: string; data: number[] }) =>
     invoke("write_attachment_bytes", { ...args }),
-  removeAttachment: (id: string) => invoke("remove_attachment", { id }),
+  removeAttachment: (id: string, spaceId?: string) =>
+    invoke("remove_attachment", { id, spaceId }),
   removeAttachments: (ids: string[]) => invoke("remove_attachments", { ids }),
   storageStats: () => invoke("storage_stats"),
   clearTrash: () => invoke("clear_trash"),

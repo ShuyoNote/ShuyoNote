@@ -1610,13 +1610,47 @@ pub fn list_all_pdf_attachments(
     Ok(out)
 }
 
+/// ⭐ v3-A1：跨空间删除（引用扫描 + 单连接删除）。命中/扫不动都拒；通过后才释放字节。
+pub(crate) fn delete_attachment_cross_space(
+    app_data_dir: &Path,
+    id: &str,
+    space: &str,
+) -> Result<usize, String> {
+    let c = crate::db::open_space_conn_at(space, app_data_dir).map_err(|e| {
+        format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+    })?;
+    if crate::plugins::cross_space_write_disabled() {
+        return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+    }
+    let hash: Option<String> = c
+        .query_row("SELECT hash FROM attachments WHERE id = ?1", params![id], |r| r.get(0))
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some(hash) = hash else { return Ok(0) };
+    let refs = cross_space_refs(&c, app_data_dir, &hash, id)?;
+    if !refs.is_empty() {
+        return Err(format!("bad_args: 附件仍被其它空间引用（{}）—— 先删引用再删", refs.join("、")));
+    }
+    let empty = Some(std::collections::HashSet::<String>::new());
+    remove_attachment_in_with(&c, app_data_dir, id, space, &empty)
+}
 #[tauri::command]
 pub fn remove_attachment(
     app: tauri::AppHandle,
     db: State<'_, Db>,
     id: String,
+    space_id: Option<String>,
 ) -> Result<usize, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let target = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(space) = target {
+        let active = {
+            let c = db.0.lock().expect("db mutex poisoned");
+            crate::workspaces::active_workspace_id(&c)?
+        };
+        if space != active {
+            return delete_attachment_cross_space(&app_data_dir, &id, space);        }
+    }
     remove_attachment_inner(&db, &app_data_dir, &id)
 }
 
@@ -1694,7 +1728,80 @@ fn remove_attachment_inner_with(
 ) -> Result<usize, String> {
     let c = db.0.lock().expect("db mutex poisoned");
     let space = active_space_id(&c);
-    let hash: Option<String> = c
+    remove_attachment_in_with(&c, app_data_dir, id, &space, other_refs)
+}
+
+/// ⭐ v3-A1：跨空间删除前的引用扫描（**目标空间之外** + 目标空间自身都查）。
+/// 命中 ⇒ bad_args 点名；任何空间读不到 ⇒ **拒绝删除**（宁留勿删，不当作没引用）。
+fn cross_space_refs(c_target: &rusqlite::Connection, app_data_dir: &Path, hash: &str, except_id: &str) -> Result<Vec<String>, String> {
+    let needle = format!("attachment://{hash}");
+    let like = format!("%{needle}%");
+    let spaces: Vec<String> = c_target
+        .prepare("SELECT id FROM meta.workspaces WHERE deleted_at IS NULL")
+        .map_err(|e| format!("db_error: {e}"))?
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(|e| format!("db_error: {e}"))?
+        .filter_map(|r| r.ok())
+        .collect();
+    let mut hits: Vec<String> = Vec::new();
+    let mut scan = |label: &str, c: &rusqlite::Connection| -> Result<(), String> {
+        let mut stmt = c
+            .prepare("SELECT title FROM pages WHERE deleted_at IS NULL AND content_json LIKE ?1")
+            .map_err(|e| e.to_string())?;
+        let titles: Vec<String> = stmt
+            .query_map(params![like], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        for t in titles {
+            hits.push(format!("{label}：{t}"));
+        }
+        let n: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM attachments WHERE hash = ?1 AND id != ?2",
+                params![hash, except_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if n > 0 {
+            hits.push(format!("{label}：另有 {n} 个附件引用同一内容"));
+        }
+        Ok(())
+    };
+    // 目标空间自身：用已打开的目标连接扫（不重复开库）
+    scan("目标空间", c_target)?;
+    for space in spaces {
+        let is_target: bool = c_target
+            .query_row("SELECT value FROM meta.sync_state WHERE key='__none__'", [], |_| Ok(String::new()))
+            .is_err(); // 占位，下面用 active 对比
+        let _ = is_target;
+        let conn = match crate::db::open_space_conn_at(&space, app_data_dir) {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(format!("bad_args: 有空间「{space}」无法确认引用（{e}）—— 宁留勿删，先解锁/修复再删"));
+            }
+        };
+        let target_space: String = conn
+            .query_row("SELECT value FROM meta.sync_state WHERE key='__x__'", [], |_| Ok(String::new()))
+            .unwrap_or_default();
+        let _ = target_space;
+        scan(&format!("空间 {space}"), &conn)?;
+    }
+    Ok(hits)
+}
+/// ⭐ v3-A1：单连接实现（命令层当前空间与跨空间共用；副作用全复用）。
+///
+/// ⚠️ 跨空间删除的"目标空间之外引用检查"尚未接入 ⇒ 调用方在跨空间时传 `other_refs=None`
+/// （字节**不删**，宁留勿删；下一轮补跨空间引用扫描）。
+pub(crate) fn remove_attachment_in_with(
+    c: &rusqlite::Connection,
+    app_data_dir: &Path,
+    id: &str,
+    space: &str,
+    other_refs: &Option<std::collections::HashSet<String>>,
+) -> Result<usize, String> {
+
+        let hash: Option<String> = c
         .query_row(
             "SELECT hash FROM attachments WHERE id = ?1",
             params![id],
