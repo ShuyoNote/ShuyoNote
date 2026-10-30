@@ -245,7 +245,7 @@ export const api = {
   lockEncryption: () => invoke("lock_encryption"),
   keyringStatus: () => invoke("keyring_status"),
   unlockEncryption: (passphrase: string) => invoke("unlock_encryption", { passphrase }),
-  getPage: (id: string) => invoke("get_page", { id }),
+  getPage: (id: string, spaceId?: string) => invoke("get_page", { id, spaceId }),
   listTemplates: (spaceId?: string | null) => invoke("list_templates", { spaceId }),
   saveAsTemplate: (args: { name: string; category?: string; icon?: string; cover?: string; summary?: string; content_json: string; content_text?: string; kind?: string; database_json?: string; space_id?: string | null }) =>
     invoke("save_as_template", { args }),
@@ -314,6 +314,7 @@ export const api = {
     title?: string;
     content_json?: string;
     content_text?: string;
+    spaceId?: string;
   }) => invoke("save_page", { args }),
   /**
    * 冲刺 S3b-2c：读这一页的 **CRDT 状态**（没有 ⇒ `null`）。

@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "apiVersion": "1.16.0",
+  "apiVersion": "1.17.0",
   "notes": "插件能力注册表——单一事实源。scripts/gen-capabilities.mjs 由本文件生成：JS shim（api.*）、Rust 绑定表、作者类型包、作者文档；scripts/check-capabilities.mjs 校验一致性与完整性。改能力请改这里，不要手改生成物。",
   "permissions": [
     {
@@ -359,6 +359,12 @@
           "required": false,
           "default": true,
           "desc": "是否在正文里给每个顶层块后插一行块锚点注释 `<!-- b:<blockId> -->`（可选，默认 true）；传 false ⇒ 返回的正文与旧行为**逐字节相同**（不占额外 token）"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略=当前空间）。跨空间需『可写（全部空间）』档（它同时给读全空间）；目标锁着 ⇒ permission_denied（locked）。"
         }
       ],
       "returns": {
@@ -925,6 +931,12 @@
           "required": false,
           "default": 100,
           "desc": "最多返回多少块（默认 100，上限 500）"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略=当前空间）。跨空间需『可写（全部空间）』档（它同时给读全空间）；目标锁着 ⇒ permission_denied（locked）。"
         }
       ],
       "returns": {
@@ -1369,6 +1381,12 @@
           "type": "string",
           "required": false,
           "desc": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略=当前空间）。跨空间需『可写（全部空间）』档（它同时给读全空间）；目标锁着 ⇒ permission_denied（locked）。"
         }
       ],
       "returns": {
@@ -3201,6 +3219,12 @@
           "type": "string",
           "required": false,
           "desc": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略=当前空间）。跨空间需『可写（全部空间）』档（它同时给读全空间）；目标锁着 ⇒ permission_denied（locked）。"
         }
       ],
       "returns": {

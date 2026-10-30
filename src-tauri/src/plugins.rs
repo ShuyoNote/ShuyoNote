@@ -1702,7 +1702,7 @@ fn cap_page_current(include_anchors: bool) -> CapResult {
                      这条工具不会为了「有东西返回」而编造一页。",
         }));
     };
-    cap_pages_get(&id, 0, MAX_PAGE_TEXT_LIMIT, include_anchors)
+    cap_pages_get(&id, 0, MAX_PAGE_TEXT_LIMIT, include_anchors, None)
 }
 
 /// 一个空间里**未删除节点**的数量 —— 与 `pages.list` / `listPages` 同一条 SQL 口径。
@@ -1767,6 +1767,14 @@ pub(crate) fn cross_space_write_disabled() -> bool {
             .as_str(),
         "0" | "off" | "false" | "no"
     )
+}
+
+/// 按目标空间取只读连接（当前空间 ⇒ 等价于 with_read_conn；别的空间 ⇒ with_conn_for_space 的读门）。
+fn with_target_space<T>(
+    space_id: &str,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>,
+) -> Result<T, String> {
+    with_conn_for_space(Some(space_id), f)
 }
 
 fn has_scope(id: &str) -> bool {
@@ -2035,8 +2043,14 @@ fn arg_bool(v: Option<&serde_json::Value>, default: bool) -> bool {
 ///
 /// ⚠️ `chars_total` / `offset` / `limit` 量的始终是**正文**（不含锚点行）——
 /// 调用方按 `offset + 返回正文字数` 翻页的口径因此一个字没变（锚点行不该被算进"读了几个字"）。
-fn cap_pages_get(id: &str, offset: i64, limit: i64, include_anchors: bool) -> CapResult {
-    with_read_conn(|c| {
+fn cap_pages_get(
+    id: &str,
+    offset: i64,
+    limit: i64,
+    include_anchors: bool,
+    space_id: Option<&str>,
+) -> CapResult {
+    with_conn_for_space(space_id, |c| {
         // 读一页只走「那一层」的一次读（内容 ＋ 读面要的两个标量来自**同一行**）：
         // `rev` 的两半必须配对，分两次查就有读到两代数据的窗口。
         let Some(row) =
@@ -2475,7 +2489,9 @@ fn cap_pages_update(
     expected_rev: Option<&str>,
     dry_run: bool,
     _client_request_id: Option<&str>,
+    space_id: Option<&str>,
 ) -> CapResult {
+    let space = write_target_space(space_id)?;
     let id = page_id.trim();
     if id.is_empty() {
         return Err("bad_args: 更新页面需要 id".to_string());
@@ -2494,7 +2510,7 @@ fn cap_pages_update(
     // ⭐ 2026-10-18：摘要原来写的是页面 **UUID**（`更新页面 91d3…（整页替换）`）——
     //   那串字符对用户毫无意义 ⇒ 有标题就用标题，没有才退回 id。
     // 读不到（页不存在 / 空间锁定）⇒ `null`，**不编一个 0**（前端会如实显示"读不到原文"）。
-    let existing = with_read_conn(|c| Ok(crate::doc_content::read(c, id).ok().flatten()))
+    let existing = with_target_space(&space, |c| Ok(crate::doc_content::read(c, id).ok().flatten()))
         .ok()
         .flatten();
     let before_chars = existing.as_ref().map(|d| d.text.chars().count());
@@ -2507,7 +2523,7 @@ fn cap_pages_update(
         Some(t) => format!("更新页面「{label}」（整页替换，标题改为「{t}」）"),
         None => format!("更新页面「{label}」（整页替换）"),
     };
-    let rev = check_expected_rev(&id, expected_rev)?;
+    let rev = with_target_space(&space, |c| check_expected_rev_in(c, &id, expected_rev))?;
     if dry_run {
         return Ok(serde_json::json!({
             "dryRun": true,
@@ -2521,6 +2537,7 @@ fn cap_pages_update(
         summary.clone(),
         serde_json::json!({
             "kind": "update_page",
+            "spaceId": space,
             "pageId": id,
             "title": new_title,
             "markdown": md,
@@ -2626,15 +2643,26 @@ fn cap_blocks_append(
     expected_rev: Option<&str>,
     dry_run: bool,
     _client_request_id: Option<&str>,
+    space_id: Option<&str>,
 ) -> CapResult {
+    let space = write_target_space(space_id)?;
     if text.trim().is_empty() {
         return Err("bad_args: 追加内容需要 text".to_string());
     }
-    let target = target_page_or_current(page_id)?;
-    let target_title = live_target(&target)
+    let current = target_space_id(None);
+    let target = if space != current {
+        page_id
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "bad_args: 跨空间追加必须给 pageId（目标空间里没有\"当前打开的页\"）".to_string())?
+            .to_string()
+    } else {
+        target_page_or_current(page_id)?
+    };
+    let target_title = with_target_space(&space, |c| live_target_in(c, &target))
         .map(|(t, _)| t)
         .unwrap_or_else(|_| target.clone());
-    let rev = check_expected_rev(&target, expected_rev)?;
+    let rev = with_target_space(&space, |c| check_expected_rev_in(c, &target, expected_rev))?;
     let title = RUN_STATE.with(|s| {
         // 顺手把目标页标题查出来给用户看（只读，不改状态）；查不到就用 id。
         let _ = s.borrow().plugin_id.clone();
@@ -2653,7 +2681,7 @@ fn cap_blocks_append(
     push_draft(
         format!("append_block:{target}"),
         summary.clone(),
-        serde_json::json!({ "kind": "append_block", "pageId": target, "text": text, "fence": fence }),
+        serde_json::json!({ "kind": "append_block", "pageId": target, "text": text, "fence": fence, "spaceId": space }),
     );
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
 }
@@ -3156,12 +3184,10 @@ fn write_target_space(space_id: Option<&str>) -> Result<String, String> {
         None => Ok(current),
         Some(s) if s == current => Ok(current),
         Some(target) => {
-            if has_scope("write:all-spaces") {
-                // ⭐ P1：档位已把**权限门**打开；但草稿落库（前端 apply）本版仍只写当前空间
-                //   ⇒ 这里给 bad_args 并**点名**目标空间，⛔ 不假装已经能跨空间落库。
-                Err(format!(
-                    "bad_args: 已授予 write:all-spaces，但跨空间落库链路本版未接（目标是 {target}）—— 省略 spaceId 即当前空间"
-                ))
+            if has_scope("write:all-spaces") && !cross_space_write_disabled() {
+                Ok(target.to_string())
+            } else if cross_space_write_disabled() {
+                Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string())
             } else {
                 Err(
                     "permission_denied: 带 spaceId 写别的空间需要权限 write:all-spaces\
@@ -3184,8 +3210,16 @@ fn page_rev_of(c: &rusqlite::Connection, page_id: &str) -> Result<Option<String>
 
 /// 校验 `expectedRev`（给了就必须与当前一致；没给就只取当前值）。页不存在 ⇒ `not_found`。
 fn check_expected_rev(page_id: &str, expected: Option<&str>) -> Result<String, String> {
+    with_read_conn(|c| check_expected_rev_in(c, page_id, expected))
+}
+
+fn check_expected_rev_in(
+    c: &rusqlite::Connection,
+    page_id: &str,
+    expected: Option<&str>,
+) -> Result<String, String> {
     let exp = expected.map(str::trim).filter(|s| !s.is_empty());
-    let cur = match with_read_conn(|c| page_rev_of(c, page_id)) {
+    let cur = match page_rev_of(c, page_id) {
         Ok(v) => v,
         // 没给 expectedRev 时**容忍**"读不到当前空间"（老草稿路径本来就不碰库；⛔ 不把它变成硬失败）
         Err(e) if exp.is_none() => return Ok(e),
@@ -3206,16 +3240,23 @@ fn check_expected_rev(page_id: &str, expected: Option<&str>) -> Result<String, S
 
 /// 读活页的 `(title, kind)`；不存在/已软删 ⇒ `not_found`（写能力的目标校验统一走这一条）。
 fn live_target(page_id: &str) -> Result<(String, String), String> {
+    with_read_conn(|c| live_target_in(c, page_id))
+}
+
+fn live_target_in(
+    c: &rusqlite::Connection,
+    page_id: &str,
+) -> Result<(String, String), String> {
     let pid = page_id.trim();
     if pid.is_empty() {
         return Err("bad_args: 需要 pageId".to_string());
     }
-    with_read_conn(|c| {
+    {
         let Some(m) = crate::doc_content::read_with_meta(c, pid)? else {
             return Err(format!("not_found: 页面 {pid} 不存在或已删除"));
         };
         Ok((m.content.title, m.kind))
-    })
+    }
 }
 
 /// 直接子项数（只数活着的子项；删除/移动前的提示与"非空文件夹拒绝"都靠它）。
@@ -3623,11 +3664,18 @@ fn cap_properties_unset(
 
 /// 块 → 页面（`blocks` 是派生化表；用它定位比让调用方传 pageId 少一个必填参数）。
 fn block_page_of(block_id: &str) -> Result<String, String> {
+    with_read_conn(|c| block_page_of_in(c, block_id))
+}
+
+fn block_page_of_in(
+    c: &rusqlite::Connection,
+    block_id: &str,
+) -> Result<String, String> {
     let bid = block_id.trim();
     if bid.is_empty() {
         return Err("bad_args: 需要 blockId".to_string());
     }
-    with_read_conn(|c| {
+    {
         use rusqlite::OptionalExtension;
         c.query_row(
             "SELECT page_id FROM blocks WHERE block_id = ?1",
@@ -3637,13 +3685,20 @@ fn block_page_of(block_id: &str) -> Result<String, String> {
         .optional()
         .map_err(|e| format!("db_error: {e}"))?
         .ok_or_else(|| format!("not_found: 块 {bid} 不存在（用 blocks.list 查）"))
-    })
+    }
 }
 
 /// 该页的**顶层**块 id（顺序即文档顺序）；页不存在 ⇒ `not_found`。
 fn top_blocks_of(page_id: &str) -> Result<Vec<String>, String> {
+    with_read_conn(|c| top_blocks_of_in(c, page_id))
+}
+
+fn top_blocks_of_in(
+    c: &rusqlite::Connection,
+    page_id: &str,
+) -> Result<Vec<String>, String> {
     let pid = page_id.trim();
-    with_read_conn(|c| {
+    {
         let Some(m) = crate::doc_content::read_with_meta(c, pid)? else {
             return Err(format!("not_found: 页面 {pid} 不存在或已删除"));
         };
@@ -3653,7 +3708,7 @@ fn top_blocks_of(page_id: &str) -> Result<Vec<String>, String> {
                 "bad_args: 页面结构不支持块级寻址（顶层块缺少 blockId）—— 可先用 pages.update 整页重写一次".to_string(),
             ),
         }
-    })
+    }
 }
 
 /// 写前的并发校验；冲突 ⇒ `rev_conflict`，**带 currentRev 与当前 markdown（带锚点）**。
@@ -3661,7 +3716,15 @@ fn top_blocks_of(page_id: &str) -> Result<Vec<String>, String> {
 /// markdown 用**前端桥**算（Rust 没有 markdown 渲染器 —— ⛔ 不在这里造第二份）；前端没挂载时
 /// 如实退化成正文（带 `<!-- b:… -->` 锚点），并说明为什么。
 fn blocks_rev_guard(page_id: &str, expected: Option<&str>) -> Result<String, String> {
-    let cur = with_read_conn(|c| page_rev_of(c, page_id))?
+    with_read_conn(|c| blocks_rev_guard_in(c, page_id, expected))
+}
+
+fn blocks_rev_guard_in(
+    c: &rusqlite::Connection,
+    page_id: &str,
+    expected: Option<&str>,
+) -> Result<String, String> {
+    let cur = page_rev_of(c, page_id)?
         .ok_or_else(|| format!("not_found: 页面 {page_id} 不存在或已删除"))?;
     if let Some(exp) = expected.map(str::trim).filter(|s| !s.is_empty()) {
         if exp != cur {
@@ -3676,12 +3739,12 @@ fn blocks_rev_guard(page_id: &str, expected: Option<&str>) -> Result<String, Str
                 "（前端未挂载 ⇒ 取不到 markdown；可用 pages.get 的 includeAnchors 正文带锚点来 diff）"
                     .to_string()
             });
-            let current = with_read_conn(|c| {
+            let current: String = (|| -> Result<String, String> {
                 let Some(m) = crate::doc_content::read_with_meta(c, page_id)? else {
                     return Ok(String::new());
                 };
                 Ok(m.content.text)
-            })?;
+            })()?;
             return Err(format!(
                 "rev_conflict: expectedRev={exp}，当前 rev={cur}\ncurrentRev={cur}\n当前 markdown（带块锚点）：\n{md}\n当前正文（带锚点）：\n{current}"
             ));
@@ -3722,14 +3785,14 @@ fn cap_blocks_patch(
     _client_request_id: Option<&str>,
 ) -> CapResult {
     let space = write_target_space(space_id)?;
-    let page = block_page_of(block_id)?;
-    let tops = top_blocks_of(&page)?;
+    let page = with_target_space(&space, |c| block_page_of_in(c, block_id))?;
+    let tops = with_target_space(&space, |c| top_blocks_of_in(c, &page))?;
     let bid = block_id.trim().to_string();
     if !tops.iter().any(|b| b == &bid) {
         return Err(format!("not_found: 块 {bid} 不是页面 {page} 的顶层块"));
     }
     let (body, is_md) = block_body_arg(markdown, text)?;
-    let rev = blocks_rev_guard(&page, expected_rev)?;
+    let rev = with_target_space(&space, |c| blocks_rev_guard_in(c, &page, expected_rev))?;
     let mut would = serde_json::json!({
         "kind": "blocks_patch", "pageId": page, "blockId": bid,
         "expectedRev": rev, "spaceId": space,
@@ -3771,14 +3834,14 @@ fn cap_blocks_insert(
             return Err("bad_args: 需要 pageId 或 afterBlockId 之一（至少给一个）".to_string())
         }
     };
-    let tops = top_blocks_of(&page)?;
+    let tops = with_target_space(&space, |c| top_blocks_of_in(c, &page))?;
     if let Some(a) = after {
         if !tops.iter().any(|b| b == a) {
             return Err(format!("not_found: 块 {a} 不是页面 {page} 的顶层块"));
         }
     }
     let (body, is_md) = block_body_arg(markdown, text)?;
-    let rev = blocks_rev_guard(&page, expected_rev)?;
+    let rev = with_target_space(&space, |c| blocks_rev_guard_in(c, &page, expected_rev))?;
     let new_block_id = uuid::Uuid::new_v4().to_string();
     let mut would = serde_json::json!({
         "kind": "blocks_insert", "pageId": page, "afterBlockId": after,
@@ -3811,8 +3874,8 @@ fn cap_blocks_delete(
     _client_request_id: Option<&str>,
 ) -> CapResult {
     let space = write_target_space(space_id)?;
-    let page = block_page_of(block_id)?;
-    let tops = top_blocks_of(&page)?;
+    let page = with_target_space(&space, |c| block_page_of_in(c, block_id))?;
+    let tops = with_target_space(&space, |c| top_blocks_of_in(c, &page))?;
     let bid = block_id.trim().to_string();
     if !tops.iter().any(|b| b == &bid) {
         return Err(format!("not_found: 块 {bid} 不是页面 {page} 的顶层块"));
@@ -3822,7 +3885,7 @@ fn cap_blocks_delete(
             "bad_args: 这是页面上最后一个顶层块 —— 删掉会留下空页面（⛔ 不制造空块/空页）".to_string(),
         );
     }
-    let rev = blocks_rev_guard(&page, expected_rev)?;
+    let rev = with_target_space(&space, |c| blocks_rev_guard_in(c, &page, expected_rev))?;
     let would = serde_json::json!({
         "kind": "blocks_delete", "pageId": page, "blockId": bid,
         "expectedRev": rev, "spaceId": space,
@@ -5015,10 +5078,10 @@ fn cap_tags_add(
 /// 之前这个能力是唯一一个"必须显式给 id"的读能力，而插件又**拿不到当前页 id**
 /// （`page.current` 只给 content_json）：等于"能往当前页写，却读不到当前页"。
 /// 写参考插件时撞到的就是这个不对称——大纲 / 改写 / 导出当前页这一整类插件都被卡住。
-fn cap_blocks_list(page_id: Option<&str>, limit: i64) -> CapResult {
+fn cap_blocks_list(page_id: Option<&str>, limit: i64, space_id: Option<&str>) -> CapResult {
     let limit = limit.clamp(1, crate::cap_limits::BLOCKS_MAX) as usize;
     let target = target_page_or_current(page_id)?;
-    with_read_conn(|c| {
+    with_conn_for_space(space_id, |c| {
         // ★ 读出口走「文档内容」那一层（阶段 0 接口收口）：谓词与原 SQL 逐字相同。
         //   ⚠️ 搬运前的语义是"**任何**取不到（SQL 错误 **或** 页不存在/已软删）都报同一句
         //   `bad_args: 未找到页面`" —— 这里两段 `.map_err` 保留那条语义，不做区分。
@@ -5324,7 +5387,10 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
                 if cross_space_write_disabled() {
                     return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
                 }
-                if method != "pages.create" {
+                if !matches!(
+                    method,
+                    "pages.create" | "pages.update" | "blocks.append" | "blocks.patch" | "blocks.delete"
+                ) {
                     return Err(format!(
                         "bad_args: {method} 暂不支持跨空间（v1 只支持 pages.create；目标空间 {space} 未写入）"
                     ));
@@ -5349,6 +5415,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_i64("offset", 0),
             arg_i64("limit", 6000),
             arg_bool(args.get("includeAnchors"), true),
+            arg_opt_str("spaceId").as_deref(),
         ),
         "pages.search" => cap_pages_search(
             &arg_str("q")?,
@@ -5400,7 +5467,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         // scope 由 manifest 声明决定（不由插件选）：设置里常有 token/路径这类东西，
         // 声明为 space 才落加密库，声明为 app 才落 meta.db（明文）。
         "settings.get" => cap_settings_get(&arg_str("key")?),
-        "blocks.list" => cap_blocks_list(arg_opt_str("pageId").as_deref(), arg_i64("limit", 100)),
+        "blocks.list" => cap_blocks_list(arg_opt_str("pageId").as_deref(), arg_i64("limit", 100), arg_opt_str("spaceId").as_deref()),
         "properties.list" => cap_properties_list(arg_opt_str("spaceId").as_deref()),
         // B1b（2026-10-29）：数据库结构化读 —— 两条都是 `read:pages`、都支持可选 `spaceId`
         // （跨空间门在 `with_conn_for_space` 里，与 pages.list / pages.tree 同一处）。
@@ -5519,6 +5586,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_opt_str("expectedRev").as_deref(),
             arg_bool(args.get("dryRun"), false),
             arg_opt_str("clientRequestId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
         ),
         "spaces.list" => cap_spaces_list(),
         "space.current" => cap_space_current(),
@@ -5544,6 +5612,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_opt_str("expectedRev").as_deref(),
             arg_bool(args.get("dryRun"), false),
             arg_opt_str("clientRequestId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
         ),
         "blocks.patch" => cap_blocks_patch(
             &arg_str("blockId")?,
@@ -15649,6 +15718,108 @@ register({ id: "s.run", title: "结构化", run: function () {
         std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
         crate::commands::create_page_in_space(second, None, Some("恢复".to_string()), None, None)
             .expect("去掉开关后应恢复");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ v2：write_all 扩读；pages.update/blocks.* 草稿带 spaceId；跨空间读两档门；回滚开关。
+    #[test]
+    fn v2_cross_space_edit_and_read_gate() {
+        let f = b1c_fixture("v2");
+        point_cap_search_at(&f.dir, &f.space);
+        let app = crate::db::ensure_test_app_data_dir().to_path_buf();
+        std::fs::create_dir_all(crate::db::spaces_dir(&app)).ok();
+        let second = "v2-second";
+        {
+            let m = crate::db::open_meta_conn_at(&app).unwrap();
+            m.execute("INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','v2-dev')", []).ok();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,'二','#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+        }
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute("INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id', 'v2-dev')", []).ok();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,'二','#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+        }
+        let doc = r#"{"root":{"type":"root","children":[{"type":"paragraph","blockId":"b1","children":[{"type":"text","text":"旧"}]},{"type":"paragraph","blockId":"b2","children":[{"type":"text","text":"二"}]}]}}"#;
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '目标页', ?2, '旧', 'page', 0, 10, 10)",
+                params![second, doc],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO blocks (block_id, page_id, created_at, updated_at) VALUES ('b1', 'p1', 10, 10), ('b2', 'p1', 11, 11)",
+                [],
+            )
+            .unwrap();
+        }
+        let snap = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (q("SELECT COUNT(*) FROM pages"), q("SELECT COUNT(*) FROM changes"), q("SELECT COUNT(*) FROM page_versions"), q("SELECT COUNT(*) FROM attachments"))
+        };
+        let before = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); snap(&c) };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        // 四个写工具草稿都带 spaceId
+        for (method, args) in [
+            ("pages.update", format!(r#"{{"id":"p1","markdown":"新","spaceId":"{second}"}}"#)),
+            ("blocks.append", format!(r#"{{"pageId":"p1","text":"加","spaceId":"{second}"}}"#)),
+            ("blocks.patch", format!(r#"{{"pageId":"p1","blockId":"b1","markdown":"改","spaceId":"{second}"}}"#)),
+            ("blocks.delete", format!(r#"{{"pageId":"p1","blockId":"b1","spaceId":"{second}"}}"#)),
+        ] {
+            let (o, d) = with_external_caller("v2-w", &g, || {
+                with_fresh_drafts(|| dispatch_capability(method, &args))
+            });
+            o.unwrap_or_else(|e| panic!("{method} 应产草稿：{e}"));
+            assert_eq!(d[0].payload["spaceId"], second, "{method} 草稿必须带 spaceId");
+        }
+        // 落库（模拟 apply）⇒ 目标改到 + changes 有；当前空间逐项不变
+        let newdoc = r#"{"root":{"type":"root","children":[{"type":"paragraph","blockId":"b1","children":[{"type":"text","text":"新"}]}]}}"#;
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            crate::commands::save_page_in(&c, crate::commands::SavePageArgs {
+                id: "p1".to_string(), title: None,
+                content_json: Some(newdoc.to_string()),
+                content_text: Some("新".to_string()), space_id: None,
+            }).expect("目标空间保存应成功");
+            let n: i64 = c.query_row("SELECT COUNT(*) FROM changes WHERE entity='page'", [], |r| r.get(0)).unwrap();
+            assert!(n >= 1, "目标空间 changes 必须有记录");
+        }
+        let after = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); snap(&c) };
+        assert_eq!(before, after, "当前空间 pages/changes/versions/attachments 逐项不变");
+        // 读：write_all 能读；只读全部空间能读；只读当前带 spaceId 拒
+        let get = |grants: &[String]| with_external_caller("v2-r", grants, || {
+            dispatch_capability("pages.get", &format!(r#"{{"id":"p1","spaceId":"{second}"}}"#))
+        });
+        assert!(get(&g).is_ok(), "write_all 应能读目标页");
+        let read_all = vec!["read:pages".to_string(), "read:all-spaces".to_string()];
+        assert!(get(&read_all).is_ok(), "只读（全部空间）应能读");
+        assert!(get(&["read:pages".to_string()]).unwrap_err().contains("read:all-spaces"));
+        // 缺档 / 不支持 / 开关
+        let e = with_external_caller("v2-no", &b2_granted(), || {
+            dispatch_capability("blocks.patch", &format!(r#"{{"pageId":"p1","blockId":"b1","markdown":"x","spaceId":"{second}"}}"#))
+        }).expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        let e = with_external_caller("v2-f", &g, || {
+            dispatch_capability("files.move", &format!(r#"{{"attId":"a1","toPageId":"p1","spaceId":"{second}"}}"#))
+        }).expect_err("未支持工具必须 unsupported");
+        assert!(e.contains("暂不支持跨空间"), "{e}");
+        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        let e = with_external_caller("v2-off", &g, || {
+            dispatch_capability("blocks.patch", &format!(r#"{{"pageId":"p1","blockId":"b1","markdown":"x","spaceId":"{second}"}}"#))
+        }).expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
         b1c_cleanup(&f);
     }
 }

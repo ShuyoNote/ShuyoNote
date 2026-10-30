@@ -110,7 +110,8 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (!pageId) return { ok: false, message: "update_page 参数不完整" };
       if (!md.trim() && !plain.trim()) return { ok: false, message: "update_page 需要新正文" };
       return serializeByKey(`page:${pageId}`, async () => {
-        const cur = await api.getPage(pageId);
+        const spaceId = typeof p.spaceId === "string" ? p.spaceId : undefined;
+        const cur = await api.getPage(pageId, spaceId);
         if (!cur) return { ok: false, message: "目标页面不存在" };
         const rp = await revProblem(pageId, p.expectedRev);
         if (rp) return { ok: false, message: rp };
@@ -126,7 +127,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
         }
         // ⭐ 2026-10-17：同上 —— 整页写入前补块身份（CRDT 播种不造身份，缺了会播种失败）。
         built = stampTopLevelBlockIds(built);
-        const page = await api.savePage({ id: pageId, ...(title ? { title } : {}), ...built });
+        const page = await api.savePage({ id: pageId, spaceId, ...(title ? { title } : {}), ...built });
         return { ok: true, message: `已更新「${page.title}」`, page };
       });
     }
@@ -146,11 +147,12 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const pageId = String(p.pageId ?? "");
       const text = String(p.text ?? "");
       if (!pageId || !text) return { ok: false, message: "append_block 参数不完整" };
+      const spaceId = typeof p.spaceId === "string" ? p.spaceId : undefined;
       // ⭐ **R151**：**读 ⇒ 改 ⇒ 写 三跳必须在同一个串行区里** ✗ ——
       //   只锁"写"那一步不够 ✓（并发时两跳各自读到同一份旧内容 ⇒ 后写赢 ⇒ 静默丢内容 ✗；
       //   现场：并发 20 次只落 4/20 ✓、顺序 20 次 20/20 ✓）。
       return serializeByKey(`page:${pageId}`, async () => {
-        const cur = await api.getPage(pageId);
+        const cur = await api.getPage(pageId, spaceId);
         if (!cur) return { ok: false, message: "目标页面不存在" };
         const rp = await revProblem(pageId, p.expectedRev);
         if (rp) return { ok: false, message: rp };
@@ -162,7 +164,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
             ? appendFence(curJson, p.fence, text, () => uid())
             : appendBlocksToJson(curJson, text, () => uid());
         const content_text = contentTextOf(content_json);
-        const page = await api.savePage({ id: pageId, content_json, content_text });
+        const page = await api.savePage({ id: pageId, spaceId, content_json, content_text });
         return { ok: true, message: `已向「${page.title}」追加内容`, page };
       });
     }
@@ -282,7 +284,8 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (!pageId || !blockId) return { ok: false, message: "blocks_patch 参数不完整" };
       const rp = await revProblem(pageId, p.expectedRev);
       if (rp) return { ok: false, message: rp };
-      const page = await api.getPage(pageId);
+      const spaceId = typeof p.spaceId === "string" ? p.spaceId : undefined;
+      const page = await api.getPage(pageId, spaceId);
       if (!page) return { ok: false, message: "目标页面不存在" };
       const children = topChildren(docJsonOfPage(page));
       const at = children.findIndex((b) => String((b as { blockId?: unknown }).blockId ?? "") === blockId);
@@ -290,7 +293,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const next = blocksFromInput(p.markdown, p.plain, blockId);
       if (next.length === 0) return { ok: false, message: "新块内容为空" };
       children.splice(at, 1, ...next);
-      const saved = await api.savePage({ id: pageId, ...saveFieldsWithChildren(docJsonOfPage(page), children, contentTextOf) });
+      const saved = await api.savePage({ id: pageId, spaceId, ...saveFieldsWithChildren(docJsonOfPage(page), children, contentTextOf) });
       return { ok: true, message: `已替换块「${blockId}」`, page: saved };
     }
 
@@ -321,14 +324,15 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (!pageId || !blockId) return { ok: false, message: "blocks_delete 参数不完整" };
       const rp = await revProblem(pageId, p.expectedRev);
       if (rp) return { ok: false, message: rp };
-      const page = await api.getPage(pageId);
+      const spaceId = typeof p.spaceId === "string" ? p.spaceId : undefined;
+      const page = await api.getPage(pageId, spaceId);
       if (!page) return { ok: false, message: "目标页面不存在" };
       const children = topChildren(docJsonOfPage(page));
       const at = children.findIndex((b) => String((b as { blockId?: unknown }).blockId ?? "") === blockId);
       if (at < 0) return { ok: false, message: `块 ${blockId} 不在这一页的顶层` };
       if (children.length <= 1) return { ok: false, message: "这是最后一个顶层块 —— 不制造空页面" };
       children.splice(at, 1);
-      const saved = await api.savePage({ id: pageId, ...saveFieldsWithChildren(docJsonOfPage(page), children, contentTextOf) });
+      const saved = await api.savePage({ id: pageId, spaceId, ...saveFieldsWithChildren(docJsonOfPage(page), children, contentTextOf) });
       return { ok: true, message: `已删除块「${blockId}」`, page: saved };
     }
 

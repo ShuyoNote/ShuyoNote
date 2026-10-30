@@ -149,7 +149,7 @@ export interface PluginApi {
   /** 读取指定页面（权限 `read:pages`；1.0.0 起）
    * 返回：{id, title, content_text(**已按 offset/limit 切好的窗口**；默认还带块锚点注释行), kind, chars_total(整页字符数), offset, limit, rev?(可选：`<updated_at 毫秒>:<正文指纹 sha256 前 8 位小写>`，拿不到正文时**不带**这个键)}；不存在返回 null
    */
-    get(id: string, offset?: number, limit?: number, includeAnchors?: boolean): { id: string; title: string; content_text: string; kind: string; chars_total: number; offset: number; limit: number; rev?: string } | null;
+    get(id: string, offset?: number, limit?: number, includeAnchors?: boolean, spaceId?: string): { id: string; title: string; content_text: string; kind: string; chars_total: number; offset: number; limit: number; rev?: string } | null;
   /** 搜索本空间页面（权限 `read:pages`；1.0.0 起）
    * 返回：[{id, title, snippet}]：多词按「全部出现」筛（AND），单词走全文索引（按相关度）、短词走子串；附件里的命中会带「【来自附件】」前缀。**空数组 = 本空间没有命中，不是失败**
    */
@@ -177,7 +177,7 @@ export interface PluginApi {
   /** 更新已有页面（整页替换 / 草稿确认）（权限 `write:pages`；1.1.0 起）
    * 返回：{drafted: true, summary}——**草稿已产出**，用户确认后才落库
    */
-    update(id: string, markdown?: string, content?: string, title?: string, expectedRev?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
+    update(id: string, markdown?: string, content?: string, title?: string, expectedRev?: string, dryRun?: boolean, clientRequestId?: string, spaceId?: string): { drafted: true; summary: string };
   };
   db: {
   /** 读取数据库结构（权限 `read:pages`；1.4.0 起）
@@ -249,11 +249,11 @@ export interface PluginApi {
   /** 列出页面块（权限 `read:pages`；1.0.0 起）
    * 返回：[{blockId, text}]；**超过 limit 的块会被丢掉且没有信号**（与 pages.get 的 truncated 不同）—— 要完整块列表就显式传更大的 limit，但**上限 500 是硬上限：超过 500 块的页面，能力面拿不到后面的部分**。将来要「读全 + 有信号」，走**新增能力** `blocks.listPage`（返回 {blocks,total,truncated}）；**`blocks.list` 的形状不变**（插件面正在动，契约变更与校验加强同时落地会分不清谁的锅）
    */
-    list(pageId?: string, limit?: number): { blockId: string; text: string }[];
+    list(pageId?: string, limit?: number, spaceId?: string): { blockId: string; text: string }[];
   /** 向页面追加内容（草稿确认）（权限 `write:pages`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已写入**
    */
-    append(text: string, pageId?: string, fence?: string, expectedRev?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
+    append(text: string, pageId?: string, fence?: string, expectedRev?: string, dryRun?: boolean, clientRequestId?: string, spaceId?: string): { drafted: true; summary: string };
   /** 整块替换（草稿确认）（权限 `write:pages`；1.8.0 起）
    * 返回：{drafted,applied:false,rev,changed}——**不代表已写入**（用户确认后才落库）
    */
@@ -457,4 +457,4 @@ export interface PluginApi {
   };
 }
 
-export declare const SDK_API_VERSION: "1.16.0";
+export declare const SDK_API_VERSION: "1.17.0";

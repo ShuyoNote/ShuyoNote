@@ -138,6 +138,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 10. 版本
 
+- 2026-10-30：**跨空间写 v2 —— `write_all` 扩读 ＋ `pages_update`/`blocks_append/patch/delete` 可改目标空间**：`write_all` 档 granted ＝ `write:pages`＋`write:all-spaces`＋`read:pages`＋`read:all-spaces`（默认关；开这档 AI 能读所有空间，加密空间内容仍不可见）；新增 `pages_get`/`blocks_list` 的 `spaceId`；v2 白名单 5 条写工具（create/update/blocks.append/patch/delete）由 `apply.ts` 在取回目标页后合并、经命令 `spaceId` 写到目标空间（不复制合并逻辑）；其余写工具带 `spaceId` 仍 `bad_args: 暂不支持跨空间`。目标锁着 ⇒ `permission_denied`（locked）；审计带 `spaceId`；回滚开关同时生效。`apiVersion` 1.16.0 → **1.17.0**。
+
 - 2026-10-30：**跨空间写 v1 —— `pages_create` 可写入指定空间**：`write:all-spaces` 档（默认关）下，`pages_create` 带 `spaceId` ⇒ 在目标空间新建页面（同一处写 `pages`＋`changes`，目标空间设备能同步到）；**当前空间完全不变**（不切空间、不写当前空间）。跨空间 v1 **只支持这一条工具**：其它带 `spaceId` 的写工具 ⇒ `bad_args: … 暂不支持跨空间`（⛔ 不回落当前空间）；目标空间**锁着/打不开** ⇒ `permission_denied`（含 locked）；回滚开关 `SHUYONOTE_MCP_CROSS_SPACE_WRITE=0` ⇒ 立即恢复拒绝。审计行带 `spaceId`。`apiVersion` 1.15.0 → **1.16.0**。
 
 - 2026-10-30：**P2 能力补齐 —— 工具 60 → 61（读面 33 → 34 / 写面 27）**：① `audit_tail` 加可选 `onlyWrites`（默认 false；true 只回 `kind:"write"` 的调用；面板最近审计固定用 true）；② 新读能力 `pages.changes_since` → 工具 `changes_since({since, spaceId?, limit?})`：按 `pages.updated_at > since` 返回 `{pages:[{pageId,title,rev,updatedAt,kind}],truncated}`（limit 默认 50/上限 200；**v1 只给页级**，要知道改了什么请对 pageId 再调 `pages_get`）；跨空间口径同 `pages_list`；③ 新增 `src-tauri/src/cap_limits.rs` 收敛 200KB/分页/句柄 TTL 等限额，能力层改为引用常量。`apiVersion` 1.14.0 → **1.15.0**。

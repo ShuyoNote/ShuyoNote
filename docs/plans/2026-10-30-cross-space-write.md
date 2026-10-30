@@ -102,6 +102,8 @@ Rust 按目标空间开**可写连接**执行写入（含 `changes` / CRDT 状�
 | `blocks.append` | ⚠️ 需要读目标页正文（拿 block 结构/末尾位置） | 读目标空间 ⇒ 需要 `read:all-spaces`，或 Rust 侧盲追加（重复前端合并逻辑 ✗） |
 | `blocks.patch` | ⚠️ 同上（必须读目标页、按 blockId 改 JSON） | 同 append；且改正文要处理 CRDT/派生文本，风险更高 |
 
+**owner 2026-10-30 拍板（甲）**：`write_all` 档**同时具备读全空间**（`granted` 加 `read:pages` ＋ `read:all-spaces`），以便改其他空间的已有页面；代价是**开这档 AI 能读所有空间**（加密空间仍不可见，锁着打不开）。v2 按此实现：`pages.get`/`blocks.list` 加 `spaceId`（读目标页），`pages.update`/`blocks.append/patch/delete` 由 `apply.ts` 在取回目标页后用现有合并路径完成、落库传 `spaceId`（⛔ 不复制合并逻辑、不进 Rust），写命令抽单连接实现复用全部副作用。
+
 **v1 建议（可一批交付、判据可证）**：
 
 - **支持**：`pages.create` 带 `spaceId` ⇒ 在目标空间新建页（写目标空间连接 + `changes` + 版本/派生按现有 create 路径）。

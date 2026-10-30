@@ -282,6 +282,8 @@ pub struct SavePageArgs {
     pub title: Option<String>,
     pub content_json: Option<String>,
     pub content_text: Option<String>,
+    #[serde(default)]
+    pub space_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -708,12 +710,42 @@ pub fn write_page_projection(db: State<Db>, args: PageProjectionArgs) -> Result<
 }
 
 #[tauri::command]
-pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String> {
+pub fn save_page(db: State<Db>, mut args: SavePageArgs) -> Result<PageDetail, String> {
+    let target = args
+        .space_id
+        .take()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if let Some(space) = target {
+        let active = {
+            let c = conn(&db);
+            workspaces::active_workspace_id(&c)?
+        };
+        if space != active {
+            if crate::plugins::cross_space_write_disabled() {
+                return Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                );
+            }
+            let app_data = crate::db::app_data_dir_ref()
+                .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let c = crate::db::open_space_conn_at(&space, app_data).map_err(|e| {
+                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+            })?;
+            return save_page_in(&c, args);
+        }
+    }
     let c = conn(&db);
-    let now = now_ms();
+    save_page_in(&c, args)
+}
+
+/// `save_page` 的单连接实现（复用全部副作用；当前/跨空间同一份）。
+pub(crate) fn save_page_in(c: &Connection, mut args: SavePageArgs) -> Result<PageDetail, String> {
+    let now = now_ms();    let now = now_ms();
 
     // Read current values for fields not provided. 走「文档内容」那一层（阶段 0 接口收口）。
-    let cur = crate::doc_content::read(&c, &args.id)?.ok_or_else(|| "页面不存在".to_string())?;
+    let cur = crate::doc_content::read(c, &args.id)?.ok_or_else(|| "页面不存在".to_string())?;
 
     let content = crate::doc_content::DocContent {
         title: args.title.unwrap_or(cur.title),
@@ -722,7 +754,7 @@ pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String
         //   不盖章 ⇒ 判定每一页都会回落到页级 LWW，接线等于白接。
         //   ⚠️ 顺序：**先盖章再落库/快照** —— 快照里存的应当是"用户真正保存的那一版"（含 rev）。
         json: crate::doc_content::stamp_block_revs(
-            &c,
+            c,
             &args.id,
             &args.content_json.unwrap_or_else(|| cur.json.clone()),
         )?,
@@ -730,13 +762,13 @@ pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String
     };
 
     // Snapshot the current state before overwriting (version history).
-    versions::snapshot_before_save(&c, &args.id, &content.title, &content.json, &content.text)?;
+    versions::snapshot_before_save(c, &args.id, &content.title, &content.json, &content.text)?;
 
-    crate::doc_content::write(&c, &args.id, &content, now)?;
-    crate::doc_content::derive(&c, &args.id, &content)?;
+    crate::doc_content::write(c, &args.id, &content, now)?;
+    crate::doc_content::derive(c, &args.id, &content)?;
 
-    let page = fetch_page(&c, &args.id)?;
-    sync::record_page_upsert(&c, &page)?;
+    let page = fetch_page(c, &args.id)?;
+    sync::record_page_upsert(c, &page)?;
     Ok(page)
 }
 
