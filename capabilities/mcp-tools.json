@@ -691,13 +691,17 @@
   {
     "name": "export_docpackage",
     "capabilityId": "export.docpackage",
-    "description": "把**一页**打包成 `.shuyodoc`（单页；与界面「导出为 .shuyodoc」同一份格式实现）并**只回句柄**：`{handle, name, size, sha256, expiresAt}`。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`。",
+    "description": "把**一页**导出成 `.shuyodoc`/docpackage 并只回句柄。参数: pageId（必填）, spaceId（可选；跨空间需 read:all-spaces，整空间导出不支持）。句柄单次/TTL 120s/绑会话。",
     "inputSchema": {
       "type": "object",
       "properties": {
         "pageId": {
           "type": "string",
           "description": "要导出的页面 id（单页；文件夹没有正文 ⇒ bad_args）"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略=当前空间）。跨空间导出需要 read:all-spaces（只读（全部空间）档已含）；目标锁着 ⇒ permission_denied。"
         }
       },
       "required": [

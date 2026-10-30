@@ -1,4 +1,4 @@
-# 插件 API（v1.22.0）
+# 插件 API（v1.23.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.22.0",
+  "apiVersion": "1.23.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.22.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.23.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -167,7 +167,7 @@ register({
 | `export.markdown` | `api.export.markdown(pageId, spaceId)` | `export:files` | `current-space` | — | object | 1.6.0 |
 | `export.page_markdown` | `api.export.pageMarkdown(pageId, spaceId)` | `export:files` | `current-space` | — | object | 1.12.0 |
 | `export.space_markdown` | `api.export.spaceMarkdown(spaceId, pageId)` | `export:files` | `current-space` | — | object | 1.12.0 |
-| `export.docpackage` | `api.export.docpackage(pageId)` | `export:files` | `current-space` | — | object | 1.6.0 |
+| `export.docpackage` | `api.export.docpackage(pageId, spaceId)` | `export:files` | `current-space` | — | object | 1.6.0 |
 | `pages.importMarkdown` | `api.pages.importMarkdown(title, markdown, parentId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `pages.import_markdown` | `api.pages.import_markdown(title, markdown, parentId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.12.0 |
 | `pages.update` | `api.pages.update(id, markdown, content, title, expectedRev, dryRun, clientRequestId, spaceId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.1.0 |
@@ -930,12 +930,13 @@ register({
 
 ### `export.docpackage` — 导出 .shuyodoc（句柄）
 
-- 调用：`api.export.docpackage(pageId)`
+- 调用：`api.export.docpackage(pageId, spaceId)`
 - 权限：`export:files`
 - scope：`current-space`
 - 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
 - 参数：
   - `pageId`: `string` —— 要导出的页面 id（单页；文件夹没有正文 ⇒ bad_args）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。跨空间导出需要 read:all-spaces（只读（全部空间）档已含）；目标锁着 ⇒ permission_denied。
 
 ### `pages.importMarkdown` — 导入 Markdown 为一页（草稿确认）
 
@@ -1152,7 +1153,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.22.0",
+  "runtime": "declarative", "apiVersion": "1.23.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },

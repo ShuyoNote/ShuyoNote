@@ -116,9 +116,6 @@ async function exportMarkdown(
 ): Promise<FrontendToolResult> {
   const pageId = String(args.pageId ?? "").trim();
   const spaceId = String(args.spaceId ?? "").trim();
-  if (pageId && spaceId) {
-    throw new Error("bad_args: pageId 与 spaceId 只能给一个（单页导出 vs 整空间导出）");
-  }
   if (pageId) {
     const page = await deps.getPage(pageId, spaceId || undefined);
     if (!page) throw new Error(`not_found: 页面 ${pageId} 不存在或已读取失败`);

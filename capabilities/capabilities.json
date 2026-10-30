@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "apiVersion": "1.22.0",
+  "apiVersion": "1.23.0",
   "notes": "插件能力注册表——单一事实源。scripts/gen-capabilities.mjs 由本文件生成：JS shim（api.*）、Rust 绑定表、作者类型包、作者文档；scripts/check-capabilities.mjs 校验一致性与完整性。改能力请改这里，不要手改生成物。",
   "permissions": [
     {
@@ -3042,6 +3042,12 @@
           "type": "string",
           "required": true,
           "desc": "要导出的页面 id（单页；文件夹没有正文 ⇒ bad_args）"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略=当前空间）。跨空间导出需要 read:all-spaces（只读（全部空间）档已含）；目标锁着 ⇒ permission_denied。"
         }
       ],
       "returns": {
@@ -3050,8 +3056,8 @@
         "desc": "{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件"
       },
       "rust": "cap_export_docpackage",
-      "desc": "把一页打包成 `.shuyodoc` 并**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。**只支持单页**（与界面「导出为 .shuyodoc」同口径）。参数: pageId (必填)。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm。",
-      "mcpDesc": "把**一页**打包成 `.shuyodoc`（单页；与界面「导出为 .shuyodoc」同一份格式实现）并**只回句柄**：`{handle, name, size, sha256, expiresAt}`。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`。",
+      "desc": "把**一页**导出成 `.docpackage`，返回句柄。参数: pageId（必填）, spaceId（可选；跨空间需 read:all-spaces）。只给句柄；落盘用 blobs_fetch。",
+      "mcpDesc": "把**一页**导出成 `.shuyodoc`/docpackage 并只回句柄。参数: pageId（必填）, spaceId（可选；跨空间需 read:all-spaces，整空间导出不支持）。句柄单次/TTL 120s/绑会话。",
       "ai": true
     },
     {

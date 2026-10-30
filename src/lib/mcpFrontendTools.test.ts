@@ -33,6 +33,7 @@ import { isDesktopPlatform } from "./platform";
 import { FRONTEND_ADAPTERS } from "./capabilities/frontend";
 import { unzipDocument } from "./docZip";
 import { openDocumentPackage } from "./docPackageOpen";
+import { contentHash } from "./platform/blobStore";
 import {
   MAX_BRIDGE_FILE_BYTES,
   MAX_BRIDGE_FILES,
@@ -88,10 +89,16 @@ describe("B3 前端桥 · export.markdown", () => {
     expect(md).toContain("正文甲");
   });
 
-  it("目标口径：两个都给 / 文件夹 / 别的空间 ⇒ 明确 bad_args（⛔ 不猜）", async () => {
-    await expect(
-      runFrontendTool("export.markdown", { pageId: "p1", spaceId: "s1" }, deps()),
-    ).rejects.toThrow(/bad_args/);
+  it("单页跨空间：spaceId 传到 getPage，内容仍含标题/正文", async () => {
+    const getPage = vi.fn(async () => PAGE as never);
+    const r = await runFrontendTool("export.markdown", { pageId: "p1", spaceId: "s2" }, deps({ getPage }));
+    expect(getPage).toHaveBeenCalledWith("p1", "s2");
+    const md = dec(r.bytes);
+    expect(md).toContain("正文甲");
+    expect(md).toContain("标题");
+  });
+
+  it("目标口径：文件夹 / 别的空间（整空间）⇒ 明确 bad_args（⛔ 不猜）", async () => {
     await expect(
       runFrontendTool(
         "export.markdown",
@@ -121,6 +128,27 @@ describe("B3 前端桥 · export.markdown", () => {
 });
 
 describe("B3 前端桥 · export.docpackage（句柄字节可被 openDocumentPackage 读回）", () => {
+  it("跨空间：spaceId 传到 getPage/listPageAttachments/readAttachmentBytes，且往返可读", async () => {
+    const bytes = new TextEncoder().encode("附件字节");
+    const hash = await contentHash(bytes);
+    const getPage = vi.fn(async () => PAGE as never);
+    const listPageAttachments = vi.fn(async () => [
+      { id: "a1", pageId: "p1", name: "a.txt", hash, mime: "text/plain", size: bytes.length } as never,
+    ]);
+    const readAttachmentBytes = vi.fn(async () => bytes);
+    const r = await runFrontendTool(
+      "export.docpackage",
+      { pageId: "p1", spaceId: "s2" },
+      deps({ getPage, listPageAttachments, readAttachmentBytes }),
+    );
+    expect(getPage).toHaveBeenCalledWith("p1", "s2");
+    expect(listPageAttachments).toHaveBeenCalledWith("p1", "s2");
+    expect(readAttachmentBytes).toHaveBeenCalledWith(hash, "s2");
+    const entries = await unzipDocument(r.bytes);
+    const opened = await openDocumentPackage(entries);
+    expect(opened.ok, JSON.stringify(opened)).toBe(true);
+  });
+
   beforeEach(() => vi.clearAllMocks());
 
   it("往返：桥算出的 .shuyodoc ⇒ 解 zip ⇒ openDocumentPackage 接受", async () => {

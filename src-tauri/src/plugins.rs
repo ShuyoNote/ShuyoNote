@@ -3177,9 +3177,6 @@ fn cap_export_markdown(page_id: Option<&str>, space_id: Option<&str>) -> CapResu
     let page = page_id.map(str::trim).filter(|s| !s.is_empty());
     let space = space_id.map(str::trim).filter(|s| !s.is_empty());
     match (page, space) {
-        (Some(_), Some(_)) => Err(
-            "bad_args: pageId 与 spaceId 只能给一个（单页导出 vs 整空间导出）".to_string(),
-        ),
         (None, None) => {
             Err("bad_args: 需要 pageId 或 spaceId（单页导出 vs 整空间导出）".to_string())
         }
@@ -3199,7 +3196,11 @@ fn cap_export_markdown(page_id: Option<&str>, space_id: Option<&str>) -> CapResu
                     Ok(pid.trim().to_string())
                 })?
             };
-            let args = serde_json::json!({ "pageId": page }).to_string();
+            let args = serde_json::json!({
+                "pageId": page,
+                "spaceId": if target == current { serde_json::Value::Null } else { serde_json::json!(target) },
+            })
+            .to_string();
             let reply = crate::frontend_tool::call("export.markdown", &args)?;
             export_handle_from_reply(reply, "text/markdown")
         }
@@ -3225,9 +3226,27 @@ fn cap_export_markdown(page_id: Option<&str>, space_id: Option<&str>) -> CapResu
 ///
 /// 打包仍走 `docPackWriter.ts::buildDocumentPackage`（企业版 reader 已验过的格式层），
 /// Rust 不碰格式（⛔ 不在这里再实现一遍 zip/checksums）。
-fn cap_export_docpackage(page_id: &str) -> CapResult {
-    let page = export_target_page(page_id)?;
-    let args = serde_json::json!({ "pageId": page }).to_string();
+fn cap_export_docpackage(page_id: &str, space_id: Option<&str>) -> CapResult {
+    let current = target_space_id(None);
+    let target = space_id.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(&current).to_string();
+    let page = if target == current {
+        export_target_page(page_id)?
+    } else {
+        with_conn_for_space(Some(target.as_str()), |c| {
+            let Some(m) = crate::doc_content::read_with_meta(c, page_id)? else {
+                return Err(format!("not_found: 页面 {page_id} 不存在或已读取失败"));
+            };
+            if m.kind == "folder" {
+                return Err(format!("bad_args: 「{}」是文件夹，没有正文可导出", m.content.title));
+            }
+            Ok(page_id.trim().to_string())
+        })?
+    };
+    let args = serde_json::json!({
+        "pageId": page,
+        "spaceId": if target == current { serde_json::Value::Null } else { serde_json::json!(target) },
+    })
+    .to_string();
     let reply = crate::frontend_tool::call("export.docpackage", &args)?;
     export_handle_from_reply(reply, "application/zip")
 }
@@ -5606,7 +5625,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_opt_str("pageId").as_deref(),
             arg_opt_str("spaceId").as_deref(),
         ),
-        "export.docpackage" => cap_export_docpackage(&arg_str("pageId")?),
+        "export.docpackage" => cap_export_docpackage(&arg_str("pageId")?, arg_opt_str("spaceId").as_deref()),
         "export.page_markdown" => cap_export_page_markdown(&arg_str("pageId")?, arg_opt_str("spaceId").as_deref()),
         "export.space_markdown" => cap_export_space_markdown(arg_opt_str("spaceId").as_deref(), arg_opt_str("pageId").as_deref()),
         "coverage.report" => cap_coverage_report(arg_opt_str("spaceId").as_deref()),
@@ -16513,6 +16532,75 @@ register({ id: "s.run", title: "结构化", run: function () {
         .expect_err("开关关着必须拒");
         assert!(e.contains("关闭"), "{e}");
         std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ B：export 单页跨空间（只读全部空间档；缺档点名；四计数不变；句柄单次/跨会话）。
+    #[test]
+    fn b_export_page_cross_space_handle_and_gates() {
+        let _serial = crate::frontend_tool::test_lock();
+        crate::frontend_tool::install_test_frontend_for_tests();
+        let f = b1c_fixture("b-exp");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "b-exp-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '目标页', '{}', '正文', 'page', 0, 10, 10)",
+                params![second],
+            )
+            .unwrap();
+        }
+        let four = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (q("SELECT COUNT(*) FROM pages"), q("SELECT COUNT(*) FROM changes"), q("SELECT COUNT(*) FROM page_versions"), q("SELECT COUNT(*) FROM attachments"))
+        };
+        let before = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
+        let read_all = vec!["read:pages".to_string(), "export:files".to_string(), "read:all-spaces".to_string()];
+        let got = with_external_caller("b-exp", &read_all, || {
+            dispatch_capability("export.markdown", &format!(r#"{{"pageId":"p1","spaceId":"{second}"}}"#))
+        });
+        let v: serde_json::Value = serde_json::from_str(&got.expect("只读全部空间档应能跨空间导出")).unwrap();
+        let handle = v["handle"].as_str().unwrap_or("").to_string();
+        assert!(!handle.is_empty(), "必须回句柄：{v}");
+        // 缺 read:all-spaces ⇒ 点名
+        let e = with_external_caller("b-exp-no", &["read:pages".to_string(), "export:files".to_string()], || {
+            dispatch_capability("export.markdown", &format!(r#"{{"pageId":"p1","spaceId":"{second}"}}"#))
+        })
+        .expect_err("缺 read:all-spaces 必须拒");
+        assert!(e.contains("read:all-spaces"), "{e}");
+        // 写工具在只读全部空间档 ⇒ permission_denied（不能写）
+        let e = with_external_caller("b-exp-w", &read_all, || {
+            dispatch_capability("pages.create", r#"{"title":"x"}"#)
+        })
+        .expect_err("只读档写必须拒");
+        assert!(e.contains("permission_denied") && e.contains("write:pages"), "{e}");
+        // 句柄单次 + 跨会话
+        let cross = with_external_caller("b-exp-other", &read_all, || {
+            dispatch_capability("blobs.fetch", &format!(r#"{{"handle":"{handle}"}}"#))
+        });
+        assert!(cross.unwrap_err().contains("not_found"), "跨会话必须 not_found");
+        let fetch = with_external_caller("b-exp", &read_all, || {
+            dispatch_capability("blobs.fetch", &format!(r#"{{"handle":"{handle}"}}"#))
+        });
+        let g: serde_json::Value = serde_json::from_str(&fetch.expect("本会话第一次应能取回")).unwrap();
+        let _ = std::fs::remove_file(g["path"].as_str().unwrap_or(""));
+        let again = with_external_caller("b-exp", &read_all, || {
+            dispatch_capability("blobs.fetch", &format!(r#"{{"handle":"{handle}"}}"#))
+        });
+        assert!(again.unwrap_err().contains("not_found"), "句柄单次：第二次必须失败");
+        // 四计数不变
+        let after = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
+        assert_eq!(before, after, "导出前后当前空间四计数逐项不变");
         b1c_cleanup(&f);
     }
 }
