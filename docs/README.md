@@ -363,6 +363,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-10-30-cross-space-write.md](plans/2026-10-30-cross-space-write.md) | 跨空间写设计：方案 A/B/C 对比、每空间副作用、回滚开关、判据；待拍板 |
 | [plans/2026-10-30-ai-hidden-spaces.md](plans/2026-10-30-ai-hidden-spaces.md) | AI 不可见空间清单设计：存 meta.db sync_state JSON、dispatch 单一拦截点、当前空间被隐藏的处理、回滚与判据；待实现 |
 | [plans/2026-10-30-cross-space-write-v3.md](plans/2026-10-30-cross-space-write-v3.md) | 跨空间写 v3 / 导出跨空间 / 超限确认 UI 的施工拆解（A1–A4/B/C、判据与风险）；待实施 |
+| [plans/2026-10-30-package-format-final.md](plans/2026-10-30-package-format-final.md) | 包格式一步到位定稿：.shuyodoc v1.1（纯新增字段/checksums 自保护/数据库命名空间）＋ .shuyospace 完整设计（tree 权威附件权威/导入原子/limits）＋ 错误码与 M1.1–M3 计划 |
 
 ## 设计交付（design）
 
