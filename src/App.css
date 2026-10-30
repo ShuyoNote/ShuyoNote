@@ -14485,6 +14485,15 @@ p:has(> .editor-drawing-container) {
   background: var(--hover);
   background: color-mix(in srgb, var(--success, #2e7d32) 12%, transparent);
 }
+/* ⭐ 2026-10-30（B1d 面板「跨空间支持矩阵」）：`.set-badge` 的**第三档**（橙 = 写）。
+   同一段注释里那条「新增行内徽章」的取舍照旧：只加**一个** modifier，形状复用 `.set-badge` ✓；
+   ⛔ 不自造颜色变量 —— 用仓里既有 `--warning` token（照 `.sync-status.is-warn` 那一族 ✓），
+   两层写法让 `color-mix` 不支持时退回灰底（与 `.is-ok` 同一条纪律 ✓）。 */
+.set-badge.is-warn {
+  color: var(--warning, #b7791f);
+  background: var(--hover);
+  background: color-mix(in srgb, var(--warning, #b7791f) 14%, transparent);
+}
 
 .set-space-filter-wrap {
   position: relative;
