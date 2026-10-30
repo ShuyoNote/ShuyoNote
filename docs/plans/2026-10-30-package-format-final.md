@@ -268,3 +268,9 @@ warnings=[id-map-ignored]（预期）；parent/children/附件名/大小/mime/sh
 - 生成器：`scripts/make-package-fixtures.mjs`（vite `ssrLoadModule` 直接加载本仓 TS 写侧，无新依赖；默认输出 `src/lib/__fixtures__/package-fixtures/`，同目录 `fixtures.json` 记录 size/sha256）。
 - 入库 4 个真实包（sha256 与 lead 生成一致）：`personal-minimal.shuyodoc` 1086 B `6ec4812b…`、`personal-with-attachment.shuyodoc` 1546 B `b43fa8ad…`、`personal-database.shuyodoc` 1192 B `d013b759…`、`personal-sample.shuyospace` 5528 B `1f768006…`。
 - 判据：`src/lib/packageFixtures.test.ts`（3 条：清单 size/sha 一致；**重新生成逐字节相等**；3 个文档包走 `openDocumentPackage`、空间包走 `openSpacePackage` 读回）。
+
+## M2c 引用重写/审计证据（2026-10-30）
+
+- 导入时建 `旧节点 id → 新 id` 与 `附件 sha → 新附件 id` 映射；正文里旧节点 id 与 `attachment://<sha>` 全部重写；`[[标题]]` 双链只在无歧义时保留，**同名冲突 ⇒ `wikilink-ambiguous` warnings**（⛔ 不任选）。
+- 审计复用**现有插件审计环**（`audit.tail` 同一账本，不新造表）：`package.import` 一条，scope 带 `spaceId/nodes/documents/attachments/warnings/source` JSON；失败回滚**不写**审计。
+- 判据 `space_import` **4 passed**（新建/改 id/原子失败/引用重写＋歧义 warning＋审计/失败不写审计）。

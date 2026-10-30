@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **M2c 引用重写＋审计**：导入建 id_map（节点/附件），正文旧 id 与 `attachment://sha` 重写；`[[标题]]` 同名歧义进 warnings 不静默挑；`package.import` 写现有插件审计环（scope 带 spaceId/counts/warnings/source），失败不写。
 - **样例包夹具入库**：`scripts/make-package-fixtures.mjs` 生成 4 个真实包（3 `.shuyodoc`＋1 `.shuyospace`，sha256 固定）到 `src/lib/__fixtures__/package-fixtures/`；`packageFixtures.test.ts` 钉住清单 sha、重新生成逐字节相等、两套读侧可读回。
 - **包格式 M2c：`.shuyospace` 导入落库**（Rust 单命令事务）：新建空间、拓扑序建节点/内层文档、附件 sha 落盘去重、父子重映射；失败原子回滚（meta/库/附件目录全清）；前端胶水复用 `openSpacePackage` 并透传 warnings。判据 2 Rust + 1 前端。
 - **包格式 M2b 读侧骨架**：`.shuyospace` 读侧整包校验（checksums 覆盖 manifest/缺则拒）、manifest/tree（kind/环/深度/children-parent 冲突）/attachments/内层文档包（禁再嵌包）/id_map 仅提示；新增 10 条判据，包判据 68 条全绿。导入落库（新建 id/id_map 重算/原子/审计）下一批。
