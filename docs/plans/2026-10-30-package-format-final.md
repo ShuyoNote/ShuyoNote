@@ -256,3 +256,9 @@ warnings=[id-map-ignored]（预期）；parent/children/附件名/大小/mime/sh
 - `src/lib/docSpacePackOpen.ts::openSpacePackage`：整包校验（checksums 必须覆盖 manifest；缺 ⇒ `E_IO_CHECKSUMS`，可显式 `allowUnverifiedChecksums`）＋ manifest（format/version/space/min_reader_version 高拒/encrypted 拒）＋ tree（roots 非空、kind 白名单、children 权威、parent_id 冲突拒、环/深度 ≤1000、空文件夹保留、混排 children、file 条目 name/mime §9）＋ attachments（sha/size/字节缺失）＋ 内层 `documents/<id>/document.shuyodoc` 复用文档包读侧且**禁再嵌包**；`id_map.json` **不信任**（`id-map-ignored` warning）。
 - 判据：`src/lib/docSpacePackOpen.test.ts`（10 条：往返/未知 kind/冲突/深度/坏 checksums/缺 checksums/嵌套包/附件缺失/id_map 不信任/manifest 高版本与加密）；包判据合计 **68 条**全绿。
 - ⏳ 未做（下一批 M2b 落库）：导入永远新建 id、id_map 重算、children+parent 一起重映射、整包原子落库、审计 `package.import`。
+
+## M2c 导入落库证据（2026-10-30）
+
+- Rust 单命令 `space_package_import`（`src-tauri/src/space_import.rs`）：新建空间 → 事务内按拓扑序 `create_node_in` 建节点（folder/page/database，父子重映射）→ 内层 content 落库 → 附件按 sha 落盘/去重并插 `attachments` 行；失败 ⇒ 回滚事务并**删除 meta 行/空间库/附件目录**（原子）。判据 `space_import::tests`：`space_import_creates_new_space_with_remapped_ids_and_counts`、`space_import_is_atomic_on_failure`（2 passed）。
+- 前端胶水 `src/lib/docSpacePackImport.ts`：`unzipDocument` → `openSpacePackage` → `api.importSpacePackage`，warnings 透传；判据 `docSpacePackImport.test.ts`（1 passed）。
+- ⏳ 未做：id_map 重算与正文/双链重写、持久审计、UI 选文件入口。

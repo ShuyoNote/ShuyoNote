@@ -142,6 +142,7 @@ export const api = {
   // ⭐ B：下载超限的「允许一次」额度
   mcpDownloadGrant: (attId: string, spaceId?: string) =>
     invoke("mcp_download_grant", { attId, spaceId }),
+  importSpacePackage: (payload: unknown) => invoke("space_package_import", { payload }),
   mcpRecentDrafts: (limit?: number) => invoke("mcp_recent_drafts", { limit }),
   mcpRecentAudit: (limit?: number, onlyWrites?: boolean) =>
     invoke("mcp_recent_audit", { limit, onlyWrites }),
