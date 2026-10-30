@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **v3-A1 第三项：`files_move` 跨空间**：抽 `move_attachment_in` 单连接实现；`toPageId` 必须在目标空间内（跨空间/不存在 ⇒ `bad_args`）；目标空间 `changes`/审计 `spaceId`；`files.rename/delete/move` 已支持，其余 unsupported。`apiVersion` 1.20.0 → **1.21.0**。
 - **v3-A1 扩展：`files_delete` 跨空间**：删除前跨空间引用扫描（目标空间之外所有空间；任一打不开即拒绝，宁留勿删），通过后才删行并释放字节；目标空间 `changes`/审计 `spaceId`；`files.rename`＋`files.delete` 已支持跨空间，其余仍 unsupported。`apiVersion` 1.19.0 → **1.20.0**。
 - **跨空间写 v3-A1：`files_rename` 支持目标空间**：`rename_attachment` 抽 `rename_attachment_in` 单连接实现；命令/能力/apply 透传 `spaceId`；只改目标空间内附件（不在 ⇒ `not_found`）；目标空间 `changes`＋审计 `spaceId`；回滚开关/`write:all-spaces` 门不变。`apiVersion` 1.18.0 → **1.19.0**。
 - **AI 不可见空间清单**：`mcp_hidden_spaces_get/set`；清单存本机 `meta.db`（不随同步走、换机重配）；AI 面读写命中 ⇒ `permission_denied`（点名「AI 不可见」）；`spaces_list` 过滤、当前空间被隐藏时连当前空间调用也拒绝；用户侧不受影响；清空即恢复；`SHUYONOTE_AI_HIDDEN_SPACES=off` 可跳过。插件 API `apiVersion` 1.17.0 → **1.18.0**。
