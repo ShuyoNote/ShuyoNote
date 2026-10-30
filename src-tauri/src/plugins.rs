@@ -4046,8 +4046,19 @@ fn cap_files_move(
     _client_request_id: Option<&str>,
 ) -> CapResult {
     let space = write_target_space(space_id)?;
-    let (name, hash, from) = attachment_meta(att_id)?;
-    let (ptitle, _) = live_target(to_page_id).map_err(|_| format!("not_found: 目标页面 {to_page_id} 不存在或已删除"))?;
+    let (name, hash, from) = if space == target_space_id(None) {
+        attachment_meta(att_id)?
+    } else {
+        with_conn_for_space(Some(&space), |c| attachment_meta_in(c, att_id))?
+    };
+    // toPageId 必须属于**同一个目标空间**（否则 bad_args，不回落当前空间）
+    let (ptitle, _) = if space == target_space_id(None) {
+        live_target(to_page_id).map_err(|_| format!("not_found: 目标页面 {to_page_id} 不存在或已删除"))?
+    } else {
+        with_conn_for_space(Some(&space), |c| live_target_in(c, to_page_id)).map_err(|_| {
+            format!("bad_args: 目标页 {to_page_id} 不在该空间（或已删除）—— 不回落当前空间")
+        })?
+    };
     check_expected_sha(&hash, expected_sha)?;
     structural_draft(
         dry_run,
@@ -5511,6 +5522,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
                         | "blocks.delete"
                         | "files.rename"
                         | "files.delete"
+                        | "files.move"
                 ) {
                     return Err(format!(
                         "bad_args: {method} 暂不支持跨空间（v1 只支持 pages.create；目标空间 {space} 未写入）"
@@ -16304,6 +16316,100 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(e.contains("not_found"), "{e}");
         std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
         let e = crate::attachments::delete_attachment_cross_space(&f.dir, "a1", second).expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ v3-A1：files.move 跨空间（目标 page_id 真变；toPageId 跨空间拒；四计数不变）。
+    #[test]
+    fn a1_files_move_cross_space() {
+        let f = b1c_fixture("a1mv");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "a1mv-second";
+        let other = "a1mv-other";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            for id in [second, other] {
+                m.execute(
+                    "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                    params![id],
+                )
+                .unwrap();
+            }
+            m.execute("INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','a1mv-dev')", []).ok();
+        }
+        for (sp, pid) in [(second, "p1"), (second, "p2"), (other, "q1")] {
+            let c = crate::db::open_space_conn_at(sp, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES (?1, ?2, NULL, ?1, '{}', 'x', 'page', 0, 10, 10)",
+                params![pid, sp],
+            )
+            .unwrap();
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO attachments (id, page_id, name, mime, size, hash, created_at)
+                 VALUES ('a1','p1','x.txt','text/plain',3,?1,10)",
+                params!["c".repeat(64)],
+            )
+            .unwrap();
+        }
+        let four = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (q("SELECT COUNT(*) FROM pages"), q("SELECT COUNT(*) FROM changes"), q("SELECT COUNT(*) FROM page_versions"), q("SELECT COUNT(*) FROM attachments"))
+        };
+        let before = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        let (out, drafts) = with_external_caller("a1mv-w", &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability("files.move", &format!(r#"{{"attId":"a1","toPageId":"p2","spaceId":"{second}"}}"#))
+            })
+        });
+        out.expect("应产草稿");
+        assert_eq!(drafts[0].payload["spaceId"], second);
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            crate::attachments::move_attachment_in(&c, "a1", "p2").expect("目标空间移动应成功");
+            let page_id: String = c.query_row("SELECT page_id FROM attachments WHERE id='a1'", [], |r| r.get(0)).unwrap();
+            assert_eq!(page_id, "p2", "目标空间附件 page_id 必须真变");
+            let ch: i64 = c.query_row("SELECT COUNT(*) FROM changes WHERE entity='attachment'", [], |r| r.get(0)).unwrap();
+            assert!(ch >= 1, "目标空间 changes 必须有 attachment 变更");
+        }
+        let after = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
+        assert_eq!(before, after, "当前空间四计数逐项不变");
+        // toPageId 属于别的空间 ⇒ bad_args 含"不在该空间"
+        let e = with_external_caller("a1mv-x", &g, || {
+            dispatch_capability("files.move", &format!(r#"{{"attId":"a1","toPageId":"q1","spaceId":"{second}"}}"#))
+        })
+        .expect_err("跨空间目标页必须拒");
+        assert!(e.contains("不在该空间") || e.contains("bad_args"), "{e}");
+        // toPageId 不存在 ⇒ bad_args/not_found
+        let e = with_external_caller("a1mv-miss", &g, || {
+            dispatch_capability("files.move", &format!(r#"{{"attId":"a1","toPageId":"nope","spaceId":"{second}"}}"#))
+        })
+        .expect_err("不存在目标页必须拒");
+        assert!(e.contains("bad_args") || e.contains("not_found"), "{e}");
+        // 缺档 / 目标空间无附件 / 开关
+        let e = with_external_caller("a1mv-no", &b2_granted(), || {
+            dispatch_capability("files.move", &format!(r#"{{"attId":"a1","toPageId":"p2","spaceId":"{second}"}}"#))
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        let e = with_external_caller("a1mv-na", &g, || {
+            dispatch_capability("files.move", &format!(r#"{{"attId":"没有","toPageId":"p2","spaceId":"{second}"}}"#))
+        })
+        .expect_err("目标空间无该附件必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        let e = with_external_caller("a1mv-off", &g, || {
+            dispatch_capability("files.move", &format!(r#"{{"attId":"a1","toPageId":"p2","spaceId":"{second}"}}"#))
+        })
+        .expect_err("开关关着必须拒");
         assert!(e.contains("关闭"), "{e}");
         std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
         b1c_cleanup(&f);

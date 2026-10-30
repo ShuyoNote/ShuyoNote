@@ -684,8 +684,8 @@ export const api = {
   cleanupOldVersions: (maxKeep?: number) => invoke("cleanup_old_versions", { maxKeep }),
   cleanupTempFiles: () => invoke("cleanup_temp_files"),
   purgeDeletedWorkspaces: () => invoke("purge_deleted_workspaces"),
-  moveAttachment: (id: string, newPageId: string) =>
-    invoke("move_attachment", { id, newPageId }),
+  moveAttachment: (id: string, newPageId: string, spaceId?: string) =>
+    invoke("move_attachment", { id, newPageId, spaceId }),
   // ⭐ B2-补遗-1：从页面摘除附件（page_id=NULL，保留文件）
   detachAttachment: (id: string) => invoke("detach_attachment", { id }),
   renameAttachment: (id: string, name: string, spaceId?: string) =>

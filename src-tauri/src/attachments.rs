@@ -1866,8 +1866,40 @@ pub fn remove_attachments(
 
 /// Move an attachment to another folder/page container (update its page_id).
 #[tauri::command]
-pub fn move_attachment(db: State<'_, Db>, id: String, new_page_id: String) -> Result<(), String> {
+pub fn move_attachment(
+    db: State<'_, Db>,
+    id: String,
+    new_page_id: String,
+    space_id: Option<String>,
+) -> Result<(), String> {
+    let target = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(space) = target {
+        let active = {
+            let c = db.0.lock().expect("db mutex poisoned");
+            crate::workspaces::active_workspace_id(&c)?
+        };
+        if space != active {
+            if crate::plugins::cross_space_write_disabled() {
+                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+            }
+            let app_data = crate::db::app_data_dir_ref()
+                .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let c = crate::db::open_space_conn_at(space, app_data).map_err(|e| {
+                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+            })?;
+            return move_attachment_in(&c, &id, &new_page_id);
+        }
+    }
     let c = db.0.lock().expect("db mutex poisoned");
+    move_attachment_in(&c, &id, &new_page_id)
+}
+
+/// move_attachment 的单连接实现（当前/跨空间同一份；副作用全复用）。
+pub(crate) fn move_attachment_in(
+    c: &rusqlite::Connection,
+    id: &str,
+    new_page_id: &str,
+) -> Result<(), String> {
     let exists: bool = c
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM pages WHERE id = ?1 AND deleted_at IS NULL)",
