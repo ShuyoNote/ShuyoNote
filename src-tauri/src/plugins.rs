@@ -3398,6 +3398,56 @@ fn check_expected_rev(page_id: &str, expected: Option<&str>) -> Result<String, S
     with_read_conn(|c| check_expected_rev_in(c, page_id, expected))
 }
 
+// ⭐ A2：结构类跨空间 —— 同一段校验按**目标空间**取连接，找不到就开目标空间读连接。
+fn live_target_at(space: &str, id: &str) -> Result<(String, String), String> {
+    if space == target_space_id(None) {
+        live_target(id)
+    } else {
+        with_conn_for_space(Some(space), |c| live_target_in(c, id))
+    }
+}
+fn check_expected_rev_at(space: &str, id: &str, expected: Option<&str>) -> Result<String, String> {
+    if space == target_space_id(None) {
+        check_expected_rev(id, expected)
+    } else {
+        with_conn_for_space(Some(space), |c| check_expected_rev_in(c, id, expected))
+    }
+}
+fn live_children_count_at(space: &str, id: &str) -> Result<i64, String> {
+    if space == target_space_id(None) {
+        with_read_conn(|c| live_children_count(c, id))
+    } else {
+        with_conn_for_space(Some(space), |c| live_children_count(c, id))
+    }
+}
+fn backlink_count_at(space: &str, id: &str) -> Result<i64, String> {
+    if space == target_space_id(None) {
+        with_read_conn(|c| backlink_count(c, id))
+    } else {
+        with_conn_for_space(Some(space), |c| backlink_count(c, id))
+    }
+}
+fn page_parent_at(space: &str, id: &str) -> Result<Option<String>, String> {
+    if space == target_space_id(None) {
+        with_read_conn(|c| {
+            c.query_row(
+                "SELECT parent_id FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+                params![id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .map_err(|e| format!("db_error: {e}"))
+        })
+    } else {
+        with_conn_for_space(Some(space), |c| {
+            c.query_row(
+                "SELECT parent_id FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+                params![id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .map_err(|e| format!("db_error: {e}"))
+        })
+    }
+}
 fn check_expected_rev_in(
     c: &rusqlite::Connection,
     page_id: &str,
@@ -3508,7 +3558,7 @@ fn cap_folders_create(
     }
     let parent = parent_id.map(str::trim).filter(|s| !s.is_empty());
     if let Some(p) = parent {
-        live_target(p).map_err(|_| format!("not_found: 上级节点 {p} 不存在或已删除"))?;
+        live_target_at(&space, p).map_err(|_| format!("not_found: 上级节点 {p} 不存在或已删除"))?;
     }
     structural_draft(
         dry_run,
@@ -3535,25 +3585,18 @@ fn cap_nodes_move(
     _client_request_id: Option<&str>,
 ) -> CapResult {
     let space = write_target_space(space_id)?;
-    let (title, _kind) = live_target(id)?;
+    let (title, _kind) = live_target_at(&space, id)?;
     let target = new_parent_id.map(str::trim).filter(|s| !s.is_empty());
     if let Some(p) = target {
         // 环检测：不能移到自己或自己的后代下面（沿 parent 向上走，遇到自己 ⇒ 拒）
-        let (ptitle, _) = live_target(p).map_err(|_| format!("not_found: 新上级 {p} 不存在或已删除"))?;
+        let (ptitle, _) = live_target_at(&space, p).map_err(|_| format!("not_found: 新上级 {p} 不存在或已删除"))?;
         if p == id.trim() {
             return Err("bad_args: 不能把节点移到自己下面（会成环）".to_string());
         }
-        let rev = check_expected_rev(id, expected_rev)?;
+        let rev = check_expected_rev_at(&space, id, expected_rev)?;
         let mut cur = p.to_string();
         for _ in 0..1000 {
-            let parent: Option<String> = with_read_conn(|c| {
-                c.query_row(
-                    "SELECT parent_id FROM pages WHERE id = ?1 AND deleted_at IS NULL",
-                    params![cur],
-                    |r| r.get::<_, Option<String>>(0),
-                )
-                .map_err(|e| format!("db_error: {e}"))
-            })?;
+            let parent: Option<String> = page_parent_at(&space, &cur)?;
             match parent {
                 None => break,
                 Some(up) if up == id.trim() => {
@@ -3565,8 +3608,8 @@ fn cap_nodes_move(
             }
         }
     }
-    let rev = check_expected_rev(id, expected_rev)?;
-    let backlinks = with_read_conn(|c| backlink_count(c, id))?;
+    let rev = check_expected_rev_at(&space, id, expected_rev)?;
+    let backlinks = backlink_count_at(&space, id)?;
     structural_draft(
         dry_run,
         format!("move_node:{}", id.trim()),
@@ -3597,7 +3640,7 @@ fn cap_nodes_rename(
     _client_request_id: Option<&str>,
 ) -> CapResult {
     let space = write_target_space(space_id)?;
-    let (old_title, _kind) = live_target(id)?;
+    let (old_title, _kind) = live_target_at(&space, id)?;
     let title = title.trim();
     if title.is_empty() {
         return Err("bad_args: 重命名需要 title".to_string());
@@ -3605,7 +3648,7 @@ fn cap_nodes_rename(
     if title.chars().count() > 200 {
         return Err("bad_args: 标题超过 200 字上限".to_string());
     }
-    let rev = check_expected_rev(id, expected_rev)?;
+    let rev = check_expected_rev_at(&space, id, expected_rev)?;
     structural_draft(
         dry_run,
         format!("rename_node:{}", id.trim()),
@@ -3630,15 +3673,15 @@ fn cap_nodes_delete(
     _client_request_id: Option<&str>,
 ) -> CapResult {
     let space = write_target_space(space_id)?;
-    let (title, _kind) = live_target(id)?;
-    let children = with_read_conn(|c| live_children_count(c, id))?;
+    let (title, _kind) = live_target_at(&space, id)?;
+    let children = live_children_count_at(&space, id)?;
     if children > 0 {
         return Err(format!(
             "bad_args: 「{title}」还有 {children} 个子项 —— 请先移走或删除它们（⛔ 不递归删）"
         ));
     }
-    let rev = check_expected_rev(id, expected_rev)?;
-    let backlinks = with_read_conn(|c| backlink_count(c, id))?;
+    let rev = check_expected_rev_at(&space, id, expected_rev)?;
+    let backlinks = backlink_count_at(&space, id)?;
     structural_draft(
         dry_run,
         format!("delete_node:{}", id.trim()),
@@ -5634,6 +5677,10 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
                         | "files.delete"
                         | "files.move"
                         | "files.detach"
+                        | "nodes.move"
+                        | "nodes.rename"
+                        | "nodes.delete"
+                        | "folders.create"
                 ) {
                     return Err(format!(
                         "bad_args: {method} 暂不支持跨空间（v1 只支持 pages.create；目标空间 {space} 未写入）"
@@ -16777,6 +16824,105 @@ register({ id: "s.run", title: "结构化", run: function () {
             crate::frontend_tool::take_notify_log().is_empty(),
             "未超限不许发确认事件"
         );
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ A2：结构类四工具跨空间（目标空间真改/校验/非空拒/缺档/回滚/四计数）。
+    #[test]
+    fn a2_structure_cross_space() {
+        let f = b1c_fixture("a2s");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "a2s-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+            m.execute("INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','a2s-dev')", []).ok();
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            for (id, parent, title, kind) in [
+                ("p1", None, "甲", "page"),
+                ("p2", Some("p1"), "乙", "page"),
+                ("f1", None, "空夹", "folder"),
+                ("f2", None, "非空夹", "folder"),
+                ("c1", Some("f2"), "子", "page"),
+                ("d1", None, "叶", "page"),
+            ] {
+                c.execute(
+                    "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, '{}', 'x', ?5, 0, 10, 10)",
+                    params![id, second, parent, title, kind],
+                )
+                .unwrap();
+            }
+        }
+        let four = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (q("SELECT COUNT(*) FROM pages"), q("SELECT COUNT(*) FROM changes"), q("SELECT COUNT(*) FROM page_versions"), q("SELECT COUNT(*) FROM attachments"))
+        };
+        let before = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        // 四个 capability 都能对目标空间产草稿
+        for (tool, args) in [
+            ("nodes.rename", format!(r#"{{"id":"p1","title":"改名","spaceId":"{second}"}}"#)),
+            ("nodes.move", format!(r#"{{"id":"p2","newParentId":null,"spaceId":"{second}"}}"#)),
+            ("nodes.delete", format!(r#"{{"id":"d1","spaceId":"{second}"}}"#)),
+            ("folders.create", format!(r#"{{"title":"新夹","spaceId":"{second}"}}"#)),
+        ] {
+            let (out, drafts) = with_external_caller("a2s", &g, || with_fresh_drafts(|| dispatch_capability(tool, &args)));
+            out.unwrap_or_else(|e| panic!("{tool} 应产草稿：{e}"));
+            assert_eq!(drafts.len(), 1, "{tool}");
+            assert_eq!(drafts[0].payload["spaceId"], second, "{tool}");
+        }
+        // 目标空间真改：move/delete/create（走单连接实现）
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            crate::commands::move_page_in(
+                &c,
+                &crate::commands::MovePageArgs { id: "p2".into(), new_parent_id: None, sort_order: 0.0, space_id: None },
+            )
+            .expect("目标空间移动");
+            let p2parent: Option<String> = c.query_row("SELECT parent_id FROM pages WHERE id='p2'", [], |r| r.get(0)).unwrap();
+            assert!(p2parent.is_none(), "目标空间 p2 应移到顶层");
+            crate::commands::delete_page_in(&c, &"f1".to_string()).expect("目标空间软删");
+            let del: Option<i64> = c.query_row("SELECT deleted_at FROM pages WHERE id='f1'", [], |r| r.get(0)).unwrap();
+            assert!(del.is_some(), "目标空间 f1 应被软删");
+            let folder = crate::commands::create_node_in(&c, second, None, Some("新夹".into()), "folder", None, None).expect("目标空间建夹");
+            assert_eq!(folder.title, "新夹");
+        }
+        // 跨空间 parentId ⇒ not_found（不回落当前空间）
+        let e = with_external_caller("a2s-x", &g, || {
+            dispatch_capability("nodes.move", &format!(r#"{{"id":"p2","newParentId":"{0}","spaceId":"{second}"}}"#, f.space))
+        })
+        .expect_err("parent 在别的空间必须拒");
+        assert!(e.contains("not_found") || e.contains("bad_args"), "{e}");
+        // 非空文件夹删除 ⇒ 拒
+        let e = with_external_caller("a2s-nf", &g, || {
+            dispatch_capability("nodes.delete", &format!(r#"{{"id":"f2","spaceId":"{second}"}}"#))
+        })
+        .expect_err("非空文件夹必须拒");
+        assert!(e.contains("bad_args"), "{e}");
+        // 缺档 / 回滚
+        let e = with_external_caller("a2s-no", &b2_granted(), || {
+            dispatch_capability("folders.create", &format!(r#"{{"title":"x","spaceId":"{second}"}}"#))
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        let e = with_external_caller("a2s-off", &g, || {
+            dispatch_capability("nodes.rename", &format!(r#"{{"id":"p1","title":"x","spaceId":"{second}"}}"#))
+        })
+        .expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        let after = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
+        assert_eq!(before, after, "当前空间四计数逐项不变");
         b1c_cleanup(&f);
     }
 }
