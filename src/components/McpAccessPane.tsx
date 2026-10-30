@@ -217,6 +217,27 @@ const NAV: Array<[string, string]> = [
   ["AI 隐藏空间", "mcp-sec-hidden"],
 ];
 
+/**
+ * 「接入外部 AI」引导里的客户端选择（设计稿 v3）：切换只改**配置文件路径那一行**，
+ * 配置片段本身相同（同一段 `mcpServers.shuyonote`）。
+ * ⚠️ 这里的路径是**各客户端自己的约定**（不是本产品的事实，也不是 Tauri 后端读数）——
+ * 面板只给"该粘到哪个文件"的提示，⛔ 不写死本机路径、也不假装能替用户写那个文件。
+ */
+type ClientKind = "claude" | "cursor" | "other";
+const CLIENTS: Array<{ id: ClientKind; label: string; configPath: string }> = [
+  {
+    id: "claude",
+    label: "Claude Desktop",
+    configPath: "%APPDATA%\\Claude\\claude_desktop_config.json",
+  },
+  { id: "cursor", label: "Cursor", configPath: "~/.cursor/mcp.json" },
+  {
+    id: "other",
+    label: "其他 MCP 客户端",
+    configPath: "（按客户端文档：把这段 mcpServers 粘进它的配置文件）",
+  },
+];
+
 export function McpAccessPane() {
   const [st, setSt] = useState<McpStatus | null>(null);
   const [drafts, setDrafts] = useState<DraftRow[]>([]);
@@ -232,6 +253,8 @@ export function McpAccessPane() {
   // 展开的分类（默认第一类展开；**内容始终留在 DOM 里**，用 CSS 折叠 —— 这样能力清单的
   // 机器读数（`[data-cap-id]` 条数）不受展开状态影响，判据才不会因为"用户点了折叠"而漂）。
   const [openCats, setOpenCats] = useState<string[]>([DOMAINS[0][0]]);
+  // 「接入外部 AI」引导：选哪个客户端（只影响"配置文件路径"那一行；片段本身相同）
+  const [client, setClient] = useState<ClientKind>("claude");
 
   const refresh = useCallback(async () => {
     try {
@@ -409,14 +432,153 @@ export function McpAccessPane() {
 
   return (
     <div className="mcp-access mcp-panel">
-      {/* 分段导航（锚点滚动；窄屏换行不横向溢出） */}
-      <nav className="mcp-nav" aria-label="MCP 接入面板分区">
-        {NAV.map(([label, id]) => (
-          <a key={id} className="mcp-nav-link" href={`#${id}`} data-nav={id}>
-            {label}
-          </a>
-        ))}
-      </nav>
+      {/* 顶栏：分段导航（锚点滚动；窄屏换行不横向溢出）＋ 状态 chip ＋「如何接入」 */}
+      <div className="mcp-topbar">
+        <nav className="mcp-nav" aria-label="MCP 接入面板分区">
+          {NAV.map(([label, id]) => (
+            <a key={id} className="mcp-nav-link" href={`#${id}`} data-nav={id}>
+              {label}
+            </a>
+          ))}
+        </nav>
+        <div className="mcp-topbar-right">
+          <span
+            className={`mcp-status-chip${st?.running ? " is-on" : ""}`}
+            data-testid="mcp-top-status"
+          >
+            <span className="mcp-access-dot" aria-hidden="true" />
+            {!st ? "读取中…" : st.running ? "已打开 · 正在听" : st.enabled ? "开关开着 · 未监听" : "已关闭（默认）"}
+          </span>
+          <button className="set-btn" data-testid="mcp-howto" onClick={() => jumpTo("mcp-sec-onboard")}>
+            ⤵ 如何接入
+          </button>
+        </div>
+      </div>
+
+      {/* ⭐ 首屏接入引导（设计稿 v3）：三步选客户端 → 复制配置 → 粘贴并重启。
+          配置片段与令牌**只在这里出现一次**（状态区不再重复）。 */}
+      <section className="set-section mcp-onboard" id="mcp-sec-onboard" data-testid="mcp-onboard">
+        <div className="set-section-title">
+          接入外部 AI
+          <span className="mcp-title-hint">三步：选客户端 → 复制配置 → 粘贴并重启</span>
+        </div>
+        <p className="set-hint">
+          配置里的 command / args / env 已经按这台机器自动填好；令牌只在本机文件里，不会出现在配置片段里。
+        </p>
+        {level === "off" ? (
+          <p className="mcp-onboard-tip" data-testid="mcp-onboard-tip">
+            先选一档权限，再按下面三步接入。
+          </p>
+        ) : null}
+        <div className="mcp-onboard-grid">
+          <ol className="mcp-onboard-steps">
+            <li data-step="1" className="mcp-step">
+              <span className="mcp-step-no" aria-hidden="true">
+                1
+              </span>
+              <div className="mcp-step-body">
+                <div className="mcp-step-title">选择你的 AI 客户端</div>
+                <div className="mcp-onboard-chips" role="group" aria-label="选择 AI 客户端">
+                  {CLIENTS.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      data-client={c.id}
+                      aria-pressed={client === c.id}
+                      className={`mcp-client-chip${client === c.id ? " is-on" : ""}`}
+                      onClick={() => setClient(c.id)}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mcp-step-path">
+                  配置文件{" "}
+                  <code data-testid="mcp-config-path">
+                    {(CLIENTS.find((c) => c.id === client) ?? CLIENTS[0]).configPath}
+                  </code>
+                </div>
+              </div>
+            </li>
+            <li data-step="2" className="mcp-step">
+              <span className="mcp-step-no" aria-hidden="true">
+                2
+              </span>
+              <div className="mcp-step-body">
+                <div className="mcp-step-title">复制右边的配置片段</div>
+                <div className="mcp-step-desc">
+                  粘贴到配置文件的 <code>mcpServers</code> 里（已存在就合并，别整段覆盖）。
+                </div>
+              </div>
+            </li>
+            <li data-step="3" className="mcp-step">
+              <span className="mcp-step-no" aria-hidden="true">
+                3
+              </span>
+              <div className="mcp-step-body">
+                <div className="mcp-step-title">重启客户端，然后点「检测连接」</div>
+                <div className="mcp-step-desc">这里会显示最近一次外部调用与连接数。</div>
+                <div className="mcp-step-readings">
+                  <span>最近一次外部调用：{lastCall ? `${relTime(lastCall.at)} · ${lastCall.tool}` : "（还没有）"}</span>
+                  <span>
+                    连接：{st?.enabled ? "本机回环（客户端连接数未采集）" : "（通道关闭）"}
+                  </span>
+                </div>
+                <button
+                  className="set-btn"
+                  data-testid="mcp-detect"
+                  disabled={busy || !st}
+                  onClick={() => {
+                    void refresh();
+                    toast("已刷新连接读数", "success");
+                  }}
+                >
+                  检测连接
+                </button>
+              </div>
+            </li>
+          </ol>
+
+          {/* 右侧：配置片段 ＋ 令牌（复制/显示/换新只在**这里**出现一次） */}
+          <div className="mcp-config-card" data-testid="mcp-config-card">
+            <div className="mcp-config-head">
+              <span>配置片段</span>
+              <button
+                className="set-btn is-primary"
+                data-testid="copy-config"
+                disabled={!st}
+                onClick={() => void copy(snippet, "配置片段")}
+              >
+                复制配置
+              </button>
+            </div>
+            <pre className="mcp-access-snippet" data-testid="mcp-snippet">
+              {snippet}
+            </pre>
+            <div className="mcp-config-token">
+              <span className="mcp-token-label">令牌</span>
+              <span className={`mcp-access-token${emptyToken ? " is-empty" : ""}`}>
+                <code
+                  className="mcp-access-token-text"
+                  data-testid="mcp-token"
+                  data-fingerprint={token ? token.slice(-4) : ""}
+                >
+                  {!token ? "（还没有 —— 打开开关时会自动生成）" : showToken ? token : maskToken(token)}
+                </code>
+              </span>
+              <button className="set-btn" data-testid="copy-token" disabled={!token} onClick={() => void copy(token, "令牌")}>
+                复制令牌
+              </button>
+              <button className="set-btn" disabled={!token} onClick={() => setShowToken((v) => !v)}>
+                {showToken ? "隐藏" : "显示"}
+              </button>
+              <button className="set-btn" disabled={busy || !st} onClick={() => void rotate()}>
+                换一枚新令牌
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* ① 权限档位：六张单选卡 */}
       <section className="set-section" id="mcp-sec-levels">
@@ -597,31 +759,6 @@ export function McpAccessPane() {
               </div>
             </div>
             <div className="mcp-stat-cell">
-              <div className="mcp-stat-label">令牌（指纹 / 脱敏）</div>
-              <div className="mcp-stat-value">
-                <span className={`mcp-access-token${emptyToken ? " is-empty" : ""}`}>
-                  <code
-                    className="mcp-access-token-text"
-                    data-testid="mcp-token"
-                    data-fingerprint={token ? token.slice(-4) : ""}
-                  >
-                    {!token ? "（还没有 —— 打开开关时会自动生成）" : showToken ? token : maskToken(token)}
-                  </code>
-                </span>
-              </div>
-              <div className="mcp-stat-actions">
-                <button className="set-btn" data-testid="copy-token" disabled={!token} onClick={() => void copy(token, "令牌")}>
-                  复制令牌
-                </button>
-                <button className="set-btn" disabled={!token} onClick={() => setShowToken((v) => !v)}>
-                  {showToken ? "隐藏" : "显示"}
-                </button>
-                <button className="set-btn" disabled={busy || !st} onClick={() => void rotate()}>
-                  换一枚新令牌
-                </button>
-              </div>
-            </div>
-            <div className="mcp-stat-cell">
               <div className="mcp-stat-label">最近一次外部调用</div>
               <div className="mcp-stat-value" data-testid="mcp-last-call">
                 {lastCall ? `${relTime(lastCall.at)} · ${lastCall.tool}` : "（还没有外部调用记录）"}
@@ -652,8 +789,8 @@ export function McpAccessPane() {
           <button className="set-btn" data-shortcut="hidden" onClick={() => jumpTo("mcp-sec-hidden")}>
             AI 隐藏空间（{hidden.length}）
           </button>
-          <button className="set-btn" data-shortcut="config" onClick={() => jumpTo("mcp-sec-config")}>
-            连接说明 / 客户端配置
+          <button className="set-btn" data-shortcut="onboard" onClick={() => jumpTo("mcp-sec-onboard")}>
+            客户端配置说明
           </button>
         </div>
         {/* granted 权限串 → 分组 chips（以前是一整串 read:pagesread:files…） */}
@@ -755,28 +892,7 @@ export function McpAccessPane() {
         </div>
       </section>
 
-      {/* ⑦ 连接说明 / 客户端配置（快捷入口会滚到这里） */}
-      <section className="set-section" id="mcp-sec-config">
-        <div className="set-section-title">连接说明 / 客户端配置</div>
-        <p className="set-hint">
-          桥的路径会自动填好；客户端配置里的端口会随重启变化；切档后请重启 AI 客户端（令牌同时换新）。
-        </p>
-        <pre className="mcp-access-snippet" data-testid="mcp-snippet">
-          {snippet}
-        </pre>
-        <div className="set-actions">
-          <button
-            className="set-btn is-primary"
-            data-testid="copy-config"
-            disabled={!st}
-            onClick={() => void copy(snippet, "配置片段")}
-          >
-            复制配置（客户端）
-          </button>
-        </div>
-      </section>
-
-      {/* ⑧ 边界提示（静态说明，⛔ 不冒充读数） */}
+      {/* ⑦ 边界提示（静态说明，⛔ 不冒充读数） */}
       <section className="set-section" id="mcp-sec-boundary">
         <div className="set-section-title">边界提示</div>
         <p className="set-hint">导出/下载走句柄（blobs_fetch 落盘），不回真名字节。</p>

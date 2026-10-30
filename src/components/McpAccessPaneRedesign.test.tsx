@@ -387,4 +387,112 @@ describe("跨空间支持矩阵改版（2026-10-31）", () => {
     expect(css, "≤900px 档位必须单列").toMatch(/@media \(max-width: 900px\)[\s\S]*?\.mcp-levels-grid[\s\S]*?grid-template-columns: 1fr/);
     expect(css, "窄屏状态卡也要单列").toMatch(/@media \(max-width: 720px\)[\s\S]*?\.mcp-stat-grid[\s\S]*?grid-template-columns: 1fr/);
   });
+
+  it("⑯ 首屏接入引导：区块在、三步齐、客户端 chips 切换只改「配置文件路径」", async () => {
+    mount();
+    await tick();
+    await tick();
+    const block = document.querySelector('[data-testid="mcp-onboard"]');
+    expect(block, "分段导航之后要有「接入外部 AI」引导块").toBeTruthy();
+    // 三个步骤（按 data-step 序号）
+    const steps = Array.from(document.querySelectorAll("[data-step]")).map((el) => el.getAttribute("data-step"));
+    expect(steps).toEqual(["1", "2", "3"]);
+    // 「如何接入」按钮指到这个区块
+    const howto = document.querySelector<HTMLElement>('[data-testid="mcp-howto"]');
+    expect(howto, "顶栏要有「如何接入」").toBeTruthy();
+    expect(document.getElementById("mcp-sec-onboard")).toBeTruthy();
+    // 客户端 chips：切换只改路径那一行
+    const path = () => document.querySelector('[data-testid="mcp-config-path"]')?.textContent ?? "";
+    expect(path()).toContain("claude_desktop_config.json");
+    flushSync(() =>
+      document.querySelector<HTMLElement>('[data-client="cursor"]')!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      ),
+    );
+    await tick();
+    expect(path(), "换客户端必须改配置文件路径").toContain(".cursor/mcp.json");
+    const cursorPath = path();
+    flushSync(() =>
+      document.querySelector<HTMLElement>('[data-client="other"]')!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      ),
+    );
+    await tick();
+    expect(path(), "「其他 MCP 客户端」的路径提示必须与 Cursor 不同").not.toBe(cursorPath);
+    expect(path().length).toBeGreaterThan(0);
+    // 片段与路径无关：切了客户端，复制的内容仍是同一份 snippet
+    const snippet = document.querySelector('[data-testid="mcp-snippet"]')?.textContent ?? "";
+    expect(JSON.parse(snippet).mcpServers.shuyonote.command).toBe("node");
+  });
+
+  it("⑰ 配置片段只有一份（引导块里）：复制配置写剪贴板的内容 = 现有 snippet", async () => {
+    mount();
+    await tick();
+    await tick();
+    const snippets = document.querySelectorAll('[data-testid="mcp-snippet"]');
+    expect(snippets.length, "配置片段只允许出现一份（状态区不许再有第二份）").toBe(1);
+    expect(
+      document.querySelectorAll('[data-testid="mcp-stat-card"] [data-testid="mcp-snippet"]').length,
+      "状态卡里不许再有 snippet",
+    ).toBe(0);
+    const copyBtn = document.querySelector<HTMLElement>('[data-testid="copy-config"]')!;
+    expect(copyBtn.className).toContain("is-primary");
+    flushSync(() => copyBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await tick();
+    const calls = vi.mocked(navigator.clipboard.writeText).mock.calls;
+    const wrote = calls[calls.length - 1]?.[0] as string;
+    expect(wrote, "复制的就是页面上那份 snippet").toBe(snippets[0].textContent);
+    expect(wrote).toContain("mcpServers");
+    expect(JSON.parse(wrote).mcpServers.shuyonote.env.SHUYONOTE_MCP_TOKEN_FILE).toBe("/data/mcp/token");
+  });
+
+  it("⑱ 令牌的复制/显示/换新只在引导块出现（状态区无重复按钮）", async () => {
+    mocks.mcpStatus.mockResolvedValue(STATUS_WRITE_ALL);
+    mount();
+    await tick();
+    await tick();
+    const buttons = () => Array.from(document.querySelectorAll<HTMLElement>("button"));
+    const countText = (needle: string) => buttons().filter((b) => (b.textContent || "").includes(needle)).length;
+    expect(countText("复制令牌"), "「复制令牌」只该有一颗").toBe(1);
+    expect(countText("换一枚新令牌"), "「换一枚新令牌」只该有一颗").toBe(1);
+    expect(buttons().filter((b) => (b.textContent || "") === "显示").length, "「显示」只该有一颗").toBe(1);
+    // 状态卡里没有令牌动作
+    const stat = document.querySelector('[data-testid="mcp-stat-card"]')!;
+    expect(stat.querySelector('[data-testid="copy-token"]'), "状态卡里不许再有复制令牌").toBeNull();
+    expect(stat.textContent || "", "状态卡里不该出现令牌正文/掩码").not.toContain("••••");
+    // 令牌本体只在引导块里，且默认掩码、可点「显示」展开
+    const tokenEl = document.querySelector<HTMLElement>('[data-testid="mcp-token"]')!;
+    expect(tokenEl.closest('[data-testid="mcp-onboard"]')).toBeTruthy();
+    expect(tokenEl.textContent).toContain("••••");
+    expect(document.body.textContent || "").not.toContain(STATUS_WRITE_ALL.token);
+  });
+
+  it("⑲ 「检测连接」会重新拉一次状态（＝refresh，不是只改本地提示）", async () => {
+    mocks.mcpStatus.mockResolvedValue(STATUS_WRITE_ALL);
+    mount();
+    await tick();
+    await tick();
+    const before = mocks.mcpStatus.mock.calls.length;
+    flushSync(() =>
+      document.querySelector<HTMLElement>('[data-testid="mcp-detect"]')!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      ),
+    );
+    await tick();
+    await tick();
+    expect(mocks.mcpStatus.mock.calls.length, "检测连接必须真的重新查一次状态").toBeGreaterThan(before);
+  });
+
+  it("⑳ off 档位时引导块仍显示（不整块藏掉），并提示「先选一档权限」", async () => {
+    // 默认 STATUS_OFF
+    mount();
+    await tick();
+    await tick();
+    const block = document.querySelector('[data-testid="mcp-onboard"]');
+    expect(block, "off 档位下引导块也必须还在").toBeTruthy();
+    expect(block!.textContent || "").toContain("先选一档权限");
+    expect(document.querySelector('[data-testid="mcp-onboard-tip"]')).toBeTruthy();
+    // 三步与客户端选择仍然可用（但配置按钮在 st 为空时禁用是另一件事）
+    expect(document.querySelectorAll("[data-step]").length).toBe(3);
+  });
 });

@@ -12,14 +12,22 @@
  *   ⑤ 权限 chips ⑥ 写操作警示条。窄屏全部纵向堆叠，⛔ 不许横向溢出。
  */
 
-/* ═══ ① 分段导航 ═══════════════════════════════════════════════════════════ */
+/* ═══ ① 顶栏：分段导航 ＋ 状态 chip ＋「如何接入」 ═══════════════════════ */
+.mcp-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 0 10px;
+  margin: 0 0 14px;
+  border-bottom: 1px solid var(--border);
+}
 .mcp-nav {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  padding: 0 0 10px;
-  margin: 0 0 14px;
-  border-bottom: 1px solid var(--border);
+  min-width: 0;
 }
 .mcp-nav-link {
   padding: 5px 10px;
@@ -32,6 +40,168 @@
 .mcp-nav-link:hover {
   background: var(--hover);
   color: var(--text);
+}
+.mcp-topbar-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.mcp-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--surface);
+}
+.mcp-status-chip.is-on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* ═══ ①.5 首屏接入引导（三步 ＋ 右侧配置片段/令牌） ═══════════════════════ */
+.mcp-onboard-tip {
+  margin: 2px 0 10px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--hover);
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.mcp-onboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: 16px;
+  align-items: start;
+}
+.mcp-onboard-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mcp-step {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+.mcp-step-no {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+.mcp-step-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.mcp-step-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.mcp-step-desc,
+.mcp-step-path {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mcp-step-path code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--hover);
+}
+.mcp-step-readings {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+.mcp-step-body .set-btn {
+  align-self: flex-start;
+}
+.mcp-onboard-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mcp-client-chip {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mcp-client-chip:hover {
+  background: var(--hover);
+}
+.mcp-client-chip.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.mcp-config-card {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+}
+.mcp-config-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.mcp-config-card .mcp-access-snippet {
+  margin: 6px 0 8px;
+  max-height: 260px;
+}
+.mcp-config-token {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.mcp-token-label {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.mcp-config-token .mcp-access-token {
+  flex: 1 1 220px;
+  min-width: 0;
+  margin: 0;
 }
 
 .mcp-panel {
@@ -416,6 +586,9 @@
 
 /* ═══ 窄屏：纵向堆叠（纯 CSS，不改结构） ═════════════════════════════════ */
 @media (max-width: 900px) {
+  .mcp-onboard-grid {
+    grid-template-columns: 1fr;
+  }
   .mcp-levels-grid {
     grid-template-columns: 1fr;
   }
