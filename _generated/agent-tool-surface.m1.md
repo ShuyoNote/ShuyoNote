@@ -5,10 +5,10 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `c55e1c29b7663d77d8b7158c67614bee8d5b2709b17336104e84b85030929568` |
+| 注册表 sha256 | `1ae8cb34b5210de3262cbed394073b19527c7e725bfecc02eb77df84d08e8d6e` |
 | `apiVersion` | 1.12.0 |
 | 取用条件 | `ai === true` **且** `kind === "read"` |
-| 条数 | **30** |
+| 条数 | **31** |
 | 生成命令 | `node scripts/gen-agent-tool-surface.mjs --phase m1` |
 
 | id | scope | permission | desc |
@@ -37,6 +37,7 @@
 | pages.search | current-space | read:pages | 检索页面：关键词用空格分隔 ⇒ **全部出现**才算命中（不是连续子串匹配）。默认只搜**当前空间**；给了 spaceId 就搜那个空间（只读，需要用户把外部接入开到「只读（全部空间）」档），**不会改变你界面上的活动空间**。返回 {matched（本次返回条数，受 limit 截断）, results:[{id,title,snippet}], scope:{spaceId,spaceName,pageCount}}；matched=0 时另给 hint —— 空结果只说明**这个**空间没命中，不代表别的空间没有。 |
 | pages.tree | current-space | read:pages | 一次读取**整个空间的页面树**（结构视图）：{spaceId, spaceName, nodes:[{id,title,kind,parentId,order}], total, truncated}。节点与 pages_list **同一集合**（未删除的页面/数据库/文件夹），按树顺序给出 parentId 与 order；`kind` 是 page / database / folder。默认读**当前空间**；给了 spaceId 就读那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。超过 limit（默认与上限都是 2000 节点）⇒ `truncated:true`（如实说，别把截断的树当全量）。参数: spaceId (可选), limit (可选, 默认 2000, 上限 2000)。 |
 | properties.list | current-space | read:properties | 列出本空间的**属性定义** `[{id, name, type}]`（写属性时要的是 id；读数据库/属性值前先用它找 id）。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选)。 |
+| space.current | current-space | read:pages | 当前活动空间：`{spaceId,name,pageCount}`（与 `spaces_list` 的 active 一致）。只读；⛔ 不切换空间。 |
 | spaces.list | app | read:pages | 列出所有空间及当前激活空间（切换空间前先看 id/名称）。只读，不改变任何状态。 |
 | tags.list | current-space | read:tags | 列出本空间用到的**标签及各自的页面数**：`[{id, name, page_count}]`（page_count 不含已删除页面）。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选)。 |
 | templates.list | current-space | read:pages | 列出本空间用户模板：`[{templateId,name,title?}]`；空表 ⇒ `[]`。拿到的 `templateId` 可传给 `templates_apply`。 |

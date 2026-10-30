@@ -168,6 +168,7 @@ register({
 | `pages.importMarkdown` | `api.pages.importMarkdown(title, markdown, parentId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `pages.update` | `api.pages.update(id, markdown, content, title, expectedRev, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.1.0 |
 | `spaces.list` | `api.spaces.list()` | `read:pages` | `app` | — | object | 1.1.0 |
+| `space.current` | `api.space.current()` | `read:pages` | `current-space` | — | object | 1.12.0 |
 | `spaces.switch` | `api.spaces.switch(id, name)` | `write:pages` | `app` | **草稿确认** | object | 1.1.0 |
 
 ### `page.current` — 读取当前页
@@ -923,6 +924,13 @@ register({
 - 权限：`read:pages`
 - scope：`app`
 - 返回：当前空间 id ＋ 全部未删除空间
+
+### `space.current` — 当前空间
+
+- 调用：`api.space.current()`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：当前活动空间（= spaces_list 的 active 那条）+ 页面计数
 
 ### `spaces.switch` — 切换空间（草稿确认）
 

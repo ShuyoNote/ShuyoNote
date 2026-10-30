@@ -433,6 +433,12 @@ export interface PluginApi {
    */
     switch(id?: string, name?: string): { drafted: true; summary: string };
   };
+  space: {
+  /** 当前空间（权限 `read:pages`；1.12.0 起）
+   * 返回：当前活动空间（= spaces_list 的 active 那条）+ 页面计数
+   */
+    current(): { spaceId: string; name: string; pageCount: number };
+  };
 }
 
 export declare const SDK_API_VERSION: "1.12.0";

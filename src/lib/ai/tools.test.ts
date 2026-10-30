@@ -109,6 +109,8 @@ const EXPECTED = [
   "audit.tail",
   // ⭐ UX-②（2026-10-30）
   "templates.list",
+  // ⭐ UX-③（2026-10-30）
+  "space.current",
 ];
 
 describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实现）", () => {

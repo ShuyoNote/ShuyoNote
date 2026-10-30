@@ -121,5 +121,8 @@ var api = {
   spaces: {
     list: function() { return __capCall("spaces.list", {}); },
     switch: function(id, name) { return __capCall("spaces.switch", { id: id === undefined ? undefined : String(id), name: name === undefined ? undefined : String(name) }); }
+  },
+  space: {
+    current: function() { return __capCall("space.current", {}); }
   }
 };

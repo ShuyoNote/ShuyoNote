@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **MCP UX-③ 当前空间 —— 工具 57 → 57（读面 31 / 写面 26）**：新增只读 `space_current`（`space.current`）→ `{spaceId,name,pageCount}`（与 `spaces_list` 的 active 一致；⛔ 不切换空间）。
 - **MCP UX-② 模板清单 —— 工具 56 → 57（读面 30 / 写面 26）**：新增只读 `templates_list`（`templates.list`）→ `[{templateId,name,title?}]`（空表 `[]`），与 `templates_apply` 配对。
 - **MCP UX-① 写闭环 —— 工具 51 → 56（读面 29 / 写面 26）**：全部 26 个写工具成功返回里加 `draftId`（`dryRun` 不生成）；新增只读 `drafts.status`（`draft_status`，状态 pending/applied/rejected/expired，**只回本会话**）与 `audit.tail`（`audit_tail`，本会话最近 N 条，默认 20/上限 100，⛔ 不含正文）；apply 侧确认/拒绝后经新桌面命令 `mcp_draft_state` 回写状态。插件 API `apiVersion` 1.11.0 → **1.12.0**。
 - **外部 AI（MCP）数据库行写 B2-补遗-2 —— 工具 51 → 53（读面 27 / 写面 26），`apiVersion` 1.10.0 → 1.11.0**：新增 `db.rows_write`（`pageId` ＋ `rows=[{rowId?（有=改，无=增）, title?, values:{列id或列名: 原始值}}]` ＋ `expectedRev`；**只支持简单表格原始列**，⛔ 关系/公式/汇总列；未知列/禁用列/类型不符/新增缺 title ⇒ `bad_args` 点名第几行第几列；写后可用 `db_rows` 读回）、`db.rows_delete`（按 `rowIds` 删行；不存在 ⇒ `not_found`）。两条都 **draft-mediate**（只产草稿等确认，`applied:false`），落库仍走 `src/lib/ai/apply.ts` 改页面 JSON 的 `db` 块（**零新写库入口**）；沿用 `expectedRev` / `dryRun` / `clientRequestId` 幂等 / 恰一条审计 / `spaceId` 跨空间门禁。

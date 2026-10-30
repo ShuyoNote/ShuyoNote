@@ -4482,6 +4482,28 @@ fn cap_templates_list() -> CapResult {
     })
 }
 
+/// `space.current`（UX-③）：当前活动空间 + 页面计数（与 spaces.list 的 active 同一数据）。
+fn cap_space_current() -> CapResult {
+    with_read_conn(|c| {
+        let active = crate::workspaces::active_workspace_id(c).unwrap_or_default();
+        let name: String = c
+            .query_row(
+                "SELECT name FROM meta.workspaces WHERE id = ?1",
+                params![active],
+                |r| r.get(0),
+            )
+            .unwrap_or_default();
+        let page_count: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        Ok(serde_json::json!({ "spaceId": active, "name": name, "pageCount": page_count }))
+    })
+}
+
 fn cap_properties_list(space_id: Option<&str>) -> CapResult {
     with_conn_for_space(space_id, |c| {
         let mut stmt = c
@@ -5253,6 +5275,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_opt_str("clientRequestId").as_deref(),
         ),
         "spaces.list" => cap_spaces_list(),
+        "space.current" => cap_space_current(),
         "spaces.switch" => cap_spaces_switch(
             arg_opt_str("id").as_deref(),
             arg_opt_str("name").as_deref(),

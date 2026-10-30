@@ -85,6 +85,7 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "pages.importMarkdown", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.0.0", mediate: "draft", rust: "cap_pages_import_markdown" },
     Capability { id: "pages.update", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.1.0", mediate: "draft", rust: "cap_pages_update" },
     Capability { id: "spaces.list", kind: "read", scope: "app", permission: Some("read:pages"), since: "1.1.0", mediate: "-", rust: "cap_spaces_list" },
+    Capability { id: "space.current", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.12.0", mediate: "-", rust: "cap_space_current" },
     Capability { id: "spaces.switch", kind: "write", scope: "app", permission: Some("write:pages"), since: "1.1.0", mediate: "draft", rust: "cap_spaces_switch" },
 ];
 

@@ -832,4 +832,15 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
     },
     isWrite: false,
   },
+  {
+    id: "space.current",
+    description: "当前活动空间：`{spaceId,name,pageCount}`（与 `spaces_list` 的 active 条一致）。只读；不会切换空间。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      },
+      required: [],
+    },
+    isWrite: false,
+  },
 ];

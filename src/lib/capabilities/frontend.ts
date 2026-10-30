@@ -1118,6 +1118,17 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     return { ok: true, templates: rows.map((t) => ({ templateId: t.id, name: t.name, title: t.name })) };
   },
 
+  // ⭐ UX-③：当前空间（应用内面也走同一份 spaces/list 数据源）
+  "space.current": async () => {
+    const [spaces, active, pages] = await Promise.all([
+      api.listWorkspaces(),
+      api.getActiveWorkspaceId(),
+      api.listPages(),
+    ]);
+    const hit = spaces.find((s) => s.id === active);
+    return { ok: true, spaceId: active, name: hit?.name ?? "", pageCount: pages.length };
+  },
+
   "spaces.list": async () => {
     const [spaces, active] = await Promise.all([api.listWorkspaces(), api.getActiveWorkspaceId()]);
     return {

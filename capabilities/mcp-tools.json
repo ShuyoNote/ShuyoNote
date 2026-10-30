@@ -600,5 +600,16 @@
       "required": []
     },
     "permission": "read:pages"
+  },
+  {
+    "name": "space_current",
+    "capabilityId": "space.current",
+    "description": "当前活动空间：`{spaceId,name,pageCount}`（与 `spaces_list` 的 active 一致）。只读；⛔ 不切换空间。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "permission": "read:pages"
   }
 ]
