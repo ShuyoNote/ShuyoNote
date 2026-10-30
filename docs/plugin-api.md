@@ -166,6 +166,7 @@ register({
 | `export.markdown` | `api.export.markdown(pageId, spaceId)` | `export:files` | `current-space` | — | object | 1.6.0 |
 | `export.docpackage` | `api.export.docpackage(pageId)` | `export:files` | `current-space` | — | object | 1.6.0 |
 | `pages.importMarkdown` | `api.pages.importMarkdown(title, markdown, parentId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `pages.import_markdown` | `api.pages.import_markdown(title, markdown, parentId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.12.0 |
 | `pages.update` | `api.pages.update(id, markdown, content, title, expectedRev, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.1.0 |
 | `spaces.list` | `api.spaces.list()` | `read:pages` | `app` | — | object | 1.1.0 |
 | `space.current` | `api.space.current()` | `read:pages` | `current-space` | — | object | 1.12.0 |
@@ -891,6 +892,20 @@ register({
 ### `pages.importMarkdown` — 导入 Markdown 为一页（草稿确认）
 
 - 调用：`api.pages.importMarkdown(title, markdown, parentId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会用 Markdown 原文新建一页笔记内容，属于对用户数据的实质写入 → 必须先给用户看草稿并等他确认，不直接落库
+- 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
+- 参数：
+  - `title`: `string` —— 新页标题。
+  - `markdown`: `string` —— Markdown 原文。围栏 ```mermaid 会变成真图块；标题/列表/引用/表格按各自类型落块。⛔ 含块级 HTML 或超过 200KB 会被拒绝。
+  - `parentId`: `string`（可选） —— 父页面 id；不传就放在顶层。
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+
+### `pages.import_markdown` — 导入 Markdown（整篇，新名）
+
+- 调用：`api.pages.import_markdown(title, markdown, parentId, dryRun, clientRequestId)`
 - 权限：`write:pages`
 - scope：`current-space`
 - 写入中介：**草稿确认（落库前需用户点确认）** —— 会用 Markdown 原文新建一页笔记内容，属于对用户数据的实质写入 → 必须先给用户看草稿并等他确认，不直接落库

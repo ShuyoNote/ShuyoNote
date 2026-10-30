@@ -1129,6 +1129,18 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     return { ok: true, spaceId: active, name: hit?.name ?? "", pageCount: pages.length };
   },
 
+  // ⭐ UX-⑤：新名（旧名 pages.importMarkdown 保留，同一能力、行为一致）
+  "pages.import_markdown": async (args) => {
+    const title = String(args.title ?? "").trim();
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!title) return { ok: false, error: "pages.import_markdown 需要 title" };
+    if (dryRun) return { ok: true, dryRun: true, would: { kind: "create_page", title, markdown: true }, clientRequestId };
+    const built = importMarkdownArgs(title, String(args.markdown ?? ""), typeof args.parentId === "string" && args.parentId ? args.parentId : null);
+    if (!built.ok) return { ok: false, error: built.error };
+    return draft(`import_markdown:${title}`, `导入 Markdown 新建页面「${title}」`, { kind: "create_page", args: built.args });
+  },
+
   "spaces.list": async () => {
     const [spaces, active] = await Promise.all([api.listWorkspaces(), api.getActiveWorkspaceId()]);
     return {

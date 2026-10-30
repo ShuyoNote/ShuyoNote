@@ -5,10 +5,10 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `1ae8cb34b5210de3262cbed394073b19527c7e725bfecc02eb77df84d08e8d6e` |
+| 注册表 sha256 | `83d34e8ef50458ff28068c2efb9e662ca38a0d977bd8909155a55b447fbe5600` |
 | `apiVersion` | 1.12.0 |
 | 取用条件 | `ai === true` **且** `kind === "write"` |
-| 条数 | **26** |
+| 条数 | **27** |
 | 生成命令 | `node scripts/gen-agent-tool-surface.mjs --phase m2` |
 
 | id | scope | permission | desc |
@@ -30,7 +30,8 @@
 | nodes.move | current-space | write:pages | 移动节点（页面或文件夹都算）。参数: id(必填), newParentId(可选,省略=顶层), sortOrder(可选), expectedRev(可选)。**环检测**：移到自己的后代下面 ⇒ `bad_args`；返回里带 `backlinks` 数（如实提示）。写操作 ⇒ 只产生草稿等用户确认；`dryRun`/`clientRequestId` 同上。 |
 | nodes.rename | current-space | write:pages | 给节点改名（只改标题）。参数: id(必填), title(必填,≤200 字), expectedRev(可选)。写操作 ⇒ 只产生草稿等用户确认；`dryRun`/`clientRequestId` 同样支持。 |
 | pages.create | current-space | write:pages | 新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。 |
-| pages.importMarkdown | current-space | write:pages | 导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。 |
+| pages.import_markdown | current-space | write:pages | 导入整篇 Markdown 新建一页（新名）。参数: title, markdown, parentId(可选)。与旧名 `pages_importMarkdown` **调用同一能力、行为一致**；旧名保留。写操作 ⇒ 只产草稿等确认。 |
+| pages.importMarkdown | current-space | write:pages | deprecated: 用 pages_import_markdown（旧名保留以兼容外部客户端）。deprecated: 用 pages_import_markdown（旧名保留以兼容外部客户端）。导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。 |
 | pages.revert | current-space | write:pages | 回退到历史版本。参数: pageId(必填), versionId(必填), expectedRev(可选)。版本不在该页历史里 ⇒ `not_found`（⛔ 不假装成功）。写操作 ⇒ 只产生草稿等用户确认。 |
 | pages.update | current-space | write:pages | 更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。 |
 | properties.set | current-space | write:properties | 设置某个页面的属性值。参数: attrId (必填, 从 properties.list 拿), value (必填), pageId (可选, 省略=当前打开的页面)。这是写操作，返回草稿供用户确认。 |

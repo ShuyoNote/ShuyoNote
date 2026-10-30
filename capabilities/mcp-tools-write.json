@@ -908,7 +908,43 @@
     "kind": "write",
     "name": "pages_importMarkdown",
     "capabilityId": "pages.importMarkdown",
-    "description": "导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。",
+    "description": "deprecated: 用 pages_import_markdown（旧名保留以兼容外部客户端）。deprecated: 用 pages_import_markdown（旧名保留以兼容外部客户端）。导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "新页标题。"
+        },
+        "markdown": {
+          "type": "string",
+          "description": "Markdown 原文。围栏 ```mermaid 会变成真图块；标题/列表/引用/表格按各自类型落块。⛔ 含块级 HTML 或超过 200KB 会被拒绝。"
+        },
+        "parentId": {
+          "type": "string",
+          "description": "父页面 id；不传就放在顶层。"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        "clientRequestId": {
+          "type": "string",
+          "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        }
+      },
+      "required": [
+        "title",
+        "markdown"
+      ]
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "pages_import_markdown",
+    "capabilityId": "pages.import_markdown",
+    "description": "导入整篇 Markdown 新建一页（新名）。参数: title, markdown, parentId(可选)。与旧名 `pages_importMarkdown` **调用同一能力、行为一致**；旧名保留。写操作 ⇒ 只产草稿等确认。",
     "inputSchema": {
       "type": "object",
       "properties": {

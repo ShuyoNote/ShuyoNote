@@ -111,6 +111,8 @@ const EXPECTED = [
   "templates.list",
   // ⭐ UX-③（2026-10-30）
   "space.current",
+  // ⭐ UX-⑤（2026-10-30）新名（旧名保留）
+  "pages.import_markdown",
 ];
 
 describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实现）", () => {

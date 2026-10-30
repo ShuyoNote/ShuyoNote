@@ -5265,6 +5265,13 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_bool(args.get("dryRun"), false),
             arg_opt_str("clientRequestId").as_deref(),
         ),
+        "pages.import_markdown" => cap_pages_import_markdown(
+            &arg_str("title")?,
+            &arg_str("markdown")?,
+            arg_opt_str("parentId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
         "pages.update" => cap_pages_update(
             &arg_str("id")?,
             arg_opt_str("title").as_deref(),

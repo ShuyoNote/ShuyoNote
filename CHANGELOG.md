@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **MCP UX-⑤ 命名统一 —— 工具 57 → 58**：新增 `pages_import_markdown`（与旧 `pages_importMarkdown` 同一能力、行为一致）；旧名保留并标 `deprecated`。
 - **MCP UX-③ 当前空间 —— 工具 57 → 57（读面 31 / 写面 26）**：新增只读 `space_current`（`space.current`）→ `{spaceId,name,pageCount}`（与 `spaces_list` 的 active 一致；⛔ 不切换空间）。
 - **MCP UX-② 模板清单 —— 工具 56 → 57（读面 30 / 写面 26）**：新增只读 `templates_list`（`templates.list`）→ `[{templateId,name,title?}]`（空表 `[]`），与 `templates_apply` 配对。
 - **MCP UX-① 写闭环 —— 工具 51 → 56（读面 29 / 写面 26）**：全部 26 个写工具成功返回里加 `draftId`（`dryRun` 不生成）；新增只读 `drafts.status`（`draft_status`，状态 pending/applied/rejected/expired，**只回本会话**）与 `audit.tail`（`audit_tail`，本会话最近 N 条，默认 20/上限 100，⛔ 不含正文）；apply 侧确认/拒绝后经新桌面命令 `mcp_draft_state` 回写状态。插件 API `apiVersion` 1.11.0 → **1.12.0**。

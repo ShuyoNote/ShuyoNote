@@ -5,7 +5,7 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `1ae8cb34b5210de3262cbed394073b19527c7e725bfecc02eb77df84d08e8d6e` |
+| 注册表 sha256 | `83d34e8ef50458ff28068c2efb9e662ca38a0d977bd8909155a55b447fbe5600` |
 | `apiVersion` | 1.12.0 |
 | 取用条件 | `ai === true` **且** `kind === "read"` |
 | 条数 | **31** |

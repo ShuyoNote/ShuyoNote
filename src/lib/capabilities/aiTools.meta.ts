@@ -789,7 +789,23 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "pages.importMarkdown",
-    description: "导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。",
+    description: "deprecated: 用 pages_import_markdown（旧名保留以兼容外部客户端）。导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "title": { type: "string" },
+      "markdown": { type: "string" },
+      "parentId": { type: "string" },
+      "dryRun": { type: "boolean" },
+      "clientRequestId": { type: "string" },
+      },
+      required: ["title", "markdown"],
+    },
+    isWrite: true,
+  },
+  {
+    id: "pages.import_markdown",
+    description: "导入整篇 Markdown 新建一页（**新名**；旧名 pages_importMarkdown 保留兼容，行为一致）。参数: title (必填), markdown (必填), parentId (可选)。写操作 ⇒ 草稿确认。",
     argsSchema: {
       type: "object",
       properties: {

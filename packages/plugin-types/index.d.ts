@@ -166,6 +166,10 @@ export interface PluginApi {
    * 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
    */
     importMarkdown(title: string, markdown: string, parentId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
+  /** 导入 Markdown（整篇，新名）（权限 `write:pages`；1.12.0 起）
+   * 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
+   */
+    import_markdown(title: string, markdown: string, parentId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
   /** 更新已有页面（整页替换 / 草稿确认）（权限 `write:pages`；1.1.0 起）
    * 返回：{drafted: true, summary}——**草稿已产出**，用户确认后才落库
    */

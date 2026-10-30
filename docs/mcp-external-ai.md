@@ -57,7 +57,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 4. 怎么验证通没通
 
-1. 让 AI **列工具**：应看到 **读面 31 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows` / `drafts_status` / `audit_tail` / `templates_list` / `space_current`；切到**可写**档后再多 **26 个写面**（共 **57 个**）：`pages_create` / `pages_update` / `pages_importMarkdown` / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset` / `blocks_patch` / `blocks_insert` / `blocks_delete`；
+1. 让 AI **列工具**：应看到 **读面 31 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows` / `drafts_status` / `audit_tail` / `templates_list` / `space_current`；切到**可写**档后再多 **27 个写面**（共 **58 个**）：`pages_create` / `pages_update` / `pages_importMarkdown`（旧名保留） / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset` / `blocks_patch` / `blocks_insert` / `blocks_delete`；
 2. 让它读一篇：「列出运营空间最近修改的 3 篇笔记」；
 3. 能读出来说明链路通；**被拒**通常说明档位不够（见 §6）；
 4. 每次调用都会**记一行审计**（谁/何时/做了什么/成败）。
@@ -135,6 +135,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - 清单与档位判据：[能力暴露矩阵](plans/2026-10-29-agent-capability-exposure-matrix.md)；块级写方案：[P2 方案](plans/2026-10-29-agent-block-write-p2.md)。
 
 ## 10. 版本
+
+- 2026-10-30：**UX-⑤ 命名统一 —— 工具 58（读面 31 / 写面 27）**：新增 `pages_import_markdown`（能力 `pages.import_markdown`，与旧 `pages.importMarkdown` **同一能力、行为一致**）；旧名保留并标 `deprecated`（外部客户端不崩）。`apiVersion` 仍 1.12.0。
 
 - 2026-10-30：**UX-③ 当前空间 —— MCP 工具 57（读面 31 / 写面 26）**：新增 `space_current`（`space.current`，read:pages）→ `{spaceId,name,pageCount}`，与 `spaces_list` 的 active 一致，⛔ 不切换空间。
 
