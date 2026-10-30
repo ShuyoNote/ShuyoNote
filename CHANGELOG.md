@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **包格式 M2e：UI 入口**：文件区工具栏「导出空间包/导入空间包」按钮；导出聚合当前空间 pages/attachments→`buildSpacePackage`→保存对话框→`writeBinaryFile`；导入选择文件→`readBinaryFile`→`openSpacePackage`→`space_package_import`→切新空间并展示 warnings；失败原样 `E_*`；取消不发命令。新增 6 条挂载判据。
 - **M2d 上限/名字冲突**：空间包读侧与导入命令都加 256 MiB/10000 条上限（可注入，超限 E_LIMIT，边界通过）；tree 与 attachments 名字冲突以 tree 为准并记 `attachment-name-mismatch` warning。UI 入口下一批。
 - **M2c 引用重写＋审计**：导入建 id_map（节点/附件），正文旧 id 与 `attachment://sha` 重写；`[[标题]]` 同名歧义进 warnings 不静默挑；`package.import` 写现有插件审计环（scope 带 spaceId/counts/warnings/source），失败不写。
 - **样例包夹具入库**：`scripts/make-package-fixtures.mjs` 生成 4 个真实包（3 `.shuyodoc`＋1 `.shuyospace`，sha256 固定）到 `src/lib/__fixtures__/package-fixtures/`；`packageFixtures.test.ts` 钉住清单 sha、重新生成逐字节相等、两套读侧可读回。
