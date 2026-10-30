@@ -1055,6 +1055,8 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   },
 
   "export.docpackage": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (spaceId) return { ok: false, error: "应用内 AI 面不提供跨空间导出（spaceId 仅外部 MCP 面支持）" };
     const pageId = String(args.pageId ?? "").trim();
     if (!pageId) return { ok: false, error: "export.docpackage 需要 pageId" };
     return {

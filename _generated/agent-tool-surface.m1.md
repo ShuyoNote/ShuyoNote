@@ -5,8 +5,8 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `de0fc52cbad8b14f254c5e841a63874384e9d1dbfa976b6d196e839723624475` |
-| `apiVersion` | 1.22.0 |
+| 注册表 sha256 | `573b1d8916602a4d12a672d1d813fef4a38b91a1be5e641434b502c3e620337f` |
+| `apiVersion` | 1.23.0 |
 | 取用条件 | `ai === true` **且** `kind === "read"` |
 | 条数 | **34** |
 | 生成命令 | `node scripts/gen-agent-tool-surface.mjs --phase m1` |
@@ -21,7 +21,7 @@
 | db.rows | current-space | read:pages | 读取一个**数据库页的行**：`{pageId, spaceId, total, returned, rows:[{id, values:{<columnId>: <原始值>}}], truncated, note}`。⚠️ **values 是数据库里存的原始值**（字符串），本工具⛔ **不重算公式列/汇总列** ⇒ 可能与界面里显示的计算值不同（`note` 里也写着这句）；要展示计算值请看界面或自己算。`total` 是**过滤后**的总行数（不受 limit 影响，可用它判断翻页到没到头）。**简单 where**（多条 AND）：`[{field, op, value?}]`，`field` 是**列 id 或列名（id 优先，列名须完全一致；必须来自 db_schema 报出的列）**，`op` 白名单 `= != > >= < <= in contains is_null`（`in` 的 value 必须是数组；`is_null` 不需要 value）；写错字段/操作符/形状 ⇒ `invalid_args` 并**点名第几条**（不会静默返回空）。可选 `viewId` 套用该视图保存的**标题过滤与排序**。`limit` 默认 100、上限 500，`offset` 默认 0（分页在宿主侧执行）；响应体超过 200 KB ⇒ 提前截断并 `truncated:true`。默认读**当前空间**；给了 spaceId 就读那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: pageId (必填), viewId (可选), where (可选), limit (可选, 默认 100, 上限 500), offset (可选, 默认 0), spaceId (可选)。 |
 | db.schema | current-space | read:pages | 读取一个**数据库页**的结构：`{pageId, spaceId, views:[{id,name,type}], columns:[{id,name,type,isFormula?,isRollup?}], relations:[{id,name,type}]}`。列与视图与界面**同一条查询**（同一份数据库元数据），所以名字/顺序/类型都对得上。**公式列**带 `isFormula:true`、**汇总列**带 `isRollup:true` —— 本工具只**标明**它们是计算列，⛔ **不计算任何值**；`relations` 是关系列（`type:ref`，取值形如 `p:<pageId>`，要标题得自己按 id 再查）。默认读**当前空间**；给了 spaceId 就读那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: pageId (必填), spaceId (可选)。 |
 | drafts.status | current-space | read:pages | 查一条草稿当前状态：pending（等用户确认）/ applied（已落库）/ rejected（用户拒绝）/ expired（10 分钟没确认）。参数: draftId。⚠️ 只回**本会话**的草稿；别的会话/不存在 ⇒ not_found。 |
-| export.docpackage | current-space | export:files | 把**一页**打包成 `.shuyodoc`（单页；与界面「导出为 .shuyodoc」同一份格式实现）并**只回句柄**：`{handle, name, size, sha256, expiresAt}`。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`。 |
+| export.docpackage | current-space | export:files | 把**一页**导出成 `.shuyodoc`/docpackage 并只回句柄。参数: pageId（必填）, spaceId（可选；跨空间需 read:all-spaces，整空间导出不支持）。句柄单次/TTL 120s/绑会话。 |
 | export.markdown | current-space | export:files | deprecated: 用上面两个显式工具 export_page_markdown / export_space_markdown（旧名保留以兼容外部客户端）。把内容导出成文件并**只回句柄**（不把字节塞进上下文）：`{handle, name, size, sha256, expiresAt}`。两种口径（**只能给一个**）：`pageId` ⇒ 该页的单个 `.md`（与界面「导出为 Markdown」同口径）；`spaceId` ⇒ 该空间整份 `.zip`（Markdown ＋ 附件，与界面「导出本空间」同口径；跨空间需要「只读（全部空间）」档）。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落应用数据目录的 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`（本批未接确认 UI，不静默导出）。 |
 | export.page_markdown | current-space | export:files | 导出**单页** Markdown（`.md`）并只回句柄。参数: pageId(必填)。⚠️ 只接受 pageId（给 spaceId ⇒ `bad_args`；整空间用 `export_space_markdown`）。句柄单次/TTL 120s/绑会话；落盘用 `blobs_fetch`。 |
 | export.space_markdown | current-space | export:files | 导出**整空间**（Markdown ＋ 附件 zip）并只回句柄。参数: spaceId(可选,省略=当前空间；本版只支持当前空间)。⚠️ 只接受 spaceId（给 pageId ⇒ `bad_args`）。句柄单次/TTL 120s/绑会话。 |
