@@ -6728,10 +6728,10 @@ select.prop-value {
   font-weight: 600;
   margin-right: 2px;
 }
-.block-select-mode-btn {
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)) !important;
-  background: var(--accent-soft) !important;
-  color: var(--accent) !important;
+.editor-toolbar .block-select-mode-btn {
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--accent-soft);
+  color: var(--accent);
   font-weight: 600;
 }
 .block-selection-bar .block-select-hint {
@@ -8694,13 +8694,13 @@ select.prop-value {
 }
 
 /* Tag value area inside the properties row (chips + add button). */
-.prop-tag-value {
+.properties .prop-tag-value {
   align-items: center;
   flex-wrap: wrap;
   gap: 4px;
-  border: none !important;
-  background: transparent !important;
-  padding: 0 !important;
+  border: none;
+  background: transparent;
+  padding: 0;
   display: flex;
 }
 
@@ -11889,13 +11889,13 @@ p:has(> .editor-drawing-container) {
   background: var(--hover-soft);
 }
 
-.db-th {
+.database-table .db-th {
   cursor: pointer;
   user-select: none;
   font-weight: 600;
   color: var(--text-dim);
   font-size: 12px;
-  padding: 8px 10px !important;
+  padding: 8px 10px;
   white-space: nowrap;
 }
 
@@ -11951,8 +11951,8 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
 }
 
-.db-cell {
-  padding: 4px 8px !important;
+.database-table .db-cell {
+  padding: 4px 8px;
   min-width: 120px;
   max-width: 260px;
 }
@@ -12009,8 +12009,8 @@ p:has(> .editor-drawing-container) {
   margin: 0;
 }
 
-.db-empty {
-  padding: 24px !important;
+.database-table .db-empty {
+  padding: 24px;
   text-align: center;
   color: var(--text-faint);
   font-size: 13px;
@@ -16950,8 +16950,8 @@ p:has(> .editor-drawing-container) {
 .file-manager-table tbody tr:hover .fm-ops-col .fm-file-actions {
   opacity: 1;
 }
-.fm-empty {
-  padding: 32px !important;
+.file-manager-table .fm-empty {
+  padding: 32px;
   text-align: center;
   color: var(--text-faint);
   font-size: 13px;
