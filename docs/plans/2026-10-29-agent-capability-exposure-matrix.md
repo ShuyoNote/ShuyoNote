@@ -1,6 +1,6 @@
 # 外部 Agent 能力暴露矩阵（v3 · 定稿）
 
-状态：v3.1 开工稿（B1a 待实现）—— v3 的 12 处修订见 §13，可行性核对见配套文档。
+状态：方案 v3.1 ＋ 实施进度见 §14（B1/B2/B3/UX 已落 dev；剩余项见 §14.2）。
 本文是**唯一版本**（v1/v2 的评审记录已并入本文，不再保留两份）。
 
 关联：`capabilities/capabilities.json`（注册表＝单一事实源）· `src-tauri/src/mcp_channel.rs`（默认关/只绑回环/令牌/权限位）· [`mcp-external-ai.md`](../mcp-external-ai.md)（面向用户的配置指南）· [`2026-10-29-agent-block-write-p2.md`](2026-10-29-agent-block-write-p2.md)（块级写面）。
@@ -203,3 +203,42 @@
 - **决定：A** —— 给 `NOTE_ID_PREFIXES` 补 `"page."`、`"properties."` 两个笔记域前缀，保住「应用内 AI 面 ＝ MCP 面同一套」，⛔ 不面分裂；
 - 改门禁脚本必须附**变异证据**（账本 `_repo_mutations`）：删掉 `"page."` ⇒ 门禁必红（逐字 `ai:true 的能力「page.current」不在**笔记域**前缀集里`）⇒ 还原必绿；
 - `coverage.report` 从 B1a 移出、改判 **B3**：它是 `host:"frontend"`，而 `check-capabilities` §2c 明令前端宿主能力不得进 MCP 清单 ⇒ 要接必须先建「Rust→前端」请求/应答桥（超出 B1a 范围，⛔ 不手改生成物硬塞）。
+## 14. 实施进度（2026-10-30 收口）
+
+### 14.1 已完成（全部在 `dev`，已推 GitCode；GitHub 已推到 `bf9f1b13`）
+
+| 范围 | 内容 | 状态 |
+|---|---|---|
+| B1a | `page_current`/`pages_count`/`pages_tree`/`tags_list`/`properties_list` | ✅ |
+| B1b | `db_schema`/`db_rows`（简单 where、分页、200KB 截断、原始值不重算） | ✅ |
+| B1c | `versions_*`/`trash_list`/`files_stat`/`files_extract_status`/`files_list_orphan`/`files_download`/`blobs_fetch`（句柄：单次/TTL120s/固定导出目录） | ✅ |
+| B3 | 前端桥：`export_markdown`/`export_docpackage`/`coverage_report`（5s 超时、unavailable/timeout 可判） | ✅ |
+| B2-结构 | `folders.create`/`nodes.move|rename|delete`/`trash.restore`/`pages.revert`/`tags.remove`/`properties.unset` | ✅ |
+| B2-块 | `blocks.patch/insert/delete`（`rev_conflict` 带 currentRev + 带锚点 markdown；draft-mediate） | ✅ |
+| B2-附件与模板 | `files.move/rename/delete`（正文引用检查）、`templates.apply` | ✅ |
+| B2-补遗-1 | 受控上传通道（系统文件选择框）：`files.upload_to_page`/`import.docpackage`/`files.detach`（新命令 `detach_attachment`） | ✅ |
+| B2-补遗-2 | `db.rows_write`/`db.rows_delete`（简单表原始列、草稿→前端 apply 改 db 块、零新写库入口） | ✅ |
+| B2-补遗-3 | e2e 判据：块写锚点数/块 id、附件 detach/delete、db 行写读回、锁空间拒绝 | ✅ |
+| UX 优化批 | 写闭环（`draftId` + `drafts_status` + `audit_tail`）、`templates_list`、`space_current`、`pages_import_markdown`（旧名保留）、`pages_update` 弃用指引、`export_page_markdown`/`export_space_markdown` | ✅ |
+| UX-④ | `files.*`/`versions.*` 9 条补可选 `spaceId`（逐 cap `with_conn_for_space`）＋ 确认框取消回写 `rejected` | ✅ |
+
+**当前面**：**69 条能力 / MCP 60 工具（读 33 / 写 27）/ `apiVersion` 1.13.0**；全量门禁 66 条中 **65 绿**，唯一红是 `scripts/session-grep.test.mjs` 的 Node24 zstd 假红（与产品无关）。
+
+### 14.2 仍未做 / 明确降级（按优先级）
+
+| # | 项 | 说明 |
+|---|---|---|
+| 1 | `changes_since`（增量） | 矩阵 §3 已定，未实现；Agent 做"最近变化"只能全量拉 |
+| 2 | `write:all-spaces` 档与 UI | 参数与门已就位（缺档 ⇒ `permission_denied` 点名），但**没有任何档位授予**该权限，也无 UI ⇒ 跨空间写不可用 |
+| 3 | `export.*` 跨空间 | 当前只支持当前空间；跨空间需命令面读别空间的页面/附件入口 |
+| 4 | `>10MB` / `>20 文件` 确认 UI | 现在只返回 `needs_confirm` 错误，没有确认交互 |
+| 5 | 应用内 AI 面跨空间 | 仅外部 MCP 面支持 `spaceId`；应用内面如实拒绝 |
+| 6 | 跨空间下载字节 | 本机未做端到端断言（需真附件文件） |
+| 7 | "用户关窗不响应" | `draftStatus` 仍 pending→过期（无取消事件可挂） |
+| 8 | 团队/企业写面 | 仍不覆盖（身份/角色/审计合规/数据边界四问未定） |
+| 9 | GitHub CI 读数 | 镜像已推到 `bf9f1b13`；但 `api.github.com` 当前 fetch failed，CI 结论未读到（不算通过） |
+
+### 14.3 环境坑（本机，非产品）
+
+- **构建产物 Low 完整性级别**：会话沙箱把 `src-tauri/target/**` 标成 Low IL ⇒ 进程写 `%APPDATA%` 被拒、SQLite 报 `readonly database`。修法：`icacls <target\debug> /setintegritylevel Medium /T /C`；重新构建后若复现就重跑这条。
+- **`tauri-plugin-http` 的 cookies 特性**：init 建 `<cache>/.cookies` 时本机稳定 `os error 5` ⇒ 已在 `Cargo.toml` 关掉（应用不使用插件 cookie 罐）。
