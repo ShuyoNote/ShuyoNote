@@ -252,16 +252,8 @@ pub(crate) fn import_space_package_in(
                     rewritten = rewritten.replace(&format!("attachment://{sha}"), &format!("attachment://{id}"));
                 }
                 if rewritten != *orig {
-                    crate::commands::save_page_in(
-                        &tx,
-                        crate::commands::SavePageArgs {
-                            id: id_map[n.old_id.as_str()].clone(),
-                            title: None,
-                            content_json: Some(rewritten),
-                            content_text: None,
-                            space_id: None,
-                        },
-                    )?;
+                    // 正文写入走 `doc_content` 层（门禁：⛔ 不许在本文件直摸存储列）。
+                    crate::doc_content::write_page_doc_json(&tx, &id_map[n.old_id.as_str()], &rewritten)?;
                 }
             }
         }
