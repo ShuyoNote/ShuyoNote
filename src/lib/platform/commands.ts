@@ -1424,7 +1424,7 @@ export interface CommandMap {
   prepare_attachment_open: { args: { hash: string; name: string }; result: string };
   get_attachment: { args: { id: string }; result: AttachmentMeta };
   /** 原始字节以 ArrayBuffer 回传（Rust 侧用 tauri::ipc::Response），不走 JSON 数字数组。 */
-  read_attachment_bytes: { args: { hash: string }; result: ArrayBuffer };
+  read_attachment_bytes: { args: { hash: string; spaceId?: string }; result: ArrayBuffer };
   /**
    * ⭐ 2026-10-11（owner 拍「甲：一端点就通，图④为准」）：⭐ **一键信任** ✗ ——
    * 点「信任这台设备」⇒ 用本空间**已有的网格令牌**把对面登记好 ＋ 广播一条「我想信任你」⇒ **通** ✓。
@@ -1484,7 +1484,7 @@ export interface CommandMap {
   copy_attachment: { args: { hash: string; destPath: string }; result: void };
   import_attachment_files: { args: { pageId: string | null; paths: string[] }; result: AttachmentMeta[] };
   // pageId 为 null = 空间根下的「未整理」文件（page_id IS NULL）。
-  list_page_attachments: { args: { pageId: string | null }; result: AttachmentMeta[] };
+  list_page_attachments: { args: { pageId: string | null; spaceId?: string }; result: AttachmentMeta[] };
   // ⭐ 2026-10-12（owner 拍：**幂等但如实返回"删了 0 条"**）：返回**实际删掉的条数**
   //（`1` = 真删到，`0` = 本来就没这一行 ⇒ ⛔ **不报错**）；界面据此自己决定提示什么 ✓。
   remove_attachment: { args: { id: string; spaceId?: string }; result: number };

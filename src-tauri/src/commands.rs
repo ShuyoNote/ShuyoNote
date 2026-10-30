@@ -101,9 +101,22 @@ pub fn list_workspace_pages(workspace_id: String) -> Result<Vec<PageMeta>, Strin
 }
 
 #[tauri::command]
-pub async fn get_page(db: State<'_, Db>, id: String) -> Result<PageDetail, String> {
-    let c = conn(&db);
-    let page = fetch_page(&c, &id)?;
+pub async fn get_page(db: State<'_, Db>, id: String, space_id: Option<String>) -> Result<PageDetail, String> {
+    let target = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let page = if let Some(space) = target {
+        let active = { let c = conn(&db); workspaces::active_workspace_id(&c)? };
+        if space != active {
+            let app = crate::db::app_data_dir_ref().ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let tc = crate::db::open_space_conn_at(space, app).map_err(|e| format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}"))?;
+            fetch_page(&tc, &id)?
+        } else {
+            let c = conn(&db);
+            fetch_page(&c, &id)?
+        }
+    } else {
+        let c = conn(&db);
+        fetch_page(&c, &id)?
+    };
     if page.kind != "page" && page.kind != "database" {
         return Err("该节点不是页面".to_string());
     }

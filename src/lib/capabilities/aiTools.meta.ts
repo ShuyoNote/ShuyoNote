@@ -831,11 +831,12 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "export.docpackage",
-    description: "把一页打包成 `.shuyodoc` 并**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。**只支持单页**（与界面「导出为 .shuyodoc」同口径）。参数: pageId (必填)。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm。",
+    description: "把**一页**导出成 `.docpackage`，返回句柄。参数: pageId（必填）, spaceId（可选；跨空间需 read:all-spaces）。只给句柄；落盘用 blobs_fetch。",
     argsSchema: {
       type: "object",
       properties: {
       "pageId": { type: "string" },
+      "spaceId": { type: "string" },
       },
       required: ["pageId"],
     },

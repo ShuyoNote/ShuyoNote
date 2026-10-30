@@ -1199,7 +1199,15 @@ pub fn read_attachment_bytes(
     app: tauri::AppHandle,
     db: State<'_, Db>,
     hash: String,
+    space_id: Option<String>,
 ) -> Result<tauri::ipc::Response, String> {
+    if let Some(space) = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let active = { let c = db.0.lock().expect("db mutex poisoned"); active_space_id(&c) };
+        if space != active {
+            let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+            return Ok(tauri::ipc::Response::new(read_attachment_bytes_at(&app_data_dir, space, &hash)?));
+        }
+    }
     // 用 `Response` 回原始字节（JS 侧拿到 ArrayBuffer）而不是 `Vec<u8>`：
     // 后者会序列化成 JSON 数字数组——2 MB 的 PDF 就是两千多万字符的文本，
     // 白白让 IPC 与 webview 各扛一次巨型 JSON 解析。图片/PDF 这类"要完整字节"的
@@ -1399,8 +1407,33 @@ pub fn list_page_attachments(
     app: tauri::AppHandle,
     db: State<'_, Db>,
     page_id: Option<String>,
+    space_id: Option<String>,
 ) -> Result<Vec<AttachmentRow>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let target = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(space) = target {
+        let active = { let c = db.0.lock().expect("db mutex poisoned"); active_space_id(&c) };
+        if space != active {
+            let c = crate::db::open_space_conn_at(space, &app_data_dir).map_err(|e| format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}"))?;
+            let space_owned = space.to_string();
+            let sql = if page_id.is_some() { "SELECT id, name, hash, mime, size, created_at FROM attachments WHERE page_id = ?1 ORDER BY created_at DESC" } else { "SELECT id, name, hash, mime, size, created_at FROM attachments WHERE page_id IS NULL ORDER BY created_at DESC" };
+            let _ = space_owned;
+            let mut stmt = c.prepare(sql).map_err(|e| e.to_string())?;
+            let read_row = |r: &rusqlite::Row| -> rusqlite::Result<AttachmentRow> {
+                Ok(AttachmentRow {
+                    meta: AttachmentMeta { id: r.get(0)?, name: r.get(1)?, hash: r.get(2)?, mime: r.get(3)?, size: r.get(4)?, path: String::new() },
+                    created_at: r.get(5)?,
+                    mtime: 0, // 跨空间读取不保证本地字节在位 ⇒ 如实给 0（前端显示「—」）
+                })
+            };
+            let rows: Vec<AttachmentRow> = if let Some(pid) = &page_id {
+                stmt.query_map(params![pid], read_row).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect()
+            } else {
+                stmt.query_map([], read_row).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect()
+            };
+            return Ok(rows);
+        }
+    }
     let c = db.0.lock().expect("db mutex poisoned");
     let space = active_space_id(&c);
     // `page_id = NULL` 永远不成立，所以「空间根下的未整理文件」必须走 IS NULL 分支。
