@@ -6,7 +6,7 @@
 | 源 | 值 |
 |---|---|
 | 注册表文件 | `capabilities/capabilities.json` |
-| 注册表 sha256 | `975a58a18f9c8712801e80b044fa28b99fbf425e9b293cb2a7f2822c9dcb5212` |
+| 注册表 sha256 | `7bf9778e52c53bcf98ffb749fcc9c309fd1eeab10587d44132050cf07c032b90` |
 | `registryVersion` | 1 |
 | `apiVersion` | 1.12.0 |
 | 能力条数 | **67**（按 `kind`：host 2 / read 33 / write 32） |
@@ -63,7 +63,7 @@
 | pages.revert | write | current-space | write:pages | ✓ | ✓ | 把页面回退到**仍在版本历史里**的某一版。参数: pageId (必填), versionId (必填), expectedRev (可选), spaceId (可选;本版只支持当前空间), dryRun, clientRequestId。版本不在历史里（超出保留期/已被清理）⇒ `not_found`（⛔ 不假装成功、⛔ 不删原写审计）。写操作 ⇒ 返回草稿等确认。 |
 | pages.search | read | current-space | read:pages | ✓ |  | 在本空间检索页面（可用 spaceId 指定别的空间，需「只读（全部空间）」档）：关键词用空格分隔 ⇒ 全部出现才算命中（与应用内搜索同一个引擎，含正文与附件抽取文本）。参数: q (必填), limit (可选, 默认 8), spaceId (可选)。返回 [{id,title,snippet}]；**空数组 = 该空间没有命中，不是失败**。 |
 | pages.tree | read | current-space | read:pages | ✓ |  | 一次读取**整个空间的页面树**（结构视图）：返回 {spaceId, spaceName, nodes:[{id,title,kind,parentId,order}], total, truncated}。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒), limit (可选, 默认 2000, 上限 2000)。数据与 pages.list **同一张表、同一口径**（未删除的全部节点，含文件夹与数据库），只是一次给出层级与排序。 |
-| pages.update | write | current-space | write:pages | ✓ | ✓ | 更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。 |
+| pages.update | write | current-space | write:pages | ✓ | ✓ | ⚠️ 整页替换。能按块改就用 blocks_patch/blocks_insert/blocks_delete；本工具仅用于整页重写。更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。 |
 | properties.list | read | current-space | read:properties | ✓ |  | 列出本空间的属性定义 [{id, name, type}]。**写属性要的是 id**（properties.set 的第一个参数），所以通常先调它按名字找 id。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。 |
 | properties.set | write | current-space | write:properties | ✓ | ✓ | 设置某个页面的属性值。参数: attrId (必填, 从 properties.list 拿), value (必填), pageId (可选, 省略=当前打开的页面)。这是写操作，返回草稿供用户确认。 |
 | properties.unset | write | current-space | write:properties | ✓ | ✓ | 去掉页面上的一个属性值（属性定义仍在，不删定义）。参数: attrId (必填), pageId (可选;省略=当前页), expectedRev (可选), spaceId (可选;本版只支持当前空间), dryRun, clientRequestId。属性不存在 ⇒ `not_found`。写操作 ⇒ 返回草稿等确认。 |

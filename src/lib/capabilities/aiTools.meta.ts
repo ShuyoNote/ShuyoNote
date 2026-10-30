@@ -821,7 +821,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "pages.update",
-    description: "更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。",
+    description: "⚠️ 整页替换。能按块改就用 blocks_patch/blocks_insert/blocks_delete；本工具仅用于整页重写。更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。",
     argsSchema: {
       type: "object",
       properties: {

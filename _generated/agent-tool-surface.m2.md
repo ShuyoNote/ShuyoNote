@@ -5,7 +5,7 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `83d34e8ef50458ff28068c2efb9e662ca38a0d977bd8909155a55b447fbe5600` |
+| 注册表 sha256 | `7bf9778e52c53bcf98ffb749fcc9c309fd1eeab10587d44132050cf07c032b90` |
 | `apiVersion` | 1.12.0 |
 | 取用条件 | `ai === true` **且** `kind === "write"` |
 | 条数 | **27** |
@@ -33,7 +33,7 @@
 | pages.import_markdown | current-space | write:pages | 导入整篇 Markdown 新建一页（新名）。参数: title, markdown, parentId(可选)。与旧名 `pages_importMarkdown` **调用同一能力、行为一致**；旧名保留。写操作 ⇒ 只产草稿等确认。 |
 | pages.importMarkdown | current-space | write:pages | deprecated: 用 pages_import_markdown（旧名保留以兼容外部客户端）。deprecated: 用 pages_import_markdown（旧名保留以兼容外部客户端）。导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。 |
 | pages.revert | current-space | write:pages | 回退到历史版本。参数: pageId(必填), versionId(必填), expectedRev(可选)。版本不在该页历史里 ⇒ `not_found`（⛔ 不假装成功）。写操作 ⇒ 只产生草稿等用户确认。 |
-| pages.update | current-space | write:pages | 更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。 |
+| pages.update | current-space | write:pages | ⚠️ 整页替换。能按块改就用 blocks_patch/blocks_insert/blocks_delete；本工具仅用于整页重写。⚠️ 整页替换。能按块改就用 blocks_patch/blocks_insert/blocks_delete；本工具仅用于整页重写。更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。 |
 | properties.set | current-space | write:properties | 设置某个页面的属性值。参数: attrId (必填, 从 properties.list 拿), value (必填), pageId (可选, 省略=当前打开的页面)。这是写操作，返回草稿供用户确认。 |
 | properties.unset | current-space | write:properties | 去掉页面的属性值（不删属性定义）。参数: attrId(必填), pageId(可选,省略=当前页)。属性不存在 ⇒ `not_found`。写操作 ⇒ 只产生草稿等用户确认。 |
 | tags.add | current-space | write:tags | 给页面加一个标签。参数: name (必填, 不带 #), pageId (可选, 省略=当前打开的页面)。标签不需要预先创建。这是写操作，返回草稿供用户确认。 |
