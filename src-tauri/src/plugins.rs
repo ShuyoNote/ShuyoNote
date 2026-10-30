@@ -16001,4 +16001,86 @@ register({ id: "s.run", title: "结构化", run: function () {
         }
         b1c_cleanup(&f);
     }
+
+    /// ⭐ 验收补齐：默认空清单与"key 不存在"/"env off" 的响应**逐字节一致**；
+    /// 用户侧命令实现（fetch_page，与 get_page 同一实现）隐藏后仍可读；清单去重。
+    #[test]
+    fn hidden_spaces_bytewise_equal_and_user_path() {
+        let f = b1c_fixture("hidden2");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "hidden2-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            for id in [second, "hidden2-a", "hidden2-b"] {
+                m.execute(
+                    "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                    params![id],
+                )
+                .unwrap();
+            }
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '二页', '{}', 'x', 'page', 0, 10, 10)",
+                params![second],
+            )
+            .unwrap();
+        }
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        let get_cross = || with_external_caller("h2", &g, || {
+            dispatch_capability("pages.get", &format!(r#"{{"id":"p1","spaceId":"{second}"}}"#))
+        }).unwrap();
+        let set_key = |value: Option<&str>| {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            match value {
+                None => {
+                    m.execute("DELETE FROM sync_state WHERE key='ai_hidden_spaces'", []).unwrap();
+                }
+                Some(j) => {
+                    m.execute("INSERT OR REPLACE INTO sync_state (key, value) VALUES ('ai_hidden_spaces', ?1)", params![j]).unwrap();
+                }
+            }
+        };
+        // ① key 不存在 vs [] vs env off ⇒ 完整 JSON 逐字节一致
+        set_key(None);
+        let absent = get_cross();
+        set_key(Some("[]"));
+        let empty = get_cross();
+        std::env::set_var("SHUYONOTE_AI_HIDDEN_SPACES", "off");
+        let off = get_cross();
+        std::env::remove_var("SHUYONOTE_AI_HIDDEN_SPACES");
+        assert_eq!(absent, empty, "key 不存在 与 [] 必须逐字节一致");
+        assert_eq!(absent, off, "env off 与 [] 必须逐字节一致");
+        println!(
+            "[hidden-byte-diff] len={} sha={} (absent=empty=off)",
+            absent.len(),
+            crate::mcp_blobs::sha256_hex(absent.as_bytes())
+        );
+        // ② 用户侧真路径：fetch_page 就是 get_page 的实现（只差 State 解包与 kind 检查）
+        set_key(Some(&serde_json::to_string(&vec![second]).unwrap()));
+        let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+        let page = crate::commands::fetch_page(&c, "p1").expect("用户侧 fetch_page 必须仍能读 A");
+        assert_eq!(page.title, "二页");
+        let e = with_external_caller("h2", &g, || {
+            dispatch_capability("pages.get", &format!(r#"{{"id":"p1","spaceId":"{second}"}}"#))
+        })
+        .unwrap_err();
+        assert!(e.contains("AI 不可见"), "AI 路径必须拒：{e}");
+        // ③ 去重：set(["a","a","b"]) ⇒ ["a","b"]
+        let c2 = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+        let stored = crate::plugins::ai_hidden_spaces_set_in(
+            &c2,
+            vec!["hidden2-a".into(), "hidden2-a".into(), "hidden2-b".into()],
+        )
+        .unwrap();
+        assert_eq!(stored, vec!["hidden2-a".to_string(), "hidden2-b".to_string()], "必须去重且保序");
+        let read_back = crate::plugins::ai_hidden_spaces_in(&c2);
+        assert_eq!(read_back, stored, "落盘读回一致");
+        set_key(Some("[]"));
+        b1c_cleanup(&f);
+    }
 }
