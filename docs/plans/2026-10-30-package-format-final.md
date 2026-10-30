@@ -274,3 +274,10 @@ warnings=[id-map-ignored]（预期）；parent/children/附件名/大小/mime/sh
 - 导入时建 `旧节点 id → 新 id` 与 `附件 sha → 新附件 id` 映射；正文里旧节点 id 与 `attachment://<sha>` 全部重写；`[[标题]]` 双链只在无歧义时保留，**同名冲突 ⇒ `wikilink-ambiguous` warnings**（⛔ 不任选）。
 - 审计复用**现有插件审计环**（`audit.tail` 同一账本，不新造表）：`package.import` 一条，scope 带 `spaceId/nodes/documents/attachments/warnings/source` JSON；失败回滚**不写**审计。
 - 判据 `space_import` **4 passed**（新建/改 id/原子失败/引用重写＋歧义 warning＋审计/失败不写审计）。
+
+## M2d 上限/名字冲突证据（2026-10-30）
+
+- 读侧 `openSpacePackage`：默认上限 **256 MiB / 10000 条**（`maxTotalBytes`/`maxEntries` 可注入）；超限 ⇒ `E_LIMIT` 点名，边界恰好通过。导入命令 `space_package_import` 侧 `check_import_limits`（nodes+files 条目数、bytes+doc_json 总大小）同口径 ⇒ 超限拒绝且**在落库前**。
+- tree↔attachments 名字冲突：以 **tree 为准**，`attachment-name-mismatch` warning；一致时无 warning。
+- 判据：`docSpacePackOpen.test.ts` 12 passed（含上限边界/超限、名字冲突/一致）；`space_import` 5 passed（含 payload 上限边界）。
+- ⏳ UI 入口（导出 `.shuyospace`/导入空间包）本批未做。
