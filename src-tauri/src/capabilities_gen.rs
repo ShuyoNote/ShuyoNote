@@ -17,7 +17,7 @@ pub struct Capability {
     pub rust: &'static str,
 }
 
-pub const API_VERSION: &str = "1.15.0";
+pub const API_VERSION: &str = "1.16.0";
 pub const API_MAJOR: u32 = 1;
 
 pub const CAPABILITIES: &[Capability] = &[

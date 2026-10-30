@@ -373,7 +373,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "pages.create",
-    description: "新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。",
+    description: "新建一页。参数: title（必填）, content?, parentId?, fence?, markdown?, spaceId?, dryRun?, clientRequestId?。⭐ 带 spaceId ⇒ 写到目标空间（跨空间 v1 **只支持本工具**；需『可写（全部空间）』档；目标锁着 ⇒ permission_denied）。写操作 ⇒ 草稿确认。",
     argsSchema: {
       type: "object",
       properties: {
@@ -383,6 +383,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       "fence": { type: "string" },
       "dryRun": { type: "boolean" },
       "clientRequestId": { type: "string" },
+      "spaceId": { type: "string" },
       },
       required: ["title"],
     },

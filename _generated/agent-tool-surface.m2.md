@@ -5,8 +5,8 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `b127f06e6e02d31616f90be1fe99dce94b71ff6f07b38d78d9798b4f0a8a315d` |
-| `apiVersion` | 1.15.0 |
+| 注册表 sha256 | `5b40477051a2906380fda6d9c3fda2d401cc452b83b0b315031b57e3e7863829` |
+| `apiVersion` | 1.16.0 |
 | 取用条件 | `ai === true` **且** `kind === "write"` |
 | 条数 | **27** |
 | 生成命令 | `node scripts/gen-agent-tool-surface.mjs --phase m2` |
@@ -29,7 +29,7 @@
 | nodes.delete | current-space | write:pages | **软删**一个节点（进回收站，可恢复）。参数: id(必填), expectedRev(可选)。⚠️ 还有子项 ⇒ `bad_args` 并点名 N（⛔ 不递归删）；返回里带 `backlinks` 数。写操作 ⇒ 只产生草稿等用户确认。 |
 | nodes.move | current-space | write:pages | 移动节点（页面或文件夹都算）。参数: id(必填), newParentId(可选,省略=顶层), sortOrder(可选), expectedRev(可选)。**环检测**：移到自己的后代下面 ⇒ `bad_args`；返回里带 `backlinks` 数（如实提示）。写操作 ⇒ 只产生草稿等用户确认；`dryRun`/`clientRequestId` 同上。 |
 | nodes.rename | current-space | write:pages | 给节点改名（只改标题）。参数: id(必填), title(必填,≤200 字), expectedRev(可选)。写操作 ⇒ 只产生草稿等用户确认；`dryRun`/`clientRequestId` 同样支持。 |
-| pages.create | current-space | write:pages | 新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。 |
+| pages.create | current-space | write:pages | 新建一页。参数: title, content?, parentId?, spaceId?, dryRun?。⭐ `spaceId` ⇒ 写到目标空间（需『可写（全部空间）』档；目标锁着 ⇒ permission_denied）；跨空间 v1 **只支持 pages_create**。写操作 ⇒ 只产草稿等确认。 |
 | pages.import_markdown | current-space | write:pages | 导入整篇 Markdown 新建一页（新名）。参数: title, markdown, parentId(可选)。与旧名 `pages_importMarkdown` **调用同一能力、行为一致**；旧名保留。写操作 ⇒ 只产草稿等确认。 |
 | pages.importMarkdown | current-space | write:pages | deprecated: 用 pages_import_markdown（旧名保留以兼容外部客户端）。deprecated: 用 pages_import_markdown（旧名保留以兼容外部客户端）。导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。 |
 | pages.revert | current-space | write:pages | 回退到历史版本。参数: pageId(必填), versionId(必填), expectedRev(可选)。版本不在该页历史里 ⇒ `not_found`（⛔ 不假装成功）。写操作 ⇒ 只产生草稿等用户确认。 |

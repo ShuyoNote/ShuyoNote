@@ -24,7 +24,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -66,7 +66,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -87,7 +87,7 @@
     "kind": "write",
     "name": "pages_create",
     "capabilityId": "pages.create",
-    "description": "新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。",
+    "description": "新建一页。参数: title, content?, parentId?, spaceId?, dryRun?。⭐ `spaceId` ⇒ 写到目标空间（需『可写（全部空间）』档；目标锁着 ⇒ permission_denied）；跨空间 v1 **只支持 pages_create**。写操作 ⇒ 只产草稿等确认。",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -113,6 +113,10 @@
         "clientRequestId": {
           "type": "string",
           "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略=当前空间）。⭐ 跨空间写 v1：只有 pages.create 真正支持；目标锁着 ⇒ permission_denied（locked）；需『可写（全部空间）』档。"
         }
       },
       "required": [
@@ -186,7 +190,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -233,7 +237,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -266,7 +270,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -308,7 +312,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -348,7 +352,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -386,7 +390,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -425,7 +429,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -460,7 +464,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -494,7 +498,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -528,7 +532,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -559,7 +563,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -587,7 +591,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -622,7 +626,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -665,7 +669,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -703,7 +707,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -739,7 +743,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -770,7 +774,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略=当前空间；本版只支持当前空间）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -808,7 +812,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -848,7 +852,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
@@ -887,7 +891,7 @@
         },
         "spaceId": {
           "type": "string",
-          "description": "目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关，⛔ 不静默回落）"
+          "description": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
         },
         "dryRun": {
           "type": "boolean",
