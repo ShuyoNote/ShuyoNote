@@ -212,3 +212,46 @@ class prefix 体量：sync 605 / set 420 / is-(状态) 367 / pdf 320 / email 306
 ```
 
 执行顺序（据 §9 v2）：S0 基线工具入库 → S1 纯删除（C→A→D，每批 50）→ S2 `@layer` 脚手架 → S3 tokens 生成 → S4 strangler。
+
+## 11. 执行记录（截至 2026-10-31）
+
+| 批 | 内容 | 读数 |
+|---|---|---|
+| S1-C | 删 5 个零引用变量（`--z-*` 后来发现需要、已恢复） | — |
+| S1-A | 11 组完全重复规则（同选择器＋同 body＋同 at-rule） | -45 行，基线 0.012% |
+| S2-a | 100 处「token 已定义」的死兜底 `var(--x, fallback)`→`var(--x)` | 视觉 0.004% |
+| S2-b | `.sync-popover.is-inline` 两条主体合并 | -6 行，视觉 0.012% |
+| S2-c | 四组 `!important` 改提特异性（db 表格 / fm-empty / 块选择 / 属性标签值） | `!important` 36→26 |
+| S2-c' | 再 5 条 `!important`（board/tree-row/block-selected/tag-color/db-item） | `!important` **21→16**，视觉 0.009% |
+| S1-D | **274 个 A 档死 class → 344 条规则 / 12 个选择器项** | App.css **28695→26439 行**（-2256） |
+
+### ⚠️ 这一段最贵的教训：**按行号区间删 CSS 会把两条规则拼在一起**
+
+第一次批 D（`ca8a219e..0b444432`）是**按行号区间**删的：D-2 那批把
+
+```css
+.btn-trash, .btn-backup, .btn-import, .btn-theme, .btn-sidebar-toggle, .btn-search { … }
+```
+
+的规则体删掉时，连带把**下一条** `.trash-popover { … }` 的**选择器**接了上来 ⇒ 最终变成
+
+```css
+.btn-trash, .btn-backup, .btn-trash:hover, .btn-backup:hover, .trash-popover {
+  position: fixed; width: 300px; box-shadow: var(--shadow-md); z-index: …;
+}
+```
+
+⇒ 活的 `.btn-trash` 吃到了「固定定位 + 300px 宽 + 阴影 + z-index」。
+
+**抓住它的不是单元测试**（全量 3800 passed 全绿），而是两条验收：
+
+1. **端点视觉基线**：`96971f6c → 0b444432` 三视口 0.22~0.30%（超 0.2% 阈值），`git bisect` 到 D-2；
+2. **逐元素 computed 样式对比**（`_tmp/scratch/compare-styles.mjs`：两套构建各开一次浏览器，对每个 DOM 列 21 个计算属性）⇒ 精确报出 `[btn-trash] box-shadow: none → 0 4px 16px; padding: 0 → 4px 10px; z-index: auto → 700`。
+
+**重做规则（已写进脚本 `_tmp/scratch/apply-dead-all.mjs`）**：
+- 必须**用 postcss AST**：整条规则 `rule.remove()` / 混合选择器只 `rule.selectors = keep`；⛔ 绝不按行号区间删；
+- 删前把类名在 `scripts/` `capabilities/` `tools/` 里再 grep 一遍（验收脚本会把 class 当选择器）；
+- 删后两道验收：**逐元素 computed 差异必须为 0**，再跑端点像素基线（三视口 0.000%）；
+- 备份：重做前打 tag `css-d-redo-backup`（指向被回滚的那版），回滚成本 = 一次 `git reset`。
+
+AST 重做后的读数：规则 4535→4191、行数 28695→26439、**逐元素 computed 差异 0 处**、三视口像素 **0.000%**、全量 vitest **3800 passed**。
