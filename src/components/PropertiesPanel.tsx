@@ -204,9 +204,35 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
     );
   }
 
-  // Hide the whole properties panel when the page has no properties/tags (the
-  // page-actions row is the entry to add). Show while adding a property/tag.
-  if (!hasProps && !adding && !tagVisible) return null;
+  // ⭐ 2026-10-31：B3 把「添加属性 / 添加标签」入口从顶部 page-actions 收进了属性区，
+  // 但属性区在没有属性时会整体隐藏 ⇒ **新页面根本没有添加入口**。mobile 组实测红：
+  // 「桌面属性表体检失败：找不到「添加属性」入口」。所以空态必须保留这两个入口。
+  if (!hasProps && !adding && !tagVisible) {
+    return (
+      <div className="properties properties-empty">
+        <div className="properties-head-row">
+          <button
+            className="prop-add-head"
+            title="添加属性"
+            onClick={() => {
+              setOpen(true);
+              setAdding(true);
+            }}
+          >
+            ＋ 添加属性
+          </button>
+          <button
+            className="prop-add-tag"
+            title="添加标签"
+            aria-label="添加标签"
+            onClick={() => usePropertyUiStore.getState().requestAddTag()}
+          >
+            ＋ 添加标签
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={hasProps ? "metadata-card" : ""}>
