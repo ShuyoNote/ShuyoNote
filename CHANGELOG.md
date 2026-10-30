@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **跨空间写 v2 —— `write_all` 扩读 ＋ 改目标空间**：`write_all` 档同时授予 `read:all-spaces`；`pages_get`/`blocks_list` 加 `spaceId`；白名单 `pages.update`/`blocks.append/patch/delete` 由 `apply.ts` 取目标页后按原合并路径处理、命令按目标空间开可写连接（复用 `save_page_in`，不复制副作用）；目标锁着 ⇒ `permission_denied`；审计带 `spaceId`；回滚开关双向生效。`apiVersion` 1.16.0 → **1.17.0**。
 - **跨空间写 v1 —— `pages_create` 可写入指定空间**：`write_all` 档（`write:all-spaces`）下 `pages.create` 带 `spaceId` 时真实写入目标空间：可写连接复用 `create_node_in` 同一份逻辑（`pages` ＋ `changes` 同写，派生/版本走既有路径），**当前空间完全不变**；跨空间 v1 **只支持 pages.create**，其它写工具带 `spaceId` ⇒ `bad_args: … 暂不支持跨空间`（不回落）；目标空间锁着 ⇒ `permission_denied`（locked）；回滚开关 `SHUYONOTE_MCP_CROSS_SPACE_WRITE=0`；审计行带 `spaceId`；面板确认框标出目标空间名。插件 API `apiVersion` 1.15.0 → **1.16.0**。
 - **MCP P2 能力补齐 —— 工具 60 → 61**：`audit_tail` 加可选 `onlyWrites`（默认 false 保持兼容；true 只回写类调用；面板最近审计用 true）；新增只读能力 `pages.changes_since`（工具 `changes_since`，页级增量：`since` 为 ms/ISO，返回 `{pages:[{pageId,title,rev,updatedAt,kind}],truncated}`，limit 默认 50/上限 200，v1 **不做块级 diff**，跨空间口径同 `pages_list`）；新增 `src-tauri/src/cap_limits.rs` 把 200KB 响应体、分页默认/上限、句柄 TTL 收敛成单一常量模块，能力层引用它。插件 API `apiVersion` 1.14.0 → **1.15.0**。
 - **MCP P1 接入面板六块 ＋ 第六档「可写（全部空间）」**：面板改成接入面板六块（档位／状态卡／能力清单／最近草稿／最近审计／边界提示），能力清单与「这一档能做什么」从注册表 `ai:true` 实时算；`McpLevel` 增 `write_all`（granted 含 `write:pages` ＋ `write:all-spaces`，⛔ 不给 `read:all-spaces`；默认关，显式选档才授予；切档换令牌语义不变）；新增只读桌面命令 `mcp_recent_drafts`（默认 5/上限 50）与 `mcp_recent_audit`（默认 20/上限 100）。⚠️ 本版只放行 `write_all` 的权限门，跨空间落库链路未接。插件 API `apiVersion` 1.13.0 → **1.14.0**。
