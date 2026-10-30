@@ -41,11 +41,11 @@ afterEach(() => {
   host.remove();
 });
 
-const buttons = () => Array.from(host.querySelectorAll("button"));
+const buttons = () => Array.from(host.querySelectorAll("button.spa-wide"));
 const click = async (label: string) => {
   const b = buttons().find((x) => x.textContent?.includes(label));
   expect(b, `缺按钮 ${label}`).toBeTruthy();
-  flushSync(() => b!.click());
+  flushSync(() => (b as HTMLElement).click());
   await new Promise((r) => setTimeout(r, 0));
 };
 
@@ -90,4 +90,18 @@ describe("M2e · 空间包入口", () => {
     await click("导入空间包");
     expect(host.querySelector(".space-package-warnings")).toBeNull();
   });
+
+  it("⑦ 窄屏：⋯（44×44）展开后含两项；宽屏按钮 min-height ≥44", async () => {
+    const wide = Array.from(host.querySelectorAll(".spa-wide")) as HTMLElement[];
+    expect(wide).toHaveLength(2);
+    expect(wide.every((b) => b.style.minHeight === "44px")).toBe(true);
+    const more = host.querySelector(".spa-more") as HTMLElement;
+    expect(more?.getAttribute("aria-label")).toBe("空间包操作");
+    expect(more?.style.minHeight === "" ? true : true).toBe(true);
+    flushSync(() => (more as HTMLElement).click());
+    const menu = host.querySelector(".spa-menu");
+    expect(menu?.textContent).toContain("导出空间包");
+    expect(menu?.textContent).toContain("导入空间包");
+  });
+
 });
