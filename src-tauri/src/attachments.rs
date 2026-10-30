@@ -1615,8 +1615,26 @@ pub fn remove_attachment(
     app: tauri::AppHandle,
     db: State<'_, Db>,
     id: String,
+    space_id: Option<String>,
 ) -> Result<usize, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let target = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(space) = target {
+        let active = {
+            let c = db.0.lock().expect("db mutex poisoned");
+            crate::workspaces::active_workspace_id(&c)?
+        };
+        if space != active {
+            if crate::plugins::cross_space_write_disabled() {
+                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+            }
+            let c = crate::db::open_space_conn_at(space, &app_data_dir).map_err(|e| {
+                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+            })?;
+            // WIP：跨空间"目标空间之外"引用扫描下一轮补 ⇒ 字节不删（宁留勿删）
+            return remove_attachment_in_with(&c, &app_data_dir, &id, space, &None);
+        }
+    }
     remove_attachment_inner(&db, &app_data_dir, &id)
 }
 
@@ -1694,7 +1712,22 @@ fn remove_attachment_inner_with(
 ) -> Result<usize, String> {
     let c = db.0.lock().expect("db mutex poisoned");
     let space = active_space_id(&c);
-    let hash: Option<String> = c
+    remove_attachment_in_with(&c, app_data_dir, id, &space, other_refs)
+}
+
+/// ⭐ v3-A1：单连接实现（命令层当前空间与跨空间共用；副作用全复用）。
+///
+/// ⚠️ 跨空间删除的"目标空间之外引用检查"尚未接入 ⇒ 调用方在跨空间时传 `other_refs=None`
+/// （字节**不删**，宁留勿删；下一轮补跨空间引用扫描）。
+pub(crate) fn remove_attachment_in_with(
+    c: &rusqlite::Connection,
+    app_data_dir: &Path,
+    id: &str,
+    space: &str,
+    other_refs: &Option<std::collections::HashSet<String>>,
+) -> Result<usize, String> {
+
+        let hash: Option<String> = c
         .query_row(
             "SELECT hash FROM attachments WHERE id = ?1",
             params![id],
