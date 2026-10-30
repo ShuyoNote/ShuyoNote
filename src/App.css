@@ -26683,6 +26683,7 @@ body.is-plugin-panel-open .main {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
 }
 /* ⭐ 里面那几层也跟着铺满 ✓（⭐ 只在这档里 ✓）。 */
@@ -26707,13 +26708,6 @@ body.is-plugin-panel-open .main {
 .sync-popover.is-inline,
 .sync-popover.is-inline * {
   box-sizing: border-box;
-}
-.sync-popover.is-inline {
-  height: 100%;
-  min-height: 100%;
-  /* ⭐ **刀十九-2（owner 复报「滚动条没有去掉」）** ✗：⭐ 那条横条是**滚动容器自己吐的** ✓ ——
-     ⭐ 某个 `overflow-y: auto` 的容器在横向内容超出时**同时**给出横条 ✓ ⇒ ⭐ 这里显式钉住 ✓。 */
-  overflow-x: hidden;
 }
 /* ⚠️⭐ **刀二十（2026-10-14，owner：「看看是否需要添加滚动支持」）实测订正** ✗ ——
    ⭐ 上面那条 `.main > .sync-popover.is-inline` **从来没匹配过** ✗：⭐ 真子级是 `.sync-panel`
