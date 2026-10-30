@@ -28678,7 +28678,6 @@ button.mset-row:focus-visible {
 .prop-person-avatar { width: 20px; height: 20px; border-radius: 50%; background: var(--hover, #eee); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
 
 /* B3 收尾：值列统一 grid（标签行同模板）＋ hover 操作 ＋ 正文引文样式 ＋ 来源说明 */
-.prop-row { display: grid; grid-template-columns: 86px minmax(0, 1fr) auto; column-gap: 8px; align-items: center; }
 .prop-row .prop-name { width: auto; }
 .prop-note { display: block; color: var(--text-faint, #999); font-size: 11px; margin-top: 2px; }
 .prop-link-actions { opacity: 0; display: inline-flex; gap: 2px; color: var(--text-faint, #999); }
@@ -28690,3 +28689,12 @@ button.mset-row:focus-visible {
 
 /* Q2：≤6 项用户属性展开、>6 项折叠（阈值只数用户属性） */
 .properties-body.is-collapsed { display: none; }
+
+/* B3：display:contents 网格下，一行只能有 3 个直接 grid 子元素（名字/值/行尾） */
+.prop-value-source { display: flex; flex-direction: column; min-width: 0; }
+.prop-value-source .prop-note { margin-top: 2px; }
+.prop-value-source .prop-link-actions { margin-top: 2px; }
+/* 工具栏窄屏：单行、去掉上下额外内边距（44 + 4 <= 60） */
+@media (max-width: 900px) {
+  .file-manager-toolbar:has(.space-package-actions) { flex-wrap: nowrap; padding: 2px 0; }
+}

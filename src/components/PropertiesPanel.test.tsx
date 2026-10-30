@@ -163,6 +163,22 @@ describe("B2：类型化展示", () => {
 });
 
 
+describe("Q2：折叠阈值（≤6 展开 / >6 折叠）", () => {
+  it("5 项用户属性 ⇒ body 可见；7 项 ⇒ 折叠；折叠态 header 的 ＋ 添加属性仍在", async () => {
+    const five = Array.from({ length: 5 }, (_, i) => prop("用户" + i, "v"));
+    const a = await mountWith(five);
+    expect(a.host.querySelector(".properties-body")).toBeTruthy();
+    expect(a.host.querySelector(".properties-body")?.classList.contains("is-collapsed")).toBe(false);
+    flushSync(() => a.root.unmount());
+
+    const seven = Array.from({ length: 7 }, (_, i) => prop("用户" + i, "v"));
+    const b = await mountWith(seven);
+    expect(b.host.querySelector(".properties-body")?.classList.contains("is-collapsed")).toBe(true);
+    expect(b.host.querySelector(".properties-head-row")?.textContent).toContain("＋ 添加属性");
+    flushSync(() => b.root.unmount());
+  });
+});
+
 describe("B3：收尾", () => {
   const css = () => readFileSync(resolve(process.cwd(), "src/App.css"), "utf8");
   const src = () => readFileSync(resolve(process.cwd(), "src/lib/communitySave.ts"), "utf8");
@@ -175,9 +191,14 @@ describe("B3：收尾", () => {
     flushSync(() => root.unmount());
   });
 
-  it("② 值列 grid：.prop-row 与标签行共用 86px minmax(0,1fr) auto", () => {
+  it("② 归格：不再有无效的 .prop-row grid 规则；来源 note/actions 在值容器内", async () => {
     const c = css();
-    expect(c).toContain("grid-template-columns: 86px minmax(0, 1fr) auto");
+    expect(c).not.toContain(".prop-row { display: grid");
+    const { root, host } = await mountWith([prop("来源", "https://example.com/x")]);
+    const box = host.querySelector(".prop-value-source");
+    expect(box?.querySelector(".prop-note")).toBeTruthy();
+    expect(box?.querySelector(".prop-link-actions")).toBeTruthy();
+    flushSync(() => root.unmount());
   });
 
   it("③ 作者 person chip（展示态无 input）", async () => {

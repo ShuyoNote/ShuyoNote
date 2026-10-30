@@ -409,7 +409,7 @@ function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string)
     const u = formatUrl(prop.value);
     if (u && !editing) {
       return (
-        <span className="prop-link-wrap">
+        <span className="prop-link-wrap prop-value-source">
           <a className="prop-link" href={u.href} target="_blank" rel="noreferrer" title={u.href}>
             {u.display}
           </a>
