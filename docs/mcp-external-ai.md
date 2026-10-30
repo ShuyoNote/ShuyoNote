@@ -20,7 +20,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | 档位（界面名） | 内部 id | 能做什么 | 建议 |
 |---|---|---|---|
 | 不接 | `off` | 通道关闭 | 平常不用时选它 |
-| 只读 | `read` | 读**当前空间**的页面/搜索/块/反链/附件/当前页/标签/属性定义/页面树/**数据库结构与行**/**历史版本与回收站**/附件元数据/导出下载句柄/**索引覆盖率报告** | 让 AI 总结、问答时够用 |
+| 只读 | `read` | 读**当前空间**的页面/搜索/块/反链/附件（**附件与历史版本可用 `spaceId` 指定空间**）/当前页/标签/属性定义/页面树/**数据库结构与行**/**历史版本与回收站**/附件元数据/导出下载句柄/**索引覆盖率报告** | 让 AI 总结、问答时够用 |
 | 只读（全部空间） | `read_all` | 同上，跨所有空间（加密空间锁着时读不到内容） | 需要跨空间检索时开 |
 | 可写（每次确认） | `write_confirm` | 写工具**都先产草稿、等你确认**（含节点整理/回收站恢复/版本回退/标签与属性）；整页替换永远要确认 | **要写就用这个（推荐）** |
 | 可写（免确认） | `write_auto` | 所有写操作**直接落库、不询问**；每次写仍留一行审计 | ⚠️ 只在刚备份过、且信任该 AI 时短开 |
@@ -71,10 +71,10 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | `page_current`（**没有 `spaceId`**） | 只读及以上；⚠️ 外部接入看不到界面里「当前页」这个状态时**如实回 `opened:false`**（不会编造一页） |
 | `db_schema`（数据库的**列/视图/关系列**） | 只读及以上。公式列带 `isFormula:true`、汇总列带 `isRollup:true`，**只标类型、不计算**；带 `spaceId` 跨空间 ⇒ **只读（全部空间）**及以上（未开该档 ⇒ 明确 `permission_denied`，不会悄悄当成当前空间） |
 | `db_rows`（数据库**行**） | 只读及以上。`where` 的字段必须来自 `db_schema` 报出的列（id 或列名），操作符白名单 `= != > >= < <= in contains is_null`，写错 ⇒ `invalid_args` 并点名第几条；**只给原始值**（⛔ 不重算公式/汇总，可能与界面计算值不同）；`limit` 默认 100/上限 500；带 `spaceId` 跨空间 ⇒ **只读（全部空间）**及以上（未开 ⇒ `permission_denied`） |
-| `versions_list` / `version_get`（历史版本） | 只读及以上。`version_get` 与 `pages_get` 同一套字符分页/块锚点口径；版本不存在 ⇒ `not_found`。**只读，不回滚** |
+| `versions_list` / `version_get`（历史版本） | 只读及以上。`version_get` 与 `pages_get` 同一套字符分页/块锚点口径；版本不存在 ⇒ `not_found`。**只读，不回滚** | （⚠️ 带 `spaceId` 跨空间需「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`）
 | `trash_list`（回收站） | 只读及以上。只读的**清单**（`deletedAt` 倒序）；⛔ 不恢复、不清空。带 `spaceId` 跨空间 ⇒ **只读（全部空间）**及以上 |
-| `files_stat` / `files_extract_status` / `files_list_orphan`（附件元数据） | 只读及以上。`files_stat` 给真 `sha256`；`files_extract_status` 的 `coverage` 是**原始覆盖度**（空 = 未知，⛔ 不等于完整）；`files_list_orphan` 只列**未挂到页面**的附件（只读，不清理） |
-| `files_download` / `blobs_fetch`（导出/下载句柄） | 只读及以上（需要 `export:files`；只读档已含）。`files_download` **只回句柄不回字节**：句柄 128bit 随机、**单次**、**120 秒**、绑当前会话；`blobs_fetch` 把句柄换成文件，**只写进应用数据目录下的 `exports/`**（文件名会清洗；⛔ **不接受任意目标路径**），sha256 与句柄一致。二次使用/过期/别的会话 ⇒ `not_found`；>10MB ⇒ `needs_confirm`（本批没有确认 UI，不静默下载） |
+| `files_stat` / `files_extract_status` / `files_list_orphan`（附件元数据） | 只读及以上。`files_stat` 给真 `sha256`；`files_extract_status` 的 `coverage` 是**原始覆盖度**（空 = 未知，⛔ 不等于完整）；`files_list_orphan` 只列**未挂到页面**的附件（只读，不清理） | （⚠️ 带 `spaceId` 跨空间需「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`）
+| `files_download` / `blobs_fetch`（导出/下载句柄） | 只读及以上（需要 `export:files`；只读档已含）。`files_download` **只回句柄不回字节**：句柄 128bit 随机、**单次**、**120 秒**、绑当前会话；`blobs_fetch` 把句柄换成文件，**只写进应用数据目录下的 `exports/`**（文件名会清洗；⛔ **不接受任意目标路径**），sha256 与句柄一致。二次使用/过期/别的会话 ⇒ `not_found`；>10MB ⇒ `needs_confirm`（本批没有确认 UI，不静默下载） | （⚠️ 带 `spaceId` 跨空间需「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`）
 | `export_markdown`（导出 Markdown，**句柄**） | 只读及以上（`export:files`）。两种口径**只能给一个**：`pageId` ⇒ 该页单个 `.md`（与界面「导出为 Markdown」同口径）；`spaceId` ⇒ 整份 `.zip`（Markdown ＋ 附件，与界面「导出本空间」同口径；⚠️ **只支持当前空间**，别的空间 ⇒ `bad_args`）。**只回句柄**（单次/120s/绑会话），落盘用 `blobs_fetch`；>10MB 或 >20 文件 ⇒ `needs_confirm` |
 | `export_page_markdown`（单页 Markdown，句柄） | 只读及以上（`export:files`）。只接受 `pageId`（给 spaceId ⇒ `bad_args`）；句柄单次/TTL 120s/绑会话 |
 | `export_space_markdown`（整空间 zip，句柄） | 只读及以上（`export:files`）。只接受 `spaceId`（省略=当前空间；给 pageId ⇒ `bad_args`）；本版只支持当前空间 |
@@ -137,6 +137,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - 清单与档位判据：[能力暴露矩阵](plans/2026-10-29-agent-capability-exposure-matrix.md)；块级写方案：[P2 方案](plans/2026-10-29-agent-block-write-p2.md)。
 
 ## 10. 版本
+
+- 2026-10-30：**UX-④ 附件/历史版本可指定空间**：`files_list/search/read/stat/extract_status/list_orphan/download` 与 `versions_list/version_get` 增加可选 `spaceId`（逐 cap 走 `with_conn_for_space`，跨空间需「只读（全部空间）」档）；省略参数行为不变。`apiVersion` 1.12.0 → **1.13.0**。
 
 - 2026-10-30：**UX-⑦ 导出拆名 —— 工具 60（读面 33 / 写面 27）**：新增 `export_page_markdown`（只接受 pageId）与 `export_space_markdown`（只接受 spaceId，省略=当前空间）；旧 `export_markdown` 保留并标 `deprecated`，行为不变。
 

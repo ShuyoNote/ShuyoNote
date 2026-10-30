@@ -2259,9 +2259,9 @@ fn cap_files_export(file_name: &str, content: &str) -> CapResult {
     }
 }
 
-fn cap_files_list(page_id: Option<&str>) -> CapResult {
+fn cap_files_list(page_id: Option<&str>, space_id: Option<&str>) -> CapResult {
     let target = target_page_or_current(page_id)?;
-    with_read_conn(|c| {
+    with_conn_for_space(space_id, |c| {
         // 只给元数据，**不给字节**——读文件内容是另一个（更高风险的）能力。
         let mut stmt = c
             .prepare("SELECT id, name, mime, size FROM attachments WHERE page_id = ?1 ORDER BY created_at DESC")
@@ -2287,13 +2287,13 @@ fn cap_files_list(page_id: Option<&str>) -> CapResult {
 /// 与界面搜索同一套口径：①查询先归一元（`prepare_chunk_query`，兼容表意字）；
 /// ②只读 `chunks` / `chunk_embeddings`；③老库没有 `chunks` 表 ⇒ 空数组（不是错误）。
 /// 返回的每条带 `pageId`/`attId`/`loc` —— 插件拿到命中后要能**回链到原文位置**。
-fn cap_files_search(query: &str, limit: i64) -> CapResult {
+fn cap_files_search(query: &str, limit: i64, space_id: Option<&str>) -> CapResult {
     let q = crate::search::prepare_chunk_query(query);
     if q.is_empty() {
         return Err("bad_args: query 不能为空".to_string());
     }
     let lim = limit.clamp(1, 100) as usize;
-    let hits = with_read_conn(|c| crate::search::search_chunks_in_conn(c, &q, lim, None, None))?;
+    let hits = with_conn_for_space(space_id, |c| crate::search::search_chunks_in_conn(c, &q, lim, None, None))?;
     serde_json::to_value(&hits).map_err(|e| format!("internal: {e}"))
 }
 
@@ -2301,13 +2301,13 @@ fn cap_files_search(query: &str, limit: i64) -> CapResult {
 ///
 /// 与 `files.search` 同构：只读、走活动空间；**不存在** ⇒ `null`，**还没抽过** ⇒ `{segments: [], total: 0}`
 /// —— 两者必须分开，否则 AI 会把"还没索引"读成"文件里没有相关内容"。
-fn cap_files_read(id: &str, offset: i64, limit: i64) -> CapResult {
+fn cap_files_read(id: &str, offset: i64, limit: i64, space_id: Option<&str>) -> CapResult {
     if id.trim().is_empty() {
         return Err("bad_args: id 不能为空".to_string());
     }
     let off = offset.max(0) as usize;
     let lim = limit.clamp(1, crate::search::MAX_ATT_TEXT_LIMIT as i64) as usize;
-    let page = with_read_conn(|c| crate::search::read_attachment_text_in_conn(c, id, off, lim))?;
+    let page = with_conn_for_space(space_id, |c| crate::search::read_attachment_text_in_conn(c, id, off, lim))?;
     serde_json::to_value(&page).map_err(|e| format!("internal: {e}"))
 }
 
@@ -2638,13 +2638,13 @@ fn current_read_space_id() -> Result<String, String> {
 }
 
 /// `versions.list`：页面历史版本清单（不含正文；正文用 `version.get`）。
-fn cap_versions_list(page_id: &str, limit: i64) -> CapResult {
+fn cap_versions_list(page_id: &str, limit: i64, space_id: Option<&str>) -> CapResult {
     let page = page_id.trim();
     if page.is_empty() {
         return Err("bad_args: 需要 pageId".to_string());
     }
     let limit = limit.clamp(1, 200);
-    with_read_conn(|c| {
+    with_conn_for_space(space_id, |c| {
         let mut stmt = c
             .prepare(
                 "SELECT id, title, created_at FROM page_versions
@@ -2675,7 +2675,7 @@ fn cap_version_get(
     offset: i64,
     limit: i64,
     include_anchors: bool,
-) -> CapResult {
+ space_id: Option<&str>) -> CapResult {
     let page = page_id.trim();
     let vid = version_id.trim();
     if page.is_empty() {
@@ -2684,7 +2684,7 @@ fn cap_version_get(
     if vid.is_empty() {
         return Err("bad_args: 需要 versionId".to_string());
     }
-    with_read_conn(|c| {
+    with_conn_for_space(space_id, |c| {
         // 正文两列只经 `doc_content` 那一层读（`check-doc-content-access` 只减不增）
         let row = crate::doc_content::version_body(c, page, vid)?;
         let Some((title, doc_json, text, at)) = row else {
@@ -2765,13 +2765,13 @@ struct AttachmentRowMeta {
 }
 
 /// `files.stat`：附件元数据（`sha256` = 附件的内容指纹，附件就是按它内容寻址的）。
-fn cap_files_stat(att_id: &str) -> CapResult {
+fn cap_files_stat(att_id: &str, space_id: Option<&str>) -> CapResult {
     let att = att_id.trim();
     if att.is_empty() {
         return Err("bad_args: 需要 attId".to_string());
     }
-    let space = target_space_id(None);
-    with_read_conn(|c| {
+    let space = target_space_id(space_id);
+    with_conn_for_space(space_id, |c| {
         let row = attachment_row_of(c, att)?;
         Ok(serde_json::json!({
             "attId": att,
@@ -2789,12 +2789,12 @@ fn cap_files_stat(att_id: &str) -> CapResult {
 ///
 /// 复用 [`crate::search::read_attachment_text_in_conn`]（与 `files.read` 同一处）：
 /// `coverage` 原样透出 —— 空串 = **未知**（⛔ 不许读成"完整"，§15.10 的口径）。
-fn cap_files_extract_status(att_id: &str) -> CapResult {
+fn cap_files_extract_status(att_id: &str, space_id: Option<&str>) -> CapResult {
     let att = att_id.trim();
     if att.is_empty() {
         return Err("bad_args: 需要 attId".to_string());
     }
-    with_read_conn(|c| {
+    with_conn_for_space(space_id, |c| {
         let row = attachment_row_of(c, att)?;
         let Some(page) = crate::search::read_attachment_text_in_conn(c, att, 0, 0)
             .map_err(|e| format!("db_error: {e}"))?
@@ -2824,10 +2824,10 @@ fn cap_files_extract_status(att_id: &str) -> CapResult {
 }
 
 /// `files.list_orphan`：未整理附件（`page_id IS NULL`）—— 只读，⛔ 不清理/删除。
-fn cap_files_list_orphan(limit: i64, offset: i64) -> CapResult {
+fn cap_files_list_orphan(limit: i64, offset: i64, space_id: Option<&str>) -> CapResult {
     let limit = limit.clamp(1, 200);
     let offset = offset.max(0);
-    with_read_conn(|c| {
+    with_conn_for_space(space_id, |c| {
         let total: i64 = c
             .query_row(
                 "SELECT COUNT(*) FROM attachments WHERE page_id IS NULL",
@@ -2863,19 +2863,19 @@ fn cap_files_list_orphan(limit: i64, offset: i64) -> CapResult {
 ///
 /// 三道：① 附件要在库里；② 字节走**与界面同一条**明文口径（`attachments::plain_bytes_of`：
 /// 按空间取钥匙/解密/空壳/内容指纹）；③ >10 MB ⇒ `needs_confirm`（本批没有确认 UI，⛔ 不静默下载）。
-fn cap_files_download(att_id: &str) -> CapResult {
+fn cap_files_download(att_id: &str, space_id: Option<&str>) -> CapResult {
     let att = att_id.trim();
     if att.is_empty() {
         return Err("bad_args: 需要 attId".to_string());
     }
-    let row = with_read_conn(|c| attachment_row_of(c, att))?;
+    let row = with_conn_for_space(space_id, |c| attachment_row_of(c, att))?;
     if row.size > MAX_INLINE_DOWNLOAD_BYTES {
         return Err(format!(
             "needs_confirm: 附件「{}」{} 字节，超过 10MB 上限 —— 本批未接用户确认 UI，不能静默下载",
             row.name, row.size
         ));
     }
-    let space = current_read_space_id()?;
+    let space = target_space_id(space_id);
     let app_data = crate::db::app_data_dir_ref()
         .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
     let bytes = crate::attachments::plain_bytes_of(app_data, &space, &row.hash)?;
@@ -5152,23 +5152,32 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         ),
         "tags.list" => cap_tags_list(arg_opt_str("spaceId").as_deref()),
         "backlinks.list" => cap_backlinks_list(arg_opt_str("pageId").as_deref()),
-        "files.list" => cap_files_list(arg_opt_str("pageId").as_deref()),
-        "files.search" => cap_files_search(&arg_str("query")?, arg_i64("limit", 10)),
-        "files.read" => cap_files_read(&arg_str("id")?, arg_i64("offset", 0), arg_i64("limit", 200)),
+        "files.list" => cap_files_list(arg_opt_str("pageId").as_deref(),
+            arg_opt_str("spaceId").as_deref()),
+        "files.search" => cap_files_search(&arg_str("query")?, arg_i64("limit", 10),
+            arg_opt_str("spaceId").as_deref()),
+        "files.read" => cap_files_read(&arg_str("id")?, arg_i64("offset", 0), arg_i64("limit", 200),
+            arg_opt_str("spaceId").as_deref()),
         // B1c（2026-10-29）：版本／回收站／附件元数据 ＋ 导出/下载句柄
-        "versions.list" => cap_versions_list(&arg_str("pageId")?, arg_i64("limit", 50)),
+        "versions.list" => cap_versions_list(&arg_str("pageId")?, arg_i64("limit", 50),
+            arg_opt_str("spaceId").as_deref()),
         "version.get" => cap_version_get(
             &arg_str("pageId")?,
             &arg_str("versionId")?,
             arg_i64("offset", 0),
             arg_i64("limit", 6000),
             arg_bool(args.get("includeAnchors"), true),
+            arg_opt_str("spaceId").as_deref(),
         ),
         "trash.list" => cap_trash_list(arg_opt_str("spaceId").as_deref(), arg_i64("limit", 50)),
-        "files.stat" => cap_files_stat(&arg_str("attId")?),
-        "files.extract_status" => cap_files_extract_status(&arg_str("attId")?),
-        "files.list_orphan" => cap_files_list_orphan(arg_i64("limit", 50), arg_i64("offset", 0)),
-        "files.download" => cap_files_download(&arg_str("attId")?),
+        "files.stat" => cap_files_stat(&arg_str("attId")?,
+            arg_opt_str("spaceId").as_deref()),
+        "files.extract_status" => cap_files_extract_status(&arg_str("attId")?,
+            arg_opt_str("spaceId").as_deref()),
+        "files.list_orphan" => cap_files_list_orphan(arg_i64("limit", 50), arg_i64("offset", 0),
+            arg_opt_str("spaceId").as_deref()),
+        "files.download" => cap_files_download(&arg_str("attId")?,
+            arg_opt_str("spaceId").as_deref()),
         "blobs.fetch" => cap_blobs_fetch(&arg_str("handle")?),
         // B3：导出（句柄，复用同一张句柄表）＋覆盖率报告（JSON）
         "export.markdown" => cap_export_markdown(
@@ -13122,7 +13131,7 @@ register({ id: "s.run", title: "结构化", run: function () {
     /// ① 空 query 是**调用错误**（`bad_args`），不是"搜了没命中"。
     #[test]
     fn cap_files_search_rejects_an_empty_query_with_bad_args() {
-        let err = cap_files_search("   ", 10).unwrap_err();
+        let err = cap_files_search("   ", 10, None).unwrap_err();
         assert!(err.starts_with("bad_args"), "空 query 应当是 bad_args：{err}");
     }
 
@@ -13137,9 +13146,9 @@ register({ id: "s.run", title: "结构化", run: function () {
         drop(c);
         point_cap_search_at(&dir, "s1");
 
-        let one = cap_files_search("周会纪要", 0).unwrap();
+        let one = cap_files_search("周会纪要", 0, None).unwrap();
         assert_eq!(one.as_array().unwrap().len(), 1, "limit=0 ⇒ 夹到 1（与注册表 desc 同值）");
-        let all = cap_files_search("周会纪要", 1000).unwrap();
+        let all = cap_files_search("周会纪要", 1000, None).unwrap();
         assert_eq!(all.as_array().unwrap().len(), 5, "只有 5 条命中 ⇒ 上限之内全给");
 
         unpoint_cap_search(&dir);
@@ -13154,7 +13163,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         drop(c);
         point_cap_search_at(&dir, "s1");
 
-        let hits = cap_files_search("第\u{2F00}段", 10).unwrap();
+        let hits = cap_files_search("第\u{2F00}段", 10, None).unwrap();
         assert_eq!(
             hits.as_array().unwrap().len(),
             1,
@@ -13176,7 +13185,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         drop(s2);
         point_cap_search_at(&dir, "s1"); // 活动空间 = s1
 
-        let hits = cap_files_search("周会纪要", 10).unwrap();
+        let hits = cap_files_search("周会纪要", 10, None).unwrap();
         let arr = hits.as_array().unwrap();
         assert_eq!(arr.len(), 1, "只该命中活动空间（s1）：{arr:?}");
         assert_eq!(arr[0]["pageId"], "p1");
@@ -13206,9 +13215,9 @@ register({ id: "s.run", title: "结构化", run: function () {
         drop(c);
         point_cap_search_at(&dir, "s1");
 
-        let hits = cap_files_search("周会纪要", 10).unwrap();
+        let hits = cap_files_search("周会纪要", 10, None).unwrap();
         let hit = &hits.as_array().unwrap()[0];
-        let page = cap_files_read("a1", 0, 10).unwrap();
+        let page = cap_files_read("a1", 0, 10, None).unwrap();
         assert_eq!(
             hit["loc"], page["segments"][0]["loc"],
             "检索命中的 loc 与 files.read 的段 loc 必须是同一口径：hit={hit:?} page={page:?}"
@@ -13225,7 +13234,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         drop(crate::db::open_space_conn_at("s1", &dir).unwrap());
         point_cap_search_at(&dir, "s1");
 
-        let hits = cap_files_search("周会纪要", 10).unwrap();
+        let hits = cap_files_search("周会纪要", 10, None).unwrap();
         assert_eq!(hits, serde_json::json!([]), "空库 ⇒ 空数组（不是错误、也不是 null）");
 
         unpoint_cap_search(&dir);
@@ -15080,5 +15089,81 @@ register({ id: "s.run", title: "结构化", run: function () {
         let e = super::cap_export_space_markdown(None, Some("p1")).unwrap_err();
         assert!(e.contains("bad_args") && e.contains("page_markdown"), "{e}");
     }
+    }
+
+    /// ⭐ UX-④：9 条附件/历史版本能力的 `spaceId` 门（表驱动）；只读（全部空间）档能读另一空间。
+    #[test]
+    fn ux4_files_and_versions_space_id_gate() {
+        let f = b1c_fixture("ux4");
+        let second = "ux4-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES (?1, '第二空间', '#000', '', 2, 1, 1)",
+                params![second],
+            )
+            .unwrap();
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '第二页', '{}', '', 'page', 0, 10, 10)",
+                params![second],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+                 VALUES ('a1', 'p1', 'r.pdf', ?1, 'application/pdf', 3, 10)",
+                params!["f".repeat(64)],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO page_versions (id, page_id, title, content_json, content_text, created_at)
+                 VALUES ('v1', 'p1', '旧版', '{}', '正文', 9)",
+                [],
+            )
+            .unwrap();
+        }
+        point_cap_search_at(&f.dir, &f.space);
+        let read_only = crate::mcp_channel::default_read_scopes();
+        let cases: [(&str, &str); 9] = [
+            ("files.list", r#"{"pageId":"p1"}"#),
+            ("files.search", r#"{"query":"x"}"#),
+            ("files.read", r#"{"id":"a1"}"#),
+            ("files.stat", r#"{"attId":"a1"}"#),
+            ("files.extract_status", r#"{"attId":"a1"}"#),
+            ("files.list_orphan", r#"{"limit":10}"#),
+            ("files.download", r#"{"attId":"a1"}"#),
+            ("versions.list", r#"{"pageId":"p1"}"#),
+            ("version.get", r#"{"pageId":"p1","versionId":"v1"}"#),
+        ];
+        for (method, args) in cases {
+            let with_space = args.replacen("{", &format!(r#"{{"spaceId":"{second}","#), 1);
+            let e = with_external_caller("ux4-gate", &read_only, || {
+                dispatch_capability(method, &with_space)
+            })
+            .expect_err("无 read:all-spaces 必须拒");
+            assert!(
+                e.contains("permission_denied") && e.contains("read:all-spaces"),
+                "{method} 必须点名 read:all-spaces：{e}"
+            );
+        }
+        // 「只读（全部空间）」档 ⇒ 能读另一空间
+        let mut read_all = read_only.clone();
+        read_all.push("read:all-spaces".to_string());
+        let ok = with_external_caller("ux4-all", &read_all, || {
+            dispatch_capability("files.list", &format!(r#"{{"pageId":"p1","spaceId":"{second}"}}"#))
+        });
+        assert!(ok.is_ok(), "全部空间档应能读 attachments：{:?}", ok.err());
+        let v = with_external_caller("ux4-all2", &read_all, || {
+            dispatch_capability("versions.list", &format!(r#"{{"pageId":"p1","spaceId":"{second}"}}"#))
+        });
+        assert!(v.is_ok(), "全部空间档应能读版本：{:?}", v.err());
+        // 省略参数 ⇒ 旧行为（当前空间）
+        with_external_caller("ux4-cur", &read_only, || dispatch_capability("files.list", r#"{"pageId":"p1"}"#))
+            .expect("省略 spaceId 必须与旧行为一致");
+        b1c_cleanup(&f);
     }
 }

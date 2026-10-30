@@ -31,10 +31,10 @@ var api = {
     rows_delete: function(pageId, rowIds, expectedRev, spaceId, dryRun, clientRequestId) { return __capCall("db.rows_delete", { pageId: pageId === undefined ? undefined : String(pageId), rowIds: rowIds === undefined ? undefined : rowIds, expectedRev: expectedRev === undefined ? undefined : String(expectedRev), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); }
   },
   versions: {
-    list: function(pageId, limit) { return __capCall("versions.list", { pageId: pageId === undefined ? undefined : String(pageId), limit: limit === undefined ? 50 : Number(limit) }); }
+    list: function(pageId, limit, spaceId) { return __capCall("versions.list", { pageId: pageId === undefined ? undefined : String(pageId), limit: limit === undefined ? 50 : Number(limit), spaceId: spaceId === undefined ? undefined : String(spaceId) }); }
   },
   version: {
-    get: function(pageId, versionId, offset, limit, includeAnchors) { return __capCall("version.get", { pageId: pageId === undefined ? undefined : String(pageId), versionId: versionId === undefined ? undefined : String(versionId), offset: offset === undefined ? 0 : Number(offset), limit: limit === undefined ? 6000 : Number(limit), includeAnchors: includeAnchors === undefined ? true : String(includeAnchors) }); }
+    get: function(pageId, versionId, offset, limit, includeAnchors, spaceId) { return __capCall("version.get", { pageId: pageId === undefined ? undefined : String(pageId), versionId: versionId === undefined ? undefined : String(versionId), offset: offset === undefined ? 0 : Number(offset), limit: limit === undefined ? 6000 : Number(limit), includeAnchors: includeAnchors === undefined ? true : String(includeAnchors), spaceId: spaceId === undefined ? undefined : String(spaceId) }); }
   },
   trash: {
     list: function(spaceId, limit) { return __capCall("trash.list", { spaceId: spaceId === undefined ? undefined : String(spaceId), limit: limit === undefined ? 50 : Number(limit) }); },
@@ -62,19 +62,19 @@ var api = {
     list: function(pageId) { return __capCall("backlinks.list", { pageId: pageId === undefined ? undefined : String(pageId) }); }
   },
   files: {
-    list: function(pageId) { return __capCall("files.list", { pageId: pageId === undefined ? undefined : String(pageId) }); },
-    search: function(query, limit) { return __capCall("files.search", { query: query === undefined ? undefined : String(query), limit: limit === undefined ? 10 : Number(limit) }); },
-    read: function(id, offset, limit) { return __capCall("files.read", { id: id === undefined ? undefined : String(id), offset: offset === undefined ? 0 : Number(offset), limit: limit === undefined ? 200 : Number(limit) }); },
-    stat: function(attId) { return __capCall("files.stat", { attId: attId === undefined ? undefined : String(attId) }); },
-    extract_status: function(attId) { return __capCall("files.extract_status", { attId: attId === undefined ? undefined : String(attId) }); },
-    list_orphan: function(limit, offset) { return __capCall("files.list_orphan", { limit: limit === undefined ? 50 : Number(limit), offset: offset === undefined ? 0 : Number(offset) }); },
+    list: function(pageId, spaceId) { return __capCall("files.list", { pageId: pageId === undefined ? undefined : String(pageId), spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
+    search: function(query, limit, spaceId) { return __capCall("files.search", { query: query === undefined ? undefined : String(query), limit: limit === undefined ? 10 : Number(limit), spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
+    read: function(id, offset, limit, spaceId) { return __capCall("files.read", { id: id === undefined ? undefined : String(id), offset: offset === undefined ? 0 : Number(offset), limit: limit === undefined ? 200 : Number(limit), spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
+    stat: function(attId, spaceId) { return __capCall("files.stat", { attId: attId === undefined ? undefined : String(attId), spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
+    extract_status: function(attId, spaceId) { return __capCall("files.extract_status", { attId: attId === undefined ? undefined : String(attId), spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
+    list_orphan: function(limit, offset, spaceId) { return __capCall("files.list_orphan", { limit: limit === undefined ? 50 : Number(limit), offset: offset === undefined ? 0 : Number(offset), spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
     export: function(fileName, content) { return __capCall("files.export", { fileName: fileName === undefined ? undefined : String(fileName), content: content === undefined ? undefined : String(content) }); },
     move: function(attId, toPageId, expectedSha, spaceId, dryRun, clientRequestId) { return __capCall("files.move", { attId: attId === undefined ? undefined : String(attId), toPageId: toPageId === undefined ? undefined : String(toPageId), expectedSha: expectedSha === undefined ? undefined : String(expectedSha), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); },
     rename: function(attId, name, expectedSha, spaceId, dryRun, clientRequestId) { return __capCall("files.rename", { attId: attId === undefined ? undefined : String(attId), name: name === undefined ? undefined : String(name), expectedSha: expectedSha === undefined ? undefined : String(expectedSha), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); },
     delete: function(attId, expectedSha, spaceId, dryRun, clientRequestId) { return __capCall("files.delete", { attId: attId === undefined ? undefined : String(attId), expectedSha: expectedSha === undefined ? undefined : String(expectedSha), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); },
     upload_to_page: function(pageId, name, spaceId, dryRun, clientRequestId) { return __capCall("files.upload_to_page", { pageId: pageId === undefined ? undefined : String(pageId), name: name === undefined ? undefined : String(name), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); },
     detach: function(attId, spaceId, dryRun, clientRequestId) { return __capCall("files.detach", { attId: attId === undefined ? undefined : String(attId), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); },
-    download: function(attId) { return __capCall("files.download", { attId: attId === undefined ? undefined : String(attId) }); }
+    download: function(attId, spaceId) { return __capCall("files.download", { attId: attId === undefined ? undefined : String(attId), spaceId: spaceId === undefined ? undefined : String(spaceId) }); }
   },
   coverage: {
     report: function(spaceId) { return __capCall("coverage.report", { spaceId: spaceId === undefined ? undefined : String(spaceId) }); }
