@@ -3183,8 +3183,22 @@ fn cap_export_markdown(page_id: Option<&str>, space_id: Option<&str>) -> CapResu
         (None, None) => {
             Err("bad_args: 需要 pageId 或 spaceId（单页导出 vs 整空间导出）".to_string())
         }
-        (Some(pid), None) => {
-            let page = export_target_page(pid)?;
+        (Some(pid), _) => {
+            let current = target_space_id(None);
+            let target = space.unwrap_or(&current).to_string();
+            let page = if target == current {
+                export_target_page(pid)?
+            } else {
+                with_conn_for_space(Some(target), |c| {
+                    let Some(m) = crate::doc_content::read_with_meta(c, pid)? else {
+                        return Err(format!("not_found: 页面 {pid} 不存在或已读取失败"));
+                    };
+                    if m.kind == "folder" {
+                        return Err(format!("bad_args: 「{}」是文件夹，没有正文可导出", m.content.title));
+                    }
+                    Ok(pid.trim().to_string())
+                })?
+            };
             let args = serde_json::json!({ "pageId": page }).to_string();
             let reply = crate::frontend_tool::call("export.markdown", &args)?;
             export_handle_from_reply(reply, "text/markdown")

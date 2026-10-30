@@ -51,7 +51,7 @@ export interface FrontendToolResult {
 
 /** 桥要用的依赖（可注入 ⇒ 判据能测；默认走真 `api` / `platform`）。 */
 export interface FrontendToolDeps {
-  getPage: (id: string) => Promise<PageDetail>;
+  getPage: (id: string, spaceId?: string) => Promise<PageDetail>;
   listPageAttachments: (id: string) => Promise<AttachmentMeta[]>;
   readAttachmentBytes: (hash: string) => Promise<ArrayBuffer | Uint8Array>;
   getActiveWorkspaceId: () => Promise<string>;
@@ -60,7 +60,7 @@ export interface FrontendToolDeps {
 
 export function defaultFrontendToolDeps(): FrontendToolDeps {
   return {
-    getPage: (id) => api.getPage(id) as unknown as Promise<PageDetail>,
+    getPage: (id, spaceId) => api.getPage(id, spaceId) as unknown as Promise<PageDetail>,
     listPageAttachments: (id) => api.listPageAttachments(id),
     readAttachmentBytes: (hash) => api.readAttachmentBytes(hash),
     getActiveWorkspaceId: () => api.getActiveWorkspaceId(),
@@ -120,7 +120,7 @@ async function exportMarkdown(
     throw new Error("bad_args: pageId 与 spaceId 只能给一个（单页导出 vs 整空间导出）");
   }
   if (pageId) {
-    const page = await deps.getPage(pageId);
+    const page = await deps.getPage(pageId, spaceId || undefined);
     if (!page) throw new Error(`not_found: 页面 ${pageId} 不存在或已读取失败`);
     if (page.kind === "folder") {
       throw new Error(`bad_args: 「${page.title || pageId}」是文件夹，没有正文可导出`);
