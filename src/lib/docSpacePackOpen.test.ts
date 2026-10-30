@@ -135,4 +135,35 @@ describe("M2b · .shuyospace 读侧", () => {
       if (!r.ok) expect(r.error).toContain(code);
     }
   });
+
+  it("上限：条目数/总大小超限 ⇒ E_LIMIT；边界恰好通过（可注入小阈值）", async () => {
+    const entries = await built();
+    const total = entries.reduce((n, e) => n + e.bytes.byteLength, 0);
+    expect((await openSpacePackage(entries, { maxEntries: entries.length })).ok).toBe(true);
+    const overCount = await openSpacePackage(entries, { maxEntries: entries.length - 1 });
+    expect(overCount.ok).toBe(false);
+    if (!overCount.ok) expect(overCount.error).toContain("E_LIMIT");
+    expect((await openSpacePackage(entries, { maxTotalBytes: total })).ok).toBe(true);
+    const overBytes = await openSpacePackage(entries, { maxTotalBytes: total - 1 });
+    expect(overBytes.ok).toBe(false);
+    if (!overBytes.ok) expect(overBytes.error).toContain("E_LIMIT");
+  });
+
+  it("tree↔attachments 名字冲突：以 tree 为准 + attachment-name-mismatch warning；一致时无 warning", async () => {
+    const entries = await built();
+    const att = JSON.parse(new TextDecoder().decode(entries.find((e) => e.path === "attachments.json")!.bytes));
+    att[0].name = "conflict-name.pdf";
+    const mutated = await repack(entries.map((e) => (e.path === "attachments.json" ? { ...e, bytes: enc(JSON.stringify(att)) } : e)));
+    const r = await openSpacePackage(mutated);
+    expect(r.ok, !r.ok ? r.error : "").toBe(true);
+    if (r.ok) {
+      expect(r.pkg.warnings.join("\n")).toContain("attachment-name-mismatch");
+      const treeName = r.pkg.tree.nodes.get("p1")!.children.find((c) => c.type === "file") as { name: string };
+      expect(r.pkg.attachments[0].name).toBe(treeName.name);
+    }
+    const clean = await openSpacePackage(entries);
+    expect(clean.ok).toBe(true);
+    if (clean.ok) expect(clean.pkg.warnings.join("\n")).not.toContain("attachment-name-mismatch");
+  });
+
 });

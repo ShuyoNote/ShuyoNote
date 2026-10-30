@@ -19,6 +19,9 @@ export const TREE_PATH = "tree.json";
 export const ATTACHMENTS_PATH = "attachments.json";
 const KINDS = new Set(["page", "folder", "database"]);
 const SHA_RE = /^[0-9a-f]{64}$/;
+/** 空间包上限（§3 默认值：256 MiB / 10000 条）。 */
+export const SPACE_MAX_TOTAL_BYTES = 256 * 1024 * 1024;
+export const SPACE_MAX_ENTRIES = 10000;
 
 export interface SpaceTreeNode {
   id: string;
@@ -43,9 +46,14 @@ const fail = (error: string): OpenSpaceResult => ({ ok: false, error });
 
 export async function openSpacePackage(
   entries: ZipEntry[],
-  opts: { maxDepth?: number; allowUnverifiedChecksums?: boolean } = {},
+  opts: { maxDepth?: number; allowUnverifiedChecksums?: boolean; maxTotalBytes?: number; maxEntries?: number } = {},
 ): Promise<OpenSpaceResult> {
   const warnings: string[] = [];
+  const maxEntries = opts.maxEntries ?? SPACE_MAX_ENTRIES;
+  const maxTotalBytes = opts.maxTotalBytes ?? SPACE_MAX_TOTAL_BYTES;
+  if (entries.length > maxEntries) return fail(`E_LIMIT: 条目数 ${entries.length} 超过上限 ${maxEntries}`);
+  const totalBytes = entries.reduce((n, e) => n + e.bytes.byteLength, 0);
+  if (totalBytes > maxTotalBytes) return fail(`E_LIMIT: 总大小 ${totalBytes} 字节超过上限 ${maxTotalBytes}`);
   const byPath = new Map<string, Uint8Array>();
   for (const e of entries) {
     const err = checkEntryPath(e.path);
@@ -254,6 +262,18 @@ export async function openSpacePackage(
       return fail(`E_TREE: database 节点 ${id} 缺 db 命名空间（§1.3）`);
     }
     documents.set(id, opened.pkg.docJson);
+  }
+
+  // ⑤b tree ↔ attachments 名字冲突：tree 权威 + warning（§9 补充权威口径）
+  for (const n of nodes.values()) {
+    for (const c of n.children) {
+      if (c.type !== "file") continue;
+      const att = attachments.find((a) => a.sha256 === c.sha256);
+      if (att && att.name !== c.name) {
+        warnings.push(`attachment-name-mismatch: ${c.sha256} tree=${c.name} attachments=${att.name}；以 tree 为准`);
+        att.name = c.name;
+      }
+    }
   }
 
   // ⑥ id_map 不信任（只提示）

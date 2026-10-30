@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **M2d 上限/名字冲突**：空间包读侧与导入命令都加 256 MiB/10000 条上限（可注入，超限 E_LIMIT，边界通过）；tree 与 attachments 名字冲突以 tree 为准并记 `attachment-name-mismatch` warning。UI 入口下一批。
 - **M2c 引用重写＋审计**：导入建 id_map（节点/附件），正文旧 id 与 `attachment://sha` 重写；`[[标题]]` 同名歧义进 warnings 不静默挑；`package.import` 写现有插件审计环（scope 带 spaceId/counts/warnings/source），失败不写。
 - **样例包夹具入库**：`scripts/make-package-fixtures.mjs` 生成 4 个真实包（3 `.shuyodoc`＋1 `.shuyospace`，sha256 固定）到 `src/lib/__fixtures__/package-fixtures/`；`packageFixtures.test.ts` 钉住清单 sha、重新生成逐字节相等、两套读侧可读回。
 - **包格式 M2c：`.shuyospace` 导入落库**（Rust 单命令事务）：新建空间、拓扑序建节点/内层文档、附件 sha 落盘去重、父子重映射；失败原子回滚（meta/库/附件目录全清）；前端胶水复用 `openSpacePackage` 并透传 warnings。判据 2 Rust + 1 前端。

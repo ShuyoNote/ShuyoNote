@@ -50,6 +50,24 @@ pub struct ImportResult {
 }
 
 const KINDS: &[&str] = &["page", "folder", "database"];
+/// §3 默认上限（与读侧同口径）：总 256 MiB / 条目 10000。
+pub(crate) const IMPORT_MAX_TOTAL_BYTES: usize = 256 * 1024 * 1024;
+pub(crate) const IMPORT_MAX_ENTRIES: usize = 10000;
+
+fn check_import_limits(payload: &ImportPayload, max_entries: usize, max_total: usize) -> Result<(), String> {
+    let entries = payload.nodes.len() + payload.files.len();
+    if entries > max_entries {
+        return Err(format!("E_LIMIT: 条目数 {entries} 超过上限 {max_entries}"));
+    }
+    let mut total = payload.files.iter().map(|f| f.bytes.len()).sum::<usize>();
+    for n in &payload.nodes {
+        total += n.doc_json.as_ref().map(|s| s.len()).unwrap_or(0);
+    }
+    if total > max_total {
+        return Err(format!("E_LIMIT: 总大小 {total} 字节超过上限 {max_total}"));
+    }
+    Ok(())
+}
 
 fn ext_of(name: &str) -> String {
     let base = name.rsplit('/').next().unwrap_or(name);
@@ -70,6 +88,7 @@ pub(crate) fn import_space_package_in(
     if payload.nodes.is_empty() {
         return Err("bad_args: package 没有节点".to_string());
     }
+    check_import_limits(payload, IMPORT_MAX_ENTRIES, IMPORT_MAX_TOTAL_BYTES)?;
     let mut seen = std::collections::HashSet::new();
     for n in &payload.nodes {
         if !KINDS.contains(&n.kind.as_str()) {
@@ -404,6 +423,20 @@ mod tests {
         let after = crate::plugins::plugin_audit(Some("app.package.import".to_string()), None).len();
         assert_eq!(before, after, "失败回滚时不许写审计");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+
+    #[test]
+    fn space_import_payload_limits() {
+        let p = payload();
+        // 条目数：nodes(3)+files(1)=4
+        assert!(check_import_limits(&p, 4, usize::MAX).is_ok(), "边界恰好通过");
+        assert!(check_import_limits(&p, 3, usize::MAX).expect_err("超条目").contains("E_LIMIT"));
+        let total = p.files.iter().map(|f| f.bytes.len()).sum::<usize>()
+            + p.nodes.iter().map(|n| n.doc_json.as_ref().map(|s| s.len()).unwrap_or(0)).sum::<usize>();
+        assert!(check_import_limits(&p, 4, total).is_ok(), "边界恰好通过");
+        let e = check_import_limits(&p, 4, total - 1).expect_err("超总量");
+        assert!(e.contains("E_LIMIT"), "{e}");
     }
 
 }
