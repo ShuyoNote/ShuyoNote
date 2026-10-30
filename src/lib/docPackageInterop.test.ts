@@ -170,7 +170,7 @@ describe("① 企业版 → 个人版：企业版生成的 .shuyodoc 必须能�
     }
     // 删掉 checksums ⇒ 完整性只剩 assets 文件名的 sha 自证；照样必须拒绝且点名
     const noChecksums = tampered.filter((e) => e.path !== "checksums.json");
-    const byAssetSha = await openDocumentPackage(noChecksums);
+    const byAssetSha = await openDocumentPackage(noChecksums, { allowUnverifiedChecksums: true });
     expect(byAssetSha.ok).toBe(false);
     if (!byAssetSha.ok) expect(byAssetSha.error).toContain("与 sha256 不符");
   });
@@ -274,7 +274,7 @@ describe("③ 向后兼容：旧个人包与不合法 manifest", () => {
       { path: "content.json", bytes: enc('{"root":{}}') },
       { path: `assets/${sha}.bin`, bytes: asset },
     ];
-    const r = await openDocumentPackage(entries);
+    const r = await openDocumentPackage(entries, { allowUnverifiedChecksums: true });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     // 缺省值：source/encrypted/content_type 有兼容默认；created_at/updated_at 回填旧字段
@@ -343,7 +343,7 @@ describe("③ 向后兼容：旧个人包与不合法 manifest", () => {
       { path: "content.json", bytes: enc('{"root":{}}') },
       { path: `assets/${sha}.bin`, bytes: asset },
     ];
-    const r = await openDocumentPackage(entries);
+    const r = await openDocumentPackage(entries, { allowUnverifiedChecksums: true });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain("拒绝夹带");
   });

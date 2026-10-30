@@ -32,6 +32,7 @@ import {
   buildManifest,
   checkEntryPath,
   checkSizeLimits,
+  checkWritePaths,
   sha256Hex,
   type DocManifest,
 } from "./docPackage";
@@ -61,7 +62,7 @@ export interface BuildDocumentPackageInput {
  * 写进 zip 的固定时间戳：1980-01-02 UTC（DOS 时间下界之后）。
  * 固定它 ⇒ **同一份输入写出逐字节相同的包**（checksums 可复现）；读端不看时间字段。
  */
-const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 2));
+const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
 
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 
@@ -190,5 +191,7 @@ export async function buildDocumentPackage(input: BuildDocumentPackageInput): Pr
   // ⑥ store（level 0）⇒ zip。企业版读端只认 store，容器层口径必须一致。
   const zippable: Record<string, Uint8Array> = {};
   for (const e of entries) zippable[e.path] = e.bytes;
+  const pathErr = checkWritePaths(entries);
+  if (pathErr) throw new Error(`buildDocumentPackage: ${pathErr}`);
   return zipSync(zippable, { level: 0, mtime: ZIP_EPOCH });
 }

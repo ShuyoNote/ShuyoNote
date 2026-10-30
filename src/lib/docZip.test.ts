@@ -140,11 +140,17 @@ describe("docZip：读 .shuyodoc 的 zip 字节", () => {
   });
 
   it("② 多条目（store）：真 zip 一路过 openDocumentPackage（不是假条目）", async () => {
-    const zip = buildZip([
-      { path: "manifest.json", bytes: enc(manifestJson()) },
-      { path: "content.json", bytes: enc(JSON.stringify({ root: { children: [] } })) },
-      { path: ASSET_PATH, bytes: enc("abc") },
-    ]);
+    const sumEntries = await (async () => {
+      const { buildChecksums } = await import("./docPackage");
+      const base = [
+        { path: "manifest.json", bytes: enc(manifestJson()) },
+        { path: "content.json", bytes: enc(JSON.stringify({ root: { children: [] } })) },
+        { path: ASSET_PATH, bytes: enc("abc") },
+      ];
+      const sums = await buildChecksums(base.map((e) => ({ path: e.path, bytes: new TextDecoder().decode(e.bytes) })));
+      return [...base, { path: "checksums.json", bytes: enc(JSON.stringify(sums)) }];
+    })();
+    const zip = buildZip(sumEntries);
     const opened = await openDocumentPackage(await unzipDocument(zip));
     expect(opened.ok).toBe(true);
     if (opened.ok) {
