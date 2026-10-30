@@ -4113,10 +4113,14 @@ fn cap_files_delete(
     _client_request_id: Option<&str>,
 ) -> CapResult {
     let space = write_target_space(space_id)?;
-    let (name, hash, _) = attachment_meta(att_id)?;
+    let (name, hash, _) = if space == target_space_id(None) {
+        attachment_meta(att_id)?
+    } else {
+        with_conn_for_space(Some(&space), |c| attachment_meta_in(c, att_id))?
+    };
     check_expected_sha(&hash, expected_sha)?;
     let needle = format!("attachment://{hash}");
-    let refs: Vec<String> = with_read_conn(|c| {
+    let refs: Vec<String> = with_conn_for_space(Some(&space), |c| {
         let mut stmt = c
             .prepare("SELECT id, title FROM pages WHERE deleted_at IS NULL")
             .map_err(|e| format!("db_error: {e}"))?;
@@ -4149,6 +4153,7 @@ fn cap_files_delete(
         serde_json::json!({
             "kind": "delete_attachment",
             "attId": att_id.trim(),
+            "spaceId": space,
             "expectedSha": hash,
             "spaceId": space,
         }),
@@ -5505,6 +5510,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
                         | "blocks.patch"
                         | "blocks.delete"
                         | "files.rename"
+                        | "files.delete"
                 ) {
                     return Err(format!(
                         "bad_args: {method} 暂不支持跨空间（v1 只支持 pages.create；目标空间 {space} 未写入）"
