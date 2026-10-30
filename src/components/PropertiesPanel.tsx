@@ -15,6 +15,7 @@ const TYPES = ["text", "number", "date", "datetime", "checkbox", "select", "mult
 const DRAG_MOVE_ENABLED = false;
 /** B1：系统字段只读（先含这三个内置项；不渲染 ✕/↑↓）。 */
 export const SYSTEM_FIELD_NAMES = ["存于", "创建", "更新"] as const;
+const COLLAPSE_THRESHOLD = 6;
 const TYPE_LABELS: Record<string, string> = {
   text: "文本",
   number: "数字",
@@ -80,6 +81,7 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
   // 属性区按 attr_defs.sort_order 顺序显示（listAttrDefs 已按该顺序返回）。
   const systemProps = nonTagProps.filter((p) => (SYSTEM_FIELD_NAMES as readonly string[]).includes(p.name));
   const userProps = nonTagProps.filter((p) => !(SYSTEM_FIELD_NAMES as readonly string[]).includes(p.name));
+  const tooManyUserProps = userProps.length > COLLAPSE_THRESHOLD;
   const orderedProps = useMemo(() => {
     const order = new Map(attrs.map((a, i) => [a.id, i]));
     return [...userProps].sort(
@@ -228,7 +230,7 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
       </button>
       </div>
       {open && (
-        <div className="properties-body">
+        <div className={tooManyUserProps ? "properties-body is-collapsed" : "properties-body"} data-user-props={userProps.length}>
           <div className="prop-tag-line">
             <TagRow pageId={pageId} />
             <button

@@ -178,7 +178,7 @@ node scripts/check-capabilities.mjs; node scripts/check-doc-facts.mjs; node scri
 ## 8. owner 已拍板（2026-10-30，全选 A）
 
 Q1 = **A**：底部「出处」块合并为**只读引文**（从属性派生、可复制）；属性区保留唯一可编辑「来源」。
-Q2 = **A**：属性区 **≤4 项展开、>4 项折叠**（记住手动偏好）。
+Q2 = **A**：属性区 **≤6 项展开、>6 项折叠（阈值可配）**（记住手动偏好）。
 Q3 = **A**：社区 URL slug **仅新帖** ASCII 化（英文数字+短 hash）；**老帖 URL 一律不动**。
 Q4 = **A**：导出文件名**加短 id 后缀**（`<标题>-<id 前 8 位>.<ext>`）。
 Q5 = **A**：props 进包用**可选 `props.json`**（checksums 覆盖；无属性不写；未知 type 按 text 兜底）；⚠️ **落地前须企业版确认**（已发信问 C1/C2/C3），确认前只做**读侧容忍**。

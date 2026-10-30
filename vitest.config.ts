@@ -7,7 +7,7 @@ export default defineConfig({
   test: {
     // CI 满载并发转译时偶发「测试文件收集失败」（status:failed、message 空）——限并发降负载，
     // 不改任何测试内容/不改 baseline。本地仍用默认（更快）。
-    ...(process.env.CI ? { maxWorkers: 4 } : {}),
+    ...(process.env.CI ? { maxWorkers: 2 } : {}),
     environment: "happy-dom",
     // `.test.tsx` 与 `.test.ts` 都收：组件测试历史上写成 `.ts` + `React.createElement`
     // （如 `communitySaveDialog.test.ts`），2026-09-20 起新写的组件测试用 `.tsx`

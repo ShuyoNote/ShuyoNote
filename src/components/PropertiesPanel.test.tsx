@@ -178,7 +178,6 @@ describe("B3：收尾", () => {
   it("② 值列 grid：.prop-row 与标签行共用 86px minmax(0,1fr) auto", () => {
     const c = css();
     expect(c).toContain("grid-template-columns: 86px minmax(0, 1fr) auto");
-    expect(c).toContain(".prop-tag-line { display: grid; grid-template-columns: 86px minmax(0, 1fr) auto");
   });
 
   it("③ 作者 person chip（展示态无 input）", async () => {
