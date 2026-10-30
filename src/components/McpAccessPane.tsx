@@ -1,12 +1,22 @@
-// MCP 接入面板（P1 改版 —— 「接入面板」六块）。
+// MCP 接入面板（P2 改版 —— 「跨空间支持矩阵」设计稿，2026-10-31）。
 //
-// ⚠️ 样式纪律：**只用设置页既有的那套类**（`set-section` / `set-section-title` / `set-row` /
-//   `set-row-text` / `set-row-name` / `set-row-sub` / `set-hint` / `set-status` / `set-btn` /
-//   `set-actions` / `ai-settings-tab*` ＋ `mcp-access-*` 既有类）。本版**没有新增 CSS**。
+// 结构（对应设计稿的五块）：
+//   ① 权限档位：六张**单选卡**（`role="radiogroup"` + `role="radio"`，风险标签、选中卡下方「当前允许」摘要）
+//   ② 能力：分类可展开（两列网格：工具名 ＋ 跨空间徽章）、筛选（全部 / 支持跨空间 / 不支持）、
+//      分类计数**必须自洽**（分类之和 === 注册表条数；没有域归属的显式进「其它」）
+//   ③ 状态：连接状态卡（监听地址／令牌指纹／最近一次外部调用／连接、刷新在卡头、快捷入口）
+//   ④ 审计：最近草稿 / 最近审计（原样两块，快捷入口滚动定位）
+//   ⑤ 隐藏空间：AI 不可见空间清单（原样）
+// 另：面板顶部分段导航（锚点滚动，⛔ 不新增浮层）；窄屏纵向堆叠。
 //
-// 六块：① 档位（六档；每档动态列"这一档能做什么"）② 状态卡（运行/端口/token 脱敏/复制配置）
-// ③ 能力清单（折叠，按域分组，条目来自注册表生成物，⛔ 不手写会漂的句子）
-// ④ 最近草稿 ⑤ 最近审计 ⑥ 边界提示。
+// ⚠️ 样式纪律（本版）：**不改 `src/App.css`** —— 新样式全部写在 `src/styles/mcp-panel.css`
+//   （使用既有 CSS 变量 `--text/--border/--hover/--surface/--card-bg/--accent/--warning/…`）。
+//   既有类（`set-section` / `set-row-sub` / `set-hint` / `set-btn` / `set-badge` /
+//   `mcp-access-token` / `mcp-access-snippet` / `ai-settings-tab`）继续复用（后者只作为测试/兼容钩子，
+//   视觉由新文件里的 `.mcp-level-card` 覆盖）。
+//
+// ⚠️ 数据纪律：能力清单、跨空间三态、`granted` 分组**全部由生成物/后端读数推导**，
+//   ⛔ 不在组件里写死"哪些工具支持跨空间"或"这一档能做什么"。
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { AI_TOOL_META } from "../lib/capabilities/aiTools.meta";
@@ -35,53 +45,57 @@ interface AuditRow {
   code: string | null;
 }
 
-const LEVELS: Array<[McpStatus["level"], string, string]> = [
-  ["off", "不接", "完全断开：既不读也不写；旧令牌同时失效。"],
-  ["read", "只读", "能看当前空间；不能改。"],
-  ["read_all", "只读（全部空间）", "能看所有空间；不能改。"],
-  ["write_confirm", "可写（每次确认）", "能改当前空间；每次先问你。"],
-  ["write_auto", "可写（免确认）", "能改当前空间；直接写入，但每一次写都会留一行审计。"],
-  [
-    "write_all",
-    "可写（全部空间）",
-    "能读并写所有空间（加密空间内容不可见）。⚠️ 仅在你信任外部 AI 时开启：开启后它能读到全部空间的内容。",
-  ],
-];
+// ═══════════════════════════════════════════════════════════════════════════════
+// 纯函数 / 纯数据（可单测；组件只负责渲染）
+// ═══════════════════════════════════════════════════════════════════════════════
 
-/** 能力清单的域分组（顺序即展示顺序）。每条能力只落一个域。 */
-const DOMAINS: Array<[string, (id: string, isWrite: boolean) => boolean]> = [
-  ["读页面", (id, w) => !w && /^(pages|search|tags|properties|backlinks|space|spaces)\./.test(id)],
-  ["写页面", (id, w) => w && /^(pages|templates|import|tags|properties)\./.test(id)],
-  ["块", (id) => /^blocks\./.test(id)],
-  ["结构", (id, w) => w && /^(folders|nodes|trash|spaces)\./.test(id)],
-  ["附件", (id) => /^(files|attachments|blobs)\./.test(id)],
-  ["数据库", (id) => /^db\./.test(id)],
-  ["导出", (id) => /^(export|coverage)\./.test(id)],
-  ["审计", (id) => /^(audit|drafts|versions|version)\./.test(id)],
-];
-
-function domainOf(id: string, isWrite: boolean): string {
-  for (const [name, hit] of DOMAINS) if (hit(id, isWrite)) return name;
-  return "其它";
+/** `granted` 权限串的分组（`read:*` / `write:*` / `export:*` / `*-all-spaces`；其余进 `other`）。 */
+export interface ScopeGroups {
+  read: string[];
+  write: string[];
+  export: string[];
+  allSpaces: string[];
+  /** 认不出的前缀（例如将来新增的 `kv:` / `audit:`）—— ⛔ 不许静默丢：进"其它"组显式渲染。 */
+  other: string[];
 }
 
 /**
- * 跨空间三态（能力清单徽章 ＋ 顶部统计行）。
+ * 把一串权限 id 分成四组（＋ 其它）。
  *
- * 读：`跨空间：支持（带 spaceId 读指定空间）`；写：`…支持（带 spaceId 写到指定空间，不是搬移）`；
- * 不支持：`跨空间：不支持（带 spaceId ⇒ bad_args）`。
- *
- * ⚠️ 三态**只从生成物那一行解析**（`capabilities/mcp-tools*.json` 的 `description`）——
- * ⛔ 不在组件里维护第二份"谁支持跨空间"的表：那份表一定会漂，而漂了不会报错。
- * 没有那一行的工具按"不支持"显示（灰）—— ⛔ 不猜成"支持"（对 agent 说有、实际会 bad_args 更糟）。
+ * 规则（顺序重要）：`*-all-spaces` 先判（否则 `read:all-spaces` 会被 `read:*` 吃掉），
+ * 再按 `read:` / `write:` / `export:` 前缀；其余进 `other`。
+ * 空数组 / `null` ⇒ 五组都是空数组（⛔ 不抛错 —— 面板在"通道还没起"时就是空）。
+ * 组内保序、去重（同一权限出现两次不会画两个 chip）。
  */
-type CrossSpace = "read" | "write" | "none";
+export function groupScopes(scopes: string[] | null | undefined): ScopeGroups {
+  const out: ScopeGroups = { read: [], write: [], export: [], allSpaces: [], other: [] };
+  const seen = new Set<string>();
+  for (const raw of scopes ?? []) {
+    const s = String(raw ?? "").trim();
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    if (s.endsWith("all-spaces")) out.allSpaces.push(s);
+    else if (s.startsWith("read:")) out.read.push(s);
+    else if (s.startsWith("write:")) out.write.push(s);
+    else if (s.startsWith("export:")) out.export.push(s);
+    else out.other.push(s);
+  }
+  return out;
+}
 
+/** 跨空间三态（能力清单徽章）。 */
+export type CrossSpace = "read" | "write" | "none";
+
+/**
+ * 从生成物那行统一文案解析三态：
+ * 读 `跨空间：支持（带 spaceId 读指定空间）`；写 `…支持（带 spaceId 写到指定空间，不是搬移）`；
+ * 不支持 `跨空间：不支持（带 spaceId ⇒ bad_args）`。
+ * 没有那一行 ⇒ `none`（⛔ 不猜成"支持"：对 agent 说有、实际会 bad_args 更糟）。
+ */
 function crossSpaceOf(description: string, isWrite: boolean): CrossSpace {
   const hit = /跨空间：\s*(支持|不支持)/.exec(description);
   if (!hit) return "none";
   if (hit[1] === "不支持") return "none";
-  // 支持那一档再看括号里说的是"读"还是"写"（比按面猜更贴描述本身）。
   if (description.includes("读指定空间")) return "read";
   if (description.includes("写到指定空间")) return "write";
   return isWrite ? "write" : "read";
@@ -100,6 +114,45 @@ const CROSS_SPACE_BADGE: Record<CrossSpace, { label: string; cls: string }> = {
   none: { label: "跨空间·不支持", cls: "set-badge" },
 };
 
+/** 档位风险标签（设计稿：关／低／中／高）。 */
+type Risk = "off" | "low" | "mid" | "high";
+const RISK_LABEL: Record<Risk, string> = { off: "关", low: "低", mid: "中", high: "高" };
+
+/** 六个档位（说明文案里的「既不读也不写 / 直接写入 / 每一次写都会留一行审计」是既有判据钉住的措辞）。 */
+const LEVELS: Array<{
+  id: McpStatus["level"];
+  label: string;
+  desc: string;
+  risk: Risk;
+}> = [
+  { id: "off", label: "不接", desc: "完全不对外监听（既不读也不写），任何客户端都连不上。", risk: "off" },
+  { id: "read", label: "只读", desc: "只读当前空间；不能写、不能导出文件句柄。", risk: "low" },
+  { id: "read_all", label: "只读（全部空间）", desc: "可读所有空间，包含你不在看的那些。", risk: "mid" },
+  { id: "write_confirm", label: "可写（每次确认）", desc: "每次写都先生成草稿，等你在应用里确认。", risk: "mid" },
+  { id: "write_auto", label: "可写（免确认）", desc: "直接写入（草稿自动应用），但每一次写都会留一行审计。", risk: "high" },
+  { id: "write_all", label: "可写（全部空间）", desc: "可读写所有空间；跨空间写需要 write:all-spaces。", risk: "high" },
+];
+
+/** 能力清单的域分组（顺序即展示顺序）。每条能力只落一个域；落不进的进「其它」（显式渲染）。 */
+const DOMAINS: Array<[string, (id: string, isWrite: boolean) => boolean]> = [
+  ["读页面", (id, w) => !w && /^(pages|search|tags|properties|backlinks|space|spaces)\./.test(id)],
+  ["写页面", (id, w) => w && /^(pages|templates|import|tags|properties)\./.test(id)],
+  ["块", (id) => /^blocks\./.test(id)],
+  ["结构 / 回收站", (id, w) => w && /^(folders|nodes|trash|spaces)\./.test(id)],
+  ["附件", (id) => /^(files|attachments|blobs)\./.test(id)],
+  ["数据库", (id) => /^db\./.test(id)],
+  ["导出", (id) => /^(export|coverage)\./.test(id)],
+  ["审计", (id) => /^(audit|drafts|versions|version)\./.test(id)],
+];
+
+/** 未归属任何域的能力桶（设计稿：显式渲染，⛔ 不再藏在"未渲染的其它"里导致合计对不上）。 */
+const CATCH_ALL = "其它";
+
+function domainOf(id: string, isWrite: boolean): string {
+  for (const [name, hit] of DOMAINS) if (hit(id, isWrite)) return name;
+  return CATCH_ALL;
+}
+
 /** 一句人话的中间态（"开着但没在听"必须说出来 —— 那通常是端口被占）。 */
 function stateLine(st: McpStatus): string {
   if (!st.enabled) return "已关闭（默认）";
@@ -109,16 +162,99 @@ function stateLine(st: McpStatus): string {
 
 const fmtTime = (ms: number) => new Date(ms).toLocaleTimeString("zh-CN", { hour12: false });
 
+/** 相对时间（状态卡里的「最近一次外部调用」）：只给粗粒度，⛔ 不假装精确。 */
+function relTime(ms: number, now: number = Date.now()): string {
+  const d = Math.max(0, now - ms);
+  const min = Math.floor(d / 60_000);
+  if (min < 1) return "刚刚";
+  if (min < 60) return `${min} 分钟前`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} 小时前`;
+  return `${Math.floor(h / 24)} 天前`;
+}
+
+/**
+ * 「当前允许」摘要 —— 由**后端读数**推导（⛔ 不按档位写死句子）：
+ *   · 通道关着（`level=off`）⇒ 一律"不读/不写/不导出"（哪怕 granted 里还留着旧串）；
+ *   · 其它档：读/写看 `granted` 里有没有对应前缀，`*-all-spaces` 决定"当前空间 / 全部空间"；
+ *   · 导出看 `export:*`；令牌指纹取**令牌末 4 位**（面板从不回显完整令牌，除非点「显示」）。
+ *
+ * 唯一一条**不来自读数**的是"加密空间内容不可见（未解锁）"—— 那是产品不变式（E2EE），
+ * 面板把它作为**不变式**展示（`data-invariant="encrypted-spaces"`），不与读数混为一谈。
+ */
+function allowanceOf(
+  level: McpStatus["level"],
+  granted: string[],
+  token: string,
+): { read: string; write: string; export: string; encrypted: string; token: string } {
+  const g = groupScopes(granted);
+  const off = level === "off";
+  const hasRead = g.read.length > 0 || g.allSpaces.some((s) => s.startsWith("read:"));
+  const hasWrite =
+    g.write.length > 0 || g.allSpaces.some((s) => s.startsWith("write:")) || granted.includes("write:pages");
+  const readAll = g.allSpaces.some((s) => s.startsWith("read:"));
+  const writeAll = g.allSpaces.some((s) => s.startsWith("write:"));
+  return {
+    read: off || !hasRead ? "不读" : readAll ? "读全部空间" : "读当前空间",
+    write: off || !hasWrite ? "不写" : writeAll ? "写全部空间" : "写当前空间",
+    export: !off && g.export.length > 0 ? "导出文件句柄" : "不导出",
+    encrypted: "加密空间内容不可见（未解锁）",
+    token: token ? `令牌：…${token.slice(-4)}` : "令牌：（无）",
+  };
+}
+
+/** 掩码形态：24 个圆点 ＋ 末 4 位（末 4 位是**指纹**，设计稿要求看得出是哪一枚）。 */
+function maskToken(token: string): string {
+  return `${"•".repeat(24)}${token.slice(-4)}`;
+}
+
+/** 面板顶部的分段导航（锚点到下面各区块，⛔ 不新增浮层）。 */
+const NAV: Array<[string, string]> = [
+  ["权限", "mcp-sec-levels"],
+  ["能力", "mcp-sec-caps"],
+  ["状态", "mcp-sec-status"],
+  ["审计", "mcp-sec-audit"],
+  ["AI 隐藏空间", "mcp-sec-hidden"],
+];
+
+/**
+ * 「接入外部 AI」引导里的客户端选择（设计稿 v3）：切换只改**配置文件路径那一行**，
+ * 配置片段本身相同（同一段 `mcpServers.shuyonote`）。
+ * ⚠️ 这里的路径是**各客户端自己的约定**（不是本产品的事实，也不是 Tauri 后端读数）——
+ * 面板只给"该粘到哪个文件"的提示，⛔ 不写死本机路径、也不假装能替用户写那个文件。
+ */
+type ClientKind = "claude" | "cursor" | "other";
+const CLIENTS: Array<{ id: ClientKind; label: string; configPath: string }> = [
+  {
+    id: "claude",
+    label: "Claude Desktop",
+    configPath: "%APPDATA%\\Claude\\claude_desktop_config.json",
+  },
+  { id: "cursor", label: "Cursor", configPath: "~/.cursor/mcp.json" },
+  {
+    id: "other",
+    label: "其他 MCP 客户端",
+    configPath: "（按客户端文档：把这段 mcpServers 粘进它的配置文件）",
+  },
+];
+
 export function McpAccessPane() {
   const [st, setSt] = useState<McpStatus | null>(null);
   const [drafts, setDrafts] = useState<DraftRow[]>([]);
   const [audit, setAudit] = useState<AuditRow[]>([]);
+  const [lastCall, setLastCall] = useState<AuditRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [spaces, setSpaces] = useState<Array<{ id: string; name: string }>>([]);
   const [hidden, setHidden] = useState<string[]>([]);
   const [hiddenSaving, setHiddenSaving] = useState(false);
+  const [capFilter, setCapFilter] = useState<"all" | "support" | "none">("all");
+  // 展开的分类（默认第一类展开；**内容始终留在 DOM 里**，用 CSS 折叠 —— 这样能力清单的
+  // 机器读数（`[data-cap-id]` 条数）不受展开状态影响，判据才不会因为"用户点了折叠"而漂）。
+  const [openCats, setOpenCats] = useState<string[]>([DOMAINS[0][0]]);
+  // 「接入外部 AI」引导：选哪个客户端（只影响"配置文件路径"那一行；片段本身相同）
+  const [client, setClient] = useState<ClientKind>("claude");
 
   const refresh = useCallback(async () => {
     try {
@@ -127,7 +263,7 @@ export function McpAccessPane() {
     } catch (e) {
       setErr(String(e));
     }
-    // 草稿/审计是面板的旁路读数：拿不到就空着（⛔ 不因此挡住档位/令牌操作）
+    // 草稿/审计/最近一次调用是面板的旁路读数：拿不到就空着（⛔ 不因此挡住档位/令牌操作）
     await Promise.all([
       api
         .mcpRecentDrafts(5)
@@ -137,6 +273,11 @@ export function McpAccessPane() {
         .mcpRecentAudit(20, true)
         .then((r) => setAudit((r as AuditRow[]) ?? []))
         .catch(() => setAudit([])),
+      // 「最近一次外部调用」用**不限写**的那一条读数（审计列表本身只看写，别拿它冒充"最近一次调用"）
+      api
+        .mcpRecentAudit(1)
+        .then((r) => setLastCall(((r as AuditRow[]) ?? [])[0] ?? null))
+        .catch(() => setLastCall(null)),
     ]);
   }, []);
 
@@ -164,7 +305,7 @@ export function McpAccessPane() {
     setBusy(true);
     try {
       setSt(await api.mcpSetLevel(next));
-      const label = LEVELS.find(([id]) => id === next)?.[1] ?? next;
+      const label = LEVELS.find((l) => l.id === next)?.label ?? next;
       toast(`权限已切到「${label}」——旧令牌同时失效`, "success");
     } catch (e) {
       setErr(String(e));
@@ -208,6 +349,11 @@ export function McpAccessPane() {
     }
   };
 
+  // ⭐ 快捷入口：锚点滚动到下面各区块（⛔ 不新增浮层）
+  const jumpTo = (id: string) => {
+    document.getElementById(id)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  };
+
   // 当前档「能做什么」：**按注册表 ai:true 过滤**，⛔ 不手写能力句子（会漂）。
   const readOk = granted.some((s) => s.startsWith("read:"));
   const writeOk = granted.some((s) => s === "write:pages" || s === "write:all-spaces");
@@ -215,31 +361,46 @@ export function McpAccessPane() {
     () => AI_TOOL_META.filter((c) => (c.isWrite ? writeOk : readOk)),
     [readOk, writeOk],
   );
-  const groupCounts = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const c of visibleCaps) {
-      const d = domainOf(c.id, c.isWrite);
-      m.set(d, (m.get(d) ?? 0) + 1);
-    }
-    return m;
-  }, [visibleCaps]);
+  const visibleRead = visibleCaps.filter((c) => !c.isWrite).length;
+  const visibleWrite = visibleCaps.length - visibleRead;
+
+  // 能力清单：**注册表全量**（按域分类）＋ 跨空间三态 ＋ 一句简介
   const capRows = useMemo(
     () =>
       AI_TOOL_META.map((c) => ({
         id: c.id,
-        domain: domainOf(c.id, c.isWrite),
+        category: domainOf(c.id, c.isWrite),
         isWrite: c.isWrite,
         crossSpace: CROSS_SPACE_META.get(c.id) ?? ("none" as CrossSpace),
         brief: (c.description.split("。")[0] ?? c.description).replace(/\*\*|✓|✗|⛔/g, ""),
       })),
-    [visibleCaps],
+    [],
   );
-  // 顶部统计行：三态各多少 —— **从上面那张表算**（⛔ 不写死数字）。
+  // 顶部统计行：三态各多少 —— **从上面那张表算**（⛔ 不写死数字）
   const crossSpaceCounts = useMemo(() => {
     const out: Record<CrossSpace, number> = { read: 0, write: 0, none: 0 };
     for (const row of capRows) out[row.crossSpace] += 1;
     return out;
   }, [capRows]);
+  const supportCount = crossSpaceCounts.read + crossSpaceCounts.write;
+
+  // 分类（顺序 = DOMAINS 顺序 ＋ 「其它」显式一行）：计数**全部由 capRows 算**
+  const categories = useMemo(() => {
+    const names = [...DOMAINS.map(([name]) => name), CATCH_ALL];
+    return names.map((name) => ({
+      name,
+      items: capRows.filter((r) => r.category === name),
+    }));
+  }, [capRows]);
+  // 计数自洽断言的数据面：分类之和必须 === 注册表条数（渲染用；测试另有独立断言）
+  const categorySum = categories.reduce((n, c) => n + c.items.length, 0);
+
+  const capShown = (crossSpace: CrossSpace) =>
+    capFilter === "all" ? true : capFilter === "support" ? crossSpace !== "none" : crossSpace === "none";
+
+  // granted 分组 chips（设计稿第二块：现在是一整串 read:pagesread:files…，不可读）
+  const scopeGroups = useMemo(() => groupScopes(granted), [granted]);
+  const allow = useMemo(() => allowanceOf(level, granted, token), [level, granted, token]);
 
   const snippet = useMemo(() => {
     const bridge = st?.bridge_path ?? "";
@@ -261,179 +422,407 @@ export function McpAccessPane() {
     );
   }, [st?.bridge_path, st?.port_path, st?.token_path]);
 
+  const scopeRows: Array<[string, string[]]> = [
+    ["读", scopeGroups.read],
+    ["写", scopeGroups.write],
+    ["全部空间", scopeGroups.allSpaces],
+    ["导出", scopeGroups.export],
+    ...(scopeGroups.other.length ? [["其它", scopeGroups.other] as [string, string[]]] : []),
+  ];
+
   return (
-    <div className="mcp-access">
-      {/* ① 档位 */}
-      <section className="set-section">
-        <div className="set-section-title">外部 AI 权限</div>
-        <div className="set-row">
-          <div className="set-row-text">
-            <div className="set-row-name">当前权限</div>
-            <div className="set-row-sub">{LEVELS.find(([id]) => id === level)?.[2] ?? ""}</div>
+    <div className="mcp-access mcp-panel">
+      {/* 顶栏：分段导航（锚点滚动；窄屏换行不横向溢出）＋ 状态 chip ＋「如何接入」 */}
+      <div className="mcp-topbar">
+        <nav className="mcp-nav" aria-label="MCP 接入面板分区">
+          {NAV.map(([label, id]) => (
+            <a key={id} className="mcp-nav-link" href={`#${id}`} data-nav={id}>
+              {label}
+            </a>
+          ))}
+        </nav>
+        <div className="mcp-topbar-right">
+          <span
+            className={`mcp-status-chip${st?.running ? " is-on" : ""}`}
+            data-testid="mcp-top-status"
+          >
+            <span className="mcp-access-dot" aria-hidden="true" />
+            {!st ? "读取中…" : st.running ? "已打开 · 正在听" : st.enabled ? "开关开着 · 未监听" : "已关闭（默认）"}
+          </span>
+          <button className="set-btn" data-testid="mcp-howto" onClick={() => jumpTo("mcp-sec-onboard")}>
+            ⤵ 如何接入
+          </button>
+        </div>
+      </div>
+
+      {/* ⭐ 首屏接入引导（设计稿 v3）：三步选客户端 → 复制配置 → 粘贴并重启。
+          配置片段与令牌**只在这里出现一次**（状态区不再重复）。 */}
+      <section className="set-section mcp-onboard" id="mcp-sec-onboard" data-testid="mcp-onboard">
+        <div className="set-section-title">
+          接入外部 AI
+          <span className="mcp-title-hint">三步：选客户端 → 复制配置 → 粘贴并重启</span>
+        </div>
+        <p className="set-hint">
+          配置里的 command / args / env 已经按这台机器自动填好；令牌只在本机文件里，不会出现在配置片段里。
+        </p>
+        {level === "off" ? (
+          <p className="mcp-onboard-tip" data-testid="mcp-onboard-tip">
+            先选一档权限，再按下面三步接入。
+          </p>
+        ) : null}
+        <div className="mcp-onboard-grid">
+          <ol className="mcp-onboard-steps">
+            <li data-step="1" className="mcp-step">
+              <span className="mcp-step-no" aria-hidden="true">
+                1
+              </span>
+              <div className="mcp-step-body">
+                <div className="mcp-step-title">选择你的 AI 客户端</div>
+                <div className="mcp-onboard-chips" role="group" aria-label="选择 AI 客户端">
+                  {CLIENTS.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      data-client={c.id}
+                      aria-pressed={client === c.id}
+                      className={`mcp-client-chip${client === c.id ? " is-on" : ""}`}
+                      onClick={() => setClient(c.id)}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mcp-step-path">
+                  配置文件{" "}
+                  <code data-testid="mcp-config-path">
+                    {(CLIENTS.find((c) => c.id === client) ?? CLIENTS[0]).configPath}
+                  </code>
+                </div>
+              </div>
+            </li>
+            <li data-step="2" className="mcp-step">
+              <span className="mcp-step-no" aria-hidden="true">
+                2
+              </span>
+              <div className="mcp-step-body">
+                <div className="mcp-step-title">复制右边的配置片段</div>
+                <div className="mcp-step-desc">
+                  粘贴到配置文件的 <code>mcpServers</code> 里（已存在就合并，别整段覆盖）。
+                </div>
+              </div>
+            </li>
+            <li data-step="3" className="mcp-step">
+              <span className="mcp-step-no" aria-hidden="true">
+                3
+              </span>
+              <div className="mcp-step-body">
+                <div className="mcp-step-title">重启客户端，然后点「检测连接」</div>
+                <div className="mcp-step-desc">这里会显示最近一次外部调用与连接数。</div>
+                <div className="mcp-step-readings">
+                  <span>最近一次外部调用：{lastCall ? `${relTime(lastCall.at)} · ${lastCall.tool}` : "（还没有）"}</span>
+                  <span>
+                    连接：{st?.enabled ? "本机回环（客户端连接数未采集）" : "（通道关闭）"}
+                  </span>
+                </div>
+                <button
+                  className="set-btn"
+                  data-testid="mcp-detect"
+                  disabled={busy || !st}
+                  onClick={() => {
+                    void refresh();
+                    toast("已刷新连接读数", "success");
+                  }}
+                >
+                  检测连接
+                </button>
+              </div>
+            </li>
+          </ol>
+
+          {/* 右侧：配置片段 ＋ 令牌（复制/显示/换新只在**这里**出现一次） */}
+          <div className="mcp-config-card" data-testid="mcp-config-card">
+            <div className="mcp-config-head">
+              <span>配置片段</span>
+              <button
+                className="set-btn is-primary"
+                data-testid="copy-config"
+                disabled={!st}
+                onClick={() => void copy(snippet, "配置片段")}
+              >
+                复制配置
+              </button>
+            </div>
+            <pre className="mcp-access-snippet" data-testid="mcp-snippet">
+              {snippet}
+            </pre>
+            <div className="mcp-config-token">
+              <span className="mcp-token-label">令牌</span>
+              <span className={`mcp-access-token${emptyToken ? " is-empty" : ""}`}>
+                <code
+                  className="mcp-access-token-text"
+                  data-testid="mcp-token"
+                  data-fingerprint={token ? token.slice(-4) : ""}
+                >
+                  {!token ? "（还没有 —— 打开开关时会自动生成）" : showToken ? token : maskToken(token)}
+                </code>
+              </span>
+              <button className="set-btn" data-testid="copy-token" disabled={!token} onClick={() => void copy(token, "令牌")}>
+                复制令牌
+              </button>
+              <button className="set-btn" disabled={!token} onClick={() => setShowToken((v) => !v)}>
+                {showToken ? "隐藏" : "显示"}
+              </button>
+              <button className="set-btn" disabled={busy || !st} onClick={() => void rotate()}>
+                换一枚新令牌
+              </button>
+            </div>
           </div>
         </div>
-        <div className="ai-settings-tabs" role="tablist" aria-label="外部 AI 权限">
-          {LEVELS.map(([id, label]) => (
+      </section>
+
+      {/* ① 权限档位：六张单选卡 */}
+      <section className="set-section" id="mcp-sec-levels">
+        <div className="set-section-title">
+          权限档位
+          <span className="mcp-title-hint">选中即生效：切换会换新令牌，旧令牌立即失效</span>
+        </div>
+        <p className="set-hint">
+          档位决定外部 AI 能对哪些空间做什么。加密空间的内容对 AI 永远不可见（需要口令解锁后才可读）。
+        </p>
+        <div className="mcp-levels-grid" role="radiogroup" aria-label="外部 AI 权限档位" data-testid="mcp-levels">
+          {LEVELS.map((l) => {
+            const on = level === l.id;
+            return (
+              <button
+                key={l.id}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                aria-label={l.label}
+                data-level={l.id}
+                data-risk={l.risk}
+                className={`mcp-level-card ai-settings-tab${on ? " is-on" : ""}`}
+                disabled={busy || !st}
+                onClick={() => void setLevel(l.id)}
+              >
+                <span className="mcp-level-head">
+                  <span className={`mcp-radio${on ? " is-on" : ""}`} aria-hidden="true" />
+                  <span className="mcp-level-title">{l.label}</span>
+                  <span className={`mcp-risk mcp-risk-${l.risk}`} data-risk-label={l.risk}>
+                    {RISK_LABEL[l.risk]}
+                  </span>
+                </span>
+                <span className="mcp-level-desc">{l.desc}</span>
+              </button>
+            );
+          })}
+        </div>
+        {/* 选中卡下方的「当前允许」摘要（全部由后端读数推导） */}
+        <div className="mcp-allow-row" data-testid="mcp-allow-summary">
+          <b>当前允许：</b>
+          <span data-allow="read">{allow.read}</span> · <span data-allow="write">{allow.write}</span> ·{" "}
+          <span data-allow="export">{allow.export}</span> ·{" "}
+          <span className="mcp-invariant" data-invariant="encrypted-spaces">
+            {allow.encrypted}
+          </span>{" "}
+          · <span data-allow="token">{allow.token}</span>
+        </div>
+      </section>
+
+      {/* ② 能力：分类可展开 ＋ 筛选 ＋ 跨空间徽章 */}
+      <section className="set-section" id="mcp-sec-caps">
+        <div className="set-section-title">它能做什么</div>
+        <p className="set-hint" data-testid="mcp-cap-summary">
+          按能力注册表实时算：清单 {AI_TOOL_META.length} 项 = 读 {capRows.filter((c) => !c.isWrite).length} + 写{" "}
+          {capRows.filter((c) => c.isWrite).length}；这一档可见 {visibleCaps.length} 项（读 {visibleRead} + 写{" "}
+          {visibleWrite}）。分类计数之和必须等于清单条数。
+        </p>
+        {/* 顶部统计行（既有判据钉住的元素与文案：三态计数） */}
+        <div
+          className="set-hint"
+          data-testid="mcp-crossspace-stats"
+          data-read={crossSpaceCounts.read}
+          data-write={crossSpaceCounts.write}
+          data-none={crossSpaceCounts.none}
+        >
+          跨空间：读 {crossSpaceCounts.read} · 写 {crossSpaceCounts.write} · 不支持 {crossSpaceCounts.none}
+        </div>
+        {/* 筛选：全部 / 支持跨空间 / 不支持（数字从数据算） */}
+        <div className="mcp-cap-filter" role="group" aria-label="按跨空间支持筛选">
+          <span className="mcp-cap-total">共 {capRows.length} 项</span>
+          {(
+            [
+              ["all", `全部`],
+              ["support", `支持跨空间 ${supportCount}`],
+              ["none", `不支持 ${crossSpaceCounts.none}`],
+            ] as const
+          ).map(([key, label]) => (
             <button
-              key={id}
+              key={key}
               type="button"
-              role="tab"
-              aria-selected={level === id}
-              aria-label={label}
-              data-level={id}
-              className={`ai-settings-tab${level === id ? " is-on" : ""}`}
-              disabled={busy || !st}
-              onClick={() => void setLevel(id)}
+              data-filter={key}
+              aria-pressed={capFilter === key}
+              className={`mcp-filter-btn${capFilter === key ? " is-on" : ""}`}
+              onClick={() => setCapFilter(key)}
             >
               {label}
             </button>
           ))}
         </div>
-        <div className="set-hint">切换档位会换新令牌，旧令牌立即失效。</div>
-
-        <details className="set-row" open>
-          <summary className="set-row-sub">
-            它能做什么（这一档，按能力注册表实时算，共 {visibleCaps.length} 项）
-          </summary>
-          {DOMAINS.map(([name]) => {
-            const n = groupCounts.get(name) ?? 0;
-            return (
-              <div key={name} className="set-hint" data-domain={name} data-count={n}>
-                {name}：{n} 项
+        {categories.map((cat) => {
+          const shown = cat.items.filter((i) => capShown(i.crossSpace));
+          if (shown.length === 0) return null;
+          const isCatchAll = cat.name === CATCH_ALL;
+          const isOpen = openCats.includes(cat.name);
+          const toggle = () =>
+            setOpenCats((prev) => (prev.includes(cat.name) ? prev.filter((x) => x !== cat.name) : [...prev, cat.name]));
+          return (
+            <div
+              key={cat.name}
+              className="mcp-cap-category"
+              data-open={isOpen}
+              {...(isCatchAll
+                ? { "data-domain-catchall": CATCH_ALL }
+                : { "data-domain": cat.name })}
+              data-count={cat.items.length}
+              data-shown={shown.length}
+            >
+              <button
+                type="button"
+                className="mcp-cap-cat-head"
+                aria-expanded={isOpen}
+                data-cat={cat.name}
+                onClick={toggle}
+              >
+                <span className="mcp-caret" aria-hidden="true">
+                  {isOpen ? "▾" : "▸"}
+                </span>
+                <span className="mcp-cap-cat-name">{cat.name}</span>
+                {isCatchAll && (
+                  <span className="mcp-cap-cat-note">
+                    这 {cat.items.length} 项没有域归属，显式列出以保证计数自洽
+                  </span>
+                )}
+                <span className="mcp-cap-cat-count" data-count-label={cat.items.length}>
+                  {cat.items.length}
+                </span>
+              </button>
+              <div className="mcp-cap-grid">
+                {shown.map((c) => {
+                  const badge = CROSS_SPACE_BADGE[c.crossSpace];
+                  return (
+                    <div key={c.id} className="mcp-cap-item" data-cap-id={c.id}>
+                      <code className="mcp-cap-name">{c.id}</code>
+                      <span className="mcp-cap-item-tail">
+                        <span className="mcp-cap-brief">{c.brief}</span>
+                        <span className={badge.cls} data-crossspace={c.crossSpace}>
+                          {badge.label}
+                        </span>
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
-        </details>
+            </div>
+          );
+        })}
+        {/* 计数自洽的机器可读读数（数据面；测试用它断言 sum === 注册表条数） */}
+        <div className="set-hint" data-testid="mcp-cap-category-sum" data-sum={categorySum}>
+          分类计数之和：{categorySum} / 清单 {AI_TOOL_META.length}
+        </div>
       </section>
 
-      {/* ② 状态卡 */}
-      <section className="set-section">
-        <div className="set-section-title">现在是什么状态</div>
-        <div className="set-row">
-          <div className="set-row-text">
-            <div className="set-row-name mcp-access-state">
-              <span className={`mcp-access-dot${st?.enabled ? " is-on" : ""}`} aria-hidden="true" />
-              {st ? stateLine(st) : "读取中…"}
-            </div>
-            {err && <div className="set-row-sub mcp-access-err">读/改状态失败：{err}</div>}
-            <div className="set-row-sub">
-              granted：
-              {granted.length === 0
-                ? "（无）"
-                : granted.map((s) => (
-                    <span key={s} className="mcp-access-badge" data-granted={s}>
-                      {s}
-                    </span>
-                  ))}
-            </div>
-          </div>
-          <button className="set-btn" disabled={busy || !st} onClick={() => void refresh()}>
+      {/* ③ 连接状态卡 */}
+      <section className="set-section" id="mcp-sec-status">
+        <div className="mcp-status-head">
+          <div className="set-section-title">现在是什么状态</div>
+          <button className="set-btn" data-testid="mcp-refresh" disabled={busy || !st} onClick={() => void refresh()}>
             刷新
           </button>
         </div>
-        <div className={`mcp-access-token${emptyToken ? " is-empty" : ""}`}>
-          <code className="mcp-access-token-text" data-testid="mcp-token">
-            {!token
-              ? "（还没有 —— 打开开关时会自动生成）"
-              : showToken
-                ? token
-                : "••••••••••••••••••••••••"}
-          </code>
-        </div>
-        <div className="set-actions">
-          <button className="set-btn" disabled={!token} onClick={() => void copy(token, "令牌")}>
-            复制令牌
-          </button>
-          <button className="set-btn" disabled={!token} onClick={() => setShowToken((v) => !v)}>
-            {showToken ? "隐藏" : "显示"}
-          </button>
-          <button className="set-btn" disabled={busy || !st} onClick={() => void rotate()}>
-            换一枚新令牌
-          </button>
-        </div>
-        <p className="set-hint">
-          桥的路径会自动填好；客户端配置里的端口会随重启变化；切档后请重启 AI 客户端（令牌同时换新）。
-        </p>
-        <pre className="mcp-access-snippet" data-testid="mcp-snippet">
-          {snippet}
-        </pre>
-        <div className="set-actions">
-          <button className="set-btn is-primary" data-testid="copy-config" disabled={!st} onClick={() => void copy(snippet, "配置片段")}>
-            复制配置（客户端）
-          </button>
-        </div>
-      </section>
-
-      {/* ③ 能力清单 */}
-      <section className="set-section">
-        <details>
-          <summary className="set-section-title">能力清单（{AI_TOOL_META.length} 项，按域分组）</summary>
-          {/* 顶部统计行：跨空间支持矩阵（数字由上面那张表算，⛔ 不硬编码） */}
-          <div
-            className="set-hint"
-            data-testid="mcp-crossspace-stats"
-            data-read={crossSpaceCounts.read}
-            data-write={crossSpaceCounts.write}
-            data-none={crossSpaceCounts.none}
-          >
-            跨空间：读 {crossSpaceCounts.read} · 写 {crossSpaceCounts.write} · 不支持{" "}
-            {crossSpaceCounts.none}
+        <div className="mcp-stat-card" data-testid="mcp-stat-card">
+          <div className="mcp-stat-grid">
+            <div className="mcp-stat-cell">
+              <div className="mcp-stat-label">监听地址</div>
+              <div className="mcp-stat-value mcp-stat-addr">
+                <code data-testid="mcp-listen-addr">
+                  {st?.running ? `127.0.0.1:${st.port ?? "?"}` : "（未监听）"}
+                </code>
+                <button
+                  className="set-btn"
+                  data-testid="copy-listen"
+                  disabled={!st?.running}
+                  onClick={() => void copy(`127.0.0.1:${st?.port ?? ""}`, "监听地址")}
+                >
+                  复制
+                </button>
+              </div>
+            </div>
+            <div className="mcp-stat-cell">
+              <div className="mcp-stat-label">最近一次外部调用</div>
+              <div className="mcp-stat-value" data-testid="mcp-last-call">
+                {lastCall ? `${relTime(lastCall.at)} · ${lastCall.tool}` : "（还没有外部调用记录）"}
+              </div>
+            </div>
+            <div className="mcp-stat-cell">
+              <div className="mcp-stat-label">连接</div>
+              <div className="mcp-stat-value" data-testid="mcp-connections">
+                {st?.enabled ? "本机回环（客户端连接数未采集）" : "（通道关闭）"}
+              </div>
+            </div>
           </div>
-          <ul>
-            {capRows.map((c) => {
-              const badge = CROSS_SPACE_BADGE[c.crossSpace];
-              return (
-                <li key={c.id} className="set-row-sub" data-cap-id={c.id}>
-                  <b>{c.domain}</b> · <code>{c.id}</code>
-                  {c.isWrite ? "（写）" : "（读）"}{" "}
-                  <span className={badge.cls} data-crossspace={c.crossSpace}>
-                    {badge.label}
-                  </span>{" "}
-                  — {c.brief}
-                </li>
-              );
-            })}
-          </ul>
-        </details>
-      </section>
-
-      {/* ⑦ AI 不可见空间清单 */}
-      <section className="set-section">
-        <div className="set-section-title">AI 不可见空间</div>
-        <p className="set-hint">勾选后 AI 既不能读也不能写该空间；你自己不受影响。隐藏 ≠ 加密。</p>
-        <p className="set-hint">清单只保存在本机（不随设备同步）；换机后需要重配。</p>
-        {level === "off" ? (
-          <p className="set-hint">（先选一个外部接入档位才能编辑）</p>
-        ) : null}
-        <ul data-testid="mcp-hidden-spaces">
-          {spaces.length === 0 ? (
-            <li className="set-hint">（未隐藏任何空间）</li>
-          ) : (
-            spaces.map((s) => (
-              <li key={s.id} className="set-row-sub">
-                <label>
-                  <input
-                    type="checkbox"
-                    aria-label={`隐藏空间 ${s.name}`}
-                    checked={hidden.includes(s.id)}
-                    disabled={level === "off" || hiddenSaving}
-                    onChange={(e) => setHidden(e.target.checked ? [...hidden, s.id] : hidden.filter((x) => x !== s.id))}
-                  />{' '}
-                  {s.name}
-                  <code> {s.id}</code>
-                </label>
-              </li>
-            ))
-          )}
-        </ul>
-        <div className="set-actions">
-          <button className="set-btn" data-testid="mcp-hidden-save" disabled={level === "off" || hiddenSaving} onClick={() => void saveHidden()}>
-            保存清单
+          <div className="mcp-stat-state">
+            <span className={`mcp-access-dot${st?.enabled ? " is-on" : ""}`} aria-hidden="true" />
+            <span className="mcp-access-state">{st ? stateLine(st) : "读取中…"}</span>
+            {err && <span className="set-row-sub mcp-access-err">读/改状态失败：{err}</span>}
+            {st?.env_override && <span className="set-row-sub">（这次是被环境变量打开的）</span>}
+          </div>
+        </div>
+        {/* 快捷入口（锚点滚动到下面各区块；⛔ 不新增浮层） */}
+        <div className="mcp-shortcuts">
+          <button className="set-btn" data-shortcut="drafts" onClick={() => jumpTo("mcp-sec-drafts")}>
+            最近草稿
+          </button>
+          <button className="set-btn" data-shortcut="audit" onClick={() => jumpTo("mcp-sec-audit")}>
+            最近审计
+          </button>
+          <button className="set-btn" data-shortcut="hidden" onClick={() => jumpTo("mcp-sec-hidden")}>
+            AI 隐藏空间（{hidden.length}）
+          </button>
+          <button className="set-btn" data-shortcut="onboard" onClick={() => jumpTo("mcp-sec-onboard")}>
+            客户端配置说明
           </button>
         </div>
+        {/* granted 权限串 → 分组 chips（以前是一整串 read:pagesread:files…） */}
+        <div className="mcp-scope-rows" data-testid="mcp-scope-chips">
+          {scopeRows.map(([label, items]) => (
+            <div key={label} className="mcp-scope-row" data-scope-group={label}>
+              <span className="mcp-scope-label">{label}</span>
+              <span className="mcp-scope-chips">
+                {items.length === 0 ? (
+                  <span className="mcp-scope-empty">（无）</span>
+                ) : (
+                  items.map((s) => (
+                    <span
+                      key={s}
+                      className={`mcp-chip${label === "全部空间" ? " is-all" : ""}`}
+                      data-granted={s}
+                    >
+                      {s}
+                    </span>
+                  ))
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+        <p className="mcp-write-warning" data-testid="mcp-write-warning">
+          写操作都是「草稿中介」：外部 AI 产生的修改先落草稿，只有你在应用里点「应用」才真正写库；每条写都留一行审计。关掉或换档会立刻吊销令牌 —— 已连上的外部 AI 会在下一次调用时被拒。
+        </p>
       </section>
-      {/* ④ 草稿 */}
-      <section className="set-section">
+
+      {/* ④ 最近草稿 */}
+      <section className="set-section" id="mcp-sec-drafts">
         <div className="set-section-title">最近草稿（5 条）</div>
         <ul data-testid="mcp-drafts">
           {drafts.length === 0 ? (
@@ -448,8 +837,8 @@ export function McpAccessPane() {
         </ul>
       </section>
 
-      {/* ⑤ 审计 */}
-      <section className="set-section">
+      {/* ⑤ 最近审计 */}
+      <section className="set-section" id="mcp-sec-audit">
         <div className="set-section-title">最近审计（20 条）</div>
         <ul data-testid="mcp-audit">
           {audit.length === 0 ? (
@@ -464,8 +853,47 @@ export function McpAccessPane() {
         </ul>
       </section>
 
-      {/* ⑥ 边界提示（静态说明，⛔ 不冒充读数） */}
-      <section className="set-section">
+      {/* ⑥ AI 不可见空间清单 */}
+      <section className="set-section" id="mcp-sec-hidden">
+        <div className="set-section-title">AI 不可见空间</div>
+        <p className="set-hint">勾选后 AI 既不能读也不能写该空间；你自己不受影响。隐藏 ≠ 加密。</p>
+        <p className="set-hint">清单只保存在本机（不随设备同步）；换机后需要重配。</p>
+        {level === "off" ? <p className="set-hint">（先选一个外部接入档位才能编辑）</p> : null}
+        <ul data-testid="mcp-hidden-spaces">
+          {spaces.length === 0 ? (
+            <li className="set-hint">（未隐藏任何空间）</li>
+          ) : (
+            spaces.map((s) => (
+              <li key={s.id} className="set-row-sub">
+                <label>
+                  <input
+                    type="checkbox"
+                    aria-label={`隐藏空间 ${s.name}`}
+                    checked={hidden.includes(s.id)}
+                    disabled={level === "off" || hiddenSaving}
+                    onChange={(e) => setHidden(e.target.checked ? [...hidden, s.id] : hidden.filter((x) => x !== s.id))}
+                  />{" "}
+                  {s.name}
+                  <code> {s.id}</code>
+                </label>
+              </li>
+            ))
+          )}
+        </ul>
+        <div className="set-actions">
+          <button
+            className="set-btn"
+            data-testid="mcp-hidden-save"
+            disabled={level === "off" || hiddenSaving}
+            onClick={() => void saveHidden()}
+          >
+            保存清单
+          </button>
+        </div>
+      </section>
+
+      {/* ⑦ 边界提示（静态说明，⛔ 不冒充读数） */}
+      <section className="set-section" id="mcp-sec-boundary">
         <div className="set-section-title">边界提示</div>
         <p className="set-hint">导出/下载走句柄（blobs_fetch 落盘），不回真名字节。</p>
         <p className="set-hint">超过 10MB 的下载需要你确认；本版面板尚未接确认 UI。</p>
