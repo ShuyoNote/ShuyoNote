@@ -12,6 +12,13 @@ import { api } from "../lib/api";
 import { AI_TOOL_META } from "../lib/capabilities/aiTools.meta";
 import { toast } from "../store/toast";
 import type { McpStatus } from "../types";
+// ⭐ 跨空间徽章的**数据源**：MCP 面两份生成物（`gen-capabilities.mjs` 从同一份
+//   `capabilities/capabilities.json` 生成，与 `AI_TOOL_META` 同源）。每条 `description`
+//   末尾有一行统一的 `跨空间：支持（带 spaceId 读/写到指定空间）` 或 `跨空间：不支持（…）`。
+//   ⛔ 本文件**不另写"哪些工具支持跨空间"的清单**（那会漂）；只解析这一行。
+//   ⚠️ `AI_TOOL_META` 的 desc 没有这行（它给的是插件作者视角的能力说明）⇒ 必须读这两份。
+import MCP_TOOLS_READ from "../../capabilities/mcp-tools.json";
+import MCP_TOOLS_WRITE from "../../capabilities/mcp-tools-write.json";
 
 interface DraftRow {
   draftId: string;
@@ -57,6 +64,41 @@ function domainOf(id: string, isWrite: boolean): string {
   for (const [name, hit] of DOMAINS) if (hit(id, isWrite)) return name;
   return "其它";
 }
+
+/**
+ * 跨空间三态（能力清单徽章 ＋ 顶部统计行）。
+ *
+ * 读：`跨空间：支持（带 spaceId 读指定空间）`；写：`…支持（带 spaceId 写到指定空间，不是搬移）`；
+ * 不支持：`跨空间：不支持（带 spaceId ⇒ bad_args）`。
+ *
+ * ⚠️ 三态**只从生成物那一行解析**（`capabilities/mcp-tools*.json` 的 `description`）——
+ * ⛔ 不在组件里维护第二份"谁支持跨空间"的表：那份表一定会漂，而漂了不会报错。
+ * 没有那一行的工具按"不支持"显示（灰）—— ⛔ 不猜成"支持"（对 agent 说有、实际会 bad_args 更糟）。
+ */
+type CrossSpace = "read" | "write" | "none";
+
+function crossSpaceOf(description: string, isWrite: boolean): CrossSpace {
+  const hit = /跨空间：\s*(支持|不支持)/.exec(description);
+  if (!hit) return "none";
+  if (hit[1] === "不支持") return "none";
+  // 支持那一档再看括号里说的是"读"还是"写"（比按面猜更贴描述本身）。
+  if (description.includes("读指定空间")) return "read";
+  if (description.includes("写到指定空间")) return "write";
+  return isWrite ? "write" : "read";
+}
+
+/** 能力 id → 跨空间三态（来自两份生成物；id 集合与 `AI_TOOL_META` 逐一对应）。 */
+const CROSS_SPACE_META: Map<string, CrossSpace> = new Map([
+  ...MCP_TOOLS_READ.map((t) => [t.capabilityId, crossSpaceOf(t.description, false)] as const),
+  ...MCP_TOOLS_WRITE.map((t) => [t.capabilityId, crossSpaceOf(t.description, true)] as const),
+]);
+
+/** 三态各自的徽章文案与类（读=绿/中性、写=橙、不支持=灰；`set-badge` 是设置页既有行内徽章类）。 */
+const CROSS_SPACE_BADGE: Record<CrossSpace, { label: string; cls: string }> = {
+  read: { label: "跨空间·读", cls: "set-badge is-ok" },
+  write: { label: "跨空间·写", cls: "set-badge is-warn" },
+  none: { label: "跨空间·不支持", cls: "set-badge" },
+};
 
 /** 一句人话的中间态（"开着但没在听"必须说出来 —— 那通常是端口被占）。 */
 function stateLine(st: McpStatus): string {
@@ -187,10 +229,17 @@ export function McpAccessPane() {
         id: c.id,
         domain: domainOf(c.id, c.isWrite),
         isWrite: c.isWrite,
+        crossSpace: CROSS_SPACE_META.get(c.id) ?? ("none" as CrossSpace),
         brief: (c.description.split("。")[0] ?? c.description).replace(/\*\*|✓|✗|⛔/g, ""),
       })),
     [visibleCaps],
   );
+  // 顶部统计行：三态各多少 —— **从上面那张表算**（⛔ 不写死数字）。
+  const crossSpaceCounts = useMemo(() => {
+    const out: Record<CrossSpace, number> = { read: 0, write: 0, none: 0 };
+    for (const row of capRows) out[row.crossSpace] += 1;
+    return out;
+  }, [capRows]);
 
   const snippet = useMemo(() => {
     const bridge = st?.bridge_path ?? "";
@@ -319,13 +368,31 @@ export function McpAccessPane() {
       <section className="set-section">
         <details>
           <summary className="set-section-title">能力清单（{AI_TOOL_META.length} 项，按域分组）</summary>
+          {/* 顶部统计行：跨空间支持矩阵（数字由上面那张表算，⛔ 不硬编码） */}
+          <div
+            className="set-hint"
+            data-testid="mcp-crossspace-stats"
+            data-read={crossSpaceCounts.read}
+            data-write={crossSpaceCounts.write}
+            data-none={crossSpaceCounts.none}
+          >
+            跨空间：读 {crossSpaceCounts.read} · 写 {crossSpaceCounts.write} · 不支持{" "}
+            {crossSpaceCounts.none}
+          </div>
           <ul>
-            {capRows.map((c) => (
-              <li key={c.id} className="set-row-sub" data-cap-id={c.id}>
-                <b>{c.domain}</b> · <code>{c.id}</code>
-                {c.isWrite ? "（写）" : "（读）"} — {c.brief}
-              </li>
-            ))}
+            {capRows.map((c) => {
+              const badge = CROSS_SPACE_BADGE[c.crossSpace];
+              return (
+                <li key={c.id} className="set-row-sub" data-cap-id={c.id}>
+                  <b>{c.domain}</b> · <code>{c.id}</code>
+                  {c.isWrite ? "（写）" : "（读）"}{" "}
+                  <span className={badge.cls} data-crossspace={c.crossSpace}>
+                    {badge.label}
+                  </span>{" "}
+                  — {c.brief}
+                </li>
+              );
+            })}
           </ul>
         </details>
       </section>
