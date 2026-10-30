@@ -68,7 +68,7 @@ jobs:
 
       - name: Rust cache
         # 首次跑没有收益，但后续每次都能省十几分钟（这个仓库的依赖树很重：mupdf / tesseract / boa）。
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2.7.8
         with:
           key: macos-aarch64
 
