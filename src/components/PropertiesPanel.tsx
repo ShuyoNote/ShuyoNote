@@ -12,6 +12,8 @@ import { DatetimeValueEditor } from "./DatetimeValueEditor";
 const TYPES = ["text", "number", "date", "datetime", "checkbox", "select", "multi"] as const;
 // 临时停用：页面属性区的手工拖拽移动（拖拖换序）。改为 true 即可恢复。
 const DRAG_MOVE_ENABLED = false;
+/** B1：系统字段只读（先含这三个内置项；不渲染 ✕/↑↓）。 */
+export const SYSTEM_FIELD_NAMES = ["存于", "创建", "更新"] as const;
 const TYPE_LABELS: Record<string, string> = {
   text: "文本",
   number: "数字",
@@ -75,12 +77,14 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
   const hasProps = nonTagProps.length > 0 || pageTags.length > 0; // card shown iff metadata present
 
   // 属性区按 attr_defs.sort_order 顺序显示（listAttrDefs 已按该顺序返回）。
+  const systemProps = nonTagProps.filter((p) => (SYSTEM_FIELD_NAMES as readonly string[]).includes(p.name));
+  const userProps = nonTagProps.filter((p) => !(SYSTEM_FIELD_NAMES as readonly string[]).includes(p.name));
   const orderedProps = useMemo(() => {
     const order = new Map(attrs.map((a, i) => [a.id, i]));
-    return [...nonTagProps].sort(
+    return [...userProps].sort(
       (x, y) => (order.get(x.attr_id) ?? 9999) - (order.get(y.attr_id) ?? 9999),
     );
-  }, [nonTagProps, attrs]);
+  }, [userProps, attrs]);
 
   const setOrder = (next: AttrDef[]) => {
     setAttrs(next);
@@ -204,15 +208,37 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
   return (
     <div className={hasProps ? "metadata-card" : ""}>
       <div className="properties">
+      <div className="properties-head-row">
       <button className="properties-toggle" onClick={() => setOpen((v) => !v)}>
         <span className="properties-toggle-title">
-          属性{nonTagProps.length > 0 ? `（${nonTagProps.length}）` : ""}
+          {`${nonTagProps.length} 项属性 · ${pageTags.length} 个标签`}
         </span>
         <span className="properties-toggle-caret">{open ? "▾" : "▸"}</span>
       </button>
+      <button
+        className="prop-add-head"
+        title="添加属性"
+        onClick={() => {
+          setOpen(true);
+          setAdding(true);
+        }}
+      >
+        ＋ 添加属性
+      </button>
+      </div>
       {open && (
         <div className="properties-body">
-          <TagRow pageId={pageId} />
+          <div className="prop-tag-line">
+            <TagRow pageId={pageId} />
+            <button
+              className="prop-add-tag"
+              title="添加标签"
+              aria-label="添加标签"
+              onClick={() => usePropertyUiStore.getState().requestAddTag()}
+            >
+              ＋
+            </button>
+          </div>
           {orderedProps.map((p, i) => (
               <div
                 key={p.attr_id}
@@ -266,6 +292,17 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
                 </span>
               </div>
             ))}
+          {systemProps.length > 0 && (
+            <details className="prop-system">
+              <summary>系统信息</summary>
+              {systemProps.map((p) => (
+                <div className="prop-row prop-row-system" key={p.attr_id}>
+                  <span className="prop-name">{p.name}</span>
+                  <span className="prop-value-text">{renderSystemValue(p)}</span>
+                </div>
+              ))}
+            </details>
+          )}
           {adding ? (
             <div className="prop-add-row">
               <input
@@ -348,6 +385,10 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
 }
 
 
+function renderSystemValue(p: PageProp): string {
+  return p.value === "" ? "未设置" : p.value;
+}
+
 function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string) => void }) {
   if (prop.attr_type === "checkbox") {
     return (
@@ -387,12 +428,27 @@ function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string)
       />
     );
   }
+  return <EmptyableTextValue prop={prop} onChange={onChange} />;
+}
+
+function EmptyableTextValue({ prop, onChange }: { prop: PageProp; onChange: (v: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  if (prop.value === "" && !editing) {
+    return (
+      <button type="button" className="prop-empty" onClick={() => setEditing(true)}>
+        未设置（点击填写）
+      </button>
+    );
+  }
   return (
     <input
       className="prop-value"
+      autoFocus={editing}
       value={prop.value}
-      placeholder="输入值"
       onChange={(e) => onChange(e.target.value)}
+      onBlur={() => {
+        if (prop.value === "") setEditing(false);
+      }}
     />
   );
 }

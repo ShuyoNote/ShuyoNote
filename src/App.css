@@ -28641,3 +28641,15 @@ button.mset-row:focus-visible {
 
 /* 2026-10-29 (owner: keep-alive): when EmailPanel is closed it stays mounted; hide the portal root by attribute. */
 .email-page[hidden] { display: none; }
+
+/* B1：行操作按钮默认隐藏，hover/聚焦才出（触屏仍由 .prop-more 提供） */
+.prop-row .prop-order-btns { opacity: 0; transition: opacity 0.12s; }
+.prop-row:hover .prop-order-btns,
+.prop-row:focus-within .prop-order-btns { opacity: 1; }
+.prop-empty { background: none; border: 0; padding: 0; color: var(--text-muted, #8a8a8a); cursor: text; font: inherit; text-align: left; }
+.prop-head-row { display: flex; align-items: center; gap: 8px; }
+.prop-add-head { margin-left: auto; background: none; border: 0; color: var(--text-muted, #8a8a8a); cursor: pointer; }
+.prop-tag-line { display: flex; align-items: center; gap: 4px; }
+.prop-add-tag { background: none; border: 0; color: var(--text-muted, #8a8a8a); cursor: pointer; }
+.prop-system { margin-top: 4px; color: var(--text-muted, #8a8a8a); }
+.prop-row-system .prop-value-text { flex: 1; }
