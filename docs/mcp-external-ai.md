@@ -145,6 +145,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 - 2026-10-30：**export 跨空间 v1 —— 单页导出支持**（`apiVersion` 1.23.0）：`export_page_markdown`/`export_docpackage` 可带 `spaceId` 导出目标空间单页（需 `read:all-spaces`；只读（全部空间）档可用）；前端桥通过 `getPage/listPageAttachments/readAttachmentBytes` 的 `spaceId` 读目标空间；句柄仍单次/TTL 120s/绑会话、落盘走 `blobs_fetch` 固定 exports 目录。⚠️ **整空间导出仅支持当前空间**（跨空间 v1 未接，`bad_args` 点名）；加密空间锁着 ⇒ 明确失败。
 
+- 2026-10-30：**跨空间写 v3-A3 —— 标签/属性四工具**（`apiVersion` 1.26.0）：`tags_add/tags_remove/properties_set/properties_unset` 支持 `spaceId`（白名单 14→18）；`pageId` 必须在目标空间（否则 `not_found`）；标签名/属性定义按目标空间解析；目标空间命令内核（`add_tag_in`/`remove_tag_in`/`set_page_prop_impl`/`remove_page_prop_impl`）；审计 `spaceId`、回滚开关同一处。
+
 - 2026-10-30：**跨空间写 v3-A2 —— 结构类四工具**（`apiVersion` 1.25.0）：`nodes_move`/`nodes_rename`/`nodes_delete`/`folders_create` 支持 `spaceId`（白名单 10→14）；目标空间可写连接＋`live_target_in`/`check_expected_rev_in` 同源校验；`parentId` 必须在目标空间（否则 `bad_args`/`not_found`，不回落）；非空文件夹删除仍拒；目标空间 `changes`、审计 `spaceId`；其余 unsupported。
 
 - 2026-10-30：**跨空间写 v3-A1 第四项 —— `files_detach` 支持目标空间**（`apiVersion` 1.22.0）：`files.rename/delete/move/detach` 已支持跨空间；detach 只把目标空间附件的 `page_id` 置 NULL，**保留字节**（sha/大小不变）；已未整理再次 detach ⇒ `bad_args`；目标空间 `changes`/审计 `spaceId`；其余 unsupported。

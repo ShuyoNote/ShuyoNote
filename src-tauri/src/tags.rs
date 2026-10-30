@@ -1,6 +1,6 @@
 use crate::db::Db;
 use crate::models::{BoardColumn, PageMeta, Tag};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 use tauri::State;
 
 fn conn<'a>(db: &'a State<'_, Db>) -> std::sync::MutexGuard<'a, rusqlite::Connection> {
@@ -190,8 +190,29 @@ pub fn page_tags(db: State<'_, Db>, page_id: String) -> Result<Vec<Tag>, String>
 }
 
 #[tauri::command]
-pub fn add_tag(db: State<'_, Db>, page_id: String, name: String) -> Result<Tag, String> {
+pub fn add_tag(
+    db: State<'_, Db>,
+    page_id: String,
+    name: String,
+    space_id: Option<String>,
+) -> Result<Tag, String> {
+    let target = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    if let Some(space) = target {
+        let active = { let c = conn(&db); crate::workspaces::active_workspace_id(&c)? };
+        if space != active {
+            if crate::plugins::cross_space_write_disabled() {
+                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+            }
+            let app = crate::db::app_data_dir_ref().ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let tc = crate::db::open_space_conn_at(&space, app).map_err(|e| format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}"))?;
+            return add_tag_in(&tc, &page_id, &name);
+        }
+    }
     let c = conn(&db);
+    add_tag_in(&c, &page_id, &name)
+}
+
+pub(crate) fn add_tag_in(c: &Connection, page_id: &str, name: &str) -> Result<Tag, String> {
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err("标签名不能为空".to_string());
@@ -235,8 +256,29 @@ pub fn add_tag(db: State<'_, Db>, page_id: String, name: String) -> Result<Tag, 
 }
 
 #[tauri::command]
-pub fn remove_tag(db: State<'_, Db>, page_id: String, tag_id: String) -> Result<(), String> {
+pub fn remove_tag(
+    db: State<'_, Db>,
+    page_id: String,
+    tag_id: String,
+    space_id: Option<String>,
+) -> Result<(), String> {
+    let target = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    if let Some(space) = target {
+        let active = { let c = conn(&db); crate::workspaces::active_workspace_id(&c)? };
+        if space != active {
+            if crate::plugins::cross_space_write_disabled() {
+                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+            }
+            let app = crate::db::app_data_dir_ref().ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let tc = crate::db::open_space_conn_at(&space, app).map_err(|e| format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}"))?;
+            return remove_tag_in(&tc, &page_id, &tag_id);
+        }
+    }
     let c = conn(&db);
+    remove_tag_in(&c, &page_id, &tag_id)
+}
+
+pub(crate) fn remove_tag_in(c: &Connection, page_id: &str, tag_id: &str) -> Result<(), String> {
     c.execute(
         "DELETE FROM page_tags WHERE page_id = ?1 AND tag_id = ?2",
         params![page_id, tag_id],

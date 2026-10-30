@@ -3399,6 +3399,47 @@ fn check_expected_rev(page_id: &str, expected: Option<&str>) -> Result<String, S
 }
 
 // ⭐ A2：结构类跨空间 —— 同一段校验按**目标空间**取连接，找不到就开目标空间读连接。
+// ⭐ A3：标签/属性跨空间 —— 读目标空间的 tags/attr_defs/page_tags（⛔ 不回落当前空间）。
+fn space_read<F, T>(space: &str, f: F) -> Result<T, String>
+where
+    F: FnOnce(&rusqlite::Connection) -> Result<T, String>,
+{
+    if space == target_space_id(None) {
+        with_read_conn(f)
+    } else {
+        with_conn_for_space(Some(space), f)
+    }
+}
+fn tag_id_at(space: &str, name: &str) -> Result<Option<String>, String> {
+    use rusqlite::OptionalExtension;
+    space_read(space, |c| {
+        c.query_row("SELECT id FROM tags WHERE name = ?1", params![name], |r| r.get(0))
+            .optional()
+            .map_err(|e| format!("db_error: {e}"))
+    })
+}
+fn tag_linked_at(space: &str, page: &str, tag_id: &str) -> Result<i64, String> {
+    space_read(space, |c| {
+        c.query_row(
+            "SELECT COUNT(*) FROM page_tags WHERE page_id = ?1 AND tag_id = ?2",
+            params![page, tag_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("db_error: {e}"))
+    })
+}
+fn attr_at(space: &str, attr_id: &str) -> Result<Option<(String, String)>, String> {
+    use rusqlite::OptionalExtension;
+    space_read(space, |c| {
+        c.query_row(
+            "SELECT name, type FROM attr_defs WHERE id = ?1",
+            params![attr_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))
+    })
+}
 fn live_target_at(space: &str, id: &str) -> Result<(String, String), String> {
     if space == target_space_id(None) {
         live_target(id)
@@ -3802,28 +3843,16 @@ fn cap_tags_remove(
         return Err("bad_args: 移除标签需要 name".to_string());
     }
     let target = target_page_or_current(page_id)?;
-    let (title, _) = live_target(&target)?;
-    let tag_id: Option<String> = with_read_conn(|c| {
-        use rusqlite::OptionalExtension;
-        c.query_row("SELECT id FROM tags WHERE name = ?1", params![name], |r| r.get(0))
-            .optional()
-            .map_err(|e| format!("db_error: {e}"))
-    })?;
+    let (title, _) = live_target_at(&space, &target)?;
+    let tag_id: Option<String> = tag_id_at(&space, name)?;
     let Some(tag_id) = tag_id else {
         return Err(format!("not_found: 没有名为「{name}」的标签"));
     };
-    let linked: i64 = with_read_conn(|c| {
-        c.query_row(
-            "SELECT COUNT(*) FROM page_tags WHERE page_id = ?1 AND tag_id = ?2",
-            params![target, tag_id],
-            |r| r.get(0),
-        )
-        .map_err(|e| format!("db_error: {e}"))
-    })?;
+    let linked: i64 = tag_linked_at(&space, &target, &tag_id)?;
     if linked == 0 {
         return Err(format!("not_found: 页面「{title}」没有标签「{name}」"));
     }
-    let rev = check_expected_rev(&target, expected_rev)?;
+    let rev = check_expected_rev_at(&space, &target, expected_rev)?;
     structural_draft(
         dry_run,
         format!("remove_tag:{target}:{name}"),
@@ -3855,8 +3884,8 @@ fn cap_properties_unset(
         return Err("bad_args: 去掉属性需要 attrId".to_string());
     }
     let target = target_page_or_current(page_id)?;
-    let (title, _) = live_target(&target)?;
-    let attr_name: Option<String> = with_read_conn(|c| {
+    let (title, _) = live_target_at(&space, &target)?;
+    let attr_name: Option<String> = space_read(&space, |c| {
         use rusqlite::OptionalExtension;
         c.query_row("SELECT name FROM attr_defs WHERE id = ?1", params![attr_id], |r| r.get(0))
             .optional()
@@ -3865,7 +3894,7 @@ fn cap_properties_unset(
     let Some(attr_name) = attr_name else {
         return Err(format!("not_found: 属性 {attr_id} 不存在（先用 properties.list 查）"));
     };
-    let rev = check_expected_rev(&target, expected_rev)?;
+    let rev = check_expected_rev_at(&space, &target, expected_rev)?;
     structural_draft(
         dry_run,
         format!("unset_page_prop:{target}:{attr_id}"),
@@ -5275,18 +5304,8 @@ fn cap_properties_set(
         return Err("bad_args: 设置属性需要 attrId".to_string());
     }
     let target = target_page_or_current(page_id)?;
-    let (title, _) = live_target(&target)?;
-    // 属性定义必须存在（⛔ 不接受"随手编一个 attrId"）；类型校验：数字属性必须是数字。
-    let attr: Option<(String, String)> = with_read_conn(|c| {
-        use rusqlite::OptionalExtension;
-        c.query_row(
-            "SELECT name, type FROM attr_defs WHERE id = ?1",
-            params![attr_id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
-        )
-        .optional()
-        .map_err(|e| format!("db_error: {e}"))
-    })?;
+    let (title, _) = live_target_at(&space, &target)?;
+    let attr: Option<(String, String)> = attr_at(&space, attr_id)?;
     let Some((attr_name, attr_type)) = attr else {
         return Err(format!("not_found: 属性 {attr_id} 不存在（先用 properties.list 查）"));
     };
@@ -5323,8 +5342,8 @@ fn cap_tags_add(
         return Err("bad_args: 加标签需要 name".to_string());
     }
     let target = target_page_or_current(page_id)?;
-    let (title, _) = live_target(&target)?;
-    let rev = check_expected_rev(&target, expected_rev)?;
+    let (title, _) = live_target_at(&space, &target)?;
+    let rev = check_expected_rev_at(&space, &target, expected_rev)?;
     structural_draft(
         dry_run,
         format!("add_tag:{target}:{name}"),
@@ -5681,6 +5700,10 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
                         | "nodes.rename"
                         | "nodes.delete"
                         | "folders.create"
+                        | "tags.add"
+                        | "tags.remove"
+                        | "properties.set"
+                        | "properties.unset"
                 ) {
                     return Err(format!(
                         "bad_args: {method} 暂不支持跨空间（v1 只支持 pages.create；目标空间 {space} 未写入）"
@@ -16917,6 +16940,92 @@ register({ id: "s.run", title: "结构化", run: function () {
         std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
         let e = with_external_caller("a2s-off", &g, || {
             dispatch_capability("nodes.rename", &format!(r#"{{"id":"p1","title":"x","spaceId":"{second}"}}"#))
+        })
+        .expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        let after = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
+        assert_eq!(before, after, "当前空间四计数逐项不变");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ A3：标签/属性四工具跨空间（目标空间真改/四计数/跨空间 pageId 拒/缺档/开关）。
+    #[test]
+    fn a3_tags_props_cross_space() {
+        let f = b1c_fixture("a3tp");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "a3tp-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+            m.execute("INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','a3tp-dev')", []).ok();
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '目标页', '{}', 'x', 'page', 0, 10, 10)",
+                params![second],
+            )
+            .unwrap();
+            let cur = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            cur.execute("INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at) VALUES ('cur-p1', ?1, NULL, '当前页', '{}', 'x', 'page', 0, 10, 10)", params![f.space]).unwrap();
+            c.execute("INSERT OR IGNORE INTO tags (id, name) VALUES ('tag1','乙标签')", []).unwrap();
+            c.execute("INSERT OR IGNORE INTO page_tags (page_id, tag_id) VALUES ('p1','tag1')", []).unwrap();
+            c.execute("INSERT OR REPLACE INTO attr_defs (id, name, type, created_at, updated_at) VALUES ('attr1','数值','text',10,10)", []).unwrap();
+            let ac: i64 = c.query_row("SELECT COUNT(*) FROM attr_defs WHERE id='attr1'", [], |r| r.get(0)).unwrap();
+            assert_eq!(ac, 1, "夹具 attr_defs 应写入目标空间");
+        }
+        let four = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (q("SELECT COUNT(*) FROM pages"), q("SELECT COUNT(*) FROM changes"), q("SELECT COUNT(*) FROM page_versions"), q("SELECT COUNT(*) FROM attachments"))
+        };
+        let before = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        for (tool, args) in [
+            ("tags.add", format!(r#"{{"name":"甲标签","pageId":"p1","spaceId":"{second}"}}"#)),
+            ("tags.remove", format!(r#"{{"name":"乙标签","pageId":"p1","spaceId":"{second}"}}"#)),
+            ("properties.set", format!(r#"{{"attrId":"attr1","value":"42","pageId":"p1","spaceId":"{second}"}}"#)),
+            ("properties.unset", format!(r#"{{"attrId":"attr1","pageId":"p1","spaceId":"{second}"}}"#)),
+        ] {
+            let (out, drafts) = with_external_caller("a3tp", &g, || with_fresh_drafts(|| dispatch_capability(tool, &args)));
+            out.unwrap_or_else(|e| panic!("{tool} 应产草稿：{e}"));
+            assert_eq!(drafts.len(), 1, "{tool}");
+            assert_eq!(drafts[0].payload["spaceId"], second, "{tool}");
+        }
+        // 目标空间真改（命令内核）
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            crate::tags::add_tag_in(&c, "p1", "甲标签").expect("目标空间加标签");
+            crate::properties::set_page_prop_impl(&c, "p1", "attr1", "42").expect("目标空间设属性");
+            let n: i64 = c.query_row("SELECT COUNT(*) FROM page_tags WHERE page_id='p1'", [], |r| r.get(0)).unwrap();
+            assert!(n >= 1, "目标空间应有标签关联");
+            let props = crate::properties::get_page_props_impl(&c, "p1").expect("读属性");
+            assert!(!props.is_empty(), "目标空间应有属性值");
+            crate::tags::remove_tag_in(&c, "p1", "tag1").expect("目标空间移除标签");
+            crate::properties::remove_page_prop_impl(&c, "p1", "attr1").expect("目标空间去属性");
+        }
+        // 跨空间 pageId（当前空间的页）⇒ 拒
+        let e = with_external_caller("a3tp-x", &g, || {
+            dispatch_capability("tags.add", &format!(r#"{{"name":"x","pageId":"{0}","spaceId":"{second}"}}"#, "cur-p1"))
+        })
+        .expect_err("pageId 在别的空间必须拒");
+        assert!(e.contains("not_found") || e.contains("bad_args"), "{e}");
+        // 缺档 / 回滚
+        let e = with_external_caller("a3tp-no", &b2_granted(), || {
+            dispatch_capability("tags.add", &format!(r#"{{"name":"x","pageId":"p1","spaceId":"{second}"}}"#))
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        let e = with_external_caller("a3tp-off", &g, || {
+            dispatch_capability("properties.set", &format!(r#"{{"attrId":"attr1","value":"1","pageId":"p1","spaceId":"{second}"}}"#))
         })
         .expect_err("开关关着必须拒");
         assert!(e.contains("关闭"), "{e}");

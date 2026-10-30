@@ -728,10 +728,10 @@ export const api = {
     invoke("update_attr", { args }),
   deleteAttr: (id: string) => invoke("delete_attr", { id }),
   reorderAttrs: (ids: string[]) => invoke("reorder_attrs", { ids }),
-  setPageProp: (args: { page_id: string; attr_id: string; value: string }) =>
+  setPageProp: (args: { page_id: string; attr_id: string; value: string; spaceId?: string }) =>
     invoke("set_page_prop", { args }),
-  removePageProp: (pageId: string, attrId: string) =>
-    invoke("remove_page_prop", { pageId, attrId }),
+  removePageProp: (pageId: string, attrId: string, spaceId?: string) =>
+    invoke("remove_page_prop", { pageId, attrId, spaceId }),
   getPageProps: (pageId: string) =>
     invoke("get_page_props", { pageId }),
   getDbColumns: (dbPageId: string) =>
@@ -750,8 +750,8 @@ export const api = {
   setTagColor: (tagId: string, color?: string | null) => invoke("set_tag_color", { tagId, color: color ?? null }),
   deleteTag: (tagId: string) => invoke("delete_tag", { tagId }),
   pageTags: (pageId: string) => invoke("page_tags", { pageId }),
-  addTag: (pageId: string, name: string) => invoke("add_tag", { pageId, name }),
-  removeTag: (pageId: string, tagId: string) => invoke("remove_tag", { pageId, tagId }),
+  addTag: (pageId: string, name: string, spaceId?: string) => invoke("add_tag", { pageId, name, spaceId }),
+  removeTag: (pageId: string, tagId: string, spaceId?: string) => invoke("remove_tag", { pageId, tagId, spaceId }),
   pagesByTag: (tagId: string) => invoke("pages_by_tag", { tagId }),
   boardData: () => invoke("board_data"),
   boardByAttr: (attrId: string) =>

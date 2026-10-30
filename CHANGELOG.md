@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **v3-A3：标签/属性四工具跨空间**（`tags.add/remove`、`properties.set/unset`）：目标空间解析标签/属性定义、`pageId` 必须同空间；命令内核单连接复用（`add_tag_in`/`remove_tag_in`/`set_page_prop_impl`/`remove_page_prop_impl`）；写白名单 14→18；判据含四计数不变、跨空间 pageId 拒、缺档/回滚。`apiVersion` 1.25.0 → **1.26.0**。
 - **v3-A2：结构类四工具跨空间**（`nodes.move/rename/delete`、`folders.create`）：单连接/目标空间 helper，`parentId` 必须同空间、非空文件夹仍拒；写白名单 10→14；目标空间 `changes`/审计；判据含四计数不变与跨空间 parent 拒绝。`apiVersion` 1.24.0 → **1.25.0**。
 - **`files.download` 超限确认（B 方案）**：能力层超限立即 `needs_confirm`＋异步前端事件（**不等回执、不碰桥 5s 契约**）；前端复用 `confirmDialog`，允许 ⇒ `mcp_download_grant` 写一次性额度（attId|space、TTL 5 分钟、进程内存、重启即丢）；重试拿句柄、用一次即废；拒绝/过期仍拒；未超限不发事件、行为不变。
 - **超限需在应用内确认一次**：前端桥遇 `>10MB`/`>20 文件` 时弹确认框（复用既有 confirm overlay，无新浮层），允许后发内存**一次性额度**（TTL 5 分钟、同一请求类型+目标），Agent 重试同请求才通过；拒绝/过期仍 `needs_confirm`；错误文本带 `needsConfirm=true thresholdBytes/thresholdFiles`；阈值未改、未超限行为不变。仅覆盖前端桥的导出/下载类；后台上传仍 unsupported。
