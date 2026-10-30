@@ -21,11 +21,15 @@ vi.mock("./api", () => ({
 }));
 
 // 桥模块 import 了 `platform`（事件总线/派生层）；判据不需要真平台。
+// ⚠️ `isDesktopPlatform()` 必须 mock：桥只在**有 Rust 内核**时上报就绪
+//    （Web 上调 `mcp_frontend_tool_ready` 会留下未捕获错误，CI 的 `check-web-build` 因此判红）。
 vi.mock("./platform", () => ({
+  isDesktopPlatform: vi.fn(() => true),
   platform: { event: { listen: vi.fn(async () => () => {}) }, derivedStores: undefined },
 }));
 
 import { api } from "./api";
+import { isDesktopPlatform } from "./platform";
 import { FRONTEND_ADAPTERS } from "./capabilities/frontend";
 import { unzipDocument } from "./docZip";
 import { openDocumentPackage } from "./docPackageOpen";
@@ -200,5 +204,15 @@ describe("B3 前端桥 · 失败面与就绪信号", () => {
     await vi.waitFor(() => {
       expect(api.mcpFrontendToolReady).toHaveBeenCalled();
     });
+  });
+
+  it("Web（没有 Rust 内核）⇒ **不报就绪**（否则控制台留未捕获错误 ⇒ check-web-build 判红）", async () => {
+    vi.clearAllMocks();
+    vi.mocked(isDesktopPlatform).mockReturnValue(false);
+    const unregister = registerMcpFrontendTools();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(api.mcpFrontendToolReady).not.toHaveBeenCalled();
+    unregister();
+    vi.mocked(isDesktopPlatform).mockReturnValue(true);
   });
 });

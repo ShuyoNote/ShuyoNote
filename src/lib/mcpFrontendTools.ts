@@ -19,7 +19,7 @@
 // 只在**主窗口**挂（`useMcpFrontendTools`）；独立页窗口（`?page=<id>`）不参与 ——
 // 与外部草稿那条同一条口径（一个应用只做一次，避免多窗口各算一遍）。
 import { api } from "./api";
-import { platform } from "./platform";
+import { isDesktopPlatform, platform } from "./platform";
 import { docJsonOfPage } from "./docContent";
 import { markdownDocumentForPage, pageContentToMarkdown, sanitizeName } from "./exportMarkdown";
 import { bundleTooLargeMessage, collectWorkspaceBundlePages, prepareBundle } from "./exportMarkdownBundle";
@@ -258,10 +258,16 @@ export function registerMcpFrontendTools(): () => void {
     .then((un) => {
       if (alive) unlisten = un;
       else un();
-      // 只在**监听真的装上了**之后报就绪（否则 Rust 会以为前端在、然后空等 5 秒）
-      void api.mcpFrontendToolReady().catch(() => {
-        /* 没有本机通道的形态（Web）⇒ 这条桥本来也不会被调用；不报就绪正是想要的 */
-      });
+      // 只在**监听真的装上了**之后报就绪（否则 Rust 会以为前端在、然后空等 5 秒）。
+      // ⚠️ 2026-10-30（CI 实测）：`mcp_frontend_tool_ready` 是**桌面专属**命令；Web 平台没有
+      //   Rust 内核，调它会走 `[web] invoke error … 未实现该命令` 并在控制台留下**未捕获错误**，
+      //   于是 `check-web-build` 的「没有未捕获错误」判红。⇒ 先判有没有 Rust 内核；
+      //   Web 上**不报就绪正是想要的**（这条桥本来也不会被调用）。
+      if (isDesktopPlatform()) {
+        void api.mcpFrontendToolReady().catch(() => {
+          /* 极简 Web 壳/冒烟形态：拿不到通道就不报就绪，不假装成功 */
+        });
+      }
     })
     .catch(() => {
       // 没有事件总线的形态（Node 冒烟 / 极简 Web 壳）⇒ 这条桥本来也不会来请求
