@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "apiVersion": "1.11.0",
+  "apiVersion": "1.12.0",
   "notes": "插件能力注册表——单一事实源。scripts/gen-capabilities.mjs 由本文件生成：JS shim（api.*）、Rust 绑定表、作者类型包、作者文档；scripts/check-capabilities.mjs 校验一致性与完整性。改能力请改这里，不要手改生成物。",
   "permissions": [
     {
@@ -752,6 +752,62 @@
       "rust": "cap_trash_list",
       "desc": "列出回收站里已软删除的页面（不含正文，也不恢复/清空）。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒), limit (可选, 默认 50, 上限 200)。",
       "mcpDesc": "列出**回收站**里已软删除的页面：`[{pageId, title, deletedAt}]`（按删除时间倒序，不含正文），**只读 —— 不恢复、不清空**。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选), limit (可选, 默认 50, 上限 200)。",
+      "ai": true
+    },
+    {
+      "kind": "read",
+      "scope": "current-space",
+      "since": "1.12.0",
+      "id": "drafts.status",
+      "title": "查草稿状态",
+      "permission": "read:pages",
+      "jsPath": [
+        "drafts",
+        "status"
+      ],
+      "rust": "cap_drafts_status",
+      "args": [
+        {
+          "name": "draftId",
+          "type": "string",
+          "required": true,
+          "desc": "写工具返回的 draftId"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ draftId: string; state: 'pending'|'applied'|'rejected'|'expired'; at: number; tool: string; capabilityId: string }",
+        "desc": "该草稿的当前状态（只回本会话）"
+      },
+      "desc": "查一条草稿当前状态：pending（等用户确认）/ applied（已落库）/ rejected（用户拒绝）/ expired（10 分钟没确认）。参数: draftId。⚠️ 只回**本会话**的草稿；别的会话/不存在 ⇒ not_found。",
+      "ai": true
+    },
+    {
+      "kind": "read",
+      "scope": "current-space",
+      "since": "1.12.0",
+      "id": "audit.tail",
+      "title": "最近审计",
+      "permission": "read:pages",
+      "jsPath": [
+        "audit",
+        "tail"
+      ],
+      "rust": "cap_audit_tail",
+      "args": [
+        {
+          "name": "limit",
+          "type": "number",
+          "required": false,
+          "desc": "最近 N 条（默认 20，上限 100）"
+        }
+      ],
+      "returns": {
+        "type": "array",
+        "ts": "{ at: number; tool: string; capabilityId: string; ok: boolean; code: string|null }[]",
+        "desc": "本会话最近 N 条审计（⛔ 不含正文）"
+      },
+      "desc": "读**本会话**最近 N 条审计（默认 20 / 上限 100）：`{at,tool,capabilityId,ok,code}`。⛔ 不回正文、不回别的会话。参数: limit。",
       "ai": true
     },
     {
@@ -1985,6 +2041,28 @@
       "ai": true
     },
     {
+      "id": "templates.list",
+      "title": "模板清单",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:pages",
+      "since": "1.12.0",
+      "jsPath": [
+        "templates",
+        "list"
+      ],
+      "rust": "cap_templates_list",
+      "args": [],
+      "returns": {
+        "type": "array",
+        "ts": "{ templateId: string; name: string; title?: string }[]",
+        "desc": "本空间的用户模板清单（空表 ⇒ []）"
+      },
+      "desc": "列出本空间的用户模板：`[{templateId,name,title?}]`（空表 ⇒ `[]`）。与 `templates.apply` 配对使用。",
+      "mcpDesc": "列出本空间用户模板：`[{templateId,name,title?}]`；空表 ⇒ `[]`。拿到的 `templateId` 可传给 `templates_apply`。",
+      "ai": true
+    },
+    {
       "kind": "write",
       "scope": "current-space",
       "mediate": "draft",
@@ -2746,8 +2824,78 @@
         "desc": "{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件"
       },
       "rust": "cap_export_markdown",
-      "desc": "把一页导出成 Markdown、或把整个空间导出成 zip，**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。参数: pageId (可选，单页 ⇒ .md) / spaceId (可选，整空间 ⇒ 含附件的 .zip；跨空间需「只读（全部空间）」档) —— 两者**只能给一个**。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm（本批未接确认 UI，不静默导出）。",
-      "mcpDesc": "把内容导出成文件并**只回句柄**（不把字节塞进上下文）：`{handle, name, size, sha256, expiresAt}`。两种口径（**只能给一个**）：`pageId` ⇒ 该页的单个 `.md`（与界面「导出为 Markdown」同口径）；`spaceId` ⇒ 该空间整份 `.zip`（Markdown ＋ 附件，与界面「导出本空间」同口径；跨空间需要「只读（全部空间）」档）。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落应用数据目录的 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`（本批未接确认 UI，不静默导出）。",
+      "desc": "deprecated: 用上面两个显式工具 export_page_markdown / export_space_markdown（旧名保留以兼容外部客户端）。把一页导出成 Markdown、或把整个空间导出成 zip，**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。参数: pageId (可选，单页 ⇒ .md) / spaceId (可选，整空间 ⇒ 含附件的 .zip；跨空间需「只读（全部空间）」档) —— 两者**只能给一个**。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm（本批未接确认 UI，不静默导出）。",
+      "mcpDesc": "deprecated: 用上面两个显式工具 export_page_markdown / export_space_markdown（旧名保留以兼容外部客户端）。把内容导出成文件并**只回句柄**（不把字节塞进上下文）：`{handle, name, size, sha256, expiresAt}`。两种口径（**只能给一个**）：`pageId` ⇒ 该页的单个 `.md`（与界面「导出为 Markdown」同口径）；`spaceId` ⇒ 该空间整份 `.zip`（Markdown ＋ 附件，与界面「导出本空间」同口径；跨空间需要「只读（全部空间）」档）。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落应用数据目录的 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`（本批未接确认 UI，不静默导出）。",
+      "ai": true
+    },
+    {
+      "id": "export.page_markdown",
+      "title": "导出单页 Markdown（句柄）",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "export:files",
+      "since": "1.12.0",
+      "jsPath": [
+        "export",
+        "pageMarkdown"
+      ],
+      "rust": "cap_export_page_markdown",
+      "args": [
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": true,
+          "desc": "要导出的页面 id（只接受 pageId）"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "整空间 id。⚠️ 本工具只接受 pageId —— 给了它 ⇒ `bad_args`（请用 export_space_markdown）"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ handle: string; name: string; size: number; sha256: string; expiresAt: number }",
+        "desc": "句柄（单次/120s/绑会话）；落盘用 blobs_fetch"
+      },
+      "desc": "把**一页**导出成 `.md`，返回句柄（不返回字节）。参数: pageId (必填)。只接受 pageId —— 给 spaceId ⇒ bad_args（整空间请用 export_space_markdown）。句柄单次/TTL 120s/绑会话；落盘用 blobs_fetch。",
+      "mcpDesc": "导出**单页** Markdown（`.md`）并只回句柄。参数: pageId(必填)。⚠️ 只接受 pageId（给 spaceId ⇒ `bad_args`；整空间用 `export_space_markdown`）。句柄单次/TTL 120s/绑会话；落盘用 `blobs_fetch`。",
+      "ai": true
+    },
+    {
+      "id": "export.space_markdown",
+      "title": "导出整空间 Markdown（句柄）",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "export:files",
+      "since": "1.12.0",
+      "jsPath": [
+        "export",
+        "spaceMarkdown"
+      ],
+      "rust": "cap_export_space_markdown",
+      "args": [
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "整空间 id（省略=当前空间；本版只支持当前空间）"
+        },
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": false,
+          "desc": "页面 id。⚠️ 本工具只接受 spaceId —— 给了它 ⇒ `bad_args`（请用 export_page_markdown）"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ handle: string; name: string; size: number; sha256: string; expiresAt: number }",
+        "desc": "句柄；落盘用 blobs_fetch"
+      },
+      "desc": "把**整个空间**导出成 `.zip`（Markdown ＋ 附件），返回句柄。参数: spaceId (可选;省略=当前空间；本版只支持当前空间)。只接受 spaceId —— 给 pageId ⇒ bad_args（单页请用 export_page_markdown）。",
+      "mcpDesc": "导出**整空间**（Markdown ＋ 附件 zip）并只回句柄。参数: spaceId(可选,省略=当前空间；本版只支持当前空间)。⚠️ 只接受 spaceId（给 pageId ⇒ `bad_args`）。句柄单次/TTL 120s/绑会话。",
       "ai": true
     },
     {
@@ -2830,8 +2978,64 @@
         "desc": "{drafted: true, summary}——**不代表已创建**，用户确认后才落库"
       },
       "rust": "cap_pages_import_markdown",
-      "desc": "导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。",
-      "ai": true
+      "desc": "deprecated: 用 pages_import_markdown（旧名保留以兼容外部客户端）。导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。",
+      "ai": true,
+      "mcpDesc": "deprecated: 用 pages_import_markdown（旧名保留以兼容外部客户端）。deprecated: 用 pages_import_markdown（旧名保留以兼容外部客户端）。导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。"
+    },
+    {
+      "id": "pages.import_markdown",
+      "title": "导入 Markdown（整篇，新名）",
+      "kind": "write",
+      "scope": "current-space",
+      "permission": "write:pages",
+      "since": "1.12.0",
+      "jsPath": [
+        "pages",
+        "import_markdown"
+      ],
+      "mediate": "draft",
+      "mediateWhy": "会用 Markdown 原文新建一页笔记内容，属于对用户数据的实质写入 → 必须先给用户看草稿并等他确认，不直接落库",
+      "args": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": true,
+          "desc": "新页标题。"
+        },
+        {
+          "name": "markdown",
+          "type": "string",
+          "required": true,
+          "desc": "Markdown 原文。围栏 ```mermaid 会变成真图块；标题/列表/引用/表格按各自类型落块。⛔ 含块级 HTML 或超过 200KB 会被拒绝。"
+        },
+        {
+          "name": "parentId",
+          "type": "string",
+          "required": false,
+          "desc": "父页面 id；不传就放在顶层。"
+        },
+        {
+          "name": "dryRun",
+          "type": "boolean",
+          "required": false,
+          "desc": "只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`"
+        },
+        {
+          "name": "clientRequestId",
+          "type": "string",
+          "required": false,
+          "desc": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ drafted: true; summary: string }",
+        "desc": "{drafted: true, summary}——**不代表已创建**，用户确认后才落库"
+      },
+      "rust": "cap_pages_import_markdown",
+      "desc": "导入整篇 Markdown 新建一页（**新名**；旧名 pages_importMarkdown 保留兼容，行为一致）。参数: title (必填), markdown (必填), parentId (可选)。写操作 ⇒ 草稿确认。",
+      "ai": true,
+      "mcpDesc": "导入整篇 Markdown 新建一页（新名）。参数: title, markdown, parentId(可选)。与旧名 `pages_importMarkdown` **调用同一能力、行为一致**；旧名保留。写操作 ⇒ 只产草稿等确认。"
     },
     {
       "id": "pages.update",
@@ -2896,8 +3100,9 @@
         "desc": "{drafted: true, summary}——**草稿已产出**，用户确认后才落库"
       },
       "rust": "cap_pages_update",
-      "desc": "更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。",
-      "ai": true
+      "desc": "⚠️ 整页替换。能按块改就用 blocks_patch/blocks_insert/blocks_delete；本工具仅用于整页重写。更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。",
+      "ai": true,
+      "mcpDesc": "⚠️ 整页替换。能按块改就用 blocks_patch/blocks_insert/blocks_delete；本工具仅用于整页重写。⚠️ 整页替换。能按块改就用 blocks_patch/blocks_insert/blocks_delete；本工具仅用于整页重写。更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。"
     },
     {
       "id": "spaces.list",
@@ -2918,6 +3123,28 @@
       },
       "rust": "cap_spaces_list",
       "desc": "列出所有空间及当前激活空间（切换空间前先看 id/名称）。只读，不改变任何状态。",
+      "ai": true
+    },
+    {
+      "id": "space.current",
+      "title": "当前空间",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:pages",
+      "since": "1.12.0",
+      "jsPath": [
+        "space",
+        "current"
+      ],
+      "rust": "cap_space_current",
+      "args": [],
+      "returns": {
+        "type": "object",
+        "ts": "{ spaceId: string; name: string; pageCount: number }",
+        "desc": "当前活动空间（= spaces_list 的 active 那条）+ 页面计数"
+      },
+      "desc": "当前活动空间：`{spaceId,name,pageCount}`（与 `spaces_list` 的 active 条一致）。只读；不会切换空间。",
+      "mcpDesc": "当前活动空间：`{spaceId,name,pageCount}`（与 `spaces_list` 的 active 一致）。只读；⛔ 不切换空间。",
       "ai": true
     },
     {

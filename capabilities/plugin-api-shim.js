@@ -21,6 +21,7 @@ var api = {
     create: function(title, content, parentId, fence, dryRun, clientRequestId) { return __capCall("pages.create", { title: title === undefined ? undefined : String(title), content: content === undefined ? undefined : String(content), parentId: parentId === undefined ? undefined : String(parentId), fence: fence === undefined ? undefined : String(fence), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); },
     revert: function(pageId, versionId, expectedRev, spaceId, dryRun, clientRequestId) { return __capCall("pages.revert", { pageId: pageId === undefined ? undefined : String(pageId), versionId: versionId === undefined ? undefined : String(versionId), expectedRev: expectedRev === undefined ? undefined : String(expectedRev), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); },
     importMarkdown: function(title, markdown, parentId, dryRun, clientRequestId) { return __capCall("pages.importMarkdown", { title: title === undefined ? undefined : String(title), markdown: markdown === undefined ? undefined : String(markdown), parentId: parentId === undefined ? undefined : String(parentId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); },
+    import_markdown: function(title, markdown, parentId, dryRun, clientRequestId) { return __capCall("pages.import_markdown", { title: title === undefined ? undefined : String(title), markdown: markdown === undefined ? undefined : String(markdown), parentId: parentId === undefined ? undefined : String(parentId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); },
     update: function(id, markdown, content, title, expectedRev, dryRun, clientRequestId) { return __capCall("pages.update", { id: id === undefined ? undefined : String(id), markdown: markdown === undefined ? undefined : String(markdown), content: content === undefined ? undefined : String(content), title: title === undefined ? undefined : String(title), expectedRev: expectedRev === undefined ? undefined : String(expectedRev), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); }
   },
   db: {
@@ -38,6 +39,12 @@ var api = {
   trash: {
     list: function(spaceId, limit) { return __capCall("trash.list", { spaceId: spaceId === undefined ? undefined : String(spaceId), limit: limit === undefined ? 50 : Number(limit) }); },
     restore: function(id, spaceId, dryRun, clientRequestId) { return __capCall("trash.restore", { id: id === undefined ? undefined : String(id), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); }
+  },
+  drafts: {
+    status: function(draftId) { return __capCall("drafts.status", { draftId: draftId === undefined ? undefined : String(draftId) }); }
+  },
+  audit: {
+    tail: function(limit) { return __capCall("audit.tail", { limit: limit === undefined ? undefined : Number(limit) }); }
   },
   tags: {
     list: function(spaceId) { return __capCall("tags.list", { spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
@@ -91,6 +98,7 @@ var api = {
   },
   log: function(message, level) { return __capCall("log.write", { message: message === undefined ? undefined : String(message), level: level === undefined ? "info" : String(level) }); },
   templates: {
+    list: function() { return __capCall("templates.list", {}); },
     apply: function(templateId, parentId, spaceId, dryRun, clientRequestId) { return __capCall("templates.apply", { templateId: templateId === undefined ? undefined : String(templateId), parentId: parentId === undefined ? undefined : String(parentId), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); }
   },
   import: {
@@ -109,10 +117,15 @@ var api = {
   },
   export: {
     markdown: function(pageId, spaceId) { return __capCall("export.markdown", { pageId: pageId === undefined ? undefined : String(pageId), spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
+    pageMarkdown: function(pageId, spaceId) { return __capCall("export.page_markdown", { pageId: pageId === undefined ? undefined : String(pageId), spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
+    spaceMarkdown: function(spaceId, pageId) { return __capCall("export.space_markdown", { spaceId: spaceId === undefined ? undefined : String(spaceId), pageId: pageId === undefined ? undefined : String(pageId) }); },
     docpackage: function(pageId) { return __capCall("export.docpackage", { pageId: pageId === undefined ? undefined : String(pageId) }); }
   },
   spaces: {
     list: function() { return __capCall("spaces.list", {}); },
     switch: function(id, name) { return __capCall("spaces.switch", { id: id === undefined ? undefined : String(id), name: name === undefined ? undefined : String(name) }); }
+  },
+  space: {
+    current: function() { return __capCall("space.current", {}); }
   }
 };

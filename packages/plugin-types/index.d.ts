@@ -166,6 +166,10 @@ export interface PluginApi {
    * 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
    */
     importMarkdown(title: string, markdown: string, parentId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
+  /** 导入 Markdown（整篇，新名）（权限 `write:pages`；1.12.0 起）
+   * 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
+   */
+    import_markdown(title: string, markdown: string, parentId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
   /** 更新已有页面（整页替换 / 草稿确认）（权限 `write:pages`；1.1.0 起）
    * 返回：{drafted: true, summary}——**草稿已产出**，用户确认后才落库
    */
@@ -210,6 +214,18 @@ export interface PluginApi {
    * 返回：{drafted,summary,spaceId}——**不代表已恢复**
    */
     restore(id: string, spaceId?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string; spaceId: string };
+  };
+  drafts: {
+  /** 查草稿状态（权限 `read:pages`；1.12.0 起）
+   * 返回：该草稿的当前状态（只回本会话）
+   */
+    status(draftId: string): { draftId: string; state: 'pending'|'applied'|'rejected'|'expired'; at: number; tool: string; capabilityId: string };
+  };
+  audit: {
+  /** 最近审计（权限 `read:pages`；1.12.0 起）
+   * 返回：本会话最近 N 条审计（⛔ 不含正文）
+   */
+    tail(limit?: number): { at: number; tool: string; capabilityId: string; ok: boolean; code: string|null }[];
   };
   tags: {
   /** 列出本空间标签（权限 `read:tags`；1.0.0 起）
@@ -360,6 +376,10 @@ export interface PluginApi {
    */
   log(message: string, level?: "info" | "warn" | "error"): void;
   templates: {
+  /** 模板清单（权限 `read:pages`；1.12.0 起）
+   * 返回：本空间的用户模板清单（空表 ⇒ []）
+   */
+    list(): { templateId: string; name: string; title?: string }[];
   /** 套用模板建页（草稿确认）（权限 `write:pages`；1.9.0 起）
    * 返回：{drafted,summary}——**不代表已建页**
    */
@@ -402,6 +422,14 @@ export interface PluginApi {
    * 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
    */
     markdown(pageId?: string, spaceId?: string): { handle: string; name: string; size: number; sha256: string; expiresAt: number };
+  /** 导出单页 Markdown（句柄）（权限 `export:files`；1.12.0 起）
+   * 返回：句柄（单次/120s/绑会话）；落盘用 blobs_fetch
+   */
+    pageMarkdown(pageId: string, spaceId?: string): { handle: string; name: string; size: number; sha256: string; expiresAt: number };
+  /** 导出整空间 Markdown（句柄）（权限 `export:files`；1.12.0 起）
+   * 返回：句柄；落盘用 blobs_fetch
+   */
+    spaceMarkdown(spaceId?: string, pageId?: string): { handle: string; name: string; size: number; sha256: string; expiresAt: number };
   /** 导出 .shuyodoc（句柄）（权限 `export:files`；1.6.0 起）
    * 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
    */
@@ -417,6 +445,12 @@ export interface PluginApi {
    */
     switch(id?: string, name?: string): { drafted: true; summary: string };
   };
+  space: {
+  /** 当前空间（权限 `read:pages`；1.12.0 起）
+   * 返回：当前活动空间（= spaces_list 的 active 那条）+ 页面计数
+   */
+    current(): { spaceId: string; name: string; pageCount: number };
+  };
 }
 
-export declare const SDK_API_VERSION: "1.11.0";
+export declare const SDK_API_VERSION: "1.12.0";

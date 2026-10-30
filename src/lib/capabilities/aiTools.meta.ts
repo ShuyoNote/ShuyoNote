@@ -200,6 +200,30 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
     isWrite: false,
   },
   {
+    id: "drafts.status",
+    description: "查一条草稿当前状态：pending（等用户确认）/ applied（已落库）/ rejected（用户拒绝）/ expired（10 分钟没确认）。参数: draftId。⚠️ 只回**本会话**的草稿；别的会话/不存在 ⇒ not_found。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "draftId": { type: "string" },
+      },
+      required: ["draftId"],
+    },
+    isWrite: false,
+  },
+  {
+    id: "audit.tail",
+    description: "读**本会话**最近 N 条审计（默认 20 / 上限 100）：`{at,tool,capabilityId,ok,code}`。⛔ 不回正文、不回别的会话。参数: limit。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "limit": { type: "number" },
+      },
+      required: [],
+    },
+    isWrite: false,
+  },
+  {
     id: "tags.list",
     description: "列出本空间用到的标签及各自的页面数。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。返回 [{id, name, page_count}]。",
     argsSchema: {
@@ -509,6 +533,17 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
     isWrite: true,
   },
   {
+    id: "templates.list",
+    description: "列出本空间的用户模板：`[{templateId,name,title?}]`（空表 ⇒ `[]`）。与 `templates.apply` 配对使用。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      },
+      required: [],
+    },
+    isWrite: false,
+  },
+  {
     id: "templates.apply",
     description: "用模板新建一页（模板内容原样复制；⛔ 不覆盖任何已有页面）。参数: templateId (来自 templates.list), parentId (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。",
     argsSchema: {
@@ -729,12 +764,38 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "export.markdown",
-    description: "把一页导出成 Markdown、或把整个空间导出成 zip，**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。参数: pageId (可选，单页 ⇒ .md) / spaceId (可选，整空间 ⇒ 含附件的 .zip；跨空间需「只读（全部空间）」档) —— 两者**只能给一个**。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm（本批未接确认 UI，不静默导出）。",
+    description: "deprecated: 用上面两个显式工具 export_page_markdown / export_space_markdown（旧名保留以兼容外部客户端）。把一页导出成 Markdown、或把整个空间导出成 zip，**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。参数: pageId (可选，单页 ⇒ .md) / spaceId (可选，整空间 ⇒ 含附件的 .zip；跨空间需「只读（全部空间）」档) —— 两者**只能给一个**。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm（本批未接确认 UI，不静默导出）。",
     argsSchema: {
       type: "object",
       properties: {
       "pageId": { type: "string" },
       "spaceId": { type: "string" },
+      },
+      required: [],
+    },
+    isWrite: false,
+  },
+  {
+    id: "export.page_markdown",
+    description: "把**一页**导出成 `.md`，返回句柄（不返回字节）。参数: pageId (必填)。只接受 pageId —— 给 spaceId ⇒ bad_args（整空间请用 export_space_markdown）。句柄单次/TTL 120s/绑会话；落盘用 blobs_fetch。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "pageId": { type: "string" },
+      "spaceId": { type: "string" },
+      },
+      required: ["pageId"],
+    },
+    isWrite: false,
+  },
+  {
+    id: "export.space_markdown",
+    description: "把**整个空间**导出成 `.zip`（Markdown ＋ 附件），返回句柄。参数: spaceId (可选;省略=当前空间；本版只支持当前空间)。只接受 spaceId —— 给 pageId ⇒ bad_args（单页请用 export_page_markdown）。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "spaceId": { type: "string" },
+      "pageId": { type: "string" },
       },
       required: [],
     },
@@ -754,7 +815,23 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "pages.importMarkdown",
-    description: "导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。",
+    description: "deprecated: 用 pages_import_markdown（旧名保留以兼容外部客户端）。导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "title": { type: "string" },
+      "markdown": { type: "string" },
+      "parentId": { type: "string" },
+      "dryRun": { type: "boolean" },
+      "clientRequestId": { type: "string" },
+      },
+      required: ["title", "markdown"],
+    },
+    isWrite: true,
+  },
+  {
+    id: "pages.import_markdown",
+    description: "导入整篇 Markdown 新建一页（**新名**；旧名 pages_importMarkdown 保留兼容，行为一致）。参数: title (必填), markdown (必填), parentId (可选)。写操作 ⇒ 草稿确认。",
     argsSchema: {
       type: "object",
       properties: {
@@ -770,7 +847,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "pages.update",
-    description: "更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。",
+    description: "⚠️ 整页替换。能按块改就用 blocks_patch/blocks_insert/blocks_delete；本工具仅用于整页重写。更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。",
     argsSchema: {
       type: "object",
       properties: {
@@ -789,6 +866,17 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   {
     id: "spaces.list",
     description: "列出所有空间及当前激活空间（切换空间前先看 id/名称）。只读，不改变任何状态。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      },
+      required: [],
+    },
+    isWrite: false,
+  },
+  {
+    id: "space.current",
+    description: "当前活动空间：`{spaceId,name,pageCount}`（与 `spaces_list` 的 active 条一致）。只读；不会切换空间。",
     argsSchema: {
       type: "object",
       properties: {

@@ -1308,6 +1308,7 @@ pub fn run() {
   // ⭐ B1c 收尾 / B3：前端桥的两条（就绪信号 ＋ 结果回执；桌面专属 —— Web 没有本机 MCP 通道）
   frontend_tool::mcp_frontend_tool_ready,
   frontend_tool::mcp_frontend_tool_respond,
+  plugins::mcp_draft_state,
   // 本地英汉词典（ECDICT）第一期：**只读**两条 —— 查词 ＋ 状态读数。
   // ⚠️ 与 `check-web-commands.mjs` 的 `DESKTOP_ONLY_COMMANDS` 登记**不同**：
   //    这里**两条平台都要**（Web 侧同一条命令面走 sql.js 直查 —— 词典数据是普通 SQLite，

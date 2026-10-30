@@ -1,4 +1,4 @@
-# 插件 API（v1.11.0）
+# 插件 API（v1.12.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.11.0",
+  "apiVersion": "1.12.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.11.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.12.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -117,6 +117,8 @@ register({
 | `versions.list` | `api.versions.list(pageId, limit)` | `read:versions` | `current-space` | — | array | 1.5.0 |
 | `version.get` | `api.version.get(pageId, versionId, offset, limit, includeAnchors)` | `read:versions` | `current-space` | — | object | 1.5.0 |
 | `trash.list` | `api.trash.list(spaceId, limit)` | `read:trash` | `current-space` | — | array | 1.5.0 |
+| `drafts.status` | `api.drafts.status(draftId)` | `read:pages` | `current-space` | — | object | 1.12.0 |
+| `audit.tail` | `api.audit.tail(limit)` | `read:pages` | `current-space` | — | array | 1.12.0 |
 | `tags.list` | `api.tags.list(spaceId)` | `read:tags` | `current-space` | — | array | 1.0.0 |
 | `blocks.list` | `api.blocks.list(pageId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | — | array | 1.0.0 |
@@ -146,6 +148,7 @@ register({
 | `files.move` | `api.files.move(attId, toPageId, expectedSha, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.9.0 |
 | `files.rename` | `api.files.rename(attId, name, expectedSha, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.9.0 |
 | `files.delete` | `api.files.delete(attId, expectedSha, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.9.0 |
+| `templates.list` | `api.templates.list()` | `read:pages` | `current-space` | — | array | 1.12.0 |
 | `templates.apply` | `api.templates.apply(templateId, parentId, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.9.0 |
 | `files.upload_to_page` | `api.files.upload_to_page(pageId, name, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.10.0 |
 | `import.docpackage` | `api.import.docpackage(parentId, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.10.0 |
@@ -161,10 +164,14 @@ register({
 | `files.download` | `api.files.download(attId)` | `export:files` | `current-space` | — | object | 1.5.0 |
 | `blobs.fetch` | `api.blobs.fetch(handle)` | `export:files` | `current-space` | — | object | 1.5.0 |
 | `export.markdown` | `api.export.markdown(pageId, spaceId)` | `export:files` | `current-space` | — | object | 1.6.0 |
+| `export.page_markdown` | `api.export.pageMarkdown(pageId, spaceId)` | `export:files` | `current-space` | — | object | 1.12.0 |
+| `export.space_markdown` | `api.export.spaceMarkdown(spaceId, pageId)` | `export:files` | `current-space` | — | object | 1.12.0 |
 | `export.docpackage` | `api.export.docpackage(pageId)` | `export:files` | `current-space` | — | object | 1.6.0 |
 | `pages.importMarkdown` | `api.pages.importMarkdown(title, markdown, parentId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `pages.import_markdown` | `api.pages.import_markdown(title, markdown, parentId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.12.0 |
 | `pages.update` | `api.pages.update(id, markdown, content, title, expectedRev, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.1.0 |
 | `spaces.list` | `api.spaces.list()` | `read:pages` | `app` | — | object | 1.1.0 |
+| `space.current` | `api.space.current()` | `read:pages` | `current-space` | — | object | 1.12.0 |
 | `spaces.switch` | `api.spaces.switch(id, name)` | `write:pages` | `app` | **草稿确认** | object | 1.1.0 |
 
 ### `page.current` — 读取当前页
@@ -314,6 +321,24 @@ register({
 - 参数：
   - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
   - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（默认 50，上限 200）
+
+### `drafts.status` — 查草稿状态
+
+- 调用：`api.drafts.status(draftId)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：该草稿的当前状态（只回本会话）
+- 参数：
+  - `draftId`: `string` —— 写工具返回的 draftId
+
+### `audit.tail` — 最近审计
+
+- 调用：`api.audit.tail(limit)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：本会话最近 N 条审计（⛔ 不含正文）
+- 参数：
+  - `limit`: `number`（可选） —— 最近 N 条（默认 20，上限 100）
 
 ### `tags.list` — 列出本空间标签
 
@@ -651,6 +676,13 @@ register({
   - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
   - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
 
+### `templates.list` — 模板清单
+
+- 调用：`api.templates.list()`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：本空间的用户模板清单（空表 ⇒ []）
+
 ### `templates.apply` — 套用模板建页（草稿确认）
 
 - 调用：`api.templates.apply(templateId, parentId, spaceId, dryRun, clientRequestId)`
@@ -850,6 +882,26 @@ register({
   - `pageId`: `string`（可选） —— 单页导出：页面 id（与 spaceId 只能给一个）
   - `spaceId`: `string`（可选） —— 整空间导出：空间 id（与 pageId 只能给一个；跨空间需「只读（全部空间）」档，否则明确拒）
 
+### `export.page_markdown` — 导出单页 Markdown（句柄）
+
+- 调用：`api.export.pageMarkdown(pageId, spaceId)`
+- 权限：`export:files`
+- scope：`current-space`
+- 返回：句柄（单次/120s/绑会话）；落盘用 blobs_fetch
+- 参数：
+  - `pageId`: `string` —— 要导出的页面 id（只接受 pageId）
+  - `spaceId`: `string`（可选） —— 整空间 id。⚠️ 本工具只接受 pageId —— 给了它 ⇒ `bad_args`（请用 export_space_markdown）
+
+### `export.space_markdown` — 导出整空间 Markdown（句柄）
+
+- 调用：`api.export.spaceMarkdown(spaceId, pageId)`
+- 权限：`export:files`
+- scope：`current-space`
+- 返回：句柄；落盘用 blobs_fetch
+- 参数：
+  - `spaceId`: `string`（可选） —— 整空间 id（省略=当前空间；本版只支持当前空间）
+  - `pageId`: `string`（可选） —— 页面 id。⚠️ 本工具只接受 spaceId —— 给了它 ⇒ `bad_args`（请用 export_page_markdown）
+
 ### `export.docpackage` — 导出 .shuyodoc（句柄）
 
 - 调用：`api.export.docpackage(pageId)`
@@ -862,6 +914,20 @@ register({
 ### `pages.importMarkdown` — 导入 Markdown 为一页（草稿确认）
 
 - 调用：`api.pages.importMarkdown(title, markdown, parentId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会用 Markdown 原文新建一页笔记内容，属于对用户数据的实质写入 → 必须先给用户看草稿并等他确认，不直接落库
+- 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
+- 参数：
+  - `title`: `string` —— 新页标题。
+  - `markdown`: `string` —— Markdown 原文。围栏 ```mermaid 会变成真图块；标题/列表/引用/表格按各自类型落块。⛔ 含块级 HTML 或超过 200KB 会被拒绝。
+  - `parentId`: `string`（可选） —— 父页面 id；不传就放在顶层。
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+
+### `pages.import_markdown` — 导入 Markdown（整篇，新名）
+
+- 调用：`api.pages.import_markdown(title, markdown, parentId, dryRun, clientRequestId)`
 - 权限：`write:pages`
 - scope：`current-space`
 - 写入中介：**草稿确认（落库前需用户点确认）** —— 会用 Markdown 原文新建一页笔记内容，属于对用户数据的实质写入 → 必须先给用户看草稿并等他确认，不直接落库
@@ -895,6 +961,13 @@ register({
 - 权限：`read:pages`
 - scope：`app`
 - 返回：当前空间 id ＋ 全部未删除空间
+
+### `space.current` — 当前空间
+
+- 调用：`api.space.current()`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：当前活动空间（= spaces_list 的 active 那条）+ 页面计数
 
 ### `spaces.switch` — 切换空间（草稿确认）
 
@@ -1052,7 +1125,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.11.0",
+  "runtime": "declarative", "apiVersion": "1.12.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },

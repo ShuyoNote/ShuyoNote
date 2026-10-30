@@ -1098,6 +1098,65 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
 
   // ⭐ spaces.list / spaces.switch（2026-10-17）：MCP / AI 宿主都要能看见并切换空间。
   //   list：只读两跳（listWorkspaces + active id）；switch：只产出草稿，真正切换走 store（唯一实现）。
+  // ⭐ UX-①（2026-10-30）：drafts.status / audit.tail —— 本机 MCP 面的闭环读数；
+  //   应用内 AI 面没有"草稿状态表/本会话审计"这条通道 ⇒ 如实说不可用（⛔ 不编造）。
+  "drafts.status": async (args) => {
+    const draftId = String(args.draftId ?? "").trim();
+    if (!draftId) return { ok: false, error: "drafts.status 需要 draftId" };
+    return { ok: false, error: "应用内 AI 面不提供 MCP 草稿状态（draftId 只在外部门户/插件面生成）" };
+  },
+
+  "audit.tail": async (args) => {
+    const raw = Number(args.limit ?? 20);
+    const limit = Number.isFinite(raw) ? Math.max(1, Math.min(100, Math.trunc(raw))) : 20;
+    return { ok: false, error: `应用内 AI 面不提供 MCP 审计环（limit=${limit} 只在外部门户/插件面可用）` };
+  },
+
+  // ⭐ UX-②：模板清单（应用内面也走同一份 listTemplates）
+  "templates.list": async () => {
+    const rows = await api.listTemplates();
+    return { ok: true, templates: rows.map((t) => ({ templateId: t.id, name: t.name, title: t.name })) };
+  },
+
+  // ⭐ UX-③：当前空间（应用内面也走同一份 spaces/list 数据源）
+  "space.current": async () => {
+    const [spaces, active, pages] = await Promise.all([
+      api.listWorkspaces(),
+      api.getActiveWorkspaceId(),
+      api.listPages(),
+    ]);
+    const hit = spaces.find((s) => s.id === active);
+    return { ok: true, spaceId: active, name: hit?.name ?? "", pageCount: pages.length };
+  },
+
+  // ⭐ UX-⑤：新名（旧名 pages.importMarkdown 保留，同一能力、行为一致）
+  "pages.import_markdown": async (args) => {
+    const title = String(args.title ?? "").trim();
+    const dryRun = args.dryRun === true;
+    const clientRequestId = typeof args.clientRequestId === "string" ? args.clientRequestId : "";
+    if (!title) return { ok: false, error: "pages.import_markdown 需要 title" };
+    if (dryRun) return { ok: true, dryRun: true, would: { kind: "create_page", title, markdown: true }, clientRequestId };
+    const built = importMarkdownArgs(title, String(args.markdown ?? ""), typeof args.parentId === "string" && args.parentId ? args.parentId : null);
+    if (!built.ok) return { ok: false, error: built.error };
+    return draft(`import_markdown:${title}`, `导入 Markdown 新建页面「${title}」`, { kind: "create_page", args: built.args });
+  },
+
+  // ⭐ UX-⑦：导出拆名（旧 export.markdown 保留）
+  "export.page_markdown": async (args) => {
+    const pageId = String(args.pageId ?? "").trim();
+    const spaceId = String(args.spaceId ?? "").trim();
+    if (!pageId) return { ok: false, error: "export.page_markdown 需要 pageId" };
+    if (spaceId) return { ok: false, error: "export.page_markdown 只接受 pageId（整空间请用 export_space_markdown）" };
+    return { ok: false, error: "应用内 AI 面不提供导出句柄 —— 要文件请用文件管理的导出入口；外部接入用 export_page_markdown + blobs_fetch。" };
+  },
+
+  "export.space_markdown": async (args) => {
+    const spaceId = String(args.spaceId ?? "").trim();
+    const pageId = String(args.pageId ?? "").trim();
+    if (pageId) return { ok: false, error: "export.space_markdown 只接受 spaceId（单页请用 export_page_markdown）" };
+    return { ok: false, error: `应用内 AI 面不提供导出句柄（空间 ${spaceId || "当前"}）—— 外部接入用 export_space_markdown + blobs_fetch。` };
+  },
+
   "spaces.list": async () => {
     const [spaces, active] = await Promise.all([api.listWorkspaces(), api.getActiveWorkspaceId()]);
     return {

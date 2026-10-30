@@ -63,6 +63,11 @@ export const NOTE_ID_PREFIXES = [
   // ⭐ 2026-10-29（B2-补遗-1）：`import.docpackage` 是**本库文档包**导入（永远新建页），
   //   文件由用户在系统选择框里亲自选 —— 属笔记域；同属清单遗漏。
   "import.",
+  // ⭐ 2026-10-30（UX-①）：`drafts.status` / `audit.tail` 是**本机 MCP 会话**的闭环读数
+  //   （只回本会话、不含正文），仍属笔记域；同属清单遗漏。
+  "drafts.", "audit.",
+  // ⭐ 2026-10-30（UX-③）：`space.current` 是当前空间的只读读数（不含别的空间）⇒ 笔记域。
+  "space.",
 ];
 export const ALLOWED_AI_KINDS = ["read", "write"];
 export const ALLOWED_AI_SCOPE = "current-space";

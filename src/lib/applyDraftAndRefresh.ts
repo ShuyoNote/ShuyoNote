@@ -47,7 +47,22 @@ const SEED_DEPS = {
 };
 
 export async function applyDraftAndRefresh(payload: unknown): Promise<ApplyResult> {
-  const res = await applyDraft(payload);
+  // ⭐ UX-①：把草稿结果回写给宿主（applied/rejected）——失败不打断落库/提示
+  const draftId = typeof (payload as { draftId?: unknown })?.draftId === "string"
+    ? String((payload as { draftId: string }).draftId)
+    : "";
+  const report = (state: "applied" | "rejected") => {
+    if (!draftId) return;
+    void api.mcpDraftState(draftId, state).catch(() => undefined);
+  };
+  let res: ApplyResult;
+  try {
+    res = await applyDraft(payload);
+  } catch (e) {
+    report("rejected");
+    throw e;
+  }
+  report(res.ok ? "applied" : "rejected");
   const notes = useNotes.getState();
   // ⭐ R150：**外部写过的页要打标记** ✓ —— 否则那条排在去抖槽里的旧补丁会在约 0.4 秒后
   //   把它盖回去 ✗（现场读数见 `lib/pendingSave.ts` 的头注 ✓）。

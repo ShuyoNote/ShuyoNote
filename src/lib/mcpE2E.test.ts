@@ -14,11 +14,13 @@ const store = vi.hoisted(() => {
     attachments: new Map<string, A>(),
     props: new Map<string, string>(),
     lockedSpace: false,
+    draftStates: [] as Array<[string, string]>,
     reset() {
       store.pages.clear();
       store.attachments.clear();
       store.props.clear();
       store.lockedSpace = false;
+      store.draftStates.length = 0;
     },
     addPage(p: Partial<P> & { id: string }) {
       store.pages.set(p.id, {
@@ -87,6 +89,7 @@ vi.mock("./api", () => ({
     listTemplates: async () => [],
     listTags: async () => [],
     removeTag: async () => undefined,
+    mcpDraftState: async (draftId: string, state: string) => { store.draftStates.push([draftId, state]); },
     listPageAttachments: async (pageId: string | null) =>
       [...store.attachments.values()].filter((a) => a.page_id === pageId),
   },

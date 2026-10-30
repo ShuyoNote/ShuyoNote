@@ -4310,6 +4310,218 @@ fn cap_db_rows_delete(
     }))
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// UX-①（2026-10-30）：写闭环 —— `draftId`（写工具返回）＋ `drafts.status` ＋ `audit.tail`
+//
+// 三条口径：
+//   · `draftId` 在**产草稿那一刻**生成（同一次调用稳定；`dryRun` 不生成），并写进交给前端的
+//     draft payload ⇒ apply 侧确认/拒绝后回写状态（`mcp_draft_state` 命令）；
+//   · 状态只有 pending → applied/rejected；超过 TTL（10 分钟）读作 `expired`（⛔ 不删记录，
+//     也不把"没见过"说成过期）；查询**只回本会话**；
+//   · `audit.tail` 只读**本会话**最近 N 条（默认 20 / 上限 100），⛔ 不回正文、不回别的会话。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const DRAFT_STATE_TTL_MS: i64 = 10 * 60 * 1000;
+const DRAFT_STATE_CAPACITY: usize = 512;
+
+struct DraftStateRow {
+    source: String,
+    tool: String,
+    capability: String,
+    state: String,
+    at_ms: i64,
+    expires_ms: i64,
+}
+
+static DRAFT_STATES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, DraftStateRow>>,
+> = std::sync::OnceLock::new();
+
+fn draft_states() -> &'static std::sync::Mutex<std::collections::HashMap<String, DraftStateRow>> {
+    DRAFT_STATES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// dispatch 产出草稿后调用：登记 pending，并把 `draftId` 写进**最后一条**草稿的 payload。
+pub(crate) fn attach_draft_id(id: &str, source: &str, tool: &str, capability: &str) {
+    let now = now_ms();
+    if let Ok(mut g) = draft_states().lock() {
+        if g.len() >= DRAFT_STATE_CAPACITY {
+            if let Some(old) = g
+                .iter()
+                .min_by_key(|(_, r)| r.at_ms)
+                .map(|(k, _)| k.clone())
+            {
+                g.remove(&old);
+            }
+        }
+        g.insert(
+            id.to_string(),
+            DraftStateRow {
+                source: source.to_string(),
+                tool: tool.to_string(),
+                capability: capability.to_string(),
+                state: "pending".to_string(),
+                at_ms: now,
+                expires_ms: now + DRAFT_STATE_TTL_MS,
+            },
+        );
+    }
+    RUN_STATE.with(|s| {
+        let mut st = s.borrow_mut();
+        if let Some(last) = st.drafts.last_mut() {
+            last.payload["draftId"] = serde_json::json!(id);
+        }
+    });
+}
+
+/// 前端回写：pending → applied / rejected（其它状态值 ⇒ `bad_args`）。
+pub(crate) fn mark_draft_state(id: &str, state: &str) -> Result<(), String> {
+    let st = state.trim();
+    if st != "applied" && st != "rejected" {
+        return Err("bad_args: state 只能是 applied / rejected".to_string());
+    }
+    let mut g = draft_states()
+        .lock()
+        .map_err(|_| "internal: 草稿状态表锁坏了".to_string())?;
+    let Some(row) = g.get_mut(id.trim()) else {
+        return Err(format!("not_found: 草稿 {} 不存在（可能已过期被清）", id.trim()));
+    };
+    if row.state != "pending" {
+        return Ok(()); // 幂等：重复回写按最后一次语义忽略（⛔ 不报错打断 apply 收尾）
+    }
+    if now_ms() > row.expires_ms {
+        return Err(format!("not_found: 草稿 {} 已过期，状态不再回写", id.trim()));
+    }
+    row.state = st.to_string();
+    Ok(())
+}
+
+/// Tauri 命令：apply 侧（确认/拒绝后）回写草稿状态。桌面专属。
+#[tauri::command]
+pub fn mcp_draft_state(draft_id: String, state: String) -> Result<(), String> {
+    mark_draft_state(&draft_id, &state)
+}
+
+fn draft_state_view(id: &str) -> Result<serde_json::Value, String> {
+    let caller = caller_identity();
+    let g = draft_states()
+        .lock()
+        .map_err(|_| "internal: 草稿状态表锁坏了".to_string())?;
+    let Some(row) = g.get(id.trim()) else {
+        return Err(format!("not_found: 草稿 {} 不存在（换会话后不可见）", id.trim()));
+    };
+    // 只回**本人会话**（外部 = external:<session>；插件 = plugin:<id>）
+    if row.source != caller {
+        return Err(format!("not_found: 草稿 {} 不存在（别的会话的草稿不可见）", id.trim()));
+    }
+    let expired = now_ms() > row.expires_ms && row.state == "pending";
+    Ok(serde_json::json!({
+        "draftId": id.trim(),
+        "state": if expired { "expired" } else { row.state.as_str() },
+        "at": row.at_ms,
+        "tool": row.tool,
+        "capabilityId": row.capability,
+    }))
+}
+
+/// `drafts.status`（读）：一条草稿的当前状态（只回本会话）。
+fn cap_drafts_status(draft_id: &str) -> CapResult {
+    if draft_id.trim().is_empty() {
+        return Err("bad_args: 需要 draftId".to_string());
+    }
+    draft_state_view(draft_id)
+}
+
+/// `audit.tail`（读）：**本会话**最近 N 条审计（默认 20 / 上限 100；⛔ 不含正文）。
+fn cap_audit_tail(limit: i64) -> CapResult {
+    let limit = limit.clamp(1, 100) as usize;
+    let caller = caller_identity();
+    let (source_filter, plugin_filter): (Option<String>, Option<String>) =
+        match caller.strip_prefix("external:") {
+            Some(session) => (Some(format!("external:{session}")), None),
+            None => (
+                Some("plugin".to_string()),
+                caller.strip_prefix("plugin:").map(str::to_string),
+            ),
+        };
+    let rows: Vec<serde_json::Value> =
+        crate::plugins::plugin_audit(None, Some(2000))
+            .into_iter()
+            .filter(|e| source_filter.as_deref().map(|s| e.source == s).unwrap_or(false))
+            .filter(|e| plugin_filter.as_deref().map(|p| e.plugin_id == p).unwrap_or(true))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|e| {
+                serde_json::json!({
+                    "at": e.at_ms,
+                    "tool": e.capability,
+                    "capabilityId": e.capability,
+                    "ok": e.ok,
+                    "code": e.error_code,
+                })
+            })
+            .collect();
+    let start = rows.len().saturating_sub(limit);
+    Ok(serde_json::json!(rows[start..].to_vec()))
+}
+
+/// `templates.list`（UX-②）：本空间用户模板清单（与 `templates.apply` 配对；空表 ⇒ []）。
+fn cap_templates_list() -> CapResult {
+    with_read_conn(|c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT id, name FROM meta.templates WHERE built_in = 0 ORDER BY sort_order ASC, created_at ASC",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows: Vec<serde_json::Value> = stmt
+            .query_map([], |r| Ok(serde_json::json!({ "templateId": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?, "title": r.get::<_, String>(1)? })))
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::json!(rows))
+    })
+}
+
+/// `space.current`（UX-③）：当前活动空间 + 页面计数（与 spaces.list 的 active 同一数据）。
+fn cap_space_current() -> CapResult {
+    with_read_conn(|c| {
+        let active = crate::workspaces::active_workspace_id(c).unwrap_or_default();
+        let name: String = c
+            .query_row(
+                "SELECT name FROM meta.workspaces WHERE id = ?1",
+                params![active],
+                |r| r.get(0),
+            )
+            .unwrap_or_default();
+        let page_count: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        Ok(serde_json::json!({ "spaceId": active, "name": name, "pageCount": page_count }))
+    })
+}
+
+/// `export.page_markdown`（UX-⑦）：只接受 pageId 的单页导出（拆名后行为不变）。
+fn cap_export_page_markdown(page_id: &str, space_id: Option<&str>) -> CapResult {
+    if space_id.map(str::trim).filter(|s| !s.is_empty()).is_some() {
+        return Err("bad_args: export_page_markdown 只接受 pageId（整空间请用 export_space_markdown）".to_string());
+    }
+    cap_export_markdown(Some(page_id), None)
+}
+
+/// `export.space_markdown`（UX-⑦）：只接受 spaceId（省略=当前空间）的整空间导出。
+fn cap_export_space_markdown(space_id: Option<&str>, page_id: Option<&str>) -> CapResult {
+    if page_id.map(str::trim).filter(|s| !s.is_empty()).is_some() {
+        return Err("bad_args: export_space_markdown 只接受 spaceId（单页请用 export_page_markdown）".to_string());
+    }
+    let current = target_space_id(None);
+    let target = space_id.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(&current);
+    cap_export_markdown(None, Some(target))
+}
+
 fn cap_properties_list(space_id: Option<&str>) -> CapResult {
     with_conn_for_space(space_id, |c| {
         let mut stmt = c
@@ -4964,6 +5176,8 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_opt_str("spaceId").as_deref(),
         ),
         "export.docpackage" => cap_export_docpackage(&arg_str("pageId")?),
+        "export.page_markdown" => cap_export_page_markdown(&arg_str("pageId")?, arg_opt_str("spaceId").as_deref()),
+        "export.space_markdown" => cap_export_space_markdown(arg_opt_str("spaceId").as_deref(), arg_opt_str("pageId").as_deref()),
         "coverage.report" => cap_coverage_report(arg_opt_str("spaceId").as_deref()),
         "files.export" => cap_files_export(&arg_str("fileName")?, &arg_str("content")?),
         "kv.get" => cap_kv_get(&arg_str("key")?, &scope_arg(&args)),
@@ -5071,6 +5285,13 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_bool(args.get("dryRun"), false),
             arg_opt_str("clientRequestId").as_deref(),
         ),
+        "pages.import_markdown" => cap_pages_import_markdown(
+            &arg_str("title")?,
+            &arg_str("markdown")?,
+            arg_opt_str("parentId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
         "pages.update" => cap_pages_update(
             &arg_str("id")?,
             arg_opt_str("title").as_deref(),
@@ -5081,10 +5302,12 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_opt_str("clientRequestId").as_deref(),
         ),
         "spaces.list" => cap_spaces_list(),
+        "space.current" => cap_space_current(),
         "spaces.switch" => cap_spaces_switch(
             arg_opt_str("id").as_deref(),
             arg_opt_str("name").as_deref(),
         ),
+        "templates.list" => cap_templates_list(),
         "pages.create" => cap_pages_create(
             &arg_str("title")?,
             &args.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -5193,6 +5416,8 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_bool(args.get("dryRun"), false),
             arg_opt_str("clientRequestId").as_deref(),
         ),
+        "drafts.status" => cap_drafts_status(&arg_str("draftId")?),
+        "audit.tail" => cap_audit_tail(arg_i64("limit", 20)),
         "editor.insertText" => cap_editor_insert_text(&arg_str("text")?),
         "user.notify" => cap_user_notify(&arg_str("message")?),
         "log.write" => {
@@ -5205,7 +5430,13 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         }
     };
     match out {
-        Ok(v) => {
+        Ok(mut v) => {
+            // ⭐ UX-①（2026-10-30）：产出草稿的写调用 ⇒ 生成 draftId（dryRun 不产草稿 ⇒ 不加）
+            if !dry_run && v.get("drafted").and_then(|x| x.as_bool()) == Some(true) {
+                let id = uuid::Uuid::new_v4().to_string();
+                attach_draft_id(&id, &source, method, cap.id);
+                v["draftId"] = serde_json::json!(id);
+            }
             // dryRun：不产生草稿（各 cap 自己保证）＋ **审计不加**（P2 判据 4）
             if !dry_run {
                 push_audit(&source, &plugin_id, method, cap.scope, true, None);
@@ -14788,5 +15019,66 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert_eq!(v2["dryRun"], true);
         assert!(d2.is_empty(), "dryRun 不产草稿");
         b1c_cleanup(&f);
+    }
+
+    /// ⭐ UX-①：写工具返回 draftId；drafts.status 四态；audit.tail 只回本人会话。
+    #[test]
+    fn ux1_draft_id_status_and_audit_tail_are_session_scoped() {
+        let f = b1c_fixture("ux1");
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        let (out, drafts) = with_external_caller("ux1-w", &g, || {
+            with_fresh_drafts(|| dispatch_capability("pages.create", r#"{"title":"x"}"#))
+        });
+        let v: serde_json::Value = serde_json::from_str(&out.expect("应产草稿")).unwrap();
+        let draft_id = v["draftId"].as_str().unwrap_or("").to_string();
+        assert!(!draft_id.is_empty(), "写工具必须返回 draftId：{v}");
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].payload["draftId"], draft_id);
+        let (out2, d2) = with_external_caller("ux1-dry", &g, || {
+            with_fresh_drafts(|| dispatch_capability("pages.create", r#"{"title":"x","dryRun":true}"#))
+        });
+        let v2: serde_json::Value = serde_json::from_str(&out2.expect("dryRun OK")).unwrap();
+        assert!(v2.get("draftId").is_none(), "dryRun 不生成 draftId");
+        assert!(d2.is_empty());
+        let st = |id: &str| -> serde_json::Value {
+            with_external_caller("ux1-w", &g, || crate::plugins::cap_drafts_status(id)).unwrap()
+        };
+        assert_eq!(st(&draft_id)["state"], "pending");
+        crate::plugins::mark_draft_state(&draft_id, "applied").expect("回写 applied");
+        assert_eq!(st(&draft_id)["state"], "applied");
+        assert_eq!(st(&draft_id)["capabilityId"], "pages.create");
+        crate::plugins::attach_draft_id("ux1-rej", "external:ux1-w", "pages.create", "pages.create");
+        crate::plugins::mark_draft_state("ux1-rej", "rejected").expect("回写 rejected");
+        assert_eq!(st("ux1-rej")["state"], "rejected");
+        crate::plugins::attach_draft_id("ux1-exp", "external:ux1-w", "pages.create", "pages.create");
+        if let Ok(mut map) = crate::plugins::draft_states().lock() {
+            if let Some(r) = map.get_mut("ux1-exp") {
+                r.expires_ms = 1;
+            }
+        }
+        assert_eq!(st("ux1-exp")["state"], "expired");
+        let other = with_external_caller("ux1-other", &g, || {
+            crate::plugins::cap_drafts_status(&draft_id)
+        });
+        assert!(other.unwrap_err().contains("not_found"), "别的会话必须看不到");
+        let tail = |sid: &str| -> serde_json::Value {
+            with_external_caller(sid, &g, || crate::plugins::cap_audit_tail(100)).unwrap()
+        };
+        let before = tail("ux1-w").as_array().unwrap().len();
+        assert!(before > 0, "本会话应有审计");
+        with_external_caller("ux1-stranger", &g, || dispatch_capability("pages.count", "{}"))
+            .unwrap();
+        let after = tail("ux1-w");
+        assert_eq!(after.as_array().unwrap().len(), before, "别的会话审计不许出现");
+        b1c_cleanup(&f);
+    /// ⭐ UX-⑦：拆分后的显式工具只接受自己的参数（给错 ⇒ bad_args 点名）。
+    #[test]
+    fn ux7_export_split_rejects_the_other_parameter() {
+        let e = super::cap_export_page_markdown("p1", Some("other")).unwrap_err();
+        assert!(e.contains("bad_args") && e.contains("space_markdown"), "{e}");
+        let e = super::cap_export_space_markdown(None, Some("p1")).unwrap_err();
+        assert!(e.contains("bad_args") && e.contains("page_markdown"), "{e}");
+    }
     }
 }
