@@ -365,6 +365,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-10-30-cross-space-write-v3.md](plans/2026-10-30-cross-space-write-v3.md) | 跨空间写 v3 / 导出跨空间 / 超限确认 UI 的施工拆解（A1–A4/B/C、判据与风险）；待实施 |
 | [plans/2026-10-30-package-format-final.md](plans/2026-10-30-package-format-final.md) | 包格式一步到位定稿：.shuyodoc v1.1（纯新增字段/checksums 自保护/数据库命名空间）＋ .shuyospace 完整设计（tree 权威附件权威/导入原子/limits）＋ 错误码与 M1.1–M3 计划 |
 | [plans/2026-10-30-note-metadata-and-title-polish.md](plans/2026-10-30-note-metadata-and-title-polish.md) | 元数据区与长标题落地方案：属性区 P0/P1（计数/系统字段只读/类型化/入口收敛/底部出处合并）＋长标题阈值与截断分流＋文件名与 URL slug＋props 进包提案＋批次 B1–B6 与判据命令 |
+| [plans/2026-10-30-appcss-deep-audit.md](plans/2026-10-30-appcss-deep-audit.md) | App.css 深度审计与优化方案：27.4k 行/814KB 单文件实测、六类问题（半迁移 token/三套刻度不统一/344 死 class/31 未定义变量/160 内联样式）、P0–P3 分阶段与目标指标 |
 
 ## 设计交付（design）
 
