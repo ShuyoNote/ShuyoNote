@@ -1610,6 +1610,30 @@ pub fn list_all_pdf_attachments(
     Ok(out)
 }
 
+/// ⭐ v3-A1：跨空间删除（引用扫描 + 单连接删除）。命中/扫不动都拒；通过后才释放字节。
+pub(crate) fn delete_attachment_cross_space(
+    app_data_dir: &Path,
+    id: &str,
+    space: &str,
+) -> Result<usize, String> {
+    let c = crate::db::open_space_conn_at(space, app_data_dir).map_err(|e| {
+        format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+    })?;
+    if crate::plugins::cross_space_write_disabled() {
+        return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+    }
+    let hash: Option<String> = c
+        .query_row("SELECT hash FROM attachments WHERE id = ?1", params![id], |r| r.get(0))
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some(hash) = hash else { return Ok(0) };
+    let refs = cross_space_refs(&c, app_data_dir, &hash, id)?;
+    if !refs.is_empty() {
+        return Err(format!("bad_args: 附件仍被其它空间引用（{}）—— 先删引用再删", refs.join("、")));
+    }
+    let empty = Some(std::collections::HashSet::<String>::new());
+    remove_attachment_in_with(&c, app_data_dir, id, space, &empty)
+}
 #[tauri::command]
 pub fn remove_attachment(
     app: tauri::AppHandle,
@@ -1625,30 +1649,7 @@ pub fn remove_attachment(
             crate::workspaces::active_workspace_id(&c)?
         };
         if space != active {
-            if crate::plugins::cross_space_write_disabled() {
-                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
-            }
-            let c = crate::db::open_space_conn_at(space, &app_data_dir).map_err(|e| {
-                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
-            })?;
-            // 引用扫描：命中 ⇒ 拒；任何空间读不到 ⇒ 拒（宁留勿删）
-            let hash: Option<String> = c
-                .query_row("SELECT hash FROM attachments WHERE id = ?1", params![id], |r| r.get(0))
-                .optional()
-                .map_err(|e| e.to_string())?;
-            let Some(hash) = hash else {
-                return Ok(0); // 幂等
-            };
-            let refs = cross_space_refs(&c, &app_data_dir, &hash, &id)?;
-            if !refs.is_empty() {
-                return Err(format!(
-                    "bad_args: 附件仍被其它空间引用（{}）—— 先删引用再删",
-                    refs.join("、")
-                ));
-            }
-            let empty = Some(std::collections::HashSet::<String>::new());
-            return remove_attachment_in_with(&c, &app_data_dir, &id, space, &empty);
-        }
+            return delete_attachment_cross_space(&app_data_dir, &id, space);        }
     }
     remove_attachment_inner(&db, &app_data_dir, &id)
 }

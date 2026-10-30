@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **v3-A1 扩展：`files_delete` 跨空间**：删除前跨空间引用扫描（目标空间之外所有空间；任一打不开即拒绝，宁留勿删），通过后才删行并释放字节；目标空间 `changes`/审计 `spaceId`；`files.rename`＋`files.delete` 已支持跨空间，其余仍 unsupported。`apiVersion` 1.19.0 → **1.20.0**。
 - **跨空间写 v3-A1：`files_rename` 支持目标空间**：`rename_attachment` 抽 `rename_attachment_in` 单连接实现；命令/能力/apply 透传 `spaceId`；只改目标空间内附件（不在 ⇒ `not_found`）；目标空间 `changes`＋审计 `spaceId`；回滚开关/`write:all-spaces` 门不变。`apiVersion` 1.18.0 → **1.19.0**。
 - **AI 不可见空间清单**：`mcp_hidden_spaces_get/set`；清单存本机 `meta.db`（不随同步走、换机重配）；AI 面读写命中 ⇒ `permission_denied`（点名「AI 不可见」）；`spaces_list` 过滤、当前空间被隐藏时连当前空间调用也拒绝；用户侧不受影响；清空即恢复；`SHUYONOTE_AI_HIDDEN_SPACES=off` 可跳过。插件 API `apiVersion` 1.17.0 → **1.18.0**。
 - **跨空间写 v2 —— `write_all` 扩读 ＋ 改目标空间**：`write_all` 档同时授予 `read:all-spaces`；`pages_get`/`blocks_list` 加 `spaceId`；白名单 `pages.update`/`blocks.append/patch/delete` 由 `apply.ts` 取目标页后按原合并路径处理、命令按目标空间开可写连接（复用 `save_page_in`，不复制副作用）；目标锁着 ⇒ `permission_denied`；审计带 `spaceId`；回滚开关双向生效。`apiVersion` 1.16.0 → **1.17.0**。

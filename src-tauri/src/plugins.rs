@@ -16201,4 +16201,111 @@ register({ id: "s.run", title: "结构化", run: function () {
         std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
         b1c_cleanup(&f);
     }
+
+    /// ⭐ v3-A1：files.delete 跨空间（引用保护/坏库拒绝/四计数不变/缺档/not_found/开关）。
+    #[test]
+    fn a1_files_delete_cross_space() {
+        let f = b1c_fixture("a1del");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "a1del-second";
+        let bad = "a1del-bad";
+        let hash = "b".repeat(64);
+        std::fs::create_dir_all(crate::db::spaces_dir(&f.dir)).ok();
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute("INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','a1del-dev')", []).ok();
+            for id in [second] {
+                m.execute(
+                    "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                    params![id],
+                )
+                .unwrap();
+            }
+        }
+
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '二页', '{}', 'x', 'page', 0, 10, 10)",
+                params![second],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO attachments (id, page_id, name, mime, size, hash, created_at)
+                 VALUES ('a1','p1','x.txt','text/plain',3,?1,10)",
+                params![hash],
+            )
+            .unwrap();
+        }
+        let four = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (q("SELECT COUNT(*) FROM pages"), q("SELECT COUNT(*) FROM changes"), q("SELECT COUNT(*) FROM page_versions"), q("SELECT COUNT(*) FROM attachments"))
+        };
+        // 跨空间引用保护：当前空间正文引用该 sha ⇒ 拒并点名
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute(
+                "UPDATE pages SET content_json = ?1 WHERE id = 'p1'",
+                params![format!(r#"{{"root":{{"type":"root","children":[{{"type":"paragraph","children":[{{"type":"text","text":"attachment://{hash}"}}]}}]}}}}"#)],
+            )
+            .unwrap();
+        }
+        let before = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
+        let e = crate::attachments::delete_attachment_cross_space(&f.dir, "a1", second).expect_err("引用存在必须拒");
+        assert!(e.contains("仍被其它空间引用"), "{e}");
+        assert!(e.contains(&f.space), "必须点名引用它的空间：{e}");
+        // 坏库空间 ⇒ 拒绝（无法确认引用）
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                params![bad],
+            )
+            .unwrap();
+        }
+        std::fs::write(crate::db::space_db_path(&f.dir, bad), b"not a database").unwrap();
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute("UPDATE pages SET content_json = '{}' WHERE id = 'p1'", []).unwrap();
+        }
+        let e = crate::attachments::delete_attachment_cross_space(&f.dir, "a1", second).expect_err("坏库必须拒");
+        assert!(e.contains("无法确认引用"), "{e}");
+        // 移掉坏空间后 ⇒ 删除成功；目标计数 -1、changes 有 delete；当前四计数不变
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute("DELETE FROM workspaces WHERE id = ?1", params![bad]).unwrap();
+        }
+        let before = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
+        let n = crate::attachments::delete_attachment_cross_space(&f.dir, "a1", second).expect("通过后应删成功");
+        assert_eq!(n, 1);
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            let left: i64 = c.query_row("SELECT COUNT(*) FROM attachments WHERE id='a1'", [], |r| r.get(0)).unwrap();
+            assert_eq!(left, 0, "目标空间附件应被删");
+            let del: i64 = c.query_row("SELECT COUNT(*) FROM changes WHERE entity='attachment' AND op='delete'", [], |r| r.get(0)).unwrap();
+            assert!(del >= 1, "目标空间 changes 必须有 delete 记录");
+        }
+        let after = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
+        assert_eq!(before, after, "当前空间四计数逐项不变");
+        // 缺档 / not_found / 开关（能力层）
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        let e = with_external_caller("a1d-no", &b2_granted(), || {
+            dispatch_capability("files.delete", &format!(r#"{{"attId":"a1","spaceId":"{second}"}}"#))
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        let e = with_external_caller("a1d-miss", &g, || {
+            dispatch_capability("files.delete", &format!(r#"{{"attId":"没有","spaceId":"{second}"}}"#))
+        })
+        .expect_err("目标空间无该附件必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        let e = crate::attachments::delete_attachment_cross_space(&f.dir, "a1", second).expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        b1c_cleanup(&f);
+    }
 }
