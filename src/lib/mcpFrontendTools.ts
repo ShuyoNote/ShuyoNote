@@ -20,6 +20,7 @@
 // 与外部草稿那条同一条口径（一个应用只做一次，避免多窗口各算一遍）。
 import { api } from "./api";
 import { isDesktopPlatform, platform } from "./platform";
+import { confirmDialog } from "../store/confirm";
 import { docJsonOfPage } from "./docContent";
 import { markdownDocumentForPage, pageContentToMarkdown, sanitizeName } from "./exportMarkdown";
 import { bundleTooLargeMessage, collectWorkspaceBundlePages, prepareBundle } from "./exportMarkdownBundle";
@@ -89,6 +90,48 @@ export function bridgeLimitError(fileCount: number, byteLength: number): string 
   return null;
 }
 
+// ⭐ 批次 C：超限确认 ＋ **一次性额度**（内存、TTL 5 分钟、只对同一请求类型＋同一目标有效）
+const OVERSIZE_GRANT_TTL_MS = 5 * 60 * 1000;
+const oversizeGrants = new Map<string, number>();
+let oversizeNow: () => number = () => Date.now();
+export function _resetOversizeGrantsForTests(): void {
+  oversizeGrants.clear();
+  oversizeNow = () => Date.now();
+}
+export function _setOversizeClockForTests(now?: () => number): void {
+  oversizeNow = now ?? (() => Date.now());
+}
+function oversizeMessage(_kind: string, files: number, bytes: number): string {
+  const base = bridgeLimitError(files, bytes) ?? "";
+  return base + ` needsConfirm=true thresholdBytes=${MAX_BRIDGE_FILE_BYTES} thresholdFiles=${MAX_BRIDGE_FILES}（去应用里确认一次：允许后重试同一请求）`;
+}
+async function oversizeConfirm(
+  kind: string,
+  files: number,
+  bytes: number,
+  target: string,
+): Promise<string | null> {
+  if (files <= MAX_BRIDGE_FILES && bytes <= MAX_BRIDGE_FILE_BYTES) return null;
+  const key = `${kind}|${target}`;
+  const expiresAt = oversizeGrants.get(key);
+  if (expiresAt && expiresAt > oversizeNow()) {
+    oversizeGrants.delete(key); // 一次性：用过即作废
+    return null;
+  }
+  const msg = oversizeMessage(kind, files, bytes);
+  const ok = await confirmDialog({
+    title: "这次操作超过上限",
+    message: `本次导出/上传 ${files} 个文件、${bytes} 字节，超过上限（${MAX_BRIDGE_FILES} 个文件 / ${Math.floor(MAX_BRIDGE_FILE_BYTES / 1024 / 1024)}MB）。\n允许这一次吗？允许后需要重试同一请求。`,
+    okLabel: "允许一次",
+    cancelLabel: "拒绝",
+  });
+  if (ok) {
+    oversizeGrants.set(key, oversizeNow() + OVERSIZE_GRANT_TTL_MS);
+    return msg + "（已在应用内允许一次：请重试同一请求）";
+  }
+  return msg;
+}
+
 /** 一次工具请求 → 结果（`method` 白名单由 Rust 那侧先筛，这里仍按"不认识就报错"处理）。 */
 export async function runFrontendTool(
   method: string,
@@ -129,7 +172,7 @@ async function exportMarkdown(
       kind: page.kind,
     });
     const bytes = new TextEncoder().encode(md);
-    const limit = bridgeLimitError(1, bytes.length);
+    const limit = await oversizeConfirm("page-markdown", 1, bytes.length, `space:${spaceId || ""}:page:${pageId}`);
     if (limit) throw new Error(limit);
     return { name: `${sanitizeName(String(page.title || pageId))}.md`, bytes };
   }
@@ -150,7 +193,7 @@ async function exportMarkdown(
     );
   }
   const fileCount = result.pages + result.assets;
-  const limit = bridgeLimitError(fileCount, result.bytes.length);
+  const limit = await oversizeConfirm("space-markdown", fileCount, result.bytes.length, `space:${spaceId}`);
   if (limit) throw new Error(limit);
   const spaceName = String(args.spaceName ?? "").trim() || "空间导出";
   return { name: `${sanitizeName(spaceName)}.zip`, bytes: result.bytes };
@@ -171,7 +214,7 @@ async function exportDocPackage(
     throw new Error(`bad_args: 「${page.title || pageId}」是文件夹，没有正文可导出`);
   }
   const built = await buildPageDocPackageBytes(pageId, spaceId ? { ...deps, listPageAttachments: (id) => deps.listPageAttachments(id, spaceId), readAttachmentBytes: (h) => deps.readAttachmentBytes(h, spaceId) } : deps);
-  const limit = bridgeLimitError(built.assetCount, built.bytes.length);
+  const limit = await oversizeConfirm("docpackage", built.assetCount, built.bytes.length, `space:${spaceId || ""}:page:${pageId}`);
   if (limit) throw new Error(limit);
   return { name: `${sanitizeName(built.title)}.shuyodoc`, bytes: built.bytes };
 }

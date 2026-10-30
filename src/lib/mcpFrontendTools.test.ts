@@ -28,7 +28,10 @@ vi.mock("./platform", () => ({
   platform: { event: { listen: vi.fn(async () => () => {}) }, derivedStores: undefined },
 }));
 
+vi.mock("../store/confirm", () => ({ confirmDialog: vi.fn() }));
+
 import { api } from "./api";
+import { confirmDialog } from "../store/confirm";
 import { isDesktopPlatform } from "./platform";
 import { FRONTEND_ADAPTERS } from "./capabilities/frontend";
 import { unzipDocument } from "./docZip";
@@ -39,6 +42,8 @@ import {
   MAX_BRIDGE_FILES,
   bridgeLimitError,
   registerMcpFrontendTools,
+  _resetOversizeGrantsForTests,
+  _setOversizeClockForTests,
   runFrontendTool,
   type FrontendToolDeps,
 } from "./mcpFrontendTools";
@@ -242,5 +247,71 @@ describe("B3 前端桥 · 失败面与就绪信号", () => {
     expect(api.mcpFrontendToolReady).not.toHaveBeenCalled();
     unregister();
     vi.mocked(isDesktopPlatform).mockReturnValue(true);
+  });
+});
+
+
+describe("批次 C · 超限确认 ＋ 一次性额度", () => {
+  async function overDeps(n: number) {
+    const atts: Array<Record<string, unknown>> = [];
+    const bytesByHash = new Map<string, Uint8Array>();
+    for (let i = 0; i < n; i++) {
+      const bytes = new TextEncoder().encode("a" + i);
+      const hash = await contentHash(bytes);
+      bytesByHash.set(hash, bytes);
+      atts.push({ id: "a" + i, pageId: "p1", name: "a" + i + ".txt", hash, mime: "text/plain", size: bytes.length });
+    }
+    return deps({
+      listPageAttachments: vi.fn(async () => atts as never),
+      readAttachmentBytes: vi.fn(async (h: string) => bytesByHash.get(String(h)) ?? new Uint8Array()),
+    });
+  }
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetOversizeGrantsForTests();
+  });
+
+  it("超限无额度 ⇒ needs_confirm 含阈值，且弹确认框", async () => {
+    (confirmDialog as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    const d = await overDeps(21);
+    await expect(runFrontendTool("export.docpackage", { pageId: "p1" }, d)).rejects.toThrow(
+      /needs_confirm.*thresholdFiles=20/,
+    );
+    expect(confirmDialog).toHaveBeenCalledTimes(1);
+  });
+
+  it("允许一次 ⇒ 重试同一请求成功；额度只用一次（第三次又 needs_confirm）", async () => {
+    (confirmDialog as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const d = await overDeps(21);
+    await expect(runFrontendTool("export.docpackage", { pageId: "p1" }, d)).rejects.toThrow(/needs_confirm/);
+    const ok = await runFrontendTool("export.docpackage", { pageId: "p1" }, d);
+    expect(ok.name).toBe("标题.shuyodoc");
+    (confirmDialog as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    await expect(runFrontendTool("export.docpackage", { pageId: "p1" }, d)).rejects.toThrow(/needs_confirm/);
+    expect(confirmDialog).toHaveBeenCalledTimes(2);
+  });
+
+  it("拒绝 ⇒ 无额度、仍 needs_confirm", async () => {
+    (confirmDialog as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    const d = await overDeps(21);
+    await expect(runFrontendTool("export.docpackage", { pageId: "p1" }, d)).rejects.toThrow(/needs_confirm/);
+    await expect(runFrontendTool("export.docpackage", { pageId: "p1" }, d)).rejects.toThrow(/needs_confirm/);
+  });
+
+  it("额度 TTL 过期（注入时钟）⇒ 回到 needs_confirm", async () => {
+    (confirmDialog as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    _setOversizeClockForTests(() => 1_000);
+    const d = await overDeps(21);
+    await expect(runFrontendTool("export.docpackage", { pageId: "p1" }, d)).rejects.toThrow(/needs_confirm/);
+    _setOversizeClockForTests(() => 1_000 + 5 * 60 * 1000 + 1);
+    (confirmDialog as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    await expect(runFrontendTool("export.docpackage", { pageId: "p1" }, d)).rejects.toThrow(/needs_confirm/);
+  });
+
+  it("未超限 ⇒ 不弹框、直接成功（行为不变）", async () => {
+    const d = await overDeps(0);
+    const r = await runFrontendTool("export.docpackage", { pageId: "p1" }, d);
+    expect(r.name).toBe("标题.shuyodoc");
+    expect(confirmDialog).not.toHaveBeenCalled();
   });
 });
