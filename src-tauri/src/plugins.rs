@@ -5555,6 +5555,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
                         | "blocks.append"
                         | "blocks.patch"
                         | "blocks.delete"
+                        | "blocks.insert"
                         | "files.rename"
                         | "files.delete"
                         | "files.move"
@@ -16601,6 +16602,68 @@ register({ id: "s.run", title: "结构化", run: function () {
         // 四计数不变
         let after = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
         assert_eq!(before, after, "导出前后当前空间四计数逐项不变");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 一致性批：blocks.insert 跨空间（目标页校验、草稿带 spaceId、四计数、缺档/开关）。
+    #[test]
+    fn blocks_insert_cross_space_draft_and_gates() {
+        let f = b1c_fixture("bi-x");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "bi-x-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+            m.execute("INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','bi-x-dev')", []).ok();
+        }
+        let doc = r#"{"root":{"type":"root","children":[{"type":"paragraph","blockId":"b1","children":[{"type":"text","text":"旧"}]}]}}"#;
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '目标页', ?2, '旧', 'page', 0, 10, 10)",
+                params![second, doc],
+            )
+            .unwrap();
+            c.execute("INSERT OR REPLACE INTO blocks (block_id, page_id, created_at, updated_at) VALUES ('b1','p1',10,10)", []).unwrap();
+        }
+        let four = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (q("SELECT COUNT(*) FROM pages"), q("SELECT COUNT(*) FROM changes"), q("SELECT COUNT(*) FROM page_versions"), q("SELECT COUNT(*) FROM attachments"))
+        };
+        let before = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        let (out, drafts) = with_external_caller("bi-x", &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability("blocks.insert", &format!(r#"{{"pageId":"p1","afterBlockId":"b1","markdown":"插入","spaceId":"{second}"}}"#))
+            })
+        });
+        out.expect("跨空间 insert 应产草稿（目标页/块在目标空间校验通过）");
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].payload["spaceId"], second);
+        assert!(drafts[0].payload["newBlockId"].is_string());
+        let after = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
+        assert_eq!(before, after, "当前空间四计数逐项不变");
+        // 缺档
+        let e = with_external_caller("bi-x-no", &b2_granted(), || {
+            dispatch_capability("blocks.insert", &format!(r#"{{"pageId":"p1","markdown":"x","spaceId":"{second}"}}"#))
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        // 回滚开关
+        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        let e = with_external_caller("bi-x-off", &g, || {
+            dispatch_capability("blocks.insert", &format!(r#"{{"pageId":"p1","markdown":"x","spaceId":"{second}"}}"#))
+        })
+        .expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
         b1c_cleanup(&f);
     }
 }

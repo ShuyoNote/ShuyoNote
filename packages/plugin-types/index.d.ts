@@ -457,4 +457,4 @@ export interface PluginApi {
   };
 }
 
-export declare const SDK_API_VERSION: "1.23.0";
+export declare const SDK_API_VERSION: "1.24.0";
