@@ -1172,11 +1172,21 @@ export function crossSpaceOf(c) {
   return (c.args ?? []).some((a) => a.name === "spaceId");
 }
 
-/** 统一追加到工具描述末尾的一行（⛔ 不手写 61 条）。 */
+/**
+ * 统一追加到工具描述末尾的一行（⛔ 不手写 61 条）。
+ *
+ * 文案**按能力类型分档**（2026-10-30 修 bug：读工具原来也写"写到指定空间"）：
+ *   · 读 + 支持：` 跨空间：支持（带 spaceId 读指定空间）`
+ *   · 写 + 白名单：` 跨空间：支持（带 spaceId 写到指定空间，不是搬移）`
+ *   · 其余：` 跨空间：不支持（带 spaceId ⇒ bad_args）`
+ *
+ * ⚠️ **yes 计数口径**（别再误读）：yes = 读侧声明 `spaceId` 的 26 条 + 写白名单 10 条 = **36**；
+ * 白名单里的写工具数才是 10（旧说法"9→10"指的是它）。
+ */
 export function crossSpaceLine(c) {
-  return crossSpaceOf(c)
-    ? " 跨空间：支持（带 spaceId 写到指定空间，不是搬移）"
-    : " 跨空间：不支持（带 spaceId ⇒ bad_args）";
+  if (!crossSpaceOf(c)) return " 跨空间：不支持（带 spaceId ⇒ bad_args）";
+  if (c.kind === "write") return " 跨空间：支持（带 spaceId 写到指定空间，不是搬移）";
+  return " 跨空间：支持（带 spaceId 读指定空间）";
 }
 
 export function genMcpTools(reg, kind = "read") {
