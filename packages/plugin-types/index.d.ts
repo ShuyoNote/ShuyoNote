@@ -197,13 +197,13 @@ export interface PluginApi {
   /** 列出页面历史版本（权限 `read:versions`；1.5.0 起）
    * 返回：[{versionId, at(毫秒时间戳), title}]，按时间倒序；不含正文（读正文用 version.get）
    */
-    list(pageId: string, limit?: number): { versionId: string; at: number; title: string }[];
+    list(pageId: string, limit?: number, spaceId?: string): { versionId: string; at: number; title: string }[];
   };
   version: {
   /** 读取某个历史版本（权限 `read:versions`；1.5.0 起）
    * 返回：与 pages.get 同口径的正文窗口（{pageId, versionId, at, title, 正文字段, chars_total, offset, limit}；版本不存在 ⇒ not_found）
    */
-    get(pageId: string, versionId: string, offset?: number, limit?: number, includeAnchors?: boolean): { pageId: string; versionId: string; at: number; title: string; content_text: string; chars_total: number; offset: number; limit: number } | never;
+    get(pageId: string, versionId: string, offset?: number, limit?: number, includeAnchors?: boolean, spaceId?: string): { pageId: string; versionId: string; at: number; title: string; content_text: string; chars_total: number; offset: number; limit: number } | never;
   };
   trash: {
   /** 列出回收站（权限 `read:trash`；1.5.0 起）
@@ -273,27 +273,27 @@ export interface PluginApi {
   /** 列出页面附件元数据（权限 `read:files`；1.0.0 起）
    * 返回：[{id, name, mime, size}]，**不含字节**
    */
-    list(pageId?: string): { id: string; name: string; mime: string; size: number }[];
+    list(pageId?: string, spaceId?: string): { id: string; name: string; mime: string; size: number }[];
   /** 检索文件内容（块级）（权限 `read:files`；1.1.0 起）
    * 返回：块级命中；pageId/attId 用来回链，loc 是原文位置（页号/行号/时间码）
    */
-    search(query: string, limit?: number): { chunkId: string; pageId: string | null; attId: string | null; ord: number; loc: string; snippet: string; score: number }[];
+    search(query: string, limit?: number, spaceId?: string): { chunkId: string; pageId: string | null; attId: string | null; ord: number; loc: string; snippet: string; score: number }[];
   /** 读取附件派生文本（权限 `read:files`；1.1.0 起）
    * 返回：派生文本段 + 总段数 + **每个抽取器的覆盖度读数**；附件不存在返回 null；还没抽过 ⇒ segments 空 + total 0（**不是**失败）。coverage 为空数组 ＝ 没有读数（未知），**不是**「抽全了」
    */
-    read(id: string, offset?: number, limit?: number): { segments: { extractor: string; kind: string; text: string; loc: string }[]; total: number; truncated: boolean; coverage: { extractor: string; coverage: string }[] } | null;
+    read(id: string, offset?: number, limit?: number, spaceId?: string): { segments: { extractor: string; kind: string; text: string; loc: string }[]; total: number; truncated: boolean; coverage: { extractor: string; coverage: string }[] } | null;
   /** 附件元数据（含 sha256）（权限 `read:files`；1.5.0 起）
    * 返回：{attId, pageId, name, mime, size, sha256, spaceId}；sha256 是内容指纹（附件按它内容寻址）
    */
-    stat(attId: string): { attId: string; pageId: string | null; name: string; mime: string; size: number; sha256: string; spaceId: string };
+    stat(attId: string, spaceId?: string): { attId: string; pageId: string | null; name: string; mime: string; size: number; sha256: string; spaceId: string };
   /** 附件抽取完整度（权限 `read:files`；1.5.0 起）
    * 返回：{attId, name, extracted, segments, extractors:[{extractor, coverage}]}；coverage 是抽取器报的**原始覆盖度 JSON**，空串=未知（⛔ 不等于完整）
    */
-    extract_status(attId: string): { attId: string; name: string; extracted: boolean; segments: number; extractors: { extractor: string; coverage: string }[]; note: string };
+    extract_status(attId: string, spaceId?: string): { attId: string; name: string; extracted: boolean; segments: number; extractors: { extractor: string; coverage: string }[]; note: string };
   /** 列出未整理附件（权限 `read:files`；1.5.0 起）
    * 返回：{files:[{attId,name,mime,size,sha256,createdAt}], total}；files 是**没有挂到任何页面**的附件（pageId 为空）
    */
-    list_orphan(limit?: number, offset?: number): { files: { attId: string; name: string; mime: string; size: number; sha256: string; createdAt: number }[]; total: number };
+    list_orphan(limit?: number, offset?: number, spaceId?: string): { files: { attId: string; name: string; mime: string; size: number; sha256: string; createdAt: number }[]; total: number };
   /** 把内容保存成文件（用户选位置）（权限 `export:files`；1.0.0 起）
    * 返回：{queued: true, bytes}——**不代表已保存**：命令跑完后宿主会弹保存对话框逐个问你，点了取消就什么都没写
    */
@@ -321,7 +321,7 @@ export interface PluginApi {
   /** 下载附件（返回句柄）（权限 `export:files`；1.5.0 起）
    * 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
    */
-    download(attId: string): { handle: string; name: string; size: number; sha256: string; expiresAt: number };
+    download(attId: string, spaceId?: string): { handle: string; name: string; size: number; sha256: string; expiresAt: number };
   };
   coverage: {
   /** 索引覆盖报告（权限 `read:files`；1.92.0 起）
@@ -453,4 +453,4 @@ export interface PluginApi {
   };
 }
 
-export declare const SDK_API_VERSION: "1.12.0";
+export declare const SDK_API_VERSION: "1.13.0";

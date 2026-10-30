@@ -165,6 +165,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       properties: {
       "pageId": { type: "string" },
       "limit": { type: "number" },
+      "spaceId": { type: "string" },
       },
       required: ["pageId"],
     },
@@ -181,6 +182,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       "offset": { type: "number" },
       "limit": { type: "number" },
       "includeAnchors": { type: "boolean" },
+      "spaceId": { type: "string" },
       },
       required: ["pageId", "versionId"],
     },
@@ -267,6 +269,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       type: "object",
       properties: {
       "pageId": { type: "string" },
+      "spaceId": { type: "string" },
       },
       required: [],
     },
@@ -280,6 +283,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       properties: {
       "query": { type: "string" },
       "limit": { type: "number" },
+      "spaceId": { type: "string" },
       },
       required: ["query"],
     },
@@ -294,6 +298,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       "id": { type: "string" },
       "offset": { type: "number" },
       "limit": { type: "number" },
+      "spaceId": { type: "string" },
       },
       required: ["id"],
     },
@@ -306,6 +311,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       type: "object",
       properties: {
       "attId": { type: "string" },
+      "spaceId": { type: "string" },
       },
       required: ["attId"],
     },
@@ -318,6 +324,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       type: "object",
       properties: {
       "attId": { type: "string" },
+      "spaceId": { type: "string" },
       },
       required: ["attId"],
     },
@@ -331,6 +338,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       properties: {
       "limit": { type: "number" },
       "offset": { type: "number" },
+      "spaceId": { type: "string" },
       },
       required: [],
     },
@@ -745,6 +753,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       type: "object",
       properties: {
       "attId": { type: "string" },
+      "spaceId": { type: "string" },
       },
       required: ["attId"],
     },

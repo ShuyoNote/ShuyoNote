@@ -1,4 +1,4 @@
-# 插件 API（v1.12.0）
+# 插件 API（v1.13.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.12.0",
+  "apiVersion": "1.13.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.12.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.13.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -114,20 +114,20 @@ register({
 | `db.rows` | `api.db.rows(pageId, viewId, where, limit, offset, spaceId)` | `read:pages` | `current-space` | — | object | 1.4.0 |
 | `db.rows_write` | `api.db.rows_write(pageId, rows, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.11.0 |
 | `db.rows_delete` | `api.db.rows_delete(pageId, rowIds, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.11.0 |
-| `versions.list` | `api.versions.list(pageId, limit)` | `read:versions` | `current-space` | — | array | 1.5.0 |
-| `version.get` | `api.version.get(pageId, versionId, offset, limit, includeAnchors)` | `read:versions` | `current-space` | — | object | 1.5.0 |
+| `versions.list` | `api.versions.list(pageId, limit, spaceId)` | `read:versions` | `current-space` | — | array | 1.5.0 |
+| `version.get` | `api.version.get(pageId, versionId, offset, limit, includeAnchors, spaceId)` | `read:versions` | `current-space` | — | object | 1.5.0 |
 | `trash.list` | `api.trash.list(spaceId, limit)` | `read:trash` | `current-space` | — | array | 1.5.0 |
 | `drafts.status` | `api.drafts.status(draftId)` | `read:pages` | `current-space` | — | object | 1.12.0 |
 | `audit.tail` | `api.audit.tail(limit)` | `read:pages` | `current-space` | — | array | 1.12.0 |
 | `tags.list` | `api.tags.list(spaceId)` | `read:tags` | `current-space` | — | array | 1.0.0 |
 | `blocks.list` | `api.blocks.list(pageId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | — | array | 1.0.0 |
-| `files.list` | `api.files.list(pageId)` | `read:files` | `current-space` | — | array | 1.0.0 |
-| `files.search` | `api.files.search(query, limit)` | `read:files` | `current-space` | — | array | 1.1.0 |
-| `files.read` | `api.files.read(id, offset, limit)` | `read:files` | `current-space` | — | object | 1.1.0 |
-| `files.stat` | `api.files.stat(attId)` | `read:files` | `current-space` | — | object | 1.5.0 |
-| `files.extract_status` | `api.files.extract_status(attId)` | `read:files` | `current-space` | — | object | 1.5.0 |
-| `files.list_orphan` | `api.files.list_orphan(limit, offset)` | `read:files` | `current-space` | — | object | 1.5.0 |
+| `files.list` | `api.files.list(pageId, spaceId)` | `read:files` | `current-space` | — | array | 1.0.0 |
+| `files.search` | `api.files.search(query, limit, spaceId)` | `read:files` | `current-space` | — | array | 1.1.0 |
+| `files.read` | `api.files.read(id, offset, limit, spaceId)` | `read:files` | `current-space` | — | object | 1.1.0 |
+| `files.stat` | `api.files.stat(attId, spaceId)` | `read:files` | `current-space` | — | object | 1.5.0 |
+| `files.extract_status` | `api.files.extract_status(attId, spaceId)` | `read:files` | `current-space` | — | object | 1.5.0 |
+| `files.list_orphan` | `api.files.list_orphan(limit, offset, spaceId)` | `read:files` | `current-space` | — | object | 1.5.0 |
 | `coverage.report` | `api.coverage.report(spaceId)` | `read:files` | `current-space` | — | object | 1.92.0 |
 | `editor.insertText` | `api.editor.insertText(text)` | `write:page.current` | `current-space` | 即时 | void | 1.0.0 |
 | `pages.create` | `api.pages.create(title, content, parentId, fence, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
@@ -161,7 +161,7 @@ register({
 | `pages.revert` | `api.pages.revert(pageId, versionId, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.7.0 |
 | `tags.remove` | `api.tags.remove(name, pageId, expectedRev, spaceId, dryRun, clientRequestId)` | `write:tags` | `current-space` | **草稿确认** | object | 1.7.0 |
 | `properties.unset` | `api.properties.unset(attrId, pageId, expectedRev, spaceId, dryRun, clientRequestId)` | `write:properties` | `current-space` | **草稿确认** | object | 1.7.0 |
-| `files.download` | `api.files.download(attId)` | `export:files` | `current-space` | — | object | 1.5.0 |
+| `files.download` | `api.files.download(attId, spaceId)` | `export:files` | `current-space` | — | object | 1.5.0 |
 | `blobs.fetch` | `api.blobs.fetch(handle)` | `export:files` | `current-space` | — | object | 1.5.0 |
 | `export.markdown` | `api.export.markdown(pageId, spaceId)` | `export:files` | `current-space` | — | object | 1.6.0 |
 | `export.page_markdown` | `api.export.pageMarkdown(pageId, spaceId)` | `export:files` | `current-space` | — | object | 1.12.0 |
@@ -291,17 +291,18 @@ register({
 
 ### `versions.list` — 列出页面历史版本
 
-- 调用：`api.versions.list(pageId, limit)`
+- 调用：`api.versions.list(pageId, limit, spaceId)`
 - 权限：`read:versions`
 - scope：`current-space`
 - 返回：[{versionId, at(毫秒时间戳), title}]，按时间倒序；不含正文（读正文用 version.get）
 - 参数：
   - `pageId`: `string` —— 页面 id
   - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（默认 50，上限 200）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
 
 ### `version.get` — 读取某个历史版本
 
-- 调用：`api.version.get(pageId, versionId, offset, limit, includeAnchors)`
+- 调用：`api.version.get(pageId, versionId, offset, limit, includeAnchors, spaceId)`
 - 权限：`read:versions`
 - scope：`current-space`
 - 返回：与 pages.get 同口径的正文窗口（{pageId, versionId, at, title, 正文字段, chars_total, offset, limit}；版本不存在 ⇒ not_found）
@@ -311,6 +312,7 @@ register({
   - `offset`: `number`（可选），默认 `0` —— 从第几个**字符**开始（默认 0；按 Unicode 标量计数）
   - `limit`: `number`（可选），默认 `6000` —— 最多返回多少字符（默认 6000，上限 20000）
   - `includeAnchors`: `boolean`（可选），默认 `true` —— 是否在每个顶层块后插块锚点注释（可选，默认 true；与 pages.get 同口径）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
 
 ### `trash.list` — 列出回收站
 
@@ -370,26 +372,28 @@ register({
 
 ### `files.list` — 列出页面附件元数据
 
-- 调用：`api.files.list(pageId)`
+- 调用：`api.files.list(pageId, spaceId)`
 - 权限：`read:files`
 - scope：`current-space`
 - 返回：[{id, name, mime, size}]，**不含字节**
 - 参数：
   - `pageId`: `string`（可选） —— 页面 id；省略则用当前打开的页面
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
 
 ### `files.search` — 检索文件内容（块级）
 
-- 调用：`api.files.search(query, limit)`
+- 调用：`api.files.search(query, limit, spaceId)`
 - 权限：`read:files`
 - scope：`current-space`
 - 返回：块级命中；pageId/attId 用来回链，loc 是原文位置（页号/行号/时间码）
 - 参数：
   - `query`: `string` —— 检索词（与界面搜索同一口径：兼容表意字会先归一）
   - `limit`: `number`（可选），默认 `10` —— 最多返回多少条命中（1–100）。**这里是能力面的默认值（10）**；UI/命令面 `search_chunks` 的默认值是 20 —— 两个面各自独立，刻意不对齐（裁定 2026-09-18）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
 
 ### `files.read` — 读取附件派生文本
 
-- 调用：`api.files.read(id, offset, limit)`
+- 调用：`api.files.read(id, offset, limit, spaceId)`
 - 权限：`read:files`
 - scope：`current-space`
 - 返回：派生文本段 + 总段数 + **每个抽取器的覆盖度读数**；附件不存在返回 null；还没抽过 ⇒ segments 空 + total 0（**不是**失败）。coverage 为空数组 ＝ 没有读数（未知），**不是**「抽全了」
@@ -397,34 +401,38 @@ register({
   - `id`: `string` —— 附件 id
   - `offset`: `number`（可选），默认 `0` —— 从第几段开始（默认 0）
   - `limit`: `number`（可选），默认 `200` —— 最多返回多少段（上限 1000）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
 
 ### `files.stat` — 附件元数据（含 sha256）
 
-- 调用：`api.files.stat(attId)`
+- 调用：`api.files.stat(attId, spaceId)`
 - 权限：`read:files`
 - scope：`current-space`
 - 返回：{attId, pageId, name, mime, size, sha256, spaceId}；sha256 是内容指纹（附件按它内容寻址）
 - 参数：
   - `attId`: `string` —— 附件 id
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
 
 ### `files.extract_status` — 附件抽取完整度
 
-- 调用：`api.files.extract_status(attId)`
+- 调用：`api.files.extract_status(attId, spaceId)`
 - 权限：`read:files`
 - scope：`current-space`
 - 返回：{attId, name, extracted, segments, extractors:[{extractor, coverage}]}；coverage 是抽取器报的**原始覆盖度 JSON**，空串=未知（⛔ 不等于完整）
 - 参数：
   - `attId`: `string` —— 附件 id
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
 
 ### `files.list_orphan` — 列出未整理附件
 
-- 调用：`api.files.list_orphan(limit, offset)`
+- 调用：`api.files.list_orphan(limit, offset, spaceId)`
 - 权限：`read:files`
 - scope：`current-space`
 - 返回：{files:[{attId,name,mime,size,sha256,createdAt}], total}；files 是**没有挂到任何页面**的附件（pageId 为空）
 - 参数：
   - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（默认 50，上限 200）
   - `offset`: `number`（可选），默认 `0` —— 跳过前多少条（默认 0；分页用）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
 
 ### `coverage.report` — 索引覆盖报告
 
@@ -856,12 +864,13 @@ register({
 
 ### `files.download` — 下载附件（返回句柄）
 
-- 调用：`api.files.download(attId)`
+- 调用：`api.files.download(attId, spaceId)`
 - 权限：`export:files`
 - scope：`current-space`
 - 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
 - 参数：
   - `attId`: `string` —— 附件 id
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
 
 ### `blobs.fetch` — 把句柄落成文件
 
@@ -1125,7 +1134,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.12.0",
+  "runtime": "declarative", "apiVersion": "1.13.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },

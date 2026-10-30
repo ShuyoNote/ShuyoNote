@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "apiVersion": "1.12.0",
+  "apiVersion": "1.13.0",
   "notes": "插件能力注册表——单一事实源。scripts/gen-capabilities.mjs 由本文件生成：JS shim（api.*）、Rust 绑定表、作者类型包、作者文档；scripts/check-capabilities.mjs 校验一致性与完整性。改能力请改这里，不要手改生成物。",
   "permissions": [
     {
@@ -650,6 +650,12 @@
           "required": false,
           "default": 50,
           "desc": "最多返回多少条（默认 50，上限 200）"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       ],
       "returns": {
@@ -706,6 +712,12 @@
           "required": false,
           "default": true,
           "desc": "是否在每个顶层块后插块锚点注释（可选，默认 true；与 pages.get 同口径）"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       ],
       "returns": {
@@ -919,6 +931,12 @@
           "type": "string",
           "required": false,
           "desc": "页面 id；省略则用当前打开的页面"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       ],
       "returns": {
@@ -954,6 +972,12 @@
           "required": false,
           "default": 10,
           "desc": "最多返回多少条命中（1–100）。**这里是能力面的默认值（10）**；UI/命令面 `search_chunks` 的默认值是 20 —— 两个面各自独立，刻意不对齐（裁定 2026-09-18）"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       ],
       "returns": {
@@ -996,6 +1020,12 @@
           "required": false,
           "default": 200,
           "desc": "最多返回多少段（上限 1000）"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       ],
       "returns": {
@@ -1024,6 +1054,12 @@
           "type": "string",
           "required": true,
           "desc": "附件 id"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       ],
       "returns": {
@@ -1053,6 +1089,12 @@
           "type": "string",
           "required": true,
           "desc": "附件 id"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       ],
       "returns": {
@@ -1090,6 +1132,12 @@
           "required": false,
           "default": 0,
           "desc": "跳过前多少条（默认 0；分页用）"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       ],
       "returns": {
@@ -2752,6 +2800,12 @@
           "type": "string",
           "required": true,
           "desc": "附件 id"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       ],
       "returns": {

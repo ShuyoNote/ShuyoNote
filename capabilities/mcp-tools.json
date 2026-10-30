@@ -204,6 +204,10 @@
         "limit": {
           "type": "number",
           "description": "最多返回多少条（默认 50，上限 200）"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       },
       "required": [
@@ -238,6 +242,10 @@
         "includeAnchors": {
           "type": "boolean",
           "description": "是否在每个顶层块后插块锚点注释（可选，默认 true；与 pages.get 同口径）"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       },
       "required": [
@@ -363,6 +371,10 @@
         "pageId": {
           "type": "string",
           "description": "页面 id；省略则用当前打开的页面"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       },
       "required": []
@@ -383,6 +395,10 @@
         "limit": {
           "type": "number",
           "description": "最多返回多少条命中（1–100）。**这里是能力面的默认值（10）**；UI/命令面 `search_chunks` 的默认值是 20 —— 两个面各自独立，刻意不对齐（裁定 2026-09-18）"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       },
       "required": [
@@ -409,6 +425,10 @@
         "limit": {
           "type": "number",
           "description": "最多返回多少段（上限 1000）"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       },
       "required": [
@@ -427,6 +447,10 @@
         "attId": {
           "type": "string",
           "description": "附件 id"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       },
       "required": [
@@ -445,6 +469,10 @@
         "attId": {
           "type": "string",
           "description": "附件 id"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       },
       "required": [
@@ -467,6 +495,10 @@
         "offset": {
           "type": "number",
           "description": "跳过前多少条（默认 0；分页用）"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       },
       "required": []
@@ -526,6 +558,10 @@
         "attId": {
           "type": "string",
           "description": "附件 id"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）"
         }
       },
       "required": [

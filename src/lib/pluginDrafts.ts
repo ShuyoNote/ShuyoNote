@@ -119,7 +119,16 @@ export async function confirmAndApplyDrafts(source: string, drafts: PluginDraft[
     title: "确认这次改动",
     message: `${friendlySource(source)} 想对笔记做这些改动：\n\n${list}${detail}\n\n点「确定」才会真正写入。`,
   });
-  if (!ok) return `已放弃 ${drafts.length} 项改动（未写入）`;
+  if (!ok) {
+    // ⭐ UX-④（2026-10-30）：用户取消 ⇒ 每条草稿立刻回写 rejected（不是等它 10 分钟后变 expired）
+    for (const d of drafts) {
+      const id = typeof (d.payload as { draftId?: unknown })?.draftId === "string"
+        ? String((d.payload as { draftId: string }).draftId)
+        : "";
+      if (id) void api.mcpDraftState(id, "rejected").catch(() => undefined);
+    }
+    return `已放弃 ${drafts.length} 项改动（未写入）`;
+  }
 
   const applied: string[] = [];
   for (const d of drafts) {

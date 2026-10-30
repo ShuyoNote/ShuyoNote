@@ -770,6 +770,10 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   },
 
   "files.list": async (args, ctx) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (spaceId) {
+      return { ok: false, error: "应用内 AI 面只读当前空间（跨空间 spaceId 仅外部 MCP 面支持）" };
+    }
     const pageId = targetPage(args, ctx);
     if (!pageId) return { ok: false, error: "files.list 需要 pageId" };
     const files = await api.listPageAttachments(pageId);
@@ -780,6 +784,10 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   },
 
   "files.search": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (spaceId) {
+      return { ok: false, error: "应用内 AI 面只读当前空间（跨空间 spaceId 仅外部 MCP 面支持）" };
+    }
     const query = String(args.query ?? "").trim();
     if (!query) return { ok: false, error: "files.search 需要 query" };
     const limit = intArg(args, "limit", FILES_SEARCH_LIMIT_DEFAULT, 1, FILES_SEARCH_LIMIT_MAX);
@@ -790,6 +798,10 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   },
 
   "files.read": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (spaceId) {
+      return { ok: false, error: "应用内 AI 面只读当前空间（跨空间 spaceId 仅外部 MCP 面支持）" };
+    }
     const id = String(args.id ?? "");
     if (!id) return { ok: false, error: "files.read 需要 id" };
     const offset = intArg(args, "offset", 0, 0);
@@ -822,6 +834,10 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   //   ⇒ `files.download` / `blobs.fetch` 在应用内面**如实报不可用**（⛔ 不发明一个前端句柄，
   //   那种句柄 blobs.fetch 兑换不了）。插件面走 Rust dispatch，句柄是真的。
   "versions.list": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (spaceId) {
+      return { ok: false, error: "应用内 AI 面只读当前空间（跨空间 spaceId 仅外部 MCP 面支持）" };
+    }
     const pageId = String(args.pageId ?? "").trim();
     if (!pageId) return { ok: false, error: "versions.list 需要 pageId" };
     const limit = intArg(args, "limit", 50, 1, 200);
@@ -833,6 +849,10 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   },
 
   "version.get": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (spaceId) {
+      return { ok: false, error: "应用内 AI 面只读当前空间（跨空间 spaceId 仅外部 MCP 面支持）" };
+    }
     const pageId = String(args.pageId ?? "").trim();
     const versionId = String(args.versionId ?? "").trim();
     if (!pageId || !versionId) return { ok: false, error: "version.get 需要 pageId 与 versionId" };
@@ -885,6 +905,10 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   },
 
   "files.stat": async (args) => {
+    const spaceIdArg = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (spaceIdArg) {
+      return { ok: false, error: "应用内 AI 面只读当前空间（跨空间 spaceId 仅外部 MCP 面支持）" };
+    }
     const attId = String(args.attId ?? "").trim();
     if (!attId) return { ok: false, error: "files.stat 需要 attId" };
     const a = await api.getAttachment(attId);
@@ -906,6 +930,10 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   },
 
   "files.extract_status": async (args) => {
+    const spaceIdArg = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (spaceIdArg) {
+      return { ok: false, error: "应用内 AI 面只读当前空间（跨空间 spaceId 仅外部 MCP 面支持）" };
+    }
     const attId = String(args.attId ?? "").trim();
     if (!attId) return { ok: false, error: "files.extract_status 需要 attId" };
     // limit=1 只借它拿 total 与 coverage（段内容不要）
@@ -926,6 +954,10 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   },
 
   "files.list_orphan": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (spaceId) {
+      return { ok: false, error: "应用内 AI 面只读当前空间（跨空间 spaceId 仅外部 MCP 面支持）" };
+    }
     const limit = intArg(args, "limit", 50, 1, 200);
     const offset = intArg(args, "offset", 0, 0);
     // `listPageAttachments(null)` 就是 `page_id IS NULL`（与 Rust 侧同一条 SQL 的过滤条件）
@@ -945,6 +977,10 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   },
 
   "files.download": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (spaceId) {
+      return { ok: false, error: "应用内 AI 面只读当前空间（跨空间 spaceId 仅外部 MCP 面支持）" };
+    }
     const attId = String(args.attId ?? "").trim();
     if (!attId) return { ok: false, error: "files.download 需要 attId" };
     return {
