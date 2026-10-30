@@ -250,3 +250,9 @@ warnings=[id-map-ignored]（预期）；parent/children/附件名/大小/mime/sh
 
 - 导出实现：`src/lib/docSpacePackWriter.ts::buildSpacePackage`（纯格式层）——manifest（format/`features`/`min_reader_version`/`space`/`encrypted`/`checksums_sha256`）、`tree.json`（children 顺序/成员权威、空文件夹 `[]`、§9 file 条目保留 `name/mime`）、`documents/<id>/document.shuyodoc`（内层复用文档包写侧、禁止再嵌套）、`files/<sha256>.<lower-ext>`、`attachments.json`（sha 去重、显示名以 tree 为准并记 `attachment-name-conflict`）、`checksums.json`（覆盖 tree/documents/files/attachments；manifest 用 `checksums_sha256` 反钉）；**不写 `id_map.json`**。固定 `1980-01-01`、store-only ⇒ 同输入逐字节可复现。
 - 判据：`src/lib/docSpacePackWriter.test.ts`（9 条：结构/树权威/空文件夹/混排/db 命名空间/内层可读且不再嵌包/可复现/checksums/名字冲突/children-parent 冲突）；包判据合计 58 条全绿。
+
+## M2b 读侧骨架证据（2026-10-30）
+
+- `src/lib/docSpacePackOpen.ts::openSpacePackage`：整包校验（checksums 必须覆盖 manifest；缺 ⇒ `E_IO_CHECKSUMS`，可显式 `allowUnverifiedChecksums`）＋ manifest（format/version/space/min_reader_version 高拒/encrypted 拒）＋ tree（roots 非空、kind 白名单、children 权威、parent_id 冲突拒、环/深度 ≤1000、空文件夹保留、混排 children、file 条目 name/mime §9）＋ attachments（sha/size/字节缺失）＋ 内层 `documents/<id>/document.shuyodoc` 复用文档包读侧且**禁再嵌包**；`id_map.json` **不信任**（`id-map-ignored` warning）。
+- 判据：`src/lib/docSpacePackOpen.test.ts`（10 条：往返/未知 kind/冲突/深度/坏 checksums/缺 checksums/嵌套包/附件缺失/id_map 不信任/manifest 高版本与加密）；包判据合计 **68 条**全绿。
+- ⏳ 未做（下一批 M2b 落库）：导入永远新建 id、id_map 重算、children+parent 一起重映射、整包原子落库、审计 `package.import`。
