@@ -1996,7 +1996,29 @@ pub(crate) fn detach_attachment_inner(c: &rusqlite::Connection, id: &str) -> Res
 
 /// 桌面命令：把附件从页面摘掉（变未整理，保留字节）。
 #[tauri::command]
-pub fn detach_attachment(db: State<'_, Db>, id: String) -> Result<(), String> {
+pub fn detach_attachment(
+    db: State<'_, Db>,
+    id: String,
+    space_id: Option<String>,
+) -> Result<(), String> {
+    let target = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(space) = target {
+        let active = {
+            let c = db.0.lock().expect("db mutex poisoned");
+            crate::workspaces::active_workspace_id(&c)?
+        };
+        if space != active {
+            if crate::plugins::cross_space_write_disabled() {
+                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+            }
+            let app_data = crate::db::app_data_dir_ref()
+                .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let c = crate::db::open_space_conn_at(space, app_data).map_err(|e| {
+                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+            })?;
+            return detach_attachment_inner(&c, &id);
+        }
+    }
     let c = db.0.lock().expect("db mutex poisoned");
     detach_attachment_inner(&c, &id)
 }
