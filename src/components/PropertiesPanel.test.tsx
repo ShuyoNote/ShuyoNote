@@ -151,7 +151,7 @@ describe("B2：类型化展示", () => {
 
   it("日期 ⇒ 到分钟 + 相对时间 + 时区（展示态无日期控件）", async () => {
     const { root, host } = await mountWith([prop("日期", "2026-10-30 11:30", "date")]);
-    const el = host.querySelector(".prop-datetime");
+    const el = host.querySelector(".prop-temporal");
     expect(el?.textContent).toContain("2026-10-30 11:30");
     expect(el?.textContent).toContain("+08:00");
     expect(el?.textContent).toMatch(/前|后|刚刚/);

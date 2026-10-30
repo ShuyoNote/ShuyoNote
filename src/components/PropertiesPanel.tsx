@@ -430,7 +430,7 @@ function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string)
     const f = formatDateTime(prop.value);
     if (f && !editing) {
       return (
-        <button type="button" className="prop-datetime" title={f.iso} onClick={() => setEditing(true)}>
+        <button type="button" className="prop-temporal" title={f.iso} onClick={() => setEditing(true)}>
           {f.absolute} · {f.relative} · {f.timezone}
         </button>
       );
