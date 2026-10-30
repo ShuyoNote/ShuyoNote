@@ -223,6 +223,9 @@
 | UX-④ | `files.*`/`versions.*` 9 条补可选 `spaceId`（逐 cap `with_conn_for_space`）＋ 确认框取消回写 `rejected` | ✅ |
 | P1 面板适配 | 第六档 `write_all`（只开权限门）、`McpStatus.level` 扩展、`mcp_recent_drafts`/`mcp_recent_audit` 两个只读命令；设置面板六块（六档＋动态「能做什么」、状态/token 打码、按域能力清单、草稿、审计、边界） | ✅ |
 | P2 能力补齐 | `audit_tail.onlyWrites`、`pages.changes_since`（工具 `changes_since`，页级增量）、`cap_limits.rs` 限额常量收敛 | ✅ |
+| 跨空间写 v1 | `pages.create` 带 `spaceId` 写到目标空间（`create_node_in` 单连接、目标空间 `changes` 同写、审计带 `spaceId`、回滚开关 `SHUYONOTE_MCP_CROSS_SPACE_WRITE`） | ✅ |
+| 跨空间写 v2 | owner 拍「甲」：`write_all` 档同时获得 `read:all-spaces`；`pages.update`/`blocks.append/patch/delete` 支持目标空间（校验改「传连接」变体，块合并仍在 `apply.ts`） | ✅ |
+| AI 不可见空间清单 | 存 `meta.sync_state` 的 `ai_hidden_spaces`（本机偏好、不同步）；`mcp_hidden_spaces_get/set`；dispatch 单点遮蔽（读/写/跨空间）、`spaces_list` 过滤、`space.current` 与当前空间隐藏均明确拒绝 | ✅ |
 
 **当前面**：**69 条能力 / MCP 60 工具（读 33 / 写 27）/ `apiVersion` 1.13.0**；全量门禁 66 条中 **65 绿**，唯一红是 `scripts/session-grep.test.mjs` 的 Node24 zstd 假红（与产品无关）。
 
@@ -230,7 +233,7 @@
 
 | # | 项 | 说明 |
 |---|---|---|
-| 1 | `write_all` 跨空间落库链路 | 权限门已开（缺档 ⇒ `permission_denied`；有档 ⇒ `bad_args` 说明未接），**落库仍只写当前空间**；下一批接 apply 侧跨空间写入 |
+| 1 | 其余写工具的跨空间 | 白名单目前 5 条（`pages.create/update`、`blocks.append/patch/delete`）；`files.*`、`nodes.*`、`tags/properties`、`db.rows_*`、`trash.restore`、`pages.revert` 等带 `spaceId` 仍 `bad_args: 暂不支持跨空间` |
 | 2 | `write:all-spaces` 档与 UI | 参数与门已就位（缺档 ⇒ `permission_denied` 点名），但**没有任何档位授予**该权限，也无 UI ⇒ 跨空间写不可用 |
 | 3 | `export.*` 跨空间 | 当前只支持当前空间；跨空间需命令面读别空间的页面/附件入口 |
 | 4 | `>10MB` / `>20 文件` 确认 UI | 现在只返回 `needs_confirm` 错误，没有确认交互 |
