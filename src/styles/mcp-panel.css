@@ -214,6 +214,25 @@
   font-weight: 400;
   color: var(--text-faint);
 }
+/* 区块标题：**允许换行**（窄屏时「接入外部 AI」不再被拆成"接入外部 / AI"），
+   标题文字本身不折行；副标题在窄屏**单独占一行**（不跟标题抢宽）。 */
+.mcp-section-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+}
+.mcp-section-title-text {
+  white-space: nowrap;
+}
+.mcp-section-title .mcp-title-hint {
+  margin-left: 0;
+}
+/* 「当前允许」摘要的分隔符：前面带不换行空格（JSX 里是 `\u00a0· `）——
+   375 下折行时分隔符不会跑到行首 ✓ */
+.mcp-sep {
+  white-space: nowrap;
+}
 
 /* ═══ ② 权限档位：六张单选卡 ═══════════════════════════════════════════════ */
 .mcp-levels-grid {
@@ -398,8 +417,27 @@
   color: var(--text-faint);
 }
 .mcp-cap-cat-name {
+  flex: none;
   font-weight: 600;
   white-space: nowrap;
+}
+/* 折叠态也可见的**占比条**：长度 = 该分类条数 / 清单条数。
+   宽度取**百分比基**（0 0 40%）而不是 flex-grow —— 这样每一行的条宽**一样**，
+   各分类长度才真的可比（⛔ 不然名字长的行条短，看着像占比不同）。 */
+.mcp-cap-bar {
+  flex: 0 0 40%;
+  max-width: 200px;
+  min-width: 60px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--hover);
+  overflow: hidden;
+}
+.mcp-cap-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
 }
 .mcp-cap-cat-note {
   font-size: 11.5px;
@@ -427,38 +465,50 @@
 }
 .mcp-cap-item {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   min-width: 0;
   padding: 2px 0;
   font-size: 12px;
   color: var(--text-dim);
 }
+/* 工具名：单行，超出用省略号（⛔ 不再折成两三行把行高撑乱） */
 .mcp-cap-name {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 46%;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11.5px;
   color: var(--text);
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .mcp-cap-item-tail {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  flex: 1 1 auto;
   min-width: 0;
   margin-left: auto;
 }
+/* 描述：**固定 1 行 + ellipsis**（owner：桌面像文字墙、375 下被截半） */
 .mcp-cap-brief {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 34ch;
 }
+/* 徽章：**固定列宽**（折叠/展开、1280/375 都对齐同一列，换行不齐的问题就没了） */
 .mcp-cap-item .set-badge {
-  flex: none;
+  flex: 0 0 96px;
+  width: 96px;
+  justify-content: center;
+  text-align: center;
   font-size: 11px;
   line-height: 16px;
-  padding: 1px 7px;
+  padding: 1px 0;
 }
 
 /* ═══ ④ 状态卡 ═══════════════════════════════════════════════════════════ */
@@ -596,8 +646,14 @@
     grid-template-columns: 1fr;
     padding-left: 8px;
   }
-  .mcp-cap-brief {
-    max-width: 18ch;
+}
+/* 手机宽度：标题副标题各占一行（375 下「接入外部 AI」不再被拆开） */
+@media (max-width: 560px) {
+  .mcp-section-title .mcp-title-hint {
+    flex: 1 0 100%;
+  }
+  .mcp-cap-cat-note {
+    display: none;
   }
 }
 @media (max-width: 720px) {
