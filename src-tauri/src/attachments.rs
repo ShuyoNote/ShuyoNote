@@ -1421,7 +1421,7 @@ pub fn list_page_attachments(
             let mut stmt = c.prepare(sql).map_err(|e| e.to_string())?;
             let read_row = |r: &rusqlite::Row| -> rusqlite::Result<AttachmentRow> {
                 Ok(AttachmentRow {
-                    meta: AttachmentMeta { id: r.get(0)?, name: r.get(1)?, hash: r.get(2)?, mime: r.get(3)?, size: r.get(4)?, path: None },
+                    meta: AttachmentMeta { id: r.get(0)?, name: r.get(1)?, hash: r.get(2)?, mime: r.get(3)?, size: r.get(4)?, path: String::new() },
                     created_at: r.get(5)?,
                     mtime: 0, // 跨空间读取不保证本地字节在位 ⇒ 如实给 0（前端显示「—」）
                 })
