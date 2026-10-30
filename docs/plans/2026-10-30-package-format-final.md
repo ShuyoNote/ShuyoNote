@@ -1,6 +1,6 @@
 # 方案：包格式"一步到位"定稿 —— `.shuyodoc` v1.1 ＋ `.shuyospace` 完整设计（2026-10-30）
 
-状态：方案定稿（待企业版确认；实现分 M1.1 与 M2 两段）
+状态：方案定稿（企业版已裁决，以 §9 为准；实现 M1.1 → M2a → M2b）
 
 关联：[`2026-10-29-shuyodoc-m1.md`](2026-10-29-shuyodoc-m1.md)（M1 已实现）· 企业版规范 `docs/specs/2026-10-28-package-format-spec.md`＋附录 A · 已发信箱信 `2026-10-30-windows-enterprise-package-format-ambiguities.md`
 
@@ -208,3 +208,35 @@ E_ATOMIC            导入中途失败（已回滚）
 3. `attachments.json` 为显示名唯一权威、tree 的 file 条目只留 sha256。
 
 > 这三条一旦确认，M1.1 与 M2 可并行开工，**不再需要 v2**。
+
+## 9. 企业版裁决（2026-10-30 已收，**以本节为准**）
+
+两条企业版线（`windows/enterprise` ＋ `amd/enterprise`）已合并答复，**采纳 4 处修改**，本文件前面冲突处以本节为准：
+
+| 项 | 原提案 | **最终（企业版裁决）** |
+|---|---|---|
+| D3/C3 tree file 去 name/mime | 只留 `sha256` | ❌ **撤回**。tree 的 file 条目**保留 `name`（`mime` 可留）**——企业 v1 读端 `validateTree` 要求 `sha256+name`，去 name 会判死现有包；`attachments.json` 仅作**补充**权威（显示名冲突时以 tree 为准并记 warning） |
+| D5 `checksums_sha256` | 存在必验 | **可选字段；v1.1 存在也不强制验**（企业 v1 读端忽略未知字段；"强制验"属行为变更，另开 v2） |
+| D6 固定时间戳 | `1980-01-02` | **`1980-01-01`**（对齐服务端现状 `0x0021`）；**内层再嵌 zip/shuyodoc ⇒ v1.1 硬拒**（服务端需补扫描、客户端 TODO） |
+| D8 编码/大小写/尾点/扩展名小写 | 读侧硬拒 | **写侧硬拒；读侧 v1 记 warning，v2 硬拒**（避免 v1 读端行为变更） |
+| C1 `min_reader_version` | 读侧拒 `>1` | ✅ 采纳；企业当前**不拒** ⇒ 列为 gap，双方补；⛔ 不得仅靠 `format_version=1` 宣称语义变更 |
+
+其余维持本文件：D1（`db` 命名空间，服务端 `content` 是 opaque jsonb、不冲突）、D2（children 权威、冲突拒收、缺省补序不判冲突；`documents-flat` 派生包不得被误判）、D4（文档包带附件；⚠️ **企业 `import-document` 目前只 warning 不入库，排 P0b**）、D7（签名"存在不验"）。
+
+### 9.1 企业版实测（可核读数）
+
+```text
+synthetic fixture：6176 B，sha256 f67d70d024ff9d7a4e59935e246132424f9309639a1e03740487d8339f8feafe
+服务端 inspect：checksums_ok=true / entries=8 / errors=[]；nodes=4 roots=2 kinds{folder:2,page:1,database:1} empty_folder_children=1
+服务端 import-space（真 PG）：nodes=4 / documents=2 / attachments=1 / file_refs=1 / tree_store=space_changes
+warnings=[id-map-ignored]（预期）；parent/children/附件名/大小/mime/sha 均还原 ✅
+⇒ 客户端合成包 → 服务端 inspect/import 双向 PASS（v1 形状）
+```
+
+### 9.2 仍然待办（双方）
+
+1. **C1**：`min_reader_version > 支持版本` 必须拒收（企业需补，个人版 M1.1 一并实现）；
+2. **D6**：内层嵌套扫描（服务端 TODO、个人版 M2 前实现）；
+3. **D4**：企业 `import-document` 的 assets 入库（P0b）；
+4. **D8**：写侧硬拒 vs 读侧 warning 的分层实现（个人版 M1.1 做写侧；读侧 warning 记录）；
+5. 互读验收草案 `docs/specs/2026-10-30-package-interop-acceptance.md`（企业仓分支）由 `windows/enterprise + contract-conformance` 审，走附录 C 合并。

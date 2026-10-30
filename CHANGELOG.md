@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **v3-A4：db 行/回收站/回退四工具跨空间**（`db.rows_write/delete`、`trash.restore`、`pages.revert`）：目标空间校验 DB 页/列/版本与 rev；`restore_page`/`restore_version` 命令加 `spaceId`；写白名单 18→22；**修 apply 的 `space_id` 键名**（此前 `spaceId` 被 serde 忽略，跨空间实际写当前空间）；判据含目标真改、四计数不变、跨空间目标拒。`apiVersion` 1.26.0 → **1.27.0**。
 - **v3-A3：标签/属性四工具跨空间**（`tags.add/remove`、`properties.set/unset`）：目标空间解析标签/属性定义、`pageId` 必须同空间；命令内核单连接复用（`add_tag_in`/`remove_tag_in`/`set_page_prop_impl`/`remove_page_prop_impl`）；写白名单 14→18；判据含四计数不变、跨空间 pageId 拒、缺档/回滚。`apiVersion` 1.25.0 → **1.26.0**。
 - **v3-A2：结构类四工具跨空间**（`nodes.move/rename/delete`、`folders.create`）：单连接/目标空间 helper，`parentId` 必须同空间、非空文件夹仍拒；写白名单 10→14；目标空间 `changes`/审计；判据含四计数不变与跨空间 parent 拒绝。`apiVersion` 1.24.0 → **1.25.0**。
 - **`files.download` 超限确认（B 方案）**：能力层超限立即 `needs_confirm`＋异步前端事件（**不等回执、不碰桥 5s 契约**）；前端复用 `confirmDialog`，允许 ⇒ `mcp_download_grant` 写一次性额度（attId|space、TTL 5 分钟、进程内存、重启即丢）；重试拿句柄、用一次即废；拒绝/过期仍拒；未超限不发事件、行为不变。

@@ -3775,7 +3775,7 @@ fn cap_trash_restore(
     if pid.is_empty() {
         return Err("bad_args: 需要 id".to_string());
     }
-    let row: Option<(String, Option<i64>)> = with_read_conn(|c| {
+    let row: Option<(String, Option<i64>)> = space_read(&space, |c| {
         use rusqlite::OptionalExtension;
         c.query_row(
             "SELECT title, deleted_at FROM pages WHERE id = ?1",
@@ -3816,13 +3816,13 @@ fn cap_pages_revert(
     _client_request_id: Option<&str>,
 ) -> CapResult {
     let space = write_target_space(space_id)?;
-    let (title, _kind) = live_target(page_id)?;
+    let (title, _kind) = live_target_at(&space, page_id)?;
     let vid = version_id.trim();
     if vid.is_empty() {
         return Err("bad_args: 需要 versionId".to_string());
     }
     // 版本必须属于这一页（版本历史是回滚的**唯一**目标；⛔ 不跨页回滚、⛔ 不删原写审计）
-    let belongs: Option<String> = with_read_conn(|c| {
+    let belongs: Option<String> = space_read(&space, |c| {
         use rusqlite::OptionalExtension;
         c.query_row(
             "SELECT title FROM page_versions WHERE page_id = ?1 AND id = ?2",
@@ -3837,7 +3837,7 @@ fn cap_pages_revert(
             "not_found: 页面 {page_id} 的版本历史里没有 {vid}（超出保留期/已被清理）"
         ));
     }
-    let rev = check_expected_rev(page_id, expected_rev)?;
+    let rev = check_expected_rev_at(&space, page_id, expected_rev)?;
     structural_draft(
         dry_run,
         format!("revert_page:{}:{vid}", page_id.trim()),
@@ -4618,7 +4618,7 @@ fn cap_db_rows_write(
     if list.is_empty() {
         return Err("bad_args: rows 不能为空".to_string());
     }
-    let (columns, normalized) = with_read_conn(|c| {
+    let (columns, normalized) = space_read(&space, |c| {
         crate::database::require_db_page(c, pid)?;
         let columns = crate::database::db_columns(c, pid)?;
         let mut out: Vec<serde_json::Value> = Vec::new();
@@ -4666,7 +4666,7 @@ fn cap_db_rows_write(
         Ok((columns.len(), out))
     })?;
     let _ = columns;
-    let rev = blocks_rev_guard(pid, expected_rev)?;
+    let rev = with_target_space(&space, |c| blocks_rev_guard_in(c, pid, expected_rev))?;
     let changed: Vec<String> = normalized
         .iter()
         .filter_map(|r| r.get("rowId").and_then(|v| v.as_str()).map(str::to_string))
@@ -4719,7 +4719,7 @@ fn cap_db_rows_delete(
     if ids.is_empty() {
         return Err("bad_args: rowIds 不能为空".to_string());
     }
-    with_read_conn(|c| {
+    space_read(&space, |c| {
         crate::database::require_db_page(c, pid)?;
         for rid in &ids {
             let exists: bool = c
@@ -4735,7 +4735,7 @@ fn cap_db_rows_delete(
         }
         Ok(())
     })?;
-    let rev = blocks_rev_guard(pid, expected_rev)?;
+    let rev = with_target_space(&space, |c| blocks_rev_guard_in(c, pid, expected_rev))?;
     let payload = serde_json::json!({
         "kind": "db_rows_delete", "pageId": pid, "rowIds": ids,
         "expectedRev": rev, "spaceId": space,
@@ -5729,6 +5729,10 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
                         | "tags.remove"
                         | "properties.set"
                         | "properties.unset"
+                        | "db.rows_write"
+                        | "db.rows_delete"
+                        | "trash.restore"
+                        | "pages.revert"
                 ) {
                     return Err(format!(
                         "bad_args: {method} 暂不支持跨空间（v1 只支持 pages.create；目标空间 {space} 未写入）"
@@ -17087,6 +17091,106 @@ register({ id: "s.run", title: "结构化", run: function () {
         set_cross_off_for_test(true);
         let e = with_external_caller("a3tp-off", &g, || {
             dispatch_capability("properties.set", &format!(r#"{{"attrId":"attr1","value":"1","pageId":"p1","spaceId":"{second}"}}"#))
+        })
+        .expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        set_cross_off_for_test(false);
+        let after = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
+        assert_eq!(before, after, "当前空间四计数逐项不变");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ A4：db 行/回收站/回退四工具跨空间（目标空间真改/四计数/跨空间目标拒/缺档/开关）。
+    #[test]
+    fn a4_db_trash_revert_cross_space() {
+        let f = b1c_fixture("a4d");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "a4d-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+            m.execute("INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','a4d-dev')", []).ok();
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            for (id, parent, title, kind, deleted) in [
+                ("p1", None, "目标页", "page", None),
+                ("db1", None, "数据库", "database", None),
+                ("tr", None, "回收站页", "page", Some(100i64)),
+                ("r1", Some("db1"), "行一", "page", None),
+            ] {
+                c.execute(
+                    "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
+                     VALUES (?1, ?2, ?3, ?4, '{}', 'x', ?5, 0, 10, 10, ?6)",
+                    params![id, second, parent, title, kind, deleted],
+                )
+                .unwrap();
+            }
+            { let cur = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+              cur.execute("INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at) VALUES ('cur-p1', ?, NULL, '当前页', '{}', 'x', 'page', 0, 10, 10)", params![f.space]).unwrap(); }
+            c.execute(
+                "INSERT OR REPLACE INTO page_versions (id, page_id, title, content_json, content_text, created_at)
+                 VALUES ('v1','p1','旧标题','{}','x',10)",
+                [],
+            )
+            .ok();
+        }
+        let four = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (q("SELECT COUNT(*) FROM pages"), q("SELECT COUNT(*) FROM changes"), q("SELECT COUNT(*) FROM page_versions"), q("SELECT COUNT(*) FROM attachments"))
+        };
+        let before = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        for (tool, args) in [
+            ("trash.restore", format!(r#"{{"id":"tr","spaceId":"{second}"}}"#)),
+            ("pages.revert", format!(r#"{{"pageId":"p1","versionId":"v1","spaceId":"{second}"}}"#)),
+            ("db.rows_write", format!(r#"{{"pageId":"db1","rows":[{{"title":"新行","values":{{}}}}],"spaceId":"{second}"}}"#)),
+            ("db.rows_delete", format!(r#"{{"pageId":"db1","rowIds":["r1"],"spaceId":"{second}"}}"#)),
+        ] {
+            let (out, drafts) = with_external_caller("a4d", &g, || with_fresh_drafts(|| dispatch_capability(tool, &args)));
+            out.unwrap_or_else(|e| panic!("{tool} 应产草稿：{e}"));
+            assert_eq!(drafts.len(), 1, "{tool}");
+            assert_eq!(drafts[0].payload["spaceId"], second, "{tool}");
+        }
+        // 目标空间真改（命令内核）
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            crate::trash::restore_page_in(&c, "tr").expect("目标空间恢复");
+            let del: Option<i64> = c.query_row("SELECT deleted_at FROM pages WHERE id='tr'", [], |r| r.get(0)).unwrap();
+            assert!(del.is_none(), "目标空间 tr 应恢复");
+            crate::versions::restore_version_in_conn(&c, "v1").expect("目标空间回退");
+            let saved = crate::commands::create_node_in(&c, second, Some("db1".into()), Some("新行".into()), "page", None, None).expect("目标空间写入行");
+            assert_eq!(saved.title, "新行");
+            crate::commands::delete_page_in(&c, &"r1".to_string()).expect("目标空间删行");
+            let dd: Option<i64> = c.query_row("SELECT deleted_at FROM pages WHERE id='r1'", [], |r| r.get(0)).unwrap();
+            assert!(dd.is_some(), "目标空间 r1 应软删");
+        }
+        // 跨空间目标（当前空间页/版本）⇒ 拒
+        let e = with_external_caller("a4d-x", &g, || {
+            dispatch_capability("trash.restore", &format!(r#"{{"id":"{0}","spaceId":"{second}"}}"#, "cur-p1"))
+        })
+        .expect_err("目标页不在该空间必须拒");
+        assert!(e.contains("not_found"), "{e}");
+        let e = with_external_caller("a4d-v", &g, || {
+            dispatch_capability("pages.revert", &format!(r#"{{"pageId":"p1","versionId":"没有版本","spaceId":"{second}"}}"#))
+        })
+        .expect_err("版本不在目标页必须拒");
+        assert!(e.contains("not_found") || e.contains("bad_args"), "{e}");
+        // 缺档 / 回滚
+        let e = with_external_caller("a4d-no", &b2_granted(), || {
+            dispatch_capability("trash.restore", &format!(r#"{{"id":"tr","spaceId":"{second}"}}"#))
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        set_cross_off_for_test(true);
+        let e = with_external_caller("a4d-off", &g, || {
+            dispatch_capability("db.rows_delete", &format!(r#"{{"pageId":"db1","rowIds":["r1"],"spaceId":"{second}"}}"#))
         })
         .expect_err("开关关着必须拒");
         assert!(e.contains("关闭"), "{e}");
