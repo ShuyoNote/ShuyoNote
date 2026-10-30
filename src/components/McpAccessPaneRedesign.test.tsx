@@ -1,0 +1,390 @@
+// `McpAccessPane` **跨空间支持矩阵改版（2026-10-31）** 的判据。
+//
+// 钉住设计稿落地的五块：
+//   ① 档位从 tab 改成**单选卡**（radiogroup/radio/aria-checked ＋ 风险标签 ＋ 选中态）
+//   ② 「当前允许」摘要**由后端读数推导**、随档位变化（⛔ 不按档位写死句子）
+//   ③ `groupScopes` 纯函数（分组 / all-spaces 优先 / 未知前缀进「其它」/ 空数组）
+//   ④ 能力分类**计数自洽**（分类之和 === 注册表条数；「其它」桶显式渲染，不再藏）
+//   ⑤ 能力筛选（全部 / 支持跨空间 / 不支持）的数字与渲染都从数据算
+//   ⑥ 跨空间徽章数量与注册表一致（读/写/不支持三态各有）
+//   ⑦ 连接状态卡（监听地址/复制、令牌指纹、最近一次外部调用、刷新在卡头、快捷入口）
+//   ⑧ 分段导航锚点可达 ＋ 窄屏单列（纯 CSS，读样式文件断言 media query）
+//
+// ⚠️ 数字一律**从数据推导**（生成物 JSON / AI_TOOL_META），⛔ 不写字面量 ——
+//    写死数字的判据在下一批能力变更时会立刻变成假话。
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import React from "react";
+import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import "../i18n";
+import { AI_TOOL_META } from "../lib/capabilities/aiTools.meta";
+import MCP_TOOLS_READ from "../../capabilities/mcp-tools.json";
+import MCP_TOOLS_WRITE from "../../capabilities/mcp-tools-write.json";
+import { groupScopes } from "./McpAccessPane";
+
+const mocks = vi.hoisted(() => ({
+  mcpStatus: vi.fn(),
+  mcpSetLevel: vi.fn(),
+  mcpRotateToken: vi.fn(),
+  mcpRecentDrafts: vi.fn(),
+  mcpRecentAudit: vi.fn(),
+  mcpHiddenSpacesGet: vi.fn(),
+  mcpHiddenSpacesSet: vi.fn(),
+  listWorkspaces: vi.fn(),
+}));
+vi.mock("../lib/api", () => ({ api: mocks }));
+
+import { McpAccessPane } from "./McpAccessPane";
+
+// ---- 数据侧（独立口径：测试自己从生成物算，不复用组件的映射） ----
+type CrossSpace = "read" | "write" | "none";
+function stateOf(description: string, isWrite: boolean): CrossSpace {
+  if (description.includes("跨空间：不支持")) return "none";
+  if (!description.includes("跨空间：支持")) return "none";
+  return isWrite ? "write" : "read";
+}
+const CROSS = new Map<string, CrossSpace>();
+for (const t of MCP_TOOLS_READ) CROSS.set(t.capabilityId, stateOf(t.description, false));
+for (const t of MCP_TOOLS_WRITE) CROSS.set(t.capabilityId, stateOf(t.description, true));
+const COUNTS = { read: 0, write: 0, none: 0 };
+for (const s of CROSS.values()) COUNTS[s] += 1;
+const SUPPORT = COUNTS.read + COUNTS.write;
+
+const STATUS_OFF = {
+  enabled: false,
+  running: false,
+  port: null as number | null,
+  token: null as string | null,
+  granted: ["read:pages"],
+  level: "off" as const,
+  allow_write: false,
+  env_override: false,
+  config_path: "/data/mcp/config.json",
+  token_path: "/data/mcp/token",
+  port_path: "/data/mcp/port",
+  bridge_path: null as string | null,
+};
+const STATUS_WRITE_ALL = {
+  ...STATUS_OFF,
+  enabled: true,
+  running: true,
+  port: 51234,
+  token: "deadbeefdeadbeef",
+  granted: ["read:pages", "read:all-spaces", "write:all-spaces", "export:files"],
+  level: "write_all" as const,
+  allow_write: true,
+};
+const STATUS_READ = {
+  ...STATUS_OFF,
+  enabled: true,
+  running: true,
+  port: 51234,
+  token: "0123456789ab",
+  granted: ["read:pages", "read:files", "read:backlinks"],
+  level: "read" as const,
+};
+
+let root: ReturnType<typeof createRoot> | null = null;
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+beforeEach(() => {
+  document.body.innerHTML = '<div id="host"></div>';
+  mocks.mcpStatus.mockReset();
+  mocks.mcpStatus.mockResolvedValue(STATUS_OFF);
+  mocks.mcpSetLevel.mockReset();
+  mocks.mcpSetLevel.mockResolvedValue(STATUS_WRITE_ALL);
+  mocks.mcpRotateToken.mockReset();
+  mocks.mcpRotateToken.mockResolvedValue({ ...STATUS_WRITE_ALL, token: "cafebabe" });
+  mocks.mcpRecentDrafts.mockReset();
+  mocks.mcpRecentDrafts.mockResolvedValue([]);
+  mocks.mcpRecentAudit.mockReset();
+  mocks.mcpRecentAudit.mockResolvedValue([]);
+  mocks.mcpHiddenSpacesGet.mockReset();
+  mocks.mcpHiddenSpacesGet.mockResolvedValue({ spaceIds: [] });
+  mocks.mcpHiddenSpacesSet.mockReset();
+  mocks.mcpHiddenSpacesSet.mockResolvedValue({ spaceIds: [] });
+  mocks.listWorkspaces.mockReset();
+  mocks.listWorkspaces.mockResolvedValue([]);
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    configurable: true,
+  });
+});
+afterEach(() => {
+  if (root) flushSync(() => root!.unmount());
+  root = null;
+  document.body.innerHTML = "";
+});
+
+function mount() {
+  root = createRoot(document.getElementById("host")!);
+  flushSync(() => root!.render(React.createElement(McpAccessPane)));
+}
+const radios = () => Array.from(document.querySelectorAll<HTMLElement>('[role="radio"]'));
+const radio = (label: string) => radios().find((r) => (r.textContent || "").includes(label)) as HTMLElement;
+const allowOf = (key: string) =>
+  document.querySelector<HTMLElement>(`[data-testid="mcp-allow-summary"] [data-allow="${key}"]`)?.textContent ?? "";
+
+describe("跨空间支持矩阵改版（2026-10-31）", () => {
+  it("① 六个档位是单选卡：radiogroup ＋ radio ＋ aria-checked，风险标签齐全且只有一个选中", async () => {
+    mount();
+    await tick();
+    await tick();
+    const group = document.querySelector('[role="radiogroup"]');
+    expect(group, "档位容器必须是 radiogroup（设计稿要求单选卡片语义）").toBeTruthy();
+    expect(radios().length, "六个档位都要渲染成单选卡").toBe(6);
+    // 恰有一个选中，且与后端 level 一致（默认 off）
+    const checked = radios().filter((r) => r.getAttribute("aria-checked") === "true");
+    expect(checked.length, "只能有一个 aria-checked=true").toBe(1);
+    expect(checked[0].dataset.level).toBe(STATUS_OFF.level);
+    expect(checked[0].className).toContain("is-on");
+    // 每张卡都有风险标签（关/低/中/高），四种风险都出现（数据侧固定，⛔ 不按档位写死选中句子）
+    const risks = radios().map((r) => r.dataset.risk);
+    expect(risks.filter(Boolean).length).toBe(6);
+    for (const want of ["off", "low", "mid", "high"]) {
+      expect(risks, `风险档「${want}」至少出现一次`).toContain(want);
+    }
+  });
+
+  it("② 点卡仍走同一个 mcp_set_level，且选中态跟着后端回读写", async () => {
+    mount();
+    await tick();
+    await tick();
+    flushSync(() => radio("只读（全部空间）").dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await tick();
+    expect(mocks.mcpSetLevel).toHaveBeenCalledWith("read_all");
+    // 后端回 write_all ⇒ 界面按**后端**读数选中（不是本地乐观改）
+    await tick();
+    const checked = radios().filter((r) => r.getAttribute("aria-checked") === "true");
+    expect(checked.length).toBe(1);
+    expect(checked[0].dataset.level).toBe("write_all");
+  });
+
+  it("③ 「当前允许」摘要由读数推导：关档=不读/不写/不导出，写全部空间档=读全/写全/导出", async () => {
+    mount();
+    await tick();
+    await tick();
+    // 关档：哪怕 granted 里还留着 read:pages，也一律"不读/不写/不导出"（通道关着）
+    expect(allowOf("read")).toBe("不读");
+    expect(allowOf("write")).toBe("不写");
+    expect(allowOf("export")).toBe("不导出");
+    expect(allowOf("token")).toContain("（无）");
+    expect(document.body.textContent || "").toContain("加密空间内容不可见");
+
+    // 写全部空间档（granted 含 read:all-spaces / write:all-spaces / export:files）
+    mocks.mcpStatus.mockResolvedValue(STATUS_WRITE_ALL);
+    flushSync(() => root!.unmount());
+    mount();
+    await tick();
+    await tick();
+    expect(allowOf("read")).toBe("读全部空间");
+    expect(allowOf("write")).toBe("写全部空间");
+    expect(allowOf("export")).toBe("导出文件句柄");
+    expect(allowOf("token")).toBe(`令牌：…${STATUS_WRITE_ALL.token.slice(-4)}`);
+
+    // 只读档：读当前空间 / 不写 / 不导出
+    mocks.mcpStatus.mockResolvedValue(STATUS_READ);
+    flushSync(() => root!.unmount());
+    mount();
+    await tick();
+    await tick();
+    expect(allowOf("read")).toBe("读当前空间");
+    expect(allowOf("write")).toBe("不写");
+    expect(allowOf("export")).toBe("不导出");
+  });
+
+  it("④ groupScopes：空输入五个组都空（⛔ 不抛错）", () => {
+    const empty = groupScopes([]);
+    expect(empty).toEqual({ read: [], write: [], export: [], allSpaces: [], other: [] });
+    expect(groupScopes(null)).toEqual(empty);
+    expect(groupScopes(undefined)).toEqual(empty);
+  });
+
+  it("⑤ groupScopes：read/write/export 分组正确、保序去重", () => {
+    const g = groupScopes(["write:pages", "read:pages", "export:files", "read:files", "read:pages"]);
+    expect(g.read).toEqual(["read:pages", "read:files"]);
+    expect(g.write).toEqual(["write:pages"]);
+    expect(g.export).toEqual(["export:files"]);
+    expect(g.allSpaces).toEqual([]);
+    expect(g.other).toEqual([]);
+  });
+
+  it("⑥ groupScopes：*-all-spaces 优先（read:all-spaces 进全部空间组，不被 read: 吃掉）", () => {
+    const g = groupScopes(["read:all-spaces", "write:all-spaces", "read:pages"]);
+    expect(g.allSpaces).toEqual(["read:all-spaces", "write:all-spaces"]);
+    expect(g.read).toEqual(["read:pages"]);
+    expect(g.write).toEqual([]);
+  });
+
+  it("⑦ groupScopes：未知前缀进「其它」组（⛔ 不静默丢）", () => {
+    const g = groupScopes(["kv:own", "audit:tail", "", "  "]);
+    expect(g.other).toEqual(["kv:own", "audit:tail"]);
+    expect(g.read).toEqual([]);
+    expect(g.write).toEqual([]);
+    expect(g.export).toEqual([]);
+    expect(g.allSpaces).toEqual([]);
+  });
+
+  it("⑧ 能力分类计数自洽：分类之和 === 注册表条数；「其它」桶显式渲染（不再藏）", async () => {
+    mount();
+    await tick();
+    await tick();
+    const cats = Array.from(document.querySelectorAll<HTMLElement>("[data-count]"));
+    expect(cats.length, "八类 ＋ 其它一行都要在").toBeGreaterThanOrEqual(9);
+    const sum = cats.reduce((n, el) => n + Number(el.dataset.count ?? 0), 0);
+    expect(sum, "分类之和必须等于能力清单条数（旧版 58≠61 的 bug）").toBe(AI_TOOL_META.length);
+    // 「其它」是显式一行（用独立属性，避免与 8 个注册表域混为一谈）
+    const catchAll = document.querySelector<HTMLElement>("[data-domain-catchall]");
+    expect(catchAll, "「其它」桶必须显式渲染").toBeTruthy();
+    const catchAllCount = Number(catchAll!.dataset.count ?? 0);
+    expect(catchAllCount, "「其它」桶不是空的（旧版这 3 项没渲染）").toBeGreaterThan(0);
+    // 它列出的条目数 === 它的计数（分类之和自洽的另一半）
+    expect(catchAll!.querySelectorAll("[data-cap-id]").length).toBe(catchAllCount);
+    // 页面上的 cap 条目总数 === 注册表条数（折叠只影响样式，不影响 DOM 读数）
+    expect(document.querySelectorAll("[data-cap-id]").length).toBe(AI_TOOL_META.length);
+    expect(document.querySelector<HTMLElement>('[data-testid="mcp-cap-category-sum"]')?.dataset.sum).toBe(
+      String(AI_TOOL_META.length),
+    );
+  });
+
+  it("⑨ 能力筛选：全部 / 支持跨空间 / 不支持——数字与渲染都从数据算", async () => {
+    mount();
+    await tick();
+    await tick();
+    const btn = (key: string) => document.querySelector<HTMLElement>(`[data-filter="${key}"]`)!;
+    expect(btn("all").textContent).toContain("全部");
+    expect(btn("support").textContent, "支持跨空间的数字来自生成物").toContain(String(SUPPORT));
+    expect(btn("none").textContent).toContain(String(COUNTS.none));
+    // 默认全部：渲染 AI 工具全量
+    expect(document.querySelectorAll("[data-cap-id]").length).toBe(AI_TOOL_META.length);
+    // 只看不支持
+    flushSync(() => btn("none").click());
+    await tick();
+    expect(document.querySelectorAll("[data-cap-id]").length).toBe(COUNTS.none);
+    // 只看支持跨空间
+    flushSync(() => btn("support").click());
+    await tick();
+    expect(document.querySelectorAll("[data-cap-id]").length).toBe(SUPPORT);
+    // 回到全部
+    flushSync(() => btn("all").click());
+    await tick();
+    expect(document.querySelectorAll("[data-cap-id]").length).toBe(AI_TOOL_META.length);
+  });
+
+  it("⑩ 跨空间徽章：每类各至少一条，三态数量与生成物一致（两列网格）", async () => {
+    mount();
+    await tick();
+    await tick();
+    const badge = (s: CrossSpace) =>
+      Array.from(document.querySelectorAll<HTMLElement>(`[data-crossspace="${s}"]`));
+    for (const s of ["read", "write", "none"] as const) {
+      expect(badge(s).length, `「${s}」这一类至少一条`).toBeGreaterThan(0);
+      expect(badge(s).length, `「${s}」数量必须等于生成物算出来的 ${COUNTS[s]}`).toBe(COUNTS[s]);
+    }
+    expect(badge("read").length + badge("write").length + badge("none").length).toBe(AI_TOOL_META.length);
+    // 两列网格：每个分类一个 `.mcp-cap-grid`
+    expect(document.querySelectorAll(".mcp-cap-grid").length).toBeGreaterThan(0);
+  });
+
+  it("⑪ 可展开分类：点标题切换 aria-expanded，内容仍在 DOM（机器读数不随折叠漂）", async () => {
+    mount();
+    await tick();
+    await tick();
+    const heads = Array.from(document.querySelectorAll<HTMLElement>(".mcp-cap-cat-head"));
+    expect(heads.length, "每个分类都要有可点的标题行").toBeGreaterThanOrEqual(9);
+    const writeCat = heads.find((h) => (h.textContent || "").includes("写页面"))!;
+    expect(writeCat.getAttribute("aria-expanded")).toBe("false");
+    flushSync(() => writeCat.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await tick();
+    expect(writeCat.getAttribute("aria-expanded")).toBe("true");
+    // 折叠与否都还在 DOM 里（旧判据按 DOM 读数）
+    expect(document.querySelectorAll("[data-cap-id]").length).toBe(AI_TOOL_META.length);
+  });
+
+  it("⑫ 连接状态卡：监听地址＋复制、令牌指纹（不回显明文）、最近一次外部调用、刷新在卡头", async () => {
+    const calledAt = Date.now() - 2 * 60_000;
+    mocks.mcpStatus.mockResolvedValue(STATUS_WRITE_ALL);
+    mocks.mcpRecentAudit.mockResolvedValue([
+      { at: calledAt, tool: "pages_list", capabilityId: "pages.list", ok: true, code: null },
+    ]);
+    mount();
+    await tick();
+    await tick();
+    // 监听地址 + 复制
+    const addr = document.querySelector('[data-testid="mcp-listen-addr"]');
+    expect(addr?.textContent).toBe("127.0.0.1:51234");
+    flushSync(() =>
+      document.querySelector<HTMLElement>('[data-testid="copy-listen"]')!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      ),
+    );
+    await tick();
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("127.0.0.1:51234");
+    // 令牌：只显示指纹末 4 位，不回显明文
+    const tokenEl = document.querySelector<HTMLElement>('[data-testid="mcp-token"]');
+    expect(tokenEl?.dataset.fingerprint).toBe(STATUS_WRITE_ALL.token.slice(-4));
+    expect(document.body.textContent || "").not.toContain(STATUS_WRITE_ALL.token);
+    // 最近一次外部调用：由审计读数推导（含工具名；相对时间是粗粒度）
+    const last = document.querySelector('[data-testid="mcp-last-call"]');
+    expect(last?.textContent).toContain("pages_list");
+    // 刷新在状态卡（卡头）里
+    const refresh = document.querySelector<HTMLElement>('[data-testid="mcp-refresh"]');
+    expect(refresh, "刷新按钮要在状态卡卡头").toBeTruthy();
+    expect(refresh!.closest('[data-testid="mcp-stat-card"]')).toBeNull();
+    expect(refresh!.parentElement?.className || "").toContain("mcp-status-head");
+    // 快捷入口：最近草稿 / 最近审计 / AI 隐藏空间
+    const shortcuts = Array.from(document.querySelectorAll<HTMLElement>("[data-shortcut]")).map(
+      (el) => el.dataset.shortcut,
+    );
+    expect(shortcuts).toEqual(expect.arrayContaining(["drafts", "audit", "hidden"]));
+  });
+
+  it("⑬ granted 权限串分组 chips：读/写/全部空间/导出四组；未知前缀进「其它」；全部空间高亮", async () => {
+    mocks.mcpStatus.mockResolvedValue({
+      ...STATUS_WRITE_ALL,
+      // 这组断言把 4+1 组都喂到
+      granted: ["read:pages", "write:pages", "export:files", "read:all-spaces", "kv:own"],
+    });
+    mount();
+    await tick();
+    await tick();
+    const group = (label: string) =>
+      document.querySelector<HTMLElement>(`[data-scope-group="${label}"]`)!;
+    for (const label of ["读", "写", "全部空间", "导出", "其它"]) {
+      expect(group(label), `缺「${label}」分组`).toBeTruthy();
+    }
+    expect(group("读").textContent).toContain("read:pages");
+    expect(group("写").textContent).toContain("write:pages");
+    expect(group("导出").textContent).toContain("export:files");
+    expect(group("其它").textContent, "未知前缀不静默丢").toContain("kv:own");
+    const allChip = group("全部空间").querySelector<HTMLElement>('[data-granted="read:all-spaces"]')!;
+    expect(allChip.className).toContain("is-all");
+  });
+
+  it("⑭ 分段导航：五个锚点都指到真实存在的区块（⛔ 不新增浮层）", async () => {
+    mount();
+    await tick();
+    await tick();
+    const links = Array.from(document.querySelectorAll<HTMLAnchorElement>("[data-nav]"));
+    expect(links.length).toBe(5);
+    for (const a of links) {
+      const id = (a.getAttribute("href") || "").replace(/^#/, "");
+      expect(id, "锚点必须有 href=#id").not.toBe("");
+      expect(document.getElementById(id), `导航「${a.textContent}」的锚点 #${id} 不存在`).toBeTruthy();
+    }
+  });
+
+  it("⑮ 窄屏单列：类名钩子 ＋ 样式文件里的 media query（纯 CSS，不改结构）", async () => {
+    mount();
+    await tick();
+    await tick();
+    expect(document.querySelector(".mcp-levels-grid"), "档位网格类必须在").toBeTruthy();
+    expect(document.querySelector('[data-testid="mcp-stat-card"]')).toBeTruthy();
+    // 样式文件路径用 cwd 相对（vitest 里 `import.meta.url` 不保证是 file: 协议）
+    const css = readFileSync(resolve(process.cwd(), "src/styles/mcp-panel.css"), "utf8");
+    expect(css, "≤900px 档位必须单列").toMatch(/@media \(max-width: 900px\)[\s\S]*?\.mcp-levels-grid[\s\S]*?grid-template-columns: 1fr/);
+    expect(css, "窄屏状态卡也要单列").toMatch(/@media \(max-width: 720px\)[\s\S]*?\.mcp-stat-grid[\s\S]*?grid-template-columns: 1fr/);
+  });
+});

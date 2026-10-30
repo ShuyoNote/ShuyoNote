@@ -1,0 +1,434 @@
+/* MCP 接入面板（跨空间支持矩阵改版）的**专用样式**。
+ *
+ * ⚠️ 为什么不写在 `src/App.css`：那条文件由另一条线在收缩（改它必冲突）⇒ 本面板的新样式
+ *   全部收在这一个文件里，由 `src/App.tsx` 在 `import "./App.css"` 之后 import
+ *   （同在设置页的既有类 `set-*` / `set-badge` / `mcp-access-*` 继续复用 ✓）。
+ *
+ * ⚠️ 颜色一律用**既有 CSS 变量**（`--text` / `--text-dim` / `--text-faint` / `--border` /
+ *   `--surface` / `--card-bg` / `--hover` / `--accent` / `--accent-soft` / `--success` /
+ *   `--warning` / `--danger`；深色主题由变量自己跟 ✓）——⛔ 不自造变量、不写死颜色。
+ *
+ * 结构：① 分段导航 ② 档位单选卡（3 列 → ≤900px 单列）③ 能力分类（2 列网格）④ 状态卡（2 列 → 窄屏单列）
+ *   ⑤ 权限 chips ⑥ 写操作警示条。窄屏全部纵向堆叠，⛔ 不许横向溢出。
+ */
+
+/* ═══ ① 分段导航 ═══════════════════════════════════════════════════════════ */
+.mcp-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 0 10px;
+  margin: 0 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.mcp-nav-link {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  text-decoration: none;
+  background: transparent;
+}
+.mcp-nav-link:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.mcp-panel {
+  min-width: 0;
+}
+
+.mcp-title-hint {
+  margin-left: 10px;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+/* ═══ ② 权限档位：六张单选卡 ═══════════════════════════════════════════════ */
+.mcp-levels-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 4px 0 10px;
+}
+
+/* 视觉由本类接管（`.ai-settings-tab` 只作为既有判据/兼容的类名钩子，它的下划线页签样式在这里被覆盖） */
+.mcp-level-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.mcp-level-card:hover {
+  border-color: var(--accent);
+}
+.mcp-level-card.is-on {
+  border-color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+  color: var(--text);
+  font-weight: 400;
+}
+.mcp-level-card:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.mcp-level-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.mcp-radio {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-faint);
+  box-sizing: border-box;
+}
+.mcp-radio.is-on {
+  border-color: var(--accent);
+  background: radial-gradient(circle, var(--accent) 0 3px, transparent 3.5px);
+}
+.mcp-level-title {
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mcp-risk {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+  border: 1px solid transparent;
+}
+.mcp-risk-off {
+  color: var(--text-faint);
+  background: var(--hover);
+}
+.mcp-risk-low {
+  color: var(--success);
+  background: var(--hover);
+  border-color: var(--success);
+}
+.mcp-risk-mid {
+  color: var(--warning);
+  background: var(--hover);
+  border-color: var(--warning);
+}
+.mcp-risk-high {
+  color: var(--danger);
+  background: var(--hover);
+  border-color: var(--danger);
+}
+.mcp-level-desc {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* 选中卡下方的「当前允许」摘要 */
+.mcp-allow-row {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mcp-allow-row b {
+  color: var(--text);
+  font-weight: 600;
+}
+.mcp-invariant {
+  color: var(--text-faint);
+}
+
+/* ═══ ③ 能力：筛选 ＋ 可展开分类 ＋ 两列网格 ═════════════════════════════ */
+.mcp-cap-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 8px;
+}
+.mcp-cap-total {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-right: 4px;
+}
+.mcp-filter-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mcp-filter-btn:hover {
+  background: var(--hover);
+}
+.mcp-filter-btn.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.mcp-cap-category {
+  border-top: 1px solid var(--border);
+}
+.mcp-cap-category:last-of-type {
+  border-bottom: 1px solid var(--border);
+}
+.mcp-cap-cat-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 2px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.mcp-cap-cat-head:hover {
+  background: var(--hover);
+}
+.mcp-caret {
+  flex: none;
+  width: 12px;
+  color: var(--text-faint);
+}
+.mcp-cap-cat-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.mcp-cap-cat-note {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+.mcp-cap-cat-count {
+  flex: none;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.mcp-cap-grid {
+  display: none;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 18px;
+  padding: 2px 0 10px 18px;
+}
+/* 折叠 = `display:none`（内容**仍在 DOM**：机器读数不随展开状态漂 ✓） */
+.mcp-cap-category[data-open="true"] .mcp-cap-grid {
+  display: grid;
+}
+.mcp-cap-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.mcp-cap-name {
+  flex: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mcp-cap-item-tail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-left: auto;
+}
+.mcp-cap-brief {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 34ch;
+}
+.mcp-cap-item .set-badge {
+  flex: none;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 1px 7px;
+}
+
+/* ═══ ④ 状态卡 ═══════════════════════════════════════════════════════════ */
+.mcp-status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.mcp-stat-card {
+  margin: 4px 0 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+}
+.mcp-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 18px;
+}
+.mcp-stat-cell {
+  min-width: 0;
+}
+.mcp-stat-label {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  margin-bottom: 3px;
+}
+.mcp-stat-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mcp-stat-addr code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.mcp-stat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.mcp-stat-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.mcp-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+/* ═══ ⑤ 权限 chips（granted 分组） ═══════════════════════════════════════ */
+.mcp-scope-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+.mcp-scope-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.mcp-scope-label {
+  flex: none;
+  width: 4.5em;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.mcp-scope-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+.mcp-chip {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+/* 「全部空间」是跨空间授权（比当前空间更大）⇒ 高亮 ✓ */
+.mcp-chip.is-all {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.mcp-scope-empty {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ═══ ⑥ 写操作警示条 ═════════════════════════════════════════════════════ */
+.mcp-write-warning {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border: 1px solid var(--warning);
+  border-radius: 10px;
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ═══ 窄屏：纵向堆叠（纯 CSS，不改结构） ═════════════════════════════════ */
+@media (max-width: 900px) {
+  .mcp-levels-grid {
+    grid-template-columns: 1fr;
+  }
+  .mcp-cap-grid {
+    grid-template-columns: 1fr;
+    padding-left: 8px;
+  }
+  .mcp-cap-brief {
+    max-width: 18ch;
+  }
+}
+@media (max-width: 720px) {
+  .mcp-stat-grid {
+    grid-template-columns: 1fr;
+  }
+}
