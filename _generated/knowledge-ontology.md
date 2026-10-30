@@ -6,10 +6,10 @@
 | 源 | 值 |
 |---|---|
 | 注册表文件 | `capabilities/capabilities.json` |
-| 注册表 sha256 | `ee87cc4988477326e26c62e8af4cc4be9388f60b82e0cb41ba4c2f253213f308` |
+| 注册表 sha256 | `b127f06e6e02d31616f90be1fe99dce94b71ff6f07b38d78d9798b4f0a8a315d` |
 | `registryVersion` | 1 |
-| `apiVersion` | 1.14.0 |
-| 能力条数 | **69**（按 `kind`：host 2 / read 35 / write 32） |
+| `apiVersion` | 1.15.0 |
+| 能力条数 | **70**（按 `kind`：host 2 / read 36 / write 32） |
 | 生成命令 | `node scripts/gen-knowledge-ontology.mjs` |
 
 | id | kind | scope | permission | ai | mediate | desc |
@@ -56,6 +56,7 @@
 | nodes.move | write | current-space | write:pages | ✓ | ✓ | 移动页面/文件夹节点。参数: id (必填), newParentId (可选;省略=顶层), sortOrder (可选), expectedRev (可选), spaceId (可选;本版只支持当前空间), dryRun, clientRequestId。**环检测**：移到自己的后代下面 ⇒ `bad_args`。写操作 ⇒ 返回草稿等确认。 |
 | nodes.rename | write | current-space | write:pages | ✓ | ✓ | 重命名页面/文件夹节点（只改标题，正文不动）。参数: id (必填), title (必填), expectedRev (可选), spaceId (可选;本版只支持当前空间), dryRun, clientRequestId。写操作 ⇒ 返回草稿等确认。 |
 | page.current | read | current-space | read:page.current | ✓ |  | 读取当前打开页面的正文。**插件面**返回原始内容字符串（没有打开页面时返回空串）；外部/MCP 面返回与 pages.get 同口径的结构化正文。参数: includeAnchors (可选, 默认 true，仅外部/MCP 面与页面锚点有关；插件面忽略)。 |
+| pages.changes_since | read | current-space | read:pages | ✓ |  | 自 since 起变了哪些页（页级增量，v1 不做块级 diff）：`{pages:[{pageId,title,rev,updatedAt,kind}],truncated}`，按 updated_at > since 过滤，limit 默认 50 / 上限 200。参数: since（ms 或 ISO，必填）, spaceId, limit。要知道改了什么请对返回的 pageId 再调 pages.get。 |
 | pages.count | read | current-space | read:pages | ✓ |  | 本空间未删除节点的数量（与 pages.list 的集合同口径：页面/数据库/文件夹各算一个）。参数: spaceId (可选；跨空间需外部接入的「只读（全部空间）」档，否则明确拒)。 |
 | pages.create | write | current-space | write:pages | ✓ | ✓ | 新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。 |
 | pages.get | read | current-space | read:pages | ✓ |  | 读取单个页面的标题与正文纯文本。参数: id (必填), offset/limit (可选分页，按**字符/Unicode 标量**计数), includeAnchors (可选，默认 true：给每个顶层块后加一行 `<!-- b:<blockId> -->` 锚点，传 false 关掉且正文逐字节不变)。**必须看 `chars_total` 与返回长度判断是否读全**：只读了窗口就当整页用，是这类工具最常见的误用。⚠️ 锚点行**不计入** `chars_total`/`offset`：翻页用 `offset + limit`（夹到 `chars_total`）推算，⛔ 别数返回正文的字符数。返回值另带 `rev`（乐观并发令牌，形如 `<更新时间毫秒>:<正文指纹前 8 位>`；按块写回时要原样带回）。 |

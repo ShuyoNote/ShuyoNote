@@ -17,13 +17,14 @@ pub struct Capability {
     pub rust: &'static str,
 }
 
-pub const API_VERSION: &str = "1.14.0";
+pub const API_VERSION: &str = "1.15.0";
 pub const API_MAJOR: u32 = 1;
 
 pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "page.current", kind: "read", scope: "current-space", permission: Some("read:page.current"), since: "1.0.0", mediate: "-", rust: "cap_page_current" },
     Capability { id: "pages.count", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.0.0", mediate: "-", rust: "cap_pages_count" },
     Capability { id: "pages.list", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.0.0", mediate: "-", rust: "cap_pages_list" },
+    Capability { id: "pages.changes_since", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.15.0", mediate: "-", rust: "cap_pages_changes_since" },
     Capability { id: "pages.get", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.0.0", mediate: "-", rust: "cap_pages_get" },
     Capability { id: "pages.search", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.0.0", mediate: "-", rust: "cap_pages_search" },
     Capability { id: "pages.tree", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.3.0", mediate: "-", rust: "cap_pages_tree" },

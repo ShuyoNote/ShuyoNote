@@ -52,6 +52,32 @@
     "permission": "read:pages"
   },
   {
+    "name": "changes_since",
+    "capabilityId": "pages.changes_since",
+    "description": "自 since 起变了哪些页（页级增量；v1 不做块级 diff）：`{pages:[...],truncated}`。since=ms 或 ISO；limit 默认 50/上限 200。要知道改了什么，请对返回的 pageId 再调 `pages_get`。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "since": {
+          "type": "number",
+          "description": "起点：ms 时间戳或 ISO/RFC3339 字符串"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略=当前空间）；跨空间需「只读（全部空间）」档，未开 ⇒ permission_denied 点名 read:all-spaces"
+        },
+        "limit": {
+          "type": "number",
+          "description": "最多返回多少页（默认 50 / 上限 200）"
+        }
+      },
+      "required": [
+        "since"
+      ]
+    },
+    "permission": "read:pages"
+  },
+  {
     "name": "pages_get",
     "capabilityId": "pages.get",
     "description": "读取单个页面的标题与正文（分页，按字符计数；**必须看 chars_total 判断读全没有**）。**默认带块锚点**：每个顶层块后一行 `<!-- b:<块 id> -->`（HTML 注释，不破坏渲染；锚点数 = 本次返回范围内的顶层块数，分页截断时**只标注已返回的块**）—— 可把结论锚定到具体段落。传 includeAnchors:false ⇒ 正文与旧行为**逐字节相同**（省 token）。另带 `rev`（乐观并发令牌，形如 `<更新时间毫秒>:<正文指纹前 8 位>`）：同一页两次读相同、内容改一次就变；按块写回时原样带回。⚠️ 算不出时**不带** rev（不编）。⚠️ **锚点行不计入 chars_total / offset**：翻页请用 `offset + limit`（夹到 chars_total）推算，⛔ 别数返回正文的字符数（会把锚点行算进去 ⇒ 跳字）。参数: id (必填), offset/limit (可选, 默认 6000, 上限 20000), includeAnchors (可选, 默认 true)。",
@@ -303,6 +329,10 @@
         "limit": {
           "type": "number",
           "description": "最近 N 条（默认 20，上限 100）"
+        },
+        "onlyWrites": {
+          "type": "boolean",
+          "description": "只回写类调用（kind:write）；默认 false（兼容）"
         }
       },
       "required": []

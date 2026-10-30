@@ -1,4 +1,4 @@
-# 插件 API（v1.14.0）
+# 插件 API（v1.15.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.14.0",
+  "apiVersion": "1.15.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.14.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.15.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -107,6 +107,7 @@ register({
 | `page.current` | `api.page.current(includeAnchors)` | `read:page.current` | `current-space` | — | string | 1.0.0 |
 | `pages.count` | `api.pages.count(spaceId)` | `read:pages` | `current-space` | — | number | 1.0.0 |
 | `pages.list` | `api.pages.list(limit, spaceId)` | `read:pages` | `current-space` | — | array | 1.0.0 |
+| `pages.changes_since` | `api.pages.changesSince(since, spaceId, limit)` | `read:pages` | `current-space` | — | object | 1.15.0 |
 | `pages.get` | `api.pages.get(id, offset, limit, includeAnchors)` | `read:pages` | `current-space` | — | object | 1.0.0 |
 | `pages.search` | `api.pages.search(q, spaceId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `pages.tree` | `api.pages.tree(spaceId, limit)` | `read:pages` | `current-space` | — | object | 1.3.0 |
@@ -118,7 +119,7 @@ register({
 | `version.get` | `api.version.get(pageId, versionId, offset, limit, includeAnchors, spaceId)` | `read:versions` | `current-space` | — | object | 1.5.0 |
 | `trash.list` | `api.trash.list(spaceId, limit)` | `read:trash` | `current-space` | — | array | 1.5.0 |
 | `drafts.status` | `api.drafts.status(draftId)` | `read:pages` | `current-space` | — | object | 1.12.0 |
-| `audit.tail` | `api.audit.tail(limit)` | `read:pages` | `current-space` | — | array | 1.12.0 |
+| `audit.tail` | `api.audit.tail(limit, onlyWrites)` | `read:pages` | `current-space` | — | array | 1.12.0 |
 | `tags.list` | `api.tags.list(spaceId)` | `read:tags` | `current-space` | — | array | 1.0.0 |
 | `blocks.list` | `api.blocks.list(pageId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | — | array | 1.0.0 |
@@ -201,6 +202,17 @@ register({
 - 参数：
   - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（上限 200）
   - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
+
+### `pages.changes_since` — 页级增量（自某时刻起变了哪些页）
+
+- 调用：`api.pages.changesSince(since, spaceId, limit)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：页级增量（不返回块级 diff）
+- 参数：
+  - `since`: `number` —— 起点：ms 时间戳或 ISO/RFC3339 字符串
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）；跨空间需「只读（全部空间）」档，未开 ⇒ permission_denied 点名 read:all-spaces
+  - `limit`: `number`（可选） —— 最多返回多少页（默认 50 / 上限 200）
 
 ### `pages.get` — 读取指定页面
 
@@ -335,12 +347,13 @@ register({
 
 ### `audit.tail` — 最近审计
 
-- 调用：`api.audit.tail(limit)`
+- 调用：`api.audit.tail(limit, onlyWrites)`
 - 权限：`read:pages`
 - scope：`current-space`
 - 返回：本会话最近 N 条审计（⛔ 不含正文）
 - 参数：
   - `limit`: `number`（可选） —— 最近 N 条（默认 20，上限 100）
+  - `onlyWrites`: `boolean`（可选） —— 只回写类调用（kind:write）；默认 false（兼容）
 
 ### `tags.list` — 列出本空间标签
 
@@ -1134,7 +1147,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.14.0",
+  "runtime": "declarative", "apiVersion": "1.15.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },

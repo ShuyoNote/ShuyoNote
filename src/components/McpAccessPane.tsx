@@ -89,7 +89,7 @@ export function McpAccessPane() {
         .then((r) => setDrafts((r as DraftRow[]) ?? []))
         .catch(() => setDrafts([])),
       api
-        .mcpRecentAudit(20)
+        .mcpRecentAudit(20, true)
         .then((r) => setAudit((r as AuditRow[]) ?? []))
         .catch(() => setAudit([])),
     ]);

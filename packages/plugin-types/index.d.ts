@@ -142,6 +142,10 @@ export interface PluginApi {
    * 返回：[{id, title, created_at, updated_at}]，按更新时间倒序；不含正文。时间都是毫秒时间戳
    */
     list(limit?: number, spaceId?: string): { id: string; title: string; created_at: number; updated_at: number }[];
+  /** 页级增量（自某时刻起变了哪些页）（权限 `read:pages`；1.15.0 起）
+   * 返回：页级增量（不返回块级 diff）
+   */
+    changesSince(since: number, spaceId?: string, limit?: number): { pages: { pageId: string; title: string; rev: string; updatedAt: number; kind: string }[]; truncated: boolean };
   /** 读取指定页面（权限 `read:pages`；1.0.0 起）
    * 返回：{id, title, content_text(**已按 offset/limit 切好的窗口**；默认还带块锚点注释行), kind, chars_total(整页字符数), offset, limit, rev?(可选：`<updated_at 毫秒>:<正文指纹 sha256 前 8 位小写>`，拿不到正文时**不带**这个键)}；不存在返回 null
    */
@@ -225,7 +229,7 @@ export interface PluginApi {
   /** 最近审计（权限 `read:pages`；1.12.0 起）
    * 返回：本会话最近 N 条审计（⛔ 不含正文）
    */
-    tail(limit?: number): { at: number; tool: string; capabilityId: string; ok: boolean; code: string|null }[];
+    tail(limit?: number, onlyWrites?: boolean): { at: number; tool: string; capabilityId: string; ok: boolean; code: string|null }[];
   };
   tags: {
   /** 列出本空间标签（权限 `read:tags`；1.0.0 起）
@@ -453,4 +457,4 @@ export interface PluginApi {
   };
 }
 
-export declare const SDK_API_VERSION: "1.14.0";
+export declare const SDK_API_VERSION: "1.15.0";

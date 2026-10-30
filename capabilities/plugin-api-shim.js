@@ -15,6 +15,7 @@ var api = {
   pages: {
     count: function(spaceId) { return __capCall("pages.count", { spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
     list: function(limit, spaceId) { return __capCall("pages.list", { limit: limit === undefined ? 50 : Number(limit), spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
+    changesSince: function(since, spaceId, limit) { return __capCall("pages.changes_since", { since: since === undefined ? undefined : Number(since), spaceId: spaceId === undefined ? undefined : String(spaceId), limit: limit === undefined ? undefined : Number(limit) }); },
     get: function(id, offset, limit, includeAnchors) { return __capCall("pages.get", { id: id === undefined ? undefined : String(id), offset: offset === undefined ? 0 : Number(offset), limit: limit === undefined ? 6000 : Number(limit), includeAnchors: includeAnchors === undefined ? true : String(includeAnchors) }); },
     search: function(q, spaceId, limit) { return __capCall("pages.search", { q: q === undefined ? undefined : String(q), spaceId: spaceId === undefined ? undefined : String(spaceId), limit: limit === undefined ? 8 : Number(limit) }); },
     tree: function(spaceId, limit) { return __capCall("pages.tree", { spaceId: spaceId === undefined ? undefined : String(spaceId), limit: limit === undefined ? 2000 : Number(limit) }); },
@@ -44,7 +45,7 @@ var api = {
     status: function(draftId) { return __capCall("drafts.status", { draftId: draftId === undefined ? undefined : String(draftId) }); }
   },
   audit: {
-    tail: function(limit) { return __capCall("audit.tail", { limit: limit === undefined ? undefined : Number(limit) }); }
+    tail: function(limit, onlyWrites) { return __capCall("audit.tail", { limit: limit === undefined ? undefined : Number(limit), onlyWrites: onlyWrites === undefined ? undefined : String(onlyWrites) }); }
   },
   tags: {
     list: function(spaceId) { return __capCall("tags.list", { spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
