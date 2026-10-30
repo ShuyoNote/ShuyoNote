@@ -495,4 +495,58 @@ describe("跨空间支持矩阵改版（2026-10-31）", () => {
     // 三步与客户端选择仍然可用（但配置按钮在 st 为空时禁用是另一件事）
     expect(document.querySelectorAll("[data-step]").length).toBe(3);
   });
+
+  it("㉑ 能力分类默认**全部折叠**：只露「分类＋计数＋占比条」，点标题才展开（内容始终在 DOM）", async () => {
+    mount();
+    await tick();
+    await tick();
+    const cats = Array.from(document.querySelectorAll<HTMLElement>(".mcp-cap-category"));
+    expect(cats.length, "八类 ＋ 其它一行").toBeGreaterThanOrEqual(9);
+    // 默认全折叠（旧版第一类默认展开 ⇒ 一进来就是文字墙）
+    for (const c of cats) expect(c.dataset.open, `「${c.textContent?.slice(0, 6)}」默认必须折叠`).toBe("false");
+    for (const h of Array.from(document.querySelectorAll<HTMLElement>(".mcp-cap-cat-head"))) {
+      expect(h.getAttribute("aria-expanded"), "折叠态 aria-expanded=false").toBe("false");
+    }
+    // 折叠态也显示占比条（长度随分类条数变）
+    const bars = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="mcp-cap-bar"]'));
+    expect(bars.length, "每个分类都要有占比条").toBe(cats.length);
+    expect(bars.every((b) => Number(b.dataset.ratio) > 0), "占比条 width > 0").toBe(true);
+    // 折叠只改样式，不改 DOM 读数
+    expect(document.querySelectorAll("[data-cap-id]").length).toBe(AI_TOOL_META.length);
+    // 点第一类标题 ⇒ 展开；再点 ⇒ 收回
+    const head = document.querySelector<HTMLElement>(".mcp-cap-cat-head")!;
+    flushSync(() => head.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await tick();
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+    expect(head.closest<HTMLElement>(".mcp-cap-category")!.dataset.open).toBe("true");
+    flushSync(() => head.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await tick();
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("㉒ 展开后的工具条目：描述**单行 + ellipsis**、徽章**固定列宽**；窄屏标题副标题各占一行", async () => {
+    mount();
+    await tick();
+    await tick();
+    const items = Array.from(document.querySelectorAll<HTMLElement>(".mcp-cap-item"));
+    expect(items.length).toBe(AI_TOOL_META.length);
+    expect(
+      items.every((it) => it.querySelector(".mcp-cap-brief") && it.querySelector("[data-crossspace]")),
+      "每条工具都要有描述与徽章",
+    ).toBe(true);
+    const css = readFileSync(resolve(process.cwd(), "src/styles/mcp-panel.css"), "utf8");
+    const rule = (sel: string) => {
+      const m = css.match(new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\{([^}]*)\\}"));
+      return m?.[1] ?? "";
+    };
+    const brief = rule(".mcp-cap-brief");
+    expect(brief, "描述必须单行").toContain("white-space: nowrap");
+    expect(brief, "描述必须省略号截断").toContain("text-overflow: ellipsis");
+    expect(brief, "描述必须可压缩").toContain("overflow: hidden");
+    const badge = rule(".mcp-cap-item .set-badge");
+    expect(badge, "徽章必须固定列宽（换行不齐的修法）").toMatch(/flex:\s*0 0 96px|width:\s*96px/);
+    // 窄屏：区块标题允许换行、副标题单独一行（不再把「接入外部 AI」拆开）
+    expect(css).toMatch(/@media \(max-width: 560px\)[\s\S]*?\.mcp-title-hint[\s\S]*?flex:\s*1 0 100%/);
+    expect(rule(".mcp-section-title")).toContain("flex-wrap: wrap");
+  });
 });

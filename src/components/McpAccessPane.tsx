@@ -250,9 +250,10 @@ export function McpAccessPane() {
   const [hidden, setHidden] = useState<string[]>([]);
   const [hiddenSaving, setHiddenSaving] = useState(false);
   const [capFilter, setCapFilter] = useState<"all" | "support" | "none">("all");
-  // 展开的分类（默认第一类展开；**内容始终留在 DOM 里**，用 CSS 折叠 —— 这样能力清单的
-  // 机器读数（`[data-cap-id]` 条数）不受展开状态影响，判据才不会因为"用户点了折叠"而漂）。
-  const [openCats, setOpenCats] = useState<string[]>([DOMAINS[0][0]]);
+  // 展开的分类：**默认全部折叠**（设计稿要求：能力区首屏只显示「分类＋计数＋占比条」，
+  // 避免一进来就是文字墙；375 下尤其明显）。**内容始终留在 DOM 里**，用 CSS 折叠 ——
+  // 这样能力清单的机器读数（`[data-cap-id]` 条数）不受展开状态影响，判据才不会因为折叠而漂。
+  const [openCats, setOpenCats] = useState<string[]>([]);
   // 「接入外部 AI」引导：选哪个客户端（只影响"配置文件路径"那一行；片段本身相同）
   const [client, setClient] = useState<ClientKind>("claude");
 
@@ -354,16 +355,6 @@ export function McpAccessPane() {
     document.getElementById(id)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   };
 
-  // 当前档「能做什么」：**按注册表 ai:true 过滤**，⛔ 不手写能力句子（会漂）。
-  const readOk = granted.some((s) => s.startsWith("read:"));
-  const writeOk = granted.some((s) => s === "write:pages" || s === "write:all-spaces");
-  const visibleCaps = useMemo(
-    () => AI_TOOL_META.filter((c) => (c.isWrite ? writeOk : readOk)),
-    [readOk, writeOk],
-  );
-  const visibleRead = visibleCaps.filter((c) => !c.isWrite).length;
-  const visibleWrite = visibleCaps.length - visibleRead;
-
   // 能力清单：**注册表全量**（按域分类）＋ 跨空间三态 ＋ 一句简介
   const capRows = useMemo(
     () =>
@@ -458,8 +449,8 @@ export function McpAccessPane() {
       {/* ⭐ 首屏接入引导（设计稿 v3）：三步选客户端 → 复制配置 → 粘贴并重启。
           配置片段与令牌**只在这里出现一次**（状态区不再重复）。 */}
       <section className="set-section mcp-onboard" id="mcp-sec-onboard" data-testid="mcp-onboard">
-        <div className="set-section-title">
-          接入外部 AI
+        <div className="set-section-title mcp-section-title">
+          <span className="mcp-section-title-text">接入外部 AI</span>
           <span className="mcp-title-hint">三步：选客户端 → 复制配置 → 粘贴并重启</span>
         </div>
         <p className="set-hint">
@@ -582,8 +573,8 @@ export function McpAccessPane() {
 
       {/* ① 权限档位：六张单选卡 */}
       <section className="set-section" id="mcp-sec-levels">
-        <div className="set-section-title">
-          权限档位
+        <div className="set-section-title mcp-section-title">
+          <span className="mcp-section-title-text">权限档位</span>
           <span className="mcp-title-hint">选中即生效：切换会换新令牌，旧令牌立即失效</span>
         </div>
         <p className="set-hint">
@@ -617,27 +608,31 @@ export function McpAccessPane() {
             );
           })}
         </div>
-        {/* 选中卡下方的「当前允许」摘要（全部由后端读数推导） */}
+        {/* 选中卡下方的「当前允许」摘要（全部由后端读数推导）。
+            ⚠️ 分隔符用 `·`，且**前面带不换行空格**（`\u00a0`）—— 375 下折行时分隔符不会跑到行首。 */}
         <div className="mcp-allow-row" data-testid="mcp-allow-summary">
           <b>当前允许：</b>
-          <span data-allow="read">{allow.read}</span> · <span data-allow="write">{allow.write}</span> ·{" "}
-          <span data-allow="export">{allow.export}</span> ·{" "}
+          <span data-allow="read">{allow.read}</span>
+          <span className="mcp-sep" aria-hidden="true">{"\u00a0· "}</span>
+          <span data-allow="write">{allow.write}</span>
+          <span className="mcp-sep" aria-hidden="true">{"\u00a0· "}</span>
+          <span data-allow="export">{allow.export}</span>
+          <span className="mcp-sep" aria-hidden="true">{"\u00a0· "}</span>
           <span className="mcp-invariant" data-invariant="encrypted-spaces">
             {allow.encrypted}
-          </span>{" "}
-          · <span data-allow="token">{allow.token}</span>
+          </span>
+          <span className="mcp-sep" aria-hidden="true">{"\u00a0· "}</span>
+          <span data-allow="token">{allow.token}</span>
         </div>
       </section>
 
       {/* ② 能力：分类可展开 ＋ 筛选 ＋ 跨空间徽章 */}
       <section className="set-section" id="mcp-sec-caps">
-        <div className="set-section-title">它能做什么</div>
-        <p className="set-hint" data-testid="mcp-cap-summary">
-          按能力注册表实时算：清单 {AI_TOOL_META.length} 项 = 读 {capRows.filter((c) => !c.isWrite).length} + 写{" "}
-          {capRows.filter((c) => c.isWrite).length}；这一档可见 {visibleCaps.length} 项（读 {visibleRead} + 写{" "}
-          {visibleWrite}）。分类计数之和必须等于清单条数。
-        </p>
-        {/* 顶部统计行（既有判据钉住的元素与文案：三态计数） */}
+        <div className="set-section-title mcp-section-title">
+          <span className="mcp-section-title-text">它能做什么</span>
+        </div>
+        {/* 顶部统计行（既有判据钉住的元素与文案：三态计数）；「共 N 项（读 X + 写 Y）」只在这里出现一次
+            —— 原来描述里还写了一遍「这一档可见 N 项」，两处重复，已删（2026-10-31 owner 反馈） */}
         <div
           className="set-hint"
           data-testid="mcp-crossspace-stats"
@@ -649,7 +644,10 @@ export function McpAccessPane() {
         </div>
         {/* 筛选：全部 / 支持跨空间 / 不支持（数字从数据算） */}
         <div className="mcp-cap-filter" role="group" aria-label="按跨空间支持筛选">
-          <span className="mcp-cap-total">共 {capRows.length} 项</span>
+          <span className="mcp-cap-total" data-testid="mcp-cap-total">
+            共 {capRows.length} 项（读 {capRows.filter((c) => !c.isWrite).length} + 写{" "}
+            {capRows.filter((c) => c.isWrite).length}）
+          </span>
           {(
             [
               ["all", `全部`],
@@ -674,6 +672,8 @@ export function McpAccessPane() {
           if (shown.length === 0) return null;
           const isCatchAll = cat.name === CATCH_ALL;
           const isOpen = openCats.includes(cat.name);
+          // 占比条（折叠时也要能看出各域大小）：条数 / 清单条数
+          const ratio = capRows.length ? cat.items.length / capRows.length : 0;
           const toggle = () =>
             setOpenCats((prev) => (prev.includes(cat.name) ? prev.filter((x) => x !== cat.name) : [...prev, cat.name]));
           return (
@@ -698,6 +698,15 @@ export function McpAccessPane() {
                   {isOpen ? "▾" : "▸"}
                 </span>
                 <span className="mcp-cap-cat-name">{cat.name}</span>
+                {/* 占比条：长度 = 该分类条数 / 清单条数（折叠时也能一眼看出各域占比） */}
+                <span
+                  className="mcp-cap-bar"
+                  aria-hidden="true"
+                  data-ratio={ratio.toFixed(4)}
+                  data-testid="mcp-cap-bar"
+                >
+                  <span className="mcp-cap-bar-fill" style={{ width: `${(ratio * 100).toFixed(2)}%` }} />
+                </span>
                 {isCatchAll && (
                   <span className="mcp-cap-cat-note">
                     这 {cat.items.length} 项没有域归属，显式列出以保证计数自洽
@@ -735,7 +744,7 @@ export function McpAccessPane() {
       {/* ③ 连接状态卡 */}
       <section className="set-section" id="mcp-sec-status">
         <div className="mcp-status-head">
-          <div className="set-section-title">现在是什么状态</div>
+          <div className="set-section-title mcp-section-title">现在是什么状态</div>
           <button className="set-btn" data-testid="mcp-refresh" disabled={busy || !st} onClick={() => void refresh()}>
             刷新
           </button>
@@ -823,7 +832,7 @@ export function McpAccessPane() {
 
       {/* ④ 最近草稿 */}
       <section className="set-section" id="mcp-sec-drafts">
-        <div className="set-section-title">最近草稿（5 条）</div>
+        <div className="set-section-title mcp-section-title">最近草稿（5 条）</div>
         <ul data-testid="mcp-drafts">
           {drafts.length === 0 ? (
             <li className="set-hint">暂无草稿</li>
@@ -839,7 +848,7 @@ export function McpAccessPane() {
 
       {/* ⑤ 最近审计 */}
       <section className="set-section" id="mcp-sec-audit">
-        <div className="set-section-title">最近审计（20 条）</div>
+        <div className="set-section-title mcp-section-title">最近审计（20 条）</div>
         <ul data-testid="mcp-audit">
           {audit.length === 0 ? (
             <li className="set-hint">暂无审计</li>
@@ -855,7 +864,7 @@ export function McpAccessPane() {
 
       {/* ⑥ AI 不可见空间清单 */}
       <section className="set-section" id="mcp-sec-hidden">
-        <div className="set-section-title">AI 不可见空间</div>
+        <div className="set-section-title mcp-section-title">AI 不可见空间</div>
         <p className="set-hint">勾选后 AI 既不能读也不能写该空间；你自己不受影响。隐藏 ≠ 加密。</p>
         <p className="set-hint">清单只保存在本机（不随设备同步）；换机后需要重配。</p>
         {level === "off" ? <p className="set-hint">（先选一个外部接入档位才能编辑）</p> : null}
@@ -894,7 +903,7 @@ export function McpAccessPane() {
 
       {/* ⑦ 边界提示（静态说明，⛔ 不冒充读数） */}
       <section className="set-section" id="mcp-sec-boundary">
-        <div className="set-section-title">边界提示</div>
+        <div className="set-section-title mcp-section-title">边界提示</div>
         <p className="set-hint">导出/下载走句柄（blobs_fetch 落盘），不回真名字节。</p>
         <p className="set-hint">超过 10MB 的下载需要你确认；本版面板尚未接确认 UI。</p>
         <p className="set-hint">上传/导入需要你在系统文件选择框里选文件（外部 AI 不能给任意路径）。</p>
