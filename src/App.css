@@ -453,7 +453,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--success, #2e7d32);
+  background: var(--success);
 }
 .titlebar-sync {
   flex: none;
@@ -527,7 +527,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   border: none;
   background: transparent;
   color: var(--text-dim);
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   padding: 0;
   transition: background var(--transition-fast), color var(--transition-fast);
@@ -613,7 +613,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   width: 3px;
 }
 .activity-bar > .activity-group:first-child::-webkit-scrollbar-thumb {
-  background: var(--border-strong, var(--border));
+  background: var(--border-strong);
   border-radius: 3px;
 }
 .activity-bar > .activity-group:first-child::-webkit-scrollbar-track {
@@ -725,8 +725,8 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 
 /* ---------- Sidebar ---------- */
 .sidebar {
-  width: var(--sidebar-w, 240px);
-  min-width: var(--sidebar-w, 240px);
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
   display: flex;
@@ -1487,8 +1487,8 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   margin: 12px 16px 0;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
-  background: var(--danger-soft, #ffecec);
-  border: 1px solid var(--danger, #e5484d);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
   font-size: 12px;
   color: var(--text);
 }
@@ -1504,7 +1504,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   cursor: pointer;
   font-size: 12px;
 }
-.btn-sync-conflict.keep { border-color: var(--success, #2e7d32); color: var(--success, #2e7d32); }
+.btn-sync-conflict.keep { border-color: var(--success); color: var(--success); }
 .btn-sync-conflict.adopt { border-color: var(--primary); color: var(--primary); }
 .sync-conflict-hint { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
 /* ★ B 方案（2026-09-22）：「待取回的远端版本」——页级保留本地时存下来的那一版。
@@ -3396,7 +3396,7 @@ select.sync-input {
   color: var(--accent);
   border-color: var(--border);
   font-weight: 500;
-  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.06));
+  box-shadow: var(--shadow-sm);
 }
 
 .view-switch-active svg {
@@ -3687,7 +3687,7 @@ select.sync-input {
 }
 .history-clear {
   font-size: 12px;
-  color: var(--danger, #e5484d);
+  color: var(--danger);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 5px;
@@ -3920,7 +3920,7 @@ select.sync-input {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--danger, #e5484d);
+  background: var(--danger);
   box-shadow: 0 0 0 2px var(--bg);
   flex-shrink: 0;
 }
@@ -4658,12 +4658,12 @@ select.sync-input {
 
 .tree-icon-folder {
   background: var(--cat-orange-soft);
-  color: var(--cat-orange, #b45309);
+  color: var(--cat-orange);
 }
 
 .tree-icon-database {
   background: var(--cat-purple-soft);
-  color: var(--cat-purple, #7c3aed);
+  color: var(--cat-purple);
 }
 
 .tree-icon-file {
@@ -5254,8 +5254,8 @@ body.is-ai-open .main {
   background: var(--hover);
 }
 .ep-side-btn.danger:hover {
-  background: color-mix(in srgb, var(--danger, #e5484d) 18%, transparent);
-  color: var(--danger, #e5484d);
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
 }
 .ep-side-spacer {
   flex: 1;
@@ -5283,7 +5283,7 @@ body.is-ai-open .main {
   font-family: inherit;
 }
 .ep-search-input:focus {
-  border-color: var(--accent, #4f7cff);
+  border-color: var(--accent);
 }
 .ep-search-btn {
   flex: none;
@@ -5408,7 +5408,7 @@ body.is-ai-open .main {
 .cover-picker-input {
   width: 100%;
   border: 1px solid var(--border);
-  background: var(--block-hover, rgba(127, 127, 127, 0.08));
+  background: var(--block-hover);
   border-radius: 8px;
   padding: 6px 10px;
   outline: none;
@@ -5704,7 +5704,7 @@ body.content-full .editor-placeholder {
   right: 0;
   top: -1px;
   height: 1px;
-  background: var(--accent, #4f7cff);
+  background: var(--accent);
   pointer-events: none;
 }
 .prop-grip {
@@ -5752,7 +5752,7 @@ body.content-full .editor-placeholder {
   bottom: 0;
   left: -1px;
   width: 1px;
-  background: var(--accent, #4f7cff);
+  background: var(--accent);
   pointer-events: none;
 }
 .db-th.db-th-drop-left::after,
@@ -5846,12 +5846,12 @@ body.content-full .editor-placeholder {
 }
 
 .prop-value.is-invalid {
-  border-color: var(--danger, #e5484d);
+  border-color: var(--danger);
 }
 
 .prop-invalid {
   flex-shrink: 0;
-  color: var(--danger, #e5484d);
+  color: var(--danger);
   font-weight: 700;
   font-size: 13px;
   cursor: help;
@@ -6720,7 +6720,7 @@ select.prop-value {
   justify-content: center;
 }
 .block-selection-bar.is-select-mode {
-  border-color: color-mix(in srgb, var(--accent, #4f7cff) 55%, var(--border));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22), 0 0 0 3px var(--accent-soft);
 }
 .block-selection-count {
@@ -6729,9 +6729,9 @@ select.prop-value {
   margin-right: 2px;
 }
 .block-select-mode-btn {
-  border: 1px solid color-mix(in srgb, var(--accent, #4f7cff) 45%, var(--border)) !important;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)) !important;
   background: var(--accent-soft) !important;
-  color: var(--accent, #4f7cff) !important;
+  color: var(--accent) !important;
   font-weight: 600;
 }
 .block-selection-bar .block-select-hint {
@@ -7256,7 +7256,7 @@ select.prop-value {
   background: var(--hover);
 }
 .pm-index-sig.warn {
-  color: var(--warning, var(--danger));
+  color: var(--warning);
   background: var(--danger-soft);
 }
 .pm-index-item {
@@ -7326,7 +7326,7 @@ select.prop-value {
 }
 .pm-index-item-link:hover {
   color: var(--text);
-  border-color: var(--accent, var(--text-dim));
+  border-color: var(--accent);
 }
 .pm-index-item-installed {
   font-size: 11.5px;
@@ -7878,7 +7878,7 @@ select.prop-value {
   /* On hover the card fills with a shade that visibly contrasts the page background
      (--bg), so the page-coloured GAP between two adjacent cards reads clearly —
      separation comes from colour contrast, not a border. */
-  background: var(--hover-strong, var(--card-bg));
+  background: var(--hover-strong);
 }
 
 /* When the cursor is anywhere over the columns block, highlight ALL of its columns
@@ -7886,7 +7886,7 @@ select.prop-value {
    clearest possible cue for the column boundaries. */
 .editor-columns:hover .editor-column,
 .editor-columns:focus-within .editor-column {
-  background: var(--hover-strong, var(--card-bg));
+  background: var(--hover-strong);
 }
 
 /* Resizable divider between columns (drag to adjust column widths). It sits on the
@@ -7900,7 +7900,7 @@ select.prop-value {
   bottom: 0;
   /* Center the 10px hit area (and grip line) in the gap between the two columns:
      half the gap + half the divider width beyond the column's right edge. */
-  right: calc(var(--col-gap, 8px) / -2 - 5px);
+  right: calc(var(--col-gap) / -2 - 5px);
   width: 10px;
   cursor: col-resize;
   z-index: 6;
@@ -7931,13 +7931,13 @@ select.prop-value {
 
 .editor-column-divider:hover,
 .editor-column-divider:active {
-  background: var(--accent-soft, rgba(59, 130, 246, 0.16));
+  background: var(--accent-soft);
 }
 
 .editor-column-divider:hover::after,
 .editor-column-divider:active::after {
   width: 3px;
-  background: var(--accent, #3b82f6);
+  background: var(--accent);
 }
 
 .editor-column-add,
@@ -7964,7 +7964,7 @@ select.prop-value {
 }
 
 .editor-column-remove:hover {
-  background: var(--danger-soft, #ffe9e9);
+  background: var(--danger-soft);
   border-color: var(--danger);
   color: var(--danger);
 }
@@ -8534,7 +8534,7 @@ select.prop-value {
 
 /* M19.3 [[ link suggestions */
 .editor-page-link {
-  color: var(--accent, #3370ff);
+  color: var(--accent);
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
@@ -8542,7 +8542,7 @@ select.prop-value {
   padding: 0 1px;
 }
 .editor-page-link:hover {
-  background: var(--accent-soft, rgba(51, 112, 255, 0.12));
+  background: var(--accent-soft);
 }
 .page-link-suggest {
   max-height: 200px;
@@ -8570,7 +8570,7 @@ select.prop-value {
 }
 .page-link-suggest-item:hover,
 .page-link-suggest-item.active {
-  background: var(--block-hover, #f2f2f2);
+  background: var(--block-hover);
   color: var(--accent);
 }
 
@@ -9932,8 +9932,8 @@ select.prop-value {
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 .webbookmark-card:hover {
-  border-color: var(--border-strong, var(--accent));
-  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.08));
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
 }
 .webbookmark-thumb {
   flex: 0 0 180px;
@@ -9984,7 +9984,7 @@ select.prop-value {
   font-weight: 500;
 }
 .webbookmark-err {
-  color: var(--danger, #e5484d);
+  color: var(--danger);
 }
 
 /* Edit affordance on the bookmark card */
@@ -11292,8 +11292,8 @@ p:has(> .editor-drawing-container) {
   transition: background 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease;
 }
 .formula-btn-primary:hover {
-  background: var(--accent-strong, var(--accent));
-  border-color: var(--accent-strong, var(--accent));
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
   box-shadow: 0 2px 8px -1px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 .formula-btn-primary:disabled { opacity: 0.5; cursor: default; }
@@ -12712,7 +12712,7 @@ p:has(> .editor-drawing-container) {
   font-family: inherit;
 }
 .db-list-title:hover {
-  color: var(--accent, #4f7cff);
+  color: var(--accent);
 }
 .db-list-expand {
   flex: none;
@@ -13192,7 +13192,7 @@ p:has(> .editor-drawing-container) {
 /* Outline rail: slides in from the right edge, full height, GitHub-style. */
 .toc-panel {
   position: fixed;
-  top: var(--titlebar-h, 0px);
+  top: var(--titlebar-h);
   right: 0;
   bottom: 0;
   /* ⭐ 宽度由拖拽决定（`--toc-w` 由 `TableOfContents.tsx` 写 ✓）；默认 300 与旧版一致 ✓。 */
@@ -14428,7 +14428,7 @@ p:has(> .editor-drawing-container) {
   padding: 10px 12px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--success, #2e7d32);
+  border-left: 3px solid var(--success);
   background: var(--hover);
 }
 .set-pack-result-head {
@@ -14439,7 +14439,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
 }
 .set-pack-result-mark {
-  color: var(--success, #2e7d32);
+  color: var(--success);
   font-weight: 700;
 }
 .set-pack-result-size {
@@ -14480,19 +14480,19 @@ p:has(> .editor-drawing-container) {
   background: var(--hover);
 }
 .set-badge.is-ok {
-  color: var(--success, #2e7d32);
+  color: var(--success);
   /* 两层写法：`color-mix` 不支持时**退回**上面那档灰底 ✓（⛔ 不会变成透明 ✗） */
   background: var(--hover);
-  background: color-mix(in srgb, var(--success, #2e7d32) 12%, transparent);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
 }
 /* ⭐ 2026-10-30（B1d 面板「跨空间支持矩阵」）：`.set-badge` 的**第三档**（橙 = 写）。
    同一段注释里那条「新增行内徽章」的取舍照旧：只加**一个** modifier，形状复用 `.set-badge` ✓；
    ⛔ 不自造颜色变量 —— 用仓里既有 `--warning` token（照 `.sync-status.is-warn` 那一族 ✓），
    两层写法让 `color-mix` 不支持时退回灰底（与 `.is-ok` 同一条纪律 ✓）。 */
 .set-badge.is-warn {
-  color: var(--warning, #b7791f);
+  color: var(--warning);
   background: var(--hover);
-  background: color-mix(in srgb, var(--warning, #b7791f) 14%, transparent);
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
 }
 
 .set-space-filter-wrap {
@@ -14819,7 +14819,7 @@ p:has(> .editor-drawing-container) {
   width: 46px;
   height: 46px;
   border-radius: 14px;
-  background: linear-gradient(135deg, var(--accent, #4f7cff), var(--accent-strong, #2952cc));
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
   color: #fff;
   display: flex;
   align-items: center;
@@ -14854,11 +14854,11 @@ p:has(> .editor-drawing-container) {
   padding: 6px 12px;
   font-size: 12px;
   border-radius: var(--radius-md);
-  background: var(--accent, #4f7cff);
+  background: var(--accent);
   color: #fff;
   border: none;
 }
-.email-set-accounts-head .set-btn:hover { background: var(--accent-strong, #2952cc); }
+.email-set-accounts-head .set-btn:hover { background: var(--accent-strong); }
 .email-set-accounts-list { display: flex; flex-direction: column; }
 .email-set-account-row {
   display: flex;
@@ -14881,7 +14881,7 @@ p:has(> .editor-drawing-container) {
   top: 0;
   bottom: 0;
   width: 3px;
-  background: linear-gradient(180deg, var(--accent, #4f7cff), var(--accent-strong, #2952cc));
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
 }
 .email-set-account-row.is-editing { background: var(--accent-soft); }
 .email-set-account-avatar {
@@ -14894,7 +14894,7 @@ p:has(> .editor-drawing-container) {
   justify-content: center;
   font-size: 15px;
   font-weight: 800;
-  background: linear-gradient(135deg, var(--accent, #4f7cff), var(--accent-strong, #2952cc));
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
   color: #fff;
   box-shadow: 0 4px 12px -4px rgba(79, 124, 255, 0.5);
 }
@@ -14919,7 +14919,7 @@ p:has(> .editor-drawing-container) {
   padding: 2px 8px;
   font-size: 10px;
   font-weight: 700;
-  color: var(--accent, #4f7cff);
+  color: var(--accent);
   background: var(--accent-soft);
   border-radius: var(--radius-sm);
   white-space: nowrap;
@@ -14944,16 +14944,16 @@ p:has(> .editor-drawing-container) {
 }
 .email-set-account-actions .set-btn:hover { color: var(--text); border-color: var(--border-strong); background: var(--hover); }
 .email-set-account-actions .set-btn.is-danger {
-  color: var(--danger, #f54a45);
+  color: var(--danger);
   border-color: transparent;
   background: transparent;
 }
-.email-set-account-actions .set-btn.is-danger:hover { background: var(--danger-soft, #fdecec); border-color: transparent; }
+.email-set-account-actions .set-btn.is-danger:hover { background: var(--danger-soft); border-color: transparent; }
 .email-set-form-head { display: flex; align-items: center; gap: 10px; margin: 2px 0 12px; flex-wrap: wrap; }
 .email-set-form-title {
   font-size: 12px;
   font-weight: 700;
-  color: var(--accent, #4f7cff);
+  color: var(--accent);
   background: var(--accent-soft);
   padding: 4px 12px;
   border-radius: var(--radius-sm);
@@ -14980,7 +14980,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-md);
 }
 .email-set-actions .set-btn.is-primary {
-  background: linear-gradient(135deg, var(--accent, #4f7cff), var(--accent-strong, #2952cc));
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
   border: none;
   color: #fff;
   box-shadow: 0 8px 20px -8px rgba(79, 124, 255, 0.6);
@@ -15057,7 +15057,7 @@ p:has(> .editor-drawing-container) {
 .email-set-grid-smtp .set-input:focus,
 .email-set-row .set-input:focus,
 .email-set-trust-add .set-input:focus {
-  border-color: var(--accent, #4f7cff);
+  border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft), 0 4px 12px -6px rgba(79, 124, 255, 0.35);
 }
 /* 下拉（加密/间隔）去掉原生箭头，改用 token 风 chevron */
@@ -15120,7 +15120,7 @@ p:has(> .editor-drawing-container) {
   height: 16px;
   padding: 0 4px;
   border-radius: 8px;
-  background: var(--accent, #4f7cff);
+  background: var(--accent);
   color: var(--on-accent);
   font-size: 10px;
   font-weight: 700;
@@ -15185,7 +15185,7 @@ p:has(> .editor-drawing-container) {
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: 14px;
-  box-shadow: var(--shadow-md, 0 16px 48px rgba(0,0,0,.28));
+  box-shadow: var(--shadow-md);
   padding: 16px 18px;
   display: flex;
   flex-direction: column;
@@ -15217,7 +15217,7 @@ p:has(> .editor-drawing-container) {
   font-size: 12px;
   color: var(--text-dim);
 }
-.set-status-line.is-ok { color: var(--accent, #4f7cff); background: var(--accent-soft); }/* 当前组织账号：登录信息卡。 */
+.set-status-line.is-ok { color: var(--accent); background: var(--accent-soft); }/* 当前组织账号：登录信息卡。 */
 .acct-login-card {
   display: flex;
   align-items: center;
@@ -15409,7 +15409,7 @@ p:has(> .editor-drawing-container) {
   text-align: left;
   color: rgba(255, 255, 255, 0.82);
   /* ⭐ 2026-10-11（owner 截图：「忘记口令的说明是空的？」）—— ⭐ **这是个真 bug** ✗：
-     原来这里是 `background: var(--surface, #16203a)` ✓，⭐ 而 `--surface` **跟着应用主题走** ✗
+     原来这里是 `background: var(--surface)` ✓，⭐ 而 `--surface` **跟着应用主题走** ✗
      （⭐ 实测：⭐ 浅色主题 `data-theme=light` ⇒ ⭐ `--surface` ＝ **#ffffff** ✓；⭐ 深色主题才是 #242529 ✓）
      ⇒ ⭐ ⭐ 而这块卡片里的文字是**写死的白** ✗（⭐ 上面那行 ✓）⇒ ⭐ **白底白字 ＝ 整块看不见** ✓
      （⭐ 截图里只剩那个 🔑 —— ⭐ emoji 自带颜色，⭐ 所以只有它可见 ✓）。
@@ -15419,8 +15419,8 @@ p:has(> .editor-drawing-container) {
      ⛔ 不去改锁屏本身：⭐ "⭐ 锁屏永远深色 ✗"是有意为之 ✓（⭐ 门口那块不该随主题忽明忽暗 ✓）。 */
   background: #16203a;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: var(--radius-lg, 14px);
-  box-shadow: var(--shadow-xl, 0 24px 60px rgba(0, 0, 0, 0.45));
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
   padding: 16px 18px 14px;
   animation: lock-forgot-pop 160ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
@@ -15643,12 +15643,12 @@ p:has(> .editor-drawing-container) {
   cursor: not-allowed;
 }
 .fm-btn-danger {
-  color: var(--danger, #e5484d);
-  border-color: var(--danger-soft, rgba(229,72,77,0.35));
+  color: var(--danger);
+  border-color: var(--danger-soft);
 }
 .fm-btn-danger:hover:not(:disabled) {
-  background: var(--danger-soft, rgba(229,72,77,0.1));
-  border-color: var(--danger, #e5484d);
+  background: var(--danger-soft);
+  border-color: var(--danger);
 }
 
 .file-manager-toolbar {
@@ -15762,10 +15762,10 @@ p:has(> .editor-drawing-container) {
   position: fixed;
   /* 避开自绘标题栏与左竖条：标题栏 32px、竖条 48px、侧栏 --sidebar-w。
      --titlebar-h 由前端在自绘标题栏开启时设为 32px，否则 0。 */
-  top: var(--titlebar-h, 0px);
+  top: var(--titlebar-h);
   right: 0;
   bottom: 0;
-  left: calc(var(--activity-w, 0px) + var(--sidebar-offset, 240px));
+  left: calc(var(--activity-w) + var(--sidebar-offset));
   /* 文件预览：内容 modal 层——高于普通 popover(40-95)，低于搜索面板(1500)/
      命令面板，避免被 tag picker/树菜单等小浮层盖住。 */
   z-index: var(--z-content-overlay);
@@ -16227,13 +16227,13 @@ p:has(> .editor-drawing-container) {
 .fm-md-preview code {
   font-family: var(--font-mono, monospace);
   font-size: 0.86em;
-  background: var(--code-bg, var(--hover));
+  background: var(--code-bg);
   color: color-mix(in srgb, var(--accent) 70%, var(--text));
   padding: 0.16em 0.42em;
   border-radius: 5px;
 }
 .fm-md-preview pre {
-  background: var(--codeblock-bg, var(--hover));
+  background: var(--codeblock-bg);
   padding: 16px 18px;
   border-radius: 12px;
   border: 1px solid var(--border);
@@ -16315,7 +16315,7 @@ p:has(> .editor-drawing-container) {
 }
 .fm-md-mermaid-errmsg {
   font-size: 12px;
-  color: var(--danger, #e5484d);
+  color: var(--danger);
   margin-top: 6px;
 }
 .fm-drop-zone {
@@ -17161,7 +17161,7 @@ p:has(> .editor-drawing-container) {
 /* P1 comments / notifications drawer */
 .comments-drawer {
   position: fixed;
-  top: var(--titlebar-h, 0);
+  top: var(--titlebar-h);
   right: 0;
   bottom: 0;
   z-index: 74;
@@ -17851,11 +17851,11 @@ p:has(> .editor-drawing-container) {
   display: flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid var(--danger, #e5484d);
+  border: 1px solid var(--danger);
   border-radius: var(--radius-md);
   padding: 8px 10px;
   font-size: 12px;
-  color: var(--danger, #e5484d);
+  color: var(--danger);
   cursor: pointer;
 }
 .ai-error span {
@@ -18347,7 +18347,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-sm);
   padding: 8px 12px;
   background: var(--bg);
-  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.04));
+  box-shadow: var(--shadow-sm);
 }
 .ai-inline-bar:focus-within {
   border-color: var(--accent);
@@ -18417,7 +18417,7 @@ p:has(> .editor-drawing-container) {
   background: var(--bg);
   overflow-y: auto;
   max-height: 260px;
-  box-shadow: var(--shadow-sm, 0 2px 8px rgba(0,0,0,0.08));
+  box-shadow: var(--shadow-sm);
   max-width: 300px;
 }
 .ai-inline-templates-head {
@@ -18444,7 +18444,7 @@ p:has(> .editor-drawing-container) {
   font-family: inherit;
 }
 .ai-inline-template:hover {
-  background: var(--block-hover, #f2f2f2);
+  background: var(--block-hover);
 }
 .ai-inline-draft {
   margin-top: 10px;
@@ -18453,7 +18453,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, pink 6%, var(--bg));
   padding: 10px 14px;
-  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.04));
+  box-shadow: var(--shadow-sm);
 }
 .ai-inline-draft-body {
   font-size: 15px;
@@ -18531,7 +18531,7 @@ p:has(> .editor-drawing-container) {
 .shortcuts-search {
   flex: 1;
   border: 1px solid var(--border);
-  background: var(--block-hover, rgba(127, 127, 127, 0.08));
+  background: var(--block-hover);
   border-radius: 8px;
   padding: 6px 10px;
   outline: none;
@@ -18573,7 +18573,7 @@ p:has(> .editor-drawing-container) {
 .shortcuts-keys kbd {
   font-family: var(--font-mono, monospace);
   font-size: 12px;
-  background: var(--block-hover, rgba(127, 127, 127, 0.1));
+  background: var(--block-hover);
   border: 1px solid var(--border);
   border-radius: 5px;
   padding: 1px 6px;
@@ -18591,12 +18591,12 @@ p:has(> .editor-drawing-container) {
   border-top: 1px solid var(--border);
 }
 .ai-inline-act.danger:hover {
-  border-color: var(--danger, #e5484d);
-  color: var(--danger, #e5484d);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 .ai-inline-error {
   margin-top: 8px;
-  color: var(--danger, #e5484d);
+  color: var(--danger);
   font-size: 13px;
 }
 /* M25 P2 — "关于" dialog (reuses the shortcuts-overlay backdrop + ui-toggle). */
@@ -18662,7 +18662,7 @@ p:has(> .editor-drawing-container) {
 }
 .about-pill-version {
   color: var(--text-dim);
-  background: var(--block-hover, rgba(127, 127, 127, 0.08));
+  background: var(--block-hover);
 }
 .about-pill-license {
   color: var(--accent);
@@ -18697,7 +18697,7 @@ p:has(> .editor-drawing-container) {
 }
 .about-link {
   border: 1px solid var(--border);
-  background: var(--block-hover, rgba(127, 127, 127, 0.08));
+  background: var(--block-hover);
   color: var(--text);
   border-radius: 8px;
   padding: 6px 12px;
@@ -19062,7 +19062,7 @@ p:has(> .editor-drawing-container) {
   gap: 4px;
 }
 .pdf-zoom-item:hover {
-  background: var(--hover-strong, rgba(0, 0, 0, 0.05));
+  background: var(--hover-strong);
 }
 .pdf-zoom-item.active {
   color: var(--accent);
@@ -19175,7 +19175,7 @@ p:has(> .editor-drawing-container) {
   color: var(--accent);
 }
 .pdf-reader-btn:active:not(:disabled) {
-  background: var(--hover-strong, var(--hover));
+  background: var(--hover-strong);
 }
 /* 窄屏的「更多工具」入口（批注侧栏 / 护眼 / 导出…）。
    ⚠️ **基础规则就是隐藏**：桌面一次放得下，不需要这个入口；窄屏那段（文件末尾）
@@ -19405,7 +19405,7 @@ p:has(> .editor-drawing-container) {
   white-space: nowrap;
 }
 .pdf-annot-tool:hover {
-  background: var(--hover-strong, rgba(0, 0, 0, 0.05));
+  background: var(--hover-strong);
   color: var(--text);
 }
 .pdf-annot-tool.active {
@@ -19420,7 +19420,7 @@ p:has(> .editor-drawing-container) {
   background: var(--accent-soft);
 }
 .pdf-annot-tool.danger {
-  color: var(--danger, #e5484d);
+  color: var(--danger);
 }
 .pdf-annot-tool.danger:hover {
   background: rgba(229, 72, 77, 0.12);
@@ -19503,7 +19503,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
 }
 .pdf-annot-ocr:active:not(:disabled) {
-  background: var(--hover-strong, var(--hover));
+  background: var(--hover-strong);
 }
 .pdf-annot-ocr:disabled { opacity: 0.6; cursor: default; }
 /* 两个识别按钮靠在一起（右侧一组）。 */
@@ -19543,7 +19543,7 @@ p:has(> .editor-drawing-container) {
 /* 页面光栅化失败：以前是"一片空白"，现在把原因摆出来并给一个重试的出口。 */
 .pdf-page-error {
   box-sizing: border-box;
-  border: 1px dashed var(--danger, #e5484d);
+  border: 1px dashed var(--danger);
   border-radius: 8px;
   background: color-mix(in srgb, var(--danger, #e5484d) 6%, var(--surface));
   color: var(--text-dim);
