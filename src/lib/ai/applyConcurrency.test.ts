@@ -61,18 +61,16 @@ describe("R151：同一页的并发追加不许互相覆盖", () => {
     expect(Array.from({ length: 20 }, (_, i) => i + 1).every((n) => final.includes(`顺序第 ${n} 段`))).toBe(true);
   });
 
-  it("不同页**互不等待** ✓（key 是页 ⇒ 不该串成一队）", async () => {
+  it("不同页**互不等待** ✓（用挂起键的重叠证明，不靠墙钟阈值 —— CI 负载下也稳定）", async () => {
     store.set("a", "A");
     store.set("b", "B");
-    const t0 = Date.now();
-    await Promise.all([
+    const both = Promise.all([
       applyDraft({ kind: "append_block", pageId: "a", text: "甲" }),
       applyDraft({ kind: "append_block", pageId: "b", text: "乙" }),
     ]);
-    // 每跳 2ms×2 次 ⇒ 串行要 ~8ms，并行 ~4ms；这里只断言"没被串成 4 跳"（宽松 ✓）
-    expect(Date.now() - t0).toBeLessThan(50);
-    expect(store.get("a")).toContain("甲");
-    expect(store.get("b")).toContain("乙");
-    void api;
+    // 两页同时进入串行区 ⇒ 两个 key 同时挂起。若被串成一队，这里最多 1。
+    expect(pendingKeyCount()).toBe(2);
+    const outs = await both;
+    expect(outs.every((o) => o.ok)).toBe(true);
   });
 });
