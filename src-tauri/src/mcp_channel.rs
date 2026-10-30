@@ -356,12 +356,14 @@ mod tests {
             (McpLevel::ReadAll, true, with_all.clone(), false),
             (McpLevel::WriteConfirm, true, with_write.clone(), false),
             (McpLevel::WriteAuto, true, with_write.clone(), true),
-            // ⭐ P1：写全部空间 = 写 scope ＋ write:all-spaces；仍不给 read:all-spaces
+            // ⭐ P1/甲：写全部空间 = 写 scope ＋ write:all-spaces ＋ read:all-spaces（owner 甲拍板后）；
             (
                 McpLevel::WriteAll,
                 true,
                 {
-                    let mut v = with_write.clone();
+                    let mut v = reads.clone();
+                    v.push(READ_ALL_SCOPE.to_string());
+                    v.push(WRITE_SCOPE.to_string());
                     v.push("write:all-spaces".to_string());
                     v
                 },

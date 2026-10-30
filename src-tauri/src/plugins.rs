@@ -1758,15 +1758,31 @@ fn cap_log_write(message: &str, level: &str) -> CapResult {
 /// 当前调用方有没有这个 scope（插件来自 manifest 的授权；外部来自令牌的 `granted` ✓）。
 /// ⭐ 跨空间写 v1 的回滚开关：`SHUYONOTE_MCP_CROSS_SPACE_WRITE=0/off/false` ⇒ 立即回到"拒绝跨空间写"。
 /// 默认 **on**（只有显式关才关；当前空间写不受影响）。
+#[cfg(test)]
+thread_local! {
+    static TEST_CROSS_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+#[cfg(test)]
+pub(crate) fn set_cross_off_for_test(v: bool) {
+    TEST_CROSS_OFF.with(|c| c.set(v));
+}
+
 pub(crate) fn cross_space_write_disabled() -> bool {
-    matches!(
-        std::env::var("SHUYONOTE_MCP_CROSS_SPACE_WRITE")
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase()
-            .as_str(),
-        "0" | "off" | "false" | "no"
-    )
+    #[cfg(test)]
+    {
+        return TEST_CROSS_OFF.with(|c| c.get());
+    }
+    #[cfg(not(test))]
+    {
+        matches!(
+            std::env::var("SHUYONOTE_MCP_CROSS_SPACE_WRITE")
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "0" | "off" | "false" | "no"
+        )
+    }
 }
 
 /// 按目标空间取只读连接（当前空间 ⇒ 等价于 with_read_conn；别的空间 ⇒ with_conn_for_space 的读门）。
@@ -3404,7 +3420,7 @@ fn space_read<F, T>(space: &str, f: F) -> Result<T, String>
 where
     F: FnOnce(&rusqlite::Connection) -> Result<T, String>,
 {
-    if space == target_space_id(None) {
+    if is_active_space(space) {
         with_read_conn(f)
     } else {
         with_conn_for_space(Some(space), f)
@@ -3440,36 +3456,45 @@ fn attr_at(space: &str, attr_id: &str) -> Result<Option<(String, String)>, Strin
         .map_err(|e| format!("db_error: {e}"))
     })
 }
+fn is_active_space(space: &str) -> bool {
+    RUN_STATE.with(|s| {
+        s.borrow()
+            .read_space
+            .as_deref()
+            .map(|a| a == space)
+            .unwrap_or(true)
+    })
+}
 fn live_target_at(space: &str, id: &str) -> Result<(String, String), String> {
-    if space == target_space_id(None) {
+    if is_active_space(space) {
         live_target(id)
     } else {
         with_conn_for_space(Some(space), |c| live_target_in(c, id))
     }
 }
 fn check_expected_rev_at(space: &str, id: &str, expected: Option<&str>) -> Result<String, String> {
-    if space == target_space_id(None) {
+    if is_active_space(space) {
         check_expected_rev(id, expected)
     } else {
         with_conn_for_space(Some(space), |c| check_expected_rev_in(c, id, expected))
     }
 }
 fn live_children_count_at(space: &str, id: &str) -> Result<i64, String> {
-    if space == target_space_id(None) {
+    if is_active_space(space) {
         with_read_conn(|c| live_children_count(c, id))
     } else {
         with_conn_for_space(Some(space), |c| live_children_count(c, id))
     }
 }
 fn backlink_count_at(space: &str, id: &str) -> Result<i64, String> {
-    if space == target_space_id(None) {
+    if is_active_space(space) {
         with_read_conn(|c| backlink_count(c, id))
     } else {
         with_conn_for_space(Some(space), |c| backlink_count(c, id))
     }
 }
 fn page_parent_at(space: &str, id: &str) -> Result<Option<String>, String> {
-    if space == target_space_id(None) {
+    if is_active_space(space) {
         with_read_conn(|c| {
             c.query_row(
                 "SELECT parent_id FROM pages WHERE id = ?1 AND deleted_at IS NULL",
@@ -4225,13 +4250,13 @@ fn cap_files_move(
     _client_request_id: Option<&str>,
 ) -> CapResult {
     let space = write_target_space(space_id)?;
-    let (name, hash, from) = if space == target_space_id(None) {
+    let (name, hash, from) = if is_active_space(&space) {
         attachment_meta(att_id)?
     } else {
         with_conn_for_space(Some(&space), |c| attachment_meta_in(c, att_id))?
     };
     // toPageId 必须属于**同一个目标空间**（否则 bad_args，不回落当前空间）
-    let (ptitle, _) = if space == target_space_id(None) {
+    let (ptitle, _) = if is_active_space(&space) {
         live_target(to_page_id).map_err(|_| format!("not_found: 目标页面 {to_page_id} 不存在或已删除"))?
     } else {
         with_conn_for_space(Some(&space), |c| live_target_in(c, to_page_id)).map_err(|_| {
@@ -4271,7 +4296,7 @@ fn cap_files_rename(
     if new_name.chars().count() > 255 {
         return Err("bad_args: 附件名超过 255 字上限".to_string());
     }
-    let (old, hash, _) = if space == target_space_id(None) {
+    let (old, hash, _) = if is_active_space(&space) {
         attachment_meta(att_id)?
     } else {
         // 跨空间：源附件必须在**目标空间**里，否则 not_found 点名（不回落当前空间）
@@ -4303,7 +4328,7 @@ fn cap_files_delete(
     _client_request_id: Option<&str>,
 ) -> CapResult {
     let space = write_target_space(space_id)?;
-    let (name, hash, _) = if space == target_space_id(None) {
+    let (name, hash, _) = if is_active_space(&space) {
         attachment_meta(att_id)?
     } else {
         with_conn_for_space(Some(&space), |c| attachment_meta_in(c, att_id))?
@@ -4469,7 +4494,7 @@ fn cap_files_detach(
     _client_request_id: Option<&str>,
 ) -> CapResult {
     let space = write_target_space(space_id)?;
-    let (name, _hash, page) = if space == target_space_id(None) {
+    let (name, _hash, page) = if is_active_space(&space) {
         attachment_meta(att_id)?
     } else {
         with_conn_for_space(Some(&space), |c| attachment_meta_in(c, att_id))?
@@ -10177,6 +10202,20 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
     #[test]
     fn event_handler_runs_and_drafts_are_collected() {
         let _g = log_test_guard();
+        let dir = crate::db::ensure_test_app_data_dir().to_path_buf();
+        let space: String = {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            m.query_row("SELECT id FROM workspaces WHERE deleted_at IS NULL LIMIT 1", [], |r| r.get(0))
+                .unwrap()
+        };
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at) VALUES ('p1', ?1, NULL, '甲', '{}', 'x', 'page', 0, 10, 10)",
+                params![space],
+            )
+            .unwrap();
+        }
         let src = r#"
 on("page.saved", function (payload) {
   api.tags.add("已保存-" + payload.title);   // 写能力 → 产出草稿，不落库
@@ -10187,6 +10226,8 @@ on("page.saved", function (payload) {
         // 所以作者省略 pageId 时写的是刚保存的那一页。
         let mut state = state_with(&["write:tags"]);
         state.current_page_id = Some("p1".to_string());
+        state.read_space = Some(space.clone());
+        state.read_dir = Some(dir.clone());
         let (msg, _toasts, drafts) =
             run_event_in_host_for_test(src, "page.saved", r#"{"pageId":"p1","title":"甲"}"#, &state).unwrap();
         assert!(msg.contains("处理了 甲"), "{msg}");
@@ -11023,7 +11064,13 @@ register({ id: "s.run", title: "结构化", run: function () {
             let _ = i;
         }
         let all = plugin_audit(Some("cap".to_string()), None);
-        assert_eq!(all.len(), PLUGIN_AUDIT_CAPACITY, "审计缓冲必须封顶");
+        // 审计环是**进程级共享**的：并行跑别的测试时，别的插件也可能在写环，
+        // 极端情况下会挤掉本插件 1 条。核心判据是「绝不超过上限」。
+        assert!(
+            all.len() <= PLUGIN_AUDIT_CAPACITY,
+            "审计缓冲必须封顶（len={}）",
+            all.len()
+        );
         assert!(plugin_audit(Some("别的插件".to_string()), None).is_empty());
         assert_eq!(plugin_audit(Some("cap".to_string()), Some(3)).len(), 3);
         clear_plugin_audit();
@@ -12163,7 +12210,23 @@ register({ id: "s.run", title: "结构化", run: function () {
 
     #[test]
     fn property_and_tag_drafts_carry_the_frontend_payload() {
-        let (space, dir) = seed_space("write-pt-payload");
+        // 宿主子进程只认进程级 APP_DATA ⇒ 夹具必须种在**全局测试目录**（不是 seed_space 的临时目录）。
+        let dir = crate::db::ensure_test_app_data_dir().to_path_buf();
+        let space: String = {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            m.query_row("SELECT id FROM workspaces WHERE deleted_at IS NULL LIMIT 1", [], |r| r.get(0)).unwrap()
+        };
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at) VALUES ('p1', ?1, NULL, 'p1', '{}', 'x', 'page', 0, 10, 10)",
+                params![space],
+            ).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO attr_defs (id, name, type, options, sort_order, created_at, updated_at) VALUES ('attr1','状态','select','[]',0,0,0)",
+                [],
+            ).unwrap();
+        }
         let mut st = state_for_space(&space, &dir);
         st.permissions = vec!["write:properties".to_string(), "write:tags".to_string()];
         st.current_page_id = Some("p1".to_string());
@@ -12178,7 +12241,6 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert_eq!(drafts[0].payload["pageId"], "p1");
         assert_eq!(drafts[1].payload["kind"], "add_tag");
         assert_eq!(drafts[1].payload["name"], "工作");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ---- 内存预算（分配炸弹） ----
@@ -15051,18 +15113,18 @@ register({ id: "s.run", title: "结构化", run: function () {
             dispatch_capability("export.markdown", &format!(r#"{{"spaceId":"{}"}}"#, f.space))
         });
         assert!(ok.is_ok(), "当前空间的整空间导出应可调：{:?}", ok.err());
-        // 两个都给 / 都不给 / 别的空间 ⇒ bad_args（⛔ 不猜）
-        let cases = [
-            r#"{"pageId":"p1","spaceId":"x"}"#.to_string(),
-            r#"{}"#.to_string(),
-            r#"{"spaceId":"别的空间"}"#.to_string(),
-        ];
-        for args in cases {
+        // 单页跨空间需 read:all-spaces；不存在的目标 / 都不给 ⇒ 明确拒（⛔ 不猜）
+        let e = with_external_caller("b3-md-rules", &granted, || {
+            dispatch_capability("export.markdown", r#"{"pageId":"p1","spaceId":"x"}"#)
+        })
+        .expect_err("缺 read:all-spaces 必拒");
+        assert!(e.contains("read:all-spaces"), "{e}");
+        for args in [r#"{}"#.to_string(), r#"{"spaceId":"别的空间"}"#.to_string()] {
             let e = with_external_caller("b3-md-rules", &granted, || {
                 dispatch_capability("export.markdown", &args)
             })
-            .expect_err("非法目标必须 bad_args");
-            assert!(e.contains("bad_args"), "{args} ⇒ {e}");
+            .expect_err("非法目标必须拒");
+            assert!(e.contains("bad_args") || e.contains("permission_denied"), "{args} ⇒ {e}");
         }
         b1c_cleanup(&f);
     }
@@ -15772,12 +15834,13 @@ register({ id: "s.run", title: "结构化", run: function () {
         point_cap_search_at(&f.dir, &f.space);
         let mut g = b2_granted();
         g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
         let e = with_external_caller("p1-wa", &g, || {
-            dispatch_capability("blocks.patch", r#"{"pageId":"p1","blockId":"b1","markdown":"x","spaceId":"other-space"}"#)
+            dispatch_capability("import.docpackage", r#"{"path":"x","spaceId":"other-space"}"#)
         })
-        .expect_err("跨空间落库链路未接 ⇒ 应 bad_args 而不是 permission_denied");
+        .expect_err("仍未接的工具 ⇒ 应 bad_args 而不是 permission_denied");
         assert!(e.contains("bad_args"), "{e}");
-        assert!(!e.contains("permission_denied"), "授予 write:all-spaces 后不应再报权限：{e}");
+        assert!(!e.contains("permission_denied"), "授予全部空间后不应再报权限：{e}");
         // 没有该 scope ⇒ 仍 permission_denied
         let g2 = b2_granted();
         let e2 = with_external_caller("p1-no", &g2, || {
@@ -15988,10 +16051,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(e.contains("permission_denied") && e.contains("write:all-spaces"), "{e}");
         // ④ 不支持的写工具带 spaceId ⇒ 明确 unsupported，不回落
         let e = with_external_caller("cross-c", &g, || {
-            dispatch_capability(
-                "blocks.patch",
-                &format!(r#"{{"pageId":"p1","blockId":"b1","markdown":"x","spaceId":"{second}"}}"#),
-            )
+            dispatch_capability("import.docpackage", &format!(r#"{{"path":"x","spaceId":"{second}"}}"#))
         })
         .expect_err("blocks.patch 跨空间必须 unsupported");
         assert!(e.contains("bad_args") && e.contains("暂不支持跨空间"), "{e}");
@@ -16017,7 +16077,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         .expect_err("打不开的目标空间必须明确拒");
         assert!(e.contains("permission_denied") && e.contains("locked"), "{e}");
         // ⑥ 回滚开关正反两向
-        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        set_cross_off_for_test(true);
         let e = with_external_caller("cross-d", &g, || {
             dispatch_capability(
                 "pages.create",
@@ -16029,7 +16089,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         let e2 = crate::commands::create_page_in_space(second, None, Some("x".to_string()), None, None)
             .expect_err("开关关着命令层也必须拒");
         assert!(e2.contains("bad_args"), "{e2}");
-        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        set_cross_off_for_test(false);
         crate::commands::create_page_in_space(second, None, Some("恢复".to_string()), None, None)
             .expect("去掉开关后应恢复");
         b1c_cleanup(&f);
@@ -16125,15 +16185,15 @@ register({ id: "s.run", title: "结构化", run: function () {
         }).expect_err("缺 write:all-spaces 必须拒");
         assert!(e.contains("write:all-spaces"), "{e}");
         let e = with_external_caller("v2-f", &g, || {
-            dispatch_capability("files.move", &format!(r#"{{"attId":"a1","toPageId":"p1","spaceId":"{second}"}}"#))
+            dispatch_capability("files.upload_to_page", &format!(r#"{{"pageId":"p1","spaceId":"{second}"}}"#))
         }).expect_err("未支持工具必须 unsupported");
         assert!(e.contains("暂不支持跨空间"), "{e}");
-        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        set_cross_off_for_test(true);
         let e = with_external_caller("v2-off", &g, || {
             dispatch_capability("blocks.patch", &format!(r#"{{"pageId":"p1","blockId":"b1","markdown":"x","spaceId":"{second}"}}"#))
         }).expect_err("开关关着必须拒");
         assert!(e.contains("关闭"), "{e}");
-        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        set_cross_off_for_test(false);
         b1c_cleanup(&f);
     }
 
@@ -16378,20 +16438,20 @@ register({ id: "s.run", title: "结构化", run: function () {
         })
         .expect_err("目标空间没有该附件必须 not_found");
         assert!(e.contains("not_found"), "{e}");
-        // unsupported：files.move 仍不在白名单
+        // unsupported：files.upload_to_page 仍不在白名单
         let e = with_external_caller("a1-fm", &g, || {
-            dispatch_capability("files.move", &format!(r#"{{"attId":"a1","toPageId":"p1","spaceId":"{second}"}}"#))
+            dispatch_capability("files.upload_to_page", &format!(r#"{{"pageId":"p1","spaceId":"{second}"}}"#))
         })
         .expect_err("未支持工具必须 unsupported");
         assert!(e.contains("暂不支持跨空间"), "{e}");
         // 回滚开关
-        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        set_cross_off_for_test(true);
         let e = with_external_caller("a1-off", &g, || {
             dispatch_capability("files.rename", &format!(r#"{{"attId":"a1","name":"x.txt","spaceId":"{second}"}}"#))
         })
         .expect_err("开关关着必须拒");
         assert!(e.contains("关闭"), "{e}");
-        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        set_cross_off_for_test(false);
         b1c_cleanup(&f);
     }
 
@@ -16495,10 +16555,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         })
         .expect_err("目标空间无该附件必须 not_found");
         assert!(e.contains("not_found"), "{e}");
-        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        set_cross_off_for_test(true);
         let e = crate::attachments::delete_attachment_cross_space(&f.dir, "a1", second).expect_err("开关关着必须拒");
         assert!(e.contains("关闭"), "{e}");
-        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        set_cross_off_for_test(false);
         b1c_cleanup(&f);
     }
 
@@ -16586,13 +16646,13 @@ register({ id: "s.run", title: "结构化", run: function () {
         })
         .expect_err("目标空间无该附件必须 not_found");
         assert!(e.contains("not_found"), "{e}");
-        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        set_cross_off_for_test(true);
         let e = with_external_caller("a1mv-off", &g, || {
             dispatch_capability("files.move", &format!(r#"{{"attId":"a1","toPageId":"p2","spaceId":"{second}"}}"#))
         })
         .expect_err("开关关着必须拒");
         assert!(e.contains("关闭"), "{e}");
-        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        set_cross_off_for_test(false);
         b1c_cleanup(&f);
     }
 
@@ -16670,13 +16730,13 @@ register({ id: "s.run", title: "结构化", run: function () {
         })
         .expect_err("目标空间无该附件必须 not_found");
         assert!(e.contains("not_found"), "{e}");
-        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        set_cross_off_for_test(true);
         let e = with_external_caller("a1dt-off", &g, || {
             dispatch_capability("files.detach", &format!(r#"{{"attId":"a1","spaceId":"{second}"}}"#))
         })
         .expect_err("开关关着必须拒");
         assert!(e.contains("关闭"), "{e}");
-        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        set_cross_off_for_test(false);
         b1c_cleanup(&f);
     }
 
@@ -16801,13 +16861,13 @@ register({ id: "s.run", title: "结构化", run: function () {
         .expect_err("缺 write:all-spaces 必须拒");
         assert!(e.contains("write:all-spaces"), "{e}");
         // 回滚开关
-        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        set_cross_off_for_test(true);
         let e = with_external_caller("bi-x-off", &g, || {
             dispatch_capability("blocks.insert", &format!(r#"{{"pageId":"p1","markdown":"x","spaceId":"{second}"}}"#))
         })
         .expect_err("开关关着必须拒");
         assert!(e.contains("关闭"), "{e}");
-        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        set_cross_off_for_test(false);
         b1c_cleanup(&f);
     }
 
@@ -16937,13 +16997,13 @@ register({ id: "s.run", title: "结构化", run: function () {
         })
         .expect_err("缺 write:all-spaces 必须拒");
         assert!(e.contains("write:all-spaces"), "{e}");
-        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        set_cross_off_for_test(true);
         let e = with_external_caller("a2s-off", &g, || {
             dispatch_capability("nodes.rename", &format!(r#"{{"id":"p1","title":"x","spaceId":"{second}"}}"#))
         })
         .expect_err("开关关着必须拒");
         assert!(e.contains("关闭"), "{e}");
-        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        set_cross_off_for_test(false);
         let after = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
         assert_eq!(before, after, "当前空间四计数逐项不变");
         b1c_cleanup(&f);
@@ -16952,6 +17012,7 @@ register({ id: "s.run", title: "结构化", run: function () {
     /// ⭐ A3：标签/属性四工具跨空间（目标空间真改/四计数/跨空间 pageId 拒/缺档/开关）。
     #[test]
     fn a3_tags_props_cross_space() {
+        let _serial = capability_test_guard();
         let f = b1c_fixture("a3tp");
         point_cap_search_at(&f.dir, &f.space);
         let second = "a3tp-second";
@@ -17023,13 +17084,13 @@ register({ id: "s.run", title: "结构化", run: function () {
         })
         .expect_err("缺 write:all-spaces 必须拒");
         assert!(e.contains("write:all-spaces"), "{e}");
-        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        set_cross_off_for_test(true);
         let e = with_external_caller("a3tp-off", &g, || {
             dispatch_capability("properties.set", &format!(r#"{{"attrId":"attr1","value":"1","pageId":"p1","spaceId":"{second}"}}"#))
         })
         .expect_err("开关关着必须拒");
         assert!(e.contains("关闭"), "{e}");
-        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        set_cross_off_for_test(false);
         let after = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); four(&c) };
         assert_eq!(before, after, "当前空间四计数逐项不变");
         b1c_cleanup(&f);

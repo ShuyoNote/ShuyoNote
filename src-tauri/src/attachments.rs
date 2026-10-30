@@ -250,8 +250,9 @@ mod empty_shell_tests {
             ),
         ] {
             assert!(
-                body.contains("space_key_for(&app_data_dir, &space)"),
-                "{name} 必须按**这个空间**取钥匙（space_key_for）"
+                body.contains("space_key_for(&app_data_dir, &space)")
+                    || body.contains("read_attachment_bytes_at("),
+                "{name} 必须按**这个空间**取钥匙（space_key_for / read_attachment_bytes_at）"
             );
             assert!(
                 !body.contains("key_if_enabled(&"),
