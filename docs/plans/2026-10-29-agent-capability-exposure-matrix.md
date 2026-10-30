@@ -221,6 +221,8 @@
 | B2-补遗-3 | e2e 判据：块写锚点数/块 id、附件 detach/delete、db 行写读回、锁空间拒绝 | ✅ |
 | UX 优化批 | 写闭环（`draftId` + `drafts_status` + `audit_tail`）、`templates_list`、`space_current`、`pages_import_markdown`（旧名保留）、`pages_update` 弃用指引、`export_page_markdown`/`export_space_markdown` | ✅ |
 | UX-④ | `files.*`/`versions.*` 9 条补可选 `spaceId`（逐 cap `with_conn_for_space`）＋ 确认框取消回写 `rejected` | ✅ |
+| P1 面板适配 | 第六档 `write_all`（只开权限门）、`McpStatus.level` 扩展、`mcp_recent_drafts`/`mcp_recent_audit` 两个只读命令；设置面板六块（六档＋动态「能做什么」、状态/token 打码、按域能力清单、草稿、审计、边界） | ✅ |
+| P2 能力补齐 | `audit_tail.onlyWrites`、`pages.changes_since`（工具 `changes_since`，页级增量）、`cap_limits.rs` 限额常量收敛 | ✅ |
 
 **当前面**：**69 条能力 / MCP 60 工具（读 33 / 写 27）/ `apiVersion` 1.13.0**；全量门禁 66 条中 **65 绿**，唯一红是 `scripts/session-grep.test.mjs` 的 Node24 zstd 假红（与产品无关）。
 
@@ -228,7 +230,7 @@
 
 | # | 项 | 说明 |
 |---|---|---|
-| 1 | `changes_since`（增量） | 矩阵 §3 已定，未实现；Agent 做"最近变化"只能全量拉 |
+| 1 | `write_all` 跨空间落库链路 | 权限门已开（缺档 ⇒ `permission_denied`；有档 ⇒ `bad_args` 说明未接），**落库仍只写当前空间**；下一批接 apply 侧跨空间写入 |
 | 2 | `write:all-spaces` 档与 UI | 参数与门已就位（缺档 ⇒ `permission_denied` 点名），但**没有任何档位授予**该权限，也无 UI ⇒ 跨空间写不可用 |
 | 3 | `export.*` 跨空间 | 当前只支持当前空间；跨空间需命令面读别空间的页面/附件入口 |
 | 4 | `>10MB` / `>20 文件` 确认 UI | 现在只返回 `needs_confirm` 错误，没有确认交互 |
