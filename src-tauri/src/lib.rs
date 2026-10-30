@@ -997,6 +997,7 @@ pub fn run() {
             commands::save_page,
   commands::mcp_hidden_spaces_get,
   commands::mcp_hidden_spaces_set,
+  plugins::mcp_download_grant,
             // 冲刺 CRDT S7-2（2026-09-23）：每页 CRDT 状态的读/写（`page_crdt` 表）。
             // 与前端 `api.readPageState` / `api.savePageState` 成对 —— 接上之后**桌面**才真正
             // 与 Web 同行为（在此之前它俩只登记为 web 专用，桌面上每次打开页面都会绑定失败）。
