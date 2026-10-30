@@ -3189,7 +3189,7 @@ fn cap_export_markdown(page_id: Option<&str>, space_id: Option<&str>) -> CapResu
             let page = if target == current {
                 export_target_page(pid)?
             } else {
-                with_conn_for_space(Some(target), |c| {
+                with_conn_for_space(Some(target.as_str()), |c| {
                     let Some(m) = crate::doc_content::read_with_meta(c, pid)? else {
                         return Err(format!("not_found: 页面 {pid} 不存在或已读取失败"));
                     };
