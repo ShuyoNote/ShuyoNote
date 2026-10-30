@@ -110,3 +110,7 @@ tools/gm-conformance/target/
 
 # 国密构建的私有副本 ＋ 私有 CARGO_HOME（scripts/sm-library-build.mjs 生成，--revert 删除）
 .gm-build/
+
+# 测试/编译临时目录（git add -A 误吞过两次：.tmp-rusttest/）
+.tmp-*/
+
