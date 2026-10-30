@@ -110,7 +110,18 @@ export async function draftPreviewLines(drafts: PluginDraft[]): Promise<string[]
  */
 export async function confirmAndApplyDrafts(source: string, drafts: PluginDraft[]): Promise<string> {
   if (drafts.length === 0) return "";
-  const list = drafts.map((d, i) => `${i + 1}. ${d.summary}`).join("\n");
+  // ⭐ 跨空间写 v1：草稿卡片标出目标空间名（"将写入『招标资料』"）
+  const spaceNames = new Map<string, string>();
+  try {
+    for (const s of await api.listWorkspaces()) spaceNames.set(s.id, s.name);
+  } catch {
+    // 读不到名字就只显示 id（⛔ 不因此挡住确认）
+  }
+  const targetNote = (payload: unknown) => {
+    const id = (payload as { args?: { spaceId?: unknown } })?.args?.spaceId;
+    return typeof id === "string" && id ? `（将写入『${spaceNames.get(id) ?? id}』）` : "";
+  };
+  const list = drafts.map((d, i) => `${i + 1}. ${d.summary}${targetNote(d.payload)}`).join("\n");
   // 预览读不到也不能拦住确认（读页失败不该让插件/AI 的改动完全无法落库）
   const preview = await draftPreviewLines(drafts).catch(() => []);
   const detail = preview.length ? `\n\n${preview.join("\n")}` : "";

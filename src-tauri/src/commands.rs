@@ -116,18 +116,88 @@ pub struct CreatePageArgs {
     pub title: Option<String>,
     pub content_json: Option<String>,
     pub content_text: Option<String>,
+    /// ⭐ 跨空间写 v1（2026-10-30）：给了就写到这个空间（仅 `pages.create` 链路支持）。
+    /// 省略 = 当前活动空间（行为逐字节不变）。
+    #[serde(default)]
+    pub space_id: Option<String>,
 }
 
 #[tauri::command]
-pub fn create_page(db: State<Db>, args: CreatePageArgs) -> Result<PageDetail, String> {
-    create_node(
-        db,
-        args.parent_id,
-        args.title,
+pub fn create_page(db: State<Db>, mut args: CreatePageArgs) -> Result<PageDetail, String> {
+    let target = args
+        .space_id
+        .take()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let json = args.content_json.take();
+    let text = args.content_text.take();
+    let parent_id = args.parent_id.take();
+    let title = args.title.take();
+    if let Some(space) = target {
+        let active = {
+            let c = conn(&db);
+            workspaces::active_workspace_id(&c)?
+        };
+        if space != active {
+            return create_page_in_space(&space, parent_id, title, json, text);
+        }
+    }
+    create_node(db, parent_id, title, "page", json, text)
+}
+
+/// ⭐ 跨空间写 v1：在**目标空间**建页（可写连接 ＋ 同一处写 `pages`/`changes`）。
+///
+/// 幂等/回滚由调用方（前端 apply 的确认链）保证；这里只做"一次调用一件事"。
+/// 目标空间**锁着/打不开** ⇒ `permission_denied`（消息含 locked），⛔ 不回落当前空间。
+pub(crate) fn create_page_in_space(
+    space_id: &str,
+    parent_id: Option<String>,
+    title: Option<String>,
+    json: Option<String>,
+    text: Option<String>,
+) -> Result<PageDetail, String> {
+    if crate::plugins::cross_space_write_disabled() {
+        return Err(
+            "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                .to_string(),
+        );
+    }
+    let app_data = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+    let exists = {
+        let m = crate::db::open_meta_conn_at(app_data)?;
+        let found: bool = m
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1 AND deleted_at IS NULL)",
+                params![space_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        found
+    };
+    if !exists {
+        return Err(format!("not_found: 空间 {space_id} 不存在"));
+    }
+    let c = crate::db::open_space_conn_at(space_id, app_data).map_err(|e| {
+        format!("permission_denied: 目标空间「{space_id}」已锁定或无法打开（locked）：{e}")
+    })?;
+    create_node_in(
+        &c,
+        space_id,
+        parent_id,
+        title,
         "page",
-        args.content_json,
-        args.content_text,
+        json,
+        text,
     )
+    .map_err(|e| {
+        if e.starts_with("permission_denied") || e.starts_with("not_found") || e.starts_with("bad_args") {
+            e
+        } else {
+            let _ = &c; // 连接活到函数结束（事务/句柄都不跨）
+            format!("db_error: {e}")
+        }
+    })
 }
 
 #[tauri::command]
@@ -151,6 +221,20 @@ pub(crate) fn create_node(
     text: Option<String>,
 ) -> Result<PageDetail, String> {
     let c = conn(&db);
+    let ws = workspaces::active_workspace_id(&c)?;
+    create_node_in(&c, &ws, parent_id, title, kind, json, text)
+}
+
+/// `create_node` 的**单连接实现**（当前空间与跨空间写共用同一份逻辑；⛔ 不复制第二套）。
+pub(crate) fn create_node_in(
+    c: &Connection,
+    workspace_id: &str,
+    parent_id: Option<String>,
+    title: Option<String>,
+    kind: &str,
+    json: Option<String>,
+    text: Option<String>,
+) -> Result<PageDetail, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_ms();
     // Honor an explicit title; fall back to a per-kind default (plain pages → 新页面).
@@ -173,23 +257,22 @@ pub(crate) fn create_node(
 
     let json = json.unwrap_or_else(|| "{}".to_string());
     let text = text.unwrap_or_default();
-    let ws = workspaces::active_workspace_id(&c)?;
 
     c.execute(
         "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)",
-        params![id, ws, parent_id, title, json, text, kind, sort_order, now, now],
+        params![id, workspace_id, parent_id, title, json, text, kind, sort_order, now, now],
     )
     .map_err(|e| e.to_string())?;
 
-    search::sync_fts(&c, &id, &title, &text)?;
+    search::sync_fts(c, &id, &title, &text)?;
     // Rebuild block/backlink graph on create too, so any `[[双链]]` / block refs in
     // the initial content (e.g. the programmatically-created 使用指南 pages) show
     // up in the relationship graph. Mirrors save_page.
-    blocks::rebuild_block_graph(&c, &id, &json, &text)?;
+    blocks::rebuild_block_graph(c, &id, &json, &text)?;
 
-    let page = fetch_page(&c, &id)?;
-    sync::record_page_upsert(&c, &page)?;
+    let page = fetch_page(c, &id)?;
+    sync::record_page_upsert(c, &page)?;
     Ok(page)
 }
 

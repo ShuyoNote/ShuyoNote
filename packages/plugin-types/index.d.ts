@@ -161,7 +161,7 @@ export interface PluginApi {
   /** 新建页面（草稿确认）（权限 `write:pages`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
    */
-    create(title: string, content?: string, parentId?: string, fence?: string, dryRun?: boolean, clientRequestId?: string): { drafted: true; summary: string };
+    create(title: string, content?: string, parentId?: string, fence?: string, dryRun?: boolean, clientRequestId?: string, spaceId?: string): { drafted: true; summary: string };
   /** 回退到历史版本（草稿确认）（权限 `write:pages`；1.7.0 起）
    * 返回：{drafted,summary,spaceId}——**不代表已回退**
    */
@@ -457,4 +457,4 @@ export interface PluginApi {
   };
 }
 
-export declare const SDK_API_VERSION: "1.15.0";
+export declare const SDK_API_VERSION: "1.16.0";

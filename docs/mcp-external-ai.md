@@ -138,6 +138,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 10. 版本
 
+- 2026-10-30：**跨空间写 v1 —— `pages_create` 可写入指定空间**：`write:all-spaces` 档（默认关）下，`pages_create` 带 `spaceId` ⇒ 在目标空间新建页面（同一处写 `pages`＋`changes`，目标空间设备能同步到）；**当前空间完全不变**（不切空间、不写当前空间）。跨空间 v1 **只支持这一条工具**：其它带 `spaceId` 的写工具 ⇒ `bad_args: … 暂不支持跨空间`（⛔ 不回落当前空间）；目标空间**锁着/打不开** ⇒ `permission_denied`（含 locked）；回滚开关 `SHUYONOTE_MCP_CROSS_SPACE_WRITE=0` ⇒ 立即恢复拒绝。审计行带 `spaceId`。`apiVersion` 1.15.0 → **1.16.0**。
+
 - 2026-10-30：**P2 能力补齐 —— 工具 60 → 61（读面 33 → 34 / 写面 27）**：① `audit_tail` 加可选 `onlyWrites`（默认 false；true 只回 `kind:"write"` 的调用；面板最近审计固定用 true）；② 新读能力 `pages.changes_since` → 工具 `changes_since({since, spaceId?, limit?})`：按 `pages.updated_at > since` 返回 `{pages:[{pageId,title,rev,updatedAt,kind}],truncated}`（limit 默认 50/上限 200；**v1 只给页级**，要知道改了什么请对 pageId 再调 `pages_get`）；跨空间口径同 `pages_list`；③ 新增 `src-tauri/src/cap_limits.rs` 收敛 200KB/分页/句柄 TTL 等限额，能力层改为引用常量。`apiVersion` 1.14.0 → **1.15.0**。
 
 - 2026-10-30：**P1 设置面板「接入面板」六块 ＋ 第六档「可写（全部空间）」**：面板分六块（档位／状态卡／能力清单／最近草稿／最近审计／边界提示）；能力清单与「这一档能做什么」都**从注册表 ai:true 实时算**（⛔ 不手写会漂的句子）。第六档 `write_all` 授予 `write:pages` ＋ `write:all-spaces`（默认关；`read:all-spaces` 不随之给），切档换令牌语义不变。新增两个只读桌面命令：`mcp_recent_drafts(limit)`（最近草稿，默认 5/上限 50；只列**外部接入**会话）与 `mcp_recent_audit(limit)`（最近审计，默认 20/上限 100；本机视角）。⛔ 本版只放行 `write_all` 的**权限门**，跨空间落库链路（前端 apply 切空间）下一版才接 —— 带 `spaceId` 跨空间写会得到 `bad_args` 而不是 `permission_denied`。`apiVersion` 1.13.0 → **1.14.0**。

@@ -443,6 +443,9 @@ pub struct PluginAuditEntry {
     pub ok: bool,
     /// 失败时的错误码前缀（permission_denied / unknown_capability / bad_args …）。
     pub error_code: Option<String>,
+    /// ⭐ 跨空间写 v1：这一条落在哪个空间（当前空间写 = None）。
+    #[serde(default)]
+    pub space_id: Option<String>,
     /// `capability = "host.run"` 这类**运行记录**上带的峰值常驻内存（字节）。
     ///
     /// 为什么记它：内存看门狗只能"拦住暴走"，而"这个插件平时吃多少"是另一件同样有用的事——
@@ -514,6 +517,7 @@ fn push_run_audit(
         at_ms: now_ms(),
         ok,
         error_code,
+        space_id: None,
         peak_rss_bytes,
     });
     if let Some(last) = q.back() { persist_audit_line(last); }
@@ -556,7 +560,13 @@ fn idempotent_remember(key: &str, out: &str) {
     g.insert(key.to_string(), (now, out.to_string()));
 }
 
+thread_local! {
+    /// 本次调用要记进审计的空间（跨空间写时 = 目标空间；其它 = None）。
+    static AUDIT_SPACE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+  }
+
 fn push_audit(source: &str, plugin_id: &str, capability: &str, scope: &str, ok: bool, error_code: Option<String>) {
+    let space_id = AUDIT_SPACE.with(|s| s.borrow().clone());
     let mut q = PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner());
     if q.len() >= PLUGIN_AUDIT_CAPACITY {
         q.pop_front();
@@ -570,6 +580,7 @@ fn push_audit(source: &str, plugin_id: &str, capability: &str, scope: &str, ok: 
         at_ms: now_ms(),
         ok,
         error_code,
+        space_id,
         peak_rss_bytes: None,
     });
     if let Some(last) = q.back() { persist_audit_line(last); }
@@ -1745,6 +1756,19 @@ fn cap_log_write(message: &str, level: &str) -> CapResult {
 }
 
 /// 当前调用方有没有这个 scope（插件来自 manifest 的授权；外部来自令牌的 `granted` ✓）。
+/// ⭐ 跨空间写 v1 的回滚开关：`SHUYONOTE_MCP_CROSS_SPACE_WRITE=0/off/false` ⇒ 立即回到"拒绝跨空间写"。
+/// 默认 **on**（只有显式关才关；当前空间写不受影响）。
+pub(crate) fn cross_space_write_disabled() -> bool {
+    matches!(
+        std::env::var("SHUYONOTE_MCP_CROSS_SPACE_WRITE")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "0" | "off" | "false" | "no"
+    )
+}
+
 fn has_scope(id: &str) -> bool {
     // ⭐ B1a（2026-10-29）修：两条路的授权**来源不同** ——
     //   外部（MCP）在 `EXTERNAL_CALLER.granted`（令牌文件里那一行），插件在 `RunState.permissions`。
@@ -2352,16 +2376,49 @@ fn cap_pages_create(
     markdown: Option<bool>,
     dry_run: bool,
     _client_request_id: Option<&str>,
+    space_id: Option<&str>,
 ) -> CapResult {
     if title.trim().is_empty() {
         return Err("bad_args: 新建页面需要 title".to_string());
     }
-    let summary = format!("新建页面「{title}」");
+    let target = space_id.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(space) = target {
+        if cross_space_write_disabled() {
+            return Err(
+                "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                    .to_string(),
+            );
+        }
+        // 目标空间必须存在且**未锁**（锁着 ⇒ 打不开 ⇒ 明确拒，⛔ 不回落当前空间）
+        let app_data = crate::db::app_data_dir_ref()
+            .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+        let exists = {
+            let m = crate::db::open_meta_conn_at(app_data)?;
+            let found: bool = m
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1 AND deleted_at IS NULL)",
+                    params![space],
+                    |r| r.get(0),
+                )
+                .map_err(|e| format!("db_error: {e}"))?;
+            found
+        };
+        if !exists {
+            return Err(format!("not_found: 空间 {space} 不存在"));
+        }
+        crate::db::open_space_conn_at(space, app_data).map_err(|e| {
+            format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+        })?;
+    }
+    let summary = match target {
+        Some(space) => format!("新建页面「{title}」（将写入空间 {space}）"),
+        None => format!("新建页面「{title}」"),
+    };
     if dry_run {
         return Ok(serde_json::json!({
             "dryRun": true,
             "summary": summary,
-            "would": { "kind": "create_page", "title": title, "parentId": parent_id },
+            "would": { "kind": "create_page", "title": title, "parentId": parent_id, "spaceId": target },
             "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
         }));
     }
@@ -2370,7 +2427,7 @@ fn cap_pages_create(
         summary.clone(),
         serde_json::json!({
             "kind": "create_page",
-            "args": { "parent_id": parent_id, "title": title, "content_text": content, "fence": fence, "markdown": markdown },
+            "args": { "parent_id": parent_id, "title": title, "content_text": content, "fence": fence, "markdown": markdown, "spaceId": target },
         }),
     );
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
@@ -2399,7 +2456,7 @@ fn cap_pages_import_markdown(
         return Err("bad_args: markdown 超过 200KB 上限，请拆分后再导入".to_string());
     }
     // 守卫做完就**委托**给既有的建页那条路 ✓（少写一份 payload ⇒ 也不多写任何列名 ✓）
-    cap_pages_create(title, text, parent_id, None, Some(true), dry_run, _client_request_id)
+    cap_pages_create(title, text, parent_id, None, Some(true), dry_run, _client_request_id, None)
 }
 
 /// `pages.update`：**不写库**，只产出草稿（**整页替换**，走前端既有的 Markdown 导入管道）。
@@ -5253,6 +5310,33 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             return Ok(hit);
         }
     }
+    // ⭐ 跨空间写 v1 守卫（单一处）：
+    //   · 写能力带 spaceId（≠ 当前空间）⇒ 只有 pages.create 支持；其它明确 unsupported（⛔ 不回落）
+    //   · 回滚开关关着 ⇒ 一律拒绝
+    {
+        let current = target_space_id(None);
+        let target = arg_opt_str("spaceId")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && s != &current);
+        AUDIT_SPACE.with(|s| *s.borrow_mut() = target.clone());
+        if cap.kind == "write" {
+            if let Some(space) = target {
+                if cross_space_write_disabled() {
+                    return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+                }
+                if method != "pages.create" {
+                    return Err(format!(
+                        "bad_args: {method} 暂不支持跨空间（v1 只支持 pages.create；目标空间 {space} 未写入）"
+                    ));
+                }
+                if !has_scope("write:all-spaces") {
+                    return Err(format!(
+                        "permission_denied: 写别的空间需要权限 write:all-spaces（『可写（全部空间）』档）—— 省略 spaceId 即当前空间（目标空间 {space} 未写入）"
+                    ));
+                }
+            }
+        }
+    }
     let out = match cap.id {
         "page.current" => cap_page_current(arg_bool(args.get("includeAnchors"), true)),
         "pages.count" => cap_pages_count(arg_opt_str("spaceId").as_deref()),
@@ -5451,6 +5535,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             None,
             arg_bool(args.get("dryRun"), false),
             arg_opt_str("clientRequestId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
         ),
         "blocks.append" => cap_blocks_append(
             arg_opt_str("pageId").as_deref(),
@@ -15412,6 +15497,158 @@ register({ id: "s.run", title: "结构化", run: function () {
         })
         .expect_err("坏 since 必须 bad_args");
         assert!(e.contains("bad_args"), "{e}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 跨空间写 v1：pages.create 写到目标空间；当前空间零变化；changes 同写；审计带 spaceId。
+    /// 另测：缺档、unsupported、回滚开关、目标空间打不开（locked）。
+    #[test]
+    fn cross_space_write_v1_create_page_only() {
+        let f = b1c_fixture("cross-write");
+        point_cap_search_at(&f.dir, &f.space);
+        let app = crate::db::ensure_test_app_data_dir().to_path_buf();
+        std::fs::create_dir_all(crate::db::spaces_dir(&app)).ok();
+        let second = "cross-second";
+        {
+            let m = crate::db::open_meta_conn_at(&app).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id', 'cross-test-device')",
+                [],
+            )
+            .ok();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES (?1, '第二空间', '#000', '', 2, 1, 1)",
+                params![second],
+            )
+            .unwrap();
+        }
+        // 目标空间先建好库（空），并记录当前空间快照
+        crate::db::open_space_conn_at(second, &app).unwrap();
+        let snap = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (
+                q("SELECT COUNT(*) FROM pages"),
+                q("SELECT COUNT(*) FROM changes"),
+                q("SELECT COUNT(*) FROM page_versions"),
+                q("SELECT COUNT(*) FROM attachments"),
+            )
+        };
+        let before = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            snap(&c)
+        };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        // ① 草稿带目标空间
+        let (out, drafts) = with_external_caller("cross-a", &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability(
+                    "pages.create",
+                    &format!(r#"{{"title":"跨空间新页","spaceId":"{second}"}}"#),
+                )
+            })
+        });
+        out.expect("应产草稿");
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].payload["args"]["spaceId"], second);
+        // ⑤ 审计行带 spaceId
+        let audit_row = crate::plugins::plugin_audit(Some("external".to_string()), Some(50))
+            .into_iter()
+            .find(|e| e.source == "external:cross-a")
+            .expect("应有审计");
+        assert_eq!(audit_row.space_id.as_deref(), Some(second));
+        // 落库那一步（命令内层；测试里直接调用同一函数）
+        let page = crate::commands::create_page_in_space(
+            second,
+            None,
+            Some("跨空间新页".to_string()),
+            Some("{}".to_string()),
+            Some("正文".to_string()),
+        )
+        .expect("目标空间应可写");
+        // 目标空间：pages + changes 都有
+        {
+            let c = crate::db::open_space_conn_at(second, &app).unwrap();
+            let n: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM pages WHERE id = ?1",
+                    params![page.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 1, "目标空间必须有这页");
+            let ch: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM changes WHERE entity = 'page' AND entity_id = ?1",
+                    params![page.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(ch >= 1, "目标空间必须记 changes（否则设备永不同步）");
+        }
+        // ① 当前空间零变化
+        let after = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            snap(&c)
+        };
+        assert_eq!(before, after, "当前空间 pages/changes/versions/attachments 必须逐项不变");
+        // ③ 缺 write:all-spaces ⇒ 仍 permission_denied 点名
+        let g_no = b2_granted();
+        let e = with_external_caller("cross-b", &g_no, || {
+            dispatch_capability(
+                "pages.create",
+                &format!(r#"{{"title":"x","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("缺档必须拒");
+        assert!(e.contains("permission_denied") && e.contains("write:all-spaces"), "{e}");
+        // ④ 不支持的写工具带 spaceId ⇒ 明确 unsupported，不回落
+        let e = with_external_caller("cross-c", &g, || {
+            dispatch_capability(
+                "blocks.patch",
+                &format!(r#"{{"pageId":"p1","blockId":"b1","markdown":"x","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("blocks.patch 跨空间必须 unsupported");
+        assert!(e.contains("bad_args") && e.contains("暂不支持跨空间"), "{e}");
+        // ② 目标空间打不开（locked 代理：写坏一个已登记空间的 db 文件）
+        {
+            let bad = "cross-locked";
+            let m = crate::db::open_meta_conn_at(&app).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES (?1, '锁着', '#000', '', 3, 1, 1)",
+                params![bad],
+            )
+            .unwrap();
+            std::fs::write(crate::db::space_db_path(&app, bad), b"not a database").unwrap();
+        }
+        let e = crate::commands::create_page_in_space(
+            "cross-locked",
+            None,
+            Some("x".to_string()),
+            None,
+            None,
+        )
+        .expect_err("打不开的目标空间必须明确拒");
+        assert!(e.contains("permission_denied") && e.contains("locked"), "{e}");
+        // ⑥ 回滚开关正反两向
+        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        let e = with_external_caller("cross-d", &g, || {
+            dispatch_capability(
+                "pages.create",
+                &format!(r#"{{"title":"x","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("开关关着必须拒");
+        assert!(e.contains("bad_args") && e.contains("关闭"), "{e}");
+        let e2 = crate::commands::create_page_in_space(second, None, Some("x".to_string()), None, None)
+            .expect_err("开关关着命令层也必须拒");
+        assert!(e2.contains("bad_args"), "{e2}");
+        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        crate::commands::create_page_in_space(second, None, Some("恢复".to_string()), None, None)
+            .expect("去掉开关后应恢复");
         b1c_cleanup(&f);
     }
 }

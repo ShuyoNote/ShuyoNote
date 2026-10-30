@@ -90,6 +90,10 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
         parent_id: p.args?.parent_id ?? null,
         title: String(p.args?.title ?? ""),
         ...built,
+        // ⭐ 跨空间写 v1：给了目标空间就传给命令（只有 pages.create 链路支持）
+        ...(typeof p.args?.spaceId === "string" && p.args.spaceId
+          ? { space_id: p.args.spaceId }
+          : {}),
       });
       return { ok: true, message: `已创建页面「${page.title}」`, page };
     }

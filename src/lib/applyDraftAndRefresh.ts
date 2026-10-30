@@ -47,6 +47,11 @@ const SEED_DEPS = {
 };
 
 export async function applyDraftAndRefresh(payload: unknown): Promise<ApplyResult> {
+  // ⭐ 跨空间写 v1：目标空间的新页**不在当前空间的页面树里** ⇒ 落库后不 seed/open，
+  //   只刷新当前列表（当前空间本身没有被改动）。
+  const crossSpace =
+    typeof (payload as { args?: { spaceId?: unknown } })?.args?.spaceId === "string" &&
+    Boolean((payload as { args: { spaceId: string } }).args.spaceId);
   // ⭐ UX-①：把草稿结果回写给宿主（applied/rejected）——失败不打断落库/提示
   const draftId = typeof (payload as { draftId?: unknown })?.draftId === "string"
     ? String((payload as { draftId: string }).draftId)
@@ -72,6 +77,7 @@ export async function applyDraftAndRefresh(payload: unknown): Promise<ApplyResul
     await seedExternalWriteState(res.page, SEED_DEPS);
   }
   await notes.loadPages();
+  if (crossSpace) return res;
   if (res.page) {
     if (res.page.id === notes.currentId) {
       // 落库的是**当前页**：编辑器自己持有 Lexical state，必须刷新内存副本并

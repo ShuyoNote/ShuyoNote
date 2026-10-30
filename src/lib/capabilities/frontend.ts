@@ -1062,6 +1062,8 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   },
 
   "pages.create": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (spaceId) return { ok: false, error: "应用内 AI 面不提供跨空间写（spaceId 仅外部 MCP 面支持）" };
     const title = String(args.title ?? "").trim();
     if (!title) return { ok: false, error: "pages.create 需要 title" };
     const dryRun = args.dryRun === true;
