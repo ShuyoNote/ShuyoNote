@@ -217,6 +217,8 @@ pub fn delete_attr(db: State<'_, Db>, id: String) -> Result<(), String> {
 
 #[derive(Deserialize)]
 pub struct SetPagePropArgs {
+    #[serde(default)]
+    pub space_id: Option<String>,
     pub page_id: String,
     pub attr_id: String,
     #[serde(default)]
@@ -245,6 +247,17 @@ pub(crate) fn set_page_prop_impl(
 
 #[tauri::command]
 pub fn set_page_prop(db: State<'_, Db>, args: SetPagePropArgs) -> Result<(), String> {
+    if let Some(space) = args.space_id.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string) {
+        let active = { let c = conn(&db); crate::workspaces::active_workspace_id(&c)? };
+        if space != active {
+            if crate::plugins::cross_space_write_disabled() {
+                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+            }
+            let app = crate::db::app_data_dir_ref().ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let tc = crate::db::open_space_conn_at(&space, app).map_err(|e| format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}"))?;
+            return set_page_prop_impl(&tc, &args.page_id, &args.attr_id, &args.value);
+        }
+    }
     let c = conn(&db);
     set_page_prop_impl(&c, &args.page_id, &args.attr_id, &args.value)
 }
@@ -267,7 +280,18 @@ pub(crate) fn remove_page_prop_impl(
 }
 
 #[tauri::command]
-pub fn remove_page_prop(db: State<'_, Db>, page_id: String, attr_id: String) -> Result<(), String> {
+pub fn remove_page_prop(db: State<'_, Db>, page_id: String, attr_id: String, space_id: Option<String>) -> Result<(), String> {
+    if let Some(space) = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string) {
+        let active = { let c = conn(&db); crate::workspaces::active_workspace_id(&c)? };
+        if space != active {
+            if crate::plugins::cross_space_write_disabled() {
+                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+            }
+            let app = crate::db::app_data_dir_ref().ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let tc = crate::db::open_space_conn_at(&space, app).map_err(|e| format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}"))?;
+            return remove_page_prop_impl(&tc, &page_id, &attr_id);
+        }
+    }
     let c = conn(&db);
     remove_page_prop_impl(&c, &page_id, &attr_id)
 }

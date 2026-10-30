@@ -175,9 +175,9 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (!pageId || !attrId) return { ok: false, message: "set_page_prop 参数不完整" };
       const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
-      await api.setPageProp({ page_id: pageId, attr_id: attrId, value: String(p.value ?? "") });
+      await api.setPageProp({ page_id: pageId, attr_id: attrId, value: String(p.value ?? ""), spaceId: typeof p.spaceId === "string" ? p.spaceId : undefined });
       // 回读一次：调用方据此刷新当前页（属性面板共用同一份内存数据）。
-      const page = await api.getPage(pageId);
+      const page = await api.getPage(pageId, typeof p.spaceId === "string" ? p.spaceId : undefined);
       return { ok: true, message: "已设置属性", page };
     }
 
@@ -187,8 +187,8 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (!pageId || !name) return { ok: false, message: "add_tag 参数不完整" };
       const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
-      await api.addTag(pageId, name);
-      const page = await api.getPage(pageId);
+      await api.addTag(pageId, name, typeof p.spaceId === "string" ? p.spaceId : undefined);
+      const page = await api.getPage(pageId, typeof p.spaceId === "string" ? p.spaceId : undefined);
       return { ok: true, message: `已加标签「${name}」`, page };
     }
 
