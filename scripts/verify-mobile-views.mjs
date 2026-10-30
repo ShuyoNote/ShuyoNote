@@ -507,10 +507,19 @@ async function checkProperties(page, vp, tag) {
   // 1b) 再加**一个标签**：「标签」那一行是 [名字, 标签块] 两个孩子的**短行**，
   //     第一版网格错位就是它引起的（下一行的名字被填进同一行的第 3 列）。
   //     不加它，这一段量到的全是"三个孩子"的正常行——**根本盖不到那个 bug**。
+  // ⚠️ B3（2026-10-30）把入口从顶部 page-actions 收进属性区，面板里那颗按钮**只有「＋」字形**
+  //    （文字在 `aria-label` 上）⇒ 旧写法"按 textContent 找「添加标签」"会找不到、静默不加标签 ✗
+  //    实测（2026-10-31）：面板里明明有 5 行，只量到 4 行 ⇒ 就是这一步没点。
   await safeEval(page, () => {
-    const b = Array.from(document.querySelectorAll(".page-action-btn, .prop-add-head, [aria-label=\"添加标签\"]")).find((x) =>
-      (x.textContent || "").includes("添加标签"),
+    const byLabel = Array.from(document.querySelectorAll('[aria-label="添加标签"], [title="添加标签"]')).find(
+      (x) => (x.getAttribute("aria-label") || x.getAttribute("title") || "").includes("添加标签"),
     );
+    const b =
+      document.querySelector(".prop-add-tag") ||
+      byLabel ||
+      Array.from(document.querySelectorAll(".page-action-btn, .prop-add-head")).find((x) =>
+        (x.textContent || "").includes("添加标签"),
+      );
     if (b) b.click();
     return !!b;
   });
@@ -549,9 +558,10 @@ async function checkProperties(page, vp, tag) {
     const items = rows
       .map((row) => {
         const n = row.querySelector(".prop-name");
-        // 「标签」行的值不是 `.prop-value` 而是 `.prop-tag-value` —— 两种都要量，
-        // 否则恰好漏掉那个"短行"（第一版就是这么漏的）。
-        const v = row.querySelector(".prop-value, .prop-tag-value");
+        // 「标签」行的值不是 `.prop-value` 而是 `.prop-tag-value`；**未设置的属性**渲染的是
+        // `.prop-empty` 按钮（B3 之后空值不再用 `.prop-value`）——三种都要量，否则整行被过滤掉，
+        // 量出"0 行属性"的假红（2026-10-31 实测：面板里明明有 5 行，count 却是 0）。
+        const v = row.querySelector(".prop-value, .prop-tag-value, .prop-empty");
         if (!n || !v) return null;
         const nb = n.getBoundingClientRect();
         const vb = v.getBoundingClientRect();
