@@ -1,4 +1,4 @@
-# 插件 API（v1.23.0）
+# 插件 API（v1.24.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.23.0",
+  "apiVersion": "1.24.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.23.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.24.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -1153,7 +1153,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.23.0",
+  "runtime": "declarative", "apiVersion": "1.24.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },
