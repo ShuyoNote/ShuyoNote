@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **MCP P1 接入面板六块 ＋ 第六档「可写（全部空间）」**：面板改成接入面板六块（档位／状态卡／能力清单／最近草稿／最近审计／边界提示），能力清单与「这一档能做什么」从注册表 `ai:true` 实时算；`McpLevel` 增 `write_all`（granted 含 `write:pages` ＋ `write:all-spaces`，⛔ 不给 `read:all-spaces`；默认关，显式选档才授予；切档换令牌语义不变）；新增只读桌面命令 `mcp_recent_drafts`（默认 5/上限 50）与 `mcp_recent_audit`（默认 20/上限 100）。⚠️ 本版只放行 `write_all` 的权限门，跨空间落库链路未接。插件 API `apiVersion` 1.13.0 → **1.14.0**。
 - **MCP UX-④ 附件/历史版本可指定空间 ＋ 取消确认回写 rejected —— 工具 60 不变（读面 33 / 写面 27）**：`files_list`/`files_search`/`files_read`/`files_stat`/`files_extract_status`/`files_list_orphan`/`files_download`/`versions_list`/`version_get` 增加可选 `spaceId`（**逐 cap** 走 `with_conn_for_space` 与 `pages_list` 同一处门）；省略 ⇒ 行为逐字节不变；跨空间需「只读（全部空间）」档，未开 ⇒ `permission_denied` 点名 `read:all-spaces`；`blobs_fetch` 不加（句柄自带来源）。用户取消确认框 ⇒ 立刻把该 `draftId` 回写 `rejected`（不再等 10 分钟变 expired）。插件 API `apiVersion` 1.12.0 → **1.13.0**。
 - **MCP UX-⑦ 导出拆名 —— 工具 58 → 60**：新增 `export_page_markdown`（只接受 `pageId`）与 `export_space_markdown`（只接受 `spaceId`，省略=当前空间）；两者给错参数 ⇒ `bad_args` 点名；旧 `export_markdown` 保留（deprecated，行为不变）。
 - **MCP UX-⑤ 命名统一 —— 工具 57 → 58**：新增 `pages_import_markdown`（与旧 `pages_importMarkdown` 同一能力、行为一致）；旧名保留并标 `deprecated`。

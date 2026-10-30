@@ -138,6 +138,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 10. 版本
 
+- 2026-10-30：**P1 设置面板「接入面板」六块 ＋ 第六档「可写（全部空间）」**：面板分六块（档位／状态卡／能力清单／最近草稿／最近审计／边界提示）；能力清单与「这一档能做什么」都**从注册表 ai:true 实时算**（⛔ 不手写会漂的句子）。第六档 `write_all` 授予 `write:pages` ＋ `write:all-spaces`（默认关；`read:all-spaces` 不随之给），切档换令牌语义不变。新增两个只读桌面命令：`mcp_recent_drafts(limit)`（最近草稿，默认 5/上限 50；只列**外部接入**会话）与 `mcp_recent_audit(limit)`（最近审计，默认 20/上限 100；本机视角）。⛔ 本版只放行 `write_all` 的**权限门**，跨空间落库链路（前端 apply 切空间）下一版才接 —— 带 `spaceId` 跨空间写会得到 `bad_args` 而不是 `permission_denied`。`apiVersion` 1.13.0 → **1.14.0**。
+
 - 2026-10-30：**UX-④ 附件/历史版本可指定空间**：`files_list/search/read/stat/extract_status/list_orphan/download` 与 `versions_list/version_get` 增加可选 `spaceId`（逐 cap 走 `with_conn_for_space`，跨空间需「只读（全部空间）」档）；省略参数行为不变。`apiVersion` 1.12.0 → **1.13.0**。
 
 - 2026-10-30：**UX-⑦ 导出拆名 —— 工具 60（读面 33 / 写面 27）**：新增 `export_page_markdown`（只接受 pageId）与 `export_space_markdown`（只接受 spaceId，省略=当前空间）；旧 `export_markdown` 保留并标 `deprecated`，行为不变。
