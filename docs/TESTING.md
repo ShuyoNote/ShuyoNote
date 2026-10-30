@@ -56,7 +56,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 86 条（contract 58 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 9 / artifact 3 / deploy 1）· 能力 70 条 · 命令 Rust 285 / web 249 / CommandMap 286
+门禁 86 条（contract 58 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 9 / artifact 3 / deploy 1）· 能力 70 条 · 命令 Rust 286 / web 249 / CommandMap 287
 基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 3585 · smoke-web 365 · check-pdf-reload 8 · check-panel-layout 61 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 68 · mobile-overlays 756 · mobile-views 249 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
