@@ -168,33 +168,30 @@ describe("MCP 接入面板（P1）", () => {
     for (const mark of ["**", "✓", "✗", "⛔"]) expect(text.includes(mark)).toBe(false);
   });
 
-  // WIP：jsdom 下空间列表回读时序未稳定（Rust/命令层已判）；下一回合修
-  it.skip("隐藏清单：回读勾选、保存后回读仍勾选", async () => {
+  it("隐藏清单：回读勾选、保存后回读仍勾选", async () => {
     mocks.mcpStatus.mockResolvedValue(STATUS_ON);
     mocks.listWorkspaces.mockResolvedValue([{ id: "a", name: "A" }, { id: "b", name: "B" }]);
     mocks.mcpHiddenSpacesGet.mockResolvedValue({ spaceIds: ["a"] });
     mount();
     await tick();
-    await tick();
-    await new Promise((r) => setTimeout(r, 100));
     const box = (label: string) =>
       document.querySelector('input[aria-label="隐藏空间 ' + label + '"]') as HTMLInputElement;
-    expect(box("A").checked).toBe(true);
-    expect(box("B").checked).toBe(false);
+    await vi.waitFor(() => {
+      expect(box("A")?.checked).toBe(true);
+      expect(box("B")?.checked).toBe(false);
+    });
     flushSync(() => box("B").click());
     mocks.mcpHiddenSpacesSet.mockResolvedValue({ spaceIds: ["a", "b"] });
     mocks.mcpHiddenSpacesGet.mockResolvedValue({ spaceIds: ["a", "b"] });
     const save = document.querySelector('[data-testid="mcp-hidden-save"]') as HTMLElement;
     flushSync(() => save.click());
-    await tick();
-    await tick();
-    expect(mocks.mcpHiddenSpacesSet).toHaveBeenCalledWith(["a", "b"]);
+    await vi.waitFor(() => expect(mocks.mcpHiddenSpacesSet).toHaveBeenCalledWith(["a", "b"]));
     flushSync(() => root!.unmount());
     root = createRoot(document.getElementById("host")!);
     flushSync(() => root!.render(React.createElement(McpAccessPane)));
-    await tick();
-    await tick();
-    expect(box("A").checked).toBe(true);
-    expect(box("B").checked).toBe(true);
+    await vi.waitFor(() => {
+      expect(box("A")?.checked).toBe(true);
+      expect(box("B")?.checked).toBe(true);
+    });
   });
 });
