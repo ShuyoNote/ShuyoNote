@@ -242,3 +242,8 @@ warnings=[id-map-ignored]（预期）；parent/children/附件名/大小/mime/sh
 3. **S4**：企业 `import-document` 的 assets 入库（P0b）；
 4. **S8**：写侧硬拒 vs 读侧 warning 的分层实现（个人版 M1.1 做写侧；读侧 warning 记录）；
 5. 互读验收草案 `docs/specs/2026-10-30-package-interop-acceptance.md`（企业仓分支）由 `windows/enterprise + contract-conformance` 审，走附录 C 合并。
+
+## M2a 实现证据（2026-10-30）
+
+- 导出实现：`src/lib/docSpacePackWriter.ts::buildSpacePackage`（纯格式层）——manifest（format/`features`/`min_reader_version`/`space`/`encrypted`/`checksums_sha256`）、`tree.json`（children 顺序/成员权威、空文件夹 `[]`、§9 file 条目保留 `name/mime`）、`documents/<id>/document.shuyodoc`（内层复用文档包写侧、禁止再嵌套）、`files/<sha256>.<lower-ext>`、`attachments.json`（sha 去重、显示名以 tree 为准并记 `attachment-name-conflict`）、`checksums.json`（覆盖 tree/documents/files/attachments；manifest 用 `checksums_sha256` 反钉）；**不写 `id_map.json`**。固定 `1980-01-01`、store-only ⇒ 同输入逐字节可复现。
+- 判据：`src/lib/docSpacePackWriter.test.ts`（9 条：结构/树权威/空文件夹/混排/db 命名空间/内层可读且不再嵌包/可复现/checksums/名字冲突/children-parent 冲突）；包判据合计 58 条全绿。
