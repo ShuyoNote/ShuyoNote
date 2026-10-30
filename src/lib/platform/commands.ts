@@ -853,7 +853,7 @@ export interface CommandMap {
   get_page: { args: { id: string; spaceId?: string }; result: PageDetail };
   delete_page: { args: { id: string; spaceId?: string }; result: void };
   purge_page: { args: { id: string }; result: void };
-  restore_page: { args: { id: string }; result: void };
+  restore_page: { args: { id: string; spaceId?: string }; result: void };
   list_deleted: { args: undefined; result: PageMeta[] };
   create_page: { args: { args: { parent_id: string | null; title?: string; content_json?: string; content_text?: string } }; result: PageDetail };
   create_folder: { args: { args: { parent_id: string | null; title?: string } }; result: PageDetail };
@@ -1674,7 +1674,7 @@ export interface CommandMap {
   cleanup_temp_files: { args: undefined; result: number };
   purge_deleted_workspaces: { args: undefined; result: { freed: number; workspaces: number } };
   list_versions: { args: { pageId: string }; result: PageVersion[] };
-  restore_version: { args: { versionId: string }; result: PageDetail };
+  restore_version: { args: { versionId: string; spaceId?: string }; result: PageDetail };
   clear_page_versions: { args: { pageId: string }; result: number };
   // 08-a②（2026-10-10）：本机名的读写。`null` ＝ **没设过**（界面显示"用主机名"✓，⛔ 不编假名 ✗）；
   // `set_device_name` 传空白 ⇒ **清掉设置** ✓，返回**回落到的主机名/默认名** ✓。

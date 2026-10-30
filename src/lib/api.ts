@@ -256,9 +256,9 @@ export const api = {
   saveAsTemplate: (args: { name: string; category?: string; icon?: string; cover?: string; summary?: string; content_json: string; content_text?: string; kind?: string; database_json?: string; space_id?: string | null }) =>
     invoke("save_as_template", { args }),
   deleteTemplate: (id: string) => invoke("delete_template", { id }),
-  createPage: (args: { parent_id: string | null; title?: string; content_json?: string; content_text?: string }) =>
+  createPage: (args: { parent_id: string | null; title?: string; content_json?: string; content_text?: string; space_id?: string }) =>
     invoke("create_page", { args }),
-  createFolder: (args: { parent_id: string | null; title?: string; spaceId?: string }) =>
+  createFolder: (args: { parent_id: string | null; title?: string; space_id?: string }) =>
     invoke("create_folder", { args }),
   createDatabase: (args: { parent_id: string | null; title?: string }) =>
     invoke("create_database", { args }),
@@ -320,7 +320,7 @@ export const api = {
     title?: string;
     content_json?: string;
     content_text?: string;
-    spaceId?: string;
+    space_id?: string;
   }) => invoke("save_page", { args }),
   /**
    * 冲刺 S3b-2c：读这一页的 **CRDT 状态**（没有 ⇒ `null`）。
@@ -488,7 +488,7 @@ export const api = {
   listAllPdfAnnotations: () => invoke("list_all_pdf_annotations"),
   listAllPdfAttachments: () => invoke("list_all_pdf_attachments"),
   deletePage: (id: string, spaceId?: string) => invoke("delete_page", { id, spaceId }),
-  movePage: (args: { id: string; new_parent_id: string | null; sort_order: number; spaceId?: string }) =>
+  movePage: (args: { id: string; new_parent_id: string | null; sort_order: number; space_id?: string }) =>
     invoke("move_page", { args }),
   search: (query: string, limit = 50, allSpaces = false) =>
     invoke("search", { args: { query, limit, all_spaces: allSpaces, embedding: readEmbedConfig() } }),
@@ -728,7 +728,7 @@ export const api = {
     invoke("update_attr", { args }),
   deleteAttr: (id: string) => invoke("delete_attr", { id }),
   reorderAttrs: (ids: string[]) => invoke("reorder_attrs", { ids }),
-  setPageProp: (args: { page_id: string; attr_id: string; value: string; spaceId?: string }) =>
+  setPageProp: (args: { page_id: string; attr_id: string; value: string; space_id?: string }) =>
     invoke("set_page_prop", { args }),
   removePageProp: (pageId: string, attrId: string, spaceId?: string) =>
     invoke("remove_page_prop", { pageId, attrId, spaceId }),
@@ -767,10 +767,12 @@ export const api = {
   getDbRule: (dbPageId: string) => invoke("get_db_rule", { dbPageId }),
   resolveRefs: (values: string[]) => invoke("resolve_refs", { values }),
   listDeleted: () => invoke("list_deleted"),
-  restorePage: (id: string) => invoke("restore_page", { id }),
+  restorePage: (id: string, spaceId?: string) =>
+    invoke("restore_page", { id, spaceId }),
   purgePage: (id: string) => invoke("purge_page", { id }),
   listVersions: (pageId: string) => invoke("list_versions", { pageId }),
-  restoreVersion: (versionId: string) => invoke("restore_version", { versionId }),
+  restoreVersion: (versionId: string, spaceId?: string) =>
+    invoke("restore_version", { versionId, spaceId }),
   clearPageVersions: (pageId: string) => invoke("clear_page_versions", { pageId }),
   // 08-a②（2026-10-10）：本机名（08 去码化配对里"信任前显示设备名 ＋ 短标识"的那一半 ✓）。
   // ⭐ 2026-10-29：`get_device_name` 现在回的是**生效名**（用户设的 ⇒ 否则系统名 ⇒ 否则「未命名设备」），

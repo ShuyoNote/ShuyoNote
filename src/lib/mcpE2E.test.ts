@@ -283,9 +283,9 @@ describe("一致性批 · blocks.insert 跨空间 apply e2e", () => {
     expect(r.ok, r.message).toBe(true);
     expect(store.saveCalls.length).toBe(1);
     const call = store.saveCalls[0];
-    expect(call.spaceId).toBe("s2");
+    expect(call.space_id).toBe("s2");
     expect(String(call.content_json)).toContain("nb1");
-    expect(store.saveCalls.every((c) => c.spaceId === "s2")).toBe(true);
-    expect(store.saveCalls.some((c) => !c.spaceId)).toBe(false);
+    expect(store.saveCalls.every((c) => c.space_id === "s2")).toBe(true);
+    expect(store.saveCalls.some((c) => !c.space_id)).toBe(false);
   });
 });

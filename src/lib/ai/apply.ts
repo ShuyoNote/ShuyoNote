@@ -127,7 +127,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
         }
         // ⭐ 2026-10-17：同上 —— 整页写入前补块身份（CRDT 播种不造身份，缺了会播种失败）。
         built = stampTopLevelBlockIds(built);
-        const page = await api.savePage({ id: pageId, spaceId, ...(title ? { title } : {}), ...built });
+        const page = await api.savePage({ id: pageId, space_id: spaceId, ...(title ? { title } : {}), ...built });
         return { ok: true, message: `已更新「${page.title}」`, page };
       });
     }
@@ -164,7 +164,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
             ? appendFence(curJson, p.fence, text, () => uid())
             : appendBlocksToJson(curJson, text, () => uid());
         const content_text = contentTextOf(content_json);
-        const page = await api.savePage({ id: pageId, spaceId, content_json, content_text });
+        const page = await api.savePage({ id: pageId, space_id: spaceId, content_json, content_text });
         return { ok: true, message: `已向「${page.title}」追加内容`, page };
       });
     }
@@ -175,7 +175,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (!pageId || !attrId) return { ok: false, message: "set_page_prop 参数不完整" };
       const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
-      await api.setPageProp({ page_id: pageId, attr_id: attrId, value: String(p.value ?? ""), spaceId: typeof p.spaceId === "string" ? p.spaceId : undefined });
+      await api.setPageProp({ page_id: pageId, attr_id: attrId, value: String(p.value ?? ""), space_id: typeof p.spaceId === "string" ? p.spaceId : undefined });
       // 回读一次：调用方据此刷新当前页（属性面板共用同一份内存数据）。
       const page = await api.getPage(pageId, typeof p.spaceId === "string" ? p.spaceId : undefined);
       return { ok: true, message: "已设置属性", page };
@@ -197,7 +197,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const title = String(p.title ?? "").trim();
       if (!title) return { ok: false, message: "create_folder 需要 title" };
       const spaceId = typeof p.spaceId === "string" ? p.spaceId : undefined;
-      const folder = await api.createFolder({ parent_id: p.parent_id ?? null, title, spaceId });
+      const folder = await api.createFolder({ parent_id: p.parent_id ?? null, title, space_id: spaceId });
       return { ok: true, message: `已创建文件夹「${folder.title ?? title}」` };
     }
 
@@ -210,7 +210,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
         id,
         new_parent_id: p.newParentId ?? null,
         sort_order: Number.isFinite(Number(p.sortOrder)) ? Number(p.sortOrder) : 0,
-        spaceId: typeof p.spaceId === "string" ? p.spaceId : undefined,
+        space_id: typeof p.spaceId === "string" ? p.spaceId : undefined,
       });
       return { ok: true, message: "已移动节点" };
     }
@@ -221,7 +221,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (!id || !title) return { ok: false, message: "rename_node 参数不完整" };
       const rp = await revProblem(id, p.expectedRev);
       if (rp) return { ok: false, message: rp };
-      const page = await api.savePage({ id, title, spaceId: typeof p.spaceId === "string" ? p.spaceId : undefined });
+      const page = await api.savePage({ id, title, space_id: typeof p.spaceId === "string" ? p.spaceId : undefined });
       return { ok: true, message: `已改名为「${page.title}」`, page };
     }
 
@@ -237,7 +237,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
     case "restore_page": {
       const id = String(p.id ?? "");
       if (!id) return { ok: false, message: "restore_page 需要 id" };
-      await api.restorePage(id);
+      await api.restorePage(id, typeof p.spaceId === "string" ? p.spaceId : undefined);
       return { ok: true, message: "已从回收站恢复" };
     }
 
@@ -247,7 +247,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (!pageId || !versionId) return { ok: false, message: "revert_page 参数不完整" };
       const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
-      const page = await api.restoreVersion(versionId);
+      const page = await api.restoreVersion(versionId, typeof p.spaceId === "string" ? p.spaceId : undefined);
       return { ok: true, message: `已回退到版本 ${versionId}`, page };
     }
 
@@ -295,7 +295,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const next = blocksFromInput(p.markdown, p.plain, blockId);
       if (next.length === 0) return { ok: false, message: "新块内容为空" };
       children.splice(at, 1, ...next);
-      const saved = await api.savePage({ id: pageId, spaceId, ...saveFieldsWithChildren(docJsonOfPage(page), children, contentTextOf) });
+      const saved = await api.savePage({ id: pageId, space_id: spaceId, ...saveFieldsWithChildren(docJsonOfPage(page), children, contentTextOf) });
       return { ok: true, message: `已替换块「${blockId}」`, page: saved };
     }
 
@@ -317,7 +317,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const next = blocksFromInput(p.markdown, p.plain, firstId);
       if (next.length === 0) return { ok: false, message: "新块内容为空" };
       children.splice(at, 0, ...next);
-      const saved = await api.savePage({ id: pageId, spaceId, ...saveFieldsWithChildren(docJsonOfPage(page), children, contentTextOf) });
+      const saved = await api.savePage({ id: pageId, space_id: spaceId, ...saveFieldsWithChildren(docJsonOfPage(page), children, contentTextOf) });
       return { ok: true, message: "已插入新块", page: saved };
     }
 
@@ -335,7 +335,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (at < 0) return { ok: false, message: `块 ${blockId} 不在这一页的顶层` };
       if (children.length <= 1) return { ok: false, message: "这是最后一个顶层块 —— 不制造空页面" };
       children.splice(at, 1);
-      const saved = await api.savePage({ id: pageId, spaceId, ...saveFieldsWithChildren(docJsonOfPage(page), children, contentTextOf) });
+      const saved = await api.savePage({ id: pageId, space_id: spaceId, ...saveFieldsWithChildren(docJsonOfPage(page), children, contentTextOf) });
       return { ok: true, message: `已删除块「${blockId}」`, page: saved };
     }
 
@@ -433,10 +433,10 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
         let target = rowId;
         if (!target) {
           const title = String(row.title ?? "").trim();
-          const created = await api.createPage({ parent_id: pageId, title, ...emptyPageContent() });
+          const created = await api.createPage({ parent_id: pageId, title, space_id: typeof p.spaceId === "string" ? p.spaceId : undefined, ...emptyPageContent() });
           target = created.id;
         } else if (typeof row.title === "string" && row.title.trim()) {
-          await api.savePage({ id: target, title: row.title.trim() });
+          await api.savePage({ id: target, title: row.title.trim(), space_id: typeof p.spaceId === "string" ? p.spaceId : undefined });
         }
         const props = Array.isArray(row.props) ? (row.props as Array<Record<string, unknown>>) : [];
         for (const prop of props) {
@@ -444,6 +444,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
             page_id: target,
             attr_id: String(prop.attrId ?? ""),
             value: String(prop.value ?? ""),
+            space_id: typeof p.spaceId === "string" ? p.spaceId : undefined,
           });
         }
         changed += 1;
@@ -457,7 +458,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (!pageId || rowIds.length === 0) return { ok: false, message: "db_rows_delete 参数不完整" };
       const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
-      for (const id of rowIds) await api.deletePage(id);
+      for (const id of rowIds) await api.deletePage(id, typeof p.spaceId === "string" ? p.spaceId : undefined);
       return { ok: true, message: `已删除数据库行（${rowIds.length} 行）` };
     }
 

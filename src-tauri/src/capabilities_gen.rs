@@ -19,7 +19,7 @@ pub struct Capability {
     pub ai: bool,
 }
 
-pub const API_VERSION: &str = "1.26.0";
+pub const API_VERSION: &str = "1.27.0";
 pub const API_MAJOR: u32 = 1;
 
 pub const CAPABILITIES: &[Capability] = &[
