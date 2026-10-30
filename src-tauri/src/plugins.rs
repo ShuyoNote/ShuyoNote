@@ -1819,7 +1819,7 @@ fn with_conn_for_space<T>(
 }
 
 fn cap_pages_list(limit: i64, space_id: Option<&str>) -> CapResult {
-    let limit = limit.clamp(1, 200);
+    let limit = limit.clamp(1, crate::cap_limits::PAGE_MAX);
     with_conn_for_space(space_id, |c| {
         // created_at 一起给：插件判断"这页是不是刚建的"只能靠它（updated_at 会被编辑
         // 刷新）。写「孤立页巡检」「本周新建了哪些」这类插件时撞到的就是这个字段的缺失——
@@ -2097,7 +2097,7 @@ fn text_window_value(
 /// （`ops-publish-log` / `ops-redline-check` 都是 `var pages = api.pages.search(...) || []`），
 /// 空结果的**范围信息**由 MCP 面在外面包一层信封（`mcp_host::with_search_scope`）。
 fn cap_pages_search(q: &str, limit: i64, space_id: Option<&str>) -> CapResult {
-    let limit = limit.clamp(1, 100) as usize;
+    let limit = limit.clamp(1, crate::cap_limits::SEARCH_MAX) as usize;
     with_conn_for_space(space_id, |c| {
         let rows = crate::search::search_pages_for_capability(c, q, limit)?;
         Ok(serde_json::Value::Array(
@@ -2292,7 +2292,7 @@ fn cap_files_search(query: &str, limit: i64, space_id: Option<&str>) -> CapResul
     if q.is_empty() {
         return Err("bad_args: query 不能为空".to_string());
     }
-    let lim = limit.clamp(1, 100) as usize;
+    let lim = limit.clamp(1, crate::cap_limits::SEARCH_MAX) as usize;
     let hits = with_conn_for_space(space_id, |c| crate::search::search_chunks_in_conn(c, &q, lim, None, None))?;
     serde_json::to_value(&hits).map_err(|e| format!("internal: {e}"))
 }
@@ -2643,7 +2643,7 @@ fn cap_versions_list(page_id: &str, limit: i64, space_id: Option<&str>) -> CapRe
     if page.is_empty() {
         return Err("bad_args: 需要 pageId".to_string());
     }
-    let limit = limit.clamp(1, 200);
+    let limit = limit.clamp(1, crate::cap_limits::LIST_MAX);
     with_conn_for_space(space_id, |c| {
         let mut stmt = c
             .prepare(
@@ -2825,7 +2825,7 @@ fn cap_files_extract_status(att_id: &str, space_id: Option<&str>) -> CapResult {
 
 /// `files.list_orphan`：未整理附件（`page_id IS NULL`）—— 只读，⛔ 不清理/删除。
 fn cap_files_list_orphan(limit: i64, offset: i64, space_id: Option<&str>) -> CapResult {
-    let limit = limit.clamp(1, 200);
+    let limit = limit.clamp(1, crate::cap_limits::LIST_MAX);
     let offset = offset.max(0);
     with_conn_for_space(space_id, |c| {
         let total: i64 = c
@@ -4463,10 +4463,20 @@ pub fn mcp_recent_drafts(limit: Option<i64>) -> Result<serde_json::Value, String
 
 /// ⭐ P1：面板「最近审计」——本机视角（外部接入 ＋ 插件的最近 N 条；⛔ 不含正文）。
 #[tauri::command]
-pub fn mcp_recent_audit(limit: Option<i64>) -> Result<serde_json::Value, String> {
+pub fn mcp_recent_audit(
+    limit: Option<i64>,
+    only_writes: Option<bool>,
+) -> Result<serde_json::Value, String> {
     let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
+    let only_writes = only_writes.unwrap_or(false);
+    let is_write = |capability: &str| {
+        crate::capabilities_gen::CAPABILITIES
+            .iter()
+            .any(|c| c.id == capability && c.kind == "write")
+    };
     let mut rows: Vec<serde_json::Value> = crate::plugins::plugin_audit(None, Some(2000))
         .into_iter()
+        .filter(|e| !only_writes || is_write(&e.capability))
         .map(|e| {
             serde_json::json!({
                 "at": e.at_ms,
@@ -4481,8 +4491,13 @@ pub fn mcp_recent_audit(limit: Option<i64>) -> Result<serde_json::Value, String>
     Ok(serde_json::json!(rows.drain(start..).collect::<Vec<_>>()))
 }
 
-fn cap_audit_tail(limit: i64) -> CapResult {
-    let limit = limit.clamp(1, 100) as usize;
+fn cap_audit_tail(limit: i64, only_writes: bool) -> CapResult {
+    let limit = limit.clamp(1, crate::cap_limits::SEARCH_MAX) as usize;
+    let is_write = |capability: &str| {
+        crate::capabilities_gen::CAPABILITIES
+            .iter()
+            .any(|c| c.id == capability && c.kind == "write")
+    };
     let caller = caller_identity();
     let (source_filter, plugin_filter): (Option<String>, Option<String>) =
         match caller.strip_prefix("external:") {
@@ -4497,6 +4512,7 @@ fn cap_audit_tail(limit: i64) -> CapResult {
             .into_iter()
             .filter(|e| source_filter.as_deref().map(|s| e.source == s).unwrap_or(false))
             .filter(|e| plugin_filter.as_deref().map(|p| e.plugin_id == p).unwrap_or(true))
+            .filter(|e| !only_writes || is_write(&e.capability))
             .collect::<Vec<_>>()
             .into_iter()
             .map(|e| {
@@ -4708,7 +4724,7 @@ fn cap_db_schema(page_id: &str, space_id: Option<&str>) -> CapResult {
 
 /// `db.rows` 单次响应体的上限（矩阵 §7「文本返回 ≤200 KB/次」）—— 超了就**截断并如实标**
 /// （⛔ 不悄悄丢：调用方得知道它看到的不全）。
-const MAX_DB_ROWS_BYTES: usize = 200 * 1024;
+use crate::cap_limits::BODY_CAP_BYTES as MAX_DB_ROWS_BYTES;
 
 /// `db.rows`（B1b，2026-10-29）：一个数据库页的**行**，只给**原始值**。
 ///
@@ -4720,6 +4736,63 @@ const MAX_DB_ROWS_BYTES: usize = 200 * 1024;
 ///   ③ `where` 的字段**必须**来自 `db.schema` 报出的列（id 或列名；**id 优先**，列名在空间内 UNIQUE），
 ///      操作符白名单见 [`crate::database::WHERE_OPS_TEXT`]；越界/未知字段/坏操作符 ⇒ `invalid_args`
 ///      （人话 ＋ 点名第几条），⛔ 不许 500 / 静默返回空。
+/// ⭐ P2：pages.changes_since（页级增量；不做块级 diff）。
+fn cap_pages_changes_since(
+    since_value: Option<&serde_json::Value>,
+    limit: i64,
+    space_id: Option<&str>,
+) -> CapResult {
+    let raw = since_value
+        .ok_or_else(|| "bad_args: 需要 since（ms 时间戳或 ISO 时间）".to_string())?;
+    let since: i64 = match raw {
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .ok_or_else(|| "bad_args: since 数字不是整数".to_string())?,
+        serde_json::Value::String(s) => {
+            let t = s.trim();
+            if t.chars().all(|c| c.is_ascii_digit()) {
+                t.parse::<i64>()
+                    .map_err(|_| "bad_args: since 不是合法时间戳".to_string())?
+            } else {
+                chrono::DateTime::parse_from_rfc3339(t)
+                    .map(|d| d.timestamp_millis())
+                    .map_err(|_| "bad_args: since 只接受 ms 时间戳或 ISO/RFC3339".to_string())?
+            }
+        }
+        _ => return Err("bad_args: since 只接受 ms 时间戳或 ISO/RFC3339".to_string()),
+    };
+    let limit = limit.clamp(1, crate::cap_limits::LIST_MAX);
+    let fetch = limit + 1;
+    with_conn_for_space(space_id, |c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT id, title, kind, updated_at FROM pages
+                 WHERE deleted_at IS NULL AND updated_at > ?1
+                 ORDER BY updated_at DESC, id ASC LIMIT ?2",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows: Vec<(String, String, String, i64)> = stmt
+            .query_map(params![since, fetch], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        let truncated = rows.len() as i64 > limit;
+        let mut pages: Vec<serde_json::Value> = Vec::new();
+        for (id, title, kind, updated_at) in rows.into_iter().take(limit as usize) {
+            let rev = page_rev_of(c, &id)?.unwrap_or_default();
+            pages.push(serde_json::json!({
+                "pageId": id, "title": title, "rev": rev, "updatedAt": updated_at, "kind": kind,
+            }));
+        }
+        Ok(serde_json::json!({
+            "pages": pages,
+            "truncated": truncated,
+        }))
+    })
+}
+
 fn cap_db_rows(
     page_id: &str,
     view_id: Option<&str>,
@@ -4729,7 +4802,7 @@ fn cap_db_rows(
     space_id: Option<&str>,
 ) -> CapResult {
     // 默认 100、上限 500（矩阵：分页参数由**这一层**夹取，SQL 只看见夹过的值）。
-    let limit = limit.clamp(1, 500);
+    let limit = limit.clamp(1, crate::cap_limits::DB_ROWS_MAX);
     let offset = offset.max(0);
     let space = target_space_id(space_id);
     with_conn_for_space(space_id, |c| {
@@ -4886,7 +4959,7 @@ fn cap_tags_add(
 /// （`page.current` 只给 content_json）：等于"能往当前页写，却读不到当前页"。
 /// 写参考插件时撞到的就是这个不对称——大纲 / 改写 / 导出当前页这一整类插件都被卡住。
 fn cap_blocks_list(page_id: Option<&str>, limit: i64) -> CapResult {
-    let limit = limit.clamp(1, 500) as usize;
+    let limit = limit.clamp(1, crate::cap_limits::BLOCKS_MAX) as usize;
     let target = target_page_or_current(page_id)?;
     with_read_conn(|c| {
         // ★ 读出口走「文档内容」那一层（阶段 0 接口收口）：谓词与原 SQL 逐字相同。
@@ -5248,11 +5321,16 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         // B1b（2026-10-29）：数据库结构化读 —— 两条都是 `read:pages`、都支持可选 `spaceId`
         // （跨空间门在 `with_conn_for_space` 里，与 pages.list / pages.tree 同一处）。
         "db.schema" => cap_db_schema(&arg_str("pageId")?, arg_opt_str("spaceId").as_deref()),
+        "pages.changes_since" => cap_pages_changes_since(
+            Some(&serde_json::json!(arg_str("since")?)),
+            arg_i64("limit", 50),
+            arg_opt_str("spaceId").as_deref(),
+        ),
         "db.rows" => cap_db_rows(
             &arg_str("pageId")?,
             arg_opt_str("viewId").as_deref(),
             args.get("where"),
-            arg_i64("limit", 100),
+            arg_i64("limit", crate::cap_limits::DB_ROWS_DEFAULT),
             arg_i64("offset", 0),
             arg_opt_str("spaceId").as_deref(),
         ),
@@ -5474,7 +5552,10 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_opt_str("clientRequestId").as_deref(),
         ),
         "drafts.status" => cap_drafts_status(&arg_str("draftId")?),
-        "audit.tail" => cap_audit_tail(arg_i64("limit", 20)),
+        "audit.tail" => cap_audit_tail(
+            arg_i64("limit", 20),
+            arg_bool(args.get("onlyWrites"), false),
+        ),
         "editor.insertText" => cap_editor_insert_text(&arg_str("text")?),
         "user.notify" => cap_user_notify(&arg_str("message")?),
         "log.write" => {
@@ -15120,7 +15201,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         });
         assert!(other.unwrap_err().contains("not_found"), "别的会话必须看不到");
         let tail = |sid: &str| -> serde_json::Value {
-            with_external_caller(sid, &g, || crate::plugins::cap_audit_tail(100)).unwrap()
+            with_external_caller(sid, &g, || crate::plugins::cap_audit_tail(100, false)).unwrap()
         };
         let before = tail("ux1-w").as_array().unwrap().len();
         assert!(before > 0, "本会话应有审计");
@@ -15245,8 +15326,92 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(arr.iter().all(|r| r["draftId"] != "p1-d2"), "插件草稿不混入面板");
         assert!(arr.iter().any(|r| r["draftId"] == "p1-d1"));
         // 审计命令：limit 上限
-        let audit = crate::plugins::mcp_recent_audit(Some(1000)).unwrap();
+        let audit = crate::plugins::mcp_recent_audit(Some(1000), None).unwrap();
         assert!(audit.as_array().unwrap().len() <= 100, "limit 上限 100");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ P2：audit_tail 的 onlyWrites；changes_since 的页级增量（空窗口/改页/rev/limit）。
+    #[test]
+    fn p2_only_writes_and_changes_since() {
+        let f = b1c_fixture("p2");
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        with_external_caller("p2-sess", &g, || dispatch_capability("pages.count", "{}")).unwrap();
+        with_external_caller("p2-sess", &g, || {
+            dispatch_capability("pages.create", r#"{"title":"写一页"}"#)
+        })
+        .unwrap();
+        let tail = |only_writes: bool| -> serde_json::Value {
+            with_external_caller("p2-sess", &g, || {
+                crate::plugins::cap_audit_tail(100, only_writes)
+            })
+            .unwrap()
+        };
+        let all = tail(false).as_array().unwrap().clone();
+        let writes = tail(true).as_array().unwrap().clone();
+        assert!(!all.is_empty() && !writes.is_empty());
+        assert!(
+            writes.iter().all(|r| r["capabilityId"] == "pages.create"),
+            "onlyWrites=true 只回写：{writes:?}"
+        );
+        assert!(
+            all.iter().any(|r| r["capabilityId"] == "pages.count"),
+            "onlyWrites=false 也要有读调用：{all:?}"
+        );
+        let empty = with_external_caller("p2-cs", &g, || {
+            dispatch_capability("pages.changes_since", r#"{"since":1000}"#)
+        })
+        .unwrap();
+        let ev: serde_json::Value = serde_json::from_str(&empty).unwrap();
+        assert!(ev["pages"].as_array().unwrap().is_empty());
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute("UPDATE pages SET updated_at = 9999999999999 WHERE id = 'p1'", [])
+                .unwrap();
+        }
+        let got = with_external_caller("p2-cs2", &g, || {
+            dispatch_capability(
+                "pages.changes_since",
+                r#"{"since":1000000000000,"limit":50}"#,
+            )
+        })
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&got).unwrap();
+        let pages = v["pages"].as_array().unwrap();
+        assert_eq!(pages.len(), 1, "只出现改过的页：{v}");
+        assert_eq!(pages[0]["pageId"], "p1");
+        let detail = with_external_caller("p2-get", &g, || {
+            dispatch_capability("pages.get", r#"{"id":"p1"}"#)
+        })
+        .unwrap();
+        let d: serde_json::Value = serde_json::from_str(&detail).unwrap();
+        assert_eq!(pages[0]["rev"], d["rev"], "changes_since.rev 必须与 pages.get 一致");
+        assert_eq!(v["truncated"], false);
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p2b', ?1, NULL, '第二页', '{}', '', 'page', 0, 1, 9999999999998)",
+                params![f.space],
+            )
+            .unwrap();
+        }
+        let one = with_external_caller("p2-cs3", &g, || {
+            dispatch_capability(
+                "pages.changes_since",
+                r#"{"since":1000000000000,"limit":1}"#,
+            )
+        })
+        .unwrap();
+        let o: serde_json::Value = serde_json::from_str(&one).unwrap();
+        assert_eq!(o["pages"].as_array().unwrap().len(), 1);
+        assert_eq!(o["truncated"], true, "还有没给完的页 ⇒ truncated:true");
+        let e = with_external_caller("p2-cs4", &g, || {
+            dispatch_capability("pages.changes_since", r#"{"since":"not-a-date"}"#)
+        })
+        .expect_err("坏 since 必须 bad_args");
+        assert!(e.contains("bad_args"), "{e}");
         b1c_cleanup(&f);
     }
 }

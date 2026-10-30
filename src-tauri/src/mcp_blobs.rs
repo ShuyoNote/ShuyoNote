@@ -27,7 +27,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 句柄有效期（矩阵 §6：120 秒）。
-pub(crate) const HANDLE_TTL_MS: i64 = 120_000;
+pub(crate) const HANDLE_TTL_MS: i64 = crate::cap_limits::HANDLE_TTL_SECS * 1000;
 /// 同时最多保留多少个句柄 / 总字节上限：外部 agent 连发下载时**不能把内存撑爆**。
 /// 超了先清过期，再按最早到期淘汰（淘汰是**可见**的：那个句柄会 `not_found`）。
 const MAX_HANDLES: usize = 16;

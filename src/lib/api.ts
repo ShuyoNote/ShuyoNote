@@ -140,7 +140,8 @@ export const api = {
     invoke("mcp_draft_state", { draftId, state }),
   // ⭐ P1：设置面板的只读读数
   mcpRecentDrafts: (limit?: number) => invoke("mcp_recent_drafts", { limit }),
-  mcpRecentAudit: (limit?: number) => invoke("mcp_recent_audit", { limit }),
+  mcpRecentAudit: (limit?: number, onlyWrites?: boolean) =>
+    invoke("mcp_recent_audit", { limit, onlyWrites }),
   // ⭐ B3（2026-10-29）：Rust→前端桥的两条（桌面专属 —— Web 没有本机 MCP 通道，也没有这条桥）
   mcpFrontendToolReady: () => invoke("mcp_frontend_tool_ready"),
   mcpFrontendToolRespond: (args: { requestId: string; name: string; data: number[]; error?: string | null }) =>

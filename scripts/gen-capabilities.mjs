@@ -1177,7 +1177,7 @@ export function genMcpTools(reg, kind = "read") {
     return {
       // ⚠️ 只有**写面**带 `kind` —— 读面加任何字段都会让第 10 件变字节 ✗
       ...(kind === "write" ? { kind: "write" } : {}),
-      name: c.id.replace(/\./g, "_"),
+      name: c.mcpName ?? c.id.replace(/\./g, "_"),
       capabilityId: c.id,
       // ⭐ 2026-10-17：`mcpDesc` 优先 —— 外部面**结果形状不同**的能力（目前只有 `pages.search`：
       //   外部面多包一层范围信封，插件面仍是裸数组）必须能各自说清自己的返回值。

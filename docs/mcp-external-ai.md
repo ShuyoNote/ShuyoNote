@@ -57,7 +57,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 4. 怎么验证通没通
 
-1. 让 AI **列工具**：应看到 **读面 33 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows` / `drafts_status` / `audit_tail` / `templates_list` / `space_current`；切到**可写**档后再多 **27 个写面**（共 **60 个**）：`pages_create` / `pages_update` / `pages_importMarkdown`（旧名保留） / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset` / `blocks_patch` / `blocks_insert` / `blocks_delete`；
+1. 让 AI **列工具**：应看到 **读面 34 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows` / `drafts_status` / `audit_tail` / `templates_list` / `space_current` / `changes_since`；切到**可写**档后再多 **27 个写面**（共 **61 个**）：`pages_create` / `pages_update` / `pages_importMarkdown`（旧名保留） / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset` / `blocks_patch` / `blocks_insert` / `blocks_delete`；
 2. 让它读一篇：「列出运营空间最近修改的 3 篇笔记」；
 3. 能读出来说明链路通；**被拒**通常说明档位不够（见 §6）；
 4. 每次调用都会**记一行审计**（谁/何时/做了什么/成败）。
@@ -137,6 +137,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - 清单与档位判据：[能力暴露矩阵](plans/2026-10-29-agent-capability-exposure-matrix.md)；块级写方案：[P2 方案](plans/2026-10-29-agent-block-write-p2.md)。
 
 ## 10. 版本
+
+- 2026-10-30：**P2 能力补齐 —— 工具 60 → 61（读面 33 → 34 / 写面 27）**：① `audit_tail` 加可选 `onlyWrites`（默认 false；true 只回 `kind:"write"` 的调用；面板最近审计固定用 true）；② 新读能力 `pages.changes_since` → 工具 `changes_since({since, spaceId?, limit?})`：按 `pages.updated_at > since` 返回 `{pages:[{pageId,title,rev,updatedAt,kind}],truncated}`（limit 默认 50/上限 200；**v1 只给页级**，要知道改了什么请对 pageId 再调 `pages_get`）；跨空间口径同 `pages_list`；③ 新增 `src-tauri/src/cap_limits.rs` 收敛 200KB/分页/句柄 TTL 等限额，能力层改为引用常量。`apiVersion` 1.14.0 → **1.15.0**。
 
 - 2026-10-30：**P1 设置面板「接入面板」六块 ＋ 第六档「可写（全部空间）」**：面板分六块（档位／状态卡／能力清单／最近草稿／最近审计／边界提示）；能力清单与「这一档能做什么」都**从注册表 ai:true 实时算**（⛔ 不手写会漂的句子）。第六档 `write_all` 授予 `write:pages` ＋ `write:all-spaces`（默认关；`read:all-spaces` 不随之给），切档换令牌语义不变。新增两个只读桌面命令：`mcp_recent_drafts(limit)`（最近草稿，默认 5/上限 50；只列**外部接入**会话）与 `mcp_recent_audit(limit)`（最近审计，默认 20/上限 100；本机视角）。⛔ 本版只放行 `write_all` 的**权限门**，跨空间落库链路（前端 apply 切空间）下一版才接 —— 带 `spaceId` 跨空间写会得到 `bad_args` 而不是 `permission_denied`。`apiVersion` 1.13.0 → **1.14.0**。
 

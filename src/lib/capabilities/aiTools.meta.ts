@@ -52,6 +52,20 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
     isWrite: false,
   },
   {
+    id: "pages.changes_since",
+    description: "自 since 起变了哪些页（页级增量，v1 不做块级 diff）：`{pages:[{pageId,title,rev,updatedAt,kind}],truncated}`，按 updated_at > since 过滤，limit 默认 50 / 上限 200。参数: since（ms 或 ISO，必填）, spaceId, limit。要知道改了什么请对返回的 pageId 再调 pages.get。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "since": { type: "number" },
+      "spaceId": { type: "string" },
+      "limit": { type: "number" },
+      },
+      required: ["since"],
+    },
+    isWrite: false,
+  },
+  {
     id: "pages.get",
     description: "读取单个页面的标题与正文纯文本。参数: id (必填), offset/limit (可选分页，按**字符/Unicode 标量**计数), includeAnchors (可选，默认 true：给每个顶层块后加一行 `<!-- b:<blockId> -->` 锚点，传 false 关掉且正文逐字节不变)。**必须看 `chars_total` 与返回长度判断是否读全**：只读了窗口就当整页用，是这类工具最常见的误用。⚠️ 锚点行**不计入** `chars_total`/`offset`：翻页用 `offset + limit`（夹到 `chars_total`）推算，⛔ 别数返回正文的字符数。返回值另带 `rev`（乐观并发令牌，形如 `<更新时间毫秒>:<正文指纹前 8 位>`；按块写回时要原样带回）。",
     argsSchema: {
@@ -220,6 +234,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       type: "object",
       properties: {
       "limit": { type: "number" },
+      "onlyWrites": { type: "boolean" },
       },
       required: [],
     },

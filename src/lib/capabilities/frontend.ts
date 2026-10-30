@@ -1143,9 +1143,10 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   },
 
   "audit.tail": async (args) => {
+    const onlyWrites = args.onlyWrites === true;
     const raw = Number(args.limit ?? 20);
     const limit = Number.isFinite(raw) ? Math.max(1, Math.min(100, Math.trunc(raw))) : 20;
-    return { ok: false, error: `应用内 AI 面不提供 MCP 审计环（limit=${limit} 只在外部门户/插件面可用）` };
+    return { ok: false, error: `应用内 AI 面不提供 MCP 审计环（limit=${limit}${onlyWrites ? "，仅写" : ""} 只在外部门户/插件面可用）` };
   },
 
   // ⭐ UX-②：模板清单（应用内面也走同一份 listTemplates）
@@ -1191,6 +1192,15 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     const pageId = String(args.pageId ?? "").trim();
     if (pageId) return { ok: false, error: "export.space_markdown 只接受 spaceId（单页请用 export_page_markdown）" };
     return { ok: false, error: `应用内 AI 面不提供导出句柄（空间 ${spaceId || "当前"}）—— 外部接入用 export_space_markdown + blobs_fetch。` };
+  },
+
+  // ⭐ P2：页级增量（应用内面没有跨页 updated_at 扫描的宿主接口 ⇒ 如实说不可用）
+  "pages.changes_since": async (args) => {
+    const since = args.since;
+    const limit = Number(args.limit ?? 50);
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (since === undefined || since === null || since === "") return { ok: false, error: "pages.changes_since 需要 since" };
+    return { ok: false, error: `应用内 AI 面不提供页级增量扫描（since=${String(since)}, limit=${limit}${spaceId ? ", spaceId=" + spaceId : ""}）—— 外部 MCP 面可用` };
   },
 
   "spaces.list": async () => {

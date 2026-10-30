@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "apiVersion": "1.14.0",
+  "apiVersion": "1.15.0",
   "notes": "插件能力注册表——单一事实源。scripts/gen-capabilities.mjs 由本文件生成：JS shim（api.*）、Rust 绑定表、作者类型包、作者文档；scripts/check-capabilities.mjs 校验一致性与完整性。改能力请改这里，不要手改生成物。",
   "permissions": [
     {
@@ -277,6 +277,48 @@
       "rust": "cap_pages_list",
       "desc": "列出页面（id / 标题 / 创建时间 / 更新时间），按更新时间倒序；不含正文。默认本空间；可用 spaceId 指定别的空间（需「只读（全部空间）」档）。**搜索之外的发现通路**：不知道关键词、或检索返回空时，先用它看这个空间里有什么。参数: limit (可选, 默认 50, 上限 200), spaceId (可选)。",
       "mcpDesc": "列出页面（id、标题、创建与更新时间），按**最近更新**倒序，不含正文。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。这是**搜索之外的发现通路**：pages_search 返回空、或不知道该搜什么词时，先调它把那个空间最近改过的页面看一遍。参数: limit (可选, 默认 50, 上限 200), spaceId (可选)。",
+      "ai": true
+    },
+    {
+      "id": "pages.changes_since",
+      "title": "页级增量（自某时刻起变了哪些页）",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:pages",
+      "since": "1.15.0",
+      "jsPath": [
+        "pages",
+        "changesSince"
+      ],
+      "rust": "cap_pages_changes_since",
+      "mcpName": "changes_since",
+      "args": [
+        {
+          "name": "since",
+          "type": "number",
+          "required": true,
+          "desc": "起点：ms 时间戳或 ISO/RFC3339 字符串"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "目标空间 id（省略=当前空间）；跨空间需「只读（全部空间）」档，未开 ⇒ permission_denied 点名 read:all-spaces"
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "required": false,
+          "desc": "最多返回多少页（默认 50 / 上限 200）"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ pages: { pageId: string; title: string; rev: string; updatedAt: number; kind: string }[]; truncated: boolean }",
+        "desc": "页级增量（不返回块级 diff）"
+      },
+      "desc": "自 since 起变了哪些页（页级增量，v1 不做块级 diff）：`{pages:[{pageId,title,rev,updatedAt,kind}],truncated}`，按 updated_at > since 过滤，limit 默认 50 / 上限 200。参数: since（ms 或 ISO，必填）, spaceId, limit。要知道改了什么请对返回的 pageId 再调 pages.get。",
+      "mcpDesc": "自 since 起变了哪些页（页级增量；v1 不做块级 diff）：`{pages:[...],truncated}`。since=ms 或 ISO；limit 默认 50/上限 200。要知道改了什么，请对返回的 pageId 再调 `pages_get`。",
       "ai": true
     },
     {
@@ -812,6 +854,12 @@
           "type": "number",
           "required": false,
           "desc": "最近 N 条（默认 20，上限 100）"
+        },
+        {
+          "name": "onlyWrites",
+          "type": "boolean",
+          "required": false,
+          "desc": "只回写类调用（kind:write）；默认 false（兼容）"
         }
       ],
       "returns": {

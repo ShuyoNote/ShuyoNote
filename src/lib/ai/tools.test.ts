@@ -116,6 +116,8 @@ const EXPECTED = [
   // ⭐ UX-⑦（2026-10-30）
   "export.page_markdown",
   "export.space_markdown",
+  // ⭐ P2（2026-10-30）
+  "pages.changes_since",
 ];
 
 describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实现）", () => {
