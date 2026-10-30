@@ -148,6 +148,7 @@ register({
 | `files.move` | `api.files.move(attId, toPageId, expectedSha, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.9.0 |
 | `files.rename` | `api.files.rename(attId, name, expectedSha, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.9.0 |
 | `files.delete` | `api.files.delete(attId, expectedSha, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.9.0 |
+| `templates.list` | `api.templates.list()` | `read:pages` | `current-space` | — | array | 1.12.0 |
 | `templates.apply` | `api.templates.apply(templateId, parentId, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.9.0 |
 | `files.upload_to_page` | `api.files.upload_to_page(pageId, name, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.10.0 |
 | `import.docpackage` | `api.import.docpackage(parentId, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.10.0 |
@@ -670,6 +671,13 @@ register({
   - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。⚠️ 本版只支持当前空间：给别的空间会明确 `permission_denied`（`write:all-spaces` 档默认关）
   - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
   - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `templates.list` — 模板清单
+
+- 调用：`api.templates.list()`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：本空间的用户模板清单（空表 ⇒ []）
 
 ### `templates.apply` — 套用模板建页（草稿确认）
 

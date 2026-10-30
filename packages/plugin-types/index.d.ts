@@ -372,6 +372,10 @@ export interface PluginApi {
    */
   log(message: string, level?: "info" | "warn" | "error"): void;
   templates: {
+  /** 模板清单（权限 `read:pages`；1.12.0 起）
+   * 返回：本空间的用户模板清单（空表 ⇒ []）
+   */
+    list(): { templateId: string; name: string; title?: string }[];
   /** 套用模板建页（草稿确认）（权限 `write:pages`；1.9.0 起）
    * 返回：{drafted,summary}——**不代表已建页**
    */

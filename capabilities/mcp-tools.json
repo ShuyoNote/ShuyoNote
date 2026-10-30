@@ -506,6 +506,17 @@
     "permission": "read:properties"
   },
   {
+    "name": "templates_list",
+    "capabilityId": "templates.list",
+    "description": "列出本空间用户模板：`[{templateId,name,title?}]`；空表 ⇒ `[]`。拿到的 `templateId` 可传给 `templates_apply`。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "permission": "read:pages"
+  },
+  {
     "name": "files_download",
     "capabilityId": "files.download",
     "description": "把附件取成一个**句柄**（**只回句柄、不回字节**）：`{handle, name, size, sha256, expiresAt}`。句柄 128bit 随机、**单次使用**、**120 秒**有效、绑定**本会话**；要拿到文件用 `blobs_fetch`（只会写进应用自己的导出目录）。不存在 ⇒ `not_found`；超过 10MB ⇒ `needs_confirm`（本批未接确认 UI，不静默下载）。参数: attId (必填)。",

@@ -4465,6 +4465,23 @@ fn cap_audit_tail(limit: i64) -> CapResult {
     Ok(serde_json::json!(rows[start..].to_vec()))
 }
 
+/// `templates.list`（UX-②）：本空间用户模板清单（与 `templates.apply` 配对；空表 ⇒ []）。
+fn cap_templates_list() -> CapResult {
+    with_read_conn(|c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT id, name FROM meta.templates WHERE built_in = 0 ORDER BY sort_order ASC, created_at ASC",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows: Vec<serde_json::Value> = stmt
+            .query_map([], |r| Ok(serde_json::json!({ "templateId": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?, "title": r.get::<_, String>(1)? })))
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::json!(rows))
+    })
+}
+
 fn cap_properties_list(space_id: Option<&str>) -> CapResult {
     with_conn_for_space(space_id, |c| {
         let mut stmt = c
@@ -5240,6 +5257,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_opt_str("id").as_deref(),
             arg_opt_str("name").as_deref(),
         ),
+        "templates.list" => cap_templates_list(),
         "pages.create" => cap_pages_create(
             &arg_str("title")?,
             &args.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string(),

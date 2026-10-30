@@ -5,10 +5,10 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `800bf44c8c0c4478f38c2a6101ceb2f2072e5abff1af6b21d8d195da42de73db` |
+| 注册表 sha256 | `c55e1c29b7663d77d8b7158c67614bee8d5b2709b17336104e84b85030929568` |
 | `apiVersion` | 1.12.0 |
 | 取用条件 | `ai === true` **且** `kind === "read"` |
-| 条数 | **29** |
+| 条数 | **30** |
 | 生成命令 | `node scripts/gen-agent-tool-surface.mjs --phase m1` |
 
 | id | scope | permission | desc |
@@ -39,6 +39,7 @@
 | properties.list | current-space | read:properties | 列出本空间的**属性定义** `[{id, name, type}]`（写属性时要的是 id；读数据库/属性值前先用它找 id）。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选)。 |
 | spaces.list | app | read:pages | 列出所有空间及当前激活空间（切换空间前先看 id/名称）。只读，不改变任何状态。 |
 | tags.list | current-space | read:tags | 列出本空间用到的**标签及各自的页面数**：`[{id, name, page_count}]`（page_count 不含已删除页面）。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选)。 |
+| templates.list | current-space | read:pages | 列出本空间用户模板：`[{templateId,name,title?}]`；空表 ⇒ `[]`。拿到的 `templateId` 可传给 `templates_apply`。 |
 | trash.list | current-space | read:trash | 列出**回收站**里已软删除的页面：`[{pageId, title, deletedAt}]`（按删除时间倒序，不含正文），**只读 —— 不恢复、不清空**。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选), limit (可选, 默认 50, 上限 200)。 |
 | version.get | current-space | read:versions | 读取某个**历史版本**的正文（与 pages_get 同一套字符分页与块锚点口径；**只读，不回滚**）。返回 {pageId, versionId, at, title, 正文窗口, chars_total, offset, limit}；版本不存在 ⇒ `not_found`。参数: pageId (必填), versionId (必填), offset/limit (可选, 默认 6000, 上限 20000), includeAnchors (可选, 默认 true)。 |
 | versions.list | current-space | read:versions | 列出某个页面的**历史版本**：`[{versionId, at, title}]`（按时间倒序，最多 200 条），不含正文 —— 要读某个版本的内容再调 version_get。参数: pageId (必填), limit (可选, 默认 50, 上限 200)。 |

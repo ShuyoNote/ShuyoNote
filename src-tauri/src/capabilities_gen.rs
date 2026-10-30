@@ -65,6 +65,7 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "files.move", kind: "write", scope: "current-space", permission: Some("write:files"), since: "1.9.0", mediate: "draft", rust: "cap_files_move" },
     Capability { id: "files.rename", kind: "write", scope: "current-space", permission: Some("write:files"), since: "1.9.0", mediate: "draft", rust: "cap_files_rename" },
     Capability { id: "files.delete", kind: "write", scope: "current-space", permission: Some("write:files"), since: "1.9.0", mediate: "draft", rust: "cap_files_delete" },
+    Capability { id: "templates.list", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.12.0", mediate: "-", rust: "cap_templates_list" },
     Capability { id: "templates.apply", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.9.0", mediate: "draft", rust: "cap_templates_apply" },
     Capability { id: "files.upload_to_page", kind: "write", scope: "current-space", permission: Some("write:files"), since: "1.10.0", mediate: "draft", rust: "cap_files_upload" },
     Capability { id: "import.docpackage", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.10.0", mediate: "draft", rust: "cap_import_docpackage" },

@@ -1112,6 +1112,12 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     return { ok: false, error: `应用内 AI 面不提供 MCP 审计环（limit=${limit} 只在外部门户/插件面可用）` };
   },
 
+  // ⭐ UX-②：模板清单（应用内面也走同一份 listTemplates）
+  "templates.list": async () => {
+    const rows = await api.listTemplates();
+    return { ok: true, templates: rows.map((t) => ({ templateId: t.id, name: t.name, title: t.name })) };
+  },
+
   "spaces.list": async () => {
     const [spaces, active] = await Promise.all([api.listWorkspaces(), api.getActiveWorkspaceId()]);
     return {

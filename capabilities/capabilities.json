@@ -2041,6 +2041,28 @@
       "ai": true
     },
     {
+      "id": "templates.list",
+      "title": "模板清单",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:pages",
+      "since": "1.12.0",
+      "jsPath": [
+        "templates",
+        "list"
+      ],
+      "rust": "cap_templates_list",
+      "args": [],
+      "returns": {
+        "type": "array",
+        "ts": "{ templateId: string; name: string; title?: string }[]",
+        "desc": "本空间的用户模板清单（空表 ⇒ []）"
+      },
+      "desc": "列出本空间的用户模板：`[{templateId,name,title?}]`（空表 ⇒ `[]`）。与 `templates.apply` 配对使用。",
+      "mcpDesc": "列出本空间用户模板：`[{templateId,name,title?}]`；空表 ⇒ `[]`。拿到的 `templateId` 可传给 `templates_apply`。",
+      "ai": true
+    },
+    {
       "kind": "write",
       "scope": "current-space",
       "mediate": "draft",

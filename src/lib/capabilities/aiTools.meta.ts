@@ -533,6 +533,17 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
     isWrite: true,
   },
   {
+    id: "templates.list",
+    description: "列出本空间的用户模板：`[{templateId,name,title?}]`（空表 ⇒ `[]`）。与 `templates.apply` 配对使用。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      },
+      required: [],
+    },
+    isWrite: false,
+  },
+  {
     id: "templates.apply",
     description: "用模板新建一页（模板内容原样复制；⛔ 不覆盖任何已有页面）。参数: templateId (来自 templates.list), parentId (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。",
     argsSchema: {

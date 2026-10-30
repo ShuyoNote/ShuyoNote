@@ -97,6 +97,7 @@ var api = {
   },
   log: function(message, level) { return __capCall("log.write", { message: message === undefined ? undefined : String(message), level: level === undefined ? "info" : String(level) }); },
   templates: {
+    list: function() { return __capCall("templates.list", {}); },
     apply: function(templateId, parentId, spaceId, dryRun, clientRequestId) { return __capCall("templates.apply", { templateId: templateId === undefined ? undefined : String(templateId), parentId: parentId === undefined ? undefined : String(parentId), spaceId: spaceId === undefined ? undefined : String(spaceId), dryRun: dryRun === undefined ? undefined : String(dryRun), clientRequestId: clientRequestId === undefined ? undefined : String(clientRequestId) }); }
   },
   import: {

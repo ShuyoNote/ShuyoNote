@@ -57,7 +57,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 4. 怎么验证通没通
 
-1. 让 AI **列工具**：应看到 **读面 29 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows` / `drafts_status` / `audit_tail`；切到**可写**档后再多 **26 个写面**（共 **56 个**）：`pages_create` / `pages_update` / `pages_importMarkdown` / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset` / `blocks_patch` / `blocks_insert` / `blocks_delete`；
+1. 让 AI **列工具**：应看到 **读面 30 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows` / `drafts_status` / `audit_tail` / `templates_list`；切到**可写**档后再多 **26 个写面**（共 **56 个**）：`pages_create` / `pages_update` / `pages_importMarkdown` / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset` / `blocks_patch` / `blocks_insert` / `blocks_delete`；
 2. 让它读一篇：「列出运营空间最近修改的 3 篇笔记」；
 3. 能读出来说明链路通；**被拒**通常说明档位不够（见 §6）；
 4. 每次调用都会**记一行审计**（谁/何时/做了什么/成败）。
@@ -79,6 +79,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | `export_docpackage`（导出 `.shuyodoc`，**句柄**） | 只读及以上（`export:files`）。**只支持单页**（与界面「导出为 .shuyodoc」同一份格式实现：`docPackWriter`）；**只回句柄**，落盘用 `blobs_fetch`；页不存在 ⇒ `not_found`、文件夹 ⇒ `bad_args`、>10MB 或 >20 文件 ⇒ `needs_confirm` |
 | `coverage_report`（索引覆盖率报告） | 只读及以上（`read:files`）。**直接回 JSON**（不进句柄表）：`{ok, summary, report}`，与应用内「检查索引覆盖」/AI 面**同一个函数**（唯一实现在 TS）。⚠️ 报告是**当前空间**口径：`spaceId` 只接受当前空间（跨空间 ⇒ `bad_args`）。⚠️ 它经 **Rust→前端桥**算 ⇒ 应用窗口没挂载/忙时会回 `frontend_unavailable` / `frontend_timeout`（见 §7） |
 | `drafts_status`（查草稿状态） | 只读及以上。写工具返回 `draftId`；状态 `pending/applied/rejected/expired`（10 分钟未确认 ⇒ expired）；**只回本会话**，别的会话/不存在 ⇒ `not_found` |
+| `templates_list`（模板清单） | 只读及以上。`[{templateId,name,title?}]`；空表 ⇒ `[]`；与 `templates_apply` 配对 |
 | `audit_tail`（最近审计） | 只读及以上。只回**本会话**最近 N 条（默认 20/上限 100）：`{at,tool,capabilityId,ok,code}`；⛔ 不含正文、不回别的会话 |
 | `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete`（**软删**） | 可写；全部**草稿确认**。⚠️ 删**非空节点** ⇒ `bad_args` 并点名 N 个子项（⛔ 不递归删）；`nodes_move` 移到自己的后代下面 ⇒ 拒绝（环检测），返回带 `backlinks` 数；支持 `expectedRev`/`dryRun`/`clientRequestId`；`spaceId` 本版只支持当前空间 |
 | `trash_restore`（从回收站恢复） | 可写；草稿确认。活着的节点 ⇒ `bad_args`（不需要恢复）；不存在 ⇒ `not_found` |
@@ -133,6 +134,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - 清单与档位判据：[能力暴露矩阵](plans/2026-10-29-agent-capability-exposure-matrix.md)；块级写方案：[P2 方案](plans/2026-10-29-agent-block-write-p2.md)。
 
 ## 10. 版本
+
+- 2026-10-30：**UX-② 模板清单 —— MCP 工具 55 → 56（读面 29 → 30 / 写面 26）**：新增 `templates_list`（`templates.list`，read:pages）→ `[{templateId,name,title?}]`，空表 `[]`，与 `templates_apply` 配对。`apiVersion` 仍 1.12.0（同批累积）。
 
 - 2026-10-30：**UX-① 写闭环 —— MCP 工具 51 → 56（读面 29 / 写面 26）**：全部写工具返回 `draftId`（`dryRun` 不生成）；新增 `drafts_status`（pending/applied/rejected/expired，**只回本会话**）与 `audit_tail`（本会话最近 N 条，⛔ 不含正文）。apply 侧确认/拒绝后回写状态（新桌面命令 `mcp_draft_state`）。`apiVersion` 1.11.0 → **1.12.0**。
 
