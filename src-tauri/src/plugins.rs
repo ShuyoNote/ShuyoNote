@@ -4810,10 +4810,8 @@ fn cap_space_current() -> CapResult {
 
 /// `export.page_markdown`（UX-⑦）：只接受 pageId 的单页导出（拆名后行为不变）。
 fn cap_export_page_markdown(page_id: &str, space_id: Option<&str>) -> CapResult {
-    if space_id.map(str::trim).filter(|s| !s.is_empty()).is_some() {
-        return Err("bad_args: export_page_markdown 只接受 pageId（整空间请用 export_space_markdown）".to_string());
-    }
-    cap_export_markdown(Some(page_id), None)
+    // ⭐ B：pageId 与 spaceId 可同时给（跨空间导单页）；spaceId=当前空间等价于省略
+    cap_export_markdown(Some(page_id), space_id.filter(|s| !s.trim().is_empty()))
 }
 
 /// `export.space_markdown`（UX-⑦）：只接受 spaceId（省略=当前空间）的整空间导出。
