@@ -137,3 +137,26 @@ describe("B1：属性区 P0", () => {
     flushSync(() => root.unmount());
   });
 });
+
+describe("B2：类型化展示", () => {
+  it("来源 URL ⇒ 链接（省略中段）+ 复制，展示态无 input", async () => {
+    const { root, host } = await mountWith([prop("来源", "example.com/very/long/path/that/should/be/ellipsized/end")]);
+    const a = host.querySelector("a.prop-link") as HTMLAnchorElement | null;
+    expect(a?.getAttribute("href")).toBe("https://example.com/very/long/path/that/should/be/ellipsized/end");
+    expect(a?.textContent).toContain("…");
+    expect(host.querySelector(".prop-link-copy")).toBeTruthy();
+    expect(host.querySelector(".prop-row input.prop-value")).toBeNull();
+    flushSync(() => root.unmount());
+  });
+
+  it("日期 ⇒ 到分钟 + 相对时间 + 时区（展示态无日期控件）", async () => {
+    const { root, host } = await mountWith([prop("日期", "2026-10-30 11:30", "date")]);
+    const el = host.querySelector(".prop-datetime");
+    expect(el?.textContent).toContain("2026-10-30 11:30");
+    expect(el?.textContent).toContain("+08:00");
+    expect(el?.textContent).toMatch(/前|后|刚刚/);
+    expect(host.querySelector('input[type="date"]')).toBeNull();
+    flushSync(() => root.unmount());
+  });
+});
+

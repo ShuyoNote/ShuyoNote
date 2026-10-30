@@ -7,6 +7,7 @@ import { TagRow } from "./TagBar";
 // 「时间」属性的编辑器单独一个文件（**一行只有一个可见输入框**，见那边的头注）：
 // 它原来长在这里、且一行并排两个框 —— owner 2026-09-21 的截图问的就是那个。
 import { DatetimeValueEditor } from "./DatetimeValueEditor";
+import { formatDateTime, formatUrl } from "../lib/propFormat";
 
 // 「时间」= 日期 + 时刻（attr_type = "datetime"），与只到日的"日期"并列。
 const TYPES = ["text", "number", "date", "datetime", "checkbox", "select", "multi"] as const;
@@ -390,6 +391,66 @@ function renderSystemValue(p: PageProp): string {
 }
 
 function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  if (prop.name === "来源") {
+    const u = formatUrl(prop.value);
+    if (u && !editing) {
+      return (
+        <span className="prop-link-wrap">
+          <a className="prop-link" href={u.href} target="_blank" rel="noreferrer" title={u.href}>
+            {u.display}
+          </a>
+          <button
+            type="button"
+            className="prop-link-copy"
+            title="复制链接"
+            onClick={() => void navigator.clipboard?.writeText(u.copyText)}
+          >
+            复制
+          </button>
+          <button type="button" className="prop-link-edit" title="编辑" onClick={() => setEditing(true)}>
+            编辑
+          </button>
+        </span>
+      );
+    }
+    if (editing) {
+      return (
+        <input
+          className="prop-value"
+          autoFocus
+          value={prop.value}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={() => setEditing(false)}
+        />
+      );
+    }
+  }
+  if (prop.attr_type === "date" || prop.attr_type === "datetime") {
+    const f = formatDateTime(prop.value);
+    if (f && !editing) {
+      return (
+        <button type="button" className="prop-datetime" title={f.iso} onClick={() => setEditing(true)}>
+          {f.absolute} · {f.relative} · {f.timezone}
+        </button>
+      );
+    }
+    if (editing) {
+      if (prop.attr_type === "datetime") {
+        return <DatetimeValueEditor value={prop.value} onChange={onChange} />;
+      }
+      return (
+        <input
+          type="date"
+          className="prop-value"
+          autoFocus
+          value={/^\d{4}-\d{2}-\d{2}/.test(prop.value) ? prop.value.slice(0, 10) : ""}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={() => setEditing(false)}
+        />
+      );
+    }
+  }
   if (prop.attr_type === "checkbox") {
     return (
       <input
@@ -410,22 +471,6 @@ function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string)
           </option>
         ))}
       </select>
-    );
-  }
-  if (prop.attr_type === "datetime") {
-    // 两条输入路径**并存**：选择器（带秒）＋ 手输（认「2008年5月9日 15:30:00」等写法）。
-    // 两条都走 `lib/dateTimeValue` 的同一份解析/格式化，避免两边不一致。
-    return <DatetimeValueEditor value={prop.value} onChange={onChange} />;
-  }
-  if (prop.attr_type === "date") {
-    // 日期选择器（不用手输 YYYY-MM-DD）。
-    return (
-      <input
-        type="date"
-        className="prop-value"
-        value={/^\d{4}-\d{2}-\d{2}/.test(prop.value) ? prop.value.slice(0, 10) : ""}
-        onChange={(e) => onChange(e.target.value)}
-      />
     );
   }
   return <EmptyableTextValue prop={prop} onChange={onChange} />;

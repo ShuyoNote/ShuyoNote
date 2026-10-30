@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **B2 属性类型化**：新增 `propFormat.ts`（URL 省略/无协议补全、日期到分钟+相对时间+`+08:00`、person chip）；属性面板「来源」渲染为可点链接+复制（展示态无 input）、date/datetime 展示态为格式化文本（编辑态才出控件）。判据 `propFormat.test.ts` 4 条＋面板 2 条。
 - **B1 属性区 P0**：计数改为「N 项属性 · M 个标签」；系统字段（存于/创建/更新）收进「系统信息」只读折叠（无删除/排序）；空值显示「未设置（点击填写）」；header「＋ 添加属性」＋标签行「＋」；行操作按钮 hover/聚焦才出。5 条新判据＋既有 2 条全绿。
 - **包格式 M2e：UI 入口**：文件区工具栏「导出空间包/导入空间包」按钮；导出聚合当前空间 pages/attachments→`buildSpacePackage`→保存对话框→`writeBinaryFile`；导入选择文件→`readBinaryFile`→`openSpacePackage`→`space_package_import`→切新空间并展示 warnings；失败原样 `E_*`；取消不发命令。新增 6 条挂载判据。
 - **M2d 上限/名字冲突**：空间包读侧与导入命令都加 256 MiB/10000 条上限（可注入，超限 E_LIMIT，边界通过）；tree 与 attachments 名字冲突以 tree 为准并记 `attachment-name-mismatch` warning。UI 入口下一批。
