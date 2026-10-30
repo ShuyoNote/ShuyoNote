@@ -1,0 +1,25 @@
+{
+  "description": "ShuyoNote 默认落地页 → 文件管理 → 属性面板。桌面宽度（>=900px）才跑后两个面：移动端布局里没有活动栏，点了也到不了。",
+  "shots": [
+    { "name": "initial" },
+    {
+      "name": "files",
+      "minWidth": 900,
+      "steps": [
+        { "click": "button[title=\"文件管理\"]" },
+        { "wait": 900 },
+        { "waitFor": ".file-manager-toolbar" }
+      ]
+    },
+    {
+      "name": "properties",
+      "minWidth": 900,
+      "steps": [
+        { "click": "button[title=\"笔记\"]" },
+        { "wait": 800 },
+        { "clickText": "添加属性" },
+        { "wait": 800 }
+      ]
+    }
+  ]
+}
