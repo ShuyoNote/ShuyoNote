@@ -117,6 +117,8 @@ var api = {
   },
   export: {
     markdown: function(pageId, spaceId) { return __capCall("export.markdown", { pageId: pageId === undefined ? undefined : String(pageId), spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
+    pageMarkdown: function(pageId, spaceId) { return __capCall("export.page_markdown", { pageId: pageId === undefined ? undefined : String(pageId), spaceId: spaceId === undefined ? undefined : String(spaceId) }); },
+    spaceMarkdown: function(spaceId, pageId) { return __capCall("export.space_markdown", { spaceId: spaceId === undefined ? undefined : String(spaceId), pageId: pageId === undefined ? undefined : String(pageId) }); },
     docpackage: function(pageId) { return __capCall("export.docpackage", { pageId: pageId === undefined ? undefined : String(pageId) }); }
   },
   spaces: {

@@ -1141,6 +1141,22 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     return draft(`import_markdown:${title}`, `导入 Markdown 新建页面「${title}」`, { kind: "create_page", args: built.args });
   },
 
+  // ⭐ UX-⑦：导出拆名（旧 export.markdown 保留）
+  "export.page_markdown": async (args) => {
+    const pageId = String(args.pageId ?? "").trim();
+    const spaceId = String(args.spaceId ?? "").trim();
+    if (!pageId) return { ok: false, error: "export.page_markdown 需要 pageId" };
+    if (spaceId) return { ok: false, error: "export.page_markdown 只接受 pageId（整空间请用 export_space_markdown）" };
+    return { ok: false, error: "应用内 AI 面不提供导出句柄 —— 要文件请用文件管理的导出入口；外部接入用 export_page_markdown + blobs_fetch。" };
+  },
+
+  "export.space_markdown": async (args) => {
+    const spaceId = String(args.spaceId ?? "").trim();
+    const pageId = String(args.pageId ?? "").trim();
+    if (pageId) return { ok: false, error: "export.space_markdown 只接受 spaceId（单页请用 export_page_markdown）" };
+    return { ok: false, error: `应用内 AI 面不提供导出句柄（空间 ${spaceId || "当前"}）—— 外部接入用 export_space_markdown + blobs_fetch。` };
+  },
+
   "spaces.list": async () => {
     const [spaces, active] = await Promise.all([api.listWorkspaces(), api.getActiveWorkspaceId()]);
     return {

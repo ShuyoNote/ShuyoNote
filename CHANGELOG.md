@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **MCP UX-⑦ 导出拆名 —— 工具 58 → 60**：新增 `export_page_markdown`（只接受 `pageId`）与 `export_space_markdown`（只接受 `spaceId`，省略=当前空间）；两者给错参数 ⇒ `bad_args` 点名；旧 `export_markdown` 保留（deprecated，行为不变）。
 - **MCP UX-⑤ 命名统一 —— 工具 57 → 58**：新增 `pages_import_markdown`（与旧 `pages_importMarkdown` 同一能力、行为一致）；旧名保留并标 `deprecated`。
 - **MCP UX-③ 当前空间 —— 工具 57 → 57（读面 31 / 写面 26）**：新增只读 `space_current`（`space.current`）→ `{spaceId,name,pageCount}`（与 `spaces_list` 的 active 一致；⛔ 不切换空间）。
 - **MCP UX-② 模板清单 —— 工具 56 → 57（读面 30 / 写面 26）**：新增只读 `templates_list`（`templates.list`）→ `[{templateId,name,title?}]`（空表 `[]`），与 `templates_apply` 配对。

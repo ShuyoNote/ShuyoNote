@@ -81,6 +81,8 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "files.download", kind: "read", scope: "current-space", permission: Some("export:files"), since: "1.5.0", mediate: "-", rust: "cap_files_download" },
     Capability { id: "blobs.fetch", kind: "read", scope: "current-space", permission: Some("export:files"), since: "1.5.0", mediate: "-", rust: "cap_blobs_fetch" },
     Capability { id: "export.markdown", kind: "read", scope: "current-space", permission: Some("export:files"), since: "1.6.0", mediate: "-", rust: "cap_export_markdown" },
+    Capability { id: "export.page_markdown", kind: "read", scope: "current-space", permission: Some("export:files"), since: "1.12.0", mediate: "-", rust: "cap_export_page_markdown" },
+    Capability { id: "export.space_markdown", kind: "read", scope: "current-space", permission: Some("export:files"), since: "1.12.0", mediate: "-", rust: "cap_export_space_markdown" },
     Capability { id: "export.docpackage", kind: "read", scope: "current-space", permission: Some("export:files"), since: "1.6.0", mediate: "-", rust: "cap_export_docpackage" },
     Capability { id: "pages.importMarkdown", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.0.0", mediate: "draft", rust: "cap_pages_import_markdown" },
     Capability { id: "pages.import_markdown", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.12.0", mediate: "draft", rust: "cap_pages_import_markdown" },

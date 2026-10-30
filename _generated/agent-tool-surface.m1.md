@@ -5,10 +5,10 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `7bf9778e52c53bcf98ffb749fcc9c309fd1eeab10587d44132050cf07c032b90` |
+| 注册表 sha256 | `9a912d9ca3da5a35f24e03542d0228f81b9a6841327a9a05af52c145016e2dc7` |
 | `apiVersion` | 1.12.0 |
 | 取用条件 | `ai === true` **且** `kind === "read"` |
-| 条数 | **31** |
+| 条数 | **33** |
 | 生成命令 | `node scripts/gen-agent-tool-surface.mjs --phase m1` |
 
 | id | scope | permission | desc |
@@ -22,7 +22,9 @@
 | db.schema | current-space | read:pages | 读取一个**数据库页**的结构：`{pageId, spaceId, views:[{id,name,type}], columns:[{id,name,type,isFormula?,isRollup?}], relations:[{id,name,type}]}`。列与视图与界面**同一条查询**（同一份数据库元数据），所以名字/顺序/类型都对得上。**公式列**带 `isFormula:true`、**汇总列**带 `isRollup:true` —— 本工具只**标明**它们是计算列，⛔ **不计算任何值**；`relations` 是关系列（`type:ref`，取值形如 `p:<pageId>`，要标题得自己按 id 再查）。默认读**当前空间**；给了 spaceId 就读那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: pageId (必填), spaceId (可选)。 |
 | drafts.status | current-space | read:pages | 查一条草稿当前状态：pending（等用户确认）/ applied（已落库）/ rejected（用户拒绝）/ expired（10 分钟没确认）。参数: draftId。⚠️ 只回**本会话**的草稿；别的会话/不存在 ⇒ not_found。 |
 | export.docpackage | current-space | export:files | 把**一页**打包成 `.shuyodoc`（单页；与界面「导出为 .shuyodoc」同一份格式实现）并**只回句柄**：`{handle, name, size, sha256, expiresAt}`。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`。 |
-| export.markdown | current-space | export:files | 把内容导出成文件并**只回句柄**（不把字节塞进上下文）：`{handle, name, size, sha256, expiresAt}`。两种口径（**只能给一个**）：`pageId` ⇒ 该页的单个 `.md`（与界面「导出为 Markdown」同口径）；`spaceId` ⇒ 该空间整份 `.zip`（Markdown ＋ 附件，与界面「导出本空间」同口径；跨空间需要「只读（全部空间）」档）。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落应用数据目录的 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`（本批未接确认 UI，不静默导出）。 |
+| export.markdown | current-space | export:files | deprecated: 用上面两个显式工具 export_page_markdown / export_space_markdown（旧名保留以兼容外部客户端）。把内容导出成文件并**只回句柄**（不把字节塞进上下文）：`{handle, name, size, sha256, expiresAt}`。两种口径（**只能给一个**）：`pageId` ⇒ 该页的单个 `.md`（与界面「导出为 Markdown」同口径）；`spaceId` ⇒ 该空间整份 `.zip`（Markdown ＋ 附件，与界面「导出本空间」同口径；跨空间需要「只读（全部空间）」档）。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落应用数据目录的 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`（本批未接确认 UI，不静默导出）。 |
+| export.page_markdown | current-space | export:files | 导出**单页** Markdown（`.md`）并只回句柄。参数: pageId(必填)。⚠️ 只接受 pageId（给 spaceId ⇒ `bad_args`；整空间用 `export_space_markdown`）。句柄单次/TTL 120s/绑会话；落盘用 `blobs_fetch`。 |
+| export.space_markdown | current-space | export:files | 导出**整空间**（Markdown ＋ 附件 zip）并只回句柄。参数: spaceId(可选,省略=当前空间；本版只支持当前空间)。⚠️ 只接受 spaceId（给 pageId ⇒ `bad_args`）。句柄单次/TTL 120s/绑会话。 |
 | files.download | current-space | export:files | 把附件取成一个**句柄**（**只回句柄、不回字节**）：`{handle, name, size, sha256, expiresAt}`。句柄 128bit 随机、**单次使用**、**120 秒**有效、绑定**本会话**；要拿到文件用 `blobs_fetch`（只会写进应用自己的导出目录）。不存在 ⇒ `not_found`；超过 10MB ⇒ `needs_confirm`（本批未接确认 UI，不静默下载）。参数: attId (必填)。 |
 | files.extract_status | current-space | read:files | 读一个附件的**抽取完整度**（单文件口径）：`{attId, name, extracted, segments, extractors:[{extractor, coverage}]}`。`coverage` 是抽取器报的**原始覆盖度**，空串 = **未知**（⛔ 不许读成「完整」）；`extracted:false` 只说明还没抽过，不代表文件里没有内容。不存在 ⇒ `not_found`。参数: attId (必填)。 |
 | files.list | current-space | read:files | 列出页面附件。参数: pageId (可选, 省略=当前打开的页面)。返回文件名/类型/大小。 |

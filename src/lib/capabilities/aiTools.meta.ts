@@ -764,12 +764,38 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "export.markdown",
-    description: "把一页导出成 Markdown、或把整个空间导出成 zip，**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。参数: pageId (可选，单页 ⇒ .md) / spaceId (可选，整空间 ⇒ 含附件的 .zip；跨空间需「只读（全部空间）」档) —— 两者**只能给一个**。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm（本批未接确认 UI，不静默导出）。",
+    description: "deprecated: 用上面两个显式工具 export_page_markdown / export_space_markdown（旧名保留以兼容外部客户端）。把一页导出成 Markdown、或把整个空间导出成 zip，**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。参数: pageId (可选，单页 ⇒ .md) / spaceId (可选，整空间 ⇒ 含附件的 .zip；跨空间需「只读（全部空间）」档) —— 两者**只能给一个**。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm（本批未接确认 UI，不静默导出）。",
     argsSchema: {
       type: "object",
       properties: {
       "pageId": { type: "string" },
       "spaceId": { type: "string" },
+      },
+      required: [],
+    },
+    isWrite: false,
+  },
+  {
+    id: "export.page_markdown",
+    description: "把**一页**导出成 `.md`，返回句柄（不返回字节）。参数: pageId (必填)。只接受 pageId —— 给 spaceId ⇒ bad_args（整空间请用 export_space_markdown）。句柄单次/TTL 120s/绑会话；落盘用 blobs_fetch。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "pageId": { type: "string" },
+      "spaceId": { type: "string" },
+      },
+      required: ["pageId"],
+    },
+    isWrite: false,
+  },
+  {
+    id: "export.space_markdown",
+    description: "把**整个空间**导出成 `.zip`（Markdown ＋ 附件），返回句柄。参数: spaceId (可选;省略=当前空间；本版只支持当前空间)。只接受 spaceId —— 给 pageId ⇒ bad_args（单页请用 export_page_markdown）。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "spaceId": { type: "string" },
+      "pageId": { type: "string" },
       },
       required: [],
     },

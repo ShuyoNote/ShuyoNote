@@ -4504,6 +4504,24 @@ fn cap_space_current() -> CapResult {
     })
 }
 
+/// `export.page_markdown`（UX-⑦）：只接受 pageId 的单页导出（拆名后行为不变）。
+fn cap_export_page_markdown(page_id: &str, space_id: Option<&str>) -> CapResult {
+    if space_id.map(str::trim).filter(|s| !s.is_empty()).is_some() {
+        return Err("bad_args: export_page_markdown 只接受 pageId（整空间请用 export_space_markdown）".to_string());
+    }
+    cap_export_markdown(Some(page_id), None)
+}
+
+/// `export.space_markdown`（UX-⑦）：只接受 spaceId（省略=当前空间）的整空间导出。
+fn cap_export_space_markdown(space_id: Option<&str>, page_id: Option<&str>) -> CapResult {
+    if page_id.map(str::trim).filter(|s| !s.is_empty()).is_some() {
+        return Err("bad_args: export_space_markdown 只接受 spaceId（单页请用 export_page_markdown）".to_string());
+    }
+    let current = target_space_id(None);
+    let target = space_id.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(&current);
+    cap_export_markdown(None, Some(target))
+}
+
 fn cap_properties_list(space_id: Option<&str>) -> CapResult {
     with_conn_for_space(space_id, |c| {
         let mut stmt = c
@@ -5158,6 +5176,8 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_opt_str("spaceId").as_deref(),
         ),
         "export.docpackage" => cap_export_docpackage(&arg_str("pageId")?),
+        "export.page_markdown" => cap_export_page_markdown(&arg_str("pageId")?, arg_opt_str("spaceId").as_deref()),
+        "export.space_markdown" => cap_export_space_markdown(arg_opt_str("spaceId").as_deref(), arg_opt_str("pageId").as_deref()),
         "coverage.report" => cap_coverage_report(arg_opt_str("spaceId").as_deref()),
         "files.export" => cap_files_export(&arg_str("fileName")?, &arg_str("content")?),
         "kv.get" => cap_kv_get(&arg_str("key")?, &scope_arg(&args)),
@@ -15052,5 +15072,13 @@ register({ id: "s.run", title: "结构化", run: function () {
         let after = tail("ux1-w");
         assert_eq!(after.as_array().unwrap().len(), before, "别的会话审计不许出现");
         b1c_cleanup(&f);
+    /// ⭐ UX-⑦：拆分后的显式工具只接受自己的参数（给错 ⇒ bad_args 点名）。
+    #[test]
+    fn ux7_export_split_rejects_the_other_parameter() {
+        let e = super::cap_export_page_markdown("p1", Some("other")).unwrap_err();
+        assert!(e.contains("bad_args") && e.contains("space_markdown"), "{e}");
+        let e = super::cap_export_space_markdown(None, Some("p1")).unwrap_err();
+        assert!(e.contains("bad_args") && e.contains("page_markdown"), "{e}");
+    }
     }
 }

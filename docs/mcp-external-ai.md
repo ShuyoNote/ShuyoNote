@@ -57,7 +57,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 4. 怎么验证通没通
 
-1. 让 AI **列工具**：应看到 **读面 31 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows` / `drafts_status` / `audit_tail` / `templates_list` / `space_current`；切到**可写**档后再多 **27 个写面**（共 **58 个**）：`pages_create` / `pages_update` / `pages_importMarkdown`（旧名保留） / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset` / `blocks_patch` / `blocks_insert` / `blocks_delete`；
+1. 让 AI **列工具**：应看到 **读面 33 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows` / `drafts_status` / `audit_tail` / `templates_list` / `space_current`；切到**可写**档后再多 **27 个写面**（共 **60 个**）：`pages_create` / `pages_update` / `pages_importMarkdown`（旧名保留） / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset` / `blocks_patch` / `blocks_insert` / `blocks_delete`；
 2. 让它读一篇：「列出运营空间最近修改的 3 篇笔记」；
 3. 能读出来说明链路通；**被拒**通常说明档位不够（见 §6）；
 4. 每次调用都会**记一行审计**（谁/何时/做了什么/成败）。
@@ -76,6 +76,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | `files_stat` / `files_extract_status` / `files_list_orphan`（附件元数据） | 只读及以上。`files_stat` 给真 `sha256`；`files_extract_status` 的 `coverage` 是**原始覆盖度**（空 = 未知，⛔ 不等于完整）；`files_list_orphan` 只列**未挂到页面**的附件（只读，不清理） |
 | `files_download` / `blobs_fetch`（导出/下载句柄） | 只读及以上（需要 `export:files`；只读档已含）。`files_download` **只回句柄不回字节**：句柄 128bit 随机、**单次**、**120 秒**、绑当前会话；`blobs_fetch` 把句柄换成文件，**只写进应用数据目录下的 `exports/`**（文件名会清洗；⛔ **不接受任意目标路径**），sha256 与句柄一致。二次使用/过期/别的会话 ⇒ `not_found`；>10MB ⇒ `needs_confirm`（本批没有确认 UI，不静默下载） |
 | `export_markdown`（导出 Markdown，**句柄**） | 只读及以上（`export:files`）。两种口径**只能给一个**：`pageId` ⇒ 该页单个 `.md`（与界面「导出为 Markdown」同口径）；`spaceId` ⇒ 整份 `.zip`（Markdown ＋ 附件，与界面「导出本空间」同口径；⚠️ **只支持当前空间**，别的空间 ⇒ `bad_args`）。**只回句柄**（单次/120s/绑会话），落盘用 `blobs_fetch`；>10MB 或 >20 文件 ⇒ `needs_confirm` |
+| `export_page_markdown`（单页 Markdown，句柄） | 只读及以上（`export:files`）。只接受 `pageId`（给 spaceId ⇒ `bad_args`）；句柄单次/TTL 120s/绑会话 |
+| `export_space_markdown`（整空间 zip，句柄） | 只读及以上（`export:files`）。只接受 `spaceId`（省略=当前空间；给 pageId ⇒ `bad_args`）；本版只支持当前空间 |
 | `export_docpackage`（导出 `.shuyodoc`，**句柄**） | 只读及以上（`export:files`）。**只支持单页**（与界面「导出为 .shuyodoc」同一份格式实现：`docPackWriter`）；**只回句柄**，落盘用 `blobs_fetch`；页不存在 ⇒ `not_found`、文件夹 ⇒ `bad_args`、>10MB 或 >20 文件 ⇒ `needs_confirm` |
 | `coverage_report`（索引覆盖率报告） | 只读及以上（`read:files`）。**直接回 JSON**（不进句柄表）：`{ok, summary, report}`，与应用内「检查索引覆盖」/AI 面**同一个函数**（唯一实现在 TS）。⚠️ 报告是**当前空间**口径：`spaceId` 只接受当前空间（跨空间 ⇒ `bad_args`）。⚠️ 它经 **Rust→前端桥**算 ⇒ 应用窗口没挂载/忙时会回 `frontend_unavailable` / `frontend_timeout`（见 §7） |
 | `drafts_status`（查草稿状态） | 只读及以上。写工具返回 `draftId`；状态 `pending/applied/rejected/expired`（10 分钟未确认 ⇒ expired）；**只回本会话**，别的会话/不存在 ⇒ `not_found` |
@@ -135,6 +137,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - 清单与档位判据：[能力暴露矩阵](plans/2026-10-29-agent-capability-exposure-matrix.md)；块级写方案：[P2 方案](plans/2026-10-29-agent-block-write-p2.md)。
 
 ## 10. 版本
+
+- 2026-10-30：**UX-⑦ 导出拆名 —— 工具 60（读面 33 / 写面 27）**：新增 `export_page_markdown`（只接受 pageId）与 `export_space_markdown`（只接受 spaceId，省略=当前空间）；旧 `export_markdown` 保留并标 `deprecated`，行为不变。
 
 - 2026-10-30：**UX-⑤ 命名统一 —— 工具 58（读面 31 / 写面 27）**：新增 `pages_import_markdown`（能力 `pages.import_markdown`，与旧 `pages.importMarkdown` **同一能力、行为一致**）；旧名保留并标 `deprecated`（外部客户端不崩）。`apiVersion` 仍 1.12.0。
 

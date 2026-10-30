@@ -164,6 +164,8 @@ register({
 | `files.download` | `api.files.download(attId)` | `export:files` | `current-space` | — | object | 1.5.0 |
 | `blobs.fetch` | `api.blobs.fetch(handle)` | `export:files` | `current-space` | — | object | 1.5.0 |
 | `export.markdown` | `api.export.markdown(pageId, spaceId)` | `export:files` | `current-space` | — | object | 1.6.0 |
+| `export.page_markdown` | `api.export.pageMarkdown(pageId, spaceId)` | `export:files` | `current-space` | — | object | 1.12.0 |
+| `export.space_markdown` | `api.export.spaceMarkdown(spaceId, pageId)` | `export:files` | `current-space` | — | object | 1.12.0 |
 | `export.docpackage` | `api.export.docpackage(pageId)` | `export:files` | `current-space` | — | object | 1.6.0 |
 | `pages.importMarkdown` | `api.pages.importMarkdown(title, markdown, parentId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `pages.import_markdown` | `api.pages.import_markdown(title, markdown, parentId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.12.0 |
@@ -879,6 +881,26 @@ register({
 - 参数：
   - `pageId`: `string`（可选） —— 单页导出：页面 id（与 spaceId 只能给一个）
   - `spaceId`: `string`（可选） —— 整空间导出：空间 id（与 pageId 只能给一个；跨空间需「只读（全部空间）」档，否则明确拒）
+
+### `export.page_markdown` — 导出单页 Markdown（句柄）
+
+- 调用：`api.export.pageMarkdown(pageId, spaceId)`
+- 权限：`export:files`
+- scope：`current-space`
+- 返回：句柄（单次/120s/绑会话）；落盘用 blobs_fetch
+- 参数：
+  - `pageId`: `string` —— 要导出的页面 id（只接受 pageId）
+  - `spaceId`: `string`（可选） —— 整空间 id。⚠️ 本工具只接受 pageId —— 给了它 ⇒ `bad_args`（请用 export_space_markdown）
+
+### `export.space_markdown` — 导出整空间 Markdown（句柄）
+
+- 调用：`api.export.spaceMarkdown(spaceId, pageId)`
+- 权限：`export:files`
+- scope：`current-space`
+- 返回：句柄；落盘用 blobs_fetch
+- 参数：
+  - `spaceId`: `string`（可选） —— 整空间 id（省略=当前空间；本版只支持当前空间）
+  - `pageId`: `string`（可选） —— 页面 id。⚠️ 本工具只接受 spaceId —— 给了它 ⇒ `bad_args`（请用 export_page_markdown）
 
 ### `export.docpackage` — 导出 .shuyodoc（句柄）
 

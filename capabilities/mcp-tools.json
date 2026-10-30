@@ -555,7 +555,7 @@
   {
     "name": "export_markdown",
     "capabilityId": "export.markdown",
-    "description": "把内容导出成文件并**只回句柄**（不把字节塞进上下文）：`{handle, name, size, sha256, expiresAt}`。两种口径（**只能给一个**）：`pageId` ⇒ 该页的单个 `.md`（与界面「导出为 Markdown」同口径）；`spaceId` ⇒ 该空间整份 `.zip`（Markdown ＋ 附件，与界面「导出本空间」同口径；跨空间需要「只读（全部空间）」档）。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落应用数据目录的 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`（本批未接确认 UI，不静默导出）。",
+    "description": "deprecated: 用上面两个显式工具 export_page_markdown / export_space_markdown（旧名保留以兼容外部客户端）。把内容导出成文件并**只回句柄**（不把字节塞进上下文）：`{handle, name, size, sha256, expiresAt}`。两种口径（**只能给一个**）：`pageId` ⇒ 该页的单个 `.md`（与界面「导出为 Markdown」同口径）；`spaceId` ⇒ 该空间整份 `.zip`（Markdown ＋ 附件，与界面「导出本空间」同口径；跨空间需要「只读（全部空间）」档）。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落应用数据目录的 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`（本批未接确认 UI，不静默导出）。",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -566,6 +566,48 @@
         "spaceId": {
           "type": "string",
           "description": "整空间导出：空间 id（与 pageId 只能给一个；跨空间需「只读（全部空间）」档，否则明确拒）"
+        }
+      },
+      "required": []
+    },
+    "permission": "export:files"
+  },
+  {
+    "name": "export_page_markdown",
+    "capabilityId": "export.page_markdown",
+    "description": "导出**单页** Markdown（`.md`）并只回句柄。参数: pageId(必填)。⚠️ 只接受 pageId（给 spaceId ⇒ `bad_args`；整空间用 `export_space_markdown`）。句柄单次/TTL 120s/绑会话；落盘用 `blobs_fetch`。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pageId": {
+          "type": "string",
+          "description": "要导出的页面 id（只接受 pageId）"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "整空间 id。⚠️ 本工具只接受 pageId —— 给了它 ⇒ `bad_args`（请用 export_space_markdown）"
+        }
+      },
+      "required": [
+        "pageId"
+      ]
+    },
+    "permission": "export:files"
+  },
+  {
+    "name": "export_space_markdown",
+    "capabilityId": "export.space_markdown",
+    "description": "导出**整空间**（Markdown ＋ 附件 zip）并只回句柄。参数: spaceId(可选,省略=当前空间；本版只支持当前空间)。⚠️ 只接受 spaceId（给 pageId ⇒ `bad_args`）。句柄单次/TTL 120s/绑会话。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": {
+          "type": "string",
+          "description": "整空间 id（省略=当前空间；本版只支持当前空间）"
+        },
+        "pageId": {
+          "type": "string",
+          "description": "页面 id。⚠️ 本工具只接受 spaceId —— 给了它 ⇒ `bad_args`（请用 export_page_markdown）"
         }
       },
       "required": []

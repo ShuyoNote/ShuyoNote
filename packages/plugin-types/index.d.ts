@@ -422,6 +422,14 @@ export interface PluginApi {
    * 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
    */
     markdown(pageId?: string, spaceId?: string): { handle: string; name: string; size: number; sha256: string; expiresAt: number };
+  /** 导出单页 Markdown（句柄）（权限 `export:files`；1.12.0 起）
+   * 返回：句柄（单次/120s/绑会话）；落盘用 blobs_fetch
+   */
+    pageMarkdown(pageId: string, spaceId?: string): { handle: string; name: string; size: number; sha256: string; expiresAt: number };
+  /** 导出整空间 Markdown（句柄）（权限 `export:files`；1.12.0 起）
+   * 返回：句柄；落盘用 blobs_fetch
+   */
+    spaceMarkdown(spaceId?: string, pageId?: string): { handle: string; name: string; size: number; sha256: string; expiresAt: number };
   /** 导出 .shuyodoc（句柄）（权限 `export:files`；1.6.0 起）
    * 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
    */

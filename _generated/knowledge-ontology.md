@@ -6,10 +6,10 @@
 | 源 | 值 |
 |---|---|
 | 注册表文件 | `capabilities/capabilities.json` |
-| 注册表 sha256 | `7bf9778e52c53bcf98ffb749fcc9c309fd1eeab10587d44132050cf07c032b90` |
+| 注册表 sha256 | `9a912d9ca3da5a35f24e03542d0228f81b9a6841327a9a05af52c145016e2dc7` |
 | `registryVersion` | 1 |
 | `apiVersion` | 1.12.0 |
-| 能力条数 | **67**（按 `kind`：host 2 / read 33 / write 32） |
+| 能力条数 | **69**（按 `kind`：host 2 / read 35 / write 32） |
 | 生成命令 | `node scripts/gen-knowledge-ontology.mjs` |
 
 | id | kind | scope | permission | ai | mediate | desc |
@@ -30,7 +30,9 @@
 | drafts.status | read | current-space | read:pages | ✓ |  | 查一条草稿当前状态：pending（等用户确认）/ applied（已落库）/ rejected（用户拒绝）/ expired（10 分钟没确认）。参数: draftId。⚠️ 只回**本会话**的草稿；别的会话/不存在 ⇒ not_found。 |
 | editor.insertText | write | current-space | write:page.current |  | ✓ | 把一段纯文本插入到当前页的光标处（没有光标则追加到页尾）。**即时生效**，不进草稿确认——它只动你正在编辑的这一页。参数: text (必填)。 |
 | export.docpackage | read | current-space | export:files | ✓ |  | 把一页打包成 `.shuyodoc` 并**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。**只支持单页**（与界面「导出为 .shuyodoc」同口径）。参数: pageId (必填)。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm。 |
-| export.markdown | read | current-space | export:files | ✓ |  | 把一页导出成 Markdown、或把整个空间导出成 zip，**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。参数: pageId (可选，单页 ⇒ .md) / spaceId (可选，整空间 ⇒ 含附件的 .zip；跨空间需「只读（全部空间）」档) —— 两者**只能给一个**。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm（本批未接确认 UI，不静默导出）。 |
+| export.markdown | read | current-space | export:files | ✓ |  | deprecated: 用上面两个显式工具 export_page_markdown / export_space_markdown（旧名保留以兼容外部客户端）。把一页导出成 Markdown、或把整个空间导出成 zip，**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。参数: pageId (可选，单页 ⇒ .md) / spaceId (可选，整空间 ⇒ 含附件的 .zip；跨空间需「只读（全部空间）」档) —— 两者**只能给一个**。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm（本批未接确认 UI，不静默导出）。 |
+| export.page_markdown | read | current-space | export:files | ✓ |  | 把**一页**导出成 `.md`，返回句柄（不返回字节）。参数: pageId (必填)。只接受 pageId —— 给 spaceId ⇒ bad_args（整空间请用 export_space_markdown）。句柄单次/TTL 120s/绑会话；落盘用 blobs_fetch。 |
+| export.space_markdown | read | current-space | export:files | ✓ |  | 把**整个空间**导出成 `.zip`（Markdown ＋ 附件），返回句柄。参数: spaceId (可选;省略=当前空间；本版只支持当前空间)。只接受 spaceId —— 给 pageId ⇒ bad_args（单页请用 export_page_markdown）。 |
 | files.delete | write | current-space | write:files | ✓ | ✓ | 删除一行附件（**先做正文引用检查**：还有页面正文按 `attachment://<sha>` 引用它 ⇒ 拒绝并点名页面）。参数: attId, expectedSha (可选), spaceId, dryRun, clientRequestId。写操作 ⇒ 草稿确认。 |
 | files.detach | write | current-space | write:files | ✓ | ✓ | 把附件从页面摘掉、**保留文件字节**（`page_id = NULL` ⇒ 未整理）。与 `files.delete` 是两件事。参数: attId, spaceId, dryRun, clientRequestId。已经未整理 ⇒ 明确 `bad_args`（不假装成功）。写操作 ⇒ 草稿确认。 |
 | files.download | read | current-space | export:files | ✓ |  | 把附件字节取成一个**句柄**（不把字节塞进上下文）：{handle, name, size, sha256, expiresAt}。句柄单次、120 秒有效、绑定本会话；要落盘用 blobs.fetch。参数: attId (必填)。⚠️ >10MB 会返回 needs_confirm（本批未接确认 UI，不静默下载）。 |

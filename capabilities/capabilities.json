@@ -2824,8 +2824,78 @@
         "desc": "{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件"
       },
       "rust": "cap_export_markdown",
-      "desc": "把一页导出成 Markdown、或把整个空间导出成 zip，**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。参数: pageId (可选，单页 ⇒ .md) / spaceId (可选，整空间 ⇒ 含附件的 .zip；跨空间需「只读（全部空间）」档) —— 两者**只能给一个**。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm（本批未接确认 UI，不静默导出）。",
-      "mcpDesc": "把内容导出成文件并**只回句柄**（不把字节塞进上下文）：`{handle, name, size, sha256, expiresAt}`。两种口径（**只能给一个**）：`pageId` ⇒ 该页的单个 `.md`（与界面「导出为 Markdown」同口径）；`spaceId` ⇒ 该空间整份 `.zip`（Markdown ＋ 附件，与界面「导出本空间」同口径；跨空间需要「只读（全部空间）」档）。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落应用数据目录的 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`（本批未接确认 UI，不静默导出）。",
+      "desc": "deprecated: 用上面两个显式工具 export_page_markdown / export_space_markdown（旧名保留以兼容外部客户端）。把一页导出成 Markdown、或把整个空间导出成 zip，**返回句柄**（不返回字节）：{handle, name, size, sha256, expiresAt}。参数: pageId (可选，单页 ⇒ .md) / spaceId (可选，整空间 ⇒ 含附件的 .zip；跨空间需「只读（全部空间）」档) —— 两者**只能给一个**。句柄单次、120 秒、绑本会话；落盘用 blobs.fetch。⚠️ >10MB ⇒ needs_confirm（本批未接确认 UI，不静默导出）。",
+      "mcpDesc": "deprecated: 用上面两个显式工具 export_page_markdown / export_space_markdown（旧名保留以兼容外部客户端）。把内容导出成文件并**只回句柄**（不把字节塞进上下文）：`{handle, name, size, sha256, expiresAt}`。两种口径（**只能给一个**）：`pageId` ⇒ 该页的单个 `.md`（与界面「导出为 Markdown」同口径）；`spaceId` ⇒ 该空间整份 `.zip`（Markdown ＋ 附件，与界面「导出本空间」同口径；跨空间需要「只读（全部空间）」档）。句柄 128bit 随机、**单次**、**120 秒**、绑**本会话**；要拿到文件用 `blobs_fetch`（只落应用数据目录的 `exports/`）。页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`；>10MB ⇒ `needs_confirm`（本批未接确认 UI，不静默导出）。",
+      "ai": true
+    },
+    {
+      "id": "export.page_markdown",
+      "title": "导出单页 Markdown（句柄）",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "export:files",
+      "since": "1.12.0",
+      "jsPath": [
+        "export",
+        "pageMarkdown"
+      ],
+      "rust": "cap_export_page_markdown",
+      "args": [
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": true,
+          "desc": "要导出的页面 id（只接受 pageId）"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "整空间 id。⚠️ 本工具只接受 pageId —— 给了它 ⇒ `bad_args`（请用 export_space_markdown）"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ handle: string; name: string; size: number; sha256: string; expiresAt: number }",
+        "desc": "句柄（单次/120s/绑会话）；落盘用 blobs_fetch"
+      },
+      "desc": "把**一页**导出成 `.md`，返回句柄（不返回字节）。参数: pageId (必填)。只接受 pageId —— 给 spaceId ⇒ bad_args（整空间请用 export_space_markdown）。句柄单次/TTL 120s/绑会话；落盘用 blobs_fetch。",
+      "mcpDesc": "导出**单页** Markdown（`.md`）并只回句柄。参数: pageId(必填)。⚠️ 只接受 pageId（给 spaceId ⇒ `bad_args`；整空间用 `export_space_markdown`）。句柄单次/TTL 120s/绑会话；落盘用 `blobs_fetch`。",
+      "ai": true
+    },
+    {
+      "id": "export.space_markdown",
+      "title": "导出整空间 Markdown（句柄）",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "export:files",
+      "since": "1.12.0",
+      "jsPath": [
+        "export",
+        "spaceMarkdown"
+      ],
+      "rust": "cap_export_space_markdown",
+      "args": [
+        {
+          "name": "spaceId",
+          "type": "string",
+          "required": false,
+          "desc": "整空间 id（省略=当前空间；本版只支持当前空间）"
+        },
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": false,
+          "desc": "页面 id。⚠️ 本工具只接受 spaceId —— 给了它 ⇒ `bad_args`（请用 export_page_markdown）"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ handle: string; name: string; size: number; sha256: string; expiresAt: number }",
+        "desc": "句柄；落盘用 blobs_fetch"
+      },
+      "desc": "把**整个空间**导出成 `.zip`（Markdown ＋ 附件），返回句柄。参数: spaceId (可选;省略=当前空间；本版只支持当前空间)。只接受 spaceId —— 给 pageId ⇒ bad_args（单页请用 export_page_markdown）。",
+      "mcpDesc": "导出**整空间**（Markdown ＋ 附件 zip）并只回句柄。参数: spaceId(可选,省略=当前空间；本版只支持当前空间)。⚠️ 只接受 spaceId（给 pageId ⇒ `bad_args`）。句柄单次/TTL 120s/绑会话。",
       "ai": true
     },
     {
