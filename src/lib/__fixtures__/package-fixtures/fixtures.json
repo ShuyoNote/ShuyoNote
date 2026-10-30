@@ -1,0 +1,27 @@
+{
+  "format": "shuyonote.package-fixtures",
+  "version": 1,
+  "generatedBy": "scripts/make-package-fixtures.mjs",
+  "fixtures": [
+    {
+      "name": "personal-minimal.shuyodoc",
+      "bytes": 1086,
+      "sha256": "6ec4812bfda68b689d04e54744b0f0d838c869148b440c49d5a76a8532bafea2"
+    },
+    {
+      "name": "personal-with-attachment.shuyodoc",
+      "bytes": 1546,
+      "sha256": "b43fa8adb9fec9e851b126caeff40cd3cdd632274cab0a8f67023f975b303e0d"
+    },
+    {
+      "name": "personal-database.shuyodoc",
+      "bytes": 1192,
+      "sha256": "d013b759c0929b8ffc269b3a90c4ea252965375737481e873b92bf87d851bc2f"
+    },
+    {
+      "name": "personal-sample.shuyospace",
+      "bytes": 5528,
+      "sha256": "1f76800651753adc71ed18c4078e601f87af9ab47efcb9e42aa95182d67c54b5"
+    }
+  ]
+}

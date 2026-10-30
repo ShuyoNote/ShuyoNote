@@ -262,3 +262,9 @@ warnings=[id-map-ignored]（预期）；parent/children/附件名/大小/mime/sh
 - Rust 单命令 `space_package_import`（`src-tauri/src/space_import.rs`）：新建空间 → 事务内按拓扑序 `create_node_in` 建节点（folder/page/database，父子重映射）→ 内层 content 落库 → 附件按 sha 落盘/去重并插 `attachments` 行；失败 ⇒ 回滚事务并**删除 meta 行/空间库/附件目录**（原子）。判据 `space_import::tests`：`space_import_creates_new_space_with_remapped_ids_and_counts`、`space_import_is_atomic_on_failure`（2 passed）。
 - 前端胶水 `src/lib/docSpacePackImport.ts`：`unzipDocument` → `openSpacePackage` → `api.importSpacePackage`，warnings 透传；判据 `docSpacePackImport.test.ts`（1 passed）。
 - ⏳ 未做：id_map 重算与正文/双链重写、持久审计、UI 选文件入口。
+
+## 样例包夹具证据（2026-10-30）
+
+- 生成器：`scripts/make-package-fixtures.mjs`（vite `ssrLoadModule` 直接加载本仓 TS 写侧，无新依赖；默认输出 `src/lib/__fixtures__/package-fixtures/`，同目录 `fixtures.json` 记录 size/sha256）。
+- 入库 4 个真实包（sha256 与 lead 生成一致）：`personal-minimal.shuyodoc` 1086 B `6ec4812b…`、`personal-with-attachment.shuyodoc` 1546 B `b43fa8ad…`、`personal-database.shuyodoc` 1192 B `d013b759…`、`personal-sample.shuyospace` 5528 B `1f768006…`。
+- 判据：`src/lib/packageFixtures.test.ts`（3 条：清单 size/sha 一致；**重新生成逐字节相等**；3 个文档包走 `openDocumentPackage`、空间包走 `openSpacePackage` 读回）。
