@@ -2,14 +2,13 @@
 //
 // 按 `docs/plans/2026-10-30-package-format-final.md` §2/§9（企业版裁决后）：
 //   · manifest：format/format_version/features/min_reader_version/source/source_app_version/
-//     space{id,name,type,created_at}/encrypted/checksums_sha256
+//     space{id,name,type,created_at}/encrypted（写侧**不写** checksums_sha256；字段仅读侧容忍）
 //   · tree.json：children 顺序/成员为权威；空文件夹写 `[]`；file 条目**保留 name/mime**（§9 撤回去名）
 //   · documents/<id>/document.shuyodoc：**内层复用文档包写侧**（内层禁止再嵌套）
 //   · files/<sha256>.<lower-ext>：附件字节（内容寻址、平铺、扩展名小写）
 //   · attachments.json：附件元数据（sha 去重；显示名冲突时**以 tree 为准**并记 warning）
-//   · checksums.json：覆盖 tree/documents/files/attachments（**不含 manifest 与 checksums 自身**
-//     —— manifest 里用 `checksums_sha256` 把 checksums 钉住；若把 manifest 也纳入 checksums 会形成
-//     哈希环，规范 §2.1 的"互锁"按此可实现口径落地）
+//   · checksums.json：覆盖 **manifest.json** ＋ tree/documents/files/attachments（排除自身与 signature）
+//     —— 按附录 A.1/§9：企业版会校验"漏登记/多登记"；写侧不再写 `checksums_sha256`（避免哈希环）。
 //   · ⛔ 导出不写 id_map.json（§2.4：导入工具才写）
 import { buildChecksums, checkEntryPath, sha256Hex, type PackageFile } from "./docPackage";
 import { buildDocumentPackage } from "./docPackWriter";
@@ -216,17 +215,7 @@ export async function buildSpacePackage(input: BuildSpacePackageInput): Promise<
   const { rows, warnings } = resolveAttachments(nodes, files);
   entries.push({ path: ATTACHMENTS_PATH, bytes: utf8(JSON.stringify(rows, null, 2) + "\n") });
 
-  // ⑥ checksums（覆盖 tree/documents/files/attachments；manifest 经 checksums_sha256 反钉）
-  for (const e of entries) {
-    const err = checkEntryPath(e.path);
-    if (err) fail(`条目 ${e.path} ${err}`);
-  }
-  const checksums = await buildChecksums(entries);
-  const checksumsBytes = utf8(JSON.stringify(checksums, null, 2) + "\n");
-  const checksumsSha = await sha256Hex(checksumsBytes);
-  entries.push({ path: CHECKSUMS_PATH, bytes: checksumsBytes });
-
-  // ⑦ manifest
+  // ⑥ manifest 先入列（不含 checksums_sha256），再算 checksums —— checksums **覆盖 manifest**（A.1）
   const manifest = {
     format: SPACE_FORMAT,
     format_version: SPACE_FORMAT_VERSION,
@@ -236,9 +225,17 @@ export async function buildSpacePackage(input: BuildSpacePackageInput): Promise<
     source_app_version: input.sourceAppVersion ?? "0.0.0",
     space,
     encrypted: false,
-    checksums_sha256: checksumsSha,
   };
   entries.unshift({ path: MANIFEST_PATH, bytes: utf8(JSON.stringify(manifest, null, 2) + "\n") });
+
+  // ⑦ checksums（覆盖除 checksums/signature 外所有条目，含 manifest.json）
+  for (const e of entries) {
+    const err = checkEntryPath(e.path);
+    if (err) fail(`条目 ${e.path} ${err}`);
+  }
+  const checksums = await buildChecksums(entries);
+  const checksumsBytes = utf8(JSON.stringify(checksums, null, 2) + "\n");
+  entries.push({ path: CHECKSUMS_PATH, bytes: checksumsBytes });
 
   // ⑧ 写侧硬拒（NFC/大小写/尾点尾空格/资产扩展名小写）；⛔ 不写 id_map.json
   if (entries.some((e) => e.path === "id_map.json")) fail("导出不得写 id_map.json（§2.4）");

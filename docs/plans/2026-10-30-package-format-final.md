@@ -235,6 +235,9 @@ warnings=[id-map-ignored]（预期）；parent/children/附件名/大小/mime/sh
 ⇒ 客户端合成包 → 服务端 inspect/import 双向 PASS（v1 形状）
 ```
 
+
+> **M2a 修正（2026-10-30）**：**写侧不写 `checksums_sha256`；`checksums.json` 覆盖 `manifest.json`（附录 A.1）；该字段仅读侧容忍。** 之前为避哈希环把 manifest 排除在外会被企业版判 `E_CHECKSUMS`，已撤回。
+
 ### 9.2 仍然待办（双方）
 
 1. **C1**：`min_reader_version > 支持版本` 必须拒收（企业需补，个人版 M1.1 一并实现）；

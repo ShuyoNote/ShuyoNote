@@ -63,8 +63,9 @@ describe("M2a · .shuyospace 导出", () => {
     expect(manifest.features).toContain("db-namespace");
     expect(manifest.min_reader_version).toBe("1.1");
     expect(manifest.space).toEqual({ id: "sp1", name: "团队空间", type: "team", createdAt: "2026-10-30T00:00:00.000Z" });
-    const checksumsBytes = byPath(entries, CHECKSUMS_PATH).bytes;
-    expect(manifest.checksums_sha256).toBe(await sha256Hex(checksumsBytes));
+    expect(manifest.checksums_sha256).toBeUndefined(); // 写侧不再写（仅读侧容忍）
+    const sums = JSON.parse(new TextDecoder().decode(byPath(entries, CHECKSUMS_PATH).bytes)) as { files: Record<string, string> };
+    expect(sums.files[MANIFEST_PATH]).toBe(await sha256Hex(byPath(entries, MANIFEST_PATH).bytes));
   });
 
   it("tree：children 顺序/成员权威；空文件夹 []；file 条目保留 name（§9）", async () => {
@@ -113,13 +114,14 @@ describe("M2a · .shuyospace 导出", () => {
     expect(Buffer.from(a.bytes)).toEqual(Buffer.from(b.bytes));
   });
 
-  it("checksums 覆盖 tree/documents/files/attachments；manifest 由 checksums_sha256 反钉", async () => {
+  it("checksums 覆盖 **manifest**/tree/documents/files/attachments（写侧不写 checksums_sha256）", async () => {
     const r = await buildSpacePackage(await sample());
     const entries = await unzipDocument(r.bytes);
     const sums = JSON.parse(new TextDecoder().decode(byPath(entries, CHECKSUMS_PATH).bytes)) as {
       files: Record<string, string>;
     };
     const covered = Object.keys(sums.files).sort();
+    expect(covered).toContain(MANIFEST_PATH);
     expect(covered).toContain(TREE_PATH);
     expect(covered).toContain(ATTACHMENTS_PATH);
     expect(covered.some((p) => p.startsWith("documents/"))).toBe(true);
