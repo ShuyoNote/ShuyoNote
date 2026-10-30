@@ -44,6 +44,47 @@ export const COMMENTS_PATH = "comments.json";
 /** v1 唯一的正文类型（企业版 manifest 的 `content_type` 取值）。 */
 export const CONTENT_TYPE_LEXICAL = "lexical-json";
 
+/** 本版读端支持的最高 `min_reader_version`（v1.1 裁决）。 */
+export const READER_VERSION = "1.1";
+
+/** simple semver compare（a > b）。 */
+export function versionGt(a: string, b: string): boolean {
+  const pa = a.split(".").map((x) => Number.parseInt(x, 10) || 0);
+  const pb = b.split(".").map((x) => Number.parseInt(x, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) > (pb[i] ?? 0);
+  }
+  return false;
+}
+
+/**
+ * ⭐ M1.1 写侧硬拒（§9 S8）：非法路径/NFC 非规范化/大小写冲突/尾点尾空格/资产扩展名非小写。
+ * 读侧 v1 仍只 warning（见 `openDocumentPackage` 的 notices），⛔ 不做行为变更。
+ */
+export function checkWritePaths(files: PackageFile[]): string | null {
+  const seen = new Map<string, string>();
+  for (const f of files) {
+    const p = f.path;
+    const bad = checkEntryPath(p);
+    if (bad) return `${p} ${bad}`;
+    if (p.normalize("NFC") !== p) return `${p} 不是 NFC 规范化路径（写侧硬拒）`;
+    for (const seg of p.split("/")) {
+      if (seg.endsWith(".") || seg.endsWith(" ")) return `${p} 的路径段以点/空格结尾（写侧硬拒）`;
+    }
+    const lower = p.toLowerCase();
+    const prev = seen.get(lower);
+    if (prev && prev !== p) return `${p} 与 ${prev} 仅大小写不同（写侧硬拒）`;
+    seen.set(lower, p);
+    if (p.startsWith("assets/")) {
+      const base = p.slice("assets/".length);
+      const dot = base.lastIndexOf(".");
+      const ext = dot < 0 ? "" : base.slice(dot + 1);
+      if (!ext || ext !== ext.toLowerCase()) return `${p} 的资产扩展名必须小写（写侧硬拒）`;
+    }
+  }
+  return null;
+}
+
 /** 单文件上限 50 MB ／ 整包上限 200 MB（M1 的临时口径，方案里标了「待定」）。 */
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 export const MAX_TOTAL_BYTES = 200 * 1024 * 1024;
@@ -77,6 +118,12 @@ export interface DocManifest {
   updated_at?: string;
   /** v1 只读 `lexical-json`。 */
   content_type: string;
+  /** v1.1 可选：声明的特性（读侧只做形状校验；不认识的写进 notices）。 */
+  features?: string[];
+  /** v1.1 可选：> 本版（1.1）⇒ 拒收并提示升级。 */
+  min_reader_version?: string;
+  /** v1.1 可选：**存在也不验**（企业 v1 读端忽略未知字段；强制验属 v2）。 */
+  checksums_sha256?: string;
   /** 企业版当前只写 `false`；`true` ⇒ 个人版没有解密能力，**整包拒绝**。 */
   encrypted: boolean;
   /** 旧个人包字段（仍然读；导出时不再写）。 */
@@ -154,6 +201,17 @@ export function parseManifest(raw: unknown): ManifestResult {
   if (m.content_type !== undefined && typeof m.content_type !== "string") {
     return { ok: false, error: "manifest.content_type 必须是字符串" };
   }
+  if (m.features !== undefined) {
+    if (!Array.isArray(m.features) || m.features.some((x) => typeof x !== "string")) {
+      return { ok: false, error: "manifest.features 必须是字符串数组" };
+    }
+  }
+  if (m.min_reader_version !== undefined && typeof m.min_reader_version !== "string") {
+    return { ok: false, error: "manifest.min_reader_version 必须是字符串" };
+  }
+  if (m.checksums_sha256 !== undefined && typeof m.checksums_sha256 !== "string") {
+    return { ok: false, error: "manifest.checksums_sha256 必须是字符串" };
+  }
   const contentType = typeof m.content_type === "string" ? m.content_type : CONTENT_TYPE_LEXICAL;
   if (contentType !== CONTENT_TYPE_LEXICAL) {
     return { ok: false, error: `manifest.content_type 不认识（${contentType}，本版只读 ${CONTENT_TYPE_LEXICAL}）` };
@@ -185,6 +243,9 @@ export function parseManifest(raw: unknown): ManifestResult {
       title: m.title,
       source: typeof m.source === "string" ? m.source : "personal",
       source_app_version: typeof m.source_app_version === "string" ? m.source_app_version : undefined,
+    ...(Array.isArray(m.features) ? { features: m.features as string[] } : {}),
+    ...(typeof m.min_reader_version === "string" ? { min_reader_version: m.min_reader_version } : {}),
+    ...(typeof m.checksums_sha256 === "string" ? { checksums_sha256: m.checksums_sha256 } : {}),
       document_id: typeof m.document_id === "string" ? m.document_id : undefined,
       created_at: typeof m.created_at === "string" ? m.created_at : legacyCreated,
       updated_at: typeof m.updated_at === "string" ? m.updated_at : legacyUpdated,
