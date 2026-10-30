@@ -6,6 +6,7 @@
 // 原子性：空间 DB 的写入在**一个事务**里；任何一步失败 ⇒ 回滚 DB 并删除 meta 行 / 空间库 /
 // 本次落盘的附件目录，保证"失败后新空间完全不存在"。
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 
 #[derive(Debug, Deserialize)]
@@ -175,6 +176,7 @@ pub(crate) fn import_space_package_in(
         }
         let mut attachments = 0usize;
         let mut warnings = Vec::new();
+        let mut att_map: HashMap<String, String> = HashMap::new();
         for f in &payload.files {
             if !f.bytes.is_empty() {
                 let actual = crate::db::sha256_hex_bytes(&f.bytes);
@@ -188,11 +190,13 @@ pub(crate) fn import_space_package_in(
                 Some(p) => id_map.get(p).cloned(),
                 None => None,
             };
+            let new_att_id = uuid::Uuid::new_v4().to_string();
+            att_map.insert(f.sha256.clone(), new_att_id.clone());
             tx.execute(
                 "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 rusqlite::params![
-                    uuid::Uuid::new_v4().to_string(),
+                    new_att_id,
                     new_page,
                     f.name,
                     f.sha256,
@@ -207,8 +211,51 @@ pub(crate) fn import_space_package_in(
         if inject_failure {
             return Err("injected failure (test)".to_string());
         }
+        // ⭐ 引用重写：旧节点 id / attachment://<sha> / [[标题]] 双链（重名只 warning，⛔ 不挑）。
+        let mut title_count: HashMap<&str, usize> = HashMap::new();
+        for n in &payload.nodes {
+            *title_count.entry(n.title.as_str()).or_insert(0) += 1;
+        }
+        for (title, n) in title_count.iter() {
+            if *n > 1 {
+                warnings.push(format!("wikilink-ambiguous: [[{title}]] 命中 {n} 个同名节点，双链未改写（请人工指认）"));
+            }
+        }
+        for n in &payload.nodes {
+            if let Some(orig) = &n.doc_json {
+                let mut rewritten = orig.clone();
+                for (old, new) in id_map.iter() {
+                    if old != new {
+                        rewritten = rewritten.replace(old, new);
+                    }
+                }
+                for (sha, id) in att_map.iter() {
+                    rewritten = rewritten.replace(&format!("attachment://{sha}"), &format!("attachment://{id}"));
+                }
+                if rewritten != *orig {
+                    crate::commands::save_page_in(
+                        &tx,
+                        crate::commands::SavePageArgs {
+                            id: id_map[n.old_id.as_str()].clone(),
+                            title: None,
+                            content_json: Some(rewritten),
+                            content_text: None,
+                            space_id: None,
+                        },
+                    )?;
+                }
+            }
+        }
+        let summary = serde_json::json!({
+            "spaceId": space_id,
+            "nodes": payload.nodes.len(),
+            "documents": documents,
+            "attachments": attachments,
+            "warnings": warnings.len(),
+            "source": "shuyonote.package",
+        });
         tx.commit().map_err(|e| e.to_string())?;
-        let _ = &warnings;
+        crate::plugins::record_package_import(&space_id, &summary);
         Ok(ImportResult {
             space_id: space_id.clone(),
             nodes: payload.nodes.len(),
@@ -237,6 +284,11 @@ pub fn space_package_import(payload: ImportPayload) -> Result<ImportResult, Stri
 mod tests {
     use super::*;
 
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn payload() -> ImportPayload {
         ImportPayload {
             space_name: "导入空间".into(),
@@ -261,6 +313,7 @@ mod tests {
 
     #[test]
     fn space_import_creates_new_space_with_remapped_ids_and_counts() {
+        let _serial = serial();
         let d = dir("ok");
         let p = payload();
         let r = import_space_package_in(&d, &p, false).expect("import");
@@ -296,6 +349,7 @@ mod tests {
 
     #[test]
     fn space_import_is_atomic_on_failure() {
+        let _serial = serial();
         let d = dir("fail");
         let m = crate::db::open_meta_conn_at(&d).unwrap();
         let before: i64 = m.query_row("SELECT COUNT(*) FROM workspaces", [], |x| x.get(0)).unwrap();
@@ -307,4 +361,49 @@ mod tests {
         assert!(spaces.is_empty(), "失败后不许残留空间库/附件目录");
         let _ = std::fs::remove_dir_all(&d);
     }
+    #[test]
+    fn space_import_rewrites_refs_ambiguous_wikilinks_and_audits() {
+        let _serial = serial();
+        let d = dir("links2");
+        let attach = b"attachment-bytes".to_vec();
+        let sha = crate::db::sha256_hex_bytes(&attach);
+        let p = ImportPayload {
+            space_name: "链接空间".into(),
+            nodes: vec![
+                ImportNode { old_id: "old-a".into(), parent_old_id: None, kind: "page".into(), title: "甲".into(),
+                    doc_json: Some(format!(r#"{{"root":{{"text":"see old-b and [[乙]] attachment://{sha}"}}}}"#)) },
+                ImportNode { old_id: "old-b".into(), parent_old_id: None, kind: "page".into(), title: "乙".into(),
+                    doc_json: Some(r#"{"root":{"text":"back old-a"}}"#.into()) },
+                ImportNode { old_id: "old-c".into(), parent_old_id: None, kind: "page".into(), title: "同名".into(), doc_json: Some(r#"{"root":{}}"#.into()) },
+                ImportNode { old_id: "old-d".into(), parent_old_id: None, kind: "page".into(), title: "同名".into(), doc_json: Some(r#"{"root":{}}"#.into()) },
+            ],
+            files: vec![ImportFile { sha256: sha.clone(), name: "x.bin".into(), mime: None, page_old_id: Some("old-a".into()), bytes: attach }],
+        };
+        let r = import_space_package_in(&d, &p, false).expect("import");
+        assert!(r.warnings.iter().any(|w| w.contains("wikilink-ambiguous") && w.contains("同名")), "{:?}", r.warnings);
+        let c = crate::db::open_space_conn_at(&r.space_id, &d).unwrap();
+        let new_b: String = c.query_row("SELECT id FROM pages WHERE title='乙'", [], |x| x.get(0)).unwrap();
+        let new_att: String = c.query_row("SELECT id FROM attachments", [], |x| x.get(0)).unwrap();
+        let content: String = c.query_row("SELECT content_json FROM pages WHERE title='甲'", [], |x| x.get(0)).unwrap();
+        assert!(content.contains(&new_b), "内部链接应指向新 id");
+        assert!(content.contains(&new_att), "attachment:// 应指向新附件 id");
+        let all: Vec<String> = c.prepare("SELECT content_json FROM pages").unwrap().query_map([], |x| x.get(0)).unwrap().filter_map(|x| x.ok()).collect();
+        assert!(all.iter().all(|s| !s.contains("old-")), "旧 id 不许残留");
+        let rows = crate::plugins::plugin_audit(Some("app.package.import".to_string()), None);
+        let mine = rows.iter().find(|x| x.scope.contains(&r.space_id)).expect("审计应有本次导入一条");
+        assert!(mine.scope.contains("warnings"), "{}", mine.scope);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn space_import_failure_writes_no_audit() {
+        let _serial = serial();
+        let d = dir("noaudit2");
+        let before = crate::plugins::plugin_audit(Some("app.package.import".to_string()), None).len();
+        let _ = import_space_package_in(&d, &payload(), true);
+        let after = crate::plugins::plugin_audit(Some("app.package.import".to_string()), None).len();
+        assert_eq!(before, after, "失败回滚时不许写审计");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
 }

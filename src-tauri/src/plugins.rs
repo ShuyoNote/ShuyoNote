@@ -617,6 +617,21 @@ thread_local! {
   static AUDIT_SPACE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
+/// ⭐ M2c：`package.import` 复用**现有插件审计环**（audit.tail 同一账本），不新造表。
+/// scope 里带 JSON 摘要（新空间 id/counts/warnings 数/来源），字段可从 audit.tail 读出。
+pub(crate) fn record_package_import(space_id: &str, summary: &serde_json::Value) {
+    let prev = AUDIT_SPACE.with(|s| s.borrow().clone());
+    AUDIT_SPACE.with(|s| *s.borrow_mut() = Some(space_id.to_string()));
+    push_audit(
+        "plugin",
+        "app.package.import",
+        "package.import",
+        &format!("app:{summary}"),
+        true,
+        None,
+    );
+    AUDIT_SPACE.with(|s| *s.borrow_mut() = prev);
+}
 fn push_audit(
     source: &str,
     plugin_id: &str,
