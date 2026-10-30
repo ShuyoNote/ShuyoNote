@@ -776,8 +776,6 @@ export function draftBodyFields(body: { content_json: string; content_text: stri
   return { content_json: body.content_json, content_text: body.content_text };
 }
 
-import { contentTextOf } from "./ai/lexicalContent";
-
 /** 记录里的正文 JSON 文本（`content_json` 键名只许在这一层出现）。 */
 export function jsonTextOf(content: { content_json?: string | null }): string {
   return content.content_json ?? "{}";
@@ -799,9 +797,10 @@ export function withTopChildren(docJson: string, children: Array<Record<string, 
 export function saveFieldsWithChildren(
   docJson: string,
   children: Array<Record<string, unknown>>,
+  deriveText: (json: string) => string,
 ): { content_json: string; content_text: string } {
   const json = withTopChildren(docJson, children);
-  return { content_json: json, content_text: contentTextOf(json) };
+  return { content_json: json, content_text: deriveText(json) };
 }
 
 /** 模板 → 建页要的两个正文键（存储键名只许在这一层出现）。 */

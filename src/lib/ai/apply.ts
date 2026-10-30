@@ -286,7 +286,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const next = blocksFromInput(p.markdown, p.plain, blockId);
       if (next.length === 0) return { ok: false, message: "新块内容为空" };
       children.splice(at, 1, ...next);
-      const saved = await api.savePage({ id: pageId, ...saveFieldsWithChildren(docJsonOfPage(page), children) });
+      const saved = await api.savePage({ id: pageId, ...saveFieldsWithChildren(docJsonOfPage(page), children, contentTextOf) });
       return { ok: true, message: `已替换块「${blockId}」`, page: saved };
     }
 
@@ -307,7 +307,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const next = blocksFromInput(p.markdown, p.plain, firstId);
       if (next.length === 0) return { ok: false, message: "新块内容为空" };
       children.splice(at, 0, ...next);
-      const saved = await api.savePage({ id: pageId, ...saveFieldsWithChildren(docJsonOfPage(page), children) });
+      const saved = await api.savePage({ id: pageId, ...saveFieldsWithChildren(docJsonOfPage(page), children, contentTextOf) });
       return { ok: true, message: "已插入新块", page: saved };
     }
 
@@ -324,7 +324,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (at < 0) return { ok: false, message: `块 ${blockId} 不在这一页的顶层` };
       if (children.length <= 1) return { ok: false, message: "这是最后一个顶层块 —— 不制造空页面" };
       children.splice(at, 1);
-      const saved = await api.savePage({ id: pageId, ...saveFieldsWithChildren(docJsonOfPage(page), children) });
+      const saved = await api.savePage({ id: pageId, ...saveFieldsWithChildren(docJsonOfPage(page), children, contentTextOf) });
       return { ok: true, message: `已删除块「${blockId}」`, page: saved };
     }
 

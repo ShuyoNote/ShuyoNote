@@ -39,6 +39,7 @@ await esbuild.build({
   target: "node20",
   outfile,
   external: ["sql.js"],
+
   // The `?url` import in web.ts is a Vite-only feature; in Node we stub it to a
   // data-url no-op via a plugin so the bundle compiles.
   plugins: [
