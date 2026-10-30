@@ -415,10 +415,16 @@ mod tests {
         let (_, g_wa, aw) = level_to_config(McpLevel::WriteAll, &[]);
         assert!(g_wa.iter().any(|s| s == "write:all-spaces"));
         assert!(g_wa.iter().any(|s| s == WRITE_SCOPE));
-        assert!(g_wa.iter().any(|s| s == READ_ALL_SCOPE), "v2：写全部空间同时能读全部空间（owner 甲）");
+        assert!(
+            g_wa.iter().any(|s| s == READ_ALL_SCOPE),
+            "v2：写全部空间同时能读全部空间（owner 甲）"
+        );
         assert!(aw, "可写（全部空间）免确认");
         let (_, g_other, _) = level_to_config(McpLevel::WriteAuto, &with_write_all);
-        assert!(!g_other.iter().any(|s| s == "write:all-spaces"), "别的档必须收回 write:all-spaces");
+        assert!(
+            !g_other.iter().any(|s| s == "write:all-spaces"),
+            "别的档必须收回 write:all-spaces"
+        );
     }
 
     /// ⭐ **R152 接线**：换档必须**换令牌**（R147 的教训 ✓）＋ 命令进 `lib.rs` ✓。

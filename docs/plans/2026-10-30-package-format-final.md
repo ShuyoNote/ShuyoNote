@@ -2,6 +2,8 @@
 
 状态：方案定稿（企业版已裁决，以 §9 为准；实现 M1.1 → M2a → M2b）
 
+> 编号说明：企业版往来信件里把本文件的规格项称作 `D1–D8`；本文件正文统一写作 **`S1–S8`**（`D#` 是决策引用专用前缀，`check-decision-ids` 会拦）。
+
 关联：[`2026-10-29-shuyodoc-m1.md`](2026-10-29-shuyodoc-m1.md)（M1 已实现）· 企业版规范 `docs/specs/2026-10-28-package-format-spec.md`＋附录 A · 已发信箱信 `2026-10-30-windows-enterprise-package-format-ambiguities.md`
 
 > 出发点：**不先做 M2 再发现 v1 形状要改**。所以把所有"会逼出 v2"的歧义一次定死；
@@ -190,7 +192,7 @@ E_ATOMIC            导入中途失败（已回滚）
 
 1. **共享 fixtures 仓库**（或本仓 `src/lib/__fixtures__/` + 一份给企业版）：正常/空文件夹/混排 children/环/深度超限/未知 kind/重复条目/坏 checksums/缺 checksums/加密/大小写冲突/超大/数据库页/文档包缺 asset —— 每个包附"期望错误码"。
 2. **只读校验 CLI**：`node tools/shuyopkg-verify.mjs <file>`（两端共用 spec 派生的规则），输出 `{ok, errors[], warnings[]}`；CI 里跑 fixtures 矩阵。
-3. **跨端互读读数表**（并入企业版互读验收草案 §5）：D1/D2/D3/S1/S2/S3 六方向 × fixtures。
+3. **跨端互读读数表**（并入企业版互读验收草案 §5）：S1/S2/S3/S1/S2/S3 六方向 × fixtures。
 
 ## 7. 实施顺序（个人版）
 
@@ -215,13 +217,13 @@ E_ATOMIC            导入中途失败（已回滚）
 
 | 项 | 原提案 | **最终（企业版裁决）** |
 |---|---|---|
-| D3/C3 tree file 去 name/mime | 只留 `sha256` | ❌ **撤回**。tree 的 file 条目**保留 `name`（`mime` 可留）**——企业 v1 读端 `validateTree` 要求 `sha256+name`，去 name 会判死现有包；`attachments.json` 仅作**补充**权威（显示名冲突时以 tree 为准并记 warning） |
-| D5 `checksums_sha256` | 存在必验 | **可选字段；v1.1 存在也不强制验**（企业 v1 读端忽略未知字段；"强制验"属行为变更，另开 v2） |
-| D6 固定时间戳 | `1980-01-02` | **`1980-01-01`**（对齐服务端现状 `0x0021`）；**内层再嵌 zip/shuyodoc ⇒ v1.1 硬拒**（服务端需补扫描、客户端 TODO） |
-| D8 编码/大小写/尾点/扩展名小写 | 读侧硬拒 | **写侧硬拒；读侧 v1 记 warning，v2 硬拒**（避免 v1 读端行为变更） |
+| S3/C3 tree file 去 name/mime | 只留 `sha256` | ❌ **撤回**。tree 的 file 条目**保留 `name`（`mime` 可留）**——企业 v1 读端 `validateTree` 要求 `sha256+name`，去 name 会判死现有包；`attachments.json` 仅作**补充**权威（显示名冲突时以 tree 为准并记 warning） |
+| S5 `checksums_sha256` | 存在必验 | **可选字段；v1.1 存在也不强制验**（企业 v1 读端忽略未知字段；"强制验"属行为变更，另开 v2） |
+| S6 固定时间戳 | `1980-01-02` | **`1980-01-01`**（对齐服务端现状 `0x0021`）；**内层再嵌 zip/shuyodoc ⇒ v1.1 硬拒**（服务端需补扫描、客户端 TODO） |
+| S8 编码/大小写/尾点/扩展名小写 | 读侧硬拒 | **写侧硬拒；读侧 v1 记 warning，v2 硬拒**（避免 v1 读端行为变更） |
 | C1 `min_reader_version` | 读侧拒 `>1` | ✅ 采纳；企业当前**不拒** ⇒ 列为 gap，双方补；⛔ 不得仅靠 `format_version=1` 宣称语义变更 |
 
-其余维持本文件：D1（`db` 命名空间，服务端 `content` 是 opaque jsonb、不冲突）、D2（children 权威、冲突拒收、缺省补序不判冲突；`documents-flat` 派生包不得被误判）、D4（文档包带附件；⚠️ **企业 `import-document` 目前只 warning 不入库，排 P0b**）、D7（签名"存在不验"）。
+其余维持本文件：S1（`db` 命名空间，服务端 `content` 是 opaque jsonb、不冲突）、S2（children 权威、冲突拒收、缺省补序不判冲突；`documents-flat` 派生包不得被误判）、S4（文档包带附件；⚠️ **企业 `import-document` 目前只 warning 不入库，排 P0b**）、S7（签名"存在不验"）。
 
 ### 9.1 企业版实测（可核读数）
 
@@ -236,7 +238,7 @@ warnings=[id-map-ignored]（预期）；parent/children/附件名/大小/mime/sh
 ### 9.2 仍然待办（双方）
 
 1. **C1**：`min_reader_version > 支持版本` 必须拒收（企业需补，个人版 M1.1 一并实现）；
-2. **D6**：内层嵌套扫描（服务端 TODO、个人版 M2 前实现）；
-3. **D4**：企业 `import-document` 的 assets 入库（P0b）；
-4. **D8**：写侧硬拒 vs 读侧 warning 的分层实现（个人版 M1.1 做写侧；读侧 warning 记录）；
+2. **S6**：内层嵌套扫描（服务端 TODO、个人版 M2 前实现）；
+3. **S4**：企业 `import-document` 的 assets 入库（P0b）；
+4. **S8**：写侧硬拒 vs 读侧 warning 的分层实现（个人版 M1.1 做写侧；读侧 warning 记录）；
 5. 互读验收草案 `docs/specs/2026-10-30-package-interop-acceptance.md`（企业仓分支）由 `windows/enterprise + contract-conformance` 审，走附录 C 合并。

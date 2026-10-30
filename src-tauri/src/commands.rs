@@ -101,13 +101,23 @@ pub fn list_workspace_pages(workspace_id: String) -> Result<Vec<PageMeta>, Strin
 }
 
 #[tauri::command]
-pub async fn get_page(db: State<'_, Db>, id: String, space_id: Option<String>) -> Result<PageDetail, String> {
+pub async fn get_page(
+    db: State<'_, Db>,
+    id: String,
+    space_id: Option<String>,
+) -> Result<PageDetail, String> {
     let target = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let page = if let Some(space) = target {
-        let active = { let c = conn(&db); workspaces::active_workspace_id(&c)? };
+        let active = {
+            let c = conn(&db);
+            workspaces::active_workspace_id(&c)?
+        };
         if space != active {
-            let app = crate::db::app_data_dir_ref().ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
-            let tc = crate::db::open_space_conn_at(space, app).map_err(|e| format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}"))?;
+            let app = crate::db::app_data_dir_ref()
+                .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let tc = crate::db::open_space_conn_at(space, app).map_err(|e| {
+                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+            })?;
             fetch_page(&tc, &id)?
         } else {
             let c = conn(&db);
@@ -194,17 +204,11 @@ pub(crate) fn create_page_in_space(
     let c = crate::db::open_space_conn_at(space_id, app_data).map_err(|e| {
         format!("permission_denied: 目标空间「{space_id}」已锁定或无法打开（locked）：{e}")
     })?;
-    create_node_in(
-        &c,
-        space_id,
-        parent_id,
-        title,
-        "page",
-        json,
-        text,
-    )
-    .map_err(|e| {
-        if e.starts_with("permission_denied") || e.starts_with("not_found") || e.starts_with("bad_args") {
+    create_node_in(&c, space_id, parent_id, title, "page", json, text).map_err(|e| {
+        if e.starts_with("permission_denied")
+            || e.starts_with("not_found")
+            || e.starts_with("bad_args")
+        {
             e
         } else {
             let _ = &c; // 连接活到函数结束（事务/句柄都不跨）
@@ -228,7 +232,10 @@ pub fn create_folder(db: State<Db>, args: CreatePageArgs) -> Result<PageDetail, 
         };
         if space != active {
             if crate::plugins::cross_space_write_disabled() {
-                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+                return Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                );
             }
             let app_data = crate::db::app_data_dir_ref()
                 .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
@@ -247,7 +254,15 @@ pub fn create_folder(db: State<Db>, args: CreatePageArgs) -> Result<PageDetail, 
                     return Err(format!("not_found: 上级节点 {p} 不存在或已删除"));
                 }
             }
-            return create_node_in(&tc, &space, args.parent_id, args.title, "folder", None, None);
+            return create_node_in(
+                &tc,
+                &space,
+                args.parent_id,
+                args.title,
+                "folder",
+                None,
+                None,
+            );
         }
     }
     create_node(db, args.parent_id, args.title, "folder", None, None)
@@ -807,7 +822,8 @@ pub fn save_page(db: State<Db>, mut args: SavePageArgs) -> Result<PageDetail, St
 
 /// `save_page` 的单连接实现（复用全部副作用；当前/跨空间同一份）。
 pub(crate) fn save_page_in(c: &Connection, mut args: SavePageArgs) -> Result<PageDetail, String> {
-    let now = now_ms();    let now = now_ms();
+    let now = now_ms();
+    let now = now_ms();
 
     // Read current values for fields not provided. 走「文档内容」那一层（阶段 0 接口收口）。
     let cur = crate::doc_content::read(c, &args.id)?.ok_or_else(|| "页面不存在".to_string())?;
@@ -839,12 +855,22 @@ pub(crate) fn save_page_in(c: &Connection, mut args: SavePageArgs) -> Result<Pag
 
 #[tauri::command]
 pub fn delete_page(db: State<Db>, id: String, space_id: Option<String>) -> Result<(), String> {
-    let target = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let target = space_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
     if let Some(space) = target {
-        let active = { let c = conn(&db); workspaces::active_workspace_id(&c)? };
+        let active = {
+            let c = conn(&db);
+            workspaces::active_workspace_id(&c)?
+        };
         if space != active {
             if crate::plugins::cross_space_write_disabled() {
-                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+                return Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                );
             }
             let app_data = crate::db::app_data_dir_ref()
                 .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
@@ -918,12 +944,23 @@ pub struct MovePageArgs {
 
 #[tauri::command]
 pub fn move_page(db: State<Db>, args: MovePageArgs) -> Result<(), String> {
-    let target = args.space_id.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let target = args
+        .space_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
     if let Some(space) = target {
-        let active = { let c = conn(&db); workspaces::active_workspace_id(&c)? };
+        let active = {
+            let c = conn(&db);
+            workspaces::active_workspace_id(&c)?
+        };
         if space != active {
             if crate::plugins::cross_space_write_disabled() {
-                return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+                return Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                );
             }
             let app_data = crate::db::app_data_dir_ref()
                 .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;

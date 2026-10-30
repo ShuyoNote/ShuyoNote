@@ -868,34 +868,34 @@ mod tools_list_tests {
     #[test]
     fn b2_write_surface_is_exactly_the_expected_whitelist() {
         const EXPECTED_WRITE: [&str; 27] = [
-    "blocks_append",
-    "blocks_delete",
-    "blocks_insert",
-    "blocks_patch",
-    "db_rows_delete",
-    "db_rows_write",
-    "files_delete",
-    "files_detach",
-    "files_move",
-    "files_rename",
-    "files_upload_to_page",
-    "folders_create",
-    "import_docpackage",
-    "nodes_delete",
-    "nodes_move",
-    "nodes_rename",
-    "pages_create",
-    "pages_importMarkdown",
-    "pages_import_markdown",
-    "pages_revert",
-    "pages_update",
-    "properties_set",
-    "properties_unset",
-    "tags_add",
-    "tags_remove",
-    "templates_apply",
-    "trash_restore",
-];
+            "blocks_append",
+            "blocks_delete",
+            "blocks_insert",
+            "blocks_patch",
+            "db_rows_delete",
+            "db_rows_write",
+            "files_delete",
+            "files_detach",
+            "files_move",
+            "files_rename",
+            "files_upload_to_page",
+            "folders_create",
+            "import_docpackage",
+            "nodes_delete",
+            "nodes_move",
+            "nodes_rename",
+            "pages_create",
+            "pages_importMarkdown",
+            "pages_import_markdown",
+            "pages_revert",
+            "pages_update",
+            "properties_set",
+            "properties_unset",
+            "tags_add",
+            "tags_remove",
+            "templates_apply",
+            "trash_restore",
+        ];
         let off = names(&tools_list_json(false));
         let on = names(&tools_list_json(true));
         let added: Vec<&String> = on.iter().filter(|n| !off.iter().any(|x| x == *n)).collect();
@@ -1053,7 +1053,11 @@ mod w3_draft_tests {
         {
             let m = crate::db::open_meta_conn_at(&dir).unwrap();
             let space: String = m
-                .query_row("SELECT id FROM workspaces WHERE deleted_at IS NULL LIMIT 1", [], |r| r.get(0))
+                .query_row(
+                    "SELECT id FROM workspaces WHERE deleted_at IS NULL LIMIT 1",
+                    [],
+                    |r| r.get(0),
+                )
                 .unwrap();
             let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
             c.execute(
@@ -1112,7 +1116,11 @@ mod w3_draft_tests {
         {
             let m = crate::db::open_meta_conn_at(&dir).unwrap();
             let space: String = m
-                .query_row("SELECT id FROM workspaces WHERE deleted_at IS NULL LIMIT 1", [], |r| r.get(0))
+                .query_row(
+                    "SELECT id FROM workspaces WHERE deleted_at IS NULL LIMIT 1",
+                    [],
+                    |r| r.get(0),
+                )
                 .unwrap();
             let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
             c.execute(
