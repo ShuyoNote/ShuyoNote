@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **修跨空间描述文案**：读工具改为「跨空间：支持（带 spaceId 读指定空间）」、写工具保留「写到指定空间，不是搬移」；生成器按 kind 分档并自证（读工具不含「写到」、写工具含「不是搬移」、61 条全有）。补 `blocks.insert` 跨空间 apply e2e（savePage 收到目标 spaceId、children 含新块、当前空间未被写）。
 - **一致性批：跨空间矩阵进工具描述 ＋ `blocks.insert` 跨空间**：生成器给全部 61 条 MCP 工具描述末尾统一追加「跨空间：支持/不支持」（10 条写白名单 + 26 条读侧声明 `spaceId`，读侧由参数推导）；`blocks.insert` 接入跨空间（目标页/块校验、草稿带 `spaceId`、白名单 9→10）；文档补总数 61/§6.9 矩阵/整空间导出仅当前空间。`apiVersion` 1.23.0 → **1.24.0**。
 - **export 跨空间 v1（单页）**：`export_page_markdown`/`export_docpackage` 支持 `spaceId`（需 `read:all-spaces`）；前端桥 `getPage/listPageAttachments/readAttachmentBytes` 透传空间；句柄单次/TTL/绑会话不变；**整空间导出仍仅当前空间**。`apiVersion` 1.22.0 → **1.23.0**。
 - **v3-A1 第四项：`files_detach` 跨空间**：命令/能力/apply 传 `spaceId`；目标空间附件 `page_id` 置 NULL、保留字节；二次 detach ⇒ `bad_args`；目标空间 `changes`/审计；`files.rename/delete/move/detach` 已支持。`apiVersion` 1.21.0 → **1.22.0**。

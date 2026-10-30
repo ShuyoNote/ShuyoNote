@@ -15,12 +15,14 @@ const store = vi.hoisted(() => {
     props: new Map<string, string>(),
     lockedSpace: false,
     draftStates: [] as Array<[string, string]>,
+    saveCalls: [] as Array<Record<string, unknown>>,
     reset() {
       store.pages.clear();
       store.attachments.clear();
       store.props.clear();
       store.lockedSpace = false;
       store.draftStates.length = 0;
+      store.saveCalls.length = 0;
     },
     addPage(p: Partial<P> & { id: string }) {
       store.pages.set(p.id, {
@@ -47,6 +49,7 @@ vi.mock("./api", () => ({
       if (store.lockedSpace) throw new Error("空间已锁定：请先解锁");
       const p = store.pages.get(String(args.id));
       if (!p) throw new Error("页面不存在");
+      store.saveCalls.push({ ...args });
       Object.assign(p, args);
       store.touch(p.id);
       return p;
@@ -262,5 +265,27 @@ describe("B2-补遗-3 · db.rows_write/delete e2e（apply → 读回）", () => 
     });
     expect(rd.ok, rd.message).toBe(true);
     expect([...store.pages.values()].filter((x) => x.parent_id === "db1").length).toBe(1);
+  });
+});
+
+
+describe("一致性批 · blocks.insert 跨空间 apply e2e", () => {
+  it("savePage 收到目标 spaceId、children 含新块；当前空间 savePage 未被调", async () => {
+    store.addPage({ id: "p1", content_json: docOf([{ id: "b1", text: "旧" }]) });
+    const r = await applyDraft({
+      kind: "blocks_insert",
+      pageId: "p1",
+      afterBlockId: "b1",
+      markdown: "新块",
+      newBlockId: "nb1",
+      spaceId: "s2",
+    });
+    expect(r.ok, r.message).toBe(true);
+    expect(store.saveCalls.length).toBe(1);
+    const call = store.saveCalls[0];
+    expect(call.spaceId).toBe("s2");
+    expect(String(call.content_json)).toContain("nb1");
+    expect(store.saveCalls.every((c) => c.spaceId === "s2")).toBe(true);
+    expect(store.saveCalls.some((c) => !c.spaceId)).toBe(false);
   });
 });
