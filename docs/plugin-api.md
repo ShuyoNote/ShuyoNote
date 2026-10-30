@@ -1,4 +1,4 @@
-# 插件 API（v1.16.0）
+# 插件 API（v1.17.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.16.0",
+  "apiVersion": "1.17.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.16.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.17.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -108,7 +108,7 @@ register({
 | `pages.count` | `api.pages.count(spaceId)` | `read:pages` | `current-space` | — | number | 1.0.0 |
 | `pages.list` | `api.pages.list(limit, spaceId)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `pages.changes_since` | `api.pages.changesSince(since, spaceId, limit)` | `read:pages` | `current-space` | — | object | 1.15.0 |
-| `pages.get` | `api.pages.get(id, offset, limit, includeAnchors)` | `read:pages` | `current-space` | — | object | 1.0.0 |
+| `pages.get` | `api.pages.get(id, offset, limit, includeAnchors, spaceId)` | `read:pages` | `current-space` | — | object | 1.0.0 |
 | `pages.search` | `api.pages.search(q, spaceId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `pages.tree` | `api.pages.tree(spaceId, limit)` | `read:pages` | `current-space` | — | object | 1.3.0 |
 | `db.schema` | `api.db.schema(pageId, spaceId)` | `read:pages` | `current-space` | — | object | 1.4.0 |
@@ -121,7 +121,7 @@ register({
 | `drafts.status` | `api.drafts.status(draftId)` | `read:pages` | `current-space` | — | object | 1.12.0 |
 | `audit.tail` | `api.audit.tail(limit, onlyWrites)` | `read:pages` | `current-space` | — | array | 1.12.0 |
 | `tags.list` | `api.tags.list(spaceId)` | `read:tags` | `current-space` | — | array | 1.0.0 |
-| `blocks.list` | `api.blocks.list(pageId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
+| `blocks.list` | `api.blocks.list(pageId, limit, spaceId)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | — | array | 1.0.0 |
 | `files.list` | `api.files.list(pageId, spaceId)` | `read:files` | `current-space` | — | array | 1.0.0 |
 | `files.search` | `api.files.search(query, limit, spaceId)` | `read:files` | `current-space` | — | array | 1.1.0 |
@@ -132,7 +132,7 @@ register({
 | `coverage.report` | `api.coverage.report(spaceId)` | `read:files` | `current-space` | — | object | 1.92.0 |
 | `editor.insertText` | `api.editor.insertText(text)` | `write:page.current` | `current-space` | 即时 | void | 1.0.0 |
 | `pages.create` | `api.pages.create(title, content, parentId, fence, dryRun, clientRequestId, spaceId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
-| `blocks.append` | `api.blocks.append(text, pageId, fence, expectedRev, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `blocks.append` | `api.blocks.append(text, pageId, fence, expectedRev, dryRun, clientRequestId, spaceId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `blocks.patch` | `api.blocks.patch(blockId, markdown, text, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.8.0 |
 | `blocks.insert` | `api.blocks.insert(pageId, afterBlockId, markdown, text, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.8.0 |
 | `blocks.delete` | `api.blocks.delete(blockId, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.8.0 |
@@ -170,7 +170,7 @@ register({
 | `export.docpackage` | `api.export.docpackage(pageId)` | `export:files` | `current-space` | — | object | 1.6.0 |
 | `pages.importMarkdown` | `api.pages.importMarkdown(title, markdown, parentId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `pages.import_markdown` | `api.pages.import_markdown(title, markdown, parentId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.12.0 |
-| `pages.update` | `api.pages.update(id, markdown, content, title, expectedRev, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.1.0 |
+| `pages.update` | `api.pages.update(id, markdown, content, title, expectedRev, dryRun, clientRequestId, spaceId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.1.0 |
 | `spaces.list` | `api.spaces.list()` | `read:pages` | `app` | — | object | 1.1.0 |
 | `space.current` | `api.space.current()` | `read:pages` | `current-space` | — | object | 1.12.0 |
 | `spaces.switch` | `api.spaces.switch(id, name)` | `write:pages` | `app` | **草稿确认** | object | 1.1.0 |
@@ -216,7 +216,7 @@ register({
 
 ### `pages.get` — 读取指定页面
 
-- 调用：`api.pages.get(id, offset, limit, includeAnchors)`
+- 调用：`api.pages.get(id, offset, limit, includeAnchors, spaceId)`
 - 权限：`read:pages`
 - scope：`current-space`
 - 返回：{id, title, content_text(**已按 offset/limit 切好的窗口**；默认还带块锚点注释行), kind, chars_total(整页字符数), offset, limit, rev?(可选：`<updated_at 毫秒>:<正文指纹 sha256 前 8 位小写>`，拿不到正文时**不带**这个键)}；不存在返回 null
@@ -225,6 +225,7 @@ register({
   - `offset`: `number`（可选），默认 `0` —— 从第几个**字符**开始（默认 0；按 Unicode 标量计数，不是 UTF-16 码元）
   - `limit`: `number`（可选），默认 `6000` —— 最多返回多少字符（默认 6000，上限 20000）
   - `includeAnchors`: `boolean`（可选），默认 `true` —— 是否在正文里给每个顶层块后插一行块锚点注释 `<!-- b:<blockId> -->`（可选，默认 true）；传 false ⇒ 返回的正文与旧行为**逐字节相同**（不占额外 token）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。跨空间需『可写（全部空间）』档（它同时给读全空间）；目标锁着 ⇒ permission_denied（locked）。
 
 ### `pages.search` — 搜索本空间页面
 
@@ -366,13 +367,14 @@ register({
 
 ### `blocks.list` — 列出页面块
 
-- 调用：`api.blocks.list(pageId, limit)`
+- 调用：`api.blocks.list(pageId, limit, spaceId)`
 - 权限：`read:pages`
 - scope：`current-space`
 - 返回：[{blockId, text}]；**超过 limit 的块会被丢掉且没有信号**（与 pages.get 的 truncated 不同）—— 要完整块列表就显式传更大的 limit，但**上限 500 是硬上限：超过 500 块的页面，能力面拿不到后面的部分**。将来要「读全 + 有信号」，走**新增能力** `blocks.listPage`（返回 {blocks,total,truncated}）；**`blocks.list` 的形状不变**（插件面正在动，契约变更与校验加强同时落地会分不清谁的锅）
 - 参数：
   - `pageId`: `string`（可选） —— 页面 id；省略 = 当前打开的页面（与 blocks.append / tags.add 一致）
   - `limit`: `number`（可选），默认 `100` —— 最多返回多少块（默认 100，上限 500）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。跨空间需『可写（全部空间）』档（它同时给读全空间）；目标锁着 ⇒ permission_denied（locked）。
 
 ### `backlinks.list` — 列出反链
 
@@ -483,7 +485,7 @@ register({
 
 ### `blocks.append` — 向页面追加内容（草稿确认）
 
-- 调用：`api.blocks.append(text, pageId, fence, expectedRev, dryRun, clientRequestId)`
+- 调用：`api.blocks.append(text, pageId, fence, expectedRev, dryRun, clientRequestId, spaceId)`
 - 权限：`write:pages`
 - scope：`current-space`
 - 写入中介：**草稿确认（落库前需用户点确认）** —— 会改动既有页面内容 → 必须先给用户看草稿并等他确认；落库时按当时的页面重读后再追加，不覆盖并发编辑
@@ -495,6 +497,7 @@ register({
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
   - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。跨空间需『可写（全部空间）』档（它同时给读全空间）；目标锁着 ⇒ permission_denied（locked）。
 
 ### `blocks.patch` — 整块替换（草稿确认）
 
@@ -964,7 +967,7 @@ register({
 
 ### `pages.update` — 更新已有页面（整页替换 / 草稿确认）
 
-- 调用：`api.pages.update(id, markdown, content, title, expectedRev, dryRun, clientRequestId)`
+- 调用：`api.pages.update(id, markdown, content, title, expectedRev, dryRun, clientRequestId, spaceId)`
 - 权限：`write:pages`
 - scope：`current-space`
 - 写入中介：**草稿确认（落库前需用户点确认）** —— 整页替换会覆盖用户已有正文 → 必须先给用户看草稿并等他确认，不直接落库
@@ -977,6 +980,7 @@ register({
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
   - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。跨空间需『可写（全部空间）』档（它同时给读全空间）；目标锁着 ⇒ permission_denied（locked）。
 
 ### `spaces.list` — 列出空间（含当前空间）
 
@@ -1148,7 +1152,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.16.0",
+  "runtime": "declarative", "apiVersion": "1.17.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },

@@ -850,7 +850,7 @@ export interface CommandMap {
   // ---- Pages ----
   list_pages: { args: undefined; result: PageMeta[] };
   list_workspace_pages: { args: { workspaceId: string }; result: PageMeta[] };
-  get_page: { args: { id: string }; result: PageDetail };
+  get_page: { args: { id: string; spaceId?: string }; result: PageDetail };
   delete_page: { args: { id: string }; result: void };
   purge_page: { args: { id: string }; result: void };
   restore_page: { args: { id: string }; result: void };

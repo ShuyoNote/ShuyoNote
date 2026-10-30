@@ -118,7 +118,8 @@ export async function confirmAndApplyDrafts(source: string, drafts: PluginDraft[
     // 读不到名字就只显示 id（⛔ 不因此挡住确认）
   }
   const targetNote = (payload: unknown) => {
-    const id = (payload as { args?: { spaceId?: unknown } })?.args?.spaceId;
+    const pp = payload as { spaceId?: unknown; args?: { spaceId?: unknown } };
+    const id = pp?.spaceId ?? pp?.args?.spaceId;
     return typeof id === "string" && id ? `（将写入『${spaceNames.get(id) ?? id}』）` : "";
   };
   const list = drafts.map((d, i) => `${i + 1}. ${d.summary}${targetNote(d.payload)}`).join("\n");

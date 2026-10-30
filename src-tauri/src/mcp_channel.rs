@@ -413,7 +413,7 @@ mod tests {
         let (_, g_wa, aw) = level_to_config(McpLevel::WriteAll, &[]);
         assert!(g_wa.iter().any(|s| s == "write:all-spaces"));
         assert!(g_wa.iter().any(|s| s == WRITE_SCOPE));
-        assert!(!g_wa.iter().any(|s| s == READ_ALL_SCOPE), "写全部空间不等于能读全部空间");
+        assert!(g_wa.iter().any(|s| s == READ_ALL_SCOPE), "v2：写全部空间同时能读全部空间（owner 甲）");
         assert!(aw, "可写（全部空间）免确认");
         let (_, g_other, _) = level_to_config(McpLevel::WriteAuto, &with_write_all);
         assert!(!g_other.iter().any(|s| s == "write:all-spaces"), "别的档必须收回 write:all-spaces");
@@ -1375,10 +1375,14 @@ pub(crate) fn level_to_config(level: McpLevel, base: &[String]) -> (bool, Vec<St
     let all = READ_ALL_SCOPE.to_string();
     if level == McpLevel::ReadAll {
         if !granted.contains(&all) {
-            granted.push(all);
+            granted.push(all.clone());
         }
     } else {
         granted.retain(|s| s != &all);
+    }
+    // ⭐ v2（owner 拍「甲」）：WriteAll = 读全空间 ＋ 写全空间；其余档不变
+    if level == McpLevel::WriteAll && !granted.contains(&all) {
+        granted.push(all.clone());
     }
     let wants_write = matches!(
         level,

@@ -675,6 +675,8 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   },
 
   "pages.get": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (spaceId) return { ok: false, error: "应用内 AI 面不提供跨空间写（spaceId 仅外部 MCP 面支持）" };
     const id = String(args.id ?? "");
     if (!id) return { ok: false, error: "pages.get 需要 id" };
     const p = await api.getPage(id);
@@ -755,6 +757,8 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   // 这类"注册表承诺、某一侧不兑现"的分歧**没有任何编译期信号**，只能靠机器判据守
   // （`check-capabilities` 现在会检查两侧都读了声明的参数）。
   "blocks.list": async (args, ctx) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (spaceId) return { ok: false, error: "应用内 AI 面不提供跨空间写（spaceId 仅外部 MCP 面支持）" };
     const pageId = targetPage(args, ctx);
     if (!pageId) return { ok: false, error: "blocks.list 需要 pageId（省略时需要一个当前打开的页面）" };
     const limit = intArg(args, "limit", BLOCKS_LIMIT_DEFAULT, 1, BLOCKS_LIMIT_MAX);
@@ -1105,6 +1109,8 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   //   只产出草稿、不落库；正文只做轻守卫（空/超限），md→块的解析留给落库层（`ai/apply.ts` ✓）。
   //   ⚠️ 目标页 id 必填（Rust 侧 `arg_str("id")?` ✓），不走"当前页"回落。
   "pages.update": async (args) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (spaceId) return { ok: false, error: "应用内 AI 面不提供跨空间写（spaceId 仅外部 MCP 面支持）" };
     const id = String(args.id ?? "").trim();
     if (!id) return { ok: false, error: "pages.update 需要 id" };
     const expectedRev = typeof args.expectedRev === "string" ? args.expectedRev : "";
@@ -1238,6 +1244,8 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   },
 
   "blocks.append": async (args, ctx) => {
+    const spaceId = typeof args.spaceId === "string" ? args.spaceId.trim() : "";
+    if (spaceId) return { ok: false, error: "应用内 AI 面不提供跨空间写（spaceId 仅外部 MCP 面支持）" };
     const pageId = targetPage(args, ctx);
     const text = String(args.text ?? "").trim();
     if (!pageId) return { ok: false, error: "blocks.append 需要 pageId" };

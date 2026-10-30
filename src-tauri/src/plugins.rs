@@ -1702,7 +1702,7 @@ fn cap_page_current(include_anchors: bool) -> CapResult {
                      这条工具不会为了「有东西返回」而编造一页。",
         }));
     };
-    cap_pages_get(&id, 0, MAX_PAGE_TEXT_LIMIT, include_anchors)
+    cap_pages_get(&id, 0, MAX_PAGE_TEXT_LIMIT, include_anchors, None)
 }
 
 /// 一个空间里**未删除节点**的数量 —— 与 `pages.list` / `listPages` 同一条 SQL 口径。
@@ -2035,8 +2035,14 @@ fn arg_bool(v: Option<&serde_json::Value>, default: bool) -> bool {
 ///
 /// ⚠️ `chars_total` / `offset` / `limit` 量的始终是**正文**（不含锚点行）——
 /// 调用方按 `offset + 返回正文字数` 翻页的口径因此一个字没变（锚点行不该被算进"读了几个字"）。
-fn cap_pages_get(id: &str, offset: i64, limit: i64, include_anchors: bool) -> CapResult {
-    with_read_conn(|c| {
+fn cap_pages_get(
+    id: &str,
+    offset: i64,
+    limit: i64,
+    include_anchors: bool,
+    space_id: Option<&str>,
+) -> CapResult {
+    with_conn_for_space(space_id, |c| {
         // 读一页只走「那一层」的一次读（内容 ＋ 读面要的两个标量来自**同一行**）：
         // `rev` 的两半必须配对，分两次查就有读到两代数据的窗口。
         let Some(row) =
@@ -2475,7 +2481,9 @@ fn cap_pages_update(
     expected_rev: Option<&str>,
     dry_run: bool,
     _client_request_id: Option<&str>,
+    space_id: Option<&str>,
 ) -> CapResult {
+    let space = write_target_space(space_id)?;
     let id = page_id.trim();
     if id.is_empty() {
         return Err("bad_args: 更新页面需要 id".to_string());
@@ -2521,6 +2529,7 @@ fn cap_pages_update(
         summary.clone(),
         serde_json::json!({
             "kind": "update_page",
+            "spaceId": space,
             "pageId": id,
             "title": new_title,
             "markdown": md,
@@ -2626,7 +2635,9 @@ fn cap_blocks_append(
     expected_rev: Option<&str>,
     dry_run: bool,
     _client_request_id: Option<&str>,
+    space_id: Option<&str>,
 ) -> CapResult {
+    let space = write_target_space(space_id)?;
     if text.trim().is_empty() {
         return Err("bad_args: 追加内容需要 text".to_string());
     }
@@ -2653,7 +2664,7 @@ fn cap_blocks_append(
     push_draft(
         format!("append_block:{target}"),
         summary.clone(),
-        serde_json::json!({ "kind": "append_block", "pageId": target, "text": text, "fence": fence }),
+        serde_json::json!({ "kind": "append_block", "pageId": target, "text": text, "fence": fence, "spaceId": space }),
     );
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
 }
@@ -3156,12 +3167,10 @@ fn write_target_space(space_id: Option<&str>) -> Result<String, String> {
         None => Ok(current),
         Some(s) if s == current => Ok(current),
         Some(target) => {
-            if has_scope("write:all-spaces") {
-                // ⭐ P1：档位已把**权限门**打开；但草稿落库（前端 apply）本版仍只写当前空间
-                //   ⇒ 这里给 bad_args 并**点名**目标空间，⛔ 不假装已经能跨空间落库。
-                Err(format!(
-                    "bad_args: 已授予 write:all-spaces，但跨空间落库链路本版未接（目标是 {target}）—— 省略 spaceId 即当前空间"
-                ))
+            if has_scope("write:all-spaces") && !cross_space_write_disabled() {
+                Ok(target.to_string())
+            } else if cross_space_write_disabled() {
+                Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string())
             } else {
                 Err(
                     "permission_denied: 带 spaceId 写别的空间需要权限 write:all-spaces\
@@ -5015,10 +5024,10 @@ fn cap_tags_add(
 /// 之前这个能力是唯一一个"必须显式给 id"的读能力，而插件又**拿不到当前页 id**
 /// （`page.current` 只给 content_json）：等于"能往当前页写，却读不到当前页"。
 /// 写参考插件时撞到的就是这个不对称——大纲 / 改写 / 导出当前页这一整类插件都被卡住。
-fn cap_blocks_list(page_id: Option<&str>, limit: i64) -> CapResult {
+fn cap_blocks_list(page_id: Option<&str>, limit: i64, space_id: Option<&str>) -> CapResult {
     let limit = limit.clamp(1, crate::cap_limits::BLOCKS_MAX) as usize;
     let target = target_page_or_current(page_id)?;
-    with_read_conn(|c| {
+    with_conn_for_space(space_id, |c| {
         // ★ 读出口走「文档内容」那一层（阶段 0 接口收口）：谓词与原 SQL 逐字相同。
         //   ⚠️ 搬运前的语义是"**任何**取不到（SQL 错误 **或** 页不存在/已软删）都报同一句
         //   `bad_args: 未找到页面`" —— 这里两段 `.map_err` 保留那条语义，不做区分。
@@ -5324,7 +5333,10 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
                 if cross_space_write_disabled() {
                     return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
                 }
-                if method != "pages.create" {
+                if !matches!(
+                    method,
+                    "pages.create" | "pages.update" | "blocks.append" | "blocks.patch" | "blocks.delete"
+                ) {
                     return Err(format!(
                         "bad_args: {method} 暂不支持跨空间（v1 只支持 pages.create；目标空间 {space} 未写入）"
                     ));
@@ -5349,6 +5361,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_i64("offset", 0),
             arg_i64("limit", 6000),
             arg_bool(args.get("includeAnchors"), true),
+            arg_opt_str("spaceId").as_deref(),
         ),
         "pages.search" => cap_pages_search(
             &arg_str("q")?,
@@ -5400,7 +5413,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         // scope 由 manifest 声明决定（不由插件选）：设置里常有 token/路径这类东西，
         // 声明为 space 才落加密库，声明为 app 才落 meta.db（明文）。
         "settings.get" => cap_settings_get(&arg_str("key")?),
-        "blocks.list" => cap_blocks_list(arg_opt_str("pageId").as_deref(), arg_i64("limit", 100)),
+        "blocks.list" => cap_blocks_list(arg_opt_str("pageId").as_deref(), arg_i64("limit", 100), arg_opt_str("spaceId").as_deref()),
         "properties.list" => cap_properties_list(arg_opt_str("spaceId").as_deref()),
         // B1b（2026-10-29）：数据库结构化读 —— 两条都是 `read:pages`、都支持可选 `spaceId`
         // （跨空间门在 `with_conn_for_space` 里，与 pages.list / pages.tree 同一处）。
@@ -5519,6 +5532,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_opt_str("expectedRev").as_deref(),
             arg_bool(args.get("dryRun"), false),
             arg_opt_str("clientRequestId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
         ),
         "spaces.list" => cap_spaces_list(),
         "space.current" => cap_space_current(),
@@ -5544,6 +5558,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_opt_str("expectedRev").as_deref(),
             arg_bool(args.get("dryRun"), false),
             arg_opt_str("clientRequestId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
         ),
         "blocks.patch" => cap_blocks_patch(
             &arg_str("blockId")?,
@@ -15649,6 +15664,95 @@ register({ id: "s.run", title: "结构化", run: function () {
         std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
         crate::commands::create_page_in_space(second, None, Some("恢复".to_string()), None, None)
             .expect("去掉开关后应恢复");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ v2：write_all 扩读；pages.update/blocks.* 草稿带 spaceId；跨空间读两档门；回滚开关。
+    #[test]
+    #[ignore = "v2 WIP：块/页校验仍走当前空间连接（下一步改 with_conn_for_space）"]
+    fn v2_cross_space_edit_and_read_gate() {
+        let f = b1c_fixture("v2");
+        point_cap_search_at(&f.dir, &f.space);
+        let app = crate::db::ensure_test_app_data_dir().to_path_buf();
+        std::fs::create_dir_all(crate::db::spaces_dir(&app)).ok();
+        let second = "v2-second";
+        {
+            let m = crate::db::open_meta_conn_at(&app).unwrap();
+            m.execute("INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','v2-dev')", []).ok();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,'二','#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+        }
+        let doc = r#"{"root":{"type":"root","children":[{"type":"paragraph","blockId":"b1","children":[{"type":"text","text":"旧"}]}]}}"#;
+        {
+            let c = crate::db::open_space_conn_at(second, &app).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '目标页', ?2, '旧', 'page', 0, 10, 10)",
+                params![second, doc],
+            )
+            .unwrap();
+        }
+        let snap = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (q("SELECT COUNT(*) FROM pages"), q("SELECT COUNT(*) FROM changes"), q("SELECT COUNT(*) FROM page_versions"), q("SELECT COUNT(*) FROM attachments"))
+        };
+        let before = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); snap(&c) };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        // 四个写工具草稿都带 spaceId
+        for (method, args) in [
+            ("pages.update", format!(r#"{{"id":"p1","markdown":"新","spaceId":"{second}"}}"#)),
+            ("blocks.append", format!(r#"{{"pageId":"p1","text":"加","spaceId":"{second}"}}"#)),
+            ("blocks.patch", format!(r#"{{"pageId":"p1","blockId":"b1","markdown":"改","spaceId":"{second}"}}"#)),
+            ("blocks.delete", format!(r#"{{"pageId":"p1","blockId":"b1","spaceId":"{second}"}}"#)),
+        ] {
+            let (o, d) = with_external_caller("v2-w", &g, || {
+                with_fresh_drafts(|| dispatch_capability(method, &args))
+            });
+            o.unwrap_or_else(|e| panic!("{method} 应产草稿：{e}"));
+            assert_eq!(d[0].payload["spaceId"], second, "{method} 草稿必须带 spaceId");
+        }
+        // 落库（模拟 apply）⇒ 目标改到 + changes 有；当前空间逐项不变
+        let newdoc = r#"{"root":{"type":"root","children":[{"type":"paragraph","blockId":"b1","children":[{"type":"text","text":"新"}]}]}}"#;
+        {
+            let c = crate::db::open_space_conn_at(second, &app).unwrap();
+            crate::commands::save_page_in(&c, crate::commands::SavePageArgs {
+                id: "p1".to_string(), title: None,
+                content_json: Some(newdoc.to_string()),
+                content_text: Some("新".to_string()), space_id: None,
+            }).expect("目标空间保存应成功");
+            let n: i64 = c.query_row("SELECT COUNT(*) FROM changes WHERE entity='page'", [], |r| r.get(0)).unwrap();
+            assert!(n >= 1, "目标空间 changes 必须有记录");
+        }
+        let after = { let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap(); snap(&c) };
+        assert_eq!(before, after, "当前空间 pages/changes/versions/attachments 逐项不变");
+        // 读：write_all 能读；只读全部空间能读；只读当前带 spaceId 拒
+        let get = |grants: &[String]| with_external_caller("v2-r", grants, || {
+            dispatch_capability("pages.get", &format!(r#"{{"id":"p1","spaceId":"{second}"}}"#))
+        });
+        assert!(get(&g).is_ok(), "write_all 应能读目标页");
+        let read_all = vec!["read:pages".to_string(), "read:all-spaces".to_string()];
+        assert!(get(&read_all).is_ok(), "只读（全部空间）应能读");
+        assert!(get(&["read:pages".to_string()]).unwrap_err().contains("read:all-spaces"));
+        // 缺档 / 不支持 / 开关
+        let e = with_external_caller("v2-no", &b2_granted(), || {
+            dispatch_capability("blocks.patch", &format!(r#"{{"pageId":"p1","blockId":"b1","markdown":"x","spaceId":"{second}"}}"#))
+        }).expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        let e = with_external_caller("v2-f", &g, || {
+            dispatch_capability("files.move", &format!(r#"{{"attId":"a1","toPageId":"p1","spaceId":"{second}"}}"#))
+        }).expect_err("未支持工具必须 unsupported");
+        assert!(e.contains("暂不支持跨空间"), "{e}");
+        std::env::set_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE", "0");
+        let e = with_external_caller("v2-off", &g, || {
+            dispatch_capability("blocks.patch", &format!(r#"{{"pageId":"p1","blockId":"b1","markdown":"x","spaceId":"{second}"}}"#))
+        }).expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
         b1c_cleanup(&f);
     }
 }

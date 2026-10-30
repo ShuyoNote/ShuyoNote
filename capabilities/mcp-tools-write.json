@@ -156,6 +156,10 @@
         "clientRequestId": {
           "type": "string",
           "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略=当前空间）。跨空间需『可写（全部空间）』档（它同时给读全空间）；目标锁着 ⇒ permission_denied（locked）。"
         }
       },
       "required": [
@@ -1015,6 +1019,10 @@
         "clientRequestId": {
           "type": "string",
           "description": "幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略=当前空间）。跨空间需『可写（全部空间）』档（它同时给读全空间）；目标锁着 ⇒ permission_denied（locked）。"
         }
       },
       "required": [

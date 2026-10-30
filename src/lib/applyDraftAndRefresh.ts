@@ -49,9 +49,12 @@ const SEED_DEPS = {
 export async function applyDraftAndRefresh(payload: unknown): Promise<ApplyResult> {
   // ⭐ 跨空间写 v1：目标空间的新页**不在当前空间的页面树里** ⇒ 落库后不 seed/open，
   //   只刷新当前列表（当前空间本身没有被改动）。
-  const crossSpace =
-    typeof (payload as { args?: { spaceId?: unknown } })?.args?.spaceId === "string" &&
-    Boolean((payload as { args: { spaceId: string } }).args.spaceId);
+  const pp = payload as { spaceId?: unknown; args?: { spaceId?: unknown } };
+  const crossSpaceId =
+    (typeof pp?.spaceId === "string" && pp.spaceId) ||
+    (typeof pp?.args?.spaceId === "string" && pp.args.spaceId) ||
+    "";
+  const crossSpace = Boolean(crossSpaceId);
   // ⭐ UX-①：把草稿结果回写给宿主（applied/rejected）——失败不打断落库/提示
   const draftId = typeof (payload as { draftId?: unknown })?.draftId === "string"
     ? String((payload as { draftId: string }).draftId)
