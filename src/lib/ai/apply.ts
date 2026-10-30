@@ -196,7 +196,8 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
     case "create_folder": {
       const title = String(p.title ?? "").trim();
       if (!title) return { ok: false, message: "create_folder 需要 title" };
-      const folder = await api.createFolder({ parent_id: p.parent_id ?? null, title });
+      const spaceId = typeof p.spaceId === "string" ? p.spaceId : undefined;
+      const folder = await api.createFolder({ parent_id: p.parent_id ?? null, title, spaceId });
       return { ok: true, message: `已创建文件夹「${folder.title ?? title}」` };
     }
 
@@ -209,6 +210,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
         id,
         new_parent_id: p.newParentId ?? null,
         sort_order: Number.isFinite(Number(p.sortOrder)) ? Number(p.sortOrder) : 0,
+        spaceId: typeof p.spaceId === "string" ? p.spaceId : undefined,
       });
       return { ok: true, message: "已移动节点" };
     }
@@ -219,7 +221,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (!id || !title) return { ok: false, message: "rename_node 参数不完整" };
       const rp = await revProblem(id, p.expectedRev);
       if (rp) return { ok: false, message: rp };
-      const page = await api.savePage({ id, title });
+      const page = await api.savePage({ id, title, spaceId: typeof p.spaceId === "string" ? p.spaceId : undefined });
       return { ok: true, message: `已改名为「${page.title}」`, page };
     }
 
@@ -228,7 +230,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (!id) return { ok: false, message: "delete_node 需要 id" };
       const rp = await revProblem(id, p.expectedRev);
       if (rp) return { ok: false, message: rp };
-      await api.deletePage(id);
+      await api.deletePage(id, typeof p.spaceId === "string" ? p.spaceId : undefined);
       return { ok: true, message: "已移入回收站（可恢复）" };
     }
 

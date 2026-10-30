@@ -258,7 +258,7 @@ export const api = {
   deleteTemplate: (id: string) => invoke("delete_template", { id }),
   createPage: (args: { parent_id: string | null; title?: string; content_json?: string; content_text?: string }) =>
     invoke("create_page", { args }),
-  createFolder: (args: { parent_id: string | null; title?: string }) =>
+  createFolder: (args: { parent_id: string | null; title?: string; spaceId?: string }) =>
     invoke("create_folder", { args }),
   createDatabase: (args: { parent_id: string | null; title?: string }) =>
     invoke("create_database", { args }),
@@ -487,8 +487,8 @@ export const api = {
     invoke("list_pdf_annotations", { args: { attachment_id: attachmentId } }),
   listAllPdfAnnotations: () => invoke("list_all_pdf_annotations"),
   listAllPdfAttachments: () => invoke("list_all_pdf_attachments"),
-  deletePage: (id: string) => invoke("delete_page", { id }),
-  movePage: (args: { id: string; new_parent_id: string | null; sort_order: number }) =>
+  deletePage: (id: string, spaceId?: string) => invoke("delete_page", { id, spaceId }),
+  movePage: (args: { id: string; new_parent_id: string | null; sort_order: number; spaceId?: string }) =>
     invoke("move_page", { args }),
   search: (query: string, limit = 50, allSpaces = false) =>
     invoke("search", { args: { query, limit, all_spaces: allSpaces, embedding: readEmbedConfig() } }),
