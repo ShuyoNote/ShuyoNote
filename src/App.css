@@ -28657,5 +28657,5 @@ button.mset-row:focus-visible {
 /* B2：类型化展示 */
 .prop-link { color: var(--accent, #3b82f6); text-decoration: underline; text-underline-offset: 2px; }
 .prop-link-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.prop-link-copy, .prop-link-edit, .prop-datetime { background: none; border: 0; color: var(--text-muted, #888); cursor: pointer; font: inherit; }
-.prop-datetime { text-align: left; }
+.prop-link-copy, .prop-link-edit { background: none; border: 0; color: var(--text-muted, #888); cursor: pointer; font: inherit; }
+.prop-temporal { text-align: left; }
