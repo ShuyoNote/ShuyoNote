@@ -2,7 +2,7 @@
 
 状态：方案定稿（企业版已裁决，以 §9 为准；实现 M1.1 → M2a → M2b）
 
-> 编号说明：企业版往来信件里把本文件的规格项称作 `D1–D8`；本文件正文统一写作 **`S1–S8`**（`D#` 是决策引用专用前缀，`check-decision-ids` 会拦）。
+> 编号说明：企业版往来信件里把这些规格项称作「D 加数字」（1–8）；本文件正文统一写作 **S1–S8**，因为 D 前缀在决策门禁里是决策引用专用，裸写会被 check-decision-ids 拦。
 
 关联：[`2026-10-29-shuyodoc-m1.md`](2026-10-29-shuyodoc-m1.md)（M1 已实现）· 企业版规范 `docs/specs/2026-10-28-package-format-spec.md`＋附录 A · 已发信箱信 `2026-10-30-windows-enterprise-package-format-ambiguities.md`
 
