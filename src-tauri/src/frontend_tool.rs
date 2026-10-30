@@ -33,8 +33,13 @@ pub(crate) const BRIDGE_EVENT: &str = "mcp:frontend-tool-request";
 /// 等应答的上限（默认 5 秒；判据用短超时注入，⛔ 不真等 5 秒）。
 const TIMEOUT_MS: u64 = 5_000;
 /// **方法白名单**：只有这几个方法能被能力层调用（⛔ 任意方法名 ⇒ `bad_args`）。
-const ALLOWED_METHODS: &[&str] =
-    &["export.markdown", "export.docpackage", "coverage.report", "markdown.render"];
+const ALLOWED_METHODS: &[&str] = &[
+    "export.markdown",
+    "export.docpackage",
+    "coverage.report",
+    "markdown.render",
+    "files.confirm_download",
+];
 
 /// 前端算出来的一件东西：建议文件名 ＋ 字节。
 #[derive(Debug, Clone)]
@@ -57,6 +62,29 @@ fn pending() -> &'static Mutex<HashMap<String, mpsc::Sender<Result<BridgeReply, 
 }
 
 /// 装/换出口（App 启动时装 Tauri 的 `emit` ✓；判据里装自己的 ✓）。
+#[cfg(test)]
+thread_local! {
+    static NOTIFY_LOG: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+#[cfg(test)]
+pub(crate) fn take_notify_log() -> Vec<String> {
+    NOTIFY_LOG.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+/// ⭐ B：**只发不等**的前端通知（超限确认用）。
+///
+/// 与 `call` 的区别：不登记 pending、不等待回执 ⇒ **不触碰 5s 超时语义**；
+/// 前端没挂载/没就绪也只是这一次通知丢掉（前端会按"没显示确认框"处理）。
+pub(crate) fn notify(method: &str, args_json: &str) {
+    #[cfg(test)]
+    NOTIFY_LOG.with(|l| l.borrow_mut().push(method.to_string()));
+    let method = method.to_string();
+    let args = args_json.to_string();
+    std::thread::spawn(move || {
+        let _ = call(&method, &args);
+    });
+}
+
 pub(crate) fn set_emitter(f: impl Fn(&str, &str) + Send + Sync + 'static) {
     if let Ok(mut g) = emitter_slot().lock() {
         *g = Some(std::sync::Arc::new(f));

@@ -145,6 +145,8 @@ export async function runFrontendTool(
       return exportDocPackage(args, deps);
     case "coverage.report":
       return coverageReport(deps);
+    case "files.confirm_download":
+      return confirmDownload(args);
     case "markdown.render":
       return renderMarkdownWithAnchors(args, deps);
     default:
@@ -225,6 +227,24 @@ async function exportDocPackage(
  * ⚠️ 与界面「检查索引覆盖」、应用内 AI 面用的是**同一份函数**（`scanLibraryCoverage` →
  * `coverageReportTool`）⇒ 三处读数不会漂（判据逐字段比对）。
  */
+/** `files.confirm_download`：超限下载的确认（B）——只发不等，不碰桥的 5s 超时语义。 */
+async function confirmDownload(args: Record<string, unknown>): Promise<FrontendToolResult> {
+  const attId = String(args.attId ?? "").trim();
+  const spaceId = String(args.spaceId ?? "").trim();
+  const size = Number(args.size ?? 0);
+  if (!attId) throw new Error("bad_args: files.confirm_download 需要 attId");
+  void (async () => {
+    const ok = await confirmDialog({
+      title: "附件超过下载上限",
+      message: `附件 ${size} 字节，超过 10MB 上限。
+允许这一次吗？允许后需要重试同一请求。`,
+      okLabel: "允许一次",
+      cancelLabel: "拒绝",
+    });
+    if (ok) await api.mcpDownloadGrant(attId, spaceId || undefined);
+  })().catch(() => undefined);
+  return { name: "confirm", bytes: new TextEncoder().encode("{}") };
+}
 async function coverageReport(deps: FrontendToolDeps): Promise<FrontendToolResult> {
   const getStores = deps.derivedStores;
   if (!getStores) {

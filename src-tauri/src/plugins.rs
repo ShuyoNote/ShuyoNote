@@ -3022,31 +3022,105 @@ fn cap_files_list_orphan(limit: i64, offset: i64, space_id: Option<&str>) -> Cap
     })
 }
 
+
+/// ⭐ B：用户点「允许一次」⇒ 写一次性下载额度（TTL 5 分钟、进程内存）。
+#[tauri::command]
+pub fn mcp_download_grant(
+    db: tauri::State<'_, crate::db::Db>,
+    att_id: String,
+    space_id: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let att = att_id.trim();
+    if att.is_empty() {
+        return Err("bad_args: 需要 attId".to_string());
+    }
+    // attId 必须存在（不猜）；目标空间锁着 ⇒ 明确拒（与读同一口径）
+    let _ = with_conn_for_space(space_id.as_deref(), |c| attachment_row_of(c, att))?;
+    let space = target_space_id(space_id.as_deref());
+    let expires_at = now_ms() + DOWNLOAD_GRANT_TTL_MS;
+    set_download_grant(att, &space, expires_at);
+    Ok(serde_json::json!({ "ok": true, "expiresAt": expires_at }))
+}
 /// `files.download`：把附件字节取成**句柄**（⛔ 不回字节）。
 ///
 /// 三道：① 附件要在库里；② 字节走**与界面同一条**明文口径（`attachments::plain_bytes_of`：
 /// 按空间取钥匙/解密/空壳/内容指纹）；③ >10 MB ⇒ `needs_confirm`（本批没有确认 UI，⛔ 不静默下载）。
+// ⭐ B：`files.download` 超限确认的**一次性额度**（进程内存；重启即丢，文档写明）。
+const DOWNLOAD_GRANT_TTL_MS: i64 = 5 * 60 * 1000;
+static DOWNLOAD_GRANTS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, i64>>,
+> = std::sync::OnceLock::new();
+fn download_grants() -> &'static std::sync::Mutex<std::collections::HashMap<String, i64>> {
+    DOWNLOAD_GRANTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+fn download_key(att_id: &str, space: &str) -> String {
+    format!("{att_id}|{space}")
+}
+pub(crate) fn set_download_grant(att_id: &str, space: &str, expires_at: i64) {
+    if let Ok(mut g) = download_grants().lock() {
+        g.insert(download_key(att_id, space), expires_at);
+    }
+}
+fn take_download_grant(att_id: &str, space: &str) -> bool {
+    let Ok(mut g) = download_grants().lock() else { return false };
+    let key = download_key(att_id, space);
+    match g.get(&key).copied() {
+        Some(exp) if exp > now_ms() => { g.remove(&key); true }
+        Some(_) => { g.remove(&key); false }
+        None => false,
+    }
+}
+#[cfg(test)]
+static DOWNLOAD_LIMIT_OVERRIDE: std::sync::atomic::AtomicI64 =
+    std::sync::atomic::AtomicI64::new(-1);
+fn download_limit() -> i64 {
+    #[cfg(test)]
+    {
+        let v = DOWNLOAD_LIMIT_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed);
+        if v >= 0 { return v; }
+    }
+    MAX_INLINE_DOWNLOAD_BYTES
+}
+#[cfg(test)]
+pub(crate) fn set_download_limit_for_test(v: i64) {
+    DOWNLOAD_LIMIT_OVERRIDE.store(v, std::sync::atomic::Ordering::Relaxed);
+}
 fn cap_files_download(att_id: &str, space_id: Option<&str>) -> CapResult {
     let att = att_id.trim();
     if att.is_empty() {
         return Err("bad_args: 需要 attId".to_string());
     }
     let row = with_conn_for_space(space_id, |c| attachment_row_of(c, att))?;
-    if row.size > MAX_INLINE_DOWNLOAD_BYTES {
+    let space = target_space_id(space_id);
+    let limit = download_limit();
+    let allowed_once = take_download_grant(att, &space);
+    if row.size > limit && !allowed_once {
+        crate::frontend_tool::notify(
+            "files.confirm_download",
+            &serde_json::json!({ "attId": att, "spaceId": space, "size": row.size, "thresholdBytes": limit }).to_string(),
+        );
         return Err(format!(
-            "needs_confirm: 附件「{}」{} 字节，超过 10MB 上限 —— 本批未接用户确认 UI，不能静默下载",
-            row.name, row.size
+            "needs_confirm: 附件「{}」{} 字节，超过 {}MB 上限 —— needsConfirm=true thresholdBytes={}（去应用里允许一次后重试）",
+            row.name,
+            row.size,
+            limit / 1024 / 1024,
+            limit
         ));
     }
-    let space = target_space_id(space_id);
     let app_data = crate::db::app_data_dir_ref()
         .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
     let bytes = crate::attachments::plain_bytes_of(app_data, &space, &row.hash)?;
-    if bytes.len() as i64 > MAX_INLINE_DOWNLOAD_BYTES {
+    if bytes.len() as i64 > limit && !allowed_once {
+        crate::frontend_tool::notify(
+            "files.confirm_download",
+            &serde_json::json!({ "attId": att, "spaceId": space, "size": bytes.len(), "thresholdBytes": limit }).to_string(),
+        );
         return Err(format!(
-            "needs_confirm: 附件「{}」实际 {} 字节，超过 10MB 上限 —— 本批未接用户确认 UI，不能静默下载",
+            "needs_confirm: 附件「{}」实际 {} 字节，超过 {}MB 上限 —— needsConfirm=true thresholdBytes={}（去应用里允许一次后重试）",
             row.name,
-            bytes.len()
+            bytes.len(),
+            limit / 1024 / 1024,
+            limit
         ));
     }
     let (handle, expires_at, meta) = crate::mcp_blobs::put(
@@ -16664,6 +16738,45 @@ register({ id: "s.run", title: "结构化", run: function () {
         .expect_err("开关关着必须拒");
         assert!(e.contains("关闭"), "{e}");
         std::env::remove_var("SHUYONOTE_MCP_CROSS_SPACE_WRITE");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ B：files.download 超限确认（事件不阻塞；一次性额度；过期/拒绝仍拒）。
+    #[test]
+    fn b_download_oversize_confirm_grant_once() {
+        let f = b1c_fixture("dl-grant");
+        point_cap_search_at(&f.dir, &f.space);
+        crate::frontend_tool::take_notify_log();
+        let read = crate::mcp_channel::default_read_scopes();
+        let call = |g: &[String]| with_external_caller("dl", g, || {
+            dispatch_capability("files.download", r#"{"attId":"a3"}"#)
+        });
+        // 阈值注入为 5 字节（a3=18 字节 ⇒ 超限）；无额度 ⇒ needs_confirm + 事件
+        crate::plugins::set_download_limit_for_test(5);
+        let e = call(&read).expect_err("超限无额度必须 needs_confirm");
+        assert!(e.contains("needs_confirm") && e.contains("thresholdBytes=5"), "{e}");
+        assert!(
+            crate::frontend_tool::take_notify_log().contains(&"files.confirm_download".to_string()),
+            "超限必须异步发确认事件"
+        );
+        // grant ⇒ 重试成功拿句柄；第三次又拒（one-shot）
+        crate::plugins::set_download_grant("a3", &f.space, crate::db::now_ms() + 60_000);
+        let v: serde_json::Value = serde_json::from_str(&call(&read).expect("有额度应成功")).unwrap();
+        assert!(v["handle"].as_str().unwrap_or("").len() >= 32, "应回句柄：{v}");
+        let e = call(&read).expect_err("额度用掉后第三次必须再 needs_confirm");
+        assert!(e.contains("needs_confirm"), "{e}");
+        // 过期额度 ⇒ 仍拒
+        crate::plugins::set_download_grant("a3", &f.space, 1);
+        let e = call(&read).expect_err("过期额度必须拒");
+        assert!(e.contains("needs_confirm"), "{e}");
+        // 未超限（默认阈值）⇒ 直接成功且**不发事件**
+        crate::plugins::set_download_limit_for_test(-1);
+        crate::frontend_tool::take_notify_log();
+        call(&read).expect("未超限应直接成功");
+        assert!(
+            crate::frontend_tool::take_notify_log().is_empty(),
+            "未超限不许发确认事件"
+        );
         b1c_cleanup(&f);
     }
 }

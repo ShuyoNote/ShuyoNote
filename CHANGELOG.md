@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **`files.download` 超限确认（B 方案）**：能力层超限立即 `needs_confirm`＋异步前端事件（**不等回执、不碰桥 5s 契约**）；前端复用 `confirmDialog`，允许 ⇒ `mcp_download_grant` 写一次性额度（attId|space、TTL 5 分钟、进程内存、重启即丢）；重试拿句柄、用一次即废；拒绝/过期仍拒；未超限不发事件、行为不变。
 - **超限需在应用内确认一次**：前端桥遇 `>10MB`/`>20 文件` 时弹确认框（复用既有 confirm overlay，无新浮层），允许后发内存**一次性额度**（TTL 5 分钟、同一请求类型+目标），Agent 重试同请求才通过；拒绝/过期仍 `needs_confirm`；错误文本带 `needsConfirm=true thresholdBytes/thresholdFiles`；阈值未改、未超限行为不变。仅覆盖前端桥的导出/下载类；后台上传仍 unsupported。
 - **修跨空间描述文案**：读工具改为「跨空间：支持（带 spaceId 读指定空间）」、写工具保留「写到指定空间，不是搬移」；生成器按 kind 分档并自证（读工具不含「写到」、写工具含「不是搬移」、61 条全有）。补 `blocks.insert` 跨空间 apply e2e（savePage 收到目标 spaceId、children 含新块、当前空间未被写）。
 - **一致性批：跨空间矩阵进工具描述 ＋ `blocks.insert` 跨空间**：生成器给全部 61 条 MCP 工具描述末尾统一追加「跨空间：支持/不支持」（10 条写白名单 + 26 条读侧声明 `spaceId`，读侧由参数推导）；`blocks.insert` 接入跨空间（目标页/块校验、草稿带 `spaceId`、白名单 9→10）；文档补总数 61/§6.9 矩阵/整空间导出仅当前空间。`apiVersion` 1.23.0 → **1.24.0**。

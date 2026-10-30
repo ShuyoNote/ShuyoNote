@@ -125,6 +125,8 @@ const DESKTOP_ONLY_COMMANDS = new Map([
   // ⭐ AI 不可见空间清单（本机 meta.db；Web 没有本机 MCP 信道）
   ["mcp_hidden_spaces_get", "桌面专属：AI 不可见空间清单（Web 没有本机 MCP 信道/meta.db 偏好）"],
   ["mcp_hidden_spaces_set", "桌面专属：AI 不可见空间清单（Web 没有本机 MCP 信道/meta.db 偏好）"],
+  // ⭐ B：下载超限确认的「允许一次」额度（进程内存，仅桌面）
+  ["mcp_download_grant", "桌面专属：下载超限确认额度（Web 没有本机 MCP 信道/进程内额度表）"],
   // ⭐ B2-补遗-1：把附件从页面摘除（page_id=NULL）。Web 上附件表走 sql.js、没有"未整理附件"这一层，
   //   且这条命令只服务本机 MCP 写面 ⇒ 桌面专属。
   ["detach_attachment", "桌面专属：把附件从页面摘除（Web 没有本机 MCP 写面；未整理附件这一层只在桌面附件树里）"],

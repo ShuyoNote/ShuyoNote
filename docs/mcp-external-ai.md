@@ -110,6 +110,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | 写入没经过我确认 | 档位是「可写（免确认）」（`write_auto`）：直接落库、只留审计。要确认就切「可写（每次确认）」 |
 ### 6.10 超限需在应用内确认一次
 
+**`files.download` 的超限（>10MB）**：能力层立即返回 `needs_confirm`（带 `needsConfirm=true thresholdBytes`），并**异步**发一条前端确认事件（不等待回执 ⇒ **不影响桥 5s 超时语义**）；用户在应用内点「允许一次」⇒ 前端调桌面命令 `mcp_download_grant` 写**一次性额度**（attId|space、TTL 5 分钟、**进程内存，重启即丢**）⇒ Agent 重试同一请求才拿到句柄（额度用一次即作废）；拒绝/过期仍 `needs_confirm`。`<= 阈值` 不发事件、行为不变。
+
 导出/下载超过 `10MB` 或 `20 个文件` 时，**不会静默截断/执行**：前端桥弹确认框（`允许一次`/`拒绝`），允许后发一张**内存一次性额度**（TTL 5 分钟、只对同一请求类型＋同一目标有效）⇒ Agent **重试同一请求**才通过；额度过期/拒绝仍返回 `needs_confirm`。MCP 错误文本含 `needsConfirm=true thresholdBytes / thresholdFiles`，Agent 可据此提示用户到应用里确认一次。阈值本身未改；上传类仍 unsupported（见 §7）。
 
 ## 7. 安全与数据边界（务必先读）

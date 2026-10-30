@@ -17,6 +17,7 @@ vi.mock("./api", () => ({
     getActiveWorkspaceId: vi.fn(),
     mcpFrontendToolReady: vi.fn(),
     mcpFrontendToolRespond: vi.fn(),
+    mcpDownloadGrant: vi.fn(),
   },
 }));
 
@@ -313,5 +314,22 @@ describe("批次 C · 超限确认 ＋ 一次性额度", () => {
     const r = await runFrontendTool("export.docpackage", { pageId: "p1" }, d);
     expect(r.name).toBe("标题.shuyodoc");
     expect(confirmDialog).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("B · files.confirm_download（只发不等，允许一次才写额度）", () => {
+  beforeEach(() => vi.clearAllMocks());
+  it("允许一次 ⇒ 调 mcp_download_grant(attId,spaceId)；拒绝 ⇒ 不调", async () => {
+    (confirmDialog as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const r = await runFrontendTool("files.confirm_download", { attId: "a1", spaceId: "s2", size: 12 }, deps());
+    expect(new TextDecoder().decode(r.bytes)).toBe("{}");
+    await new Promise((res) => setTimeout(res, 20));
+    expect(api.mcpDownloadGrant).toHaveBeenCalledWith("a1", "s2");
+    (api.mcpDownloadGrant as unknown as ReturnType<typeof vi.fn>).mockClear();
+    (confirmDialog as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    await runFrontendTool("files.confirm_download", { attId: "a1", spaceId: "s2", size: 12 }, deps());
+    await new Promise((res) => setTimeout(res, 20));
+    expect(api.mcpDownloadGrant).not.toHaveBeenCalled();
   });
 });
