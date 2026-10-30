@@ -1118,6 +1118,8 @@ export interface CommandMap {
   // ⭐ R150：外部草稿的落库结果回执（写 mcp/apply.log ✓）
   mcp_log_apply_result: { args: { line: string }; result: void };
   mcp_draft_state: { args: { draftId: string; state: string }; result: void };
+  mcp_recent_drafts: { args: { limit?: number }; result: unknown[] };
+  mcp_recent_audit: { args: { limit?: number }; result: unknown[] };
   // ⭐ B3（2026-10-29）：Rust→前端桥 —— 就绪信号 ＋ 结果回执（桌面专属：Web 没有本机 MCP 通道）
   mcp_frontend_tool_ready: { args: undefined; result: void };
   mcp_frontend_tool_respond: {

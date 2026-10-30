@@ -356,6 +356,17 @@ mod tests {
             (McpLevel::ReadAll, true, with_all.clone(), false),
             (McpLevel::WriteConfirm, true, with_write.clone(), false),
             (McpLevel::WriteAuto, true, with_write.clone(), true),
+            // ⭐ P1：写全部空间 = 写 scope ＋ write:all-spaces；仍不给 read:all-spaces
+            (
+                McpLevel::WriteAll,
+                true,
+                {
+                    let mut v = with_write.clone();
+                    v.push("write:all-spaces".to_string());
+                    v
+                },
+                true,
+            ),
         ];
         for (level, en, gr, aw) in table {
             let (e, g, a) = level_to_config(level, &[]);
@@ -395,6 +406,17 @@ mod tests {
         assert_eq!(level_of(true, &with_all, false), McpLevel::ReadAll);
         assert_eq!(level_of(true, &with_write, false), McpLevel::WriteConfirm);
         assert_eq!(level_of(true, &with_write, true), McpLevel::WriteAuto);
+        // ⭐ P1
+        let mut with_write_all = with_write.clone();
+        with_write_all.push("write:all-spaces".to_string());
+        assert_eq!(level_of(true, &with_write_all, false), McpLevel::WriteAll);
+        let (_, g_wa, aw) = level_to_config(McpLevel::WriteAll, &[]);
+        assert!(g_wa.iter().any(|s| s == "write:all-spaces"));
+        assert!(g_wa.iter().any(|s| s == WRITE_SCOPE));
+        assert!(!g_wa.iter().any(|s| s == READ_ALL_SCOPE), "写全部空间不等于能读全部空间");
+        assert!(aw, "可写（全部空间）免确认");
+        let (_, g_other, _) = level_to_config(McpLevel::WriteAuto, &with_write_all);
+        assert!(!g_other.iter().any(|s| s == "write:all-spaces"), "别的档必须收回 write:all-spaces");
     }
 
     /// ⭐ **R152 接线**：换档必须**换令牌**（R147 的教训 ✓）＋ 命令进 `lib.rs` ✓。
@@ -812,6 +834,8 @@ pub fn set_allow_write(on: bool) -> Result<McpStatus, String> {
 /// ⚠️ 在此之前**全仓没有任何地方把它加进 `granted`** ✗ ⇒ 面板那个「免确认写」开关是个**空开关** ✓
 /// （打开也只影响"草稿要不要自动落库" ✓，而它前面那道**授权门从来没开过** ✗）。
 pub(crate) const WRITE_SCOPE: &str = "write:pages";
+/// ⭐ P1：可写（全部空间）档显式授予的写 scope（默认关；⛔ 不替代 read:all-spaces）。
+pub(crate) const WRITE_ALL_SCOPE: &str = "write:all-spaces";
 
 /// ⭐ **2026-10-18**：**跨空间只读**那一条 scope —— 只有面板的「只读（全部空间）」档会给它 ✓。
 ///
@@ -1318,6 +1342,9 @@ pub enum McpLevel {
     WriteConfirm,
     /// 可写、**免确认** ✓（直接落库；⚠️ 每一次写仍留一行审计 ✓）。
     WriteAuto,
+    /// ⭐ P1（2026-10-30）：可写（**全部空间**）—— 含 `write:pages` ＋ `write:all-spaces`，
+    /// 免确认；⛔ **不给** `read:all-spaces`（"能写到看不见的空间"不等于能读它）。
+    WriteAll,
 }
 
 /// ⭐ **纯函数**：档位 ⇒ `(enabled, granted, allow_write)` ✓（**表驱动**判据就钉它 ✓）。
@@ -1331,7 +1358,12 @@ pub(crate) fn level_to_config(level: McpLevel, base: &[String]) -> (bool, Vec<St
     let reads = default_read_scopes();
     let mut granted: Vec<String> = base
         .iter()
-        .filter(|s| reads.contains(s) || s.as_str() == WRITE_SCOPE || s.as_str() == READ_ALL_SCOPE)
+        .filter(|s| {
+            reads.contains(s)
+                || s.as_str() == WRITE_SCOPE
+                || s.as_str() == READ_ALL_SCOPE
+                || s.as_str() == WRITE_ALL_SCOPE
+        })
         .cloned()
         .collect();
     for r in &reads {
@@ -1348,7 +1380,10 @@ pub(crate) fn level_to_config(level: McpLevel, base: &[String]) -> (bool, Vec<St
     } else {
         granted.retain(|s| s != &all);
     }
-    let wants_write = matches!(level, McpLevel::WriteConfirm | McpLevel::WriteAuto);
+    let wants_write = matches!(
+        level,
+        McpLevel::WriteConfirm | McpLevel::WriteAuto | McpLevel::WriteAll
+    );
     let w = WRITE_SCOPE.to_string();
     if wants_write {
         if !granted.contains(&w) {
@@ -1357,12 +1392,22 @@ pub(crate) fn level_to_config(level: McpLevel, base: &[String]) -> (bool, Vec<St
     } else {
         granted.retain(|s| s != &w);
     }
+    // ⭐ P1：write:all-spaces 只由 WriteAll 给，其余档一律收回
+    let wa = WRITE_ALL_SCOPE.to_string();
+    if level == McpLevel::WriteAll {
+        if !granted.contains(&wa) {
+            granted.push(wa);
+        }
+    } else {
+        granted.retain(|s| s != &wa);
+    }
     match level {
         McpLevel::Off => (false, granted, false),
         McpLevel::Read => (true, granted, false),
         McpLevel::ReadAll => (true, granted, false),
         McpLevel::WriteConfirm => (true, granted, false),
         McpLevel::WriteAuto => (true, granted, true),
+        McpLevel::WriteAll => (true, granted, true),
     }
 }
 
@@ -1376,7 +1421,8 @@ pub fn level_of(enabled: bool, granted: &[String], allow_write: bool) -> McpLeve
         granted.iter().any(|s| s == READ_ALL_SCOPE),
         allow_write,
     ) {
-        // 写优先：带了 write:pages 就是写档（读全部空间与否不改变它是"可写"这件事 ✓）
+        // 写优先：带了 write:all-spaces 就是"可写（全部空间）"档；否则按免确认与否分档
+        (true, _, _) if granted.iter().any(|s| s == WRITE_ALL_SCOPE) => McpLevel::WriteAll,
         (true, _, false) => McpLevel::WriteConfirm,
         (true, _, true) => McpLevel::WriteAuto,
         (false, true, _) => McpLevel::ReadAll,

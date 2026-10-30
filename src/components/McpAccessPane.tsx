@@ -1,32 +1,79 @@
-// MCP 接入（R89 的**开关面** ＋ M2 的**写**那半 ✓）：开关 ／ 状态 ／ 令牌 ／ 给 AI 的配置 ✓。
+// MCP 接入面板（P1 改版 —— 「接入面板」六块）。
 //
-// owner 2026-10-06 拍板：**允许外部 AI 读**（默认关、只绑本机、要令牌、关掉立刻失效 ✓）
-// ＋ **设置里必须有开关与可见状态** ✓；M2 又加了「提改动」（默认进待确认；免确认开着时每次写留痕 ✓）。
+// ⚠️ 样式纪律：**只用设置页既有的那套类**（`set-section` / `set-section-title` / `set-row` /
+//   `set-row-text` / `set-row-name` / `set-row-sub` / `set-hint` / `set-status` / `set-btn` /
+//   `set-actions` / `ai-settings-tab*` ＋ `mcp-access-*` 既有类）。本版**没有新增 CSS**。
 //
-// ⚠️ **2026-10-06 第二版（owner：截图 ＋「优化一下」✓）** —— 第一版我**自己发明了一套 `set-row-*` 子类名**
-//    （`set-row-main` / `set-row-title` / `set-row-hint`）✗，而 `App.css` 里**根本没有这几条规则** ✗
-//    （全仓只有这个文件在用它们 ✓）⇒ 面板是"裸"的：标题和正文同字号、换行挤在一起、开关悬在长文的
-//    垂直中点、`**加粗**` 这种 Markdown 写法在 JSX 里是**字面星号** ✗。
-//    ⇒ 这一版改用**设置页既有的那套类**（`AbilitiesPane` 是现成范例 ✓）：
-//      `set-section` / `set-section-title` / `set-row` / `set-row-text` / `set-row-name` / `set-row-sub`
-//      / `set-hint` / `set-status` / `set-btn` ＋ 既有的 `ui-toggle` ✓ —— 一行都不新造 ✗。
-//    ⚠️ 界面上要强调的词一律用 `<b>` ✓，⛔ 不写 `**…**` ✗（那是 Markdown，不是 JSX）。
-import { useCallback, useEffect, useState } from "react";
+// 六块：① 档位（六档；每档动态列"这一档能做什么"）② 状态卡（运行/端口/token 脱敏/复制配置）
+// ③ 能力清单（折叠，按域分组，条目来自注册表生成物，⛔ 不手写会漂的句子）
+// ④ 最近草稿 ⑤ 最近审计 ⑥ 边界提示。
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
+import { AI_TOOL_META } from "../lib/capabilities/aiTools.meta";
 import { toast } from "../store/toast";
 import type { McpStatus } from "../types";
 
-/** 一句人话的中间态（"开着但没在听"必须说出来 —— 那通常是端口被占 ✓）。 */
+interface DraftRow {
+  draftId: string;
+  tool: string;
+  capabilityId: string;
+  state: "pending" | "applied" | "rejected" | "expired";
+  at: number;
+}
+interface AuditRow {
+  at: number;
+  tool: string;
+  capabilityId: string;
+  ok: boolean;
+  code: string | null;
+}
+
+const LEVELS: Array<[McpStatus["level"], string, string]> = [
+  ["off", "不接", "完全断开：既不读也不写；旧令牌同时失效。"],
+  ["read", "只读", "能看当前空间；不能改。"],
+  ["read_all", "只读（全部空间）", "能看所有空间；不能改。"],
+  ["write_confirm", "可写（每次确认）", "能改当前空间；每次先问你。"],
+  ["write_auto", "可写（免确认）", "能改当前空间；直接写入，但每一次写都会留一行审计。"],
+  [
+    "write_all",
+    "可写（全部空间）",
+    "能写到你看不见的空间（全部空间的写权限；读仍只限当前空间）。跨空间落库链路下一版才接，本版只放行权限门。",
+  ],
+];
+
+/** 能力清单的域分组（顺序即展示顺序）。每条能力只落一个域。 */
+const DOMAINS: Array<[string, (id: string, isWrite: boolean) => boolean]> = [
+  ["读页面", (id, w) => !w && /^(pages|search|tags|properties|backlinks|space|spaces)\./.test(id)],
+  ["写页面", (id, w) => w && /^(pages|templates|import|tags|properties)\./.test(id)],
+  ["块", (id) => /^blocks\./.test(id)],
+  ["结构", (id, w) => w && /^(folders|nodes|trash|spaces)\./.test(id)],
+  ["附件", (id) => /^(files|attachments|blobs)\./.test(id)],
+  ["数据库", (id) => /^db\./.test(id)],
+  ["导出", (id) => /^(export|coverage)\./.test(id)],
+  ["审计", (id) => /^(audit|drafts|versions|version)\./.test(id)],
+];
+
+function domainOf(id: string, isWrite: boolean): string {
+  for (const [name, hit] of DOMAINS) if (hit(id, isWrite)) return name;
+  return "其它";
+}
+
+/** 一句人话的中间态（"开着但没在听"必须说出来 —— 那通常是端口被占）。 */
 function stateLine(st: McpStatus): string {
   if (!st.enabled) return "已关闭（默认）";
   if (st.running) return `已打开 · 正在听 127.0.0.1:${st.port ?? "?"}`;
   return "开关开着，但监听没起来（端口可能被占）—— 这一刻连不上";
 }
 
+const fmtTime = (ms: number) => new Date(ms).toLocaleTimeString("zh-CN", { hour12: false });
+
 export function McpAccessPane() {
   const [st, setSt] = useState<McpStatus | null>(null);
+  const [drafts, setDrafts] = useState<DraftRow[]>([]);
+  const [audit, setAudit] = useState<AuditRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [showToken, setShowToken] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -35,46 +82,35 @@ export function McpAccessPane() {
     } catch (e) {
       setErr(String(e));
     }
+    // 草稿/审计是面板的旁路读数：拿不到就空着（⛔ 不因此挡住档位/令牌操作）
+    await Promise.all([
+      api
+        .mcpRecentDrafts(5)
+        .then((r) => setDrafts((r as DraftRow[]) ?? []))
+        .catch(() => setDrafts([])),
+      api
+        .mcpRecentAudit(20)
+        .then((r) => setAudit((r as AuditRow[]) ?? []))
+        .catch(() => setAudit([])),
+    ]);
   }, []);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  // ⭐ R152（owner 2026-10-08 选 A）：**一个四档**取代原先三个开关 ✓ ——
-  //   理由：②「免确认」与③「授权写入」不独立（③ 关着 ⇒ ② 毫无作用 ✗）、① 关着时 ②③ 是死 UI ✗
-  //   ⇒ 真状态只有 4 个，却用 3 个布尔表达 ⇒ 一半组合是死的/骗人的 ✗。
-  // ⛔ 界面文案里**不许**出现 `**加粗**` 与 `✓／✗／⛔` —— 那些是我在仓库里判"过没过"的记号 ✗，
-  //   不是给用户看的 ✓（R152 我把它们写进来了 ✓，owner 2026-10-08 指出 ⇒ R158 修 ✓）。
-  const LEVELS: Array<[McpStatus["level"], string, string]> = [
-    ["off", "不接", "完全断开：既不读也不写；旧令牌同时失效。"],
-    ["read", "只读", "能看当前空间的笔记；不能修改。"],
-    [
-      "read_all",
-      "只读（全部空间）",
-      "能看所有空间的笔记；不能修改。",
-    ],
-    ["write_confirm", "可写（每次确认）", "能新建 / 追加内容；每次先问你。"],
-    ["write_auto", "可写（免确认）", "能新建 / 追加内容：直接写入，但每一次写都会留一行审计。整页替换仍会先问你。"],
-  ];
-  const [showToken, setShowToken] = useState(false);
   const level: McpStatus["level"] = st?.level ?? "off";
-  // ⭐ 空态：占位句是**人话**、不是令牌 ⇒ 单独一档样式（2026-10-29 owner 截图：
-  //   等宽字体里的中文回退会把占位撑得又大又重，跟下面真实的令牌不是一种东西）。
-  const emptyToken = !st?.token;
+  const granted = st?.granted ?? [];
+  const token = st?.token ?? "";
+  const emptyToken = !token;
 
   const setLevel = async (next: McpStatus["level"]) => {
+    if (!st) return;
     setBusy(true);
     try {
       setSt(await api.mcpSetLevel(next));
-      setErr("");
       const label = LEVELS.find(([id]) => id === next)?.[1] ?? next;
-      toast(
-        next === "off"
-          ? "已关掉外部接入 —— 旧令牌立刻作废"
-          : `已切到「${label}」—— 换了一枚对应授权的令牌（旧那枚立刻作废）`,
-        next === "write_confirm" ? "info" : "success",
-      );
+      toast(`权限已切到「${label}」——旧令牌同时失效`, "success");
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -86,8 +122,8 @@ export function McpAccessPane() {
     setBusy(true);
     try {
       setSt(await api.mcpRotateToken());
-      setErr("");
-      toast("已换一枚新令牌 —— 旧的那枚立刻作废", "success");
+      toast("已换一枚新令牌 —— 旧令牌立刻作废", "success");
+      await refresh();
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -104,44 +140,63 @@ export function McpAccessPane() {
     }
   };
 
-  // 给 agent 的配置片段：**路径取自后端读数** ✓（界面不猜路径 ✗）。
-  // ⭐ 2026-10-18（owner：「让程序自动填好 args，省却用户麻烦」）：
-  //   `args` 里的桥路径**不再让用户自己找** —— 后端能定位到就填绝对路径（`bridge_path` ✓），
-  //   定位不到才退回占位文案（并说明可以设 `SHUYONOTE_MCP_BRIDGE` ✓）。
-  //   ⚠️ 同时把整段改成 `JSON.stringify`：原来是用手写字符串拼的，**Windows 路径里的反斜杠**
-  //   会拼出非法 JSON（`C:\repo` 里的 `\r` 会被转义成回车 ✗）⇒ 这就是"自动填了也粘不过去"的坑 ✓。
-  const bridgePath = st?.bridge_path ?? null;
-  const snippet = st
-    ? JSON.stringify(
-        {
-          mcpServers: {
-            shuyonote: {
-              command: "node",
-              args: [bridgePath ?? "<桥的路径：<本仓>/tools/shuyonote-mcp/index.mjs>"],
-              env: {
-                SHUYONOTE_MCP_TOKEN_FILE: st.token_path ?? "",
-                SHUYONOTE_MCP_PORT_FILE: st.port_path ?? "",
-              },
+  // 当前档「能做什么」：**按注册表 ai:true 过滤**，⛔ 不手写能力句子（会漂）。
+  const readOk = granted.some((s) => s.startsWith("read:"));
+  const writeOk = granted.some((s) => s === "write:pages" || s === "write:all-spaces");
+  const visibleCaps = useMemo(
+    () => AI_TOOL_META.filter((c) => (c.isWrite ? writeOk : readOk)),
+    [readOk, writeOk],
+  );
+  const groupCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of visibleCaps) {
+      const d = domainOf(c.id, c.isWrite);
+      m.set(d, (m.get(d) ?? 0) + 1);
+    }
+    return m;
+  }, [visibleCaps]);
+  const capRows = useMemo(
+    () =>
+      AI_TOOL_META.map((c) => ({
+        id: c.id,
+        domain: domainOf(c.id, c.isWrite),
+        isWrite: c.isWrite,
+        brief: (c.description.split("。")[0] ?? c.description).replace(/\*\*|✓|✗|⛔/g, ""),
+      })),
+    [visibleCaps],
+  );
+
+  const snippet = useMemo(() => {
+    const bridge = st?.bridge_path ?? "";
+    return JSON.stringify(
+      {
+        mcpServers: {
+          shuyonote: {
+            command: "node",
+            args: [bridge || "tools/shuyonote-mcp/index.mjs"],
+            env: {
+              SHUYONOTE_MCP_PORT_FILE: st?.port_path ?? "",
+              SHUYONOTE_MCP_TOKEN_FILE: st?.token_path ?? "",
             },
           },
         },
-        null,
-        2,
-      )
-    : "";
+      },
+      null,
+      2,
+    );
+  }, [st?.bridge_path, st?.port_path, st?.token_path]);
 
   return (
     <div className="mcp-access">
+      {/* ① 档位 */}
       <section className="set-section">
         <div className="set-section-title">外部 AI 权限</div>
-
         <div className="set-row">
           <div className="set-row-text">
             <div className="set-row-name">当前权限</div>
             <div className="set-row-sub">{LEVELS.find(([id]) => id === level)?.[2] ?? ""}</div>
           </div>
         </div>
-
         <div className="ai-settings-tabs" role="tablist" aria-label="外部 AI 权限">
           {LEVELS.map(([id, label]) => (
             <button
@@ -150,6 +205,7 @@ export function McpAccessPane() {
               role="tab"
               aria-selected={level === id}
               aria-label={label}
+              data-level={id}
               className={`ai-settings-tab${level === id ? " is-on" : ""}`}
               disabled={busy || !st}
               onClick={() => void setLevel(id)}
@@ -158,23 +214,24 @@ export function McpAccessPane() {
             </button>
           ))}
         </div>
+        <div className="set-hint">切换档位会换新令牌，旧令牌立即失效。</div>
 
-        <div className="set-hint">
-          切换档位会换新令牌，旧令牌立即失效。
-        </div>
+        <details className="set-row" open>
+          <summary className="set-row-sub">
+            它能做什么（这一档，按能力注册表实时算，共 {visibleCaps.length} 项）
+          </summary>
+          {DOMAINS.map(([name]) => {
+            const n = groupCounts.get(name) ?? 0;
+            return (
+              <div key={name} className="set-hint" data-domain={name} data-count={n}>
+                {name}：{n} 项
+              </div>
+            );
+          })}
+        </details>
       </section>
 
-      <section className="set-section">
-        <div className="set-section-title">它能做什么</div>
-        <p className="set-hint"><b>读</b>：页面、搜索、块、反链、附件。</p>
-        <p className="set-hint"><b>写</b>：新建页面 / 追加内容；仅「可写」档，且「每次确认」档会先问你。</p>
-        <p className="set-hint"><b>审计</b>：每次调用记录谁、何时、做了什么、成败。</p>
-        <p className="set-hint">
-          <b>数据边界</b>：笔记仍在本机，ShuyoNote 不上传；但外部 AI 读到什么由它决定。
-          云端 AI 收到内容后，这部分内容就离开了本机。
-        </p>
-      </section>
-
+      {/* ② 状态卡 */}
       <section className="set-section">
         <div className="set-section-title">现在是什么状态</div>
         <div className="set-row">
@@ -183,77 +240,113 @@ export function McpAccessPane() {
               <span className={`mcp-access-dot${st?.enabled ? " is-on" : ""}`} aria-hidden="true" />
               {st ? stateLine(st) : "读取中…"}
             </div>
-            {st?.env_override && (
-              <details className="set-row-sub">
-                <summary>技术细节：这次是被启动环境打开的</summary>
-                启动环境里设了 <code>SHUYONOTE_MCP_SWITCH=on</code>。面板关不掉它 —— 要去掉那个环境变量。
-              </details>
-            )}
             {err && <div className="set-row-sub mcp-access-err">读/改状态失败：{err}</div>}
+            <div className="set-row-sub">
+              granted：
+              {granted.length === 0
+                ? "（无）"
+                : granted.map((s) => (
+                    <span key={s} className="mcp-access-badge" data-granted={s}>
+                      {s}
+                    </span>
+                  ))}
+            </div>
           </div>
           <button className="set-btn" disabled={busy || !st} onClick={() => void refresh()}>
             刷新
           </button>
         </div>
-      </section>
-
-      <section className="set-section">
-        <div className="set-section-title">会话令牌</div>
-        <p className="set-hint">
-          这枚令牌只在本机读写；它写在一个只有你自己能读的文件里（
-          <code>{st?.token_path ?? "（未知）"}</code>）。换一枚 ⇒ 旧的立刻作废。
-        </p>
-        {/* ⭐ R158：**默认打码** ✓ —— 这枚令牌原来整串铺在这里 ✗，而 owner 两次把这个面板截图发出来 ✓，
-            令牌每次完整进对话 ✗ ⇒ 默认只显示点，点「显示」才展开 ✓。 */}
         <div className={`mcp-access-token${emptyToken ? " is-empty" : ""}`}>
-          <code className="mcp-access-token-text">
-            {!st?.token
+          <code className="mcp-access-token-text" data-testid="mcp-token">
+            {!token
               ? "（还没有 —— 打开开关时会自动生成）"
               : showToken
-                ? st.token
+                ? token
                 : "••••••••••••••••••••••••"}
           </code>
         </div>
         <div className="set-actions">
-          <button
-            className="set-btn"
-            disabled={!st?.token}
-            onClick={() => void copy(String(st?.token ?? ""), "令牌")}
-          >
+          <button className="set-btn" disabled={!token} onClick={() => void copy(token, "令牌")}>
             复制令牌
           </button>
-          <button className="set-btn" disabled={!st?.token} onClick={() => setShowToken((v) => !v)}>
+          <button className="set-btn" disabled={!token} onClick={() => setShowToken((v) => !v)}>
             {showToken ? "隐藏" : "显示"}
           </button>
           <button className="set-btn" disabled={busy || !st} onClick={() => void rotate()}>
             换一枚新令牌
           </button>
         </div>
-      </section>
-
-      <section className="set-section">
-        <div className="set-section-title">给 AI 的配置</div>
         <p className="set-hint">
-          把下面这段粘进 AI 客户端的 MCP 配置即可。
-          {bridgePath ? (
-            <>
-              桥的路径已<b>自动填好</b>（本机：<code>{bridgePath}</code>）；两个环境变量指的就是上面那两个文件。
-            </>
-          ) : (
-            <>
-              桥在仓库里（<code>tools/shuyonote-mcp/index.mjs</code>）—— 没找到本机路径：把{' '}
-              <code>args</code> 换成你机器上那个（或设 <code>SHUYONOTE_MCP_BRIDGE</code> 指过去）。
-            </>
-          )}
+          桥的路径会自动填好；客户端配置里的端口会随重启变化；切档后请重启 AI 客户端（令牌同时换新）。
         </p>
-        <pre className="mcp-access-snippet">{snippet}</pre>
+        <pre className="mcp-access-snippet" data-testid="mcp-snippet">
+          {snippet}
+        </pre>
         <div className="set-actions">
-          <button className="set-btn is-primary" disabled={!snippet} onClick={() => void copy(snippet, "配置片段")}>
-            复制配置
+          <button className="set-btn is-primary" data-testid="copy-config" disabled={!st} onClick={() => void copy(snippet, "配置片段")}>
+            复制配置（客户端）
           </button>
         </div>
       </section>
 
+      {/* ③ 能力清单 */}
+      <section className="set-section">
+        <details>
+          <summary className="set-section-title">能力清单（{AI_TOOL_META.length} 项，按域分组）</summary>
+          <ul>
+            {capRows.map((c) => (
+              <li key={c.id} className="set-row-sub" data-cap-id={c.id}>
+                <b>{c.domain}</b> · <code>{c.id}</code>
+                {c.isWrite ? "（写）" : "（读）"} — {c.brief}
+              </li>
+            ))}
+          </ul>
+        </details>
+      </section>
+
+      {/* ④ 草稿 */}
+      <section className="set-section">
+        <div className="set-section-title">最近草稿（5 条）</div>
+        <ul data-testid="mcp-drafts">
+          {drafts.length === 0 ? (
+            <li className="set-hint">暂无草稿</li>
+          ) : (
+            drafts.map((d) => (
+              <li key={d.draftId} className="set-row-sub" data-state={d.state}>
+                {fmtTime(d.at)} · <code>{d.tool}</code> · {d.state}
+              </li>
+            ))
+          )}
+        </ul>
+      </section>
+
+      {/* ⑤ 审计 */}
+      <section className="set-section">
+        <div className="set-section-title">最近审计（20 条）</div>
+        <ul data-testid="mcp-audit">
+          {audit.length === 0 ? (
+            <li className="set-hint">暂无审计</li>
+          ) : (
+            audit.map((a, i) => (
+              <li key={`${a.at}-${i}`} className="set-row-sub" data-ok={a.ok}>
+                {fmtTime(a.at)} · <code>{a.tool}</code> · {a.ok ? "成功" : `失败（${a.code ?? "?"}）`}
+              </li>
+            ))
+          )}
+        </ul>
+      </section>
+
+      {/* ⑥ 边界提示（静态说明，⛔ 不冒充读数） */}
+      <section className="set-section">
+        <div className="set-section-title">边界提示</div>
+        <p className="set-hint">导出/下载走句柄（blobs_fetch 落盘），不回真名字节。</p>
+        <p className="set-hint">超过 10MB 的下载需要你确认；本版面板尚未接确认 UI。</p>
+        <p className="set-hint">上传/导入需要你在系统文件选择框里选文件（外部 AI 不能给任意路径）。</p>
+        <p className="set-hint">跨空间读要「只读（全部空间）」档；跨空间写要「可写（全部空间）」档。</p>
+        <p className="set-hint">
+          笔记仍在本机；但外部 AI 读到什么由它决定 —— 云端 AI 收到内容后，这部分内容就离开了本机。
+        </p>
+      </section>
     </div>
   );
 }

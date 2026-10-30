@@ -29,6 +29,8 @@ vi.mock("../lib/api", () => ({
     mcpSetEnabled: mocks.mcpSetEnabled,
     mcpSetLevel: mocks.mcpSetLevel,
     mcpRotateToken: mocks.mcpRotateToken,
+    mcpRecentDrafts: async () => [],
+    mcpRecentAudit: async () => [],
   },
 }));
 
@@ -98,7 +100,7 @@ describe("McpAccessPane：外部 AI 接入的档位面", () => {
     await tick();
     await tick();
     expect(mocks.mcpStatus).toHaveBeenCalled();
-    expect(tabs().length, "五个档位都要在").toBe(5);
+    expect(tabs().length, "六个档位都要在").toBe(6);
     const on = tabs().filter((t) => t.className.includes("is-on"));
     expect(on.length, "只能有一个选中").toBe(1);
     expect(on[0].textContent).toContain("不接");
@@ -204,7 +206,7 @@ describe("McpAccessPane：外部 AI 接入的档位面", () => {
     expect(document.body.textContent).toContain("既不读也不写");
     // 五档标签都在 ✓（这就是"用户看得见的全部选择" ✓）
     const labels = tabs().map((t) => t.textContent || "").join(" ｜ ");
-    for (const l of ["不接", "只读", "只读（全部空间）", "可写（每次确认）", "可写（免确认）"]) {
+    for (const l of ["不接", "只读", "只读（全部空间）", "可写（每次确认）", "可写（免确认）", "可写（全部空间）"]) {
       expect(labels, `缺档位「${l}」✗`).toContain(l);
     }
     // ⭐ 切到「可写（免确认）」⇒ 那一档的说明必须**立刻**说清：直接落库 ＋ 每一次写仍留一行审计 ✓

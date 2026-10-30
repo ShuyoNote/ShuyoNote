@@ -5,8 +5,8 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `8c90330c9af5b5d85f5e491cca8d8ec8fd44e4aa1a5a86d2c00abae9506a164e` |
-| `apiVersion` | 1.13.0 |
+| 注册表 sha256 | `ee87cc4988477326e26c62e8af4cc4be9388f60b82e0cb41ba4c2f253213f308` |
+| `apiVersion` | 1.14.0 |
 | 取用条件 | `ai === true` **且** `kind === "read"` |
 | 条数 | **33** |
 | 生成命令 | `node scripts/gen-agent-tool-surface.mjs --phase m1` |

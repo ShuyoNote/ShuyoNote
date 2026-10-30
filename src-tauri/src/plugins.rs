@@ -3090,19 +3090,21 @@ fn cap_coverage_report(space_id: Option<&str>) -> CapResult {
 //     ④ `clientRequestId`：同 id 重复调用只落一次/只审计一条（在 `dispatch_capability` 那一层做）。
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// 写目标空间（§4.1）。`write:all-spaces` 目前**没有任何档位授予**（默认关）。
+/// 写目标空间（§4.1）。`write:all-spaces` 由「可写（全部空间）」档显式授予（默认关）；
+/// ⚠️ 本版只把**权限门**打开：跨空间落库链路（前端 apply 切空间）尚未接，⛔ 不假装已支持。
 fn write_target_space(space_id: Option<&str>) -> Result<String, String> {
     let current = target_space_id(None);
     let want = space_id.map(str::trim).filter(|s| !s.is_empty());
     match want {
         None => Ok(current),
         Some(s) if s == current => Ok(current),
-        Some(_) => {
+        Some(target) => {
             if has_scope("write:all-spaces") {
-                Err(
-                    "bad_args: 跨空间写本批未接（草稿落库只走当前空间连接）—— 省略 spaceId 即当前空间"
-                        .to_string(),
-                )
+                // ⭐ P1：档位已把**权限门**打开；但草稿落库（前端 apply）本版仍只写当前空间
+                //   ⇒ 这里给 bad_args 并**点名**目标空间，⛔ 不假装已经能跨空间落库。
+                Err(format!(
+                    "bad_args: 已授予 write:all-spaces，但跨空间落库链路本版未接（目标是 {target}）—— 省略 spaceId 即当前空间"
+                ))
             } else {
                 Err(
                     "permission_denied: 带 spaceId 写别的空间需要权限 write:all-spaces\
@@ -4433,6 +4435,52 @@ fn cap_drafts_status(draft_id: &str) -> CapResult {
 }
 
 /// `audit.tail`（读）：**本会话**最近 N 条审计（默认 20 / 上限 100；⛔ 不含正文）。
+/// ⭐ P1：面板「最近草稿」——只列**外部接入会话**的草稿（插件内部草稿不混进来），按时间倒序。
+#[tauri::command]
+pub fn mcp_recent_drafts(limit: Option<i64>) -> Result<serde_json::Value, String> {
+    let limit = limit.unwrap_or(5).clamp(1, 50) as usize;
+    let now = now_ms();
+    let mut rows: Vec<serde_json::Value> = draft_states()
+        .lock()
+        .map_err(|_| "internal: 草稿状态表锁坏了".to_string())?
+        .iter()
+        .filter(|(_, r)| r.source.starts_with("external:"))
+        .map(|(id, r)| {
+            let expired = now > r.expires_ms && r.state == "pending";
+            serde_json::json!({
+                "draftId": id,
+                "tool": r.tool,
+                "capabilityId": r.capability,
+                "state": if expired { "expired" } else { r.state.as_str() },
+                "at": r.at_ms,
+            })
+        })
+        .collect();
+    rows.sort_by_key(|r| -(r["at"].as_i64().unwrap_or(0)));
+    rows.truncate(limit);
+    Ok(serde_json::json!(rows))
+}
+
+/// ⭐ P1：面板「最近审计」——本机视角（外部接入 ＋ 插件的最近 N 条；⛔ 不含正文）。
+#[tauri::command]
+pub fn mcp_recent_audit(limit: Option<i64>) -> Result<serde_json::Value, String> {
+    let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
+    let mut rows: Vec<serde_json::Value> = crate::plugins::plugin_audit(None, Some(2000))
+        .into_iter()
+        .map(|e| {
+            serde_json::json!({
+                "at": e.at_ms,
+                "tool": e.capability,
+                "capabilityId": e.capability,
+                "ok": e.ok,
+                "code": e.error_code,
+            })
+        })
+        .collect();
+    let start = rows.len().saturating_sub(limit);
+    Ok(serde_json::json!(rows.drain(start..).collect::<Vec<_>>()))
+}
+
 fn cap_audit_tail(limit: i64) -> CapResult {
     let limit = limit.clamp(1, 100) as usize;
     let caller = caller_identity();
@@ -15164,6 +15212,41 @@ register({ id: "s.run", title: "结构化", run: function () {
         // 省略参数 ⇒ 旧行为（当前空间）
         with_external_caller("ux4-cur", &read_only, || dispatch_capability("files.list", r#"{"pageId":"p1"}"#))
             .expect("省略 spaceId 必须与旧行为一致");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ P1：write_all 档放行权限门（跨空间写不再 permission_denied）；别的档仍拒。
+    /// ＋ 面板两个只读命令：只列外部会话草稿、limit 上限生效。
+    #[test]
+    fn p1_write_all_gate_and_recent_reads() {
+        let f = b1c_fixture("p1");
+        point_cap_search_at(&f.dir, &f.space);
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        let e = with_external_caller("p1-wa", &g, || {
+            dispatch_capability("blocks.patch", r#"{"pageId":"p1","blockId":"b1","markdown":"x","spaceId":"other-space"}"#)
+        })
+        .expect_err("跨空间落库链路未接 ⇒ 应 bad_args 而不是 permission_denied");
+        assert!(e.contains("bad_args"), "{e}");
+        assert!(!e.contains("permission_denied"), "授予 write:all-spaces 后不应再报权限：{e}");
+        // 没有该 scope ⇒ 仍 permission_denied
+        let g2 = b2_granted();
+        let e2 = with_external_caller("p1-no", &g2, || {
+            dispatch_capability("blocks.patch", r#"{"pageId":"p1","blockId":"b1","markdown":"x","spaceId":"other-space"}"#)
+        })
+        .expect_err("无 write:all-spaces 必须拒");
+        assert!(e2.contains("permission_denied") && e2.contains("write:all-spaces"), "{e2}");
+        // 面板命令：外部草稿 + limit 夹取；插件草稿不混入
+        crate::plugins::attach_draft_id("p1-d1", "external:p1-wa", "pages.create", "pages.create");
+        crate::plugins::attach_draft_id("p1-d2", "plugin:demo", "pages.create", "pages.create");
+        let rows = crate::plugins::mcp_recent_drafts(Some(100)).unwrap();
+        let arr = rows.as_array().unwrap();
+        assert!(arr.len() <= 50, "limit 上限 50");
+        assert!(arr.iter().all(|r| r["draftId"] != "p1-d2"), "插件草稿不混入面板");
+        assert!(arr.iter().any(|r| r["draftId"] == "p1-d1"));
+        // 审计命令：limit 上限
+        let audit = crate::plugins::mcp_recent_audit(Some(1000)).unwrap();
+        assert!(audit.as_array().unwrap().len() <= 100, "limit 上限 100");
         b1c_cleanup(&f);
     }
 }
