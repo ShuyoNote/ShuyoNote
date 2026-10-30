@@ -349,7 +349,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const attId = String(p.attId ?? "");
       const name = String(p.name ?? "").trim();
       if (!attId || !name) return { ok: false, message: "rename_attachment 参数不完整" };
-      await api.renameAttachment(attId, name);
+      await api.renameAttachment(attId, name, typeof p.spaceId === "string" ? p.spaceId : undefined);
       return { ok: true, message: `已把附件改名为「${name}」` };
     }
 

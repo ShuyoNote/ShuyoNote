@@ -687,7 +687,8 @@ export const api = {
     invoke("move_attachment", { id, newPageId }),
   // ⭐ B2-补遗-1：从页面摘除附件（page_id=NULL，保留文件）
   detachAttachment: (id: string) => invoke("detach_attachment", { id }),
-  renameAttachment: (id: string, name: string) => invoke("rename_attachment", { id, name }),
+  renameAttachment: (id: string, name: string, spaceId?: string) =>
+    invoke("rename_attachment", { id, name, spaceId }),
   restoreAttachment: (targetPageId: string, sourceId: string) =>
     invoke("restore_attachment", { targetPageId, sourceId }),
   getBacklinks: (id: string) => invoke("get_backlinks", { id }),

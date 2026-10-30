@@ -138,6 +138,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 
 ## 10. 版本
 
+- 2026-10-30：**跨空间写 v3-A1 —— `files_rename` 支持目标空间**（`apiVersion` 1.19.0）：`rename_attachment` 抽出 `rename_attachment_in(c,…)` 单连接实现；命令/能力/apply 都传 `spaceId`；只允许改**目标空间内**的附件（不在该空间 ⇒ `not_found` 点名）；目标空间写 `changes`；审计带 `spaceId`；仍受回滚开关与 `write:all-spaces` 门约束。v3 其余类别（move/delete/detach/结构/标签/属性/db/回收站等）尚未支持，带 `spaceId` 仍 `bad_args: 暂不支持跨空间`。
+
 - 2026-10-30：**AI 不可见空间清单（apiVersion 1.18.0）**：设置面板新增「AI 不可见空间」多选；清单存本机 `meta.db`（**不随设备同步，换机要重配**）；勾选后 AI 面（`ai:true`）读写该空间 ⇒ `permission_denied: 空间「X」在 AI 不可见清单里（AI 不可见）`，`spaces_list` 过滤隐藏空间，当前空间被隐藏时连不带 `spaceId` 的调用也拒绝；用户自己不受影响；**隐藏 ≠ 加密**（加密空间仍按加密规则不可见）。清空清单即恢复；`SHUYONOTE_AI_HIDDEN_SPACES=off` 可临时跳过判断。
 
 - 2026-10-30：**跨空间写 v2 —— `write_all` 扩读 ＋ `pages_update`/`blocks_append/patch/delete` 可改目标空间**：`write_all` 档 granted ＝ `write:pages`＋`write:all-spaces`＋`read:pages`＋`read:all-spaces`（默认关；开这档 AI 能读所有空间，加密空间内容仍不可见）；新增 `pages_get`/`blocks_list` 的 `spaceId`；v2 白名单 5 条写工具（create/update/blocks.append/patch/delete）由 `apply.ts` 在取回目标页后合并、经命令 `spaceId` 写到目标空间（不复制合并逻辑）；其余写工具带 `spaceId` 仍 `bad_args: 暂不支持跨空间`。目标锁着 ⇒ `permission_denied`（locked）；审计带 `spaceId`；回滚开关同时生效。`apiVersion` 1.16.0 → **1.17.0**。
