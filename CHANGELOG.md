@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **B3 属性区收尾**：header 同行；值列/标签行统一 86px grid；作者 person chip；日期/来源展示态无 input、操作 hover 才出；来源行说明小字；正文「> 来源：」引文改为 citation 样式（保留文本以保幂等）；顶部添加属性/标签入口移除；metadata-card 去灰底改分隔线。
 - **F1 空间包按附录 A 形状**：`roots` 改节点 id 字符串数组、`document` 改 doc id、`min_reader_version` 改整数 1、省略 `features`；读侧兼容旧对象 roots/字符串版本并 warning；fixture 改名 `personal-sample-appendixA.shuyospace` 并重生成；`packageFixtures` 改进程内重建。
 - **B2 属性类型化**：新增 `propFormat.ts`（URL 省略/无协议补全、日期到分钟+相对时间+`+08:00`、person chip）；属性面板「来源」渲染为可点链接+复制（展示态无 input）、date/datetime 展示态为格式化文本（编辑态才出控件）。判据 `propFormat.test.ts` 4 条＋面板 2 条。
 - **B1 属性区 P0**：计数改为「N 项属性 · M 个标签」；系统字段（存于/创建/更新）收进「系统信息」只读折叠（无删除/排序）；空值显示「未设置（点击填写）」；header「＋ 添加属性」＋标签行「＋」；行操作按钮 hover/聚焦才出。5 条新判据＋既有 2 条全绿。

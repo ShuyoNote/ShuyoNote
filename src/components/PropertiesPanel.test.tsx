@@ -6,6 +6,8 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { createElement } from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const mock = vi.hoisted(() => ({
   getPageProps: vi.fn(async (..._args: unknown[]) => [] as unknown[]),
@@ -160,3 +162,52 @@ describe("B2：类型化展示", () => {
   });
 });
 
+
+describe("B3：收尾", () => {
+  const css = () => readFileSync(resolve(process.cwd(), "src/App.css"), "utf8");
+  const src = () => readFileSync(resolve(process.cwd(), "src/lib/communitySave.ts"), "utf8");
+
+  it("① header 同行：计数与「＋ 添加属性」在同一 head-row", async () => {
+    const { root, host } = await mountWith([prop("备注", "x")]);
+    const head = host.querySelector(".properties-head-row");
+    expect(head?.querySelector(".properties-toggle")?.textContent).toContain("项属性");
+    expect(head?.textContent).toContain("＋ 添加属性");
+    flushSync(() => root.unmount());
+  });
+
+  it("② 值列 grid：.prop-row 与标签行共用 86px minmax(0,1fr) auto", () => {
+    const c = css();
+    expect(c).toContain("grid-template-columns: 86px minmax(0, 1fr) auto");
+    expect(c).toContain(".prop-tag-line { display: grid; grid-template-columns: 86px minmax(0, 1fr) auto");
+  });
+
+  it("③ 作者 person chip（展示态无 input）", async () => {
+    const { root, host } = await mountWith([prop("作者", "张三")]);
+    const row = Array.from(host.querySelectorAll(".prop-row")).find((r) => r.textContent?.includes("张三"));
+    expect(row?.querySelector(".prop-person")).toBeTruthy();
+    expect(row?.querySelector("input")).toBeNull();
+    flushSync(() => root.unmount());
+  });
+
+  it("④ 日期展示态无 input（hover 编辑按钮在 DOM 里）", async () => {
+    const { root, host } = await mountWith([prop("日期", "2026-10-30 11:30", "date")]);
+    expect(host.querySelector(".prop-temporal")?.textContent).toContain("+08:00");
+    expect(host.querySelector('input[type="date"]')).toBeNull();
+    expect(host.querySelector(".prop-edit-hint")?.textContent).toBe("编辑");
+    flushSync(() => root.unmount());
+  });
+
+  it("⑤ 来源行说明小字存在，且复制/编辑在 hover actions 里", async () => {
+    const { root, host } = await mountWith([prop("来源", "https://example.com/x")]);
+    expect(host.querySelector(".prop-note")?.textContent).toContain("发布到社区时会同时写进正文最前面");
+    expect(host.querySelector(".prop-link-actions .prop-link-copy")).toBeTruthy();
+    flushSync(() => root.unmount());
+  });
+
+  it("⑥ 正文引文：sourceLine 保留「> 来源：」且 CSS 有 citation 样式", () => {
+    expect(src()).toContain("> 来源：");
+    const c = css();
+    expect(c).toContain("blockquote");
+    expect(c).toContain("border-left: 3px solid");
+  });
+});

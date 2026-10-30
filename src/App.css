@@ -28670,3 +28670,28 @@ button.mset-row:focus-visible {
   .space-package-actions .spa-wide { display: none; }
   .space-package-actions .spa-more { display: inline-flex; align-items: center; justify-content: center; }
 }
+
+/* B3：属性区 header 同一行（原按钮换行到下一行）＋ 元数据块去整块灰底改分隔线 */
+.properties-head-row { display: flex; align-items: center; gap: 8px; }
+.properties-head-row .properties-toggle { flex: 1; text-align: left; }
+.metadata-card { background: transparent; background-clip: border-box; padding: 8px var(--doc-pad) 8px; border-top: 1px solid var(--border, #e5e5e5); border-radius: 0; }
+.prop-name { width: 86px; }
+.prop-tag-line { padding-left: 94px; }
+.prop-person { display: inline-flex; align-items: center; gap: 6px; }
+.prop-person-avatar { width: 20px; height: 20px; border-radius: 50%; background: var(--hover, #eee); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
+.prop-temporal { border: 0; background: none; }
+
+/* B3 收尾：值列统一 grid（标签行同模板）＋ hover 操作 ＋ 正文引文样式 ＋ 来源说明 */
+.prop-row { display: grid; grid-template-columns: 86px minmax(0, 1fr) auto; column-gap: 8px; align-items: center; }
+.prop-row .prop-name { width: auto; }
+.prop-tag-line { display: grid; grid-template-columns: 86px minmax(0, 1fr) auto; column-gap: 8px; align-items: center; padding-left: 0; }
+.prop-tag-line > :first-child { grid-column: 2; }
+.prop-tag-line .prop-add-tag { grid-column: 3; }
+.prop-note { display: block; color: var(--text-faint, #999); font-size: 11px; margin-top: 2px; }
+.prop-link-actions { opacity: 0; display: inline-flex; gap: 2px; color: var(--text-faint, #999); }
+.prop-row:hover .prop-link-actions, .prop-row:focus-within .prop-link-actions { opacity: 1; }
+.prop-link-copy, .prop-link-edit { color: var(--text-faint, #999); font-weight: 400; }
+.prop-edit-hint { opacity: 0; margin-left: 6px; color: var(--text-faint, #999); background: none; border: 0; cursor: pointer; }
+.prop-row:hover .prop-edit-hint, .prop-row:focus-within .prop-edit-hint { opacity: 1; }
+/* 正文里的「> 来源：…」引文：明显引用样式（保留正文文本 ⇒ 幂等判重不坏） */
+.editor-content blockquote, .note-scroll blockquote { border-left: 3px solid var(--border-strong, #d0d0d0); background: var(--hover, rgba(0,0,0,.03)); padding: 6px 10px; margin: 8px 0; border-radius: 4px; }
