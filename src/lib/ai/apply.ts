@@ -24,9 +24,9 @@ export interface ApplyResult {
 }
 
 /** 写前乐观并发校验：草稿带了 `expectedRev` 就必须与当前一致（不一致 ⇒ 拒，⛔ 不覆盖）。 */
-async function revProblem(pageId: string, expected: unknown): Promise<string | null> {
+async function revProblem(pageId: string, expected: unknown, spaceId?: string): Promise<string | null> {
   if (typeof expected !== "string" || !expected.trim()) return null;
-  const page = await api.getPage(pageId);
+  const page = await api.getPage(pageId, spaceId);
   if (!page) return `目标页面 ${pageId} 不存在`;
   const cur = await pageRev(page.updated_at, docJsonOfPage(page));
   if (!cur) return "算不出当前 rev（正文读不到）";
@@ -113,7 +113,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
         const spaceId = typeof p.spaceId === "string" ? p.spaceId : undefined;
         const cur = await api.getPage(pageId, spaceId);
         if (!cur) return { ok: false, message: "目标页面不存在" };
-        const rp = await revProblem(pageId, p.expectedRev);
+        const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
         if (rp) return { ok: false, message: rp };
         let built;
         if (md.trim()) {
@@ -154,7 +154,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       return serializeByKey(`page:${pageId}`, async () => {
         const cur = await api.getPage(pageId, spaceId);
         if (!cur) return { ok: false, message: "目标页面不存在" };
-        const rp = await revProblem(pageId, p.expectedRev);
+        const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
         if (rp) return { ok: false, message: rp };
         // 串行区里重读一次：拿到的是**前一个任务写完**的那份 ✓（外部编辑不会被盖 ✗）。
         // ⚠️ 只在这里点一次名 ✓ —— 那个列名在 `apply.ts` 里是有基线配额的（基线只许变小 ✗）
@@ -173,7 +173,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const pageId = String(p.pageId ?? p.args?.pageId ?? "");
       const attrId = String(p.attrId ?? "");
       if (!pageId || !attrId) return { ok: false, message: "set_page_prop 参数不完整" };
-      const rp = await revProblem(pageId, p.expectedRev);
+      const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
       await api.setPageProp({ page_id: pageId, attr_id: attrId, value: String(p.value ?? "") });
       // 回读一次：调用方据此刷新当前页（属性面板共用同一份内存数据）。
@@ -185,7 +185,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const pageId = String(p.pageId ?? p.args?.pageId ?? "");
       const name = String(p.name ?? "").trim();
       if (!pageId || !name) return { ok: false, message: "add_tag 参数不完整" };
-      const rp = await revProblem(pageId, p.expectedRev);
+      const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
       await api.addTag(pageId, name);
       const page = await api.getPage(pageId);
@@ -243,7 +243,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const pageId = String(p.pageId ?? "");
       const versionId = String(p.versionId ?? "");
       if (!pageId || !versionId) return { ok: false, message: "revert_page 参数不完整" };
-      const rp = await revProblem(pageId, p.expectedRev);
+      const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
       const page = await api.restoreVersion(versionId);
       return { ok: true, message: `已回退到版本 ${versionId}`, page };
@@ -254,7 +254,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const name = String(p.name ?? "").trim();
       const tagId = String(p.tagId ?? "");
       if (!pageId) return { ok: false, message: "remove_tag 需要 pageId" };
-      const rp = await revProblem(pageId, p.expectedRev);
+      const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
       let resolved = tagId;
       if (!resolved && name) {
@@ -271,7 +271,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const pageId = String(p.pageId ?? "");
       const attrId = String(p.attrId ?? "");
       if (!pageId || !attrId) return { ok: false, message: "unset_page_prop 参数不完整" };
-      const rp = await revProblem(pageId, p.expectedRev);
+      const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
       await api.removePageProp(pageId, attrId);
       const page = await api.getPage(pageId);
@@ -282,7 +282,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const pageId = String(p.pageId ?? "");
       const blockId = String(p.blockId ?? "").trim();
       if (!pageId || !blockId) return { ok: false, message: "blocks_patch 参数不完整" };
-      const rp = await revProblem(pageId, p.expectedRev);
+      const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
       const spaceId = typeof p.spaceId === "string" ? p.spaceId : undefined;
       const page = await api.getPage(pageId, spaceId);
@@ -302,9 +302,10 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const afterBlockId = typeof p.afterBlockId === "string" && p.afterBlockId ? p.afterBlockId : null;
       const firstId = typeof p.newBlockId === "string" && p.newBlockId ? p.newBlockId : undefined;
       if (!pageId) return { ok: false, message: "blocks_insert 需要 pageId" };
-      const rp = await revProblem(pageId, p.expectedRev);
+      const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
-      const page = await api.getPage(pageId);
+      const spaceId = typeof p.spaceId === "string" ? p.spaceId : undefined;
+      const page = await api.getPage(pageId, spaceId);
       if (!page) return { ok: false, message: "目标页面不存在" };
       const children = topChildren(docJsonOfPage(page));
       const at = afterBlockId
@@ -314,7 +315,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const next = blocksFromInput(p.markdown, p.plain, firstId);
       if (next.length === 0) return { ok: false, message: "新块内容为空" };
       children.splice(at, 0, ...next);
-      const saved = await api.savePage({ id: pageId, ...saveFieldsWithChildren(docJsonOfPage(page), children, contentTextOf) });
+      const saved = await api.savePage({ id: pageId, spaceId, ...saveFieldsWithChildren(docJsonOfPage(page), children, contentTextOf) });
       return { ok: true, message: "已插入新块", page: saved };
     }
 
@@ -322,7 +323,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const pageId = String(p.pageId ?? "");
       const blockId = String(p.blockId ?? "").trim();
       if (!pageId || !blockId) return { ok: false, message: "blocks_delete 参数不完整" };
-      const rp = await revProblem(pageId, p.expectedRev);
+      const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
       const spaceId = typeof p.spaceId === "string" ? p.spaceId : undefined;
       const page = await api.getPage(pageId, spaceId);
@@ -422,7 +423,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const pageId = String(p.pageId ?? "");
       const rows = Array.isArray(p.rows) ? (p.rows as Array<Record<string, unknown>>) : [];
       if (!pageId || rows.length === 0) return { ok: false, message: "db_rows_write 参数不完整" };
-      const rp = await revProblem(pageId, p.expectedRev);
+      const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
       let changed = 0;
       for (const row of rows) {
@@ -452,7 +453,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const pageId = String(p.pageId ?? "");
       const rowIds = Array.isArray(p.rowIds) ? (p.rowIds as unknown[]).map((x) => String(x)) : [];
       if (!pageId || rowIds.length === 0) return { ok: false, message: "db_rows_delete 参数不完整" };
-      const rp = await revProblem(pageId, p.expectedRev);
+      const rp = await revProblem(pageId, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
       for (const id of rowIds) await api.deletePage(id);
       return { ok: true, message: `已删除数据库行（${rowIds.length} 行）` };
