@@ -405,15 +405,18 @@ describe("跨空间支持矩阵改版（2026-10-31）", () => {
       document.querySelector('[data-shortcut="onboard"]'),
       "状态卡里的「客户端配置说明」快捷入口应保留",
     ).toBeTruthy();
-    // ⭐ 精简版：**没有**客户端选择 chips（片段通用 ⇒ 不必先选一次）；路径直接列出（A 批补到 5 个）
+    // ⭐ 精简版：**没有**客户端选择 chips（片段通用 ⇒ 不必先选一次）；路径直接列出
+    //    （A 批补到 5 个；owner 2026-10-31 又把自家两个 WorkBuddy / DeepSeek Harness 放最前 ⇒ 共 7 个）
     expect(block!.querySelectorAll("[data-client]").length, "不再要求选择客户端").toBe(0);
     const paths = Array.from(block!.querySelectorAll('[data-testid="mcp-config-path"]')).map((el) => el.textContent ?? "");
-    expect(paths.length, "常见客户端路径直接并列（Claude Desktop / Cursor / Claude Code / Windsurf / VS Code）").toBe(5);
-    expect(paths[0]).toContain("claude_desktop_config.json");
-    expect(paths[1]).toContain(".cursor/mcp.json");
-    expect(paths[2], "Claude Code 的 ~/.claude.json").toContain(".claude.json");
-    expect(paths[3], "Windsurf 的 mcp_config.json").toContain(".codeium/windsurf/mcp_config.json");
-    expect(paths[4], "VS Code 的用户级 mcp.json").toContain("Code\\User\\mcp.json");
+    expect(paths.length, "常见客户端路径直接并列（7 个，自家两个在前）").toBe(7);
+    expect(paths[0], "① WorkBuddy 放最前").toContain(".workbuddy/mcp.json");
+    expect(paths[1], "② DeepSeek Harness 紧随其后").toContain("cordis.patch.yml");
+    expect(paths[2]).toContain("claude_desktop_config.json");
+    expect(paths[3]).toContain(".cursor/mcp.json");
+    expect(paths[4], "Claude Code 的 ~/.claude.json").toContain(".claude.json");
+    expect(paths[5], "Windsurf 的 mcp_config.json").toContain(".codeium/windsurf/mcp_config.json");
+    expect(paths[6], "VS Code 的用户级 mcp.json").toContain("Code\\User\\mcp.json");
     // ⭐ A 批（2026-10-31）：第 3 步改成「重启客户端（只需首次）」＋ 说清"以后换档/换令牌不用重启"；
     //    按钮改叫「刷新状态」，并如实写"连接数不统计"（后端确实不统计连接）。
     const step3 = block!.querySelector('[data-step="3"]')?.textContent ?? "";

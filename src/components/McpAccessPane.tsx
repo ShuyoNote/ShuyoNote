@@ -225,14 +225,19 @@ const NAV: Array<[string, string]> = [
  */
 /**
  * 常见客户端的配置文件位置（**不要求用户先"选择客户端"** —— 片段本身完全相同，
- * 选一次只是多一步交互；这里把最常见的五个路径直接列出来，其余一句话带过）。
+ * 选一次只是多一步交互；这里把最常见的路径直接列出来，其余一句话带过）。
  *
  * ⚠️ 2026-10-31（A 批）：原来只有 2 个（Claude Desktop / Cursor）。补上 Claude Code /
  * Windsurf / VS Code —— 后三者是"外部 AI 接入"里问得最多的（见 WorkBuddy 那份实测建议）。
  * ⚠️ **VS Code 的键名不是 `mcpServers` 而是 `servers`**（还有 JSONC 注释问题）⇒ 步骤 2 里单独加一句说明，
  * ⛔ 别让用户照着 mcpServers 贴进 VS Code 后一脸问号。
+ * ⚠️ 2026-10-31（owner）：**自家两个放最前面** —— WorkBuddy（`~/.workbuddy/mcp.json`，标准
+ * mcpServers JSON）与 DeepSeek Harness（profile 的 `cordis.patch.yml`，**YAML 的 insert 一节**，
+ * 键名不是 mcpServers ⇒ 下面单独一句说明，⛔ 别让用户把 JSON 直接糊进 YAML）。
  */
 const CONFIG_PATHS: Array<{ label: string; configPath: string }> = [
+  { label: "WorkBuddy", configPath: "~/.workbuddy/mcp.json" },
+  { label: "DeepSeek Harness", configPath: "~/.dsh/profiles/<profile>/cordis.patch.yml" },
   { label: "Claude Desktop", configPath: "%APPDATA%\\Claude\\claude_desktop_config.json" },
   { label: "Cursor", configPath: "~/.cursor/mcp.json" },
   { label: "Claude Code", configPath: "~/.claude.json" },
@@ -493,6 +498,10 @@ export function McpAccessPane() {
                 </div>
                 <div className="mcp-step-note">
                   VS Code 的写法不同：键名是 <code>servers</code>（不是 <code>mcpServers</code>），文件是 JSONC、可以带注释。
+                </div>
+                <div className="mcp-step-note">
+                  DeepSeek Harness 的 MCP 写在 profile 的 <code>cordis.patch.yml</code> 里（YAML 的 <code>insert</code> 一节，
+                  name 用 <code>@deepseek-ai/dsh-mcp-client</code>），不是 mcpServers JSON。
                 </div>
               </div>
             </li>
