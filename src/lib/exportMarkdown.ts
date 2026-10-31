@@ -33,7 +33,7 @@ import { BlockRefNode } from "../editor/nodes/BlockRefNode";
 import { BlockEmbedNode } from "../editor/nodes/BlockEmbedNode";
 import { AttachmentRefNode } from "../editor/nodes/AttachmentRefNode";
 import { DrawingNode, $isDrawingNode } from "../editor/nodes/DrawingNode";
-import { MermaidNode } from "../editor/nodes/MermaidNode";
+import { MermaidNode, $isMermaidNode } from "../editor/nodes/MermaidNode";
 
 const NODES = [
   HeadingNode,
@@ -294,7 +294,33 @@ export function pageContentToMarkdown(docJson: string, resolveImage?: ResolveIma
           .filter((k) => !$isLineBreakNode(k) && !($isTextNode(k) && k.getTextContent() === ""));
         if (rest.length === 0) para.remove();
       }
-      // ③ 就在这份 pending 状态上导出 ✓
+      // ③ 还嵌在**引用 / 列表 / callout / 同段文字**里的 mermaid 也提到根上（2026-10-31 owner 报：
+      //    "导出 markdown 丢了 mermaid 图块的标记"）。② 只处理"段落里恰好一个装饰节点"；
+      //    同段还有文字、或图块在引用/列表/callout 里时，`$convertToMarkdownString` 同样不走出围栏
+      //    （实测 quote/list/callout/inline 四种形状围栏数 = 0 ✗）。
+      //    ⇒ 统一把嵌套的 mermaid **提到它所在的顶层块之后**：文字/列表结构原样保留，
+      //      图块以顶层 ```mermaid 围栏导出（md 没有"段落内的图"这种形态，拆开是唯一能带走的表示）。
+      //    ⚠️ 与 ② 一样，必须在**同一次 update** 的 pending 树上做（见上面 ②① 的注释）。
+      const nestedMermaid: LexicalNode[] = [];
+      for (const top of $getRoot().getChildren()) {
+        if ($isMermaidNode(top)) continue;
+        const walk = (node: LexicalNode) => {
+          if (!$isElementNode(node)) return;
+          for (const child of node.getChildren()) {
+            if ($isMermaidNode(child)) nestedMermaid.push(child);
+            else if ($isElementNode(child)) walk(child);
+          }
+        };
+        walk(top);
+        if (nestedMermaid.length === 0) continue;
+        let anchor: LexicalNode = top;
+        for (const m of nestedMermaid.splice(0)) {
+          m.remove();
+          anchor.insertAfter(m);
+          anchor = m;
+        }
+      }
+      // ④ 就在这份 pending 状态上导出 ✓
       md = $convertToMarkdownString(transformers);
     },
     { discrete: true },
