@@ -101,7 +101,7 @@ $env:SHUYONOTE_MCP_PORT_FILE  = "C:\path\to\port"
   （`auth_mode` 省略），不是 OAuth 也不是"用户自填 Token"表单。
 
 
-## 它能看到什么（9 个只读 ＋ 5 个写，写按档位出现）
+## 它能看到什么（34 个只读 ＋ 27 个写 = 61，写按档位出现）
 
 | 工具 | 干什么 |
 | :-- | :-- |
@@ -138,9 +138,9 @@ $env:SHUYONOTE_MCP_PORT_FILE  = "C:\path\to\port"
 
 默认只作用于**当前空间**；要跨空间读，把档位开到「只读（全部空间）」，用 `spaceId` 指定——它**不会**改变你界面上的活动空间。`spaces_switch` 是写能力（会改活动空间），一般不需要用。
 
-⚠️ `coverage_report`（索引覆盖报告）**不在这个面上** ✓ —— 它由 App 内部（前端宿主）实现，
-外部经桥调不到，所以清单里**刻意不列它** ✗（列了就是"面里有个调不通的工具" ✓，
-`check-capabilities.mjs` 有一条反向断言钉这个 ✓）。
+⚠️ `coverage_report`（索引覆盖报告）**在这个面上**，但它由**前端宿主**交付：Rust 侧经"前端桥"转给前端算，
+所以会走前端能力那条路——监听没装好时它可能先报就绪再空等 5s（`frontend_timeout`）。别把这句旧话当依据：
+2026-10-29 B3 起它**已经列入** `capabilities/mcp-tools.json`（`node scripts/check-capabilities.mjs` 为准）。
 
 ## 安全边界（照实说）
 
