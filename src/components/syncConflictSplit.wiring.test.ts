@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { allCssText } from "../lib/cssSources";
 
 const stripComments = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
 const panel = stripComments(readFileSync(join(process.cwd(), "src/components/SyncPanel.tsx"), "utf8"));
@@ -69,7 +70,7 @@ describe("冲突横幅：分两类", () => {
     expect(panel, "面板里不该再有那个 30 秒定时器（轮询归单例）").not.toContain("setInterval(read, 30_000)");
     // 面板自己读到同一个数字时要**公布**给单例（省一次读，且两处永远是同一个数）
     expect(panel, "面板读到总量之后没有公布给单例 ⇒ 两个数会各走各的").toContain("publishPendingRemoteTotal(");
-    const css = readFileSync(join(process.cwd(), "src/App.css"), "utf8");
+    const css = allCssText();
     expect(css, "缺少 `.sync-badge` 的样式（角标会显示成一串裸数字）").toContain(".sync-badge {");
   });
 });

@@ -138,6 +138,8 @@ import "./styles/table-menu.css";
 import "./styles/plugin-manager.css";
 // S4-5（2026-11-01）：文件管理器域（`.fm-*` / `.file-manager*`）。响应式覆盖一并抽走。
 import "./styles/file-manager.css";
+// S4-6（2026-11-01）：同步域（`.sync-*`）。响应式覆盖一并抽走。
+import "./styles/sync.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

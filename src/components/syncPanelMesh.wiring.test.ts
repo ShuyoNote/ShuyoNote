@@ -9,6 +9,7 @@
 import { resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { allCssText } from "../lib/cssSources";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
@@ -168,7 +169,7 @@ describe("网格（丙-③-b）· 面板接线", () => {
   //   桌面/手机的真机几何只能靠人。所以这里钉"形状不许回退"：
   //   谁把 `.sync-mesh` 改回横排、或去掉那句 `white-space:nowrap`，这几条立刻红。
   it("⑥ 网格那一块是竖排，且输入框吃宽、按钮不缩不断行（窄屏不许挤成并排）", () => {
-    const css = read("src/App.css");
+    const css = allCssText();
     // ⚠️ 选择器写**裸**的（`.` 不用转义）：`rule()` 自己会把正则元字符转义 ——
     //    再写一层 `\\.` 会被它转义成"要匹配一个字面反斜杠"，于是永远匹配不上（第一版就踩了）。
     const rule = (sel: string) => {
