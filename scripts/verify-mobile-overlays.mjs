@@ -1157,54 +1157,51 @@ async function main() {
           //  3. 这个仓库的窄/矮是**同一条** `@media (max-width:768px), (max-height:520px)`
           //     ⇒ 不要按"窄"或"矮"分桶，要看那条 conditionText 是否**两个轴都写了**。
           const out = [];
-          for (const sheet of Array.from(document.styleSheets)) {
-            let list;
-            try {
-              list = Array.from(sheet.cssRules);
-            } catch {
-              continue;
-            }
-            for (const r of list) {
-              if (!r.conditionText) continue;
-              if (!/max-width:\s*768px/.test(r.conditionText) && !/max-height:\s*520px/.test(r.conditionText)) continue;
-              for (const inner of Array.from(r.cssRules || [])) {
-                const st = inner.style || null;
-                if (!st) continue;
-                const sel = inner.selectorText || "";
-                if (!sel) continue; // @keyframes 之类没有 selectorText 的，跳过
-                // ⚠️ **不要**在这里加"只收某些选择器"的白名单：这个白名单连着坑了两次
-                // （先漏 `.pdf-reader-head`/`.pdf-annot-toolbar`，再漏 `.pdf-reader-overlay`）
-                // ——白名单漏了，断言看不到规则就只会假红，排查成本还高。全收，筛选放到断言里。
-                out.push({
-                  sel: sel.trim(),
-                  cond: r.conditionText.replace(/\s+/g, " "),
-                  position: st.position,
-                  display: st.display,
-                  width: st.width,
-                  minWidth: st.minWidth,
-                  minHeight: st.minHeight,
-                  flexWrap: st.flexWrap,
-                  overflowX: st.overflowX,
-                  padding: st.padding,
-                });
+          // ⭐ 2026-10-31（S2 @layer）：App.css 的规则现在在 `@layer legacy` 容器里，
+          //   浏览器 CSSOM 里它是 **CSSLayerBlockRule**（有 cssRules、无 conditionText、无 selectorText）。
+          //   原来只下沉一层 `@media` ⇒ 层里的规则**一条都看不见**（整段静态判据假红）。
+          //   这里改成**递归下沉所有容器**（@layer / @media / @supports），把媒体条件带着走。
+          const collect = (rules, cond) => {
+            for (const r of Array.from(rules || [])) {
+              if (r.conditionText) {
+                collect(r.cssRules, cond ? cond + " && " + r.conditionText : r.conditionText);
+                continue;
               }
+              if (r.cssRules && !r.selectorText) { collect(r.cssRules, cond); continue; } // @layer 等容器
+              const st = r.style || null;
+              const sel = r.selectorText || "";
+              if (!st || !sel) continue; // @keyframes 之类没有 selectorText 的，跳过
+              // ⚠️ **不要**在这里加"只收某些选择器"的白名单：这个白名单连着坑了两次
+              // （先漏 `.pdf-reader-head`/`.pdf-annot-toolbar`，再漏 `.pdf-reader-overlay`）
+              // ——白名单漏了，断言看不到规则就只会假红，排查成本还高。全收，筛选放到断言里。
+              out.push({
+                sel: sel.trim(),
+                cond: cond ? cond.replace(/\s+/g, " ") : "",
+                position: st.position,
+                display: st.display,
+                width: st.width,
+                minWidth: st.minWidth,
+                minHeight: st.minHeight,
+                flexWrap: st.flexWrap,
+                overflowX: st.overflowX,
+                padding: st.padding,
+              });
             }
+          };
+          for (const sheet of Array.from(document.styleSheets)) {
+            try { collect(sheet.cssRules, ""); } catch { continue; }
           }
-          return out;
+          return out.filter((e) => /max-width:\s*768px/.test(e.cond) || /max-height:\s*520px/.test(e.cond));
         });
         // ⚠️ 2026-09-22：`rules` 只收**窄/矮段里**的规则，而"头部永不换行 + 放不下收进「⋯」"
         // 这一套是**基础规则**（不分视口，桌面也给同一套）⇒ 另收一份"不在任何 media 里"的。
         const baseRules = await safeEval(page, () => {
           const out = [];
-          for (const sheet of Array.from(document.styleSheets)) {
-            let list;
-            try {
-              list = Array.from(sheet.cssRules);
-            } catch {
-              continue;
-            }
-            for (const r of list) {
+          // ⭐ 同上：基础规则现在也在 `@layer legacy` 里 ⇒ 必须递归下沉容器，否则一条都收不到。
+          const collect = (rules) => {
+            for (const r of Array.from(rules || [])) {
               if (r.conditionText) continue; // 只看基础规则（media / supports 都跳过）
+              if (r.cssRules && !r.selectorText) { collect(r.cssRules); continue; } // @layer 等容器
               const st = r.style || null;
               const sel = r.selectorText || "";
               if (!st || !sel) continue;
@@ -1218,6 +1215,9 @@ async function main() {
                 maxWidth: st.maxWidth,
               });
             }
+          };
+          for (const sheet of Array.from(document.styleSheets)) {
+            try { collect(sheet.cssRules); } catch { continue; }
           }
           return out;
         });

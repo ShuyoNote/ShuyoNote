@@ -45,6 +45,17 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 > ⚠️ 这条属于本文件反复出现的那一族（**假红**），但**成因与 L499/L526/L573 那三条都不同**：
 > 那三条是负载 / 超时 / 进程级全局状态，这一条是**环境冲突**（dev server 占了端口 + 动了被测试的文件）。
 > **判据是两次对照，不是推测。** 遇到时先看 `:5173` 在不在，别去改产品代码。
+
+> ### ⚠️ 验收脚本读 `sheet.cssRules` 时必须递归下沉 `@layer`（2026-10-31，S2 之后）
+>
+> App.css 从 S2 起把**全部既有规则**包进 `@layer legacy`。浏览器 CSSOM 里那是一个
+> `CSSLayerBlockRule`（有 `cssRules`、**没有** `conditionText` / `selectorText`）。
+> 任何"遍历 `sheet.cssRules` 找规则"的验收脚本，只下沉 `@media` 一层就会把层里的规则
+> **全部漏掉** ⇒ 静态判据整段**假红**（2026-10-31 CI 实测：`verify-mobile-overlays` 里
+> PDF 抽屉 / 头部 `data-collapse` / 命中区等 20+ 条一起红，而真浏览器行为全对、页面渲染正常）。
+> 做法：递归下沉**所有容器**（`@layer` / `@media` / `@supports`，媒体条件带着走），
+> 见 `scripts/verify-mobile-overlays.mjs` 里两处 `collect(...)`；本机复跑
+> `mobile-layout 68/68`、`mobile-overlays 756/756`、`mobile-views 249/249` 全绿。
 >
 > **为什么不直接判红/自动避开**：`vitest` 的收集失败信息在这条路径上**不指出是 5173 造成的**，
 > 而"跑之前要求先停 dev server"会与 mobile 组的前置要求打架。**如实记在这里，让人判断。**
