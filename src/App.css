@@ -1375,6 +1375,9 @@ html.mac-blurred .mac-light svg { opacity: 0; }
    修好之前这一支完全没有界面（游标过去了、对端那笔编辑再也取不回），所以这块是"从静默到可见"的那一半。
    配色刻意用**信息**（不是危险）：它记的是"有东西等你处理"，不是"出错了"。 */
 .sync-pending-remote {
+  /* ⭐ 2026-10-31（owner 截图反馈）：它紧贴在「加密空间同步」卡片下沿，上边留一点空隙才不显挤。
+     与 `.sync-conflict-banner` 的 12px 上留白同一档（移动端在下面单独收到 16px）。 */
+  margin-top: 12px;
   margin-bottom: 10px;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
@@ -25504,6 +25507,8 @@ button.mset-row:focus-visible {
 /* ⭐ 2026-10-25 owner：冲突提示卡片上边加点留白 */
 .conflict-banner{margin-top:14px}
 .sync-conflict-banner{margin-top:16px}
+/* ⭐ 2026-10-31 owner：待取回的远端版本与上面「加密空间同步」卡片也要留空隙（移动端与冲突卡同档） */
+.sync-pending-remote{margin-top:16px}
 
 /* ⭐ 2026-10-25 owner：数据页「自动备份」重排 + 备份目录打开按钮 */
 .backup-auto-card{
