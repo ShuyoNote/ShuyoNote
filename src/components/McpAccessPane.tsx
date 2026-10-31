@@ -482,7 +482,7 @@ export function McpAccessPane() {
                 2
               </span>
               <div className="mcp-step-body">
-                <div className="mcp-step-title">粘到客户端的 mcpServers 里</div>
+                <div className="mcp-step-title">粘进客户端的 MCP 配置</div>
                 <div className="mcp-path-list">
                   {CONFIG_PATHS.map((c) => (
                     <div className="mcp-path-row" key={c.label}>
@@ -494,14 +494,13 @@ export function McpAccessPane() {
                   ))}
                 </div>
                 <div className="mcp-step-note">
-                  其他客户端：看它的文档里 <code>mcpServers</code> 那一节（已存在就合并，别整段覆盖）。
+                  已存在就合并，别整段覆盖。
                 </div>
                 <div className="mcp-step-note">
-                  VS Code 的写法不同：键名是 <code>servers</code>（不是 <code>mcpServers</code>），文件是 JSONC、可以带注释。
+                  VS Code：键名是 <code>servers</code>，JSONC（可带注释）。
                 </div>
                 <div className="mcp-step-note">
-                  DeepSeek Harness 的 MCP 写在 profile 的 <code>cordis.patch.yml</code> 里（YAML 的 <code>insert</code> 一节，
-                  name 用 <code>@deepseek-ai/dsh-mcp-client</code>），不是 mcpServers JSON。
+                  DeepSeek Harness：写在 <code>cordis.patch.yml</code> 的 <code>insert</code> 一节（YAML）。
                 </div>
               </div>
             </li>
@@ -512,7 +511,7 @@ export function McpAccessPane() {
               <div className="mcp-step-body">
                 <div className="mcp-step-title">重启客户端（只需首次）</div>
                 <div className="mcp-step-note">
-                  桥每次调用都会重读端口和令牌 ⇒ 以后换档位、换令牌都不用重启；只有第一次接入要重启一次。
+                  以后换档、换令牌不用重启。
                 </div>
                 <div className="mcp-step-readings">
                   <div className="mcp-kv">
