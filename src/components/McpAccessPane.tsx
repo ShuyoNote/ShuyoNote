@@ -235,8 +235,14 @@ const NAV: Array<[string, string]> = [
  * mcpServers JSON）与 DeepSeek Harness（profile 的 `cordis.patch.yml`，**YAML 的 insert 一节**，
  * 键名不是 mcpServers ⇒ 下面单独一句说明，⛔ 别让用户把 JSON 直接糊进 YAML）。
  */
-const CONFIG_PATHS: Array<{ label: string; configPath: string }> = [
-  { label: "WorkBuddy", configPath: "~/.workbuddy/mcp.json" },
+const CONFIG_PATHS: Array<{ label: string; configPath: string; note?: string }> = [
+  {
+    label: "WorkBuddy",
+    configPath: "~/.workbuddy/mcp.json",
+    // ⭐ M9（2026-10-31）：WorkBuddy 有**自己的客户端准入** —— 不写这一句，用户会以为
+    // "文件写对了 = 接上了"，然后在 WB 里一直看不到服务器（面板侧没有任何读数能解释这件事）。
+    note: "首次配置后还需在 WorkBuddy 的「连接器管理 → 自定义连接器」里点「信任」，否则不会加载 MCP 服务器。",
+  },
   { label: "DeepSeek Harness", configPath: "~/.dsh/profiles/<profile>/cordis.patch.yml" },
   { label: "Claude Desktop", configPath: "%APPDATA%\\Claude\\claude_desktop_config.json" },
   { label: "Cursor", configPath: "~/.cursor/mcp.json" },
@@ -489,11 +495,25 @@ export function McpAccessPane() {
                 <div className="mcp-step-title">粘进客户端的 MCP 配置</div>
                 <div className="mcp-path-list">
                   {CONFIG_PATHS.map((c) => (
-                    <div className="mcp-path-row" key={c.label}>
+                    <div
+                      className="mcp-path-row"
+                      key={c.label}
+                      // 只有带 note 的行需要换行（WorkBuddy 的「信任」提示）；其余行保持 单行「标签 + 路径」。
+                      style={c.note ? { flexWrap: "wrap" } : undefined}
+                    >
                       <span className="mcp-path-label">{c.label}</span>
                       <code className="mcp-path-value" data-testid="mcp-config-path" title={c.configPath}>
                         {c.configPath}
                       </code>
+                      {c.note ? (
+                        <div
+                          className="mcp-step-note"
+                          data-testid="mcp-path-note"
+                          style={{ flexBasis: "100%", paddingTop: 2 }}
+                        >
+                          {c.note}
+                        </div>
+                      ) : null}
                     </div>
                   ))}
                 </div>
