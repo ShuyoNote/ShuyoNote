@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **选中文字的工具条新增「正文 / 标题 1–3」下拉** —— 选中文字后工具条左侧多一个下拉：把选区涉及的块在正文与标题 1–3 之间互转。**保留块 ID**（`((blockId))` 引用与 CRDT 身份不断）、保留文字与行内格式；跨多个块时一起转；列表/代码/引用/分栏等块不碰（它们有各自的结构语义）。判据 `src/editor/blockType.test.ts` 5/5（含「块 ID 保留」「跨两块各转各的」）；真机截图在 `_tmp/acceptance/selection-toolbar-blocktype-*.png`。
 - **MCP 桥改 Rust 版（随包、零依赖）**：新增独立 crate `tools/shuyonote-mcp-rust`，编译成 `shuyonote-mcp[.exe]` 随安装包（三个平台 `bundle.resources` → `mcp/…`）；设置面板片段**默认「随包」**（`command` 直接指桥，不需要 Node、不需要联网），可切「npx」（需 Node 20+ 且联网）。行为与 Node 桥逐条对齐：`initialize`/`ping`/`tools/list`/`tools/call`、未知方法 -32601、通知不回、stdin EOF 顺序退；8 条 crate 单测（含假 App 通道往返）。开发期由 `beforeDevCommand`/`beforeBuildCommand` 自动编桥；面板片段高度随形态自适应 240~360px。
 - **B3 属性区收尾**：header 同行；值列/标签行统一 86px grid；作者 person chip；日期/来源展示态无 input、操作 hover 才出；来源行说明小字；正文「> 来源：」引文改为 citation 样式（保留文本以保幂等）；顶部添加属性/标签入口移除；metadata-card 去灰底改分隔线。
 - **F1 空间包按附录 A 形状**：`roots` 改节点 id 字符串数组、`document` 改 doc id、`min_reader_version` 改整数 1、省略 `features`；读侧兼容旧对象 roots/字符串版本并 warning；fixture 改名 `personal-sample-appendixA.shuyospace` 并重生成；`packageFixtures` 改进程内重建。

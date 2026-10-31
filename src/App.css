@@ -6572,6 +6572,43 @@ select.prop-value {
   color: var(--text);
 }
 
+/* 块类型下拉（正文 / 标题 1–3）。2026-10-31：跟着工具条放在 legacy 层 ——
+   它不是通用 utilities，而是这个浮层的一部分；加 utilities 会让"谁压谁"多一层要记。 */
+.selection-toolbar-blocktype { position: relative; display: flex; align-items: center; }
+.selection-toolbar button.selection-toolbar-blocktype-btn {
+  width: auto;
+  padding: 0 6px;
+  gap: 3px;
+  font-size: var(--fs-12);
+  color: var(--text);
+}
+.selection-toolbar-caret { font-size: var(--fs-9); color: var(--text-faint); line-height: 1; }
+.selection-toolbar-sep { width: 1px; height: 16px; background: var(--border); margin: 0 2px; }
+.selection-toolbar-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 96px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  z-index: 51;
+}
+.selection-toolbar-menu button {
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  justify-content: flex-start;
+  font-size: var(--fs-12);
+  color: var(--text);
+}
+.selection-toolbar-menu button.is-current { background: var(--hover); color: var(--accent); }
+
 /* Link popover */
 .link-popover {
   position: fixed;
@@ -26603,4 +26640,5 @@ button.mset-row:focus-visible {
 
 /* Match the block-formula look (no KaTeX display margin, no box). */
 .formula-preview-katex .katex-display { margin: 0; }
+
 
