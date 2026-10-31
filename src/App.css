@@ -26398,17 +26398,6 @@ button.mset-row:focus-visible {
 .prop-link-copy, .prop-link-edit { background: none; border: 0; color: var(--text-muted, #888); cursor: pointer; font: inherit; }
 .prop-temporal { text-align: left; }
 
-/* M2e：空间包入口的窄屏收纳（⛔ 不新增浮层；行内面板） */
-.space-package-actions .spa-more { display: none; }
-.spa-more { width: 44px; height: 44px; min-height: 44px; border: 1px solid var(--border, #ddd); border-radius: 8px; background: transparent; font-size: 18px; line-height: 1; cursor: pointer; }
-.spa-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 148px; background: var(--bg-elev, #fff); border: 1px solid var(--border, #ddd); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 4px; display: flex; flex-direction: column; }
-.spa-menu button { min-height: 44px; text-align: left; padding: 8px 12px; background: none; border: 0; border-radius: 6px; cursor: pointer; }
-.spa-menu button:hover { background: var(--hover, rgba(0,0,0,.06)); }
-@media (max-width: 900px) {
-  .space-package-actions .spa-wide { display: none; }
-  .space-package-actions .spa-more { display: inline-flex; align-items: center; justify-content: center; }
-}
-
 /* B3：属性区 header 同一行（原按钮换行到下一行）＋ 元数据块去整块灰底改分隔线 */
 .properties-head-row { display: flex; align-items: center; gap: 8px; }
 .properties-head-row .properties-toggle { flex: 1; text-align: left; }
@@ -26432,10 +26421,6 @@ button.mset-row:focus-visible {
 .prop-value-source { display: flex; flex-direction: column; min-width: 0; }
 .prop-value-source .prop-note { margin-top: 2px; }
 .prop-value-source .prop-link-actions { margin-top: 2px; }
-/* 工具栏窄屏：单行、去掉上下额外内边距（44 + 4 <= 60） */
-@media (max-width: 900px) {
-  .file-manager-toolbar:has(.space-package-actions) { flex-wrap: nowrap; padding: 2px 0; }
-}
 
 /* ── 属性表布局收口（2026-10-31）────────────────────────────────────────
    根因：`TagRow` 原来被包在 `.prop-tag-line` 这个 div 里 ⇒ 它作为**一个**网格子项

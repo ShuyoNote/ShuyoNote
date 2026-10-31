@@ -18,7 +18,6 @@ import { importOfficeAttachmentAsPage } from "../lib/office/pickOfficeFile";
 // ⭐ 2026-10-29（M1 最后一段）：文件区「导入文档包」—— 选 `.shuyodoc` ⇒ 解包校验 ⇒ **新建一页**。
 // 整条流程（选文件 / 解 zip / 整包校验 / 资产入库 / 建页）都在那一层，⛔ 这里不自己解包、不手写库。
 import { importDocumentPackage } from "../lib/docPackageTransfer";
-import { SpacePackageActions } from "./SpacePackageActions";
 import { PluginMenuItems } from "./PluginMenuItems";
 import { fileContextArgs } from "../lib/pluginMenus";
 import { attachmentFetchHint } from "../lib/attachmentFetchHint";
@@ -979,7 +978,6 @@ export function FileManagerView() {
       </div>
 
       <div className="file-manager-toolbar">
-        <SpacePackageActions />
         <div className="fm-breadcrumb">
           <button
             className={`fm-crumb ${folderId === null ? "fm-crumb-active" : ""}`}
