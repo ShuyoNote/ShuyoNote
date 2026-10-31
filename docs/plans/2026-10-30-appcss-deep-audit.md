@@ -1,6 +1,6 @@
 # 方案：App.css 深度审计与优化（2026-10-30）
 
-状态：S0 视觉基线工具 ✅；S1 纯删除 ✅（App.css 28,695→26,439 行；非空行 27.4k→25.3k；`!important` 正则 36→21、实际声明 31→16）；S2 部分 ✅（去 `!important`／合并重复规则／删死兜底）；**S2 `@layer` 脚手架 ✅（2026-10-31）**：全部既有规则保序包进 `@layer legacy`、utilities 试点 5 条、excalidraw/KaTeX 覆盖 7 条**留在层外**；判据 `src/lib/cssLayers.test.ts`，真浏览器视觉基线最差 **0.018%**（阈值 0.2%）；S3 tokens、S4 strangler 未开工。审计读数见 §2、执行记录见 §11（截至 2026-10-31）
+状态：S0 视觉基线工具 ✅；S1 纯删除 ✅（App.css 28,695→26,439 行；非空行 27.4k→25.3k；`!important` 正则 36→21、实际声明 31→16）；S2 部分 ✅（去 `!important`／合并重复规则／删死兜底）；**S2 `@layer` 脚手架 ✅（2026-10-31）**：全部既有规则保序包进 `@layer legacy`、utilities 试点 5 条、excalidraw/KaTeX 覆盖 7 条**留在层外**；判据 `src/lib/cssLayers.test.ts`，真浏览器视觉基线最差 **0.018%**（阈值 0.2%）；**S3 tokens 起步（2026-10-31）**：`src/styles/tokens.json` → 生成 `tokens.css`/`tokens.d.ts`（21 档整数字号），**12/13px 批次 585 处**换 token，未定义变量 **26**（冻结只减不增），判据 `src/lib/cssTokens.test.ts`，视觉基线最差 **0.004%**；**S4 strangler 未开工**。审计读数见 §2、执行记录见 §11/§12（截至 2026-10-31）
 
 关联：`src/lib/cssHygiene.test.ts`（既有「只减不增」判据）· `docs/TESTING.md`（门禁总表）· 测量脚本（临时）：`_tmp/scratch/analyze-app-css.mjs`、`analyze-app-css2.mjs`
 
@@ -256,3 +256,14 @@ class prefix 体量：sync 605 / set 420 / is-(状态) 367 / pdf 320 / email 306
 - 备份：重做前打 tag `css-d-redo-backup`（指向被回滚的那版），回滚成本 = 一次 `git reset`。
 
 AST 重做后的读数：规则 4535→4191、行数 28695→26439、**逐元素 computed 差异 0 处**、三视口像素 **0.000%**、全量 vitest **3800 passed**。
+
+## 12. S3 第一批（tokens 单源 + 字号 12/13px，2026-10-31）
+
+- **生成器**：`scripts/gen-css-tokens.mjs` —— 源 `src/styles/tokens.json` → 生成 `src/styles/tokens.css` ＋ `tokens.d.ts`；`src/App.tsx` 在 `App.css` 之后 import（层序已由 App.css 的 `@layer legacy, utilities;` 声明，tokens 自己也落 `@layer legacy`）。⛔ 改刻度只改 json + 跑生成器。
+- **刻度**：只收**数值已存在**的整数字号（9–52 共 21 档）；半像素（11.5/12.5/10.5…）按 owner 2026-10-31 拍板**暂不纳入**。
+- ⚠️ **`--space-1..8` 已存在，但不是**本方案 §9.3 草稿里的 `2/4/6/8/10/12/16/24`，而是 **`4/8/12/16/24/32/40/64`** ⇒ 本轮**不重定义**（重定义会改所有用点）；间距 token 化另立一批并先量用点。
+- **批次 1**：`font-size: 12px / 13px` → `var(--fs-12/13)`，共 **585 处**（12px 353 ／ 13px 232；注释里提到的 2 处未动）；剩余 `font-size` 字面量 **577**（冻结，只减不增）。
+- **判据** `src/lib/cssTokens.test.ts` 三条：① 生成物与 json 逐字节一致；② 全仓 `var(--x)` 有定义或属运行时白名单，未定义集合 ≤ 冻结 26；③ `font-size` 字面量只减不增且 12/13 批次已在。
+- **读数**：`cssTokens` 3/3、`cssLayers` 4/4、`cssHygiene` 4/4；真浏览器视觉基线 5 图最差 **0.004%**（阈值 0.2%）、metrics 差异 0。
+- **下一批**：14/15/16/18/20/22/24px；再清那 26 个未定义变量（逐个定性见 `_tmp/acceptance/css-undefined-vars-2026-10-31.md`，⚠️ 定义会让原本失效的声明重新生效 ⇒ 逐个看视觉风险）。
+

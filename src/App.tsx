@@ -123,6 +123,10 @@ import "./App.css";
 // MCP 接入面板（跨空间支持矩阵改版）的专用样式：不写进 App.css（那条文件在收缩），
 // 也不用内联样式 —— 全部收在独立文件里，放在 App.css **之后**以便覆盖同特异性的旧类。
 import "./styles/mcp-panel.css";
+// S3（2026-10-31）：生成的 token 定义（`--fs-*` 等）。放在 App.css 之后 import ⇒ 层序已由
+// App.css 的 `@layer legacy, utilities;` 声明；tokens.css 自己也落在 `@layer legacy` 里。
+// ⛔ 别手改 tokens.css/tokens.d.ts —— 改 `src/styles/tokens.json` 再跑 `node scripts/gen-css-tokens.mjs`。
+import "./styles/tokens.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

@@ -1,0 +1,25 @@
+/* 本文件由 scripts/gen-css-tokens.mjs 从 src/styles/tokens.json 生成 —— 请勿手改。 */
+
+/** 生成的 CSS token 名（tokens.css 的镜像；TS 侧只做形状提示，不做运行时校验）。 */
+export type CssFontSizeToken =
+  | "--fs-9"
+  | "--fs-10"
+  | "--fs-11"
+  | "--fs-12"
+  | "--fs-13"
+  | "--fs-14"
+  | "--fs-15"
+  | "--fs-16"
+  | "--fs-17"
+  | "--fs-18"
+  | "--fs-19"
+  | "--fs-20"
+  | "--fs-22"
+  | "--fs-24"
+  | "--fs-26"
+  | "--fs-27"
+  | "--fs-28"
+  | "--fs-30"
+  | "--fs-34"
+  | "--fs-40"
+  | "--fs-52";

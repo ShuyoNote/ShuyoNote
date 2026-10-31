@@ -433,7 +433,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 .titlebar-title {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -845,7 +845,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 
 .sidebar-title-caret {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1;
   flex: none;
 }
@@ -924,7 +924,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   margin-bottom: 2px;
 }
 .space-switcher-sub {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   line-height: 1.5;
 }
@@ -953,7 +953,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 }
 .space-switcher-empty {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   text-align: center;
   padding: 28px 12px;
   border: 1px dashed var(--border);
@@ -973,7 +973,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   border-radius: var(--radius-md);
   cursor: pointer;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-13);
   text-align: left;
   transition: background var(--transition-fast);
 }
@@ -1006,7 +1006,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   border-radius: 50%;
   background: var(--hover-strong);
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -1025,7 +1025,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   gap: 2px;
 }
 .space-item-name {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1093,7 +1093,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   border: none;
   background: transparent;
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1;
   padding: 0;
   border-radius: var(--radius-sm);
@@ -1128,7 +1128,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   border-radius: var(--radius-sm);
   color: var(--text);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-family: inherit;
   text-align: left;
   transition: background var(--transition-fast), border-color var(--transition-fast);
@@ -1159,7 +1159,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   border-radius: var(--radius-xs);
   background: var(--chip-bg);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .space-action.is-primary .space-action-icon {
   background: transparent;
@@ -1232,7 +1232,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   color: var(--text-dim);
   border-radius: var(--radius-sm);
   padding: 0 8px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-family: inherit;
   cursor: pointer;
   white-space: nowrap;
@@ -1272,7 +1272,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   z-index: var(--z-popover);
 }
 .sync-title {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text);
   margin-bottom: 10px;
@@ -1319,7 +1319,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   letter-spacing: 0.01em;
 }
 .sync-subtitle {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   line-height: 1.5;
 }
@@ -1344,7 +1344,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   background: var(--cat-yellow-soft);
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text);
 }
 .sync-web-note span {
@@ -1359,7 +1359,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   border-radius: var(--radius-sm);
   background: var(--danger-soft);
   border: 1px solid var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text);
 }
 .sync-conflict-title { font-weight: 600; margin-bottom: 6px; }
@@ -1372,7 +1372,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   background: var(--bg-1);
   color: var(--text);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .btn-sync-conflict.keep { border-color: var(--success); color: var(--success); }
 .btn-sync-conflict.adopt { border-color: var(--primary); color: var(--primary); }
@@ -1389,7 +1389,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   border-radius: var(--radius-sm);
   background: var(--accent-soft);
   border: 1px solid var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text);
 }
 .sync-pending-remote .sync-conflict-list { margin: 0 0 6px; padding-left: 18px; }
@@ -1460,7 +1460,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   align-items: center;
   gap: 8px;
   padding: 6px 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   cursor: pointer;
 }
@@ -1505,12 +1505,12 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 .sync-row-caret {
   flex: none;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 .sync-row[open] > summary .sync-row-caret {
@@ -1686,7 +1686,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   font: inherit;
 }
 .input-choice:hover { border-color: var(--accent); }
-.input-choice-label { font-size: 13px; }
+.input-choice-label { font-size: var(--fs-13); }
 .input-choice-hint { font-size: 11px; line-height: 1.5; color: var(--text-dim); }
 /* 主口令：**标签一行、输入框单独一行**（owner 2026-09-24：挤在同一行时标签被折行、输入框被压到最右边）。
    竖排后输入框占满宽度，等于一个正常的"设置口令"字段；盒子本身用 `.sync-input`（与下拉、按钮同高）。 */
@@ -1872,7 +1872,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 7px 10px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-family: inherit;
   background: var(--bg);
   color: var(--text);
@@ -1913,7 +1913,7 @@ select.sync-input {
      而按钮**没有** ⇒ 实际只有 ~29px ⇒ 并排时高矮不齐，而且按钮自己也没守那条规矩 ✓。
      ⭐ 字号也跟输入框对齐（12 → 13）✓；圆角本来就是同一个 `--radius-sm` ✓。 */
   min-height: 44px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 500;
   font-family: inherit;
   cursor: pointer;
@@ -2071,8 +2071,8 @@ select.sync-input {
 }
 
 .sync-auto { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
-.sync-auto-label { font-size: 12px; color: var(--text-faint); flex-shrink: 0; }
-.sync-auto select.sync-input { width: auto; padding: 4px 6px; font-size: 12px; }
+.sync-auto-label { font-size: var(--fs-12); color: var(--text-faint); flex-shrink: 0; }
+.sync-auto select.sync-input { width: auto; padding: 4px 6px; font-size: var(--fs-12); }
 
 /* C1 预算刹车 / C2 网络闸门（2026-09-15）：收在 sync- 命名空间里。 */
 .sync-net {
@@ -2091,7 +2091,7 @@ select.sync-input {
 .sync-budget .sync-budget-row select.sync-input {
   width: auto;
   padding: 4px 6px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 /* ⚠️ 2026-09-29（IA）：`.sync-budget` 现在是那一行的 `<details>`（`.sync-row.sync-budget`），
    三个下拉与这段解释被统一折进行体里 ⇒ 选择器跟着下移一层（同样的间距，同一个说法）。 */
@@ -2148,7 +2148,7 @@ select.sync-input {
 
 /* 状态条：默认中性；同步面板按语义加 is-ok / is-warn / is-err 上色。 */
 .sync-status {
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.5;
   color: var(--text-dim);
   background: var(--chip-bg);
@@ -2288,7 +2288,7 @@ select.sync-input {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 .sync-history-status {
@@ -2296,7 +2296,7 @@ select.sync-input {
   width: 16px;
   text-align: center;
   font-weight: 700;
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 18px;
 }
 .sync-history-status.is-ok { color: var(--success); }
@@ -2308,7 +2308,7 @@ select.sync-input {
 .sync-history-title {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
 }
-.sync-history-at { font-size: 12px; color: var(--text-dim); }
+.sync-history-at { font-size: var(--fs-12); color: var(--text-dim); }
 .sync-history-stats { display: inline-flex; gap: 5px; }
 .sync-stat {
   font-size: 11px; padding: 1px 6px; border-radius: 6px;
@@ -2360,7 +2360,7 @@ select.sync-input {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text);
 }
 .sync-dir-push { color: var(--success); }
@@ -2383,7 +2383,7 @@ select.sync-input {
   color: var(--text-dim);
   border-radius: 8px;
   padding: 5px 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-family: inherit;
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
@@ -2403,7 +2403,7 @@ select.sync-input {
   color: var(--text-faint);
   border-radius: var(--radius-sm);
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
   transition: color var(--transition-fast), background var(--transition-fast);
 }
@@ -2417,7 +2417,7 @@ select.sync-input {
 .sync-history-msg { color: var(--danger); font-size: 11px; }
 
 .sync-empty {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   line-height: 1.6;
   margin-bottom: 10px;
@@ -2434,7 +2434,7 @@ select.sync-input {
   color: var(--text);
   border-radius: 6px;
   padding: 5px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 
@@ -2465,7 +2465,7 @@ select.sync-input {
   color: var(--text-dim);
   border-radius: var(--radius-sm);
   padding: 0 8px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-family: inherit;
   cursor: pointer;
   white-space: nowrap;
@@ -2542,7 +2542,7 @@ select.sync-input {
   padding: 9px 10px;
   border-radius: 7px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   text-align: left;
 }
@@ -2571,7 +2571,7 @@ select.sync-input {
 }
 
 .new-menu-name {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 500;
   color: var(--text);
 }
@@ -2601,7 +2601,7 @@ select.sync-input {
   color: var(--text-dim);
   border-radius: 6px;
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 
@@ -2616,7 +2616,7 @@ select.sync-input {
   color: var(--text-dim);
   border-radius: 6px;
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 
@@ -2652,7 +2652,7 @@ select.sync-input {
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   text-align: left;
 }
@@ -2709,8 +2709,8 @@ select.sync-input {
   padding: 9px 12px;
   border-bottom: 1px solid var(--border);
 }
-.trash-head-title { font-size: 13px; font-weight: 600; color: var(--text); }
-.trash-count { font-size: 12px; color: var(--text-dim); flex: 1; }
+.trash-head-title { font-size: var(--fs-13); font-weight: 600; color: var(--text); }
+.trash-count { font-size: var(--fs-12); color: var(--text-dim); flex: 1; }
 .trash-head-actions { display: inline-flex; gap: 6px; }
 .trash-act-head {
   display: inline-flex; align-items: center; gap: 4px;
@@ -2719,7 +2719,7 @@ select.sync-input {
   color: var(--text-dim);
   border-radius: var(--radius-sm);
   padding: 3px 9px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
   transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
 }
@@ -2738,8 +2738,8 @@ select.sync-input {
   gap: 6px;
 }
 .trash-empty-icon { font-size: 28px; opacity: .5; }
-.trash-empty-text { font-size: 13px; color: var(--text-dim); }
-.trash-empty-sub { font-size: 12px; color: var(--text-faint); }
+.trash-empty-text { font-size: var(--fs-13); color: var(--text-dim); }
+.trash-empty-sub { font-size: var(--fs-12); color: var(--text-faint); }
 
 .trash-item {
   display: flex;
@@ -2747,7 +2747,7 @@ select.sync-input {
   gap: 8px;
   padding: 7px 8px;
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .trash-item:hover { background: var(--hover); }
 .trash-icon { flex-shrink: 0; opacity: .8; }
@@ -2823,7 +2823,7 @@ select.sync-input {
 }
 
 .board-group-label {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
 }
 
@@ -2833,7 +2833,7 @@ select.sync-input {
   color: var(--text);
   border-radius: var(--radius-sm);
   padding: 5px 10px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   outline: none;
 }
 
@@ -2912,7 +2912,7 @@ select.sync-input {
 }
 
 .board-column-title {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   flex: 1;
   user-select: none;
@@ -2920,7 +2920,7 @@ select.sync-input {
 }
 
 .board-column-count {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
   background: var(--hover);
   border-radius: var(--radius-full);
@@ -2942,7 +2942,7 @@ select.sync-input {
   border-radius: var(--radius-md);
   padding: 8px 10px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
   box-shadow: var(--shadow-xs);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   user-select: none;
@@ -2982,7 +2982,7 @@ select.sync-input {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text);
 }
@@ -3016,7 +3016,7 @@ select.sync-input {
 .board-empty {
   padding: 12px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   text-align: center;
   border: 1px dashed var(--border);
   border-radius: 6px;
@@ -3049,7 +3049,7 @@ select.sync-input {
 .history-empty {
   padding: 12px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   text-align: center;
 }
 
@@ -3062,7 +3062,7 @@ select.sync-input {
   margin-bottom: 4px;
 }
 .history-title {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text);
 }
@@ -3072,7 +3072,7 @@ select.sync-input {
   color: var(--text-dim);
 }
 .history-clear {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--danger);
   background: transparent;
   border: 1px solid transparent;
@@ -3128,7 +3128,7 @@ select.sync-input {
 }
 
 .history-preview {
-  font-size: 13px;
+  font-size: var(--fs-13);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3186,7 +3186,7 @@ select.sync-input {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.55;
   color: var(--text);
   background: var(--bg);
@@ -3276,7 +3276,7 @@ select.sync-input {
   padding: 8px 16px;
   background: linear-gradient(90deg, #3370ff, #2952cc);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--fs-13);
   box-shadow: 0 2px 12px rgba(51, 112, 255, 0.35);
 }
 .update-banner-icon { font-size: 15px; }
@@ -3288,7 +3288,7 @@ select.sync-input {
   padding: 3px 12px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .update-banner-action:hover { background: rgba(255, 255, 255, 0.28); }
 .update-banner-close {
@@ -3419,7 +3419,7 @@ select.sync-input {
 .search-locked-hint {
   margin: 0;
   padding: 6px 10px 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.5;
   color: var(--text-dim);
 }
@@ -3430,7 +3430,7 @@ select.sync-input {
   color: var(--text-dim);
   border-radius: var(--radius-xs);
   padding: 5px 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-family: inherit;
   white-space: nowrap;
   cursor: pointer;
@@ -3479,7 +3479,7 @@ select.sync-input {
   color: var(--text-dim);
   border-radius: var(--radius-full);
   padding: 5px 12px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-family: inherit;
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
@@ -3611,7 +3611,7 @@ select.sync-input {
 
 /* 摘要给两行：搜索结果的判断依据主要在正文片段，单行截断等于把它废掉。 */
 .search-item-snippet {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   margin-top: 4px;
   line-height: 1.6;
@@ -3634,13 +3634,13 @@ select.sync-input {
 }
 
 .search-empty-title {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   margin-bottom: 4px;
 }
 
 .search-empty-sub {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   line-height: 1.6;
 }
@@ -3677,7 +3677,7 @@ select.sync-input {
 .sidebar-empty {
   padding: 16px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 
 /* Skeleton loading */
@@ -3781,7 +3781,7 @@ select.sync-input {
 }
 
 .tree-ghost-title {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -3853,7 +3853,7 @@ select.sync-input {
   width: 18px;
   flex-shrink: 0;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--accent);
   font-weight: 700;
 }
@@ -3873,7 +3873,7 @@ select.sync-input {
 }
 
 .tree-batch-count {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   font-weight: 500;
 }
@@ -3885,7 +3885,7 @@ select.sync-input {
 }
 
 .tree-batch-btn {
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 8px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
@@ -3927,7 +3927,7 @@ select.sync-input {
 }
 
 .tree-batch-item {
-  font-size: 12px;
+  font-size: var(--fs-12);
   text-align: left;
   padding: 6px 8px;
   border-radius: var(--radius-sm);
@@ -3947,7 +3947,7 @@ select.sync-input {
   flex-shrink: 0;
   text-align: center;
   transition: transform var(--transition);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 .tree-icon {
@@ -4004,7 +4004,7 @@ select.sync-input {
   color: var(--text);
 }
 .tree-file-row .tree-title {
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 
 .tree-rename-input {
@@ -4040,7 +4040,7 @@ select.sync-input {
   background: transparent;
   cursor: pointer;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 2px 4px;
   border-radius: 4px;
   line-height: 1;
@@ -4085,7 +4085,7 @@ select.sync-input {
   background: transparent;
   border: none;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 500;
   padding: 9px 10px;
   border-radius: 8px;
@@ -4147,7 +4147,7 @@ select.sync-input {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .plugin-menu-label {
   flex: 1;
@@ -4321,7 +4321,7 @@ body.is-ai-open .main {
   border-radius: var(--radius-xs);
   background: var(--bg);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 
@@ -4522,7 +4522,7 @@ body.is-ai-open .main {
   background: var(--block);
   border: 1px solid var(--border);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-13);
   border-radius: 8px;
   padding: 7px 10px;
   outline: none;
@@ -4545,7 +4545,7 @@ body.is-ai-open .main {
   cursor: pointer;
 }
 .ep-group-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   margin: 8px 0 6px;
 }
@@ -4573,7 +4573,7 @@ body.is-ai-open .main {
   font-size: 18px;
 }
 .ep-empty {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
   padding: 12px 4px;
 }
@@ -4623,7 +4623,7 @@ body.is-ai-open .main {
   font-weight: 600;
 }
 .cover-picker-sub {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 .cover-picker-grid {
@@ -4658,7 +4658,7 @@ body.is-ai-open .main {
   border-radius: 8px;
   padding: 6px 10px;
   outline: none;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   box-sizing: border-box;
 }
@@ -4681,7 +4681,7 @@ body.is-ai-open .main {
   border-radius: var(--radius-sm);
   padding: 6px 14px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .cover-picker-upload {
   background: var(--accent);
@@ -4760,7 +4760,7 @@ body.is-ai-open .main {
   border-radius: var(--radius-sm);
   padding: 7px 16px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .crop-ok {
   background: var(--accent);
@@ -4797,7 +4797,7 @@ body.is-ai-open .main {
   border: none;
   background: transparent;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
   padding: 4px 6px;
   border-radius: var(--radius-xs);
@@ -4880,7 +4880,7 @@ body.content-full .editor-placeholder {
   margin-bottom: 2px;
   cursor: pointer;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   font-family: inherit;
 }
@@ -4925,7 +4925,7 @@ body.content-full .editor-placeholder {
   color: var(--text-faint);
   background: transparent;
   border: none;
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 0 2px;
 }
 .prop-order-btns { display: inline-flex; flex-direction: row; flex-shrink: 0; gap: 2px; align-items: center; }
@@ -4975,7 +4975,7 @@ body.content-full .editor-placeholder {
 .prop-name {
   flex-shrink: 0;
   width: 120px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
   text-align: left;
   overflow: hidden;
@@ -5049,7 +5049,7 @@ body.content-full .editor-placeholder {
   color: var(--text);
   border-radius: var(--radius-xs);
   padding: 4px 8px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   min-width: 0;
 }
 
@@ -5101,7 +5101,7 @@ select.prop-value {
   color: var(--text);
   border-radius: var(--radius-xs);
   padding: 4px 8px;
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 
 .prop-add-name {
@@ -5128,7 +5128,7 @@ select.prop-value {
   color: var(--text);
   border-radius: var(--radius-xs);
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
   font-family: inherit;
 }
@@ -5152,7 +5152,7 @@ select.prop-value {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -5165,7 +5165,7 @@ select.prop-value {
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 2px 4px;
   border-radius: var(--radius-xs);
   font-family: inherit;
@@ -5205,7 +5205,7 @@ select.prop-value {
 }
 
 .save-indicator {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   white-space: nowrap;
 }
@@ -5216,7 +5216,7 @@ select.prop-value {
 
 .error-badge {
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 /* Editor toolbar */
@@ -5279,7 +5279,7 @@ select.prop-value {
   background: transparent;
   border: none;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 7px 10px;
   border-radius: var(--radius-xs);
   cursor: pointer;
@@ -5396,13 +5396,13 @@ select.prop-value {
 .find-input {
   border: none;
   outline: none;
-  font-size: 13px;
+  font-size: var(--fs-13);
   width: 140px;
   font-family: inherit;
 }
 
 .find-count {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   min-width: 40px;
   text-align: center;
@@ -5413,7 +5413,7 @@ select.prop-value {
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 2px 5px;
   border-radius: 4px;
 }
@@ -5515,7 +5515,7 @@ select.prop-value {
 
 .editor-error-detail {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-12);
   margin-top: 8px;
   word-break: break-all;
   max-width: 640px;
@@ -5536,7 +5536,7 @@ select.prop-value {
 }
 
 .pm-approval-text {
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.7;
   color: var(--text);
 }
@@ -5547,7 +5547,7 @@ select.prop-value {
   color: var(--danger);
   border-radius: 6px;
   padding: 5px 12px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 
@@ -5577,13 +5577,13 @@ select.prop-value {
 
 .panel-error-title {
   color: var(--danger);
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
 }
 
 .panel-error-detail {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-12);
   word-break: break-all;
 }
 
@@ -5645,7 +5645,7 @@ select.prop-value {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
   backdrop-filter: blur(10px) saturate(1.05);
   -webkit-backdrop-filter: blur(10px) saturate(1.05);
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-family: inherit;
   animation: block-grip-menu-in 0.14s ease-out;
 }
@@ -5674,7 +5674,7 @@ select.prop-value {
   background: transparent;
   color: var(--text);
   text-align: left;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-family: inherit;
   padding: 7px 9px;
   border-radius: 8px;
@@ -5863,7 +5863,7 @@ select.prop-value {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
   padding: 6px 10px 6px 14px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   max-width: min(92vw, 720px);
   flex-wrap: wrap;
   justify-content: center;
@@ -5885,7 +5885,7 @@ select.prop-value {
 }
 .block-selection-bar .block-select-hint {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding-left: 6px;
   border-left: 1px solid var(--border);
 }
@@ -5896,7 +5896,7 @@ select.prop-value {
   border-radius: var(--radius-sm);
   padding: 4px 10px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-family: inherit;
 }
 .block-selection-bar button:hover {
@@ -6003,7 +6003,7 @@ select.prop-value {
   border: 1px solid var(--border);
   background: var(--hover);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -6021,7 +6021,7 @@ select.prop-value {
 }
 .pm-empty {
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 20px 0;
   text-align: center;
 }
@@ -6050,7 +6050,7 @@ select.prop-value {
   font-weight: 400;
 }
 .pm-item-desc {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   margin: 2px 0;
 }
@@ -6067,7 +6067,7 @@ select.prop-value {
   border: 1px solid var(--border);
   background: var(--hover);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -6176,7 +6176,7 @@ select.prop-value {
 }
 .pm-index-fold > summary {
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   padding: 4px 0;
 }
@@ -6244,7 +6244,7 @@ select.prop-value {
   border: none;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   padding: 0;
   cursor: pointer;
@@ -6307,7 +6307,7 @@ select.prop-value {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 8px;
   border-radius: var(--radius-sm);
   font-family: inherit;
@@ -6320,7 +6320,7 @@ select.prop-value {
   font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
   /* 比默认输入框高一点：点上去更容易落准，也更好读。 */
   padding: 6px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   letter-spacing: 0.2px;
 }
 .pm-index-form button {
@@ -6328,7 +6328,7 @@ select.prop-value {
   border: 1px solid var(--border);
   background: var(--hover);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -6349,14 +6349,14 @@ select.prop-value {
 }
 .pm-index-error {
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--danger);
   line-height: 1.5;
   word-break: break-word;
 }
 .pm-index-source {
   margin-top: 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 /* 签名状态：没验过必须是黄的那种"没验"，不能和"验过了"长得一样 */
@@ -6387,7 +6387,7 @@ select.prop-value {
   min-width: 0;
 }
 .pm-index-item-title {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text);
   display: flex;
@@ -6408,7 +6408,7 @@ select.prop-value {
   margin-top: 2px;
 }
 .pm-index-item-desc {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   margin-top: 3px;
 }
@@ -6459,7 +6459,7 @@ select.prop-value {
   border: 1px solid var(--border);
   background: var(--hover);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -6526,7 +6526,7 @@ select.prop-value {
   border: 1px solid var(--border);
   background: var(--hover);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 3px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -6589,7 +6589,7 @@ select.prop-value {
 }
 
 .link-url {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--accent);
   max-width: 160px;
   overflow: hidden;
@@ -6606,7 +6606,7 @@ select.prop-value {
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   outline: none;
 }
 
@@ -6617,7 +6617,7 @@ select.prop-value {
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -7063,7 +7063,7 @@ select.prop-value {
   border-radius: 4px;
   background: var(--surface);
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1;
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
@@ -7119,7 +7119,7 @@ select.prop-value {
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.4;
   pointer-events: none;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
@@ -7143,13 +7143,13 @@ select.prop-value {
 
 .editor-column-error {
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-12);
   margin-bottom: 4px;
 }
 
 .editor-columns-loading {
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 
 /* Column-count picker (选择栏数) over an empty columns block. */
@@ -7355,7 +7355,7 @@ select.prop-value {
 }
 
 .editor-file-name {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 500;
   color: var(--text);
   overflow: hidden;
@@ -7451,7 +7451,7 @@ select.prop-value {
 }
 
 .backlinks-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 700;
   color: var(--text-dim);
   text-transform: uppercase;
@@ -7460,12 +7460,12 @@ select.prop-value {
 }
 
 .backlinks-loading {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   padding: 4px 0;
 }
 .backlinks-error {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   display: flex;
   align-items: center;
@@ -7476,7 +7476,7 @@ select.prop-value {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 2px 8px;
   border-radius: 6px;
   cursor: pointer;
@@ -7487,13 +7487,13 @@ select.prop-value {
 
 .board-loading {
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 32px 0;
   text-align: center;
 }
 .board-error {
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -7504,7 +7504,7 @@ select.prop-value {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 3px 10px;
   border-radius: 6px;
   cursor: pointer;
@@ -7513,12 +7513,12 @@ select.prop-value {
   background: var(--hover);
 }
 .properties-loading {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   padding: 8px 2px;
 }
 .properties-load-error {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   display: flex;
   align-items: center;
@@ -7529,7 +7529,7 @@ select.prop-value {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 2px 8px;
   border-radius: 6px;
   cursor: pointer;
@@ -7545,7 +7545,7 @@ select.prop-value {
   width: 100%;
 }
 .unlinked-mentions-summary {
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 700;
   color: var(--text-dim);
   text-transform: uppercase;
@@ -7563,7 +7563,7 @@ select.prop-value {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
 }
 .unlinked-mention-title {
@@ -7571,7 +7571,7 @@ select.prop-value {
 }
 .unlinked-mention-desc {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   flex: 1;
 }
 .unlinked-mention-link {
@@ -7579,7 +7579,7 @@ select.prop-value {
   background: transparent;
   color: var(--accent);
   border-radius: var(--radius-xs);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 2px 8px;
   cursor: pointer;
   font-family: inherit;
@@ -7643,7 +7643,7 @@ select.prop-value {
   color: var(--text);
   border-radius: 6px;
   padding: 4px 10px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
 }
 
@@ -7656,7 +7656,7 @@ select.prop-value {
 }
 
 .backlinks-subtitle {
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   color: var(--text-faint);
   margin-bottom: 6px;
@@ -7702,7 +7702,7 @@ select.prop-value {
 }
 
 .backlink-block-snippet {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -7764,7 +7764,7 @@ select.prop-value {
   padding: 2px 4px 8px;
 }
 .tag-picker-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   color: var(--text-dim);
 }
@@ -7806,7 +7806,7 @@ select.prop-value {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 6px 8px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   background: var(--bg);
   font-family: inherit;
@@ -7852,7 +7852,7 @@ select.prop-value {
   border: none;
   background: transparent;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
   padding: 0;
   text-align: left;
@@ -7860,7 +7860,7 @@ select.prop-value {
 }
 .tag-picker-check {
   width: 14px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--accent);
   flex: none;
 }
@@ -7870,7 +7870,7 @@ select.prop-value {
   white-space: nowrap;
 }
 .tag-picker-count {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
   white-space: nowrap;
   flex: none;
@@ -7885,7 +7885,7 @@ select.prop-value {
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 2px 5px;
   border-radius: var(--radius-xs);
 }
@@ -7935,7 +7935,7 @@ select.prop-value {
 .tag-color-pick.tag-color-clear {
   background: var(--hover);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 20px;
   text-align: center;
 }
@@ -7946,7 +7946,7 @@ select.prop-value {
   border-radius: 50%;
   background: var(--border);
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 20px;
   text-align: center;
   cursor: pointer;
@@ -7972,7 +7972,7 @@ select.prop-value {
   border-radius: var(--radius-xs);
   background: var(--bg);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 3px 6px;
   min-width: 0;
 }
@@ -7981,7 +7981,7 @@ select.prop-value {
   border-radius: var(--radius-xs);
   background: var(--accent);
   color: #fff;
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 3px 8px;
   cursor: pointer;
   white-space: nowrap;
@@ -7990,7 +7990,7 @@ select.prop-value {
   padding: 16px 8px;
   text-align: center;
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 
 .tag-chip {
@@ -8002,7 +8002,7 @@ select.prop-value {
   color: var(--text);
   border-radius: var(--radius-full);
   padding: 0 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 .tag-dot {
@@ -8017,7 +8017,7 @@ select.prop-value {
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 0;
   line-height: 1;
 }
@@ -8029,7 +8029,7 @@ select.prop-value {
 .tag-input {
   border: none;
   outline: none;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text);
   font-family: inherit;
   background: transparent;
@@ -8052,7 +8052,7 @@ select.prop-value {
 }
 
 .attachment-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   letter-spacing: 0.03em;
   color: var(--text-faint);
@@ -8066,7 +8066,7 @@ select.prop-value {
   height: 26px;
   padding: 0 12px;
   border-radius: var(--radius-full);
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
   transition: color var(--transition-fast), border-color var(--transition-fast);
 }
@@ -8086,7 +8086,7 @@ select.prop-value {
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-md);
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-12);
   text-align: center;
 }
 
@@ -8102,7 +8102,7 @@ select.prop-value {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   margin-bottom: 6px;
 }
@@ -8162,7 +8162,7 @@ select.prop-value {
 }
 
 .attachment-name {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -8195,7 +8195,7 @@ select.prop-value {
   border-radius: 5px;
   background: transparent;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -8319,7 +8319,7 @@ select.prop-value {
 }
 
 .palette-desc {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
   white-space: nowrap;
 }
@@ -8327,13 +8327,13 @@ select.prop-value {
 .palette-empty {
   padding: 12px 16px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 
 .palette-result {
   padding: 10px 16px;
   border-top: 1px solid var(--border);
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
 }
 
@@ -8342,7 +8342,7 @@ select.prop-value {
   gap: 14px;
   padding: 9px 16px;
   border-top: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 
@@ -8523,7 +8523,7 @@ select.prop-value {
 .slash-icon {
   width: 22px;
   text-align: center;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
   flex-shrink: 0;
 }
@@ -8545,7 +8545,7 @@ select.prop-value {
   flex-shrink: 0;
   margin-left: auto;
   padding-left: 12px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
   font-family: inherit;
   white-space: nowrap;
@@ -8555,7 +8555,7 @@ select.prop-value {
 .slash-empty {
   padding: 12px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   text-align: center;
 }
 
@@ -8569,7 +8569,7 @@ select.prop-value {
   color: var(--text);
   border-radius: 6px;
   padding: 6px 9px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   outline: none;
   margin-bottom: 6px;
 }
@@ -8616,7 +8616,7 @@ select.prop-value {
 .insert-icon {
   width: 22px;
   text-align: center;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
   flex-shrink: 0;
 }
@@ -8632,7 +8632,7 @@ select.prop-value {
   flex-shrink: 0;
   margin-left: auto;
   padding-left: 12px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
   white-space: nowrap;
   opacity: 0.85;
@@ -8721,7 +8721,7 @@ select.prop-value {
 .insert-block-empty {
   padding: 12px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   text-align: center;
 }
 
@@ -8754,7 +8754,7 @@ select.prop-value {
 .insert-basic-icon {
   width: 22px;
   text-align: center;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
   flex-shrink: 0;
 }
@@ -8762,7 +8762,7 @@ select.prop-value {
 .insert-basic-name {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -8823,7 +8823,7 @@ select.prop-value {
 }
 
 .block-ref-preview-snippet {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
@@ -8866,7 +8866,7 @@ select.prop-value {
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 2px 4px;
 }
 
@@ -8930,7 +8930,7 @@ select.prop-value {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 .webbookmark-domain {
@@ -8998,7 +8998,7 @@ select.prop-value {
   border-radius: var(--radius-sm);
   color: var(--text);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
   text-align: left;
 }
 .bookmark-paste-opt:hover {
@@ -9029,7 +9029,7 @@ select.prop-value {
 .block-embed-error {
   padding: 10px 12px;
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
   border: 1px dashed var(--border);
   border-radius: var(--radius-sm);
 }
@@ -9041,7 +9041,7 @@ select.prop-value {
   color: var(--text);
   border-radius: 4px;
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 
@@ -9077,7 +9077,7 @@ select.prop-value {
 }
 
 .block-selector-title {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text-dim);
   flex-shrink: 0;
@@ -9101,7 +9101,7 @@ select.prop-value {
 .block-selector-empty {
   padding: 18px 12px;
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
   text-align: center;
 }
 
@@ -9127,7 +9127,7 @@ select.prop-value {
 }
 
 .block-selector-snippet {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -9164,7 +9164,7 @@ select.prop-value {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
   padding: 10px 16px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   max-width: 70vw;
   pointer-events: auto;
   cursor: pointer;
@@ -9206,7 +9206,7 @@ select.prop-value {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 8px 12px;
   pointer-events: none;
 }
@@ -9313,7 +9313,7 @@ select.prop-value {
   border-radius: 6px;
   padding: 4px 8px;
   min-width: 110px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 /* Drawing block */
@@ -9382,7 +9382,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   border-radius: var(--radius-sm);
   padding: 4px 9px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.12s ease, color 0.12s ease;
@@ -9460,12 +9460,12 @@ p:has(> .editor-drawing-container) {
 .inline-drawing-loading {
   color: var(--text-faint);
   padding: 16px;
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 
 .inline-drawing-err {
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 .editor-drawing {
@@ -9477,7 +9477,7 @@ p:has(> .editor-drawing-container) {
 
 .editor-drawing-placeholder {
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 24px;
 }
 
@@ -9543,7 +9543,7 @@ p:has(> .editor-drawing-container) {
 .drawing-modal-btn {
   border-radius: 8px;
   padding: 7px 16px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   cursor: pointer;
   border: 1px solid transparent;
@@ -9638,7 +9638,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   border-radius: 7px;
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
@@ -9665,7 +9665,7 @@ p:has(> .editor-drawing-container) {
   color: #b91c1c;
   padding: 6px 14px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   z-index: 10;
 }
 
@@ -9719,7 +9719,7 @@ p:has(> .editor-drawing-container) {
 
 .editor-formula-loading {
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 12px;
   text-align: center;
 }
@@ -9775,7 +9775,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   background: transparent;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 5px 9px;
   cursor: pointer;
   border-radius: 4px;
@@ -9864,7 +9864,7 @@ p:has(> .editor-drawing-container) {
 .formula-icon-btn:hover { background: var(--hover); color: var(--text); }
 .formula-foot-right { display: flex; align-items: center; gap: 10px; }
 .formula-foot-hint {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 .formula-btn {
@@ -9874,7 +9874,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-sm);
   padding: 5px 16px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .formula-btn:hover { background: var(--hover); }
 .formula-btn-primary {
@@ -9893,12 +9893,12 @@ p:has(> .editor-drawing-container) {
 /* 公式识别状态提示 */
 .formula-reco-status {
   padding: 6px 16px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--accent);
 }
 .formula-reco-error {
   padding: 6px 16px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--danger);
 }
 
@@ -9976,7 +9976,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-sm);
   padding: 6px 16px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .handwrite-btn:hover { background: var(--hover); }
 .handwrite-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
@@ -10019,7 +10019,7 @@ p:has(> .editor-drawing-container) {
 
 .editor-mermaid-err {
   color: #b91c1c;
-  font-size: 13px;
+  font-size: var(--fs-13);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -10028,7 +10028,7 @@ p:has(> .editor-drawing-container) {
 
 .editor-mermaid-placeholder {
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 
 /* ── 看图器顶栏：页签（图表/代码）＋ 缩放/下载/全屏/编辑 —— 2026-10-05 ─────────────
@@ -10055,7 +10055,7 @@ p:has(> .editor-drawing-container) {
   border: 0;
   background: transparent;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 3px 12px;
   border-radius: 6px;
   cursor: pointer;
@@ -10078,7 +10078,7 @@ p:has(> .editor-drawing-container) {
   border: 0;
   background: transparent;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 8px;
   border-radius: 6px;
   cursor: pointer;
@@ -10174,7 +10174,7 @@ p:has(> .editor-drawing-container) {
 
 .editor-mermaid-syntax-label {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-12);
   margin-right: auto;
 }
 
@@ -10184,7 +10184,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px 12px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 
@@ -10222,7 +10222,7 @@ p:has(> .editor-drawing-container) {
   border-bottom: 1px solid var(--border);
   padding: 10px 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
+  font-size: var(--fs-13);
   resize: vertical;
 }
 
@@ -10232,7 +10232,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 .graph-node-label {
@@ -10262,7 +10262,7 @@ p:has(> .editor-drawing-container) {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 
@@ -10279,7 +10279,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   border-radius: 5px;
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 
@@ -10314,7 +10314,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   border-radius: 5px;
   padding: 3px 8px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
   min-width: 24px;
 }
@@ -10348,7 +10348,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   border-radius: 5px;
   padding: 3px 6px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   max-width: 120px;
   outline: none;
 }
@@ -10395,7 +10395,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   border-radius: var(--radius-sm);
   padding: 6px 10px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   width: 240px;
   outline: none;
 }
@@ -10405,7 +10405,7 @@ p:has(> .editor-drawing-container) {
 }
 
 .database-count {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
   white-space: nowrap;
 }
@@ -10426,19 +10426,19 @@ p:has(> .editor-drawing-container) {
 }
 
 .db-summary-name {
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   color: var(--text-dim);
 }
 
 .db-summary-chip {
-  font-size: 12px;
+  font-size: var(--fs-12);
   border-radius: var(--radius-full);
   padding: 1px 8px;
 }
 
 .db-summary-value {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 
@@ -10457,7 +10457,7 @@ p:has(> .editor-drawing-container) {
   border-collapse: separate;
   border-spacing: 0;
   width: 100%;
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 
 .database-table th,
@@ -10486,7 +10486,7 @@ p:has(> .editor-drawing-container) {
   user-select: none;
   font-weight: 600;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 8px 10px;
   white-space: nowrap;
 }
@@ -10534,7 +10534,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   border-radius: var(--radius-sm);
   padding: 3px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 
@@ -10562,7 +10562,7 @@ p:has(> .editor-drawing-container) {
   background: transparent;
   color: var(--text);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 500;
   padding: 4px 0;
   text-align: left;
@@ -10580,7 +10580,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   border-radius: var(--radius-xs);
   padding: 4px 6px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   box-sizing: border-box;
 }
 
@@ -10605,7 +10605,7 @@ p:has(> .editor-drawing-container) {
   padding: 24px;
   text-align: center;
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 
 .db-add-col-panel {
@@ -10626,7 +10626,7 @@ p:has(> .editor-drawing-container) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   color: var(--text-dim);
   padding: 4px 8px 6px;
@@ -10659,7 +10659,7 @@ p:has(> .editor-drawing-container) {
   padding: 6px 8px;
   border-radius: var(--radius-xs);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 
 .db-add-col-item:hover {
@@ -10674,7 +10674,7 @@ p:has(> .editor-drawing-container) {
 .db-add-col-empty {
   padding: 8px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 .db-new-attr {
@@ -10704,7 +10704,7 @@ p:has(> .editor-drawing-container) {
   color: #fff;
   border-radius: var(--radius-xs);
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -10724,7 +10724,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   border-radius: var(--radius-sm);
   padding: 6px 9px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
   white-space: nowrap;
   line-height: 1;
@@ -10765,7 +10765,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 5px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -10795,7 +10795,7 @@ p:has(> .editor-drawing-container) {
   width: 100%;
   border: none; background: transparent;
   color: var(--text-dim);
-  font-size: 13px; padding: 7px 9px;
+  font-size: var(--fs-13); padding: 7px 9px;
   border-radius: var(--radius-sm);
   cursor: pointer; font-family: inherit;
   text-align: left;
@@ -10813,7 +10813,7 @@ p:has(> .editor-drawing-container) {
 }
 .db-views-empty {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 8px;
 }
 .db-views-item {
@@ -10825,7 +10825,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   background: transparent;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 6px 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -10861,7 +10861,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 7px;
   border-radius: var(--radius-sm);
   font-family: inherit;
@@ -10870,7 +10870,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   background: var(--hover);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -10891,7 +10891,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 5px 7px;
   border-radius: var(--radius-sm);
   margin: 4px 0;
@@ -10906,7 +10906,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   background: var(--hover);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -10923,7 +10923,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   background: transparent;
   color: var(--accent);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 2px 4px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -10947,7 +10947,7 @@ p:has(> .editor-drawing-container) {
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-12);
   margin-left: 6px;
   padding: 0 3px;
   border-radius: var(--radius-xs);
@@ -10981,7 +10981,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   border-radius: var(--radius-xs);
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 
@@ -11028,7 +11028,7 @@ p:has(> .editor-drawing-container) {
 
 .db-gallery-badge {
   align-self: flex-start;
-  font-size: 12px;
+  font-size: var(--fs-12);
   border-radius: var(--radius-full);
   padding: 2px 10px;
 }
@@ -11049,7 +11049,7 @@ p:has(> .editor-drawing-container) {
 }
 
 .db-board-label {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
 }
 
@@ -11059,7 +11059,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   border-radius: var(--radius-sm);
   padding: 5px 10px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   outline: none;
   cursor: pointer;
   display: inline-flex;
@@ -11107,7 +11107,7 @@ p:has(> .editor-drawing-container) {
 }
 
 .db-board-hint {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 
@@ -11181,7 +11181,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text);
   pointer-events: none;
@@ -11202,7 +11202,7 @@ p:has(> .editor-drawing-container) {
 
 .db-board-col-name {
   flex: 1;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text);
   overflow: hidden;
@@ -11211,7 +11211,7 @@ p:has(> .editor-drawing-container) {
 }
 
 .db-board-col-count {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 
@@ -11229,7 +11229,7 @@ p:has(> .editor-drawing-container) {
   background: var(--surface);
   border-radius: var(--radius-sm);
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   cursor: pointer;
 }
@@ -11327,7 +11327,7 @@ p:has(> .editor-drawing-container) {
 }
 
 .db-list-prop {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   background: var(--bg);
   border-radius: var(--radius-full);
@@ -11368,7 +11368,7 @@ p:has(> .editor-drawing-container) {
 }
 
 .db-cal-hint {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 
@@ -11452,7 +11452,7 @@ p:has(> .editor-drawing-container) {
   flex: none;
   width: 330px;
   text-align: left;
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 5px 10px;
   border: none;
   background: transparent;
@@ -11537,7 +11537,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   background: transparent;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-13);
   text-align: left;
   cursor: pointer;
   overflow: hidden;
@@ -11678,7 +11678,7 @@ p:has(> .editor-drawing-container) {
 }
 
 .db-timeline-date {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   min-width: 80px;
 }
@@ -11862,7 +11862,7 @@ p:has(> .editor-drawing-container) {
 }
 .toc-empty {
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
   text-align: center;
   padding: 16px 0;
 }
@@ -11938,7 +11938,7 @@ p:has(> .editor-drawing-container) {
   gap: 16px;
 }
 .npg-db-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -11975,7 +11975,7 @@ p:has(> .editor-drawing-container) {
   height: 22px;
 }
 .npg-db-name {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 
@@ -12013,7 +12013,7 @@ p:has(> .editor-drawing-container) {
 .tc-tab-active::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
 .tc-search { position: relative; flex-shrink: 0; }
 .tc-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 15px; height: 15px; color: var(--text-faint); }
-.tc-search-input { width: 240px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 10px 7px 32px; font-size: 13px; outline: none; background: var(--bg); color: var(--text); font-family: inherit; }
+.tc-search-input { width: 240px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 10px 7px 32px; font-size: var(--fs-13); outline: none; background: var(--bg); color: var(--text); font-family: inherit; }
 .tc-search-input:focus { border-color: var(--accent); }
 .tc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px; }
 .tc-card { position: relative; border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-md); overflow: hidden; cursor: pointer; text-align: left; padding: 0; font-family: inherit; display: flex; flex-direction: column; transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast); }
@@ -12049,7 +12049,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -12084,7 +12084,7 @@ p:has(> .editor-drawing-container) {
 .tc-card-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
 .tc-card-name { font-size: 14px; font-weight: 600; color: var(--text); }
 .tc-card-tag { font-size: 11px; color: var(--text-faint); }
-.tc-empty { color: var(--text-faint); font-size: 13px; padding: 40px 0; text-align: center; }
+.tc-empty { color: var(--text-faint); font-size: var(--fs-13); padding: 40px 0; text-align: center; }
 
 /* In-app confirm dialog (centered in the app window), theme-consistent card. */
 /* 层级约定（改动前先读）：
@@ -12142,7 +12142,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
 }
 .confirm-message {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
   line-height: 1.6;
   white-space: pre-wrap;
@@ -12154,7 +12154,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   border-radius: var(--radius-sm);
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   outline: none;
   margin-top: 2px;
   font-family: inherit;
@@ -12178,7 +12178,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 500;
   transition: background var(--transition-fast), color var(--transition-fast);
 }
@@ -12194,7 +12194,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   transition: background var(--transition-fast), filter var(--transition-fast);
 }
@@ -12314,7 +12314,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-sm);
   padding: 6px 9px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   cursor: pointer;
 }
@@ -12373,7 +12373,7 @@ p:has(> .editor-drawing-container) {
 }
 
 .set-rail-label {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
 }
 
@@ -12417,7 +12417,7 @@ p:has(> .editor-drawing-container) {
 
 /* 每页一句说明：让「这一页管什么」不用猜，也把面板撑得更从容。 */
 .set-body-desc {
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.6;
   color: var(--text-dim);
 }
@@ -12459,7 +12459,7 @@ p:has(> .editor-drawing-container) {
 }
 
 .set-section-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 700;
   color: var(--text-dim);
   letter-spacing: 0.02em;
@@ -12476,7 +12476,7 @@ p:has(> .editor-drawing-container) {
    ⇒ ⭐ 这里给它**同一族**的排版 ✓（⭐ 同字号 12 ／ ⭐ 同字重 700 ／ ⭐ 同暗色 ／ ⭐ 同字距 ✓），
       ⭐ 只是**不带**那条竖条 ✓ —— ⭐ 它是「完整备份」下面的**子分组** ✓，⭐ 靠"⭐ 没有条 ✗"区别于顶层 ✓。 */
 .backup-auto-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 700;
   color: var(--text-dim);
   letter-spacing: 0.02em;
@@ -12503,7 +12503,7 @@ p:has(> .editor-drawing-container) {
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   background: var(--cat-yellow-soft);
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text);
 }
 
@@ -12522,7 +12522,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   border-radius: var(--radius-full);
   padding: 6px 14px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-family: inherit;
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
@@ -12584,7 +12584,7 @@ p:has(> .editor-drawing-container) {
 }
 
 .set-row-name {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
 }
 
@@ -12687,7 +12687,7 @@ p:has(> .editor-drawing-container) {
   gap: 4px;
 }
 .plugin-desc {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text);
 }
 .plugin-meta {
@@ -12705,7 +12705,7 @@ p:has(> .editor-drawing-container) {
 }
 .plugin-empty p {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 .plugin-empty .set-btn {
@@ -12784,7 +12784,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-family: inherit;
   background: var(--bg);
   color: var(--text);
@@ -12814,7 +12814,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   border-radius: var(--radius-sm);
   padding: 8px 16px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-family: inherit;
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
@@ -12881,7 +12881,7 @@ p:has(> .editor-drawing-container) {
   display: flex;
   align-items: baseline;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
 }
 .set-pack-result-mark {
@@ -12890,7 +12890,7 @@ p:has(> .editor-drawing-container) {
 }
 .set-pack-result-size {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .set-pack-result-meta {
   margin-top: 4px;
@@ -12919,7 +12919,7 @@ p:has(> .editor-drawing-container) {
   gap: 4px;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 18px;
   white-space: nowrap;
   color: var(--text-dim);
@@ -13140,7 +13140,7 @@ p:has(> .editor-drawing-container) {
    ⛔ 别再凭"这里看着该有个图标"把它加回来：判据在 `SettingsDialog.test.tsx`
    （卡片里**只能**有 标题／说明／按钮 三样节点 ✓），加回来当场红 ✓。 */
 .set-migrate-name {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text);
 }
@@ -13160,7 +13160,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-md);
   background: var(--hover-strong);
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 700;
   display: grid;
   place-items: center;
@@ -13196,7 +13196,7 @@ p:has(> .editor-drawing-container) {
 }
 /* 服务器组头：服务器名突出。 */
 .set-group-head .set-row-name {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text);
 }
@@ -13239,7 +13239,7 @@ p:has(> .editor-drawing-container) {
 }
 .email-set-card-text { flex: 1; min-width: 0; }
 .email-set-card-title { font-size: 15px; font-weight: 700; color: var(--text); }
-.email-set-card-sub { font-size: 12px; color: var(--text-faint); margin-top: 4px; line-height: 1.5; }
+.email-set-card-sub { font-size: var(--fs-12); color: var(--text-faint); margin-top: 4px; line-height: 1.5; }
 .email-set-smtp-card { margin-top: 14px; }
 
 /* 多账号管理（设置 → 邮箱） */
@@ -13260,10 +13260,10 @@ p:has(> .editor-drawing-container) {
   border-bottom: 1px solid var(--border);
   background: linear-gradient(90deg, var(--accent-soft), var(--card-bg));
 }
-.email-set-accounts-title { font-size: 12px; font-weight: 700; color: var(--text-dim); letter-spacing: 0.02em; }
+.email-set-accounts-title { font-size: var(--fs-12); font-weight: 700; color: var(--text-dim); letter-spacing: 0.02em; }
 .email-set-accounts-head .set-btn {
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   border-radius: var(--radius-md);
   background: var(--accent);
   color: #fff;
@@ -13314,7 +13314,7 @@ p:has(> .editor-drawing-container) {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text);
   min-width: 0;
@@ -13347,7 +13347,7 @@ p:has(> .editor-drawing-container) {
 .email-set-account-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 .email-set-account-actions .set-btn {
   padding: 5px 12px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-dim);
@@ -13362,7 +13362,7 @@ p:has(> .editor-drawing-container) {
 .email-set-account-actions .set-btn.is-danger:hover { background: var(--danger-soft); border-color: transparent; }
 .email-set-form-head { display: flex; align-items: center; gap: 10px; margin: 2px 0 12px; flex-wrap: wrap; }
 .email-set-form-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 700;
   color: var(--accent);
   background: var(--accent-soft);
@@ -13386,7 +13386,7 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   gap: 6px;
   padding: 10px 20px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   border-radius: var(--radius-md);
 }
@@ -13439,7 +13439,7 @@ p:has(> .editor-drawing-container) {
   max-width: 460px;
 }
 .email-set-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.email-set-row-name { font-size: 13px; color: var(--text); }
+.email-set-row-name { font-size: var(--fs-13); color: var(--text); }
 .email-set-row-sub { font-size: 11px; color: var(--text-faint); }
 .email-set-select {
   flex: none;
@@ -13494,7 +13494,7 @@ p:has(> .editor-drawing-container) {
 .email-set-trust-card { margin-top: 12px; }
 .email-set-trust { max-width: 460px; margin: 6px 0 12px; display: flex; flex-direction: column; gap: 8px; }
 .email-set-trust-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.email-set-trust-empty { font-size: 12px; color: var(--text-faint); }
+.email-set-trust-empty { font-size: var(--fs-12); color: var(--text-faint); }
 .email-set-trust-chip {
   display: inline-flex;
   align-items: center;
@@ -13504,7 +13504,7 @@ p:has(> .editor-drawing-container) {
   border-radius: 999px;
   background: var(--chip-bg);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .email-set-trust-remove {
   display: inline-flex;
@@ -13560,7 +13560,7 @@ p:has(> .editor-drawing-container) {
   justify-content: space-between;
 }
 .email-compose-inline .email-compose-field { display: flex; flex-direction: column; gap: 5px; }
-.email-compose-inline .email-compose-field > label { font-size: 12px; font-weight: 500; color: var(--text-dim); }
+.email-compose-inline .email-compose-field > label { font-size: var(--fs-12); font-weight: 500; color: var(--text-dim); }
 .email-compose-inline .email-compose-body textarea { min-height: 160px; resize: vertical; line-height: 1.6; font-family: inherit; }
 .email-compose-inline .email-compose-actions {
   display: flex;
@@ -13573,7 +13573,7 @@ p:has(> .editor-drawing-container) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   cursor: pointer;
   user-select: none;
@@ -13600,7 +13600,7 @@ p:has(> .editor-drawing-container) {
 }
 .email-compose-title { font-size: 16px; font-weight: 700; color: var(--text); }
 .email-compose-field { display: flex; flex-direction: column; gap: 5px; }
-.email-compose-field > label { font-size: 12px; font-weight: 500; color: var(--text-dim); }
+.email-compose-field > label { font-size: var(--fs-12); font-weight: 500; color: var(--text-dim); }
 .email-compose-body { flex: 1; min-height: 0; }
 .email-compose-body textarea { min-height: 200px; resize: vertical; line-height: 1.6; font-family: inherit; }
 .email-compose-actions {
@@ -13616,7 +13616,7 @@ p:has(> .editor-drawing-container) {
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   background: var(--chip-bg);
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 .set-status-line.is-ok { color: var(--accent); background: var(--accent-soft); }/* 当前组织账号：登录信息卡。 */
@@ -13632,7 +13632,7 @@ p:has(> .editor-drawing-container) {
 .ai-settings-saved {
   align-self: center;
   margin-right: auto;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--success);
 }
 
@@ -13668,7 +13668,7 @@ p:has(> .editor-drawing-container) {
   margin-bottom: 10px;
 }
 .lock-desc {
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1.6;
   color: rgba(255, 255, 255, 0.75);
   margin-bottom: 18px;
@@ -13698,7 +13698,7 @@ p:has(> .editor-drawing-container) {
 }
 .lock-error {
   margin-top: 12px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: #ffb3b3;
 }
 .lock-error-count {
@@ -13718,7 +13718,7 @@ p:has(> .editor-drawing-container) {
   border-radius: 8px;
   background: transparent;
   color: rgba(255, 255, 255, 0.8);
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-family: inherit;
   cursor: pointer;
 }
@@ -13731,7 +13731,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   padding: 0;
   color: rgba(255, 255, 255, 0.65);
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-family: inherit;
   text-decoration: underline;
   cursor: pointer;
@@ -13744,7 +13744,7 @@ p:has(> .editor-drawing-container) {
 .lock-forgot {
   margin-top: 12px;
   text-align: left;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.65;
   color: rgba(255, 255, 255, 0.78);
   border-top: 1px solid rgba(255, 255, 255, 0.12);
@@ -13840,7 +13840,7 @@ p:has(> .editor-drawing-container) {
   color: #fff;
 }
 .lock-forgot-modal-body {
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.65;
 }
 @keyframes lock-forgot-fade {
@@ -13893,7 +13893,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   padding: 10px;
   font-family: "SF Mono", Consolas, monospace;
-  font-size: 13px;
+  font-size: var(--fs-13);
   box-sizing: border-box;
 }
 
@@ -13921,7 +13921,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   border-radius: var(--radius-sm);
   padding: 6px 12px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
   font-family: inherit;
 }
@@ -14007,7 +14007,7 @@ p:has(> .editor-drawing-container) {
   background: var(--bg);
   color: var(--text);
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast);
   /* 按钮文案也是中文：不许在字间断行，也不许被压窄（窄窗口下整块换行） */
@@ -14052,7 +14052,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   background: transparent;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
   padding: 2px 6px;
   border-radius: var(--radius-xs);
@@ -14073,7 +14073,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text-faint);
 }
 .fm-count {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
   white-space: nowrap;
 }
@@ -14081,7 +14081,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   width: 180px;
@@ -14097,7 +14097,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   background: transparent;
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 2px 3px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -14330,7 +14330,7 @@ p:has(> .editor-drawing-container) {
   background: color-mix(in srgb, var(--bg) 80%, transparent);
   border: 1px solid var(--border);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   user-select: none;
   pointer-events: none;
 }
@@ -14371,7 +14371,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
@@ -14432,7 +14432,7 @@ p:has(> .editor-drawing-container) {
 }
 .fm-preview-unsupported {
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 30px;
   text-align: center;
 }
@@ -14519,7 +14519,7 @@ p:has(> .editor-drawing-container) {
   background: var(--accent-soft);
 }
 .fm-md-outline-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 700;
   color: var(--text-dim);
   padding: 0 6px 8px;
@@ -14533,7 +14533,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   background: transparent;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.4;
   padding: 5px 6px;
   border-radius: 6px;
@@ -14677,7 +14677,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
 }
 .fm-md-mermaid-errmsg {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--danger);
   margin-top: 6px;
 }
@@ -14736,7 +14736,7 @@ p:has(> .editor-drawing-container) {
   margin-bottom: 8px;
 }
 .fm-version-title {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text);
 }
@@ -14778,7 +14778,7 @@ p:has(> .editor-drawing-container) {
   background: var(--hover);
 }
 .fm-version-name {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -14801,14 +14801,14 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   border-radius: var(--radius-sm);
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 .fm-version-restore:hover {
   background: var(--hover);
 }
 .fm-version-empty {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
   padding: 6px 8px;
 }
@@ -14858,7 +14858,7 @@ p:has(> .editor-drawing-container) {
   margin-bottom: 3px;
 }
 .stg-sub {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   line-height: 1.5;
 }
@@ -14888,7 +14888,7 @@ p:has(> .editor-drawing-container) {
 }
 .stg-loading {
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 20px 0;
   text-align: center;
 }
@@ -14896,7 +14896,7 @@ p:has(> .editor-drawing-container) {
   margin-top: 22px;
 }
 .stg-section-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   color: var(--text-dim);
   margin-bottom: 10px;
@@ -14920,11 +14920,11 @@ p:has(> .editor-drawing-container) {
   letter-spacing: -0.01em;
 }
 .stg-total-label {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 .stg-reclaim {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   padding: 4px 10px;
   border-radius: var(--radius-full);
@@ -14968,12 +14968,12 @@ p:has(> .editor-drawing-container) {
   border-radius: 50%;
 }
 .stg-legend-label {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 .stg-legend-value {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text);
   white-space: nowrap;
 }
@@ -14998,7 +14998,7 @@ p:has(> .editor-drawing-container) {
   min-width: 0;
 }
 .stg-row-name {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
 }
 .stg-row-quota {
@@ -15019,7 +15019,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   border-radius: var(--radius-sm);
   padding: 6px 14px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-family: inherit;
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
@@ -15062,12 +15062,12 @@ p:has(> .editor-drawing-container) {
 .stg-busy {
   padding: 10px 18px 14px;
   border-top: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--accent);
 }
 
 .fm-move-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
   padding: 5px 8px 4px;
 }
@@ -15079,7 +15079,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   background: transparent;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 6px 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -15092,7 +15092,7 @@ p:has(> .editor-drawing-container) {
 }
 .fm-move-empty {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 8px;
 }
 .fm-move-cancel {
@@ -15116,11 +15116,11 @@ p:has(> .editor-drawing-container) {
      不用横滚；而 560px 时它继续兜住列宽 ⇒「类型」列仍是 88px，不会把「文件」压成一字一行。 */
   min-width: 780px;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .file-manager-table th {
   text-align: left;
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   color: var(--text-dim);
   padding: 4px 14px;
@@ -15296,7 +15296,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-family: inherit;
   cursor: pointer;
   transition: border-color var(--transition-fast), background var(--transition-fast);
@@ -15317,7 +15317,7 @@ p:has(> .editor-drawing-container) {
   padding: 32px;
   text-align: center;
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 
 /* Folder file list (batch upload of large files) */
@@ -15327,7 +15327,7 @@ p:has(> .editor-drawing-container) {
 .fm-progress-label {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   margin-bottom: 4px;
 }
@@ -15362,7 +15362,7 @@ p:has(> .editor-drawing-container) {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   margin-bottom: 6px;
 }
@@ -15398,7 +15398,7 @@ p:has(> .editor-drawing-container) {
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 2px 5px;
   border-radius: var(--radius-xs);
 }
@@ -15414,7 +15414,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--accent);
   border-radius: var(--radius-xs);
   padding: 3px 6px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-family: inherit;
   color: var(--text);
   background: var(--bg);
@@ -15551,7 +15551,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   background: transparent;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
   padding: 3px 5px;
   border-radius: var(--radius-sm);
@@ -15591,7 +15591,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 10px;
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -15664,7 +15664,7 @@ p:has(> .editor-drawing-container) {
 .ai-bubble-text .md h1 { font-size: 16px; }
 .ai-bubble-text .md h2 { font-size: 15px; }
 .ai-bubble-text .md h3 { font-size: 14px; }
-.ai-bubble-text .md h4 { font-size: 13px; }
+.ai-bubble-text .md h4 { font-size: var(--fs-13); }
 .ai-bubble-text .md ul,
 .ai-bubble-text .md ol {
   padding-left: 18px;
@@ -15674,7 +15674,7 @@ p:has(> .editor-drawing-container) {
 }
 .ai-bubble-text .md code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-12);
   background: var(--hover);
   padding: 1px 5px;
   border-radius: 4px;
@@ -15724,7 +15724,7 @@ p:has(> .editor-drawing-container) {
 .ai-bubble {
   border-radius: var(--radius-md);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1.6;
 }
 .ai-bubble-user {
@@ -15757,7 +15757,7 @@ p:has(> .editor-drawing-container) {
 }
 .ai-think-summary {
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   list-style: none;
 }
@@ -15773,7 +15773,7 @@ p:has(> .editor-drawing-container) {
 }
 .ai-think-body {
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   white-space: pre-wrap;
   word-break: break-word;
@@ -15803,7 +15803,7 @@ p:has(> .editor-drawing-container) {
 }
 
 .ai-drafts-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   color: var(--text-dim);
   margin-bottom: 6px;
@@ -15819,7 +15819,7 @@ p:has(> .editor-drawing-container) {
   background: var(--bg);
 }
 .ai-draft-summary {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   min-width: 0;
   overflow: hidden;
@@ -15835,7 +15835,7 @@ p:has(> .editor-drawing-container) {
 }
 .ai-draft-preview {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.5;
   color: var(--text-dim);
   background: var(--hover);
@@ -15855,7 +15855,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   background: var(--hover);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 3px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -15878,7 +15878,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--danger);
   border-radius: var(--radius-md);
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--danger);
   cursor: pointer;
 }
@@ -15900,7 +15900,7 @@ p:has(> .editor-drawing-container) {
   background: var(--bg);
 }
 .ai-welcome-text {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text);
   line-height: 1.7;
 }
@@ -15911,7 +15911,7 @@ p:has(> .editor-drawing-container) {
   margin: 4px 0 8px;
 }
 .ai-suggestions-label {
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   color: var(--text-dim);
 }
@@ -15919,7 +15919,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   background: transparent;
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
   font-family: inherit;
   padding: 2px 4px;
@@ -15941,7 +15941,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   text-align: left;
   padding: 12px 14px;
   cursor: pointer;
@@ -15977,7 +15977,7 @@ p:has(> .editor-drawing-container) {
   margin-bottom: 6px;
 }
 .ai-disabled-desc {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   line-height: 1.6;
   margin-bottom: 12px;
@@ -15986,7 +15986,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   background: var(--accent);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 7px 16px;
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -16010,7 +16010,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-lg);
   background: var(--bg);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 9px 12px;
   font-family: inherit;
   line-height: 1.5;
@@ -16114,7 +16114,7 @@ p:has(> .editor-drawing-container) {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 700;
   color: var(--text);
   margin-bottom: 12px;
@@ -16144,7 +16144,7 @@ p:has(> .editor-drawing-container) {
   background: var(--chip-bg);
   border-radius: var(--radius-sm);
   padding: 9px 11px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.9;
   color: var(--text-dim);
 }
@@ -16161,7 +16161,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   background: transparent;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
   padding: 8px 12px;
   border-bottom: 2px solid transparent;
@@ -16180,7 +16180,7 @@ p:has(> .editor-drawing-container) {
 /* 可折叠的分区标题头（语义检索）：点击展开/收起。 */
 /* 小程序说明：AI 助手 / 语义检索 各一行简短描述（普通文本，非 Callout）。 */
 .ai-settings-brief {
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.5;
   color: var(--text-dim);
   background: var(--chip-bg);
@@ -16196,7 +16196,7 @@ p:has(> .editor-drawing-container) {
   margin-bottom: 12px;
 }
 .ai-settings-label {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
   white-space: nowrap;
 }
@@ -16207,7 +16207,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 6px 8px;
   font-family: inherit;
   outline: none;
@@ -16222,7 +16222,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 6px 8px;
   font-family: inherit;
   outline: none;
@@ -16253,7 +16253,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   background: var(--hover);
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 6px 14px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -16268,7 +16268,7 @@ p:has(> .editor-drawing-container) {
   cursor: default;
 }
 .ai-settings-test-msg {
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.5;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
@@ -16291,7 +16291,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 6px 18px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-family: inherit;
   cursor: pointer;
 }
@@ -16363,7 +16363,7 @@ p:has(> .editor-drawing-container) {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   color: var(--text-dim);
   border-radius: var(--radius-xs);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 8px;
   cursor: pointer;
   font-family: inherit;
@@ -16410,13 +16410,13 @@ p:has(> .editor-drawing-container) {
   max-width: 300px;
 }
 .ai-inline-templates-head {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   padding: 6px 12px;
   border-bottom: 1px solid var(--border);
 }
 .ai-inline-group {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
   padding: 6px 12px 2px;
 }
@@ -16459,7 +16459,7 @@ p:has(> .editor-drawing-container) {
   margin-top: 8px;
 }
 .ai-inline-draft-status {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 .ai-inline-draft-actions {
@@ -16471,7 +16471,7 @@ p:has(> .editor-drawing-container) {
   background: var(--bg);
   color: var(--text);
   border-radius: var(--radius-xs);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 3px 10px;
   cursor: pointer;
   font-family: inherit;
@@ -16524,7 +16524,7 @@ p:has(> .editor-drawing-container) {
   border-radius: 8px;
   padding: 6px 10px;
   outline: none;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
 }
 .shortcuts-body {
@@ -16535,7 +16535,7 @@ p:has(> .editor-drawing-container) {
   margin-top: 12px;
 }
 .shortcuts-group-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   letter-spacing: 0.04em;
   margin-bottom: 6px;
@@ -16561,7 +16561,7 @@ p:has(> .editor-drawing-container) {
 }
 .shortcuts-keys kbd {
   font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-size: var(--fs-12);
   background: var(--block-hover);
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -16575,7 +16575,7 @@ p:has(> .editor-drawing-container) {
 }
 .shortcuts-foot {
   padding: 8px 16px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   border-top: 1px solid var(--border);
 }
@@ -16586,7 +16586,7 @@ p:has(> .editor-drawing-container) {
 .ai-inline-error {
   margin-top: 8px;
   color: var(--danger);
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 /* M25 P2 — "关于" dialog (reuses the shortcuts-overlay backdrop + ui-toggle). */
 .about {
@@ -16662,7 +16662,7 @@ p:has(> .editor-drawing-container) {
    设备名是"我是谁"，两者不该看起来是同一类格子 ✓。 */
 .about-device {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-12);
   margin-top: 2px;
 }
 .about-device b {
@@ -16674,7 +16674,7 @@ p:has(> .editor-drawing-container) {
   padding: 14px 0;
 }
 .about-links-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   letter-spacing: 0.05em;
   margin-bottom: 8px;
@@ -16690,7 +16690,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   border-radius: 8px;
   padding: 6px 12px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
   transition: border-color 0.12s ease, color 0.12s ease;
 }
@@ -16700,7 +16700,7 @@ p:has(> .editor-drawing-container) {
 }
 .about-license-note {
   margin-top: 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   line-height: 1.5;
 }
@@ -16713,7 +16713,7 @@ p:has(> .editor-drawing-container) {
   padding-top: 16px;
 }
 .about-update-state {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 .about-update-state b {
@@ -16730,7 +16730,7 @@ p:has(> .editor-drawing-container) {
   color: var(--bg);
   border-radius: 6px;
   padding: 4px 12px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   cursor: pointer;
   margin-left: 2px;
@@ -16745,7 +16745,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   border-radius: 6px;
   padding: 4px 12px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 500;
   cursor: pointer;
 }
@@ -16767,7 +16767,7 @@ p:has(> .editor-drawing-container) {
   border-top: 1px solid var(--border);
 }
 .about-update-progress-text {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text);
 }
 .about-update-progress-track {
@@ -16792,12 +16792,12 @@ p:has(> .editor-drawing-container) {
 }
 .about-update-error {
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 /* Android 应用内更新：交给系统安装器之后的提示（系统弹窗在应用外，界面里要留一句话）。 */
 .about-update-hint {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.5;
 }
 .about-update-head {
@@ -16828,7 +16828,7 @@ p:has(> .editor-drawing-container) {
 }
 .about-release-notes-body {
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.6;
   color: var(--text);
   white-space: pre-wrap;
@@ -16855,11 +16855,11 @@ p:has(> .editor-drawing-container) {
   min-width: 0;
 }
 .about-toggle-label {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text);
 }
 .about-hint {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   line-height: 1.5;
 }
@@ -16876,7 +16876,7 @@ p:has(> .editor-drawing-container) {
   color: #fff;
   border-radius: 8px;
   padding: 7px 20px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   cursor: pointer;
 }
@@ -17002,7 +17002,7 @@ p:has(> .editor-drawing-container) {
 }
 .pdf-reader-page,
 .pdf-reader-pct {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   min-width: 72px;
   text-align: center;
@@ -17015,7 +17015,7 @@ p:has(> .editor-drawing-container) {
 }
 .pdf-zoom-btn .pdf-reader-pct {
   min-width: auto;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text);
   white-space: nowrap;
 }
@@ -17043,7 +17043,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   text-align: left;
   padding: 6px 8px;
   border-radius: 6px;
@@ -17087,7 +17087,7 @@ p:has(> .editor-drawing-container) {
   border-radius: 6px;
   background: var(--surface);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 5px 8px;
 }
 .pdf-zoom-custom:focus {
@@ -17225,7 +17225,7 @@ p:has(> .editor-drawing-container) {
   flex-wrap: wrap;
 }
 .pdf-head-more-label {
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .pdf-reader-close {
   margin-left: auto;
@@ -17386,7 +17386,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 5px 9px;
   border-radius: 7px;
   cursor: pointer;
@@ -17449,7 +17449,7 @@ p:has(> .editor-drawing-container) {
      盒子中心虽然都对齐在 75.5，但「朗读」的文字比旁边低 1px、三块背景大小也各不相同，
      看上去就是"没排齐"。现在两边都写死 `font-size: 12px; line-height: 18px`：
      行盒高度恒为 18、盒子中心 = 文字中心 ⇒ 四个字面同线、四块背景同高。 */
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 18px;
   /* 上下内边距与右边三个按钮**一模一样**（4px）⇒ 四块的盒子高度也都是 26px，
      不只是"文字中线相同"。没有底色，所以看不出这 8px，但结构与命中区完全一致。 */
@@ -17468,7 +17468,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   background: transparent;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   /* ⚠️ 写死行高（不是 `normal`）：`normal` 按脚本取度量 ⇒「朗读」(汉字) 25px、
      「OCR」「AI」(拉丁) 23px，同一排按钮都不一样高、字面也不在同一条线上
      （owner 截图："这几个按钮似乎不在一个水平线上？"）。同 18px 之后恒为 26px 高。 */
@@ -17547,14 +17547,14 @@ p:has(> .editor-drawing-container) {
 }
 .pdf-page-error-title {
   color: var(--danger, #e5484d);
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
 }
 .pdf-page-error-why {
   max-width: 460px;
   word-break: break-word;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.6;
 }
 .pdf-page-error-retry {
@@ -17599,7 +17599,7 @@ p:has(> .editor-drawing-container) {
   resize: none;
   border: 1px solid var(--border);
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.4;
   padding: 5px 6px;
   color: var(--text);
@@ -17616,7 +17616,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 3px 10px;
   border-radius: 6px;
   cursor: pointer;
@@ -17641,7 +17641,7 @@ p:has(> .editor-drawing-container) {
   pointer-events: none;
 }
 .pdf-sticky-bubble-text {
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.5;
   color: #57491c;
   white-space: pre-wrap;
@@ -17650,7 +17650,7 @@ p:has(> .editor-drawing-container) {
   overflow: hidden;
 }
 .pdf-ocr-tip {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   line-height: 1.5;
   padding: 2px 0;
@@ -17687,7 +17687,7 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text);
   border-bottom: 1px solid var(--border);
@@ -17739,7 +17739,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 5px 12px;
   border-radius: 7px;
   cursor: pointer;
@@ -17763,12 +17763,12 @@ p:has(> .editor-drawing-container) {
   padding: 10px 12px;
 }
 .pdf-ai-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   margin-bottom: 6px;
 }
 .pdf-ai-body {
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1.6;
   color: var(--text);
   white-space: pre-wrap;
@@ -17793,7 +17793,7 @@ p:has(> .editor-drawing-container) {
   border-radius: 8px;
   background: var(--bg);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 8px 10px;
 }
 .pdf-askbar-input:focus { outline: none; border-color: var(--accent); }
@@ -17804,7 +17804,7 @@ p:has(> .editor-drawing-container) {
   color: var(--accent);
   border-radius: 8px;
   padding: 0 14px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
 }
 .pdf-askbar-btn:hover:not(:disabled) { background: var(--accent); color: #fff; }
@@ -17830,17 +17830,17 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   border-radius: 6px;
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 .pdf-askbar-save:hover { border-color: var(--accent); color: var(--accent); }
 .pdf-askbar-error {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--danger, #e5484d);
   margin-top: 4px;
 }
 .pdf-askbar-answer-text {
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1.6;
   color: var(--text);
   white-space: pre-wrap;
@@ -17975,7 +17975,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   background: transparent;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 7px 10px;
   border-radius: 6px;
   cursor: pointer;
@@ -18096,7 +18096,7 @@ p:has(> .editor-drawing-container) {
 }
 .pdf-outline-head {
   padding: 12px 14px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text);
   border-bottom: 1px solid var(--border);
@@ -18112,7 +18112,7 @@ p:has(> .editor-drawing-container) {
   background: transparent;
   border-radius: 7px;
   padding: 3px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -18151,7 +18151,7 @@ p:has(> .editor-drawing-container) {
   text-align: center;
 }
 .pdf-outline-title {
-  font-size: 12px;
+  font-size: var(--fs-12);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -18161,13 +18161,13 @@ p:has(> .editor-drawing-container) {
   text-align: center;
 }
 .pdf-outline-empty-title {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text);
   margin-bottom: 4px;
 }
 .pdf-outline-empty-sub {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   line-height: 1.5;
 }
@@ -18185,13 +18185,13 @@ p:has(> .editor-drawing-container) {
   background: transparent;
   border-radius: 8px;
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   cursor: pointer;
 }
 .pdf-outline-ai-btn:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .pdf-outline-ai-progress {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   line-height: 1.5;
 }
@@ -18202,7 +18202,7 @@ p:has(> .editor-drawing-container) {
   gap: 6px;
 }
 .pdf-outline-ai-label {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   white-space: nowrap;
 }
@@ -18212,7 +18212,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 6px;
   border-radius: 7px;
   font-family: inherit;
@@ -18223,7 +18223,7 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--accent);
   background: var(--surface);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 6px;
   border-radius: 7px;
   font-family: inherit;
@@ -18231,7 +18231,7 @@ p:has(> .editor-drawing-container) {
 .pdf-outline-ai-input:focus { outline: none; border-color: var(--accent); }
 .pdf-sidebar-head {
   padding: 12px 14px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text);
   border-bottom: 1px solid var(--border);
@@ -18368,7 +18368,7 @@ p:has(> .editor-drawing-container) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .pdf-sidebar-item-body {
   flex: 1;
@@ -18382,7 +18382,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
 }
 .pdf-sidebar-item-text {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -18398,13 +18398,13 @@ p:has(> .editor-drawing-container) {
   text-align: center;
 }
 .pdf-sidebar-empty-title {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--text);
   margin-bottom: 4px;
 }
 .pdf-sidebar-empty-sub {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   line-height: 1.5;
 }
@@ -18514,7 +18514,7 @@ p:has(> .editor-drawing-container) {
 .fm-ctx-title,
 .prop-ctx-title {
   padding: 4px 10px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
   border-bottom: 1px solid var(--border);
   margin-bottom: 4px;
@@ -18539,7 +18539,7 @@ p:has(> .editor-drawing-container) {
   background: transparent;
   border: none;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 8px 10px;
   border-radius: 7px;
   cursor: pointer;
@@ -18595,7 +18595,7 @@ p:has(> .editor-drawing-container) {
   background: linear-gradient(180deg, var(--surface), var(--surface-2));
 }
 .fm-grid-mini-line {
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.5;
   color: var(--text-faint);
   white-space: nowrap;
@@ -18632,7 +18632,7 @@ p:has(> .editor-drawing-container) {
 }
 .fm-grid-name {
   padding: 9px 12px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 500;
   color: var(--text);
   white-space: nowrap;
@@ -18698,7 +18698,7 @@ p:has(> .editor-drawing-container) {
 }
 .email-page-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .email-page-title-text { font-size: 15px; font-weight: 700; color: var(--text); white-space: nowrap; }
-.email-page-sub { font-size: 12px; color: var(--text-faint); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
+.email-page-sub { font-size: var(--fs-12); color: var(--text-faint); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
 .email-page-actions { display: flex; gap: 8px; align-items: center; flex: none; }
 .email-page-actions .sync-btn { flex: none; white-space: nowrap; }
 .email-head-more-wrap { position: relative; }
@@ -18728,7 +18728,7 @@ p:has(> .editor-drawing-container) {
   padding: 6px 8px;
   border-radius: 6px;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -18789,7 +18789,7 @@ p:has(> .editor-drawing-container) {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
   padding: 8px 12px;
   background: var(--bg-2, rgba(0, 0, 0, 0.03));
@@ -18862,7 +18862,7 @@ p:has(> .editor-drawing-container) {
   gap: 4px;
   flex: none;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   background: transparent;
   border: none;
@@ -18880,7 +18880,7 @@ p:has(> .editor-drawing-container) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   background: transparent;
   border: none;
@@ -18916,7 +18916,7 @@ p:has(> .editor-drawing-container) {
   padding: 6px 8px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text);
 }
 .email-account-filter-item:hover { background: var(--hover); }
@@ -18938,7 +18938,7 @@ p:has(> .editor-drawing-container) {
   gap: 4px;
   /* `margin-left: auto` 移到 `.email-list-head-actions` 上：让**整组**右对齐、整组换行 */
   flex: none;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--danger, #e5484d);
   background: transparent;
   border: none;
@@ -18956,7 +18956,7 @@ p:has(> .editor-drawing-container) {
 .email-list-more {
   text-align: center;
   padding: 10px 14px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
   user-select: none;
 }
@@ -18967,7 +18967,7 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   gap: 4px;
   flex: none;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--accent, #4f7cff);
   background: transparent;
   border: none;
@@ -18996,7 +18996,7 @@ p:has(> .editor-drawing-container) {
   border-radius: 6px;
   background: var(--bg);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-family: inherit;
   padding: 5px 8px;
   outline: none;
@@ -19136,7 +19136,7 @@ p:has(> .editor-drawing-container) {
 }
 .email-item-from {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -19146,7 +19146,7 @@ p:has(> .editor-drawing-container) {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   min-width: 0;
   overflow: hidden;
@@ -19213,7 +19213,7 @@ p:has(> .editor-drawing-container) {
 }
 .email-item-line1 .email-item-date { flex: none; }
 .email-item.is-narrow .email-item-subject {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -19316,7 +19316,7 @@ p:has(> .editor-drawing-container) {
 .email-read-meta-avatar-inner { width: 44px; height: 44px; border-radius: 50%; color: #4f7cff; font-size: 18px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
 .email-read-meta-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .email-read-meta-from { font-size: 15px; font-weight: 600; color: var(--text); }
-.email-read-meta-sub { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--text-faint); }
+.email-read-meta-sub { display: flex; flex-wrap: wrap; gap: 12px; font-size: var(--fs-12); color: var(--text-faint); }
 .email-read-body { font-size: 15px; line-height: 1.8; color: var(--text); word-break: break-word; }
 /* 邮件 AI 总结弹窗（酷炫） */
 .email-ai-modal-overlay {
@@ -19368,13 +19368,13 @@ p:has(> .editor-drawing-container) {
   letter-spacing: 0.01em;
 }
 .email-ai-modal-body { padding: 18px; overflow-y: auto; flex: 1; min-height: 120px; }
-.email-ai-modal-text { font-size: 13px; line-height: 1.75; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+.email-ai-modal-text { font-size: var(--fs-13); line-height: 1.75; color: var(--text); white-space: pre-wrap; word-break: break-word; }
 .email-ai-modal-loading {
   display: flex;
   align-items: center;
   gap: 10px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 10px 0;
 }
 .email-ai-modal-spinner {
@@ -19386,7 +19386,7 @@ p:has(> .editor-drawing-container) {
   animation: email-ai-modal-spin 0.7s linear infinite;
 }
 @keyframes email-ai-modal-spin { to { transform: rotate(360deg); } }
-.email-ai-modal-empty { color: var(--text-faint); font-size: 13px; padding: 12px 0; }
+.email-ai-modal-empty { color: var(--text-faint); font-size: var(--fs-13); padding: 12px 0; }
 .email-ai-modal-footer {
   display: flex;
   align-items: center;
@@ -19430,7 +19430,7 @@ p:has(> .editor-drawing-container) {
   padding: 6px 8px;
   background: var(--chip-bg);
   border-radius: var(--radius-sm);
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 .email-img-blocked-text { flex: 1 1 auto; min-width: 0; }
@@ -19697,7 +19697,7 @@ p:has(> .editor-drawing-container) {
 }
 .palette-form-title {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .palette-field {
   display: flex;
@@ -19729,7 +19729,7 @@ p:has(> .editor-drawing-container) {
 }
 .palette-form-error {
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .palette-form-actions {
   display: flex;
@@ -19743,7 +19743,7 @@ p:has(> .editor-drawing-container) {
   margin-top: 8px;
   border-top: 1px solid var(--border);
   padding-top: 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .pm-setting-row {
   display: flex;
@@ -19771,7 +19771,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-sm);
   color: var(--text);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 3px 7px;
 }
 .pm-setting-save {
@@ -20009,7 +20009,7 @@ body.is-plugin-panel-open .main {
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 .plugin-manager .pm-perm {
@@ -20040,7 +20040,7 @@ body.is-plugin-panel-open .main {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   padding: 5px 11px;
   border-radius: var(--radius-md);
@@ -20072,7 +20072,7 @@ body.is-plugin-panel-open .main {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 11px 12px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 /* 撤回 / 审批这类"要你看一眼"的提示：做成带底色与左色条的告警块，而不是一行彩字 */
@@ -20138,7 +20138,7 @@ body.is-plugin-panel-open .main {
   align-items: center;
   gap: 8px;
   padding: 11px 14px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 700;
   color: var(--text);
   cursor: pointer;
@@ -20160,7 +20160,7 @@ body.is-plugin-panel-open .main {
   padding: 10px 12px;
   background: var(--card-bg);
 }
-.plugin-manager .pm-subs-head { font-size: 12px; font-weight: 600; color: var(--text); }
+.plugin-manager .pm-subs-head { font-size: var(--fs-12); font-weight: 600; color: var(--text); }
 .plugin-manager .pm-sub { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 8px; }
 .plugin-manager .pm-sub-open { font-size: 12.5px; font-weight: 600; color: var(--accent); }
 .plugin-manager .pm-sub-open:hover { text-decoration: underline; }
@@ -20172,7 +20172,7 @@ body.is-plugin-panel-open .main {
   background: var(--surface);
   color: var(--text);
   border-radius: var(--radius-md);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 7px 9px;
 }
 .plugin-manager .pm-index-form input:focus {
@@ -20184,7 +20184,7 @@ body.is-plugin-panel-open .main {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   padding: 7px 12px;
   border-radius: var(--radius-md);
@@ -20200,13 +20200,13 @@ body.is-plugin-panel-open .main {
 }
 .plugin-manager .pm-index-form button:disabled { opacity: .5; cursor: default; }
 .plugin-manager .pm-index-hint { font-size: 11.5px; line-height: 1.6; color: var(--text-faint); }
-.plugin-manager .pm-index-source { margin-top: 12px; font-size: 12px; color: var(--text-dim); }
+.plugin-manager .pm-index-source { margin-top: 12px; font-size: var(--fs-12); color: var(--text-dim); }
 /* 签名状态：**没验过**必须是"没验"的样子（暖色告警条），不能和"验过了"长得一样 */
 .plugin-manager .pm-index-sig {
   margin-top: 8px;
   border-radius: 10px;
   padding: 9px 11px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.6;
   border-left: 3px solid var(--warning);
   background: var(--cat-orange-soft);
@@ -20253,7 +20253,7 @@ body.is-plugin-panel-open .main {
 .plugin-manager .pm-index-item-meta { margin-top: 4px; font-size: 11px; color: var(--text-faint); }
 .plugin-manager .pm-index-item-desc {
   margin-top: 7px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.6;
   color: var(--text-dim);
 }
@@ -20298,7 +20298,7 @@ body.is-plugin-panel-open .main {
   border: 1px solid var(--accent);
   background: var(--surface);
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 700;
   padding: 6px 12px;
   border-radius: var(--radius-md);
@@ -20362,7 +20362,7 @@ body.is-plugin-panel-open .main {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   padding: 6px 11px;
   border-radius: var(--radius-md);
@@ -20500,7 +20500,7 @@ body.is-plugin-panel-open .main {
 .community-save-error {
   margin-top: 10px;
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--danger, #c0392b);
   border: 1px solid var(--danger, #c0392b);
   border-radius: var(--radius);
@@ -20513,7 +20513,7 @@ body.is-plugin-panel-open .main {
   padding: 10px 12px;
 }
 .community-save-preview-title {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
 }
 .community-save-preview-meta {
@@ -20551,7 +20551,7 @@ body.is-plugin-panel-open .main {
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px dashed var(--border);
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   white-space: pre-wrap;
   word-break: break-word;
@@ -20855,7 +20855,7 @@ body.is-plugin-panel-open .main {
   .tc-pv-text { font-size: 9px; }
   .tc-pv-head { font-size: 10px; }
   .tc-card-body { padding: 9px 10px; }
-  .tc-card-name { font-size: 13px; }
+  .tc-card-name { font-size: var(--fs-13); }
 }
 
 /* ---------------------------------------------------------------------------
@@ -22180,7 +22180,7 @@ body.is-plugin-panel-open .main {
   border-radius: 8px;
   background: var(--bg-sidebar);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .conflict-banner-head {
   display: flex;
@@ -22327,7 +22327,7 @@ body.is-plugin-panel-open .main {
   color: var(--text);
 }
 .ai-libmap-sub {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 .ai-libmap-sec {
@@ -22336,10 +22336,10 @@ body.is-plugin-panel-open .main {
 .ai-libmap-sec-label {
   font-weight: 600;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .ai-libmap-sec-summary {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   margin-top: 2px;
 }
@@ -22354,7 +22354,7 @@ body.is-plugin-panel-open .main {
   align-items: baseline;
   gap: 8px;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: var(--fs-13);
   border-bottom: 1px dashed var(--border);
 }
 .ai-libmap-item:last-child {
@@ -22371,7 +22371,7 @@ body.is-plugin-panel-open .main {
 }
 .ai-libmap-item-note,
 .ai-libmap-item-src {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 /* 四种读数状态：**未知必须是灰的、且不加粗** —— 它不是一个数字 */
@@ -22390,7 +22390,7 @@ body.is-plugin-panel-open .main {
 }
 .ai-libmap-warn {
   margin-top: 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 /* ── 第三块：分区上的「生成这一页」按钮 ＋ 草稿区（**未落库**的东西要一眼看出来 ✓） ── */
@@ -22402,7 +22402,7 @@ body.is-plugin-panel-open .main {
 .ai-libmap-gen {
   margin-left: auto;
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   border: 1px solid var(--border, #3a3a3a);
   border-radius: 6px;
   background: transparent;
@@ -22434,7 +22434,7 @@ body.is-plugin-panel-open .main {
 }
 .ai-libmap-draft-drop {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--fs-12);
   background: transparent;
   border: none;
   color: var(--text-dim);
@@ -22445,7 +22445,7 @@ body.is-plugin-panel-open .main {
  * 采用是描边按钮（accent），不采用是低调的下划线文字 —— 别让两个键长得一样 ✓。 */
 .ai-libmap-draft-keep {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 2px 10px;
   border-radius: 6px;
   border: 1px solid var(--accent);
@@ -22466,7 +22466,7 @@ body.is-plugin-panel-open .main {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 .ai-libmap-draft-warn {
@@ -22479,7 +22479,7 @@ body.is-plugin-panel-open .main {
 }
 .ai-libmap-note {
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 .ai-libmap-note.ai-warn {
@@ -22517,7 +22517,7 @@ body.is-plugin-panel-open .main {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1.6;
   color: var(--text);
   background: var(--surface);
@@ -22546,13 +22546,13 @@ body.is-plugin-panel-open .main {
   border-radius: 6px;
   background: var(--bg);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 10px;
   cursor: pointer;
 }
 .fm-text-note {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .fm-html-preview {
   flex: 1;
@@ -22601,7 +22601,7 @@ body.is-plugin-panel-open .main {
 }
 .mcp-access-token-text {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.6;
   letter-spacing: 0.02em;
   word-break: break-all;
@@ -22613,7 +22613,7 @@ body.is-plugin-panel-open .main {
    真令牌仍走等宽（两件事视觉上分开）。 */
 .mcp-access-token.is-empty .mcp-access-token-text {
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   letter-spacing: 0;
   color: var(--text-faint);
 }
@@ -22625,7 +22625,7 @@ body.is-plugin-panel-open .main {
 .mcp-access .mcp-access-token code {
   padding: 0;
   background: transparent;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .mcp-access-snippet {
   margin: 8px 0 10px;
@@ -22634,7 +22634,7 @@ body.is-plugin-panel-open .main {
   border-radius: var(--radius-sm);
   background: var(--surface);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.55;
   color: var(--text);
   overflow-x: auto;
@@ -22668,7 +22668,7 @@ body.is-plugin-panel-open .main {
 .editor-mermaid-note {
   margin: 0 2px 2px;
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.5;
   color: var(--text-muted, #6b7280);
   background: var(--surface-2, rgba(0, 0, 0, 0.03));
@@ -22710,7 +22710,7 @@ body.is-plugin-panel-open .main {
   height: 32px;
   padding: 0 14px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
   transition: background .12s ease, border-color .12s ease;
 }
@@ -22772,7 +22772,7 @@ body.is-plugin-panel-open .main {
   background: var(--surface-2, rgba(0, 0, 0, 0.03));
   white-space: pre-wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -22920,7 +22920,7 @@ body.is-plugin-panel-open .main {
 }
 .mhome-sub {
   margin: 6px 0 0;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
 }
 /* 卡片：整块可点，最小高度 88px（远高于移动端 44px 的触控下限 ✓） */
@@ -22963,7 +22963,7 @@ body.is-plugin-panel-open .main {
   font-weight: 600;
 }
 .mhome-card-hint {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
 }
 .mhome-card.is-accent .mhome-card-hint {
@@ -22978,7 +22978,7 @@ body.is-plugin-panel-open .main {
   color: rgba(255, 255, 255, 0.9);
 }
 .mhome-count {
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 500;
   color: var(--text-dim);
 }
@@ -23080,12 +23080,12 @@ body.is-plugin-panel-open .main {
   resize: none;
 }
 .mcap-err {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: #c5221f;
 }
 .mcap-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 /* 快捷工具栏：6 项横排，可横滚（窄屏不挤扁 ✓ —— 与设置分类栏那次同类的坑 ✗ 先避开 ✓）*/
@@ -23182,7 +23182,7 @@ body.is-plugin-panel-open .main {
 }
 /* 分组小标题（效果图里是「账户／同步／外观…」这几个淡色小字 ✓）*/
 .mset-group {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
   margin-bottom: 6px;
 }
@@ -23218,7 +23218,7 @@ body.is-plugin-panel-open .main {
   color: var(--text);
 }
 .mset-row-sub {
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-dim);
 }
 .mset-go {
@@ -23262,7 +23262,7 @@ body.is-plugin-panel-open .main {
 }
 .mset-note {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 .mset-note.is-strong {
@@ -23272,7 +23272,7 @@ body.is-plugin-panel-open .main {
 }
 .mset-foot {
   margin: 2px 2px 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 /* ⭐ 2026-10-19 第二刀：同步入口搬进设置屏（`<SyncPanel />` 自带触发器 ✓，组件未改 ✓）。
@@ -23362,7 +23362,7 @@ body.is-plugin-panel-open .main {
 }
 .mread-meta {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 /* 「在电脑上继续」提示块（效果图里那块淡蓝 ✓ —— 用既有的 `--accent-soft`，⛔ 不自造色 ✓） */
@@ -23394,7 +23394,7 @@ body.is-plugin-panel-open .main {
   color: var(--accent);
 }
 .mread-tip-sub {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   overflow-wrap: anywhere;
 }
@@ -23485,7 +23485,7 @@ body.is-plugin-panel-open .main {
   border: 1.5px dashed var(--border);
   border-radius: 12px;
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .mread-hr {
   margin: 18px 0;
@@ -23502,7 +23502,7 @@ body.is-plugin-panel-open .main {
   margin: 20px 0 0;
   padding-top: 12px;
   border-top: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 
@@ -23639,7 +23639,7 @@ body.is-plugin-panel-open .main {
 }
 .msearch-stat {
   flex: none;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
   white-space: nowrap;
 }
@@ -23678,7 +23678,7 @@ body.is-plugin-panel-open .main {
   overflow-wrap: anywhere;
 }
 .msearch-item-snippet {
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.6;
   color: var(--text-dim);
   display: -webkit-box;
@@ -23716,7 +23716,7 @@ body.is-plugin-panel-open .main {
 }
 .msearch-foot {
   margin: 16px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 
@@ -23792,7 +23792,7 @@ body.is-plugin-panel-open .main {
 }
 .mabout-version {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 .mabout-latest {
@@ -23809,12 +23809,12 @@ body.is-plugin-panel-open .main {
 }
 .mabout-card-title {
   margin-bottom: 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 .mabout-line {
   margin: 0 0 6px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1.6;
   color: var(--text);
   overflow-wrap: anywhere;
@@ -23823,7 +23823,7 @@ body.is-plugin-panel-open .main {
   margin-bottom: 0;
 }
 .mabout-dim {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 .mabout-license {
@@ -23848,7 +23848,7 @@ body.is-plugin-panel-open .main {
   min-width: 0;
 }
 .mabout-dep-name {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -23872,7 +23872,7 @@ body.is-plugin-panel-open .main {
   border-bottom: 1px solid var(--border);
   background: transparent;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-13);
   text-align: left;
 }
 .mabout-link:last-child {
@@ -23922,7 +23922,7 @@ body.is-plugin-panel-open .main {
 }
 .mabout-check-result {
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   overflow-wrap: anywhere;
 }
@@ -23983,7 +23983,7 @@ body.is-plugin-panel-open .main {
 }
 .mdict-meta {
   margin: 2px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
   overflow-wrap: anywhere;
 }
@@ -24089,7 +24089,7 @@ body.is-plugin-panel-open .main {
   border-radius: var(--radius-sm);
   background: var(--cat-green-soft);
   color: var(--success);
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1.45;
 }
 .mpair-ok-line {
@@ -24119,7 +24119,7 @@ body.is-plugin-panel-open .main {
   /* ⚠️ 用**仓里既有 token** ✓（照 `.sync-status.is-warn` 那一族 ✓）—— ⛔ 不自造变量／不写死颜色 ✗
      （写死颜色在深色主题下不跟主题走 ✗ —— 这是本仓踩过的一条 ✓）。 */
   color: var(--cat-yellow);
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1.45;
 }
 .mpair-warn b {
@@ -24143,12 +24143,12 @@ body.is-plugin-panel-open .main {
 }
 .mpair-card-title {
   margin-bottom: 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 .mpair-line {
   margin: 0 0 6px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1.6;
   color: var(--text);
   overflow-wrap: anywhere;
@@ -24157,7 +24157,7 @@ body.is-plugin-panel-open .main {
   margin-bottom: 0;
 }
 .mpair-dim {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 /* ⭐ 【C2】设备卡上的小胶囊（照 owner 2026-10-14 参考图 ✓）。
@@ -24183,7 +24183,7 @@ body.is-plugin-panel-open .main {
 .mpair-code-note {
   margin: 0 0 12px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1.5;
 }
 .mpair-code-actions {
@@ -24226,7 +24226,7 @@ body.is-plugin-panel-open .main {
 .mpair-code-star {
   margin: 14px 0 0;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.55;
 }
 
@@ -24270,7 +24270,7 @@ body.is-plugin-panel-open .main {
 .mpair-code-lead {
   margin: 0 0 14px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .mpair-code-cancel {
   width: 100%;
@@ -24296,7 +24296,7 @@ body.is-plugin-panel-open .main {
   border-radius: 999px;
   background: var(--chip-bg);
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1.4;
   cursor: pointer;
 }
@@ -24324,7 +24324,7 @@ body.is-plugin-panel-open .main {
   gap: 4px;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.6;
 }
 .mpair-pill.mpair-pill-ok {
@@ -24454,7 +24454,7 @@ body.is-plugin-panel-open .main {
 .sync-nearby { gap: 10px; }
 .sync-nearby-row { width: 100%; border-radius: var(--radius-md); }
 /* ⭐ 段标题照图：⭐ 略大一号 ＋ 与上一段拉开（⭐ 只钉那三个 testid ✓）。 */
-[data-testid^="nearby-group-"] { font-size: 13px; margin-top: 14px; }
+[data-testid^="nearby-group-"] { font-size: var(--fs-13); margin-top: 14px; }
 
 /* ═══ ⭐ 刀十八（2026-10-14，owner：「上下没有铺满；去掉底部那个滚动条」）✗ ═══
    ⭐ 真因（⭐ 量出来的 ✓）：⭐ 全站 `box-sizing` 只在 **34 处**逐个组件设 ✓ ⇒ ⭐ `.sync-popover.is-inline`
@@ -24790,7 +24790,7 @@ body.is-plugin-panel-open .main {
   margin-top: 2px;
 }
 .sync-popover .license-block .license-prompt { color: var(--text-dim); }
-.sync-popover .license-block .license-dim { color: var(--text-faint); font-size: 12px; }
+.sync-popover .license-block .license-dim { color: var(--text-faint); font-size: var(--fs-12); }
 .sync-popover .license-block .license-err { color: var(--danger); }
 .sync-popover .license-block .license-paste {
   display: flex;
@@ -24808,7 +24808,7 @@ body.is-plugin-panel-open .main {
   background: var(--chip-bg);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.5;
 }
 .sync-popover .license-block .license-paste-input:focus {
@@ -24875,7 +24875,7 @@ body.is-plugin-panel-open .main {
 }
 .mhome-sub {
   margin-top: 5px;
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .mshell .mhome-card {
   min-height: 84px;
@@ -24945,7 +24945,7 @@ body.is-plugin-panel-open .main {
   line-height: 1.8;
 }
 .mcap-hint {
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .mcap-bar {
   gap: 8px;
@@ -25077,7 +25077,7 @@ body.is-plugin-panel-open .main {
   font-size: 16px;
 }
 .msearch-chip {
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 0 12px;
 }
 .msearch-item {
@@ -25224,7 +25224,7 @@ button.mset-row:focus-visible {
    视觉体系：主色 --accent、勾中 --accent-soft、墓碑胶囊 --mark-bg；圆角 8/4/999。 */
 .mesh-missing { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
 .mesh-missing-head { display: flex; align-items: center; gap: 7px; width: 100%; border: none; background: transparent; padding: 2px 0; cursor: pointer; text-align: left; color: var(--text); }
-.mesh-missing-star { color: var(--accent); font-size: 12px; }
+.mesh-missing-star { color: var(--accent); font-size: var(--fs-12); }
 .mesh-missing-title { font-size: 12.5px; font-weight: 600; }
 .mesh-missing-title b { color: var(--accent); }
 .mesh-missing-toggle { margin-left: auto; font-size: 11.5px; color: var(--text-dim); }
@@ -25242,9 +25242,9 @@ button.mset-row:focus-visible {
 .mesh-missing-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
 .mesh-missing-foot { font-size: 11px; color: var(--text-dim); margin: 8px 2px 0; }
 .mesh-missing-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-.mesh-missing-ignore { border: none; background: transparent; color: var(--text-dim); font-size: 12px; padding: 8px; border-radius: var(--radius-md); cursor: pointer; }
+.mesh-missing-ignore { border: none; background: transparent; color: var(--text-dim); font-size: var(--fs-12); padding: 8px; border-radius: var(--radius-md); cursor: pointer; }
 .mesh-missing-ignore:hover { background: var(--hover); color: var(--text); }
-.mesh-missing-create { margin-left: auto; border: none; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 500; padding: 8px 14px; border-radius: var(--radius-md); cursor: pointer; }
+.mesh-missing-create { margin-left: auto; border: none; background: var(--accent); color: var(--on-accent); font-size: var(--fs-12); font-weight: 500; padding: 8px 14px; border-radius: var(--radius-md); cursor: pointer; }
 .mesh-missing-create:disabled { background: var(--hover); color: var(--text-faint); cursor: default; }
 .mesh-missing-done { margin-top: 8px; font-size: 11.5px; color: var(--success); }
 /* ⭐ 2026-10-24：页级血统冲突条（`LineageConflictBanner`）—— 只覆盖 `.conflict-banner-lineage`。
@@ -25271,10 +25271,10 @@ button.mset-row:focus-visible {
   color: var(--warning);
 }
 .conflict-banner-lineage .conflict-lineage-body { flex: 1; min-width: 0; }
-.conflict-banner-lineage .conflict-banner-title { font-size: 13px; font-weight: 600; }
-.conflict-banner-lineage .conflict-banner-hint { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+.conflict-banner-lineage .conflict-banner-title { font-size: var(--fs-13); font-weight: 600; }
+.conflict-banner-lineage .conflict-banner-hint { font-size: var(--fs-12); color: var(--text-dim); margin-top: 3px; }
 .conflict-banner-lineage .conflict-item-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-.conflict-banner-lineage .conflict-btn { font-size: 12px; padding: 6px 12px; border-radius: var(--radius-md); }
+.conflict-banner-lineage .conflict-btn { font-size: var(--fs-12); padding: 6px 12px; border-radius: var(--radius-md); }
 .conflict-banner-lineage .conflict-lineage-keep { color: var(--text-dim); }
 
 /* 窄屏（≤520px）：按钮两列，主操作整行 —— ⛔ 不许挤成一列竖排 */
@@ -25301,10 +25301,10 @@ button.mset-row:focus-visible {
 .set-crypto-steps{display:flex;flex-direction:column;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px}
 .set-crypto-steps b{display:block;font-size:12.5px;color:var(--text)}
 .set-crypto-steps span{display:block;font-size:11.5px;color:var(--text-2);margin-top:2px}
-.set-crypto-label{font-size:12px;color:var(--text-2)}
-.set-crypto-check{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text-2);line-height:1.5;cursor:pointer}
-.set-crypto-warn{display:flex;flex-direction:column;gap:6px;background:var(--warning-soft);border:1px solid var(--warning-line);border-radius:10px;padding:12px;font-size:12px;color:var(--text-2)}
-.set-crypto-err{font-size:12px;color:var(--danger)}
+.set-crypto-label{font-size: var(--fs-12);color:var(--text-2)}
+.set-crypto-check{display:flex;align-items:flex-start;gap:8px;font-size: var(--fs-12);color:var(--text-2);line-height:1.5;cursor:pointer}
+.set-crypto-warn{display:flex;flex-direction:column;gap:6px;background:var(--warning-soft);border:1px solid var(--warning-line);border-radius:10px;padding:12px;font-size: var(--fs-12);color:var(--text-2)}
+.set-crypto-err{font-size: var(--fs-12);color:var(--danger)}
 .set-crypto-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
 
 /* ⭐ 2026-10-25 真机修复：滚动容器是 flex 列 ⇒ 子项默认 flex-shrink:1，
@@ -25356,7 +25356,7 @@ button.mset-row:focus-visible {
 .set-security-pill{font-size:10.5px;font-weight:500;border-radius:999px;padding:2px 9px;line-height:18px}
 .set-security-pill.is-ok{color:#0b802f;background:#e8faec}
 .set-security-pill.is-warn{color:#b45309;background:#fff3e8}
-.set-security-sub{font-size:12px;color:var(--text-2);margin-top:8px}
+.set-security-sub{font-size: var(--fs-12);color:var(--text-2);margin-top:8px}
 .set-security-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .set-security-chips span{font-size:10.5px;color:var(--text-2);background:#f5f7fa;border-radius:999px;padding:3px 10px}
 .set-security-hint{font-size:10.5px;color:var(--text-faint);margin-top:12px}
@@ -25382,7 +25382,7 @@ button.mset-row:focus-visible {
 .set-space-more>summary::-webkit-details-marker{display:none}
 .set-space-more>summary:hover,.set-space-more[open]>summary{background:#f0f3f8;color:var(--text-2)}
 .set-space-menu{position:absolute;right:0;top:34px;z-index:30;min-width:150px;padding:6px;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 28px rgba(15,20,32,.16);display:flex;flex-direction:column;gap:2px}
-.set-space-menu .set-btn{justify-content:flex-start;border:none;background:transparent;text-align:left;height:32px;font-size:12px}
+.set-space-menu .set-btn{justify-content:flex-start;border:none;background:transparent;text-align:left;height:32px;font-size: var(--fs-12)}
 .set-space-menu .set-btn:hover:not(:disabled){background:#f3f5f9}
 
 /* ⭐ 2026-10-25 真机对照设计稿：右侧口令行并排 / 行内状态 pill / 当前行弱化边框 */
@@ -25480,13 +25480,13 @@ button.mset-row:focus-visible {
   border-radius:14px;background:var(--card-bg);display:flex;flex-direction:column;gap:12px;
 }
 .backup-auto-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.backup-auto-title{font-size:12px;font-weight:700;color:var(--text-2);letter-spacing:.02em}
+.backup-auto-title{font-size: var(--fs-12);font-weight:700;color:var(--text-2);letter-spacing:.02em}
 .backup-auto-badge{font-size:11px;color:var(--text-faint);background:#f5f7fa;border-radius:999px;padding:2px 10px}
 .backup-auto-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .backup-auto-item{background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:4px}
 .backup-auto-item span{font-size:10.5px;color:var(--text-faint)}
-.backup-auto-item b{font-size:13px;font-weight:600;color:var(--text)}
-.backup-auto-unreadable{font-size:12px;color:var(--text-2);display:flex;flex-direction:column;gap:4px}
+.backup-auto-item b{font-size: var(--fs-13);font-weight:600;color:var(--text)}
+.backup-auto-unreadable{font-size: var(--fs-12);color:var(--text-2);display:flex;flex-direction:column;gap:4px}
 .backup-dir-row{display:flex;align-items:center;gap:10px;min-width:0;border-top:1px solid var(--border);padding-top:10px}
 .backup-dir-label{flex:0 0 auto;font-size:11px;color:var(--text-faint)}
 .backup-dir-path{
@@ -25507,8 +25507,8 @@ button.mset-row:focus-visible {
 /* ⭐ 2026-10-25 owner：本机设备整块再收紧（少留白、控件同高、按钮靠右） */
 .acct-device-row .set-row-text{gap:2px}
 .acct-device-row .set-row-sub{line-height:1.45}
-.acct-device-edit .set-input{height:34px;font-size:12px}
-.acct-device-edit .set-btn{height:34px;min-width:58px;padding:0 12px;font-size:12px}
+.acct-device-edit .set-input{height:34px;font-size: var(--fs-12)}
+.acct-device-edit .set-btn{height:34px;min-width:58px;padding:0 12px;font-size: var(--fs-12)}
 .set-section:has(.acct-device-row) .set-section-title{margin-bottom:2px}
 /* ⭐ 2026-10-25 owner：设备名输入＋保存**单独一行**（标签/说明在上，控件在下） */
 .acct-device-stack .acct-device-edit .set-input{flex:1 1 auto}
@@ -25616,7 +25616,7 @@ button.mset-row:focus-visible {
 }
 .sync-popover.is-inline .relay-status .sync-row-value,
 .sync-popover.is-inline .license-block .sync-row-value {
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .sync-popover.is-inline .license-block .sync-hint { font-size: 11px; }
 
@@ -25676,7 +25676,7 @@ button.mset-row:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 650;
   color: var(--text);
   letter-spacing: 0.1px;
@@ -25759,7 +25759,7 @@ button.mset-row:focus-visible {
   height: 30px;
   padding: 0 14px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -25917,7 +25917,7 @@ button.mset-row:focus-visible {
     gap: 8px 10px;
     padding: 11px 12px;
   }
-  .sync-nearby-avatar { grid-area: avatar; width: 30px; height: 30px; border-radius: 9px; font-size: 13px; }
+  .sync-nearby-avatar { grid-area: avatar; width: 30px; height: 30px; border-radius: 9px; font-size: var(--fs-13); }
   .sync-nearby-main { grid-area: main; }
   .sync-nearby-actions { grid-area: actions; justify-content: flex-end; }
 }
@@ -25955,7 +25955,7 @@ button.mset-row:focus-visible {
 }
 .mhome-headtext { min-width: 0; }
 .mhome-title { font-size: 27px; font-weight: 750; letter-spacing: -0.6px; }
-.mhome-sub { margin-top: 4px; font-size: 12px; color: var(--text-faint); }
+.mhome-sub { margin-top: 4px; font-size: var(--fs-12); color: var(--text-faint); }
 .mhome-space {
   width: 100%;
   min-width: 0;
@@ -25971,7 +25971,7 @@ button.mset-row:focus-visible {
   border-radius: var(--radius-full, 999px);
   background: var(--surface);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   box-shadow: var(--shadow-xs);
 }
@@ -25992,7 +25992,7 @@ button.mset-row:focus-visible {
 .mhome-card-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; background: var(--bg-sidebar); }
 .mhome-card.is-accent .mhome-card-icon { background: rgba(255,255,255,.18); }
 .mhome-card-title { font-size: 17px; font-weight: 700; }
-.mhome-card-hint { font-size: 12px; }
+.mhome-card-hint { font-size: var(--fs-12); }
 .mhome-card-go { display: grid; place-items: center; color: var(--text-faint); }
 
 .mhome-notes {
@@ -26041,7 +26041,7 @@ button.mset-row:focus-visible {
   border-radius: 14px;
   background: color-mix(in srgb, var(--surface) 70%, var(--bg));
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.6;
 }
 .mhome-notes-hint { margin: 2px 2px 0; font-size: 10.5px; line-height: 1.55; color: var(--text-faint); }
@@ -26139,7 +26139,7 @@ button.mset-row:focus-visible {
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
 }
 .mset-name-save {
@@ -26189,7 +26189,7 @@ button.mset-row:focus-visible {
 .mpair-warn { border-radius: 14px; padding: 9px 11px; margin-bottom: 10px; }
 .mpair-warn svg { flex: none; margin-top: 1px; }
 .mpair-caps { gap: 7px; margin-bottom: 10px; }
-.mpair-cap { min-height: 34px; padding: 5px 13px; font-size: 12px; }
+.mpair-cap { min-height: 34px; padding: 5px 13px; font-size: var(--fs-12); }
 .mpair-list { display: flex; flex-direction: column; gap: 8px; }
 .mpair-item {
   align-items: flex-start;
@@ -26216,7 +26216,7 @@ button.mset-row:focus-visible {
   border-radius: 10px;
   background: var(--surface);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 650;
 }
 .mpair-entry.is-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); box-shadow: 0 4px 10px color-mix(in srgb, var(--accent) 22%, transparent); }
@@ -26240,7 +26240,7 @@ button.mset-row:focus-visible {
   border-radius: 11px;
   background: var(--accent);
   color: var(--on-accent);
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 650;
   box-shadow: 0 5px 12px color-mix(in srgb, var(--accent) 22%, transparent);
 }
@@ -26256,7 +26256,7 @@ button.mset-row:focus-visible {
   border-radius: 11px;
   background: var(--surface);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 650;
   box-shadow: none;
 }
@@ -26370,7 +26370,7 @@ button.mset-row:focus-visible {
 /* B3：属性区 header 同一行（原按钮换行到下一行）＋ 元数据块去整块灰底改分隔线 */
 .properties-head-row { display: flex; align-items: center; gap: 8px; }
 .properties-head-row .properties-toggle { flex: 1; text-align: left; }
-.prop-person { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.prop-person { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-13); }
 /* 阅读态文本（名字/普通文本属性）：点击才进编辑；失焦立刻回这一态。 */
 .prop-text {
   display: inline-block;
@@ -26426,7 +26426,7 @@ button.mset-row:focus-visible {
   border-radius: 6px;
   background: transparent;
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1;
   cursor: pointer;
   transition: background .1s ease, color .1s ease, border-color .1s ease;
@@ -26450,7 +26450,7 @@ button.mset-row:focus-visible {
   border: 1px dashed var(--border);
   border-radius: 7px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .properties-empty .prop-add-head:hover,
 .properties-empty .prop-add-tag:hover { background: var(--hover); color: var(--text); }
@@ -26475,7 +26475,7 @@ button.mset-row:focus-visible {
 .properties-body > .prop-system { grid-column: 1 / -1; }
 .prop-system { margin-top: 6px; padding-top: 2px; border-top: 1px solid var(--border); }
 .prop-system > summary {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
   padding: 4px 0;
   cursor: pointer;
@@ -26507,19 +26507,19 @@ button.mset-row:focus-visible {
 .properties-body .prop-value,
 .properties-body .prop-empty,
 .properties-body .prop-person,
-.properties-body .prop-temporal { font-size: 13px; }
-.properties-body .tag-chip { height: 22px; padding: 0 9px; font-size: 12px; }
+.properties-body .prop-temporal { font-size: var(--fs-13); }
+.properties-body .tag-chip { height: 22px; padding: 0 9px; font-size: var(--fs-12); }
 .properties-toggle-title { font-size: 12.5px; font-weight: 600; color: var(--text-dim); }
-.prop-add-head { font-size: 12px; color: var(--text-faint); }
-.properties-body .prop-value-source .prop-link { font-size: 13px; }
+.prop-add-head { font-size: var(--fs-12); color: var(--text-faint); }
+.properties-body .prop-value-source .prop-link { font-size: var(--fs-13); }
 
 /* 来源行的容器本身也要吃 13px：它是 `.prop-link-wrap`（没有 `.prop-value` 类）⇒ 默认继承 16px，
    链接虽显式 13px，但行高/说明基线会被容器字号带大（真机量到容器 16px、行高被撑到 36px）。 */
-.properties-body .prop-value-source { font-size: 13px; line-height: 1.55; }
+.properties-body .prop-value-source { font-size: var(--fs-13); line-height: 1.55; }
 
 /* 阅读态文本（`.prop-text`）的字号：它是 2026-10-31 新加的展示态 span（不在 `.prop-value` 那一档里），
    漏写规则 ⇒ 继承到 16px，比相邻的名字(12.5)/其它值(13) 明显大一号 —— 就是"字体不统一"的来源。 */
-.properties-body .prop-text { font-size: 13px; line-height: 1.5; color: var(--text); }
+.properties-body .prop-text { font-size: var(--fs-13); line-height: 1.5; color: var(--text); }
 }
 
 @layer utilities {
