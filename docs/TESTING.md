@@ -526,6 +526,11 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   `euleros-2.10.1` **不在**白名单）；每个 step 必须有合法 `name`（字符集受限，全角逗号与加号都不行）；
   action 只能用 `actions/xxx@vN`（`checkout-action@0.0.1` 这类简写校验器报"不存在"）。
   ⚠️ 剩下的边界只是**运行时**：本机没有 GitCode runner，所以"真跑一次"仍待首次合并到默认分支后确认。
+- **随包 Rust 桥是独立 crate ⇒ rust 组碰不到它**：`tools/shuyonote-mcp-rust`（只依赖 `serde_json`）
+  不在 `src-tauri` 包里，所以 rust 组的 `cargo test` 跑不到它的 8 条桥单测。它们由 `.github/workflows/ci.yml`
+  的 `rust-tests` job 里一条**具名 step** 跑（`cargo test --manifest-path tools/shuyonote-mcp-rust/Cargo.toml --locked`）。
+  ⚠️ 那个 step **不是注册门禁** ⇒ 本机 `pnpm verify:rust` 不跑它；要本机也覆盖得把它注册进
+  `scripts/lib/gates.mjs` 的 rust 组（另一次改动）。
 - **happy-dom 不等于浏览器**：`vitest` 跑在 happy-dom 里，**不做布局**、不按视口重算媒体查询，
   所以"文字挤成竖柱""弹层关不上"这类只能靠 browser / mobile 组（真实 Chromium）兜。
 - ⚠️ **Windows 上 `cargo test` 的红有三种形态 —— 看到红的第一件事是「认形态」**（2026-09-20 补齐）：

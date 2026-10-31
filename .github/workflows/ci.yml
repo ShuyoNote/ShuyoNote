@@ -262,6 +262,25 @@ jobs:
           path: test-report-rust.json
           retention-days: 30
 
+      # ★ 2026-10-31：**随安装包分发的 Rust 桥**（独立 crate，不在 `src-tauri` 包里）也要有 CI。
+      #
+      # 为什么必须单列一步：上面 `--group rust` 跑的 `cargo test` 只是 `src-tauri/Cargo.toml` 那个包
+      # （门禁清单在 `scripts/lib/gates.mjs` 的 rust 组）⇒ 独立 crate 的 8 条桥单测在 CI 上**一条都没跑过**，
+      # 桥回归只有本机知道。这与 `rust-tests` 这个 job 当初的来由同形（Rust 侧回归只能靠人记得敲
+      # `cargo test`）⇒ 同样用"机器跑"收口。
+      #
+      # 为什么**只**加这一条、且不并进 rust 组：该 crate 只依赖 `serde_json` —— 无系统依赖、不碰 Tauri /
+      # OpenSSL，也不需要 node / 前端构建 ⇒ 不需要额外的 apt 包或缓存 action，一条 `cargo test` 就够
+      # （`dtolnay/rust-toolchain@stable` 那步已经装好工具链）。`--locked` 钉住
+      # `tools/shuyonote-mcp-rust/Cargo.lock`（锁过期就当场红，而不是悄悄重新解析依赖）。
+      # 工作目录＝仓根（本 job 全程没有 `working-directory`），所以 `--manifest-path` 直接给相对路径。
+      #
+      # ⚠️ 边界（别把这一步读成"桥也被 rust 组门禁覆盖了"）：它**不在** `scripts/lib/gates.mjs` 里 ⇒
+      # 本机 `pnpm verify:rust` 不会跑它；要本机也跑就得把一条 rust-bridge 门禁注册进注册表（另一次改动）。
+      # ⚠️ 本步**只在 GitHub 上跑**（GitCode 侧不跑 rust 组，见 `docs/TESTING.md` 的「覆盖边界」）。
+      - name: Rust 桥单测（随包 crate：tools/shuyonote-mcp-rust）
+        run: cargo test --manifest-path tools/shuyonote-mcp-rust/Cargo.toml --locked
+
       # 外部产物的验收：**我们打出来的包、我们签出来的索引，应用真正的解析器与校验器认不认**。
       # 两段分别在别处有测试（打包工具在 JS 侧、解析/校验在 Rust 侧），但"接起来"那段
       # 只有靠人记得敲命令——而它恰恰是最容易在改动里悄悄坏掉的一段
