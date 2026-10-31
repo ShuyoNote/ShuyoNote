@@ -26547,3 +26547,7 @@ button.mset-row:focus-visible {
 /* 来源行的容器本身也要吃 13px：它是 `.prop-link-wrap`（没有 `.prop-value` 类）⇒ 默认继承 16px，
    链接虽显式 13px，但行高/说明基线会被容器字号带大（真机量到容器 16px、行高被撑到 36px）。 */
 .properties-body .prop-value-source { font-size: 13px; line-height: 1.55; }
+
+/* 阅读态文本（`.prop-text`）的字号：它是 2026-10-31 新加的展示态 span（不在 `.prop-value` 那一档里），
+   漏写规则 ⇒ 继承到 16px，比相邻的名字(12.5)/其它值(13) 明显大一号 —— 就是"字体不统一"的来源。 */
+.properties-body .prop-text { font-size: 13px; line-height: 1.5; color: var(--text); }
