@@ -481,53 +481,12 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   background: var(--hover-strong);
   color: var(--text);
 }
-/* ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条竖向工具条撤掉 ⇒ 它的入口搬进**顶端工具栏** ✓，
-   形态按 owner 纠正后的口径＝**保持图标样式** ✓（⛔ 不做文字胶囊 ✗）。
-   视觉刻意**贴着标题栏那组窗口按钮**（同高、同 hover 底色 ✓）—— 它们是同一行里的两组按钮，
-   长得不一样会显得像两个系统 ✓。
-   ⚠️ 类名不叫 `titlebar-*` ✗：手机上 `TitleBar` 不渲染，这条工具栏要在 `App.tsx` 顶部**自己渲染** ✓
-   ⇒ 同一个组件、同一套类名，两处共用 ✓（`.is-mobile` 是手机那一行的底座样式 ✓）。 */
-.top-tools {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin-right: 6px;
-}
-.top-tools.is-mobile {
-  margin: 0;
-  padding: var(--space-1) 6px;
-  gap: var(--space-1);
-  background: var(--bg-sidebar);
-  border-bottom: 1px solid var(--border);
-}
-.top-tool {
-  position: relative;
-  width: 32px;
-  height: 32px;
-  display: grid;
-  place-items: center;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  padding: 0;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-/* 手机那条工具栏上，命中区按 44px 走 ✓（`.is-mobile` 时图标仍是 16px，靠内边距撑命中区 ✓）。 */
-.top-tools.is-mobile .top-tool {
-  width: 44px;
-  height: 44px;
-}
-.top-tool:hover {
-  background: var(--hover-strong);
-  color: var(--text);
-}
-.top-tool.is-on {
-  background: var(--hover-strong);
-  color: var(--accent);
-}
+
+
+
+
+
+
 /* 「通知」未读角标：**现在恒为 0 ⇒ 不渲染** ✓（见 `TopTools.tsx` 里那条登记 ✓）。 */
 .titlebar-btn:focus-visible {
   outline: 2px solid var(--accent);
@@ -17406,27 +17365,18 @@ button.ui-toggle::after,
 .tl-block-removed { text-decoration: line-through; }
 .tl-block-more { color: var(--text-faint); font-size: 0.74rem; }
 
-/* ---- S4 知识地图（components/KnowledgeMap.tsx）----
-   只读视图：按标签聚类的关系全景。⚠️ 大库上 `GRAPH_NODE_CAP` 会挡掉一部分 ⇒ 界面**必须**把
-   `.kb-map-warn` 那条说出来（不许让用户以为"我的图就这么大" ✗）。 */
-.kb-map { padding: var(--space-5) 28px; }
-.kb-map-title { font-size: 1.05rem; margin: 0 0 var(--space-1); }
-.kb-map-note { margin: 0 0 10px; color: var(--text-faint); font-size: 0.82rem; }
-.kb-map-warn { margin: 0 0 10px; color: var(--danger); font-size: 0.84rem; }
-.kb-map-clusters { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
-.kb-map-cluster { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px var(--space-3); }
-.kb-map-cluster-head { display: flex; align-items: baseline; gap: var(--space-2); border-bottom: 1px solid var(--border); padding-bottom: var(--space-1); margin-bottom: 6px; }
-.kb-map-cluster-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kb-map-cluster-count { margin-left: auto; color: var(--text-faint); font-size: 0.78rem; }
-.kb-map-pages { margin: 0; padding: 0; list-style: none; }
-/* ⭐ 2026-10-08（owner：「知识地图看板卡片名称不回绕」✓）：卡片里的名字**只占一行**，超长就截断 ✓。
-   为什么必须有：卡片宽被 `.kb-map-clusters` 的 `minmax(220px,1fr)` 定死（约 220–280px），
-   而页面标题可以很长 ⇒ 折行会把卡片顶高、名字被断成两截（"知识地/图"那种），一屏能看的条数也变少 ✗。
-   ⚠️ `display:block` 是 `text-overflow` 生效的前提（按钮默认 inline-block）；完整名字走 `title` 悬浮提示 ✓
-   （组件那一侧配着写了 —— 截断而不给全名，等于把信息真的删掉 ✗）。
-   判据：`scripts/check-panel-layout.mjs`（真 Chromium ＋ 真 App.css 量"几行 ＋ 裁没裁" ✓）。 */
-.kb-map-page { display: block; width: 100%; padding: 2px var(--space-1); border: 0; border-radius: var(--radius-xs); background: none; color: inherit; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.kb-map-page:hover { background: var(--hover); }
+
+
+
+
+
+
+
+
+
+
+
+
 .tl-empty { padding: var(--space-6) 28px; }
 .tl-empty-main { margin: 6px 0 2px; }
 .tl-empty-hint { color: var(--text-faint); font-size: 0.86rem; }

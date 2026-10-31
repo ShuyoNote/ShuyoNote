@@ -1,0 +1,40 @@
+/* S4-4（2026-11-01）：域抽取器搬出的**插件管理器域**（`.pm-*` / `.plugin-manager*` / `.plugin-menu-*`）。
+
+- 选择器混排（`.pm-x, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- 核心规则在前、**响应式覆盖（来自混合 @media，只抽命中域的规则并重建同条件块）在后** —— 保持原相对顺序。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* ---- S4 知识地图（components/KnowledgeMap.tsx）----
+   只读视图：按标签聚类的关系全景。⚠️ 大库上 `GRAPH_NODE_CAP` 会挡掉一部分 ⇒ 界面**必须**把
+   `.kb-map-warn` 那条说出来（不许让用户以为"我的图就这么大" ✗）。 */
+.kb-map { padding: var(--space-5) 28px; }
+
+.kb-map-title { font-size: 1.05rem; margin: 0 0 var(--space-1); }
+
+.kb-map-note { margin: 0 0 10px; color: var(--text-faint); font-size: 0.82rem; }
+
+.kb-map-warn { margin: 0 0 10px; color: var(--danger); font-size: 0.84rem; }
+
+.kb-map-clusters { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+
+.kb-map-cluster { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px var(--space-3); }
+
+.kb-map-cluster-head { display: flex; align-items: baseline; gap: var(--space-2); border-bottom: 1px solid var(--border); padding-bottom: var(--space-1); margin-bottom: 6px; }
+
+.kb-map-cluster-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.kb-map-cluster-count { margin-left: auto; color: var(--text-faint); font-size: 0.78rem; }
+
+.kb-map-pages { margin: 0; padding: 0; list-style: none; }
+
+/* ⭐ 2026-10-08（owner：「知识地图看板卡片名称不回绕」✓）：卡片里的名字**只占一行**，超长就截断 ✓。
+   为什么必须有：卡片宽被 `.kb-map-clusters` 的 `minmax(220px,1fr)` 定死（约 220–280px），
+   而页面标题可以很长 ⇒ 折行会把卡片顶高、名字被断成两截（"知识地/图"那种），一屏能看的条数也变少 ✗。
+   ⚠️ `display:block` 是 `text-overflow` 生效的前提（按钮默认 inline-block）；完整名字走 `title` 悬浮提示 ✓
+   （组件那一侧配着写了 —— 截断而不给全名，等于把信息真的删掉 ✗）。
+   判据：`scripts/check-panel-layout.mjs`（真 Chromium ＋ 真 App.css 量"几行 ＋ 裁没裁" ✓）。 */
+.kb-map-page { display: block; width: 100%; padding: 2px var(--space-1); border: 0; border-radius: var(--radius-xs); background: none; color: inherit; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.kb-map-page:hover { background: var(--hover); }
+}

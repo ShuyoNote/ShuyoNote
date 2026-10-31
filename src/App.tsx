@@ -142,6 +142,9 @@ import "./styles/file-manager.css";
 import "./styles/sync.css";
 // S4-7（2026-11-01）：AI 面板/设置域（`.ai-*`）。响应式覆盖一并抽走。
 import "./styles/ai.css";
+// S4-8（2026-11-01）：两个小域 —— 知识地图（`.kb-map*`）与顶部工具（`.top-tools*`）。
+import "./styles/kb-map.css";
+import "./styles/top-tools.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
