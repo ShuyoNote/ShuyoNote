@@ -36,12 +36,21 @@
 * 实际端口写在 `<应用数据>\mcp\port` ✓；
 * **关掉 ⇒ 每个请求立刻被拒** ✓，**重新打开会换一枚新令牌**（旧令牌作废 ✓）。
 
-桥本身有两个来源，面板会**自动填好**它找到的那一个：
-* **安装包自带**：`<安装目录>/mcp/index.mjs`，且 `paths.mjs` **必须跟着一起发**（桥 `import` 它；三份平台包配置都随包发这两个文件 ✓ —— 2026-10-19：1.92.20 只发了 `index.mjs`，导致装完必 `ERR_MODULE_NOT_FOUND`，`scripts/check-mcp-bundle-resources.mjs` 现在盯着这件事）；
-* **源码仓库**：`<仓库根>/tools/shuyonote-mcp/index.mjs`（`pnpm tauri dev` 时 ✓）。
+桥本身有**三种来源**，面板会**自动填好**它找到的那一个（**优先级从上到下**）：
 
-⚠️ 两种都要求本机有 **Node.js**（桥是一个零依赖的 `node:fs` 脚本，不要求 `npm install`，
-但要能跑 `node`）。
+1. **随包 Rust 桥（默认，2026-10-31 起）**：`<安装目录>/mcp/shuyonote-mcp[.exe]`（三个平台的
+   `tauri.*.conf.json` 的 `bundle.resources` 各自把它收进包）；开发期则是
+   `<仓库根>/tools/shuyonote-mcp-rust/dist/shuyonote-mcp[.exe]`。
+   ⇒ **不需要 Node、不需要联网、不需要 env**（自己找 `{port,token}`）。详见
+   [`../shuyonote-mcp-rust/README.md`](../shuyonote-mcp-rust/README.md)；
+2. **随包 Node 桥（旧安装包的兜底）**：`<安装目录>/mcp/index.mjs`，且 `paths.mjs` **必须跟着一起发**
+   （桥 `import` 它；三份平台包配置都随包发这两个文件 ✓ —— 2026-10-19：1.92.20 只发了 `index.mjs`，
+   导致装完必 `ERR_MODULE_NOT_FOUND`，`scripts/check-mcp-bundle-resources.mjs` 现在盯着这件事）；
+3. **源码仓库**：`<仓库根>/tools/shuyonote-mcp-rust/dist/...`（Rust，优先）或
+   `<仓库根>/tools/shuyonote-mcp/index.mjs`（Node 桥；`pnpm tauri dev` 时 ✓）。
+
+⚠️ **只有 Node 桥那两种要求本机有 Node.js**（它是一个零依赖的 `node:fs` 脚本，不要求 `npm install`，
+但要能跑 `node`）。**随包 Rust 桥不需要 Node** —— 它就是一个独立可执行文件。
 
 开发／判据场景也可以用环境变量（与面板是**同一条**路 ✓，两者任一为真即为开）：
 
@@ -53,7 +62,13 @@ $env:SHUYONOTE_MCP_PORT_FILE  = "C:\path\to\port"
 
 ## 接到你的 AI 客户端
 
-把下面这段放进客户端的 MCP 配置（**路径换成你机器上的**；两个环境变量就是上面那两个文件 ✓）：
+**首选：从 App 的「外部 AI 接入」点「复制配置」** —— 面板会把**你那台机器上的真实路径**填好，
+令牌**不进片段**，默认「随包」形态就是一行 `command`（没有 env / args）。
+面向用户的完整步骤（含 WorkBuddy / Claude Desktop / Cursor / Claude Code / Windsurf / VS Code
+的落点，以及「随包 vs npx」两形态对照）见 [`docs/mcp-external-ai.md`](../../docs/mcp-external-ai.md) §3。
+
+下面这段是 **Node 桥**的手工形态（旧写法；今天只在这类场景才需要：你直接在仓库里跑 Node 桥，
+或想显式指定两个文件的路径）：
 
 ```json
 {
@@ -70,7 +85,8 @@ $env:SHUYONOTE_MCP_PORT_FILE  = "C:\path\to\port"
 }
 ```
 
-（App 的「外部 AI 接入」那一节里同样有一段现成的、路径已填好的配置可以直接复制 ✓。）
+⚠️ **应用必须开着**（通道只在应用监听时可用；关掉开关/退出应用 ⇒ 桥报「通道未开：读不到端口文件」，
+⛔ 不猜不假装连上）；**端口别写死**（桥每次调用都重读 `port` 文件）。
 
 ## 不填路径也能连（2026-10-18 起）
 

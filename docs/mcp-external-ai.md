@@ -13,7 +13,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 2. **只绑回环** `127.0.0.1`：同网段的设备连不上，出不了本机；
 3. **每次会话一个令牌**：令牌从本地文件读，切换档位就换新令牌、旧令牌立刻失效。
 
-## 2. 五个权限档位
+## 2. 六个权限档位
 
 设置 →「外部 AI 接入（MCP）」→「外部 AI 权限」：
 
@@ -24,8 +24,12 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | 只读（全部空间） | `read_all` | 同上，跨所有空间（加密空间锁着时读不到内容） | 需要跨空间检索时开 |
 | 可写（每次确认） | `write_confirm` | 写工具**都先产草稿、等你确认**（含节点整理/回收站恢复/版本回退/标签与属性）；整页替换永远要确认 | **要写就用这个（推荐）** |
 | 可写（免确认） | `write_auto` | 所有写操作**直接落库、不询问**；每次写仍留一行审计 | ⚠️ 只在刚备份过、且信任该 AI 时短开 |
+| 可写（全部空间） | `write_all` | 上面两档的**全集**：可读写**所有空间**（`write:pages` ＋ `write:all-spaces`，并同时具备 `read:all-spaces`）；写是**免确认**（每次写仍留一行审计）；跨空间写要用它 —— 默认关，只有你显式选这一档才授出 | ⚠️ 最宽的一档：只在"确实要让 AI 改别的空间"时短开，用完切回 |
 
-⚠️ **切档会换新令牌** ⇒ 切完必须**重启外部 MCP 客户端**（它在启动时才读令牌文件）。
+⚠️ **切档会换新令牌**（旧令牌立刻失效），但**不用重启外部 MCP 客户端** —— 桥**每次调用**
+都重新读 `port`/`token` 两个文件（`tools/shuyonote-mcp-rust/src/main.rs` 的 `read_endpoint` ＋ `call_app`），
+所以换档/换令牌/端口变化都会被下一次调用自动接上。
+**唯一需要重启客户端的情形是"新增了一个 server"**：客户端只在启动（或它自己的重连）时才读 `mcpServers` 配置。
 
 ## 3. 配置步骤
 
@@ -34,30 +38,37 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 2. 选一个档位（先 `只读` 验证连通，再考虑 `可写（每次确认）`）；
 3. 点「刷新」，状态应显示 **`已打开 · 正在听 127.0.0.1:<端口>`**。
 
-### 3.2 外部客户端这边（以通用 `mcpServers` 配置为例）
-```json
-{
-  "mcpServers": {
-    "shuyonote": {
-      "command": "node",
-      "args": ["<仓库路径>\\tools\\shuyonote-mcp\\index.mjs"],
-      "env": {
-        "SHUYONOTE_MCP_TOKEN_FILE": "%APPDATA%\\cn.shuyo.shuyonote\\mcp\\token",
-        "SHUYONOTE_MCP_PORT_FILE": "%APPDATA%\\cn.shuyo.shuyonote\\mcp\\port"
-      }
-    }
-  }
-}
-```
+### 3.2 外部客户端这边
+
+**首选：直接从应用面板复制**（**推荐**）—— 面板会把你那台机器上的**真实路径**填好，
+令牌**不进片段**，也不用你手写 env：
+
+1. 设置 →「外部 AI 接入（MCP）」→ 权限档位选好 → 点**「复制配置」**；
+2. 把复制到的 JSON 粘进客户端的 `mcpServers`（WorkBuddy 是 `~/.workbuddy/mcp.json`；
+   Claude Desktop / Cursor / Claude Code / Windsurf / VS Code 的落点在面板里逐条列着，
+   ⚠️ **VS Code 的键名是 `servers` 不是 `mcpServers`**，DeepSeek Harness 则是 `cordis.patch.yml` 的 `insert` 一节（YAML））；
+3. 客户端是图形应用时**重启它一次**（新增 server 要它重读配置）；之后换档/换令牌**不用再重启**。
+
+面板给的是下面两种形态之一（**默认「随包」**，可切「npx」）：
+
+| 形态 | 片段长什么样 | 要 Node 吗 | 要联网吗 | 什么时候用 |
+|---|---|---|---|---|
+| **随包（默认）** | `{"mcpServers":{"shuyonote":{"command":"<面板已填好的随包桥路径>"}}}` —— **只有 `command`**，没有 env/args/token | **不要** | **不要** | 装完即用；Rust 桥随安装包发（三个平台各自进了 `bundle.resources`） |
+| **npx** | `{"mcpServers":{"shuyonote":{"command":"npx","args":["-y","-p","https://shuyo.cn/mcp/shuyonote-mcp-0.1.0.tgz","shuyonote-mcp"]}}}` | 要 **Node ≥ 20** | 要（首次拉 tgz） | 机器上本来就有 Node、想要"零路径"的人 |
 
 要点：
-- **`token` / `port` 两个文件由应用自己写**：不要手改、不要复制给别人；
-- **端口随会话会变** ⇒ 配置里写的是**文件路径**，别把端口写死；
-- 客户端若是图形应用，改完配置需要**重启**（或让它重连 MCP 服务）。
+
+- **`token` / `port` 两个文件由应用自己写**，**不进配置片段**：面板里令牌默认打码；不要手改、不要复制给别人；
+- **端口随会话会变** ⇒ 配置里**别把端口写死**（桥每次调用都重读 `port` 文件）；
+- **应用必须开着**（通道只在应用监听时可用；关掉「外部 AI 接入」或退出应用 ⇒ 桥报「通道未开：读不到端口文件」，⛔ 不猜不假装连上）；
+- ⚠️ 旧文档里那种 `command: node` ＋ 两个 `env` 的写法**只对"在源码仓库里直接跑 Node 桥"有意义**，
+  今天不再需要它（两形态都自带找路径的能力）；确需手写时形如
+  `{"command":"node","args":["<仓库>\\tools\\shuyonote-mcp\\index.mjs"],"env":{"SHUYONOTE_MCP_TOKEN_FILE":"…\\mcp\\token","SHUYONOTE_MCP_PORT_FILE":"…\\mcp\\port"}}`，
+  默认目录见 [`tools/shuyonote-mcp/README.md`](../tools/shuyonote-mcp/README.md)（Windows `%APPDATA%`／macOS `~/Library/Application Support`／Linux `~/.local/share`）。
 
 ## 4. 怎么验证通没通
 
-1. 让 AI **列工具**：应看到 **读面 34 个 / 写面 27 个，共 61 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows` / `drafts_status` / `audit_tail` / `templates_list` / `space_current` / `changes_since`；切到**可写**档后再多 **27 个写面**（共 **61 个**）：`pages_create` / `pages_update` / `pages_importMarkdown`（旧名保留） / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset` / `blocks_patch` / `blocks_insert` / `blocks_delete`；
+1. 让 AI **列工具**：应看到 **读面 34 个 / 写面 27 个，共 61 个**——`pages_list` / `pages_get` / `pages_search` / `page_current` / `pages_count` / `pages_tree` / `blocks_list` / `backlinks_list` / `files_list` / `files_search` / `files_read` / `files_stat` / `files_extract_status` / `files_list_orphan` / `files_download` / `blobs_fetch` / `export_markdown` / `export_docpackage` / `coverage_report` / `tags_list` / `properties_list` / `versions_list` / `version_get` / `trash_list` / `spaces_list` / `db_schema` / `db_rows` / `drafts_status` / `audit_tail` / `templates_list` / `space_current` / `changes_since`；切到**可写**档后再多 **27 个写面**（共 **61 个**）：`pages_create` / `pages_update` / `pages_importMarkdown`（旧名保留） / `blocks_append` / `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete` / `trash_restore` / `pages_revert` / `tags_add` / `tags_remove` / `properties_set` / `properties_unset` / `blocks_patch` / `blocks_insert` / `blocks_delete`（上面只列常用名；**完整 61 条以 `tools/list` 或面板「能力清单」为准**）；
 2. 让它读一篇：「列出运营空间最近修改的 3 篇笔记」；
 3. 能读出来说明链路通；**被拒**通常说明档位不够（见 §6）；
 4. 每次调用都会**记一行审计**（谁/何时/做了什么/成败）。
@@ -84,7 +95,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | `templates_list`（模板清单） | 只读及以上。`[{templateId,name,title?}]`；空表 ⇒ `[]`；与 `templates_apply` 配对 |
 | `space_current`（当前空间） | 只读及以上。`{spaceId,name,pageCount}`（= `spaces_list` 的 active 条）；⛔ 不切换空间 |
 | `audit_tail`（最近审计） | 只读及以上。只回**本会话**最近 N 条（默认 20/上限 100）：`{at,tool,capabilityId,ok,code}`；⛔ 不含正文、不回别的会话 |
-| `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete`（**软删**） | 可写；全部**草稿确认**。⚠️ 删**非空节点** ⇒ `bad_args` 并点名 N 个子项（⛔ 不递归删）；`nodes_move` 移到自己的后代下面 ⇒ 拒绝（环检测），返回带 `backlinks` 数；支持 `expectedRev`/`dryRun`/`clientRequestId`；`spaceId` 本版只支持当前空间 |
+| `folders_create` / `nodes_move` / `nodes_rename` / `nodes_delete`（**软删**） | 可写；全部**草稿确认**。⚠️ 删**非空节点** ⇒ `bad_args` 并点名 N 个子项（⛔ 不递归删）；`nodes_move` 移到自己的后代下面 ⇒ 拒绝（环检测），返回带 `backlinks` 数；支持 `expectedRev`/`dryRun`/`clientRequestId`；`spaceId` **支持目标空间**（v3 结构类四工具已接；需「可写（全部空间）」档，回滚开关 `SHUYONOTE_MCP_CROSS_SPACE_WRITE=0` 可一键关） |
 | `trash_restore`（从回收站恢复） | 可写；草稿确认。活着的节点 ⇒ `bad_args`（不需要恢复）；不存在 ⇒ `not_found` |
 | `pages_revert`（回退到历史版本） | 可写；草稿确认。**只能回退到仍在版本历史里的版本**（超出保留期/已清理 ⇒ `not_found`）；⛔ 不删原写审计 |
 | `tags_add` / `tags_remove` / `properties_set` / `properties_unset` | 可写；草稿确认。目标页不存在 ⇒ `not_found`；标签/属性不存在 ⇒ `not_found`；数字属性给非数字 ⇒ `bad_args` |
@@ -97,14 +108,21 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | `pages_create`、`blocks_append`、`pages_importMarkdown` | `可写（每次确认）`及以上 |
 | `pages_update`（整页替换） | `可写（每次确认）`：会先弹确认 |
 
+### 5.1 两处「如实失败」的读取口径（别当成空数据）
+
+| 情形 | 现在的行为 |
+|---|---|
+| `pages_get` 的页不存在（或目标页不在**当前空间/给定 `spaceId`** 的空间里） | 回**结构化 `not_found`**（点名页 id 与空间），**不再返回 `null`** —— 所以"页不存在"和"页是空的"从此可分辨 |
+| `pages_search` 的命中数超过 `limit` | 信封里带 **`truncated: true`**（与 `changes_since` 同一口径）⇒ `matched` 是**本次返回条数**，不是命中总数；`truncated` 为 true 时请放宽 `limit` 或换更短的词 |
+
 ## 6. 常见问题
 
 | 现象 | 原因 / 处理 |
 |---|---|
 | 列出 **0 个工具** | 通道没开（档位＝不接）、或客户端读不到 `token`/`port` 文件、或改完配置没重启客户端 |
 | `连不上 App 的通道（127.0.0.1:xxxx）：fetch failed` | 应用已退出/通道关闭；重新打开「外部 AI 接入」并点刷新（端口可能已变） |
-| `permission_denied` | 档位不够（例如只读档调用写工具）；升级档位后**重启客户端**（令牌已换） |
-| 刚切档后旧客户端报 401/未授权 | 正常：切档会换令牌，旧令牌立即失效 ⇒ 重启客户端 |
+| `permission_denied` | 档位不够（例如只读档调用写工具）；**升级档位即可，不用重启客户端**（桥每次调用重读令牌，见 §2） |
+| 刚切档后旧客户端报 401/未授权 | 正常：切档会换令牌，旧令牌立即失效；**下一次调用会自动用新令牌**（不用重启）。若客户端只是在启动时读了一次配置，可让它重连一次 |
 | 读不到某个空间的内容 | 空间被加密且当前会话未解锁；或用了「只读（当前空间）」但目标是别的空间 |
 | 端口和我记的不一样 | 端口每次会话可能不同；**永远从 `port` 文件读**，别写死 |
 | 写入没经过我确认 | 档位是「可写（免确认）」（`write_auto`）：直接落库、只留审计。要确认就切「可写（每次确认）」 |
@@ -121,8 +139,11 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - **数据边界**：笔记本体仍在你的本机，ShuyoNote **不上传**；但**外部 AI 读到什么由它决定**——云端模型收到内容后，这部分内容就离开了本机；
 - **免确认档的风险**：AI 的写操作不询问直接落库；可撤销的手段是**历史版本/回收站/审计**（写坏了先看历史，不要靠"再让 AI 改回来"）；
 - **导出/下载走句柄**：这类工具**只回句柄、不回字节**（句柄 128bit 随机、单次、120 秒、绑当前会话）；`blobs_fetch` 把句柄换成文件，**只落进应用数据目录下的 `exports/`**（文件名已清洗，**不接受任意目标路径**），落盘前复核 sha256。⛔ 别把 `exports/` 当成"给 AI 的任意写盘口子"；
-- **三条「前端桥」能力**（`export_markdown` / `export_docpackage` / `coverage_report`）：它们**唯一实现在前端**（Markdown/`.shuyodoc` 渲染、抽取器注册表），Rust 只负责**把请求转给应用窗口、等它算完**（默认 **5 秒**超时，**不重试、不缓存**）。⇒ **应用没开**或窗口忙时会回 `frontend_unavailable`（没挂载，立刻返回）/ `frontend_timeout`（挂着但这次没回）——这是**如实失败**，不是"空成功"；等窗口可用后重试即可。⛔ 桥不会执行任意前端代码（方法白名单固定三条）；
-- **写一致性与幂等**：所有写工具都是**草稿确认**（不经你确认不落库）；支持 `expectedRev`（`updated_at:sha8`，与 `pages.get` 的 `rev` 同一形态）——不一致 ⇒ `rev_conflict`（带当前 rev，⛔ 不覆盖）；`dryRun:true` 只回"会做什么"（不产草稿、不记审计）；`clientRequestId` 同 id 重复调用只落一次、只审一条（进程内 10 分钟）；写 `spaceId` 本版**只支持当前空间**（别的空间 ⇒ `permission_denied`，需 `write:all-spaces` 档，默认关）；
+- **三条「前端桥」能力**（`export_markdown` / `export_docpackage` / `coverage_report`）：它们**唯一实现在前端**（Markdown/`.shuyodoc` 渲染、抽取器注册表），Rust 只负责**把请求转给应用窗口、等它算完**（默认 **5 秒**超时，**不重试、不缓存**）。失败**分型**且**都带原因**：`frontend_unavailable`（应用没开/窗口没挂载 ⇒ **立刻**返回，⛔ 不空等 5 秒）/ `frontend_timeout`（窗口在、已就绪，但 5 秒内没回）。**把事件送出去这一步也不吞错** —— 送不出去按 `frontend_unavailable` 如实报，不会伪装成超时。这是**如实失败**，不是"空成功"；等窗口可用后重试即可。⛔ 桥不会执行任意前端代码（方法白名单固定三条）；
+- **AI 不可见空间**（设置 →「外部 AI 接入」里的多选清单）：勾上的空间对**外部 AI 面**整体遮蔽 —— 读、写、跨空间一律 `permission_denied` 并点名「AI 不可见」；`spaces_list` 会过滤掉它们，**当前空间被勾上时连不带 `spaceId` 的调用也拒绝**。清单存本机 `meta.db`（**不随设备同步，换机要重配**）；**清空即恢复**。⚠️ **它是 AI 面的遮罩，不是权限、不是加密** —— 用户自己在界面里读写不受影响，加密空间仍按加密规则（锁着就看不到）。所以"`read:all-spaces` 能读你所有空间"这句要加限定：**被遮罩的空间读不到**；
+- **审计的保留口径**：每次调用记一行（谁/何时/哪个能力/成败/错误码，⛔ 不含正文）。`audit_tail` 读的是**进程内最近 500 条**的环（超了丢最老的），同时逐行追加到应用数据目录的 `plugin-audit.jsonl`（**重启不丢**）。⇒ 说"每一次都能查到"要加限定：**跨过 500 条的旧记录只能在 jsonl 里翻**，不是无限期在线可查；`dryRun` 不写审计；
+- **写一致性与幂等**：所有写工具都是**草稿确认**（不经你确认不落库）；支持 `expectedRev`（`updated_at:sha8`，与 `pages.get` 的 `rev` 同一形态）——不一致 ⇒ `rev_conflict`（带当前 rev，⛔ 不覆盖）；`dryRun:true` 只回"会做什么"（不产草稿、不记审计）；`clientRequestId` 同 id 重复调用只落一次、只审一条（进程内 10 分钟）；
+- **跨空间写（v3 白名单 22 条写面）**：带 `spaceId` 时**写到目标空间**（不是"搬到目标空间"）—— 附件类（`files.move/rename/delete/detach/upload_to_page`）、结构类（`nodes.move/rename/delete`、`folders.create`）、标签/属性类（`tags.add/remove`、`properties.set/unset`）、db 行/回收站/回退类（`db.rows_write/delete`、`trash.restore`、`pages.revert`）以及 `pages.create`/`pages.update`/`blocks.append/patch/delete` 均已接。需要「可写（全部空间）」档；目标空间**锁着/打不开** ⇒ `permission_denied`（含 locked）；`pageId`/`parentId`/`toPageId` 等**必须属于目标空间**（否则 `not_found`/`bad_args`，⛔ 不回落当前空间）；目标空间的 `changes`＋审计（带 `spaceId`）照写；回滚开关 `SHUYONOTE_MCP_CROSS_SPACE_WRITE=0`；**未接的写工具**带 `spaceId` 仍 `bad_args: … 暂不支持跨空间`；
 - **块级写的边界**：`blocks_*` 只动**顶层块**（不做整篇锚点对齐、不做嵌套块编辑）；`applied` 在调用时**永远是 false** —— 写能力都是草稿确认，用户确认后才落库；`rev_conflict` 里的 markdown 由应用窗口算（窗口没开时退回正文带锚点，如实说明）；
 - **附件与模板写的边界**：`files_delete` 不做静默删除（正文仍引用 ⇒ 拒绝并点名）；`files_upload_to_page` / `import_docpackage` **已实现**（受控入口：⛔ Agent 不接受任意路径，确认草稿后由**用户亲自在系统文件选择框选文件**）；`db_rows_write/delete` **已实现**（2026-10-30 跨空间批：目标空间校验 ＋ 草稿确认）；
 - **上传/导入走系统文件选择框**：`files_upload_to_page` / `import_docpackage` **不接受 Agent 传的任何路径**，确认草稿后由**用户亲自选文件**；用户取消 ⇒ `cancelled`（不静默成功/失败）；>10MB 上传 ⇒ `needs_confirm`。
@@ -135,13 +156,17 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - **让 AI 改笔记**：`可写（每次确认）`；
 - **免确认**：仅"刚备份 + 本机可信 Agent + 用完就切回"。
 
-## 9. 后续路线（会改变本指南的地方）
+## 9. 还没接的（会改变本指南的地方）
 
-- **块级写面（P2）**：新增 `blocks_patch/insert/delete`，带 `expectedRev` 冲突校验与 `dryRun` —— 粒度从"整页替换"降到"按块改"；
-- **只读扩容（B1）**：大纲/历史版本/增量变更（`changes_since`）/附件 stat 等（**数据库结构/行已在 B1b 落地**）；
-- 清单与档位判据：[能力暴露矩阵](plans/2026-10-29-agent-capability-exposure-matrix.md)；块级写方案：[P2 方案](plans/2026-10-29-agent-block-write-p2.md)。
+> 下面只列**今天确实还没接**的；已落地的不再留在这里（块级写面 P2、只读扩容 B1a–B1c 都已进面，见 §5）。
+
+- **整空间导出跨空间**：`export_space_markdown` / `export_markdown` 的 `spaceId` 形态**只支持当前空间**（别的空间 ⇒ `bad_args` 点名）；单页导出（`export_page_markdown` / `export_docpackage`）已支持目标空间；
+- **企业版 Agent 写面**：团队/租户空间暂不在本指南范围（见 §7 末条）；
+- 清单与档位判据：[能力暴露矩阵](plans/2026-10-29-agent-capability-exposure-matrix.md)；块级写方案：[P2 方案](plans/2026-10-29-agent-block-write-p2.md)（**已落地**，留作设计出处）。
 
 ## 10. 版本
+
+- 2026-10-31：**按实测反馈对账（WorkBuddy 会话记录指出 8 处过期/缺失）**：① 权限档位 **五个 → 六个**（补「可写（全部空间）」＝免确认 ＋ 每次写留审计）；② **切档/换令牌不用重启客户端**（Rust 桥每次调用重读 `port`/`token`；只有新增 server 首次要重启客户端）；③ §3.2 改为「**面板复制**」为首路径，并列 **随包（零 Node/零 env）** 与 **npx（Node ≥20 ＋联网）** 两形态，并写明**应用必须开着**；④ 跨空间写白名单 **22 条写面**（v3-A1–A4，含结构/标签属性/db 行/回收站/回退/附件）；⑤ `pages_get` 对不存在页/跨空间失配 ⇒ **结构化 `not_found`**（不再返回 `null`）；⑥ `pages_search` 信封补 **`truncated`**（命中被 `limit` 截断时为 true）；⑦ 前端桥失败**分型**：`frontend_unavailable`（带原因、立刻返回）/ `frontend_timeout`，**事件出口不再吞错**；⑧ §7 补「**AI 不可见空间**」与「审计＝进程内 500 条环 ＋ 落盘 `plugin-audit.jsonl`」两句，§9 改为只列仍未接的项。
 
 - 2026-10-30：**export 跨空间 v1 —— 单页导出支持**（`apiVersion` 1.23.0）：`export_page_markdown`/`export_docpackage` 可带 `spaceId` 导出目标空间单页（需 `read:all-spaces`；只读（全部空间）档可用）；前端桥通过 `getPage/listPageAttachments/readAttachmentBytes` 的 `spaceId` 读目标空间；句柄仍单次/TTL 120s/绑会话、落盘走 `blobs_fetch` 固定 exports 目录。⚠️ **整空间导出仅支持当前空间**（跨空间 v1 未接，`bad_args` 点名）；加密空间锁着 ⇒ 明确失败。
 
