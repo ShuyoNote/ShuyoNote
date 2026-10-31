@@ -1648,8 +1648,22 @@ trailer
   const mixed = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"good","version":1}]},{"foo":"bar"}],"type":"root","version":1}}';
   const onlyBadText = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"text":"hi","version":1}]}],"type":"root","version":1}}';
   const genericChild = '{"root":{"children":[{"foo":"bar"}],"type":"root","version":1}}';
-  assert("lexicalValid accepts valid doc", aiMod.lexicalStateValid(valid) === valid);
-  assert("lexicalValid accepts data-only items (imagerow)", aiMod.lexicalStateValid(imagerow) === imagerow);
+  // ⭐ 2026-10-31：根节点现在会补 direction/format/indent（防 MCP 写出的旧根让正文左边距归零），
+  // 所以不再逐字相等；改成"内容原样 + 根默认值补齐"。
+  const validOut = JSON.parse(aiMod.lexicalStateValid(valid)).root;
+  assert(
+    "lexicalValid accepts valid doc",
+    validOut.children?.[0]?.type === "paragraph" &&
+      validOut.children?.[0]?.children?.[0]?.text === "hi" &&
+      validOut.direction === "ltr" && validOut.format === "" && validOut.indent === 0,
+  );
+  const imgOut = JSON.parse(aiMod.lexicalStateValid(imagerow)).root;
+  assert(
+    "lexicalValid accepts data-only items (imagerow)",
+    imgOut.children?.[0]?.type === "imagerow" &&
+      imgOut.children?.[0]?.items?.[0]?.src === "a" &&
+      imgOut.direction === "ltr" && imgOut.format === "" && imgOut.indent === 0,
+  );
   // A serialized 分栏 block (columns -> column -> paragraph -> text) must be accepted
   // by the editor's known-type set, so existing columns docs round-trip (Tier-1).
   const columnsDoc = '{"root":{"children":[{"type":"columns","count":2,"version":1,"children":[{"type":"column","version":1,"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"左","version":1}]}]},{"type":"column","version":1,"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"右","version":1}]}]}]}],"type":"root","version":1}}';

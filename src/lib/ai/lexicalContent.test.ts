@@ -58,3 +58,22 @@ describe("`contentTextOf`：与唯一实现逐字相同（它就是一层薄委�
     expect(out).not.toBe("hi a b");
   });
 });
+
+describe("★ 2026-10-31：AI/MCP 写出的根必须带 direction/format/indent", () => {
+  // 根缺 `indent` ⇒ Lexical 往 `.editor-content` 写 `calc(undefined * …)` 的
+  // padding-inline-start ⇒ 正文左边距归零（owner 截图；详因见 src/lib/lexicalRoot.ts）。
+  it("pageJsonFromText（有正文）", () => {
+    const root = JSON.parse(pageJsonFromText("hello", makeId()).content_json).root;
+    expect(root).toMatchObject({ type: "root", direction: "ltr", format: "", indent: 0 });
+  });
+
+  it("pageJsonFromText（空正文）", () => {
+    const root = JSON.parse(pageJsonFromText("", makeId()).content_json).root;
+    expect(root).toMatchObject({ type: "root", direction: "ltr", format: "", indent: 0 });
+  });
+
+  it("appendBlocksToJson（从空 root 起）", () => {
+    const root = JSON.parse(appendBlocksToJson("", "x", makeId())).root;
+    expect(root).toMatchObject({ type: "root", direction: "ltr", format: "", indent: 0 });
+  });
+});

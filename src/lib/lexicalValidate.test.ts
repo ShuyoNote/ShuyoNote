@@ -89,3 +89,17 @@ describe("lexicalStateValid", () => {
     expect(slots.bad).toBeUndefined();
   });
 });
+
+describe("★ 2026-10-31：根节点排版默认值（MCP 写出的旧根缺 indent 会让正文左边距归零）", () => {
+  it("缺 direction/format/indent ⇒ 校验层补齐", () => {
+    const input = JSON.stringify({ root: { children: [{ type: "paragraph", version: 1, children: [{ type: "text", text: "x", version: 1 }] }], type: "root", version: 1 } });
+    const root = parsed(lexicalStateValid(input))?.root as Record<string, unknown>;
+    expect(root).toMatchObject({ direction: "ltr", format: "", indent: 0, type: "root" });
+  });
+
+  it("已有值不覆盖", () => {
+    const input = JSON.stringify({ root: { children: [{ type: "paragraph", version: 1, children: [{ type: "text", text: "x", version: 1 }] }], type: "root", version: 1, direction: "rtl", format: "x", indent: 2 } });
+    const root = parsed(lexicalStateValid(input))?.root as Record<string, unknown>;
+    expect(root).toMatchObject({ direction: "rtl", format: "x", indent: 2 });
+  });
+});

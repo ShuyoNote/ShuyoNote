@@ -37,7 +37,7 @@ function paraNode(text: string, blockId: string): LexicalBlock {
   };
 }
 
-function safeRoot(contentJson: string): { root: { children: unknown[]; type: string; version: number } } {
+function safeRoot(contentJson: string): { root: { children: unknown[]; type: string; version: number; direction: string; format: string; indent: number } } {
   try {
     const v = JSON.parse(contentJson || "{}");
     const root = (v?.root && Array.isArray(v.root.children) ? v.root : { children: [] }) as {
@@ -47,9 +47,21 @@ function safeRoot(contentJson: string): { root: { children: unknown[]; type: str
     // Lexical requires the root node to carry `type: "root"` (and a version) or it
     // throws `type "undefined" + not found`. Normalize so all AI-generated docs are
     // parseable even when the source omitted it.
-    return { root: { ...root, type: "root", version: typeof root.version === "number" ? root.version : 1 } };
+    // ⚠️ 2026-10-31（owner 截图）：根还必须带 `direction/format/indent` —— 缺 `indent`
+    // 时 Lexical 会往 `.editor-content` 写 `padding-inline-start: calc(undefined * …)`
+    // ⇒ 正文左边距归零（标题不受影响）。判据与修复见 `src/lib/lexicalRoot.ts`。
+    return {
+      root: {
+        ...root,
+        type: "root",
+        version: typeof root.version === "number" ? root.version : 1,
+        direction: typeof (root as { direction?: unknown }).direction === "string" ? String((root as { direction?: unknown }).direction) : "ltr",
+        format: typeof (root as { format?: unknown }).format === "string" ? String((root as { format?: unknown }).format) : "",
+        indent: typeof (root as { indent?: unknown }).indent === "number" ? Number((root as { indent?: unknown }).indent) : 0,
+      },
+    };
   } catch {
-    return { root: { children: [], type: "root", version: 1 } };
+    return { root: { children: [], type: "root", version: 1, direction: "ltr", format: "", indent: 0 } };
   }
 }
 
@@ -117,6 +129,6 @@ export function pageJsonFromText(
   const lines = docLines(content);
   const content_json = lines.length
     ? appendBlocksToJson("", content, makeId)
-    : '{"root":{"children":[],"type":"root","version":1}}';
+    : '{"root":{"children":[],"type":"root","version":1,"direction":"ltr","format":"","indent":0}}';
   return { content_json, content_text: lines.join("\n\n") };
 }

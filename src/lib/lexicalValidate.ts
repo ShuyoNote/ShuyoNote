@@ -80,6 +80,12 @@ export function lexicalStateValid(contentJson: string, allowedTypes?: ReadonlySe
     const rootRec = root as Record<string, unknown>;
     rootRec.type = "root";
     if (typeof rootRec.version !== "number") rootRec.version = 1;
+    // ⭐ 2026-10-31（owner 截图）：根节点缺排版默认值（MCP `update_page` 曾写出这种根）时，
+    // Lexical 会往编辑正文的根 DOM 写 `padding-inline-start: calc(undefined * …)` ⇒
+    // 正文左边距归零、标题不受影响。读侧在唯一校验层补齐（写侧见 `ai/lexical.ts::safeRoot`）。
+    if (typeof rootRec.direction !== "string" || !rootRec.direction) rootRec.direction = "ltr";
+    if (typeof rootRec.format !== "string") rootRec.format = "";
+    if (typeof rootRec.indent !== "number") rootRec.indent = 0;
     const children = sanitizeChildren(rootRec.children, allowedTypes);
     rootRec.children = children;
     if (children.length === 0) return EMPTY;
