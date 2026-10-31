@@ -9,7 +9,8 @@
       "vendor/pdfium/linux-x64/lib/libpdfium.so": "libpdfium.so",
       "assets/fonts/*": "./",
       "../tools/shuyonote-mcp/index.mjs": "mcp/index.mjs",
-      "../tools/shuyonote-mcp/paths.mjs": "mcp/paths.mjs"
+      "../tools/shuyonote-mcp/paths.mjs": "mcp/paths.mjs",
+      "../tools/shuyonote-mcp-rust/dist/shuyonote-mcp": "mcp/shuyonote-mcp"
     }
   }
 }

@@ -428,27 +428,33 @@ describe("跨空间支持矩阵改版（2026-10-31）", () => {
     // 判据不能依赖运行时状态 ⇒ 认 title 这句）
     const detectTitle = block!.querySelector('[data-testid="mcp-detect"]')?.getAttribute("title") ?? "";
     expect(detectTitle, "如实说明不统计连接数").toContain("不统计连接数");
-    // ⭐ C1（2026-10-31，owner 选）：默认片段是**标准 npx**（5 行常量、无本机路径）；
-    //    可切「离线」拿随包桥（node + 绝对路径 + port/token 两个 env）。判据把两种形态都钉住。
-    const snippet = document.querySelector('[data-testid="mcp-snippet"]')?.textContent ?? "";
-    const std = JSON.parse(snippet).mcpServers.shuyonote;
-    expect(std.command, "默认必须是 npx（标准形态）").toBe("npx");
-    expect(std.args.join(" "), "标准形态拉的是 tarball").toContain("https://shuyo.cn/mcp/shuyonote-mcp-0.1.0.tgz");
-    expect(JSON.stringify(std), "标准形态不许出现本机盘符路径").not.toContain("C:\\\\");
-    expect(std.env, "标准形态不需要 env").toBeUndefined();
-    const bundledBtn = document.querySelector<HTMLElement>('[data-testid="snippet-mode-bundled"]');
-    expect(bundledBtn, "要有「离线」切换按钮").toBeTruthy();
-    flushSync(() => bundledBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    // ⭐ 2026-10-31（owner 选 B）：默认片段是**随包**（command = 安装包里的 Rust 桥，零依赖零网络）；
+    //    可切「npx」拿 5 行常量（需 Node 20+ 且联网）。判据把两种形态都钉住。
+    const BRIDGE = "C:\\Program Files\\ShuyoNote\\mcp\\shuyonote-mcp.exe";
+    mocks.mcpStatus.mockResolvedValue({ ...STATUS_WRITE_ALL, bridge_path: BRIDGE });
+    mount();
     await tick();
-    const off = JSON.parse(document.querySelector('[data-testid="mcp-snippet"]')?.textContent ?? "").mcpServers.shuyonote;
-    expect(off.command, "离线形态是 node + 随包桥").toBe("node");
-    expect(off.env.SHUYONOTE_MCP_PORT_FILE, "离线形态带 port/token 路径").toBe("/data/mcp/port");
-    // 切回标准，别把状态留给下一条用例
-    flushSync(() => document.querySelector<HTMLElement>('[data-testid="snippet-mode-npx"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await tick();
+    const snippet = document.querySelector('[data-testid="mcp-snippet"]')?.textContent ?? "";
+    const def = JSON.parse(snippet).mcpServers.shuyonote;
+    expect(def.command, "默认必须是随包桥（不需要 Node）").toBe(BRIDGE);
+    expect(def.env, "随包形态不需要 env").toBeUndefined();
+    const npxBtn = document.querySelector<HTMLElement>('[data-testid="snippet-mode-npx"]');
+    expect(npxBtn, "要有「npx」切换按钮").toBeTruthy();
+    flushSync(() => npxBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await tick();
+    const npx = JSON.parse(document.querySelector('[data-testid="mcp-snippet"]')?.textContent ?? "").mcpServers.shuyonote;
+    expect(npx.command, "npx 形态是 command=npx").toBe("npx");
+    expect(npx.args.join(" "), "npx 形态拉的是 tarball").toContain("https://shuyo.cn/mcp/shuyonote-mcp-0.1.0.tgz");
+    expect(JSON.stringify(npx), "npx 形态不许出现本机盘符路径").not.toContain("C:\\\\");
+    // 切回随包，别把状态留给下一条用例
+    flushSync(() => document.querySelector<HTMLElement>('[data-testid="snippet-mode-bundled"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await tick();
   });
 
   it("⑰ 配置片段只有一份（引导块里）：复制配置写剪贴板的内容 = 现有 snippet", async () => {
+    const BRIDGE = "C:\\Program Files\\ShuyoNote\\mcp\\shuyonote-mcp.exe";
+    mocks.mcpStatus.mockResolvedValue({ ...STATUS_WRITE_ALL, bridge_path: BRIDGE });
     mount();
     await tick();
     await tick();
@@ -464,13 +470,13 @@ describe("跨空间支持矩阵改版（2026-10-31）", () => {
     await tick();
     let calls = vi.mocked(navigator.clipboard.writeText).mock.calls;
     let wrote = calls[calls.length - 1]?.[0] as string;
-    // 默认（标准 npx）：复制到的就是页面上那份，且是 npx 形态
+    // 默认（随包）：复制到的就是页面上那份
     expect(wrote, "复制的就是页面上那份 snippet").toBe(snippets[0].textContent);
     expect(wrote).toContain("mcpServers");
-    expect(JSON.parse(wrote).mcpServers.shuyonote.command).toBe("npx");
-    // 切「离线」后复制：拿到的是随包桥形态（带 port/token 路径）
+    expect(JSON.parse(wrote).mcpServers.shuyonote.command).toBe(BRIDGE);
+    // 切「npx」后复制：拿到的是 5 行常量形态
     flushSync(() =>
-      document.querySelector<HTMLElement>('[data-testid="snippet-mode-bundled"]')!.dispatchEvent(
+      document.querySelector<HTMLElement>('[data-testid="snippet-mode-npx"]')!.dispatchEvent(
         new MouseEvent("click", { bubbles: true }),
       ),
     );
@@ -479,7 +485,8 @@ describe("跨空间支持矩阵改版（2026-10-31）", () => {
     await tick();
     calls = vi.mocked(navigator.clipboard.writeText).mock.calls;
     wrote = calls[calls.length - 1]?.[0] as string;
-    expect(JSON.parse(wrote).mcpServers.shuyonote.env.SHUYONOTE_MCP_TOKEN_FILE).toBe("/data/mcp/token");
+    expect(JSON.parse(wrote).mcpServers.shuyonote.command).toBe("npx");
+    expect(JSON.parse(wrote).mcpServers.shuyonote.args.join(" ")).toContain("https://shuyo.cn/mcp/shuyonote-mcp-0.1.0.tgz");
   });
 
   it("⑱ 令牌的复制/显示/换新只在引导块出现（状态区无重复按钮）", async () => {

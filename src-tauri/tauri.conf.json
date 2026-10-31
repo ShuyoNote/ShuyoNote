@@ -4,9 +4,9 @@
   "version": "2.0.0",
   "identifier": "cn.shuyo.shuyonote",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "node scripts/build-mcp-bridge.mjs --debug && pnpm dev",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "node scripts/build-mcp-bridge.mjs && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {

@@ -143,25 +143,16 @@ describe("MCP 接入面板（P1）", () => {
     expect(text()).toContain("deadbeefdeadbeef");
   });
 
-  it("保留：配置片段用后端给的路径（离线形态）、复制配置是主按钮、换令牌仍可用", async () => {
-    mocks.mcpStatus.mockResolvedValue({ ...STATUS_ON, bridge_path: "C:\\repo\\tools\\shuyonote-mcp\\index.mjs" });
+  it("保留：默认配置片段用后端给的桥路径（随包形态）、复制配置是主按钮、换令牌仍可用", async () => {
+    mocks.mcpStatus.mockResolvedValue({ ...STATUS_ON, bridge_path: "C:\\Program Files\\ShuyoNote\\mcp\\shuyonote-mcp.exe" });
     mount();
     await tick();
     await tick();
-    // C1 之后默认是标准 npx（无路径）；这条判据守的是「离线」形态仍然用后端给的路径
-    flushSync(() =>
-      document.querySelector<HTMLElement>('[data-testid="snippet-mode-bundled"]')!.dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      ),
-    );
-    await tick();
+    // C1/B 之后默认是「随包」：command 就是安装包里的桥，**没有 env/args**
     const snippet = document.querySelector(".mcp-access-snippet")?.textContent || "";
-    expect(snippet).toContain("SHUYONOTE_MCP_TOKEN_FILE");
-    expect(snippet).toContain("SHUYONOTE_MCP_PORT_FILE");
-    expect(snippet).toContain("/data/mcp/token");
-    expect(snippet).toContain("/data/mcp/port");
     const cfg = JSON.parse(snippet);
-    expect(cfg.mcpServers.shuyonote.args[0]).toContain("index.mjs");
+    expect(cfg.mcpServers.shuyonote.command, "默认片段要用后端给的桥路径").toContain("shuyonote-mcp.exe");
+    expect(cfg.mcpServers.shuyonote.env, "随包形态不需要 env").toBeUndefined();
     const primary = document.querySelector('[data-testid="copy-config"]') as HTMLElement;
     expect(primary.className).toContain("is-primary");
     expect(primary.textContent).toContain("复制配置");

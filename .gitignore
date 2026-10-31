@@ -114,3 +114,8 @@ tools/gm-conformance/target/
 # 测试/编译临时目录（git add -A 误吞过两次：.tmp-rusttest/）
 .tmp-*/
 
+
+# MCP 桥（Rust 版）的构建产物：scripts/build-mcp-bridge.mjs 生成，打包前由 tauri.conf 的
+# beforeBuildCommand / beforeDevCommand 自动重建（独立 crate，产物不进库）
+tools/shuyonote-mcp-rust/target/
+tools/shuyonote-mcp-rust/dist/

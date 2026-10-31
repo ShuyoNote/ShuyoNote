@@ -995,6 +995,39 @@ fn resolve_bridge_from(
     start: &std::path::Path,
     resource_dir: Option<&std::path::Path>,
 ) -> Option<PathBuf> {
+    // ⭐ 2026-10-31（C1/B）：**优先用随包发的 Rust 桥 exe**（用户机器不需要 Node、不需要联网）。
+    //   顺序：① 从 exe 目录往上有**开发构建产物**（`tools/shuyonote-mcp-rust/dist/…`）
+    //         ② 打包资源目录 `<resource>/mcp/shuyonote-mcp[.exe]`
+    //         ③ 都没有才退回 Node 桥（旧包/开发期）—— 过渡期两条都在，别让面板拿到不存在的路径。
+    let bin = if cfg!(windows) {
+        "shuyonote-mcp.exe"
+    } else {
+        "shuyonote-mcp"
+    };
+    let mut cur = Some(start.to_path_buf());
+    let mut hops = 0;
+    while let Some(dir) = cur {
+        let cand = dir
+            .join("tools")
+            .join("shuyonote-mcp-rust")
+            .join("dist")
+            .join(bin);
+        if cand.is_file() {
+            return Some(cand);
+        }
+        hops += 1;
+        if hops >= 8 {
+            break;
+        }
+        cur = dir.parent().map(std::path::Path::to_path_buf);
+    }
+    if let Some(res) = resource_dir {
+        let cand = res.join("mcp").join(bin);
+        if cand.is_file() {
+            return Some(cand);
+        }
+    }
+    // ③ Node 桥兜底（过渡期：旧安装包只带了 index.mjs；开发期 `src-tauri/mcp/` 还没构建时也是如此）
     let mut cur = Some(start.to_path_buf());
     let mut hops = 0;
     while let Some(dir) = cur {
@@ -1514,6 +1547,25 @@ mod bridge_path_tests {
             "从 exe 目录往上找仓库里的桥（{exe_dir:?} → {bridge:?}）"
         );
 
+        // ⭐ 2026-10-31（C1/B）：有随包 Rust 桥 exe 时**必须优先用它**（用户机器不依赖 Node）
+        let rust_bin_name = if cfg!(windows) {
+            "shuyonote-mcp.exe"
+        } else {
+            "shuyonote-mcp"
+        };
+        let rust_bin = repo
+            .join("tools")
+            .join("shuyonote-mcp-rust")
+            .join("dist")
+            .join(rust_bin_name);
+        std::fs::create_dir_all(rust_bin.parent().expect("parent")).unwrap();
+        std::fs::write(&rust_bin, b"bin").unwrap();
+        assert_eq!(
+            resolve_bridge_from(&exe_dir, None).as_deref(),
+            Some(rust_bin.as_path()),
+            "有随包 Rust 桥时优先用它（Node 桥只做兜底）"
+        );
+
         // 干净的另一棵树：没有仓库，只有打包资源目录
         let clean = std::env::temp_dir().join(format!("shuyonote-bridge-res-{tag}"));
         let res = clean.join("resources");
@@ -1546,14 +1598,31 @@ mod bridge_path_tests {
     /// 而所有既有判据照样是绿的。这就是本仓最忌的那族：**行为悄悄变差、没有信号** ✗。
     #[test]
     fn every_platform_bundle_ships_the_bridge() {
-        for (name, text) in [
-            ("windows", include_str!("../tauri.windows.conf.json")),
-            ("linux", include_str!("../tauri.linux.conf.json")),
-            ("macos", include_str!("../tauri.macos.conf.json")),
+        for (name, text, rust_mapping) in [
+            (
+                "windows",
+                include_str!("../tauri.windows.conf.json"),
+                "\"../tools/shuyonote-mcp-rust/dist/shuyonote-mcp.exe\": \"mcp/shuyonote-mcp.exe\"",
+            ),
+            (
+                "linux",
+                include_str!("../tauri.linux.conf.json"),
+                "\"../tools/shuyonote-mcp-rust/dist/shuyonote-mcp\": \"mcp/shuyonote-mcp\"",
+            ),
+            (
+                "macos",
+                include_str!("../tauri.macos.conf.json"),
+                "\"../tools/shuyonote-mcp-rust/dist/shuyonote-mcp\": \"mcp/shuyonote-mcp\"",
+            ),
         ] {
             assert!(
                 text.contains("\"../tools/shuyonote-mcp/index.mjs\": \"mcp/index.mjs\""),
                 "{name} 的打包配置没有把桥映射到 mcp/index.mjs（安装版会拿不到 bridge_path）✗"
+            );
+            // ⭐ 2026-10-31（C1/B）：**必须**带上 Rust 桥 exe —— 否则用户机器没有 Node 就永远接不上
+            assert!(
+                text.contains(rust_mapping),
+                "{name} 的打包配置没有带上随包 Rust 桥（{rust_mapping}）✗"
             );
         }
         // 源文件真的在（`include_str!` 的映射指向它 ✓）

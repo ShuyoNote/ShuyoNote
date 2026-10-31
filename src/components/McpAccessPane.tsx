@@ -401,12 +401,12 @@ export function McpAccessPane() {
   const scopeGroups = useMemo(() => groupScopes(granted), [granted]);
   const allow = useMemo(() => allowanceOf(level, granted, token), [level, granted, token]);
 
-  // ⭐ 2026-10-31（owner 选 C1）：片段给两种形态，默认「标准（npx）」，可切「离线（随包桥）」。
-  //   · 标准：5 行常量，npx 从 shuyo.cn 拉桥（约 11 KB），**不含任何本机路径**；需要联网 + Node。
-  //   · 离线：`node <安装包里的桥>` ＋ port/token 两个 env（绝对路径），不联网，但换机器要重新复制。
-  //   为什么能省掉 env：桥（`tools/shuyonote-mcp/paths.mjs`）默认就去应用数据目录找 `mcp/{port,token}`，
-  //   与 Rust 侧 `app_data_dir` 同口径 ⇒ 标准形态不需要任何路径。
-  const [snippetMode, setSnippetMode] = useState<"npx" | "bundled">("npx");
+  // ⭐ 2026-10-31（owner 选 B）：片段两种形态，**默认「随包」**：
+  //   · 随包（零依赖）：`command` 直接指安装包里自带的 **Rust 桥 exe** —— 不需要 Node、不需要联网；
+  //     桥自己会去应用数据目录找 `mcp/{port,token}`（与 `tools/shuyonote-mcp/paths.mjs` 同口径）
+  //     ⇒ 片段里既没有 env、也没有 args，就是一行命令。
+  //   · npx（需 Node 20+）：5 行常量，从 shuyo.cn 拉 JS 桥；给"装了 Node、想要零路径"的人。
+  const [snippetMode, setSnippetMode] = useState<"bundled" | "npx">("bundled");
   const snippet = useMemo(() => {
     const bridge = st?.bridge_path ?? "";
     const server =
@@ -416,15 +416,11 @@ export function McpAccessPane() {
             args: ["-y", "-p", NPX_TARBALL, "shuyonote-mcp"],
           }
         : {
-            command: "node",
-            args: [bridge || "tools/shuyonote-mcp/index.mjs"],
-            env: {
-              SHUYONOTE_MCP_PORT_FILE: st?.port_path ?? "",
-              SHUYONOTE_MCP_TOKEN_FILE: st?.token_path ?? "",
-            },
+            // 随包桥（Rust exe）：零依赖、零网络；找不到它时给一句"未随包"的占位，不编假路径
+            command: bridge || "shuyonote-mcp（找不到随包桥：请重新安装）",
           };
     return JSON.stringify({ mcpServers: { shuyonote: server } }, null, 2);
-  }, [snippetMode, st?.bridge_path, st?.port_path, st?.token_path]);
+  }, [snippetMode, st?.bridge_path]);
 
   const scopeRows: Array<[string, string[]]> = [
     ["读", scopeGroups.read],
@@ -558,21 +554,21 @@ export function McpAccessPane() {
               <div className="mcp-snippet-mode" role="group" aria-label="片段形式">
                 <button
                   type="button"
-                  className={snippetMode === "npx" ? "is-on" : ""}
-                  data-testid="snippet-mode-npx"
-                  aria-pressed={snippetMode === "npx"}
-                  onClick={() => setSnippetMode("npx")}
-                >
-                  标准
-                </button>
-                <button
-                  type="button"
                   className={snippetMode === "bundled" ? "is-on" : ""}
                   data-testid="snippet-mode-bundled"
                   aria-pressed={snippetMode === "bundled"}
                   onClick={() => setSnippetMode("bundled")}
                 >
-                  离线
+                  随包
+                </button>
+                <button
+                  type="button"
+                  className={snippetMode === "npx" ? "is-on" : ""}
+                  data-testid="snippet-mode-npx"
+                  aria-pressed={snippetMode === "npx"}
+                  onClick={() => setSnippetMode("npx")}
+                >
+                  npx
                 </button>
               </div>
               <button
@@ -589,8 +585,8 @@ export function McpAccessPane() {
             </pre>
             <p className="mcp-snippet-hint" data-testid="mcp-snippet-hint">
               {snippetMode === "npx"
-                ? "需要联网：npx 会从 shuyo.cn 下载桥（约 11 KB）。"
-                : "不联网：用安装包里自带的桥；路径是本机的，换机器要重新复制。"}
+                ? "需要 Node 20+ 且联网（npx 从 shuyo.cn 下载 JS 桥）。"
+                : "零依赖：用安装包里自带的桥，不需要 Node、也不需要联网。"}
             </p>
             <div className="mcp-config-foot">
               <div className="mcp-token-line">

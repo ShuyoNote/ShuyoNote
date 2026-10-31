@@ -13,6 +13,11 @@ rust-version = "1.94"
 name = "shuyonote_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# MCP 桥（Rust 版）**不在这个包里**：它是独立 crate `tools/shuyonote-mcp-rust/`。
+# 原因：tauri-build 在编译期就校验 `bundle.resources` 里的路径存在，而桥产物正是编译期才生成的
+# （放这里 ⇒ `cargo build` 直接红 `resource path … doesn't exist`）。
+# 构建：`node scripts/build-mcp-bridge.mjs`，已挂到 tauri.conf 的 beforeDev/BuildCommand。
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 # `build.rs` 要把**被检查的那份 SQLCipher 源码**的 sha256 写进产物标记（见 `build.rs` 里"新鲜度"那段注释）。

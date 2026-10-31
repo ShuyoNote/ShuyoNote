@@ -226,7 +226,8 @@
        · 标准 npx（13 行）⇒ 自然展开约 250px，不留大片空白；
        · 离线（20 行）⇒ 到 360px 封顶，超出走纵向滚动；长路径仍横向滚动。 */
   height: auto;
-  min-height: 240px;
+  /* 两种形态行数差很多：随包 7 行（~140px）、npx 13 行（~250px）⇒ 下限只兜住"别贴成一条" */
+  min-height: 160px;
   max-height: 360px;
   margin: 0;
   padding: 10px 12px;

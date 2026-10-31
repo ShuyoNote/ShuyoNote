@@ -169,66 +169,53 @@ describe("McpAccessPane：外部 AI 接入的档位面", () => {
     expect(mocks.mcpRotateToken).toHaveBeenCalled();
   });
 
-  it("★ 默认片段是标准 npx（5 行常量、无本机路径）；切「离线」才出现 port/token 两个 env", async () => {
-    mount();
-    await tick();
-    await tick();
-    // 默认：标准（npx）—— 不含任何本机绝对路径，args 里是 tarball
-    const std = JSON.parse(document.querySelector(".mcp-access-snippet")?.textContent || "");
-    expect(std.mcpServers.shuyonote.command, "默认应该是 npx（C1 标准形态）").toBe("npx");
-    expect(std.mcpServers.shuyonote.args.join(" ")).toContain("https://shuyo.cn/mcp/shuyonote-mcp-0.1.0.tgz");
-    expect(JSON.stringify(std), "标准形态不许出现本机盘符路径").not.toContain("C:\\\\");
-    expect(std.mcpServers.shuyonote.env, "标准形态不需要 env（桥自己找应用数据目录）").toBeUndefined();
-    // 切到「离线」：随包桥（绝对路径 ＋ port/token）
-    const bundledBtn = document.querySelector<HTMLElement>('[data-testid="snippet-mode-bundled"]')!;
-    flushSync(() => bundledBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    await tick();
-    const off = JSON.parse(document.querySelector(".mcp-access-snippet")?.textContent || "");
-    expect(off.mcpServers.shuyonote.command, "离线形态是 node + 安装包里的桥").toBe("node");
-    expect(off.mcpServers.shuyonote.env.SHUYONOTE_MCP_TOKEN_FILE).toContain("/data/mcp/token");
-    expect(off.mcpServers.shuyonote.env.SHUYONOTE_MCP_PORT_FILE).toContain("/data/mcp/port");
-  });
-
-  it("★ 配置片段里是**后端给的**两个文件路径（令牌/端口 ✓，离线形态），复制按钮真的复制", async () => {
-    mount();
-    await tick();
-    await tick();
-    // 「离线」形态才有 port/token（标准 npx 形态不需要）
-    flushSync(() =>
-      document.querySelector<HTMLElement>('[data-testid="snippet-mode-bundled"]')!.dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      ),
-    );
-    await tick();
-    const snippet = document.querySelector(".mcp-access-snippet")?.textContent || "";
-    expect(snippet).toContain("SHUYONOTE_MCP_TOKEN_FILE");
-    expect(snippet).toContain("SHUYONOTE_MCP_PORT_FILE");
-    expect(snippet).toContain("/data/mcp/token");
-    expect(snippet).toContain("/data/mcp/port");
-    const copyBtn = Array.from(document.querySelectorAll("button")).find((b) => (b.textContent || "").includes("复制配置")) as HTMLElement;
-    flushSync(() => copyBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    await tick();
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("SHUYONOTE_MCP_TOKEN_FILE"));
-  });
-
-  it("★ owner 2026-10-18：桥路径**自动填好**（Windows 反斜杠也必须粘得进 JSON；离线形态）", async () => {
-    // 真因之一：片段原来是手写字符串拼的 ⇒ `C:\repo\...` 里的 `\r` 会被拼成回车、JSON 非法 ✗。
-    // 这里钉两件事：① 整段能被 `JSON.parse`；② `args[0]` 逐字等于后端给的绝对路径 ✓。
-    const bridge = "C:\\Users\\me\\ShuyoNote\\tools\\shuyonote-mcp\\index.mjs";
+  it("★ 默认片段是「随包」（command = 安装包里的 Rust 桥，零依赖零网络）；可切 npx（需 Node）", async () => {
+    const bridge = "C:\\Program Files\\ShuyoNote\\mcp\\shuyonote-mcp.exe";
     mocks.mcpStatus.mockResolvedValue({ ...STATUS_ON, bridge_path: bridge });
     mount();
     await tick();
     await tick();
-    flushSync(() =>
-      document.querySelector<HTMLElement>('[data-testid="snippet-mode-bundled"]')!.dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      ),
-    );
+    // 默认：随包 —— 一行命令，没有 args、没有 env（桥自己找应用数据目录）
+    const def = JSON.parse(document.querySelector(".mcp-access-snippet")?.textContent || "").mcpServers.shuyonote;
+    expect(def.command, "默认应该是随包桥（C1/B：用户机器不需要 Node）").toBe(bridge);
+    expect(def.env, "随包形态不需要 env").toBeUndefined();
+    expect(def.args, "随包形态不需要 args").toBeUndefined();
+    // 切到 npx：5 行常量，tarball，无本机路径
+    const npxBtn = document.querySelector<HTMLElement>('[data-testid="snippet-mode-npx"]')!;
+    flushSync(() => npxBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await tick();
+    const npx = JSON.parse(document.querySelector(".mcp-access-snippet")?.textContent || "").mcpServers.shuyonote;
+    expect(npx.command, "npx 形态是 command=npx").toBe("npx");
+    expect(npx.args.join(" ")).toContain("https://shuyo.cn/mcp/shuyonote-mcp-0.1.0.tgz");
+    expect(JSON.stringify(npx), "npx 形态不许出现本机盘符路径").not.toContain("C:\\\\");
+    expect(npx.env, "npx 形态也不需要 env").toBeUndefined();
+  });
+
+  it("★ 复制按钮复制的是**当前形态**（默认随包 ⇒ 剪贴板里就是桥路径那段 JSON）", async () => {
+    const bridge = "C:\\Program Files\\ShuyoNote\\mcp\\shuyonote-mcp.exe";
+    mocks.mcpStatus.mockResolvedValue({ ...STATUS_ON, bridge_path: bridge });
+    mount();
+    await tick();
+    await tick();
+    const copyBtn = Array.from(document.querySelectorAll("button")).find((b) => (b.textContent || "").includes("复制配置")) as HTMLElement;
+    flushSync(() => copyBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await tick();
+    const calls = vi.mocked(navigator.clipboard.writeText).mock.calls;
+    const wrote = calls[calls.length - 1]?.[0] as string;
+    expect(JSON.parse(wrote).mcpServers.shuyonote.command).toBe(bridge);
+  });
+
+  it("★ owner 2026-10-18：桥路径**自动填好**（Windows 反斜杠也必须粘得进 JSON；随包形态）", async () => {
+    // 真因之一：片段原来是手写字符串拼的 ⇒ `C:\repo\...` 里的 `\r` 会被拼成回车、JSON 非法 ✗。
+    // 这里钉两件事：① 整段能被 `JSON.parse`；② `command` 逐字等于后端给的绝对路径 ✓。
+    const bridge = "C:\\Users\\me\\ShuyoNote\\mcp\\shuyonote-mcp.exe";
+    mocks.mcpStatus.mockResolvedValue({ ...STATUS_ON, bridge_path: bridge });
+    mount();
+    await tick();
     await tick();
     const snippet = document.querySelector(".mcp-access-snippet")?.textContent || "";
     const cfg = JSON.parse(snippet);
-    expect(cfg.mcpServers.shuyonote.args[0]).toBe(bridge);
-    // 片段里的路径已经**逐字填好**（上面那条 JSON 断言就是"自动填好"的判据）。
+    expect(cfg.mcpServers.shuyonote.command).toBe(bridge);
     // ⛔ 2026-10-31（owner 截图）：那句「片段已按这台机器自动填好；令牌只存在本机文件里，不写进片段。」
     //   已经去掉 ⇒ 反向判据钉住"别再回来"。
     expect(document.body.textContent, "那句提示已被 owner 去掉").not.toContain("片段已按这台机器自动填好");
