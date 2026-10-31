@@ -7,7 +7,7 @@
 //
 // 口径：
 //   · 只收**数值已存在**的刻度 ⇒ 替换成 `var(--fs-N)` 不会改变任何计算值（S3 的硬要求）。
-//   · 半像素值**先不收**（owner 2026-10-31：11.5/12.5/10.5 等留到有稳定视觉基线再议）。
+//   · 半像素值按 owner 2026-10-31「2」拍板**纳入**；CSS 变量名不能带 `.` ⇒ 用 `-` 代（`11.5` → `--fs-11-5`）。
 //   · `--space-1..8` 已存在（4/8/12/16/24/32/40/64），**不是**计划草稿里的 2/4/6/8/10/12/16/24 ⇒ 不重定义（会改所有用点）；将来要动单独一批。
 //
 // 用法：node scripts/gen-css-tokens.mjs
@@ -32,15 +32,20 @@ function sortedEntries(map) {
   return Object.entries(map).sort((a, b) => Number.parseFloat(a[1]) - Number.parseFloat(b[1]));
 }
 
+/** CSS 自定义属性名不能带 `.`：`11.5` 这档生成 `--fs-11-5`（TS 侧同名）。 */
+function tokenName(key) {
+  return `--fs-${String(key).replace(/\./g, "-")}`;
+}
+
 export function renderCss(tokens = loadTokens()) {
   const lines = [];
   lines.push(`/* ${HEADER} */`);
-  lines.push(`/* 源：${SRC}（字号刻度；半像素值按 owner 拍板暂不纳入） */`);
+  lines.push(`/* 源：${SRC}（字号刻度；半像素用 - 代 . 命名，如 --fs-11-5） */`);
   lines.push("");
   lines.push("@layer legacy {");
   lines.push(":root {");
   for (const [key, value] of sortedEntries(tokens.fontSize ?? {})) {
-    lines.push(`  --fs-${key}: ${value};`);
+    lines.push(`  ${tokenName(key)}: ${value};`);
   }
   lines.push("}");
   lines.push("}");
@@ -49,7 +54,7 @@ export function renderCss(tokens = loadTokens()) {
 }
 
 export function renderDts(tokens = loadTokens()) {
-  const keys = sortedEntries(tokens.fontSize ?? {}).map(([key]) => `--fs-${key}`);
+  const keys = sortedEntries(tokens.fontSize ?? {}).map(([key]) => tokenName(key));
   const union = keys.map((k) => `  | "${k}"`).join("\n");
   return `/* ${HEADER} */\n\n/** 生成的 CSS token 名（tokens.css 的镜像；TS 侧只做形状提示，不做运行时校验）。 */\nexport type CssFontSizeToken =\n${union};\n`;
 }

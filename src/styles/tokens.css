@@ -1,15 +1,22 @@
 /* 本文件由 scripts/gen-css-tokens.mjs 从 src/styles/tokens.json 生成 —— 请勿手改。 */
-/* 源：src/styles/tokens.json（字号刻度；半像素值按 owner 拍板暂不纳入） */
+/* 源：src/styles/tokens.json（字号刻度；半像素用 - 代 . 命名，如 --fs-11-5） */
 
 @layer legacy {
 :root {
   --fs-9: 9px;
+  --fs-9-5: 9.5px;
   --fs-10: 10px;
+  --fs-10-5: 10.5px;
   --fs-11: 11px;
+  --fs-11-5: 11.5px;
   --fs-12: 12px;
+  --fs-12-5: 12.5px;
   --fs-13: 13px;
+  --fs-13-5: 13.5px;
   --fs-14: 14px;
+  --fs-14-5: 14.5px;
   --fs-15: 15px;
+  --fs-15-5: 15.5px;
   --fs-16: 16px;
   --fs-17: 17px;
   --fs-18: 18px;

@@ -88,17 +88,16 @@ describe("CSS tokens（S3）", () => {
     ).toBeLessThanOrEqual(KNOWN_UNDEFINED.size);
   });
 
-  it("③ font-size 字面量只减不增；整数已全换 token（半像素按 owner 拍板暂留）", () => {
+  it("③ font-size 字面量只剩注释里的提及（整数＋半像素全部 token 化）", () => {
     const css = read("src/App.css");
     const literals = (css.match(/font-size:\s*[0-9.]+px/g) ?? []).length;
-    // 2026-10-31：批次 1（12/13px 585 处）→ 批次 3（其余整数 445 处）之后实测 132
-    //   ＝ 半像素 128（9.5/10.5/11.5/12.5/13.5/14.5/15.5，owner 暂不纳入 token）
-    //     ＋ 注释里提及的 4 处（不是设置字号）。
-    expect(literals, `font-size 字面量 ${literals} > 冻结值 132（只减不增；整数请用 var(--fs-N)）`).toBeLessThanOrEqual(132);
-    // 更强的一条：**剥掉注释**之后不许再有任何整数 px 字号（半像素除外）。
+    // 2026-10-31：批次 1（12/13px 585）→ 批次 3（其余整数 445）→ 批次 6（半像素 128）之后，
+    //   只剩注释里提及的 4 处（不是设置字号）。
+    expect(literals, `font-size 字面量 ${literals} > 冻结值 4（只减不增；新样式请用 var(--fs-N)）`).toBeLessThanOrEqual(4);
+    // 剥掉注释后**一个 px 字号都不许有**（整数/半像素一视同仁）。
     const noComment = css.replace(/\/\*[\s\S]*?\*\//g, "");
-    const intLeft = [...noComment.matchAll(/font-size:\s*(\d+)px/g)].map((m) => m[1]);
-    expect(intLeft, `整数 px 字号还在：${intLeft.join(",")}`).toEqual([]);
+    const left = [...noComment.matchAll(/font-size:\s*[0-9.]+px/g)].map((m) => m[0]);
+    expect(left, `px 字号还在：${left.join(" / ")}`).toEqual([]);
   });
 
   it("④ 间距（padding/margin/gap 系列）里恰好等于 --space-1..8 的 px 已全换 token（负值/小数除外）", () => {
@@ -114,5 +113,18 @@ describe("CSS tokens（S3）", () => {
     // 只增不减：批次 4 之后**剥注释**实测 1,399 处（原文 1,401，其中 2 处是注释里的提及）。
     const usages = (css.match(/var\(--space-/g) ?? []).length;
     expect(usages, `var(--space-*) 用量 ${usages} < 冻结值 1399`).toBeGreaterThanOrEqual(1399);
+  });
+
+  it("⑤ border-radius 里等于 --radius-xs/sm/md/lg/full 的 px 已全换 token", () => {
+    const css = read("src/App.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    const left: string[] = [];
+    for (const m of css.matchAll(/border-radius\s*:\s*([^;{}]+)/g)) {
+      // 4/6/8/12/999 分别对应 radius-xs/sm/md/lg/full；小数（0.5px）不要求 token。
+      if (/(?<![\d.\-])(?:4|6|8|12|999)px\b/.test(m[1])) left.push(m[1].trim());
+    }
+    expect(left, "border-radius 值等于现成 radius token 却还在写字面量 px").toEqual([]);
+    // 只增不减：2026-10-31 批次 5 之后实测 632 处。
+    const usages = (css.match(/var\(--radius-/g) ?? []).length;
+    expect(usages, `var(--radius-*) 用量 ${usages} < 冻结值 632`).toBeGreaterThanOrEqual(632);
   });
 });
