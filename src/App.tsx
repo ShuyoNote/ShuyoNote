@@ -132,6 +132,8 @@ import "./styles/tokens.css";
 import "./styles/selection-toolbar.css";
 // S4-2（2026-10-31）：mermaid 域（编辑器图块 ＋ 文件管理器 md 预览 ＋ mindmap 提示）整段搬出。
 import "./styles/mermaid.css";
+// S4-3（2026-11-01）：表格工具条域（`.table-menu*`，8 条规则，块内无 @media）。
+import "./styles/table-menu.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

@@ -1,6 +1,6 @@
 # 方案：App.css 深度审计与优化（2026-10-30）
 
-状态：S0 视觉基线工具 ✅；S1 纯删除 ✅（App.css 28,695→26,439 行；非空行 27.4k→25.3k；`!important` 正则 36→21、实际声明 31→16）；S2 部分 ✅（去 `!important`／合并重复规则／删死兜底）；**S2 `@layer` 脚手架 ✅（2026-10-31）**：全部既有规则保序包进 `@layer legacy`、utilities 试点 5 条、excalidraw/KaTeX 覆盖 7 条**留在层外**；判据 `src/lib/cssLayers.test.ts`，真浏览器视觉基线最差 **0.018%**（阈值 0.2%）；**S3 字号 token 化 ✅（2026-10-31）**：`tokens.json` → 生成 `tokens.css`/`tokens.d.ts`（21 档整数字号）；`var(--fs-*)` **1,161 处**、px 字号**清零**（整数＋半像素全 token 化，仅注释剩 4 处提及）；间距 `var(--space-*)` **1,401 处**、圆角 `var(--radius-*)` **632 处**；未定义变量 **0**（批 7 清零，判据钉住），判据 `src/lib/cssTokens.test.ts`；批 7 的视觉变化已由 owner 批（截图 `_tmp/acceptance/css-undef-*.png`，基线待重录）；**S4 strangler pilot ✅（2026-10-31）**：三条 CSS 判据已 glob 化到 `src/styles/**/*.css`，`.selection-toolbar` 域整段搬进 `src/styles/selection-toolbar.css`（computed 快照前后 0 差异、基线 0.026%）；**S4-2 ✅**：`check-panel-layout` 夹具改成按 import 顺序内联全部 CSS，mermaid 域（三处切片）搬进 `src/styles/mermaid.css`（夹具 61/61 前后一致、基线 0.007%）；后续批次见 §13。审计读数见 §2、执行记录见 §11/§12（截至 2026-10-31）
+状态：S0 视觉基线工具 ✅；S1 纯删除 ✅（App.css 28,695→26,439 行；非空行 27.4k→25.3k；`!important` 正则 36→21、实际声明 31→16）；S2 部分 ✅（去 `!important`／合并重复规则／删死兜底）；**S2 `@layer` 脚手架 ✅（2026-10-31）**：全部既有规则保序包进 `@layer legacy`、utilities 试点 5 条、excalidraw/KaTeX 覆盖 7 条**留在层外**；判据 `src/lib/cssLayers.test.ts`，真浏览器视觉基线最差 **0.018%**（阈值 0.2%）；**S3 字号 token 化 ✅（2026-10-31）**：`tokens.json` → 生成 `tokens.css`/`tokens.d.ts`（21 档整数字号）；`var(--fs-*)` **1,161 处**、px 字号**清零**（整数＋半像素全 token 化，仅注释剩 4 处提及）；间距 `var(--space-*)` **1,401 处**、圆角 `var(--radius-*)` **632 处**；未定义变量 **0**（批 7 清零，判据钉住），判据 `src/lib/cssTokens.test.ts`；批 7 的视觉变化已由 owner 批（截图 `_tmp/acceptance/css-undef-*.png`，基线待重录）；**S4 strangler pilot ✅（2026-10-31）**：三条 CSS 判据已 glob 化到 `src/styles/**/*.css`，`.selection-toolbar` 域整段搬进 `src/styles/selection-toolbar.css`（computed 快照前后 0 差异、基线 0.026%）；**S4-2 ✅**：`check-panel-layout` 夹具改成按 import 顺序内联全部 CSS，mermaid 域（三处切片）搬进 `src/styles/mermaid.css`（夹具 61/61 前后一致、基线 0.007%）；**S4-3 ✅**：`.table-menu` 域搬进 `src/styles/table-menu.css`（computed 0 差异、基线 0.054%）；后续批次见 §13。审计读数见 §2、执行记录见 §11/§12（截至 2026-10-31）
 
 关联：`src/lib/cssHygiene.test.ts`（既有「只减不增」判据）· `docs/TESTING.md`（门禁总表）· 测量脚本（临时）：`_tmp/scratch/analyze-app-css.mjs`、`analyze-app-css2.mjs`
 
@@ -302,8 +302,14 @@ AST 重做后的读数：规则 4535→4191、行数 28695→26439、**逐元素
 - mermaid 在 App.css 里**本来就不连续**（三处），整段搬到 `src/styles/mermaid.css`：编辑器 `.editor-mermaid-*`（含 `@media (hover:hover)` 那条"悬停才显示顶栏"）、文件管理器 md 预览 `.fm-md-mermaid*`、`.editor-mermaid-note`。纯搬运、自包 `@layer legacy`。
 - 证据：`check-panel-layout` **搬前 61/61、搬后 61/61**；CSS 判据 14/14；真浏览器 5 图基线最差 **0.007%**（1280 编辑页 0.000%）、metrics 0；`tsc` 0、`pnpm verify` 66/66。
 
+### S4-3：`.table-menu` 域（App.css → `src/styles/table-menu.css`，2026-11-01）
+- 选它而不是原计划的 pm：pm 域有 **18 条响应式覆盖散落在 `@media (max-width:720px)` 等混合块里**；核心规则一搬，它们会排到搬走的核心规则**前面**（同特异性时被压掉）⇒ 响应式覆盖静默失效。要动 pm 得先有"把 media 里的域规则连同条件一起抽走"的工具（第一版试做已回滚，别在没工具时硬搬）。
+- `.table-menu` 域：8 条规则、**整块连续、块内无 `@media`**；连同 `/* Table toolbar (Wolai-style) */` 注释搬到 `src/styles/table-menu.css`，纯搬运、自包 `@layer legacy`。
+- 证据：computed 快照（`.table-menu`/button/active/danger/sep/swatch × 16 属性＋几何）**前后 0 差异**（`_tmp/acceptance/table-menu-computed-after.json`）；`check-panel-layout` 61/61；CSS 判据 14/14；5 图基线最差 **0.054%**；`tsc` 0。
+
 ### 后续批次（按风险从低到高）
-1. 之后按 **pm → fm → sync** 搬；每个域仍要：(a) 逐元素 computed 等价（选中工具条 / mermaid 那一套方法）、(b) 全站 5 图基线 ≤0.2%、(c) 若域内有 `@media`/`!important` 先单独量。
+1. 先补一个**域内 media 提取器**（把 `@media` 里的域规则连同条件一起搬、其余规则留原位），再动 **pm**；之后 **fm → sync**。每批仍要：(a) 逐元素 computed 等价、(b) 全站 5 图基线 ≤0.2%、(c) 域内有 `@media`/`!important` 先单独量。
 2. 第三方覆盖（excalidraw / KaTeX）**永远留在 App.css 末尾层外**（懒加载未分层，进层即失效）。
 3. 夹具点名的其余域（ai / pdf / kb-map / attachments / top-tools / activity-bar）搬之前先确认 `check-panel-layout` 已能覆盖（S4-2 已把前置做完 ✓）。
+
 
