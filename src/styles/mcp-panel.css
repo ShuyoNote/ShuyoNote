@@ -66,7 +66,7 @@
 
 /* ═══ ①.5 首屏接入引导（三步 ＋ 右侧配置片段/令牌） ═══════════════════════ */
 .mcp-onboard-tip {
-  margin: 2px 0 10px;
+  margin: 2px 0 12px;
   padding: 6px 10px;
   border-left: 3px solid var(--accent);
   border-radius: 6px;
@@ -74,31 +74,33 @@
   font-size: 12.5px;
   color: var(--text-dim);
 }
+/* 两列等高：左列步骤，右列卡片（卡片内部 flex，片段区吃掉多余高度） */
 .mcp-onboard-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr);
+  gap: 22px;
   align-items: start;
 }
 .mcp-onboard-steps {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 18px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 .mcp-step {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
 }
 .mcp-step-no {
   flex: none;
   width: 22px;
   height: 22px;
+  margin-top: 1px;
   border-radius: 50%;
-  border: 1px solid var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
   color: var(--accent);
   background: var(--accent-soft);
   font-size: 12px;
@@ -110,36 +112,84 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 7px;
 }
 .mcp-step-title {
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--text);
+  line-height: 1.35;
 }
+/* 统一的说明小字（原来的 .mcp-step-desc / .mcp-step-path 合并成这一档） */
 .mcp-step-desc,
-.mcp-step-path {
+.mcp-step-note {
   font-size: 12px;
+  line-height: 1.6;
   color: var(--text-dim);
   overflow-wrap: anywhere;
 }
-.mcp-step-path code {
+.mcp-step-note code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11.5px;
-  padding: 1px 4px;
+  padding: 0 3px;
   border-radius: 4px;
   background: var(--hover);
 }
+/* 配置文件路径：单独一行盒（label + 等宽路径，超长省略号，不撑破列宽） */
+.mcp-path-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.mcp-path-label {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.mcp-path-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+/* 读数：标签列固定宽 ⇒ 两行左对齐 */
 .mcp-step-readings {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.mcp-kv {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 8px;
   font-size: 12px;
+  line-height: 1.5;
+}
+.mcp-kv-label {
   color: var(--text-faint);
+}
+.mcp-kv-value {
+  color: var(--text-dim);
   overflow-wrap: anywhere;
 }
 .mcp-step-body .set-btn {
   align-self: flex-start;
+}
+.mcp-detect-btn {
+  margin-top: 1px;
 }
 .mcp-onboard-chips {
   display: flex;
@@ -147,14 +197,16 @@
   gap: 6px;
 }
 .mcp-client-chip {
-  padding: 3px 10px;
+  padding: 4px 11px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: transparent;
   color: var(--text-dim);
   font-family: inherit;
   font-size: 12px;
+  line-height: 1.4;
   cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 .mcp-client-chip:hover {
   background: var(--hover);
@@ -165,32 +217,66 @@
   color: var(--accent);
   font-weight: 600;
 }
+/* 右侧卡片：头部 / 片段（吃满高度，横向不滚） / 底部令牌栏 */
 .mcp-config-card {
   min-width: 0;
-  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--card-bg);
+  overflow: hidden;
 }
 .mcp-config-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 4px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.mcp-config-title {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--text);
 }
-.mcp-config-card .mcp-access-snippet {
-  margin: 6px 0 8px;
-  max-height: 260px;
+.mcp-config-card .mcp-config-snippet {
+  flex: none;
+  height: 190px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  background: var(--bg);
+  overflow: auto;
+  scrollbar-width: thin;
+  /* 代码块不折行（折行会把路径从中间劈开、更难读）——长行横向滚动 */
+  white-space: pre;
+  font-size: 11.5px;
+  line-height: 1.55;
 }
-.mcp-config-token {
+.mcp-config-card .mcp-config-snippet::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.mcp-config-card .mcp-config-snippet::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-faint) 35%, transparent);
+  border-radius: 4px;
+}
+.mcp-config-card .mcp-config-snippet::-webkit-scrollbar-track {
+  background: transparent;
+}
+.mcp-config-foot {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+.mcp-token-line {
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 .mcp-token-label {
@@ -198,10 +284,34 @@
   font-size: 12px;
   color: var(--text-faint);
 }
-.mcp-config-token .mcp-access-token {
-  flex: 1 1 220px;
+.mcp-config-foot .mcp-access-token {
+  flex: 1 1 auto;
   min-width: 0;
   margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: hidden;
+}
+.mcp-config-foot .mcp-access-token-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--hover);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.mcp-token-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mcp-token-actions .set-btn {
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .mcp-panel {

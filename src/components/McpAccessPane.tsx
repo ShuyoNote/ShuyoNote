@@ -224,17 +224,24 @@ const NAV: Array<[string, string]> = [
  * 面板只给"该粘到哪个文件"的提示，⛔ 不写死本机路径、也不假装能替用户写那个文件。
  */
 type ClientKind = "claude" | "cursor" | "other";
-const CLIENTS: Array<{ id: ClientKind; label: string; configPath: string }> = [
+const CLIENTS: Array<{ id: ClientKind; label: string; configPath: string; note: string }> = [
   {
     id: "claude",
     label: "Claude Desktop",
     configPath: "%APPDATA%\\Claude\\claude_desktop_config.json",
+    note: "把片段并入文件里的 mcpServers；文件不存在就新建一个。",
   },
-  { id: "cursor", label: "Cursor", configPath: "~/.cursor/mcp.json" },
+  {
+    id: "cursor",
+    label: "Cursor",
+    configPath: "~/.cursor/mcp.json",
+    note: "同上；改完重启 Cursor 窗口才生效。",
+  },
   {
     id: "other",
     label: "其他 MCP 客户端",
-    configPath: "（按客户端文档：把这段 mcpServers 粘进它的配置文件）",
+    configPath: "见客户端文档 · MCP 服务器配置",
+    note: "找到它的 MCP / mcpServers 配置节，把片段并进去即可。",
   },
 ];
 
@@ -421,6 +428,8 @@ export function McpAccessPane() {
     ...(scopeGroups.other.length ? [["其它", scopeGroups.other] as [string, string[]]] : []),
   ];
 
+  const activeClient = CLIENTS.find((c) => c.id === client) ?? CLIENTS[0];
+
   return (
     <div className="mcp-access mcp-panel">
       {/* 顶栏：分段导航（锚点滚动；窄屏换行不横向溢出）＋ 状态 chip ＋「如何接入」 */}
@@ -454,7 +463,7 @@ export function McpAccessPane() {
           <span className="mcp-title-hint">三步：选客户端 → 复制配置 → 粘贴并重启</span>
         </div>
         <p className="set-hint">
-          配置里的 command / args / env 已经按这台机器自动填好；令牌只在本机文件里，不会出现在配置片段里。
+          command / args / env 已按这台机器自动填好；令牌只存在本机文件里，不写进片段。
         </p>
         {level === "off" ? (
           <p className="mcp-onboard-tip" data-testid="mcp-onboard-tip">
@@ -483,12 +492,13 @@ export function McpAccessPane() {
                     </button>
                   ))}
                 </div>
-                <div className="mcp-step-path">
-                  配置文件{" "}
-                  <code data-testid="mcp-config-path">
-                    {(CLIENTS.find((c) => c.id === client) ?? CLIENTS[0]).configPath}
+                <div className="mcp-path-box">
+                  <span className="mcp-path-label">配置文件</span>
+                  <code className="mcp-path-value" data-testid="mcp-config-path" title={activeClient.configPath}>
+                    {activeClient.configPath}
                   </code>
                 </div>
+                <div className="mcp-step-note">{activeClient.note}</div>
               </div>
             </li>
             <li data-step="2" className="mcp-step">
@@ -497,7 +507,7 @@ export function McpAccessPane() {
               </span>
               <div className="mcp-step-body">
                 <div className="mcp-step-title">复制右边的配置片段</div>
-                <div className="mcp-step-desc">
+                <div className="mcp-step-note">
                   粘贴到配置文件的 <code>mcpServers</code> 里（已存在就合并，别整段覆盖）。
                 </div>
               </div>
@@ -507,16 +517,23 @@ export function McpAccessPane() {
                 3
               </span>
               <div className="mcp-step-body">
-                <div className="mcp-step-title">重启客户端，然后点「检测连接」</div>
-                <div className="mcp-step-desc">这里会显示最近一次外部调用与连接数。</div>
+                <div className="mcp-step-title">重启客户端，再点「检测连接」</div>
                 <div className="mcp-step-readings">
-                  <span>最近一次外部调用：{lastCall ? `${relTime(lastCall.at)} · ${lastCall.tool}` : "（还没有）"}</span>
-                  <span>
-                    连接：{st?.enabled ? "本机回环（客户端连接数未采集）" : "（通道关闭）"}
-                  </span>
+                  <div className="mcp-kv">
+                    <span className="mcp-kv-label">最近调用</span>
+                    <span className="mcp-kv-value">
+                      {lastCall ? `${relTime(lastCall.at)} · ${lastCall.tool}` : "还没有（客户端还没连过）"}
+                    </span>
+                  </div>
+                  <div className="mcp-kv">
+                    <span className="mcp-kv-label">连接</span>
+                    <span className="mcp-kv-value">
+                      {st?.enabled ? "本机回环 · 连接数未采集" : "通道关闭"}
+                    </span>
+                  </div>
                 </div>
                 <button
-                  className="set-btn"
+                  className="set-btn mcp-detect-btn"
                   data-testid="mcp-detect"
                   disabled={busy || !st}
                   onClick={() => {
@@ -533,7 +550,7 @@ export function McpAccessPane() {
           {/* 右侧：配置片段 ＋ 令牌（复制/显示/换新只在**这里**出现一次） */}
           <div className="mcp-config-card" data-testid="mcp-config-card">
             <div className="mcp-config-head">
-              <span>配置片段</span>
+              <span className="mcp-config-title">配置片段</span>
               <button
                 className="set-btn is-primary"
                 data-testid="copy-config"
@@ -543,29 +560,33 @@ export function McpAccessPane() {
                 复制配置
               </button>
             </div>
-            <pre className="mcp-access-snippet" data-testid="mcp-snippet">
+            <pre className="mcp-access-snippet mcp-config-snippet" data-testid="mcp-snippet">
               {snippet}
             </pre>
-            <div className="mcp-config-token">
-              <span className="mcp-token-label">令牌</span>
-              <span className={`mcp-access-token${emptyToken ? " is-empty" : ""}`}>
-                <code
-                  className="mcp-access-token-text"
-                  data-testid="mcp-token"
-                  data-fingerprint={token ? token.slice(-4) : ""}
-                >
-                  {!token ? "（还没有 —— 打开开关时会自动生成）" : showToken ? token : maskToken(token)}
-                </code>
-              </span>
-              <button className="set-btn" data-testid="copy-token" disabled={!token} onClick={() => void copy(token, "令牌")}>
-                复制令牌
-              </button>
-              <button className="set-btn" disabled={!token} onClick={() => setShowToken((v) => !v)}>
-                {showToken ? "隐藏" : "显示"}
-              </button>
-              <button className="set-btn" disabled={busy || !st} onClick={() => void rotate()}>
-                换一枚新令牌
-              </button>
+            <div className="mcp-config-foot">
+              <div className="mcp-token-line">
+                <span className="mcp-token-label">令牌</span>
+                <span className={`mcp-access-token${emptyToken ? " is-empty" : ""}`}>
+                  <code
+                    className="mcp-access-token-text"
+                    data-testid="mcp-token"
+                    data-fingerprint={token ? token.slice(-4) : ""}
+                  >
+                    {!token ? "（还没有 —— 打开开关时会自动生成）" : showToken ? token : maskToken(token)}
+                  </code>
+                </span>
+              </div>
+              <div className="mcp-token-actions">
+                <button className="set-btn" data-testid="copy-token" disabled={!token} onClick={() => void copy(token, "令牌")}>
+                  复制令牌
+                </button>
+                <button className="set-btn" disabled={!token} onClick={() => setShowToken((v) => !v)}>
+                  {showToken ? "隐藏" : "显示"}
+                </button>
+                <button className="set-btn" disabled={busy || !st} onClick={() => void rotate()}>
+                  换一枚新令牌
+                </button>
+              </div>
             </div>
           </div>
         </div>
