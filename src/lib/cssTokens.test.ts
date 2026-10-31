@@ -88,11 +88,17 @@ describe("CSS tokens（S3）", () => {
     ).toBeLessThanOrEqual(KNOWN_UNDEFINED.size);
   });
 
-  it("③ font-size 字面量只减不增，且 12/13px 批次已换成 token", () => {
+  it("③ font-size 字面量只减不增；整数已全换 token（半像素按 owner 拍板暂留）", () => {
     const css = read("src/App.css");
     const literals = (css.match(/font-size:\s*[0-9.]+px/g) ?? []).length;
-    // 2026-10-31：S3 批次 1 之后实测 577（替换前 1,162；批次换掉 585 处 12/13px）。
-    expect(literals, `font-size 字面量 ${literals} > 冻结值 577（S3 只减不增；新样式请用 var(--fs-N)）`).toBeLessThanOrEqual(577);
+    // 2026-10-31：批次 1（12/13px 585 处）→ 批次 3（其余整数 445 处）之后实测 132
+    //   ＝ 半像素 128（9.5/10.5/11.5/12.5/13.5/14.5/15.5，owner 暂不纳入 token）
+    //     ＋ 注释里提及的 4 处（不是设置字号）。
+    expect(literals, `font-size 字面量 ${literals} > 冻结值 132（只减不增；整数请用 var(--fs-N)）`).toBeLessThanOrEqual(132);
+    // 更强的一条：**剥掉注释**之后不许再有任何整数 px 字号（半像素除外）。
+    const noComment = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    const intLeft = [...noComment.matchAll(/font-size:\s*(\d+)px/g)].map((m) => m[1]);
+    expect(intLeft, `整数 px 字号还在：${intLeft.join(",")}`).toEqual([]);
     expect(css).toContain("font-size: var(--fs-12)");
     expect(css).toContain("font-size: var(--fs-13)");
   });
