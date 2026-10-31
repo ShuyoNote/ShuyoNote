@@ -257,17 +257,21 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
       </div>
       {open && (
         <div className={tooManyUserProps ? "properties-body is-collapsed" : "properties-body"} data-user-props={userProps.length}>
-          <div className="prop-tag-line">
-            <TagRow pageId={pageId} />
-            <button
-              className="prop-add-tag"
-              title="添加标签"
-              aria-label="添加标签"
-              onClick={() => usePropertyUiStore.getState().requestAddTag()}
-            >
-              ＋
-            </button>
-          </div>
+          {/* 标签行直接并进网格（⚠️ 不要再套一层 `.prop-tag-line` 容器：那层 div 自己会占掉
+              网格的第 1 列，把"名字列"撑成标签 chips 的宽度 ⇒ 值列被推到很右边、整块错位）。 */}
+          <TagRow
+            pageId={pageId}
+            trailing={
+              <button
+                className="prop-add-tag"
+                title="添加标签"
+                aria-label="添加标签"
+                onClick={() => usePropertyUiStore.getState().requestAddTag()}
+              >
+                ＋
+              </button>
+            }
+          />
           {orderedProps.map((p, i) => (
               <div
                 key={p.attr_id}
