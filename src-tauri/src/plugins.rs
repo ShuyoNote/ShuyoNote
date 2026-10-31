@@ -17414,6 +17414,15 @@ register({ id: "s.run", title: "结构化", run: function () {
     /// 另测：缺档、unsupported、回滚开关、目标空间打不开（locked）。
     #[test]
     fn cross_space_write_v1_create_page_only() {
+        // ⚠️ **本用例整段**拿 crate 级 DB 锁（只测试用，`#[cfg(test)]`）：本用例（含开头的
+        // `b1c_fixture` 与末尾 `b1c_cleanup`）会往**共享测试目录**写 `spaces/cross-second.db`
+        // 与 `meta.db`，而 `mcp_host::w3_draft_tests` 的指纹判据比的是该目录下
+        // `*.db` / `*.db-wal` / `*.db-shm` 的 sha ⇒ 不整段包住就会在它的窗口里翻指纹
+        // （两进程并发实测会红；见 `DB_WRITE_TEST_LOCK` 的注释）。
+        // 锁顺序：本用例**没有**更早的局部锁（不拿 `capability_test_guard()` / `log_test_guard()`；
+        // `dispatch_capability` / `with_external_caller` / `with_fresh_drafts` 内部都不拿测试锁）
+        // ⇒ 先拿本锁即可；持有期间不会再等别的测试锁 ⇒ 不成环。
+        let _db = crate::mcp_host::lock_db_writes_for_test();
         let f = b1c_fixture("cross-write");
         point_cap_search_at(&f.dir, &f.space);
         let app = crate::db::ensure_test_app_data_dir().to_path_buf();
@@ -17578,6 +17587,13 @@ register({ id: "s.run", title: "结构化", run: function () {
     /// ⭐ v2：write_all 扩读；pages.update/blocks.* 草稿带 spaceId；跨空间读两档门；回滚开关。
     #[test]
     fn v2_cross_space_edit_and_read_gate() {
+        // ⚠️ **本用例整段**拿 crate 级 DB 锁（只测试用，`#[cfg(test)]`）：理由同
+        // `cross_space_write_v1_create_page_only` —— 本用例（含 `b1c_fixture` / `b1c_cleanup`）
+        // 会往**共享测试目录**写 `spaces/v2-second.db` 与 `meta.db`，撞 `mcp_host::w3_draft_tests`
+        // 的逐字节指纹判据。
+        // 锁顺序：本用例**没有**更早的局部锁（同 v1：`dispatch_capability` 等 helper 内部不拿测试锁）
+        // ⇒ 先拿本锁即可，持有期间不再等别的测试锁 ⇒ 不成环。
+        let _db = crate::mcp_host::lock_db_writes_for_test();
         let f = b1c_fixture("v2");
         point_cap_search_at(&f.dir, &f.space);
         let app = crate::db::ensure_test_app_data_dir().to_path_buf();
