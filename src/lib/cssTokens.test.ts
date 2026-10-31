@@ -99,7 +99,20 @@ describe("CSS tokens（S3）", () => {
     const noComment = css.replace(/\/\*[\s\S]*?\*\//g, "");
     const intLeft = [...noComment.matchAll(/font-size:\s*(\d+)px/g)].map((m) => m[1]);
     expect(intLeft, `整数 px 字号还在：${intLeft.join(",")}`).toEqual([]);
-    expect(css).toContain("font-size: var(--fs-12)");
-    expect(css).toContain("font-size: var(--fs-13)");
+  });
+
+  it("④ 间距（padding/margin/gap 系列）里恰好等于 --space-1..8 的 px 已全换 token（负值/小数除外）", () => {
+    const css = read("src/App.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    const declRe =
+      /(?:^|[;{])\s*((?:padding|margin)(?:-(?:top|right|bottom|left))?|gap|row-gap|column-gap)\s*:\s*([^;{}]+)(?=[;}])/g;
+    const left: string[] = [];
+    for (const m of css.matchAll(declRe)) {
+      // 负值（-8px）与小数（0.5px）不要求 token：`-var(...)` 不是合法 CSS。
+      if (/(?<![\d.\-])(?:4|8|12|16|24|32|40|64)px\b/.test(m[2])) left.push(`${m[1]}: ${m[2].trim()}`);
+    }
+    expect(left, "间距值等于 --space-1..8 却还在写字面量 px").toEqual([]);
+    // 只增不减：批次 4 之后**剥注释**实测 1,399 处（原文 1,401，其中 2 处是注释里的提及）。
+    const usages = (css.match(/var\(--space-/g) ?? []).length;
+    expect(usages, `var(--space-*) 用量 ${usages} < 冻结值 1399`).toBeGreaterThanOrEqual(1399);
   });
 });
