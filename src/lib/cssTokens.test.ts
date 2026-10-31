@@ -36,29 +36,16 @@ const RUNTIME_VARS = new Set([
   "--fill", // FileManagerView.tsx:972（内联样式注入）
 ]);
 
-/** 冻结清单：S3 清零前允许存在的 9 个未定义变量（只减不增；清掉一个就把这里删一行）。
- *
- * ⚠️ 2026-10-31 修正：之前写 26 是**扫描器的假阳性**（定义正则带 `^` 行首锚 ⇒
- * 「一行两个定义」只认第一个、「作用域内定义」看不见；使用扫描没剥注释 ⇒ 注释里的
- * `var(--brand)` 被当成使用）。真未定义 14 条，已按批处理：
- *   批 1 清 `--plugin-panel-w`（两处都有 420px 兜底 → 落成字面量）
- *   批 2 清 `--bg-2` / `--border-faint` / `--fill-soft` / `--text-muted`
- *        （用法里本来就带兜底 ⇒ 换成兜底字面量，**零视觉**）
- *   剩 9 条（**没有兜底**，定义/改名会让原本失效的声明生效 ⇒ 需逐条看视觉）：
- *     B 改名 7：`--bg-1/--block/--hover-soft/--primary/--surface-2/--surface-light/--text-2`
- *     C 定义 2：`--radius/--font-mono`
+/** 冻结清单：**已清零**（2026-10-31 批 7）。历史：S3 开始时 26 条，修正扫描口径后真 14，
+ *  批 1–2 清掉 5 条（`--plugin-panel-w`、`--bg-2/--border-faint/--fill-soft/--text-muted` 只有兜底用点），
+ *  批 7 按 owner「3」清掉最后 9 条：
+ *    B 改名 7 → `--primary`→`--accent`、`--hover-soft`→`--hover`、`--block`→`--codeblock-bg`、
+ *      `--text-2`→`--text-dim`、`--surface-2`→`--card-bg`、`--surface-light`→`--card-bg`、
+ *      `--bg-1`→`--surface`（`sync-badge` 的文字一处改 `--on-accent`）
+ *    C 定义 2 → `--radius: var(--radius-md)`、`--font-mono: 等宽栈`（都在 App.css 的 `:root`）
+ *  ⇒ 现在「用了但没定义」必须是 **0** —— 新增一个就会红（浏览器会静默丢弃那行声明）。
  * 分档依据与视觉风险见 `_tmp/acceptance/css-undefined-vars-2026-10-31.md`。 */
-const KNOWN_UNDEFINED = new Set([
-  "--bg-1",
-  "--block",
-  "--font-mono",
-  "--hover-soft",
-  "--primary",
-  "--radius",
-  "--surface-2",
-  "--surface-light",
-  "--text-2",
-]);
+const KNOWN_UNDEFINED = new Set<string>([]);
 
 describe("CSS tokens（S3）", () => {
   it("① tokens.css / tokens.d.ts 与 tokens.json 的生成结果逐字节一致", () => {
@@ -128,3 +115,4 @@ describe("CSS tokens（S3）", () => {
     expect(usages, `var(--radius-*) 用量 ${usages} < 冻结值 632`).toBeGreaterThanOrEqual(632);
   });
 });
+
