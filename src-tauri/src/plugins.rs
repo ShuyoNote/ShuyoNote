@@ -10835,6 +10835,15 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
     #[test]
     fn event_handler_runs_and_drafts_are_collected() {
         let _g = log_test_guard();
+        // ⚠️ **本用例整段**拿 crate 级 DB 锁（只测试用，`#[cfg(test)]`）—— 不是只包下面那次 seed：
+        // `mcp_host::w3_draft_tests` 的两条判据比的是**共享测试数据目录**的逐字节指纹，而本用例
+        // 后面 `run_event_in_host_for_test` 起的事件派发还会**打开**共享目录里的空间库（连接一开一关
+        // 就会让 `*.db-wal` / `*.db-shm` 出现／消失 —— 那同样会翻指纹）。实测（两进程并发）：
+        // 只包 seed ⇒ 仍会因"数据没变、但 sidecar 出现"而假红；整段包住 ⇒ 不再重叠。
+        // 锁顺序：本用例**已经先拿了 `log_test_guard()`**（局部锁）⇒ 符合「先局部、后 DB」✓；
+        // 本锁在函数末尾随 guard 一起释放（届时 `capability_test_guard()` 早已由 helper 释放）⇒
+        // 持有期间不会再等别的测试锁 ⇒ 不会成环。
+        let _db = crate::mcp_host::lock_db_writes_for_test();
         let dir = crate::db::ensure_test_app_data_dir().to_path_buf();
         let space: String = {
             let m = crate::db::open_meta_conn_at(&dir).unwrap();
@@ -13149,6 +13158,14 @@ register({ id: "s.run", title: "结构化", run: function () {
 
     #[test]
     fn property_and_tag_drafts_carry_the_frontend_payload() {
+        // ⚠️ **本用例整段**拿 crate 级 DB 锁（只测试用，`#[cfg(test)]`）—— 理由同
+        // `event_handler_runs_and_drafts_are_collected`：`mcp_host` 的两条指纹判据比的是**共享测试
+        // 数据目录**，本用例除了 seed 还会（经 `run_command_in_host_for_test`）打开共享空间库，
+        // 连接一开一关会让 `*.db-wal` / `*.db-shm` 出现／消失 ⇒ 只包 seed 不够（实测两进程并发仍假红）。
+        // 锁顺序：本用例开头**没有**局部锁 ⇒ 先拿本锁；`capability_test_guard()` 在 helper 里面才拿、
+        // 拿完即还 ⇒ 持有本锁期间不会再等别的测试锁，不会成环（与 head 那条「先局部、后 DB」不冲突：
+        // 这里根本没有更早的局部锁）。
+        let _db = crate::mcp_host::lock_db_writes_for_test();
         // 宿主子进程只认进程级 APP_DATA ⇒ 夹具必须种在**全局测试目录**（不是 seed_space 的临时目录）。
         let dir = crate::db::ensure_test_app_data_dir().to_path_buf();
         let space: String = {

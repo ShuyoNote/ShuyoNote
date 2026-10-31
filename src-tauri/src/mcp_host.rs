@@ -930,6 +930,59 @@ mod tools_list_tests {
 #[cfg(test)]
 static DRAFT_SINK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// ⚠️ **测试级串行锁：共享测试数据目录的「写者」**（2026-10-31，CI flake 修复）。
+///
+/// 为什么需要：`crate::db::ensure_test_app_data_dir()` 返回的是**整个测试二进制共用**的目录
+/// （`db.rs` 里那个"必须只有这一个来源"的 helper），而 [`w3_draft_tests::fingerprint`] 比的是该
+/// 目录下**所有** `*.db` / `*.db-wal` / `*.db-shm` 的 sha ⇒ 只要**别的模块**的用例在这个窗口里往
+/// 共享目录写一次，那条"数据目录逐字节不变"的断言就红（**CI 实测**：`plugins::tests` 的两个
+/// seed 写了 `spaces/default.db` ⇒ `pages_update_never_auto_applies_…` 在 `mcp_host.rs:1155` 红）。
+///
+/// 实现是**两层**（都只测试用，`#[cfg(test)]`；⛔ 不是产品锁，产品代码不引用）：
+/// 1. **进程内**：`DB_WRITE_TEST_LOCK`（`std::sync::Mutex`）—— `cargo test` 是**一个进程多线程**，
+///    靠它串住同进程里的写者（**CI 那次红就是这种形态**）；
+/// 2. **跨进程**：共享测试目录里的一个 `.lock` 文件（`std::fs::File::lock`，`std` 自带 ⇒ ⛔ 无新依赖）
+///    —— 本仓的**复现脚本**是两个测试进程并发跑，只加 Mutex 挡不住（实测：只加进程内锁 ⇒ 复现仍
+///    12/12 红）；CI 一般用不到这一层，但临界区只有"一次 seed / 一个窗口"，多这一层不会拖慢。
+///    ⛔ 那个 `.lock` 文件**不会**被 `fingerprint` 算进去（它只收 `*.db` / `*.db-wal` / `*.db-shm`）。
+///
+/// 锁顺序：**先局部锁、后本锁**（`DRAFT_SINK_TEST_LOCK` / `LOG_TEST_LOCK` /
+/// `CAPABILITY_TEST_LOCK` → 本锁），⛔ 不许反序；持有本锁期间**只**做「快照 → 被测调用 → 断言」
+/// （或一次 seed），**不**在里面再拿别的测试锁 —— 因而不会成环。
+#[cfg(test)]
+pub(crate) static DB_WRITE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// [`lock_db_writes_for_test`] 的守卫：**同时**持进程内 Mutex 与跨进程文件锁，Drop 时一起放。
+#[cfg(test)]
+pub(crate) struct DbWriteTestGuard {
+    _process: std::sync::MutexGuard<'static, ()>,
+    _cross_process: std::fs::File,
+}
+
+/// 拿「共享测试目录的写者锁」（进程内 ＋ 跨进程）。口径见 [`DB_WRITE_TEST_LOCK`] 的注释。
+#[cfg(test)]
+pub(crate) fn lock_db_writes_for_test() -> DbWriteTestGuard {
+    // 固定次序：先进程内、再跨进程（两层都按同一方向拿 ⇒ 不会死锁）。
+    let process = DB_WRITE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = crate::db::test_app_data_dir_path();
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("db-write-test.lock");
+    let cross_process = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap_or_else(|e| panic!("打开测试锁文件 {} 失败：{e}", path.display()));
+    cross_process
+        .lock()
+        .unwrap_or_else(|e| panic!("拿跨进程测试锁失败：{e}"));
+    DbWriteTestGuard {
+        _process: process,
+        _cross_process: cross_process,
+    }
+}
+
 #[cfg(test)]
 mod w3_draft_tests {
     use super::*;
@@ -989,6 +1042,10 @@ mod w3_draft_tests {
             }
         });
 
+        // ⚠️ 锁粒度必须覆盖「快照 → 调用 → 断言」**整段**（只包快照 = 窗口没被保护 ⇒ 等于没加）：
+        // 共享目录是所有用例共用的，别的模块的**写者**（见 `DB_WRITE_TEST_LOCK` 的注释）必须在
+        // 这一段里进不来。锁顺序：本用例已先拿 `DRAFT_SINK_TEST_LOCK`（局部锁）⇒「先局部、后 DB」✓。
+        let _db = lock_db_writes_for_test();
         let before = fingerprint(&dir);
         let session = "sdk-w3-draft-1";
         // 权限取**注册表里写的那一条** ✓（⛔ 不在测试里手抄权限名 ✗）
@@ -1138,6 +1195,9 @@ mod w3_draft_tests {
             }
         });
 
+        // ⚠️ 同 `external_write_is_drafted_not_landed`：整段「快照 → 调用 → 断言」拿 DB 锁
+        // （共享目录的写者见 `DB_WRITE_TEST_LOCK` 的注释）。锁顺序：已先拿 `DRAFT_SINK_TEST_LOCK`。
+        let _db = lock_db_writes_for_test();
         let before = fingerprint(&dir);
         let session = "sdk-update-auto-1";
         let cap = crate::capabilities_gen::lookup("pages.update").expect("pages.update 必须存在 ✓");
