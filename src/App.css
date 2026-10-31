@@ -26544,6 +26544,11 @@ button.mset-row:focus-visible {
 .is-ai-resizing .ai-panel {
   transition: none;
 }
+
+/* 2026-10-31（owner 截图）：MCP「正在监听」的状态点改**绿**（`--success`）。
+   原来灰点（`--text-faint`）放在「已打开 · 正在听」这枚蓝胶囊里，看着像"没开/离线"；
+   绿＝在听。⚠️ `.is-on` 那档保持蓝（= 已启用但还没监听），两种状态别再混成一个颜色。 */
+.mcp-access-dot.is-live { background: var(--success); }
 }
 
 /* ═══ 第三方组件覆盖（unlayered，S2 起固定位置）═══ */

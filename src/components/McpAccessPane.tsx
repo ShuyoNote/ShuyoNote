@@ -452,7 +452,7 @@ export function McpAccessPane() {
             className={`mcp-status-chip${st?.running ? " is-on" : ""}`}
             data-testid="mcp-top-status"
           >
-            <span className="mcp-access-dot" aria-hidden="true" />
+            <span className={`mcp-access-dot${st?.running ? " is-live" : ""}`} aria-hidden="true" />
             {!st ? "读取中…" : st.running ? "已打开 · 正在听" : st.enabled ? "开关开着 · 未监听" : "已关闭（默认）"}
           </span>
           {/* ⛔ 2026-10-31（owner）：「如何接入」按钮去掉 —— 接入引导本来就是首屏第一块，
@@ -847,7 +847,10 @@ export function McpAccessPane() {
             </div>
           </div>
           <div className="mcp-stat-state">
-            <span className={`mcp-access-dot${st?.enabled ? " is-on" : ""}`} aria-hidden="true" />
+            <span
+              className={`mcp-access-dot${st?.running ? " is-live" : st?.enabled ? " is-on" : ""}`}
+              aria-hidden="true"
+            />
             <span className="mcp-access-state">{st ? stateLine(st) : "读取中…"}</span>
             {err && <span className="set-row-sub mcp-access-err">读/改状态失败：{err}</span>}
             {st?.env_override && <span className="set-row-sub">（这次是被环境变量打开的）</span>}

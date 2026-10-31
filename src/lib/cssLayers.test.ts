@@ -121,10 +121,11 @@ describe("App.css 级联层序（S2）", () => {
     expect(vendorOutside.length, "第三方覆盖段不完整（应 ≥7 条）").toBeGreaterThanOrEqual(7);
   });
 
-  it("④ utilities 层暂只放三个瞬态状态类（试点批；扩批要同步改白名单 + 补视觉基线）", () => {
+  it("④ utilities 层只放白名单里的状态规则（试点批 + 2026-10-31 的绿点；扩批要同步改白名单 + 补视觉基线）", () => {
     const inner = innerOf(utilities[0], css);
     const utilRules = topLevelNodes(inner).filter((x) => x.kind === "rule");
-    const allowed = /^\.is-(dragging-block|sidebar-resizing|ai-resizing)\b/;
+    const allowed =
+      /^\.is-(dragging-block|sidebar-resizing|ai-resizing)\b|^\.mcp-access-dot\.is-live$/;
     const bad = utilRules.map((x) => selectorOf(x.header)).filter((s) => !allowed.test(s));
     expect(bad, "utilities 层出现试点外的选择器").toEqual([]);
     expect(utilRules.length, "试点批应 ≥5 条规则").toBeGreaterThanOrEqual(5);
