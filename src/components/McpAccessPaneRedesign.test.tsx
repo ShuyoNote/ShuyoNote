@@ -388,7 +388,7 @@ describe("跨空间支持矩阵改版（2026-10-31）", () => {
     expect(css, "窄屏状态卡也要单列").toMatch(/@media \(max-width: 720px\)[\s\S]*?\.mcp-stat-grid[\s\S]*?grid-template-columns: 1fr/);
   });
 
-  it("⑯ 首屏接入引导：区块在、三步齐、**不要求选客户端**（两条常见路径直接列出）", async () => {
+  it("⑯ 首屏接入引导：区块在、三步齐、**不要求选客户端**（五条常见路径直接列出）", async () => {
     mount();
     await tick();
     await tick();
@@ -405,12 +405,26 @@ describe("跨空间支持矩阵改版（2026-10-31）", () => {
       document.querySelector('[data-shortcut="onboard"]'),
       "状态卡里的「客户端配置说明」快捷入口应保留",
     ).toBeTruthy();
-    // ⭐ 精简版：**没有**客户端选择 chips（片段通用 ⇒ 不必先选一次），两条常见路径直接列出来
+    // ⭐ 精简版：**没有**客户端选择 chips（片段通用 ⇒ 不必先选一次）；路径直接列出（A 批补到 5 个）
     expect(block!.querySelectorAll("[data-client]").length, "不再要求选择客户端").toBe(0);
     const paths = Array.from(block!.querySelectorAll('[data-testid="mcp-config-path"]')).map((el) => el.textContent ?? "");
-    expect(paths.length, "常见客户端路径直接并列（Claude Desktop + Cursor）").toBe(2);
+    expect(paths.length, "常见客户端路径直接并列（Claude Desktop / Cursor / Claude Code / Windsurf / VS Code）").toBe(5);
     expect(paths[0]).toContain("claude_desktop_config.json");
     expect(paths[1]).toContain(".cursor/mcp.json");
+    expect(paths[2], "Claude Code 的 ~/.claude.json").toContain(".claude.json");
+    expect(paths[3], "Windsurf 的 mcp_config.json").toContain(".codeium/windsurf/mcp_config.json");
+    expect(paths[4], "VS Code 的用户级 mcp.json").toContain("Code\\User\\mcp.json");
+    // ⭐ A 批（2026-10-31）：第 3 步改成「重启客户端（只需首次）」＋ 说清"以后换档/换令牌不用重启"；
+    //    按钮改叫「刷新状态」，并如实写"连接数不统计"（后端确实不统计连接）。
+    const step3 = block!.querySelector('[data-step="3"]')?.textContent ?? "";
+    expect(step3, "第 3 步要写明「只需首次」").toContain("只需首次");
+    expect(step3, "要写清换档/换令牌不用重启").toContain("不用重启");
+    expect(step3, "按钮改叫「刷新状态」").toContain("刷新状态");
+    expect(step3, "⛔ 不许再写「检测连接」").not.toContain("检测连接");
+    // 「不统计连接数」写在按钮 title 里（kv 那行只在通道开启时才渲染"本机回环（连接数不统计）"，
+    // 判据不能依赖运行时状态 ⇒ 认 title 这句）
+    const detectTitle = block!.querySelector('[data-testid="mcp-detect"]')?.getAttribute("title") ?? "";
+    expect(detectTitle, "如实说明不统计连接数").toContain("不统计连接数");
     // 片段仍然是同一份（与路径无关）
     const snippet = document.querySelector('[data-testid="mcp-snippet"]')?.textContent ?? "";
     expect(JSON.parse(snippet).mcpServers.shuyonote.command).toBe("node");
@@ -458,7 +472,7 @@ describe("跨空间支持矩阵改版（2026-10-31）", () => {
     expect(document.body.textContent || "").not.toContain(STATUS_WRITE_ALL.token);
   });
 
-  it("⑲ 「检测连接」会重新拉一次状态（＝refresh，不是只改本地提示）", async () => {
+  it("⑲ 「刷新状态」会重新拉一次状态（＝refresh，不是只改本地提示）", async () => {
     mocks.mcpStatus.mockResolvedValue(STATUS_WRITE_ALL);
     mount();
     await tick();
@@ -471,7 +485,7 @@ describe("跨空间支持矩阵改版（2026-10-31）", () => {
     );
     await tick();
     await tick();
-    expect(mocks.mcpStatus.mock.calls.length, "检测连接必须真的重新查一次状态").toBeGreaterThan(before);
+    expect(mocks.mcpStatus.mock.calls.length, "刷新状态必须真的重新查一次状态").toBeGreaterThan(before);
   });
 
   it("⑳ off 档位时引导块仍显示（不整块藏掉），并提示「先选一档权限」", async () => {

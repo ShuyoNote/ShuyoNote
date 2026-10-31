@@ -225,11 +225,19 @@ const NAV: Array<[string, string]> = [
  */
 /**
  * 常见客户端的配置文件位置（**不要求用户先"选择客户端"** —— 片段本身完全相同，
- * 选一次只是多一步交互；这里直接把两个最常见的路径并排列出来，其余一句话带过）。
+ * 选一次只是多一步交互；这里把最常见的五个路径直接列出来，其余一句话带过）。
+ *
+ * ⚠️ 2026-10-31（A 批）：原来只有 2 个（Claude Desktop / Cursor）。补上 Claude Code /
+ * Windsurf / VS Code —— 后三者是"外部 AI 接入"里问得最多的（见 WorkBuddy 那份实测建议）。
+ * ⚠️ **VS Code 的键名不是 `mcpServers` 而是 `servers`**（还有 JSONC 注释问题）⇒ 步骤 2 里单独加一句说明，
+ * ⛔ 别让用户照着 mcpServers 贴进 VS Code 后一脸问号。
  */
 const CONFIG_PATHS: Array<{ label: string; configPath: string }> = [
   { label: "Claude Desktop", configPath: "%APPDATA%\\Claude\\claude_desktop_config.json" },
   { label: "Cursor", configPath: "~/.cursor/mcp.json" },
+  { label: "Claude Code", configPath: "~/.claude.json" },
+  { label: "Windsurf", configPath: "~/.codeium/windsurf/mcp_config.json" },
+  { label: "VS Code", configPath: "%APPDATA%\\Code\\User\\mcp.json" },
 ];
 
 export function McpAccessPane() {
@@ -443,7 +451,7 @@ export function McpAccessPane() {
       <section className="set-section mcp-onboard" id="mcp-sec-onboard" data-testid="mcp-onboard">
         <div className="set-section-title mcp-section-title">
           <span className="mcp-section-title-text">接入外部 AI</span>
-          <span className="mcp-title-hint">复制 → 粘贴到 mcpServers → 重启客户端</span>
+          <span className="mcp-title-hint">复制 → 粘贴到 mcpServers → 重启（首次）</span>
         </div>
         <p className="set-hint">片段已按这台机器自动填好；令牌只存在本机文件里，不写进片段。</p>
         {level === "off" ? (
@@ -481,6 +489,9 @@ export function McpAccessPane() {
                 <div className="mcp-step-note">
                   其他客户端：看它的文档里 <code>mcpServers</code> 那一节（已存在就合并，别整段覆盖）。
                 </div>
+                <div className="mcp-step-note">
+                  VS Code 的写法不同：键名是 <code>servers</code>（不是 <code>mcpServers</code>），文件是 JSONC、可以带注释。
+                </div>
               </div>
             </li>
             <li data-step="3" className="mcp-step">
@@ -488,7 +499,10 @@ export function McpAccessPane() {
                 3
               </span>
               <div className="mcp-step-body">
-                <div className="mcp-step-title">重启客户端，再点「检测连接」</div>
+                <div className="mcp-step-title">重启客户端（只需首次）</div>
+                <div className="mcp-step-note">
+                  桥每次调用都会重读端口和令牌 ⇒ 以后换档位、换令牌都不用重启；只有第一次接入要重启一次。
+                </div>
                 <div className="mcp-step-readings">
                   <div className="mcp-kv">
                     <span className="mcp-kv-label">最近调用</span>
@@ -498,19 +512,20 @@ export function McpAccessPane() {
                   </div>
                   <div className="mcp-kv">
                     <span className="mcp-kv-label">连接</span>
-                    <span className="mcp-kv-value">{st?.enabled ? "本机回环 · 连接数未采集" : "通道关闭"}</span>
+                    <span className="mcp-kv-value">{st?.enabled ? "本机回环（连接数不统计）" : "通道关闭"}</span>
                   </div>
                 </div>
                 <button
                   className="set-btn mcp-detect-btn"
                   data-testid="mcp-detect"
                   disabled={busy || !st}
+                  title="只刷新通道状态与最近调用读数；后端不统计连接数"
                   onClick={() => {
                     void refresh();
-                    toast("已刷新连接读数", "success");
+                    toast("已刷新状态读数", "success");
                   }}
                 >
-                  检测连接
+                  刷新状态
                 </button>
               </div>
             </li>

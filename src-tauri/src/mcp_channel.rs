@@ -1200,7 +1200,9 @@ pub fn set_enabled(enabled: bool) -> Result<McpStatus, String> {
     // ⭐ B1a（2026-10-29）：旧配置里的 `granted` 是**写下来的快照**，可能缺后来新增的读 scope
     //   （`read:tags` / `read:properties` / `read:page.current`）⇒ 起通道前**补齐并落盘**（只补读 ✓）。
     //   ⚠️ **不主动换令牌**：鉴权用的是这里拼出来的 `ChannelConfig.granted`（见下），令牌文件里那一行
-    //   只用于面板展示；升级时换令牌会把已经配好的外部客户端踢掉（它们多半在启动时读一次令牌）。
+    //   只用于面板展示；换令牌**不会**踢掉已连上的客户端 —— 桥（`tools/shuyonote-mcp/index.mjs`）
+    //   每次调用都重读端口/令牌文件（实测：同一桥进程内换令牌、换端口都自动跟上）。
+    //   ⚠️ 但客户端只在**启动时**拉起桥 ⇒ 「首次接入后要重启客户端」仍然成立（面板第 3 步据此措辞）。
     let upgraded = granted_with_default_reads(&cfg.granted);
     if upgraded != cfg.granted {
         cfg.granted = upgraded;
