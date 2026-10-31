@@ -122,6 +122,7 @@ export default {
     more: "更多（导出等）",
     exportMarkdown: "导出为 Markdown（.md 文件）",
     exportMarkdownZip: "导出为 Markdown ＋ 附件（.zip）",
+    exportShuyodoc: "导出为 .shuyodoc（文档包）",
     copyMarkdown: "复制 Markdown 到剪贴板",
     exportHtml: "导出为 HTML",
     discuss: "讨论",

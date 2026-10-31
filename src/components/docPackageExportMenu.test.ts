@@ -19,6 +19,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 /** 被点了一次的写包入参（`vi.hoisted` ⇒ 提升到 `vi.mock` 工厂之前）。 */
 const buildCalls = vi.hoisted(() => [] as unknown[]);
@@ -295,8 +300,7 @@ describe("M1 · 导出：页行右键「导出为 .shuyodoc」", () => {
     expect(toastMessages().some((m) => m.includes("已导出「第一页」") && m.includes(SAVE_PATH))).toBe(true);
   });
 
-  it("取消保存（dialog 回 null）⇒ 一个字节都不写，且如实说「已取消导出」", async () => {
-    const docJson = JSON.stringify({ root: { children: [{ type: "paragraph", children: [{ type: "text", text: "x" }] }] } });
+  it("取消保存（dialog 回 null）⇒ 一个字节都不写，且如实说「已取消导出」", async () => {    const docJson = JSON.stringify({ root: { children: [{ type: "paragraph", children: [{ type: "text", text: "x" }] }] } });
     const host = installHost({
       savePath: null,
       page: {
@@ -329,5 +333,23 @@ describe("M1 · 导出：页行右键「导出为 .shuyodoc」", () => {
     expect(host.saved, "取消之后仍然写了文件").toBeNull();
     expect(buildCalls, "取消之后还在打包（白读一遍大附件）").toHaveLength(0);
     expect(toastMessages()).toContain("已取消导出");
+  });
+});
+
+// ⭐ 2026-10-31（owner 截图）：「⋯ 更多（导出等）」菜单里也要有「导出为 .shuyodoc」。
+// 钉的是**同一函数**：两处入口都调 `docPackageTransfer.ts::exportPageAsDocPackage`，
+// ⛔ 不许在工具栏里再写一份打包／资产／落盘逻辑（那正是本仓最贵的一类事故）。
+describe("导出入口 ②：编辑器「⋯ 更多」菜单", () => {
+  it("菜单里有「导出为 .shuyodoc」，且调的是同一个 exportPageAsDocPackage（zh/en 文案都在）", () => {
+    const src = readFileSync(resolve(HERE, "EditorToolbar.tsx"), "utf8");
+    expect(src, "EditorToolbar 没有 import 文档包导出函数").toMatch(
+      /import \{ exportPageAsDocPackage \} from "\.\.\/lib\/docPackageTransfer"/,
+    );
+    expect(src, "菜单项文案没接上 i18n").toContain('t("editor.exportShuyodoc")');
+    expect(src, "点下去没有调用 exportPageAsDocPackage(pageId)").toMatch(/exportPageAsDocPackage\(pageId\)/);
+    const zh = readFileSync(resolve(HERE, "../i18n/locales/zh.ts"), "utf8");
+    const en = readFileSync(resolve(HERE, "../i18n/locales/en.ts"), "utf8");
+    expect(zh, "zh 缺 exportShuyodoc").toMatch(/exportShuyodoc:\s*"导出为 \.shuyodoc/);
+    expect(en, "en 缺 exportShuyodoc（⛔ 只改 zh 会造出不一致）").toMatch(/exportShuyodoc:\s*"Export as \.shuyodoc/);
   });
 });

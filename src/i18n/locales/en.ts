@@ -122,6 +122,7 @@ export default {
     more: "More (export…)",
     exportMarkdown: "Export as Markdown (.md file)",
     exportMarkdownZip: "Export as Markdown + attachments (.zip)",
+    exportShuyodoc: "Export as .shuyodoc (document package)",
     copyMarkdown: "Copy Markdown to clipboard",
     exportHtml: "Export as HTML",
     discuss: "Discussion",

@@ -25,6 +25,9 @@ import { renderExportMermaid } from "../lib/exportMermaid";
 import { exportPageToMarkdown } from "../lib/exportMarkdown";
 // ⭐ 2026-10-17：带附件的一键导出（zip）。与上面那条**并存** ✓ —— 纯 .md 那条不碰附件、不改引用 ✓。
 import { exportPageBundleToZip, ExportReportedError } from "../lib/exportMarkdownBundle";
+// ⭐ 2026-10-31（owner）：「⋯ 更多」里也要有「导出为 .shuyodoc」——与页树右键**同一个**函数
+//    （⛔ 不新增第二份打包逻辑；判据见 docPackageExportMenu.test.ts）。
+import { exportPageAsDocPackage } from "../lib/docPackageTransfer";
 import { docJsonOfPage } from "../lib/docContent";
 
 /**
@@ -381,6 +384,20 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
             {/* ⭐ 2026-10-17：一键导出**含附件**的 zip（与上面那条纯 .md 并存 ✓） */}
             <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); void exportMarkdownBundleFile(); }} title={t("editor.exportMarkdownZip")}>
               <UploadIcon /> {t("editor.exportMarkdownZip")}
+            </button>
+            {/* ⭐ 2026-10-31（owner，截图）：文档包（.shuyodoc）导出也放进这个菜单 ——
+                与页树右键、文件区行菜单是**同一条链**（`exportPageAsDocPackage`），
+                ⛔ 不在这里再写一份打包／资产／落盘逻辑。 */}
+            <button
+              className="toolbar-menu-item"
+              onClick={async () => {
+                setExportOpen(false);
+                const outcome = await exportPageAsDocPackage(pageId);
+                toast(outcome.message, outcome.ok ? "success" : "error");
+              }}
+              title={t("editor.exportShuyodoc")}
+            >
+              <FileCodeIcon /> {t("editor.exportShuyodoc")}
             </button>
             <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportHtml(); }} title={t("editor.exportHtml")}>
               <FileCodeIcon /> {t("editor.exportHtml")}
