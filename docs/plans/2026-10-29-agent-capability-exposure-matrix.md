@@ -227,21 +227,24 @@
 | 跨空间写 v2 | owner 拍「甲」：`write_all` 档同时获得 `read:all-spaces`；`pages.update`/`blocks.append/patch/delete` 支持目标空间（校验改「传连接」变体，块合并仍在 `apply.ts`） | ✅ |
 | AI 不可见空间清单 | 存 `meta.sync_state` 的 `ai_hidden_spaces`（本机偏好、不同步）；`mcp_hidden_spaces_get/set`；dispatch 单点遮蔽（读/写/跨空间）、`spaces_list` 过滤、`space.current` 与当前空间隐藏均明确拒绝 | ✅ |
 
-**当前面**：**69 条能力 / MCP 60 工具（读 33 / 写 27）/ `apiVersion` 1.13.0**；全量门禁 66 条中 **65 绿**，唯一红是 `scripts/session-grep.test.mjs` 的 Node24 zstd 假红（与产品无关）。
+**当前面（2026-10-31）**：**70 条能力 / MCP 61 工具（读 34 / 写 27）/ `apiVersion` 1.27.0** —— 以 `node scripts/check-capabilities.mjs` 的输出为准（注册表 70、生成物 61、TS 适配器 62 有参数比对）。
 
-### 14.2 仍未做 / 明确降级（按优先级）
+### 14.2 仍未做 / 明确降级（2026-10-31 对账）
 
-| # | 项 | 说明 |
-|---|---|---|
-| 1 | 其余写工具的跨空间 | 白名单目前 5 条（`pages.create/update`、`blocks.append/patch/delete`）；`files.*`、`nodes.*`、`tags/properties`、`db.rows_*`、`trash.restore`、`pages.revert` 等带 `spaceId` 仍 `bad_args: 暂不支持跨空间` |
-| 2 | `write:all-spaces` 档与 UI | 参数与门已就位（缺档 ⇒ `permission_denied` 点名），但**没有任何档位授予**该权限，也无 UI ⇒ 跨空间写不可用 |
-| 3 | `export.*` 跨空间 | 当前只支持当前空间；跨空间需命令面读别空间的页面/附件入口 |
-| 4 | `>10MB` / `>20 文件` 确认 UI | 现在只返回 `needs_confirm` 错误，没有确认交互 |
-| 5 | 应用内 AI 面跨空间 | 仅外部 MCP 面支持 `spaceId`；应用内面如实拒绝 |
-| 6 | 跨空间下载字节 | 本机未做端到端断言（需真附件文件） |
-| 7 | "用户关窗不响应" | `draftStatus` 仍 pending→过期（无取消事件可挂） |
-| 8 | 团队/企业写面 | 仍不覆盖（身份/角色/审计合规/数据边界四问未定） |
-| 9 | GitHub CI 读数 | 镜像已推到 `bf9f1b13`；但 `api.github.com` 当前 fetch failed，CI 结论未读到（不算通过） |
+> 2026-10-31 只核代码、未改代码的对账（**别再把 §14.1 已落地的项当"未做"读**）：
+> · **块级写 P2 已实现**（不是"未开始"）：`blocks.patch` / `blocks.insert` / `blocks.delete` 已注册（`src-tauri/src/capabilities_gen.rs:55-57`，`kind:"write"`、`mediate:"draft"`、`ai:true`），用例见 `src-tauri/src/plugins.rs:18593`（`blocks_insert_cross_space_draft_and_gates`）；
+> · **第六档「可写（全部空间）」已是实际档位**：`McpLevel::WriteAll`（`src-tauri/src/mcp_channel.rs:1388-1390`）；`level_to_config` 给它授 `write:all-spaces` 并收回其它档（同文件 `:1442-1457`）；`level_of` 按该权限判档（`:1471-1472`）；面板六档含该项（`src/components/McpAccessPane.tsx:133`，说明见 `:956`）⇒ 原「没有档位授予 ⇒ 跨空间写不可用」已过期；
+> · **`>10MB` / `>20 文件` 的确认 UI 已落地**：导出/上传走 `confirmDialog`「允许一次」＋一次性额度（`src/lib/mcpFrontendTools.ts:108-133`），下载走 `files.confirm_download` ＋ `mcp_download_grant`（同文件 `:230-247`、`src-tauri/src/plugins.rs:3206`），文档见 `docs/mcp-external-ai.md:111-120`。
+
+| # | 项 | 现状证据（file:line） | 仍缺什么 |
+|---|---|---|---|
+| 1 | 其余写工具的跨空间 | 白名单已扩到 **22 条**（`src-tauri/src/plugins.rs:6007-6031`）：`pages.create/update`、`blocks.append/patch/insert/delete`、`files.rename/delete/move/detach`、`nodes.move/rename/delete`、`folders.create`、`tags.add/remove`、`properties.set/unset`、`db.rows_write/delete`、`trash.restore`、`pages.revert` | 仍不支持跨空间的写工具：`templates.apply`、`files.upload_to_page`、`import.docpackage`、`pages.importMarkdown`（含旧名 `pages.import_markdown`）—— 不在白名单 ⇒ 带 `spaceId` 命中 `bad_args: 暂不支持跨空间`（`src-tauri/src/plugins.rs:6032-6034`） |
+| 2 | `export.*` 跨空间 | **单页已支持**：`export.markdown` / `export.docpackage` 带 `spaceId` 走 `with_conn_for_space`（`src-tauri/src/plugins.rs:3445-3467` / `:3494-3516`） | **整空间导出仍只认当前空间**（同文件 `:3472-3479` 明确 `bad_args`）；跨空间整空间导出还需要命令面读别空间页面/附件的入口 |
+| 3 | 应用内 AI 面跨空间 | 读已部分支持：`pages.list` / `pages.search` / `pages.tree` 等经 `listWorkspacePages` 走 `spaceId`（`src/lib/capabilities/frontend.ts:403-435`、`:492-516`）；DB 跨空间**如实拒绝**（同文件 `:386-393`） | 应用内面的跨空间**写**与 DB 读仍缺；应用内面 vs 外部面的 `spaceId` 支持矩阵尚未逐条对齐（没有"一张表"） |
+| 4 | 跨空间下载字节 | `files.download` 已带 `spaceId` 门（`src-tauri/src/plugins.rs:3276-3290`、`:6105`），超限确认走一次性额度（`:3206`） | **仍没有"跨空间下载真字节"的端到端断言**（要真附件文件；现有判据只覆盖同空间下载与超限额度） |
+| 5 | "用户关窗不响应" | 草稿状态机 `pending → applied/rejected`，超 10 分钟 TTL 读作 `expired`（`src-tauri/src/plugins.rs:5007-5012`、`:5117-5120`）；确认/取消回写 `mcp_draft_state`（`:5095`） | **关窗仍无取消事件可挂** ⇒ 用户直接关窗时草稿停在 `pending`、10 分钟后才变 `expired`（⛔ 不猜成 `rejected`） |
+| 6 | 团队/企业写面 | 仍不覆盖（§10 四问未定；`README.md:57` 记 2026-10-29 起团队协作已移除、改由独立企业版承载） | 身份/角色/审计合规/数据边界四问落定前，企业版不开写面 |
+| 7 | GitHub CI 读数 | 上次记录：镜像已推到 `bf9f1b13`；`api.github.com` fetch failed，CI 结论未读到（不算通过） | 仍需联网读一次 GitHub Actions 结论（本机绿 ≠ CI 绿） |
 
 ### 14.3 环境坑（本机，非产品）
 

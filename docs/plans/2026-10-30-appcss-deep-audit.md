@@ -1,6 +1,6 @@
 # 方案：App.css 深度审计与优化（2026-10-30）
 
-状态：审计读数见 §2；方案待排期（P0 可直接开工；P2 的拆分/分层需 owner 拍一次）
+状态：S0 视觉基线工具入库 ✅；S1 纯删除 ✅（App.css 28,695→26,439 行；非空行 27.4k→25.3k、当前 dev 26,559 行；`!important` 正则 36→21、实际声明 31→16）；S2 部分 ✅（去 `!important`／合并重复规则／删死兜底）；S2 的 `@layer` 脚手架、S3 tokens、S4 strangler 未开工。审计读数见 §2、执行记录见 §11（截至 2026-10-31）
 
 关联：`src/lib/cssHygiene.test.ts`（既有「只减不增」判据）· `docs/TESTING.md`（门禁总表）· 测量脚本（临时）：`_tmp/scratch/analyze-app-css.mjs`、`analyze-app-css2.mjs`
 
