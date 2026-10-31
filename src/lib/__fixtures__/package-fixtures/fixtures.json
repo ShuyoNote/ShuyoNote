@@ -5,23 +5,23 @@
   "fixtures": [
     {
       "name": "personal-minimal.shuyodoc",
-      "bytes": 1086,
-      "sha256": "9ff3809ff7a97f082239fa2ec146e7d32a3dfa1f90c28c62ab7e1889b341e750"
+      "bytes": 1128,
+      "sha256": "0989a5adf492f7b676c4b0ce4f56bd07bd0fa35c1d89a3671b1eee6640a188a0"
     },
     {
       "name": "personal-with-attachment.shuyodoc",
-      "bytes": 1546,
-      "sha256": "62284416eb88320de609a77399bcf98968ee75044859ce31500b774542416398"
+      "bytes": 1607,
+      "sha256": "cd39f78906c77406b04a4c0bbd014df3de86c080b8f8a669a629f125f043c2d9"
     },
     {
       "name": "personal-database.shuyodoc",
-      "bytes": 1192,
-      "sha256": "47be8b8656c430396844b4175c4315db6319dacd99e4e2576014fb6c897d3b2e"
+      "bytes": 1254,
+      "sha256": "7a9aa073af5597e923655f798804192f4d199c32d893b81d6da59bf4e3c60bb8"
     },
     {
       "name": "personal-sample-appendixA.shuyospace",
-      "bytes": 5280,
-      "sha256": "e1b8688f4a9f3d1dbfc91ede1e70882a0ddaf4ad5e72542cab29fd44d215eac6"
+      "bytes": 5384,
+      "sha256": "709305b3b5e87e84d58db89402888a18792751472689aaf424e7124a27893998"
     }
   ]
 }

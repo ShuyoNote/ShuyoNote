@@ -9,8 +9,10 @@
 //   ② 资产路径先过 `checkEntryPath`（zip-slip / 绝对路径 / 盘符 / 反斜杠一律拒绝），且必须是
 //      `assets/<sha256>.<ext>`（内容寻址：文件名里的 sha256 必须等于字节实际的 sha256）；
 //   ③ 同名条目不许出现两次（zip 会静默覆盖 ⇒ 等于夹带）；
-//   ④ manifest **只写企业版 10 个必填字段**，不写个人版扩展的 `assets` 字段 —— 这样资产只能靠
-//      `assets/<sha256>.<ext>` 内容寻址发现，读回时走的正是"读企业版包"的那条路。
+//   ④ manifest **只写企业版字段 ＋ v1.1 的 `features`**：`features` 按 §1.2 只声明真的用到的
+//      扩展（`attachments` / `db-namespace` / `checksums-self`，顺序见 `KNOWN_FEATURES`）；
+//      ⛔ 不写个人版扩展的 `assets` 字段 —— 资产只能靠 `assets/<sha256>.<ext>` 内容寻址发现，
+//      读回时走的正是"读企业版包"的那条路。
 //
 // 两个容器层口径（跨版互通的关键）：
 //   · **store（不压缩）**：企业版 zip 读端只支持 store（`method !== 0` 直接报错），
@@ -144,32 +146,13 @@ async function normalizeAsset(input: DocumentPackageAsset, index: number): Promi
 export async function buildDocumentPackage(input: BuildDocumentPackageInput): Promise<Uint8Array> {
   if (typeof input !== "object" || input === null) fail("入参必须是对象");
 
-  // ① manifest：复用格式层的入参校验（id / 标题 / 时间 / 版本号必须非空），
-  //    但**只写企业版 10 个必填字段**（字段顺序同企业版 `buildDocumentPackage`）。
-  const built = buildManifest({
-    documentId: input.documentId,
-    title: input.title,
-    createdAt: input.createdAt,
-    updatedAt: input.updatedAt,
-    sourceAppVersion: input.sourceAppVersion,
-  });
-  const manifest: Omit<DocManifest, "assets"> = {
-    format: DOC_FORMAT,
-    format_version: DOC_FORMAT_VERSION,
-    source: built.source,
-    source_app_version: built.source_app_version,
-    document_id: built.document_id,
-    title: built.title,
-    created_at: built.created_at,
-    updated_at: built.updated_at,
-    content_type: CONTENT_TYPE_LEXICAL,
-    encrypted: false,
-  };
-
-  // ② 正文（不合法就现在拒，⛔ 不写"自己的读端读不回来"的包）
+  // ① 正文（不合法就现在拒，⛔ 不写"自己的读端读不回来"的包）。
+  //    先收正文，是因为下面的 features 要看正文根上有没有 `db`（§1.3 的数据库页形状）。
   const docJson = normalizeDocJson(input.docJson);
+  const docRoot = JSON.parse(docJson) as Record<string, unknown>;
+  const hasDbNamespace = Object.prototype.hasOwnProperty.call(docRoot, "db");
 
-  // ③ 资产：逐个校验（路径安全 / 内容寻址 / sha 与字节一致 / 不重名）
+  // ② 资产：逐个校验（路径安全 / 内容寻址 / sha 与字节一致 / 不重名）
   const rawAssets = input.assets ?? [];
   if (!Array.isArray(rawAssets)) fail("assets 必须是数组");
   const assets: NormalizedAsset[] = [];
@@ -181,7 +164,40 @@ export async function buildDocumentPackage(input: BuildDocumentPackageInput): Pr
     assets.push(normalized);
   }
 
-  // ④ 条目（顺序固定：清单 → 正文 → 资产 → 校验和）
+  // ③ features（§1.2）：写侧**只声明真的用到的**扩展（顺序由 `normalizeFeatures` 规范化）。
+  //    `checksums-self` 恒有 —— 本版总是写 `checksums.json`，而它现在是必带条目（缺则读侧默认拒）。
+  const features = [
+    ...(assets.length > 0 ? ["attachments"] : []),
+    ...(hasDbNamespace ? ["db-namespace"] : []),
+    "checksums-self",
+  ];
+
+  // ④ manifest：复用格式层的入参校验（id / 标题 / 时间 / 版本号必须非空；features 只许白名单值），
+  //    但**只写企业版字段 ＋ v1.1 的 features**（⛔ 不写个人版扩展的 `assets` 字段）。
+  const built = buildManifest({
+    documentId: input.documentId,
+    title: input.title,
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt,
+    sourceAppVersion: input.sourceAppVersion,
+    features,
+  });
+  const manifest: Omit<DocManifest, "assets"> = {
+    format: DOC_FORMAT,
+    format_version: DOC_FORMAT_VERSION,
+    // v1.1 字段位置按规范 §1.2（紧跟 format_version）；没给就不写，v1 形状一个字不变。
+    ...(built.features ? { features: built.features } : {}),
+    source: built.source,
+    source_app_version: built.source_app_version,
+    document_id: built.document_id,
+    title: built.title,
+    created_at: built.created_at,
+    updated_at: built.updated_at,
+    content_type: CONTENT_TYPE_LEXICAL,
+    encrypted: false,
+  };
+
+  // ⑤ 条目（顺序固定：清单 → 正文 → 资产 → 校验和）
   const entries: { path: string; bytes: Uint8Array }[] = [
     { path: MANIFEST_PATH, bytes: utf8(`${JSON.stringify(manifest, null, 2)}\n`) },
     { path: CONTENT_PATH, bytes: utf8(docJson) },
@@ -191,11 +207,11 @@ export async function buildDocumentPackage(input: BuildDocumentPackageInput): Pr
   const checksums = await buildChecksums(entries);
   entries.push({ path: CHECKSUMS_PATH, bytes: utf8(`${JSON.stringify(checksums, null, 2)}\n`) });
 
-  // ⑤ 大小上限：与本仓读端同一口径（⛔ 不导出自己都读不回来的包）
+  // ⑥ 大小上限：与本仓读端同一口径（⛔ 不导出自己都读不回来的包）
   const sizeErr = checkSizeLimits(entries.map((e) => ({ path: e.path, size: e.bytes.byteLength })));
   if (sizeErr) fail(sizeErr);
 
-  // ⑥ store（level 0）⇒ zip。企业版读端只认 store，容器层口径必须一致。
+  // ⑦ store（level 0）⇒ zip。企业版读端只认 store，容器层口径必须一致。
   const zippable: Record<string, Uint8Array> = {};
   for (const e of entries) zippable[e.path] = e.bytes;
   const pathErr = checkWritePaths(entries);

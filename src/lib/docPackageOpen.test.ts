@@ -98,4 +98,31 @@ describe("打开 .shuyodoc（整包完整性）", () => {
     expect(r.ok).toBe(true);
     if (r.ok) expect(JSON.parse(r.pkg.docJson)).toEqual(rich);
   });
+
+  it("⑧ v1.1 features：认识的照常打开；不认识 ⇒ 整包拒收并点名（E_FEATURE，提示升级）", async () => {
+    const withFeatures = async (features: unknown): Promise<ZipEntry[]> =>
+      withSums([
+        {
+          path: "manifest.json",
+          bytes: enc(
+            JSON.stringify({ format: DOC_FORMAT, format_version: DOC_FORMAT_VERSION, title: "周报", assets: [], features }),
+          ),
+        },
+        { path: "content.json", bytes: enc(JSON.stringify({ root: { children: [] } })) },
+      ]);
+
+    // 认识的（v1.1 白名单）⇒ 放行，manifest 里能看到声明
+    const known = await openDocumentPackage(await withFeatures(["attachments", "checksums-self"]));
+    expect(known.ok).toBe(true);
+    if (known.ok) expect(known.pkg.manifest.features).toEqual(["attachments", "checksums-self"]);
+
+    // 不认识的 ⇒ 拒收、点名那个值、带升级提示（⛔ 不是"记 notice 继续"）
+    const unknown = await openDocumentPackage(await withFeatures(["checksums-self", "graph-v2"]));
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) {
+      expect(unknown.error).toContain("E_FEATURE");
+      expect(unknown.error).toContain("graph-v2");
+      expect(unknown.error).toContain("升级");
+    }
+  });
 });

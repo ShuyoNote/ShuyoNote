@@ -10,7 +10,8 @@
 //      ⇒ `checksumsOk=true` / `errors=[]`。企业版仓不在本机时**显式跳过**（⛔ 跳过 ≠ 通过，读数进报告）。
 //   ⑥ store 模式（企业版读端只支持 store）＋ 条目顺序固定 ＋ 同一输入逐字节相同；
 //   ⑦ 无资产也能导；正文不合法 / 标题为空 ⇒ 拒绝写；
-//   ⑧ manifest 只写企业版 10 个必填字段（不写个人版扩展的 `assets` 字段）。
+//   ⑧ manifest 只写企业版字段 ＋ v1.1 的 `features`（不写个人版扩展的 `assets` 字段）。
+//   ⑨ features 只声明**真的用到的**扩展（attachments / db-namespace / checksums-self）。
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +24,7 @@ import {
   CONTENT_PATH,
   DOC_FORMAT,
   DOC_FORMAT_VERSION,
+  KNOWN_FEATURES,
   MANIFEST_PATH,
   buildManifest,
   sha256Hex,
@@ -67,6 +69,25 @@ const CONTENT_JSON = JSON.stringify(LEXICAL_CONTENT);
 const ENTERPRISE_MANIFEST_KEYS = [
   "format",
   "format_version",
+  "source",
+  "source_app_version",
+  "document_id",
+  "title",
+  "created_at",
+  "updated_at",
+  "content_type",
+  "encrypted",
+];
+
+/**
+ * 个人版写侧**实际写出**的 key 顺序（v1.1）：企业版 10 项 ＋ `features` ——
+ * 规范 §1.2 把它放在 `format_version` 之后。企业版读端忽略未知字段 ⇒ 这个多出来的键
+ * 不会让它拒包（⑤ 那条用真 reader 跑出来，读数进报告）。
+ */
+const WRITTEN_MANIFEST_KEYS = [
+  "format",
+  "format_version",
+  "features",
   "source",
   "source_app_version",
   "document_id",
@@ -353,6 +374,7 @@ describe.skipIf(!HAS_ENTERPRISE_READER)("⑤ 跨版：企业版 readPackage 直�
           kind: reading.kind,
           entries: reading.entries,
           manifestKeys: reading.manifestKeys,
+          features: reading.manifest?.features,
         })}`,
       );
 
@@ -363,8 +385,11 @@ describe.skipIf(!HAS_ENTERPRISE_READER)("⑤ 跨版：企业版 readPackage 直�
       expect(reading.entries).toEqual(
         [MANIFEST_PATH, CONTENT_PATH, "checksums.json", input.assets![0].path].sort(),
       );
-      // manifest 被接受：企业版认出的字段与我们写的一致（它忽略未知字段，但我们没写未知字段）
-      expect(reading.manifestKeys).toEqual(ENTERPRISE_MANIFEST_KEYS);
+      // manifest 被接受：企业版认出的字段与我们写的一致。★ 我们现在**写**了 v1.1 的
+      // `features`（企业版 manifest 结构体没有它）—— 它照常读出来、不拒包，这正是
+      // 「企业版读端容忍新字段」的实测读数（不是推论）。
+      expect(reading.manifestKeys).toEqual(WRITTEN_MANIFEST_KEYS);
+      expect(reading.manifest?.features).toEqual(["attachments", "checksums-self"]);
       expect(reading.manifest?.format).toBe(DOC_FORMAT);
       expect(reading.manifest?.format_version).toBe(DOC_FORMAT_VERSION);
       expect(reading.manifest?.source).toBe("personal");
@@ -444,12 +469,16 @@ describe("⑦ 无资产也能导；正文/标题不合法 ⇒ 拒绝写", () => 
   });
 });
 
-describe("⑧ manifest 只写企业版 10 个必填字段", () => {
-  it("㊲ 字段集合与顺序 = 企业版必填 10 项；没有个人版扩展的 assets 字段与旧 created/updated", async () => {
+describe("⑧ manifest 只写企业版字段 ＋ v1.1 的 features", () => {
+  it("㊲ 字段集合与顺序 = 企业版必填 10 项 ＋ features（紧跟 format_version）；没有个人版扩展的 assets 字段与旧 created/updated", async () => {
+    // 10 项企业版必填字段的名字与顺序一个字没动（features 只是插在 format_version 之后的新键）
+    expect(WRITTEN_MANIFEST_KEYS.filter((k) => k !== "features")).toEqual(ENTERPRISE_MANIFEST_KEYS);
     const entries = await unzipDocument(await buildDocumentPackage(await baseInput()));
     const manifest = JSON.parse(dec(byPath(entries).get(MANIFEST_PATH)!)) as Record<string, unknown>;
-    expect(Object.keys(manifest)).toEqual(ENTERPRISE_MANIFEST_KEYS);
-    // 与格式层 buildManifest 的字段逐字一致，只少了扩展的 assets
+    expect(Object.keys(manifest)).toEqual(WRITTEN_MANIFEST_KEYS);
+    // baseInput 带一个资产、正文无 db ⇒ 声明 attachments ＋ checksums-self
+    expect(manifest.features).toEqual(["attachments", "checksums-self"]);
+    // 与格式层 buildManifest 的字段逐字一致（features 用同一份才可比），只少了扩展的 assets
     const fromFormatLayer = Object.keys(
       buildManifest({
         documentId: "doc-writer-fixture-1",
@@ -457,12 +486,43 @@ describe("⑧ manifest 只写企业版 10 个必填字段", () => {
         createdAt: "2026-10-29T04:00:00.000Z",
         updatedAt: "2026-10-29T05:00:00.000Z",
         sourceAppVersion: "2.0.0-writer",
+        features: ["attachments", "checksums-self"],
       }),
     );
-    expect(Object.keys(manifest)).toEqual(fromFormatLayer.filter((k) => k !== "assets"));
+    expect(fromFormatLayer.filter((k) => k !== "assets")).toEqual(Object.keys(manifest));
     // 不写扩展 / 旧字段（写了只会让读端多一条"清单外条目"的判据面）
     expect(manifest.assets).toBeUndefined();
     expect(manifest.created).toBeUndefined();
     expect(manifest.updated).toBeUndefined();
+  });
+});
+
+describe("⑨ v1.1 features：写侧只声明真的用到的扩展（§1.2）", () => {
+  const featuresOf = async (input: BuildDocumentPackageInput): Promise<unknown> => {
+    const entries = await unzipDocument(await buildDocumentPackage(input));
+    return (JSON.parse(dec(byPath(entries).get(MANIFEST_PATH)!)) as { features?: unknown }).features;
+  };
+
+  it("㊳ 无资产、无 db ⇒ 只声明 checksums-self（不是「什么都不声明」：checksums.json 是必带条目）", async () => {
+    expect(await featuresOf(await baseInput({ assets: [] }))).toEqual(["checksums-self"]);
+  });
+
+  it("㊴ 带资产 ⇒ ＋attachments；正文根带 db ⇒ ＋db-namespace；三者齐时按规范顺序", async () => {
+    expect(await featuresOf(await baseInput())).toEqual(["attachments", "checksums-self"]);
+    const dbDoc = { root: { type: "root", children: [] }, db: { columns: [], views: [], rows: [] } };
+    expect(await featuresOf(await baseInput({ assets: [], docJson: dbDoc }))).toEqual([
+      "db-namespace",
+      "checksums-self",
+    ]);
+    // 规范顺序（= `KNOWN_FEATURES` 的顺序），fixture 逐字节可复现靠它
+    expect(await featuresOf(await baseInput({ docJson: dbDoc }))).toEqual([...KNOWN_FEATURES]);
+  });
+
+  it("㊵ 写出的包一定读得回来：manifest.features 全在白名单内（不认识的值写侧就拒了）", async () => {
+    const opened = await openDocumentPackage(await unzipDocument(await buildDocumentPackage(await baseInput())));
+    expect(opened.ok).toBe(true);
+    if (opened.ok) {
+      for (const f of opened.pkg.manifest.features ?? []) expect(KNOWN_FEATURES).toContain(f);
+    }
   });
 });

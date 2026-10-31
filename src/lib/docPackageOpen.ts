@@ -111,9 +111,10 @@ export async function openDocumentPackage(
   if (manifest.checksums_sha256) {
     notices.push("包带 manifest.checksums_sha256：v1.1 读端**存在也不验**（强制验属 v2）");
   }
-  if (manifest.features && manifest.features.length > 0) {
-    notices.push(`包声明 features=[${manifest.features.join(", ")}]：本版不认识的一律忽略（不落库）`);
-  }
+  // v1.1 `features`：白名单校验在 `parseManifest` 里 —— 不认识的值**已经**整包拒收并点名
+  // （`E_FEATURE`，含升级提示）；能走到这里的都是本版认识的声明，照常放行。
+  // ⚠️ 这里以前写的是"不认识的一律忽略（不落库）"，那是**错的**：旧读端会拿残缺语义去落库，
+  //    用户看到的是"打开成功但内容少了"。规范 §1.2 明确要求拒收并点名。
   const checksumsBytes = byPath.get(CHECKSUMS_PATH);
   let checksumsFiles: Record<string, unknown> | null = null;
   if (!checksumsBytes) {

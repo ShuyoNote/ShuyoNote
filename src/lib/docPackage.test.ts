@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   DOC_FORMAT,
   DOC_FORMAT_VERSION,
+  KNOWN_FEATURES,
   checkEntryPath,
   checkSizeLimits,
   MAX_FILE_BYTES,
@@ -89,5 +90,44 @@ describe("资产自证（内容寻址）", () => {
     expect(ok).toBeNull();
     const bad = await verifyAssets([{ path: "assets/x.bin", sha256: SHA_ABC, bytes: new TextEncoder().encode("abd") }]);
     expect(bad).toContain("与 sha256 不符");
+  });
+});
+
+// v1.1 `features`（包格式定稿 §1.2）：写侧声明能力，**读侧不认识就拒收并点名**。
+// 现场：以前的实现是"记一条 notice 继续打开" —— 那会让旧读端拿残缺语义落库，
+// 用户看到"打开成功但内容少了"；规范明确要拒（升级提示才会出现）。
+describe("manifest.features 白名单（不认识 ⇒ 拒收并点名）", () => {
+  it("⑨ 认识的 features 原样读出（attachments / db-namespace / checksums-self）", () => {
+    const r = parseManifest({ ...goodManifest(), features: [...KNOWN_FEATURES] });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.manifest.features).toEqual([...KNOWN_FEATURES]);
+    // 空数组 = 没声明任何扩展（v1 形状），也照常通过
+    expect(parseManifest({ ...goodManifest(), features: [] }).ok).toBe(true);
+  });
+
+  it("⑩ ⛔ 不认识的 feature ⇒ 整包拒收、点名、带升级提示（E_FEATURE）", () => {
+    const r = parseManifest({ ...goodManifest(), features: ["attachments", "quantum-blocks"] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toContain("E_FEATURE");
+      expect(r.error).toContain("quantum-blocks");
+      expect(r.error).toContain("升级");
+      // 认识的那个不该被误报（点名只点不认识的值）
+      expect(r.error).not.toContain("「attachments」");
+    }
+  });
+
+  it("⑪ ⛔ 多个未知 feature 一次点名（⛔ 不许只报第一个就让人反复重试）", () => {
+    const r = parseManifest({ ...goodManifest(), features: ["graph-v2", "quantum-blocks"] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toContain("graph-v2");
+      expect(r.error).toContain("quantum-blocks");
+    }
+  });
+
+  it("⑫ features 形状不对仍按旧口径拒（不是字符串数组）", () => {
+    expect(parseManifest({ ...goodManifest(), features: "attachments" }).ok).toBe(false);
+    expect(parseManifest({ ...goodManifest(), features: [3] }).ok).toBe(false);
   });
 });

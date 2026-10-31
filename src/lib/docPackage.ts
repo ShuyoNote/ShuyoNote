@@ -47,6 +47,44 @@ export const CONTENT_TYPE_LEXICAL = "lexical-json";
 /** 本版读端支持的最高 `min_reader_version`（v1.1 裁决）。 */
 export const READER_VERSION = "1.1";
 
+/**
+ * v1.1 读端**认识**的 feature 全集（包格式定稿 §1.2：「写侧声明能力、读侧不认识就**拒收并点名**」）。
+ *
+ * 加一个值的含义是「读端真的理解它声明的形状」，不是「忽略也没事」：
+ *   · `attachments` —— 资产在 `assets/<sha256>.<ext>` 内容寻址（读侧按文件名认 sha）；
+ *   · `db-namespace` —— 正文 `content.json` 根上带可选 `db` 命名空间（数据库页）；
+ *   · `checksums-self` —— 包写了 `checksums.json`（本版写侧**总是**写，缺它读侧默认拒）。
+ *
+ * ⛔ 别为了放行某个新包往这里塞值：不认识就拒收，升级提示才会出现（这条规范的全部意义）。
+ * 顺序也是**写侧的规范顺序**（fixture/manifest 的 `features` 按它排列，便于逐字节复现）。
+ */
+export const KNOWN_FEATURES = ["attachments", "db-namespace", "checksums-self"] as const;
+export type KnownFeature = (typeof KNOWN_FEATURES)[number];
+
+/** 是否为本版认识的 feature（读侧白名单的唯一出处）。 */
+export function isKnownFeature(name: string): name is KnownFeature {
+  return (KNOWN_FEATURES as readonly string[]).includes(name);
+}
+
+/**
+ * 写侧 `features` 规范化：去重 + 按 [`KNOWN_FEATURES`] 的规范顺序排列。
+ *
+ * 遇到不认识的值 ⇒ **抛错**（写侧只写规范允许的字段；要写新能力先把它加进白名单，
+ * 否则就是在生产"自己的读端都不认识的包"）。
+ */
+export function normalizeFeatures(names: string[]): KnownFeature[] {
+  const wanted = new Set<string>();
+  for (const name of names) {
+    if (!isKnownFeature(name)) {
+      throw new Error(
+        `未知 feature「${name}」：写侧只允许 ${KNOWN_FEATURES.join(" / ")}（新能力要先加进 KNOWN_FEATURES 白名单）`,
+      );
+    }
+    wanted.add(name);
+  }
+  return KNOWN_FEATURES.filter((f) => wanted.has(f));
+}
+
 /** simple semver compare（a > b）。 */
 export function versionGt(a: string, b: string): boolean {
   const pa = a.split(".").map((x) => Number.parseInt(x, 10) || 0);
@@ -118,7 +156,7 @@ export interface DocManifest {
   updated_at?: string;
   /** v1 只读 `lexical-json`。 */
   content_type: string;
-  /** v1.1 可选：声明的特性（读侧只做形状校验；不认识的写进 notices）。 */
+  /** v1.1 可选：声明的特性；读侧**白名单**校验 —— 不认识的值 ⇒ 拒收并点名（`E_FEATURE`）。 */
   features?: string[];
   /** v1.1 可选：> 本版（1.1）⇒ 拒收并提示升级。 */
   min_reader_version?: string;
@@ -205,6 +243,15 @@ export function parseManifest(raw: unknown): ManifestResult {
     if (!Array.isArray(m.features) || m.features.some((x) => typeof x !== "string")) {
       return { ok: false, error: "manifest.features 必须是字符串数组" };
     }
+    // 规范 §1.2：**不认识某 feature ⇒ 拒收并点名**（⛔ 不许"记个 notice 继续"——那样旧读端会
+    // 用残缺的语义去落库，用户看到的是"打开成功但内容少了"）。白名单见 `KNOWN_FEATURES`。
+    const unknown = [...new Set(m.features as string[])].filter((f) => !isKnownFeature(f));
+    if (unknown.length > 0) {
+      return {
+        ok: false,
+        error: `E_FEATURE: 这个包声明了本版不认识的 feature${unknown.map((f) => `「${f}」`).join("")}—— 请升级应用后再打开`,
+      };
+    }
   }
   if (m.min_reader_version !== undefined && typeof m.min_reader_version !== "string") {
     return { ok: false, error: "manifest.min_reader_version 必须是字符串" };
@@ -269,6 +316,11 @@ export interface BuildManifestInput {
   content_type?: string;
   /** 只接受 `false`（个人版没有加密能力，⛔ 不写假加密包）。 */
   encrypted?: boolean;
+  /**
+   * v1.1：本包用到的扩展能力（§1.2）。**只允许 [`KNOWN_FEATURES`] 里的值**（写侧不塞私有值）；
+   * 省略 / 空数组 ⇒ 不写这个字段（v1 形状不变）。写侧顺序按白名单规范化。
+   */
+  features?: string[];
   /** 可选：旧个人包风格的显式资产清单（企业版读端会忽略这个多余字段）。 */
   assets?: DocAsset[];
 }
@@ -276,8 +328,12 @@ export interface BuildManifestInput {
 /**
  * **写出** manifest.json（个人版导出用；带全企业版必填字段）。
  *
- * 字段顺序与企业版 `buildDocumentPackage` 一致；`assets` 是个人版扩展字段
+ * 字段顺序与企业版 `buildDocumentPackage` 一致（v1.1 的 `features` 插在 `format_version` 之后，
+ * 与规范 §1.2 的示例同序）；`assets` 是个人版扩展字段
  * （旧个人版读端要求它在，企业版读端忽略未知字段 —— 2026-10-29 实地验过）。
+ *
+ * `features` **只在调用方给了非空数组时写入**（旧包/v1 形状一个字不变）；值只许来自
+ * [`KNOWN_FEATURES`]，未知值直接抛错（⛔ 不生产"自己的读端会拒收"的包）。
  */
 export function buildManifest(input: BuildManifestInput): DocManifest {
   if (typeof input?.documentId !== "string" || input.documentId === "") throw new Error("buildManifest: documentId 必须是非空字符串");
@@ -292,9 +348,12 @@ export function buildManifest(input: BuildManifestInput): DocManifest {
   if (input.encrypted === true) throw new Error("buildManifest: 加密包未实现（encrypted:true 被拒绝，⛔ 不写\"加密\"明文）");
   const assets = input.assets ?? [];
   if (!Array.isArray(assets)) throw new Error("buildManifest: assets 必须是数组");
+  const features = normalizeFeatures(input.features ?? []);
   return {
     format: DOC_FORMAT,
     format_version: DOC_FORMAT_VERSION,
+    // 规范 §1.2 的字段顺序：features 紧跟 format_version（有才写；没有就是 v1 形状）。
+    ...(features.length > 0 ? { features } : {}),
     source,
     source_app_version: input.sourceAppVersion,
     document_id: input.documentId,
