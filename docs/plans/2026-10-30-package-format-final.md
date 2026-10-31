@@ -1,10 +1,11 @@
 # 方案：包格式"一步到位"定稿 —— `.shuyodoc` v1.1 ＋ `.shuyospace` 完整设计（2026-10-30）
 
-状态：方案定稿（企业版已裁决，以 §9 为准；实现 M1.1 → M2a → M2b）
+状态：已实现（2026-10-31）—— M1.1 / M2a–M2e 均已落 dev；遗留见文末「实现状态（2026-10-31）」。
+证据：`../../src/lib/docPackWriter.ts`（M1.1 文档包写侧）／`../../src/lib/docSpacePackWriter.ts`（M2a 空间包写侧）／`../../src/lib/docSpacePackOpen.ts`（M2b 读侧）／`../../src-tauri/src/space_import.rs`（M2c 导入落库＋引用重写＋审计）／`../../src/lib/docSpacePackTransfer.ts`（M2e UI 胶水）
 
 > 编号说明：企业版往来信件里把这些规格项称作「D 加数字」（1–8）；本文件正文统一写作 **S1–S8**，因为 D 前缀在决策门禁里是决策引用专用，裸写会被 check-decision-ids 拦。
 
-关联：[`2026-10-29-shuyodoc-m1.md`](2026-10-29-shuyodoc-m1.md)（M1 已实现）· 企业版规范 `docs/specs/2026-10-28-package-format-spec.md`＋附录 A · 已发信箱信 `2026-10-30-windows-enterprise-package-format-ambiguities.md`
+关联：[`2026-10-29-shuyodoc-m1.md`](2026-10-29-shuyodoc-m1.md)（M1 已实现）· 企业版规范「`docs/specs/2026-10-28-package-format-spec.md`＋附录 A」（**在企业仓**，本仓不存该文件） · 已发信箱信 `2026-10-30-windows-enterprise-package-format-ambiguities.md`
 
 > 出发点：**不先做 M2 再发现 v1 形状要改**。所以把所有"会逼出 v2"的歧义一次定死；
 > 同时**不破坏企业版已实现的 v1**（`package-format.mjs`）：所有新增都是**可选字段**，
@@ -242,10 +243,10 @@ warnings=[id-map-ignored]（预期）；parent/children/附件名/大小/mime/sh
 
 ### 9.2 仍然待办（双方）
 
-1. **C1**：`min_reader_version > 支持版本` 必须拒收（企业需补，个人版 M1.1 一并实现）；
-2. **S6**：内层嵌套扫描（服务端 TODO、个人版 M2 前实现）；
+1. **C1**：`min_reader_version > 支持版本` 必须拒收（**个人版已实现** `src/lib/docPackageOpen.ts:96-98`（`E_VERSION` 点名升级）；企业侧仍待补）；
+2. **S6**：内层嵌套扫描（**个人版已实现** `src/lib/docPackageOpen.ts:77-78`（`E_ZIP_STRUCTURE` 硬拒嵌套包）；服务端仍 TODO）；
 3. **S4**：企业 `import-document` 的 assets 入库（P0b）；
-4. **S8**：写侧硬拒 vs 读侧 warning 的分层实现（个人版 M1.1 做写侧；读侧 warning 记录）；
+4. **S8**：写侧硬拒 vs 读侧 warning 的分层实现（**个人版写侧已实现** `src/lib/docPackage.ts::checkWritePaths`；读侧 warning 已做）；
 5. 互读验收草案 `docs/specs/2026-10-30-package-interop-acceptance.md`（企业仓分支）由 `windows/enterprise + contract-conformance` 审，走附录 C 合并。
 
 ## M2a 实现证据（2026-10-30）
@@ -257,19 +258,20 @@ warnings=[id-map-ignored]（预期）；parent/children/附件名/大小/mime/sh
 
 - `src/lib/docSpacePackOpen.ts::openSpacePackage`：整包校验（checksums 必须覆盖 manifest；缺 ⇒ `E_IO_CHECKSUMS`，可显式 `allowUnverifiedChecksums`）＋ manifest（format/version/space/min_reader_version 高拒/encrypted 拒）＋ tree（roots 非空、kind 白名单、children 权威、parent_id 冲突拒、环/深度 ≤1000、空文件夹保留、混排 children、file 条目 name/mime §9）＋ attachments（sha/size/字节缺失）＋ 内层 `documents/<id>/document.shuyodoc` 复用文档包读侧且**禁再嵌包**；`id_map.json` **不信任**（`id-map-ignored` warning）。
 - 判据：`src/lib/docSpacePackOpen.test.ts`（10 条：往返/未知 kind/冲突/深度/坏 checksums/缺 checksums/嵌套包/附件缺失/id_map 不信任/manifest 高版本与加密）；包判据合计 **68 条**全绿。
-- ⏳ 未做（下一批 M2b 落库）：导入永远新建 id、id_map 重算、children+parent 一起重映射、整包原子落库、审计 `package.import`。
+- ✅ 已实现（2026-10-31，M2c 落库）：导入永远新建 id、id_map 重算、children+parent 一起重映射、整包原子落库、审计 `package.import` —— 证据：`src-tauri/src/space_import.rs:187`（id_map 重算/父子重映射）、`:303-304`（commit 后写 `record_package_import`）、`:316`（失败 `cleanup` 回滚）；提交 `cdac6897`＋`08f98962`；判据 `space_import::tests`（5 passed，含原子失败与审计）。
 
 ## M2c 导入落库证据（2026-10-30）
 
 - Rust 单命令 `space_package_import`（`src-tauri/src/space_import.rs`）：新建空间 → 事务内按拓扑序 `create_node_in` 建节点（folder/page/database，父子重映射）→ 内层 content 落库 → 附件按 sha 落盘/去重并插 `attachments` 行；失败 ⇒ 回滚事务并**删除 meta 行/空间库/附件目录**（原子）。判据 `space_import::tests`：`space_import_creates_new_space_with_remapped_ids_and_counts`、`space_import_is_atomic_on_failure`（2 passed）。
 - 前端胶水 `src/lib/docSpacePackImport.ts`：`unzipDocument` → `openSpacePackage` → `api.importSpacePackage`，warnings 透传；判据 `docSpacePackImport.test.ts`（1 passed）。
-- ⏳ 未做：id_map 重算与正文/双链重写、持久审计、UI 选文件入口。
+- ✅ 已实现（2026-10-31）：id_map 重算与正文/双链重写（`src-tauri/src/space_import.rs:187`、`:259`；同名歧义只记 `wikilink-ambiguous` warning）、持久审计（`:304` → 插件审计环 `app.package.import`，`src-tauri/src/plugins.rs:622-634`）、UI 选文件入口（设置→空间：`src/components/SpacePackageTransferRows.tsx:37-45`，胶水 `src/lib/docSpacePackTransfer.ts:124-139`）。
 
 ## 样例包夹具证据（2026-10-30）
 
 - 生成器：`scripts/make-package-fixtures.mjs`（vite `ssrLoadModule` 直接加载本仓 TS 写侧，无新依赖；默认输出 `src/lib/__fixtures__/package-fixtures/`，同目录 `fixtures.json` 记录 size/sha256）。
-- 入库 4 个真实包（`fixtures.json` 为准）：`personal-minimal.shuyodoc` 1086 B `9ff3809f…`、`personal-with-attachment.shuyodoc` 1546 B `62284416…`、`personal-database.shuyodoc` 1192 B `47be8b86…`、`personal-sample-appendixA.shuyospace` 5280 B `e1b8688f…`。
-  - ⚠️ **2026-10-31 重新生成过一次**（旧 sha 为 `6ec4812b…` 等）：写侧的固定时间戳原来用 `Date.UTC(1980,0,1)`，而 fflate 编码 DOS 时间字段用的是**本地** getter ⇒ +08:00 与 UTC 会写出不同字节（CI 是 UTC，本机是 +08:00）⇒ `packageFixtures.test.ts` 的"重新生成逐字节相等"在 CI 上必红、本机永远绿。改成**本地构造** `new Date(1980,0,1,0,0,0)` 后两地字节一致，夹具按新字节重新入库。
+- 入库 4 个真实包（`fixtures.json` 为准）：`personal-minimal.shuyodoc` 1128 B `0989a5ad…`、`personal-with-attachment.shuyodoc` 1607 B `cd39f789…`、`personal-database.shuyodoc` 1254 B `7a9aa073…`、`personal-sample-appendixA.shuyospace` 5384 B `709305b3…`。
+  - ⚠️ **2026-10-31 第二次重新生成**（features 合规：每个 manifest 多一行 `features`，空间包 = 两个内层文档各多一行）：旧值 `9ff3809f… / 62284416… / 47be8b86… / e1b8688f…` **作废**，以本行 + `fixtures.json` 为准；企业侧对拍须用本行新 sha 重跑。
+  - ⚠️ **2026-10-31 第一次重新生成**（旧旧 sha 为 `6ec4812b…` 等）：写侧的固定时间戳原来用 `Date.UTC(1980,0,1)`，而 fflate 编码 DOS 时间字段用的是**本地** getter ⇒ +08:00 与 UTC 会写出不同字节（CI 是 UTC，本机是 +08:00）⇒ `packageFixtures.test.ts` 的"重新生成逐字节相等"在 CI 上必红、本机永远绿。改成**本地构造** `new Date(1980,0,1,0,0,0)` 后两地字节一致，夹具按新字节重新入库。
 - 判据：`src/lib/packageFixtures.test.ts`（3 条：清单 size/sha 一致；**重新生成逐字节相等**；3 个文档包走 `openDocumentPackage`、空间包走 `openSpacePackage` 读回）。
 
 ## M2c 引用重写/审计证据（2026-10-30）
@@ -283,4 +285,26 @@ warnings=[id-map-ignored]（预期）；parent/children/附件名/大小/mime/sh
 - 读侧 `openSpacePackage`：默认上限 **256 MiB / 10000 条**（`maxTotalBytes`/`maxEntries` 可注入）；超限 ⇒ `E_LIMIT` 点名，边界恰好通过。导入命令 `space_package_import` 侧 `check_import_limits`（nodes+files 条目数、bytes+doc_json 总大小）同口径 ⇒ 超限拒绝且**在落库前**。
 - tree↔attachments 名字冲突：以 **tree 为准**，`attachment-name-mismatch` warning；一致时无 warning。
 - 判据：`docSpacePackOpen.test.ts` 12 passed（含上限边界/超限、名字冲突/一致）；`space_import` 5 passed（含 payload 上限边界）。
-- ⏳ UI 入口（导出 `.shuyospace`/导入空间包）本批未做。
+- ✅ 已实现（2026-10-31，M2e）：UI 入口 —— 设置→空间「备份与迁移」里的**导出空间包/导入空间包**（`src/components/SpacePackageTransferRows.tsx:20-45`，胶水 `src/lib/docSpacePackTransfer.ts:107-139`，逻辑 `src/lib/useSpacePackageTransfer.ts:48-49`）；提交 `60f185b8`（入口）＋ `3fa90600`（按 owner 选 A 搬到 设置→空间）＋ `7c858a7d`（窄屏收纳）。
+
+## 实现状态（2026-10-31）
+
+> 2026-10-31 只核代码、未改实现的对账：把上面各段「本批未做」的 ⏳ 逐条改成现状。
+> **夹具 sha 表不在本任务范围**（另一任务可能重生成，由 Lead 统一改）；本节只写实现状态。
+
+### 已做
+
+- **M1.1（文档包 v1.1）**：manifest 可选字段（`features` / `min_reader_version` / `checksums_sha256`）、固定时间戳 1980-01-01、写侧路径硬拒、读侧重复/嵌套/未知条目/缺 checksums 默认拒、`db` 命名空间透传 —— `src/lib/docPackWriter.ts`、`src/lib/docPackageOpen.ts`；判据 `src/lib/docPackageV11.test.ts`（8 条）；提交 `e40c1ca2`。
+- **M2a（空间包导出）**：`src/lib/docSpacePackWriter.ts::buildSpacePackage`；判据 `src/lib/docSpacePackWriter.test.ts`（9 条）；提交 `758b3eb3`。
+- **M2b（空间包读侧）**：`src/lib/docSpacePackOpen.ts::openSpacePackage`；判据 `src/lib/docSpacePackOpen.test.ts`（10 条）；提交 `3485f959`。
+- **M2c（导入落库）**：`src-tauri/src/space_import.rs`（新建空间 `:135`/`:161`、id_map 重算 `:187`、引用重写 `:259`、审计 `:304`、失败回滚 `:316`）；前端胶水 `src/lib/docSpacePackImport.ts`；判据 `space_import::tests`（5 passed）；提交 `cdac6897`＋`08f98962`。
+- **M2d（上限＋名字冲突）**：读侧 256 MiB / 10000 条上限（`src/lib/docSpacePackOpen.ts`）＋导入侧 `check_import_limits`（`src-tauri/src/space_import.rs:57`）；tree↔attachments 名字冲突只记 `attachment-name-mismatch` warning；提交 `e8dfde723`；判据 `docSpacePackOpen.test.ts`（12 passed）＋ `space_import`（5 passed）。
+- **M2e（空间包 UI 入口）**：设置→空间「备份与迁移」的导出/导入两个按钮（`src/components/SpacePackageTransferRows.tsx:20-45`、`src/lib/useSpacePackageTransfer.ts:48-49`、`src/lib/docSpacePackTransfer.ts:107-139`）；提交 `60f185b8`＋`3fa90600`＋`7c858a7d`。
+- **样例包夹具**：`scripts/make-package-fixtures.mjs` 生成器 ＋ `src/lib/__fixtures__/package-fixtures/`（`fixtures.json` 记 size/sha）；判据 `src/lib/packageFixtures.test.ts`（3 条）；固定时间戳按本地构造修过一次（`96971f6c`），夹具按新字节重新入库。
+
+### 未做（遗留）
+
+1. **`props.json` B6** 待企业确认（规格侧；个人版代码尚未实现）；
+2. **`features` 合规**（写侧声明/读侧校验哪些 feature）由**另一任务**处理；
+3. **企业侧用新 fixtures 重跑**互读（本仓夹具已按新字节重生成，企业侧读数未见）；
+4. **夹具 sha 表**由 Lead 统一改（本任务未动，见本节开头说明）。
