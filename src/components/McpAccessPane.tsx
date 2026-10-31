@@ -432,9 +432,8 @@ export function McpAccessPane() {
             <span className="mcp-access-dot" aria-hidden="true" />
             {!st ? "读取中…" : st.running ? "已打开 · 正在听" : st.enabled ? "开关开着 · 未监听" : "已关闭（默认）"}
           </span>
-          <button className="set-btn" data-testid="mcp-howto" onClick={() => jumpTo("mcp-sec-onboard")}>
-            ⤵ 如何接入
-          </button>
+          {/* ⛔ 2026-10-31（owner）：「如何接入」按钮去掉 —— 接入引导本来就是首屏第一块，
+              这颗按钮纯属重复；状态卡里的「客户端配置说明」快捷入口仍在。 */}
         </div>
       </div>
 

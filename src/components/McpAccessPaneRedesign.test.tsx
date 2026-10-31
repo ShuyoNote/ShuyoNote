@@ -397,10 +397,14 @@ describe("跨空间支持矩阵改版（2026-10-31）", () => {
     // 三个步骤（按 data-step 序号）
     const steps = Array.from(document.querySelectorAll("[data-step]")).map((el) => el.getAttribute("data-step"));
     expect(steps).toEqual(["1", "2", "3"]);
-    // 「如何接入」按钮指到这个区块
-    const howto = document.querySelector<HTMLElement>('[data-testid="mcp-howto"]');
-    expect(howto, "顶栏要有「如何接入」").toBeTruthy();
+    // ⛔ 2026-10-31（owner）：顶栏「如何接入」按钮去掉（引导本来就是首屏第一块，重复）；
+    //    状态卡里的「客户端配置说明」快捷入口（data-shortcut="onboard"）仍在，指向同一个锚点。
+    expect(document.querySelector('[data-testid="mcp-howto"]'), "顶栏「如何接入」不许再出现").toBeNull();
     expect(document.getElementById("mcp-sec-onboard")).toBeTruthy();
+    expect(
+      document.querySelector('[data-shortcut="onboard"]'),
+      "状态卡里的「客户端配置说明」快捷入口应保留",
+    ).toBeTruthy();
     // ⭐ 精简版：**没有**客户端选择 chips（片段通用 ⇒ 不必先选一次），两条常见路径直接列出来
     expect(block!.querySelectorAll("[data-client]").length, "不再要求选择客户端").toBe(0);
     const paths = Array.from(block!.querySelectorAll('[data-testid="mcp-config-path"]')).map((el) => el.textContent ?? "");
