@@ -427,9 +427,9 @@ function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string)
   if (/^(作者|author)$/i.test(prop.name)) {
     const person = formatPerson(prop.value);
     if (person && !editing) {
+      // ⭐ 2026-10-31（owner）：「属性区不要人的图标」⇒ 只留名字，去掉圆形头像。
       return (
         <span className="prop-person" aria-label="作者" onClick={() => setEditing(true)} title="点击编辑">
-          <span className="prop-person-avatar">{person.initial}</span>
           {person.label}
         </span>
       );
@@ -486,7 +486,7 @@ function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string)
     }
     if (editing) {
       if (prop.attr_type === "datetime") {
-        return <DatetimeValueEditor value={prop.value} onChange={onChange} />;
+        return <DatetimeValueEditor value={prop.value} onChange={onChange} onDone={() => setEditing(false)} />;
       }
       return (
         <input
@@ -527,21 +527,45 @@ function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string)
 
 function EmptyableTextValue({ prop, onChange }: { prop: PageProp; onChange: (v: string) => void }) {
   const [editing, setEditing] = useState(false);
-  if (prop.value === "" && !editing) {
+  // ⭐ 2026-10-31（owner）：「属性字段编辑后失去焦点自动变回阅读状态」。
+  // 以前非空文本**一直是 input**（blur 只处理空值）⇒ 编辑完还停在一只输入框里，
+  // 和其它类型（来源/日期）的"展示态"不一致。现在统一成：阅读态 <span> ＋ 点击进编辑，
+  // 失焦（或回车）立刻回阅读态（值已在 onChange 时逐字落库，不需要再提交一次）。
+  if (!editing) {
+    if (prop.value === "") {
+      return (
+        <button type="button" className="prop-empty" onClick={() => setEditing(true)}>
+          未设置（点击填写）
+        </button>
+      );
+    }
     return (
-      <button type="button" className="prop-empty" onClick={() => setEditing(true)}>
-        未设置（点击填写）
-      </button>
+      <span
+        className="prop-text"
+        role="button"
+        tabIndex={0}
+        title="点击编辑"
+        onClick={() => setEditing(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setEditing(true);
+          }
+        }}
+      >
+        {prop.value}
+      </span>
     );
   }
   return (
     <input
       className="prop-value"
-      autoFocus={editing}
+      autoFocus
       value={prop.value}
       onChange={(e) => onChange(e.target.value)}
-      onBlur={() => {
-        if (prop.value === "") setEditing(false);
+      onBlur={() => setEditing(false)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === "Escape") setEditing(false);
       }}
     />
   );

@@ -26401,8 +26401,21 @@ button.mset-row:focus-visible {
 /* B3：属性区 header 同一行（原按钮换行到下一行）＋ 元数据块去整块灰底改分隔线 */
 .properties-head-row { display: flex; align-items: center; gap: 8px; }
 .properties-head-row .properties-toggle { flex: 1; text-align: left; }
-.prop-person { display: inline-flex; align-items: center; gap: 6px; }
-.prop-person-avatar { width: 20px; height: 20px; border-radius: 50%; background: var(--hover, #eee); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
+.prop-person { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+/* 阅读态文本（名字/普通文本属性）：点击才进编辑；失焦立刻回这一态。 */
+.prop-text {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0 2px;
+  margin: 0 -2px;
+  border-radius: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  cursor: text;
+}
+.prop-text:hover { background: var(--hover); }
 
 /* B3 收尾：值列统一 grid（标签行同模板）＋ hover 操作 ＋ 正文引文样式 ＋ 来源说明 */
 .prop-row .prop-name { width: auto; }

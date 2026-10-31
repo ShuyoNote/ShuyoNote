@@ -201,11 +201,30 @@ describe("B3：收尾", () => {
     flushSync(() => root.unmount());
   });
 
-  it("③ 作者 person chip（展示态无 input）", async () => {
+  it("③ 作者行：只显示名字（owner 2026-10-31「去掉人的图标」⇒ 不许有圆形头像）", async () => {
     const { root, host } = await mountWith([prop("作者", "张三")]);
     const row = Array.from(host.querySelectorAll(".prop-row")).find((r) => r.textContent?.includes("张三"));
     expect(row?.querySelector(".prop-person")).toBeTruthy();
+    expect(row?.querySelector(".prop-person")?.textContent).toBe("张三");
+    expect(row?.querySelector(".prop-person-avatar"), "⛔ 人的头像/图标不许再出现").toBeNull();
     expect(row?.querySelector("input")).toBeNull();
+    flushSync(() => root.unmount());
+  });
+
+  it("③b 文本属性：失焦自动回阅读态（不再是常驻 input）；再点一次才进编辑", async () => {
+    const { root, host } = await mountWith([prop("备注", "初始值")]);
+    // 阅读态：有 .prop-text、没有 input
+    const text = host.querySelector(".prop-text") as HTMLElement | null;
+    expect(text?.textContent).toBe("初始值");
+    expect(host.querySelector(".prop-row input.prop-value")).toBeNull();
+    // 点一下 ⇒ 进编辑（input 出现）
+    flushSync(() => text!.click());
+    const input = host.querySelector(".prop-row input.prop-value") as HTMLInputElement | null;
+    expect(input, "点击阅读态应进编辑").toBeTruthy();
+    // 失焦 ⇒ 自动回阅读态（React 的 onBlur 走 focusout；直接派发 blur 不冒泡，测不到）
+    flushSync(() => input!.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(host.querySelector(".prop-row input.prop-value"), "失焦后必须回阅读态").toBeNull();
+    expect(host.querySelector(".prop-text")?.textContent).toBe("初始值");
     flushSync(() => root.unmount());
   });
 
