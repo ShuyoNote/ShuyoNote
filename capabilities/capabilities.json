@@ -369,12 +369,12 @@
       ],
       "returns": {
         "type": "object",
-        "ts": "{ id: string; title: string; content_text: string; kind: string; chars_total: number; offset: number; limit: number; rev?: string } | null",
-        "desc": "{id, title, content_text(**已按 offset/limit 切好的窗口**；默认还带块锚点注释行), kind, chars_total(整页字符数), offset, limit, rev?(可选：`<updated_at 毫秒>:<正文指纹 sha256 前 8 位小写>`，拿不到正文时**不带**这个键)}；不存在返回 null"
+        "ts": "{ id: string; title: string; content_text: string; kind: string; chars_total: number; offset: number; limit: number; rev?: string }",
+        "desc": "{id, title, content_text(**已按 offset/limit 切好的窗口**；默认还带块锚点注释行), kind, chars_total(整页字符数), offset, limit, rev?(可选：`<updated_at 毫秒>:<正文指纹 sha256 前 8 位小写>`，拿不到正文时**不带**这个键)}；不存在 ⇒ **抛结构化 `not_found`**（不再返回 null）"
       },
       "rust": "cap_pages_get",
       "desc": "读取单个页面的标题与正文纯文本。参数: id (必填), offset/limit (可选分页，按**字符/Unicode 标量**计数), includeAnchors (可选，默认 true：给每个顶层块后加一行 `<!-- b:<blockId> -->` 锚点，传 false 关掉且正文逐字节不变)。**必须看 `chars_total` 与返回长度判断是否读全**：只读了窗口就当整页用，是这类工具最常见的误用。⚠️ 锚点行**不计入** `chars_total`/`offset`：翻页用 `offset + limit`（夹到 `chars_total`）推算，⛔ 别数返回正文的字符数。返回值另带 `rev`（乐观并发令牌，形如 `<更新时间毫秒>:<正文指纹前 8 位>`；按块写回时要原样带回）。",
-      "mcpDesc": "读取单个页面的标题与正文（分页，按字符计数；**必须看 chars_total 判断读全没有**）。**默认带块锚点**：每个顶层块后一行 `<!-- b:<块 id> -->`（HTML 注释，不破坏渲染；锚点数 = 本次返回范围内的顶层块数，分页截断时**只标注已返回的块**）—— 可把结论锚定到具体段落。传 includeAnchors:false ⇒ 正文与旧行为**逐字节相同**（省 token）。另带 `rev`（乐观并发令牌，形如 `<更新时间毫秒>:<正文指纹前 8 位>`）：同一页两次读相同、内容改一次就变；按块写回时原样带回。⚠️ 算不出时**不带** rev（不编）。⚠️ **锚点行不计入 chars_total / offset**：翻页请用 `offset + limit`（夹到 chars_total）推算，⛔ 别数返回正文的字符数（会把锚点行算进去 ⇒ 跳字）。参数: id (必填), offset/limit (可选, 默认 6000, 上限 20000), includeAnchors (可选, 默认 true)。",
+      "mcpDesc": "读取单个页面的标题与正文（分页，按字符计数；**必须看 chars_total 判断读全没有**）。**默认带块锚点**：每个顶层块后一行 `<!-- b:<块 id> -->`（HTML 注释，不破坏渲染；锚点数 = 本次返回范围内的顶层块数，分页截断时**只标注已返回的块**）—— 可把结论锚定到具体段落。传 includeAnchors:false ⇒ 正文与旧行为**逐字节相同**（省 token）。另带 `rev`（乐观并发令牌，形如 `<更新时间毫秒>:<正文指纹前 8 位>`）：同一页两次读相同、内容改一次就变；按块写回时原样带回。⚠️ 算不出时**不带** rev（不编）。⚠️ **锚点行不计入 chars_total / offset**：翻页请用 `offset + limit`（夹到 chars_total）推算，⛔ 别数返回正文的字符数（会把锚点行算进去 ⇒ 跳字）。参数: id (必填), offset/limit (可选, 默认 6000, 上限 20000), includeAnchors (可选, 默认 true)。页不存在 / 不在当前空间或给定 spaceId 的空间 ⇒ `not_found` 点名（跨空间请带 spaceId，⛔ 不自动回落）。",
       "ai": true
     },
     {
@@ -416,7 +416,7 @@
       },
       "rust": "cap_pages_search",
       "desc": "在本空间检索页面（可用 spaceId 指定别的空间，需「只读（全部空间）」档）：关键词用空格分隔 ⇒ 全部出现才算命中（与应用内搜索同一个引擎，含正文与附件抽取文本）。参数: q (必填), limit (可选, 默认 8), spaceId (可选)。返回 [{id,title,snippet}]；**空数组 = 该空间没有命中，不是失败**。",
-      "mcpDesc": "检索页面：关键词用空格分隔 ⇒ **全部出现**才算命中（不是连续子串匹配）。默认只搜**当前空间**；给了 spaceId 就搜那个空间（只读，需要用户把外部接入开到「只读（全部空间）」档），**不会改变你界面上的活动空间**。返回 {matched（本次返回条数，受 limit 截断）, results:[{id,title,snippet}], scope:{spaceId,spaceName,pageCount}}；matched=0 时另给 hint —— 空结果只说明**这个**空间没命中，不代表别的空间没有。",
+      "mcpDesc": "检索页面：关键词用空格分隔 ⇒ **全部出现**才算命中（不是连续子串匹配）。默认只搜**当前空间**；给了 spaceId 就搜那个空间（只读，需要用户把外部接入开到「只读（全部空间）」档），**不会改变你界面上的活动空间**。返回 {matched（本次返回条数）, results:[{id,title,snippet}], truncated（是否还有更多命中被 limit 截断）, scope:{spaceId,spaceName,pageCount}}；matched=0 时另给 hint —— 空结果只说明**这个**空间没命中，不代表别的空间没有。截断时 `truncated:true`（`matched` **不是**命中总数，调大 limit 或换关键词再搜）。",
       "ai": true
     },
     {

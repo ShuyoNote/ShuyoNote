@@ -2283,7 +2283,19 @@ fn cap_pages_get(
         let Some(row) =
             crate::doc_content::read_with_meta(c, id).map_err(|e| format!("db_error: {e}"))?
         else {
-            return Ok(serde_json::Value::Null);
+            // ⭐ 2026-10-31（WorkBuddy 评估修）：**不再返回 `null`** —— `null` 把
+            // 「页不存在/已删除」与「页是空的」压成同一个答案（外部 agent 只能猜）。
+            // 点名页 id 与**这次真正查的空间**；跨空间忘带 spaceId 时也照这里报（⛔ 不猜别的空间，
+            // 也不偷偷回落 —— 那是"搜错空间还装作成功"那一族错）。
+            let space = target_space_id(space_id);
+            let where_ = if space.is_empty() {
+                "当前空间".to_string()
+            } else {
+                format!("空间「{space}」")
+            };
+            return Err(format!(
+                "not_found: 页面 {id} 在{where_}不存在或已删除；若它在别的空间，请带 spaceId 再查（跨空间不会自动回落）"
+            ));
         };
         Ok(text_window_value(
             id,
@@ -12064,10 +12076,12 @@ register({ id: "s.run", title: "结构化", run: function () {
                 // 参数原样传下去 ⇒ 带空格的 / 大小写不同的 id 都查不到（不 trim、不归一）。
                 let args =
                     serde_json::json!({ "id": c.id_probe, "offset": 0, "limit": 10 }).to_string();
-                let got = call(&st, "pages.get", &args).unwrap();
+                // 2026-10-31：查不到 ⇒ **结构化 `not_found`**（不再返回 null；见 `cap_pages_get`）。
+                let err = call(&st, "pages.get", &args)
+                    .expect_err("查不到的 id 必须报 not_found，而不是返回 null");
                 assert!(
-                    got.is_null(),
-                    "用例[{i}] {}：`id` 不该被 trim/归一（期望查不到，实际拿到 {got}）",
+                    err.starts_with("not_found:"),
+                    "用例[{i}] {}：`id` 不该被 trim/归一（期望查不到 ⇒ not_found，实际 {err}）",
                     c.name
                 );
                 continue;
@@ -12125,7 +12139,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             );
         }
 
-        // 越界不报错（返回空串 + 真实总数）、页面不存在仍然 null —— 两条既有契约，分页不能顺手改掉。
+        // 越界不报错（返回空串 + 真实总数）—— 这条契约分页不能顺手改掉。
         let beyond = call(
             &st,
             "pages.get",
@@ -12134,12 +12148,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         .unwrap();
         assert!(beyond["content_text"].as_str().unwrap().is_empty());
         assert_eq!(beyond["chars_total"].as_u64().unwrap(), 100);
-        assert!(
-            call(&st, "pages.get", r#"{"id":"nope"}"#)
-                .unwrap()
-                .is_null(),
-            "不存在的页面仍然是 null"
-        );
+        // 2026-10-31：页面不存在 ⇒ **结构化 `not_found`**（不再返回 null，见 `cap_pages_get`）。
+        let e = call(&st, "pages.get", r#"{"id":"nope"}"#)
+            .expect_err("不存在的页面必须报 not_found（不再是 null）");
+        assert!(e.starts_with("not_found:"), "{e}");
     }
 
     // ---- P1 读面（2026-10-29）：`rev` ＋ 块锚点 ----
@@ -12526,6 +12538,51 @@ register({ id: "s.run", title: "结构化", run: function () {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// ⭐ 2026-10-31（WorkBuddy 评估修）：`pages.get` 查不到 ⇒ **结构化 `not_found`**（不再是 `null`）。
+    ///
+    /// 三条判据：① 错码前缀稳定（审计/调用方按它判）；② 点名页 id 与**这次真正查的空间**；
+    /// ③ **不猜别的空间** —— 页只在别的空间时，不传 spaceId 仍是「本空间查不到」（并提示补 spaceId），
+    /// ⛔ 不许"帮"调用方换一个空间去找到它。
+    #[test]
+    fn pages_get_missing_page_is_a_structured_not_found() {
+        let (space, dir) = seed_space("pages-get-404");
+        let st = state_for_space(&space, &dir);
+        // 另一个空间里真的有一页 p9：它存在，但**不属于当前空间** ⇒ 不传 spaceId 时不许被猜到。
+        {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            let now = now_ms();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, created_at, updated_at) VALUES ('s2','另一个空间',?1,?1)",
+                params![now],
+            )
+            .unwrap();
+            let c = crate::db::open_space_conn_at("s2", &dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at)
+                 VALUES ('p9','s2','别处的页','{}','x','page',1,1)",
+                [],
+            )
+            .unwrap();
+        }
+        let e =
+            call(&st, "pages.get", r#"{"id":"nope"}"#).expect_err("不存在必须是错误，不再是 null");
+        assert!(
+            e.starts_with("not_found:"),
+            "错码前缀要稳定（调用方/审计按它判）：{e}"
+        );
+        assert!(e.contains("nope"), "要点名页 id：{e}");
+        assert!(e.contains(&space), "要点名这次查的空间：{e}");
+        assert!(
+            e.contains("spaceId"),
+            "要给出下一步（若在别的空间请带 spaceId）：{e}"
+        );
+        // 页只在别的空间 ⇒ 不传 spaceId 仍是「当前空间查不到」，不自动回落/不换空间找
+        let e = call(&st, "pages.get", r#"{"id":"p9"}"#).expect_err("跨空间不许自动回落");
+        assert!(e.starts_with("not_found:"), "{e}");
+        assert!(e.contains(&space), "报的必须是**当前**空间：{e}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn read_capabilities_query_the_active_space() {
         let (space, dir) = seed_space("read-caps");
@@ -12542,12 +12599,11 @@ register({ id: "s.run", title: "结构化", run: function () {
         let one = call(&st, "pages.get", r#"{"id":"p1"}"#).unwrap();
         assert_eq!(one["title"], "会议纪要");
         assert_eq!(one["content_text"], "本周进展与下周计划");
-        assert!(
-            call(&st, "pages.get", r#"{"id":"nope"}"#)
-                .unwrap()
-                .is_null(),
-            "不存在的页面返回 null 而不是报错"
-        );
+        let e = call(&st, "pages.get", r#"{"id":"nope"}"#)
+            .expect_err("不存在的页面必须报 not_found（不再是 null，见 `cap_pages_get`）");
+        assert!(e.starts_with("not_found:"), "{e}");
+        assert!(e.contains("nope"), "错误要点名页 id：{e}");
+        assert!(e.contains("s1"), "错误要点名这次查的空间：{e}");
 
         let hits = call(&st, "pages.search", r#"{"q":"进展"}"#).unwrap();
         assert_eq!(hits.as_array().unwrap().len(), 1, "只应命中含关键词的那页");

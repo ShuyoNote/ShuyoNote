@@ -765,9 +765,15 @@ pub fn run() {
             // 用现成的 TS 实现算字节，这里装上事件出口（与上面草稿出口同一处、同一形态）。
             {
                 let h = app.handle().clone();
+                // ⭐ 2026-10-31（WorkBuddy 评估修）：出口**不再吞错** —— emit 失败（窗口已销毁/
+                // 事件系统不可用）⇒ 把原因交回能力层，由它**立刻**报 `frontend_unavailable: <原因>`，
+                // ⛔ 不许变成"没人应答"再空等 5 秒超时。stderr 诊断保留（失败原因也出现在应用日志里）。
                 frontend_tool::set_emitter(move |event, payload| {
                     use tauri::Emitter;
-                    let _ = h.emit(event, payload.to_string());
+                    h.emit(event, payload.to_string()).map_err(|e| {
+                        eprintln!("[mcp] 前端桥事件发送失败（{event}）：{e}");
+                        e.to_string()
+                    })
                 });
             }
             match mcp_channel::start_if_enabled() {

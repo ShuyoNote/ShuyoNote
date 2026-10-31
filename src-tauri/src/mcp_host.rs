@@ -150,6 +150,9 @@ pub(crate) fn handle_external_call_with(
     args_json: &str,
     auto_write: bool,
 ) -> Result<String, String> {
+    // ⭐ 2026-10-31：`pages.search` 的信封要如实给 `truncated` ⇒ 外部面替它**多取一条**
+    // （能力面保持裸数组，插件面契约不动；见 [`search_probe_args`]）。
+    let (dispatch_args, search_want) = search_probe_args(method, args_json);
     // ① 跑这次调用，并把**它产出的草稿**收上来 ✓（外部路以前没人取 ⇒ 静默丢掉 ✗）
     let (out, drafts) = plugins::with_fresh_drafts(|| {
         plugins::with_external_caller(session_id, granted, || {
@@ -163,7 +166,8 @@ pub(crate) fn handle_external_call_with(
                 with_search_scope(
                     method,
                     args_json,
-                    plugins::dispatch_capability(method, args_json),
+                    search_want,
+                    plugins::dispatch_capability(method, &dispatch_args),
                 )
             })
         })
@@ -201,6 +205,53 @@ pub(crate) fn handle_external_call_with(
     Ok(v.to_string())
 }
 
+/// `pages.search` 的 limit 默认值 —— 与 `plugins::dispatch_capability` 里
+/// `arg_i64("limit", 8)` **同源**（能力面才是语义处；这里只算"多取一条"的预算）。
+const SEARCH_LIMIT_DEFAULT: i64 = 8;
+
+/// `pages.search` 的「**多取一条**」探针（2026-10-31，WorkBuddy 评估修）。
+///
+/// 为什么必须多取：信封要如实给 `truncated`（与 `pages.changes_since` 同口径），
+/// 而能力面**必须**保持裸数组（插件面 `api.pages.search(...) || []` 是既有写法，⛔ 不能改成对象）⇒
+/// 外部面替它多要一条、信封再裁回调用方要的条数。这样插件面一个字节都没变，只有外部面多了 `truncated`。
+///
+/// 返回 `(真正 dispatch 的 args, 调用方要的条数)`；非 `pages.search` ⇒ 原样 args / `None`
+/// （别的能力的结果形状一个字段都不许动）。
+///
+/// ⚠️ 上限处**无法**多取（能力面会夹到 [`crate::cap_limits::SEARCH_MAX`]）⇒ 那时 `truncated`
+/// 只能为 false；这是硬上限的诚实边界，不是"猜它没有更多"。
+fn search_probe_args(method: &str, args_json: &str) -> (String, Option<i64>) {
+    if method != "pages.search" {
+        return (args_json.to_string(), None);
+    }
+    let mut map = match serde_json::from_str::<serde_json::Value>(args_json) {
+        Ok(serde_json::Value::Object(m)) => m,
+        // 坏 JSON 原样交给 dispatch 去报 bad_args（这里不抢它的错因）
+        _ => return (args_json.to_string(), None),
+    };
+    // 与能力层 `arg_i64` 同口径：整数 / 小数部分为 0 的浮点 / 数字字符串；非整数回落默认值。
+    let want = match map.get("limit") {
+        Some(serde_json::Value::Number(n)) => n
+            .as_i64()
+            .or_else(|| {
+                n.as_f64()
+                    .filter(|f| f.is_finite() && f.fract() == 0.0)
+                    .map(|f| f as i64)
+            })
+            .unwrap_or(SEARCH_LIMIT_DEFAULT),
+        Some(serde_json::Value::String(s)) => s.parse::<i64>().unwrap_or(SEARCH_LIMIT_DEFAULT),
+        _ => SEARCH_LIMIT_DEFAULT,
+    }
+    .clamp(1, crate::cap_limits::SEARCH_MAX);
+    let fetch = if want < crate::cap_limits::SEARCH_MAX {
+        want + 1
+    } else {
+        want
+    };
+    map.insert("limit".to_string(), serde_json::json!(fetch));
+    (serde_json::Value::Object(map).to_string(), Some(want))
+}
+
 /// 外部面的**检索信封**（2026-10-17）：`pages.search` 的结果要**自带范围**。
 ///
 /// 为什么必须有这一层（现场）：外部 agent 实测「四次搜索全空」之后，对着 `[]` 只能得出
@@ -217,6 +268,7 @@ pub(crate) fn handle_external_call_with(
 fn with_search_scope(
     method: &str,
     args_json: &str,
+    wanted: Option<i64>,
     out: Result<String, String>,
 ) -> Result<String, String> {
     if method != "pages.search" {
@@ -251,6 +303,7 @@ fn with_search_scope(
                 items,
                 plugins::space_scope_snapshot_of(target.as_deref()),
                 hint.as_deref(),
+                wanted,
             )
             .to_string())
         }
@@ -314,12 +367,13 @@ fn with_search_scope_with(
     out: Result<String, String>,
     scope: Result<serde_json::Value, String>,
     hint: Option<&str>,
+    wanted: Option<i64>,
 ) -> Result<String, String> {
     if method != "pages.search" {
         return out;
     }
     match out.as_ref().ok().and_then(|json| search_items(json)) {
-        Some(items) => Ok(search_envelope(items, scope, hint).to_string()),
+        Some(items) => Ok(search_envelope(items, scope, hint, wanted).to_string()),
         None => out,
     }
 }
@@ -329,9 +383,20 @@ fn search_envelope(
     items: Vec<serde_json::Value>,
     scope: Result<serde_json::Value, String>,
     extra_hint: Option<&str>,
+    wanted: Option<i64>,
 ) -> serde_json::Value {
-    let matched = items.len();
-    let mut v = serde_json::json!({ "matched": matched, "results": items });
+    // ⭐ 2026-10-31（WorkBuddy 评估修）：`matched` 是**本次返回条数**、`truncated` 才是"还有更多"
+    // —— 与 `pages.changes_since` 同口径。`wanted` 来自 [`search_probe_args`] 的"多取一条"探针：
+    // 收到 `wanted+1` 条 ⇒ 说明后面还有 ⇒ `truncated:true` 并把多的那条裁掉。
+    let (matched, truncated, items) = match wanted {
+        Some(w) if items.len() as i64 > w => {
+            let w = w.max(0) as usize;
+            (w, true, items.into_iter().take(w).collect())
+        }
+        Some(_) => (items.len(), false, items),
+        None => (items.len(), false, items),
+    };
+    let mut v = serde_json::json!({ "matched": matched, "results": items, "truncated": truncated });
     match scope {
         Ok(s) => {
             if matched == 0 {
@@ -343,6 +408,14 @@ fn search_envelope(
                     "当前空间「{name}」（{pages} 页）没有匹配 —— 这不代表别的空间也没有。\
                      可以换更短的词、去掉部分关键词；或用 pages_list 先看一遍本空间最近更新的页面；\
                      也可用 spaces_list 确认当前空间（必要时 spaces_switch 切换）再搜。{extra}"
+                ));
+            } else if truncated {
+                // ⭐ 2026-10-31：被 limit 截断时也要说清"matched 不是命中总数"，否则调用方会把
+                // 「只回了前 N 条」当成「一共就 N 条」——与空结果那族是同一种误读。
+                let extra = extra_hint.map(|h| format!("\n{h}")).unwrap_or_default();
+                v["hint"] = serde_json::Value::String(format!(
+                    "命中超过本次 limit={matched} ⇒ 只回了前 {matched} 条（`matched` 是本次条数，不是命中总数）\
+                     ⇒ 放宽 limit 或换更短的词再搜。{extra}"
                 ));
             }
             v["scope"] = s;
@@ -1321,16 +1394,20 @@ mod w4_audit_tests {
 
     /// 检索信封（2026-10-17）：`pages.search` 的外部结果**必须**带上范围；空结果必须说得出
     /// "是哪个空间没有"。判据把范围直接喂进来（不碰库 ⇒ 不依赖活动空间，也不会被并行测试干扰 ✓）。
+    ///
+    /// ⭐ 2026-10-31（WorkBuddy 评估修）：信封再带 `truncated`（与 `pages.changes_since` 同口径）——
+    /// 调用方靠它区分「只回了前 N 条」与「一共就 N 条」。
     #[test]
     fn pages_search_result_carries_scope_and_says_which_space_is_empty() {
         let scope = || Ok(serde_json::json!({"spaceId":"s1","spaceName":"运营","pageCount":42}));
 
-        // ① 有命中：matched 与 results 都在，**不必**给 hint（有结果时别劝人换词 ✗）
+        // ① 有命中：matched 与 results、truncated:false 都在，**不必**给 hint（有结果时别劝人换词 ✗）
         let one = with_search_scope_with(
             "pages.search",
             Ok(r#"[{"id":"p1","title":"短剧方案","snippet":"…"}]"#.to_string()),
             scope(),
             None,
+            Some(1),
         )
         .expect("成功的结果不该被信封弄成错误 ✓");
         let v: serde_json::Value = serde_json::from_str(&one).unwrap();
@@ -1341,6 +1418,7 @@ mod w4_audit_tests {
             "范围必须带空间名（否则调用方仍然不知道搜的是哪）"
         );
         assert_eq!(v["scope"]["pageCount"], 42);
+        assert_eq!(v["truncated"], false, "1 条命中、want=1 ⇒ 没截断：{v}");
         assert!(
             v.get("hint").is_none(),
             "有命中还劝换词只会让 agent 怀疑结果：{v}"
@@ -1348,9 +1426,11 @@ mod w4_audit_tests {
 
         // ② 空：**必须**说清楚是哪个空间、有多少页 —— 这就是「[] 让调用方困惑」的修法
         let none =
-            with_search_scope_with("pages.search", Ok("[]".to_string()), scope(), None).unwrap();
+            with_search_scope_with("pages.search", Ok("[]".to_string()), scope(), None, Some(8))
+                .unwrap();
         let v: serde_json::Value = serde_json::from_str(&none).unwrap();
         assert_eq!(v["matched"], 0);
+        assert_eq!(v["truncated"], false, "0 条没有被截断：{v}");
         let hint = v["hint"].as_str().unwrap_or_default();
         assert!(hint.contains("运营"), "空结果的提示要点名空间：{hint}");
         assert!(
@@ -1367,6 +1447,7 @@ mod w4_audit_tests {
                 Ok("[]".to_string()),
                 scope(),
                 split_hint.as_deref(),
+                Some(8),
             )
             .unwrap(),
         )
@@ -1377,11 +1458,48 @@ mod w4_audit_tests {
             "空结果 + 整句中文 ⇒ 教它拆词：{hint}"
         );
 
+        // ②c **截断**：探针收到 wanted+1 条 ⇒ 裁回 wanted，且 truncated:true ＋ 说清 matched 不是总数
+        let v: serde_json::Value = serde_json::from_str(
+            &with_search_scope_with(
+                "pages.search",
+                Ok(r#"[{"id":"p1"},{"id":"p2"},{"id":"p3"}]"#.to_string()),
+                scope(),
+                None,
+                Some(2),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v["matched"], 2, "matched 是**本次返回条数**：{v}");
+        assert_eq!(v["results"].as_array().unwrap().len(), 2);
+        assert_eq!(v["truncated"], true, "多取到第 3 条 ⇒ 必须标截断：{v}");
+        let hint = v["hint"].as_str().unwrap_or_default();
+        assert!(
+            hint.contains("不是命中总数"),
+            "截断时要说清 matched 不是总数：{hint}"
+        );
+
+        // ②d 没有探针（wanted=None）⇒ 不许猜"截断"，如实 false
+        let v: serde_json::Value = serde_json::from_str(
+            &with_search_scope_with(
+                "pages.search",
+                Ok(r#"[{"id":"p1"},{"id":"p2"}]"#.to_string()),
+                scope(),
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v["matched"], 2);
+        assert_eq!(v["truncated"], false, "没有探针就不许声称截断：{v}");
+
         // ③ 非检索能力**原样**（信封只属于 pages.search，别的工具结果不许被改形状 ✗）
         let raw = with_search_scope_with(
             "pages.get",
             Ok(r#"{"id":"p1","title":"会议纪要"}"#.to_string()),
             scope(),
+            None,
             None,
         )
         .unwrap();
@@ -1393,6 +1511,7 @@ mod w4_audit_tests {
                 "pages.search",
                 Err("bad_args: 缺少参数 q".to_string()),
                 scope(),
+                None,
                 None
             )
             .is_err(),
@@ -1406,6 +1525,7 @@ mod w4_audit_tests {
                 Ok(r#"[{"id":"p1"}]"#.to_string()),
                 Err("db_error: 库打不开".to_string()),
                 None,
+                Some(1),
             )
             .unwrap(),
         )
@@ -1419,6 +1539,42 @@ mod w4_audit_tests {
             "取不到范围时要如实说明，而不是静默留空：{v}"
         );
         assert_eq!(v["matched"], 1, "范围取不到不影响这次检索本身的读数");
+        assert_eq!(v["truncated"], false);
+    }
+
+    /// ⭐ 2026-10-31（WorkBuddy 评估修）：`truncated` 靠"**多取一条**"探针 —— 纯函数判据
+    /// （不碰库；探针与能力层 `arg_i64` 的数值口径必须一致，否则 `limit` 读法一变就静默错位）。
+    #[test]
+    fn search_probe_asks_for_exactly_one_extra_item() {
+        let args_of = |raw: &str| -> (serde_json::Value, Option<i64>) {
+            let (a, w) = search_probe_args("pages.search", raw);
+            (serde_json::from_str(&a).unwrap(), w)
+        };
+        // 缺省（= 能力层默认 8）⇒ 多要一条
+        let (v, w) = args_of(r#"{"q":"x"}"#);
+        assert_eq!(w, Some(8));
+        assert_eq!(v["limit"], 9, "默认 8 ⇒ 探针要 9：{v}");
+        // 指定 limit ⇒ want+1；数字 / 数字字符串 / 2.0 与能力层同一口径（`tests/numeric-arg-parity.json` 那族）
+        for raw in [
+            r#"{"q":"x","limit":2}"#,
+            r#"{"q":"x","limit":"2"}"#,
+            r#"{"q":"x","limit":2.0}"#,
+        ] {
+            let (v, w) = args_of(raw);
+            assert_eq!(w, Some(2), "{raw}");
+            assert_eq!(v["limit"], 3, "{raw}: {v}");
+        }
+        // 上限处**多不了**（能力面会夹到 SEARCH_MAX）⇒ 原值；truncated 只能如实 false
+        let (v, w) = args_of(&format!(
+            r#"{{"q":"x","limit":{}}}"#,
+            crate::cap_limits::SEARCH_MAX
+        ));
+        assert_eq!(w, Some(crate::cap_limits::SEARCH_MAX));
+        assert_eq!(v["limit"], crate::cap_limits::SEARCH_MAX);
+        // 非 pages.search ⇒ 一个字节都不改（别的能力形状不许被动）
+        let (a, w) = search_probe_args("pages.get", r#"{"id":"p1","limit":2}"#);
+        assert!(w.is_none());
+        assert_eq!(a, r#"{"id":"p1","limit":2}"#);
     }
 
     /// 整句中文的补救提示只在"真的会误伤"的形状上出现（2026-10-18）。

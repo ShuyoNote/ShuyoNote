@@ -219,7 +219,7 @@ register({
 - 调用：`api.pages.get(id, offset, limit, includeAnchors, spaceId)`
 - 权限：`read:pages`
 - scope：`current-space`
-- 返回：{id, title, content_text(**已按 offset/limit 切好的窗口**；默认还带块锚点注释行), kind, chars_total(整页字符数), offset, limit, rev?(可选：`<updated_at 毫秒>:<正文指纹 sha256 前 8 位小写>`，拿不到正文时**不带**这个键)}；不存在返回 null
+- 返回：{id, title, content_text(**已按 offset/limit 切好的窗口**；默认还带块锚点注释行), kind, chars_total(整页字符数), offset, limit, rev?(可选：`<updated_at 毫秒>:<正文指纹 sha256 前 8 位小写>`，拿不到正文时**不带**这个键)}；不存在 ⇒ **抛结构化 `not_found`**（不再返回 null）
 - 参数：
   - `id`: `string` —— 页面 id
   - `offset`: `number`（可选），默认 `0` —— 从第几个**字符**开始（默认 0；按 Unicode 标量计数，不是 UTF-16 码元）

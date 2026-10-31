@@ -5,7 +5,7 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `eb0d4066436fddff0b7019730c5e79f1c84053fd9eea1471d35279d34ac8c9c5` |
+| 注册表 sha256 | `530b603a1f438303264d205ddbc1ce297dd672f204db692f1e61d1f56f9e4c24` |
 | `apiVersion` | 1.27.0 |
 | 取用条件 | `ai === true` **且** `kind === "read"` |
 | 条数 | **34** |
@@ -35,9 +35,9 @@
 | page.current | current-space | read:page.current | 读取**当前打开的页面**的正文纯文本（与 pages_get 同口径：整页窗口上限 20000 字符、includeAnchors 默认 true 加块锚点、带 rev 乐观并发令牌）。⚠️ **外部接入拿不到界面里「当前页」这个状态**：没有打开的页面时**如实**返回 `{opened:false, note:「…」}`，不会编造一页；要读具体页面请用 pages_list 发现 id、再 pages_get。参数: includeAnchors (可选, 默认 true)。 |
 | pages.changes_since | current-space | read:pages | 自 since 起变了哪些页（页级增量；v1 不做块级 diff）：`{pages:[...],truncated}`。since=ms 或 ISO；limit 默认 50/上限 200。要知道改了什么，请对返回的 pageId 再调 `pages_get`。 |
 | pages.count | current-space | read:pages | 本空间**未删除节点的数量**（与 pages_list 同口径：页面/数据库/文件夹各算一个）。默认只数**当前空间**；给了 spaceId 就数那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选)。 |
-| pages.get | current-space | read:pages | 读取单个页面的标题与正文（分页，按字符计数；**必须看 chars_total 判断读全没有**）。**默认带块锚点**：每个顶层块后一行 `<!-- b:<块 id> -->`（HTML 注释，不破坏渲染；锚点数 = 本次返回范围内的顶层块数，分页截断时**只标注已返回的块**）—— 可把结论锚定到具体段落。传 includeAnchors:false ⇒ 正文与旧行为**逐字节相同**（省 token）。另带 `rev`（乐观并发令牌，形如 `<更新时间毫秒>:<正文指纹前 8 位>`）：同一页两次读相同、内容改一次就变；按块写回时原样带回。⚠️ 算不出时**不带** rev（不编）。⚠️ **锚点行不计入 chars_total / offset**：翻页请用 `offset + limit`（夹到 chars_total）推算，⛔ 别数返回正文的字符数（会把锚点行算进去 ⇒ 跳字）。参数: id (必填), offset/limit (可选, 默认 6000, 上限 20000), includeAnchors (可选, 默认 true)。 |
+| pages.get | current-space | read:pages | 读取单个页面的标题与正文（分页，按字符计数；**必须看 chars_total 判断读全没有**）。**默认带块锚点**：每个顶层块后一行 `<!-- b:<块 id> -->`（HTML 注释，不破坏渲染；锚点数 = 本次返回范围内的顶层块数，分页截断时**只标注已返回的块**）—— 可把结论锚定到具体段落。传 includeAnchors:false ⇒ 正文与旧行为**逐字节相同**（省 token）。另带 `rev`（乐观并发令牌，形如 `<更新时间毫秒>:<正文指纹前 8 位>`）：同一页两次读相同、内容改一次就变；按块写回时原样带回。⚠️ 算不出时**不带** rev（不编）。⚠️ **锚点行不计入 chars_total / offset**：翻页请用 `offset + limit`（夹到 chars_total）推算，⛔ 别数返回正文的字符数（会把锚点行算进去 ⇒ 跳字）。参数: id (必填), offset/limit (可选, 默认 6000, 上限 20000), includeAnchors (可选, 默认 true)。页不存在 / 不在当前空间或给定 spaceId 的空间 ⇒ `not_found` 点名（跨空间请带 spaceId，⛔ 不自动回落）。 |
 | pages.list | current-space | read:pages | 列出页面（id、标题、创建与更新时间），按**最近更新**倒序，不含正文。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。这是**搜索之外的发现通路**：pages_search 返回空、或不知道该搜什么词时，先调它把那个空间最近改过的页面看一遍。参数: limit (可选, 默认 50, 上限 200), spaceId (可选)。 |
-| pages.search | current-space | read:pages | 检索页面：关键词用空格分隔 ⇒ **全部出现**才算命中（不是连续子串匹配）。默认只搜**当前空间**；给了 spaceId 就搜那个空间（只读，需要用户把外部接入开到「只读（全部空间）」档），**不会改变你界面上的活动空间**。返回 {matched（本次返回条数，受 limit 截断）, results:[{id,title,snippet}], scope:{spaceId,spaceName,pageCount}}；matched=0 时另给 hint —— 空结果只说明**这个**空间没命中，不代表别的空间没有。 |
+| pages.search | current-space | read:pages | 检索页面：关键词用空格分隔 ⇒ **全部出现**才算命中（不是连续子串匹配）。默认只搜**当前空间**；给了 spaceId 就搜那个空间（只读，需要用户把外部接入开到「只读（全部空间）」档），**不会改变你界面上的活动空间**。返回 {matched（本次返回条数）, results:[{id,title,snippet}], truncated（是否还有更多命中被 limit 截断）, scope:{spaceId,spaceName,pageCount}}；matched=0 时另给 hint —— 空结果只说明**这个**空间没命中，不代表别的空间没有。截断时 `truncated:true`（`matched` **不是**命中总数，调大 limit 或换关键词再搜）。 |
 | pages.tree | current-space | read:pages | 一次读取**整个空间的页面树**（结构视图）：{spaceId, spaceName, nodes:[{id,title,kind,parentId,order}], total, truncated}。节点与 pages_list **同一集合**（未删除的页面/数据库/文件夹），按树顺序给出 parentId 与 order；`kind` 是 page / database / folder。默认读**当前空间**；给了 spaceId 就读那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。超过 limit（默认与上限都是 2000 节点）⇒ `truncated:true`（如实说，别把截断的树当全量）。参数: spaceId (可选), limit (可选, 默认 2000, 上限 2000)。 |
 | properties.list | current-space | read:properties | 列出本空间的**属性定义** `[{id, name, type}]`（写属性时要的是 id；读数据库/属性值前先用它找 id）。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。参数: spaceId (可选)。 |
 | space.current | current-space | read:pages | 当前活动空间：`{spaceId,name,pageCount}`（与 `spaces_list` 的 active 一致）。只读；⛔ 不切换空间。 |

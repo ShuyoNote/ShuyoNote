@@ -147,9 +147,9 @@ export interface PluginApi {
    */
     changesSince(since: number, spaceId?: string, limit?: number): { pages: { pageId: string; title: string; rev: string; updatedAt: number; kind: string }[]; truncated: boolean };
   /** 读取指定页面（权限 `read:pages`；1.0.0 起）
-   * 返回：{id, title, content_text(**已按 offset/limit 切好的窗口**；默认还带块锚点注释行), kind, chars_total(整页字符数), offset, limit, rev?(可选：`<updated_at 毫秒>:<正文指纹 sha256 前 8 位小写>`，拿不到正文时**不带**这个键)}；不存在返回 null
+   * 返回：{id, title, content_text(**已按 offset/limit 切好的窗口**；默认还带块锚点注释行), kind, chars_total(整页字符数), offset, limit, rev?(可选：`<updated_at 毫秒>:<正文指纹 sha256 前 8 位小写>`，拿不到正文时**不带**这个键)}；不存在 ⇒ **抛结构化 `not_found`**（不再返回 null）
    */
-    get(id: string, offset?: number, limit?: number, includeAnchors?: boolean, spaceId?: string): { id: string; title: string; content_text: string; kind: string; chars_total: number; offset: number; limit: number; rev?: string } | null;
+    get(id: string, offset?: number, limit?: number, includeAnchors?: boolean, spaceId?: string): { id: string; title: string; content_text: string; kind: string; chars_total: number; offset: number; limit: number; rev?: string };
   /** 搜索本空间页面（权限 `read:pages`；1.0.0 起）
    * 返回：[{id, title, snippet}]：多词按「全部出现」筛（AND），单词走全文索引（按相关度）、短词走子串；附件里的命中会带「【来自附件】」前缀。**空数组 = 本空间没有命中，不是失败**
    */

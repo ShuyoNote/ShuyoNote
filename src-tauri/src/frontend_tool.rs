@@ -48,7 +48,11 @@ pub(crate) struct BridgeReply {
     pub bytes: Vec<u8>,
 }
 
-type Emitter = std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>;
+/// 事件出口：**返回失败原因**（2026-10-31，WorkBuddy 评估修）——
+/// 以前是 `Fn(&str, &str)` 且调用处 `let _ = h.emit(...)` ⇒ 出口真失败（窗口已销毁/事件系统不可用）
+/// 会被**吞成"没人应答"**，调用方只能空等 5 秒再拿到误导性的 `frontend_timeout`。
+/// 现在失败**立刻**报 `frontend_unavailable: <原因>`（"没人可用" ≠ "在但没回"）。
+type Emitter = std::sync::Arc<dyn Fn(&str, &str) -> Result<(), String> + Send + Sync>;
 
 fn emitter_slot() -> &'static Mutex<Option<Emitter>> {
     static SLOT: OnceLock<Mutex<Option<Emitter>>> = OnceLock::new();
@@ -85,7 +89,7 @@ pub(crate) fn notify(method: &str, args_json: &str) {
     });
 }
 
-pub(crate) fn set_emitter(f: impl Fn(&str, &str) + Send + Sync + 'static) {
+pub(crate) fn set_emitter(f: impl Fn(&str, &str) -> Result<(), String> + Send + Sync + 'static) {
     if let Ok(mut g) = emitter_slot().lock() {
         *g = Some(std::sync::Arc::new(f));
     }
@@ -157,7 +161,13 @@ pub(crate) fn call_with_timeout(
             "frontend_unavailable: 前端窗口没有挂载（应用窗口还没打开/正在启动）".to_string(),
         );
     }
-    emit(BRIDGE_EVENT, &payload);
+    // ⭐ 2026-10-31：出口失败**立刻**报 `frontend_unavailable`（⛔ 不吞错、⛔ 不空等超时）——
+    // 出口失败说明"这条桥现在送不出去"（窗口销毁/事件系统不可用），与"前端在但没回"是两件事，
+    // 给用户的下一步也不同：前者要重开窗口/应用，后者可以重试。
+    if let Err(e) = emit(BRIDGE_EVENT, &payload) {
+        cleanup(&request_id);
+        return Err(format!("frontend_unavailable: 前端事件发送失败（{e}）"));
+    }
     match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
         Ok(Ok(reply)) => Ok(reply),
         Ok(Err(e)) => Err(e),
@@ -268,17 +278,21 @@ mod tests {
     /// 按 id 回来"，而不是证明一个空函数返回了常量。
     /// 测试钩子（只存在于判据里）：`__silent` ⇒ 不应答（超时分支）；`__fail` ⇒ 回一条错误。
     pub(crate) fn install_test_emitter() {
-        set_emitter(|_event, payload| {
+        set_emitter(|_event, payload| -> Result<(), String> {
             let v: serde_json::Value = serde_json::from_str(payload).unwrap();
             let id = v["requestId"].as_str().unwrap_or("").to_string();
             let method = v["method"].as_str().unwrap_or("");
             let args = &v["args"];
+            // 判据钩子：模拟"事件出口失败"（生产里对应窗口已销毁/事件系统不可用）。
+            if let Some(msg) = args["__emit_fail"].as_str() {
+                return Err(msg.to_string());
+            }
             if args["__silent"].as_bool() == Some(true) {
-                return; // 静默 ⇒ 超时分支
+                return Ok(()); // 静默 ⇒ 超时分支
             }
             if let Some(msg) = args["__fail"].as_str() {
                 let _ = respond_error(&id, msg);
-                return;
+                return Ok(());
             }
             match method {
                 "export.markdown" => {
@@ -301,6 +315,7 @@ mod tests {
                 }
                 _ => {}
             }
+            Ok(())
         });
         mark_ready();
     }
@@ -322,6 +337,34 @@ mod tests {
             t0.elapsed()
         );
         set_ready_for_tests(true);
+    }
+
+    /// ⭐ 2026-10-31（WorkBuddy 评估修）：**事件出口失败**（窗口已销毁/事件系统不可用）⇒
+    /// 立刻 `frontend_unavailable: <原因>`，⛔ 不许被吞成"前端没回"再空等超时。
+    ///
+    /// 变异：把调用处改回 `let _ = emit(...)`（旧行为）⇒ 本条会拿到 `frontend_timeout` 且耗时
+    /// 接近注入的 5000ms ⇒ **必红**。
+    #[test]
+    fn an_emitter_failure_is_reported_as_unavailable_immediately() {
+        let _serial = test_lock();
+        set_emitter(|_event, _payload| Err("窗口已销毁（WebView 不可用）".to_string()));
+        set_ready_for_tests(true);
+        let t0 = std::time::Instant::now();
+        let e = call_with_timeout("export.markdown", r#"{"pageId":"p1"}"#, 5_000)
+            .expect_err("出口失败必须报错");
+        assert!(e.contains("frontend_unavailable"), "分型错了：{e}");
+        assert!(e.contains("窗口已销毁"), "要点名真实原因：{e}");
+        assert!(
+            !e.contains("frontend_timeout"),
+            "出口失败不许伪装成超时：{e}"
+        );
+        assert!(
+            t0.elapsed() < std::time::Duration::from_millis(1000),
+            "必须立刻返回，不能等满超时（实际 {:?}）",
+            t0.elapsed()
+        );
+        // 还原成正常假前端，免得影响后续用例（测试锁只串行、不隔离全局状态）
+        install_test_emitter();
     }
 
     /// ⭐ 判据：前端在、但不回应 ⇒ `frontend_timeout`（短超时注入，⛔ 不真等 5 秒）。
