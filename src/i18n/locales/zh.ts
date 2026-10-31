@@ -44,7 +44,7 @@ export default {
     appearance: "外观",
     appearanceHint: "主题与强调色",
     spaces: "空间",
-    spacesHint: "切换 / 配色 / 加密 / 迁移 / 删除",
+    spacesHint: "切换 / 配色 / 加密 / 备份 / 迁移 / 删除",
     account: "账户",
     accountHint: "登录身份与同步目标",
     email: "邮箱",

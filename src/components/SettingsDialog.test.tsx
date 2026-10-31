@@ -402,12 +402,14 @@ describe("设置-空间 · owner 挑的四条（编号／IP／可见切换入口
     expect(switchTo, "点「删除」却先把空间切过去了（冒泡 ✗）").not.toHaveBeenCalled();
   });
 
-  it("⭐ ④ 副标题那句加上「切换」（两处词条一起改 ✓）", () => {
+  it("⭐ ④ 副标题那句加上「切换」（两处词条一起改 ✓；2026-10-31 起含「备份」）", () => {
     const zh = readFileSync(resolve(HERE, "../i18n/locales/zh.ts"), "utf8");
     const en = readFileSync(resolve(HERE, "../i18n/locales/en.ts"), "utf8");
     expect(zh, "zh 词条里没有「切换」").toMatch(/spacesHint:\s*"[^"]*切换/);
+    // 2026-10-31：空间包导出/导入搬进这一页 ⇒ 副标题补「备份」（两处词条同步改，⛔ 只改一处）
+    expect(zh, "zh 词条里没有「备份」").toMatch(/spacesHint:\s*"[^"]*备份/);
     expect(en, "en 词条里没有 Switch（⛔ 只改 zh 会造出不一致 ✗）").toMatch(
-      /spacesHint:\s*"Switch \/ colors \/ encryption \/ migrate \/ delete"/,
+      /spacesHint:\s*"Switch \/ colors \/ encryption \/ backup \/ migrate \/ delete"/,
     );
   });
 });

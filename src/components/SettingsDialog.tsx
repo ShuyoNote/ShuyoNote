@@ -550,6 +550,9 @@ function SpacesPane() {
             这里 —— 导出的是整个空间、导入会**新建一个空间**，都不是"文件"动作。
             下面的「快速搬家（.zip）」是旧通道（workspaceTransfer），格式不同、保留不动。 */}
         <SpacePackageTransferRows />
+        <p className="set-hint" data-testid="set-space-quickmigrate-hint">
+          快速搬家（<code>.zip</code>，旧通道）：只适合本机快速搬运，不带校验；企业版/跨版本交付请用上面的空间包。
+        </p>
         {/* ⭐ 2026-10-10（owner **第二次**提：「去掉这两个图标」）：两张卡片顶上原本各有一个方块图标
             （`.set-migrate-icon`，写的是 ↑ ／ ↓）✗ ⇒ **只删图标** ✓：
             标题（导出当前空间／导入空间包）＋ 说明那句 ＋ 两个按钮**一个不少** ✓。
