@@ -453,7 +453,9 @@ export function McpAccessPane() {
           <span className="mcp-section-title-text">接入外部 AI</span>
           <span className="mcp-title-hint">复制 → 粘贴到 mcpServers → 重启（首次）</span>
         </div>
-        <p className="set-hint">片段已按这台机器自动填好；令牌只存在本机文件里，不写进片段。</p>
+        {/* ⛔ 2026-10-31（owner 截图）：这行提示去掉 ——
+            「片段已按这台机器自动填好；令牌只存在本机文件里，不写进片段。」
+            片段里已经能直接看到填好的路径，令牌栏单独在下面；再放一句解释反而多一行噪音。 */}
         {level === "off" ? (
           <p className="mcp-onboard-tip" data-testid="mcp-onboard-tip">
             先选一档权限，再按下面三步接入。

@@ -195,8 +195,10 @@ describe("McpAccessPane：外部 AI 接入的档位面", () => {
     const snippet = document.querySelector(".mcp-access-snippet")?.textContent || "";
     const cfg = JSON.parse(snippet);
     expect(cfg.mcpServers.shuyonote.args[0]).toBe(bridge);
-    // 面板要说「自动填好」，⛔ 不是让用户自己找路径 ✗
-    expect(document.body.textContent).toContain("自动填好");
+    // 片段里的路径已经**逐字填好**（上面那条 JSON 断言就是"自动填好"的判据）。
+    // ⛔ 2026-10-31（owner 截图）：那句「片段已按这台机器自动填好；令牌只存在本机文件里，不写进片段。」
+    //   已经去掉 ⇒ 反向判据钉住"别再回来"。
+    expect(document.body.textContent, "那句提示已被 owner 去掉").not.toContain("片段已按这台机器自动填好");
   });
 
   it("★ 五档的文案必须说全（每档讲清「要不要问」＋ 免确认必留痕），⛔ 不许再说成只读", async () => {
