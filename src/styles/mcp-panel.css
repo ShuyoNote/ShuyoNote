@@ -221,7 +221,9 @@
 }
 .mcp-config-card .mcp-config-snippet {
   flex: none;
-  height: 190px;
+  /* 2026-10-31（owner 截图）：190px 太矮 —— 片段有 ~17 行，一屏只能看见一半。
+     320px 能完整露出 mcpServers / args / env 三段，仍保留滚动条给更长的机器路径。 */
+  height: 320px;
   margin: 0;
   padding: 10px 12px;
   border: 0;
