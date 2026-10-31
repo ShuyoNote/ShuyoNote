@@ -223,26 +223,13 @@ const NAV: Array<[string, string]> = [
  * ⚠️ 这里的路径是**各客户端自己的约定**（不是本产品的事实，也不是 Tauri 后端读数）——
  * 面板只给"该粘到哪个文件"的提示，⛔ 不写死本机路径、也不假装能替用户写那个文件。
  */
-type ClientKind = "claude" | "cursor" | "other";
-const CLIENTS: Array<{ id: ClientKind; label: string; configPath: string; note: string }> = [
-  {
-    id: "claude",
-    label: "Claude Desktop",
-    configPath: "%APPDATA%\\Claude\\claude_desktop_config.json",
-    note: "把片段并入文件里的 mcpServers；文件不存在就新建一个。",
-  },
-  {
-    id: "cursor",
-    label: "Cursor",
-    configPath: "~/.cursor/mcp.json",
-    note: "同上；改完重启 Cursor 窗口才生效。",
-  },
-  {
-    id: "other",
-    label: "其他 MCP 客户端",
-    configPath: "见客户端文档 · MCP 服务器配置",
-    note: "找到它的 MCP / mcpServers 配置节，把片段并进去即可。",
-  },
+/**
+ * 常见客户端的配置文件位置（**不要求用户先"选择客户端"** —— 片段本身完全相同，
+ * 选一次只是多一步交互；这里直接把两个最常见的路径并排列出来，其余一句话带过）。
+ */
+const CONFIG_PATHS: Array<{ label: string; configPath: string }> = [
+  { label: "Claude Desktop", configPath: "%APPDATA%\\Claude\\claude_desktop_config.json" },
+  { label: "Cursor", configPath: "~/.cursor/mcp.json" },
 ];
 
 export function McpAccessPane() {
@@ -261,8 +248,6 @@ export function McpAccessPane() {
   // 避免一进来就是文字墙；375 下尤其明显）。**内容始终留在 DOM 里**，用 CSS 折叠 ——
   // 这样能力清单的机器读数（`[data-cap-id]` 条数）不受展开状态影响，判据才不会因为折叠而漂。
   const [openCats, setOpenCats] = useState<string[]>([]);
-  // 「接入外部 AI」引导：选哪个客户端（只影响"配置文件路径"那一行；片段本身相同）
-  const [client, setClient] = useState<ClientKind>("claude");
 
   const refresh = useCallback(async () => {
     try {
@@ -428,8 +413,6 @@ export function McpAccessPane() {
     ...(scopeGroups.other.length ? [["其它", scopeGroups.other] as [string, string[]]] : []),
   ];
 
-  const activeClient = CLIENTS.find((c) => c.id === client) ?? CLIENTS[0];
-
   return (
     <div className="mcp-access mcp-panel">
       {/* 顶栏：分段导航（锚点滚动；窄屏换行不横向溢出）＋ 状态 chip ＋「如何接入」 */}
@@ -455,16 +438,15 @@ export function McpAccessPane() {
         </div>
       </div>
 
-      {/* ⭐ 首屏接入引导（设计稿 v3）：三步选客户端 → 复制配置 → 粘贴并重启。
+      {/* ⭐ 首屏接入引导（精简版）：两步"复制 → 粘贴"，再一行"重启并检测"。
+          ⛔ 不再要求先"选择客户端"：片段完全相同，选一次只是多一步交互。
           配置片段与令牌**只在这里出现一次**（状态区不再重复）。 */}
       <section className="set-section mcp-onboard" id="mcp-sec-onboard" data-testid="mcp-onboard">
         <div className="set-section-title mcp-section-title">
           <span className="mcp-section-title-text">接入外部 AI</span>
-          <span className="mcp-title-hint">三步：选客户端 → 复制配置 → 粘贴并重启</span>
+          <span className="mcp-title-hint">复制 → 粘贴到 mcpServers → 重启客户端</span>
         </div>
-        <p className="set-hint">
-          command / args / env 已按这台机器自动填好；令牌只存在本机文件里，不写进片段。
-        </p>
+        <p className="set-hint">片段已按这台机器自动填好；令牌只存在本机文件里，不写进片段。</p>
         {level === "off" ? (
           <p className="mcp-onboard-tip" data-testid="mcp-onboard-tip">
             先选一档权限，再按下面三步接入。
@@ -477,28 +459,8 @@ export function McpAccessPane() {
                 1
               </span>
               <div className="mcp-step-body">
-                <div className="mcp-step-title">选择你的 AI 客户端</div>
-                <div className="mcp-onboard-chips" role="group" aria-label="选择 AI 客户端">
-                  {CLIENTS.map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      data-client={c.id}
-                      aria-pressed={client === c.id}
-                      className={`mcp-client-chip${client === c.id ? " is-on" : ""}`}
-                      onClick={() => setClient(c.id)}
-                    >
-                      {c.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="mcp-path-box">
-                  <span className="mcp-path-label">配置文件</span>
-                  <code className="mcp-path-value" data-testid="mcp-config-path" title={activeClient.configPath}>
-                    {activeClient.configPath}
-                  </code>
-                </div>
-                <div className="mcp-step-note">{activeClient.note}</div>
+                <div className="mcp-step-title">复制右边的配置片段</div>
+                <div className="mcp-step-note">片段通用，不用先选客户端。</div>
               </div>
             </li>
             <li data-step="2" className="mcp-step">
@@ -506,9 +468,19 @@ export function McpAccessPane() {
                 2
               </span>
               <div className="mcp-step-body">
-                <div className="mcp-step-title">复制右边的配置片段</div>
+                <div className="mcp-step-title">粘到客户端的 mcpServers 里</div>
+                <div className="mcp-path-list">
+                  {CONFIG_PATHS.map((c) => (
+                    <div className="mcp-path-row" key={c.label}>
+                      <span className="mcp-path-label">{c.label}</span>
+                      <code className="mcp-path-value" data-testid="mcp-config-path" title={c.configPath}>
+                        {c.configPath}
+                      </code>
+                    </div>
+                  ))}
+                </div>
                 <div className="mcp-step-note">
-                  粘贴到配置文件的 <code>mcpServers</code> 里（已存在就合并，别整段覆盖）。
+                  其他客户端：看它的文档里 <code>mcpServers</code> 那一节（已存在就合并，别整段覆盖）。
                 </div>
               </div>
             </li>
@@ -527,9 +499,7 @@ export function McpAccessPane() {
                   </div>
                   <div className="mcp-kv">
                     <span className="mcp-kv-label">连接</span>
-                    <span className="mcp-kv-value">
-                      {st?.enabled ? "本机回环 · 连接数未采集" : "通道关闭"}
-                    </span>
+                    <span className="mcp-kv-value">{st?.enabled ? "本机回环 · 连接数未采集" : "通道关闭"}</span>
                   </div>
                 </div>
                 <button

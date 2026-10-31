@@ -135,19 +135,24 @@
   border-radius: 4px;
   background: var(--hover);
 }
-/* 配置文件路径：单独一行盒（label + 等宽路径，超长省略号，不撑破列宽） */
-.mcp-path-box {
+/* 常见客户端的配置文件位置：两行小盒（标签 + 等宽路径，超长省略号，不撑破列宽） */
+.mcp-path-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mcp-path-row {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  padding: 6px 9px;
+  padding: 4px 9px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 7px;
   background: var(--bg);
 }
 .mcp-path-label {
-  flex: none;
+  flex: 0 0 92px;
   font-size: 11.5px;
   color: var(--text-faint);
 }
@@ -190,32 +195,6 @@
 }
 .mcp-detect-btn {
   margin-top: 1px;
-}
-.mcp-onboard-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.mcp-client-chip {
-  padding: 4px 11px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-dim);
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 1.4;
-  cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
-}
-.mcp-client-chip:hover {
-  background: var(--hover);
-}
-.mcp-client-chip.is-on {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
 }
 /* 右侧卡片：头部 / 片段（吃满高度，横向不滚） / 底部令牌栏 */
 .mcp-config-card {

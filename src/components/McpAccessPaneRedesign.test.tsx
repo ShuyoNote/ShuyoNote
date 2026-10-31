@@ -388,7 +388,7 @@ describe("跨空间支持矩阵改版（2026-10-31）", () => {
     expect(css, "窄屏状态卡也要单列").toMatch(/@media \(max-width: 720px\)[\s\S]*?\.mcp-stat-grid[\s\S]*?grid-template-columns: 1fr/);
   });
 
-  it("⑯ 首屏接入引导：区块在、三步齐、客户端 chips 切换只改「配置文件路径」", async () => {
+  it("⑯ 首屏接入引导：区块在、三步齐、**不要求选客户端**（两条常见路径直接列出）", async () => {
     mount();
     await tick();
     await tick();
@@ -401,26 +401,13 @@ describe("跨空间支持矩阵改版（2026-10-31）", () => {
     const howto = document.querySelector<HTMLElement>('[data-testid="mcp-howto"]');
     expect(howto, "顶栏要有「如何接入」").toBeTruthy();
     expect(document.getElementById("mcp-sec-onboard")).toBeTruthy();
-    // 客户端 chips：切换只改路径那一行
-    const path = () => document.querySelector('[data-testid="mcp-config-path"]')?.textContent ?? "";
-    expect(path()).toContain("claude_desktop_config.json");
-    flushSync(() =>
-      document.querySelector<HTMLElement>('[data-client="cursor"]')!.dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      ),
-    );
-    await tick();
-    expect(path(), "换客户端必须改配置文件路径").toContain(".cursor/mcp.json");
-    const cursorPath = path();
-    flushSync(() =>
-      document.querySelector<HTMLElement>('[data-client="other"]')!.dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      ),
-    );
-    await tick();
-    expect(path(), "「其他 MCP 客户端」的路径提示必须与 Cursor 不同").not.toBe(cursorPath);
-    expect(path().length).toBeGreaterThan(0);
-    // 片段与路径无关：切了客户端，复制的内容仍是同一份 snippet
+    // ⭐ 精简版：**没有**客户端选择 chips（片段通用 ⇒ 不必先选一次），两条常见路径直接列出来
+    expect(block!.querySelectorAll("[data-client]").length, "不再要求选择客户端").toBe(0);
+    const paths = Array.from(block!.querySelectorAll('[data-testid="mcp-config-path"]')).map((el) => el.textContent ?? "");
+    expect(paths.length, "常见客户端路径直接并列（Claude Desktop + Cursor）").toBe(2);
+    expect(paths[0]).toContain("claude_desktop_config.json");
+    expect(paths[1]).toContain(".cursor/mcp.json");
+    // 片段仍然是同一份（与路径无关）
     const snippet = document.querySelector('[data-testid="mcp-snippet"]')?.textContent ?? "";
     expect(JSON.parse(snippet).mcpServers.shuyonote.command).toBe("node");
   });
