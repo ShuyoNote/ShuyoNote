@@ -143,10 +143,17 @@ describe("MCP 接入面板（P1）", () => {
     expect(text()).toContain("deadbeefdeadbeef");
   });
 
-  it("保留：配置片段用后端给的路径、复制配置是主按钮、换令牌仍可用", async () => {
+  it("保留：配置片段用后端给的路径（离线形态）、复制配置是主按钮、换令牌仍可用", async () => {
     mocks.mcpStatus.mockResolvedValue({ ...STATUS_ON, bridge_path: "C:\\repo\\tools\\shuyonote-mcp\\index.mjs" });
     mount();
     await tick();
+    await tick();
+    // C1 之后默认是标准 npx（无路径）；这条判据守的是「离线」形态仍然用后端给的路径
+    flushSync(() =>
+      document.querySelector<HTMLElement>('[data-testid="snippet-mode-bundled"]')!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      ),
+    );
     await tick();
     const snippet = document.querySelector(".mcp-access-snippet")?.textContent || "";
     expect(snippet).toContain("SHUYONOTE_MCP_TOKEN_FILE");

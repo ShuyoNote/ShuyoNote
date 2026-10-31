@@ -428,9 +428,24 @@ describe("跨空间支持矩阵改版（2026-10-31）", () => {
     // 判据不能依赖运行时状态 ⇒ 认 title 这句）
     const detectTitle = block!.querySelector('[data-testid="mcp-detect"]')?.getAttribute("title") ?? "";
     expect(detectTitle, "如实说明不统计连接数").toContain("不统计连接数");
-    // 片段仍然是同一份（与路径无关）
+    // ⭐ C1（2026-10-31，owner 选）：默认片段是**标准 npx**（5 行常量、无本机路径）；
+    //    可切「离线」拿随包桥（node + 绝对路径 + port/token 两个 env）。判据把两种形态都钉住。
     const snippet = document.querySelector('[data-testid="mcp-snippet"]')?.textContent ?? "";
-    expect(JSON.parse(snippet).mcpServers.shuyonote.command).toBe("node");
+    const std = JSON.parse(snippet).mcpServers.shuyonote;
+    expect(std.command, "默认必须是 npx（标准形态）").toBe("npx");
+    expect(std.args.join(" "), "标准形态拉的是 tarball").toContain("https://shuyo.cn/mcp/shuyonote-mcp-0.1.0.tgz");
+    expect(JSON.stringify(std), "标准形态不许出现本机盘符路径").not.toContain("C:\\\\");
+    expect(std.env, "标准形态不需要 env").toBeUndefined();
+    const bundledBtn = document.querySelector<HTMLElement>('[data-testid="snippet-mode-bundled"]');
+    expect(bundledBtn, "要有「离线」切换按钮").toBeTruthy();
+    flushSync(() => bundledBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await tick();
+    const off = JSON.parse(document.querySelector('[data-testid="mcp-snippet"]')?.textContent ?? "").mcpServers.shuyonote;
+    expect(off.command, "离线形态是 node + 随包桥").toBe("node");
+    expect(off.env.SHUYONOTE_MCP_PORT_FILE, "离线形态带 port/token 路径").toBe("/data/mcp/port");
+    // 切回标准，别把状态留给下一条用例
+    flushSync(() => document.querySelector<HTMLElement>('[data-testid="snippet-mode-npx"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await tick();
   });
 
   it("⑰ 配置片段只有一份（引导块里）：复制配置写剪贴板的内容 = 现有 snippet", async () => {
@@ -447,10 +462,23 @@ describe("跨空间支持矩阵改版（2026-10-31）", () => {
     expect(copyBtn.className).toContain("is-primary");
     flushSync(() => copyBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await tick();
-    const calls = vi.mocked(navigator.clipboard.writeText).mock.calls;
-    const wrote = calls[calls.length - 1]?.[0] as string;
+    let calls = vi.mocked(navigator.clipboard.writeText).mock.calls;
+    let wrote = calls[calls.length - 1]?.[0] as string;
+    // 默认（标准 npx）：复制到的就是页面上那份，且是 npx 形态
     expect(wrote, "复制的就是页面上那份 snippet").toBe(snippets[0].textContent);
     expect(wrote).toContain("mcpServers");
+    expect(JSON.parse(wrote).mcpServers.shuyonote.command).toBe("npx");
+    // 切「离线」后复制：拿到的是随包桥形态（带 port/token 路径）
+    flushSync(() =>
+      document.querySelector<HTMLElement>('[data-testid="snippet-mode-bundled"]')!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      ),
+    );
+    await tick();
+    flushSync(() => copyBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await tick();
+    calls = vi.mocked(navigator.clipboard.writeText).mock.calls;
+    wrote = calls[calls.length - 1]?.[0] as string;
     expect(JSON.parse(wrote).mcpServers.shuyonote.env.SHUYONOTE_MCP_TOKEN_FILE).toBe("/data/mcp/token");
   });
 

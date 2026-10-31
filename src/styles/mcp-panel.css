@@ -221,9 +221,13 @@
 }
 .mcp-config-card .mcp-config-snippet {
   flex: none;
-  /* 2026-10-31（owner 截图）：190px 太矮 —— 片段有 ~17 行，一屏只能看见一半。
-     320px 能完整露出 mcpServers / args / env 三段，仍保留滚动条给更长的机器路径。 */
-  height: 320px;
+  /* 2026-10-31（owner 截图，C1）：190px 太矮（标准 npx 13 行都露不全）；
+     但固定 320px 对 5 行的 npx 形态又太空 ⇒ 改成"随内容自适应、封顶 360px"：
+       · 标准 npx（13 行）⇒ 自然展开约 250px，不留大片空白；
+       · 离线（20 行）⇒ 到 360px 封顶，超出走纵向滚动；长路径仍横向滚动。 */
+  height: auto;
+  min-height: 240px;
+  max-height: 360px;
   margin: 0;
   padding: 10px 12px;
   border: 0;
@@ -751,4 +755,42 @@
   .mcp-stat-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* ⭐ 2026-10-31（owner 选 C1）：配置片段两种形态的切换（标准 npx / 离线随包桥）＋ 前提说明。
+   为什么放在标题行里而不是另起一行：片段卡片的头已经只有「标题 + 复制」两个元素，
+   切换器塞进去正好把"这是同一个片段的两种写法"表达清楚；再占一行会把卡片顶得很高。 */
+.mcp-config-head .mcp-snippet-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--hover);
+}
+.mcp-snippet-mode button {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 1;
+  padding: 5px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.mcp-snippet-mode button.is-on {
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.mcp-snippet-hint {
+  margin: 0;
+  padding: 7px 12px 9px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
 }

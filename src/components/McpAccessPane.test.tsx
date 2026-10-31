@@ -169,9 +169,36 @@ describe("McpAccessPane：外部 AI 接入的档位面", () => {
     expect(mocks.mcpRotateToken).toHaveBeenCalled();
   });
 
-  it("★ 配置片段里是**后端给的**两个文件路径（令牌/端口 ✓），复制按钮真的复制", async () => {
+  it("★ 默认片段是标准 npx（5 行常量、无本机路径）；切「离线」才出现 port/token 两个 env", async () => {
     mount();
     await tick();
+    await tick();
+    // 默认：标准（npx）—— 不含任何本机绝对路径，args 里是 tarball
+    const std = JSON.parse(document.querySelector(".mcp-access-snippet")?.textContent || "");
+    expect(std.mcpServers.shuyonote.command, "默认应该是 npx（C1 标准形态）").toBe("npx");
+    expect(std.mcpServers.shuyonote.args.join(" ")).toContain("https://shuyo.cn/mcp/shuyonote-mcp-0.1.0.tgz");
+    expect(JSON.stringify(std), "标准形态不许出现本机盘符路径").not.toContain("C:\\\\");
+    expect(std.mcpServers.shuyonote.env, "标准形态不需要 env（桥自己找应用数据目录）").toBeUndefined();
+    // 切到「离线」：随包桥（绝对路径 ＋ port/token）
+    const bundledBtn = document.querySelector<HTMLElement>('[data-testid="snippet-mode-bundled"]')!;
+    flushSync(() => bundledBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await tick();
+    const off = JSON.parse(document.querySelector(".mcp-access-snippet")?.textContent || "");
+    expect(off.mcpServers.shuyonote.command, "离线形态是 node + 安装包里的桥").toBe("node");
+    expect(off.mcpServers.shuyonote.env.SHUYONOTE_MCP_TOKEN_FILE).toContain("/data/mcp/token");
+    expect(off.mcpServers.shuyonote.env.SHUYONOTE_MCP_PORT_FILE).toContain("/data/mcp/port");
+  });
+
+  it("★ 配置片段里是**后端给的**两个文件路径（令牌/端口 ✓，离线形态），复制按钮真的复制", async () => {
+    mount();
+    await tick();
+    await tick();
+    // 「离线」形态才有 port/token（标准 npx 形态不需要）
+    flushSync(() =>
+      document.querySelector<HTMLElement>('[data-testid="snippet-mode-bundled"]')!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      ),
+    );
     await tick();
     const snippet = document.querySelector(".mcp-access-snippet")?.textContent || "";
     expect(snippet).toContain("SHUYONOTE_MCP_TOKEN_FILE");
@@ -184,13 +211,19 @@ describe("McpAccessPane：外部 AI 接入的档位面", () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("SHUYONOTE_MCP_TOKEN_FILE"));
   });
 
-  it("★ owner 2026-10-18：桥路径**自动填好**（Windows 反斜杠也必须粘得进 JSON）", async () => {
+  it("★ owner 2026-10-18：桥路径**自动填好**（Windows 反斜杠也必须粘得进 JSON；离线形态）", async () => {
     // 真因之一：片段原来是手写字符串拼的 ⇒ `C:\repo\...` 里的 `\r` 会被拼成回车、JSON 非法 ✗。
     // 这里钉两件事：① 整段能被 `JSON.parse`；② `args[0]` 逐字等于后端给的绝对路径 ✓。
     const bridge = "C:\\Users\\me\\ShuyoNote\\tools\\shuyonote-mcp\\index.mjs";
     mocks.mcpStatus.mockResolvedValue({ ...STATUS_ON, bridge_path: bridge });
     mount();
     await tick();
+    await tick();
+    flushSync(() =>
+      document.querySelector<HTMLElement>('[data-testid="snippet-mode-bundled"]')!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      ),
+    );
     await tick();
     const snippet = document.querySelector(".mcp-access-snippet")?.textContent || "";
     const cfg = JSON.parse(snippet);

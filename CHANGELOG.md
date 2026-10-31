@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **MCP 接入片段 C1：两种形态**：默认「标准」为 5 行 npx 常量（`https://shuyo.cn/mcp/shuyonote-mcp-0.1.0.tgz`，无任何本机路径，需联网 + Node 20+）；可切「离线」用安装包自带的桥（`node <bridge>` + port/token 两个 env），片段高度随形态自适应（240~360px）。桥已在三平台 `bundle.resources` 里（`mcp/index.mjs`、`mcp/paths.mjs`），标准形态不需要 env 因为桥自己找应用数据目录。判据：默认 npx 且无盘符路径、离线形态带两个 env、复制跟随当前形态。
 - **B3 属性区收尾**：header 同行；值列/标签行统一 86px grid；作者 person chip；日期/来源展示态无 input、操作 hover 才出；来源行说明小字；正文「> 来源：」引文改为 citation 样式（保留文本以保幂等）；顶部添加属性/标签入口移除；metadata-card 去灰底改分隔线。
 - **F1 空间包按附录 A 形状**：`roots` 改节点 id 字符串数组、`document` 改 doc id、`min_reader_version` 改整数 1、省略 `features`；读侧兼容旧对象 roots/字符串版本并 warning；fixture 改名 `personal-sample-appendixA.shuyospace` 并重生成；`packageFixtures` 改进程内重建。
 - **B2 属性类型化**：新增 `propFormat.ts`（URL 省略/无协议补全、日期到分钟+相对时间+`+08:00`、person chip）；属性面板「来源」渲染为可点链接+复制（展示态无 input）、date/datetime 展示态为格式化文本（编辑态才出控件）。判据 `propFormat.test.ts` 4 条＋面板 2 条。

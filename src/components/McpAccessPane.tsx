@@ -245,6 +245,9 @@ const CONFIG_PATHS: Array<{ label: string; configPath: string }> = [
   { label: "VS Code", configPath: "%APPDATA%\\Code\\User\\mcp.json" },
 ];
 
+/** 「标准（npx）」片段拉的是哪个包：与连接器商店 `connectors/shuyonote/mcp.json` 同一个 tarball。 */
+const NPX_TARBALL = "https://shuyo.cn/mcp/shuyonote-mcp-0.1.0.tgz";
+
 export function McpAccessPane() {
   const [st, setSt] = useState<McpStatus | null>(null);
   const [drafts, setDrafts] = useState<DraftRow[]>([]);
@@ -398,25 +401,30 @@ export function McpAccessPane() {
   const scopeGroups = useMemo(() => groupScopes(granted), [granted]);
   const allow = useMemo(() => allowanceOf(level, granted, token), [level, granted, token]);
 
+  // ⭐ 2026-10-31（owner 选 C1）：片段给两种形态，默认「标准（npx）」，可切「离线（随包桥）」。
+  //   · 标准：5 行常量，npx 从 shuyo.cn 拉桥（约 11 KB），**不含任何本机路径**；需要联网 + Node。
+  //   · 离线：`node <安装包里的桥>` ＋ port/token 两个 env（绝对路径），不联网，但换机器要重新复制。
+  //   为什么能省掉 env：桥（`tools/shuyonote-mcp/paths.mjs`）默认就去应用数据目录找 `mcp/{port,token}`，
+  //   与 Rust 侧 `app_data_dir` 同口径 ⇒ 标准形态不需要任何路径。
+  const [snippetMode, setSnippetMode] = useState<"npx" | "bundled">("npx");
   const snippet = useMemo(() => {
     const bridge = st?.bridge_path ?? "";
-    return JSON.stringify(
-      {
-        mcpServers: {
-          shuyonote: {
+    const server =
+      snippetMode === "npx"
+        ? {
+            command: "npx",
+            args: ["-y", "-p", NPX_TARBALL, "shuyonote-mcp"],
+          }
+        : {
             command: "node",
             args: [bridge || "tools/shuyonote-mcp/index.mjs"],
             env: {
               SHUYONOTE_MCP_PORT_FILE: st?.port_path ?? "",
               SHUYONOTE_MCP_TOKEN_FILE: st?.token_path ?? "",
             },
-          },
-        },
-      },
-      null,
-      2,
-    );
-  }, [st?.bridge_path, st?.port_path, st?.token_path]);
+          };
+    return JSON.stringify({ mcpServers: { shuyonote: server } }, null, 2);
+  }, [snippetMode, st?.bridge_path, st?.port_path, st?.token_path]);
 
   const scopeRows: Array<[string, string[]]> = [
     ["读", scopeGroups.read],
@@ -545,6 +553,28 @@ export function McpAccessPane() {
           <div className="mcp-config-card" data-testid="mcp-config-card">
             <div className="mcp-config-head">
               <span className="mcp-config-title">配置片段</span>
+              {/* 2026-10-31（owner 选 C1）：两种形态可切。默认 npx（5 行、无路径）；
+                  「离线」给内网/无网环境用随包桥（绝对路径 + port/token 两个 env）。 */}
+              <div className="mcp-snippet-mode" role="group" aria-label="片段形式">
+                <button
+                  type="button"
+                  className={snippetMode === "npx" ? "is-on" : ""}
+                  data-testid="snippet-mode-npx"
+                  aria-pressed={snippetMode === "npx"}
+                  onClick={() => setSnippetMode("npx")}
+                >
+                  标准
+                </button>
+                <button
+                  type="button"
+                  className={snippetMode === "bundled" ? "is-on" : ""}
+                  data-testid="snippet-mode-bundled"
+                  aria-pressed={snippetMode === "bundled"}
+                  onClick={() => setSnippetMode("bundled")}
+                >
+                  离线
+                </button>
+              </div>
               <button
                 className="set-btn is-primary"
                 data-testid="copy-config"
@@ -557,6 +587,11 @@ export function McpAccessPane() {
             <pre className="mcp-access-snippet mcp-config-snippet" data-testid="mcp-snippet">
               {snippet}
             </pre>
+            <p className="mcp-snippet-hint" data-testid="mcp-snippet-hint">
+              {snippetMode === "npx"
+                ? "需要联网：npx 会从 shuyo.cn 下载桥（约 11 KB）。"
+                : "不联网：用安装包里自带的桥；路径是本机的，换机器要重新复制。"}
+            </p>
             <div className="mcp-config-foot">
               <div className="mcp-token-line">
                 <span className="mcp-token-label">令牌</span>
