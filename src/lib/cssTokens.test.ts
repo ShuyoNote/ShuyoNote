@@ -33,36 +33,31 @@ const RUNTIME_VARS = new Set([
   "--sab",
   "--sal",
   "--kb", // viewportInsets.ts:120（窗口 inset / 软键盘）
+  "--fill", // FileManagerView.tsx:972（内联样式注入）
 ]);
 
-/** 冻结清单：S3 清零前允许存在的 26 个未定义变量（只减不增；清掉一个就把这里删一行）。 */
+/** 冻结清单：S3 清零前允许存在的 9 个未定义变量（只减不增；清掉一个就把这里删一行）。
+ *
+ * ⚠️ 2026-10-31 修正：之前写 26 是**扫描器的假阳性**（定义正则带 `^` 行首锚 ⇒
+ * 「一行两个定义」只认第一个、「作用域内定义」看不见；使用扫描没剥注释 ⇒ 注释里的
+ * `var(--brand)` 被当成使用）。真未定义 14 条，已按批处理：
+ *   批 1 清 `--plugin-panel-w`（两处都有 420px 兜底 → 落成字面量）
+ *   批 2 清 `--bg-2` / `--border-faint` / `--fill-soft` / `--text-muted`
+ *        （用法里本来就带兜底 ⇒ 换成兜底字面量，**零视觉**）
+ *   剩 9 条（**没有兜底**，定义/改名会让原本失效的声明生效 ⇒ 需逐条看视觉）：
+ *     B 改名 7：`--bg-1/--block/--hover-soft/--primary/--surface-2/--surface-light/--text-2`
+ *     C 定义 2：`--radius/--font-mono`
+ * 分档依据与视觉风险见 `_tmp/acceptance/css-undefined-vars-2026-10-31.md`。 */
 const KNOWN_UNDEFINED = new Set([
   "--bg-1",
-  "--bg-2",
   "--block",
-  "--border-faint",
-  "--brand",
-  "--brand-soft",
-  "--cat-green-soft",
-  "--cat-orange-soft",
-  "--cat-purple-soft",
-  "--cat-yellow-soft",
-  "--eye-bg",
-  "--eye-bg-dark",
-  "--eye-fg",
-  "--eye-filter",
-  "--eye-stage",
-  "--fill",
-  "--fill-soft",
   "--font-mono",
   "--hover-soft",
-  "--plugin-panel-w",
   "--primary",
   "--radius",
   "--surface-2",
   "--surface-light",
   "--text-2",
-  "--text-muted",
 ]);
 
 describe("CSS tokens（S3）", () => {
@@ -75,9 +70,15 @@ describe("CSS tokens（S3）", () => {
   });
 
   it("② 全仓 CSS 的 var(--x) 都有定义（运行时注入白名单除外），且未定义集合不超过冻结清单", () => {
-    const text = ["src/App.css", "src/styles/mcp-panel.css", "src/styles/tokens.css"].map(read).join("\n");
+    // ⚠️ 必须先剥注释再扫：注释里的 `var(--x)` 不是使用（2026-10-31 修：--brand 曾因此假阳性）。
+    const text = ["src/App.css", "src/styles/mcp-panel.css", "src/styles/tokens.css"]
+      .map(read)
+      .join("\n")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
     const used = [...new Set([...text.matchAll(/var\((--[A-Za-z0-9_-]+)/g)].map((m) => m[1]))];
-    const defined = new Set([...text.matchAll(/^\s*(--[A-Za-z0-9_-]+)\s*:/gm)].map((m) => m[1]));
+    // 定义匹配**不要**行首锚：App.css 有一行两个定义（`--cat-x: …; --cat-x-soft: …;`）和
+    // 作用域内定义（`.pdf-reader.eye-* { --eye-*: … }`），带 `^` 会把它们判成未定义。
+    const defined = new Set([...text.matchAll(/--([A-Za-z0-9_-]+)\s*:/g)].map((m) => "--" + m[1]));
     const undefinedVars = used.filter((v) => !defined.has(v) && !RUNTIME_VARS.has(v));
     const unexpected = undefinedVars.filter((v) => !KNOWN_UNDEFINED.has(v));
     expect(unexpected, "新增了「用了但没定义」的变量 ⇒ 那行声明会被浏览器静默丢弃；要么定义它，要么改用已有 token").toEqual([]);

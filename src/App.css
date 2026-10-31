@@ -13276,7 +13276,7 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border-faint, rgba(128, 128, 128, 0.12));
+  border-bottom: 1px solid rgba(128, 128, 128, 0.12);
   transition: background var(--transition-fast);
 }
 .email-set-account-row:last-child { border-bottom: none; }
@@ -18792,7 +18792,7 @@ p:has(> .editor-drawing-container) {
   font-size: var(--fs-13);
   color: var(--text-dim);
   padding: 8px 12px;
-  background: var(--bg-2, rgba(0, 0, 0, 0.03));
+  background: rgba(0, 0, 0, 0.03);
   border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
   border-radius: 10px;
 }
@@ -19081,7 +19081,7 @@ p:has(> .editor-drawing-container) {
 .email-item-acct .email-account-chip { max-width: 100%; }
 /* 账号列与主题之间加一条竖向分隔线（仅列头「标题」行，多账号显示账号列时） */
 .email-col-head.has-acct .email-col-subject {
-  border-left: 1px solid var(--border-faint, rgba(128, 128, 128, 0.14));
+  border-left: 1px solid rgba(128, 128, 128, 0.14);
   padding-left: 8px;
 }
 
@@ -19224,7 +19224,7 @@ p:has(> .editor-drawing-container) {
 /* 邮件之间淡淡的细分隔细线（以 section 内相邻 item 分界） */
 .email-section { display: flex; flex-direction: column; }
 .email-section .email-item:not(:first-child) {
-  box-shadow: 0 -1px 0 0 var(--border-faint, rgba(128,128,128,.14));
+  box-shadow: 0 -1px 0 0 rgba(128,128,128,.14);
 }
 .email-check {
   width: 18px;
@@ -19866,7 +19866,7 @@ p:has(> .editor-drawing-container) {
   right: 0;
   bottom: 0;
   z-index: 73;
-  width: var(--plugin-panel-w, 420px);
+  width: 420px;
   max-width: calc(100vw - 64px);
   display: flex;
   flex-direction: column;
@@ -19878,7 +19878,7 @@ p:has(> .editor-drawing-container) {
 }
 /* 桌面：面板占位，主区让出同样宽度（与 AI / 目录同一条规则）。 */
 body.is-plugin-panel-open .main {
-  padding-right: var(--plugin-panel-w, 420px);
+  padding-right: 420px;
 }
 
 /* ===================================================================
@@ -22670,7 +22670,7 @@ body.is-plugin-panel-open .main {
   padding: 4px 8px;
   font-size: var(--fs-12);
   line-height: 1.5;
-  color: var(--text-muted, #6b7280);
+  color: #6b7280;
   background: var(--surface-2, rgba(0, 0, 0, 0.03));
   border-top: 1px dashed var(--border);
 }
@@ -25335,14 +25335,14 @@ button.mset-row:focus-visible {
   display:grid;place-items:center;color:var(--text-faint);font-size:16px;
 }
 .set-space-more>summary::-webkit-details-marker{display:none}
-.set-space-more[open]>summary,.set-space-more>summary:hover{background:var(--fill-soft,#f3f5f9);color:var(--text-2)}
+.set-space-more[open]>summary,.set-space-more>summary:hover{background:#f3f5f9;color:var(--text-2)}
 .set-space-menu{
   position:absolute;right:0;top:38px;z-index:20;min-width:150px;padding:6px;
   background:var(--card-bg);border:1px solid var(--border);border-radius:12px;
   box-shadow:0 12px 28px rgba(15,20,32,.16);display:flex;flex-direction:column;gap:2px;
 }
 .set-space-menu .set-btn{justify-content:flex-start;text-align:left;border:none;background:transparent}
-.set-space-menu .set-btn:hover:not(:disabled){background:var(--fill-soft,#f3f5f9)}
+.set-space-menu .set-btn:hover:not(:disabled){background:#f3f5f9}
 
 /* ⭐ 2026-10-25 按设计稿重写：顶部安全卡 / 标题+筛选同排 / 行卡 */
 .set-security-card{
@@ -26354,17 +26354,17 @@ button.mset-row:focus-visible {
 .prop-row .prop-order-btns { opacity: 0; transition: opacity 0.12s; }
 .prop-row:hover .prop-order-btns,
 .prop-row:focus-within .prop-order-btns { opacity: 1; }
-.prop-empty { background: none; border: 0; padding: 0; color: var(--text-muted, #8a8a8a); cursor: text; font: inherit; text-align: left; }
-.prop-add-head { margin-left: auto; background: none; border: 0; color: var(--text-muted, #8a8a8a); cursor: pointer; }
+.prop-empty { background: none; border: 0; padding: 0; color: #8a8a8a; cursor: text; font: inherit; text-align: left; }
+.prop-add-head { margin-left: auto; background: none; border: 0; color: #8a8a8a; cursor: pointer; }
 .prop-tag-line { display: flex; align-items: center; gap: 4px; }
-.prop-add-tag { background: none; border: 0; color: var(--text-muted, #8a8a8a); cursor: pointer; }
-.prop-system { margin-top: 4px; color: var(--text-muted, #8a8a8a); }
+.prop-add-tag { background: none; border: 0; color: #8a8a8a; cursor: pointer; }
+.prop-system { margin-top: 4px; color: #8a8a8a; }
 .prop-row-system .prop-value-text { flex: 1; }
 
 /* B2：类型化展示 */
 .prop-link { color: var(--accent, #3b82f6); text-decoration: underline; text-underline-offset: 2px; }
 .prop-link-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.prop-link-copy, .prop-link-edit { background: none; border: 0; color: var(--text-muted, #888); cursor: pointer; font: inherit; }
+.prop-link-copy, .prop-link-edit { background: none; border: 0; color: #888; cursor: pointer; font: inherit; }
 .prop-temporal { text-align: left; }
 
 /* B3：属性区 header 同一行（原按钮换行到下一行）＋ 元数据块去整块灰底改分隔线 */
