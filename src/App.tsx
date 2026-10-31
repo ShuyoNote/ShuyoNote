@@ -130,6 +130,8 @@ import "./styles/tokens.css";
 // S4 pilot（2026-10-31）：从 App.css 整段搬出的 `.selection-toolbar` 域（纯搬运、不改选择器）。
 // 它自己也包在 `@layer legacy` 里；层序仍由 App.css 顶部那条 `@layer legacy, utilities;` 唯一声明。
 import "./styles/selection-toolbar.css";
+// S4-2（2026-10-31）：mermaid 域（编辑器图块 ＋ 文件管理器 md 预览 ＋ mindmap 提示）整段搬出。
+import "./styles/mermaid.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

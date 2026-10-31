@@ -291,7 +291,14 @@ A2["RAG 检索"]</textarea>
 `;
 
 
-const css = readFileSync(join(root, "src", "App.css"), "utf8");
+// S4（2026-10-31）：CSS 已开始按域拆到 src/styles/*.css ⇒ 夹具必须按 **App.tsx 的 import 顺序**内联全部 CSS，
+// 否则某个域搬走之后，夹具里那一段就丢了样式（61 条几何断言会假红/假绿）。
+const cssPaths = [join(root, "src", "App.css")];
+const appTsx = readFileSync(join(root, "src", "App.tsx"), "utf8");
+for (const m of appTsx.matchAll(/import\s+"\.\/styles\/([^"]+\.css)"/g)) {
+  cssPaths.push(join(root, "src", "styles", m[1]));
+}
+const css = cssPaths.map((p) => readFileSync(p, "utf8")).join("\n");
 const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>panel layout</title>
 <style>${css}</style></head><body class="theme-light">${FIXTURE}</body></html>`;
 
@@ -910,3 +917,4 @@ try {
 
 console.log(`\n[结果] ${pass} 通过 / ${fail} 失败`);
 process.exit(fail === 0 ? 0 : 1);
+
