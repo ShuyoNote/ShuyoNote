@@ -22,7 +22,7 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-2);
   padding: 0 0 10px;
   margin: 0 0 14px;
   border-bottom: 1px solid var(--border);
@@ -30,13 +30,13 @@
 .mcp-nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
 }
 .mcp-nav-link {
   padding: 5px 10px;
-  border-radius: 999px;
-  font-size: 12.5px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-12-5);
   color: var(--text-dim);
   text-decoration: none;
   background: transparent;
@@ -57,8 +57,8 @@
   gap: 6px;
   padding: 3px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 12px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-12);
   color: var(--text-dim);
   background: var(--surface);
 }
@@ -70,12 +70,12 @@
 
 /* ═══ ①.5 首屏接入引导（三步 ＋ 右侧配置片段/令牌） ═══════════════════════ */
 .mcp-onboard-tip {
-  margin: 2px 0 12px;
+  margin: 2px 0 var(--space-3);
   padding: 6px 10px;
   border-left: 3px solid var(--accent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--hover);
-  font-size: 12.5px;
+  font-size: var(--fs-12-5);
   color: var(--text-dim);
 }
 /* 两列等高：左列步骤，右列卡片（卡片内部 flex，片段区吃掉多余高度） */
@@ -95,7 +95,7 @@
 }
 .mcp-step {
   display: flex;
-  gap: 12px;
+  gap: var(--space-3);
   min-width: 0;
 }
 .mcp-step-no {
@@ -107,7 +107,7 @@
   border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
   color: var(--accent);
   background: var(--accent-soft);
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   line-height: 20px;
   text-align: center;
@@ -119,7 +119,7 @@
   gap: 7px;
 }
 .mcp-step-title {
-  font-size: 13.5px;
+  font-size: var(--fs-13-5);
   font-weight: 600;
   color: var(--text);
   line-height: 1.35;
@@ -127,37 +127,37 @@
 /* 统一的说明小字（原来的 .mcp-step-desc / .mcp-step-path 合并成这一档） */
 .mcp-step-desc,
 .mcp-step-note {
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.6;
   color: var(--text-dim);
   overflow-wrap: anywhere;
 }
 .mcp-step-note code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11.5px;
+  font-size: var(--fs-11-5);
   padding: 0 3px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--hover);
 }
 /* 常见客户端的配置文件位置：两行小盒（标签 + 等宽路径，超长省略号，不撑破列宽） */
 .mcp-path-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 .mcp-path-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
-  padding: 4px 9px;
+  padding: var(--space-1) 9px;
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--bg);
 }
 .mcp-path-label {
   flex: 0 0 92px;
-  font-size: 11.5px;
+  font-size: var(--fs-11-5);
   color: var(--text-faint);
 }
 .mcp-path-value {
@@ -167,7 +167,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11.5px;
+  font-size: var(--fs-11-5);
   color: var(--text-dim);
 }
 /* 读数：标签列固定宽 ⇒ 两行左对齐 */
@@ -176,15 +176,15 @@
   flex-direction: column;
   gap: 3px;
   padding: 7px 9px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   border: 1px solid var(--border);
 }
 .mcp-kv {
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr);
-  gap: 8px;
-  font-size: 12px;
+  gap: var(--space-2);
+  font-size: var(--fs-12);
   line-height: 1.5;
 }
 .mcp-kv-label {
@@ -206,7 +206,7 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: var(--card-bg);
   overflow: hidden;
 }
@@ -214,12 +214,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 9px 12px;
+  gap: var(--space-2);
+  padding: 9px var(--space-3);
   border-bottom: 1px solid var(--border);
 }
 .mcp-config-title {
-  font-size: 12.5px;
+  font-size: var(--fs-12-5);
   font-weight: 600;
   color: var(--text);
 }
@@ -234,7 +234,7 @@
   min-height: 160px;
   max-height: 360px;
   margin: 0;
-  padding: 10px 12px;
+  padding: 10px var(--space-3);
   border: 0;
   border-radius: 0;
   background: var(--bg);
@@ -242,7 +242,7 @@
   scrollbar-width: thin;
   /* 代码块不折行（折行会把路径从中间劈开、更难读）——长行横向滚动 */
   white-space: pre;
-  font-size: 11.5px;
+  font-size: var(--fs-11-5);
   line-height: 1.55;
 }
 .mcp-config-card .mcp-config-snippet::-webkit-scrollbar {
@@ -251,7 +251,7 @@
 }
 .mcp-config-card .mcp-config-snippet::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--text-faint) 35%, transparent);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 .mcp-config-card .mcp-config-snippet::-webkit-scrollbar-track {
   background: transparent;
@@ -259,19 +259,19 @@
 .mcp-config-foot {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--space-2);
+  padding: 10px var(--space-3);
   border-top: 1px solid var(--border);
 }
 .mcp-token-line {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
 }
 .mcp-token-label {
   flex: none;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 .mcp-config-foot .mcp-access-token {
@@ -291,7 +291,7 @@
   padding: 2px 6px;
   border-radius: 5px;
   background: var(--hover);
-  font-size: 11.5px;
+  font-size: var(--fs-11-5);
   color: var(--text-dim);
 }
 .mcp-token-actions {
@@ -300,8 +300,8 @@
   gap: 6px;
 }
 .mcp-token-actions .set-btn {
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: var(--space-1) 10px;
+  font-size: var(--fs-12);
 }
 
 .mcp-panel {
@@ -310,7 +310,7 @@
 
 .mcp-title-hint {
   margin-left: 10px;
-  font-size: 11.5px;
+  font-size: var(--fs-11-5);
   font-weight: 400;
   color: var(--text-faint);
 }
@@ -339,7 +339,7 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
-  margin: 4px 0 10px;
+  margin: var(--space-1) 0 10px;
 }
 
 /* 视觉由本类接管（`.ai-settings-tab` 只作为既有判据/兼容的类名钩子，它的下划线页签样式在这里被覆盖） */
@@ -351,14 +351,14 @@
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  padding: 10px 12px;
+  padding: 10px var(--space-3);
   border: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
   color: var(--text);
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-12-5);
   text-align: left;
   cursor: pointer;
 }
@@ -404,8 +404,8 @@
   flex: none;
   margin-left: auto;
   padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 11px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-11);
   line-height: 16px;
   border: 1px solid transparent;
 }
@@ -430,19 +430,19 @@
 }
 .mcp-level-desc {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
 /* 选中卡下方的「当前允许」摘要 */
 .mcp-allow-row {
-  margin: 0 0 12px;
-  padding: 8px 12px;
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--card-bg);
-  font-size: 12.5px;
+  font-size: var(--fs-12-5);
   color: var(--text-dim);
   overflow-wrap: anywhere;
 }
@@ -460,21 +460,21 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin: 2px 0 8px;
+  margin: 2px 0 var(--space-2);
 }
 .mcp-cap-total {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
-  margin-right: 4px;
+  margin-right: var(--space-1);
 }
 .mcp-filter-btn {
   padding: 3px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: transparent;
   color: var(--text-dim);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 .mcp-filter-btn:hover {
@@ -504,7 +504,7 @@
   background: transparent;
   color: var(--text);
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-12-5);
   text-align: left;
   cursor: pointer;
 }
@@ -529,18 +529,18 @@
   max-width: 200px;
   min-width: 60px;
   height: 5px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--hover);
   overflow: hidden;
 }
 .mcp-cap-bar-fill {
   display: block;
   height: 100%;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--accent);
 }
 .mcp-cap-cat-note {
-  font-size: 11.5px;
+  font-size: var(--fs-11-5);
   font-weight: 400;
   color: var(--text-faint);
   overflow-wrap: anywhere;
@@ -548,7 +548,7 @@
 .mcp-cap-cat-count {
   flex: none;
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
@@ -556,7 +556,7 @@
 .mcp-cap-grid {
   display: none;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px 18px;
+  gap: var(--space-1) 18px;
   padding: 2px 0 10px 18px;
 }
 /* 折叠 = `display:none`（内容**仍在 DOM**：机器读数不随展开状态漂 ✓） */
@@ -566,10 +566,10 @@
 .mcp-cap-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
   padding: 2px 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-dim);
 }
 /* 工具名：单行，超出用省略号（⛔ 不再折成两三行把行高撑乱） */
@@ -578,7 +578,7 @@
   min-width: 0;
   max-width: 46%;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11.5px;
+  font-size: var(--fs-11-5);
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -587,7 +587,7 @@
 .mcp-cap-item-tail {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   flex: 1 1 auto;
   min-width: 0;
   margin-left: auto;
@@ -606,7 +606,7 @@
   width: 96px;
   justify-content: center;
   text-align: center;
-  font-size: 11px;
+  font-size: var(--fs-11);
   line-height: 16px;
   padding: 1px 0;
 }
@@ -619,22 +619,22 @@
   gap: 10px;
 }
 .mcp-stat-card {
-  margin: 4px 0 10px;
-  padding: 12px;
+  margin: var(--space-1) 0 10px;
+  padding: var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: var(--card-bg);
 }
 .mcp-stat-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 18px;
+  gap: var(--space-3) 18px;
 }
 .mcp-stat-cell {
   min-width: 0;
 }
 .mcp-stat-label {
-  font-size: 11.5px;
+  font-size: var(--fs-11-5);
   color: var(--text-faint);
   margin-bottom: 3px;
 }
@@ -643,13 +643,13 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: var(--fs-12-5);
   color: var(--text);
   overflow-wrap: anywhere;
 }
 .mcp-stat-addr code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .mcp-stat-actions {
   display: flex;
@@ -661,11 +661,11 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px dashed var(--border);
-  font-size: 12.5px;
+  font-size: var(--fs-12-5);
   color: var(--text-dim);
 }
 .mcp-shortcuts {
@@ -685,13 +685,13 @@
 .mcp-scope-row {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
 }
 .mcp-scope-label {
   flex: none;
   width: 4.5em;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 .mcp-scope-chips {
@@ -701,13 +701,13 @@
   min-width: 0;
 }
 .mcp-chip {
-  padding: 1px 8px;
+  padding: 1px var(--space-2);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--surface);
   color: var(--text-dim);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-size: var(--fs-11);
   line-height: 17px;
   overflow-wrap: anywhere;
 }
@@ -718,19 +718,19 @@
   color: var(--accent);
 }
 .mcp-scope-empty {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-faint);
 }
 
 /* ═══ ⑥ 写操作警示条 ═════════════════════════════════════════════════════ */
 .mcp-write-warning {
   margin: 10px 0 0;
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--warning);
   border-radius: 10px;
   background: var(--hover);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.5;
 }
 
@@ -744,7 +744,7 @@
   }
   .mcp-cap-grid {
     grid-template-columns: 1fr;
-    padding-left: 8px;
+    padding-left: var(--space-2);
   }
 }
 /* 手机宽度：标题副标题各占一行（375 下「接入外部 AI」不再被拆开） */
@@ -780,7 +780,7 @@
   background: transparent;
   color: var(--text-dim);
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-11-5);
   line-height: 1;
   padding: 5px 9px;
   border-radius: 5px;
@@ -794,8 +794,8 @@
 }
 .mcp-snippet-hint {
   margin: 0;
-  padding: 7px 12px 9px;
-  font-size: 11.5px;
+  padding: 7px var(--space-3) 9px;
+  font-size: var(--fs-11-5);
   color: var(--text-faint);
   border-top: 1px solid var(--border);
 }

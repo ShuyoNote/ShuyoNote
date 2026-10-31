@@ -127,6 +127,9 @@ import "./styles/mcp-panel.css";
 // App.css 的 `@layer legacy, utilities;` 声明；tokens.css 自己也落在 `@layer legacy` 里。
 // ⛔ 别手改 tokens.css/tokens.d.ts —— 改 `src/styles/tokens.json` 再跑 `node scripts/gen-css-tokens.mjs`。
 import "./styles/tokens.css";
+// S4 pilot（2026-10-31）：从 App.css 整段搬出的 `.selection-toolbar` 域（纯搬运、不改选择器）。
+// 它自己也包在 `@layer legacy` 里；层序仍由 App.css 顶部那条 `@layer legacy, utilities;` 唯一声明。
+import "./styles/selection-toolbar.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

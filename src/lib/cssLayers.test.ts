@@ -12,6 +12,7 @@
 // 口径：只读 `src/App.css` 的**文本结构**；层叠语义由浏览器保证，这里钉的是"文件形状不会被下一次改动破坏"。
 // 真视觉验收仍走 `node scripts/css-visual-baseline.mjs --compare <基线>`（S0 工具）。
 import { readFileSync } from "node:fs";
+import { readCssFiles } from "./cssSources";
 import { describe, expect, it } from "vitest";
 
 const css = readFileSync("src/App.css", "utf8");
@@ -122,13 +123,36 @@ describe("App.css 级联层序（S2）", () => {
   });
 
   it("④ utilities 层只放白名单里的状态规则（试点批 + 2026-10-31 的绿点；扩批要同步改白名单 + 补视觉基线）", () => {
-    const inner = innerOf(utilities[0], css);
-    const utilRules = topLevelNodes(inner).filter((x) => x.kind === "rule");
+    const utilRules: TopNode[] = topLevelNodes(innerOf(utilities[0], css)).filter((x) => x.kind === "rule");
+    for (const f of readCssFiles().filter((x) => !x.path.endsWith("App.css"))) {
+      for (const n of topLevelNodes(f.text)) {
+        if (selectorOf(n.header).replace(/\s+/g, " ").trim() === "@layer utilities") {
+          utilRules.push(...topLevelNodes(innerOf(n, f.text)).filter((x) => x.kind === "rule"));
+        }
+      }
+    }
     const allowed =
       /^\.is-(dragging-block|sidebar-resizing|ai-resizing)\b|^\.mcp-access-dot\.is-live$/;
     const bad = utilRules.map((x) => selectorOf(x.header)).filter((s) => !allowed.test(s));
     expect(bad, "utilities 层出现试点外的选择器").toEqual([]);
     expect(utilRules.length, "试点批应 ≥5 条规则").toBeGreaterThanOrEqual(5);
   });
+
+  it("⑤ 分文件 CSS（S4）：顶层只许层块，不许层外规则、不许再写层序声明", () => {
+    for (const f of readCssFiles().filter((x) => !x.path.endsWith("App.css"))) {
+      const ns = topLevelNodes(f.text);
+      // ⚠️ 扫描器给节点的 kind 不看"前导注释"：文件以 `/* … */` 开头时，`@layer legacy` 会被归成 rule。
+      //    ⇒ 这里一律按"去掉注释后的 header 是否以 @layer 开头"判，别用 kind。
+      const headerOf = (n: TopNode) => selectorOf(n.header).replace(/\s+/g, " ").trim();
+      expect(ns.filter((n) => n.kind === "stmt" && !headerOf(n).startsWith("@layer")), f.path + " 里不许再声明层序").toEqual([]);
+      expect(ns.filter((n) => !headerOf(n).startsWith("@layer")).map((n) => selectorOf(n.header)), f.path + " 有层外顶层规则").toEqual([]);
+      for (const n of ns.filter((x) => headerOf(x).startsWith("@layer"))) {
+        expect(["@layer legacy", "@layer utilities"], f.path + " 顶层层块只许 legacy/utilities：" + headerOf(n)).toContain(headerOf(n));
+      }
+      const legacyBlocks = ns.filter((n) => headerOf(n) === "@layer legacy");
+      expect(legacyBlocks.length, f.path + " 最多一个 legacy 块").toBeLessThanOrEqual(1);
+    }
+  });
 });
+
 

@@ -14,6 +14,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { loadTokens, renderCss, renderDts } from "../../scripts/gen-css-tokens.mjs";
+import { allCssText } from "./cssSources";
 
 const ROOT = process.cwd();
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
@@ -58,10 +59,7 @@ describe("CSS tokens（S3）", () => {
 
   it("② 全仓 CSS 的 var(--x) 都有定义（运行时注入白名单除外），且未定义集合不超过冻结清单", () => {
     // ⚠️ 必须先剥注释再扫：注释里的 `var(--x)` 不是使用（2026-10-31 修：--brand 曾因此假阳性）。
-    const text = ["src/App.css", "src/styles/mcp-panel.css", "src/styles/tokens.css"]
-      .map(read)
-      .join("\n")
-      .replace(/\/\*[\s\S]*?\*\//g, "");
+    const text = allCssText().replace(/\/\*[\s\S]*?\*\//g, "");
     const used = [...new Set([...text.matchAll(/var\((--[A-Za-z0-9_-]+)/g)].map((m) => m[1]))];
     // 定义匹配**不要**行首锚：App.css 有一行两个定义（`--cat-x: …; --cat-x-soft: …;`）和
     // 作用域内定义（`.pdf-reader.eye-* { --eye-*: … }`），带 `^` 会把它们判成未定义。
@@ -76,7 +74,7 @@ describe("CSS tokens（S3）", () => {
   });
 
   it("③ font-size 字面量只剩注释里的提及（整数＋半像素全部 token 化）", () => {
-    const css = read("src/App.css");
+    const css = allCssText();
     const literals = (css.match(/font-size:\s*[0-9.]+px/g) ?? []).length;
     // 2026-10-31：批次 1（12/13px 585）→ 批次 3（其余整数 445）→ 批次 6（半像素 128）之后，
     //   只剩注释里提及的 4 处（不是设置字号）。
@@ -88,7 +86,7 @@ describe("CSS tokens（S3）", () => {
   });
 
   it("④ 间距（padding/margin/gap 系列）里恰好等于 --space-1..8 的 px 已全换 token（负值/小数除外）", () => {
-    const css = read("src/App.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    const css = allCssText().replace(/\/\*[\s\S]*?\*\//g, "");
     const declRe =
       /(?:^|[;{])\s*((?:padding|margin)(?:-(?:top|right|bottom|left))?|gap|row-gap|column-gap)\s*:\s*([^;{}]+)(?=[;}])/g;
     const left: string[] = [];
@@ -99,11 +97,11 @@ describe("CSS tokens（S3）", () => {
     expect(left, "间距值等于 --space-1..8 却还在写字面量 px").toEqual([]);
     // 只增不减：批次 4 之后**剥注释**实测 1,399 处（原文 1,401，其中 2 处是注释里的提及）。
     const usages = (css.match(/var\(--space-/g) ?? []).length;
-    expect(usages, `var(--space-*) 用量 ${usages} < 冻结值 1399`).toBeGreaterThanOrEqual(1399);
+    expect(usages, `var(--space-*) 用量 ${usages} < 冻结值 1434`).toBeGreaterThanOrEqual(1434);
   });
 
   it("⑤ border-radius 里等于 --radius-xs/sm/md/lg/full 的 px 已全换 token", () => {
-    const css = read("src/App.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    const css = allCssText().replace(/\/\*[\s\S]*?\*\//g, "");
     const left: string[] = [];
     for (const m of css.matchAll(/border-radius\s*:\s*([^;{}]+)/g)) {
       // 4/6/8/12/999 分别对应 radius-xs/sm/md/lg/full；小数（0.5px）不要求 token。
@@ -112,7 +110,8 @@ describe("CSS tokens（S3）", () => {
     expect(left, "border-radius 值等于现成 radius token 却还在写字面量 px").toEqual([]);
     // 只增不减：2026-10-31 批次 5 之后实测 632 处。
     const usages = (css.match(/var\(--radius-/g) ?? []).length;
-    expect(usages, `var(--radius-*) 用量 ${usages} < 冻结值 632`).toBeGreaterThanOrEqual(632);
+    expect(usages, `var(--radius-*) 用量 ${usages} < 冻结值 647`).toBeGreaterThanOrEqual(647);
   });
 });
+
 

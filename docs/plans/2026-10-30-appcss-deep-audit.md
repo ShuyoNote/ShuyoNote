@@ -1,6 +1,6 @@
 # 方案：App.css 深度审计与优化（2026-10-30）
 
-状态：S0 视觉基线工具 ✅；S1 纯删除 ✅（App.css 28,695→26,439 行；非空行 27.4k→25.3k；`!important` 正则 36→21、实际声明 31→16）；S2 部分 ✅（去 `!important`／合并重复规则／删死兜底）；**S2 `@layer` 脚手架 ✅（2026-10-31）**：全部既有规则保序包进 `@layer legacy`、utilities 试点 5 条、excalidraw/KaTeX 覆盖 7 条**留在层外**；判据 `src/lib/cssLayers.test.ts`，真浏览器视觉基线最差 **0.018%**（阈值 0.2%）；**S3 字号 token 化 ✅（2026-10-31）**：`tokens.json` → 生成 `tokens.css`/`tokens.d.ts`（21 档整数字号）；`var(--fs-*)` **1,161 处**、px 字号**清零**（整数＋半像素全 token 化，仅注释剩 4 处提及）；间距 `var(--space-*)` **1,401 处**、圆角 `var(--radius-*)` **632 处**；未定义变量 **0**（批 7 清零，判据钉住），判据 `src/lib/cssTokens.test.ts`；批 7 的视觉变化已由 owner 批（截图 `_tmp/acceptance/css-undef-*.png`，基线待重录）；**S4 strangler 已起 pilot**。审计读数见 §2、执行记录见 §11/§12（截至 2026-10-31）
+状态：S0 视觉基线工具 ✅；S1 纯删除 ✅（App.css 28,695→26,439 行；非空行 27.4k→25.3k；`!important` 正则 36→21、实际声明 31→16）；S2 部分 ✅（去 `!important`／合并重复规则／删死兜底）；**S2 `@layer` 脚手架 ✅（2026-10-31）**：全部既有规则保序包进 `@layer legacy`、utilities 试点 5 条、excalidraw/KaTeX 覆盖 7 条**留在层外**；判据 `src/lib/cssLayers.test.ts`，真浏览器视觉基线最差 **0.018%**（阈值 0.2%）；**S3 字号 token 化 ✅（2026-10-31）**：`tokens.json` → 生成 `tokens.css`/`tokens.d.ts`（21 档整数字号）；`var(--fs-*)` **1,161 处**、px 字号**清零**（整数＋半像素全 token 化，仅注释剩 4 处提及）；间距 `var(--space-*)` **1,401 处**、圆角 `var(--radius-*)` **632 处**；未定义变量 **0**（批 7 清零，判据钉住），判据 `src/lib/cssTokens.test.ts`；批 7 的视觉变化已由 owner 批（截图 `_tmp/acceptance/css-undef-*.png`，基线待重录）；**S4 strangler pilot ✅（2026-10-31）**：三条 CSS 判据已 glob 化到 `src/styles/**/*.css`，`.selection-toolbar` 域整段搬进 `src/styles/selection-toolbar.css`（computed 快照前后 0 差异、基线 0.026%）；后续批次见 §13。审计读数见 §2、执行记录见 §11/§12（截至 2026-10-31）
 
 关联：`src/lib/cssHygiene.test.ts`（既有「只减不增」判据）· `docs/TESTING.md`（门禁总表）· 测量脚本（临时）：`_tmp/scratch/analyze-app-css.mjs`、`analyze-app-css2.mjs`
 
@@ -272,7 +272,33 @@ AST 重做后的读数：规则 4535→4191、行数 28695→26439、**逐元素
 - **批 6（零视觉，2026-10-31）**：半像素字号纳入 token —— `tokens.json` 加 9.5/10.5/11.5/12.5/13.5/14.5/15.5（owner 拍板「2」）；生成器把 `.` 换成 `-` 命名（`--fs-11-5`，CSS 变量名不能带 `.`）；App.css 换 **128 处**。判据 ③ 收紧为「剥注释后**一个 px 字号都不许有**」（只剩注释里 4 处提及）。
 - **批 7（有视觉，owner 2026-10-31 拍板「3」）**：清掉最后 9 个未定义变量。改名 7：`--primary`→`--accent`(3)、`--hover-soft`→`--hover`(2)、`--block`→`--codeblock-bg`(4＋`CodeBlockToolbar.tsx` 内联 2)、`--text-2`→`--text-dim`(18)、`--surface-2`→`--card-bg`(10)、`--surface-light`→`--card-bg`(4，ghost hover 一处改 `--hover`)、`--bg-1`→`--surface`(2；`sync-badge` 文字一处改 `--on-accent`）；定义 2：`:root` 加 `--radius: var(--radius-md)`、`--font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`。**未定义变量 9 → 0**（判据 ② 的冻结清单清空，新增一个就红）。
 - **批 7 的预期视觉变化**（owner 已批，真机截图在 `_tmp/acceptance/css-undef-*.png`）：文件管理器开关底 `transparent → #f8f9fa`、设置/加密区次要文字 `#1f2329 → #646a73`、mermaid/画板按钮由透明→浅底、插件视图/社区保存块直角→8px 圆角、单处许可证输入框字体变等宽。⚠️ 因此 **5 图视觉基线不再 0**（375/320 移动首页 9.8%/1.4%，1280 files 0.12%），这是**有意的**；等 owner 看过截图再重录基线。
-- **判据** `src/lib/cssTokens.test.ts` 五条：① 生成物与 json 逐字节一致；② 全仓 `var(--x)` 有定义或属运行时白名单，**未定义集合 = 0**；③ 剥注释后**没有 px 字号**（整数/半像素都走 token）；④ 间距里没有等于 `--space-1..8` 的 px，`var(--space-*)` ≥ 1,399；⑤ `border-radius` 里没有等于 radius token 的 px，`var(--radius-*)` ≥ 632。
-- **读数**：`cssTokens` 5/5、`cssLayers` 4/4、`cssHygiene` 4/4；`tsc` 0、`pnpm verify` 66/66。
+- **判据** `src/lib/cssTokens.test.ts` 五条：① 生成物与 json 逐字节一致；② 全仓 `var(--x)` 有定义或属运行时白名单，**未定义集合 = 0**；③ 剥注释后**没有 px 字号**（整数/半像素都走 token）；④ 间距里没有等于 `--space-1..8` 的 px，`var(--space-*)` ≥ 1,434（S4 glob 化后含 `src/styles/**/*.css`）；⑤ `border-radius` 里没有等于 radius token 的 px，`var(--radius-*)` ≥ 647。
+- **读数**：`cssTokens` 5/5、`cssLayers` 5/5、`cssHygiene` 4/4；`tsc` 0、`pnpm verify` 66/66。
 - **下一批**：S4 strangler —— 见 §13 的 pilot 方案（先 glob 化三条 CSS 判据，再搬 `.selection-toolbar`）。
+
+## 13. S4 strangler pilot（2026-10-31）
+
+### 形态订正
+方案 §9.3 原文写「抽 `*.module.css`」，**实测订正为纯 `.css` 分文件**：
+- 全仓 `*.module.css` = 0 先例；已有先例是 `src/styles/mcp-panel.css` / `tokens.css` 各自包 `@layer legacy`；
+- **类名是运行时契约**：`blockGestures.ts` 把 `.selection-toolbar` 放进手势排除清单、`SelectionToolbarPlugin.tsx` 用 `querySelector(".selection-toolbar")` ⇒ CSS Modules 的哈希类名＝静默行为回归。
+
+### 第 0 步：判据 glob 化（先于任何搬家）
+- 新增 `src/lib/cssSources.ts`：唯一清单 `src/App.css` ＋ `src/styles/**/*.css`；`cssTokens` / `cssLayers` / `cssHygiene` 三条判据都改成看这份清单（不再只读 App.css）。
+  - `cssLayers` 新增⑤：分文件顶层只许 `@layer legacy` / `@layer utilities` 块，不许层外规则、不许再写层序声明（层序单点仍在 App.css 顶部）。
+  - `cssHygiene` 的 `!important` / 重复组改成**逐文件求和**（跨文件同选择器是允许的级联，不算"同上下文重复"）。
+- 顺手把 `src/styles/mcp-panel.css` 里没 token 化的部分清掉（零视觉）：字号 **38**、间距 **35**、圆角 **14** 处 → token；冻结值随之上调（`--space-*` 1,434、`--radius-*` 647，剥注释口径）。
+
+### Pilot：`.selection-toolbar`（App.css → `src/styles/selection-toolbar.css`）
+- 为什么是它（全仓唯一"零 fence"域）：无 `@media` / 无 `!important` / 无 keyframes；引用者只有 `SelectionToolbarPlugin.tsx`、`blockGestures.ts`、`blockGestures.test.ts`（后两者读 .ts 不读 CSS），不在 `check-panel-layout` 夹具里。
+- 搬运方式：**整段纯搬运**（选择器/声明/顺序一字不改），新文件自包 `@layer legacy`，`App.tsx` 在 `tokens.css` 之后 import。
+- 证据：
+  - 真浏览器 computed 快照（工具条 ＋ 第一个按钮 ＋ 块类型按钮 ＋ 分隔条，17 个属性）：**前后 0 差异**（`_tmp/acceptance/selection-toolbar-computed-{before,after}.json`）；
+  - 真浏览器视觉基线 5 图：最差 **0.026%**（阈值 0.2%）、metrics 0；
+  - CSS 判据 14/14（`cssTokens` 5 ＋ `cssLayers` 5 ＋ `cssHygiene` 4）；`tsc` 0。
+
+### 后续批次（按风险从低到高）
+1. **S4-2 之前必须先改 `scripts/check-panel-layout.mjs`**：它只喂 `src/App.css`（`:294`/`:305`）；夹具点名的域（mermaid / pm / fm / ai / pdf / kb-map / attachments / top-tools / activity-bar）一旦搬走，61 条几何断言会假红/假绿。改成按 `App.tsx` import 顺序内联 `src/styles/*.css`。
+2. 之后按 **mermaid → pm → fm → sync** 搬；每个域仍要：(a) 逐元素 computed 等价（选中工具条那一套方法）、(b) 全站 5 图基线 ≤0.2%、(c) 若域内有 `@media`/`!important` 先单独量。
+3. 第三方覆盖（excalidraw / KaTeX）**永远留在 App.css 末尾层外**（懒加载未分层，进层即失效）。
 

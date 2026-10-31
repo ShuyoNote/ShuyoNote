@@ -11,13 +11,10 @@
 //   后者按仓规要走 `scripts/lib/gates.mjs` 注册 + 工作区变异证据账本，成本与收益不成比例（本判据只读一个文件）。
 //   ⚠️ 它**不修** CSS，只在有人把这两项加上去时报红。
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { readCssFiles } from "./cssSources";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const CSS_PATH = resolve(here, "../../src/App.css");
-const css = readFileSync(CSS_PATH, "utf8");
+const CSS_FILES = readCssFiles();
 
 /** 2026-10-29 实测基线（「只减不增」）。加一条 `!important` 会让它红 —— 那是**有意的**。 */
 const BASELINE_IMPORTANT = 36;
@@ -82,7 +79,7 @@ function countDuplicateGroups(text: string): number {
 
 describe("App.css 卫生：!important 与重复选择器「只减不增」", () => {
   it(`① !important 不超过基线 ${BASELINE_IMPORTANT} 处（加一处就会红）`, () => {
-    const n = countImportant(css);
+    const n = CSS_FILES.reduce((sum, f) => sum + countImportant(f.text), 0);
     expect(
       n,
       `!important 从 ${BASELINE_IMPORTANT} 涨到 ${n}。要么删掉新增的那处，要么在本次改动里说明为什么必须加、并同步改 BASELINE_IMPORTANT。`,
@@ -90,7 +87,7 @@ describe("App.css 卫生：!important 与重复选择器「只减不增」", () 
   });
 
   it(`② 同一上下文里重复定义的选择器不超过基线 ${BASELINE_DUP_GROUPS} 组`, () => {
-    const n = countDuplicateGroups(css);
+    const n = CSS_FILES.reduce((sum, f) => sum + countDuplicateGroups(f.text), 0);
     expect(
       n,
       `重复选择器组从 ${BASELINE_DUP_GROUPS} 涨到 ${n}。同一选择器写两处＝谁生效看源码顺序（2026-10-29 已因此踩过 .sync-input 的 min-height）。合并到一处，或说明为什么必须分开。`,
@@ -142,3 +139,5 @@ describe("S2-c 状态类守卫（静态级联）", () => {
     }
   });
 });
+
+
