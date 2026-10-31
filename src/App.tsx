@@ -140,6 +140,8 @@ import "./styles/plugin-manager.css";
 import "./styles/file-manager.css";
 // S4-6（2026-11-01）：同步域（`.sync-*`）。响应式覆盖一并抽走。
 import "./styles/sync.css";
+// S4-7（2026-11-01）：AI 面板/设置域（`.ai-*`）。响应式覆盖一并抽走。
+import "./styles/ai.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

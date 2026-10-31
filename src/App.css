@@ -11821,12 +11821,7 @@ p:has(> .editor-drawing-container) {
   max-width: 560px;
 }
 
-.ai-settings-saved {
-  align-self: center;
-  margin-right: auto;
-  font-size: var(--fs-12);
-  color: var(--success);
-}
+
 
 /* E1 encryption lock screen (shown when the workspace DBs are encrypted + session locked) */
 .lock-screen {
@@ -12618,24 +12613,7 @@ p:has(> .editor-drawing-container) {
   outline: none;
 }
 
-/* ---- AI assistant ---- */
 
-.ai-panel {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 75;
-  width: var(--ai-w, 380px);
-  max-width: calc(100vw - 64px);
-  display: flex;
-  flex-direction: column;
-  background: var(--surface);
-  border-left: 1px solid var(--border);
-  box-shadow: var(--shadow-xl);
-  overflow: hidden;
-  animation: ai-slide-in var(--transition-fast) ease;
-}
 /* P1 comments / notifications drawer */
 .comments-drawer-tabs button.active { color: var(--accent); background: var(--chip-bg); }
 
@@ -12658,1029 +12636,172 @@ p:has(> .editor-drawing-container) {
   from { transform: translateX(100%); }
   to { transform: translateX(0); }
 }
-.ai-resizer {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 6px;
-  cursor: col-resize;
-  z-index: 2;
-}
-/* A 1px highlight line hugging the panel's exact left edge (the content boundary). */
-.ai-resizer::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 1px;
-  background: transparent;
-  transition: background var(--transition-fast);
-}
-/* Small centered grip pill so the user can see where to grab. */
-.ai-resizer::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 3px;
-  height: 40px;
-  border-radius: 2px;
-  background: var(--border);
-  opacity: 0;
-  transition: opacity var(--transition-fast), background var(--transition-fast);
-}
-.ai-resizer:hover::before,
-.ai-resizer:active::before {
-  background: var(--accent);
-}
-.ai-resizer:hover::after,
-.ai-resizer:active::after {
-  opacity: 1;
-  background: var(--accent);
-}
 
 
 
-/* Right-edge vertical launcher rail (Wolai-style) */
-.ai-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 14px 9px;
-  border-bottom: 1px solid var(--border);
-}
-.ai-header-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.ai-title-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.ai-header-icon {
-  width: 16px;
-  height: 16px;
-  color: var(--accent);
-}
-.ai-title {
-  font-size: var(--fs-14);
-  font-weight: 600;
-  color: var(--text);
-  letter-spacing: 0.2px;
-}
-.ai-header-sub {
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ai-header-btn {
-  display: grid;
-  place-items: center;
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  font-size: var(--fs-12);
-  cursor: pointer;
-  padding: 3px 5px;
-  border-radius: var(--radius-sm);
-  font-family: inherit;
-}
-.ai-header-btn:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-.ai-header-btn.ai-close {
-  font-size: var(--fs-17);
-  line-height: 1;
-}
-/* ⚠️ 按钮的类名是 `ai-settings-btn`，**故意不叫** `ai-settings`：后者是设置**弹窗容器**
-   （`.ai-settings`，见下面 16xxx 行那条 width/aspect-ratio/border 的规则）。两者同名时，
-   弹窗那条规则后写、权重又一样，会把这里的 `display: grid; place-items: center` 和
-   `.ai-header-btn` 的 `border: none` 一起顶掉 —— 齿轮就被 flex 摆到左上角、按钮还多出一圈描边，
-   正是 2026-09-20 用户截图「设置按钮偏心了」。判据：`scripts/check-panel-layout.mjs`
-   的「齿轮图标在按钮正中（偏移 ≤1px）」。 */
-.ai-header-btn.ai-settings-btn {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-}
-.ai-header-btn.ai-settings-btn svg {
-  display: block;
-}
 
-.ai-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: 6px 14px 10px;
-}
-.ai-footer-btn {
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-dim);
-  font-size: var(--fs-12);
-  padding: var(--space-1) 10px;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  font-family: inherit;
-}
-.ai-footer-btn:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-/* 「跨库总结」：挨着「新会话」放左边，模型名继续靠右（footer 是 space-between） */
-.ai-footer-summary {
-  margin-right: auto;
-}
-.ai-footer-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.ai-footer-btn:disabled:hover {
-  color: var(--text-dim);
-  background: transparent;
-}
-.ai-footer-model {
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.ai-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: var(--space-3) 14px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-/* Markdown-rendered reply (scoped to the reply card) */
-.ai-bubble-text .md > :first-child,
-.ai-bubble-text .md > .md-p:first-child {
-  margin-top: 0;
-}
-.ai-bubble-text .md > :last-child {
-  margin-bottom: 0;
-}
-.ai-bubble-text .md p,
-.ai-bubble-text .md ul,
-.ai-bubble-text .md ol,
-.ai-bubble-text .md blockquote,
-.ai-bubble-text .md pre,
-.ai-bubble-text .md h1,
-.ai-bubble-text .md h2,
-.ai-bubble-text .md h3,
-.ai-bubble-text .md h4 {
-  margin: 0 0 var(--space-2);
-}
-.ai-bubble-text .md p {
-  line-height: 1.6;
-}
-.ai-bubble-text .md h1,
-.ai-bubble-text .md h2,
-.ai-bubble-text .md h3,
-.ai-bubble-text .md h4 {
-  font-weight: 600;
-  color: var(--text);
-  line-height: 1.4;
-}
-.ai-bubble-text .md h1 { font-size: var(--fs-16); }
-.ai-bubble-text .md h2 { font-size: var(--fs-15); }
-.ai-bubble-text .md h3 { font-size: var(--fs-14); }
-.ai-bubble-text .md h4 { font-size: var(--fs-13); }
-.ai-bubble-text .md ul,
-.ai-bubble-text .md ol {
-  padding-left: 18px;
-}
-.ai-bubble-text .md li {
-  margin: 2px 0;
-}
-.ai-bubble-text .md code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--fs-12);
-  background: var(--hover);
-  padding: 1px 5px;
-  border-radius: var(--radius-xs);
-}
-.ai-bubble-text .md pre {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 10px var(--space-3);
-  overflow-x: auto;
-}
-.ai-bubble-text .md pre code {
-  background: transparent;
-  padding: 0;
-}
-.ai-bubble-text .md blockquote {
-  border-left: 3px solid var(--border);
-  padding-left: 10px;
-  color: var(--text-dim);
-}
-.ai-bubble-text .md blockquote p {
-  margin-bottom: 6px;
-}
-.ai-bubble-text .md a {
-  color: var(--accent);
-  text-decoration: none;
-}
-.ai-bubble-text .md a:hover {
-  text-decoration: underline;
-}
-.ai-bubble-text .md hr {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 10px 0;
-}
-.ai-disclaimer {
-  margin-top: var(--space-2);
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-}
-/* Chat transcript bubbles (Wolai-style) */
-.ai-transcript {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-.ai-bubble {
-  border-radius: var(--radius-md);
-  padding: 10px var(--space-3);
-  font-size: var(--fs-13);
-  line-height: 1.6;
-}
-.ai-bubble-user {
-  align-self: flex-end;
-  max-width: 90%;
-  background: var(--accent);
-  color: #fff;
-}
-.ai-bubble-user .ai-bubble-text {
-  color: #fff;
-}
-.ai-bubble-assistant {
-  align-self: flex-start;
-  max-width: 100%;
-  border: 1px solid var(--border);
-  background: var(--bg);
-}
-.ai-bubble-text {
-  word-break: break-word;
-}
-.ai-bubble-assistant .ai-bubble-text {
-  max-height: 260px;
-  overflow-y: auto;
-}
-/* Collapsible "deep thinking" block */
-.ai-think {
-  margin-top: var(--space-2);
-  border-top: 1px dashed var(--border);
-  padding-top: var(--space-2);
-}
-.ai-think-summary {
-  cursor: pointer;
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  list-style: none;
-}
-.ai-think-summary::-webkit-details-marker {
-  display: none;
-}
-.ai-think-summary::before {
-  content: "▸ ";
-  color: var(--text-faint);
-}
-.ai-think[open] .ai-think-summary::before {
-  content: "▾ ";
-}
-.ai-think-body {
-  margin-top: var(--space-2);
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 180px;
-  overflow-y: auto;
-  line-height: 1.6;
-}
-.ai-activity {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px dashed var(--border);
-  font-size: var(--fs-11);
-}
-.ai-activity-label {
-  color: var(--text-faint);
-  font-weight: 600;
-}
-.ai-activity-item {
-  color: var(--text-dim);
-  background: var(--hover);
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-sm);
-}
 
-.ai-drafts-title {
-  font-size: var(--fs-12);
-  font-weight: 600;
-  color: var(--text-dim);
-  margin-bottom: 6px;
-}
-.ai-draft-item {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: var(--space-2) 10px;
-  margin-bottom: 6px;
-  background: var(--bg);
-}
-.ai-draft-summary {
-  font-size: var(--fs-13);
-  color: var(--text);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ai-draft-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-.ai-draft-preview {
-  margin: 0;
-  font-size: var(--fs-12);
-  line-height: 1.5;
-  color: var(--text-dim);
-  background: var(--hover);
-  border-radius: var(--radius-sm);
-  padding: 6px var(--space-2);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 120px;
-  overflow: hidden;
-}
-.ai-draft-actions {
-  display: flex;
-  gap: 6px;
-}
-.ai-draft-apply,
-.ai-draft-discard {
-  border: 1px solid var(--border);
-  background: var(--hover);
-  color: var(--text-dim);
-  font-size: var(--fs-12);
-  padding: 3px 10px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-family: inherit;
-}
-.ai-draft-apply:hover {
-  color: #fff;
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.ai-draft-discard:hover {
-  color: var(--text);
-  background: var(--hover-strong);
-}
 
-.ai-error {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-md);
-  padding: var(--space-2) 10px;
-  font-size: var(--fs-12);
-  color: var(--danger);
-  cursor: pointer;
-}
-.ai-error span {
-  flex: 1;
-  min-width: 0;
-}
-.ai-error-close {
-  border: none;
-  background: transparent;
-  color: inherit;
-  font-size: var(--fs-14);
-  cursor: pointer;
-}
-.ai-welcome {
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-}
-.ai-welcome-text {
-  font-size: var(--fs-12);
-  color: var(--text);
-  line-height: 1.7;
-}
-.ai-suggestions-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: var(--space-1) 0 var(--space-2);
-}
-.ai-suggestions-label {
-  font-size: var(--fs-12);
-  font-weight: 600;
-  color: var(--text-dim);
-}
-.ai-suggestions-shuffle {
-  border: none;
-  background: transparent;
-  color: var(--accent);
-  font-size: var(--fs-12);
-  cursor: pointer;
-  font-family: inherit;
-  padding: 2px var(--space-1);
-  border-radius: var(--radius-sm);
-}
-.ai-suggestions-shuffle:hover {
-  text-decoration: underline;
-}
-.ai-suggestions-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.ai-suggestion-card {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-  color: var(--text);
-  font-size: var(--fs-12);
-  text-align: left;
-  padding: var(--space-3) 14px;
-  cursor: pointer;
-  font-family: inherit;
-  line-height: 1.6;
-  transition: border-color var(--transition-fast), background var(--transition-fast);
-}
-.ai-suggestion-card:hover {
-  border-color: var(--accent);
-  background: var(--hover);
-}
-.ai-suggestion-num {
-  color: var(--text-faint);
-  flex-shrink: 0;
-  font-weight: 600;
-}
-.ai-suggestion-text {
-  flex: 1;
-  min-width: 0;
-}
 
-.ai-disabled {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: var(--space-4) 14px;
-  text-align: center;
-  background: var(--bg);
-}
-.ai-disabled-title {
-  font-size: var(--fs-14);
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 6px;
-}
-.ai-disabled-desc {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  line-height: 1.6;
-  margin-bottom: var(--space-3);
-}
-.ai-disabled-cta {
-  border: 1px solid var(--border);
-  background: var(--accent);
-  color: #fff;
-  font-size: var(--fs-13);
-  padding: 7px var(--space-4);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  font-family: inherit;
-}
-.ai-disabled-cta:hover {
-  opacity: 0.92;
-}
 
-.ai-input-row {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3) 6px;
-  border-top: 1px solid var(--border);
-}
-.ai-textarea {
-  flex: 1;
-  resize: none;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg);
-  color: var(--text);
-  font-size: var(--fs-13);
-  padding: 9px var(--space-3);
-  font-family: inherit;
-  line-height: 1.5;
-  outline: none;
-}
-.ai-textarea:focus {
-  border-color: var(--accent);
-}
-.ai-send {
-  align-self: flex-end;
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  flex-shrink: 0;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--accent);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  font-family: inherit;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-.ai-send:hover {
-  background: var(--hover);
-}
-.ai-send:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.ai-send-stop {
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
-  background: currentColor;
-}
 
-/* ---- AI settings dialog ---- */
-.ai-settings-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1200;
-  background: rgba(15, 23, 42, 0.34);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 10vh;
-}
-.ai-settings {
-  width: min(840px, calc(100vw - 48px));
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-xl);
-  padding: 18px;
-  /* 黄金比例（宽:高 ≈ 1.618）：横向矩形，更大气。 */
-  aspect-ratio: 1.618 / 1;
-  max-height: calc(100vh - 20vh);
-  overflow-y: auto;
-  /* 让 cols 占上部、动作栏(取消/保存)底部对齐。 */
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.ai-settings-title {
-  font-size: var(--fs-15);
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: var(--space-1);
-}
-/* ⚠️ 2026-10-08：**页签化了 ⇒ 这里必须是单列** ✗
-   第 3 招把 AI 面板的「两块并排（对话模型 / 语义检索）」改成 **Tab**（一次只画一块，
-   见 `AiSettingsForm.tsx` 的 `aiTab === "…" && …`）—— 而这条模板还留在两列时代
-   ⇒ 那一块只占**左半列**：真 Chromium 实测 `grid-template-columns: 310px 310px`、
-   卡 310px ／ 内容区 634px ＝ **49%**，右半永远空 ✗（owner 2026-10-08 截图：
-   「全库索引内容多，没有充分利用空间」）。
-   ⚠️ 这个类名**全仓只有 `AiSettingsForm` 用**（AI 助手右侧面板是另一套类名）⇒ 改成单列不会误伤别处 ✓。
-   ⚠️ 原来那条 `@media (max-width: 768px) { … 1fr }` 的回退**已删**：单列本身就是它的结论。
-   判据在 `check-web-build`（真 Chromium 打开 AI 页量几何：单卡必须占内容区 ≥90% ✓）。 */
-.ai-settings-cols {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 14px;
-  /* 高度对齐：卡片拉伸等高。 */
-  align-items: stretch;
-  /* 占上部，把动作栏(取消/保存)推到底部对齐。 */
-  flex: 1;
-  min-height: 0;
-}
-/* AI 设置分区卡：对话模型 / 语义检索 分组清晰。 */
-.ai-settings-group {
-  padding: 14px var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--card-bg);
-  margin-bottom: 0;
-  display: flex;
-  flex-direction: column;
-}
-.ai-settings-group-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--fs-13);
-  font-weight: 700;
-  color: var(--text);
-  margin-bottom: var(--space-3);
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--border);
-}
-/* 启用开关移到标题行右侧（右上角）。 */
-.ai-settings-group-title > .ui-toggle {
-  margin-left: auto;
-  flex: none;
-}
-/* 启用开关关闭 → 该块其余字段整体禁灰；开关(在标题行)仍可点重新启用。 */
-/* ⚠️ 2026-10-08：配置块**关着时不渲染**了（见下一条 ✓）⇒ 这条现在只是"万一还剩点啥"的兜底；
-   灰框 `.ai-settings-placeholder` **排除在外**（它是"看不到就不知道怎么开"的保险，要看得清 ✓）。 */
-.ai-settings-group.is-off > :not(.ai-settings-group-title):not(.ai-settings-placeholder) {
-  opacity: 0.45;
-  filter: grayscale(0.55);
-  pointer-events: none;
-  user-select: none;
-}
-/* ⭐ 2026-10-08 第一招「渐进式披露」（owner 2026-10-08 拍板开工 ✓）：
-   开关**关着 ⇒ 配置整块不渲染** ✗（原来只是变灰、配置照样堆一屏 ✓），
-   只在原位留这个**灰框**，逐条写清"开启后会出现什么" ✓ ——
-   它是"看不到就不知道怎么开"的那道保险 ⇒ ⛔ 不许省 ✗、也不参与上面那条变灰 ✓。 */
-.ai-settings-placeholder {
-  border: 1px dashed var(--border-strong);
-  background: var(--chip-bg);
-  border-radius: var(--radius-sm);
-  padding: 9px 11px;
-  font-size: var(--fs-12);
-  line-height: 1.9;
-  color: var(--text-dim);
-}
-/* ⭐ 2026-10-08 第 3 招：AI 面板三块 → **Tab**（owner 拍板 ✓，效果图已认可 ✓）。
-   形状照仓库既有的下划线式页签（与 AI 面板上的 `.tabs` 同族 ✓）：平时灰、选中蓝＋2px 下划线 ✓，
-   ⛔ 不再用整块卡片并列（那正是"密度高"的来源 ✗）。 */
-.ai-settings-tabs {
-  display: flex;
-  gap: var(--space-1);
-  border-bottom: 1px solid var(--border);
-  margin: 0 0 14px;
-}
-.ai-settings-tab {
-  border: none;
-  background: transparent;
-  font-family: inherit;
-  font-size: var(--fs-13);
-  color: var(--text-dim);
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-}
-.ai-settings-tab.is-on {
-  color: var(--accent);
-  font-weight: 700;
-  border-bottom-color: var(--accent);
-}
-.ai-settings-placeholder > div:first-child {
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 2px;
-}
-/* 可折叠的分区标题头（语义检索）：点击展开/收起。 */
-/* 小程序说明：AI 助手 / 语义检索 各一行简短描述（普通文本，非 Callout）。 */
-.ai-settings-brief {
-  font-size: var(--fs-12);
-  line-height: 1.5;
-  color: var(--text-dim);
-  background: var(--chip-bg);
-  border-radius: var(--radius-sm);
-  padding: var(--space-2) 10px;
-  margin-bottom: var(--space-3);
-}
-.ai-settings-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-}
-.ai-settings-label {
-  font-size: var(--fs-13);
-  color: var(--text);
-  white-space: nowrap;
-}
-.ai-settings-input {
-  flex: 1;
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--text);
-  font-size: var(--fs-13);
-  padding: 6px var(--space-2);
-  font-family: inherit;
-  outline: none;
-}
-.ai-settings-input:focus {
-  border-color: var(--accent);
-}
-.ai-settings-select {
-  flex: 1;
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--text);
-  font-size: var(--fs-13);
-  padding: 6px var(--space-2);
-  font-family: inherit;
-  outline: none;
-  cursor: pointer;
-}
-.ai-settings-select:focus {
-  border-color: var(--accent);
-}
-.ai-settings-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  margin-top: auto;
-  padding-top: 6px;
-}
 
-.ai-settings-test {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-  /* 测试连接下部留白，为测试信息(结果)预留空间，不贴卡片底。 */
-  margin-bottom: var(--space-1);
-  min-height: 44px;
-}
-.ai-settings-test-btn {
-  align-self: flex-start;
-  border: 1px solid var(--border);
-  background: var(--hover);
-  color: var(--text-dim);
-  font-size: var(--fs-13);
-  padding: 6px 14px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-family: inherit;
-}
-.ai-settings-test-btn:hover {
-  color: var(--text);
-  background: var(--hover-strong);
-}
-.ai-settings-test-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.ai-settings-test-msg {
-  font-size: var(--fs-12);
-  line-height: 1.5;
-  padding: var(--space-2) 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  background: var(--bg);
-  word-break: break-word;
-}
-.ai-settings-test-msg.ok {
-  color: var(--text);
-  border-color: var(--accent);
-  background: var(--hover);
-}
-.ai-settings-test-msg.bad {
-  color: var(--danger);
-  border-color: var(--danger);
-}
-.ai-settings-cancel,
-.ai-settings-save {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 6px 18px;
-  font-size: var(--fs-13);
-  font-family: inherit;
-  cursor: pointer;
-}
-.ai-settings-cancel {
-  background: var(--hover);
-  color: var(--text-dim);
-}
-.ai-settings-cancel:hover {
-  color: var(--text);
-  background: var(--hover-strong);
-}
-.ai-settings-save {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
-}
-.ai-settings-save:hover {
-  opacity: 0.92;
-}
 
-/* ===== Inline AI drafting (M18) ===== */
-.ai-inline-pop {
-  width: var(--doc-width);
-  max-width: calc(100vw - 24px);
-  max-height: 70vh;
-  overflow-y: auto;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
-  padding: var(--space-2);
-}
-.ai-inline-pop .ai-inline-bar {
-  margin-top: 0;
-}
-.ai-inline-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg);
-  box-shadow: var(--shadow-sm);
-}
-.ai-inline-bar:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
-}
-.ai-inline-bar-icon {
-  display: inline-flex;
-  color: var(--accent);
-}
-.ai-inline-input {
-  flex: 1;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-size: var(--fs-15);
-  color: var(--text);
-  font-family: inherit;
-}
-.ai-inline-input::placeholder {
-  color: var(--text-faint);
-}
-.ai-inline-model {
-  border: none;
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  color: var(--text-dim);
-  border-radius: var(--radius-xs);
-  font-size: var(--fs-12);
-  padding: var(--space-1) var(--space-2);
-  cursor: pointer;
-  font-family: inherit;
-  white-space: nowrap;
-}
-.ai-inline-model:hover {
-  color: var(--accent);
-}
-.ai-inline-send {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border: none;
-  border-radius: var(--radius-xs);
-  background: var(--accent);
-  color: #fff;
-  cursor: pointer;
-  flex: none;
-}
-.ai-inline-send:hover {
-  opacity: 0.9;
-}
-.ai-inline-send:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.ai-inline-send .ai-send-stop {
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
-  background: currentColor;
-  display: block;
-}
-.ai-inline-templates {
-  margin-top: var(--space-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  overflow-y: auto;
-  max-height: 260px;
-  box-shadow: var(--shadow-sm);
-  max-width: 300px;
-}
-.ai-inline-templates-head {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  padding: 6px var(--space-3);
-  border-bottom: 1px solid var(--border);
-}
-.ai-inline-group {
-  font-size: var(--fs-12);
-  color: var(--text-faint);
-  padding: 6px var(--space-3) 2px;
-}
-.ai-inline-template {
-  display: block;
-  width: 100%;
-  text-align: left;
-  border: none;
-  background: transparent;
-  color: var(--text);
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--fs-14);
-  cursor: pointer;
-  font-family: inherit;
-}
-.ai-inline-template:hover {
-  background: var(--block-hover);
-}
-.ai-inline-draft {
-  margin-top: 10px;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, pink 6%, var(--bg));
-  padding: 10px 14px;
-  box-shadow: var(--shadow-sm);
-}
-.ai-inline-draft-body {
-  font-size: var(--fs-15);
-  line-height: 1.7;
-  color: var(--text);
-  white-space: pre-wrap;
-}
-.ai-inline-draft-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-}
-.ai-inline-draft-status {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-}
-.ai-inline-draft-actions {
-  display: flex;
-  gap: 6px;
-}
-.ai-inline-act {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  border-radius: var(--radius-xs);
-  font-size: var(--fs-13);
-  padding: 3px 10px;
-  cursor: pointer;
-  font-family: inherit;
-}
-.ai-inline-act:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.ai-inline-act:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* M25 — keyboard shortcuts overlay (ShortcutsPanel) */
 .shortcuts-overlay {
@@ -13776,15 +12897,8 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   border-top: 1px solid var(--border);
 }
-.ai-inline-act.danger:hover {
-  border-color: var(--danger);
-  color: var(--danger);
-}
-.ai-inline-error {
-  margin-top: var(--space-2);
-  color: var(--danger);
-  font-size: var(--fs-13);
-}
+
+
 /* M25 P2 — "关于" dialog (reuses the shortcuts-overlay backdrop + ui-toggle). */
 .about {
   width: min(440px, 92vw);
@@ -16463,14 +15577,8 @@ p:has(> .editor-drawing-container) {
 
 
 
-/* ---------------------------------------------------------------------------
- * 移动端 / 小屏响应式（手机浏览器 + WebView 壳）：<=768px
- * - 侧栏变左侧抽屉 overlay（不占主区宽度），主区全屏。
- * - 右侧 AI / 评论抽屉全屏叠加。
- * - 活动栏保留（瘦条导航）。
- * ------------------------------------------------------------------------- */
 @media (max-width: 768px) {
-  /* 侧栏：显示时不再占 flex 流，改为左侧滑入抽屉 + 遮罩。 */
+/* 侧栏：显示时不再占 flex 流，改为左侧滑入抽屉 + 遮罩。 */
   .sidebar {
     position: fixed;
     top: 0;
@@ -16483,15 +15591,15 @@ p:has(> .editor-drawing-container) {
     box-shadow: var(--shadow-xl);
     animation: mobile-sidebar-in var(--transition-fast) ease;
   }
-  @keyframes mobile-sidebar-in {
+@keyframes mobile-sidebar-in {
     from { transform: translateX(-100%); }
     to { transform: translateX(0); }
   }
-  /* 侧栏收起后主区自动全宽（sidebar 不再占 flex 流）。 */
+/* 侧栏收起后主区自动全宽（sidebar 不再占 flex 流）。 */
   .main {
     width: 100%;
   }
-  /* 左侧竖条改为**浮层**：常驻 48px 在 390px 视口上吃掉 12%，窄屏太奢侈。
+/* 左侧竖条改为**浮层**：常驻 48px 在 390px 视口上吃掉 12%，窄屏太奢侈。
      收起后竖条脱离 flex 流，主区直接拿到全宽；展开时浮在内容之上。
      ⚠️ 收起用 `left` 而不是 `transform: translateX(-100%)`：竖条是搜索/回收站
      浮层（`position: fixed`）的祖先，而**带 transform 的祖先会成为包含块**，
@@ -16508,10 +15616,10 @@ p:has(> .editor-drawing-container) {
     transition: left var(--transition-fast) ease;
     box-shadow: var(--shadow-xl);
   }
-  .activity-bar.is-open {
+.activity-bar.is-open {
     left: 0;
   }
-  /* 唤出按钮：左下角，拇指够得到；展开时它自己不显示（改由遮罩收起）。 */
+/* 唤出按钮：左下角，拇指够得到；展开时它自己不显示（改由遮罩收起）。 */
   .mobile-rail-toggle {
     position: fixed;
     left: 12px;
@@ -16534,11 +15642,11 @@ p:has(> .editor-drawing-container) {
     box-shadow: var(--shadow-md);
     cursor: pointer;
   }
-  .mobile-rail-toggle:active {
+.mobile-rail-toggle:active {
     background: var(--hover);
     color: var(--text);
   }
-  /* 手机上同步入口的第二处（主界面可见的那个）：与「展开工具栏」并排。
+/* 手机上同步入口的第二处（主界面可见的那个）：与「展开工具栏」并排。
      为什么需要：手机上 `TitleBar` 整个不渲染 ⇒ 桌面的 `.titlebar-sync` 根本不存在，
      只剩"侧栏抽屉 → 同步"（要先开抽屉）。这里补一个一次点击可达的入口；
      按钮本身用 SyncPanel 自己的 `.btn-sync`（含云图标与同步中的脉冲点）。
@@ -16549,7 +15657,7 @@ p:has(> .editor-drawing-container) {
     bottom: max(18px, calc(var(--sab) + 12px));
     z-index: 45;
   }
-  .mobile-sync-slot .btn-sync {
+.mobile-sync-slot .btn-sync {
     min-height: 44px;
     /* ⚠️ 2026-10-17：这一颗原来**只定了高**✗ ⇒ 实测 40×44（宽差 4px ✗）。
        它就是"手机上主界面那个同步入口"✓ ⇒ 命中区补到 44，视觉只是一个略宽的胶囊 ✓。 */
@@ -16560,20 +15668,18 @@ p:has(> .editor-drawing-container) {
     background: var(--surface);
     box-shadow: var(--shadow-md);
   }
-  /* 浮层遮罩：点它收起竖条（z 高于内容与唤出按钮，低于竖条本身）。 */
+/* 浮层遮罩：点它收起竖条（z 高于内容与唤出按钮，低于竖条本身）。 */
   .mobile-rail-backdrop {
     position: fixed;
     inset: 0;
     z-index: 58;
     background: rgba(0, 0, 0, 0.35);
   }
-  /* 右抽屉：AI / 评论 / 插件面板，窄屏全屏叠加。 */
-  .ai-panel,
-  .plugin-panel {
+.plugin-panel {
     width: 100%;
     max-width: 100%;
   }
-  /* 窄屏下 TOC / AI 是叠加层，主区不需要为它们让位。桌面端那两条让位规则
+/* 窄屏下 TOC / AI 是叠加层，主区不需要为它们让位。桌面端那两条让位规则
      （padding-right: 280px / 380px）在窄屏会把主区内容盒挤成 0 宽，并把
      .main 撑出 .app-body —— flex 项缩不到 padding 以下，宽度被顶成 380px。 */
   /* ⚠️ 窄屏下目录是**叠加层**（不是并排 ✓）⇒ 让位要归零，否则正文会被挤成 0 宽 ✗
@@ -16583,7 +15689,7 @@ p:has(> .editor-drawing-container) {
   body.is-plugin-panel-open .main {
     padding-right: 0;
   }
-  /* 顶栏标题栏在窄屏收起部分（保留标题与操作）。 */
+/* 顶栏标题栏在窄屏收起部分（保留标题与操作）。 */
   .titlebar-sync {
     display: none;
   }
@@ -17615,7 +16721,6 @@ body.is-plugin-panel-open .main {
 .emoji-picker,
 .cover-picker,
 .markdown-import,
-.ai-settings,
 .plugin-view,
 .confirm-box,
 .community-save-box,
@@ -17657,7 +16762,6 @@ body.is-plugin-panel-open .main {
 .shortcuts-overlay,
 .markdown-import-overlay,
 .community-save-overlay,
-.ai-settings-overlay,
 .plugin-view-overlay {
     align-items: flex-end;
     justify-content: center;
@@ -17676,7 +16780,6 @@ body.is-plugin-panel-open .main {
 .about,
 .markdown-import,
 .community-save-box,
-.ai-settings,
 .plugin-view,
 .tag-picker.tag-picker-modal {
     position: static;
@@ -17687,10 +16790,6 @@ body.is-plugin-panel-open .main {
        与底部（手势条 / 键盘），所以这里只需要那个 24px 的呼吸位。 */
     max-height: calc(var(--ovh) - 24px);
     border-radius: 16px 16px var(--radius-lg) var(--radius-lg);
-  }
-/* `.ai-settings` 桌面是对齐黄金比例的横矩形；弹层里让高度跟内容走。 */
-  .ai-settings {
-    aspect-ratio: auto;
   }
 /* 这几个盒子桌面上是 `overflow:hidden` + 内部另行滚动；窄屏统一由盒子自己滚，
      否则内容一高就被裁掉且**滚不到**（`.sync-popover` 的「保存」就是这样
@@ -17801,15 +16900,8 @@ body.is-plugin-panel-open .main {
     overscroll-behavior-y: contain;
     padding-bottom: 20px;
   }
-/* 右侧抽屉（AI / 评论 / 插件面板 / 目录）：窄屏整屏叠加。
-     `.plugin-panel` 必须在这里再写一遍 `width:100%`——它在文件里的位置比
-     18973 行那条窄屏规则**更靠后**，那条规则实际上从来没生效过。
-
-     `top` / `bottom` 也在这里改：它们原本是 `top: var(--titlebar-h)` + `bottom: 0`，
-     在 edge-to-edge 下会钻进状态栏（顶部内容点不到）与手势条。 */
-  .ai-panel,
-  .toc-panel,
-  .plugin-panel {
+.toc-panel,
+.plugin-panel {
     width: 100%;
     max-width: 100%;
     left: 0;
@@ -17956,7 +17048,6 @@ body.is-plugin-panel-open .main {
 .markdown-import button,
 .shortcuts button,
 .about button,
-.ai-settings button,
 .plugin-view button,
 .emoji-picker .ep-grid button,
 .cover-picker button,
@@ -17986,11 +17077,9 @@ body.is-plugin-panel-open .main {
   .emoji-picker .ep-grid {
     grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
   }
-/* 侧板 / 全屏面板里的按钮同理：触屏点不中就是点不中，跟它属于哪一层无关。 */
-  .ai-panel button,
-  .toc-panel button,
-  .formula-editor button,
-  .emoji-picker button {
+.toc-panel button,
+.formula-editor button,
+.emoji-picker button {
     min-height: 44px;
   }
 /* ---------------------------------------------------------------------------
@@ -18341,187 +17430,39 @@ button.ui-toggle::after,
 .tl-empty { padding: var(--space-6) 28px; }
 .tl-empty-main { margin: 6px 0 2px; }
 .tl-empty-hint { color: var(--text-faint); font-size: 0.86rem; }
-/* ===== LLM wiki 第二块着陆点：库地图（只读派生视图，`components/LibraryMapView.tsx`） =====
-   为什么单独一块样式：它画的是"读数"而不是"设置项"，所以**每种读数状态都要看得出来**
-   （ok / partial / missing / unknown）—— 尤其是 `unknown`：它必须长得**跟 0 不一样**，
-   否则界面上"没查"与"查过了、没有"就分不出来了（`LibraryMapView.test.tsx` 成对断言这两件事）。 */
-.ai-libmap {
-  margin-top: var(--space-3);
-  padding: 10px var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--card-bg);
-}
-.ai-libmap-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2);
-  margin-bottom: var(--space-2);
-}
-.ai-libmap-title {
-  font-weight: 600;
-  color: var(--text);
-}
-.ai-libmap-sub {
-  font-size: var(--fs-12);
-  color: var(--text-faint);
-}
-.ai-libmap-sec {
-  margin-top: 10px;
-}
-.ai-libmap-sec-label {
-  font-weight: 600;
-  color: var(--text-dim);
-  font-size: var(--fs-13);
-}
-.ai-libmap-sec-summary {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  margin-top: 2px;
-}
-.ai-libmap-items {
-  list-style: none;
-  margin: 6px 0 0;
-  padding: 0;
-}
-.ai-libmap-item {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2);
-  padding: 3px 0;
-  font-size: var(--fs-13);
-  border-bottom: 1px dashed var(--border);
-}
-.ai-libmap-item:last-child {
-  border-bottom: none;
-}
-.ai-libmap-item-label {
-  color: var(--text);
-}
-.ai-libmap-item-count {
-  min-width: 2.5em;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  color: var(--text);
-}
-.ai-libmap-item-note,
-.ai-libmap-item-src {
-  font-size: var(--fs-12);
-  color: var(--text-faint);
-}
-/* 四种读数状态：**未知必须是灰的、且不加粗** —— 它不是一个数字 */
-.ai-libmap-item.is-ok .ai-libmap-item-count {
-  color: var(--success, #0f7b3f);
-}
-.ai-libmap-item.is-partial .ai-libmap-item-count {
-  color: var(--warning, #9a6a00);
-}
-.ai-libmap-item.is-missing .ai-libmap-item-count {
-  color: var(--danger, #c0392b);
-}
-.ai-libmap-item.is-unknown .ai-libmap-item-count {
-  color: var(--text-faint);
-  font-weight: 400;
-}
-.ai-libmap-warn {
-  margin-top: 10px;
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-}
-/* ── 第三块：分区上的「生成这一页」按钮 ＋ 草稿区（**未落库**的东西要一眼看出来 ✓） ── */
-.ai-libmap-sec-label {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.ai-libmap-gen {
-  margin-left: auto;
-  padding: 2px var(--space-2);
-  font-size: var(--fs-12);
-  border: 1px solid var(--border, #3a3a3a);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-.ai-libmap-gen:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.ai-libmap-draft {
-  margin-top: var(--space-3);
-  padding: 10px;
-  border: 1px dashed var(--border, #3a3a3a);
-  border-radius: var(--radius-md);
-}
-.ai-libmap-draft-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-bottom: 6px;
-}
-.ai-libmap-draft-badge {
-  padding: 1px 6px;
-  border-radius: var(--radius-full);
-  font-size: var(--fs-11);
-  border: 1px solid var(--warning, #b7791f);
-  color: var(--warning, #b7791f);
-}
-.ai-libmap-draft-drop {
-  margin-left: auto;
-  font-size: var(--fs-12);
-  background: transparent;
-  border: none;
-  color: var(--text-dim);
-  cursor: pointer;
-  text-decoration: underline;
-}
-/* ⭐ 2026-10-18（第四块「采用」）：这是**唯一**会把草稿写成真页面的键 ⇒ 与「不采用」**视觉分档**：
- * 采用是描边按钮（accent），不采用是低调的下划线文字 —— 别让两个键长得一样 ✓。 */
-.ai-libmap-draft-keep {
-  margin-left: auto;
-  font-size: var(--fs-12);
-  padding: 2px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--accent);
-  background: transparent;
-  color: var(--accent);
-  cursor: pointer;
-}
-.ai-libmap-draft-keep:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.ai-libmap-draft-body {
-  white-space: pre-wrap;
-  font-family: inherit;
-  margin: 0 0 6px;
-}
-.ai-libmap-draft-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-}
-.ai-libmap-draft-warn {
-  color: var(--warning, #b7791f);
-}
-.ai-libmap-draft-footer {
-  margin-top: 6px;
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-}
-.ai-libmap-note {
-  margin-top: var(--space-2);
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-}
-.ai-libmap-note.ai-warn {
-  color: var(--danger, #c0392b);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -18637,106 +17578,23 @@ button.ui-toggle::after,
   pointer-events: none;
 }
 
-/* ⭐ 2026-10-07（owner：「这个面板太丑了」✗）：AI 设置里的「全库索引」面板。
-   取舍：**一个字都不改文案** ✓ —— `aiSettingsCoverage.test.tsx` 断言了逐字那句话 ✓；
-   这里只做「卡片化 ＋ 主次分明 ＋ 进度条有类名 ＋ 消息两种面貌」 ✓。 */
-.ai-index {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px var(--space-4) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-}
-.ai-index .ai-settings-group-title {
-  margin-bottom: 2px;
-}
-.ai-index-sub {
-  margin: 2px 0 0;
-  color: var(--text);
-  line-height: 1.6;
-}
-/* 主次分明的按钮排 ✓ */
-.ai-index-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 2px;
-}
-.ai-index-actions-second {
-  padding-top: 2px;
-}
-.ai-index-btn-primary,
-.ai-index-btn-second {
-  height: 32px;
-  padding: 0 14px;
-  border-radius: var(--radius-md);
-  font-size: var(--fs-13);
-  cursor: pointer;
-  transition: background .12s ease, border-color .12s ease;
-}
-.ai-index-btn-primary {
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #fff;
-}
-.ai-index-btn-primary:hover:not(:disabled) {
-  filter: brightness(1.06);
-}
-.ai-index-btn-second {
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text);
-}
-.ai-index-btn-second:hover:not(:disabled) {
-  background: var(--card-bg, rgba(0, 0, 0, 0.04));
-}
-.ai-index-btn-primary:disabled,
-.ai-index-btn-second:disabled {
-  opacity: .5;
-  cursor: default;
-}
-/* 进度：类名化（原来是一串内联样式 ✓），并让数字用等宽对齐 ✓ */
-.ai-index-progress {
-  font-variant-numeric: tabular-nums;
-}
-.ai-index-bar {
-  margin-top: var(--space-2);
-  height: 5px;
-  border-radius: var(--radius-full);
-  background: var(--border);
-  overflow: hidden;
-}
-.ai-index-bar > div {
-  height: 100%;
-  border-radius: var(--radius-full);
-  background: var(--accent);
-  transition: width .15s linear;
-}
-/* 覆盖结果：数字那一长行给它呼吸感 + 等宽数字 ✓（文案一个字不改 ✓） */
-.ai-index-coverage {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.ai-index-coverage .ai-settings-brief {
-  font-variant-numeric: tabular-nums;
-  line-height: 1.75;
-}
-/* 缺口明细：等宽 + 可滚（原来是一坨换行文本 ✗） */
-.ai-index-gaps {
-  max-height: 168px;
-  overflow: auto;
-  padding: var(--space-2) 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--card-bg, rgba(0, 0, 0, 0.03));
-  white-space: pre-wrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--fs-12);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* ══════════════════════════════════════════════════════════════════════════
    移动端首页（效果图 `docs/plans/mobile/mockups/01-home.svg`，规格 §4.1）
