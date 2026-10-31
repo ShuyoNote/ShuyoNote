@@ -1,3 +1,13 @@
+/* ═══ 级联层序（S2，2026-10-31；计划 docs/plans/2026-10-30-appcss-deep-audit.md §9.3）═══
+   legacy    ：本文件**既有全部规则**（整段保序包进来 ⇒ 视觉 0 变化）
+   utilities ：新代码/状态类写这里 —— 同特异性下**天然压过 legacy**，不许再用 !important
+   ⚠️ 例外：第三方组件（excalidraw / KaTeX）的覆盖留在**层外**（见文件末尾）——
+      它们的样式由运行时懒加载注入且未分层，分层会把我们靠特异性赢的覆盖压掉。
+   判据：src/lib/cssLayers.test.ts（层序 / 归属 / !important 不增） */
+
+@layer legacy, utilities;
+
+@layer legacy {
 :root {
   color-scheme: light;
   /* 统一的 z-index 分层规范：解决弹层互相遮挡的问题。
@@ -727,12 +737,8 @@ html.mac-blurred .mac-light svg { opacity: 0; }
   opacity: 1;
   background: var(--accent);
 }
-.is-sidebar-resizing {
-  user-select: none;
-}
-.is-sidebar-resizing .sidebar {
-  transition: none;
-}
+
+
 
 .sidebar-collapsed {
   width: 56px;
@@ -6768,11 +6774,7 @@ select.prop-value {
   cursor: col-resize;
 }
 
-.is-dragging-block,
-.is-dragging-block * {
-  cursor: grabbing !important;
-  user-select: none !important;
-}
+
 
 /* Lexical node styles */
 .editor-h1 {
@@ -9415,25 +9417,9 @@ p:has(> .editor-drawing-container) {
   background: var(--surface);
 }
 
-/* Hide Excalidraw's built-in footer/system chrome (the bottom bar with the "≡"
-   main-menu button, plus any footer zoom/help) inside the page-embedded drawing,
-   so only the drawing canvas shows. The block's own hover control bar
-   (编辑/保存/导出/复制/全屏) supplies the actions. The left tool palette in edit
-   mode is kept. */
-.inline-drawing .excalidraw .layer-ui__wrapper__footer,
-.inline-drawing .excalidraw .layer-ui__wrapper__footer-left,
-.inline-drawing .excalidraw .layer-ui__wrapper__footer-right,
-.inline-drawing .excalidraw .main-menu-trigger {
-  display: none !important;
-}
 
-/* In read-only (view) mode the only remaining Excalidraw `Island` is the bottom
-   footer bar (the floating grey pill) — hide it so the embed is just the drawing
-   canvas. Edit mode keeps the tool palette (also an `Island`), so this applies
-   only while not editing. */
-.inline-drawing:not(.editing) .excalidraw .Island {
-  display: none !important;
-}
+
+
 
 /* Bottom-center drag handle to resize the embed height (Feishu-style). */
 .inline-drawing-resize {
@@ -9727,27 +9713,10 @@ p:has(> .editor-drawing-container) {
   max-width: 100%;
   line-height: 1;
 }
-/* KaTeX display mode adds its own 1em top/bottom margin + .katex baseline
-   padding — forcibly drop them inside the block formula (and use !important so
-   the lazily-injected katex.min.css never wins) so there's no empty space
-   under the formula. */
-.editor-formula-katex .katex-display {
-  margin: 0 !important;
-  padding: 0 !important;
-}
-.editor-formula-katex .katex-display > .katex {
-  margin: 0 !important;
-  padding: 0 !important;
-}
-.editor-formula-katex .katex-display > .katex > .katex-html {
-  margin: 0 !important;
-  /* KaTeX uses 1px/2px vertical baseline padding that can leave a gap; zero it. */
-  padding: 0 !important;
-}
-.editor-formula-katex .katex .base {
-  padding: 0 !important;
-  margin: 0 !important;
-}
+
+
+
+
 .editor-formula-loading {
   color: var(--text-dim);
   font-size: 13px;
@@ -9854,8 +9823,7 @@ p:has(> .editor-drawing-container) {
   text-decoration: none;
 }
 .formula-toolbar-help:hover { color: var(--accent); text-decoration: underline; }
-/* Match the block-formula look (no KaTeX display margin, no box). */
-.formula-preview-katex .katex-display { margin: 0; }
+
 
 .formula-input {
   width: 100%;
@@ -15536,12 +15504,8 @@ p:has(> .editor-drawing-container) {
   opacity: 1;
   background: var(--accent);
 }
-.is-ai-resizing {
-  user-select: none;
-}
-.is-ai-resizing .ai-panel {
-  transition: none;
-}
+
+
 
 /* Right-edge vertical launcher rail (Wolai-style) */
 .ai-header {
@@ -26556,3 +26520,82 @@ button.mset-row:focus-visible {
 /* 阅读态文本（`.prop-text`）的字号：它是 2026-10-31 新加的展示态 span（不在 `.prop-value` 那一档里），
    漏写规则 ⇒ 继承到 16px，比相邻的名字(12.5)/其它值(13) 明显大一号 —— 就是"字体不统一"的来源。 */
 .properties-body .prop-text { font-size: 13px; line-height: 1.5; color: var(--text); }
+}
+
+@layer utilities {
+.is-sidebar-resizing {
+  user-select: none;
+}
+
+.is-sidebar-resizing .sidebar {
+  transition: none;
+}
+
+.is-dragging-block,
+.is-dragging-block * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
+.is-ai-resizing {
+  user-select: none;
+}
+
+.is-ai-resizing .ai-panel {
+  transition: none;
+}
+}
+
+/* ═══ 第三方组件覆盖（unlayered，S2 起固定位置）═══ */
+/* ⚠️ 本段**刻意留在层外**（unlayered）：excalidraw / KaTeX 的 CSS 是运行时懒加载注入的
+   未分层样式 ⇒ 若把下面这些覆盖放进 @layer legacy，会被层外样式按"层优先于特异性"压掉。
+   这些规则原本靠更高特异性赢，留在层外 = 保持原强度。改这段前先读 src/lib/cssLayers.test.ts。 */
+
+/* Hide Excalidraw's built-in footer/system chrome (the bottom bar with the "≡"
+   main-menu button, plus any footer zoom/help) inside the page-embedded drawing,
+   so only the drawing canvas shows. The block's own hover control bar
+   (编辑/保存/导出/复制/全屏) supplies the actions. The left tool palette in edit
+   mode is kept. */
+.inline-drawing .excalidraw .layer-ui__wrapper__footer,
+.inline-drawing .excalidraw .layer-ui__wrapper__footer-left,
+.inline-drawing .excalidraw .layer-ui__wrapper__footer-right,
+.inline-drawing .excalidraw .main-menu-trigger {
+  display: none !important;
+}
+
+/* In read-only (view) mode the only remaining Excalidraw `Island` is the bottom
+   footer bar (the floating grey pill) — hide it so the embed is just the drawing
+   canvas. Edit mode keeps the tool palette (also an `Island`), so this applies
+   only while not editing. */
+.inline-drawing:not(.editing) .excalidraw .Island {
+  display: none !important;
+}
+
+/* KaTeX display mode adds its own 1em top/bottom margin + .katex baseline
+   padding — forcibly drop them inside the block formula (and use !important so
+   the lazily-injected katex.min.css never wins) so there's no empty space
+   under the formula. */
+.editor-formula-katex .katex-display {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.editor-formula-katex .katex-display > .katex {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.editor-formula-katex .katex-display > .katex > .katex-html {
+  margin: 0 !important;
+  /* KaTeX uses 1px/2px vertical baseline padding that can leave a gap; zero it. */
+  padding: 0 !important;
+}
+
+.editor-formula-katex .katex .base {
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* Match the block-formula look (no KaTeX display margin, no box). */
+.formula-preview-katex .katex-display { margin: 0; }
+

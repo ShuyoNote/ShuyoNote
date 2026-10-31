@@ -1,6 +1,6 @@
 # 方案：App.css 深度审计与优化（2026-10-30）
 
-状态：S0 视觉基线工具入库 ✅；S1 纯删除 ✅（App.css 28,695→26,439 行；非空行 27.4k→25.3k、当前 dev 26,559 行；`!important` 正则 36→21、实际声明 31→16）；S2 部分 ✅（去 `!important`／合并重复规则／删死兜底）；S2 的 `@layer` 脚手架、S3 tokens、S4 strangler 未开工。审计读数见 §2、执行记录见 §11（截至 2026-10-31）
+状态：S0 视觉基线工具 ✅；S1 纯删除 ✅（App.css 28,695→26,439 行；非空行 27.4k→25.3k；`!important` 正则 36→21、实际声明 31→16）；S2 部分 ✅（去 `!important`／合并重复规则／删死兜底）；**S2 `@layer` 脚手架 ✅（2026-10-31）**：全部既有规则保序包进 `@layer legacy`、utilities 试点 5 条、excalidraw/KaTeX 覆盖 7 条**留在层外**；判据 `src/lib/cssLayers.test.ts`，真浏览器视觉基线最差 **0.018%**（阈值 0.2%）；S3 tokens、S4 strangler 未开工。审计读数见 §2、执行记录见 §11（截至 2026-10-31）
 
 关联：`src/lib/cssHygiene.test.ts`（既有「只减不增」判据）· `docs/TESTING.md`（门禁总表）· 测量脚本（临时）：`_tmp/scratch/analyze-app-css.mjs`、`analyze-app-css2.mjs`
 
@@ -224,6 +224,7 @@ class prefix 体量：sync 605 / set 420 / is-(状态) 367 / pdf 320 / email 306
 | S2-c | 四组 `!important` 改提特异性（db 表格 / fm-empty / 块选择 / 属性标签值） | `!important` 36→26 |
 | S2-c' | 再 5 条 `!important`（board/tree-row/block-selected/tag-color/db-item） | `!important` **21→16**，视觉 0.009% |
 | S1-D | **274 个 A 档死 class → 344 条规则 / 12 个选择器项** | App.css **28695→26439 行**（-2256） |
+| S2-d | **`@layer` 脚手架**：顶部 `@layer legacy, utilities;`；全部既有规则保序包进 `@layer legacy`（`:root` 变量照常生效）；utilities 试点 5 条（`.is-dragging-block` / `.is-sidebar-resizing` / `.is-ai-resizing` 三族）；excalidraw＋KaTeX 覆盖 **7 条搬到层外**（它们的 CSS 懒加载注入、未分层 ⇒ 进层会被压掉）；`mcp-panel.css` 同入 legacy 层 | 结构判据 `src/lib/cssLayers.test.ts`（4 条）＋ `cssHygiene` 8/8；真浏览器基线 **5 图最差 0.018%**（阈值 0.2%）、metrics 差异 0；`!important` 不增；happy-dom 不支持 `@layer` ⇒ 两条注入式测试改用 `src/lib/unlayerForHappyDom.ts` 扁平化后判同一批规则 |
 
 ### ⚠️ 这一段最贵的教训：**按行号区间删 CSS 会把两条规则拼在一起**
 

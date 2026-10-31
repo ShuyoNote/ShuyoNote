@@ -11,8 +11,12 @@ import { resolve } from "node:path";
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
 
+import { unlayerForHappyDom } from "../lib/unlayerForHappyDom";
+
 // 测试环境把 import.meta.url 解析成 http://，拿不到 file: 路径，所以按 cwd 定位。
 const APP_CSS = readFileSync(resolve(process.cwd(), "src/App.css"), "utf8");
+// happy-dom 不支持 @layer（S2 起 App.css 全部规则在层里）⇒ 注入前先扁平化；判的还是同一批规则。
+const FLAT_CSS = unlayerForHappyDom(APP_CSS);
 
 /** 在隔离的文档里注样式，返回带 hidden 的 .sidebar 的计算 display。 */
 function displayWithHidden(css: string): string {
@@ -41,14 +45,14 @@ function displayOf(css: string, className: string): string {
 
 describe("侧栏 hidden 收起契约", () => {
   it("带 hidden 的 .sidebar 计算样式为 none（侧栏能真正收起）", () => {
-    expect(displayWithHidden(APP_CSS)).toBe("none");
+    expect(displayWithHidden(FLAT_CSS)).toBe("none");
   });
 
   it("兜底规则不可被误删：少了 .sidebar[hidden] 就会退回 flex（收不起来）", () => {
-    const withoutRule = APP_CSS.replace(/\.sidebar\[hidden\]\s*\{[^}]*\}/g, "");
+    const withoutRule = FLAT_CSS.replace(/\.sidebar\[hidden\]\s*\{[^}]*\}/g, "");
     // 若这条兜底规则被人删掉，replace 不再是有效替换，下面两条会同时失败：
     // 前者说明规则已缺失，后者说明 bug 复现。
-    expect(withoutRule).not.toBe(APP_CSS);
+    expect(withoutRule).not.toBe(FLAT_CSS);
     expect(displayWithHidden(withoutRule)).not.toBe("none");
   });
 });
@@ -58,15 +62,15 @@ describe("侧栏 hidden 收起契约", () => {
 // 隐式约定（图标上那句说明只有 hover 才出现），以及拖分隔条收起之后同样没有可见入口。
 describe("侧栏开合按钮的可见性契约", () => {
   it("桌面基线（不套媒体查询）也不是 display: none——否则收起后没法用鼠标拉回来", () => {
-    expect(displayOf(APP_CSS, "activity-btn sidebar-toggle-btn")).not.toBe("none");
+    expect(displayOf(FLAT_CSS, "activity-btn sidebar-toggle-btn")).not.toBe("none");
   });
 
   it("这条规则不能被改回 none（改回就重现「收起来找不回」）", () => {
-    const back = APP_CSS.replace(
+    const back = FLAT_CSS.replace(
       /\.sidebar-toggle-btn\s*\{[^}]*\}/,
       ".sidebar-toggle-btn { display: none; }",
     );
-    expect(back).not.toBe(APP_CSS);
+    expect(back).not.toBe(FLAT_CSS);
     expect(displayOf(back, "activity-btn sidebar-toggle-btn")).toBe("none");
   });
 });

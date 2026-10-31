@@ -12,6 +12,10 @@
  *   ⑤ 权限 chips ⑥ 写操作警示条。窄屏全部纵向堆叠，⛔ 不许横向溢出。
  */
 
+/* S2（2026-10-31）：与 App.css 同属 legacy 层 —— 保持「本文件在 App.css 之后 import ⇒ 同特异性覆盖」的原语义。
+   若留在层外会压过 App.css 全部规则（层外 > 分层），那会改变既有视觉。判据见 src/lib/cssLayers.test.ts */
+@layer legacy {
+
 /* ═══ ① 顶栏：分段导航 ＋ 状态 chip ＋「如何接入」 ═══════════════════════ */
 .mcp-topbar {
   display: flex;
@@ -794,4 +798,5 @@
   font-size: 11.5px;
   color: var(--text-faint);
   border-top: 1px solid var(--border);
+}
 }

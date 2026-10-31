@@ -14,8 +14,12 @@ import { resolve } from "node:path";
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
 
+import { unlayerForHappyDom } from "../lib/unlayerForHappyDom";
+
 // 测试环境把 import.meta.url 解析成 http://，拿不到 file: 路径，所以按 cwd 定位。
 const APP_CSS = readFileSync(resolve(process.cwd(), "src/App.css"), "utf8");
+// happy-dom 不支持 @layer（S2 起 App.css 全部规则在层里）⇒ 注入前先扁平化；判的还是同一批规则。
+const FLAT_CSS = unlayerForHappyDom(APP_CSS);
 
 /** `flex: none` 的两种等价写法（happy-dom 会正规化成后者）。 */
 const NOT_SHRINKING = ["none", "0 0 auto"];
@@ -34,29 +38,29 @@ function computed(css: string, className: string, prop: string, tag = "div"): st
 
 describe("邮箱列表头：窄面板下必须能整组换行", () => {
   it("① 头部允许换行（少了它，整行挤在一行里、标题被压成竖排）", () => {
-    expect(computed(APP_CSS, "email-list-head", "flex-wrap")).toBe("wrap");
+    expect(computed(FLAT_CSS, "email-list-head", "flex-wrap")).toBe("wrap");
   });
 
   it("★ 右侧整组用 wrap-reverse：「共 N 封」留在上一行右端，批量按钮掉到下一行", () => {
-    expect(computed(APP_CSS, "email-list-head-right", "flex-wrap")).toBe("wrap-reverse");
+    expect(computed(FLAT_CSS, "email-list-head-right", "flex-wrap")).toBe("wrap-reverse");
   });
 
   it("② 批量按钮不许被压缩（宁可换行，也不许文字溢出到邻居身上）", () => {
     // happy-dom 把 `flex: none` 正规化成 `0 0 auto`（= grow 0 / shrink 0 / basis auto），两种写法都收
-    expect(NOT_SHRINKING).toContain(computed(APP_CSS, "email-list-head-delete", "flex", "button"));
-    expect(NOT_SHRINKING).toContain(computed(APP_CSS, "email-list-head-op", "flex", "button"));
+    expect(NOT_SHRINKING).toContain(computed(FLAT_CSS, "email-list-head-delete", "flex", "button"));
+    expect(NOT_SHRINKING).toContain(computed(FLAT_CSS, "email-list-head-op", "flex", "button"));
   });
 
   it("③ 计数按钮不换行、不参与收缩", () => {
-    expect(computed(APP_CSS, "email-list-head-count", "white-space", "button")).toBe("nowrap");
-    expect(NOT_SHRINKING).toContain(computed(APP_CSS, "email-list-head-count", "flex", "button"));
+    expect(computed(FLAT_CSS, "email-list-head-count", "white-space", "button")).toBe("nowrap");
+    expect(NOT_SHRINKING).toContain(computed(FLAT_CSS, "email-list-head-count", "flex", "button"));
   });
 
   it("变异：把这三条规则删掉 ⇒ 计算值当场变回去（判据不是恒绿）", () => {
-    const mutated = APP_CSS.replace(/\.email-list-head\s*\{[^}]*\}/, "")
+    const mutated = FLAT_CSS.replace(/\.email-list-head\s*\{[^}]*\}/, "")
       .replace(/\.email-list-head-right\s*\{[^}]*\}/, "")
       .replace(/\.email-list-head-delete\s*\{[^}]*\}/, "");
-    expect(mutated).not.toBe(APP_CSS);
+    expect(mutated).not.toBe(FLAT_CSS);
     expect(computed(mutated, "email-list-head", "flex-wrap")).not.toBe("wrap");
     expect(computed(mutated, "email-list-head-right", "flex-wrap")).not.toBe("wrap-reverse");
     expect(NOT_SHRINKING).not.toContain(computed(mutated, "email-list-head-delete", "flex", "button"));
