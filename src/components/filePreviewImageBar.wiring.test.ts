@@ -18,6 +18,7 @@
 // 不对着注释（下面用"取出规则体"而不是"全文搜索"正是为此）。
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { allCssText } from "../lib/cssSources";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
@@ -64,7 +65,9 @@ function divBlock(src: string, from: number): string {
 
 describe("图片预览顶栏（issue #12）· 形状不许回退", () => {
   const tsx = read("src/components/FilePreviewDialog.tsx");
-  const css = read("src/App.css");
+  // S4：文件管理器域已搬到 `src/styles/file-manager.css` ⇒ 判据读**全仓 CSS**（App.css ＋ src/styles/*.css），
+  // 否则域一搬，这条"形状不许回退"的断言就变成假红/假绿。
+  const css = allCssText();
 
   it("① 提示与按钮组是**同一个** `.fm-img-bar` 的子节点（不是两个各自定位的角标）", () => {
     const at = tsx.indexOf('className="fm-img-bar"');

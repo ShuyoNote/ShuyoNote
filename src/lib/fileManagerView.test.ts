@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { allCssText } from "./cssSources";
 
 import {
   FM_TABLE_MIN_WIDTH,
@@ -46,9 +47,9 @@ describe("defaultFileView", () => {
 });
 
 describe("断点常量与样式同源", () => {
-  it("FM_TABLE_MIN_WIDTH 与 App.css 里 .file-manager-table 的 min-width 逐字一致（防漂移）", () => {
-    // 与 sidebarVisibility.test.ts 同一读法：vitest 里 import.meta.url 不是 file: 协议。
-    const css = readFileSync(resolve(process.cwd(), "src/App.css"), "utf8");
+  it("FM_TABLE_MIN_WIDTH 与全仓 CSS 里 .file-manager-table 的 min-width 逐字一致（防漂移）", () => {
+    // S4：文件管理器域已搬到 src/styles/file-manager.css ⇒ 读全仓 CSS（App.css ＋ src/styles/*.css）。
+    const css = allCssText();
     const block = /\.file-manager-table\s*\{([\s\S]*?)\}/.exec(css)?.[1];
     // 没有这个规则块就说明有人把表格的保底宽度删了 —— 常量会立刻变成空谈
     expect(block, "App.css 里找不到 .file-manager-table { … } 规则块").toBeTruthy();

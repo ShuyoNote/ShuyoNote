@@ -1,0 +1,1905 @@
+/* S4-4（2026-11-01）：域抽取器搬出的**插件管理器域**（`.pm-*` / `.plugin-manager*` / `.plugin-menu-*`）。
+
+- 选择器混排（`.pm-x, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- 核心规则在前、**响应式覆盖（来自混合 @media，只抽命中域的规则并重建同条件块）在后** —— 保持原相对顺序。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* ---------- File manager ---------- */
+.file-manager {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-5) var(--space-6) 0;
+  max-width: none;
+  width: 100%;
+  margin: 0 auto;
+  overflow: hidden;
+}
+
+.file-manager-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-2);
+  /* 窄窗口：让「操作条」整块换到下一行，而不是把标题 / 按钮各挤成两行字
+     （2026-09-19 用户截图里的「文件管/理」「新建文件/夹」就是这么来的）。 */
+  flex-wrap: wrap;
+}
+
+.file-manager-title-block {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.file-manager-bigicon {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex: none;
+}
+
+.file-manager-title {
+  font-size: var(--fs-30);
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+  /* 中文没有词边界，默认会在**任意两个字之间**断行；标题必须整行 ——
+     装不下时由父级（.file-manager-head 的 flex-wrap）换行，而不是把标题拆开。 */
+  white-space: nowrap;
+}
+
+.file-manager-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.fm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-13);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+  /* 按钮文案也是中文：不许在字间断行，也不许被压窄（窄窗口下整块换行） */
+  white-space: nowrap;
+  flex: none;
+}
+
+.fm-btn:hover {
+  background: var(--hover);
+  border-color: var(--border-strong);
+}
+
+.fm-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.fm-btn-danger {
+  color: var(--danger);
+  border-color: var(--danger-soft);
+}
+
+.fm-btn-danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+
+.file-manager-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  /* 面包屑 / 计数 / 搜索：窄窗口下各占一行，而不是三个挤在一行里互相压 */
+  flex-wrap: wrap;
+}
+
+.fm-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.fm-crumb {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-13);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  font-family: inherit;
+}
+
+.fm-crumb:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.fm-crumb-active {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.fm-crumb-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-faint);
+}
+
+.fm-count {
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.fm-search {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-13);
+  padding: var(--space-1) 10px;
+  border-radius: var(--radius-sm);
+  width: 180px;
+  font-family: inherit;
+}
+
+.fm-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* File actions + preview */
+.fm-file-actions button {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--fs-13);
+  padding: 2px 3px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.fm-file-actions button:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+/* 只属于窄屏的形态（见文件末尾"文件视图窄屏适配"那段）：
+   · `.fm-btn-icon` —— 操作行按钮里的图标（桌面隐藏，桌面照旧只有文字标签）。
+   ⚠️ **2026-10-04 改**（owner 决定）：⭐ 下面那个 `⋯` **不再"只属于窄屏"** ✗ ——
+     ⭐ **桌面也收成一个 hover 才现的 `⋯`** ✓（与窄屏同一个按钮 ✓）。
+     ⚠️ 原注释那句「⭐ 桌面已经有六个小按钮，用不着它」当时是对的 ✓，现在 owner 要把六个收进来 ✓。 */
+.fm-btn-icon { display: none; }
+
+/* ⚠️ **2026-10-04 二次改**（owner 决定）：⭐ **去掉文件视图里的「更多操作」按钮** ✗ ——
+   ⭐ 桌面**不再** hover 显示那个 `⋯`（基础规则 `display:none` 直接生效 ✓）。
+   ⭐ 桌面的文件行操作**只走两条**：⭐ 行上**右键**（完整菜单 ✓）＋ ⭐ **双击文件名改名** ✓。
+   ⚠️ **窄屏那条 media 规则保留**（见文件末尾 `.fm-more-btn { display:flex; 44×44 }` ✓）——
+   ⭐ 因为窄屏**没有 hover** ✗、右键只能靠**长按** ✓（⭐ 那条注释逐字写着「⭐ **列表模式此前根本没有右键入口**」✓）
+   ⇒ ⭐ 删掉它手机上就真的没入口了 ✓。⭐ 要连窄屏一起去掉，说一声即可 ✓。 */
+.fm-more-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-16);
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.fm-more-btn:hover { background: var(--hover); color: var(--text); }
+
+/* ⭐ 桌面把行尾那六个小按钮**收进 `⋯`**（它们的动作一个不少地都在右键菜单里 ✓，见 `ctxMenu`）。
+   ⚠️ 用 `display: none` 而不是 `opacity: 0` ✗ —— 后者在桌面仍占位、而且能被 Tab 聚焦到 ✓。
+   ⚠️ 安全边界：⭐ `.fm-file-actions` 只在 `row.kind === "file"` 时渲染 ✓（`FileManagerView.tsx` 里那个条件 ✓）
+     ⇒ ⭐ 藏它**只影响文件行** ✓，页面行/文件夹行不受影响 ✓。 */
+.fm-ops-col .fm-file-actions { display: none; }
+
+.fm-preview-overlay {
+  position: fixed;
+  /* 避开自绘标题栏与左竖条：标题栏 32px、竖条 48px、侧栏 --sidebar-w。
+     --titlebar-h 由前端在自绘标题栏开启时设为 32px，否则 0。 */
+  top: var(--titlebar-h);
+  right: 0;
+  bottom: 0;
+  left: calc(var(--activity-w) + var(--sidebar-offset));
+  /* 文件预览：内容 modal 层——高于普通 popover(40-95)，低于搜索面板(1500)/
+     命令面板，避免被 tag picker/树菜单等小浮层盖住。 */
+  z-index: var(--z-content-overlay);
+  background: var(--bg);
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.fm-preview {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  background: var(--surface);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.fm-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.fm-preview-name {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ⚠️ **2026-10-04 改**（owner：去掉文字只留图标）：⭐ 这一族现在是**方形图标按钮** ✗ ——
+   原先是「图标 ＋ 文字」的胶囊（`padding: 5px 12px`），去掉文字后若还留着那个内距，
+   按钮会变成一条**又宽又空**的长条 ✓。⭐ 现在四边等距 ⇒ 16px 图标 ⇒ 约 30×28 ✓。
+   ⚠️ 名字没丢：`title` ＋ `aria-label`（见组件里每个按钮 ✓）。 */
+/* ⚠️ **2026-10-04 改**（owner 给了参考图：「要这种风格」）：⭐ 无边框纯图标工具栏 ✗ ——
+   原来是**蓝色描边胶囊**（`border + accent-soft` 底）＋ 文字 ✓；去掉文字之后那个胶囊样式就
+   只剩一个空壳 ⇒ 照参考图改成：透明底、灰图标、悬停才出浅底、四边等距 ✓。
+   ⭐ 名字没丢：每个按钮都有 `title` ＋ `aria-label`（见组件 ✓）。 */
+.fm-preview-read {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: var(--radius-md);
+  padding: 6px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+/* ⭐ 图标尺寸统一到 20px（参考图里那一档）—— 一处改全部 ✓。 */
+.fm-preview-read svg {
+  width: 20px;
+  height: 20px;
+}
+
+.fm-preview-read:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* ⚠️ **2026-10-04**：这两个 toggle 原来要单独"去胶囊"✗ —— 现在主块本身已是无边框 ✓，
+   这一块删掉即可（后面原有的 .is-on 规则照旧表达"开着"✓）。 */
+.fm-outline-toggle:hover,
+.fm-width-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+  box-shadow: none;
+}
+
+.fm-outline-toggle.is-on,
+.fm-width-toggle.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.fm-outline-toggle.is-on:hover,
+.fm-width-toggle.is-on:hover {
+  background: color-mix(in srgb, var(--accent-soft) 85%, var(--hover));
+  color: var(--accent);
+  box-shadow: none;
+}
+
+/* 文件列表行里的 PDF「标注」直达按钮 */
+.fm-file-annotate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--accent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.fm-file-annotate:hover {
+  background: var(--accent-soft);
+}
+
+.fm-preview-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  /* MD 预览极高时若垂直居中会裁顶部（align-items 居中 + overflow 的经典问题），
+     这里让子项顶部对齐。图片/视频/iframe 用自身的 margin:auto 居中。 */
+  align-items: stretch;
+  justify-content: center;
+  padding: var(--space-3);
+  overflow: auto;
+}
+
+.fm-preview-body > img,
+.fm-preview-body > video {
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  margin: auto;
+}
+
+/* ------------------------- 图片预览器 · 缩放平移 -------------------------
+   类似专业看图器：适应窗口 / 滚轮缩放 / 拖动平移 / 1:1 实际尺寸 / 放大镜。 */
+.fm-img-view {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  user-select: none;
+  /* 纯色浅衬底，不用棋盘格（太抢眼）。 */
+  background: var(--bg);
+}
+
+.fm-img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  transition: transform 0.08s ease;
+  cursor: zoom-in;
+}
+
+.fm-img.is-zoomed {
+  max-width: none;
+  max-height: none;
+  width: auto;
+  height: auto;
+  transform-origin: center center;
+  cursor: unset;
+}
+
+/* 图片预览的**顶栏**：提示胶囊 ＋（旋转 / 查看原图）按钮组。
+   ⚠️ 它们是**同一条 flex 行里的两半**，不是两个各自 `position:absolute` 的角标 ——
+   后者在窄屏上必然互相压：两个都钉在 `top:14px`，左边那个还按 `left:50%` 居中，
+   360px 视口下实测重叠 ~111px（GitCode issue #12「窄屏时内置图片阅览的控制按钮重叠了」）。
+   ⇒ 布局不许靠"算两边宽度刚好不撞"，只许靠"**它们在同一行里，谁也盖不住谁**"：
+   左边那半放不下就在自己的盒子里截断（`min-width:0` ＋ 省略号），右边那组 `flex:none`。
+   bar 自己不吃指针事件（空白处的滚轮缩放 / 拖动平移照旧落在图片上），
+   只有右边那组按钮把 `pointer-events` 打开。 */
+.fm-img-bar {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.fm-img-hint {
+  /* 行里的**左半**（原来这里是绝对定位 ＋ `translateX(-50%)` 居中）。 */
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  user-select: none;
+  pointer-events: none;
+}
+
+/* 旋转按钮组 + 查看原图：这一行的**右半**。
+   `margin-left:auto` 是给窄屏兜底的：那时左边的提示被藏起来（见窄屏那一段），
+   只剩一个子项，`space-between` 会把它推到**左边** —— 那是视觉回退。 */
+.fm-img-actions {
+  margin-left: auto;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  pointer-events: auto;
+}
+
+.fm-img-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.fm-img-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.fm-img-original {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-13);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.fm-img-original:hover {
+  background: var(--hover);
+  border-color: var(--border-strong);
+}
+
+.fm-preview-body iframe {
+  width: 100%;
+  height: 70vh;
+  border: none;
+}
+
+/* 视频预览：居中、限宽限高，适应窗口。 */
+.fm-video-view {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.fm-video-view video {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  background: #000;
+}
+
+/* 音频预览：居中卡片，图标 + 文件名 + 播放器。 */
+.fm-audio-view {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--bg);
+}
+
+.fm-audio-icon {
+  color: var(--accent);
+  opacity: 0.85;
+}
+
+.fm-audio-name {
+  max-width: 80%;
+  font-size: var(--fs-14);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fm-audio-view audio {
+  width: min(100%, 420px);
+}
+
+.fm-preview-unsupported {
+  color: var(--text-faint);
+  font-size: var(--fs-13);
+  padding: 30px;
+  text-align: center;
+}
+
+/* ------------------------- 文件预览 · Markdown 阅读版式 -------------------------
+   布局与主编辑器页面一致：内容列宽 = --doc-width、居中、内部全部左对齐。
+   右侧可开一个大纲侧栏（列出 h1–h6，点击滚动定位），长文档可快速跳转。
+   支持「适配窗口宽度」：默认 --doc-width 文档宽，切到 is-full 时随窗口撑满。 */
+.fm-md-preview {
+  /* 内容列（--doc-width）在可用区内水平居中，左右留白均衡，与主编辑器页面一致。
+     用 block + margin:auto 居中，避免受 flex justify 影响。 */
+  max-width: var(--doc-width);
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
+  min-height: 100%;
+  text-align: left;
+  color: var(--text);
+  font-size: var(--fs-16);
+  line-height: 1.7;
+  padding: var(--space-6) var(--doc-pad) 80px;
+  user-select: text;
+}
+
+/* 「适配窗口宽度」：不再限 --doc-width，随内容区宽度自适应（仍留舒适左右
+   内边距，避免贴边）。 */
+.fm-md-preview.is-full {
+  max-width: none;
+}
+
+.fm-md-preview > *:first-child { margin-top: 0; }
+
+/* 内容列内全部左对齐，不再让表格/代码各自居中（仅是整块内容列居中）。 */
+.fm-md-preview > table {
+  width: auto;
+  max-width: 100%;
+}
+
+.fm-md-preview > img {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ------------------------- MD 预览 · 大纲侧栏 ------------------------- */
+.fm-md-wrap {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  /* 覆盖 .fm-preview-body 的 align-items:center——MD 内容高时垂直居中会裁
+     顶部；这里是内容列 + 大纲两栏，占满高度而非垂直居中。 */
+  align-items: stretch;
+}
+
+/* 内容列（.fm-md-preview 用 --doc-width + margin:0 auto 居中），
+   .fm-md-body 只负责滚动。 */
+.fm-md-body {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+
+.fm-md-outline {
+  flex: none;
+  width: 220px;
+  min-width: 160px;
+  max-width: 480px;
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+  padding: var(--space-4) 10px;
+  background: var(--bg);
+  position: relative;
+}
+
+.fm-md-outline-inner {
+  overflow: auto;
+  height: 100%;
+}
+
+/* 拖拽手柄：目录栏左缘一条可抓区域，拖动改宽。 */
+.fm-md-outline-resizer {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.fm-md-outline-resizer:hover,
+.fm-md-outline-resizer.is-dragging {
+  background: var(--accent-soft);
+}
+
+.fm-md-outline-title {
+  font-size: var(--fs-12);
+  font-weight: 700;
+  color: var(--text-dim);
+  padding: 0 6px var(--space-2);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-2);
+}
+
+.fm-md-outline-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  line-height: 1.4;
+  padding: 5px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fm-md-outline-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.fm-md-outline-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.fm-md-preview h1,
+.fm-md-preview h2,
+.fm-md-preview h3,
+.fm-md-preview h4,
+.fm-md-preview h5,
+.fm-md-preview h6 {
+  margin: 1.4em 0 0.6em;
+  line-height: 1.3;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.fm-md-preview h1 {
+  font-size: 1.7em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3em;
+  margin-top: 0.3em;
+}
+
+.fm-md-preview h2 {
+  font-size: 1.4em;
+  margin-top: 1.6em;
+}
+
+.fm-md-preview h3 { font-size: 1.2em; }
+
+.fm-md-preview h4 { font-size: 1.05em; }
+
+.fm-md-preview h5 { font-size: 1em; }
+
+.fm-md-preview h6 { font-size: 0.95em; color: var(--text-dim); }
+
+.fm-md-preview p { margin: 0.9em 0; }
+
+.fm-md-preview a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  transition: border-color var(--transition-fast);
+}
+
+.fm-md-preview a:hover {
+  border-bottom-color: var(--accent);
+}
+
+.fm-md-preview code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.86em;
+  background: var(--code-bg);
+  color: color-mix(in srgb, var(--accent) 70%, var(--text));
+  padding: 0.16em 0.42em;
+  border-radius: 5px;
+}
+
+.fm-md-preview pre {
+  background: var(--codeblock-bg);
+  padding: var(--space-4) 18px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  overflow: auto;
+  line-height: 1.6;
+}
+
+.fm-md-preview pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: inherit;
+  font-size: 0.9em;
+}
+
+.fm-md-preview blockquote {
+  margin: 1em 0;
+  padding: 0.6em 1em;
+  border-left: 3px solid var(--accent);
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+
+/* 引用块内文字字号略收，保持「注」的层级感。 */
+.fm-md-preview blockquote > * { font-size: 0.95em; }
+
+.fm-md-preview ul,
+.fm-md-preview ol {
+  padding-left: 1.6em;
+  margin: 0.8em 0;
+  line-height: 1.75;
+}
+
+.fm-md-preview li { margin: 0.3em 0; }
+
+.fm-md-preview li::marker { color: var(--text-faint); }
+
+.fm-md-preview table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  width: auto;
+  min-width: 60%;
+}
+
+.fm-md-preview th {
+  background: var(--hover);
+  font-weight: 600;
+}
+
+.fm-md-preview th,
+.fm-md-preview td {
+  border: 1px solid var(--border);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+.fm-md-preview tr:nth-child(even) td { background: color-mix(in srgb, var(--hover) 50%, transparent); }
+
+.fm-md-preview hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.6em 0;
+  width: 100%;
+}
+
+.fm-md-preview img {
+  max-width: 100%;
+  border-radius: 10px;
+  display: block;
+  margin: 1.2em auto;
+  box-shadow: var(--shadow-md);
+}
+
+.fm-drop-zone {
+  position: fixed;
+  inset: 0;
+  z-index: 94;
+  border: 2px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 40%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  font-size: var(--fs-16);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.fm-move-popover {
+  position: fixed;
+  z-index: 96;
+  top: 120px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 220px;
+  max-width: 320px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 6px;
+}
+
+/* File versions popover */
+.fm-version-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  background: rgba(0, 0, 0, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fm-version-pop {
+  min-width: 340px;
+  max-width: 460px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-3);
+}
+
+.fm-version-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.fm-version-title {
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.fm-version-close {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--fs-16);
+  cursor: pointer;
+}
+
+.fm-version-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.fm-version-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.fm-version-current {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.fm-version-badge {
+  font-size: var(--fs-11);
+  color: var(--accent);
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  white-space: nowrap;
+}
+
+.fm-version-old {
+  color: var(--text-dim);
+  background: var(--hover);
+}
+
+.fm-version-name {
+  font-size: var(--fs-13);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.fm-version-meta {
+  font-size: var(--fs-11);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.fm-version-hash {
+  font-size: var(--fs-10);
+  color: var(--text-faint);
+  font-family: var(--font-mono, monospace);
+}
+
+.fm-version-restore {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+  font-size: var(--fs-12);
+  cursor: pointer;
+}
+
+.fm-version-restore:hover {
+  background: var(--hover);
+}
+
+.fm-version-empty {
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+  padding: 6px var(--space-2);
+}
+
+.fm-move-title {
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+  padding: 5px var(--space-2) var(--space-1);
+}
+
+.fm-move-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-13);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.fm-move-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.fm-move-empty {
+  color: var(--text-faint);
+  font-size: var(--fs-12);
+  padding: var(--space-2);
+}
+
+.fm-move-cancel {
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
+  margin-top: 3px;
+}
+
+.file-manager-table-wrap {
+  flex: 1;
+  min-height: 0;
+  /* 两个方向都能滚：窄窗口下**表格不再被挤压** —— 被挤压的后果就是「类型」格里
+     的「文件」被压成一字一行（用户截图里那一幕）。宁可横向滚，也不压字。 */
+  overflow: auto;
+}
+
+.file-manager-table {
+  width: 100%;
+  /* 列宽之和的下限：比这更窄就别缩了，交给上面的容器横向滚动。
+     取 780 的依据（实测）：830px 窗口里可用宽度 = 830 − 2×16（窄档内边距）= 798 ⇒ 780 放得下、
+     不用横滚；而 560px 时它继续兜住列宽 ⇒「类型」列仍是 88px，不会把「文件」压成一字一行。 */
+  min-width: 780px;
+  border-collapse: collapse;
+  font-size: var(--fs-13);
+}
+
+.file-manager-table th {
+  text-align: left;
+  font-size: var(--fs-12);
+  font-weight: 600;
+  color: var(--text-dim);
+  padding: var(--space-1) 14px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 1;
+}
+
+.file-manager-table td {
+  padding: var(--space-1) 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.file-manager-table tbody tr {
+  transition: background var(--transition-fast);
+}
+
+.file-manager-table tbody tr:hover {
+  background: var(--hover);
+}
+
+.file-manager-table tbody tr.fm-row-selected {
+  background: var(--accent-soft);
+}
+
+.fm-check-col {
+  width: 36px;
+}
+
+.fm-check-col input {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  margin: 0;
+  vertical-align: middle;
+}
+
+/* ⚠️ **2026-10-04 改**（owner：「文件夹管理视图列表右边的留空太大了」）：
+   原来只有 `min-width: 240px` ✗ ⇒ 表格 auto 布局把剩余空间**平摊**给「三列没有宽度的列」
+   （name ＋ 两个 date-col）✓ ⇒ 日期列各拿一大块、而日期文字左对齐 ⇒ 右边一片空 ✓。
+   ⭐ 现在 `width: 100%` ⇒ auto 布局下它**吃掉剩余** ✓（文件名本来也最需要空间 ✓）。 */
+.fm-name-col {
+  min-width: 240px;
+  width: 100%;
+}
+
+.fm-kind-col {
+  width: 88px;
+  color: var(--text-faint);
+  /* ⚠️ 这一行是**承重**的，别删（2026-09-19 用户截图：「文件」被拆成「文/件」）。
+     表格在窄容器里要"减宽"，而缺口会全部落到**唯一可断行的短列**上：
+       · `.fm-name-col` 有 `min-width: 240px`、两个日期列与 `.fm-size-col` 有 `nowrap`
+         ⇒ 它们的 min-content 都绷住了；
+       · 而「文件」是 CJK，`white-space: normal` 下 **min-content 只有一个字宽**
+         ⇒ 浏览器把整张表的缺口都压给这一列，它就成了 1 字/行。
+     `nowrap` 之后这列的 min-content = 整词宽度，缺口再也压不动它：
+     表格要么放得下，要么**横向滚动**（`宁可横滚，也不压字`）。
+     触发条件不是"窗口特别窄"——只要表格 min-content 超过那个 780 下限就会发生
+     （实测：长不可断文件名 + 窗口 1100 就已经 2 行）。 */
+  white-space: nowrap;
+}
+
+.fm-size-col {
+  width: 90px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.fm-ops-col {
+  width: 64px;
+  text-align: right;
+}
+
+/* ⚠️ **2026-10-04 加**（同上）：⭐ 两个日期列**必须给固定宽** ✗ ——
+   否则 auto 布局会把剩余空间平摊给它们，日期文字左对齐 ⇒ 右边看着全是空的 ✓。
+   ⭐ 内容形如 `2026-10-04 09:52`（nowrap）＋ 左右 padding 28 ⇒ **160px** 够 ✓。 */
+.fm-date-col {
+  width: 160px;
+}
+
+.fm-date {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.fm-name-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-14);
+  font-weight: 500;
+  cursor: pointer;
+  padding: var(--space-1) 0;
+  text-align: left;
+  font-family: inherit;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.fm-name-btn:hover {
+  color: var(--accent);
+}
+
+.fm-kind-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  background: var(--hover);
+  color: var(--text-dim);
+  flex: none;
+}
+
+.fm-name-btn:hover .fm-kind-icon {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.fm-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 根目录下的无归属文件标记：弱化的中性 chip，提示「该归位了」但不报警。 */
+.fm-inbox-tag {
+  flex: none;
+  margin-left: var(--space-2);
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--chip-bg);
+  color: var(--text-faint);
+  font-size: var(--fs-10);
+  line-height: 1.6;
+}
+
+/* P6.2「未下载」：**行有、字节不在**（P6.1 关了开关 / 预算刹车跳过 / 还没轮到）。
+ * 与「未整理」同一形状，但要更显眼一档——它表示"这个文件现在打不开"，
+ * 而「未整理」只是分类信息。 */
+.fm-missing-tag {
+  flex: none;
+  margin-left: var(--space-2);
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  font-size: var(--fs-10);
+  line-height: 1.6;
+  cursor: help;
+}
+
+/* P6.3 续：预览里"字节不在本机"那块的手动取回入口（自动取回失败后才出现）。 */
+.fm-preview-fetch {
+  margin-top: 10px;
+  padding: 6px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-13);
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.fm-preview-fetch:hover {
+  border-color: var(--accent);
+  background: var(--hover);
+}
+
+/* Reveal file actions on row hover. */
+.fm-ops-col .fm-file-actions {
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.file-manager-table tbody tr:hover .fm-ops-col .fm-file-actions {
+  opacity: 1;
+}
+
+.file-manager-table .fm-empty {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--text-faint);
+  font-size: var(--fs-13);
+}
+
+/* Folder file list (batch upload of large files) */
+.fm-progress {
+  margin-bottom: 10px;
+}
+
+.fm-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  margin-bottom: var(--space-1);
+}
+
+.fm-progress-track {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--hover);
+  overflow: hidden;
+}
+
+.fm-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-full);
+  transition: width var(--transition);
+}
+
+.fm-file-actions {
+  display: inline-flex;
+  gap: 2px;
+  flex: none;
+}
+
+.fm-file-actions button {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: var(--fs-13);
+  padding: 2px 5px;
+  border-radius: var(--radius-xs);
+}
+
+.fm-file-actions button:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+/* ---- 文件管理器：列表/网格视图切换 + 缩略图网格 ---- */
+.fm-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.fm-view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--fs-14);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.fm-view-btn:hover { background: var(--hover); color: var(--text); }
+
+.fm-view-btn.is-on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+
+.fm-size-slider {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--space-1);
+}
+
+.fm-size-slider input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 84px;
+  height: 16px;
+  margin: 0 2px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.fm-size-slider input[type="range"]:focus-visible { outline: none; }
+
+/* 轨道：细圆角，左侧按值用 accent 填充、右侧浅灰 */
+.fm-size-slider input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(
+    to right,
+    var(--accent, #4f7cff) 0%,
+    var(--accent, #4f7cff) var(--fill, 50%),
+    var(--border-strong, #d8dce4) var(--fill, 50%),
+    var(--border-strong, #d8dce4) 100%
+  );
+}
+
+/* 圆点：accent 实心 + 白描边 + 柔影，悬停/拖动/聚焦微交互 */
+.fm-size-slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--accent, #4f7cff);
+  border: 2px solid var(--surface, #fff);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.fm-size-slider input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.06); }
+
+.fm-size-slider input[type="range"]:active::-webkit-slider-thumb {
+  transform: scale(1.14);
+  box-shadow: 0 0 0 4px var(--accent-soft, rgba(79, 124, 255, 0.2)), 0 1px 5px rgba(0, 0, 0, 0.25);
+}
+
+.fm-size-slider input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22), 0 0 0 2px var(--surface, #fff), 0 0 0 4px var(--accent, #4f7cff);
+}
+
+/* Firefox 兜底 */
+.fm-size-slider input[type="range"]::-moz-range-track { height: 4px; border-radius: var(--radius-full); background: var(--border-strong, #d8dce4); }
+
+.fm-size-slider input[type="range"]::-moz-range-progress { height: 4px; border-radius: var(--radius-full); background: var(--accent, #4f7cff); }
+
+.fm-size-slider input[type="range"]::-moz-range-thumb {
+  width: 13px; height: 13px; border: 2px solid var(--surface, #fff); border-radius: 50%;
+  background: var(--accent, #4f7cff); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+}
+
+.fm-ctx {
+  position: fixed;
+  z-index: var(--z-context);
+  min-width: 170px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 14px 36px rgba(0,0,0,.22);
+}
+
+.fm-ctx-title {
+  padding: var(--space-1) 10px var(--space-2);
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.fm-ctx-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fm-ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: var(--fs-13);
+  padding: var(--space-2) 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.fm-ctx-item:hover { background: var(--hover); }
+
+.fm-ctx-item.is-danger { color: var(--danger); }
+
+.fm-ctx-item.is-danger:hover { background: var(--danger-soft); }
+
+.fm-ctx-ic {
+  width: 16px; height: 16px;
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-dim);
+}
+
+.fm-ctx-label { flex: 1; white-space: nowrap; }
+
+.fm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--space-3);
+  padding: var(--space-3);
+  align-items: start;
+}
+
+.fm-grid-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: 116px;
+  padding: 10px;
+  background: linear-gradient(180deg, var(--card-bg), var(--surface));
+}
+
+.fm-grid-page-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-24);
+  color: var(--text-faint);
+}
+
+.fm-grid-mini {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 116px;
+  padding: var(--space-3) var(--space-3) 10px;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--surface), var(--card-bg));
+}
+
+.fm-grid-mini-line {
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fm-grid-audio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 116px;
+  padding: var(--space-3);
+  background: linear-gradient(180deg, var(--card-bg), var(--surface));
+}
+
+.fm-grid-audio audio { width: 100%; height: 34px; }
+
+.fm-grid-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color .12s ease, box-shadow .12s ease, transform .12s ease;
+}
+
+.fm-grid-card:hover { border-color: var(--border-strong); box-shadow: 0 8px 22px rgba(0,0,0,.14); transform: translateY(-2px); }
+
+.fm-grid-thumb {
+  width: 100%;
+  height: 116px;
+  object-fit: cover;
+  background: var(--card-bg);
+  display: block;
+}
+
+.fm-grid-name {
+  padding: 9px var(--space-3);
+  font-size: var(--fs-13);
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fm-grid-tag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 2px 7px;
+  font-size: var(--fs-10);
+  font-weight: 500;
+  color: #fff;
+  background: rgba(15,23,42,.5);
+  border-radius: var(--radius-sm);
+  backdrop-filter: blur(2px);
+}
+
+.fm-grid-check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .1s ease;
+  z-index: 2;
+  accent-color: var(--accent, #4f7cff);
+}
+
+.fm-grid-card:hover .fm-grid-check,
+.fm-grid-card.is-selected .fm-grid-check { opacity: 1; }
+
+.fm-grid-card.is-selected {
+  border-color: var(--accent, #4f7cff);
+  box-shadow: 0 0 0 2px rgba(79,124,255,.28), 0 8px 20px rgba(0,0,0,.14);
+}
+
+/* ⚠️ **2026-10-04 加**：文件预览的**内联形态**（owner：「pdf 和文件预览面板可否跟页面一个级别」）。
+   原来那一套是 position:fixed 的全屏浮层（避开标题栏 / 左竖条 / 侧栏）；
+   内联时它就在 .main 里 ⇒ ⭐ 位置交还文档流，那一套外边距全部作废。
+   ⚠️ 类名用**附加类**（.fm-preview-overlay.is-inline）而不是换一个类 —— 因为
+   scripts/check-overlay-registry.mjs 的判据是「JSX 里字面量写出来的、以 -overlay 结尾的 class token」，
+   写成三元表达式会让它报「幽灵条目：没有任何组件渲染」（实测撞过一次）。
+   特异性更高 ⇒ 放在文件末尾也能覆盖。 */
+.fm-preview-overlay.is-inline {
+  position: static;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  z-index: auto;
+}
+
+/* ⚠️ **2026-10-04 加**：预览顶栏的关闭按钮。
+   来由：组件的关闭方式原来只有「点空白」＋ Android 返回键 —— 而内联形态里没有“空白” ⇒
+   没有这颗按钮就退不出去（浮层形态也一并给：触屏上点空白不好点）。 */
+
+/* ⚠️ **2026-10-04 加**：文本类文件的预览（txt / htm / html / json / xml）。
+   形状借 `.fm-md-preview`：同一块内容区，只是**按源码显示**、不渲染 HTML。
+   ⚠️ 不渲染 HTML 是**有意的**：文件从外面来，里面可能有脚本，而这里是 App 里的一块。 */
+.fm-text-preview {
+  margin: 0;
+  padding: var(--space-4) 20px;
+  flex: 1;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--surface);
+  tab-size: 4;
+}
+
+/* ⚠️ **2026-10-04 加**：html 预览的「源码 ⇄ 沙箱渲染」两态。
+   ⭐ 默认源码（最安全）；⭐ 点「渲染网页」才在 sandbox="" 的 iframe 里渲染。
+   ⚠️ iframe 的 `sandbox=""` 是最严那一档：脚本一行都跑不了 ⇒ 外来 html 碰不到应用。 */
+.fm-text-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.fm-text-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.fm-text-toggle {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-12);
+  padding: var(--space-1) 10px;
+  cursor: pointer;
+}
+
+.fm-text-note {
+  color: var(--text-faint);
+  font-size: var(--fs-12);
+}
+
+.fm-html-preview {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #fff;
+}
+
+@media (max-width: 900px) {
+.file-manager {
+    padding: var(--space-4) var(--space-4) 0;
+  }
+.file-manager-head {
+    align-items: flex-start;
+  }
+.file-manager-title {
+    font-size: var(--fs-22);
+  }
+.file-manager-bigicon {
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+  }
+/* 单元格左右各收 4px：7 列共省 ≈56px，宽度 830 上下时**不用横滚就能放下** */
+  .file-manager-table th,
+  .file-manager-table td {
+    padding: var(--space-1) 10px;
+  }
+}
+
+@media (max-width: 480px) {
+.file-manager-table .fm-kind-col,
+  .file-manager-table .fm-date-col,
+  .file-manager-table .fm-date { display: none; }
+}
+
+@media (max-width: 768px) {
+.file-manager {
+    /* 桌面 `24px 32px` 的留白在 320px 上吃掉 20%。 */
+    padding: 10px 14px 0;
+  }
+/* ---------- 标题行 / 操作行拆成两行：竖排比"挤一行"更省也更清楚 ---------- */
+  .file-manager-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-1);
+    margin-bottom: var(--space-1);
+  }
+.file-manager-title-block { gap: var(--space-2); }
+/* 那个 46px 的方块图标只是装饰，而窄屏的每一像素都要向内容让位
+     （左边竖条里已经有一个文件夹图标在指示"你在文件视图"）。 */
+  .file-manager-bigicon { display: none; }
+.file-manager-title { font-size: var(--fs-18); }
+/* ---------- 操作行：一排图标按钮（视觉很轻，命中区仍是 44） ---------- */
+  .file-manager-actions { flex-wrap: wrap; gap: 2px; }
+.fm-btn {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    gap: 0;
+    justify-content: center;
+    /* 去掉边框与底色：一排 44px 的方框看着占地方，一排 18px 的字形才叫"简洁"。 */
+    border-color: transparent;
+    background: transparent;
+  }
+.fm-btn:hover { background: var(--hover); }
+.fm-btn-text { display: none; }
+.fm-btn-icon { display: block; width: 18px; height: 18px; }
+/* 没选中 = 不能被删，那这个按钮就不该在场（row 上的勾选仍然照常工作）。 */
+  .fm-btn-danger:disabled { display: none; }
+.fm-size-slider { display: none; }
+.fm-view-toggle { padding: 0; gap: 0; background: transparent; border-color: transparent; }
+.fm-view-btn { width: 44px; height: 44px; }
+/* ---------- 工具条：面包屑 + 搜索**同一行**（竖排两行白吃掉 44px 正文高度） ---------- */
+  .file-manager-toolbar {
+    flex-wrap: wrap;
+    row-gap: 0;
+    padding: 2px 0 6px;
+  }
+.fm-breadcrumb {
+    order: 1;
+    flex: 1 1 auto;
+    min-width: 0;
+    /* 深路径改为**单行横滑**：换行会把工具条顶成三行，而面包屑本来就不该吃掉正文高度。 */
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+.fm-breadcrumb::-webkit-scrollbar { display: none; }
+.fm-crumb { flex: 0 0 auto; min-height: 44px; }
+/* 「N 个文件 · 共 X · N 项」这一行统计在手机上不占位：列表本身就是那份信息，
+     而它一在场就把搜索挤到第三行（实测工具条因此高 107px）。 */
+  .fm-count { display: none; }
+.fm-search {
+    order: 2;
+    flex: 0 1 46%;
+    width: auto;
+    min-height: 44px;
+    font-size: var(--fs-14);
+  }
+/* ---------- 表格：能横滑，且只留"名字 + 大小 + 操作" ---------- */
+  .file-manager-table-wrap {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+/* `width: max-content` 是横滑的前提：`width:100%` 会把七列硬压进 292px。 */
+  .file-manager-table { width: max-content; min-width: 100%; }
+.file-manager-table th,
+  .file-manager-table td { padding: var(--space-1) 10px; }
+/* 行尾六个 20px 小按钮 → 一个 `⋯`；其余动作在动作面板里。 */
+  .file-manager-table .fm-file-actions { display: none; }
+.fm-more-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: var(--fs-18);
+    line-height: 1;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+.fm-more-btn:active { background: var(--hover); color: var(--text); }
+/* 行内"打开这个文件"的按钮：桌面上它跟着文字高度（~20px），窄屏给足 44。 */
+  .fm-name-btn { min-height: 44px; }
+/* 行首那个勾选框：**命中区是整行**（点行即选中，`tr` 上有 onClick），
+     所以它在窄屏只当"状态指示"用——`pointer-events:none` 让点击穿透到行上，
+     顺带消掉"点勾选框会不会触发两次"的疑问。视觉放大到 22px 更好认。 */
+  .file-manager-table input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+    margin: 0;
+    pointer-events: none;
+  }
+/* 表头那个「全选」不在可点行里，它是**唯一**的全选入口，命中区必须自己够大：
+     外面那个 `label` 长到 44×44（负 margin 让它不把行撑高），input 本身
+     `pointer-events:none`——点 label 就等于点它。 */
+  .file-manager-table .fm-selectall {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin: -11px;
+    cursor: pointer;
+  }
+.file-manager-table .fm-selectall input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    pointer-events: none;
+  }
+.fm-ctx.is-sheet {
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: max(var(--sab), var(--kb));
+    width: auto;
+    max-height: calc(var(--ovh) - 24px);
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    padding: var(--space-2);
+    padding-bottom: calc(var(--space-2) + var(--sab));
+    border-radius: 16px 16px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    z-index: 1600;
+  }
+.fm-ctx.is-sheet .fm-ctx-item { min-height: 48px; font-size: var(--fs-14); }
+.fm-ctx.is-sheet .fm-ctx-title { padding: 2px 10px var(--space-2); max-width: none; }
+}
+
+@media (max-width: 768px) {
+/* ---------- 文件管理：网格图块的勾选框 ----------
+     桌面上它靠 `:hover` 才显形，而**触屏没有 hover** ⇒ 手机上它既看不见、又只有 15×15；
+     图块本身的点击是"打开文件"⇒ **网格模式在手机上根本选不中任何东西**
+     （批量删除/移动都够不到）。窄屏改成：常显 + 命中区 44（外面那层 label 提供命中区，
+     见 `FileManagerView` 的 `.fm-grid-checkwrap`；桌面那层 label 不设样式、不影响布局）。 */
+  .fm-grid-checkwrap {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    cursor: pointer;
+  }
+.fm-grid-check {
+    position: static;
+    width: 20px;
+    height: 20px;
+    opacity: 1;
+    pointer-events: none;
+  }
+}
+
+@media (max-width: 768px), (max-height: 520px) {
+.fm-version-pop {
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    /* `--ovh` 已经扣掉状态栏与底部（手势条 / 键盘）：盒子在任何视口下都装得下。 */
+    max-height: calc(var(--ovh) - 24px);
+  }
+.fm-version-overlay {
+    align-items: flex-end;
+    justify-content: center;
+    /* 先重置四个方向（.ai-settings-overlay 原先有 padding-top:10vh、
+       .plugin-manager-overlay 有 padding:4vh 24px），再加安全区。 */
+    padding: var(--space-3);
+    padding-top: calc(var(--space-3) + var(--sat));
+    padding-bottom: calc(var(--space-3) + max(var(--sab), var(--kb)));
+    padding-left: calc(var(--space-3) + var(--sal));
+    padding-right: calc(var(--space-3) + var(--sar));
+  }
+.fm-version-pop {
+    position: static;
+    transform: none;
+    width: 100%;
+    max-width: 100%;
+    /* 顶部留 24px：让用户看得见"后面还有内容"。`--ovh` 里已经扣掉了状态栏
+       与底部（手势条 / 键盘），所以这里只需要那个 24px 的呼吸位。 */
+    max-height: calc(var(--ovh) - 24px);
+    border-radius: 16px 16px var(--radius-lg) var(--radius-lg);
+  }
+/* ---------- 4b. 文件预览浮层：窄屏整屏（2026-09-15 第三轮） ----------
+     桌面它是"避开左竖条 + 侧栏"的**内容区**浮层
+     （基础规则 `left: calc(--activity-w + --sidebar-w)`）——但**窄屏的侧栏早已收成抽屉**，
+     `--sidebar-w` 却仍是桌面的 240px，于是 360px 视口上 `left` 算成 48 + 240 = **288px**，
+     整个浮层只剩 **72px 宽**（实测 72×640）。这与设置面板的 `min-width:640px` 是**同一类**：
+     "功能不可用，而且不报错"——文件预览在手机上等于打不开。
+     ⚠️ 而且它**骗过了旧的几何断言**：`x 288..360` 的四边**全都在视口里**，
+     所以那一轮 900+ 条断言全绿（见 `verify-mobile-overlays.mjs` 的 (1b)）。
+
+     窄屏按 §4.1.1 走"大面板 → 全屏 + 内部滚动"。让位方式与 `.set-overlay` 一致：
+     **给遮罩加 padding**（遮罩是 `position:fixed`，它不跟着 `.app` 的 padding 走），
+     一处同时管住状态栏 / 手势条 / 软键盘 / 左右安全区。 */
+  .fm-preview-overlay {
+    left: 0;
+    right: 0;
+    /* 基础规则是 `top: var(--titlebar-h)`（自绘标题栏）；窄屏没有标题栏，改由 --sat 让位。 */
+    top: 0;
+    bottom: 0;
+    padding: var(--sat) var(--sar) max(var(--sab), var(--kb)) var(--sal);
+  }
+.fm-preview {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+  }
+/* §4.1.2 第 1 条：内容区**唯一**可滚 + 不把滚动惯性传给外层。
+     `.fm-preview-body` 已经是 `flex:1; min-height:0; overflow:auto`，
+     缺的只是那道 `overscroll-behavior`。 */
+  .fm-preview-body {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+/* §4.1.2 第 3 条：命中区 ≥44×44。图片预览右上角那组（旋转 / 查看原图）
+     桌面上是 32×32，触屏上点不中——它是这一层的主要操作，不只是"装饰按钮"。 */
+  .fm-img-btn,
+  .fm-img-original {
+    min-width: 44px;
+    min-height: 44px;
+  }
+/* 图片预览那条提示写的是**桌面手势**（滚轮缩放 / 拖动平移）：触屏上没有滚轮，
+     留着只会被截成"滚轮缩放 · 拖…"，既不好看也没用 ⇒ 窄屏不显示它（按钮组照旧）。
+     ⚠️ 这一条**不是**"窄屏没有缩放"的声明：图片预览今天确实**只接了 wheel**
+     （触屏放不大）—— 那是另一件事（捏合缩放）。真接上时，这里要改成
+     "只显示百分比"（`.fm-img-hint` 里那个 zoom 读数），别让这条 `display:none`
+     变成一句"窄屏故意没有缩放"的假话。 */
+  .fm-img-hint {
+    display: none;
+  }
+.fm-version-close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+.fm-version-pop button {
+    min-height: 44px;
+  }
+}
+}
