@@ -134,6 +134,8 @@ import "./styles/selection-toolbar.css";
 import "./styles/mermaid.css";
 // S4-3（2026-11-01）：表格工具条域（`.table-menu*`，8 条规则，块内无 @media）。
 import "./styles/table-menu.css";
+// S4-4（2026-11-01）：插件管理器域（`.pm-*` / `.plugin-manager*` / `.plugin-menu*`）。响应式覆盖也一并抽走。
+import "./styles/plugin-manager.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

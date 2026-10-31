@@ -1,0 +1,1663 @@
+/* S4-4（2026-11-01）：域抽取器搬出的**插件管理器域**（`.pm-*` / `.plugin-manager*` / `.plugin-menu-*`）。
+
+- 选择器混排（`.pm-x, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- 核心规则在前、**响应式覆盖（来自混合 @media，只抽命中域的规则并重建同条件块）在后** —— 保持原相对顺序。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* 插件命令分组：与内置项之间留一道分隔线，并标出"这是插件给的"（用户才知道谁在动他的笔记）。
+   样式写成**与容器无关**的一份：同一组按钮既在页面列表的行菜单里（.tree-node-menu），
+   也在文件列表的右键菜单里（.fm-ctx）——两处各写一套必然长得不一样。 */
+.plugin-menu-title {
+  margin: 6px var(--space-1) 2px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: var(--fs-11);
+  letter-spacing: 0.02em;
+}
+
+/* 只写**结构**：字号/内边距/圆角交给各宿主自己的项类（`.tree-node-menu button`、
+   `.fm-ctx-item`、`.toolbar-menu-item`）——三个入口里都该长得像那个菜单里的原生项，
+   而不是三处一样、三处都别扭。 */
+.plugin-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s ease, color 0.1s ease, transform 0.1s ease;
+}
+
+.plugin-menu-item:hover {
+  background: var(--hover);
+  color: var(--text);
+  transform: translateX(2px);
+}
+
+.plugin-menu-ic {
+  width: 16px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-12);
+}
+
+.plugin-menu-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.plugin-menu-badge {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+  color: var(--text-faint);
+  font-size: var(--fs-10-5);
+  font-weight: 400;
+}
+
+/* 插件声明扩张后的提示条（components/PluginManager.tsx）：宿主已经暂停它，
+   这里说清新增了什么并给出唯一的放行按钮。 */
+.pm-approval {
+  margin-top: var(--space-2);
+  padding: 10px var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--danger);
+  background: var(--hover);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.pm-approval-text {
+  font-size: var(--fs-12);
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.pm-approval-btn {
+  border: 1px solid var(--danger);
+  background: transparent;
+  color: var(--danger);
+  border-radius: var(--radius-sm);
+  padding: 5px var(--space-3);
+  font-size: var(--fs-12);
+  cursor: pointer;
+}
+
+.pm-approval-btn:hover {
+  background: var(--card-bg);
+}
+
+/* Plugin manager */
+.plugin-manager-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  /* 遮挡要**足够厚**。原先 0.34 太透：弹窗右侧会露出被压在下面的设置面板一小条
+     （开关 + 半截文字），看起来像"内容被裁掉了"——实际是两层模态叠在一起。
+     这不是靠调透明度能优雅解决的问题，所以遮严一点，并加一层模糊。 */
+  background: rgba(10, 14, 26, 0.62);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh var(--space-5);
+}
+
+.plugin-manager {
+  /* 520px 装不下插件索引那一块的真实内容：索引里必须有 56 字符的 base64 公钥、
+     以及带 sha256/指纹/权限理由的条目 —— 都是**机器串**，被折行就等于没法核对。
+     1120px 让索引条目与插件卡片都能双列排布（原先 680px 时 18 个条目叠成一条
+     3000px 的竖列，每个条目的正文又比一列窄得多，白扔一半宽度）；
+     仍用 `min()` 对窄窗口收窄，所以小窗口不会溢出。 */
+  width: min(1120px, calc(100vw - 56px));
+  /* 头顶那条固定、只有正文滚动（见 .pm-body），所以这里是弹性列而不是滚动容器。 */
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--shadow-xl);
+  padding: 0;
+}
+
+.pm-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  /* 允许换行：窄窗口下按钮排落到第二行，而不是把标题压成「插件 / 管理」两行。 */
+  flex-wrap: wrap;
+  row-gap: 10px;
+  gap: var(--space-3);
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  /* 从主题强调色的淡底渐变到面板底色：给弹窗一个"顶部有光"的层次，
+     同时在两种主题下都只是很轻的一层（用的是各自主题里的 --accent-soft）。 */
+  background: linear-gradient(180deg, var(--accent-soft), var(--surface));
+}
+
+.pm-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: 6px;
+  gap: 9px;
+  font-size: var(--fs-15-5);
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* 标题文字**不许折行**（见上面那句注释）；徽章与状态胶囊则允许折到下一行。 */
+.pm-title-text { white-space: nowrap; }
+
+.pm-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 18px 18px;
+}
+
+.pm-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.pm-actions button {
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  padding: var(--space-1) 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pm-actions button:hover {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+
+.pm-actions .pm-close {
+  color: var(--text-faint);
+  background: transparent;
+  border: none;
+  font-size: var(--fs-16);
+}
+
+.pm-empty {
+  color: var(--text-faint);
+  font-size: var(--fs-13);
+  padding: 20px 0;
+  text-align: center;
+}
+
+.pm-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.pm-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.pm-item-name {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pm-item-ver {
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+.pm-item-desc {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  margin: 2px 0;
+}
+
+.pm-item-cmds {
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+}
+
+.pm-item-actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+.pm-item-actions button {
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  padding: var(--space-1) 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pm-item-actions button:hover {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+
+.pm-item-actions button.danger {
+  color: var(--danger);
+}
+
+.pm-item-actions button.danger:hover {
+  background: var(--danger-soft);
+}
+
+/* 事实清单（M11.11b 治理）：只摆事实，不评分 */
+.pm-facts {
+  flex-basis: 100%;
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+  font-size: var(--fs-11-5);
+  line-height: 1.7;
+  color: var(--text-dim);
+}
+
+.pm-facts-note {
+  color: var(--text-faint);
+  margin-bottom: 6px;
+  line-height: 1.6;
+}
+
+.pm-facts-empty {
+  color: var(--text-faint);
+}
+
+.pm-facts-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.pm-facts-key {
+  flex: none;
+  width: 34px;
+  color: var(--text-faint);
+}
+
+.pm-facts-val {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.pm-facts-item {
+  margin-top: var(--space-1);
+  padding-left: 42px;
+  position: relative;
+}
+
+.pm-facts-item::before {
+  content: "·";
+  position: absolute;
+  left: 34px;
+  color: var(--text-faint);
+}
+
+/* 撤回记忆（M11.11b）：已装插件被索引撤回 —— 宿主已拦下运行，必须一眼看见 */
+.pm-revoked {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: 6px;
+  padding: 6px var(--space-2);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+}
+
+/* 用户已经明确表态过的那一条：不再拦，但也不装作没这回事——用中性色，别继续报警 */
+.pm-revoked-ignored {
+  border-color: var(--border);
+  background: var(--hover);
+}
+
+.pm-revoked-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-11-5);
+  line-height: 1.6;
+  color: var(--danger);
+}
+
+.pm-revoked-ignored .pm-revoked-text {
+  color: var(--text-dim);
+}
+
+.pm-revoked-btn {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--fs-11-5);
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pm-revoked-btn:hover {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+
+/* 「从索引安装」（M11.11a）：来源、签名状态、权限逐条摊开 */
+.pm-index-fold {
+  margin: var(--space-1) 0 10px;
+}
+
+.pm-index-fold > summary {
+  cursor: pointer;
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  padding: var(--space-1) 0;
+}
+
+.pm-index-fold > summary:hover {
+  color: var(--text);
+}
+
+/* 多源订阅（M11.11a）：一组索引 URL，可增删、可逐个检查——不是商店 */
+.pm-subs {
+  margin: var(--space-2) 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px var(--space-2);
+}
+
+.pm-subs-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-11-5);
+  color: var(--text-dim);
+}
+
+.pm-subs-head > span {
+  flex: 1;
+}
+
+.pm-subs-check {
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: var(--fs-11-5);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pm-subs-check:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+
+.pm-subs-check:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.pm-subs-empty {
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+  margin-top: 5px;
+  line-height: 1.6;
+}
+
+.pm-sub {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.pm-sub-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.pm-sub-open {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.pm-sub-open:hover {
+  text-decoration: underline;
+}
+
+.pm-sub-status {
+  font-size: var(--fs-11);
+  color: var(--text-dim);
+}
+
+/* 上次失败：用告警色，并且**不显示可更新数**（那是上次成功时的旧数字） */
+.pm-sub-status.warn {
+  color: var(--danger);
+}
+
+.pm-sub-sig {
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+}
+
+.pm-sub-del {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--fs-14);
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1;
+}
+
+.pm-sub-del:hover {
+  color: var(--danger);
+}
+
+.pm-index-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pm-index-save {
+  flex: none;
+}
+
+.pm-index-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: var(--space-2) 0 var(--space-1);
+}
+
+/* 地址一个人占满一行（它最长、也最容易被截断读错），公钥与按钮排第二行。 */
+.pm-index-url {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.pm-index-key {
+  /* 公钥被粘贴掉行过三次（真机上表现为"公钥不合法"）——所以给它**尽量宽**：
+     `flex: 1 1 100%` 独占一行，不与按钮抢宽度。 */
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.pm-index-form input {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-12);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+}
+
+/* 地址与公钥都是**机器串**（URL / base64），用等宽字体：
+   一是像 l/1、O/0、+/t 这种一眼能分清，二是等宽下 56 字符的宽度可预测，
+   用户能直接看出"我粘进去的是不是完整的一条"。 */
+.plugin-manager .pm-index-url,
+.plugin-manager .pm-index-key {
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  /* 比默认输入框高一点：点上去更容易落准，也更好读。 */
+  padding: 6px var(--space-2);
+  font-size: var(--fs-12);
+  letter-spacing: 0.2px;
+}
+
+.pm-index-form button {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  padding: var(--space-1) 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pm-index-form button:hover {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+
+.pm-index-form button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.pm-index-hint {
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+.pm-index-error {
+  margin-top: var(--space-2);
+  font-size: var(--fs-12);
+  color: var(--danger);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.pm-index-source {
+  margin-top: 10px;
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+}
+
+/* 签名状态：没验过必须是黄的那种"没验"，不能和"验过了"长得一样 */
+.pm-index-sig {
+  margin-top: var(--space-1);
+  font-size: var(--fs-11-5);
+  line-height: 1.5;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.pm-index-sig.ok {
+  color: var(--text-dim);
+  background: var(--hover);
+}
+
+.pm-index-sig.warn {
+  color: var(--warning);
+  background: var(--danger-soft);
+}
+
+.pm-index-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.pm-index-item-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.pm-index-item-title {
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pm-index-badge {
+  font-size: var(--fs-10);
+  font-weight: 600;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+}
+
+.pm-index-item-meta {
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+.pm-index-item-desc {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
+.pm-index-item-perms {
+  font-size: var(--fs-11-5);
+  color: var(--text-dim);
+  margin-top: var(--space-1);
+  line-height: 1.6;
+}
+
+.pm-index-item-sig {
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+  margin-top: 3px;
+}
+
+/* 索引条目里的「社区讨论 / 主页」。做成小按钮而不是 <a>：打开动作统一走平台的 opener
+   （Web 版是新标签页、桌面版是系统浏览器），不在这里各自实现一套。 */
+.pm-index-item-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.pm-index-item-link {
+  font-size: var(--fs-11);
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.pm-index-item-link:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.pm-index-item-installed {
+  font-size: var(--fs-11-5);
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
+.pm-index-item-blocked {
+  font-size: var(--fs-11-5);
+  color: var(--danger);
+  margin-top: 3px;
+}
+
+.pm-index-item > button {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  padding: var(--space-1) 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pm-index-item > button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+
+.pm-index-item > button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 插件日志面板（__log / __toast 的输出） */
+.pm-logs {
+  flex-basis: 100%;
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+  max-height: 220px;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--fs-11-5);
+}
+
+.pm-log {
+  display: flex;
+  gap: var(--space-2);
+  padding: 2px 0;
+  line-height: 1.5;
+}
+
+.pm-log-time {
+  color: var(--text-faint);
+  flex: none;
+}
+
+.pm-log-level {
+  flex: none;
+  width: 38px;
+  color: var(--text-dim);
+}
+
+.pm-log-warn .pm-log-level {
+  color: var(--cat-orange);
+}
+
+.pm-log-error .pm-log-level {
+  color: var(--danger);
+}
+
+.pm-log-msg {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.pm-log-empty {
+  color: var(--text-faint);
+}
+
+.pm-log-empty code {
+  background: var(--hover);
+  padding: 0 var(--space-1);
+  border-radius: 3px;
+}
+
+.pm-log-actions {
+  margin-top: var(--space-2);
+}
+
+.pm-log-actions button {
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pm-log-actions button:hover {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+
+/* 插件权限清单（id → 人类可读标题 + 作者给的理由） */
+.pm-item-perms {
+  margin-top: var(--space-1);
+  font-size: var(--fs-11-5);
+  color: var(--text-faint);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.pm-perm {
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  border-radius: 3px;
+  padding: 0 5px;
+  cursor: help;
+}
+
+.pm-perm-high {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.pm-perm-baseline {
+  color: var(--cat-orange);
+}
+
+.pm-log-scope {
+  color: var(--text-faint);
+}
+
+/* 插件校验面板（作者工具链：一次列出全部问题，与加载器同源） */
+.pm-autoreload {
+  margin-left: var(--space-2);
+  font-size: var(--fs-11);
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+.pm-verify {
+  flex-basis: 100%;
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+  max-height: 260px;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--fs-11-5);
+}
+
+.pm-verify-head {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  margin-bottom: var(--space-1);
+}
+
+.pm-verify-ok {
+  color: var(--cat-green);
+  flex: none;
+}
+
+.pm-verify-bad {
+  color: var(--danger);
+  flex: none;
+}
+
+.pm-verify-meta,
+.pm-verify-line {
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+.pm-verify-warn {
+  color: var(--cat-orange);
+  line-height: 1.6;
+}
+
+.pm-problem {
+  display: flex;
+  gap: var(--space-2);
+  padding: 2px 0;
+  line-height: 1.5;
+}
+
+.pm-problem-code {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.pm-problem-msg {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.pm-problem-file {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.pm-problem-error .pm-problem-msg {
+  color: var(--danger);
+}
+
+.pm-problem-warning .pm-problem-msg {
+  color: var(--cat-orange);
+}
+
+.pm-problem-ok {
+  color: var(--text-dim);
+}
+
+/* 插件设置（用户在宿主界面填，插件只读） */
+.pm-settings {
+  flex-basis: 100%;
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+  font-size: var(--fs-12);
+}
+
+.pm-setting-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px 0;
+}
+
+.pm-setting-label {
+  flex: none;
+  width: 34%;
+  color: var(--text-dim);
+}
+
+.pm-setting-scope {
+  margin-left: 6px;
+  font-size: var(--fs-10-5);
+  color: var(--text-faint);
+}
+
+.pm-setting-row input[type="text"],
+.pm-setting-row input[type="number"],
+.pm-setting-row select {
+  flex: 1;
+  min-width: 0;
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-12);
+  padding: 3px 7px;
+}
+
+.pm-setting-save {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: var(--fs-11-5);
+  padding: 3px 9px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pm-setting-save:hover { color: var(--text); background: var(--hover-strong); }
+
+.pm-setting-warn {
+  margin-top: 6px;
+  color: var(--cat-orange);
+  line-height: 1.5;
+}
+
+/* ===================================================================
+   插件管理面板 · 重做（2026-09-12）
+   ===================================================================
+   上一版的问题（用户截图）：680px 宽的弹窗里塞着两种长列表，且全是 11–12px 的同权重文字；
+   索引那 18 条叠成一条约 3000px 的竖列；卡片抬头只有名字，看不出"启没启用"。
+
+   还有一处真 bug：这套样式用的是 `var(--brand)` / `var(--brand-soft)`，而这两个令牌
+   **在 App.css 里根本不存在**（主题用的是 `--accent` / `--accent-soft`）——
+   于是 `var(--brand, #2F6BFF)` 永远取兜底值：亮色下与 `--accent`(#3370ff) 差一点，
+   暗色下干脆完全不跟主题走。**本块一律只用真实存在的令牌。**
+
+   布局：头部固定 + 正文滚动（`.pm-body`）；插件卡片与索引条目都走自适应网格，
+   窄窗口自动收成单列。覆盖仍用 `.plugin-manager .pm-*`（两个类）压过基础规则，不写 !important。
+   =================================================================== */
+
+/* ---- 卡片网格：宽窗口按 minmax 自己算列数，窄窗口自然一列 ---- */
+.plugin-manager .pm-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: var(--space-3);
+  align-items: start;
+}
+
+/* ---- 插件卡片 ---- */
+.plugin-manager .pm-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  background: var(--card-bg);
+  /* 左侧那道色条是"一眼看出状态"：绿=启用、灰=禁用（下面按 pm-on/pm-off 覆盖） */
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: 14px;
+  padding: 13px 15px 11px;
+  box-shadow: var(--shadow-xs);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.plugin-manager .pm-item:hover {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.plugin-manager .pm-item.pm-on { border-left-color: var(--success); }
+
+.plugin-manager .pm-item.pm-off { border-left-color: var(--border-strong); }
+
+.plugin-manager .pm-item-info { flex: 1 1 100%; min-width: 0; }
+
+/* 抬头：名字 + 版本 + 运行档在左，启停状态在右 */
+.plugin-manager .pm-item-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.plugin-manager .pm-item-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  font-size: var(--fs-15);
+  font-weight: 700;
+  letter-spacing: .2px;
+  color: var(--text);
+}
+
+/* 徽章三件套：版本（中性等宽）、运行档（蓝/紫）、状态（绿/灰）。
+   底色一律取主题里已有的"软色"令牌，两种主题各自成立。 */
+.plugin-manager .pm-item-ver,
+.plugin-manager .pm-item-runtime,
+.plugin-manager .pm-state {
+  flex: none;
+  font-size: var(--fs-11);
+  font-weight: 600;
+  line-height: 1.7;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+
+.plugin-manager .pm-item-ver {
+  color: var(--text-dim);
+  background: var(--chip-bg);
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+}
+
+.plugin-manager .pm-item-runtime.pm-rt-code { color: var(--accent); background: var(--accent-soft); }
+
+.plugin-manager .pm-item-runtime.pm-rt-decl { color: var(--cat-purple); background: var(--cat-purple-soft); }
+
+.plugin-manager .pm-state { display: inline-flex; align-items: center; gap: 5px; }
+
+.plugin-manager .pm-state::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.plugin-manager .pm-state-on { color: var(--success); background: var(--cat-green-soft); }
+
+.plugin-manager .pm-state-off { color: var(--text-faint); background: var(--chip-bg); }
+
+/* 机器可核对的那一行：id 用等宽（要和插件目录名对上），命令数用词 */
+.plugin-manager .pm-item-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: 7px;
+}
+
+.plugin-manager .pm-item-id {
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+  background: var(--hover);
+  border-radius: var(--radius-xs);
+  padding: 1px 6px;
+}
+
+.plugin-manager .pm-item-cmds { font-size: var(--fs-11-5); color: var(--text-faint); }
+
+/* 描述是正文里最该好读的一段：给足行高 */
+.plugin-manager .pm-item-desc {
+  margin-top: var(--space-2);
+  font-size: var(--fs-12-5);
+  line-height: 1.65;
+  color: var(--text-dim);
+}
+
+/* 权限：折行多列 —— 这是"12 项各占一行、把按钮一路往下推"那堵墙的正解 */
+.plugin-manager .pm-item-perms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+}
+
+.plugin-manager .pm-perm {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  /* 权限胶囊做成小圆角药丸（基础规则是 3px 直角）：一排权限要像一排标签，而不是一排小方块 */
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  border-radius: var(--radius-full);
+  padding: 1px 9px;
+  cursor: help;
+}
+
+/* 操作条：收到底部一条，与正文用虚线分开；破坏性动作靠右并拉开距离 */
+.plugin-manager .pm-item-actions {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: flex-end;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.plugin-manager .pm-item-actions button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: inherit;
+  transition: color var(--transition-fast), border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.plugin-manager .pm-item-actions button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.plugin-manager .pm-item-actions button.danger { color: var(--danger); margin-left: var(--space-1); }
+
+.plugin-manager .pm-item-actions button.danger:hover {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* 卡片里展开的那些面板（日志 / 活动 / 事实 / 校验 / 设置）统一成内嵌块 */
+.plugin-manager .pm-facts,
+.plugin-manager .pm-logs,
+.plugin-manager .pm-verify,
+.plugin-manager .pm-settings {
+  flex: 1 1 100%;
+  margin-top: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 11px var(--space-3);
+  font-size: var(--fs-12);
+}
+
+/* 撤回 / 审批这类"要你看一眼"的提示：做成带底色与左色条的告警块，而不是一行彩字 */
+.plugin-manager .pm-revoked {
+  border-radius: 10px;
+  padding: 9px 11px;
+  border-left: 3px solid var(--danger);
+  background: var(--danger-soft);
+}
+
+.plugin-manager .pm-revoked.pm-revoked-ignored {
+  border-left-color: var(--warning);
+  background: var(--cat-orange-soft);
+}
+
+/* 警告与基线授权提示：同样的告警块语言 */
+.plugin-manager .pm-perm-baseline,
+.plugin-manager .pm-problem-warning {
+  background: var(--cat-orange-soft);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius-md);
+  padding: 7px 10px;
+  color: var(--text-dim);
+}
+
+/* ---- 折叠区（卡片里的权限 / 「从索引安装」） ---- */
+.plugin-manager .pm-perms-fold { margin-top: var(--space-2); }
+
+.plugin-manager .pm-perms-fold > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  font-size: var(--fs-12-5);
+  font-weight: 600;
+  color: var(--text-faint);
+  padding: 3px 0;
+  list-style: none;
+}
+
+.plugin-manager .pm-perms-fold > summary::-webkit-details-marker { display: none; }
+
+.plugin-manager .pm-perms-fold > summary::before { content: "▸"; font-size: var(--fs-10); }
+
+.plugin-manager .pm-perms-fold[open] > summary::before { content: "▾"; }
+
+.plugin-manager .pm-perms-fold > summary:hover { color: var(--accent); }
+
+.plugin-manager .pm-perms-fold[open] > summary { margin-bottom: 6px; }
+
+.plugin-manager .pm-perms-fold[open] .pm-item-perms { margin-top: 7px; }
+
+.plugin-manager .pm-fold-warn {
+  font-size: var(--fs-11);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--cat-orange-soft);
+  color: var(--warning);
+  font-weight: 700;
+}
+
+/* ---- 「从索引安装」整块是一张分区卡 ---- */
+.plugin-manager .pm-index-fold {
+  margin: 0 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.plugin-manager .pm-index-fold > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 11px 14px;
+  font-size: var(--fs-13);
+  font-weight: 700;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  background: var(--card-bg);
+}
+
+.plugin-manager .pm-index-fold > summary::-webkit-details-marker { display: none; }
+
+.plugin-manager .pm-index-fold > summary::before { content: "▸"; font-size: var(--fs-10); color: var(--text-faint); }
+
+.plugin-manager .pm-index-fold[open] > summary::before { content: "▾"; }
+
+.plugin-manager .pm-index-fold > summary:hover { color: var(--accent); }
+
+.plugin-manager .pm-index-fold[open] > summary { border-bottom: 1px solid var(--border); }
+
+.plugin-manager .pm-index-fold[open] > .pm-index { padding: var(--space-3) 14px 14px; }
+
+/* ---- 订阅列表与索引表单 ---- */
+.plugin-manager .pm-subs {
+  margin: 0 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 10px var(--space-3);
+  background: var(--card-bg);
+}
+
+.plugin-manager .pm-subs-head { font-size: var(--fs-12); font-weight: 600; color: var(--text); }
+
+.plugin-manager .pm-sub { border-top: 1px solid var(--border); margin-top: var(--space-2); padding-top: var(--space-2); }
+
+.plugin-manager .pm-sub-open { font-size: var(--fs-12-5); font-weight: 600; color: var(--accent); }
+
+.plugin-manager .pm-sub-open:hover { text-decoration: underline; }
+
+.plugin-manager .pm-sub-status { color: var(--text-dim); }
+
+.plugin-manager .pm-sub-sig { color: var(--text-faint); }
+
+.plugin-manager .pm-index-form { gap: var(--space-2); margin: 0 0 var(--space-2); }
+
+.plugin-manager .pm-index-form input {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-12);
+  padding: 7px 9px;
+}
+
+.plugin-manager .pm-index-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.plugin-manager .pm-index-form button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  padding: 7px var(--space-3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: inherit;
+  transition: color var(--transition-fast), border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.plugin-manager .pm-index-form button:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.plugin-manager .pm-index-form button:disabled { opacity: .5; cursor: default; }
+
+.plugin-manager .pm-index-hint { font-size: var(--fs-11-5); line-height: 1.6; color: var(--text-faint); }
+
+.plugin-manager .pm-index-source { margin-top: var(--space-3); font-size: var(--fs-12); color: var(--text-dim); }
+
+/* 签名状态：**没验过**必须是"没验"的样子（暖色告警条），不能和"验过了"长得一样 */
+.plugin-manager .pm-index-sig {
+  margin-top: var(--space-2);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  border-left: 3px solid var(--warning);
+  background: var(--cat-orange-soft);
+  color: var(--text-dim);
+}
+
+.plugin-manager .pm-index-sig.ok {
+  border-left-color: var(--success);
+  background: var(--cat-green-soft);
+}
+
+.plugin-manager .pm-index-sig.warn {
+  border-left-color: var(--warning);
+  background: var(--cat-orange-soft);
+}
+
+/* ---- 索引条目：同样是网格。18 个叠成一列时正文只有一列宽，读起来像流水账 ---- */
+.plugin-manager .pm-index-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 10px;
+  margin-top: var(--space-3);
+  align-items: start;
+}
+
+.plugin-manager .pm-index-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 11px var(--space-3);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.plugin-manager .pm-index-item:hover { border-color: var(--border-strong); box-shadow: var(--shadow-xs); }
+
+.plugin-manager .pm-index-item-main { flex: 1; min-width: 0; }
+
+.plugin-manager .pm-index-item-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  font-size: var(--fs-13-5);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.plugin-manager .pm-index-item-meta { margin-top: var(--space-1); font-size: var(--fs-11); color: var(--text-faint); }
+
+.plugin-manager .pm-index-item-desc {
+  margin-top: 7px;
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+/* 权限与理由：一条一条列出来，左边一条细线表示"这些都属于上面那个插件" */
+.plugin-manager .pm-index-item-perms {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 7px;
+  padding-left: 9px;
+  border-left: 2px solid var(--border);
+  font-size: var(--fs-11-5);
+  line-height: 1.6;
+  color: var(--text-faint);
+}
+
+.plugin-manager .pm-index-item-sig { margin-top: 7px; font-size: var(--fs-11-5); color: var(--text-faint); }
+
+.plugin-manager .pm-index-item-sig.warn { color: var(--warning); }
+
+.plugin-manager .pm-index-item-installed { margin-top: 6px; font-size: var(--fs-11-5); color: var(--accent); }
+
+.plugin-manager .pm-index-item-blocked { margin-top: 6px; font-size: var(--fs-11-5); color: var(--text-faint); }
+
+.plugin-manager .pm-index-item-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+
+.plugin-manager .pm-index-item-link {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--fs-11-5);
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  font-family: inherit;
+  transition: color var(--transition-fast), border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.plugin-manager .pm-index-item-link:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* 条目的动作：描边按钮（18 条都填成实心蓝会吵），悬停才填色 */
+.plugin-manager .pm-index-item > button {
+  flex: none;
+  align-self: flex-start;
+  border: 1px solid var(--accent);
+  background: var(--surface);
+  color: var(--accent);
+  font-size: var(--fs-12);
+  font-weight: 700;
+  padding: 6px var(--space-3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.plugin-manager .pm-index-item > button:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.plugin-manager .pm-index-item > button:disabled {
+  border-color: var(--border);
+  background: var(--hover);
+  color: var(--text-faint);
+  font-weight: 600;
+  cursor: default;
+}
+
+.plugin-manager .pm-index-badge {
+  font-size: var(--fs-11);
+  font-weight: 700;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+/* ---- 头部零件 ---- */
+.plugin-manager .pm-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 9px;
+  color: var(--on-accent);
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  box-shadow: var(--shadow-sm);
+}
+
+.plugin-manager .pm-count {
+  flex: none;
+  font-size: var(--fs-11-5);
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-full);
+  padding: 1px 9px;
+}
+
+.plugin-manager .pm-autoreload {
+  flex: none;
+  font-size: var(--fs-11-5);
+  font-weight: 600;
+  color: var(--warning);
+  background: var(--cat-orange-soft);
+  border-radius: var(--radius-full);
+  padding: 1px 9px;
+}
+
+.plugin-manager .pm-actions { flex: none; flex-wrap: wrap; justify-content: flex-end; }
+
+.plugin-manager .pm-actions button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  padding: 6px 11px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: inherit;
+  transition: color var(--transition-fast), border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.plugin-manager .pm-actions button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.plugin-manager .pm-actions .pm-close {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--fs-19);
+  line-height: 1;
+  border-radius: var(--radius-md);
+}
+
+.plugin-manager .pm-actions .pm-close:hover { color: var(--text); background: var(--hover-strong); }
+
+/* ---- 滚动条：默认那条又宽又亮，和面板不搭 ---- */
+.plugin-manager .pm-body {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.plugin-manager .pm-body::-webkit-scrollbar { width: 10px; }
+
+.plugin-manager .pm-body::-webkit-scrollbar-track { background: transparent; }
+
+.plugin-manager .pm-body::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 3px solid var(--surface);
+  border-radius: var(--radius-full);
+}
+
+.plugin-manager .pm-body::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
+
+/* == 设置页「管理插件」按钮 == */
+.pm-open-btn {
+  margin-left: auto;
+  padding: 5px var(--space-3);
+  font-size: var(--fs-12-5);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border, #e5e7eb);
+  background: var(--surface, #fff);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color .18s ease, color .18s ease;
+}
+
+.pm-open-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+@media (max-width: 720px) {
+.plugin-manager-overlay { padding: 2vh 10px; }
+.plugin-manager { width: calc(100vw - 20px); max-height: 96vh; border-radius: 14px; }
+.plugin-manager .pm-head { padding: var(--space-3) 13px; }
+.plugin-manager .pm-body { padding: var(--space-3) 13px 14px; }
+.plugin-manager .pm-list { grid-template-columns: 1fr; }
+.plugin-manager .pm-index-list { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 768px), (max-height: 520px) {
+.plugin-manager {
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    /* `--ovh` 已经扣掉状态栏与底部（手势条 / 键盘）：盒子在任何视口下都装得下。 */
+    max-height: calc(var(--ovh) - 24px);
+  }
+/* `minmax(360px, 1fr)` 在 342px 的容器里会撑出横向溢出（360 > 342）。 */
+  .plugin-manager .pm-list,
+  .plugin-manager .pm-index-list {
+    grid-template-columns: 1fr;
+  }
+.plugin-manager .pm-body,
+  .plugin-manager .pm-head {
+    padding-left: 13px;
+    padding-right: 13px;
+  }
+.plugin-manager-overlay {
+    padding: var(--sat) var(--sar) max(var(--sab), var(--kb)) var(--sal);
+    place-items: stretch;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+.plugin-manager {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    border-radius: 0;
+    border: none;
+    /* 桌面上的 `resize: both` 在手机上没有意义，而且会把 min-width 一起带回来。 */
+    resize: none;
+  }
+.pm-body {
+    overscroll-behavior-y: contain;
+    padding-bottom: 20px;
+  }
+.plugin-manager .pm-close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+.plugin-manager button {
+    min-height: 44px;
+  }
+.plugin-manager .pm-close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+}
