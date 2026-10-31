@@ -26497,3 +26497,55 @@ button.mset-row:focus-visible {
 .properties-body { row-gap: 2px; grid-auto-rows: minmax(28px, auto); }
 .properties-body .prop-name { line-height: 1.35; }
 .prop-value-source .prop-note { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── 属性区·按设计稿收口（2026-10-31）────────────────────────────────────
+   设计稿：名字列 62px / 名字 12.5px / 值 13px / 标签 22px / 系统信息带分隔线。
+   ⚠️ 关键结构约束：网格只认 `.properties-body` 的**直接孩子**——原来用后代选择器
+   `.properties-body .prop-row { display: contents }`，会把 `<details>` 里的系统行也拆成网格项，
+   而 `<details>` 自己是网格项、被塞进第 1 列 ⇒ 名字列被系统信息的文本撑宽、值列被推到右边。
+   ⇒ 改成 `>` 直接子代 + details 跨满整行。 */
+.properties-body > .prop-row { display: contents; }
+.properties-body > .prop-system { grid-column: 1 / -1; }
+.prop-system { margin-top: 6px; padding-top: 2px; border-top: 1px solid var(--border); }
+.prop-system > summary {
+  font-size: 12px;
+  color: var(--text-faint);
+  padding: 4px 0;
+  cursor: pointer;
+  list-style: none;
+}
+.prop-system > summary::-webkit-details-marker { display: none; }
+.prop-system > summary::before { content: "▸ "; font-size: 9px; }
+.prop-system[open] > summary::before { content: "▾ "; }
+/* 系统行恢复 flex（名字定宽 + 值自适应）——它们**不是**网格项 */
+.prop-system .prop-row-system {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 26px;
+}
+.prop-system .prop-row-system .prop-name { flex: 0 0 62px; width: 62px; }
+.prop-system .prop-row-system .prop-value-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 字体与密度（对齐设计稿：名字 12.5 / 值 13 / 行高 30） */
+.properties-body { padding: 4px 16px 10px; grid-auto-rows: minmax(30px, auto); row-gap: 2px; }
+.properties-body .prop-name { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
+.properties-body .prop-value,
+.properties-body .prop-empty,
+.properties-body .prop-person,
+.properties-body .prop-temporal { font-size: 13px; }
+.properties-body .tag-chip { height: 22px; padding: 0 9px; font-size: 12px; }
+.properties-toggle-title { font-size: 12.5px; font-weight: 600; color: var(--text-dim); }
+.prop-add-head { font-size: 12px; color: var(--text-faint); }
+.properties-body .prop-value-source .prop-link { font-size: 13px; }
+
+/* 来源行的容器本身也要吃 13px：它是 `.prop-link-wrap`（没有 `.prop-value` 类）⇒ 默认继承 16px，
+   链接虽显式 13px，但行高/说明基线会被容器字号带大（真机量到容器 16px、行高被撑到 36px）。 */
+.properties-body .prop-value-source { font-size: 13px; line-height: 1.55; }
