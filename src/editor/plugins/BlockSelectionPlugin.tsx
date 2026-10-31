@@ -7,6 +7,7 @@ import {
 } from "lexical";
 import { useBlockSelection } from "../../store/blockSelection";
 import { toast } from "../../store/toast";
+import { blocksToPlainText } from "../../lib/blockClipboard";
 import { $deepCloneBlock } from "../blockUtils";
 import { isBlockGestureExcluded } from "../blockGestures";
 
@@ -124,7 +125,27 @@ export function BlockSelectionPlugin() {
 
   const toggleMode = () => useBlockSelection.getState().setSelectMode(!selectMode);
 
-  const copy = () => {
+  // ⭐ 2026-10-31（owner：「笔记里复制了一段文本，VS Code 粘不出来」）：原来的「⧉ 复制」
+  //    只把块在文档里又插了一份（duplicate），**完全没写剪贴板** ⇒ 用户以为复制了，切到别的应用是空的。
+  //    现在拆成两个动作：「复制」= 写剪贴板（跨应用可粘）；「复制一份」= 文档内复制（原行为，保留）。
+  const copyToClipboard = async () => {
+    const parts = editor.getEditorState().read(() =>
+      keys.map((k) => $getNodeByKey(k)?.getTextContent() ?? ""),
+    );
+    const text = blocksToPlainText(parts);
+    if (!text) {
+      toast("选中的块没有可复制的文字", "error");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(`已复制 ${keys.length} 块到剪贴板`, "success");
+    } catch {
+      toast("复制到剪贴板失败 —— 请手动选中复制", "error");
+    }
+  };
+
+  const duplicate = () => {
     editor.update(() => {
       let last = null as ReturnType<typeof $deepCloneBlock> | null;
       for (const k of keys) {
@@ -136,7 +157,7 @@ export function BlockSelectionPlugin() {
         last = clone;
       }
     });
-    toast(`已复制 ${keys.length} 块`, "success");
+    toast(`已复制一份（${keys.length} 块）`, "success");
   };
 
   const del = () => {
@@ -170,7 +191,12 @@ export function BlockSelectionPlugin() {
       </button>
       {keys.length > 0 && (
         <>
-          <button onClick={copy}>⧉ 复制</button>
+          <button onClick={() => void copyToClipboard()} title="复制选中块的文字到系统剪贴板（可粘到别的应用）">
+            ⧉ 复制
+          </button>
+          <button onClick={duplicate} title="在本文档里复制一份（不写剪贴板）">
+            ⧉ 复制一份
+          </button>
           <button className="danger" onClick={del}>🗑 删除</button>
           <button className="block-selection-close" onClick={clear}>✕ 清空</button>
         </>
