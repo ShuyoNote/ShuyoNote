@@ -7186,18 +7186,8 @@ select.prop-value {
 .block-ref:hover {
   background: var(--accent-soft);
 }
-/* M24 — pdf:// reference link (clickable → reopen reader at that page). */
-.pdf-ref {
-  color: var(--accent);
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-underline-offset: 2px;
-  cursor: pointer;
-  border-radius: 2px;
-}
-.pdf-ref:hover {
-  background: var(--accent-soft);
-}
+
+
 
 .block-flash {
   animation: block-flash 1.6s ease;
@@ -13153,16 +13143,7 @@ p:has(> .editor-drawing-container) {
 .about-close:hover {
   filter: brightness(0.95);
 }
-/* M24 — PDF reader + annotation canvas. */
-.pdf-reader-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  z-index: 300;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+
 /* 桌面端：PDF 阅读器是**内容区的一种视图**——和 Markdown 阅读器一样，侧边栏与右栏都留着。
    （窄屏仍是上面那个全屏浮层：那时侧边栏本来就是抽屉。）
    所以这里不是"给弹窗挪位置"，而是把它当成第二阅读器：铺满 .main，去掉遮罩/圆角/阴影。 */
@@ -13186,1498 +13167,228 @@ p:has(> .editor-drawing-container) {
   border-radius: 0;
   box-shadow: none;
 }
-.pdf-reader {
-  /* M24 — 思源式近全屏阅读器：默认铺满页面区域（留少量边距），不再居中限宽小弹窗。
-     若要真正的全屏，点最大化按钮 (.maximized 覆盖为 100% 无边距)。 */
-  width: calc(100vw - 40px);
-  height: calc(100vh - 40px);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-/* M24 — 最大化：撑满整个页面区域（无圆角、无边距），保留头部 */
-.pdf-reader.maximized {
-  width: 100%;
-  height: 100%;
-  border-radius: 0;
-  border: none;
-}
-/* 头部（顶部系统工具栏）—— 2026-09-22（owner："pdf 阅读器顶部系统工具栏任何时候不换行，
-   空间狭小时收起来，除了最右端的关闭按钮"）：
-   · **任何时候都不换行**（`nowrap`）；放不下的项由 `PdfReader` 量宽后写进 `data-collapse`、
-     收进「⋯」（见下面的 `[data-collapse]` 那几条）；
-   · **关闭按钮永不收**，并且 `margin-left:auto` 顶到最右端（它是"离开"的唯一入口）；
-   · 这一行**不开** `overflow-x`：「⋯」的菜单是绝对定位的子元素，行一滚它就被裁掉了。
-     兜底靠"最少配置 = [文件名 48][⋯ 44][×] ≈ 144px"这条事实（比任何可能的阅读器宽度都窄）。
-   ⚠️ 原来它靠 `flex-wrap: wrap` 保证按钮不被裁（真机 730 > 360）——折行的代价是
-   390 上占 115px、320 上占 165px 高，"不换行 + 收起来"才是那条要求的正解。 */
-.pdf-reader-head {
-  display: flex;
-  align-items: center;
-  /* 2026-09-22：12 → 10 → **8**。前两次是"有了分组分隔线、可以收一点"；
-     这次按钮扁平化（无边框无底色）之后，图标之间不再需要"方块不相碰"的额外余量。 */
-  gap: var(--space-2);
-  flex-wrap: nowrap;
-  /* ⚠️ 2026-09-22（owner："pdf 阅读器的系统工具栏高度也要固定，不能被撑得更大"）：
-     **高度写死**（`height` 而不是 `min-height`）——它一变高，正文就跟着少一截。
-     · 桌面这一档：按钮 28 + 上下内边距 10+10 + 下边框 1 = 49，留 1px 余量写 50；
-     · 窄屏那一档（按钮 44）在文件末尾另给 66；
-     · 里面的文字一律不许折行（文件名走省略号、页码/百分比 `white-space: nowrap`），
-       否则折行会把这一格撑高 —— 固定高度就不成立了。
-     改按钮尺寸/内边距时**要跟着改这两个值**。 */
-  height: 50px;
-  box-sizing: border-box;
-  flex: 0 0 auto;
-  /* 「⋯」的菜单以**头部**为包含块（不是「⋯」那一格）：后者才 44px 宽，
-     菜单用它当包含块会"按它算 max-width" ⇒ 窄屏左边直接跑出屏幕。 */
-  position: relative;
-  padding: 10px var(--space-3);
-  border-bottom: 1px solid var(--border);
-}
-/* 文件名：**唯一的弹性项** —— 有富余就长（`flex-grow`）、挤了就缩到 `min-width` 打省略号。
-   ⚠️ `min-width: 48px` 这个地板宽是"量宽"公式里用的（`PdfReader` 直接读 CSS 的 `min-width`，
-   不另抄一份）；它同时保证"空间再紧也不会把文件名挤没"。 */
-.pdf-reader-name {
-  flex: 1 1 auto;
-  min-width: 48px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-  color: var(--text);
-  font-size: var(--fs-14);
-}
-/* 翻页 / 缩放两组：**不再套一层** `.pdf-reader-controls`（那一层会让"只收缩放、留翻页"
-   这种粒度做不到：外层在，内层只能整块藏）。现在它们是 head 的直接子元素，
-   组间距就是 head 自己的 `gap`（8，与原值一致）。 */
-.pdf-head-tail,
-.pdf-head-export {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: 0 0 auto;
-}
-.pdf-reader-nav,
-.pdf-reader-zoom {
-  display: flex;
-  align-items: center;
-  /* 6 → 2：翻页组/缩放组内部本来就是"图标—文字—图标"，扁平之后不需要 6px 的呼吸位 */
-  gap: 2px;
-  /* 量宽要的是**真实宽**：这两组不许被压扁（否则"收哪几项"就算错了）。 */
-  flex: 0 0 auto;
-}
-.pdf-reader-page,
-.pdf-reader-pct {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  min-width: 72px;
-  text-align: center;
-  /* 同样的道理：这两处文字一折行，头部就会被撑高（页码读数里有空格）。 */
-  white-space: nowrap;
-}
-/* 缩放下拉：触发器显示当前模式/百分比，点击弹出参考阅读器式菜单（fit 模式 + 百分比阶梯 + 底部设置）。 */
-.pdf-zoom-wrap {
-  position: relative;
-}
-.pdf-zoom-btn .pdf-reader-pct {
-  min-width: auto;
-  font-size: var(--fs-12);
-  color: var(--text);
-  white-space: nowrap;
-}
-.pdf-zoom-caret {
-  color: var(--text-dim);
-}
-.pdf-zoom-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 40;
-  min-width: 150px;
-  max-height: 420px;
-  overflow-y: auto;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
-  padding: var(--space-1);
-}
-.pdf-zoom-item {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  border: none;
-  background: transparent;
-  color: var(--text);
-  font-size: var(--fs-12);
-  text-align: left;
-  padding: 6px var(--space-2);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  gap: var(--space-1);
-}
-.pdf-zoom-item:hover {
-  background: var(--hover-strong);
-}
-.pdf-zoom-item.active {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-.pdf-zoom-item-check {
-  display: inline-flex;
-  justify-content: center;
-  width: 16px;
-  flex-shrink: 0;
-  color: var(--text-dim);
-}
-.pdf-zoom-item-label {
-  flex: 1;
-}
-.pdf-zoom-item.active .pdf-zoom-item-check {
-  color: var(--accent);
-}
-.pdf-zoom-sep {
-  height: 1px;
-  margin: 3px 2px;
-  background: var(--border);
-}
-.pdf-zoom-footer {
-  color: var(--text-dim);
-}
-.pdf-zoom-custom {
-  display: block;
-  width: calc(100% - 12px);
-  margin: 6px;
-  box-sizing: border-box;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-12);
-  padding: 5px var(--space-2);
-}
-.pdf-zoom-custom:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-/* 阅读器的控制按钮：**扁平**（2026-09-22，owner："控制按钮全部改成扁平类型按钮，进一步压缩占宽"）。
-   原来是"描边 + 浅底"的小方块（`border: 1px solid var(--border); background: var(--block-hover)`）——
-   一长排方块自带拥挤感，间距也不敢压。现在：**无边框、无底色、只有图标**（hover/选中才给底色）；
-   边框去掉后一组图标可以贴得更近（间距见 `.pdf-reader-head` / `.pdf-reader-controls` /
-   `.pdf-reader-nav` 的 gap，本轮一并从 10/14/6 压到 8/8/2）。
-   ⚠️ 尺寸仍是 28×28（`box-sizing: border-box` 下去掉 1px 边框不改变外边距盒）⇒ 布局不跳；
-      命中区规则（窄屏 ≥44）在文件末尾那段里照旧生效。 */
-.pdf-reader-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  border-radius: var(--radius-sm);
-  width: 28px;
-  height: 28px;
-  cursor: pointer;
-}
 
-/* 「导出带批注副本」：**与其它 `.pdf-reader-btn` 同规格的图标按钮**（28×28）。
-   2026-09-22 owner："导出带批注副本…现在的太占地方" —— 它原来是一枚自适应宽的文字按钮，
-   1280 下实测 **102×28**，是整条 head 里最占地方的一个（其余图标都是 28×28）。
-   完整说法进 `title` / `aria-label`；导出中才需要一点文字宽度（紧凑的 `3/12`）。 */
-.pdf-reader-btn.pdf-export-btn {
-  width: 28px;
-  padding: 0;
-}
-.pdf-reader-btn.pdf-export-btn:has(.pdf-export-progress) {
-  width: auto;
-  padding: 0 5px;
-  font-size: var(--fs-11);
-}
-.pdf-export-progress {
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-/* 分组分隔线：head 里把"翻页 / 缩放"与"面板 / 视图"两族分开（原来是一长串没有分组的图标）。
-   窄屏隐藏 —— 那里每个按钮已经是 44 宽，再加分隔只会挤掉正文宽度，换行时还可能落在行首。 */
-.pdf-reader-sep {
-  flex: 0 0 auto;
-  width: 1px;
-  height: 20px;
-  background: var(--border);
-}
-.pdf-reader-btn svg {
-  display: block;
-}
-.pdf-reader-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-/* 缩放触发器：覆盖 .pdf-reader-btn 的固定 28px 宽，改为按内容自适应（显示"适合页面"等中文不竖排）。 */
-.pdf-reader-btn.pdf-zoom-btn {
-  width: auto;
-  min-width: 0;
-  padding: 0 6px;
-  gap: var(--space-1);
-  white-space: nowrap;
-}
-.pdf-reader-btn:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--text);
-}
-/* 扁平之后"选中态"得自己给反馈（原来靠边框变强调色）：护眼等开关用 `active` 类。 */
-.pdf-reader-btn.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.pdf-reader-btn:active:not(:disabled) {
-  background: var(--hover-strong);
-}
-/* 窄屏的「更多工具」入口（批注侧栏 / 护眼 / 导出…）。
-   ⚠️ **基础规则就是隐藏**：桌面一次放得下，不需要这个入口；窄屏那段（文件末尾）
-   再把它 `inline-flex` 放出来。写在 `.pdf-reader-btn` **之后**——两者同为 (0,1,0)，
-   靠"后写的赢"，写在前面会被 `.pdf-reader-btn` 的 display 顶掉（那样手机上根本点不到）。 */
-/* 「更多工具」入口：**只在头部真的塞不下时才出现**（`has-more` 由 `PdfReader` 量宽后写）。
-   ⚠️ 基础规则就是隐藏；`.pdf-reader-head.has-more .pdf-reader-more` 放出来。
-   写在 `.pdf-reader-btn` **之后**——两者同为 (0,1,0)，靠"后写的赢"（写在前面会被顶掉，
-   那样手机上根本点不到）。 */
-.pdf-head-more-wrap {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-}
-.pdf-reader-more {
-  display: none;
-}
-.pdf-reader-head.has-more .pdf-reader-more {
-  display: inline-flex;
-}
-/* 收起来的项：`data-collapse` 的值就是被收起来的那些 key（由 `PdfReader` 写）。
-   ⚠️ 每条都限定在**行内**（`>` 直接子元素）：「⋯」菜单里渲染的是同一份 JSX 的第二份调用，
-   那几件必须看得见，否则"收起来"就等于"删掉"。 */
-.pdf-reader-head[data-collapse~="outline"] > .pdf-reader-outline-toggle,
-.pdf-reader-head[data-collapse~="nav"] > .pdf-reader-nav,
-.pdf-reader-head[data-collapse~="zoom"] > .pdf-reader-zoom,
-.pdf-reader-head[data-collapse~="tail"] > .pdf-head-tail,
-.pdf-reader-head[data-collapse~="export"] > .pdf-head-export {
-  display: none;
-}
-/* 「⋯」的菜单：**锚在头部的内联菜单**（与 `.pdf-eye-pop` / `.pdf-annot-more-pop` 同一先例），
-   不是应用级浮层。里面的行可以自由换行 —— "永不换行"约束的是头部那一行，不是这个浮出来的面板。 */
-.pdf-head-more-pop {
-  position: absolute;
-  top: calc(100% + 6px);
-  /* 贴头部**内容区**的右缘（head 的左右内边距是 12）。包含块是 head 本身，
-     所以窄屏下 `max-width` 按视口算也不会把左边顶出屏幕。 */
-  right: 12px;
-  z-index: 40;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  /* ⚠️ `width: max-content`：包含块是「⋯」那一格（才 ~44px 宽），`width:auto` 的
-     shrink-to-fit 会按包含块算 ⇒ 菜单被压成一条。 */
-  width: max-content;
-  max-width: min(92vw, 520px);
-  padding: var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
-}
-.pdf-head-more-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.pdf-head-more-label {
-  font-size: var(--fs-12);
-}
-.pdf-reader-close {
-  margin-left: auto;
-  flex: 0 0 auto;
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  font-size: var(--fs-20);
-  cursor: pointer;
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-xs);
-}
-.pdf-reader-close:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-.pdf-reader-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.pdf-reader-loading {
-  color: #d6d6d6;
-  align-self: center;
-}
-/* annotation canvas */
-.pdf-annot {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  align-items: center;
-}
-/* 顶层工具栏：工具在左，选区操作在右，整条随阅读器宽度。
-   批注工具栏「不滚动」：滚动查看放大页面时吸顶固定（sticky）。
 
-   ⚠️ 2026-09-22（owner："pdf 页内工具栏任何时候不换行，空间狭小时，可以收起来，不截断"）：
-   这一条**永不换行**（`flex-wrap: nowrap`）。原来它是 `wrap`，宽度不够就折成两行
-   （1280 上少一列面板就折；选中一条批注再多出操作组，折得更狠），窄屏则靠工具组横向滚动
-   把按钮推出屏外 —— 两种都不是"收起来"。现在：
-     · `.pdf-annot-toolbar-row` = 三个组所在的那一行（`nowrap`，`overflow-x:auto` 只作**兜底**：
-       真到极限还能滑，绝不裁切）；
-     · 放不下时由 `PdfAnnotTopToolbar` **量宽**后按优先级收进「⋯」（`data-collapse` 那几条规则）；
-     · 「⋯」与它的菜单是行的**兄弟**节点 ⇒ 不会被行的滚动裁掉。 */
-.pdf-annot-toolbar {
-  width: 100%;
-  max-width: 860px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: nowrap;
-  position: relative;
-  z-index: 22;
-  background: var(--bg);
-  padding: var(--space-1) 6px 6px;
-}
-.pdf-annot-toolbar-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: nowrap;
-  flex: 1 1 auto;
-  min-width: 0;
-  /* 兜底：把所有能收的都收完还放不下（≈230px 以下的窄条）时还能横向滑 —— 不裁切。 */
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-.pdf-annot-toolbar-row::-webkit-scrollbar {
-  display: none;
-}
-/* 「⋯」：没有可收的项时整个收起（连占位都不留）。 */
-.pdf-annot-more-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-}
-.pdf-annot-toolbar:not(.has-more) .pdf-annot-more-wrap {
-  display: none;
-}
-.pdf-annot-more {
-  padding: 5px 7px;
-}
-/* 收起来的项（`data-collapse` 由 `PdfAnnotTopToolbar` 写、值就是被收起来的那些项）。
-   ⚠️ 三条都限定在**行内**（`.pdf-annot-toolbar-row`）：「⋯」菜单里渲染的是同一批元素的
-   第二份调用，那几件必须**看得见**，否则"收起来"就等于"删掉"。 */
-.pdf-annot-toolbar[data-collapse~="status"] .pdf-annot-toolbar-row > .pdf-annot-status,
-.pdf-annot-toolbar[data-collapse~="actions"] .pdf-annot-toolbar-row > .pdf-annot-actions,
-.pdf-annot-toolbar[data-collapse~="undoExport"] .pdf-annot-toolbar-row .pdf-annot-pair {
-  display: none;
-}
-.pdf-annot-toolbar .pdf-annot-tools.is-icons .pdf-annot-tool-label {
-  display: none;
-}
-/* 「⋯」里的菜单：**锚在工具条内的内联菜单**（不是应用级浮层，见组件顶部注释）。
-   它里面的分组可以自由换行 —— "永不换行"约束的是工具条那一行，不是这个浮出来的面板。 */
-.pdf-annot-more-pop {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 40;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  /* ⚠️ `width: max-content` 是必须的：这个面板的包含块是「⋯」那一格（才 ~36px 宽），
-     `width:auto` 的 shrink-to-fit 会按包含块算 ⇒ 面板被压成 ~95px，"朗读"竖着排成两行。 */
-  width: max-content;
-  max-width: min(88vw, 460px);
-  padding: var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
-}
-.pdf-annot-more-pop .pdf-annot-actions,
-.pdf-annot-more-pop .pdf-annot-status,
-.pdf-annot-more-pop .pdf-annot-pair {
-  flex-wrap: wrap;
-  row-gap: var(--space-1);
-}
-.pdf-annot-more-pop .pdf-annot-status {
-  width: auto;
-  max-width: none;
-  position: static;
-  background: transparent;
-  padding: 0;
-}
-.pdf-annot-tools,
-.pdf-annot-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  background: var(--surface);
-  /* 去掉外框勾线（2026-09-22，owner："去掉批注工具栏的外框勾线"）。
-     原来这一圈 1px 边框把工具行画成一个"盒子"，和扁平化的阅读器按钮风格不一致；
-     现在只留极浅的底色做分组，分组靠 `.pdf-reader-sep` 那条分隔线交代。 */
-  border: none;
-  border-radius: 9px;
-  padding: var(--space-1) 6px;
-  /* 量宽的预算必须是**内容真实宽度**：这三格不许被压扁（否则"要不要收"就量不准）。 */
-  flex: 0 0 auto;
-}
-/* 撤销 + 导出批注：一个整体（要么都在工具组里，要么一起进「⋯」）。 */
-.pdf-annot-pair {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex: 0 0 auto;
-}
-.pdf-annot-tool {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: var(--fs-12);
-  padding: 5px 9px;
-  border-radius: 7px;
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
-  white-space: nowrap;
-}
-.pdf-annot-tool:hover {
-  background: var(--hover-strong);
-  color: var(--text);
-}
-.pdf-annot-tool.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: rgba(51, 112, 255, 0.25);
-}
-.pdf-annot-tool.accent {
-  color: var(--accent);
-}
-.pdf-annot-tool.accent:hover {
-  background: var(--accent-soft);
-}
-.pdf-annot-tool.danger {
-  color: var(--danger);
-}
-.pdf-annot-tool.danger:hover {
-  background: rgba(229, 72, 77, 0.12);
-}
-/* A2 — 撤销按钮不可用态 */
-.pdf-annot-tool.disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.pdf-annot-tool-icon {
-  display: inline-flex;
-  align-items: center;
-}
-/* 页面能力组（文本层 chip + 朗读 / OCR / AI）——**工具行里的一格**。
-   2026-09-22 起它不再"独占一行/吸顶"：工具条改成单行 + 按需收进「⋯」，
-   这一格的宽度必须等于**内容宽**（`width:auto`），否则它自己就会把行撑爆。
-   放不下时由 `PdfAnnotTopToolbar` 把它整格收进「⋯」（`data-collapse~="status"`）。
-   标签一律**短**（朗读 / OCR / AI），完整说法进 `title`：它原来被
-   「朗读本页 / OCR 识别本页 / AI 识别」撑到 472px。 */
-.pdf-annot-status {
-  width: auto;
-  max-width: none;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-1);
-  flex: 0 0 auto;
-}
-.pdf-annot-layer {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  /* ⚠️ 2026-09-22（owner 截图："这几个按钮似乎不在一个水平线上？"）：
-     这一格与右边三个按钮**必须在同一条线上**。改前这里是 11.5px + `line-height: normal`，
-     右边是 12px + `normal` ⇒ 三者的**行盒高度居然各不相同**——实测「无文本层」17px、
-     「朗读」25px、「OCR」「AI」23px（`normal` 按脚本取字体度量，汉字与拉丁不一样）。
-     盒子中心虽然都对齐在 75.5，但「朗读」的文字比旁边低 1px、三块背景大小也各不相同，
-     看上去就是"没排齐"。现在两边都写死 `font-size: 12px; line-height: 18px`：
-     行盒高度恒为 18、盒子中心 = 文字中心 ⇒ 四个字面同线、四块背景同高。 */
-  font-size: var(--fs-12);
-  line-height: 18px;
-  /* 上下内边距与右边三个按钮**一模一样**（4px）⇒ 四块的盒子高度也都是 26px，
-     不只是"文字中线相同"。没有底色，所以看不出这 8px，但结构与命中区完全一致。 */
-  padding: var(--space-1) 0;
-  color: var(--text-dim);
-  /* 这一格也不许折行把工具条撑高。 */
-  white-space: nowrap;
-}
-.pdf-annot-layer.ok { color: var(--accent); }
-.pdf-annot-layer.warn { color: #b8860b; }
-/* 朗读 / OCR / AI（2026-09-22 owner 截图："这几个按钮也进行扁平化处理"）——
-   与 `.pdf-reader-btn` 同一套扁平语言：**无边框、透明底**，hover 才给底色。
-   改前是"1px 描边 + `--surface` 浅底"的胶囊，和已经扁平化的头部图标按钮并排时
-   明显是两种语言（截图里三个白底描边胶囊）。 */
-.pdf-annot-ocr {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: var(--fs-12);
-  /* ⚠️ 写死行高（不是 `normal`）：`normal` 按脚本取度量 ⇒「朗读」(汉字) 25px、
-     「OCR」「AI」(拉丁) 23px，同一排按钮都不一样高、字面也不在同一条线上
-     （owner 截图："这几个按钮似乎不在一个水平线上？"）。同 18px 之后恒为 26px 高。 */
-  line-height: 18px;
-  /* ⚠️ 必须显式继承字体栈（**不是**可有可无的一行）：
-     按钮不吃继承，不给这一行就拿 UA 默认（本机实测 `font-family: Arial`），
-     旁边的「无文本层」span 却继承应用字体栈（PingFang SC…）⇒ 汉字 run 高差 1px
-     ⇒ 门禁 `verify-mobile-views.mjs` 那条「四个字面同线」在 macOS 上红
-     （实测 `文字高 [15,14,14,14]`；Windows/Edge 上两套字体恰好都是 15 所以看不出来）。
-     同一批规则（`.unlinked-mention-link`、`.pdf-page-error-retry` 等）都写了这一行。 */
-  font-family: inherit;
-  padding: var(--space-1) 10px;
-  border-radius: 7px;
-  cursor: pointer;
-  /* ⚠️ 见 `.pdf-reader-stage-wrap > .pdf-annot-toolbar` 那条注释：忙碌文案
-     「识别中 3/12」里有空格，不给 nowrap 的话窄一点就折成两行、把工具条撑高。 */
-  white-space: nowrap;
-}
-.pdf-annot-ocr:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--text);
-}
-.pdf-annot-ocr:active:not(:disabled) {
-  background: var(--hover-strong);
-}
-.pdf-annot-ocr:disabled { opacity: 0.6; cursor: default; }
-/* 两个识别按钮靠在一起（右侧一组）。 */
-.pdf-annot-ocr-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-/* AI 视觉识别按钮：靠**文字颜色**（而不是描边）区分，扁平化后仍然分得出来。 */
-.pdf-annot-ocr-ai {
-  color: var(--accent);
-}
-.pdf-annot-ocr-ai:hover:not(:disabled) {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.pdf-annot-stage {
-  position: relative;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-  background: #fff;
-}
-.pdf-annot-img {
-  display: block;
-  max-width: 100%;
-  /* 页面图像是透明底 RGBA（MuPDF alpha=true）；暗色主题下必须给白纸背景，
-     否则深色文字浮在透明上看不清。 */
-  background: #fff;
-}
-.pdf-annot-svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  cursor: crosshair;
-  touch-action: none;
-}
-/* 页面光栅化失败：以前是"一片空白"，现在把原因摆出来并给一个重试的出口。 */
-.pdf-page-error {
-  box-sizing: border-box;
-  border: 1px dashed var(--danger);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--danger, #e5484d) 6%, var(--surface));
-  color: var(--text-dim);
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  min-height: 220px;
-  padding: 20px;
-  text-align: center;
-  display: flex;
-}
-.pdf-page-error-title {
-  color: var(--danger, #e5484d);
-  font-size: var(--fs-13);
-  font-weight: 600;
-}
-.pdf-page-error-why {
-  max-width: 460px;
-  word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: var(--fs-12);
-  line-height: 1.6;
-}
-.pdf-page-error-retry {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) 14px;
-  font-family: inherit;
-  font-size: var(--fs-12-5);
-}
-.pdf-page-error-retry:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.pdf-annot-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 800px;
-  height: 1000px;
-  color: var(--text-dim);
-  background: var(--surface);
-}
-/* 内联便签气泡（替换 window.prompt） */
-.pdf-sticky-editor {
-  position: absolute;
-  z-index: 20;
-  min-width: 180px;
-  max-width: 240px;
-  transform: translateY(-2px);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  padding: 6px;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
-}
-.pdf-sticky-input {
-  width: 100%;
-  box-sizing: border-box;
-  resize: none;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-12);
-  line-height: 1.4;
-  padding: 5px 6px;
-  color: var(--text);
-  background: var(--surface);
-}
-.pdf-sticky-input:focus { outline: none; border-color: var(--accent); }
-.pdf-sticky-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-  margin-top: 6px;
-}
-.pdf-sticky-btn {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-12);
-  padding: 3px 10px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.pdf-sticky-btn.ok {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.pdf-sticky-btn:hover { opacity: 0.85; }
-/* 已保存便签的内容气泡：贴在便签钉旁显示文本，自动换行、留阴影，不拦截指针。 */
-.pdf-sticky-bubble {
-  position: absolute;
-  z-index: 8;
-  transform: translate(14px, -6px);
-  max-width: 220px;
-  background: #fffbe8;
-  border: 1px solid #ecd27a;
-  border-left: 3px solid #f3c73f;
-  border-radius: var(--radius-md);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
-  padding: 6px 9px;
-  pointer-events: none;
-}
-.pdf-sticky-bubble-text {
-  font-size: var(--fs-12);
-  line-height: 1.5;
-  color: #57491c;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 132px;
-  overflow: hidden;
-}
-.pdf-ocr-tip {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  line-height: 1.5;
-  padding: 2px 0;
-}
-/* 第二行：怎么做 / 排查线索。比正文更淡一档，别和"你此刻要知道的那句"抢注意力。 */
-.pdf-ocr-tip-hint {
-  display: block;
-  margin-top: 6px;
-  color: var(--text-faint);
-  line-height: 1.6;
-}
-/* OCR 结果居中弹层：必定可见（不再埋在页块底部）；默认更大，可拖动右下角自由调整尺寸。 */
-.pdf-ocr-popover {
-  position: fixed;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 340;
-  width: min(720px, 92vw);
-  height: min(72vh, 720px);
-  min-width: 360px;
-  min-height: 260px;
-  resize: both;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
-}
-.pdf-ocr-pop-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  font-size: var(--fs-13);
-  font-weight: 600;
-  color: var(--text);
-  border-bottom: 1px solid var(--border);
-}
-.pdf-ocr-pop-close {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: var(--fs-18);
-  line-height: 1;
-  cursor: pointer;
-  padding: 2px 6px;
-}
-.pdf-ocr-pop-close:hover { color: var(--text); }
-.pdf-ocr-pop-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding: var(--space-3) 14px;
-  overflow: hidden;
-}
-.pdf-ocr-text {
-  flex: 1;
-  width: 100%;
-  box-sizing: border-box;
-  min-height: 0;
-  resize: none;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-  color: var(--text);
-  font-size: var(--fs-14);
-  line-height: 1.75;
-  font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-  padding: 10px var(--space-3);
-  outline: none;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.pdf-ocr-text:focus { border-color: var(--accent); }
-.pdf-ocr-pop-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 14px var(--space-3);
-}
-.pdf-ocr-action {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-12);
-  padding: 5px var(--space-3);
-  border-radius: 7px;
-  cursor: pointer;
-}
-.pdf-ocr-action:hover { border-color: var(--accent); color: var(--accent); }
-.pdf-ocr-action.ok {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-}
-.pdf-ocr-action.ok:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 
-/* M24 阶段 3 — AI 帮读结果面 */
-.pdf-ai-result {
-  margin-top: 10px;
-  width: 100%;
-  max-width: 720px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 10px var(--space-3);
-}
-.pdf-ai-title {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  margin-bottom: 6px;
-}
-.pdf-ai-body {
-  font-size: var(--fs-13);
-  line-height: 1.6;
-  color: var(--text);
-  white-space: pre-wrap;
-  max-height: 260px;
-  overflow-y: auto;
-}
 
-/* M24 阶段 3 延伸 ——「对整篇 PDF 提问」栏 */
-.pdf-reader-askbar {
-  border-top: 1px solid var(--border);
-  background: var(--surface);
-  padding: 10px var(--space-3);
-}
-.pdf-askbar-input-row {
-  display: flex;
-  gap: var(--space-2);
-}
-.pdf-askbar-input {
-  flex: 1;
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-  color: var(--text);
-  font-size: var(--fs-13);
-  padding: var(--space-2) 10px;
-}
-.pdf-askbar-input:focus { outline: none; border-color: var(--accent); }
-.pdf-askbar-btn {
-  flex-shrink: 0;
-  border: 1px solid var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-radius: var(--radius-md);
-  padding: 0 14px;
-  font-size: var(--fs-13);
-  cursor: pointer;
-}
-.pdf-askbar-btn:hover:not(:disabled) { background: var(--accent); color: #fff; }
-.pdf-askbar-btn:disabled { opacity: 0.6; cursor: default; }
-.pdf-askbar-answer {
-  margin-top: var(--space-2);
-  border-top: 1px solid var(--border);
-  padding-top: var(--space-2);
-}
-.pdf-askbar-answer-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-.pdf-askbar-src {
-  font-size: var(--fs-11);
-  color: var(--text-dim);
-}
-.pdf-askbar-save {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  border-radius: var(--radius-sm);
-  padding: 3px 10px;
-  font-size: var(--fs-12);
-  cursor: pointer;
-}
-.pdf-askbar-save:hover { border-color: var(--accent); color: var(--accent); }
-.pdf-askbar-error {
-  font-size: var(--fs-12);
-  color: var(--danger, #e5484d);
-  margin-top: var(--space-1);
-}
-.pdf-askbar-answer-text {
-  font-size: var(--fs-13);
-  line-height: 1.6;
-  color: var(--text);
-  white-space: pre-wrap;
-  margin-top: 6px;
-  max-height: 260px;
-  overflow-y: auto;
-}
 
-/* M24 — 思源式阅读器：画布 + 右侧批注侧栏 */
-.pdf-reader-layout {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: row;
-  overflow: hidden;
-  /* 侧栏收起时的"拖出来"手柄要相对它定位（2026-09-22） */
-  position: relative;
-}
-/* 侧栏/目录**收起时**那条边上的抓取条（两侧侧栏都能"拖拽收起 / 拖拽展开"）。
-   为什么需要它：收起后面板不在 DOM 里 ⇒ 没有可抓的 resizer，光靠 head 上的按钮就只能"点"。
-   可见性：中间一段 3px 小竖条当"这里能拖"的提示，hover 变强调色；不抢视觉。
-   ⚠️ `z-index: 40` 是量出来的：`.right-rail`（全局右侧悬浮条）是 **z-index 30 / position: fixed**，
-   而且它正好浮在阅读器右侧中段（41×112）。原来手柄是 z-index 5 ⇒ 中段被它压住、指针事件收不到
-   （`elementFromPoint` 在 y=425 返回 `div.right-rail`）⇒ 右侧"拖出来"只有上下一小段能用。
-   宽度取 6px（与 `.pdf-outline-resizer` / `.pdf-sidebar-resizer` 同规格）：手柄在 1274..1280，
-   而悬浮条按钮在 1245..1275 ⇒ 只压住它 1px，不影响点它。 */
-.pdf-edge-drag {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 6px;
-  z-index: 40;
-  cursor: col-resize;
-  background: transparent;
-}
-.pdf-edge-drag.is-left { left: 0; }
-/* ⚠️ 右侧手柄要**避开常驻悬浮条**（`--rail-w`）：它在 `--z-bar` 层，比阅读器浮层高，
-   否则右侧中段（41×112 那条）的指针事件会被它截走 ⇒ 只有上下一小段能拖。 */
-.pdf-edge-drag.is-right { right: var(--rail-w); }
-/* ---------------------------------------------------------------------------
-   两侧的**拖拽竖线**：四处同一件东西（2026-09-22，owner："pdf 阅读器左右侧边栏的拖拽竖线
-   粗细要一样"）。
 
-   四处 = 左侧栏 ×（展开 / 收起）、右侧栏 ×（展开 / 收起）。统一规格：
-   **3px × 44px、垂直居中、`--border` 色、hover 变强调色**；抓取条本身仍是透明的 6px，
-   而且两侧都**完全落在各自面板内**。
 
-   ⚠️ 改前右侧那条是 `left: -3px`（跨在边界上），而 `.pdf-sidebar-col` 是 `overflow: hidden`
-   —— 露在面板外的那 3px 被裁掉，于是"展开态 hover 的高亮"**左边 6px、右边只剩 3px**，
-   这就是"粗细不一样"的来源；收起态那两条 `::after` 虽然都是 3px，但左边贴 `left: 2px`、
-   右边贴 `right: 2px`，位置也不完全镜像。现在两处都用同一条规则居中，规格只有一个。
-   --------------------------------------------------------------------------- */
-.pdf-edge-drag::after,
-.pdf-outline-resizer::after,
-.pdf-sidebar-resizer::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 3px;
-  height: 44px;
-  border-radius: 2px;
-  background: var(--border);
-}
-.pdf-edge-drag:hover::after,
-.pdf-outline-resizer:hover::after,
-.pdf-sidebar-resizer:hover::after {
-  background: color-mix(in srgb, var(--accent) 60%, transparent);
-}
-.pdf-reader-stage-wrap {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--surface);
-}
-.pdf-reader-stage {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  padding: var(--space-4) var(--space-3) var(--space-5);
-  background: var(--surface);
-}
-/* 护眼模式（多档位）：阅读区暖色纸底 + 页图降蓝/柔光滤镜，独立于明暗主题。
-   各档位只定义 CSS 变量，下方共享规则统一应用；档位名作为根类 .eye-soft/.eye-warm/...。 */
-.pdf-reader.eye-soft { --eye-bg:#f6f0e0; --eye-bg-dark:#2a251c; --eye-stage:#fbf6ea; --eye-fg:#7c6f50; --eye-filter: sepia(0.18) saturate(0.94) brightness(1) contrast(0.98); }
-.pdf-reader.eye-warm { --eye-bg:#f0e3c4; --eye-bg-dark:#332c1f; --eye-stage:#f8efd8; --eye-fg:#7d6a3f; --eye-filter: sepia(0.32) saturate(0.9) brightness(0.99) contrast(0.97); }
-.pdf-reader.eye-night { --eye-bg:#26221c; --eye-bg-dark:#211d18; --eye-stage:#2e2a23; --eye-fg:#9a8d72; --eye-filter: sepia(0.42) saturate(0.82) brightness(0.9) contrast(0.95); }
-.pdf-reader.eye-green { --eye-bg:#e9efe2; --eye-bg-dark:#24291f; --eye-stage:#eef3e9; --eye-fg:#5f6b4d; --eye-filter: sepia(0.16) hue-rotate(14deg) saturate(0.9) brightness(1); }
 
-.pdf-reader[class*="eye-"] .pdf-reader-stage,
-.pdf-reader[class*="eye-"] .pdf-reader-stage-wrap {
-  background: var(--eye-bg);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 [data-theme="dark"] .pdf-reader[class*="eye-"] .pdf-reader-stage,
 [data-theme="dark"] .pdf-reader[class*="eye-"] .pdf-reader-stage-wrap {
   background: var(--eye-bg-dark);
 }
-.pdf-reader[class*="eye-"] .pdf-annot-img {
-  /* 只作用于页面图像，不影响高亮/便签等批注 SVG。 */
-  filter: var(--eye-filter);
-}
-.pdf-reader[class*="eye-"] .pdf-annot-stage { background: var(--eye-stage); }
-.pdf-reader[class*="eye-"] .pdf-annot-placeholder { background: var(--eye-bg); color: var(--eye-fg); }
-.pdf-reader[class*="eye-"] .pdf-reader-btn.active {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-}
-/* 护眼档位下拉（与缩放下拉同款交互）。 */
-.pdf-eye-wrap { position: relative; }
-.pdf-eye-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 30;
-  min-width: 148px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
-  padding: var(--space-1);
-}
-.pdf-eye-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  border: none;
-  background: transparent;
-  color: var(--text);
-  font-size: var(--fs-13);
-  padding: 7px 10px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  text-align: left;
-}
-.pdf-eye-item:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.pdf-eye-item.active { color: var(--accent); font-weight: 600; }
-.pdf-eye-item-check { width: 12px; flex-shrink: 0; }
-/* 顶部批注工具栏（唯一一份，固定在阅读器内容区顶部，不随页面滚动）。
-   ⚠️ 2026-09-22（owner："pdf 阅读器的页内工具栏高度永远固定，不能被撑大"）：
-   **高度写死**，不让内容把它撑高 —— 这一条是"正文空间每一屏都要用"的直接兑现：
-   它一变高，正文就少一截，而且是在"点了某个按钮/某条命令在跑"的时候变，最烦人。
-   · `height` 而不是 `min-height`：`min-height` 只能保证"不低于"，正是"会被撑大"的那种写法；
-   · 里面的按钮**一律单行**（`.pdf-annot-tool` / `.pdf-annot-ocr` 都 `white-space: nowrap`）：
-     文字换行会让按钮长高 ⇒ 把这一格撑破（这一条是本次真正的隐患：OCR 忙碌文案
-     「识别中 3/12」里有空格，窄一点就会折成两行）；
-   · 窄屏那一档（按钮 44 高）另给一个固定值，见文件末尾的 `@media (max-width:768px), …`。
-   改按钮尺寸/内边距时**要跟着改这两个值**，否则会裁到内容。 */
-.pdf-reader-stage-wrap > .pdf-annot-toolbar {
-  position: static;
-  flex-shrink: 0;
-  max-width: none;
-  height: 50px;
-  box-sizing: border-box;
-  border-bottom: 1px solid var(--border);
-  padding: 6px 10px;
-  background: var(--bg);
-}
-/* 方案 B — 虚拟化连续滚动：单页切换改为多页纵向堆叠。
-   只挂载视口 ± 缓冲 的页块（避免整篇 PDF 全部渲染的内存开销）；
-   每页是一个自包含的 PdfAnnotationCanvas，批注随页块走。 */
-.pdf-continuous {
-  display: block;
-  width: 100%;
-}
-.pdf-continuous-page {
-  margin: 0 auto;
-  position: relative;
-}
-/* 连续模式：页图像铺满页块宽（随缩放真实放大），而不是被 max-width:100% 卡在内容宽。 */
-.pdf-continuous-page .pdf-annot-img {
-  width: 100%;
-  max-width: none;
-}
-/* ⭐ **2026-10-15（活体实测查出"放大不变大"的真因）**：上面那条 `width:100%` **一直没生效** ✗ ——
-   因为 `.pdf-annot` 是**列向 flex ＋ `align-items:center`**（见上面 `annotation canvas` 那段），
-   而 `.pdf-annot-stage` 是它的 flex item ⇒ 宽度由**内容**（＝`<img>` 的固有尺寸＝光栅的像素宽）决定，
-   `width:100%` 解在 shrink-to-fit 的父级上就等于 `auto` ✗。
-   实测（3152×5752 pt 那篇，250%）：页块 **7880 px**、`.pdf-annot-stage` 只有 **2564 px**
-   （＝光栅自然宽）⇒ 页看着**没变大**，只有页块在长（右/下方留白）✗ —— 用户那句"放大不动"就是这个。
-   这里把 stage 铺满页块宽 ⇒ `width:100%` 才真的拉伸 ✓。
-   ⚠️ 只改这一条（⛔ 不动 `.pdf-annot` 的 `align-items` ✗ —— 那一层还管着页内工具栏的居中）。
-   ⚠️ 拉伸的是**底图**：巨幅页的底图受 12 Mpx 预算封顶 ⇒ 放大后略糊 ✓，
-   可见区域由 **D2 的瓦片**补清 ✓（`PdfReader.tsx` 的 D2/D3 注释）。 */
-.pdf-continuous-page .pdf-annot-stage {
-  width: 100%;
-}
-/* 右侧批注侧栏 */
-.pdf-sidebar {
-  width: 260px;
-  flex-shrink: 0;
-  border-left: 1px solid var(--border);
-  background: var(--surface);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-/* 侧栏可拖拽调宽容器 + 手柄 */
-.pdf-sidebar-col {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-.pdf-sidebar-col .pdf-sidebar { width: 100%; border-left: none; flex: 1; min-height: 0; }
-.pdf-sidebar-resizer {
-  position: absolute;
-  /* ⚠️ 0 而不是 -3px：`.pdf-sidebar-col` 是 `overflow: hidden`，跨出去的那 3px 会被裁掉
-     ⇒ 抓取条只剩 3px（左侧那条是 6px）——"左右拖拽竖线粗细不一样"就是这么来的。
-     现在两侧都**完全落在各自面板内**，镜像对称。 */
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 6px;
-  cursor: col-resize;
-  z-index: 5;
-  background: transparent;
-}
-/* 左侧目录（书签）侧栏 */
-.pdf-outline {
-  width: 240px;
-  flex-shrink: 0;
-  border-right: 1px solid var(--border);
-  background: var(--surface);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-/* 目录栏可拖拽调宽容器 + 手柄 */
-.pdf-outline-col {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-.pdf-outline-col .pdf-outline { width: 100%; border-right: none; flex: 1; min-height: 0; }
-.pdf-outline-resizer {
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 6px;
-  cursor: col-resize;
-  z-index: 5;
-  background: transparent;
-}
-.pdf-outline-head {
-  padding: var(--space-3) 14px;
-  font-size: var(--fs-13);
-  font-weight: 600;
-  color: var(--text);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-.pdf-outline-regen {
-  border: 1px solid var(--accent);
-  color: var(--accent);
-  background: transparent;
-  border-radius: 7px;
-  padding: 3px var(--space-2);
-  font-size: var(--fs-12);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.pdf-outline-regen:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.pdf-outline-regen:disabled { opacity: 0.6; cursor: default; }
-.pdf-outline-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 6px 6px var(--space-4);
-}
-.pdf-outline-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  width: 100%;
-  border: 1px solid transparent;
-  background: transparent;
-  padding: 5px var(--space-2);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  text-align: left;
-  color: var(--text);
-}
-.pdf-outline-item:hover {
-  background: var(--hover-strong, rgba(0, 0, 0, 0.05));
-}
-.pdf-outline-item.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.pdf-outline-caret {
-  flex-shrink: 0;
-  width: 12px;
-  font-size: var(--fs-10);
-  color: var(--text-faint);
-  text-align: center;
-}
-.pdf-outline-title {
-  font-size: var(--fs-12);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pdf-outline-empty {
-  padding: var(--space-5) 14px;
-  text-align: center;
-}
-.pdf-outline-empty-title {
-  font-size: var(--fs-13);
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: var(--space-1);
-}
-.pdf-outline-empty-sub {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  line-height: 1.5;
-}
-/* 扫描版无目录：「AI 生成目录（本段）」入口 + 进度 + 取消。 */
-.pdf-outline-ai {
-  margin-top: var(--space-4);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  align-items: stretch;
-}
-.pdf-outline-ai-btn {
-  border: 1px solid var(--accent);
-  color: var(--accent);
-  background: transparent;
-  border-radius: var(--radius-md);
-  padding: var(--space-2) 10px;
-  font-size: var(--fs-13);
-  font-weight: 600;
-  cursor: pointer;
-}
-.pdf-outline-ai-btn:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.pdf-outline-ai-progress {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  line-height: 1.5;
-}
-/* 目录生成范围选择行。 */
-.pdf-outline-ai-range {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.pdf-outline-ai-label {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-.pdf-outline-ai-select {
-  flex: 1;
-  min-width: 0;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-12);
-  padding: var(--space-1) 6px;
-  border-radius: 7px;
-  font-family: inherit;
-}
-.pdf-outline-ai-input {
-  width: 76px;
-  box-sizing: border-box;
-  border: 1px solid var(--accent);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-12);
-  padding: var(--space-1) 6px;
-  border-radius: 7px;
-  font-family: inherit;
-}
-.pdf-outline-ai-input:focus { outline: none; border-color: var(--accent); }
-.pdf-sidebar-head {
-  padding: var(--space-3) 14px;
-  font-size: var(--fs-13);
-  font-weight: 600;
-  color: var(--text);
-  border-bottom: 1px solid var(--border);
-}
-/* 5 — 侧栏类型筛选
-   2026-09-22（owner："右边侧栏顶部的四个按钮平时收起来"）：四枚胶囊**默认收起**，
-   常驻只剩一枚漏斗开关（`.pdf-sidebar-filter-toggle`）。理由：它们只在"标注多到要按类型筛"
-   时才用得上，常驻时却几乎占满整个栏宽（≈236px，侧栏本身才 ~260px）。 */
-.pdf-sidebar-filters {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: var(--space-2) var(--space-2) var(--space-1);
-  flex-wrap: wrap;
-}
-/* 2026-09-22（owner 截图："这几个按钮也进行扁平化处理"）：漏斗开关与它展开后的四枚胶囊
-   一起走扁平语言（无边框、透明底、hover 给底色、选中给 `--accent-soft` 底 + 强调色），
-   理由与 `.pdf-annot-ocr` 相同：右侧栏里再留一圈 1px 描边，和已经扁平的工具行不是一套。 */
-.pdf-sidebar-filter-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: var(--fs-11-5);
-  padding: 3px 9px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  flex: 0 0 auto;
-}
-.pdf-sidebar-filter-toggle:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-/* 筛选**不是"全部"**时常驻态也要看得出来（收起时旁边带当前类型文字） */
-.pdf-sidebar-filter-toggle.is-active {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.pdf-sidebar-filter-current {
-  white-space: nowrap;
-}
-.pdf-sidebar-filter {
-  display: flex;
-  gap: var(--space-1);
-  padding: 0;
-  flex-wrap: wrap;
-}
-.pdf-sidebar-filter-btn {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: var(--fs-11-5);
-  padding: 3px 9px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.pdf-sidebar-filter-btn:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-.pdf-sidebar-filter-btn.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.pdf-sidebar-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--space-2) var(--space-2) var(--space-4);
-}
-.pdf-sidebar-page + .pdf-sidebar-page {
-  margin-top: 10px;
-}
-.pdf-sidebar-page-no {
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-  margin: 2px 6px var(--space-1);
-  font-weight: 600;
-}
-.pdf-sidebar-page-no.active {
-  color: var(--accent);
-}
-/* B6 — 侧栏批注行：跳转按钮 + 删除按钮并列 */
-.pdf-sidebar-item-row {
-  display: flex;
-  align-items: center;
-  width: 100%;
-}
-.pdf-sidebar-item-row:hover .pdf-sidebar-item {
-  background: var(--hover-strong, rgba(0, 0, 0, 0.05));
-}
-.pdf-sidebar-del {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.12s;
-}
-.pdf-sidebar-item-row:hover .pdf-sidebar-del {
-  opacity: 1;
-}
-.pdf-sidebar-del:hover {
-  color: var(--danger, #e5484d);
-  background: rgba(229, 72, 77, 0.1);
-}
-.pdf-sidebar-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  border: 1px solid transparent;
-  background: transparent;
-  padding: 6px var(--space-2);
-  border-radius: 7px;
-  cursor: pointer;
-  text-align: left;
-}
-.pdf-sidebar-item:hover {
-  background: var(--hover-strong, rgba(0, 0, 0, 0.05));
-}
-.pdf-sidebar-item-icon {
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--fs-13);
-}
-.pdf-sidebar-item-body {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.pdf-sidebar-item-type {
-  font-size: var(--fs-11);
-  color: var(--text-dim);
-}
-.pdf-sidebar-item-text {
-  font-size: var(--fs-12);
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pdf-sidebar-item-page {
-  flex-shrink: 0;
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-}
-.pdf-sidebar-empty {
-  padding: var(--space-5) 14px;
-  text-align: center;
-}
-.pdf-sidebar-empty-title {
-  font-size: var(--fs-13);
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: var(--space-1);
-}
-.pdf-sidebar-empty-sub {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  line-height: 1.5;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* 侧栏跳转定位的闪烁动画 */
 @keyframes pdf-flash {
@@ -16668,7 +15379,6 @@ body.is-plugin-panel-open .main {
 @media (max-width: 768px), (max-height: 520px) {
 .set-dialog,
 .formula-editor,
-.pdf-ocr-popover,
 .palette,
 .space-switcher,
 .search-popover,
@@ -16937,25 +15647,6 @@ body.is-plugin-panel-open .main {
     border: none;
     resize: none;
   }
-/* OCR 结果浮层：内容可以很长（实测 1470px），而 `.pdf-ocr-pop-body` 是
-     `overflow:hidden`——不改成可滚就是"看得见上半截、下半截永远够不到"。 */
-  .pdf-ocr-popover {
-    left: 0;
-    right: 0;
-    top: auto;
-    bottom: 0;
-    transform: none;
-    width: auto;
-    height: auto;
-    max-height: calc(var(--ovh) - 24px);
-    border-radius: 16px 16px 0 0;
-    border-bottom: none;
-    resize: none;
-  }
-.pdf-ocr-pop-body {
-    overflow-y: auto;
-    overscroll-behavior-y: contain;
-  }
 .search-popover,
 .trash-popover,
 .backup-dropdown,
@@ -16997,7 +15688,6 @@ body.is-plugin-panel-open .main {
 .set-close,
 .community-save-close,
 .plugin-view-close,
-.pdf-ocr-pop-close,
 .tag-picker-close {
     min-width: 44px;
     min-height: 44px;
@@ -17039,134 +15729,6 @@ body.is-plugin-panel-open .main {
 .toc-panel button,
 .formula-editor button,
 .emoji-picker button {
-    min-height: 44px;
-  }
-/* ---------------------------------------------------------------------------
-     PDF 阅读器的**内部分栏**（2026-09-15 真机量到的第二个问题：能打开 ≠ 能看）
-
-     症状（360×792 实测）：目录栏 240px 常驻在左、批注栏并排、页面图 x=99/宽 306
-     ⇒ **右边溢出屏幕**，正文被两栏挤在中间看不见。
-
-     改法与 §4.1 那 19 层同一条纪律：窄/矮视口下这两栏**不再是并排的列**，而是
-     **盖在正文上的抽屉**（贴左/贴右、整高、带阴影），默认收起由 JS 负责
-     （`PdfReader` 用 `useMobileOverlayViewport()` 把初始 state 设成 false）。
-     拖拽改宽的把手在抽屉形态下没有意义（宽度由 CSS 定），所以藏掉。
-     ⚠️ 抽屉宽度**故意写在 CSS 里**，所以 `PdfReader` 在浮层视口下必须**不写内联 width**
-     （内联样式优先级更高，会把这里顶掉——两边必须一起改）。
-     --------------------------------------------------------------------------- */
-  .pdf-reader-layout {
-    position: relative;
-  }
-.pdf-outline-col,
-  .pdf-sidebar-col {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    z-index: 6;
-    width: min(300px, 86vw);
-    max-width: 86vw;
-    background: var(--bg);
-  }
-.pdf-outline-col {
-    left: 0;
-    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.2);
-  }
-.pdf-sidebar-col {
-    right: 0;
-    box-shadow: -2px 0 16px rgba(0, 0, 0, 0.2);
-  }
-.pdf-outline-resizer,
-  .pdf-sidebar-resizer {
-    display: none;
-  }
-/* 正文区必须吃掉整宽：两栏已经脱离文档流，不再参与分配。 */
-  .pdf-reader-layout > .pdf-reader-stage-wrap {
-    width: 100%;
-    flex: 1 1 auto;
-  }
-/* ---------------------------------------------------------------------------
-     PDF 阅读器的**头部工具条 / 批注工具行**（同一轮真机量到的第三处）
-
-     实测（360 宽）：头部内容 **730px** 宽，而外层 `.pdf-reader.maximized` 是
-     `overflow: hidden` ⇒ 放大 / 还原窗口 / 批注侧栏 / 对这篇 PDF 提问 / 护眼模式 /
-     导出带批注副本 / **关闭** 整排**被裁在屏外、点不到**；批注工具行同理（489 > 360）。
-     用户只能靠 Android 返回键离开，而屏幕上那个「关闭」其实一直在屏幕外。
-
-     改法：窄/矮视口下这两行**允许换行**（不裁 = 每个按钮都真的能按到），
-     并把「关闭」推到可见的一端；触摸目标补齐到 44×44（这一层原来是 28×28，
-     与 §4.1 那条"命中区 ≥44"是同一条规矩，只是当初没覆盖到阅读器内部）。
-     --------------------------------------------------------------------------- */
-  /* ⚠️ 2026-09-22（owner："pdf 阅读器顶部系统工具栏任何时候不换行，空间狭小时收起来"）：
-     这里原来给 head 开的是 `flex-wrap: wrap`（"不裁 = 每个按钮都真的能按到"），代价是
-     390 上 115px / 2 行、320 上 165px / 3 行。现在 head **任何时候都不换行**，
-     放不下的收进「⋯」（`PdfReader` 量宽 + `[data-collapse]`）—— 不裁这件事由
-     "最少配置 [文件名][⋯][×] ≈ 144px" 保证，不需要靠折行。 */
-  /* ---------------------------------------------------------------------------
-     浮层形态的阅读器**必须自己让开系统栏**（同一轮真机量到的第四处）
-
-     `.pdf-reader-overlay` 是 `position: fixed; inset: 0`，于是头部第一行落在
-     0..41 CSS px 那一条带里——而**那一条带的触摸按设计归 SystemUI**（§4.2.1）。
-     真机实证：目录开关的中心在设备 y=96（状态栏 0..123 之内），
-     `adb shell input tap` 打上去**什么都没发生**；而"目录栏默认收起"是我这一轮刚做的，
-     于是"手机上根本打不开目录"。
-
-     内联形态（横屏，挂在 `.main` 下）由外壳的 padding 让位，**不能**重复加，所以用
-     `:not()` 把它排除掉。变量用的是全仓一致那一套（`--sat/--sar/--sab/--sal/--kb`）。
-     --------------------------------------------------------------------------- */
-  .pdf-reader-overlay:not(.main > .pdf-reader-overlay) {
-    padding: var(--sat) var(--sar) max(var(--sab), var(--kb)) var(--sal);
-  }
-/* 2026-09-22：窄屏把这两组内部的间距收紧（6 → 4）。⚠️ 外层 `.pdf-reader-controls`
-     已经**不存在**了（head 改成扁平 + 量宽收起，那一层会让"只收缩放、留翻页"做不到）。 */
-  .pdf-reader-nav,
-  .pdf-reader-zoom {
-    gap: var(--space-1);
-  }
-/* 页码指示器是"至少 72px"（桌面为了不抖），窄屏没必要留那么宽：短文本自然更窄，
-     长文本（如「第 128 / 1024 页」）本来就超过 72px，不受影响。 */
-  .pdf-reader-page {
-    min-width: 64px;
-  }
-.pdf-reader-name {
-    flex: 0 1 auto;
-    max-width: 42%;
-  }
-/* 分隔线在窄屏不显示：每个按钮已经 44 宽，再加 1px + 两侧间距只会挤掉正文。 */
-  .pdf-reader-sep { display: none; }
-.pdf-reader-close {
-    margin-left: auto;
-  }
-/* ⚠️ 这里原来还有一段 `order` 重排（[目录][文件名][导出][⋯][×] 提到第一行）——
-     那是"折行时代"的补丁：控制组一换行，后面的 `⋯`/`×` 就被推到第四行。
-     现在只有一行、且 DOM 顺序本来就是 [目录][文件名][翻页][缩放][视图开关][导出][⋯][×]，
-     `order` 全部删掉（留着只会让人以为是它在起作用）。 */
-  /* 「⋯」的菜单在窄屏不许超出视口：里面的行本来就允许换行。 */
-  .pdf-head-more-pop {
-    max-width: calc(100vw - 24px);
-  }
-/* ⚠️ 2026-09-22：这里原来给批注工具组开了一条**横向滚动**（"单行横滑"）——按钮被推出屏外，
-     和"收起来"是两回事。现在窄屏也**不换行、不横滑**：工具条自己量宽后把放不下的收进「⋯」
-     （`PdfAnnotTopToolbar` + `[data-collapse]`）。行内只留兜底滚动（见 `.pdf-annot-toolbar-row`）。 */
-  .pdf-annot-tool { flex: 0 0 auto; }
-/* 「⋯」的菜单在窄屏铺满一行的宽度：里面的分组本来就允许换行。 */
-  .pdf-annot-more-pop {
-    max-width: calc(100vw - 24px);
-  }
-/* ⚠️ 页内工具栏的**固定高度**在窄屏另一档：按钮是 44 命中区 + 工具组内边距 8 +
-     工具条内边距 12 + 下边框 1 = 65px。写死它，内容再忙也不许把这一格撑高。 */
-  .pdf-reader-stage-wrap > .pdf-annot-toolbar {
-    height: 65px;
-  }
-/* ⚠️ 系统工具栏（头部）同理：按钮 44 + 上下内边距 10+10 + 下边框 1 = 65，留 1px 写 66。
-     它是"一句话都不许折行"的那一层：文件名走省略号、页码/百分比 `nowrap`。 */
-  .pdf-reader-head {
-    height: 66px;
-  }
-.pdf-reader-head button,
-  .pdf-annot-toolbar button,
-  .pdf-outline button,
-  .pdf-sidebar button {
-    min-width: 44px;
     min-height: 44px;
   }
 /* ---------------------------------------------------------------------------
@@ -17216,37 +15778,7 @@ button.ui-toggle::after,
   }
 }
 
-/* ---------------------------------------------------------------------------
-   横屏（**矮**视口专有）：批注工具行单行 + 兜底横滑
 
-   ⚠️ 2026-09-22 起这一段**只管批注工具行的兜底滚动**：头部（`.pdf-reader-head`）与
-   批注工具条都已经"任何时候不换行 + 放不下收进「⋯」"，横屏这一档同理（量出来的宽度
-   已经含着"高度矮"这件事）。
-   ⚠️⚠️ head **不能**在这里开 `overflow-x: auto`：那会让绝对定位的「⋯」菜单被裁掉
-   （overflow-x 一旦不是 visible，overflow-y 也跟着变 auto）。所以 head 只留
-   `sticky` 的关闭按钮那条 —— 它其实也不再需要 sticky（整行不滚），保留是历史包袱，
-   等下一轮顺手清。
-   --------------------------------------------------------------------------- */
-@media (max-height: 520px) {
-  .pdf-annot-toolbar-row {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    overflow-y: hidden;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-  .pdf-annot-toolbar-row::-webkit-scrollbar {
-    display: none;
-  }
-  .pdf-reader-name {
-    max-width: 30%;
-  }
-  /* 批注工具组同理：量宽要的是**真实宽**，别被压扁。 */
-  .pdf-annot-tools,
-  .pdf-annot-actions {
-    flex-shrink: 0;
-  }
-}
 
 /* ---------------------------------------------------------------------------
    阶段 1 · **冲突提示条**（`components/ConflictBanner.tsx`）

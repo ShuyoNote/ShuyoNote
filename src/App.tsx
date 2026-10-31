@@ -145,6 +145,8 @@ import "./styles/ai.css";
 // S4-8（2026-11-01）：两个小域 —— 知识地图（`.kb-map*`）与顶部工具（`.top-tools*`）。
 import "./styles/kb-map.css";
 import "./styles/top-tools.css";
+// S4-9（2026-11-01）：PDF 阅读器/批注/目录域（`.pdf-*`）。响应式覆盖一并抽走。
+import "./styles/pdf.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
