@@ -24,7 +24,48 @@ fn main() {
     enforce_explicit_crypto_backend_for_sm_library();
     warn_if_patched_source_without_sm_library_feature();
     require_gm_provider_patch();
+    ensure_mcp_bridge_placeholder();
     tauri_build::build()
+}
+
+/// ⭐ 2026-10-31（B：随包 Rust 桥）：给 `bundle.resources` 里的桥产物**放一个占位文件**。
+///
+/// 为什么需要：`tauri-build` 在**编译期**就校验 `bundle.resources` 的路径必须存在（精确路径与
+/// glob 一样都会被校验：实测 `glob pattern … didn't match any files` ⇒ 直接红）。而桥是
+/// `scripts/build-mcp-bridge.mjs` 在**打包前**才编出来的产物、不进库 ⇒ 干净检出上跑
+/// `cargo test` / `cargo check`（CI 的 rust 组就是这样）会**一条都跑不了**。
+/// 实测事故：`4a5ec07b` 的 CI rust job 四条门禁全红在
+/// `resource path ../tools/shuyonote-mcp-rust/dist/shuyonote-mcp doesn't exist`。
+///
+/// 占位文件只在**文件不存在**时写，内容是可识别的文本（不是真二进制）；正常路径上：
+///   · `tauri dev` ⇒ beforeDevCommand 先编真桥（debug）⇒ 会覆盖它；
+///   · `tauri build` ⇒ beforeBuildCommand 先编真桥（release）⇒ 会覆盖它 ⇒ 打进包里的是真二进制；
+///   · 只有 `cargo test/check` 这种不打包的构建才会真的用到占位文件（它也不读它）。
+fn ensure_mcp_bridge_placeholder() {
+    let dist = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("tools")
+        .join("shuyonote-mcp-rust")
+        .join("dist");
+    let name = if cfg!(windows) {
+        "shuyonote-mcp.exe"
+    } else {
+        "shuyonote-mcp"
+    };
+    let file = dist.join(name);
+    if file.is_file() {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&dist) {
+        panic!("MCP 桥占位目录建不出来（{dist:?}）：{e}");
+    }
+    if let Err(e) = std::fs::write(
+        &file,
+        "// shuyonote-mcp placeholder —— 真二进制由 scripts/build-mcp-bridge.mjs 在打包前生成\n",
+    ) {
+        panic!("MCP 桥占位文件写不出来（{file:?}）：{e}");
+    }
+    println!("cargo:warning=MCP 桥产物不存在，已放置占位文件；打包/开发时会被真二进制覆盖");
 }
 
 /// ★ 反向告警（2026-09-22 本人踩坑后补）：**源码上有补丁、但这次构建没开 `sm-library`**。
