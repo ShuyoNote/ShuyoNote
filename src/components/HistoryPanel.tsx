@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
+import { useRightPanel } from "../store/rightPanel";
+import { useViewStore } from "../store/view";
 import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
 import type { PageVersion } from "../types";
@@ -45,8 +47,14 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
   // （见 hooks/usePopover.ts 与 App.css 末尾那段）。原来它只是 CSS 里的
   // `position:absolute; right:0; width:320px`，360×640 实测**左边缘 = −6px**（越界 6px，
   // 因为工具条上那个按钮的右边缘离屏左边不足 320px）——所以它不是"难看"，是真的越界。
+  // ⭐ 2026-11-01（P1-A）：目录打开时把 `--toc-w` 作为"可用右边界"传进去 —— 否则浮层
+  // 只按视口 clamp，右缘会压在目录上（owner 截图）。目录是否打开 / 多宽以 store 现值为准。
   const { open, pos, isSheet, triggerRef, contentRef, toggle, close } =
-    usePopover<HTMLButtonElement>({ width: 320 });
+    usePopover<HTMLButtonElement>({
+      width: 320,
+      rightInset: () =>
+        useRightPanel.getState().toc ? useViewStore.getState().tocWidth : 0,
+    });
   // 与搜索/回收站/同步同一条既有做法：浮层打开时锁住外壳滚动（否则手指拖背景能把正文拖走）。
   useOverlayScrollLock(open);
 
