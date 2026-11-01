@@ -217,6 +217,8 @@ import "./styles/database-page.css";
 import "./styles/confirm.css";
 import "./styles/ui-toggle.css";
 import "./styles/formula.css";
+// S4-39（2026-11-01）：移动首页/搜索/外壳（`.mhome*` / `.msearch*` / `.mshell*`）。
+import "./styles/mobile-home.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
