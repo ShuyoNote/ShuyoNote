@@ -1,6 +1,6 @@
 # 方案：App.css 深度审计与优化（2026-10-30）
 
-状态：S0 视觉基线工具 ✅；S1 纯删除 ✅（App.css 28,695→26,439 行；非空行 27.4k→25.3k；`!important` 正则 36→21、实际声明 31→16）；S2 部分 ✅（去 `!important`／合并重复规则／删死兜底）；**S2 `@layer` 脚手架 ✅（2026-10-31）**：全部既有规则保序包进 `@layer legacy`、utilities 试点 5 条、excalidraw/KaTeX 覆盖 7 条**留在层外**；判据 `src/lib/cssLayers.test.ts`，真浏览器视觉基线最差 **0.018%**（阈值 0.2%）；**S3 字号 token 化 ✅（2026-10-31）**：`tokens.json` → 生成 `tokens.css`/`tokens.d.ts`（21 档整数字号）；`var(--fs-*)` **1,161 处**、px 字号**清零**（整数＋半像素全 token 化，仅注释剩 4 处提及）；间距 `var(--space-*)` **1,401 处**、圆角 `var(--radius-*)` **632 处**；未定义变量 **0**（批 7 清零，判据钉住），判据 `src/lib/cssTokens.test.ts`；批 7 的视觉变化已由 owner 批（截图 `_tmp/acceptance/css-undef-*.png`，基线待重录）；**S4 strangler pilot ✅（2026-10-31）**：三条 CSS 判据已 glob 化到 `src/styles/**/*.css`，`.selection-toolbar` 域整段搬进 `src/styles/selection-toolbar.css`（computed 快照前后 0 差异、基线 0.026%）；**S4-2 ✅**：`check-panel-layout` 夹具改成按 import 顺序内联全部 CSS，mermaid 域（三处切片）搬进 `src/styles/mermaid.css`（夹具 61/61 前后一致、基线 0.007%）；**S4-3 ✅**：`.table-menu` 域搬进 `src/styles/table-menu.css`（computed 0 差异、基线 0.054%）；**S4-4 ✅**：media 提取器就绪，插件管理器域（236 核心＋2 组响应式）搬进 `src/styles/plugin-manager.css`（两个视口 computed 0 差异、基线 0.020%）；**S4-5 ✅**：文件管理器域（200 核心＋5 组响应式）搬进 `src/styles/file-manager.css`（0 差异、基线 0.021%）；**S4-6 ✅**：同步域（325 核心＋4 组响应式）搬进 `src/styles/sync.css`（两视口 0 差异、基线 0.020%）；**S4-7 ✅**：AI 域（208 核心＋2 组响应式）搬进 `src/styles/ai.css`（0 差异、基线 0.025%）；**S4-8 ✅**：知识地图＋顶部工具两个小域搬进独立 `.css`（0 差异、基线 0.021%）；**S4-9 ✅**：PDF 域（216 核心＋2 组响应式）搬进 `src/styles/pdf.css`（0 差异、mobile-overlays 756/756）；**S4-10 ✅**：活动栏＋附件面板两个小域搬进独立 `.css`（0 差异、基线 0.032%，App.css 19,007 行）；后续批次见 §13。审计读数见 §2、执行记录见 §11/§12（截至 2026-10-31）
+状态：S0 视觉基线工具 ✅；S1 纯删除 ✅（App.css 28,695→26,439 行；非空行 27.4k→25.3k；`!important` 正则 36→21、实际声明 31→16）；S2 部分 ✅（去 `!important`／合并重复规则／删死兜底）；**S2 `@layer` 脚手架 ✅（2026-10-31）**：全部既有规则保序包进 `@layer legacy`、utilities 试点 5 条、excalidraw/KaTeX 覆盖 7 条**留在层外**；判据 `src/lib/cssLayers.test.ts`，真浏览器视觉基线最差 **0.018%**（阈值 0.2%）；**S3 字号 token 化 ✅（2026-10-31）**：`tokens.json` → 生成 `tokens.css`/`tokens.d.ts`（21 档整数字号）；`var(--fs-*)` **1,161 处**、px 字号**清零**（整数＋半像素全 token 化，仅注释剩 4 处提及）；间距 `var(--space-*)` **1,401 处**、圆角 `var(--radius-*)` **632 处**；未定义变量 **0**（批 7 清零，判据钉住），判据 `src/lib/cssTokens.test.ts`；批 7 的视觉变化已由 owner 批（截图 `_tmp/acceptance/css-undef-*.png`，基线待重录）；**S4 strangler pilot ✅（2026-10-31）**：三条 CSS 判据已 glob 化到 `src/styles/**/*.css`，`.selection-toolbar` 域整段搬进 `src/styles/selection-toolbar.css`（computed 快照前后 0 差异、基线 0.026%）；**S4-2 ✅**：`check-panel-layout` 夹具改成按 import 顺序内联全部 CSS，mermaid 域（三处切片）搬进 `src/styles/mermaid.css`（夹具 61/61 前后一致、基线 0.007%）；**S4-3 ✅**：`.table-menu` 域搬进 `src/styles/table-menu.css`（computed 0 差异、基线 0.054%）；**S4-4 ✅**：media 提取器就绪，插件管理器域（236 核心＋2 组响应式）搬进 `src/styles/plugin-manager.css`（两个视口 computed 0 差异、基线 0.020%）；**S4-5 ✅**：文件管理器域（200 核心＋5 组响应式）搬进 `src/styles/file-manager.css`（0 差异、基线 0.021%）；**S4-6 ✅**：同步域（325 核心＋4 组响应式）搬进 `src/styles/sync.css`（两视口 0 差异、基线 0.020%）；**S4-7 ✅**：AI 域（208 核心＋2 组响应式）搬进 `src/styles/ai.css`（0 差异、基线 0.025%）；**S4-8 ✅**：知识地图＋顶部工具两个小域搬进独立 `.css`（0 差异、基线 0.021%）；**S4-9 ✅**：PDF 域（216 核心＋2 组响应式）搬进 `src/styles/pdf.css`（0 差异、mobile-overlays 756/756）；**S4-10 ✅**：活动栏＋附件面板两个小域搬进独立 `.css`（0 差异、基线 0.032%）；**S4-11 ✅**：邮箱域（252 条）搬进 `src/styles/email.css`（0 差异、基线 0.036%，App.css 18,114 行）；后续批次见 §13。审计读数见 §2、执行记录见 §11/§12（截至 2026-10-31）
 
 关联：`src/lib/cssHygiene.test.ts`（既有「只减不增」判据）· `docs/TESTING.md`（门禁总表）· 测量脚本（临时）：`_tmp/scratch/analyze-app-css.mjs`、`analyze-app-css2.mjs`
 
@@ -364,8 +364,15 @@ AST 重做后的读数：规则 4535→4191、行数 28695→26439、**逐元素
 - 证据：computed 等价（20 个元素 × 19 属性＋几何 × 视口 1280 / 600）**前后 0 差异**（`_tmp/acceptance/activity-attachments-computed-diff.json`）；`check-panel-layout` **61/61**；CSS 判据 14/14 + sidebar 4/4；5 图基线最差 **0.032%**；`tsc` 0。
 - App.css：19,293 → **19,007 行**。
 
+### S4-11：邮箱域（App.css → `src/styles/email.css`，2026-11-01）
+- 核心 **252 条**（**无 @media 混装**）→ 1,404 行；`.email-*` 在 App.css **0 残留**。
+- 先改 `emailListHeadWrap.test.ts` 读全仓 CSS（它按 happy-dom 计算样式钉 `.email-list-head` 的三条换行契约）。
+- 证据：computed 等价（40 个 email 元素 × 20 属性＋几何 × 视口 1280 / 600）**前后 0 差异**（`_tmp/acceptance/email-computed-diff.json`）；
+  `check-panel-layout` **61/61**；email 接线＋CSS 判据 34/34；5 图基线最差 **0.036%**；`tsc` 0。
+- App.css：19,007 → **18,114 行**。
+
 ### 后续批次（按风险从低到高）
-1. 再评估更大的域：email / settings / tree / mobile / 编辑器（提取器与读法都已就绪）。每批仍要：(a) 逐元素 computed 等价（两个视口）、(b) 全站 5 图基线 ≤0.2%、(c) 域内有 `@media`/`!important` 先单独量。
+1. 再评估更大的域：settings / properties / tree / mobile / 编辑器 / 社区（提取器与读法都已就绪）。每批仍要：(a) 逐元素 computed 等价（两个视口）、(b) 全站 5 图基线 ≤0.2%、(c) 域内有 `@media`/`!important` 先单独量。
 2. 第三方覆盖（excalidraw / KaTeX）**永远留在 App.css 末尾层外**（懒加载未分层，进层即失效）。
 
 

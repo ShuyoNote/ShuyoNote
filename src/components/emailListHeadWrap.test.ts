@@ -4,20 +4,20 @@
 // 这类故障不会报错、不会警告，只在浏览器的 flex 布局里静默发生：面板能拖到 300px 出头，
 // 而这一行原来有 6 个不收缩的元素 + 一个会缩的标题 ⇒ 标题缩成"邮\n件"、按钮互相压。
 //
-// 这里**读真正的 App.css**、用 happy-dom 的计算样式判"那三条规则在不在"：
+// 这里**读全仓 CSS**、用 happy-dom 的计算样式判"那三条规则在不在"（S4 起邮箱域已搬到
+// `src/styles/email.css`；只读 App.css 会假红）：
 //   ① `.email-list-head` 允许换行；
 //   ② 右侧整组 `.email-list-head-right` 用 `wrap-reverse`（「共 N 封」留在上一行右端、按钮掉下一行）；
 //   ③ 按钮 `flex: none`（宁可整组换行，也不许被压扁成文字溢出）。
 // 末条是**变异读数**：把规则删掉后计算值确实会变 —— 证明这三条断言真能咬住那个 bug。
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
 
 import { unlayerForHappyDom } from "../lib/unlayerForHappyDom";
+import { allCssText } from "../lib/cssSources";
 
 // 测试环境把 import.meta.url 解析成 http://，拿不到 file: 路径，所以按 cwd 定位。
-const APP_CSS = readFileSync(resolve(process.cwd(), "src/App.css"), "utf8");
+const APP_CSS = allCssText();
 // happy-dom 不支持 @layer（S2 起 App.css 全部规则在层里）⇒ 注入前先扁平化；判的还是同一批规则。
 const FLAT_CSS = unlayerForHappyDom(APP_CSS);
 

@@ -150,6 +150,8 @@ import "./styles/pdf.css";
 // S4-10（2026-11-01）：活动栏（`.activity-*`）与附件面板（`.attachment*`）两个小域。
 import "./styles/activity-bar.css";
 import "./styles/attachments.css";
+// S4-11（2026-11-01）：邮箱域（`.email-*`）。
+import "./styles/email.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
