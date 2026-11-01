@@ -510,9 +510,20 @@ pub fn run() {
             // ⭐ 2026-10-09（task-10 ③）**追加**：`args` 里还有一条 `--import <文件>`（Windows 文件关联那一半）——
             //    deep-link 只认 URL、认不出本地路径 ⇒ 它此前被丢掉 ✗；这里交给 `office_import` 认 ✓
             //    （⛔ 单实例守卫仍由本插件负责 —— 下面那段"禁止多开"的注释口径不变 ✓）。
-            office_import::forward_import_args(&args, |p| {
-                let _ = tauri::Emitter::emit(app, office_import::IMPORT_EVENT, p.to_string());
-            });
+            // ⭐ task-14（2026-11-01）：**office-import 被停用 ⇒ 不转交**（这一条 OS 唤起入口是真的被关上，
+            //    ⛔ 不是"先转交、再让界面假装拦一下" ✗）。真正解析 `.docx` 的是 TS 那条链，Rust 只负责
+            //    把路径带过去 ⇒ 「不转交」就是这里唯一能真拦的动作。界面侧那条 guard 照旧负责给人话
+            //    （用户从应用内发起时能读到"已禁用"）；这一条被丢掉时只留一行可诊断的日志。
+            if abilities::office_import_allowed(app) {
+                office_import::forward_import_args(&args, |p| {
+                    let _ = tauri::Emitter::emit(app, office_import::IMPORT_EVENT, p.to_string());
+                });
+            } else {
+                log_lifecycle(
+                    "office_import_skipped_disabled",
+                    "第二个实例带来的 --import 请求被丢弃（能力页里 office-import 处于禁用状态）",
+                );
+            }
             //
             // 唤起已有实例到前台：先还原最小化窗口，再抢焦点。否则二次启动时最小化的
             // 实例只是被 set_focus，不会取消最小化/前置，用户以为没响应用户。
@@ -686,7 +697,18 @@ pub fn run() {
             //    `main.rs` 早在 `run()` 之前就把路径记进本进程了 ✓（app 那时还没建 ⇒ 只能记、不能发 ✓）；
             //    发（emit）必须等 app 建好 ⇒ 位置只能是**紧接上面那行深链补收** ✓（同族：都是"补收冷启动那一次" ✓）。
             //    ⚠️ 第二个实例那一路在单实例回调里（`lib.rs:346` 那段 ✓）；两条最终都落到同一个事件名 ✓。
-            office_import::deliver_pending(|p| { let _ = tauri::Emitter::emit(app, office_import::IMPORT_EVENT, p.to_string()); });
+            // ⭐ task-14（2026-11-01）：office-import 被停用 ⇒ **不交付、并把队列丢掉**（与上面第二个实例
+            //    那条同一个理由：真正解析 `.docx` 的是 TS 链，Rust 能做的是"不把路径带过去"）。
+            //    ⚠️ 丢弃是**故意的**：留着队列的话，用户之后一启用它会突然冒出来建一页 —— 那才是意外。
+            if abilities::office_import_allowed(app.handle()) {
+                office_import::deliver_pending(|p| { let _ = tauri::Emitter::emit(app, office_import::IMPORT_EVENT, p.to_string()); });
+            } else {
+                log_lifecycle(
+                    "office_import_skipped_disabled",
+                    "冷启动的 --import 请求被丢弃（能力页里 office-import 处于禁用状态）",
+                );
+                let _ = office_import::take_pending_imports();
+            }
 
 	// P1 自动备份：⭐ 启动时先跑一轮，然后按间隔再看
 	//（P1 逐字＝「调度器（启动触发 ＋ 每 24h）」✓）
@@ -957,6 +979,12 @@ pub fn run() {
             //   ⛔ 别再在这里补注册 ✗；⛔ 也别把门禁改成"忽略 team_" ✗。
 
             abilities::save_ability_pack,
+            // ⭐ task-14（2026-11-01）：能力的**启停**与**卸载** —— 白名单（闭集）＋ 原子写
+            //    `<app_data>/abilities-state.json`（tmp ＋ rename）＋ 卸载**只删** `packs/<id>` 且幂等。
+            //    ⚠️ 三条都**桌面专属**：能力包只落在本机应用数据目录（Web 壳没有那个位置）。
+            abilities::ability_states,
+            abilities::ability_set_enabled,
+            abilities::ability_uninstall,
             storage::cleanup_orphan_derived,
             // ⭐ 2026-10-11：只读附件引用体检（⭐ 报表，⛔ 不删不改 ✓）—— 用来把"加密空间有没有引用老明文"说死 ✓
             storage::audit_attachment_refs,

@@ -1456,6 +1456,20 @@ export function makeInvoke(store: SqliteStore) {
     if (cmd === "save_ability_pack") {
       throw new Error("按需下载仅桌面版支持（Web 版请使用桌面版）");
     }
+    // ⭐ task-14：能力的**启停 / 卸载**也是**桌面专属** —— 它们操作的是
+    //   `<app_data>/packs/<id>` 与 `<app_data>/abilities-state.json` 这两个**本机文件**；
+    //   Web 壳里没有"应用数据目录"这种受管位置 ⇒ 在浏览器里"实现"它只能是假的
+    //   （例如写进 localStorage，而那条路**没有任何入口会去读**）⇒ 如实说不支持，
+    //   ⛔ 不假装浏览器里也有一个能卸载的本机能力包（同 `save_ability_pack` 那条先例）。
+    if (cmd === "ability_states") {
+      throw new Error("能力状态仅桌面版支持（能力包只落在本机应用数据目录的 packs 里）");
+    }
+    if (cmd === "ability_set_enabled") {
+      throw new Error("启用/停用能力仅桌面版支持（状态文件在本机应用数据目录里）");
+    }
+    if (cmd === "ability_uninstall") {
+      throw new Error("卸载能力包仅桌面版支持（它删的是本机 packs 目录里的下载包）");
+    }
     // ⚠️ 同理：P0 格式引擎是本机原生库 ✓，浏览器里没有它 ⇒ **明说做不到** ✓
     //    （同 `email_fetch_*` 那几条的既有口径 ✓；⛔ 不假装能抽 ✗）。
     if (cmd === "extract_with_kreuzberg") {
@@ -2775,6 +2789,9 @@ export function makeInvoke(store: SqliteStore) {
     if (cmd === "dictionary_status") {
       return {
         available: false,
+        // ⭐ task-14：Web 壳里没有能力包落盘 ⇒ 既没装、也没"被停用"这回事（如实两个 false）
+        installed: false,
+        disabled: false,
         path: null,
         bytes: null,
         entries: null,

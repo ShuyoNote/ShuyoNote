@@ -29,6 +29,9 @@
 import { useEffect, useState } from "react";
 
 import { importOfficeBytes } from "../lib/office/importPipeline";
+// ⭐ task-14（2026-11-01）：`office-import` 被用户在「设置 → 能力」里停用时，这里要**拒绝并给人话**
+//    （⛔ 不许让用户选完文件、转完再告诉他"其实这一项已经关了" ✗）。
+import { OFFICE_IMPORT_ABILITY_ID, isAbilityEnabled } from "../lib/abilities/state";
 import { measureOne, renderRetentionReport, type RetentionRow } from "../lib/office/retention";
 import { realOfficePathDeps, type OfficePathOutcome } from "../lib/office/pathImport";
 import { mountOfficeImportRequests, realOfficeImportRequestHandler } from "../lib/office/requestBridge";
@@ -79,6 +82,14 @@ export function OfficeImportPanel({ parentId = null }: { parentId?: string | nul
 
   const pickFile = async () => {
     if (busy) return;
+    // ⭐ task-14：停用 ⇒ **连文件选择都不打开**，先给人话（这条是"入口拒绝"，不是"选完再失败"）
+    if (!(await isAbilityEnabled(OFFICE_IMPORT_ABILITY_ID))) {
+      toast(
+        "「Word 导入」已在「设置 → 能力」里停用 ⇒ 现在不能导入；到那里启用后即可恢复。",
+        "error",
+      );
+      return;
+    }
     setBusy(true);
     setOutcome(null);
     setPreview(null);

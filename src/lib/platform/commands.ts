@@ -675,7 +675,14 @@ export type DictionaryMissKind = "empty" | "not_english" | "not_found" | "too_lo
 export type DictionaryLookupOutcome =
   | { status: "found"; query: string; matched: string; entry: DictionaryEntry }
   | { status: "not_found"; query: string; kind: DictionaryMissKind; message: string }
-  | { status: "unavailable"; message: string };
+  | { status: "unavailable"; message: string }
+  /**
+   * ⭐ task-14（2026-11-01）：**这一项被用户在「设置 → 能力」里停用了**。
+   *
+   * ⚠️ 与 `unavailable`（没装/坏了）**必须分开**：处置完全不同 —— 一个去下载，
+   * 一个去启用。混成一个状态，界面就只能说"未就绪"，把用户自己的选择说成故障。
+   */
+  | { status: "disabled"; message: string };
 
 /**
  * 词库 pack **首次下载**完成后的读数（对应 `dictionary.rs::PackInstallReport`）。
@@ -696,6 +703,14 @@ export interface DictionaryPackInstallReport {
 /** 词典状态读数（界面据此决定显不显示"本地词典"那一档；`entries: null` = 读不出来，不猜）。 */
 export interface DictionaryStatus {
   available: boolean;
+  /**
+   * ⭐ task-14：**盘上有没有那个词库文件** —— 与 `available` **不是一回事**：
+   * 有文件但被用户停用 ⇒ `installed: true` ／ `available: false` ／ `disabled: true`。
+   * 界面靠它把"已装但已停用"那一行留在「可用（已装）」里（⛔ 不许当成"没装" ✗）。
+   */
+  installed: boolean;
+  /** ⭐ task-14：这一项在「设置 → 能力」里被停用了（停用 ⇒ `available` 恒为 false）。 */
+  disabled: boolean;
   path: string | null;
   bytes: number | null;
   entries: number | null;
@@ -762,6 +777,32 @@ export interface RelayStatus {
   license: RelayLicenseView;
 }
 
+/**
+ * ⭐ task-14（2026-11-01）：一条能力在「设置 → 能力」里的**启停读数**
+ * （对应 Rust `abilities::AbilityEnabled`）。
+ *
+ * ⚠️ 它是**后端状态**，⛔ 不是界面自娱自乐的开关：`office-import` 的入口拦截、
+ * `dictionary_status` / `dictionary_lookup` 的 `disabled` 都读同一份（`<app_data>/abilities-state.json`）。
+ */
+export interface AbilityEnabledFlags {
+  id: string;
+  /** 缺省（后端没这条记录）= 启用；读不到状态 ⇒ 界面按启用处理（fail-open，与 Rust 同口径）。 */
+  enabled: boolean;
+  /** 能不能卸载：`builtin` / `local-endpoint` ⇒ `false`（可禁用，但没有可删的 pack）。 */
+  uninstallable: boolean;
+}
+
+/**
+ * ⭐ task-14：卸载的读数（对应 Rust `abilities::UninstallReport`）。
+ * ⚠️ `removed: false` = 它本来就不在（**幂等**，不是错误）；⛔ 界面不许把两者说成一样。
+ */
+export interface AbilityUninstallReport {
+  /** 那个 pack 目录的路径（删之前记下的）。 */
+  path: string;
+  removed: boolean;
+  bytes: number;
+}
+
 export interface CommandMap {
   // ---- 交付通道 shuyonote:// 的 OS 层（桌面） ----
   /**
@@ -792,6 +833,12 @@ export interface CommandMap {
     args: { packId: string; base64: string };
     result: { path: string; bytes: number; sha256: string; audit: string };
   };
+  // ⭐ task-14（2026-11-01）：能力的**启停**与**卸载**（桌面专属 —— 能力包只落在本机 packs 目录）。
+  //    ⚠️ 白名单是**闭集**（`office-import` / `ecdict-en-zh` / `vlm-ocr`），后端对别的 id 一律拒；
+  //    卸载**只删** `<app_data>/packs/<packId>` 且幂等；状态存 `<app_data>/abilities-state.json`（原子写）。
+  ability_states: { args: undefined; result: AbilityEnabledFlags[] };
+  ability_set_enabled: { args: { packId: string; enabled: boolean }; result: AbilityEnabledFlags[] };
+  ability_uninstall: { args: { packId: string }; result: AbilityUninstallReport };
   // ---- P0 格式引擎（Kreuzberg v4.10.x，MIT；桌面专属） ----
   // ⚠️ 只**取文本**：不写派生表（`attachment_text` / `chunks` 的唯一写入者仍是 `src/lib/extract/` ✓）。
   // 补的是本仓既有 TS 链吃不下的一类：eml／msg／zip／7z／gz／rtf／odt／epub／学术格式 ✓。

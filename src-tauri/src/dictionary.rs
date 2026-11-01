@@ -100,12 +100,25 @@ pub enum LookupOutcome {
     /// 词典本身不可用（没装／文件不认识）。⚠️ 与 `NotFound` **分开**：界面要说的是
     /// "本地词典未安装"，而不是"这个词未收录" —— 后者会让人以为查过了。
     Unavailable { message: String },
+    /// ⭐ **词典被用户在「设置 → 能力」里停用了**（task-14）。
+    ///
+    /// ⚠️ 与 `Unavailable` **必须分开**：两者对用户是完全不同的事 ——
+    /// 一个是"没装/坏了、去下载"，另一个是"你自己关掉的、去启用"。
+    /// 把它们混成一个 `Unavailable`，界面就只能说"未就绪"，把用户自己的选择说成故障。
+    Disabled { message: String },
 }
 
 /// 词典状态读数（界面/诊断用）。**如实**报路径与词条数，没有就报没有。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DictionaryStatus {
     pub available: bool,
+    /// ⭐ **盘上有没有那个词库文件**（task-14）—— 与 `available` **不是一回事**：
+    /// 有文件但被用户停用 ⇒ `installed: true` ／ `available: false` ／ `disabled: true`。
+    /// 界面靠它把"已装但已停用"那一行留在「可用（已装）」里（⛔ 不许当成"没装" ✗）。
+    pub installed: bool,
+    /// ⭐ 用户在「设置 → 能力」里停用了这一项（task-14）：`available` 恒为 false，
+    /// 且**查词会返回 `Disabled`**（不是"未安装"）。
+    pub disabled: bool,
     /// 实际用到的文件（没有就是 `None`）。
     pub path: Option<String>,
     /// 文件字节数（`available` 时才有）。
@@ -462,20 +475,40 @@ fn count_entries(conn: &Connection) -> Option<i64> {
         .ok()
 }
 
-/// 状态：**如实**报"有没有、在哪、多少条、指纹过没过"。
+/// 状态：**如实**报"有没有、在哪、多少条、指纹过没过、以及**是不是被停用了**"。
 ///
 /// `verified` 由调用方算好传进来（它要花几百毫秒 ⇒ 只在命令层按"每进程一次"算）：
-/// · `None` = 没有文件；
+/// · `None` = 没有文件（或**被停用、根本不需要核**）；
 /// · `Some(false)` = 文件在但**半包/指纹不符** ⇒ `available` 仍为 false（⛔ 不是"就绪"）。
+///
+/// ⭐ `disabled`（task-14）：用户在「设置 → 能力」里把这一项停用了 ⇒
+/// `available: false` ＋ `disabled: true`，而 `installed` **照实**反映盘上有没有文件
+/// （⛔ 不许把"已装但停用"说成"没装" ✗ —— 那是两件不同的事，处置也不同）。
 pub fn status_at(
     path: Option<&Path>,
     env: Option<&Path>,
     app_data: Option<&Path>,
     verified: Option<bool>,
+    disabled: bool,
 ) -> DictionaryStatus {
+    if disabled {
+        return DictionaryStatus {
+            available: false,
+            installed: path.is_some(),
+            disabled: true,
+            path: path.map(|p| p.display().to_string()),
+            bytes: path.and_then(|p| std::fs::metadata(p).ok().map(|m| m.len())),
+            entries: None,
+            source: path.map(|p| source_of(env, app_data, p).to_string()),
+            verified,
+            message: "本地英汉词库已被停用（在「设置 → 能力 → 英汉词库」里启用即可恢复）—— 这一项现在不参与查词；⛔ 不当成「未安装」，查词也不会编造释义。".to_string(),
+        };
+    }
     let Some(path) = path else {
         return DictionaryStatus {
             available: false,
+            installed: false,
+            disabled: false,
             path: None,
             bytes: None,
             entries: None,
@@ -492,6 +525,8 @@ pub fn status_at(
     if verified == Some(false) {
         return DictionaryStatus {
             available: false,
+            installed: true,
+            disabled: false,
             path: Some(path.display().to_string()),
             bytes,
             entries: None,
@@ -510,6 +545,8 @@ pub fn status_at(
     });
     DictionaryStatus {
         available: true,
+        installed: true,
+        disabled: false,
         path: Some(path.display().to_string()),
         bytes,
         entries,
@@ -522,6 +559,14 @@ pub fn status_at(
             None => "词库文件在，但读不出词条数（schema 不认识？）⇒ 界面按「查不到」如实显示。"
                 .to_string(),
         },
+    }
+}
+
+/// 被停用时**查词**的答复（与 `status_at` 的 `disabled` 那一支同一口径；⛔ 不查文件 ✗）。
+pub fn disabled_outcome() -> LookupOutcome {
+    LookupOutcome::Disabled {
+        message: "本地英汉词库已被停用（在「设置 → 能力 → 英汉词库」里启用即可恢复）⇒ 这次没有查词，也不会编造释义。"
+            .to_string(),
     }
 }
 
@@ -562,10 +607,24 @@ fn cached_pack_check(path: &Path) -> Result<(), String> {
         .clone()
 }
 
+/// ⭐ ECDICT 这一项在「设置 → 能力」里被停用了吗？
+///
+/// ⚠️ 读不到 app data（还没初始化）⇒ **当成没停用**（与 `abilities::read_state` 的 fail-open
+/// 同一条口径：读不到偏好不该让功能整个失效）。
+fn ecdict_disabled() -> bool {
+    crate::db::app_data_dir_ref()
+        .map(|d| crate::abilities::is_ability_disabled(d, crate::abilities::ECDICT_PACK_ID))
+        .unwrap_or(false)
+}
+
 /// 查一个词/短语。返回的三种状态见 [`LookupOutcome`]。
 #[tauri::command]
 pub async fn dictionary_lookup(app: tauri::AppHandle, word: String) -> LookupOutcome {
     let _ = &app; // 路径只从 `db::app_data_dir_ref()` 取（与 `save_ability_pack` 同一个来源）
+                  // ⭐ task-14：被停用 ⇒ **先说这件事**，连文件都不打开（⛔ 不当作"未安装" ✗）
+    if ecdict_disabled() {
+        return disabled_outcome();
+    }
     match current_db_path() {
         // 能力包 ⇒ 先核完整性（长度每次 ＋ sha256 每进程一次）；不过就**不查**，把原因说出来。
         Some((p, true)) => match cached_pack_check(&p) {
@@ -589,19 +648,27 @@ pub async fn dictionary_status(app: tauri::AppHandle) -> DictionaryStatus {
     let _ = &app;
     let env = std::env::var_os(ENV_DB).map(PathBuf::from);
     let app_data = crate::db::app_data_dir_ref().map(|p| p.to_path_buf());
-    let (path, verified) = match current_db_path() {
-        Some((p, true)) => {
-            let ok = cached_pack_check(&p).is_ok();
-            (Some(p), Some(ok))
+    let disabled = ecdict_disabled();
+    let (path, verified) = if disabled {
+        // ⭐ 停用 ⇒ 不去算那份 90 MB 的 sha256（不需要，而且那是白等几百毫秒）；
+        //    但"盘上到底有没有那个文件"仍然如实报（`installed` 靠它 ⇒ 界面才知道该不该留着那一行）。
+        (current_db_path().map(|(p, _)| p), None)
+    } else {
+        match current_db_path() {
+            Some((p, true)) => {
+                let ok = cached_pack_check(&p).is_ok();
+                (Some(p), Some(ok))
+            }
+            Some((p, false)) => (Some(p), None), // 开发覆盖口：没有可核的 pin
+            None => (None, None),
         }
-        Some((p, false)) => (Some(p), None), // 开发覆盖口：没有可核的 pin
-        None => (None, None),
     };
     status_at(
         path.as_deref(),
         env.as_deref(),
         app_data.as_deref(),
         verified,
+        disabled,
     )
 }
 
@@ -665,6 +732,11 @@ pub async fn dictionary_install_pack(
     app: tauri::AppHandle,
     url: Option<String>,
 ) -> Result<PackInstallReport, String> {
+    // ⭐ task-14：被停用 ⇒ **连下载也拒**（停用是用户的选择，"顺手再下一份"等于绕过它；
+    //    界面上那颗下载键在停用时也是禁用的，这里是**同一件事的第二道**）。
+    if ecdict_disabled() {
+        return Err("英汉词库已被停用（在「设置 → 能力 → 英汉词库」里启用之后再下载）".to_string());
+    }
     let pins = ecdict_pins()?;
     let app_data = crate::db::app_data_dir_ref()
         .ok_or_else(|| "app data dir 未初始化".to_string())?
@@ -1057,8 +1129,10 @@ mod tests {
 
     #[test]
     fn status_says_not_ready_instead_of_pretending() {
-        let st = status_at(None, None, None, None);
+        let st = status_at(None, None, None, None, false);
         assert!(!st.available);
+        assert!(!st.installed);
+        assert!(!st.disabled);
         assert!(st.path.is_none() && st.entries.is_none());
         assert_eq!(st.verified, None);
         assert!(st.message.contains("未就绪"), "{}", st.message);
@@ -1066,8 +1140,10 @@ mod tests {
         assert!(!st.message.contains("词库就绪"), "{}", st.message);
 
         let p = fixture_file("dict-status");
-        let st = status_at(Some(&p), None, None, Some(true));
+        let st = status_at(Some(&p), None, None, Some(true), false);
         assert!(st.available);
+        assert!(st.installed);
+        assert!(!st.disabled);
         assert_eq!(st.entries, Some(4));
         assert!(st.bytes.unwrap_or(0) > 0);
         assert_eq!(st.source.as_deref(), Some("unknown"));
@@ -1080,11 +1156,49 @@ mod tests {
         // ⭐ 半包/指纹不符时，状态里 `available` 必须是 **false** —— 否则界面会显示"就绪"，
         //    而查询那条路又会拒（同一个文件两种说法 = 用户看到的自相矛盾）。
         let p = fixture_file("dict-status-bad");
-        let st = status_at(Some(&p), None, None, Some(false));
+        let st = status_at(Some(&p), None, None, Some(false), false);
         assert!(!st.available);
         assert_eq!(st.verified, Some(false));
         assert!(st.message.contains("完整性"), "{}", st.message);
         let _ = std::fs::remove_file(&p);
+    }
+
+    /// ⭐ task-14：**被停用**与"没装／坏了"必须是三件不同的事。
+    #[test]
+    fn a_disabled_dictionary_says_disabled_and_is_never_reported_as_uninstalled() {
+        // ① 查词 ⇒ `Disabled`（⛔ 不是 `Unavailable`、⛔ 不是 `NotFound`）
+        match disabled_outcome() {
+            LookupOutcome::Disabled { message } => {
+                assert!(message.contains("停用"), "必须明说停用：{message}");
+                assert!(
+                    !message.contains("未安装") && !message.contains("未就绪"),
+                    "⛔ 不许把'用户自己关掉的'说成'没装/没就绪'：{message}"
+                );
+                assert!(message.contains("设置"), "要告诉用户去哪儿启用：{message}");
+            }
+            other => panic!("停用必须走 Disabled 那条，实际 {other:?}"),
+        }
+
+        // ② 状态：文件在 ⇒ `installed: true` 而 `available: false`、`disabled: true`，
+        //    且**不去读**词条数（停用了就不必打开那份 90 MB 的库）
+        let p = fixture_file("dict-disabled");
+        let st = status_at(Some(&p), None, None, None, true);
+        assert!(st.disabled);
+        assert!(
+            st.installed,
+            "文件在盘上 ⇒ installed 必须是 true（这是与'没装'分开的那个读数）"
+        );
+        assert!(!st.available, "停用 ⇒ 不可查");
+        assert_eq!(st.entries, None, "停用时不读词条数");
+        assert!(st.bytes.unwrap_or(0) > 0, "字节数照实报");
+        assert!(st.message.contains("停用"), "{}", st.message);
+        let _ = std::fs::remove_file(&p);
+
+        // ③ 反向：盘上没有文件又停用 ⇒ `installed: false`（⛔ 不许说成"有"）
+        let st = status_at(None, None, None, None, true);
+        assert!(st.disabled);
+        assert!(!st.installed);
+        assert!(!st.available);
     }
 
     /// ⭐ 对**真的 ECDICT 产出**跑一次（数据不入库 ⇒ 本机没这个环境变量时**自报跳过**）。
@@ -1516,7 +1630,7 @@ mod tests {
             "拒绝之后不许被解析成词库"
         );
         // ② 状态读数如实说"未就绪"（而不是"可用"）
-        let st = status_at(None, None, Some(&app_data), None);
+        let st = status_at(None, None, Some(&app_data), None, false);
         assert!(!st.available, "校验不过 ⇒ available 必须为 false：{st:?}");
         assert!(st.message.contains("未就绪"), "{}", st.message);
         let _ = std::fs::remove_dir_all(&app_data);

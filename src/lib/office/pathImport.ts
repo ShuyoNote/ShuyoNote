@@ -14,6 +14,10 @@
 //   ⇒ 于是"失败要如实说、⛔ 不静默吞掉"在**面板**与**事件**两条路上是同一段代码 ✓。
 
 import { api } from "../api";
+// ⭐ task-14（2026-11-01）：**office-import 被禁用 ⇒ 在这里就把导入拒掉**。
+//    ⚠️ 拦在**这一处**是刻意的：三条触发（双击 .docx 的事件、面板里选文件、「新建页 → 从导入文件创建…」）
+//    全都收敛到 `importOfficeFromPath` ⇒ 只判一次，就没有"漏掉一条入口"的缺口。
+import { OFFICE_IMPORT_ABILITY_ID, isAbilityEnabled } from "../abilities/state";
 import {
   importOfficeBytes,
   type OfficeImportDeps,
@@ -43,6 +47,19 @@ export async function importOfficeFromPath(
   parentId: string | null,
   deps: OfficePathDeps,
 ): Promise<OfficePathOutcome> {
+  // ⭐ task-14：这一项被用户在「设置 → 能力」里禁用了 ⇒ **从这里就拒**（⛔ 不建页、⛔ 附件也不入库）。
+  //    ⚠️ 位置在 `fetchBytes` **之前**：禁用了就连附件都不该先存一份、再说"其实没导入" ✗。
+  //    ⚠️ `isAbilityEnabled` 读不到状态 ⇒ `true`（fail-open）⇒ 命令面抽风**不会**挡住宿主导入；
+  //       而"禁用"的强制一面在 Rust（`dictionary_*`）与这里（office-import）各负其责。
+  if (!(await isAbilityEnabled(OFFICE_IMPORT_ABILITY_ID))) {
+    return {
+      ok: false,
+      code: "ability-disabled",
+      message:
+        "「Word 导入」这一项在「设置 → 能力」里被停用了 ⇒ 这次没有导入任何东西（在那里启用后即可恢复）。",
+      warnings: [],
+    };
+  }
   let got: { name: string; bytes: Uint8Array };
   try {
     got = await deps.fetchBytes(path);

@@ -181,4 +181,26 @@ export default {
   textRepair: {
     pending: "{{count}} page(s) still need their text index rebuilt (merged-in content is not searchable yet — open the page to fix it)",
   },
+  // Abilities page — enable/disable + uninstall (`components/AbilitiesPane.tsx`, task-14, 2026-11-01)
+  // Only this batch of new strings is collected; the rest of that page still falls back to Chinese
+  // in code (progressive migration — batches land here one at a time).
+  abilities: {
+    installed: "Installed",
+    disabled: "Disabled",
+    disabledHint: "This ability is disabled: it takes part in nothing, and you can enable it again anytime.",
+    disable: "Disable",
+    enable: "Enable",
+    uninstall: "Uninstall",
+    uninstallHint: "Deletes only the pack this app downloaded — notes, attachments and other settings are untouched.",
+    uninstallBlockedBuiltin: "Built-in ability: it ships with the installer, so there is no downloaded pack to remove (use “Disable” instead)",
+    uninstallBlockedLocal: "Local-endpoint ability: the model lives in your own Ollama, this app never downloaded anything (use “Disable” instead)",
+    uninstallConfirmTitle: "Uninstall “{{name}}”?",
+    uninstallConfirmMessage:
+      "This deletes only the pack this app downloaded (app data dir/packs/{{id}}). Your notes, attachments and other settings are untouched. Afterwards the ability goes back to “Download on demand”, so you can fetch it again when needed.",
+    uninstallDone: "Uninstalled: removed {{path}} ({{size}})",
+    uninstallNoop: "Already uninstalled: {{path}} was not there, nothing was deleted (idempotent)",
+    uninstallFailed: "Uninstall failed",
+    toggleFailed: "Could not change the enabled state",
+    downloadBlockedDisabled: "This ability is disabled — enable it first, then download",
+  },
 } as const;

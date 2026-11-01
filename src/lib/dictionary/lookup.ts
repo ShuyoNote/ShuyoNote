@@ -75,6 +75,8 @@ export async function dictionaryStatus(invoker: DictionaryInvoker): Promise<Dict
   } catch (e) {
     return {
       available: false,
+      installed: false,
+      disabled: false,
       path: null,
       bytes: null,
       entries: null,
@@ -166,6 +168,17 @@ export function presentOutcome(outcome: DictionaryLookupOutcome): LookupPresenta
         body: outcome.message,
         meta: "",
         // 词典都没装，用户手上那个词仍可能值得解释 ⇒ 给入口，但由界面去提示"需配置 AI"。
+        aiHint: true,
+      };
+    // ⭐ task-14（2026-11-01）：**被停用**是用户自己的选择，⛔ 不许和"没装/坏了"说成同一句话 ✗
+    //    （后者要用户去下载/重下，前者要用户去「设置 → 能力」里启用 —— 处置完全不同）。
+    case "disabled":
+      return {
+        tone: "unavailable",
+        title: "本地词典已停用",
+        body: outcome.message,
+        meta: "",
+        // 停用期间仍然可以走 AI 解释（这条路不依赖本地词库）⇒ 给入口。
         aiHint: true,
       };
   }

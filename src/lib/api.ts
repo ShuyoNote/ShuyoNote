@@ -167,6 +167,22 @@ export const api = {
   saveAbilityPack: (packId: string, base64: string) =>
     invoke("save_ability_pack", { packId, base64 }),
   /**
+   * ⭐ task-14（2026-11-01）：能力的**启停读数**（三条：office-import / ecdict-en-zh / vlm-ocr）。
+   *
+   * ⚠️ 这是**后端状态**（`<app_data>/abilities-state.json`），不是界面自己的开关：
+   * 词库查词、Office 导入那几条入口读的都是同一份 ⇒ 禁用是真的生效，不是只改了个颜色。
+   * 读不到（Web 壳没有能力包落盘）⇒ 前端 `src/lib/abilities/state.ts` 按"全启用"处理。
+   */
+  abilityStates: () => invoke("ability_states"),
+  /** ⭐ task-14：启用/停用某个能力 —— 返回**落盘之后**的读数（界面直接拿它刷新，不自己猜）。 */
+  abilitySetEnabled: (packId: string, enabled: boolean) =>
+    invoke("ability_set_enabled", { packId, enabled }),
+  /**
+   * ⭐ task-14：卸载某个能力包 —— **只删** `<app_data>/packs/<packId>`（不碰笔记/附件），
+   * 幂等（`removed: false` = 本来就没有，不是错误）。builtin / local-endpoint 会被后端拒。
+   */
+  abilityUninstall: (packId: string) => invoke("ability_uninstall", { packId }),
+  /**
    * ⭐ **P0 格式引擎**（Kreuzberg v4.10.x，MIT ✓）：补 `eml／msg／zip／7z／gz／rtf／odt／epub／
    * 学术格式` 那一类（本仓既有 TS 链对它们**无读数** ✗）。
    * ⚠️ 只**取文本** —— 派生表（`attachment_text` / `chunks`）的唯一写入者仍然是

@@ -25,18 +25,44 @@ import { flushSync } from "react-dom";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import "../i18n"; // 先初始化 i18n，免得刷一屏 NO_I18NEXT_INSTANCE（同 vaultGate.test.ts ✓）
+import i18n from "../i18n"; // 先初始化 i18n，免得刷一屏 NO_I18NEXT_INSTANCE（同 vaultGate.test.ts ✓）
 import { allCssText } from "../lib/cssSources";
+import { confirmDialog } from "../store/confirm";
+import { invalidateAbilityStates } from "../lib/abilities/state";
+
+// ⚠️⭐ **task-14（2026-11-01）**：本文件把语言**钉成中文** —— 下面所有断言写的是**中文原文**
+//    （"已装"／"已禁用"／"卸载"…）。这些文案以前只存在于代码里的 `t(key, "中文兜底")`，所以
+//    jsdom 里 `navigator.language` 是 en-US 也照样拿到中文；**task-14 之后它们真的进了
+//    `locales/zh.ts` ＋ `locales/en.ts`** ⇒ 不钉住的话 `t()` 会返回英文、整批断言会莫名其妙地红
+//    （而界面其实是对的）。⚠️ 不是放宽断言：判据仍然逐字比中文，只是把"语言"这个变量固定住。
+await i18n.changeLanguage("zh-CN");
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC_TSX = resolve(HERE, "AbilitiesPane.tsx");
 
-// 本组件挂载时**不**联网（note 都是清单里的静态值 ✓）；只有点「下载」才会走 api ✓。
-vi.mock("../lib/api", () => ({ api: new Proxy({}, { get: () => async () => ({}) }) }));
+// ⭐ task-14：`ability_*` 三条命令的桩（**可逐条改返回值** ⇒ 判据能造出"已装/已禁用/卸载失败"）。
+const apiStub = vi.hoisted(() => ({
+  abilityStates: vi.fn(),
+  abilitySetEnabled: vi.fn(),
+  abilityUninstall: vi.fn(),
+  saveAbilityPack: vi.fn(async () => ({})),
+}));
+vi.mock("../lib/api", () => ({ api: apiStub }));
+// ⭐ task-14：卸载前**必须**弹确认框 ⇒ 判据要能分别演"确认"与"取消"两遍（⛔ 不真的弹窗）。
+vi.mock("../store/confirm", () => ({ confirmDialog: vi.fn(async () => true) }));
 // ⭐ 2026-10-11（owner 截图问「下载完了，是不是应该移到『可用（已装）』？」）：给 `platform` 造桩 ✓ ——
 //    组件挂载时会问一次 `dictionary_status` ✓；判据要能造出「⭐ 下完那一态 ✗」✓。
 //    ⚠️ 默认 `available:false` ⇒ 词库**仍在「按需下载」** ✓ ⇒ 上面那几条老判据**一个字不受影响** ✓。
-const stub = vi.hoisted(() => ({ dict: { available: false, verified: null as boolean | null }, fail: false }));
+const stub = vi.hoisted(() => ({
+  dict: {
+    available: false,
+    verified: null as boolean | null,
+    // ⭐ task-14：这两个读数是新加的（盘上有没有那个文件 / 有没有被用户停用）
+    installed: false,
+    disabled: false,
+  },
+  fail: false,
+}));
 vi.mock("../lib/platform", () => ({
   platform: {
     executor: {
@@ -57,11 +83,36 @@ const { AbilitiesPane } = await import("./AbilitiesPane");
 let host: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 
+/** 挂到当前 root 上（`root.render` 同一元素**不会**重跑 effect ⇒ 要"另一态"必须重挂）。 */
+const mount = () => {
+  root = createRoot(host);
+  flushSync(() => root.render(React.createElement(AbilitiesPane)));
+};
+/** ⭐ task-14：改完桩之后**重挂**一次（effect 依赖是 `[]`，同实例不会重跑）。 */
+const remount = () => {
+  flushSync(() => root.unmount());
+  mount();
+};
+
 beforeEach(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
-  root = createRoot(host);
-  flushSync(() => root.render(React.createElement(AbilitiesPane)));
+  // ⭐ task-14：每个用例都从"干净状态"起（能力读数的缓存 ＋ 桩的调用记录 ＋ 默认返回值）
+  invalidateAbilityStates();
+  vi.clearAllMocks();
+  apiStub.abilityStates.mockImplementation(async () => []);
+  apiStub.abilitySetEnabled.mockImplementation(async (id: string, enabled: boolean) => [
+    { id, enabled, uninstallable: id === "ecdict-en-zh" },
+  ]);
+  apiStub.abilityUninstall.mockImplementation(async (id: string) => ({
+    path: `C:/appdata/packs/${id}`,
+    removed: true,
+    bytes: 4096,
+  }));
+  vi.mocked(confirmDialog).mockResolvedValue(true);
+  stub.fail = false;
+  stub.dict = { available: false, verified: null, installed: false, disabled: false };
+  mount();
 });
 
 afterEach(() => {
@@ -316,7 +367,7 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
 
   it("⭐ j) 下载成功后 ⇒ 词库**自己移到「可用（已装）」**（owner 问的那件 ✓）", async () => {
     stub.fail = false;
-    stub.dict = { available: false, verified: null };
+    stub.dict = { available: false, verified: null, installed: false, disabled: false };
     await settle();
     expect(rowsIn("按需下载").length, "下之前它应当在「按需下载」里").toBe(1);
     const btn = [...host.querySelectorAll<HTMLButtonElement>("button.set-btn")].find((b) =>
@@ -342,5 +393,175 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     expect(rowsIn("可用（已装）").map((r) => r.textContent ?? "").join("|"), "⛔ 不许把没核过的词库说成已装 ✗").not.toContain(
       "英汉词库",
     );
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // ⭐⭐ **task-14（2026-11-01）：已装行的「禁用 / 启用」与「卸载」**
+  //
+  // 判据刻意分五件（每件都是 owner 会看到的一句话）：
+  //   ① 三个按钮**真的出现**（禁用/启用 ／ 卸载），且不可卸载的那两条**按钮禁用 ＋ 有理由**；
+  //   ② 点「禁用」⇒ **真的调后端**（不是只改颜色）⇒ 那一行变成「已禁用」；
+  //   ③ 点「卸载」⇒ 先弹确认（说清"只删 packs/<id>、不碰笔记/附件"）⇒ 真调后端 ⇒ 词库回「按需下载」；
+  //   ④ 取消确认 ⇒ 一个字都不动（⛔ 不许"点了就删" ✗）；
+  //   ⑤ 卸载失败 ⇒ 显示**真实错误**（⛔ 不许假装成功 ✗）。
+  // ─────────────────────────────────────────────────────────────────────────────
+  const rowOf = (kw: string, id: string) =>
+    rowsIn(kw).find((r) => r.getAttribute("data-ability") === id) ?? null;
+  const btnOf = (row: HTMLElement | null, testid: string) =>
+    row?.querySelector<HTMLButtonElement>(`[data-testid="${testid}"]`) ?? null;
+
+  /** 造出"词库已装（可卸载）"那一态并重挂（effect 依赖 `[]` ⇒ 只能重挂）。 */
+  const mountWithDictInstalled = async () => {
+    stub.dict = { available: true, verified: true, installed: true, disabled: false };
+    remount();
+    await settle();
+  };
+
+  it("⭐ l) 已装行有「禁用」「卸载」；内置那条**不可卸载但可禁用**（按钮禁用 ＋ 写明理由）", async () => {
+    await mountWithDictInstalled();
+    const builtinRows = rowsIn("可用（已装）");
+    expect(builtinRows.length, "词库装好之后这一节是两条：Word 导入 ＋ 英汉词库").toBe(2);
+
+    const office = rowOf("可用（已装）", "office-import");
+    const ecdict = rowOf("可用（已装）", "ecdict-en-zh");
+    expect(office, "找不到 Word 导入那一行").not.toBeNull();
+    expect(ecdict, "找不到英汉词库那一行").not.toBeNull();
+
+    // 每行都有两颗键，且**都带 title / aria-label**（owner 口径：所有按钮都要有）
+    for (const row of [office!, ecdict!]) {
+      for (const testid of ["ability-toggle", "ability-uninstall"]) {
+        const b = btnOf(row, testid);
+        expect(b, `缺了 ${testid} 那颗键`).not.toBeNull();
+        expect((b!.getAttribute("title") ?? "").length, `${testid} 少了 title`).toBeGreaterThan(0);
+        expect((b!.getAttribute("aria-label") ?? "").length, `${testid} 少了 aria-label`).toBeGreaterThan(0);
+      }
+    }
+
+    // builtin ⇒ 可**禁用**、不可**卸载**，且理由在行里可见（⛔ 只靠 hover 不够：触屏没有 hover）
+    expect(btnOf(office!, "ability-toggle")!.disabled, "内置能力必须**可以禁用**").toBe(false);
+    expect(btnOf(office!, "ability-uninstall")!.disabled, "内置能力⛔ 不该能卸载（没有下载包）").toBe(true);
+    expect((office!.textContent ?? ""), "不可卸载的理由要写在行里").toContain("内置能力");
+
+    // 词库是真的下载过一个 pack ⇒ 两颗键都能点
+    expect(btnOf(ecdict!, "ability-uninstall")!.disabled, "词库是唯一可卸载的那条").toBe(false);
+  });
+
+  it("⭐ m) 点「禁用」⇒ **真的调后端**，回来那一行显示「已禁用」", async () => {
+    await mountWithDictInstalled();
+    apiStub.abilitySetEnabled.mockImplementation(async (id: string) => [
+      { id: "office-import", enabled: true, uninstallable: false },
+      { id: "ecdict-en-zh", enabled: id !== "ecdict-en-zh", uninstallable: true },
+      { id: "vlm-ocr", enabled: true, uninstallable: false },
+    ]);
+    const row = rowOf("可用（已装）", "ecdict-en-zh")!;
+    flushSync(() => btnOf(row, "ability-toggle")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await settle();
+
+    expect(apiStub.abilitySetEnabled, "⛔ 只改界面是不够的：必须调 ability_set_enabled").toHaveBeenCalledWith(
+      "ecdict-en-zh",
+      false,
+    );
+    const after = rowOf("可用（已装）", "ecdict-en-zh")!;
+    expect(after.textContent ?? "", "停用之后那一行必须写「已禁用」").toContain("已禁用");
+    expect(after.getAttribute("data-enabled"), "停用之后 data-enabled 应当是 false").toBe("false");
+    expect(
+      after.querySelector('[data-testid="ability-badge"]')?.className ?? "",
+      "徽章要换成警告档（⛔ 不许还挂着成功的绿）",
+    ).toContain("is-warn");
+    expect(
+      btnOf(after, "ability-toggle")?.textContent ?? "",
+      "停用之后那颗键应当变成「启用」",
+    ).toContain("启用");
+  });
+
+  it("⭐ n) 卸载：先确认（说清只删 packs/<id>、不碰笔记/附件）⇒ 真调后端 ⇒ 词库回「按需下载」", async () => {
+    await mountWithDictInstalled();
+    const row = rowOf("可用（已装）", "ecdict-en-zh")!;
+    flushSync(() => btnOf(row, "ability-uninstall")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await settle();
+
+    const opts = vi.mocked(confirmDialog).mock.calls[0]?.[0];
+    expect(opts, "卸载前**必须**先确认（⛔ 不许点了就删）").toBeTruthy();
+    expect(opts!.title ?? "", "确认框标题要点名是哪一项").toContain("英汉词库");
+    expect(opts!.message, "必须说清只删哪一份 pack").toContain("packs/ecdict-en-zh");
+    expect(opts!.message, "必须说清不碰笔记/附件（owner 口径）").toMatch(/笔记.*附件/);
+    expect(opts!.danger, "破坏性动作要标 danger").toBe(true);
+
+    expect(apiStub.abilityUninstall, "确认之后必须真调 ability_uninstall").toHaveBeenCalledWith("ecdict-en-zh");
+    expect(rowsIn("可用（已装）").length, "删掉之后「已装」只剩 Word 导入一条").toBe(1);
+    expect(rowsIn("按需下载").length, "词库必须回到「按需下载」（还能再下）").toBe(1);
+    expect(
+      (host.querySelector('[data-testid="ability-notice"]')?.textContent ?? ""),
+      "要如实说卸载成了、删的是哪个目录",
+    ).toContain("已卸载");
+  });
+
+  it("⭐ o) 取消确认 ⇒ **一个字都不动**（⛔ 不许先删再说）", async () => {
+    await mountWithDictInstalled();
+    vi.mocked(confirmDialog).mockResolvedValueOnce(false);
+    const row = rowOf("可用（已装）", "ecdict-en-zh")!;
+    flushSync(() => btnOf(row, "ability-uninstall")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await settle();
+    expect(apiStub.abilityUninstall, "取消之后⛔ 不许调卸载命令").not.toHaveBeenCalled();
+    expect(rowsIn("可用（已装）").length, "取消之后两条都还在").toBe(2);
+  });
+
+  it("⭐ p) 卸载失败 ⇒ 把**真实错误**显示出来（⛔ 不许假装成功）", async () => {
+    await mountWithDictInstalled();
+    apiStub.abilityUninstall.mockRejectedValueOnce(new Error("删不掉（…/packs/ecdict-en-zh）：拒绝访问 (os error 5)"));
+    const row = rowOf("可用（已装）", "ecdict-en-zh")!;
+    flushSync(() => btnOf(row, "ability-uninstall")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await settle();
+
+    const notice = host.querySelector<HTMLElement>('[data-testid="ability-notice"]');
+    expect(notice, "失败必须有一处把它说出来").not.toBeNull();
+    expect(notice!.getAttribute("data-tone"), "这一条是**错误**档").toBe("err");
+    expect(notice!.textContent ?? "", "要显示后端那句真实错误，⛔ 不许吞掉").toContain("拒绝访问");
+    expect(rowsIn("可用（已装）").length, "失败 ⇒ 词库**还在**（⛔ 不许假装已经删了）").toBe(2);
+  });
+
+  it("⭐ q) 后端说「已停用」⇒ 已装行标「已禁用」、vlm 的检查键不可用（禁用要真的影响入口）", async () => {
+    stub.dict = { available: false, verified: null, installed: true, disabled: true };
+    apiStub.abilityStates.mockImplementation(async () => [
+      { id: "office-import", enabled: false, uninstallable: false },
+      { id: "ecdict-en-zh", enabled: false, uninstallable: true },
+      { id: "vlm-ocr", enabled: false, uninstallable: false },
+    ]);
+    remount();
+    await settle();
+
+    // 停用 ≠ 没装：词库**仍然算已装**（所以它必须留在这一节、标已禁用）
+    expect(rowsIn("可用（已装）").length, "停用不等于没装 ⇒ 这一节仍是两条").toBe(2);
+    for (const id of ["office-import", "ecdict-en-zh"]) {
+      const row = rowOf("可用（已装）", id)!;
+      expect(row.textContent ?? "", `${id} 那一行要写「已禁用」`).toContain("已禁用");
+      expect(row.textContent ?? "", `${id} 那一行⛔ 不许再写「已装」`).not.toContain("√ 已装");
+    }
+    // 看图识字：停用 ⇒ 「检查本机模型」不可用（不是只变灰了事 —— 它 disabled）
+    const vlmRow = rowOf("需要本机模型", "vlm-ocr");
+    expect(vlmRow, "找不到看图识字那一行").not.toBeNull();
+    const check = btnOf(vlmRow!, "check-local-vision");
+    expect(check, "找不到「检查本机模型」").not.toBeNull();
+    expect(check!.disabled, "停用之后这颗键必须真的不可用").toBe(true);
+    expect(check!.getAttribute("title") ?? "", "要说明为什么不可用").toContain("停用");
+  });
+
+  it("⭐ r) 停用且**没装** ⇒ 留在「按需下载」，但下载键禁用（禁止顺手下一份）", async () => {
+    stub.dict = { available: false, verified: null, installed: false, disabled: true };
+    apiStub.abilityStates.mockImplementation(async () => [
+      { id: "office-import", enabled: true, uninstallable: false },
+      { id: "ecdict-en-zh", enabled: false, uninstallable: true },
+      { id: "vlm-ocr", enabled: true, uninstallable: false },
+    ]);
+    remount();
+    await settle();
+
+    expect(rowsIn("按需下载").length, "没装 ⇒ 它还在「按需下载」里").toBe(1);
+    const row = rowOf("按需下载", "ecdict-en-zh")!;
+    expect(row.textContent ?? "", "得标出「已禁用」").toContain("已禁用");
+    const dl = btnOf(row, "ability-download");
+    expect(dl, "找不到下载键").not.toBeNull();
+    expect(dl!.disabled, "停用状态下⛔ 不许还能下载（那会绕过用户自己的选择）").toBe(true);
+    expect(dl!.getAttribute("title") ?? "", "要说明先启用再下载").toContain("先启用");
   });
 });
