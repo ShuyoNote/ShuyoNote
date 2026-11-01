@@ -1,0 +1,338 @@
+/* S4（2026-11-01）：域抽取器搬出的**移动外壳/快速记录域（`.mcap-*` / `.m-tabshell*` / `.mtab-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端首页（效果图 `docs/plans/mobile/mockups/01-home.svg`，规格 §4.1）
+   ⚠️ 只有手机档才渲染它（`App.tsx` 的 `isMobile` 分支 ✓）⇒ 这里**不套 @media** ✓；
+   ⛔ 也**不动**桌面那套 `.empty-state`（桌面空态照旧 ✓）。
+   ⚠️ 这一段写在文件**最外层**（前一个块在 24114 行以 `}` 结束、净深度 0 ✓，我核过 ✓）。
+   ========================================================================== */
+/* ⭐ 2026-10-13 阶段 1 **第一刀**（R203 owner 拍「单立，走乙丙」）：移动屏**自己的外壳** ✓ ——
+   把原来从桌面 `.main`（`App.css:4700` ＋ 窄屏媒体查询 `:21251` 那格 `width:100%`）借的东西**逐格接管** ✓。
+   为什么：`.main` 有 **11 处**规则命中，其中 `body.is-toc-open .main`／`body.is-ai-open .main`／
+   `body.is-plugin-panel-open .main` 全是**桌面侧的状态** ⇒ 移动屏借它就会被桌面状态**顺带动一下** ✗。
+   ⚠️ **有界高度怎么来的**（写清楚，⛔ 别让它静默失效 ✗）：父级是 `.app-body`（**row** flex ✓，实测 640px ✓）
+   ⇒ 宽度靠 `flex: 1` ✓、高度靠**默认 `align-items: stretch`** ✓ ⇒ ⛔ 若将来有人把 `.app-body` 的高度
+   改成 `auto` ✗ ⇒ 这一格会**静默失效**（屏内滚动会跟着坏 ✓）⇒ 改那里的人必须同时看这一条 ✓。
+   ⚠️ `.mhome` 自己已有 `flex-direction:column` 与 `overflow-y:auto` ✓ ⇒ 这里补的是**父级那格**
+   （`overflow:hidden` ＋ 有界高度 ✓），否则子级的 `overflow-y:auto` 拿不到有界高度 ⇒ 滚不动 ✓。
+   ⛔ 不改桌面 `.main` 一个字节 ✗；⛔ 不用 `transform` 做转场 ✗（带 transform 的祖先会成为包含块 ⇒
+   里面 `position:fixed` 的浮层会偏 ✗ —— 那条坑 `:21278` 附近有逐字记录 ✓）。 */
+/* ⭐ 移动端内容外壳（纯重构那一刀 ✓）：把所有移动屏**统一裹一层** ✓，为底栏 ＋ 留白留位置 ✓。
+   ⭐ 2026-10-19 第二刀：底栏落地 ⇒ **只在这一处**给内容让出 64px（56px 栏高 ＋ 8px 呼吸位 ✓）。
+   ⛔ 别逐屏加 `padding-bottom` ✗ —— 那会在没有底栏的屏（阅读/配对）上多出一截空白 ✓。 */
+.m-tabshell {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding-bottom: calc(var(--space-8) + var(--sab));
+}
+
+/* ⭐ 2026-10-23（owner 手机实拍「红圈那截不合适」）：**没有底栏的屏不再让位**。
+   上一版把底栏从「快速记录」摘掉（`showTabs:false`）却仍留 `padding-bottom: 64px`
+   ⇒ 键盘弹起时那 64px 变成一截死白（红圈里那截空白），还把快捷工具栏顶出可视区、文字被切断。
+   ⛔ 别用"逐屏写死 padding"来修（那正是上面这条注释警告的坑）⇒ 由 `wrapMobile` 打一个
+   `--no-tabs` 修饰类，让"让位"与"底栏"**同生共死**（一处开关，永不失配）。 */
+.m-tabshell--no-tabs {
+  padding-bottom: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端**底边栏 ＋ 浮「＋」**（2026-10-19 第二刀）
+   ⚠️ 只有 `.m-tabshell` 里会渲染它们（`wrapMobile` ✓：设置屏 ＋ 首页/快速记录/搜索）✓。
+   ⚠️ 栏自身 `position: fixed`：不参与 `.m-tabshell` 的 column flex ✓（否则会给内容再挤一次）。
+   ⚠️ 高度 56（在 56–64 的口径内 ✓）＋ 底部系统手势区 `--sab` ✓；
+      内容让位靠上面 `.m-tabshell` 那**唯一一处** padding-bottom ✓。
+   ========================================================================== */
+.mtab-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 45;
+  display: flex;
+  height: calc(56px + var(--sab, 0px));
+  padding-bottom: var(--sab, 0px);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.mtab-item {
+  flex: 1 1 0;
+  min-width: 0;
+  /* 触屏命中区口径 ≥44（行高给满 56） */
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--fs-11);
+  cursor: pointer;
+}
+
+/* 选中态＝**实心主色**：图标胶囊填 `--accent`，文字同色（`--on-accent` 是仓里既有的前景色 ✓）。 */
+.mtab-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  color: inherit;
+}
+
+.mtab-item.is-on {
+  color: var(--accent);
+}
+
+.mtab-item.is-on .mtab-ico {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.mtab-label {
+  line-height: 1.1;
+}
+
+/* 浮「＋」：右下、**底栏上方**（56 栏高 ＋ 系统手势区 ＋ 16 呼吸位 ✓），56×56 ≥44 ✓。
+   ⚠️ 它挂在 `.m-tabshell` 下、`position: fixed` ⇒ 不会被 `.mshell` 的 overflow 裁掉 ✓。 */
+.mtab-fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(56px + var(--sab, 0px) + 16px);
+  z-index: 46;
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: var(--shadow-lg);
+  cursor: pointer;
+}
+
+.mtab-fab:active {
+  filter: brightness(0.92);
+}
+
+.mcap-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* ⭐ 2026-10-22（owner 手机实拍「编辑时底部标签不该显示」）：这一屏的底栏被拿掉了
+   ⇒ 左上这颗「‹ 返回」就是它**唯一**的回家路（回首页：与底栏「笔记」同一目的地）。
+   形态照阅读屏那颗 `.mread-back`（圆形、44px 命中区）——两屏同一个手势，别各写一种。 */
+.mcap-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-20);
+  line-height: 1;
+}
+
+.mcap-title {
+  margin: 0;
+  flex: 1 1 auto;
+  font-size: var(--fs-24);
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* 「存」＝主按钮（效果图里它是右上角那块主色 ✓），触控高度 ≥48px ✓ */
+.mcap-save {
+  flex: none;
+  min-width: 72px;
+  min-height: 48px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radius-md, 10px);
+  background: var(--accent);
+  color: #fff;
+  font-size: var(--fs-17);
+  font-weight: 600;
+}
+
+.mcap-save:disabled {
+  opacity: 0.6;
+}
+
+.mcap-area {
+  flex: 1 1 auto;
+  min-height: 160px;
+  width: 100%;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, var(--radius-lg));
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-17);
+  line-height: 1.7;
+  resize: none;
+}
+
+.mcap-err {
+  font-size: var(--fs-13);
+  color: #c5221f;
+}
+
+.mcap-hint {
+  margin: 0;
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+}
+
+/* 快捷工具栏：6 项横排，可横滚（窄屏不挤扁 ✓ —— 与设置分类栏那次同类的坑 ✗ 先避开 ✓）*/
+.mcap-bar {
+  /* ⭐ 2026-10-23（owner 实拍：快捷工具栏的文字被切掉一半）：**不许被压缩**。
+     它是 column flex 里的一项，默认 `flex-shrink:1` ⇒ 键盘弹起、可视高变短时它被压到
+     比内容还矮 ⇒ "段落/标题/列表"的下半截被切 ✗。让它 `flex: none`，由输入区去吸收收缩。 */
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  /* ⚠️ 真机上「段落」被左下角那个**悬浮汉堡键**压住了一半 ✗（实测截图 ✓）。
+     那个键是全局的、`position: fixed` 在左下 ⇒ 这里给它让出约 56px 的宽度 ✓
+     （只让开第一条按钮的位置，不改变整条的高度与横滚 ✓）。 */
+  padding: 6px 0 6px 56px;
+  border-top: 1px solid var(--border);
+}
+
+.mcap-bar-btn {
+  flex: 0 0 auto;
+  /* ⭐ 2026-10-10：改成**图标在上、文字在下**（效果图形态 ✓）—— ⛔ **命中区不许缩** ✗：
+     `min-height` 仍是 **44** ✓（门禁按元素自己量 ✓），宽仍是 54 ✓（见下面的 padding 与图标宽 ✓）。 */
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-height: 44px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-11);
+  white-space: nowrap;
+}
+
+.mcap-bar-icon {
+  display: block;
+  line-height: 0;
+}
+
+.mcap-bar-label {
+  display: block;
+  font-size: var(--fs-11);
+  line-height: 1.1;
+  color: inherit;
+}
+
+.mcap-bar-btn:active {
+  background: var(--accent-soft);
+}
+
+/* ---- 底边栏：白底细线；选中＝实心胶囊（与效果图一致） ---- */
+.mtab-bar {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -6px 18px rgba(16, 24, 40, 0.04);
+}
+
+.mtab-ico {
+  width: 44px;
+  height: 26px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.mtab-item.is-on .mtab-ico {
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.mtab-fab {
+  background: linear-gradient(
+    135deg,
+    var(--accent) 0%,
+    color-mix(in srgb, var(--accent) 55%, #ffffff) 100%
+  );
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.mcap-title {
+  font-size: var(--fs-24);
+}
+
+.mcap-save {
+  min-width: 68px;
+  min-height: 44px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-15);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.mcap-area {
+  padding: var(--space-4);
+  border-radius: 16px;
+  font-size: var(--fs-16);
+  line-height: 1.8;
+}
+
+.mcap-hint {
+  font-size: var(--fs-12);
+}
+
+.mcap-bar {
+  gap: var(--space-2);
+  /* ⛔ 旧稿这里给已删除的悬浮 ☰ 让了 56px；2026-10-19 已删 ☰ ⇒ 让位一并去掉。 */
+  padding: 10px 0 calc(var(--space-1) + var(--sab));
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.mcap-bar-btn {
+  min-width: 48px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.mcap-bar-label {
+  font-size: var(--fs-10-5);
+}
+
+/* 快速记录输入区：聚焦时给一圈软强调，而不是浏览器默认的粗蓝框。 */
+.mcap-area:focus,
+.mcap-area:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+}

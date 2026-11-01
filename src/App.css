@@ -9797,121 +9797,17 @@ button.ui-toggle::after {
 
 
 
-/* ══════════════════════════════════════════════════════════════════════════
-   移动端首页（效果图 `docs/plans/mobile/mockups/01-home.svg`，规格 §4.1）
-   ⚠️ 只有手机档才渲染它（`App.tsx` 的 `isMobile` 分支 ✓）⇒ 这里**不套 @media** ✓；
-   ⛔ 也**不动**桌面那套 `.empty-state`（桌面空态照旧 ✓）。
-   ⚠️ 这一段写在文件**最外层**（前一个块在 24114 行以 `}` 结束、净深度 0 ✓，我核过 ✓）。
-   ========================================================================== */
-/* ⭐ 2026-10-13 阶段 1 **第一刀**（R203 owner 拍「单立，走乙丙」）：移动屏**自己的外壳** ✓ ——
-   把原来从桌面 `.main`（`App.css:4700` ＋ 窄屏媒体查询 `:21251` 那格 `width:100%`）借的东西**逐格接管** ✓。
-   为什么：`.main` 有 **11 处**规则命中，其中 `body.is-toc-open .main`／`body.is-ai-open .main`／
-   `body.is-plugin-panel-open .main` 全是**桌面侧的状态** ⇒ 移动屏借它就会被桌面状态**顺带动一下** ✗。
-   ⚠️ **有界高度怎么来的**（写清楚，⛔ 别让它静默失效 ✗）：父级是 `.app-body`（**row** flex ✓，实测 640px ✓）
-   ⇒ 宽度靠 `flex: 1` ✓、高度靠**默认 `align-items: stretch`** ✓ ⇒ ⛔ 若将来有人把 `.app-body` 的高度
-   改成 `auto` ✗ ⇒ 这一格会**静默失效**（屏内滚动会跟着坏 ✓）⇒ 改那里的人必须同时看这一条 ✓。
-   ⚠️ `.mhome` 自己已有 `flex-direction:column` 与 `overflow-y:auto` ✓ ⇒ 这里补的是**父级那格**
-   （`overflow:hidden` ＋ 有界高度 ✓），否则子级的 `overflow-y:auto` 拿不到有界高度 ⇒ 滚不动 ✓。
-   ⛔ 不改桌面 `.main` 一个字节 ✗；⛔ 不用 `transform` 做转场 ✗（带 transform 的祖先会成为包含块 ⇒
-   里面 `position:fixed` 的浮层会偏 ✗ —— 那条坑 `:21278` 附近有逐字记录 ✓）。 */
-/* ⭐ 移动端内容外壳（纯重构那一刀 ✓）：把所有移动屏**统一裹一层** ✓，为底栏 ＋ 留白留位置 ✓。
-   ⭐ 2026-10-19 第二刀：底栏落地 ⇒ **只在这一处**给内容让出 64px（56px 栏高 ＋ 8px 呼吸位 ✓）。
-   ⛔ 别逐屏加 `padding-bottom` ✗ —— 那会在没有底栏的屏（阅读/配对）上多出一截空白 ✓。 */
-.m-tabshell {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  padding-bottom: calc(var(--space-8) + var(--sab));
-}
-/* ⭐ 2026-10-23（owner 手机实拍「红圈那截不合适」）：**没有底栏的屏不再让位**。
-   上一版把底栏从「快速记录」摘掉（`showTabs:false`）却仍留 `padding-bottom: 64px`
-   ⇒ 键盘弹起时那 64px 变成一截死白（红圈里那截空白），还把快捷工具栏顶出可视区、文字被切断。
-   ⛔ 别用"逐屏写死 padding"来修（那正是上面这条注释警告的坑）⇒ 由 `wrapMobile` 打一个
-   `--no-tabs` 修饰类，让"让位"与"底栏"**同生共死**（一处开关，永不失配）。 */
-.m-tabshell--no-tabs {
-  padding-bottom: 0;
-}
 
-/* ══════════════════════════════════════════════════════════════════════════
-   移动端**底边栏 ＋ 浮「＋」**（2026-10-19 第二刀）
-   ⚠️ 只有 `.m-tabshell` 里会渲染它们（`wrapMobile` ✓：设置屏 ＋ 首页/快速记录/搜索）✓。
-   ⚠️ 栏自身 `position: fixed`：不参与 `.m-tabshell` 的 column flex ✓（否则会给内容再挤一次）。
-   ⚠️ 高度 56（在 56–64 的口径内 ✓）＋ 底部系统手势区 `--sab` ✓；
-      内容让位靠上面 `.m-tabshell` 那**唯一一处** padding-bottom ✓。
-   ========================================================================== */
-.mtab-bar {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 45;
-  display: flex;
-  height: calc(56px + var(--sab, 0px));
-  padding-bottom: var(--sab, 0px);
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-}
-.mtab-item {
-  flex: 1 1 0;
-  min-width: 0;
-  /* 触屏命中区口径 ≥44（行高给满 56） */
-  min-height: 44px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  padding: var(--space-1) 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-dim);
-  font-family: inherit;
-  font-size: var(--fs-11);
-  cursor: pointer;
-}
-/* 选中态＝**实心主色**：图标胶囊填 `--accent`，文字同色（`--on-accent` 是仓里既有的前景色 ✓）。 */
-.mtab-ico {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 24px;
-  border-radius: var(--radius-full);
-  color: inherit;
-}
-.mtab-item.is-on {
-  color: var(--accent);
-}
-.mtab-item.is-on .mtab-ico {
-  background: var(--accent);
-  color: var(--on-accent);
-}
-.mtab-label {
-  line-height: 1.1;
-}
-/* 浮「＋」：右下、**底栏上方**（56 栏高 ＋ 系统手势区 ＋ 16 呼吸位 ✓），56×56 ≥44 ✓。
-   ⚠️ 它挂在 `.m-tabshell` 下、`position: fixed` ⇒ 不会被 `.mshell` 的 overflow 裁掉 ✓。 */
-.mtab-fab {
-  position: fixed;
-  right: 16px;
-  bottom: calc(56px + var(--sab, 0px) + 16px);
-  z-index: 46;
-  width: 56px;
-  height: 56px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: var(--accent);
-  color: var(--on-accent);
-  box-shadow: var(--shadow-lg);
-  cursor: pointer;
-}
-.mtab-fab:active {
-  filter: brightness(0.92);
-}
+
+
+
+
+
+
+
+
+
+
 
 .mshell {
   flex: 1;
@@ -9960,123 +9856,19 @@ button.ui-toggle::after {
   padding: var(--space-3) var(--space-4) calc(var(--space-2) + var(--sab, 0px));
   min-height: 100%;
 }
-.mcap-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-/* ⭐ 2026-10-22（owner 手机实拍「编辑时底部标签不该显示」）：这一屏的底栏被拿掉了
-   ⇒ 左上这颗「‹ 返回」就是它**唯一**的回家路（回首页：与底栏「笔记」同一目的地）。
-   形态照阅读屏那颗 `.mread-back`（圆形、44px 命中区）——两屏同一个手势，别各写一种。 */
-.mcap-back {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-20);
-  line-height: 1;
-}
-.mcap-title {
-  margin: 0;
-  flex: 1 1 auto;
-  font-size: var(--fs-24);
-  font-weight: 700;
-  color: var(--text);
-}
-/* 「存」＝主按钮（效果图里它是右上角那块主色 ✓），触控高度 ≥48px ✓ */
-.mcap-save {
-  flex: none;
-  min-width: 72px;
-  min-height: 48px;
-  padding: 0 18px;
-  border: 0;
-  border-radius: var(--radius-md, 10px);
-  background: var(--accent);
-  color: #fff;
-  font-size: var(--fs-17);
-  font-weight: 600;
-}
-.mcap-save:disabled {
-  opacity: 0.6;
-}
-.mcap-area {
-  flex: 1 1 auto;
-  min-height: 160px;
-  width: 100%;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md, var(--radius-lg));
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-17);
-  line-height: 1.7;
-  resize: none;
-}
-.mcap-err {
-  font-size: var(--fs-13);
-  color: #c5221f;
-}
-.mcap-hint {
-  margin: 0;
-  font-size: var(--fs-12);
-  color: var(--text-faint);
-}
-/* 快捷工具栏：6 项横排，可横滚（窄屏不挤扁 ✓ —— 与设置分类栏那次同类的坑 ✗ 先避开 ✓）*/
-.mcap-bar {
-  /* ⭐ 2026-10-23（owner 实拍：快捷工具栏的文字被切掉一半）：**不许被压缩**。
-     它是 column flex 里的一项，默认 `flex-shrink:1` ⇒ 键盘弹起、可视高变短时它被压到
-     比内容还矮 ⇒ "段落/标题/列表"的下半截被切 ✗。让它 `flex: none`，由输入区去吸收收缩。 */
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  -webkit-overflow-scrolling: touch;
-  /* ⚠️ 真机上「段落」被左下角那个**悬浮汉堡键**压住了一半 ✗（实测截图 ✓）。
-     那个键是全局的、`position: fixed` 在左下 ⇒ 这里给它让出约 56px 的宽度 ✓
-     （只让开第一条按钮的位置，不改变整条的高度与横滚 ✓）。 */
-  padding: 6px 0 6px 56px;
-  border-top: 1px solid var(--border);
-}
-.mcap-bar-btn {
-  flex: 0 0 auto;
-  /* ⭐ 2026-10-10：改成**图标在上、文字在下**（效果图形态 ✓）—— ⛔ **命中区不许缩** ✗：
-     `min-height` 仍是 **44** ✓（门禁按元素自己量 ✓），宽仍是 54 ✓（见下面的 padding 与图标宽 ✓）。 */
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  min-height: 44px;
-  padding: 3px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-11);
-  white-space: nowrap;
-}
-.mcap-bar-icon {
-  display: block;
-  line-height: 0;
-}
-.mcap-bar-label {
-  display: block;
-  font-size: var(--fs-11);
-  line-height: 1.1;
-  color: inherit;
-}
-.mcap-bar-btn:active {
-  background: var(--accent-soft);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* ══════════════════════════════════════════════════════════════════════════
    移动端「设置」（效果图 `docs/plans/mobile/mockups/07-settings.svg`，规格 §4.7）
@@ -10700,372 +10492,63 @@ button.ui-toggle::after {
   color: var(--text-faint);
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   移动端「设备配对 · 同步」屏（效果图 `docs/plans/mobile/mockups/08-pair.svg`，规格 §4.8）
-   ⚠️ 同 `.mhome`/`.mcap`/`.msearch`/`.mread`/`.mabout`：**只有手机档会渲染它**
-      （`App.tsx` 的 `isMobile && mobileScreen === "pair"` 那一支 ✓）⇒ 不套 `@media` ✓。
-   ⛔ 桌面那套 `.sync-panel` / `.sync-popover` 一个字没动 ✓。
-   ⚠️ 本屏是 v1「只读」✓：⛔ 屏上**零"码"类字样** ✗（规格 J14 ✓）、⛔ 不显示任何密钥/暗号 ✗。
-   ========================================================================== */
-.mpair {
-  display: flex;
-  flex-direction: column;
-  min-height: 100%;
-  padding: calc(10px + var(--sat, 0px)) 0 calc(72px + var(--sab, 0px));
-  overflow: hidden;
-}
-.mpair-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: none;
-  padding: 0 var(--space-3) 10px;
-}
-/* 「‹」＝图标按钮 ⇒ ≥44×44 ✓ */
-.mpair-back {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-22);
-  line-height: 1;
-}
-.mpair-head-title {
-  font-size: var(--fs-17);
-  font-weight: 600;
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
-/* ⭐ 阶段 3（owner 2026-10-14 参考图）：本机有空间没开加密时的**警示条** ✓。
-   ⚠️ 只做"说明"✓，⛔ 不带任何动作（目的地是桌面专属 ⇒ 假按钮 ✗）。 */
-/* ⭐ 阶段 3（owner 2026-10-14 参考图）：绿卡**两行**（短句 ＋ 副文案 ✓，⛔ 不拼长句 ✗）。
-   ⚠️ 配色用**仓里既有 token** ✓（照 `.sync-status.is-ok` ✓）—— ⛔ 不写死色值 ✗（深色主题会不跟 ✓）。 */
-.mpair-ok {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  margin: 0 0 var(--space-3);
-  padding: 10px var(--space-3);
-  border: 1px solid var(--cat-green);
-  border-radius: var(--radius-sm);
-  background: var(--cat-green-soft);
-  color: var(--success);
-  font-size: var(--fs-13);
-  line-height: 1.45;
-}
-.mpair-ok-line {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-}
-.mpair-ok-dot {
-  font-size: var(--fs-10);
-  line-height: 1;
-}
-.mpair-ok-sub {
-  color: var(--text-dim);
-  font-weight: 400;
-}
 
-.mpair-warn {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  margin: 0 0 var(--space-3);
-  padding: 10px var(--space-3);
-  border: 1px solid var(--cat-yellow);
-  border-radius: var(--radius-sm);
-  background: var(--cat-yellow-soft);
-  /* ⚠️ 用**仓里既有 token** ✓（照 `.sync-status.is-warn` 那一族 ✓）—— ⛔ 不自造变量／不写死颜色 ✗
-     （写死颜色在深色主题下不跟主题走 ✗ —— 这是本仓踩过的一条 ✓）。 */
-  color: var(--cat-yellow);
-  font-size: var(--fs-13);
-  line-height: 1.45;
-}
-.mpair-warn b {
-  font-weight: 600;
-}
 
-.mpair-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior-y: contain;
-  -webkit-overflow-scrolling: touch;
-  padding: 0 var(--space-4);
-}
-.mpair-card {
-  margin: 0 0 var(--space-3);
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md, var(--radius-lg));
-  background: var(--surface);
-}
-.mpair-card-title {
-  margin-bottom: var(--space-2);
-  font-size: var(--fs-12);
-  color: var(--text-faint);
-}
-.mpair-line {
-  margin: 0 0 6px;
-  font-size: var(--fs-13);
-  line-height: 1.6;
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
-.mpair-line:last-child {
-  margin-bottom: 0;
-}
-.mpair-dim {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-}
-/* ⭐ 【C2】设备卡上的小胶囊（照 owner 2026-10-14 参考图 ✓）。
-   ⚠️ 颜色一律用**仓里既有 token** ✓（照 `.sync-status.is-err`／`.is-ok` 那一族 ✓）
-      —— ⛔ 不写死色值 ✗（深色主题会不跟 ✓，本仓为此吃过亏 ✓）。 */
-/* ⭐ 【C3】三颗胶囊＝过滤器（选中态**实心蓝** ✓）。⚠️ 类名一律 `mpair-` 开头 ✓
-   （⛔ `.is-active`／`.active` 这类泛名会撞 `check-mobile-class-namespace` ✗ —— 今晚刚栽过 ✓）；
-   ⚠️ 颜色用**既有 token** ✓（⛔ 不写死色值 ✗）。 */
-/* ⭐ d1：移动端「首次配对」屏**骨架**（20 格对码未接 ✗ —— 见组件注释 ✓）。
-   ⚠️ 类名 `mpair-code-` 开头 ✓（⛔ 泛名 ✗）；颜色用既有 token ✓（⛔ 不写死色值 ✗）。 */
-.mpair-code-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 0 0 10px;
-}
-.mpair-code-caption {
-  margin: 0 0 var(--space-3);
-  text-align: center;
-  color: var(--text-dim);
-  font-size: var(--fs-12-5);
-}
-.mpair-code-note {
-  margin: 0 0 var(--space-3);
-  color: var(--text-dim);
-  font-size: var(--fs-13);
-  line-height: 1.5;
-}
-.mpair-code-actions {
-  display: flex;
-  gap: 10px;
-}
-.mpair-code-cancel,
-.mpair-code-confirm {
-  flex: 1;
-  min-height: 44px;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-14);
-  cursor: pointer;
-}
-.mpair-code-cancel {
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text);
-}
-.mpair-code-confirm {
-  border: 1px solid transparent;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 600;
-}
-.mpair-code-confirm:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.mpair-code-error {
-  margin: 0 0 var(--space-3);
-  padding: 10px var(--space-3);
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-sm);
-  background: var(--danger-soft);
-  color: var(--danger);
-  font-size: var(--fs-12-5);
-  line-height: 1.5;
-}
-.mpair-code-star {
-  margin: 14px 0 0;
-  color: var(--text-dim);
-  font-size: var(--fs-12);
-  line-height: 1.55;
-}
 
-.mpair-code {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  position: relative;
-  width: 100%;
-  background: var(--bg);
-}
-.mpair-code-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 10px var(--space-3);
-  border-bottom: 1px solid var(--border);
-  flex: none;
-}
-.mpair-code-back {
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font-size: var(--fs-22);
-  line-height: 1;
-  width: 44px;
-  height: 44px;
-  cursor: pointer;
-}
-.mpair-code-head-title {
-  font-size: var(--fs-16);
-  font-weight: 600;
-  color: var(--text);
-}
-.mpair-code-scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--space-4) 14px var(--space-5);
-}
-.mpair-code-lead {
-  margin: 0 0 14px;
-  color: var(--text-dim);
-  font-size: var(--fs-13);
-}
-.mpair-code-cancel {
-  width: 100%;
-  min-height: 44px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text);
-  font-size: var(--fs-14);
-  cursor: pointer;
-}
 
-.mpair-caps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin: 0 0 var(--space-3);
-}
-.mpair-cap {
-  flex: 0 1 auto;
-  padding: 6px 14px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-full);
-  background: var(--chip-bg);
-  color: var(--text-dim);
-  font-size: var(--fs-13);
-  line-height: 1.4;
-  cursor: pointer;
-}
-.mpair-cap.mpair-cap-on {
-  background: var(--accent);
-  /* ⚠️ 文字色用**主题感知**的 token ✓ —— `--on-accent`（亮色 `#ffffff`／暗色 `#0b1220` ✓，
-     见 `App.css:24` 与 `:117` ✓）；⛔ 不写死 `#fff` ✗，⛔ 也不用 `--accent-strong` ✗（那是**更深的蓝** ⇒ 蓝底蓝字 ✗）。 */
-  color: var(--on-accent);
-  font-weight: 600;
-}
-.mpair-cap:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
 
-.mpair-item-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
-}
-.mpair-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-full);
-  font-size: var(--fs-12);
-  line-height: 1.6;
-}
-.mpair-pill.mpair-pill-ok {
-  background: var(--cat-green-soft);
-  color: var(--success);
-}
-.mpair-pill.mpair-pill-bad {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
 
-/* ⭐ owner 2026-10-14 移动参考图：底部虚线框（「附近」档的脚注 ✓，纯文案 ✓） */
-.mpair-nonearby {
-  margin: 10px 2px 0;
-  padding: 10px var(--space-3);
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-dim);
-  font-size: var(--fs-12-5);
-  line-height: 1.6;
-}
 
-.mpair-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.mpair-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border);
-}
-.mpair-item:last-child {
-  border-bottom: 0;
-}
-.mpair-item-main {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.mpair-item-who {
-  font-size: var(--fs-14);
-  font-weight: 600;
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
-.mpair-item-meta {
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-  overflow-wrap: anywhere;
-}
-/* ⛔ 「信任」本轮**未接** ⇒ 置灰且点不动 ✓（让缺口看得见 ✓，⛔ 不做假按钮 ✗）——
-   命中区仍按 ≥44 给（它是 button ✓，`verify-mobile-views` 会量 ✓）。 */
-.mpair-trust {
-  flex: none;
-  height: 44px;
-  padding: 0 var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-14);
-  font-weight: 600;
-}
-.mpair-trust:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* 刀七②：三段标题加粗（⭐ 只钉那三个 testid ✓ —— owner 的图上标题是粗的 ✓；⛔ 别的选择器不动 ✗）。 */
 [data-testid^="nearby-group-"] { font-weight: 600; }
@@ -11184,50 +10667,19 @@ button.ui-toggle::after {
 
 
 
-/* ══════════════════════════════════════════════════════════════════════════
-   2026-10-20 移动端「浅色明快卡片版」重设计落地（视觉层）
-   ──────────────────────────────────────────────────────────────────────────
-   依据：docs/plans/mobile/mockups/2026-10-20-redesign/（10 图）。
-   ⛔ 只覆盖 `.m*` 移动命名空间：桌面选择器一个不碰；导航/屏栈结构不动。
-   ⛔ 颜色一律走 token（浅/深主题都跟），不写死品牌色；只有渐变/阴影用
-      `color-mix` 从 `--accent` 派生（Chrome/Safari 均支持）。
-   ⚠️ 命中区 ≥44 的既有约束全部保留：这里只改观感，不缩触控尺寸。
-   ========================================================================== */
-
-/* 屏底：浅色版是纯白；深色主题仍由 token 跟随。 */
 .mhome,
 .mcap,
 .msearch,
 .mread,
 .mabout,
-.mpair,
-.mpair-code,
 .mset {
   background: var(--bg);
 }
 
-/* ---- 底边栏：白底细线；选中＝实心胶囊（与效果图一致） ---- */
-.mtab-bar {
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  box-shadow: 0 -6px 18px rgba(16, 24, 40, 0.04);
-}
-.mtab-ico {
-  width: 44px;
-  height: 26px;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-.mtab-item.is-on .mtab-ico {
-  box-shadow: 0 4px 10px color-mix(in srgb, var(--accent) 26%, transparent);
-}
-.mtab-fab {
-  background: linear-gradient(
-    135deg,
-    var(--accent) 0%,
-    color-mix(in srgb, var(--accent) 55%, #ffffff) 100%
-  );
-  box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 28%, transparent);
-}
+
+
+
+
 
 /* ---- 01 首页：渐变主卡 ＋ 白卡列表 ---- */
 .mhome {
@@ -11266,41 +10718,13 @@ button.ui-toggle::after {
   padding: var(--space-4) var(--space-4) calc(var(--space-2) + var(--sab));
   gap: var(--space-3);
 }
-.mcap-title {
-  font-size: var(--fs-24);
-}
-.mcap-save {
-  min-width: 68px;
-  min-height: 44px;
-  border-radius: var(--radius-full);
-  font-size: var(--fs-15);
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 20%, transparent);
-}
-.mcap-area {
-  padding: var(--space-4);
-  border-radius: 16px;
-  font-size: var(--fs-16);
-  line-height: 1.8;
-}
-.mcap-hint {
-  font-size: var(--fs-12);
-}
-.mcap-bar {
-  gap: var(--space-2);
-  /* ⛔ 旧稿这里给已删除的悬浮 ☰ 让了 56px；2026-10-19 已删 ☰ ⇒ 让位一并去掉。 */
-  padding: 10px 0 calc(var(--space-1) + var(--sab));
-  border-top: 1px solid var(--border);
-  background: var(--bg);
-}
-.mcap-bar-btn {
-  min-width: 48px;
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow-xs);
-}
-.mcap-bar-label {
-  font-size: var(--fs-10-5);
-}
+
+
+
+
+
+
+
 
 /* ---- 07 我的 / 设置：卡片＋分组＋分段控件 ---- */
 .mset {
@@ -11382,32 +10806,13 @@ button.ui-toggle::after {
   border-radius: var(--radius-full);
 }
 
-/* ---- 08 设备直连：白卡＋浅底状态胶囊 ---- */
-.mpair-card {
-  border-radius: 16px;
-  padding: var(--space-4);
-  box-shadow: var(--shadow-xs);
-}
-.mpair-item {
-  padding: var(--space-3) 0;
-}
-.mpair-entry {
-  min-height: 44px;
-  border-radius: var(--radius-full);
-}
-.mpair-cap {
-  min-height: 36px;
-}
-.mpair-nonearby {
-  border-radius: 14px;
-  background: var(--bg-sidebar);
-}
 
-/* ---- 08b 首次配对：浅色对码格 ---- */
-.mpair-code-confirm,
-.mpair-code-cancel {
-  border-radius: var(--radius-lg);
-}
+
+
+
+
+
+
 
 /* ---- 10 关于：白卡、浅色按钮 ---- */
 .mabout-card {
@@ -11439,13 +10844,7 @@ button.ui-toggle::after {
   box-shadow: none;
 }
 
-/* 快速记录输入区：聚焦时给一圈软强调，而不是浏览器默认的粗蓝框。 */
-.mcap-area:focus,
-.mcap-area:focus-visible {
-  outline: none;
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
-}
+
 
 /* 设置里的行按钮：`.mset-row` 同时用于 div 和 button —— button 默认边框/底色必须清掉，
    否则浅色下会出现一圈黑框（2026-10-20 首轮截图实测）。 */
@@ -11473,12 +10872,7 @@ button.mset-row:focus-visible {
 
 
 
-/* 08 加密黄条：文字必须在一个 flex 子项里，否则每个 text node 都会成为独立 flex 项，
-   出现「本机／有／1 个空间」竖着断开（2026-10-20 首轮截图实测）。 */
-.mpair-warn > span:last-child {
-  flex: 1 1 auto;
-  min-width: 0;
-}
+
 
 /* ⭐ 2026-10-23：「对端有、你没有的空间」（MeshMissingSpaces.tsx）
    视觉体系：主色 --accent、勾中 --accent-soft、墓碑胶囊 --mark-bg；圆角 8/4/999。 */
@@ -11952,70 +11346,32 @@ button.mset-row:focus-visible {
 
 
 
-/* ── 设备配对 ─────────────────────────────────────────────────────────────── */
-.mpair { padding-top: calc(var(--space-2) + var(--sat, 0px)); }
-.mpair-head { padding: 0 var(--space-4) var(--space-2); }
-.mpair-head-title { font-size: var(--fs-19); font-weight: 750; letter-spacing: -.2px; }
-.mpair-self {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: none;
-  padding: 0 18px 10px;
-  font-size: var(--fs-10-5);
-  color: var(--text-faint);
-}
-.mpair-self b { color: var(--text-dim); font-weight: 650; }
-.mpair-self-edit {
-  margin-left: auto;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  font-size: var(--fs-11);
-  font-weight: 600;
-  padding: 6px 2px;
-}
-.mpair-scroll { padding: 0 var(--space-4); }
-.mpair-card { border-radius: 16px; padding: var(--space-3) 13px; box-shadow: var(--shadow-xs); }
-.mpair-ok { border-radius: 14px; padding: 10px var(--space-3); margin-bottom: 10px; }
-.mpair-warn { border-radius: 14px; padding: 9px 11px; margin-bottom: 10px; }
-.mpair-warn svg { flex: none; margin-top: 1px; }
-.mpair-caps { gap: 7px; margin-bottom: 10px; }
-.mpair-cap { min-height: 34px; padding: 5px 13px; font-size: var(--fs-12); }
-.mpair-list { display: flex; flex-direction: column; gap: var(--space-2); }
-.mpair-item {
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 9px;
-  padding: 10px 11px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface);
-}
-.mpair-item:last-child { border-bottom: 1px solid var(--border); }
-.mpair-item-main { width: 100%; gap: 3px; }
-.mpair-item-who { font-size: var(--fs-13-5); font-weight: 700; }
-.mpair-item-meta { font-size: var(--fs-10-5); }
-.mpair-actions { display: flex; gap: 7px; justify-content: flex-end; width: 100%; }
-.mpair-entry {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  min-height: 44px;
-  padding: 0 13px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-12);
-  font-weight: 650;
-}
-.mpair-entry.is-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); box-shadow: 0 4px 10px color-mix(in srgb, var(--accent) 22%, transparent); }
-.mpair-entry.mpair-entry-danger { border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); color: var(--danger); background: var(--surface); }
-.mpair-entry:disabled { opacity: .5; }
-.mpair-item .mpair-entry { min-height: 38px; }
-.mpair-paired-card .mpair-card-title { font-size: var(--fs-11); letter-spacing: .5px; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

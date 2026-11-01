@@ -177,6 +177,9 @@ import "./styles/emoji-picker.css";
 import "./styles/search.css";
 // S4-23（2026-11-01）：存储面板域（`.stg-*`）。
 import "./styles/storage-panel.css";
+// S4-24/25（2026-11-01）：移动配对（`.mpair-*`）＋ 移动外壳/快速记录（`.mcap-*` / `.m-tabshell*` / `.mtab-*`）。
+import "./styles/mobile-pair.css";
+import "./styles/mobile-capture.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

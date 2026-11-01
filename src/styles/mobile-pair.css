@@ -1,0 +1,550 @@
+/* S4（2026-11-01）：域抽取器搬出的**移动配对域（`.mpair-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「设备配对 · 同步」屏（效果图 `docs/plans/mobile/mockups/08-pair.svg`，规格 §4.8）
+   ⚠️ 同 `.mhome`/`.mcap`/`.msearch`/`.mread`/`.mabout`：**只有手机档会渲染它**
+      （`App.tsx` 的 `isMobile && mobileScreen === "pair"` 那一支 ✓）⇒ 不套 `@media` ✓。
+   ⛔ 桌面那套 `.sync-panel` / `.sync-popover` 一个字没动 ✓。
+   ⚠️ 本屏是 v1「只读」✓：⛔ 屏上**零"码"类字样** ✗（规格 J14 ✓）、⛔ 不显示任何密钥/暗号 ✗。
+   ========================================================================== */
+.mpair {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: calc(10px + var(--sat, 0px)) 0 calc(72px + var(--sab, 0px));
+  overflow: hidden;
+}
+
+.mpair-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 0 var(--space-3) 10px;
+}
+
+/* 「‹」＝图标按钮 ⇒ ≥44×44 ✓ */
+.mpair-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-22);
+  line-height: 1;
+}
+
+.mpair-head-title {
+  font-size: var(--fs-17);
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* ⭐ 阶段 3（owner 2026-10-14 参考图）：本机有空间没开加密时的**警示条** ✓。
+   ⚠️ 只做"说明"✓，⛔ 不带任何动作（目的地是桌面专属 ⇒ 假按钮 ✗）。 */
+/* ⭐ 阶段 3（owner 2026-10-14 参考图）：绿卡**两行**（短句 ＋ 副文案 ✓，⛔ 不拼长句 ✗）。
+   ⚠️ 配色用**仓里既有 token** ✓（照 `.sync-status.is-ok` ✓）—— ⛔ 不写死色值 ✗（深色主题会不跟 ✓）。 */
+.mpair-ok {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-3);
+  padding: 10px var(--space-3);
+  border: 1px solid var(--cat-green);
+  border-radius: var(--radius-sm);
+  background: var(--cat-green-soft);
+  color: var(--success);
+  font-size: var(--fs-13);
+  line-height: 1.45;
+}
+
+.mpair-ok-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.mpair-ok-dot {
+  font-size: var(--fs-10);
+  line-height: 1;
+}
+
+.mpair-ok-sub {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.mpair-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: 10px var(--space-3);
+  border: 1px solid var(--cat-yellow);
+  border-radius: var(--radius-sm);
+  background: var(--cat-yellow-soft);
+  /* ⚠️ 用**仓里既有 token** ✓（照 `.sync-status.is-warn` 那一族 ✓）—— ⛔ 不自造变量／不写死颜色 ✗
+     （写死颜色在深色主题下不跟主题走 ✗ —— 这是本仓踩过的一条 ✓）。 */
+  color: var(--cat-yellow);
+  font-size: var(--fs-13);
+  line-height: 1.45;
+}
+
+.mpair-warn b {
+  font-weight: 600;
+}
+
+.mpair-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 var(--space-4);
+}
+
+.mpair-card {
+  margin: 0 0 var(--space-3);
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, var(--radius-lg));
+  background: var(--surface);
+}
+
+.mpair-card-title {
+  margin-bottom: var(--space-2);
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+}
+
+.mpair-line {
+  margin: 0 0 6px;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.mpair-line:last-child {
+  margin-bottom: 0;
+}
+
+.mpair-dim {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+}
+
+/* ⭐ 【C2】设备卡上的小胶囊（照 owner 2026-10-14 参考图 ✓）。
+   ⚠️ 颜色一律用**仓里既有 token** ✓（照 `.sync-status.is-err`／`.is-ok` 那一族 ✓）
+      —— ⛔ 不写死色值 ✗（深色主题会不跟 ✓，本仓为此吃过亏 ✓）。 */
+/* ⭐ 【C3】三颗胶囊＝过滤器（选中态**实心蓝** ✓）。⚠️ 类名一律 `mpair-` 开头 ✓
+   （⛔ `.is-active`／`.active` 这类泛名会撞 `check-mobile-class-namespace` ✗ —— 今晚刚栽过 ✓）；
+   ⚠️ 颜色用**既有 token** ✓（⛔ 不写死色值 ✗）。 */
+/* ⭐ d1：移动端「首次配对」屏**骨架**（20 格对码未接 ✗ —— 见组件注释 ✓）。
+   ⚠️ 类名 `mpair-code-` 开头 ✓（⛔ 泛名 ✗）；颜色用既有 token ✓（⛔ 不写死色值 ✗）。 */
+.mpair-code-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 10px;
+}
+
+.mpair-code-caption {
+  margin: 0 0 var(--space-3);
+  text-align: center;
+  color: var(--text-dim);
+  font-size: var(--fs-12-5);
+}
+
+.mpair-code-note {
+  margin: 0 0 var(--space-3);
+  color: var(--text-dim);
+  font-size: var(--fs-13);
+  line-height: 1.5;
+}
+
+.mpair-code-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.mpair-code-cancel,
+.mpair-code-confirm {
+  flex: 1;
+  min-height: 44px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-14);
+  cursor: pointer;
+}
+
+.mpair-code-cancel {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+
+.mpair-code-confirm {
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.mpair-code-confirm:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mpair-code-error {
+  margin: 0 0 var(--space-3);
+  padding: 10px var(--space-3);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--fs-12-5);
+  line-height: 1.5;
+}
+
+.mpair-code-star {
+  margin: 14px 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  line-height: 1.55;
+}
+
+.mpair-code {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+  background: var(--bg);
+}
+
+.mpair-code-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px var(--space-3);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.mpair-code-back {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-22);
+  line-height: 1;
+  width: 44px;
+  height: 44px;
+  cursor: pointer;
+}
+
+.mpair-code-head-title {
+  font-size: var(--fs-16);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mpair-code-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4) 14px var(--space-5);
+}
+
+.mpair-code-lead {
+  margin: 0 0 14px;
+  color: var(--text-dim);
+  font-size: var(--fs-13);
+}
+
+.mpair-code-cancel {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-14);
+  cursor: pointer;
+}
+
+.mpair-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+}
+
+.mpair-cap {
+  flex: 0 1 auto;
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: var(--chip-bg);
+  color: var(--text-dim);
+  font-size: var(--fs-13);
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.mpair-cap.mpair-cap-on {
+  background: var(--accent);
+  /* ⚠️ 文字色用**主题感知**的 token ✓ —— `--on-accent`（亮色 `#ffffff`／暗色 `#0b1220` ✓，
+     见 `App.css:24` 与 `:117` ✓）；⛔ 不写死 `#fff` ✗，⛔ 也不用 `--accent-strong` ✗（那是**更深的蓝** ⇒ 蓝底蓝字 ✗）。 */
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.mpair-cap:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mpair-item-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.mpair-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-12);
+  line-height: 1.6;
+}
+
+.mpair-pill.mpair-pill-ok {
+  background: var(--cat-green-soft);
+  color: var(--success);
+}
+
+.mpair-pill.mpair-pill-bad {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* ⭐ owner 2026-10-14 移动参考图：底部虚线框（「附近」档的脚注 ✓，纯文案 ✓） */
+.mpair-nonearby {
+  margin: 10px 2px 0;
+  padding: 10px var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: var(--fs-12-5);
+  line-height: 1.6;
+}
+
+.mpair-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mpair-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.mpair-item:last-child {
+  border-bottom: 0;
+}
+
+.mpair-item-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mpair-item-who {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.mpair-item-meta {
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
+/* ⛔ 「信任」本轮**未接** ⇒ 置灰且点不动 ✓（让缺口看得见 ✓，⛔ 不做假按钮 ✗）——
+   命中区仍按 ≥44 给（它是 button ✓，`verify-mobile-views` 会量 ✓）。 */
+.mpair-trust {
+  flex: none;
+  height: 44px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-14);
+  font-weight: 600;
+}
+
+.mpair-trust:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mpair,
+.mpair-code {
+  background: var(--bg);
+}
+
+/* ---- 08 设备直连：白卡＋浅底状态胶囊 ---- */
+.mpair-card {
+  border-radius: 16px;
+  padding: var(--space-4);
+  box-shadow: var(--shadow-xs);
+}
+
+.mpair-item {
+  padding: var(--space-3) 0;
+}
+
+.mpair-entry {
+  min-height: 44px;
+  border-radius: var(--radius-full);
+}
+
+.mpair-cap {
+  min-height: 36px;
+}
+
+.mpair-nonearby {
+  border-radius: 14px;
+  background: var(--bg-sidebar);
+}
+
+/* ---- 08b 首次配对：浅色对码格 ---- */
+.mpair-code-confirm,
+.mpair-code-cancel {
+  border-radius: var(--radius-lg);
+}
+
+/* 08 加密黄条：文字必须在一个 flex 子项里，否则每个 text node 都会成为独立 flex 项，
+   出现「本机／有／1 个空间」竖着断开（2026-10-20 首轮截图实测）。 */
+.mpair-warn > span:last-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ── 设备配对 ─────────────────────────────────────────────────────────────── */
+.mpair { padding-top: calc(var(--space-2) + var(--sat, 0px)); }
+
+.mpair-head { padding: 0 var(--space-4) var(--space-2); }
+
+.mpair-head-title { font-size: var(--fs-19); font-weight: 750; letter-spacing: -.2px; }
+
+.mpair-self {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 0 18px 10px;
+  font-size: var(--fs-10-5);
+  color: var(--text-faint);
+}
+
+.mpair-self b { color: var(--text-dim); font-weight: 650; }
+
+.mpair-self-edit {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  padding: 6px 2px;
+}
+
+.mpair-scroll { padding: 0 var(--space-4); }
+
+.mpair-card { border-radius: 16px; padding: var(--space-3) 13px; box-shadow: var(--shadow-xs); }
+
+.mpair-ok { border-radius: 14px; padding: 10px var(--space-3); margin-bottom: 10px; }
+
+.mpair-warn { border-radius: 14px; padding: 9px 11px; margin-bottom: 10px; }
+
+.mpair-warn svg { flex: none; margin-top: 1px; }
+
+.mpair-caps { gap: 7px; margin-bottom: 10px; }
+
+.mpair-cap { min-height: 34px; padding: 5px 13px; font-size: var(--fs-12); }
+
+.mpair-list { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.mpair-item {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.mpair-item:last-child { border-bottom: 1px solid var(--border); }
+
+.mpair-item-main { width: 100%; gap: 3px; }
+
+.mpair-item-who { font-size: var(--fs-13-5); font-weight: 700; }
+
+.mpair-item-meta { font-size: var(--fs-10-5); }
+
+.mpair-actions { display: flex; gap: 7px; justify-content: flex-end; width: 100%; }
+
+.mpair-entry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 44px;
+  padding: 0 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-12);
+  font-weight: 650;
+}
+
+.mpair-entry.is-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); box-shadow: 0 4px 10px color-mix(in srgb, var(--accent) 22%, transparent); }
+
+.mpair-entry.mpair-entry-danger { border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); color: var(--danger); background: var(--surface); }
+
+.mpair-entry:disabled { opacity: .5; }
+
+.mpair-item .mpair-entry { min-height: 38px; }
+
+.mpair-paired-card .mpair-card-title { font-size: var(--fs-11); letter-spacing: .5px; }
+}
