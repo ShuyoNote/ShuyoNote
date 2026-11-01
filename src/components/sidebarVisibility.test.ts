@@ -6,15 +6,15 @@
 //
 // 这类故障不会报错、不会警告，只在浏览器层叠里静默发生，所以用真实 App.css
 // 跑一遍层叠把它钉死。
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
 
 import { unlayerForHappyDom } from "../lib/unlayerForHappyDom";
+import { allCssText } from "../lib/cssSources";
 
 // 测试环境把 import.meta.url 解析成 http://，拿不到 file: 路径，所以按 cwd 定位。
-const APP_CSS = readFileSync(resolve(process.cwd(), "src/App.css"), "utf8");
+// S4：CSS 已按域拆到 src/styles/*.css ⇒ 读**全仓 CSS**，否则 `.activity-*` 一搬走这条就假红。
+const APP_CSS = allCssText();
 // happy-dom 不支持 @layer（S2 起 App.css 全部规则在层里）⇒ 注入前先扁平化；判的还是同一批规则。
 const FLAT_CSS = unlayerForHappyDom(APP_CSS);
 
@@ -66,11 +66,12 @@ describe("侧栏开合按钮的可见性契约", () => {
   });
 
   it("这条规则不能被改回 none（改回就重现「收起来找不回」）", () => {
-    const back = FLAT_CSS.replace(
-      /\.sidebar-toggle-btn\s*\{[^}]*\}/,
-      ".sidebar-toggle-btn { display: none; }",
-    );
-    expect(back).not.toBe(FLAT_CSS);
+    // ⚠️ S4 起 CSS 按域拆文件：`.activity-btn { display:grid }` 在 activity-bar.css，排在 App.css 之后。
+    //   若只把 `.sidebar-toggle-btn` 原地改成 none，同特异性的 `.activity-btn` 会**后写赢** ⇒ 假红。
+    //   所以这里删掉原规则、把"改坏版"追加到最末尾（模拟"有人把这条规则改成 none"）。
+    const withoutRule = FLAT_CSS.replace(/\.sidebar-toggle-btn\s*\{[^}]*\}/, "");
+    const back = withoutRule + "\n.sidebar-toggle-btn { display: none; }";
+    expect(withoutRule).not.toBe(FLAT_CSS);
     expect(displayOf(back, "activity-btn sidebar-toggle-btn")).toBe("none");
   });
 });

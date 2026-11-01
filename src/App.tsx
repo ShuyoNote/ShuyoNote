@@ -147,6 +147,9 @@ import "./styles/kb-map.css";
 import "./styles/top-tools.css";
 // S4-9（2026-11-01）：PDF 阅读器/批注/目录域（`.pdf-*`）。响应式覆盖一并抽走。
 import "./styles/pdf.css";
+// S4-10（2026-11-01）：活动栏（`.activity-*`）与附件面板（`.attachment*`）两个小域。
+import "./styles/activity-bar.css";
+import "./styles/attachments.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

@@ -1,0 +1,181 @@
+/* S4-4（2026-11-01）：域抽取器搬出的**插件管理器域**（`.pm-*` / `.plugin-manager*` / `.plugin-menu-*`）。
+
+- 选择器混排（`.pm-x, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- 核心规则在前、**响应式覆盖（来自混合 @media，只抽命中域的规则并重建同条件块）在后** —— 保持原相对顺序。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* Attachments */
+.attachment-panel {
+  max-width: var(--doc-width);
+  margin: 0 auto;
+  width: 100%;
+  padding: var(--space-3) var(--doc-pad) var(--space-7);
+}
+
+.attachment-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.attachment-title {
+  font-size: var(--fs-12);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+
+.attachment-add {
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--text-dim);
+  height: 26px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-12);
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.attachment-add:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.attachment-add:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.attachment-empty {
+  padding: var(--space-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-faint);
+  font-size: var(--fs-12);
+  text-align: center;
+}
+
+.attachment-progress {
+  margin-bottom: var(--space-2);
+  padding: var(--space-2) 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.attachment-progress-label {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.attachment-progress-label span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--hover);
+  overflow: hidden;
+}
+
+.attachment-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width var(--transition-fast);
+}
+
+.attachment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.attachment-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: var(--space-2) 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.attachment-item:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-xs);
+}
+
+.attachment-icon {
+  font-size: var(--fs-18);
+  flex: none;
+}
+
+.attachment-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.attachment-name {
+  font-size: var(--fs-13);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.attachment-name:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.attachment-size {
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+}
+
+.attachment-actions {
+  display: none;
+  gap: 2px;
+}
+
+.attachment-item:hover .attachment-actions {
+  display: inline-flex;
+}
+
+.attachment-actions button {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-13);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.attachment-actions button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.attachment-prefetch{font-size: var(--fs-11);color:var(--text-faint);margin-left:var(--space-2)}
+}
