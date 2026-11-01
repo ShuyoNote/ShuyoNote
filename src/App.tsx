@@ -180,6 +180,8 @@ import "./styles/storage-panel.css";
 // S4-24/25（2026-11-01）：移动配对（`.mpair-*`）＋ 移动外壳/快速记录（`.mcap-*` / `.m-tabshell*` / `.mtab-*`）。
 import "./styles/mobile-pair.css";
 import "./styles/mobile-capture.css";
+// S4-26（2026-11-01）：关于对话框域（`.about-*` / `.mabout-*`）。
+import "./styles/about.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
