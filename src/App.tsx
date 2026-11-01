@@ -199,6 +199,9 @@ import "./styles/inline-drawing.css";
 import "./styles/conflict-lineage.css";
 // S4-32（2026-11-01）：命令面板域（`.palette*`）。
 import "./styles/palette.css";
+// S4-33（2026-11-01）：模板中心域（`.tc-*`）与关系图控件域（`.graph-controls*`）。
+import "./styles/template-center.css";
+import "./styles/graph-controls.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

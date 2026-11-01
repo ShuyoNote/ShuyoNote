@@ -5283,53 +5283,17 @@ p:has(> .editor-drawing-container) {
   border-color: var(--accent);
 }
 
-.graph-controls {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  display: flex;
-  gap: var(--space-1);
-  align-items: center;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: var(--space-1);
-  box-shadow: var(--shadow-sm);
-}
 
-.graph-controls button {
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-dim);
-  border-radius: 5px;
-  padding: 3px var(--space-2);
-  font-size: var(--fs-13);
-  cursor: pointer;
-  min-width: 24px;
-}
 
-.graph-controls button:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--text);
-}
 
-.graph-controls button:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
 
-.graph-controls .graph-toggle-active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent);
-}
 
-.graph-controls-sep {
-  width: 1px;
-  height: 16px;
-  background: var(--border);
-  margin: 0 2px;
-}
+
+
+
+
+
+
 
 .graph-select {
   border: 1px solid var(--border);
@@ -5990,104 +5954,43 @@ p:has(> .editor-drawing-container) {
   padding: var(--space-4) var(--space-6) var(--space-7);
   width: 100%;
 }
-.tc-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-}
-.tc-breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--fs-14);
-  flex: 1;
-  min-width: 0;
-}
-.tc-crumb { color: var(--text-dim); }
-.tc-crumb-sep { color: var(--text-faint); }
-.tc-crumb-current { color: var(--text); font-weight: 600; }
-.tc-close { border: none; background: transparent; color: var(--text-faint); font-size: var(--fs-20); cursor: pointer; padding: 0 6px; border-radius: var(--radius-xs); flex-shrink: 0; }
-.tc-close:hover { color: var(--text); background: var(--hover); }
-.tc-tabs { display: flex; gap: var(--space-1); margin-bottom: var(--space-3); border-bottom: 1px solid var(--border); }
-.tc-tab { border: none; background: transparent; padding: var(--space-2) var(--space-3); color: var(--text-dim); font-size: var(--fs-14); cursor: pointer; position: relative; font-family: inherit; }
-.tc-tab:hover { color: var(--text); }
-.tc-tab-active { color: var(--accent); font-weight: 600; }
-.tc-tab-active::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
-.tc-search { position: relative; flex-shrink: 0; }
-.tc-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 15px; height: 15px; color: var(--text-faint); }
-.tc-search-input { width: 240px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 10px 7px var(--space-6); font-size: var(--fs-13); outline: none; background: var(--bg); color: var(--text); font-family: inherit; }
-.tc-search-input:focus { border-color: var(--accent); }
-.tc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px; }
-.tc-card { position: relative; border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-md); overflow: hidden; cursor: pointer; text-align: left; padding: 0; font-family: inherit; display: flex; flex-direction: column; transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast); }
-.tc-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: var(--shadow-sm); }
-.tc-card-actions {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  z-index: 2;
-}
-.tc-card-del {
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-full);
-  border: none;
-  background: rgba(0, 0, 0, 0.28);
-  color: #fff;
-  font-size: var(--fs-14);
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transition: opacity var(--transition-fast), background var(--transition-fast);
-}
-.tc-card:hover .tc-card-del { opacity: 1; }
-.tc-card-del:hover { background: var(--danger); }
-.tc-import {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-dim);
-  font-size: var(--fs-12);
-  padding: var(--space-1) 10px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-family: inherit;
-}
-.tc-import:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-/* Thumbnail at the top of the card (cover bg + mini white page card). */
-.tc-preview { height: 150px; display: flex; flex-direction: column; overflow: hidden; }
-/* 题头图(封面照片)顶部。 */
-.tc-preview-cover { height: 74px; flex: none; background-size: cover; background-position: center 25%; }
-.tc-pv-card { background: #fff; flex: 1; padding: 10px var(--space-3); width: 100%; display: flex; flex-direction: column; gap: 6px; }
-.tc-pv-card { background: #fff; flex: 1; padding: 10px var(--space-3); width: 100%; display: flex; flex-direction: column; gap: 6px; }
-.tc-pv-title { height: 10px; width: 55%; border-radius: 2px; background: #e3e6eb; }
-.tc-pv-line { height: 6px; border-radius: 2px; background: #eef0f4; }
-/* 模板内容快照：迷你文本行。 */
-.tc-pv-text {
-  font-size: var(--fs-10);
-  color: #4a4f5a;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: 1.5;
-}
-.tc-pv-head {
-  font-size: var(--fs-11);
-  font-weight: 700;
-  color: #20242c;
-}
-.tc-card-body { padding: var(--space-3) 14px; display: flex; flex-direction: column; gap: var(--space-1); }
-.tc-card-name { font-size: var(--fs-14); font-weight: 600; color: var(--text); }
-.tc-card-tag { font-size: var(--fs-11); color: var(--text-faint); }
-.tc-empty { color: var(--text-faint); font-size: var(--fs-13); padding: var(--space-7) 0; text-align: center; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* In-app confirm dialog (centered in the app window), theme-consistent card. */
 /* 层级约定（改动前先读）：
@@ -8076,32 +7979,8 @@ body.is-plugin-panel-open .main {
 
 
 
-/* ===========================================================================
- * 模板中心（`TemplateCenterView`）窄屏 / 触屏适配 · 2026-09-22
- * ===========================================================================
- * 它**不是浮层**，而是 `.main` 里的一个整视图（`App.tsx` 里 `templateOpen` 那一支），
- * 所以这里只吃**窄**断点（768px，与 `useMobile.ts` 的 `MOBILE_BREAKPOINT_PX` 同源）——
- * 仓库口径是「**布局看宽度**；浮层才看宽度和高度，横屏手机不算窄」。
- * 唯一的例外是"卡片操作要不要常驻"：那是**有没有 hover** 的问题，与宽度无关，
- * 单独写在紧跟的 `@media (hover: none)` 那一条里。
- *
- * 390×844 上量到的三处（都让某个操作**点不到**，而且都不报错）：
- *   1. `.tc-head` 是一行 flex：面包屑 + **固定 240px** 的搜索框 + 导入 + 关闭。
- *      390px 视口扣掉 `.template-center` 左右各 32px 只剩 326px，而这几项里
- *      `.tc-search`（`flex-shrink:0`）与 `.tc-close`（`flex-shrink:0`）都不缩水，
- *      加间距要 ~368px ⇒ **横向溢出 42px**，「关闭」被推出屏幕——模板中心在手机上
- *      **关不掉**。这与 `.set-dialog{min-width:640px}` 是同一类坏法：
- *      固定宽度压过可用宽度，且失败时静默。改法：换行成两行，搜索框独占第二行。
- *   2. `.tc-tabs` 六个分类加起来 ~420px，在 326px 里溢出 ⇒ 「健康 / 我的模板」
- *      落在屏外，**既看不到也切不过去**（那两类模板在手机上只能靠"全部"翻）。
- *      改法：单行横向滚动。
- *   3. `.tc-card-actions` 只在 `:hover` 时 `opacity: 1`——触屏**永远没有 hover**，
- *      于是「我的模板」的**导出 / 删除在手机上永远点不到**（那不是装饰按钮，
- *      是这两件事的唯一入口）；而且它们是 22×22，本来就低于仓库那条"触屏 ≥44"。
- *      这一条与宽度无关（横屏手机同样如此），所以单独写成 `@media (hover: none)`。
- * =========================================================================== */
 @media (max-width: 768px) {
-  .template-center {
+.template-center {
     /* 桌面那 32px 的横向留白在 390px 上吃掉 16%（卡片区只剩 326px）。
        底部 72px 是给左下角那两颗 `position: fixed` 的浮动按钮让位
        （`.mobile-rail-toggle` / `.mobile-sync-slot`：`bottom:18px` + 44px 高 = 62px，
@@ -8111,117 +7990,9 @@ body.is-plugin-panel-open .main {
     overscroll-behavior-y: contain;
     -webkit-overflow-scrolling: touch;
   }
-
-  /* ---------- 头部：两行（面包屑 + 导入 + 关闭 / 搜索整行） ---------- */
-  .tc-head {
-    flex-wrap: wrap;
-    row-gap: var(--space-2);
-    margin-bottom: 10px;
-  }
-  /* `order` 是必需的：DOM 顺序是 面包屑 → 搜索 → 导入 → 关闭，
-     而窄屏要让搜索掉到第二行、两个按钮留在第一行右端。 */
-  .tc-breadcrumb { order: 1; flex: 1 1 auto; }
-  .tc-import { order: 2; min-height: 44px; padding: var(--space-1) var(--space-3); }
-  .tc-close { order: 3; }
-  .tc-search {
-    order: 4;
-    /* `flex-basis: 100%` 是"独占一行"在 flex 里的写法：它跟谁都不挤，
-       于是第一行只会是"面包屑 + 导入 + 关闭"。 */
-    flex: 1 1 100%;
-  }
-  .tc-search-input {
-    width: 100%;
-    /* 触屏命中区 ≥44（仓库口径）：搜索是这一层的主要动作，不是装饰。 */
-    min-height: 44px;
-    font-size: var(--fs-14);
-  }
-
-  /* ---------- 分类页签：单行横向滚动 ---------- */
-  .tc-tabs {
-    overflow-x: auto;
-    overflow-y: hidden;
-    overscroll-behavior-x: contain;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    /* 选中态那条下划线是 `bottom: -1px`，而 `overflow` 在 padding box 上裁——
-       不留这 2px 就会被裁掉一半（2px 变 1px）。 */
-    padding-bottom: 2px;
-  }
-  .tc-tabs::-webkit-scrollbar { display: none; }
-  /* `flex: 0 0 auto`：页签不许被压扁（压扁就等于文字看不全）。 */
-  .tc-tab { flex: 0 0 auto; min-height: 44px; padding: var(--space-2) 14px; }
-
-  /* ---------- 卡片：两列（140px 起），缩略图跟着收一档 ----------
-     ⚠️ 下限必须是 **140px 而不是 160px**：320px（iPhone SE / 老 Android）可用宽只有
-     320 − 14×2 = 292px，`minmax(160px,1fr)` 在 2×160+12 = 332 > 292 时退回**一列**——
-     一张卡占满 292px、封面却只有 56px 高，版式整个散掉（实测过）。
-     140px 时 2×140+12 = 292 正好两列；390px 上每列仍是 1fr 拉出来的 175px。 */
-  .tc-grid {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: var(--space-3);
-  }
-  /* 桌面一张卡 240px 起、缩略图 150px（封面 74px）；140~175px 宽的卡上照搬，
-     正文快照会被挤成一条缝，所以封面 / 内容区 / 字号一起等比收一档。 */
-  .tc-preview { height: 112px; }
-  .tc-preview-cover { height: 56px; }
-  .tc-pv-card { padding: var(--space-2) 9px; gap: 5px; }
-  .tc-pv-text { font-size: var(--fs-9); }
-  .tc-pv-head { font-size: var(--fs-10); }
-  .tc-card-body { padding: 9px 10px; }
-  .tc-card-name { font-size: var(--fs-13); }
 }
 
-/* ---------------------------------------------------------------------------
- * 触屏（`hover: none`）：卡片操作要**常驻**，而且**不许占版面**
- *
- * 两条约束各自都有理由：
- *   1. **常驻**：基础规则只在 `:hover` 时 `opacity: 1`，而触屏永远没有 hover ⇒
- *      「我的模板」的导出 / 删除在手机上等于不存在。
- *   2. **不占版面**：移动端版式要简洁。第一版把它改成"卡片底部一行常驻按钮"，
- *      功能是对的、版式是错的——每个自建模板都多出一条 54px 的行，而没有操作行的
- *      卡片被网格 `stretch` 拉到同高、底下空出一块带边框的白（320px 上最明显）。
- *      所以回到"悬浮在封面右上角"：`position: absolute` ⇒ **卡片高度与桌面一致**，
- *      网格不必为它做任何让步。
- *
- * 真正需要取舍的只剩一处：**命中区 vs 视觉尺寸**。
- * 仓库那条"触屏命中区 ≥44"不是可选项，但 44×44 的深色圆盖在 56px 高的封面上太重。
- * 于是把两者拆开——按钮对外仍是 44×44，圆用 `radial-gradient` 只画 30px：
- * **看着是两个小圆，摸着是够大的按钮**，这是唯一不用二选一的写法。
- * 代价是"封面右上角那一小块不再等于'点卡片建页'"，卡片正文与封面其余部分照旧。
- *
- * 为什么单列一条而不是塞进上面那个宽度断点：这与宽度无关——
- * **792×360 的横屏手机不命中 768px**，但它同样没有 hover，同样删不掉自己的模板。
- * 用 `hover` 媒体特性是"纯 CSS、无 JS 对应值"，所以也不触碰仓库那条
- * "JS/CSS 断点必须是同一个数"（那条管的是宽度/高度断点）。
- * ------------------------------------------------------------------------- */
-@media (max-width: 768px), (hover: none) {
-  /* 两个按钮**横排**（桌面是竖排两行）：56px 高的封面里塞不下两个 44 高的按钮，
-     横排才放得进上下各 6px 的余量。`top/right` 收到 2px，视觉圆才贴得住角。 */
-  .tc-card-actions {
-    top: 2px;
-    right: 2px;
-    flex-direction: row;
-    gap: 0;
-  }
-  /* `.tc-card:hover .tc-card-del` 必须一起写：基础规则里那条是 (0,2,0)，
-     在**能 hover**的环境（窄窗口 + 鼠标）里比 `.tc-card-del` (0,1,0) 大——
-     不带它，尺寸会退回 22×22。 */
-  .tc-card-del,
-  .tc-card:hover .tc-card-del {
-    opacity: 1;
-    /* 44×44 是**命中区**，下面那个半径 15px 的圆才是视觉尺寸（30px）。 */
-    width: 44px;
-    height: 44px;
-    border: none;
-    background: radial-gradient(circle 15px at 50% 50%, rgba(0, 0, 0, 0.45) 0, rgba(0, 0, 0, 0.45) 14px, transparent 15px);
-    color: #fff;
-    font-size: var(--fs-14);
-  }
-  /* 悬停仍走危险色（基础规则 `.tc-card-del:hover` 的 background: var(--danger)）。 */
-  .tc-card-del:hover {
-    background: radial-gradient(circle 15px at 50% 50%, var(--danger) 0, var(--danger) 14px, transparent 15px);
-  }
-}
+
 
 
 
@@ -8258,42 +8029,21 @@ body.is-plugin-panel-open .main {
 .backlinks-retry { min-height: 44px; }
 }
 
-/* ===========================================================================
- * 窄屏"视图内部工具条"紧凑化 · 2026-09-22
- * ===========================================================================
- * 看板的筛选条、关系图的控制面板：它们浮在内容上，窄屏下**必须换行**——
- * 关系图那一条控制总宽 ~650px，锚在 `right: 14px`，390px 视口上左边有 274px
- * **挂在屏幕外**（右锚定不会溢出右边，所以此前没人发现：它是"左边点不到"）。
- * 换行之后每一行都留在屏内，命中区同时补到 44。
- * =========================================================================== */
 @media (max-width: 768px) {
-  /* ---------- 看板：分组维度选择器 30 高 ---------- */
+/* ---------- 看板：分组维度选择器 30 高 ---------- */
   .board-group-select { min-height: 44px; }
-  .board-toolbar { flex-wrap: wrap; row-gap: var(--space-1); }
-
-  /* ---------- 关系图：控制面板换行 + 命中区 44 ---------- */  .graph-controls {
-    left: 8px;
-    right: 8px;
-    top: 8px;
-    flex-wrap: wrap;
-    row-gap: var(--space-1);
-    max-width: calc(100% - 16px);
-    padding: var(--space-1) 6px;
-  }
-  .graph-controls button { min-height: 44px; }
-  .graph-select,
+.board-toolbar { flex-wrap: wrap; row-gap: var(--space-1); }
+.graph-select,
   .graph-search { min-height: 44px; }
-  .graph-search { flex: 1 1 120px; }
-  /* 分隔条只对"同一行内的分组"有意义；换行之后它会悬在行尾，反而像多余的空格。 */
-  .graph-controls-sep { display: none; }
-  /* ⚠️ 「块级」那个开关不在 `.graph-controls` 里，它在左下角的 `.graph-legend` 里
+.graph-search { flex: 1 1 120px; }
+/* ⚠️ 「块级」那个开关不在 `.graph-controls` 里，它在左下角的 `.graph-legend` 里
      （图例条 + 一个开关）。上一版只写了 `.graph-controls button`，于是它仍是 40 高。 */
   .graph-legend {
     flex-wrap: wrap;
     row-gap: var(--space-1);
     max-width: calc(100% - 28px);
   }
-  .graph-legend .graph-toggle { min-height: 44px; }
+.graph-legend .graph-toggle { min-height: 44px; }
 }
 
 @media (max-width: 768px) {
