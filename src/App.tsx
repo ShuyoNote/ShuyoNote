@@ -164,6 +164,8 @@ import "./styles/community.css";
 import "./styles/mobile-read.css";
 // S4-17（2026-11-01）：编辑器域（`.editor-*` / `.block-selection*`）。
 import "./styles/editor.css";
+// S4-18（2026-11-01）：侧栏与空间切换域（`.sidebar*` / `.space-*`；`.space-item-crypto` 共享规则除外）。
+import "./styles/sidebar-space.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
