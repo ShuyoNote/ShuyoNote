@@ -2305,34 +2305,11 @@ body.is-ai-open .main {
 .ep-bottom-btn:hover {
   background: var(--hover);
 }
-.cover-picker {
-  width: min(600px, 92vw);
-  max-height: 80vh;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
-  padding: var(--space-4);
-  overflow-y: auto;
-}
-.cover-picker-head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: var(--space-3);
-}
-.cover-picker-title {
-  font-weight: 600;
-}
-.cover-picker-sub {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-}
-.cover-picker-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-  gap: var(--space-2);
-}
+
+
+
+
+
 .cover-swatch {
   height: 64px;
   border: 2px solid transparent;
@@ -2350,54 +2327,14 @@ body.is-ai-open .main {
 .cover-swatch.active {
   border-color: var(--accent);
 }
-.cover-picker-custom {
-  margin-top: var(--space-3);
-}
-.cover-picker-input {
-  width: 100%;
-  border: 1px solid var(--border);
-  background: var(--block-hover);
-  border-radius: var(--radius-md);
-  padding: 6px 10px;
-  outline: none;
-  font-size: var(--fs-13);
-  color: var(--text);
-  box-sizing: border-box;
-}
-.cover-picker-actions {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: var(--space-3);
-}
-.cover-picker-actions-right {
-  display: flex;
-  gap: var(--space-2);
-}
-.cover-picker-upload,
-.cover-picker-clear,
-.cover-picker-btn {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  border-radius: var(--radius-sm);
-  padding: 6px 14px;
-  cursor: pointer;
-  font-size: var(--fs-13);
-}
-.cover-picker-upload {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--bg);
-}
-.cover-picker-upload:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.cover-picker-btn:hover,
-.cover-picker-clear:hover {
-  background: var(--block-hover);
-}
+
+
+
+
+
+
+
+
 
 /* Cover crop editor (uploaded image → crop to banner). */
 .crop-overlay {
@@ -7220,87 +7157,25 @@ p:has(> .editor-drawing-container) {
   }
 }
 
-/* Markdown import dialog */
-.markdown-import-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  background: rgba(0, 0, 0, 0.28);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 
-.markdown-import {
-  width: 560px;
-  max-width: 90vw;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  padding: var(--space-4);
-}
 
-.markdown-import-title {
-  font-size: var(--fs-15);
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 10px;
-}
 
-.markdown-import-textarea {
-  width: 100%;
-  min-height: 240px;
-  resize: vertical;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--text);
-  padding: 10px;
-  font-family: "SF Mono", Consolas, monospace;
-  font-size: var(--fs-13);
-  box-sizing: border-box;
-}
 
-.markdown-import-textarea:focus {
-  outline: none;
-  border-color: var(--accent);
-}
 
-.markdown-import-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-}
 
-.markdown-import-spacer {
-  flex: 1;
-}
 
-.markdown-import-file,
-.markdown-import-cancel,
-.markdown-import-confirm {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  border-radius: var(--radius-sm);
-  padding: 6px var(--space-3);
-  font-size: var(--fs-13);
-  cursor: pointer;
-  font-family: inherit;
-}
 
-.markdown-import-file:hover,
-.markdown-import-cancel:hover {
-  background: var(--hover);
-}
 
-.markdown-import-confirm {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -7776,100 +7651,21 @@ p:has(> .editor-drawing-container) {
 
 
 
-/* M25 — keyboard shortcuts overlay (ShortcutsPanel) */
-.shortcuts-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 1200;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.shortcuts {
-  width: min(720px, 92vw);
-  max-height: 80vh;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.shortcuts-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--border);
-}
-.shortcuts-title {
-  font-weight: 600;
-  white-space: nowrap;
-}
-.shortcuts-search {
-  flex: 1;
-  border: 1px solid var(--border);
-  background: var(--block-hover);
-  border-radius: var(--radius-md);
-  padding: 6px 10px;
-  outline: none;
-  font-size: var(--fs-13);
-  color: var(--text);
-}
-.shortcuts-body {
-  overflow-y: auto;
-  padding: var(--space-2) var(--space-4) var(--space-4);
-}
-.shortcuts-group {
-  margin-top: var(--space-3);
-}
-.shortcuts-group-title {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  letter-spacing: 0.04em;
-  margin-bottom: 6px;
-}
-.shortcuts-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: 6px var(--space-2);
-  border-radius: var(--radius-xs);
-}
-.shortcuts-row:hover {
-  background: var(--block-hover);
-}
-.shortcuts-label {
-  color: var(--text);
-}
-.shortcuts-keys {
-  display: flex;
-  gap: var(--space-1);
-  flex-shrink: 0;
-}
-.shortcuts-keys kbd {
-  font-family: var(--font-mono, monospace);
-  font-size: var(--fs-12);
-  background: var(--block-hover);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 1px 6px;
-  color: var(--text);
-}
-.shortcuts-empty {
-  padding: var(--space-5);
-  color: var(--text-dim);
-  text-align: center;
-}
-.shortcuts-foot {
-  padding: var(--space-2) var(--space-4);
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  border-top: 1px solid var(--border);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -9030,9 +8826,6 @@ body.is-plugin-panel-open .main {
 .trash-popover,
 .backup-dropdown,
 .new-menu-dropdown,
-.shortcuts,
-.cover-picker,
-.markdown-import,
 .plugin-view,
 .confirm-box {
     min-width: 0;
@@ -9048,8 +8841,6 @@ body.is-plugin-panel-open .main {
   }
 .confirm-overlay,
 .cover-overlay,
-.shortcuts-overlay,
-.markdown-import-overlay,
 .plugin-view-overlay {
     align-items: flex-end;
     justify-content: center;
@@ -9062,9 +8853,6 @@ body.is-plugin-panel-open .main {
     padding-right: calc(var(--space-3) + var(--sar));
   }
 .confirm-box,
-.cover-picker,
-.shortcuts,
-.markdown-import,
 .plugin-view {
     position: static;
     transform: none;
@@ -9075,7 +8863,6 @@ body.is-plugin-panel-open .main {
     max-height: calc(var(--ovh) - 24px);
     border-radius: 16px 16px var(--radius-lg) var(--radius-lg);
   }
-.markdown-import,
 .plugin-view {
     overflow-y: auto;
     overscroll-behavior-y: contain;
@@ -9194,10 +8981,7 @@ body.is-plugin-panel-open .main {
     min-height: 44px;
   }
 .confirm-box button,
-.markdown-import button,
-.shortcuts button,
 .plugin-view button,
-.cover-picker button,
 .trash-popover button,
 .palette button {
     min-height: 44px;
@@ -9206,10 +8990,6 @@ body.is-plugin-panel-open .main {
      宽度不够等于点不中。这里用"类名里带 close"一条覆盖所有浮层，
      比逐个列举 `.set-close / .pm-close / …` 更不容易漏（漏一个就是一处点不中）。 */
   button[class*="close"] {
-    min-width: 44px;
-    min-height: 44px;
-  }
-.shortcuts button {
     min-width: 44px;
     min-height: 44px;
   }

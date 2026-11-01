@@ -182,6 +182,10 @@ import "./styles/mobile-pair.css";
 import "./styles/mobile-capture.css";
 // S4-26（2026-11-01）：关于对话框域（`.about-*` / `.mabout-*`）。
 import "./styles/about.css";
+// S4-27（2026-11-01）：快捷键 / Markdown 导入 / 封面选择器。
+import "./styles/shortcuts.css";
+import "./styles/markdown-import.css";
+import "./styles/cover-picker.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
