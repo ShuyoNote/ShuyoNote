@@ -232,6 +232,8 @@ import "./styles/breadcrumbs.css";
 import "./styles/editor-misc.css";
 // S4-44（2026-11-01）：锁屏/解锁域（`.lock-*`）。
 import "./styles/lock.css";
+// S4-45（2026-11-01）：mac 窗口控件域（`.is-macos*` / `.mac-*`）。
+import "./styles/mac-window.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
