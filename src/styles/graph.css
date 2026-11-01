@@ -1,0 +1,223 @@
+/* S4（2026-11-01）：域抽取器搬出的**关系图视图域（`.graph-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* ---------- Relationship graph ---------- */
+.graph-view {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}
+
+.graph-hint {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  max-width: min(560px, 90%);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  padding: var(--space-2) var(--space-3);
+  pointer-events: none;
+}
+
+.graph-view-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: var(--fs-14);
+  padding: var(--space-7);
+  text-align: center;
+}
+
+.graph-svg {
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+
+.graph-svg:active {
+  cursor: grabbing;
+}
+
+.graph-edge {
+  stroke-opacity: 0.5;
+  stroke-width: 1.5;
+}
+
+.graph-edge-page {
+  stroke-opacity: 0.35;
+}
+
+.graph-edge-embed {
+  stroke-width: 2;
+}
+
+.graph-edge-belongs {
+  stroke-dasharray: 3 3;
+  stroke-opacity: 0.3;
+  stroke-width: 1;
+}
+
+.graph-edge-active {
+  stroke-opacity: 0.9;
+  stroke-width: 2;
+}
+
+.graph-edge-dim {
+  stroke-opacity: 0.08;
+}
+
+.graph-node {
+  cursor: pointer;
+}
+
+.graph-node-circle {
+  fill: var(--accent);
+  opacity: 0.85;
+  stroke: var(--surface);
+  stroke-width: 1.5;
+  transition: opacity 0.12s ease;
+}
+
+.graph-node:hover .graph-node-circle {
+  opacity: 1;
+}
+
+.graph-node-current .graph-node-circle {
+  fill: #f59e0b;
+  stroke: var(--text);
+  stroke-width: 2;
+}
+
+.graph-node-block .graph-node-circle {
+  fill: #14b8a6;
+  stroke-width: 1;
+}
+
+.graph-node-dim {
+  opacity: 0.15;
+}
+
+.graph-node-match .graph-node-circle {
+  stroke: #f59e0b;
+  stroke-width: 3;
+  fill: #fde68a;
+}
+
+.graph-node-pinned .graph-node-circle {
+  stroke: #ef4444;
+  stroke-width: 2.5;
+}
+
+.graph-node-pin {
+  font-size: var(--fs-10);
+  pointer-events: none;
+}
+
+.graph-search {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  min-width: 110px;
+  font-size: var(--fs-12);
+}
+
+.graph-node-label {
+  font-size: var(--fs-11);
+  fill: var(--text);
+  text-anchor: middle;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
+}
+
+.graph-legend {
+  position: absolute;
+  bottom: 14px;
+  left: 14px;
+  display: flex;
+  gap: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  box-shadow: var(--shadow-sm);
+}
+
+.graph-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+}
+
+.graph-legend-item i {
+  width: 12px;
+  height: 3px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.graph-toggle {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: 5px;
+  padding: 2px var(--space-2);
+  font-size: var(--fs-12);
+  cursor: pointer;
+}
+
+.graph-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.graph-toggle-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.graph-select {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 3px 6px;
+  font-size: var(--fs-12);
+  max-width: 120px;
+  outline: none;
+}
+
+@media (max-width: 768px) {
+.graph-select,
+  .graph-search { min-height: 44px; }
+.graph-search { flex: 1 1 120px; }
+/* ⚠️ 「块级」那个开关不在 `.graph-controls` 里，它在左下角的 `.graph-legend` 里
+     （图例条 + 一个开关）。上一版只写了 `.graph-controls button`，于是它仍是 40 高。 */
+  .graph-legend {
+    flex-wrap: wrap;
+    row-gap: var(--space-1);
+    max-width: calc(100% - 28px);
+  }
+.graph-legend .graph-toggle { min-height: 44px; }
+}
+}

@@ -223,6 +223,8 @@ import "./styles/mobile-home.css";
 import "./styles/missing-sync.css";
 import "./styles/mobile-dict.css";
 import "./styles/mobile-sheet.css";
+// S4-41（2026-11-01）：关系图视图域（`.graph-*`）。
+import "./styles/graph.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
