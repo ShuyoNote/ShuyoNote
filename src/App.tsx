@@ -166,6 +166,8 @@ import "./styles/mobile-read.css";
 import "./styles/editor.css";
 // S4-18（2026-11-01）：侧栏与空间切换域（`.sidebar*` / `.space-*`；`.space-item-crypto` 共享规则除外）。
 import "./styles/sidebar-space.css";
+// S4-19（2026-11-01）：数据库表格域（`.db-*`）。
+import "./styles/database.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

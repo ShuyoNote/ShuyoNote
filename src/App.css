@@ -2900,21 +2900,10 @@ body.content-full .editor-placeholder {
 
 
 
-.db-th { user-select: none; position: relative; }
-.db-th-dragging { opacity: 0.5; }
-.db-th.db-th-drop-left::before,
-.db-th.db-th-drop-right::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -1px;
-  width: 1px;
-  background: var(--accent);
-  pointer-events: none;
-}
-.db-th.db-th-drop-left::after,
-.db-th.db-th-drop-right::after { display: none; }
+
+
+
+
 
 
 
@@ -6294,37 +6283,15 @@ p:has(> .editor-drawing-container) {
   white-space: nowrap;
 }
 
-.db-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-  margin-bottom: 10px;
-  flex-shrink: 0;
-}
 
-.db-summary-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
 
-.db-summary-name {
-  font-size: var(--fs-12);
-  font-weight: 600;
-  color: var(--text-dim);
-}
 
-.db-summary-chip {
-  font-size: var(--fs-12);
-  border-radius: var(--radius-full);
-  padding: 1px var(--space-2);
-}
 
-.db-summary-value {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-}
+
+
+
+
+
 
 .database-table-wrap {
   flex: 1;
@@ -6375,57 +6342,21 @@ p:has(> .editor-drawing-container) {
   white-space: nowrap;
 }
 
-.db-th:hover {
-  background: var(--hover);
-  color: var(--text);
-}
 
-.db-th-name {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-}
 
-.db-col-remove {
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-  font-size: var(--fs-14);
-  margin-left: 6px;
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-xs);
-  visibility: hidden;
-}
 
-.db-th:hover .db-col-remove {
-  visibility: visible;
-}
 
-.db-col-remove:hover {
-  color: var(--text);
-  background: var(--hover);
-}
 
-.db-th-add {
-  cursor: default;
-  width: 64px;
-}
 
-.db-add-col {
-  border: 1px dashed var(--border);
-  background: transparent;
-  color: var(--text-dim);
-  border-radius: var(--radius-sm);
-  padding: 3px var(--space-2);
-  font-size: var(--fs-12);
-  cursor: pointer;
-}
 
-.db-add-col:hover {
-  background: var(--hover);
-  color: var(--text);
-}
+
+
+
+
+
+
+
+
 
 .database-table .db-cell {
   padding: var(--space-1) var(--space-2);
@@ -6433,57 +6364,21 @@ p:has(> .editor-drawing-container) {
   max-width: 260px;
 }
 
-.db-cell-title {
-  min-width: 160px;
-}
 
-.db-cell-empty {
-  min-width: 40px;
-}
 
-.db-title {
-  border: none;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  font-size: var(--fs-13);
-  font-weight: 500;
-  padding: var(--space-1) 0;
-  text-align: left;
-  width: 100%;
-}
 
-.db-title:hover {
-  color: var(--accent);
-}
 
-.db-input {
-  width: 100%;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text);
-  border-radius: var(--radius-xs);
-  padding: var(--space-1) 6px;
-  font-size: var(--fs-13);
-  box-sizing: border-box;
-}
 
-.db-input:hover {
-  border-color: var(--border);
-}
 
-.db-input:focus {
-  outline: none;
-  border-color: var(--accent);
-  background: var(--bg);
-}
 
-.db-checkbox {
-  width: 15px;
-  height: 15px;
-  cursor: pointer;
-  margin: 0;
-}
+
+
+
+
+
+
+
+
 
 .database-table .db-empty {
   padding: var(--space-5);
@@ -6492,1120 +6387,236 @@ p:has(> .editor-drawing-container) {
   font-size: var(--fs-13);
 }
 
-.db-add-col-panel {
-  position: absolute;
-  top: 52px;
-  right: 24px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  padding: var(--space-2);
-  width: 220px;
-  /* 分组字段/添加列弹窗：用户主动调出——提到最高阶(1500)，不被侧边栏/内容遮挡。 */
-  z-index: 1500;
-}
-
-.db-add-col-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: var(--fs-12);
-  font-weight: 600;
-  color: var(--text-dim);
-  padding: var(--space-1) var(--space-2) 6px;
-}
-
-.db-panel-close {
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-  font-size: var(--fs-14);
-  line-height: 1;
-  padding: 0 2px;
-  border-radius: var(--radius-xs);
-}
-
-.db-panel-close:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-
-.db-add-col-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  border: none;
-  background: transparent;
-  color: var(--text);
-  padding: 6px var(--space-2);
-  border-radius: var(--radius-xs);
-  cursor: pointer;
-  font-size: var(--fs-13);
-}
-
-.db-add-col-item:hover {
-  background: var(--hover);
-}
-
-.db-add-col-type {
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-}
-
-.db-add-col-empty {
-  padding: var(--space-2);
-  color: var(--text-faint);
-  font-size: var(--fs-12);
-}
-
-.db-new-attr {
-  display: flex;
-  gap: var(--space-1);
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid var(--border);
-}
-
-.db-new-attr .db-input {
-  border: 1px solid var(--border);
-  flex: 1;
-  min-width: 0;
-}
-
-.db-input-rollup {
-  font-family: var(--font-mono, monospace);
-  font-size: var(--fs-11);
-  resize: vertical;
-  min-height: 40px;
-}
-
-.db-new-attr-btn {
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #fff;
-  border-radius: var(--radius-xs);
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--fs-12);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.db-view-switch {
-  display: flex;
-  gap: var(--space-1);
-  flex: 0 0 auto;
-}
-
-.db-view-switch button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-dim);
-  border-radius: var(--radius-sm);
-  padding: 6px 9px;
-  font-size: var(--fs-13);
-  cursor: pointer;
-  white-space: nowrap;
-  line-height: 1;
-}
-
-.db-view-switch button svg {
-  flex-shrink: 0;
-}
-
-.db-view-switch button:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-
-.db-view-switch .db-view-active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-/* Right-side actions (PDF / views / rule), visually separated from the switch. */
-.db-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-left: auto;
-  flex: 0 0 auto;
-}
-.db-rule-glyph {
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-}
-
-.db-views-wrap {
-  position: relative;
-}
-.db-views-btn {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-dim);
-  font-size: var(--fs-12);
-  padding: 5px 10px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-family: inherit;
-}
-.db-views-btn:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-.db-views-pop {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: var(--z-popover);
-  min-width: 220px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  padding: 5px;
-}
-/* 「更多」溢出菜单：折叠顶部不常用按钮。 */
-.db-more-wrap { position: relative; }
-.db-more-glyph { letter-spacing: 1px; }
-.db-more-item {
-  display: flex; align-items: center; gap: var(--space-2);
-  width: 100%;
-  border: none; background: transparent;
-  color: var(--text-dim);
-  font-size: var(--fs-13); padding: 7px 9px;
-  border-radius: var(--radius-sm);
-  cursor: pointer; font-family: inherit;
-  text-align: left;
-}
-.db-more-item:hover { background: var(--hover); color: var(--text); }
-.db-more-ic {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 16px; height: 16px; flex-shrink: 0; color: var(--text-dim);
-}
-.db-more-label { flex: 1; white-space: nowrap; }
-.db-views-title {
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-  padding: var(--space-1) var(--space-2) 3px;
-}
-.db-views-empty {
-  color: var(--text-faint);
-  font-size: var(--fs-12);
-  padding: var(--space-2);
-}
-.db-views-item {
-  display: flex;
-  align-items: center;
-}
-.db-views-item-main {
-  flex: 1;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: var(--fs-13);
-  padding: 6px var(--space-2);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-family: inherit;
-  text-align: left;
-}
-.db-views-item-main:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-.db-views-item-del {
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  font-size: var(--fs-14);
-  padding: var(--space-1) var(--space-2);
-  cursor: pointer;
-}
-.db-views-item-del:hover {
-  color: var(--danger);
-}
-.db-views-save-row {
-  display: flex;
-  gap: 6px;
-  border-top: 1px solid var(--border);
-  margin-top: 3px;
-  padding-top: 6px;
-  padding-left: var(--space-1);
-}
-.db-views-input {
-  flex: 1;
-  min-width: 0;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  font-size: var(--fs-12);
-  padding: var(--space-1) 7px;
-  border-radius: var(--radius-sm);
-  font-family: inherit;
-}
-.db-views-save-row button {
-  border: 1px solid var(--border);
-  background: var(--hover);
-  color: var(--text-dim);
-  font-size: var(--fs-12);
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-family: inherit;
-}
-.db-views-save-row button:hover {
-  color: var(--text);
-  background: var(--hover-strong);
-}
-.db-rule-wrap {
-  position: relative;
-}
-.db-rule-pop {
-  width: 240px;
-}
-.db-rule-select {
-  width: 100%;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  font-size: var(--fs-12);
-  padding: 5px 7px;
-  border-radius: var(--radius-sm);
-  margin: var(--space-1) 0;
-  font-family: inherit;
-}
-.db-rule-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: var(--space-1);
-}
-.db-rule-actions button {
-  border: 1px solid var(--border);
-  background: var(--hover);
-  color: var(--text-dim);
-  font-size: var(--fs-12);
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-family: inherit;
-}
-.db-rule-actions button:hover {
-  color: var(--text);
-  background: var(--hover-strong);
-}
-.db-cell-muted {
-  color: var(--text-faint);
-}
-.db-ref {
-  border: none;
-  background: transparent;
-  color: var(--accent);
-  font-size: var(--fs-13);
-  padding: 2px var(--space-1);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-family: inherit;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.db-ref:hover {
-  background: var(--accent-soft);
-  text-decoration: underline;
-}
-.db-formula {
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.db-col-options {
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-  font-size: var(--fs-12);
-  margin-left: 6px;
-  padding: 0 3px;
-  border-radius: var(--radius-xs);
-  visibility: hidden;
-}
-
-.db-th:hover .db-col-options {
-  visibility: visible;
-}
-
-.db-col-options:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-
-.db-options-input {
-  border: 1px solid var(--border);
-  width: 100%;
-  margin: var(--space-1) 0;
-}
-
-.db-options-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.db-options-cancel {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  border-radius: var(--radius-xs);
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--fs-12);
-  cursor: pointer;
-}
-
-.db-options-cancel:hover {
-  background: var(--hover);
-}
-
-.db-gallery {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: var(--space-3);
-  align-content: start;
-}
-
-.db-gallery-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  padding: 14px;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-height: 84px;
-  transition: box-shadow 0.12s ease;
-}
-
-.db-gallery-card:hover {
-  box-shadow: var(--shadow-md);
-  border-color: var(--accent);
-}
-
-.db-gallery-title {
-  font-size: var(--fs-14);
-  font-weight: 600;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.db-gallery-badge {
-  align-self: flex-start;
-  font-size: var(--fs-12);
-  border-radius: var(--radius-full);
-  padding: 2px 10px;
-}
-
-.db-board {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.db-board-toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-
-.db-board-label {
-  font-size: var(--fs-13);
-  color: var(--text-dim);
-}
-
-.db-board-select {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  border-radius: var(--radius-sm);
-  padding: 5px 10px;
-  font-size: var(--fs-13);
-  outline: none;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: inherit;
-}
-
-.db-board-select:hover {
-  background: var(--hover);
-  border-color: var(--accent);
-}
-
-.db-select-caret {
-  font-size: var(--fs-10);
-  color: var(--text-faint);
-  line-height: 1;
-}
-
-.db-board-group {
-  position: relative;
-}
-
-/* Anchor the group-field panel right below its trigger button. */
-.db-board-group .db-add-col-panel {
-  width: 190px;
-}
-
-.db-pop-panel .db-add-col-item {
-  gap: 6px;
-}
-
-.db-item.db-item-active {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.db-sort-caret {
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-}
-
-.db-th-sorted {
-  color: var(--accent);
-}
-
-.db-board-hint {
-  font-size: var(--fs-12);
-  color: var(--text-faint);
-}
-
-.db-board-columns {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  gap: var(--space-3);
-  overflow-x: auto;
-  align-items: flex-start;
-}
-
-.db-board-col {
-  min-width: 220px;
-  max-width: 260px;
-  background: var(--bg-sidebar);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  display: flex;
-  flex-direction: column;
-  max-height: 100%;
-  position: relative;
-}
-
-.db-board-col-over {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-/* 列拖拽插入位置竖线：插前(左缘)/插后(右缘)。 */
-.db-board-col-over::before,
-.db-board-col-after::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  background: var(--accent);
-  border-radius: 2px;
-}
-.db-board-col-over::before {
-  left: 0;
-}
-.db-board-col-after::after {
-  right: 0;
-}
-
-.db-board-col-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 10px var(--space-3);
-  border-bottom: 1px solid var(--border);
-  cursor: grab;
-  user-select: none;
-}
-.db-board-col-header:active {
-  cursor: grabbing;
-}
-.db-board-col-header-dragging {
-  opacity: 0.5;
-}
-/* 列拖拽浮动标题条：跟随指针，明确"拖的是哪列"。 */
-.db-board-col-ghost {
-  position: fixed;
-  z-index: 96;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 7px var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  font-size: var(--fs-13);
-  font-weight: 600;
-  color: var(--text);
-  pointer-events: none;
-  white-space: nowrap;
-}
-.db-board-col-ghost .db-board-dot {
-  width: 8px;
-  height: 8px;
-  flex: none;
-}
-
-.db-board-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.db-board-col-name {
-  flex: 1;
-  font-size: var(--fs-13);
-  font-weight: 600;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.db-board-col-count {
-  font-size: var(--fs-12);
-  color: var(--text-faint);
-}
-
-.db-board-col-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--space-2);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.db-board-card {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: var(--radius-sm);
-  padding: var(--space-2) 10px;
-  font-size: var(--fs-13);
-  color: var(--text);
-  cursor: pointer;
-}
-.db-board-card-title {
-  display: block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.db-board-card:hover {
-  border-color: var(--accent);
-}
-/* 拖拽中的浮动卡：跟随指针。 */
-.db-board-card-ghost {
-  position: fixed;
-  z-index: 96;
-  opacity: 0.92;
-  box-shadow: var(--shadow-lg);
-  cursor: grabbing;
-  pointer-events: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 200px;
-}
-
-/* List view */
-.db-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.db-list-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: var(--space-2) var(--space-3);
-  cursor: pointer;
-}
-
-.db-list-item:hover {
-  border-color: var(--accent);
-  background: var(--hover);
-}
-
-.db-list-title {
-  font-size: var(--fs-14);
-  font-weight: 500;
-  color: var(--text);
-  min-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  background: none;
-  border: none;
-  padding: 0;
-  text-align: left;
-  cursor: pointer;
-  font-family: inherit;
-}
-.db-list-title:hover {
-  color: var(--accent);
-}
-.db-list-expand {
-  flex: none;
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--fs-10);
-  color: var(--text-dim);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-xs);
-  cursor: pointer;
-}
-.db-list-expand:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-
-.db-list-props {
-  display: flex;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
-.db-list-prop {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  background: var(--bg);
-  border-radius: var(--radius-full);
-  padding: 1px var(--space-2);
-}
-
-/* Calendar view */
-.db-cal {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.db-cal-toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.db-cal-toolbar button {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) 10px;
-  font-size: var(--fs-14);
-  cursor: pointer;
-}
-
-.db-cal-title {
-  font-size: var(--fs-14);
-  font-weight: 600;
-  color: var(--text);
-  min-width: 120px;
-  text-align: center;
-}
-
-.db-cal-hint {
-  font-size: var(--fs-12);
-  color: var(--text-faint);
-}
-
-.db-cal-grid {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  grid-auto-rows: 1fr;
-  gap: var(--space-1);
-}
-
-.db-cal-cell {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  padding: var(--space-1);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.db-cal-empty {
-  background: transparent;
-  border-color: transparent;
-}
-
-.db-cal-day {
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-}
-
-.db-cal-event {
-  border: none;
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-radius: var(--radius-xs);
-  font-size: var(--fs-11);
-  padding: 1px var(--space-1);
-  cursor: pointer;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Timeline view */
-.db-timeline {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-/* 甘特图视图：任务条 + 时间轴。 */
-.db-gantt {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  /* 外围框线。 */
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-.db-gantt-head,
-.db-gantt-row {
-  display: flex;
-  align-items: stretch;
-  min-width: 100%;
-}
-.db-gantt-row {
-  transition: background var(--transition-fast);
-}
-.db-gantt-row:hover {
-  background: var(--hover);
-}
-.db-gantt-rowlabel {
-  flex: none;
-  width: 330px;
-  text-align: left;
-  font-size: var(--fs-13);
-  padding: 5px 10px;
-  border: none;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.db-gantt-rowlabel:hover {
-  color: var(--accent);
-}
-.db-gantt-head .db-gantt-rowlabel {
-  font-weight: 700;
-  color: var(--text);
-  position: relative;
-  border-right: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-}
-/* 标题列宽拖拽手柄：右缘竖条，hover 高亮。 */
-.db-gantt-resize {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  right: 0;
-  width: 6px;
-  cursor: col-resize;
-  border-left: 1px solid var(--border);
-}
-.db-gantt-resize:hover {
-  background: var(--accent-soft);
-}
-.db-gantt-resize-hint {
-  margin-left: var(--space-2);
-  font-size: var(--fs-11);
-  font-weight: 400;
-  color: var(--text-faint);
-}
-/* 甘特图行左侧：任务名 + 开始/结束 两个数据项。 */
-.db-gantt-meta {
-  flex: none;
-  width: 330px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 var(--space-2);
-  min-width: 0;
-  border-right: 1px solid var(--border);
-}
-.db-gantt-owner {
-  flex: 2;
-  min-width: 0;
-  font-size: var(--fs-11-5);
-  color: var(--text-faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  border-left: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
-  padding-left: 6px;
-}
-/* 负责人可编辑下拉。 */
-.db-gantt-owner-select {
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-faint);
-  border-radius: var(--radius-xs);
-  padding: 1px 2px;
-  font-size: var(--fs-10-5);
-  font-family: inherit;
-}
-.db-gantt-owner-select:hover {
-  border-color: var(--border);
-}
-.db-gantt-owner-select:focus {
-  outline: none;
-  border-color: var(--accent);
-  background: var(--bg);
-}
-.db-gantt-name {
-  flex: 5;
-  min-width: 0;
-  border: none;
-  background: transparent;
-  color: var(--text);
-  font-size: var(--fs-13);
-  text-align: left;
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.db-gantt-name:hover {
-  color: var(--accent);
-}
-.db-gantt-date {
-  flex: none;
-  width: 92px;
-  min-width: 92px;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  font-size: var(--fs-11-5);
-  color: var(--text-faint);
-  white-space: nowrap;
-  border-left: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
-  padding-left: 6px;
-}
-/* 📅 SVG 日历选择按钮：currentColor 随主题。 */
-.db-gantt-date-pick {
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 2px;
-  color: var(--text-faint);
-  opacity: 0.7;
-}
-.db-gantt-date-pick:hover {
-  opacity: 1;
-  color: var(--accent);
-}
-.db-gantt-date-picker {
-  position: absolute;
-  width: 0;
-  height: 0;
-  opacity: 0;
-  pointer-events: none;
-  border: 0;
-  padding: 0;
-}
-/* 可编辑日期：淡色，hover/聚焦显示边框，原生 date 选择器跟随暗色。 */
-.db-gantt-date-input {
-  flex: 1;
-  min-width: 0;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-faint);
-  border-radius: var(--radius-xs);
-  padding: 1px 2px;
-  font-size: var(--fs-11-5);
-  font-family: inherit;
-  box-sizing: border-box;
-}
-.db-gantt-date-input:hover {
-  border-color: var(--border);
-}
-.db-gantt-date-input:focus {
-  outline: none;
-  border-color: var(--accent);
-  background: var(--bg);
-}
-.db-gantt-axis {
-  flex: 1;
-  display: flex;
-  border-left: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
-}
-.db-gantt-axis-cell {
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-  padding: 5px 0;
-  text-align: center;
-  border-left: 1px solid var(--border);
-  overflow: visible;
-  white-space: nowrap;
-  flex: none;
-  width: 24px;
-}
-.db-gantt-track {
-  flex: 1;
-  position: relative;
-  border-left: 1px solid var(--border);
-  min-height: 32px;
-  display: flex;
-  align-items: stretch;
-}
-/* 甘特图横向滚动（每格固定宽，日期清晰）。 */
-.db-gantt {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  /* 外围框线。 */
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-.db-gantt-head,
-.db-gantt-row {
-  display: flex;
-  align-items: stretch;
-  min-width: 100%;
-  width: max-content;
-}
-/* 甘特图网格填色：每日期一格，任务占用的格染色(像参考图日历网格)。 */
-.db-gantt-cell {
-  flex: none;
-  min-width: 0;
-  box-sizing: border-box;
-  /* 网格线：每格左+上边线，形成清晰网格（参考图 Excel 网格感）。 */
-  border-left: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
-  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
-  width: 24px;
-}
-.db-gantt-cell.on {
-  border-radius: 2px;
-}
-/* 汇总行：每日期列的任务数。 */
-.db-gantt-count.has {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.db-timeline-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  border-left: 3px solid var(--accent);
-  padding: 6px var(--space-3);
-}
-
-.db-timeline-date {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  min-width: 80px;
-}
-
-.db-timeline-title {
-  border: none;
-  background: transparent;
-  color: var(--text);
-  font-size: var(--fs-14);
-  cursor: pointer;
-  text-align: left;
-}
-
-.db-timeline-title:hover {
-  color: var(--accent);
-}
-
-/* Directory view */
-.db-directory {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.db-dir-title {
-  border: none;
-  background: transparent;
-  color: var(--text);
-  font-size: var(--fs-14);
-  cursor: pointer;
-  text-align: left;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-xs);
-  width: 100%;
-}
-
-.db-dir-title:hover {
-  background: var(--hover);
-  color: var(--accent);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -10986,37 +9997,12 @@ body.is-plugin-panel-open .main {
   .graph-legend .graph-toggle { min-height: 44px; }
 }
 
-/* ===========================================================================
- * 数据库视图（`DatabaseView`）窄屏适配 · 2026-09-22
- * ===========================================================================
- * 8 个视图页签（表格/画廊/看板/列表/日历/时间轴/目录/甘特图）排成一行是 **582px**，
- * 而 `.database-head` 虽然是 `flex-wrap: wrap`，`.db-view-switch` 却是
- * `flex: 0 0 auto`——它自己既不换行也不缩，于是 390px 上 `right=606`
- * （**右边 216px 挂在屏幕外**，320 上是 286px）：「日历 / 时间轴 / 目录 / 甘特图」
- * 四个模式在手机上**根本切不过去**。命中区也普遍偏小：
- * 筛选框 30 高、页签 29、`＋ 列` 25、单元格输入 26、行标题按钮 27。
- *
- * 做法与文件视图同一条（**不让控件留在屏幕外，也不让它们占版面**）：
- * 页签**单行横滑**（换行会白吃 88px 正文高度），其余控件补到 44。
- * =========================================================================== */
 @media (max-width: 768px) {
-  .database-view { padding: 10px var(--space-3) var(--space-4); }
-  .database-head { row-gap: 6px; margin-bottom: var(--space-2); }
-  .database-title { order: 1; flex: 1 1 auto; font-size: var(--fs-18); }
-  .database-count { order: 2; }
-  /* 视图页签：单行横向滚动。 */
-  .db-view-switch {
-    order: 3;
-    flex: 1 1 100%;
-    min-width: 0;
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    scrollbar-width: none;
-    padding-bottom: 2px;
-  }
-  .db-view-switch::-webkit-scrollbar { display: none; }
-  .db-view-switch button { flex: 0 0 auto; min-height: 44px; }
-  /* 筛选框 + 右侧动作挤同一行：筛选框可缩到 120px（桌面上它是固定 240px）。 */
+.database-view { padding: 10px var(--space-3) var(--space-4); }
+.database-head { row-gap: 6px; margin-bottom: var(--space-2); }
+.database-title { order: 1; flex: 1 1 auto; font-size: var(--fs-18); }
+.database-count { order: 2; }
+/* 筛选框 + 右侧动作挤同一行：筛选框可缩到 120px（桌面上它是固定 240px）。 */
   .database-filter {
     order: 4;
     flex: 1 1 120px;
@@ -11025,32 +10011,9 @@ body.is-plugin-panel-open .main {
     min-height: 44px;
     font-size: var(--fs-14);
   }
-  .db-actions { order: 5; margin-left: 0; flex-wrap: wrap; gap: var(--space-1); }
-  .db-views-btn { min-height: 44px; }
-  /* 单元格里的小控件：桌面上它们是"贴着单元格"的 25~28 高。 */
-  .db-add-col,
-  .db-title,
-  .db-input,
-  .db-ref { min-height: 44px; }
-  .db-title { padding: 0 var(--space-2); }
-  /* 外层 `.database-table-wrap` 本来就是 `overflow:auto`；这里让表**真的撑开**，
+/* 外层 `.database-table-wrap` 本来就是 `overflow:auto`；这里让表**真的撑开**，
      否则七列会被硬压进 292px（那时每一列都只剩几十像素）。 */
   .database-table { width: max-content; min-width: 100%; }
-  /* 看板 / 列表模式的条目同理（卡片本身就是可点的目标）。 */
-  .db-board-card,
-  .db-list-item { min-height: 44px; }
-  /* 其余模式的条目与工具按钮：桌面上它们是"贴着内容"的 20~31 高
-     （列表展开箭头 20×20、列表/时间轴/目录的标题按钮 20~28 高、看板分组选择器 31 高、
-     日历翻页 ‹ › 26 高）。窄屏一律补到 44——量过 8 个模式，越界 0 处、命中区这些是剩下的。 */
-  .db-list-expand,
-  .db-list-title,
-  .db-timeline-title,
-  .db-dir-title,
-  .db-board-select,
-  .db-cal-toolbar button { min-height: 44px; }
-  /* 只有图形的（展开箭头 / 日历翻页）宽度也要够。 */
-  .db-list-expand,
-  .db-cal-toolbar button { min-width: 44px; }
 }
 
 @media (max-width: 768px), (max-height: 520px) {
