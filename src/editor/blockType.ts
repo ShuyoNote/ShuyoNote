@@ -1,4 +1,4 @@
-// 块类型（正文 / 标题 1–3）转换：给「选中文字 → 浮动工具条」的下拉控件用。
+// 块类型（正文 / 标题 1–5）转换：给「选中文字 → 浮动工具条」的下拉控件用。
 //
 // 为什么需要它：工具条原来只有 B/I/U/S/`<>` 这些**行内**格式，用户选了整段想变标题只能
 // 去斜杠菜单（要另起一行、且会换块 ID）。这里把「标题 ↔ 正文」做成对**选区涉及的块**操作：
@@ -24,14 +24,16 @@ import { $getInsertTargetBlock } from "./blockUtils";
 import { $createBlockHeadingNode, $isBlockHeadingNode } from "./nodes/BlockHeadingNode";
 import { $createBlockParagraphNode, $isBlockParagraphNode } from "./nodes/BlockParagraphNode";
 
-export type BlockType = "p" | "h1" | "h2" | "h3";
+export type BlockType = "p" | "h1" | "h2" | "h3" | "h4" | "h5";
 
-/** 下拉选项（顺序即展示顺序；与斜杠菜单的「正文 / 标题 1–3」同名同序）。 */
+/** 下拉选项（顺序即展示顺序；与斜杠菜单的「正文 / 标题 1–5」同名同序）。 */
 export const BLOCK_TYPE_OPTIONS: Array<{ value: BlockType; label: string }> = [
   { value: "p", label: "正文" },
   { value: "h1", label: "标题 1" },
   { value: "h2", label: "标题 2" },
   { value: "h3", label: "标题 3" },
+  { value: "h4", label: "标题 4" },
+  { value: "h5", label: "标题 5" },
 ];
 
 /** 只认这两类块：模型段落 / 模型标题（历史遗留的 `paragraph` / `heading` 也收，加载期会被升级）。 */
@@ -61,12 +63,12 @@ export function $selectedBlocksForType(selection: RangeSelection): ElementNode[]
   return out;
 }
 
-/** 当前块类型（选区锚点所在块）；标题 4–6 若出现，按 `h3` 显示（下拉只有 1–3）。 */
+/** 当前块类型（选区锚点所在块）；标题 4–5 已在下拉里，标题 6（历史数据/粘贴）按 `h5` 显示。 */
 export function $blockTypeOf(node: LexicalNode | null | undefined): BlockType {
   const block = node ? $getInsertTargetBlock(node) : null;
   if (block && $isBlockHeadingNode(block)) {
     const tag = block.getTag();
-    return tag === "h1" || tag === "h2" || tag === "h3" ? tag : "h3";
+    return tag === "h1" || tag === "h2" || tag === "h3" || tag === "h4" || tag === "h5" ? tag : "h5";
   }
   return "p";
 }

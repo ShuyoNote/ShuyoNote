@@ -1,4 +1,4 @@
-// 选中工具条「块类型下拉」的判据（正文 ↔ 标题 1–3）。
+// 选中工具条「块类型下拉」的判据（正文 ↔ 标题 1–5）。
 //
 // 为什么单独钉：这个转换**最容易伤到块 ID**（`((blockId))` 引用、CRDT 身份都靠它）。
 // 斜杠菜单那套 `$replaceBlock` 是"新造一个节点再 replace"，块 ID 会换；
@@ -36,7 +36,7 @@ function paragraphWithText(blockId: string, text: string) {
 }
 
 /** 把选区设成 `from` 文本开头 → `to` 文本结尾，然后执行转换。 */
-function convertBetween(fromTextKey: string, fromOffset: number, toTextKey: string, toOffset: number, target: "p" | "h1" | "h2" | "h3") {
+function convertBetween(fromTextKey: string, fromOffset: number, toTextKey: string, toOffset: number, target: "p" | "h1" | "h2" | "h3" | "h4" | "h5") {
   const range = $createRangeSelection();
   range.anchor.set(fromTextKey, fromOffset, "text");
   range.focus.set(toTextKey, toOffset, "text");
@@ -121,7 +121,7 @@ describe("块类型转换（选中工具条下拉）", () => {
     });
   });
 
-  it("⑤ 标题 tag 读数：h1/h2/h3 各自认得，正文给 p", () => {
+  it("⑤ 标题 tag 读数：h1–h5 各自认得，h6 归到 h5，正文给 p", () => {
     const editor = editorWithTransforms();
     editor.update(() => {
       const root = $getRoot();
@@ -131,11 +131,41 @@ describe("块类型转换（选中工具条下拉）", () => {
       h1.append($createTextNode("y"));
       const h3 = $createBlockHeadingNode("h3", "b3");
       h3.append($createTextNode("z"));
-      root.append(p, h1, h3);
+      const h4 = $createBlockHeadingNode("h4", "b4");
+      h4.append($createTextNode("w"));
+      const h5 = $createBlockHeadingNode("h5", "b5");
+      h5.append($createTextNode("v"));
+      const h6 = $createBlockHeadingNode("h6", "b6");
+      h6.append($createTextNode("u"));
+      root.append(p, h1, h3, h4, h5, h6);
       expect($blockTypeOf(p)).toBe("p");
       expect($blockTypeOf(h1)).toBe("h1");
       expect($blockTypeOf(h3)).toBe("h3");
+      expect($blockTypeOf(h4)).toBe("h4");
+      expect($blockTypeOf(h5)).toBe("h5");
+      expect($blockTypeOf(h6)).toBe("h5");
     }, { discrete: true });
+  });
+
+  it("⑥ 正文 → 标题 4 / 标题 5：块 ID 与文字都保留（新增的两档真能转）", () => {
+    for (const target of ["h4", "h5"] as const) {
+      const editor = editorWithTransforms();
+      editor.update(() => {
+        const root = $getRoot();
+        root.clear();
+        const p = paragraphWithText("b1", "一段正文");
+        root.append(p);
+        const t = p.getFirstChild()!;
+        expect(convertBetween(t.getKey(), 0, t.getKey(), t.getTextContentSize(), target)).toBe(1);
+      }, { discrete: true });
+      editor.getEditorState().read(() => {
+        const child = $getRoot().getFirstChild();
+        expect(child?.getType()).toBe("shuyo-heading");
+        expect((child as unknown as { getTag(): string }).getTag()).toBe(target);
+        expect((child as unknown as { getBlockId(): string }).getBlockId()).toBe("b1");
+        expect(child?.getTextContent()).toBe("一段正文");
+      });
+    }
   });
 });
 

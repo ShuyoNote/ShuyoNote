@@ -88,7 +88,7 @@ export function SelectionToolbarPlugin() {
 
   return (
     <div className="selection-toolbar" style={{ top: pos.top, left: pos.left }}>
-      {/* 块类型下拉：正文 / 标题 1–3。点开时**不能**让编辑器失焦（否则选区没了）⇒ 一律 preventDefault。 */}
+      {/* 块类型下拉：正文 / 标题 1–5。点开时**不能**让编辑器失焦（否则选区没了）⇒ 一律 preventDefault。 */}
       <div className="selection-toolbar-blocktype">
         <button
           className="selection-toolbar-blocktype-btn"
