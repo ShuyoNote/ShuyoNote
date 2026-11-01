@@ -9,6 +9,8 @@ import { createElement } from "react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { allCssText } from "../lib/cssSources";
+
 const mock = vi.hoisted(() => ({
   getPageProps: vi.fn(async (..._args: unknown[]) => [] as unknown[]),
   listAttrDefs: vi.fn(async () => [] as unknown[]),
@@ -180,7 +182,7 @@ describe("Q2：折叠阈值（≤6 展开 / >6 折叠）", () => {
 });
 
 describe("B3：收尾", () => {
-  const css = () => readFileSync(resolve(process.cwd(), "src/App.css"), "utf8");
+  const css = () => allCssText();
   const src = () => readFileSync(resolve(process.cwd(), "src/lib/communitySave.ts"), "utf8");
 
   it("① header 同行：计数与「＋ 添加属性」在同一 head-row", async () => {

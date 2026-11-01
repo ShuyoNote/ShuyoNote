@@ -1,0 +1,642 @@
+/* S4（2026-11-01）：域抽取器搬出的**属性面板域（`.properties-*` / `.prop-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+.properties-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 10px 0 var(--space-2) var(--space-3);
+  margin-bottom: 2px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.properties-toggle:hover {
+  color: var(--text);
+}
+
+.properties-toggle-caret {
+  font-size: var(--fs-11);
+}
+
+.properties-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 6px 28px 10px;
+}
+
+.prop-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 30px;
+}
+
+.prop-row .prop-order-btns { margin-left: auto; }
+
+.prop-row.is-dragging { opacity: 0.5; }
+
+.prop-row { position: relative; }
+
+.prop-row.drop-before::before,
+.prop-row.drop-after::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.prop-grip {
+  cursor: grab;
+  color: var(--text-faint);
+  background: transparent;
+  border: none;
+  font-size: var(--fs-13);
+  padding: 0 2px;
+}
+
+.prop-order-btns { display: inline-flex; flex-direction: row; flex-shrink: 0; gap: 2px; align-items: center; }
+
+/* 行尾「⋯」只在窄屏出现（见文件末尾"属性表的 ⋯ 动作面板"）：桌面那三个小按钮就够了。 */
+.prop-more { display: none; }
+
+.prop-order,
+.prop-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 0;
+  transition: background .1s ease, color .1s ease;
+}
+
+.prop-order .prop-ico,
+.prop-remove .prop-ico { display: block; }
+
+.prop-order:hover,
+.prop-remove:hover { color: var(--text); background: var(--hover); }
+
+.prop-remove:hover { color: var(--danger); background: var(--danger-soft); }
+
+.prop-order:disabled,
+.prop-remove:disabled { opacity: 0.3; cursor: default; background: transparent; color: var(--text-faint); }
+
+.prop-order:disabled:hover,
+.prop-remove:disabled:hover { background: transparent; }
+
+.prop-name {
+  flex-shrink: 0;
+  width: 120px;
+  font-size: var(--fs-13);
+  color: var(--text-dim);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+ * 属性表：名字列**按最长名字自适应**，值列吃掉剩下的宽度
+ *
+ * 起因（真机/真窗口量到的，两处都是同一个根因——`120px` 写死了）：
+ *   · 桌面 780px 窗口：名字列固定 120px，而「标签/作者/来源/存于」只有 2 个字
+ *     ⇒ 名字与值之间空出一大片（用户看到的就是这个"留空太大"）；
+ *   · 窄屏 390px：一行只有 230px，120px 名字 + 58px 排序按钮 + 16px 间距之后，
+ *     值只剩 **36px**（连一个日期都放不下）。实测见 `tmp/probe-props.mjs`。
+ *
+ * 为什么用「父级 grid + 行 `display: contents`」：既要**列宽统一**（所有值的左边缘
+ * 对齐，像一张表），又要**不写死宽度**——只有网格能做到：列宽由所有行里最宽的那个
+ * 名字决定，短名字不再留白、长名字不再被 `text-overflow` 截断。
+ *
+ * ⚠️ 行用了 `display: contents` 就没有自己的盒子了：行级的 hover / 拖拽落点指示
+ *（`.prop-row.drop-before::before` 是 `position: absolute`，要有个定位父级）会失去依托。
+ *    落点指示属于**当前已停用**的手工拖拽（`PropertiesPanel` 的
+ *    `DRAG_MOVE_ENABLED = false`，代码里写着"临时停用"）；真要恢复它，得把指示器
+ *    改挂到网格单元上（或给 `.properties-body` 加一条伪元素轨道），不能直接翻那个开关。
+ * ⚠️ 还有一条同一处的约束：**每行的孩子数必须与列数（3）对得上**，否则自动放置会把
+ *    后面的行"顶偏"。第一版就栽在这——`.prop-row-tag` 只有 2 个孩子（名字 + 标签块），
+ *    于是下一行的名字被填进同一行的第 3 列，从此整块错位一格（值最左、`⋯` 中间、
+ *    名字最右）。现在用 `.prop-name { grid-column: 1 }` 把名字钉死在第 1 列。
+ *    ⇒ 若将来要**恢复拖拽**（会多出一个 `.prop-grip` 孩子），必须同时把 `grid-template-columns`
+ *      改成 4 列（或把 grip 并进名字那一格），否则又会错位。
+ * ------------------------------------------------------------------------- */
+.properties-body {
+  display: grid;
+  /* 名字列 = 最宽的名字；值列 = 剩余（`minmax(0,1fr)` 才能被压缩，否则长内容会撑破容器）；
+     第三列 = 行尾的排序/删除按钮（`max-content`）。 */
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  grid-auto-rows: minmax(30px, auto);
+  column-gap: var(--space-2);
+  row-gap: var(--space-1);
+  align-items: center;
+}
+
+.properties-body .prop-row { display: contents; }
+
+/* 一次性的「添加属性」行跨满整行，保留它自己的 flex 布局。 */
+.properties-body .prop-add-row { grid-column: 1 / -1; }
+
+/* ⚠️ **每行的名字钉在第 1 列**，否则"只有 2 个子元素的行"会把后面整块带偏：
+   「标签」那一行是 [名字, 标签块]（没有行尾按钮），自动放置会把**下一行的名字**
+   填进同一行的第 3 列 ⇒ 从此每行都错位一格，界面上就是
+   "值在最左、`⋯` 在中间、属性名跑到最右"（2026-09-22 真机截图）。
+   加了这条之后，名字总是从第 1 列起，短行留下的空格就留在那儿。 */
+.properties-body .prop-name { grid-column: 1; }
+
+/* 标签块把剩下的两列都吃掉：不然它只拿到第 2 列，第 3 列（max-content ≈ 58px）空着，
+   标签一多就提前换行。 */
+.properties-body .prop-row-tag .prop-tag-value { grid-column: 2 / -1; }
+
+.properties-body .prop-name { width: auto; max-width: 12em; }
+
+/* 值列已经由网格决定宽度，`max-width: 75%` 那一档在这里只会再留 25% 的空白；
+   勾选框是个例外（它是 16px 的小方块，拉满就成了横条）。 */
+.properties-body .prop-value:not(.prop-checkbox) { width: 100%; max-width: none; }
+
+.properties-body .prop-checkbox { justify-self: start; }
+
+/* ⚠️ 2026-09-22：这一块（`.prop-datetime` / `.prop-datetime-pick` / `.prop-datetime-picker`
+   与上面那条 `.properties-body .prop-datetime`）**整块删掉了** —— 「时间」属性现在就是
+   一个原生 `<input type="datetime-local">`（与「日期」属性同一个风格、没有额外按钮，
+   owner："页面时间属性的控件采用和日期一样风格的控件，不要再额外加按钮"），
+   值列宽度归网格管（`.properties-body .prop-value` 那条），不再需要外层 wrapper。 */
+
+.prop-value {
+  flex: 1;
+  max-width: 75%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-xs);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--fs-13);
+  min-width: 0;
+}
+
+.prop-value:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.prop-value.is-invalid {
+  border-color: var(--danger);
+}
+
+.prop-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+/* The add-tag button sits inside the tag value row; keep it vertically centered. */
+.prop-tag-value .property-add-btn {
+  align-self: center;
+  flex: none;
+}
+
+.prop-add-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.prop-add-name,
+.prop-add-options,
+.prop-add-type {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-xs);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--fs-13);
+}
+
+.prop-add-name {
+  flex: 1;
+  min-width: 120px;
+}
+
+.prop-add-options {
+  flex: 1;
+  min-width: 120px;
+}
+
+.prop-add-name:focus,
+.prop-add-options:focus,
+.prop-add-type:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.prop-add-confirm,
+.prop-add-cancel {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-xs);
+  padding: var(--space-1) 10px;
+  font-size: var(--fs-12);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.prop-add-confirm {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.prop-add-confirm:hover {
+  filter: brightness(1.05);
+}
+
+.prop-add-cancel:hover {
+  background: var(--hover);
+}
+
+.properties-loading {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  padding: var(--space-2) 2px;
+}
+
+.properties-load-error {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 2px;
+}
+
+.properties-retry {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-12);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.properties-retry:hover {
+  background: var(--hover);
+}
+
+.prop-ctx {
+  position: fixed;
+  z-index: var(--z-context);
+  min-width: 170px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 14px 36px rgba(0,0,0,.22);
+}
+
+.prop-ctx-title {
+  padding: var(--space-1) 10px var(--space-2);
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.prop-ctx-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.prop-ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: var(--fs-13);
+  padding: var(--space-2) 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.prop-ctx-item:hover { background: var(--hover); }
+
+.prop-ctx-item.is-danger { color: var(--danger); }
+
+.prop-ctx-item.is-danger:hover { background: var(--danger-soft); }
+
+/* 禁用态（首行不能「上移」、末行不能「下移」）：与行内那三个小按钮同一套语义。 */
+.prop-ctx-item:disabled { opacity: 0.4; cursor: default; }
+
+.prop-ctx-item:disabled:hover { background: transparent; }
+
+@media (max-width: 768px) {
+.prop-ctx.is-sheet {
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: max(var(--sab), var(--kb));
+    width: auto;
+    max-height: calc(var(--ovh) - 24px);
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    padding: var(--space-2);
+    padding-bottom: calc(var(--space-2) + var(--sab));
+    border-radius: 16px 16px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    z-index: 1600;
+  }
+.prop-ctx.is-sheet .prop-ctx-item { min-height: 48px; font-size: var(--fs-14); }
+.prop-ctx.is-sheet .prop-ctx-title { padding: 2px 10px var(--space-2); max-width: none; }
+}
+
+@media (max-width: 768px) {
+/* 属性面板内层的左右留白同理（桌面 28px 是为了和文档列对齐）。 */
+  .properties-body { padding: 6px var(--space-3) 10px; }
+/* ---------- 属性行尾：三个 18px 小按钮 → 一个 `⋯`（44×44）----------
+     为什么不是"把那三个各自补到 44"：三个 44 就是 132px，而 320px 上整个属性行只有
+     230px（名字 39 + 间距 16 + 值列）——补完值列只剩 ~43px，等于把用户真正要看的值挤没。
+     收进一个 `⋯` 之后值列反而更宽（实测 320px：147 → 161px），而且手机上本来也点不中
+     那三个 18px 的图标。面板里三项齐全（上移/下移/移除属性），**功能一点没少**。 */
+  .prop-order-btns .prop-order,
+  .prop-order-btns .prop-remove { display: none; }
+.prop-more {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: var(--fs-18);
+    line-height: 1;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+.prop-more:active { background: var(--hover); color: var(--text); }
+/* 面板的遮罩：`z-index` 比面板低一档（面板 1600）。 */
+  .prop-ctx-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1500;
+    background: rgba(0, 0, 0, 0.35);
+  }
+.properties-retry { min-height: 44px; }
+}
+
+/* B1：行操作按钮默认隐藏，hover/聚焦才出（触屏仍由 .prop-more 提供） */
+.prop-row .prop-order-btns { opacity: 0; transition: opacity 0.12s; }
+
+.prop-row:hover .prop-order-btns,
+.prop-row:focus-within .prop-order-btns { opacity: 1; }
+
+.prop-empty { background: none; border: 0; padding: 0; color: #8a8a8a; cursor: text; font: inherit; text-align: left; }
+
+.prop-add-head { margin-left: auto; background: none; border: 0; color: #8a8a8a; cursor: pointer; }
+
+.prop-tag-line { display: flex; align-items: center; gap: var(--space-1); }
+
+.prop-add-tag { background: none; border: 0; color: #8a8a8a; cursor: pointer; }
+
+.prop-system { margin-top: var(--space-1); color: #8a8a8a; }
+
+.prop-row-system .prop-value-text { flex: 1; }
+
+/* B2：类型化展示 */
+.prop-link { color: var(--accent, #3b82f6); text-decoration: underline; text-underline-offset: 2px; }
+
+.prop-link-wrap { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+
+.prop-link-copy, .prop-link-edit { background: none; border: 0; color: #888; cursor: pointer; font: inherit; }
+
+.prop-temporal { text-align: left; }
+
+/* B3：属性区 header 同一行（原按钮换行到下一行）＋ 元数据块去整块灰底改分隔线 */
+.properties-head-row { display: flex; align-items: center; gap: var(--space-2); }
+
+.properties-head-row .properties-toggle { flex: 1; text-align: left; }
+
+.prop-person { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-13); }
+
+/* 阅读态文本（名字/普通文本属性）：点击才进编辑；失焦立刻回这一态。 */
+.prop-text {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0 2px;
+  margin: 0 -2px;
+  border-radius: var(--radius-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  cursor: text;
+}
+
+.prop-text:hover { background: var(--hover); }
+
+/* B3 收尾：值列统一 grid（标签行同模板）＋ hover 操作 ＋ 正文引文样式 ＋ 来源说明 */
+.prop-row .prop-name { width: auto; }
+
+.prop-note { display: block; color: var(--text-faint, #999); font-size: var(--fs-11); margin-top: 2px; }
+
+.prop-link-actions { opacity: 0; display: inline-flex; gap: 2px; color: var(--text-faint, #999); }
+
+.prop-row:hover .prop-link-actions, .prop-row:focus-within .prop-link-actions { opacity: 1; }
+
+.prop-edit-hint { opacity: 0; margin-left: 6px; color: var(--text-faint, #999); background: none; border: 0; cursor: pointer; }
+
+.prop-row:hover .prop-edit-hint, .prop-row:focus-within .prop-edit-hint { opacity: 1; }
+
+/* Q2：≤6 项用户属性展开、>6 项折叠（阈值只数用户属性） */
+.properties-body.is-collapsed { display: none; }
+
+/* B3：display:contents 网格下，一行只能有 3 个直接 grid 子元素（名字/值/行尾） */
+.prop-value-source { display: flex; flex-direction: column; min-width: 0; }
+
+.prop-value-source .prop-note { margin-top: 2px; }
+
+.prop-value-source .prop-link-actions { margin-top: 2px; }
+
+/* ── 属性表布局收口（2026-10-31）────────────────────────────────────────
+   根因：`TagRow` 原来被包在 `.prop-tag-line` 这个 div 里 ⇒ 它作为**一个**网格子项
+   占了 `.properties-body` 的第 1 列，把"名字列"撑成标签 chips 的宽度（真机截图：
+   名字→值之间空出 600px）。现在标签行直接并进网格（`.prop-row-tag` 的两个孩子
+   由 `.prop-name` / `.prop-tag-value` 各就各位），下面几条只做对齐与密度。 */
+.properties-body { column-gap: 10px; row-gap: 6px; }
+
+.properties-body .prop-name { color: var(--text-dim); font-size: var(--fs-12-5); }
+
+.properties-body .prop-value,
+.properties-body .prop-empty { font-size: var(--fs-12-5); }
+
+/* 标签行：chips 与「＋」同一格、同一行，不再被推到最右 */
+.properties-body .prop-tag-value { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 24px; }
+
+.prop-add-tag {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--fs-13);
+  line-height: 1;
+  cursor: pointer;
+  transition: background .1s ease, color .1s ease, border-color .1s ease;
+}
+
+.prop-add-tag:hover { background: var(--hover); color: var(--text); border-color: var(--border-strong, var(--border)); }
+
+/* 来源行：链接单行省略、说明左对齐落在链接下面（原来 flex 的 align-items:center 把它居中到右边） */
+.prop-value-source { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0; width: 100%; }
+
+.prop-value-source .prop-link { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.prop-value-source .prop-note { max-width: 100%; }
+
+/* 日期/时间值：单行省略（完整值在 title 里） */
+.properties-body .prop-temporal { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 空态（新页面）：两个入口贴着左边，别漂在中间 */
+.properties-empty { padding-top: var(--space-1); }
+
+.properties-empty .properties-head-row { justify-content: flex-start; gap: var(--space-3); }
+
+.properties-empty .prop-add-head,
+.properties-empty .prop-add-tag {
+  margin-left: 0;
+  width: auto;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px dashed var(--border);
+  border-radius: 7px;
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+}
+
+.properties-empty .prop-add-head:hover,
+.properties-empty .prop-add-tag:hover { background: var(--hover); color: var(--text); }
+
+/* 来源行的 hover 操作（复制/编辑）改成**绝对定位贴右上**：它原来是 flex 的第三行，
+   即使 `opacity:0` 也占 21px 高 ⇒ 整行被撑成三行、上下留白巨大、和别的行对不齐。 */
+.prop-value-source { position: relative; padding-right: 46px; }
+
+.prop-value-source .prop-link-actions { position: absolute; right: 0; top: 0; margin-top: 0; }
+
+/* 密度再收一档：行距 6→2、行高下限 30→28；说明压成一行（完整句子在 title 里） */
+.properties-body { row-gap: 2px; grid-auto-rows: minmax(28px, auto); }
+
+.properties-body .prop-name { line-height: 1.35; }
+
+.prop-value-source .prop-note { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── 属性区·按设计稿收口（2026-10-31）────────────────────────────────────
+   设计稿：名字列 62px / 名字 12.5px / 值 13px / 标签 22px / 系统信息带分隔线。
+   ⚠️ 关键结构约束：网格只认 `.properties-body` 的**直接孩子**——原来用后代选择器
+   `.properties-body .prop-row { display: contents }`，会把 `<details>` 里的系统行也拆成网格项，
+   而 `<details>` 自己是网格项、被塞进第 1 列 ⇒ 名字列被系统信息的文本撑宽、值列被推到右边。
+   ⇒ 改成 `>` 直接子代 + details 跨满整行。 */
+.properties-body > .prop-row { display: contents; }
+
+.properties-body > .prop-system { grid-column: 1 / -1; }
+
+.prop-system { margin-top: 6px; padding-top: 2px; border-top: 1px solid var(--border); }
+
+.prop-system > summary {
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+  padding: var(--space-1) 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.prop-system > summary::-webkit-details-marker { display: none; }
+
+.prop-system > summary::before { content: "▸ "; font-size: var(--fs-9); }
+
+.prop-system[open] > summary::before { content: "▾ "; }
+
+/* 系统行恢复 flex（名字定宽 + 值自适应）——它们**不是**网格项 */
+.prop-system .prop-row-system {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 26px;
+}
+
+.prop-system .prop-row-system .prop-name { flex: 0 0 62px; width: 62px; }
+
+.prop-system .prop-row-system .prop-value-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-12-5);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 字体与密度（对齐设计稿：名字 12.5 / 值 13 / 行高 30） */
+.properties-body { padding: var(--space-1) var(--space-4) 10px; grid-auto-rows: minmax(30px, auto); row-gap: 2px; }
+
+.properties-body .prop-name { font-size: var(--fs-12-5); color: var(--text-dim); line-height: 1.5; }
+
+.properties-body .prop-value,
+.properties-body .prop-empty,
+.properties-body .prop-person,
+.properties-body .prop-temporal { font-size: var(--fs-13); }
+
+.properties-body .tag-chip { height: 22px; padding: 0 9px; font-size: var(--fs-12); }
+
+.properties-toggle-title { font-size: var(--fs-12-5); font-weight: 600; color: var(--text-dim); }
+
+.prop-add-head { font-size: var(--fs-12); color: var(--text-faint); }
+
+.properties-body .prop-value-source .prop-link { font-size: var(--fs-13); }
+
+/* 来源行的容器本身也要吃 13px：它是 `.prop-link-wrap`（没有 `.prop-value` 类）⇒ 默认继承 16px，
+   链接虽显式 13px，但行高/说明基线会被容器字号带大（真机量到容器 16px、行高被撑到 36px）。 */
+.properties-body .prop-value-source { font-size: var(--fs-13); line-height: 1.55; }
+
+/* 阅读态文本（`.prop-text`）的字号：它是 2026-10-31 新加的展示态 span（不在 `.prop-value` 那一档里），
+   漏写规则 ⇒ 继承到 16px，比相邻的名字(12.5)/其它值(13) 明显大一号 —— 就是"字体不统一"的来源。 */
+.properties-body .prop-text { font-size: var(--fs-13); line-height: 1.5; color: var(--text); }
+}

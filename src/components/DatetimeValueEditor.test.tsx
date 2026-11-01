@@ -13,10 +13,10 @@
 // 原生事件（见 `communityPublishDialog.test.tsx`）。
 import { describe, expect, it, vi } from "vitest";
 import React from "react";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
+
+import { allCssText } from "../lib/cssSources";
 
 import { DatetimeValueEditor } from "./DatetimeValueEditor";
 
@@ -66,8 +66,9 @@ describe("DatetimeValueEditor（原生 datetime-local）", () => {
     }
   });
 
-  it("App.css 里那套 `.prop-datetime*` 规则已经删干净（不留死样式）", () => {
-    const css = readFileSync(resolve(process.cwd(), "src", "App.css"), "utf8");
+  it("全仓 CSS 里那套 `.prop-datetime*` 规则已经删干净（不留死样式）", () => {
+    // S4-13：属性域已搬到 src/styles/properties.css ⇒ 读全仓 CSS（只读 App.css 会漏掉新文件里的死样式）。
+    const css = allCssText();
     // 只认**真的规则**（同一行里后面跟着 `{`）；散文/注释里提到类名不算。
     const ruleRe = /(^|\})[^{}\n]*\.prop-datetime[^{}\n]*\{/m;
     const hit = ruleRe.exec(css);
