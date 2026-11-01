@@ -10,9 +10,8 @@
 // ⚠️ 口径：这是**vitest 测试**（挂在本仓既有 `vitest` 门禁上），不是新注册的 `check-*.mjs` ——
 //   后者按仓规要走 `scripts/lib/gates.mjs` 注册 + 工作区变异证据账本，成本与收益不成比例（本判据只读一个文件）。
 //   ⚠️ 它**不修** CSS，只在有人把这两项加上去时报红。
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { readCssFiles } from "./cssSources";
+import { readCssFiles, allCssText } from "./cssSources";
 
 const CSS_FILES = readCssFiles();
 
@@ -96,7 +95,8 @@ describe("App.css 卫生：!important 与重复选择器「只减不增」", () 
 });
 
 describe("S2-c 状态类守卫（静态级联）", () => {
-  const css = readFileSync("src/App.css", "utf8");
+  // S4 起 CSS 按域拆分（`.tree-row` 在 src/styles/tree.css）⇒ 读全仓 CSS，⛔ 只读 App.css 会假红。
+  const css = allCssText();
   const lines = css.split("\n");
   const ruleOf = (sel: string) => {
     const i = lines.findIndex((l) => l.trim() === sel + " {");

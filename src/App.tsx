@@ -156,6 +156,8 @@ import "./styles/email.css";
 import "./styles/settings.css";
 // S4-13（2026-11-01）：属性面板域（`.properties-*` / `.prop-*`）。
 import "./styles/properties.css";
+// S4-14（2026-11-01）：目录树域（`.tree-*`）。
+import "./styles/tree.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
