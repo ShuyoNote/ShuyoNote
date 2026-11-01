@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useRightPanel } from "../store/rightPanel";
@@ -42,6 +42,8 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
   //   为什么必须：列表数据本来就带**整篇正文**（`versions.rs` 的 `PageVersion`），而面板原先只显示 40 字
   //   ⇒ 用户是**盲着**按「恢复」（破坏性操作 ✗）。现在恢复按钮**只在展开之后**出现 ✓（判据 ①②）。
   const [expanded, setExpanded] = useState<string | null>(null);
+  // a11y（2026-11-01）：触发器与弹层用同一个 id 关联（aria-controls / aria-haspopup）。
+  const popoverId = useId();
 
   // 窄屏 / 矮视口的形态与其余浮层一致：不再锚定触发按钮，而是带 `is-sheet` 走底部弹层
   // （见 hooks/usePopover.ts 与 App.css 末尾那段）。原来它只是 CSS 里的
@@ -168,12 +170,18 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
         onClick={toggle}
         title="版本历史"
         aria-label="版本历史"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={open ? popoverId : undefined}
       >
         <ClockIcon />
       </button>
       {open && (
         <div
           ref={contentRef}
+          id={popoverId}
+          role="dialog"
+          aria-label="版本历史"
           className={`history-popover${isSheet ? " is-sheet" : ""}`}
           style={{ top: pos.top, left: pos.left, bottom: pos.bottom }}
         >
@@ -184,6 +192,7 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
               className="history-clear"
               onClick={clearHistory}
               disabled={versions.length === 0 || clearing}
+              aria-label="清空版本历史"
               title="删除全部历史版本（保留当前内容）"
             >
               {clearing ? "清空中…" : "清空"}

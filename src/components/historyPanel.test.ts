@@ -95,6 +95,25 @@ describe("版本历史弹层 · Android 返回键", () => {
     flushSync(() => root.unmount());
   });
 
+  it("a11y：触发器与弹层用 aria-haspopup / expanded / controls 关联，弹层可被读成 dialog", () => {
+    const root = mount();
+    const btn = trigger()!;
+    expect(btn.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+    expect(btn.getAttribute("aria-controls"), "关着时不该指向不存在的节点").toBeNull();
+
+    flushSync(() => btn.click());
+    const pop = popover()!;
+    expect(pop.getAttribute("role"), "读屏应当把这一层读成 dialog").toBe("dialog");
+    expect(pop.getAttribute("aria-label")).toBe("版本历史");
+
+    const opened = trigger()!;
+    expect(opened.getAttribute("aria-expanded")).toBe("true");
+    expect(opened.getAttribute("aria-controls"), "打开后要指向弹层 id").toBe(pop.id);
+
+    flushSync(() => root.unmount());
+  });
+
   it("没打开时按 Esc 不产生任何副作用（不许凭空登记/注销一层）", () => {
     const root = mount();
     flushSync(() => {
