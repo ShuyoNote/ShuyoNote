@@ -1,0 +1,123 @@
+/* S4（2026-11-01）：域抽取器搬出的**编辑器 chrome/输入基元（input-dialog/title-input/save-indicator/table-selecting/backlink/template-center）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+.title-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  font-size: var(--fs-40);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text);
+  font-family: inherit;
+  background: transparent;
+  min-width: 0;
+  min-height: 1.2em;
+  text-align: left;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.title-input::placeholder {
+  color: var(--text-faint);
+}
+
+.save-indicator {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.save-indicator.saved {
+  opacity: 0.5;
+}
+
+/* Cell selection highlight */
+.table-selecting {
+  user-select: none;
+}
+
+.table-selecting ::selection {
+  background: transparent;
+}
+
+.backlink-item {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) 10px;
+  font-size: var(--fs-13);
+  cursor: pointer;
+}
+
+.backlink-item:hover {
+  background: var(--hover);
+}
+
+.backlink-block-card {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.backlink-block-card:hover {
+  background: var(--hover);
+}
+
+/* Template-center gallery (UI skeleton). */
+.template-center {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-6) var(--space-7);
+  width: 100%;
+}
+
+.input-dialog-field {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) 10px;
+  font-size: var(--fs-13);
+  outline: none;
+  margin-top: 2px;
+  font-family: inherit;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.input-dialog-field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+@media (max-width: 768px) {
+.template-center {
+    /* 桌面那 32px 的横向留白在 390px 上吃掉 16%（卡片区只剩 326px）。
+       底部 72px 是给左下角那两颗 `position: fixed` 的浮动按钮让位
+       （`.mobile-rail-toggle` / `.mobile-sync-slot`：`bottom:18px` + 44px 高 = 62px，
+       再加一点呼吸位）——否则最后一行卡片永远压在它们下面，点不到。 */
+    padding: var(--space-3) 14px 72px;
+    /* §2 那条纪律：内容区唯一可滚，且不把滚动惯性传给外层。 */
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+}

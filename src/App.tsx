@@ -250,6 +250,9 @@ import "./styles/toolbar-sheets.css";
 import "./styles/residual-ui.css";
 // S4-51（2026-11-01）：标签输入/颜色（`.tag-*`）与插入菜单（`.slash-item*` / `.insert-*`）。
 import "./styles/tag-input.css";
+// S4-52（2026-11-01）：绘图/手写（`.drawing-*` / `.handwrite-*`）与编辑器 chrome/输入基元。
+import "./styles/drawing.css";
+import "./styles/editor-chrome.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
