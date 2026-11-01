@@ -400,103 +400,24 @@ html.mac-fullscreen .mac-lights { display: none; }
 html.mac-blurred .mac-light { background: #d6d6d6; }
 html[data-theme="dark"].mac-blurred .mac-light { background: #4a4a4d; }
 html.mac-blurred .mac-light svg { opacity: 0; }
-/* ---------------------------------------------------------------------------
- * 自绘标题栏（桌面端，窗口无边框时渲染）。
- * 高度 32px 与 Windows 系统标题栏一致，按钮 46x32 也沿用系统尺寸——用户的
- * 肌肉记忆（右上角三个键、关闭悬停变红）不该被重新发明。
- * ------------------------------------------------------------------------- */
-.titlebar {
-  flex: 0 0 auto;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding-left: 10px;
-  background: var(--bg-sidebar);
-  border-bottom: 1px solid var(--border);
-  user-select: none;
-  -webkit-user-select: none;
-}
-/* 失焦变淡：系统标题栏本来就有，自绘的不做会分不清哪个是当前窗口。 */
-.titlebar.is-blurred {
-  opacity: 0.6;
-  transition: opacity var(--transition);
-}
-.titlebar-brand {
-  display: flex;
-  align-items: center;
-  flex: none;
-  color: var(--accent);
-}
-.titlebar-logo {
-  width: 15px;
-  height: 15px;
-  display: block;
-}
-.titlebar-title {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.titlebar-actions {
-  flex: none;
-  display: flex;
-  align-self: stretch;
-}
-/* 同步状态芯片：颜色点 + host，与侧栏空间行、同步面板共用同一套颜色编码。 */
-.titlebar-sync {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 180px;
-  margin-right: var(--space-2);
-  padding: 2px 9px;
-  border-radius: var(--radius-full);
-  background: var(--chip-bg);
-  font-size: var(--fs-11);
-  color: var(--text-dim);
-}
-.titlebar-btn {
-  width: 46px;
-  display: grid;
-  place-items: center;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  padding: 0;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-.titlebar-btn svg {
-  width: 12px;
-  height: 12px;
-  stroke-width: 1;
-}
-.titlebar-btn:hover {
-  background: var(--hover-strong);
-  color: var(--text);
-}
 
 
 
 
 
 
-/* 「通知」未读角标：**现在恒为 0 ⇒ 不渲染** ✓（见 `TopTools.tsx` 里那条登记 ✓）。 */
-.titlebar-btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -3px;
-}
-/* 关闭键沿用系统的「悬停变红」，这是跨应用的通用约定。 */
-.titlebar-close:hover {
-  background: #e81123;
-  color: #fff;
-}
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -633,35 +554,6 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 
 
 
-/* 与「新建」同款幽灵按钮：无边框、透明、hover 显背景、28px 高、white-space
-   不换行。同步、新建在侧栏头部并排时风格一致。 */
-.btn-sync {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  height: 28px;
-  flex: none;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  border-radius: var(--radius-sm);
-  padding: 0 var(--space-2);
-  font-size: var(--fs-13);
-  font-family: inherit;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-
-.btn-sync:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-.btn-sync:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
 
 
 
@@ -679,17 +571,13 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 
 
 
-.btn-sync-conflict {
-  padding: 5px var(--space-3);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  cursor: pointer;
-  font-size: var(--fs-12);
-}
-.btn-sync-conflict.keep { border-color: var(--success); color: var(--success); }
-.btn-sync-conflict.adopt { border-color: var(--accent); color: var(--accent); }
+
+
+
+
+
+
+
 
 
 
@@ -958,37 +846,11 @@ select.sync-input {
 
 
 
-/* 「新建」保持素净：无底色的幽灵按钮，右对齐（外层 space-between 决定位置）。
-   它虽是高频动作，但侧栏的主角是页面树——按钮不该跟内容抢对比度。 */
-.btn-new {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  border-radius: var(--radius-sm);
-  padding: 0 var(--space-2);
-  font-size: var(--fs-13);
-  font-family: inherit;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
 
-.btn-new:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-.btn-new:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.btn-new-label {
-  line-height: 1;
-}
+
+
+
+
 
 .new-menu {
   position: relative;
@@ -1083,35 +945,13 @@ select.sync-input {
   position: relative;
 }
 
-.btn-trash {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-dim);
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) 10px;
-  font-size: var(--fs-12);
-  cursor: pointer;
-}
 
-.btn-trash:hover {
-  background: var(--hover);
-  color: var(--text);
-}
 
-.btn-backup {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-dim);
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) 10px;
-  font-size: var(--fs-12);
-  cursor: pointer;
-}
 
-.btn-backup:hover {
-  background: var(--hover);
-  color: var(--text);
-}
+
+
+
+
 
 .backup-menu {
   position: relative;
@@ -1148,32 +988,9 @@ select.sync-input {
   background: var(--hover);
 }
 
-/* Ghost icon buttons in the sidebar header (FlowUs/Wolai style) */
-/* 注：不含 .btn-sync——那是 SyncPanel 的「同步」紧凑按钮（带边框+文字），
-   不应被这套 28px 方形幽灵按钮覆盖。 */
-.btn-trash,
-.btn-backup {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-14);
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
 
-.btn-trash:hover,
-.btn-backup:hover {
-  background: var(--hover);
-  color: var(--text);
-}
+
+
 
 .trash-popover {
   position: fixed;
@@ -2879,30 +2696,13 @@ select.prop-value {
   outline: none;
 }
 
-.link-btn {
-  height: 24px;
-  padding: 0 var(--space-2);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-dim);
-  font-size: var(--fs-12);
-  cursor: pointer;
-  white-space: nowrap;
-}
 
-.link-btn:hover {
-  background: var(--hover);
-  color: var(--text);
-}
 
-.link-btn.danger {
-  color: var(--danger);
-}
 
-.link-btn.danger:hover {
-  background: var(--danger-soft);
-}
+
+
+
+
 
 /* Background color palette */
 .table-palette {
@@ -4459,31 +4259,8 @@ p:has(> .editor-drawing-container) {
 
 
 
-/* M26 公式编辑器弹窗（Notion 风格） */
-.formula-editor-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.25);
-  z-index: 200;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 12vh;
-}
-.formula-editor {
-  width: 620px;
-  max-width: 92vw;
-  min-width: 460px;
-  min-height: 260px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  overflow: hidden;
-  resize: both;
-  display: flex;
-  flex-direction: column;
-}
+
+
 
 .formula-toolbar {
   position: relative;
@@ -4563,14 +4340,7 @@ p:has(> .editor-drawing-container) {
 }
 .formula-input:focus { box-shadow: inset 0 0 0 1px var(--accent); }
 
-.formula-editor-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: 10px 14px;
-  border-top: 1px solid var(--border);
-}
+
 .formula-foot-left { display: flex; gap: 6px; }
 .formula-icon-btn {
   border: none;
@@ -7207,10 +6977,6 @@ p:has(> .editor-drawing-container) {
   body.is-plugin-panel-open .main {
     padding-right: 0;
   }
-/* 顶栏标题栏在窄屏收起部分（保留标题与操作）。 */
-  .titlebar-sync {
-    display: none;
-  }
 }
 
 
@@ -7486,14 +7252,6 @@ body.is-plugin-panel-open .main {
      窄屏收到 18px。`.note-scroll` / `.title-area` / `.properties` / `.metadata-card`
      等七八处共用这一个变量，改一处全跟着走。 */
   :root { --doc-pad: 18px; }
-/* ---------- 侧栏头部：同步 / 新建 / 空间名 ----------
-     ⚠️ 2026-10-17 补 `min-width`：门禁 `mobile-views` 实测这颗是 **40×44** ✗
-     （高有 44 ✓、**宽只有 40** ✗ —— 宽度是**内容撑出来**的，不是写死的）。
-     本节口径本来就是"命中区 44、视觉尽量小"✓ ⇒ 加最小宽度正好补上那 4px；
-     侧栏那两颗（61/62 宽）**不受影响** ✓。同一条读数是 macOS 侧在信箱里点给我们的
-     （"10 条红都在 button.btn-sync 40x44"✓）⇒ 与那条对齐 ✓。 */
-  .btn-sync,
-  .btn-new { height: 44px; min-width: 44px; }
 /* 面包屑让位：它本身是导航，深路径改为**单行横滑**（换行会把工具栏顶成两行）。 */
   .breadcrumbs {
     min-width: 0;
@@ -7544,7 +7302,6 @@ body.is-plugin-panel-open .main {
 }
 
 @media (max-width: 768px), (max-height: 520px) {
-.formula-editor,
 .trash-popover,
 .backup-dropdown,
 .new-menu-dropdown,
@@ -7602,21 +7359,6 @@ body.is-plugin-panel-open .main {
     padding-bottom: var(--space-2);
     overscroll-behavior-y: contain;
   }
-/* 公式编辑器：`min-width:460px` 在 390px 上溢出 35~50px，且 `resize:both`
-     会把它再放大。窄屏整屏、内部滚动。 */
-  .formula-editor-overlay {
-    padding: var(--sat) var(--sar) max(var(--sab), var(--kb)) var(--sal);
-  }
-.formula-editor {
-    width: 100%;
-    max-width: 100%;
-    height: 100%;
-    max-height: 100%;
-    min-height: 0;
-    border-radius: 0;
-    border: none;
-    resize: none;
-  }
 .trash-popover,
 .backup-dropdown,
 .new-menu-dropdown,
@@ -7659,8 +7401,7 @@ body.is-plugin-panel-open .main {
     min-width: 44px;
     min-height: 44px;
   }
-.toc-panel button,
-.formula-editor button {
+.toc-panel button {
     min-height: 44px;
   }
 /* ---------------------------------------------------------------------------

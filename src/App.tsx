@@ -206,6 +206,10 @@ import "./styles/graph-controls.css";
 import "./styles/block.css";
 // S4-35（2026-11-01）：看板视图域（`.board-*`）。
 import "./styles/board.css";
+// S4-36（2026-11-01）：标题栏（`.titlebar*`）、按钮基元（`.btn-*` / `.link-btn*`）、公式编辑器（`.formula-editor*`）。
+import "./styles/titlebar.css";
+import "./styles/buttons.css";
+import "./styles/formula-editor.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
