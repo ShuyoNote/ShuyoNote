@@ -1704,23 +1704,9 @@ body.is-ai-open .main {
 
 
 
-.cover-swatch {
-  height: 64px;
-  border: 2px solid transparent;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-}
-.cover-swatch:hover {
-  border-color: var(--accent);
-  transform: scale(1.02);
-  transition: transform 0.08s;
-}
-.cover-swatch.active {
-  border-color: var(--accent);
-}
+
+
+
 
 
 
@@ -4983,20 +4969,9 @@ p:has(> .editor-drawing-container) {
 /* P1 comments / notifications drawer */
 .comments-drawer-tabs button.active { color: var(--accent); background: var(--chip-bg); }
 
-/* ---------------------------------------------------------------------------
- * P1 评论面板 / 通知中心
- * 这两个面板此前**完全没有样式**（类名一个都没定义），功能能用但渲染成裸 HTML，
- * 在抽屉里看着像没做完。样式沿用抽屉/面板的既有 token 与节奏。
- * ------------------------------------------------------------------------- */
 
-/* 单条评论 */
 
-/* 评论输入区 */
 
-/* 单条通知 */
-.notif-item.is-unread { border-left: 3px solid var(--accent); }
-.notif-item.is-clickable { cursor: pointer; transition: background var(--transition-fast); }
-.notif-item.is-clickable:hover { background: var(--hover); }
 
 @keyframes ai-slide-in {
   from { transform: translateX(100%); }

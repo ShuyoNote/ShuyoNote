@@ -238,6 +238,8 @@ import "./styles/mac-window.css";
 import "./styles/emoji-picker-inner.css";
 // S4-47（2026-11-01）：目录侧栏域（`.toc-*`）。
 import "./styles/toc.css";
+// S4-48（2026-11-01）：零散 UI 基元（`.cover-swatch` / `.notif-item`）。
+import "./styles/misc-ui.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
