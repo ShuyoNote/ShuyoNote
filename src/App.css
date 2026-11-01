@@ -2865,16 +2865,7 @@ body.is-ai-open .main {
   filter: brightness(1.08);
 }
 
-.editor-head {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-1);
-  padding: var(--space-1) var(--doc-pad) 2px;
-  max-width: var(--doc-width);
-  width: 100%;
-  margin: 0 auto;
-}
+
 /* 页面图标行（标题上方）：大号、可点击更换。 */
 .page-icon-row {
   display: flex;
@@ -3548,58 +3539,11 @@ select.prop-value {
   font-size: var(--fs-12);
 }
 
-/* Editor toolbar */
-.editor-toolbar-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  width: 100%;
-  padding: 6px var(--space-4);
-  flex-shrink: 0;
-}
 
-.editor-toolbar {
-  display: flex;
-  align-items: center;
-  /* ⚠️ 2026-10-06：加了「语音输入」那颗之后，**320px 那档这一排放不下了** ✗ ——
-     `scripts/verify-mobile-views.mjs` 逐字：`1 处控件在视口外：div.editor-toolbar(left=10 right=362 "⋯")`
-     （320 视口、整排 352 宽 ⇒ 溢出 42px ✓）。
-     ⚠️ 两条**试过但没用**的路子（别再走一遍 ✗）：
-       ① 把按钮改小（`width: 26px`）⇒ 同一条判据的另一半当场红
-          （`1 类控件低于 44：button.toolbar-btn 26x26` ✓）—— 拿"手指点不着"换"不溢出" ✗；
-       ② 只收间距（`gap: 2 → 1`）⇒ 省 6px，而溢出是 42px ⇒ 不够 ✗。
-     ⇒ 真正的修法在下面 `@media (max-width: 480px)` 里：**把「导入 / 模板」两颗从这排收起** ✓
-       （它们在「⋯」菜单里留了同样的入口 ✓ ⇒ 不是"藏起来就没了" ✗）。 */
-  gap: 2px;
-  flex-shrink: 0;
-  margin-left: auto;
-}
-/* 工具栏「⋯」折叠菜单。 */
-.editor-toolbar-more {
-  position: relative;
-}
-.editor-more-menu {
-  position: fixed;
-  z-index: 1500;
-  /* ⭐ 2026-10-07（owner：「更多弹窗弹出位置不对」✗）：位置**不再写死** ✗ ——
-     原先这里是 `top: 34px; right: 8px`，锚的是**视口右上角**、不是那颗 ⋯ 按钮 ✓
-     （截图里它飘在窗口右上、盖住「目录」面板 ✓）。现在由 `EditorToolbar` 打开时
-     按按钮的实际矩形算出来，以**内联** `top`/`right` 给（并夹在视口内 ✓，
-     纯规则在 `lib/menuAnchor.ts`，判据 `menuAnchor.test.ts` ✓）。
-     ⚠️ 仍然是 `fixed`（**没有**改成 absolute）：工具栏自己有 overflow 收口，
-     absolute 会被裁掉 ✗ —— 当初写 fixed 多半就是撞过这个 ✓。 */
-  top: 34px;
-  right: 8px;
-  min-width: 168px;
-  padding: var(--space-1);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  display: flex;
-  flex-direction: column;
-}
+
+
+
+
 .toolbar-menu-item {
   display: flex;
   align-items: center;
@@ -3698,13 +3642,7 @@ select.prop-value {
   }
 }
 
-/* ---------- Editor ---------- */
-.editor-shell {
-  flex: 1;
-  overflow-y: auto;
-  position: relative;
-  padding: var(--space-1) 0 20vh;
-}
+
 
 /* Find bar */
 .find-bar {
@@ -3757,98 +3695,24 @@ select.prop-value {
   cursor: default;
 }
 
-.editor-content {
-  min-height: 100%;
-  outline: none;
-  font-size: var(--fs-16);
-  line-height: 1.7;
-  max-width: var(--doc-width);
-  margin: 0 auto;
-  padding: 0 var(--doc-pad) 120px;
-}
-/* 正文文本始终可拖选(选中/复制)，不被块拖拽或容器继承的 user-select:none 限制。 */
-.editor-content,
-.editor-content p,
-.editor-content h1,
-.editor-content h2,
-.editor-content h3,
-.editor-content blockquote,
-.editor-content li,
-.editor-content a,
-.editor-content strong,
-.editor-content em {
-  user-select: text;
-  -webkit-user-select: text;
-}
 
-/* Block hover affordance (Notion-style): highlight the block under the cursor. */
-.editor-content > * {
-  border-radius: var(--radius-xs);
-  position: relative;
-}
 
-.editor-content > *:hover {
-  background: var(--block-hover);
-}
 
-/* Inline-formatting blocks: paragraph, headings, quote. */
-.editor-content p,
-.editor-content h1,
-.editor-content h2,
-.editor-content h3,
-.editor-content blockquote {
-  padding: 2px var(--space-1);
-  margin: 0.6em 0;
-}
 
-.editor-placeholder {
-  position: absolute;
-  top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: var(--doc-width);
-  max-width: 100%;
-  padding: 0 0 0 calc(var(--doc-pad) + var(--space-1));
-  box-sizing: border-box;
-  color: var(--text-dim);
-  pointer-events: none;
-  font-size: var(--fs-16);
-}
 
-/*
-  ⚠️ 2026-10-06（owner 截图）：「输入 '/' 选择，按 '空」只剩半句 —— 空页面上**两个占位同时在**。
-  为什么：`.new-page-guide`（新页面引导，`App.tsx:860` 渲染）是 `position:absolute; inset:0` ＋
-  `max-width: var(--doc-width)` 居中的**不透明**面板，它只盖住中间；
-  而这条占位**也是**居中同宽 ⇒ 就从引导**两侧露出半截**，看着像被切了一刀 ✗。
-  修法：**引导在的时候把编辑器占位藏掉**（两者说的是同一件事，留一个就够）。
-  ⚠️ 用 `:has()` 而不是在 `Editor.tsx` 里另算一遍"这页是不是空的"：判据只有一处
-  （`App.tsx` 渲染引导用的条件）⇒ ⛔ 不会出现两份"空页"定义各自漂移 ✗。
-  ⚠️ 只在空页上生效：正文有内容时占位由 Lexical 自己管，这条不参与 ✓。
-  ⚠️ 祖先取 `.editor-stage`（`Editor` 与 `NewPageGuide` 的共同父节点，`position: relative` ✓）。
-*/
-.editor-stage:has(.new-page-guide) .editor-placeholder {
-  display: none;
-}
 
-.editor-error {
-  color: var(--danger);
-  /* The RichTextPlugin ErrorBoundary wraps every decorator in this div even when
-     there's no error — so no default padding, or it insets block content (e.g. the
-     columns card) from the page boundary. Only pad when an error is actually shown. */
-  padding: 0;
-}
 
-.editor-error:has(.editor-error-detail) {
-  padding: var(--space-4);
-}
 
-.editor-error-detail {
-  color: var(--text-faint);
-  font-size: var(--fs-12);
-  margin-top: var(--space-2);
-  word-break: break-all;
-  max-width: 640px;
-}
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -4135,11 +3999,7 @@ select.prop-value {
   background: var(--danger-soft);
 }
 
-/* Selected top-level block (multi-select). */
-.editor-content > .block-selected.block-selected {
-  background: var(--accent-soft);
-  border-radius: var(--radius-sm);
-}
+
 
 /* Drag marquee (box-select) overlay — armed only from the blank/safe zone. */
 .block-box-select {
@@ -4151,76 +4011,17 @@ select.prop-value {
   pointer-events: none;
 }
 
-/* Batch action bar for selected blocks / 多选模式 —— 底部居中浮动条。 */
-.block-selection-bar {
-  position: fixed;
-  left: 50%;
-  bottom: 20px;
-  transform: translateX(-50%);
-  z-index: 200;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  padding: 6px 10px 6px 14px;
-  font-size: var(--fs-13);
-  max-width: min(92vw, 720px);
-  flex-wrap: wrap;
-  justify-content: center;
-}
-.block-selection-bar.is-select-mode {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22), 0 0 0 3px var(--accent-soft);
-}
-.block-selection-count {
-  color: var(--text-dim);
-  font-weight: 600;
-  margin-right: 2px;
-}
-.editor-toolbar .block-select-mode-btn {
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-}
-.block-selection-bar .block-select-hint {
-  color: var(--text-faint);
-  font-size: var(--fs-12);
-  padding-left: 6px;
-  border-left: 1px solid var(--border);
-}
-.block-selection-bar button {
-  border: none;
-  background: var(--hover);
-  color: var(--text);
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) 10px;
-  cursor: pointer;
-  font-size: var(--fs-13);
-  font-family: inherit;
-}
-.block-selection-bar button:hover {
-  background: var(--hover-strong);
-}
-.block-selection-bar button.danger {
-  color: var(--danger);
-}
-.block-selection-bar button.danger:hover {
-  background: var(--danger-soft);
-}
-.block-selection-bar .block-selection-close {
-  background: transparent;
-  color: var(--text-faint);
-  padding: var(--space-1) 6px;
-  font-size: var(--fs-15);
-}
-.block-selection-bar .block-selection-close:hover {
-  color: var(--text);
-  background: var(--hover);
-}
+
+
+
+
+
+
+
+
+
+
+
 
 /* Right-click context menu for selected blocks. */
 .block-context-menu button.danger {
@@ -4450,17 +4251,7 @@ select.prop-value {
   background: transparent;
 }
 
-/* ⚠️ 2026-10-01（owner：「橡皮筋还在」＋截图）：这条样式**就是**那个蓝框 ——
-   config.ts:127 把 Lexical 的 	ableCellSelected 主题键指到这个类 ⇒ **表格单元格选区**里的格子
-   被着上「浅蓝填充 ＋ 1px 蓝框」；而拖列宽时 Lexical 会**顺带拉出一个单元格选区** ✗ ⇒
-   那个矩形就跟着鼠标绷出来（owner 称之为橡皮筋 ✓）。
-   处置：**只把视觉去掉**（类名与主题键都不动 ⇒ 零 JS 改动、一句可回滚 ✓）。
-   判据：拖列宽不再出现该矩形 ✓；反例：把这两行恢复 ⇒ 矩形立刻回来 ✓。
-   ⚠️ 代价（照实）：用户**主动**选中多个单元格时也不再有高亮 ✗。 */
-.editor-table-cell-selected {
-  /* background: var(--accent-soft) !important; */
-  /* box-shadow: inset 0 0 0 1px var(--accent); */
-}
+
 
 .table-resize-handle {
   position: fixed;
@@ -4471,670 +4262,145 @@ select.prop-value {
 
 
 
-/* Lexical node styles */
-.editor-h1 {
-  font-size: 1.9em;
-  font-weight: 700;
-  line-height: 1.3;
-  margin: 0.5em 0 0.2em;
-}
-
-.editor-h2 {
-  font-size: 1.5em;
-  font-weight: 700;
-  line-height: 1.35;
-  margin: 0.45em 0 0.2em;
-}
-
-.editor-h3 {
-  font-size: 1.2em;
-  font-weight: 600;
-  line-height: 1.4;
-  margin: 0.4em 0 0.15em;
-}
-
-/* owner 2026-10-01：**标题的上留空要比下留空大一点**。
-   ⚠️ 老坑第三处（与 `.editor-quote` 同源）：上面 `.editor-h1/h2/h3` 自己写的**本来就是上大下小**
-   （0.5／0.45／0.4em 上，0.2／0.2／0.15em 下），但被靠前那组「Inline-formatting blocks」
-   （`.editor-content p, h1, h2, h3, blockquote { margin: 0.6em 0 }`，特异性 **0,1,1**）压成了
-   **上下相等** ✗ ⇒ 视觉上"标题上面挤、贴着上一段"。
-   这里用更高特异性把上大下小要回来，并把上留空**再放大一档** ✓。
-   ⛔ 仍然**不改**通用那条 ⇒ 段落与注释块不受影响（注释块有自己的 `.editor-quote` 那条 ✓）。
-   ⚠️ h4–h6 不在通用那条的名单里（所以它们本来就没被压），这里一并给同一比例，
-      免得四级标题与三级标题的间距看起来是两个体系 ✓。 */
-.editor-content h1.editor-h1 {
-  margin-top: 1.4em;
-  margin-bottom: 0.4em;
-}
-.editor-content h2.editor-h2 {
-  margin-top: 1.25em;
-  margin-bottom: 0.35em;
-}
-.editor-content h3.editor-h3 {
-  margin-top: 1.1em;
-  margin-bottom: 0.3em;
-}
-.editor-content h4,
-.editor-content h5,
-.editor-content h6 {
-  margin-top: 1em;
-  margin-bottom: 0.25em;
-}
-
-/* 表格**表头默认加粗＋带底色**（owner 2026-10-01：「表格的标题列不加粗吗？」「没有背景色吗？」）。
-   md 惯例（GitHub / 知乎）里表头本来就是粗的，源文件里不必写 `**` ✓。
-   两路都要，缺一不可：
-     ① 用表格菜单把表头行标成 `TableCellHeaderStates.ROW` ⇒ 是真的 `<th>` ⇒ 上面 `th` 那条命中 ✓；
-     ② 下面这几条覆盖**没标表头的表**（含**导入/旧表**：`markdownTransformers.ts` 的
-        `createMarkdownCell` 现在**不**标 ROW，见该文件 278 行那条"撤回"注释 ✓）
-        ⇒ ⭐ 不用重新导入也当场变粗、有底色 ✓。
-   ⚠️ 用 600 而不是 700：与 `.editor-h3` 的 600 同档，避免表头抢过标题的层级 ✓。
-
-   ⚠️ **2026-10-06 修正**（owner 带截图：「表格拖拽列宽后，标题栏背景色和字体加粗丢了」）：
-   这里原来写的是 `table tr:first-child > td` —— 而**拖过列宽的表格**里，Lexical 会把一个
-   `<colgroup>` 放在 `<table>` 的**第一个子元素**位置（本机实测 `table.firstElementChild === "COLGROUP"` ✓），
-   而 `tr` 是 `<table>` 的**直接**子元素（没有 `<tbody>` ✓ 实测 `tr.parentElement.tagName === "TABLE"`）
-   ⇒ 第一行不再是 `:first-child` ⇒ **这条规则整个不再命中**：粗体 600→400、底色→透明 ✗
-   （那正是截图里"表头没样式"的样子 ✓）。
-   ⇒ 改成**按行类型**取第一行（`:first-of-type` 不受 `<colgroup>` 影响 ✓），并覆盖三种真实形状：
-     · `th` —— 标过表头的表 ✓；
-     · `table > tr` —— Lexical 渲染的形状（行直挂 table ✓）；
-     · `table > tbody > tr` —— **HTML 解析器**补过 tbody 的形状（粘贴 HTML 会遇到 ✓），
-       且**只在没有 `thead` 时**才算表头（有 thead 时表头在 thead 里，tbody 首行是数据 ✓）。
-   ⛔ 别再退回 `tr:first-child` ✗ —— 判据在 `scripts/check-panel-layout.mjs`（夹具用 **DOM API** 造、
-      带 colgroup ✓；用 innerHTML 会被解析器补 tbody ⇒ 判据假绿 ✗）。 */
-.editor-content table th,
-.editor-content table > thead > tr:first-of-type > td,
-.editor-content table > tr:first-of-type > td,
-.editor-content table:not(:has(> thead)) > tbody:first-of-type > tr:first-of-type > td {
-  font-weight: 600;
-  /* 表头底色（owner 2026-10-01：「标题列没有背景色吗？」）：
-     ⚠️ 产品**本来就有**这条样式 —— 见下面的 `.editor-table-cell-header { background: var(--bg-sidebar) }`，
-     但那个 class **只在单元格的表头状态被标上时才加**，而没标表头的表是 `NO_STATUS` ⇒
-     既没有粗体也没有背景（同一个根因，owner 连问两次 ✓）。
-     做法：这里给 `th` 与**第一行**补上**同一个 token** ⇒ ⭐ 没标表头的表也当场有背景 ✓，
-     而且与标了表头的**同色**（不引入第二种"表头灰" ✗）。 */
-  background: var(--bg-sidebar);
-}
-
-.editor-quote {
-  border-left: 3px solid var(--border-strong);
-  padding-left: 14px;
-  color: var(--text-dim);
-  margin: 0.4em 0;
-  background: transparent;
-}
-
-/* owner 2026-10-01：「注释块的文字前面留点空」＋「上下留空大一点」。
-   ⚠️ 同一个坑（两条都在这里一次说清）：靠前那组「Inline-formatting blocks」
-   （`.editor-content p, h1, h2, h3, blockquote { padding: 2px var(--space-1); margin: 0.6em 0 }`）
-   是**简写**且特异性更高（0,1,1 > 0,1,0）⇒ 它会把 `.editor-quote` 自己的
-   `padding-left: 14px` 与 `margin: 0.4em 0` **一起**压掉（实际左内边距只有 4px、上下只有 2px/0.6em）。
-   所以这里用**同一元素、更高特异性**把四个方向的留白一次给足：
-     · 左 14px ⇒ 竖线不再贴字 ✓
-     · 上下 padding 6px ⇒ **竖线在文字上下各多出一截**（这就是"注释块"该有的呼吸感 ✓）
-     · 上下 margin 1em ⇒ 与前后块之间也拉开 ✓
-   ⛔ 仍然**不改**通用那条 ⇒ 段落 / 标题的留白不受影响 ✓。 */
-/* ⭐ 2026-10-02（owner 给了参考图）：「把注释块调成图中的样式」。
-   参考样式 = **浅灰底 ＋ 左侧一根粗灰条 ＋ 四周留白**（掘金那种引用块 ✓）。
-   原来：透明底 ✗ ＋ 3px 竖线 ⇒ 只有一根线，没有"块"的感觉 ✓。
-   ⚠️ 颜色**一律用变量**（浅 `--card-bg: #f8f9fa` ／ 深 `#1c1d20` ✓；条 `--border-strong` 浅 `#d4d8df` ／ 深 `#3a3c41` ✓）
-      ⇒ 深色主题自动跟着走 ✓，⛔ 不硬写 `#f7f8fa` 这类值 ✗。
-   ⚠️ `--bg-2` 是**社区站**的变量，本仓**没有定义** ✗ —— 用它会让底色静默失效 ✓（我查过才没写它 ✓）。
-   ⚠️ 右边也要留白：否则底色会**贴着文字边缘**（参考图里四周都是留白 ✓）。
-   ⚠️ **圆角维持 0**（就是下面那条 `border-radius: 0` ✓）—— 那是 **owner 2026-10-01 明确拍的**
-      「注释块与高亮块都**不要**圆角，要 md 那种方角」✓ ⇒ 参考图看着像有圆角 ✓，但**改它要先问** ✓。 */
-.editor-content blockquote.editor-quote {
-  padding-left: 14px;
-  padding-right: 14px;
-  padding-top: var(--space-2);
-  padding-bottom: var(--space-2);
-  margin-top: 1em;
-  margin-bottom: 1em;
-  background: var(--card-bg);
-  border-left: 4px solid var(--border-strong);
-}
-
-.editor-callout {
-  background: var(--callout-bg);
-  border: 1px solid var(--callout-border);
-  border-left: 4px solid var(--accent);
-  border-radius: var(--radius-sm);
-  padding: 10px 14px;
-  margin: 0.5em 0;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  column-gap: var(--space-2);
-  align-items: start;
-}
-
-/* Icon sits in column 1; all content flows through column 2, so they line up
-   side by side (multiple paragraphs keep stacking on the right). */
-.editor-callout::before {
-  content: "💡";
-  grid-column: 1;
-  grid-row: 1;
-  align-self: start;
-}
-
-.editor-callout > * {
-  grid-column: 2;
-}
-
-/* owner 2026-10-01：**注释块与高亮块都不要圆角**（要 md 那种方角）。
-   两条纪律：
-     ① ⛔ 不改上面通用的 `.editor-content > * { border-radius: … }` —— 那是**所有顶层块**的
-        Notion 式 hover 圆角（段落 / 标题 / 图片都吃它），改 0 会把它们一起方掉；
-     ② ⛔ 不动分栏卡片那条（`.editor-columns`：它自己的注释写明 "each column is a rounded card"）。
-   做法：只给这两个块加**更高特异性**的专门规则 ⇒ 通用语义与分栏都不受影响。 */
-.editor-content blockquote.editor-quote,
-.editor-content .editor-callout {
-  border-radius: 0;
-}
-
-/* Feishu-style 分栏: a flex row of N columns side by side with a small gap between
-   them. Borderless (no outer frame / divider lines); each column is a rounded card
-   with its own background, so the gap reads as separation. */
-.editor-columns {
-  --col-gap: 8px;
-  display: flex;
-  width: 100%;
-  gap: var(--col-gap);
-  margin: 0.4em 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  padding: 0;
-  background: transparent;
-}
-
-/* Block host for a Route-B columns node: full-width block; the styled flex
-   container (.editor-columns) lives inside it (rendered by the React view). */
-.editor-columns-host {
-  display: block;
-  width: 100%;
-}
-
-.editor-columns[data-count="0"] {
-  /* Empty (count not chosen) — the picker overlay floats above; keep a minimal
-     slot so the block has a visible footprint. */
-  min-height: 64px;
-}
-
-.editor-column {
-  flex: 1 1 0;
-  min-width: 0;
-  position: relative;
-  /* Borderless rounded card; the inter-column gap + background reads as separation.
-     The card's background is only shown while the cursor is over the column (or it's
-     focused) — otherwise the columns sit transparent on the page so the block blends
-     in. No outline is ever drawn (neither idle nor hovered). */
-  border: 0;
-  border-radius: var(--radius-sm);
-  padding: 6px var(--space-2);
-  background: transparent;
-  /* The RichTextPlugin ErrorBoundary wraps column content in a `.editor-error`
-     container whose default color is --danger (red). Force the card's text back to
-     the normal block color so columns read the same as regular content — and the
-     red only ever appears if there really is an error. */
-  color: var(--text);
-  transition: background var(--transition-fast);
-}
-
-.editor-column:hover,
-.editor-column:focus-within {
-  /* On hover the card fills with a shade that visibly contrasts the page background
-     (--bg), so the page-coloured GAP between two adjacent cards reads clearly —
-     separation comes from colour contrast, not a border. */
-  background: var(--hover-strong);
-}
-
-/* When the cursor is anywhere over the columns block, highlight ALL of its columns
-   at once — the page-coloured gap sandwiched between two grey cards becomes the
-   clearest possible cue for the column boundaries. */
-.editor-columns:hover .editor-column,
-.editor-columns:focus-within .editor-column {
-  background: var(--hover-strong);
-}
-
-/* Resizable divider between columns (drag to adjust column widths). It sits on the
-   shared boundary between two columns. The grip line is HIDDEN by default and only
-   appears when hovering that column (or when actively dragging), so the divider
-   doesn't clutter the block. The full-width hit area stays active so the drag still
-   starts anywhere on the boundary. */
-.editor-column-divider {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  /* Center the 10px hit area (and grip line) in the gap between the two columns:
-     half the gap + half the divider width beyond the column's right edge. */
-  right: calc(var(--col-gap) / -2 - 5px);
-  width: 10px;
-  cursor: col-resize;
-  z-index: 6;
-  transition: background var(--transition-fast);
-}
-
-/* A visible grip line users can aim at — hidden until the cursor is over the
-   divider (the gap between columns), not merely over a column, so the grip appears
-   "in the empty space" between columns. */
-.editor-column-divider::after {
-  content: "";
-  position: absolute;
-  top: 25%;
-  bottom: 25%;
-  left: 50%;
-  width: 2px;
-  transform: translateX(-50%);
-  border-radius: 1px;
-  background: var(--border);
-  opacity: 0;
-  transition: background var(--transition-fast), width var(--transition-fast), opacity 0.15s ease;
-}
-
-.editor-column-divider:hover::after,
-.editor-column-divider:active::after {
-  opacity: 1;
-}
-
-.editor-column-divider:hover,
-.editor-column-divider:active {
-  background: var(--accent-soft);
-}
-
-.editor-column-divider:hover::after,
-.editor-column-divider:active::after {
-  width: 3px;
-  background: var(--accent);
-}
-
-.editor-column-add,
-.editor-column-remove {
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xs);
-  background: var(--surface);
-  color: var(--text-dim);
-  font-size: var(--fs-13);
-  line-height: 1;
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
-}
-
-.editor-column-add:hover {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.editor-column-remove:hover {
-  background: var(--danger-soft);
-  border-color: var(--danger);
-  color: var(--danger);
-}
-
-.editor-column-actions {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  display: flex;
-  gap: var(--space-1);
-  z-index: 5;
-  /* Hide the per-column toolbar until the cursor is over this column (keeps the
-     block clean); mirrors the drawing block's hover-reveal control bar. */
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease;
-}
-
-.editor-column:hover .editor-column-actions,
-.editor-column:focus-within .editor-column-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/* While a divider is dragged, the share badge occupies the top-right; hide the
-   add/remove actions so they don't overlap the badge. */
-.editor-columns.is-dragging .editor-column-actions {
-  opacity: 0;
-  pointer-events: none;
-}
-
-/* Current share badge (top-right) shown while a divider is being dragged. The ＋/×
-   actions sit slightly lower so both can coexist during the drag. */
-.editor-column-pct {
-  position: absolute;
-  top: 4px;
-  right: 6px;
-  z-index: 7;
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text-dim);
-  font-size: var(--fs-12);
-  line-height: 1.4;
-  pointer-events: none;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-  white-space: nowrap;
-}
-
-/* Route-B nested editor inside a column: the contenteditable owns the column's full
-   block stack; reset to a clean block so paragraphs/headings fill the column. */
-.editor-column-body {
-  position: relative;
-  min-height: 44px;
-}
-
-.editor-column-editable {
-  outline: none;
-  min-height: 44px;
-  font-size: var(--fs-15);
-  line-height: 1.7;
-  word-break: break-word;
-}
-
-.editor-column-error {
-  color: var(--danger);
-  font-size: var(--fs-12);
-  margin-bottom: var(--space-1);
-}
-
-.editor-columns-loading {
-  color: var(--text-faint);
-  font-size: var(--fs-13);
-}
-
-/* Column-count picker (选择栏数) over an empty columns block. */
-
-.editor-checklist {
-  padding-left: 1.4em;
-  margin: 0.3em 0;
-  list-style-type: none;
-}
-
-.editor-listitem-checked,
-.editor-listitem-unchecked {
-  list-style-type: none;
-  margin: 0.15em 0;
-  border-radius: var(--radius-xs);
-}
-
-.editor-listitem-checked:hover,
-.editor-listitem-unchecked:hover {
-  background: var(--block-hover);
-}
-
-.editor-listitem-checked::before,
-.editor-listitem-unchecked::before {
-  display: inline-block;
-  width: 1em;
-  margin-right: 0.4em;
-  text-align: center;
-}
-
-.editor-listitem-unchecked::before {
-  content: "☐";
-}
-
-.editor-listitem-checked::before {
-  content: "☑";
-}
-
-.editor-listitem-checked > span {
-  text-decoration: line-through;
-  color: var(--text-dim);
-}
-
-.editor-hr {
-  border: none;
-  background: none;
-  height: 22px;
-  margin: 0.4em 0;
-  position: relative;
-}
-
-.editor-hr::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 1px;
-  transform: translateY(-50%);
-  background: var(--border);
-}
-
-.editor-image-container {
-  display: block;
-  margin: 6px 0;
-  text-align: center;
-}
-
-.editor-image {
-  display: inline-block;
-  max-width: 100%;
-  max-height: 480px;
-  width: auto;
-  height: auto;
-  object-fit: contain;
-  border-radius: var(--radius-sm);
-}
-
-/* A broken/404 image collapses to a small file name placeholder instead of a
-   huge empty region (e.g. a relative path from an imported Markdown doc). */
-.editor-image.editor-image-broken {
-  max-height: none;
-  max-width: 220px;
-  opacity: 0.55;
-}
-
-/* Empty-src image/video placeholder (no src → render nothing meaningful rather
-   than an <img src=""> which triggers a React warning + full-page refetch). */
-.editor-image.editor-image-empty {
-  display: inline-block;
-  min-width: 24px;
-  min-height: 24px;
-  max-height: 24px;
-  max-width: 24px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--hover);
-  opacity: 0.6;
-  width: 24px;
-  height: 24px;
-}
-
-/* Inline images (emblem/badge rows) sit in the text line, small and centered. */
-.editor-image-container.editor-image-inline-container {
-  display: inline !important;
-  margin: 0 var(--space-1) 0 0;
-  text-align: initial;
-}
-.editor-image.editor-image-inline {
-  display: inline;
-  max-height: 28px;
-  max-width: 200px;
-  vertical-align: middle;
-}
-/* An inline image carrying an explicit size (e.g. a 128px logo) keeps that size
-   instead of being shrunk to the small badge row cap. */
-.editor-image.editor-image-inline.editor-image-sized {
-  max-height: none;
-  max-width: none;
-}
-
-/* A flex row of images (GitHub-style badge row): side by side and centered. */
-.editor-image-row {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: var(--space-2);
-  margin: 6px 0;
-  flex-wrap: wrap;
-}
-.editor-image-row img {
-  max-height: 36px;
-  max-width: 220px;
-  width: auto;
-  height: auto;
-  object-fit: contain;
-  vertical-align: middle;
-}
-.editor-image-row img.editor-image-broken {
-  max-height: none;
-  max-width: 220px;
-  opacity: 0.55;
-}
-
-.editor-video-container {
-  display: block;
-  margin: 0.5em 0;
-}
-
-.editor-video {
-  max-width: 100%;
-  border-radius: var(--radius-sm);
-  display: block;
-}
-
-/* File reference card (attachment-ref node) */
-.editor-attachment-ref-container {
-  display: block;
-  margin: 0.5em 0;
-  max-width: 360px;
-}
-
-.editor-attachment-ref {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-  user-select: none;
-}
-
-.editor-attachment-ref:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-xs);
-}
-
-.editor-attachment-ref:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.editor-file-glyph {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: var(--radius-sm);
-  background: var(--hover);
-  color: var(--accent);
-  flex-shrink: 0;
-}
-
-.editor-file-info {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-
-.editor-file-name {
-  font-size: var(--fs-13);
-  font-weight: 500;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.editor-file-meta {
-  font-size: var(--fs-11);
-  color: var(--text-dim);
-}
-
-.editor-file-open {
-  display: flex;
-  align-items: center;
-  color: var(--text-faint);
-  flex-shrink: 0;
-}
-
-/* PDF 附件「标注」徽章：提示可点击打开阅读器 */
-.editor-file-annotate-badge {
-  flex-shrink: 0;
-  font-size: var(--fs-10-5);
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: 5px;
-  padding: 1px 6px;
-  margin-right: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-}
-
-/* Tables */
-.editor-table-scrollable-wrapper {
-  overflow-x: auto;
-  max-width: 100%;
-}
-
-.editor-table {
-  border-collapse: collapse;
-  margin: 0.5em 0;
-  width: 100%;
-  table-layout: fixed;
-}
-
-.editor-table-row {
-  border-bottom: 1px solid var(--border);
-}
-
-.editor-table-cell {
-  border: 1px solid var(--border);
-  padding: 6px 10px;
-  min-width: 60px;
-  vertical-align: top;
-  outline: none;
-}
-
-/*
-  单元格里的段落**不许再带正文的块间留白**。
-  为什么：`.editor-content p { padding: 2px var(--space-1); margin: 0.6em 0 }` 那条是给**正文块之间**
-  留气口的；表格单元格里也套着段落 ⇒ 0.6em×2（16px 正文 ≈ 19px）＋ 上下内边距 ＋ 单元格
-  padding 也跟着叠 ⇒ 一行 ≈ 62px（正文行高 27.2px 的 ~2.3 倍）。
-  2026-10-05 owner 先报"行高缩小一些"、再报"稍微大一点点" ⇒ 最终取值：
-  **单元格 padding 保持原值 6px 10px**（不改它）＋ 段落留白归零 ⇒ 一行 ≈ 39px。
-  （中间试过 padding 3px 8px ⇒ 一行 ≈33px，owner 觉得偏小。）
-  ⚠️ 只作用于**单元格的直接子段落**，正文段落照旧吃那 0.6em ✓。
-  为什么选 `> p` 就够：`editorTheme` 里**没有** `paragraph` 这一项 ⇒ Lexical 的段落就是裸
-  `<p>`（`markdownTransformers.createMarkdownCell` 也是往单元格里 append 一个 `$createParagraphNode()`）。
-  ⚠️ 与 `.editor-content p` 那条**特异性相同**（都是 0,1,1）⇒ 本条第靠**源码顺序**取胜：
-  ⛔ 别把 Tables 这一节挪到 `5716` 那组 `.editor-content p` **之前**，否则这条会静默失效。
-*/
-.editor-table-cell > p {
-  margin: 0;
-  padding: 0;
-}
-.editor-table-cell > p {
-  margin: 0;
-  padding: 0;
-}
-
-.editor-table-cell-header {
-  background: var(--bg-sidebar);
-  font-weight: 600;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* Backlinks */
 .backlinks {
@@ -5263,18 +4529,8 @@ select.prop-value {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-/* M19.3 [[ link suggestions */
-.editor-page-link {
-  color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-  border-radius: 2px;
-  padding: 0 1px;
-}
-.editor-page-link:hover {
-  background: var(--accent-soft);
-}
+
+
 .page-link-suggest {
   max-height: 200px;
   overflow-y: auto;
@@ -5909,129 +5165,42 @@ select.prop-value {
   font-family: inherit;
 }
 
-.editor-ul {
-  padding-left: 1.4em;
-  margin: 0.3em 0;
-}
 
-.editor-ol {
-  padding-left: 1.4em;
-  margin: 0.3em 0;
-}
 
-.editor-listitem {
-  margin: 0.15em 0;
-}
 
-.editor-nested-listitem {
-  list-style-type: none;
-}
 
-.editor-bold {
-  font-weight: 700;
-}
 
-.editor-italic {
-  font-style: italic;
-}
 
-.editor-underline {
-  text-decoration: underline;
-}
 
-.editor-strikethrough {
-  text-decoration: line-through;
-}
 
-.editor-code {
-  background: var(--code-bg);
-  border-radius: var(--radius-xs);
-  padding: 1px var(--space-1);
-  font-family: "SF Mono", Consolas, monospace;
-  font-size: 0.9em;
-}
 
-.editor-link {
-  color: var(--accent);
-  text-decoration: underline;
-}
 
-.editor-codeblock {
-  display: block;
-  white-space: pre;
-  background: var(--codeblock-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: var(--space-3) var(--space-3) var(--space-3) 52px; /* 左侧留出对照行号 */
-  font-family: "SF Mono", Consolas, monospace;
-  font-size: 0.9em;
-  overflow-x: auto;
-  margin: 0.5em 0;
-  position: relative;
-  line-height: 1.5;
-  color-scheme: light;
-}
+
+
+
+
+
+
+
+
+
+
+
 [data-theme="dark"] .editor-codeblock {
   color-scheme: dark;
 }
-/* 行号列。 */
-/* 代码块工具条（语言 + 复制），常显于右上角。 */
-.editor-code-lang {
-  background: var(--codeblock-bg);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  font-size: var(--fs-11);
-  border-radius: var(--radius-xs);
-  padding: 2px var(--space-1);
-  outline: none;
-  font-family: inherit;
-}
-.editor-code-copy {
-  background: var(--codeblock-bg);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  font-size: var(--fs-11);
-  border-radius: var(--radius-xs);
-  padding: 2px 6px;
-  cursor: pointer;
-  font-family: inherit;
-}
-.editor-code-copy:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-/* Prism 语法高亮 token 配色（暗色）。 */
-.editor-codeblock .token.comment,
-.editor-codeblock .token.prolog,
-.editor-codeblock .token.doctype,
-.editor-codeblock .token.cdata { color: #6a737d; }
-.editor-codeblock .token.punctuation { color: #c9d1d9; }
-.editor-codeblock .token.property,
-.editor-codeblock .token.tag,
-.editor-codeblock .token.boolean,
-.editor-codeblock .token.number,
-.editor-codeblock .token.constant,
-.editor-codeblock .token.symbol { color: #f97583; }
-.editor-codeblock .token.selector,
-.editor-codeblock .token.attr-name,
-.editor-codeblock .token.string,
-.editor-codeblock .token.char,
-.editor-codeblock .token.builtin,
-.editor-codeblock .token.inserted { color: #9ecbff; }
-.editor-codeblock .token.operator,
-.editor-codeblock .token.entity,
-.editor-codeblock .token.url,
-.editor-codeblock .language-css .token.string,
-.editor-codeblock .style .token.string { color: #79c0ff; }
-.editor-codeblock .token.atrule,
-.editor-codeblock .token.attr-value,
-.editor-codeblock .token.keyword { color: #d2a8ff; }
-.editor-codeblock .token.function,
-.editor-codeblock .token.class-name { color: #ffab70; }
-.editor-codeblock .token.regex,
-.editor-codeblock .token.important,
-.editor-codeblock .token.variable { color: #ffa657; }
-.editor-codeblock .token.deleted { color: #ffa198; }
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* Slash menu */
 .slash-menu {
@@ -6369,10 +5538,7 @@ select.prop-value {
   word-break: break-word;
 }
 
-/* Block embed {{blockId}} */
-.editor-block-embed {
-  margin: 0.5em 0;
-}
+
 
 .block-embed {
   border: 1px solid var(--border);
@@ -6410,10 +5576,7 @@ select.prop-value {
   padding: 2px var(--space-1);
 }
 
-/* Webpage bookmark card */
-.editor-webbookmark {
-  margin: 0.5em 0;
-}
+
 .webbookmark-card {
   display: flex;
   gap: var(--space-3);
@@ -6856,12 +6019,7 @@ select.prop-value {
   font-size: var(--fs-12);
 }
 
-/* Drawing block */
-.editor-drawing-container {
-  display: block;
-  margin: 0 -2px;
-  user-select: none;
-}
+
 
 /* A drawing block is wrapped by Lexical in a <p>; that <p> carries the paragraph
    margin (0.6em) which would add extra top/bottom inset beyond the page's own flow.
@@ -7008,18 +6166,9 @@ p:has(> .editor-drawing-container) {
   font-size: var(--fs-12);
 }
 
-.editor-drawing {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  overflow: hidden;
-}
 
-.editor-drawing-placeholder {
-  color: var(--text-faint);
-  font-size: var(--fs-13);
-  padding: var(--space-5);
-}
+
+
 
 /* Fullscreen drawing (Excalidraw) modal */
 .drawing-modal {
@@ -7209,72 +6358,20 @@ p:has(> .editor-drawing-container) {
   z-index: 10;
 }
 
-/* Mermaid block */
-/* M26 公式块 —— block-level KaTeX formula */
-.editor-formula-container {
-  display: block;
-  margin: 2px 0;
-  user-select: none;
-  -webkit-user-select: none;
-}
-/* Block any text selection/caret inside an inline formula block (this is a
-   decorative node; it shouldn't accept focus or typing). */
-.editor-formula-container * {
-  user-select: none;
-  -webkit-user-select: none;
-}
-.editor-formula-wrap {
-  display: block;
-  user-select: none;
-  -webkit-user-select: none;
-}
-.editor-formula {
-  display: block;
-  width: 100%;
-  min-width: 120px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  padding: 0;
-  cursor: pointer;
-  text-align: center;
-  color: var(--text);
-  line-height: 1.2;
-}
-.editor-formula:hover {
-  background: var(--accent-soft);
-}
-.editor-formula-katex {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  overflow: visible;
-  max-width: 100%;
-  line-height: 1;
-}
 
 
 
 
-.editor-formula-loading {
-  color: var(--text-dim);
-  font-size: var(--fs-13);
-  padding: var(--space-3);
-  text-align: center;
-}
-.editor-inline-formula {
-  display: inline-block;
-  padding: 0 2px;
-  border-radius: 3px;
-  cursor: pointer;
-}
-.editor-inline-formula:hover {
-  background: var(--accent-soft);
-}
-.editor-inline-formula-katex {
-  display: inline-block;
-}
+
+
+
+
+
+
+
+
+
+
 
 /* M26 公式编辑器弹窗（Notion 风格） */
 .formula-editor-overlay {
@@ -9010,15 +8107,7 @@ p:has(> .editor-drawing-container) {
   color: var(--accent);
 }
 
-/* New page guidance */
-.editor-stage {
-  flex: 1;
-  min-height: 0;
-  margin-top: 20px;
-  display: flex;
-  flex-direction: column;
-  position: relative;
-}
+
 
 /* Single scroll container for the whole page (title + properties + content), so
    the title scrolls away with the content instead of being pinned. */
@@ -12336,13 +11425,7 @@ body.is-plugin-panel-open .main {
   }
 }
 
-@media (max-width: 480px) {
-/* ⭐ 2026-10-06（owner 要的「语音输入」那颗把这一排顶出去了 ✗）：窄屏这排 44px 命中区的图标
-     放不下 —— 320 视口上整排 `right=362` ⇒ 溢出 42px ✓（逐字读数见 `.editor-toolbar` 上面那段 ✓）。
-     ⇒ 把「导入 / 模板」两颗从**这一排**收起：它们在「⋯」菜单里**有同样的入口** ✓
-     （`EditorToolbar` 里那两条 `toolbar-menu-item` ✓）⇒ 这是"换一条路进"，⛔ 不是把功能删掉 ✗。 */
-  .editor-toolbar .toolbar-btn-narrow { display: none; }
-}
+
 
 
 
@@ -12362,12 +11445,6 @@ body.is-plugin-panel-open .main {
   .btn-sync,
   .btn-new { height: 44px; min-width: 44px; }
 .sidebar-title { min-height: 44px; }
-/* ---------- 编辑工具栏 ----------
-     命中区给到 44，**图标尺寸一点不动**：一排透明底的 44px 格子看起来只是一排图标，
-     而一排 28px 的格子看起来也一样——但后者点不中。真正占地方的是"格子数"，
-     所以这里同时把间距收到 0。 */
-  .editor-toolbar-bar { padding: var(--space-1) 10px; gap: var(--space-2); }
-.editor-toolbar { gap: 0; }
 .toolbar-btn { width: 44px; height: 44px; }
 /* 面包屑让位：它本身是导航，深路径改为**单行横滑**（换行会把工具栏顶成两行）。 */
   .breadcrumbs {
@@ -15448,8 +14525,7 @@ button.mset-row:focus-visible {
 
 
 
-/* 正文里的「> 来源：…」引文：明显引用样式（保留正文文本 ⇒ 幂等判重不坏） */
-.editor-content blockquote, .note-scroll blockquote { border-left: 3px solid var(--border-strong, #d0d0d0); background: var(--hover, rgba(0,0,0,.03)); padding: 6px 10px; margin: var(--space-2) 0; border-radius: var(--radius-xs); }
+.note-scroll blockquote { border-left: 3px solid var(--border-strong, #d0d0d0); background: var(--hover, rgba(0,0,0,.03)); padding: 6px 10px; margin: var(--space-2) 0; border-radius: var(--radius-xs); }
 
 
 

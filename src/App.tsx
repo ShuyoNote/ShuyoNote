@@ -162,6 +162,8 @@ import "./styles/tree.css";
 import "./styles/community.css";
 // S4-16（2026-11-01）：移动阅读/首页域（`.mread-*` / `.mhome-*` / `.mobile-*`）。
 import "./styles/mobile-read.css";
+// S4-17（2026-11-01）：编辑器域（`.editor-*` / `.block-selection*`）。
+import "./styles/editor.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
