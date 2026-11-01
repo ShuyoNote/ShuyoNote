@@ -380,6 +380,15 @@ AST 重做后的读数：规则 4535→4191、行数 28695→26439、**逐元素
 - 证据：computed 等价（32 个设置元素 × 20 属性＋几何 × 视口 1280 / 600）**前后 0 差异**（`_tmp/acceptance/settings-computed-diff.json`）；
   `check-panel-layout` **61/61**；设置相关＋CSS 判据 **57/57**；5 图基线最差 **0.027%**；`tsc` 0。
 - App.css：18,114 → **17,073 行**。
+- ⚠️ **CI mobile 抓到的真回归（2026-11-01，已修）**：上面这版用的是 v4 提取器（核心全在前、media 全在后）。
+  它把 `.set-dialog button { min-height:44px }` 挪到 settings.css 后，原本靠"在它之后"才压得住的
+  `button.set-swatch { height:30px; min-height:30px }` 仍留在 App.css ⇒ **文件边界让 44px 后写赢**，
+  移动端色板从 30×30 变成 **30×44 的椭圆**（CI job「移动端布局+浮层验收」逐字报的）。
+- **修法**：① 设置域改用 **v6 顺序保持提取器**；② 把 `button.set-swatch` / `button.set-swatch::after`
+  两条**随域一起搬**（选择器不以 `.set-` 开头，用额外模式 `^button\.set-swatch` 带过来）⇒ 它们仍在
+  `.set-dialog button` 之后。复验：computed **1280/600/390 三视口 0 差异**；本机
+  `verify-mobile-views` **249/249**、`verify-mobile-overlays` **756/756**；桌面基线 0.017%。
+  ⇒ 教训：**v4 的"核心前、media 后"只在原文件没有"media 之后还有核心规则"时才等价**；以后一律 v6。
 
 ### S4-13：属性面板域（App.css → `src/styles/properties.css`，2026-11-01）
 - 核心 **119 条** ＋ **2 组混合 @media** → 641 行；`.properties-*` / `.prop-*` 在 App.css **0 残留**。
