@@ -1,0 +1,161 @@
+/* S4（2026-11-01）：域抽取器搬出的**页面壳域（`.page-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* 页面图标行（标题上方）：大号、可点击更换。 */
+.page-icon-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: -26px; /* 图标上半叠在题头图上 */
+  position: relative;
+  z-index: 2;
+  padding-left: var(--doc-pad);
+  pointer-events: none; /* 整行不拦截指针，避免遮住封面高度拖拽手柄 */
+}
+
+.page-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  pointer-events: auto; /* 仅图标按钮本身可点击 */
+  transition: background var(--transition-fast);
+}
+
+.page-icon-btn:hover {
+  background: var(--hover);
+}
+
+/* Page cover: a full-width banner above the title (CSS gradient). Spans the whole
+   note-scroll width (NOT limited to the centered doc column) with no rounded corners. */
+.page-cover {
+  position: relative;
+  width: 100%;
+  height: 300px;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  border-radius: 0;
+  margin-bottom: var(--space-2);
+}
+
+/* Drag handle (bottom center) to resize the cover height. */
+.page-cover-handle {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
+  width: 44px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.6);
+  cursor: ns-resize;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.page-cover:hover .page-cover-handle {
+  opacity: 1;
+}
+
+/* Page icon: an emoji shown before the title. */
+.page-icon {
+  font-size: var(--fs-52);
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.page-icon-img {
+  width: 52px;
+  height: 52px;
+  object-fit: contain;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+}
+
+.page-actions {
+  width: 100%;
+  padding: 0 var(--doc-pad);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 36px;
+  margin-top: 18px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+
+/* 「⋯」折叠菜单入口。 */
+.page-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-13);
+  cursor: pointer;
+  padding: var(--space-1) 6px;
+  border-radius: var(--radius-xs);
+  font-family: inherit;
+}
+
+.page-action-btn:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.page-action-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.page-link-suggest {
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  padding: var(--space-1);
+  min-width: 180px;
+  max-width: 320px;
+}
+
+.page-link-suggest-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: var(--fs-14);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.page-link-suggest-item:hover,
+.page-link-suggest-item.active {
+  background: var(--block-hover);
+  color: var(--accent);
+}
+
+@media (max-width: 768px) {
+/* 「更换图标 / 更换封面」等页面级动作（27 高）。 */
+  .page-action-btn { min-height: 44px; }
+}
+}

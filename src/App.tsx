@@ -210,6 +210,9 @@ import "./styles/board.css";
 import "./styles/titlebar.css";
 import "./styles/buttons.css";
 import "./styles/formula-editor.css";
+// S4-37（2026-11-01）：页面壳（`.page-*`）与数据库页（`.database-*`）。
+import "./styles/page.css";
+import "./styles/database-page.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
