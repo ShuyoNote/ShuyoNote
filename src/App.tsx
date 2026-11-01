@@ -204,6 +204,8 @@ import "./styles/template-center.css";
 import "./styles/graph-controls.css";
 // S4-34（2026-11-01）：块操作域（`.block-*`）。
 import "./styles/block.css";
+// S4-35（2026-11-01）：看板视图域（`.board-*`）。
+import "./styles/board.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
