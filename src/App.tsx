@@ -186,6 +186,8 @@ import "./styles/about.css";
 import "./styles/shortcuts.css";
 import "./styles/markdown-import.css";
 import "./styles/cover-picker.css";
+// S4-28（2026-11-01）：插件面板/视图域（`.plugin-*`）。
+import "./styles/plugin-panel.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

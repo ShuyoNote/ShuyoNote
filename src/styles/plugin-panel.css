@@ -1,0 +1,282 @@
+/* S4（2026-11-01）：域抽取器搬出的**插件面板/视图域（`.plugin-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* ---------------------------------------------------------------------------
+ * 插件面板：卡片网格。之前一行一个「名字 + 开关」太素；改成图标 + 状态灯 +
+ * 命令数的卡片，视觉上更有层次，但强弱对比仍靠开关与底色，绝不彩色堆砌。
+ * ------------------------------------------------------------------------- */
+.plugin-count {
+  margin-left: var(--space-2);
+  font-size: var(--fs-11);
+  font-weight: 500;
+  color: var(--text-faint);
+}
+
+.plugin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+}
+
+.plugin-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+  transition: border-color var(--transition-fast);
+}
+
+.plugin-card:hover {
+  border-color: var(--border-strong);
+}
+
+/* 禁用态：整体压灰 + 图标去饱和，一眼看出「不参与命令面板」。 */
+.plugin-card.is-off {
+  opacity: 0.6;
+}
+
+.plugin-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.plugin-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--chip-bg);
+  color: var(--text-dim);
+  flex: none;
+}
+
+.plugin-card.is-off .plugin-icon {
+  filter: saturate(0.5);
+}
+
+.plugin-name {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.plugin-sub {
+  flex: 1;
+  font-size: var(--fs-11);
+  line-height: 1.5;
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.plugin-desc {
+  font-size: var(--fs-12);
+  color: var(--text);
+}
+
+.plugin-meta {
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+}
+
+/* 无磁盘插件时的空态。 */
+.plugin-empty {
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.plugin-empty p {
+  margin: 0;
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+}
+
+.plugin-empty .set-btn {
+  align-self: flex-start;
+}
+
+@media (max-width: 768px) {
+.plugin-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 768px) {
+.plugin-panel {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
+/* 声明式插件视图（宿主渲染：插件零代码，只交一份声明） */
+.plugin-view-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+
+.plugin-view {
+  width: min(760px, 92vw);
+  max-height: 80vh;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.plugin-view-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: var(--space-3) 14px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+}
+
+.plugin-view-title { font-size: var(--fs-14); color: var(--text); }
+
+.plugin-view-from { margin-left: var(--space-2); font-size: var(--fs-11-5); color: var(--text-faint); }
+
+.plugin-view-close {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: var(--fs-18);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.plugin-view-close:hover { color: var(--text); }
+
+.plugin-view-summary {
+  padding: var(--space-2) 14px;
+  color: var(--text-dim);
+  font-size: var(--fs-12-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.plugin-view-empty { padding: 20px 14px; color: var(--text-faint); font-size: var(--fs-12-5); }
+
+.plugin-view-table { width: 100%; border-collapse: collapse; font-size: var(--fs-12-5); }
+
+.plugin-view-table th {
+  text-align: left;
+  padding: 7px 14px;
+  color: var(--text-dim);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+}
+
+.plugin-view-table td {
+  padding: 6px 14px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+
+.plugin-view-table tbody tr { cursor: pointer; }
+
+.plugin-view-table tbody tr:hover { background: var(--hover); }
+
+.plugin-view-cell-title { color: var(--text); }
+
+/* 声明式插件视图的**右侧常驻面板**（manifest `placement: "rail"`）。
+   与浮层同一张表（PluginViewTable），差别是"一边看正文一边看着它"：
+   宽度够放几列（表格在 380px 下会挤成一条），窄屏则与 AI/评论一样整屏叠加。 */
+.plugin-panel {
+  position: fixed;
+  top: var(--titlebar-h, 0);
+  right: 0;
+  bottom: 0;
+  z-index: 73;
+  width: 420px;
+  max-width: calc(100vw - 64px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-xl);
+  overflow: auto;
+  animation: ai-slide-in var(--transition-fast) ease;
+}
+
+/* == 设置页插件行：不许被挤成竖排 == */
+/* 「管理插件」按钮用了 margin-left:auto，会压窄同一行的标题与计数——
+   它们必须保持一行（截图里出现过「插件/管理」「1/1 已启/用」竖排）。 */
+.plugin-count { white-space: nowrap; flex: 0 0 auto; }
+
+@media (max-width: 768px), (max-height: 520px) {
+.plugin-view {
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    /* `--ovh` 已经扣掉状态栏与底部（手势条 / 键盘）：盒子在任何视口下都装得下。 */
+    max-height: calc(var(--ovh) - 24px);
+  }
+.plugin-view-overlay {
+    align-items: flex-end;
+    justify-content: center;
+    /* 先重置四个方向（.ai-settings-overlay 原先有 padding-top:10vh、
+       .plugin-manager-overlay 有 padding:4vh 24px），再加安全区。 */
+    padding: var(--space-3);
+    padding-top: calc(var(--space-3) + var(--sat));
+    padding-bottom: calc(var(--space-3) + max(var(--sab), var(--kb)));
+    padding-left: calc(var(--space-3) + var(--sal));
+    padding-right: calc(var(--space-3) + var(--sar));
+  }
+.plugin-view {
+    position: static;
+    transform: none;
+    width: 100%;
+    max-width: 100%;
+    /* 顶部留 24px：让用户看得见"后面还有内容"。`--ovh` 里已经扣掉了状态栏
+       与底部（手势条 / 键盘），所以这里只需要那个 24px 的呼吸位。 */
+    max-height: calc(var(--ovh) - 24px);
+    border-radius: 16px 16px var(--radius-lg) var(--radius-lg);
+  }
+.plugin-view {
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+.plugin-panel {
+    width: 100%;
+    max-width: 100%;
+    left: 0;
+    right: 0;
+    top: var(--sat);
+    bottom: max(var(--sab), var(--kb));
+  }
+.plugin-panel {
+    box-shadow: none;
+    border-left: none;
+  }
+.plugin-view-close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+.plugin-view button {
+    min-height: 44px;
+  }
+}
+}
