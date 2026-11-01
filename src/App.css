@@ -7397,102 +7397,17 @@ button.ui-toggle::after {
 
 
 
-/* ══════════════════════════════════════════════════════════════════════════
-   移动端「划词查词」词条卡（效果图 `docs/plans/mobile/mockups/06-dict.svg`，规格 §4.6）
-   ⚠️ 形态照图：**卡片压在正文上** ✓（正文还在、卡盖在下半屏 ✓），⛔ 不是换掉正文 ✗。
-   ⚠️ 它是移动端阅读屏里的一层（`MobileDictCard` ✓）⇒ 不套 `@media` ✓。
-   ========================================================================== */
-.mdict {
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: calc(74px + var(--sab, 0px));
-  z-index: 30;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md, var(--radius-lg));
-  background: var(--surface);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
-}
-.mdict-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-.mdict-word {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: var(--fs-24);
-  font-weight: 700;
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
-/* 「×」＝图标按钮 ⇒ ≥44×44 ✓ */
-.mdict-close {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-faint);
-  font-size: var(--fs-18);
-  line-height: 1;
-}
-.mdict-meta {
-  margin: 2px 0 0;
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  overflow-wrap: anywhere;
-}
-.mdict-body {
-  margin: 10px 0 0;
-  font-size: var(--fs-14);
-  line-height: 1.7;
-  color: var(--text);
-  overflow-wrap: anywhere;
-  /* ⭐ 2026-10-10：词库释义里的换行要**真的换行** ✓（`lookup.ts` 的 `decodeDictNewlines` 解出真换行 ✓）。
-     ⚠️ 用 `pre-line`（**保留换行、折叠多余空格、仍自动折行** ✓）而不是 `pre-wrap`/`pre` ✗ ——
-     释义是**成句的长文本** ✓，`pre-wrap` 会让它不折行 ⇒ 横向冲出卡片 ✗。 */
-  white-space: pre-line;
-}
-.mdict-actions {
-  display: flex;
-  gap: 10px;
-  margin: 14px 0 0;
-}
-.mdict-btn {
-  flex: 1 1 0;
-  min-width: 0;
-  height: 44px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-14);
-  font-weight: 600;
-}
-.mdict-btn.is-primary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: #fff;
-}
-/* ⛔ 「加入词库」没这个功能 ⇒ 置灰且点不动 ✓（让缺口看得见 ✓） */
-.mdict-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-.mdict-src {
-  margin: 10px 0 0;
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-}
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -7736,14 +7651,8 @@ button.ui-toggle::after {
 
 
 
-/* ---- 06 划词卡片：浅色浮卡、轻阴影 ---- */
-.mdict {
-  border-radius: 18px;
-  box-shadow: 0 12px 32px rgba(16, 24, 40, 0.18);
-}
-.mdict-btn {
-  border-radius: var(--radius-full);
-}
+
+
 
 
 
@@ -7797,33 +7706,31 @@ button.mset-row:focus-visible {
 
 
 
-/* ⭐ 2026-10-23：「对端有、你没有的空间」（MeshMissingSpaces.tsx）
-   视觉体系：主色 --accent、勾中 --accent-soft、墓碑胶囊 --mark-bg；圆角 8/4/999。 */
-.mesh-missing { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
-.mesh-missing-head { display: flex; align-items: center; gap: 7px; width: 100%; border: none; background: transparent; padding: 2px 0; cursor: pointer; text-align: left; color: var(--text); }
-.mesh-missing-star { color: var(--accent); font-size: var(--fs-12); }
-.mesh-missing-title { font-size: var(--fs-12-5); font-weight: 600; }
-.mesh-missing-title b { color: var(--accent); }
-.mesh-missing-toggle { margin-left: auto; font-size: var(--fs-11-5); color: var(--text-dim); }
-.mesh-missing-body { margin-top: var(--space-2); }
-.mesh-missing-list { border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
-.mesh-missing-row { display: flex; gap: 9px; padding: 10px 11px; border-top: 1px solid var(--border); }
-.mesh-missing-row:first-child { border-top: none; }
-.mesh-missing-row.is-on { background: var(--accent-soft); }
-.mesh-missing-cb { width: 16px; height: 16px; margin-top: 1px; flex: none; border-radius: var(--radius-xs); border: 1.5px solid var(--border-strong); background: var(--surface); color: var(--on-accent); font-size: var(--fs-10); font-weight: 700; line-height: 1; display: grid; place-items: center; cursor: pointer; }
-.mesh-missing-cb.is-on { background: var(--accent); border-color: var(--accent); }
-.mesh-missing-text { min-width: 0; }
-.mesh-missing-name { font-size: var(--fs-12-5); font-weight: 500; line-height: 1.35; word-break: break-word; }
-.mesh-missing-row.is-on .mesh-missing-name { color: var(--accent-strong); }
-.mesh-missing-chip { display: inline-block; margin-left: 6px; padding: 3px 9px; border-radius: var(--radius-full); background: var(--mark-bg); color: #b26a00; font-size: var(--fs-11); font-weight: 500; vertical-align: 1px; }
-.mesh-missing-sub { font-size: var(--fs-11); color: var(--text-dim); margin-top: 2px; }
-.mesh-missing-foot { font-size: var(--fs-11); color: var(--text-dim); margin: var(--space-2) 2px 0; }
-.mesh-missing-actions { display: flex; align-items: center; gap: var(--space-2); margin-top: 10px; }
-.mesh-missing-ignore { border: none; background: transparent; color: var(--text-dim); font-size: var(--fs-12); padding: var(--space-2); border-radius: var(--radius-md); cursor: pointer; }
-.mesh-missing-ignore:hover { background: var(--hover); color: var(--text); }
-.mesh-missing-create { margin-left: auto; border: none; background: var(--accent); color: var(--on-accent); font-size: var(--fs-12); font-weight: 500; padding: var(--space-2) 14px; border-radius: var(--radius-md); cursor: pointer; }
-.mesh-missing-create:disabled { background: var(--hover); color: var(--text-faint); cursor: default; }
-.mesh-missing-done { margin-top: var(--space-2); font-size: var(--fs-11-5); color: var(--success); }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -8141,64 +8048,24 @@ button.mset-row:focus-visible {
 
 
 
-/* ── 切换空间 bottom sheet ────────────────────────────────────────────────── */
-.msheet-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 90;
-  display: flex;
-  align-items: flex-end;
-  background: rgba(16, 24, 40, .36);
-}
-.msheet-sheet {
-  width: 100%;
-  max-height: 76vh;
-  overflow-y: auto;
-  padding: var(--space-2) var(--space-4) calc(22px + var(--sab, 0px));
-  border-radius: 24px 24px 0 0;
-  background: var(--surface);
-  box-shadow: 0 -18px 44px rgba(16, 24, 40, .18);
-  animation: msheet-in 180ms var(--transition-fast, ease);
-}
+
+
 @keyframes msheet-in { from { transform: translateY(18px); opacity: .6; } to { transform: none; opacity: 1; } }
-.msheet-grab { width: 36px; height: 4px; margin: 2px auto 14px; border-radius: var(--radius-full); background: var(--border-strong); }
-.msheet-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: var(--space-3); }
-.msheet-title { font-size: var(--fs-18); font-weight: 750; }
-.msheet-hint { margin-top: 3px; font-size: var(--fs-11); color: var(--text-faint); }
-.msheet-close {
-  flex: none;
-  width: 44px;
-  height: 44px;
-  display: grid;
-  place-items: center;
-  margin: -8px -8px 0 0;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--text-dim);
-}
-.msheet-list { display: flex; flex-direction: column; gap: var(--space-2); }
-.msheet-row {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  width: 100%;
-  min-height: 58px;
-  padding: 9px var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface);
-  color: var(--text);
-  text-align: left;
-}
-.msheet-row.is-active { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: var(--accent-soft); }
-.msheet-ico { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; background: var(--bg-sidebar); color: var(--text-dim); }
-.msheet-row.is-active .msheet-ico { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); color: var(--accent-strong); }
-.msheet-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.msheet-name { font-size: var(--fs-14); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.msheet-sub { font-size: var(--fs-11); color: var(--text-faint); }
-.msheet-check { flex: none; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: var(--on-accent); }
-.msheet-radio { flex: none; width: 20px; height: 20px; border: 1.5px solid var(--border-strong); border-radius: 50%; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

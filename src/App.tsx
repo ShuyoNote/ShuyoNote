@@ -219,6 +219,10 @@ import "./styles/ui-toggle.css";
 import "./styles/formula.css";
 // S4-39（2026-11-01）：移动首页/搜索/外壳（`.mhome*` / `.msearch*` / `.mshell*`）。
 import "./styles/mobile-home.css";
+// S4-40（2026-11-01）：移动端缺失同步（`.mesh-missing-*`）、词典（`.mdict*`）、底部弹层（`.msheet-*`）。
+import "./styles/missing-sync.css";
+import "./styles/mobile-dict.css";
+import "./styles/mobile-sheet.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
