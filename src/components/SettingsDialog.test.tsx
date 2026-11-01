@@ -16,8 +16,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** 判据 c) 要读**真的** CSS 规则（⛔ 不是凭印象说"卡片不会塌"✗）。 */
-const APP_CSS = resolve(dirname(fileURLToPath(import.meta.url)), "../App.css");
+/** 判据 c) 要读**真的** CSS 规则（⛔ 不是凭印象说"卡片不会塌"✗）；S4 起设置域已搬到 `src/styles/settings.css` ⇒ 读全仓 CSS。 */
+import { allCssText } from "../lib/cssSources";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -316,7 +316,7 @@ describe("设置-空间 · 单空间迁移：⛔ 那两个图标不许再回来"
   it("⭐ c) 卡片**不会塌**：那两条规则里没有写死高度 ＋ 三样可见内容各自都在", async () => {
     await render();
 
-    const css = readFileSync(APP_CSS, "utf8");
+    const css = allCssText();
     for (const sel of [".set-migrate-card", ".set-migrate"]) {
       const m = new RegExp(`\\${sel}\\s*\\{([^}]*)\\}`).exec(css);
       expect(m, `${sel} 的规则不见了`).not.toBeNull();

@@ -1,0 +1,1676 @@
+/* S4-12（2026-11-01）：设置域（`.set-*` / `.mset-*`）。
+
+- 选择器混排（`.set-x, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- 核心规则在前、**响应式覆盖（来自混合 @media，只抽命中域的规则并重建同条件块）在后** —— 保持原相对顺序。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+- ⚠️ 唯一例外：`.set-space-crypto` 的**基础样式**留在 App.css，和 `.space-item-crypto` 写在**同一条规则**里
+  （`spaceSecurity.test.ts` 要求两个落点共享同一条规则，拆开=两份会各自漂；它自己那些 `.is-enc/.is-plain` 仍在下面）。
+*/
+@layer legacy {
+.set-body-scroll::-webkit-scrollbar,
+.set-rail::-webkit-scrollbar {
+  width: 8px;
+}
+
+.set-body-scroll::-webkit-scrollbar-thumb,
+.set-rail::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: var(--radius-full);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.set-body-scroll:hover::-webkit-scrollbar-thumb,
+.set-rail:hover::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  background-clip: content-box;
+}
+
+.set-body-scroll::-webkit-scrollbar-track,
+.set-rail::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------------------------------------------------------------------------
+ * 设置中心（左侧标签栏 + 右侧内容）。
+ * 取代原「主题设置」弹层——把外观/插件/加密/AI/关于收口到一处，避免把
+ * 「关闭加密」这种不可逆操作和「换个强调色」摆成同一种按钮。
+ * ------------------------------------------------------------------------- */
+.set-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  background: rgba(16, 24, 40, 0.42);
+  backdrop-filter: blur(2px);
+}
+
+.set-dialog {
+  display: flex;
+  /* 允许拖拽调整大小：resize:both + 合理上下限。overflow:auto 让 resize 手柄
+     可用（右下角）。初始尺寸 min(900,100%) x min(620, 100vh-64)。 */
+  width: min(900px, 100%);
+  height: min(620px, calc(100vh - 64px));
+  min-width: 640px;
+  min-height: 420px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  resize: both;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+}
+
+.set-rail {
+  flex: none;
+  width: 224px;
+  padding: var(--space-4) 10px;
+  border-right: 1px solid var(--border);
+  background: var(--bg-sidebar);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.set-rail-title {
+  font-size: var(--fs-15);
+  font-weight: 700;
+  color: var(--text);
+  padding: 2px 10px var(--space-3);
+}
+
+/* ⭐ 2026-10-08 第 2 招：左侧导航**分组**（11 项平铺 → 4 组 ✓，owner 拍板 ✓）。
+   样式取向照 owner 的原话「不要花哨」✓：标题只用**小号灰字**＋一条**细分隔线**，
+   ⛔ 不用 emoji、不用彩色、不加粗大字号 ✗。分组间距靠上留白拉开 ✓（比加边框更安静 ✓）。 */
+.set-rail-group + .set-rail-group {
+  margin-top: 14px;
+}
+
+.set-rail-group-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  padding: 10px 10px var(--space-1);
+}
+
+/* ⭐ 2026-10-10 R185：分类标签的**明确宽度策略** ✓（修"真机上被挤成单字竖排"✗）。
+   ⚠️ 那格的病根与 win 的 `3f66ff44` **同形**（flex 子项没有宽度策略 ⇒ 自动最小尺寸 ＝ min-content
+   ＝ 一个汉字 ✓，CJK 可在任何字之间断行 ✓），但**对象不同、方向也相反** ✗：
+   · 他那格是「被长文本顶开」⇒ 补 `min-width: 0` ✓；
+   · 我们这格是「容器被挤窄 ⇒ 标签跟着缩」⇒ 要 `flex: 0 0 auto`（**不许缩** ✓）
+     ＋ `white-space: nowrap`（⛔ 不许逐字断行 ✗ ⇒ 这才是"单字竖排"的直接解 ✓）。
+   ⛔ 别删这条：`SettingsDialog` 那边的 JSX 注释点名了它 ✓。
+   ⚠️ **真机观感未验** ✗ —— 这条毛病在本机复现不出来 ✓（量出来必然"正常"✗ ⇒ 那不能当验过 ✗）。 */
+.set-rail-label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.set-rail-group-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ⭐ 2026-10-08 第 5 招（裁定 A ✓）：个人偏好「隐藏高级项」—— 放在导航**底部**，不抢戏 ✓。
+   默认**关**（全显 ✓）；打开后只留基础组 ✓。样式取向照 owner 那句"不花哨" ✓：细边框 ＋ 小号灰字 ✓。 */
+.set-rail-pref {
+  margin-top: 14px;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  font-family: inherit;
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.set-rail-pref.is-on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.set-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 9px 10px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--transition-fast);
+}
+
+.set-rail-icon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--chip-bg);
+  color: var(--text-dim);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.set-rail-item.is-on .set-rail-icon {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.set-rail-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.set-rail-item:hover {
+  background: var(--hover);
+}
+
+.set-rail-item.is-on {
+  background: var(--accent-soft);
+}
+
+.set-rail-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.set-rail-label {
+  font-size: var(--fs-13);
+  color: var(--text);
+}
+
+.set-rail-item.is-on .set-rail-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.set-rail-hint {
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+}
+
+.set-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.set-body-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) 20px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.set-body-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.set-body-title {
+  font-size: var(--fs-16);
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+/* 每页一句说明：让「这一页管什么」不用猜，也把面板撑得更从容。 */
+.set-body-desc {
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.set-close {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-18);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.set-close:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.set-body-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 20px 28px;
+}
+
+/* 内容限宽：设置项是「标签 + 控件」的窄栏结构，铺满 600px 以上会让眼睛
+   在标签与右侧按钮之间跑很远。 */
+.set-body-inner {
+  max-width: 640px;
+}
+
+.set-section + .set-section {
+  margin-top: 26px;
+}
+
+.set-section-title {
+  font-size: var(--fs-12);
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+  margin-bottom: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* 区块标题前的小强调条，让账户页各区块更有层。 */
+.set-section-title::before {
+  content: "";
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--accent);
+  flex: none;
+}
+
+.set-hint {
+  margin: 10px 0 0;
+  font-size: var(--fs-11);
+  line-height: 1.6;
+  color: var(--text-faint);
+}
+
+.set-note {
+  margin-bottom: var(--space-3);
+  padding: 10px var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--cat-yellow-soft);
+  font-size: var(--fs-12);
+  color: var(--text);
+}
+
+/* E2：开启加密前的「我知道丢了找不回」硬确认。勾选框与文字要一起可点，
+   文字长、要给行高留地方（这句话本身就是这道闸门的意义所在）。 */
+
+.set-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.set-chip {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-full);
+  padding: 6px 14px;
+  font-size: var(--fs-12);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.set-chip:hover {
+  background: var(--hover);
+}
+
+.set-chip.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 500;
+}
+
+.set-swatch-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.set-swatch {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  box-shadow: 0 0 0 1px var(--border) inset;
+  cursor: pointer;
+  padding: 0;
+  transition: transform var(--transition-fast);
+}
+
+.set-swatch:hover {
+  transform: scale(1.1);
+}
+
+.set-swatch.is-on {
+  border-color: var(--surface);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.set-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px var(--space-3);
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast);
+}
+
+.set-row:hover {
+  background: var(--hover);
+}
+
+.set-row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.set-row-name {
+  font-size: var(--fs-13);
+  color: var(--text);
+}
+
+.set-row-sub {
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+/* ⚠️⭐ 「还没上架」那节里那一格（说明文字 note）—— 它是 `.set-row` 的**直接 flex 子项** ✓。
+   ⭐ **2026-10-10 订正（我先前把那个经典口诀写反了 ✗，连同纠正一起留下）**：
+   口诀「加 `min-width: 0`」管的是 ⭐ **"不加 ⇒ flex 子项撑破容器"** ✗ ；
+   而**这一格的问题是反过来的** —— ⛔ **它把别人挤没了** ✗：
+     · `flex: 0 1 auto` ⇒ 它的 flex base ＝ **max-content ＝ 整句自然宽** ✗（实测那条 note 236 字 ＝ **590px**）
+     · 而 `.set-row-text` 是 `flex: 1`（＝`1 1 0%`）⇒ base 是 **0** ⇒ 没有"要守护的基准" ✗
+     ⇒ ⭐ 实测（CDP，2026-10-10，面板宽 626）：`textW = 0` ✗ ／ `nameW = 0` ✗ ／ `nameH = 90`（＝**名字一列一个字** ✓）
+       ／ 而 note 拿了 **590px** ✓ —— ⭐ owner 截图里"竖排"的正是这条 ✓（短说明那几条观感没问题 ✓，所以只有它看得出坏 ✓）。
+   ⇒ ⭐ 修法：**给一个"确定且有限"的宽度** ✗（⛔ 不是"允许它缩到 0" ✗）：
+     给死 `flex: 0 0 40%` ⇒ note 在**自己那一格**里换行 ✓、名字那格拿到剩下的 60% ✓。
+     ⚠️ 同时**不再靠 `min-width: 0`** ✗：给死基准之后它压根不需要靠收缩来活 ✓，
+        而留着它反而会让人以为"收缩是解法" ✗（那就是这次的误诊 ✓）。
+   ⚠️ 判据：`src/components/AbilitiesPane.test.tsx` —— ⛔ 旧的 d) 判据（"必须有 `min-width: 0`"）**是错的** ⇒ 已改成
+      "**必须有确定的宽度基准（`flex: 0 0 …`／`width`）** ＋ ⛔ 不许是 `0 1 auto`" ✓（**真验收是 CDP 那两个宽度数** ✓）。 */
+.set-row-note {
+  flex: 0 0 40%;
+  text-align: right;
+  /* ⭐ 2026-10-10（owner 拍 C）：列表里**只显示 2 行 ＋ 省略号**；⭐ 而**全文一个字都不许少** ✗ ——
+     ⛔ 不许把文案改短 ✗（DOM 里仍是完整那句）⇒ 悬停看全文（`title` ＝ 完整那句，见 `AbilitiesPane.tsx`）。
+     ⚠️ `-webkit-box` ＋ `line-clamp` 是**视觉截断**，⛔ 不动文本本身；`overflow: hidden` 是它生效的必要条件 ✓。 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 加密状态卡：三态（未开启 / 已锁定 / 已解锁）用底色 + 圆点区分。 */
+.set-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: var(--space-3) 14px;
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  margin-bottom: var(--space-4);
+}
+
+.set-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: var(--space-3);
+  max-width: 380px;
+}
+
+.set-field > label {
+  font-size: var(--fs-11);
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.set-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) 10px;
+  font-size: var(--fs-13);
+  font-family: inherit;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.set-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.set-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.set-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.set-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--fs-12);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.set-btn:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--border-strong);
+}
+
+.set-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.set-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.set-btn.is-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.set-btn.is-primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+/* 破坏性操作与普通操作必须长得不一样——这是把加密搬出主题面板的核心动机。 */
+.set-btn.is-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--on-danger);
+}
+
+.set-btn.is-danger:hover:not(:disabled) {
+  background: var(--danger-strong);
+  border-color: var(--danger-strong);
+}
+
+/* ⭐ 2026-10-11（owner 截图「美化一下筛选空间这个控件」）：原先它就是一个**裸的** `.sync-input` ✗ ——
+   现在：左边放大镜 ＋ 右边「清空」（⭐ 空查询时**根本不渲染**它 ✓）、圆角与下面那些空间卡片**同一档** ✓、
+   悬停有反馈、聚焦沿用 `.sync-input:focus` 那圈强调色 ✓。
+   ⚠️ 高度**不许低于 44**（本仓规则：可点控件 ≥44px ⇒ 见 `verify-mobile-views.mjs`）——
+   所以清空按钮也做成 44×44 的命中区，只是里面的 × 画小一点 ✓（⛔ 别为了好看把命中区缩下去 ✗）。
+   ⚠️ `:has()` 用来在**没有清空按钮**时把右边那 44px 让回来 ✓（WebView2 是 Chromium ⇒ 支持 ✓）。 */
+/* ⭐ 2026-10-11（owner 截图「下载完了的界面优化一下」）：下载成功原来只是**一句生数据** ✗ ——
+   `89735168 B · sha256 5dc10a51f33a… · C:\Users\…\ecdict-en-zh.bin` ⇒ 又长又折行、还印生字节数 ✓。
+   ⇒ ⭐ 改成一张**小成功卡**：第一行「√ 已保存到本地 · 85.6 MiB」（成功色 ✓），
+   第二行灰字放 sha256 与路径（⭐ 路径 `title` 悬停看全 ✓，⭐ 长路径 `overflow-wrap: anywhere` 折行 ✓）。
+   ⚠️ 只用于**块级**结果提示（⛔ 不往 `.set-row` 里塞卡片 ✗ —— 今天已经因为那个栽过两次 ✓）。 */
+.set-pack-result {
+  margin-top: 10px;
+  padding: 10px var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--success);
+  background: var(--hover);
+}
+
+.set-pack-result-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--fs-13);
+  color: var(--text);
+}
+
+.set-pack-result-mark {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.set-pack-result-size {
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+}
+
+.set-pack-result-meta {
+  margin-top: var(--space-1);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) 10px;
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+}
+
+.set-pack-result-path {
+  overflow-wrap: anywhere;
+}
+
+/* ⭐ 2026-10-11（owner 截图「优化这个界面」）：能力页那格原来复用 `.set-status` ✗ ——
+   而 `.set-status` 是**整块卡片**（`display:flex` ＋ `padding:12px 14px` ＋ `border` ＋
+   `background: var(--card-bg)` ＋ **`margin-bottom: 16px`**）⇒ 被塞进 `.set-row` 当**行内徽章**用之后：
+   ① 看着**像一个能点的按钮** ✗（2026-10-02 已经因为同一个观感问题把「还没上架」那节改掉了 ✓）
+   ② 那一行被**撑高一大截**，② 而且 `margin-bottom:16px` 让**两节之间多出一大块空白** ✗
+   ⇒ ⭐ 新增**行内徽章** `.set-badge`：小胶囊、成功色、**不**带按钮感（无边、无阴影、无 `cursor:pointer` ✓）。
+   ⛔ **不动 `.set-status` 自己的定义** ✗ —— 别处（设置里那些整块提示）还在用它 ✓。
+   ⚠️ `flex: 0 0 auto` 是**必须**的：长说明**不许**把它挤扁 ✗（那个"被挤成一列"的病今天已经栽过两次 ✓）。 */
+.set-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-12);
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--text-dim);
+  background: var(--hover);
+}
+
+.set-badge.is-ok {
+  color: var(--success);
+  /* 两层写法：`color-mix` 不支持时**退回**上面那档灰底 ✓（⛔ 不会变成透明 ✗） */
+  background: var(--hover);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+/* ⭐ 2026-10-30（B1d 面板「跨空间支持矩阵」）：`.set-badge` 的**第三档**（橙 = 写）。
+   同一段注释里那条「新增行内徽章」的取舍照旧：只加**一个** modifier，形状复用 `.set-badge` ✓；
+   ⛔ 不自造颜色变量 —— 用仓里既有 `--warning` token（照 `.sync-status.is-warn` 那一族 ✓），
+   两层写法让 `color-mix` 不支持时退回灰底（与 `.is-ok` 同一条纪律 ✓）。 */
+.set-badge.is-warn {
+  color: var(--warning);
+  background: var(--hover);
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+}
+
+.set-space-filter-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  /* ⭐ 2026-10-11（owner：「筛选控件聚焦后和下面的控件留点白」）：⭐ 聚焦光圈是 `0 0 0 3px` **向外扩**的 ✗
+     ⇒ ⭐ 不留白就会**贴到第一张空间卡片上** ✓（owner 截图里正是这样 ✓）⇒ ⭐ 这 12px 是给光圈让的位 ✓。 */
+  margin-bottom: var(--space-3);
+}
+
+.set-space-filter-wrap > svg {
+  position: absolute;
+  left: 12px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.set-space-filter.sync-input {
+  padding-left: 38px;
+  padding-right: 44px;
+  border-radius: var(--radius-lg);
+  /* ⭐ 2026-10-11 **第三次改**（owner：「去掉控件的背景色如何？」）：⭐ 去掉填充 ✓ ——
+     上一版是**浅灰填充 ＋ 无边** ✗；现在改成**透明底 ＋ 一圈细边** ✓（⭐ 形状交给边框定 ✓）。
+     ⭐ 保留的仍是那几件：⭐ 放大镜 ／ ⭐ 圆角 `radius-lg` ／ ⭐ 左侧 38px 不压字 ／ ⭐ 高度 44px ✓。
+     ＋ ⭐ 悬停**只动边框**（⭐ 不再换底色 ✓）；⭐ 聚焦仍是强调色描边 ＋ 3px 光圈 ✓（⛔ 不换底 ✓）。
+     ⚠️ 高度仍由 `.sync-input` 的 `min-height: 44px` 管 ✗（本仓规则：可点控件 ≥44px ✓）——⛔ 这里不写死更小值 ✓。 */
+  /* ⭐ 2026-10-11 **第四次改**（owner：「外框也去掉」）：⭐ 连接触边也不要 ✓ ——
+     现在**静止与悬停都没有可见边框** ✓（⭐ 只有放大镜 ＋ ⭐ 提示文字 ✓），⭐ 形状完全交给聚焦态 ✓。
+     ⚠️ ⭐ **透明边是刻意留的占位** ✗（`1px solid transparent`）：⭐ 这样聚焦时把颜色换成强调色
+        **不会让整行跳一下** ✗（⛔ 不是"忘了删" ✓）；⭐ 而聚焦那一圈是**可访问性底线** ⇒ ⛔ 不许去掉 ✓。 */
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+  outline: none;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.set-space-filter-wrap:not(:has(.set-space-filter-clear)) .set-space-filter.sync-input {
+  padding-right: 14px;
+}
+
+/* ⭐ 悬停也**不显形**（owner 要的就是这个 ✓）—— ⚠️⭐ **2026-10-11 订正**：第一版写的是
+   `.set-space-filter.sync-input:hover` ✗，⭐ 而别处 `.sync-input:hover:not(:disabled)` 同权重、又是**后写的**
+   ⇒ ⭐ 它赢了 ⇒ ⭐ **悬停照样冒出一圈强调色边** ✗（CDP 实测 `rgb(51,112,255)` ✓ ——
+   ⭐ 而我当时**只看了 tsc 与判据就提交了** ✗，提交信息里那句"悬停也不显形"**是假的** ✓）。
+   ⇒ ⭐ 修法：**加一层外层类**把权重抬上去 ✗（`.set-space-filter-wrap .set-space-filter.sync-input:hover` ✓）。
+   ⛔ 别删这条：删了就又会在悬停时冒出边框 ✗。 */
+.set-space-filter-wrap .set-space-filter.sync-input:hover {
+  border-color: transparent;
+}
+
+/* ⚠️⭐ **2026-10-11 再订正**：上面那条把权重抬到 `.wrap .filter.sync-input:hover`（四个类 ✓）之后，
+   ⭐ 它**顺带把聚焦也压住了** ✗ —— ⭐ CDP 实测"聚焦时边框仍是透明" ✗（只剩 3px 光圈 ✓）。
+   ⇒ ⭐ 聚焦这条必须**同样权重、且写在后面** ✗（同权重按先后 ✓）⇒ ⭐ 聚焦才重新显形 ✓。
+   ⛔ 这条是**可访问性底线**：⛔ 不许去掉、⛔ 也不许被 hover 压掉 ✓。 */
+.set-space-filter-wrap .set-space-filter.sync-input:focus {
+  background: transparent;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.set-space-filter.sync-input:focus {
+  background: transparent;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.set-space-filter-clear {
+  position: absolute;
+  right: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--fs-18);
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition:
+    color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.set-space-filter-clear:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+/* 「空间」页：每个空间一张卡片（色块 + 名称 + 同步目标），配色抽屉在卡片内展开。 */
+.set-space-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* ⭐ 2026-10-25（合并「空间」页）：空间多时**只让列表自己滚**，标题/筛选/底部分区不动。
+   ⛔ 不要让整个设置正文再滚一层（双滚动在触控板上最容易"卡在中间"）。 */
+.set-space-list-scroll {
+  /* ⭐ 2026-10-25 owner：空间列表**不再自己滚** —— 全部行铺开，
+     交给设置正文（`.set-body-scroll`）一层滚，避免双层滚动。 */
+  max-height: none;
+  overflow: visible;
+  overscroll-behavior: auto;
+}
+
+.set-space-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+  overflow: hidden;
+  transition: border-color var(--transition-fast);
+}
+
+.set-space-card:hover {
+  border-color: var(--border-strong);
+}
+
+.set-space-card.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.set-space-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 14px;
+}
+
+/* ⭐ 2026-10-10（owner 要求"设置里点一行就切换"）：那一行**可点** ⇒ 给鼠标反馈。
+   ⚠️ **只给"能切的那一行"**：当前空间那一行点了无事发生（`pick()` 直接返回 ⇒ 不白跑
+   `loadPages`/`refreshVault`）⇒ 它**不给** pointer ✓（否则等于承诺一个不会发生的动作 ✗）。
+   ⚠️ 这一处**只加这一条**（Lead 批的写域就这一格 ✓）。 */
+.set-space-card:not(.is-active) .set-space-row {
+  cursor: pointer;
+}
+
+.set-space-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 3px;
+  font-size: var(--fs-11);
+}
+
+.set-space-sync {
+  color: var(--success);
+}
+
+.set-space-local {
+  color: var(--text-faint);
+}
+
+/* ⭐ 2026-10-10（owner 截图）：`.set-space-id` 那条规则**随那一行 DOM 一起删了** ✓ ——
+ *   空间编号是**内部标识**，⛔ 不许进用户面 ✗（同族：`SettingsDialog.test.tsx` 的 c) 判据 ✓）。
+ *   ⚠️ **别再加回来** ✓ —— 防线在判据里，⛔ 不靠这条注释 ✗。
+ *   ⚠️ 而 `.set-space-sync` 那条**仍在用** ✓（「已同步」那个 span 带着它 ✓）⇒ ⛔ 别顺手删它 ✗。 */
+.set-space-colors {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 14px var(--space-3) 56px;
+  border-top: 1px dashed var(--border);
+}
+
+.set-space-colors-label {
+  font-size: var(--fs-11);
+  color: var(--text-dim);
+  flex: none;
+}
+
+.set-btn.is-on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 迁移做成两张对称卡片，比两行「文字 + 小按钮」更有分量。 */
+.set-migrate {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.set-migrate-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+
+/* ⚠️ 2026-10-10：这里原本是 `.set-migrate-icon`（卡片顶上那个 28px 方块图标，内容是 ↑／↓）——
+   owner 要求「去掉这两个图标」✓ ⇒ 节点已删 ✗ ⇒ **这条规则也一并删掉** ✓
+   （留着一条没人用的规则，会让下一个人以为它还承重 ✓）。
+   ⛔ 别再凭"这里看着该有个图标"把它加回来：判据在 `SettingsDialog.test.tsx`
+   （卡片里**只能**有 标题／说明／按钮 三样节点 ✓），加回来当场红 ✓。 */
+.set-migrate-name {
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.set-migrate-sub {
+  flex: 1;
+  font-size: var(--fs-11);
+  line-height: 1.6;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+
+/* 「空间」页与「账户」页专属元素。 */
+.set-space-mark {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-md);
+  background: var(--hover-strong);
+  color: var(--text-dim);
+  font-size: var(--fs-13);
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+
+.set-tag {
+  margin-left: var(--space-2);
+  font-size: var(--fs-10);
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--on-accent);
+  vertical-align: middle;
+}
+
+.set-btn.is-danger-ghost {
+  color: var(--danger);
+  border-color: var(--border);
+}
+
+.set-btn.is-danger-ghost:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+
+.set-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) 14px;
+  margin-bottom: 10px;
+  background: var(--card-bg);
+}
+
+/* 服务器组头：服务器名突出。 */
+.set-group-head .set-row-name {
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.set-group-item .set-row-sub {
+  font-size: var(--fs-11);
+}
+
+/* 空间名 + 类型标签水平排列。 */
+
+/* 账户页状态标签（已认证 / 单用户 / 空间）用小胶囊。 */
+.set-chip-inline.on {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  color: var(--success);
+}
+
+.set-status-line {
+  margin-top: 10px;
+  padding: var(--space-2) 10px;
+  border-radius: var(--radius-sm);
+  background: var(--chip-bg);
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+}
+
+.set-status-line.is-ok { color: var(--accent); background: var(--accent-soft); }
+
+/* 当前组织账号：登录信息卡。 */
+
+/* 设置中心里的 AI 表单沿用 ai-settings-* 既有样式。两列布局下行占满各自列宽。 */.set-ai .ai-settings-row {
+  width: 100%;
+}
+
+.set-ai .ai-settings-desc {
+  max-width: 560px;
+}
+
+.mset-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mset-title {
+  margin: 0;
+  font-size: var(--fs-26);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.mset-close {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-18);
+}
+
+.mset-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, var(--radius-lg));
+  background: var(--surface);
+  padding: var(--space-3) 14px;
+}
+
+/* 分组小标题（效果图里是「账户／同步／外观…」这几个淡色小字 ✓）*/
+.mset-group {
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+
+.mset-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+}
+
+.mset-row[aria-disabled="true"] {
+  opacity: 0.75;
+}
+
+.mset-ico {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--bg-sidebar);
+  font-size: var(--fs-17);
+}
+
+.mset-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mset-row-title {
+  font-size: var(--fs-16);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mset-row-sub {
+  font-size: var(--fs-13);
+  color: var(--text-dim);
+}
+
+.mset-go {
+  flex: none;
+  font-size: var(--fs-20);
+  color: var(--text-faint);
+}
+
+/* 同步状态那一行：小圆点 ＋ 一句话（效果图里点是有颜色的 ✓）*/
+.mset-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: #f0a020;
+}
+
+.mset-dot.is-bad {
+  background: #c5221f;
+}
+
+.mset-dot.is-busy {
+  background: var(--accent);
+}
+
+/* 外观：三段选择（触控 ≥44px ✓）*/
+.mset-seg {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.mset-seg-btn {
+  flex: 1 1 0;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-14);
+}
+
+.mset-seg-btn.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+.mset-note {
+  margin: var(--space-2) 0 0;
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+}
+
+.mset-note.is-strong {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.mset-foot {
+  margin: 2px 2px 0;
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+}
+
+.mset-head {
+  border-bottom: 0;
+  padding-bottom: 2px;
+}
+
+.mset-title {
+  font-size: var(--fs-26);
+  letter-spacing: -0.3px;
+}
+
+.mset-close {
+  background: var(--bg-sidebar);
+}
+
+.mset-card {
+  border-radius: 16px;
+  padding: 14px var(--space-4);
+  box-shadow: var(--shadow-xs);
+}
+
+.mset-group {
+  margin-bottom: var(--space-2);
+}
+
+.mset-row {
+  min-height: 48px;
+  gap: var(--space-3);
+}
+
+.mset-ico {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-lg);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.mset-row-title {
+  font-size: var(--fs-15-5);
+}
+
+.mset-row-sub {
+  font-size: var(--fs-12-5);
+}
+
+.mset-seg {
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--bg-sidebar);
+}
+
+.mset-seg-btn {
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  font-size: var(--fs-14);
+}
+
+.mset-seg-btn.is-on {
+  border: 0;
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 同步入口那颗云图标按钮（`SyncPanel` 的 `.btn-sync`）放到「设备配对与同步」行右侧，
+   不单独占一行（重设计 07 里那行是「一行设置」）。 */
+.mset-card:has(> .sync-panel) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: var(--space-2);
+}
+
+.mset-card:has(> .sync-panel) > .mset-group,
+.mset-card:has(> .sync-panel) > .mset-last,
+.mset-card:has(> .sync-panel) > .mset-status {
+  grid-column: 1 / -1;
+}
+
+.mset-card:has(> .sync-panel) > .mset-row {
+  grid-column: 1;
+}
+
+/* 同步行右侧只留云图标那颗真入口（箭头会与它重复）。 */
+.mset-card:has(> .sync-panel) > .mset-row .mset-go {
+  display: none;
+}
+
+.mset-card:has(> .sync-panel) > .sync-panel {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: center;
+  margin: 0;
+}
+
+/* ⭐ 2026-10-25（合并空间页）：行内加密入口 + 开启/关闭加密弹窗 */
+.set-crypto-scrim{position:fixed;inset:0;background:rgba(15,20,32,.45);z-index:80;display:grid;place-items:center}
+
+.set-crypto-dialog{width:min(640px,calc(100vw - 48px));background:var(--card-bg);border-radius:16px;box-shadow:0 20px 48px rgba(15,20,32,.28);padding:20px 22px;display:flex;flex-direction:column;gap:10px}
+
+.set-crypto-head{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3)}
+
+.set-crypto-title{font-size: var(--fs-16);font-weight:600;color:var(--text)}
+
+.set-crypto-steps{display:flex;flex-direction:column;gap:var(--space-2);background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:var(--space-3)}
+
+.set-crypto-steps b{display:block;font-size:var(--fs-12-5);color:var(--text)}
+
+.set-crypto-steps span{display:block;font-size:var(--fs-11-5);color:var(--text-dim);margin-top:2px}
+
+.set-crypto-label{font-size: var(--fs-12);color:var(--text-dim)}
+
+.set-crypto-check{display:flex;align-items:flex-start;gap:var(--space-2);font-size: var(--fs-12);color:var(--text-dim);line-height:1.5;cursor:pointer}
+
+.set-crypto-warn{display:flex;flex-direction:column;gap:6px;background:var(--warning-soft);border:1px solid var(--warning-line);border-radius:10px;padding:var(--space-3);font-size: var(--fs-12);color:var(--text-dim)}
+
+.set-crypto-err{font-size: var(--fs-12);color:var(--danger)}
+
+.set-crypto-foot{display:flex;justify-content:flex-end;gap:var(--space-2);margin-top:var(--space-1)}
+
+/* ⭐ 2026-10-25 真机修复：滚动容器是 flex 列 ⇒ 子项默认 flex-shrink:1，
+   12 行会被压扁/互相盖住（owner 截图：行卡重叠、按钮上下被切）。
+   ⛔ 不许靠给卡写死高度解决（行内文本换行时会溢出）⇒ 只禁止收缩。 */
+.set-space-list-scroll > .set-space-card { flex: 0 0 auto; }
+
+.set-space-row { min-height: 56px; }
+
+.set-space-row .set-row-text { flex: 1 1 auto; min-width: 0; }
+
+.set-space-row .set-btn { flex: 0 0 auto; white-space: nowrap; }
+
+/* ⭐ 2026-10-25 按设计稿收口：顶部安全卡 + 行内 ⋯ 菜单 + 状态/作用域 meta */
+.set-security-card{
+  background:linear-gradient(135deg,#f7faff 0%,#ffffff 70%);
+  border:1px solid #ecEEf2;border-radius:18px;padding:var(--space-4) 18px;margin-bottom:var(--space-4);
+}
+
+.set-space-card{position:relative}
+
+.set-space-row{min-height:60px}
+
+.set-space-scope{color:var(--text-faint)}
+
+.set-space-meta{gap:var(--space-2);flex-wrap:wrap}
+
+.set-space-crypto{
+  border:1px solid var(--border);border-radius:var(--radius-full);padding:1px var(--space-2);
+  font-size:var(--fs-10-5);line-height:18px;color:var(--text-dim);background:#f7f8fa;
+}
+
+.set-space-crypto:has(+ .set-space-sync){}
+
+.set-space-more{margin-left:auto;position:relative;flex:0 0 auto}
+
+.set-space-more>summary{
+  list-style:none;cursor:pointer;width:32px;height:32px;border-radius:var(--radius-md);
+  display:grid;place-items:center;color:var(--text-faint);font-size: var(--fs-16);
+}
+
+.set-space-more>summary::-webkit-details-marker{display:none}
+
+.set-space-more[open]>summary,.set-space-more>summary:hover{background:#f3f5f9;color:var(--text-dim)}
+
+.set-space-menu{
+  position:absolute;right:0;top:38px;z-index:20;min-width:150px;padding:6px;
+  background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius-lg);
+  box-shadow:0 12px 28px rgba(15,20,32,.16);display:flex;flex-direction:column;gap:2px;
+}
+
+.set-space-menu .set-btn{justify-content:flex-start;text-align:left;border:none;background:transparent}
+
+.set-space-menu .set-btn:hover:not(:disabled){background:#f3f5f9}
+
+/* ⭐ 2026-10-25 按设计稿重写：顶部安全卡 / 标题+筛选同排 / 行卡 */
+.set-security-card{
+  display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:var(--space-5);align-items:center;
+  background:linear-gradient(135deg,#f7faff 0%,#ffffff 70%);
+  border:1px solid #ecEEf2;border-radius:18px;padding:18px 20px;margin:2px 0 18px;
+}
+
+.set-security-left{min-width:0}
+
+.set-security-overline{font-size: var(--fs-11);color:var(--text-faint);letter-spacing:.02em}
+
+.set-security-title{display:flex;align-items:center;gap:10px;font-size: var(--fs-18);font-weight:600;margin-top:6px}
+
+.set-security-pill{font-size:var(--fs-10-5);font-weight:500;border-radius:var(--radius-full);padding:2px 9px;line-height:18px}
+
+.set-security-pill.is-ok{color:#0b802f;background:#e8faec}
+
+.set-security-pill.is-warn{color:#b45309;background:#fff3e8}
+
+.set-security-sub{font-size: var(--fs-12);color:var(--text-dim);margin-top:var(--space-2)}
+
+.set-security-chips{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-top:10px}
+
+.set-security-chips span{font-size:var(--fs-10-5);color:var(--text-dim);background:#f5f7fa;border-radius:var(--radius-full);padding:3px 10px}
+
+.set-security-hint{font-size:var(--fs-10-5);color:var(--text-faint);margin-top:var(--space-3)}
+
+.set-security-right{border-left:1px solid #edf0f6;padding-left:20px;display:flex;flex-direction:column;gap:var(--space-2)}
+
+.set-security-right-label{font-size:var(--fs-10-5);color:var(--text-faint)}
+
+.set-security-right .set-input{height:38px}
+
+.set-security-right .set-btn{height:38px}
+
+.set-security-ok{font-size: var(--fs-11);color:var(--text-dim);padding:var(--space-2) 0}
+
+.set-space-section .set-space-head{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);margin-bottom:var(--space-3);flex-wrap:wrap}
+
+.set-space-head-title{font-size:var(--fs-15-5);font-weight:600}
+
+.set-space-head-title>span{font-size: var(--fs-11);font-weight:400;color:var(--text-faint);margin-left:6px}
+
+.set-space-head-tools{display:flex;align-items:center;gap:10px;margin-left:auto}
+
+.set-space-seg{display:flex;background:#f4f6fa;border-radius:9px;padding:3px;gap:2px}
+
+.set-space-seg button{border:none;background:transparent;border-radius:7px;padding:5px 10px;font-size:var(--fs-10-5);color:var(--text-dim);cursor:pointer}
+
+.set-space-seg button.is-on{background:#fff;color:var(--text);box-shadow:0 1px 2px rgba(15,20,32,.08)}
+
+.set-space-card{border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card-bg);position:relative;overflow:visible}
+
+.set-space-card.is-active{background:#f5f9ff;border-color:#cfe0ff;box-shadow:inset 3px 0 0 var(--accent)}
+
+.set-space-row{display:flex;align-items:center;gap:var(--space-3);padding:11px 14px;min-height:60px}
+
+.set-space-mark{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);font-size: var(--fs-14);font-weight:600;flex:0 0 auto}
+
+.set-space-more{margin-left:auto;position:relative;flex:0 0 auto}
+
+.set-space-more>summary{list-style:none;cursor:pointer;width:30px;height:30px;border-radius:var(--radius-md);display:grid;place-items:center;color:var(--text-faint);font-size: var(--fs-16);line-height:1}
+
+.set-space-more>summary::-webkit-details-marker{display:none}
+
+.set-space-more>summary:hover,.set-space-more[open]>summary{background:#f0f3f8;color:var(--text-dim)}
+
+.set-space-menu{position:absolute;right:0;top:34px;z-index:30;min-width:150px;padding:6px;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 28px rgba(15,20,32,.16);display:flex;flex-direction:column;gap:2px}
+
+.set-space-menu .set-btn{justify-content:flex-start;border:none;background:transparent;text-align:left;height:32px;font-size: var(--fs-12)}
+
+.set-space-menu .set-btn:hover:not(:disabled){background:#f3f5f9}
+
+/* ⭐ 2026-10-25 真机对照设计稿：右侧口令行并排 / 行内状态 pill / 当前行弱化边框 */
+.set-security-right{display:flex;flex-direction:column;gap:var(--space-2);min-width:0}
+
+.set-security-row{display:flex;align-items:center;gap:var(--space-2)}
+
+.set-security-row .set-input{flex:1 1 auto;min-width:0}
+
+.set-security-row .set-btn{flex:0 0 auto;width:auto;min-width:84px;white-space:nowrap}
+
+.set-security-chips{flex-wrap:nowrap;overflow:hidden}
+
+.set-security-chips span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.set-space-state{font-size:var(--fs-10-5);line-height:18px;border-radius:var(--radius-full);padding:1px var(--space-2);flex:0 0 auto}
+
+.set-space-state.is-enc{color:#0b802f;background:#e8faec}
+
+.set-space-state.is-plain{color:var(--text-dim);background:#f2f3f5}
+
+.set-space-card.is-active{border-color:#dbe7ff;background:#f5f9ff;box-shadow:inset 3px 0 0 var(--accent)}
+
+.set-space-crypto.is-enc{color:#0b802f;background:#e8faec;border-color:#c9f0d3}
+
+.set-space-crypto.is-plain{color:var(--text-dim);background:#f2f3f5}
+
+/* ⭐ 2026-10-25 按效果图：chips 不缩、单空间迁移合成一条、低频项收进入口 */
+.set-security-chips{flex-wrap:wrap;overflow:visible}
+
+.set-security-chips span{flex:0 0 auto;max-width:100%;white-space:nowrap;overflow:visible;text-overflow:clip}
+
+.set-migrate{
+  display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--border);
+  border-radius:var(--radius-lg);background:var(--card-bg);overflow:hidden;
+}
+
+.set-migrate-card{border:none;border-radius:0;padding:14px var(--space-4);background:transparent}
+
+.set-migrate-card + .set-migrate-card{border-left:1px solid var(--border)}
+
+/* ⭐ 2026-10-25 对照效果图：空间列表是一张白卡（行间分隔线），不是每行一张卡 */
+.set-space-list{
+  display:flex;flex-direction:column;gap:0;background:var(--card-bg);
+  border:1px solid var(--border);border-radius:18px;overflow:hidden;
+}
+
+.set-space-list .set-space-card{
+  border:none;border-radius:0;background:transparent;box-shadow:none;
+  border-bottom:1px solid var(--border);
+}
+
+.set-space-list .set-space-card:last-child{border-bottom:none}
+
+.set-space-list .set-space-card.is-active{background:#f5f9ff;box-shadow:inset 3px 0 0 var(--accent)}
+
+.set-space-mark{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;background:#eef3ff;color:var(--accent);flex:0 0 auto}
+
+.set-space-row{min-height:64px;padding:var(--space-3) var(--space-4)}
+
+.set-space-row:hover{background:#fafbfd}
+
+.set-space-list .set-space-card.is-active .set-space-row:hover{background:transparent}
+
+.set-space-head-tools{flex:0 0 auto}
+
+.set-space-filter-wrap{flex:0 0 210px}
+
+.set-security-right{width:280px;max-width:280px;justify-self:end;min-width:0}
+
+.set-security-row{display:flex;align-items:center;gap:var(--space-2);min-width:0}
+
+.set-security-row .set-input{flex:1 1 auto;min-width:0;width:100%}
+
+.set-security-row .set-btn{flex:0 0 auto;width:auto;min-width:78px}
+
+.set-security-chips{display:flex;flex-wrap:nowrap;gap:var(--space-2);overflow:hidden}
+
+.set-security-chips span{flex:0 0 auto;font-size: var(--fs-10);padding:2px var(--space-2);white-space:nowrap}
+
+/* ⭐ 2026-10-25 真机：行内 ⋯ 菜单被列表卡/行卡的 overflow:hidden 裁掉。
+   ⇒ 列表与行卡都允许溢出（圆角靠首/末行自己补），菜单再抬一层 z-index。 */
+.set-space-list{overflow:visible}
+
+.set-space-list .set-space-card{overflow:visible}
+
+.set-space-list .set-space-card:first-child{border-radius:18px 18px 0 0}
+
+.set-space-list .set-space-card:last-child{border-radius:0 0 18px 18px}
+
+.set-space-list .set-space-card:only-child{border-radius:18px}
+
+.set-space-list .set-space-card.is-active:first-child{border-radius:18px 18px 0 0}
+
+.set-space-list .set-space-card.is-active:last-child{border-radius:0 0 18px 18px}
+
+.set-space-more[open]{z-index:50}
+
+.set-space-menu{z-index:60}
+
+/* ⭐ 2026-10-25 owner：明文/已加密要**对齐**（同一条竖线），不要再跟着名字长度漂 */
+.set-space-row .set-row-text{flex:1 1 auto;min-width:0}
+
+.set-space-status{
+  flex:0 0 84px;width:84px;display:flex;align-items:center;justify-content:flex-start;
+}
+
+.set-space-status .set-space-crypto,.set-space-status .set-space-state{white-space:nowrap}
+
+.set-space-row .set-space-more{margin-left:0}
+
+/* ⭐ 2026-10-25 owner：筛选空间控件靠右 + 与分段水平对齐；行内菜单加 SVG 图标 */
+.set-space-head .set-space-filter-wrap{
+  margin-bottom:0;flex:0 0 200px;width:200px;align-self:center;
+}
+
+.set-space-head-tools{justify-content:flex-end;align-items:center}
+
+.set-space-head .set-space-seg{align-self:center;height:36px;align-items:center}
+
+.set-space-menu .set-btn{display:flex;align-items:center;gap:var(--space-2)}
+
+.set-space-menu .set-btn svg{flex:0 0 auto}
+
+/* ⭐ 2026-10-25 owner：筛选空间控件再窄一点 */
+.set-space-head .set-space-filter-wrap{flex:0 0 168px;width:168px}
+
+/* ⭐ 2026-10-25 owner：筛选框再窄到 120px（为窄框单独收内边距，避免占位被裁） */
+.set-space-head .set-space-filter-wrap{flex:0 0 120px;width:120px}
+
+.set-space-head .set-space-filter-wrap>svg{left:8px}
+
+.set-space-head .set-space-filter.sync-input{padding-left:28px;padding-right:18px}
+
+/* ⭐ 2026-10-25 owner：分段控件左右留白再大一点 */
+.set-space-seg{padding:3px 6px;gap:var(--space-1)}
+
+.set-space-seg button{padding:5px var(--space-3)}
+
+.set-section:has(.acct-device-row) .set-section-title{margin-bottom:2px}
+
+.mset-card { border-radius: 18px; padding: 11px 13px; box-shadow: var(--shadow-xs); min-width: 0; flex: none; }
+
+.mset-row { min-width: 0; }
+
+.mset-body { min-width: 0; }
+
+.mset-name-edit { width: 100%; min-width: 0; }
+
+.mset-name-input { flex: 1 1 0; width: 100%; }
+
+.mset-close { flex: none; }
+
+.mset-group { font-size: var(--fs-10-5); letter-spacing: .6px; font-weight: 650; margin-bottom: var(--space-1); }
+
+.mset-row { gap: 11px; padding: 7px 0; }
+
+.mset-ico { width: 34px; height: 34px; border-radius: 11px; background: var(--bg-sidebar); color: var(--text-dim); }
+
+.mset-row-title { font-size: var(--fs-13-5); font-weight: 650; }
+
+.mset-row-sub { font-size: var(--fs-11); }
+
+.mset-go { display: grid; place-items: center; color: var(--text-faint); }
+
+.mset-name-row { align-items: flex-start; }
+
+.mset-name-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  height: 36px;
+  padding: 0 var(--space-2) 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+}
+
+.mset-name-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-13);
+  font-weight: 600;
+}
+
+.mset-name-save {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.mset-name-save:disabled { opacity: .45; }
+
+.mset-name-status { font-size: var(--fs-10-5); color: var(--text-faint); line-height: 1.5; }
+
+.mset-current-space .mset-go { color: var(--success); }
+
+.mset-seg-btn { min-height: 36px; font-size: var(--fs-12-5); }
+
+.mset-note { margin-top: 6px; font-size: var(--fs-10-5); }
+
+.mset-foot { font-size: var(--fs-10-5); }
+
+/* 设置页「同步」卡（2026-10-26 按效果图 04）：已配对状态 ＋ 立即同步 ＋ 管理设备。 */
+.mset-sync-line { display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: var(--fs-11); color: var(--text-dim); }
+
+.mset-sync-actions { display: flex; gap: var(--space-2); margin-top: 10px; }
+
+.mset-sync-primary {
+  flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: 11px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--fs-12);
+  font-weight: 650;
+  box-shadow: 0 5px 12px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.mset-sync-primary:disabled { opacity: .5; }
+
+.mset-sync-report { margin: var(--space-2) 0 0; font-size: var(--fs-10-5); line-height: 1.5; color: var(--text-faint); }
+
+@media (min-width: 601px) {
+.set-space-filter.sync-input {
+    min-height: 36px;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}
+
+@media (max-width: 768px), (max-height: 520px) {
+.set-dialog {
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    /* `--ovh` 已经扣掉状态栏与底部（手势条 / 键盘）：盒子在任何视口下都装得下。 */
+    max-height: calc(var(--ovh) - 24px);
+  }
+.set-overlay {
+    padding: var(--sat) var(--sar) max(var(--sab), var(--kb)) var(--sal);
+    place-items: stretch;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+.set-dialog {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    border-radius: 0;
+    border: none;
+    /* 桌面上的 `resize: both` 在手机上没有意义，而且会把 min-width 一起带回来。 */
+    resize: none;
+  }
+/* 设置：竖排分类栏改成顶部横向条（竖排 224px 在 390px 视口里占掉 57%）。 */
+  .set-dialog {
+    flex-direction: column;
+  }
+/* ⚠️ 列向 flex 里"该滚的那个"必须能被压缩：`.set-body{flex:1}` 但**没有**
+     `min-height:0`，它的自动最小高度就是内容高度 ⇒ 面板一矮就不缩、也不滚，
+     外层 `.set-dialog{overflow:hidden}` 直接裁。实测 792×360（矮视口）下面板被裁 142px。
+     这条就是 §4.1.2 第 1 条那句"列向 flex 要让该滚的真的滚，还得给它 min-height:0"
+     ——规则早就写了，只是 `.set-body` 这一处漏了。 */
+  .set-body,
+  .set-body-scroll {
+    min-height: 0;
+  }
+/* ⭐ 2026-10-10 补：`.set-body{min-height:0}` 之后**仍剩 26px 裁切**（`mobile-overlays`
+     逐字：`✗ 有内容被裁却滚不动：set-dialog(+26px, overflow-y:hidden)`）——
+     因为外层 `.set-dialog` 的 `overflow:hidden`（桌面那条 13290 行）在矮视口下
+     会把"内部各段加起来比面板高"的那 26px **直接裁掉且滚不动**。
+     ⇒ 矮视口里让**面板自己**成为可滚容器（`overflow-y:auto`）：桌面布局不受影响
+     （这条只在 `max-width:768px` / `max-height:520px` 里生效 ✓）；
+     内层 `.set-body-scroll` 仍是主滚动容器 ✓，面板这层只兜住"谁都没接住"的那几像素 ✓。 */
+  .set-dialog {
+    overflow-y: auto;
+  }
+.set-rail {
+    flex: none;
+    width: 100%;
+    flex-direction: row;
+    align-items: stretch;
+    gap: var(--space-1);
+    padding: 6px var(--space-2);
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+.set-rail-title,
+  .set-rail-hint {
+    display: none;
+  }
+.set-rail-item {
+    flex: 0 0 auto;
+    padding: var(--space-2) 10px;
+    min-height: 44px;
+  }
+/* ⭐ 2026-10-10：手机横排时，`.set-rail` 的子项是**分组容器** `.set-rail-group`，
+     而它没有 `flex: 0 0 auto` ⇒ 作为横排 flex 子项被**挤压** ⇒ 组内每一项窄到只能
+     **单字竖排**（门禁逐字：`分组宽 69/69/69/69px；组内标签最高 90px` ✗；真机同形 ✓）。
+     ⚠️ 这两条一度被我**误撤**（我拿"改完只等 2 秒就量"的假绿变异当证据 ✗，
+     那次 dev server 已在跑、CSS 热更新还没生效 ✗）——是**门禁自己**把真相顶回来的 ✓
+     （撤掉后 `mobile-overlays` 立刻 `1017 通过 / 3 失败` ✗）。 */
+  .set-rail-group {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+.set-rail-group-title,
+  .set-rail-label {
+    white-space: nowrap;
+  }
+.set-body-scroll {
+    padding: var(--space-4) 14px;
+    padding-bottom: 28px;
+    overscroll-behavior-y: contain;
+  }
+.set-body-inner {
+    max-width: 100%;
+  }
+.set-close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+.set-dialog button {
+    min-height: 44px;
+  }
+}
+}

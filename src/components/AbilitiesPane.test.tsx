@@ -26,9 +26,9 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import "../i18n"; // 先初始化 i18n，免得刷一屏 NO_I18NEXT_INSTANCE（同 vaultGate.test.ts ✓）
+import { allCssText } from "../lib/cssSources";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const APP_CSS = resolve(HERE, "../App.css");
 const SRC_TSX = resolve(HERE, "AbilitiesPane.tsx");
 
 // 本组件挂载时**不**联网（note 都是清单里的静态值 ✓）；只有点「下载」才会走 api ✓。
@@ -132,7 +132,7 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
   //    而它当时**绿着、现象没变** ✗（owner 截图里还是"一个字一列" ✓）。
   //    ⇒ 教训：⭐ **别判"文本里有没有某个声明"✗，判"那个形状对不对"** ✓（同 `spaceSecurity` 那次的误伤 ✓）。
   it("⭐ d) 那一格必须有**确定的宽度基准**（⛔ 不许 `0 1 auto`）—— 钉住「被 `.set-row-text` 饿死」那个成因", () => {
-    const css = readFileSync(APP_CSS, "utf8");
+    const css = allCssText();
     const m = /\.set-row-note\s*\{([^}]*)\}/.exec(css);
     expect(m, "`set-row-note` 必须有它自己的规则（本仓规矩：新类名没规则 = 裸的 ✗）").not.toBeNull();
     const rule = m![1];
@@ -221,7 +221,7 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
   }
 
   it("⭐ f) CSS：那一格**最多 2 行**（视觉截断生效的三件套）", () => {
-    const css = readFileSync(APP_CSS, "utf8");
+    const css = allCssText();
     const m = /\.set-row-note\s*\{([^}]*)\}/.exec(css);
     expect(m, "`set-row-note` 必须有它自己的规则").not.toBeNull();
     const rule = m![1];

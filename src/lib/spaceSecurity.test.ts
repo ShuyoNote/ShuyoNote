@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { spaceCryptoBadge } from "./spaceSecurity";
+import { allCssText } from "./cssSources";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (p: string) => readFileSync(join(root, p), "utf8");
@@ -92,7 +93,7 @@ describe("加密标识 · 接线（侧栏空间切换器那一行）", () => {
 
   it("⛔ 不许只靠颜色 ＋ 两个落点的样式**写在同一条规则里**（分开写就会各自漂）", () => {
     // ⚠️ 标识是**文字**（`label` ✓），但**样式**也不能退化成"只有颜色" ✗（色弱用户看不到 ✓）。
-    const css = read("src/App.css");
+    const css = allCssText();
     const at = css.indexOf(".space-item-crypto");
     expect(at, "侧栏那个标识没有任何样式").toBeGreaterThan(-1);
     const block = css.slice(at, css.indexOf("}", at));

@@ -152,6 +152,8 @@ import "./styles/activity-bar.css";
 import "./styles/attachments.css";
 // S4-11（2026-11-01）：邮箱域（`.email-*`）。
 import "./styles/email.css";
+// S4-12（2026-11-01）：设置域（`.set-*` / `.mset-*`，含移动端设置卡）。
+import "./styles/settings.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
