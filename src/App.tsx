@@ -230,6 +230,8 @@ import "./styles/backlinks.css";
 import "./styles/breadcrumbs.css";
 // S4-43（2026-11-01）：编辑器零散小簇（`.find-btn` / `.insert-item` / `.unlinked-mention-link` / `.empty-cta` / `.title-area` / `.note-scroll` / `.npg-*`）。
 import "./styles/editor-misc.css";
+// S4-44（2026-11-01）：锁屏/解锁域（`.lock-*`）。
+import "./styles/lock.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

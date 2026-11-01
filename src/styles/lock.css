@@ -1,0 +1,242 @@
+/* S4（2026-11-01）：域抽取器搬出的**锁屏/解锁域（`.lock-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* E1 encryption lock screen (shown when the workspace DBs are encrypted + session locked) */
+.lock-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: #0b1533;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+}
+
+.lock-card {
+  width: 380px;
+  max-width: 92vw;
+  background: #1c2340;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 28px 26px;
+  text-align: center;
+  color: #fff;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+}
+
+.lock-logo {
+  font-size: var(--fs-40);
+  margin-bottom: var(--space-3);
+}
+
+.lock-title {
+  font-size: var(--fs-18);
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.lock-desc {
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.75);
+  margin-bottom: 18px;
+}
+
+.lock-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.lock-button {
+  margin-top: var(--space-3);
+  width: 100%;
+  padding: 10px 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: #3370ff;
+  color: #fff;
+  font-size: var(--fs-14);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lock-button:hover {
+  background: #2b5fe0;
+}
+
+.lock-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lock-error {
+  margin-top: var(--space-3);
+  font-size: var(--fs-13);
+  color: #ffb3b3;
+}
+
+.lock-error-count {
+  margin-left: var(--space-1);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* E2：口令框 + 显示/隐藏；忘了口令的人第一条出路是"先看清自己打了什么"。 */
+.lock-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.lock-reveal {
+  flex: 0 0 auto;
+  padding: var(--space-2) 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: var(--fs-12);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.lock-reveal:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.lock-forgot-toggle {
+  margin-top: var(--space-4);
+  background: none;
+  border: none;
+  padding: 0;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: var(--fs-12);
+  font-family: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.lock-forgot-toggle:hover {
+  color: #fff;
+}
+
+/* 「忘记口令？」摊开后的说明：左对齐、可滚动——锁定屏本身是固定高度的居中卡片，
+   说明写长了不能把解锁按钮挤出可视区（窄屏/小屏尤其）。 */
+.lock-forgot {
+  margin-top: var(--space-3);
+  text-align: left;
+  font-size: var(--fs-12);
+  line-height: 1.65;
+  color: rgba(255, 255, 255, 0.78);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  padding-top: var(--space-3);
+  max-height: 42vh;
+  overflow: auto;
+}
+
+.lock-forgot-lead {
+  margin: 0 0 var(--space-2);
+}
+
+.lock-forgot-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lock-forgot-foot {
+  margin: var(--space-2) 0 0;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+/* ⭐ 2026-10-10（owner）：「忘记口令」改成**弹窗** —— 锁屏本身保持短，说明进浮层 ✓。
+   ⚠️ 纯 CSS（⛔ 不引依赖 ✗）；颜色/圆角/阴影**复用既有变量** ✓（与 `.confirm-overlay` / `.lock-*` 同一套 ✓）。
+   ⚠️ 正文字号**不小于**原来那条（12px ✓）——「酷炫」⛔ 不许牺牲可读性 ✗。 */
+.lock-forgot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1500; /* ⚠️ 高于 `.confirm-overlay` 的 1400：这块屏本身就是最高优先级的门口 ✓ */
+  background: rgba(8, 12, 22, 0.62);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: lock-forgot-fade 140ms ease-out;
+}
+
+.lock-forgot-modal {
+  width: min(520px, calc(100vw - 40px));
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+  text-align: left;
+  color: rgba(255, 255, 255, 0.82);
+  /* ⭐ 2026-10-11（owner 截图：「忘记口令的说明是空的？」）—— ⭐ **这是个真 bug** ✗：
+     原来这里是 `background: var(--surface)` ✓，⭐ 而 `--surface` **跟着应用主题走** ✗
+     （⭐ 实测：⭐ 浅色主题 `data-theme=light` ⇒ ⭐ `--surface` ＝ **#ffffff** ✓；⭐ 深色主题才是 #242529 ✓）
+     ⇒ ⭐ ⭐ 而这块卡片里的文字是**写死的白** ✗（⭐ 上面那行 ✓）⇒ ⭐ **白底白字 ＝ 整块看不见** ✓
+     （⭐ 截图里只剩那个 🔑 —— ⭐ emoji 自带颜色，⭐ 所以只有它可见 ✓）。
+     ⚠️ 根因是**两套口径混用** ✗：⭐ 它坐在 `.lock-screen` 上，⭐ 而那块屏是**永远深色**的
+     （⭐ `background: #0b1533` **写死** ✓，⭐ 不跟主题 ✓）⇒ ⭐ 卡片**必须**也跟着"⭐ 永远深色 ✗" ✓。
+     ⇒ ⭐ 用原来那个**兜底值** `#16203a` 写死 ✓（⭐ 它就是当初的意图 ✓，⭐ 只是被 `var()` 抢先了 ✓）。
+     ⛔ 不去改锁屏本身：⭐ "⭐ 锁屏永远深色 ✗"是有意为之 ✓（⭐ 门口那块不该随主题忽明忽暗 ✓）。 */
+  background: #16203a;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  padding: var(--space-4) 18px 14px;
+  animation: lock-forgot-pop 160ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.lock-forgot-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.lock-forgot-modal-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.lock-forgot-modal-title {
+  flex: 1;
+  font-size: var(--fs-14);
+  font-weight: 600;
+  color: #fff;
+}
+
+.lock-forgot-close {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: var(--fs-18);
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.lock-forgot-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.lock-forgot-modal-body {
+  font-size: var(--fs-12);
+  line-height: 1.65;
+}
+}
