@@ -68,7 +68,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 
 <!-- facts:begin -->
 门禁 86 条（contract 58 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 9 / artifact 3 / deploy 1）· 能力 70 条 · 命令 Rust 289 / web 252 / CommandMap 290
-基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 3585 · smoke-web 365 · check-pdf-reload 8 · check-panel-layout 61 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 68 · mobile-overlays 756 · mobile-views 249 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
+基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 3585 · smoke-web 365 · check-pdf-reload 8 · check-panel-layout 66 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 68 · mobile-overlays 756 · mobile-views 249 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
@@ -131,7 +131,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | sync | `two-device-sync` | 两设备并发编辑的同步一致性（真实 `applyChange` + 真实 sql.js） |
 | plugin | `examples-tsc` / `plugin-cli-validate` / `plugin-new-smoke` | "只看文档就能写出插件"：类型包、作者 CLI、脚手架生成的起点当场可用 |
 | browser | `check-pdf-reload` | StrictMode 下 PDF 二次加载交回已 detach 的 buffer（8 断言） |
-| browser | `check-panel-layout` | "文字被挤成一条竖柱"这类纯几何问题（61 断言；⭐ 2026-10-08 起还量**知识地图卡片的长名是否折行**——长名必须**单行 ＋ 省略号**，折行会把卡片顶高、名字被断成两截 ✓） |
+| browser | `check-panel-layout` | "文字被挤成一条竖柱"这类纯几何问题（66 断言；⭐ 2026-10-08 起还量**知识地图卡片的长名是否折行**——长名必须**单行 ＋ 省略号**，折行会把卡片顶高、名字被断成两截 ✓） |
 | browser | `check-web-build` | 构建产物打不开：v1.84.1 删掉 sql.js wasm / pdf worker，页面照开但 DB 初始化失败（13 断言；⭐ 2026-10-08 起还量 **AI 设置页的单卡宽度**与**正文不重复面板名**——真 Chromium 打开那一页取几何与 DOM ✓） |
 | browser | `check-editor-table-gesture` | **在表格单元格上拖选就报 `Lexical error #335`**（＝`tableObserver not found for tableKey`）：owner 2026-10-08 贴来的 1.92.6 生产控制台日志连发 6 次。⭐ 它抓的**第二层**才是真因 —— 2026-10-01 那次修复**只打在 `LexicalTable.dev.*`**，而线上走 `production` 产物 ⇒ **从没生效** ✗；本门禁跑 `pnpm build:web` 的**真产物**，只修 dev 的回归会当场变红（5 断言：① 只拖选必须 0 行；② 拖拽中表被撤掉也必须 0 行——②**先断言前提**"撤销后表真的没了"，否则它是空判据 ✗。⚠️ 判据要靠**真指针**：合成 `MouseEvent` 触不到 pointer 手势 ⇒ 会假绿） |
 | mobile | `mobile-layout` / `mobile-overlays` | 窄屏布局与浮层三类"功能直接不可用且不报错"的坏法（43 / 979 断言） |
