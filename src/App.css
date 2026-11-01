@@ -2802,204 +2802,45 @@ select.prop-value {
   word-break: break-all;
 }
 
-/* Block drag handle */
-.block-handle {
-  position: fixed;
-  z-index: 25;
-  width: 48px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--fs-15);
-  letter-spacing: -1px;
-  color: var(--text-faint);
-  cursor: grab;
-  border-radius: var(--radius-xs);
-  user-select: none;
-  transition: color var(--transition-fast), background var(--transition-fast), opacity var(--transition-fast);
-}
-.block-handle::before {
-  content: "";
-  position: absolute;
-  /* 扩大不可见命中区便于抓取，但只向左/上下扩，且右侧留 4px 缝隙，
-     绝不越过手柄右缘伸进正文——段首（正文起点=rect.left）点选/拖拽文字时
-     命中的必定是正文而非手柄，保证文字选中优先。 */
-  inset: -16px 4px -16px -16px;
-}
 
-.block-handle:hover {
-  background: var(--hover);
-  color: var(--text-dim);
-}
 
-.block-handle:active {
-  cursor: grabbing;
-}
 
-.block-handle--dragging {
-  pointer-events: none;
-  cursor: grabbing;
-  color: var(--text-dim);
-  background: var(--hover);
-  opacity: 0.85;
-  box-shadow: var(--shadow-md);
-  transition: none;
-}
 
-/* 块手柄单击弹出的「块操作」菜单（复制/删除/清空选择）。 */
-.block-grip-menu {
-  z-index: 210;
-  display: flex;
-  flex-direction: column;
-  min-width: 172px;
-  padding: 6px;
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
-  backdrop-filter: blur(10px) saturate(1.05);
-  -webkit-backdrop-filter: blur(10px) saturate(1.05);
-  font-size: var(--fs-13);
-  font-family: inherit;
-  animation: block-grip-menu-in 0.14s ease-out;
-}
+
+
+
+
+
+
 @keyframes block-grip-menu-in {
   from { opacity: 0; transform: translateY(4px) scale(0.98); }
   to { opacity: 1; transform: none; }
 }
-.block-grip-menu-head {
-  padding: 2px var(--space-2) 5px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 3px;
-}
-.block-grip-menu-title {
-  color: var(--text-faint);
-  font-weight: 700;
-  font-size: var(--fs-11);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.block-grip-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  border: none;
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  font-size: var(--fs-13);
-  font-family: inherit;
-  padding: 7px 9px;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
-}
-.block-grip-item svg { flex: none; color: var(--text-dim); transition: color 0.12s; }
-.block-grip-item:hover { background: var(--hover); color: var(--text); }
-.block-grip-item:hover svg { color: var(--text); }
-.block-grip-item:active { transform: translateY(0.5px); }
-.block-grip-item.danger { color: var(--danger); }
-.block-grip-item.danger svg { color: var(--danger); }
-.block-grip-item.danger:hover { background: var(--danger-soft); }
-.block-grip-menu-sep {
-  height: 1px;
-  background: var(--border);
-  margin: var(--space-1) var(--space-2);
-}
 
-/* Insertion indicator shown while dragging a block. */
-.block-drop-line {
-  position: fixed;
-  z-index: 24;
-  height: 3px;
-  border-radius: 3px;
-  background: var(--accent);
-  pointer-events: none;
-  transform: translateY(-1px);
-}
 
-.block-drop-line::before {
-  content: "";
-  position: absolute;
-  left: -6px;
-  top: 50%;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  transform: translateY(-50%);
-}
 
-/* Feishu-style inline "+" (insert-block): shown over an EMPTY top-level block, in
-   the left gutter, instead of the ⋮⋮ grip. The anchor wraps the "+" handle and the
-   popover so hovering either keeps the panel open (the popover opens on hover over
-   "+", not on click, and stays while the cursor is on the handle or panel). */
-.block-insert-anchor {
-  position: fixed;
-  z-index: 25;
-  width: 48px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center; /* center the "+" so its center aligns with the ⋮⋮ handle */
-  box-sizing: border-box;
-}
 
-.block-insert-plus {
-  position: relative;
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-dim);
-  cursor: pointer;
-  border-radius: 50%;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
-  user-select: none;
-  transition: color var(--transition-fast), background var(--transition-fast),
-    border-color var(--transition-fast), box-shadow var(--transition-fast),
-    transform var(--transition-fast);
-}
 
-.block-insert-plus::before {
-  content: "";
-  position: absolute;
-  /* enlarge the invisible hit area evenly around the small circle */
-  inset: -8px;
-}
 
-.block-insert-plus:hover {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-  box-shadow: 0 2px 6px rgba(51, 112, 255, 0.35);
-  transform: scale(1.06);
-}
 
-/* Block-insert popover (Feishu-style grouped panel) reuses the insert-block
-   classes (.insert-block-search/.insert-group/.insert-item/.insert-name/etc.).
-   Anchored to the "+" (via the anchor container), opening to the right/top. */
-.block-insert-popover {
-  position: fixed;
-  z-index: 60;
-  width: 300px;
-  max-height: 560px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
-  padding: 6px;
-  animation: pop 0.16s ease;
-  /* top/left come from inline style (clamped beside the "+" button) */
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* Pinned "AI 帮我写" entry at the top of the insert panel. */
 .insert-ai-entry {
@@ -3037,27 +2878,6 @@ select.prop-value {
   font-weight: 500;
 }
 
-/* Block handle menu (click the ⋮⋮ grip) */
-
-.block-menu button.danger {
-  color: var(--danger);
-}
-
-.block-menu button.danger:hover {
-  background: var(--danger-soft);
-}
-
-
-
-/* Drag marquee (box-select) overlay — armed only from the blank/safe zone. */
-.block-box-select {
-  position: fixed;
-  z-index: 28;
-  background: rgba(51, 112, 255, 0.14);
-  border: 1px solid rgba(51, 112, 255, 0.7);
-  border-radius: 2px;
-  pointer-events: none;
-}
 
 
 
@@ -3071,13 +2891,15 @@ select.prop-value {
 
 
 
-/* Right-click context menu for selected blocks. */
-.block-context-menu button.danger {
-  color: var(--danger);
-}
-.block-context-menu button.danger:hover {
-  background: var(--danger-soft);
-}
+
+
+
+
+
+
+
+
+
 
 
 
@@ -4274,94 +4096,36 @@ select.prop-value {
   text-overflow: ellipsis;
 }
 
-/* Block reference ((blockId)) */
-.block-ref {
-  color: var(--accent);
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-underline-offset: 2px;
-  cursor: pointer;
-  border-radius: 2px;
-}
-
-.block-ref:hover {
-  background: var(--accent-soft);
-}
 
 
 
-.block-flash {
-  animation: block-flash 1.6s ease;
-}
+
+
+
+
 
 @keyframes block-flash {
   0% { background: var(--accent-soft); }
   100% { background: transparent; }
 }
 
-.block-ref-preview {
-  /* ⭐ 2026-11-01：同一条层叠纪律 —— 临时浮层用 `--z-popover`（700），压过右侧目录（40）。 */
-  z-index: var(--z-popover);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  padding: 10px var(--space-3);
-  max-width: 340px;
-  animation: pop 0.14s ease;
-}
-
-.block-ref-preview-title {
-  font-size: var(--fs-11);
-  font-weight: 600;
-  color: var(--text-dim);
-  margin-bottom: var(--space-1);
-}
-
-.block-ref-preview-snippet {
-  font-size: var(--fs-13);
-  color: var(--text);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
 
 
 
-.block-embed {
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  padding: 10px var(--space-3);
-  cursor: pointer;
-}
 
-.block-embed:hover {
-  background: var(--hover);
-}
 
-.block-embed-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  margin-bottom: 6px;
-}
 
-.block-embed-from {
-  font-size: var(--fs-11);
-  font-weight: 600;
-  color: var(--text-dim);
-}
 
-.block-embed-refresh {
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-  font-size: var(--fs-13);
-  padding: 2px var(--space-1);
-}
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -4421,132 +4185,37 @@ select.prop-value {
   font-size: var(--fs-14);
 }
 
-.block-embed-refresh:hover {
-  color: var(--text);
-}
 
-.block-embed-content {
-  font-size: var(--fs-14);
-  color: var(--text);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 240px;
-  overflow-y: auto;
-}
 
-.block-embed-loading,
-.block-embed-error {
-  padding: 10px var(--space-3);
-  color: var(--text-faint);
-  font-size: var(--fs-13);
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-}
 
-.block-embed-error button {
-  margin-left: var(--space-2);
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  border-radius: var(--radius-xs);
-  padding: 2px var(--space-2);
-  font-size: var(--fs-12);
-  cursor: pointer;
-}
 
-/* Block picker (block selector) */
-.block-selector-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 45;
-  background: rgba(0, 0, 0, 0.28);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 12vh;
-}
 
-.block-selector {
-  width: 480px;
-  max-width: 90vw;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  overflow: hidden;
-  animation: pop 0.16s ease;
-}
 
-.block-selector-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px var(--space-3);
-  border-bottom: 1px solid var(--border);
-}
 
-.block-selector-title {
-  font-size: var(--fs-13);
-  font-weight: 600;
-  color: var(--text-dim);
-  flex-shrink: 0;
-}
 
-.block-selector-input {
-  flex: 1;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-size: var(--fs-14);
-  color: var(--text);
-}
 
-.block-selector-results {
-  max-height: 320px;
-  overflow-y: auto;
-  padding: var(--space-1);
-}
 
-.block-selector-empty {
-  padding: 18px var(--space-3);
-  color: var(--text-faint);
-  font-size: var(--fs-13);
-  text-align: center;
-}
 
-.block-selector-item {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  width: 100%;
-  border: none;
-  background: transparent;
-  padding: var(--space-2) 10px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  text-align: left;
-}
 
-.block-selector-item:hover {
-  background: var(--hover);
-}
 
-.block-selector-item-active {
-  background: var(--accent-soft);
-}
 
-.block-selector-snippet {
-  font-size: var(--fs-13);
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
-.block-selector-page {
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* Markdown toolbar */
 
@@ -8304,11 +7973,7 @@ button.ui-toggle::after {
   color: var(--accent-strong);
 }
 
-/* 阶段 1 · **冲突块角标**（`editor/blockConflictBadge.ts`）：提示条里那几条对应的块，在正文里也看得出来。
-   只用一条内阴影，不动块的背景 —— 正文里的背景属于主题/引用/代码块，改它会把格式吃掉。 */
-.block-conflict {
-  box-shadow: inset 3px 0 0 var(--danger);
-}
+
 
 /* ---- S3 时间复盘页（components/TimelineReview.tsx）----
    只读视图：按天回看「这些天做过什么」。两种空态**必须长得不一样**：

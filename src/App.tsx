@@ -202,6 +202,8 @@ import "./styles/palette.css";
 // S4-33（2026-11-01）：模板中心域（`.tc-*`）与关系图控件域（`.graph-controls*`）。
 import "./styles/template-center.css";
 import "./styles/graph-controls.css";
+// S4-34（2026-11-01）：块操作域（`.block-*`）。
+import "./styles/block.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
