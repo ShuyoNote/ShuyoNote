@@ -194,6 +194,9 @@ import "./styles/plugin-panel.css";
 import "./styles/webbookmark-card.css";
 import "./styles/account.css";
 import "./styles/mset.css";
+// S4-31（2026-11-01）：内联绘图（`.inline-drawing*`）与血统冲突横幅（`.conflict-banner-lineage*`）。
+import "./styles/inline-drawing.css";
+import "./styles/conflict-lineage.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

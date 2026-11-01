@@ -1,0 +1,141 @@
+/* S4（2026-11-01）：域抽取器搬出的**内联绘图域（`.inline-drawing*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* Inline drawing (page-embedded Excalidraw) */
+/* Outer shell: position anchor for the floating control bar. The control bar is
+   rendered OUTSIDE the drawing box (just above it) so it never covers the canvas
+   and never blocks 看图 (viewing the drawing). */
+.inline-drawing-wrap {
+  position: relative;
+  margin: 0;
+}
+
+.inline-drawing {
+  position: relative;
+  border: 0;
+  border-radius: 0;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+/* Control bar: pinned to the TOP INSIDE the drawing box (over the canvas), shown on
+   hover (Feishu-style). Because it lives inside `.inline-drawing` (overflow hidden),
+   it never overflows; it floats over the top of the canvas.
+   - `top: 0` (not above the box) so it sits inside the block's top edge — the cursor
+     moving onto the bar keeps the wrap's `:hover` active (no dead-zone gap).
+   - Style: transparent background with a thin `--border` outline (the original,
+     light look) — no filled panel / shadow, so it doesn't cover the canvas. */
+.inline-drawing-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  flex-wrap: wrap;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 8;
+  transition: opacity 0.15s ease;
+}
+
+.inline-drawing-wrap:not(:hover) .inline-drawing-bar {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.inline-drawing-btn {
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) 9px;
+  font-size: var(--fs-12);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.inline-drawing-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* Compact magnifier-style zoom buttons (icon-only) + the live percentage label. */
+.inline-drawing-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1) 6px;
+}
+
+.inline-drawing-zoom-btn svg {
+  display: block;
+}
+
+.inline-drawing-pct {
+  min-width: 46px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.inline-drawing-canvas {
+  position: relative;
+  height: 420px;
+  background: var(--surface);
+}
+
+/* Bottom-center drag handle to resize the embed height (Feishu-style). */
+.inline-drawing-resize {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 72px;
+  height: 14px;
+  cursor: ns-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  z-index: 7;
+  transition: opacity 0.15s ease;
+}
+
+.inline-drawing-resize::after {
+  content: "";
+  width: 56px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background 0.15s ease;
+}
+
+.inline-drawing:hover .inline-drawing-resize::after,
+.inline-drawing.editing .inline-drawing-resize::after {
+  background: var(--accent);
+}
+
+.inline-drawing:not(.editing):not(:hover) .inline-drawing-resize {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.inline-drawing-loading {
+  color: var(--text-faint);
+  padding: var(--space-4);
+  font-size: var(--fs-13);
+}
+
+.inline-drawing-err {
+  color: var(--danger);
+  font-size: var(--fs-12);
+}
+}
