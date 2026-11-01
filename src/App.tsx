@@ -173,6 +173,8 @@ import "./styles/shell.css";
 // S4-21（2026-11-01）：标签选择器（`.tag-picker*`）与表情选择器（`.emoji-picker*`）。
 import "./styles/tag-picker.css";
 import "./styles/emoji-picker.css";
+// S4-22（2026-11-01）：搜索浮层域（`.search-*`）。
+import "./styles/search.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

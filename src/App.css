@@ -1754,370 +1754,96 @@ select.sync-input {
 }
 .update-banner-close:hover { opacity: 1; }
 
-.search-panel {
-  position: relative;
-}
 
-/* ---------------------------------------------------------------------------
- * 搜索面板：头部（输入 + 范围分段）/ 结果计数 / 可滚动结果区。
- * 原来是 280px 的小气弹层：摘要单行截断、`prop:` 用法藏在 title 里没人看得见、
- * 无结果只有两个字、也没有键盘选择。现在摘要给两行、用法做成可点 chip、
- * 加载给骨架屏、选中项有明确高亮（配合 ↑↓/Enter）。
- * ------------------------------------------------------------------------- */
-.search-popover {
-  position: fixed;
-  width: min(468px, calc(100vw - 24px));
-  max-height: min(72vh, 560px);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  padding: 0;
-  /* 搜索面板是用户主动调出的最高阶浮层——高于文件预览(600)/内容 modal，
-     避免被预览或其他浮层遮挡。 */
-  z-index: 1500;
-}
 
-.search-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: var(--space-3) 14px;
-  border-bottom: 1px solid var(--border);
-}
 
-.search-input-row {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-}
 
-.search-input-icon {
-  position: absolute;
-  left: 11px;
-  display: grid;
-  place-items: center;
-  color: var(--text-faint);
-  pointer-events: none;
-}
 
-.search-input {
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 9px var(--space-6) 9px 36px;
-  font-size: var(--fs-14);
-  outline: none;
-  font-family: inherit;
-  background: var(--bg);
-  color: var(--text);
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
 
-.search-input::placeholder {
-  color: var(--text-faint);
-}
 
-.search-input:hover {
-  border-color: var(--border-strong);
-}
 
-.search-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
 
-.search-clear {
-  position: absolute;
-  right: 6px;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  border-radius: var(--radius-xs);
-  font-size: var(--fs-15);
-  line-height: 1;
-  cursor: pointer;
-}
 
-.search-clear:hover {
-  background: var(--hover-strong);
-  color: var(--text);
-}
 
-/* 范围分段控件：两个选项常驻可见，不用猜当前在搜哪儿。 */
-.search-scope {
-  flex: none;
-  display: flex;
-  padding: 2px;
-  gap: 2px;
-  border-radius: var(--radius-sm);
-  background: var(--chip-bg);
-}
 
-/* ⭐ 2026-10-18：「N 个空间未解锁，结果不含它们」那一行（全空间搜索、未输主口令时）。
-   ⚠️ 灰字＋小字号：它是**说明**不是错误 —— 搜索本身是成功的 ✓（⛔ 别做成红色警告 ✗）。 */
-.search-locked-hint {
-  margin: 0;
-  padding: 6px 10px 0;
-  font-size: var(--fs-12);
-  line-height: 1.5;
-  color: var(--text-dim);
-}
 
-.search-scope-btn {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  border-radius: var(--radius-xs);
-  padding: 5px 10px;
-  font-size: var(--fs-12);
-  font-family: inherit;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
 
-.search-scope-btn:hover {
-  color: var(--text);
-}
 
-.search-scope-btn.is-on {
-  background: var(--surface);
-  color: var(--accent);
-  font-weight: 600;
-  box-shadow: var(--shadow-xs);
-}
 
-.search-scope-btn:focus-visible,
-.search-chip:focus-visible,
-.search-clear:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
 
-/* 空查询时的用法提示（可发现性，而不是藏在 title 里） */
-.search-tips {
-  padding: 14px;
-}
 
-.search-tips-title {
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-  letter-spacing: 0.04em;
-  margin-bottom: var(--space-2);
-}
 
-.search-tips-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
 
-.search-chip {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-dim);
-  border-radius: var(--radius-full);
-  padding: 5px var(--space-3);
-  font-size: var(--fs-12);
-  font-family: inherit;
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
-}
 
-.search-chip:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent);
-}
 
-.search-tips-foot {
-  margin-top: var(--space-3);
-  padding-top: 10px;
-  border-top: 1px dashed var(--border);
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-  line-height: 1.7;
-}
 
-.search-tips-foot code {
-  background: var(--code-bg);
-  border-radius: var(--radius-xs);
-  padding: 1px 5px;
-  font-size: var(--fs-11);
-}
 
-.search-tips-foot kbd {
-  display: inline-block;
-  min-width: 16px;
-  text-align: center;
-  border: 1px solid var(--border);
-  border-bottom-width: 2px;
-  border-radius: var(--radius-xs);
-  background: var(--bg);
-  color: var(--text-dim);
-  padding: 0 var(--space-1);
-  margin: 0 2px;
-  font-size: var(--fs-10);
-  font-family: inherit;
-}
 
-.search-count {
-  padding: var(--space-2) 14px 6px;
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-}
 
-.search-results {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0 var(--space-2) 10px;
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  max-height: none;
-}
 
-.search-item {
-  padding: 10px var(--space-3);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
 
-.search-item:hover,
-.search-item.is-active {
-  background: var(--hover);
-}
 
-/* 键盘选中项：左侧 accent 竖条，鼠标 hover 与键盘选择用同一个高亮位。 */
-.search-item.is-active {
-  position: relative;
-  background: var(--accent-soft);
-}
 
-.search-item.is-active::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: var(--accent);
-}
 
-.search-item-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--fs-13-5);
-  font-weight: 600;
-  color: var(--text);
-  min-width: 0;
-}
 
-.search-item-name {
-  flex: 0 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.search-item-space {
-  flex: none;
-  font-size: var(--fs-11);
-  font-weight: 400;
-  color: var(--text-dim);
-  background: var(--chip-bg);
-  border-radius: var(--radius-full);
-  padding: 2px var(--space-2);
-  white-space: nowrap;
-}
 
-/* M20 打磨 — 语义相关度提示 */
-.search-item-score {
-  flex: none;
-  margin-left: auto;
-  font-size: var(--fs-11);
-  font-weight: 500;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: var(--radius-full);
-  padding: 2px var(--space-2);
-  white-space: nowrap;
-}
 
-/* 摘要给两行：搜索结果的判断依据主要在正文片段，单行截断等于把它废掉。 */
-.search-item-snippet {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  margin-top: var(--space-1);
-  line-height: 1.6;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
 
-.search-item-snippet mark {
-  background: var(--mark-bg);
-  color: var(--text);
-  border-radius: var(--radius-xs);
-  padding: 0 2px;
-}
 
-.search-empty {
-  padding: 22px 14px 26px;
-  text-align: center;
-}
 
-.search-empty-title {
-  font-size: var(--fs-13);
-  color: var(--text);
-  margin-bottom: var(--space-1);
-}
 
-.search-empty-sub {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  line-height: 1.6;
-}
 
-/* 加载骨架：比一行「搜索中…」更稳，也避免结果跳变。 */
-.search-skeleton {
-  padding: var(--space-1);
-}
 
-.search-skeleton-row {
-  padding: 10px var(--space-2);
-}
 
-.search-skeleton-line {
-  height: 10px;
-  border-radius: var(--radius-xs);
-  background: linear-gradient(90deg, var(--hover) 25%, var(--hover-strong) 37%, var(--hover) 63%);
-  background-size: 400% 100%;
-  animation: search-shimmer 1.4s ease infinite;
-}
 
-.search-skeleton-line + .search-skeleton-line {
-  margin-top: var(--space-2);
-}
 
-.search-skeleton-line.w60 { width: 60%; }
-.search-skeleton-line.w90 { width: 90%; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 @keyframes search-shimmer {
   0% { background-position: 100% 50%; }
@@ -9750,7 +9476,6 @@ body.is-plugin-panel-open .main {
 @media (max-width: 768px), (max-height: 520px) {
 .formula-editor,
 .palette,
-.search-popover,
 .trash-popover,
 .backup-dropdown,
 .new-menu-dropdown,
@@ -9905,7 +9630,6 @@ body.is-plugin-panel-open .main {
     border: none;
     resize: none;
   }
-.search-popover,
 .trash-popover,
 .backup-dropdown,
 .new-menu-dropdown,
@@ -9928,7 +9652,6 @@ body.is-plugin-panel-open .main {
     padding-bottom: 14px;
     z-index: 1600;
   }
-.search-popover .search-results,
 .trash-popover .trash-list {
     overflow-y: visible;
     max-height: none;
@@ -9943,7 +9666,6 @@ body.is-plugin-panel-open .main {
 .about button,
 .plugin-view button,
 .cover-picker button,
-.search-popover button,
 .trash-popover button,
 .palette button {
     min-height: 44px;
