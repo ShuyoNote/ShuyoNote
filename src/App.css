@@ -571,28 +571,11 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 
 
 
-/* ★ A1：单选对话框（"这个空间是个人还是团队"）的按钮列。
-   与 `.confirm-box` 同一视觉语言 —— **不另起一套**（owner 2026-09-24 那条纪律：
-   同类控件形状要一致，别让人以为进了另一个界面）。 */
-.input-choice-list { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-1) 0 var(--space-3); }
-.input-choice {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
-  width: 100%;
-  text-align: left;
-  padding: 10px var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-  color: var(--text);
-  cursor: pointer;
-  font: inherit;
-}
-.input-choice:hover { border-color: var(--accent); }
-.input-choice-label { font-size: var(--fs-13); }
-.input-choice-hint { font-size: var(--fs-11); line-height: 1.5; color: var(--text-dim); }
+
+
+
+
+
 
 
 
@@ -678,27 +661,10 @@ select.sync-input {
 
 
 
-/* 组织管理：成员列表 + 状态 + 操作。 */
-/* 停用/移除按钮挨在一起，避免被拉得很开。 */
-/* 组织邀请行：输入框撑满 + 按钮不换行（避免"邀请"两字竖排）。 */
-.org-invite .sync-input {
-  flex: 1;
-  min-width: 0;
-}
-.org-invite .sync-btn {
-  white-space: nowrap;
-  flex: none;
-}
-/* 待加入（pending）区：待批准成员，带强调。 */
-/* 凭邀请码加入组织：输入框 + 按钮一行。 */
-.org-join .sync-input {
-  flex: 1;
-  min-width: 0;
-}
-.org-join .sync-btn {
-  white-space: nowrap;
-  flex: none;
-}
+
+
+
+
 /* 组织头部邀请码：码 + 生成/重置按钮。 */
 /* 注册后「未入组」引导：清晰列出加入方式 + 提示组织≠空间。 */
 .org-empty-help .set-hint {
@@ -987,47 +953,13 @@ select.sync-input {
 
 
 
-/* Pinned bottom actions (回收站 / 模板中心), Wolai-style. */
-/* 发现新版顶部横幅：在布局流内（sticky 顶部），出现时把下方内容整体下推，不覆盖顶栏 */
-.update-banner {
-  position: sticky;
-  top: 0;
-  z-index: 1000;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  justify-content: center;
-  padding: var(--space-2) var(--space-4);
-  background: linear-gradient(90deg, #3370ff, #2952cc);
-  color: #fff;
-  font-size: var(--fs-13);
-  box-shadow: 0 2px 12px rgba(51, 112, 255, 0.35);
-}
-.update-banner-icon { font-size: var(--fs-15); }
-.update-banner-text b { font-weight: 700; }
-.update-banner-action {
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  background: rgba(255, 255, 255, 0.15);
-  color: #fff;
-  padding: 3px var(--space-3);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: var(--fs-12);
-}
-.update-banner-action:hover { background: rgba(255, 255, 255, 0.28); }
-.update-banner-close {
-  background: transparent;
-  border: none;
-  color: #fff;
-  font-size: var(--fs-18);
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 var(--space-1);
-  margin-left: auto;
-  opacity: 0.8;
-}
-.update-banner-close:hover { opacity: 1; }
+
+
+
+
+
+
+
 
 
 
@@ -1313,22 +1245,9 @@ body.is-ai-open .main {
   color: var(--text);
 }
 
-.empty-desc {
-  font-size: var(--fs-14);
-  color: var(--text-dim);
-}
 
-.empty-desc kbd {
-  display: inline-block;
-  padding: 1px 6px;
-  border: 1px solid var(--border);
-  border-bottom-width: 2px;
-  border-radius: var(--radius-xs);
-  background: var(--bg);
-  font-family: inherit;
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-}
+
+
 
 
 
@@ -1354,16 +1273,6 @@ body.is-ai-open .main {
 
 
 
-/* Cover picker modal (built-in cover gallery). */
-.cover-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 200;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 
 
 
@@ -1404,16 +1313,8 @@ body.is-ai-open .main {
 
 
 
-/* Cover crop editor (uploaded image → crop to banner). */
-.crop-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  z-index: 220;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+
+
 .crop {
   width: min(760px, 92vw);
   background: var(--bg);
@@ -1422,61 +1323,16 @@ body.is-ai-open .main {
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
   padding: var(--space-4);
 }
-.crop-head {
-  font-weight: 600;
-  margin-bottom: 10px;
-}
-.crop-box {
-  position: relative;
-  overflow: hidden;
-  aspect-ratio: 3.5 / 1;
-  border-radius: var(--radius-sm);
-  background: #000;
-  cursor: grab;
-  touch-action: none;
-}
-.crop-box:active {
-  cursor: grabbing;
-}
-.crop-img {
-  position: absolute;
-  top: 0;
-  left: 0;
-  transform-origin: 0 0;
-  user-select: none;
-  -webkit-user-drag: none;
-  pointer-events: none;
-}
-.crop-controls {
-  margin: var(--space-3) 0 var(--space-1);
-}
-.crop-controls input {
-  width: 100%;
-}
-.crop-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-}
-.crop-cancel,
-.crop-ok {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  border-radius: var(--radius-sm);
-  padding: 7px var(--space-4);
-  cursor: pointer;
-  font-size: var(--fs-13);
-}
-.crop-ok {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--bg);
-}
-.crop-cancel:hover {
-  background: var(--block-hover);
-}
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2043,39 +1899,13 @@ select.prop-value {
 
 
 
-/* Background color palette */
-.table-palette {
-  position: fixed;
-  z-index: 57;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-  width: 152px;
-  padding: var(--space-2);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  animation: pop 0.12s ease;
-}
 
-.table-palette button {
-  width: 22px;
-  height: 22px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  cursor: pointer;
-  position: relative;
-  padding: 0;
-}
 
-.table-palette button:hover {
-  transform: scale(1.12);
-}
 
-.table-palette button.picked {
-  box-shadow: 0 0 0 2px var(--accent);
-}
+
+
+
+
 
 
 
@@ -3006,27 +2836,9 @@ select.prop-value {
   color: var(--text-faint);
   padding: var(--space-1) var(--space-2) 6px;
 }
-.bookmark-paste-opt {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: 6px var(--space-2);
-  border: none;
-  background: transparent;
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  cursor: pointer;
-  font-size: var(--fs-13);
-  text-align: left;
-}
-.bookmark-paste-opt:hover {
-  background: var(--hover);
-}
-.bookmark-paste-opt.primary {
-  color: var(--accent);
-  font-weight: 500;
-}
+
+
+
 .bpi-icon {
   font-size: var(--fs-14);
 }
@@ -5623,17 +5435,6 @@ body.is-plugin-panel-open .main {
 
 
 @media (max-width: 768px), (max-height: 520px) {
-.cover-overlay {
-    align-items: flex-end;
-    justify-content: center;
-    /* 先重置四个方向（.ai-settings-overlay 原先有 padding-top:10vh、
-       .plugin-manager-overlay 有 padding:4vh 24px），再加安全区。 */
-    padding: var(--space-3);
-    padding-top: calc(var(--space-3) + var(--sat));
-    padding-bottom: calc(var(--space-3) + max(var(--sab), var(--kb)));
-    padding-left: calc(var(--space-3) + var(--sal));
-    padding-right: calc(var(--space-3) + var(--sar));
-  }
 /* 关闭类按钮必须**两个方向**都够 44：它们只有图形/一个 ×，
      宽度不够等于点不中。这里用"类名里带 close"一条覆盖所有浮层，
      比逐个列举 `.set-close / .pm-close / …` 更不容易漏（漏一个就是一处点不中）。 */
@@ -5936,19 +5737,7 @@ button.ui-toggle::after {
 
 
 
-/* ══════════════════════════════════════════════════════════════════════════
-   移动端「快速记录」（效果图 `docs/plans/mobile/mockups/02-capture.svg`，规格 §4.2）
-   ⚠️ 同 `.mhome`：只有手机档会渲染它（`App.tsx` 的 `isMobile` 分支 ✓）⇒ 不套 @media ✓。
-   ⚠️ 工具栏钉在**底部**：`index.html` 的 viewport 带 `interactive-widget=resizes-content` ✓
-      ⇒ 软键盘弹出时可视区缩短 ⇒ 这条自然落在**键盘上方** ✓（正是效果图的位置 ✓）。
-   ========================================================================== */
-.mcap {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: var(--space-3) var(--space-4) calc(var(--space-2) + var(--sab, 0px));
-  min-height: 100%;
-}
+
 
 
 
@@ -6285,7 +6074,6 @@ button.ui-toggle::after {
 
 
 
-.mcap,
 .mread {
   background: var(--bg);
 }
@@ -6308,11 +6096,7 @@ button.ui-toggle::after {
 
 
 
-/* ---- 02 快速记录：圆角输入区 ＋ 底部白色工具栏（去掉旧汉堡让位） ---- */
-.mcap {
-  padding: var(--space-4) var(--space-4) calc(var(--space-2) + var(--sab));
-  gap: var(--space-3);
-}
+
 
 
 

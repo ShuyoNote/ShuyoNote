@@ -246,6 +246,8 @@ import "./styles/trash.css";
 import "./styles/backup.css";
 import "./styles/new-menu.css";
 import "./styles/toolbar-sheets.css";
+// S4-50（2026-11-01）：残留 app 基元（input-choice/org/update-banner/empty-desc/cover-overlay/crop/table-palette/bookmark-paste/mcap；`.properties` / `.metadata-card` 留在 App.css，见计划）。
+import "./styles/residual-ui.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
