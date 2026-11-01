@@ -1,0 +1,41 @@
+/* S4-49（2026-11-01）：工具条 sheet 共享组（`.trash-popover` / `.backup-dropdown` /
+ * `.new-menu-dropdown` / `.history-popover.is-sheet`）。
+ *
+ * ⚠️ 为什么这四个**必须继续同一个逗号组**：`historyPanelLayering.test.ts` 逐字钉住
+ *   「版本历史 sheet 与回收站/备份/新建菜单同一个组」——2026-11-01 真事故（sheet 的
+ *   1600 盖住确认框 1400）就修在这条组上。四个域分别提取到各自文件时，这条组会被拆开；
+ *   所以**整个组手工搬到这里**，四个域文件只放各自的独立规则。
+ *
+ * 顺序：本文件在 App.css 之后 import，仍在同一个 `@layer legacy` 里 ⇒ 同特异性覆盖语义不变。
+ */
+@layer legacy {
+@media (max-width: 768px), (max-height: 520px) {
+.trash-popover,
+.backup-dropdown,
+.new-menu-dropdown,
+.history-popover.is-sheet {
+    position: fixed;
+    inset: auto 0 0 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: max(var(--sab), var(--kb));
+    width: auto;
+    max-width: 100%;
+    max-height: calc(var(--ovh) - 24px);
+    margin: 0;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+    padding-bottom: 14px;
+    /* ⭐ 2026-11-01（F5）：原来这里是裸数字 1600，比 `.confirm-overlay` 的 1400 **还高**
+       ⇒ 短视口（≤768 宽或 ≤520 高，含横屏手机 792×360 与矮窗口）打开这组底部弹层后，
+       点「恢复 / 清空」弹出的确认框被**它自己**盖住（点了没反应，按 Esc 才看见）。
+       层级契约见 `.confirm-overlay` 上方那段注释：确认框由模态内部发起、必须盖住模态。
+       ⇒ 回到临时浮层那一档（与搜索/回收站/同步同层），确认框自然在上。 */
+    z-index: var(--z-popover);
+  }
+}
+}

@@ -240,6 +240,12 @@ import "./styles/emoji-picker-inner.css";
 import "./styles/toc.css";
 // S4-48（2026-11-01）：零散 UI 基元（`.cover-swatch` / `.notif-item`）。
 import "./styles/misc-ui.css";
+// S4-49（2026-11-01）：版本历史/回收站/备份/新建菜单 + 它们的共享 sheet 组。
+import "./styles/history.css";
+import "./styles/trash.css";
+import "./styles/backup.css";
+import "./styles/new-menu.css";
+import "./styles/toolbar-sheets.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
