@@ -4486,102 +4486,21 @@ select.prop-value {
 }
 
 
-.webbookmark-card {
-  display: flex;
-  gap: var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  overflow: hidden;
-  cursor: pointer;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-.webbookmark-card:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
-}
-.webbookmark-thumb {
-  flex: 0 0 180px;
-  min-height: 110px;
-  background: var(--hover);
-}
-.webbookmark-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.webbookmark-body {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 5px;
-  padding: var(--space-3) 14px;
-  min-width: 0;
-}
-.webbookmark-title {
-  font-size: var(--fs-15);
-  font-weight: 600;
-  color: var(--text);
-  line-height: 1.35;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.webbookmark-desc {
-  font-size: var(--fs-12-5);
-  color: var(--text-dim);
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.webbookmark-site {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--fs-12);
-  color: var(--text-faint);
-}
-.webbookmark-domain {
-  font-weight: 500;
-}
-.webbookmark-err {
-  color: var(--danger);
-}
 
-/* Edit affordance on the bookmark card */
-.webbookmark-card {
-  position: relative;
-}
-.webbookmark-edit-trigger {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  border: none;
-  background: var(--hover);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-dim);
-  width: 26px;
-  height: 26px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity var(--transition-fast), background var(--transition-fast);
-}
-.webbookmark-card:hover .webbookmark-edit-trigger,
-.webbookmark-card:focus-within .webbookmark-edit-trigger {
-  opacity: 1;
-}
-.webbookmark-edit-trigger:hover {
-  background: var(--surface);
-  color: var(--text);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* "Pasted a link" choice bubble */
 .bookmark-paste-menu {
@@ -9233,18 +9152,6 @@ button.ui-toggle::after {
 
 
 
-/* ══════════════════════════════════════════════════════════════════════════
-   移动端「设置」（效果图 `docs/plans/mobile/mockups/07-settings.svg`，规格 §4.7）
-   ⚠️ 只有手机档会渲染它（`App.tsx` 两处渲染点都按 `isMobile` 切 ✓）⇒ 不套 @media ✓。
-   ⚠️ 桌面档照旧走 `SettingsDialog` ✓ —— 这里**不动** `.set-*` 那套一个字 ✓。
-   ========================================================================== */
-.mset {
-  padding: 14px var(--space-4) calc(20px + var(--sab, 0px));
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
 
 
 
@@ -9266,19 +9173,8 @@ button.ui-toggle::after {
 
 
 
-/* ⭐ 2026-10-19 第二刀：同步入口搬进设置屏（`<SyncPanel />` 自带触发器 ✓，组件未改 ✓）。
-   沿用原主界面那颗浮钮的命中区与外观口径（44×44 胶囊 ✓）——
-   它在一张卡片里，不再需要 fixed 定位 ✓。 */
-.mset .btn-sync {
-  min-width: 44px;
-  min-height: 44px;
-  margin-top: var(--space-1);
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  background: var(--surface);
-  box-shadow: var(--shadow-md);
-}
+
+
 
 /* ⚠️ 2026-10-22：`.mnote-home`（手机档"回首页"浮标，R188 的 (b)）**已删** ——
    两条真路已建好（阅读屏顶栏「‹ 阅读」＋ 底栏三格），它压在正文右下角只是冗余的第二条。
@@ -9852,8 +9748,7 @@ button.ui-toggle::after {
 .mhome,
 .mcap,
 .msearch,
-.mread,
-.mset {
+.mread {
   background: var(--bg);
 }
 
@@ -9907,11 +9802,6 @@ button.ui-toggle::after {
 
 
 
-/* ---- 07 我的 / 设置：卡片＋分组＋分段控件 ---- */
-.mset {
-  padding: 18px var(--space-4) calc(var(--space-5) + var(--sab));
-  gap: 14px;
-}
 
 
 
@@ -9924,15 +9814,8 @@ button.ui-toggle::after {
 
 
 
-/* 「上次成功时间：暂无读数」—— 设计目标；后端暂时没有这个读数，文案不许写成已同步。 */
-.mset .btn-sync {
-  width: 44px;
-  height: 44px;
-  min-width: 44px;
-  min-height: 44px;
-  padding: 0;
-  border-radius: var(--radius-full);
-}
+
+
 
 
 
@@ -10272,19 +10155,16 @@ button.mset-row:focus-visible {
 .backup-auto-lastrun{font-size:var(--fs-11-5);color:var(--text-dim);line-height:1.6;border-top:1px solid var(--border);padding-top:10px}
 .backup-auto-lastrun-hint{color:var(--text-faint);margin-top:var(--space-1)}
 
-.acct-device-edit .set-input{flex:1 1 auto;min-width:0}
-/* ⭐ 2026-10-25 真机：设备名“保存”按钮被挤成竖排两字 ⇒ 不许收缩、给最小宽 */
-.acct-device-edit .set-btn{flex:0 0 auto;min-width:64px;white-space:nowrap;padding-left:14px;padding-right:14px}
-.acct-device-edit .set-input{height:38px}
-/* ⭐ 2026-10-25 owner：本机设备整块再收紧（少留白、控件同高、按钮靠右） */
-.acct-device-row .set-row-text{gap:2px}
-.acct-device-row .set-row-sub{line-height:1.45}
-.acct-device-edit .set-input{height:34px;font-size: var(--fs-12)}
-.acct-device-edit .set-btn{height:34px;min-width:58px;padding:0 var(--space-3);font-size: var(--fs-12)}
 
-/* ⭐ 2026-10-25 owner：设备名输入＋保存**单独一行**（标签/说明在上，控件在下） */
-.acct-device-stack .acct-device-edit .set-input{flex:1 1 auto}
-.acct-device-stack .acct-device-edit .set-btn{flex:0 0 auto}
+
+
+
+
+
+
+
+
+
 
 /* ⭐ 2026-10-25 owner：设置-空间面板**深色主题适配**（真机截图里白卡/分段/状态 pill 全是浅色硬编码） */
 [data-theme="dark"] .set-security-card{
@@ -10486,8 +10366,6 @@ button.mset-row:focus-visible {
 .msheet-check { flex: none; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: var(--on-accent); }
 .msheet-radio { flex: none; width: 20px; height: 20px; border: 1.5px solid var(--border-strong); border-radius: 50%; }
 
-/* ── 我的（设置）─────────────────────────────────────────────────────────── */
-.mset { gap: 10px; min-width: 0; }
 
 
 
@@ -10542,21 +10420,8 @@ button.mset-row:focus-visible {
 
 
 
-.mset .mset-sync-actions .btn-sync {
-  flex: none;
-  min-width: 0;
-  min-height: 40px;
-  height: 40px;
-  margin: 0;
-  padding: 0 14px;
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-12);
-  font-weight: 650;
-  box-shadow: none;
-}
+
+
 
 
 

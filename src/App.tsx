@@ -188,6 +188,10 @@ import "./styles/markdown-import.css";
 import "./styles/cover-picker.css";
 // S4-28（2026-11-01）：插件面板/视图域（`.plugin-*`）。
 import "./styles/plugin-panel.css";
+// S4-29（2026-11-01）：网页书签卡片（`.webbookmark-*`）、账户设备（`.acct-*`）、移动设置（`.mset*`）。
+import "./styles/webbookmark-card.css";
+import "./styles/account.css";
+import "./styles/mset.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
