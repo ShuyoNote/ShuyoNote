@@ -7,6 +7,7 @@ import type { PageVersion } from "../types";
 import { usePopover } from "../hooks/usePopover";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { seedPageCrdtStateAfterRestore } from "../lib/crdt/seedPageState";
 import { ClockIcon } from "./icons";
 
 // Compact, friendly timestamp: today/yesterday → 时:分, this year → 月日 时:分, else 年月日.
@@ -93,6 +94,20 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
       // 三个都是 store 动作（引用恒定）⇒ 走 getState() 现取：本面板不读 notes 的任何
       // state 字段，订阅整店只会被每次自动保存白白唤醒。
       const notes = useNotes.getState();
+      // ⭐ R150（2026-11-01 接上）：恢复**也是外部写** —— 必须先把"这一页刚被外部写过"标上，
+      //   否则点「恢复」前 600ms 内敲的那条陈旧待保存会在恢复之后落地，把恢复的正文盖回去
+      //   （`lib/pendingSave.ts` 的头注就是那次 0.4 秒覆盖的现场）。
+      //   ⚠️ 必须在 `bumpReload()` 之前（与 `notes.refreshCurrent` 同一顺序）。
+      notes.noteExternalWrite(page.id);
+      // ⭐ R155 × 恢复版本（2026-11-01）：盘上正文已经换成旧版，而这一页的 CRDT 状态还是
+      //   恢复前那份；编辑器「有状态就载入」（`crdt/pageBinding.ts`）⇒ 不播种的话，
+      //   下面 `bumpReload()` 一重挂，**旧状态就会赢回旧内容**（恢复被静默作废）。
+      //   ⇒ 顺序是判据：落库 ⇒ 播种 ⇒ 才允许重挂（判据在 `historyPanelInspect.test.ts`）。
+      const seed = await seedPageCrdtStateAfterRestore(page);
+      // ⭐ F3（2026-11-01）：恢复把**标题**也一起恢复了 ⇒ 页树/面包屑要跟着改。
+      //   不在列表里就回退全量重拉 —— 与保存那条路同一条口径（`App.tsx` 的
+      //   `if (!updated || notes.error || !notes.patchPageMeta(updated)) loadPages()`）。
+      if (!notes.patchPageMeta({ id: page.id, title: page.title })) await notes.loadPages();
       notes.updateCurrent(page);
       // 编辑器以 `reloadTick` 作为 key 才会重挂载并重新读取 content_json；恢复当前页时
       // pageId 不变，必须 bump reload 才能让编辑器刷新成恢复后的内容。
@@ -101,7 +116,15 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
       close();
       load();
       notes.openPage(page.id);
-      toast("已恢复该版本", "success");
+      // ⛔ 播种失败**不许说成成功**：库已经恢复了，但"重启/重开可能回滚这一页"必须说出来
+      //   （只 console.warn 等于对没有 devtools 的用户静默）。恢复结果本身照常保留。
+      if (seed.status === "failed") {
+        console.warn("[history] 恢复后同步 CRDT 状态失败（重启/重开可能回滚这一页）", seed.error);
+        // 提示只给人话，技术细节在上面那条 warn 与 `mcp/apply.log` 的留痕行里（⛔ 不把 200 字错误塞进气泡）
+        toast("已恢复该版本，但状态同步失败：重启后可能回滚这一页（详见控制台 / apply.log）", "error");
+      } else {
+        toast("已恢复该版本", "success");
+      }
     } catch (e) {
       toast(`恢复失败：${e}`, "error");
     }

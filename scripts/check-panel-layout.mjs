@@ -905,6 +905,149 @@ try {
     });
   }
 
+  // ---------- 桌面 1280×800：「版本历史」浮层 × 右侧目录（owner 2026-11-01 截图）----------
+  //
+  // 为什么非要有它：现有浮层几何判据的视口全是**手机**（360/390/792），而手机根本不渲染
+  // 编辑器工具条（`verify-mobile-overlays.mjs` 的 `DESKTOP_CHROME_ONLY_OVERLAYS` 登记了这件事）
+  // ⇒「桌面宽度 ＋ 目录开 ＋ 版本历史开」这个组合在全仓**没有任何自动化判据**，
+  // owner 那张截图（浮层右半边被「目录」吃掉）正好落在盲区里。
+  // 这里只量**止血**之后必须成立的两件事（P1 的"clamp 到正文可用区"是另一件事）：
+  //   ① 重叠区里 `elementFromPoint` 命中的是**浮层**（不是目录）—— 把 z-index 压回 40 时必须翻红；
+  //   ② 浮层**不越出视口**（四条边都在里面）。
+  // ⚠️ 夹具不是真 app：浮层坐标按 `usePopover.place()` 的既有规则算（align 默认 left、只夹视口、
+  //   宽度 320），目录用真类名 `.toc-panel.open` 与真实宽度变量 `--toc-w`。
+  //   ⇒ 它判的是**层叠与含纳**，不是"浮层算得对不对"（那要真 app，见分析 §5.3）。
+  {
+    const fixture = await page.evaluate(() => {
+      document.documentElement.style.setProperty("--toc-w", "300px");
+      document.body.classList.add("is-toc-open");
+      // 上面那批断言留下的两个 `position:fixed` 大浮层（插件管理弹窗 z=1200、PDF 阅读器）
+      // ⇒ 不收起它们，`elementFromPoint` 命中的永远是它们（第一版量到过 `pm-head` / `pdf-reader-body`）。
+      for (const sel of [".plugin-manager-overlay", ".pdf-reader-overlay"]) {
+        const el = document.querySelector(sel);
+        if (el) el.style.display = "none";
+      }
+      document.body.insertAdjacentHTML(
+        "beforeend",
+        `<div class="app" id="hist-app" style="position:fixed;top:0;left:0;right:0;bottom:0"><div class="app-body">
+           <div class="activity-bar"></div>
+           <div class="sidebar"></div>
+           <div class="main">
+             <div class="editor-toolbar-bar"><div class="editor-toolbar">
+               <div class="history-panel" id="hist-panel">
+                 <button class="toolbar-btn" id="hist-trigger" title="版本历史" aria-label="版本历史">⏱</button>
+               </div>
+             </div></div>
+           </div>
+         </div></div>`,
+      );
+      const r = document.getElementById("hist-trigger").getBoundingClientRect();
+      // 与 `usePopover.place()` 同一套：按触发器左缘铺开，再夹到视口内（宽度 320）
+      const left = Math.max(8, Math.min(r.left, innerWidth - 320));
+      const top = Math.round(r.bottom + 6);
+      document.getElementById("hist-panel").insertAdjacentHTML(
+        "beforeend",
+        `<div class="history-popover" id="hist-popover" style="top:${top}px;left:${left}px">
+           <div class="history-head"><span class="history-title">版本历史</span></div>
+           <div class="history-note">每页最多保留最近 50 份，更早的会被自动清理</div>
+           <div class="history-item"><button class="history-row">今天 12:00 · 示例</button></div>
+         </div>`,
+      );
+      // 目录与 `App.tsx` 同一处 DOM 位置：也在 `.main` 里、**在工具条之后**
+      // （`<EditorToolbar/>` … `<TableOfContents/>` 都是 `.main` 的孩子）。
+      // ⚠️ 必须放**同一个叠加上下文**里：放 body 上的话，`#hist-app` 自己 `position:fixed`
+      // 就是一个叠加上下文 ⇒ 浮层的 700 会被关在里面，反而输给外面的 40（第一版这么错过）。
+      document.querySelector("#hist-app .main").insertAdjacentHTML(
+        "beforeend",
+        `<div class="toc-panel open" id="hist-toc"><div class="toc-resizer"></div>
+           <div class="toc-head"><span class="toc-title">目录</span></div></div>`,
+      );
+      return { left, top };
+    });
+    const layering = await page.evaluate(() => {
+      const popEl = document.getElementById("hist-popover");
+      const tocEl = document.getElementById("hist-toc");
+      const pop = popEl.getBoundingClientRect();
+      const toc = tocEl.getBoundingClientRect();
+      const x0 = Math.max(pop.left, toc.left);
+      const x1 = Math.min(pop.right, toc.right);
+      const y0 = Math.max(pop.top, toc.top);
+      const y1 = Math.min(pop.bottom, toc.bottom);
+      const probe = () => {
+        if (!(x1 > x0 && y1 > y0)) return "no-overlap";
+        const el = document.elementFromPoint(Math.round((x0 + x1) / 2), Math.round((y0 + y1) / 2));
+        if (!el) return "none";
+        if (popEl.contains(el)) return "history-popover";
+        if (tocEl.contains(el)) return "toc-panel";
+        return String(el.className || el.tagName);
+      };
+      const zPop = getComputedStyle(popEl).zIndex;
+      const zToc = getComputedStyle(tocEl).zIndex;
+      const hit = probe();
+      // 反向自证：把浮层压回 40（2026-11-01 之前的样子）⇒ 重叠区应当改由目录赢
+      popEl.style.zIndex = "40";
+      const hitAtOldLayer = probe();
+      popEl.style.zIndex = "";
+      return {
+        vw: innerWidth,
+        vh: innerHeight,
+        pop: {
+          left: Math.round(pop.left),
+          right: Math.round(pop.right),
+          top: Math.round(pop.top),
+          bottom: Math.round(pop.bottom),
+        },
+        tocLeft: Math.round(toc.left),
+        overlapW: Math.round(x1 - x0),
+        hit,
+        hitAtOldLayer,
+        zPop,
+        zToc,
+      };
+    });
+    ok(
+      Math.abs(layering.vw - 1280) <= 1,
+      `量的时候是桌面宽度（innerWidth=${layering.vw}；窄视口本来就是另一套形态，拿它断言没有意义）`,
+    );
+    ok(
+      layering.overlapW > 0,
+      `夹具真的复现了「浮层压在目录上」（重叠 ${layering.overlapW}px：浮层右缘 ${layering.pop.right} ／ 目录左缘 ${layering.tocLeft}）`,
+    );
+    ok(
+      layering.hit === "history-popover",
+      `重叠区命中的是版本历史浮层（实际 ${layering.hit}；z 浮层=${layering.zPop} 目录=${layering.zToc}）`,
+    );
+    ok(
+      layering.hitAtOldLayer === "toc-panel",
+      `反向自证：把浮层压回 z-index 40 ⇒ 重叠区改由目录赢（实际 ${layering.hitAtOldLayer}）—— 上面那条因此不是假绿`,
+    );
+    ok(
+      layering.pop.left >= 0 &&
+        layering.pop.right <= layering.vw &&
+        layering.pop.top >= 0 &&
+        layering.pop.bottom <= layering.vh,
+      `浮层不越出视口（左 ${layering.pop.left} 上 ${layering.pop.top} ／ 右 ${layering.pop.right}≤${layering.vw} 下 ${layering.pop.bottom}≤${layering.vh}）`,
+    );
+    // 夹具用了 `is-toc-open` 与 `--toc-w`（会给 `.main` 加 padding）⇒ 量完必须拆干净，
+    // 否则后面的截图/断言会落在一个"目录开着"的页面上。
+    await page.evaluate(() => {
+      document.getElementById("hist-app")?.remove();
+      document.getElementById("hist-toc")?.remove();
+      document.body.classList.remove("is-toc-open");
+      document.documentElement.style.removeProperty("--toc-w");
+      const pm = document.querySelector(".plugin-manager-overlay");
+      if (pm) pm.style.removeProperty("display");
+      const pdf = document.querySelector(".pdf-reader-overlay");
+      if (pdf) pdf.style.removeProperty("display");
+    });
+    if (SHOTS) {
+      console.log(
+        `  读数（history×toc @1280×800）：浮层 left=${fixture.left} top=${fixture.top} ` +
+          `重叠 ${layering.overlapW}px，命中 ${layering.hit}（压回 40 时 ${layering.hitAtOldLayer}）`,
+      );
+    }
+  }
+
   if (SHOTS) {
     mkdirSync(SHOTS, { recursive: true });
     await page.screenshot({ path: join(SHOTS, "panel-layout.png"), fullPage: true });

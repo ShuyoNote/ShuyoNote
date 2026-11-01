@@ -9650,7 +9650,12 @@ body.is-plugin-panel-open .main {
     overflow-x: hidden;
     overscroll-behavior-y: contain;
     padding-bottom: 14px;
-    z-index: 1600;
+    /* ⭐ 2026-11-01（F5）：原来这里是裸数字 1600，比 `.confirm-overlay` 的 1400 **还高**
+       ⇒ 短视口（≤768 宽或 ≤520 高，含横屏手机 792×360 与矮窗口）打开这组底部弹层后，
+       点「恢复 / 清空」弹出的确认框被**它自己**盖住（点了没反应，按 Esc 才看见）。
+       层级契约见 `.confirm-overlay` 上方那段注释：确认框由模态内部发起、必须盖住模态。
+       ⇒ 回到临时浮层那一档（与搜索/回收站/同步同层），确认框自然在上。 */
+    z-index: var(--z-popover);
   }
 .trash-popover .trash-list {
     overflow-y: visible;
