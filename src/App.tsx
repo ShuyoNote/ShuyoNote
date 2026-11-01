@@ -158,6 +158,8 @@ import "./styles/settings.css";
 import "./styles/properties.css";
 // S4-14（2026-11-01）：目录树域（`.tree-*`）。
 import "./styles/tree.css";
+// S4-15（2026-11-01）：社区发布/保存域（`.community-*`）。
+import "./styles/community.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
