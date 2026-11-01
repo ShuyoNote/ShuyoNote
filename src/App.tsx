@@ -170,6 +170,9 @@ import "./styles/sidebar-space.css";
 import "./styles/database.css";
 // S4-20（2026-11-01）：外壳域（`.main*` / `.toolbar*`）。
 import "./styles/shell.css";
+// S4-21（2026-11-01）：标签选择器（`.tag-picker*`）与表情选择器（`.emoji-picker*`）。
+import "./styles/tag-picker.css";
+import "./styles/emoji-picker.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

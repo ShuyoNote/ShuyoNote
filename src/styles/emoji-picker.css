@@ -1,0 +1,88 @@
+/* S4（2026-11-01）：域抽取器搬出的**表情选择器域（`.emoji-picker*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* ---- 页面图标 emoji 选择器 ---- */
+.emoji-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 1400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.emoji-picker {
+  width: 520px;
+  max-height: 76vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+@media (max-width: 768px), (max-height: 520px) {
+.emoji-picker {
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    /* `--ovh` 已经扣掉状态栏与底部（手势条 / 键盘）：盒子在任何视口下都装得下。 */
+    max-height: calc(var(--ovh) - 24px);
+  }
+.emoji-picker-overlay {
+    align-items: flex-end;
+    justify-content: center;
+    /* 先重置四个方向（.ai-settings-overlay 原先有 padding-top:10vh、
+       .plugin-manager-overlay 有 padding:4vh 24px），再加安全区。 */
+    padding: var(--space-3);
+    padding-top: calc(var(--space-3) + var(--sat));
+    padding-bottom: calc(var(--space-3) + max(var(--sab), var(--kb)));
+    padding-left: calc(var(--space-3) + var(--sal));
+    padding-right: calc(var(--space-3) + var(--sar));
+  }
+.emoji-picker {
+    position: static;
+    transform: none;
+    width: 100%;
+    max-width: 100%;
+    /* 顶部留 24px：让用户看得见"后面还有内容"。`--ovh` 里已经扣掉了状态栏
+       与底部（手势条 / 键盘），所以这里只需要那个 24px 的呼吸位。 */
+    max-height: calc(var(--ovh) - 24px);
+    border-radius: 16px 16px var(--radius-lg) var(--radius-lg);
+  }
+.emoji-picker {
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+/* `.ep-main{flex:1}` 没有 `min-height:0`：在列向 flex 里它的自动最小高度就是
+     内容高度，于是"该滚的那个"不滚、外层 `overflow:hidden` 直接裁。
+     图标选择器在 390px 下 119 个图标里有一大半点不到，就是这条。 */
+  .emoji-picker .ep-main {
+    min-height: 0;
+  }
+.emoji-picker .ep-grid button {
+    min-height: 44px;
+  }
+.emoji-picker .ep-grid button,
+.emoji-picker .ep-side-btn,
+.emoji-picker .ep-search-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+/* 图标格子本身也要跟着放大到 44，否则按钮溢出 40px 的轨道 ⇒ 横向滚动条。 */
+  .emoji-picker .ep-grid {
+    grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  }
+.emoji-picker button {
+    min-height: 44px;
+  }
+}
+}
