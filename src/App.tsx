@@ -168,6 +168,8 @@ import "./styles/editor.css";
 import "./styles/sidebar-space.css";
 // S4-19（2026-11-01）：数据库表格域（`.db-*`）。
 import "./styles/database.css";
+// S4-20（2026-11-01）：外壳域（`.main*` / `.toolbar*`）。
+import "./styles/shell.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
