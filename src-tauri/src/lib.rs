@@ -407,6 +407,34 @@ pub fn cli_mode_of_args() -> auto_backup::CliMode {
     auto_backup::cli_mode(std::env::args().skip(1))
 }
 
+/// 生命周期日志的毫秒时间戳（与 `plugin_audit` 的 `at_ms` 同口径：Unix epoch ms）。
+fn lifecycle_now_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+/// ⭐ 2026-11-01（排查"更新笔记后应用自己退出"）：把**退出原因**写进 stderr（`tauri dev` 的日志里能看到）。
+///
+/// 为什么需要它：那次的日志只有 `[mesh]` 刷屏 + `tauri dev` 的 `exit code: 1`，
+/// 分不清"用户关窗 / 另一个实例唤起 / 二次启动 / 程序化 exit / 被杀"。
+/// 这里在每个可能触发退出的入口各打一行，**一行一个原因**，下次直接看日志即可：
+///   - `start`：本次进程启动（带 pid，和退出行配对）
+///   - `second_instance`：**另一个进程**启动了同名应用（single-instance 回调）——这是"被别的会话
+///     启动/重启"的最直接证据
+///   - `window_close_requested`：收到关窗请求（用户点 X / Alt+F4 / 别处 PostMessage WM_CLOSE）
+///   - `window_destroyed`：窗口已销毁（退出前的最后一步）
+///   - `exit_requested`：Tauri 决定退出（`code=None` 常是用户关最后一个窗口；`Some(_)` 是程序化 `AppHandle.exit`）
+///   - `exit`：事件循环真正结束
+fn log_lifecycle(kind: &str, detail: &str) {
+    if detail.is_empty() {
+        eprintln!("[lifecycle] {kind} at_ms={}", lifecycle_now_ms());
+    } else {
+        eprintln!("[lifecycle] {kind} {detail} at_ms={}", lifecycle_now_ms());
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // M11.13 阶段 1：**宿主子进程分流必须在最前面**——在任何 Tauri / 单实例初始化之前。
@@ -418,6 +446,8 @@ pub fn run() {
     if std::env::args().any(|a| a == plugin_host::HOST_FLAG) {
         std::process::exit(plugin_host::serve_stdio());
     }
+    // 与下面的 exit 行配对：判断"这个 pid 是正常运行中被关的，还是根本没起来就被单实例顶掉"。
+    log_lifecycle("start", &format!("pid={}", std::process::id()));
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
@@ -472,6 +502,9 @@ pub fn run() {
         // 开了之后顺序是：插件先 `handle_cli_arguments` ⇒ 入队 + emit，然后才是
         // 「还原窗口 + 抢焦点」。
         let single_instance = tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // ⭐ 2026-11-01：第二实例回调 —— 先记一行（含 argv）。如果"应用自己退出"其实是**另一个
+            //   进程/会话启动了同名应用**，这行就是最直接的证据（谁先谁后看 at_ms 与 pid）。
+            log_lifecycle("second_instance", &format!("args={args:?}"));
             // `_args` 不用自己解析：`deep-link` feature 已经把 URL 送进 deeplink
             // 模块的队列并 emit 出去了，这里只负责让用户**看见**窗口。
             // ⭐ 2026-10-09（task-10 ③）**追加**：`args` 里还有一条 `--import <文件>`（Windows 文件关联那一半）——
@@ -1356,8 +1389,25 @@ pub fn run() {
   license_http::license_http_request,
   license_http::license_apply_lease,
 ])
-        .run(app_context())
-        .expect("error while running tauri application");
+        .build(app_context())
+        .expect("error while running tauri application")
+        .run(|_app_handle, event| match event {
+            tauri::RunEvent::Ready => log_lifecycle("ready", ""),
+            tauri::RunEvent::ExitRequested { code, .. } => {
+                log_lifecycle("exit_requested", &format!("code={code:?}"));
+            }
+            tauri::RunEvent::Exit => log_lifecycle("exit", ""),
+            tauri::RunEvent::WindowEvent { label, event, .. } => match event {
+                tauri::WindowEvent::CloseRequested { .. } => {
+                    log_lifecycle("window_close_requested", &format!("label={label}"));
+                }
+                tauri::WindowEvent::Destroyed => {
+                    log_lifecycle("window_destroyed", &format!("label={label}"));
+                }
+                _ => {}
+            },
+            _ => {}
+        });
 }
 
 /// Tauri 的 **http 插件作用域**必须显式放行 —— 它的默认权限是"能发请求，但一个源都不许发"。
