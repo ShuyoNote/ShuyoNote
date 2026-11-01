@@ -225,6 +225,9 @@ import "./styles/mobile-dict.css";
 import "./styles/mobile-sheet.css";
 // S4-41（2026-11-01）：关系图视图域（`.graph-*`）。
 import "./styles/graph.css";
+// S4-42（2026-11-01）：反链面板（`.backlinks-*`）与面包屑（`.breadcrumbs*` / `.crumb*`）。
+import "./styles/backlinks.css";
+import "./styles/breadcrumbs.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

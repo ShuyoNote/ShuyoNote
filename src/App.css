@@ -2146,39 +2146,13 @@ select.prop-value {
 
 
 
-/* Breadcrumbs */
-.breadcrumbs {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--fs-13);
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  flex: 1;
-  min-width: 0;
-}
 
-.crumb {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: var(--fs-13);
-  padding: 2px var(--space-1);
-  border-radius: var(--radius-xs);
-  font-family: inherit;
-}
 
-.crumb:hover {
-  background: var(--hover);
-  color: var(--text);
-}
 
-.crumb-sep {
-  margin: 0 2px;
-  color: var(--text-faint);
-}
+
+
+
+
 
 .title-input {
   flex: 1;
@@ -2808,49 +2782,14 @@ select.prop-value {
 
 
 
-/* Backlinks */
-.backlinks {
-  max-width: var(--doc-width);
-  margin: 0 auto;
-  padding: var(--space-5) var(--doc-pad) var(--space-3);
-  width: 100%;
-  border-top: 1px solid var(--border);
-}
 
-.backlinks-title {
-  font-size: var(--fs-12);
-  font-weight: 700;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: var(--space-2);
-}
 
-.backlinks-loading {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  padding: var(--space-1) 0;
-}
-.backlinks-error {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) 0;
-}
-.backlinks-retry {
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text);
-  font-size: var(--fs-12);
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.backlinks-retry:hover {
-  background: var(--hover);
-}
+
+
+
+
+
+
 
 
 
@@ -2918,11 +2857,7 @@ select.prop-value {
 
 
 
-.backlinks-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
+
 
 .backlink-item {
   border: 1px solid var(--border);
@@ -2938,22 +2873,11 @@ select.prop-value {
   background: var(--hover);
 }
 
-.backlinks-group {
-  margin-bottom: 14px;
-}
 
-.backlinks-subtitle {
-  font-size: var(--fs-12);
-  font-weight: 600;
-  color: var(--text-faint);
-  margin-bottom: 6px;
-}
 
-.backlinks-blocks {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
+
+
+
 
 .backlink-block-row {
   display: flex;
@@ -6677,18 +6601,7 @@ body.is-plugin-panel-open .main {
      窄屏收到 18px。`.note-scroll` / `.title-area` / `.properties` / `.metadata-card`
      等七八处共用这一个变量，改一处全跟着走。 */
   :root { --doc-pad: 18px; }
-/* 面包屑让位：它本身是导航，深路径改为**单行横滑**（换行会把工具栏顶成两行）。 */
-  .breadcrumbs {
-    min-width: 0;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    scrollbar-width: none;
-  }
-.breadcrumbs::-webkit-scrollbar { display: none; }
-.crumb { flex: 0 0 auto; min-height: 44px; }
-.unlinked-mention-link,
-.backlinks-retry { min-height: 44px; }
+.unlinked-mention-link { min-height: 44px; }
 }
 
 
