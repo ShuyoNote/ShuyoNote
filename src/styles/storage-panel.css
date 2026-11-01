@@ -1,0 +1,325 @@
+/* S4（2026-11-01）：域抽取器搬出的**存储面板域（`.stg-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* ---------------------------------------------------------------------------
+ * 存储 / 空间管理面板。
+ * 原来是五个孤立数字 + 一列长得一样的按钮——看不出「谁在占空间」，也看不出
+ * 哪几个按钮是不可逆的。现在：合计 + 占比条 + 图例（一眼看出构成），清理
+ * 全部归入危险区并逐条写清影响范围与可回收量，无可回收时按钮直接禁用。
+ * ------------------------------------------------------------------------- */
+.stg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  background: rgba(16, 24, 40, 0.42);
+  backdrop-filter: blur(2px);
+}
+
+.stg-panel {
+  width: min(560px, 100%);
+  max-height: min(80vh, 720px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+}
+
+.stg-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4) 18px 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+.stg-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.stg-title {
+  font-size: var(--fs-15);
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.stg-sub {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.stg-close {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-18);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.stg-close:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.stg-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) 18px 20px;
+}
+
+.stg-loading {
+  color: var(--text-dim);
+  font-size: var(--fs-13);
+  padding: 20px 0;
+  text-align: center;
+}
+
+.stg-section + .stg-section {
+  margin-top: 22px;
+}
+
+.stg-section-title {
+  font-size: var(--fs-12);
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.stg-total-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: 10px;
+}
+
+.stg-total {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.stg-total-value {
+  font-size: var(--fs-26);
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.stg-total-label {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+}
+
+.stg-reclaim {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  padding: var(--space-1) 10px;
+  border-radius: var(--radius-full);
+  background: var(--cat-yellow-soft);
+}
+
+.stg-reclaim b {
+  color: var(--text);
+}
+
+.stg-bar {
+  display: flex;
+  height: 12px;
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  background: var(--hover);
+  margin-bottom: 14px;
+}
+
+.stg-bar-seg {
+  height: 100%;
+  min-width: 2px;
+  transition: width var(--transition);
+}
+
+.stg-bar-empty {
+  width: 100%;
+  background: var(--hover);
+}
+
+.stg-legend {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2) 18px;
+}
+
+.stg-legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.stg-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.stg-legend-label {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+}
+
+.stg-legend-value {
+  margin-left: auto;
+  font-size: var(--fs-12);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.stg-legend-detail {
+  color: var(--text-faint);
+}
+
+.stg-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+.stg-row + .stg-row {
+  margin-top: 2px;
+}
+
+.stg-row:hover {
+  background: var(--hover);
+}
+
+.stg-row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.stg-row-name {
+  font-size: var(--fs-13);
+  color: var(--text);
+}
+
+.stg-row-quota {
+  margin-left: var(--space-2);
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+}
+
+.stg-row-sub {
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+  margin-top: 3px;
+  line-height: 1.5;
+}
+
+.stg-btn {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
+  font-size: var(--fs-12);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.stg-btn:hover:not(:disabled) {
+  background: var(--hover-strong);
+  border-color: var(--border-strong);
+}
+
+.stg-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.stg-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.stg-btn.is-danger {
+  color: var(--danger);
+}
+
+.stg-btn.is-danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+
+.stg-danger {
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: var(--danger-soft);
+}
+
+.stg-danger-title {
+  color: var(--danger);
+  margin-bottom: var(--space-2);
+}
+
+.stg-danger .stg-row:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.stg-busy {
+  padding: 10px 18px 14px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-12);
+  color: var(--accent);
+}
+
+@media (max-width: 768px), (max-height: 520px) {
+.stg-overlay {
+    padding: var(--sat) var(--sar) max(var(--sab), var(--kb)) var(--sal);
+    place-items: stretch;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+.stg-panel {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    border-radius: 0;
+    border: none;
+    /* 桌面上的 `resize: both` 在手机上没有意义，而且会把 min-width 一起带回来。 */
+    resize: none;
+  }
+.stg-body {
+    overscroll-behavior-y: contain;
+    padding-bottom: 20px;
+  }
+}
+}
