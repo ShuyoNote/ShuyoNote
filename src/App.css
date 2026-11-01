@@ -1707,27 +1707,11 @@ body.is-ai-open .main {
   color: var(--text-dim);
 }
 
-.empty-cta {
-  margin-top: var(--space-2);
-  border: none;
-  background: var(--accent);
-  color: var(--on-accent);
-  border-radius: var(--radius-full);
-  padding: 9px 20px;
-  font-size: var(--fs-14);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--transition-fast), box-shadow var(--transition-fast);
-}
 
-.empty-cta:hover {
-  background: var(--accent-strong);
-  box-shadow: var(--shadow-md);
-}
 
-.empty-cta:hover {
-  filter: brightness(1.08);
-}
+
+
+
 
 
 
@@ -1740,13 +1724,7 @@ body.is-ai-open .main {
   width: 100%;
 }
 
-/* Page-actions row (Notion-style: add icon / cover / property / tag). It only
-   shows when the pointer is over the title area (so the page stays clean). */
-.title-area {
-  max-width: var(--doc-width);
-  width: 100%;
-  margin: 0 auto;
-}
+
 
 
 
@@ -2003,11 +1981,7 @@ body.is-ai-open .main {
   background: var(--block-hover);
 }
 
-.title-area:hover .page-actions,
-.title-area:focus-within .page-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
+
 
 
 
@@ -2257,25 +2231,11 @@ select.prop-value {
   text-align: center;
 }
 
-.find-btn {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: var(--fs-13);
-  padding: 2px 5px;
-  border-radius: var(--radius-xs);
-}
 
-.find-btn:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--text);
-}
 
-.find-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
+
+
+
 
 
 
@@ -2836,20 +2796,8 @@ select.prop-value {
   font-size: var(--fs-12);
   flex: 1;
 }
-.unlinked-mention-link {
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--accent);
-  border-radius: var(--radius-xs);
-  font-size: var(--fs-12);
-  padding: 2px var(--space-2);
-  cursor: pointer;
-  font-family: inherit;
-}
-.unlinked-mention-link:hover {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-}
+
+
 
 
 
@@ -3339,24 +3287,9 @@ select.prop-value {
   padding: var(--space-2) 10px var(--space-1);
 }
 
-.insert-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  border: none;
-  background: transparent;
-  padding: 7px 10px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: var(--fs-14);
-  color: var(--text);
-  text-align: left;
-}
 
-.insert-item:hover {
-  background: var(--hover);
-}
+
+
 
 .insert-icon {
   width: 22px;
@@ -3397,9 +3330,7 @@ select.prop-value {
   color: var(--text-dim);
 }
 
-.insert-item.active {
-  background: var(--hover);
-}
+
 
 /* Second-level submenu (分栏 count picker). Fixed position, opens to the RIGHT
    of the 分栏 row (anchored via inline top/left from its rect). */
@@ -4427,17 +4358,7 @@ p:has(> .editor-drawing-container) {
 
 
 
-/* Single scroll container for the whole page (title + properties + content), so
-   the title scrolls away with the content instead of being pinned. */
-.note-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  /* ⭐ 2026-10-06：同 `.sidebar-tree` —— 正文滚到底不许把滚动接力给外层 ✓（owner 那条报告的另一半 ✓）。 */
-  overscroll-behavior: contain;
-  /* 内容底部留白：滚动到底时下方留出空间，视觉更透气。 */
-  padding-bottom: 120px;
-}
+
 
 /* Table of contents (right-hand drawer) */
 /* Outline rail: slides in from the right edge, full height, GitHub-style. */
@@ -4590,38 +4511,10 @@ p:has(> .editor-drawing-container) {
   align-items: flex-start;
   gap: 10px;
 }
-/* 新页面引导的动作项：无底色、无描边——这是一张空白页面上的「起手式」，
-   四个填充色块会把注意力从「开始写」上抢走。hover 才给一层淡底。 */
-.npg-act {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  border: none;
-  background: transparent;
-  color: var(--text);
-  min-width: 280px;
-  font-size: var(--fs-14);
-  font-weight: 500;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-  font-family: inherit;
-  text-align: left;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-.npg-act:hover {
-  background: var(--hover);
-}
-.npg-act:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-.npg-act-icon {
-  width: 18px;
-  height: 18px;
-  flex-shrink: 0;
-  color: var(--accent);
-}
+
+
+
+
 
 /* "Create as database" view row */
 .new-page-guide-db {
@@ -4631,47 +4524,12 @@ p:has(> .editor-drawing-container) {
   align-items: flex-start;
   gap: var(--space-4);
 }
-.npg-db-title {
-  font-size: var(--fs-12);
-  color: var(--text-faint);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-.npg-db-row {
-  display: flex;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-.npg-db-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-dim);
-  padding: 14px var(--space-3) 10px;
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-  font-family: inherit;
-  min-width: 66px;
-  transition: color .18s, border-color .18s, background .18s, transform .18s, box-shadow .18s;
-}
-.npg-db-item:hover {
-  color: var(--text);
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  transform: translateY(-3px);
-  box-shadow: 0 8px 22px rgba(47, 107, 255, 0.14);
-}
-.npg-db-icon {
-  width: 22px;
-  height: 22px;
-}
-.npg-db-name {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-}
+
+
+
+
+
+
 
 /* Template-center gallery (UI skeleton). */
 .template-center {
@@ -6601,7 +6459,6 @@ body.is-plugin-panel-open .main {
      窄屏收到 18px。`.note-scroll` / `.title-area` / `.properties` / `.metadata-card`
      等七八处共用这一个变量，改一处全跟着走。 */
   :root { --doc-pad: 18px; }
-.unlinked-mention-link { min-height: 44px; }
 }
 
 
@@ -6617,11 +6474,6 @@ body.is-plugin-panel-open .main {
     max-width: 100%;
     /* `--ovh` 已经扣掉状态栏与底部（手势条 / 键盘）：盒子在任何视口下都装得下。 */
     max-height: calc(var(--ovh) - 24px);
-  }
-/* ---------- 2. 内容区：唯一可滚 + 不把滚动惯性传给外层 ---------- */
-  .note-scroll {
-    overscroll-behavior-y: contain;
-    -webkit-overflow-scrolling: touch;
   }
 .cover-overlay {
     align-items: flex-end;
@@ -7931,7 +7783,7 @@ button.mset-row:focus-visible {
 
 
 
-.note-scroll blockquote { border-left: 3px solid var(--border-strong, #d0d0d0); background: var(--hover, rgba(0,0,0,.03)); padding: 6px 10px; margin: var(--space-2) 0; border-radius: var(--radius-xs); }
+
 
 
 
