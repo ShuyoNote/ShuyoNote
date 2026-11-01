@@ -1,0 +1,48 @@
+/* S4（2026-11-01）：域抽取器搬出的**开关基元域（`.ui-toggle*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* 通用拨动开关：设置中心的启用项 / AI 设置 / 外链开关 / 插件卡统一用这一套，
+   避免三种开关（文字胶囊 / 大小拨动）并存。on=accent，off=灰，knob 平移。 */
+.ui-toggle {
+  position: relative;
+  flex: none;
+  width: 38px;
+  height: 22px;
+  border-radius: 11px;
+  border: none;
+  background: var(--hover-strong);
+  cursor: pointer;
+  padding: 0;
+  transition: background var(--transition-fast);
+}
+
+.ui-toggle.on {
+  background: var(--accent);
+}
+
+.ui-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ui-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  transition: transform var(--transition-fast);
+}
+
+.ui-toggle.on .ui-toggle-knob {
+  transform: translateX(16px);
+}
+}

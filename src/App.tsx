@@ -213,6 +213,10 @@ import "./styles/formula-editor.css";
 // S4-37（2026-11-01）：页面壳（`.page-*`）与数据库页（`.database-*`）。
 import "./styles/page.css";
 import "./styles/database-page.css";
+// S4-38（2026-11-01）：确认对话框（`.confirm-*`）、开关（`.ui-toggle*`）、公式工具栏（`.formula-*`）。
+import "./styles/confirm.css";
+import "./styles/ui-toggle.css";
+import "./styles/formula.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

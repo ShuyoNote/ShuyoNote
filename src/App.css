@@ -4144,138 +4144,39 @@ p:has(> .editor-drawing-container) {
 
 
 
-.formula-toolbar {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 6px var(--space-3);
-  border-bottom: 1px solid var(--border);
-}
-.formula-cat-wrap { position: relative; }
-.formula-toolbar-tab {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: var(--fs-13);
-  padding: 5px 9px;
-  cursor: pointer;
-  border-radius: var(--radius-xs);
-  white-space: nowrap;
-}
-.formula-toolbar-tab.active { color: var(--text); background: var(--hover); }
-.formula-toolbar-tab:hover { background: var(--hover); }
-.formula-caret { font-size: var(--fs-9); opacity: 0.6; }
-.formula-toolbar-right { margin-left: auto; }
-
-.formula-dropdown {
-  position: fixed;
-  left: 0;
-  bottom: auto;
-  top: 0;
-  transform: translateY(-100%);
-  margin-bottom: var(--space-1);
-  z-index: 220;
-  max-width: 420px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  padding: var(--space-2);
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
-  gap: var(--space-1);
-}
-.formula-dropdown-item {
-  border: none;
-  background: transparent;
-  color: var(--text);
-  font-size: var(--fs-15);
-  padding: 5px var(--space-1);
-  cursor: pointer;
-  border-radius: var(--radius-xs);
-  min-width: 38px;
-  text-align: center;
-}
-.formula-dropdown-item:hover { background: var(--hover); }
-
-.formula-toolbar-help {
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-  text-decoration: none;
-}
-.formula-toolbar-help:hover { color: var(--accent); text-decoration: underline; }
 
 
-.formula-input {
-  width: 100%;
-  border: none;
-  outline: none;
-  resize: none;
-  flex: 1;
-  min-height: 88px;
-  padding: 14px var(--space-4);
-  font-size: var(--fs-14);
-  font-family: var(--font-mono, monospace);
-  color: var(--text);
-  background: var(--bg);
-}
-.formula-input:focus { box-shadow: inset 0 0 0 1px var(--accent); }
 
 
-.formula-foot-left { display: flex; gap: 6px; }
-.formula-icon-btn {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  width: 32px;
-  height: 32px;
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.formula-icon-btn:hover { background: var(--hover); color: var(--text); }
-.formula-foot-right { display: flex; align-items: center; gap: 10px; }
-.formula-foot-hint {
-  font-size: var(--fs-12);
-  color: var(--text-faint);
-}
-.formula-btn {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  border-radius: var(--radius-sm);
-  padding: 5px var(--space-4);
-  cursor: pointer;
-  font-size: var(--fs-13);
-}
-.formula-btn:hover { background: var(--hover); }
-.formula-btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--bg);
-  transition: background 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease;
-}
-.formula-btn-primary:hover {
-  background: var(--accent-strong);
-  border-color: var(--accent-strong);
-  box-shadow: 0 2px 8px -1px color-mix(in srgb, var(--accent) 40%, transparent);
-}
-.formula-btn-primary:disabled { opacity: 0.5; cursor: default; }
 
-/* 公式识别状态提示 */
-.formula-reco-status {
-  padding: 6px var(--space-4);
-  font-size: var(--fs-13);
-  color: var(--accent);
-}
-.formula-reco-error {
-  padding: 6px var(--space-4);
-  font-size: var(--fs-13);
-  color: var(--danger);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* 公式手写板 */
 .handwrite-overlay {
@@ -5037,67 +4938,13 @@ p:has(> .editor-drawing-container) {
 
 
 
-/* In-app confirm dialog (centered in the app window), theme-consistent card. */
-/* 层级约定（改动前先读）：
- *   1000  普通弹层 / 抽屉（space-switcher、backup 下拉、drawing-modal…）
- *   1100  拖拽幽灵
- *   1200  全屏模态面板（设置中心、存储面板、快捷键、关于、AI 设置）
- *   1300  空间导入导出进度（模态开着也要能看到）
- *   1400  确认 / 输入对话框——**由模态内部发起，必须盖住模态**
- *   1500  toast 反馈——盖住一切
- * 这里曾出问题：存储面板 1200 而确认框 1000，「清空回收站」的确认框被面板挡住。 */
-.confirm-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1400;
-  background: rgba(15, 23, 42, 0.34);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.confirm-box {
-  width: min(360px, calc(100vw - 48px));
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-xl);
-  padding: 18px 18px 14px;
-}
-.confirm-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-.confirm-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-full);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: var(--fs-14);
-  font-weight: 700;
-  line-height: 1;
-  flex: none;
-}
-.confirm-icon-danger {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-.confirm-title {
-  font-size: var(--fs-15);
-  font-weight: 600;
-  color: var(--text);
-}
-.confirm-message {
-  font-size: var(--fs-13);
-  color: var(--text-dim);
-  line-height: 1.6;
-  white-space: pre-wrap;
-}
+
+
+
+
+
+
+
 .input-dialog-field {
   width: 100%;
   border: 1px solid var(--border);
@@ -5115,57 +4962,14 @@ p:has(> .editor-drawing-container) {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-.confirm-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  margin-top: 18px;
-}
-.confirm-cancel {
-  border: 1px solid var(--border);
-  background: var(--hover);
-  color: var(--text-dim);
-  padding: 7px var(--space-4);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: var(--fs-13);
-  font-weight: 500;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-.confirm-cancel:hover {
-  background: var(--hover-strong);
-  color: var(--text);
-}
-.confirm-ok {
-  border: 1px solid transparent;
-  background: var(--accent);
-  color: var(--on-accent);
-  padding: 7px var(--space-4);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: var(--fs-13);
-  font-weight: 600;
-  transition: background var(--transition-fast), filter var(--transition-fast);
-}
-.confirm-ok:hover {
-  background: var(--accent-strong);
-}
-/* Danger confirms use the theme accent for the action button (harmonized with
-   the theme); the destructive cue is carried by the red "!" icon badge. */
-.confirm-ok-danger {
-  background: var(--accent);
-  color: var(--on-accent);
-}
-.confirm-ok-danger:hover {
-  background: var(--accent-strong);
-}
-.confirm-ok:focus-visible,
-.confirm-cancel:focus-visible {
-  outline: 2px solid var(--accent-soft);
-  outline-offset: 1px;
-}
+
+
+
+
+
+
+
+
 
 
 
@@ -5285,41 +5089,11 @@ p:has(> .editor-drawing-container) {
 
 
 
-/* 通用拨动开关：设置中心的启用项 / AI 设置 / 外链开关 / 插件卡统一用这一套，
-   避免三种开关（文字胶囊 / 大小拨动）并存。on=accent，off=灰，knob 平移。 */
-.ui-toggle {
-  position: relative;
-  flex: none;
-  width: 38px;
-  height: 22px;
-  border-radius: 11px;
-  border: none;
-  background: var(--hover-strong);
-  cursor: pointer;
-  padding: 0;
-  transition: background var(--transition-fast);
-}
-.ui-toggle.on {
-  background: var(--accent);
-}
-.ui-toggle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.ui-toggle-knob {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--surface);
-  box-shadow: var(--shadow-xs);
-  transition: transform var(--transition-fast);
-}
-.ui-toggle.on .ui-toggle-knob {
-  transform: translateX(16px);
-}
+
+
+
+
+
 
 
 
@@ -7079,8 +6853,7 @@ body.is-plugin-panel-open .main {
 @media (max-width: 768px), (max-height: 520px) {
 .trash-popover,
 .backup-dropdown,
-.new-menu-dropdown,
-.confirm-box {
+.new-menu-dropdown {
     min-width: 0;
     min-height: 0;
     max-width: 100%;
@@ -7092,7 +6865,6 @@ body.is-plugin-panel-open .main {
     overscroll-behavior-y: contain;
     -webkit-overflow-scrolling: touch;
   }
-.confirm-overlay,
 .cover-overlay {
     align-items: flex-end;
     justify-content: center;
@@ -7103,16 +6875,6 @@ body.is-plugin-panel-open .main {
     padding-bottom: calc(var(--space-3) + max(var(--sab), var(--kb)));
     padding-left: calc(var(--space-3) + var(--sal));
     padding-right: calc(var(--space-3) + var(--sar));
-  }
-.confirm-box {
-    position: static;
-    transform: none;
-    width: 100%;
-    max-width: 100%;
-    /* 顶部留 24px：让用户看得见"后面还有内容"。`--ovh` 里已经扣掉了状态栏
-       与底部（手势条 / 键盘），所以这里只需要那个 24px 的呼吸位。 */
-    max-height: calc(var(--ovh) - 24px);
-    border-radius: 16px 16px var(--radius-lg) var(--radius-lg);
   }
 .toc-panel {
     width: 100%;
@@ -7165,7 +6927,6 @@ body.is-plugin-panel-open .main {
     overflow-y: visible;
     max-height: none;
   }
-.confirm-box button,
 .trash-popover button {
     min-height: 44px;
   }
