@@ -1,0 +1,82 @@
+/* S4（2026-11-01）：域抽取器搬出的**移动端底部弹层域（`.msheet-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* ── 切换空间 bottom sheet ────────────────────────────────────────────────── */
+.msheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(16, 24, 40, .36);
+}
+
+.msheet-sheet {
+  width: 100%;
+  max-height: 76vh;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-4) calc(22px + var(--sab, 0px));
+  border-radius: 24px 24px 0 0;
+  background: var(--surface);
+  box-shadow: 0 -18px 44px rgba(16, 24, 40, .18);
+  animation: msheet-in 180ms var(--transition-fast, ease);
+}
+
+.msheet-grab { width: 36px; height: 4px; margin: 2px auto 14px; border-radius: var(--radius-full); background: var(--border-strong); }
+
+.msheet-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: var(--space-3); }
+
+.msheet-title { font-size: var(--fs-18); font-weight: 750; }
+
+.msheet-hint { margin-top: 3px; font-size: var(--fs-11); color: var(--text-faint); }
+
+.msheet-close {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  margin: -8px -8px 0 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.msheet-list { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.msheet-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 58px;
+  padding: 9px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+
+.msheet-row.is-active { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: var(--accent-soft); }
+
+.msheet-ico { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; background: var(--bg-sidebar); color: var(--text-dim); }
+
+.msheet-row.is-active .msheet-ico { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); color: var(--accent-strong); }
+
+.msheet-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+
+.msheet-name { font-size: var(--fs-14); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.msheet-sub { font-size: var(--fs-11); color: var(--text-faint); }
+
+.msheet-check { flex: none; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: var(--on-accent); }
+
+.msheet-radio { flex: none; width: 20px; height: 20px; border: 1.5px solid var(--border-strong); border-radius: 50%; }
+}

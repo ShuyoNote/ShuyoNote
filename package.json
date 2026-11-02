@@ -19,6 +19,7 @@
     "fetch:release-artifacts": "node scripts/fetch-release-artifacts.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
     "check:overlays": "node scripts/check-overlay-registry.mjs",
+    "check:rustfmt": "node scripts/check-rustfmt.mjs",
     "check:hook-order": "node scripts/check-hook-order.mjs",
     "check:store-subscriptions": "node scripts/check-store-subscriptions.mjs",
     "check:ocr-assets": "node scripts/check-ocr-assets.mjs",

@@ -78,7 +78,11 @@ pub async fn fetch_update_manifest(url: Option<String>) -> Result<Option<UpdateM
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| e.to_string())?;
-    let resp = client.get(&url).send().await.map_err(|e| describe_net(&e, &url))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| describe_net(&e, &url))?;
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
@@ -88,9 +92,15 @@ pub async fn fetch_update_manifest(url: Option<String>) -> Result<Option<UpdateM
         .map_err(|e| e.to_string())?;
     let (android_url, android_sha256) = android_entry(&j);
     Ok(Some(UpdateManifest {
-        version: j.get("version").and_then(|v| v.as_str()).map(str::to_string),
+        version: j
+            .get("version")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
         notes: j.get("notes").and_then(|v| v.as_str()).map(str::to_string),
-        pub_date: j.get("pub_date").and_then(|v| v.as_str()).map(str::to_string),
+        pub_date: j
+            .get("pub_date")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
         android_url,
         android_sha256,
     }))
@@ -112,7 +122,10 @@ fn normalize_sha256(raw: &str) -> Option<String> {
 /// 更新包落盘的文件名（按指纹前 8 位）：同一个版本重下会复用同一个文件名 ⇒
 /// 用户"装失败再点一次"不必重下整包。
 fn android_apk_file_name(sha256_hex: &str) -> String {
-    format!("ShuyoNote-android-{}.apk", &sha256_hex[..8.min(sha256_hex.len())])
+    format!(
+        "ShuyoNote-android-{}.apk",
+        &sha256_hex[..8.min(sha256_hex.len())]
+    )
 }
 
 /// `sha2` 的 `finalize()` 给的是 `GenericArray`，**没有** `LowerHex` 实现
@@ -158,7 +171,8 @@ pub async fn download_android_update(
     if !url.starts_with("https://") {
         return Err("更新地址必须是 https".to_string());
     }
-    let expect = normalize_sha256(&sha256).ok_or_else(|| "更新指纹格式不对（应为 64 位十六进制）".to_string())?;
+    let expect = normalize_sha256(&sha256)
+        .ok_or_else(|| "更新指纹格式不对（应为 64 位十六进制）".to_string())?;
 
     let dir = app
         .path()
@@ -182,7 +196,11 @@ pub async fn download_android_update(
         .connect_timeout(std::time::Duration::from_secs(20))
         .build()
         .map_err(|e| e.to_string())?;
-    let mut resp = client.get(&url).send().await.map_err(|e| describe_net(&e, &url))?;
+    let mut resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| describe_net(&e, &url))?;
     if !resp.status().is_success() {
         return Err(format!("下载更新失败：HTTP {}", resp.status()));
     }
@@ -193,7 +211,8 @@ pub async fn download_android_update(
     let mut hasher = Sha256::new();
     let mut done: u64 = 0;
     while let Some(chunk) = resp.chunk().await.map_err(|e| format!("下载中断：{e}"))? {
-        out.write_all(&chunk).map_err(|e| format!("写入失败：{e}"))?;
+        out.write_all(&chunk)
+            .map_err(|e| format!("写入失败：{e}"))?;
         hasher.update(&chunk);
         done += chunk.len() as u64;
         let _ = app.emit(
@@ -201,7 +220,11 @@ pub async fn download_android_update(
             AndroidUpdateProgress {
                 done,
                 total,
-                percent: if total > 0 { (done as f64 / total as f64) * 100.0 } else { 0.0 },
+                percent: if total > 0 {
+                    (done as f64 / total as f64) * 100.0
+                } else {
+                    0.0
+                },
             },
         );
     }
@@ -211,7 +234,9 @@ pub async fn download_android_update(
     let got = hex_of(&hasher.finalize());
     if got != expect {
         let _ = std::fs::remove_file(&tmp);
-        return Err(format!("更新包校验不通过（期望 {expect}，实际 {got}）——已丢弃，请重试或前往发布页手动下载"));
+        return Err(format!(
+            "更新包校验不通过（期望 {expect}，实际 {got}）——已丢弃，请重试或前往发布页手动下载"
+        ));
     }
     std::fs::rename(&tmp, &dest).map_err(|e| format!("落盘失败：{e}"))?;
     Ok(dest.to_string_lossy().into_owned())
@@ -248,9 +273,15 @@ mod tests {
     fn sha256_shape_is_enforced() {
         let ok = "a".repeat(64);
         assert_eq!(normalize_sha256(&ok).as_deref(), Some(ok.as_str()));
-        assert_eq!(normalize_sha256(&format!("sha256:{ok}")).as_deref(), Some(ok.as_str()));
+        assert_eq!(
+            normalize_sha256(&format!("sha256:{ok}")).as_deref(),
+            Some(ok.as_str())
+        );
         // 大写要归一化（清单里出现过小写，但别假设）
-        assert_eq!(normalize_sha256(&"A".repeat(64)).as_deref(), Some(ok.as_str()));
+        assert_eq!(
+            normalize_sha256(&"A".repeat(64)).as_deref(),
+            Some(ok.as_str())
+        );
         // 形状不对一律拒绝：短、长、非十六进制、空
         assert_eq!(normalize_sha256("abc"), None);
         assert_eq!(normalize_sha256(&"a".repeat(63)), None);
@@ -329,7 +360,9 @@ mod tests {
 
         // 桌面三键仍然完整可读（证明"没有 android 不影响别人"）
         assert_eq!(
-            deskonly["platforms"]["windows-x86_64"]["url"].as_str().map(|s| s.ends_with(".exe")),
+            deskonly["platforms"]["windows-x86_64"]["url"]
+                .as_str()
+                .map(|s| s.ends_with(".exe")),
             Some(true)
         );
     }
@@ -347,13 +380,20 @@ mod tests {
             json!({}),
         ];
         for (i, c) in cases.iter().enumerate() {
-            assert_eq!(android_entry(c).1, None, "case {i} 的 sha256 都应被当作「没有」");
+            assert_eq!(
+                android_entry(c).1,
+                None,
+                "case {i} 的 sha256 都应被当作「没有」"
+            );
         }
         // url 只要求绝对 https：只有 sha256 不合约定时，地址仍然可用（按钮照旧能打开，
         // 只是没有指纹可比）——**不要**因为指纹缺失就连地址一起丢掉。
         let bad_sig = json!({ "platforms": { "android-aarch64": {
             "url": "https://e/x.apk", "signature": "sha256:abc" } } });
-        assert_eq!(android_entry(&bad_sig).0.as_deref(), Some("https://e/x.apk"));
+        assert_eq!(
+            android_entry(&bad_sig).0.as_deref(),
+            Some("https://e/x.apk")
+        );
         assert_eq!(android_entry(&bad_sig).1, None);
         // 非 https（含明文 http）的地址一律丢掉
         let plain = json!({ "platforms": { "android-aarch64": {
@@ -380,21 +420,25 @@ mod tests {
         // 允许用环境变量换一个清单地址：这样能对着**本地假清单**做变异验证
         //（"清单指向 dmg 时这条判据必须红"），不必等真出事。与 plugin_index/community 那些
         // live 判据同一套做法：默认走线上，要验门禁就指到本地。
-        let url = std::env::var("SHUYONOTE_LIVE_MANIFEST").unwrap_or_else(|_| DEFAULT_MANIFEST_URL.to_string());
+        let url = std::env::var("SHUYONOTE_LIVE_MANIFEST")
+            .unwrap_or_else(|_| DEFAULT_MANIFEST_URL.to_string());
         let body = reqwest::get(&url)
             .await
             .expect("抓线上 latest.json 失败（网络？）")
             .text()
             .await
             .expect("读 body 失败");
-        let manifest: serde_json::Value = serde_json::from_str(&body).expect("线上 latest.json 不是合法 JSON");
+        let manifest: serde_json::Value =
+            serde_json::from_str(&body).expect("线上 latest.json 不是合法 JSON");
         let platforms = manifest
             .get("platforms")
             .and_then(|p| p.as_object())
             .expect("线上清单没有 platforms 对象 —— 桌面端的更新会**整份**解析失败");
 
-        let darwin: Vec<(&String, &serde_json::Value)> =
-            platforms.iter().filter(|(k, _)| k.starts_with("darwin")).collect();
+        let darwin: Vec<(&String, &serde_json::Value)> = platforms
+            .iter()
+            .filter(|(k, _)| k.starts_with("darwin"))
+            .collect();
         if darwin.is_empty() {
             println!("线上清单暂无 darwin 键（macOS 通道尚未启用）—— 跳过，不算失败");
             return;
@@ -402,13 +446,19 @@ mod tests {
         println!("线上清单 version={:?}", manifest.get("version"));
         for (key, entry) in &darwin {
             let url = entry.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            let sig = entry.get("signature").and_then(|v| v.as_str()).unwrap_or("");
+            let sig = entry
+                .get("signature")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             println!("  {key} → {url}");
             assert!(
                 url.ends_with(".app.tar.gz"),
                 "{key} 的 URL 不是 .app.tar.gz：{url}\n  ⇒ macOS 用户会「能下载、装不上」（更新器只解 .app.tar.gz）"
             );
-            assert!(!sig.trim().is_empty(), "{key} 的 signature 为空：缺了它整份清单解析失败");
+            assert!(
+                !sig.trim().is_empty(),
+                "{key} 的 signature 为空：缺了它整份清单解析失败"
+            );
         }
         // universal 包一物两键：要么两个 darwin 键都在，要么都不在（只写一个 = 另一架构静默收不到更新）
         let has_aarch64 = platforms.contains_key("darwin-aarch64");

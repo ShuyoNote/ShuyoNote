@@ -1,0 +1,60 @@
+/* S4-4（2026-11-01）：域抽取器搬出的**插件管理器域**（`.pm-*` / `.plugin-manager*` / `.plugin-menu-*`）。
+
+- 选择器混排（`.pm-x, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- 核心规则在前、**响应式覆盖（来自混合 @media，只抽命中域的规则并重建同条件块）在后** —— 保持原相对顺序。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条竖向工具条撤掉 ⇒ 它的入口搬进**顶端工具栏** ✓，
+   形态按 owner 纠正后的口径＝**保持图标样式** ✓（⛔ 不做文字胶囊 ✗）。
+   视觉刻意**贴着标题栏那组窗口按钮**（同高、同 hover 底色 ✓）—— 它们是同一行里的两组按钮，
+   长得不一样会显得像两个系统 ✓。
+   ⚠️ 类名不叫 `titlebar-*` ✗：手机上 `TitleBar` 不渲染，这条工具栏要在 `App.tsx` 顶部**自己渲染** ✓
+   ⇒ 同一个组件、同一套类名，两处共用 ✓（`.is-mobile` 是手机那一行的底座样式 ✓）。 */
+.top-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 6px;
+}
+
+.top-tools.is-mobile {
+  margin: 0;
+  padding: var(--space-1) 6px;
+  gap: var(--space-1);
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border);
+}
+
+.top-tool {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: 0;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+/* 手机那条工具栏上，命中区按 44px 走 ✓（`.is-mobile` 时图标仍是 16px，靠内边距撑命中区 ✓）。 */
+.top-tools.is-mobile .top-tool {
+  width: 44px;
+  height: 44px;
+}
+
+.top-tool:hover {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+
+.top-tool.is-on {
+  background: var(--hover-strong);
+  color: var(--accent);
+}
+}

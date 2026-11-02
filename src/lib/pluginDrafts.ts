@@ -110,7 +110,19 @@ export async function draftPreviewLines(drafts: PluginDraft[]): Promise<string[]
  */
 export async function confirmAndApplyDrafts(source: string, drafts: PluginDraft[]): Promise<string> {
   if (drafts.length === 0) return "";
-  const list = drafts.map((d, i) => `${i + 1}. ${d.summary}`).join("\n");
+  // ⭐ 跨空间写 v1：草稿卡片标出目标空间名（"将写入『招标资料』"）
+  const spaceNames = new Map<string, string>();
+  try {
+    for (const s of await api.listWorkspaces()) spaceNames.set(s.id, s.name);
+  } catch {
+    // 读不到名字就只显示 id（⛔ 不因此挡住确认）
+  }
+  const targetNote = (payload: unknown) => {
+    const pp = payload as { spaceId?: unknown; args?: { spaceId?: unknown } };
+    const id = pp?.spaceId ?? pp?.args?.spaceId;
+    return typeof id === "string" && id ? `（将写入『${spaceNames.get(id) ?? id}』）` : "";
+  };
+  const list = drafts.map((d, i) => `${i + 1}. ${d.summary}${targetNote(d.payload)}`).join("\n");
   // 预览读不到也不能拦住确认（读页失败不该让插件/AI 的改动完全无法落库）
   const preview = await draftPreviewLines(drafts).catch(() => []);
   const detail = preview.length ? `\n\n${preview.join("\n")}` : "";
@@ -119,7 +131,16 @@ export async function confirmAndApplyDrafts(source: string, drafts: PluginDraft[
     title: "确认这次改动",
     message: `${friendlySource(source)} 想对笔记做这些改动：\n\n${list}${detail}\n\n点「确定」才会真正写入。`,
   });
-  if (!ok) return `已放弃 ${drafts.length} 项改动（未写入）`;
+  if (!ok) {
+    // ⭐ UX-④（2026-10-30）：用户取消 ⇒ 每条草稿立刻回写 rejected（不是等它 10 分钟后变 expired）
+    for (const d of drafts) {
+      const id = typeof (d.payload as { draftId?: unknown })?.draftId === "string"
+        ? String((d.payload as { draftId: string }).draftId)
+        : "";
+      if (id) void api.mcpDraftState(id, "rejected").catch(() => undefined);
+    }
+    return `已放弃 ${drafts.length} 项改动（未写入）`;
+  }
 
   const applied: string[] = [];
   for (const d of drafts) {

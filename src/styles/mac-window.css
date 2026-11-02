@@ -1,0 +1,99 @@
+/* S4（2026-11-01）：域抽取器搬出的**mac 窗口控件域（`.is-macos*` / `.mac-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* ---------------------------------------------------------------------------
+ * macOS 原生透明标题栏（2026-10-23）。
+ *
+ * 窗口以 `titleBarStyle: Overlay + hidden_title` 创建（src-tauri/src/lib.rs）：
+ * 标题栏透明、内容铺到窗口顶端、红绿灯浮在内容之上。
+ *
+ * 布局＝**微信式（B 版，owner 2026-10-23 拍）**：
+ *   · 左竖条 = 这扇窗的"标题栏区域"：三颗小灯画在竖条顶端（**自绘**，比系统的小一号），
+ *     竖条内容（图标）整体下移 `--mac-lights-h`；竖条宽 56px（灯 8..50）。
+ *     系统那三颗原生灯被 `traffic_light_position(-100,14)` 移出可视区（尺寸改不了）。
+ *   · 侧栏 / 主区：**内容顶到窗口顶端**（像微信的列表：搜索框与红绿灯同一水平线）。
+ *   · 拖拽/双击：**不铺任何 DOM**。Overlay 下 tauri 不替你接管拖拽，而竖条顶端又被
+ *     三颗灯占满 ⇒ 由 `<TitleBar>` 在 document 上接 mousedown：整窗顶部 28px 的
+ *     **空白处**都能拖，落在交互控件上就放行（详见 TitleBar.tsx 那段注释）。
+ *
+ * ⚠️ 全部挂在 `.is-macos` 上：自绘栏（Windows/Linux）、Web、手机一个字不变。
+ *    ⛔ Windows/Linux 的竖条仍是 48px。
+ * ------------------------------------------------------------------------- */
+.is-macos {
+  /* 竖条宽＝自绘小灯那一组的宽度（8..54）＋右侧 2px。`--activity-w` 只有一处
+     别的消费方（`.fm-preview-overlay` 的 left）⇒ 覆盖它 = 竖条与浮层避让同源。 */
+  --activity-w: 60px;
+  /* 红绿灯占位高度：**只给竖条用**。⛔ 不复用 `--titlebar-h` —— B 版侧栏/主区内容
+     顶到窗口顶、浮层也要能从 0 开始，那个变量在 macOS 上是 0（见 `<TitleBar>`）。 */
+  --mac-lights-h: 28px;
+}
+
+.is-macos .activity-bar {
+  width: var(--activity-w);
+  padding-top: calc(2px + var(--mac-lights-h)); /* 原 `padding: 2px 0` */
+}
+
+/* B 版：这两列不再让位（原来各让 28px 的那条就是被去掉的"空白带"）。 */
+.is-macos .sidebar { padding-top: 0; }
+
+.is-macos .main { padding-top: 0; }
+
+/* 独立页面窗口没有左竖条 ⇒ 主区自己让位，否则正文被红绿灯/拖拽带压住。 */
+.is-macos .app-body > .main:first-child { padding-top: var(--mac-lights-h); }
+
+/* ---- 自绘红绿灯（macOS，2026-10-23）--------------------------------------
+   为什么自绘：macOS 不提供改原生按钮尺寸的 API（`NSWindow` 只暴露位置），
+   而 owner 要"像微信那样小一号" ⇒ 原生三颗被 Rust 侧移到窗口外，这里按
+   10px 直径 / 6px 间距重画（系统的是 12~14px，所以肉眼"小一号"）。
+   交互/观感对齐系统：
+     · 平时是三个纯色圆点；**鼠标移进这一组**才浮出 × − ⤢（和系统一样）；
+     · 窗口失焦 → 全部变灰（`html.mac-blurred`，由 `<TitleBar>` 监听焦点挂上）；
+     · 点按＝关闭 / 最小化 / **全屏**（⌥+点绿键＝缩放，与 macOS 原生一致）；
+     · 它们都是 `<button>` ⇒ 顶部拖拽判定会自动放行，不会把点击当拖窗。 */
+.mac-lights {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: var(--activity-w);
+  height: var(--mac-lights-h);
+  display: flex;
+  align-items: center;
+  /* ⚠️ 2026-10-23 owner：「系统按钮间距小点」⇒ 8 → 6px（微信那组更紧）。
+     ⛔ 不要再往上加：间距超过 8 就回到"散开"的观感。 */
+  gap: 6px;
+  padding-left: var(--space-2);
+  z-index: calc(var(--z-bar) + 1); /* 要压过左竖条 */
+}
+
+.mac-light {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: default;
+  color: rgba(0, 0, 0, 0.62);
+}
+
+/* 一圈极淡的内描边：系统灯有，不加会显得"太塑料"。 */
+.mac-light { box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12); }
+
+.mac-light-close { background: #ff5f57; }
+
+.mac-light-min { background: #febc2e; }
+
+.mac-light-zoom { background: #28c840; }
+
+/* 悬停组内才显字（与系统一致：不在某个点上悬停，是"这一组"一起显）。 */
+.mac-light svg { opacity: 0; width: 6px; height: 6px; display: block; }
+
+.mac-lights:hover .mac-light svg { opacity: 1; }
+}

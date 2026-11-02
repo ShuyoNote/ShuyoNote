@@ -1,0 +1,284 @@
+/* S4（2026-11-01）：域抽取器搬出的**命令面板域（`.palette*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+.palette-clear {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 14px;
+  height: 2px;
+  background: var(--danger);
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+/* Command palette */
+.palette-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  /* 命令面板(Ctrl+K)是最高阶浮层——高于文件预览(600)/内容 modal，避免被遮挡。 */
+  z-index: 1500;
+  display: flex;
+  justify-content: center;
+  padding-top: 12vh;
+}
+
+.palette {
+  width: 560px;
+  max-width: 90vw;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  align-self: flex-start;
+  animation: pop 0.16s ease;
+}
+
+.palette-input {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--fs-15);
+  outline: none;
+  font-family: inherit;
+}
+
+.palette-list {
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.palette-group {
+  font-size: var(--fs-11);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: var(--space-2) 10px var(--space-1);
+}
+
+.palette-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font-size: var(--fs-14);
+  color: var(--text);
+}
+
+.palette-item:hover {
+  background: var(--hover);
+}
+
+.palette-item-active {
+  background: var(--accent-soft);
+}
+
+/* ⚠️ **2026-10-17（owner 截图报的真 bug）**：长标题在命令面板里被**挤到没有了** ✗ ——
+   实测：`导出当前页为 Markdown ＋ 附件（zip）` 这种 20+ 字的标签只剩 `导.` ✗，
+   而 8–12 字的命令显示正常 ✓ ⇒ 是 flex 收缩把**标题**让掉了（描述占了整行 ✓）。
+   口径：**标题优先、描述让位** ✓ —— 标题不参与收缩（超长自己省略），描述拿剩余宽度并省略 ✓。
+   ⛔ 只动布局，一个字都没改文案 ✗。 */
+.palette-item {
+  min-width: 0;
+}
+
+.palette-item .palette-title {
+  /* ⛔ 不许收缩 ✗（标题永远完整可见 ✓）；只给一个上限，超长自己省略 ✓ */
+  flex: 0 0 auto;
+  max-width: 62%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-item .palette-desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-title {
+  flex: 1;
+  font-size: var(--fs-14);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-desc {
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.palette-empty {
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-dim);
+  font-size: var(--fs-13);
+}
+
+.palette-result {
+  padding: 10px var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-13);
+  color: var(--text);
+}
+
+.palette-foot {
+  display: flex;
+  gap: 14px;
+  padding: 9px var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+}
+
+.palette-foot kbd {
+  display: inline-block;
+  padding: 0 5px;
+  font-size: var(--fs-11);
+  line-height: 17px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-xs);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-family: inherit;
+}
+
+/* 命令参数表单（由 manifest/register 的 schema 生成，作者声明什么就渲染什么） */
+.palette-params-badge {
+  margin-left: var(--space-2);
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+}
+
+.palette-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 10px var(--space-3);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.palette-form-title {
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+}
+
+.palette-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.palette-field-label {
+  flex: none;
+  width: 34%;
+  color: var(--text-dim);
+  font-size: var(--fs-12-5);
+}
+
+.palette-field-req {
+  color: var(--danger);
+  margin-left: 3px;
+}
+
+.palette-field input[type="text"],
+.palette-field input[type="number"],
+.palette-field select {
+  flex: 1;
+  min-width: 0;
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-12-5);
+  padding: var(--space-1) var(--space-2);
+}
+
+.palette-form-error {
+  color: var(--danger);
+  font-size: var(--fs-12);
+}
+
+.palette-form-actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+@media (max-width: 768px), (max-height: 520px) {
+.palette {
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    /* `--ovh` 已经扣掉状态栏与底部（手势条 / 键盘）：盒子在任何视口下都装得下。 */
+    max-height: calc(var(--ovh) - 24px);
+  }
+/* 命令面板：整宽 + 顶部对齐，列表只纵向滚（横向溢出 46~73px 是坐标/宽度算错，
+     不是"内容真的更宽"）。 */
+  .palette-overlay {
+    padding: var(--sat) var(--sar) max(var(--sab), var(--kb)) var(--sal);
+    padding-top: calc(var(--space-5) + var(--sat));
+    align-items: flex-start;
+  }
+.palette {
+    /* 列向 flex：`.palette-input` 固定、`.palette-list` 自己滚。
+       写成"整个盒子定高 + overflow:hidden"是**错的**——base 的 `.palette-list{max-height:340px}`
+       会大于盒子能给的余量，多出来的部分被盒子裁掉且**永远滚不到**
+       （验收实测：360px 视口下 `.palette` 被裁 86px）。 */
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(var(--ovh) - 24px);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  }
+.palette-list {
+    /* `--ovh` 里已经扣掉状态栏与底部，再减掉遮罩的 24px 呼吸位。
+       ⚠️ `min-height: 0` 不能省：列向 flex 的自动最小高度是**内容高度**，
+       不写它这个列表就不缩、也不滚，只能被外层裁掉。 */
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+  }
+.palette-item {
+    min-width: 0;
+  }
+.palette-item .palette-title,
+  .palette-item .palette-desc {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+.palette button {
+    min-height: 44px;
+  }
+}
+}

@@ -130,12 +130,16 @@ async fn connect_and_auth(
     let _greeting = read_response(&mut stream).await;
 
     // EHLO
-    write_cmd(&mut stream, &ehlo()).await.map_err(|e| e.to_string())?;
+    write_cmd(&mut stream, &ehlo())
+        .await
+        .map_err(|e| e.to_string())?;
     let _r = read_response(&mut stream).await;
 
     // STARTTLS
     if security == SmtpSecurity::StartTls {
-        write_cmd(&mut stream, "STARTTLS").await.map_err(|e| e.to_string())?;
+        write_cmd(&mut stream, "STARTTLS")
+            .await
+            .map_err(|e| e.to_string())?;
         let r = read_response(&mut stream).await;
         if !r.starts_with("220") {
             return Err(format!("STARTTLS 不被支持: {}", r));
@@ -153,20 +157,28 @@ async fn connect_and_auth(
             .await
             .map_err(|e| format!("SMTP TLS 失败: {}", e))?;
         stream = SmtpStream::Tls(tls_stream);
-        write_cmd(&mut stream, &ehlo()).await.map_err(|e| e.to_string())?;
+        write_cmd(&mut stream, &ehlo())
+            .await
+            .map_err(|e| e.to_string())?;
         let _r = read_response(&mut stream).await;
     }
 
     // AUTH LOGIN（多数服务商），失败则 AUTH PLAIN。
-    write_cmd(&mut stream, "AUTH LOGIN").await.map_err(|e| e.to_string())?;
+    write_cmd(&mut stream, "AUTH LOGIN")
+        .await
+        .map_err(|e| e.to_string())?;
     let r = read_response(&mut stream).await;
     if r.starts_with("334") {
         use base64::Engine as _;
         let user = base64::engine::general_purpose::STANDARD.encode(username);
         let pass = base64::engine::general_purpose::STANDARD.encode(password);
-        write_cmd(&mut stream, &user).await.map_err(|e| e.to_string())?;
+        write_cmd(&mut stream, &user)
+            .await
+            .map_err(|e| e.to_string())?;
         let _r = read_response(&mut stream).await;
-        write_cmd(&mut stream, &pass).await.map_err(|e| e.to_string())?;
+        write_cmd(&mut stream, &pass)
+            .await
+            .map_err(|e| e.to_string())?;
         let r = read_response(&mut stream).await;
         if !r.starts_with("235") {
             return Err(format!("SMTP 认证失败: {}", r));
@@ -175,7 +187,9 @@ async fn connect_and_auth(
         use base64::Engine as _;
         let plain = format!("\x00{}\x00{}", username, password);
         let b64 = base64::engine::general_purpose::STANDARD.encode(plain);
-        write_cmd(&mut stream, &format!("AUTH PLAIN {}", b64)).await.map_err(|e| e.to_string())?;
+        write_cmd(&mut stream, &format!("AUTH PLAIN {}", b64))
+            .await
+            .map_err(|e| e.to_string())?;
         let r = read_response(&mut stream).await;
         if !r.starts_with("235") {
             return Err(format!("SMTP 认证失败: {}", r));
@@ -185,9 +199,17 @@ async fn connect_and_auth(
 }
 
 /// 仅验证 SMTP 连接与认证（不发信）：连接 → 认证 → QUIT。用于配置面板「测试」。
-pub async fn verify(host: &str, port: u16, username: &str, password: &str, security: SmtpSecurity) -> Result<(), String> {
+pub async fn verify(
+    host: &str,
+    port: u16,
+    username: &str,
+    password: &str,
+    security: SmtpSecurity,
+) -> Result<(), String> {
     let mut stream = connect_and_auth(host, port, username, password, security).await?;
-    write_cmd(&mut stream, "QUIT").await.map_err(|e| e.to_string())?;
+    write_cmd(&mut stream, "QUIT")
+        .await
+        .map_err(|e| e.to_string())?;
     let _r = read_response(&mut stream).await;
     Ok(())
 }
@@ -206,27 +228,39 @@ pub async fn send(
     let mut stream = connect_and_auth(host, port, username, password, security).await?;
 
     // MAIL FROM / RCPT TO
-    write_cmd(&mut stream, &format!("MAIL FROM:<{}>", from)).await.map_err(|e| e.to_string())?;
+    write_cmd(&mut stream, &format!("MAIL FROM:<{}>", from))
+        .await
+        .map_err(|e| e.to_string())?;
     let r = read_response(&mut stream).await;
     if !r.starts_with("250") {
         return Err(format!("MAIL FROM 失败: {}", r));
     }
-    write_cmd(&mut stream, &format!("RCPT TO:<{}>", to)).await.map_err(|e| e.to_string())?;
+    write_cmd(&mut stream, &format!("RCPT TO:<{}>", to))
+        .await
+        .map_err(|e| e.to_string())?;
     let r = read_response(&mut stream).await;
     if !(r.starts_with("250") || r.starts_with("251")) {
         return Err(format!("RCPT TO 失败: {}", r));
     }
 
     // DATA
-    write_cmd(&mut stream, "DATA").await.map_err(|e| e.to_string())?;
+    write_cmd(&mut stream, "DATA")
+        .await
+        .map_err(|e| e.to_string())?;
     let r = read_response(&mut stream).await;
     if !r.starts_with("354") {
         return Err(format!("DATA 失败: {}", r));
     }
     // 规范化换行为 CRLF，并以 "." 结束。
     let body = normalize_crlf(msg);
-    stream.write_all(body.as_bytes()).await.map_err(|e| e.to_string())?;
-    stream.write_all(b"\r\n.\r\n").await.map_err(|e| e.to_string())?;
+    stream
+        .write_all(body.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+    stream
+        .write_all(b"\r\n.\r\n")
+        .await
+        .map_err(|e| e.to_string())?;
     stream.flush().await.map_err(|e| e.to_string())?;
     let r = read_response(&mut stream).await;
     if !r.starts_with("250") {
@@ -234,7 +268,9 @@ pub async fn send(
     }
 
     // QUIT
-    write_cmd(&mut stream, "QUIT").await.map_err(|e| e.to_string())?;
+    write_cmd(&mut stream, "QUIT")
+        .await
+        .map_err(|e| e.to_string())?;
     let _r = read_response(&mut stream).await;
     Ok(())
 }

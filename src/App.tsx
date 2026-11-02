@@ -63,9 +63,8 @@ import { ConflictBanner } from "./components/ConflictBanner";
 import { LineageConflictBanner } from "./components/LineageConflictBanner";
 import { TextRepairRunner } from "./components/TextRepairRunner";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
-import { CommentsDrawer } from "./components/CommentsDrawer";
 import { InlineAiDraftBar } from "./components/InlineAiDraftBar";
-import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
+import { SmileIcon, ImageIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
 import { LockScreen } from "./components/LockScreen";
 import { useVault } from "./hooks/useVault";
@@ -74,10 +73,10 @@ import { useIconPicker } from "./store/iconPicker";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { PanelBoundary } from "./components/PanelBoundary";
 import { Editor } from "./editor/Editor";
-import { usePresence } from "./hooks/usePresence";
 import { useSyncStream } from "./hooks/useSyncStream";
 import { useSyncProgress } from "./hooks/useSyncProgress";
 import { useExternalDrafts } from "./hooks/useExternalDrafts";
+import { useMcpFrontendTools } from "./hooks/useMcpFrontendTools";
 import { AUTO_SYNC_CHANGED_EVENT, effectiveAutoSyncMs, setLanMeshActive } from "./lib/syncMode";
 import { shouldAutoSyncNow } from "./lib/syncGate";
 // 空闲退避（2026-09-30）：自动同步那一轮的节拍判据（纯函数；三条口径与"兜底"都在那里 ✓）
@@ -100,6 +99,7 @@ import { useUpdateChecker } from "./lib/useUpdateChecker";
 import { api } from "./lib/api";
 import { createDeepLinkHandler } from "./lib/deepLinkDispatch";
 import { useNotes } from "./store/notes";
+import { useSpaceStore } from "./store/space";
 import { shouldDropPendingSave } from "./lib/pendingSave";
 import { isLocalEditRecent, markLocalEdit } from "./lib/editIdle";
 import { usePlugins } from "./store/plugins";
@@ -116,12 +116,145 @@ import { usePdfReader } from "./store/pdfReader";
 import { useFilePreview } from "./store/filePreview";
 import { pdfPlacement } from "./lib/pdfPlacement";
 import { useFileManagerStore } from "./store/fileManager";
-import { usePropertyUiStore } from "./store/propertyUi";
 import { toast } from "./store/toast";
 import { platform } from "./lib/platform";
-import { useAuth } from "./store/auth";
 import { withSyncStatus } from "./store/syncStatus";
 import "./App.css";
+// MCP 接入面板（跨空间支持矩阵改版）的专用样式：不写进 App.css（那条文件在收缩），
+// 也不用内联样式 —— 全部收在独立文件里，放在 App.css **之后**以便覆盖同特异性的旧类。
+import "./styles/mcp-panel.css";
+// S4-30（2026-11-01）：MCP 接入状态域（`.mcp-access*`）。
+import "./styles/mcp-access.css";
+// S3（2026-10-31）：生成的 token 定义（`--fs-*` 等）。放在 App.css 之后 import ⇒ 层序已由
+// App.css 的 `@layer legacy, utilities;` 声明；tokens.css 自己也落在 `@layer legacy` 里。
+// ⛔ 别手改 tokens.css/tokens.d.ts —— 改 `src/styles/tokens.json` 再跑 `node scripts/gen-css-tokens.mjs`。
+import "./styles/tokens.css";
+// S4 pilot（2026-10-31）：从 App.css 整段搬出的 `.selection-toolbar` 域（纯搬运、不改选择器）。
+// 它自己也包在 `@layer legacy` 里；层序仍由 App.css 顶部那条 `@layer legacy, utilities;` 唯一声明。
+import "./styles/selection-toolbar.css";
+// S4-2（2026-10-31）：mermaid 域（编辑器图块 ＋ 文件管理器 md 预览 ＋ mindmap 提示）整段搬出。
+import "./styles/mermaid.css";
+// S4-3（2026-11-01）：表格工具条域（`.table-menu*`，8 条规则，块内无 @media）。
+import "./styles/table-menu.css";
+// S4-4（2026-11-01）：插件管理器域（`.pm-*` / `.plugin-manager*` / `.plugin-menu*`）。响应式覆盖也一并抽走。
+import "./styles/plugin-manager.css";
+// S4-5（2026-11-01）：文件管理器域（`.fm-*` / `.file-manager*`）。响应式覆盖一并抽走。
+import "./styles/file-manager.css";
+// S4-6（2026-11-01）：同步域（`.sync-*`）。响应式覆盖一并抽走。
+import "./styles/sync.css";
+// S4-7（2026-11-01）：AI 面板/设置域（`.ai-*`）。响应式覆盖一并抽走。
+import "./styles/ai.css";
+// S4-8（2026-11-01）：两个小域 —— 知识地图（`.kb-map*`）与顶部工具（`.top-tools*`）。
+import "./styles/kb-map.css";
+import "./styles/top-tools.css";
+// S4-9（2026-11-01）：PDF 阅读器/批注/目录域（`.pdf-*`）。响应式覆盖一并抽走。
+import "./styles/pdf.css";
+// S4-10（2026-11-01）：活动栏（`.activity-*`）与附件面板（`.attachment*`）两个小域。
+import "./styles/activity-bar.css";
+import "./styles/attachments.css";
+// S4-11（2026-11-01）：邮箱域（`.email-*`）。
+import "./styles/email.css";
+// S4-12（2026-11-01）：设置域（`.set-*` / `.mset-*`，含移动端设置卡）。
+import "./styles/settings.css";
+// S4-13（2026-11-01）：属性面板域（`.properties-*` / `.prop-*`）。
+import "./styles/properties.css";
+// S4-14（2026-11-01）：目录树域（`.tree-*`）。
+import "./styles/tree.css";
+// S4-15（2026-11-01）：社区发布/保存域（`.community-*`）。
+import "./styles/community.css";
+// S4-16（2026-11-01）：移动阅读/首页域（`.mread-*` / `.mhome-*` / `.mobile-*`）。
+import "./styles/mobile-read.css";
+// S4-17（2026-11-01）：编辑器域（`.editor-*` / `.block-selection*`）。
+import "./styles/editor.css";
+// S4-18（2026-11-01）：侧栏与空间切换域（`.sidebar*` / `.space-*`；`.space-item-crypto` 共享规则除外）。
+import "./styles/sidebar-space.css";
+// S4-19（2026-11-01）：数据库表格域（`.db-*`）。
+import "./styles/database.css";
+// S4-20（2026-11-01）：外壳域（`.main*` / `.toolbar*`）。
+import "./styles/shell.css";
+// S4-21（2026-11-01）：标签选择器（`.tag-picker*`）与表情选择器（`.emoji-picker*`）。
+import "./styles/tag-picker.css";
+import "./styles/emoji-picker.css";
+// S4-22（2026-11-01）：搜索浮层域（`.search-*`）。
+import "./styles/search.css";
+// S4-23（2026-11-01）：存储面板域（`.stg-*`）。
+import "./styles/storage-panel.css";
+// S4-24/25（2026-11-01）：移动配对（`.mpair-*`）＋ 移动外壳/快速记录（`.mcap-*` / `.m-tabshell*` / `.mtab-*`）。
+import "./styles/mobile-pair.css";
+import "./styles/mobile-capture.css";
+// S4-26（2026-11-01）：关于对话框域（`.about-*` / `.mabout-*`）。
+import "./styles/about.css";
+// S4-27（2026-11-01）：快捷键 / Markdown 导入 / 封面选择器。
+import "./styles/shortcuts.css";
+import "./styles/markdown-import.css";
+import "./styles/cover-picker.css";
+// S4-28（2026-11-01）：插件面板/视图域（`.plugin-*`）。
+import "./styles/plugin-panel.css";
+// S4-29（2026-11-01）：网页书签卡片（`.webbookmark-*`）、账户设备（`.acct-*`）、移动设置（`.mset*`）。
+import "./styles/webbookmark-card.css";
+import "./styles/account.css";
+import "./styles/mset.css";
+// S4-31（2026-11-01）：内联绘图（`.inline-drawing*`）与血统冲突横幅（`.conflict-banner-lineage*`）。
+import "./styles/inline-drawing.css";
+import "./styles/conflict-lineage.css";
+// S4-32（2026-11-01）：命令面板域（`.palette*`）。
+import "./styles/palette.css";
+// S4-33（2026-11-01）：模板中心域（`.tc-*`）与关系图控件域（`.graph-controls*`）。
+import "./styles/template-center.css";
+import "./styles/graph-controls.css";
+// S4-34（2026-11-01）：块操作域（`.block-*`）。
+import "./styles/block.css";
+// S4-35（2026-11-01）：看板视图域（`.board-*`）。
+import "./styles/board.css";
+// S4-36（2026-11-01）：标题栏（`.titlebar*`）、按钮基元（`.btn-*` / `.link-btn*`）、公式编辑器（`.formula-editor*`）。
+import "./styles/titlebar.css";
+import "./styles/buttons.css";
+import "./styles/formula-editor.css";
+// S4-37（2026-11-01）：页面壳（`.page-*`）与数据库页（`.database-*`）。
+import "./styles/page.css";
+import "./styles/database-page.css";
+// S4-38（2026-11-01）：确认对话框（`.confirm-*`）、开关（`.ui-toggle*`）、公式工具栏（`.formula-*`）。
+import "./styles/confirm.css";
+import "./styles/ui-toggle.css";
+import "./styles/formula.css";
+// S4-39（2026-11-01）：移动首页/搜索/外壳（`.mhome*` / `.msearch*` / `.mshell*`）。
+import "./styles/mobile-home.css";
+// S4-40（2026-11-01）：移动端缺失同步（`.mesh-missing-*`）、词典（`.mdict*`）、底部弹层（`.msheet-*`）。
+import "./styles/missing-sync.css";
+import "./styles/mobile-dict.css";
+import "./styles/mobile-sheet.css";
+// S4-41（2026-11-01）：关系图视图域（`.graph-*`）。
+import "./styles/graph.css";
+// S4-42（2026-11-01）：反链面板（`.backlinks-*`）与面包屑（`.breadcrumbs*` / `.crumb*`）。
+import "./styles/backlinks.css";
+import "./styles/breadcrumbs.css";
+// S4-43（2026-11-01）：编辑器零散小簇（`.find-btn` / `.insert-item` / `.unlinked-mention-link` / `.empty-cta` / `.title-area` / `.note-scroll` / `.npg-*`）。
+import "./styles/editor-misc.css";
+// S4-44（2026-11-01）：锁屏/解锁域（`.lock-*`）。
+import "./styles/lock.css";
+// S4-45（2026-11-01）：mac 窗口控件域（`.is-macos*` / `.mac-*`）。
+import "./styles/mac-window.css";
+// S4-46（2026-11-01）：表情选择器内层域（`.ep-*`）。
+import "./styles/emoji-picker-inner.css";
+// S4-47（2026-11-01）：目录侧栏域（`.toc-*`）。
+import "./styles/toc.css";
+// S4-48（2026-11-01）：零散 UI 基元（`.cover-swatch` / `.notif-item`）。
+import "./styles/misc-ui.css";
+// S4-49（2026-11-01）：版本历史/回收站/备份/新建菜单 + 它们的共享 sheet 组。
+import "./styles/history.css";
+import "./styles/trash.css";
+import "./styles/backup.css";
+import "./styles/new-menu.css";
+import "./styles/toolbar-sheets.css";
+// S4-50（2026-11-01）：残留 app 基元（input-choice/org/update-banner/empty-desc/cover-overlay/crop/table-palette/bookmark-paste/mcap；`.properties` / `.metadata-card` 留在 App.css，见计划）。
+import "./styles/residual-ui.css";
+// S4-51（2026-11-01）：标签输入/颜色（`.tag-*`）与插入菜单（`.slash-item*` / `.insert-*`）。
+import "./styles/tag-input.css";
+// S4-52（2026-11-01）：绘图/手写（`.drawing-*` / `.handwrite-*`）与编辑器 chrome/输入基元。
+import "./styles/drawing.css";
+import "./styles/editor-chrome.css";
+// S4-53（2026-11-02）：App.css 收尾 —— 剩余 app 规则（壳/属性/编辑器浮层/提示/时间线/移动阅读）。
+import "./styles/app-residual.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
@@ -364,9 +497,25 @@ function NoteEditor({ pageId }: { pageId: string }) {
     return () => unlisten?.();
   }, []);
 
+  // ⭐ 2026-10-28（owner 报「同步后空间列表没有自动刷新」）：**新空间要重读侧栏** ✗ ——
+  //   Rust 的自动建空间发生在 `round` **之前**，所以 `mesh-applied` 那一批页里没有它
+  //   （那条监听只刷页列表/当前页）⇒ 侧栏一直停在旧清单，要切空间/重启才看见新空间 ✓。
+  //   后端在"这一轮真的新建了空间"时单独发一格 `spaces-changed`；这里只做一件事：重读清单 ✓。
+  //   ⚠️ 重读失败只影响"侧栏这一秒显示什么"，不影响同步本身（`load()` 自己 catch 掉 ✓）。
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void platform.event
+      .listen<{ created: string[] }>("spaces-changed", () => {
+        void useSpaceStore.getState().load();
+      })
+      .then((u) => {
+        unlisten = u;
+      });
+    return () => unlisten?.();
+  }, []);
+
   // Restore the team-edition login state on startup (from meta.db session).
   useEffect(() => {
-    void useAuth.getState().init();
   }, []);
 
   // `shuyonote://` 的投递：把"操作系统交给应用的那条 URL"送进应用内接入缝。
@@ -871,22 +1020,6 @@ function NoteEditor({ pageId }: { pageId: string }) {
             >
               <ImageIcon className="page-action-icon" /> {current?.cover ? "更换题头图" : "添加题头图"}
             </button>
-            <button
-              className="page-action-btn"
-              onClick={() => usePropertyUiStore.getState().requestAddProp()}
-            >
-              <PropertyIcon className="page-action-icon" /> 添加属性
-            </button>
-            <button
-              className="page-action-btn"
-              onClick={(e) => {
-                const r = e.currentTarget.getBoundingClientRect();
-                usePropertyUiStore.getState().setTagAnchor({ top: r.bottom, left: r.left, width: r.width });
-                usePropertyUiStore.getState().requestAddTag();
-              }}
-            >
-              <TagIcon className="page-action-icon" /> 添加标签
-            </button>
           </div>
           <div className="editor-head">
             <div className="title-row">
@@ -1015,13 +1148,15 @@ function AppShell() {
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
   const templateOpen = useViewStore((s) => s.view === "templates");
-  usePresence();
   useSyncStream();
   // 中继租约的兜底续期：6 小时一次（面板不常开，光靠面板挂载不够）。
   useLeaseAutoRefresh();
   // ⭐ M2（施工单 Task W3/W4）：**外部 AI 的写请求**从这条事件进来 —— 默认弹确认、
   //    免确认开关开着时直接落库并留一句看得见的痕 ✓（判断逻辑在 `src/lib/externalDrafts.ts` ✓）。
   useExternalDrafts();
+  // ⭐ B3（2026-10-29）：**Rust→前端桥**（导出 Markdown/.shuyodoc、覆盖率报告）——
+  //    只在主窗口挂；前端用现有 TS 实现算，回执给 Rust（那边只做句柄登记/透传，⛔ 不重写一份）。
+  useMcpFrontendTools();
   // P1：把 Rust 侧的附件同步进度接进 useSyncStatus（Web 引擎自己会上报，不需要这条）。
   useSyncProgress();
   // ★ 2026-09-29：**开机就把「局域网这一档开着吗」读一次**。
@@ -1180,7 +1315,6 @@ function AppShell() {
           <ConfirmDialog />
           <InputDialog />
           <AiAssistantPanel />
-          <CommentsDrawer />
         </PanelBoundary>
       </div>
     );
@@ -1331,7 +1465,6 @@ function AppShell() {
         <InputDialog />
         <MarkdownExportDialog />
         <AiAssistantPanel />
-        <CommentsDrawer />
         {/* 阶段 1 · B1：正文索引补算（合并/裁决过的页面在后台补上；应用启动与每次同步结束后跑一趟） */}
         <TextRepairRunner />
         <ShortcutsPanel />

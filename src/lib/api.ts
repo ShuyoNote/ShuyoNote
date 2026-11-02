@@ -24,6 +24,8 @@ const invoke = <K extends keyof CommandMap>(
 // from "../lib/api"` 拿到的类型少了新字段、`tsc` 报 TS2339——而这还是**报错**的那种；
 // 同一个原因造成的静默不一致（比如 `conflicts` 曾经只在一边有）连报错都没有。
 export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult, LanStatus } from "./platform/commands";
+/** ⭐ 2026-10-28：加密空间逐条同步状态（"为什么没数据"的读数）—— 契约在 `commands.ts` 一处。 */
+export type SpaceSyncState = CommandMap["space_sync_state"]["result"];
 export type { MeshRoundReport, MeshPeerPullReport, MeshConfigState } from "./platform/commands";
 export type { NearbyPeer } from "./platform/commands";
 export type { DevicePairExportOutcome, DevicePairImportOutcome, DeviceUnpairOutcome } from "./platform/commands";
@@ -133,6 +135,24 @@ export const api = {
   mcpSetLevel: (level: string) => invoke("mcp_set_level", { level }),
   // ⭐ 2026-10-08（R150）：把前端那条路的落库结果写进 mcp/apply.log（可诊断 ✓）
   mcpLogApplyResult: (line: string) => invoke("mcp_log_apply_result", { line }),
+  // ⭐ UX-①（2026-10-30）：apply 侧回写草稿状态（applied / rejected）——桌面专属
+  mcpDraftState: (draftId: string, state: string) =>
+    invoke("mcp_draft_state", { draftId, state }),
+  // ⭐ P1：设置面板的只读读数
+  // ⭐ B：下载超限的「允许一次」额度
+  mcpDownloadGrant: (attId: string, spaceId?: string) =>
+    invoke("mcp_download_grant", { attId, spaceId }),
+  importSpacePackage: (payload: unknown) => invoke("space_package_import", { payload }),
+  mcpRecentDrafts: (limit?: number) => invoke("mcp_recent_drafts", { limit }),
+  mcpRecentAudit: (limit?: number, onlyWrites?: boolean) =>
+    invoke("mcp_recent_audit", { limit, onlyWrites }),
+  // ⭐ AI 不可见空间清单
+  mcpHiddenSpacesGet: () => invoke("mcp_hidden_spaces_get"),
+  mcpHiddenSpacesSet: (spaceIds: string[]) => invoke("mcp_hidden_spaces_set", { spaceIds }),
+  // ⭐ B3（2026-10-29）：Rust→前端桥的两条（桌面专属 —— Web 没有本机 MCP 通道，也没有这条桥）
+  mcpFrontendToolReady: () => invoke("mcp_frontend_tool_ready"),
+  mcpFrontendToolRespond: (args: { requestId: string; name: string; data: number[]; error?: string | null }) =>
+    invoke("mcp_frontend_tool_respond", args),
 
   setActiveWorkspaceId: (id: string) => invoke("set_active_workspace_id", { id }),
   deleteWorkspace: (id: string) => invoke("delete_workspace", { id }),
@@ -146,6 +166,22 @@ export const api = {
    */
   saveAbilityPack: (packId: string, base64: string) =>
     invoke("save_ability_pack", { packId, base64 }),
+  /**
+   * ⭐ task-14（2026-11-01）：能力的**启停读数**（三条：office-import / ecdict-en-zh / vlm-ocr）。
+   *
+   * ⚠️ 这是**后端状态**（`<app_data>/abilities-state.json`），不是界面自己的开关：
+   * 词库查词、Office 导入那几条入口读的都是同一份 ⇒ 禁用是真的生效，不是只改了个颜色。
+   * 读不到（Web 壳没有能力包落盘）⇒ 前端 `src/lib/abilities/state.ts` 按"全启用"处理。
+   */
+  abilityStates: () => invoke("ability_states"),
+  /** ⭐ task-14：启用/停用某个能力 —— 返回**落盘之后**的读数（界面直接拿它刷新，不自己猜）。 */
+  abilitySetEnabled: (packId: string, enabled: boolean) =>
+    invoke("ability_set_enabled", { packId, enabled }),
+  /**
+   * ⭐ task-14：卸载某个能力包 —— **只删** `<app_data>/packs/<packId>`（不碰笔记/附件），
+   * 幂等（`removed: false` = 本来就没有，不是错误）。builtin / local-endpoint 会被后端拒。
+   */
+  abilityUninstall: (packId: string) => invoke("ability_uninstall", { packId }),
   /**
    * ⭐ **P0 格式引擎**（Kreuzberg v4.10.x，MIT ✓）：补 `eml／msg／zip／7z／gz／rtf／odt／epub／
    * 学术格式` 那一类（本仓既有 TS 链对它们**无读数** ✗）。
@@ -232,14 +268,14 @@ export const api = {
   lockEncryption: () => invoke("lock_encryption"),
   keyringStatus: () => invoke("keyring_status"),
   unlockEncryption: (passphrase: string) => invoke("unlock_encryption", { passphrase }),
-  getPage: (id: string) => invoke("get_page", { id }),
+  getPage: (id: string, spaceId?: string) => invoke("get_page", { id, spaceId }),
   listTemplates: (spaceId?: string | null) => invoke("list_templates", { spaceId }),
   saveAsTemplate: (args: { name: string; category?: string; icon?: string; cover?: string; summary?: string; content_json: string; content_text?: string; kind?: string; database_json?: string; space_id?: string | null }) =>
     invoke("save_as_template", { args }),
   deleteTemplate: (id: string) => invoke("delete_template", { id }),
-  createPage: (args: { parent_id: string | null; title?: string; content_json?: string; content_text?: string }) =>
+  createPage: (args: { parent_id: string | null; title?: string; content_json?: string; content_text?: string; space_id?: string }) =>
     invoke("create_page", { args }),
-  createFolder: (args: { parent_id: string | null; title?: string }) =>
+  createFolder: (args: { parent_id: string | null; title?: string; space_id?: string }) =>
     invoke("create_folder", { args }),
   createDatabase: (args: { parent_id: string | null; title?: string }) =>
     invoke("create_database", { args }),
@@ -301,6 +337,7 @@ export const api = {
     title?: string;
     content_json?: string;
     content_text?: string;
+    space_id?: string;
   }) => invoke("save_page", { args }),
   /**
    * 冲刺 S3b-2c：读这一页的 **CRDT 状态**（没有 ⇒ `null`）。
@@ -467,8 +504,8 @@ export const api = {
     invoke("list_pdf_annotations", { args: { attachment_id: attachmentId } }),
   listAllPdfAnnotations: () => invoke("list_all_pdf_annotations"),
   listAllPdfAttachments: () => invoke("list_all_pdf_attachments"),
-  deletePage: (id: string) => invoke("delete_page", { id }),
-  movePage: (args: { id: string; new_parent_id: string | null; sort_order: number }) =>
+  deletePage: (id: string, spaceId?: string) => invoke("delete_page", { id, spaceId }),
+  movePage: (args: { id: string; new_parent_id: string | null; sort_order: number; space_id?: string }) =>
     invoke("move_page", { args }),
   search: (query: string, limit = 50, allSpaces = false) =>
     invoke("search", { args: { query, limit, all_spaces: allSpaces, embedding: readEmbedConfig() } }),
@@ -526,6 +563,11 @@ export const api = {
   lanStatus: (workspaceId?: string | null) =>
     invoke("lan_status", { workspaceId: workspaceId ?? null }) as Promise<LanStatus>,
   /**
+   * ⭐ **2026-10-28（owner：「一步到位」·P1）**：**加密空间的逐条同步状态** ——
+   * 说清"为什么没数据"（本机锁着／对端锁着／对端不在线／可以拉）。
+   */
+  spaceSyncState: () => invoke("space_sync_state") as Promise<SpaceSyncState>,
+  /**
    * 丙-③-b ③：**对等交换（网格）跑一轮**。
    *
    * 读数是**给人看的**（开了没开、拉了几台、哪一台没拉动），**不含内容**；
@@ -573,75 +615,19 @@ export const api = {
       token: token ?? null,
       room: room ?? null,
     }) as Promise<MeshConfigState>,
-  // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
+  /**
+   * ⭐ **2026-10-27（owner 拍 M2）**：**用户进入「局域网同步」页时**备好局域网前置
+   * （设备身份／自动组名／监听地址／档案行；只补不覆盖、幂等）。
+   * ⚠️ ⛔ 不在启动时调 —— 桌面保持「用户不配就不广播」。
+   */
+  meshEnsureDefaults: (workspaceId?: string | null) =>
+    invoke("mesh_ensure_defaults", { workspaceId: workspaceId ?? null }) as Promise<MeshConfigState>,
   // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
   // 传 `server_url` 会被判为「缺少必填键 serverUrl」——这是运行时错误，TS 查不出来，
   // 所以 CommandMap 里也按 camelCase 声明，并由 check-web-commands 兜底校验。
-  teamRegister: (server_url: string, email: string, password: string, display?: string | null, register_code?: string | null) =>
-    invoke("team_register", { serverUrl: server_url, email, password, display, registerCode: register_code }),
-  teamLogin: (server_url: string, email: string, password: string) =>
-    invoke("team_login", { serverUrl: server_url, email, password }),
-  teamLogout: (server_url: string) => invoke("team_logout", { serverUrl: server_url }),
-  teamListSpaces: (server_url: string, token: string) =>
-    invoke("team_list_spaces", { serverUrl: server_url, token }),
-  teamCreateSpace: (server_url: string, token: string, name: string, org_id?: string | null) =>
-    invoke("team_create_space", { serverUrl: server_url, token, name, orgId: org_id }),
-  teamListMembers: (server_url: string, token: string, space_id: string) =>
-    invoke("team_list_members", { serverUrl: server_url, token, spaceId: space_id }),
-  teamInviteMember: (server_url: string, token: string, space_id: string, email: string, role: string) =>
-    invoke("team_invite_member", { serverUrl: server_url, token, spaceId: space_id, email, role }),
-  teamSetMemberRole: (server_url: string, token: string, space_id: string, email: string, role: string) =>
-    invoke("team_set_member_role", { serverUrl: server_url, token, spaceId: space_id, email, role }),
-  teamRemoveMember: (server_url: string, token: string, space_id: string, user_id: string) =>
-    invoke("team_remove_member", { serverUrl: server_url, token, spaceId: space_id, userId: user_id }),
-  teamGetSession: () => invoke("team_get_session"),
-  teamGetMe: (server_url: string, token: string) =>
-    invoke("team_get_me", { serverUrl: server_url, token }),
-  teamGetServerEmail: (server_url: string) =>
-    invoke("team_get_server_email", { serverUrl: server_url }),
   listSyncHistory: (limit?: number) => invoke("list_sync_history", { limit }),
   clearSyncHistory: () => invoke("clear_sync_history"),
   // P0 org management (research group) — desktop only (Web driver throws).
-  teamListOrgs: (server_url: string, token: string) =>
-    invoke("team_list_orgs", { serverUrl: server_url, token }),
-  teamCreateOrg: (server_url: string, token: string, name: string) =>
-    invoke("team_create_org", { serverUrl: server_url, token, name }),
-  teamListOrgMembers: (server_url: string, token: string, org_id: string) =>
-    invoke("team_list_org_members", { serverUrl: server_url, token, orgId: org_id }),
-  teamInviteOrgMember: (server_url: string, token: string, org_id: string, email: string, role: string) =>
-    invoke("team_invite_org_member", { serverUrl: server_url, token, orgId: org_id, email, role }),
-  teamSetOrgMemberActive: (server_url: string, token: string, org_id: string, user_id: string, active: boolean) =>
-    invoke("team_set_org_member_active", { serverUrl: server_url, token, orgId: org_id, userId: user_id, active }),
-  teamRemoveOrgMember: (server_url: string, token: string, org_id: string, user_id: string) =>
-    invoke("team_remove_org_member", { serverUrl: server_url, token, orgId: org_id, userId: user_id }),
-  teamApproveOrgInvite: (server_url: string, token: string, org_id: string, email: string) =>
-    invoke("team_approve_org_invite", { serverUrl: server_url, token, orgId: org_id, email }),
-  teamRejectOrgInvite: (server_url: string, token: string, org_id: string, email: string) =>
-    invoke("team_reject_org_invite", { serverUrl: server_url, token, orgId: org_id, email }),
-  teamDeactivateAccount: (server_url: string, token: string) =>
-    invoke("team_deactivate_account", { serverUrl: server_url, token }),
-  teamDeactivateOrgMember: (server_url: string, token: string, org_id: string, user_id: string) =>
-    invoke("team_deactivate_org_member", { serverUrl: server_url, token, orgId: org_id, userId: user_id }),
-  teamGenerateOrgInviteCode: (server_url: string, token: string, org_id: string) =>
-    invoke("team_generate_org_invite_code", { serverUrl: server_url, token, orgId: org_id }),
-  teamJoinOrgByCode: (server_url: string, token: string, code: string) =>
-    invoke("team_join_org_by_code", { serverUrl: server_url, token, code }),
-  teamPresenceBeat: (server_url: string, token: string, space_id: string, page_id?: string | null, device_id?: string | null) =>
-    invoke("team_presence_beat", { serverUrl: server_url, token, spaceId: space_id, pageId: page_id ?? null, deviceId: device_id ?? null }),
-  teamOnline: (server_url: string, token: string, space_id: string) =>
-    invoke("team_online", { serverUrl: server_url, token, spaceId: space_id }),
-  teamListComments: (server_url: string, token: string, space_id: string, page_id: string) =>
-    invoke("team_list_comments", { serverUrl: server_url, token, spaceId: space_id, pageId: page_id }),
-  teamAddComment: (server_url: string, token: string, space_id: string, page_id: string, body: string, parent_id?: string | null, mentions?: string[]) =>
-    invoke("team_add_comment", { serverUrl: server_url, token, spaceId: space_id, pageId: page_id, body, parentId: parent_id ?? null, mentions: mentions ?? [] }),
-  teamDeleteComment: (server_url: string, token: string, space_id: string, comment_id: string) =>
-    invoke("team_delete_comment", { serverUrl: server_url, token, spaceId: space_id, commentId: comment_id }),
-  teamListNotifications: (server_url: string, token: string) =>
-    invoke("team_list_notifications", { serverUrl: server_url, token }),
-  teamSeenNotification: (server_url: string, token: string, id: string) =>
-    invoke("team_seen_notification", { serverUrl: server_url, token, id }),
-  teamSeenAllNotifications: (server_url: string, token: string) =>
-    invoke("team_seen_all_notifications", { serverUrl: server_url, token }),
   saveImage: async (args: {
     page_id: string | null;
     name: string | null;
@@ -662,6 +648,9 @@ export const api = {
     return meta;
   },
   attachmentPath: (hash: string) => invoke("attachment_path", { hash }),
+  /** ⭐ 2026-10-28：按原始文件名/扩展名落一份临时副本（给系统默认应用打开用）。 */
+  prepareAttachmentOpen: (hash: string, name: string) =>
+    invoke("prepare_attachment_open", { hash, name }),
   /** 让 Windows 系统标题栏跟随应用主题（非 Windows / Web 为空实现）。 */
   setTitlebarTheme: (dark: boolean, caption?: string, text?: string) =>
     invoke("set_titlebar_theme", { dark, caption: caption ?? null, text: text ?? null }),
@@ -672,7 +661,7 @@ export const api = {
   getAttachment: (id: string) => invoke("get_attachment", { id }),
   // Read an attachment's PLAINTEXT bytes by hash (decrypts at-rest-encrypted
   // bytes, unlike read_text_file which reads the raw on-disk path).
-  readAttachmentBytes: (hash: string) => invoke("read_attachment_bytes", { hash }),
+  readAttachmentBytes: (hash: string, spaceId?: string) => invoke("read_attachment_bytes", { hash, spaceId }),
   fetchBookmarkMetadata: (url: string) =>
     invoke("fetch_bookmark_metadata", { url }),
   copyAttachment: (hash: string, destPath: string) =>
@@ -689,9 +678,18 @@ export const api = {
     return metas;
   },
   /** pageId 传 null 列出空间根下的「未整理」文件（page_id IS NULL）。 */
-  listPageAttachments: (pageId: string | null) =>
-    invoke("list_page_attachments", { pageId }),
-  removeAttachment: (id: string) => invoke("remove_attachment", { id }),
+  listPageAttachments: (pageId: string | null, spaceId?: string) =>
+    invoke("list_page_attachments", { pageId, spaceId }),
+  /**
+   * ⭐ 2026-10-29：把**已经知道 hash** 的字节写进附件库（内容寻址 ＋ 去重，桌面/Web 同一份语义）。
+   * 用在 `.shuyodoc` 导入：包的 `assets/<sha256>.<ext>` 文件名里已带 sha，不必再算一遍
+   * （也⛔ 不走 `save_image` —— 那张 mime 表只认图片/PDF 那几类，别的会落成 `.bin`）。
+   * 命令本身早就在（`write_attachment_bytes`，同步下载附件那条路在用），这里只是补个前端入口。
+   */
+  writeAttachmentBytes: (args: { hash: string; mime: string; name: string; data: number[] }) =>
+    invoke("write_attachment_bytes", { ...args }),
+  removeAttachment: (id: string, spaceId?: string) =>
+    invoke("remove_attachment", { id, spaceId }),
   removeAttachments: (ids: string[]) => invoke("remove_attachments", { ids }),
   storageStats: () => invoke("storage_stats"),
   clearTrash: () => invoke("clear_trash"),
@@ -706,9 +704,13 @@ export const api = {
   cleanupOldVersions: (maxKeep?: number) => invoke("cleanup_old_versions", { maxKeep }),
   cleanupTempFiles: () => invoke("cleanup_temp_files"),
   purgeDeletedWorkspaces: () => invoke("purge_deleted_workspaces"),
-  moveAttachment: (id: string, newPageId: string) =>
-    invoke("move_attachment", { id, newPageId }),
-  renameAttachment: (id: string, name: string) => invoke("rename_attachment", { id, name }),
+  moveAttachment: (id: string, newPageId: string, spaceId?: string) =>
+    invoke("move_attachment", { id, newPageId, spaceId }),
+  // ⭐ B2-补遗-1：从页面摘除附件（page_id=NULL，保留文件）
+  detachAttachment: (id: string, spaceId?: string) =>
+    invoke("detach_attachment", { id, spaceId }),
+  renameAttachment: (id: string, name: string, spaceId?: string) =>
+    invoke("rename_attachment", { id, name, spaceId }),
   restoreAttachment: (targetPageId: string, sourceId: string) =>
     invoke("restore_attachment", { targetPageId, sourceId }),
   getBacklinks: (id: string) => invoke("get_backlinks", { id }),
@@ -743,10 +745,10 @@ export const api = {
     invoke("update_attr", { args }),
   deleteAttr: (id: string) => invoke("delete_attr", { id }),
   reorderAttrs: (ids: string[]) => invoke("reorder_attrs", { ids }),
-  setPageProp: (args: { page_id: string; attr_id: string; value: string }) =>
+  setPageProp: (args: { page_id: string; attr_id: string; value: string; space_id?: string }) =>
     invoke("set_page_prop", { args }),
-  removePageProp: (pageId: string, attrId: string) =>
-    invoke("remove_page_prop", { pageId, attrId }),
+  removePageProp: (pageId: string, attrId: string, spaceId?: string) =>
+    invoke("remove_page_prop", { pageId, attrId, spaceId }),
   getPageProps: (pageId: string) =>
     invoke("get_page_props", { pageId }),
   getDbColumns: (dbPageId: string) =>
@@ -765,8 +767,8 @@ export const api = {
   setTagColor: (tagId: string, color?: string | null) => invoke("set_tag_color", { tagId, color: color ?? null }),
   deleteTag: (tagId: string) => invoke("delete_tag", { tagId }),
   pageTags: (pageId: string) => invoke("page_tags", { pageId }),
-  addTag: (pageId: string, name: string) => invoke("add_tag", { pageId, name }),
-  removeTag: (pageId: string, tagId: string) => invoke("remove_tag", { pageId, tagId }),
+  addTag: (pageId: string, name: string, spaceId?: string) => invoke("add_tag", { pageId, name, spaceId }),
+  removeTag: (pageId: string, tagId: string, spaceId?: string) => invoke("remove_tag", { pageId, tagId, spaceId }),
   pagesByTag: (tagId: string) => invoke("pages_by_tag", { tagId }),
   boardData: () => invoke("board_data"),
   boardByAttr: (attrId: string) =>
@@ -782,12 +784,16 @@ export const api = {
   getDbRule: (dbPageId: string) => invoke("get_db_rule", { dbPageId }),
   resolveRefs: (values: string[]) => invoke("resolve_refs", { values }),
   listDeleted: () => invoke("list_deleted"),
-  restorePage: (id: string) => invoke("restore_page", { id }),
+  restorePage: (id: string, spaceId?: string) =>
+    invoke("restore_page", { id, spaceId }),
   purgePage: (id: string) => invoke("purge_page", { id }),
   listVersions: (pageId: string) => invoke("list_versions", { pageId }),
-  restoreVersion: (versionId: string) => invoke("restore_version", { versionId }),
+  restoreVersion: (versionId: string, spaceId?: string) =>
+    invoke("restore_version", { versionId, spaceId }),
   clearPageVersions: (pageId: string) => invoke("clear_page_versions", { pageId }),
   // 08-a②（2026-10-10）：本机名（08 去码化配对里"信任前显示设备名 ＋ 短标识"的那一半 ✓）。
+  // ⭐ 2026-10-29：`get_device_name` 现在回的是**生效名**（用户设的 ⇒ 否则系统名 ⇒ 否则「未命名设备」），
+  //   所以「设置 → 账户」的设备名输入框可以直接预填；形状仍是 `string | null`（老构建可能回 null）。
   getDeviceName: () => invoke("get_device_name", undefined),
   setDeviceName: (name: string) => invoke("set_device_name", { name }),
   // ---- 阶段 1 · 冲突留痕与裁决（提示 UI 用这两个入口）----
@@ -840,6 +846,9 @@ export const api = {
     invoke("export_backup", { destPath }),
   importBackup: (srcPath: string) =>
     invoke("import_backup", { srcPath }),
+  /** ⭐ 2026-10-28：**替换式原样恢复**（解到 staging，下次启动生效；旧数据另存一份）。 */
+  restoreBackupReplace: (srcPath: string) =>
+    invoke("restore_backup_replace", { srcPath }),
   exportWorkspace: (destPath: string) =>
     invoke("export_workspace", { destPath }),
   exportWiki: (destPath: string, files: { name: string; content: string }[]) =>
@@ -850,6 +859,8 @@ export const api = {
   writeTextFile: (path: string, content: string) =>
     invoke("write_text_file", { path, content }),
   writeBinaryFile: (path: string, data: number[]) => invoke("write_binary_file", { path, data }),
+  readBinaryFile: (path: string) =>
+    (invoke("read_binary_file", { path }) as Promise<number[]>).then((a) => Uint8Array.from(a)),
   readTextFile: (path: string) => invoke("read_text_file", { path }),
   openPageWindow: (pageId: string) => invoke("open_page_window", { pageId }),
   requestPersistentStorage: () =>

@@ -97,7 +97,10 @@ pub fn content_rev(title: &str, body: &str, tags: &[String]) -> String {
     let mut sorted: Vec<&str> = tags.iter().map(|t| t.as_str()).collect();
     sorted.sort_unstable();
     let mut canonical = String::from("shuyonote-content-v1");
-    for part in std::iter::once(title).chain(std::iter::once(body)).chain(sorted) {
+    for part in std::iter::once(title)
+        .chain(std::iter::once(body))
+        .chain(sorted)
+    {
         canonical.push('\n');
         canonical.push_str(&part.len().to_string());
         canonical.push(':');
@@ -152,7 +155,8 @@ pub fn valid_board_slug(s: &str) -> bool {
         && s.len() <= 60
         && !s.starts_with('-')
         && !s.ends_with('-')
-        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
 /// 组装发帖体。标题为空**在这一侧就报错**：社区会回 422，但那时用户看到的是"审核没通过"，
@@ -167,7 +171,9 @@ pub fn build_payload(
 ) -> Result<NewPostPayload, String> {
     let title = title.trim();
     if title.is_empty() {
-        return Err("这篇笔记没有标题：社区要求标题非空（给笔记起个名，或用文件名当标题）".to_string());
+        return Err(
+            "这篇笔记没有标题：社区要求标题非空（给笔记起个名，或用文件名当标题）".to_string(),
+        );
     }
     let board = match board.map(str::trim).filter(|b| !b.is_empty()) {
         None => None,
@@ -241,8 +247,7 @@ pub enum PublishOutcome {
 /// 靠 `id` + `slug` 在不在，而不是靠某个 `ok: true`。缺了就当没发成 —— 宁可让用户重试，
 /// 也不要回写一个空 slug 进笔记。
 pub fn classify(status: u16, body: &str, base: &str) -> PublishOutcome {
-    let v: serde_json::Value =
-        serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
     let err = v
         .get("error")
         .and_then(|e| e.as_str())
@@ -259,7 +264,11 @@ pub fn classify(status: u16, body: &str, base: &str) -> PublishOutcome {
             if slug.is_empty() || id == 0 {
                 return PublishOutcome::Unexpected {
                     status,
-                    error: format!("社区回了 {} 但响应里没有 id/slug：{}", status, preview(body)),
+                    error: format!(
+                        "社区回了 {} 但响应里没有 id/slug：{}",
+                        status,
+                        preview(body)
+                    ),
                 };
             }
             let url = format!("{base}/post/{slug}");
@@ -279,7 +288,10 @@ pub fn classify(status: u16, body: &str, base: &str) -> PublishOutcome {
             error: if body.trim().is_empty() {
                 "422：社区没给理由（响应体是空的）".to_string()
             } else {
-                format!("{}（这不是审核拦下，是社区**没收下这个请求体**：把这句话反馈给开发者）", preview(body))
+                format!(
+                    "{}（这不是审核拦下，是社区**没收下这个请求体**：把这句话反馈给开发者）",
+                    preview(body)
+                )
             },
         },
         401 => PublishOutcome::Unauthorized,
@@ -357,7 +369,8 @@ impl StoredAuth {
 /// 写授权文件。Unix 下把权限收到 0600：这是一把能用 180 天的凭据，同机其它用户不该读得到。
 pub fn save_auth_at(path: &Path, auth: &StoredAuth) -> Result<(), String> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("建配置目录失败（{}）：{e}", dir.display()))?;
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("建配置目录失败（{}）：{e}", dir.display()))?;
     }
     let text = serde_json::to_string_pretty(auth).map_err(|e| e.to_string())?;
     std::fs::write(path, text).map_err(|e| format!("写授权文件失败（{}）：{e}", path.display()))?;
@@ -462,10 +475,7 @@ async fn post_json(
         }
     })?;
     let status = resp.status().as_u16();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("读响应失败：{e}"))?;
+    let text = resp.text().await.map_err(|e| format!("读响应失败：{e}"))?;
     Ok((status, text))
 }
 
@@ -566,11 +576,7 @@ pub fn parse_me_username(json: &str) -> String {
 }
 
 /// `GET /api/me`：只为一个问题 —— "这把令牌是谁的"（界面上要能让用户核对）。
-async fn me_username(
-    client: &reqwest::Client,
-    base: &str,
-    token: &str,
-) -> Result<String, String> {
+async fn me_username(client: &reqwest::Client, base: &str, token: &str) -> Result<String, String> {
     let resp = client
         .get(format!("{base}/api/me"))
         .bearer_auth(token)
@@ -601,7 +607,9 @@ pub async fn refresh_username_at(path: &Path) -> Option<ConnectionInfo> {
         .redirect(reqwest::redirect::Policy::limited(5))
         .build()
     {
-        Ok(c) => me_username(&c, &auth.base, &auth.token).await.unwrap_or_default(),
+        Ok(c) => me_username(&c, &auth.base, &auth.token)
+            .await
+            .unwrap_or_default(),
         Err(_) => String::new(),
     };
     if fetched.trim().is_empty() {
@@ -724,14 +732,8 @@ pub async fn community_connect_start() -> Result<DeviceStart, String> {
         user_code,
         device_code,
         verify_url: format!("{base}/device"),
-        interval_seconds: v
-            .get("interval")
-            .and_then(|i| i.as_i64())
-            .unwrap_or(5),
-        expires_in_seconds: v
-            .get("expires_in")
-            .and_then(|i| i.as_i64())
-            .unwrap_or(600),
+        interval_seconds: v.get("interval").and_then(|i| i.as_i64()).unwrap_or(5),
+        expires_in_seconds: v.get("expires_in").and_then(|i| i.as_i64()).unwrap_or(600),
     })
 }
 
@@ -805,18 +807,13 @@ async fn revoke_remote(auth: &StoredAuth) -> Result<bool, String> {
         .map_err(|e| e.to_string())?;
     let text = resp.text().await.map_err(|e| e.to_string())?;
     let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
-    let id = v
-        .get("items")
-        .and_then(|i| i.as_array())
-        .and_then(|items| {
-            items
-                .iter()
-                .filter(|it| {
-                    it.get("client").and_then(|c| c.as_str()).unwrap_or("") == auth.client
-                })
-                .filter_map(|it| it.get("id").and_then(|i| i.as_i64()))
-                .max()
-        });
+    let id = v.get("items").and_then(|i| i.as_array()).and_then(|items| {
+        items
+            .iter()
+            .filter(|it| it.get("client").and_then(|c| c.as_str()).unwrap_or("") == auth.client)
+            .filter_map(|it| it.get("id").and_then(|i| i.as_i64()))
+            .max()
+    });
     let Some(id) = id else {
         return Ok(false);
     };
@@ -864,15 +861,26 @@ pub struct CommunityTaxonomy {
 
 /// 解析 `GET /api/boards` 的响应（纯函数，好判）。
 pub fn parse_boards(json: &str) -> Result<Vec<BoardInfo>, String> {
-    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("板块列表不是 JSON：{e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("板块列表不是 JSON：{e}"))?;
     let items = v
         .get("items")
         .and_then(|i| i.as_array())
         .ok_or_else(|| "板块列表里没有 items 数组".to_string())?;
     let mut out = Vec::new();
     for it in items {
-        let slug = it.get("slug").and_then(|s| s.as_str()).unwrap_or("").trim().to_string();
-        let name = it.get("name").and_then(|s| s.as_str()).unwrap_or("").trim().to_string();
+        let slug = it
+            .get("slug")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let name = it
+            .get("name")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
         if slug.is_empty() || name.is_empty() || !valid_board_slug(&slug) {
             continue; // 认不出来的条目直接跳过：宁可少一个选项，也不要发一个不存在的 slug
         }
@@ -893,7 +901,8 @@ pub fn parse_boards(json: &str) -> Result<Vec<BoardInfo>, String> {
 
 /// 解析 `GET /api/tags` 的响应（纯函数）。
 pub fn parse_tags(json: &str) -> Result<Vec<String>, String> {
-    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("标签列表不是 JSON：{e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("标签列表不是 JSON：{e}"))?;
     let items = v
         .get("items")
         .and_then(|i| i.as_array())
@@ -1055,7 +1064,9 @@ async fn post_bytes(
         .await
         .map_err(|e| {
             if e.is_timeout() {
-                format!("上传超时（{url}）：图可能偏大或网慢，重试即可（内容寻址，重复上传不会占两份）")
+                format!(
+                    "上传超时（{url}）：图可能偏大或网慢，重试即可（内容寻址，重复上传不会占两份）"
+                )
             } else if e.is_connect() {
                 format!("连不上社区（{url}）：网络不可达")
             } else {
@@ -1122,8 +1133,7 @@ pub async fn upload_at(
         bytes.to_vec(),
     )
     .await?;
-    let v: serde_json::Value =
-        serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
     if !(200..300).contains(&status) {
         // 社区的拒绝理由要说清是**哪一类**（太大 / 类型不支持 / 审核），原样带出去。
         let why = v
@@ -1134,14 +1144,23 @@ pub async fn upload_at(
         let why = if why.is_empty() { preview(&text) } else { why };
         return Err(format!("社区拒收这张图（HTTP {status}）：{why}"));
     }
-    let hash = v.get("hash").and_then(|h| h.as_str()).unwrap_or("").to_string();
+    let hash = v
+        .get("hash")
+        .and_then(|h| h.as_str())
+        .unwrap_or("")
+        .to_string();
     if hash.is_empty() {
         return Err(format!("社区回了 {status} 但没给 hash：{}", preview(&text)));
     }
     Ok((
         hash,
-        v.get("mime").and_then(|m| m.as_str()).unwrap_or("").to_string(),
-        v.get("size").and_then(|s| s.as_u64()).unwrap_or(bytes.len() as u64) as usize,
+        v.get("mime")
+            .and_then(|m| m.as_str())
+            .unwrap_or("")
+            .to_string(),
+        v.get("size")
+            .and_then(|s| s.as_u64())
+            .unwrap_or(bytes.len() as u64) as usize,
     ))
 }
 
@@ -1372,19 +1391,26 @@ mod tests {
         );
         // 没有标签时是**空字符串**，也不是 `[]`
         let none = build_payload("标题", "正文", &[], None, "n", "1").unwrap();
-        assert!(serde_json::to_string(&none).unwrap().contains(r#""tags":"""#));
+        assert!(serde_json::to_string(&none)
+            .unwrap()
+            .contains(r#""tags":"""#));
     }
 
     /// 本地就按社区的上限裁（5 个 / 每个 ≤16 字）：否则"清单里 8 个标签、社区只存 5 个"
     /// 又是一处静默丢失。
     #[test]
-    fn payload_caps_tags_the_way_the_community_does() {        let many: Vec<String> = (0..8).map(|i| format!("tag{i}")).collect();
+    fn payload_caps_tags_the_way_the_community_does() {
+        let many: Vec<String> = (0..8).map(|i| format!("tag{i}")).collect();
         let p = build_payload("标题", "正文", &many, None, "n", "1").unwrap();
         assert_eq!(p.tags, "tag0,tag1,tag2,tag3,tag4", "最多 5 个");
 
         let long = vec!["一二三四五六七八九十一二三四五六七八".to_string()];
         let p2 = build_payload("标题", "正文", &long, None, "n", "1").unwrap();
-        assert_eq!(p2.tags.chars().count(), COMMUNITY_MAX_TAG_CHARS, "每个标签限 16 字");
+        assert_eq!(
+            p2.tags.chars().count(),
+            COMMUNITY_MAX_TAG_CHARS,
+            "每个标签限 16 字"
+        );
 
         // 裁完之后才去重：两个只差尾部的长标签会变成同一个，只留一个。
         let dup = vec![
@@ -1392,7 +1418,11 @@ mod tests {
             "一二三四五六七八九十一二三四五六七".to_string(),
         ];
         let p3 = build_payload("标题", "正文", &dup, None, "n", "1").unwrap();
-        assert!(!p3.tags.contains(','), "裁完相同的两个标签只该留一个：{}", p3.tags);
+        assert!(
+            !p3.tags.contains(','),
+            "裁完相同的两个标签只该留一个：{}",
+            p3.tags
+        );
     }
 
     /// **板块**：选了就带、没选就**不出现这个字段**、形状不对要拦下来。
@@ -1404,19 +1434,26 @@ mod tests {
         let none = build_payload("标题", "正文", &[], None, "n", "1").unwrap();
         assert_eq!(none.board, None);
         let json = serde_json::to_string(&none).unwrap();
-        assert!(!json.contains("board"), "没选板块时连字段都不该出现：{json}");
+        assert!(
+            !json.contains("board"),
+            "没选板块时连字段都不该出现：{json}"
+        );
 
         // 空串 / 全是空白 = 没选（界面把"未分类"就是传成这样）
         let blank = build_payload("标题", "正文", &[], Some("   "), "n", "1").unwrap();
         assert_eq!(blank.board, None);
         assert!(!serde_json::to_string(&blank).unwrap().contains("board"));
 
-        let chosen = build_payload("标题", "正文", &[], Some("data-sovereignty"), "n", "1").unwrap();
+        let chosen =
+            build_payload("标题", "正文", &[], Some("data-sovereignty"), "n", "1").unwrap();
         assert_eq!(chosen.board.as_deref(), Some("data-sovereignty"));
-        assert!(serde_json::to_string(&chosen).unwrap().contains(r#""board":"data-sovereignty""#));
+        assert!(serde_json::to_string(&chosen)
+            .unwrap()
+            .contains(r#""board":"data-sovereignty""#));
 
         // 形状不对 = 客户端 bug（界面只让从社区给的列表里挑），要**说出来**而不是静默当未分类
-        let bad = build_payload("标题", "正文", &[], Some("Data Sovereignty!"), "n", "1").unwrap_err();
+        let bad =
+            build_payload("标题", "正文", &[], Some("Data Sovereignty!"), "n", "1").unwrap_err();
         assert!(bad.contains("板块"), "要说清是板块的问题：{bad}");
         assert!(bad.contains("客户端 bug"), "要说清这是客户端的问题：{bad}");
     }
@@ -1516,7 +1553,10 @@ mod tests {
                     error.contains("invalid type: sequence"),
                     "要原样带上社区那句话：{error}"
                 );
-                assert!(error.contains("不是审核拦下"), "要说清这不是审核拦下：{error}");
+                assert!(
+                    error.contains("不是审核拦下"),
+                    "要说清这不是审核拦下：{error}"
+                );
             }
             other => panic!("纯文本 422 判读错了：{other:?}"),
         }
@@ -1601,15 +1641,22 @@ mod tests {
         };
         save_auth_at(&path, &auth).unwrap();
 
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         // ① 空名字 ⇒ 问一次、补上、**写回文件**
-        let got = rt.block_on(refresh_username_at(&path)).expect("有授权就该有结果");
+        let got = rt
+            .block_on(refresh_username_at(&path))
+            .expect("有授权就该有结果");
         assert_eq!(got.username, "cnzen@shuyo.cn");
         assert_eq!(load_auth_at(&path).unwrap().username, "cnzen@shuyo.cn");
         assert_eq!(hits.load(Ordering::SeqCst), 1, "空名字要补一次");
 
         // ② 已经有名字 ⇒ **不碰网络**
-        let again = rt.block_on(refresh_username_at(&path)).expect("有授权就该有结果");
+        let again = rt
+            .block_on(refresh_username_at(&path))
+            .expect("有授权就该有结果");
         assert_eq!(again.username, "cnzen@shuyo.cn");
         assert_eq!(hits.load(Ordering::SeqCst), 1, "有名字就不该再问");
 
@@ -1624,9 +1671,15 @@ mod tests {
             ..auth.clone()
         };
         save_auth_at(&path, &offline).unwrap();
-        let got = rt.block_on(refresh_username_at(&path)).expect("补不到也要给本地那份");
+        let got = rt
+            .block_on(refresh_username_at(&path))
+            .expect("补不到也要给本地那份");
         assert_eq!(got.username, "");
-        assert_eq!(load_auth_at(&path).unwrap().username, "", "补不到就不该动文件");
+        assert_eq!(
+            load_auth_at(&path).unwrap().username,
+            "",
+            "补不到就不该动文件"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1635,7 +1688,9 @@ mod tests {
     fn csrf_cookie_is_picked_out_of_set_cookie_headers() {
         let got = csrf_from_set_cookies(vec![
             "other=1; Path=/",
-            "csrf_token=abc123; Path=/; SameSite=Lax; HttpOnly".to_string().as_str(),
+            "csrf_token=abc123; Path=/; SameSite=Lax; HttpOnly"
+                .to_string()
+                .as_str(),
         ]);
         assert_eq!(got.as_deref(), Some("abc123"));
         assert_eq!(csrf_from_set_cookies(vec!["csrf_token=; Path=/"]), None);
@@ -1782,7 +1837,10 @@ mod tests {
     #[test]
     fn upload_guard_speaks_before_the_wire() {
         assert!(ensure_uploadable(1).is_ok(), "一字节的图也该放行");
-        assert!(ensure_uploadable(MAX_ATTACHMENT_BYTES).is_ok(), "正好 5 MiB 是允许的");
+        assert!(
+            ensure_uploadable(MAX_ATTACHMENT_BYTES).is_ok(),
+            "正好 5 MiB 是允许的"
+        );
         let e = ensure_uploadable(0).unwrap_err();
         assert!(e.contains("空文件"), "空文件要说清是空文件：{e}");
         let e = ensure_uploadable(MAX_ATTACHMENT_BYTES + 1).unwrap_err();
@@ -1791,21 +1849,29 @@ mod tests {
 
     /// 假社区收图：两个请求（`GET /` 拿 CSRF、`POST /api/attachments` 送字节）。
     /// 返回 (base, 收到的原始请求文本)。
-    fn serve_upload(reply: (u16, &'static str)) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    fn serve_upload(
+        reply: (u16, &'static str),
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let seen_srv = seen.clone();
         std::thread::spawn(move || {
             for _ in 0..2 {
-                let Ok((mut stream, _)) = listener.accept() else { return };
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
                 let mut buf = vec![0u8; 8192];
                 let n = stream.read(&mut buf).unwrap_or(0);
                 let req = String::from_utf8_lossy(&buf[..n]).to_string();
                 let is_get = req.starts_with("GET /");
                 seen_srv.lock().unwrap().push(req);
                 let (code, extra, body) = if is_get {
-                    (200u16, "Set-Cookie: csrf_token=testcsrf; Path=/\r\n", "<html></html>")
+                    (
+                        200u16,
+                        "Set-Cookie: csrf_token=testcsrf; Path=/\r\n",
+                        "<html></html>",
+                    )
                 } else {
                     (reply.0, "", reply.1)
                 };
@@ -1848,12 +1914,24 @@ mod tests {
             .unwrap();
         assert_eq!(out, ("deadbeef".to_string(), "image/png".to_string(), 8));
         let reqs = seen.lock().unwrap().clone();
-        let post = reqs.iter().find(|r| r.starts_with("POST ")).expect("应有 POST");
+        let post = reqs
+            .iter()
+            .find(|r| r.starts_with("POST "))
+            .expect("应有 POST");
         let lower = post.to_ascii_lowercase();
-        assert!(post.starts_with("POST /api/attachments "), "打错了路径：{post}");
-        assert!(lower.contains("content-type: application/octet-stream"), "社区只认 octet-stream");
+        assert!(
+            post.starts_with("POST /api/attachments "),
+            "打错了路径：{post}"
+        );
+        assert!(
+            lower.contains("content-type: application/octet-stream"),
+            "社区只认 octet-stream"
+        );
         assert!(lower.contains("x-csrf-token: testcsrf"), "少了 CSRF 头");
-        assert!(lower.contains("cookie: csrf_token=testcsrf"), "少了 CSRF cookie");
+        assert!(
+            lower.contains("cookie: csrf_token=testcsrf"),
+            "少了 CSRF cookie"
+        );
         assert!(lower.contains("authorization: bearer tok"), "少了 Bearer");
         assert!(post.contains("PNG"), "字节没跟着上去（魔数都找不到）");
 
@@ -1866,7 +1944,10 @@ mod tests {
             .block_on(upload_at(&base2, &auth, &png))
             .unwrap_err();
         assert!(err.contains("422"), "要说清状态码：{err}");
-        assert!(err.contains("不支持的文件类型"), "社区的理由要原样带出去：{err}");
+        assert!(
+            err.contains("不支持的文件类型"),
+            "社区的理由要原样带出去：{err}"
+        );
     }
 
     /// 发布状态：写 → 读 → 覆盖（只记最近一次），且"没发过"与"表不存在"都当作没有（不炸）。
@@ -1964,7 +2045,10 @@ mod tests {
 
         // 空内容也有指纹（不是空串），且与"只剩标签"那种不同
         assert!(!content_rev("", "", &[]).is_empty());
-        assert_ne!(content_rev("", "", &[]), content_rev("", "", &["a".to_string()]));
+        assert_ne!(
+            content_rev("", "", &[]),
+            content_rev("", "", &["a".to_string()])
+        );
     }
 
     /// 指纹必须由**本地态**正文算出：发布时正文里的图片会被换成社区地址，
@@ -1991,7 +2075,10 @@ mod tests {
         );
         // 内容变了 ⇒ 指纹变了 ⇒ 键也变了（那是**新的一篇**，本来就该是新内容）
         let other = content_rev("标题", "正文改了", &[]);
-        assert_ne!(idempotency_key("page-1", &rev), idempotency_key("page-1", &other));
+        assert_ne!(
+            idempotency_key("page-1", &rev),
+            idempotency_key("page-1", &other)
+        );
     }
 
     /// **手动探针（会真的发帖）**：拿本机已连接的令牌，对着**真社区**走一遍

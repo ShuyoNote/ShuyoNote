@@ -942,3 +942,18 @@ curl -s -X POST http://127.0.0.1:8080/v1/audio/transcriptions \
 > 后者**现在还没有机器能判**（"做得对不对"暂时写不出判据），所以更要写在这里——
 > 而一旦某一条将来能变成门禁（像 §8.1 那样），**就应当把它从本文档挪进 `scripts/lib/gates.mjs`**。
 
+## CSS 视觉基线
+
+纯删除/重构 CSS 时用**像素基线**兜底（不靠推理）。工具不装依赖，复用仓库里现成的 puppeteer-core：
+
+```bash
+pnpm build:web
+node scripts/css-visual-baseline.mjs --static-dir dist-web --scenario scripts/css-baseline-scenarios.json --out _tmp/acceptance/css-baseline-before
+# 改 CSS 后再 build 一次，用同一份场景对比
+node scripts/css-visual-baseline.mjs --static-dir dist-web --scenario scripts/css-baseline-scenarios.json --compare _tmp/acceptance/css-baseline-before
+```
+
+- **阈值 0.2%**：单张图差异超过即失败；时间戳等必变区域用 `--mask <选择器>` 涂掉（底噪约 0.01%）。
+- **基线必须绑同一份构建产物**：对比前 `pnpm build:web` 重新构建；两次截图必须用同一 `--static-dir`／`dist-web`。
+- 自测：`node scripts/css-visual-baseline.mjs --self-test`（CDP→截图→PNG 解码→几何→差异，exit 0 才算通）。
+- 场景文件：`scripts/css-baseline-scenarios.json`（默认 1280x800/375x812/320x700，含初始页、属性区、文件区）。

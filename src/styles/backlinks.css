@@ -1,0 +1,82 @@
+/* S4（2026-11-01）：域抽取器搬出的**反链面板域（`.backlinks-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* Backlinks */
+.backlinks {
+  max-width: var(--doc-width);
+  margin: 0 auto;
+  padding: var(--space-5) var(--doc-pad) var(--space-3);
+  width: 100%;
+  border-top: 1px solid var(--border);
+}
+
+.backlinks-title {
+  font-size: var(--fs-12);
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: var(--space-2);
+}
+
+.backlinks-loading {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  padding: var(--space-1) 0;
+}
+
+.backlinks-error {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.backlinks-retry {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-12);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.backlinks-retry:hover {
+  background: var(--hover);
+}
+
+.backlinks-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.backlinks-group {
+  margin-bottom: 14px;
+}
+
+.backlinks-subtitle {
+  font-size: var(--fs-12);
+  font-weight: 600;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+
+.backlinks-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+@media (max-width: 768px) {
+.backlinks-retry { min-height: 44px; }
+}
+}

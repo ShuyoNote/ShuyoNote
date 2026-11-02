@@ -33,7 +33,10 @@ const COLS: &str = "id,name,category,kind,icon,cover,summary,content_json,conten
 /// List user templates ("我的模板"), optionally scoped to a space.
 /// Built-in templates live on the frontend (M9.1); this returns only `built_in=0`.
 #[tauri::command]
-pub fn list_templates(db: State<Db>, space_id: Option<String>) -> Result<Vec<TemplateMeta>, String> {
+pub fn list_templates(
+    db: State<Db>,
+    space_id: Option<String>,
+) -> Result<Vec<TemplateMeta>, String> {
     let c = conn(&db);
     let sql = format!(
         "SELECT {COLS} FROM meta.templates WHERE built_in = 0 AND (?1 IS NULL OR space_id = ?1) ORDER BY sort_order ASC, created_at ASC"
@@ -110,7 +113,10 @@ pub fn save_as_template(db: State<Db>, args: SaveAsTemplateArgs) -> Result<Templ
 pub fn delete_template(db: State<Db>, id: String) -> Result<(), String> {
     let c = conn(&db);
     let n = c
-        .execute("DELETE FROM meta.templates WHERE id = ?1 AND built_in = 0", params![id])
+        .execute(
+            "DELETE FROM meta.templates WHERE id = ?1 AND built_in = 0",
+            params![id],
+        )
         .map_err(|e| e.to_string())?;
     if n == 0 {
         return Err("模板不存在或为内置模板".to_string());

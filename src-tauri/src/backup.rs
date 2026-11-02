@@ -64,7 +64,9 @@ pub(crate) fn stale_parts(dir: &Path, now_ms: i64, max_age_ms: i64) -> Vec<PathB
             continue;
         }
         let Ok(md) = e.metadata() else { continue };
-        let Ok(modified) = md.modified() else { continue };
+        let Ok(modified) = md.modified() else {
+            continue;
+        };
         let Ok(age) = modified.duration_since(std::time::UNIX_EPOCH) else {
             continue;
         };
@@ -144,10 +146,7 @@ fn short_space_id(id: &str) -> String {
 /// 为什么要它：备份是**按目录**打的（`snapshot_spaces` 遍历 `spaces/`），不看 meta ⇒
 /// 界面上看不见的库也会进包（真机实测：13 个库 / 9 个活空间 ⇒ 4 个孤儿）。
 /// 口径：⛔ **不因此少打包**（那可能是一份用户内容，只是 meta 行丢了 ✗）；只**如实点名** ✓。
-pub(crate) fn orphan_space_ids(
-    meta_file: &Path,
-    spaces_dir: &Path,
-) -> Result<Vec<String>, String> {
+pub(crate) fn orphan_space_ids(meta_file: &Path, spaces_dir: &Path) -> Result<Vec<String>, String> {
     let known: std::collections::HashSet<String> = {
         let c = rusqlite::Connection::open(meta_file).map_err(|e| e.to_string())?;
         let mut st = c
@@ -190,11 +189,11 @@ pub struct ImportSummary {
 /// work is genuinely long-running; the old sync command froze the UI thread).
 #[derive(Clone, Serialize)]
 pub struct BackupProgress {
-    pub phase: String,     // "export" | "import"
-    pub done: usize,       // files processed so far
-    pub total: usize,      // total files
-    pub bytes: u64,        // bytes processed
-    pub message: String,   // human-readable stage label
+    pub phase: String,   // "export" | "import"
+    pub done: usize,     // files processed so far
+    pub total: usize,    // total files
+    pub bytes: u64,      // bytes processed
+    pub message: String, // human-readable stage label
 }
 
 // Create a consistent snapshot of the SQLite database via rusqlite's online
@@ -235,9 +234,9 @@ fn backup_db(src: &rusqlite::Connection, dst: &Path, key: Option<&[u8; 32]>) -> 
 /// ★ owner 第三轮拍板（2026-09-24）：钥匙**按空间取**（`space_crypto::space_key_for_path`），
 /// 不再是"应用级一把会话钥匙 `session_key`"（那把已删）。所以每个空间各取各的钥匙 ——
 /// 恰好也是"按空间加密"该有的样子：一个空间拿不到钥匙，**不影响**别的空间进备份。
-/// ⚠️ 本进程还没载入公开材料（未解锁 / 之前是应用级加密的存量库）⇒ `space_key_for_path` 要么
-/// `Err`（袋里有它但锁着）要么 `None`（袋里没有 / 没有袋子）⇒ 两种都记进 `skipped` 并**继续**，
-/// 绝不"拿一把错的钥匙去快照"（那会写出一个打不开的备份）。
+/// ⭐ **2026-10-28（owner：「本机备份 全空间打包，要能原样恢复」）**：拿不到钥匙的加密空间
+/// **不再跳过** —— 改按**原始字节**复制快照（连 `-wal`/`-shm`），⛔ 绝不"拿一把错的钥匙去快照" ✗
+/// （那会写出一个打不开的备份 ✓）；解不开的是内容，不影响按字节保全 ✓。
 fn snapshot_spaces(
     spaces_dir: &Path,
     tmp_root: &Path,
@@ -256,26 +255,29 @@ fn snapshot_spaces(
         let id = name.trim_end_matches(".db").to_string();
         let path = spaces_dir.join(&name);
         let out = tmp_root.join("spaces").join(&name);
-        let conn = rusqlite::Connection::open(&path).map_err(|e| e.to_string())?;
-        // 加密空间：连接要加钥，**快照目标也要同一把钥**（见 `backup_db` 注释）。
-        let key = if crate::security::space_db_is_encrypted(&path) {
+        let encrypted = crate::security::space_db_is_encrypted(&path);
+        let key = if encrypted {
             match crate::space_crypto::space_key_for_path(&path) {
                 Ok(Some(k)) => Some(k),
-                Ok(None) => {
-                    skipped.push(format!(
-                        "{id}: 空间是密文但钥匙袋里没有它的盒子（应用级加密的存量库，本版已不再支持）\
-                         ⇒ 这个空间没进备份"
-                    ));
-                    continue;
-                }
-                Err(e) => {
-                    skipped.push(format!("{id}: 空间已加密但拿不到它的钥匙（{e}）⇒ 这个空间没进备份"));
+                _ => {
+                    // ⭐⭐ **2026-10-28（owner：「本机备份 全空间打包，要能原样恢复」）**：
+                    //   **锁着的加密空间也要进备份** —— 不打开库、按**原始字节**复制快照
+                    //   （连 `-wal`/`-shm` 一起）⇒ 恢复后与备份时逐字节同源 ✓。
+                    //   锁着 ⇒ 没有活跃连接 ⇒ 文件是静息的；带上残留 `-wal` 由 SQLite 开库时重放 ✓。
+                    //   ⚠️ 解密仍要**原来那把口令**（这是加密空间本来的语义，⛔ 不是这次退化 ✗）。
+                    if let Err(e) = copy_space_files_raw(&path, &out) {
+                        skipped.push(format!("{id}: 原始字节快照失败（{e}）⇒ 没进备份"));
+                        continue;
+                    }
+                    snapshots.push((id, out));
                     continue;
                 }
             }
         } else {
             None
         };
+        let conn = rusqlite::Connection::open(&path).map_err(|e| e.to_string())?;
+        // 加密空间：连接要加钥，**快照目标也要同一把钥**（见 `backup_db` 注释）。
         if let Some(k) = key.as_ref() {
             if let Err(e) = crate::security::key_conn_with(&conn, k) {
                 skipped.push(format!("{id}: 加钥失败（{e}）⇒ 没进备份"));
@@ -293,6 +295,23 @@ fn snapshot_spaces(
     snapshots.sort();
     skipped.sort();
     Ok((snapshots, skipped))
+}
+
+/// 把空间库按**原始字节**快照到 `out`（连 `-wal` / `-shm` 一起）——
+/// 给"锁着的加密空间"用：没有钥匙也能打包（解不开的是内容，不影响按字节保全）。
+fn copy_space_files_raw(src_db: &Path, out_db: &Path) -> Result<(), String> {
+    if let Some(parent) = out_db.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::copy(src_db, out_db).map_err(|e| e.to_string())?;
+    for suffix in ["-wal", "-shm"] {
+        let s = PathBuf::from(format!("{}{}", src_db.display(), suffix));
+        if s.exists() {
+            let d = PathBuf::from(format!("{}{}", out_db.display(), suffix));
+            std::fs::copy(&s, &d).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 // Count files + total bytes under a directory (recursive), for progress.
@@ -407,9 +426,21 @@ pub async fn export_backup(
 
         // Then every per-space DB.
         for (id, sf) in &space_snapshots {
-            zip.start_file(format!("spaces/{id}.db"), opts).map_err(|e| e.to_string())?;
+            zip.start_file(format!("spaces/{id}.db"), opts)
+                .map_err(|e| e.to_string())?;
             let mut s = std::fs::File::open(sf).map_err(|e| e.to_string())?;
             std::io::copy(&mut s, &mut zip).map_err(|e| e.to_string())?;
+            // ⭐ 2026-10-28（owner：「全空间打包」）：**原始字节快照**可能带 `-wal`/`-shm`
+            //   （锁着的加密空间走的就是这条路）⇒ 一起进包，恢复才与备份时**逐字节同源** ✓。
+            for suffix in ["-wal", "-shm"] {
+                let sib = PathBuf::from(format!("{}{}", sf.display(), suffix));
+                if sib.exists() {
+                    zip.start_file(format!("spaces/{id}.db{suffix}"), opts)
+                        .map_err(|e| e.to_string())?;
+                    let mut f = std::fs::File::open(&sib).map_err(|e| e.to_string())?;
+                    std::io::copy(&mut f, &mut zip).map_err(|e| e.to_string())?;
+                }
+            }
         }
 
         // Then all attachments (content-addressed).
@@ -427,7 +458,24 @@ pub async fn export_backup(
         let mut done = 0usize;
         let mut bytes = 0u64;
         if attachments2.exists() {
-            add_dir_to_zip(&mut zip, &attachments2, &attachments2, &app2, &mut done, &mut bytes, total_files)?;
+            // ⭐⭐ **2026-10-28（owner：「本机备份 全空间打包，要能原样恢复」）**：
+            //   附件必须以 **`attachments/<空间>/<桶>/<hash>.<ext>`** 进包 —— 否则解包侧
+            //   认不出来（它按 `attachments/` 前缀判附件）⇒ **包里有字节、恢复时却被跳过** ✗。
+            //   真机就是这么"备份了等于没备"的：10-28 之前这里 base 传的是附件目录本身，
+            //   条目名 `<空间>/<桶>/<hash>` **没有前缀** ⇒ `extract_full_backup` 全部忽略 ✗。
+            let att_base = attachments2
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| attachments2.clone());
+            add_dir_to_zip(
+                &mut zip,
+                &att_base,
+                &attachments2,
+                &app2,
+                &mut done,
+                &mut bytes,
+                total_files,
+            )?;
         }
 
         let _ = app2.emit(
@@ -473,11 +521,17 @@ pub async fn run_auto_backup_once(app: &tauri::AppHandle) -> crate::auto_backup:
 
     let app_data = match app.path().app_data_dir() {
         Ok(d) => d,
-        Err(e) => return RunResult::Failed { note: format!("拿不到应用数据目录：{e}") },
+        Err(e) => {
+            return RunResult::Failed {
+                note: format!("拿不到应用数据目录：{e}"),
+            }
+        }
     };
     let dir = app_data.join("backups");
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        return RunResult::Failed { note: format!("建备份目录失败：{e}") };
+        return RunResult::Failed {
+            note: format!("建备份目录失败：{e}"),
+        };
     }
     // ⭐ 2026-10-25：**先收尸**（写一半被中断留下的 `.part`）——
     //   保留分层只认"有效快照"，`.part` 不算 ⇒ 它不会被当成备份，也**永远不会被清**（真机见过 0 字节的）。
@@ -509,14 +563,18 @@ pub async fn run_auto_backup_once(app: &tauri::AppHandle) -> crate::auto_backup:
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     if !ready {
-        return RunResult::Skipped { note: "数据库 5 秒内没就绪".into() };
+        return RunResult::Skipped {
+            note: "数据库 5 秒内没就绪".into(),
+        };
     }
     let db = app.state::<Db>();
     match export_backup(app.clone(), db, dest.to_string_lossy().to_string()).await {
         Ok(r) => {
             // ⭐ 成功才改名（rename ✓）：中断/崩溃只会留下 `.part`（⭐ 不算一份 ✓）
             if let Err(e) = std::fs::rename(&dest, &final_dest) {
-                return RunResult::Failed { note: format!("改名失败：{e}") };
+                return RunResult::Failed {
+                    note: format!("改名失败：{e}"),
+                };
             }
             // ★ 保留分层：只认我们自己的命名，且只在这个目录里删 ✓
             let mut entries: Vec<Snapshot> = Vec::new();
@@ -570,7 +628,9 @@ pub async fn run_auto_backup_once(app: &tauri::AppHandle) -> crate::auto_backup:
                 note: summary_note(r.size, &r.skipped, &r.orphans),
             }
         }
-        Err(e) => RunResult::Failed { note: format!("导出失败：{e}") },
+        Err(e) => RunResult::Failed {
+            note: format!("导出失败：{e}"),
+        },
     }
 }
 // Restore the database from a backup snapshot into the live connection.
@@ -628,17 +688,22 @@ fn extract_full_backup(
     for i in 0..total {
         let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
         let name = entry.name().to_string();
-        let is_meta = name == "meta.db";
-        let is_space = name.starts_with("spaces/") && name.ends_with(".db");
-        let is_legacy = name == "shuyonote.db";
-        let is_att = name.starts_with("attachments/") && !name.ends_with('/');
-        if !(is_meta || is_space || is_legacy || is_att) {
+        let kind = classify_backup_entry(&name);
+        if kind == BackupEntryKind::Ignore {
             continue;
         }
-        let out_path = match safe_join(tmp_dir, &name) {
+        // ⭐ **2026-10-28（owner：「要能原样恢复」）**：**老备份**的附件条目**不带 `attachments/` 前缀**
+        //   （`<空间>/<桶>/<hash>.<ext>`，本仓 export 在 10-28 之前就是这么写的）——
+        //   解包时补上前缀，否则"包里有字节、恢复被跳过"（真机就是这么把附件丢掉的 ✗）。
+        let out_rel = if kind == BackupEntryKind::Attachment && !name.starts_with("attachments/") {
+            format!("attachments/{name}")
+        } else {
+            name.clone()
+        };
+        let out_path = match safe_join(tmp_dir, &out_rel) {
             Some(p) => p,
             None => {
-                eprintln!("backup zip rejected path entry: {name}");
+                eprintln!("backup zip rejected path entry: {out_rel}");
                 continue;
             }
         };
@@ -658,22 +723,68 @@ fn extract_full_backup(
                 message: "解包备份…".to_string(),
             },
         );
-        if is_meta {
-            meta_snap = Some(out_path);
-        } else if is_space {
-            let id = name.trim_start_matches("spaces/").trim_end_matches(".db").to_string();
-            if !safe_space_id(&id) {
-                eprintln!("backup zip rejected space id: {id}");
-                continue;
+        match kind {
+            BackupEntryKind::Meta => meta_snap = Some(out_path),
+            BackupEntryKind::Space => {
+                let id = name
+                    .trim_start_matches("spaces/")
+                    .trim_end_matches(".db")
+                    .to_string();
+                if !safe_space_id(&id) {
+                    eprintln!("backup zip rejected space id: {id}");
+                    continue;
+                }
+                space_snaps.push((out_path, id));
             }
-            space_snaps.push((out_path, id));
-        } else if is_legacy {
-            space_snaps.push((out_path, "__legacy__".to_string()));
-        } else {
-            attachments_src = Some(tmp_dir.join("attachments"));
+            BackupEntryKind::Legacy => space_snaps.push((out_path, "__legacy__".to_string())),
+            BackupEntryKind::Attachment => attachments_src = Some(tmp_dir.join("attachments")),
+            BackupEntryKind::SpaceSide | BackupEntryKind::Ignore => {}
         }
     }
     Ok((meta_snap, space_snaps, attachments_src))
+}
+
+/// 备份包里**一个条目**是什么（分类是纯函数 ⇒ 可单测，不必起 AppHandle）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackupEntryKind {
+    Meta,
+    Space,
+    SpaceSide,
+    Legacy,
+    Attachment,
+    Ignore,
+}
+
+fn classify_backup_entry(name: &str) -> BackupEntryKind {
+    if name == "meta.db" {
+        return BackupEntryKind::Meta;
+    }
+    if name.starts_with("spaces/") && name.ends_with(".db") {
+        return BackupEntryKind::Space;
+    }
+    // ⭐ 2026-10-28（owner：「要能原样恢复」）：原始字节快照会带 `-wal`/`-shm` ——
+    //   它们**不算一个空间**（不进 space_snaps），但要**原样解出来**，否则恢复时少了 WAL 那一截。
+    if name.starts_with("spaces/") && (name.ends_with(".db-wal") || name.ends_with(".db-shm")) {
+        return BackupEntryKind::SpaceSide;
+    }
+    if name == "shuyonote.db" {
+        return BackupEntryKind::Legacy;
+    }
+    if name.starts_with("attachments/") && !name.ends_with('/') {
+        return BackupEntryKind::Attachment;
+    }
+    // ★ 老备份：附件条目**没有前缀**（`<空间>/<桶>/<64 位 hex>.<ext>`）—— 按"文件名是内容指纹"认。
+    if !name.ends_with('/') && looks_like_attachment_path(name) {
+        return BackupEntryKind::Attachment;
+    }
+    BackupEntryKind::Ignore
+}
+
+/// 条目名是不是一个**附件路径**（末段文件名 = 64 位十六进制 ＝ 内容指纹）。
+fn looks_like_attachment_path(name: &str) -> bool {
+    let fname = name.rsplit('/').next().unwrap_or("");
+    let stem = fname.split('.').next().unwrap_or("");
+    stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Read the space's display name / theme / icon from its own `workspaces` row.
@@ -724,13 +835,21 @@ fn space_exists(spaces_dir: &Path, meta_file: &Path, id: &str) -> Result<bool, S
     }
     let meta_conn = rusqlite::Connection::open(meta_file).map_err(|e| e.to_string())?;
     let n: i64 = meta_conn
-        .query_row("SELECT COUNT(*) FROM workspaces WHERE id = ?1", [id], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM workspaces WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
         .map_err(|e| e.to_string())?;
     Ok(n > 0)
 }
 
 /// Re-point an imported space DB's own `workspaces` row to `id`.
-fn rekey_workspace(conn: &rusqlite::Connection, id: &str, name: &str, theme: &str, icon: &str) -> Result<(), String> {
+fn rekey_workspace(
+    conn: &rusqlite::Connection,
+    id: &str,
+    name: &str,
+    theme: &str,
+    icon: &str,
+) -> Result<(), String> {
     rekey_workspace_from(conn, None, id, name, theme, icon)
 }
 
@@ -763,7 +882,10 @@ fn rekey_workspace_from(
     conn.execute_batch("PRAGMA foreign_keys = OFF")
         .map_err(|e| format!("关闭外键检查失败：{e}"))?;
     let res = (|| -> Result<(), String> {
-        if let Some(old) = old_id.map(str::trim).filter(|o| !o.is_empty() && *o != new_id) {
+        if let Some(old) = old_id
+            .map(str::trim)
+            .filter(|o| !o.is_empty() && *o != new_id)
+        {
             conn.execute(
                 "UPDATE pages SET workspace_id = ?1 WHERE workspace_id = ?2",
                 rusqlite::params![new_id, old],
@@ -826,7 +948,13 @@ fn dangling_refs(conn: &rusqlite::Connection) -> Vec<(String, i64)> {
 }
 
 /// Register the imported space in meta.workspaces so it shows up in the sidebar.
-fn register_space(meta_file: &Path, id: &str, name: &str, theme: &str, icon: &str) -> Result<(), String> {
+fn register_space(
+    meta_file: &Path,
+    id: &str,
+    name: &str,
+    theme: &str,
+    icon: &str,
+) -> Result<(), String> {
     let meta_conn = rusqlite::Connection::open(meta_file).map_err(|e| e.to_string())?;
     let now = crate::db::now_ms();
     let max: f64 = meta_conn
@@ -887,11 +1015,10 @@ pub async fn import_backup(
     let app2 = app.clone();
     let tmp2 = tmp_dir.clone();
     let src2 = src.clone();
-    let (_meta_snap, space_snaps, att_src) = tauri::async_runtime::spawn_blocking(move || {
-        extract_full_backup(&app2, &src2, &tmp2)
-    })
-    .await
-    .map_err(|e| e.to_string())??;
+    let (_meta_snap, space_snaps, att_src) =
+        tauri::async_runtime::spawn_blocking(move || extract_full_backup(&app2, &src2, &tmp2))
+            .await
+            .map_err(|e| e.to_string())??;
 
     // Merge each space as a fresh, never-clobbering import: if the id already
     // exists on disk / in meta, re-import it under a new id so nothing is lost.
@@ -969,6 +1096,123 @@ pub async fn import_backup(
     Ok(ImportSummary { imported, renamed })
 }
 
+// ═══════════════════ ⭐ 2026-10-28：**原样恢复**（替换式，重启生效） ═══════════════════
+//
+// owner 原话：「本机备份 全空间打包，要能原样恢复」。
+//
+// 与 `import_backup` 是**两条不同的产品动作**（⛔ 不合并 ✗）：
+// · `import_backup`：**合并** —— 作为新空间导入、重名改 id、附件按内容去重、`meta.db` 不动；
+// · `restore_backup_replace`：**原样恢复** —— 备份解到 `restore-staging/` 并写 `READY`；
+//   **下一次启动、在打开任何库之前**把当前 `meta.db`/`spaces/`/`attachments/` 整份挪到
+//   `restore-prev-<毫秒>/`（⛔ 一个字节都不删 ✗），再把 staging 搬到位 ✓
+//   ⇒ 「备份时什么样、恢复后就是什么样」（全空间 ＋ 锁着的加密空间 ＋ 附件字节）。
+//
+// ⚠️ 为什么必须"重启才生效"：本进程还拿着活动库连接；运行中换掉 `meta.db` ＝ 让正在跑的连接
+//    指向一个被移走的文件（那是"看起来正常、写进去全丢"的最坏形状）✗。
+const RESTORE_STAGING: &str = "restore-staging";
+const RESTORE_READY: &str = "READY";
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceRestore {
+    /// 已解到 staging、**重启后生效** ✓
+    pub staged: bool,
+    pub note: String,
+}
+
+/// 把备份解到 `app_data/restore-staging/` 并写 `READY`（⛔ 不动现有数据 ✗）。
+#[tauri::command]
+pub async fn restore_backup_replace(
+    app: tauri::AppHandle,
+    src_path: String,
+) -> Result<ReplaceRestore, String> {
+    let picked = crate::picked_file::materialize(&app, &src_path)?;
+    let src = picked.path().to_path_buf();
+    if !src.exists() {
+        return Err("备份文件不存在".to_string());
+    }
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let staging = app_data_dir.join(RESTORE_STAGING);
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+    let app2 = app.clone();
+    let staging2 = staging.clone();
+    let src2 = src.clone();
+    let (meta_snap, space_snaps, _att) =
+        tauri::async_runtime::spawn_blocking(move || extract_full_backup(&app2, &src2, &staging2))
+            .await
+            .map_err(|e| e.to_string())??;
+    // 「原样恢复」必须是**全库备份**（有 meta.db）；单空间老备份（`shuyonote.db`）走「导入合并」那条。
+    if meta_snap.is_none() {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(
+            "这份备份不是「全库备份」（缺 meta.db）⇒ 请用「导入备份（合并）」那条路".to_string(),
+        );
+    }
+    // READY **最后**写：中途失败 ⇒ 下次启动不会应用半份 ✓。
+    let marker = staging.join(RESTORE_READY);
+    let src_name = src
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    std::fs::write(&marker, format!("{}\n{}", src_name, crate::db::now_ms()))
+        .map_err(|e| e.to_string())?;
+    let count = space_snaps.len();
+    Ok(ReplaceRestore {
+        staged: true,
+        note: format!(
+            "已就绪：{count} 个空间（含锁着的加密空间）＋附件已解到本地；**重启应用后**按原样恢复。\
+             恢复前的数据会先整份挪到 `restore-prev-…/`（不会删）"
+        ),
+    })
+}
+
+/// 启动早期调用：staging 里有 `READY` ⇒ **在打开任何库之前**做整份替换。
+///
+/// ① 当前 `meta.db`/`spaces`/`attachments` → `restore-prev-<毫秒>/`（⛔ 不删 ✗）；
+/// ② staging 里那几样搬到位；③ 删 staging（`READY` 随之消失 ⇒ 不会重复应用）。
+pub fn apply_staged_restore(app_data_dir: &std::path::Path) -> Result<Option<String>, String> {
+    let staging = app_data_dir.join(RESTORE_STAGING);
+    let marker = staging.join(RESTORE_READY);
+    if !marker.exists() {
+        return Ok(None);
+    }
+    let prev = app_data_dir.join(format!("restore-prev-{}", crate::db::now_ms()));
+    std::fs::create_dir_all(&prev).map_err(|e| e.to_string())?;
+    // ① 挪开当前那份（⛔ 一个字节都不删 ✗）。
+    for name in ["meta.db", "spaces", "attachments"] {
+        let cur = app_data_dir.join(name);
+        if cur.exists() {
+            std::fs::rename(&cur, prev.join(name)).map_err(|e| {
+                format!(
+                    "把现有 {name} 挪去 {} 失败：{e}（未做任何替换）",
+                    prev.display()
+                )
+            })?;
+        }
+    }
+    // ② staging 搬到位。
+    let mut moved = 0usize;
+    for name in ["meta.db", "spaces", "attachments"] {
+        let st = staging.join(name);
+        if st.exists() {
+            std::fs::rename(&st, app_data_dir.join(name))
+                .map_err(|e| format!("把 {name} 搬到位失败：{e}"))?;
+            moved += 1;
+        }
+    }
+    // ③ 清 staging（READY 随之消失 ⇒ 不会重复应用）。
+    let _ = std::fs::remove_dir_all(&staging);
+    eprintln!(
+        "[restore] 已按原样恢复（{moved} 项）；恢复前的数据整份在 {}",
+        prev.display()
+    );
+    Ok(Some(format!(
+        "已按原样恢复（{moved} 项）；恢复前的数据整份在 {}（可手动找回）",
+        prev.display()
+    )))
+}
+
 #[tauri::command]
 pub fn write_text_file(app: tauri::AppHandle, path: String, content: String) -> Result<(), String> {
     // Android：保存对话框给的是 `content://` URI，不能当路径用（真机实测 EROFS）。
@@ -997,6 +1241,16 @@ pub fn write_binary_file(app: tauri::AppHandle, path: String, data: Vec<u8>) -> 
 ///
 /// 修法照 `import_backup` 的同一条路：**先 `picked_file::materialize` 落成真实临时路径**
 /// （桌面原样返回 ⇒ 桌面行为逐字不变），再读。
+/// ⭐ M2e：读本机文件原始字节（导入 .shuyospace 用；路径来自系统文件选择框）。
+#[tauri::command]
+pub fn read_binary_file(path: String) -> Result<Vec<u8>, String> {
+    let p = std::path::Path::new(&path);
+    if !p.is_file() {
+        return Err(format!("文件不存在：{path}"));
+    }
+    std::fs::read(p).map_err(|e| format!("读取文件失败：{e}"))
+}
+
 #[tauri::command]
 pub fn read_text_file(app: tauri::AppHandle, path: String) -> Result<String, String> {
     let picked = crate::picked_file::materialize(&app, &path)?;
@@ -1080,7 +1334,11 @@ pub fn auto_backup_status(app: tauri::AppHandle) -> AutoBackupStatus {
             snapshots: list
                 .entries
                 .into_iter()
-                .map(|e| AutoBackupSnapshot { name: e.name, unix: e.unix, size: e.size })
+                .map(|e| AutoBackupSnapshot {
+                    name: e.name,
+                    unix: e.unix,
+                    size: e.size,
+                })
                 .collect(),
             keep_days,
             keep_weeks,
@@ -1118,10 +1376,29 @@ pub struct AutoBackupRunReport {
 pub async fn auto_backup_run_now(app: tauri::AppHandle) -> AutoBackupRunReport {
     use crate::auto_backup::RunResult;
     let r = match run_auto_backup_once(&app).await {
-        RunResult::Ok { kept, removed, note } => AutoBackupRunReport { ran: true, kept, removed, note },
+        RunResult::Ok {
+            kept,
+            removed,
+            note,
+        } => AutoBackupRunReport {
+            ran: true,
+            kept,
+            removed,
+            note,
+        },
         // ⭐ 跳过／失败都**照实回**（⛔ 不假装跑成功 ✗）
-        RunResult::Skipped { note } => AutoBackupRunReport { ran: false, kept: 0, removed: 0, note },
-        RunResult::Failed { note } => AutoBackupRunReport { ran: false, kept: 0, removed: 0, note },
+        RunResult::Skipped { note } => AutoBackupRunReport {
+            ran: false,
+            kept: 0,
+            removed: 0,
+            note,
+        },
+        RunResult::Failed { note } => AutoBackupRunReport {
+            ran: false,
+            kept: 0,
+            removed: 0,
+            note,
+        },
     };
     // ⭐⭐ **2026-10-25**：**手动那次也要留一行日志** ——
     //   真机踩到：点了「立即备份」后，日志里**一条都不多**（自动那趟由 `lib.rs` 打，
@@ -1145,16 +1422,40 @@ mod tests {
     #[test]
     fn a_fresh_zero_byte_part_is_not_swept() {
         // 刚开的备份：0 字节、年龄 3 秒 ⇒ ⛔ 不许删
-        assert!(!should_sweep_debris("shuyonote-backup-1.zip.part", 0, Some(3)));
-        assert!(!should_sweep_debris("shuyonote-backup-1.zip.part", 1024, Some(3)));
+        assert!(!should_sweep_debris(
+            "shuyonote-backup-1.zip.part",
+            0,
+            Some(3)
+        ));
+        assert!(!should_sweep_debris(
+            "shuyonote-backup-1.zip.part",
+            1024,
+            Some(3)
+        ));
         // 一小时以上的尸体 ⇒ 收
-        assert!(should_sweep_debris("shuyonote-backup-1.zip.part", 1024, Some(7200)));
-        assert!(should_sweep_debris("shuyonote-backup-1.zip.part", 0, Some(7200)));
+        assert!(should_sweep_debris(
+            "shuyonote-backup-1.zip.part",
+            1024,
+            Some(7200)
+        ));
+        assert!(should_sweep_debris(
+            "shuyonote-backup-1.zip.part",
+            0,
+            Some(7200)
+        ));
         // 0 字节的老 `.zip`（老版本留下的半个包）⇒ 收；新的一律不碰
-        assert!(should_sweep_debris("shuyonote-backup-1.zip", 0, Some(86400)));
+        assert!(should_sweep_debris(
+            "shuyonote-backup-1.zip",
+            0,
+            Some(86400)
+        ));
         assert!(!should_sweep_debris("shuyonote-backup-1.zip", 0, Some(3)));
         // 正常的包（有内容、不是 .part）⇒ 永远不走这条（它由保留分层管）
-        assert!(!should_sweep_debris("shuyonote-backup-1.zip", 999, Some(86400)));
+        assert!(!should_sweep_debris(
+            "shuyonote-backup-1.zip",
+            999,
+            Some(86400)
+        ));
         // 摸不到 mtime ⇒ **不动**（不猜）
         assert!(!should_sweep_debris("shuyonote-backup-1.zip.part", 0, None));
     }
@@ -1191,7 +1492,11 @@ mod tests {
 
         let now_ms = crate::auto_backup::now_unix() as i64 * 1000;
         let got = stale_parts(&dir, now_ms, STALE_PART_MS);
-        assert_eq!(got, vec![stale.clone()], "只该收**我们自己的 + 超过 1 小时**的那一个");
+        assert_eq!(
+            got,
+            vec![stale.clone()],
+            "只该收**我们自己的 + 超过 1 小时**的那一个"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1213,7 +1518,10 @@ mod tests {
             &["99082b5a-dc25-4712-b2c9-fcff13612e64: 空间是密文但拿不到它的钥匙".to_string()],
             &[],
         );
-        assert_eq!(note, "size=9 skipped=1（99082b5a…: 空间是密文但拿不到它的钥匙）");
+        assert_eq!(
+            note,
+            "size=9 skipped=1（99082b5a…: 空间是密文但拿不到它的钥匙）"
+        );
 
         // ③ 有孤儿 ⇒ 单独一格点名（⛔ 不混进 skipped：那不是"没备份"，是"界面上看不见"）
         let note = summary_note(
@@ -1286,7 +1594,7 @@ mod tests {
     //   ⚠️ 这会动**进程级全局**（KEYRING / SESSION_MASTER）⇒ 必须与其它会话态判据串行（`SEC_LOCK`）。
     #[test]
     fn snapshot_spaces_keys_the_encrypted_space_and_names_what_it_skips() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let _g = crate::security::test_lock();
         let dir = uniq_tmp("spaces");
         let _ = std::fs::remove_dir_all(&dir);
         let spaces = dir.join("spaces");
@@ -1326,7 +1634,9 @@ mod tests {
             assert_eq!(t, "hi");
         }
 
-        // ② 锁定态（袋子里没有它的盒子）：明文那份照导，加密那份**记名跳过**（带空间 id 和原因）。
+        // ② 锁定态（袋子里没有它的盒子）：**两个空间都进备份** ——
+        //    ⭐ 2026-10-28（owner：「本机备份 全空间打包」）：加密那份拿不到钥匙时
+        //    **按原始字节复制**（⛔ 不再"记名跳过" ✗）；它仍是密文，恢复后照样要原来那把口令。
         crate::space_crypto::set_keyring_for_test(None);
         crate::space_crypto::set_session_master(None).unwrap();
         let out2 = dir.join("out2");
@@ -1334,14 +1644,19 @@ mod tests {
         let (snaps2, skipped2) = snapshot_spaces(&spaces, &out2).unwrap();
         assert_eq!(
             snaps2.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
-            vec!["plain"]
+            vec!["enc", "plain"],
+            "锁着的加密空间也必须进备份（全空间打包）"
         );
-        assert_eq!(skipped2.len(), 1, "跳过必须被记下来：{skipped2:?}");
-        assert!(skipped2[0].starts_with("enc:"), "{}", skipped2[0]);
+        assert!(skipped2.is_empty(), "不再有跳过：{skipped2:?}");
+        let enc_out2 = &snaps2.iter().find(|(id, _)| id == "enc").unwrap().1;
         assert!(
-            skipped2[0].contains("钥匙袋"),
-            "跳过原因要说清「为什么拿不到钥匙」：{}",
-            skipped2[0]
+            crate::security::space_db_is_encrypted(enc_out2),
+            "原始字节复制出来的那份仍是密文（解密仍要原口令）"
+        );
+        assert_eq!(
+            std::fs::read(enc_out2).unwrap(),
+            std::fs::read(&enc).unwrap(),
+            "锁着的加密空间要**逐字节**同源（⛔ 不许「解不开就丢掉」✗）"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1356,8 +1671,10 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let snap = dir.join("enc.db");
         make_space(&snap, "enc");
-        let key_a = crate::crypto::derive_key("passphrase-A", &crate::crypto::random_salt()).unwrap();
-        let key_b = crate::crypto::derive_key("passphrase-B", &crate::crypto::random_salt()).unwrap();
+        let key_a =
+            crate::crypto::derive_key("passphrase-A", &crate::crypto::random_salt()).unwrap();
+        let key_b =
+            crate::crypto::derive_key("passphrase-B", &crate::crypto::random_salt()).unwrap();
         crate::security::convert_space_db(&snap, true, Some(&key_a)).unwrap();
         assert!(crate::security::space_db_is_encrypted(&snap));
 
@@ -1383,7 +1700,8 @@ mod tests {
         make_space(&plain, "plain");
         {
             let c = rusqlite::Connection::open(&plain).unwrap();
-            c.execute_batch("PRAGMA foreign_keys=OFF; DELETE FROM workspaces").unwrap();
+            c.execute_batch("PRAGMA foreign_keys=OFF; DELETE FROM workspaces")
+                .unwrap();
             let e = read_snapshot_meta(&c, &plain, "plain").unwrap_err();
             assert!(!e.contains("密文"), "明文快照被误诊成密文：{e}");
         }
@@ -1435,7 +1753,11 @@ mod rekey_tests {
             .expect("重命名不该再撞外键");
 
         let ws: String = c
-            .query_row("SELECT workspace_id FROM pages WHERE id = 'pg-1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT workspace_id FROM pages WHERE id = 'pg-1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(ws, "new-id", "页面没被改到新空间 ⇒ 指向了一个不存在的父");
         let n: i64 = c
@@ -1443,8 +1765,146 @@ mod rekey_tests {
             .unwrap();
         assert_eq!(n, 1, "workspaces 应当只有一行");
         let dangling: i64 = c
-            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(dangling, 0, "还有悬空引用");
+    }
+
+    /// ⭐ **2026-10-28（owner：「本机备份 全空间打包」）**：**锁着的加密空间也进快照** ——
+    /// 按**原始字节**复制（连 `-wal`），⛔ 不再因为"拿不到钥匙"被跳过 ✗。
+    #[test]
+    fn a_locked_encrypted_space_is_snapshotted_byte_for_byte() {
+        let root = std::env::temp_dir().join(format!("shuyo-snap-{}", uuid::Uuid::new_v4()));
+        let spaces = root.join("spaces");
+        std::fs::create_dir_all(&spaces).unwrap();
+        // 16 字节以上、且**不是** `SQLite format 3\0` ⇒ `space_db_is_encrypted` 判真
+        let raw: Vec<u8> = (0u8..64)
+            .map(|i| i.wrapping_mul(37).wrapping_add(11))
+            .collect();
+        let db = spaces.join("enc-1.db");
+        std::fs::write(&db, &raw).unwrap();
+        assert!(
+            crate::security::space_db_is_encrypted(&db),
+            "夹具：这个文件要判成密文"
+        );
+        std::fs::write(spaces.join("enc-1.db-wal"), b"wal-bytes").unwrap();
+
+        let tmp = root.join("tmp");
+        std::fs::create_dir_all(tmp.join("spaces")).unwrap();
+        let (snaps, skipped) = snapshot_spaces(&spaces, &tmp).unwrap();
+        assert!(
+            skipped.is_empty(),
+            "锁着的加密空间不许再被跳过：{skipped:?}"
+        );
+        assert_eq!(snaps.len(), 1);
+        assert_eq!(snaps[0].0, "enc-1");
+        assert_eq!(
+            std::fs::read(&snaps[0].1).unwrap(),
+            raw,
+            "要按**原始字节**快照"
+        );
+        assert_eq!(
+            std::fs::read(tmp.join("spaces").join("enc-1.db-wal")).unwrap(),
+            b"wal-bytes",
+            "WAL 也要带上（少了它就少一截）"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// ⭐ **2026-10-28（owner：「要能原样恢复」）**：**整份替换** ＋ **旧数据另存**（⛔ 不删 ✗）。
+    #[test]
+    fn staged_restore_replaces_everything_and_keeps_the_previous_copy() {
+        let root = std::env::temp_dir().join(format!("shuyo-restore-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("meta.db"), b"old-meta").unwrap();
+        std::fs::create_dir_all(root.join("spaces")).unwrap();
+        std::fs::write(root.join("spaces/a.db"), b"old-a").unwrap();
+        std::fs::create_dir_all(root.join("attachments/p")).unwrap();
+        std::fs::write(root.join("attachments/p/q"), b"old-att").unwrap();
+
+        let staging = root.join(RESTORE_STAGING);
+        std::fs::create_dir_all(staging.join("spaces")).unwrap();
+        std::fs::create_dir_all(staging.join("attachments/p")).unwrap();
+        std::fs::write(staging.join("meta.db"), b"new-meta").unwrap();
+        std::fs::write(staging.join("spaces/a.db"), b"new-a").unwrap();
+        std::fs::write(staging.join("spaces/a.db-wal"), b"new-wal").unwrap();
+        std::fs::write(staging.join("attachments/p/q"), b"new-att").unwrap();
+        std::fs::write(staging.join(RESTORE_READY), "src.zip\n1").unwrap();
+
+        let note = apply_staged_restore(&root)
+            .unwrap()
+            .expect("有 READY ⇒ 应当应用");
+        assert!(note.contains("原样恢复"));
+        assert_eq!(std::fs::read(root.join("meta.db")).unwrap(), b"new-meta");
+        assert_eq!(std::fs::read(root.join("spaces/a.db")).unwrap(), b"new-a");
+        assert_eq!(
+            std::fs::read(root.join("spaces/a.db-wal")).unwrap(),
+            b"new-wal"
+        );
+        assert_eq!(
+            std::fs::read(root.join("attachments/p/q")).unwrap(),
+            b"new-att"
+        );
+        assert!(
+            !root.join(RESTORE_STAGING).exists(),
+            "staging/READY 必须清掉（否则每次启动都会重放）"
+        );
+
+        let prev = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().starts_with("restore-prev-"))
+                    .unwrap_or(false)
+            })
+            .expect("旧数据必须在 restore-prev-* 里（⛔ 不许删 ✗）");
+        assert_eq!(std::fs::read(prev.join("meta.db")).unwrap(), b"old-meta");
+        assert_eq!(std::fs::read(prev.join("spaces/a.db")).unwrap(), b"old-a");
+        assert_eq!(
+            std::fs::read(prev.join("attachments/p/q")).unwrap(),
+            b"old-att"
+        );
+
+        assert!(
+            apply_staged_restore(&root).unwrap().is_none(),
+            "没有 READY ⇒ 不应用第二次"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// ⭐ **2026-10-28**：备份条目分类 —— 新包（`attachments/…`）与**老包**（无前缀的
+    /// `<空间>/<桶>/<hash>`）**都认**；`spaces/x.db-wal` 是副文件；别的忽略（⛔ 不把杂项解出来 ✗）。
+    #[test]
+    fn backup_entries_are_classified_including_legacy_unprefixed_attachments() {
+        let h = "a".repeat(64);
+        assert_eq!(classify_backup_entry("meta.db"), BackupEntryKind::Meta);
+        assert_eq!(classify_backup_entry("spaces/x.db"), BackupEntryKind::Space);
+        assert_eq!(
+            classify_backup_entry("spaces/x.db-wal"),
+            BackupEntryKind::SpaceSide
+        );
+        assert_eq!(
+            classify_backup_entry("shuyonote.db"),
+            BackupEntryKind::Legacy
+        );
+        assert_eq!(
+            classify_backup_entry(&format!("attachments/s/b/{h}.png")),
+            BackupEntryKind::Attachment
+        );
+        // ⭐ 老包：附件条目没有 `attachments/` 前缀也必须认
+        //   （否则"包里明明有字节、恢复却没有"—— 真机就是这么把附件丢掉的）
+        assert_eq!(
+            classify_backup_entry(&format!("s/b/{h}.png")),
+            BackupEntryKind::Attachment
+        );
+        assert_eq!(classify_backup_entry("readme.txt"), BackupEntryKind::Ignore);
+        assert_eq!(
+            classify_backup_entry("attachments/"),
+            BackupEntryKind::Ignore
+        );
     }
 }

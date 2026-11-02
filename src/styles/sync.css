@@ -1,0 +1,2239 @@
+/* S4-4（2026-11-01）：域抽取器搬出的**插件管理器域**（`.pm-*` / `.plugin-manager*` / `.plugin-menu-*`）。
+
+- 选择器混排（`.pm-x, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- 核心规则在前、**响应式覆盖（来自混合 @media，只抽命中域的规则并重建同条件块）在后** —— 保持原相对顺序。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+.sync-panel {
+  position: relative;
+}
+
+.sync-popover {
+  position: fixed;
+  width: 320px;
+  /* ⭐ 2026-10-25（owner：「给同步面板添加滚动」）：内容多时**面板自己滚**，⛔ 不许顶出窗口。
+     高度按视口封顶（留 24px 呼吸），滚动留在这层、并有 `overscroll-behavior: contain`
+     ⇒ 滚到底不会把后面的页面/侧栏一起带着滚。 */
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 14px;
+  /* 同步弹窗是用户主动调出的浮层：**高于文件预览(600)**，但必须**低于确认/输入对话框(1400)**。
+     ⚠️ 2026-09-22 真机验收修：这里曾是魔法数 1500（理由是"别被文件预览挡住"，而 700 就已经
+     高于预览 600）。1500 > `.confirm-overlay` 的 1400 ⇒ 从同步面板里发起的「新建空间 /
+     重命名 / 设备密钥」输入框会画在面板**背后**，用户看到的是"点了按钮没反应"
+     （就是 F3「P0.1 按钮没反应」的真身）。
+     浮层该用的值就是 --z-popover(700)：700 > 预览(600)，且 < 模态(1000) / 右键(1100) /
+     确认框(1400) / 命令面板(1500) / toast(1600)——见 :root 里的分层规范。 */
+  z-index: var(--z-popover);
+}
+
+.sync-title {
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+
+/* ---------------------------------------------------------------------------
+ * 同步面板（.is-sync）：头/滚动区/底栏三段式。之前所有字段一次性铺开，
+ * 320px 宽里挤了 5 组输入，视觉上又窄又碎；现在按「服务器 → 账号 → 空间 →
+ * 成员」分组，登录后收起表单，手动令牌折进「高级」，只留必要的一屏。
+ * ------------------------------------------------------------------------- */
+.sync-popover.is-sync {
+  width: min(452px, calc(100vw - 24px));
+  max-height: min(76vh, 680px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  /* ⚠️ 2026-09-29（D5 修正②）：**桌面档也改成「整个面板滚」**（原为 `overflow: hidden`）。
+     为什么必须改：三段式里"只有 `.sync-profiles` 滚"，而**落在它外面**的块
+     （`SpacePrivacySection` ＋ D5 的 hero）**既不滚、又被 `hidden` 裁掉** ⇒
+     实测固定区 = head 67 ＋ hero 169 ＋ space-privacy 261 ＋ foot 86 = **583px**，
+     而面板只有 608px ⇒ 滚动区只剩 **24px** ⇒ owner 在真机上「**面板不能滚动**」。
+     ⚠️ 不能简单把 `space-privacy` 挪进 `.sync-profiles`：它在 Web 档带 `is-disabled`
+     （`opacity:.45 ＋ pointer-events:none`）⇒ 会把空间隐私**变灰且点不动**。
+     ⇒ 改成与**窄屏同一套**：外层滚 ＋ 底栏吸底。
+     ⚠️ 副作用（如实记）：`desktop-no-scroll` 测的是"外层不滚"，内容真装不下时它会**变红**
+        —— 那是对的，它本来就说"桌面本该一屏装下"。 */
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
+.sync-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px var(--space-4) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.sync-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.sync-head .sync-title {
+  font-size: var(--fs-14);
+  margin: 0 0 2px;
+  letter-spacing: 0.01em;
+}
+
+.sync-subtitle {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.sync-chip {
+  flex: none;
+  font-size: var(--fs-11);
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  background: var(--chip-bg);
+  color: var(--text-dim);
+}
+
+.sync-chip.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.sync-web-note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: var(--space-3) var(--space-4) 0;
+  padding: 10px var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--cat-yellow-soft);
+  font-size: var(--fs-12);
+  color: var(--text);
+}
+
+.sync-web-note span {
+  font-size: var(--fs-11);
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* P0.1 同页冲突提示 */
+.sync-conflict-banner {
+  margin: var(--space-3) var(--space-4) 0;
+  padding: 10px var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+  font-size: var(--fs-12);
+  color: var(--text);
+}
+
+.sync-conflict-title { font-weight: 600; margin-bottom: 6px; }
+
+.sync-conflict-list { margin: 0 0 var(--space-2); padding-left: 18px; }
+
+.sync-conflict-actions { display: flex; gap: var(--space-2); margin-bottom: 6px; }
+
+.sync-conflict-hint { font-size: var(--fs-11); color: var(--text-dim); line-height: 1.5; }
+
+/* ★ B 方案（2026-09-22）：「待取回的远端版本」——页级保留本地时存下来的那一版。
+   修好之前这一支完全没有界面（游标过去了、对端那笔编辑再也取不回），所以这块是"从静默到可见"的那一半。
+   配色刻意用**信息**（不是危险）：它记的是"有东西等你处理"，不是"出错了"。 */
+.sync-pending-remote {
+  /* ⭐ 2026-10-31（owner 截图反馈）：它紧贴在「加密空间同步」卡片下沿，上边留一点空隙才不显挤。
+     与 `.sync-conflict-banner` 的 12px 上留白同一档（移动端在下面单独收到 16px）。 */
+  margin-top: var(--space-3);
+  margin-bottom: 10px;
+  padding: 10px var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  font-size: var(--fs-12);
+  color: var(--text);
+}
+
+.sync-pending-remote .sync-conflict-list { margin: 0 0 6px; padding-left: 18px; }
+
+.sync-pending-remote li { margin-bottom: var(--space-1); }
+
+.sync-pending-actions { display: inline-flex; gap: 6px; margin-left: var(--space-2); }
+
+.sync-pending-actions button {
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: var(--fs-11);
+}
+
+.sync-pending-actions button:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ⚠️ 2026-09-29（D5 修正②）：桌面档**不再由它自己滚**（改由外层滚，见 `.sync-popover.is-sync`）。
+   `flex: none` 是必须的 —— 原来 `flex: 1` 会把它压扁（本次那个「只剩 24px」就是这么来的）。 */
+.sync-profiles {
+  flex: none;
+  min-height: 0;
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ── ⚠️ 2026-09-29（IA）：**两组 ＋ 每行一个可展开项**（原生 `<details>`）────────────
+   为什么：默认展开的一长条 —— 桌面实测内容 **1190px vs 面板 606px**（`desktop-no-scroll`
+   的读数）—— 用户要找某一项得先把整屏滚一遍。收成"两组 ＋ 每行一折"之后一屏就看得全。
+   口径：
+     · 行里装的是**原来的块本身**（一块没删、一个字没改，只是折起来）；
+     · 用原生 `<details>/<summary>`（本文件早有先例：`.sync-advanced`）⇒ 不引入新的 JS 状态；
+     · 只用既有变量（`--border` / `--card-bg` / `--text-dim` / `--text-faint` / `--radius-md` /
+       `--accent`），不新增色值。 */
+.sync-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sync-group-title {
+  font-size: var(--fs-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  margin-left: 2px;
+}
+
+/* ⚠️ 【进阶】那一组是 `.sync-profiles` 的**兄弟**（不是孩子）—— `SpacePrivacySection`
+   不能进 `.sync-profiles`（Web 档 `is-disabled` ⇒ 变灰且点不动）⇒ 它在外面，就得自己
+   对齐那 16px（`.sync-profiles` 的横向内边距）。 */
+.sync-group.is-advanced {
+  margin: 0 var(--space-4) var(--space-3);
+}
+
+.sync-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+
+/* ⭐ 2026-10-11（owner：「参照效果图实现」／「把同步面板做好」）：⭐ 「严格模式（高级）」那一层折叠 ✓
+   —— 效果图把配对那串码收在它底下 ✓，⭐ 所以它得**看起来像这个面板自己的东西** ✓。
+   ⚠️ 与 `.sync-row` 同一套外观语言 ✗（⭐ 同样藏掉 webkit 的三角 ✓、⭐ 同样 hover 变强调色 ✓、⭐ 同样 8px 间距 ✓），
+      ⭐ 但**不套外框** ✗ —— ⭐ 它嵌在别的折叠**里面** ✓，⭐ 再加一圈边就成了"盒子里还有个盒子" ✓
+      （⭐ 效果图上它就是一条朴素的可展开行 ✓）。 */
+.sync-advanced {
+  margin-top: var(--space-2);
+}
+
+.sync-advanced > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 0;
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.sync-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sync-advanced > summary:hover {
+  color: var(--accent);
+}
+
+.sync-advanced[open] > summary {
+  color: var(--text);
+}
+
+.sync-row > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 9px var(--space-3);
+  font-size: var(--fs-12-5);
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.sync-row > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sync-row > summary:hover {
+  color: var(--accent);
+}
+
+.sync-row-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 右侧那颗摘要值：**由真实读数算出来**（见 `SyncPanel.tsx` 里那一段派生）。
+   长值（服务器地址）不许撑破这一行 ⇒ 省略号；全文在 `title` 上。 */
+.sync-row-value {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+}
+
+.sync-row-caret {
+  flex: none;
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+}
+
+.sync-row[open] > summary .sync-row-caret {
+  transform: rotate(90deg);
+}
+
+.sync-row-body {
+  padding: 10px var(--space-3) var(--space-3);
+  border-top: 1px dashed var(--border);
+}
+
+/* 行体里装的是**原来的块本身** —— 它们原来靠 `.sync-profiles` 的 `gap:12px` / `padding:16px`
+   定位，现在那一层由 `.sync-row` 提供 ⇒ 这里只抹掉重复的外边距（字号 / 配色一概不动）。 */
+.sync-row-body > .sync-auto { margin: 0; }
+
+.sync-row-body > .sync-net { margin: 0; }
+
+.sync-row-body > .space-privacy { margin: 0; }
+
+.sync-row-body > .sync-history { border-top: 0; padding-top: 0; }
+
+/* ⚠️ 卡片之间的间距本来来自 `.sync-profiles` 的 `gap:12px`；折进普通块容器后要补回来，
+   否则两张卡会贴在一起。 */
+.sync-row-body > .sync-card + .sync-card,
+.sync-row-body > .sync-empty-state + .sync-card { margin-top: var(--space-3); }
+
+/* ── ★ 2026-09-29（丙档「设备直连」）：三样新东西的样式 ─────────────────────────────
+   口径（本档的落地要求）：**只用既有变量**（`--border` / `--card-bg` / `--text-dim` /
+   `--text-faint` / `--radius-md` / `--accent` / `--text`），**不引入任何新色值**。
+   而那个"提示框"直接复用既有的 `.sync-web-note`（它的底色本来就是既有变量），
+   这里只把它的外边距归零（它原来是给 `.sync-popover` 直接当孩子用的，margin 会重复一圈）。 */
+.sync-web-note.is-inline { margin: 0; }
+
+/* 子项那一行（「拉取间隔」）：**缩进 ＋ 一条竖线**，表示它属于上一行（照效果图）。
+   ⚠️ 竖线用伪元素而不是 `border-left`：`border-left` 会把圆角那一圈也画上，看起来像两个盒子。 */
+.sync-row.is-child { margin-left: 14px; position: relative; }
+
+.sync-row.is-child::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  background: var(--border);
+}
+
+/* ★ 规格 §9.2：总闸＝关闭 ⇒ 设备直连那一行**灰掉**。
+   ⚠️ 与 `.sync-profiles.is-disabled` 同一套手法（`opacity` ＋ `pointer-events`）——
+      它是"不能点"，不是"藏起来"（用户要看得到"它停着"这件事，上面的黄框在说为什么）。 */
+.sync-row.is-off {
+  opacity: 0.45;
+  filter: grayscale(0.4);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* 「附近设备」那一块：一块**区域标题** ＋ 每台一行（＋ 收到的邀请 ＋ 那句代价说明）。 */
+.sync-nearby { display: flex; flex-direction: column; gap: var(--space-2); }
+
+/* 一台设备那一行：名字（可缩）＋ 第二列说明（可缩）＋ 右侧动作（不可缩）。
+   ⚠️ `flex-wrap` 是必须的：`邀请加入「<空间名>」` 在 320px 宽的面板里放不下 ——
+      不换行就会把那一行**撑出面板**（而"越界"正是 mobile-views 那条门禁在量的东西）。 */
+.sync-nearby-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+
+.sync-nearby-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-12-5);
+  color: var(--text);
+}
+
+/* 第二列说明与右侧动作都靠 `margin-left:auto` 推到右边；换行时动作自己落到下一行。
+   ⚠️ 说明这一格要能换行（窄屏下"没报可以直连的地址"那一截不许被裁掉）⇒ `flex: 0 1 auto`。 */
+.sync-nearby-row > .sync-hint { margin-left: auto; text-align: right; flex: 0 1 auto; }
+
+.sync-nearby-row > .sync-btn { margin-left: auto; flex: none; }
+
+/* ⭐ **刀六-2（2026-10-14，owner：「按最后的桌面版高保真效果图设计进行开发」）** ✗ ——
+   ⚠️ 只加下面这几条 `.sync-nearby*`（⛔ 别的选择器一个字没动 ✗）；变量名照抄上面那几条：
+   `--border`（`:29` ✓）／`--radius-sm`（`:80` ✓）／`--bg`（`:25`／`:118` ✓）。
+   ⭐ 为什么这几条就够：⭐ 那一行**本来就是**卡片 ✓（`:1556-1558` 已有 `border` ＋ `--radius-md` ＋ `--card-bg` ✓）
+   ＋ ⭐ 动作按钮**本来就**贴右 ✓（`:1571`／`:1572` ✓）⇒ ⭐ 差的只是：
+     · ⭐ 那一段**左对齐** ✓（⭐ 刚搬出 hero ✓，⭐ 这里再保底一道 ✓，⛔ 不吃 `text-align:center` ✗）
+     · ⭐ 名字**加粗** ✓（⭐ 图上名字是粗的 ✓）
+     · ⭐ 卡片内边距**放宽一点** ✓（⭐ 7px 10px ⇒ 10px 12px ✓，⭐ 更像卡片 ✓）
+     · ⭐ 末位元素贴右写成通例 ✓（⭐ 覆盖"状态胶囊"那一类将来会加的元素 ✓）
+   ⚠️ **本轮是纯 CSS** ✓：⛔ `SyncPanel.tsx` 一个字没动 ✗、⛔ 六个 `data-testid` 没动 ✗。 */
+.sync-nearby { text-align: left; }
+
+.sync-nearby .sync-hint { text-align: left; }
+
+.sync-nearby-row {
+  padding: 10px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.sync-nearby-row .sync-nearby-name { font-weight: 600; }
+
+.sync-nearby-row > :last-child { margin-left: auto; }
+
+/* 非 Tauri 平台（含桌面浏览器与手机浏览器）**不提供**多设备同步，故整个面板禁灰、不可交互。
+ *
+ * **产品决定（2026-09-15）**：Web 版不开多设备同步；**但 `web.ts` 的实现保留、不要删**。
+ *
+ * ⚠️ 别把它写成"Web 版是 stub / 没实现"——`web.ts` 的 `sync_now`(:2429) /
+ * `sync_workspace`(:2541) / `syncAttachments`(:896) **都是真实现**（原文那句"不支持"
+ * 与代码相反，2026-09-15 已修）。准确说法是"**不提供**"，理由是**浏览器存储会被系统回收**、
+ * 不适合当唯一副本——`SyncPanel.tsx:502` 那句"Web 版同步受浏览器环境限制"是同一个意思。
+ * 完整说明与三条口径见 `web.ts` 里 `sync_now` 上方那段注释。
+ * ⇒ **别据"不支持 / 没实现"把那段实现当死代码删掉。** */
+.sync-profiles.is-disabled {
+  opacity: 0.45;
+  filter: grayscale(0.4);
+  pointer-events: none;
+  user-select: none;
+}
+
+.sync-empty-state {
+  /* ⭐ **2026-10-29（owner：「同步面板感觉乱糟糟」）**：0 台的两段原来是**两个大虚线空盒**
+     （上下各 24px 内边距 ＋ dashed 边框）⇒ 一屏里"没有设备"占掉半屏，还和真正的内容抢注意力。
+     现在只留**一行灰字**（左对齐）；有设备时各段照旧是卡片 ✓。 */
+  padding: 2px var(--space-3) 6px;
+  text-align: left;
+  font-size: var(--fs-11-5);
+  color: var(--text-faint);
+  border: none;
+  border-radius: 0;
+}
+
+/* 主口令：**标签一行、输入框单独一行**（owner 2026-09-24：挤在同一行时标签被折行、输入框被压到最右边）。
+   竖排后输入框占满宽度，等于一个正常的"设置口令"字段；盒子本身用 `.sync-input`（与下拉、按钮同高）。 */
+/* ── ⚠️ 2026-09-29（D5）：**状态置顶**（`.sync-hero`）────────────────────────────
+   口径见 `SyncPanel.tsx` 里它上面那段注释。三条要点：
+     · 它是给人【看状态】的 ⇒ **里面不许有 input/select/textarea**（同 `.sync-foot` 那条口径）
+     · 颜色只用既有变量（`--accent` / `--border` / `--card-bg` / `--text-faint`），不新增色值
+     · 绿点那个色（`#22a06b`）与 `.sync-account-dot` 已有的成功色一致 */
+/* ⚠️ 2026-09-29（尺寸协调）：hero 原来在 `.sync-profiles`【外面】⇒ 满宽贴边（宽 450 / x 61），
+   而下面那些行在容器 16px 内边距里（宽 418 / x 77）⇒ **左右差 16px、宽差 32px**，
+   owner 一眼看出的"和大卡片与下面的尺寸不协调"就是这个。
+   ⇒ 左右 margin 取 16px 与行对齐；同时把垂直节奏收一档（169px → ~132px），
+     按钮 48 → 42、标题 19 → 17、副标题 13 → 12.5。 */
+.sync-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  margin: var(--space-3) var(--space-4);
+  padding: 14px 14px var(--space-3);
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+
+.sync-hero-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--fs-17);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sync-hero-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-full);
+  background: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.sync-hero-dot.is-ok { background: #22a06b; box-shadow: 0 0 0 4px rgba(34, 160, 107, 0.15); }
+
+.sync-hero-dot.is-busy { background: var(--accent); }
+
+.sync-hero-sub { font-size: var(--fs-12-5); color: var(--text-faint); }
+
+/* ⭐ **2026-10-27（owner：「关闭局域网同步按钮布局太丑，优化一下」）** ✗：
+   这一枚动作从「状态条下面单独一行」收进**状态行右上角** ✓（`margin-left:auto` 顶过去 ✓）。
+   ⚠️ 刻意**不复用** `.sync-btn` ✗ —— 它有 `min-height: 44px`（给输入框并排用的 ✓），
+   摆在 15px 的状态行旁边会把那一行撑成一堵墙 ✓。这里是小胶囊，**只用既有变量**（⛔ 不写死色值 ✗）。 */
+.sync-hero-action { margin-left: auto; display: inline-flex; align-items: center; }
+
+.sync-mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--fs-11-5);
+  font-weight: 500;
+  line-height: 1.6;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.sync-mini-btn:hover { background: var(--hover); border-color: var(--border-strong); color: var(--text); }
+
+/* ⭐ 2026-10-29（owner 选 B）：设备名搬进「局域网同步」—— 一行「标签 ＋ 输入 ＋ 保存」。
+   它原来住在「设置 → 账户」（整页只剩这一格，已撤）；这里紧跟在状态读数之后，
+   因为它影响的是"同网段的设备在「附近的设备」里看到你叫什么" ✓。
+   ⭐ 2026-10-29 第二版（owner：「文本框尺寸不协调」）：⭐ 输入框不再 `flex:1` 撑满整行 ——
+   一个 240px 的名字不该占 600px 宽。现在**定宽 220**（刚好容得下 40 字上限的绝大多数名字、
+   又不和右侧那颗胶囊按钮抢），高度沿用 `.sync-input` 的 44 命中区；圆角/底色走面板既有变量
+   （`--radius-sm` / `--surface`），与上面两排读数胶囊同一套视觉体系 ✓。 */
+.sync-device-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 10px;
+}
+
+.sync-device-name-label {
+  flex: none;
+  min-width: 3em;
+  color: var(--text-faint);
+  font-size: var(--fs-11-5);
+  font-weight: 500;
+}
+
+/* ⚠️ 选择器必须写**两段**（`.sync-input.sync-device-name-input`）—— ⛔ 单写 `.sync-device-name-input`
+   会被后面（第 2095 行附近）的 `.sync-input { min-height: 44px }` **按源码顺序压掉** ✗：
+   实测 owner 截图里输入框仍是 44 高、而宽度 170 已生效 ⇒ 就是这条顺序坑 ✓。 */
+.sync-input.sync-device-name-input {
+  flex: 0 0 auto;
+  /* ⭐ 2026-10-29 第五版（owner：「这个控件高度小一半」）：⭐ 44 → **24**（≈ 一半）✓——
+     它是状态卡里一行轻量设置，不是表单页主角；宽度仍 170（够放常见设备名）✓。 */
+  width: 170px;
+  max-width: 170px;
+  min-height: 24px;
+  height: 24px;
+  padding: 0 var(--space-2);
+  font-size: var(--fs-12-5);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.sync-device-name .sync-mini-btn {
+  /* 与左边输入框**同一水平线**（24px）—— ⛔ 不让一行里出现两种高度 ✗ */
+  min-height: 24px;
+  padding: 0 10px;
+  align-self: center;
+}
+
+.sync-mini-btn:active { background: var(--hover-strong); }
+
+.sync-mini-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.sync-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.sync-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-xs);
+}
+
+.sync-state {
+  flex: none;
+  font-size: var(--fs-11);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--chip-bg);
+  color: var(--text-dim);
+}
+
+.sync-state.is-bound {
+  background: var(--cat-green-soft);
+  color: var(--success);
+}
+
+.sync-state.is-partial {
+  background: var(--cat-yellow-soft);
+  color: var(--cat-yellow);
+}
+
+.sync-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.sync-field > label {
+  font-size: var(--fs-11);
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
+
+.sync-hint {
+  margin: 0;
+  font-size: var(--fs-11);
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
+/* 已登录但无组织空间时的引导行：提示 + 「创建空间」按钮并排。 */
+.sync-space-guide {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.sync-space-guide .sync-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 输入与下拉共用同一个盒子，行高、圆角、聚焦环都对齐。 */
+.sync-input {
+  width: 100%;
+  box-sizing: border-box;
+  /* ⚠️ 2026-09-28：**命中区**。原来靠 `padding: 7px 10px` ＋ `font-size: 13px` 算出来约 **32px 高**，
+     而本仓的规则是"可点控件高度一律 ≥44"（`verify-mobile-views.mjs:223`）——
+     那条判据的选择器**含 `input`**，但它跑的时候同步面板没被打开 ⇒ 一直没扫到这里。
+     实测：面板里 10 个输入控件有 **9 个 < 44**（8 个是 32px）而三个门禁全绿。 */
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: var(--fs-13);
+  font-family: inherit;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.sync-input::placeholder {
+  color: var(--text-faint);
+}
+
+.sync-input:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.sync-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.sync-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* 按钮系统：次要=描边、主要=实心 accent、ghost=无底色。 */
+.sync-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 7px 14px;
+  /* ⚠️ **2026-10-04 改**（owner：「按钮和输入框不协调」）：⭐ 补上**高度** ✗ ——
+     输入框有 `min-height: 44px`（那条「可点控件 ≥44」的规矩，见 `.sync-input` 的注释），
+     而按钮**没有** ⇒ 实际只有 ~29px ⇒ 并排时高矮不齐，而且按钮自己也没守那条规矩 ✓。
+     ⭐ 字号也跟输入框对齐（12 → 13）✓；圆角本来就是同一个 `--radius-sm` ✓。 */
+  min-height: 44px;
+  font-size: var(--fs-13);
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.sync-btn:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--border-strong);
+}
+
+.sync-btn:active:not(:disabled) {
+  background: var(--hover-strong);
+}
+
+.sync-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.sync-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.sync-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.sync-btn.primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.sync-btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+  padding: 5px 10px;
+}
+
+.sync-btn.ghost:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.sync-btn.block {
+  width: 100%;
+}
+
+/* 登录/注册 tab：选中高亮下划线，另 tab 弱化。 */
+.sync-tab.on {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.sync-space-row .sync-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.sync-advanced {
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+}
+
+.sync-advanced > summary {
+  font-size: var(--fs-11);
+  color: var(--text-dim);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.sync-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sync-advanced > summary::before {
+  content: "▸ ";
+}
+
+.sync-advanced[open] > summary::before {
+  content: "▾ ";
+}
+
+.sync-advanced > summary:hover {
+  color: var(--text);
+}
+
+.sync-advanced .sync-input {
+  margin-top: var(--space-2);
+}
+
+/* P6.1 每空间「附件同步」开关：说明文字占满左侧、复选框靠右，与设置面板的
+ * .set-row 同构，但收在 sync- 命名空间里，不与设置弹层的布局耦合。 */
+.sync-att {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.sync-att-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ⚠️ 2026-09-29（D3）：`INV-UI-copy-inline-separators` —— `.sync-att-name` 与 `.sync-hint`
+   都是 `<span>`、都**没写 display** ⇒ 两个 inline 挨着跑，渲染成
+   「只在 Wi-Fi 下自动同步关掉后蜂窝网络也会自动同步…」（名字与提示黏在一起，owner 截图里能看到）。
+   ⇒ 让 `name` 在 `.sync-att-text` 里成为**块**：提示自然落到下一行，就有了分隔。
+   ⚠️ 只加这一条，不动 `.sync-att-name` 本身的字号/颜色（那是别的块共用的）。 */
+.sync-att-text > .sync-att-name {
+  display: block;
+}
+
+.sync-att .sync-hint {
+  margin-top: 3px;
+}
+
+.sync-att > input[type="checkbox"] {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  margin: 1px 0 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* ★ 网格那一块（丙-③-b）：它是**竖排**的 —— 读数 ＋「输入＋按钮」两行 ＋ 按钮一行。
+   ⚠️ 它一开始复用了 `.sync-att`，而那个类是**横排**（"说明文字 ＋ 一个复选框"，见上面的注释）
+   ⇒ 四个孩子在窄屏里并排。2026-09-26 owner 截图 ＋ 真机实测的读数：
+   `.sync-mesh` 是 `display:flex; flex-direction:row`，318px 宽里
+   **输入框只剩 50px**（两个字，屏幕上就是 `192.`）、**按钮 44~50px 宽 × 64~112px 高**
+   （「保存地址」被折成"保/存/地/址"一列）。
+   ⇒ 这里把它覆盖成块级竖排，并规定每一行是"**输入框吃掉宽度 ＋ 按钮不缩、不断行**"。 */
+.sync-att.sync-mesh {
+  display: block;
+}
+
+.sync-mesh .sync-field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* 输入框吃掉这一行剩下的宽度（`min-width:0` 才能在窄屏**真的收缩**，而不是把容器撑破）。 */
+.sync-mesh .sync-field > .sync-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 按钮**不缩、不断行**：`white-space:nowrap` 就是"一个字一行"那条的直接解药。 */
+.sync-mesh .sync-field > .sync-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  /* ⚠️ 2026-09-28：**给同一列的按钮一个共同的最小宽度** ——
+     原来只有 `flex: 0 0 auto`，于是按钮按【文案字数】自适应：
+     「保存地址」(4 字) = 78px、「设口令」(3 字) = 66px ⇒ **差 12px**，
+     而它把这一行的输入框也带得不齐（270 vs 282，右边缘差 12px）。
+     用 `min-width` 而不是 `width`：短标签被撑到同一宽度，**将来更长的标签仍然安全**。
+     ⚠️ 用 **`6.5em` 而不是 `78px`** —— 78px ＝「4 个汉字 @12px ＋ 14px 内边距 ×2 ＋ 2px 边框」，
+     **只是碰巧**等于最宽那个标签的固有宽度；字号一变（或标签变长）它就不够了，
+     于是又有一个按钮撑出去、又不齐。改成 em ⇒ 跟着字号缩放：
+       12px → 78px（＝当前实测需要）｜13px → 84.5px（需要 82）｜16px → 104px（需要 94）⇒ **恒等宽**。 */
+  min-width: 6.5em;
+  justify-content: center;
+}
+
+/* 读数里有长 URL（`http://192.168.43.1:47832`）：长串按任意位置折，别撑破卡片。 */
+.sync-mesh .sync-hint {
+  overflow-wrap: anywhere;
+}
+
+.sync-auto { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 6px; }
+
+.sync-auto-label { font-size: var(--fs-12); color: var(--text-faint); flex-shrink: 0; }
+
+.sync-auto select.sync-input { width: auto; padding: var(--space-1) 6px; font-size: var(--fs-12); }
+
+/* C1 预算刹车 / C2 网络闸门（2026-09-15）：收在 sync- 命名空间里。 */
+.sync-net {
+  margin: 0 0 6px;
+}
+
+.sync-net > input[type="checkbox"] {
+  margin-top: 1px;
+}
+
+.sync-budget .sync-budget-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.sync-budget .sync-budget-row select.sync-input {
+  width: auto;
+  padding: var(--space-1) 6px;
+  font-size: var(--fs-12);
+}
+
+/* ⚠️ 2026-09-29（IA）：`.sync-budget` 现在是那一行的 `<details>`（`.sync-row.sync-budget`），
+   三个下拉与这段解释被统一折进行体里 ⇒ 选择器跟着下移一层（同样的间距，同一个说法）。 */
+.sync-budget .sync-row-body > .sync-hint {
+  margin-top: 10px;
+}
+
+.sync-foot {
+  /* ⚠️ 2026-09-29（D5 修正②）：外层滚之后，底栏要**吸底**（否则它跟着内容一起滚掉）。 */
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: var(--card-bg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.sync-foot .sync-status {
+  margin: 0;
+}
+
+/* M27 成员管理：折叠开关 + 成员行（首字母头像 / 邮箱 / 角色 / 移除）+ 邀请行。 */
+.sync-caret.is-open {
+  transform: rotate(180deg);
+}
+
+/* 状态条：默认中性；同步面板按语义加 is-ok / is-warn / is-err 上色。 */
+.sync-status {
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: var(--chip-bg);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) 10px;
+  margin-bottom: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sync-status.is-ok {
+  background: var(--cat-green-soft);
+  color: var(--success);
+}
+
+.sync-status.is-warn {
+  background: var(--cat-yellow-soft);
+  color: var(--cat-yellow);
+}
+
+.sync-status.is-err {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.sync-duration {
+  margin-left: auto;
+  font-size: var(--fs-11);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* 实时同步中：进行中状态条（转圈 + 文案 + 附件进度）。 */
+.sync-status.is-progress {
+  background: var(--accent-soft);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.sync-status.is-progress.is-err {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.sync-spin {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: sync-spin 0.8s linear infinite;
+}
+
+.sync-progress {
+  margin-left: auto;
+  font-size: var(--fs-11);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* 进度条容器/填充 */
+.sync-progress-row {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+}
+
+.sync-progress-count {
+  margin-left: auto;
+  font-size: var(--fs-11);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.sync-progressbar {
+  height: 4px; border-radius: 2px;
+  background: var(--border);
+  overflow: hidden; margin-top: 6px;
+}
+
+.sync-progressbar-fill {
+  height: 100%; border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+/* 触发图标上同步中的脉冲点。 */
+.sync-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  animation: sync-pulse 1.1s ease-in-out infinite;
+}
+
+/* ★ 丙-⑤（2026-09-26）：侧栏「同步」上的**数字角标** —— "有几页等你裁决"。
+   只报"要你动手"的那一件事（「待取回的远端版本」）；"你输了但没丢"（已进版本历史）不报，
+   因为那件事不需要用户做任何事，报了就是噪声（状态行里那句已经说清了）。
+   配色用信息色（`--accent`）而不是危险色：这是"有东西等你处理"，不是"出错了"。 */
+.sync-badge {
+  min-width: 15px;
+  height: 15px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--fs-10);
+  line-height: 15px;
+  font-weight: 600;
+  text-align: center;
+  flex: none;
+}
+
+/* 同步历史展开区。 */
+.sync-history {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+}
+
+.sync-history .sync-members-toggle {
+  width: 100%;
+}
+
+.sync-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 2px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.sync-history-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+}
+
+.sync-history-status {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-weight: 700;
+  font-size: var(--fs-13);
+  line-height: 18px;
+}
+
+.sync-history-status.is-ok { color: var(--success); }
+
+.sync-history-status.is-err { color: var(--danger); }
+
+.sync-history-main {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 3px;
+}
+
+.sync-history-title {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+}
+
+.sync-history-at { font-size: var(--fs-12); color: var(--text-dim); }
+
+.sync-history-stats { display: inline-flex; gap: 5px; }
+
+.sync-stat {
+  font-size: var(--fs-11); padding: 1px 6px; border-radius: var(--radius-sm);
+  background: var(--chip-bg); color: var(--text-dim);
+}
+
+.sync-history-msg {
+  font-size: var(--fs-11); color: var(--danger);
+  word-break: break-word;
+}
+
+/* ⭐ A+C（owner 2026-10-29）：失败历史行的行内动作（重试 / 复制诊断）—— 小、安静、不抢"清空"。 */
+.sync-history-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.sync-history-action {
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--fs-11);
+  cursor: pointer;
+}
+
+.sync-history-action:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.sync-history-action:disabled { opacity: 0.55; cursor: default; }
+
+.sync-history-detail-toggle {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--fs-11);
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+}
+
+.sync-history-items {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--space-1) 0 var(--space-1) var(--space-4);
+  width: 100%;
+}
+
+.sync-history-item-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-12);
+  color: var(--text);
+}
+
+.sync-dir-push { color: var(--success); }
+
+.sync-dir-pull { color: var(--accent); }
+
+.sync-op { color: var(--text-dim); }
+
+.sync-op.is-del { color: var(--danger); }
+
+.sync-id { color: var(--text-faint); font-size: var(--fs-11); }
+
+.sync-history-more { color: var(--text-faint); font-size: var(--fs-11); }
+
+/* 同步历史头：标题 + 清空按钮一行。 */
+.sync-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.sync-history-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: var(--radius-md);
+  padding: 5px 10px;
+  font-size: var(--fs-12);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.sync-history-toggle:hover { background: var(--hover); color: var(--text); }
+
+.sync-history-toggle-title { font-weight: 600; }
+
+.sync-history-count {
+  font-size: var(--fs-11); line-height: 16px;
+  padding: 0 5px; border-radius: var(--radius-md);
+  background: var(--chip-bg); color: var(--text-dim);
+}
+
+.sync-history-caret { font-size: var(--fs-10); transition: transform var(--transition-fast); }
+
+.sync-history-caret.is-open { transform: rotate(180deg); }
+
+.sync-history-clear {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--fs-12);
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.sync-history-clear:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.sync-history-status { font-weight: 700; }
+
+.sync-history-at { color: var(--text-faint); font-size: var(--fs-11); white-space: nowrap; }
+
+.sync-history-detail { color: var(--text); }
+
+.sync-history-msg { color: var(--danger); font-size: var(--fs-11); }
+
+.sync-empty {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  line-height: 1.6;
+  margin-bottom: 10px;
+}
+
+.sync-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.sync-actions button {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 5px var(--space-2);
+  font-size: var(--fs-12);
+  cursor: pointer;
+}
+
+.sync-actions button:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.sync-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ═══ ⭐ 刀十六①（2026-10-14，owner：「按这个图复刻…要铺满页面内容区」）✗ ═══
+   ⚠️ ⭐ **只钉 `.sync-popover.is-inline`** ✓ —— 那是「面板被嵌进内容区」（`App.tsx`: `<div className="main"><SyncPanel contentOnly /></div>` ✓）
+   ⭐ **那一档** ✓；⛔ ⭐ `.sync-popover` 本体**一个字节不动** ✗（⭐ 浮层那份还在用 ✓ —— 桌面档仍走浮层 ✓）。
+   ⭐ 抽屉那套在这档里要全松开：定位／宽度／最大宽度／最大高度／外边距／描边／圆角／阴影／底色 都归零或铺满 ✓，
+   ⭐ 内边距照图 ≈ `24px 28px` ✓。 */
+.sync-popover.is-inline {
+  position: static;
+  inset: auto;
+  width: 100%;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: var(--space-5) 28px;
+  /* ⭐ 2026-10-25（owner：「高级面板被遮挡了」）：内嵌这档**自己滚**。
+     ⚠️ 之前这里只有 `max-height: none; height: auto` ⇒ 内容比容器高时，底部（「高级」折叠）
+        会被父级 `overflow: hidden` 直接裁掉、且**滚不到**（不是"被别的元素盖住"，是裁切）。
+     修法：把它变成父 flex（`.sync-panel:has(> .is-inline)`）里**可收缩的滚动区**：
+       `flex: 1 1 auto` ＋ `min-height: 0`（经典坑：不写就撑破父级）＋ `overflow-y: auto`。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+/* ⭐ 里面那几层也跟着铺满 ✓（⭐ 只在这档里 ✓）。 */
+.sync-popover.is-inline .sync-group,
+.sync-popover.is-inline .sync-card,
+.sync-popover.is-inline .sync-profiles {
+  width: 100%;
+  max-width: none;
+}
+
+/* ⭐ 刀十六③（照图肉眼可辨的那几条 ✓）：⭐ 三段卡片一行占满 ＋ 圆角照图 ✓（⭐ 只钉 `.sync-nearby` 家族 ✓）。 */
+.sync-nearby { gap: 10px; }
+
+.sync-nearby-row { width: 100%; border-radius: var(--radius-md); }
+
+/* ═══ ⭐ 刀十八（2026-10-14，owner：「上下没有铺满；去掉底部那个滚动条」）✗ ═══
+   ⭐ 真因（⭐ 量出来的 ✓）：⭐ 全站 `box-sizing` 只在 **34 处**逐个组件设 ✓ ⇒ ⭐ `.sync-popover.is-inline`
+   ⭐ 这棵子树**没设** ✗ ⇒ ⭐ `width: 100%` ＋ `padding: 24px 28px`（⭐ 上一刀 ✓）＋ ⭐ `.sync-nearby-row` 的
+   ⭐ `width: 100%` ＋ `padding: 10px 12px`（⭐ 本来就有 ✓）⭐ **每层都宽出 padding** ✗ ⇒ ⭐ 底部横条 ✓。
+   ⭐ 上下：⭐ 那一档没有高度约束 ✗ ⇒ ⭐ 补满高 ✓（⭐ 外层是 flex 时另加 `align-self: stretch` ✓）。
+   ⚠️ ⭐ **只钉 `.sync-popover.is-inline`** ✓（⛔ 浮层那份一条没动 ✗、⛔ 没全站改 ✗）；⭐ 这轮**没用** `overflow-x` 兜底 ✓（⭐ 真因是 `box-sizing` ✓）。 */
+.sync-popover.is-inline,
+.sync-popover.is-inline * {
+  box-sizing: border-box;
+}
+
+/* ⚠️⭐ **刀二十（2026-10-14，owner：「看看是否需要添加滚动支持」）实测订正** ✗ ——
+   ⭐ 上面那条 `.main > .sync-popover.is-inline` **从来没匹配过** ✗：⭐ 真子级是 `.sync-panel`
+   （`SyncPanel.tsx:1217` 那个 `<div className="sync-panel">` ✓ 包着 popover ✓）⇒ ⭐ 它一直是一条**死规则** ✓。
+   ⭐ 同一族：⭐ `.is-inline { height: 100% }`（⭐ 上面刀十六那条 ✓）也**不生效** ✗ ——
+   ⭐ 父级 `.sync-panel` 是**自动高** ⇒ 百分比高度按 auto 解析 ✓。
+   ⭐ 后果（⭐ CDP 真读数 ✓：`Emulation.setDeviceMetricsOverride` 改视口、⛔ 没 reload ✗）：
+   ⭐ `.main` 是 `display:flex; flex-direction:column; overflow:hidden` ✓ ⇒ 窗口一矮就把面板底部
+   ⭐ **静默裁掉** ✗ —— 实测 1280×860 裁 16px ／ **1280×720 裁 156px** ／ **1180×640 裁 236px**，
+   ⭐ 而面板里**一个能滚的容器都没有** ✗（⭐ `.sync-popover` 本体有 `overflow-y:auto` ✓，
+   ⭐ 但它从没被限高 ⇒ 永远不滚 ✓）。
+   ⇒ ⭐ 修法：⭐ 把这一档钉成「**占满 ＋ 内部滚**」✓（⭐ 用 `:has(> .sync-popover.is-inline)` ✓ ——
+   ⛔ 抽屉/浮层那一支**一个字节不动** ✗；⭐ 全仓 `:has(` 本来就有 8 处 ✓，不是新引入的写法 ✓）。
+   ⚠️ 同一条也把刀十六那句「要铺满页面内容区」真正兑现了 ✓（之前 `height:100%` 是死的 ⇒ 面板一直
+   只有内容那么高 ✓）。判据：`syncControls.wiring` ⑨（源码级钉这两条 ✓）。 */
+.sync-panel:has(> .sync-popover.is-inline) {
+  flex: 1 1 auto;
+  /* ⭐ flex 子项的经典坑：不给 `min-height: 0` 就撑破父级 ✓（撑破 ＝ 被 `.main` 裁掉 ✓）。 */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sync-panel:has(> .sync-popover.is-inline) > .sync-popover.is-inline {
+  flex: 1 1 auto;
+  /* ⭐ 覆盖 `.is-inline { height: 100% / min-height: 100% }` —— 那两个在自动高父级下本来也不生效 ✓。 */
+  height: auto;
+  min-height: 0;
+  align-self: stretch;
+}
+
+/* ⭐ 刀二十②（美化，照 owner 2026-10-14「参考设计效果图美化界面」）：⭐ **有读数支撑** ✓ ——
+   ⭐ CDP 量到状态行 `.sync-hero-state` 是 **17px / 600** ✓ ⇒ ⭐ 它是**整个面板里最大的字** ✗
+   （⭐ 比面板标题还大 ✓）⇒ ⭐ **层级倒了**：状态行该是「一行小字 ＋ 一个点」✓、标题领读 ✓
+   （⭐ 设计图 图⑤ 里那一行也是小号 ✓）。⇒ 这一档里压到 **13.5px / 600** ✓
+   （⭐ 只钉 `.is-inline` ✓ —— ⛔ 浮层/抽屉那一支**一个字节不动** ✗）。 */
+.sync-popover.is-inline .sync-hero-state {
+  font-size: var(--fs-13-5);
+}
+
+/* ⭐ 刀二十③（美化）：⭐ 虚线空框（`.sync-empty-state`）**会裁自己的字** ✗ ——
+   ⭐ 真读数：窄宽度下 `scrollHeight > clientHeight`（⭐ 文字换行后比框高 ✓）；
+   ⭐ 而且它现在只有一行时 31px、两行时挤 ✓。⇒ ⭐ 给它 `min-height` ＋ 垂直居中 ✓
+   （⛔ 字号、内边距、文案**一个字不改** ✗ —— 只让它**跟内容长** ✓）。 */
+.sync-popover.is-inline .sync-hint.sync-empty-state {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+}
+
+/* ═══ ⭐ 刀二十一（2026-10-14，owner：「太丑了，美化酷炫一下」）✗ ═══
+   ⚠️ 只钉 `.sync-popover.is-inline`（嵌进内容区那一档 ✓）—— ⛔ 抽屉/浮层/手机 sheet **一字不动** ✗。
+   ⭐ 颜色全部走**既有变量** ✓（新增的只有两处透明 rgba 光晕 ✓）；⛔ 不引外部字体/图片 ✗。
+   ⭐ 动效只有：120ms 的 hover 过渡 ＋ 一颗绿点的慢呼吸 ✓（`prefers-reduced-motion` 里关掉 ✓）。
+   ⚠️ 唯一的 markup 改动＝状态条外面多一层 `.sync-hero-card`（见 `SyncStatusStrip.tsx` ✓）。 */
+
+/* ① 顶部状态条 → ⭐ **照桌面版高保真效果图**：一块**浅绿卡**（软底、⛔ 无描边 ✗、圆角 12 ✓），
+   里面两行：加粗的状态行 ＋ 一行小灰字（照图 ✓ —— ⛔ 上一版那个蓝渐变是我自己发挥的 ✗，已撤 ✓）。
+   ⚠️ 没有 `--success-soft` 这个变量 ✗ ⇒ 用 `color-mix` 把 `--success` 混进 `--surface` ✓
+   （⭐ 深浅色主题都跟着走 ✓，⛔ 不写死色值 ✗）。 */
+.sync-popover.is-inline .sync-hero-card {
+  background: color-mix(in srgb, var(--success) 10%, var(--surface));
+  border: 0;
+  border-radius: var(--radius-lg);
+  padding: 14px 18px;
+}
+
+/* ⭐ **2026-10-29（owner：「同步面板感觉乱糟糟」）**：状态条 ＋ 三格读数 ＋ 设备名 原来是
+   三块各漂各的（绿卡／一排胶囊／一个输入行）⇒ 现在收进**同一张状态卡**：外卡给底色/描边，
+   里面那条绿卡的背景与内边距退成 0（否则就是卡里套卡、两层底色打架 ✓）。 */
+.sync-status-card {
+  margin-top: 10px;
+}
+
+.sync-popover.is-inline .sync-status-card {
+  background: color-mix(in srgb, var(--success) 7%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+}
+
+.sync-popover.is-inline .sync-status-card .sync-hero-card {
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+}
+
+.sync-status-card .sync-readout {
+  margin-top: 10px;
+}
+
+.sync-status-card .sync-device-name {
+  margin-top: var(--space-3);
+}
+
+.sync-popover.is-inline .sync-hero-state { letter-spacing: 0.2px; font-weight: 600; font-size: var(--fs-15); }
+
+/* ⭐ **2026-10-14（owner：「这部分不协调」）** ✗：⭐ 读数显示卡里两行**只差 1px**（13.5 vs 12.5 ✓）
+   ⇒ 状态行压不住小字行 ✓，而小字行本体又很长 ⇒ 一团 ✗。⇒ ⭐ 小字行降到 11.5px ✓（明确次要 ✓）。
+   ⚠️ 状态行保持**小于标题**（15 < 16 ✓）—— 上一轮 owner 拍过"17px 比标题还大 ⇒ 层级倒了"✓。 */
+/* ⭐ **2026-10-14（owner：「这两行的间距略大一点」）** ✗：实测状态行与小字行**紧贴**（间距 0 ✓）
+   ⇒ 给小字行 **4px** 上边距 ✓（"略" ✓；⛔ 只动这一处间距 ✗ —— 字号/行高/颜色都不动 ✓）。 */
+.sync-popover.is-inline .sync-hero-sub { font-size: var(--fs-11-5); margin-top: var(--space-1); }
+
+.sync-popover.is-inline .sync-hero-dot.is-ok { animation: sync-hero-breath 2.8s ease-in-out infinite; }
+
+/* ② 三段：⭐ **照图** —— 段标题是**朴素加粗的黑字** ✓（⛔ 我上一版加的蓝色小竖条已撤 ✗），
+   段之间留白拉开 ✓；虚线空框软化（更淡的边 ＋ 浅底 ✓，图里那个提示框就是虚线圆角 ✓）。 */
+.sync-popover.is-inline [data-testid^="nearby-group-"] {
+  display: block;
+  font-size: var(--fs-14); font-weight: 600; color: var(--text); letter-spacing: 0.2px;
+  margin: 22px 0 var(--space-2);
+}
+
+.sync-popover.is-inline .sync-hint.sync-empty-state {
+  border-color: var(--border-strong);
+  background: rgba(248, 249, 250, 0.7);
+  color: var(--text-faint);
+}
+
+/* ③ 「高级」⭐ **照图**：一整条**卡片行**（描边 ＋ 圆角 ＋ 白底 ✓），文字在左、箭头在右 ✓
+   （⛔ 上一版那枚自绘胶囊已撤 ✗ —— 图里它就是一条安静的行 ✓）。
+   ⭐ 展开时只把箭头转一下 ＋ 文字加深 ✓，⛔ 不整条染强调色 ✗。 */
+.sync-popover.is-inline .sync-advanced > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  /* ⚠️ **实测两条** ✗：① `<summary>` 会继承上面的 `text-align: center` ⇒ 文字跑到中间 ✗；
+     ② `list-style: none` 对 `display: flex` 的 summary **不管用** ✗ ⇒ 左侧原生三角还在
+     ⇒ 必须左对齐 ＋ 显式盖 `::marker` ✓（都是真机看出来的 ✓）。 */
+  text-align: left;
+  padding: 10px 14px; margin: 22px 0 0;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface); color: var(--text);
+  font-size: var(--fs-12-5); cursor: pointer; list-style: none;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.sync-popover.is-inline .sync-advanced > summary::-webkit-details-marker { display: none; }
+
+.sync-popover.is-inline .sync-advanced > summary::marker { content: ""; }
+
+/* ⚠️ **实测**：基样式里本来就有 `.sync-advanced > summary::before { content: "▸ " }`（`App.css:2070` ✗）
+   ⇒ ⭐ 我加的 `::after` 会让屏幕上出现**两个三角** ✗（真机截图看到的 ✓）⇒ 在这一档里把它**中和掉** ✓。 */
+.sync-popover.is-inline .sync-advanced > summary::before { content: none; }
+
+.sync-popover.is-inline .sync-advanced > summary::after { content: "\25B8"; font-size: var(--fs-10); opacity: 0.7; }
+
+.sync-popover.is-inline .sync-advanced[open] > summary::after { content: "\25BE"; }
+
+.sync-popover.is-inline .sync-advanced > summary:hover { background: var(--hover); border-color: var(--border-strong); }
+
+.sync-popover.is-inline .sync-advanced[open] > summary { color: var(--accent-strong); }
+
+/* ④ 卡片语言统一：读数行/卡片圆角与底色一致 ＋ hover 反馈；中继那格的状态做成小胶囊 */
+.sync-popover.is-inline .sync-row,
+.sync-popover.is-inline .sync-card { border-radius: var(--radius-md); background: var(--surface); }
+
+.sync-popover.is-inline .sync-card { box-shadow: 0 1px 2px rgba(31, 35, 41, 0.04); }
+
+.sync-popover.is-inline .sync-row { transition: border-color 120ms ease; }
+
+.sync-popover.is-inline .sync-row:hover { border-color: var(--border-strong); }
+
+.sync-popover.is-inline .relay-status .sync-row-value {
+  padding: 2px 9px; border-radius: var(--radius-full); background: var(--hover); font-size: var(--fs-11);
+}
+
+.sync-popover.is-inline .relay-status.is-muted .sync-row-value { color: var(--text-faint); }
+
+/* ⑤ 节奏：分组之间留白，别贴在一起 */
+.sync-popover.is-inline .sync-nearby { gap: var(--space-3); }
+
+.sync-popover.is-inline .sync-group { gap: 10px; }
+
+.sync-popover.is-inline .sync-profiles { padding: var(--space-4) 0; }
+
+/* ⑥ 阅读宽度：面板**照样铺满** ✓（底色与滚动都在 ✓），但**内容**别横跨整屏 ✗ ——
+   ⚠️ 截图里那行字左右拉到 1400px ⇒ 读起来散 ✓；这里给内容一档上限 ✓。
+   ⚠️⭐ **不许加 `margin-inline: auto`** ✗（**实测踩到** ✓）：这一档是 **flex 列**
+   （`.sync-popover.is-sync` 的 `display:flex; flex-direction:column` ✓）⇒ 子项上的 auto 边距会**吸收交叉轴
+   的空隙** ⇒ ⭐ 每一项**按内容宽居中** ✗（真机截图：整块挤成中间一条 ✓）。去掉 auto 边距、吃默认的
+   `align-self: stretch` ⇒ 限宽之后**左对齐** ✓✓（与全站正文一致 ✓）。 */
+.sync-popover.is-inline > * {
+  /* ⭐ **2026-10-14（owner：「右边留白太大了」）** ✗：⭐ 上一版只写 `max-width: 920px` ✓
+     ⇒ 在 ~1093px 的内容区里右边空出 ~170px ✗。⇒ ⭐ `width: 100%` **铺满** ✓，
+     只有超过 1120px 才限宽 ✓。
+     ⚠️ 限宽之后**贴左**（⛔ 不居中 ✗）—— **2026-10-15 owner 拍**：「不放开也行，左对齐」✓
+     （2026-10-14 那一版写的是 `margin-inline: auto` ⇒ 居中，今天去掉了 ✓）。
+     ⚠️ 两条必须**一起**理解 ✗：① flex 子项上只写 `margin-inline: auto`（不带 `width: 100%`）
+     会被解释成"按内容宽居中"（上一轮翻过车 ✓）；② 在**列向** flex 里 `margin-inline: auto`
+     正是"居中"的来源 ⇒ 想去掉居中，就得去掉它（⛔ 别改 `width: 100%` ✗）。
+     判据：`header.sync-head` 的 `margin-inline` 计算值要是 `0px`（不是 auto）✓。 */
+  width: 100%;
+  max-width: 1120px;
+}
+
+/* ④ ⭐ **照桌面版高保真效果图**再补两条（⛔ 不加花样 ✗，图上就是这两件事）： */
+
+/* · 同一张卡里两行读数之间是一条**细分割线** ✓（图里「监听地址 / 端口」那段就是这样 ✓），
+     ⛔ 不是每行各套一个框 ✗。 */
+.sync-popover.is-inline .relay-status .sync-att + .sync-att {
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+}
+
+/* · 设备卡右上那颗主按钮照图是**实心强调色** ✓（「立即同步」/「重新配对」/「接入」✓）；
+     ⭐ 但**解除配对**那颗不动 ✗ —— 图里它是次要动作，实心色会让它太抢眼 ✓（nearby-unpair 那颗排除在外 ✓）。 */
+.sync-popover.is-inline .sync-nearby-row > .sync-btn:not([data-testid="nearby-unpair"]) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.sync-popover.is-inline .sync-nearby-row > .sync-btn:not([data-testid="nearby-unpair"]):hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+/* ⭐⭐ **2026-10-14（owner：「卡片都没有对齐」）** ✗ —— ⭐ 真因是**两条水平内边距**（**量出来的** ✓）：
+   · 状态卡住在 `header.sync-head` 里，而那个 header 有 `padding: 16px` ✗ ⇒ 它比别的卡右缩 16px ✓；
+   · 「设置」组里的卡住在 `.sync-profiles`，那个容器有 18px 内边距 ✗（⭐ **是我上一轮加的** ✗）⇒ 右缩 18px ✓。
+   ⇒ ⭐ 在这一档里把这两处**水平**内边距归零 ✓（垂直留着 ✓），让**所有卡共用同一条左右边缘** ✓
+   （⭐ 这也正是效果图的样子：标题与它下面的卡**左对齐** ✓）。⛔ 只钉 `.is-inline` ✗。 */
+.sync-popover.is-inline .sync-head { padding-left: 0; padding-right: 0; }
+
+.sync-popover.is-inline .sync-profiles { padding-left: 0; padding-right: 0; }
+
+/* ⭐⭐ **2026-10-14（owner：「中继服务卡片错位」）** ✗ —— ⭐ 真因**量出来的** ✓：
+   `.sync-group.is-advanced` 带着 `margin: 16px 16px` ✗ ⇒ 里面那张中继卡整体**右推 16px**
+   （左 **468** vs 别的卡 **452** ✗），⭐ 而且右边**溢出**出内容区（**1388 > 1372** ✗）。
+   ⇒ ⭐ 水平外边距也要归零 ✓（垂直的留着 ✓）—— ⭐ 与上面那条「水平内边距归零」是同一个病 ✓：
+   ⭐ **任何一层加出来的水平间距，都会让卡片错位** ✓。 */
+.sync-popover.is-inline .sync-group { margin-left: 0; margin-right: 0; }
+
+/* ⭐⭐ **2026-10-14（owner：「这部分不像是一组的」）** ✗ —— ⭐ 真因**量出来的** ✓：折叠里是
+   **三张各自带描边的卡**堆在一起 ✓（`summary` ／ `details.sync-row` ／ `.relay-status` 都是
+   920 宽 ＋ 圆角 8 ＋ 白底 ✓）⇒ 看起来像三个不相干的东西 ✗。
+   ⇒ ⭐ 修法：把**折叠本身**做成一张卡 ✓，摘要＝它的**标题行**（展开时底下一条细线 ✓），
+   里面那些「各自带框」的元素全部降成**组内的行** ✓（⛔ 不再各自一个框 ✗），行与行之间一条细线 ✓。
+   ⭐ 这才是效果图里那种「一张卡装一组设置」的样子 ✓。⛔ 只钉 `.is-inline` ✗（抽屉/浮层不动 ✓）。 */
+.sync-popover.is-inline .sync-advanced {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: 0;
+  overflow: hidden;
+}
+
+.sync-popover.is-inline .sync-advanced > summary {
+  margin: 0; border: 0; border-radius: 0; background: transparent;
+}
+
+.sync-popover.is-inline .sync-advanced[open] > summary { border-bottom: 1px solid var(--border); }
+
+/* 卡内：所有「各自带框」的行/卡 ⇒ 去框 ✓（保留它们自己的内边距与 hover ✓） */
+.sync-popover.is-inline .sync-advanced .sync-row,
+.sync-popover.is-inline .sync-advanced .sync-card,
+.sync-popover.is-inline .sync-advanced > .sync-profiles details.sync-row {
+  border: 0; border-radius: 0; box-shadow: none; background: transparent;
+}
+
+/* 组内左右留一点边距 ✓（行自己的内边距还在 ⇒ 文字与标题行大致对齐 ✓） */
+.sync-popover.is-inline .sync-advanced > .sync-profiles,
+.sync-popover.is-inline .sync-advanced > .sync-group { padding-left: 14px; padding-right: 14px; }
+
+.sync-popover.is-inline .sync-advanced > .sync-profiles { padding-top: var(--space-1); padding-bottom: var(--space-3); }
+
+.sync-popover.is-inline .sync-advanced > .sync-group { padding-top: var(--space-1); padding-bottom: 10px; }
+
+/* 行与行、组与组之间的**细线** ✓（顺序：先一条竖线上面的分隔 ✓） */
+.sync-popover.is-inline .sync-advanced > .sync-profiles + .sync-group,
+.sync-popover.is-inline .sync-advanced > .sync-group + .sync-group { border-top: 1px solid var(--border); }
+
+.sync-popover.is-inline .sync-advanced .sync-group > details.sync-row + details.sync-row { border-top: 1px solid var(--border); }
+
+/* ⭐ **2026-10-14（owner：「去掉这根横虚线」）** ✗ —— ⭐ 真身**量出来的** ✓：那条虚线是
+   `.sync-row-body` 上的 `border-top: 1px dashed` ✓（**基样式**里就有 ✓，折里两行都带 ✓）
+   ⇒ ⭐ 它是"内容区可折叠"那个时代的遗物 ✗（现在这些行是**常开**的 ✓）⇒ 纯多余 ✓。
+   ⭐ 只在**折里**去掉 ✓（⛔ 别处用 `.sync-row-body` 的地方一个字节不动 ✗）。 */
+.sync-popover.is-inline .sync-advanced .sync-row-body { border-top: 0; }
+
+/* ⭐⭐ **2026-10-14（owner：「优化文案及布局」）** ✗：中继那一格的**层级**用两条 CSS 说清 ✓
+   （⛔ 只钉内容区那一档 ✗ —— 抽屉/浮层不动 ✓）：
+   · 动作行原来是"按钮 ＋ 长说明"挤一行 ⇒ 说明被挤到右边折行 ✗ ⇒ 改成**块**：按钮一行 ✓、说明一行 ✓；
+   · 那行**机器细节**（后端原文 ✓）是"证据"不是"结论" ⇒ 更小、更淡 ✓（⛔ 一个字不改写 ✗）。 */
+/* ⭐ **2026-10-14（owner：「把重新检查按钮放在最右边」）** ✗：⭐ DOM 顺序是 **[按钮][说明]** ✓ ⇒
+   光靠 `justify-content` 只会把按钮留在左边 ✗ ⇒ 用 **`row-reverse`**（视觉上：说明在左 ✓、按钮在右 ✓）
+   ＋ `space-between`（按钮贴右边缘 ✓）✓。⛔ 不动 markup ✗、⛔ 只钉内容区那一档 ✗。 */
+.sync-popover.is-inline .relay-status .sync-att:has(> .sync-btn) {
+  display: flex; flex-direction: row-reverse; align-items: center; justify-content: space-between; gap: 10px;
+}
+
+.sync-popover.is-inline .relay-status .relay-detail { font-size: var(--fs-10-5); line-height: 1.5; opacity: 0.9; }
+
+/* ⭐ 同上：「还没发现别的设备… 正在找」那行与绿卡只隔 13px ✗（读数 ✓）⇒ 给它一点上边距 ✓。 */
+.sync-popover.is-inline .sync-hint + .sync-hint { margin-top: 6px; }
+
+/* ⭐⭐ **2026-10-14（owner）**：① 标题**放大** ✓（量出来的现状是 **14px** ✓ ⇒ 20px ✓ —— 这一档里它
+   该是全屏最大的字 ✓）；② **下间距加大** ✓（标题→副标题 6px ✓、副标题→绿卡 12px ✓ ——
+   原来副标题与绿卡是**紧贴**的（间距 0 ✓，实测 ✓））；③ **上留白收小** ✓（面板顶 24 ⇒ 12 ✓、
+   头部自己那 14 ⇒ 6 ✓ ⇒ 标题距顶从 **38** 收到约 **18** ✓）。
+   ⛔ 只钉 `.sync-popover.is-inline` ✗ —— 抽屉／浮层／手机面板一个字节不动 ✓。 */
+/* ⭐ **2026-10-14（owner：「标题上边的留白再略微大一点点」）** ✗：上一轮从 38 收到 18（12 ＋ 6 ✓）
+   ⇒ 这一轮给回 **4px** ⇒ 标题距顶 **22** ✓（"略微" ✓，⛔ 不是回到 38 ✗）。 */
+.sync-popover.is-inline { padding-top: var(--space-4); }
+
+.sync-popover.is-inline .sync-head { padding-top: 6px; }
+
+.sync-popover.is-inline .sync-head .sync-title { font-size: var(--fs-20); margin: 0 0 6px; line-height: 1.25; }
+
+.sync-popover.is-inline .sync-subtitle { margin-bottom: var(--space-3); }
+
+/* ⭐ 2026-10-19（owner：「中继和跨网订阅不是一回事？」 → 拍 A ＋「美化这个面板」）：
+   「跨网同步订阅」那一块 —— 版式只做**三件事**（⛔ 不新造颜色、不新造反色阶）：
+   ① 状态值沿用中继那套 `is-ok/is-warn/is-bad/is-muted` 的胶囊（同一套颜色语义 ✓）；
+   ② 动作行横排、有间距（原来按钮与说明会挤在一行中间 ✓）；
+   ③ 粘贴框等宽字体、可竖向拉高（许可证是一长串，用正文字体读不准 ✓）。 */
+.sync-popover .license-block .sync-row-body { gap: 6px; }
+
+.sync-popover .license-block .license-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.sync-popover .license-block .license-prompt { color: var(--text-dim); }
+
+.sync-popover .license-block .license-dim { color: var(--text-faint); font-size: var(--fs-12); }
+
+.sync-popover .license-block .license-err { color: var(--danger); }
+
+.sync-popover .license-block .license-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: var(--space-1);
+}
+
+.sync-popover .license-block .license-paste-input {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  padding: var(--space-2) 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--chip-bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  line-height: 1.5;
+}
+
+.sync-popover .license-block .license-paste-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.sync-conflict-banner{margin-top:var(--space-4)}
+
+/* ⭐ 2026-10-31 owner：待取回的远端版本与上面「加密空间同步」卡片也要留空隙（移动端与冲突卡同档） */
+.sync-pending-remote{margin-top:var(--space-4)}
+
+.sync-popover.is-inline > .sync-advanced[open] {
+  overflow: visible;
+}
+
+/* ⭐ 2026-10-25 owner：「中继」「跨网同步订阅」两组字体向「同步预算」看齐。
+   「同步预算」是 `.sync-row > summary`（12.5px 标签 ＋ 12px 值 ＋ 11px hint）；
+   而这两组是 `.sync-row-body` 里的行，标签继承了面板正文（比 summary 大）。
+   ⇒ 显式对齐到同一套字号，⛔ 不改文案、⛔ 不动中继胶囊的颜色语义。 */
+.sync-popover.is-inline .relay-status .sync-row-label,
+.sync-popover.is-inline .license-block .sync-row-label {
+  font-size: var(--fs-12-5);
+}
+
+.sync-popover.is-inline .relay-status .sync-row-value,
+.sync-popover.is-inline .license-block .sync-row-value {
+  font-size: var(--fs-12);
+}
+
+.sync-popover.is-inline .license-block .sync-hint { font-size: var(--fs-11); }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ⭐ 2026-10-26（owner：「界面不美观，优化一下」）
+   ⭐ 只动**视觉**：设备行从"一长串 span 平铺"改成 **头像 ＋ 主信息 ＋ 右侧动作** 的三段式卡片；
+      段标题加数量胶囊；状态条的三格读数改成小胶囊；按钮统一高度/字号。
+   ⛔ 不动任何 `data-testid`／文案／动作 handler／判定 ✗；⛔ 不引入新颜色 ✗（全走既有主题变量，
+      `color-mix` 把 `--accent` / `--success` 混进 `--surface`，深浅色主题都跟着走 ✓）。
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── ① 设备行：三段式 ─────────────────────────────────────────────────────── */
+.sync-nearby-row {
+  display: flex;
+  /* ⭐ 2026-10-29（owner 截图）：这里原来吃到了上面那条老规则的 `flex-wrap: wrap` ✗ ——
+     而 `.sync-nearby-main` 的 flex-basis 是 auto（内容宽，含那句很长的「不再信任」说明）
+     ⇒ 一行塞不下时**头像独占一行、名字落到第二行、按钮再落到第三行** ✓（截图正是这样）。
+     ⇒ 三段式卡片必须 `nowrap`：头像/主信息/动作同一行，说明在中间那列自己换行 ✓。
+     窄屏（手机面板）仍保留换行：见下面 `@media` ✓。 */
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.sync-nearby-row:hover {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--surface) 80%, var(--hover));
+}
+
+.sync-nearby-avatar {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  color: var(--accent-strong);
+  font-size: var(--fs-14);
+  font-weight: 650;
+  user-select: none;
+}
+
+.sync-nearby-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.sync-nearby-titleline { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+
+.sync-nearby-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-13);
+  font-weight: 650;
+  color: var(--text);
+  letter-spacing: 0.1px;
+}
+
+.sync-nearby-id {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--hover);
+  color: var(--text-faint);
+  font-size: var(--fs-10-5);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sync-nearby-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* 行内说明：在卡片里一律左对齐、小一号（原来那条"`> .sync-hint` 贴右"只服务平铺形态 ✓）。 */
+.sync-nearby-meta .sync-hint {
+  margin: 0;
+  text-align: left;
+  font-size: var(--fs-11-5);
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.sync-nearby-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.sync-nearby-dot.is-ok {
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 16%, transparent);
+}
+
+.sync-nearby-dot.is-info { background: var(--accent); }
+
+.sync-nearby-dot.is-warn { background: var(--warning); }
+
+.sync-nearby-paired {
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--success) 10%, var(--surface));
+  color: var(--success);
+  font-weight: 600;
+}
+
+/* 原因句：一条**安静的信息条**（⛔ 不再是悬在行里的一段裸文字 ✗）。 */
+.sync-nearby-note {
+  margin-top: 2px;
+  padding: 2px 0 2px 9px;
+  border-left: 2px solid var(--border-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--fs-11);
+  line-height: 1.55;
+  text-align: left;
+}
+
+.sync-nearby-note.is-warn {
+  border-left-color: var(--warning);
+  background: transparent;
+  color: var(--text-dim);
+  box-shadow: none;
+}
+
+.sync-nearby-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  /* 三段式：动作与名字**顶对齐**（原来 `align-items:center` 会把两颗按钮浮到卡片中线，
+     下面还有一行说明时看着像脱开了 ✓）。窄屏走 720px 那条 grid，不受影响。 */
+  align-self: flex-start;
+}
+
+.sync-nearby-actions .sync-btn {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 主按钮（接入/重新配对/立即同步）：与既有"已信任卡上的主按钮"同一套强调色 ✓ */
+.sync-popover .sync-nearby-actions .sync-btn:not(.is-ghost) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.sync-popover .sync-nearby-actions .sync-btn:not(.is-ghost):hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+/* 次要按钮（撤销配对）：安静；hover 才露出危险色（⛔ 危险色不常驻 ✗）。 */
+.sync-nearby-actions .sync-btn.is-ghost {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+
+.sync-nearby-actions .sync-btn.is-ghost:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+/* ── ② 段标题：标题 ＋ 数量胶囊 ───────────────────────────────────────────── */
+.sync-nearby-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 22px 0 var(--space-2);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: var(--fs-13-5);
+  font-weight: 650;
+  color: var(--text);
+  letter-spacing: 0.2px;
+}
+
+.sync-nearby-group-label { flex: none; }
+
+.sync-nearby-group-count {
+  flex: none;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 覆盖既有那条 `.is-inline [data-testid^="nearby-group-"]` 的字号/外边距（本块在文件末尾 ⇒ 后者胜 ✓）。 */
+.sync-popover.is-inline .sync-nearby-group {
+  display: flex;
+  font-size: var(--fs-13-5);
+  font-weight: 650;
+  color: var(--text);
+  margin: 22px 0 var(--space-2);
+}
+
+/* ── ③ 顶部状态条：三格读数做成小胶囊（宽屏上好扫读 ✓） ───────────────────── */
+.sync-popover.is-inline .sync-hero-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px var(--space-2);
+  font-size: var(--fs-11-5);
+  margin-top: var(--space-2);
+}
+
+/* ── ④ **R176-A（owner 2026-10-28 拍 A）「能读的状态」**：状态条下面那三格读数 ────────
+   走哪条路 ／ 服务几个空间 ／ 已信任几台（`SyncReadout.tsx` ✓）。
+   ⚠️ 三枚胶囊**复用**上面那套 `.sync-hero-meta*`（它们是全局的 ✓）—— 这条只负责**外层排布**：
+      与 `.sync-popover.is-inline .sync-hero-sub` 同一份手感（flex ＋ wrap ＋ 小间距 ✓），
+      因为状态条那行是被 popover 作用域包着的、本块在**同一容器**里但**不在**那条规则的选择器下 ✓。
+   ⚠️ 只用既有变量／`color-mix`（不新增色值），与状态条那几条同一套 ✓。 */
+.sync-readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px var(--space-2);
+  font-size: var(--fs-11-5);
+  margin-top: var(--space-2);
+}
+
+.sync-readout .sync-nearby-note {
+  flex: 1 1 100%;
+}
+
+/* ⭐ 2026-10-29（owner：「同步面板感觉乱糟糟」）：诊断长文（"本机已信任 N 台，但这一轮一台都没
+   出现在附近。常见原因 ①②③…"）收进 `<details>` ⇒ 默认只留一行「为什么…？」，点开仍是原文。
+   这样主视图里读数的下面不再压着一堵三行的墙 ✓。 */
+.sync-readout-why {
+  flex: 1 1 100%;
+}
+
+.sync-readout-why > summary {
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: var(--fs-11-5);
+  line-height: 1.6;
+  list-style: none;
+}
+
+.sync-readout-why > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sync-readout-why > summary::before {
+  content: "▸ ";
+}
+
+.sync-readout-why[open] > summary::before {
+  content: "▾ ";
+}
+
+.sync-readout-why .sync-nearby-note {
+  margin-top: var(--space-1);
+}
+
+.sync-hero-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.sync-hero-meta-k { font-size: var(--fs-10-5); color: var(--text-faint); }
+
+.sync-hero-meta-v {
+  font-size: var(--fs-11-5);
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.sync-hero-meta-v.is-strong { color: var(--text); }
+
+.sync-hero-meta-tag { font-size: var(--fs-9-5); color: var(--text-faint); }
+
+/* 后端那句整句（reach 兜底）不塞进胶囊：它自己就是一句话 ✓ */
+.sync-hero-meta.is-wide {
+  padding: 0;
+  background: transparent;
+  color: var(--text-faint);
+}
+
+/* ── ④ 空段虚线框：收紧、别抢戏 ──────────────────────────────────────────── */
+.sync-popover.is-inline [data-testid^="nearby-group-"] + .sync-empty-state {
+  padding: 10px var(--space-3);
+  margin: 0;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 70%, var(--hover));
+  color: var(--text-faint);
+  font-size: var(--fs-11-5);
+}
+
+/* ⭐ 2026-10-26（owner follow-up：「待配对设备卡片之间留点白，比较好看吧？」）——
+   卡片之间从 12px 放到 **16px**（⛔ 只动间距，不碰字号/内边距/配色）；窄屏同样受益 ✓。 */
+.sync-popover.is-inline .sync-nearby { gap: var(--space-4); }
+
+/* ⭐ 2026-10-26（owner 截图：「待配对设备卡片间没有间隙」）——
+   ⚠️ 真因：**真实 DOM 里 `.sync-nearby-row` 是 `.sync-popover` 的直接子节点**，
+   仓库里那条 `.sync-nearby { gap: … }` 只有旧样式表在用（React 从来没渲染过这层容器）。
+   ⇒ `gap` 落在一个不存在的父节点上，所以卡片贴在一起。
+   修法：把间距落到**相邻行**上（⛔ 不改 DOM 结构，段标题与卡片的兄弟关系判据不受影响 ✓）。
+   ⭐ 2026-10-26 二次反馈（owner：「间隙有点大」）⇒ 16px 收到 **10px** ✓。 */
+.sync-popover .sync-nearby-row + .sync-nearby-row { margin-top: 10px; }
+
+.sync-popover.is-inline .sync-nearby-row + .sync-nearby-row { margin-top: 10px; }
+
+/* ⭐ 2026-10-27（owner：只优化**未配对**设备卡片内部布局，别的视觉体系先不动）
+   「待配对」那张卡的内部：原先 note 与右侧「接入」抢宽度（宽一点时 note 被挤成窄条、
+   窄一点时按钮换行后与文字错位）。⇒ 只在 `.is-pending` 上把动作移到**卡片底部**，
+   让名字／状态／说明先占满整行，再在右下角放主按钮；已配对/需重配的卡片不受影响。 */
+.sync-nearby-row.is-pending {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) 14px;
+}
+
+.sync-nearby-row.is-pending .sync-nearby-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-lg);
+  font-size: var(--fs-15);
+  font-weight: 700;
+}
+
+.sync-nearby-row.is-pending .sync-nearby-main {
+  flex: 1 1 240px;
+  min-width: 0;
+  gap: 5px;
+}
+
+.sync-nearby-row.is-pending .sync-nearby-meta { row-gap: var(--space-1); }
+
+.sync-nearby-row.is-pending .sync-nearby-note {
+  margin-top: var(--space-1);
+  padding: var(--space-2) 10px;
+  border-left: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 62%, var(--hover));
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+
+.sync-nearby-row.is-pending .sync-nearby-note.is-warn {
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+  color: var(--text-dim);
+}
+
+.sync-nearby-row.is-pending .sync-nearby-actions {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  justify-content: flex-end;
+  margin-left: auto;
+  padding-top: 2px;
+}
+
+.sync-nearby-row.is-pending .sync-nearby-actions .sync-btn {
+  height: 34px;
+  min-width: 88px;
+  padding: 0 var(--space-4);
+  border-radius: 10px;
+}
+
+/* ── 加密空间同步（2026-10-28，owner：「同步面板适配一下视觉体系」）──────────────
+   本块用回「附近设备」那套零件（段标题＋数量胶囊、sync-nearby-row 卡片、状态点、sync-chip），
+   这里只补三格：行间距、锁着时头像的警示底色、待应用胶囊的数字对齐。 */
+.sync-enc-row + .sync-enc-row { margin-top: var(--space-2); }
+
+.sync-enc-row.is-locked .sync-nearby-avatar {
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  color: var(--warning);
+}
+
+.sync-enc-row .sync-nearby-id { font-variant-numeric: tabular-nums; }
+
+/* ── 加密空间·一次性口令接入（2026-10-28，owner 选 A）─────────────────────────
+   一行提示 ＋ 一颗主按钮；虚线框表示"还没接进来"，与"已接入卡片"区分开 ✓。 */
+.sync-enc-adopt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: var(--space-2);
+  padding: 10px var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 70%, var(--hover));
+}
+
+.sync-enc-adopt .sync-hint { margin: 0; text-align: left; }
+
+.sync-enc-adopt .sync-btn { flex: none; }
+
+@media (max-width: 768px), (max-height: 520px) {
+.sync-popover {
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    /* `--ovh` 已经扣掉状态栏与底部（手势条 / 键盘）：盒子在任何视口下都装得下。 */
+    max-height: calc(var(--ovh) - 24px);
+  }
+/* 同步面板：桌面上是 `overflow:hidden` + 内部几段各自滚动，内容一高
+     「保存」就被裁在视口外且滚不到（360px 上实测跑出 121px）。
+     窄屏改成"整个弹层滚、操作栏吸底"。 */
+  .sync-popover,
+  .sync-popover.is-sync {
+    overflow-y: auto;
+    overflow-x: hidden;
+    max-height: calc(var(--ovh) - 24px);
+    overscroll-behavior-y: contain;
+  }
+.sync-popover.is-sync .sync-profiles {
+    overflow: visible;
+    flex: none;
+  }
+.sync-popover.is-sync .sync-foot {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    padding-bottom: var(--space-3);
+  }
+.sync-popover {
+    position: fixed;
+    inset: auto 0 0 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: max(var(--sab), var(--kb));
+    width: auto;
+    max-width: 100%;
+    max-height: calc(var(--ovh) - 24px);
+    margin: 0;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+    padding-bottom: 14px;
+    z-index: 1600;
+  }
+/* ⚠️ `.sync-popover.is-sync`（0,2,0）比 `.sync-popover`（0,1,0）特异性高，
+     所以那一条必须**逐条重复带 `.is-sync` 的选择器**，否则宽/高/overflow 会被它压回去——
+     实测症状正是"同步面板高 616px、底边跑到屏外 66px、「保存」点不到"。 */
+  .sync-popover.is-sync {
+    position: fixed;
+    inset: auto 0 0 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: max(var(--sab), var(--kb));
+    width: auto;
+    max-width: 100%;
+    max-height: calc(var(--ovh) - 24px);
+    margin: 0;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+    padding-bottom: 14px;
+    z-index: 1600;
+  }
+/* 窄屏弹层里**只有同步面板**要回到 --z-popover(700)：它是唯一会从自身内容里发起
+     输入框/确认框的弹层（见 App.css 里 `.sync-popover` 的注释），而上面那一整排
+     1600（搜索/回收站/空间切换/备份/新建菜单/版本历史）是"弹层压弹层"的既有做法，
+     它们的父级可能是全屏模态（如设置里的备份下拉），压低会反过来被模态吃掉。
+     同步面板不在这类模态里，所以只压低它自己。 */
+  .sync-popover,
+  .sync-popover.is-sync {
+    z-index: var(--z-popover);
+  }
+.sync-popover button {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+.sync-popover.is-inline .sync-hero-dot.is-ok { animation: none; }
+}
+
+@media (max-width: 720px) {
+.sync-nearby-row {
+    display: grid;
+    grid-template-columns: 30px minmax(0, 1fr);
+    grid-template-areas:
+      "avatar main"
+      "actions actions";
+    align-items: start;
+    gap: var(--space-2) 10px;
+    padding: 11px var(--space-3);
+  }
+.sync-nearby-avatar { grid-area: avatar; width: 30px; height: 30px; border-radius: 9px; font-size: var(--fs-13); }
+.sync-nearby-main { grid-area: main; }
+.sync-nearby-actions { grid-area: actions; justify-content: flex-end; }
+}
+
+@media (max-width: 720px) {
+.sync-nearby-row.is-pending .sync-nearby-actions {
+    flex: 1 1 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+}
+}

@@ -123,7 +123,7 @@ export function CodeBlockToolbar() {
               <select
                 className="editor-code-lang"
                 value={it.lang}
-                style={{ background: "var(--block)", color: "var(--text-dim)", border: "1px solid var(--border)", fontSize: 11, borderRadius: 4, padding: "2px 4px", outline: "none" }}
+                style={{ background: "var(--codeblock-bg)", color: "var(--text-dim)", border: "1px solid var(--border)", fontSize: 11, borderRadius: 4, padding: "2px 4px", outline: "none" }}
                 title="切换语言"
                 onChange={(e) => {
                   editor.update(() => {
@@ -147,7 +147,7 @@ export function CodeBlockToolbar() {
               </select>
               <button
                 className="editor-code-copy"
-                style={{ background: "var(--block)", color: "var(--text-dim)", border: "1px solid var(--border)", fontSize: 11, borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}
+                style={{ background: "var(--codeblock-bg)", color: "var(--text-dim)", border: "1px solid var(--border)", fontSize: 11, borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}
                 onClick={() => {
                   const txt = it.el.querySelector("code")?.textContent ?? it.el.textContent ?? "";
                   navigator.clipboard

@@ -371,6 +371,11 @@ TopicId **绑空间** ⇒ 个人空间不订阅 ✓。
   （`src-tauri/src/sync.rs:4101-4110` 的 `presence_page_id_gated` ✓）⇒ ⛔ 别为了"在线更准"把它拆掉 ✗
 ```
 
+> ⚠️ **2026-10-29（owner 拍第三阶段）：本规格点名的团队客户端实现已删除** ——
+> `team_presence_beat` / `presence_page_id_gated` / `team_*` 命令随 `shuyonote-sync-server` 归档一起退役
+> （见 `docs/SHUYONOTE_STATE.md` 与台账 R233）。本规格作为 **契约 / 历史出处**保留：
+> 企业版仍引用主仓的 IM 边界（`check-im-boundary`），⛔ **不因实现删除而作废**。
+
 ---
 
 ## 3. 协议（**复用 9 条 ＋ 只加必要的**）

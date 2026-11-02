@@ -1,0 +1,619 @@
+/* S4（2026-11-01）：域抽取器搬出的**移动阅读/首页域（`.mread-*` / `.mhome-*` / `.mobile-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+@media (max-width: 768px) {
+/* 唤出按钮：左下角，拇指够得到；展开时它自己不显示（改由遮罩收起）。 */
+  .mobile-rail-toggle {
+    position: fixed;
+    left: 12px;
+    /* 与弹层同一条口径：让开底部系统手势区（`--sab`）。**这台设备实测 `--sab = 0`**，
+       所以这条是防御性的（`max(18px, 0 + 12px)` 仍等于 18px）；手势条更高的机型上才有区别。
+       下面那个同步入口同理。 */
+    bottom: max(18px, calc(var(--sab) + 12px));
+    z-index: 45;
+    /* 44 是仓库里那条"触屏命中区 ≥44"的口径（原来是 42，差 2px 也是点不中）；
+       与下面同步入口的高度对齐。 */
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    background: var(--surface);
+    color: var(--text-dim);
+    box-shadow: var(--shadow-md);
+    cursor: pointer;
+  }
+.mobile-rail-toggle:active {
+    background: var(--hover);
+    color: var(--text);
+  }
+/* 手机上同步入口的第二处（主界面可见的那个）：与「展开工具栏」并排。
+     为什么需要：手机上 `TitleBar` 整个不渲染 ⇒ 桌面的 `.titlebar-sync` 根本不存在，
+     只剩"侧栏抽屉 → 同步"（要先开抽屉）。这里补一个一次点击可达的入口；
+     按钮本身用 SyncPanel 自己的 `.btn-sync`（含云图标与同步中的脉冲点）。
+     位置：工具栏圆钮是 `left:12px / bottom:18px / 42px`，这里紧挨它右侧。 */
+  .mobile-sync-slot {
+    position: fixed;
+    left: 62px;
+    bottom: max(18px, calc(var(--sab) + 12px));
+    z-index: 45;
+  }
+.mobile-sync-slot .btn-sync {
+    min-height: 44px;
+    /* ⚠️ 2026-10-17：这一颗原来**只定了高**✗ ⇒ 实测 40×44（宽差 4px ✗）。
+       它就是"手机上主界面那个同步入口"✓ ⇒ 命中区补到 44，视觉只是一个略宽的胶囊 ✓。 */
+    min-width: 44px;
+    padding: 0 var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    background: var(--surface);
+    box-shadow: var(--shadow-md);
+  }
+/* 浮层遮罩：点它收起竖条（z 高于内容与唤出按钮，低于竖条本身）。 */
+  .mobile-rail-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 58;
+    background: rgba(0, 0, 0, 0.35);
+  }
+}
+
+@media (max-width: 768px) {
+.mobile-sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(0, 0, 0, 0.4);
+  }
+}
+
+@media (max-width: 768px), (max-height: 520px) {
+.mobile-rail-toggle {
+    bottom: calc(18px + max(var(--sab), var(--kb)));
+  }
+/* ---------- 5. 命中区 >= 44x44 ----------
+     触屏没有 hover，也没有鼠标的精细定位：小于 44px 的目标在手机上
+     基本等于"点不中"。图标选择器实测 119/119 全是 38x34。 */
+  .mobile-rail-toggle {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+.mhome-head {
+  margin: 6px 2px 10px;
+}
+
+.mhome-title {
+  margin: 0;
+  font-size: var(--fs-30);
+  line-height: 1.15;
+  letter-spacing: -0.5px;
+  color: var(--text);
+}
+
+.mhome-sub {
+  margin: 6px 0 0;
+  font-size: var(--fs-13);
+  color: var(--text-dim);
+}
+
+/* 卡片：整块可点，最小高度 88px（远高于移动端 44px 的触控下限 ✓） */
+.mhome-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 88px;
+  padding: var(--space-4) 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, var(--radius-lg));
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+
+.mhome-card.is-accent {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.mhome-card-icon {
+  flex: none;
+  width: 40px;
+  text-align: center;
+  font-size: var(--fs-22);
+}
+
+.mhome-card-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.mhome-card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-19);
+  font-weight: 600;
+}
+
+.mhome-card-hint {
+  font-size: var(--fs-13);
+  color: var(--text-dim);
+}
+
+.mhome-card.is-accent .mhome-card-hint {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.mhome-card-go {
+  flex: none;
+  font-size: var(--fs-22);
+  color: var(--text-faint);
+}
+
+.mhome-card.is-accent .mhome-card-go {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.mhome-count {
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.mhome-recent {
+  display: block;
+}
+
+/* ⭐ 2026-10-10：`p.icon` 是 URI/图片数据时要渲染成 `<img>` ✓ ⇒ 给它一个**固定的小盒** ✓。
+   ⚠️ 这里原来**一条规则都没有** ✗ —— 于是 `<img>` 会按它自己的固有尺寸撑开 ✗
+   （那是"整串 base64 当文字画到屏外"之外的第二条路 ✗；实测样例页的 `.mhome.scrollWidth`
+   曾达 **17561** 而视口只有 390 ✗）。文字那条（emoji 单字符）也走同一个盒子 ✓。 */
+.mhome-recent-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  overflow: hidden;
+  font-size: var(--fs-16);
+  line-height: 1;
+}
+
+.mhome-recent-icon-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.mread-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 0 var(--space-3) 10px;
+}
+
+/* 「‹」＝图标按钮 ⇒ 宽高都要 ≥44（`verify-mobile-views` 的命中区判据 ✓） */
+.mread-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-22);
+  line-height: 1;
+}
+
+.mread-head-title {
+  font-size: var(--fs-17);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mread-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 var(--space-4);
+}
+
+.mread-title {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fs-26);
+  line-height: 1.25;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--text);
+  /* 长英文串/URL 不撑破视口（不然 `verify-mobile-views` 的越界判据会红 ✓） */
+  overflow-wrap: anywhere;
+}
+
+.mread-meta {
+  margin: var(--space-2) 0 0;
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+}
+
+/* 「在电脑上继续」提示块（效果图里那块淡蓝 ✓ —— 用既有的 `--accent-soft`，⛔ 不自造色 ✓） */
+.mread-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: var(--space-3) 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md, var(--radius-lg));
+  background: var(--accent-soft);
+}
+
+.mread-tip-icon {
+  flex: none;
+  font-size: var(--fs-18);
+  line-height: 1.3;
+}
+
+.mread-tip-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.mread-tip-title {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.mread-tip-sub {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.mread-body {
+  margin: 18px 0 0;
+}
+
+.mread-p {
+  margin: 0 0 var(--space-3);
+  font-size: var(--fs-16);
+  line-height: 1.75;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* ⭐ 2026-10-22：移动阅读屏**按块类型**排版（owner：「页面样式没有了？」）。
+   原先所有块都渲染成 .mread-p（契约只给 block_id+text）⇒ 标题不加粗、列表粘成一行、
+   引用丢蓝条、callout 丢浅底、图片整块消失。取值都走既有设计 token，不新增配色。 */
+.mread-h1 {
+  margin: 22px 0 10px;
+  font-size: var(--fs-22);
+  line-height: 1.35;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.mread-h2 {
+  margin: 20px 0 var(--space-2);
+  font-size: var(--fs-18);
+  line-height: 1.4;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.mread-h3 {
+  margin: var(--space-4) 0 6px;
+  font-size: var(--fs-16);
+  line-height: 1.5;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.mread-list {
+  margin: 0 0 var(--space-3);
+  padding-left: 20px;
+  list-style: disc;
+}
+
+.mread-list li {
+  margin: 6px 0;
+  font-size: var(--fs-16);
+  line-height: 1.7;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.mread-quote {
+  margin: 0 0 var(--space-3);
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--card-bg, #f5f7fa);
+  font-size: var(--fs-15);
+  line-height: 1.7;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.mread-callout {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3) 14px;
+  border-radius: 10px;
+  background: var(--accent-soft, #ebf1ff);
+  font-size: var(--fs-15);
+  line-height: 1.7;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* 真图（有 src 时）：铺满内容宽、不裁切，圆角与占位框同一档 */
+.mread-img-el {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 0 var(--space-3);
+  border-radius: var(--radius-lg);
+}
+
+.mread-img {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  margin: 0 0 var(--space-3);
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--text-faint);
+  font-size: var(--fs-13);
+}
+
+.mread-hr {
+  margin: 18px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.mread-note {
+  margin: 18px 0 0;
+  font-size: var(--fs-14);
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.mread-foot {
+  margin: 20px 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+}
+
+.mhome-head {
+  margin: 2px 2px var(--space-2);
+}
+
+.mhome-title {
+  font-size: var(--fs-26);
+  letter-spacing: -0.4px;
+}
+
+.mhome-sub {
+  margin-top: 5px;
+  font-size: var(--fs-13);
+}
+
+.mhome-card-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: var(--bg-sidebar);
+  font-size: var(--fs-20);
+}
+
+.mhome-card.is-accent .mhome-card-icon {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.mhome-card-title {
+  font-size: var(--fs-18);
+}
+
+.mhome-card.is-accent .mhome-card-title {
+  font-size: var(--fs-19);
+}
+
+.mhome-card-hint {
+  font-size: var(--fs-12-5);
+}
+
+.mhome-recent-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--bg-sidebar);
+  color: var(--text-dim);
+}
+
+/* ---- 04 阅读：浅色提示卡与正文排版 ---- */
+.mread-head {
+  padding: 0 14px 10px;
+}
+
+.mread-title {
+  font-size: var(--fs-27);
+}
+
+.mread-tip {
+  border: 0;
+  border-radius: 16px;
+  padding: 14px var(--space-4);
+  background: var(--accent-soft);
+}
+
+.mread-tip-title {
+  font-size: var(--fs-14);
+}
+
+.mread-p {
+  margin-bottom: 14px;
+  font-size: var(--fs-16);
+  line-height: 1.85;
+}
+
+.mhome-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 40%);
+  align-items: start;
+  gap: 10px;
+  margin: var(--space-1) 2px var(--space-2);
+  min-width: 0;
+}
+
+.mhome-headtext { min-width: 0; }
+
+.mhome-title { font-size: var(--fs-27); font-weight: 750; letter-spacing: -0.6px; }
+
+.mhome-sub { margin-top: var(--space-1); font-size: var(--fs-12); color: var(--text-faint); }
+
+.mhome-space {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  justify-self: end;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full, var(--radius-full));
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  box-shadow: var(--shadow-xs);
+}
+
+.mhome-space-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.mhome-space svg { flex: none; color: var(--text-faint); }
+
+.mhome-card {
+  min-height: 78px;
+  padding: 13px 14px;
+  border-radius: 16px;
+  gap: var(--space-3);
+}
+
+.mhome-card.is-accent {
+  background: linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 62%, #ffffff) 100%);
+  border-color: transparent;
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.mhome-card-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: var(--radius-lg); background: var(--bg-sidebar); }
+
+.mhome-card.is-accent .mhome-card-icon { background: rgba(255,255,255,.18); }
+
+.mhome-card-title { font-size: var(--fs-17); font-weight: 700; }
+
+.mhome-card-hint { font-size: var(--fs-12); }
+
+.mhome-card-go { display: grid; place-items: center; color: var(--text-faint); }
+
+.mhome-notes {
+  margin-top: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.mhome-notes-head { display: flex; align-items: center; gap: var(--space-2); padding: 2px 2px 0; }
+
+.mhome-notes-title { font-size: var(--fs-15); font-weight: 750; }
+
+.mhome-notes .mhome-count { font-size: var(--fs-11); }
+
+.mhome-note-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+
+.mhome-note-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  box-shadow: var(--shadow-xs);
+}
+
+.mhome-note-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: var(--fs-16);
+  overflow: hidden;
+}
+
+.mhome-note-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+
+.mhome-note-title { font-size: var(--fs-13-5); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.mhome-note-time { font-size: var(--fs-11); color: var(--text-faint); }
+
+.mhome-note-go { flex: none; display: grid; place-items: center; color: var(--text-faint); }
+
+.mhome-empty {
+  padding: 14px var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 70%, var(--bg));
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  line-height: 1.6;
+}
+
+.mhome-notes-hint { margin: 2px 2px 0; font-size: var(--fs-10-5); line-height: 1.55; color: var(--text-faint); }
+}

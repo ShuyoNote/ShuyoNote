@@ -117,3 +117,101 @@ owner 2026-10-11 逐字：**「确定：点一下就通」** ⇒ 个人空间配
    —— ⭐ §6.3 那两条未拍项在这一步开始前定掉 ✓
 ```
 
+
+---
+
+## 7. ⭐⭐ 2026-10-26 owner 拍 A：**撤销「一方配对成功，就双向通」** —— ⛔ 两边各点一次确认 ✓
+
+> ⚠️ **旧文一字不删** ✓（§6 保留当时记录）—— 本节只写**哪一条被撤销** ＋ **为什么** ＋ **新的判据** ✓。
+> 来源：`_workspace/REQUESTS.md` **R208**（真机链路实测发现的安全洞；owner 2026-10-26 逐字回 **「A」**）。
+
+### 7.1 撤销的是哪一条
+
+```text
+⛔ 被撤销（2026-10-17 口径）：「一方配对成功，就双向通」——
+   收到对方那条「我想信任你」的广播，本机**自动**把对面登记进「允许拉我内容」的名单
+   （`sync::note_pending_trust_asks` 里的 `pair_pubkey` ＋ `add_paired_pubkey`）。
+
+⚠️ 为什么它危险（R208）：那条判断只要求"空间房间号对得上"，而房间号本来就在局域网广播里
+   ⇒ 同网段的人只要发一条 `trust_ask`，你的机器就会**在你没点任何东西**的情况下
+   把对方加进名单 ⇒ 对方能拉走内容 ✗。
+   这不是"用户点了才信任"那笔已知代价，而是**用户没点也会被信任** ✗。
+```
+
+### 7.2 现在的新口径（owner 2026-10-26 拍 A）
+
+```text
+⭐ 「信任这台设备」＝ **只开它来拿我的这一个方向** ✓；
+⭐ 要双向 ⇒ **两边各点一次「接入」并核对确认** ✓（⛔ 不再自动替对面登记 ✗）。
+· `sync::note_pending_trust_asks` 现在**只读 ＋ 日志**：⛔ 一个字节都不写库 ✗；
+· 内核 `state_after_ask_seen` **不再把状态推进到 `Trusted`**（看到 ask ≠ 同意）✓；
+· 界面文案：配对成功只说"这一侧已开"，并明说"对面也要点一次确认，双向才通" ✓；
+· 判据（会红的）：
+  `sync::tests::receiving_a_trust_ask_does_not_register_the_asker`、
+  `sync::tests::receiving_a_trust_ask_writes_nothing`、
+  `sync::tests::receiving_a_pending_ask_is_noticed_but_never_registers`、
+  `mesh::tests::one_sided_pairing_opens_only_one_direction_until_the_other_side_confirms`、
+  `pairing_trust::tests::seeing_the_ask_is_not_agreeing`。
+```
+
+### 7.3 与 §2／§6 的关系
+
+```text
+· §2「点一下就通」**仍然成立**（点的那一下就是建立 ✓）—— 被撤销的是**自动替对面同意**那一半 ✓；
+· §6.1 2026-10-11／§6.4 ③ 早就写过「要双向 ⇒ 两边各点一次」✓ —— 本轮 owner 的选择**回到那一档** ✓；
+· ⚠️ 曾用于论证 2026-10-17 的真机 401（"对面不点就单向"）**不是要撤销那条新口径的理由**：
+  它恰好说明"单向"是**预期行为**，不是故障 ✓。
+```
+
+## 8. ⭐⭐ 2026-10-28 owner 拍 R209-B：**同步组名不再上局域网广播**
+
+> ⚠️ §6.3 那段"配对暗号会随公告发到网段上 ⇒ 它只是名字、不是秘密"是 **2026-10-11 的口径** ✓；
+> 本节是一笔**后来收窄**：⭐ 不是推翻"它不是凭证"（那条仍然成立 ✓），而是 ⛔ **不再把它发出去** ✗
+> （"不是秘密"不等于"该主动广播" —— 那个推理在 2026-10-26 为手机自动对齐用过一次 ✓，owner 2026-10-28 收回 ✓）。
+
+### 8.1 拍的是什么
+
+```text
+⭐ owner 2026-10-28 逐字（台账 R209 行）：⛔ 不把设备级「同步组名」放进局域网广播；
+   改成本机从对端派生房间号做逐空间覆盖。
+⇒ 台账里三个选项，取 **B**：
+   A（现状）每轮把 `LanAnnounce.room` 带上 —— 协议最顺、已真机验证，但种子**上网** ✗；
+   ⭐ B 不上广播种子，改为采用对端**派生房间号**做逐空间覆盖；
+   C 只对手机、且只发首启随机组名。
+```
+
+**为什么 B 能做到而不用动协议**：公告里**本来就有**对端每个个人空间的
+**派生房间号**（`hub_spaces` —— 别人必须知道"去哪个房间见面" ✓）⇒ 对端不需要种子，
+只要拿到"这个空间的房间号"就够了 ✓（种子是**派生它**用的，不是路由用的 ✓）。
+
+### 8.2 落地（哪些函数／判据）
+
+```text
+· 发：`announces_for_this_round` **不再填** `room`（恒空；`skip_serializing_if` ⇒ 线格式里连字段名都不出现 ✓）；
+      只多发一个布尔 `room_auto`（"本机组名是不是自动生成的" —— 对端据此决定能不能跟 ✓，⛔ 不含值 ✗）；
+      ⛔ 不升 `WIRE_VERSION`（`serde(default)` ⇒ 老对端照旧收发 ✓）。
+· 收：`lan_state::decide_space_room_coverage`（纯函数）＋ `cover_spaces_from_offers`（写库那一半）
+      ⇒ 逐空间写 `meta.sync_state.mesh_room_cover:<ws_id>`（`sync::set_room_cover` ✓）；
+      ⭐ `sync::mesh_scope_at`（窗口/公告/拉取**唯一**解析处 ✓）**覆盖优先** ⇒ 一处改、全链路一致 ✓。
+· 兼容：老对端仍会报 `room` ⇒ 老那条 `maybe_adopt_peer_room`／`decide_room_adoption` **原样保留** ✓
+      （它只处理"对端报了种子"的老公告）；新对端不报 ⇒ 走逐空间覆盖 ✓。
+      反过来：老对端读我们的公告，只少一个可选格、多一个可选格 ⇒ 照常解得开 ✓。
+· 清账：用户显式设组名（`mesh_set_config(room=…)`）或设备级种子被采用 ⇒ `clear_room_covers` ✓
+      （⛔ 不许"种子换了、房间号还是旧的" ✗）。
+```
+
+### 8.3 判据（会红的，本机可跑）
+
+```text
+① `lan::r209b_wire_tests::a_new_announce_never_carries_a_device_room_value`（线格式里连 `room` 字段名都没有）
+   ＋ `lan_state::space_room_coverage_tests::the_device_seed_never_reaches_the_wire_and_only_the_auto_flag_does`
+   （用一条**有辨识度的种子**构造公告 ⇒ 报文里不许出现那个串）
+② `lan_state::space_room_coverage_tests::a_peer_derived_room_covers_this_space_so_both_sides_meet_again`
+   （覆盖后 `window_serve_space` **就是**对端的派生房间号 ⇒ 两边又在同一个房间；幂等；团队空间不动）
+③ `lan::r209b_wire_tests::a_legacy_announce_that_still_reports_a_room_is_read_verbatim`
+   ＋ `…::an_old_peer_can_still_parse_our_announce_and_route`（老结构读我们发的东西）
+   ＋ `…::an_old_style_announce_still_drives_the_cover`（老公告仍能驱动覆盖）
+```
+
+⚠️ **仍未验收**：⭐ **真机双端**（手机 ↔ 电脑）自动对齐 —— 本机起不了两个发现实体
+（`LAN_PORT` 是常量，第二绑必然失败，见 `lan.rs` 里那段探针记录）⇒ 上面①②③都是**编码层／DB 解析层**判据 ✓。

@@ -57,8 +57,8 @@ pub struct MeshTrustStateView {
 /// ⚠️ 兜底那一档要说**下一步做什么** ✗，⛔ 不是只说"没有" ✗（owner 口径：界面上的话要能照着做 ✓）。
 ///
 /// ⭐⭐ **2026-10-12（第 3 步改口径 ✓）** ✗：⭐ 那两句**声称的是双向** ✗ ⇒ 与 owner 的口径矛盾 ⇒ 换掉 ✓
-/// ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）**：⭐ 这一格的人话也改了 ✗ ——
-/// 配对**一次**两边都通 ✓（收到 ask 的那一侧会在下一次交换里互相登记 ✓），⛔ 不再说"要两台各点一次" ✗。
+/// ⭐⭐ **2026-10-26（owner 拍 A：两边各点一次确认，R208）** ✗：⭐ 撤销 2026-10-17 的「一方配对成功，就双向通」——
+/// 看到 ask **不算配对** ✓；要双向 ⇒ 两边各点「接入」并确认 ✓（这一格的人话也随之改 ✓）。
 pub fn trust_state_view(state: TrustState, active: bool, pending: usize) -> MeshTrustStateView {
     let (state, message) = match state {
         TrustState::Idle => (
@@ -67,7 +67,7 @@ pub fn trust_state_view(state: TrustState, active: bool, pending: usize) -> Mesh
         ),
         TrustState::Trusted => (
             "trusted",
-            "已经配对过（⭐ 一方配对成功 ⇒ 两个方向都通 ✓）—— 谁在名单里看下面那份「这台机器认了 N 台设备」",
+            "已经配对过（⭐ 2026-10-26 owner 拍 A：两边各点一次确认，双向才通 ✓）—— 谁在名单里看下面那份「这台机器认了 N 台设备」",
         ),
     };
     MeshTrustStateView {
@@ -85,9 +85,8 @@ pub fn trust_state_view(state: TrustState, active: bool, pending: usize) -> Mesh
 #[tauri::command]
 pub fn mesh_trust_state() -> MeshTrustStateView {
     let now = crate::lan_state::now_ms();
-    let (state, active, pending) = crate::lan_state::with_trust(|h| {
-        (h.state(), h.is_active(now), h.pending_asks(now).len())
-    });
+    let (state, active, pending) =
+        crate::lan_state::with_trust(|h| (h.state(), h.is_active(now), h.pending_asks(now).len()));
     trust_state_view(state, active, pending)
 }
 
@@ -204,7 +203,20 @@ pub fn mesh_trust_begin(
     let row = crate::mesh::paired_row_key(&scope.space, scope.device_level);
     crate::db::pair_pubkey(&c, row, &peer, &pk)?;
     // ⭐ 跑着的门**也要认它** ✗ —— ⛔ 只写库不算 ✗（那正是"配对成功却 401" ✓，与 `add_paired` 同一条纪律 ✓）。
-    crate::mesh::add_paired_pubkey(&scope.space, &peer, &pk)?;
+    // ⭐ **2026-10-26（owner：个人版不该卡在同一空间）**：个人档是**设备级信任** ⇒ 当前空间不同也照样能配；
+    //    但门是按协议空间存公钥的 ⇒ 必须给**所有正在运行的个人空间**都加上，否则别的空间仍 401。
+    //    团队档不动（仍是当前空间那一扇门）。
+    if scope.device_level {
+        let mut protos = crate::lan_state::personal_proto_spaces(&c);
+        if !protos.iter().any(|p| p == &scope.space) {
+            protos.push(scope.space.clone());
+        }
+        for proto in protos {
+            let _ = crate::mesh::add_paired_pubkey(&proto, &peer, &pk);
+        }
+    } else {
+        crate::mesh::add_paired_pubkey(&scope.space, &peer, &pk)?;
+    }
     // ⚠️ 口令**不再需要** ✗：旧口径下这里要先把空间的共用口令读出来当"配对密钥" ✓；
     //   ⭐ 第 3 步之后**信任与口令无关** ✓（门认签名 ✓）⇒ ⛔ 没有口令也照样能信任 ✓
     //   （⚠️ 那是**有意的**：口令从此只在"旧那一档"里有意义 ✓ —— 见 `authorized` 那一段 ✓）。
@@ -224,7 +236,8 @@ pub fn mesh_trust_begin(
     });
     Ok(MeshTrustOutcome {
         outcome: "trusted".to_string(),
-        message: "配对成功：两边都通了 ✓（对面收到这一轮「想信任」后会自动互相登记 —— 它那边不用再点一次 ✓）"
+        message: "配对成功：这一侧已开（允许它来拿我的）✓\n\
+                  ⚠️ 对面也要点一次「接入」并核对确认，**双向**才通（owner 2026-10-26 拍 A）"
             .to_string(),
     })
 }
@@ -248,7 +261,10 @@ mod tests {
         let a = new_trust_ask();
         let b = new_trust_ask();
         assert_eq!(a.len(), 64, "32 字节 ⇒ 64 个十六进制字符");
-        assert!(a.chars().all(|ch| ch.is_ascii_hexdigit()), "只许十六进制：{a}");
+        assert!(
+            a.chars().all(|ch| ch.is_ascii_hexdigit()),
+            "只许十六进制：{a}"
+        );
         assert_ne!(a, b, "两次握手串不许相同（⛔ 那不是一次性 ✗）");
         // ⚠️ 它是"一次性"的凭据本身 ⇒ ⛔ 不许退化成空串（空串在 `nonce_matches` 里一律不算对上 ✓）。
         assert!(!a.is_empty());

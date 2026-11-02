@@ -151,14 +151,20 @@ pub fn device_pair_from(
         return Err("这台设备**还没填监听地址** ⇒ 没有东西可以配对过去（先在「同步」面板填地址或写 `0.0.0.0:8788`）".to_string());
     }
     if token.is_empty() {
-        return Err("这台设备**还没设窗口口令** ⇒ 先设一个（至少 8 个字符、别用纯数字）：\n\
-                    ⚠️ 未加密的空间里，口令是唯一的防线 —— 不带口令的窗口，同一网络里谁都能拉 ✓".to_string());
+        return Err(
+            "这台设备**还没设窗口口令** ⇒ 先设一个（至少 8 个字符、别用纯数字）：\n\
+                    ⚠️ 未加密的空间里，口令是唯一的防线 —— 不带口令的窗口，同一网络里谁都能拉 ✓"
+                .to_string(),
+        );
     }
     if from_device_id.is_empty() {
-        return Err("这台设备**还没有自己的设备号**（`device_id`）⇒ 不能生成配对码：\n\
+        return Err(
+            "这台设备**还没有自己的设备号**（`device_id`）⇒ 不能生成配对码：\n\
                     ⚠️ 对面采纳时要按这一格**登记一张卡**（「我认哪一台」要能点名 ✓）——\
                     少了它，那段码到对面**只会被当面拒掉**（本机一个字节都不写 ✓）。\n\
-                    ⇒ 请先让应用正常启动一次（设备号在初始化时写入），再来配对 ✓".to_string());
+                    ⇒ 请先让应用正常启动一次（设备号在初始化时写入），再来配对 ✓"
+                .to_string(),
+        );
     }
     if !to_device_id.is_empty() && to_device_id == from_device_id {
         return Err("选到的**就是这台自己** ⇒ 不能生成「给自己」的配对码：\n\
@@ -287,8 +293,8 @@ pub fn encode_payload(p: &PairingPayload) -> Result<String, String> {
 /// 三条都**当场报错、不猜**：版本不认识、字段多出来（`deny_unknown_fields`）、材料不像钥匙袋。
 /// 最后一条是**故意**放在这里的：让它**扫码那一步**就失败，而不是拖到采纳那一步。
 pub fn decode_payload(raw: &str) -> Result<PairingPayload, String> {
-    let p: PairingPayload =
-        serde_json::from_str(raw).map_err(|e| format!("这不是一个配对载荷（或字段对不上）：{e}"))?;
+    let p: PairingPayload = serde_json::from_str(raw)
+        .map_err(|e| format!("这不是一个配对载荷（或字段对不上）：{e}"))?;
     if p.v != PAIRING_VERSION {
         return Err(format!(
             "配对载荷版本 {} 本版不认识（本版认到 {PAIRING_VERSION}）—— 请升级应用后再扫",
@@ -405,7 +411,6 @@ pub fn verify_confirm_code(payload_text: &str, confirmed: Option<&str>) -> Resul
     Ok(computed)
 }
 
-
 /// 把配对载荷画成**一张二维码的 SVG**（前端直接当 data URI 贴进 `<img>`）。
 ///
 /// ★ 三条口径（判据钉着）：
@@ -437,7 +442,8 @@ mod tests {
         let mut kr = crate::keyring::Keyring::new();
         let m = kr.kdf.derive_master("口令八个字以上").unwrap();
         for id in spaces {
-            kr.wrap(&m, id, &crate::keyring::random_space_key()).unwrap();
+            kr.wrap(&m, id, &crate::keyring::random_space_key())
+                .unwrap();
         }
         (kr.to_json().unwrap(), serde_json::to_string(&kr).unwrap())
     }
@@ -458,7 +464,10 @@ mod tests {
     #[test]
     fn a_payload_round_trips_byte_for_byte() {
         let (pretty, compact) = material_pair(&["sp-a", "sp-b"]);
-        assert_ne!(pretty, compact, "两种形态必须真的不同，否则②这条判据也是空的");
+        assert_ne!(
+            pretty, compact,
+            "两种形态必须真的不同，否则②这条判据也是空的"
+        );
 
         // ① canonical 形态
         let p = payload_from_material(&pretty, "fp-abc").unwrap();
@@ -486,16 +495,23 @@ mod tests {
     #[test]
     fn a_payload_rejects_any_extra_field() {
         let material = material_with(&["sp-a"]);
-        let mut v: serde_json::Value = serde_json::from_str(&encode_payload(&payload_from_material(&material, "").unwrap()).unwrap()).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(
+            &encode_payload(&payload_from_material(&material, "").unwrap()).unwrap(),
+        )
+        .unwrap();
         // 先确认没有多字段时是好的（否则下面那条断言可能是"因为别的原因"才红）
         let ok = serde_json::to_string(&v).unwrap();
         assert!(decode_payload(&ok).is_ok(), "干净载荷本来就该过");
 
-        v.as_object_mut().unwrap().insert("device_name".into(), serde_json::json!("张三的 MacBook"));
+        v.as_object_mut()
+            .unwrap()
+            .insert("device_name".into(), serde_json::json!("张三的 MacBook"));
         let with_extra = serde_json::to_string(&v).unwrap();
         let err = decode_payload(&with_extra).unwrap_err();
         assert!(
-            err.contains("字段对不上") || err.contains("unknown field") || err.contains("device_name"),
+            err.contains("字段对不上")
+                || err.contains("unknown field")
+                || err.contains("device_name"),
             "多一个字段必须**当场拒收**（不是静默忽略）：{err}"
         );
     }
@@ -513,7 +529,10 @@ mod tests {
         let p = payload_from_material(&material, "").unwrap();
         let raw = encode_payload(&p).unwrap();
 
-        assert!(raw.len() > QR_SINGLE_BYTE_LIMIT, "造出来的样本必须真的超限（否则这条判据是空的）");
+        assert!(
+            raw.len() > QR_SINGLE_BYTE_LIMIT,
+            "造出来的样本必须真的超限（否则这条判据是空的）"
+        );
         assert!(!fits_single_qr(&raw));
         let msg = qr_capacity_error(&raw).expect("超限必须给一句人话");
         assert!(msg.contains("装不下"), "{msg}");
@@ -521,7 +540,10 @@ mod tests {
 
         // ★ 核心断言：**编码结果没有被截断** —— 它仍然能原样解回来
         let back = decode_payload(&raw).unwrap();
-        assert_eq!(back.material, material, "★ 超限也不许截断：整段仍要能逐字节解回");
+        assert_eq!(
+            back.material, material,
+            "★ 超限也不许截断：整段仍要能逐字节解回"
+        );
 
         // 边界：正好等于上限 ⇒ 装得下；多 1 字节 ⇒ 装不下
         let at_limit = "x".repeat(QR_SINGLE_BYTE_LIMIT);
@@ -550,7 +572,10 @@ mod tests {
     fn a_material_that_is_not_a_keyring_is_refused_on_both_ends() {
         let err = payload_from_material("这不是材料", "").unwrap_err();
         assert!(err.contains("读不懂"), "{err}");
-        assert!(err.contains("没有生成载荷"), "产出侧要明说「什么都没生成」：{err}");
+        assert!(
+            err.contains("没有生成载荷"),
+            "产出侧要明说「什么都没生成」：{err}"
+        );
 
         let raw = "{\"v\":1,\"material\":\"也不是材料\",\"fp\":\"\"}";
         let err = decode_payload(raw).unwrap_err();
@@ -581,21 +606,35 @@ mod tests {
     ///    写成 `pairing::the_measured_sizes` 会**安静地跑 0 条**（2026-09-25 我自己踩到过）。
     #[test]
     fn the_measured_sizes_still_match_the_workorder() {
-        let one = encode_payload(&payload_from_material(&material_with(&["sp-000"]), "").unwrap()).unwrap();
-        println!("PAIRING-SIZE 1 个空间：载荷 {} 字节（二维码上限 {}）", one.len(), QR_SINGLE_BYTE_LIMIT);
+        let one = encode_payload(&payload_from_material(&material_with(&["sp-000"]), "").unwrap())
+            .unwrap();
+        println!(
+            "PAIRING-SIZE 1 个空间：载荷 {} 字节（二维码上限 {}）",
+            one.len(),
+            QR_SINGLE_BYTE_LIMIT
+        );
         for n in [3usize, 5, 10] {
             let ids: Vec<String> = (0..n).map(|i| format!("sp-{i:03}")).collect();
             let refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
-            let raw = encode_payload(&payload_from_material(&material_with(&refs), "").unwrap()).unwrap();
+            let raw =
+                encode_payload(&payload_from_material(&material_with(&refs), "").unwrap()).unwrap();
             println!(
                 "PAIRING-SIZE {n} 个空间：载荷 {} 字节 ⇒ {}",
                 raw.len(),
-                if fits_single_qr(&raw) { "单张二维码装得下" } else { "**装不下**" }
+                if fits_single_qr(&raw) {
+                    "单张二维码装得下"
+                } else {
+                    "**装不下**"
+                }
             );
         }
         // 施工单 F3 实测：1 个空间的**紧凑材料**是 360 字节；载荷还多包了一层，
         // 所以这里只断言"同一量级"（材料自身 300~500，载荷比它大但不到两倍）。
-        assert!(one.len() > 360, "载荷比裸材料大（外面还包了一层）：{}", one.len());
+        assert!(
+            one.len() > 360,
+            "载荷比裸材料大（外面还包了一层）：{}",
+            one.len()
+        );
         assert!(one.len() < 720, "载荷不该比裸材料大出一倍：{}", one.len());
     }
 
@@ -604,7 +643,9 @@ mod tests {
     /// 判据：**确定性 ＋ 形状** —— 两端要能"对一下"，所以同一份载荷必须派生出同一个码。
     #[test]
     fn the_check_code_is_deterministic_and_well_shaped() {
-        let raw = encode_payload(&payload_from_material(&material_with(&["sp-a"]), "fp-1").unwrap()).unwrap();
+        let raw =
+            encode_payload(&payload_from_material(&material_with(&["sp-a"]), "fp-1").unwrap())
+                .unwrap();
         let a = check_code(&raw);
         let b = check_code(&raw);
         assert_eq!(a, b, "同一份载荷必须派生出同一个码（否则两个人没法对）");
@@ -629,8 +670,16 @@ mod tests {
         let other_material = encode_payload(&payload_from_material(&m2, "fp-1").unwrap()).unwrap();
         let other_fp = encode_payload(&payload_from_material(&m1, "fp-2").unwrap()).unwrap();
 
-        assert_ne!(check_code(&base), check_code(&other_material), "★ 材料变了，码必须变");
-        assert_ne!(check_code(&base), check_code(&other_fp), "★ 指纹变了，码必须变");
+        assert_ne!(
+            check_code(&base),
+            check_code(&other_material),
+            "★ 材料变了，码必须变"
+        );
+        assert_ne!(
+            check_code(&base),
+            check_code(&other_fp),
+            "★ 指纹变了，码必须变"
+        );
         // 连"只多一个空格"也要变（说明是按字节派生的，不是按解析后的字段）
         assert_ne!(
             check_code(&base),
@@ -660,7 +709,8 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(" ")
         }
-        let raw = encode_payload(&payload_from_material(&material_with(&["sp-a"]), "").unwrap()).unwrap();
+        let raw =
+            encode_payload(&payload_from_material(&material_with(&["sp-a"]), "").unwrap()).unwrap();
         assert_ne!(
             check_code(&raw),
             render_without_domain(&raw),
@@ -692,7 +742,9 @@ mod tests {
     /// 不给 ⇒ 过（两台设备就在一起、用眼睛对屏幕那条路）。
     #[test]
     fn a_confirmed_check_code_is_enforced_when_given() {
-        let raw = encode_payload(&payload_from_material(&material_with(&["sp-a"]), "fp-1").unwrap()).unwrap();
+        let raw =
+            encode_payload(&payload_from_material(&material_with(&["sp-a"]), "fp-1").unwrap())
+                .unwrap();
         let truth = check_code(&raw);
 
         // ① 对得上（原样 / 去掉空格 / 换成短横，都算对）⇒ 过，并返回算出来的那个码
@@ -713,7 +765,10 @@ mod tests {
         assert_ne!(truth, wrong, "这条用例要的是真的对不上");
         let err = verify_confirm_code(&raw, Some(wrong)).unwrap_err();
         assert!(err.contains("对不上"), "{err}");
-        assert!(err.contains("一个字节都没改"), "★ 要说清本机没被改动：{err}");
+        assert!(
+            err.contains("一个字节都没改"),
+            "★ 要说清本机没被改动：{err}"
+        );
 
         // ③ 不给比对码 ⇒ 过（旁边核对那条路）
         assert_eq!(verify_confirm_code(&raw, None).unwrap(), truth);
@@ -723,11 +778,15 @@ mod tests {
     /// 只回一句"码不对"，人没法判断是自己抄错了，还是这段码真被换过。
     #[test]
     fn a_rejected_check_code_shows_both_sides() {
-        let raw = encode_payload(&payload_from_material(&material_with(&["sp-a"]), "").unwrap()).unwrap();
+        let raw =
+            encode_payload(&payload_from_material(&material_with(&["sp-a"]), "").unwrap()).unwrap();
         let truth = check_code(&raw);
         let err = verify_confirm_code(&raw, Some("1111 2222 3333 4444 5555")).unwrap_err();
         assert!(err.contains(&truth), "要把**算出来的**那个码摆出来：{err}");
-        assert!(err.contains("1111 2222 3333 4444 5555"), "也要把用户记下的摆出来：{err}");
+        assert!(
+            err.contains("1111 2222 3333 4444 5555"),
+            "也要把用户记下的摆出来：{err}"
+        );
         assert!(err.contains("被换过"), "要点明「可能是被换过」：{err}");
     }
 
@@ -739,8 +798,12 @@ mod tests {
     fn a_qr_is_never_drawn_for_an_oversized_payload() {
         let ids: Vec<String> = (0..80).map(|i| format!("sp-{i:03}")).collect();
         let refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
-        let raw = encode_payload(&payload_from_material(&material_with(&refs), "").unwrap()).unwrap();
-        assert!(!fits_single_qr(&raw), "样本必须真的超限，否则这条判据是空的");
+        let raw =
+            encode_payload(&payload_from_material(&material_with(&refs), "").unwrap()).unwrap();
+        assert!(
+            !fits_single_qr(&raw),
+            "样本必须真的超限，否则这条判据是空的"
+        );
         let err = qr_svg(&raw).unwrap_err();
         assert!(err.contains("装不下"), "{err}");
     }
@@ -750,14 +813,18 @@ mod tests {
     /// 退化会怎样：两次画出来不一样 ⇒ 两台设备/两次打开看到的码不同，人眼比对与截图核对都无从谈起。
     #[test]
     fn the_qr_is_deterministic_and_well_shaped() {
-        let raw = encode_payload(&payload_from_material(&material_with(&["sp-a"]), "fp-1").unwrap()).unwrap();
+        let raw =
+            encode_payload(&payload_from_material(&material_with(&["sp-a"]), "fp-1").unwrap())
+                .unwrap();
         let a = qr_svg(&raw).unwrap();
         let b = qr_svg(&raw).unwrap();
         assert_eq!(a, b, "同一份载荷两次画出来必须逐字节相同");
         let head = &a[..a.len().min(60)];
         assert!(a.trim_start().starts_with("<svg"), "要是一张 SVG：{head}");
         assert!(a.trim_end().ends_with("</svg>"), "SVG 要收尾");
-        let other = encode_payload(&payload_from_material(&material_with(&["sp-b"]), "fp-1").unwrap()).unwrap();
+        let other =
+            encode_payload(&payload_from_material(&material_with(&["sp-b"]), "fp-1").unwrap())
+                .unwrap();
         assert_ne!(qr_svg(&other).unwrap(), a, "不同载荷必须画出不同的码");
     }
 
@@ -786,19 +853,31 @@ mod tests {
     /// —— 那是 T2 最要紧的一条：**两种载荷不许互相渗透** ✓。
     #[test]
     fn a_device_pair_payload_rejects_any_extra_field() {
-        for extra in ["\"material\":\"{}\"", "\"master\":\"hunter2\"", "\"spaces\":[]"] {
-            let raw = format!("{{\"v\":1,\"bind\":\"0.0.0.0:8788\",\"token\":\"k7Qm-2pRt\",{extra}}}");
+        for extra in [
+            "\"material\":\"{}\"",
+            "\"master\":\"hunter2\"",
+            "\"spaces\":[]",
+        ] {
+            let raw =
+                format!("{{\"v\":1,\"bind\":\"0.0.0.0:8788\",\"token\":\"k7Qm-2pRt\",{extra}}}");
             assert!(decode_device_pair(&raw).is_err(), "多一个字段就要拒：{raw}");
         }
         // 反向：把**钥匙袋载荷**喂给设备直连解码 ⇒ 也必须拒（它多 `material`、少 `bind`/`token`）
-        let km = encode_payload(&payload_from_material(&material_with(&["sp-a"]), "fp-1").unwrap()).unwrap();
-        assert!(decode_device_pair(&km).is_err(), "钥匙袋载荷不许被当设备直连载荷收下");
+        let km = encode_payload(&payload_from_material(&material_with(&["sp-a"]), "fp-1").unwrap())
+            .unwrap();
+        assert!(
+            decode_device_pair(&km).is_err(),
+            "钥匙袋载荷不许被当设备直连载荷收下"
+        );
     }
 
     /// ⚠️ **版本不猜**（照 `decode_payload` 的既有形状）：不认识的 `v` ⇒ `Err` ✓。
     #[test]
     fn an_unknown_device_pair_version_is_refused_not_guessed() {
-        let raw = format!("{{\"v\":{},\"bind\":\"0.0.0.0:8788\",\"token\":\"k7Qm-2pRt\"}}", DEVICE_PAIR_VERSION + 1);
+        let raw = format!(
+            "{{\"v\":{},\"bind\":\"0.0.0.0:8788\",\"token\":\"k7Qm-2pRt\"}}",
+            DEVICE_PAIR_VERSION + 1
+        );
         let e = decode_device_pair(&raw).unwrap_err();
         assert!(e.contains("版本"), "{e}");
     }
@@ -807,8 +886,14 @@ mod tests {
     /// （发出去只会让对方在采纳那一步才炸，而现场看起来像"码坏了" ✓）。
     #[test]
     fn a_device_pair_payload_is_never_produced_from_a_weak_or_empty_setting() {
-        assert!(device_pair_from("", "k7Qm-2pRt", "fp", "").is_err(), "没填地址 ⇒ 不生成");
-        assert!(device_pair_from("0.0.0.0:8788", "", "fp", "").is_err(), "没口令 ⇒ 不生成");
+        assert!(
+            device_pair_from("", "k7Qm-2pRt", "fp", "").is_err(),
+            "没填地址 ⇒ 不生成"
+        );
+        assert!(
+            device_pair_from("0.0.0.0:8788", "", "fp", "").is_err(),
+            "没口令 ⇒ 不生成"
+        );
         for weak in ["123456", "1234567890", "aaaaaaaaaaaa", "short"] {
             let e = device_pair_from("0.0.0.0:8788", weak, "fp", "").unwrap_err();
             assert!(e.contains("口令"), "理由要点名是口令的问题：{e}");
@@ -862,12 +947,21 @@ mod tests {
     fn an_old_device_pair_code_without_the_new_field_still_parses() {
         let raw = "{\"v\":1,\"bind\":\"0.0.0.0:8788\",\"token\":\"k7Qm-2pRt\",\"fp\":\"dev-A\"}";
         let why = decode_device_pair(raw).unwrap_err();
-        assert!(why.contains("钥匙"), "⛔ 老码要**如实拒**，而且要点名缺的是哪一格 ✗：{why}");
-        assert!(why.contains("升级"), "⭐ 还要说清下一步做什么（让那台升级重发 ✓）：{why}");
+        assert!(
+            why.contains("钥匙"),
+            "⛔ 老码要**如实拒**，而且要点名缺的是哪一格 ✗：{why}"
+        );
+        assert!(
+            why.contains("升级"),
+            "⭐ 还要说清下一步做什么（让那台升级重发 ✓）：{why}"
+        );
         // ⚠️ ⭐ 反向**必须仍然解析得动** ✗（⛔ 别让"拒老码"变成"连自己的码也拒" ✗）——
         //   ⭐ 带钥匙的那段码照旧往返 ✓。
         let mine = pair_with_key("0.0.0.0:8788", "k7Qm-2pRt", "dev-A", "");
-        assert_eq!(decode_device_pair(&encode_device_pair(&mine).unwrap()).unwrap(), mine);
+        assert_eq!(
+            decode_device_pair(&encode_device_pair(&mine).unwrap()).unwrap(),
+            mine
+        );
     }
 
     /// ⚠️ **产出侧先验**：**没有设备号就不许生成载荷** ✓ —— 那一格是采纳侧唯一的"点名"依据，
@@ -876,7 +970,10 @@ mod tests {
     fn a_device_pair_payload_is_never_produced_without_a_device_id() {
         let e = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "  ", "").unwrap_err();
         assert!(e.contains("设备号"), "理由要点名是设备号的问题：{e}");
-        assert!(e.contains("登记"), "要说清对面拿它做什么（登记一张卡）：{e}");
+        assert!(
+            e.contains("登记"),
+            "要说清对面拿它做什么（登记一张卡）：{e}"
+        );
     }
 
     // ═══════════ ⭐⭐ R110（owner 2026-10-02 拍 A）：载荷带上**"这段码给哪一台"** ═══════════
@@ -887,13 +984,18 @@ mod tests {
     #[test]
     fn a_device_pair_payload_carries_the_target_device_id() {
         let p = pair_with_key("0.0.0.0:8788", "k7Qm-2pRt", "dev-jia", "dev-yi");
-        assert_eq!(p.to_device_id, "dev-yi", "点选的那台必须进载荷（发起侧要按它先登记 ✓）");
+        assert_eq!(
+            p.to_device_id, "dev-yi",
+            "点选的那台必须进载荷（发起侧要按它先登记 ✓）"
+        );
         assert_eq!(p.from_device_id, "dev-jia", "发起侧自己那格照旧 ✓");
         let back = decode_device_pair(&encode_device_pair(&p).unwrap()).unwrap();
         assert_eq!(back.to_device_id, "dev-yi", "必须原样解回来");
         // ① **不指定**（空）也合法 ⇒ 走"码可以离线传、要配两次"那条路 ✓（A 是加法、不是替换 ✓）
         assert_eq!(
-            device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "dev-jia", "").unwrap().to_device_id,
+            device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "dev-jia", "")
+                .unwrap()
+                .to_device_id,
             "",
             "不指定 ⇒ 空串（⛔ 不是错 ✗）"
         );
@@ -903,7 +1005,12 @@ mod tests {
         //   ⇒ 这里改成"**带钥匙、但不指定对面**"的码 ✓（⭐ 它量的本来就是"不指定也合法"✓）。
         let open = pair_with_key("0.0.0.0:8788", "k7Qm-2pRt", "dev-jia", "");
         assert_eq!(open.to_device_id, "", "不指定 ⇒ 空串（⛔ 不是错 ✗）");
-        assert_eq!(decode_device_pair(&encode_device_pair(&open).unwrap()).unwrap().to_device_id, "");
+        assert_eq!(
+            decode_device_pair(&encode_device_pair(&open).unwrap())
+                .unwrap()
+                .to_device_id,
+            ""
+        );
     }
 
     /// ⭐⭐ **2026-10-12（owner 拍「4C 用逐位对一遍」）的命门** ✗：
@@ -932,9 +1039,15 @@ mod tests {
             "⛔ 只差公钥 ⇒ 数字码**必须不同** ✗ —— 一样的话，「当面逐位对一遍」就**担保不到**公钥 ✓"
         );
         // ⭐ 反向：**同一份载荷** ⇒ 数字码必须**逐字相同** ✓（⛔ 否则"对一遍"根本对不上 ✗）
-        assert_eq!(check_code(&ta), check_code(&encode_device_pair(&a).unwrap()));
+        assert_eq!(
+            check_code(&ta),
+            check_code(&encode_device_pair(&a).unwrap())
+        );
         // ⚠️ 顺带钉住"公钥那一格**真的进了载荷文本**"✗（⛔ 不是只在结构体里有 ✗）
-        assert!(ta.contains(&a.pubkey), "载荷文本里必须**看得见**那一把公钥：{ta}");
+        assert!(
+            ta.contains(&a.pubkey),
+            "载荷文本里必须**看得见**那一把公钥：{ta}"
+        );
     }
 
     /// ⭐ **别把"拒老码"变成"连自己的码也拒"** ✗：**带钥匙**的码必须**照旧往返** ✓。
@@ -957,7 +1070,10 @@ mod tests {
     fn a_device_pair_payload_is_never_produced_for_yourself() {
         let e = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "dev-jia", "dev-jia").unwrap_err();
         assert!(e.contains("自己"), "理由要点名「选到了自己」：{e}");
-        assert!(e.contains("不指定"), "要给出路：看不到对面就选「不指定」：{e}");
+        assert!(
+            e.contains("不指定"),
+            "要给出路：看不到对面就选「不指定」：{e}"
+        );
     }
 
     /// ⭐ **矩阵 U3 的纯函数半边**：两端载荷**差一个字节** ⇒ `check_code` 必须不同 ✓
@@ -965,14 +1081,26 @@ mod tests {
     ///  这里再钉一次，是因为**设备直连载荷**是新的输入形状 ✓）。
     #[test]
     fn the_check_code_separates_two_device_pair_payloads() {
-        let a = encode_device_pair(&device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-a", "").unwrap()).unwrap();
-        let b = encode_device_pair(&device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-b", "").unwrap()).unwrap();
-        let c = encode_device_pair(&device_pair_from("0.0.0.0:8789", "k7Qm-2pRt", "fp-a", "").unwrap()).unwrap();
+        let a =
+            encode_device_pair(&device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-a", "").unwrap())
+                .unwrap();
+        let b =
+            encode_device_pair(&device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-b", "").unwrap())
+                .unwrap();
+        let c =
+            encode_device_pair(&device_pair_from("0.0.0.0:8789", "k7Qm-2pRt", "fp-a", "").unwrap())
+                .unwrap();
         assert_ne!(check_code(&a), check_code(&b), "指纹不同 ⇒ 码必须不同");
         assert_ne!(check_code(&a), check_code(&c), "端口不同 ⇒ 码必须不同");
         // ⚠️ 而**核对码**对设备直连载荷同样有效（复用同一条 `check_code` ⇒ 码长不缩 ✓）
-        assert!(verify_confirm_code(&a, Some(&check_code(&a))).is_ok(), "核对了就要过");
-        assert!(verify_confirm_code(&a, Some(&check_code(&b))).is_err(), "对不上就要拒");
+        assert!(
+            verify_confirm_code(&a, Some(&check_code(&a))).is_ok(),
+            "核对了就要过"
+        );
+        assert!(
+            verify_confirm_code(&a, Some(&check_code(&b))).is_err(),
+            "对不上就要拒"
+        );
     }
 
     /// ⭐ **2026-10-01 修的真错**（owner 追问「监听地址不是自动配的吗、还会错？」抓到的 ✓）：
@@ -984,13 +1112,32 @@ mod tests {
     fn a_device_pair_payload_carries_a_copyable_bind_not_the_exporters_address() {
         // ① 具体地址 ⇒ 载荷里是**通配 ＋ 同一个端口**（⛔ 不是原样搬 ✗）
         let p = device_pair_from("192.168.1.5:8788", "k7Qm-2pRt", "fp-a", "").unwrap();
-        assert_eq!(p.bind, "0.0.0.0:8788", "具体地址不许原样搬（对方绑不了别人的 IP）");
+        assert_eq!(
+            p.bind, "0.0.0.0:8788",
+            "具体地址不许原样搬（对方绑不了别人的 IP）"
+        );
         // ② 端口要**留着**（不是一律换成 8788）
-        assert_eq!(device_pair_from("10.0.0.7:12345", "k7Qm-2pRt", "f", "").unwrap().bind, "0.0.0.0:12345");
+        assert_eq!(
+            device_pair_from("10.0.0.7:12345", "k7Qm-2pRt", "f", "")
+                .unwrap()
+                .bind,
+            "0.0.0.0:12345"
+        );
         // ③ 本来就是通配 ⇒ 原样（端口不变）
-        assert_eq!(device_pair_from("0.0.0.0:9999", "k7Qm-2pRt", "f", "").unwrap().bind, "0.0.0.0:9999");
+        assert_eq!(
+            device_pair_from("0.0.0.0:9999", "k7Qm-2pRt", "f", "")
+                .unwrap()
+                .bind,
+            "0.0.0.0:9999"
+        );
         // ④ ⚠️ 而「公网地址仍然拒」这一半**照样在**（`checked_bind` 把关 ⇒ 折通配**没放宽**边界 ✓）
-        assert!(device_pair_from("8.8.8.8:8788", "k7Qm-2pRt", "f", "").is_err(), "公网仍然拒");
-        assert!(device_pair_from("127.0.0.1:8788", "k7Qm-2pRt", "f", "").is_ok(), "回环（本机自测）仍可用");
+        assert!(
+            device_pair_from("8.8.8.8:8788", "k7Qm-2pRt", "f", "").is_err(),
+            "公网仍然拒"
+        );
+        assert!(
+            device_pair_from("127.0.0.1:8788", "k7Qm-2pRt", "f", "").is_ok(),
+            "回环（本机自测）仍可用"
+        );
     }
 }

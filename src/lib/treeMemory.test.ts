@@ -63,13 +63,15 @@ describe("treeMemory —— 展开/折叠按空间记住", () => {
     expect(localStorage.length).toBe(0);
   });
 
+  // ⚠️ 显式 20s 超时（2026-10-31 实测）：这条要写 `MAX_ENTRIES+1` 次、每次把整条数组 JSON 化，
+  //    单独跑 ~0.5s，但全量 410 个文件并行时会撞 5s 默认超时 ⇒ 假红（不是产品问题，也不是断言问题）。
   it("⑦ 有上限：超过 MAX 条 ⇒ 丢**最旧**的，键不会无限长 ✓", () => {
     for (let i = 0; i <= TREE_MEMORY_MAX_ENTRIES; i += 1) rememberNodeExpanded(WS, `node-${i}`, false);
     const rows = JSON.parse(localStorage.getItem(KEY) ?? "[]") as unknown[];
     expect(rows.length).toBeLessThanOrEqual(TREE_MEMORY_MAX_ENTRIES);
     expect(isNodeExpanded(WS, "node-0"), "最早那笔该被剪掉").toBe(true);
     expect(isNodeExpanded(WS, `node-${TREE_MEMORY_MAX_ENTRIES}`), "最新的必须还在").toBe(false);
-  });
+  }, 20_000);
 
   it("⑧ localStorage 写不进去（隐私模式/配额）⇒ 静默放弃，⛔ 不抛 ✗", () => {
     // ⚠️ 打**实例**方法（happy-dom 的 localStorage 不走 Storage.prototype ⇒ 打原型等于没打 ✗）

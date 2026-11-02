@@ -1,0 +1,147 @@
+/* S4（2026-11-01）：域抽取器搬出的**数据库页域（`.database-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* ---------- Database view ---------- */
+.database-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4) var(--space-5) var(--space-6);
+  overflow: hidden;
+}
+
+.database-empty {
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: var(--fs-14);
+}
+
+.database-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.database-title {
+  font-size: var(--fs-22);
+  font-weight: 700;
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-filter {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: var(--fs-13);
+  width: 240px;
+  outline: none;
+}
+
+.database-filter:focus {
+  border-color: var(--accent);
+}
+
+.database-count {
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.database-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  position: relative;
+}
+
+.database-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-size: var(--fs-13);
+}
+
+.database-table th,
+.database-table td {
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  padding: 0;
+}
+
+.database-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 1;
+}
+
+.database-table tbody tr {
+  transition: background var(--transition-fast);
+}
+
+.database-table tbody tr:hover {
+  background: var(--hover);
+}
+
+.database-table .db-th {
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  padding: var(--space-2) 10px;
+  white-space: nowrap;
+}
+
+.database-table .db-cell {
+  padding: var(--space-1) var(--space-2);
+  min-width: 120px;
+  max-width: 260px;
+}
+
+.database-table .db-empty {
+  padding: var(--space-5);
+  text-align: center;
+  color: var(--text-faint);
+  font-size: var(--fs-13);
+}
+
+@media (max-width: 768px) {
+.database-view { padding: 10px var(--space-3) var(--space-4); }
+.database-head { row-gap: 6px; margin-bottom: var(--space-2); }
+.database-title { order: 1; flex: 1 1 auto; font-size: var(--fs-18); }
+.database-count { order: 2; }
+/* 筛选框 + 右侧动作挤同一行：筛选框可缩到 120px（桌面上它是固定 240px）。 */
+  .database-filter {
+    order: 4;
+    flex: 1 1 120px;
+    width: auto;
+    min-width: 0;
+    min-height: 44px;
+    font-size: var(--fs-14);
+  }
+/* 外层 `.database-table-wrap` 本来就是 `overflow:auto`；这里让表**真的撑开**，
+     否则七列会被硬压进 292px（那时每一列都只剩几十像素）。 */
+  .database-table { width: max-content; min-width: 100%; }
+}
+}

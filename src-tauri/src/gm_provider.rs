@@ -68,7 +68,11 @@ pub enum GmProviderStatus {
     /// provider 真的吃下了国密标签（回显就是它）⇒ 后面写出来的库才是国密那套。
     Applied { hmac: String, kdf: String },
     /// 没生效：**把回显原样带出来**，因为"回显仍是 HMAC_SHA512"正是静默降级的证据。
-    Unsupported { hmac: String, kdf: String, note: String },
+    Unsupported {
+        hmac: String,
+        kdf: String,
+        note: String,
+    },
 }
 
 impl GmProviderStatus {
@@ -144,7 +148,10 @@ pub fn configure_gm_cipher(c: &Connection) -> Result<(), String> {
 ///   ② **这条连接上标签有没有落值** —— 用**回显**看（[`read_gm_cipher_status`]）；回显读不出来时**不判红**
 ///      （那说明这条连接本来就有别的问题，让后面的读去失败、由 `cipher_open_error` 如实翻译）。
 pub fn set_gm_cipher_labels(c: &Connection) -> Result<(), String> {
-    set_pragma(c, &format!("PRAGMA cipher_hmac_algorithm = {GM_HMAC_LABEL};"))?;
+    set_pragma(
+        c,
+        &format!("PRAGMA cipher_hmac_algorithm = {GM_HMAC_LABEL};"),
+    )?;
     set_pragma(c, &format!("PRAGMA cipher_kdf_algorithm = {GM_KDF_LABEL};"))?;
     Ok(())
 }
@@ -170,7 +177,9 @@ pub fn library_recognizes_gm_labels() -> bool {
         if set_gm_cipher_labels(&c).is_err() {
             return false;
         }
-        read_gm_cipher_status(&c).map(|s| s.is_applied()).unwrap_or(false)
+        read_gm_cipher_status(&c)
+            .map(|s| s.is_applied())
+            .unwrap_or(false)
     })
 }
 
@@ -297,7 +306,8 @@ pub fn generate_sm3_fixture(dest: &std::path::Path) -> Result<(), String> {
                 let _ = std::fs::remove_file(&tmp);
                 return Err(format!("夹具太小，像个空库：{n} 字节 ⇒ 已丢弃"));
             }
-            std::fs::rename(&tmp, dest).map_err(|e| format!("把夹具放到 {} 失败: {e}", dest.display()))?;
+            std::fs::rename(&tmp, dest)
+                .map_err(|e| format!("把夹具放到 {} 失败: {e}", dest.display()))?;
             Ok(())
         }
         Err(e) => {
@@ -333,7 +343,9 @@ mod tests {
         if configure_gm_cipher(&c).is_err() {
             return false;
         }
-        read_gm_cipher_status(&c).map(|s| s.is_applied()).unwrap_or(false)
+        read_gm_cipher_status(&c)
+            .map(|s| s.is_applied())
+            .unwrap_or(false)
     }
 
     /// ★ 判据 1：**"设下去了" ≠ "生效了"** —— 只有在**回显就是国密标签**时才允许算生效。
@@ -375,7 +387,10 @@ mod tests {
         let c = fresh();
         configure_gm_cipher(&c).expect("配置不该报错");
         let e = read_gm_cipher_status(&c).expect_err("未 key 时读状态必须报错，而不是猜一个值");
-        assert!(e.contains("cipher_hmac_algorithm"), "错误信息要点出是哪条 PRAGMA 读不出来：{e}");
+        assert!(
+            e.contains("cipher_hmac_algorithm"),
+            "错误信息要点出是哪条 PRAGMA 读不出来：{e}"
+        );
     }
 
     /// ★ 判据 3：配过国密参数的连接**仍然可用**（P2 的接线点就在这个位置）。
@@ -390,7 +405,9 @@ mod tests {
             Ok(()) => {
                 c.execute_batch("CREATE TABLE t(x INTEGER); INSERT INTO t VALUES (7);")
                     .expect("配过国密参数的连接必须还能建表写值");
-                let n: i64 = c.query_row("SELECT x FROM t", [], |r| r.get(0)).expect("必须还能读");
+                let n: i64 = c
+                    .query_row("SELECT x FROM t", [], |r| r.get(0))
+                    .expect("必须还能读");
                 assert_eq!(n, 7);
             }
             Err(e) => {
@@ -440,8 +457,10 @@ mod tests {
         set_pragma(&c, KEY_PRAGMA).expect("设 key");
         // 直接读回显（不走 `read_gm_cipher_status`：v4 之后回显可能就是 GM 标签，那是**默认值**的功劳，
         // 不是"key 之前设的标签生效了"）
-        let hmac = pragma_str(&c, "cipher_hmac_algorithm").expect("读状态（连接是健康的，回显读得到）");
-        let kdf = pragma_str(&c, "cipher_kdf_algorithm").expect("读状态（连接是健康的，回显读得到）");
+        let hmac =
+            pragma_str(&c, "cipher_hmac_algorithm").expect("读状态（连接是健康的，回显读得到）");
+        let kdf =
+            pragma_str(&c, "cipher_kdf_algorithm").expect("读状态（连接是健康的，回显读得到）");
         assert_ne!(
             hmac, "HMAC_SHA256",
             "key 之前设的标签被静默丢掉 ⇒ 回显不该是我们设的那个标签（实际拿到 {hmac}）"
@@ -463,8 +482,14 @@ mod tests {
         if st.is_applied() {
             assert!(s.contains("已生效"), "生效时的描述应正面说明：{s}");
         } else {
-            assert!(s.contains("未生效"), "未生效时必须明说未生效，不能含糊：{s}");
-            assert!(s.contains("HMAC_SHA512"), "未生效时应把回显带出来（可核对）：{s}");
+            assert!(
+                s.contains("未生效"),
+                "未生效时必须明说未生效，不能含糊：{s}"
+            );
+            assert!(
+                s.contains("HMAC_SHA512"),
+                "未生效时应把回显带出来（可核对）：{s}"
+            );
         }
     }
 
@@ -497,7 +522,10 @@ mod tests {
                 "拒绝的理由要说清是回显不对（否则看不出是「静默降级」）：{e}"
             );
             assert!(!dest.exists(), "拒绝时必须不留下夹具文件");
-            assert!(!dest.with_extension("tmp").exists(), "拒绝时必须把临时文件也删掉（不留半成品）");
+            assert!(
+                !dest.with_extension("tmp").exists(),
+                "拒绝时必须把临时文件也删掉（不留半成品）"
+            );
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -596,8 +624,11 @@ mod tests {
     fn probe_how_default_build_reacts_to_gm_labels() {
         let c = Connection::open_in_memory().expect("开内存库");
         // 先上 key，让"加密参数"这条路真的被走到（没 key 时 SQLCipher 是明文模式，PRAGMA 值不代表加密路径）
-        set_pragma(&c, "PRAGMA key = \"x'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff'\";")
-            .expect("设 key");
+        set_pragma(
+            &c,
+            "PRAGMA key = \"x'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff'\";",
+        )
+        .expect("设 key");
 
         println!("== 事实：默认构建自己报的加密参数 ==");
         for p in [
@@ -608,12 +639,18 @@ mod tests {
             "cipher_kdf_iter",
             "cipher_hmac_sz",
         ] {
-            println!("  {p} = {}", pragma_str(&c, p).unwrap_or_else(|e| format!("<{e}>")));
+            println!(
+                "  {p} = {}",
+                pragma_str(&c, p).unwrap_or_else(|e| format!("<{e}>"))
+            );
         }
 
         // 基线：先确认这个库确实能读写（否则下面的"拒绝"可能只是别的原因）
-        c.execute_batch("CREATE TABLE t(x); INSERT INTO t VALUES (1);").expect("建表插值");
-        let n: i64 = c.query_row("SELECT count(*) FROM t", [], |r| r.get(0)).unwrap();
+        c.execute_batch("CREATE TABLE t(x); INSERT INTO t VALUES (1);")
+            .expect("建表插值");
+        let n: i64 = c
+            .query_row("SELECT count(*) FROM t", [], |r| r.get(0))
+            .unwrap();
         println!("  读写自检：t 里有 {n} 行");
 
         println!("== 尝试 1：把 HMAC 换成国密标签 ==");
@@ -664,14 +701,24 @@ mod tests {
                 println!("== 顺序 A：标签在前 ==\n  设标签：{r:?}");
             }
             let rk = set_pragma(&c, "PRAGMA key = \"x'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff'\";");
-            println!("  设 key：{}", rk.map(|_| "ok".to_string()).unwrap_or_else(|e| e));
+            println!(
+                "  设 key：{}",
+                rk.map(|_| "ok".to_string()).unwrap_or_else(|e| e)
+            );
             if !before_key {
                 let r = set_pragma(&c, label);
                 println!("== 顺序 B：标签在后 ==\n  设标签：{r:?}");
             }
-            println!("  回显 hmac = {}", pragma_str(&c, "cipher_hmac_algorithm").unwrap_or_default());
+            println!(
+                "  回显 hmac = {}",
+                pragma_str(&c, "cipher_hmac_algorithm").unwrap_or_default()
+            );
             let w = c.execute_batch("CREATE TABLE t(x); INSERT INTO t VALUES (1);");
-            println!("  写：{}", w.map(|_| "ok".to_string()).unwrap_or_else(|e| e.to_string()));
+            println!(
+                "  写：{}",
+                w.map(|_| "ok".to_string())
+                    .unwrap_or_else(|e| e.to_string())
+            );
             let rd: Result<i64, _> = c.query_row("SELECT count(*) FROM t", [], |r| r.get(0));
             println!("  读：{rd:?}");
         }
@@ -693,7 +740,8 @@ mod tests {
         let path = dir.join("probe.db");
         // ⚠️ 与 `security.rs::set_cipher_key` 同一种写法（`PRAGMA key = "x'…'";`）：
         //    少一层引号会直接 syntax error —— 我第一版就是这么错的，记在这里免得重踩
-        let key = "PRAGMA key = \"x'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff'\";";
+        let key =
+            "PRAGMA key = \"x'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff'\";";
 
         {
             let c = Connection::open(&path).expect("开库");
@@ -703,7 +751,8 @@ mod tests {
                 Err(e) => println!("  写入端：设标签报错 ⇒ {e}"),
             }
             set_pragma(&c, key).expect("设 key");
-            c.execute_batch("CREATE TABLE t(x); INSERT INTO t VALUES (42);").expect("写数据");
+            c.execute_batch("CREATE TABLE t(x); INSERT INTO t VALUES (42);")
+                .expect("写数据");
         }
 
         // 重开：**同一把 key** 能不能读回来（能读回来 ≠ 真的用了 SM3 —— 那要看回显）

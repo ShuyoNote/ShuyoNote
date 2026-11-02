@@ -127,7 +127,11 @@ pub fn retention_keep(entries: &[Snapshot], now: u64) -> RetentionPlan {
     let mut seen_months = std::collections::HashSet::new();
 
     for s in sorted {
-        let age_days = if now >= s.unix { (now - s.unix) / DAY } else { 0 };
+        let age_days = if now >= s.unix {
+            (now - s.unix) / DAY
+        } else {
+            0
+        };
         let keep = if age_days < KEEP_DAYS {
             seen_days.insert(days_of(s.unix))
         } else if age_days < KEEP_WEEKS * 7 {
@@ -167,7 +171,11 @@ pub fn log_line(ran: bool, kept: usize, removed: usize, note: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunResult {
     /// 跑成功了：kept/removed 由保留策略给出 ✓
-    Ok { kept: usize, removed: usize, note: String },
+    Ok {
+        kept: usize,
+        removed: usize,
+        note: String,
+    },
     /// 没跑（例如加密空间不支持在线备份 ⇒ 如实跳过，**不假装成功** ✓）
     Skipped { note: String },
     /// 跑了但失败（错误必须进日志 ✓）
@@ -231,12 +239,7 @@ impl LastRunStore for MemoryStore {
 ///   ① 不到点 ⇒ `ran=false`，**绝不调用 `run`** ✓（否则每次 tick 都刷一份备份 ✗）
 ///   ② 到点且跑过 ⇒ 无论成败都**写入"刚刚跑过"** ✓（否则失败会变成每 tick 重试风暴 ✗）
 ///   ③ 失败 ⇒ 日志行里带 `Failed` 与原因 ✓（跳过要如实报 ✓）
-pub fn tick<S, C, F>(
-    store: &mut S,
-    clock: &C,
-    interval_secs: u64,
-    run: &mut F,
-) -> RunOutcome
+pub fn tick<S, C, F>(store: &mut S, clock: &C, interval_secs: u64, run: &mut F) -> RunOutcome
 where
     S: LastRunStore,
     C: Clock,
@@ -266,7 +269,12 @@ where
 /// 起一个后台线程：**启动时先跑一轮**，然后每 `tick_secs` 走一次 `tick` ✓
 ///
 /// ⚠️ 只做"睡 → tick"这件事；`store` 的读写与真备份都在调用方给的闭包里 ✓
-pub fn spawn_loop<S, F>(mut store: S, interval_secs: u64, tick_secs: u64, mut run: F) -> std::thread::JoinHandle<()>
+pub fn spawn_loop<S, F>(
+    mut store: S,
+    interval_secs: u64,
+    tick_secs: u64,
+    mut run: F,
+) -> std::thread::JoinHandle<()>
 where
     S: LastRunStore + Send + 'static,
     F: FnMut() -> RunResult + Send + 'static,
@@ -360,8 +368,14 @@ mod tests {
             snap("w-c-20d.zip", now - 20 * DAY),
         ];
         let p = retention_keep(&entries, now);
-        assert!(p.keep.contains(&"w-a-10d.zip".to_string()), "同周该留最新 ✓");
-        assert!(!p.keep.contains(&"w-b-11d.zip".to_string()), "同周旧份该删 ✓");
+        assert!(
+            p.keep.contains(&"w-a-10d.zip".to_string()),
+            "同周该留最新 ✓"
+        );
+        assert!(
+            !p.keep.contains(&"w-b-11d.zip".to_string()),
+            "同周旧份该删 ✓"
+        );
         assert!(p.keep.contains(&"w-c-20d.zip".to_string()), "另一周该留 ✓");
     }
 
@@ -375,9 +389,18 @@ mod tests {
             snap("ancient.zip", now - 366 * DAY), // 超过 12 月 ⇒ 删
         ];
         let p = retention_keep(&entries, now);
-        assert!(p.keep.contains(&"m-old-1.zip".to_string()), "该月的最新一份该留 ✓");
-        assert!(!p.keep.contains(&"m-old-2.zip".to_string()), "同月旧份该删 ✓");
-        assert!(!p.keep.contains(&"ancient.zip".to_string()), "超过 12 月该删 ✓");
+        assert!(
+            p.keep.contains(&"m-old-1.zip".to_string()),
+            "该月的最新一份该留 ✓"
+        );
+        assert!(
+            !p.keep.contains(&"m-old-2.zip".to_string()),
+            "同月旧份该删 ✓"
+        );
+        assert!(
+            !p.keep.contains(&"ancient.zip".to_string()),
+            "超过 12 月该删 ✓"
+        );
     }
 
     /// ⭐ 评估文档 §6 P1 的判据逐字：「保留策略跑一遍后**旧份消失、新份在**」✓
@@ -385,13 +408,16 @@ mod tests {
     fn p1_criterion_old_gone_new_stays() {
         let now = 500 * DAY;
         let entries = vec![
-            snap("fresh.zip", now - 60),          // 新 ✓
-            snap("old-same-day.zip", now - 120),  // 同一天 ⇒ 该消失 ✓
+            snap("fresh.zip", now - 60),           // 新 ✓
+            snap("old-same-day.zip", now - 120),   // 同一天 ⇒ 该消失 ✓
             snap("very-old.zip", now - 400 * DAY), // 超期 ⇒ 该消失 ✓
         ];
         let p = retention_keep(&entries, now);
         assert!(p.keep.contains(&"fresh.zip".to_string()), "新份在 ✓");
-        assert!(p.remove.contains(&"old-same-day.zip".to_string()), "旧份消失 ✓");
+        assert!(
+            p.remove.contains(&"old-same-day.zip".to_string()),
+            "旧份消失 ✓"
+        );
         assert!(p.remove.contains(&"very-old.zip".to_string()), "超期消失 ✓");
         // 每个输入恰好归到 keep 或 remove 之一（⭐ 不重不漏 ✓）
         assert_eq!(p.keep.len() + p.remove.len(), entries.len());
@@ -427,10 +453,17 @@ mod tests {
         let mut calls = 0;
         let out = tick(&mut store, &clock, DEFAULT_INTERVAL_SECS, &mut || {
             calls += 1;
-            RunResult::Ok { kept: 0, removed: 0, note: "x".into() }
+            RunResult::Ok {
+                kept: 0,
+                removed: 0,
+                note: "x".into(),
+            }
         });
         assert!(!out.ran, "不到点不该跑 ✓");
-        assert_eq!(calls, 0, "⭐ 不到点**绝不能**调用 run（否则每次 tick 都刷备份 ✗）");
+        assert_eq!(
+            calls, 0,
+            "⭐ 不到点**绝不能**调用 run（否则每次 tick 都刷备份 ✗）"
+        );
         assert!(out.note.contains("not-due"), "日志要明说没到点 ✓");
     }
 
@@ -438,13 +471,18 @@ mod tests {
     fn tick_due_runs_and_records_success() {
         let mut store = FakeStore(Some(100 * DAY));
         let clock = FixedClock(101 * DAY);
-        let out = tick(&mut store, &clock, DEFAULT_INTERVAL_SECS, &mut || RunResult::Ok {
-            kept: 3,
-            removed: 2,
-            note: "ok".into(),
+        let out = tick(&mut store, &clock, DEFAULT_INTERVAL_SECS, &mut || {
+            RunResult::Ok {
+                kept: 3,
+                removed: 2,
+                note: "ok".into(),
+            }
         });
         assert!(out.ran, "到点该跑 ✓");
-        assert!(out.note.contains("ran=true kept=3 removed=2"), "成功读数要进日志 ✓");
+        assert!(
+            out.note.contains("ran=true kept=3 removed=2"),
+            "成功读数要进日志 ✓"
+        );
         assert_eq!(store.get(), Some(101 * DAY), "跑过之后要记下『刚刚跑过』✓");
     }
 
@@ -452,36 +490,54 @@ mod tests {
     fn tick_records_last_run_even_on_failure() {
         let mut store = FakeStore(Some(100 * DAY));
         let clock = FixedClock(101 * DAY);
-        let out = tick(&mut store, &clock, DEFAULT_INTERVAL_SECS, &mut || RunResult::Failed {
-            note: "磁盘满".into(),
+        let out = tick(&mut store, &clock, DEFAULT_INTERVAL_SECS, &mut || {
+            RunResult::Failed {
+                note: "磁盘满".into(),
+            }
         });
         assert!(out.ran);
         assert!(out.note.contains("failed: 磁盘满"), "失败原因必须进日志 ✓");
-        assert_eq!(store.get(), Some(101 * DAY), "⭐ 失败也要记账（否则会变成每 tick 重试风暴 ✗）");
+        assert_eq!(
+            store.get(),
+            Some(101 * DAY),
+            "⭐ 失败也要记账（否则会变成每 tick 重试风暴 ✗）"
+        );
     }
 
     #[test]
     fn tick_skipped_is_reported_not_silently_ok() {
         let mut store = FakeStore(None);
         let clock = FixedClock(50 * DAY);
-        let out = tick(&mut store, &clock, DEFAULT_INTERVAL_SECS, &mut || RunResult::Skipped {
-            note: "加密空间不支持在线备份".into(),
+        let out = tick(&mut store, &clock, DEFAULT_INTERVAL_SECS, &mut || {
+            RunResult::Skipped {
+                note: "加密空间不支持在线备份".into(),
+            }
         });
         assert!(out.ran);
-        assert!(out.note.contains("skipped:"), "⭐ 跳过要**如实报**，不许静默算成功 ✓");
+        assert!(
+            out.note.contains("skipped:"),
+            "⭐ 跳过要**如实报**，不许静默算成功 ✓"
+        );
         assert!(out.note.contains("加密空间"), "跳过原因要写清 ✓");
-
     }
 
     // ── 有效快照判据（⭐ 半个包不算一份 ✓） ──────────────────────────────
     #[test]
     fn valid_snapshot_requires_zip_name_and_nonzero_size() {
         assert!(is_valid_snapshot("shuyonote-backup-1.zip", 10));
-        assert!(!is_valid_snapshot("shuyonote-backup-1.zip", 0), "⭐ 0 字节 = 半个包 ⇒ 不算 ✓");
-        assert!(!is_valid_snapshot("shuyonote-backup-1.zip.part", 10), "⭐ 正在写 ⇒ 不算 ✓");
-        assert!(!is_valid_snapshot("别人的备份.zip", 10), "⭐ 别人的名字不受我们管 ⇒ 不算 ✓");
+        assert!(
+            !is_valid_snapshot("shuyonote-backup-1.zip", 0),
+            "⭐ 0 字节 = 半个包 ⇒ 不算 ✓"
+        );
+        assert!(
+            !is_valid_snapshot("shuyonote-backup-1.zip.part", 10),
+            "⭐ 正在写 ⇒ 不算 ✓"
+        );
+        assert!(
+            !is_valid_snapshot("别人的备份.zip", 10),
+            "⭐ 别人的名字不受我们管 ⇒ 不算 ✓"
+        );
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -633,7 +689,9 @@ mod p3_tests {
         let (svc, _) = systemd_units("/opt/shuyonote/shuyonote", DEFAULT_INTERVAL_SECS);
         assert!(svc.contains("Type=oneshot"), "⭐ 跑完就退 ✓：{svc}");
         assert!(
-            svc.contains(&format!("ExecStart=/opt/shuyonote/shuyonote {BACKUP_ONCE_FLAG}")),
+            svc.contains(&format!(
+                "ExecStart=/opt/shuyonote/shuyonote {BACKUP_ONCE_FLAG}"
+            )),
             "⭐ 无头入口必须是 `--backup-once` ✓：{svc}"
         );
         assert!(
@@ -645,9 +703,18 @@ mod p3_tests {
     #[test]
     fn systemd_timer_is_daily_and_catches_up() {
         let (_, timer) = systemd_units("/opt/shuyonote/shuyonote", DEFAULT_INTERVAL_SECS);
-        assert!(timer.contains("OnUnitActiveSec=86400s"), "⭐ 每天一次 ✓：{timer}");
-        assert!(timer.contains("Persistent=true"), "⭐ 关机错过要补 ✓：{timer}");
-        assert!(timer.contains("Unit=shuyonote-backup.service"), "⭐ 拉起哪个 unit ✓");
+        assert!(
+            timer.contains("OnUnitActiveSec=86400s"),
+            "⭐ 每天一次 ✓：{timer}"
+        );
+        assert!(
+            timer.contains("Persistent=true"),
+            "⭐ 关机错过要补 ✓：{timer}"
+        );
+        assert!(
+            timer.contains("Unit=shuyonote-backup.service"),
+            "⭐ 拉起哪个 unit ✓"
+        );
         assert!(timer.contains("WantedBy=timers.target"), "⭐ 装到哪一档 ✓");
     }
 
@@ -804,7 +871,9 @@ pub struct SnapshotList {
 /// 文件名里的时刻 ⇒ unix 秒。`shuyonote-backup-<n>.zip` ⇒ `n` 是**毫秒**（`run_auto_backup_once`
 /// 用 `as_millis()` 命名 ✓）⇒ 这里**毫秒/秒都认**（≥ 10^12 当毫秒 ✓），解不出返回 `None`（由调用方用 mtime 兜底 ✓）。
 pub fn unix_from_snapshot_name(name: &str) -> Option<u64> {
-    let stem = name.strip_prefix("shuyonote-backup-")?.strip_suffix(".zip")?;
+    let stem = name
+        .strip_prefix("shuyonote-backup-")?
+        .strip_suffix(".zip")?;
     let n: u64 = stem.parse().ok()?;
     Some(if n >= 1_000_000_000_000 { n / 1000 } else { n })
 }
@@ -836,11 +905,17 @@ pub fn list_snapshots(dir: &std::path::Path) -> Result<SnapshotList, String> {
             continue; // ⭐ 半个包（0 字节／`.part`）不算一份 ✓（复用同一处口径 ✓）
         }
         let unix = unix_from_snapshot_name(&name)
-            .or_else(|| meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()))
+            .or_else(|| {
+                meta.modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+            })
             .unwrap_or(0);
         out.entries.push(SnapshotEntry { name, unix, size });
     }
-    out.entries.sort_by(|a, b| b.unix.cmp(&a.unix).then_with(|| b.name.cmp(&a.name)));
+    out.entries
+        .sort_by(|a, b| b.unix.cmp(&a.unix).then_with(|| b.name.cmp(&a.name)));
     out.bytes = out.entries.iter().map(|e| e.size).sum();
     out.last_success_unix = out.entries.first().map(|e| e.unix);
     Ok(out)
@@ -864,24 +939,49 @@ mod snapshot_list_tests {
         let dir = tmp("list");
         // 两份有效（第二份用**毫秒**命名 ⇒ 解出来应当是秒 ✓）
         std::fs::write(dir.join("shuyonote-backup-1759900000.zip"), vec![0u8; 10]).unwrap();
-        std::fs::write(dir.join("shuyonote-backup-1759903600000.zip"), vec![0u8; 20]).unwrap();
+        std::fs::write(
+            dir.join("shuyonote-backup-1759903600000.zip"),
+            vec![0u8; 20],
+        )
+        .unwrap();
         // 三个"不算一份"的：0 字节 zip ／ `.part` ／ 别人的文件 ✓
-        std::fs::write(dir.join("shuyonote-backup-1759909999.zip"), Vec::<u8>::new()).unwrap();
-        std::fs::write(dir.join("shuyonote-backup-1760000000.zip.part"), vec![0u8; 5]).unwrap();
+        std::fs::write(
+            dir.join("shuyonote-backup-1759909999.zip"),
+            Vec::<u8>::new(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("shuyonote-backup-1760000000.zip.part"),
+            vec![0u8; 5],
+        )
+        .unwrap();
         std::fs::write(dir.join("别人的文件.zip"), vec![0u8; 99]).unwrap();
 
         let got = list_snapshots(&dir).expect("目录在 ⇒ 应当 Ok");
-        assert_eq!(got.entries.len(), 2, "⛔ 半个包／别人的文件不许算一份：{:?}", got.entries);
+        assert_eq!(
+            got.entries.len(),
+            2,
+            "⛔ 半个包／别人的文件不许算一份：{:?}",
+            got.entries
+        );
         assert_eq!(got.bytes, 30, "总大小只算有效那两份");
-        assert_eq!(got.last_success_unix, Some(1_759_903_600), "毫秒命名要解成秒 ✓");
-        assert_eq!(got.entries[0].name, "shuyonote-backup-1759903600000.zip", "从新到旧 ✓");
+        assert_eq!(
+            got.last_success_unix,
+            Some(1_759_903_600),
+            "毫秒命名要解成秒 ✓"
+        );
+        assert_eq!(
+            got.entries[0].name, "shuyonote-backup-1759903600000.zip",
+            "从新到旧 ✓"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// ⭐ 判据 b 的地基：**"目录不存在"＝真的 0 份**（`Ok` ✓，⛔ 不是 `Err` ✗）
     #[test]
     fn missing_dir_is_a_real_zero_not_an_error() {
-        let dir = std::env::temp_dir().join(format!("shuyonote-list-{}-missing", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("shuyonote-list-{}-missing", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let got = list_snapshots(&dir).expect("目录不存在 ⇒ Ok(空)（＝真的 0 份 ✓）");
         assert_eq!(got.entries.len(), 0);
@@ -912,11 +1012,21 @@ mod snapshot_list_tests {
     /// 本用例**复用**既有的 `retention_keep`（⛔ 不写第二份保留逻辑 ✗）来钉住这件事 ✓。
     #[test]
     fn same_day_second_backup_moves_last_success_while_retention_keeps_one_per_day() {
-        let older = Snapshot { name: "shuyonote-backup-1759900000000.zip".into(), unix: 1_759_900_000 };
-        let newer = Snapshot { name: "shuyonote-backup-1759903600000.zip".into(), unix: 1_759_903_600 };
+        let older = Snapshot {
+            name: "shuyonote-backup-1759900000000.zip".into(),
+            unix: 1_759_900_000,
+        };
+        let newer = Snapshot {
+            name: "shuyonote-backup-1759903600000.zip".into(),
+            unix: 1_759_903_600,
+        };
         // 同一天（相隔 1 小时）⇒ 同一个桶 ⇒ 只留最新那份 ✓
         let plan = retention_keep(&[older.clone(), newer.clone()], 1_759_903_600 + 60);
-        assert_eq!(plan.keep.len(), 1, "同一天只留最新一份 ⇒ ⛔ 份数不该 +1：{plan:?}");
+        assert_eq!(
+            plan.keep.len(),
+            1,
+            "同一天只留最新一份 ⇒ ⛔ 份数不该 +1：{plan:?}"
+        );
         assert_eq!(plan.remove.len(), 1, "旧那份会被删：{plan:?}");
         assert_eq!(plan.keep[0], newer.name);
 
@@ -926,7 +1036,13 @@ mod snapshot_list_tests {
             .filter_map(|s| unix_from_snapshot_name(&s.name))
             .max()
             .expect("两份名字都应能解出时刻");
-        assert_eq!(newest_unix, 1_759_903_600, "「上次成功备份」显示的是**最新**那份的时刻 ✓");
-        assert_ne!(newest_unix, older.unix, "⛔ 不许把旧那份的时刻当'上次成功' ✗");
+        assert_eq!(
+            newest_unix, 1_759_903_600,
+            "「上次成功备份」显示的是**最新**那份的时刻 ✓"
+        );
+        assert_ne!(
+            newest_unix, older.unix,
+            "⛔ 不许把旧那份的时刻当'上次成功' ✗"
+        );
     }
 }

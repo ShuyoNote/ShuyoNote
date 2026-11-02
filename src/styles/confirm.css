@@ -1,0 +1,169 @@
+/* S4（2026-11-01）：域抽取器搬出的**确认对话框域（`.confirm-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* In-app confirm dialog (centered in the app window), theme-consistent card. */
+/* 层级约定（改动前先读）：
+ *   1000  普通弹层 / 抽屉（space-switcher、backup 下拉、drawing-modal…）
+ *   1100  拖拽幽灵
+ *   1200  全屏模态面板（设置中心、存储面板、快捷键、关于、AI 设置）
+ *   1300  空间导入导出进度（模态开着也要能看到）
+ *   1400  确认 / 输入对话框——**由模态内部发起，必须盖住模态**
+ *   1500  toast 反馈——盖住一切
+ * 这里曾出问题：存储面板 1200 而确认框 1000，「清空回收站」的确认框被面板挡住。 */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  background: rgba(15, 23, 42, 0.34);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.confirm-box {
+  width: min(360px, calc(100vw - 48px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  padding: 18px 18px 14px;
+}
+
+.confirm-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.confirm-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-14);
+  font-weight: 700;
+  line-height: 1;
+  flex: none;
+}
+
+.confirm-icon-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.confirm-title {
+  font-size: var(--fs-15);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.confirm-message {
+  font-size: var(--fs-13);
+  color: var(--text-dim);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: 18px;
+}
+
+.confirm-cancel {
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  padding: 7px var(--space-4);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--fs-13);
+  font-weight: 500;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.confirm-cancel:hover {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+
+.confirm-ok {
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+  padding: 7px var(--space-4);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--fs-13);
+  font-weight: 600;
+  transition: background var(--transition-fast), filter var(--transition-fast);
+}
+
+.confirm-ok:hover {
+  background: var(--accent-strong);
+}
+
+/* Danger confirms use the theme accent for the action button (harmonized with
+   the theme); the destructive cue is carried by the red "!" icon badge. */
+.confirm-ok-danger {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.confirm-ok-danger:hover {
+  background: var(--accent-strong);
+}
+
+.confirm-ok:focus-visible,
+.confirm-cancel:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 1px;
+}
+
+@media (max-width: 768px), (max-height: 520px) {
+.confirm-box {
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    /* `--ovh` 已经扣掉状态栏与底部（手势条 / 键盘）：盒子在任何视口下都装得下。 */
+    max-height: calc(var(--ovh) - 24px);
+  }
+.confirm-overlay {
+    align-items: flex-end;
+    justify-content: center;
+    /* 先重置四个方向（.ai-settings-overlay 原先有 padding-top:10vh、
+       .plugin-manager-overlay 有 padding:4vh 24px），再加安全区。 */
+    padding: var(--space-3);
+    padding-top: calc(var(--space-3) + var(--sat));
+    padding-bottom: calc(var(--space-3) + max(var(--sab), var(--kb)));
+    padding-left: calc(var(--space-3) + var(--sal));
+    padding-right: calc(var(--space-3) + var(--sar));
+  }
+.confirm-box {
+    position: static;
+    transform: none;
+    width: 100%;
+    max-width: 100%;
+    /* 顶部留 24px：让用户看得见"后面还有内容"。`--ovh` 里已经扣掉了状态栏
+       与底部（手势条 / 键盘），所以这里只需要那个 24px 的呼吸位。 */
+    max-height: calc(var(--ovh) - 24px);
+    border-radius: 16px 16px var(--radius-lg) var(--radius-lg);
+  }
+.confirm-box button {
+    min-height: 44px;
+  }
+}
+}

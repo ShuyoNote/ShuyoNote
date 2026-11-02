@@ -53,6 +53,12 @@ const jsSig = (cap) => `api.${cap.jsPath.join(".")}(${cap.args.map((a) => a.name
 /** JS 侧实参 → 传给 __cap 的对象字面量片段。 */
 function argExpr(a) {
   const coerce = a.type === "number" ? "Number" : "String";
+  // ⭐ B1b（2026-10-29）：`where` 是**数组**（复合值）—— ⛔ 不能 `String()` 强转
+  //   （`String([{…}])` ⇒ `"[object Object]"`，宿主拿到的是垃圾）。复合值原样递给
+  //   `JSON.stringify(args)` 即可（shim 的下游就是 JSON）。
+  if (a.type === "array" || a.type === "object") {
+    return `${a.name}: ${a.name} === undefined ? undefined : ${a.name}`;
+  }
   // 关键：`undefined` 必须原样传下去（JSON.stringify 会丢掉这个键），
   // 否则 String(undefined) = "undefined" 会让宿主把"没传参"当成"传了个字符串"，
   // 变成静默的错误输入（曾把 api.blocks.append("文本") 的文本当成 pageId）。
@@ -129,6 +135,8 @@ export function genRust(reg) {
   l.push("    pub mediate: &'static str,");
   l.push("    /// 实现函数名（在 plugins.rs 里），供 check-capabilities 做覆盖校验。");
   l.push("    pub rust: &'static str,");
+  l.push("    /// ⭐ AI 不可见空间清单只遮蔽 AI 面（ai:true）能力。");
+  l.push("    pub ai: bool,");
   l.push("}");
   l.push("");
   l.push(`pub const API_VERSION: &str = ${JSON.stringify(reg.apiVersion)};`);
@@ -144,7 +152,7 @@ export function genRust(reg) {
     l.push(
       `    Capability { id: ${JSON.stringify(c.id)}, kind: ${JSON.stringify(c.kind)}, scope: ${JSON.stringify(
         c.scope,
-      )}, permission: ${perm}, since: ${JSON.stringify(c.since)}, mediate: ${JSON.stringify(c.mediate ?? "-")}, rust: ${JSON.stringify(c.rust)} },`,
+      )}, permission: ${perm}, since: ${JSON.stringify(c.since)}, mediate: ${JSON.stringify(c.mediate ?? "-")}, rust: ${JSON.stringify(c.rust)}, ai: ${c.ai ? "true" : "false"} },`,
     );
   }
   l.push("];");
@@ -384,7 +392,8 @@ export function genTypes(reg) {
     node[path[path.length - 1]] = cap;
   }
   const tsType = (t) =>
-    ({ string: "string", number: "number", boolean: "boolean", void: "void" })[t] ?? "unknown";
+    ({ string: "string", number: "number", boolean: "boolean", void: "void", array: "unknown[]", object: "Record<string, unknown>" })[t] ??
+    "unknown";
   const emitTs = (obj, indent) => {
     const pad = " ".repeat(indent);
     return Object.entries(obj)
@@ -393,7 +402,7 @@ export function genTypes(reg) {
           const params = val.args
             .map((a) => {
               const opt = a.required === false ? "?" : "";
-              const t = a.enum ? a.enum.map((e) => JSON.stringify(e)).join(" | ") : tsType(a.type);
+              const t = a.enum ? a.enum.map((e) => JSON.stringify(e)).join(" | ") : (a.ts ?? tsType(a.type));
               return `${a.name}${opt}: ${t}`;
             })
             .join(", ");
@@ -1144,6 +1153,42 @@ export function genPackageJson(reg) {
  * 字段：`capabilityId` 是桥回传时用的注册表 id；`name` 是 MCP 工具名（**不许带点** ⇒ `.` 换 `_`）。
  * ⚠️ 别在任何提示词里写死工具名：不同客户端可能改写不合规字符（**本条未复核** ✗，不当作已核实 ✓）。
  */
+const CROSS_SPACE_WRITE = new Set([
+  "pages.create",
+  "pages.update",
+  "blocks.append",
+  "blocks.insert",
+  "blocks.patch",
+  "blocks.delete",
+  "files.rename",
+  "files.delete",
+  "files.move",
+  "files.detach",
+]);
+
+/** 跨空间支持判定（读侧：声明了 spaceId；写侧：白名单）。 */
+export function crossSpaceOf(c) {
+  if (c.kind === "write") return CROSS_SPACE_WRITE.has(c.id);
+  return (c.args ?? []).some((a) => a.name === "spaceId");
+}
+
+/**
+ * 统一追加到工具描述末尾的一行（⛔ 不手写 61 条）。
+ *
+ * 文案**按能力类型分档**（2026-10-30 修 bug：读工具原来也写"写到指定空间"）：
+ *   · 读 + 支持：` 跨空间：支持（带 spaceId 读指定空间）`
+ *   · 写 + 白名单：` 跨空间：支持（带 spaceId 写到指定空间，不是搬移）`
+ *   · 其余：` 跨空间：不支持（带 spaceId ⇒ bad_args）`
+ *
+ * ⚠️ **yes 计数口径**（别再误读）：yes = 读侧声明 `spaceId` 的 26 条 + 写白名单 10 条 = **36**；
+ * 白名单里的写工具数才是 10（旧说法"9→10"指的是它）。
+ */
+export function crossSpaceLine(c) {
+  if (!crossSpaceOf(c)) return " 跨空间：不支持（带 spaceId ⇒ bad_args）";
+  if (c.kind === "write") return " 跨空间：支持（带 spaceId 写到指定空间，不是搬移）";
+  return " 跨空间：支持（带 spaceId 读指定空间）";
+}
+
 export function genMcpTools(reg, kind = "read") {
   // ⚠️ **2026-10-06 加 `host` 过滤**（M1 收口，真端到端逼出来的）：`coverage.report` 的 `host` 是
     //    `"frontend"`（只有 AI 宿主能实现，Rust 侧按设计**没有**实现 ✓）⇒ 清单里带着它，
@@ -1152,23 +1197,30 @@ export function genMcpTools(reg, kind = "read") {
     // ⭐ 2026-10-06（M2 · Task W1）：同一个函数也用来生成**写面**清单 ✓（`kind` 参数 ✓）。
   //    读面清单的字节**不许变**（M1 的硬判据盯着它 ✓）⇒ 写面才带 `kind` 字段 ✓。
   const tools = reg.capabilities.filter((c) => c.ai && c.kind === kind && c.host !== "frontend");
-  const jsonType = (t) => ({ string: "string", number: "number", boolean: "boolean" })[t] ?? "string";
+  // ⭐ B1b（2026-10-29）：`array` 参数（`db.rows` 的 `where`）要生成**真正的 JSON Schema 数组**
+  //   —— 以前这里只有标量三型，其它一律回落 `"string"` ⇒ 外部 agent 会以为要传字符串
+  //   （`String([{…}])` 的坑在 shim 那侧也有，同一个原因）。元素类型先统一 `object`
+  //   （`where` 的元素就是 `{field,op,value}`）。
+  const jsonType = (t) =>
+    ({ string: "string", number: "number", boolean: "boolean", array: "array", object: "object" })[t] ??
+    "string";
   const list = tools.map((c) => {
     const properties = {};
     for (const a of c.args ?? []) {
       properties[a.name] = { type: jsonType(a.type) };
+      if (a.type === "array") properties[a.name].items = { type: "object" };
       if (a.enum) properties[a.name].enum = a.enum;
       if (a.desc) properties[a.name].description = a.desc;
     }
     return {
       // ⚠️ 只有**写面**带 `kind` —— 读面加任何字段都会让第 10 件变字节 ✗
       ...(kind === "write" ? { kind: "write" } : {}),
-      name: c.id.replace(/\./g, "_"),
+      name: c.mcpName ?? c.id.replace(/\./g, "_"),
       capabilityId: c.id,
       // ⭐ 2026-10-17：`mcpDesc` 优先 —— 外部面**结果形状不同**的能力（目前只有 `pages.search`：
       //   外部面多包一层范围信封，插件面仍是裸数组）必须能各自说清自己的返回值。
       //   两份描述**不是**两份语义：检索本身仍是同一个引擎（`cap_pages_search`）✓。
-      description: c.mcpDesc ?? c.desc ?? c.title,
+      description: (c.mcpDesc ?? c.desc ?? c.title) + crossSpaceLine(c),
       inputSchema: {
         type: "object",
         properties,

@@ -110,7 +110,11 @@ pub fn serve_own_records(
     since: i64,
     limit: i64,
 ) -> Result<Vec<MeshRow>, String> {
-    let limit = if limit <= 0 { MAX_LIMIT } else { limit.min(MAX_LIMIT) };
+    let limit = if limit <= 0 {
+        MAX_LIMIT
+    } else {
+        limit.min(MAX_LIMIT)
+    };
     let mut stmt = c
         .prepare(
             "SELECT device_seq, entity, entity_id, op, payload, updated_at FROM changes
@@ -132,7 +136,59 @@ pub fn serve_own_records(
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+/// ⭐⭐ **2026-10-28（owner：「一步到位」·P2）**：**加密空间的记录，直接发封好的整条** ✗。
+///
+/// ## 为什么必须有它（今天那次"我解锁了为什么没数据"的另一半）
+/// 原来只有**锁着那一侧**会用封包（`serve_locked_outbox`）；**开着那一侧**一律发**明文**
+/// ⇒ 一个**锁着**的对端来拉，`stash_sealed_rows` 只收 `sealed` 行 ⇒ **一条都存不下** ✗
+/// ⇒ "一端锁着 ⇒ 永远拉不到"，哪怕对面早就解锁了 ✓。
+/// ⇒ 现在：加密空间 + 对端带 `caps=sealed1` ⇒ 这里**逐条封好**（`encrypt_payload`，用**这个空间自己的**钥匙）
+/// 再发 ⇒ 锁着的那台能先收进 `mesh_inbox`，解锁后 `drain_inbox` 自动补应用 ✓。
+///
+/// ⚠️ 封的是**整条记录**（entity/entity_id/op/payload 一起）—— 与 `mirror_change_to_mesh_outbox`
+/// 同一个形状（`unseal_rows` 解出来就走原来那条 apply 路径 ✓）。
+pub fn serve_own_records_sealed(
+    c: &Connection,
+    own_device: &str,
+    since: i64,
+    limit: i64,
+) -> Result<Vec<MeshRow>, String> {
+    let plain = serve_own_records(c, own_device, since, limit)?;
+    let mut out = Vec::with_capacity(plain.len());
+    for r in plain {
+        let rec = serde_json::json!({
+            "entity": r.entity,
+            "entity_id": r.entity_id,
+            "op": r.op,
+            "payload": r.payload,
+        });
+        // 明文空间不会走到这里（调用方只在"这个空间是密文"时才用这一支）；
+        // 真走到了也只是原样透传 `encrypt_payload` 的既有口径 ✓。
+        let sealed = crate::security::encrypt_payload(c, &rec.to_string())?;
+        out.push(MeshRow {
+            device_seq: r.device_seq,
+            entity: String::new(),
+            entity_id: String::new(),
+            op: String::new(),
+            payload: None,
+            updated_at: r.updated_at,
+            sealed: Some(sealed),
+        });
+    }
+    Ok(out)
+}
+
+/// 请求里带没带"我认得封包"（`caps=sealed1`，用逗号分隔可组合）。
+pub(crate) fn caps_has_sealed1(target: &str) -> bool {
+    query_get(target, "caps")
+        .ok()
+        .flatten()
+        .map(|caps| caps.split(',').any(|c| c.trim() == "sealed1"))
+        .unwrap_or(false)
 }
 
 /// 我这一栏 `changes.device_seq` 的**高水位**（没有行 ⇒ 0）。
@@ -249,9 +305,11 @@ fn peer_space_name_in_batch(c: &Connection, rows: &[MeshRow]) -> Option<String> 
         if r.entity != "page" || r.op != "upsert" {
             continue;
         }
-        let Some(payload) = r.payload.as_deref() else { continue };
-        let plain = crate::security::decrypt_payload(c, payload)
-            .unwrap_or_else(|_| payload.to_string());
+        let Some(payload) = r.payload.as_deref() else {
+            continue;
+        };
+        let plain =
+            crate::security::decrypt_payload(c, payload).unwrap_or_else(|_| payload.to_string());
         if let Some(name) = crate::sync::space_name_of_payload(&plain) {
             return Some(name);
         }
@@ -290,7 +348,9 @@ fn peer_merge_decision(
             Vec::new()
         }
     };
-    let oracle = PairedDeviceOracle { paired_devices: &paired };
+    let oracle = PairedDeviceOracle {
+        paired_devices: &paired,
+    };
     let identity = oracle.same_person(peer_device, &local_name);
     batch_merge_gate(kind, &local_name, peer_name.as_deref(), &identity)
 }
@@ -435,7 +495,14 @@ pub fn absorb_peer_batch(
     let now = crate::db::now_ms();
 
     // ⭐ 融合闸：先取证（只读），再决定这一批的处置。
-    let merge = match peer_merge_decision(c, rows, peer_device, space_id, device_level, peer_name_hint) {
+    let merge = match peer_merge_decision(
+        c,
+        rows,
+        peer_device,
+        space_id,
+        device_level,
+        peer_name_hint,
+    ) {
         crate::mesh_merge_ledger::BatchMerge::Refuse(gate) => {
             eprintln!(
                 "[mesh] **不融合**（{}）：对端 `{}` 的这一批 {} 条**一条都不落库、水位不前进** \
@@ -509,13 +576,8 @@ pub fn absorb_peer_batch(
     //   `sync::apply_pulled_changes` 会合，所以"这一笔是从对端来的"必须由**调用方显式说**
     //   （口径见 `doc_content::Ingest`；作用范围见
     //   `docs/specs/2026-10-09-multidevice-merge-semantics.md` §2「作用范围」）。
-    let out = crate::sync::apply_pulled_changes(
-        c,
-        incoming,
-        0,
-        now,
-        crate::doc_content::Ingest::Peer,
-    )?;
+    let out =
+        crate::sync::apply_pulled_changes(c, incoming, 0, now, crate::doc_content::Ingest::Peer)?;
     let tail = rows.iter().map(|r| r.device_seq).max().unwrap_or(0);
     Ok(Absorbed {
         applied: out.count,
@@ -543,7 +605,9 @@ fn not_eligible_reason(why: crate::mesh_merge_ledger::NotEligibleWhy) -> &'stati
     match why {
         NotEligibleWhy::NotPersonal(SpaceKind::Personal) => "个人空间（不该走到这里）",
         NotEligibleWhy::NotPersonal(SpaceKind::Team) => "团队空间不参与（一个字节都不动）",
-        NotEligibleWhy::NotPersonal(SpaceKind::Unclassified) => "未分类空间不参与（一个字节都不动）",
+        NotEligibleWhy::NotPersonal(SpaceKind::Unclassified) => {
+            "未分类空间不参与（一个字节都不动）"
+        }
         NotEligibleWhy::KindUnknown => "本机这一格的类别读不出来 ⇒ 判不出（⛔ 不默认成个人空间）",
         NotEligibleWhy::NoPeerName => "对面载荷里没带空间名（老对端/老载荷）⇒ 判不了同名",
     }
@@ -603,7 +667,12 @@ pub fn invitable_base_for(
     if !crate::lan::serves_space(space_id, p) {
         return None;
     }
-    let base = p.announce.hub_base.as_deref().map(str::trim).filter(|b| !b.is_empty())?;
+    let base = p
+        .announce
+        .hub_base
+        .as_deref()
+        .map(str::trim)
+        .filter(|b| !b.is_empty())?;
     if !crate::lan::is_lan_base(base) {
         return None;
     }
@@ -657,7 +726,10 @@ pub fn mesh_peers_by_name(
         if out.iter().any(|q| q.device_id == id || q.base == base) {
             continue; // 同一台 / 同一个地址只拉一次
         }
-        out.push(MeshPeer { device_id: id.to_string(), base });
+        out.push(MeshPeer {
+            device_id: id.to_string(),
+            base,
+        });
     }
     out.sort_by(|a, b| a.device_id.cmp(&b.device_id)); // 确定性（判据要能逐字节比）
     out
@@ -690,7 +762,22 @@ pub async fn pull_from_peer(
         .await
         .map_err(|e| format!("拉对端 {} 失败：{e}", peer.device_id))?;
     if !(200..300).contains(&reply.status) {
-        return Err(format!("对端 {} 回了 {}", peer.device_id, reply.status));
+        // ⭐ 2026-10-28（真机：「加密空间不能同步」历史里只留一句 `对端 … 回了 401` ⇒
+        //   分不清是「没出示」「卡不在这个空间的名单里」还是「签名没过」）：
+        //   对端 4xx/5xx 的**响应体本来就是我们自己拼的人话**（没有凭证），把它一并带出来 ✓。
+        //   ⚠️ 截断 160 字（与 `pull_log_line` 同一口径），⛔ 别让一整页 HTML 进历史 ✗。
+        let tail: String = reply.body.chars().take(160).collect();
+        let tail = tail.trim();
+        return Err(format!(
+            "对端 {} 回了 {}{}",
+            peer.device_id,
+            reply.status,
+            if tail.is_empty() {
+                String::new()
+            } else {
+                format!(" ｜ {tail}")
+            }
+        ));
     }
     let body: PullResponse = serde_json::from_str(&reply.body)
         .map_err(|e| format!("对端 {} 的拉取响应不是 JSON：{e}", peer.device_id))?;
@@ -751,6 +838,9 @@ pub struct MeshRoundReport {
     pub note: String,
     /// 发现层里**够格当网格对端**的台数（＝下面 `peers` 的行数）。
     pub candidates: usize,
+    /// ⭐ 2026-10-29：本轮**真的收下**的页数（各对端 `applied` 之和）—— **Rust 侧算好的读数**，
+    /// 界面只显示、⛔ 不许自己遍历 `peers` 数（`syncPanelMesh.wiring` ⑦ 钉着"面板不自己数"）。
+    pub applied: usize,
     pub peers: Vec<PeerPullReport>,
     /// 本机窗口**实际**绑在哪儿（没开 ⇒ `None`）。⚠️ 它由**命令面**填（`round` 本身不开窗）。
     pub window: Option<String>,
@@ -772,10 +862,7 @@ pub fn round_touched_pages(r: &MeshRoundReport) -> Vec<String> {
             continue;
         }
         for it in &p.items {
-            if it.entity == "page"
-                && it.op == "upsert"
-                && !out.iter().any(|x| x == &it.entity_id)
-            {
+            if it.entity == "page" && it.op == "upsert" && !out.iter().any(|x| x == &it.entity_id) {
                 out.push(it.entity_id.clone());
             }
         }
@@ -808,7 +895,9 @@ pub async fn pull_and_absorb(
     let (name_sha, local_name) = {
         let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
         match crate::sync::local_space_name(&g) {
-            Some(n) if !n.trim().is_empty() => (crate::db::sha256_hex(n.trim()), n.trim().to_string()),
+            Some(n) if !n.trim().is_empty() => {
+                (crate::db::sha256_hex(n.trim()), n.trim().to_string())
+            }
             _ => (String::new(), String::new()),
         }
     };
@@ -829,8 +918,15 @@ pub async fn pull_and_absorb(
                 None
             } else {
                 let target = pull_target(space_id, since, &name_sha);
-                sign_request(&g, &device_id, space_id, "GET", &target, crate::db::now_ms())
-                    .map(|(ts, sig)| (device_id, ts, sig))
+                sign_request(
+                    &g,
+                    &device_id,
+                    space_id,
+                    "GET",
+                    &target,
+                    crate::db::now_ms(),
+                )
+                .map(|(ts, sig)| (device_id, ts, sig))
             }
         };
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
@@ -853,8 +949,15 @@ pub async fn pull_and_absorb(
                 None
             } else {
                 let target = pull_target(space_id, 0, &name_sha);
-                sign_request(&g, &device_id, space_id, "GET", &target, crate::db::now_ms())
-                    .map(|(ts, sig)| (device_id, ts, sig))
+                sign_request(
+                    &g,
+                    &device_id,
+                    space_id,
+                    "GET",
+                    &target,
+                    crate::db::now_ms(),
+                )
+                .map(|(ts, sig)| (device_id, ts, sig))
             }
         };
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
@@ -899,8 +1002,15 @@ pub async fn pull_and_absorb(
                     None
                 } else {
                     let target = pull_target(space_id, 0, &name_sha);
-                    sign_request(&g, &device_id, space_id, "GET", &target, crate::db::now_ms())
-                        .map(|(ts, sig)| (device_id, ts, sig))
+                    sign_request(
+                        &g,
+                        &device_id,
+                        space_id,
+                        "GET",
+                        &target,
+                        crate::db::now_ms(),
+                    )
+                    .map(|(ts, sig)| (device_id, ts, sig))
                 }
             };
             let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
@@ -966,7 +1076,11 @@ pub async fn pull_and_absorb(
             &peer.device_id,
             space_id,
             device_level,
-            if local_name.is_empty() { None } else { Some(local_name.as_str()) },
+            if local_name.is_empty() {
+                None
+            } else {
+                Some(local_name.as_str())
+            },
         )?;
         // ⭐ 2026-10-20：**归零自愈过的那一轮必须无条件写回** ✗ ——
         //   原规则是 `ab.tail > since`，而 since 还是那个越界值（99999）⇒ 恒 false
@@ -1042,7 +1156,10 @@ async fn maybe_sync_peer_keyring(
             let Ok(g) = conn.lock() else { return };
             match crate::space_crypto::merge_material(&g, &material) {
                 Ok(rep) => {
-                    if rep.added_groups > 0 || rep.added_spaces > 0 || !rep.conflicting_spaces.is_empty() {
+                    if rep.added_groups > 0
+                        || rep.added_spaces > 0
+                        || !rep.conflicting_spaces.is_empty()
+                    {
                         eprintln!(
                             "[mesh] 并入对端 {} 的公开材料：组 +{} ｜ 空间 +{} ｜ 冲突 {} 个{}",
                             peer.device_id.chars().take(8).collect::<String>(),
@@ -1052,7 +1169,10 @@ async fn maybe_sync_peer_keyring(
                             if rep.conflicting_spaces.is_empty() {
                                 String::new()
                             } else {
-                                format!("（同空间不同盒子，保留本地：{:?}）", rep.conflicting_spaces)
+                                format!(
+                                    "（同空间不同盒子，保留本地：{:?}）",
+                                    rep.conflicting_spaces
+                                )
                             }
                         );
                     }
@@ -1060,7 +1180,11 @@ async fn maybe_sync_peer_keyring(
                     // ⭐ P2：如果此刻会话已解锁（主密钥在手），顺手把新并进来的加密空间建出来。
                     match crate::security::provision_from_current_session(&g) {
                         Ok(v) if !v.is_empty() => {
-                            eprintln!("[mesh] 依新并入的公开材料自动建了 {} 个加密空间：{:?}", v.len(), v)
+                            eprintln!(
+                                "[mesh] 依新并入的公开材料自动建了 {} 个加密空间：{:?}",
+                                v.len(),
+                                v
+                            )
                         }
                         Ok(_) => {}
                         Err(e) => eprintln!("[mesh] 自动建加密空间失败（不影响本轮同步）：{e}"),
@@ -1103,7 +1227,12 @@ fn read_setting(c: &Connection, prefix: &str, space_id: &str) -> Option<String> 
 }
 
 /// 空串 ＝ **关**（用空串当"清除"，省掉一个 KV 删除接口；`read_setting` 两侧都按空当没有）。
-fn write_setting(c: &Connection, prefix: &str, space_id: &str, value: Option<&str>) -> Result<(), String> {
+fn write_setting(
+    c: &Connection,
+    prefix: &str,
+    space_id: &str,
+    value: Option<&str>,
+) -> Result<(), String> {
     let v = value.map(str::trim).unwrap_or("");
     crate::sync::set_meta_state(c, &setting_key(prefix, space_id), v)
 }
@@ -1122,7 +1251,11 @@ pub const DEVICE_LEVEL_SPACE: &str = "";
 /// ⚠️ 个人档**回退**读旧的"按暗号那一格"✓（⭐ 只读、⛔ 不写 ✗）：升级上来的机器**第一次读就看得见旧值** ✓
 /// —— 迁移只发生在写路径 ✓（[`migrate_device_level_mesh`] ✓），⛔ 读路径一个字节都不写 ✓。
 pub fn settings_for(c: &Connection, space: &str, device_level: bool) -> MeshSettings {
-    let key = if device_level { DEVICE_LEVEL_SPACE } else { space };
+    let key = if device_level {
+        DEVICE_LEVEL_SPACE
+    } else {
+        space
+    };
     let mut bind = read_setting(c, "mesh_bind", key);
     let mut token = read_setting(c, "mesh_token", key);
     if device_level {
@@ -1143,7 +1276,11 @@ pub fn set_mesh_bind_for(
     device_level: bool,
     bind: Option<&str>,
 ) -> Result<(), String> {
-    let key = if device_level { DEVICE_LEVEL_SPACE } else { space };
+    let key = if device_level {
+        DEVICE_LEVEL_SPACE
+    } else {
+        space
+    };
     write_setting(c, "mesh_bind", key, bind)
 }
 
@@ -1154,7 +1291,11 @@ pub fn set_mesh_token_for(
     device_level: bool,
     token: Option<&str>,
 ) -> Result<(), String> {
-    let key = if device_level { DEVICE_LEVEL_SPACE } else { space };
+    let key = if device_level {
+        DEVICE_LEVEL_SPACE
+    } else {
+        space
+    };
     write_setting(c, "mesh_token", key, token)
 }
 
@@ -1315,7 +1456,9 @@ pub fn migrate_device_level_mesh(c: &Connection) -> Result<Option<String>, Strin
                 )
                 .map_err(|e| e.to_string())?;
             let like = format!("{prefix}:%");
-            let mut rows = stmt.query(rusqlite::params![like]).map_err(|e| e.to_string())?;
+            let mut rows = stmt
+                .query(rusqlite::params![like])
+                .map_err(|e| e.to_string())?;
             while let Some(row) = rows.next().map_err(|e| e.to_string())? {
                 candidates.push((
                     row.get(0).map_err(|e| e.to_string())?,
@@ -1325,7 +1468,11 @@ pub fn migrate_device_level_mesh(c: &Connection) -> Result<Option<String>, Strin
         }
         let mut picked: Option<(String, String)> = None;
         for (k, v) in candidates {
-            let suffix = k.strip_prefix(&format!("{prefix}:")).unwrap_or("").trim().to_string();
+            let suffix = k
+                .strip_prefix(&format!("{prefix}:"))
+                .unwrap_or("")
+                .trim()
+                .to_string();
             if suffix.is_empty() {
                 continue; // 已经是设备级那一格 ✓
             }
@@ -1409,7 +1556,8 @@ fn migrate_device_level_paired_devices(c: &Connection) -> Result<usize, String> 
         let it = stmt
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .map_err(|e| e.to_string())?;
-        it.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        it.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
     };
     let mut moved = 0usize;
     let mut skipped = 0usize;
@@ -1653,12 +1801,28 @@ pub async fn round(
     //   "收到了、也存住了、就是不用" ✗）。⚠️ 放在真正拉取**之前**：这一轮后面的 pull
     //   才有机会看到"已经应用过的"那份；⚠️ drain 失败**不拦这一轮**（下一轮还会再来 ✓）。
     if let Ok(g) = conn.lock() {
-        for p in peers {
-            match drain_inbox(&g, space_id, &p.announce.device_id, device_level) {
-                Ok(ab) if ab.applied > 0 => eprintln!(
-                    "[mesh] 解锁后补应用：对端 {} ｜ {} 条",
-                    p.announce.device_id, ab.applied
-                ),
+        // ⭐⭐ **2026-10-28（真机：解锁后 pendingInbox 仍 4 条／inbox 行永残留）** —— 两个真因一起修：
+        //   ① **键不一致**：sealed_round 收封包时按**本地空间 id** 存（stash_sealed_rows(&meta, db_space, …)），
+        //      而这里原来传的是本函数的 space_id ＝ **对暗号的 proto**（调用方传 scope.space）
+        //      ⇒ 按 proto 去查 meta.mesh_inbox.space_id **一条都查不到** ✗（windows 侧独立复现并修了这一半 ✓）；
+        //   ② **只看在线对端**：收下的封包与「这一秒谁在线」无关，原来只遍历 peers
+        //      ⇒ 对端一离线，解锁后自动应用**永远不跑** ✗（最坏的静默失败：收了、存了、就是不用）。
+        //   ⇒ 键用**这条连接自己那个空间库的 id**；扫描面 = 在线对端 ∪ inbox 里出现过的 peer_device（去重保序）。
+        let drain_space = crate::sync::space_id_of(&g).unwrap_or_else(|| space_id.to_string());
+        let online: Vec<String> = peers.iter().map(|p| p.announce.device_id.clone()).collect();
+        let mut inbox_ids: Vec<String> = Vec::new();
+        if let Ok(mut st) =
+            g.prepare("SELECT DISTINCT peer_device FROM meta.mesh_inbox WHERE space_id = ?1")
+        {
+            if let Ok(rows) = st.query_map(params![drain_space], |r| r.get::<_, String>(0)) {
+                inbox_ids.extend(rows.flatten());
+            }
+        }
+        for dev in drain_targets(&online, &inbox_ids) {
+            match drain_inbox(&g, &drain_space, &dev, device_level) {
+                Ok(ab) if ab.applied > 0 => {
+                    eprintln!("[mesh] 解锁后补应用：对端 {dev} ｜ {} 条", ab.applied)
+                }
                 Ok(_) => {}
                 Err(e) => eprintln!("[mesh] 补应用失败（这一轮照常继续）：{e}"),
             }
@@ -1669,6 +1833,7 @@ pub async fn round(
             enabled: false,
             note: "没有配网格监听地址 ⇒ 网格这一档关着（这一轮一个字节都没动）".to_string(),
             candidates: 0,
+            applied: 0,
             peers: Vec::new(),
             window: None,
         });
@@ -1676,22 +1841,41 @@ pub async fn round(
     let local_encrypted = conn
         .lock()
         .ok()
-        .and_then(|g| g.path().map(|p| crate::security::space_db_is_encrypted(std::path::Path::new(p))))
+        .and_then(|g| {
+            g.path()
+                .map(|p| crate::security::space_db_is_encrypted(std::path::Path::new(p)))
+        })
         .unwrap_or(false);
-    let mut candidates = mesh_peers_by_name(space_id, &space_name, my_device, peers, local_encrypted);
+    let mut candidates =
+        mesh_peers_by_name(space_id, &space_name, my_device, peers, local_encrypted);
     // ⭐ 2026-10-25（Step 3-2）：**把跨网路线表里的对端也喂进本轮**
     //   ⚠️ 默认构建什么都不做（跨网只有 --features relay 才可用）；坏了只打日志、不打断本轮。
     crate::relay_route::append_virtual_peers(&mut candidates);
     if candidates.is_empty() {
         return Ok(MeshRoundReport {
             enabled: true,
-            note: "网格开着，但这个网段里没有能直接拉的对端（没人代言这个空间 / 只有我自己）".to_string(),
+            note: "网格开着，但这个网段里没有能直接拉的对端（没人代言这个空间 / 只有我自己）"
+                .to_string(),
             candidates: 0,
+            applied: 0,
             peers: Vec::new(),
             window: None,
         });
     }
     round_candidates(conn, space_id, candidates, device_level).await
+}
+
+/// 局域网网格用的 HTTP 客户端：**显式绕过系统代理**。
+///
+/// 2026-10-28 真机 root cause：macOS 系统代理被打开（`HTTPProxy=127.0.0.1:7890`），
+/// 而 `reqwest` 会读系统代理；本机 7890 没有进程 ⇒ 拉对端一律 `Connection refused`，
+/// 但同一 URL 用 curl（不读系统代理）却通 ⇒ 面板上看起来“对端在线、同步不了”。
+/// 网格是**局域网直连**，⛔ 不该走代理 ✗；`no_proxy()` 只作用于这一支，服务端同步不动。
+pub(crate) fn mesh_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
 }
 
 /// `round` 的**后半**：对端由调用方给，只做"逐个拉 ＋ 不连坐 ＋ 把读数整理成人话"。
@@ -1709,7 +1893,7 @@ pub async fn round_candidates(
     candidates: Vec<MeshPeer>,
     device_level: bool,
 ) -> Result<MeshRoundReport, String> {
-    let client = reqwest::Client::new();
+    let client = mesh_http_client();
     let mut out: Vec<PeerPullReport> = Vec::with_capacity(candidates.len());
     for p in &candidates {
         // ⭐ **U11（A：门只认卡）**：出示的是**这一台**的那一份配对秘密 ✓
@@ -1768,7 +1952,14 @@ pub async fn round_candidates(
         }
     }
     let note = round_note(&out);
-    Ok(MeshRoundReport { enabled: true, note, candidates: out.len(), peers: out, window: None })
+    Ok(MeshRoundReport {
+        enabled: true,
+        note,
+        candidates: out.len(),
+        applied: out.iter().map(|p| p.applied).sum(),
+        peers: out,
+        window: None,
+    })
 }
 
 /// 把每一台的读数拼成**一句人话** —— 纯函数（判据不打桩、不看网络）。
@@ -1785,7 +1976,10 @@ pub fn round_note(peers: &[PeerPullReport]) -> String {
     let base = if failed == 0 {
         format!("网格：拉了 {} 台对端", peers.len())
     } else {
-        format!("网格：拉了 {} 台对端，其中 {failed} 台没拉动（见每一行的 error）", peers.len())
+        format!(
+            "网格：拉了 {} 台对端，其中 {failed} 台没拉动（见每一行的 error）",
+            peers.len()
+        )
     };
     let superseded: usize = peers.iter().map(|r| r.superseded).sum();
     let awaiting: usize = peers.iter().map(|r| r.awaiting).sum();
@@ -1796,7 +1990,9 @@ pub fn round_note(peers: &[PeerPullReport]) -> String {
         ));
     }
     if awaiting > 0 {
-        tail.push(format!("另有 {awaiting} 页等你裁决（见下面「待取回的远端版本」）"));
+        tail.push(format!(
+            "另有 {awaiting} 页等你裁决（见下面「待取回的远端版本」）"
+        ));
     }
     // ⭐ **2026-10-17（按名融合接线）**：融合/没融也**必须说出来** —— 与上面那两句同一条纪律
     //   （网格这一档没有服务端，`MeshRoundReport` 是用户唯一能看到的窗口）。
@@ -1908,7 +2104,9 @@ pub fn ensure_window(
     if bind.is_empty() {
         return Ok(None);
     }
-    let mut guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
+    let mut guard = windows()
+        .lock()
+        .map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
     // ① 这一扇门**已经在开** ⇒ 只把缺的空间加进去（⛔ 不重启 ✗）
     if let Some(h) = guard.get(bind) {
         let mut failures: Vec<String> = Vec::new();
@@ -1937,7 +2135,8 @@ pub fn ensure_window(
     // ② 新开一扇门：先把这些空间的库连接都开好（⭐ 服务范围＝这张表的键 ✓）
     // ⭐ 2026-10-23（S3a）：逐个开、**开不了的那个跳过**（口径同 ①）—— 一个锁着的加密空间
     //   曾经让整扇门「这一轮都不宣告」，界面只会说「附近发现 0 台」，真因一个字看不见 ✓。
-    let mut conns: std::collections::HashMap<String, Arc<Mutex<Connection>>> = std::collections::HashMap::new();
+    let mut conns: std::collections::HashMap<String, Arc<Mutex<Connection>>> =
+        std::collections::HashMap::new();
     let mut failures: Vec<String> = Vec::new();
     // ⭐ S3b-发：开不了的那些**记下房间名** —— 它们不是"没有"，而是"知道但打不开"。
     let mut locked_protos: Vec<String> = Vec::new();
@@ -1968,8 +2167,7 @@ pub fn ensure_window(
     // ⭐ U11：把**每个空间各自的**卡表载进来（一个空间一组 ✓）
     //   ⚠️ S3b-发：**开不了的空间也要载卡** ✗ —— 鉴权只需要卡表（读 meta），不需要开库 ✓；
     //     不载 ⇒ 锁着的那台连"我认得你"都做不到 ⇒ 一律 401，封包那条路根本走不到 ✗。
-    let mut paired: CardBook =
-        std::collections::HashMap::new();
+    let mut paired: CardBook = std::collections::HashMap::new();
     for (_, proto_space, device_level) in spaces {
         load_cards(dir, proto_space, *device_level, &mut paired);
     }
@@ -1999,9 +2197,25 @@ pub fn ensure_window(
 /// 那正是这一族里最坏的一种：**播出去的话是假的** ✓。
 pub fn window_serves(bind: &str, proto_space: &str) -> bool {
     let bind = bind.trim();
-    let Ok(g) = windows().lock() else { return false };
+    let Ok(g) = windows().lock() else {
+        return false;
+    };
     let Some(h) = g.get(bind) else { return false };
     h.served().iter().any(|s| s == proto_space)
+}
+
+/// ⭐ **2026-10-28（owner：「一步到位」·P2）**：这个空间是不是"**我知道、但这一轮锁着开不了**"
+/// —— 给公告那一侧用：**锁着也照样宣告房间**（只发封包、不发明文 ✓）。
+///
+/// 为什么必须宣告：不宣告 ⇒ 对端 candidates=0 ⇒ 封包通道**根本没有入口** ⇒
+/// 用户看到的就是今天那句"我解锁了为什么没数据"（其实是**那边锁着**）✗。
+pub fn window_locked(bind: &str, proto_space: &str) -> bool {
+    let bind = bind.trim();
+    let Ok(g) = windows().lock() else {
+        return false;
+    };
+    let Some(h) = g.get(bind) else { return false };
+    h.is_locked(proto_space)
 }
 
 /// ⭐ **U8 的便利包装**（设置面那两条命令用 ✓）：从 `MeshSettings` 取绑定/口令、目录取 app data ✓。
@@ -2012,7 +2226,8 @@ pub fn ensure_window_for(
     device_id: &str,
     bind: &str,
 ) -> Result<Option<SocketAddr>, String> {
-    let dir = crate::db::app_data_dir_ref().ok_or_else(|| "app data dir not initialised".to_string())?;
+    let dir =
+        crate::db::app_data_dir_ref().ok_or_else(|| "app data dir not initialised".to_string())?;
     ensure_window(spaces, device_id, bind, dir)
 }
 
@@ -2034,14 +2249,18 @@ pub(crate) fn open_window_at(
     dir: &Path,
 ) -> Result<MeshHandle, String> {
     let conn = crate::db::open_space_conn_at(db_space, dir)?;
-    let mut conns: std::collections::HashMap<String, Arc<Mutex<Connection>>> = std::collections::HashMap::new();
+    let mut conns: std::collections::HashMap<String, Arc<Mutex<Connection>>> =
+        std::collections::HashMap::new();
     conns.insert(proto_space.to_string(), Arc::new(Mutex::new(conn)));
     // ⭐ **U11**：判据传进来的那个 `token` 现在当**一张已登记的卡** ✓
     //   （A 之后门只认卡 ✓）—— 于是既有那批判据**不用改形状**，而它们**真的在走卡那条路** ✓。
-    let mut paired: CardBook =
-        std::collections::HashMap::new();
+    let mut paired: CardBook = std::collections::HashMap::new();
     if let Some(t) = token.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
-        paired.entry(proto_space.to_string()).or_default().hashes.insert(crate::db::sha256_hex(t));
+        paired
+            .entry(proto_space.to_string())
+            .or_default()
+            .hashes
+            .insert(crate::db::sha256_hex(t));
     }
     // ⚠️ 而**真实**的卡从库里来（判据通常没有 ✓ ⇒ 上面那张就是它唯一的卡 ✓）
     load_cards(dir, proto_space, device_level, &mut paired);
@@ -2102,10 +2321,14 @@ pub fn paired_devices(
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(rusqlite::params![row], |r| {
-            Ok(MeshPairedDevice { device_id: r.get(0)?, added_at_ms: r.get(1)? })
+            Ok(MeshPairedDevice {
+                device_id: r.get(0)?,
+                added_at_ms: r.get(1)?,
+            })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// 网格设置的**读数**（设置面回给界面的东西）。
@@ -2197,7 +2420,11 @@ pub fn config_state(
     };
     // ⭐ U8：服务多个空间时，**在读数里说清是几个** ✓（不然"一个窗口"看不出它替谁听 ✓）
     let note = if served.len() > 1 {
-        format!("{note} ｜ 这一扇门服务 {} 个空间：{}", served.len(), served.join("、"))
+        format!(
+            "{note} ｜ 这一扇门服务 {} 个空间：{}",
+            served.len(),
+            served.join("、")
+        )
     } else {
         note
     };
@@ -2223,7 +2450,10 @@ pub fn config_state(
 /// （⛔ 注册表的键是**绑定**，不是空间 ✗ —— 见 `WINDOWS` ✓）。
 pub fn window_addr(space_id: &str) -> Option<SocketAddr> {
     let guard = windows().lock().ok()?;
-    guard.values().find(|h| h.serves(space_id)).map(|h| h.addr())
+    guard
+        .values()
+        .find(|h| h.serves(space_id))
+        .map(|h| h.addr())
 }
 
 /// ⭐ **U11/T5**：把**这一张卡**从**正在跑的那扇门**里摘掉（回"摘到了吗"✓）。
@@ -2231,7 +2461,9 @@ pub fn window_addr(space_id: &str) -> Option<SocketAddr> {
 /// ⚠️ **只删库不算** ✗ —— 运行中的窗口**还认着那张卡**（它是开门时载进内存的 ✓）
 /// ⇒ 用户看到的是「**删了等于没删**」✓ ⇒ 必须两处一起摘 ✓。
 pub fn forget_paired(proto_space: &str, secret_sha256: &str) -> Result<bool, String> {
-    let guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
+    let guard = windows()
+        .lock()
+        .map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
     for h in guard.values() {
         if h.serves(proto_space) {
             return h.forget_paired_hash(proto_space, secret_sha256);
@@ -2245,7 +2477,9 @@ pub fn forget_paired(proto_space: &str, secret_sha256: &str) -> Result<bool, Str
 ///
 /// ⚠️ 撤回时**两档都要摘** ✗：那一行可能既有哈希又有公钥 ✓ ⇒ ⛔ 只摘一半 ＝ 它还能从另一半进来 ✗。
 pub fn forget_paired_device(proto_space: &str, device_id: &str) -> Result<bool, String> {
-    let guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
+    let guard = windows()
+        .lock()
+        .map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
     for h in guard.values() {
         if h.serves(proto_space) {
             return h.forget_paired_device(proto_space, device_id);
@@ -2264,7 +2498,9 @@ pub fn forget_paired_device(proto_space: &str, device_id: &str) -> Result<bool, 
 /// ⚠️ 门没开着 ⇒ `Ok(false)`：库里写上就够了（下次开门 `load_cards` 会把它载进来 ✓）。
 /// ⛔ **不是错** ✗ —— 与 `forget_paired` 对称 ✓（判据因此不必先开窗，但**开着窗那一趟必须 200** ✓）。
 pub fn add_paired(proto_space: &str, secret_sha256: &str) -> Result<bool, String> {
-    let guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
+    let guard = windows()
+        .lock()
+        .map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
     for h in guard.values() {
         if h.serves(proto_space) {
             return h.add_paired_hash(proto_space, secret_sha256);
@@ -2282,7 +2518,9 @@ pub fn add_paired_pubkey(
     device_id: &str,
     pubkey_hex: &str,
 ) -> Result<bool, String> {
-    let guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
+    let guard = windows()
+        .lock()
+        .map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
     for h in guard.values() {
         if h.serves(proto_space) {
             return h.add_paired_pubkey(proto_space, device_id, pubkey_hex);
@@ -2296,7 +2534,11 @@ pub fn add_paired_pubkey(
 /// ⚠️ 读数用 —— ⛔ 它**不开窗** ✗（与 `window_addr` 同一条纪律：面板打开一次不该顺手开端口 ✓）。
 pub fn served_spaces(space_id: &str) -> Vec<String> {
     match windows().lock() {
-        Ok(g) => g.values().find(|h| h.serves(space_id)).map(|h| h.served()).unwrap_or_default(),
+        Ok(g) => g
+            .values()
+            .find(|h| h.serves(space_id))
+            .map(|h| h.served())
+            .unwrap_or_default(),
         Err(_) => Vec::new(),
     }
 }
@@ -2342,10 +2584,7 @@ pub(crate) fn is_marked_locked(proto_space: &str) -> bool {
 /// ⚠️ 摘掉之后**标 `locked`**，不是把人整个拒掉：对端来拉会走"封包"那条路（`serve_locked_outbox`），
 ///    而 `sealed` 那一列是 `encrypt_payload` 封的（密文空间用它**自己的**钥匙封，见 `sync.rs`）
 ///    ⇒ **锁着仍能同步，但出去的是密文** ✓（S3b 的设计，不是这里的让步）。
-pub fn lock_encrypted_spaces(
-    c: &Connection,
-    dir: &std::path::Path,
-) -> Result<Vec<String>, String> {
+pub fn lock_encrypted_spaces(c: &Connection, dir: &std::path::Path) -> Result<Vec<String>, String> {
     let encrypted = encrypted_protos(c, dir)?;
     Ok(detach_from_windows(&encrypted))
 }
@@ -2423,7 +2662,9 @@ fn detach_from_windows(protos: &[String]) -> Vec<String> {
 /// T6 的判据就是这条：「**关掉一个空间不许关掉整窗**」✓ ——
 /// 最后一个空间也走了，整扇门才真关 ✓（不然"关掉 A 顺手把 B 也断了"，而界面上看不出来 ✗）。
 pub fn stop_window(space_id: &str) -> Result<(), String> {
-    let mut guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
+    let mut guard = windows()
+        .lock()
+        .map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
     let hit: Option<String> = guard
         .iter()
         .find(|(_, h)| h.serves(space_id))
@@ -2475,7 +2716,9 @@ pub fn announced_bases_with(addr: SocketAddr, locals: &[IpAddr]) -> Vec<String> 
     ips.retain(|ip| !ip.is_loopback() && !ip.is_unspecified() && is_lan_only(*ip));
     ips.sort_by_key(|ip| (is_link_local_addr(*ip), ip_bits(*ip)));
     ips.dedup();
-    ips.into_iter().map(|ip| format!("http://{}", SocketAddr::new(ip, addr.port()))).collect()
+    ips.into_iter()
+        .map(|ip| format!("http://{}", SocketAddr::new(ip, addr.port())))
+        .collect()
 }
 
 fn is_link_local_addr(ip: IpAddr) -> bool {
@@ -2526,10 +2769,17 @@ pub fn local_addrs_named() -> Vec<(String, IpAddr)> {
 ///
 /// ⚠️ **刻意只列"明显不是对端能到的"那几家** ✓：⛔ 不列 Tailscale / ZeroTier 这类 ✗
 /// （它们是**真的网络** ✓，用户可能正要用它们当对端 ✓）。
+///
+/// ⭐ **2026-10-26（iOS 真机读数）**：⭐ 把系统 VPN/隧道网卡也补进来（`utun*` / `ipsec*` /
+/// `pdp_ip*`（蜂窝）/ `tun*` / `tap*`）✗ —— 真机：iPhone 同时有 `en0 = 192.168.0.101`
+/// 与一张 `utun` 的 `10.128.166.117`，而排序**第三档按地址字节** ⇒ `10.*` 排在 `192.*` 前
+/// ⇒ `announced_base` 报出去 **`http://10.128.166.117:8788`** ⇒ 同网段的电脑**永远连不上**，
+/// 且界面上一个字都不会提示 ✗（与 2026-10-09 那次 WSL 抢第一位同形）。
+/// ⚠️ **只是降权、不是排除** ✓（没有别的私有 IPv4 时它们照旧会被报 ✓，虚拟局域网那档不受影响 ✓）。
 fn is_virtual_if_name(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
-    const NEEDLES: [&str; 8] = [
-        "vethernet",      // Hyper-V / WSL 的 vEthernet
+    const NEEDLES: [&str; 13] = [
+        "vethernet", // Hyper-V / WSL 的 vEthernet
         "hyper-v",
         "wsl",
         "docker",
@@ -2537,6 +2787,11 @@ fn is_virtual_if_name(name: &str) -> bool {
         "default switch", // Hyper-V 默认交换机
         "virtualbox",
         "vmware",
+        "utun",   // macOS/iOS 的 VPN / 隧道（iPhone 真机实测：10.* 会抢 Wi-Fi 的第一位）
+        "ipsec",  // iOS VPN
+        "pdp_ip", // iOS 蜂窝数据
+        "tun",    // Linux/Android 隧道
+        "tap",
     ];
     NEEDLES.iter().any(|k| n.contains(k))
 }
@@ -2545,7 +2800,11 @@ fn is_virtual_if_name(name: &str) -> bool {
 /// 第二档才是链路本地，第三档回到原来的**地址字节序**（确定性 ✓，判据可逐字节钉 ✓）。
 fn lan_rank_key(name: Option<&str>, ip: IpAddr) -> (u8, u8, (u8, u128)) {
     let virt = name.map(is_virtual_if_name).unwrap_or(false);
-    (u8::from(virt), u8::from(is_link_local_addr(ip)), ip_bits(ip))
+    (
+        u8::from(virt),
+        u8::from(is_link_local_addr(ip)),
+        ip_bits(ip),
+    )
 }
 
 /// 与 announced_bases_with 同一个内核，但**带网卡名** ⇒ 能按 lan_rank_key 把虚拟网卡排到最后 ✓。
@@ -2554,7 +2813,10 @@ pub fn announced_bases_with_named(addr: SocketAddr, locals: &[(String, IpAddr)])
         return Vec::new();
     }
     let mut cands: Vec<(Option<&str>, IpAddr)> = if addr.ip().is_unspecified() {
-        locals.iter().map(|(n, ip)| (Some(n.as_str()), *ip)).collect()
+        locals
+            .iter()
+            .map(|(n, ip)| (Some(n.as_str()), *ip))
+            .collect()
     } else {
         vec![(None, addr.ip())]
     };
@@ -2562,7 +2824,10 @@ pub fn announced_bases_with_named(addr: SocketAddr, locals: &[(String, IpAddr)])
     cands.retain(|(_, ip)| !ip.is_loopback() && !ip.is_unspecified() && is_lan_only(*ip));
     cands.sort_by_key(|(n, ip)| lan_rank_key(*n, *ip));
     cands.dedup_by_key(|(_, ip)| *ip);
-    cands.into_iter().map(|(_, ip)| format!("http://{}", SocketAddr::new(ip, addr.port()))).collect()
+    cands
+        .into_iter()
+        .map(|(_, ip)| format!("http://{}", SocketAddr::new(ip, addr.port())))
+        .collect()
 }
 
 /// ★ 丙-③-b-2b：这个**实际绑上的**窗口地址该报哪个（＝别人能不能来拉我）。
@@ -2580,7 +2845,9 @@ pub fn announced_bases_with_named(addr: SocketAddr, locals: &[(String, IpAddr)])
 /// （`lan.rs` 的线上字段）—— 那条路不在本任务写域里，属显式决定（见报告 §拿不准）。
 pub fn announced_base(addr: SocketAddr) -> Option<String> {
     // ⭐ 2026-10-09：走**带网卡名**的那条 ⇒ 虚拟网卡不再抢到第一个 ✓（原来按字节序，172.18.* 会赢 ✓）。
-    announced_bases_with_named(addr, &local_addrs_named()).into_iter().next()
+    announced_bases_with_named(addr, &local_addrs_named())
+        .into_iter()
+        .next()
 }
 
 // ─────────────────────────── 供的那一侧（最小 HTTP/1.1，不引依赖） ───────────────────────────
@@ -2604,6 +2871,10 @@ pub enum Route {
     /// ⭐ 2026-10-24（P3 对账）：`GET /mesh/page?space_id=…&id=…` —— **按 id 取单页**。
     /// 对"从未记账"的页（changes 里没有）也能按**当前状态**重播一次 ⇒ 对账能补回它。
     Page,
+    /// ⭐ **2026-10-28（owner：「可否一方取消配对，另一方自动也取消？」）**：
+    /// `GET /mesh/revoked?space_id=…` —— **对方撤销了本机** ⇒ 本机也把对方从名单里删掉 ✓。
+    /// ⚠️ 这个端点**只认签名那一档**（见 `authorized_signed` ✓）。
+    Revoke,
     /// 同步协议里**有**、但**不是网格这一档**的端点 ⇒ `501` ＋ 一句人话。
     NotYet(&'static str),
     /// 协议里根本没有这个路径 ⇒ `404`。
@@ -2612,13 +2883,18 @@ pub enum Route {
 
 pub fn route(method: &str, target: &str) -> Route {
     let path = target.split('?').next().unwrap_or("");
-    let path = if path.len() > 1 { path.trim_end_matches('/') } else { path };
+    let path = if path.len() > 1 {
+        path.trim_end_matches('/')
+    } else {
+        path
+    };
     match method.to_ascii_uppercase().as_str() {
         "GET" if path == "/mesh/pull" => Route::Pull,
         "GET" if path == "/mesh/attachment" => Route::Attachment,
         "GET" if path == "/mesh/keyring" => Route::Keyring,
         "GET" if path == "/mesh/manifest" => Route::Manifest,
         "GET" if path == "/mesh/page" => Route::Page,
+        "GET" if path == "/mesh/revoked" => Route::Revoke,
         _ => match not_yet(path) {
             Some(what) => Route::NotYet(what),
             None => Route::Unknown,
@@ -2758,8 +3034,9 @@ impl State {
     ///
     /// ⚠️ 三条写在这里，因为它们是**这一片的安全面** ✓：
     ///   ① **白名单**：`?space_id=` 不在 `conns` 里 ⇒ 403（**绝不**退回"随便挑一个"✗）；
-    ///   ② **连接按空间取**：`handle_attachment` 的空间 id 是**从这条连接的 meta 里读的**
-    ///      ⇒ 取错连接 ＝ **把别人的附件字节发出去** ✗；
+    ///   ② **连接按空间取**：`handle_attachment` 的空间 id 是**从这条连接自己那个空间库**
+    ///      （`main.workspaces` 那一行）读的 ⇒ 取错连接 ＝ **把别人的附件字节发出去** ✗；
+    ///      ⛔ 不许用 `attachments::active_space_id`（**全局活动空间**，随界面切空间而变 ✗）。
     ///   ③ **省略 `?space_id=` 的语义**（⚠️ **显式决定**，2026-10-01）：**只服务一个空间**时用它
     ///      （向后兼容旧客户端 ✓）；**服务多个**时 ⇒ **400**（说不清要哪个 ⇒ ⛔ **不猜** ✗）。
     ///      既有判据 `the_space_id_gate_refuses_by_default_and_never_leaks_before_refusing` 钉着它 ✓。
@@ -2788,20 +3065,24 @@ impl State {
         let guard = match self.conns.lock() {
             Ok(g) => g,
             Err(_) => {
-                return Err(Reply::json(500, "Internal Server Error", json_error("空间连接表的锁被毒掉了")))
+                return Err(Reply::json(
+                    500,
+                    "Internal Server Error",
+                    json_error("空间连接表的锁被毒掉了"),
+                ))
             }
         };
         let space = match want {
             Some(s) => s,
             None => match guard.len() {
                 1 => guard.keys().next().cloned().unwrap_or_default(),
-                _ => {
-                    return Err(Reply::json(
-                        400,
-                        "Bad Request",
-                        json_error("这个窗口服务**多个**空间 ⇒ 请求必须带 `?space_id=`（说不清要哪个，不猜）"),
-                    ))
-                }
+                _ => return Err(Reply::json(
+                    400,
+                    "Bad Request",
+                    json_error(
+                        "这个窗口服务**多个**空间 ⇒ 请求必须带 `?space_id=`（说不清要哪个，不猜）",
+                    ),
+                )),
             },
         };
         match guard.get(&space) {
@@ -2812,7 +3093,10 @@ impl State {
                 Err(Reply::json(
                     403,
                     "Forbidden",
-                    json_error(&format!("这个窗口只服务这些空间：{}（收到 {space}）", names.join("、"))),
+                    json_error(&format!(
+                        "这个窗口只服务这些空间：{}（收到 {space}）",
+                        names.join("、")
+                    )),
                 ))
             }
         }
@@ -2869,6 +3153,15 @@ impl MeshHandle {
         }
     }
 
+    /// ⭐ **2026-10-28（owner：「一步到位」·P2）**：这个空间是不是"我知道，但这一轮锁着" ——
+    /// 给公告那一侧用（**锁着也宣告房间**，只发封包 ✓）。
+    pub fn is_locked(&self, proto_space: &str) -> bool {
+        match self.locked.lock() {
+            Ok(g) => g.contains(proto_space),
+            Err(_) => false,
+        }
+    }
+
     /// ⭐ **U8**：这一扇门现在**服务哪些空间**（**排过序** ⇒ 读数确定 ✓）。
     pub fn served(&self) -> Vec<String> {
         match self.conns.lock() {
@@ -2885,12 +3178,24 @@ impl MeshHandle {
     ///
     /// ⚠️ 开的是**这个空间自己那份库**（`db_space` ≠ `proto_space` —— 那条真机教训见 `ensure_window` ✓）。
     pub fn add_space(&self, db_space: &str, proto_space: &str, dir: &Path) -> Result<bool, String> {
-        let mut guard = self.conns.lock().map_err(|_| "空间连接表的锁被毒掉了".to_string())?;
+        let mut guard = self
+            .conns
+            .lock()
+            .map_err(|_| "空间连接表的锁被毒掉了".to_string())?;
         if guard.contains_key(proto_space) {
             return Ok(false);
         }
         let conn = crate::db::open_space_conn_at(db_space, dir)?;
         guard.insert(proto_space.to_string(), Arc::new(Mutex::new(conn)));
+        // ⭐⭐ **2026-10-28（真机：`diag served=true locked=true` 两种状态同时为真）**：**加进来了就把 locked 摘掉** ✗ ——
+        //   锁着时 `mark_locked(proto)` 会把它记进 `locked`；解锁后 `ensure_window` 走"已开"分支
+        //   把连接加回来（`add_space` ✓），但**没人把 locked 清掉** ⇒ 这个空间同时"在服务"且"锁着"
+        //   ⇒ `window_locked()` 会对一个开着的空间说"锁着"（面板/日志误导），
+        //   而且 `authorized`／`handle_pull` 里 `serves || locked` 的分支优先级也跟着含混 ✓。
+        //   ⇒ 连接真的进来了 ⇒ 这个空间**不再锁着**（摘标记在**成功之后**，失败不动它 ✓）。
+        if let Ok(mut lg) = self.locked.lock() {
+            lg.remove(proto_space);
+        }
         Ok(true)
     }
 
@@ -2900,11 +3205,19 @@ impl MeshHandle {
     /// 只加连接不载卡 ⇒ 那个空间**服务着、但谁都进不来**（401 ✓）
     /// ⇒ ⭐ **这是 U8 判据当场抓到的真 bug** ✓（2026-10-02 实测：`three_spaces_share_one_window_…`
     /// 里 proto-2 回 401 而期望 200 ✓）。
-    pub fn load_cards_for(&self, proto_space: &str, dir: &Path, device_level: bool) -> Result<(), String> {
+    pub fn load_cards_for(
+        &self,
+        proto_space: &str,
+        dir: &Path,
+        device_level: bool,
+    ) -> Result<(), String> {
         let mut fresh = CardBook::new();
         load_cards(dir, proto_space, device_level, &mut fresh);
         let add = fresh.remove(proto_space).unwrap_or_default();
-        let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
+        let mut guard = self
+            .paired
+            .lock()
+            .map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
         let cards = guard.entry(proto_space.to_string()).or_default();
         for h in add.hashes {
             cards.hashes.insert(h);
@@ -2921,16 +3234,32 @@ impl MeshHandle {
     ///
     /// ⚠️ **必须做** ✗：只删库里那一行 ⇒ 运行中的窗口**还认着那张卡** ⇒ 直到重启/换绑
     /// ⇒ 用户看到的是"**删了等于没删**" ✗（正是 T5 判据① 要挡的 ✓）。
-    pub fn forget_paired_hash(&self, proto_space: &str, secret_sha256: &str) -> Result<bool, String> {
-        let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
-        Ok(guard.get_mut(proto_space).map(|c| c.hashes.remove(secret_sha256)).unwrap_or(false))
+    pub fn forget_paired_hash(
+        &self,
+        proto_space: &str,
+        secret_sha256: &str,
+    ) -> Result<bool, String> {
+        let mut guard = self
+            .paired
+            .lock()
+            .map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
+        Ok(guard
+            .get_mut(proto_space)
+            .map(|c| c.hashes.remove(secret_sha256))
+            .unwrap_or(false))
     }
 
     /// ⭐ **2026-10-12（第 2 步）**：把**那一台的公钥**从正在跑的门里摘掉 ✗
     /// （⭐ `forget_paired_hash` 在新那一档上的对应物 ✓ —— ⛔ 只删库那一步不够 ✗，同一条理由 ✓）。
     pub fn forget_paired_device(&self, proto_space: &str, device_id: &str) -> Result<bool, String> {
-        let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
-        Ok(guard.get_mut(proto_space).map(|c| c.pubkeys.remove(device_id).is_some()).unwrap_or(false))
+        let mut guard = self
+            .paired
+            .lock()
+            .map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
+        Ok(guard
+            .get_mut(proto_space)
+            .map(|c| c.pubkeys.remove(device_id).is_some())
+            .unwrap_or(false))
     }
 
     /// ⭐ **U11/T5**：把**刚登记的这一张卡**加进正在跑的门（回"新加的吗"✓）——
@@ -2944,8 +3273,15 @@ impl MeshHandle {
         if !self.serves(proto_space) {
             return Ok(false);
         }
-        let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
-        Ok(guard.entry(proto_space.to_string()).or_default().hashes.insert(secret_sha256.to_string()))
+        let mut guard = self
+            .paired
+            .lock()
+            .map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
+        Ok(guard
+            .entry(proto_space.to_string())
+            .or_default()
+            .hashes
+            .insert(secret_sha256.to_string()))
     }
 
     /// ⭐ **2026-10-12（第 3 步）**：把**那一台的公钥**加进这道门的卡册（回"新加的吗"✓）——
@@ -2959,7 +3295,10 @@ impl MeshHandle {
         if !self.serves(proto_space) {
             return Ok(false);
         }
-        let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
+        let mut guard = self
+            .paired
+            .lock()
+            .map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
         let cards = guard.entry(proto_space.to_string()).or_default();
         Ok(cards
             .pubkeys
@@ -2974,7 +3313,10 @@ impl MeshHandle {
     /// ⭐ 它只是**读数** ✓，⛔ 不参与任何判定 ✗（真判定在 `authorized` ✓）。
     pub fn paired_card_count(&self, proto_space: &str) -> usize {
         match self.paired.lock() {
-            Ok(g) => g.get(proto_space).map(|c| c.hashes.len() + c.pubkeys.len()).unwrap_or(0),
+            Ok(g) => g
+                .get(proto_space)
+                .map(|c| c.hashes.len() + c.pubkeys.len())
+                .unwrap_or(0),
             Err(_) => 0,
         }
     }
@@ -2991,7 +3333,10 @@ impl MeshHandle {
     ///
     /// ⚠️ 这就是 T6 的「**关掉一个空间不许关掉整窗**」✓ —— 调用方据此决定要不要真停 ✓。
     pub fn remove_space(&self, proto_space: &str) -> Result<bool, String> {
-        let mut guard = self.conns.lock().map_err(|_| "空间连接表的锁被毒掉了".to_string())?;
+        let mut guard = self
+            .conns
+            .lock()
+            .map_err(|_| "空间连接表的锁被毒掉了".to_string())?;
         guard.remove(proto_space);
         Ok(!guard.is_empty())
     }
@@ -3029,7 +3374,9 @@ pub fn start(
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     // ⭐ U8：一条请求要哪个空间由 `?space_id=` 决定 ⇒ 日志把**服务范围**印全（排过序 ⇒ 确定 ✓）
     let served: Vec<String> = {
-        let g = conns.lock().map_err(|_| "空间连接表的锁被毒掉了".to_string())?;
+        let g = conns
+            .lock()
+            .map_err(|_| "空间连接表的锁被毒掉了".to_string())?;
         let mut v: Vec<String> = g.keys().cloned().collect();
         v.sort_unstable();
         v
@@ -3075,7 +3422,10 @@ pub fn start(
         std::thread::Builder::new()
             .name("relay-tunnel".to_string())
             .spawn(move || {
-                let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                let rt = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
                     Ok(rt) => rt,
                     Err(e) => {
                         eprintln!("[relay] 隧道服务侧没起来（运行时建不了）：{e}");
@@ -3102,13 +3452,23 @@ pub fn start(
                             let _ = handle_conn(sock, st);
                         });
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(POLL),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(POLL)
+                    }
                     Err(_) => std::thread::sleep(POLL),
                 }
             }
         })
         .map_err(|e| format!("网格窗口线程起不来：{e}"))?;
-    Ok(MeshHandle { addr: bound, stop, join: Some(join), served_pulls, conns, paired, locked })
+    Ok(MeshHandle {
+        addr: bound,
+        stop,
+        join: Some(join),
+        served_pulls,
+        conns,
+        paired,
+        locked,
+    })
 }
 
 struct Request {
@@ -3119,7 +3479,10 @@ struct Request {
 
 impl Request {
     fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -3177,7 +3540,11 @@ fn read_request(sock: &mut TcpStream) -> Result<Request, String> {
     // 一个带体的请求会把体字节留在连接上 —— 现在是 `Connection: close` 所以无害，
     // 但"读干净"这个习惯别丢（将来若接 keep-alive，那就是一串解析错误）。
     let _ = body;
-    Ok(Request { method, target, headers })
+    Ok(Request {
+        method,
+        target,
+        headers,
+    })
 }
 
 /// 一个响应：状态码 ＋ 原因 ＋ 体（**字节**）＋ 内容类型。
@@ -3195,13 +3562,23 @@ struct Reply {
 
 impl Reply {
     fn json(code: u16, reason: &'static str, body: String) -> Self {
-        Reply { code, reason, content_type: "application/json; charset=utf-8", body: body.into_bytes() }
+        Reply {
+            code,
+            reason,
+            content_type: "application/json; charset=utf-8",
+            body: body.into_bytes(),
+        }
     }
 
     /// 原始字节（附件）：`application/octet-stream` —— 具体 mime 由**收侧**按本地元数据判
     /// （与甲那条 `GET /attachments/<hash>` 同一口径：**字节就是字节**，元数据各机自己有一份）。
     fn bytes(code: u16, reason: &'static str, body: Vec<u8>) -> Self {
-        Reply { code, reason, content_type: "application/octet-stream", body }
+        Reply {
+            code,
+            reason,
+            content_type: "application/octet-stream",
+            body,
+        }
     }
 }
 
@@ -3213,7 +3590,11 @@ pub(crate) fn dispatch_tunnel(
     target: &str,
     headers: Vec<(String, String)>,
 ) -> (u16, Vec<u8>) {
-    let req = Request { method: method.to_string(), target: target.to_string(), headers };
+    let req = Request {
+        method: method.to_string(),
+        target: target.to_string(),
+        headers,
+    };
     let reply = dispatch(state, &req);
     (reply.code, reply.body)
 }
@@ -3247,7 +3628,11 @@ fn handle_conn(mut sock: TcpStream, state: Arc<State>) -> Result<(), String> {
     let req = match read_request(&mut sock) {
         Ok(r) => r,
         Err(e) => {
-            let reply = Reply::json(400, "Bad Request", json_error(&format!("请求读不出来：{e}")));
+            let reply = Reply::json(
+                400,
+                "Bad Request",
+                json_error(&format!("请求读不出来：{e}")),
+            );
             let _ = respond(&mut sock, &reply);
             return Ok(());
         }
@@ -3256,21 +3641,134 @@ fn handle_conn(mut sock: TcpStream, state: Arc<State>) -> Result<(), String> {
     respond(&mut sock, &reply).map_err(|e| e.to_string())
 }
 
+/// ⭐ **2026-10-28（owner：「一步到位」· P2 观测缺口）**：**入站拉取**的一行读数（纯函数 ✓）。
+///
+/// 形状：`[mesh] 入站拉取：space=<前 8 位> since=<n> caps_sealed1=<bool> ⇒ <code>`，
+/// 封包通道追加 `sealed_rows=<n>`，失败追加一句被截断的原因 ✓。
+///
+/// ⚠️ **不打 `name_sha`、不打签名/口令**（都可能被当成凭证面）✓；
+/// ⚠️ 调用点只在两种情形调用（带 `caps=sealed1` / 任何 4xx·5xx）⇒ 不刷屏 ✓。
+fn pull_log_line(target: &str, code: u16, body: &[u8]) -> String {
+    let space: String = query_get(target, "space_id")
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+        .chars()
+        .take(8)
+        .collect();
+    let since = query_get(target, "since")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let sealed_cap = caps_has_sealed1(target);
+    let body_text = String::from_utf8_lossy(body);
+    let tail = if code >= 400 {
+        format!(" ｜ {}", body_text.chars().take(160).collect::<String>())
+    } else if sealed_cap {
+        format!(
+            " ｜ sealed_rows={}",
+            body_text.matches("\"sealed\":").count()
+        )
+    } else {
+        String::new()
+    };
+    format!("[mesh] 入站拉取：space={space} since={since} caps_sealed1={sealed_cap} ⇒ {code}{tail}")
+}
+
+/// ⭐ **2026-10-28（P2 观测缺口·第二格）**：入站拉取的**门内读数** ——
+/// `served` / `locked` / **这把请求带的 device_id 在该空间的卡册里有没有公钥**。
+/// 来由：真机 401 只能读到"两样都没有/都不对"，分不清是"空间没进这扇门"还是"卡没载进来"。
+fn pull_diag(state: &State, req: &Request) -> String {
+    let space = query_get(&req.target, "space_id")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let dev = req.header(HDR_DEVICE).map(str::trim).unwrap_or("");
+    let (served, locked, pk) = (
+        state.serves(&space),
+        state.is_locked(&space),
+        state
+            .paired
+            .lock()
+            .ok()
+            .and_then(|g| g.get(&space).map(|c| c.pubkeys.contains_key(dev)))
+            .unwrap_or(false),
+    );
+    let dev8: String = dev.chars().take(8).collect();
+    // ⭐ 第二层诊断：这扇门**手上到底有哪些 key**（卡册 / 连接 / 锁着集合各取前 8 位）——
+    //   来由：真机 401 的 diag 显示 `served=false locked=true pk=false`，但"谁把 locked 标上的"说不清 ⇒ 先把集合打出来。
+    let short = |k: &String| -> String { k.chars().take(8).collect() };
+    let mut known: Vec<String> = state
+        .paired
+        .lock()
+        .ok()
+        .map(|g| g.keys().map(short).collect())
+        .unwrap_or_default();
+    known.sort();
+    let mut conns: Vec<String> = state
+        .conns
+        .lock()
+        .ok()
+        .map(|g| g.keys().map(short).collect())
+        .unwrap_or_default();
+    conns.sort();
+    let mut locked_keys: Vec<String> = state
+        .locked
+        .lock()
+        .ok()
+        .map(|g| g.iter().map(short).collect())
+        .unwrap_or_default();
+    locked_keys.sort();
+    format!(
+        "diag: served={served} locked={locked} pk_for_dev={pk} dev={dev8} ｜ cardbook=[{}] ｜ serves=[{}] ｜ locked=[{}]",
+        known.join(","), conns.join(","), locked_keys.join(",")
+    )
+}
+/// ⭐ **2026-10-28（真机：解锁后 pendingInbox 不降）**：补应用该扫**谁** ——
+/// **在线对端 ∪ inbox 里出现过的 peer_device**（去重，在线那些保持原序在前）✓。
+/// 来由：原来只扫 `peers` ⇒ 对端离线时「解锁后自动应用」永远不跑（收了、存了、就是不用 ✗）。
+pub(crate) fn drain_targets(online: &[String], inbox_ids: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for id in online.iter().chain(inbox_ids.iter()) {
+        let t = id.trim();
+        if t.is_empty() || out.iter().any(|x| x == t) {
+            continue;
+        }
+        out.push(t.to_string());
+    }
+    out
+}
 pub(crate) fn dispatch(state: &State, req: &Request) -> Reply {
-    // ⭐ U11：门只认卡，且**分清 401／403**（见 `authorized` 头注 ✓）
+    let routed = route(&req.method, &req.target);
+    // ⭐ 2026-10-28（owner：「一步到位」· P2 观测缺口）：**入站拉取要留一行读数** ✗ ——
+    //   来由（真机）：锁态实验两边都看不见"请求到没到"（成功不写 `sync_history`、失败不打日志）
+    //   ⇒ 只能靠猜。这里只补**读数**，⛔ 不改协议 ✗。
     if let Err(r) = authorized(state, req) {
+        if matches!(&routed, Route::Pull) {
+            eprintln!(
+                "{} ｜ {}",
+                pull_log_line(&req.target, r.code, &r.body),
+                pull_diag(state, req)
+            );
+        }
         return r;
     }
-    match route(&req.method, &req.target) {
+    match routed {
         Route::Pull => {
             // ★ **T-10**：**在线上真的发生过**的拉取在这里计数（`authorized` 之后 ⇒ 只数被服务的）。
             state.served_pulls.fetch_add(1, Ordering::Relaxed);
-            handle_pull(state, &req.target)
+            let reply = handle_pull(state, &req.target);
+            // ⚠️ 只打两种：封包通道（要验"P2 第二半"）与任何失败 —— 否则每个空间每轮都刷屏 ✓
+            if caps_has_sealed1(&req.target) || reply.code >= 400 {
+                eprintln!("{} ｜ {}", pull_log_line(&req.target, reply.code, &reply.body), pull_diag(state, req));
+            }
+            reply
         }
         Route::Attachment => handle_attachment(state, &req.target),
         Route::Keyring => handle_keyring(state),
         Route::Manifest => handle_manifest(state, &req.target),
         Route::Page => handle_page(state, &req.target),
+        Route::Revoke => handle_revoked(state, req),
         Route::NotYet(what) => Reply::json(
             501,
             "Not Implemented",
@@ -3305,17 +3803,21 @@ fn authorized(state: &State, req: &Request) -> Result<(), Reply> {
         Ok(Some(s)) => s,
         Ok(None) => {
             let Ok(guard) = state.conns.lock() else {
-                return Err(Reply::json(500, "Internal Server Error", json_error("空间连接表的锁被毒掉了")));
+                return Err(Reply::json(
+                    500,
+                    "Internal Server Error",
+                    json_error("空间连接表的锁被毒掉了"),
+                ));
             };
             match guard.len() {
                 1 => guard.keys().next().cloned().unwrap_or_default(),
-                _ => {
-                    return Err(Reply::json(
-                        400,
-                        "Bad Request",
-                        json_error("这个窗口服务**多个**空间 ⇒ 请求必须带 `?space_id=`（说不清要哪个，不猜）"),
-                    ))
-                }
+                _ => return Err(Reply::json(
+                    400,
+                    "Bad Request",
+                    json_error(
+                        "这个窗口服务**多个**空间 ⇒ 请求必须带 `?space_id=`（说不清要哪个，不猜）",
+                    ),
+                )),
             }
         }
         Err(e) => return Err(Reply::json(400, "Bad Request", json_error(&e))),
@@ -3328,7 +3830,9 @@ fn authorized(state: &State, req: &Request) -> Result<(), Reply> {
         return Err(Reply::json(
             403,
             "Forbidden",
-            json_error(&format!("这个窗口不服务空间 {space}（不是「没带证件」，是「这不是我的空间」）")),
+            json_error(&format!(
+                "这个窗口不服务空间 {space}（不是「没带证件」，是「这不是我的空间」）"
+            )),
         ));
     }
     // ③ ⭐⭐ **2026-10-12（设备身份第 2 步）**：⭐ **先试签名那一档** ✗ ——
@@ -3342,8 +3846,14 @@ fn authorized(state: &State, req: &Request) -> Result<(), Reply> {
     //    ⚠️⭐ **等 owner 选 ⓒ（停认旧那一档）时，这一段必须改成"签名不过 ⇒ 直接 401"** ✗ ——
     //      否则"把签名弄坏就能降级"就是一条真洞 ✓（⛔ 那时标志是：旧那一档那一段被删掉 ✓）。
     let mut sig_refusal: Option<&'static str> = None;
-    if let Some(dev) = req.header(HDR_DEVICE).map(str::trim).filter(|s| !s.is_empty()) {
-        let ts = req.header(HDR_TS).and_then(|v| v.trim().parse::<i64>().ok());
+    if let Some(dev) = req
+        .header(HDR_DEVICE)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let ts = req
+            .header(HDR_TS)
+            .and_then(|v| v.trim().parse::<i64>().ok());
         let sig = req.header(HDR_SIG).map(str::trim).filter(|s| !s.is_empty());
         match (ts, sig) {
             (Some(ts), Some(sig)) => {
@@ -3356,10 +3866,9 @@ fn authorized(state: &State, req: &Request) -> Result<(), Reply> {
                         Err(_) => None,
                     };
                     match pk {
-                        None => {
-                            sig_refusal =
-                                Some("这个空间里**没有登记过这台设备的公钥**（没被信任过，或已被逐台解除）")
-                        }
+                        None => sig_refusal = Some(
+                            "这个空间里**没有登记过这台设备的公钥**（没被信任过，或已被逐台解除）",
+                        ),
                         Some(pk) => {
                             // ⭐ 签的那串由**同一句**重建 ✗（`auth_message` ✓）—— ⚠️ 用的是
                             //   **这一条请求真实的** `method` ／ `target` ✓（⭐ 签名绑死"这一个请求" ✓）
@@ -3372,7 +3881,10 @@ fn authorized(state: &State, req: &Request) -> Result<(), Reply> {
                     }
                 }
             }
-            _ => sig_refusal = Some("签名那一档要**三格一起**给（设备号／时间戳／签名）—— 现在缺格，不猜"),
+            _ => {
+                sig_refusal =
+                    Some("签名那一档要**三格一起**给（设备号／时间戳／签名）—— 现在缺格，不猜")
+            }
         }
     }
     // ③-b ⭐ **旧那一档（过渡）**：出示共用口令 ⇒ 它的 `sha256` 在名单里就算过 ✓
@@ -3393,7 +3905,10 @@ fn authorized(state: &State, req: &Request) -> Result<(), Reply> {
     };
     let h = crate::db::sha256_hex(got);
     let ok = match state.paired.lock() {
-        Ok(g) => g.get(&space).map(|cards| cards.hashes.contains(&h)).unwrap_or(false),
+        Ok(g) => g
+            .get(&space)
+            .map(|cards| cards.hashes.contains(&h))
+            .unwrap_or(false),
         Err(_) => false,
     };
     if ok {
@@ -3406,6 +3921,345 @@ fn authorized(state: &State, req: &Request) -> Result<(), Reply> {
         ))
     }
 }
+
+// ─────── ⭐ 2026-10-28（owner：「可否一方取消配对，另一方自动也取消？」）───────
+//
+// ## 它是什么（撤回的**通知**那一半）
+// A 撤销 B ⇒ A 本地**立刻**生效 ✓；再由 A 把「我把你撤销了」**签名**送到 B 的门。
+// B 用**它手里还留着的** A 的公钥卡验签 ✓ ⇒ B 也执行同一次撤销 ⇒ **双向都断** ✓。
+//
+// ## 三条口径
+// 1. ⛔ **只认签名那一档** ✗（`authorized_signed`）：口令那一档在这里**不收** ✗ ——
+//    否则"知道口令的人"能冒充任何 device_id 去撤别人的配对（＝把 U11 消灭掉的洞换个门开回来 ✗）。
+// 2. **幂等** ✓：已经不在名单里 ⇒ 还是 200（调用方据此清掉待发）✓。
+// 3. ⚠️ 只撤**那一台** ✓（复用 `sync::device_unpair_at` —— 与本地撤销**同一处实现** ✓）。
+
+/// 撤销端点的 target（⭐ **一处拼** ✗：签的是它、发的也是它 ✓）。
+pub(crate) fn revoke_target(space_id: &str) -> String {
+    format!("/mesh/revoked?space_id={space_id}")
+}
+
+/// 撤回的送达结论（⭐ **纯函数**分类 ⇒ 判据够得着 ✓）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RevokeOutcome {
+    /// 对面执行了（或**它本来就不认我了** ⇒ 目标已达成 ✓）
+    Delivered,
+    /// 对面是**老版本**（没有这个端点）⇒ 如实记一句、⛔ 不再无限重试 ✗
+    Unsupported,
+    /// 没送到（网络 / 5xx）⇒ **保留待发**，下一轮再试 ✓
+    Failed,
+}
+
+pub(crate) fn classify_revoke_reply(status: u16) -> RevokeOutcome {
+    match status {
+        200 | 401 => RevokeOutcome::Delivered,
+        404 => RevokeOutcome::Unsupported,
+        _ => RevokeOutcome::Failed,
+    }
+}
+
+/// **只要签名那一档**的鉴权（撤回端点专用 —— ⛔ 口令那一档在这里不收 ✗）。
+///
+/// 成功 ⇒ `(被服务的空间, 调用者 device_id)` ✓。
+fn authorized_signed(state: &State, req: &Request) -> Result<(String, String), Reply> {
+    // ① 定位空间（与 `select_space` 同一口径：多个空间时**必须**带 `?space_id=`，⛔ 不猜 ✗）
+    let space = match query_get(&req.target, "space_id") {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            let guard = match state.conns.lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    return Err(Reply::json(
+                        500,
+                        "Internal Server Error",
+                        json_error("空间连接表的锁被毒掉了"),
+                    ))
+                }
+            };
+            match guard.len() {
+                1 => guard.keys().next().cloned().unwrap_or_default(),
+                _ => return Err(Reply::json(
+                    400,
+                    "Bad Request",
+                    json_error(
+                        "这个窗口服务**多个**空间 ⇒ 请求必须带 `?space_id=`（说不清要哪个，不猜）",
+                    ),
+                )),
+            }
+        }
+        Err(e) => return Err(Reply::json(400, "Bad Request", json_error(&e))),
+    };
+    if !(state.serves(&space) || state.is_locked(&space)) {
+        return Err(Reply::json(
+            403,
+            "Forbidden",
+            json_error(&format!(
+                "这个窗口不服务空间 {space}（不是「没带证件」，是「这不是我的空间」）"
+            )),
+        ));
+    }
+    // ② 三格头必须齐（⛔ 缺格不猜 ✗）
+    let dev = req
+        .header(HDR_DEVICE)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            Reply::json(
+                401,
+                "Unauthorized",
+                json_error("撤回**只接受签名那一档**（口令那一档在这里不收）：缺设备号"),
+            )
+        })?;
+    let ts = req
+        .header(HDR_TS)
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .ok_or_else(|| {
+            Reply::json(
+                401,
+                "Unauthorized",
+                json_error("撤回只接受签名那一档：缺时间戳"),
+            )
+        })?;
+    let sig = req
+        .header(HDR_SIG)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            Reply::json(
+                401,
+                "Unauthorized",
+                json_error("撤回只接受签名那一档：缺签名"),
+            )
+        })?;
+    let now = crate::db::now_ms();
+    if (now - ts).abs() > AUTH_WINDOW_MS {
+        return Err(Reply::json(
+            401,
+            "Unauthorized",
+            json_error("这份签名**过期**了（或对端时钟偏得太多）"),
+        ));
+    }
+    // ③ 用**它自己的**公钥验签（⛔ 不认口令 ⇒ 撤不了别人 ✗）
+    let pk = match state.paired.lock() {
+        Ok(g) => g.get(&space).and_then(|c| c.pubkeys.get(dev).cloned()),
+        Err(_) => None,
+    };
+    let Some(pk) = pk else {
+        return Err(Reply::json(
+            401,
+            "Unauthorized",
+            json_error("这个空间里**没有登记过这台设备的公钥**（没被信任过，或已被逐台解除）"),
+        ));
+    };
+    let msg = auth_message(dev, &space, ts, &req.method, &req.target);
+    if !crate::device_key::verify_hex(&pk, msg.as_bytes(), sig) {
+        return Err(Reply::json(
+            401,
+            "Unauthorized",
+            json_error("签名对不上（不是这台签的，或这条请求被改过）"),
+        ));
+    }
+    Ok((space, dev.to_string()))
+}
+
+/// `GET /mesh/revoked?space_id=…`：**对方撤销了本机** ⇒ 本机也把对方从名单里删掉 ✓。
+fn handle_revoked(state: &State, req: &Request) -> Reply {
+    let (space, dev) = match authorized_signed(state, req) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if !state.serves(&space) {
+        // 锁着的空间：这个窗口开不了库 ⇒ 撤不了（⛔ 不许假装成功 ✗）。
+        return Reply::json(
+            503,
+            "Service Unavailable",
+            json_error(
+                "这个空间在**本机这一轮是锁着的**（开不了库）⇒ 现在执行不了撤销，请解锁后再试",
+            ),
+        );
+    }
+    let conn = match state.select_space(&req.target) {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let guard = match conn.lock() {
+        Ok(g) => g,
+        Err(_) => {
+            return Reply::json(
+                500,
+                "Internal Server Error",
+                json_error("空间库的锁被毒掉了"),
+            )
+        }
+    };
+    match crate::sync::device_unpair_served(&guard, &space, &dev) {
+        Ok(st) => {
+            eprintln!(
+                "[mesh] 收到「对方撤销配对」：{}… ⇒ 已把它从本机名单删掉（这个空间还剩 {} 台）",
+                &dev[..dev.len().min(8)],
+                st.paired_count
+            );
+            Reply::json(
+                200,
+                "OK",
+                serde_json::json!({
+                    "ok": true,
+                    "wasPaired": st.was_paired,
+                    "pairedCount": st.paired_count,
+                })
+                .to_string(),
+            )
+        }
+        Err(e) => Reply::json(
+            500,
+            "Internal Server Error",
+            json_error(&format!("本机执行撤销失败：{e}")),
+        ),
+    }
+}
+
+/// 送**一次**撤回（⚠️ 签名在外面签好传进来 ⇒ 这一层**不拿库锁跨 await** ✓）。
+pub(crate) async fn deliver_revoke_once(
+    peer: &MeshPeer,
+    space: &str,
+    device_id: &str,
+    ts: i64,
+    sig: &str,
+    client: &reqwest::Client,
+) -> Result<RevokeOutcome, String> {
+    let target = revoke_target(space);
+    let ep = crate::mesh_endpoint::endpoint_for_peer(peer, client.clone()).await?;
+    let reply = ep.get(&target, Some((device_id, ts, sig)), None).await?;
+    Ok(classify_revoke_reply(reply.status))
+}
+
+/// 待发撤回的**执行器**（由 `lan_state` 主循环调用 ✓；5 秒节流 ✓）。
+///
+/// ## 时机与边界
+/// · 对面**在线**（公告里有它）⇒ 立刻送；送达（200/401）⇒ 清掉待发 ✓；
+/// · 对面是**老版本**（404）⇒ 如实记一句、清掉待发（⛔ 不无限重试 ✗）；
+/// · 对面**不在线** ⇒ 待发留着，它一上线下一轮就送 ✓；
+/// · 等了 **72 小时**还没送到 ⇒ 如实放弃并记一句（⛔ 不让队列无限长 ✗）。
+pub fn retry_pending_revokes(app: &tauri::AppHandle, peers: &[crate::lan::Peer]) {
+    use tauri::Manager as _;
+    const THROTTLE_MS: i64 = 5_000;
+    const GIVE_UP_MS: i64 = 72 * 3600 * 1000;
+    let now = crate::db::now_ms();
+    if now.saturating_sub(LAST_REVOKE_ATTEMPT_MS.load(Ordering::SeqCst)) < THROTTLE_MS {
+        return;
+    }
+    let pending = {
+        let db = app.state::<crate::db::Db>();
+        let c = match db.0.lock() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        crate::sync::pending_revokes(&c)
+    };
+    if pending.is_empty() {
+        return;
+    }
+    let mut jobs: Vec<(MeshPeer, Vec<String>, String)> = Vec::new();
+    for p in &pending {
+        if now.saturating_sub(p.at_ms) > GIVE_UP_MS {
+            eprintln!(
+                "[mesh] 撤回通知：{}… 等了 72 小时还没送到（对面一直没上线？）⇒ 如实放弃（可在对面手动撤销）",
+                &p.device[..p.device.len().min(8)]
+            );
+            let db = app.state::<crate::db::Db>();
+            if let Ok(c) = db.0.lock() {
+                let _ = crate::sync::clear_pending_revoke(&c, &p.device);
+            }
+            continue;
+        }
+        let Some(pr) = peers
+            .iter()
+            .find(|x| x.announce.device_id.trim() == p.device.trim())
+        else {
+            continue;
+        };
+        let Some(base) = pr
+            .announce
+            .hub_base
+            .as_deref()
+            .map(str::trim)
+            .filter(|b| !b.is_empty() && crate::lan::is_lan_base(b))
+        else {
+            continue;
+        };
+        if pr.announce.hub_spaces.is_empty() {
+            continue;
+        }
+        jobs.push((
+            MeshPeer {
+                device_id: p.device.clone(),
+                base: base.trim_end_matches('/').to_string(),
+            },
+            pr.announce.hub_spaces.clone(),
+            p.device.clone(),
+        ));
+    }
+    if jobs.is_empty() {
+        return;
+    }
+    LAST_REVOKE_ATTEMPT_MS.store(now, Ordering::SeqCst);
+    for (peer, spaces, dev) in jobs {
+        let app2 = app.clone();
+        tauri::async_runtime::spawn(async move {
+            use tauri::Manager as _;
+            let client = mesh_http_client();
+            for space in spaces {
+                // 签名：拿库锁 → **立刻放**（⛔ 不跨 await 持锁 ✗）
+                let signed = {
+                    let db = app2.state::<crate::db::Db>();
+                    let c = match db.0.lock() {
+                        Ok(c) => c,
+                        Err(_) => return,
+                    };
+                    let my_dev = crate::sync::device_id(&c).unwrap_or_default();
+                    if my_dev.trim().is_empty() {
+                        None
+                    } else {
+                        let target = revoke_target(&space);
+                        sign_request(&c, &my_dev, &space, "GET", &target, crate::db::now_ms())
+                            .map(|(ts, sig)| (my_dev, ts, sig))
+                    }
+                };
+                let Some((my_dev, ts, sig)) = signed else {
+                    return;
+                };
+                match deliver_revoke_once(&peer, &space, &my_dev, ts, &sig, &client).await {
+                    Ok(RevokeOutcome::Delivered) => {
+                        let db = app2.state::<crate::db::Db>();
+                        if let Ok(c) = db.0.lock() {
+                            let _ = crate::sync::clear_pending_revoke(&c, &dev);
+                        }
+                        eprintln!(
+                            "[mesh] 撤回通知已送达：{}… ⇒ 对面也把本机从它名单里删掉了 ✓",
+                            &dev[..dev.len().min(8)]
+                        );
+                        return;
+                    }
+                    Ok(RevokeOutcome::Unsupported) => {
+                        let db = app2.state::<crate::db::Db>();
+                        if let Ok(c) = db.0.lock() {
+                            let _ = crate::sync::clear_pending_revoke(&c, &dev);
+                        }
+                        eprintln!(
+                            "[mesh] 撤回通知：{}… 那台是**老版本**（没有这个端点）⇒ 只能它在那边手动撤销（已不再重试）",
+                            &dev[..dev.len().min(8)]
+                        );
+                        return;
+                    }
+                    Ok(RevokeOutcome::Failed) | Err(_) => continue, // 换下一个空间 / 下一轮再试
+                }
+            }
+        });
+    }
+}
+
+/// 待发撤回的节流（毫秒时间戳；`0` ＝ 启动后还没试过）。
+static LAST_REVOKE_ATTEMPT_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 
 // ─────────────── ⭐ 2026-10-12（设备身份第 2 步）：请求签名 ✗ ───────────────
 
@@ -3493,7 +4347,9 @@ pub(crate) type CardBook = std::collections::HashMap<String, SpaceCards>;
 /// ⭐⭐ **2026-10-12（第 2 步）**：⭐ 两档**一起载** ✗（旧：哈希 ✓／新：公钥 ✓）——
 /// ⚠️ 行键那一步**只有这一处** ✓ ⇒ ⛔ 两档不许各算一次行键 ✗（那是第二处判定 ✓）。
 fn load_cards(dir: &Path, proto_space: &str, device_level: bool, into: &mut CardBook) {
-    let Ok(meta) = crate::db::open_meta_conn_at(dir) else { return };
+    let Ok(meta) = crate::db::open_meta_conn_at(dir) else {
+        return;
+    };
     let row = paired_row_key(proto_space, device_level);
     let cards = into.entry(proto_space.to_string()).or_default();
     // ⭐ 两档**各查各的、互不连坐** ✗：⭐ 一档的查询失败（老库缺列 / 表不在）**不该把另一档也清空** ✓
@@ -3518,7 +4374,9 @@ fn query_get(target: &str, key: &str) -> Result<Option<String>, String> {
     for pair in q.split('&').filter(|p| !p.is_empty()) {
         let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
         if k.contains('%') || v.contains('%') || k.contains('+') || v.contains('+') {
-            return Err("查询参数里出现了 `%` / `+` —— 本窗口不做 URL 解码：如实拒绝，不猜".to_string());
+            return Err(
+                "查询参数里出现了 `%` / `+` —— 本窗口不做 URL 解码：如实拒绝，不猜".to_string(),
+            );
         }
         if k == key {
             return Ok(Some(v.to_string()));
@@ -3540,15 +4398,15 @@ fn query_get(target: &str, key: &str) -> Result<Option<String>, String> {
 ///
 /// ⚠️ 读的是**裸 meta 连接**上的 `sync_state`（⛔ 不是 `meta.sync_state` ✗）：
 ///   `open_meta_conn_at` 给的就是裸连接，写 `meta.` 前缀会报 "no such table"。
-pub(crate) fn read_public_material(
-    dir: &std::path::Path,
-) -> Result<Option<(String, u16)>, String> {
+pub(crate) fn read_public_material(dir: &std::path::Path) -> Result<Option<(String, u16)>, String> {
     let meta = crate::db::open_meta_conn_at(dir)
         .map_err(|e| format!("打不开 meta.db（拿不到公开材料）：{e}"))?;
     let text: Option<String> = meta
-        .query_row("SELECT value FROM sync_state WHERE key = 'keyring'", [], |r| {
-            r.get::<_, String>(0)
-        })
+        .query_row(
+            "SELECT value FROM sync_state WHERE key = 'keyring'",
+            [],
+            |r| r.get::<_, String>(0),
+        )
         .optional()
         .map_err(|e| format!("本机那份公开材料读不出来（⛔ 不推一份坏的上去）：{e}"))?;
     let Some(text) = text else {
@@ -3607,7 +4465,8 @@ pub async fn fetch_peer_keyring(
     if !(200..300).contains(&status) {
         return Err(format!("取公开材料被拒：HTTP {status}：{}", body.trim()));
     }
-    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("响应不是 JSON：{e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("响应不是 JSON：{e}"))?;
     match v.get("material") {
         Some(serde_json::Value::String(s)) if !s.trim().is_empty() => Ok(Some(s.clone())),
         Some(serde_json::Value::Null) | None => {
@@ -3632,18 +4491,33 @@ fn handle_manifest(state: &State, target: &str) -> Reply {
     };
     let g = match conn.lock() {
         Ok(g) => g,
-        Err(_) => return Reply::json(500, "Internal Server Error", json_error("空间库的锁被毒掉了")),
+        Err(_) => {
+            return Reply::json(
+                500,
+                "Internal Server Error",
+                json_error("空间库的锁被毒掉了"),
+            )
+        }
     };
     let rows: Vec<serde_json::Value> = match g
         .prepare("SELECT id, updated_at, deleted_at FROM pages ORDER BY updated_at ASC, id ASC")
         .and_then(|mut st| {
-            st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, Option<i64>>(2)?)))
-                .and_then(|m| m.collect::<Result<Vec<_>, _>>())
+            st.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                ))
+            })
+            .and_then(|m| m.collect::<Result<Vec<_>, _>>())
         }) {
-        Ok(v) => v.into_iter()
-            .map(|(id, updated_at, deleted_at)| serde_json::json!({
-                "id": id, "updated_at": updated_at, "deleted": deleted_at.is_some()
-            }))
+        Ok(v) => v
+            .into_iter()
+            .map(|(id, updated_at, deleted_at)| {
+                serde_json::json!({
+                    "id": id, "updated_at": updated_at, "deleted": deleted_at.is_some()
+                })
+            })
             .collect(),
         Err(e) => {
             return Reply::json(
@@ -3680,14 +4554,18 @@ pub async fn fetch_peer_manifest(
     if !(200..300).contains(&status) {
         return Err(format!("取页清单被拒：HTTP {status}：{}", body.trim()));
     }
-    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("页清单不是 JSON：{e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("页清单不是 JSON：{e}"))?;
     let arr = v
         .get("pages")
         .and_then(|p| p.as_array())
         .ok_or_else(|| "页清单里没有 pages 数组（版本不认识？）".to_string())?;
     let mut out = Vec::with_capacity(arr.len());
     for it in arr {
-        let id = it.get("id").and_then(|x| x.as_str()).ok_or("页清单有条目缺 id")?;
+        let id = it
+            .get("id")
+            .and_then(|x| x.as_str())
+            .ok_or("页清单有条目缺 id")?;
         let updated_at = it.get("updated_at").and_then(|x| x.as_i64()).unwrap_or(0);
         let deleted = it.get("deleted").and_then(|x| x.as_bool()).unwrap_or(false);
         out.push((id.to_string(), updated_at, deleted));
@@ -3762,7 +4640,11 @@ async fn maybe_report_manifest_gap(
         Ok(None) => {
             // 老对端没有这一档 ⇒ 只压 **30 分钟**（⛔ 不是 6 小时：对方升级后要能很快用上）。
             if let Ok(g) = conn.lock() {
-                let _ = crate::sync::set_meta_state(&g, &stamp_key, &(now - (TTL_MS - 30 * 60 * 1000)).to_string());
+                let _ = crate::sync::set_meta_state(
+                    &g,
+                    &stamp_key,
+                    &(now - (TTL_MS - 30 * 60 * 1000)).to_string(),
+                );
             }
             eprintln!("[mesh] 对账：对端没有 /mesh/manifest（多半是旧构建）⇒ 30 分钟后再试");
             return;
@@ -3780,13 +4662,21 @@ async fn maybe_report_manifest_gap(
         let mut dirty: std::collections::HashSet<String> = std::collections::HashSet::new();
         match g.prepare("SELECT id, deleted_at IS NOT NULL, COALESCE(dirty, 0) FROM pages") {
             Ok(mut st) => match st.query_map([], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?, r.get::<_, i64>(2)?))
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, bool>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
             }) {
                 Ok(it) => {
                     for row in it.filter_map(|x| x.ok()) {
                         let (id, deleted, d) = row;
-                        if deleted { local_deleted.insert(id); } else {
-                            if d != 0 { dirty.insert(id.clone()); }
+                        if deleted {
+                            local_deleted.insert(id);
+                        } else {
+                            if d != 0 {
+                                dirty.insert(id.clone());
+                            }
                             local_live.insert(id);
                         }
                     }
@@ -3813,9 +4703,16 @@ async fn maybe_report_manifest_gap(
     );
     let mut repaired = 0usize;
     // ① 对端墓碑、我这边 live ⇒ 补一条 delete（⛔ 本地脏的先不动：那是用户没同步出去的编辑）
-    for id in gaps.peer_deleted_local_live.iter().take(MAX_REPAIR_PER_ROUND) {
+    for id in gaps
+        .peer_deleted_local_live
+        .iter()
+        .take(MAX_REPAIR_PER_ROUND)
+    {
         if local_dirty.contains(id) {
-            eprintln!("[mesh] 对账：{} 对端是墓碑、本地是脏页 ⇒ **不动**（先保住本地编辑）", id.chars().take(8).collect::<String>());
+            eprintln!(
+                "[mesh] 对账：{} 对端是墓碑、本地是脏页 ⇒ **不动**（先保住本地编辑）",
+                id.chars().take(8).collect::<String>()
+            );
             continue;
         }
         let Ok(g) = conn.lock() else { return };
@@ -3832,7 +4729,10 @@ async fn maybe_report_manifest_gap(
             Ok(ab) => {
                 if ab.applied > 0 {
                     repaired += ab.applied;
-                    eprintln!("[mesh] 对账补删：{}（对端墓碑 ⇒ 本地落墓碑）", id.chars().take(8).collect::<String>());
+                    eprintln!(
+                        "[mesh] 对账补删：{}（对端墓碑 ⇒ 本地落墓碑）",
+                        id.chars().take(8).collect::<String>()
+                    );
                 }
             }
             Err(e) => eprintln!("[mesh] 对账补删失败（{id}，不影响同步）：{e}"),
@@ -3847,7 +4747,14 @@ async fn maybe_report_manifest_gap(
             if device_id.trim().is_empty() {
                 return;
             }
-            match sign_request(&g, &device_id, space_id, "GET", &target, crate::db::now_ms()) {
+            match sign_request(
+                &g,
+                &device_id,
+                space_id,
+                "GET",
+                &target,
+                crate::db::now_ms(),
+            ) {
                 Some((ts, sig)) => Some((device_id, ts, sig)),
                 None => return,
             }
@@ -3872,7 +4779,11 @@ async fn maybe_report_manifest_gap(
                     &peer.device_id,
                     space_id,
                     device_level,
-                    if local_name.is_empty() { None } else { Some(local_name.as_str()) },
+                    if local_name.is_empty() {
+                        None
+                    } else {
+                        Some(local_name.as_str())
+                    },
                 ) {
                     Ok(ab) => {
                         repaired += ab.applied;
@@ -3891,7 +4802,10 @@ async fn maybe_report_manifest_gap(
         }
     }
     if repaired > 0 {
-        eprintln!("[mesh] 对账完成：补了 {repaired} 页（空间 {}）", crate::lan::mask_space(space_id));
+        eprintln!(
+            "[mesh] 对账完成：补了 {repaired} 页（空间 {}）",
+            crate::lan::mask_space(space_id)
+        );
     }
 }
 
@@ -3916,7 +4830,13 @@ fn handle_page(state: &State, target: &str) -> Reply {
     };
     let g = match conn.lock() {
         Ok(g) => g,
-        Err(_) => return Reply::json(500, "Internal Server Error", json_error("空间库的锁被毒掉了")),
+        Err(_) => {
+            return Reply::json(
+                500,
+                "Internal Server Error",
+                json_error("空间库的锁被毒掉了"),
+            )
+        }
     };
     let page = match crate::commands::fetch_page(&g, &id) {
         Ok(p) => p,
@@ -3942,7 +4862,8 @@ fn handle_page(state: &State, target: &str) -> Reply {
     Reply::json(
         200,
         "OK",
-        serde_json::json!({ "id": page.id, "updated_at": updated_at, "payload": payload }).to_string(),
+        serde_json::json!({ "id": page.id, "updated_at": updated_at, "payload": payload })
+            .to_string(),
     )
 }
 
@@ -3983,7 +4904,8 @@ pub async fn fetch_peer_page(
     if !(200..300).contains(&status) {
         return Err(format!("按 id 取页被拒：HTTP {status}：{}", body.trim()));
     }
-    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("响应不是 JSON：{e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("响应不是 JSON：{e}"))?;
     let payload = v
         .get("payload")
         .and_then(|p| p.as_str())
@@ -4021,11 +4943,29 @@ fn handle_pull(state: &State, target: &str) -> Reply {
     };
     let g = match conn.lock() {
         Ok(g) => g,
-        Err(_) => return Reply::json(500, "Internal Server Error", json_error("空间库的锁被毒掉了")),
+        Err(_) => {
+            return Reply::json(
+                500,
+                "Internal Server Error",
+                json_error("空间库的锁被毒掉了"),
+            )
+        }
     };
     // ⭐ 2026-10-20：把**我这一栏的高水位**一起发出去（收侧据此判断"游标是不是越界了"）。
     let max_device_seq = max_own_device_seq(&g, &state.cfg.device_id).unwrap_or(0);
-    match serve_own_records(&g, &state.cfg.device_id, since, limit) {
+    // ⭐⭐ **2026-10-28（owner：「一步到位」·P2）**：**加密空间对认得封包的对端，直接发封包** ✓
+    //   ⇒ 一个**锁着**的对端也能先收下、解锁后自动补应用（原来明文会被 `stash_sealed_rows` 跳过 ⇒ 白跑）。
+    let sealed_ok = caps_has_sealed1(target);
+    let encrypted = g
+        .path()
+        .map(|p| crate::security::space_db_is_encrypted(std::path::Path::new(p)))
+        .unwrap_or(false);
+    let served = if encrypted && sealed_ok {
+        serve_own_records_sealed(&g, &state.cfg.device_id, since, limit)
+    } else {
+        serve_own_records(&g, &state.cfg.device_id, since, limit)
+    };
+    match served {
         Ok(records) => Reply::json(
             200,
             "OK",
@@ -4065,18 +5005,35 @@ pub async fn sealed_round(
     } else {
         crate::db::sha256_hex(name.trim())
     };
-    let local_encrypted = crate::security::space_db_is_encrypted(&crate::db::space_db_path(dir, db_space));
+    let local_encrypted =
+        crate::security::space_db_is_encrypted(&crate::db::space_db_path(dir, db_space));
     let targets = mesh_peers_by_name(proto_space, &name, my_device, peers, local_encrypted);
     if targets.is_empty() {
+        let note = "锁着：网段里没有能直接拉的对端（这一轮一个字节都没动）".to_string();
+        // ⭐ 2026-10-28（owner「继续」／amd 锁态实验）：**锁着这条路的读数必须可见** ✗ ——
+        //   原来这里连一行日志都不打、历史也不写 ⇒ 真机上只能看到外面那句
+        //   「候选 1 ｜ 收下 0 条（1 台没拉动，见历史那一行）」，而"历史那一行"是**空指针**。
+        eprintln!("[mesh] {note}");
+        crate::sync::write_sync_history_with(
+            &meta,
+            db_space,
+            0,
+            0,
+            true,
+            &format!("设备直连（网格·锁态）：{note}"),
+            &[],
+        );
         return Ok(MeshRoundReport {
             enabled: true,
-            note: "锁着：网段里没有能直接拉的对端（这一轮一个字节都没动）".to_string(),
+            note,
             candidates: 0,
+            applied: 0,
             peers: Vec::new(),
             window: window_addr(proto_space).map(|a| format!("http://{a}")),
         });
     }
     let client = reqwest::Client::builder()
+        .no_proxy()
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .map_err(|e| e.to_string())?;
@@ -4092,12 +5049,19 @@ pub async fn sealed_round(
             )
             .unwrap_or(0);
         let target = pull_target(proto_space, since, &name_sha);
-        let auth = sign_request(&meta, my_device, proto_space, "GET", &target, crate::db::now_ms())
-            .map(|(ts, sig)| (my_device.to_string(), ts, sig));
+        let auth = sign_request(
+            &meta,
+            my_device,
+            proto_space,
+            "GET",
+            &target,
+            crate::db::now_ms(),
+        )
+        .map(|(ts, sig)| (my_device.to_string(), ts, sig));
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
         // ⭐ Step 1b：每个对端各自一个端点（今天只有局域网直连）
         // ⭐ Step 3-1：**挑传输**收敛到一处（局域网 / 跨网隧道）
-    let ep = crate::mesh_endpoint::endpoint_for_peer(peer, client.clone()).await?;
+        let ep = crate::mesh_endpoint::endpoint_for_peer(peer, client.clone()).await?;
         match pull_from_peer(&*ep, peer, proto_space, since, None, auth_ref, &name_sha).await {
             Ok((rows, _max)) => {
                 let n = stash_sealed_rows(&meta, db_space, &peer.device_id, &rows).unwrap_or(0);
@@ -4130,12 +5094,43 @@ pub async fn sealed_round(
             }),
         }
     }
+    // ⭐ 2026-10-28（owner「继续」／amd 锁态实验）：**每一台对端的成败都打一行，整轮结论也打一行，
+    //   并写进 `sync_history`** ✗ —— 原来锁着这条路：日志只有外面那句「候选 1 ｜ 收下 0 条
+    //   （1 台没拉动，见历史那一行 ✓）」，而实际上**这里一行没打、历史也一个字没写** ⇒
+    //   真机实验时"为什么 0 条"完全不可见（amd 2026-10-28 那轮就是这么卡住的）。
+    //   ⛔ 不许静默：失败原因逐台原样打出来（401/403/没封包/空，用户下一步完全不同）。
+    for p in &out {
+        match &p.error {
+            Some(e) => eprintln!(
+                "[mesh] 锁着：拉对端 {} ｜ ⛔ 失败：{e}（已收 {} 条）",
+                p.peer, p.fetched
+            ),
+            None => eprintln!(
+                "[mesh] 锁着：拉对端 {} ｜ ✓ 收下 {} 条（封包进 inbox，解锁后应用）",
+                p.peer, p.fetched
+            ),
+        }
+    }
+    let note = format!(
+        "锁着：不开空间库，只把封包收进 inbox（这一轮新收 {stashed_total} 条；解锁后自动应用）"
+    );
+    eprintln!("[mesh] {note}");
+    let ok = out.iter().all(|p| p.error.is_none());
+    let failures: Vec<String> = out
+        .iter()
+        .filter_map(|p| p.error.as_ref().map(|e| format!("对端 {}：{e}", p.peer)))
+        .collect();
+    let detail = if failures.is_empty() {
+        format!("设备直连（网格·锁态）：{note}")
+    } else {
+        format!("设备直连（网格·锁态）：{note} ｜ {}", failures.join("；"))
+    };
+    crate::sync::write_sync_history_with(&meta, db_space, 0, stashed_total, ok, &detail, &[]);
     Ok(MeshRoundReport {
         enabled: true,
-        note: format!(
-            "锁着：不开空间库，只把封包收进 inbox（这一轮新收 {stashed_total} 条；解锁后自动应用）"
-        ),
+        note,
         candidates: targets.len(),
+        applied: 0, // 锁态只收封包、不解密应用 ⇒ 没有"收下的页"
         peers: out,
         window: window_addr(proto_space).map(|a| format!("http://{a}")),
     })
@@ -4254,7 +5249,9 @@ fn serve_locked_outbox(state: &State, target: &str, _space: &str, since: i64, li
             return Reply::json(
                 400,
                 "Bad Request",
-                json_error("锁着的时候必须带 `?name_sha=`（这个房间下可能不止一个空间：说不清就不猜）"),
+                json_error(
+                    "锁着的时候必须带 `?name_sha=`（这个房间下可能不止一个空间：说不清就不猜）",
+                ),
             )
         }
     };
@@ -4272,7 +5269,8 @@ fn serve_locked_outbox(state: &State, target: &str, _space: &str, since: i64, li
     // 名字对不上 ⇒ 这不是我的空间（403，与"不服务这个空间"同一档，别混进 401）。
     let mut ws: Option<String> = None;
     if let Ok(mut st) = meta.prepare("SELECT id, name FROM workspaces WHERE deleted_at IS NULL") {
-        if let Ok(rows) = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+        if let Ok(rows) = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        {
             for row in rows.flatten() {
                 if crate::db::sha256_hex(row.1.trim()) == name_sha {
                     ws = Some(row.0);
@@ -4285,10 +5283,16 @@ fn serve_locked_outbox(state: &State, target: &str, _space: &str, since: i64, li
         return Reply::json(
             403,
             "Forbidden",
-            json_error("这一台没有那个名字的空间（或它已删）—— 不是「没带证件」，是「不是我的空间」"),
+            json_error(
+                "这一台没有那个名字的空间（或它已删）—— 不是「没带证件」，是「不是我的空间」",
+            ),
         );
     };
-    let limit = if limit <= 0 { MAX_LIMIT } else { limit.min(MAX_LIMIT) };
+    let limit = if limit <= 0 {
+        MAX_LIMIT
+    } else {
+        limit.min(MAX_LIMIT)
+    };
     let max_device_seq: i64 = meta
         .query_row(
             "SELECT COALESCE(MAX(device_seq), 0) FROM mesh_outbox WHERE space_id = ?1 AND device_id = ?2",
@@ -4345,11 +5349,21 @@ fn handle_attachment(state: &State, target: &str) -> Reply {
     };
     let hash = match query_get(target, "hash") {
         Ok(Some(v)) => v,
-        Ok(None) => return Reply::json(400, "Bad Request", json_error("缺 hash：这一档按**内容**要字节（内容寻址）")),
+        Ok(None) => {
+            return Reply::json(
+                400,
+                "Bad Request",
+                json_error("缺 hash：这一档按**内容**要字节（内容寻址）"),
+            )
+        }
         Err(e) => return Reply::json(400, "Bad Request", json_error(&e)),
     };
     if !crate::sync::is_valid_attachment_hash(&hash) {
-        return Reply::json(400, "Bad Request", json_error("附件标识不合法（要 64 位十六进制的内容指纹）"));
+        return Reply::json(
+            400,
+            "Bad Request",
+            json_error("附件标识不合法（要 64 位十六进制的内容指纹）"),
+        );
     }
     let Some(data_dir) = state.cfg.data_dir.as_deref() else {
         return Reply::json(
@@ -4358,16 +5372,56 @@ fn handle_attachment(state: &State, target: &str) -> Reply {
             json_error("这个窗口没配数据目录 ⇒ 不服务附件字节（设置面该重开一次窗口）"),
         );
     };
-    // 附件按**空间**分目录，而"本地空间 id"只能从这条连接的 meta 里读（真机上它 ≠ 对暗号的 id）。
+    // 附件按**空间**分目录，而"本地空间 id"只能从**这条连接自己那个空间库**里读
+    // （真机上它 ≠ 对暗号的 id）。
     // ⚠️ **U8**：这里的 `conn` 必须是 `select_space` 挑出来的**那个空间自己那条** ✓（见上面的头注）。
-    let (space_id, key) = match conn.lock() {
-        Ok(g) => (crate::attachments::active_space_id(&g), crate::security::key_if_enabled(&g)),
-        Err(_) => return Reply::json(500, "Internal Server Error", json_error("空间库的锁被毒掉了")),
+    //
+    // ⭐⭐ **2026-10-28（amd 真机：明明盘上有字节，`/mesh/attachment` 却回 404）**：
+    //   这里原来取的是 `attachments::active_space_id(&g)` —— 那是**全局活动空间**（用户界面上
+    //   当前打开的那个），⛔ 不是这条连接绑的空间 ✗。后果两条：
+    //     ① 非活动空间的附件一律在**别人的目录**里找 ⇒ 404「这一台没有这份字节」（而本机其实有）；
+    //     ② 真正危险的一面：拿错目录就有把**别的空间**的字节发出去的可能（跨空间泄漏）。
+    //   ⇒ 空间 id 改成读 `sync::space_id_of(&g)`（这条连接的 `main.workspaces` 那一行）；
+    //     钥匙也按**那个空间**取（`attachments::space_key_for`，与 2026-10-27 那笔同一条口径）。
+    let space_id = match conn.lock() {
+        Ok(g) => crate::sync::space_id_of(&g).unwrap_or_default(),
+        Err(_) => {
+            return Reply::json(
+                500,
+                "Internal Server Error",
+                json_error("空间库的锁被毒掉了"),
+            )
+        }
     };
+    let key = crate::attachments::space_key_for(data_dir, &space_id);
     match crate::attachments::read_attachment_bytes_at(data_dir, &space_id, &hash) {
         Ok(raw) => match crate::security::decrypt_attachment_bytes(key.as_ref(), &raw) {
-            Ok(plain) => Reply::bytes(200, "OK", plain),
-            Err(e) => Reply::json(500, "Internal Server Error", json_error(&format!("本机这份字节解不开：{e}"))),
+            // ⭐⭐ **2026-10-27（owner：「彻底解决」）**：**不往外发空壳/坏件** ✗ ——
+            //   真机现场：这一台那份是 42 B 的**空壳**（明文 0 字节），却回了 `200` + 0 字节体 ⇒
+            //   对端把它当"成功"落盘 ⇒ 对端也变成空壳（"空壳传染"）。⇒ 空 ⇒ 404（去问别的对端）；
+            //   指纹对不上 ⇒ 500（本机这份坏了，发出去只会让对方看到破图）。
+            Ok(plain) => {
+                if plain.is_empty() {
+                    return Reply::json(
+                        404,
+                        "Not Found",
+                        json_error("这一台手上这份附件是**空壳**（字节没取到过，不是 0 字节的文件）—— 去问别的对端"),
+                    );
+                }
+                if !crate::sync::attachment_digest_ok(&hash, &plain) {
+                    return Reply::json(
+                        500,
+                        "Internal Server Error",
+                        json_error("本机这份字节与**内容指纹**对不上（坏件／被截断）⇒ 不往外发：发出去对方也只会落成破图"),
+                    );
+                }
+                Reply::bytes(200, "OK", plain)
+            }
+            Err(e) => Reply::json(
+                500,
+                "Internal Server Error",
+                json_error(&format!("本机这份字节解不开：{e}")),
+            ),
         },
         Err(e) => Reply::json(
             404,
@@ -4486,7 +5540,8 @@ mod direct_sync_tests {
         );
         let bases = vec![(served.clone(), "http://192.168.43.206:8788".to_string())];
 
-        let got = crate::lan_state::announces_for_this_round(&c, "dev-win", "WIN", &profiles, &bases);
+        let got =
+            crate::lan_state::announces_for_this_round(&c, "dev-win", "WIN", &profiles, &bases);
         assert_eq!(
             got.len(),
             1,
@@ -4520,7 +5575,11 @@ mod direct_sync_tests {
         let bases_b = vec![(room.clone(), "http://192.168.43.190:8788".to_string())];
         let announced =
             crate::lan_state::announces_for_this_round(&c, "dev-amd", "AMD", &profiles_b, &bases_b);
-        assert_eq!(announced.len(), 1, "乙必须先真的喊出去（上一条判据管这一格）");
+        assert_eq!(
+            announced.len(),
+            1,
+            "乙必须先真的喊出去（上一条判据管这一格）"
+        );
 
         // 甲那台：收到的就是乙那一条原样（发现层 decode 之后 `Peer` 就是这个形状 ✓）。
         let peers = vec![crate::lan::Peer {
@@ -4545,10 +5604,17 @@ mod direct_sync_tests {
     #[test]
     fn a_personal_space_without_a_room_still_says_nothing() {
         let c = fixture();
-        c.execute("INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', '')", []).unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', '')",
+            [],
+        )
+        .unwrap();
         let profiles = vec![("".to_string(), "".to_string(), "ws-personal".to_string())];
         let got = crate::lan_state::announces_for_this_round(&c, "dev-win", "WIN", &profiles, &[]);
-        assert!(got.is_empty(), "没暗号 ⇒ 保持旧口径不发言（⛔ 不许凭空报一个空间出来 ✗）：{got:#?}");
+        assert!(
+            got.is_empty(),
+            "没暗号 ⇒ 保持旧口径不发言（⛔ 不许凭空报一个空间出来 ✗）：{got:#?}"
+        );
     }
 
     /// ⭐ **接线判据**：公告那一行必须走**唯一入口** ✓，⛔ 不许退回"把原始 `profiles` 直接喂给
@@ -4568,8 +5634,14 @@ mod direct_sync_tests {
         );
         // ⚠️ 这个"不许出现"的模式**必须拼出来**：`include_str!` 把**本判据自己**也读进去了
         //    （写成字面量就会自己命中自己 —— 与 `lan_state` 那条判据同一个坑 ✓）。
-        let forbidden = format!("announces_for_with_mesh(&device_id, &device_name, &{}", "profiles");
-        assert!(!code.contains(&forbidden), "公告那一行退回了**原始** `profiles`（个人空间＝空串 ⇒ 0 条公告 ✗）");
+        let forbidden = format!(
+            "announces_for_with_mesh(&device_id, &device_name, &{}",
+            "profiles"
+        );
+        assert!(
+            !code.contains(&forbidden),
+            "公告那一行退回了**原始** `profiles`（个人空间＝空串 ⇒ 0 条公告 ✗）"
+        );
     }
 }
 
@@ -4653,7 +5725,10 @@ mod multi_space_window_tests {
             is_device_level_space(&c, &derived),
             "⛔ 派生子房间号必须照样认成个人档（否则卡表从团队行载 ⇒ 401）"
         );
-        assert!(!is_device_level_space(&c, "org-team-space"), "⛔ 团队空间不许被误认");
+        assert!(
+            !is_device_level_space(&c, "org-team-space"),
+            "⛔ 团队空间不许被误认"
+        );
     }
 }
 
@@ -4672,13 +5747,17 @@ mod tests {
     /// ★ **T-10**：**独立库文件**那一版 —— 10 台那一档要"各自独立 `--db`"，所以不上 `:memory:`。
     /// （`conn_with` 是两者共用的那份 fixture schema；**只此一处**，免得两份 fixture 各漂。）
     fn device_conn(dir: &std::path::Path, device: &str) -> Connection {
-        conn_with(Connection::open(dir.join(format!("{device}.db"))).unwrap(), device)
+        conn_with(
+            Connection::open(dir.join(format!("{device}.db"))).unwrap(),
+            device,
+        )
     }
 
     /// 两台／十台共用的 fixture schema（迁移 ＋ `meta` 挂库 ＋ 那两张表 ＋ 设备身份）。
     fn conn_with(c: Connection, device: &str) -> Connection {
         crate::db::migrate(&c, "ws").unwrap();
-        c.execute_batch("ATTACH DATABASE ':memory:' AS meta").unwrap();
+        c.execute_batch("ATTACH DATABASE ':memory:' AS meta")
+            .unwrap();
         c.execute_batch(
             "CREATE TABLE IF NOT EXISTS meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS meta.sync_profiles (
@@ -4742,10 +5821,15 @@ mod tests {
             vec!["平板".to_string()],
             "前提：那一行**真的读出来了**（⛔ 防两张空表假绿 ✗）"
         );
-        let oracle = PairedDeviceOracle { paired_devices: &paired };
+        let oracle = PairedDeviceOracle {
+            paired_devices: &paired,
+        };
 
         // 认过的 ⇒ `Yes` ⇒ **同名**才允许融（Q3）
-        assert_eq!(merge_gate(&oracle.same_person("平板", "工作"), true), MergeGate::Allow);
+        assert_eq!(
+            merge_gate(&oracle.same_person("平板", "工作"), true),
+            MergeGate::Allow
+        );
         // ⭐ 没认过的 ⇒ 判**不出** ⇒ **不融**（反例：`left: Allow` ／ `right: RefuseUnknownIdentity`）
         assert_eq!(
             merge_gate(&oracle.same_person("陌生设备", "工作"), true),
@@ -4764,7 +5848,9 @@ mod tests {
         };
 
         let none: Vec<String> = Vec::new();
-        let oracle = PairedDeviceOracle { paired_devices: &none };
+        let oracle = PairedDeviceOracle {
+            paired_devices: &none,
+        };
         let id = oracle.same_person("陌生设备", "工作");
         assert_eq!(
             id,
@@ -4789,9 +5875,13 @@ mod tests {
     fn merge_gate_d2_wire_contract_and_peer_identity_absent_today() {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let lan = std::fs::read_to_string(src.join("lan.rs")).expect("读得到 src/lan.rs");
-        let pairing = std::fs::read_to_string(src.join("pairing.rs")).expect("读得到 src/pairing.rs");
+        let pairing =
+            std::fs::read_to_string(src.join("pairing.rs")).expect("读得到 src/pairing.rs");
 
-        assert!(lan.contains("pub const WIRE_VERSION: u32 = 1;"), "⛔ 不许升 WIRE_VERSION ✗");
+        assert!(
+            lan.contains("pub const WIRE_VERSION: u32 = 1;"),
+            "⛔ 不许升 WIRE_VERSION ✗"
+        );
         assert!(
             pairing.contains("deny_unknown_fields"),
             "⛔ 配对码那条路是**硬**的（老版本会整条拒收）—— 这正是**不能**往它里面放身份字段的理由 ✓"
@@ -4809,11 +5899,15 @@ mod tests {
     /// 过期条件：owner 给真 keyring **且**定下"许可证怎么答『是不是同一个人』"之后重写。
     #[test]
     fn merge_gate_d3_license_is_never_an_identity_basis() {
-        use crate::mesh_merge_ledger::{IdentityBasis, IdentityOracle, PairedDeviceOracle, SamePerson};
+        use crate::mesh_merge_ledger::{
+            IdentityBasis, IdentityOracle, PairedDeviceOracle, SamePerson,
+        };
 
         // ① 唯一的**生产** oracle（`PairedDeviceOracle`）**永远不产** `Account`/`License` 两类身份 ✓
         let paired = vec!["平板".to_string()];
-        let oracle = PairedDeviceOracle { paired_devices: &paired };
+        let oracle = PairedDeviceOracle {
+            paired_devices: &paired,
+        };
         for dev in ["平板", "陌生设备"] {
             let id = oracle.same_person(dev, "工作");
             assert!(
@@ -4851,7 +5945,9 @@ mod tests {
                     continue; // ⭐ 判据自己（否则那两个模式串自绊 ✗）
                 }
                 let text = std::fs::read_to_string(&p).expect("读得到 .rs");
-                if text.contains("IdentityBasis::License(") || text.contains("IdentityBasis::Account(") {
+                if text.contains("IdentityBasis::License(")
+                    || text.contains("IdentityBasis::Account(")
+                {
                     hits.push(name.clone());
                 }
                 if text.contains("impl IdentityOracle for") {
@@ -4903,8 +5999,12 @@ mod tests {
     }
 
     fn content_of(c: &Connection, id: &str) -> String {
-        c.query_row("SELECT content_json FROM pages WHERE id = ?1", params![id], |r| r.get(0))
-            .unwrap_or_else(|e| panic!("{id} 应当已经在库里：{e}"))
+        c.query_row(
+            "SELECT content_json FROM pages WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|e| panic!("{id} 应当已经在库里：{e}"))
     }
 
     /// 这一页的**投影**：规范化之后的内容（去 `blockRev` ＋ 键排序）。
@@ -4918,7 +6018,10 @@ mod tests {
     }
 
     fn mesh_peer(device: &str, base: &str) -> MeshPeer {
-        MeshPeer { device_id: device.to_string(), base: base.to_string() }
+        MeshPeer {
+            device_id: device.to_string(),
+            base: base.to_string(),
+        }
     }
 
     fn lan_peer_of(device: &str, base: Option<&str>, spaces: &[&str]) -> crate::lan::Peer {
@@ -4927,6 +6030,7 @@ mod tests {
                 trust_ask: String::new(),
                 trust_secret: String::new(),
                 v: 1,
+                room_auto: false,
                 device_id: device.to_string(),
                 device_name: format!("{device} 的机器"),
                 short_id: String::new(),
@@ -4935,6 +6039,7 @@ mod tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                room: String::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
             },
@@ -4974,11 +6079,26 @@ mod tests {
             );
         }
         // 别的空间代言 ⇒ 不进（地址解析与"服务不服务"共用同一把尺 ✓）
-        let others = vec![lan_peer_of("dev-peer", Some("http://192.168.1.6:8788"), &["sp-other"])];
-        assert!(mesh_peers("sp-1", "me", &others).is_empty(), "别的空间的公告不许被拨 ✗");
+        let others = vec![lan_peer_of(
+            "dev-peer",
+            Some("http://192.168.1.6:8788"),
+            &["sp-other"],
+        )];
+        assert!(
+            mesh_peers("sp-1", "me", &others).is_empty(),
+            "别的空间的公告不许被拨 ✗"
+        );
         // 正例：同网段 ⇒ 恰好一条（否则"全都不给连"也能骗过这条判据 ✗）
-        let good = vec![lan_peer_of("dev-peer", Some("http://192.168.1.6:8788"), &["sp-1"])];
-        assert_eq!(mesh_peers("sp-1", "me", &good).len(), 1, "同网段的对端要进候选 ✓");
+        let good = vec![lan_peer_of(
+            "dev-peer",
+            Some("http://192.168.1.6:8788"),
+            &["sp-1"],
+        )];
+        assert_eq!(
+            mesh_peers("sp-1", "me", &good).len(),
+            1,
+            "同网段的对端要进候选 ✓"
+        );
     }
 
     fn announced(device: &str, base: &str, spaces: &[&str]) -> Peer {
@@ -4987,6 +6107,7 @@ mod tests {
                 trust_ask: String::new(),
                 trust_secret: String::new(),
                 v: crate::lan::WIRE_VERSION,
+                room_auto: false,
                 device_id: device.to_string(),
                 device_name: String::new(),
                 short_id: String::new(),
@@ -4995,6 +6116,7 @@ mod tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                room: String::new(),
                 fp: device.to_string(),
                 pubkey: String::new(),
             },
@@ -5030,20 +6152,37 @@ mod tests {
     /// **变异**：把 `invitable_base_for` 改回"有名字就只看名字" ⇒ 第 ② 格必红（正是今天那次故障）。
     #[test]
     fn peer_selection_is_by_transport_scope_not_by_name() {
-        let named = vec![announced_named("B", "http://192.168.1.3:8787", "sp-remote", "产品")];
+        let named = vec![announced_named(
+            "B",
+            "http://192.168.1.3:8787",
+            "sp-remote",
+            "产品",
+        )];
         assert!(
             mesh_peers_by_name("sp-local", "产品", "me", &named, false).is_empty(),
             "① 对端服务的是**别的**房间 ⇒ ⛔ 不挑（传输作用域不同）"
         );
 
-        let same_room_other_name =
-            vec![announced_named("C", "http://192.168.1.4:8787", "sp-local", "运营")];
+        let same_room_other_name = vec![announced_named(
+            "C",
+            "http://192.168.1.4:8787",
+            "sp-local",
+            "运营",
+        )];
         let got = mesh_peers_by_name("sp-local", "产品", "me", &same_room_other_name, false);
-        assert_eq!(got.len(), 1, "② 同一房间、名字不同 ⇒ **要挑中**（名字交给落库那层判）");
+        assert_eq!(
+            got.len(),
+            1,
+            "② 同一房间、名字不同 ⇒ **要挑中**（名字交给落库那层判）"
+        );
         assert_eq!(got[0].device_id, "C");
 
         let old = vec![announced("D", "http://192.168.1.5:8787", &["sp-local"])];
-        assert_eq!(mesh_peers_by_name("sp-local", "产品", "me", &old, false).len(), 1, "③ 老对端按 id");
+        assert_eq!(
+            mesh_peers_by_name("sp-local", "产品", "me", &old, false).len(),
+            1,
+            "③ 老对端按 id"
+        );
         let old_other = vec![announced("E", "http://192.168.1.6:8787", &["other"])];
         assert!(mesh_peers_by_name("sp-local", "产品", "me", &old_other, false).is_empty());
     }
@@ -5069,7 +6208,10 @@ mod tests {
         let first = serve_own_records(&c, "A", 0, 1).unwrap();
         assert_eq!(first.len(), 1);
         let tail = first[0].device_seq;
-        assert!(serve_own_records(&c, "A", tail, 500).unwrap().is_empty(), "批尾之后没有了");
+        assert!(
+            serve_own_records(&c, "A", tail, 500).unwrap().is_empty(),
+            "批尾之后没有了"
+        );
     }
 
     #[test]
@@ -5079,7 +6221,10 @@ mod tests {
         set_peer_cursor(&c, "space-x", "B", 7).unwrap();
         assert_eq!(peer_cursor(&c, "space-x", "B"), 7);
         set_peer_cursor(&c, "space-x", "B", 7).unwrap(); // 原地不动是允许的
-        assert!(set_peer_cursor(&c, "space-x", "B", 6).is_err(), "水位倒退要当场挡住");
+        assert!(
+            set_peer_cursor(&c, "space-x", "B", 6).is_err(),
+            "水位倒退要当场挡住"
+        );
         // 每个对端一个水位（互不串味）
         assert_eq!(peer_cursor(&c, "space-x", "C"), 0);
     }
@@ -5089,16 +6234,23 @@ mod tests {
     #[test]
     fn only_peers_that_serve_this_space_over_lan_are_mesh_peers() {
         let peers = vec![
-            announced("me", "http://192.168.1.2:8787", &["space-x"]),      // 我自己
-            announced("B", "http://192.168.1.3:8787", &["space-x"]),        // ✅
-            announced("C", "http://192.168.1.4:8787", &["other"]),          // 不服务这个空间
-            announced("D", "http://203.0.113.7:8787", &["space-x"]),        // 公网地址
-            announced("E", "http://192.168.1.5:8787", &[]),                 // 谁都不代言
-            announced("B", "http://192.168.1.3:8787", &["space-x"]),        // 重复
+            announced("me", "http://192.168.1.2:8787", &["space-x"]), // 我自己
+            announced("B", "http://192.168.1.3:8787", &["space-x"]),  // ✅
+            announced("C", "http://192.168.1.4:8787", &["other"]),    // 不服务这个空间
+            announced("D", "http://203.0.113.7:8787", &["space-x"]),  // 公网地址
+            announced("E", "http://192.168.1.5:8787", &[]),           // 谁都不代言
+            announced("B", "http://192.168.1.3:8787", &["space-x"]),  // 重复
         ];
         let got = mesh_peers("space-x", "me", &peers);
-        assert_eq!(got, vec![mesh_peer("B", "http://192.168.1.3:8787")], "{got:#?}");
-        assert!(mesh_peers("", "me", &peers).is_empty(), "没绑空间 ⇒ 不拉任何对端");
+        assert_eq!(
+            got,
+            vec![mesh_peer("B", "http://192.168.1.3:8787")],
+            "{got:#?}"
+        );
+        assert!(
+            mesh_peers("", "me", &peers).is_empty(),
+            "没绑空间 ⇒ 不拉任何对端"
+        );
     }
 
     /// ★★ 丙档「附近设备」（2026-09-29）：**"谁可以被直接拉"只有一把尺** ——
@@ -5111,22 +6263,68 @@ mod tests {
     fn one_ruler_says_who_can_be_pulled_and_who_can_be_invited() {
         // ✅ 三条都过 ⇒ 可以被直接拉（＝界面上那一行有「邀请」）
         assert_eq!(
-            invitable_base("space-x", "me", &announced("B", "http://192.168.1.3:8787", &["space-x"])),
+            invitable_base(
+                "space-x",
+                "me",
+                &announced("B", "http://192.168.1.3:8787", &["space-x"])
+            ),
             Some("http://192.168.1.3:8787".to_string())
         );
         // 尾巴上的 `/` 归一（与 `mesh_peers` 的 `base` 逐字节一致）
         assert_eq!(
-            invitable_base("space-x", "me", &announced("B", "http://192.168.1.3:8787/", &["space-x"])),
+            invitable_base(
+                "space-x",
+                "me",
+                &announced("B", "http://192.168.1.3:8787/", &["space-x"])
+            ),
             Some("http://192.168.1.3:8787".to_string())
         );
         // ❌ 我自己 / ❌ 不服务这个空间 / ❌ 公网地址 / ❌ 没报地址 / ❌ 空 device_id
-        assert_eq!(invitable_base("space-x", "me", &announced("me", "http://192.168.1.3:8787", &["space-x"])), None);
-        assert_eq!(invitable_base("space-x", "me", &announced("C", "http://192.168.1.3:8787", &["other"])), None);
-        assert_eq!(invitable_base("space-x", "me", &announced("D", "http://203.0.113.7:8787", &["space-x"])), None);
-        assert_eq!(invitable_base("space-x", "me", &announced("E", "", &["space-x"])), None);
-        assert_eq!(invitable_base("space-x", "me", &announced("   ", "http://192.168.1.3:8787", &["space-x"])), None);
+        assert_eq!(
+            invitable_base(
+                "space-x",
+                "me",
+                &announced("me", "http://192.168.1.3:8787", &["space-x"])
+            ),
+            None
+        );
+        assert_eq!(
+            invitable_base(
+                "space-x",
+                "me",
+                &announced("C", "http://192.168.1.3:8787", &["other"])
+            ),
+            None
+        );
+        assert_eq!(
+            invitable_base(
+                "space-x",
+                "me",
+                &announced("D", "http://203.0.113.7:8787", &["space-x"])
+            ),
+            None
+        );
+        assert_eq!(
+            invitable_base("space-x", "me", &announced("E", "", &["space-x"])),
+            None
+        );
+        assert_eq!(
+            invitable_base(
+                "space-x",
+                "me",
+                &announced("   ", "http://192.168.1.3:8787", &["space-x"])
+            ),
+            None
+        );
         // ❌ 没空间（"没指定空间"不是"谁都算"）
-        assert_eq!(invitable_base("", "me", &announced("B", "http://192.168.1.3:8787", &["space-x"])), None);
+        assert_eq!(
+            invitable_base(
+                "",
+                "me",
+                &announced("B", "http://192.168.1.3:8787", &["space-x"])
+            ),
+            None
+        );
     }
 
     // ─────────────────────────── 路由：显式不支持 ───────────────────────────
@@ -5134,18 +6332,39 @@ mod tests {
     #[test]
     fn central_endpoints_are_answered_explicitly_rather_than_404() {
         assert_eq!(route("GET", "/mesh/pull?space_id=s&since=1"), Route::Pull);
-        for t in ["/push", "/pull", "/spaces", "/lineage-claim", "/spaces/s/keyring", "/auth/login"] {
-            assert!(matches!(route("POST", t), Route::NotYet(_)) || matches!(route("GET", t), Route::NotYet(_)), "{t}");
+        for t in [
+            "/push",
+            "/pull",
+            "/spaces",
+            "/lineage-claim",
+            "/spaces/s/keyring",
+            "/auth/login",
+        ] {
+            assert!(
+                matches!(route("POST", t), Route::NotYet(_))
+                    || matches!(route("GET", t), Route::NotYet(_)),
+                "{t}"
+            );
         }
         for t in ["/", "/healthz", "/mesh", "/mesh/pull/extra"] {
             assert_eq!(route("GET", t), Route::Unknown, "{t}");
         }
-        assert_eq!(route("POST", "/mesh/pull"), Route::Unknown, "方法不对不算认识");
+        assert_eq!(
+            route("POST", "/mesh/pull"),
+            Route::Unknown,
+            "方法不对不算认识"
+        );
     }
 
     #[test]
     fn the_window_refuses_to_listen_on_a_public_address() {
-        for ok in ["127.0.0.1:0", "localhost:8788", "192.168.1.5:8788", "10.1.2.3:1", "[::1]:8788"] {
+        for ok in [
+            "127.0.0.1:0",
+            "localhost:8788",
+            "192.168.1.5:8788",
+            "10.1.2.3:1",
+            "[::1]:8788",
+        ] {
             assert!(checked_bind(ok).is_ok(), "{ok}");
         }
         for bad in ["8.8.8.8:8788", "example.com:8788", "", "127.0.0.1"] {
@@ -5163,10 +6382,16 @@ mod tests {
         assert!(checked_bind("1.1.1.1:8788").is_err(), "D1 不许把公网放进来");
         // ⚠️ **D14（owner 2026-09-30：放行 CGNAT）**：`100.64.0.0/10` 现在**绑得上** ——
         //    这是 Tailscale 默认段，不放行 ⇒ 用户**开不了窗**。
-        assert!(checked_bind("100.100.1.1:8788").is_ok(), "D14：CGNAT 必须绑得上");
+        assert!(
+            checked_bind("100.100.1.1:8788").is_ok(),
+            "D14：CGNAT 必须绑得上"
+        );
         // ⚠️ 而**出段的两条仍拒**：D14 只放 `100.64/10`，不许顺手放宽成"100/8 全收"。
         for bad in ["100.63.255.255:8788", "100.128.0.1:8788"] {
-            assert!(checked_bind(bad).is_err(), "{bad} 出了 100.64/10，不许被放行");
+            assert!(
+                checked_bind(bad).is_err(),
+                "{bad} 出了 100.64/10，不许被放行"
+            );
         }
     }
 
@@ -5177,14 +6402,20 @@ mod tests {
     #[test]
     fn the_cgnat_shared_range_is_exactly_100_64_over_10() {
         for ok in ["100.64.0.1", "100.100.1.1", "100.127.255.254"] {
-            assert!(is_lan_only(ok.parse().unwrap()), "D14：{ok} 在 100.64/10 里，必须算内网");
+            assert!(
+                is_lan_only(ok.parse().unwrap()),
+                "D14：{ok} 在 100.64/10 里，必须算内网"
+            );
             assert!(
                 crate::lan::is_lan_base(&format!("http://{ok}:8787")),
                 "D14：{ok} 在乙尺（消费侧）上也必须放行"
             );
         }
         for bad in ["100.63.255.255", "100.128.0.1"] {
-            assert!(!is_lan_only(bad.parse().unwrap()), "{bad} 出了 100.64/10，不许当内网");
+            assert!(
+                !is_lan_only(bad.parse().unwrap()),
+                "{bad} 出了 100.64/10，不许当内网"
+            );
             assert!(
                 !crate::lan::is_lan_base(&format!("http://{bad}:8787")),
                 "{bad} 出段 ⇒ 乙尺也不许放行"
@@ -5192,7 +6423,10 @@ mod tests {
         }
         // ⚠️ **不许放宽**：D14 只加这一段 —— 公网照旧落到三支之外。
         assert!(!is_lan_only("8.8.8.8".parse().unwrap()));
-        assert!(checked_bind("8.8.8.8:8788").is_err(), "D14 不许把公网放进来");
+        assert!(
+            checked_bind("8.8.8.8:8788").is_err(),
+            "D14 不许把公网放进来"
+        );
     }
 
     /// ⚠️ **横切判据（D14 之后新增）**：仓里**有两张网段表**，它们必须对同一批地址给同一个结论 ——
@@ -5210,14 +6444,28 @@ mod tests {
     fn the_two_lan_range_tables_agree() {
         let addrs = [
             // 段内（含 D14 新放的 CGNAT）
-            "100.64.0.1", "100.100.1.1", "100.127.255.254",
-            "10.0.0.1", "172.16.3.4", "172.31.255.254", "192.168.1.5", "169.254.1.1",
+            "100.64.0.1",
+            "100.100.1.1",
+            "100.127.255.254",
+            "10.0.0.1",
+            "172.16.3.4",
+            "172.31.255.254",
+            "192.168.1.5",
+            "169.254.1.1",
             // 段外边界：一个都不许算内网
-            "100.63.255.255", "100.128.0.1", "100.0.0.1",
-            "172.15.0.1", "172.32.0.1", "192.167.1.1", "192.169.1.1",
-            "169.253.1.1", "169.255.1.1", "11.0.0.1",
+            "100.63.255.255",
+            "100.128.0.1",
+            "100.0.0.1",
+            "172.15.0.1",
+            "172.32.0.1",
+            "192.167.1.1",
+            "192.169.1.1",
+            "169.253.1.1",
+            "169.255.1.1",
+            "11.0.0.1",
             // 公网
-            "8.8.8.8", "1.1.1.1",
+            "8.8.8.8",
+            "1.1.1.1",
         ];
         for a in addrs {
             let ip: IpAddr = a.parse().unwrap();
@@ -5284,7 +6532,7 @@ mod tests {
             local_edit(&c, &page("p1", "甲写的", 1_000));
         }
         // ② B 去拉 A（**没有中枢**，直接拉）
-        let client = reqwest::Client::new();
+        let client = mesh_http_client();
         let report = pull_and_absorb(
             &b,
             &client,
@@ -5299,7 +6547,11 @@ mod tests {
         .await
         .unwrap();
         assert_eq!((report.fetched, report.applied), (1, 1), "{report:?}");
-        assert_eq!(projection_of(&b.lock().unwrap(), "p1"), projection_of(&a.lock().unwrap(), "p1"), "一侧一致");
+        assert_eq!(
+            projection_of(&b.lock().unwrap(), "p1"),
+            projection_of(&a.lock().unwrap(), "p1"),
+            "一侧一致"
+        );
 
         // ③ B 接着改同一页，A 去拉 B（**互换**的另一半）
         {
@@ -5336,7 +6588,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(again.fetched, 0, "水位已经到批尾 ⇒ 不该再拉回东西：{again:?}");
+        assert_eq!(
+            again.fetched, 0,
+            "水位已经到批尾 ⇒ 不该再拉回东西：{again:?}"
+        );
     }
 
     /// ★★ 窗口要开**本地空间那一份库**，而不是"对暗号那个远端 id"的同名文件。
@@ -5373,18 +6628,37 @@ mod tests {
             local_edit(&c, &pg);
         }
         // ② 窗口：库名 `default`、对暗号的空间 id `space-x` —— **故意让两个 id 不同名**
-        let win = open_window_at("default", "space-x", false, "A", "127.0.0.1:0", Some("lan-token".into()), &dir)
-            .expect("窗口应当起得来");
+        let win = open_window_at(
+            "default",
+            "space-x",
+            false,
+            "A",
+            "127.0.0.1:0",
+            Some("lan-token".into()),
+            &dir,
+        )
+        .expect("窗口应当起得来");
         // ③ 直接问它：那条记录必须**服务得出来**
-        let (code, body) = http_get(win.addr(), "/mesh/pull?space_id=space-x&since=0&limit=100", Some("lan-token"));
+        let (code, body) = http_get(
+            win.addr(),
+            "/mesh/pull?space_id=space-x&since=0&limit=100",
+            Some("lan-token"),
+        );
         assert_eq!(code, 200, "{body}");
         assert!(
             body.contains("p1") && body.contains("本机写的那一版"),
             "窗口服务的是**空库**（改前的真机症状：fetched=0、一条也换不过去）：{body}"
         );
         // ④ 反向：**对暗号仍然按远端那个 id**（问本地那个 id 必须 403）
-        let (code, _) = http_get(win.addr(), "/mesh/pull?space_id=default&since=0", Some("lan-token"));
-        assert_eq!(code, 403, "这个窗口服务的是 space-x ⇒ 问 default 必须被拒（两个 id 各司其职）");
+        let (code, _) = http_get(
+            win.addr(),
+            "/mesh/pull?space_id=default&since=0",
+            Some("lan-token"),
+        );
+        assert_eq!(
+            code, 403,
+            "这个窗口服务的是 space-x ⇒ 问 default 必须被拒（两个 id 各司其职）"
+        );
         // ⑤ 别把窗口留在**进程级**注册表里（后面的判据还会用同一张表）
         crate::mesh::stop_window("space-x").unwrap();
     }
@@ -5413,11 +6687,23 @@ mod tests {
             pg.workspace_id = "default".to_string();
             local_edit(&c, &pg);
         }
-        let win = open_window_at("default", "space-x", false, "A", "127.0.0.1:0", Some("lan-token".into()), &dir)
-            .expect("窗口应当起得来");
+        let win = open_window_at(
+            "default",
+            "space-x",
+            false,
+            "A",
+            "127.0.0.1:0",
+            Some("lan-token".into()),
+            &dir,
+        )
+        .expect("窗口应当起得来");
 
         // ① 别的空间 ⇒ 403，**且一个字节的记录都不许出现在 body 里**
-        let (code, body) = http_get(win.addr(), "/mesh/pull?space_id=space-y&since=0&limit=100", Some("lan-token"));
+        let (code, body) = http_get(
+            win.addr(),
+            "/mesh/pull?space_id=space-y&since=0&limit=100",
+            Some("lan-token"),
+        );
         assert_eq!(code, 403, "别的空间必须被拒：{body}");
         assert!(
             !body.contains("p-secret") && !body.contains("只该给 space-x 看的内容"),
@@ -5425,12 +6711,26 @@ mod tests {
         );
 
         // ② ⚠️ 省略 `?space_id=` ⇒ **今天**仍然服务（U8 必须显式决定它变成什么 —— 见上面的注释）
-        let (code, body) = http_get(win.addr(), "/mesh/pull?since=0&limit=100", Some("lan-token"));
-        assert_eq!(code, 200, "今天省略参数仍然服务（U8 会改动这里 ⇒ 那次改动必须是显式的）：{body}");
-        assert!(body.contains("p-secret"), "省略参数时服务的仍是那一个空间：{body}");
+        let (code, body) = http_get(
+            win.addr(),
+            "/mesh/pull?since=0&limit=100",
+            Some("lan-token"),
+        );
+        assert_eq!(
+            code, 200,
+            "今天省略参数仍然服务（U8 会改动这里 ⇒ 那次改动必须是显式的）：{body}"
+        );
+        assert!(
+            body.contains("p-secret"),
+            "省略参数时服务的仍是那一个空间：{body}"
+        );
 
         // ③ 而本空间带参数 ⇒ 正常 ✓（别把闸门做成「谁都不给」）
-        let (code, _) = http_get(win.addr(), "/mesh/pull?space_id=space-x&since=0&limit=100", Some("lan-token"));
+        let (code, _) = http_get(
+            win.addr(),
+            "/mesh/pull?space_id=space-x&since=0&limit=100",
+            Some("lan-token"),
+        );
         assert_eq!(code, 200, "本空间必须放行");
 
         crate::mesh::stop_window("space-x").unwrap();
@@ -5463,9 +6763,13 @@ mod tests {
             other => panic!("服务出去的记录必须带本机戳：{other:?}"),
         }
         // 顺带钉住"戳在载荷里、行上不重复一份"（两处各存一次真相迟早会漂）
-        let json: serde_json::Value = serde_json::from_str(&serde_json::to_string(&served[0]).unwrap()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&served[0]).unwrap()).unwrap();
         assert!(json.get("stamp").is_none(), "行上不该再有一份戳：{json}");
-        assert!(json["payload"].as_str().unwrap().contains(hlc::HLC_PAYLOAD_FIELD));
+        assert!(json["payload"]
+            .as_str()
+            .unwrap()
+            .contains(hlc::HLC_PAYLOAD_FIELD));
     }
 
     /// 对端窗口**不服务别人的记录**，所以"收到过谁的东西"不会从这里漏出去 ——
@@ -5497,7 +6801,11 @@ mod tests {
         //    （正面判据在 `doc_content` 那侧）。
         //    ⚠️ 它抓过一次真的：第一版只改了 stash、**没改计数**（`pending_remote_ids` 照旧无条件推），
         //    于是"清单是空的、而读数说另有 2 页等你裁决"—— 这条断言当场红。
-        assert_eq!((ab2.superseded, ab2.awaiting), (0, 0), "幂等重放不该多出裁决项（假账）：{ab2:?}");
+        assert_eq!(
+            (ab2.superseded, ab2.awaiting),
+            (0, 0),
+            "幂等重放不该多出裁决项（假账）：{ab2:?}"
+        );
     }
 
     /// ★★ 丙-⑤（2026-09-26）：**网格一轮里用户输了/等裁决的那两件事必须被报出来**。
@@ -5515,9 +6823,10 @@ mod tests {
         let c = space_conn("B");
         let mine = page("p1", "本机未推送的那一版", 10);
         local_edit(&c, &mine); // 落库 ＋ 挂本机戳（走真路径）
-        // ⚠️ `dirty` 必须在 `local_edit` **之后**置 1：它内部借的是远端写入口，
-        //    那一条把 `dirty` 写 0（就是这个原因，本判据的顺序不能反）。
-        c.execute("UPDATE pages SET dirty = 1 WHERE id = 'p1'", []).unwrap();
+                               // ⚠️ `dirty` 必须在 `local_edit` **之后**置 1：它内部借的是远端写入口，
+                               //    那一条把 `dirty` 写 0（就是这个原因，本判据的顺序不能反）。
+        c.execute("UPDATE pages SET dirty = 1 WHERE id = 'p1'", [])
+            .unwrap();
         let mine_stamp = crate::sync::page_stamp(&c, "ws", "p1").unwrap();
 
         // ── 对端那一版：戳**更晚**（同一页、改了同一块）⇒ 戳判"用远端"
@@ -5528,15 +6837,24 @@ mod tests {
             entity: "page".to_string(),
             entity_id: "p1".to_string(),
             op: "upsert".to_string(),
-            payload: Some(crate::hlc::with_stamp(&serde_json::to_string(&theirs).unwrap(), &later).unwrap()),
+            payload: Some(
+                crate::hlc::with_stamp(&serde_json::to_string(&theirs).unwrap(), &later).unwrap(),
+            ),
             updated_at: 20,
             sealed: None,
         }];
         let ab = absorb_peer_batch(&c, &rows, "A", "ws", false, None).unwrap();
         assert_eq!(ab.applied, 1, "{ab:?}");
-        assert_eq!(ab.superseded, 1, "戳判远端 ＋ 本机脏 ⇒ 必须报成「你那一版让给了远端」：{ab:?}");
+        assert_eq!(
+            ab.superseded, 1,
+            "戳判远端 ＋ 本机脏 ⇒ 必须报成「你那一版让给了远端」：{ab:?}"
+        );
         assert_eq!(ab.awaiting, 0, "远端赢了就没有「等裁决」的东西：{ab:?}");
-        assert!(content_of(&c, "p1").contains("对端更晚的那一版"), "{}", content_of(&c, "p1"));
+        assert!(
+            content_of(&c, "p1").contains("对端更晚的那一版"),
+            "{}",
+            content_of(&c, "p1")
+        );
         // ★ 那句人话必须对得上账：报出来的页**真的**在版本历史里（不然就是"说了但没做"）。
         let kept: i64 = c
             .query_row(
@@ -5545,12 +6863,16 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(kept, 1, "报成 superseded 的页，本机那一版必须真的在版本历史里");
+        assert_eq!(
+            kept, 1,
+            "报成 superseded 的页，本机那一版必须真的在版本历史里"
+        );
 
         // ── 反面方向：换一页，**本机戳更晚** ⇒ 远端那一版进「待取回的远端版本」，等用户裁决
         let mine2 = page("p2", "本机更晚的那一版", 30);
         local_edit(&c, &mine2);
-        c.execute("UPDATE pages SET dirty = 1 WHERE id = 'p2'", []).unwrap();
+        c.execute("UPDATE pages SET dirty = 1 WHERE id = 'p2'", [])
+            .unwrap();
         let mine2_stamp = crate::sync::page_stamp(&c, "ws", "p2").unwrap();
         let older = crate::hlc::Hlc::genesis("A").tick(mine2_stamp.wall_ms().saturating_sub(1_000));
         let rows2 = vec![MeshRow {
@@ -5559,15 +6881,26 @@ mod tests {
             entity_id: "p2".to_string(),
             op: "upsert".to_string(),
             payload: Some(
-                crate::hlc::with_stamp(&serde_json::to_string(&page("p2", "对端更早的那一版", 40)).unwrap(), &older)
-                    .unwrap(),
+                crate::hlc::with_stamp(
+                    &serde_json::to_string(&page("p2", "对端更早的那一版", 40)).unwrap(),
+                    &older,
+                )
+                .unwrap(),
             ),
             updated_at: 40,
             sealed: None,
         }];
         let ab2 = absorb_peer_batch(&c, &rows2, "A", "ws", false, None).unwrap();
-        assert_eq!((ab2.superseded, ab2.awaiting), (0, 1), "本机赢了 ⇒ 远端那一版进「待取回」等裁决：{ab2:?}");
-        assert!(content_of(&c, "p2").contains("本机更晚的那一版"), "{}", content_of(&c, "p2"));
+        assert_eq!(
+            (ab2.superseded, ab2.awaiting),
+            (0, 1),
+            "本机赢了 ⇒ 远端那一版进「待取回」等裁决：{ab2:?}"
+        );
+        assert!(
+            content_of(&c, "p2").contains("本机更晚的那一版"),
+            "{}",
+            content_of(&c, "p2")
+        );
     }
 
     // ═══════════ ⭐ 按名融合接线（2026-10-17）：同名个人空间 ⇒ 并进来；其余**如实不动** ═══════════
@@ -5595,7 +6928,11 @@ mod tests {
         )
         .unwrap();
         let ws: String = c
-            .query_row("SELECT id FROM workspaces ORDER BY rowid ASC LIMIT 1", [], |r| r.get(0))
+            .query_row(
+                "SELECT id FROM workspaces ORDER BY rowid ASC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
             .expect("空间库必须有自己那一行（`db::migrate` 播种）");
         c.execute(
             "INSERT INTO meta.workspaces (id, name, kind) VALUES (?1, ?2, ?3)
@@ -5661,8 +6998,14 @@ mod tests {
         assert_eq!(out[0].entity_id, "p1");
         assert_eq!(out[0].op, "upsert");
         assert_eq!(out[0].payload.as_deref(), Some("{\"id\":\"p1\"}"));
-        assert_eq!(out[0].device_seq, 7, "游标那一格必须原样带过来（水位按它走）");
-        assert!(out[0].sealed.is_none(), "解开之后不许再留封包（否则下游会再解一次）");
+        assert_eq!(
+            out[0].device_seq, 7,
+            "游标那一格必须原样带过来（水位按它走）"
+        );
+        assert!(
+            out[0].sealed.is_none(),
+            "解开之后不许再留封包（否则下游会再解一次）"
+        );
     }
 
     /// ⭐ 2026-10-23（S3b）：**解不开就停**，⛔ 不许当成"不认识的记录"跳过。
@@ -5729,7 +7072,10 @@ mod tests {
             .expect("好的那个必须把门开起来")
             .expect("端口 0 也应当拿到真实地址");
         assert!(window_serves(bind, "proto-good"));
-        assert!(!window_serves(bind, "proto-locked"), "开不了的空间不算在服务 ✓");
+        assert!(
+            !window_serves(bind, "proto-locked"),
+            "开不了的空间不算在服务 ✓"
+        );
 
         // ① 不认识封包 ⇒ 409，且**一条记录都没有**
         let (code, body) = http_get(
@@ -5783,7 +7129,8 @@ mod tests {
         .unwrap();
         crate::db::pair_device(&meta, "proto-a", "dev-peer", "tok").unwrap();
         let c = crate::db::open_space_conn_at("sp-a", &dir).unwrap();
-        c.execute("UPDATE workspaces SET name = '工作'", []).unwrap();
+        c.execute("UPDATE workspaces SET name = '工作'", [])
+            .unwrap();
         crate::sync::set_meta_state(&c, "device_id", "dev-me").unwrap();
 
         // 两条"封包"（空间是明文 ⇒ 封包就是那条记录本身的 JSON，`decrypt_payload` 原样过）
@@ -5806,24 +7153,134 @@ mod tests {
         };
         let rows = vec![mk("p1", 1), mk("p2", 2)];
 
-        assert_eq!(stash_sealed_rows(&meta, "sp-a", "dev-peer", &rows).unwrap(), 2);
+        assert_eq!(
+            stash_sealed_rows(&meta, "sp-a", "dev-peer", &rows).unwrap(),
+            2
+        );
         assert_eq!(
             stash_sealed_rows(&meta, "sp-a", "dev-peer", &rows).unwrap(),
             0,
             "同一批再存一次 ⇒ 一条都不新增（主键去重 ⇒ 幂等）"
         );
-        let n: i64 = meta.query_row("SELECT COUNT(*) FROM mesh_inbox", [], |r| r.get(0)).unwrap();
+        let n: i64 = meta
+            .query_row("SELECT COUNT(*) FROM mesh_inbox", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 2);
         // 收下 ≠ 应用：空间库里一条都还没有
-        let before: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let before: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
 
         // 解锁 ⇒ drain
         let ab = drain_inbox(&c, "sp-a", "dev-peer", false).unwrap();
         assert_eq!(ab.applied, 2, "两条都要真的应用：{ab:?}");
-        let after: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let after: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(after, before + 2, "应用之后空间库里必须有这两页");
-        let left: i64 = meta.query_row("SELECT COUNT(*) FROM mesh_inbox", [], |r| r.get(0)).unwrap();
-        assert_eq!(left, 0, "应用成功的那几条必须从 inbox 删掉（否则会被反复应用）");
+        let left: i64 = meta
+            .query_row("SELECT COUNT(*) FROM mesh_inbox", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            left, 0,
+            "应用成功的那几条必须从 inbox 删掉（否则会被反复应用）"
+        );
+    }
+
+    /// ⭐⭐ **2026-10-28（owner「清理」／真机：解锁后「补应用」从未生效、inbox 行永残留）**：
+    /// **存的时候用哪把键，drain 就必须用同一把** ✗。
+    ///
+    /// 真机现场：`sealed_round` 收封包按**本地空间 id** 存（`stash_sealed_rows(&meta, db_space, …)`），
+    /// 而 `round` 里补应用那一句原来传的是**对暗号的 proto** ⇒ `drain_inbox` 按 proto 查
+    /// `meta.mesh_inbox.space_id`，**一条都查不到** ⇒ `applied` 恒 0、行永远残留；
+    /// 解锁后页面能出来其实靠的是"正常拉取/同名融合"那条路，drain 一个字都没说。
+    ///
+    /// 判据两条一起看，才能把那把"错键"的形状钉住：
+    ///   ① **用 proto 去 drain ⇒ 0 条应用、行还在**（＝旧行为的读数）；
+    ///   ② **用本地空间 id 去 drain ⇒ 应用成功、行被删**（＝修后的读数，也是 `round` 现在传的那把）。
+    #[test]
+    fn drain_uses_the_same_space_key_that_stash_used() {
+        let dir = temp_dir("s3c-inbox-key");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        let meta = crate::db::open_meta_conn_at(&dir).unwrap();
+        meta.execute(
+            "INSERT INTO workspaces (id, name, created_at, updated_at) VALUES ('sp-a', '工作', 1, 1)",
+            [],
+        )
+        .unwrap();
+        // 对暗号的 proto ＝ proto-a；本地空间 id ＝ sp-a —— **故意让两者不同**（真机就是这样）
+        crate::db::pair_device(&meta, "proto-a", "dev-peer", "tok").unwrap();
+        let c = crate::db::open_space_conn_at("sp-a", &dir).unwrap();
+        c.execute("UPDATE workspaces SET name = '工作'", [])
+            .unwrap();
+        crate::sync::set_meta_state(&c, "device_id", "dev-me").unwrap();
+
+        let mk = |id: &str, seq: i64| MeshRow {
+            device_seq: seq,
+            entity: String::new(),
+            entity_id: String::new(),
+            op: String::new(),
+            payload: None,
+            updated_at: 1,
+            sealed: Some(
+                serde_json::json!({
+                    "entity": "page",
+                    "entity_id": id,
+                    "op": "upsert",
+                    // ⚠️ `payload` 必须是**字符串**（封包就是"记录本身 JSON 的字符串"，
+                    //    与上面那条既有判据同一个形状；写成对象 ⇒ "封包格式看不懂"）。
+                    "payload": serde_json::to_string(&page(id, "锁着时收到的", 10)).unwrap(),
+                })
+                .to_string(),
+            ),
+        };
+        let rows = vec![mk("p-key", 1)];
+        // 存的那一侧用**本地空间 id**（与 `sealed_round` 一致）
+        assert_eq!(
+            stash_sealed_rows(&meta, "sp-a", "dev-peer", &rows).unwrap(),
+            1
+        );
+
+        // ① 旧行为的形状：拿 **proto** 去 drain ⇒ 一条都查不到、行还在
+        let ab = drain_inbox(&c, "proto-a", "dev-peer", false).unwrap();
+        assert_eq!(
+            ab.applied, 0,
+            "键不一致时一条都不该应用（这就是真机那个 applied=0）：{ab:?}"
+        );
+        let left: i64 = meta
+            .query_row("SELECT COUNT(*) FROM mesh_inbox", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 1, "错键这一侧读不到行 ⇒ 行会永残留（真机现场）");
+
+        // ② 修后的形状：拿**本地空间 id**（`round` 现在用 `space_id_of` 取的就是它）
+        let ab = drain_inbox(&c, "sp-a", "dev-peer", false).unwrap();
+        assert_eq!(ab.applied, 1, "同一把尺 ⇒ 必须真的应用：{ab:?}");
+        let left: i64 = meta
+            .query_row("SELECT COUNT(*) FROM mesh_inbox", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0, "应用成功必须删行（否则解锁后永远清不掉）");
+
+        // ③ 再钉一句**调用点**（否则"drain 会用本地 id"这件事只在测试里成立，
+        //    真机上 `round` 又传回 proto 也没人拦）—— 源码文本、剥注释后比。
+        let src = include_str!("mesh.rs");
+        let start = src.find("pub async fn round(").expect("round 必须在");
+        let rest = &src[start..];
+        let end = rest.find("\n/// ★ **产品入口").unwrap_or(rest.len());
+        let code: String = rest[..end]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let flat = code.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat.contains("space_id_of("),
+            "⛔ `round` 里 drain 必须用本地空间 id（`sync::space_id_of`）—— \
+             用 proto 会和 `stash_sealed_rows` 存的那把键错开（真机：applied 恒 0、行永残留）"
+        );
+        assert!(
+            !flat.contains(concat!("drain_inbox(&g, ", "space_id,")),
+            "⛔ 别把 proto 当 inbox 的键传进 drain_inbox ✗"
+        );
     }
 
     /// ⭐ 2026-10-23（S3c-接②的护栏）：**同一个房间里，别的空间一个字节都不许动**。
@@ -5846,10 +7303,12 @@ mod tests {
         // ⭐ 对端只服务「工作」这一个名字
         crate::db::pair_device(&meta, "proto-room", "dev-peer", "tok").unwrap();
         let a = crate::db::open_space_conn_at("sp-a", &dir).unwrap();
-        a.execute("UPDATE workspaces SET name = '工作', kind = 'personal'", []).unwrap();
+        a.execute("UPDATE workspaces SET name = '工作', kind = 'personal'", [])
+            .unwrap();
         crate::sync::set_meta_state(&a, "device_id", "dev-me").unwrap();
         let b = crate::db::open_space_conn_at("sp-b", &dir).unwrap();
-        b.execute("UPDATE workspaces SET name = '别的', kind = 'personal'", []).unwrap();
+        b.execute("UPDATE workspaces SET name = '别的', kind = 'personal'", [])
+            .unwrap();
         crate::sync::set_meta_state(&b, "device_id", "dev-me").unwrap();
 
         let rows = vec![peer_row(1, &page("p1", "对端的这一页", 10), Some("工作"))];
@@ -5857,14 +7316,21 @@ mod tests {
         // ① 名字对得上的那个空间 ⇒ 收下
         let ab = absorb_peer_batch(&a, &rows, "dev-peer", "proto-room", false, None).unwrap();
         assert!(ab.applied > 0, "同名（工作）必须收下：{ab:?}");
-        let na: i64 = a.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let na: i64 = a
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(na, 1);
 
         // ② 同房间、但名字不同的那个 ⇒ **一条都不许落库**，水位也不许前进
         let ab2 = absorb_peer_batch(&b, &rows, "dev-peer", "proto-room", false, None).unwrap();
-        assert_eq!(ab2.applied, 0, "⛔ 同房间不同名却落库 = 把两个空间悄悄并了：{ab2:?}");
+        assert_eq!(
+            ab2.applied, 0,
+            "⛔ 同房间不同名却落库 = 把两个空间悄悄并了：{ab2:?}"
+        );
         assert_eq!(ab2.tail, 0, "被拒的那批不许推进水位（否则它永远补不回来）");
-        let nb: i64 = b.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let nb: i64 = b
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(nb, 0, "⛔ 另一个空间被串了：{nb} 页");
     }
 
@@ -5883,15 +7349,28 @@ mod tests {
         let rows = vec![peer_row(1, &p, Some("  工作  "))];
 
         let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
-        assert_eq!(ab.merge, PeerMergeState::Merged, "⭐ 同名个人空间必须融合：{ab:?}");
-        assert_eq!((ab.applied, ab.tail), (1, 1), "融合这一批算收下 ⇒ 水位到批尾：{ab:?}");
+        assert_eq!(
+            ab.merge,
+            PeerMergeState::Merged,
+            "⭐ 同名个人空间必须融合：{ab:?}"
+        );
+        assert_eq!(
+            (ab.applied, ab.tail),
+            (1, 1),
+            "融合这一批算收下 ⇒ 水位到批尾：{ab:?}"
+        );
         assert!(content_of(&c, "p1").contains("从平板来的"));
 
         // ⭐ 保留**本机** space_id 与名字（⛔ 不许把对面的 id 落进来）。
         let landed_ws: String = c
-            .query_row("SELECT workspace_id FROM pages WHERE id = 'p1'", [], |r| r.get(0))
+            .query_row("SELECT workspace_id FROM pages WHERE id = 'p1'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
-        assert_eq!(landed_ws, "ws", "⛔ 融合后落库的 workspace_id 必须是本机的（space_id 可以不同）");
+        assert_eq!(
+            landed_ws, "ws",
+            "⛔ 融合后落库的 workspace_id 必须是本机的（space_id 可以不同）"
+        );
         assert_eq!(
             crate::sync::local_space_name(&c).as_deref(),
             Some("工作"),
@@ -5900,9 +7379,17 @@ mod tests {
 
         // ⭐ **账本一条记录（可读）**：谁、融了哪些行、融合前本机有几条。
         let v = crate::sync::merge_ledger_view(&c, "工作").unwrap();
-        assert_eq!(v.undoable.len(), 1, "⭐ 账本必须记下这一笔（否则「可撤」没有落点）");
+        assert_eq!(
+            v.undoable.len(),
+            1,
+            "⭐ 账本必须记下这一笔（否则「可撤」没有落点）"
+        );
         assert_eq!(v.undoable[0].peer_device, "平板");
-        assert_eq!(v.undoable[0].moved, vec!["p1".to_string()], "撤销要动的是并进来的页 id");
+        assert_eq!(
+            v.undoable[0].moved,
+            vec!["p1".to_string()],
+            "撤销要动的是并进来的页 id"
+        );
         assert_eq!(v.undoable[0].kept_before, 0, "融合前本机没有页");
     }
 
@@ -5924,7 +7411,8 @@ mod tests {
         let rows = vec![peer_row(1, &p, Some("面板验收-20261023"))];
 
         // ① 调用方说"这次是按公告名「产品」配上的" ⇒ 必须允许并落库
-        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, Some("产品")).unwrap();
+        let ab =
+            absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, Some("产品")).unwrap();
         assert_eq!(
             ab.merge,
             PeerMergeState::Merged,
@@ -5941,7 +7429,11 @@ mod tests {
             matches!(ab2.merge, PeerMergeState::Refused(_)),
             "⛔ 没有权威名时不许猜（旧口径保留）：{ab2:?}"
         );
-        assert_eq!((ab2.applied, ab2.tail), (0, 0), "被拒 ⇒ 一条不落库、水位不前进");
+        assert_eq!(
+            (ab2.applied, ab2.tail),
+            (0, 0),
+            "被拒 ⇒ 一条不落库、水位不前进"
+        );
     }
 
     /// ⭐ **判据②（反向）**：不同名 ⇒ **不融合**：一条都不落库、水位不前进、账本一笔都不记。
@@ -5960,11 +7452,20 @@ mod tests {
             PeerMergeState::Refused(MergeGate::RefuseDifferentName),
             "⛔ 名字不一样却融了 ✗：{ab:?}"
         );
-        assert_eq!((ab.applied, ab.tail), (0, 0), "⭐ 不融 ⇒ 一条不落库、水位不前进（下一轮还会再拉）");
-        let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        assert_eq!(
+            (ab.applied, ab.tail),
+            (0, 0),
+            "⭐ 不融 ⇒ 一条不落库、水位不前进（下一轮还会再拉）"
+        );
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 0, "⛔ 不同名却落库 = 把两个空间悄悄并了");
         assert!(
-            crate::sync::merge_ledger_view(&c, "工作").unwrap().undoable.is_empty(),
+            crate::sync::merge_ledger_view(&c, "工作")
+                .unwrap()
+                .undoable
+                .is_empty(),
             "⛔ 没融就不许记账"
         );
     }
@@ -5983,9 +7484,16 @@ mod tests {
             PeerMergeState::NotEligible(NotEligibleWhy::NotPersonal(SpaceKind::Team)),
             "⛔ 团队空间参与了融合 ✗：{ab:?}"
         );
-        assert_eq!((ab.applied, ab.tail), (1, 1), "⭐ 团队空间沿用既有同步（不掺融合）");
+        assert_eq!(
+            (ab.applied, ab.tail),
+            (1, 1),
+            "⭐ 团队空间沿用既有同步（不掺融合）"
+        );
         assert!(
-            crate::sync::merge_ledger_view(&c, "工作").unwrap().undoable.is_empty(),
+            crate::sync::merge_ledger_view(&c, "工作")
+                .unwrap()
+                .undoable
+                .is_empty(),
             "⛔ 团队空间**一条融合账都不许记**"
         );
 
@@ -6008,7 +7516,11 @@ mod tests {
             PeerMergeState::NotEligible(NotEligibleWhy::KindUnknown),
             "⭐ 读不到 ≠ 读到 0：类别判不出时**不许**当个人空间：{ab:?}"
         );
-        assert_eq!((ab.applied, ab.tail), (1, 1), "判不出类别 ⇒ 不参与 ⇒ 老路照旧");
+        assert_eq!(
+            (ab.applied, ab.tail),
+            (1, 1),
+            "判不出类别 ⇒ 不参与 ⇒ 老路照旧"
+        );
     }
 
     /// ⭐ **判据④**：**重复接入幂等** —— 同一对设备再连一次 ⇒ 账本**仍只有一笔**、页面数不涨、
@@ -6030,8 +7542,14 @@ mod tests {
             PeerMergeState::AlreadyMerged,
             "⭐ 重复接入必须幂等（只记一笔）：{again:?}"
         );
-        assert_eq!((again.applied, again.tail), (1, 1), "内容照旧按 id 幂等应用");
-        let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        assert_eq!(
+            (again.applied, again.tail),
+            (1, 1),
+            "内容照旧按 id 幂等应用"
+        );
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 1, "⭐ 页面数也不许涨（没有第二份内容）");
         let v = crate::sync::merge_ledger_view(&c, "工作").unwrap();
         assert_eq!(v.undoable.len(), 1, "⭐ 账本仍只有一笔");
@@ -6044,7 +7562,11 @@ mod tests {
     fn an_untrusted_device_cannot_merge_even_with_the_same_name() {
         let c = space_conn("B");
         merge_fixture(&c, "工作", "personal", &[]); // 信任名单是空的
-        let rows = vec![peer_row(1, &page("p1", "陌生设备的同名空间", 10), Some("工作"))];
+        let rows = vec![peer_row(
+            1,
+            &page("p1", "陌生设备的同名空间", 10),
+            Some("工作"),
+        )];
 
         let ab = absorb_peer_batch(&c, &rows, "陌生设备", DEVICE_LEVEL_SPACE, true, None).unwrap();
         assert_eq!(
@@ -6058,7 +7580,9 @@ mod tests {
             PeerMergeState::Refused(MergeGate::RefuseDifferentPerson),
             "⛔ 「判不出」不许折成「不同人」（那是替用户下断言）"
         );
-        let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 0);
     }
 
@@ -6078,7 +7602,10 @@ mod tests {
         );
         assert_eq!((ab.applied, ab.tail), (1, 1), "兼容：老对端照旧按暗号同步");
         assert!(
-            crate::sync::merge_ledger_view(&c, "工作").unwrap().undoable.is_empty(),
+            crate::sync::merge_ledger_view(&c, "工作")
+                .unwrap()
+                .undoable
+                .is_empty(),
             "⛔ 没判出同名就记账 = 假账"
         );
     }
@@ -6096,10 +7623,14 @@ mod tests {
             awaiting,
             items: Vec::new(),
             merge: PeerMergeState::NotRun,
-        max_seq: 0,
+            max_seq: 0,
             error: None,
         };
-        assert_eq!(round_note(&[ok(0, 0)]), "网格：拉了 1 台对端", "老那一句**逐字不变**");
+        assert_eq!(
+            round_note(&[ok(0, 0)]),
+            "网格：拉了 1 台对端",
+            "老那一句**逐字不变**"
+        );
         assert_eq!(round_note(&[]), "网格：拉了 0 台对端");
         let s = round_note(&[ok(2, 0)]);
         assert!(s.starts_with("网格：拉了 1 台对端；"), "{s}");
@@ -6112,7 +7643,10 @@ mod tests {
         // 两台对端：**跨台累加**（用户关心的是"这一轮我一共输了几页"，不是"哪一台"）
         let two = round_note(&[ok(1, 1), ok(2, 0)]);
         assert!(two.contains("拉了 2 台对端"), "{two}");
-        assert!(two.contains("3 页你本机那一版让给了远端"), "3 = 1 + 2：{two}");
+        assert!(
+            two.contains("3 页你本机那一版让给了远端"),
+            "3 = 1 + 2：{two}"
+        );
         // ⭐ 2026-10-17：**融合/没融也要出现在这句人话里**（网格这一档用户只能看它）。
         let mut merged = ok(0, 0);
         merged.merge = PeerMergeState::Merged;
@@ -6146,16 +7680,22 @@ mod tests {
     #[tokio::test]
     async fn an_attachment_comes_from_whichever_peer_actually_has_it() {
         let bytes: Vec<u8> = b"\x89PNG\r\n\x1a\n-not-a-real-png-but-real-bytes".to_vec();
-        let hash = "ab".repeat(32); // 64 位十六进制（过形状校验）
+        // ⭐ 2026-10-27（owner：「彻底解决」）：hash 必须是**这些字节的 sha256** ——
+        //   服务端现在按内容指纹对账（`handle_attachment`），拿 `"ab"*32` 当指纹会如实回 500。
+        //   ⇒ 夹具顺势改成"真内容寻址"，这才与产品同一条口径 ✓。
+        let hash = crate::db::sha256_hex_bytes(&bytes);
         let dir_a = temp_dir("att-a");
         let dir_b = temp_dir("att-b");
         let a = Arc::new(Mutex::new(space_conn("A")));
         let b = Arc::new(Mutex::new(space_conn("B")));
         // B 的盘上有这份字节 —— 写的位置走**产品那条布局**（`space_attachments_dir` ＋ `bucket_path`），
-        // 空间 id 也用那一侧自己的读法（`active_space_id`），免得判据手抄一份布局。
+        // 空间 id 也读**服务端同一个来源**（`sync::space_id_of` ＝ 这条连接自己那个空间库）；
+        // ⚠️ 2026-10-28 改：原来这里读 `active_space_id`（全局活动空间），而服务端已改成按
+        //   **连接自己的空间**找目录 ⇒ 夹具跟着改，否则夹具会按"活动空间"写、服务端按"自己的空间"读
+        //   （真机就是这么 404 的；夹具必须与生产同一把尺，⛔ 不许各读各的 ✗）。
         let (space_of_b, bucket) = {
             let g = b.lock().unwrap();
-            let space = crate::attachments::active_space_id(&g);
+            let space = crate::sync::space_id_of(&g).unwrap_or_default();
             let root = crate::attachments::space_attachments_dir(&dir_b, &space);
             (space, root)
         };
@@ -6163,7 +7703,10 @@ mod tests {
         let file = crate::attachments::bucket_path(&bucket, &hash, "png");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, &bytes).unwrap();
-        assert!(!space_of_b.is_empty() || bucket.exists(), "夹具：B 的附件目录应当建好了");
+        assert!(
+            !space_of_b.is_empty() || bucket.exists(),
+            "夹具：B 的附件目录应当建好了"
+        );
 
         let win_a = start1(
             MeshConfig {
@@ -6194,36 +7737,103 @@ mod tests {
         )
         .unwrap();
 
-        let client = reqwest::Client::new();
+        let client = mesh_http_client();
         let pa = mesh_peer("A", &format!("http://{}", win_a.addr()));
         let pb = mesh_peer("B", &format!("http://{}", win_b.addr()));
         let pc = mesh_peer("C", &format!("http://{}", win_c.addr()));
 
         // ① 第一台没有 ⇒ 404，而且**说清"这一台没有"**（客户端据此去问下一台）
-        let (code, mut body) = request_attachment_from_peer(&client, &pa, "space-x", &hash, Some("lan-token"), None).await.unwrap();
+        let (code, mut body) =
+            request_attachment_from_peer(&client, &pa, "space-x", &hash, Some("lan-token"), None)
+                .await
+                .unwrap();
         assert_eq!(code, 404, "第一台没有这份字节");
         let mut text = String::new();
         let _ = tokio::io::AsyncReadExt::read_to_string(&mut body, &mut text).await;
-        assert!(text.contains("这一台没有"), "404 必须说清是「这一台没有」，不是笼统失败：{text}");
+        assert!(
+            text.contains("这一台没有"),
+            "404 必须说清是「这一台没有」，不是笼统失败：{text}"
+        );
 
         // ② 第二台有 ⇒ 200 ＋ **字节逐字节相同**（这就是"按内容从任意一个对等体取到"）
-        let (code, mut body) = request_attachment_from_peer(&client, &pb, "space-x", &hash, Some("lan-token"), None).await.unwrap();
+        let (code, mut body) =
+            request_attachment_from_peer(&client, &pb, "space-x", &hash, Some("lan-token"), None)
+                .await
+                .unwrap();
         assert_eq!(code, 200, "第二台手上就有这份字节");
         let mut got = Vec::new();
-        tokio::io::AsyncReadExt::read_to_end(&mut body, &mut got).await.unwrap();
+        tokio::io::AsyncReadExt::read_to_end(&mut body, &mut got)
+            .await
+            .unwrap();
         assert_eq!(got, bytes, "取回来的必须**逐字节**是那一份");
 
+        // ②b ⭐ **2026-10-27（owner：「彻底解决」）**：**坏件不外发** ——
+        //   真机现场：一台把 42 B 的空壳当 `200` 发出去、对端落盘成空壳（"空壳传染"）。
+        //   现在：内容指纹对不上 ⇒ 500（说清是"指纹对不上"）；空壳 ⇒ 404（说清"这一台手上是空壳"）。
+        std::fs::write(&file, b"corrupted bytes").unwrap();
+        let (code, mut body) =
+            request_attachment_from_peer(&client, &pb, "space-x", &hash, Some("lan-token"), None)
+                .await
+                .unwrap();
+        assert_eq!(
+            code, 500,
+            "指纹对不上必须 500（⛔ 不许把坏件当 200 发出去 ✗）"
+        );
+        let mut text = String::new();
+        let _ = tokio::io::AsyncReadExt::read_to_string(&mut body, &mut text).await;
+        assert!(
+            text.contains("内容指纹"),
+            "500 必须说清「内容指纹对不上」：{text}"
+        );
+
+        std::fs::write(&file, b"").unwrap();
+        let (code, mut body) =
+            request_attachment_from_peer(&client, &pb, "space-x", &hash, Some("lan-token"), None)
+                .await
+                .unwrap();
+        assert_eq!(
+            code, 404,
+            "空壳必须 404（对端据此去问下一台，⛔ 不是 200 + 0 字节 ✗）"
+        );
+        let mut text = String::new();
+        let _ = tokio::io::AsyncReadExt::read_to_string(&mut body, &mut text).await;
+        assert!(text.contains("空壳"), "404 必须说清「空壳」：{text}");
+
         // ③ 空间对不上 ⇒ 403（与 pull 同一道门）
-        let (code, _body) = request_attachment_from_peer(&client, &pb, "other-space", &hash, Some("lan-token"), None).await.unwrap();
+        let (code, _body) = request_attachment_from_peer(
+            &client,
+            &pb,
+            "other-space",
+            &hash,
+            Some("lan-token"),
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(code, 403, "窗口只服务它代言的空间");
         // ④ 口令不对 ⇒ 401（同一道门，同一句话）
-        let (code, _body) = request_attachment_from_peer(&client, &pb, "space-x", &hash, Some("wrong"), None).await.unwrap();
+        let (code, _body) =
+            request_attachment_from_peer(&client, &pb, "space-x", &hash, Some("wrong"), None)
+                .await
+                .unwrap();
         assert_eq!(code, 401);
         // ⑤ 没配数据目录 ⇒ 501（"没配"≠"没有这份文件"）
-        let (code, _body) = request_attachment_from_peer(&client, &pc, "space-x", &hash, Some("lan-token"), None).await.unwrap();
+        let (code, _body) =
+            request_attachment_from_peer(&client, &pc, "space-x", &hash, Some("lan-token"), None)
+                .await
+                .unwrap();
         assert_eq!(code, 501, "没配数据目录要如实说（不是 404）");
         // ⑥ 形状不合法的 hash ⇒ 400（它会被拼进文件路径 ⇒ 与产品同一道门）
-        let (code, _body) = request_attachment_from_peer(&client, &pb, "space-x", "../../meta.db", Some("lan-token"), None).await.unwrap();
+        let (code, _body) = request_attachment_from_peer(
+            &client,
+            &pb,
+            "space-x",
+            "../../meta.db",
+            Some("lan-token"),
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(code, 400, "不可信的 hash 必须当场拒绝");
 
         let _ = std::fs::remove_dir_all(&dir_a);
@@ -6236,18 +7846,35 @@ mod tests {
         // ① 没绑组织空间 id ⇒ 配置问题
         let s = crate::sync::attachment_fetch_failure(None, "", 0, &[]);
         assert!(s.contains("没绑组织空间 id"), "{s}");
-        assert!(!s.contains("没有能问的对端"), "没绑 id 时不许说成「网段里没人」：{s}");
+        assert!(
+            !s.contains("没有能问的对端"),
+            "没绑 id 时不许说成「网段里没人」：{s}"
+        );
         // ② 绑了 id、网段里没人 ⇒ 这不是失败，是"没人"
         let s = crate::sync::attachment_fetch_failure(None, "space-x", 0, &[]);
         assert!(s.contains("附近没有能问的对端"), "{s}");
-        assert!(!s.contains("问了"), "一台都没问过，不许说「问了 N 台」：{s}");
+        assert!(
+            !s.contains("问了"),
+            "一台都没问过，不许说「问了 N 台」：{s}"
+        );
         // ③ 有对端但都拿不到 ⇒ 每一家的原文都要带上（别合成一句"失败"）
-        let tried = vec!["A：对端 A 返回 404".to_string(), "B：问对端 B 失败：连接被拒".to_string()];
+        let tried = vec![
+            "A：对端 A 返回 404".to_string(),
+            "B：问对端 B 失败：连接被拒".to_string(),
+        ];
         let s = crate::sync::attachment_fetch_failure(None, "space-x", 2, &tried);
         assert!(s.contains("问了 2 台对端"), "{s}");
-        assert!(s.contains("A：对端 A 返回 404") && s.contains("连接被拒"), "每一家的原文都要在：{s}");
+        assert!(
+            s.contains("A：对端 A 返回 404") && s.contains("连接被拒"),
+            "每一家的原文都要在：{s}"
+        );
         // ④ 服务端那条也报过错 ⇒ 一并带上（用户要能分辨"服务器没成"与"对端没有"）
-        let s = crate::sync::attachment_fetch_failure(Some("服务端 返回 401"), "space-x", 1, &["A：x".to_string()]);
+        let s = crate::sync::attachment_fetch_failure(
+            Some("服务端 返回 401"),
+            "space-x",
+            1,
+            &["A：x".to_string()],
+        );
         assert!(s.contains("服务端：服务端 返回 401"), "{s}");
     }
 
@@ -6262,7 +7889,10 @@ mod tests {
             "加密对端不许配明文本机"
         );
         // 本机也是加密 ⇒ 允许
-        assert_eq!(mesh_peers_by_name("room-enc", "保险柜", "me", &[p], true).len(), 1);
+        assert_eq!(
+            mesh_peers_by_name("room-enc", "保险柜", "me", &[p], true).len(),
+            1
+        );
     }
 
     /// ⭐⭐ **2026-10-25（数据面 Step 1a 的判据）**：**一个假端点就够了** ——
@@ -6298,8 +7928,13 @@ mod tests {
                 })
             }
         }
-        let fake = Fake { seen: std::sync::Mutex::new(Vec::new()) };
-        let peer = MeshPeer { device_id: "dev-x".to_string(), base: "http://not-used.invalid:1".to_string() };
+        let fake = Fake {
+            seen: std::sync::Mutex::new(Vec::new()),
+        };
+        let peer = MeshPeer {
+            device_id: "dev-x".to_string(),
+            base: "http://not-used.invalid:1".to_string(),
+        };
         let got = fetch_peer_manifest(&fake, &peer, "space-z", None, None)
             .await
             .expect("假端点必须够用");
@@ -6348,8 +7983,13 @@ mod tests {
                 })
             }
         }
-        let fake = Fake { seen: std::sync::Mutex::new(Vec::new()) };
-        let peer = MeshPeer { device_id: "dev-x".to_string(), base: "http://not-used.invalid:1".to_string() };
+        let fake = Fake {
+            seen: std::sync::Mutex::new(Vec::new()),
+        };
+        let peer = MeshPeer {
+            device_id: "dev-x".to_string(),
+            base: "http://not-used.invalid:1".to_string(),
+        };
         let (rows, max) = pull_from_peer(&fake, &peer, "space-z", 0, None, None, "")
             .await
             .expect("假端点必须够用");
@@ -6377,18 +8017,21 @@ mod tests {
         let live: HashSet<String> = ["a".to_string(), "f".to_string()].into_iter().collect();
         let deleted: HashSet<String> = ["g".to_string()].into_iter().collect();
         let peer = vec![
-            ("a".to_string(), 1, false),  // 两边都 live
-            ("c".to_string(), 2, false),  // 只对端 live ⇒ 缺
-            ("d".to_string(), 3, true),   // 对端墓碑、我这边没有 ⇒ 不动
-            ("e".to_string(), 4, false),  // 缺
-            ("f".to_string(), 5, true),   // 对端墓碑、我这边 live ⇒ 补删
-            ("g".to_string(), 6, true),   // 两边都墓碑 ⇒ 不动
+            ("a".to_string(), 1, false), // 两边都 live
+            ("c".to_string(), 2, false), // 只对端 live ⇒ 缺
+            ("d".to_string(), 3, true),  // 对端墓碑、我这边没有 ⇒ 不动
+            ("e".to_string(), 4, false), // 缺
+            ("f".to_string(), 5, true),  // 对端墓碑、我这边 live ⇒ 补删
+            ("g".to_string(), 6, true),  // 两边都墓碑 ⇒ 不动
         ];
         let g = manifest_gaps(&live, &deleted, &peer);
         assert_eq!(g.missing_live, vec!["c".to_string(), "e".to_string()]);
         assert_eq!(g.peer_deleted_local_live, vec!["f".to_string()]);
         // 全都有 ⇒ 空
-        assert_eq!(manifest_gaps(&live, &deleted, &[("a".to_string(), 1, false)]), ManifestGaps::default());
+        assert_eq!(
+            manifest_gaps(&live, &deleted, &[("a".to_string(), 1, false)]),
+            ManifestGaps::default()
+        );
     }
 
     /// ⭐ 2026-10-24（加密空间自动同步 B1）：`/mesh/keyring` 是**真路由**（不是 501/404）。
@@ -6402,9 +8045,16 @@ mod tests {
     /// ★ 丙-④：窗口那条路由**认得**新端点（不认得就会被 `not_yet` 抢走回 501）。
     #[test]
     fn the_attachment_endpoint_is_a_route_not_a_not_yet() {
-        assert_eq!(route("GET", "/mesh/attachment?space_id=s&hash=h"), Route::Attachment);
+        assert_eq!(
+            route("GET", "/mesh/attachment?space_id=s&hash=h"),
+            Route::Attachment
+        );
         assert_eq!(route("GET", "/mesh/attachment/"), Route::Attachment);
-        assert_eq!(route("POST", "/mesh/attachment"), Route::Unknown, "只认 GET");
+        assert_eq!(
+            route("POST", "/mesh/attachment"),
+            Route::Unknown,
+            "只认 GET"
+        );
         // ⚠️ 中枢那条 `/attachments/<hash>` **仍然**是"这一档不支持"（两条路不能混为一谈）
         assert!(matches!(route("GET", "/attachments/abc"), Route::NotYet(_)));
     }
@@ -6424,7 +8074,11 @@ mod tests {
             c,
         )
         .unwrap();
-        let (code, body) = http_get(win.addr(), "/mesh/pull?space_id=space-x&since=0", Some("right"));
+        let (code, body) = http_get(
+            win.addr(),
+            "/mesh/pull?space_id=space-x&since=0",
+            Some("right"),
+        );
         assert_eq!(code, 200, "{body}");
 
         let (code, body) = http_get(win.addr(), "/push", Some("right"));
@@ -6454,8 +8108,7 @@ mod tests {
     ) -> Result<MeshHandle, String> {
         let mut m = std::collections::HashMap::new();
         m.insert(proto.to_string(), conn);
-        let mut cards: CardBook =
-            std::collections::HashMap::new();
+        let mut cards: CardBook = std::collections::HashMap::new();
         cards
             .entry(proto.to_string())
             .or_default()
@@ -6464,7 +8117,11 @@ mod tests {
         start(cfg, Arc::new(Mutex::new(m)), Arc::new(Mutex::new(cards)))
     }
 
-    fn start1s(proto: &str, cfg: MeshConfig, conn: Arc<Mutex<Connection>>) -> Result<MeshHandle, String> {
+    fn start1s(
+        proto: &str,
+        cfg: MeshConfig,
+        conn: Arc<Mutex<Connection>>,
+    ) -> Result<MeshHandle, String> {
         start1s_card(proto, "lan-token", cfg, conn)
     }
 
@@ -6484,7 +8141,38 @@ mod tests {
         let mut raw = Vec::new();
         sock.read_to_end(&mut raw).unwrap();
         let text = String::from_utf8_lossy(&raw).to_string();
-        let code = text.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let code = text
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let body = text.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+        (code, body)
+    }
+
+    /// ⭐ 2026-10-28：三格签名 **＋** Bearer（用来钉"撤回端点**不收**口令那一档" ✓）。
+    fn http_get_signed_with_token(
+        addr: SocketAddr,
+        target: &str,
+        device_id: &str,
+        ts: i64,
+        sig: &str,
+        token: &str,
+    ) -> (u16, String) {
+        let mut sock = TcpStream::connect(addr).expect("connect");
+        let req = format!(
+            "GET {target} HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {token}\r\n{HDR_DEVICE}: {device_id}\r\n{HDR_TS}: {ts}\r\n{HDR_SIG}: {sig}\r\nConnection: close\r\n\r\n"
+        );
+        sock.write_all(req.as_bytes()).unwrap();
+        sock.flush().unwrap();
+        let mut raw = Vec::new();
+        sock.read_to_end(&mut raw).unwrap();
+        let text = String::from_utf8_lossy(&raw).to_string();
+        let code = text
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         let body = text.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
         (code, body)
     }
@@ -6508,7 +8196,11 @@ mod tests {
         let mut raw = Vec::new();
         sock.read_to_end(&mut raw).unwrap();
         let text = String::from_utf8_lossy(&raw).to_string();
-        let code = text.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let code = text
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         let body = text.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
         (code, body)
     }
@@ -6560,12 +8252,18 @@ mod tests {
     #[test]
     fn only_a_real_lan_window_address_may_be_announced() {
         let ok: SocketAddr = "192.168.1.5:8788".parse().unwrap();
-        assert_eq!(announced_base(ok).as_deref(), Some("http://192.168.1.5:8788"));
+        assert_eq!(
+            announced_base(ok).as_deref(),
+            Some("http://192.168.1.5:8788")
+        );
         // ⚠️ **D14（owner 2026-09-30：放行 CGNAT）**：绑在 `100.64/10`（Tailscale 默认段）上的窗口
         //    必须**报得出去** —— 否则对端 `invitable_base` 拿到 `None` ⇒ 永远拉不到我们
         //    （"绑得上但不报"＝ D14 只做了一半）。
         let cgnat: SocketAddr = "100.100.1.1:8788".parse().unwrap();
-        assert_eq!(announced_base(cgnat).as_deref(), Some("http://100.100.1.1:8788"));
+        assert_eq!(
+            announced_base(cgnat).as_deref(),
+            Some("http://100.100.1.1:8788")
+        );
         // ⚠️ 这里**故意不再断言** `announced_base("0.0.0.0:8788") == None`：D1 之后它的结果
         //    **取决于这台机器真有哪些网卡** ⇒ 放进"固定期望"的判据里就是**看机器脸色**。
         //    通配那一支改由下面那条**喂假网卡**的判据钉（确定性），并在那里断言"绝不许报 0.0.0.0"。
@@ -6586,7 +8284,12 @@ mod tests {
         // 一台"典型"的机器：一张 Wi-Fi（私有）＋ 一张 VPN（D14 放行的 CGNAT 段）
         // ＋ 回环 ＋ 链路本地 ＋ 一个公网地址（后三个都**不许**被报出去）。
         let locals: Vec<IpAddr> = [
-            "192.168.1.5", "100.100.1.2", "127.0.0.1", "169.254.10.20", "8.8.8.8", "0.0.0.0",
+            "192.168.1.5",
+            "100.100.1.2",
+            "127.0.0.1",
+            "169.254.10.20",
+            "8.8.8.8",
+            "0.0.0.0",
         ]
         .iter()
         .map(|s| s.parse().unwrap())
@@ -6608,8 +8311,14 @@ mod tests {
         );
         // ⚠️ **绝不许报 0.0.0.0** —— 对端拿它去连就是连自己（这正是"只放宽 checked_bind"的坑）
         assert!(!got.iter().any(|b| b.contains("0.0.0.0")), "{got:?}");
-        assert!(!got.iter().any(|b| b.contains("127.0.0.1")), "回环不是'网段里的别人'：{got:?}");
-        assert!(!got.iter().any(|b| b.contains("8.8.8.8")), "公网不许宣告：{got:?}");
+        assert!(
+            !got.iter().any(|b| b.contains("127.0.0.1")),
+            "回环不是'网段里的别人'：{got:?}"
+        );
+        assert!(
+            !got.iter().any(|b| b.contains("8.8.8.8")),
+            "公网不许宣告：{got:?}"
+        );
         // 一个候选都没有（这台只有回环/公网）⇒ **空**，而不是硬编一个
         assert!(announced_bases_with(wild, &["127.0.0.1".parse().unwrap()]).is_empty());
         assert!(announced_bases_with(wild, &[]).is_empty());
@@ -6618,18 +8327,36 @@ mod tests {
         // 顺序是**确定性**的：同一组网卡跑两遍逐字节相同（否则判据没法比）
         assert_eq!(got, announced_bases_with(wild, &locals));
         // 去重：同一张网卡报两遍 ⇒ 只出现一次
-        let dup: Vec<IpAddr> =
-            ["192.168.1.5", "192.168.1.5"].iter().map(|s| s.parse().unwrap()).collect();
+        let dup: Vec<IpAddr> = ["192.168.1.5", "192.168.1.5"]
+            .iter()
+            .map(|s| s.parse().unwrap())
+            .collect();
         assert_eq!(announced_bases_with(wild, &dup).len(), 1);
         // 链路本地**排在私有之后**（它是"这条链上"的地址，最不像对端能用的）
-        let ll = announced_bases_with(wild, &["169.254.1.1".parse().unwrap(), "10.0.0.9".parse().unwrap()]);
-        assert_eq!(ll, vec!["http://10.0.0.9:8788".to_string(), "http://169.254.1.1:8788".to_string()], "{ll:?}");
+        let ll = announced_bases_with(
+            wild,
+            &["169.254.1.1".parse().unwrap(), "10.0.0.9".parse().unwrap()],
+        );
+        assert_eq!(
+            ll,
+            vec![
+                "http://10.0.0.9:8788".to_string(),
+                "http://169.254.1.1:8788".to_string()
+            ],
+            "{ll:?}"
+        );
         // ★ **绑具体地址 ⇒ 只报它自己**（与 D1 之前逐字相同：这一支不走枚举）
         let concrete: SocketAddr = "10.0.0.7:9000".parse().unwrap();
-        assert_eq!(announced_bases_with(concrete, &locals), vec!["http://10.0.0.7:9000".to_string()]);
+        assert_eq!(
+            announced_bases_with(concrete, &locals),
+            vec!["http://10.0.0.7:9000".to_string()]
+        );
         // ⚠️ **IPv6 候选一律丢掉**：消费侧 `lan::is_lan_base` 只认 `http://<私有 IPv4>[:端口]`
         //    ⇒ 报 IPv6 就是报一个**对方必然跳过**的地址（往返性质退化的形状）。宁可这一轮不宣告。
-        let v6: Vec<IpAddr> = ["fc00::1", "192.168.1.5"].iter().map(|s| s.parse().unwrap()).collect();
+        let v6: Vec<IpAddr> = ["fc00::1", "192.168.1.5"]
+            .iter()
+            .map(|s| s.parse().unwrap())
+            .collect();
         assert_eq!(
             announced_bases_with(wild, &v6),
             vec!["http://192.168.1.5:8788".to_string()],
@@ -6674,8 +8401,14 @@ mod tests {
         //    ⚠️ 产品目标只看**第一位**（`announced_base` 取 `.next()` ✓）⇒ 这个先后不影响结论 ✓，
         //    但判据要钉**本函数真实的序** ✓，不能钉我以为的序 ✗。
         let pos = |s: &str| got.iter().position(|g| g == s).unwrap_or(usize::MAX);
-        assert!(pos("http://192.168.43.190:8788") < pos("http://169.254.10.5:8788"), "{got:?}");
-        assert!(pos("http://169.254.10.5:8788") < pos("http://172.18.224.1:8788"), "{got:?}");
+        assert!(
+            pos("http://192.168.43.190:8788") < pos("http://169.254.10.5:8788"),
+            "{got:?}"
+        );
+        assert!(
+            pos("http://169.254.10.5:8788") < pos("http://172.18.224.1:8788"),
+            "{got:?}"
+        );
         // ⚠️ 虚拟网卡**仍然报**（不排除 ✓）—— 只是**不许抢第一** ✓
         assert_eq!(got.len(), 6, "六张都要在（顺序变、集合不变）：{got:?}");
         assert_eq!(got, announced_bases_with_named(wild, &named));
@@ -6684,6 +8417,35 @@ mod tests {
         assert_eq!(
             announced_bases_with_named(concrete, &named),
             vec!["http://172.18.224.1:8788".to_string()]
+        );
+    }
+
+    /// ⭐ **2026-10-26（iPhone 真机读数）**：系统 VPN/隧道网卡**不许抢** Wi-Fi 的第一位。
+    ///
+    /// 现场逐字：iPhone 的 `en0 = 192.168.0.101`，另有一张 `utun` 的 `10.128.166.117`；
+    /// 旧排序按地址字节 ⇒ `10.*` 排在 `192.*` 前 ⇒ 报出去的是 `http://10.128.166.117:8788`
+    /// ⇒ 同网段的电脑**永远连不上**（macOS 后台轮日志里那条 `hub_base` 就是它）。
+    ///
+    /// **变异**：把 `utun` / `tun` 从 `is_virtual_if_name` 拿掉 ⇒ 本条**必须红**。
+    #[test]
+    fn a_wildcard_bind_prefers_wifi_over_a_vpn_tunnel_on_ios() {
+        let wild: SocketAddr = "0.0.0.0:8788".parse().unwrap();
+        let named: Vec<(String, IpAddr)> = [("utun3", "10.128.166.117"), ("en0", "192.168.0.101")]
+            .iter()
+            .map(|(n, ip)| (n.to_string(), ip.parse().unwrap()))
+            .collect();
+        let got = announced_bases_with_named(wild, &named);
+        assert_eq!(
+            got.first().map(String::as_str),
+            Some("http://192.168.0.101:8788"),
+            "iPhone 上必须报 Wi-Fi，⛔ 不是 VPN 隧道：{got:?}"
+        );
+        // 降权 ≠ 排除：只有隧道时它照旧会被报（虚拟局域网那一档不受影响）。
+        let only_tunnel: Vec<(String, IpAddr)> =
+            vec![("utun3".to_string(), "100.64.0.7".parse().unwrap())];
+        assert_eq!(
+            announced_bases_with_named(wild, &only_tunnel),
+            vec!["http://100.64.0.7:8788".to_string()]
         );
     }
 
@@ -6712,7 +8474,10 @@ mod tests {
         // ① 通配真的落在一个**具体端口**上（而 `local_addr()` 的 IP 仍是 `0.0.0.0`
         //    ⇒ **它自己不是一个能报给对端的地址**，这就是必须有 `announced_bases_with` 的原因）
         let bound = win_b.addr();
-        assert!(bound.ip().is_unspecified(), "绑通配时 local_addr 的 IP 是 0.0.0.0：{bound}");
+        assert!(
+            bound.ip().is_unspecified(),
+            "绑通配时 local_addr 的 IP 是 0.0.0.0：{bound}"
+        );
         assert_ne!(bound.port(), 0, "端口是内核给的具体端口：{bound}");
         // ⭐ P1 前提读数（判据不许假绿 ✓）：这扇门现在**只有签名这一档能进** ——
         //   ⛔ 不带任何证件 ⇒ **401** ✓；✅ 带**这一份库的真签名** ⇒ **200** ✓。
@@ -6727,7 +8492,12 @@ mod tests {
             "摘掉口令之后，不带证件必须 401"
         );
         assert_eq!(
-            signed_get(&a.lock().unwrap(), probe, "/mesh/pull?space_id=space-x&since=0&limit=100").0,
+            signed_get(
+                &a.lock().unwrap(),
+                probe,
+                "/mesh/pull?space_id=space-x&since=0&limit=100"
+            )
+            .0,
             200,
             "登记过 A 的真公钥 ⇒ A 的真签名必须放行"
         );
@@ -6737,7 +8507,7 @@ mod tests {
             local_edit(&c, &page("p1", "乙在通配窗口上写的", 1_000));
         }
         // ③ A 去拉 —— 通配窗口**在回环上也听** ⇒ "拉得通"（回环是本档的下界，见头注）
-        let client = reqwest::Client::new();
+        let client = mesh_http_client();
         let report = pull_and_absorb(
             &a,
             &client,
@@ -6757,8 +8527,14 @@ mod tests {
         );
         // ④ ★ 而**报出去的**绝不是 `0.0.0.0`：同一个端口，喂一组假网卡 ⇒ 报成对端能连的地址
         let announced = announced_bases_with(bound, &["192.168.1.5".parse().unwrap()]);
-        assert_eq!(announced, vec![format!("http://192.168.1.5:{}", bound.port())]);
-        assert!(!announced.iter().any(|x| x.contains("0.0.0.0")), "{announced:?}");
+        assert_eq!(
+            announced,
+            vec![format!("http://192.168.1.5:{}", bound.port())]
+        );
+        assert!(
+            !announced.iter().any(|x| x.contains("0.0.0.0")),
+            "{announced:?}"
+        );
     }
 
     /// ★ 设置面的读数必须说清**"别人拉不拉得到"** —— 绑回环时网格自己照常工作，
@@ -6769,7 +8545,10 @@ mod tests {
         assert!(!config_state(&off, None, &[], &[]).enabled);
         assert!(config_state(&off, None, &[], &[]).note.contains("关着"));
 
-        let on = MeshSettings { bind: Some("192.168.1.5:8788".into()), token: Some("t".into()) };
+        let on = MeshSettings {
+            bind: Some("192.168.1.5:8788".into()),
+            token: Some("t".into()),
+        };
         let good = config_state(&on, Some("192.168.1.5:8788".parse().unwrap()), &[], &[]);
         assert!(good.enabled && good.token_set);
         // ⭐ 2026-10-14：这句搬到了 `reach`（⭐ 界面第二行 ✓）—— ⭐ 判据跟着换对象 ✓（⛔ 断言没删 ✗）。
@@ -6784,17 +8563,29 @@ mod tests {
         let wild: SocketAddr = "0.0.0.0:8788".parse().unwrap();
         let w = config_state(&on, Some(wild), &[], &[]);
         assert!(w.note.contains("听所有网卡"), "{}", w.note);
-        assert!(w.note.contains("0.0.0.0:8788"), "通配要把**绑的**地址说出来：{}", w.note);
+        assert!(
+            w.note.contains("0.0.0.0:8788"),
+            "通配要把**绑的**地址说出来：{}",
+            w.note
+        );
         match announced_base(wild) {
             Some(base) => {
-                assert!(w.reach.contains(&base), "枚举到的地址要出现在读数里：{}", w.reach);
+                assert!(
+                    w.reach.contains(&base),
+                    "枚举到的地址要出现在读数里：{}",
+                    w.reach
+                );
                 assert!(w.reach.contains("能被别人拉到"), "{}", w.reach);
             }
             None => {
                 assert!(w.reach.contains("别人拉不到"), "{}", w.reach);
                 // ⚠️ 通配 + 无候选，**不许**说成"回环 / 端口 0"——那是另一格，用户的下一步不同
                 //    （`INV-VLAN-bind-must-be-reachable`：这里要说**可操作**的话，不许静默）
-                assert!(!w.note.contains("回环"), "通配不是回环，别混两格：{}", w.note);
+                assert!(
+                    !w.note.contains("回环"),
+                    "通配不是回环，别混两格：{}",
+                    w.note
+                );
                 assert!(w.note.contains("网卡"), "要给出可操作的下一步：{}", w.note);
             }
         }
@@ -6817,10 +8608,18 @@ mod tests {
         crate::sync::set_meta_state(&c, "device_id", "A").unwrap();
 
         let n: i64 = c
-            .query_row("SELECT COUNT(*) FROM changes WHERE device_seq > 0", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM changes WHERE device_seq > 0",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(n, 2, "库里确实有两条（一条是我的、一条不是）");
-        assert_eq!(serve_own_records(&c, "A", 0, 500).unwrap().len(), 1, "而我只服务我自己的那条");
+        assert_eq!(
+            serve_own_records(&c, "A", 0, 500).unwrap().len(),
+            1,
+            "而我只服务我自己的那条"
+        );
     }
 
     // ═══════════════ 丙-③-b-2a：控制面（设置 / 窗口 / 一轮交换） ═══════════════
@@ -6833,7 +8632,11 @@ mod tests {
     #[tokio::test]
     async fn without_a_configured_bind_the_mesh_is_off_and_touches_nothing() {
         let b = Mutex::new(space_conn("B"));
-        assert_eq!(settings(&b.lock().unwrap(), "space-x"), MeshSettings::default(), "默认是关的");
+        assert_eq!(
+            settings(&b.lock().unwrap(), "space-x"),
+            MeshSettings::default(),
+            "默认是关的"
+        );
 
         let peers = vec![announced("A", "http://127.0.0.1:9", &["space-x"])]; // 端口 9：连不上
         let rep = round(&b, "space-x", "B", &peers, false).await.unwrap();
@@ -6848,7 +8651,9 @@ mod tests {
     #[test]
     fn a_space_with_no_server_profile_can_still_turn_the_mesh_on() {
         let c = space_conn("A");
-        let n: i64 = c.query_row("SELECT COUNT(*) FROM sync_profiles", [], |r| r.get(0)).unwrap();
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM sync_profiles", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 0, "这一格判据的前提：一个服务端档案都没有");
 
         set_mesh_bind(&c, "space-x", Some("192.168.1.5:8788")).unwrap();
@@ -6902,8 +8707,15 @@ mod tests {
             // ⭐ **可操作**：说清了它为什么是唯一防线 ＋ 给出路（长度／别用纯数字）
             assert!(e.contains("唯一"), "理由要说清“口令是唯一防线”：{e}");
             assert!(e.contains("8"), "理由要给出长度门槛：{e}");
-            assert!(e.contains("纯数字") || e.contains("同一"), "理由要点名是哪一类弱：{e}");
-            assert_eq!(settings(&c, "space-x").token, None, "拒了就不许落库（{weak}）");
+            assert!(
+                e.contains("纯数字") || e.contains("同一"),
+                "理由要点名是哪一类弱：{e}"
+            );
+            assert_eq!(
+                settings(&c, "space-x").token,
+                None,
+                "拒了就不许落库（{weak}）"
+            );
         }
 
         // ② 达标的口令**收**，而且落库（⛔ 不要把好口令也挡了 —— 那是另一种坏 ✓）
@@ -6949,20 +8761,33 @@ mod tests {
         // ⭐ P1：签名那一档要过两件事 —— 本机（B）自己签 ✓ ＋ **A 的门上登记过 B 的公钥** ✓
         //   ⇒ 把 **B 的真公钥**登记在 **A 这扇门**上（方向＝"谁进门、谁被登记"✓）。
         trust_conn(&win, "space-x", "B", &b.lock().unwrap());
-        let peers = vec![announced("A", &format!("http://{}", win.addr()), &["space-x"])];
+        let peers = vec![announced(
+            "A",
+            &format!("http://{}", win.addr()),
+            &["space-x"],
+        )];
 
         // ⚠️ 这里走 `round_candidates`（而不是 `round`）：回环地址会被 `mesh_peers` 正确过滤掉
         //    （`lan::is_lan_base` 明确排除 `127/8` —— "回环不是网段里的别人"），
         //    所以本机判据只能在**后半**上跑真环回；`mesh_peers` 的过滤自有一条判据。
         let candidates = mesh_peers("space-x", "B", &peers);
-        assert!(candidates.is_empty(), "前提：回环基址会被挑对端那一步过滤掉（甲-1 的口径）");
+        assert!(
+            candidates.is_empty(),
+            "前提：回环基址会被挑对端那一步过滤掉（甲-1 的口径）"
+        );
         let cands = vec![mesh_peer("A", &format!("http://{}", win.addr()))];
         let cfg = settings(&b.lock().unwrap(), "space-x");
 
-        let rep = round_candidates(&b, "space-x", cands.clone(), false).await.unwrap();
+        let rep = round_candidates(&b, "space-x", cands.clone(), false)
+            .await
+            .unwrap();
         assert!(rep.enabled && rep.candidates == 1, "{rep:?}");
         assert_eq!(rep.peers.len(), 1);
-        assert_eq!((rep.peers[0].fetched, rep.peers[0].applied), (1, 1), "{rep:?}");
+        assert_eq!(
+            (rep.peers[0].fetched, rep.peers[0].applied),
+            (1, 1),
+            "{rep:?}"
+        );
         assert_eq!(rep.peers[0].error, None);
         assert_eq!(
             projection_of(&b.lock().unwrap(), "p1"),
@@ -7007,11 +8832,27 @@ mod tests {
         let cfg = settings(&b.lock().unwrap(), "space-x");
         let rep = round_candidates(&b, "space-x", cands, false).await.unwrap();
         assert_eq!(rep.candidates, 2);
-        let down = rep.peers.iter().find(|r| r.peer == "Z").expect("连不上的那台也要有一行");
+        let down = rep
+            .peers
+            .iter()
+            .find(|r| r.peer == "Z")
+            .expect("连不上的那台也要有一行");
         assert!(down.error.is_some(), "拉不动要如实写在自己那一行：{down:?}");
-        let up = rep.peers.iter().find(|r| r.peer == "A").expect("活着的那台");
-        assert_eq!((up.fetched, up.applied, up.error.is_none()), (1, 1, true), "{up:?}");
-        assert!(rep.note.contains("1 台没拉动"), "总读数要把失败数说出来：{}", rep.note);
+        let up = rep
+            .peers
+            .iter()
+            .find(|r| r.peer == "A")
+            .expect("活着的那台");
+        assert_eq!(
+            (up.fetched, up.applied, up.error.is_none()),
+            (1, 1, true),
+            "{up:?}"
+        );
+        assert!(
+            rep.note.contains("1 台没拉动"),
+            "总读数要把失败数说出来：{}",
+            rep.note
+        );
     }
 
     // ═══════════ ⭐ T-10 · **十台设备的多端验证**（`U14` 的判据承载） ═══════════ //
@@ -7050,20 +8891,29 @@ mod tests {
 
     /// T-10 判据①的读数：一台设备**整库**的投影（所有页，按 id 排序拼起来）⇒ 与别的设备**逐字节**比。
     fn db_projection(c: &Connection) -> String {
-        page_ids(c).iter().map(|id| format!("{id} => {}\n", projection_of(c, id))).collect()
+        page_ids(c)
+            .iter()
+            .map(|id| format!("{id} => {}\n", projection_of(c, id)))
+            .collect()
     }
 
     /// T-10 的**信息项**（**不是判据**）：同一批页的**原始** `content_json`。
     /// 两侧经手路径不同（本地写 vs 合并落库）⇒ 允许不同；判据是上一条投影比对
     /// （口径见 `projection_of` 的头注）。
     fn db_raw(c: &Connection) -> String {
-        page_ids(c).iter().map(|id| format!("{id} => {}\n", content_of(c, id))).collect()
+        page_ids(c)
+            .iter()
+            .map(|id| format!("{id} => {}\n", content_of(c, id)))
+            .collect()
     }
 
     fn page_ids(c: &Connection) -> Vec<String> {
         let mut stmt = c.prepare("SELECT id FROM pages ORDER BY id").unwrap();
-        let ids: Vec<String> =
-            stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        let ids: Vec<String> = stmt
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
         ids
     }
 
@@ -7092,8 +8942,10 @@ mod tests {
         let ids: Vec<String> = (1..=T10_DEVICES).map(|i| format!("dev-{i:02}")).collect();
 
         // ① 10 份**独立库文件** ＋ 10 个**真窗口**（各自一个端口 ⇒ 真环回、真 HTTP）
-        let conns: Vec<Arc<Mutex<Connection>>> =
-            ids.iter().map(|id| Arc::new(Mutex::new(device_conn(&dir, id)))).collect();
+        let conns: Vec<Arc<Mutex<Connection>>> = ids
+            .iter()
+            .map(|id| Arc::new(Mutex::new(device_conn(&dir, id))))
+            .collect();
 
         // ⚠️⚠️ **2026-10-02（个人版任务单 T8 的「在岗核查」当场抓到的一处坏）**：
         //    owner 2026-10-02 选 A（**门只认卡** ✓）之后，`authorized` 是拿 `sha256(Bearer)`
@@ -7131,12 +8983,17 @@ mod tests {
             .collect();
 
         // ② **手工对端清单**（每台 ＝ 其余 9 台）—— §15.2 的那条口径，也是"下界"的来源（见头注）。
-        let cfg = MeshSettings { bind: Some("127.0.0.1:0".into()), token: Some(T10_TOKEN.into()) };
+        let cfg = MeshSettings {
+            bind: Some("127.0.0.1:0".into()),
+            token: Some(T10_TOKEN.into()),
+        };
         let cfg_ref = &cfg;
         // 读数：10 个窗口的实际地址（各自一个端口 ⇒ 10 份独立监听；判据 ③ 的对端清单就是它们）
         println!(
             "[T10] 10 个窗口 = {:?}",
-            wins.iter().map(|w| format!("{}", w.addr())).collect::<Vec<_>>()
+            wins.iter()
+                .map(|w| format!("{}", w.addr()))
+                .collect::<Vec<_>>()
         );
 
         struct Round {
@@ -7167,9 +9024,15 @@ mod tests {
                 for (i, c) in conns.iter().enumerate() {
                     let g = c.lock().unwrap();
                     let (pid, text) = if tick % 5 == 0 {
-                        ("p-shared".to_string(), format!("第 {tick} 拍：{} 改共享页", ids[i]))
+                        (
+                            "p-shared".to_string(),
+                            format!("第 {tick} 拍：{} 改共享页", ids[i]),
+                        )
                     } else {
-                        (format!("p-{}", ids[i]), format!("第 {tick} 拍：{} 改自己那页", ids[i]))
+                        (
+                            format!("p-{}", ids[i]),
+                            format!("第 {tick} 拍：{} 改自己那页", ids[i]),
+                        )
                     };
                     local_edit(&g, &page(&pid, &text, now));
                     edits += 1;
@@ -7200,7 +9063,9 @@ mod tests {
                 let mut fetched = 0usize;
                 let mut errs = 0usize;
                 for (i, r) in reports.iter().enumerate() {
-                    let rep = r.as_ref().unwrap_or_else(|e| panic!("round 本身不该失败：{e}"));
+                    let rep = r
+                        .as_ref()
+                        .unwrap_or_else(|e| panic!("round 本身不该失败：{e}"));
                     for p in &rep.peers {
                         if let Some(e) = &p.error {
                             // 拉不动就**逐条**打出来（不只第一条）—— 这一档"不许有拉不动"，
@@ -7223,9 +9088,15 @@ mod tests {
                     }
                 }
                 if errs > 0 {
-                    panic!("T-10：第 {} 轮有 {errs} 次拉不动（诊断见上面 [T10-DIAG]）", rounds.len() + 1);
+                    panic!(
+                        "T-10：第 {} 轮有 {errs} 次拉不动（诊断见上面 [T10-DIAG]）",
+                        rounds.len() + 1
+                    );
                 }
-                rounds.push(Round { at_ms: at, ok_per_dev });
+                rounds.push(Round {
+                    at_ms: at,
+                    ok_per_dev,
+                });
                 next_round += T10_CADENCE_MS;
                 // 收敛出口：编辑已停 ＋ 这一轮**谁都没有新行** ⇒ 再确认一轮就收工
                 if at > edit_deadline && fetched == 0 {
@@ -7242,10 +9113,17 @@ mod tests {
         }
 
         let end_ms = crate::db::now_ms();
-        assert!(rounds.len() >= 4, "T-10：只跑了 {} 轮（窗口没起来？）", rounds.len());
+        assert!(
+            rounds.len() >= 4,
+            "T-10：只跑了 {} 轮（窗口没起来？）",
+            rounds.len()
+        );
 
         // ── ① 收敛：**全库投影逐字节相同**
-        let projections: Vec<String> = conns.iter().map(|c| db_projection(&c.lock().unwrap())).collect();
+        let projections: Vec<String> = conns
+            .iter()
+            .map(|c| db_projection(&c.lock().unwrap()))
+            .collect();
         let converged = projections.iter().all(|p| *p == projections[0]);
         let raws: Vec<String> = conns.iter().map(|c| db_raw(&c.lock().unwrap())).collect();
         let raw_equal = raws.iter().all(|r| *r == raws[0]);
@@ -7276,7 +9154,10 @@ mod tests {
             }
         }
         let agg_pulls: usize = per_dev_pulls.iter().sum();
-        let per_dev_per_sec: Vec<f64> = per_dev_pulls.iter().map(|n| *n as f64 / window_secs).collect();
+        let per_dev_per_sec: Vec<f64> = per_dev_pulls
+            .iter()
+            .map(|n| *n as f64 / window_secs)
+            .collect();
         let agg_per_sec = agg_pulls as f64 / window_secs;
         // 信息项：拿**真实**跨度算的同一条速率（判据不吃它，只为"上界 vs 实测"可比）
         let agg_per_sec_wallclock = agg_pulls as f64 / wallclock_secs;
@@ -7353,7 +9234,9 @@ mod tests {
             "② 判据不成立（收尾）：{final_staleness:?}（上限 {T10_STALENESS_LIMIT_MS}）"
         );
         assert!(
-            per_dev_per_sec.iter().all(|r| *r <= T10_PULLS_PER_DEV_PER_SEC_LIMIT),
+            per_dev_per_sec
+                .iter()
+                .all(|r| *r <= T10_PULLS_PER_DEV_PER_SEC_LIMIT),
             "③ 判据不成立：每台速率 {per_dev_per_sec:?}（上限 {T10_PULLS_PER_DEV_PER_SEC_LIMIT}）"
         );
         assert!(
@@ -7400,7 +9283,10 @@ mod tests {
             .expect("能开的那个必须把门开起来（⛔ 不许因为一个打不开的空间整扇门不起）")
             .expect("端口 0 也应当拿到真实地址");
         assert!(addr.port() > 0);
-        assert!(window_serves(bind, "proto-good"), "能开的空间必须真的在服务");
+        assert!(
+            window_serves(bind, "proto-good"),
+            "能开的空间必须真的在服务"
+        );
         assert!(
             !window_serves(bind, "proto-bad"),
             "打不开的空间⛔ 不许被算成在服务（否则公告就是假话）"
@@ -7435,7 +9321,11 @@ mod tests {
 
         let removed = detach_from_windows(&["proto-vault".to_string()]);
 
-        assert_eq!(removed, vec!["proto-vault".to_string()], "必须报出真的摘了哪一个");
+        assert_eq!(
+            removed,
+            vec!["proto-vault".to_string()],
+            "必须报出真的摘了哪一个"
+        );
         assert!(
             !window_serves(bind, "proto-vault"),
             "锁上了它就不该还在服务清单里（清单＝`served()`＝公告读的那份）"
@@ -7444,7 +9334,10 @@ mod tests {
             is_marked_locked("proto-vault"),
             "摘掉的同时要标成「知道但开不了」—— 封包那条路（`is_locked`）要它"
         );
-        assert!(window_serves(bind, "proto-plain"), "⛔ 不许顺手把同门的明文空间也摘了");
+        assert!(
+            window_serves(bind, "proto-plain"),
+            "⛔ 不许顺手把同门的明文空间也摘了"
+        );
         let _ = stop_window("proto-plain");
     }
 
@@ -7462,7 +9355,11 @@ mod tests {
         // 明文那个（团队档）：真开一个 sqlite（头就是 `SQLite format 3\0`）
         drop(crate::db::open_space_conn_at("ws-plain", &dir).unwrap());
         // 密文那个（个人档＝保险柜）：真 SQLCipher 的头**不是** `SQLite format 3\0` ⇒ 造一个同档的文件
-        std::fs::write(crate::db::space_db_path(&dir, "ws-vault"), b"not-a-sqlite-header").unwrap();
+        std::fs::write(
+            crate::db::space_db_path(&dir, "ws-vault"),
+            b"not-a-sqlite-header",
+        )
+        .unwrap();
 
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(
@@ -7564,7 +9461,9 @@ mod tests {
             pg.workspace_id = db_name.clone();
             local_edit(&c, &pg);
         }
-        let pairs: Vec<(String, String)> = (1..=3).map(|i| (format!("s{i}"), format!("proto-{i}"))).collect();
+        let pairs: Vec<(String, String)> = (1..=3)
+            .map(|i| (format!("s{i}"), format!("proto-{i}")))
+            .collect();
 
         // ① ⭐⭐ **每个空间各调一次 `ensure_window` ⇒ 三次都落在同一个 `SocketAddr`**
         //    ⚠️ **必须「每次一个空间」**（就像旧的 `lan_state` 逐空间调那样 ✓）——
@@ -7595,9 +9494,16 @@ mod tests {
 
         // ② **每空间各自拉得到自己的那份**（互不影响 ✓），且**拉不到别人的**（不许串 ✓）
         for i in 1..=3 {
-            let (code, body) = http_get(a1, &format!("/mesh/pull?space_id=proto-{i}&since=0&limit=100"), Some("lan-token"));
+            let (code, body) = http_get(
+                a1,
+                &format!("/mesh/pull?space_id=proto-{i}&since=0&limit=100"),
+                Some("lan-token"),
+            );
             assert_eq!(code, 200, "空间 {i} 应当拉得到：{body}");
-            assert!(body.contains(&format!("only-in-s{i}")), "空间 {i} 的记录没回来：{body}");
+            assert!(
+                body.contains(&format!("only-in-s{i}")),
+                "空间 {i} 的记录没回来：{body}"
+            );
             for j in 1..=3 {
                 if i != j {
                     assert!(
@@ -7610,20 +9516,36 @@ mod tests {
 
         // ③ ⭐ **关掉一个空间 ⇒ 门还在，另外两个照样能拉**（T6：不许关掉整扇门 ✓）
         stop_window("proto-2").unwrap();
-        assert_eq!(window_addr("proto-1"), Some(a1), "关掉 proto-2 不许把整扇门也关了");
+        assert_eq!(
+            window_addr("proto-1"),
+            Some(a1),
+            "关掉 proto-2 不许把整扇门也关了"
+        );
         assert_eq!(window_addr("proto-2"), None, "proto-2 应当已经摘掉了");
         for i in [1, 3] {
-            let (code, _) = http_get(a1, &format!("/mesh/pull?space_id=proto-{i}&since=0&limit=100"), Some("lan-token"));
+            let (code, _) = http_get(
+                a1,
+                &format!("/mesh/pull?space_id=proto-{i}&since=0&limit=100"),
+                Some("lan-token"),
+            );
             assert_eq!(code, 200, "剩下那两个必须照常收敛 ✓");
         }
         // ⭐ 而**被摘掉的那个**再问就是 403（白名单是**当前**范围，不是历史 ✓）
-        let (code, body) = http_get(a1, "/mesh/pull?space_id=proto-2&since=0&limit=100", Some("lan-token"));
+        let (code, body) = http_get(
+            a1,
+            "/mesh/pull?space_id=proto-2&since=0&limit=100",
+            Some("lan-token"),
+        );
         assert_eq!(code, 403, "摘掉之后就不在服务范围里了：{body}");
 
         // ④ 三个都摘掉 ⇒ **整扇门才真关** ✓（不然端口一直听着）
         stop_window("proto-1").unwrap();
         stop_window("proto-3").unwrap();
-        assert_eq!(window_addr("proto-1"), None, "最后一个空间也走了 ⇒ 门应当关掉");
+        assert_eq!(
+            window_addr("proto-1"),
+            None,
+            "最后一个空间也走了 ⇒ 门应当关掉"
+        );
         assert_eq!(window_addr("proto-3"), None);
     }
 
@@ -7664,8 +9586,15 @@ mod tests {
                     |r| r.get(0),
                 )
                 .unwrap();
-            assert_ne!(stored, secret_b, "⛔ 库里存了**明文**（U11-③ 要挡的正是这个 ✗）");
-            assert_eq!(stored, crate::db::sha256_hex(secret_b), "存的应当是 sha256 ✓");
+            assert_ne!(
+                stored, secret_b,
+                "⛔ 库里存了**明文**（U11-③ 要挡的正是这个 ✗）"
+            );
+            assert_eq!(
+                stored,
+                crate::db::sha256_hex(secret_b),
+                "存的应当是 sha256 ✓"
+            );
             assert_eq!(stored.len(), 64, "形状就是 64 位十六进制 ✓");
         }
         // 窗口：⭐ **必须走 `ensure_window`**（会进**进程级注册表** ✓）——
@@ -7677,7 +9606,8 @@ mod tests {
         let addr = ensure_window(&pairs, "A", "localhost:0", &dir)
             .unwrap()
             .expect("窗口应当起得来");
-        let pull = |r: &'static str| format!("/mesh/pull?space_id=proto-x&since=0&limit=100&who={r}");
+        let pull =
+            |r: &'static str| format!("/mesh/pull?space_id=proto-x&since=0&limit=100&who={r}");
 
         // ② 两台都进得来（基线 ✓ —— 别把"谁都进不来"当成"撤销成功" ✗）
         for sec in [secret_b, secret_c] {
@@ -7700,11 +9630,179 @@ mod tests {
         // ② ⭐ **别的那台照常** —— 这一条才是"逐台"的意思 ✓
         //    ⚠️ 变异（把撤销做成"换窗口口令"／或只删库不摘卡）⇒ 上面那条仍会绿 ✗，而**这条会红** ✓
         let (code, body) = http_get(addr, &pull("y"), Some(secret_c));
-        assert_eq!(code, 200, "**别的设备不受影响**（这才是逐台解除 ✓）：{body}");
+        assert_eq!(
+            code, 200,
+            "**别的设备不受影响**（这才是逐台解除 ✓）：{body}"
+        );
         assert!(body.contains("p1"), "它还要真拉得到：{body}");
         // ⭐ 而且**不必给所有设备换口令** ✓ —— dev-C 用的还是它原来那一份 ✓
 
         crate::mesh::stop_window("proto-x").unwrap();
+    }
+
+    /// ⭐ **2026-10-28（owner：「一方取消配对，另一方自动也取消？」）**：待发撤回队列 ——
+    /// **幂等、可删**；送达分类是纯函数（⛔ 不靠网络就能钉住"什么算送到" ✓）。
+    #[test]
+    fn pending_revokes_are_recorded_deduped_and_cleared() {
+        let dir = temp_dir("mesh-pending-rev");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("default", &dir).unwrap();
+        crate::sync::set_meta_state(&c, "device_id", "dev-host").unwrap();
+        assert!(crate::sync::pending_revokes(&c).is_empty());
+        crate::sync::enqueue_pending_revoke(&c, "dev-b").unwrap();
+        crate::sync::enqueue_pending_revoke(&c, "dev-b").unwrap();
+        assert_eq!(
+            crate::sync::pending_revokes(&c).len(),
+            1,
+            "同一台不许重复记（幂等）✓"
+        );
+        crate::sync::enqueue_pending_revoke(&c, "dev-c").unwrap();
+        assert_eq!(crate::sync::pending_revokes(&c).len(), 2);
+        crate::sync::clear_pending_revoke(&c, "dev-b").unwrap();
+        let left = crate::sync::pending_revokes(&c);
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].device, "dev-c");
+        // 送达分类（纯函数）
+        assert_eq!(classify_revoke_reply(200), RevokeOutcome::Delivered);
+        assert_eq!(
+            classify_revoke_reply(401),
+            RevokeOutcome::Delivered,
+            "它已经不认我了 ⇒ 目标已达成 ✓"
+        );
+        assert_eq!(
+            classify_revoke_reply(404),
+            RevokeOutcome::Unsupported,
+            "老版本（没有这个端点）⇒ 如实说、⛔ 不无限重试 ✗"
+        );
+        assert_eq!(
+            classify_revoke_reply(500),
+            RevokeOutcome::Failed,
+            "没送到 ⇒ 留着下一轮再试 ✓"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐ **2026-10-28**：`device_unpair_at` 撤销时**记一条待发撤回**（只有真配过才记 ✓）。
+    #[test]
+    fn unpairing_records_a_pending_revoke_for_the_peer() {
+        // 自带夹具（与 `sync::device_level_paired_tests::fixture` 同形 ✓）：`mesh_scope_at` 要的那几张表。
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             CREATE TABLE meta.mesh_paired_devices (
+                 space_id TEXT NOT NULL, device_id TEXT NOT NULL, added_at_ms INTEGER NOT NULL DEFAULT 0,
+                 secret_sha256 TEXT NOT NULL DEFAULT '',
+                 pubkey TEXT NOT NULL DEFAULT '', PRIMARY KEY (space_id, device_id)
+             );
+             INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-host');
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-a', '个人');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-a', '', 'room-p');",
+        )
+        .unwrap();
+        // 设备级那一行（个人档 ✓）：一台**真配过**的。
+        crate::db::pair_pubkey(&c, "", "dev-b", &"ab".repeat(32)).unwrap();
+        // ① 没配过的那一台：撤销不该记（⛔ 不去打扰对面 ✗）
+        crate::sync::device_unpair_at(&c, Some("ws-a"), "dev-ghost").unwrap();
+        assert!(
+            crate::sync::pending_revokes(&c).is_empty(),
+            "没配过 ⇒ 不记待发 ✓"
+        );
+        // ② 真配过：撤销 ⇒ 记一条（送达由 `retry_pending_revokes` 负责 ✓）
+        crate::sync::device_unpair_at(&c, Some("ws-a"), "dev-b").unwrap();
+        let list = crate::sync::pending_revokes(&c);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].device, "dev-b");
+        assert!(list[0].at_ms > 0);
+    }
+
+    /// ⭐⭐ **2026-10-28（owner：「一方取消配对，另一方自动也取消？」）**：
+    /// **签名撤回 ⇒ 门真把那一台摘掉**（不是"看起来撤了"✗）。
+    #[tokio::test]
+    async fn a_signed_revoke_makes_the_door_drop_that_device() {
+        let dir = temp_dir("mesh-revoke-door");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("default", &dir).unwrap();
+        crate::sync::set_meta_state(&c, "device_id", "dev-host").unwrap();
+        let guest = crate::device_key::load_or_create(&c).expect("本机身份");
+        let space_owned = crate::sync::personal_room_for("room-rev-1", "个人");
+        let space = space_owned.as_str();
+        // 门那一侧：登记 guest 的公钥（设备级行 ""，与个人档同一把键 ✓）
+        crate::db::pair_pubkey(&c, "", "dev-guest", &guest.public_key_hex()).unwrap();
+        assert_eq!(crate::db::paired_device_count(&c, "").unwrap(), 1);
+        let pairs = [("default".to_string(), space.to_string(), true)];
+        let bound = ensure_window(&pairs, "dev-host", "0.0.0.0:000", &dir)
+            .unwrap()
+            .expect("窗口应当起得来");
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, bound.port()));
+        let target = crate::mesh::revoke_target(space);
+        let now = crate::db::now_ms();
+        // ① 签名对 ⇒ 200 ＋ 本机那张卡真被摘
+        let (ts, sig) =
+            crate::mesh::sign_request(&c, "dev-guest", space, "GET", &target, now).expect("签一份");
+        let (code, body) = http_get_signed(addr, &target, "dev-guest", ts, &sig);
+        assert_eq!(code, 200, "签名对 ⇒ 必须执行撤回：{body}");
+        assert!(
+            body.contains("\"wasPaired\":true"),
+            "响应要说清它本来在名单里：{body}"
+        );
+        assert_eq!(
+            crate::db::paired_device_count(&c, "").unwrap(),
+            0,
+            "⛔ 卡必须被摘 ✗（不是「看起来撤了」✓）"
+        );
+        // ② 摘掉之后**正常拉取**再签一份 ⇒ 401（这一台已经不被认了 ✓）
+        let pull = format!("/mesh/pull?space_id={space}&since=0&limit=10");
+        let (ts2, sig2) =
+            crate::mesh::sign_request(&c, "dev-guest", space, "GET", &pull, crate::db::now_ms())
+                .expect("签一份");
+        let (code, _) = http_get_signed(addr, &pull, "dev-guest", ts2, &sig2);
+        assert_eq!(code, 401, "撤回之后它必须拉不动了 ✗");
+        crate::mesh::stop_window(space).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐⭐ **2026-10-28**：**撤回端点只收签名那一档** ——
+    /// 光有"旧那一档"的口令**撤不了别人**（⛔ 那是把 U11 的洞换个门开回来 ✗）。
+    #[tokio::test]
+    async fn the_revoke_endpoint_never_accepts_the_legacy_token() {
+        let dir = temp_dir("mesh-revoke-token");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("default", &dir).unwrap();
+        crate::sync::set_meta_state(&c, "device_id", "dev-host").unwrap();
+        let space = crate::sync::personal_room_for("room-rev-2", "个人");
+        let conn = Arc::new(Mutex::new(c));
+        let cfg = MeshConfig {
+            bind: "127.0.0.1:0".into(),
+            device_id: "dev-host".into(),
+            data_dir: Some(dir.clone()),
+        };
+        // 这一扇门只有**旧那一档**（口令哈希），没有公钥卡。
+        let win = start1s_card(&space, "lan-token", cfg, conn).unwrap();
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, win.addr().port()));
+        let target = crate::mesh::revoke_target(&space);
+        let now = crate::db::now_ms();
+        let fake = "00".repeat(64);
+        // ① 口令对了 + 冒充一个 device_id ⇒ **仍然 401**（撤回端点不收口令那一档）
+        let (code, body) =
+            http_get_signed_with_token(addr, &target, "dev-guest", now, &fake, "lan-token");
+        assert_eq!(code, 401, "⛔ 撤回端点不收口令那一档 ✗：{body}");
+        // ② 门本身照常（那次尝试没把门弄坏）
+        let pull = format!("/mesh/pull?space_id={space}&since=0&limit=10");
+        let (code, _) = http_get(addr, &pull, Some("lan-token"));
+        assert_eq!(code, 200, "口令那一档**拉取**照常 ✓");
+        crate::mesh::stop_window(&space).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// ⭐⭐ **R109 缺的那一环：U11 的端到端判据** ——
@@ -7749,24 +9847,40 @@ mod tests {
         //    U11 用 `localhost:0` ⇒ 这条用 `0.0.0.0:0` ✓；**连的时候换成回环**（0.0.0.0 不是
         //    可连接的地址 —— 与 `config_state` 那条口径同源 ✓）。
         let pairs = [("default".to_string(), "proto-e2e".to_string(), false)];
-        let bound = ensure_window(&pairs, "A", "0.0.0.0:0", &dir).unwrap().expect("窗口应当起得来");
+        let bound = ensure_window(&pairs, "A", "0.0.0.0:0", &dir)
+            .unwrap()
+            .expect("窗口应当起得来");
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, bound.port()));
         let secret = "k7Qm-2pRt-e2e";
         let pull = "/mesh/pull?space_id=proto-e2e&since=0&limit=100";
         let (code, body) = http_get(addr, pull, Some(secret));
-        assert_eq!(code, 401, "基线：门里零张卡 ⇒ 谁来都得 401（不然这条判据分不出东西）：{body}");
+        assert_eq!(
+            code, 401,
+            "基线：门里零张卡 ⇒ 谁来都得 401（不然这条判据分不出东西）：{body}"
+        );
 
         // ② ⭐ **走真采纳**：真载荷 → 真判定 → **生产同一个落库内核** ✓（门**先开着**、**不重启** ✓）
         //   ⭐ 2026-10-12（1C）：载荷**必须带对方的公钥** ✗（不带 ⇒ 解码那一步就**如实拒** ✓）。
         //   ⚠️ 夹具**借门这台自己的钥匙冒充 dev-B** ✓（门只按 `device_id` 查公钥 ✓ ⇒
         //     这一格量的是"**登记 → 验签放行**"那条链 ✓，⛔ 不是量钥匙归属 ✗）。
         let id_peer = crate::device_key::load_or_create(&c).unwrap();
-        let mut payload = crate::pairing::device_pair_from("0.0.0.0:8788", secret, "dev-B", "").unwrap();
+        let mut payload =
+            crate::pairing::device_pair_from("0.0.0.0:8788", secret, "dev-B", "").unwrap();
         crate::pairing::stamp_pubkey(&mut payload, &id_peer.public_key_hex()).unwrap();
         let text = crate::pairing::encode_device_pair(&payload).unwrap();
-        let decision =
-            crate::sync::decide_device_pair_import(&text, Some(&crate::pairing::check_code(&text)), "A").unwrap();
-        let crate::sync::DevicePairDecision::Accept { peer_device_id, bind, token, .. } = decision else {
+        let decision = crate::sync::decide_device_pair_import(
+            &text,
+            Some(&crate::pairing::check_code(&text)),
+            "A",
+        )
+        .unwrap();
+        let crate::sync::DevicePairDecision::Accept {
+            peer_device_id,
+            bind,
+            token,
+            ..
+        } = decision
+        else {
             panic!("核对过就该 Accept：{decision:?}")
         };
         assert_eq!(peer_device_id, "dev-B", "对面设备号来自载荷 ✓");
@@ -7782,7 +9896,10 @@ mod tests {
             &id_peer.public_key_hex(),
         )
         .unwrap();
-        assert!(added, "门正开着 ⇒ 新卡必须**当场**加进那扇门（否则就是「配对成功却 401」✓）");
+        assert!(
+            added,
+            "门正开着 ⇒ 新卡必须**当场**加进那扇门（否则就是「配对成功却 401」✓）"
+        );
 
         // ③ ⭐⭐ **门没有重启也必须立刻认这一台** ⇒ 200 ✓（R109 的洞就在这一格）
         let (code, body) = http_get(addr, pull, Some(secret));
@@ -7791,7 +9908,8 @@ mod tests {
         // ③-b ⭐⭐ **2026-10-12（1C）**：⭐ 采纳登记的**公钥**也要**当场**生效 ✗ ——
         //   ⭐ 这一台此后**凭签名**（⛔ 不带任何口令 ✗）就得进得来 ✓（那正是取代口令的那条路 ✓）。
         let (ts, sig) =
-            crate::mesh::sign_request(&c, "dev-B", "proto-e2e", "GET", pull, crate::db::now_ms()).unwrap();
+            crate::mesh::sign_request(&c, "dev-B", "proto-e2e", "GET", pull, crate::db::now_ms())
+                .unwrap();
         let (code, body) = http_get_signed(addr, pull, "dev-B", ts, &sig);
         assert_eq!(
             code, 200,
@@ -7805,7 +9923,10 @@ mod tests {
         );
         // ⭐ 而库里那张卡**只存哈希**（明文只在本机"我要出示"的那一侧 ✓）
         let hashes = crate::db::paired_secret_hashes(&c, "proto-e2e").unwrap();
-        assert!(hashes.contains(&crate::db::sha256_hex(secret)), "库里要有 sha256：{hashes:?}");
+        assert!(
+            hashes.contains(&crate::db::sha256_hex(secret)),
+            "库里要有 sha256：{hashes:?}"
+        );
         assert!(!hashes.iter().any(|h| h == secret), "⛔ 库里不许存明文 ✗");
 
         // ④ **逐台解除**：`unpair_device`（删库）＋ `forget_paired`（**门里也摘** ✓）⇒ **立刻 401** ✓
@@ -7813,7 +9934,10 @@ mod tests {
         assert!(h.is_some(), "解除前它应当在名单里 ✓");
         crate::mesh::forget_paired("proto-e2e", h.as_deref().unwrap()).unwrap();
         let (code, body) = http_get(addr, pull, Some(secret));
-        assert_eq!(code, 401, "被解除之后必须**立刻** 401（同样不许重启门）：{body}");
+        assert_eq!(
+            code, 401,
+            "被解除之后必须**立刻** 401（同样不许重启门）：{body}"
+        );
 
         crate::mesh::stop_window("proto-e2e").unwrap();
     }
@@ -7840,7 +9964,8 @@ mod tests {
         // ⭐ 2026-10-12（1C）：⭐ 登记**必须有公钥** ✗（`remember_peer_card` 收进一处 ✓）——
         //   ⚠️ 夹具这里给的是**假钥匙** ✓（本条量的是"个人档落同一行"✓，⛔ 不是量那把钥匙 ✓）；
         //   ⭐ 门那一档删除之后，本判据要换成**真钥匙 ＋ 签名请求** ✓（方案 §8.6 的作业单 ✓）。
-        crate::sync::remember_peer_card(&c, room, "dev-peer", secret, true, &"ab".repeat(32)).unwrap();
+        crate::sync::remember_peer_card(&c, room, "dev-peer", secret, true, &"ab".repeat(32))
+            .unwrap();
         // 前提：卡片确实落在**空串那一行** ✓（按口径读得到 ✓）
         assert_eq!(
             crate::mesh::paired_devices(&c, room, true).unwrap().len(),
@@ -7893,7 +10018,9 @@ mod tests {
         //   ⇒ 撞键 ＝ 两条判据**共用一扇门**（⭐ 而门只认**第一个**开起来的那个库目录 ✓）
         //   ⇒ 症状是"200 但一条记录都没有" ✓（⭐ 实测踩到过：与 R109 那条共用 `0.0.0.0:0` ✓）。
         let pairs = [("default".to_string(), space.to_string(), true)];
-        let bound = ensure_window(&pairs, "dev-me", "0.0.0.0:000", &dir).unwrap().expect("窗口应当起得来");
+        let bound = ensure_window(&pairs, "dev-me", "0.0.0.0:000", &dir)
+            .unwrap()
+            .expect("窗口应当起得来");
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, bound.port()));
         let target = format!("/mesh/pull?space_id={space}&since=0&limit=10");
         let now = crate::db::now_ms();
@@ -7916,13 +10043,21 @@ mod tests {
         // ③ ⛔ 签名绑在**这一条请求**上 ⇒ 换一条 target 不许过 ✓
         let other = format!("/mesh/pull?space_id={space}&since=5&limit=10");
         let (code, _) = http_get_signed(addr, &other, "dev-peer", ts, &sig);
-        assert_eq!(code, 401, "⛔ 签名绑在「这一条请求」上 ✗（换 target 不许过 ✓）");
+        assert_eq!(
+            code, 401,
+            "⛔ 签名绑在「这一条请求」上 ✗（换 target 不许过 ✓）"
+        );
 
         // ④ ⛔ 过期的时间戳 ⇒ 不许过（⭐ "旧包重放"那一条 ✓）
         let stale_ts = now - AUTH_WINDOW_MS - 1;
-        let stale = crate::mesh::sign_request(&c, "dev-peer", space, "GET", &target, stale_ts).unwrap();
+        let stale =
+            crate::mesh::sign_request(&c, "dev-peer", space, "GET", &target, stale_ts).unwrap();
         let (code, _) = http_get_signed(addr, &target, "dev-peer", stale.0, &stale.1);
-        assert_eq!(code, 401, "⛔ 过期签名不许过 ✗（窗口 {} ms）", AUTH_WINDOW_MS);
+        assert_eq!(
+            code, 401,
+            "⛔ 过期签名不许过 ✗（窗口 {} ms）",
+            AUTH_WINDOW_MS
+        );
 
         // ⑤ ⛔ **没登记过的那一台**签的 ⇒ 不许过（⭐ 换个 device_id 就用同一把钥匙签 ✓）
         let ghost = crate::mesh::sign_request(&c, "dev-ghost", space, "GET", &target, now).unwrap();
@@ -7932,12 +10067,15 @@ mod tests {
         // ⑥ ⭐⭐ **出站那一侧**（`pull_from_peer` 自己拼的 target ✓）也必须过 ✗ ——
         //    ⭐ 这条判据钉的是「⭐ 签的那串」与「⭐ 门重建的那串」**逐字相同** ✓：
         //    ⛔ 两处各拼一份 URL ⇒ 一漂就 401，而"只测纯函数"照不出来 ✓。
-        let peer = MeshPeer { device_id: "dev-me".to_string(), base: format!("http://{addr}") };
+        let peer = MeshPeer {
+            device_id: "dev-me".to_string(),
+            base: format!("http://{addr}"),
+        };
         let out_target = crate::mesh::pull_target(space, 0, "");
         let (ts2, sig2) = crate::mesh::sign_request(&c, "dev-peer", space, "GET", &out_target, now)
             .expect("签一份");
         let rows = crate::mesh::pull_from_peer(
-            &crate::mesh_endpoint::LanEndpoint::new(&peer.base, reqwest::Client::new()),
+            &crate::mesh_endpoint::LanEndpoint::new(&peer.base, mesh_http_client()),
             &peer,
             space,
             0,
@@ -7948,7 +10086,10 @@ mod tests {
         .await
         .expect("⭐ 出站签名的 target 必须与门重建的那一串逐字相同（差一个字符就是 401）");
         // ⭐ 2026-10-20：返回形状从 Vec 变成 (Vec, max_device_seq)
-        assert!(rows.0.is_empty(), "这个空间里还没有记录 ⇒ 拉回来是空的一批 ✓（但**放行了** ✓）");
+        assert!(
+            rows.0.is_empty(),
+            "这个空间里还没有记录 ⇒ 拉回来是空的一批 ✓（但**放行了** ✓）"
+        );
 
         // ⑦ ⭐⭐ **撤回必须真的生效** ✗（⭐ 走**生产那一半**：`sync::device_unpair_at` ✓）——
         //    ⚠️ 这一条是上一轮查出来的那个洞（"库里删了、**跑着的门**还认"✓）在新那一档上的对照组 ✓：
@@ -7961,7 +10102,8 @@ mod tests {
              INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-sig', '', 'room-sig-1');",
         )
         .unwrap();
-        let st = crate::sync::device_unpair_at(&c, Some("ws-sig"), "dev-peer").expect("撤回不许报错");
+        let st =
+            crate::sync::device_unpair_at(&c, Some("ws-sig"), "dev-peer").expect("撤回不许报错");
         assert!(st.was_paired, "它本来在名单里（不然这条判据量的是空气）");
         let (code, _) = http_get_signed(addr, &target, "dev-peer", ts, &sig);
         assert_eq!(
@@ -7991,28 +10133,47 @@ mod tests {
 
         // ① 一开始：idle ＋ 没有任何进行中的握手（兜底那档也要说"下一步做什么" ✓）
         let mut h = TrustHandshake::default();
-        let v0 = crate::mesh_trust::trust_state_view(h.state(), h.is_active(now), h.pending_asks(now).len());
+        let v0 = crate::mesh_trust::trust_state_view(
+            h.state(),
+            h.is_active(now),
+            h.pending_asks(now).len(),
+        );
         assert_eq!(v0.state, "idle", "默认必须是 idle");
         assert!(!v0.active, "默认没有进行中的握手");
         assert_eq!(v0.pending, 0, "默认没有等采纳的条目");
         assert!(!v0.message.trim().is_empty(), "兜底那档也要给出下一步");
 
-        // ② 对面来问（`note_ask`）⇒ 甲 之下**看到就是采纳** ⇒ 直接 trusted ＋ 有一条等采纳
+        // ② 对面来问（`note_ask`）⇒ **2026-10-26 owner 拍 A：看到 ask 不算信任** ⇒ 仍是 idle ＋ 有一条等采纳
         h.note_ask("dev-peer", now, ttl);
-        let v1 = crate::mesh_trust::trust_state_view(h.state(), h.is_active(now), h.pending_asks(now).len());
-        assert_eq!(v1.state, "trusted", "甲：看到对方的「想信任」就是采纳（不再等本机的人点）");
+        let v1 = crate::mesh_trust::trust_state_view(
+            h.state(),
+            h.is_active(now),
+            h.pending_asks(now).len(),
+        );
+        assert_eq!(
+            v1.state, "idle",
+            "⛔ 看到对方的「想信任」不许直接变 trusted（R208；要本机也点确认）"
+        );
         assert!(v1.active, "这一秒还有进行中的握手");
-        assert_eq!(v1.pending, 1, "有一条正等着被采纳");
+        assert_eq!(v1.pending, 1, "有一条正等着本机的人点确认");
 
         // ③ 本机自己点（`begin`）⇒ 同样 trusted；且**点的一方没有"等采纳"条目** ✓
         let mut h2 = TrustHandshake::default();
         h2.begin("dev-peer", "ask-1", now, ttl);
-        let v2 = crate::mesh_trust::trust_state_view(h2.state(), h2.is_active(now), h2.pending_asks(now).len());
+        let v2 = crate::mesh_trust::trust_state_view(
+            h2.state(),
+            h2.is_active(now),
+            h2.pending_asks(now).len(),
+        );
         assert_eq!(v2.state, "trusted", "点一下就是 trusted");
         assert_eq!(v2.pending, 0, "发问的一方没有「等采纳」的条目");
         // ④ 过期之后 active 必须变假（过期的不算 ✓）
         let later = now + ttl + 1;
-        let v3 = crate::mesh_trust::trust_state_view(h2.state(), h2.is_active(later), h2.pending_asks(later).len());
+        let v3 = crate::mesh_trust::trust_state_view(
+            h2.state(),
+            h2.is_active(later),
+            h2.pending_asks(later).len(),
+        );
         assert!(!v3.active, "过期的不算 active");
         assert_eq!(v3.pending, 0, "过期的等采纳条目不许再报");
     }
@@ -8042,16 +10203,13 @@ mod tests {
         );
     }
 
-    /// ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）**：⭐ 一趟配对 ⇒ **两个方向都通** ✓。
+    /// ⭐⭐ **2026-10-26（owner 拍 A：两边各点一次确认）**：⭐ 单方配对 ⇒ **只开一个方向** ✓；
+    /// 要双向 ⇒ 两边各点一次并确认 ✓。
     ///
-    /// ## ⚠️ 本条**取代** 2026-10-12 那版（原话：「单方信任 ⇒ 同步是单向的」✗）
-    /// owner 2026-10-12 逐字是「『信任这台设备』是『**允许它来拿我的**』」＋「单方信任时，同步就是单向的」✓；
-    /// ⭐ **2026-10-17 owner 改口径**：「**一方配对成功，就双向通**」✓
-    /// ⇒ ⭐ 发起侧点一次（登记对面 ✓）＋ 对面收到 ask 后**互相登记** ✓ ⇒ 两个方向都进得来 ✓。
-    /// ⚠️ 真机来由：AMD 侧配对后拉本机**每一轮 401**（「这张卡不在名册里」✓）——
-    ///    那正是"单方只开一个方向"的形状 ✓。
+    /// ## ⚠️ 本条**取代** 2026-10-17 的「一方配对成功，就双向通」
+    /// 那条会让同网段任何一条 `trust_ask` 被自动登记（R208 安全洞）⇒ 已撤销。
     #[tokio::test]
-    async fn one_pairing_round_opens_both_directions() {
+    async fn one_sided_pairing_opens_only_one_direction_until_the_other_side_confirms() {
         let dir_a = temp_dir("trust-oneway-a");
         let dir_b = temp_dir("trust-oneway-b");
         for d in [&dir_a, &dir_b] {
@@ -8077,21 +10235,26 @@ mod tests {
             device_id: dev.to_string(),
             base: format!("http://{addr}"),
         };
-        let client = reqwest::Client::new();
+        let client = mesh_http_client();
         let sign = |c: &Connection, dev: &str| {
             let target = crate::mesh::pull_target(space, 0, "");
             let (ts, sig) =
-                crate::mesh::sign_request(c, dev, space, "GET", &target, crate::db::now_ms()).unwrap();
+                crate::mesh::sign_request(c, dev, space, "GET", &target, crate::db::now_ms())
+                    .unwrap();
             (ts, sig)
         };
         // ⚠️ 出站那一趟**不抽闭包** ✗：它要把 `client` ／ `space` 借进 `async` 块 ✓
         //   ⇒ 与后面那几处直用**借不开** ✓（实测：`value borrowed here after move` ✓）。
 
         // ─── ① 只有 A 的门开着（A 的库里已经有 B 的公钥 ✓）───
-        let addr_a =
-            ensure_window(&[("default".to_string(), space.to_string(), true)], "dev-a", "127.0.0.1:000", &dir_a)
-                .unwrap()
-                .expect("A 的门要起得来");
+        let addr_a = ensure_window(
+            &[("default".to_string(), space.to_string(), true)],
+            "dev-a",
+            "127.0.0.1:000",
+            &dir_a,
+        )
+        .unwrap()
+        .expect("A 的门要起得来");
         // ⭐ **B 来拿 A 的** ⇒ 放行 ✓（⭐ A 允许了它 ✓ —— 这一条就是"单方"的那个方向 ✓）
         let (tb, sb) = sign(&cb, "dev-b");
         let ok = crate::mesh::pull_from_peer(
@@ -8104,11 +10267,15 @@ mod tests {
             "",
         )
         .await;
-        assert!(ok.is_ok(), "⛔ A 点了「允许 B 来拿」⇒ **B 必须进得来** ✗：{ok:?}");
+        assert!(
+            ok.is_ok(),
+            "⛔ A 点了「允许 B 来拿」⇒ **B 必须进得来** ✗：{ok:?}"
+        );
         // ⛔ 没被允许过的第三台 ⇒ 进不来 ✓（⭐ 换个设备号用同一把钥匙签 ✓）
         let tgt = crate::mesh::pull_target(space, 0, "");
         let (tc, sc) =
-            crate::mesh::sign_request(&ca, "dev-c", space, "GET", &tgt, crate::db::now_ms()).unwrap();
+            crate::mesh::sign_request(&ca, "dev-c", space, "GET", &tgt, crate::db::now_ms())
+                .unwrap();
         let ghost = crate::mesh::pull_from_peer(
             &crate::mesh_endpoint::LanEndpoint::new(&near("dev-a", addr_a).base, client.clone()),
             &near("dev-a", addr_a),
@@ -8123,26 +10290,52 @@ mod tests {
         // 关掉 A 的门（此刻只有它在服务这个空间 ⇒ 摘的就是它 ✓）
         stop_window(space).unwrap();
 
-        // ─── ② ⭐ **B 收到 A 的「想信任」⇒ 这一侧也登记 A**（owner 2026-10-17：一方配对成功，就双向通 ✓）───
-        //   ⚠️ 生产里这一步是 `sync::note_pending_trust_asks` 做的 ✓（这里直接落那两行，等价 ✓）——
-        //   ⛔ 不再是"B 也点一次"✗：那一侧**不用人再点** ✓。
+        // ─── ② owner 2026-10-26 A：B **没有**再点一次 ⇒ A 拉不动 B（单方只开一个方向）───
+        //   ⛔ 不再模拟「收到 ask 自动登记」（那正是 R208 的洞）。
+        let addr_b = ensure_window(
+            &[("default".to_string(), space.to_string(), true)],
+            "dev-b",
+            "127.0.0.1:0000",
+            &dir_b,
+        )
+        .unwrap()
+        .expect("B 的门要起得来");
+        let (ta, sa) = sign(&ca, "dev-a");
+        let one_way = crate::mesh::pull_from_peer(
+            &crate::mesh_endpoint::LanEndpoint::new(&near("dev-b", addr_b).base, client.clone()),
+            &near("dev-b", addr_b),
+            space,
+            0,
+            None,
+            Some(("dev-a", ta, &sa)),
+            "",
+        )
+        .await;
+        assert!(
+            one_way.is_err(),
+            "⛔ 单方配对只开一个方向：A 现在拉 B 必须失败（401）—— 过了就说明「自动双向」又回来了 ✗：{one_way:?}"
+        );
+
+        // ─── ③ B 自己也点一次「接入」并确认 ⇒ 双向才通 ✓ ───
+        //   ⚠️ 生产里这一步是 B 的 `mesh_trust_begin`（人点确认）✓；这里直接落那两行 ✓。
         crate::db::pair_pubkey(&cb, "", "dev-a", &ida.public_key_hex()).unwrap();
         // ⭐ 跑着的门**也要认它** ✗ —— ⛔ 只写库不算 ✗（那正是"配对成功却 401" ✓）
         crate::mesh::add_paired_pubkey(space, "dev-a", &ida.public_key_hex()).unwrap();
-        let addr_b =
-            ensure_window(&[("default".to_string(), space.to_string(), true)], "dev-b", "127.0.0.1:0000", &dir_b)
-                .unwrap()
-                .expect("B 的门要起得来");
-        // ⭐ **A 去拿 B 的** ⇒ **必须进得来** ✓（双向已通 ✓；⛔ 门口不用重启 ✗）
-        let (ta, sa) = sign(&ca, "dev-a");
-        let both =
-            crate::mesh::pull_from_peer(&crate::mesh_endpoint::LanEndpoint::new(&near("dev-b", addr_b).base, client.clone()), &near("dev-b", addr_b), space, 0, None, Some(("dev-a", ta, &sa)), "")
-                .await;
+        let (ta2, sa2) = sign(&ca, "dev-a");
+        let both = crate::mesh::pull_from_peer(
+            &crate::mesh_endpoint::LanEndpoint::new(&near("dev-b", addr_b).base, client.clone()),
+            &near("dev-b", addr_b),
+            space,
+            0,
+            None,
+            Some(("dev-a", ta2, &sa2)),
+            "",
+        )
+        .await;
         assert!(
             both.is_ok(),
-            "⭐ **一方配对成功 ⇒ 双向通** ✓（⛔ 不许只开一个方向 ✗；⭐ 门没重启 ✓）：{both:?}"
+            "⭐ 两边各点一次 ⇒ 双向通 ✓（门不重启也要认出新的那把公钥）：{both:?}"
         );
-
         stop_window(space).unwrap();
     }
 
@@ -8186,14 +10379,22 @@ mod tests {
         //    `0.0.0.0:0` 已各有其主 ⇒ 这里用 `…:00`（**另一个键、同一个临时端口** ✓）：键不同才不会
         //    与别人共用一扇门，而端口 0 仍是系统的临时端口 ✓。
         let mk = |bind: &str, dir: &std::path::PathBuf, dev: &str| {
-            ensure_window(&[("default".to_string(), "proto-r110".to_string(), false)], dev, bind, dir)
-                .unwrap()
-                .expect("窗口应当起得来")
+            ensure_window(
+                &[("default".to_string(), "proto-r110".to_string(), false)],
+                dev,
+                bind,
+                dir,
+            )
+            .unwrap()
+            .expect("窗口应当起得来")
         };
 
         // ① ⭐ **甲先开一扇门**（空卡）—— 生成时登记的那张卡必须**当场**进这扇门 ✓
         let addr_a0 = mk("127.0.0.1:00", &dir_a, "dev-jia");
-        assert!(addr_a0.port() > 0, "甲的门要真的绑上端口（不然下面那次「当场加进去」无从谈起）");
+        assert!(
+            addr_a0.port() > 0,
+            "甲的门要真的绑上端口（不然下面那次「当场加进去」无从谈起）"
+        );
 
         // ② ⭐ **走真产出内核**（＝ `device_pair_export` 那一步 ✓）：真载荷 ＋ 生成时登记
         //   ⭐ 2026-10-12（1C）：载荷**必须带公钥** ✗（不带 ⇒ 解码就拒 ✓）——
@@ -8219,9 +10420,15 @@ mod tests {
         //   ⭐ 乙此后**凭签名**（⛔ 不带任何口令 ✗）就得进得来 ✓。
         //   ⚠️ 夹具借甲自己那把钥匙当"乙的公钥" ✓（这一格量的是"登记 → 验签放行"那条链 ✓）。
         let pull_r110 = "/mesh/pull?space_id=proto-r110&since=0&limit=100";
-        let (ts_e, sig_e) =
-            crate::mesh::sign_request(&ca, "dev-yi", "proto-r110", "GET", pull_r110, crate::db::now_ms())
-                .unwrap();
+        let (ts_e, sig_e) = crate::mesh::sign_request(
+            &ca,
+            "dev-yi",
+            "proto-r110",
+            "GET",
+            pull_r110,
+            crate::db::now_ms(),
+        )
+        .unwrap();
         let (code, body) = http_get_signed(addr_a0, pull_r110, "dev-yi", ts_e, &sig_e);
         assert_eq!(
             code, 200,
@@ -8244,7 +10451,13 @@ mod tests {
             "dev-yi",
         )
         .unwrap();
-        let crate::sync::DevicePairDecision::Accept { peer_device_id, bind, token, .. } = decision else {
+        let crate::sync::DevicePairDecision::Accept {
+            peer_device_id,
+            bind,
+            token,
+            ..
+        } = decision
+        else {
             panic!("给本机的码应当能采纳：{decision:?}")
         };
         assert_eq!(peer_device_id, "dev-jia");
@@ -8268,7 +10481,10 @@ mod tests {
         let pull = "/mesh/pull?space_id=proto-r110&since=0&limit=100";
         //   方向一：**乙拉甲** ⇒ 甲要放行 S —— 靠的正是**生成时登记的那张卡** ★（变异就打在这里 ✓）
         let (code, body) = http_get(addr_a, pull, Some(secret));
-        assert_eq!(code, 200, "生成时登记过 ⇒ 甲必须当场放行（A 的意义全在这一格）：{body}");
+        assert_eq!(
+            code, 200,
+            "生成时登记过 ⇒ 甲必须当场放行（A 的意义全在这一格）：{body}"
+        );
         assert!(body.contains("only-in-jia"), "而且要真拉到甲的东西：{body}");
         //   方向二：**甲拉乙** ⇒ 乙要放行 S —— 靠的是**采纳时登记** ✓（与 A 之前一样 ✓）
         let (code, body) = http_get(addr_b, pull, Some(secret));
@@ -8288,7 +10504,10 @@ mod tests {
         // ⑥ 而两边都**只存哈希**（⛔ 明文只在"我要出示"的那一侧 ✓）
         for c in [&ca, &cb] {
             let hashes = crate::db::paired_secret_hashes(c, "proto-r110").unwrap();
-            assert!(hashes.contains(&crate::db::sha256_hex(secret)), "库里要有 sha256：{hashes:?}");
+            assert!(
+                hashes.contains(&crate::db::sha256_hex(secret)),
+                "库里要有 sha256：{hashes:?}"
+            );
             assert!(!hashes.iter().any(|h| h == secret), "⛔ 库里不许存明文 ✗");
         }
 
@@ -8321,7 +10540,11 @@ mod tests {
             19,
             "高水位必须是**我这一栏**的最大值：dev-other 的 999 不算进来"
         );
-        assert_eq!(max_own_device_seq(&c, "dev-nobody").unwrap(), 0, "一行都没有 ⇒ 0");
+        assert_eq!(
+            max_own_device_seq(&c, "dev-nobody").unwrap(),
+            0,
+            "一行都没有 ⇒ 0"
+        );
 
         let old = r#"{"records":[]}"#;
         let parsed: PullResponse = serde_json::from_str(old).expect("老对端不带那一格也必须能解析");
@@ -8366,6 +10589,7 @@ mod tests {
                 enabled: true,
                 note: String::new(),
                 candidates: peers.len(),
+                applied: peers.iter().map(|p| p.applied).sum(),
                 peers,
                 window: None,
             }
@@ -8386,7 +10610,10 @@ mod tests {
 
         // ② 这一台一个字节都没动 ⇒ 整台跳过（即便 items 里有东西）
         let r = report(vec![peer(0, 0, 0, vec![item("page", "p1", "upsert")])]);
-        assert!(round_touched_pages(&r).is_empty(), "没改东西的 peer 不许报“改了”");
+        assert!(
+            round_touched_pages(&r).is_empty(),
+            "没改东西的 peer 不许报“改了”"
+        );
 
         // ③ 「等你裁决」（awaiting）也是改了 —— 远端版本进了待取回，编辑器同样要刷新
         let r = report(vec![peer(0, 0, 1, vec![item("page", "p2", "upsert")])]);
@@ -8396,6 +10623,217 @@ mod tests {
         let r = report(vec![peer(1, 0, 0, vec![item("page", "p3", "delete")])]);
         assert!(round_touched_pages(&r).is_empty());
     }
+
+    /// ⭐⭐ **2026-10-28（amd 真机：`/mesh/attachment` 回 404，而本机盘上明明有那份字节）**：
+    /// 服务附件时"这是哪个空间"必须读**这条连接自己那个空间库**（`main.workspaces`），
+    /// ⛔ 不许读全局活动空间（`attachments::active_space_id`）—— 两者是两回事：
+    /// 前者是"这扇门的这条连接绑哪个空间"，后者随**用户在界面上切空间**而变
+    /// ⇒ 非活动空间的附件会被判"这一台没有"，而拿错目录还可能把**别的空间**的字节发出去。
+    ///
+    /// 判据形状抄 `receiving_a_trust_ask_writes_nothing`：读源码、剥注释再比（本函数文档里
+    /// 会提到旧名字 ✓，不剥就会假红 ✗）。
+    #[test]
+    fn serving_an_attachment_reads_the_connections_own_space() {
+        let src = include_str!("mesh.rs");
+        let start = src
+            .find("fn handle_attachment(")
+            .expect("handle_attachment 必须在（改了名字要同步改这里）");
+        // ⚠️ 必须**截到本函数为止**：`active_space_id(` 在本文件别处仍有合法用法
+        //    （比如 App 自己那条按"活动空间"读字节的路）⇒ 整段到尾扫就会假红 ✗。
+        let rest = &src[start..];
+        let end = rest
+            .find("pub async fn request_attachment_from_peer")
+            .expect(
+                "handle_attachment 后面紧跟的就是 request_attachment_from_peer（改了要同步改这里）",
+            );
+        let code: String = rest[..end]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let flat = code.split_whitespace().collect::<Vec<_>>().join(" ");
+        let body = flat
+            .split("fn handle_attachment(")
+            .nth(1)
+            .unwrap_or("")
+            .to_string();
+        assert!(
+            body.contains("space_id_of("),
+            "⛔ 服务附件必须按**这条连接自己的空间**找目录（`sync::space_id_of`）—— \
+             用全局活动空间会让非活动空间的附件一律 404"
+        );
+        assert!(
+            !body.contains("active_space_id("),
+            "⛔ 不许用 `attachments::active_space_id`（全局活动空间）找附件目录 —— \
+             它随界面切空间而变：非活动空间 404，拿错目录还可能跨空间发字节"
+        );
+    }
 }
 
+#[cfg(test)]
+mod sealed_caps_tests {
+    use super::*;
 
+    /// ⭐ **2026-10-28（owner：「一步到位」·P2）**：只有带 `caps=sealed1` 的对端才配收封包 ——
+    /// 老对端收到封包会**跳过它并推游标**（那一条从此补不回来），所以这一格必须严格 ✓。
+    #[test]
+    fn only_peers_that_advertise_sealed1_get_sealed_rows() {
+        assert!(caps_has_sealed1(
+            "/mesh/pull?space_id=a&since=0&limit=10&caps=sealed1&name_sha=x"
+        ));
+        assert!(
+            caps_has_sealed1("/mesh/pull?caps=lan,sealed1&name_sha=x"),
+            "逗号组合也认 ✓"
+        );
+        assert!(!caps_has_sealed1("/mesh/pull?space_id=a&since=0&limit=10"));
+        assert!(!caps_has_sealed1("/mesh/pull?caps=lan&name_sha=x"));
+        assert!(
+            !caps_has_sealed1("/mesh/pull?caps=sealed10"),
+            "⛔ 前缀像不算 ✗"
+        );
+    }
+
+    /// ⭐ 2026-10-28（owner「继续」／amd 锁态实验）：**锁着那一轮必须留下可读的读数** ✗ ——
+    /// 真机现场（amd 建页后一轮）：日志只有「候选 1 ｜ 收下 0 条（1 台没拉动，见历史那一行 ✓）」，
+    /// 而 `sync_history` 里那个空间**全表 0 行** ⇒ "为什么 0 条"完全不可见，两边只能互相猜。
+    ///
+    /// 判据（源码文本、剥注释后比 —— 本函数文档里会提到这些名字 ✓）：
+    ///   · `sealed_round` 函数体里要有 `eprintln!`（逐台成败 ＋ 整轮结论）；
+    ///   · 要有 `write_sync_history_with(`（锁态轮也进历史，别让"见历史那一行"是空指针）。
+    #[test]
+    fn the_locked_round_says_why_and_writes_history() {
+        let src = include_str!("mesh.rs");
+        let start = src
+            .find("pub async fn sealed_round(")
+            .expect("sealed_round 必须在（改了名字要同步改这里）");
+        let rest = &src[start..];
+        let end = rest
+            .find("\npub fn stash_sealed_rows(")
+            .expect("sealed_round 后面紧跟 stash_sealed_rows（改了要同步改这里）");
+        let code: String = rest[..end]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let flat = code.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat.contains("eprintln!"),
+            "⛔ 锁态轮必须把每台对端的成败与整轮结论打进日志 —— 否则真机只有一句「1 台没拉动」，只能猜"
+        );
+        assert!(
+            flat.contains("write_sync_history_with("),
+            "⛔ 锁态轮必须写 sync_history —— 否则日志里那句「见历史那一行」是空指针（真机 2026-10-28 就是 0 行）"
+        );
+    }
+}
+
+#[cfg(test)]
+mod pull_log_tests {
+    use super::*;
+
+    /// ⭐ **2026-10-28（owner：「一步到位」· P2 观测缺口）**：这一行必须**够判**"谁、要什么、回来什么"，
+    /// 且⛔ **不许把 `name_sha` 打出来** ✗（凭证面）—— 来由：锁态实验两边都看不到请求到没到 ✓。
+    #[test]
+    fn the_inbound_pull_line_says_who_asked_and_what_came_back() {
+        let ok_line = pull_log_line(
+            "/mesh/pull?space_id=53d6dacb5daeafc580795bdefe2535bd&since=7&limit=10&caps=sealed1&name_sha=deadbeef",
+            200,
+            br#"{"records":[{"sealed":"xx"}]}"#,
+        );
+        assert!(ok_line.contains("space=53d6dacb"), "{ok_line}");
+        assert!(ok_line.contains("since=7"), "{ok_line}");
+        assert!(ok_line.contains("caps_sealed1=true"), "{ok_line}");
+        assert!(ok_line.contains("⇒ 200"), "{ok_line}");
+        assert!(ok_line.contains("sealed_rows=1"), "{ok_line}");
+        assert!(
+            !ok_line.contains("name_sha"),
+            "⛔ 不许把 name_sha 打出来：{ok_line}"
+        );
+        assert!(!ok_line.contains("deadbeef"), "⛔ 连值也不许：{ok_line}");
+        let fail = pull_log_line(
+            "/mesh/pull?space_id=s1&since=0",
+            403,
+            br#"{"error":"not served"}"#,
+        );
+        assert!(fail.contains("⇒ 403"), "{fail}");
+        assert!(fail.contains("not served"), "失败要带一句原因：{fail}");
+    }
+}
+
+#[cfg(test)]
+mod drain_targets_tests {
+    use super::*;
+
+    /// ⭐ **2026-10-28（真机：解锁后 pendingInbox 不降）**：补应用的扫描面必须是
+    /// **在线对端 ∪ inbox 里出现过的 peer**（去重、保序）—— 只扫在线对端 ⇒ 对端离线时
+    /// 「解锁后自动应用」永远不跑（收了、存了、就是不用 ✗）。
+    #[test]
+    fn inbox_peers_are_drained_even_when_offline() {
+        let online = vec!["dev-a".to_string()];
+        let inbox = vec![
+            "dev-b".to_string(),
+            "dev-a".to_string(),
+            " ".to_string(),
+            "dev-b".to_string(),
+        ];
+        assert_eq!(
+            drain_targets(&online, &inbox),
+            vec!["dev-a".to_string(), "dev-b".to_string()],
+            "在线在前 ✓、inbox 里离线那台也要在 ✓、去重去空 ✓"
+        );
+        // 一个都不在线也要扫（真机就是这一格：两台都没开）
+        assert_eq!(
+            drain_targets(&[], &["dev-b".to_string()]),
+            vec!["dev-b".to_string()],
+            "⛔ 不许因为 peers 空就一条都不补应用 ✗"
+        );
+        assert!(drain_targets(&[], &[]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod locked_mark_tests {
+    use super::*;
+
+    fn tmp(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "shuyo-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|x| x.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// ⭐ **2026-10-28（真机 `diag served=true locked=true` 两种状态同时为真）**：
+    /// 锁着时 `mark_locked(proto)` 记进集合；解锁后连接被 `add_space` 加回来，
+    /// 但**没人摘 locked** ⇒ 空间同时"在服务"且"锁着" ⇒ `window_locked()` 会对开着的空间说"锁着"✗。
+    /// 判据：加成功 ⇒ 立刻不再是 locked（⛔ 失败不动它 ✗）。
+    #[test]
+    fn a_space_that_gets_served_is_no_longer_marked_locked() {
+        let dir = tmp("locked-mark-clear");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_space_conn_at("default", &dir).unwrap());
+        let cfg = MeshConfig {
+            bind: "127.0.0.1:0".into(),
+            device_id: "dev".into(),
+            data_dir: Some(dir.clone()),
+        };
+        let h = start(
+            cfg,
+            Arc::new(Mutex::new(std::collections::HashMap::new())),
+            Arc::new(Mutex::new(CardBook::new())),
+        )
+        .expect("窗口应当起得来");
+        let proto = "proto-locked";
+        h.mark_locked(proto);
+        assert!(h.is_locked(proto), "前提：先标上锁着");
+        h.add_space("default", proto, &dir)
+            .expect("库开得开 ⇒ 加成功");
+        assert!(!h.is_locked(proto), "⛔ 连接进来了就不该再说自己锁着 ✗");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

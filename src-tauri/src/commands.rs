@@ -65,7 +65,8 @@ pub async fn list_pages(db: State<'_, Db>) -> Result<Vec<PageMeta>, String> {
         })
         .map_err(|e| e.to_string())?;
 
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// M10.4b 打磨 — 列出指定工作空间的页面（供「跨空间复制选父级」的目标空间文件夹树）。
@@ -95,13 +96,37 @@ pub fn list_workspace_pages(workspace_id: String) -> Result<Vec<PageMeta>, Strin
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn get_page(db: State<'_, Db>, id: String) -> Result<PageDetail, String> {
-    let c = conn(&db);
-    let page = fetch_page(&c, &id)?;
+pub async fn get_page(
+    db: State<'_, Db>,
+    id: String,
+    space_id: Option<String>,
+) -> Result<PageDetail, String> {
+    let target = space_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let page = if let Some(space) = target {
+        let active = {
+            let c = conn(&db);
+            workspaces::active_workspace_id(&c)?
+        };
+        if space != active {
+            let app = crate::db::app_data_dir_ref()
+                .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let tc = crate::db::open_space_conn_at(space, app).map_err(|e| {
+                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+            })?;
+            fetch_page(&tc, &id)?
+        } else {
+            let c = conn(&db);
+            fetch_page(&c, &id)?
+        }
+    } else {
+        let c = conn(&db);
+        fetch_page(&c, &id)?
+    };
     if page.kind != "page" && page.kind != "database" {
         return Err("该节点不是页面".to_string());
     }
@@ -114,22 +139,132 @@ pub struct CreatePageArgs {
     pub title: Option<String>,
     pub content_json: Option<String>,
     pub content_text: Option<String>,
+    /// ⭐ 跨空间写 v1（2026-10-30）：给了就写到这个空间（仅 `pages.create` 链路支持）。
+    /// 省略 = 当前活动空间（行为逐字节不变）。
+    #[serde(default)]
+    pub space_id: Option<String>,
 }
 
 #[tauri::command]
-pub fn create_page(db: State<Db>, args: CreatePageArgs) -> Result<PageDetail, String> {
-    create_node(
-        db,
-        args.parent_id,
-        args.title,
-        "page",
-        args.content_json,
-        args.content_text,
-    )
+pub fn create_page(db: State<Db>, mut args: CreatePageArgs) -> Result<PageDetail, String> {
+    let target = args
+        .space_id
+        .take()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let json = args.content_json.take();
+    let text = args.content_text.take();
+    let parent_id = args.parent_id.take();
+    let title = args.title.take();
+    if let Some(space) = target {
+        let active = {
+            let c = conn(&db);
+            workspaces::active_workspace_id(&c)?
+        };
+        if space != active {
+            return create_page_in_space(&space, parent_id, title, json, text);
+        }
+    }
+    create_node(db, parent_id, title, "page", json, text)
+}
+
+/// ⭐ 跨空间写 v1：在**目标空间**建页（可写连接 ＋ 同一处写 `pages`/`changes`）。
+///
+/// 幂等/回滚由调用方（前端 apply 的确认链）保证；这里只做"一次调用一件事"。
+/// 目标空间**锁着/打不开** ⇒ `permission_denied`（消息含 locked），⛔ 不回落当前空间。
+pub(crate) fn create_page_in_space(
+    space_id: &str,
+    parent_id: Option<String>,
+    title: Option<String>,
+    json: Option<String>,
+    text: Option<String>,
+) -> Result<PageDetail, String> {
+    if crate::plugins::cross_space_write_disabled() {
+        return Err(
+            "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                .to_string(),
+        );
+    }
+    let app_data = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+    let exists = {
+        let m = crate::db::open_meta_conn_at(app_data)?;
+        let found: bool = m
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1 AND deleted_at IS NULL)",
+                params![space_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        found
+    };
+    if !exists {
+        return Err(format!("not_found: 空间 {space_id} 不存在"));
+    }
+    let c = crate::db::open_space_conn_at(space_id, app_data).map_err(|e| {
+        format!("permission_denied: 目标空间「{space_id}」已锁定或无法打开（locked）：{e}")
+    })?;
+    create_node_in(&c, space_id, parent_id, title, "page", json, text).map_err(|e| {
+        if e.starts_with("permission_denied")
+            || e.starts_with("not_found")
+            || e.starts_with("bad_args")
+        {
+            e
+        } else {
+            let _ = &c; // 连接活到函数结束（事务/句柄都不跨）
+            format!("db_error: {e}")
+        }
+    })
 }
 
 #[tauri::command]
 pub fn create_folder(db: State<Db>, args: CreatePageArgs) -> Result<PageDetail, String> {
+    let target = args
+        .space_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if let Some(space) = target {
+        let active = {
+            let c = conn(&db);
+            workspaces::active_workspace_id(&c)?
+        };
+        if space != active {
+            if crate::plugins::cross_space_write_disabled() {
+                return Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                );
+            }
+            let app_data = crate::db::app_data_dir_ref()
+                .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let tc = crate::db::open_space_conn_at(&space, app_data).map_err(|e| {
+                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+            })?;
+            if let Some(ref p) = args.parent_id {
+                let ok: bool = tc
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM pages WHERE id = ?1 AND deleted_at IS NULL)",
+                        params![p],
+                        |r| r.get(0),
+                    )
+                    .map_err(|e| e.to_string())?;
+                if !ok {
+                    return Err(format!("not_found: 上级节点 {p} 不存在或已删除"));
+                }
+            }
+            return create_node_in(
+                &tc,
+                &space,
+                args.parent_id,
+                args.title,
+                "folder",
+                None,
+                None,
+            );
+        }
+    }
     create_node(db, args.parent_id, args.title, "folder", None, None)
 }
 
@@ -149,6 +284,20 @@ pub(crate) fn create_node(
     text: Option<String>,
 ) -> Result<PageDetail, String> {
     let c = conn(&db);
+    let ws = workspaces::active_workspace_id(&c)?;
+    create_node_in(&c, &ws, parent_id, title, kind, json, text)
+}
+
+/// `create_node` 的**单连接实现**（当前空间与跨空间写共用同一份逻辑；⛔ 不复制第二套）。
+pub(crate) fn create_node_in(
+    c: &Connection,
+    workspace_id: &str,
+    parent_id: Option<String>,
+    title: Option<String>,
+    kind: &str,
+    json: Option<String>,
+    text: Option<String>,
+) -> Result<PageDetail, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_ms();
     // Honor an explicit title; fall back to a per-kind default (plain pages → 新页面).
@@ -171,23 +320,22 @@ pub(crate) fn create_node(
 
     let json = json.unwrap_or_else(|| "{}".to_string());
     let text = text.unwrap_or_default();
-    let ws = workspaces::active_workspace_id(&c)?;
 
     c.execute(
         "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)",
-        params![id, ws, parent_id, title, json, text, kind, sort_order, now, now],
+        params![id, workspace_id, parent_id, title, json, text, kind, sort_order, now, now],
     )
     .map_err(|e| e.to_string())?;
 
-    search::sync_fts(&c, &id, &title, &text)?;
+    search::sync_fts(c, &id, &title, &text)?;
     // Rebuild block/backlink graph on create too, so any `[[双链]]` / block refs in
     // the initial content (e.g. the programmatically-created 使用指南 pages) show
     // up in the relationship graph. Mirrors save_page.
-    blocks::rebuild_block_graph(&c, &id, &json, &text)?;
+    blocks::rebuild_block_graph(c, &id, &json, &text)?;
 
-    let page = fetch_page(&c, &id)?;
-    sync::record_page_upsert(&c, &page)?;
+    let page = fetch_page(c, &id)?;
+    sync::record_page_upsert(c, &page)?;
     Ok(page)
 }
 
@@ -197,6 +345,8 @@ pub struct SavePageArgs {
     pub title: Option<String>,
     pub content_json: Option<String>,
     pub content_text: Option<String>,
+    #[serde(default)]
+    pub space_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -231,6 +381,23 @@ fn finish_page_chrome_update(c: &Connection, id: &str, now: i64) -> Result<PageD
     Ok(page)
 }
 
+/// ⭐ AI 不可见空间清单：读（默认空；丢弃已删空间）。
+#[tauri::command]
+pub fn mcp_hidden_spaces_get(db: State<Db>) -> Result<serde_json::Value, String> {
+    let c = conn(&db);
+    Ok(serde_json::json!({ "spaceIds": crate::plugins::ai_hidden_spaces_in(&c) }))
+}
+
+/// ⭐ AI 不可见空间清单：写（校验存在/去重/≤500）。
+#[tauri::command]
+pub fn mcp_hidden_spaces_set(
+    db: State<Db>,
+    space_ids: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    let c = conn(&db);
+    let clean = crate::plugins::ai_hidden_spaces_set_in(&c, space_ids)?;
+    Ok(serde_json::json!({ "spaceIds": clean }))
+}
 /// Set a page's cover (CSS gradient) and return the updated page detail.
 #[tauri::command]
 pub fn set_page_cover(db: State<Db>, args: SetCoverArgs) -> Result<PageDetail, String> {
@@ -320,7 +487,10 @@ pub struct ListPdfAnnotationsArgs {
 
 /// Save (upsert) the annotation list for an attachment page; return the saved list.
 #[tauri::command]
-pub fn save_pdf_annotations(db: State<Db>, args: SavePdfAnnotationsArgs) -> Result<serde_json::Value, String> {
+pub fn save_pdf_annotations(
+    db: State<Db>,
+    args: SavePdfAnnotationsArgs,
+) -> Result<serde_json::Value, String> {
     let c = conn(&db);
     let now = now_ms();
     let payload = args.annotations.to_string();
@@ -351,7 +521,10 @@ pub fn save_pdf_annotations(db: State<Db>, args: SavePdfAnnotationsArgs) -> Resu
 
 /// List all annotation pages for an attachment (ordered by page index).
 #[tauri::command]
-pub fn list_pdf_annotations(db: State<Db>, args: ListPdfAnnotationsArgs) -> Result<Vec<serde_json::Value>, String> {
+pub fn list_pdf_annotations(
+    db: State<Db>,
+    args: ListPdfAnnotationsArgs,
+) -> Result<Vec<serde_json::Value>, String> {
     let c = conn(&db);
     let mut stmt = c
         .prepare(
@@ -370,7 +543,8 @@ pub fn list_pdf_annotations(db: State<Db>, args: ListPdfAnnotationsArgs) -> Resu
             }))
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// List every annotated page across all attachments, most recently updated first
@@ -395,12 +569,16 @@ pub fn list_all_pdf_annotations(db: State<Db>) -> Result<Vec<serde_json::Value>,
             }))
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// Set a page's cover height (px) and return the updated page detail.
 #[tauri::command]
-pub fn set_page_cover_height(db: State<Db>, args: SetCoverHeightArgs) -> Result<PageDetail, String> {
+pub fn set_page_cover_height(
+    db: State<Db>,
+    args: SetCoverHeightArgs,
+) -> Result<PageDetail, String> {
     let c = conn(&db);
     c.execute(
         "UPDATE pages SET cover_height = ?1 WHERE id = ?2 AND deleted_at IS NULL",
@@ -525,7 +703,9 @@ pub fn enable_space_encryption(
     db: State<Db>,
     args: SpaceEncryptionArgs,
 ) -> Result<[u8; 32], String> {
-    let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
+    let dir = crate::db::app_data_dir_ref()
+        .ok_or("app data dir not initialised")?
+        .to_path_buf();
     let mut c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
     crate::space_crypto::enable_space(&mut c, &dir, &args.space_id, args.passphrase.as_deref())
 }
@@ -533,7 +713,9 @@ pub fn enable_space_encryption(
 /// ★ 同上（另一半）：**按空间禁用** —— 只把它自己的库换回明文、扔掉它的盒子（别的空间不受影响）。
 #[tauri::command]
 pub fn disable_space_encryption(db: State<Db>, args: SpaceIdArgs) -> Result<(), String> {
-    let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
+    let dir = crate::db::app_data_dir_ref()
+        .ok_or("app data dir not initialised")?
+        .to_path_buf();
     let mut c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
     crate::space_crypto::disable_space(&mut c, &dir, &args.space_id)
 }
@@ -580,7 +762,9 @@ pub fn set_space_kind(db: State<Db>, args: SpaceKindArgs) -> Result<(), String> 
 pub fn space_security_overview(
     db: State<Db>,
 ) -> Result<Vec<crate::space_crypto::SpaceSecurityView>, String> {
-    let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
+    let dir = crate::db::app_data_dir_ref()
+        .ok_or("app data dir not initialised")?
+        .to_path_buf();
     let c = conn(&db);
     crate::space_crypto::space_security_views(&c, &dir)
 }
@@ -606,13 +790,43 @@ pub fn write_page_projection(db: State<Db>, args: PageProjectionArgs) -> Result<
 }
 
 #[tauri::command]
-pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String> {
+pub fn save_page(db: State<Db>, mut args: SavePageArgs) -> Result<PageDetail, String> {
+    let target = args
+        .space_id
+        .take()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if let Some(space) = target {
+        let active = {
+            let c = conn(&db);
+            workspaces::active_workspace_id(&c)?
+        };
+        if space != active {
+            if crate::plugins::cross_space_write_disabled() {
+                return Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                );
+            }
+            let app_data = crate::db::app_data_dir_ref()
+                .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let c = crate::db::open_space_conn_at(&space, app_data).map_err(|e| {
+                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+            })?;
+            return save_page_in(&c, args);
+        }
+    }
     let c = conn(&db);
+    save_page_in(&c, args)
+}
+
+/// `save_page` 的单连接实现（复用全部副作用；当前/跨空间同一份）。
+pub(crate) fn save_page_in(c: &Connection, mut args: SavePageArgs) -> Result<PageDetail, String> {
+    let now = now_ms();
     let now = now_ms();
 
     // Read current values for fields not provided. 走「文档内容」那一层（阶段 0 接口收口）。
-    let cur = crate::doc_content::read(&c, &args.id)?
-        .ok_or_else(|| "页面不存在".to_string())?;
+    let cur = crate::doc_content::read(c, &args.id)?.ok_or_else(|| "页面不存在".to_string())?;
 
     let content = crate::doc_content::DocContent {
         title: args.title.unwrap_or(cur.title),
@@ -621,7 +835,7 @@ pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String
         //   不盖章 ⇒ 判定每一页都会回落到页级 LWW，接线等于白接。
         //   ⚠️ 顺序：**先盖章再落库/快照** —— 快照里存的应当是"用户真正保存的那一版"（含 rev）。
         json: crate::doc_content::stamp_block_revs(
-            &c,
+            c,
             &args.id,
             &args.content_json.unwrap_or_else(|| cur.json.clone()),
         )?,
@@ -629,19 +843,49 @@ pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String
     };
 
     // Snapshot the current state before overwriting (version history).
-    versions::snapshot_before_save(&c, &args.id, &content.title, &content.json, &content.text)?;
+    versions::snapshot_before_save(c, &args.id, &content.title, &content.json, &content.text)?;
 
-    crate::doc_content::write(&c, &args.id, &content, now)?;
-    crate::doc_content::derive(&c, &args.id, &content)?;
+    crate::doc_content::write(c, &args.id, &content, now)?;
+    crate::doc_content::derive(c, &args.id, &content)?;
 
-    let page = fetch_page(&c, &args.id)?;
-    sync::record_page_upsert(&c, &page)?;
+    let page = fetch_page(c, &args.id)?;
+    sync::record_page_upsert(c, &page)?;
     Ok(page)
 }
 
 #[tauri::command]
-pub fn delete_page(db: State<Db>, id: String) -> Result<(), String> {
+pub fn delete_page(db: State<Db>, id: String, space_id: Option<String>) -> Result<(), String> {
+    let target = space_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if let Some(space) = target {
+        let active = {
+            let c = conn(&db);
+            workspaces::active_workspace_id(&c)?
+        };
+        if space != active {
+            if crate::plugins::cross_space_write_disabled() {
+                return Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                );
+            }
+            let app_data = crate::db::app_data_dir_ref()
+                .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let tc = crate::db::open_space_conn_at(&space, app_data).map_err(|e| {
+                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+            })?;
+            return delete_page_in(&tc, &id);
+        }
+    }
     let c = conn(&db);
+    delete_page_in(&c, &id)
+}
+
+/// delete_page 的单连接实现（当前/跨空间同一份）。
+pub(crate) fn delete_page_in(c: &Connection, id: &String) -> Result<(), String> {
     let now = now_ms();
 
     // Collect descendant ids to soft-delete recursively.
@@ -672,7 +916,9 @@ pub fn delete_page(db: State<Db>, id: String) -> Result<(), String> {
         // Delete change: embed the node's title so sync-history 明细 can show a
         // name (deleted entities have no living row). Best-effort; empty payload OK.
         let title: String = c
-            .query_row("SELECT title FROM pages WHERE id = ?1", params![pid], |r| r.get(0))
+            .query_row("SELECT title FROM pages WHERE id = ?1", params![pid], |r| {
+                r.get(0)
+            })
             .unwrap_or_default();
         let payload = if title.is_empty() {
             None
@@ -692,11 +938,44 @@ pub struct MovePageArgs {
     pub id: String,
     pub new_parent_id: Option<String>,
     pub sort_order: f64,
+    #[serde(default)]
+    pub space_id: Option<String>,
 }
 
 #[tauri::command]
 pub fn move_page(db: State<Db>, args: MovePageArgs) -> Result<(), String> {
+    let target = args
+        .space_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if let Some(space) = target {
+        let active = {
+            let c = conn(&db);
+            workspaces::active_workspace_id(&c)?
+        };
+        if space != active {
+            if crate::plugins::cross_space_write_disabled() {
+                return Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                );
+            }
+            let app_data = crate::db::app_data_dir_ref()
+                .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let tc = crate::db::open_space_conn_at(&space, app_data).map_err(|e| {
+                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+            })?;
+            return move_page_in(&tc, &args);
+        }
+    }
     let c = conn(&db);
+    move_page_in(&c, &args)
+}
+
+/// move_page 的单连接实现（当前/跨空间同一份）。
+pub(crate) fn move_page_in(c: &Connection, args: &MovePageArgs) -> Result<(), String> {
     // Prevent moving a page under its own descendant.
     if let Some(ref parent) = args.new_parent_id {
         let mut cur = Some(parent.clone());
@@ -820,7 +1099,11 @@ pub struct PdfPagePayload {
 /// ⚠️ 没编 MuPDF 的构建里，MuPDF + rect 会先被 `ensure_mupdf_available()` 拦下（那句话更贴切）；
 /// 编了 MuPDF 时由 [`MUPDF_NO_RECT`] 拒绝（原因见 [`engine_supports_rect`] 的注释）。
 #[tauri::command]
-pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: RenderPdfPageArgs) -> Result<PdfPagePayload, String> {
+pub async fn render_pdf_page(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    args: RenderPdfPageArgs,
+) -> Result<PdfPagePayload, String> {
     let hash: String = {
         let c = conn(&db);
         c.query_row(
@@ -882,14 +1165,15 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
     // 两条路径都**归一成紧凑 RGBA**（前端按 宽×高×4 校验字节数）：
     //  · MuPDF 出的是带行填充的缓冲 ⇒ 还要 `compact_rgba`；
     //  · PDFium 的 `as_rgba_bytes()` **本来就是紧凑的** ⇒ 不需要那一步（见 pdfium_native.rs 模块头第 1 条）。
-    let (compact, w, h) = tauri::async_runtime::spawn_blocking(
-        move || -> Result<(Vec<u8>, usize, usize), String> {
+    let (compact, w, h) =
+        tauri::async_runtime::spawn_blocking(move || -> Result<(Vec<u8>, usize, usize), String> {
             match engine {
                 PdfEngine::Mupdf => {
                     #[cfg(feature = "mupdf-rollback")]
                     {
-                        let (rgba, w, h, stride) =
-                            unsafe { crate::pdf_native::render_page(&hash, &bytes, page_index, scale) }?;
+                        let (rgba, w, h, stride) = unsafe {
+                            crate::pdf_native::render_page(&hash, &bytes, page_index, scale)
+                        }?;
                         Ok((crate::pdf_native::compact_rgba(&rgba, w, h, stride)?, w, h))
                     }
                     // 没编 MuPDF 的构建走不到这里（上面已返回）——保留一句可读的错，别写成 unreachable!()。
@@ -921,10 +1205,9 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
                     }
                 }
             }
-        },
-    )
-    .await
-    .map_err(|e| format!("render task failed: {e}"))??;
+        })
+        .await
+        .map_err(|e| format!("render task failed: {e}"))??;
     let width = u32::try_from(w).map_err(|_| format!("PDF: 页面宽度 {w} 超出范围"))?;
     let height = u32::try_from(h).map_err(|_| format!("PDF: 页面高度 {h} 超出范围"))?;
     // ⛔⭐ **2026-10-15（owner：「pdf 放大很卡」）** ✗ —— ⭐ 实测：过桥的是**原始 RGBA 的 base64**：
@@ -982,7 +1265,8 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
 /// —— 必须一句话说清"现在没有它 + 换哪个开关 + 想要它怎么构建"。
 /// （编了 `mupdf-rollback` 的构建里这句话没有调用点，但那是有意的：判据与文档都指着它。）
 #[cfg_attr(feature = "mupdf-rollback", allow(dead_code))]
-pub(crate) const MUPDF_NOT_COMPILED: &str = "这个构建没有编入 MuPDF（构建期特性 `mupdf-rollback`，2026-09-21 起默认不编）。\
+pub(crate) const MUPDF_NOT_COMPILED: &str =
+    "这个构建没有编入 MuPDF（构建期特性 `mupdf-rollback`，2026-09-21 起默认不编）。\
 现在请把 SHUYONOTE_PDF_ENGINE 设为 pdfium（或删掉这个环境变量）用默认引擎；\
 若确实要用 MuPDF 回滚，请用带 `--features mupdf-rollback` 重新构建的安装包。";
 
@@ -1068,7 +1352,10 @@ mod pdf_engine_tests {
     fn explicit_values_win_and_are_case_insensitive() {
         assert_eq!(PdfEngine::from_env_value(Some("pdfium")), PdfEngine::Pdfium);
         assert_eq!(PdfEngine::from_env_value(Some("PDFium")), PdfEngine::Pdfium);
-        assert_eq!(PdfEngine::from_env_value(Some(" pdfium ")), PdfEngine::Pdfium);
+        assert_eq!(
+            PdfEngine::from_env_value(Some(" pdfium ")),
+            PdfEngine::Pdfium
+        );
         assert_eq!(PdfEngine::from_env_value(Some("mupdf")), PdfEngine::Mupdf);
         assert_eq!(PdfEngine::from_env_value(Some("MuPDF")), PdfEngine::Mupdf);
     }
@@ -1076,8 +1363,19 @@ mod pdf_engine_tests {
     /// 认不出的值（含空串）⇒ 默认，不报错。失败面：把 `""` 当成"显式指定了某个引擎"。
     #[test]
     fn unknown_or_empty_values_fall_back_to_default() {
-        for v in [Some(""), Some("   "), Some("pdf"), Some("1"), Some("true"), Some("pdfiumm")] {
-            assert_eq!(PdfEngine::from_env_value(v), PdfEngine::Pdfium, "value={v:?}");
+        for v in [
+            Some(""),
+            Some("   "),
+            Some("pdf"),
+            Some("1"),
+            Some("true"),
+            Some("pdfiumm"),
+        ] {
+            assert_eq!(
+                PdfEngine::from_env_value(v),
+                PdfEngine::Pdfium,
+                "value={v:?}"
+            );
         }
     }
 
@@ -1088,7 +1386,11 @@ mod pdf_engine_tests {
     #[test]
     fn explicit_mupdf_always_rolls_back() {
         assert_eq!(PdfEngine::from_env_value(Some("mupdf")), PdfEngine::Mupdf);
-        assert_ne!(PdfEngine::DEFAULT, PdfEngine::Mupdf, "P5 之后默认不再是 MuPDF；若改成 MuPDF 请同步改这条与上面那条");
+        assert_ne!(
+            PdfEngine::DEFAULT,
+            PdfEngine::Mupdf,
+            "P5 之后默认不再是 MuPDF；若改成 MuPDF 请同步改这条与上面那条"
+        );
     }
 
     /// ★ **2026-09-21 的新不变式**：MuPDF 是构建期特性（默认不编）⇒ 显式要它却编不出时，
@@ -1156,8 +1458,15 @@ mod render_rect_args_tests {
 
     #[test]
     fn a_rect_of_the_wrong_shape_is_refused_not_guessed() {
-        for bad in [r#"[1,2,3]"#, r#"[1,2,3,4,5]"#, r#"[1,2,3,"x"]"#, r#"{"x":1}"#, r#""1,2,3,4""#] {
-            let json = format!(r#"{{"attachment_id":"a","page_index":0,"scale":1.0,"rect":{bad}}}"#);
+        for bad in [
+            r#"[1,2,3]"#,
+            r#"[1,2,3,4,5]"#,
+            r#"[1,2,3,"x"]"#,
+            r#"{"x":1}"#,
+            r#""1,2,3,4""#,
+        ] {
+            let json =
+                format!(r#"{{"attachment_id":"a","page_index":0,"scale":1.0,"rect":{bad}}}"#);
             assert!(
                 parse(&json).is_err(),
                 "形状不对必须报错（⛔ 不许就近取四个）：{bad}"
@@ -1188,8 +1497,14 @@ mod render_rect_args_tests {
 
     #[test]
     fn refusing_rect_says_what_to_do() {
-        assert!(MUPDF_NO_RECT.contains("pdfium"), "要说清现在该用哪个引擎：{MUPDF_NO_RECT}");
-        assert!(MUPDF_NO_RECT.contains("整页"), "要给出前端可用的退路（退回整页）：{MUPDF_NO_RECT}");
+        assert!(
+            MUPDF_NO_RECT.contains("pdfium"),
+            "要说清现在该用哪个引擎：{MUPDF_NO_RECT}"
+        );
+        assert!(
+            MUPDF_NO_RECT.contains("整页"),
+            "要给出前端可用的退路（退回整页）：{MUPDF_NO_RECT}"
+        );
     }
 }
 
@@ -1267,7 +1582,11 @@ pub fn resolve_lineage_conflict(
 ///
 /// 落库那一笔是**一次本地编辑**（`dirty = 1`）⇒ 会被推上去 —— "留本地"就是这么生效的。
 #[tauri::command]
-pub fn resolve_page_conflict(db: State<Db>, conflict_id: String, choice: String) -> Result<(), String> {
+pub fn resolve_page_conflict(
+    db: State<Db>,
+    conflict_id: String,
+    choice: String,
+) -> Result<(), String> {
     let c = conn(&db);
     let choice = match choice.as_str() {
         "local" => crate::doc_content::ConflictChoice::Local,
@@ -1373,12 +1692,20 @@ mod page_chrome_sync_tests {
     #[test]
     fn setting_the_cover_persists_it_and_records_one_sync_change() {
         let c = fixture();
-        c.execute("UPDATE pages SET cover='url(\"/covers/a.jpg\")' WHERE id='p1'", []).unwrap();
+        c.execute(
+            "UPDATE pages SET cover='url(\"/covers/a.jpg\")' WHERE id='p1'",
+            [],
+        )
+        .unwrap();
 
         let page = finish_page_chrome_update(&c, "p1", 42_000).expect("尾巴");
         assert_eq!(page.cover, "url(\"/covers/a.jpg\")");
         assert_eq!(chrome_of(&c).0, "url(\"/covers/a.jpg\")");
-        assert_eq!(chrome_of(&c).4, 42_000, "updated_at 必须被推进（LWW/排序都看它）");
+        assert_eq!(
+            chrome_of(&c).4,
+            42_000,
+            "updated_at 必须被推进（LWW/排序都看它）"
+        );
 
         let payload: String = c
             .query_row(
@@ -1417,7 +1744,10 @@ mod page_chrome_sync_tests {
     #[test]
     fn a_missing_page_is_an_error_not_a_silent_success() {
         let c = fixture();
-        assert_eq!(finish_page_chrome_update(&c, "nope", 1).unwrap_err(), "页面不存在");
+        assert_eq!(
+            finish_page_chrome_update(&c, "nope", 1).unwrap_err(),
+            "页面不存在"
+        );
     }
 }
 
@@ -1429,14 +1759,29 @@ mod cover_normalize_tests {
     #[test]
     fn cover_values_are_normalized_to_css_url() {
         // 裸文件名（真实现场：`微信头像.jpg`）⇒ 必须包成 url("…")，否则 CSS 无效
-        assert_eq!(normalize_cover_value("微信头像.jpg").unwrap(), "url(\"微信头像.jpg\")");
+        assert_eq!(
+            normalize_cover_value("微信头像.jpg").unwrap(),
+            "url(\"微信头像.jpg\")"
+        );
         // 相对路径同理
-        assert_eq!(normalize_cover_value("covers/default-cover.jpg").unwrap(), "url(\"covers/default-cover.jpg\")");
+        assert_eq!(
+            normalize_cover_value("covers/default-cover.jpg").unwrap(),
+            "url(\"covers/default-cover.jpg\")"
+        );
         // data URL ⇒ 包起来（渲染层只认 background-image 形式）
-        assert_eq!(normalize_cover_value("data:image/png;base64,AAAA").unwrap(), "url(\"data:image/png;base64,AAAA\")");
+        assert_eq!(
+            normalize_cover_value("data:image/png;base64,AAAA").unwrap(),
+            "url(\"data:image/png;base64,AAAA\")"
+        );
         // 已经是 url(...) ⇒ **原样**（⛔ 不许套成 url("url(…)")）
-        assert_eq!(normalize_cover_value("url(\"covers/a.jpg\")").unwrap(), "url(\"covers/a.jpg\")");
-        assert_eq!(normalize_cover_value("URL(covers/a.jpg)").unwrap(), "URL(covers/a.jpg)");
+        assert_eq!(
+            normalize_cover_value("url(\"covers/a.jpg\")").unwrap(),
+            "url(\"covers/a.jpg\")"
+        );
+        assert_eq!(
+            normalize_cover_value("URL(covers/a.jpg)").unwrap(),
+            "URL(covers/a.jpg)"
+        );
         // 空 ⇒ 清掉封面
         assert_eq!(normalize_cover_value("   ").unwrap(), "");
     }
@@ -1445,7 +1790,10 @@ mod cover_normalize_tests {
     #[test]
     fn cover_values_with_quotes_or_newlines_are_refused_with_a_reason() {
         let e = normalize_cover_value("a\".jpg").unwrap_err();
-        assert!(e.contains("双引号") || e.contains("换行"), "错误信息要能看懂：{e}");
+        assert!(
+            e.contains("双引号") || e.contains("换行"),
+            "错误信息要能看懂：{e}"
+        );
         assert!(normalize_cover_value("a\nb").unwrap_err().contains("换行"));
     }
 }

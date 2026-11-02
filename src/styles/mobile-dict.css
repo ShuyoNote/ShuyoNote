@@ -1,0 +1,125 @@
+/* S4（2026-11-01）：域抽取器搬出的**移动端词典域（`.mdict*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「划词查词」词条卡（效果图 `docs/plans/mobile/mockups/06-dict.svg`，规格 §4.6）
+   ⚠️ 形态照图：**卡片压在正文上** ✓（正文还在、卡盖在下半屏 ✓），⛔ 不是换掉正文 ✗。
+   ⚠️ 它是移动端阅读屏里的一层（`MobileDictCard` ✓）⇒ 不套 `@media` ✓。
+   ========================================================================== */
+.mdict {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(74px + var(--sab, 0px));
+  z-index: 30;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, var(--radius-lg));
+  background: var(--surface);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+}
+
+.mdict-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.mdict-word {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-24);
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* 「×」＝图标按钮 ⇒ ≥44×44 ✓ */
+.mdict-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--fs-18);
+  line-height: 1;
+}
+
+.mdict-meta {
+  margin: 2px 0 0;
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.mdict-body {
+  margin: 10px 0 0;
+  font-size: var(--fs-14);
+  line-height: 1.7;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  /* ⭐ 2026-10-10：词库释义里的换行要**真的换行** ✓（`lookup.ts` 的 `decodeDictNewlines` 解出真换行 ✓）。
+     ⚠️ 用 `pre-line`（**保留换行、折叠多余空格、仍自动折行** ✓）而不是 `pre-wrap`/`pre` ✗ ——
+     释义是**成句的长文本** ✓，`pre-wrap` 会让它不折行 ⇒ 横向冲出卡片 ✗。 */
+  white-space: pre-line;
+}
+
+.mdict-actions {
+  display: flex;
+  gap: 10px;
+  margin: 14px 0 0;
+}
+
+.mdict-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 44px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-14);
+  font-weight: 600;
+}
+
+.mdict-btn.is-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ⛔ 「加入词库」没这个功能 ⇒ 置灰且点不动 ✓（让缺口看得见 ✓） */
+.mdict-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mdict-src {
+  margin: 10px 0 0;
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+}
+
+/* ---- 06 划词卡片：浅色浮卡、轻阴影 ---- */
+.mdict {
+  border-radius: 18px;
+  box-shadow: 0 12px 32px rgba(16, 24, 40, 0.18);
+}
+
+.mdict-btn {
+  border-radius: var(--radius-full);
+}
+}

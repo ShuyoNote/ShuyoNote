@@ -9,6 +9,7 @@
 import { resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { allCssText } from "../lib/cssSources";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
@@ -22,19 +23,53 @@ describe("网格（丙-③-b）· 面板接线", () => {
 
   it("① 面板真的调了命令面那两个命令（少一个就有一半功能点不到）", () => {
     expect(panel, "面板没接 `mesh_set_config` ⇒ 用户没法开网格").toContain("api.meshSetConfig(");
-    // ★ 2026-09-26 口径收敛：**交换并进「同步」**（原来有一个单独的「立刻交换一轮」按钮）。
-    //   所以这条断言从"面板里有这个词"改成"**`syncOne` 那段里有它**" —— 否则把调用挪到别处
-    //   （比如某一个已经没人点的按钮里）也照样绿。
-    const syncOne = panel.slice(panel.indexOf("const syncOne"), panel.indexOf("const update"));
-    expect(syncOne, "「同步」那条路没有跑网格 ⇒ 用户点同步时网格不动").toContain("api.meshSyncNow(");
-    // ★ 它在 `finally` 里，**不在 `try` 里** —— 真机实测踩过：服务端那条抛错（"会话已失效"）时
-    //   `try` 里剩下的语句一行都不跑 ⇒ 网格被**连坐**跳过，而它根本不依赖服务端。
-    const catchAt = syncOne.indexOf("} catch (e) {");
-    const meshAt = syncOne.indexOf("api.meshSyncNow(");
-    expect(catchAt, "`syncOne` 里没找到 catch（结构变了？）").toBeGreaterThan(-1);
-    expect(meshAt, "网格那一步必须放在 catch 之后（＝ finally 里）").toBeGreaterThan(catchAt);
+    // ⭐ 2026-10-27（owner 拍 M2）：**第一次进入本页**要自动备好局域网前置 —— ⛔ 不是启动时（见 ①c）。
+    expect(panel, "没接 `mesh_ensure_defaults` ⇒ 新装/清过数据的桌面用户仍然没有入口").toContain(
+      "api.meshEnsureDefaults(",
+    );
+    expect(commandsTs, "缺 `mesh_ensure_defaults` 的契约条目").toContain("mesh_ensure_defaults:");
+    // ⭐ **2026-10-29（第二阶段：团队 UI 已删）**：原来的 `syncOne`（服务端同步那条）**整条没了** ✓
+    //   ⇒ ⭐ 按 R192「换对象不删断言」：网格那一轮现在只在 **`syncMeshNow`**（「立即同步」那颗）里 ✓
+    //   （⛔ 断言没删：仍然要求"面板里有一条真的跑 `mesh_sync_now` 的路" ✓）。
+    const meshFn = panel.slice(panel.indexOf("const syncMeshNow"), panel.indexOf("const statusKind"));
+    expect(meshFn, "「立即同步」那条路没有跑网格 ⇒ 用户点同步时网格不动").toContain("api.meshSyncNow(");
+    expect(meshFn, "网格那条路失败要如实说（⛔ 不许静默）").toContain("} catch (e) {");
+    expect(meshFn, "失败也要把 busy 复位（否则按钮永远灰着）").toContain("} finally {");
+    const meshAt = meshFn.indexOf("api.meshSyncNow(");
+    expect(meshFn.slice(meshAt), "网格那轮之后要重读「待取回的远端版本」").toContain("await loadPendingRemote()");
     expect(panel, "「立刻交换一轮」那个按钮应当已经删掉（同一个意图两个动作）").not.toContain("const meshRoundNow");
     expect(panel, "「立刻交换一轮」那个按钮应当已经删掉").not.toContain("void meshRoundNow()");
+  });
+
+  it("①c ⭐ M2 的隐私承载：**不在启动时自动开**、**本机只自动跑一次**、**已配过不写**", () => {
+    // ⭐ 2026-10-27（owner 拍 M2）：桌面「用户不配就不广播」这条口径**一个字不改** ——
+    //   自动备好只发生在**用户进入本页**（组件可见 ⇒ 有 lanStatus）且本机**第一次**。
+    expect(panel, "M2：自动备好必须有一枚本机一次性标记").toContain("LAN_AUTO_CONFIG_KEY");
+    expect(panel, "M2：已配过（mesh.bind 非空）时一个字节都不许写").toContain("if (lanStatus.mesh?.bind) return;");
+    // ⛔ 启动路径（App.tsx）里不许调它 —— 那是 owner 10-14 那条隐私口径的反例。
+    const app = read("src/App.tsx");
+    expect(app, "⛔ 启动路径不许调 mesh_ensure_defaults（桌面保持不配就不广播）").not.toContain("meshEnsureDefaults");
+    // ⛔ 后端也不许在 setup 里加桌面调用（只在移动端那支有）。
+    const libRs = read("src-tauri/src/lib.rs");
+    expect(libRs, "Rust 命令面必须注册 `mesh_ensure_defaults`").toContain("sync::mesh_ensure_defaults,");
+    expect(libRs, "⛔ setup 里不许新增桌面自动调用（只有 cfg(mobile) 那一支）").not.toContain(
+      "crate::sync::ensure_mesh_defaults(&c)",
+    );
+  });
+
+  it("①d ⭐ 2026-10-27：局域网读数「真变了」后端推一次事件，面板立刻重读（轮询保留兜底）", () => {
+    // 后端：只有**指纹变了**才推（⛔ 不是每条公告都推 ✗ —— 那等于把轮询搬到后端）。
+    const lanStateRs = read("src-tauri/src/lan_state.rs");
+    expect(lanStateRs, "缺事件名 `lan:changed`").toContain('"lan:changed"');
+    expect(lanStateRs, "缺变化指纹（判据锚点）").toContain("lan_change_fingerprint");
+    // 前端：订阅走 lib 那一处（⛔ 别在面板里再写一遍事件名 ✗）。
+    const lanEventsTs = read("src/lib/lanEvents.ts");
+    expect(lanEventsTs, "缺事件名（单一出处）").toContain('const EVENT = "lan:changed"');
+    expect(panel, "面板没订阅 ⇒ 收到事件也不会重读").toContain("subscribeLanChanged(");
+    // 已配对名单**跟 5 秒那条读数走**（同一份 `lan_status.mesh.paired`）——
+    // 原来只在挂载/切空间读一次 ⇒「已配对」那句会停在旧值。
+    expect(panel, "tick 里没有更新 duList ⇒ 已配对名单仍会停在旧值").toContain("setDuList(pairedNow)");
+    expect(panel, "读不到时不许用 [] 冒充「一台都没有」").toContain("if (Array.isArray(pairedNow))");
   });
 
   it("①b 自动同步也对网格生效（不是只有手点「同步」才换）", () => {
@@ -69,26 +104,34 @@ describe("网格（丙-③-b）· 面板接线", () => {
     );
   });
 
-  it("②b ⭐ 服务器那一段只列团队空间（个人空间不显示服务器同步内容）", () => {
-    // owner 2026-10-04：「个人空间不显示服务器同步内容」。
-    // 判据取"那里用的是 serverRows（按 kind 过滤）"这个形状；不给个人空间列服务器卡。
-    expect(panel, "服务器那一段没用 serverRows ⇒ 个人空间也会被列进去").toContain("{serverRows.map((r) => {");
+  it("②b ⭐ 服务器那一段**已随团队 UI 一起删除**；个人/团队的判定仍按 kind（第二阶段）", () => {
+    // ⭐ **2026-10-29（owner 拍第二阶段 A）**：团队 UI ＋ `team_*` 前端契约**已删** ✓ ⇒
+    //   原来这一条钉的是"服务器那一段只列团队空间"（`{serverRows.map(...)`）—— 那段 JSX **已经不在了** ✓。
+    //   ⭐ 按 R192「换对象不删断言」：⛔ 不是把这条删掉 ✓，换成**现在承重的两半** ✓：
+    //     · ⛔ 那段 UI 不许回来（`{serverRows.map` 出现 ⇒ 团队卡又接上了 ✗）；
+    //     · ✅ `kind === "team"` 那条**判定**仍在岗（`isPersonalActive` 用它决定主视图给哪一套 ✓）。
+    expect(panel, "⛔ 团队服务器卡又回来了（第二阶段已删 UI）").not.toContain("{serverRows.map(");
     const at = panel.indexOf("const serverRows =");
-    expect(at, "没有 serverRows 的定义").toBeGreaterThan(-1);
+    expect(at, "`serverRows` 的定义没了 ⇒ 个人空间判定跟着完蛋").toBeGreaterThan(-1);
     expect(panel.slice(at, at + 120), "serverRows 不是按团队过滤的").toContain('r.kind === "team"');
+    // ⛔ 团队那些新建/配置入口一个都不许在面板里（字符串级兜底；组件级已在删除清单里 ✓）
+    //   ⚠️ 必须剥注释再判（本仓踩过：解释这件事的注释会喂饱 `toContain` ⇒ 假绿/假红 ✓）
+    const code = panel.replace(/\/\/[^\n]*/g, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+    for (const bad of ["创建空间", "成员管理", "登录", "注册"]) {
+      expect(code, `⛔ 面板里还有团队入口文案「${bad}」`).not.toContain(bad);
+    }
   });
 
-  it("③ 「关掉网格」走清除（`\"\"`），不是 `null` —— **换对象**：那条界面已撤，口径归后端", () => {
+  it("③ 「关掉网格」走清除（`\"\"`），不是 `null` —— **2026-10-27 M2 起界面又有这一颗了**", () => {
     // ⭐ **2026-10-14（owner：先拍删那张卡 ⇒ 再拍「去掉孤儿组件」）** ✗：这一条原来钉的是界面里那句
-    //   `api.meshSetConfig(activeId, "", null)` ✓ —— ⭐ 它住的 `MeshAdvancedForm.tsx` **已删** ✓ ⇒ ⭐ 对象没了 ✓。
-    //   ⭐ 按 R192 换对象：⛔ 不删这条 ✓，换成**现在承重的那两半** ✓：
-    //     · ⛔ 界面里不许再有那句（撤了就是撤了 ✓）；
-    //     · ⭐ 「清除 ＝ 空串、⛔ 不是 `null`」这条口径**在后端仍有承重**（`mesh.rs` 的 `mesh_set_config` ✓）。
-    // ⚠️ **必须先剥注释** ✗ —— 本文件的 `read()` 是**原样读**（不剥 ✓），而面板里那条注释**正是**在讲这句
-    //    调用 ✓（`SyncPanel.tsx` 的 `disableMesh` 那条 ✓）⇒ ⛔ 不剥的话这条判据会被**解释它自己的注释**喂饱 ⇒ 假红 ✓
-    //    （实测：第一版就是这么红的 ✓）。
+    //   `api.meshSetConfig(activeId, "", null)` ✓ —— ⭐ 它住的 `MeshAdvancedForm.tsx` **已删** ✓ ⇒ 对象没了 ✓。
+    // ⭐ **2026-10-27（owner 拍 M2）**：⭐ **界面又有了这一颗**（「关闭局域网同步」✓）—— 但它**不是**
+    //   旧设置卡的复活：只有一枚可逆开关，没有输入框／口令 ✓ ⇒ 这一条**换回"界面里要有它"** ✗
+    //   （R192：换对象、⛔ 不删断言 ✓）。
     const stripped = panel.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
-    expect(stripped, "⛔ 界面里那条清除调用已撤（owner 2026-10-14 拍删 ✓）").not.toContain('api.meshSetConfig(activeId, "", null)');
+    expect(stripped, "M2：界面里「关闭局域网同步」必须走清除（`\"\"`，⛔ 不是 `null`）").toContain(
+      'api.meshSetConfig(activeId, "", null)',
+    );
     const meshRs = readFileSync(resolve(__dirname, "..", "..", "src-tauri", "src", "mesh.rs"), "utf8");
     expect(meshRs, "⭐ 那条口径后端仍在（`mesh_set_config` ✓）").toContain("mesh_set_config");
   });
@@ -126,7 +169,7 @@ describe("网格（丙-③-b）· 面板接线", () => {
   //   桌面/手机的真机几何只能靠人。所以这里钉"形状不许回退"：
   //   谁把 `.sync-mesh` 改回横排、或去掉那句 `white-space:nowrap`，这几条立刻红。
   it("⑥ 网格那一块是竖排，且输入框吃宽、按钮不缩不断行（窄屏不许挤成并排）", () => {
-    const css = read("src/App.css");
+    const css = allCssText();
     // ⚠️ 选择器写**裸**的（`.` 不用转义）：`rule()` 自己会把正则元字符转义 ——
     //    再写一层 `\\.` 会被它转义成"要匹配一个字面反斜杠"，于是永远匹配不上（第一版就踩了）。
     const rule = (sel: string) => {
@@ -157,8 +200,9 @@ describe("网格（丙-③-b）· 面板接线", () => {
   // 而且**说到了就必须做得到**：通知是「有 2 页等你裁决」，下面那一段却还是空的 —— 用户只会
   // 以为那两页丢了（那份清单是在网格**开跑之前**读的）。
   it("⑦ 人话来自 Rust（面板不自己数 superseded/awaiting 拼句子）", () => {
-    const syncOne = panel.slice(panel.indexOf("const syncOne"), panel.indexOf("const update"));
-    expect(syncOne, "网格那轮的结果没有原样显示 `rep.note`").toContain("${rep.note}");
+    // ⭐ 2026-10-29：`syncOne` 已删 ⇒ 对象换成 `syncMeshNow`（R192 换对象不删断言 ✓）
+    const meshFn = panel.slice(panel.indexOf("const syncMeshNow"), panel.indexOf("const statusKind"));
+    expect(meshFn, "网格那轮的结果没有原样显示 `rep.note`").toContain("${rep.note}");
     // 面板**不许**自己遍历 `rep.peers` 去数「输了几页」：那是第二份真相（Rust 里刚数过一遍）。
     expect(panel, "面板自己遍历网格读数拼句子了（应当是 `rep.note` 原文）").not.toContain("rep.peers");
     // 两侧成对：Rust `PeerPullReport` 新加的两项必须在契约里（否则界面拿到的是 undefined）。
@@ -167,10 +211,11 @@ describe("网格（丙-③-b）· 面板接线", () => {
   });
 
   it("⑧ 网格那轮之后两份清单跟着刷新（不然通知与现场对不上）", () => {
-    const syncOne = panel.slice(panel.indexOf("const syncOne"), panel.indexOf("const update"));
-    const meshAt = syncOne.indexOf("api.meshSyncNow(");
-    expect(meshAt, "`syncOne` 里没有网格那一轮（结构变了？）").toBeGreaterThan(-1);
-    const after = syncOne.slice(meshAt);
+    // ⭐ 2026-10-29：对象从 `syncOne` 换成 `syncMeshNow`（团队 UI 删了；网格这条路仍在 ✓）
+    const meshFn = panel.slice(panel.indexOf("const syncMeshNow"), panel.indexOf("const statusKind"));
+    const meshAt = meshFn.indexOf("api.meshSyncNow(");
+    expect(meshAt, "`syncMeshNow` 里没有网格那一轮（结构变了？）").toBeGreaterThan(-1);
+    const after = meshFn.slice(meshAt);
     // ⚠️ 断言必须落在**网格那一轮之后**：`try` 里那两个刷新调用在网格**之前**跑
     //    （服务端那条走完就读），拿它们冒充就是「测了个寂寞」。
     expect(after, "网格那轮之后没重拉页面列表 ⇒ 换过来的内容要切一次空间才看得见").toContain(
@@ -371,6 +416,19 @@ describe("片 D1a-1：0 台时也渲染三段标题", () => {
       b,
       "⛔ 那句总说明不许再渲染 ✗（owner 2026-10-14：「文案合并」✓ —— 它与三段计数说的是同一件事 ✓）",
     ).not.toContain("还没发现别的设备");
+  });
+
+  it("①e ⭐ A+C（owner 2026-10-29）：同步中给本轮进度；失败历史行可重试/复制诊断", () => {
+    const panelSrc = read("src/components/SyncPanel.tsx");
+    const meshFn = panelSrc.slice(panelSrc.indexOf("const syncMeshNow"), panelSrc.indexOf("const statusKind"));
+    expect(meshFn, "同步中要有本轮进度（不是空白）").toContain("meshProgressText(");
+    expect(meshFn, "完成时补「收下几页」").toContain("meshRoundSummaryText(rep.applied)");
+    expect(meshFn, "⛔ 面板仍不许自己遍历 peers 数（用 Rust 的 applied）").not.toContain("rep.peers");
+    expect(meshFn, "进度要真的在跑（定时刷新）").toContain("setInterval(");
+    expect(panelSrc, "失败历史行要有「重试」").toContain("sync-history-retry");
+    expect(panelSrc, "失败历史行要有「复制诊断」").toContain("sync-history-copy");
+    expect(panelSrc, "重试真的调 mesh_sync_now（带那个空间的 id）").toContain("api.meshSyncNow(h.ws_id)");
+    expect(panelSrc, "只对失败行给动作").toContain("!h.ok");
   });
 
   it("② 锁（今天已绿 ✓）：`NEARBY_GROUPS` 三条 label 逐字未变 ＋ 另两支逐字未变", () => {

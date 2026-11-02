@@ -10,6 +10,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { allCssText } from "../lib/cssSources";
+
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 const APP = strip(readFileSync(resolve(__dirname, "..", "App.tsx"), "utf8"));
 const CAP = strip(readFileSync(resolve(__dirname, "MobileCapture.tsx"), "utf8"));
@@ -35,7 +37,8 @@ describe("移动端「快速记录」屏：不挂底栏 ＋ 自带回家路", ()
   //   而 `.mcap-bar` 没写 `flex: none` ⇒ 被压缩到比内容矮 ⇒「段落/标题/列表」下半截被切。
   it("④ 没有底栏就不许再让位（让位与底栏同生共死）", () => {
     expect(APP, "未打 --no-tabs 修饰类").toMatch(/m-tabshell m-tabshell--no-tabs/);
-    const css = readFileSync(resolve(__dirname, "..", "App.css"), "utf8");
+    // S4：移动外壳/快速记录域已拆到 src/styles/（`.m-tabshell` / `.mcap-*`）⇒ 读全仓 CSS。
+    const css = allCssText();
     expect(css, "缺 --no-tabs 的 padding 归零").toMatch(/\.m-tabshell--no-tabs\s*\{\s*padding-bottom:\s*0;/);
     expect(css, "快捷工具栏不许被压缩（flex: none）").toMatch(/\.mcap-bar\s*\{[^}]*flex:\s*none;/);
   });

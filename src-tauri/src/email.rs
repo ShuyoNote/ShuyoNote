@@ -123,15 +123,31 @@ fn default_email_interval() -> u16 {
 
 impl EmailAccountArgs {
     fn smtp(&self) -> (String, u16, SmtpSecurity, String, String) {
-        let host = if self.smtp_host.trim().is_empty() { self.host.clone() } else { self.smtp_host.clone() };
+        let host = if self.smtp_host.trim().is_empty() {
+            self.host.clone()
+        } else {
+            self.smtp_host.clone()
+        };
         let port = if self.smtp_port == 0 {
-            if self.smtp_security == "starttls" { 587 } else { 465 }
+            if self.smtp_security == "starttls" {
+                587
+            } else {
+                465
+            }
         } else {
             self.smtp_port
         };
         let sec = SmtpSecurity::parse(&self.smtp_security);
-        let user = if self.smtp_user.is_empty() { self.username.clone() } else { self.smtp_user.clone() };
-        let pass = if self.smtp_pass.is_empty() { self.password.clone() } else { self.smtp_pass.clone() };
+        let user = if self.smtp_user.is_empty() {
+            self.username.clone()
+        } else {
+            self.smtp_user.clone()
+        };
+        let pass = if self.smtp_pass.is_empty() {
+            self.password.clone()
+        } else {
+            self.smtp_pass.clone()
+        };
         (host, port, sec, user, pass)
     }
 }
@@ -175,18 +191,25 @@ pub fn email_to_page_parts(_title: &str, body: &str, from: &str, date: &str) -> 
         "root": { "children": children, "direction": null, "format": "", "indent": 0, "type": "root", "version": 1 }
     });
     let text = lines.join("\n");
-    (serde_json::to_string(&root).unwrap_or_else(|_| "{}".to_string()), text)
+    (
+        serde_json::to_string(&root).unwrap_or_else(|_| "{}".to_string()),
+        text,
+    )
 }
 
 /// 把一条原始邮件存为笔记（capture-first 核心）。
 #[tauri::command]
-pub fn email_save_as_note(db: State<Db>, args: EmailSaveArgs) -> Result<crate::models::PageDetail, String> {
+pub fn email_save_as_note(
+    db: State<Db>,
+    args: EmailSaveArgs,
+) -> Result<crate::models::PageDetail, String> {
     save_raw_note(db, args.raw)
 }
 
 /// 解析 RFC822 → 建页。供「粘贴存为笔记」与「按 UID 存为笔记」共用。
 fn save_raw_note(db: State<Db>, raw: String) -> Result<crate::models::PageDetail, String> {
-    let parsed = mailparse::parse_mail(raw.as_bytes()).map_err(|e| format!("邮件解析失败: {}", e))?;
+    let parsed =
+        mailparse::parse_mail(raw.as_bytes()).map_err(|e| format!("邮件解析失败: {}", e))?;
     let subject = parsed
         .headers
         .iter()
@@ -241,7 +264,9 @@ fn default_folder() -> String {
 /// 把 ISO `YYYY-MM-DD` 转成 IMAP 的 `d-MMM-yyyy`（如 `2026-08-01` → `1-Aug-2026`），
 /// 用于 `SEARCH SINCE/BEFORE`。无法解析时原样返回。
 fn imap_date(s: &str) -> String {
-    const MONTHS: [&str; 12] = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
     let parts: Vec<&str> = s.split('-').collect();
     if parts.len() == 3 {
         let y = parts[0];
@@ -258,12 +283,19 @@ fn imap_date(s: &str) -> String {
 
 /// 按 UID 拉取完整邮件（`BODY.PEEK[]`，不置已读）→ 存为笔记。
 #[tauri::command]
-pub async fn email_save_uid(db: State<'_, Db>, args: EmailSaveUidArgs) -> Result<crate::models::PageDetail, String> {
+pub async fn email_save_uid(
+    db: State<'_, Db>,
+    args: EmailSaveUidArgs,
+) -> Result<crate::models::PageDetail, String> {
     let raw = fetch_uid_raw(&args.account, &args.folder, args.uid).await?;
     save_raw_note(db, raw)
 }
 
-async fn fetch_uid_raw(account: &EmailAccountArgs, folder: &str, uid: u32) -> Result<String, String> {
+async fn fetch_uid_raw(
+    account: &EmailAccountArgs,
+    folder: &str,
+    uid: u32,
+) -> Result<String, String> {
     use futures_util::StreamExt;
 
     let mut session = open_session(account, folder).await?;
@@ -317,7 +349,17 @@ fn decode_mime_words(s: &str) -> String {
 }
 
 fn utf8_len(b: u8) -> usize {
-    if b < 0x80 { 1 } else if b >> 5 == 0b110 { 2 } else if b >> 4 == 0b1110 { 3 } else if b >> 3 == 0b11110 { 4 } else { 1 }
+    if b < 0x80 {
+        1
+    } else if b >> 5 == 0b110 {
+        2
+    } else if b >> 4 == 0b1110 {
+        3
+    } else if b >> 3 == 0b11110 {
+        4
+    } else {
+        1
+    }
 }
 
 fn decode_mime_word(token: &str) -> Option<String> {
@@ -327,7 +369,9 @@ fn decode_mime_word(token: &str) -> Option<String> {
     let enc = parts.next()?;
     let data = parts.next()?;
     let bytes = match enc.to_ascii_uppercase().as_str() {
-        "B" => base64::engine::general_purpose::STANDARD.decode(data).ok()?,
+        "B" => base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .ok()?,
         "Q" => {
             let mut v = Vec::new();
             let mb = data.as_bytes();
@@ -418,7 +462,11 @@ pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, S
                 let name = a
                     .name
                     .as_ref()
-                    .map(|n| decode_mime_words(&String::from_utf8_lossy(n.as_ref())).trim().to_string())
+                    .map(|n| {
+                        decode_mime_words(&String::from_utf8_lossy(n.as_ref()))
+                            .trim()
+                            .to_string()
+                    })
                     .unwrap_or_default();
                 if !name.is_empty() && !name.eq_ignore_ascii_case(&addr) {
                     format!("{} <{}>", name, addr)
@@ -461,7 +509,8 @@ pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, S
             .await
             .map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
 
-        if let (Some(df), Some(dt)) = (&args.date_from, &args.date_to) {            // 按日期区间：先用 IMAP SEARCH SINCE/BEFORE 拿该区间 UID，再只 FETCH 这些。
+        if let (Some(df), Some(dt)) = (&args.date_from, &args.date_to) {
+            // 按日期区间：先用 IMAP SEARCH SINCE/BEFORE 拿该区间 UID，再只 FETCH 这些。
             // IMAP 日期格式为 `d-MMM-yyyy`，如 `01-Aug-2026`。
             let from_s = imap_date(df);
             let to_s = imap_date(dt);
@@ -471,7 +520,11 @@ pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, S
                 .await
                 .map_err(|e| format!("按日期搜索 {} 失败: {}", folder, e))?;
             if !ids.is_empty() {
-                let set = ids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+                let set = ids
+                    .iter()
+                    .map(|u| u.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
                 let mut stream = session
                     .uid_fetch(set, "(ENVELOPE UID FLAGS)")
                     .await
@@ -515,10 +568,17 @@ pub struct EmailMonthsArgs {
 
 /// 枚举单个账号（多文件夹）所有含邮件的月份（含未加载历史），供月份选择器启用对应月份。
 /// 只拉 ENVELOPE（不含正文），按每封 Date 提取 `YYYY-M` 去重，结果升序。
-async fn list_account_months(account: &EmailAccountArgs, folders: &[String]) -> Result<Vec<String>, String> {
+async fn list_account_months(
+    account: &EmailAccountArgs,
+    folders: &[String],
+) -> Result<Vec<String>, String> {
     use futures_util::StreamExt;
 
-    let folders = if folders.is_empty() { vec!["INBOX".to_string()] } else { folders.to_vec() };
+    let folders = if folders.is_empty() {
+        vec!["INBOX".to_string()]
+    } else {
+        folders.to_vec()
+    };
     let mut session = open_session(account, "INBOX").await?;
     let mut months: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
@@ -555,10 +615,15 @@ pub async fn email_list_months(args: EmailMonthsArgs) -> Result<Vec<String>, Str
 /// 把邮件 Date 规范化：去掉末尾 " (CST)" 注释、去掉开头的星期（QQ 等常写错星期，
 /// 而 chrono 的 %a/rfc2822 会校验星期与日期匹配导致 Impossible）、并把 1 位数字天补零成 "07"。
 fn normalize_email_date(s: &str) -> String {
-    const MONTHS: [&str; 12] = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    const WDAYS: [&str; 7] = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    const WDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     let s = s.trim();
-    let s = match s.find(" (") { Some(i) => &s[..i], None => s };
+    let s = match s.find(" (") {
+        Some(i) => &s[..i],
+        None => s,
+    };
     let mut parts: Vec<&str> = s.split_whitespace().collect();
     if let Some(first) = parts.first() {
         let name = first.trim_end_matches(',');
@@ -693,7 +758,11 @@ pub struct EmailOpArgs {
 pub async fn email_set_flag(args: EmailOpArgs, flag: bool) -> Result<(), String> {
     use futures_util::StreamExt;
     let mut session = open_session(&args.account, &args.folder).await?;
-    let q = if flag { "+FLAGS.SILENT (\\Flagged)" } else { "-FLAGS.SILENT (\\Flagged)" };
+    let q = if flag {
+        "+FLAGS.SILENT (\\Flagged)"
+    } else {
+        "-FLAGS.SILENT (\\Flagged)"
+    };
     let mut stream = session
         .uid_store(format!("{}", args.uid), q)
         .await
@@ -707,7 +776,11 @@ pub async fn email_set_flag(args: EmailOpArgs, flag: bool) -> Result<(), String>
 pub async fn email_mark_read(args: EmailOpArgs, read: bool) -> Result<(), String> {
     use futures_util::StreamExt;
     let mut session = open_session(&args.account, &args.folder).await?;
-    let q = if read { "+FLAGS.SILENT (\\Seen)" } else { "-FLAGS.SILENT (\\Seen)" };
+    let q = if read {
+        "+FLAGS.SILENT (\\Seen)"
+    } else {
+        "-FLAGS.SILENT (\\Seen)"
+    };
     let mut stream = session
         .uid_store(format!("{}", args.uid), q)
         .await
@@ -773,11 +846,16 @@ fn decode_utf16be_b64(chunk: &str) -> Option<String> {
     let std_b64 = chunk.replace(',', "/");
     let pad = (4 - std_b64.len() % 4) % 4;
     let padded = format!("{}{}", std_b64, "=".repeat(pad));
-    let bytes = base64::engine::general_purpose::STANDARD.decode(padded).ok()?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(padded)
+        .ok()?;
     if bytes.len() % 2 != 0 {
         return None;
     }
-    let units: Vec<u16> = bytes.chunks(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+    let units: Vec<u16> = bytes
+        .chunks(2)
+        .map(|c| u16::from_be_bytes([c[0], c[1]]))
+        .collect();
     String::from_utf16(&units).ok()
 }
 
@@ -1052,7 +1130,11 @@ pub async fn email_mark_many_read(args: EmailBatchOpArgs, read: bool) -> Result<
     use futures_util::StreamExt;
 
     let mut session = open_session(&args.account, &args.folder).await?;
-    let q = if read { "+FLAGS.SILENT (\\Seen)" } else { "-FLAGS.SILENT (\\Seen)" };
+    let q = if read {
+        "+FLAGS.SILENT (\\Seen)"
+    } else {
+        "-FLAGS.SILENT (\\Seen)"
+    };
     let mut done = 0u32;
     for uid in &args.uids {
         let stream = session
@@ -1077,7 +1159,11 @@ pub struct EmailSendArgs {
 
 /// 构造纯文本 MIME 消息（含头 + 空行 + 正文），并规范化换行。
 fn build_mime(from: &str, to: &str, subject: &str, body: &str) -> String {
-    let msg_id = format!("<{}-{}@shuyonote.local>", Uuid::new_v4().simple(), chrono::Utc::now().timestamp_millis());
+    let msg_id = format!(
+        "<{}-{}@shuyonote.local>",
+        Uuid::new_v4().simple(),
+        chrono::Utc::now().timestamp_millis()
+    );
     let date = chrono::Utc::now().to_rfc2822();
     // 头部字段值若有非 ASCII，简单 base64 编码（RFC2047），保证中文主题/收件人不乱码。
     let subj_enc = encode_header(subject);
@@ -1115,8 +1201,13 @@ pub async fn email_send(args: EmailSendArgs) -> Result<(), String> {
 #[tauri::command]
 pub async fn email_test_connection(account: EmailAccountArgs) -> Result<String, String> {
     // IMAP：开会话并登录（open_session 已 login），再选 INBOX 验证可读。
-    let mut session = open_session(&account, "INBOX").await.map_err(|e| format!("IMAP: {}", e))?;
-    session.select("INBOX").await.map_err(|e| format!("IMAP 选择 INBOX 失败: {}", e))?;
+    let mut session = open_session(&account, "INBOX")
+        .await
+        .map_err(|e| format!("IMAP: {}", e))?;
+    session
+        .select("INBOX")
+        .await
+        .map_err(|e| format!("IMAP 选择 INBOX 失败: {}", e))?;
 
     // SMTP：仅当配置了 SMTP 服务器/账号/授权码才验证（不发信）。
     let (host, port, sec, user, pass) = account.smtp();
@@ -1154,7 +1245,7 @@ async fn fetch_unseen(account: &EmailAccountArgs) -> Result<u32, String> {
 pub struct EmailPollState {
     pub busy: tokio::sync::Mutex<()>,
     /// ⭐ **2026-10-21（B）**：定时任务预取好的**第一页**（默认查询：INBOX ＋ 全部账号）。
-  /// 面板打开时若它够新，就直接用它 ⇒ 不再每次都等一遍 IMAP ✓
+    /// 面板打开时若它够新，就直接用它 ⇒ 不再每次都等一遍 IMAP ✓
     pub first_page: tokio::sync::Mutex<Option<CachedPage>>,
 }
 
@@ -1181,13 +1272,18 @@ pub fn start_email_poller(app: AppHandle) {
         loop {
             // 每次唤醒都重新读配置，这样账号/间隔/开关在运行中也能实时生效。
             let accounts = email_list_accounts(app.state::<Db>(), app.clone()).unwrap_or_default();
-            let fetchable: Vec<&EmailAccountArgs> = accounts.iter().filter(|a| a.auto_fetch).collect();
+            let fetchable: Vec<&EmailAccountArgs> =
+                accounts.iter().filter(|a| a.auto_fetch).collect();
             if fetchable.is_empty() {
                 // 未配置 / 未开启自动收取：每 30s 醒来看一眼配置变化，几乎零开销。
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                 continue;
             }
-            let minutes = fetchable.iter().map(|a| (a.interval_minutes.max(5)) as u64).min().unwrap_or(15);
+            let minutes = fetchable
+                .iter()
+                .map(|a| (a.interval_minutes.max(5)) as u64)
+                .min()
+                .unwrap_or(15);
             // 门闩：加锁失败说明上次轮询或手动拉取仍在进行，跳过本轮。
             if let Ok(_guard) = state.busy.try_lock() {
                 let mut total = 0u32;
@@ -1207,12 +1303,17 @@ pub fn start_email_poller(app: AppHandle) {
                         fetchable.len(),
                         total,
                         minutes,
-                        if total > last_total { "未读变多 ⇒ 预取第一页" } else { "无变化" }
+                        if total > last_total {
+                            "未读变多 ⇒ 预取第一页"
+                        } else {
+                            "无变化"
+                        }
                     );
                     // ⭐ **2026-10-21（B）**：未读变多 ⇒ 顺手把**第一页**拉好放进缓存。
                     //   面板打开时若它够新就直接用 ⇒ 不再每次都等一遍 IMAP ✓
                     if total > last_total {
-                        let mut results: Vec<(String, Result<(Vec<EmailMeta>, u32), String>)> = Vec::new();
+                        let mut results: Vec<(String, Result<(Vec<EmailMeta>, u32), String>)> =
+                            Vec::new();
                         let inbox = vec!["INBOX".to_string()];
                         for a in &fetchable {
                             results.push((
@@ -1222,7 +1323,10 @@ pub fn start_email_poller(app: AppHandle) {
                         }
                         let agg = aggregate_fetches(results, 60, 0);
                         let mut slot = state.first_page.lock().await;
-                        *slot = Some(CachedPage { at_ms: crate::db::now_ms(), agg });
+                        *slot = Some(CachedPage {
+                            at_ms: crate::db::now_ms(),
+                            agg,
+                        });
                     }
                     last_total = total;
                     let _ = app.emit(POLL_EVENT, total);
@@ -1230,7 +1334,9 @@ pub fn start_email_poller(app: AppHandle) {
                 } else {
                     failures += 1;
                     // 退避：30s 起，指数翻倍，封顶 10 分钟。
-                    let backoff = 30u64.saturating_mul(2u64.saturating_pow(failures.min(6))).min(600);
+                    let backoff = 30u64
+                        .saturating_mul(2u64.saturating_pow(failures.min(6)))
+                        .min(600);
                     tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
                 }
             } else {
@@ -1284,26 +1390,40 @@ pub async fn email_get_attachments(
     let raw = fetch_uid_raw(&args.account, &args.folder, args.uid).await?;
     let parsed = mailparse::parse_mail(raw.as_bytes()).map_err(|e| e.to_string())?;
 
-    fn walk<'a>(
-        p: &'a mailparse::ParsedMail<'a>,
-        out: &mut Vec<(&'a str, String, Vec<u8>)>,
-    ) {
+    fn walk<'a>(p: &'a mailparse::ParsedMail<'a>, out: &mut Vec<(&'a str, String, Vec<u8>)>) {
         // 从 Content-Disposition header 判断是否附件，并取 filename。
         let mut filename: Option<String> = None;
         let mut is_attachment = false;
         for h in &p.headers {
             if h.get_key().eq_ignore_ascii_case("Content-Disposition") {
                 let cd = mailparse::parse_content_disposition(&h.get_value());
-                filename = cd.params.get("filename").cloned().or_else(|| cd.params.get("name").cloned());
-                is_attachment = cd.params.get("filename").map(|s| !s.is_empty()).unwrap_or(false)
-                    || cd.params.get("name").map(|s| !s.is_empty()).unwrap_or(false)
+                filename = cd
+                    .params
+                    .get("filename")
+                    .cloned()
+                    .or_else(|| cd.params.get("name").cloned());
+                is_attachment = cd
+                    .params
+                    .get("filename")
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false)
+                    || cd
+                        .params
+                        .get("name")
+                        .map(|s| !s.is_empty())
+                        .unwrap_or(false)
                     || matches!(cd.disposition, mailparse::DispositionType::Attachment);
                 break;
             }
         }
         // ctype 里也可能带 filename/name 参数。
         if filename.is_none() {
-            filename = p.ctype.params.get("filename").cloned().or_else(|| p.ctype.params.get("name").cloned());
+            filename = p
+                .ctype
+                .params
+                .get("filename")
+                .cloned()
+                .or_else(|| p.ctype.params.get("name").cloned());
         }
         if is_attachment || filename.as_ref().map(|s| !s.is_empty()).unwrap_or(false) {
             let name = filename.unwrap_or_else(|| "attachment".to_string());
@@ -1329,8 +1449,15 @@ pub async fn email_get_attachments(
             h.update(&data);
             hex_of(&h.finalize())
         };
-        let meta = crate::attachments::write_attachment_bytes(app.clone(), db.clone(), hash, mime.to_string(), name, data)
-            .map_err(|e| format!("附件写入失败: {}", e))?;
+        let meta = crate::attachments::write_attachment_bytes(
+            app.clone(),
+            db.clone(),
+            hash,
+            mime.to_string(),
+            name,
+            data,
+        )
+        .map_err(|e| format!("附件写入失败: {}", e))?;
         result.push(meta);
     }
     Ok(result)
@@ -1418,7 +1545,8 @@ fn collect_cid_parts(
     // 只内联图片：`cid:` 出现在 `src` 里就是图片；别的类型（音频/PDF）内联进 HTML 没意义。
     if !cid.is_empty() && p.ctype.mimetype.starts_with("image/") {
         if let Ok(bytes) = p.get_body_raw() {
-            if !bytes.is_empty() && bytes.len() <= MAX_INLINE_IMAGE_BYTES && bytes.len() <= *budget {
+            if !bytes.is_empty() && bytes.len() <= MAX_INLINE_IMAGE_BYTES && bytes.len() <= *budget
+            {
                 *budget -= bytes.len();
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                 out.insert(cid, (p.ctype.mimetype.clone(), b64));
@@ -1450,9 +1578,7 @@ fn rewrite_cid_refs(
     re.replace_all(html, |c: &regex::Captures| {
         let raw = &c[1];
         let key = raw.to_lowercase();
-        let hit = parts
-            .get(&key)
-            .or_else(|| parts.get(&percent_decode(&key)));
+        let hit = parts.get(&key).or_else(|| parts.get(&percent_decode(&key)));
         match hit {
             Some((mime, b64)) => format!("data:{};base64,{}", mime, b64),
             // 找不到对应部分就原样保留（宁可碎图，也不要凭空造一个假地址）。
@@ -1497,7 +1623,8 @@ fn email_html_body(p: &mailparse::ParsedMail) -> Option<String> {
 /// 从原始 HTML 里仅剔除 script/style 与 display:none 预读文本（不做标签白名单——
 /// 那是前端 DOMPurify 的职责）。
 fn sanitize_pre_html(s: &str) -> String {
-    let re_script = regex::Regex::new(r"(?is)<(script|style)\b[^>]*>.*?<\/(script|style)\s*>").unwrap();
+    let re_script =
+        regex::Regex::new(r"(?is)<(script|style)\b[^>]*>.*?<\/(script|style)\s*>").unwrap();
     let re_hidden = regex::Regex::new(r"(?is)<(span|div|p|td|tr)\b[^>]*style[^>]*display\s*:\s*none[^>]*>.*?<\/(?:span|div|p|td|tr)\s*>").unwrap();
     let s = re_hidden.replace_all(s, "").into_owned();
     let s = re_script.replace_all(&s, "").into_owned();
@@ -1511,7 +1638,8 @@ fn sanitize_pre_html(s: &str) -> String {
 /// 段落由 <br>、块级闭合标签或连续空行自然形成，前端再按空行分段。
 fn strip_html(s: &str) -> String {
     // 注意：regex crate 不支持反向引用 `\1`，故用「对应闭合标签」展开替代。
-    let re_script = regex::Regex::new(r"(?is)<(script|style)\b[^>]*>.*?<\/(script|style)\s*>").unwrap();
+    let re_script =
+        regex::Regex::new(r"(?is)<(script|style)\b[^>]*>.*?<\/(script|style)\s*>").unwrap();
     // 移除 display:none 的预读/隐藏文本（营销邮件常把"此邮件由X发送，请勿直接回复"放在这里）。
     // regex 不支持反向引用，按标签名分别匹配常见的隐藏容器（span/div/p）。
     let re_hidden = regex::Regex::new(r"(?is)<(span|div|p|td|tr)\b[^>]*style[^>]*display\s*:\s*none[^>]*>.*?<\/(?:span|div|p|td|tr)\s*>").unwrap();
@@ -1538,7 +1666,14 @@ fn strip_html(s: &str) -> String {
     let s = re_qp_soft.replace_all(&s, "\n").into_owned();
     let re_qp_lone = regex::Regex::new(r"(?m)^[ \t]*=[ \t]*$").unwrap();
     let s = re_qp_lone.replace_all(&s, "").into_owned();
-    let s = s.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'");
+    let s = s
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'");
     s.trim().to_string()
 }
 
@@ -1580,9 +1715,11 @@ fn save_accounts(
     let mut list = accounts.to_vec();
     for a in list.iter_mut() {
         if let Some(k) = key {
-            a.password = crate::crypto::encrypt_str(&a.password, k).unwrap_or_else(|_| a.password.clone());
+            a.password =
+                crate::crypto::encrypt_str(&a.password, k).unwrap_or_else(|_| a.password.clone());
             if !a.smtp_pass.is_empty() {
-                a.smtp_pass = crate::crypto::encrypt_str(&a.smtp_pass, k).unwrap_or_else(|_| a.smtp_pass.clone());
+                a.smtp_pass = crate::crypto::encrypt_str(&a.smtp_pass, k)
+                    .unwrap_or_else(|_| a.smtp_pass.clone());
             }
         }
     }
@@ -1591,7 +1728,10 @@ fn save_accounts(
 }
 
 /// 解密账号列表的密码（配合会话密钥）。
-fn decrypt_accounts(key: Option<&crate::crypto::AppKeys>, mut accounts: Vec<EmailAccountArgs>) -> Vec<EmailAccountArgs> {
+fn decrypt_accounts(
+    key: Option<&crate::crypto::AppKeys>,
+    mut accounts: Vec<EmailAccountArgs>,
+) -> Vec<EmailAccountArgs> {
     if let Some(k) = key {
         for a in accounts.iter_mut() {
             if let Ok(p) = crate::crypto::decrypt_str(&a.password, k) {
@@ -1614,7 +1754,11 @@ fn session_key(db: &State<'_, Db>) -> Option<crate::crypto::AppKeys> {
 /// 保存 IMAP 账号配置（支持多账号：按 host+username upsert，并把该账号设为「当前活动」）。
 /// 安全：开启 E1 且解锁时用会话密钥加密 password/smtp_pass 后落盘。
 #[tauri::command]
-pub fn email_save_account(db: State<Db>, app: tauri::AppHandle, account: EmailAccountArgs) -> Result<(), String> {
+pub fn email_save_account(
+    db: State<Db>,
+    app: tauri::AppHandle,
+    account: EmailAccountArgs,
+) -> Result<(), String> {
     let path = account_path(&app)?;
     let key = session_key(&db);
     let mut list = if path.exists() {
@@ -1631,7 +1775,10 @@ pub fn email_save_account(db: State<Db>, app: tauri::AppHandle, account: EmailAc
 
 /// 读取当前活动账号（列表首位；兼容旧单对象）。密码在未加密/未锁定时应为明文。
 #[tauri::command]
-pub fn email_get_account(db: State<Db>, app: tauri::AppHandle) -> Result<Option<EmailAccountArgs>, String> {
+pub fn email_get_account(
+    db: State<Db>,
+    app: tauri::AppHandle,
+) -> Result<Option<EmailAccountArgs>, String> {
     let path = account_path(&app)?;
     if !path.exists() {
         return Ok(None);
@@ -1644,7 +1791,10 @@ pub fn email_get_account(db: State<Db>, app: tauri::AppHandle) -> Result<Option<
 
 /// 列出所有已保存邮箱账号（含解密后的密码），供前端标签/管理。
 #[tauri::command]
-pub fn email_list_accounts(db: State<Db>, app: tauri::AppHandle) -> Result<Vec<EmailAccountArgs>, String> {
+pub fn email_list_accounts(
+    db: State<Db>,
+    app: tauri::AppHandle,
+) -> Result<Vec<EmailAccountArgs>, String> {
     let path = account_path(&app)?;
     if !path.exists() {
         return Ok(Vec::new());
@@ -1656,7 +1806,11 @@ pub fn email_list_accounts(db: State<Db>, app: tauri::AppHandle) -> Result<Vec<E
 
 /// 删除一个邮箱账号（按 host+username）。返回是否删除到。
 #[tauri::command]
-pub fn email_remove_account(db: State<Db>, app: tauri::AppHandle, account: EmailAccountArgs) -> Result<bool, String> {
+pub fn email_remove_account(
+    db: State<Db>,
+    app: tauri::AppHandle,
+    account: EmailAccountArgs,
+) -> Result<bool, String> {
     let path = account_path(&app)?;
     if !path.exists() {
         return Ok(false);
@@ -1674,9 +1828,14 @@ pub fn email_remove_account(db: State<Db>, app: tauri::AppHandle, account: Email
 // ---- 多账号聚合（B）----
 
 /// 读取并解密所有已保存账号（供聚合命令用）。
-fn read_accounts(db: &State<'_, Db>, app: &tauri::AppHandle) -> Result<Vec<EmailAccountArgs>, String> {
+fn read_accounts(
+    db: &State<'_, Db>,
+    app: &tauri::AppHandle,
+) -> Result<Vec<EmailAccountArgs>, String> {
     let path = account_path(app)?;
-    if !path.exists() { return Ok(Vec::new()); }
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
     let key = session_key(db);
     let list = load_accounts(&path)?;
     Ok(decrypt_accounts(key.as_ref(), list))
@@ -1684,7 +1843,9 @@ fn read_accounts(db: &State<'_, Db>, app: &tauri::AppHandle) -> Result<Vec<Email
 
 /// 把 Date 字符串解析成可排序的时间戳（毫秒）；失败返回 0。
 fn date_ts(s: &str) -> i64 {
-    parse_email_date(s).map(|d| d.timestamp_millis()).unwrap_or(0)
+    parse_email_date(s)
+        .map(|d| d.timestamp_millis())
+        .unwrap_or(0)
 }
 
 /// 从一条 FETCH 构造 EmailMeta（复用 email_fetch_inbox 的 build_meta 逻辑）。
@@ -1700,14 +1861,38 @@ fn meta_from_fetch(m: &async_imap::types::Fetch, folder: &str) -> Option<EmailMe
         .as_ref()
         .and_then(|v| v.first())
         .map(|a| {
-            let mb = a.mailbox.as_ref().map(|x| String::from_utf8_lossy(x.as_ref()).to_string()).unwrap_or_default();
-            let host = a.host.as_ref().map(|x| String::from_utf8_lossy(x.as_ref()).to_string()).unwrap_or_default();
+            let mb = a
+                .mailbox
+                .as_ref()
+                .map(|x| String::from_utf8_lossy(x.as_ref()).to_string())
+                .unwrap_or_default();
+            let host = a
+                .host
+                .as_ref()
+                .map(|x| String::from_utf8_lossy(x.as_ref()).to_string())
+                .unwrap_or_default();
             let addr = format!("{}@{}", mb, host);
-            let name = a.name.as_ref().map(|n| decode_mime_words(&String::from_utf8_lossy(n.as_ref())).trim().to_string()).unwrap_or_default();
-            if !name.is_empty() && !name.eq_ignore_ascii_case(&addr) { format!("{} <{}>", name, addr) } else { addr }
+            let name = a
+                .name
+                .as_ref()
+                .map(|n| {
+                    decode_mime_words(&String::from_utf8_lossy(n.as_ref()))
+                        .trim()
+                        .to_string()
+                })
+                .unwrap_or_default();
+            if !name.is_empty() && !name.eq_ignore_ascii_case(&addr) {
+                format!("{} <{}>", name, addr)
+            } else {
+                addr
+            }
         })
         .unwrap_or_default();
-    let date = env.date.as_ref().map(|d| String::from_utf8_lossy(d.as_ref()).to_string()).unwrap_or_default();
+    let date = env
+        .date
+        .as_ref()
+        .map(|d| String::from_utf8_lossy(d.as_ref()).to_string())
+        .unwrap_or_default();
     let seen = m.flags().any(|f| f == async_imap::types::Flag::Seen);
     let flagged = m.flags().any(|f| f == async_imap::types::Flag::Flagged);
     // 同 `build_meta`：带 `\Deleted` 的不列出来（删除是"进回收站"，原件可能还挂着删除标记）。
@@ -1748,7 +1933,11 @@ struct FetchChunk {
 ///
 /// 修法：把"流中途报错"当成**可恢复**的：记下断点、**重开会话**（那次响应剩下的字节还在 socket 里，
 /// 直接再发命令会串味）、从断点下一条继续。代价是"一条畸形邮件只损失它自己"。
-async fn fetch_chunk(account: &EmailAccountArgs, folder: &str, start: u32) -> Result<FetchChunk, String> {
+async fn fetch_chunk(
+    account: &EmailAccountArgs,
+    folder: &str,
+    start: u32,
+) -> Result<FetchChunk, String> {
     use futures_util::StreamExt;
     let mut session = open_session(account, folder).await?;
     let mut stream = session
@@ -1802,7 +1991,11 @@ async fn fetch_chunk(account: &EmailAccountArgs, folder: &str, start: u32) -> Re
             }
         }
     }
-    Ok(FetchChunk { metas, resume_at: if finished { None } else { Some(next + 1) }, note })
+    Ok(FetchChunk {
+        metas,
+        resume_at: if finished { None } else { Some(next + 1) },
+        note,
+    })
 }
 
 /// 日志里只留**有用那一截** —— 坏响应的原文动辄数千字节（2026-10-22 实测一条 6 KB），
@@ -1811,7 +2004,10 @@ async fn fetch_chunk(account: &EmailAccountArgs, folder: &str, start: u32) -> Re
 /// `async-imap` 的 nom 错误尾巴上带 `during parsing of "* 17 FETCH (ENVELOPE (…"` ——
 /// **那一截才是人看得懂的**（能直接看出是哪一条、坏在哪），前面的字节数组全部丢掉。
 fn brief(s: &str) -> String {
-    let tail = s.find("during parsing of").map(|i| &s[i..]).unwrap_or_else(|| s.lines().next().unwrap_or(""));
+    let tail = s
+        .find("during parsing of")
+        .map(|i| &s[i..])
+        .unwrap_or_else(|| s.lines().next().unwrap_or(""));
     let mut out: String = tail.chars().take(240).collect();
     if tail.chars().count() > 240 {
         out.push('…');
@@ -2038,8 +2234,7 @@ pub struct EmailAccountError {
     pub message: String,
 }
 
-#[derive(Serialize)]
-#[derive(Clone)]
+#[derive(Serialize, Clone)]
 pub struct EmailAggregate {
     pub emails: Vec<EmailMeta>,
     pub unread: u32,
@@ -2081,7 +2276,10 @@ fn aggregate_fetches(
                     rows.push((ts, m));
                 }
             }
-            Err(message) => errors.push(EmailAccountError { account: key, message }),
+            Err(message) => errors.push(EmailAccountError {
+                account: key,
+                message,
+            }),
         }
     }
     rows.sort_by(|a, b| b.0.cmp(&a.0));
@@ -2121,7 +2319,11 @@ pub struct EmailFetchProgress {
 /// 传 date_from/date_to 时，仅合并日期区间内的邮件（供「按月直达」用）。
 /// 传 accounts 时仅聚合这些账号；空表示聚合全部已保存账号。
 #[tauri::command]
-pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: EmailFetchAllArgs) -> Result<EmailAggregate, String> {
+pub async fn email_fetch_all(
+    db: State<'_, Db>,
+    app: tauri::AppHandle,
+    args: EmailFetchAllArgs,
+) -> Result<EmailAggregate, String> {
     // ⭐⭐ **2026-10-21（B）**：**默认查询**（第一页 ＋ INBOX ＋ 全部账号 ＋ 无日期过滤）
     //   且缓存够新 ⇒ 直接返回定时任务预取好的那一页 ✓
     //   ⇒ 用户点开邮箱**立刻有列表**，不再每次都等一遍 IMAP ✓
@@ -2143,7 +2345,11 @@ pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: Ema
         }
     }
     let accounts = read_accounts(&db, &app)?;
-    let folders = if args.folders.is_empty() { vec!["INBOX".to_string()] } else { args.folders.clone() };
+    let folders = if args.folders.is_empty() {
+        vec!["INBOX".to_string()]
+    } else {
+        args.folders.clone()
+    };
     let targets: Vec<&EmailAccountArgs> = accounts
         .iter()
         .filter(|a| args.accounts.is_empty() || args.accounts.contains(&account_key(a)))
@@ -2152,15 +2358,32 @@ pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: Ema
     // 0 先推一次：界面能立刻从「没反应」变成「0/5 · 正在连第一个账号」
     let _ = app.emit(
         FETCH_PROGRESS_EVENT,
-        EmailFetchProgress { done: 0, total, account: String::new() },
+        EmailFetchProgress {
+            done: 0,
+            total,
+            account: String::new(),
+        },
     );
     let mut results: Vec<(String, Result<(Vec<EmailMeta>, u32), String>)> = Vec::new();
     for (i, acc) in targets.iter().enumerate() {
         let key = account_key(acc);
-        results.push((key.clone(), fetch_account_emails(acc, &folders, args.date_from.as_deref(), args.date_to.as_deref()).await));
+        results.push((
+            key.clone(),
+            fetch_account_emails(
+                acc,
+                &folders,
+                args.date_from.as_deref(),
+                args.date_to.as_deref(),
+            )
+            .await,
+        ));
         let _ = app.emit(
             FETCH_PROGRESS_EVENT,
-            EmailFetchProgress { done: (i + 1) as u32, total, account: key },
+            EmailFetchProgress {
+                done: (i + 1) as u32,
+                total,
+                account: key,
+            },
         );
     }
     Ok(aggregate_fetches(results, args.limit, args.offset))
@@ -2177,13 +2400,23 @@ pub struct EmailFetchAllMonthsArgs {
 
 /// 聚合所有（或指定）账号的「含邮件月份」并集（供聚合视图月份选择器用）；单账号失败跳过。
 #[tauri::command]
-pub async fn email_fetch_all_months(db: State<'_, Db>, app: tauri::AppHandle, args: EmailFetchAllMonthsArgs) -> Result<Vec<String>, String> {
+pub async fn email_fetch_all_months(
+    db: State<'_, Db>,
+    app: tauri::AppHandle,
+    args: EmailFetchAllMonthsArgs,
+) -> Result<Vec<String>, String> {
     let accounts = read_accounts(&db, &app)?;
-    let folders = if args.folders.is_empty() { vec!["INBOX".to_string()] } else { args.folders };
+    let folders = if args.folders.is_empty() {
+        vec!["INBOX".to_string()]
+    } else {
+        args.folders
+    };
     let mut months: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for acc in &accounts {
         let key = account_key(acc);
-        if !args.accounts.is_empty() && !args.accounts.contains(&key) { continue; }
+        if !args.accounts.is_empty() && !args.accounts.contains(&key) {
+            continue;
+        }
         match list_account_months(acc, &folders).await {
             Ok(ms) => months.extend(ms),
             Err(_) => { /* 单账号失败跳过，不影响其它账号 */ }
@@ -2210,10 +2443,19 @@ mod tests {
     #[test]
     fn parse_email_date_handles_qq_zone_comment_and_month() {
         // QQ 邮箱日期带末尾括号时区注释 + 可能写错的星期 + 单位数字天，都要能解析。
-        assert_eq!(month_key_from_date("Mon, 7 Jul 2026 16:19:49 +0800 (CST)").as_deref(), Some("2026-6"));
-        assert_eq!(month_key_from_date("7 Sep 2026 16:19:49 +0800 (CST)").as_deref(), Some("2026-8"));
+        assert_eq!(
+            month_key_from_date("Mon, 7 Jul 2026 16:19:49 +0800 (CST)").as_deref(),
+            Some("2026-6")
+        );
+        assert_eq!(
+            month_key_from_date("7 Sep 2026 16:19:49 +0800 (CST)").as_deref(),
+            Some("2026-8")
+        );
         // 无括号的标准 RFC2822 也能解析
-        assert_eq!(month_key_from_date("Mon, 31 Aug 2026 11:40:54 +0800").as_deref(), Some("2026-7"));
+        assert_eq!(
+            month_key_from_date("Mon, 31 Aug 2026 11:40:54 +0800").as_deref(),
+            Some("2026-7")
+        );
         // date_ts 不再因解析失败而恒为 0
         assert!(date_ts("Mon, 7 Jul 2026 16:19:49 +0800 (CST)") > 0);
     }
@@ -2247,8 +2489,14 @@ mod tests {
         let ok = vec![meta_for("Mon, 20 Sep 2026 18:17:08 +0800", 1)];
         let agg = aggregate_fetches(
             vec![
-                ("imap.qq.com|zhaizy@qq.com".to_string(), Err("登录失败: 认证失败".to_string())),
-                ("imap.qiye.aliyun.com|sales@shuyo.cn".to_string(), Ok((ok, 2))),
+                (
+                    "imap.qq.com|zhaizy@qq.com".to_string(),
+                    Err("登录失败: 认证失败".to_string()),
+                ),
+                (
+                    "imap.qiye.aliyun.com|sales@shuyo.cn".to_string(),
+                    Ok((ok, 2)),
+                ),
             ],
             0,
             0,
@@ -2273,14 +2521,23 @@ mod tests {
     fn aggregate_fetches_all_ok_has_no_errors_and_sorts_newest_first() {
         let agg = aggregate_fetches(
             vec![
-                ("a|1".to_string(), Ok((vec![meta_for("Mon, 7 Jul 2026 16:19:49 +0800", 7)], 0))),
-                ("b|2".to_string(), Ok((vec![meta_for("Sun, 20 Sep 2026 20:42:43 +0800", 9)], 1))),
+                (
+                    "a|1".to_string(),
+                    Ok((vec![meta_for("Mon, 7 Jul 2026 16:19:49 +0800", 7)], 0)),
+                ),
+                (
+                    "b|2".to_string(),
+                    Ok((vec![meta_for("Sun, 20 Sep 2026 20:42:43 +0800", 9)], 1)),
+                ),
             ],
             0,
             0,
         );
         assert!(agg.errors.is_empty());
-        assert_eq!(agg.emails.iter().map(|m| m.uid).collect::<Vec<_>>(), vec![9, 7]);
+        assert_eq!(
+            agg.emails.iter().map(|m| m.uid).collect::<Vec<_>>(),
+            vec![9, 7]
+        );
         assert_eq!(agg.unread, 1);
     }
 
@@ -2293,7 +2550,10 @@ mod tests {
             meta_for("Sun, 20 Sep 2026 08:00:00 +0800", 1),
         ];
         let agg = aggregate_fetches(vec![("a|1".to_string(), Ok((metas, 0)))], 2, 1);
-        assert_eq!(agg.emails.iter().map(|m| m.uid).collect::<Vec<_>>(), vec![2, 1]);
+        assert_eq!(
+            agg.emails.iter().map(|m| m.uid).collect::<Vec<_>>(),
+            vec![2, 1]
+        );
     }
 
     /// **手动探针 ③**（默认不跑，只读）：把某个账号的文件夹列表按**界面会看到的样子**打出来
@@ -2321,11 +2581,16 @@ mod tests {
         let all: Vec<EmailAccountArgs> =
             serde_json::from_str(&std::fs::read_to_string(&cfg).expect("读账号配置失败"))
                 .expect("解析账号配置失败");
-        let account = all.into_iter().find(|a| a.username == want).expect("配置里没有这个账号");
+        let account = all
+            .into_iter()
+            .find(|a| a.username == want)
+            .expect("配置里没有这个账号");
 
         // 与 `email_list_folders` 同一段逻辑（这里只打印，不改任何东西）
         use tokio::net::TcpStream;
-        let tcp = TcpStream::connect((account.host.as_str(), account.port)).await.expect("TCP");
+        let tcp = TcpStream::connect((account.host.as_str(), account.port))
+            .await
+            .expect("TCP");
         let tls = tokio_native_tls::TlsConnector::from(native_tls::TlsConnector::new().unwrap());
         let tls_stream = tls.connect(&account.host, tcp).await.expect("TLS");
         let client = async_imap::Client::new(tls_stream);
@@ -2351,7 +2616,11 @@ mod tests {
                 .any(|a| matches!(a, async_imap::types::NameAttribute::Trash));
             names.push((imap_utf7_decode(name.name()), is_trash));
         }
-        eprintln!("账号 {}：界面会看到 {} 个文件夹 ——", account.username, names.len());
+        eprintln!(
+            "账号 {}：界面会看到 {} 个文件夹 ——",
+            account.username,
+            names.len()
+        );
         for (human, is_trash) in &names {
             eprintln!("   {}{}", if *is_trash { "★ " } else { "  " }, human);
         }
@@ -2386,8 +2655,12 @@ mod tests {
         let all: Vec<EmailAccountArgs> =
             serde_json::from_str(&std::fs::read_to_string(&cfg).expect("读账号配置失败"))
                 .expect("解析账号配置失败");
-        let account = all.into_iter().find(|a| a.username == want).expect("配置里没有这个账号");
-        let folder = std::env::var("SHUYO_EMAIL_PROBE_FOLDER").unwrap_or_else(|_| "INBOX".to_string());
+        let account = all
+            .into_iter()
+            .find(|a| a.username == want)
+            .expect("配置里没有这个账号");
+        let folder =
+            std::env::var("SHUYO_EMAIL_PROBE_FOLDER").unwrap_or_else(|_| "INBOX".to_string());
         let mut session = open_session(&account, &folder).await.expect("打开会话失败");
         let mut stream = session
             .fetch("1:*", "(ENVELOPE UID FLAGS)")
@@ -2428,8 +2701,13 @@ mod tests {
     #[test]
     fn fetch_path_never_stops_silently_on_a_stream_error() {
         let src = include_str!("email.rs");
-        let start = src.find("async fn fetch_chunk").expect("fetch_chunk 不见了（改名了？这条哨兵要跟着搬）");
-        let end = src[start..].find("async fn email_fetch_all").expect("找不到拉取段的结尾") + start;
+        let start = src
+            .find("async fn fetch_chunk")
+            .expect("fetch_chunk 不见了（改名了？这条哨兵要跟着搬）");
+        let end = src[start..]
+            .find("async fn email_fetch_all")
+            .expect("找不到拉取段的结尾")
+            + start;
         let body = &src[start..end];
         assert!(
             !body.contains("Some(Ok("),
@@ -2457,8 +2735,16 @@ mod tests {
             .expect("原始头部必须解析得出来（这正是绕开 ENVELOPE 的理由）");
         assert_eq!(m.uid, 9668);
         assert_eq!(m.subject, "工业和信息化部网站备案系统邮件通知");
-        assert!(m.from.contains("zwfw-info@miit.gov.cn"), "From 丢了：{}", m.from);
-        assert!(m.date.starts_with("Tue, 8 Sep 2026"), "Date 丢了：{}", m.date);
+        assert!(
+            m.from.contains("zwfw-info@miit.gov.cn"),
+            "From 丢了：{}",
+            m.from
+        );
+        assert!(
+            m.date.starts_with("Tue, 8 Sep 2026"),
+            "Date 丢了：{}",
+            m.date
+        );
         assert!(!m.seen && !m.flagged);
     }
 
@@ -2499,10 +2785,17 @@ mod tests {
         let all: Vec<EmailAccountArgs> =
             serde_json::from_str(&std::fs::read_to_string(&cfg).expect("读账号配置失败"))
                 .expect("解析账号配置失败");
-        let account = all.into_iter().find(|a| a.username == want).expect("配置里没有这个账号");
+        let account = all
+            .into_iter()
+            .find(|a| a.username == want)
+            .expect("配置里没有这个账号");
         // 想看别的文件夹就设 `SHUYO_EMAIL_PROBE_FOLDER`（默认 INBOX）——查"回收站里到底能列出几封"要用。
-        let folder = std::env::var("SHUYO_EMAIL_PROBE_FOLDER").unwrap_or_else(|_| "INBOX".to_string());
-        eprintln!("探针账号：{} @ {}:{}（auto_fetch={}）文件夹={}", account.username, account.host, account.port, account.auto_fetch, folder);
+        let folder =
+            std::env::var("SHUYO_EMAIL_PROBE_FOLDER").unwrap_or_else(|_| "INBOX".to_string());
+        eprintln!(
+            "探针账号：{} @ {}:{}（auto_fetch={}）文件夹={}",
+            account.username, account.host, account.port, account.auto_fetch, folder
+        );
         match fetch_account_emails(&account, &[folder.clone()], None, None).await {
             Ok((metas, unread)) => {
                 let mut v: Vec<EmailMeta> = metas.clone();
@@ -2511,7 +2804,14 @@ mod tests {
                 eprintln!("  最新 5 封（按 date_ts 降序；date_ts=0 表示**日期解析失败**，在多账号聚合里会沉底）：");
                 for m in v.iter().take(5) {
                     let subject: String = m.subject.chars().take(46).collect();
-                    eprintln!("   uid={:<6} ts={:<14} {} | {} | {}", m.uid, date_ts(&m.date), m.date, m.from, subject);
+                    eprintln!(
+                        "   uid={:<6} ts={:<14} {} | {} | {}",
+                        m.uid,
+                        date_ts(&m.date),
+                        m.date,
+                        m.from,
+                        subject
+                    );
                 }
                 // 今天/昨天的信在不在（按本地日历日粗判）
                 let today = chrono::Local::now().format("%d %b %Y").to_string();
@@ -2553,31 +2853,47 @@ mod tests {
         let all: Vec<EmailAccountArgs> =
             serde_json::from_str(&std::fs::read_to_string(&cfg).expect("读账号配置失败"))
                 .expect("解析账号配置失败");
-        let account = all.into_iter().find(|a| a.username == want).expect("配置里没有这个账号");
-        let needle = std::env::var("SHUYO_EMAIL_PROBE_NEEDLE").unwrap_or_else(|_| "shuyo".to_string());
+        let account = all
+            .into_iter()
+            .find(|a| a.username == want)
+            .expect("配置里没有这个账号");
+        let needle =
+            std::env::var("SHUYO_EMAIL_PROBE_NEEDLE").unwrap_or_else(|_| "shuyo".to_string());
         let needle_lc = needle.to_lowercase();
-        let folder = std::env::var("SHUYO_EMAIL_PROBE_FOLDER").unwrap_or_else(|_| "INBOX".to_string());
+        let folder =
+            std::env::var("SHUYO_EMAIL_PROBE_FOLDER").unwrap_or_else(|_| "INBOX".to_string());
 
-        let (metas, _unread) = match fetch_account_emails(&account, &[folder.clone()], None, None).await {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("ERR：{e}");
-                return;
-            }
-        };
+        let (metas, _unread) =
+            match fetch_account_emails(&account, &[folder.clone()], None, None).await {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("ERR：{e}");
+                    return;
+                }
+            };
         let mut hits: Vec<EmailMeta> = metas
             .into_iter()
             .filter(|m| {
-                m.from.to_lowercase().contains(&needle_lc) || m.subject.to_lowercase().contains(&needle_lc)
+                m.from.to_lowercase().contains(&needle_lc)
+                    || m.subject.to_lowercase().contains(&needle_lc)
             })
             .collect();
         hits.sort_by(|a, b| date_ts(&b.date).cmp(&date_ts(&a.date)));
-        eprintln!("账号 {} 文件夹 {} 里命中「{}」的邮件：{} 封", account.username, folder, needle, hits.len());
+        eprintln!(
+            "账号 {} 文件夹 {} 里命中「{}」的邮件：{} 封",
+            account.username,
+            folder,
+            needle,
+            hits.len()
+        );
         if hits.is_empty() {
             return;
         }
         let m = &hits[0];
-        eprintln!("取最新一封：uid={} date={} from={} subject={}", m.uid, m.date, m.from, m.subject);
+        eprintln!(
+            "取最新一封：uid={} date={} from={} subject={}",
+            m.uid, m.date, m.from, m.subject
+        );
 
         let raw = match fetch_uid_raw(&account, &folder, m.uid).await {
             Ok(r) => r,
@@ -2586,7 +2902,11 @@ mod tests {
                 return;
             }
         };
-        eprintln!("原文长度：{} 字节；含 <style>：{}", raw.len(), raw.to_lowercase().contains("<style"));
+        eprintln!(
+            "原文长度：{} 字节；含 <style>：{}",
+            raw.len(),
+            raw.to_lowercase().contains("<style")
+        );
 
         // MIME 树：哪些子部分是内嵌图片（有 Content-ID / inline disposition）？
         let parsed = match mailparse::parse_mail(raw.as_bytes()) {
@@ -2631,9 +2951,15 @@ mod tests {
         let img_re = regex::Regex::new(r"(?is)<img\b[^>]*>").unwrap();
         let src_re = regex::Regex::new(r#"(?is)src\s*=\s*["']([^"']*)["']"#).unwrap();
         let tags: Vec<&str> = img_re.find_iter(&html).map(|x| x.as_str()).collect();
-        eprintln!("（经 `email_html_body`：内嵌图已内联）HTML 里 <img> 共 {} 个：", tags.len());
+        eprintln!(
+            "（经 `email_html_body`：内嵌图已内联）HTML 里 <img> 共 {} 个：",
+            tags.len()
+        );
         for (i, tag) in tags.iter().take(12).enumerate() {
-            let src = src_re.captures(tag).map(|c| c[1].to_string()).unwrap_or_default();
+            let src = src_re
+                .captures(tag)
+                .map(|c| c[1].to_string())
+                .unwrap_or_default();
             let scheme = if src.starts_with("cid:") {
                 "cid(内嵌附件)**未内联**"
             } else if src.starts_with("data:") {
@@ -2690,7 +3016,10 @@ mod tests {
         );
         let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
         let html = email_html_body(&parsed).expect("有 text/html 部分");
-        assert!(html.contains("data:image/png;base64,"), "内嵌图没内联：{html}");
+        assert!(
+            html.contains("data:image/png;base64,"),
+            "内嵌图没内联：{html}"
+        );
         assert!(!html.contains("cid:shuyo-logo"), "还留着 cid: 引用：{html}");
         assert!(html.contains("alt=\"shuyo\""), "alt 被弄丢了：{html}");
     }
@@ -2699,8 +3028,14 @@ mod tests {
     #[test]
     fn rewrite_cid_refs_handles_case_encoding_and_misses() {
         let mut parts = std::collections::HashMap::new();
-        parts.insert("shuyo-logo".to_string(), ("image/png".to_string(), "AAA".to_string()));
-        parts.insert("my logo".to_string(), ("image/gif".to_string(), "BBB".to_string()));
+        parts.insert(
+            "shuyo-logo".to_string(),
+            ("image/png".to_string(), "AAA".to_string()),
+        );
+        parts.insert(
+            "my logo".to_string(),
+            ("image/gif".to_string(), "BBB".to_string()),
+        );
         // 大小写不敏感（头里写 <SHUYO-LOGO>、正文写 cid:shuyo-logo 的邮件很常见）
         assert_eq!(
             rewrite_cid_refs(r#"<img src="cid:SHUYO-LOGO">"#, &parts),
@@ -2732,7 +3067,11 @@ mod tests {
         assert!(t.contains("Div text"));
         assert!(!t.contains("<p>"), "html tag leaked: {:?}", t);
         // 段落之间应有空行（\n\n）分隔。
-        assert!(t.contains("First paragraph.\n\nSecond para."), "paragraphs not separated: {:?}", t);
+        assert!(
+            t.contains("First paragraph.\n\nSecond para."),
+            "paragraphs not separated: {:?}",
+            t
+        );
     }
 
     #[test]
@@ -2752,7 +3091,11 @@ mod tests {
         assert!(t.contains("备案已提交"), "body lost: {:?}", t);
         assert!(t.contains("Copyright"), "footer lost: {:?}", t);
         // 正文应该远不止底部版权一行。
-        assert!(t.len() > "Copyright © 阿里云 2026 All Rights Reserved".len(), "only footer returned: {:?}", t);
+        assert!(
+            t.len() > "Copyright © 阿里云 2026 All Rights Reserved".len(),
+            "only footer returned: {:?}",
+            t
+        );
     }
 
     #[test]
@@ -2781,8 +3124,16 @@ mod tests {
     fn strip_html_keeps_real_alibaba_body() {
         let html = "<html><head><style>.a{padding:10px}.b{margin:0}</style></head><body><div style=\"...\"><table><tr><td><p>尊敬的濮阳数友信息科技服务有限责任公司：</p><p>您的备案信息已经提交至通信管理局审核！</p><p>如您对此有更多疑问，请点击<a href=\"x\">联系我们</a>登录阿里云账号。</p><p class=\"f\">Copyright © 阿里云 2009-2026 All Rights Reserved</p></td></tr></table></div></body></html>";
         let t = strip_html(html);
-        assert!(t.contains("尊敬的濮阳数友信息科技服务有限责任公司"), "leading content lost: {:?}", t);
-        assert!(t.contains("您的备案信息已经提交至通信管理局审核"), "content lost: {:?}", t);
+        assert!(
+            t.contains("尊敬的濮阳数友信息科技服务有限责任公司"),
+            "leading content lost: {:?}",
+            t
+        );
+        assert!(
+            t.contains("您的备案信息已经提交至通信管理局审核"),
+            "content lost: {:?}",
+            t
+        );
         assert!(t.contains("如您对此有更多疑问"), "content lost: {:?}", t);
         assert!(t.contains("联系我们"), "link text lost: {:?}", t);
     }
@@ -2792,9 +3143,21 @@ mod tests {
         // 还原真实报文的关键结构：display:none 预读 + 顶部导航 <a> 列表 + 正文多段 + 版权。
         let html = "<html><head><style type=\"text/css\">a{color:#1366ec;text-decoration:none}</style></head><body><span style=\"display:none\">此邮件由阿里云发送，请勿直接回复</span><div max-width=\"1200px\"><div class=\"nav\"><a href=\"x\">产品</a><a href=\"x\">解决方案</a><a href=\"x\">了解阿里云</a></div><div class=\"email-body\"><p>尊敬的濮阳数友信息科技服务有限责任公司：</p><p>您的备案信息已经提交至通信管理局审核！</p><p>如您对此有更多疑问，请点击<a href=\"x\">联系我们</a>登录阿里云账号。</p></div><div class=\"footer\">Copyright © 阿里云 2009-2026 All Rights Reserved</div></div></body></html>";
         let t = strip_html(html);
-        assert!(t.contains("尊敬的濮阳数友信息科技服务有限责任公司"), "main content lost: {:?}", t);
-        assert!(t.contains("您的备案信息已经提交至通信管理局审核"), "main content lost: {:?}", t);
-        assert!(t.contains("如您对此有更多疑问"), "main content lost: {:?}", t);
+        assert!(
+            t.contains("尊敬的濮阳数友信息科技服务有限责任公司"),
+            "main content lost: {:?}",
+            t
+        );
+        assert!(
+            t.contains("您的备案信息已经提交至通信管理局审核"),
+            "main content lost: {:?}",
+            t
+        );
+        assert!(
+            t.contains("如您对此有更多疑问"),
+            "main content lost: {:?}",
+            t
+        );
         assert!(t.contains("Copyright"), "footer lost: {:?}", t);
     }
 
@@ -2835,12 +3198,28 @@ mod tests {
         let body = parsed.subparts[0].get_body().unwrap_or_default();
         // 定位：如果 get_body 只回版权（脱字符），说明 QP 解码后非 ASCII 被丢；
         // 打印以便诊断。
-        eprintln!("EMAIL_TEXT body len={} zh?={}", body.len(), body.contains("尊敬的"));
+        eprintln!(
+            "EMAIL_TEXT body len={} zh?={}",
+            body.len(),
+            body.contains("尊敬的")
+        );
         let stripped = strip_html(&body);
         eprintln!("EMAIL_TEXT stripped >>>{:?}<<<", stripped);
-        assert!(stripped.contains("尊敬的濮阳数友信息科技服务有限责任公司"), "body lost: {:?}", stripped);
-        assert!(stripped.contains("您的备案信息已经提交至通信管理局审核"), "body lost: {:?}", stripped);
-        assert!(stripped.contains("Copyright"), "footer lost: {:?}", stripped);
+        assert!(
+            stripped.contains("尊敬的濮阳数友信息科技服务有限责任公司"),
+            "body lost: {:?}",
+            stripped
+        );
+        assert!(
+            stripped.contains("您的备案信息已经提交至通信管理局审核"),
+            "body lost: {:?}",
+            stripped
+        );
+        assert!(
+            stripped.contains("Copyright"),
+            "footer lost: {:?}",
+            stripped
+        );
     }
 
     /// IMAP mailbox 名的 modified UTF-7 编码。期望值**不是**我推出来的，是阿里云企业邮
@@ -2896,7 +3275,10 @@ mod tests {
         assert_eq!(folder_on_wire("垃圾邮件"), "&V4NXPpCuTvY-");
         // ★ 协议名**原样不动**（再编一次就会多一个 `&-`）
         assert_eq!(folder_on_wire("&XfJSIJZkkK5O9g-"), "&XfJSIJZkkK5O9g-");
-        assert_eq!(folder_on_wire("&UXZO1mWHTvZZOQ-/&VFhd5XuAU4Y-"), "&UXZO1mWHTvZZOQ-/&VFhd5XuAU4Y-");
+        assert_eq!(
+            folder_on_wire("&UXZO1mWHTvZZOQ-/&VFhd5XuAU4Y-"),
+            "&UXZO1mWHTvZZOQ-/&VFhd5XuAU4Y-"
+        );
         // 纯 ASCII 两种口径都通（编码是恒等）
         assert_eq!(folder_on_wire("INBOX"), "INBOX");
         assert_eq!(folder_on_wire("Deleted Messages"), "Deleted Messages");
@@ -2908,7 +3290,8 @@ mod tests {
     /// 旧代码把 `垃圾箱` / `已删除` 原文发出去，阿里云企业邮不认、当场废掉那条连接，
     /// 于是整批删除静默失败 —— 用户看到的就是「删了、重新拉取又出现」。
     #[test]
-    fn mailbox_names_on_the_wire_are_ascii_only() {        for name in [
+    fn mailbox_names_on_the_wire_are_ascii_only() {
+        for name in [
             "垃圾箱",
             "已删除",
             "已删除邮件",
@@ -3006,7 +3389,12 @@ mod tests {
     /// `UID SEARCH SUBJECT "shuyo-probe-"` 过 60 秒仍然是空）。序号尾段 FETCH 既便宜又不依赖索引。
     ///
     /// 复用点：探针用它 ①认回刚 APPEND 的信、②清理以前跑挂留下的垃圾、③到回收站里找那封信。
-    async fn tail_uids(session: &mut ImapSession, folder: &str, tail: u32, prefix: &str) -> Vec<u32> {
+    async fn tail_uids(
+        session: &mut ImapSession,
+        folder: &str,
+        tail: u32,
+        prefix: &str,
+    ) -> Vec<u32> {
         use futures_util::StreamExt;
         // `UID SEARCH ALL` 只用来估"有多少封"：它对**已存在**的信是准的；对刚 APPEND 的（QQ 上）
         // 会少算一封 —— 但 `<n>:*` 里的 `*` 仍然覆盖真正的末尾，所以照样能拿到。

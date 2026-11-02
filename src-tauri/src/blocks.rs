@@ -130,7 +130,11 @@ fn collect_block_refs(node: &Value, top_block_id: &str, out: &mut Vec<(String, S
         if ty == "blockref" || ty == "blockembed" {
             if let Some(target_id) = node.get("targetId").and_then(|v| v.as_str()) {
                 let kind = if ty == "blockembed" { "embed" } else { "link" };
-                out.push((top_block_id.to_string(), target_id.to_string(), kind.to_string()));
+                out.push((
+                    top_block_id.to_string(),
+                    target_id.to_string(),
+                    kind.to_string(),
+                ));
             }
         }
     }
@@ -243,8 +247,7 @@ pub fn resolve_block(db: State<'_, Db>, block_id: String) -> Result<BlockInfo, S
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "块不存在".to_string())?;
 
-    let page = crate::doc_content::read(&c, &page_id)?
-        .ok_or_else(|| "页面不存在".to_string())?;
+    let page = crate::doc_content::read(&c, &page_id)?.ok_or_else(|| "页面不存在".to_string())?;
 
     let snippet = snippet_for_block(&page.json, &block_id);
     let content = block_text(&page.json, &block_id)
@@ -267,7 +270,8 @@ pub async fn get_page_blocks(db: State<'_, Db>, page_id: String) -> Result<Vec<P
     //    `doc_content::page_blocks_from_doc` 头上 ✓（`blockId` 可选 ⇒ 不许当"有没有正文"的判据 ✗）。
     //    ⛔ 本文件**不再**直接碰落盘形态：那会把「文档内容直接访问」的**只减不增**基线顶到 24 → 29 ⇒ 红 ✗
     //    （本文件不在那条门禁的 `LAYER_FILES` 白名单里 ✗，`doc_content.rs` 在 ✓）。
-    let rows = crate::doc_content::page_blocks(&c, &page_id)?.ok_or_else(|| "页面不存在".to_string())?;
+    let rows =
+        crate::doc_content::page_blocks(&c, &page_id)?.ok_or_else(|| "页面不存在".to_string())?;
     Ok(rows
         .into_iter()
         .map(|b| PageBlock {
@@ -292,7 +296,9 @@ pub fn search_blocks(db: State<'_, Db>, query: String) -> Result<Vec<SearchBlock
 
     let pattern = format!(
         "%{}%",
-        q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+        q.replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
     );
     let mut stmt = c
         .prepare(
@@ -333,7 +339,10 @@ pub fn search_blocks(db: State<'_, Db>, query: String) -> Result<Vec<SearchBlock
 }
 
 #[tauri::command]
-pub fn list_block_backlinks(db: State<'_, Db>, page_id: String) -> Result<Vec<BlockBacklink>, String> {
+pub fn list_block_backlinks(
+    db: State<'_, Db>,
+    page_id: String,
+) -> Result<Vec<BlockBacklink>, String> {
     let c = db.0.lock().expect("db mutex poisoned");
 
     // Target snippets all live in the current page.
@@ -371,7 +380,9 @@ pub fn list_block_backlinks(db: State<'_, Db>, page_id: String) -> Result<Vec<Bl
         .map_err(|e| e.to_string())?;
 
     let mut out = Vec::new();
-    for (source_page_id, source_page_title, source_block_id, target_block_id, kind, source_json) in rows {
+    for (source_page_id, source_page_title, source_block_id, target_block_id, kind, source_json) in
+        rows
+    {
         let source_snippet = source_json
             .as_deref()
             .map(|j| snippet_for_block(j, &source_block_id))
@@ -473,15 +484,26 @@ mod crdt_legacy_input_tests {
         let ids = extract_block_ids(&src).expect("抽 id");
         assert_eq!(ids.first().map(String::as_str), Some(SOURCE_BLOCK));
         assert_eq!(ids.len(), 6, "顶层 6 个块：{ids:?}");
-        assert!(!ids.contains(&NESTED_BLOCK.to_string()), "嵌套块的 id **不该**被索引：{ids:?}");
+        assert!(
+            !ids.contains(&NESTED_BLOCK.to_string()),
+            "嵌套块的 id **不该**被索引：{ids:?}"
+        );
 
         upsert_blocks(&c, "p-source", &src).expect("源页入索引");
         let n: i64 = c
-            .query_row("SELECT COUNT(*) FROM blocks WHERE page_id = 'p-source'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM blocks WHERE page_id = 'p-source'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(n, 6, "块表行数应等于顶层块数");
         let nested: i64 = c
-            .query_row("SELECT COUNT(*) FROM blocks WHERE block_id = ?1", [NESTED_BLOCK], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM blocks WHERE block_id = ?1",
+                [NESTED_BLOCK],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(nested, 0, "嵌套块不许进块表");
     }
@@ -505,11 +527,15 @@ mod crdt_legacy_input_tests {
         };
         assert_eq!(
             rows,
-            vec![("embed".to_string(), TARGET_BLOCK.to_string()), ("link".to_string(), TARGET_BLOCK.to_string())],
+            vec![
+                ("embed".to_string(), TARGET_BLOCK.to_string()),
+                ("link".to_string(), TARGET_BLOCK.to_string())
+            ],
             "块引用与块嵌入各应记一条（按 kind 排序）"
         );
         // 幂等：再跑一次不该翻倍（`DELETE … WHERE source_block_id != ''` 那一步的承重判据）。
-        rebuild_block_graph(&c, "p-source", &src, "见 与下面的嵌入 标题").expect("重建块图（第二次）");
+        rebuild_block_graph(&c, "p-source", &src, "见 与下面的嵌入 标题")
+            .expect("重建块图（第二次）");
         let again: i64 = c
             .query_row(
                 "SELECT COUNT(*) FROM backlinks WHERE source_page_id = 'p-source' AND source_block_id != ''",
@@ -525,7 +551,11 @@ mod crdt_legacy_input_tests {
         let c = space_db();
         sync_fts(&c, "p-source", "源页", "见 与下面的嵌入").expect("写 FTS");
         let n: i64 = c
-            .query_row("SELECT COUNT(*) FROM page_fts WHERE page_id = 'p-source'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM page_fts WHERE page_id = 'p-source'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(n, 1, "FTS 应当有且只有一行");
     }

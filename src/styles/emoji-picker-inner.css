@@ -1,0 +1,162 @@
+/* S4（2026-11-01）：域抽取器搬出的**表情选择器内层域（`.ep-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+.ep-side {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-2) 10px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.ep-side-btn {
+  flex: none;
+  width: 38px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-18);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--text-dim);
+  transition: background var(--transition-fast);
+}
+
+.ep-side-btn.active {
+  background: var(--hover);
+}
+
+.ep-side-btn:hover {
+  background: var(--hover);
+}
+
+.ep-side-btn.danger:hover {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
+}
+
+.ep-side-spacer {
+  flex: 1;
+}
+
+.ep-main {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3) 14px var(--space-2);
+}
+
+.ep-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: 10px;
+}
+
+.ep-search-input {
+  flex: 1;
+  background: var(--codeblock-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--fs-13);
+  border-radius: var(--radius-md);
+  padding: 7px 10px;
+  outline: none;
+  font-family: inherit;
+}
+
+.ep-search-input:focus {
+  border-color: var(--accent);
+}
+
+.ep-search-btn {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-16);
+  background: var(--codeblock-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.ep-group-title {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  margin: var(--space-2) 0 6px;
+}
+
+.ep-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+  gap: var(--space-1);
+}
+
+.ep-item {
+  aspect-ratio: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-24);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.ep-item:hover {
+  background: var(--hover);
+}
+
+.ep-item-custom {
+  font-size: var(--fs-18);
+}
+
+.ep-empty {
+  font-size: var(--fs-13);
+  color: var(--text-dim);
+  padding: var(--space-3) var(--space-1);
+}
+
+.ep-bottom {
+  display: flex;
+  gap: 2px;
+  padding: var(--space-2) 10px;
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.ep-bottom-btn {
+  flex: none;
+  width: 36px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-17);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.ep-bottom-btn.active {
+  background: var(--hover);
+}
+
+.ep-bottom-btn:hover {
+  background: var(--hover);
+}
+}

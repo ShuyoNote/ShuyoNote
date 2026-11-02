@@ -27,6 +27,15 @@
 | **国密 × 全库 AI 覆盖 × 块级 CRDT 三条线怎么一起验收** | [三平面联合验收](JOINT-ACCEPTANCE.md) |
 | 版本演进 | [变更记录](#变更记录-changelog) |
 
+> ⛔ **2026-10-29（owner 拍）：`shuyonote-sync-server` 已归档** —— 它**不再作为在售服务端**
+> （被独立闭源企业版 `shuyonote-enterprise-server` 取代）；**团队 / 企业能力归企业版**。
+> 本客户端（个人版，AGPL-3.0）**团队 UI 与 `team_*` 前端契约已删除**（2026-10-29 第二阶段）：
+> 新建 / 绑定团队空间、登录团队账号、组织管理**这些入口全部不再存在** ✓；
+> **Rust 团队实现也已删除**（2026-10-29 第三阶段：31 个 `team_*` 函数、9 个 `Team*` 类型、配套 helper 全部移除）；
+> 仅 `sync_profiles`／工作区同步机制保留（个人同步与历史团队空间数据要用）——不是产品能力。
+> ⚠️ **`shuyonote-sync-server` 无用户**（owner 2026-10-29）⇒ 历史口径只作**历史/开发参考**，**不是产品承诺**。
+> 历史规格 / 方案（含 09-29 企业版、10-01 企业 IM）**一份不删** —— 它们是**契约与历史出处**（企业版仍引用），⛔ 不当作客户端能力 ✗。
+
 ## 目录结构
 
 > 下面是**按用途分组**的一张地图（不是文件清单的完整枚举）。要"有没有漏登记"这个问题的答案，
@@ -94,6 +103,7 @@ CHANGELOG.md                     # 版本变更日志
 |---|---|
 | [architecture.md](architecture.md) | **系统架构**：前端 / 平台 driver（桌面 Tauri + 浏览器 Web）/ Rust 后端 / SQLite & 存储布局 / 同步服务端分层；数据模型、一致性边界与 ADR |
 | [web-sync-boundary.md](web-sync-boundary.md) | **Web 同步能力边界**：Web 版为何不支持多设备同步的四层原因（服务端不挂 CORS / 同步引擎在 Rust / 存储模型不匹配 / 凭证信任边界）、用户可见表现与代码出处、桌面 vs Web 能力对照、若要开启的前置条件与 W1–W4 分阶段路线 |
+| [mcp-external-ai.md](mcp-external-ai.md) | **外部 AI 接入（MCP）配置指南**：五档权限、客户端配置、验证与排错、安全与数据边界、推荐配置 |
 | [design-philosophy.md](design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器；从需求、定位、竞品对比、各功能方案与设计系统提炼的完整信条、取舍与边界 |
 | [realtime-collab-analysis.md](realtime-collab-analysis.md) | **实时协同（多人同页协作编辑）利弊分析**：区分「近实时」vs「块级 CRDT」两档成本；好处（对齐竞品 / 不丢内容 / 实时感知）与代价（富块难合并 / 服务端 WebSocket / 离线×实时并存 / E2E 冲突 / 非购买点核心）；分阶段建议（近期近实时、长期最小 CRDT、个人空间保留 E2E）与决策记录 |
 | [free-edition-field-test.md](free-edition-field-test.md) | **免费版上门实测清单（两台真机）**：逐条步骤 ＋ 每条的"通过的样子"与"失败取什么证据"；⭐⭐ 第 7 步是**硬证据**（**拔掉外网仍能同步** ⇒ 证明不经服务器）；含加密空间再走一遍、四种**已知会失败但不是缺陷**的情形（跨网段/AP 隔离/防火墙/虚拟网段）、回读数的固定格式 ｜ ⚠️ 这是**人手验收**，⛔ 不许当"已通过" |
@@ -166,6 +176,8 @@ CHANGELOG.md                     # 版本变更日志
 | [specs/2026-10-08-network-targets-declaration-surface.md](specs/2026-10-08-network-targets-declaration-surface.md) | **设计：网络目标声明面（方案 B，不锁实现）** —— `INV-KB-space-split` 的「个人侧网络目标清单必须为空」这句**今天没有着力点**（那份"清单"在代码里**不存在** ✗）⇒ 先定「谁声明／声明在哪（仓内 `network-targets.json` 一处、两侧同一个字节）／怎么核（`check-network-targets.mjs` 的三条形状）」，并把与 **2026-10-05「未加密空间可用云端」冲突**的**方案 A（锁死 AI 端点）** 单列待拍 ✓ |
 | [specs/2026-10-09-file-associations.md](specs/2026-10-09-file-associations.md) | **设计：文件关联（双击 `.docx` 能唤起，但⛔不抢默认）** —— 走 `bundle.windows.nsis.installerHooks` ＋ 自写 `.nsh`（只写 `OpenWithProgids`）；**贴上游 `APP_ASSOCIATE` 宏原文说明为什么不用 `fileAssociations`**（那一行会把我们写成 `.docx` 的默认值 ✗）；两条红线 ＋ 判据 a/b/c/d 进既有 `check-nsis-template.mjs`；⚠️ **未做安装验证**（无 `makensis`，安装归 Lead） |
 | [specs/2026-10-11-local-voice-ai-feasibility-requirements.md](specs/2026-10-11-local-voice-ai-feasibility-requirements.md) | **需求（可行性版）：本地语音 AI 助手（待拍板）** —— ⭐ 每条指标**可判**：延迟拆六段（唤醒／尾音／STT 首字／检索／LLM 首 token／TTS 首音）＋ 绑定**模型档 × 语料 × 上下文长度**，硬件分**最低／推荐**两档；⭐ 架构只用仓里**真实存在的机制**（内部控制面走 `invoke`，⛔ **不**把 MCP 当内部总线 —— 实测它是「桥 → App」那一向、且默认关／只绑回环；会议跨网先**复用 iroh ＋ 自建中继**，⛔ 本期不引 LiveKit）；⭐ 唤醒词与视频**不进 MVP**（按键触发就够）；含**许可表**（⛔ ffmpeg 禁令，仓规不许 AGPL／GPL）、**磁盘预算**（≈6.5GB）、**六条探针**（⭐ 平台假设先验 —— 今天刚实测过"文档说会回调、实际从不回调"）、**退路阶梯**；⭐ 并**点名四项「待实测」**（Vosk 中文准确率等，⛔ 不许当已达标） |
+| [specs/2026-10-27-lan-sync-auto-config-m2.md](specs/2026-10-27-lan-sync-auto-config-m2.md) | **设计：局域网同步「进页面即自动备好」（M2，owner 2026-10-27 拍）** —— 解决**新装/清过数据的桌面用户没有入口**（`mesh_bind` 空 ＋ 10-14 删了设置卡 ⇒ 状态条只能"未读到"）；口径五条（⛔ 不在启动时自动开／只补不覆盖／本机只自动跑一次／可逆开关／组名采用只对自动组名）、实现落点（`mesh_ensure_defaults` 命令 ＋ 面板首进 ＋ `maybe_adopt_peer_room` 放开到桌面）、四条判据、**未做真机端到端**如实标 |
+
 
 > ⚠️ 与上面那张 `plans` 表的区别：**`plans/` 记过程（怎么想、施工单），`specs/` 只放「现在仍然必须成立」的东西**。
 > 两边的登记判据也不同：`plans` 由 `check-doc-links` 逐篇对应，`specs` 的准入靠**判据能不能被证明会红**。
@@ -331,6 +343,10 @@ node scripts/test-report.mjs --list                                             
 | [plans/mobile/2026-10-08-mobile-requirements.md](plans/mobile/2026-10-08-mobile-requirements.md) | ⚠️ **历史稿（2026-10-08）**：移动端需求初版（**立项待裁决**／P0×6＋P1×5＋P2×4／最小切片）。**已被 2026-10-20 完整版取代**；其中「立项待裁决」「设备直连一轮都没搬过」等句子已过期 |
 | [plans/mobile/2026-10-08-mobile-tech-plan.md](plans/mobile/2026-10-08-mobile-tech-plan.md) | ⚠️ **历史稿（2026-10-08）**：旧技术方案（**切 `crates/core`＋uniffi** 路线，**未采用**；435 处/78 文件已过期）。**已被 2026-10-20 完整版技术方案取代**，保留作分析存档 |
 | [plans/mobile/2026-10-08-mobile-spec.md](plans/mobile/2026-10-08-mobile-spec.md) | ⚠️ **历史稿（2026-10-08，2026-10-10 更新过屏状态）**：把需求/效果图/技术方案合并的自足总篇。**需求与范围以 2026-10-20 完整版为准**；旧稿的「8 屏已落地」「07 先不接」「08 只读 v1」已被后续改动超前 |
+| [plans/2026-10-29-shuyodoc-m1.md](plans/2026-10-29-shuyodoc-m1.md) | 单文档包 .shuyodoc M1 方案（只做单篇/导入永远新建/不带评论历史；含导入侧 7 条拒绝项与往返判据） |
+| [plans/2026-10-29-agent-block-write-p2.md](plans/2026-10-29-agent-block-write-p2.md) | 外部 Agent 块级写面 P2 方案（锚点读面 + patch/insert/delete + expectedRev 冲突必拒 + 审计/权限） |
+| [plans/2026-10-29-agent-capability-exposure-matrix.md](plans/2026-10-29-agent-capability-exposure-matrix.md) | 能力暴露矩阵（29 条注册表能力 × MCP 现状 × P0/P1/不暴露档位，含新增能力与分批验收） |
+| [plans/2026-10-29-mcp-capability-feasibility.md](plans/2026-10-29-mcp-capability-feasibility.md) | 能力暴露底层可行性核对（B1 前置）：逐条「已有命令/需扩展/需新建/不做」 |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
 > 「还差 **0b** 公开材料可同步」**已作废** —— 0b 那条（经服务器搬钥匙袋）**已整条删除**
@@ -344,6 +360,12 @@ node scripts/test-report.mjs --list                                             
 |---|---|
 | [compare-obsidian-siyuan-shuyonote.md](compare-obsidian-siyuan-shuyonote.md) | **Obsidian / 思源笔记 / ShuyoNote** 三方对比与定位 |
 | [compare-flowus-wolai-notion-shuyonote.md](compare-flowus-wolai-notion-shuyonote.md) | **FlowUs / Wolai / Notion / ShuyoNote** 四方对比与定位 |
+| [plans/2026-10-30-cross-space-write.md](plans/2026-10-30-cross-space-write.md) | 跨空间写设计：方案 A/B/C 对比、每空间副作用、回滚开关、判据；待拍板 |
+| [plans/2026-10-30-ai-hidden-spaces.md](plans/2026-10-30-ai-hidden-spaces.md) | AI 不可见空间清单设计：存 meta.db sync_state JSON、dispatch 单一拦截点、当前空间被隐藏的处理、回滚与判据；待实现 |
+| [plans/2026-10-30-cross-space-write-v3.md](plans/2026-10-30-cross-space-write-v3.md) | 跨空间写 v3 / 导出跨空间 / 超限确认 UI 的施工拆解（A1–A4/B/C、判据与风险）；待实施 |
+| [plans/2026-10-30-package-format-final.md](plans/2026-10-30-package-format-final.md) | 包格式一步到位定稿：.shuyodoc v1.1（纯新增字段/checksums 自保护/数据库命名空间）＋ .shuyospace 完整设计（tree 权威附件权威/导入原子/limits）＋ 错误码与 M1.1–M3 计划 |
+| [plans/2026-10-30-note-metadata-and-title-polish.md](plans/2026-10-30-note-metadata-and-title-polish.md) | 元数据区与长标题落地方案：属性区 P0/P1（计数/系统字段只读/类型化/入口收敛/底部出处合并）＋长标题阈值与截断分流＋文件名与 URL slug＋props 进包提案＋批次 B1–B6 与判据命令 |
+| [plans/2026-10-30-appcss-deep-audit.md](plans/2026-10-30-appcss-deep-audit.md) | App.css 深度审计与优化方案：27.4k 行/814KB 单文件实测、六类问题（半迁移 token/三套刻度不统一/344 死 class/31 未定义变量/160 内联样式）、P0–P3 分阶段与目标指标 |
 
 ## 设计交付（design）
 

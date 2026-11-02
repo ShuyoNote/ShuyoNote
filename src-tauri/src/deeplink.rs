@@ -172,7 +172,10 @@ pub fn attach<R: Runtime>(app: &AppHandle<R>) {
     //    而不是自己监听 `"deep-link://new-url"` 字符串——跟着公开 API 走。
     let handle = app.clone();
     app.deep_link().on_open_url(move |event| {
-        handle_urls(&handle, event.urls().iter().map(|u| u.to_string()).collect());
+        handle_urls(
+            &handle,
+            event.urls().iter().map(|u| u.to_string()).collect(),
+        );
     });
 }
 
@@ -195,7 +198,10 @@ fn handle_urls<R: Runtime>(app: &AppHandle<R>, urls: Vec<String>) {
     eprintln!(
         "[deep-link] 收到 {} 条 URL：{}",
         urls.len(),
-        urls.iter().map(|u| log_summary(u)).collect::<Vec<_>>().join(" , ")
+        urls.iter()
+            .map(|u| log_summary(u))
+            .collect::<Vec<_>>()
+            .join(" , ")
     );
     // 事件也照发（"应用已经开着"那条路径的正常通道，前端此时在听）。
     // 发失败**不致命**：队列还在，前端的启动 drain 仍能取到。
@@ -260,7 +266,10 @@ mod tests {
         // 社区链接：`url=` 里的整条地址（含域名与帖号）都不能出现。
         let save = log_summary("shuyonote://save?url=https%3A%2F%2Fcommunity.shuyo.cn%2Fpost%2F1");
         assert_eq!(save, "shuyonote://save/…");
-        assert!(!save.contains("community") && !save.contains("post"), "参数泄进日志了：{save}");
+        assert!(
+            !save.contains("community") && !save.contains("post"),
+            "参数泄进日志了：{save}"
+        );
 
         // 测试钩子的 `text=` 同理（真机上跑的就是这条）。
         let hook = log_summary("shuyonote://test/new-page?text=phase0-persist-011531");
@@ -268,7 +277,10 @@ mod tests {
         assert!(!hook.contains("phase0"), "参数泄进日志了：{hook}");
 
         // 有路径段时保留**一段**（够看清是哪类动作），其余仍省掉。
-        assert_eq!(log_summary("shuyonote://page/abc123?x=1"), "shuyonote://page/abc123/…");
+        assert_eq!(
+            log_summary("shuyonote://page/abc123?x=1"),
+            "shuyonote://page/abc123/…"
+        );
 
         // 认不出 scheme：**一个字都不打**（宁可少说，也不把可能是参数的原文写进日志）。
         assert_eq!(log_summary("garbage"), "<不是带 scheme 的 URL>");
@@ -298,7 +310,10 @@ mod tests {
         assert!(first[0].starts_with("shuyonote://save"));
 
         // 关键断言：第二次必须是空的。
-        assert!(q.drain().is_empty(), "取过之后队列必须为空，否则前端会收到重复投递");
+        assert!(
+            q.drain().is_empty(),
+            "取过之后队列必须为空，否则前端会收到重复投递"
+        );
     }
 
     /// 先进先出 + 一条都不丢：冷启动那条与"已开着时"那条都进同一个队列。

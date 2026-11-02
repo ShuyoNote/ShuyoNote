@@ -1,0 +1,423 @@
+/* S4（2026-11-01）：域抽取器搬出的**标签输入/插入菜单域（`.tag-*` / `.slash-item*` / `.insert-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* Pinned "AI 帮我写" entry at the top of the insert panel. */
+.insert-ai-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: var(--space-2) 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+.insert-ai-entry:hover {
+  background: var(--hover);
+}
+
+.insert-ai-icon {
+  width: 22px;
+  text-align: center;
+  flex-shrink: 0;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.insert-ai-name {
+  flex: 1;
+  font-size: var(--fs-14);
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* 标签搜索框：覆盖 .tag-input 的 90px，占满面板宽。 */
+.tag-input.tag-picker-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px var(--space-2);
+  background: var(--bg);
+}
+
+/* 标签自定义颜色选择器（原生色板）。 */
+/* 标签自定义颜色：色板按钮 + 预设色板。 */
+.tag-color-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: var(--radius-full);
+}
+
+.tag-color-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  display: inline-block;
+}
+
+.tag-color-palette {
+  position: fixed;
+  z-index: 80;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  display: grid;
+  grid-template-columns: repeat(4, 20px);
+  gap: 6px;
+}
+
+.tag-color-pick {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.tag-color-pick.tag-color-clear {
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  line-height: 20px;
+  text-align: center;
+}
+
+/* 自定义颜色：隐藏原生 input，显示 "＋" 触发系统调色板。 */
+.tag-color-custom {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--text-dim);
+  font-size: var(--fs-13);
+  line-height: 20px;
+  text-align: center;
+  cursor: pointer;
+  overflow: hidden;
+  position: relative;
+}
+
+.tag-color-custom input[type="color"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* 自定义 hex 输入 + 应用（跨网格两列）。 */
+.tag-color-hex-row {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.tag-color-hex {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-12);
+  padding: 3px 6px;
+  min-width: 0;
+}
+
+.tag-color-apply {
+  border: none;
+  border-radius: var(--radius-xs);
+  background: var(--accent);
+  color: #fff;
+  font-size: var(--fs-12);
+  padding: 3px var(--space-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  background: var(--chip-bg);
+  color: var(--text);
+  border-radius: var(--radius-full);
+  padding: 0 10px;
+  font-size: var(--fs-12);
+}
+
+.tag-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.tag-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: var(--fs-13);
+  padding: 0;
+  line-height: 1;
+}
+
+.tag-remove:hover {
+  color: var(--text);
+}
+
+.tag-input {
+  border: none;
+  outline: none;
+  font-size: var(--fs-12);
+  color: var(--text);
+  font-family: inherit;
+  background: transparent;
+  width: 90px;
+}
+
+.slash-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 7px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: var(--fs-14);
+  color: var(--text);
+  text-align: left;
+}
+
+.slash-item:hover {
+  background: var(--hover);
+}
+
+.slash-item-active {
+  background: var(--accent-soft);
+}
+
+/* "+" insert-block menu (Feishu-style) */
+
+.insert-block-search {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  font-size: var(--fs-13);
+  outline: none;
+  margin-bottom: 6px;
+}
+
+.insert-block-search:focus {
+  border-color: var(--accent);
+}
+
+.insert-block-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.insert-group-title {
+  font-size: var(--fs-11);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: var(--space-2) 10px var(--space-1);
+}
+
+.insert-icon {
+  width: 22px;
+  text-align: center;
+  font-size: var(--fs-13);
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.insert-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.insert-shortcut {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: var(--space-3);
+  font-size: var(--fs-13);
+  color: var(--text-dim);
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+/* Vertical row stacking for "常用"/"多维表格" items. */
+.insert-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.insert-caret {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: var(--space-3);
+  font-size: var(--fs-14);
+  color: var(--text-dim);
+}
+
+/* Second-level submenu (分栏 count picker). Fixed position, opens to the RIGHT
+   of the 分栏 row (anchored via inline top/left from its rect). */
+.insert-columns-sub {
+  position: fixed;
+  z-index: 70;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-2);
+  animation: pop 0.16s ease;
+}
+
+.insert-columns-label {
+  font-size: var(--fs-11);
+  color: var(--text-dim);
+  margin-bottom: var(--space-2);
+}
+
+/* Feishu-style count track: a single row of vertical bars; the bars up to the
+   selected count are highlighted (blue = on, others = dark), like the reference
+   "选择栏数" picker. Hovering a bar selects that many columns. */
+.insert-columns-sub {
+  position: fixed;
+  z-index: 70;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-2);
+  animation: pop 0.16s ease;
+}
+
+.insert-columns-label {
+  font-size: var(--fs-11);
+  color: var(--text-dim);
+  margin-bottom: var(--space-2);
+}
+
+.insert-columns-track {
+  display: flex;
+  gap: 3px;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.insert-columns-cell {
+  display: block;
+  width: 22px;
+  height: 52px;
+  border-radius: 2px;
+  background: var(--text-faint);
+  transition: background var(--transition-fast);
+}
+
+.insert-columns-cell.on {
+  background: var(--accent);
+}
+
+.insert-block-empty {
+  padding: var(--space-3);
+  color: var(--text-dim);
+  font-size: var(--fs-13);
+  text-align: center;
+}
+
+/* 基础 blocks: Feishu-style horizontal icon-tile grid (2 columns), so H1/H2/H3,
+   list, quote, code etc. read as a compact row of tiles instead of a vertical list. */
+.insert-basic-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-1) var(--space-2);
+  padding: 2px 6px;
+}
+
+.insert-basic-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: none;
+  background: transparent;
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  min-width: 0;
+}
+
+.insert-basic-item:hover {
+  background: var(--hover);
+}
+
+.insert-basic-icon {
+  width: 22px;
+  text-align: center;
+  font-size: var(--fs-13);
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.insert-basic-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-13);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Inline rename input used by the tag picker. */
+.tag-manager-edit {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xs);
+  padding: 3px 6px;
+  font-size: var(--fs-13);
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  outline: none;
+}
+}

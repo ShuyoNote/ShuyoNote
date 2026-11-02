@@ -1,0 +1,29 @@
+/* S4（2026-11-01）：域抽取器搬出的**账户/设备域（`.acct-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+.acct-device-edit .set-input{flex:1 1 auto;min-width:0}
+
+/* ⭐ 2026-10-25 真机：设备名“保存”按钮被挤成竖排两字 ⇒ 不许收缩、给最小宽 */
+.acct-device-edit .set-btn{flex:0 0 auto;min-width:64px;white-space:nowrap;padding-left:14px;padding-right:14px}
+
+.acct-device-edit .set-input{height:38px}
+
+/* ⭐ 2026-10-25 owner：本机设备整块再收紧（少留白、控件同高、按钮靠右） */
+.acct-device-row .set-row-text{gap:2px}
+
+.acct-device-row .set-row-sub{line-height:1.45}
+
+.acct-device-edit .set-input{height:34px;font-size: var(--fs-12)}
+
+.acct-device-edit .set-btn{height:34px;min-width:58px;padding:0 var(--space-3);font-size: var(--fs-12)}
+
+/* ⭐ 2026-10-25 owner：设备名输入＋保存**单独一行**（标签/说明在上，控件在下） */
+.acct-device-stack .acct-device-edit .set-input{flex:1 1 auto}
+
+.acct-device-stack .acct-device-edit .set-btn{flex:0 0 auto}
+}

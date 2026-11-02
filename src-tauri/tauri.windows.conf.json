@@ -4,7 +4,8 @@
     "resources": {
       "vendor/pdfium/win-x64/bin/pdfium.dll": "pdfium.dll",
       "../tools/shuyonote-mcp/index.mjs": "mcp/index.mjs",
-      "../tools/shuyonote-mcp/paths.mjs": "mcp/paths.mjs"
+      "../tools/shuyonote-mcp/paths.mjs": "mcp/paths.mjs",
+      "../tools/shuyonote-mcp-rust/dist/shuyonote-mcp.exe": "mcp/shuyonote-mcp.exe"
     }
   }
 }

@@ -11,6 +11,8 @@ const SITE_THEME_KEY = "shuyo-theme";
 
 /** 把官网主题值（light/dark/auto）映射成应用主题（light/dark/system）；未设置返回 null。 */
 function siteThemeToApp(): Theme | null {
+  // ⚠️ Node（web 冒烟 / SSR 形态）没有 localStorage ⇒ 只读路径要能安全降级（⛔ 不在 import 期崩）
+  if (typeof localStorage === "undefined") return null;
   const v = localStorage.getItem(SITE_THEME_KEY);
   if (v === "dark") return "dark";
   if (v === "light") return "light";
@@ -25,6 +27,7 @@ function appThemeToSite(t: Theme): string {
 
 /** 解析当前生效主题：官网优先，其次应用内设置，最后跟随系统。 */
 function effectiveTheme(): Theme {
+  if (typeof localStorage === "undefined") return "system";
   return siteThemeToApp() ?? ((localStorage.getItem(STORAGE_KEY) as Theme) || "system");
 }
 

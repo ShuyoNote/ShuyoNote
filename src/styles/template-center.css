@@ -1,0 +1,230 @@
+/* S4（2026-11-01）：域抽取器搬出的**模板中心域（`.tc-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+.tc-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.tc-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-14);
+  flex: 1;
+  min-width: 0;
+}
+
+.tc-crumb { color: var(--text-dim); }
+
+.tc-crumb-sep { color: var(--text-faint); }
+
+.tc-crumb-current { color: var(--text); font-weight: 600; }
+
+.tc-close { border: none; background: transparent; color: var(--text-faint); font-size: var(--fs-20); cursor: pointer; padding: 0 6px; border-radius: var(--radius-xs); flex-shrink: 0; }
+
+.tc-close:hover { color: var(--text); background: var(--hover); }
+
+.tc-tabs { display: flex; gap: var(--space-1); margin-bottom: var(--space-3); border-bottom: 1px solid var(--border); }
+
+.tc-tab { border: none; background: transparent; padding: var(--space-2) var(--space-3); color: var(--text-dim); font-size: var(--fs-14); cursor: pointer; position: relative; font-family: inherit; }
+
+.tc-tab:hover { color: var(--text); }
+
+.tc-tab-active { color: var(--accent); font-weight: 600; }
+
+.tc-tab-active::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
+
+.tc-search { position: relative; flex-shrink: 0; }
+
+.tc-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 15px; height: 15px; color: var(--text-faint); }
+
+.tc-search-input { width: 240px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 10px 7px var(--space-6); font-size: var(--fs-13); outline: none; background: var(--bg); color: var(--text); font-family: inherit; }
+
+.tc-search-input:focus { border-color: var(--accent); }
+
+.tc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px; }
+
+.tc-card { position: relative; border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-md); overflow: hidden; cursor: pointer; text-align: left; padding: 0; font-family: inherit; display: flex; flex-direction: column; transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast); }
+
+.tc-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: var(--shadow-sm); }
+
+.tc-card-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  z-index: 2;
+}
+
+.tc-card-del {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  border: none;
+  background: rgba(0, 0, 0, 0.28);
+  color: #fff;
+  font-size: var(--fs-14);
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+
+.tc-card:hover .tc-card-del { opacity: 1; }
+
+.tc-card-del:hover { background: var(--danger); }
+
+.tc-import {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  padding: var(--space-1) 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.tc-import:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+/* Thumbnail at the top of the card (cover bg + mini white page card). */
+.tc-preview { height: 150px; display: flex; flex-direction: column; overflow: hidden; }
+
+/* 题头图(封面照片)顶部。 */
+.tc-preview-cover { height: 74px; flex: none; background-size: cover; background-position: center 25%; }
+
+.tc-pv-card { background: #fff; flex: 1; padding: 10px var(--space-3); width: 100%; display: flex; flex-direction: column; gap: 6px; }
+
+.tc-pv-card { background: #fff; flex: 1; padding: 10px var(--space-3); width: 100%; display: flex; flex-direction: column; gap: 6px; }
+
+.tc-pv-title { height: 10px; width: 55%; border-radius: 2px; background: #e3e6eb; }
+
+.tc-pv-line { height: 6px; border-radius: 2px; background: #eef0f4; }
+
+/* 模板内容快照：迷你文本行。 */
+.tc-pv-text {
+  font-size: var(--fs-10);
+  color: #4a4f5a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.5;
+}
+
+.tc-pv-head {
+  font-size: var(--fs-11);
+  font-weight: 700;
+  color: #20242c;
+}
+
+.tc-card-body { padding: var(--space-3) 14px; display: flex; flex-direction: column; gap: var(--space-1); }
+
+.tc-card-name { font-size: var(--fs-14); font-weight: 600; color: var(--text); }
+
+.tc-card-tag { font-size: var(--fs-11); color: var(--text-faint); }
+
+.tc-empty { color: var(--text-faint); font-size: var(--fs-13); padding: var(--space-7) 0; text-align: center; }
+
+@media (max-width: 768px) {
+/* ---------- 头部：两行（面包屑 + 导入 + 关闭 / 搜索整行） ---------- */
+  .tc-head {
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+    margin-bottom: 10px;
+  }
+/* `order` 是必需的：DOM 顺序是 面包屑 → 搜索 → 导入 → 关闭，
+     而窄屏要让搜索掉到第二行、两个按钮留在第一行右端。 */
+  .tc-breadcrumb { order: 1; flex: 1 1 auto; }
+.tc-import { order: 2; min-height: 44px; padding: var(--space-1) var(--space-3); }
+.tc-close { order: 3; }
+.tc-search {
+    order: 4;
+    /* `flex-basis: 100%` 是"独占一行"在 flex 里的写法：它跟谁都不挤，
+       于是第一行只会是"面包屑 + 导入 + 关闭"。 */
+    flex: 1 1 100%;
+  }
+.tc-search-input {
+    width: 100%;
+    /* 触屏命中区 ≥44（仓库口径）：搜索是这一层的主要动作，不是装饰。 */
+    min-height: 44px;
+    font-size: var(--fs-14);
+  }
+/* ---------- 分类页签：单行横向滚动 ---------- */
+  .tc-tabs {
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    /* 选中态那条下划线是 `bottom: -1px`，而 `overflow` 在 padding box 上裁——
+       不留这 2px 就会被裁掉一半（2px 变 1px）。 */
+    padding-bottom: 2px;
+  }
+.tc-tabs::-webkit-scrollbar { display: none; }
+/* `flex: 0 0 auto`：页签不许被压扁（压扁就等于文字看不全）。 */
+  .tc-tab { flex: 0 0 auto; min-height: 44px; padding: var(--space-2) 14px; }
+/* ---------- 卡片：两列（140px 起），缩略图跟着收一档 ----------
+     ⚠️ 下限必须是 **140px 而不是 160px**：320px（iPhone SE / 老 Android）可用宽只有
+     320 − 14×2 = 292px，`minmax(160px,1fr)` 在 2×160+12 = 332 > 292 时退回**一列**——
+     一张卡占满 292px、封面却只有 56px 高，版式整个散掉（实测过）。
+     140px 时 2×140+12 = 292 正好两列；390px 上每列仍是 1fr 拉出来的 175px。 */
+  .tc-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: var(--space-3);
+  }
+/* 桌面一张卡 240px 起、缩略图 150px（封面 74px）；140~175px 宽的卡上照搬，
+     正文快照会被挤成一条缝，所以封面 / 内容区 / 字号一起等比收一档。 */
+  .tc-preview { height: 112px; }
+.tc-preview-cover { height: 56px; }
+.tc-pv-card { padding: var(--space-2) 9px; gap: 5px; }
+.tc-pv-text { font-size: var(--fs-9); }
+.tc-pv-head { font-size: var(--fs-10); }
+.tc-card-body { padding: 9px 10px; }
+.tc-card-name { font-size: var(--fs-13); }
+}
+
+@media (max-width: 768px), (hover: none) {
+/* 两个按钮**横排**（桌面是竖排两行）：56px 高的封面里塞不下两个 44 高的按钮，
+     横排才放得进上下各 6px 的余量。`top/right` 收到 2px，视觉圆才贴得住角。 */
+  .tc-card-actions {
+    top: 2px;
+    right: 2px;
+    flex-direction: row;
+    gap: 0;
+  }
+/* `.tc-card:hover .tc-card-del` 必须一起写：基础规则里那条是 (0,2,0)，
+     在**能 hover**的环境（窄窗口 + 鼠标）里比 `.tc-card-del` (0,1,0) 大——
+     不带它，尺寸会退回 22×22。 */
+  .tc-card-del,
+  .tc-card:hover .tc-card-del {
+    opacity: 1;
+    /* 44×44 是**命中区**，下面那个半径 15px 的圆才是视觉尺寸（30px）。 */
+    width: 44px;
+    height: 44px;
+    border: none;
+    background: radial-gradient(circle 15px at 50% 50%, rgba(0, 0, 0, 0.45) 0, rgba(0, 0, 0, 0.45) 14px, transparent 15px);
+    color: #fff;
+    font-size: var(--fs-14);
+  }
+/* 悬停仍走危险色（基础规则 `.tc-card-del:hover` 的 background: var(--danger)）。 */
+  .tc-card-del:hover {
+    background: radial-gradient(circle 15px at 50% 50%, var(--danger) 0, var(--danger) 14px, transparent 15px);
+  }
+}
+}

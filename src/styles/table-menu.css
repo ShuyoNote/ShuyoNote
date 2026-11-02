@@ -1,0 +1,75 @@
+/* S4-3（2026-11-01）：从 App.css 整段搬出的**表格工具条域**（`.table-menu*`，8 条规则）。
+
+- 选择理由：整块连续、**块内无 @media**（响应式覆盖问题不存在）、类名运行时契约不变。
+- 纯搬运：不改选择器/声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+- 依赖：`animation: pop`（keyframes 仍在 App.css，全局可用）；不涉及第三方覆盖。
+*/
+@layer legacy {
+/* Table toolbar (Wolai-style) */
+.table-menu {
+  position: fixed;
+  z-index: 56;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  animation: pop 0.14s ease;
+}
+
+.table-menu button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.table-menu button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.table-menu button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.table-menu button.danger {
+  color: var(--danger);
+}
+
+.table-menu button.danger:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.table-menu-sep {
+  display: block;
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: var(--border);
+  align-self: center;
+  flex-shrink: 0;
+}
+
+.table-menu-swatch {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  border: 1px solid var(--border-strong);
+}
+}

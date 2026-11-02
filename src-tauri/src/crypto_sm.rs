@@ -86,7 +86,8 @@ fn sm4_key(enc_key: &[u8; 32]) -> &[u8] {
 
 /// HMAC-SM3 tag，覆盖调用方给的**完整**被保护字节（含版本头，见 §0.1）。
 fn tag_of(mac_key: &[u8; 32], covered: &[u8]) -> Result<[u8; SM_TAG_LEN], String> {
-    let mut m = HmacSm3::new_from_slice(mac_key).map_err(|e| format!("HMAC-SM3 初始化失败: {e}"))?;
+    let mut m =
+        HmacSm3::new_from_slice(mac_key).map_err(|e| format!("HMAC-SM3 初始化失败: {e}"))?;
     m.update(covered);
     let mut tag = [0u8; SM_TAG_LEN];
     tag.copy_from_slice(&m.finalize().into_bytes());
@@ -94,7 +95,11 @@ fn tag_of(mac_key: &[u8; 32], covered: &[u8]) -> Result<[u8; SM_TAG_LEN], String
 }
 
 /// 加密：`magic | 0x02 | iv(16) | SM4-CBC-PKCS7(ct) | HMAC-SM3(32)`。
-pub fn encrypt(plaintext: &[u8], enc_key: &[u8; 32], mac_key: &[u8; 32]) -> Result<Vec<u8>, String> {
+pub fn encrypt(
+    plaintext: &[u8],
+    enc_key: &[u8; 32],
+    mac_key: &[u8; 32],
+) -> Result<Vec<u8>, String> {
     let mut iv = [0u8; SM_IV_LEN];
     OsRng.fill_bytes(&mut iv);
     let ct = Encryptor::<Sm4>::new_from_slices(sm4_key(enc_key), &iv)
@@ -125,11 +130,11 @@ pub fn decrypt(blob: &[u8], enc_key: &[u8; 32], mac_key: &[u8; 32]) -> Result<Ve
     let body = &blob[..blob.len() - SM_TAG_LEN];
     let tag = &blob[blob.len() - SM_TAG_LEN..];
     // `verify_slice` 是**常量时间**比较（不要手写 `==`：那会把 tag 按字节泄漏出去）。
-    let mut m = HmacSm3::new_from_slice(mac_key).map_err(|e| format!("HMAC-SM3 初始化失败: {e}"))?;
+    let mut m =
+        HmacSm3::new_from_slice(mac_key).map_err(|e| format!("HMAC-SM3 初始化失败: {e}"))?;
     m.update(body);
-    m.verify_slice(tag).map_err(|_| {
-        "密文校验不通过（内容没有被解开）".to_string()
-    })?;
+    m.verify_slice(tag)
+        .map_err(|_| "密文校验不通过（内容没有被解开）".to_string())?;
     let iv = &body[HEADER_LEN..HEADER_LEN + SM_IV_LEN];
     let ct = &body[HEADER_LEN + SM_IV_LEN..];
     Decryptor::<Sm4>::new_from_slices(sm4_key(enc_key), iv)
@@ -146,7 +151,10 @@ mod tests {
     /// 这条断言的作用不是"验证 200000 是对的"，而是**让改小它必须显式改这一行**（同时会惊动 review）。
     #[test]
     fn kdf_rounds_are_the_pinned_value() {
-        assert_eq!(SM_KDF_ROUNDS, 200_000, "PBKDF2-HMAC-SM3 迭代数被改了 —— §0-D 要求先压测、并同步文档");
+        assert_eq!(
+            SM_KDF_ROUNDS, 200_000,
+            "PBKDF2-HMAC-SM3 迭代数被改了 —— §0-D 要求先压测、并同步文档"
+        );
         assert!(SM_KDF_ROUNDS >= 100_000, "迭代数低于 10 万没有理由");
     }
 
@@ -161,7 +169,11 @@ mod tests {
         let key = hex::decode("0123456789abcdeffedcba9876543210").unwrap();
         let pt = hex::decode("0123456789abcdeffedcba9876543210").unwrap();
         let cipher = Sm4::new_from_slice(&key).unwrap();
-        assert_eq!(<Sm4 as BlockSizeUser>::block_size(), SM4_KEY_LEN, "SM4 分组应为 16 字节");
+        assert_eq!(
+            <Sm4 as BlockSizeUser>::block_size(),
+            SM4_KEY_LEN,
+            "SM4 分组应为 16 字节"
+        );
         let mut block = Block::<Sm4>::default();
         block.copy_from_slice(&pt);
         cipher.encrypt_block(&mut block);
@@ -187,8 +199,16 @@ mod tests {
         let pt = b"ShuyoNote-GM-p1-application-layer-aead";
         assert_eq!(pt.len() % 16 != 0, true, "明文应当不是整块，否则测不到填充");
         let ct = encrypt(pt, &enc, &mac).unwrap();
-        assert_eq!(&ct[..HEADER_LEN], &[MAGIC, VERSION_SM4], "v2 必须带 magic+version 头");
-        assert_eq!((ct.len() - HEADER_LEN - SM_IV_LEN - SM_TAG_LEN) % 16, 0, "密文应是块整数倍");
+        assert_eq!(
+            &ct[..HEADER_LEN],
+            &[MAGIC, VERSION_SM4],
+            "v2 必须带 magic+version 头"
+        );
+        assert_eq!(
+            (ct.len() - HEADER_LEN - SM_IV_LEN - SM_TAG_LEN) % 16,
+            0,
+            "密文应是块整数倍"
+        );
         assert_eq!(decrypt(&ct, &enc, &mac).unwrap(), pt);
     }
 
@@ -198,7 +218,11 @@ mod tests {
     fn tampering_anywhere_fails_before_decrypting() {
         let (enc, mac) = derive_keys("pw", &[5u8; 16]);
         let base = encrypt(b"integrity matters", &enc, &mac).unwrap();
-        for (what, idx) in [("版本头", 1usize), ("IV", HEADER_LEN + 3), ("密文", HEADER_LEN + SM_IV_LEN + 1)] {
+        for (what, idx) in [
+            ("版本头", 1usize),
+            ("IV", HEADER_LEN + 3),
+            ("密文", HEADER_LEN + SM_IV_LEN + 1),
+        ] {
             let mut bad = base.clone();
             bad[idx] ^= 0x01;
             let err = decrypt(&bad, &enc, &mac).unwrap_err();
@@ -229,9 +253,15 @@ mod tests {
     #[test]
     fn encryption_and_mac_keys_are_not_interchangeable() {
         let (enc, mac) = derive_keys("pw", &[7u8; 16]);
-        assert_ne!(enc, mac, "KDF 吐出的两把密钥相同 —— 前 32/后 32 的切分被改坏了");
+        assert_ne!(
+            enc, mac,
+            "KDF 吐出的两把密钥相同 —— 前 32/后 32 的切分被改坏了"
+        );
         let ct = encrypt(b"two keys", &enc, &mac).unwrap();
-        assert!(decrypt(&ct, &mac, &enc).is_err(), "两把密钥互换后竟然能解开");
+        assert!(
+            decrypt(&ct, &mac, &enc).is_err(),
+            "两把密钥互换后竟然能解开"
+        );
     }
 
     /// ★★ **KDF 黄金向量（跨实现双方都产出过这一串 64 字节）**。
@@ -249,11 +279,18 @@ mod tests {
         const PASS: &str = "a-typical-passphrase";
         const SALT: [u8; 16] = [0x5a; 16];
         const EXPECT64: &str = "b5623ce8682771b65b7d72a9c0b707adad32fa36e0c03ee92f2832ac594ffad99c3469e8dc977dd3fd159ef69d41d39742a54f140e932498e5b5c069fb0861d4";
-        assert_eq!(EXPECT64.len(), SM_KDF_OUT_LEN * 2, "黄金向量长度与 KDF 输出口径不一致");
+        assert_eq!(
+            EXPECT64.len(),
+            SM_KDF_OUT_LEN * 2,
+            "黄金向量长度与 KDF 输出口径不一致"
+        );
 
         let (enc, mac) = derive_keys(PASS, &SALT);
         let joined = format!("{}{}", hex::encode(enc), hex::encode(mac));
-        assert_eq!(joined, EXPECT64, "64 字节 KDF 输出与跨实现黄金向量不一致 —— 跨设备会互相解不开");
+        assert_eq!(
+            joined, EXPECT64,
+            "64 字节 KDF 输出与跨实现黄金向量不一致 —— 跨设备会互相解不开"
+        );
 
         // 口径 1：**SM4 用前 16 字节**（不是前 32、也不是后 16）。这条挡的正是"改切片不红"的缺口。
         assert_eq!(
@@ -262,7 +299,11 @@ mod tests {
             "SM4 密钥取的不是 KDF 输出的**前 16 字节**（口径 1 被改坏 ⇒ 跨设备互解失败）"
         );
         // MAC 用后 32 字节（§0.1）；两把独立密钥不得相同。
-        assert_eq!(hex::encode(mac), &EXPECT64[SM_KDF_OUT_LEN * 2 - 64..], "MAC 密钥不是 KDF 输出的后 32 字节");
+        assert_eq!(
+            hex::encode(mac),
+            &EXPECT64[SM_KDF_OUT_LEN * 2 - 64..],
+            "MAC 密钥不是 KDF 输出的后 32 字节"
+        );
         assert_ne!(enc, mac, "两把密钥相同 —— EtM 的独立性没了");
     }
 
@@ -273,7 +314,10 @@ mod tests {
         let a = encrypt(b"same plaintext", &enc, &mac).unwrap();
         let b = encrypt(b"same plaintext", &enc, &mac).unwrap();
         assert_ne!(a, b, "两次加密字节相同 ⇒ IV 复用了");
-        assert_eq!(decrypt(&a, &enc, &mac).unwrap(), decrypt(&b, &enc, &mac).unwrap());
+        assert_eq!(
+            decrypt(&a, &enc, &mac).unwrap(),
+            decrypt(&b, &enc, &mac).unwrap()
+        );
     }
 
     /// KDF 确定性 + 口令/盐都参与：同口令同盐必同结果，换盐或换口令必不同（两把都要看）。
@@ -305,13 +349,19 @@ mod tests {
         // 国密那条只喂应用层 AEAD），§0-D 的"<1 秒"要按**两条之和**算。
         let t = Instant::now();
         let _ = crate::crypto::derive_key("a-typical-passphrase", &salt).unwrap();
-        println!("Argon2id（默认参数）        ：{:8.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+        println!(
+            "Argon2id（默认参数）        ：{:8.1} ms",
+            t.elapsed().as_secs_f64() * 1000.0
+        );
         for rounds in [50_000u32, 100_000, 200_000, 400_000] {
             let t = Instant::now();
             let mut out = [0u8; SM_KDF_OUT_LEN];
             pbkdf2::pbkdf2_hmac::<Sm3>(b"a-typical-passphrase", &salt, rounds, &mut out);
             let ms = t.elapsed().as_secs_f64() * 1000.0;
-            println!("PBKDF2-HMAC-SM3 {rounds:>7} 轮：{ms:8.1} ms  （每 1 万轮 {:.1} ms）", ms / (rounds as f64 / 10_000.0));
+            println!(
+                "PBKDF2-HMAC-SM3 {rounds:>7} 轮：{ms:8.1} ms  （每 1 万轮 {:.1} ms）",
+                ms / (rounds as f64 / 10_000.0)
+            );
         }
         println!("当前常量 SM_KDF_ROUNDS = {SM_KDF_ROUNDS}");
     }

@@ -1,4 +1,4 @@
-# 插件 API（v1.2.0）
+# 插件 API（v1.27.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.2.0",
+  "apiVersion": "1.27.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.2.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.27.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -96,53 +96,102 @@ register({
 | `write:properties` | 设置页面属性：给页面设置属性值；**写入前会先给你看草稿并等你确认** | medium |
 | `write:tags` | 给页面加标签：给页面加标签；**写入前会先给你看草稿并等你确认** | medium |
 | `export:files` | 把内容保存成文件：存到哪、存不存都由你在系统保存对话框里定（插件只能给一个建议文件名，给不了路径）。**导出的文件是明文**，不随空间的加密一起保护 | medium |
+| `read:versions` | 读取历史版本：读取页面的历史版本清单与某个版本的正文（只读；不会回滚任何内容） | low |
+| `read:trash` | 读取回收站：读取已软删除页面的清单（标题与删除时间；不含正文，也不恢复/清空） | low |
+| `write:files` | 移动/改名/删除附件：改附件的归属/显示名，或删除附件条目（**正文仍引用时拒绝**；写入前会先给你看草稿并等你确认） | medium |
 
 ## 4. 能力（`api.*`）
 
 | 能力 | 签名 | 需要权限 | scope | 写入中介 | 返回 | 自 |
 |---|---|---|---|---|---|---|
-| `page.current` | `api.page.current()` | `read:page.current` | `current-space` | — | string | 1.0.0 |
-| `pages.count` | `api.pages.count()` | `read:pages` | `current-space` | — | number | 1.0.0 |
+| `page.current` | `api.page.current(includeAnchors)` | `read:page.current` | `current-space` | — | string | 1.0.0 |
+| `pages.count` | `api.pages.count(spaceId)` | `read:pages` | `current-space` | — | number | 1.0.0 |
 | `pages.list` | `api.pages.list(limit, spaceId)` | `read:pages` | `current-space` | — | array | 1.0.0 |
-| `pages.get` | `api.pages.get(id, offset, limit)` | `read:pages` | `current-space` | — | object | 1.0.0 |
+| `pages.changes_since` | `api.pages.changesSince(since, spaceId, limit)` | `read:pages` | `current-space` | — | object | 1.15.0 |
+| `pages.get` | `api.pages.get(id, offset, limit, includeAnchors, spaceId)` | `read:pages` | `current-space` | — | object | 1.0.0 |
 | `pages.search` | `api.pages.search(q, spaceId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
-| `tags.list` | `api.tags.list()` | `read:tags` | `current-space` | — | array | 1.0.0 |
-| `blocks.list` | `api.blocks.list(pageId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
+| `pages.tree` | `api.pages.tree(spaceId, limit)` | `read:pages` | `current-space` | — | object | 1.3.0 |
+| `db.schema` | `api.db.schema(pageId, spaceId)` | `read:pages` | `current-space` | — | object | 1.4.0 |
+| `db.rows` | `api.db.rows(pageId, viewId, where, limit, offset, spaceId)` | `read:pages` | `current-space` | — | object | 1.4.0 |
+| `db.rows_write` | `api.db.rows_write(pageId, rows, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.11.0 |
+| `db.rows_delete` | `api.db.rows_delete(pageId, rowIds, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.11.0 |
+| `versions.list` | `api.versions.list(pageId, limit, spaceId)` | `read:versions` | `current-space` | — | array | 1.5.0 |
+| `version.get` | `api.version.get(pageId, versionId, offset, limit, includeAnchors, spaceId)` | `read:versions` | `current-space` | — | object | 1.5.0 |
+| `trash.list` | `api.trash.list(spaceId, limit)` | `read:trash` | `current-space` | — | array | 1.5.0 |
+| `drafts.status` | `api.drafts.status(draftId)` | `read:pages` | `current-space` | — | object | 1.12.0 |
+| `audit.tail` | `api.audit.tail(limit, onlyWrites)` | `read:pages` | `current-space` | — | array | 1.12.0 |
+| `tags.list` | `api.tags.list(spaceId)` | `read:tags` | `current-space` | — | array | 1.0.0 |
+| `blocks.list` | `api.blocks.list(pageId, limit, spaceId)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | — | array | 1.0.0 |
-| `files.list` | `api.files.list(pageId)` | `read:files` | `current-space` | — | array | 1.0.0 |
-| `files.search` | `api.files.search(query, limit)` | `read:files` | `current-space` | — | array | 1.1.0 |
-| `files.read` | `api.files.read(id, offset, limit)` | `read:files` | `current-space` | — | object | 1.1.0 |
+| `files.list` | `api.files.list(pageId, spaceId)` | `read:files` | `current-space` | — | array | 1.0.0 |
+| `files.search` | `api.files.search(query, limit, spaceId)` | `read:files` | `current-space` | — | array | 1.1.0 |
+| `files.read` | `api.files.read(id, offset, limit, spaceId)` | `read:files` | `current-space` | — | object | 1.1.0 |
+| `files.stat` | `api.files.stat(attId, spaceId)` | `read:files` | `current-space` | — | object | 1.5.0 |
+| `files.extract_status` | `api.files.extract_status(attId, spaceId)` | `read:files` | `current-space` | — | object | 1.5.0 |
+| `files.list_orphan` | `api.files.list_orphan(limit, offset, spaceId)` | `read:files` | `current-space` | — | object | 1.5.0 |
+| `coverage.report` | `api.coverage.report(spaceId)` | `read:files` | `current-space` | — | object | 1.92.0 |
 | `editor.insertText` | `api.editor.insertText(text)` | `write:page.current` | `current-space` | 即时 | void | 1.0.0 |
-| `pages.create` | `api.pages.create(title, content, parentId, fence)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
-| `blocks.append` | `api.blocks.append(text, pageId, fence)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `pages.create` | `api.pages.create(title, content, parentId, fence, dryRun, clientRequestId, spaceId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `blocks.append` | `api.blocks.append(text, pageId, fence, expectedRev, dryRun, clientRequestId, spaceId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `blocks.patch` | `api.blocks.patch(blockId, markdown, text, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.8.0 |
+| `blocks.insert` | `api.blocks.insert(pageId, afterBlockId, markdown, text, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.8.0 |
+| `blocks.delete` | `api.blocks.delete(blockId, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.8.0 |
 | `user.notify` | `api.notify(message)` | — | `app` | — | void | 1.0.0 |
 | `kv.get` | `api.kv.get(key, scope)` | `kv:own` | `app` | — | string | 1.0.0 |
 | `kv.set` | `api.kv.set(key, value, scope)` | `kv:own` | `app` | 即时 | void | 1.0.0 |
 | `kv.remove` | `api.kv.remove(key, scope)` | `kv:own` | `app` | 即时 | void | 1.0.0 |
 | `settings.get` | `api.settings.get(key)` | `kv:own` | `app` | — | string | 1.0.0 |
-| `properties.list` | `api.properties.list()` | `read:properties` | `current-space` | — | array | 1.0.0 |
-| `properties.set` | `api.properties.set(attrId, value, pageId)` | `write:properties` | `current-space` | **草稿确认** | object | 1.0.0 |
-| `tags.add` | `api.tags.add(name, pageId)` | `write:tags` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `properties.list` | `api.properties.list(spaceId)` | `read:properties` | `current-space` | — | array | 1.0.0 |
+| `properties.set` | `api.properties.set(attrId, value, pageId, expectedRev, spaceId, dryRun, clientRequestId)` | `write:properties` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `tags.add` | `api.tags.add(name, pageId, expectedRev, spaceId, dryRun, clientRequestId)` | `write:tags` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `log.write` | `api.log(message, level)` | — | `app` | — | void | 1.0.0 |
 | `files.export` | `api.files.export(fileName, content)` | `export:files` | `app` | **草稿确认** | object | 1.0.0 |
-| `pages.importMarkdown` | `api.pages.importMarkdown(title, markdown, parentId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
-| `pages.update` | `api.pages.update(id, markdown, content, title)` | `write:pages` | `current-space` | **草稿确认** | object | 1.1.0 |
+| `files.move` | `api.files.move(attId, toPageId, expectedSha, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.9.0 |
+| `files.rename` | `api.files.rename(attId, name, expectedSha, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.9.0 |
+| `files.delete` | `api.files.delete(attId, expectedSha, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.9.0 |
+| `templates.list` | `api.templates.list()` | `read:pages` | `current-space` | — | array | 1.12.0 |
+| `templates.apply` | `api.templates.apply(templateId, parentId, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.9.0 |
+| `files.upload_to_page` | `api.files.upload_to_page(pageId, name, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.10.0 |
+| `import.docpackage` | `api.import.docpackage(parentId, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.10.0 |
+| `files.detach` | `api.files.detach(attId, spaceId, dryRun, clientRequestId)` | `write:files` | `current-space` | **草稿确认** | object | 1.10.0 |
+| `folders.create` | `api.folders.create(title, parentId, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.7.0 |
+| `nodes.move` | `api.nodes.move(id, newParentId, sortOrder, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.7.0 |
+| `nodes.rename` | `api.nodes.rename(id, title, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.7.0 |
+| `nodes.delete` | `api.nodes.delete(id, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.7.0 |
+| `trash.restore` | `api.trash.restore(id, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.7.0 |
+| `pages.revert` | `api.pages.revert(pageId, versionId, expectedRev, spaceId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.7.0 |
+| `tags.remove` | `api.tags.remove(name, pageId, expectedRev, spaceId, dryRun, clientRequestId)` | `write:tags` | `current-space` | **草稿确认** | object | 1.7.0 |
+| `properties.unset` | `api.properties.unset(attrId, pageId, expectedRev, spaceId, dryRun, clientRequestId)` | `write:properties` | `current-space` | **草稿确认** | object | 1.7.0 |
+| `files.download` | `api.files.download(attId, spaceId)` | `export:files` | `current-space` | — | object | 1.5.0 |
+| `blobs.fetch` | `api.blobs.fetch(handle)` | `export:files` | `current-space` | — | object | 1.5.0 |
+| `export.markdown` | `api.export.markdown(pageId, spaceId)` | `export:files` | `current-space` | — | object | 1.6.0 |
+| `export.page_markdown` | `api.export.pageMarkdown(pageId, spaceId)` | `export:files` | `current-space` | — | object | 1.12.0 |
+| `export.space_markdown` | `api.export.spaceMarkdown(spaceId, pageId)` | `export:files` | `current-space` | — | object | 1.12.0 |
+| `export.docpackage` | `api.export.docpackage(pageId, spaceId)` | `export:files` | `current-space` | — | object | 1.6.0 |
+| `pages.importMarkdown` | `api.pages.importMarkdown(title, markdown, parentId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `pages.import_markdown` | `api.pages.import_markdown(title, markdown, parentId, dryRun, clientRequestId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.12.0 |
+| `pages.update` | `api.pages.update(id, markdown, content, title, expectedRev, dryRun, clientRequestId, spaceId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.1.0 |
 | `spaces.list` | `api.spaces.list()` | `read:pages` | `app` | — | object | 1.1.0 |
+| `space.current` | `api.space.current()` | `read:pages` | `current-space` | — | object | 1.12.0 |
 | `spaces.switch` | `api.spaces.switch(id, name)` | `write:pages` | `app` | **草稿确认** | object | 1.1.0 |
 
 ### `page.current` — 读取当前页
 
-- 调用：`api.page.current()`
+- 调用：`api.page.current(includeAnchors)`
 - 权限：`read:page.current`
 - scope：`current-space`
-- 返回：当前页的 content_json 原始字符串（未解析；插件自行 JSON.parse）
+- 返回：**插件面**：当前页正文的原始内容字符串（未解析；插件自行 JSON.parse）；没有打开页面时返回空串。**外部/MCP 面**（`page_current`）与 pages.get 同口径：{id, title, content_text, kind, chars_total, offset, limit, rev?}；没有打开的页面时返回 {opened:false, note}（如实说，不编造）
+- 参数：
+  - `includeAnchors`: `boolean`（可选），默认 `true` —— 是否在正文里给每个顶层块后插一行块锚点注释（可选，默认 true；与 pages.get 同口径）。**插件面忽略它**（api.page.current 仍返回原始内容字符串）
 
 ### `pages.count` — 本空间页面总数
 
-- 调用：`api.pages.count()`
+- 调用：`api.pages.count(spaceId)`
 - 权限：`read:pages`
 - scope：`current-space`
-- 返回：本空间未删除页面的数量
+- 返回：该空间未删除节点的数量（与 pages.list 的集合同口径：页面/数据库/文件夹各算一个节点）
+- 参数：
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
 
 ### `pages.list` — 列出本空间页面
 
@@ -154,16 +203,29 @@ register({
   - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（上限 200）
   - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
 
-### `pages.get` — 读取指定页面
+### `pages.changes_since` — 页级增量（自某时刻起变了哪些页）
 
-- 调用：`api.pages.get(id, offset, limit)`
+- 调用：`api.pages.changesSince(since, spaceId, limit)`
 - 权限：`read:pages`
 - scope：`current-space`
-- 返回：{id, title, content_text(**已按 offset/limit 切好的窗口**), kind, chars_total(整页字符数), offset, limit}；不存在返回 null
+- 返回：页级增量（不返回块级 diff）
+- 参数：
+  - `since`: `number` —— 起点：ms 时间戳或 ISO/RFC3339 字符串
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）；跨空间需「只读（全部空间）」档，未开 ⇒ permission_denied 点名 read:all-spaces
+  - `limit`: `number`（可选） —— 最多返回多少页（默认 50 / 上限 200）
+
+### `pages.get` — 读取指定页面
+
+- 调用：`api.pages.get(id, offset, limit, includeAnchors, spaceId)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：{id, title, content_text(**已按 offset/limit 切好的窗口**；默认还带块锚点注释行), kind, chars_total(整页字符数), offset, limit, rev?(可选：`<updated_at 毫秒>:<正文指纹 sha256 前 8 位小写>`，拿不到正文时**不带**这个键)}；不存在 ⇒ **抛结构化 `not_found`**（不再返回 null）
 - 参数：
   - `id`: `string` —— 页面 id
   - `offset`: `number`（可选），默认 `0` —— 从第几个**字符**开始（默认 0；按 Unicode 标量计数，不是 UTF-16 码元）
   - `limit`: `number`（可选），默认 `6000` —— 最多返回多少字符（默认 6000，上限 20000）
+  - `includeAnchors`: `boolean`（可选），默认 `true` —— 是否在正文里给每个顶层块后插一行块锚点注释 `<!-- b:<blockId> -->`（可选，默认 true）；传 false ⇒ 返回的正文与旧行为**逐字节相同**（不占额外 token）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。跨空间需『可写（全部空间）』档（它同时给读全空间）；目标锁着 ⇒ permission_denied（locked）。
 
 ### `pages.search` — 搜索本空间页面
 
@@ -176,22 +238,143 @@ register({
   - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
   - `limit`: `number`（可选），默认 `8` —— 最多返回多少条（上限 100）
 
+### `pages.tree` — 读取空间页面树
+
+- 调用：`api.pages.tree(spaceId, limit)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：{spaceId, spaceName, nodes:[{id,title,kind,parentId,order}], total, truncated}：一次给出整个空间的层级（kind = page/database/folder；parentId=null 是顶层；order = 树里的排序值）。节点按树顺序（sort_order → created_at）排列；超过 limit ⇒ truncated:true 并给 total
+- 参数：
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
+  - `limit`: `number`（可选），默认 `2000` —— 最多返回多少个节点（默认 2000，上限 2000；超出 ⇒ truncated:true）
+
+### `db.schema` — 读取数据库结构
+
+- 调用：`api.db.schema(pageId, spaceId)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：{pageId, spaceId, views:[{id,name,type}], columns:[{id,name,type,isFormula?,isRollup?}], relations:[{id,name,type}]}：列与视图与界面**同一条查询**（getDbColumns / listDbViews）；公式列带 isFormula:true、汇总列带 isRollup:true（**只标明类型，本工具不计算任何值**）；relations 是 type=ref 的关系列（取值形如 `p:<pageId>`）
+- 参数：
+  - `pageId`: `string` —— 数据库页 id（**必填**）。本应用的数据库是 `kind=database` 的页面节点（在 pages.tree / pages.list 里看得到）；⛔ 不是「数据库块所在的那篇普通笔记」
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
+
+### `db.rows` — 读取数据库行（原始值）
+
+- 调用：`api.db.rows(pageId, viewId, where, limit, offset, spaceId)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：{pageId, spaceId, total, returned, rows:[{id, values:{<columnId>: <原始值>}}], truncated, note}：total 是**过滤后**的总行数（不受 limit 影响）；values **只给原始值**（原始字符串），⛔ **不重算公式/汇总** ⇒ 可能与界面里显示的计算值不同（note 里有这句）；truncated=true 表示本次没给全（还有更多行，或响应体撞了 200 KB 上限）
+- 参数：
+  - `pageId`: `string` —— 数据库页 id（**必填**）。本应用的数据库是 `kind=database` 的页面节点
+  - `viewId`: `string`（可选） —— 视图 id（可选；省略 = 不加视图过滤）。给了就套用该视图保存的**标题过滤与排序**（与界面同一个视图配置）；认不出的 id ⇒ invalid_args，不会静默忽略
+  - `where`: `array`（可选） —— 简单条件数组（可选；不传 = 全部行）。形状：[{field, op, value?}]，多条之间是 **AND**；field 是列 id 或列名（**id 优先**，列名须完全一致；列必须来自 db.schema）；op 白名单 = != > >= < <= in contains is_null；in 的 value 必须是数组；is_null 不需要 value。越界/未知字段/坏操作符 ⇒ invalid_args（点名声哪条）
+  - `limit`: `number`（可选），默认 `100` —— 本页最多返回多少行（默认 100，上限 500）；分页在宿主侧执行
+  - `offset`: `number`（可选），默认 `0` —— 跳过多少行（默认 0）；与 limit 一起翻页
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
+
+### `db.rows_write` — 数据库行写入（草稿确认）
+
+- 调用：`api.db.rows_write(pageId, rows, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会新建/修改表格行（页面）→ 先给用户看草稿并确认
+- 返回：{drafted,applied:false,changed}——**不代表已写入**
+- 参数：
+  - `pageId`: `string` —— 数据库页 id
+  - `rows`: `array`（可选） —— 数组（**调用时必须提供**；缺失/空 ⇒ `bad_args`）——行数组：每行 `{rowId?（有=改，无=增）, title?（新增行必填）, values:{<columnId|列名>: 原始值}}`
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `db.rows_delete` — 数据库行删除（草稿确认）
+
+- 调用：`api.db.rows_delete(pageId, rowIds, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会删除表格行（页面）→ 先给用户看草稿并确认
+- 返回：{drafted,applied:false,changed}——**不代表已删除**
+- 参数：
+  - `pageId`: `string` —— 数据库页 id
+  - `rowIds`: `array`（可选） —— 数组（**调用时必须提供**；缺失/空 ⇒ `bad_args`）——要删的行 id 列表（必须是该数据库页的子行）
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `versions.list` — 列出页面历史版本
+
+- 调用：`api.versions.list(pageId, limit, spaceId)`
+- 权限：`read:versions`
+- scope：`current-space`
+- 返回：[{versionId, at(毫秒时间戳), title}]，按时间倒序；不含正文（读正文用 version.get）
+- 参数：
+  - `pageId`: `string` —— 页面 id
+  - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（默认 50，上限 200）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
+
+### `version.get` — 读取某个历史版本
+
+- 调用：`api.version.get(pageId, versionId, offset, limit, includeAnchors, spaceId)`
+- 权限：`read:versions`
+- scope：`current-space`
+- 返回：与 pages.get 同口径的正文窗口（{pageId, versionId, at, title, 正文字段, chars_total, offset, limit}；版本不存在 ⇒ not_found）
+- 参数：
+  - `pageId`: `string` —— 页面 id
+  - `versionId`: `string` —— 版本 id（从 versions.list 取）
+  - `offset`: `number`（可选），默认 `0` —— 从第几个**字符**开始（默认 0；按 Unicode 标量计数）
+  - `limit`: `number`（可选），默认 `6000` —— 最多返回多少字符（默认 6000，上限 20000）
+  - `includeAnchors`: `boolean`（可选），默认 `true` —— 是否在每个顶层块后插块锚点注释（可选，默认 true；与 pages.get 同口径）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
+
+### `trash.list` — 列出回收站
+
+- 调用：`api.trash.list(spaceId, limit)`
+- 权限：`read:trash`
+- scope：`current-space`
+- 返回：[{pageId, title, deletedAt(毫秒时间戳)}]，按删除时间倒序；不含正文
+- 参数：
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
+  - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（默认 50，上限 200）
+
+### `drafts.status` — 查草稿状态
+
+- 调用：`api.drafts.status(draftId)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：该草稿的当前状态（只回本会话）
+- 参数：
+  - `draftId`: `string` —— 写工具返回的 draftId
+
+### `audit.tail` — 最近审计
+
+- 调用：`api.audit.tail(limit, onlyWrites)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：本会话最近 N 条审计（⛔ 不含正文）
+- 参数：
+  - `limit`: `number`（可选） —— 最近 N 条（默认 20，上限 100）
+  - `onlyWrites`: `boolean`（可选） —— 只回写类调用（kind:write）；默认 false（兼容）
+
 ### `tags.list` — 列出本空间标签
 
-- 调用：`api.tags.list()`
+- 调用：`api.tags.list(spaceId)`
 - 权限：`read:tags`
 - scope：`current-space`
-- 返回：[{id, name, page_count}]
+- 返回：[{id, name, page_count}]：page_count 是**这个空间里**打了该标签的页面数（不含已删除页面）
+- 参数：
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
 
 ### `blocks.list` — 列出页面块
 
-- 调用：`api.blocks.list(pageId, limit)`
+- 调用：`api.blocks.list(pageId, limit, spaceId)`
 - 权限：`read:pages`
 - scope：`current-space`
 - 返回：[{blockId, text}]；**超过 limit 的块会被丢掉且没有信号**（与 pages.get 的 truncated 不同）—— 要完整块列表就显式传更大的 limit，但**上限 500 是硬上限：超过 500 块的页面，能力面拿不到后面的部分**。将来要「读全 + 有信号」，走**新增能力** `blocks.listPage`（返回 {blocks,total,truncated}）；**`blocks.list` 的形状不变**（插件面正在动，契约变更与校验加强同时落地会分不清谁的锅）
 - 参数：
   - `pageId`: `string`（可选） —— 页面 id；省略 = 当前打开的页面（与 blocks.append / tags.add 一致）
   - `limit`: `number`（可选），默认 `100` —— 最多返回多少块（默认 100，上限 500）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。跨空间需『可写（全部空间）』档（它同时给读全空间）；目标锁着 ⇒ permission_denied（locked）。
 
 ### `backlinks.list` — 列出反链
 
@@ -204,26 +387,28 @@ register({
 
 ### `files.list` — 列出页面附件元数据
 
-- 调用：`api.files.list(pageId)`
+- 调用：`api.files.list(pageId, spaceId)`
 - 权限：`read:files`
 - scope：`current-space`
 - 返回：[{id, name, mime, size}]，**不含字节**
 - 参数：
   - `pageId`: `string`（可选） —— 页面 id；省略则用当前打开的页面
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
 
 ### `files.search` — 检索文件内容（块级）
 
-- 调用：`api.files.search(query, limit)`
+- 调用：`api.files.search(query, limit, spaceId)`
 - 权限：`read:files`
 - scope：`current-space`
 - 返回：块级命中；pageId/attId 用来回链，loc 是原文位置（页号/行号/时间码）
 - 参数：
   - `query`: `string` —— 检索词（与界面搜索同一口径：兼容表意字会先归一）
   - `limit`: `number`（可选），默认 `10` —— 最多返回多少条命中（1–100）。**这里是能力面的默认值（10）**；UI/命令面 `search_chunks` 的默认值是 20 —— 两个面各自独立，刻意不对齐（裁定 2026-09-18）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
 
 ### `files.read` — 读取附件派生文本
 
-- 调用：`api.files.read(id, offset, limit)`
+- 调用：`api.files.read(id, offset, limit, spaceId)`
 - 权限：`read:files`
 - scope：`current-space`
 - 返回：派生文本段 + 总段数 + **每个抽取器的覆盖度读数**；附件不存在返回 null；还没抽过 ⇒ segments 空 + total 0（**不是**失败）。coverage 为空数组 ＝ 没有读数（未知），**不是**「抽全了」
@@ -231,6 +416,47 @@ register({
   - `id`: `string` —— 附件 id
   - `offset`: `number`（可选），默认 `0` —— 从第几段开始（默认 0）
   - `limit`: `number`（可选），默认 `200` —— 最多返回多少段（上限 1000）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
+
+### `files.stat` — 附件元数据（含 sha256）
+
+- 调用：`api.files.stat(attId, spaceId)`
+- 权限：`read:files`
+- scope：`current-space`
+- 返回：{attId, pageId, name, mime, size, sha256, spaceId}；sha256 是内容指纹（附件按它内容寻址）
+- 参数：
+  - `attId`: `string` —— 附件 id
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
+
+### `files.extract_status` — 附件抽取完整度
+
+- 调用：`api.files.extract_status(attId, spaceId)`
+- 权限：`read:files`
+- scope：`current-space`
+- 返回：{attId, name, extracted, segments, extractors:[{extractor, coverage}]}；coverage 是抽取器报的**原始覆盖度 JSON**，空串=未知（⛔ 不等于完整）
+- 参数：
+  - `attId`: `string` —— 附件 id
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
+
+### `files.list_orphan` — 列出未整理附件
+
+- 调用：`api.files.list_orphan(limit, offset, spaceId)`
+- 权限：`read:files`
+- scope：`current-space`
+- 返回：{files:[{attId,name,mime,size,sha256,createdAt}], total}；files 是**没有挂到任何页面**的附件（pageId 为空）
+- 参数：
+  - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（默认 50，上限 200）
+  - `offset`: `number`（可选），默认 `0` —— 跳过前多少条（默认 0；分页用）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
+
+### `coverage.report` — 索引覆盖报告
+
+- 调用：`api.coverage.report(spaceId)`
+- 权限：`read:files`
+- scope：`current-space`
+- 返回：**一行摘要**（可直接念给用户）＋ 结构化明细：`pages`/`attachments`/`derived`/`chunks` 四组计数与 `gaps` 明细。`attachments.partial` ＝ **搜得到但没抽全**的数量（§15.10）；`gaps[].reason` 是分类：`no_extractor`（没人认领这种格式）/ `no_content`（认领了但抽出来是空）/ `not_chunked`（抽到了没切块）/ `page_empty`（页面正文空）/ `partial`（已索引但抽取器报了缺口）。**缺口只列前若干条**：`gapsTotal` 是总数、`gapsTruncated` 说明是否被截断
+- 参数：
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。⚠️ 覆盖率报告是**全库派生层**的当前空间口径：跨空间暂不支持 ⇒ 给了别的空间会明确 `bad_args`（⛔ 不假装支持）
 
 ### `editor.insertText` — 向当前页插入纯文本
 
@@ -243,7 +469,7 @@ register({
 
 ### `pages.create` — 新建页面（草稿确认）
 
-- 调用：`api.pages.create(title, content, parentId, fence)`
+- 调用：`api.pages.create(title, content, parentId, fence, dryRun, clientRequestId, spaceId)`
 - 权限：`write:pages`
 - scope：`current-space`
 - 写入中介：**草稿确认（落库前需用户点确认）** —— 会新建笔记内容，属于对用户数据的实质写入 → 必须先给用户看草稿并等他确认，不直接落库
@@ -253,10 +479,13 @@ register({
   - `content`: `string`（可选） —— 正文纯文本（按空行分段）
   - `parentId`: `string`（可选） —— 父页面 id；省略=顶层
   - `fence`: `string`（可选） —— 块类型：填 mermaid 时把这次内容作为**一整块** mermaid 图源码写入（编辑器会把它升级成图块）；省略＝按普通段落。
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写 v1：只有 pages.create 真正支持；目标锁着 ⇒ permission_denied（locked）；需『可写（全部空间）』档。
 
 ### `blocks.append` — 向页面追加内容（草稿确认）
 
-- 调用：`api.blocks.append(text, pageId, fence)`
+- 调用：`api.blocks.append(text, pageId, fence, expectedRev, dryRun, clientRequestId, spaceId)`
 - 权限：`write:pages`
 - scope：`current-space`
 - 写入中介：**草稿确认（落库前需用户点确认）** —— 会改动既有页面内容 → 必须先给用户看草稿并等他确认；落库时按当时的页面重读后再追加，不覆盖并发编辑
@@ -265,6 +494,57 @@ register({
   - `text`: `string` —— 要追加的纯文本（按空行分段）
   - `pageId`: `string`（可选） —— 目标页面 id；省略=当前页
   - `fence`: `string`（可选） —— 块类型：填 mermaid 时把这次内容作为**一整块** mermaid 图源码写入（编辑器会把它升级成图块）；省略＝按普通段落。
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。跨空间需『可写（全部空间）』档（它同时给读全空间）；目标锁着 ⇒ permission_denied（locked）。
+
+### `blocks.patch` — 整块替换（草稿确认）
+
+- 调用：`api.blocks.patch(blockId, markdown, text, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 替换既有块内容 → 先给用户看草稿并确认
+- 返回：{drafted,applied:false,rev,changed}——**不代表已写入**（用户确认后才落库）
+- 参数：
+  - `blockId`: `string` —— 要替换的**顶层**块 id（来自 blocks.list / pages.get 的锚点）
+  - `markdown`: `string`（可选） —— 新块内容（Markdown，经应用自己的解析转块）——与 text 二选一
+  - `text`: `string`（可选） —— 新块内容（纯文本）——与 markdown 二选一
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带 currentRev ＋ 当前 markdown 带锚点），⛔ 不覆盖
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, applied:false, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条（进程内 10 分钟）
+
+### `blocks.insert` — 插入块（草稿确认）
+
+- 调用：`api.blocks.insert(pageId, afterBlockId, markdown, text, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 往页面里插入内容 → 先给用户看草稿并确认
+- 返回：{drafted,applied:false,rev,newBlockId}——**不代表已插入**；确认后新块 id 即生效
+- 参数：
+  - `pageId`: `string`（可选） —— 目标页面 id；省略时必须给 afterBlockId
+  - `afterBlockId`: `string`（可选） —— 插在这个块之后；省略=页首（给了它时可省 pageId）
+  - `markdown`: `string`（可选） —— 新块内容（Markdown，经应用自己的解析转块）——与 text 二选一
+  - `text`: `string`（可选） —— 新块内容（纯文本）——与 markdown 二选一
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带 currentRev ＋ 当前 markdown 带锚点），⛔ 不覆盖
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, applied:false, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条（进程内 10 分钟）
+
+### `blocks.delete` — 删除块（草稿确认）
+
+- 调用：`api.blocks.delete(blockId, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 删除既有块内容 → 先给用户看草稿并确认
+- 返回：{drafted,applied:false,rev,changed}——**不代表已删除**
+- 参数：
+  - `blockId`: `string` —— 要删除的顶层块 id
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带 currentRev ＋ 当前 markdown 带锚点），⛔ 不覆盖
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, applied:false, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条（进程内 10 分钟）
 
 ### `user.notify` — 向用户显示一条提示
 
@@ -318,14 +598,16 @@ register({
 
 ### `properties.list` — 列出属性定义
 
-- 调用：`api.properties.list()`
+- 调用：`api.properties.list(spaceId)`
 - 权限：`read:properties`
 - scope：`current-space`
 - 返回：[{id, name, type}]——插件据此找到要写的属性 id
+- 参数：
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
 
 ### `properties.set` — 设置页面属性（草稿确认）
 
-- 调用：`api.properties.set(attrId, value, pageId)`
+- 调用：`api.properties.set(attrId, value, pageId, expectedRev, spaceId, dryRun, clientRequestId)`
 - 权限：`write:properties`
 - scope：`current-space`
 - 写入中介：**草稿确认（落库前需用户点确认）** —— 改动既有页面的属性 → 必须先给用户看草稿并等他确认
@@ -334,10 +616,14 @@ register({
   - `attrId`: `string` —— 属性定义 id（由 api.properties.list() 得到）
   - `value`: `string` —— 
   - `pageId`: `string`（可选） —— 目标页面 id；省略=当前页
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
 
 ### `tags.add` — 给页面加标签（草稿确认）
 
-- 调用：`api.tags.add(name, pageId)`
+- 调用：`api.tags.add(name, pageId, expectedRev, spaceId, dryRun, clientRequestId)`
 - 权限：`write:tags`
 - scope：`current-space`
 - 写入中介：**草稿确认（落库前需用户点确认）** —— 改动既有页面的标签 → 必须先给用户看草稿并等他确认
@@ -345,6 +631,10 @@ register({
 - 参数：
   - `name`: `string` —— 标签名（不存在则新建）
   - `pageId`: `string`（可选） —— 目标页面 id；省略=当前页
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
 
 ### `log.write` — 写作者侧日志
 
@@ -367,9 +657,290 @@ register({
   - `fileName`: `string` —— 建议的文件名（只给名字——路径里的目录会被去掉，文件存哪里由用户在保存对话框里定）
   - `content`: `string` —— 要写入的内容（单文件上限 4 MiB，一次运行最多 4 个文件）
 
+### `files.move` — 移动附件（草稿确认）
+
+- 调用：`api.files.move(attId, toPageId, expectedSha, spaceId, dryRun, clientRequestId)`
+- 权限：`write:files`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 改附件归属 → 先给用户看草稿并确认
+- 返回：{drafted,summary}——**不代表已移动**
+- 参数：
+  - `attId`: `string` —— 
+  - `toPageId`: `string` —— 目标页面/文件夹 id
+  - `expectedSha`: `string`（可选） —— 附件内容指纹（`hash`，来自 files.stat 的 sha256）；不一致 ⇒ `rev_conflict`
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `files.rename` — 重命名附件（草稿确认）
+
+- 调用：`api.files.rename(attId, name, expectedSha, spaceId, dryRun, clientRequestId)`
+- 权限：`write:files`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 改附件显示名 → 先给用户看草稿并确认
+- 返回：{drafted,summary}——**不代表已改名**
+- 参数：
+  - `attId`: `string` —— 
+  - `name`: `string` —— 新显示名（≤255 字；扩展名会影响 mime，与界面同一条规则）
+  - `expectedSha`: `string`（可选） —— 附件内容指纹（`hash`，来自 files.stat 的 sha256）；不一致 ⇒ `rev_conflict`
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `files.delete` — 删除附件（草稿确认，先做引用检查）
+
+- 调用：`api.files.delete(attId, expectedSha, spaceId, dryRun, clientRequestId)`
+- 权限：`write:files`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 删附件会影响用户数据 → 先给用户看草稿并确认；可恢复由应用既有路径决定
+- 返回：{drafted,summary}——**不代表已删除**
+- 参数：
+  - `attId`: `string` —— 
+  - `expectedSha`: `string`（可选） —— 附件内容指纹（`hash`，来自 files.stat 的 sha256）；不一致 ⇒ `rev_conflict`
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `templates.list` — 模板清单
+
+- 调用：`api.templates.list()`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：本空间的用户模板清单（空表 ⇒ []）
+
+### `templates.apply` — 套用模板建页（草稿确认）
+
+- 调用：`api.templates.apply(templateId, parentId, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会新建页面 → 先给用户看草稿并确认
+- 返回：{drafted,summary}——**不代表已建页**
+- 参数：
+  - `templateId`: `string` —— 
+  - `parentId`: `string`（可选） —— 新页的父节点 id；省略=顶层
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `files.upload_to_page` — 上传附件到页面（用户选文件）
+
+- 调用：`api.files.upload_to_page(pageId, name, spaceId, dryRun, clientRequestId)`
+- 权限：`write:files`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会往页面写附件 → 先给用户看草稿并确认；确认后由**用户亲自选文件**
+- 返回：{drafted,summary}——**不代表已上传**；确认后系统会弹文件选择框，取消 ⇒ 不落任何东西
+- 参数：
+  - `pageId`: `string` —— 
+  - `name`: `string`（可选） —— 期望的文件名（可选；同名自动 `-N` 不覆盖）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `import.docpackage` — 导入 .shuyodoc（用户选文件）
+
+- 调用：`api.import.docpackage(parentId, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会新建页面 → 先给用户看草稿并确认；确认后由**用户亲自选 .shuyodoc**
+- 返回：{drafted,summary}——**不代表已导入**；确认后弹选择框，取消 ⇒ cancelled
+- 参数：
+  - `parentId`: `string`（可选） —— 新页的父节点 id；省略=顶层
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `files.detach` — 从页面摘除附件（保留文件）
+
+- 调用：`api.files.detach(attId, spaceId, dryRun, clientRequestId)`
+- 权限：`write:files`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 改附件归属 → 先给用户看草稿并确认
+- 返回：{drafted,summary}——**不代表已摘除**
+- 参数：
+  - `attId`: `string` —— 
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
+  - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
+
+### `folders.create` — 新建文件夹（草稿确认）
+
+- 调用：`api.folders.create(title, parentId, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会在页面树里新建节点 → 先给用户看草稿并确认
+- 返回：{drafted,summary,spaceId}——**不代表已创建**
+- 参数：
+  - `title`: `string` —— 文件夹名
+  - `parentId`: `string`（可选） —— 上级节点 id；省略=顶层
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+
+### `nodes.move` — 移动节点（草稿确认）
+
+- 调用：`api.nodes.move(id, newParentId, sortOrder, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会改变页面树结构 → 先给用户看草稿并确认
+- 返回：{drafted,summary,spaceId}——**不代表已移动**
+- 参数：
+  - `id`: `string` —— 要移动的节点 id（页面或文件夹）
+  - `newParentId`: `string`（可选） —— 新上级节点 id；省略/null=移到顶层
+  - `sortOrder`: `number`（可选） —— 同级排序位（默认 0）
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+
+### `nodes.rename` — 节点改名（草稿确认）
+
+- 调用：`api.nodes.rename(id, title, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 改既有节点的标题 → 先给用户看草稿并确认
+- 返回：{drafted,summary,spaceId}——**不代表已改名**
+- 参数：
+  - `id`: `string` —— 
+  - `title`: `string` —— 新标题（≤200 字）
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+
+### `nodes.delete` — 软删节点（草稿确认）
+
+- 调用：`api.nodes.delete(id, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 删除（进回收站）会影响用户数据 → 先给用户看草稿并确认；可恢复
+- 返回：{drafted,summary,spaceId}——**不代表已删**
+- 参数：
+  - `id`: `string` —— 要软删的节点 id
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+
+### `trash.restore` — 从回收站恢复（草稿确认）
+
+- 调用：`api.trash.restore(id, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 把已删节点恢复回页面树 → 先给用户看草稿并确认
+- 返回：{drafted,summary,spaceId}——**不代表已恢复**
+- 参数：
+  - `id`: `string` —— 回收站里的节点 id
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+
+### `pages.revert` — 回退到历史版本（草稿确认）
+
+- 调用：`api.pages.revert(pageId, versionId, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 把页面正文退回到旧版本 → 先给用户看草稿并确认（回退本身也会留新版本/审计）
+- 返回：{drafted,summary,spaceId}——**不代表已回退**
+- 参数：
+  - `pageId`: `string` —— 
+  - `versionId`: `string` —— 版本 id（来自 versions.list）
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+
+### `tags.remove` — 从页面移除标签（草稿确认）
+
+- 调用：`api.tags.remove(name, pageId, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:tags`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 改动既有页面的标签 → 先给用户看草稿并确认
+- 返回：{drafted,summary,spaceId}——**不代表已移除**
+- 参数：
+  - `name`: `string` —— 标签名（不带 #）
+  - `pageId`: `string`（可选） —— 目标页面 id；省略=当前页
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+
+### `properties.unset` — 去掉页面属性（草稿确认）
+
+- 调用：`api.properties.unset(attrId, pageId, expectedRev, spaceId, dryRun, clientRequestId)`
+- 权限：`write:properties`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 去掉既有页面的属性值 → 先给用户看草稿并确认
+- 返回：{drafted,summary,spaceId}——**不代表已去掉**
+- 参数：
+  - `attrId`: `string` —— 属性定义 id（来自 properties.list）
+  - `pageId`: `string`（可选） —— 目标页面 id；省略=当前页
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+
+### `files.download` — 下载附件（返回句柄）
+
+- 调用：`api.files.download(attId, spaceId)`
+- 权限：`export:files`
+- scope：`current-space`
+- 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
+- 参数：
+  - `attId`: `string` —— 附件 id
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间**需要「只读（全部空间）」档；未开 ⇒ `permission_denied` 点名 `read:all-spaces`（⛔ 不静默回落）
+
+### `blobs.fetch` — 把句柄落成文件
+
+- 调用：`api.blobs.fetch(handle)`
+- 权限：`export:files`
+- scope：`current-space`
+- 返回：{path, size, sha256}：文件落在**应用数据目录下的 exports/**（文件名已清洗；⛔ 不接受任意目标路径）；sha256 与句柄声明一致
+- 参数：
+  - `handle`: `string` —— 句柄（from files.download / export.*）
+
+### `export.markdown` — 导出 Markdown（句柄）
+
+- 调用：`api.export.markdown(pageId, spaceId)`
+- 权限：`export:files`
+- scope：`current-space`
+- 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
+- 参数：
+  - `pageId`: `string`（可选） —— 单页导出：页面 id（与 spaceId 只能给一个）
+  - `spaceId`: `string`（可选） —— 整空间导出：空间 id（与 pageId 只能给一个；跨空间需「只读（全部空间）」档，否则明确拒）
+
+### `export.page_markdown` — 导出单页 Markdown（句柄）
+
+- 调用：`api.export.pageMarkdown(pageId, spaceId)`
+- 权限：`export:files`
+- scope：`current-space`
+- 返回：句柄（单次/120s/绑会话）；落盘用 blobs_fetch
+- 参数：
+  - `pageId`: `string` —— 要导出的页面 id（只接受 pageId）
+  - `spaceId`: `string`（可选） —— 整空间 id。⚠️ 本工具只接受 pageId —— 给了它 ⇒ `bad_args`（请用 export_space_markdown）
+
+### `export.space_markdown` — 导出整空间 Markdown（句柄）
+
+- 调用：`api.export.spaceMarkdown(spaceId, pageId)`
+- 权限：`export:files`
+- scope：`current-space`
+- 返回：句柄；落盘用 blobs_fetch
+- 参数：
+  - `spaceId`: `string`（可选） —— 整空间 id（省略=当前空间；本版只支持当前空间）
+  - `pageId`: `string`（可选） —— 页面 id。⚠️ 本工具只接受 spaceId —— 给了它 ⇒ `bad_args`（请用 export_page_markdown）
+
+### `export.docpackage` — 导出 .shuyodoc（句柄）
+
+- 调用：`api.export.docpackage(pageId, spaceId)`
+- 权限：`export:files`
+- scope：`current-space`
+- 返回：{handle, name, size, sha256, expiresAt}：**返回句柄、不返回字节**；句柄 128bit 随机、单次、120 秒有效、绑定本会话；用 blobs.fetch 换文件
+- 参数：
+  - `pageId`: `string` —— 要导出的页面 id（单页；文件夹没有正文 ⇒ bad_args）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。跨空间导出需要 read:all-spaces（只读（全部空间）档已含）；目标锁着 ⇒ permission_denied。
+
 ### `pages.importMarkdown` — 导入 Markdown 为一页（草稿确认）
 
-- 调用：`api.pages.importMarkdown(title, markdown, parentId)`
+- 调用：`api.pages.importMarkdown(title, markdown, parentId, dryRun, clientRequestId)`
 - 权限：`write:pages`
 - scope：`current-space`
 - 写入中介：**草稿确认（落库前需用户点确认）** —— 会用 Markdown 原文新建一页笔记内容，属于对用户数据的实质写入 → 必须先给用户看草稿并等他确认，不直接落库
@@ -378,10 +949,26 @@ register({
   - `title`: `string` —— 新页标题。
   - `markdown`: `string` —— Markdown 原文。围栏 ```mermaid 会变成真图块；标题/列表/引用/表格按各自类型落块。⛔ 含块级 HTML 或超过 200KB 会被拒绝。
   - `parentId`: `string`（可选） —— 父页面 id；不传就放在顶层。
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+
+### `pages.import_markdown` — 导入 Markdown（整篇，新名）
+
+- 调用：`api.pages.import_markdown(title, markdown, parentId, dryRun, clientRequestId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会用 Markdown 原文新建一页笔记内容，属于对用户数据的实质写入 → 必须先给用户看草稿并等他确认，不直接落库
+- 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
+- 参数：
+  - `title`: `string` —— 新页标题。
+  - `markdown`: `string` —— Markdown 原文。围栏 ```mermaid 会变成真图块；标题/列表/引用/表格按各自类型落块。⛔ 含块级 HTML 或超过 200KB 会被拒绝。
+  - `parentId`: `string`（可选） —— 父页面 id；不传就放在顶层。
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
 
 ### `pages.update` — 更新已有页面（整页替换 / 草稿确认）
 
-- 调用：`api.pages.update(id, markdown, content, title)`
+- 调用：`api.pages.update(id, markdown, content, title, expectedRev, dryRun, clientRequestId, spaceId)`
 - 权限：`write:pages`
 - scope：`current-space`
 - 写入中介：**草稿确认（落库前需用户点确认）** —— 整页替换会覆盖用户已有正文 → 必须先给用户看草稿并等他确认，不直接落库
@@ -391,6 +978,10 @@ register({
   - `markdown`: `string`（可选） —— 整篇 Markdown 新正文（与 content 二选一）；走应用自己的 Markdown 导入管道（mermaid/表格/列表按各自类型落块）
   - `content`: `string`（可选） —— 整篇纯文本新正文（按换行分段）；与 markdown 二选一
   - `title`: `string`（可选） —— 新标题；省略=保留原标题
+  - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
+  - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
+  - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。跨空间需『可写（全部空间）』档（它同时给读全空间）；目标锁着 ⇒ permission_denied（locked）。
 
 ### `spaces.list` — 列出空间（含当前空间）
 
@@ -398,6 +989,13 @@ register({
 - 权限：`read:pages`
 - scope：`app`
 - 返回：当前空间 id ＋ 全部未删除空间
+
+### `space.current` — 当前空间
+
+- 调用：`api.space.current()`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：当前活动空间（= spaces_list 的 active 那条）+ 页面计数
 
 ### `spaces.switch` — 切换空间（草稿确认）
 
@@ -409,22 +1007,6 @@ register({
 - 参数：
   - `id`: `string`（可选） —— 目标空间 id（与 name 二选一；都传时以 id 为准）
   - `name`: `string`（可选） —— 目标空间名称（如「运营」）；重名时报错要求改用 id
-
-## 4b. 只有 AI 宿主可用的工具（**插件调不到**）
-
-这些能力**不暴露给插件**（不在 `api.*` 里、也不在 `@shuyonote/plugin-types` 里）：它们的实现只有**应用内的 AI 宿主**那一侧有。原因写在注册表里每条能力的 `desc` 与方案的裁定里 —— 典型是「要读**抽取器注册表**（TS 侧的事实源），而 Rust 侧再长一份就是两份实现」。
-
-| 工具 | 返回 | 自 |
-|---|---|---|
-| `coverage.report` | object | 1.92.0 |
-
-### `coverage.report` — 索引覆盖报告
-
-- **调用方**：只有 AI 宿主（无 `api.*` 入口）
-- 权限：`read:files`
-- scope：`current-space`
-- 返回：**一行摘要**（可直接念给用户）＋ 结构化明细：`pages`/`attachments`/`derived`/`chunks` 四组计数与 `gaps` 明细。`attachments.partial` ＝ **搜得到但没抽全**的数量（§15.10）；`gaps[].reason` 是分类：`no_extractor`（没人认领这种格式）/ `no_content`（认领了但抽出来是空）/ `not_chunked`（抽到了没切块）/ `page_empty`（页面正文空）/ `partial`（已索引但抽取器报了缺口）。**缺口只列前若干条**：`gapsTotal` 是总数、`gapsTruncated` 说明是否被截断
-- 说明：检查**整个库**的索引覆盖：哪些内容真的进了检索面、哪些没进、哪些**进了但没抽全**。参数: 无。返回 {summary, report}：`summary` 是一行中文摘要（可直接展示）；`report.attachments` 给出 已索引/没抽全/未索引 的计数与分类，`report.gaps` 给出**明细**（每条含 `reason` 与一句「该怎么办」）。⚠️ 三个必须分清的口径：① **没抽到 ≠ 文件里没有**（`no_content` 可能是空文件/加密/纯图）；② **页面正文空 ≠ 这页内容没被索引**（图片/附件/数据库块由附件侧负责）；③ **`partial` 是「搜得到，但只覆盖了一部分」**（典型：混合 PDF 只抽到正文页）—— 别把「已索引 N/N」读成「内容全在检索面里」。**缺口列表可能被截断**（看 `gapsTotal` 与 `gapsTruncated`）。 ★ **只有 AI 宿主**能实现它（`host: frontend`）：判「没人认领这种格式」必须以 TS 侧的抽取器注册表为准，Rust 侧再长一份就是两份实现、而漂移不会报错 ⇒ 它不进插件 shim／插件类型包／Rust 绑定表，插件调不到。
 
 ## 4.5 命令参数（宿主渲染表单）
 
@@ -571,7 +1153,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.2.0",
+  "runtime": "declarative", "apiVersion": "1.27.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },
@@ -806,6 +1388,8 @@ register({
 | `plugin_error` | 插件自身抛错 |
 | `quota_exceeded` | 插件私有数据超出配额（每个 scope 256 KiB） |
 | `plugin_crash` | 插件把宿主解释器进程搞崩了（原生崩溃 / abort）：这次调用被终止，应用本身不受影响 |
+| `not_found` | 目标不存在（页面/版本/附件/句柄），或句柄已用过/已过期/不属于本会话 |
+| `needs_confirm` | 这个动作需要用户当场确认 —— 本批未接确认 UI 的动作会明确返回它，⛔ 不静默执行（例如 >10MB 的下载） |
 
 ## 8. 兼容与老写法
 

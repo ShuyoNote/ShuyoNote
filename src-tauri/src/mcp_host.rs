@@ -34,7 +34,8 @@ use crate::plugins;
 pub(crate) const MCP_TOOLS_JSON: &str = include_str!("../../capabilities/mcp-tools.json");
 /// M2 的**写面**清单（第 11 件生成物 ✓）—— 与读面同一纪律：**编译期内嵌** ✓，
 /// ⛔ 不在 Rust 里手抄一份工具名（那正是 `INV-MCP-tools-generated` 要挡的 ✗）。
-pub(crate) const MCP_TOOLS_WRITE_JSON: &str = include_str!("../../capabilities/mcp-tools-write.json");
+pub(crate) const MCP_TOOLS_WRITE_JSON: &str =
+    include_str!("../../capabilities/mcp-tools-write.json");
 
 /// 拼给外部 agent 看的工具清单：**读面永远在** ✓；写面在**有写权限时**才拼上去 ✓
 /// （M2 · Task W2；⭐ **R152** 起口径修正：跟的是**权限** `write:pages` ✓，**不是**"要不要人确认" ✗ ——
@@ -45,11 +46,13 @@ pub(crate) const MCP_TOOLS_WRITE_JSON: &str = include_str!("../../capabilities/m
 /// （`coverage.report` 列在面上却调不通 ✓）—— 面里出现用不了的东西，agent 会照它去调、然后撞墙 ✓。
 /// ⇒ 这里的口径是**面 = 此刻真能调的能力** ✓。
 pub fn tools_list_json(include_write: bool) -> String {
-    let read: serde_json::Value = serde_json::from_str(MCP_TOOLS_JSON).unwrap_or(serde_json::Value::Array(Vec::new()));
+    let read: serde_json::Value =
+        serde_json::from_str(MCP_TOOLS_JSON).unwrap_or(serde_json::Value::Array(Vec::new()));
     if !include_write {
         return serde_json::to_string(&read).unwrap_or_else(|_| "[]".to_string());
     }
-    let write: serde_json::Value = serde_json::from_str(MCP_TOOLS_WRITE_JSON).unwrap_or(serde_json::Value::Array(Vec::new()));
+    let write: serde_json::Value =
+        serde_json::from_str(MCP_TOOLS_WRITE_JSON).unwrap_or(serde_json::Value::Array(Vec::new()));
     let mut all = read.as_array().cloned().unwrap_or_default();
     all.extend(write.as_array().cloned().unwrap_or_default());
     serde_json::to_string(&serde_json::Value::Array(all)).unwrap_or_else(|_| "[]".to_string())
@@ -70,7 +73,8 @@ pub fn tools_list_json(include_write: bool) -> String {
 /// 真跑一次外部调用、并**看见**草稿交出来了 ✓（`set_external_draft_sink` 在测试里换成自己的 ✓ ——
 /// 这比「读源码猜有没有 emit」硬 ✗）。
 type DraftSink = std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>;
-static DRAFT_SINK: std::sync::OnceLock<std::sync::Mutex<Option<DraftSink>>> = std::sync::OnceLock::new();
+static DRAFT_SINK: std::sync::OnceLock<std::sync::Mutex<Option<DraftSink>>> =
+    std::sync::OnceLock::new();
 
 fn draft_sink_slot() -> &'static std::sync::Mutex<Option<DraftSink>> {
     DRAFT_SINK.get_or_init(|| std::sync::Mutex::new(None))
@@ -111,7 +115,10 @@ fn deliver_drafts(source: &str, auto_apply: bool, drafts: &[plugins::PluginDraft
             true
         }
         None => {
-            eprintln!("[mcp] 有一批外部草稿没人接（{} 条，来自 {source}）—— 草稿会被丢掉 ✗", drafts.len());
+            eprintln!(
+                "[mcp] 有一批外部草稿没人接（{} 条，来自 {source}）—— 草稿会被丢掉 ✗",
+                drafts.len()
+            );
             false
         }
     }
@@ -126,7 +133,13 @@ pub(crate) fn handle_external_call(
     // ⭐ M2（Task W4）：免确认开关的读数**在这里读一次** ✓（生产路径）。
     //    拆出 `_with` 是为了**判据能直说**（`auto_write` 显式传 ✓）—— ⛔ 不让判据去改进程级环境变量
     //    或共享配置（Rust 测试是**并行**跑的 ⇒ 那种写法会时红时绿 ✗）。
-    handle_external_call_with(session_id, granted, method, args_json, crate::mcp_channel::allow_write())
+    handle_external_call_with(
+        session_id,
+        granted,
+        method,
+        args_json,
+        crate::mcp_channel::allow_write(),
+    )
 }
 
 /// 与 [`handle_external_call`] 同一条路，但**免确认开关由调用方给** ✓（判据用 ✓）。
@@ -137,6 +150,9 @@ pub(crate) fn handle_external_call_with(
     args_json: &str,
     auto_write: bool,
 ) -> Result<String, String> {
+    // ⭐ 2026-10-31：`pages.search` 的信封要如实给 `truncated` ⇒ 外部面替它**多取一条**
+    // （能力面保持裸数组，插件面契约不动；见 [`search_probe_args`]）。
+    let (dispatch_args, search_want) = search_probe_args(method, args_json);
     // ① 跑这次调用，并把**它产出的草稿**收上来 ✓（外部路以前没人取 ⇒ 静默丢掉 ✗）
     let (out, drafts) = plugins::with_fresh_drafts(|| {
         plugins::with_external_caller(session_id, granted, || {
@@ -147,7 +163,12 @@ pub(crate) fn handle_external_call_with(
                 // ⭐ 2026-10-17：检索结果**自带范围**（`with_search_scope`）✓。
                 //   放在这个闭包里做，是因为范围快照读的**必须**是这次调用用的那个空间 ✓
                 //   （出了闭包 `read_space` 就恢复了 ⇒ 再读会得到 `space_unknown` ✗）。
-                with_search_scope(method, args_json, plugins::dispatch_capability(method, args_json))
+                with_search_scope(
+                    method,
+                    args_json,
+                    search_want,
+                    plugins::dispatch_capability(method, &dispatch_args),
+                )
             })
         })
     });
@@ -161,8 +182,10 @@ pub(crate) fn handle_external_call_with(
     let auto = auto_write && !needs_confirmation(method);
     let delivered = deliver_drafts(&source, auto, &drafts);
     let summaries: Vec<String> = drafts.iter().map(|d| d.summary.clone()).collect();
-    let out_json = out.unwrap_or_else(|e| format!("{{\"error\":{}}}", serde_json::Value::String(e)));
-    let mut v: serde_json::Value = serde_json::from_str(&out_json).unwrap_or(serde_json::Value::Null);
+    let out_json =
+        out.unwrap_or_else(|e| format!("{{\"error\":{}}}", serde_json::Value::String(e)));
+    let mut v: serde_json::Value =
+        serde_json::from_str(&out_json).unwrap_or(serde_json::Value::Null);
     if let Some(obj) = v.as_object_mut() {
         obj.insert("drafted".into(), serde_json::Value::Bool(true));
         obj.insert("summaries".into(), serde_json::json!(summaries));
@@ -171,12 +194,62 @@ pub(crate) fn handle_external_call_with(
         obj.insert("auto_apply".into(), serde_json::Value::Bool(auto));
         if !delivered {
             obj.insert("delivered".into(), serde_json::Value::Bool(false));
-            obj.insert("note".into(), serde_json::Value::String(
-                "草稿已生成但没人接（App 那侧没装出口）⇒ 这次改动**没有落库** ✓".to_string(),
-            ));
+            obj.insert(
+                "note".into(),
+                serde_json::Value::String(
+                    "草稿已生成但没人接（App 那侧没装出口）⇒ 这次改动**没有落库** ✓".to_string(),
+                ),
+            );
         }
     }
     Ok(v.to_string())
+}
+
+/// `pages.search` 的 limit 默认值 —— 与 `plugins::dispatch_capability` 里
+/// `arg_i64("limit", 8)` **同源**（能力面才是语义处；这里只算"多取一条"的预算）。
+const SEARCH_LIMIT_DEFAULT: i64 = 8;
+
+/// `pages.search` 的「**多取一条**」探针（2026-10-31，WorkBuddy 评估修）。
+///
+/// 为什么必须多取：信封要如实给 `truncated`（与 `pages.changes_since` 同口径），
+/// 而能力面**必须**保持裸数组（插件面 `api.pages.search(...) || []` 是既有写法，⛔ 不能改成对象）⇒
+/// 外部面替它多要一条、信封再裁回调用方要的条数。这样插件面一个字节都没变，只有外部面多了 `truncated`。
+///
+/// 返回 `(真正 dispatch 的 args, 调用方要的条数)`；非 `pages.search` ⇒ 原样 args / `None`
+/// （别的能力的结果形状一个字段都不许动）。
+///
+/// ⚠️ 上限处**无法**多取（能力面会夹到 [`crate::cap_limits::SEARCH_MAX`]）⇒ 那时 `truncated`
+/// 只能为 false；这是硬上限的诚实边界，不是"猜它没有更多"。
+fn search_probe_args(method: &str, args_json: &str) -> (String, Option<i64>) {
+    if method != "pages.search" {
+        return (args_json.to_string(), None);
+    }
+    let mut map = match serde_json::from_str::<serde_json::Value>(args_json) {
+        Ok(serde_json::Value::Object(m)) => m,
+        // 坏 JSON 原样交给 dispatch 去报 bad_args（这里不抢它的错因）
+        _ => return (args_json.to_string(), None),
+    };
+    // 与能力层 `arg_i64` 同口径：整数 / 小数部分为 0 的浮点 / 数字字符串；非整数回落默认值。
+    let want = match map.get("limit") {
+        Some(serde_json::Value::Number(n)) => n
+            .as_i64()
+            .or_else(|| {
+                n.as_f64()
+                    .filter(|f| f.is_finite() && f.fract() == 0.0)
+                    .map(|f| f as i64)
+            })
+            .unwrap_or(SEARCH_LIMIT_DEFAULT),
+        Some(serde_json::Value::String(s)) => s.parse::<i64>().unwrap_or(SEARCH_LIMIT_DEFAULT),
+        _ => SEARCH_LIMIT_DEFAULT,
+    }
+    .clamp(1, crate::cap_limits::SEARCH_MAX);
+    let fetch = if want < crate::cap_limits::SEARCH_MAX {
+        want + 1
+    } else {
+        want
+    };
+    map.insert("limit".to_string(), serde_json::json!(fetch));
+    (serde_json::Value::Object(map).to_string(), Some(want))
 }
 
 /// 外部面的**检索信封**（2026-10-17）：`pages.search` 的结果要**自带范围**。
@@ -195,6 +268,7 @@ pub(crate) fn handle_external_call_with(
 fn with_search_scope(
     method: &str,
     args_json: &str,
+    wanted: Option<i64>,
     out: Result<String, String>,
 ) -> Result<String, String> {
     if method != "pages.search" {
@@ -220,11 +294,16 @@ fn with_search_scope(
             if let Some(h) = long_cjk_retry_hint(args_json) {
                 hints.push(h);
             }
-            let hint = if hints.is_empty() { None } else { Some(hints.join("\n")) };
+            let hint = if hints.is_empty() {
+                None
+            } else {
+                Some(hints.join("\n"))
+            };
             Ok(search_envelope(
                 items,
                 plugins::space_scope_snapshot_of(target.as_deref()),
                 hint.as_deref(),
+                wanted,
             )
             .to_string())
         }
@@ -261,9 +340,7 @@ fn long_cjk_retry_hint(args_json: &str) -> Option<String> {
         return None;
     }
     let chars = t.chars().count();
-    let has_cjk = t
-        .chars()
-        .any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c));
+    let has_cjk = t.chars().any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c));
     if chars < 6 || !has_cjk {
         return None;
     }
@@ -290,12 +367,13 @@ fn with_search_scope_with(
     out: Result<String, String>,
     scope: Result<serde_json::Value, String>,
     hint: Option<&str>,
+    wanted: Option<i64>,
 ) -> Result<String, String> {
     if method != "pages.search" {
         return out;
     }
     match out.as_ref().ok().and_then(|json| search_items(json)) {
-        Some(items) => Ok(search_envelope(items, scope, hint).to_string()),
+        Some(items) => Ok(search_envelope(items, scope, hint, wanted).to_string()),
         None => out,
     }
 }
@@ -305,9 +383,20 @@ fn search_envelope(
     items: Vec<serde_json::Value>,
     scope: Result<serde_json::Value, String>,
     extra_hint: Option<&str>,
+    wanted: Option<i64>,
 ) -> serde_json::Value {
-    let matched = items.len();
-    let mut v = serde_json::json!({ "matched": matched, "results": items });
+    // ⭐ 2026-10-31（WorkBuddy 评估修）：`matched` 是**本次返回条数**、`truncated` 才是"还有更多"
+    // —— 与 `pages.changes_since` 同口径。`wanted` 来自 [`search_probe_args`] 的"多取一条"探针：
+    // 收到 `wanted+1` 条 ⇒ 说明后面还有 ⇒ `truncated:true` 并把多的那条裁掉。
+    let (matched, truncated, items) = match wanted {
+        Some(w) if items.len() as i64 > w => {
+            let w = w.max(0) as usize;
+            (w, true, items.into_iter().take(w).collect())
+        }
+        Some(_) => (items.len(), false, items),
+        None => (items.len(), false, items),
+    };
+    let mut v = serde_json::json!({ "matched": matched, "results": items, "truncated": truncated });
     match scope {
         Ok(s) => {
             if matched == 0 {
@@ -319,6 +408,14 @@ fn search_envelope(
                     "当前空间「{name}」（{pages} 页）没有匹配 —— 这不代表别的空间也没有。\
                      可以换更短的词、去掉部分关键词；或用 pages_list 先看一遍本空间最近更新的页面；\
                      也可用 spaces_list 确认当前空间（必要时 spaces_switch 切换）再搜。{extra}"
+                ));
+            } else if truncated {
+                // ⭐ 2026-10-31：被 limit 截断时也要说清"matched 不是命中总数"，否则调用方会把
+                // 「只回了前 N 条」当成「一共就 N 条」——与空结果那族是同一种误读。
+                let extra = extra_hint.map(|h| format!("\n{h}")).unwrap_or_default();
+                v["hint"] = serde_json::Value::String(format!(
+                    "命中超过本次 limit={matched} ⇒ 只回了前 {matched} 条（`matched` 是本次条数，不是命中总数）\
+                     ⇒ 放宽 limit 或换更短的词再搜。{extra}"
                 ));
             }
             v["scope"] = s;
@@ -349,12 +446,23 @@ mod tests {
     fn unknown_capability_is_denied_and_audited_with_external_source() {
         let session = "sdk-unknown-1";
         let err = handle_external_call(session, &[], "这个能力不存在", "{}").unwrap_err();
-        assert!(err.contains("unknown_capability"), "错误码必须逐字不变：{err}");
+        assert!(
+            err.contains("unknown_capability"),
+            "错误码必须逐字不变：{err}"
+        );
         let rows = audit_of(&format!("external:{session}"));
-        assert_eq!(rows.len(), 1, "被拒的调用也必须留痕（这恰恰是最该查的那类记录 ✓）；读到 {} 条", rows.len());
+        assert_eq!(
+            rows.len(),
+            1,
+            "被拒的调用也必须留痕（这恰恰是最该查的那类记录 ✓）；读到 {} 条",
+            rows.len()
+        );
         assert_eq!(rows[0].error_code.as_deref(), Some("unknown_capability"));
         assert!(!rows[0].ok);
-        assert_eq!(rows[0].plugin_id, "external", "外部会话不是插件 ⇒ 别冒用插件 id ✓");
+        assert_eq!(
+            rows[0].plugin_id, "external",
+            "外部会话不是插件 ⇒ 别冒用插件 id ✓"
+        );
     }
 
     /// 权限不够时**点名缺哪个** ✓ —— 与插件那条路**同一份**消息与错误码 ✓（判定只有一处 ✓）。
@@ -363,11 +471,333 @@ mod tests {
         let session = "sdk-denied-1";
         // `pages.count` 需要 `read:pages`（`capabilities_gen.rs` ✓）⇒ 一个都不授予 ⇒ 必拒 ✓
         let err = handle_external_call(session, &[], "pages.count", "{}").unwrap_err();
-        assert!(err.contains("permission_denied"), "错误码必须逐字不变：{err}");
-        assert!(err.contains("read:pages"), "要点名「缺哪个权限」（给人看的那半 ✓）：{err}");
+        assert!(
+            err.contains("permission_denied"),
+            "错误码必须逐字不变：{err}"
+        );
+        assert!(
+            err.contains("read:pages"),
+            "要点名「缺哪个权限」（给人看的那半 ✓）：{err}"
+        );
         let rows = audit_of(&format!("external:{session}"));
-        assert_eq!(rows.len(), 1, "被拒的调用也必须留痕；读到 {} 条", rows.len());
+        assert_eq!(
+            rows.len(),
+            1,
+            "被拒的调用也必须留痕；读到 {} 条",
+            rows.len()
+        );
         assert_eq!(rows[0].error_code.as_deref(), Some("permission_denied"));
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // B1a（2026-10-29）· 只读扩容的**挂载级**判据（工具面 ＋ 权限门 ＋ 当前页如实）
+    //   数据级的三条（节点数/父子/截断、跨空间、count==listPages.length）在
+    //   `plugins.rs` 的 tests 里（那里有真夹具空间；这里是宿主面这一层）。
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /// ⭐ **表驱动**：这 5 条 B1a 工具在「不接」档（`granted` 为空）必须**逐条**
+    /// `permission_denied`，且拒绝消息里点名的是**注册表里写着的那条权限**
+    /// （⛔ 不在测试里手抄权限名 —— 从注册表查，改了它这里自动跟）。
+    #[test]
+    fn b1a_tools_are_denied_table_driven_without_the_read_grant() {
+        let cases = [
+            "page.current",
+            "pages.count",
+            "pages.tree",
+            "tags.list",
+            "properties.list",
+        ];
+        for method in cases {
+            let cap = crate::capabilities_gen::lookup(method)
+                .unwrap_or_else(|| panic!("注册表里必须有 {method} ✓"));
+            let perm = cap.permission.expect("只读能力也有权限门 ✓");
+            let session = format!("b1a-denied-{}", method.replace('.', "-"));
+            let err = match handle_external_call(&session, &[], method, "{}") {
+                Ok(v) => panic!("{method} 在无授权时**必须被拒**，实际成功：{v}"),
+                Err(e) => e,
+            };
+            assert!(
+                err.contains("permission_denied"),
+                "{method} 在无授权时必须 permission_denied：{err}"
+            );
+            assert!(
+                err.contains(perm),
+                "{method} 的拒绝必须点名缺哪个权限 {perm}：{err}"
+            );
+            let rows = audit_of(&format!("external:{session}"));
+            assert_eq!(
+                rows.len(),
+                1,
+                "{method} 被拒也必须留痕 ✓（拿到 {} 条）",
+                rows.len()
+            );
+            assert_eq!(rows[0].error_code.as_deref(), Some("permission_denied"));
+        }
+    }
+
+    /// ⭐ **B1b（2026-10-29）判据 5（挂载级那一半）**：`db.schema` / `db.rows` 在「不接」档
+    /// （`granted` 为空）必须**逐条** `permission_denied`，且拒绝消息点名的是**注册表里
+    /// 写着的那条权限**（`read:pages`；⛔ 不在测试里手抄 —— 注册表改了这里自动跟）。
+    ///
+    /// 变异（会红）：把 `db.schema` 的 `permission` 改成 `null` ⇒ 它变成"无需权限"⇒ 这条的第一断
+    /// 言红（说明这一格真的由注册表驱动）。
+    #[test]
+    fn b1b_db_tools_are_denied_table_driven_without_the_read_grant() {
+        for method in ["db.schema", "db.rows"] {
+            let cap = crate::capabilities_gen::lookup(method)
+                .unwrap_or_else(|| panic!("注册表里必须有 {method} ✓"));
+            let perm = cap.permission.expect("只读能力也有权限门 ✓");
+            let session = format!("b1b-denied-{}", method.replace('.', "-"));
+            let err = match handle_external_call(&session, &[], method, "{}") {
+                Ok(v) => panic!("{method} 在无授权时**必须被拒**，实际成功：{v}"),
+                Err(e) => e,
+            };
+            assert!(
+                err.contains("permission_denied"),
+                "{method} 在无授权时必须 permission_denied：{err}"
+            );
+            assert!(
+                err.contains(perm),
+                "{method} 的拒绝必须点名缺哪个权限 {perm}：{err}"
+            );
+            let rows = audit_of(&format!("external:{session}"));
+            assert_eq!(
+                rows.len(),
+                1,
+                "{method} 被拒也必须留痕 ✓（拿到 {} 条）",
+                rows.len()
+            );
+            assert_eq!(rows[0].error_code.as_deref(), Some("permission_denied"));
+        }
+    }
+
+    /// ⭐ **B1c/B3（2026-10-29）挂载级判据**：
+    /// ① 这些只读工具在「不接」档（`granted` 为空）**逐条** `permission_denied`，且点名的权限来自注册表；
+    /// ② **句柄类**（`files.download` / `blobs.fetch` / 两个 `export.*`）在"只读档但**没有** `export:files`"
+    ///    时必须拒 —— 这是矩阵 §6「原字节只走句柄」的权限门那一半；
+    /// ③ `coverage.report` 要 `read:files`（B3 起它不再是 host:frontend 的幽灵能力）。
+    #[test]
+    fn b1c_tools_are_denied_table_driven_and_handles_need_the_export_scope() {
+        let methods = [
+            "versions.list",
+            "version.get",
+            "trash.list",
+            "files.stat",
+            "files.extract_status",
+            "files.list_orphan",
+            "files.download",
+            "blobs.fetch",
+            // B3
+            "export.markdown",
+            "export.docpackage",
+            "coverage.report",
+        ];
+        for method in methods {
+            let cap = crate::capabilities_gen::lookup(method)
+                .unwrap_or_else(|| panic!("注册表里必须有 {method} ✓"));
+            let perm = cap.permission.expect("只读能力也有权限门 ✓");
+            let session = format!("b1c-denied-{}", method.replace('.', "-"));
+            let err = match handle_external_call(&session, &[], method, "{}") {
+                Ok(v) => panic!("{method} 在无授权时**必须被拒**，实际成功：{v}"),
+                Err(e) => e,
+            };
+            assert!(
+                err.contains("permission_denied"),
+                "{method} 在无授权时必须 permission_denied：{err}"
+            );
+            assert!(
+                err.contains(perm),
+                "{method} 的拒绝必须点名缺哪个权限 {perm}：{err}"
+            );
+            assert_eq!(
+                audit_of(&format!("external:{session}")).len(),
+                1,
+                "{method} 被拒也必须留痕 ✓"
+            );
+        }
+        // ② 句柄类：只读档但**收回** `export:files` ⇒ 必须拒（⛔ 不看"别的读权限在不在"）
+        let mut read = crate::mcp_channel::default_read_scopes();
+        read.retain(|s| s != "export:files");
+        for (method, args) in [
+            ("files.download", r#"{"attId":"a1"}"#),
+            ("blobs.fetch", r#"{"handle":"whatever"}"#),
+            // B3：两个导出也是「句柄类」，同样只认 `export:files`
+            ("export.markdown", r#"{"pageId":"p1"}"#),
+            ("export.docpackage", r#"{"pageId":"p1"}"#),
+        ] {
+            let err = match handle_external_call(
+                &format!("b1c-noexport-{}", method.replace('.', "-")),
+                &read,
+                method,
+                args,
+            ) {
+                Ok(v) => panic!("{method} 没有 export:files 时必须被拒，实际成功：{v}"),
+                Err(e) => e,
+            };
+            assert!(
+                err.contains("permission_denied") && err.contains("export:files"),
+                "{method} 没有 export:files 必须点名拒：{err}"
+            );
+        }
+    }
+
+    /// ⭐ 判据 6：**没有打开的页面 ⇒ 如实说**（不报 500 形状的错、⛔ 不编造一页）。
+    ///
+    /// 为什么挂在这一层：外部接入**拿不到**界面里「当前页」这个状态（`RunState.current_page_id`
+    /// 只在插件运行时被装进来）⇒ 这条工具在外部面上**必然**走 no-page 分支；
+    /// 判据要钉的正是"它没为了有东西返回而编一个页面 id"。
+    #[test]
+    fn b1a_page_current_says_there_is_no_open_page_instead_of_inventing_one() {
+        let granted = crate::mcp_channel::default_read_scopes();
+        let out = handle_external_call("b1a-current-1", &granted, "page.current", "{}")
+            .expect("没有打开的页面**不是错误**（不许报 500 形状的错 ✓）");
+        let v: serde_json::Value = serde_json::from_str(&out).expect("回话必须是 JSON ✓");
+        assert_eq!(
+            v["opened"],
+            serde_json::json!(false),
+            "必须如实说没有打开的页面：{v}"
+        );
+        assert!(
+            v.get("id").is_none(),
+            "⛔ 不许编造一页（回话里不许有 id）：{v}"
+        );
+        assert!(
+            v["note"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("没有打开的页面"),
+            "note 要直说「没有打开的页面」：{v}"
+        );
+        let rows = audit_of("external:b1a-current-1");
+        assert_eq!(rows.len(), 1, "成功调用也要留一行审计 ✓");
+        assert!(rows[0].ok);
+    }
+    /// ⭐ **B1c/B3（2026-10-29）判据 1**：新工具在**读面**清单里；清单与注册表同源
+    /// （每条 capabilityId 查得到、都是 read）；且**一条写页/写块工具都没有**（零写红测试）。
+    #[test]
+    fn b1c_tools_are_listed_and_no_write_page_tool_leaks() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(&tools_list_json(false)).expect("工具清单必须是合法 JSON ✓");
+        let off: Vec<String> = parsed
+            .as_array()
+            .expect("工具清单是裸数组 ✓")
+            .iter()
+            .map(|t| t["name"].as_str().unwrap_or_default().to_string())
+            .collect();
+        for n in [
+            "versions_list",
+            "version_get",
+            "trash_list",
+            "files_stat",
+            "files_extract_status",
+            "files_list_orphan",
+            "files_download",
+            "blobs_fetch",
+            // B3：前端桥三条
+            "export_markdown",
+            "export_docpackage",
+            "coverage_report",
+        ] {
+            assert!(
+                off.iter().any(|x| x == n),
+                "B1c 工具 {n} 必须在读面清单里 ✓（实际 {off:?}）"
+            );
+        }
+        // 零写：B1c 一条写页/写块工具都不许有
+        for forbidden in [
+            "pages_create",
+            "pages_update",
+            "pages_importMarkdown",
+            "blocks_append",
+            "editor_insertText",
+        ] {
+            assert!(
+                !off.iter().any(|x| x == forbidden),
+                "⛔ 读面里出现了写页/写块工具 {forbidden} ✗"
+            );
+        }
+        // 与注册表同源
+        for t in parsed.as_array().expect("裸数组 ✓") {
+            let id = t["capabilityId"].as_str().unwrap_or_default();
+            let cap = crate::capabilities_gen::lookup(id)
+                .unwrap_or_else(|| panic!("清单里的 {id} 不在注册表里 ✗"));
+            assert_eq!(cap.kind, "read", "读面里混进了非读能力 {id} ✗");
+        }
+    }
+
+    /// ⭐ **B2-结构（2026-10-29）挂载级判据**：14 条写工具在「不接」档逐条 `permission_denied`，
+    /// 且点名的权限来自注册表；带 `spaceId` 写别的空间 ⇒ 点名缺 `write:all-spaces`。
+    #[test]
+    fn b2_write_tools_are_denied_table_driven_and_space_id_needs_write_all() {
+        let methods = [
+            "pages.create",
+            "pages.update",
+            "pages.importMarkdown",
+            "blocks.append",
+            "folders.create",
+            "nodes.move",
+            "nodes.rename",
+            "nodes.delete",
+            "trash.restore",
+            "pages.revert",
+            "tags.add",
+            "tags.remove",
+            "properties.set",
+            "properties.unset",
+            "blocks.patch",
+            "blocks.insert",
+            "blocks.delete",
+            "files.move",
+            "files.rename",
+            "files.delete",
+            "templates.apply",
+            "files.upload_to_page",
+            "import.docpackage",
+            "files.detach",
+            "db.rows_write",
+            "db.rows_delete",
+        ];
+        for method in methods {
+            let cap = crate::capabilities_gen::lookup(method)
+                .unwrap_or_else(|| panic!("注册表里必须有 {method} ✓"));
+            let perm = cap.permission.expect("写能力也有权限门 ✓");
+            let session = format!("b2-denied-{}", method.replace('.', "-"));
+            let err = match handle_external_call(&session, &[], method, "{}") {
+                Ok(v) => panic!("{method} 在无授权时**必须被拒**，实际成功：{v}"),
+                Err(e) => e,
+            };
+            assert!(
+                err.contains("permission_denied"),
+                "{method} 在无授权时必须 permission_denied：{err}"
+            );
+            assert!(
+                err.contains(perm),
+                "{method} 的拒绝必须点名缺哪个权限 {perm}：{err}"
+            );
+            assert_eq!(
+                audit_of(&format!("external:{session}")).len(),
+                1,
+                "{method} 被拒也必须留痕 ✓"
+            );
+        }
+        // ② 有写权限、但带**别的空间**的 spaceId ⇒ permission_denied 并点名 write:all-spaces
+        let mut granted = crate::mcp_channel::default_read_scopes();
+        granted.push("write:pages".to_string());
+        granted.push("write:tags".to_string());
+        granted.push("write:properties".to_string());
+        let err = match handle_external_call(
+            "b2-space-id-wall",
+            &granted,
+            "nodes.move",
+            r#"{"id":"p1","spaceId":"别的空间"}"#,
+        ) {
+            Ok(v) => panic!("带别的空间 spaceId 必须被拒，实际成功：{v}"),
+            Err(e) => e,
+        };
+        assert!(
+            err.contains("permission_denied") && err.contains("write:all-spaces"),
+            "跨空间写必须点名 write:all-spaces：{err}"
+        );
     }
 }
 
@@ -403,10 +833,19 @@ mod tools_list_tests {
         }
         // ② 读面永远是那 7 条 ✓（写面开关不影响读面 ✓）
         assert!(off.len() >= 7, "读面至少 7 条 ✓（实际 {}）", off.len());
-        assert!(!off.iter().any(|x| x == "coverage_report"), "host=frontend 的那条**不在**面上 ✓（M1 修过 ✓）");
+        // ⭐ B3（2026-10-29）改判：`coverage.report` 以前是 `host:"frontend"`、**不在面上**
+        //   （M1 修过："面里不许有调不通的工具"）；现在它有了 **Rust→前端桥** ⇒ 它**该在**面上，
+        //   而且点开就是真能调（前端没挂载时会立刻 `frontend_unavailable`，不会挂死）。
+        assert!(
+            off.iter().any(|x| x == "coverage_report"),
+            "B3 起 coverage_report 必须**在**读面上（经前端桥真能调）：{off:?}"
+        );
         // ③ 开关**开着**时：两个写工具都在 ✓，且正好多出写面那 2 条 ✓
         for n in ["pages_create", "blocks_append"] {
-            assert!(on.iter().any(|x| x == n), "开着时清单里必须有写工具 {n} ✓: {on:?}");
+            assert!(
+                on.iter().any(|x| x == n),
+                "开着时清单里必须有写工具 {n} ✓: {on:?}"
+            );
         }
         // ⭐ **2026-10-09（owner 拍「同意」✓）**：这里原来硬断言"写工具**正好 2 条**" ✗ ——
         //   R152 把口径改成"跟**权限** `write:pages` 走、不是跟要不要人确认" ✓ 之后，
@@ -414,9 +853,138 @@ mod tools_list_tests {
         //   ⇒ 改成**语义断言** ✓：开着时**只多出**写工具 ✓、两个写工具**必须在** ✓；
         //   ⛔ 不再钉条数 —— 那正是它过期的方式 ✗。
         let added: Vec<&String> = on.iter().filter(|n| !off.iter().any(|x| x == *n)).collect();
-        assert!(!added.is_empty(), "开着时必须**多出**写工具 ✓（实际 {off:?} / {on:?}）");
+        assert!(
+            !added.is_empty(),
+            "开着时必须**多出**写工具 ✓（实际 {off:?} / {on:?}）"
+        );
         for n in ["pages_create", "blocks_append"] {
-            assert!(added.iter().any(|x| *x == n), "新多出来的必须含写工具 {n} ✓（实际多出 {added:?}）");
+            assert!(
+                added.iter().any(|x| *x == n),
+                "新多出来的必须含写工具 {n} ✓（实际多出 {added:?}）"
+            );
+        }
+    }
+
+    /// ⭐ **B1a（2026-10-29）判据 1**：5 条只读扩容工具**必须在** `tools/list` 里；
+    /// 且清单里的每个 `capabilityId` 都能在注册表里查到、都是 `read`、都不是 `host:frontend`
+    /// —— 面与注册表**同源**（⛔ 不是手搓的第二套工具表）。
+    ///
+    /// 变异（会红）：把 `genMcpTools` 的 `c.ai` 过滤去掉/把注册表里某条的 `ai` 关掉并重新生成
+    /// ⇒ 对应那条不在清单里 ⇒ 本测试第一条断言红。
+    #[test]
+    fn b1a_readonly_tools_are_listed_and_every_entry_matches_the_registry() {
+        let off = names(&tools_list_json(false));
+        for n in [
+            "page_current",
+            "pages_count",
+            "pages_tree",
+            "tags_list",
+            "properties_list",
+            // ⭐ B1b（2026-10-29）：数据库只读两条也在读面清单里（同一份注册表生成 ✓）
+            "db_schema",
+            "db_rows",
+        ] {
+            assert!(
+                off.iter().any(|x| x == n),
+                "B1a 工具 {n} 必须在读面清单里 ✓（实际 {off:?}）"
+            );
+        }
+        // 生成物与注册表同源：每一条都查得到、都是读能力、都不是 host:frontend
+        let v: serde_json::Value =
+            serde_json::from_str(&tools_list_json(false)).expect("工具清单必须是合法 JSON ✓");
+        let arr = v.as_array().expect("工具清单是裸数组 ✓");
+        assert!(!arr.is_empty(), "扫到 0 条不等于干净 ✗");
+        for t in arr {
+            let id = t["capabilityId"]
+                .as_str()
+                .unwrap_or_else(|| panic!("清单必须带 capabilityId ✓：{t}"));
+            let cap = crate::capabilities_gen::lookup(id)
+                .unwrap_or_else(|| panic!("清单里的 {id} 不在注册表里 ✗（面与注册表漂了）"));
+            assert_eq!(cap.kind, "read", "读面清单里混进了非读能力 {id} ✗");
+            // ⚠️ `host: "frontend"` 的能力**根本不在 Rust 绑定表里**（生成器就跳过它）⇒
+            //    `lookup` 能查到它，本身已证明"宿主面真能服务它"（M1 在 coverage.report 上踩过：
+            //    面里列了、一调 unknown_capability ✗）。这条口径由 `check-capabilities` §2c 再钉一遍。
+        }
+    }
+
+    /// ⭐ **B1a 判据 7（零写）**：`editor.insertText` / `user.notify` / `kv.*` / `settings.get` /
+    /// `log.write` / `spaces.switch` **仍然不在**任何一份 MCP 工具清单里（读面与写面都查）。
+    /// 它们要么是注册表里的 ✗ 项、要么是插件私有面 —— 出现在面上就是"外部 AI 能碰应用状态"。
+    #[test]
+    fn b1a_surface_still_excludes_every_forbidden_tool() {
+        let off = names(&tools_list_json(false));
+        let on = names(&tools_list_json(true));
+        for forbidden in [
+            "editor_insertText",
+            "user_notify",
+            "kv_get",
+            "kv_set",
+            "kv_remove",
+            "settings_get",
+            "log_write",
+            "spaces_switch",
+        ] {
+            assert!(
+                !off.iter().any(|x| x == forbidden),
+                "⛔ 不暴露清单里的 {forbidden} 出现在读面 ✗：{off:?}"
+            );
+            assert!(
+                !on.iter().any(|x| x == forbidden),
+                "⛔ 不暴露清单里的 {forbidden} 出现在写面 ✗：{on:?}"
+            );
+        }
+    }
+
+    /// ⭐ **B2-结构（2026-10-29）判据 7**：零写红测试改判成「**预期写工具白名单**」——
+    /// 读面里⛔ 一个写工具都不许有；写面**正好**是这 14 条（旧 4 ＋ B2 的 10），多一条少一条都红。
+    /// （不是删掉旧测试：它挡的"写能力悄悄多出来"正是要保留的语义，只是从"一条都没有"升级成白名单。）
+    #[test]
+    fn b2_write_surface_is_exactly_the_expected_whitelist() {
+        const EXPECTED_WRITE: [&str; 27] = [
+            "blocks_append",
+            "blocks_delete",
+            "blocks_insert",
+            "blocks_patch",
+            "db_rows_delete",
+            "db_rows_write",
+            "files_delete",
+            "files_detach",
+            "files_move",
+            "files_rename",
+            "files_upload_to_page",
+            "folders_create",
+            "import_docpackage",
+            "nodes_delete",
+            "nodes_move",
+            "nodes_rename",
+            "pages_create",
+            "pages_importMarkdown",
+            "pages_import_markdown",
+            "pages_revert",
+            "pages_update",
+            "properties_set",
+            "properties_unset",
+            "tags_add",
+            "tags_remove",
+            "templates_apply",
+            "trash_restore",
+        ];
+        let off = names(&tools_list_json(false));
+        let on = names(&tools_list_json(true));
+        let added: Vec<&String> = on.iter().filter(|n| !off.iter().any(|x| x == *n)).collect();
+        let mut got: Vec<String> = added.iter().map(|s| (*s).clone()).collect();
+        got.sort();
+        let mut want: Vec<String> = EXPECTED_WRITE.iter().map(|s| s.to_string()).collect();
+        want.sort();
+        assert_eq!(
+            got, want,
+            "写面必须**正好**是预期白名单（多/少都红）——got={got:?}"
+        );
+        for n in EXPECTED_WRITE {
+            assert!(
+                !off.iter().any(|x| x == n),
+                "读写面分离：读面里不该出现写工具 {n}：{off:?}"
+            );
         }
     }
 }
@@ -435,6 +1003,60 @@ mod tools_list_tests {
 #[cfg(test)]
 static DRAFT_SINK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// ⚠️ **测试级串行锁：共享测试数据目录的「写者」**（2026-10-31；2026-11-02 改了口径）。
+///
+/// 背景：`crate::db::ensure_test_app_data_dir()` 返回的是**整个测试二进制共用**的目录
+/// （`db.rs` 里那个"必须只有这一个来源"的 helper）。多个用例会往里 seed 同一个
+/// `spaces/default.db` / `meta.db` ⇒ 必须串行，否则**两个测试进程**同时写同一个库
+/// （本仓的复现脚本就是两进程并发跑；只加进程内 Mutex 挡不住，实测仍 12/12 红）。
+///
+/// ⚠️ **2026-11-02 改口径**：`mcp_host` 那两条"数据目录逐字节不变"的判据**不再拿这把锁** ——
+/// 它们改用**自己的私有 app-data 目录**（见 [`w3_draft_tests::private_app_data_dir`]）：
+/// 靠"所有写者都自觉拿锁"来保护别人的快照窗口是**不成立**的（CI 上翻指纹的正是**没拿锁**的
+/// 那个写者；`SEC_LOCK` 那族 flake 同形），靠"窗口里根本没有别的写者"才成立。
+/// 这把锁留给**共享目录自己的写者们**互相串行（跨进程那层仍然有用）。
+///
+/// 实现是**两层**（都只测试用，`#[cfg(test)]`；⛔ 不是产品锁，产品代码不引用）：
+/// 1. **进程内**：`DB_WRITE_TEST_LOCK`（`std::sync::Mutex`）—— `cargo test` 是**一个进程多线程**；
+/// 2. **跨进程**：共享测试目录里的一个 `.lock` 文件（`std::fs::File::lock`，`std` 自带 ⇒ ⛔ 无新依赖）。
+///
+/// 锁顺序：**先局部锁、后本锁**（`DRAFT_SINK_TEST_LOCK` / `LOG_TEST_LOCK` /
+/// `CAPABILITY_TEST_LOCK` → 本锁），⛔ 不许反序；持有本锁期间**只**做「一次 seed」，
+/// **不**在里面再拿别的测试锁 —— 因而不会成环。
+#[cfg(test)]
+pub(crate) static DB_WRITE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// [`lock_db_writes_for_test`] 的守卫：**同时**持进程内 Mutex 与跨进程文件锁，Drop 时一起放。
+#[cfg(test)]
+pub(crate) struct DbWriteTestGuard {
+    _process: std::sync::MutexGuard<'static, ()>,
+    _cross_process: std::fs::File,
+}
+
+/// 拿「共享测试目录的写者锁」（进程内 ＋ 跨进程）。口径见 [`DB_WRITE_TEST_LOCK`] 的注释。
+#[cfg(test)]
+pub(crate) fn lock_db_writes_for_test() -> DbWriteTestGuard {
+    // 固定次序：先进程内、再跨进程（两层都按同一方向拿 ⇒ 不会死锁）。
+    let process = DB_WRITE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = crate::db::test_app_data_dir_path();
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("db-write-test.lock");
+    let cross_process = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap_or_else(|e| panic!("打开测试锁文件 {} 失败：{e}", path.display()));
+    cross_process
+        .lock()
+        .unwrap_or_else(|e| panic!("拿跨进程测试锁失败：{e}"));
+    DbWriteTestGuard {
+        _process: process,
+        _cross_process: cross_process,
+    }
+}
+
 #[cfg(test)]
 mod w3_draft_tests {
     use super::*;
@@ -442,10 +1064,11 @@ mod w3_draft_tests {
     use std::path::Path;
 
     /// **库文件**的逐字节指纹（路径 → 内容 sha256 ✓）：只收
-    /// ① 应用数据目录**顶层**、② `spaces/` **一层** 里的 `*.db` / `*.db-wal` / `*.db-shm` ✓。
+    /// ① `dir` **顶层**、② `dir/spaces/` **一层** 里的 `*.db` / `*.db-wal` / `*.db-shm` ✓。
     ///
-    /// ⚠️ 为什么**不**扫整棵测试目录：那是**所有测试共用**的（本仓的测试并行跑 ✓），别的测试
-    /// 新建的子目录会被误读成「这次调用落库了」⇒ **假红** ✓（本判据第一版就这么红的 ✓）。
+    /// ⚠️ 传进来的 `dir` 必须是**本用例私有**的那个（见 [`private_app_data_dir`]）：
+    /// 共享测试目录是**所有测试共用**的（本仓的测试并行跑 ✓），扫它就会把别人的写入读成
+    /// 「这次调用落库了」⇒ **假红** ✓（本判据第一版就这么红的 ✓）。
     /// ⚠️ 为什么用 sha256 而不是 mtime：mtime 会因为「读一下」就变 ✗，判据要抓的是**内容变化** ✓。
     fn fingerprint(dir: &Path) -> BTreeMap<String, String> {
         use sha2::{Digest, Sha256};
@@ -453,7 +1076,9 @@ mod w3_draft_tests {
         let mut dirs = vec![dir.to_path_buf()];
         dirs.push(dir.join("spaces"));
         for d in dirs {
-            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            let Ok(rd) = std::fs::read_dir(&d) else {
+                continue;
+            };
             for e in rd.flatten() {
                 let p = e.path();
                 let is_db = p
@@ -475,13 +1100,105 @@ mod w3_draft_tests {
         out
     }
 
+    /// 给「数据目录**逐字节不变**」那两条判据造一个**私有** app-data 目录（2026-11-02）。
+    ///
+    /// 为什么必须私有：判据的形态是「整个数据目录在调用前后逐字节相同」，而
+    /// [`crate::db::ensure_test_app_data_dir`] 返回的是**整个测试二进制共用**的目录 ——
+    /// 别的模块在同一个窗口里写一次 `spaces/default.db`，那条断言就红（**CI 实测**：
+    /// 前后不一致，唯一变的是 `spaces/default.db`；真因不是产品回归，是**判据的窗口里
+    /// 有别的写者**）。
+    ///
+    /// ⚠️ **覆盖范围没有变小**（这不是"忽略某个文件"那种放宽 ✓）：外部调用能打开的库只有
+    /// 「当前空间」与 `meta.db` —— `with_read_conn` / `with_conn_for_space` / `with_meta_conn`
+    /// 全都跟着 `RUN_STATE.read_dir` 走（见 `plugins::with_conn_for_space` 里那两处），而
+    /// [`crate::plugins::with_active_space_in_test`] 把 `read_dir` 钉在这个目录上 ⇒
+    /// 它写哪儿都会被 [`fingerprint`] 抓到。私有目录还顺带消掉了 `*.db-wal` / `*.db-shm`
+    /// 的噪声（共享目录里别人的连接会让 sidecar 出现/消失，那同样会翻指纹）。
+    fn private_app_data_dir(tag: &str, seeded_page: &str) -> (std::path::PathBuf, String) {
+        // ⚠️ 放在**临时目录根下**、**不在** `db::test_app_data_dir_path()` 里面：
+        //    那边是共享测试目录，而 `db::tests` 有个 `remove_dir_all(<共享目录>)` 的夹具
+        //    （`db.rs` 的 `test_dir()`）⇒ 放进它里面等于把自己的夹具交给别人的清理动作。
+        let dir = std::env::temp_dir().join(format!("shuyonote-w3-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        let space = format!("w3-{tag}");
+        {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, created_at, updated_at) VALUES (?1, '判据空间', 1, 1)",
+                rusqlite::params![&space],
+            )
+            .unwrap();
+            m.execute(
+                "INSERT OR REPLACE INTO sync_state (key, value) VALUES (?1, ?2)",
+                rusqlite::params![crate::db::ACTIVE_KEY, &space],
+            )
+            .unwrap();
+        }
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at) VALUES (?1, ?2, NULL, 'p', '{}', 'x', 'page', 0, 10, 10)",
+                rusqlite::params![seeded_page, &space],
+            )
+            .unwrap();
+        }
+        (dir, space)
+    }
+
+    /// 快照**不能空转**：私有目录里必须真有被测空间的库，否则 `before` / `after` 都是空集
+    /// ⇒ 生成前后相等却什么也没证明（空扫最容易被当成"绿" ✗）。
+    fn assert_snapshot_covers_space(before: &BTreeMap<String, String>, space: &str) {
+        assert!(
+            before.keys().any(|k| k.ends_with(&format!("{space}.db"))),
+            "前置失败：私有目录的指纹里没有 `spaces/{space}.db`（拿到 {} 个文件）⇒ 这条判据会空转",
+            before.len()
+        );
+    }
+
+    /// 让私有夹具**静置**：把库打开再关一次，把"只有首次打开才会做"的那些写入先做掉。
+    ///
+    /// ⚠️ 这是 2026-11-02 实测出来的（不是预防性洁癖）：`db::migrate` 里有一条
+    /// 「`page_fts` 是空的、而 `pages` 已有行 ⇒ 回填 FTS」的幂等补数据 —— 夹具在
+    /// `open_space_conn_at` 之后才 INSERT 页面 ⇒ **被测调用那次单纯打开库**就会补一次 FTS ⇒
+    /// 库文件真的变了 ⇒ 判定「落库了」的假红（实测逐字：只有 `spaces/<space>.db` 的 sha 变了）。
+    /// 旧版把"库已经被人打开过 N 次"这件事**隐式**交给了共享目录（别的用例早把它打开过）⇒
+    /// 那正是"判据依赖别人跑过什么"的形态 ✗；私有目录必须自己静置。
+    fn settle(dir: &Path, space: &str) {
+        drop(crate::db::open_space_conn_at(space, dir).unwrap());
+    }
+
+    /// 静置后的指纹（**并复核它自己稳**）：先 `settle` 一次，取指纹，再 `settle` 一次，指纹必须一样。
+    ///
+    /// 复核这半句是判据的**前置**（不是断言被测调用）：夹具若"每打开一次就写一次库"，
+    /// 后面的「调用前后逐字节相同」就**测不出**被测调用做过什么 —— 那种红会把人指向产品，
+    /// 而真因在夹具。⇒ 让它以"前置失败"的形状红，并且说清是哪一半。
+    fn settled_fingerprint(dir: &Path, space: &str) -> BTreeMap<String, String> {
+        settle(dir, space);
+        let before = fingerprint(dir);
+        settle(dir, space);
+        assert_eq!(
+            before,
+            fingerprint(dir),
+            "前置失败：私有夹具**自己不稳**（每打开一次库就写一次）⇒ 下面的\
+             「调用前后逐字节相同」测不出被测调用，先修夹具（见 `settle` 的注释）"
+        );
+        assert_snapshot_covers_space(&before, space);
+        before
+    }
+
     #[test]
     fn external_write_is_drafted_not_landed() {
         // 出口是全局的 ⇒ 与 W4 那条串起来跑 ✓（不拿锁就会互相覆盖 ✗）
-        let _serial = DRAFT_SINK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = crate::db::ensure_test_app_data_dir().to_path_buf();
+        let _serial = DRAFT_SINK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // ⭐ 2026-11-02：数据目录**本用例私有**（不再用共享的 `ensure_test_app_data_dir`）——
+        // 判据断言的是"这个目录逐字节不变"，共享目录里别人的写入会把它弄红（CI flake 的真因）。
+        let (dir, space) = private_app_data_dir("create", "p-w3-create");
         // 装一个**测试出口**：真看见草稿才算数 ✓（比读源码猜有没有 emit 硬 ✗）
-        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen2 = seen.clone();
         set_external_draft_sink(move |source, payload| {
             if let Ok(mut g) = seen2.lock() {
@@ -489,31 +1206,55 @@ mod w3_draft_tests {
             }
         });
 
-        let before = fingerprint(&dir);
+        // ⚠️ 窗口**不再**靠 `DB_WRITE_TEST_LOCK` 保护（那样只挡"愿意拿锁的写者"，而 CI 上翻指纹的
+        // 正是**没拿锁**的那个）：这个目录是**本用例私有**的 ⇒ 窗口里唯一的写者就是被测调用本身。
+        // 覆盖范围不变（见 `private_app_data_dir` 的注释）。夹具先**静置**（见 `settle`）。
+        let before = settled_fingerprint(&dir, &space);
         let session = "sdk-w3-draft-1";
         // 权限取**注册表里写的那一条** ✓（⛔ 不在测试里手抄权限名 ✗）
         let cap = crate::capabilities_gen::lookup("pages.create").expect("pages.create 必须存在 ✓");
-        let perm = cap.permission.expect("写能力必须有 permission（注册表里写着 ✓）");
+        let perm = cap
+            .permission
+            .expect("写能力必须有 permission（注册表里写着 ✓）");
         assert!(!perm.is_empty());
-        let out = handle_external_call(
-            session,
-            &[perm.to_string()],
-            "pages.create",
-            r#"{"title":"周报","content":"第一段"}"#,
-        )
+        // 把「当前空间 ＋ 数据目录」钉到私有目录（`handle_external_call` 内部会装当前空间，
+        // 这个口子只改测试构建里它**装哪一个** —— 见 `plugins::with_active_space_in_test`）。
+        let out = crate::plugins::with_active_space_in_test(&space, &dir, || {
+            handle_external_call(
+                session,
+                &[perm.to_string()],
+                "pages.create",
+                r#"{"title":"周报","content":"第一段"}"#,
+            )
+        })
         .expect("外部写请求本身应当成功（它产出的是草稿 ✓）");
         let after = fingerprint(&dir);
 
         // ① 数据目录**逐字节不变** ✓ —— 这是规格那条不变量的机械形态 ✓
-        assert_eq!(before, after, "外部写请求在用户确认之前**不许落库** ✗：数据目录变了");
+        assert_eq!(
+            before, after,
+            "外部写请求在用户确认之前**不许落库** ✗：数据目录变了"
+        );
         // ② 草稿**交出去了** ✓（以前是塞进线程局、没人取 ⇒ 静默丢掉 ✗）
         let got = seen.lock().map(|g| g.clone()).unwrap_or_default();
         assert_eq!(got.len(), 1, "草稿必须交出去一次（拿到 {} 条）✗", got.len());
-        assert!(got[0].contains("新建页面"), "出口里要带**后端生成的** summary ✓：{got:?}");
-        assert!(got[0].contains("create_page"), "payload 的 kind 也要在 ✓：{got:?}");
+        assert!(
+            got[0].contains("新建页面"),
+            "出口里要带**后端生成的** summary ✓：{got:?}"
+        );
+        assert!(
+            got[0].contains("create_page"),
+            "payload 的 kind 也要在 ✓：{got:?}"
+        );
         // ③ 回给 agent 的话**如实** ✓（是「待确认」就不许说成「已写入」✗）
-        assert!(out.contains("\"drafted\":true"), "回话要带 drafted ✓：{out}");
-        assert!(out.contains("\"awaiting_confirm\":true"), "默认（免确认关着）必须 awaiting_confirm ✓：{out}");
+        assert!(
+            out.contains("\"drafted\":true"),
+            "回话要带 drafted ✓：{out}"
+        );
+        assert!(
+            out.contains("\"awaiting_confirm\":true"),
+            "默认（免确认关着）必须 awaiting_confirm ✓：{out}"
+        );
         // ④ 留痕 ✓
         let rows: Vec<_> = crate::plugins::plugin_audit(Some("external".to_string()), Some(200))
             .into_iter()
@@ -522,14 +1263,19 @@ mod w3_draft_tests {
         assert_eq!(rows.len(), 1, "写请求也要留痕 ✓（拿到 {} 条）", rows.len());
         assert!(rows[0].ok, "这次调用本身是成功的（草稿生成了 ✓）");
         assert_eq!(rows[0].capability, "pages.create");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `pages.update`（2026-10-17）：MCP 的**整页替换**入口 —— 同样只产出草稿。
     /// 判据：草稿真的交出去、kind 是 `update_page`、payload 带着**目标页 id**（⛔ 不带=不知道改哪页 ✗）。
     #[test]
     fn pages_update_is_drafted_with_target_page_id() {
-        let _serial = DRAFT_SINK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _dir = crate::db::ensure_test_app_data_dir();
+        let _serial = DRAFT_SINK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // ⭐ 2026-11-02：私有数据目录（同另外两条）—— 共享目录是**所有用例共用**的，
+        //   单跑时里面可能连一个工作区都没有（`query_row` 直接 panic）⇒ 自带一份夹具最稳。
+        let (dir, space) = private_app_data_dir("update-drafted", "p-update-1");
         let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen2 = seen.clone();
@@ -542,19 +1288,31 @@ mod w3_draft_tests {
         let session = "sdk-w3-update-1";
         let cap = crate::capabilities_gen::lookup("pages.update").expect("pages.update 必须存在 ✓");
         let perm = cap.permission.expect("写能力必须有 permission ✓");
-        let out = handle_external_call(
-            session,
-            &[perm.to_string()],
-            "pages.update",
-            r##"{"id":"p-update-1","title":"新标题","markdown":"# 新标题\n\n新正文"}"##,
-        )
+        let out = crate::plugins::with_active_space_in_test(&space, &dir, || {
+            handle_external_call(
+                session,
+                &[perm.to_string()],
+                "pages.update",
+                r##"{"id":"p-update-1","title":"新标题","markdown":"# 新标题\n\n新正文"}"##,
+            )
+        })
         .expect("外部写请求本身应当成功（它产出的是草稿 ✓）");
 
         let got = seen.lock().map(|g| g.clone()).unwrap_or_default();
         assert_eq!(got.len(), 1, "草稿必须交出去一次（拿到 {} 条）✗", got.len());
-        assert!(got[0].contains("update_page"), "payload 的 kind 必须是 update_page ✓：{got:?}");
-        assert!(got[0].contains("p-update-1"), "payload 必须带目标页 id ✓：{got:?}");
-        assert!(out.contains("\"drafted\":true"), "回话要带 drafted ✓：{out}");
+        assert!(
+            got[0].contains("update_page"),
+            "payload 的 kind 必须是 update_page ✓：{got:?}"
+        );
+        assert!(
+            got[0].contains("p-update-1"),
+            "payload 必须带目标页 id ✓：{got:?}"
+        );
+        assert!(
+            out.contains("\"drafted\":true"),
+            "回话要带 drafted ✓：{out}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// ⭐ 2026-10-18：**整页替换永远要人确认** —— 即使「免确认」档开着。
@@ -564,8 +1322,12 @@ mod w3_draft_tests {
     /// 三条断言一起说清：回话如实（`auto_apply:false`）／数据目录**逐字节不变**／草稿也标了 false。
     #[test]
     fn pages_update_never_auto_applies_even_when_allow_write_is_on() {
-        let _serial = DRAFT_SINK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = crate::db::ensure_test_app_data_dir().to_path_buf();
+        let _serial = DRAFT_SINK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // ⭐ 2026-11-02：私有数据目录（同 `external_write_is_drafted_not_landed`）——
+        // 断言的是"这个目录逐字节不变"，共享目录里别的用例写一次 `spaces/default.db` 就会假红。
+        let (dir, space) = private_app_data_dir("update-auto", "p-update-auto");
         let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen2 = seen.clone();
@@ -575,17 +1337,20 @@ mod w3_draft_tests {
             }
         });
 
-        let before = fingerprint(&dir);
+        let before = settled_fingerprint(&dir, &space);
         let session = "sdk-update-auto-1";
         let cap = crate::capabilities_gen::lookup("pages.update").expect("pages.update 必须存在 ✓");
         let perm = cap.permission.expect("写能力必须有 permission ✓");
-        let out = handle_external_call_with(
-            session,
-            &[perm.to_string()],
-            "pages.update",
-            r##"{"id":"p-update-auto","markdown":"整页替换的新正文"}"##,
-            true, // ⭐ 免确认开关**开着** —— 正是这条判据要挡的场景 ✓
-        )
+        // 当前空间 ＝ 私有目录里的那个空间 ⇒ `pages.update` 读/写都落在这个目录（覆盖范围不变）。
+        let out = crate::plugins::with_active_space_in_test(&space, &dir, || {
+            handle_external_call_with(
+                session,
+                &[perm.to_string()],
+                "pages.update",
+                r##"{"id":"p-update-auto","markdown":"整页替换的新正文"}"##,
+                true, // ⭐ 免确认开关**开着** —— 正是这条判据要挡的场景 ✓
+            )
+        })
         .expect("调用本身应当成功（它产出的是草稿 ✓）");
         let after = fingerprint(&dir);
 
@@ -608,7 +1373,11 @@ mod w3_draft_tests {
             "出口那边也必须是「等确认」（否则前端会直接落库 ✗）：{}",
             got[0]
         );
-        assert!(got[0].contains("update_page"), "payload 的 kind 必须是 update_page ✓");
+        assert!(
+            got[0].contains("update_page"),
+            "payload 的 kind 必须是 update_page ✓"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
@@ -629,9 +1398,12 @@ mod w4_audit_tests {
 
     #[test]
     fn confirm_free_write_is_marked_and_audited() {
-        let _serial = DRAFT_SINK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _serial = DRAFT_SINK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _dir = crate::db::ensure_test_app_data_dir();
-        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen2 = seen.clone();
         set_external_draft_sink(move |source, payload| {
             if let Ok(mut g) = seen2.lock() {
@@ -652,12 +1424,22 @@ mod w4_audit_tests {
         .expect("免确认写本身应当成功（草稿＋落库由前端同一条路做 ✓）");
 
         // ① 回话如实：免确认 ⇒ 不等确认，且标明 auto_apply ✓
-        assert!(out.contains("\"auto_apply\":true"), "免确认时必须标明 auto_apply ✓：{out}");
-        assert!(out.contains("\"awaiting_confirm\":false"), "免确认时不该说在等确认 ✓：{out}");
+        assert!(
+            out.contains("\"auto_apply\":true"),
+            "免确认时必须标明 auto_apply ✓：{out}"
+        );
+        assert!(
+            out.contains("\"awaiting_confirm\":false"),
+            "免确认时不该说在等确认 ✓：{out}"
+        );
         // ② 出口里也带 auto_apply:true ⇒ 前端**不弹框**、直接走同一条落库路 ✓（落库仍只有 `ai/apply.ts` 一处 ✓）
         let got = seen.lock().map(|g| g.clone()).unwrap_or_default();
         assert_eq!(got.len(), 1, "草稿要交出去一次 ✓（拿到 {} 条）", got.len());
-        assert!(got[0].contains("\"auto_apply\":true"), "出口里必须带 auto_apply:true ✓：{}", got[0]);
+        assert!(
+            got[0].contains("\"auto_apply\":true"),
+            "出口里必须带 auto_apply:true ✓：{}",
+            got[0]
+        );
         // ③ ⭐ **必须留痕** —— 这一条就是 R87 那句话的机械形态 ✓
         let rows: Vec<_> = crate::plugins::plugin_audit(Some("external".to_string()), Some(200))
             .into_iter()
@@ -670,39 +1452,61 @@ mod w4_audit_tests {
             rows.len()
         );
         assert!(rows[0].ok, "这一笔本身是成功的 ✓");
-        assert_eq!(rows[0].capability, "pages.create", "审计里要看得出改的是哪一类能力 ✓");
-        assert_eq!(rows[0].plugin_id, "external", "外部会话不是插件 ⇒ 不许冒用插件 id ✓");
+        assert_eq!(
+            rows[0].capability, "pages.create",
+            "审计里要看得出改的是哪一类能力 ✓"
+        );
+        assert_eq!(
+            rows[0].plugin_id, "external",
+            "外部会话不是插件 ⇒ 不许冒用插件 id ✓"
+        );
     }
 
     /// 检索信封（2026-10-17）：`pages.search` 的外部结果**必须**带上范围；空结果必须说得出
     /// "是哪个空间没有"。判据把范围直接喂进来（不碰库 ⇒ 不依赖活动空间，也不会被并行测试干扰 ✓）。
+    ///
+    /// ⭐ 2026-10-31（WorkBuddy 评估修）：信封再带 `truncated`（与 `pages.changes_since` 同口径）——
+    /// 调用方靠它区分「只回了前 N 条」与「一共就 N 条」。
     #[test]
     fn pages_search_result_carries_scope_and_says_which_space_is_empty() {
         let scope = || Ok(serde_json::json!({"spaceId":"s1","spaceName":"运营","pageCount":42}));
 
-        // ① 有命中：matched 与 results 都在，**不必**给 hint（有结果时别劝人换词 ✗）
+        // ① 有命中：matched 与 results、truncated:false 都在，**不必**给 hint（有结果时别劝人换词 ✗）
         let one = with_search_scope_with(
             "pages.search",
             Ok(r#"[{"id":"p1","title":"短剧方案","snippet":"…"}]"#.to_string()),
             scope(),
             None,
+            Some(1),
         )
         .expect("成功的结果不该被信封弄成错误 ✓");
         let v: serde_json::Value = serde_json::from_str(&one).unwrap();
         assert_eq!(v["matched"], 1);
         assert_eq!(v["results"][0]["id"], "p1");
-        assert_eq!(v["scope"]["spaceName"], "运营", "范围必须带空间名（否则调用方仍然不知道搜的是哪）");
+        assert_eq!(
+            v["scope"]["spaceName"], "运营",
+            "范围必须带空间名（否则调用方仍然不知道搜的是哪）"
+        );
         assert_eq!(v["scope"]["pageCount"], 42);
-        assert!(v.get("hint").is_none(), "有命中还劝换词只会让 agent 怀疑结果：{v}");
+        assert_eq!(v["truncated"], false, "1 条命中、want=1 ⇒ 没截断：{v}");
+        assert!(
+            v.get("hint").is_none(),
+            "有命中还劝换词只会让 agent 怀疑结果：{v}"
+        );
 
         // ② 空：**必须**说清楚是哪个空间、有多少页 —— 这就是「[] 让调用方困惑」的修法
         let none =
-            with_search_scope_with("pages.search", Ok("[]".to_string()), scope(), None).unwrap();
+            with_search_scope_with("pages.search", Ok("[]".to_string()), scope(), None, Some(8))
+                .unwrap();
         let v: serde_json::Value = serde_json::from_str(&none).unwrap();
         assert_eq!(v["matched"], 0);
+        assert_eq!(v["truncated"], false, "0 条没有被截断：{v}");
         let hint = v["hint"].as_str().unwrap_or_default();
         assert!(hint.contains("运营"), "空结果的提示要点名空间：{hint}");
-        assert!(hint.contains("42"), "空结果的提示要给页数（0 页与 42 页是两件事）：{hint}");
+        assert!(
+            hint.contains("42"),
+            "空结果的提示要给页数（0 页与 42 页是两件事）：{hint}"
+        );
 
         // ②b 整句中文：除了范围，还要给"拆词重试"这句**能立刻执行**的话
         let split_hint = long_cjk_retry_hint(r#"{"q":"找一下焦煤相关的材料"}"#);
@@ -713,18 +1517,59 @@ mod w4_audit_tests {
                 Ok("[]".to_string()),
                 scope(),
                 split_hint.as_deref(),
+                Some(8),
             )
             .unwrap(),
         )
         .unwrap();
         let hint = v["hint"].as_str().unwrap_or_default();
-        assert!(hint.contains("拆成 2–4 个关键词"), "空结果 + 整句中文 ⇒ 教它拆词：{hint}");
+        assert!(
+            hint.contains("拆成 2–4 个关键词"),
+            "空结果 + 整句中文 ⇒ 教它拆词：{hint}"
+        );
+
+        // ②c **截断**：探针收到 wanted+1 条 ⇒ 裁回 wanted，且 truncated:true ＋ 说清 matched 不是总数
+        let v: serde_json::Value = serde_json::from_str(
+            &with_search_scope_with(
+                "pages.search",
+                Ok(r#"[{"id":"p1"},{"id":"p2"},{"id":"p3"}]"#.to_string()),
+                scope(),
+                None,
+                Some(2),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v["matched"], 2, "matched 是**本次返回条数**：{v}");
+        assert_eq!(v["results"].as_array().unwrap().len(), 2);
+        assert_eq!(v["truncated"], true, "多取到第 3 条 ⇒ 必须标截断：{v}");
+        let hint = v["hint"].as_str().unwrap_or_default();
+        assert!(
+            hint.contains("不是命中总数"),
+            "截断时要说清 matched 不是总数：{hint}"
+        );
+
+        // ②d 没有探针（wanted=None）⇒ 不许猜"截断"，如实 false
+        let v: serde_json::Value = serde_json::from_str(
+            &with_search_scope_with(
+                "pages.search",
+                Ok(r#"[{"id":"p1"},{"id":"p2"}]"#.to_string()),
+                scope(),
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v["matched"], 2);
+        assert_eq!(v["truncated"], false, "没有探针就不许声称截断：{v}");
 
         // ③ 非检索能力**原样**（信封只属于 pages.search，别的工具结果不许被改形状 ✗）
         let raw = with_search_scope_with(
             "pages.get",
             Ok(r#"{"id":"p1","title":"会议纪要"}"#.to_string()),
             scope(),
+            None,
             None,
         )
         .unwrap();
@@ -736,6 +1581,7 @@ mod w4_audit_tests {
                 "pages.search",
                 Err("bad_args: 缺少参数 q".to_string()),
                 scope(),
+                None,
                 None
             )
             .is_err(),
@@ -749,16 +1595,56 @@ mod w4_audit_tests {
                 Ok(r#"[{"id":"p1"}]"#.to_string()),
                 Err("db_error: 库打不开".to_string()),
                 None,
+                Some(1),
             )
             .unwrap(),
         )
         .unwrap();
         assert!(v["scope"].is_null());
         assert!(
-            v["scopeError"].as_str().unwrap_or_default().contains("db_error"),
+            v["scopeError"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("db_error"),
             "取不到范围时要如实说明，而不是静默留空：{v}"
         );
         assert_eq!(v["matched"], 1, "范围取不到不影响这次检索本身的读数");
+        assert_eq!(v["truncated"], false);
+    }
+
+    /// ⭐ 2026-10-31（WorkBuddy 评估修）：`truncated` 靠"**多取一条**"探针 —— 纯函数判据
+    /// （不碰库；探针与能力层 `arg_i64` 的数值口径必须一致，否则 `limit` 读法一变就静默错位）。
+    #[test]
+    fn search_probe_asks_for_exactly_one_extra_item() {
+        let args_of = |raw: &str| -> (serde_json::Value, Option<i64>) {
+            let (a, w) = search_probe_args("pages.search", raw);
+            (serde_json::from_str(&a).unwrap(), w)
+        };
+        // 缺省（= 能力层默认 8）⇒ 多要一条
+        let (v, w) = args_of(r#"{"q":"x"}"#);
+        assert_eq!(w, Some(8));
+        assert_eq!(v["limit"], 9, "默认 8 ⇒ 探针要 9：{v}");
+        // 指定 limit ⇒ want+1；数字 / 数字字符串 / 2.0 与能力层同一口径（`tests/numeric-arg-parity.json` 那族）
+        for raw in [
+            r#"{"q":"x","limit":2}"#,
+            r#"{"q":"x","limit":"2"}"#,
+            r#"{"q":"x","limit":2.0}"#,
+        ] {
+            let (v, w) = args_of(raw);
+            assert_eq!(w, Some(2), "{raw}");
+            assert_eq!(v["limit"], 3, "{raw}: {v}");
+        }
+        // 上限处**多不了**（能力面会夹到 SEARCH_MAX）⇒ 原值；truncated 只能如实 false
+        let (v, w) = args_of(&format!(
+            r#"{{"q":"x","limit":{}}}"#,
+            crate::cap_limits::SEARCH_MAX
+        ));
+        assert_eq!(w, Some(crate::cap_limits::SEARCH_MAX));
+        assert_eq!(v["limit"], crate::cap_limits::SEARCH_MAX);
+        // 非 pages.search ⇒ 一个字节都不改（别的能力形状不许被动）
+        let (a, w) = search_probe_args("pages.get", r#"{"id":"p1","limit":2}"#);
+        assert!(w.is_none());
+        assert_eq!(a, r#"{"id":"p1","limit":2}"#);
     }
 
     /// 整句中文的补救提示只在"真的会误伤"的形状上出现（2026-10-18）。
@@ -770,8 +1656,14 @@ mod w4_audit_tests {
             "整句中文（无空格、≥6 字）⇒ 要给拆词建议"
         );
         assert!(long_cjk_retry_hint(r#"{"q":"焦煤"}"#).is_none(), "短词不给");
-        assert!(long_cjk_retry_hint(r#"{"q":"焦煤 材料"}"#).is_none(), "已经拆好的多词查询不给");
-        assert!(long_cjk_retry_hint(r#"{"q":"release notes"}"#).is_none(), "英文多词不给");
+        assert!(
+            long_cjk_retry_hint(r#"{"q":"焦煤 材料"}"#).is_none(),
+            "已经拆好的多词查询不给"
+        );
+        assert!(
+            long_cjk_retry_hint(r#"{"q":"release notes"}"#).is_none(),
+            "英文多词不给"
+        );
         assert!(long_cjk_retry_hint(r#"{"q":""}"#).is_none(), "空 q 不给");
         assert!(long_cjk_retry_hint(r#"{}"#).is_none(), "缺 q 不给");
     }

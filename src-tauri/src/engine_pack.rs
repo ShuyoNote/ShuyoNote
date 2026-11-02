@@ -13,7 +13,8 @@
 use serde::Serialize;
 use std::path::Path;
 /// 镜像仓的 contents API 前缀（⭐ 与 `AbilitiesPane` 的 `API` 常量**逐字一致**）。
-pub const MIRROR_CONTENTS_API: &str = "https://api.gitcode.com/api/v5/repos/shuyo-cn/shuyo-mirror/contents/";
+pub const MIRROR_CONTENTS_API: &str =
+    "https://api.gitcode.com/api/v5/repos/shuyo-cn/shuyo-mirror/contents/";
 /// 镜像仓的 **git blobs** API 前缀 —— ⭐ 实测三种端点（2026-10-10，Lead 量的）：
 ///
 /// ```text
@@ -26,7 +27,8 @@ pub const MIRROR_CONTENTS_API: &str = "https://api.gitcode.com/api/v5/repos/shuy
 ///
 /// ⇒ 所以默认取法是两步：先用 `contents` 拿 **GitCode 自己的 blob sha**（⛔ 那不是我们的 sha256），
 /// 再来这里取内容。
-pub const MIRROR_BLOBS_API: &str = "https://api.gitcode.com/api/v5/repos/shuyo-cn/shuyo-mirror/git/blobs/";
+pub const MIRROR_BLOBS_API: &str =
+    "https://api.gitcode.com/api/v5/repos/shuyo-cn/shuyo-mirror/git/blobs/";
 
 /// 内存里算 sha256（小写十六进制）—— 与 `sha256_file` 同一把尺子。
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -43,7 +45,9 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 pub fn decode_blob_json(j: &serde_json::Value) -> Result<Vec<u8>, String> {
     let enc = j.get("encoding").and_then(|v| v.as_str()).unwrap_or("");
     if enc != "base64" {
-        return Err(format!("blobs 返回的形状不是 base64（encoding={enc}）⇒ 不猜"));
+        return Err(format!(
+            "blobs 返回的形状不是 base64（encoding={enc}）⇒ 不猜"
+        ));
     }
     let content = j.get("content").and_then(|v| v.as_str()).unwrap_or("");
     if content.is_empty() {
@@ -153,7 +157,8 @@ pub fn install_pack_from_reader<R: std::io::Read>(
         return Err("清单里没有钉字节数 ⇒ 拒绝落盘（没有上限就没法挡半包）".to_string());
     }
     if let Some(dir) = dest.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("建目录失败（{}）：{e}", dir.display()))?;
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("建目录失败（{}）：{e}", dir.display()))?;
     }
 
     // ⭐ `.part` 策略（**选一个并写明**，owner 2026-10-10 要求）：
@@ -215,7 +220,11 @@ pub fn install_pack_from_reader<R: std::io::Read>(
         ));
     }
 
-    let got = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let got = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
     // ⚠️ 这一条就是"危险方向优先"那一条：不匹配 ⇒ 删掉 `.part` ＋ 拒绝，⛔ 绝不 rename 成正式文件。
     if got != expected_sha {
         cleanup(part);
@@ -255,9 +264,16 @@ pub(crate) async fn fetch_archive_from(url: &str) -> Result<Vec<u8>, String> {
         .unwrap_or("")
         .to_string();
     if ctype.contains("json") {
-        let j: serde_json::Value = res.json().await.map_err(|e| format!("返回结构不是 JSON：{e}"))?;
+        let j: serde_json::Value = res
+            .json()
+            .await
+            .map_err(|e| format!("返回结构不是 JSON：{e}"))?;
         decode_blob_json(&j)
     } else {
-        Ok(res.bytes().await.map_err(|e| format!("读响应失败：{e}"))?.to_vec())
+        Ok(res
+            .bytes()
+            .await
+            .map_err(|e| format!("读响应失败：{e}"))?
+            .to_vec())
     }
 }

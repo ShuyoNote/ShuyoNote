@@ -1,0 +1,433 @@
+/* S4（2026-11-01）：域抽取器搬出的**社区发布域（`.community-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* 「从社区链接存一篇笔记」：两步 UI（粘贴 → 预览 → 存/取消）。
+   视觉上沿用确认框那套（同一种浮层 + 同一种盒子），因为它也是"看清楚再决定"的一屏。 */
+.community-save-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  background: rgba(15, 23, 42, 0.34);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.community-save-box {
+  width: min(560px, calc(100vw - 48px));
+  max-height: min(76vh, 720px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+}
+
+.community-save-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px var(--space-4) 10px;
+  font-size: var(--fs-13-5);
+  font-weight: 600;
+}
+
+.community-save-close {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-18);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.community-save-body {
+  padding: 0 var(--space-4);
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.community-save-label {
+  display: block;
+  font-size: var(--fs-11-5);
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.community-save-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.community-save-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  font-size: var(--fs-12-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.community-save-error {
+  margin-top: 10px;
+  padding: var(--space-2) 10px;
+  font-size: var(--fs-12);
+  color: var(--danger, #c0392b);
+  border: 1px solid var(--danger, #c0392b);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--danger, #c0392b) 8%, transparent);
+}
+
+.community-save-preview {
+  margin-top: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px var(--space-3);
+}
+
+.community-save-preview-title {
+  font-size: var(--fs-13);
+  font-weight: 600;
+}
+
+.community-save-preview-meta {
+  font-size: var(--fs-11-5);
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
+.community-save-source {
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent, var(--text-dim));
+  font-size: var(--fs-11-5);
+  cursor: pointer;
+  text-align: left;
+  word-break: break-all;
+}
+
+/* `.community-save-source` 是"一行可点的地址/链接"（发布台账那条）；下面这个只是
+   「看 Markdown 源码 / 看渲染效果」的档位开关，**故意用不同的类名** —— 同一屏里两者都在，
+   共用类名会让"点开已发布的那一篇"那条判据（按 `querySelector(".community-save-source")` 找）
+   点到开关上。 */
+.community-save-preview-toggle {
+  margin-top: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent, var(--text-dim));
+  font-size: var(--fs-11-5);
+  cursor: pointer;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.community-save-preview-body {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--border);
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 34vh;
+  overflow: auto;
+}
+
+/* 板块 / 标签这两行：左边小标题、右边控件（清单里唯一的两个**可编辑**项）。 */
+.community-save-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 6px;
+}
+
+.community-save-field > .community-save-preview-meta { flex: none; margin-top: 0; }
+
+.community-save-board {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 260px;
+  padding: 3px 6px;
+  font-size: var(--fs-11-5);
+  color: var(--text);
+  background: var(--chip-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.community-save-tags {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.community-save-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px var(--space-1) 2px 6px;
+  font-size: var(--fs-11-5);
+  color: var(--text);
+  background: var(--chip-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  max-width: 100%;
+  word-break: break-all;
+}
+
+.community-save-tag-x {
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-10);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.community-save-tag-x:hover { color: var(--danger); }
+
+.community-save-tag-input {
+  flex: 1 1 90px;
+  min-width: 90px;
+  padding: 3px 6px;
+  font-size: var(--fs-11-5);
+  color: var(--text);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.community-save-tag-hint { font-size: var(--fs-11); color: var(--text-faint); }
+
+.community-save-tag-suggest {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: 6px;
+}
+
+.community-save-tag-suggest-item {
+  padding: 2px 6px;
+  font-size: var(--fs-11);
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+
+.community-save-tag-suggest-item:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
+
+.community-save-tag-suggest-item:disabled { opacity: 0.45; cursor: default; }
+
+/* 「正文预览」那一行：左边标题、右边「看 Markdown 源码 / 看渲染效果」。 */.community-save-preview-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.community-save-preview-row .community-save-preview-meta { margin-top: 0; }
+
+.community-save-preview-row .community-save-source { margin-top: 0; white-space: nowrap; }
+
+/* 渲染档：正文按"发出去的样子"排版（社区那边也是这套 Markdown 语义）。
+   源码档仍是上面的 pre-wrap 等宽观感 —— 两档的差别只在这里。 */
+.community-save-preview-body.is-rendered {
+  white-space: normal;
+  color: var(--text);
+  line-height: 1.7;
+}
+
+.community-save-preview-body.is-rendered > :first-child { margin-top: 0; }
+
+.community-save-preview-body.is-rendered h1,
+.community-save-preview-body.is-rendered h2,
+.community-save-preview-body.is-rendered h3,
+.community-save-preview-body.is-rendered h4,
+.community-save-preview-body.is-rendered h5,
+.community-save-preview-body.is-rendered h6 {
+  margin: var(--space-3) 0 6px;
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+.community-save-preview-body.is-rendered h1 { font-size: var(--fs-17); }
+
+.community-save-preview-body.is-rendered h2 { font-size: var(--fs-15); }
+
+.community-save-preview-body.is-rendered h3 { font-size: var(--fs-13-5); }
+
+.community-save-preview-body.is-rendered h4,
+.community-save-preview-body.is-rendered h5,
+.community-save-preview-body.is-rendered h6 { font-size: var(--fs-12-5); }
+
+.community-save-preview-body.is-rendered p { margin: 6px 0; }
+
+.community-save-preview-body.is-rendered ul,
+.community-save-preview-body.is-rendered ol { margin: 6px 0; padding-left: 20px; }
+
+.community-save-preview-body.is-rendered li { margin: 2px 0; }
+
+.community-save-preview-body.is-rendered hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: var(--space-3) 0;
+}
+
+.community-save-preview-body.is-rendered blockquote {
+  margin: var(--space-2) 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-dim);
+}
+
+.community-save-preview-body.is-rendered code {
+  background: var(--chip-bg);
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-xs);
+  font-size: var(--fs-11-5);
+}
+
+.community-save-preview-body.is-rendered pre {
+  background: var(--chip-bg);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  overflow: auto;
+}
+
+.community-save-preview-body.is-rendered pre code { background: transparent; padding: 0; }
+
+.community-save-preview-body.is-rendered img {
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+  vertical-align: middle;
+}
+
+.community-save-preview-body.is-rendered a { color: var(--accent, var(--text)); }
+
+.community-save-preview-body.is-rendered table { border-collapse: collapse; margin: var(--space-2) 0; }
+
+.community-save-preview-body.is-rendered th,
+.community-save-preview-body.is-rendered td {
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  text-align: left;
+}
+
+.community-save-more {
+  margin-top: 6px;
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+}
+
+.community-save-target {
+  margin-top: var(--space-2);
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+}
+
+.community-save-stored {
+  margin-top: var(--space-3);
+  padding: 10px var(--space-3);
+  font-size: var(--fs-12-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.community-save-stored-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: 10px;
+}
+
+.community-save-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) 14px;
+}
+
+.community-save-btn {
+  padding: 6px var(--space-3);
+  font-size: var(--fs-12-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.community-save-btn.primary {
+  background: var(--accent, #2563eb);
+  border-color: transparent;
+  color: #fff;
+}
+
+.community-save-btn.ghost {
+  background: transparent;
+}
+
+.community-save-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (max-width: 768px), (max-height: 520px) {
+.community-save-box {
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    /* `--ovh` 已经扣掉状态栏与底部（手势条 / 键盘）：盒子在任何视口下都装得下。 */
+    max-height: calc(var(--ovh) - 24px);
+  }
+.community-save-overlay {
+    align-items: flex-end;
+    justify-content: center;
+    /* 先重置四个方向（.ai-settings-overlay 原先有 padding-top:10vh、
+       .plugin-manager-overlay 有 padding:4vh 24px），再加安全区。 */
+    padding: var(--space-3);
+    padding-top: calc(var(--space-3) + var(--sat));
+    padding-bottom: calc(var(--space-3) + max(var(--sab), var(--kb)));
+    padding-left: calc(var(--space-3) + var(--sal));
+    padding-right: calc(var(--space-3) + var(--sar));
+  }
+.community-save-box {
+    position: static;
+    transform: none;
+    width: 100%;
+    max-width: 100%;
+    /* 顶部留 24px：让用户看得见"后面还有内容"。`--ovh` 里已经扣掉了状态栏
+       与底部（手势条 / 键盘），所以这里只需要那个 24px 的呼吸位。 */
+    max-height: calc(var(--ovh) - 24px);
+    border-radius: 16px 16px var(--radius-lg) var(--radius-lg);
+  }
+.community-save-close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+.community-save-box button {
+    min-height: 44px;
+  }
+}
+}

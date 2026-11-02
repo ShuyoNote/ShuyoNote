@@ -105,7 +105,7 @@ describe("applyDraft（属性 / 标签写）", () => {  it("set_page_prop：写�
     const r = await applyDraft({ kind: "add_tag", pageId: "p1", name: "工作" });
 
     expect(r.ok).toBe(true);
-    expect(api.addTag).toHaveBeenCalledWith("p1", "工作");
+    expect(api.addTag).toHaveBeenCalledWith("p1", "工作", undefined);
     expect(r.message).toContain("工作");
   });
 

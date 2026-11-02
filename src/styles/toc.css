@@ -1,0 +1,166 @@
+/* S4（2026-11-01）：域抽取器搬出的**目录侧栏域（`.toc-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* Table of contents (right-hand drawer) */
+/* Outline rail: slides in from the right edge, full height, GitHub-style. */
+.toc-panel {
+  position: fixed;
+  top: var(--titlebar-h);
+  right: 0;
+  bottom: 0;
+  /* ⭐ 宽度由拖拽决定（`--toc-w` 由 `TableOfContents.tsx` 写 ✓）；默认 300 与旧版一致 ✓。 */
+  width: var(--toc-w, 300px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  transform: translateX(100%);
+  transition: transform var(--transition-fast);
+}
+
+/* ⭐ 拖拽把手（2026-10-02）：贴在目录**左缘**的一条 6px 窄条 —— 指针变 `col-resize` ✓，
+   悬停/拖拽时亮一下（`--accent` ✓）。⚠️ 视觉上只占 6px，但 `left: -3px` 让它一半压在正文侧，
+   手感更"抓得住" ✓（GitHub / VS Code 那种分栏都是这个做法 ✓）。 */
+.toc-resizer {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+  transition: background var(--transition-fast);
+  /* 触摸/笔输入也别让浏览器抢走手势（否则一拖就在面板里滚起来了 ✗）。 */
+  touch-action: none;
+}
+
+.toc-resizer:hover,
+.toc-resizer.is-dragging {
+  background: var(--accent);
+  opacity: 0.55;
+}
+
+.toc-panel.open {
+  transform: translateX(0);
+  /* ⛔ 2026-10-02（owner）：「去掉目录栏的阴影」。
+     原来这里是 `box-shadow: -12px 0 32px rgba(0,0,0,.10)` —— 那是**浮层**才需要的投影
+     （`position: fixed` 盖在正文上时，靠它把两层分开 ✓）；现在目录是**并排停靠** ✓
+     ⇒ 投影只会糊在正文右侧，显得脏 ✗ ⇒ 去掉 ✓。
+     分界改用本来就有的 `border-left: 1px solid var(--border)` ✓（参考图里也就是一条细线 ✓）。 */
+}
+
+.toc-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 14px var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.toc-title {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+
+.toc-close {
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--fs-16);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+
+.toc-close:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.toc-list {
+  flex: 1;
+  overflow-y: auto;
+  margin: var(--space-3);
+  padding: var(--space-1);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.toc-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+  color: var(--text);
+  font-size: var(--fs-14);
+  line-height: 1.6;
+  padding: 5px 10px;
+  border-radius: var(--radius-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.toc-item:hover {
+  background: var(--hover);
+}
+
+/* Current section: a soft accent tint (Notion-ish, no heavy pill). */
+.toc-item.active {
+  background: var(--block-hover);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.toc-empty {
+  color: var(--text-faint);
+  font-size: var(--fs-13);
+  text-align: center;
+  padding: var(--space-4) 0;
+}
+
+@media (max-width: 768px), (max-height: 520px) {
+.toc-panel {
+    width: 100%;
+    max-width: 100%;
+    left: 0;
+    right: 0;
+    top: var(--sat);
+    bottom: max(var(--sab), var(--kb));
+  }
+/* 目录原先窄屏还是 300px 抽屉，在 390px 上占 77%、360px 上占 83%，
+     等于"开了个看不全正文的抽屉"。整屏 + 底部安全区。
+     ⚠️ `transform: none` 必须挂在 `.open` 上：基础规则用
+     `translateX(100%)` 表示"收起在屏外"，无条件清零会让**关着的目录也显示出来**。 */
+  .toc-panel.open {
+    transform: none;
+  }
+.toc-list {
+    margin: var(--space-2);
+    padding-bottom: var(--space-2);
+    overscroll-behavior-y: contain;
+  }
+.toc-panel button {
+    min-height: 44px;
+  }
+}
+}

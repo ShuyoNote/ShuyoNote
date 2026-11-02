@@ -827,6 +827,14 @@ export const GATES = [
     baseline: true,
   },
   {
+    id: "check-rustfmt",
+    group: "rust",
+    label: "Rust 格式（cargo fmt --check，2 个登记例外）",
+    cmd: "node scripts/check-rustfmt.mjs",
+    incident:
+      "2026-10-29（owner 拍「给 CI 加上 fmt 步骤」）：全仓 `cargo fmt` 之后**没有任何门禁守着 Rust 格式** —— rust job 只跑 cargo test、默认组是纯 Node ⇒ 下一笔把代码写回旧排版没有任何读数会红。本门禁跑 `cargo fmt --check`，只允许两个**登记例外**（`capabilities_gen.rs` 生成物必须与生成器逐字节一致；`plugins.rs` 被 `check-capabilities` 按原排版解析 dispatch 的 match 臂）。⚠️ 新增例外要写理由，⛔ 不许为变绿往 ALLOW 里塞。",
+  },
+  {
     id: "rust-plugins-alone",
     group: "rust",
     label: "插件测试必须能单独跑",

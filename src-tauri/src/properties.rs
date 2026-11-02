@@ -14,9 +14,13 @@ pub(crate) fn parse_options(json: &str) -> Vec<String> {
 }
 
 fn attr_type(c: &Connection, attr_id: &str) -> Result<Option<String>, String> {
-    c.query_row("SELECT type FROM attr_defs WHERE id = ?1", params![attr_id], |r| r.get(0))
-        .optional()
-        .map_err(|e| e.to_string())
+    c.query_row(
+        "SELECT type FROM attr_defs WHERE id = ?1",
+        params![attr_id],
+        |r| r.get(0),
+    )
+    .optional()
+    .map_err(|e| e.to_string())
 }
 
 fn page_tags_joined(c: &Connection, page_id: &str) -> Result<String, String> {
@@ -48,15 +52,20 @@ fn sync_page_tags(c: &Connection, page_id: &str, value: &str) -> Result<(), Stri
         .map_err(|e| e.to_string())?;
     for name in parse_tag_names(value) {
         let tag_id: Option<String> = c
-            .query_row("SELECT id FROM tags WHERE name = ?1", params![name], |r| r.get(0))
+            .query_row("SELECT id FROM tags WHERE name = ?1", params![name], |r| {
+                r.get(0)
+            })
             .optional()
             .map_err(|e| e.to_string())?;
         let tag_id = match tag_id {
             Some(id) => id,
             None => {
                 let id = uuid::Uuid::new_v4().to_string();
-                c.execute("INSERT INTO tags (id, name) VALUES (?1, ?2)", params![id, name])
-                    .map_err(|e| e.to_string())?;
+                c.execute(
+                    "INSERT INTO tags (id, name) VALUES (?1, ?2)",
+                    params![id, name],
+                )
+                .map_err(|e| e.to_string())?;
                 id
             }
         };
@@ -85,7 +94,8 @@ pub fn list_attr_defs(db: State<'_, Db>) -> Result<Vec<AttrDef>, String> {
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 #[derive(Deserialize)]
@@ -121,8 +131,7 @@ pub fn create_attr(db: State<'_, Db>, args: CreateAttrArgs) -> Result<AttrDef, S
 
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_ms();
-    let options_json =
-        serde_json::to_string(&args.options).unwrap_or_else(|_| "[]".to_string());
+    let options_json = serde_json::to_string(&args.options).unwrap_or_else(|_| "[]".to_string());
     let next_sort: f64 = c
         .query_row(
             "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM attr_defs",
@@ -208,13 +217,20 @@ pub fn delete_attr(db: State<'_, Db>, id: String) -> Result<(), String> {
 
 #[derive(Deserialize)]
 pub struct SetPagePropArgs {
+    #[serde(default)]
+    pub space_id: Option<String>,
     pub page_id: String,
     pub attr_id: String,
     #[serde(default)]
     pub value: String,
 }
 
-pub(crate) fn set_page_prop_impl(c: &Connection, page_id: &str, attr_id: &str, value: &str) -> Result<(), String> {
+pub(crate) fn set_page_prop_impl(
+    c: &Connection,
+    page_id: &str,
+    attr_id: &str,
+    value: &str,
+) -> Result<(), String> {
     if attr_type(c, attr_id)?.as_deref() == Some("tag") {
         // `tag` type is a view over the real tags system.
         sync_page_tags(c, page_id, value)?;
@@ -231,11 +247,41 @@ pub(crate) fn set_page_prop_impl(c: &Connection, page_id: &str, attr_id: &str, v
 
 #[tauri::command]
 pub fn set_page_prop(db: State<'_, Db>, args: SetPagePropArgs) -> Result<(), String> {
+    if let Some(space) = args
+        .space_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+    {
+        let active = {
+            let c = conn(&db);
+            crate::workspaces::active_workspace_id(&c)?
+        };
+        if space != active {
+            if crate::plugins::cross_space_write_disabled() {
+                return Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                );
+            }
+            let app = crate::db::app_data_dir_ref()
+                .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let tc = crate::db::open_space_conn_at(&space, app).map_err(|e| {
+                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+            })?;
+            return set_page_prop_impl(&tc, &args.page_id, &args.attr_id, &args.value);
+        }
+    }
     let c = conn(&db);
     set_page_prop_impl(&c, &args.page_id, &args.attr_id, &args.value)
 }
 
-pub(crate) fn remove_page_prop_impl(c: &Connection, page_id: &str, attr_id: &str) -> Result<(), String> {
+pub(crate) fn remove_page_prop_impl(
+    c: &Connection,
+    page_id: &str,
+    attr_id: &str,
+) -> Result<(), String> {
     if attr_type(c, attr_id)?.as_deref() == Some("tag") {
         sync_page_tags(c, page_id, "")?;
     } else {
@@ -249,7 +295,37 @@ pub(crate) fn remove_page_prop_impl(c: &Connection, page_id: &str, attr_id: &str
 }
 
 #[tauri::command]
-pub fn remove_page_prop(db: State<'_, Db>, page_id: String, attr_id: String) -> Result<(), String> {
+pub fn remove_page_prop(
+    db: State<'_, Db>,
+    page_id: String,
+    attr_id: String,
+    space_id: Option<String>,
+) -> Result<(), String> {
+    if let Some(space) = space_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+    {
+        let active = {
+            let c = conn(&db);
+            crate::workspaces::active_workspace_id(&c)?
+        };
+        if space != active {
+            if crate::plugins::cross_space_write_disabled() {
+                return Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                );
+            }
+            let app = crate::db::app_data_dir_ref()
+                .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+            let tc = crate::db::open_space_conn_at(&space, app).map_err(|e| {
+                format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+            })?;
+            return remove_page_prop_impl(&tc, &page_id, &attr_id);
+        }
+    }
     let c = conn(&db);
     remove_page_prop_impl(&c, &page_id, &attr_id)
 }
@@ -274,7 +350,8 @@ pub(crate) fn get_page_props_impl(c: &Connection, page_id: &str) -> Result<Vec<P
                 })
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
     };
 
     // `tag` type attributes are views over the real tags system.
@@ -335,7 +412,8 @@ mod tests {
              );",
         )
         .unwrap();
-        c.execute("INSERT INTO pages (id) VALUES ('p1')", []).unwrap();
+        c.execute("INSERT INTO pages (id) VALUES ('p1')", [])
+            .unwrap();
         c.execute(
             "INSERT INTO attr_defs (id, name, type, options, created_at, updated_at) VALUES ('a1','名称','text','[]',0,0)",
             [],
@@ -355,7 +433,11 @@ mod tests {
         )
         .unwrap();
         let v: String = c
-            .query_row("SELECT value FROM page_props WHERE page_id='p1' AND attr_id='a1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT value FROM page_props WHERE page_id='p1' AND attr_id='a1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(v, "hello");
 
@@ -367,17 +449,28 @@ mod tests {
         )
         .unwrap();
         let v2: String = c
-            .query_row("SELECT value FROM page_props WHERE page_id='p1' AND attr_id='a1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT value FROM page_props WHERE page_id='p1' AND attr_id='a1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(v2, "world");
 
         // delete
         let n = c
-            .execute("DELETE FROM page_props WHERE page_id='p1' AND attr_id='a1'", [])
+            .execute(
+                "DELETE FROM page_props WHERE page_id='p1' AND attr_id='a1'",
+                [],
+            )
             .unwrap();
         assert_eq!(n, 1);
         let count: i64 = c
-            .query_row("SELECT COUNT(*) FROM page_props WHERE page_id='p1' AND attr_id='a1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM page_props WHERE page_id='p1' AND attr_id='a1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(count, 0);
     }
@@ -415,7 +508,10 @@ mod tests {
         set_page_prop_impl(&conn, page_id, attr_id, "hello").unwrap();
         let props = get_page_props_impl(&conn, page_id).unwrap();
         assert_eq!(
-            props.iter().map(|p: &PageProp| (p.attr_id.as_str(), p.value.as_str())).collect::<Vec<_>>(),
+            props
+                .iter()
+                .map(|p: &PageProp| (p.attr_id.as_str(), p.value.as_str()))
+                .collect::<Vec<_>>(),
             vec![("a1", "hello")]
         );
 
@@ -441,10 +537,16 @@ mod tests {
         .unwrap();
         set_page_prop_impl(&conn, page_id, tag_attr, "进行中").unwrap();
         let props = get_page_props_impl(&conn, page_id).unwrap();
-        assert!(props.iter().any(|p| p.attr_type == "tag" && p.value == "进行中"));
+        assert!(props
+            .iter()
+            .any(|p| p.attr_type == "tag" && p.value == "进行中"));
         remove_page_prop_impl(&conn, page_id, tag_attr).unwrap();
         let tags_after: i64 = conn
-            .query_row("SELECT COUNT(*) FROM page_tags WHERE page_id = ?1", params![page_id], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM page_tags WHERE page_id = ?1",
+                params![page_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(tags_after, 0);
         // the tag property view is still synthesized (attr still in attr_defs)

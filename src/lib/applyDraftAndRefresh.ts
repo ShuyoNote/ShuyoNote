@@ -5,8 +5,7 @@
 
 import { applyDraft, type ApplyResult } from "./ai/apply";
 import { api } from "./api";
-import { stateForExternalWrite } from "./crdt/yDocBridge";
-import { seedExternalWriteState } from "./crdt/seedExternalWrite";
+import { seedPageCrdtState } from "./crdt/seedPageState";
 import { useNotes } from "../store/notes";
 
 /**
@@ -22,41 +21,46 @@ import { useNotes } from "../store/notes";
  *
  * 播种失败**不静默**：`seedExternalWriteState` 会 `console.warn` 并返回 false（写入本身已落盘，
  * 但"重启后可能回滚"这件事必须留下线索）。执行体本身在 `crdt/seedExternalWrite.ts`（纯函数，便于判据）。
+ *
+ * ⚠️ 2026-11-01：那套依赖（`stateFor` / `saveState` / `verify` / `report`）**搬去了**
+ * `crdt/seedPageState.ts` —— 「恢复历史版本」要走同一条路，两处各写一份必然漂
+ * （判据：`crdt/seedPageState.test.ts` ＋ 历史面板的恢复顺序判据）。
  */
-const SEED_DEPS = {
-  stateFor: (page: { id: string }) => stateForExternalWrite(page),
-  saveState: (id: string, state: Uint8Array) => api.savePageState(id, state),
-  verify: async (id: string, state: Uint8Array) => {
-    const back = await api.readPageState(id);
-    if (!back) return "read-null";
-    if (back.length !== state.length) return `mismatch(len ${back.length}!=${state.length})`;
-    let same = true;
-    for (let i = 0; i < back.length; i++) {
-      if (back[i] !== state[i]) { same = false; break; }
-    }
-    return same ? "match" : "mismatch(bytes)";
-  },
-  report: (line: string) => {
-    // 诊断用：播种成败写进 mcp/apply.log（没有 devtools 的窗口也能查 R155 是否生效）
-    try {
-      void api.mcpLogApplyResult(line);
-    } catch {
-      // 诊断失败不影响落库
-    }
-  },
-};
-
 export async function applyDraftAndRefresh(payload: unknown): Promise<ApplyResult> {
-  const res = await applyDraft(payload);
+  // ⭐ 跨空间写 v1：目标空间的新页**不在当前空间的页面树里** ⇒ 落库后不 seed/open，
+  //   只刷新当前列表（当前空间本身没有被改动）。
+  const pp = payload as { spaceId?: unknown; args?: { spaceId?: unknown } };
+  const crossSpaceId =
+    (typeof pp?.spaceId === "string" && pp.spaceId) ||
+    (typeof pp?.args?.spaceId === "string" && pp.args.spaceId) ||
+    "";
+  const crossSpace = Boolean(crossSpaceId);
+  // ⭐ UX-①：把草稿结果回写给宿主（applied/rejected）——失败不打断落库/提示
+  const draftId = typeof (payload as { draftId?: unknown })?.draftId === "string"
+    ? String((payload as { draftId: string }).draftId)
+    : "";
+  const report = (state: "applied" | "rejected") => {
+    if (!draftId) return;
+    void api.mcpDraftState(draftId, state).catch(() => undefined);
+  };
+  let res: ApplyResult;
+  try {
+    res = await applyDraft(payload);
+  } catch (e) {
+    report("rejected");
+    throw e;
+  }
+  report(res.ok ? "applied" : "rejected");
   const notes = useNotes.getState();
   // ⭐ R150：**外部写过的页要打标记** ✓ —— 否则那条排在去抖槽里的旧补丁会在约 0.4 秒后
   //   把它盖回去 ✗（现场读数见 `lib/pendingSave.ts` 的头注 ✓）。
   if (res.ok && res.page) {
     notes.noteExternalWrite(res.page.id);
     // ⭐ R155：落库后播种状态，再刷新界面（顺序不能反：编辑器重挂时会读状态）。
-    await seedExternalWriteState(res.page, SEED_DEPS);
+    await seedPageCrdtState(res.page);
   }
   await notes.loadPages();
+  if (crossSpace) return res;
   if (res.page) {
     if (res.page.id === notes.currentId) {
       // 落库的是**当前页**：编辑器自己持有 Lexical state，必须刷新内存副本并

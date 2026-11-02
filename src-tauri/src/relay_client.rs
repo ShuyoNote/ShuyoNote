@@ -171,10 +171,8 @@ pub fn resolve_config_path() -> Option<PathBuf> {
 /// `INV-UI-copy-no-internal-ids` 同族的口径里 ✓）；⭐ 排障要看路径 ⇒ 走
 /// [`resolve_config_path`]（它本来就回一个 `PathBuf` ✓）。
 pub fn load_config_from(path: &Path) -> Result<RelayConfig, String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("读不了中继配置: {e}"))?;
-    serde_json::from_str(&text)
-        .map_err(|e| format!("中继配置不是合法的 JSON: {e}"))
+    let text = std::fs::read_to_string(path).map_err(|e| format!("读不了中继配置: {e}"))?;
+    serde_json::from_str(&text).map_err(|e| format!("中继配置不是合法的 JSON: {e}"))
 }
 
 /// 从 [`resolve_config_path`] 读配置 ✓；路径都取不到 ⇒ 报清楚"还没配置"✓。
@@ -468,12 +466,7 @@ pub fn gate_for_new_tunnel(cfg: &RelayConfig, now: i64) -> Result<(), String> {
 /// 顺序（固定 ✓，排障时先命中哪一条是确定的 ✓）：
 /// ① 地址配没配 ⇒ ② 设备身份有没有 ⇒ ③ 许可窗口放不放行 ⇒ ④ 有没有可递上去的租约。
 pub fn decide_new_connection(cfg: &RelayConfig, now: i64) -> ConnectDecision {
-    let Some(url) = cfg
-        .url
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    else {
+    let Some(url) = cfg.url.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
         return ConnectDecision::Refuse {
             code: "not_configured",
             message: "还没配置中继地址（relay/config.json 的 url）".to_string(),
@@ -570,7 +563,11 @@ impl RelayProbe {
 
     /// 机器可读一行 ✓（判据就靠它 ✓）。⛔ **绝不打印租约** ✗（凭证不进日志／不进报告 ✓）。
     pub fn machine_line(&self) -> String {
-        let license = format!("license={} display=\"{}\"", self.license.code(), self.license.display());
+        let license = format!(
+            "license={} display=\"{}\"",
+            self.license.code(),
+            self.license.display()
+        );
         match &self.outcome {
             ProbeOutcome::Connected => format!(
                 "connected url={} endpoint={} {license}",
@@ -583,7 +580,10 @@ impl RelayProbe {
                 self.endpoint_hex.as_deref().unwrap_or("-")
             ),
             ProbeOutcome::Refused { code, message } => {
-                format!("refused code={code} why=\"{message}\" url={} {license}", self.url)
+                format!(
+                    "refused code={code} why=\"{message}\" url={} {license}",
+                    self.url
+                )
             }
             ProbeOutcome::Unreachable { error } => {
                 format!("unreachable url={} error=\"{error}\" {license}", self.url)
@@ -826,7 +826,9 @@ pub fn license_view(window: LicenseWindow) -> RelayLicenseView {
             true,
         ),
         LicenseWindow::Expired => ("expired", None, None, "已到期".to_string(), false),
-        LicenseWindow::NotYet { .. } => ("not_yet", None, None, "还没到生效时间".to_string(), false),
+        LicenseWindow::NotYet { .. } => {
+            ("not_yet", None, None, "还没到生效时间".to_string(), false)
+        }
         LicenseWindow::Unconfigured => (
             "missing",
             None,
@@ -1150,7 +1152,13 @@ mod tests {
         let mut cfg = cfg_ok(NOW + 30 * 86_400);
         cfg.token = None;
         let d = decide_new_connection(&cfg, NOW);
-        assert!(matches!(d, ConnectDecision::Refuse { code: "missing", .. }));
+        assert!(matches!(
+            d,
+            ConnectDecision::Refuse {
+                code: "missing",
+                ..
+            }
+        ));
         // ⑤ 全齐 ⇒ 放行 ✓
         let cfg = cfg_ok(NOW + 30 * 86_400);
         assert!(decide_new_connection(&cfg, NOW).allowed());
@@ -1175,7 +1183,10 @@ mod tests {
         assert_eq!(cfg.url.as_deref(), Some("http://127.0.0.1:8899"));
         assert_eq!(token_text(&cfg).as_deref(), Some("T"));
         assert_eq!(device_seed(&cfg).unwrap().len(), 32);
-        assert_eq!(config_window(&cfg, NOW), LicenseWindow::Active { days_left: 1 });
+        assert_eq!(
+            config_window(&cfg, NOW),
+            LicenseWindow::Active { days_left: 1 }
+        );
 
         let bad = dir.join("bad.json");
         std::fs::write(&bad, "{ 这不是 JSON").unwrap();
@@ -1274,7 +1285,11 @@ mod tests {
         // 还没检查过 ⇒ 那句话说"没检查"，⛔ 不是"已连上" ✗
         let un = status_payload_from(Ok(cfg.clone()), NOW, None);
         assert_eq!(un.connection.state, "unchecked");
-        assert!(!un.connection.label.contains("已连上"), "实得 {}", un.connection.label);
+        assert!(
+            !un.connection.label.contains("已连上"),
+            "实得 {}",
+            un.connection.label
+        );
         assert_eq!(un.connection.checked_at, None);
 
         // 中继拒绝 ⇒ 一句话 ＋ **中继给的原因原样**在 detail 里 ✓
@@ -1309,29 +1324,51 @@ mod tests {
             )),
         );
         assert_eq!(un_reach.connection.state, "unreachable");
-        assert!(un_reach.connection.detail.as_deref().unwrap().contains("deadline"));
+        assert!(un_reach
+            .connection
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("deadline"));
     }
 
     /// ② **读不到就不编数字** ✓（⛔ 不许 0 天冒充、⛔ 不许说已连上 ✗）。
     #[test]
     fn 读数_读不到时不编数字() {
-        let st = status_payload_from(Err("还没配置中继：读不到 relay/config.json".to_string()), NOW, None);
+        let st = status_payload_from(
+            Err("还没配置中继：读不到 relay/config.json".to_string()),
+            NOW,
+            None,
+        );
         // ⚠️ "读不到配置" ≠ "这一档不可用" —— 但"在岗"与否现在**跟构建走**（2026-10-25）。
         #[cfg(feature = "relay")]
-        assert!(st.available, "带 relay 特性：这一档在岗（读不到配置只是没配）");
+        assert!(
+            st.available,
+            "带 relay 特性：这一档在岗（读不到配置只是没配）"
+        );
         #[cfg(not(feature = "relay"))]
         assert!(!st.available, "不带 relay 的构建：这一档不可用");
         assert!(!st.configured);
         assert_eq!(st.url, None);
         assert_eq!(st.license.state, "missing");
-        assert_eq!(st.license.days_left, None, "读不到 ⇒ 不许有天数（更不许是 0）");
-        assert!(st.license.label.contains("读不到有效期"), "实得 {}", st.license.label);
+        assert_eq!(
+            st.license.days_left, None,
+            "读不到 ⇒ 不许有天数（更不许是 0）"
+        );
+        assert!(
+            st.license.label.contains("读不到有效期"),
+            "实得 {}",
+            st.license.label
+        );
         assert!(
             !st.license.label.chars().any(|c| c.is_ascii_digit()),
             "读不到那一句里不许有数字，实得 {}",
             st.license.label
         );
-        assert!(!st.license.crossnet_allowed, "读不到 ⇒ 不放行（fail-closed）");
+        assert!(
+            !st.license.crossnet_allowed,
+            "读不到 ⇒ 不放行（fail-closed）"
+        );
         assert!(!st.connection.label.contains("已连上"));
         assert!(st.note.contains("还没配置中继"), "那句为什么也要带给界面");
     }
@@ -1358,7 +1395,10 @@ mod tests {
         // 整份读数里**只有**"跨网放不放行"这一个布尔 ⇒ 不存在"本机禁用"那种东西 ✓
         let json = serde_json::to_string(&st).unwrap();
         for bad in ["lock", "locked", "disabled", "readonly", "read_only"] {
-            assert!(!json.contains(bad), "读数里不该有 {bad} 这种本地开关：{json}");
+            assert!(
+                !json.contains(bad),
+                "读数里不该有 {bad} 这种本地开关：{json}"
+            );
         }
         // 宽限期内则相反：跨网**仍放行** ＋ 界面把宽限一并说清 ✓
         // ⚠️ 取"刚好过期 1 秒"：此时宽限还剩 14 天差 1 秒 ⇒ 向上取整报 **14 天** ✓
@@ -1389,7 +1429,10 @@ mod tests {
         assert!(st.available, "带 relay 特性的桌面版：这一档在岗");
         #[cfg(not(feature = "relay"))]
         {
-            assert!(!st.available, "不带 relay 的构建：这一档不可用（隧道没编进来）");
+            assert!(
+                !st.available,
+                "不带 relay 的构建：这一档不可用（隧道没编进来）"
+            );
             assert!(
                 st.note.contains("不含跨网"),
                 "要说清为什么不可用，实得：{}",

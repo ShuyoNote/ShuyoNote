@@ -44,7 +44,7 @@ export default {
     appearance: "外观",
     appearanceHint: "主题与强调色",
     spaces: "空间",
-    spacesHint: "切换 / 配色 / 加密 / 迁移 / 删除",
+    spacesHint: "切换 / 配色 / 加密 / 备份 / 迁移 / 删除",
     account: "账户",
     accountHint: "登录身份与同步目标",
     email: "邮箱",
@@ -122,6 +122,7 @@ export default {
     more: "更多（导出等）",
     exportMarkdown: "导出为 Markdown（.md 文件）",
     exportMarkdownZip: "导出为 Markdown ＋ 附件（.zip）",
+    exportShuyodoc: "导出为 .shuyodoc（文档包）",
     copyMarkdown: "复制 Markdown 到剪贴板",
     exportHtml: "导出为 HTML",
     discuss: "讨论",
@@ -179,5 +180,27 @@ export default {
   // 阶段 1 · 正文索引的补算器（`components/TextRepairRunner.tsx`，B1）
   textRepair: {
     pending: "还有 {{count}} 页正文待重建（合并进来的内容暂时搜不到，打开那一页即可）",
+  },
+  // 「能力」页的**启停 / 卸载**（`components/AbilitiesPane.tsx`，task-14，2026-11-01）
+  // ⚠️ 只收这一批新增文案；该页其余文案仍在代码里用中文兜底（渐进迁移，逐批进来）。
+  abilities: {
+    installed: "已装",
+    disabled: "已禁用",
+    disabledHint: "这一项已被停用：不再参与任何功能，随时可以启用。",
+    disable: "禁用",
+    enable: "启用",
+    uninstall: "卸载",
+    uninstallHint: "只会删掉本应用下载的那份 pack，不碰笔记、附件和其它设置。",
+    uninstallBlockedBuiltin: "内置能力：随安装包一起提供，没有可卸载的下载包（可以改为「禁用」）",
+    uninstallBlockedLocal:
+      "本机端点能力：模型在你自己的 Ollama 里，本应用没有下载任何东西（可以改为「禁用」）",
+    uninstallConfirmTitle: "卸载「{{name}}」？",
+    uninstallConfirmMessage:
+      "只会删除本应用下载的那份 pack（应用数据目录/packs/{{id}}），不会碰你的笔记、附件和其它设置。删掉后这一项会回到「按需下载」，需要时可以再下。",
+    uninstallDone: "已卸载：删掉了 {{path}}（{{size}}）",
+    uninstallNoop: "已经卸载过了：{{path}} 本来就不在，什么都没删（幂等）",
+    uninstallFailed: "卸载失败",
+    toggleFailed: "切换启用状态失败",
+    downloadBlockedDisabled: "这一项已停用 ⇒ 先启用，再下载",
   },
 } as const;

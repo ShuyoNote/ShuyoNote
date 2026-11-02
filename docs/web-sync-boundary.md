@@ -40,6 +40,10 @@ Rust `reqwest`（没有浏览器 origin 概念），**默认拒绝跨源是安�
 （团队版 M27 客户端把登录 / 空间 / 成员做成 **Rust 代理命令**（`team_login` / `team_list_spaces` / …）
 是同一层原因的另一面：桌面 WebView2 同样受同源策略约束，必须由 Rust 侧发 HTTP 绕开，与 `ai.rs` 同一模式。）
 
+> ⚠️ **2026-10-29（owner 拍第三阶段）**：`team_login` / `team_list_spaces` 等**客户端团队命令已删除**
+> （`shuyonote-sync-server` 归档后随团队实现一起退役；见 `docs/SHUYONOTE_STATE.md` ／ 台账 R233）。
+> 上面这段保留为**历史边界说明**，不是现状。
+
 > 这一层可以不靠放开跨源来解决：把同步服务端反代到 Web 站点的**同源路径**（如 `/sync/` → `127.0.0.1:8787`），浏览器眼里就是同源请求。**属于建议，尚未实施。**
 
 ### 2.2 同步引擎有**两份**实现（Rust 与 TypeScript），不是"只有 Rust"

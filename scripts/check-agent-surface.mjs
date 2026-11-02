@@ -32,6 +32,42 @@ export const INTERNAL_MARKERS = [
 export const NOTE_ID_PREFIXES = [
   "pages.", "blocks.", "backlinks.", "files.", "coverage.",
   "tags.", "links.", "search.", "media.", "attachments.", "spaces.",
+  // ⭐ 2026-10-29（B1a，owner 拍 A）：`page.current` / `properties.list` 是**笔记域**能力
+  //   （当前页正文 / 属性定义），此前不在白名单里只是因为它们一直没挂 `ai:true`（清单遗漏），
+  //   不是安全边界的例外 —— 这条规则本意挡的是 fs/网络/命令类能力。
+  //   ⛔ 别在这里加 `fs.` / `exec.` / `net.` 这类（那才是它要挡的 ✗）。
+  "page.", "properties.",
+  // ⭐ 2026-10-29（B1b）：`db.schema` / `db.rows` 是**笔记域**能力（数据库的列/视图/行原始值，
+  //   就是笔记库里的结构化内容）—— 与上一行同一条判断：白名单此前只收 `pages.` 等前缀，
+  //   而 `db.*` 一直没挂 `ai:true`，属于**清单遗漏**，不是安全边界的例外。
+  //   ⛔ 别在这里加 `fs.` / `exec.` / `net.` / `sql.` 这类（任意 SQL 仍是矩阵 §9.2 的红线 ✗）。
+  "db.",
+  // ⭐ 2026-10-29（B1c）：`versions.*`（历史版本快照）、`trash.*`（回收站清单）、`blobs.*`（导出/下载
+  //   句柄的消费方）同样都是**笔记域**能力 —— 版本/回收站是笔记库自己的数据，`blobs.fetch` 只把
+  //   句柄落进应用自己的 `exports/`（⛔ 不接受任意路径）。与前面几条同一条判断：属于清单遗漏。
+  //   ⛔ 别在这里加 `fs.` / `exec.` / `net.` / `sql.` 这类（那才是这条规则要挡的 ✗）。
+  "versions.", "version.", "trash.", "blobs.",
+  // ⭐ 2026-10-29（B3）：`export.markdown` / `export.docpackage` 是**导出**能力 —— 产物只有句柄
+  //   （字节经 `blobs.fetch` 落进应用自己的 `exports/`），⛔ 不接受任意路径、也不改任何笔记。
+  //   与前面几条同一条判断：属于**清单遗漏**，不是安全边界放宽。
+  //   ⛔ 别在这里加 `fs.` / `exec.` / `net.` / `sql.` 这类（那才是这条规则要挡的 ✗）。
+  "export.",
+  // ⭐ 2026-10-29（B2-结构）：`folders.create` / `nodes.move|rename|delete` 是**笔记域**能力 ——
+  //   它们整理的就是页面树（文件夹＝kind=folder 的页面节点），⛔ 不碰库外东西。
+  //   与前面几条同一条判断：属于**清单遗漏**，不是安全边界放宽。
+  //   ⛔ 别在这里加 `fs.` / `exec.` / `net.` / `sql.` 这类（那才是这条规则要挡的 ✗）。
+  "nodes.", "folders.",
+  // ⭐ 2026-10-29（B2-附件与模板）：`templates.apply` 是用**本库模板**建页（笔记域），
+  //   ⛔ 不是 fs/网络类；同属清单遗漏。
+  "templates.",
+  // ⭐ 2026-10-29（B2-补遗-1）：`import.docpackage` 是**本库文档包**导入（永远新建页），
+  //   文件由用户在系统选择框里亲自选 —— 属笔记域；同属清单遗漏。
+  "import.",
+  // ⭐ 2026-10-30（UX-①）：`drafts.status` / `audit.tail` 是**本机 MCP 会话**的闭环读数
+  //   （只回本会话、不含正文），仍属笔记域；同属清单遗漏。
+  "drafts.", "audit.",
+  // ⭐ 2026-10-30（UX-③）：`space.current` 是当前空间的只读读数（不含别的空间）⇒ 笔记域。
+  "space.",
 ];
 export const ALLOWED_AI_KINDS = ["read", "write"];
 export const ALLOWED_AI_SCOPE = "current-space";

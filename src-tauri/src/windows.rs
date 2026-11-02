@@ -31,9 +31,7 @@ pub fn open_page_window(app: AppHandle, page_id: String) -> Result<(), String> {
         .hidden_title(true);
     #[cfg(all(desktop, not(target_os = "macos")))]
     let builder = builder.decorations(false);
-    let win = builder
-        .build()
-        .map_err(|e| e.to_string())?;
+    let win = builder.build().map_err(|e| e.to_string())?;
     // macOS：与主窗口同一套 —— 系统红绿灯藏掉，前端自绘小灯（见 lib.rs / mac_lights.rs）。
     let _ = crate::mac_lights::hide_native_traffic_lights(&win);
 

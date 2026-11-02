@@ -39,7 +39,11 @@ fn extract_titles(text: &str) -> Vec<String> {
 
 // Rebuild page-level backlinks for a source page: remove stale, resolve titles to page ids, insert.
 // Block-level backlinks are rebuilt separately by blocks::rebuild_block_backlinks.
-pub fn rebuild_backlinks(c: &Connection, source_id: &str, content_text: &str) -> Result<(), String> {
+pub fn rebuild_backlinks(
+    c: &Connection,
+    source_id: &str,
+    content_text: &str,
+) -> Result<(), String> {
     c.execute(
         "DELETE FROM backlinks WHERE source_page_id = ?1 AND source_block_id = ''",
         params![source_id],
@@ -110,7 +114,8 @@ pub fn get_backlinks(db: State<'_, Db>, id: String) -> Result<Vec<PageMeta>, Str
         })
         .map_err(|e| e.to_string())?;
 
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

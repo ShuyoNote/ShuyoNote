@@ -96,7 +96,12 @@ fn upstream_error_detail(body: &str) -> String {
     }
     let mut msg = String::new();
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
-        for path in [["error", "message"], ["message", ""], ["error", ""], ["detail", ""]] {
+        for path in [
+            ["error", "message"],
+            ["message", ""],
+            ["error", ""],
+            ["detail", ""],
+        ] {
             let mut cur = &v;
             let mut ok = true;
             for seg in path.iter().filter(|s| !s.is_empty()) {
@@ -187,30 +192,40 @@ async fn ai_ollama_complete(args: AiCompleteArgs) -> Result<AiCompleteResult, St
             "num_predict": args.max_tokens.unwrap_or(512),
         }
     });
-    let resp = http_client()?.post(&url).json(&body).send().await.map_err(|e| describe_net(&e, &url))?;
+    let resp = http_client()?
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| describe_net(&e, &url))?;
     if !resp.status().is_success() {
-        return Err(format!("Ollama 请求失败 ({})，请确认本地模型服务已启动、地址正确。", resp.status()));
+        return Err(format!(
+            "Ollama 请求失败 ({})，请确认本地模型服务已启动、地址正确。",
+            resp.status()
+        ));
     }
     let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
     let content = v["message"]["content"].as_str().unwrap_or("").to_string();
     let native = tool_calls_from(&v["message"]["tool_calls"]);
     Ok(AiCompleteResult {
         content,
-        native_tool_calls: if native.is_empty() { None } else { Some(native) },
+        native_tool_calls: if native.is_empty() {
+            None
+        } else {
+            Some(native)
+        },
     })
 }
 
 async fn ai_openai_complete(args: AiCompleteArgs) -> Result<AiCompleteResult, String> {
     let url = append_v1(&args.base_url, "/chat/completions");
-    let mut req = http_client()?
-        .post(&url)
-        .json(&json!({
-            "model": args.model,
-            "messages": args.messages,
-            "stream": false,
-            "temperature": args.temperature.unwrap_or(0.7),
-            "max_tokens": args.max_tokens.unwrap_or(512),
-        }));
+    let mut req = http_client()?.post(&url).json(&json!({
+        "model": args.model,
+        "messages": args.messages,
+        "stream": false,
+        "temperature": args.temperature.unwrap_or(0.7),
+        "max_tokens": args.max_tokens.unwrap_or(512),
+    }));
     if let Some(key) = args.api_key.filter(|k| !k.is_empty()) {
         req = req.bearer_auth(key);
     }
@@ -228,11 +243,18 @@ async fn ai_openai_complete(args: AiCompleteArgs) -> Result<AiCompleteResult, St
         });
     }
     let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    let content = v["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
+    let content = v["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
     let native = tool_calls_from(&v["choices"][0]["message"]["tool_calls"]);
     Ok(AiCompleteResult {
         content,
-        native_tool_calls: if native.is_empty() { None } else { Some(native) },
+        native_tool_calls: if native.is_empty() {
+            None
+        } else {
+            Some(native)
+        },
     })
 }
 
@@ -247,7 +269,9 @@ pub async fn ai_complete(args: AiCompleteArgs) -> Result<AiCompleteResult, Strin
 
 fn probe_message(models: Vec<String>, model: &str, is_ollama: bool) -> AiProbeResult {
     let installed = !models.is_empty();
-    let found = models.iter().any(|m| *m == model || m.starts_with(&format!("{model}")));
+    let found = models
+        .iter()
+        .any(|m| *m == model || m.starts_with(&format!("{model}")));
     let message = if !installed {
         if is_ollama {
             format!("连接成功，但未发现任何可用模型。请先运行 ollama pull {model}。")
@@ -255,15 +279,27 @@ fn probe_message(models: Vec<String>, model: &str, is_ollama: bool) -> AiProbeRe
             "连接成功，但未发现任何可用模型。请确认真实模型名。".to_string()
         }
     } else if found {
-        format!("连接成功。模型「{model}」已可用（共 {} 个）。", models.len())
+        format!(
+            "连接成功。模型「{model}」已可用（共 {} 个）。",
+            models.len()
+        )
     } else {
         format!(
             "连接成功（共 {} 个模型），但「{model}」不在其中。可用：{}",
             models.len(),
-            models.iter().take(8).cloned().collect::<Vec<_>>().join(", ")
+            models
+                .iter()
+                .take(8)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
         )
     };
-    AiProbeResult { ok: true, message, models }
+    AiProbeResult {
+        ok: true,
+        message,
+        models,
+    }
 }
 
 async fn ai_openai_probe(args: AiProbeArgs) -> Result<AiProbeResult, String> {
@@ -286,14 +322,23 @@ async fn ai_openai_probe(args: AiProbeArgs) -> Result<AiProbeResult, String> {
         .cloned()
         .unwrap_or_default()
         .iter()
-        .filter_map(|m| m["id"].as_str().or_else(|| m["name"].as_str()).map(|s| s.to_string()))
+        .filter_map(|m| {
+            m["id"]
+                .as_str()
+                .or_else(|| m["name"].as_str())
+                .map(|s| s.to_string())
+        })
         .collect();
     Ok(probe_message(models, &args.model, false))
 }
 
 async fn ai_ollama_probe(args: AiProbeArgs) -> Result<AiProbeResult, String> {
     let url = format!("{}/api/tags", base_of(&args.base_url));
-    let resp = http_client()?.get(&url).send().await.map_err(|e| describe_net(&e, &url))?;
+    let resp = http_client()?
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| describe_net(&e, &url))?;
     if !resp.status().is_success() {
         return Err(format!("Ollama 服务响应异常 ({})。", resp.status()));
     }
@@ -322,7 +367,10 @@ pub async fn ai_probe(args: AiProbeArgs) -> Result<AiProbeResult, String> {
 // stream, and emits each content delta to a per-run event (`ai-stream:{run_id}`)
 // with payload {delta} / {done}. The frontend subscribes via `platform.event.listen`.
 
-async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) -> Result<Vec<serde_json::Value>, String> {
+async fn stream_model<E: Fn(String) + Send>(
+    args: AiCompleteArgs,
+    emit: E,
+) -> Result<Vec<serde_json::Value>, String> {
     let is_openai = args.provider == "openai";
     let url = if is_openai {
         append_v1(&args.base_url, "/chat/completions")
@@ -387,7 +435,8 @@ async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) -> Re
     let mut stream = resp.bytes_stream();
     let mut buf = String::new();
     let mut tool_calls: Vec<serde_json::Value> = Vec::new();
-    let mut tc_frags: std::collections::HashMap<usize, (String, String)> = std::collections::HashMap::new();
+    let mut tc_frags: std::collections::HashMap<usize, (String, String)> =
+        std::collections::HashMap::new();
     let mut use_frags = false;
     while let Some(chunk) = stream.next().await {
         let chunk = match chunk {
@@ -448,7 +497,10 @@ async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) -> Re
         tool_calls
             .into_iter()
             .filter_map(|tc| {
-                let name = tc["function"]["name"].as_str().or(tc["name"].as_str()).unwrap_or("");
+                let name = tc["function"]["name"]
+                    .as_str()
+                    .or(tc["name"].as_str())
+                    .unwrap_or("");
                 if name.is_empty() {
                     return None;
                 }
@@ -486,7 +538,10 @@ fn openai_stream_chunk(line: &str) -> Option<(String, Option<Vec<serde_json::Val
         return None;
     }
     let v: serde_json::Value = serde_json::from_str(l).ok()?;
-    let content = v["choices"][0]["delta"]["content"].as_str().unwrap_or("").to_string();
+    let content = v["choices"][0]["delta"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
     let tcs = v["choices"][0]["delta"]["tool_calls"]
         .as_array()
         .cloned()
@@ -536,19 +591,33 @@ mod upstream_error_tests {
             upstream_error_detail(r#"{"error":{"message":"Model Not Exist"}}"#),
             "Model Not Exist"
         );
-        assert_eq!(upstream_error_detail(r#"{"message":"余额不足"}"#), "余额不足");
-        assert_eq!(upstream_error_detail(r#"{"error":"invalid api key"}"#), "invalid api key");
-        assert_eq!(upstream_error_detail(r#"{"detail":"bad request"}"#), "bad request");
+        assert_eq!(
+            upstream_error_detail(r#"{"message":"余额不足"}"#),
+            "余额不足"
+        );
+        assert_eq!(
+            upstream_error_detail(r#"{"error":"invalid api key"}"#),
+            "invalid api key"
+        );
+        assert_eq!(
+            upstream_error_detail(r#"{"detail":"bad request"}"#),
+            "bad request"
+        );
     }
 
     #[test]
     fn plain_text_passes_through() {
-        assert_eq!(upstream_error_detail("  请求失败 400 Bad Request  "), "请求失败 400 Bad Request");
+        assert_eq!(
+            upstream_error_detail("  请求失败 400 Bad Request  "),
+            "请求失败 400 Bad Request"
+        );
     }
 
     #[test]
     fn html_gateway_page_is_flattened() {
-        let got = upstream_error_detail("<html><head><title>400</title></head>\n<body><h1>Bad\nRequest</h1></body></html>");
+        let got = upstream_error_detail(
+            "<html><head><title>400</title></head>\n<body><h1>Bad\nRequest</h1></body></html>",
+        );
         assert_eq!(got, "400 Bad Request");
     }
 

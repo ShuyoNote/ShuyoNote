@@ -1,0 +1,735 @@
+/* S4（2026-11-01）：域抽取器搬出的**侧栏与空间切换域（`.sidebar*` / `.space-*`；`.space-item-crypto` 共享规则除外）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* 侧栏开合按钮：**桌面也显示**。
+   早先只在窄屏显示（理由是"桌面点活动图标就能开合、还有 hover 提示"）——但那条路有两个
+   坑：① 收起侧栏之后，桌面上没有任何**看得见**的入口能把它拉回来（图标上那句提示是 hover
+   才有的，而"点已选中的图标会收起"本身就是隐式约定）；② 拖分隔条把侧栏拖到底时也没地方
+   回来。所以这个按钮现在常驻：它是"侧栏还能找回来"的唯一可见保证（触屏上更是唯一入口）。 */
+.sidebar-toggle-btn {
+  display: grid;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transition: width var(--transition), min-width var(--transition);
+  overflow: hidden;
+}
+
+/* `hidden` 属性必须显式打回 display:none。作者样式里的 `.sidebar{display:flex}`
+ * 会压过浏览器默认的 `[hidden]{display:none}`（普通作者声明优先于普通 UA 声明），
+ * 所以只写 hidden 属性侧栏根本不会消失——桌面端收起、移动端抽屉关闭都失效。 */
+.sidebar[hidden] {
+  display: none;
+}
+
+.sidebar-resizer {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 30;
+  background: transparent;
+}
+
+.sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 40px;
+  border-radius: 2px;
+  background: var(--border);
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+
+.sidebar-resizer:hover::after,
+.sidebar-resizer:active::after {
+  opacity: 1;
+  background: var(--accent);
+}
+
+.sidebar-collapsed {
+  width: 56px;
+  min-width: 56px;
+}
+
+.sidebar-collapsed .tree-title,
+.sidebar-collapsed .tree-actions,
+.sidebar-collapsed .tree-toggle {
+  display: none;
+}
+
+.sidebar-collapsed .tree-row {
+  justify-content: center;
+  padding: 6px 0;
+}
+
+.sidebar-collapsed .tree-icon {
+  width: auto;
+}
+
+.sidebar-collapsed .sidebar-header {
+  justify-content: center;
+}
+
+/* 折叠态（56px）：顶部动作与底部栏都改纵向排列、只留图标。
+   底部栏此前在折叠时整块不渲染，回收站/模板/设置/关于全点不到——现在保留。 */
+
+.sidebar-collapsed .sidebar-actions-group {
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.sidebar-collapsed .sidebar-bottom {
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-1);
+}
+
+.sidebar-collapsed .sidebar-bottom-about {
+  margin-left: 0;
+}
+
+.sidebar-collapsed .sidebar-bottom-label {
+  display: none;
+}
+
+/* 空间标题行：整行可点、更大的色块与名称——它是侧栏的「门牌」，
+   之前 22px 色块 + 14px 文字在 264px 宽里显得局促。 */
+.sidebar-header {
+  padding: 14px var(--space-3) var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  /* ⭐ 2026-10-28：新建按钮收进这一行后，标题（flex:1）与它之间留 6px ——
+     避免"贴在一起"；同步点（`.sidebar-sync-pill`）在场时也一样 ✓。 */
+  gap: 6px;
+}
+
+.sidebar-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  font-weight: 600;
+  font-size: var(--fs-14-5);
+  letter-spacing: 0.01em;
+  border: none;
+  background: transparent;
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--text);
+  min-width: 0;
+  transition: background var(--transition-fast);
+}
+
+.sidebar-title:hover {
+  background: var(--hover);
+}
+
+.sidebar-title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.sidebar-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-title-caret {
+  color: var(--text-faint);
+  font-size: var(--fs-12);
+  line-height: 1;
+  flex: none;
+}
+
+/* Space (workspace) switcher dropdown */
+/* ---------------------------------------------------------------------------
+ * 工作空间切换面板：头部 / 可滚动列表 / 底部操作三段式。
+ * 原来是 200px 宽的密集菜单，空间名、同步标签、三个操作键全挤在一行 13px 里；
+ * 现在每个空间一行两层（名称 + 状态），操作键收进 hover 区，底部把「新建」与
+ * 「单空间迁移」分开，面板才撑得住「空间=独立存储容器」这个分量。
+ * ------------------------------------------------------------------------- */
+.space-switcher {
+  position: fixed;
+  z-index: 1000;
+  width: min(380px, calc(100vw - 24px));
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 0;
+}
+
+.space-switcher-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px var(--space-4) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+/* ⭐ 2026-10-11（owner：「保持这样的布局；但去掉筛选控件外框」）：
+   ⚠️ 这个筛选框**此前没有任何专有样式** ✗（⭐ 我今天才量到 ✓）⇒ ⭐ 它一直照着 `.sync-input` 的
+   `border: 1px solid var(--border)` ＋ `background: var(--bg)` 长 ✓ ⇒ ⭐ 所以在这儿收口 ✓。
+   ⭐ 做法：⭐ 边框**透明**（⭐ 保留那 1px 占位 ⇒ ⭐ 聚焦换色时**不跳版** ✓）＋ ⭐ 底色透明 ✓。
+   ⚠️ 光写这一条不够 ✗：⭐ 还有 `.sync-input:hover:not(:disabled)` 会在**悬停时把边显出来** ✓
+      ⇒ ⭐ 必须一起压掉（⭐ 今天在设置面板那个控件上就是这么量出来的 ✓）。
+   ⚠️ **聚焦那一圈留着** ✗ —— ⭐ 那是可访问性底线（⭐ 键盘用户得看出焦点在哪 ✓）；
+      ⭐ "去掉外框"我按**静止与悬停**理解 ✓，⭐ 你要连聚焦也不要 ⭐ 说一声我去掉 ✓。
+   ⚠️ 高度仍由 `.sync-input` 的 `min-height: 44px` 管 ✓（⭐ 本仓规则：可点控件 ≥44 ✓）——⛔ 这里不动 ✓。 */
+.space-switcher-filter.sync-input {
+  border-color: transparent;
+  background: transparent;
+  /* ⭐ 2026-10-11（owner：「缩小控件的高度」）：⭐ 桌面收到 **36** ✓ ——
+     ⚠️ 为什么⛔ 不一律缩 ✗：⭐ 本仓那条"命中区高度一律 ≥44"是**在 390 视口下量的** ✓
+     （`scripts/verify-mobile-views.mjs:19`；⭐ 那个面板它也打开来量 ✓）⇒ ⭐ 桌面缩、⛔ 手机不缩 ✓
+     —— ⭐ 与设置面板那个筛选框**同一套写法** ✓（⭐ 那次实测：⭐ 桌面 36 ／ ⭐ 390 视口仍 44 ✓ 门禁绿 ✓）。 */
+  min-height: 36px;
+  /* ⭐ 2026-10-11（owner：「筛选控件的宽度与下面的控件对齐」）：⭐ 实测口径（⛔ 不靠眼看 ✓）——
+     面板 **380** 宽 ✓ ／ 列表内边距 **8px** ✓ ／ 卡片左右各缩 **9px**（1 ＋ 8 ✓）、宽 **362** ✓；
+     而输入框**只缩 1px**（宽 378 ✓）⇒ ⭐ 顶满整块面板 ⇒ ⭐ 与卡片差 **8px** ✓（⭐ 截图里那处不齐 ✓）。
+     ⇒ ⭐ 给它 8px 左右外边距 ⇒ ⭐ 两边都是 9px、⭐ 宽 362 ＝ ⭐ 与卡片**同宽** ✓。
+     ⚠️⭐ **必须同时把 `width` 从 100% 改成 auto** ✗（100% 是 `.sync-input` 给的 ✓）——
+     否则 100% ＋ 左右外边距会**溢出面板** ✓（⭐ `box-sizing: border-box` 也救不了 100% ＋ margin ✓）。 */
+  margin: 0 var(--space-2);
+  width: auto;
+}
+
+@media (max-width: 600px) {
+.space-switcher-filter.sync-input {
+    min-height: 44px;
+  }
+}
+
+.space-switcher-filter.sync-input:hover:not(:disabled) {
+  border-color: transparent;
+}
+
+.space-switcher-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.space-switcher-title {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.01em;
+  margin-bottom: 2px;
+}
+
+.space-switcher-sub {
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.space-switcher-count {
+  flex: none;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--chip-bg);
+  color: var(--text-dim);
+  font-size: var(--fs-11);
+  font-weight: 600;
+}
+
+.space-switcher-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.space-switcher-empty {
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  text-align: center;
+  padding: 28px var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+
+.space-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 9px 10px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--fs-13);
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.space-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.space-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.space-item.is-active {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+/* 激活行左侧一道 accent 竖条：比单独一个 ✓ 更醒目，也不占一列宽度。 */
+.space-item.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+
+.space-item-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--hover-strong);
+  color: var(--text-dim);
+  font-size: var(--fs-13);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.space-item.is-active .space-item-mark {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.space-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.space-item-name {
+  font-size: var(--fs-13);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.space-item.is-active .space-item-name {
+  font-weight: 600;
+}
+
+.space-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.space-item-current {
+  flex: none;
+  font-size: var(--fs-10);
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.space-item-local {
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+}
+
+/* 行内操作：默认淡出，hover / 该行展开配色时才实体化，避免一行五个按钮的噪音。 */
+.space-item-ops {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.space-item:hover .space-item-ops,
+.space-item:focus-within .space-item-ops {
+  opacity: 1;
+}
+
+.space-item-op {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--fs-13);
+  line-height: 1;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.space-item-op:hover {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+
+.space-item-op:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 底部：新建（主）+ 管理入口（次），与列表用分隔线切开。
+   配色 / 删除 / 导入导出已移到设置中心「空间」页（低频 + 破坏性）。 */
+.space-switcher-foot {
+  border-top: 1px solid var(--border);
+  padding: 10px var(--space-3) var(--space-3);
+  background: var(--surface);
+}
+
+.space-action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-2) 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+  font-size: var(--fs-13);
+  font-family: inherit;
+  text-align: left;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.space-action:hover {
+  background: var(--hover);
+}
+
+.space-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.space-action.is-primary {
+  border-color: var(--border);
+  color: var(--accent);
+  font-weight: 500;
+  justify-content: center;
+}
+
+.space-action.is-primary:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.space-action-icon {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  background: var(--chip-bg);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+}
+
+.space-action.is-primary .space-action-icon {
+  background: transparent;
+  color: inherit;
+  width: auto;
+}
+
+/* Space-export progress bar (rendered app-level by <SpaceTransferProgress />). */
+.space-export-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 6px var(--space-2) 2px;
+}
+
+.space-export-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-11);
+  color: var(--text-dim);
+}
+
+.space-export-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--hover);
+  overflow: hidden;
+}
+
+.space-export-progress-fill {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width var(--transition-fast);
+}
+
+/* Fixed progress bar for space export/import, always visible regardless of the
+   space-switcher popover being open/closed during the async work. */
+.space-export-overlay {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 14px;
+  z-index: 1300;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.space-export-overlay .space-export-progress {
+  width: min(480px, 92vw);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 10px var(--space-3);
+}
+
+/* 空间隐私（②b）：同步面板里那一节「这个空间敢不敢绑同步」。
+ * ⚠️ 与 `.sync-card` 同族（同一屏里上下相邻）⇒ 沿用同一套变量与圆角，别另起一套视觉语言。
+ * 为什么放在同步面板里：闸门拦的正是「绑同步」这个动作（Rust `sync::sync_bind_gate`），
+ * 读数与动作必须**同屏**，否则用户得自己去别处找「为什么绑不上」。 */
+.space-privacy {
+  margin: var(--space-3) var(--space-4) 0;
+  padding: var(--space-3) 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* 口径 / 换设备这类"解释性"内容收进折叠：首屏只留动作与一句结论（owner 2026-09-24：太啰嗦）。
+   与 `.pm-index-fold` 同族，不另起视觉语言。 */
+/* ⚠️ 2026-10-08：`.space-privacy-kind`（那枚「个人空间／团队空间」徽章）**已删** ——
+   与下面那个下拉是同一个字段的两份显示 ⇒ 它的三条 CSS 一并删掉（别留死规则 ✓）。 */
+.space-privacy-gate.is-allow { color: var(--text-dim); }
+
+.space-privacy-gate.is-block { color: var(--danger); }
+
+/* 行内判决徽标（与 `.space-privacy-kind` / `.space-privacy-enc` 同族）：把"能不能绑同步"收进名字那一行，
+   而不是让它单独占一句（owner 2026-09-24：一屏里最不缺的就是解释）。 */
+.space-privacy-verdict.is-ok { border-color: var(--border-strong); color: var(--text); }
+
+.space-privacy-verdict.is-note { color: var(--text-faint); }
+
+.space-privacy-verdict.is-block { border-color: var(--danger); color: var(--danger); }
+
+/* 下拉与输入框**复用仓库既有的 `.sync-input` 盒子**（`padding:7px 10px`、同圆角、同聚焦环）
+   —— 与旁边的 `.sync-btn`（`padding:7px 14px`）本来就配成一对。
+   ⚠️ 之前这里只给了 `font-size: 12px`，于是浏览器原生控件比按钮**矮一截**、也不吃主题色，
+   看着不协调（owner 2026-09-24 指出）。这里只保留"别撑满整行"这一条覆盖。 */
+.space-privacy-actions select.sync-input { width: auto; max-width: 100%; }
+
+.sidebar-title {
+  font-weight: 700;
+  font-size: var(--fs-14);
+}
+
+/* ⭐ **2026-10-28（owner 选 A）：新建收进空间标题行右侧** ——
+   原来是 `.sidebar-header-actions` 里一条独占横带（28px+10px 高），而那一行只剩它一个孩子
+   ⇒ 视觉上像"错行的树行"（左缘 ~20px，与树标题 ~56px、空间名 ~52px 都不对齐）✓。
+   现在：与空间名同基线、贴右缘；`flex:none` 保证标题的 `flex:1` 不会把它挤走 ✓。
+   ⚠️ 图标态只有 28×28：文字标签仍在 DOM（读屏可读），侧栏里 `display:none` ⇒ 靠 `title`/`aria-label` ✓。
+   ⚠️ 折叠态由 `.sidebar-collapsed .sidebar-header { justify-content:center }` 居中，入口不丢 ✓。 */
+.sidebar-header .new-menu {
+  flex: none;
+}
+
+.sidebar-header .btn-new {
+  width: 28px;
+  padding: 0;
+}
+
+.sidebar-header .btn-new-label {
+  display: none;
+}
+
+/* ⭐ 2026-10-28：与 `PageTree` 里 `usePopover({ width: 260, align: "right" })` 钉同一个宽度 ——
+   菜单**右缘与按钮右缘对齐**（向左展开）；两边写成同一个数才逐像素对齐 ✓。
+   ⚠️ 只作用于桌面（`:not(.is-sheet)`）：窄屏那条 is-sheet 是底部弹层，宽度归媒体查询管 ✓。 */
+.sidebar-header .new-menu-dropdown:not(.is-sheet) {
+  width: 260px;
+}
+
+.sidebar-tree {
+  flex: 1;
+  overflow-y: auto;
+  /* ⭐ 2026-10-06（owner：「在侧边栏滚动鼠标，结果整个页面上移，底下大片空白」✗）：
+     这一栏滚到头之后，滚轮**不许把滚动"接力"给外层**（scroll chaining ✓）——
+     那正是"滚侧栏、整页跟着动"的形状 ✗。`contain` = 滚到边界就停在本容器里 ✓。 */
+  overscroll-behavior: contain;
+  padding-top: 2px;
+  padding-bottom: var(--space-4);
+}
+
+.sidebar-tree::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar-tree::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: var(--radius-full);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.sidebar-tree:hover::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  background-clip: content-box;
+}
+
+/* ⚠️ **2026-10-04 加**（owner 反馈：「⭐ 侧边栏的滚动条没有了」✓）：
+   ⭐ 让**侧栏**的滚动条**常显** ✓ —— 上面那条缩略图是 `background: transparent` ＋ 只在 `:hover` 时才给颜色 ✓，
+   ⇒ ⭐ 不悬停就**完全看不见** ✗（⭐ 那是"侧栏是常驻区域、默认滚动条太抢眼"的原设计 ✓，owner 明确说要去掉它 ✓）。
+   ⚠️ 只加**这一条**、只点 `.sidebar-tree` ✓ —— 上面那组的另两个（⭐ 设置正文 `.set-body-scroll` ／
+   设置导轨 `.set-rail` ✓）**维持原样** ✓；⭐ hover 那条特异性更高（`.sidebar-tree:hover` ✓）
+   ⇒ ⭐ 悬停时仍然会加深成 `--border-strong` ✓（⭐ 原设计的那一半保住了 ✓）。
+   ⚠️ 用 `background-color` 而不是 `background` 简写 ✗ —— 简写会把 `background-clip` 打回 `border-box` ✓
+   （⭐ 那会让这条竖条从 8px 涨成满宽 ✗）。 */
+.sidebar-tree::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+}
+
+.sidebar-tree::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-empty {
+  padding: var(--space-4);
+  color: var(--text-dim);
+  font-size: var(--fs-13);
+}
+
+/* Skeleton loading */
+.sidebar-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-1) var(--space-2);
+}
+
+@media (max-width: 768px) {
+/* 侧栏：显示时不再占 flex 流，改为左侧滑入抽屉 + 遮罩。 */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 60;
+    width: min(320px, 88vw);
+    min-width: 0;
+    max-width: 88vw;
+    box-shadow: var(--shadow-xl);
+    animation: mobile-sidebar-in var(--transition-fast) ease;
+  }
+}
+
+@media (max-width: 768px) {
+.sidebar-title { min-height: 44px; }
+}
+
+@media (max-width: 768px), (max-height: 520px) {
+.space-switcher {
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    /* `--ovh` 已经扣掉状态栏与底部（手势条 / 键盘）：盒子在任何视口下都装得下。 */
+    max-height: calc(var(--ovh) - 24px);
+  }
+/* 窄屏侧栏是 `position: fixed` 的抽屉 —— 同理，它也不跟着 `.app` 的 padding 走。
+     验收脚本抓到的是它的 `.sidebar-title` 停在 y=14（状态栏死区里）。 */
+  .sidebar {
+    top: var(--sat);
+    bottom: max(var(--sab), var(--kb));
+  }
+.space-switcher {
+    position: fixed;
+    inset: auto 0 0 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: max(var(--sab), var(--kb));
+    width: auto;
+    max-width: 100%;
+    max-height: calc(var(--ovh) - 24px);
+    margin: 0;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+    padding-bottom: 14px;
+    z-index: 1600;
+  }
+.space-switcher .space-switcher-list {
+    overflow-y: visible;
+    max-height: none;
+  }
+}
+}

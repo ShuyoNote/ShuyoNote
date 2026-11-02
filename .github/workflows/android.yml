@@ -108,7 +108,7 @@ jobs:
 
       - name: Rust cache
         # 首次跑没有收益，但后续每次调试能省十几分钟——这个 workflow 的价值就在于反复量体积。
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2.7.8
         with:
           key: android-aarch64
 

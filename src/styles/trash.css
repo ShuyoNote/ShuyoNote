@@ -1,0 +1,162 @@
+/* S4（2026-11-01）：域抽取器搬出的**回收站域（`.trash-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* Trash */
+.trash-panel {
+  position: relative;
+}
+
+.trash-popover {
+  position: fixed;
+  width: 300px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  z-index: var(--z-popover);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: pop 0.14s ease;
+}
+
+.trash-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 9px var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.trash-head-title { font-size: var(--fs-13); font-weight: 600; color: var(--text); }
+
+.trash-count { font-size: var(--fs-12); color: var(--text-dim); flex: 1; }
+
+.trash-head-actions { display: inline-flex; gap: 6px; }
+
+.trash-act-head {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: var(--radius-sm);
+  padding: 3px 9px;
+  font-size: var(--fs-12);
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.trash-act-head.restore:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+
+.trash-act-head.clear:hover:not(:disabled) { color: #e5484d; border-color: rgba(229,72,77,.4); background: rgba(229,72,77,.08); }
+
+.trash-act-head:disabled { opacity: .4; cursor: default; }
+
+.trash-list { overflow-y: auto; max-height: 300px; padding: var(--space-1); }
+
+.trash-empty {
+  padding: 28px var(--space-3);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.trash-empty-icon { font-size: var(--fs-28); opacity: .5; }
+
+.trash-empty-text { font-size: var(--fs-13); color: var(--text-dim); }
+
+.trash-empty-sub { font-size: var(--fs-12); color: var(--text-faint); }
+
+.trash-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-13);
+}
+
+.trash-item:hover { background: var(--hover); }
+
+.trash-icon { flex-shrink: 0; opacity: .8; }
+
+.trash-item-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+
+.trash-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.trash-when { font-size: var(--fs-11); color: var(--text-faint); }
+
+.trash-group-label {
+  padding: var(--space-2) var(--space-2) 3px;
+  font-size: var(--fs-11);
+  font-weight: 600;
+  color: var(--text-faint);
+  letter-spacing: .04em;
+}
+
+.trash-actions { display: inline-flex; gap: var(--space-1); flex-shrink: 0; opacity: 0; transition: opacity var(--transition-fast); }
+
+.trash-item:hover .trash-actions { opacity: 1; }
+
+.trash-act {
+  display: inline-flex; align-items: center; gap: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 2px 7px;
+  font-size: var(--fs-11);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.trash-act.restore:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+
+.trash-act.del { padding: 2px 6px; }
+
+.trash-act.del:hover { color: #e5484d; border-color: rgba(229,72,77,.4); background: rgba(229,72,77,.08); }
+
+/* 触发图标上的数量角标 */
+.trash-panel .btn-trash { position: relative; }
+
+.trash-badge {
+  position: absolute;
+  top: -5px; right: -5px;
+  min-width: 15px; height: 15px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: #fff;
+  font-size: var(--fs-10); line-height: 15px;
+  text-align: center;
+  pointer-events: none;
+}
+
+@media (max-width: 768px), (max-height: 520px) {
+.trash-popover {
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    /* `--ovh` 已经扣掉状态栏与底部（手势条 / 键盘）：盒子在任何视口下都装得下。 */
+    max-height: calc(var(--ovh) - 24px);
+  }
+.trash-popover {
+    /* S4-49（2026-11-01）：这条共享 sheet 组已整体搬到 `src/styles/toolbar-sheets.css`
+       （四个域分别提取时必须保持同一个逗号组——`historyPanelLayering` 判据钉着它）。 */
+  }
+.trash-popover .trash-list {
+    overflow-y: visible;
+    max-height: none;
+  }
+.trash-popover button {
+    min-height: 44px;
+  }
+}
+}

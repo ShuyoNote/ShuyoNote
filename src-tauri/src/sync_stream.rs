@@ -158,7 +158,11 @@ pub fn is_seq_gap(last_seq: i64, seq: i64) -> bool {
 /// ⚠️ 服务端地址的结尾斜杠在这里归一（前端也是这么做的）；`space_id` 是服务端生成的十六进制，
 /// **不需要**百分号编码（与前端 `encodeURIComponent` 的效果一致，这里不为它引一层依赖）。
 pub fn stream_url(server: &str, space_id: &str) -> String {
-    format!("{}/spaces/{}/changes-stream", server.trim_end_matches('/'), space_id)
+    format!(
+        "{}/spaces/{}/changes-stream",
+        server.trim_end_matches('/'),
+        space_id
+    )
 }
 
 // -------------------------------------------------------------------------------------
@@ -248,8 +252,13 @@ pub async fn run_stream_with_reconnect(
 ///
 /// `notify` 是 `Fn + Send + 'static`：它会被移进 `on_frame`（那个闭包要满足
 /// `read_stream_once` 的 `+ Send` 约束 —— 见那边的注释）。
-pub async fn run_stream_task<F>(url: String, token: String, ws_id: String, server: String, notify: F)
-where
+pub async fn run_stream_task<F>(
+    url: String,
+    token: String,
+    ws_id: String,
+    server: String,
+    notify: F,
+) where
     F: Fn(StreamChange) + Send + 'static,
 {
     let mut on_connected = || {
@@ -429,14 +438,23 @@ pub async fn sync_stream_start(
         ..Default::default()
     };
     let app2 = app.clone();
-    let handle = tokio::spawn(run_stream_task(url, token, ws_id.clone(), server.clone(), move |ch| {
-        // 出口：把"有变更"这个信号发给前端（**不带内容**）。语义在 `run_stream_task` 里（有判据）。
-        let _ = app2.emit("sync-stream-change", ch);
-    }));
+    let handle = tokio::spawn(run_stream_task(
+        url,
+        token,
+        ws_id.clone(),
+        server.clone(),
+        move |ch| {
+            // 出口：把"有变更"这个信号发给前端（**不带内容**）。语义在 `run_stream_task` 里（有判据）。
+            let _ = app2.emit("sync-stream-change", ch);
+        },
+    ));
 
     {
         let mut guard = slot().lock().unwrap_or_else(|e| e.into_inner());
-        *guard = Some(Running { status: status.clone(), handle });
+        *guard = Some(Running {
+            status: status.clone(),
+            handle,
+        });
     }
     Ok(status)
 }
@@ -452,7 +470,6 @@ pub fn sync_stream_stop() -> StreamStatus {
 pub fn sync_stream_status() -> StreamStatus {
     snapshot()
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -474,7 +491,10 @@ mod tests {
     #[test]
     fn sticky_frames_are_all_drained() {
         let (frames, rest) = drain_sse_frames("data: a\n\ndata: b\n\ndata: c\n\n");
-        assert_eq!(frames, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        assert_eq!(
+            frames,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
         assert_eq!(rest, "");
     }
 
@@ -535,11 +555,18 @@ mod tests {
     /// 判据 2 的配套：**`ping` 要被分类出来**（它意味着"可能漏了事件" ⇒ 调用方立刻拉一次）。
     #[test]
     fn frame_kind_classifies_push_ping_and_unknown() {
-        assert_eq!(frame_kind(r#"{"type":"push","space_id":"sp","accepted":3}"#), "push");
+        assert_eq!(
+            frame_kind(r#"{"type":"push","space_id":"sp","accepted":3}"#),
+            "push"
+        );
         // 服务端订阅者落后时发的就是它：**不是心跳**，是"你漏了事件"
         assert_eq!(frame_kind(r#"{"type":"ping"}"#), "ping");
         assert_eq!(frame_kind(r#"{"type":"whatever"}"#), "other");
-        assert_eq!(frame_kind("不是 JSON"), "other", "认不出来 ⇒ other，**不猜**");
+        assert_eq!(
+            frame_kind("不是 JSON"),
+            "other",
+            "认不出来 ⇒ other，**不猜**"
+        );
         assert_eq!(frame_kind(""), "other");
     }
 
@@ -588,7 +615,10 @@ mod tests {
             "https://shuyo.cn/sync/spaces/ab12/changes-stream",
             "结尾斜杠要被归一（与前端 `server.replace(/\\/+$/,'')` 同一效果）"
         );
-        assert_eq!(stream_url("http://127.0.0.1:8787", "sp"), "http://127.0.0.1:8787/spaces/sp/changes-stream");
+        assert_eq!(
+            stream_url("http://127.0.0.1:8787", "sp"),
+            "http://127.0.0.1:8787/spaces/sp/changes-stream"
+        );
     }
 
     /// 判据 6/7（可判的那一半）：**没在跑时读数是"全默认"**（`running=false`），
@@ -620,11 +650,15 @@ mod tests {
     /// 返回 `(port, 句柄)`。用裸 TCP（tokio `net`）写最小的 HTTP 响应，不引额外依赖。
     async fn fake_sse_server(frames: Vec<String>) -> (u16, tokio::task::JoinHandle<()>) {
         use tokio::io::AsyncWriteExt;
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
         let port = listener.local_addr().expect("addr").port();
         let handle = tokio::spawn(async move {
             for f in frames {
-                let Ok((mut sock, _)) = listener.accept().await else { return };
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
                 // 先读掉请求（免得对端写阻塞）；这里只读一次，够用。
                 let mut buf = [0u8; 1024];
                 let _ = tokio::io::AsyncReadExt::read(&mut sock, &mut buf).await;
@@ -641,7 +675,9 @@ mod tests {
             }
             // 帧发完了：保持 listener 活着，别让客户端连出"端口拒绝"（那是另一种失败，另有判据）。
             loop {
-                let Ok((sock, _)) = listener.accept().await else { return };
+                let Ok((sock, _)) = listener.accept().await else {
+                    return;
+                };
                 drop(sock);
             }
         });
@@ -665,7 +701,13 @@ mod tests {
         let errors = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-        let (g, c, r, e, s) = (got.clone(), connects.clone(), retries.clone(), errors.clone(), stop.clone());
+        let (g, c, r, e, s) = (
+            got.clone(),
+            connects.clone(),
+            retries.clone(),
+            errors.clone(),
+            stop.clone(),
+        );
         let mut on_connected = || {
             c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         };
@@ -714,11 +756,22 @@ mod tests {
             frames.get(1).map(|f| f.0 - frames[0].0).unwrap_or(-1)
         );
 
-        assert_eq!(frames.len(), 2, "两帧都要收到（第二帧只在重连之后才可能到）");
+        assert_eq!(
+            frames.len(),
+            2,
+            "两帧都要收到（第二帧只在重连之后才可能到）"
+        );
         assert_eq!(frame_kind(&frames[0].1), "push");
         assert_eq!(frame_kind(&frames[1].1), "push");
-        assert!(connects >= 2, "必须**重连**过一次（连接数 ≥ 2），实际 {connects}");
-        assert_eq!(retry_seq.first(), Some(&1), "第一次断开后应当记一次重试（从 1 开始）");
+        assert!(
+            connects >= 2,
+            "必须**重连**过一次（连接数 ≥ 2），实际 {connects}"
+        );
+        assert_eq!(
+            retry_seq.first(),
+            Some(&1),
+            "第一次断开后应当记一次重试（从 1 开始）"
+        );
         assert!(
             !errs.is_empty(),
             "断开必须**有痕**（`on_error` 被调到）—— 静默重连是本仓最忌的形状"
@@ -738,9 +791,14 @@ mod tests {
     async fn unreachable_server_surfaces_an_error() {
         let mut connected = || panic!("不该连上");
         let mut frames = |_: &str| panic!("不该收到帧");
-        let err = read_stream_once("http://127.0.0.1:1/spaces/sp/changes-stream", "tk", &mut connected, &mut frames)
-            .await
-            .expect_err("连不上就该是 Err");
+        let err = read_stream_once(
+            "http://127.0.0.1:1/spaces/sp/changes-stream",
+            "tk",
+            &mut connected,
+            &mut frames,
+        )
+        .await
+        .expect_err("连不上就该是 Err");
         println!("【判据 5 实测】连不上时的原因 = {err}");
         assert!(!err.is_empty(), "错误文本不能空（界面要能说出来）");
     }
@@ -765,11 +823,15 @@ mod tests {
     ) -> (u16, tokio::task::JoinHandle<()>) {
         use std::sync::atomic::Ordering::SeqCst;
         use tokio::io::AsyncWriteExt;
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
         let port = listener.local_addr().expect("addr").port();
         let handle = tokio::spawn(async move {
             loop {
-                let Ok((mut sock, _)) = listener.accept().await else { return };
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
                 connects.fetch_add(1, SeqCst);
                 let sent2 = sent.clone();
                 tokio::spawn(async move {
@@ -778,14 +840,17 @@ mod tests {
                     // ⚠️ 没有 `Content-Length` + `Connection: close` ⇒ hyper 按"读到 EOF 为止"收流，
                     //    于是每帧写完就能被 `bytes_stream()` 立刻吐出来（不需要自己拼 chunked 分块）。
                     let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
-                    if sock.write_all(head.as_bytes()).await.is_err() || sock.flush().await.is_err() {
+                    if sock.write_all(head.as_bytes()).await.is_err() || sock.flush().await.is_err()
+                    {
                         return;
                     }
                     loop {
                         tokio::time::sleep(std::time::Duration::from_millis(interval_ms)).await;
                         let n = sent2.load(SeqCst) + 1;
                         let body = format!("data: {{\"type\":\"push\",\"accepted\":{n}}}\n\n");
-                        if sock.write_all(body.as_bytes()).await.is_err() || sock.flush().await.is_err() {
+                        if sock.write_all(body.as_bytes()).await.is_err()
+                            || sock.flush().await.is_err()
+                        {
                             return; // 对端关了 ⇒ 这条连接结束（外层继续等下一次连接）
                         }
                         sent2.fetch_add(1, SeqCst);
@@ -811,7 +876,8 @@ mod tests {
         let url = stream_url(&server_url, "sp");
 
         // 按生产的方式"装上"：状态进槽位、任务跑 `run_stream_task`
-        let kinds: std::sync::Arc<std::sync::Mutex<Vec<String>>> = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let kinds: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let k2 = kinds.clone();
         let status = StreamStatus {
             running: true,
@@ -819,9 +885,15 @@ mod tests {
             server: server_url.clone(),
             ..Default::default()
         };
-        let handle = tokio::spawn(run_stream_task(url.clone(), "tk".to_string(), "ws-1".to_string(), server_url.clone(), move |ch: StreamChange| {
-            k2.lock().unwrap().push(ch.kind);
-        }));
+        let handle = tokio::spawn(run_stream_task(
+            url.clone(),
+            "tk".to_string(),
+            "ws-1".to_string(),
+            server_url.clone(),
+            move |ch: StreamChange| {
+                k2.lock().unwrap().push(ch.kind);
+            },
+        ));
         {
             let mut g = slot().lock().unwrap_or_else(|e| e.into_inner());
             *g = Some(Running { status, handle });
@@ -837,7 +909,10 @@ mod tests {
         assert_eq!(before.ws_id, "ws-1", "状态要如实说出订的是哪个工作空间");
         assert_eq!(before.server, server_url, "状态要如实说出连的是哪个服务端");
         assert!(before.last_event_at > 0, "收到帧要记下时刻（界面排错靠它）");
-        assert!(kinds.lock().unwrap().len() >= 2, "持续推送的服务端应当已经送来 ≥2 帧");
+        assert!(
+            kinds.lock().unwrap().len() >= 2,
+            "持续推送的服务端应当已经送来 ≥2 帧"
+        );
         assert_eq!(connects.load(SeqCst), 1, "只该连一次（还没发生任何断开）");
 
         // ② 关开关（**生产命令**）
@@ -845,7 +920,10 @@ mod tests {
         let frames_at_stop = kinds.lock().unwrap().len();
         let sent_at_stop = sent.load(SeqCst);
         assert!(!after.running, "关掉之后**返回的**状态必须 running=false");
-        assert!(!sync_stream_status().running, "槽位也要真的清空（`sync_stream_status` 读的就是它）");
+        assert!(
+            !sync_stream_status().running,
+            "槽位也要真的清空（`sync_stream_status` 读的就是它）"
+        );
 
         // ③ 再等 500ms（服务端还在推：这条连接每 60ms 一帧，5 倍以上窗口）
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -865,7 +943,10 @@ mod tests {
             frames_later, frames_at_stop,
             "关掉之后**不许再收到帧**（`abort` 必须真的停掉任务；否则连接还开着，帧会继续到）"
         );
-        assert_eq!(connects_later, 1, "关掉之后**不许重连**（实际连接 {connects_later} 次）");
+        assert_eq!(
+            connects_later, 1,
+            "关掉之后**不许重连**（实际连接 {connects_later} 次）"
+        );
         // "立刻断"不只是"回调没人调了"：socket 也得真的关掉 —— 服务端那边**写不进去**了，
         // 所以停掉之后它最多再写成 1 帧（可能正在写的那一帧进了内核缓冲），之后所有写都失败。
         assert!(
@@ -884,7 +965,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn e2e_receives_a_push_from_a_real_server() {
         let Ok(server) = std::env::var("SHUYONOTE_STREAM_E2E_SERVER") else {
-            eprintln!("[自报跳过] 没设 SHUYONOTE_STREAM_E2E_SERVER ⇒ 与真服务端的端到端判据**未跑**");
+            eprintln!(
+                "[自报跳过] 没设 SHUYONOTE_STREAM_E2E_SERVER ⇒ 与真服务端的端到端判据**未跑**"
+            );
             return;
         };
         let server = server.trim_end_matches('/').to_string();
@@ -967,7 +1050,11 @@ mod tests {
             .send()
             .await
             .expect("push 请求发出");
-        assert!(pushed.status().is_success(), "push 失败：HTTP {}", pushed.status());
+        assert!(
+            pushed.status().is_success(),
+            "push 失败：HTTP {}",
+            pushed.status()
+        );
 
         // ④ 断言"2s 内收到"（判据 5 的延迟口径）
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
@@ -977,10 +1064,19 @@ mod tests {
         let frames = got.lock().unwrap().clone();
         stop.store(true, std::sync::atomic::Ordering::SeqCst);
         sub.abort();
-        assert!(!frames.is_empty(), "订阅 2s 内**没有**收到推送（判据 5 红）");
+        assert!(
+            !frames.is_empty(),
+            "订阅 2s 内**没有**收到推送（判据 5 红）"
+        );
         let latency = frames[0].0 - sent;
-        println!("【判据 5 实测·真服务端】订阅 ⇒ 推送 ⇒ 收到：**{latency}ms**；帧 = {}", frames[0].1);
-        assert!(latency >= 0 && latency < 2000, "延迟要在 2s 内（实际 {latency}ms）");
+        println!(
+            "【判据 5 实测·真服务端】订阅 ⇒ 推送 ⇒ 收到：**{latency}ms**；帧 = {}",
+            frames[0].1
+        );
+        assert!(
+            latency >= 0 && latency < 2000,
+            "延迟要在 2s 内（实际 {latency}ms）"
+        );
         assert_eq!(frame_kind(&frames[0].1), "push");
 
         // ⑤ ★ L4a（owner 2026-09-30 拍 D2）：帧里那个 `seq` 必须等于**那次变更的真实 seq**

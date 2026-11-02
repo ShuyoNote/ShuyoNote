@@ -91,7 +91,10 @@ impl KdfParams {
     /// 为什么必须放宽：不放宽的话，把默认值往上一抬，**所有老袋子会被判"参数与本版不同"直接打不开**。
     pub fn ensure_supported(&self) -> Result<(), String> {
         if self.algo != "argon2id" {
-            return Err(format!("钥匙袋用的 KDF 是 {}，本版只认 argon2id", self.algo));
+            return Err(format!(
+                "钥匙袋用的 KDF 是 {}，本版只认 argon2id",
+                self.algo
+            ));
         }
         // 合理区间（**宽进严出**：只要 argon2 真的算得出来、且不至于把机器拖死，就放行）。
         // 下界 8 MiB / 上界 1 GiB；t 1..=16；p 1..=8。越界 ⇒ 报错（而不是静默当成默认值）。
@@ -205,10 +208,13 @@ fn open_plaintext(plain: &[u8], space_id: &str) -> Result<[u8; SPACE_KEY_LEN], S
     if plain.len() != 4 + n + SPACE_KEY_LEN {
         return Err("钥匙袋的盒子内容长度不对（不是本版写的，或已被破坏）".to_string());
     }
-    let id = std::str::from_utf8(&plain[4..4 + n]).map_err(|_| "盒子里的空间 id 不是合法 UTF-8".to_string())?;
+    let id = std::str::from_utf8(&plain[4..4 + n])
+        .map_err(|_| "盒子里的空间 id 不是合法 UTF-8".to_string())?;
     if id != space_id {
         // ★ 承重：盒子与槽位绑死 —— 有人把别的空间的盒子搬过来，必须**当场报错**
-        return Err(format!("这个盒子属于空间「{id}」，不是「{space_id}」（盒子被换过？）"));
+        return Err(format!(
+            "这个盒子属于空间「{id}」，不是「{space_id}」（盒子被换过？）"
+        ));
     }
     let mut key = [0u8; SPACE_KEY_LEN];
     key.copy_from_slice(&plain[4 + n..]);
@@ -234,7 +240,8 @@ impl Keyring {
 
     /// 从公开材料读回来。**版本不认识 ⇒ 报错**（不猜）。
     pub fn from_json(text: &str) -> Result<Self, String> {
-        let parsed: Self = serde_json::from_str(text).map_err(|e| format!("钥匙袋不是合法 JSON：{e}"))?;
+        let parsed: Self =
+            serde_json::from_str(text).map_err(|e| format!("钥匙袋不是合法 JSON：{e}"))?;
         if parsed.v < KEYRING_VERSION_MIN || parsed.v > KEYRING_VERSION {
             return Err(format!(
                 "钥匙袋版本 {} 本版不认识（本版认 {KEYRING_VERSION_MIN}..={KEYRING_VERSION}）—— 请升级应用后再打开",
@@ -247,7 +254,10 @@ impl Keyring {
 
     pub fn has(&self, space_id: &str) -> bool {
         self.spaces.contains_key(space_id)
-            || self.extra_groups.iter().any(|g| g.spaces.contains_key(space_id))
+            || self
+                .extra_groups
+                .iter()
+                .any(|g| g.spaces.contains_key(space_id))
     }
 
     /// 这一组公开材料的**稳定指纹**（盐/参数决定；用于合并与"这份是谁的"）。
@@ -260,7 +270,14 @@ impl Keyring {
     }
 
     /// 本袋子所有组：`(组指纹, 参数, 盒子表, 空间名表)`（主组在前）。
-    pub fn groups(&self) -> Vec<(String, KdfParams, BTreeMap<String, WrappedBox>, BTreeMap<String, String>)> {
+    pub fn groups(
+        &self,
+    ) -> Vec<(
+        String,
+        KdfParams,
+        BTreeMap<String, WrappedBox>,
+        BTreeMap<String, String>,
+    )> {
         let mut out = vec![(
             Self::group_fingerprint(&self.kdf),
             self.kdf.clone(),
@@ -268,7 +285,12 @@ impl Keyring {
             self.space_names.clone(),
         )];
         for g in &self.extra_groups {
-            out.push((Self::group_fingerprint(&g.kdf), g.kdf.clone(), g.spaces.clone(), g.space_names.clone()));
+            out.push((
+                Self::group_fingerprint(&g.kdf),
+                g.kdf.clone(),
+                g.spaces.clone(),
+                g.space_names.clone(),
+            ));
         }
         out
     }
@@ -307,7 +329,8 @@ impl Keyring {
             if same(&self.space_names) {
                 return false;
             }
-            self.space_names.insert(space_id.to_string(), name.to_string());
+            self.space_names
+                .insert(space_id.to_string(), name.to_string());
             return true;
         }
         for g in self.extra_groups.iter_mut() {
@@ -348,7 +371,11 @@ impl Keyring {
         let local_primary_fp = Self::group_fingerprint(&self.kdf);
         // 本地的组指纹表（主组 + 额外组）
         let mut known: Vec<String> = vec![local_primary_fp.clone()];
-        known.extend(self.extra_groups.iter().map(|g| Self::group_fingerprint(&g.kdf)));
+        known.extend(
+            self.extra_groups
+                .iter()
+                .map(|g| Self::group_fingerprint(&g.kdf)),
+        );
         // 先处理远端主组
         let mut incoming: Vec<KeyringGroup> = vec![KeyringGroup {
             kdf: other.kdf.clone(),
@@ -365,7 +392,12 @@ impl Keyring {
                 .iter_mut()
                 .find(|e| Self::group_fingerprint(&e.kdf) == fp)
             {
-                Self::merge_group_spaces(&mut extra.spaces, &mut extra.space_names, &g, &mut report);
+                Self::merge_group_spaces(
+                    &mut extra.spaces,
+                    &mut extra.space_names,
+                    &g,
+                    &mut report,
+                );
             } else {
                 report.added_groups += 1;
                 report.added_spaces += g.spaces.len();
@@ -402,7 +434,12 @@ impl Keyring {
     }
 
     /// 装一把空间密钥进袋子（已有 ⇒ **覆盖**：轮换走同一条路）。
-    pub fn wrap(&mut self, master: &AppKeys, space_id: &str, key: &[u8; SPACE_KEY_LEN]) -> Result<(), String> {
+    pub fn wrap(
+        &mut self,
+        master: &AppKeys,
+        space_id: &str,
+        key: &[u8; SPACE_KEY_LEN],
+    ) -> Result<(), String> {
         let box_bytes = crypto::encrypt(&seal_plaintext(space_id, key), master)?;
         self.spaces.insert(
             space_id.to_string(),
@@ -414,11 +451,17 @@ impl Keyring {
     }
 
     /// 从袋子里取一把空间密钥。取不出 ⇒ **报错**（绝不回退成明文或空钥匙）。
-    pub fn unwrap_key(&self, master: &AppKeys, space_id: &str) -> Result<[u8; SPACE_KEY_LEN], String> {
+    pub fn unwrap_key(
+        &self,
+        master: &AppKeys,
+        space_id: &str,
+    ) -> Result<[u8; SPACE_KEY_LEN], String> {
         // 单主密钥版本（旧调用点）：在各组里找这个空间的盒子，逐个用**这一把**主密钥试。
         let mut found = false;
         for (_, _, spaces, _) in self.groups() {
-            let Some(b) = spaces.get(space_id) else { continue };
+            let Some(b) = spaces.get(space_id) else {
+                continue;
+            };
             found = true;
             let raw = hex::decode(&b.box_hex).map_err(|e| format!("盒子不是合法 hex：{e}"))?;
             if let Ok(plain) = crypto::decrypt(&raw, master) {
@@ -442,7 +485,9 @@ impl Keyring {
     ) -> Result<[u8; SPACE_KEY_LEN], String> {
         let mut found = false;
         for (fp, kdf, spaces, _) in self.groups() {
-            let Some(b) = spaces.get(space_id) else { continue };
+            let Some(b) = spaces.get(space_id) else {
+                continue;
+            };
             found = true;
             let Some((_, master)) = masters.iter().find(|(id, _)| id == &fp) else {
                 let _ = kdf;
@@ -462,7 +507,11 @@ impl Keyring {
     }
 
     /// 轮换一个空间的密钥（**只换这一个空间**：主口令与其它空间都不动）—— 这正是"每空间随机密钥"换来的。
-    pub fn rotate(&mut self, master: &AppKeys, space_id: &str) -> Result<[u8; SPACE_KEY_LEN], String> {
+    pub fn rotate(
+        &mut self,
+        master: &AppKeys,
+        space_id: &str,
+    ) -> Result<[u8; SPACE_KEY_LEN], String> {
         let key = random_space_key();
         self.wrap(master, space_id, &key)?;
         Ok(key)
@@ -568,7 +617,10 @@ mod tests {
             "SQLCipher 那条口径被动过了（既有加密库会全打不开）"
         );
         // ② 我们选的数字写死在这里；改它必须是有意识的（owner 拍板 ＋ 真机实测），并连带改这条判据与文档
-        assert_eq!(ARGON2_M_KIB, 65536, "★ 默认参数若要变，这条判据与文档要同批改");
+        assert_eq!(
+            ARGON2_M_KIB, 65536,
+            "★ 默认参数若要变，这条判据与文档要同批改"
+        );
         // ③ 我们自己那套**故意不等于**库默认（owner 件1=B：抬内存硬化）——
         //    这条从 `assert_eq` 翻成 `assert_ne` 正是"默认值抬上去了"的那个记号。
         //    ⚠️ 无论如何 ① 那行（SQLCipher 那条不许动）永远不动。
@@ -580,7 +632,10 @@ mod tests {
         )
         .hash_password_into(b"pw", &salt, &mut ours)
         .unwrap();
-        assert_ne!(ours, default, "★ 我们选的参数必须比库默认更硬（改了这条要连带改文档）");
+        assert_ne!(
+            ours, default,
+            "★ 我们选的参数必须比库默认更硬（改了这条要连带改文档）"
+        );
     }
 
     /// ★★ **"老袋子不许被锁在外面"**（owner 件1=B 的前置）：一份**用 19 MiB 记的**老袋子，
@@ -617,14 +672,23 @@ mod tests {
         assert!(bad_algo.ensure_supported().is_err(), "不认识的算法要挡");
         let mut too_small = KdfParams::fresh();
         too_small.m_kib = 4;
-        assert!(too_small.ensure_supported().is_err(), "小到没意义的参数要挡");
+        assert!(
+            too_small.ensure_supported().is_err(),
+            "小到没意义的参数要挡"
+        );
         let mut too_big = KdfParams::fresh();
         too_big.m_kib = 4 * 1024 * 1024;
-        assert!(too_big.ensure_supported().is_err(), "大到会把机器拖死的参数要挡");
+        assert!(
+            too_big.ensure_supported().is_err(),
+            "大到会把机器拖死的参数要挡"
+        );
         let mut fine = KdfParams::fresh();
         fine.m_kib = 32768;
         fine.t = 3;
-        assert!(fine.ensure_supported().is_ok(), "合理区间内的非默认参数要放行（宽进）");
+        assert!(
+            fine.ensure_supported().is_ok(),
+            "合理区间内的非默认参数要放行（宽进）"
+        );
     }
 
     #[test]
@@ -639,9 +703,15 @@ mod tests {
 
         // ★ 公开材料里**不许**出现裸密钥：盒子是密文，且 JSON 本身不含口令
         let public = kr.to_json().unwrap();
-        assert!(!public.contains(&hex::encode(key)), "公开材料里出现了裸密钥");
+        assert!(
+            !public.contains(&hex::encode(key)),
+            "公开材料里出现了裸密钥"
+        );
         assert!(!public.contains("mimi"), "公开材料里出现了口令");
-        assert!(public.contains("salt_hex"), "盐必须在公开材料里（第二台设备要用）");
+        assert!(
+            public.contains("salt_hex"),
+            "盐必须在公开材料里（第二台设备要用）"
+        );
         // 同一份公开材料读回来，用同一句口令仍能取回
         let back = Keyring::from_json(&public).unwrap();
         assert_eq!(back.unwrap_key(&m, "space-a").unwrap(), key);
@@ -657,9 +727,14 @@ mod tests {
 
         // ① 换个空间名去解 ⇒ 报错（不许给出一把错钥匙）
         let mut moved = Keyring::new();
-        moved.spaces.insert("space-b".to_string(), kr.spaces["space-a"].clone());
+        moved
+            .spaces
+            .insert("space-b".to_string(), kr.spaces["space-a"].clone());
         let err = moved.unwrap_key(&m, "space-b").unwrap_err();
-        assert!(err.contains("不是") || err.contains("打不开"), "盒子被换过要说清：{err}");
+        assert!(
+            err.contains("不是") || err.contains("打不开"),
+            "盒子被换过要说清：{err}"
+        );
 
         // ② 错主密钥 ⇒ 报错（**不静默**、不回退）
         assert!(kr.unwrap_key(&other, "space-a").is_err());
@@ -670,7 +745,10 @@ mod tests {
         let last = raw.len() - 1;
         raw[last] ^= 0x01;
         tampered.spaces.get_mut("space-a").unwrap().box_hex = hex::encode(raw);
-        assert!(tampered.unwrap_key(&m, "space-a").is_err(), "改过的盒子必须解不开");
+        assert!(
+            tampered.unwrap_key(&m, "space-a").is_err(),
+            "改过的盒子必须解不开"
+        );
 
         // ④ 袋子里没有这个空间 ⇒ 报错（不猜、不新建）
         assert!(kr.unwrap_key(&m, "space-zzz").is_err());
@@ -753,7 +831,11 @@ mod tests {
         assert_eq!(r1.added_spaces, 1);
         assert_eq!(r1.total_spaces, 2);
         assert!(r1.conflicting_spaces.is_empty());
-        assert_eq!(a.space_name("sp-b").as_deref(), Some("保险柜"), "空间名随材料一起并进来");
+        assert_eq!(
+            a.space_name("sp-b").as_deref(),
+            Some("保险柜"),
+            "空间名随材料一起并进来"
+        );
 
         // 幂等：再并一次什么都不加
         let r2 = a.merge_from(&b);
@@ -785,7 +867,10 @@ mod tests {
 
         let r = a.merge_from(&b);
         assert_eq!(r.conflicting_spaces, vec!["sp-a".to_string()], "{r:?}");
-        assert_eq!(a.spaces["sp-a"].box_hex, local_box, "⛔ 冲突时不许覆盖本地盒子");
+        assert_eq!(
+            a.spaces["sp-a"].box_hex, local_box,
+            "⛔ 冲突时不许覆盖本地盒子"
+        );
     }
 
     /// v1 老袋子（只有 kdf+spaces）必须还能读；读出来就是"一组"。
@@ -797,5 +882,4 @@ mod tests {
         assert!(kr.has("sp-old"));
         assert_eq!(kr.space_ids(), vec!["sp-old".to_string()]);
     }
-
 }

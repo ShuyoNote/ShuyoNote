@@ -110,14 +110,19 @@ fn scan_attachment_facts(app_data_dir: &Path, db: &Db) -> Result<ScanFacts, Stri
 
     // ② 逐空间读它引用的 hash（⭐ 宽松：读不到只记原因 ✓）
     let mut spaces = Vec::new();
-    let mut refs: std::collections::HashMap<String, Vec<(String, String)>> = std::collections::HashMap::new();
+    let mut refs: std::collections::HashMap<String, Vec<(String, String)>> =
+        std::collections::HashMap::new();
     let mut unreadable = Vec::new();
     for (sid, name, encrypted, in_use) in &listed {
         match crate::db::open_space_conn(sid) {
             Ok(c) => {
                 let mut n: i64 = 0;
-                let mut stmt = c.prepare("SELECT DISTINCT hash FROM attachments").map_err(|e| e.to_string())?;
-                let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+                let mut stmt = c
+                    .prepare("SELECT DISTINCT hash FROM attachments")
+                    .map_err(|e| e.to_string())?;
+                let rows = stmt
+                    .query_map([], |r| r.get::<_, String>(0))
+                    .map_err(|e| e.to_string())?;
                 for h in rows.flatten() {
                     if h.is_empty() {
                         continue;
@@ -158,21 +163,36 @@ fn scan_attachment_facts(app_data_dir: &Path, db: &Db) -> Result<ScanFacts, Stri
         if p.extension().map(|e| e == "part").unwrap_or(false) {
             continue;
         }
-        let hash = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let hash = p
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
         let bytes = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
         legacy.insert(hash, (p, bytes));
     }
 
-    Ok(ScanFacts { spaces, refs, legacy, unreadable })
+    Ok(ScanFacts {
+        spaces,
+        refs,
+        legacy,
+        unreadable,
+    })
 }
 
 #[tauri::command]
-pub async fn audit_attachment_refs(app: tauri::AppHandle, db: State<'_, Db>) -> Result<AttachmentAudit, String> {
+pub async fn audit_attachment_refs(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+) -> Result<AttachmentAudit, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let f = scan_attachment_facts(&app_data_dir, &db)?;
 
-    let encrypted_ids: std::collections::HashSet<String> =
-        f.spaces.iter().filter(|s| s.encrypted).map(|s| s.name.clone()).collect();
+    let encrypted_ids: std::collections::HashSet<String> = f
+        .spaces
+        .iter()
+        .filter(|s| s.encrypted)
+        .map(|s| s.name.clone())
+        .collect();
     let mut legacy_referenced = 0i64;
     let mut plain_refs_legacy = 0i64;
     let mut encrypted_refs_legacy = Vec::new();
@@ -246,7 +266,8 @@ fn adopt_one(
         .extension()
         .map(|e| e.to_string_lossy().to_string())
         .unwrap_or_else(|| "bin".to_string());
-    let (_p, wrote) = crate::attachments::write_attachment_once(&dir, hash, &ext, &data, Some(keys))?;
+    let (_p, wrote) =
+        crate::attachments::write_attachment_once(&dir, hash, &ext, &data, Some(keys))?;
     Ok(wrote)
 }
 
@@ -274,13 +295,25 @@ pub async fn adopt_legacy_refs_for_encrypted_spaces(
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let f = scan_attachment_facts(&app_data_dir, &db)?;
 
-    let encrypted: std::collections::HashSet<String> =
-        f.spaces.iter().filter(|s| s.encrypted).map(|s| s.name.clone()).collect();
-    let mut rep = AdoptReport { adopted: 0, already: 0, bytes: 0, items: Vec::new(), skipped: Vec::new() };
+    let encrypted: std::collections::HashSet<String> = f
+        .spaces
+        .iter()
+        .filter(|s| s.encrypted)
+        .map(|s| s.name.clone())
+        .collect();
+    let mut rep = AdoptReport {
+        adopted: 0,
+        already: 0,
+        bytes: 0,
+        items: Vec::new(),
+        skipped: Vec::new(),
+    };
 
     // ⚠️ 逐条来：⭐ 一条失败⛔ 不连坐别的 ✓（⭐ 与"删东西的闸"相反：⭐ 这里错了只是少补一份 ✓）
     for (hash, (path, bytes)) in &f.legacy {
-        let Some(who) = f.refs.get(hash) else { continue };
+        let Some(who) = f.refs.get(hash) else {
+            continue;
+        };
         for (sid, name) in who {
             if !encrypted.contains(name) {
                 continue;
@@ -299,11 +332,17 @@ pub async fn adopt_legacy_refs_for_encrypted_spaces(
             let keys = match crate::space_crypto::space_app_keys_for_path(&dbp) {
                 Ok(Some(k)) => k,
                 Ok(None) => {
-                    rep.skipped.push(format!("「{name}」／{}：空间未解锁（先打开它再试）", &hash[..hash.len().min(12)]));
+                    rep.skipped.push(format!(
+                        "「{name}」／{}：空间未解锁（先打开它再试）",
+                        &hash[..hash.len().min(12)]
+                    ));
                     continue;
                 }
                 Err(e) => {
-                    rep.skipped.push(format!("「{name}」／{}：取钥匙失败：{e}", &hash[..hash.len().min(12)]));
+                    rep.skipped.push(format!(
+                        "「{name}」／{}：取钥匙失败：{e}",
+                        &hash[..hash.len().min(12)]
+                    ));
                     continue;
                 }
             };
@@ -311,10 +350,16 @@ pub async fn adopt_legacy_refs_for_encrypted_spaces(
                 Ok(true) => {
                     rep.adopted += 1;
                     rep.bytes += *bytes as i64;
-                    rep.items.push(format!("「{name}」／{}／{} B", &hash[..hash.len().min(12)], bytes));
+                    rep.items.push(format!(
+                        "「{name}」／{}／{} B",
+                        &hash[..hash.len().min(12)],
+                        bytes
+                    ));
                 }
                 Ok(false) => rep.already += 1,
-                Err(e) => rep.skipped.push(format!("「{name}」／{}：{e}", &hash[..hash.len().min(12)])),
+                Err(e) => rep
+                    .skipped
+                    .push(format!("「{name}」／{}：{e}", &hash[..hash.len().min(12)])),
             }
         }
     }
@@ -323,14 +368,21 @@ pub async fn adopt_legacy_refs_for_encrypted_spaces(
 
 /// M14.1 — Storage breakdown for the space-management panel.
 #[tauri::command]
-pub async fn storage_stats(app: tauri::AppHandle, db: State<'_, Db>) -> Result<StorageStats, String> {
+pub async fn storage_stats(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+) -> Result<StorageStats, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachment_dir = app_data_dir.join("attachments");
 
     let (trash_count, trash_bytes, version_count, version_bytes, deleted_workspace_count) = {
         let c = db.0.lock().expect("db mutex poisoned");
         let trash_count: i64 = c
-            .query_row("SELECT COUNT(*) FROM pages WHERE deleted_at IS NOT NULL", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM pages WHERE deleted_at IS NOT NULL",
+                [],
+                |r| r.get(0),
+            )
             .unwrap_or(0);
         let trash_bytes: i64 = c
             .query_row(
@@ -351,9 +403,19 @@ pub async fn storage_stats(app: tauri::AppHandle, db: State<'_, Db>) -> Result<S
             .unwrap_or(0);
         // Soft-deleted workspaces live in meta (app-level), not per-space.
         let deleted_workspace_count: i64 = c
-            .query_row("SELECT COUNT(*) FROM meta.workspaces WHERE deleted_at IS NOT NULL", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM meta.workspaces WHERE deleted_at IS NOT NULL",
+                [],
+                |r| r.get(0),
+            )
             .unwrap_or(0);
-        (trash_count, trash_bytes, version_count, version_bytes, deleted_workspace_count)
+        (
+            trash_count,
+            trash_bytes,
+            version_count,
+            version_bytes,
+            deleted_workspace_count,
+        )
     };
 
     let att_dir = attachment_dir.clone();
@@ -378,7 +440,9 @@ pub async fn storage_stats(app: tauri::AppHandle, db: State<'_, Db>) -> Result<S
             if let Ok(entries) = std::fs::read_dir(&tmp) {
                 for e in entries.flatten() {
                     let name = e.file_name().to_string_lossy().into_owned();
-                    if name.starts_with("shuyonote-backup-") || name.starts_with("shuyonote-restore-") {
+                    if name.starts_with("shuyonote-backup-")
+                        || name.starts_with("shuyonote-restore-")
+                    {
                         temp_bytes += dir_size(&e.path()).bytes;
                     }
                 }
@@ -386,7 +450,10 @@ pub async fn storage_stats(app: tauri::AppHandle, db: State<'_, Db>) -> Result<S
             // leftover .part upload temp files（★ 按空间分之后要**递归**找：`.part` 现在
             // 可能落在 `<根>/<空间>/` 下面，而不是根下）
             for p in crate::attachments::walk_attachment_files(&att_dir2) {
-                let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let name = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 if name.ends_with(".part") {
                     temp_bytes += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0) as i64;
                 }
@@ -446,7 +513,9 @@ pub(crate) fn all_referenced_hashes(
     meta: &rusqlite::Connection,
 ) -> Result<std::collections::HashSet<String>, Vec<String>> {
     let ids = all_space_ids(meta)?;
-    Ok(scan_referenced_hashes(&ids, crate::db::open_space_conn)?.into_iter().collect())
+    Ok(scan_referenced_hashes(&ids, crate::db::open_space_conn)?
+        .into_iter()
+        .collect())
 }
 
 /// 除 `except_id` 之外**其余空间**的引用集（严格版）。给"先删除行、再回收字节"的命令用：
@@ -455,8 +524,13 @@ pub(crate) fn other_spaces_referenced_hashes(
     meta: &rusqlite::Connection,
     except_id: &str,
 ) -> Result<std::collections::HashSet<String>, Vec<String>> {
-    let ids: Vec<String> = all_space_ids(meta)?.into_iter().filter(|i| i != except_id).collect();
-    Ok(scan_referenced_hashes(&ids, crate::db::open_space_conn)?.into_iter().collect())
+    let ids: Vec<String> = all_space_ids(meta)?
+        .into_iter()
+        .filter(|i| i != except_id)
+        .collect();
+    Ok(scan_referenced_hashes(&ids, crate::db::open_space_conn)?
+        .into_iter()
+        .collect())
 }
 
 /// M14.2 — Permanently delete trash (soft-deleted pages) and release their bytes.
@@ -486,12 +560,15 @@ pub(crate) fn release_own_attachment_bytes(
 }
 
 #[tauri::command]
-pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64, String> {    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
 
     // Collect trash page ids + candidate hashes while locked.
     let (trash_ids, hashes) = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let mut stmt = c.prepare("SELECT id FROM pages WHERE deleted_at IS NOT NULL").map_err(|e| e.to_string())?;
+        let mut stmt = c
+            .prepare("SELECT id FROM pages WHERE deleted_at IS NOT NULL")
+            .map_err(|e| e.to_string())?;
         let ids: Vec<String> = stmt
             .query_map([], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?
@@ -542,8 +619,11 @@ pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64
             [],
         )
         .map_err(|e| e.to_string())?;
-        tx.execute("UPDATE pages SET parent_id = NULL WHERE deleted_at IS NOT NULL", [])
-            .map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE pages SET parent_id = NULL WHERE deleted_at IS NOT NULL",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
         for pid in &trash_ids {
             for sql in [
                 "DELETE FROM page_props WHERE page_id = ?1",
@@ -575,14 +655,17 @@ pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64
             .collect::<Result<Vec<String>, _>>()
             .map_err(|e| format!("读当前空间的 attachments 失败（{e}）⇒ 字节未回收，附件行已删"))?;
         let still_referenced: std::collections::HashSet<String> = own.into_iter().collect();
-        hashes.iter().filter(|h| !still_referenced.contains(*h)).cloned().collect()
+        hashes
+            .iter()
+            .filter(|h| !still_referenced.contains(*h))
+            .cloned()
+            .collect()
     };
 
     // Release bytes off the main thread (no DB needed) —— ⭐ **只删当前空间目录里那份**。
     let own_dir = crate::attachments::space_attachments_dir(&app_data_dir, &current_space);
     let freed = tauri::async_runtime::spawn_blocking(move || -> Result<u64, String> {
-        let (freed, kept_elsewhere) =
-            release_own_attachment_bytes(&own_dir, &orphaned);
+        let (freed, kept_elsewhere) = release_own_attachment_bytes(&own_dir, &orphaned);
         if kept_elsewhere > 0 {
             eprintln!(
                 "[attachments] 清空回收站：{kept_elsewhere} 个哈希只在老布局里有字节 ⇒ 本次**未删**\
@@ -618,7 +701,10 @@ pub fn cleanup_orphan_derived(db: State<'_, Db>) -> Result<u64, String> {
 
 /// M14.3 — Delete attachment bytes whose hash is referenced by no attachment row.
 #[tauri::command]
-pub async fn cleanup_orphan_attachments(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64, String> {
+pub async fn cleanup_orphan_attachments(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+) -> Result<u64, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachment_dir = app_data_dir.join("attachments");
 
@@ -631,7 +717,11 @@ pub async fn cleanup_orphan_attachments(app: tauri::AppHandle, db: State<'_, Db>
         let c = db.0.lock().expect("db mutex poisoned");
         all_referenced_hashes(&c).map_err(|unreadable| {
             // ⭐ 2026-10-11（owner 选乙）：⭐ 同一句话，⭐ 三处共用 ✓
-            unreadable_spaces_message(&unreadable, &space_name_map(&c, &unreadable), "打不开就判断不了哪些附件是孤儿")
+            unreadable_spaces_message(
+                &unreadable,
+                &space_name_map(&c, &unreadable),
+                "打不开就判断不了哪些附件是孤儿",
+            )
         })?
     };
 
@@ -641,7 +731,10 @@ pub async fn cleanup_orphan_attachments(app: tauri::AppHandle, db: State<'_, Db>
         // ★ 递归扫**整棵树**（`<根>/<空间>/<桶>/…` 与老布局都算）：按空间分之后
         //   孤儿可能躺在任何一个空间目录里，"哪些字节没人引用"这条判据本身是全局的。
         for p in crate::attachments::walk_attachment_files(&att_dir) {
-            let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let name = p
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let stem = name.split('.').next().unwrap_or("").to_string();
             if !stem.is_empty() && !referenced.contains(&stem) {
                 freed += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
@@ -704,7 +797,10 @@ pub async fn cleanup_temp_files(app: tauri::AppHandle) -> Result<u64, String> {
         }
         // ★ 递归找 `.part`（按空间分之后它们可能在 `<根>/<空间>/` 下）。
         for p in crate::attachments::walk_attachment_files(&att_dir) {
-            let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let name = p
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
             if name.ends_with(".part") {
                 freed += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
                 let _ = std::fs::remove_file(&p);
@@ -768,7 +864,10 @@ where
 ///      让"⭐ 失败 ✗"读起来像**保护** ✓，⛔ 不是坏 ✓）。
 ///
 /// ⚠️ 空间名查不到就**退回印 id** ✗（⭐ 绝不编一个名字 ✓，⭐ 也绝不因此把整条提示变成空话 ✓）。
-fn space_name_map(c: &rusqlite::Connection, unreadable: &[String]) -> std::collections::HashMap<String, String> {
+fn space_name_map(
+    c: &rusqlite::Connection,
+    unreadable: &[String],
+) -> std::collections::HashMap<String, String> {
     let mut m = std::collections::HashMap::new();
     for line in unreadable {
         // ⚠️ 这里**故意**按第一个 ':' 切一次 —— ⭐ 这些行都是**本文件**自己拼的 `{sid}: …` ✓
@@ -819,7 +918,10 @@ fn unreadable_spaces_message(
 /// active DB. The soft-deleted rows come from meta.workspaces. Then any attachment
 /// bytes unreferenced by every remaining space's DB are freed (global store).
 #[tauri::command]
-pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) -> Result<WorkspacePurgeResult, String> {
+pub async fn purge_deleted_workspaces(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+) -> Result<WorkspacePurgeResult, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachment_dir = app_data_dir.join("attachments");
     let spaces_dir = app_data_dir.join("spaces");
@@ -875,46 +977,51 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
     // For each deleted space, open its DB to collect the hashes it referenced, then
     // delete its DB + WAL files.
     let deleted_for_files = deleted_ids.clone();
-    let (hashes_to_free, freed_bytes) = tauri::async_runtime::spawn_blocking(move || -> Result<(Vec<String>, u64), String> {
-        let mut freed_bytes: u64 = 0u64;
-        let mut released_hashes: Vec<String> = Vec::new();
+    let (hashes_to_free, freed_bytes) =
+        tauri::async_runtime::spawn_blocking(move || -> Result<(Vec<String>, u64), String> {
+            let mut freed_bytes: u64 = 0u64;
+            let mut released_hashes: Vec<String> = Vec::new();
 
-        for sid in &deleted_for_files {
-            // 这些空间**马上要被删掉**，所以读不到只意味着"少回收一些字节"（安全方向），
-            // 与上面那条"存活空间读不到 ⇒ 不许删"是两件事，这里保持宽松。
-            // ⚠️ 不 join `pages`：内连接会漏掉 `page_id IS NULL`（根目录文件）与
-            // "页已不在"的历史行，那些字节会被当成孤儿（2026-09-19 缺陷帖 #6）。
-            match crate::db::open_space_conn(sid) {
-                Ok(conn) => match conn.prepare("SELECT DISTINCT hash FROM attachments") {
-                    Ok(mut stmt) => match stmt.query_map([], |r| r.get::<_, String>(0)) {
-                        Ok(rows) => released_hashes.extend(rows.flatten()),
-                        Err(e) => eprintln!("清理软删空间 {sid}：读 attachments 失败（{e}）⇒ 这批字节不回收"),
+            for sid in &deleted_for_files {
+                // 这些空间**马上要被删掉**，所以读不到只意味着"少回收一些字节"（安全方向），
+                // 与上面那条"存活空间读不到 ⇒ 不许删"是两件事，这里保持宽松。
+                // ⚠️ 不 join `pages`：内连接会漏掉 `page_id IS NULL`（根目录文件）与
+                // "页已不在"的历史行，那些字节会被当成孤儿（2026-09-19 缺陷帖 #6）。
+                match crate::db::open_space_conn(sid) {
+                    Ok(conn) => match conn.prepare("SELECT DISTINCT hash FROM attachments") {
+                        Ok(mut stmt) => match stmt.query_map([], |r| r.get::<_, String>(0)) {
+                            Ok(rows) => released_hashes.extend(rows.flatten()),
+                            Err(e) => eprintln!(
+                                "清理软删空间 {sid}：读 attachments 失败（{e}）⇒ 这批字节不回收"
+                            ),
+                        },
+                        Err(e) => eprintln!(
+                            "清理软删空间 {sid}：打不开 attachments 表（{e}）⇒ 这批字节不回收"
+                        ),
                     },
-                    Err(e) => eprintln!("清理软删空间 {sid}：打不开 attachments 表（{e}）⇒ 这批字节不回收"),
-                },
-                Err(e) => eprintln!("清理软删空间 {sid}：打不开空间库（{e}）⇒ 这批字节不回收"),
-            }
-            // Delete the space DB + WAL/shm.
-            if !crate::db::is_safe_space_id(sid) {
-                // 纵深防御：id 来源（meta.workspaces）理论上已被写路径校验，但防止
-                // 历史脏数据/二次污染把 `../` id 拼进删除路径（任意文件删）。
-                continue;
-            }
-            for suffix in ["", "-wal", "-shm"] {
-                let p = spaces_dir.join(format!("{sid}.db{suffix}"));
-                if let Ok(m) = std::fs::metadata(&p) {
-                    if m.is_file() {
-                        freed_bytes += m.len();
-                        let _ = std::fs::remove_file(p);
+                    Err(e) => eprintln!("清理软删空间 {sid}：打不开空间库（{e}）⇒ 这批字节不回收"),
+                }
+                // Delete the space DB + WAL/shm.
+                if !crate::db::is_safe_space_id(sid) {
+                    // 纵深防御：id 来源（meta.workspaces）理论上已被写路径校验，但防止
+                    // 历史脏数据/二次污染把 `../` id 拼进删除路径（任意文件删）。
+                    continue;
+                }
+                for suffix in ["", "-wal", "-shm"] {
+                    let p = spaces_dir.join(format!("{sid}.db{suffix}"));
+                    if let Ok(m) = std::fs::metadata(&p) {
+                        if m.is_file() {
+                            freed_bytes += m.len();
+                            let _ = std::fs::remove_file(p);
+                        }
                     }
                 }
             }
-        }
 
-        Ok((released_hashes, freed_bytes))
-    })
-    .await
-    .map_err(|e| e.to_string())??;
+            Ok((released_hashes, freed_bytes))
+        })
+        .await
+        .map_err(|e| e.to_string())??;
 
     // Remove the soft-deleted meta.workspaces rows (now that their DBs are gone).
     {
@@ -952,7 +1059,10 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
     .await
     .map_err(|e| e.to_string())??;
 
-    Ok(WorkspacePurgeResult { freed: freed_bytes + freed_att_bytes, workspaces: deleted_ids.len() })
+    Ok(WorkspacePurgeResult {
+        freed: freed_bytes + freed_att_bytes,
+        workspaces: deleted_ids.len(),
+    })
 }
 
 #[cfg(test)]
@@ -1007,7 +1117,10 @@ mod tests {
             crate::attachments::find_path_by_hash(&root, &hash).is_some(),
             "⛔ 老布局那份不许动（不读别的空间就证明不了安全）"
         );
-        assert_eq!(kept_elsewhere, 1, "只在老布局里的那个要记数（留给「整理附件布局」）");
+        assert_eq!(
+            kept_elsewhere, 1,
+            "只在老布局里的那个要记数（留给「整理附件布局」）"
+        );
         let _ = std::fs::remove_dir_all(&app);
     }
 
@@ -1027,12 +1140,19 @@ mod tests {
         std::fs::write(&legacy, &plain).unwrap();
 
         let keys = crate::crypto::AppKeys::legacy_only([9u8; 32]);
-        assert!(adopt_one(&app, "space-enc", &hash, &legacy, &keys).unwrap(), "第一次应当真写一份 ✓");
+        assert!(
+            adopt_one(&app, "space-enc", &hash, &legacy, &keys).unwrap(),
+            "第一次应当真写一份 ✓"
+        );
 
         let own_dir = crate::attachments::space_attachments_dir(&app, "space-enc");
-        let own = crate::attachments::find_path_by_hash(&own_dir, &hash).expect("补完之后它自己目录里必须找得到");
+        let own = crate::attachments::find_path_by_hash(&own_dir, &hash)
+            .expect("补完之后它自己目录里必须找得到");
         let raw = std::fs::read(&own).unwrap();
-        assert_ne!(raw, plain, "⭐ 补的这份必须是**密文** ✗（⛔ 不是把明文抄一份 ✓）");
+        assert_ne!(
+            raw, plain,
+            "⭐ 补的这份必须是**密文** ✗（⛔ 不是把明文抄一份 ✓）"
+        );
         assert!(
             crate::security::decrypt_attachment_bytes(Some(&keys), &raw).unwrap() == plain,
             "⭐ 而且必须解得回原字节 ✓"
@@ -1042,16 +1162,25 @@ mod tests {
             "⭐⭐ 老布局那份**一个字节都不许动** ✗ —— 「工作」还在用它 ✓"
         );
 
-        assert!(!adopt_one(&app, "space-enc", &hash, &legacy, &keys).unwrap(), "⭐ 幂等：已经有了 ⇒ 再跑不写 ✓");
+        assert!(
+            !adopt_one(&app, "space-enc", &hash, &legacy, &keys).unwrap(),
+            "⭐ 幂等：已经有了 ⇒ 再跑不写 ✓"
+        );
 
         // ⭐ 指纹不符 ⇒ ⛔ **不写**（⭐ 挡"把坏字节冒充成附件"✓）
         let bogus = "0".repeat(64);
         let tampered = legacy_dir.join(format!("{bogus}.png"));
         std::fs::write(&tampered, b"\x89PNG\r\n\x1a\nTAMPERED").unwrap();
-        assert!(adopt_one(&app, "space-enc2", &bogus, &tampered, &keys).is_err(), "⛔ 指纹不符必须报错 ✗");
         assert!(
-            crate::attachments::find_path_by_hash(&crate::attachments::space_attachments_dir(&app, "space-enc2"), &bogus)
-                .is_none(),
+            adopt_one(&app, "space-enc2", &bogus, &tampered, &keys).is_err(),
+            "⛔ 指纹不符必须报错 ✗"
+        );
+        assert!(
+            crate::attachments::find_path_by_hash(
+                &crate::attachments::space_attachments_dir(&app, "space-enc2"),
+                &bogus
+            )
+            .is_none(),
             "⛔ 指纹不符 ⇒ 它目录里**不许**出现任何东西 ✗"
         );
 
@@ -1069,10 +1198,22 @@ mod tests {
         let mut m = std::collections::HashMap::new();
         m.insert(sid.to_string(), "保险柜".to_string());
         let msg = unreadable_spaces_message(&lines, &m, "打不开就判断不了哪些附件是孤儿");
-        assert!(msg.contains("保险柜"), "⭐ 必须点名是哪个空间 —— 只说 UUID 用户对不上 ✗：{msg}");
-        assert!(!msg.contains(sid), "⭐ 名字查到了就不该再印那串 id ✗：{msg}");
-        assert!(msg.contains("打开它") && msg.contains("输一次口令"), "⭐ 得说清怎么做 ✗：{msg}");
-        assert!(msg.contains("一个字节都不删"), "⭐ 得说清兜底（让失败读起来像保护）✗：{msg}");
+        assert!(
+            msg.contains("保险柜"),
+            "⭐ 必须点名是哪个空间 —— 只说 UUID 用户对不上 ✗：{msg}"
+        );
+        assert!(
+            !msg.contains(sid),
+            "⭐ 名字查到了就不该再印那串 id ✗：{msg}"
+        );
+        assert!(
+            msg.contains("打开它") && msg.contains("输一次口令"),
+            "⭐ 得说清怎么做 ✗：{msg}"
+        );
+        assert!(
+            msg.contains("一个字节都不删"),
+            "⭐ 得说清兜底（让失败读起来像保护）✗：{msg}"
+        );
 
         // ⭐ 反向：名字查不到 ⇒ **如实退回印 id** ✓
         let msg2 = unreadable_spaces_message(
@@ -1081,7 +1222,10 @@ mod tests {
             "打不开就判断不了哪些附件是孤儿",
         );
         assert!(msg2.contains(sid), "⭐ 查不到名字就得如实印 id ✗：{msg2}");
-        assert!(msg2.contains("一个字节都不删"), "⭐ 即便查不到名字，兜底那句也必须在 ✗：{msg2}");
+        assert!(
+            msg2.contains("一个字节都不删"),
+            "⭐ 即便查不到名字，兜底那句也必须在 ✗：{msg2}"
+        );
     }
 
     // ★ 清理软删空间时"存活空间读不到 ⇒ 一个附件都不许删"（2026-09-20 自查发现的**静默数据丢失**）。
@@ -1129,7 +1273,9 @@ mod tests {
 
         // ③ 空集合 ⇒ Ok(空)，不把"没有空间"误判成失败。
         let empty: Vec<String> = vec![];
-        assert!(scan_referenced_hashes(&empty, |_| Err("不该被调用".into())).unwrap().is_empty());
+        assert!(scan_referenced_hashes(&empty, |_| Err("不该被调用".into()))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -1139,7 +1285,8 @@ mod tests {
         migrate(&c, "w1").unwrap();
         // workspace 'w1' row is seeded by migrate(space_id="w1"); no duplicate insert.
         let page = "INSERT INTO pages (id,workspace_id,parent_id,title,content_json,content_text,kind,sort_order,created_at,updated_at,deleted_at) VALUES (?1,'w1',?2,'t','{}','','page',0,1,1,1)";
-        c.execute(page, params!["p", rusqlite::types::Null]).unwrap();
+        c.execute(page, params!["p", rusqlite::types::Null])
+            .unwrap();
         c.execute(page, params!["c", "p"]).unwrap();
         // A database page with a column referencing it (FK via database_columns).
         c.execute(
@@ -1165,16 +1312,24 @@ mod tests {
             [],
         )
         .unwrap();
-        tx.execute("UPDATE pages SET parent_id = NULL WHERE deleted_at IS NOT NULL", []).unwrap();
+        tx.execute(
+            "UPDATE pages SET parent_id = NULL WHERE deleted_at IS NOT NULL",
+            [],
+        )
+        .unwrap();
         // Database page references via database_columns must be cleared too.
-        tx.execute("DELETE FROM database_columns WHERE db_page_id = 'db1'", []).unwrap();
+        tx.execute("DELETE FROM database_columns WHERE db_page_id = 'db1'", [])
+            .unwrap();
         // Delete in a parent-then-child order; must not violate FK.
         tx.execute("DELETE FROM pages WHERE id = 'p'", []).unwrap();
         tx.execute("DELETE FROM pages WHERE id = 'c'", []).unwrap();
-        tx.execute("DELETE FROM pages WHERE id = 'db1'", []).unwrap();
+        tx.execute("DELETE FROM pages WHERE id = 'db1'", [])
+            .unwrap();
         tx.commit().unwrap();
 
-        let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 0);
     }
 
@@ -1204,8 +1359,14 @@ mod tests {
         };
         let ids = vec!["a".to_string(), "b".to_string()];
         let set: std::collections::HashSet<String> =
-            scan_referenced_hashes(&ids, |sid| Ok(build(sid))).unwrap().into_iter().collect();
-        assert!(set.contains(H), "跨空间 + 页不可解析都必须算被引用：{set:?}");
+            scan_referenced_hashes(&ids, |sid| Ok(build(sid)))
+                .unwrap()
+                .into_iter()
+                .collect();
+        assert!(
+            set.contains(H),
+            "跨空间 + 页不可解析都必须算被引用：{set:?}"
+        );
 
         // 反例守卫：换成 `JOIN pages ON p.id = a.page_id` 的旧口径 ⇒ 两行都会消失。
         // 这里直接断言"不 join 才拿得到"，把口径钉在函数里（改回去这条就红）。
@@ -1217,6 +1378,9 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(joined, 0, "JOIN 口径下 A 的行应当查不到 —— 这正是缺陷帖 #6 的形态");
+        assert_eq!(
+            joined, 0,
+            "JOIN 口径下 A 的行应当查不到 —— 这正是缺陷帖 #6 的形态"
+        );
     }
 }

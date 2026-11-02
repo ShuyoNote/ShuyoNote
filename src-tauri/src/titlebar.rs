@@ -64,12 +64,8 @@ mod imp {
 
     #[link(name = "dwmapi")]
     extern "system" {
-        fn DwmSetWindowAttribute(
-            hwnd: HWND,
-            attr: u32,
-            value: *const c_void,
-            size: u32,
-        ) -> HRESULT;
+        fn DwmSetWindowAttribute(hwnd: HWND, attr: u32, value: *const c_void, size: u32)
+            -> HRESULT;
     }
 
     #[link(name = "user32")]
@@ -239,7 +235,11 @@ pub fn set_mica_effect(window: tauri::Window, on: bool) -> Result<(), String> {
 /// Rust 侧用 `cursor_position()` 取**原生物理坐标**，与 TrackPopupMenu 天然
 /// 同坐标系，免去前端换算与往返精度损失。
 #[tauri::command]
-pub fn show_window_menu(window: tauri::Window, x: Option<f64>, y: Option<f64>) -> Result<(), String> {
+pub fn show_window_menu(
+    window: tauri::Window,
+    x: Option<f64>,
+    y: Option<f64>,
+) -> Result<(), String> {
     #[cfg(windows)]
     {
         let hwnd = window.hwnd().map_err(|e| e.to_string())?.0 as *mut std::ffi::c_void;

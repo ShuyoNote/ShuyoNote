@@ -66,7 +66,12 @@ fn acquire_global(
 ) -> Result<jni021::objects::GlobalRef, String> {
     // Context 用 Application 那一份（活动的那份会在旋转/重建后失效）。
     let ctx = env
-        .call_method(activity, "getApplicationContext", "()Landroid/content/Context;", &[])
+        .call_method(
+            activity,
+            "getApplicationContext",
+            "()Landroid/content/Context;",
+            &[],
+        )
         .map_err(|e| format!("getApplicationContext 失败：{e}"))?
         .l()
         .map_err(|e| format!("getApplicationContext 返回值不是对象：{e}"))?;
@@ -74,7 +79,9 @@ fn acquire_global(
         return Err("getApplicationContext 返回空".into());
     }
     // Context.WIFI_SERVICE 的字面量就是 "wifi"（Android 源码里的常量值）。
-    let svc = env.new_string("wifi").map_err(|e| format!("造 \"wifi\" 字符串失败：{e}"))?;
+    let svc = env
+        .new_string("wifi")
+        .map_err(|e| format!("造 \"wifi\" 字符串失败：{e}"))?;
     let wm = env
         .call_method(
             &ctx,
@@ -88,7 +95,9 @@ fn acquire_global(
     if wm.as_raw().is_null() {
         return Err("getSystemService(\"wifi\") 返回空（没有 Wi-Fi 服务？）".into());
     }
-    let tag = env.new_string("shuyonote-lan").map_err(|e| format!("造 tag 失败：{e}"))?;
+    let tag = env
+        .new_string("shuyonote-lan")
+        .map_err(|e| format!("造 tag 失败：{e}"))?;
     let lock = env
         .call_method(
             &wm,
@@ -106,5 +115,6 @@ fn acquire_global(
     let _ = env.call_method(&lock, "setReferenceCounted", "(Z)V", &[JValue::Bool(0)]);
     env.call_method(&lock, "acquire", "()V", &[])
         .map_err(|e| format!("acquire 失败：{e}"))?;
-    env.new_global_ref(&lock).map_err(|e| format!("转全局引用失败：{e}"))
+    env.new_global_ref(&lock)
+        .map_err(|e| format!("转全局引用失败：{e}"))
 }

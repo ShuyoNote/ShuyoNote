@@ -1,0 +1,117 @@
+/* S4（2026-11-01）：域抽取器搬出的**网页书签卡片域（`.webbookmark-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+.webbookmark-card {
+  display: flex;
+  gap: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.webbookmark-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.webbookmark-thumb {
+  flex: 0 0 180px;
+  min-height: 110px;
+  background: var(--hover);
+}
+
+.webbookmark-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.webbookmark-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: var(--space-3) 14px;
+  min-width: 0;
+}
+
+.webbookmark-title {
+  font-size: var(--fs-15);
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.webbookmark-desc {
+  font-size: var(--fs-12-5);
+  color: var(--text-dim);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.webbookmark-site {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+}
+
+.webbookmark-domain {
+  font-weight: 500;
+}
+
+.webbookmark-err {
+  color: var(--danger);
+}
+
+/* Edit affordance on the bookmark card */
+.webbookmark-card {
+  position: relative;
+}
+
+.webbookmark-edit-trigger {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border: none;
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+
+.webbookmark-card:hover .webbookmark-edit-trigger,
+.webbookmark-card:focus-within .webbookmark-edit-trigger {
+  opacity: 1;
+}
+
+.webbookmark-edit-trigger:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+}

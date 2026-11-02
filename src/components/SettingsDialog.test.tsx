@@ -16,8 +16,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** 判据 c) 要读**真的** CSS 规则（⛔ 不是凭印象说"卡片不会塌"✗）。 */
-const APP_CSS = resolve(dirname(fileURLToPath(import.meta.url)), "../App.css");
+/** 判据 c) 要读**真的** CSS 规则（⛔ 不是凭印象说"卡片不会塌"✗）；S4 起设置域已搬到 `src/styles/settings.css` ⇒ 读全仓 CSS。 */
+import { allCssText } from "../lib/cssSources";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -316,7 +316,7 @@ describe("设置-空间 · 单空间迁移：⛔ 那两个图标不许再回来"
   it("⭐ c) 卡片**不会塌**：那两条规则里没有写死高度 ＋ 三样可见内容各自都在", async () => {
     await render();
 
-    const css = readFileSync(APP_CSS, "utf8");
+    const css = allCssText();
     for (const sel of [".set-migrate-card", ".set-migrate"]) {
       const m = new RegExp(`\\${sel}\\s*\\{([^}]*)\\}`).exec(css);
       expect(m, `${sel} 的规则不见了`).not.toBeNull();
@@ -402,12 +402,14 @@ describe("设置-空间 · owner 挑的四条（编号／IP／可见切换入口
     expect(switchTo, "点「删除」却先把空间切过去了（冒泡 ✗）").not.toHaveBeenCalled();
   });
 
-  it("⭐ ④ 副标题那句加上「切换」（两处词条一起改 ✓）", () => {
+  it("⭐ ④ 副标题那句加上「切换」（两处词条一起改 ✓；2026-10-31 起含「备份」）", () => {
     const zh = readFileSync(resolve(HERE, "../i18n/locales/zh.ts"), "utf8");
     const en = readFileSync(resolve(HERE, "../i18n/locales/en.ts"), "utf8");
     expect(zh, "zh 词条里没有「切换」").toMatch(/spacesHint:\s*"[^"]*切换/);
+    // 2026-10-31：空间包导出/导入搬进这一页 ⇒ 副标题补「备份」（两处词条同步改，⛔ 只改一处）
+    expect(zh, "zh 词条里没有「备份」").toMatch(/spacesHint:\s*"[^"]*备份/);
     expect(en, "en 词条里没有 Switch（⛔ 只改 zh 会造出不一致 ✗）").toMatch(
-      /spacesHint:\s*"Switch \/ colors \/ encryption \/ migrate \/ delete"/,
+      /spacesHint:\s*"Switch \/ colors \/ encryption \/ backup \/ migrate \/ delete"/,
     );
   });
 });

@@ -20,6 +20,9 @@ const mocks = vi.hoisted(() => ({
   // 2026-09-15：Android 改成**应用内**下载 + 校验 + 交给系统安装器，所以这两个也要桩掉
   // ——用例要断言"点了按钮真的按 url+sha256 去下、再把拿到的路径交给安装器"。
   installAndroidUpdate: vi.fn<(url: string, sha: string, onProgress?: unknown) => Promise<string>>(),
+  // ⭐ 2026-10-29：关于窗新增「本机设备：<名字>」那一行 ⇒ 读本机名的命令要桩掉
+  //   （不桩的话 `lib/api` 会去拿真实 `invoke`，在 Web 夹具里是同步抛）。
+  getDeviceName: vi.fn<() => Promise<string | null>>(),
 }));
 
 vi.mock("../lib/platform", () => ({
@@ -39,6 +42,9 @@ vi.mock("../lib/updater", () => ({
   installAndroidUpdate: mocks.installAndroidUpdate,
 }));
 
+// ⭐ 2026-10-29：关于窗那行「本机设备：<名字>」读的是 `api.getDeviceName()` ⇒ 桩掉。
+vi.mock("../lib/api", () => ({ api: { getDeviceName: mocks.getDeviceName } }));
+
 import { AboutDialog } from "./AboutDialog";
 import { useEditorStore } from "../store/editor";
 import { APP_NAME } from "../lib/links";
@@ -55,6 +61,8 @@ const fetchStub = vi.fn(async () => ({ ok: false, status: 404, json: async () =>
 beforeEach(() => {
   fetchStub.mockClear();
   vi.stubGlobal("fetch", fetchStub);
+  mocks.getDeviceName.mockReset();
+  mocks.getDeviceName.mockResolvedValue("ZHAI-AMD");
 });
 
 afterEach(() => {
@@ -113,6 +121,33 @@ describe("「关于」弹窗的版面", () => {
     const { render, root } = mount();
     render();
     expect(document.querySelector(".about")).toBeNull();
+    flushSync(() => root.unmount());
+  });
+
+  it("⭐ 2026-10-29：头部多一行「本机设备：<名字>」（只读；⛔ 不是第三枚胶囊）", async () => {
+    mocks.getDeviceName.mockResolvedValue("ZHAI-AMD");
+    useEditorStore.setState({ aboutOpen: true });
+    const { render, root } = mount();
+    render();
+    const row = await vi.waitFor(() => {
+      const el = document.querySelector<HTMLElement>('[data-testid="about-device-name"]');
+      expect(el, "设备名那一行要在").not.toBeNull();
+      return el!;
+    });
+    expect(row.textContent).toContain("本机设备");
+    expect(row.textContent).toContain("ZHAI-AMD");
+    // 版本/许可仍是两枚胶囊：设备名**不做成第三枚**（"这一版是什么"与"我是谁"不是一类格子）
+    expect(document.querySelectorAll(".about-hero .about-pill").length).toBe(2);
+    flushSync(() => root.unmount());
+  });
+
+  it("⭐ 读不到设备名 ⇒ 那一行不出现（⛔ 不编一个名字、也不显示设备号）", async () => {
+    mocks.getDeviceName.mockResolvedValue(null);
+    useEditorStore.setState({ aboutOpen: true });
+    const { render, root } = mount();
+    render();
+    await vi.waitFor(() => expect(mocks.getDeviceName).toHaveBeenCalled());
+    expect(document.querySelector('[data-testid="about-device-name"]')).toBeNull();
     flushSync(() => root.unmount());
   });
 });

@@ -71,12 +71,17 @@ impl CachedDocument {
         }
         let magic = b"x.pdf\0";
         let mut err: *mut mupdf_error_t = ptr::null_mut();
-        let doc = mupdf_open_document_from_bytes(ctx, buf, magic.as_ptr() as *const c_char, &mut err);
+        let doc =
+            mupdf_open_document_from_bytes(ctx, buf, magic.as_ptr() as *const c_char, &mut err);
         if doc.is_null() {
             fz_drop_buffer(ctx, buf);
             return Err(take_error(err));
         }
-        Ok(Self { ctx, doc, buffer: buf })
+        Ok(Self {
+            ctx,
+            doc,
+            buffer: buf,
+        })
     }
 }
 impl Drop for CachedDocument {
@@ -107,7 +112,10 @@ fn doc_cache() -> &'static Mutex<HashMap<String, CachedDocument>> {
 /// command layer skip re-reading the PDF bytes from disk on every page render
 /// (repeated scans + full-file reads are the dominant cost for large PDFs).
 pub fn has_document(cache_key: &str) -> bool {
-    doc_cache().lock().map(|c| c.contains_key(cache_key)).unwrap_or(false)
+    doc_cache()
+        .lock()
+        .map(|c| c.contains_key(cache_key))
+        .unwrap_or(false)
 }
 
 /// 丢掉某个 key 的缓存文档。**P2 的「引擎互斥淘汰」要用它**：
@@ -130,7 +138,11 @@ struct PageCanvas {
 }
 impl PageCanvas {
     fn new(ctx: *mut fz_context, page: *mut fz_page) -> Self {
-        Self { ctx, page, pix: ptr::null_mut() }
+        Self {
+            ctx,
+            page,
+            pix: ptr::null_mut(),
+        }
     }
 }
 impl Drop for PageCanvas {
@@ -241,7 +253,9 @@ pub unsafe fn render_page(
 /// `宽 × 高 × 4` 校验字节数——多一个字节就会被判为"字节数对不上"。
 /// 填充必须在 Rust 侧去掉，别把这个差异漏到前端去当谜题。
 pub fn compact_rgba(samples: &[u8], w: usize, h: usize, stride: usize) -> Result<Vec<u8>, String> {
-    let row = w.checked_mul(4).ok_or_else(|| "MuPDF: 页面宽度溢出".to_string())?;
+    let row = w
+        .checked_mul(4)
+        .ok_or_else(|| "MuPDF: 页面宽度溢出".to_string())?;
     let need = stride
         .checked_mul(h)
         .ok_or_else(|| "MuPDF: 页面高度溢出".to_string())?;
@@ -293,7 +307,10 @@ mod tests {
         ];
         let out = compact_rgba(&samples, 2, 2, 12).expect("compact");
         assert_eq!(out.len(), 2 * 2 * 4);
-        assert_eq!(out, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        assert_eq!(
+            out,
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        );
     }
 
     #[test]
@@ -305,8 +322,14 @@ mod tests {
 
     #[test]
     fn compact_rgba_rejects_inconsistent_inputs() {
-        assert!(compact_rgba(&[0u8; 16], 2, 2, 4).is_err(), "行跨距小于行宽必须报错");
-        assert!(compact_rgba(&[0u8; 15], 2, 2, 8).is_err(), "缓冲不足必须报错");
+        assert!(
+            compact_rgba(&[0u8; 16], 2, 2, 4).is_err(),
+            "行跨距小于行宽必须报错"
+        );
+        assert!(
+            compact_rgba(&[0u8; 15], 2, 2, 8).is_err(),
+            "缓冲不足必须报错"
+        );
     }
 
     /// 真机 PDF 的显式冒烟测试（默认忽略）：一条命令跑完 Rust 侧整条链路——
@@ -324,12 +347,15 @@ mod tests {
         };
         let data = std::fs::read(&path).expect("读取 PDF 失败");
         unsafe {
-            let (rgba, w, h, stride) = render_page("real-fixture", &data, 0, 1.0).expect("渲染第 1 页失败");
+            let (rgba, w, h, stride) =
+                render_page("real-fixture", &data, 0, 1.0).expect("渲染第 1 页失败");
             let compact = compact_rgba(&rgba, w, h, stride).expect("压缩像素失败");
             assert_eq!(compact.len(), w * h * 4, "紧凑 RGBA 长度必须是 宽×高×4");
             assert!(compact.iter().any(|b| *b != 0), "渲染结果全零");
             let b64 = base64::engine::general_purpose::STANDARD.encode(&compact);
-            let decoded = base64::engine::general_purpose::STANDARD.decode(&b64).expect("base64 解码失败");
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(&b64)
+                .expect("base64 解码失败");
             assert_eq!(decoded.len(), w * h * 4);
             eprintln!(
                 "第 1 页 {w}×{h}（stride {stride}）→ RGBA {} 字节，base64 {} 字节",
@@ -345,11 +371,14 @@ mod tests {
     fn compact_page_matches_frontend_contract() {
         use base64::Engine as _;
         unsafe {
-            let (rgba, w, h, stride) = render_page("test-min-contract", MIN_PDF, 0, 1.0).expect("render");
+            let (rgba, w, h, stride) =
+                render_page("test-min-contract", MIN_PDF, 0, 1.0).expect("render");
             let compact = compact_rgba(&rgba, w, h, stride).expect("compact");
             assert_eq!(compact.len(), w * h * 4);
             let b64 = base64::engine::general_purpose::STANDARD.encode(&compact);
-            let decoded = base64::engine::general_purpose::STANDARD.decode(b64).expect("decode");
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .expect("decode");
             assert_eq!(decoded.len(), w * h * 4);
             // 200×200 的页面不能是全零：那说明栅格化"成功"但什么也没画。
             assert!(decoded.iter().any(|b| *b != 0), "渲染结果全零");

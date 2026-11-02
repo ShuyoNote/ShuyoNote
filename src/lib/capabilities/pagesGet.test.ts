@@ -7,6 +7,7 @@
 // **"成功"不等于"读全了"** —— 只是这次发生在 AI 工具面而不是抽取层。
 
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -249,4 +250,95 @@ describe("pages.get：与 Rust 侧共用的分页夹具", () => {
       expect(hasLoneSurrogate(r.page.content_text)).toBe(false);
     });
   }
+});
+
+// ── P1 读面（2026-10-29）：`rev` ＋ 块锚点 ────────────────────────────────────────────────
+// 口径与 Rust 侧（`src-tauri/src/plugins.rs`）逐字相同，跨语言一致性本身由
+// `tests/pages-get-anchors-parity.json` 那份共用夹具钉住（见 `pageAnchors.test.ts`）；
+// 这一节只钉**适配器这一层**真的接上了：默认开、能关、字数读数只量正文、算不出就不带 rev。
+describe("pages.get：P1 读面（rev + 块锚点）", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  /** 3 个顶层块（甲/乙/丙）的正文 JSON；与夹具里的同一形状。 */
+  const DOC3 = JSON.stringify({
+    root: {
+      children: [
+        { type: "paragraph", blockId: "blk1", children: [{ type: "text", text: "甲" }] },
+        { type: "paragraph", blockId: "blk2", children: [{ type: "text", text: "乙" }] },
+        { type: "paragraph", blockId: "blk3", children: [{ type: "text", text: "丙" }] },
+      ],
+    },
+  });
+  const BODY = "甲\n\n乙\n\n丙";
+  const UPDATED_AT = 1_761_700_000_000;
+
+  /** 独立算一遍指纹（用 node 的 crypto，⛔ 不复用被测实现的 sha256 包装）。 */
+  const sha8 = (s: string) => createHash("sha256").update(s, "utf8").digest("hex").slice(0, 8);
+
+  const mockDetail = (extra: Record<string, unknown> = {}) => {
+    (api.getPage as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "p1",
+      title: "T",
+      content_text: BODY,
+      content_json: DOC3,
+      updated_at: UPDATED_AT,
+      ...extra,
+    });
+  };
+
+  it("判据 ①：默认带块锚点（3 块 ⇒ 3 个），字数读数仍只量**正文**（锚点不算字）", async () => {
+    mockDetail();
+    const r = (await run()({ id: "p1" }, CTX)) as unknown as {
+      ok: boolean;
+      page: PageOut & { rev?: string };
+    };
+    expect(r.ok).toBe(true);
+    expect(r.page.content_text.match(/<!-- b:/g)?.length).toBe(3);
+    for (const id of ["blk1", "blk2", "blk3"]) expect(r.page.content_text).toContain(`<!-- b:${id} -->`);
+    // ⚠️ `chars_returned` / `chars_total` / `truncated` 一律量正文：锚点行不许被算成"读了几个字"
+    expect(r.page.chars_total).toBe(7);
+    expect(r.page.chars_returned).toBe(7);
+    expect(r.page.truncated).toBe(false);
+  });
+
+  it("判据 ②：`includeAnchors:false` ⇒ 正文与旧行为**逐字节相同**（rev 仍在）", async () => {
+    mockDetail();
+    const r = (await run()({ id: "p1", includeAnchors: false }, CTX)) as unknown as {
+      page: PageOut & { rev?: string };
+    };
+    expect(r.page.content_text).toBe(BODY);
+    expect(r.page.content_text).not.toContain("<!-- b:");
+    // 开关只管锚点，**不**管令牌：省 token 不该顺带放弃并发安全
+    expect(typeof r.page.rev).toBe("string");
+  });
+
+  it("判据 ③：rev 形状合法、两次读相同、内容改一次就变", async () => {
+    mockDetail();
+    const a = (await run()({ id: "p1" }, CTX)) as unknown as { page: { rev?: string } };
+    const b = (await run()({ id: "p1" }, CTX)) as unknown as { page: { rev?: string } };
+    expect(a.page.rev).toBe(`${UPDATED_AT}:${sha8(DOC3)}`);
+    expect(a.page.rev).toMatch(/^\d+:[0-9a-f]{8}$/);
+    expect(b.page.rev).toBe(a.page.rev);
+
+    // 同一毫秒、只改正文 ⇒ 令牌必须变（否则并发写会静默覆盖）
+    mockDetail({ content_json: JSON.stringify({ root: { children: [] } }) });
+    const c = (await run()({ id: "p1" }, CTX)) as unknown as { page: { rev?: string } };
+    expect(c.page.rev).not.toBe(a.page.rev);
+  });
+
+  it("判据 ④：分页截断 ⇒ 只给返回范围内的块加锚点", async () => {
+    mockDetail();
+    const r = (await run()({ id: "p1", offset: 0, limit: 5 }, CTX)) as unknown as { page: PageOut };
+    expect(r.page.content_text.match(/<!-- b:/g)?.length).toBe(2);
+    expect(r.page.content_text).toContain("blk1");
+    expect(r.page.content_text).not.toContain("blk3");
+  });
+
+  it("拿不到正文 JSON（老数据 / Web 桩）⇒ 不加锚点、也**不带 rev**（⛔ 不编）", async () => {
+    mockPage("T", "短正文");
+    const r = (await run()({ id: "p1" }, CTX)) as unknown as { page: PageOut & { rev?: string } };
+    expect(r.page.content_text).toBe("短正文");
+    expect(r.page.content_text).not.toContain("<!-- b:");
+    expect(r.page.rev).toBeUndefined();
+  });
 });

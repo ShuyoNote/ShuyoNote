@@ -51,7 +51,11 @@ pub const BLOCK_LABEL_CHARS: usize = 40;
 
 /// 纯文本 ⇒ **首行**、截断 ✓（空文本 ⇒ 空串 ✓）。
 fn label_of_text(text: &str) -> String {
-    let first = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let first = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
     let n = first.chars().count();
     if n <= BLOCK_LABEL_CHARS {
         return first.to_string();
@@ -123,7 +127,10 @@ pub fn changed_blocks(prev_json: Option<&str>, next_json: &str) -> Vec<BlockChan
 ///
 /// ⚠️ 解析载荷那一步走 `doc_content::doc_json_of_payload`（**那一层**的活 ✓）—— 本模块不许自己再拼一遍键名 ✗
 /// （判据 `check-doc-content-access.mjs`：直接提那个字段名的地方只许减 ✓）。
-pub fn changed_blocks_between_payloads(prev_payload: Option<&str>, next_payload: &str) -> Vec<BlockChange> {
+pub fn changed_blocks_between_payloads(
+    prev_payload: Option<&str>,
+    next_payload: &str,
+) -> Vec<BlockChange> {
     let next = match crate::doc_content::doc_json_of_payload(next_payload) {
         Some(j) => j,
         None => return Vec::new(),
@@ -229,7 +236,8 @@ pub async fn activity_feed(
                 ))
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
     }; // ← 锁在这里就放掉了 ✓；下面一行都不再碰 db ✓
 
     // 逐页保留**上一条载荷** ⇒ 相邻两条之间才是"这次改了什么" ✓
@@ -272,8 +280,12 @@ mod tests {
 
     /// 一个顶层块（`rev` 可缺 ⇒ 老客户端产物 ✓）。
     fn para(block_id: Option<&str>, rev: Option<i64>, text: &str) -> String {
-        let id = block_id.map(|b| format!("\"blockId\":\"{b}\",")).unwrap_or_default();
-        let rv = rev.map(|r| format!("\"blockRev\":{r},")).unwrap_or_default();
+        let id = block_id
+            .map(|b| format!("\"blockId\":\"{b}\","))
+            .unwrap_or_default();
+        let rv = rev
+            .map(|r| format!("\"blockRev\":{r},"))
+            .unwrap_or_default();
         format!("{{ \"type\":\"paragraph\",{id}{rv} \"children\":[{{\"type\":\"text\",\"text\":\"{text}\"}}] }}")
     }
 
@@ -282,12 +294,18 @@ mod tests {
     }
 
     fn ids_of(changes: &[BlockChange]) -> Vec<(String, BlockChangeKind)> {
-        changes.iter().map(|c| (c.block_id.clone(), c.kind)).collect()
+        changes
+            .iter()
+            .map(|c| (c.block_id.clone(), c.kind))
+            .collect()
     }
 
     #[test]
     fn first_version_marks_every_block_added() {
-        let next = doc(&[para(Some("b1"), Some(1), "甲"), para(Some("b2"), Some(1), "乙")]);
+        let next = doc(&[
+            para(Some("b1"), Some(1), "甲"),
+            para(Some("b2"), Some(1), "乙"),
+        ]);
         assert_eq!(
             ids_of(&changed_blocks(None, &next)),
             vec![
@@ -299,8 +317,14 @@ mod tests {
 
     #[test]
     fn text_edit_is_reported_as_edited() {
-        let prev = doc(&[para(Some("b1"), Some(1), "甲"), para(Some("b2"), Some(1), "乙")]);
-        let next = doc(&[para(Some("b1"), Some(2), "甲改了"), para(Some("b2"), Some(1), "乙")]);
+        let prev = doc(&[
+            para(Some("b1"), Some(1), "甲"),
+            para(Some("b2"), Some(1), "乙"),
+        ]);
+        let next = doc(&[
+            para(Some("b1"), Some(2), "甲改了"),
+            para(Some("b2"), Some(1), "乙"),
+        ]);
         assert_eq!(
             ids_of(&changed_blocks(Some(&prev), &next)),
             vec![("b1".to_string(), BlockChangeKind::Edited)]
@@ -317,12 +341,18 @@ mod tests {
 
     #[test]
     fn added_and_removed_blocks_are_reported() {
-        let prev = doc(&[para(Some("b1"), Some(1), "甲"), para(Some("b2"), Some(1), "乙")]);
-        let next = doc(&[para(Some("b1"), Some(1), "甲"), para(Some("b3"), Some(1), "丙")]);
+        let prev = doc(&[
+            para(Some("b1"), Some(1), "甲"),
+            para(Some("b2"), Some(1), "乙"),
+        ]);
+        let next = doc(&[
+            para(Some("b1"), Some(1), "甲"),
+            para(Some("b3"), Some(1), "丙"),
+        ]);
         assert_eq!(
             ids_of(&changed_blocks(Some(&prev), &next)),
             vec![
-                ("b3".to_string(), BlockChangeKind::Added),   // 新版顺序在前 ✓
+                ("b3".to_string(), BlockChangeKind::Added), // 新版顺序在前 ✓
                 ("b2".to_string(), BlockChangeKind::Removed)  // 再补旧版里没了的 ✓
             ]
         );
@@ -330,7 +360,10 @@ mod tests {
 
     #[test]
     fn unparsable_or_identity_less_documents_report_nothing() {
-        assert!(changed_blocks(Some("{}"), "不是 JSON").is_empty(), "坏 JSON ⇒ 判不了 ⇒ 不报 ✓");
+        assert!(
+            changed_blocks(Some("{}"), "不是 JSON").is_empty(),
+            "坏 JSON ⇒ 判不了 ⇒ 不报 ✓"
+        );
         // 块没有身份 ⇒ `block_snapshots` 给 None ⇒ 不报 ✓（照实留空，不猜 ✓）
         let no_id = doc(&[para(None, Some(1), "甲")]);
         assert!(changed_blocks(None, &no_id).is_empty());
@@ -344,15 +377,26 @@ mod tests {
             Some(r#"{"root":{"children":[]}}"#)
         );
         // 对象形态也收 ✓；没有这一项 ⇒ None ✓
-        assert!(crate::doc_content::doc_json_of_payload(r#"{"content_json":{"root":{}}}"#).is_some());
-        assert_eq!(crate::doc_content::doc_json_of_payload(r#"{"id":"p1"}"#), None);
+        assert!(
+            crate::doc_content::doc_json_of_payload(r#"{"content_json":{"root":{}}}"#).is_some()
+        );
+        assert_eq!(
+            crate::doc_content::doc_json_of_payload(r#"{"id":"p1"}"#),
+            None
+        );
         assert_eq!(crate::doc_content::doc_json_of_payload("不是 JSON"), None);
     }
 
     #[test]
     fn payload_level_diff_walks_from_payload_to_blocks() {
-        let prev = format!(r#"{{"id":"p1","content_json":{}}}"#, serde_json::to_string(&doc(&[para(Some("b1"), Some(1), "甲")])).unwrap());
-        let next = format!(r#"{{"id":"p1","content_json":{}}}"#, serde_json::to_string(&doc(&[para(Some("b1"), Some(2), "甲改了")])).unwrap());
+        let prev = format!(
+            r#"{{"id":"p1","content_json":{}}}"#,
+            serde_json::to_string(&doc(&[para(Some("b1"), Some(1), "甲")])).unwrap()
+        );
+        let next = format!(
+            r#"{{"id":"p1","content_json":{}}}"#,
+            serde_json::to_string(&doc(&[para(Some("b1"), Some(2), "甲改了")])).unwrap()
+        );
         assert_eq!(
             ids_of(&changed_blocks_between_payloads(Some(&prev), &next)),
             vec![("b1".to_string(), BlockChangeKind::Edited)]
@@ -368,7 +412,11 @@ mod tests {
             label_of_text(&long),
             format!("{}…", "字".repeat(BLOCK_LABEL_CHARS))
         );
-        assert_eq!(label_of_text("   \n  "), "", "全空白 ⇒ 空串（界面自己兜底 ✓）");
+        assert_eq!(
+            label_of_text("   \n  "),
+            "",
+            "全空白 ⇒ 空串（界面自己兜底 ✓）"
+        );
     }
 
     /// ⚠️ 走法必须与 Web 侧**逐字一致**：先取本节点的 `text`、**再递归 `children`** ✓ ——
@@ -414,7 +462,10 @@ mod tests {
         let fx: serde_json::Value =
             serde_json::from_str(ACTIVITY_PARITY_JSON).expect("夹具必须是合法 JSON");
         let cases = fx["cases"].as_array().expect("cases 数组");
-        assert!(cases.len() >= 2, "夹具至少要两条用例（一条证明不了两侧一致 ✓）");
+        assert!(
+            cases.len() >= 2,
+            "夹具至少要两条用例（一条证明不了两侧一致 ✓）"
+        );
         let mut bad = Vec::new();
         for c in cases {
             let next = serde_json::to_string(&c["next"]).expect("next 可序列化");

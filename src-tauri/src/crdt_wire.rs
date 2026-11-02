@@ -60,13 +60,20 @@ pub fn extract_wire_state(payload_json: &str) -> Result<WireState, String> {
         return Ok(WireState::UnknownVersion(version));
     }
     let Some(arr) = obj.get("state").and_then(Value::as_array) else {
-        return Err("crdt_wire: 版本是已知的，但 `state` 不是数组 —— 载荷坏了，如实报错（不静默当成空）".to_string());
+        return Err(
+            "crdt_wire: 版本是已知的，但 `state` 不是数组 —— 载荷坏了，如实报错（不静默当成空）"
+                .to_string(),
+        );
     };
     let mut out = Vec::with_capacity(arr.len());
     for (i, b) in arr.iter().enumerate() {
-        let n = b.as_i64().ok_or_else(|| format!("crdt_wire: 第 {i} 个字节不是整数"))?;
+        let n = b
+            .as_i64()
+            .ok_or_else(|| format!("crdt_wire: 第 {i} 个字节不是整数"))?;
         if !(0..=255).contains(&n) {
-            return Err(format!("crdt_wire: 第 {i} 个字节不是 0..255（如实报错，不静默截断）"));
+            return Err(format!(
+                "crdt_wire: 第 {i} 个字节不是 0..255（如实报错，不静默截断）"
+            ));
         }
         out.push(n as u8);
     }
@@ -106,8 +113,14 @@ mod tests {
     /// ⇒ 这一格如实分化：**报错**（响亮），不猜着把它当对象塞字段。
     #[test]
     fn with_wire_state_attaches_and_is_inert_when_empty() {
-        assert_eq!(with_wire_state(r#"{"id":"p1"}"#, &[]).unwrap(), r#"{"id":"p1"}"#);
-        assert!(with_wire_state("not json", &[1]).is_err(), "不是 JSON ⇒ 如实报错，不猜");
+        assert_eq!(
+            with_wire_state(r#"{"id":"p1"}"#, &[]).unwrap(),
+            r#"{"id":"p1"}"#
+        );
+        assert!(
+            with_wire_state("not json", &[1]).is_err(),
+            "不是 JSON ⇒ 如实报错，不猜"
+        );
         assert_eq!(with_wire_state("[1,2]", &[1]).unwrap(), "[1,2]");
 
         let out = with_wire_state(r#"{"id":"p1","title":"t"}"#, &[0, 255]).unwrap();
@@ -117,24 +130,37 @@ mod tests {
         assert_eq!(back["crdt_state"]["v"], CRDT_WIRE_VERSION);
         assert_eq!(back["crdt_state"]["state"], serde_json::json!([0, 255]));
         // 挂上去的能被自己读回来（同一张表，两个方向）
-        assert_eq!(extract_wire_state(&out).unwrap(), WireState::Ok(vec![0, 255]));
+        assert_eq!(
+            extract_wire_state(&out).unwrap(),
+            WireState::Ok(vec![0, 255])
+        );
     }
 
     /// 与 `wireState.test.ts` ① 成对：往返逐字节相同（含非 UTF-8 字节）。
     #[test]
     fn extract_round_trips_non_utf8_bytes() {
         let bytes: Vec<u8> = vec![0x00, 0xff, 0x80, 0x7f, 0x01];
-        let payload = serde_json::json!({ "id": "p1", "crdt_state": { "v": 1, "state": bytes } }).to_string();
+        let payload =
+            serde_json::json!({ "id": "p1", "crdt_state": { "v": 1, "state": bytes } }).to_string();
         assert_eq!(extract_wire_state(&payload).unwrap(), WireState::Ok(bytes));
     }
 
     /// 与 `wireState.test.ts` ③ 成对：**缺字段 ≠ 空状态**（老载荷 ⇒ 走今天那条路）。
     #[test]
     fn missing_field_is_none_not_an_empty_state() {
-        assert_eq!(extract_wire_state(r#"{"id":"p1"}"#).unwrap(), WireState::None);
-        assert_eq!(extract_wire_state(r#"{"id":"p1","crdt_state":null}"#).unwrap(), WireState::None);
+        assert_eq!(
+            extract_wire_state(r#"{"id":"p1"}"#).unwrap(),
+            WireState::None
+        );
+        assert_eq!(
+            extract_wire_state(r#"{"id":"p1","crdt_state":null}"#).unwrap(),
+            WireState::None
+        );
         // 形状不是对象：当"没有"（TS 侧同一口径），**不是**"坏载荷"
-        assert_eq!(extract_wire_state(r#"{"crdt_state":"x"}"#).unwrap(), WireState::None);
+        assert_eq!(
+            extract_wire_state(r#"{"crdt_state":"x"}"#).unwrap(),
+            WireState::None
+        );
         // 载荷根本不是 JSON：也不是本函数的事（调用方本来就会跳过这一条）
         assert_eq!(extract_wire_state("not json").unwrap(), WireState::None);
     }
@@ -143,9 +169,15 @@ mod tests {
     #[test]
     fn unknown_version_is_reported_not_guessed() {
         let payload = r#"{"crdt_state":{"v":99,"state":[1,2,3]}}"#;
-        assert_eq!(extract_wire_state(payload).unwrap(), WireState::UnknownVersion(99));
+        assert_eq!(
+            extract_wire_state(payload).unwrap(),
+            WireState::UnknownVersion(99)
+        );
         // 连 `v` 都没有 ⇒ 也是"不认识"（不是"没有"）：**不猜**
-        assert_eq!(extract_wire_state(r#"{"crdt_state":{"state":[1]}}"#).unwrap(), WireState::UnknownVersion(i64::MIN));
+        assert_eq!(
+            extract_wire_state(r#"{"crdt_state":{"state":[1]}}"#).unwrap(),
+            WireState::UnknownVersion(i64::MIN)
+        );
     }
 
     /// 与 `wireState.test.ts` ⑤ 成对：载荷坏了 ⇒ **如实抛**，不静默截断。

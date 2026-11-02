@@ -366,9 +366,25 @@ function EmailBodyFrame({ html }: { html: string }) {
   html, body { margin: 0; padding: 0; background: transparent; }
   body { color: ${text}; font: 15px/1.7 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; word-break: break-word; }
   img { max-width: 100%; height: auto; }
-  table { max-width: 100%; border-collapse: collapse; }
+  /* ⭐ **2026-10-29（owner：「邮件阅读区排版还有瑕疵」· 方案 A）**：⛔ 不再给 table 加
+     \`max-width:100%\` ✗ —— 通知类邮件（GitHub 等）是**老式 table 布局 + 固定像素宽**，
+     压到容器宽时列会塌成 1 字（截图里 \`Status\` 被挤成竖排 ✗）。现在**尊重邮件原宽**：
+     table 保持固有宽度，超宽由 iframe 自身横向滚动承担（见下面的 overflow-x ✓）。 */
+  table { border-collapse: collapse; }
+  td, th { vertical-align: top; }
+  /* ⭐⭐ **2026-10-29 第二版（上一版没治住：GitHub 邮件里 \`Status\` 仍竖排）**：
+     ⚠️ 真因不是 table 宽度，而是 **body 上那条 \`word-break: break-word\` 被 th 继承**：
+     GitHub 的表头列本身只有十几像素宽（它给圆点留的列），于是 "Status" 被逐字符断行 ⇒ 竖排 ✗。
+     ⇒ 表头**不许断词、不许折行**：列宽由表头文字撑开（table-layout:auto 下浏览器会把这列加宽）✓。
+     ⚠️ 只对 th 生效，正文（td）仍保留断词，长 URL 不会撑破版面 ✓。 */
+  th { text-align: left; white-space: nowrap; word-break: normal; overflow-wrap: normal; }
+  /* 邮件里常见的"单元格里套段落"：把段落外距压平，否则每格都是大段空隙（表格式通知的观感问题） */
+  td > p, th > p { margin: 0 0 6px; }
+  td > p:last-child, th > p:last-child { margin-bottom: 0; }
   a { color: ${link}; }
   blockquote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid rgba(128,128,128,.45); color: inherit; }
+  /* ⭐ 宽邮件（≥600px 固定宽那种）允许横向滚动，而不是压扁它 */
+  html, body { overflow-x: auto; }
 </style></head><body>${html}</body></html>`;
 
   return (
@@ -737,8 +753,17 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
       setErr("请先在 设置 → 邮箱 配置 IMAP 账号");
       return;
     }
-    // ⭐ A（2026-10-21）：60 秒内已经拉过、且手上还有列表 ⇒ **不重复拉** ✓
-    if (Date.now() - lastFetchAtRef.current < FETCH_TTL_MS && list.length > 0) return;
+    // ⭐ 2026-10-29：**缓存优先** —— 先把手上的列表摆出来（⛔ 不白屏），再决定要不要拉。
+    if (list.length === 0 && cache.list.length > 0) {
+      setList(cache.list);
+      setUnread(cache.unread);
+      setHasMore(cache.hasMore);
+      if (cache.fetchedAt > 0) setFetchedAt(cache.fetchedAt);
+      lastFetchAtRef.current = cache.at;
+      if (!active) void selectEmail(cache.list[0]);
+    }
+    // ⭐ A（2026-10-21）：TTL 内且手上已有列表 ⇒ **不重复拉** ✓（缓存跨挂载存活后这条才真的生效）
+    if (Date.now() - lastFetchAtRef.current < FETCH_TTL_MS && (list.length > 0 || cache.list.length > 0)) return;
     void fetchInbox();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -772,8 +797,20 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
   // ⭐⭐ **2026-10-21（owner：每次点邮箱都重新拉 / 定时有没有用）**：
   //   A：**60 秒内打开过就不重复拉**（列表已在前端状态里）—— 再点开**立刻出列表** ✓
   //   C：把 `fetched_at` 显示成「上次收取 HH:MM」，用户能看出后台定时在不在跑 ✓
-  const FETCH_TTL_MS = 60 * 1000;
-  const lastFetchAtRef = useRef<number>(0);
+  // ⭐⭐ **2026-10-29（owner：「每次点侧栏邮件都要重新拉」）**：上一版的 TTL 挂在 `useRef` 上，
+  // 而面板由 `ActivityBar` 的 `mailOpen && <EmailPanel/>` 卸载 ⇒ **ref 每次归零、TTL 永远不成立** ✗。
+  // 现在把「上次拉到的列表」挂到 `globalThis`（**只在本进程内存里，退出即失**，⛔ 不落盘 ✗）⇒
+  // 再点开**先摆缓存、再静默刷新**；5 分钟内直接不拉。
+  const FETCH_TTL_MS = 5 * 60 * 1000;
+  type EmailListCache = { at: number; list: EmailMeta[]; unread: number; fetchedAt: number; hasMore: boolean };
+  const cache = ((globalThis as unknown as { __emailListCache?: EmailListCache }).__emailListCache ??= {
+    at: 0,
+    list: [],
+    unread: 0,
+    fetchedAt: 0,
+    hasMore: false,
+  });
+  const lastFetchAtRef = useRef<number>(cache.at);
 
   const fetchInbox = async (
     af: string[] = accountFilter,
@@ -793,6 +830,12 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
       // 拉不到的账号如实显示（后端 `errors`）：否则"少了一个账号的信"看起来就像"没有新邮件"。
       setAccountErrors(agg.errors ?? []);
       setHasMore(agg.emails.length >= PAGE_SIZE);
+      // ⭐ 2026-10-29：这一份写进**跨挂载缓存**（下次点开先摆它，⛔ 不白屏）
+      cache.at = Date.now();
+      cache.list = agg.emails;
+      cache.unread = agg.unread;
+      cache.fetchedAt = typeof agg.fetched_at === "number" && agg.fetched_at > 0 ? agg.fetched_at : cache.fetchedAt;
+      cache.hasMore = agg.emails.length >= PAGE_SIZE;
       if (agg.emails.length === 0) {
         const failed = (agg.errors ?? []).map((e) => e.account.split("|")[1] ?? e.account);
         setErr(failed.length > 0 ? `未拉到邮件（${failed.join("、")} 拉取失败，见下方具体原因）` : "未拉到邮件（检查账号 / 认证）");
@@ -1767,9 +1810,12 @@ export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {
         </button>
       )}
 
-      {open &&
-        createPortal(
-          <div ref={pageRef} className="email-page" role="dialog" aria-label="邮箱">
+      {/* ⭐ **2026-10-29（owner：点侧栏邮件总要重拉 · 方案 B「保活」）**：portal 现在就**常驻**，
+          关闭时用 `hidden` 藏（`.email-page[hidden]` 见 App.css）—— DOM 不销毁 ⇒ 滚动位置、
+          选中的邮件、列表全部保留 ✓。⛔ 别改回 `open &&`：那等于每次关闭都丢掉整棵 DOM ✗。
+          ⚠️ 隐藏期间不轮询：下面所有定时/拉取 effect 仍以 `open` 为门 ✓。 */}
+      {createPortal(
+          <div ref={pageRef} className="email-page" role="dialog" aria-label="邮箱" hidden={!open} aria-hidden={!open}>
             <header className="email-page-head" ref={pageHeadRef}>
               <div className="email-page-title">
                 <span className="email-page-title-text">邮箱</span>

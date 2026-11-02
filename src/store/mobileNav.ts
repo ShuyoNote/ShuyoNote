@@ -29,7 +29,7 @@ interface MobileNavState {
   cameFrom: MobileScreen | null;
   /**
    * ⭐ **带着哪一台设备进「首次配对」**（d1 ✓）—— 与桌面 `nearby-allow` **同形** ✓：
-   * 只记 peer ＋ 打开对码屏 ✓，⛔ **先不发任何信任请求** ✗；⛔ 不复制面板的 `setDpPeer` 整套状态 ✗。
+   * 只记 peer ＋ 打开「确认身份」屏 ✓，⛔ **先不发任何信任请求** ✗；⛔ 不复制面板的 `setDpPeer` 整套状态 ✗。
    */
   pairPeer: { deviceId: string; deviceName: string; shortId: string; pubkey: string } | null;
   setPairPeer: (peer: { deviceId: string; deviceName: string; shortId: string; pubkey: string } | null) => void;

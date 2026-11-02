@@ -5,10 +5,11 @@ mod engine_pack;
 mod activity;
 // MCP 宿主面那半「本机通道」（方向②：桥 → App，App 当服务端 ✓）—— **默认关** ✓，
 // 详见 `mcp_channel.rs` 头部与判据 `scripts/check-mcp-host-channel.mjs` ✓。
-mod mcp_channel;
+mod attachments;
 mod community;
 mod community_publish;
-mod attachments;
+mod mcp_channel;
+mod space_import;
 // ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 一键信任的**纯函数内核** ✗
 //    —— 判定「要不要两端确认」「收到的确认算不算」✓，⛔ 不碰 IO／网络／密钥 ✓。
 //    出处：`docs/plans/2026-10-11-one-click-trust-decision.md`（第 ① 步 ✓）。
@@ -32,27 +33,27 @@ mod license_http;
 mod mesh_trust;
 // ⭐ **P1.5 主件 · A1**（2026-10-13）：设备直连那一屏的**本机读数**（只读 ✓，⛔ 不动协议 ✗）——
 //    `mesh_panel_scopes`（每个空间"对外宣称"的状态）＋ `mesh_panel_spaces`（本机有哪些空间 ✓；`offer` 待 B 片）。
-mod mesh_panel;
 mod device_key;
+mod mesh_panel;
 // 「能力」按需下载包的落盘（2026-10-02）—— ⚠️ **不信任 webview**：白名单 ＋ 体积上限 ＋
 // sha256 自己再算一遍，三条任一不过就拒收 ✓（见 `abilities.rs` 头部）。
 mod abilities;
 // P0 格式引擎（Kreuzberg v4.10.x，MIT ✓）—— 补 eml/msg/zip/rtf/odt/epub/学术格式那一类；
 // ⛔ 只返回文本、**不写派生表**（派生表唯一写入者仍是 `src/lib/extract/` ✓）。
 // ⚠️ 特性集不含 `chunking`（与 boa_engine 的 icu 依赖互斥 ✗ 实测；见 `Cargo.toml` 注释 ✓）。
-mod extract_kz;
+pub mod auto_backup;
 mod backlinks;
 mod backup;
 mod backup_verify;
-pub mod auto_backup;
+mod extract_kz;
 // Office 导入第一期（task-10 ③）：`--import <文件>` 的解析与交班。
 // ⚠️ 它**必须是 `pub`**：`main.rs`（bin）要用它做冷启动解析 ✓（见那一份的文件头 ✓）。
-pub mod office_import;
 mod block_rev;
 mod blocks;
 mod bookmark;
 mod commands;
 mod crypto;
+pub mod office_import;
 // 国密（SM4-CBC ＋ HMAC-SM3）应用层 AEAD —— **2026-09-20 起是默认特性**（方案 §3.4「无兼容快路」）；
 // 要编旧行为（只写 v1）用 `--no-default-features`。
 // 默认包里它整个不存在 ⇒ 默认构建既不多编一个 crate，也不可能写出 v2 密文。
@@ -70,10 +71,10 @@ mod gm_provider;
 // 就是判据（构建期那一半走的是 `build.rs` 的 `include!`，那是**另一次编译**，与本行无关）
 // ⇒ 声明成 `#[cfg(test)] mod` 比"整模块 `#[allow(dead_code)]`"更诚实：不是"编进来了但没人用"，
 // 而是"没编进去"。8 处逐项豁免（5 个 `#[allow]` ＋ 3 个 `cfg_attr`）随之全部删除。
-#[cfg(test)]
-mod gm_patch_probe;
 mod database;
 mod db;
+#[cfg(test)]
+mod gm_patch_probe;
 // 本地英汉词典（ECDICT）：应用内划词查词第一期，**只读**两条命令。
 // ⚠️ 本模块**不碰**系统钩子/全局划词（owner 2026-10-09 拍"只做应用内划词"），
 //    数据文件不入库（65.9MB，见 `scripts/fetch-ecdict.mjs`）。
@@ -174,19 +175,20 @@ mod deeplink;
 // `isDesktopPlatform()` —— 后者在同步/插件/加密处表示"有没有 Rust 内核"，移动端是要有的。
 #[cfg(desktop)]
 mod email;
-#[cfg(desktop)]
-mod smtp;
 mod graph;
 mod models;
 mod net;
+#[cfg(desktop)]
+mod smtp;
 // 局域网发现（甲-1 纯函数内核）：见 [`lan`] 模块头 —— UDP 收发与「代言」在下一片接线。
 mod lan;
 // 发现层的**归属**：对端表 = 应用级单例 ＋ 按需启用（owner 2026-09-25 拍板，见 workorder §8 ②）。
 mod lan_state;
 // 配对载荷（B 片纯函数内核）：见 [`pairing`] 模块头 —— 二维码 / 短码 PAKE / 界面在接线那一片。
 // ⚠️ 本模块**不含任何密码学**：短码通道必须 PAKE，而选型要单独过一次目（见该文件头）。
-mod pairing;
+mod cap_limits;
 mod capabilities_gen;
+mod pairing;
 // MuPDF 光栅化：**2026-09-21 起是构建期特性**（默认不编，见 Cargo.toml 的 `mupdf-rollback`）。
 // PDFium 从 1.91.13 起是默认引擎，这条只剩"一键回滚"；平时不背它那份重量级 C 依赖。
 #[cfg(feature = "mupdf-rollback")]
@@ -211,15 +213,20 @@ mod magic;
 mod android_fs;
 // 「用户选的目标位置」的落地入口（picked_file 的写侧）：Android 的**保存**对话框同样给
 // `content://` URI，`std::fs` 写它会得到 EROFS（真机实测）——这一层负责"先写缓存、再搬进 URI"。
-mod save_target;
 mod plugin_budget;
 pub mod plugin_host;
 mod plugin_index;
 mod plugin_validate;
 mod plugins;
+mod save_target;
 // MCP **宿主面**（M1 · Task 5；R106=A：**进程内模块** ✓）：外部会话那一路**只**把调用转交给
 // 唯一鉴权点 `plugins::dispatch_capability` ✓（自开库/自判权限由 `check-mcp-host-authz` 挡 ✓）。
 mod mcp_host;
+// ⭐ B1c（2026-10-29）：导出/下载**句柄表**与唯一落盘处（`exports/`）——纯内存、单次、TTL 120s、绑会话。
+mod mcp_blobs;
+// ⭐ B1c 收尾（2026-10-29）：**Rust → 前端**的请求/应答桥 —— 导出类能力（唯一实现是 TS）按句柄交付时
+// 靠它把前端算好的字节取回来；⛔ 不在 Rust 里重写一份导出（两套实现会漂）。方法白名单 + 15s 超时。
+mod frontend_tool;
 mod properties;
 mod search;
 // 派生文本层的**唯一运输通道**（桌面）：TS 的索引代码靠它把 `attachment_text`/`chunks` 写进
@@ -239,23 +246,23 @@ mod lan_android;
 // ⚠️ 只有库级接入：⛔ 今天**没有**注册 Tauri 命令 ✗（那要同步 `commands.ts` ＋ `web.ts`，
 //    门禁 `check-web-commands` 三个方向都查，而那两个文件不在本期写域内）—— 见模块头。
 // `pub`（不是 `mod`）：这一层就是给下一期接线用的**库级接口** ⇒ 不这样做整模块全是 dead_code 警告 ✓
+mod mac_lights;
 pub mod relay_client;
 mod security;
-mod storage;
 mod space_snapshot_client;
+mod storage;
 mod sync;
 mod tags;
-mod templates;
 mod tempdir;
+mod templates;
 mod textnorm;
-mod mac_lights;
 mod titlebar;
 mod trash;
 mod updates;
 mod versions;
+mod wiki_export;
 mod windows;
 mod workspace_io;
-mod wiki_export;
 mod workspaces;
 
 use db::Db;
@@ -351,7 +358,11 @@ pub fn run_backup_once() -> i32 {
             out.scanned,
             out.appended,
             out.unreadable.len(),
-            if out.unreadable.is_empty() { String::new() } else { format!("（{}）", out.unreadable.join("、")) }
+            if out.unreadable.is_empty() {
+                String::new()
+            } else {
+                format!("（{}）", out.unreadable.join("、"))
+            }
         );
         return 0;
     }
@@ -396,6 +407,34 @@ pub fn cli_mode_of_args() -> auto_backup::CliMode {
     auto_backup::cli_mode(std::env::args().skip(1))
 }
 
+/// 生命周期日志的毫秒时间戳（与 `plugin_audit` 的 `at_ms` 同口径：Unix epoch ms）。
+fn lifecycle_now_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+/// ⭐ 2026-11-01（排查"更新笔记后应用自己退出"）：把**退出原因**写进 stderr（`tauri dev` 的日志里能看到）。
+///
+/// 为什么需要它：那次的日志只有 `[mesh]` 刷屏 + `tauri dev` 的 `exit code: 1`，
+/// 分不清"用户关窗 / 另一个实例唤起 / 二次启动 / 程序化 exit / 被杀"。
+/// 这里在每个可能触发退出的入口各打一行，**一行一个原因**，下次直接看日志即可：
+///   - `start`：本次进程启动（带 pid，和退出行配对）
+///   - `second_instance`：**另一个进程**启动了同名应用（single-instance 回调）——这是"被别的会话
+///     启动/重启"的最直接证据
+///   - `window_close_requested`：收到关窗请求（用户点 X / Alt+F4 / 别处 PostMessage WM_CLOSE）
+///   - `window_destroyed`：窗口已销毁（退出前的最后一步）
+///   - `exit_requested`：Tauri 决定退出（`code=None` 常是用户关最后一个窗口；`Some(_)` 是程序化 `AppHandle.exit`）
+///   - `exit`：事件循环真正结束
+fn log_lifecycle(kind: &str, detail: &str) {
+    if detail.is_empty() {
+        eprintln!("[lifecycle] {kind} at_ms={}", lifecycle_now_ms());
+    } else {
+        eprintln!("[lifecycle] {kind} {detail} at_ms={}", lifecycle_now_ms());
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // M11.13 阶段 1：**宿主子进程分流必须在最前面**——在任何 Tauri / 单实例初始化之前。
@@ -407,6 +446,8 @@ pub fn run() {
     if std::env::args().any(|a| a == plugin_host::HOST_FLAG) {
         std::process::exit(plugin_host::serve_stdio());
     }
+    // 与下面的 exit 行配对：判断"这个 pid 是正常运行中被关的，还是根本没起来就被单实例顶掉"。
+    log_lifecycle("start", &format!("pid={}", std::process::id()));
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
@@ -461,19 +502,35 @@ pub fn run() {
         // 开了之后顺序是：插件先 `handle_cli_arguments` ⇒ 入队 + emit，然后才是
         // 「还原窗口 + 抢焦点」。
         let single_instance = tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // ⭐ 2026-11-01：第二实例回调 —— 先记一行（含 argv）。如果"应用自己退出"其实是**另一个
+            //   进程/会话启动了同名应用**，这行就是最直接的证据（谁先谁后看 at_ms 与 pid）。
+            log_lifecycle("second_instance", &format!("args={args:?}"));
             // `_args` 不用自己解析：`deep-link` feature 已经把 URL 送进 deeplink
             // 模块的队列并 emit 出去了，这里只负责让用户**看见**窗口。
             // ⭐ 2026-10-09（task-10 ③）**追加**：`args` 里还有一条 `--import <文件>`（Windows 文件关联那一半）——
             //    deep-link 只认 URL、认不出本地路径 ⇒ 它此前被丢掉 ✗；这里交给 `office_import` 认 ✓
             //    （⛔ 单实例守卫仍由本插件负责 —— 下面那段"禁止多开"的注释口径不变 ✓）。
-            office_import::forward_import_args(&args, |p| { let _ = tauri::Emitter::emit(app, office_import::IMPORT_EVENT, p.to_string()); });
+            // ⭐ task-14（2026-11-01）：**office-import 被停用 ⇒ 不转交**（这一条 OS 唤起入口是真的被关上，
+            //    ⛔ 不是"先转交、再让界面假装拦一下" ✗）。真正解析 `.docx` 的是 TS 那条链，Rust 只负责
+            //    把路径带过去 ⇒ 「不转交」就是这里唯一能真拦的动作。界面侧那条 guard 照旧负责给人话
+            //    （用户从应用内发起时能读到"已禁用"）；这一条被丢掉时只留一行可诊断的日志。
+            if abilities::office_import_allowed(app) {
+                office_import::forward_import_args(&args, |p| {
+                    let _ = tauri::Emitter::emit(app, office_import::IMPORT_EVENT, p.to_string());
+                });
+            } else {
+                log_lifecycle(
+                    "office_import_skipped_disabled",
+                    "第二个实例带来的 --import 请求被丢弃（能力页里 office-import 处于禁用状态）",
+                );
+            }
             //
             // 唤起已有实例到前台：先还原最小化窗口，再抢焦点。否则二次启动时最小化的
             // 实例只是被 set_focus，不会取消最小化/前置，用户以为没响应用户。
             fn raise(w: tauri::WebviewWindow) {
                 let _ = w.unminimize(); // 最小化 → 还原
-                let _ = w.show();       // 确保显示（可能在托盘/隐藏）
-                let _ = w.set_focus();  // 抢焦点到前台
+                let _ = w.show(); // 确保显示（可能在托盘/隐藏）
+                let _ = w.set_focus(); // 抢焦点到前台
             }
             if let Some(w) = app.get_webview_window("main") {
                 raise(w);
@@ -525,7 +582,7 @@ pub fn run() {
                 .into_owned();
             let app = ctx.app_handle();
             let data_dir = db::resolve_app_data_dir(app.path().app_data_dir().ok());
-            let attachments_dir = data_dir.map(|d| d.join("attachments"));
+            let attachments_dir = data_dir.as_ref().map(|d| d.join("attachments"));
             // Validate the target is inside the attachments dir. A lexical
             // `starts_with` is NOT a boundary (it doesn't normalize `..`), so:
             // 1) reject any `..` path component outright, and
@@ -549,11 +606,29 @@ pub fn run() {
                     .unwrap();
             }
             let raw = std::fs::read(&decoded).unwrap_or_default();
+            // ⭐ **2026-10-27（owner：「修」）**：钥匙按**这个附件所属的空间**取 ——
+            //   旧写法拿的是"连接自己"的钥匙；活动空间切走之后连接还停在旧空间 ⇒ 拿到 `None`
+            //   ⇒ 把盘上密文当明文交给 WebView（图片/PDF 就成了打不开的乱码文件）。
             let key = {
                 let db = app.state::<Db>();
                 let c = db.0.lock().expect("db mutex poisoned");
-                security::key_if_enabled(&c)
+                let space = attachments::active_space_id(&c);
+                data_dir
+                    .as_deref()
+                    .and_then(|d| security::key_for_space(d, &space))
             };
+            // ⭐ **2026-10-27（owner：「修」）**：拿不到钥匙、盘上却是**密文** ⇒ 403（⛔ 不把密文交给 WebView ✗）。
+            if key.is_none() && security::looks_like_attachment_ciphertext(&raw) {
+                return tauri::http::Response::builder()
+                    .status(403)
+                    .header(CONTENT_TYPE, "text/plain; charset=utf-8")
+                    .body(Cow::Owned(
+                        "这一件在盘上是密文，但本会话拿不到这个空间的钥匙 —— 先在应用里解锁该空间"
+                            .as_bytes()
+                            .to_vec(),
+                    ))
+                    .unwrap();
+            }
             let out = security::decrypt_attachment_bytes(key.as_ref(), &raw).unwrap_or(raw.clone());
             let ext = Path::new(&decoded)
                 .extension()
@@ -622,7 +697,18 @@ pub fn run() {
             //    `main.rs` 早在 `run()` 之前就把路径记进本进程了 ✓（app 那时还没建 ⇒ 只能记、不能发 ✓）；
             //    发（emit）必须等 app 建好 ⇒ 位置只能是**紧接上面那行深链补收** ✓（同族：都是"补收冷启动那一次" ✓）。
             //    ⚠️ 第二个实例那一路在单实例回调里（`lib.rs:346` 那段 ✓）；两条最终都落到同一个事件名 ✓。
-            office_import::deliver_pending(|p| { let _ = tauri::Emitter::emit(app, office_import::IMPORT_EVENT, p.to_string()); });
+            // ⭐ task-14（2026-11-01）：office-import 被停用 ⇒ **不交付、并把队列丢掉**（与上面第二个实例
+            //    那条同一个理由：真正解析 `.docx` 的是 TS 链，Rust 能做的是"不把路径带过去"）。
+            //    ⚠️ 丢弃是**故意的**：留着队列的话，用户之后一启用它会突然冒出来建一页 —— 那才是意外。
+            if abilities::office_import_allowed(app.handle()) {
+                office_import::deliver_pending(|p| { let _ = tauri::Emitter::emit(app, office_import::IMPORT_EVENT, p.to_string()); });
+            } else {
+                log_lifecycle(
+                    "office_import_skipped_disabled",
+                    "冷启动的 --import 请求被丢弃（能力页里 office-import 处于禁用状态）",
+                );
+                let _ = office_import::take_pending_imports();
+            }
 
 	// P1 自动备份：⭐ 启动时先跑一轮，然后按间隔再看
 	//（P1 逐字＝「调度器（启动触发 ＋ 每 24h）」✓）
@@ -656,6 +742,14 @@ pub fn run() {
 
             let app_data_dir = db::resolve_app_data_dir(app.path().app_data_dir().ok())
                 .ok_or_else(|| std::io::Error::other("拿不到应用数据目录（也没有 SHUYONOTE_DATA_DIR）"))?;
+            // ⭐⭐ **2026-10-28（owner：「本机备份 全空间打包，要能原样恢复」）**：
+            //   「原样恢复」是**重启生效**的 —— 在**打开任何库之前**把 staging 换上来
+            //   （当前数据整份挪到 `restore-prev-<毫秒>/`，⛔ 不删 ✗）。失败不影响启动（如实打一行）。
+            match crate::backup::apply_staged_restore(&app_data_dir) {
+                Ok(Some(note)) => eprintln!("[restore] {note}"),
+                Ok(None) => {}
+                Err(e) => eprintln!("[restore] ⚠️ 暂存的恢复没应用成（按原样继续启动）：{e}"),
+            }
             let conn = db::init(app_data_dir).map_err(|e| {
                 eprintln!("failed to init db: {e}");
                 std::io::Error::other(e.to_string())
@@ -664,6 +758,27 @@ pub fn run() {
             // launch so the passphrase must be re-entered before any encrypted sync.
             security::startup_lock(&conn);
             app.manage(Db(Mutex::new(conn)));
+            // ⭐⭐ **2026-10-26（移动端局域网同步）**：⭐ 手机/平板**没有桌面那张「设备直连」设置卡** ✗
+            //   （owner 2026-10-14 把那张卡删了）⇒ 移动端要在**启动时**把设备直连的两样前置备好，
+            //   否则发现层永远不发言（`should_run_discovery` 恒假）⇒ 手机在「附近的设备」里
+            //   **一台都看不到**、配对屏也配不了 ✗（真机根因，见 `sync::ensure_mobile_mesh_defaults` ✓）。
+            //
+            //   ⚠️ **只在 `cfg(mobile)` 下做** ✗：桌面版保持「用户不配就不广播」（隐私/噪音口径不变 ✓）。
+            //   ⚠️ 失败**只记一行**、不挡启动（与发现层同一条纪律 ✓）。
+            //   ⚠️ 锁只在这一小块里拿（下面 `lan_state::start` 自己会再拿一次 ⇒ 必须先 drop ✓）。
+            #[cfg(mobile)]
+            {
+                let db = app.state::<Db>();
+                let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+                match crate::sync::ensure_mobile_mesh_defaults(&c) {
+                    Ok(()) => eprintln!(
+                        "[mesh] 移动端：局域网直连前置已就绪（监听地址 ＋ 同步组名）⇒ 发现层会开始发言"
+                    ),
+                    Err(e) => eprintln!(
+                        "[mesh] 移动端：局域网直连前置没备好（发现层这一轮不会发言，其余功能不受影响）：{e}"
+                    ),
+                }
+            }
             // 甲-1 接线第 1 件（2026-09-25）：**启动时就把局域网发现的循环拉起来**。
             //
             // ⚠️ 为什么必须在**这里**（而不是等界面第一次 `lan_status`）：发现层要在
@@ -699,6 +814,21 @@ pub fn run() {
                         "mcp:external-drafts",
                         serde_json::json!({ "source": source, "payload": payload }),
                     );
+                });
+            }
+            // ⭐ B1c 收尾：**前端桥出口** —— 能力层（`export.markdown` / `export.docpackage`）需要前端
+            // 用现成的 TS 实现算字节，这里装上事件出口（与上面草稿出口同一处、同一形态）。
+            {
+                let h = app.handle().clone();
+                // ⭐ 2026-10-31（WorkBuddy 评估修）：出口**不再吞错** —— emit 失败（窗口已销毁/
+                // 事件系统不可用）⇒ 把原因交回能力层，由它**立刻**报 `frontend_unavailable: <原因>`，
+                // ⛔ 不许变成"没人应答"再空等 5 秒超时。stderr 诊断保留（失败原因也出现在应用日志里）。
+                frontend_tool::set_emitter(move |event, payload| {
+                    use tauri::Emitter;
+                    h.emit(event, payload.to_string()).map_err(|e| {
+                        eprintln!("[mcp] 前端桥事件发送失败（{event}）：{e}");
+                        e.to_string()
+                    })
                 });
             }
             match mcp_channel::start_if_enabled() {
@@ -840,7 +970,21 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // ⛔ **2026-10-29（owner 拍：团队功能第三阶段）**：⭐ 这里原来注册着 **32 条 `sync::team_*`** ✗
+            //   —— `shuyonote-sync-server` 已归档、零用户 ⇒ **前端契约/UI（第二阶段）＋ Rust 团队实现（第三阶段）
+            //   都已删除** ✓（`sync.rs` 里那 31 个 `team_*` 函数、9 个 `Team*` 类型、配套 helper 全部移除 ✓；
+            //   第二阶段先只摘了 IPC、第三阶段把实现也删了 ✓）。
+            //   ⚠️ **`sync_profiles` / 工作区同步 / `space_id`（含历史 `SpaceKind::Team`）保留** ✓ ——
+            //   个人同步与历史团队空间数据仍要读得懂 ✓；**`docs/specs/**`（含企业 IM）保留**（企业版引用 ✓）。
+            //   ⛔ 别再在这里补注册 ✗；⛔ 也别把门禁改成"忽略 team_" ✗。
+
             abilities::save_ability_pack,
+            // ⭐ task-14（2026-11-01）：能力的**启停**与**卸载** —— 白名单（闭集）＋ 原子写
+            //    `<app_data>/abilities-state.json`（tmp ＋ rename）＋ 卸载**只删** `packs/<id>` 且幂等。
+            //    ⚠️ 三条都**桌面专属**：能力包只落在本机应用数据目录（Web 壳没有那个位置）。
+            abilities::ability_states,
+            abilities::ability_set_enabled,
+            abilities::ability_uninstall,
             storage::cleanup_orphan_derived,
             // ⭐ 2026-10-11：只读附件引用体检（⭐ 报表，⛔ 不删不改 ✓）—— 用来把"加密空间有没有引用老明文"说死 ✓
             storage::audit_attachment_refs,
@@ -919,6 +1063,10 @@ pub fn run() {
             updates::install_android_update,
             commands::create_database,
             commands::save_page,
+  commands::mcp_hidden_spaces_get,
+  commands::mcp_hidden_spaces_set,
+  plugins::mcp_download_grant,
+  space_import::space_package_import,
             // 冲刺 CRDT S7-2（2026-09-23）：每页 CRDT 状态的读/写（`page_crdt` 表）。
             // 与前端 `api.readPageState` / `api.savePageState` 成对 —— 接上之后**桌面**才真正
             // 与 Web 同行为（在此之前它俩只登记为 web 专用，桌面上每次打开页面都会绑定失败）。
@@ -973,12 +1121,17 @@ pub fn run() {
             // ⚠️ 只有桌面：发现靠 Rust 收发的 UDP（`lan.rs`），Web 平台上没有这一层 ——
             //    Web 侧的实现如实回"配置地址那一档 ＋ 局域网不可用"（不是假装发现了谁）。
             sync::lan_status,
+            // ⭐ 2026-10-28（owner：「一步到位」·P1）：加密空间的逐条同步状态（为什么没数据）
+            sync::space_sync_state,
             // 丙-③-b：**对等交换的产品入口**（确认窗口 ＋ 从发现到的对端各拉一轮）
             // ＋ **设置面**（写监听地址 / 口令，并把窗口的开关跟着改）。
             sync::mesh_sync_now,
             sync::mesh_missing_spaces,
             sync::mesh_create_spaces,
             sync::mesh_set_config,
+            // ⭐ 2026-10-27（owner 拍 M2）：用户**进入「局域网同步」页**时才备好局域网前置
+            //   （设备身份／自动组名／监听地址／档案行）—— ⛔ 不在启动时自动写（桌面隐私口径不变 ✓）。
+            sync::mesh_ensure_defaults,
             // 阶段 1 · 冲突留痕与裁决（提示 UI 的两个入口；数据在本地表 `page_conflicts`）
             commands::list_page_conflicts,
             commands::resolve_page_conflict,
@@ -1038,18 +1191,6 @@ pub fn run() {
             // C2 网络闸门（2026-09-15）：Android 上真查网络类型，其它平台回 "n/a"（闸门不适用）。
             net::network_type,
             sync::sync_workspace,
-            sync::team_register,
-            sync::team_login,
-            sync::team_logout,
-            sync::team_list_spaces,
-            sync::team_create_space,
-            sync::team_list_members,
-            sync::team_invite_member,
-            sync::team_set_member_role,
-            sync::team_remove_member,
-            sync::team_get_session,
-            sync::team_get_me,
-            sync::team_get_server_email,
             // 冲刺 CRDT S9（2026-09-23）：**血统 claim** —— 桌面侧与 web 侧同端点
             // （`POST /sync/lineage-claim`）、同口径。接上它之后这条命令才不是"web 专属"
             // （`scripts/check-web-commands.mjs` 的 `WEB_ONLY_COMMANDS` 已相应撤回）。
@@ -1069,31 +1210,13 @@ pub fn run() {
             sync::device_pair_import,
             sync::list_sync_history,
             sync::clear_sync_history,
-            sync::team_list_orgs,
-            sync::team_create_org,
-            sync::team_list_org_members,
-            sync::team_invite_org_member,
-            sync::team_set_org_member_active,
-            sync::team_remove_org_member,
-            sync::team_approve_org_invite,
-            sync::team_reject_org_invite,
-            sync::team_deactivate_account,
-            sync::team_deactivate_org_member,
-            sync::team_generate_org_invite_code,
-            sync::team_join_org_by_code,
-            sync::team_presence_beat,
-            sync::team_online,
-            sync::team_list_comments,
-            sync::team_add_comment,
-            sync::team_delete_comment,
-            sync::team_list_notifications,
-            sync::team_seen_notification,
-            sync::team_seen_all_notifications,
             attachments::save_image,
             attachments::attachment_path,
             attachments::copy_attachment,
             attachments::list_attachment_hashes,
             attachments::read_attachment_bytes,
+            // ⭐ 2026-10-28（owner：「打开 html 变成 BIN 文件」）：按原始文件名落一份临时副本再交给系统
+            attachments::prepare_attachment_open,
             attachments::write_attachment_bytes,
             legacy_convert::convert_legacy_office,
             attachments::import_attachment_files,
@@ -1102,6 +1225,7 @@ pub fn run() {
             attachments::remove_attachment,
             attachments::remove_attachments,
             attachments::move_attachment,
+  attachments::detach_attachment,
             attachments::rename_attachment,
             attachments::get_attachment,
             attachments::restore_attachment,
@@ -1161,9 +1285,13 @@ pub fn run() {
             versions::clear_page_versions,
             backup::export_backup,
             backup::import_backup,
+            // ⭐ 2026-10-28（owner：「本机备份 全空间打包，要能原样恢复」）：
+            //   替换式恢复 —— 解到 staging，**重启后**在打开任何库之前整份替换（旧数据另存一份）
+            backup::restore_backup_replace,
             backup::write_text_file,
             backup::write_binary_file,
             backup::read_text_file,
+  backup::read_binary_file,
             // ⭐ task-20：自动备份那两条（只读读数 ＋ 立刻备份一次）—— 都只是"把已有能力开口" ✓
             backup::auto_backup_status,
             backup::auto_backup_run_now,
@@ -1251,6 +1379,12 @@ pub fn run() {
   mcp_channel::mcp_set_write_grant,
   mcp_channel::mcp_set_level,
   mcp_channel::mcp_log_apply_result,
+  // ⭐ B1c 收尾 / B3：前端桥的两条（就绪信号 ＋ 结果回执；桌面专属 —— Web 没有本机 MCP 通道）
+  frontend_tool::mcp_frontend_tool_ready,
+  frontend_tool::mcp_frontend_tool_respond,
+  plugins::mcp_draft_state,
+  plugins::mcp_recent_drafts,
+  plugins::mcp_recent_audit,
   // 本地英汉词典（ECDICT）第一期：**只读**两条 —— 查词 ＋ 状态读数。
   // ⚠️ 与 `check-web-commands.mjs` 的 `DESKTOP_ONLY_COMMANDS` 登记**不同**：
   //    这里**两条平台都要**（Web 侧同一条命令面走 sql.js 直查 —— 词典数据是普通 SQLite，
@@ -1283,8 +1417,25 @@ pub fn run() {
   license_http::license_http_request,
   license_http::license_apply_lease,
 ])
-        .run(app_context())
-        .expect("error while running tauri application");
+        .build(app_context())
+        .expect("error while running tauri application")
+        .run(|_app_handle, event| match event {
+            tauri::RunEvent::Ready => log_lifecycle("ready", ""),
+            tauri::RunEvent::ExitRequested { code, .. } => {
+                log_lifecycle("exit_requested", &format!("code={code:?}"));
+            }
+            tauri::RunEvent::Exit => log_lifecycle("exit", ""),
+            tauri::RunEvent::WindowEvent { label, event, .. } => match event {
+                tauri::WindowEvent::CloseRequested { .. } => {
+                    log_lifecycle("window_close_requested", &format!("label={label}"));
+                }
+                tauri::WindowEvent::Destroyed => {
+                    log_lifecycle("window_destroyed", &format!("label={label}"));
+                }
+                _ => {}
+            },
+            _ => {}
+        });
 }
 
 /// Tauri 的 **http 插件作用域**必须显式放行 —— 它的默认权限是"能发请求，但一个源都不许发"。
@@ -1387,4 +1538,3 @@ mod relay_feature_tests {
         );
     }
 }
-

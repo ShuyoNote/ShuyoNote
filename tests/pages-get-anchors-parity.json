@@ -1,0 +1,91 @@
+{
+  "note": "`pages.get` 读面（P1）的块锚点与 rev 的**跨语言一致性夹具**：Rust `src-tauri/src/plugins.rs`（block_end_offsets / annotated_window / page_rev）与 TS `src/lib/capabilities/pageAnchors.ts` 共用同一份，各自在自己的测试里跑（`plugins.rs` 的 #[cfg(test)] 与 `src/lib/capabilities/pageAnchors.test.ts`）。口径：位置按 Unicode 码点；锚点只插在本次窗口里、块尾落在窗口内才标；正文一个字不改；includeAnchors:false 时正文逐字节等于旧行为；没有块 id 的块不可寻址 ⇒ 不给锚点（⛔ 不编 id）。改一边而另一边没跟，这份夹具先红。",
+  "cases": [
+    {
+      "name": "三块全返回 ⇒ 锚点数 = 顶层块数（3），每个块后一空行 + 一行注释",
+      "docJson": "{\"root\":{\"children\":[{\"type\":\"paragraph\",\"blockId\":\"blk1\",\"children\":[{\"type\":\"text\",\"text\":\"甲\"}]},{\"type\":\"paragraph\",\"blockId\":\"blk2\",\"children\":[{\"type\":\"text\",\"text\":\"乙\"}]},{\"type\":\"paragraph\",\"blockId\":\"blk3\",\"children\":[{\"type\":\"text\",\"text\":\"丙\"}]}]}}",
+      "contentText": "甲\n\n乙\n\n丙",
+      "offset": 0,
+      "limit": 100,
+      "includeAnchors": true,
+      "expectAnchors": 3,
+      "expectText": "甲\n\n<!-- b:blk1 -->\n\n乙\n\n<!-- b:blk2 -->\n\n丙\n\n<!-- b:blk3 -->"
+    },
+    {
+      "name": "includeAnchors:false ⇒ 正文与旧行为逐字节相同（不加任何注释）",
+      "docJson": "{\"root\":{\"children\":[{\"type\":\"paragraph\",\"blockId\":\"blk1\",\"children\":[{\"type\":\"text\",\"text\":\"甲\"}]},{\"type\":\"paragraph\",\"blockId\":\"blk2\",\"children\":[{\"type\":\"text\",\"text\":\"乙\"}]},{\"type\":\"paragraph\",\"blockId\":\"blk3\",\"children\":[{\"type\":\"text\",\"text\":\"丙\"}]}]}}",
+      "contentText": "甲\n\n乙\n\n丙",
+      "offset": 0,
+      "limit": 100,
+      "includeAnchors": false,
+      "expectAnchors": 0,
+      "expectText": "甲\n\n乙\n\n丙"
+    },
+    {
+      "name": "分页截断（窗口 0..5）：只给**返回范围内**的块加锚点（块 3 没返回 ⇒ 无锚点）",
+      "docJson": "{\"root\":{\"children\":[{\"type\":\"paragraph\",\"blockId\":\"blk1\",\"children\":[{\"type\":\"text\",\"text\":\"甲\"}]},{\"type\":\"paragraph\",\"blockId\":\"blk2\",\"children\":[{\"type\":\"text\",\"text\":\"乙\"}]},{\"type\":\"paragraph\",\"blockId\":\"blk3\",\"children\":[{\"type\":\"text\",\"text\":\"丙\"}]}]}}",
+      "contentText": "甲\n\n乙\n\n丙",
+      "offset": 0,
+      "limit": 5,
+      "includeAnchors": true,
+      "expectAnchors": 2,
+      "expectText": "甲\n\n<!-- b:blk1 -->\n\n乙\n\n<!-- b:blk2 -->\n"
+    },
+    {
+      "name": "窗口从块 2 的块尾开始：上一窗读完的块**不重复标注**，本窗只标块 3",
+      "docJson": "{\"root\":{\"children\":[{\"type\":\"paragraph\",\"blockId\":\"blk1\",\"children\":[{\"type\":\"text\",\"text\":\"甲\"}]},{\"type\":\"paragraph\",\"blockId\":\"blk2\",\"children\":[{\"type\":\"text\",\"text\":\"乙\"}]},{\"type\":\"paragraph\",\"blockId\":\"blk3\",\"children\":[{\"type\":\"text\",\"text\":\"丙\"}]}]}}",
+      "contentText": "甲\n\n乙\n\n丙",
+      "offset": 4,
+      "limit": 10,
+      "includeAnchors": true,
+      "expectAnchors": 1,
+      "expectText": "\n\n丙\n\n<!-- b:blk3 -->"
+    },
+    {
+      "name": "列表块：块内项间是 `\\n\\n` ⇒ 按文本叶子逐片对齐（整串匹配会落空）",
+      "docJson": "{\"root\":{\"children\":[{\"type\":\"list\",\"blockId\":\"blkL\",\"listType\":\"bullet\",\"children\":[{\"type\":\"listitem\",\"value\":1,\"children\":[{\"type\":\"text\",\"text\":\"第一项\"}]},{\"type\":\"listitem\",\"value\":2,\"children\":[{\"type\":\"text\",\"text\":\"第二项\"}]}]},{\"type\":\"paragraph\",\"blockId\":\"blkE\",\"children\":[{\"type\":\"text\",\"text\":\"尾\"}]}]}}",
+      "contentText": "第一项\n\n第二项\n\n尾",
+      "offset": 0,
+      "limit": 100,
+      "includeAnchors": true,
+      "expectAnchors": 2,
+      "expectText": "第一项\n\n第二项\n\n<!-- b:blkL -->\n\n尾\n\n<!-- b:blkE -->"
+    },
+    {
+      "name": "emoji 按**码点**计数（不按 UTF-16 码元）：窗口 0..4 只装得下块 1",
+      "docJson": "{\"root\":{\"children\":[{\"type\":\"paragraph\",\"blockId\":\"blk1\",\"children\":[{\"type\":\"text\",\"text\":\"😀甲\"}]},{\"type\":\"paragraph\",\"blockId\":\"blk2\",\"children\":[{\"type\":\"text\",\"text\":\"乙\"}]}]}}",
+      "contentText": "😀甲\n\n乙",
+      "offset": 0,
+      "limit": 4,
+      "includeAnchors": true,
+      "expectAnchors": 1,
+      "expectText": "😀甲\n\n<!-- b:blk1 -->\n\n"
+    },
+    {
+      "name": "emoji 第二窗：offset=4 起 ⇒ 只剩块 2 的锚点",
+      "docJson": "{\"root\":{\"children\":[{\"type\":\"paragraph\",\"blockId\":\"blk1\",\"children\":[{\"type\":\"text\",\"text\":\"😀甲\"}]},{\"type\":\"paragraph\",\"blockId\":\"blk2\",\"children\":[{\"type\":\"text\",\"text\":\"乙\"}]}]}}",
+      "contentText": "😀甲\n\n乙",
+      "offset": 4,
+      "limit": 100,
+      "includeAnchors": true,
+      "expectAnchors": 1,
+      "expectText": "乙\n\n<!-- b:blk2 -->"
+    },
+    {
+      "name": "没有块 id 的块**给不了锚点**（不可寻址）⇒ 3 个顶层块只有 2 个锚点",
+      "docJson": "{\"root\":{\"children\":[{\"type\":\"paragraph\",\"blockId\":\"blk1\",\"children\":[{\"type\":\"text\",\"text\":\"甲\"}]},{\"type\":\"paragraph\",\"children\":[{\"type\":\"text\",\"text\":\"乙\"}]},{\"type\":\"paragraph\",\"blockId\":\"blk3\",\"children\":[{\"type\":\"text\",\"text\":\"丙\"}]}]}}",
+      "contentText": "甲\n\n乙\n\n丙",
+      "offset": 0,
+      "limit": 100,
+      "includeAnchors": true,
+      "expectAnchors": 2,
+      "expectText": "甲\n\n<!-- b:blk1 -->\n\n乙\n\n丙\n\n<!-- b:blk3 -->"
+    }
+  ],
+  "rev": {
+    "name": "rev = `<updated_at 毫秒>:<正文 JSON sha256 前 8 位小写>`；同一输入必同值",
+    "updatedAt": 1761700000000,
+    "docJson": "{\"root\":{\"children\":[]}}",
+    "expect": "1761700000000:d8009861"
+  }
+}

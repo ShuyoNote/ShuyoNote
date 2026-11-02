@@ -49,7 +49,9 @@ impl DeviceIdentity {
 
     #[cfg(test)]
     pub fn from_seed(seed: [u8; 32]) -> Self {
-        Self { signing: SigningKey::from_bytes(&seed) }
+        Self {
+            signing: SigningKey::from_bytes(&seed),
+        }
     }
 }
 
@@ -75,7 +77,9 @@ pub fn load_or_create(app_data: &Path) -> Result<DeviceIdentity, String> {
     match std::fs::read_to_string(&path) {
         Ok(text) => {
             let seed = parse_seed(text.trim())?;
-            Ok(DeviceIdentity { signing: SigningKey::from_bytes(&seed) })
+            Ok(DeviceIdentity {
+                signing: SigningKey::from_bytes(&seed),
+            })
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let identity = generate();
@@ -113,7 +117,9 @@ fn generate() -> DeviceIdentity {
     use rand_core::RngCore as _;
     let mut seed = [0u8; 32];
     rand_core::OsRng.fill_bytes(&mut seed);
-    DeviceIdentity { signing: SigningKey::from_bytes(&seed) }
+    DeviceIdentity {
+        signing: SigningKey::from_bytes(&seed),
+    }
 }
 
 /// 先写 `.tmp` 再 rename（原子）＋ 收窄权限。

@@ -24,7 +24,48 @@ fn main() {
     enforce_explicit_crypto_backend_for_sm_library();
     warn_if_patched_source_without_sm_library_feature();
     require_gm_provider_patch();
+    ensure_mcp_bridge_placeholder();
     tauri_build::build()
+}
+
+/// ⭐ 2026-10-31（B：随包 Rust 桥）：给 `bundle.resources` 里的桥产物**放一个占位文件**。
+///
+/// 为什么需要：`tauri-build` 在**编译期**就校验 `bundle.resources` 的路径必须存在（精确路径与
+/// glob 一样都会被校验：实测 `glob pattern … didn't match any files` ⇒ 直接红）。而桥是
+/// `scripts/build-mcp-bridge.mjs` 在**打包前**才编出来的产物、不进库 ⇒ 干净检出上跑
+/// `cargo test` / `cargo check`（CI 的 rust 组就是这样）会**一条都跑不了**。
+/// 实测事故：`4a5ec07b` 的 CI rust job 四条门禁全红在
+/// `resource path ../tools/shuyonote-mcp-rust/dist/shuyonote-mcp doesn't exist`。
+///
+/// 占位文件只在**文件不存在**时写，内容是可识别的文本（不是真二进制）；正常路径上：
+///   · `tauri dev` ⇒ beforeDevCommand 先编真桥（debug）⇒ 会覆盖它；
+///   · `tauri build` ⇒ beforeBuildCommand 先编真桥（release）⇒ 会覆盖它 ⇒ 打进包里的是真二进制；
+///   · 只有 `cargo test/check` 这种不打包的构建才会真的用到占位文件（它也不读它）。
+fn ensure_mcp_bridge_placeholder() {
+    let dist = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("tools")
+        .join("shuyonote-mcp-rust")
+        .join("dist");
+    let name = if cfg!(windows) {
+        "shuyonote-mcp.exe"
+    } else {
+        "shuyonote-mcp"
+    };
+    let file = dist.join(name);
+    if file.is_file() {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&dist) {
+        panic!("MCP 桥占位目录建不出来（{dist:?}）：{e}");
+    }
+    if let Err(e) = std::fs::write(
+        &file,
+        "// shuyonote-mcp placeholder —— 真二进制由 scripts/build-mcp-bridge.mjs 在打包前生成\n",
+    ) {
+        panic!("MCP 桥占位文件写不出来（{file:?}）：{e}");
+    }
+    println!("cargo:warning=MCP 桥产物不存在，已放置占位文件；打包/开发时会被真二进制覆盖");
 }
 
 /// ★ 反向告警（2026-09-22 本人踩坑后补）：**源码上有补丁、但这次构建没开 `sm-library`**。
@@ -159,7 +200,9 @@ fn require_gm_provider_patch() {
     }
 
     // 外置（预编译）SQLCipher 这条路**还没有可核对的口子** ⇒ 明确拒绝，不拿环境变量冒充事实。
-    if std::env::var_os("SQLCIPHER_INCLUDE_DIR").is_some() || std::env::var_os("SQLCIPHER_LIB_DIR").is_some() {
+    if std::env::var_os("SQLCIPHER_INCLUDE_DIR").is_some()
+        || std::env::var_os("SQLCIPHER_LIB_DIR").is_some()
+    {
         panic!(
             "`sm-library` ＋ 外置 SQLCipher（`SQLCIPHER_INCLUDE_DIR`/`SQLCIPHER_LIB_DIR`）这条路**还没有核对补丁的口子**。\n\
              本脚本只认「cargo 将要编译的那份源码里有 SM3 标签」这一种事实；对预编译产物我无法在这里核对，\n\
@@ -328,20 +371,28 @@ fn resolve_sqlcipher_source() -> Option<(std::path::PathBuf, String, &'static st
 /// 从依赖构建产物里读 `cargo:include=…/libsqlite3-sys-<版本>/sqlcipher`。
 ///
 /// ⚠️ 与 macOS 侧那条纪律一致：**按平台过滤**（同一 target 目录里可能躺着别的平台的产物）。
-fn include_hint_from_build_output(manifest: &std::path::Path) -> Option<(std::path::PathBuf, String)> {
+fn include_hint_from_build_output(
+    manifest: &std::path::Path,
+) -> Option<(std::path::PathBuf, String)> {
     let target = manifest.join("target");
     let host_is_windows = cfg!(windows);
     for profile in ["debug", "release"] {
         let build = target.join(profile).join("build");
-        let Ok(entries) = std::fs::read_dir(&build) else { continue };
+        let Ok(entries) = std::fs::read_dir(&build) else {
+            continue;
+        };
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             if !name.starts_with("libsqlite3-sys-") {
                 continue;
             }
-            let Ok(text) = std::fs::read_to_string(e.path().join("output")) else { continue };
+            let Ok(text) = std::fs::read_to_string(e.path().join("output")) else {
+                continue;
+            };
             for line in text.lines() {
-                let Some(rest) = line.strip_prefix("cargo:include=") else { continue };
+                let Some(rest) = line.strip_prefix("cargo:include=") else {
+                    continue;
+                };
                 // 另一个平台的产物会带盘符/反斜杠（Windows）或 `/`（unix）——按当前平台粗筛
                 let looks_windows = rest.contains('\\') || rest.contains(":\\");
                 if looks_windows != host_is_windows {
@@ -350,11 +401,20 @@ fn include_hint_from_build_output(manifest: &std::path::Path) -> Option<(std::pa
                 let p = std::path::Path::new(rest);
                 // `…/libsqlite3-sys-<版本>/sqlcipher` 或 `…/libsqlite3-sys-<版本>` 都要能认
                 let (dir, ver) = if p.file_name().map(|f| f == "sqlcipher").unwrap_or(false) {
-                    (p.to_path_buf(), p.parent()?.file_name()?.to_string_lossy().to_string())
+                    (
+                        p.to_path_buf(),
+                        p.parent()?.file_name()?.to_string_lossy().to_string(),
+                    )
                 } else {
-                    (p.join("sqlcipher"), p.file_name()?.to_string_lossy().to_string())
+                    (
+                        p.join("sqlcipher"),
+                        p.file_name()?.to_string_lossy().to_string(),
+                    )
                 };
-                let version = ver.strip_prefix("libsqlite3-sys-").unwrap_or(&ver).to_string();
+                let version = ver
+                    .strip_prefix("libsqlite3-sys-")
+                    .unwrap_or(&ver)
+                    .to_string();
                 if dir.is_dir() {
                     return Some((dir, version));
                 }
@@ -392,7 +452,9 @@ fn sqlcipher_source_dir_deprecated_mtime() -> Option<std::path::PathBuf> {
     let registries = std::fs::read_dir(&src_root).ok()?;
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
     for reg in registries.flatten() {
-        let Ok(pkgs) = std::fs::read_dir(reg.path()) else { continue };
+        let Ok(pkgs) = std::fs::read_dir(reg.path()) else {
+            continue;
+        };
         for pkg in pkgs.flatten() {
             let name = pkg.file_name();
             let name = name.to_string_lossy();

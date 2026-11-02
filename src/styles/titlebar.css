@@ -1,0 +1,118 @@
+/* S4（2026-11-01）：域抽取器搬出的**标题栏域（`.titlebar*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* ---------------------------------------------------------------------------
+ * 自绘标题栏（桌面端，窗口无边框时渲染）。
+ * 高度 32px 与 Windows 系统标题栏一致，按钮 46x32 也沿用系统尺寸——用户的
+ * 肌肉记忆（右上角三个键、关闭悬停变红）不该被重新发明。
+ * ------------------------------------------------------------------------- */
+.titlebar {
+  flex: 0 0 auto;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: 10px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 失焦变淡：系统标题栏本来就有，自绘的不做会分不清哪个是当前窗口。 */
+.titlebar.is-blurred {
+  opacity: 0.6;
+  transition: opacity var(--transition);
+}
+
+.titlebar-brand {
+  display: flex;
+  align-items: center;
+  flex: none;
+  color: var(--accent);
+}
+
+.titlebar-logo {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+.titlebar-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.titlebar-actions {
+  flex: none;
+  display: flex;
+  align-self: stretch;
+}
+
+/* 同步状态芯片：颜色点 + host，与侧栏空间行、同步面板共用同一套颜色编码。 */
+.titlebar-sync {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  margin-right: var(--space-2);
+  padding: 2px 9px;
+  border-radius: var(--radius-full);
+  background: var(--chip-bg);
+  font-size: var(--fs-11);
+  color: var(--text-dim);
+}
+
+.titlebar-btn {
+  width: 46px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.titlebar-btn svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 1;
+}
+
+.titlebar-btn:hover {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+
+/* 「通知」未读角标：**现在恒为 0 ⇒ 不渲染** ✓（见 `TopTools.tsx` 里那条登记 ✓）。 */
+.titlebar-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+
+/* 关闭键沿用系统的「悬停变红」，这是跨应用的通用约定。 */
+.titlebar-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+@media (max-width: 768px) {
+/* 顶栏标题栏在窄屏收起部分（保留标题与操作）。 */
+  .titlebar-sync {
+    display: none;
+  }
+}
+}

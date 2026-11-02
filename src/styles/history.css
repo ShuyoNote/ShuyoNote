@@ -1,0 +1,283 @@
+/* S4（2026-11-01）：域抽取器搬出的**版本历史域（`.history-*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* History */
+.history-panel {
+  position: relative;
+}
+
+/* 版本历史弹层：走 `usePopover`（`position: fixed` + 内联 top/left），与搜索/回收站/同步
+   同一条路——窄屏/矮视口由 usePopover 返回空坐标 + `is-sheet`，交给下面那段
+   `@media (max-width:768px), (max-height:520px)` 铺成底部弹层。
+   ⚠️ 原来是 `position: absolute; right: 0` 锚在工具条按钮上：360×640 实测**左边缘 = −6px**
+   （320px 宽、按钮右边缘离屏左边不足 320px ⇒ 直接越界）。改成 fixed 之后位置由 usePopover
+   按包含块折算的坐标给，窄屏则完全不锚定。 */
+.history-popover {
+  position: fixed;
+  width: 320px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  /* ⭐ 2026-11-01：和搜索/回收站/同步一致用 `--z-popover`。原来这里是 40，
+     与右侧目录 `.toc-panel` 的 40 **同层** ⇒ 目录在 DOM 后面、把版本历史盖住半截
+     （owner 截图：右半边被「目录」吃掉）。常驻停靠面板（目录）不该压过临时浮层。 */
+  z-index: var(--z-popover);
+  padding: 6px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.history-empty {
+  padding: var(--space-3);
+  color: var(--text-dim);
+  font-size: var(--fs-13);
+  text-align: center;
+}
+
+.history-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px 6px var(--space-2);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-1);
+}
+
+.history-title {
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.history-total {
+  flex: 1;
+  font-size: var(--fs-11);
+  color: var(--text-dim);
+}
+
+.history-clear {
+  font-size: var(--fs-12);
+  color: var(--danger);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 2px var(--space-2);
+  cursor: pointer;
+}
+
+.history-clear:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--border);
+}
+
+.history-clear:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.history-time-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.history-newest {
+  font-size: var(--fs-10);
+  line-height: 1.3;
+  color: #3370ff;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-xs);
+  padding: 0 var(--space-1);
+  flex-shrink: 0;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px var(--space-2);
+  border-radius: 5px;
+}
+
+.history-item:hover {
+  background: var(--hover);
+}
+
+.history-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.history-time {
+  font-size: var(--fs-11);
+  color: var(--text-dim);
+}
+
+.history-preview {
+  font-size: var(--fs-13);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-restore {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-xs);
+  padding: 3px var(--space-2);
+  font-size: var(--fs-11);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.history-restore:hover {
+  background: var(--hover);
+}
+
+/* ⭐ 2026-10-08（owner：「优化一下版本历史功能」）：**先看再恢复**那一套的样式。
+   `.history-row` 是"点一下展开/收起"的那一行（整行可点 ⇒ 命中区够大 ✓）；
+   `.history-full` 是展开后的**整篇**预览（可滚动、等宽、保留换行 ✓）；
+   `.history-note` 把"每页最多保留最近 N 份"明示出来（本仓忌"悄悄丢东西" ✗）。 */
+.history-note {
+  padding: 0 var(--space-2) 6px;
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+}
+
+.history-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-full-wrap {
+  margin-top: 6px;
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+}
+
+.history-full {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: var(--fs-12);
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 6px var(--space-2);
+}
+
+.history-full-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 6px;
+}
+
+.history-full-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+}
+
+/* P2（2026-11-02）：恢复前 diff 对照。 */
+.history-full-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.history-diff-btn {
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: var(--radius-xs);
+  padding: 3px var(--space-2);
+  font-size: var(--fs-11);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.history-diff-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.history-diff {
+  margin-top: 6px;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-11);
+  line-height: 1.5;
+}
+
+.history-diff-line {
+  display: flex;
+  gap: 6px;
+  padding: 0 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.history-diff-sign {
+  flex: none;
+  width: 12px;
+  text-align: center;
+  color: var(--text-faint);
+}
+
+.history-diff-line.is-add {
+  background: var(--hover);
+}
+
+.history-diff-line.is-add .history-diff-sign {
+  color: var(--success);
+}
+
+.history-diff-line.is-del {
+  background: var(--danger-soft);
+}
+
+.history-diff-line.is-del .history-diff-sign {
+  color: var(--danger);
+}
+
+.history-diff-empty {
+  padding: 6px var(--space-2);
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+}
+
+.history-item.is-open {
+  align-items: flex-start;
+  background: var(--hover);
+}
+}

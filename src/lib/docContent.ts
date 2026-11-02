@@ -33,6 +33,16 @@ export interface DocContent {
   text: string;
 }
 
+/**
+ * 从**内存里的页对象**取正文文本（组件 ⛔ 不许直接摸落盘字段名）。
+ *
+ * 为什么放在这一层：`check-doc-content-access` 的口径是"直接访问只经那一层"；历史面板
+ * 「与当前版本对比」要读当前正文，走这个函数而不是在组件里点属性名。
+ */
+export function pageText(page: { content_text?: unknown } | null | undefined): string {
+  return typeof page?.content_text === "string" ? page.content_text : "";
+}
+
 /** 批量读出来的行：多一个 `id`（读单页时 id 是入参，不必回传）。 */
 export interface ContentRow extends DocContent {
   id: string;
@@ -754,8 +764,94 @@ export function blockSnapshotsOf(docJson: string): BlockSnapshot[] | undefined {
  *
  * 空值兜底成 `{}`：与工作区导出（`exportWorkspaceToMarkdown`）**同一个兜底** ✓。
  */
+
+/**
+ * 记录（页面/历史版本）里的**正文字符串** —— 存储列名只许在这一层出现
+ * （`check-doc-content-access` 只减不增；别处一律经它取）。
+ */
+export function recordedText(rec: { content_text?: string | null }): string {
+  return String(rec.content_text ?? "");
+}
+
+/** 读面回话里的正文键（字段名是**接口形状**；存储键名只许在这一层写）。 */
+export function textField(text: string): { content_text: string } {
+  return { content_text: text };
+}
+
+/** 新建页草稿的两个正文键（`content_json` / `content_text` 只许在这一层出现）。 */
+export function draftBodyFields(body: { content_json: string; content_text: string }): {
+  content_json: string;
+  content_text: string;
+} {
+  return { content_json: body.content_json, content_text: body.content_text };
+}
+
+/** 记录里的正文 JSON 文本（`content_json` 键名只许在这一层出现）。 */
+export function jsonTextOf(content: { content_json?: string | null }): string {
+  return content.content_json ?? "{}";
+}
+
+/** 顶层块数组（块级写只动 root.children；⛔ 别处不要自己 parse 文档 JSON）。 */
+export function topChildren(docJson: string): Array<Record<string, unknown>> {
+  const doc = JSON.parse(docJson) as { root?: { children?: Array<Record<string, unknown>> } };
+  return Array.isArray(doc?.root?.children) ? doc.root!.children! : [];
+}
+
+/** 用新的顶层块重建整页 JSON（保留 root 上其它键）。 */
+export function withTopChildren(docJson: string, children: Array<Record<string, unknown>>): string {
+  const doc = JSON.parse(docJson) as Record<string, unknown>;
+  return JSON.stringify({ ...doc, root: { type: "root", children } });
+}
+
+/** 写回一页需要的两个键（顶层块已换好）—— 存储键名只许在这一层出现。 */
+export function saveFieldsWithChildren(
+  docJson: string,
+  children: Array<Record<string, unknown>>,
+  deriveText: (json: string) => string,
+): { content_json: string; content_text: string } {
+  const json = withTopChildren(docJson, children);
+  return { content_json: json, content_text: deriveText(json) };
+}
+
+/** 模板 → 建页要的两个正文键（存储键名只许在这一层出现）。 */
+export function templateContentFields(tpl: { content_json: string; content_text?: string }): {
+  content_json: string;
+  content_text: string;
+} {
+  return { content_json: tpl.content_json, content_text: tpl.content_text ?? "" };
+}
+
+/** 空白页的正文两键（新建"数据库行页面"时用；存储键名只在这一层）。 */
+export function emptyPageContent(): { content_json: string; content_text: string } {
+  return { content_json: '{"root":{"type":"root","children":[]}}', content_text: "" };
+}
+
 export function docJsonOfPage(page: { content_json?: string | null }): string {
   return page.content_json || "{}";
+}
+
+/**
+ * ⭐ **读面（`pages.get` 的 P1）要的两样标量**：正文 JSON 原文 ＋ 更新时间。
+ *
+ * 为什么要单立一个（而不是让能力层自己 `page.content_json` 一下）：直接提那两个落盘字段名的
+ * 地方**只许减**（判据 `check-doc-content-access.mjs`）⇒ 读面的 `rev`（指纹的一半）与块锚点
+ * （块 id 只在 JSON 里）都从**这一层**取，别处不再出现列名。
+ *
+ * ⚠️ **「算不出」要能如实表达**：`docJson` 拿不到时是 `null`，**不是** `"{}"`
+ * —— 拿 `"{}"` 兜底会算出一个**假指纹**，比没有 `rev` 更糟（调用方会拿它当真令牌去写）。
+ * 与 `docJsonOfPage` 的分工：那个是"导出/发布"的口径（空 ⇒ `{}` 也能导出），这个是令牌口径。
+ */
+export function pageReadMeta(page: {
+  content_json?: string | null;
+  updated_at?: number | null;
+}): { docJson: string | null; updatedAt: number | null } {
+  return {
+    docJson: typeof page.content_json === "string" ? page.content_json : null,
+    updatedAt:
+      typeof page.updated_at === "number" && Number.isFinite(page.updated_at)
+        ? Math.trunc(page.updated_at)
+        : null,
+  };
 }
 
 /**

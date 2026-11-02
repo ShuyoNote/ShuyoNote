@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { pushOverlay } from "../lib/overlayStack";
+import { confirmDialog } from "../store/confirm";
 import { peerIdentityLine } from "../lib/peerIdentity";
 import { useMobileNav } from "../store/mobileNav";
 import { useSpaceStore } from "../store/space";
 // ⭐ 阶段 3：自动同步那格的**唯一判定处** ✓（与 `App.tsx:73` 同源 ✓ ⇒ ⛔ 不抄第二份判定 ✗）。
 import { AUTO_SYNC_CHANGED_EVENT, effectiveAutoSyncMs } from "../lib/syncMode";
 import type { NearbyPeer } from "../lib/platform/commands";
+import { AlertTriangleIcon, ChevronLeftIcon, DeviceIcon, RefreshIcon, XIcon } from "./icons";
 
 /**
  * **移动端「设备配对 · 同步」屏**（效果图 `docs/plans/mobile/mockups/08-pair.svg`，规格 §4.8）。
@@ -47,6 +49,19 @@ export function MobilePair() {
     nearby: NearbyPeer[];
   } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // ⭐ 2026-10-26（移动端局域网同步）：**手动同步当前空间**的一轮读数。
+  //   ⚠️ 按钮按**空间**同步（`mesh_sync_now(activeId)` ✓），⛔ 不挂在某一台设备上 ✗（那会指错空间 ——
+  //   与 08 屏那条「立即同步不渲染」的旧口径同源 ✓，所以这里放的是**本机同步状态**那张卡里 ✓）。
+  const [syncingNow, setSyncingNow] = useState(false);
+  const [syncReport, setSyncReport] = useState<string | null>(null);
+  // ⭐ 2026-10-26 修（真机暴露的**既存 TDZ bug**）：`pairedIds` 原来声明在 `nearbyGroup` **之后**，
+  //   而"附近设备"一张都听不到时 **sort 的比较器根本不执行** ⇒ 从未触发；一旦手机真的发现了设备
+  //   （正是本次移动端同步功能要做成的事 ✓）⇒ `nearbyGroup` 在 `pairedIds` 初始化前被调用 ⇒
+  //   整屏 `Cannot access '…' before initialization` ✗。⇒ **状态声明提到使用点之前**（声明顺序即执行顺序）。
+  const [pairedIds, setPairedIds] = useState<string[]>([]);
+  const [pairedRows, setPairedRows] = useState<{ deviceId: string; addedAtMs: number }[]>([]);
+  const [selfName, setSelfName] = useState("");
+  const [unpairing, setUnpairing] = useState<string | null>(null);
 
   /**
    * 返回：**回来处** ✓（阶段 3 修 —— 原先是**写死** `home` ✗：从设置那行进来的也会被丢回首页 ✓）。
@@ -78,6 +93,57 @@ export function MobilePair() {
   }, [activeId]);
 
   const nearby = status?.nearby ?? [];
+
+  /**
+   * ⭐ **2026-10-26（移动端局域网同步）**：手动同步**当前空间**一轮。
+   *
+   * 口径（与桌面「立即同步」同一支后端命令 ✓）：
+   * · 传 `activeId` ⇒ Rust 按**这个空间自己的连接**拉一轮（`mesh_sync_now` ✓，2026-10-24 修过串空间 ✓）；
+   * · 读数**原样转述**后端那句 `note` ＋ 收下条数（⛔ 不自己按地址/形状另判一档 ✗）；
+   * · 失败**如实显示**（⛔ 不吞 ✗）；
+   * · 跑完重读一次 `lan_status`（对端/窗口读数可能变了 ✓）。
+   */
+  const syncNow = async () => {
+    if (!activeId || syncingNow) return;
+    setSyncingNow(true);
+    setSyncReport(null);
+    try {
+      const r = await api.meshSyncNow(activeId);
+      const applied = r.peers.reduce((n, p) => n + (p.applied ?? 0), 0);
+      setSyncReport(
+        `${r.note}${r.peers.length > 0 ? ` · 本轮收下 ${applied} 条` : ""}`,
+      );
+      const s = await api.lanStatus(activeId);
+      setStatus({ enabled: s.enabled, peers: s.peers, kind: s.kind, line: s.line, nearby: s.nearby ?? [] });
+    } catch (e) {
+      setSyncReport(`这一轮没跑成：${String(e instanceof Error ? e.message : e).slice(0, 160)}`);
+    } finally {
+      setSyncingNow(false);
+    }
+  };
+
+  /** 取消配对（逐台解除）—— 复用既有 `device_unpair`，二次确认后只踢这一台。 */
+  const unpair = async (deviceId: string) => {
+    if (!activeId || unpairing) return;
+    const ok = await confirmDialog({
+      title: "取消这一台的配对？",
+      message: "取消后它拉不动你的内容；想再连要重新配对一次。",
+      okLabel: "取消配对",
+      danger: true,
+    });
+    if (!ok) return;
+    setUnpairing(deviceId);
+    try {
+      const r = await api.deviceUnpair(activeId, deviceId);
+      setPairedRows((prev) => prev.filter((d) => d.deviceId !== deviceId));
+      setPairedIds((prev) => prev.filter((d) => d !== deviceId));
+      setSyncReport(`${r.wasPaired ? "已取消这一台的配对。" : "这一台本来就不在名单里。"}${r.note ? ` ${r.note}` : ""}`);
+    } catch (e) {
+      setSyncReport(`没取消成：${String(e instanceof Error ? e.message : e).slice(0, 160)}`);
+    } finally {
+      setUnpairing(null);
+    }
+  };
 
   /**
    * ⭐ 【C1】**分组**（照 owner 2026-10-14 参考图 ✓）：已配对 ① → **要重配** ② → 附近 ③。
@@ -145,13 +211,14 @@ export function MobilePair() {
    *    「取**本机认过的那份名单** ✓…⛔ 不自己再算一遍"算不算配上了"✗（两份真相迟早各说各话 ✓）」）。
    * ⚠️ 读不到（还没配／读失败）⇒ **空名单** ✓ ⇒ 绿卡那句「已配对」**不写** ✗（⛔ 不假装有设备 ✗）。
    */
-  const [pairedIds, setPairedIds] = useState<string[]>([]);
   useEffect(() => {
     let alive = true;
     api
       .meshSetConfig(activeId ?? null)
       .then((st) => {
-        if (alive) setPairedIds((st.paired ?? []).map((d) => d.deviceId));
+        if (!alive) return;
+        setPairedRows(st.paired ?? []);
+        setPairedIds((st.paired ?? []).map((d) => d.deviceId));
       })
       .catch(() => {
         if (alive) setPairedIds([]);
@@ -160,6 +227,21 @@ export function MobilePair() {
       alive = false;
     };
   }, [activeId]);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .getDeviceName()
+      .then((n) => {
+        if (alive) setSelfName(n ?? "");
+      })
+      .catch(() => {
+        /* 读不到不影响配对；设置屏会写明怎么改 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const [autoSyncMs, setAutoSyncMs] = useState(() => effectiveAutoSyncMs());
   useEffect(() => {
@@ -174,10 +256,17 @@ export function MobilePair() {
       <header className="mpair-head">
         {/* ⭐ 阶段 3：文案**不再写"返回首页"** ✗ —— 现在是回**来处** ✓（设置那行进 ⇒ 回设置 ✓；首页进 ⇒ 回首页 ✓）。 */}
         <button className="mpair-back" onClick={goBack} aria-label="返回">
-          ‹
+          <ChevronLeftIcon width={18} height={18} />
         </button>
-        <span className="mpair-head-title">设备直连</span>
+        <span className="mpair-head-title">设备配对</span>
       </header>
+      <div className="mpair-self">
+        <DeviceIcon width={14} height={14} />
+        <span>本机名称：<b>{selfName || "未设置"}</b></span>
+        <button className="mpair-self-edit" onClick={() => setScreen("settings")}>
+          修改
+        </button>
+      </div>
 
       <div className="mpair-scroll">
         {/* ⭐ 【C3】三颗胶囊（过滤器 ✓）：⛔ 数字全部来自 `capCounts`（＝ `nearbyGroup` 同一判据 ✓）；
@@ -238,14 +327,14 @@ export function MobilePair() {
                 {words.join(" · ")}
               </span>
               {/* 副文案：**纯文案** ✓ 照图抄 ✓（⛔ 不承载任何读数 ✗）。 */}
-              <span className="mpair-ok-sub">配对一次之后，不用再点任何东西</span>
+              <span className="mpair-ok-sub">两边各确认一次后，不用再点任何东西</span>
             </div>
           );
         })()}
         {/* ⭐ 黄条（照 owner 2026-10-14 参考图 ✓）：只有**真有问题**时才出现 ✓（`N === 0` ⇒ 不渲染 ✗）。 */}
         {unencryptedCount > 0 && (
           <div className="mpair-warn" role="note" data-testid="mpair-unencrypted-warn">
-            <span aria-hidden>⚠</span>
+            <span aria-hidden><AlertTriangleIcon width={16} height={16} /></span>
             <span>
               本机有 <b>{unencryptedCount}</b> 个空间没开加密 ⇒ 内容会在局域网上明文传输
             </span>
@@ -268,6 +357,23 @@ export function MobilePair() {
               {/* ⭐ 2026-10-20 重设计：设计图要求「上次成功时间」。⚠️ 后端没有这个读数
                   （`useSyncStatus` 只给"此刻"）⇒ 只能如实写「暂无读数」，⛔ 不编时间 ✗。 */}
               <p className="mpair-line mpair-dim">上次成功时间：暂无读数 · 失败不吞，原样转述后端读数</p>
+              {/* ⭐ 2026-10-26（移动端局域网同步）：**这个空间的「立即同步」** —— 在手机上第一次
+                  真正有触发入口。⚠️ 桌面那一颗走的是同一条后端命令（`mesh_sync_now` ✓），
+                  所以"手机上点得动、桌面上也点得动"✓；⛔ 这里不新造同步语义 ✗。 */}
+              <button
+                className="mpair-entry is-primary"
+                data-testid="mpair-sync-now"
+                disabled={!activeId || syncingNow}
+                onClick={() => void syncNow()}
+              >
+                <RefreshIcon width={14} height={14} />
+                {syncingNow ? "同步中…" : "立即同步这个空间"}
+              </button>
+              {syncReport && (
+                <p className="mpair-line mpair-dim" data-testid="mpair-sync-report">
+                  {syncReport}
+                </p>
+              )}
             </>
           )}
         </section>
@@ -329,20 +435,22 @@ export function MobilePair() {
                       ) : null}
                     </span>
                     {/* ⭐ d1：**真入口** ✓ —— 只打开「首次配对」屏 ✓，⛔ 这里**不发任何信任请求** ✗
-                        （与桌面 `nearby-allow` 同形 ✓：桌面那一下也只是"记下这一台 ＋ 打开对码屏"✓）。
-                        ⚠️ ⛔ 「立即同步」**仍然不渲染** ✗ —— 它按**空间**同步 ✓，挂到某一台设备上会指错 ✓。 */}
-                    {p.key_changed === true || !pairedIds.includes(p.device_id) ? (
-                      <button
-                        className="mpair-entry"
-                        data-testid={p.key_changed === true ? "mpair-repair" : "mpair-allow"}
-                        onClick={() => {
-                          setPairPeer({ deviceId: p.device_id, deviceName: p.device_name, shortId: p.short_id, pubkey: p.pubkey ?? "" });
-                          setScreen("paircode");
-                        }}
-                      >
-                        {p.key_changed === true ? "重新配对" : "接入"}
-                      </button>
-                    ) : null}
+                        （与桌面 `nearby-allow` 同形 ✓：桌面那一下也只是"记下这一台 ＋ 打开「确认身份」屏"✓）。
+                        ⭐ **2026-10-26（移动端局域网多端同步）**：⭐ **已配对的那一台也要有入口** ✗ ——
+                        原来配对成功后这一行**一个字都没有** ✗ ⇒ "想再核一次对方身份 / 换过网络再确认"没有路 ✓；
+                        真机验收正好撞上：一端配对后 ask 过期，另一端要等「接入」却无处可点 ⇒ 只能重装 ✗。
+                        ⇒ 已配对 ⇒ 「**重新配对**」（同一条「确认身份」路，⛔ 不新增后端 ✗）；未配对 ⇒ 「接入」✓。
+                        ⚠️ ⛔ 「立即同步」仍然**不挂在设备行上** ✗（它按**空间** ✓，挂到某一台会指错 ✓）。 */}
+                    <button
+                      className="mpair-entry"
+                      data-testid={p.key_changed === true || pairedIds.includes(p.device_id) ? "mpair-repair" : "mpair-allow"}
+                      onClick={() => {
+                        setPairPeer({ deviceId: p.device_id, deviceName: p.device_name, shortId: p.short_id, pubkey: p.pubkey ?? "" });
+                        setScreen("paircode");
+                      }}
+                    >
+                      {p.key_changed === true || pairedIds.includes(p.device_id) ? "重新配对" : "接入"}
+                    </button>
                   </span>
                   {/* ⛔ 2026-10-20：旧那颗 disabled 的「信任」按钮已删 —— 它的文案（"后端尚未定形状"）
                       已被 2026-10-17 的真配对流程超前；真入口是上面的「接入 / 重新配对」✓。
@@ -362,12 +470,46 @@ export function MobilePair() {
         </section>
 
         {/* ④ 逐台解除：同样明标未接 ✓（那侧只有 device_id ＋ 时间，没有名字 ⇒ 显示会说谎 ✗） */}
-        <section className="mpair-card">
+        <section className="mpair-card mpair-paired-card">
           <div className="mpair-card-title">已配对的设备</div>
-          <p className="mpair-line mpair-dim">
-            本屏未接 —— 已配对列表那侧只有「设备标识与时间」，没有名字；规格要求显示「哪台」，
-            所以不拿设备标识凑数。
-          </p>
+          {pairedRows.length === 0 ? (
+            <p className="mpair-line mpair-dim">还没有已配对的设备 —— 从下面「附近的设备」里点「接入」。</p>
+          ) : (
+            <ul className="mpair-list">
+              {pairedRows.map((d) => {
+                const near = nearby.find((p) => p.device_id === d.deviceId);
+                const name = near?.device_name?.trim() || "已配对设备";
+                const short = near?.short_id?.trim() || "";
+                return (
+                  <li key={d.deviceId} className="mpair-item mpair-paired-item">
+                    <span className="mpair-item-main">
+                      <span className="mpair-item-who">{short ? `${name} · ${short}` : name}</span>
+                      <span className="mpair-item-meta">
+                        {near ? "附近 · 已配对" : "已配对 · 现在不在附近"}
+                      </span>
+                    </span>
+                    <span className="mpair-actions">
+                      <button
+                        className="mpair-entry is-primary"
+                        disabled={!activeId || syncingNow}
+                        onClick={() => void syncNow()}
+                      >
+                        <RefreshIcon width={14} height={14} /> 立即同步
+                      </button>
+                      <button
+                        className="mpair-entry mpair-entry-danger"
+                        data-testid="mpair-unpair"
+                        disabled={unpairing === d.deviceId}
+                        onClick={() => void unpair(d.deviceId)}
+                      >
+                        <XIcon width={14} height={14} /> {unpairing === d.deviceId ? "取消中…" : "取消配对"}
+                      </button>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </section>
       </div>
     </div>

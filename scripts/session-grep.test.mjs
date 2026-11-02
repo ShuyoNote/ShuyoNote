@@ -14,13 +14,18 @@ import { join } from "node:path";
 import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
 import { collectSessionFiles, decompressMaybeMultiFrame } from "./session-grep.mjs";
 
+// ⚠️ 版本分层（2026-10-30）：本机 Node 24 起 `zstdDecompressSync(多帧)` 的行为与 CI 的 Node 22 不同；
+// 下面两条把「单帧 API 会漏」当**历史观察**保留，只在 Node<24 上断言（CI 仍是 Node 22，可证）；
+// 与版本无关的主判据（decompressMaybeMultiFrame 解出所有帧）不在此列。
+const NODE_MAJOR = Number(process.versions.node.split(".")[0]);
+
 /** 造一个"多帧拼接"的 zstd 缓冲：把几段文本各自压成一帧再拼起来（模拟 append-only 写入）。 */
 function multiFrame(parts) {
   return Buffer.concat(parts.map((p) => zstdCompressSync(Buffer.from(p, "utf8"))));
 }
 
 describe("会话记录解压（多帧 zstd）", () => {
-  it("单帧 API **确实**只解第一帧且不报错 —— 这就是当初零命中的根因", () => {
+  it.skipIf(NODE_MAJOR >= 24)("单帧 API **确实**只解第一帧且不报错 —— 当初零命中的根因（仅 Node<24 可判定）", () => {
     const buf = multiFrame(["第一帧的内容\n", "第二帧的内容\n", "第三帧的内容\n"]);
     const naive = zstdDecompressSync(buf).toString("utf8");
     // 关键：不抛错，但只拿到第一帧 —— "成功"与"完整"不是一回事。
@@ -85,7 +90,7 @@ describe("会话记录解压（多帧 zstd）", () => {
     expect(text).toBe('{"a":1}\n');
   });
 
-  it("零命中之所以危险：解出的字符数会**小得离谱**，那是工具坏了而不是内容为空", () => {
+  it.skipIf(NODE_MAJOR >= 24)("零命中之所以危险：解出的字符数会**小得离谱**（仅 Node<24 可判定；Node≥24 单帧 API 已全解）", () => {
     // 这条把"怎么识别工具坏"固化成断言：单帧解出的字符数远小于真实内容。
     const big = "x".repeat(20000);
     const buf = multiFrame([big, "关键词在这", big]);

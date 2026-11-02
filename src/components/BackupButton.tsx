@@ -117,6 +117,38 @@ export function BackupButton({ label }: { label?: string } = {}) {
     }
   };
 
+  /** ⭐ **2026-10-28（owner：「本机备份 全空间打包，要能原样恢复」）**：
+   *  **替换式**恢复 —— 与「导入（合并）」是两条不同的动作：
+   *  · 合并：作为新空间导入、重名改 id、附件去重、meta 不动；
+   *  · 原样恢复：整份替换（全部空间＋附件＋meta），**下次启动生效**；旧数据先另存到 `restore-prev-…/`。 */
+  const doRestoreReplace = async () => {
+    try {
+      const path = await platform.dialog.open({
+        title: "选择全库备份（原样恢复）",
+        filters: [{ name: "ZIP", extensions: ["zip"] }],
+        multiple: false,
+      });
+      if (!path) return;
+      if (
+        !(await confirmDialog({
+          title: "原样恢复（替换）",
+          message:
+            "会用这份备份**替换**当前的所有数据（全部空间 ＋ 附件 ＋ 元数据），并**在下次启动时生效**。\n" +
+            "当前数据不会删：会整份另存到应用数据目录的 restore-prev-…/。\n确定继续？",
+        }))
+      ) {
+        return;
+      }
+      setBusying("正在准备原样恢复…");
+      const res = await api.restoreBackupReplace(path as string);
+      toast(res.note, "success");
+    } catch (e) {
+      toast(`原样恢复失败：${e}`, "error");
+    } finally {
+      clearBusy();
+    }
+  };
+
   // Determine progress percent (indeterminate when total == 0).
   const pct = prog && prog.total > 0 ? Math.min(100, Math.round((prog.done / prog.total) * 100)) : null;
 
@@ -150,6 +182,17 @@ export function BackupButton({ label }: { label?: string } = {}) {
           >
             <DownloadIcon width={14} height={14} />
             导入备份（合并，不覆盖现有空间）
+          </button>
+          {/* ⭐ 2026-10-28（owner：「要能原样恢复」）：替换式恢复 —— 重启生效，旧数据另存一份 */}
+          <button
+            onClick={() => {
+              close();
+              doRestoreReplace();
+            }}
+            data-testid="restore-replace"
+          >
+            <DownloadIcon width={14} height={14} />
+            原样恢复（替换全部数据，重启生效）
           </button>
         </div>
       )}

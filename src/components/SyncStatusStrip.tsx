@@ -21,6 +21,7 @@
 // 它们与 `App.css` 里那两条规则（`:1756` 起）是**一对** ✓；而判据
 // `SyncPanel.trustDevicePanel.wiring.test.tsx` 的「不变量」那条**就查 `.sync-hero-sub`** ✓
 // ⇒ ⛔ 改名会在不新增任何信息的情况下把那条判据弄红 ✗（本笔不碰样式表 ✓）。
+import type { ReactNode } from "react";
 import { inlineMd } from "../lib/inlineMd";
 
 export interface SyncStatusStripProps {
@@ -28,6 +29,12 @@ export interface SyncStatusStripProps {
   dotClass: string;
   /** 主句（⭐ 调用方拼 ✓ —— 现在是「已配对 · 在线 · 自动同步中」那三件真事 ✓）。 */
   state: string;
+  /**
+   * ⭐ **2026-10-27（owner：「关闭局域网同步按钮布局太丑，优化一下」）**：
+   * 状态行**右上角**的那枚动作（`关闭局域网同步`／`开启局域网同步`）——
+   * ⚠️ 由调用方给（这里只摆位置 ＋ 一个 `margin-left:auto`，⛔ 不自己判开没开 ✗）。
+   */
+  action?: ReactNode;
   /** `lanStatus.mesh.bind` 拆出来的地址；空串 ⇒ 显示「未读到」。 */
   addr: string;
   /** 同上拆出来的端口；空串 ⇒ 显示「未读到」。 */
@@ -58,7 +65,7 @@ export interface SyncStatusStripProps {
 /** ⭐ 「读不到」那句话**只有一处**（⛔ 不在调用方再判一次 ✗ —— 两份写法迟早漂开 ✓）。 */
 const NOT_READ = "未读到";
 
-export function SyncStatusStrip({ dotClass, state, addr, port, reach, announced }: SyncStatusStripProps) {
+export function SyncStatusStrip({ dotClass, state, action, addr, port, reach, announced }: SyncStatusStripProps) {
   const shown = (v: string) => v || NOT_READ;
   // ⭐ **2026-10-14（owner：「美化酷炫一下」）**：外面包一层 \`sync-hero-card\` ✓ —— 让这一块成为
   //   **一张卡**（底色/描边/圆角/浮起 都在 \`App.css\` 的 \`.sync-popover.is-inline\` 那一档里 ✓）。
@@ -69,6 +76,8 @@ export function SyncStatusStrip({ dotClass, state, addr, port, reach, announced 
       <div className="sync-hero-state">
         <span className={`sync-hero-dot${dotClass}`} aria-hidden />
         <span>{state}</span>
+        {/* ⭐ 2026-10-27：右上角那枚动作（`关闭局域网同步`）—— `margin-left:auto` 把它顶到右边 ✓ */}
+        {action && <span className="sync-hero-action">{action}</span>}
       </div>
       {/* ⭐⭐ **2026-10-14（照桌面版高保真效果图）** ✗：图上状态卡里是**两行** ✓ ——
           加粗的状态行 ＋ **一行**小灰字 ✓（「监听地址 …（自动）· 端口 …（默认）· …」✓）
@@ -78,17 +87,33 @@ export function SyncStatusStrip({ dotClass, state, addr, port, reach, announced 
           ⛔ 我不这么干 ✗）。⇒ ⭐ 这一格摆**后端那句原文** ✓（它自己就写着"报出去的是枚举到的 …" ✓）；
           取不到 ⇒ 如实说「报出去的是 未读到」✓（⛔ 不拿前两格凑一个地址 ✗）。
           ⚠️ ⭐ **必须过 `inlineMd`** ✗（见文件头那条纪律 ✓：不过就会原样显示星号 ✓）。 */}
+      {/* ⭐ **2026-10-26（owner：「界面不美观，优化一下」）**：⭐ 这一行拆成**三枚读数胶囊** ✓ ——
+          文字内容与"取不到就说未读到"的口径**一个字没改** ✓，只是把它们**各成一格**：
+          长句摊成一行时在宽屏上很难扫读（owner 截图里那一行 12px 小字横跨整屏 ✓）。
+          ⚠️ 仍然**不许**在界面这一层写死任何地址／端口默认值 ✓（值只来自 props ✓）。 */}
       <div className="sync-hero-sub">
-        监听地址 {shown(addr)}（自动）· 端口 {shown(port)}（默认）
+        <span className="sync-hero-meta">
+          <span className="sync-hero-meta-k">监听地址</span>
+          <span className="sync-hero-meta-v">{shown(addr)}</span>
+          <span className="sync-hero-meta-tag">自动</span>
+        </span>
+        <span className="sync-hero-meta">
+          <span className="sync-hero-meta-k">端口</span>
+          <span className="sync-hero-meta-v">{shown(port)}</span>
+          <span className="sync-hero-meta-tag">默认</span>
+        </span>
         {announced ? (
-          <span>
-            {" · 报出去的是 "}
-            {announced}
+          <span className="sync-hero-meta is-wide">
+            <span className="sync-hero-meta-k">报出去的是</span>
+            <span className="sync-hero-meta-v is-strong">{announced}</span>
           </span>
         ) : reach ? (
-          <span> · {inlineMd(reach)}</span>
+          <span className="sync-hero-meta is-wide">{inlineMd(reach)}</span>
         ) : (
-          <span> · 报出去的是 {NOT_READ}</span>
+          <span className="sync-hero-meta is-wide">
+            <span className="sync-hero-meta-k">报出去的是</span>
+            <span className="sync-hero-meta-v">{NOT_READ}</span>
+          </span>
         )}
       </div>
     </div>

@@ -87,7 +87,15 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      ignored: [
+        "**/src-tauri/**",
+        // ⭐ **2026-10-29 修**：编辑器的原子写在仓根建 `.CHANGELOG.md.<pid>.<uuid>.tmpdir/…`，
+        //   vite 的文件监听到它报 `EBUSY` 会把**整个 dev server 弄挂**（实测两次：改 CHANGELOG
+        //   就把 dev 打死，日志里只有一句 EBUSY、看不出是"另一个进程的临时目录"）。
+        //   ⇒ 这些一次性临时物**不该被监听**（它们从不参与构建）。
+        "**/.*.tmpdir/**",
+        "**/*.tmp",
+      ],
     },
   },
 }));

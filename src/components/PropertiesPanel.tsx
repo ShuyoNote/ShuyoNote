@@ -7,11 +7,15 @@ import { TagRow } from "./TagBar";
 // 「时间」属性的编辑器单独一个文件（**一行只有一个可见输入框**，见那边的头注）：
 // 它原来长在这里、且一行并排两个框 —— owner 2026-09-21 的截图问的就是那个。
 import { DatetimeValueEditor } from "./DatetimeValueEditor";
+import { formatDateTime, formatPerson, formatUrl } from "../lib/propFormat";
 
 // 「时间」= 日期 + 时刻（attr_type = "datetime"），与只到日的"日期"并列。
 const TYPES = ["text", "number", "date", "datetime", "checkbox", "select", "multi"] as const;
 // 临时停用：页面属性区的手工拖拽移动（拖拖换序）。改为 true 即可恢复。
 const DRAG_MOVE_ENABLED = false;
+/** B1：系统字段只读（先含这三个内置项；不渲染 ✕/↑↓）。 */
+export const SYSTEM_FIELD_NAMES = ["存于", "创建", "更新"] as const;
+const COLLAPSE_THRESHOLD = 6;
 const TYPE_LABELS: Record<string, string> = {
   text: "文本",
   number: "数字",
@@ -75,12 +79,15 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
   const hasProps = nonTagProps.length > 0 || pageTags.length > 0; // card shown iff metadata present
 
   // 属性区按 attr_defs.sort_order 顺序显示（listAttrDefs 已按该顺序返回）。
+  const systemProps = nonTagProps.filter((p) => (SYSTEM_FIELD_NAMES as readonly string[]).includes(p.name));
+  const userProps = nonTagProps.filter((p) => !(SYSTEM_FIELD_NAMES as readonly string[]).includes(p.name));
+  const tooManyUserProps = userProps.length > COLLAPSE_THRESHOLD;
   const orderedProps = useMemo(() => {
     const order = new Map(attrs.map((a, i) => [a.id, i]));
-    return [...nonTagProps].sort(
+    return [...userProps].sort(
       (x, y) => (order.get(x.attr_id) ?? 9999) - (order.get(y.attr_id) ?? 9999),
     );
-  }, [nonTagProps, attrs]);
+  }, [userProps, attrs]);
 
   const setOrder = (next: AttrDef[]) => {
     setAttrs(next);
@@ -197,22 +204,74 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
     );
   }
 
-  // Hide the whole properties panel when the page has no properties/tags (the
-  // page-actions row is the entry to add). Show while adding a property/tag.
-  if (!hasProps && !adding && !tagVisible) return null;
+  // ⭐ 2026-10-31：B3 把「添加属性 / 添加标签」入口从顶部 page-actions 收进了属性区，
+  // 但属性区在没有属性时会整体隐藏 ⇒ **新页面根本没有添加入口**。mobile 组实测红：
+  // 「桌面属性表体检失败：找不到「添加属性」入口」。所以空态必须保留这两个入口。
+  if (!hasProps && !adding && !tagVisible) {
+    return (
+      <div className="properties properties-empty">
+        <div className="properties-head-row">
+          <button
+            className="prop-add-head"
+            title="添加属性"
+            onClick={() => {
+              setOpen(true);
+              setAdding(true);
+            }}
+          >
+            ＋ 添加属性
+          </button>
+          <button
+            className="prop-add-tag"
+            title="添加标签"
+            aria-label="添加标签"
+            onClick={() => usePropertyUiStore.getState().requestAddTag()}
+          >
+            ＋ 添加标签
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={hasProps ? "metadata-card" : ""}>
       <div className="properties">
+      <div className="properties-head-row">
       <button className="properties-toggle" onClick={() => setOpen((v) => !v)}>
         <span className="properties-toggle-title">
-          属性{nonTagProps.length > 0 ? `（${nonTagProps.length}）` : ""}
+          {`${nonTagProps.length} 项属性 · ${pageTags.length} 个标签`}
         </span>
         <span className="properties-toggle-caret">{open ? "▾" : "▸"}</span>
       </button>
+      <button
+        className="prop-add-head"
+        title="添加属性"
+        onClick={() => {
+          setOpen(true);
+          setAdding(true);
+        }}
+      >
+        ＋ 添加属性
+      </button>
+      </div>
       {open && (
-        <div className="properties-body">
-          <TagRow pageId={pageId} />
+        <div className={tooManyUserProps ? "properties-body is-collapsed" : "properties-body"} data-user-props={userProps.length}>
+          {/* 标签行直接并进网格（⚠️ 不要再套一层 `.prop-tag-line` 容器：那层 div 自己会占掉
+              网格的第 1 列，把"名字列"撑成标签 chips 的宽度 ⇒ 值列被推到很右边、整块错位）。 */}
+          <TagRow
+            pageId={pageId}
+            trailing={
+              <button
+                className="prop-add-tag"
+                title="添加标签"
+                aria-label="添加标签"
+                onClick={() => usePropertyUiStore.getState().requestAddTag()}
+              >
+                ＋
+              </button>
+            }
+          />
           {orderedProps.map((p, i) => (
               <div
                 key={p.attr_id}
@@ -266,6 +325,17 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
                 </span>
               </div>
             ))}
+          {systemProps.length > 0 && (
+            <details className="prop-system">
+              <summary>系统信息</summary>
+              {systemProps.map((p) => (
+                <div className="prop-row prop-row-system" key={p.attr_id}>
+                  <span className="prop-name">{p.name}</span>
+                  <span className="prop-value-text">{renderSystemValue(p)}</span>
+                </div>
+              ))}
+            </details>
+          )}
           {adding ? (
             <div className="prop-add-row">
               <input
@@ -348,7 +418,88 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
 }
 
 
+function renderSystemValue(p: PageProp): string {
+  return p.value === "" ? "未设置" : p.value;
+}
+
 function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  if (/^(作者|author)$/i.test(prop.name)) {
+    const person = formatPerson(prop.value);
+    if (person && !editing) {
+      // ⭐ 2026-10-31（owner）：「属性区不要人的图标」⇒ 只留名字，去掉圆形头像。
+      return (
+        <span className="prop-person" aria-label="作者" onClick={() => setEditing(true)} title="点击编辑">
+          {person.label}
+        </span>
+      );
+    }
+  }
+  if (prop.name === "来源") {
+    const u = formatUrl(prop.value);
+    if (u && !editing) {
+      return (
+        <span className="prop-link-wrap prop-value-source">
+          <a className="prop-link" href={u.href} target="_blank" rel="noreferrer" title={u.href}>
+            {u.display}
+          </a>
+          <span className="prop-note">发布到社区时会同时写进正文最前面（用于去重与导出）</span>
+          <span className="prop-link-actions">
+            <button
+              type="button"
+              className="prop-link-copy"
+              title="复制链接"
+              onClick={() => void navigator.clipboard?.writeText(u.copyText)}
+            >
+              复制
+            </button>
+            <button type="button" className="prop-link-edit" title="编辑" onClick={() => setEditing(true)}>
+              编辑
+            </button>
+          </span>
+        </span>
+      );
+    }
+    if (editing) {
+      return (
+        <input
+          className="prop-value"
+          autoFocus
+          value={prop.value}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={() => setEditing(false)}
+        />
+      );
+    }
+  }
+  if (prop.attr_type === "date" || prop.attr_type === "datetime") {
+    const f = formatDateTime(prop.value);
+    if (f && !editing) {
+      return (
+        <span className="prop-temporal" title={f.iso}>
+          {f.absolute} · {f.relative} · {f.timezone}
+          <button type="button" className="prop-edit-hint" onClick={() => setEditing(true)}>
+            编辑
+          </button>
+        </span>
+      );
+    }
+    if (editing) {
+      if (prop.attr_type === "datetime") {
+        return <DatetimeValueEditor value={prop.value} onChange={onChange} onDone={() => setEditing(false)} />;
+      }
+      return (
+        <input
+          type="date"
+          className="prop-value"
+          autoFocus
+          value={/^\d{4}-\d{2}-\d{2}/.test(prop.value) ? prop.value.slice(0, 10) : ""}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={() => setEditing(false)}
+        />
+      );
+    }
+  }
   if (prop.attr_type === "checkbox") {
     return (
       <input
@@ -371,28 +522,51 @@ function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string)
       </select>
     );
   }
-  if (prop.attr_type === "datetime") {
-    // 两条输入路径**并存**：选择器（带秒）＋ 手输（认「2008年5月9日 15:30:00」等写法）。
-    // 两条都走 `lib/dateTimeValue` 的同一份解析/格式化，避免两边不一致。
-    return <DatetimeValueEditor value={prop.value} onChange={onChange} />;
-  }
-  if (prop.attr_type === "date") {
-    // 日期选择器（不用手输 YYYY-MM-DD）。
+  return <EmptyableTextValue prop={prop} onChange={onChange} />;
+}
+
+function EmptyableTextValue({ prop, onChange }: { prop: PageProp; onChange: (v: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  // ⭐ 2026-10-31（owner）：「属性字段编辑后失去焦点自动变回阅读状态」。
+  // 以前非空文本**一直是 input**（blur 只处理空值）⇒ 编辑完还停在一只输入框里，
+  // 和其它类型（来源/日期）的"展示态"不一致。现在统一成：阅读态 <span> ＋ 点击进编辑，
+  // 失焦（或回车）立刻回阅读态（值已在 onChange 时逐字落库，不需要再提交一次）。
+  if (!editing) {
+    if (prop.value === "") {
+      return (
+        <button type="button" className="prop-empty" onClick={() => setEditing(true)}>
+          未设置（点击填写）
+        </button>
+      );
+    }
     return (
-      <input
-        type="date"
-        className="prop-value"
-        value={/^\d{4}-\d{2}-\d{2}/.test(prop.value) ? prop.value.slice(0, 10) : ""}
-        onChange={(e) => onChange(e.target.value)}
-      />
+      <span
+        className="prop-text"
+        role="button"
+        tabIndex={0}
+        title="点击编辑"
+        onClick={() => setEditing(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setEditing(true);
+          }
+        }}
+      >
+        {prop.value}
+      </span>
     );
   }
   return (
     <input
       className="prop-value"
+      autoFocus
       value={prop.value}
-      placeholder="输入值"
       onChange={(e) => onChange(e.target.value)}
+      onBlur={() => setEditing(false)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === "Escape") setEditing(false);
+      }}
     />
   );
 }

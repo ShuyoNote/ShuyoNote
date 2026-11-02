@@ -44,11 +44,11 @@ pub fn state_after_local_confirm(current: TrustState) -> TrustState {
     }
 }
 
-/// ⭐ 对方那边动了（⭐ 它点了 ／ ⭐ 它发来「我想信任你」✓）之后的状态 ✓。
-/// ⭐ 甲 之下**这一侧自动采纳** ✗ ⇒ ⭐ 直接通 ✓（⭐ "不问那台的人" ✓）。
+/// ⭐ 对方那边动了（旧内核的 remote-confirm 一档）之后的状态 ✓。
+/// ⚠️ **2026-10-26（owner 拍 A）之后生产路径不再调用它** ✗ —— 保留只为旧判据/兼容；
+/// ⭐ 真正让状态变 `Trusted` 的只有**本机自己点确认**（`state_after_local_confirm`）✓。
 pub fn state_after_remote_confirm(current: TrustState) -> TrustState {
     match current {
-        // ⭐ 甲：对面动过 ⇒ 自动采纳 ⇒ 直接信 ✓（⭐ 原先"⭐ 只记成 `RemotePending` ✗"已取代 ✓）。
         TrustState::Idle => TrustState::Trusted,
         TrustState::Trusted => TrustState::Trusted,
     }
@@ -68,15 +68,15 @@ pub enum TrustRole {
     Responder,
 }
 
-/// ⭐ 看到对方的「想信任」之后的状态 ✓。
-/// ⭐⭐ **甲** ✗：⭐ 看到就是采纳 ⇒ ⭐ 直接通 ✓（⭐ "不问那台的人" ✓）。
-/// ⚠️ 原先那句"⭐ 看到 ≠ 同意 ✗、⭐ 一定要本机的人再点一下 ✓"**已被 owner 的甲取代** ✗ ✓。
+/// 看到对方的「想信任」之后的状态 ✓。
+/// ⭐⭐ **2026-10-26（owner 拍 A：两边各点一次确认，R208）**：⭐ **看到 ask ≠ 信任** ✓ ——
+/// ⛔ 状态**不变**（`Idle` 仍是 `Idle`）✗；要变成 `Trusted`，必须本机自己点「接入」并确认
+/// （`state_after_local_confirm`）✓。
+/// ⚠️ 旧口径（2026-10-17「一方配对成功，就双向通」）在这里直接 `Trusted`；撤销理由与
+/// DB 那一条同源：同网段一条 ask 就能让人以为已经配对 ✓，而真实名单里什么都没有 ✗。
 pub fn state_after_ask_seen(current: TrustState) -> TrustState {
-    match current {
-        TrustState::Idle => TrustState::Trusted,
-        // ⭐ 已经信任 ⇒ ⭐ 不因"⭐ 又收到一遍广播 ✗"而变化 ✓（⭐ 广播是周期性的 ✓）。
-        TrustState::Trusted => TrustState::Trusted,
-    }
+    // ⭐ 不因"又收到一遍广播"而变化 ✓（广播是周期性的 ✓）；也不因**第一次**看到就变 ✓。
+    current
 }
 
 /// ⭐ 确认时要不要**由我生成**那把配对密钥 ✗ —— ⭐ 只有**被问的那台**生成 ✓。
@@ -99,12 +99,12 @@ pub fn confirm_generates_secret(role: TrustRole) -> bool {
 /// ⇒ ⭐ 甲 的真实形状是：⭐ 点的那一侧 ⭐ 用**已有的令牌**登记对面 ✓（`remember_peer_card` ✓）。
 /// ⭐⭐ **2026-10-13（P-4 片①）按代码实际行为订正** ✗ —— 这一句原来是「另一位收到 `trust_ask` ⇒
 /// ⭐ **自动采纳** ✓」，⚠️ 它**半对半错** ✗（以代码为准，⛔ 不凭注释 ✗）：
-/// · ✅ 还成立的：⭐ 收到 ask ⇒ ⭐ 本机**状态**推进到已信任 ✓（`state_after_ask_seen` ✓，判据
-///   `remote_side_acting_alone_also_reaches_trusted` ✓ 仍在 ✓）；
-/// · ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）** ✗：⭐ 「自动采纳」那半**又成立**了 ✓
-///   —— ⭐ 收到 ask ⇒ ⭐ 这一侧**也把对面登记上** ✓（`sync::note_pending_trust_asks` ⇒
-///   `pair_pubkey` ＋ `add_paired_pubkey` ✓；判据 `receiving_a_trust_ask_registers_the_asker_so_both_directions_work` ✓）。
-///   ⚠️ 2026-10-12 那条「登记只在点的那一侧」**已被推翻** ✓（真机来由：AMD 侧配对后拉本机每轮 401 ✓）。
+/// · ⭐⭐ **2026-10-26（owner 拍 A：两边各点一次确认，R208）** ✗：⭐ 「收到 ask ⇒ 自动采纳」那半**撤销** ✓ ——
+///   `sync::note_pending_trust_asks` 现在**只读 ＋ 日志**，⛔ 一个字节都不写库 ✗；
+///   `state_after_ask_seen` 也**不再把状态推进到 `Trusted`**（看到 ≠ 同意）✓。
+///   ⭐ 要双向 ⇒ 两边各点「接入」并核对确认 ✓（判据 `receiving_a_trust_ask_does_not_register_the_asker`）。
+///   ⚠️ 被撤销的是 2026-10-17 的「一方配对成功，就双向通」（真机来由：AMD 侧配对后拉本机每轮 401 ✓），
+///   不是 2026-10-12 的「登记只在点的那一侧」——后者**现在重新成立** ✓。
 pub const fn one_sided_click_establishes_trust() -> bool {
     true
 }
@@ -236,7 +236,8 @@ pub fn pairing_code_reading_of(
     if trust_ask.trim().is_empty() {
         return PairingCodeReading {
             code: None,
-            reason: "这一轮没有进行中的握手（trust_ask 是空的）⇒ 先点「接入」，再对这一屏".to_string(),
+            reason: "这一轮没有进行中的握手（trust_ask 是空的）⇒ 先点「接入」，再对这一屏"
+                .to_string(),
         };
     }
     PairingCodeReading {
@@ -374,11 +375,11 @@ impl TrustHandshake {
     /// ⭐⭐ **2026-10-13（P-4 片①）按代码实际行为订正** ✗ —— 上面那段「采纳（登记对面 ＋ 推进状态）
     /// 在 `sync.rs`」⚠️ **两头都不准** ✗（以代码为准，⛔ 不凭注释 ✗）：
     /// · ⛔ "推进状态在 sync.rs" ✗ —— ⭐ 它就在**本函数紧下面那一行**（`state_after_ask_seen` ✓）；
-    /// · ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）** ✗：⭐ "登记对面在 sync.rs" 那半**又成立**了 ✓
-    ///   —— ⭐ 这一侧收到 ask ⇒ `sync::note_pending_trust_asks` 会登记对面 ✓
-    ///   （判据 `sync.rs` 的 `receiving_a_trust_ask_registers_the_asker_so_both_directions_work` ✓
-    ///   ＋ `receiving_a_pending_ask_registers_the_asker_and_respects_space_and_ttl` ✓）。
-    ///   ⚠️ 2026-10-12 的「收到 ask 一个字节都不登记」**已被 owner 推翻** ✓（真机来由：AMD 侧 401 ✓）。
+    /// · ⛔ "收到 ask ⇒ `sync::note_pending_trust_asks` 会登记对面" ✗ —— **2026-10-26 owner 拍 A（R208）
+    ///   撤销了 2026-10-17 的「一方配对成功，就双向通」** ⇒ 现在那一层**只读 ＋ 日志，一个字节都不写库**
+    ///   （判据 `sync::tests::receiving_a_trust_ask_writes_nothing` 按源码文本钉住）。
+    ///   ⚠️ 2026-10-17 那条真机来由（AMD 侧 401）仍然成立，但**解法换了**：两边各点一次「接入」确认；
+    ///   ⛔ 不是单方自动登记（旧判据名 `receiving_a_trust_ask_registers_the_asker_…` 已不存在）。
     pub fn note_ask(&mut self, peer_device_id: &str, now_ms: i64, ttl_ms: i64) {
         // ⚠️ 兼容旧调用点（⭐ 只记"谁问的" ✓）；⭐ 要算比对码的那条路走 [`Self::note_ask_with`] ✓
         self.note_ask_with(peer_device_id, "", now_ms, ttl_ms);
@@ -605,17 +606,20 @@ mod tests {
     }
 
     #[test]
-    fn remote_side_acting_alone_also_reaches_trusted() {
-        // ⭐ 甲 的另一半：⭐ 对面那条路 ⇒ ⭐ 这一侧**自动采纳** ⇒ ⭐ 直接通 ✓（"不问那台的人" ✓）。
+    fn seeing_the_ask_alone_is_not_trust() {
+        // ⭐⭐ 2026-10-26（owner 拍 A）：⭐ 只看得到「我想信任你」**不算信任** ✓ ——
+        //   要本机自己点「接入」并确认（`state_after_local_confirm`）才进 `Trusted` ✓。
+        assert_eq!(
+            state_after_ask_seen(TrustState::Idle),
+            TrustState::Idle,
+            "⛔ 看到 ask 不许自动变成已信任（那正是 R208 的 UI 版）"
+        );
+        // ⚠️ `state_after_remote_confirm` 是旧内核的一档（生产路径已不走它）⇒ 行为先保留 ✓，
+        //   但它**不能**被 ask 那条路调用（见上）。
         assert_eq!(
             state_after_remote_confirm(TrustState::Idle),
             TrustState::Trusted,
-            "甲：收到对面的确认 ⇒ 自动采纳 ⇒ 直接信"
-        );
-        assert_eq!(
-            state_after_ask_seen(TrustState::Idle),
-            TrustState::Trusted,
-            "甲：看到「我想信任你」那条广播 ⇒ 自动采纳 ⇒ 直接信（⛔ 不要人再点一下）"
+            "旧内核的 remote-confirm 语义保留（生产已无调用点）"
         );
     }
 
@@ -662,12 +666,14 @@ mod tests {
     }
 
     #[test]
-    fn seeing_the_ask_agrees_under_jia() {
-        // ⭐⭐ 甲 之后**反过来了** ✗（原判据名 `seeing_the_ask_is_not_agreeing` ✓ —— ⭐ 改名是为了让翻转看得见 ✓）：
-        //    ⭐ 收到"想信任"那条广播 ⇒ ⭐ 这一侧**自动采纳** ⇒ ⭐ 直接 `Trusted` ✓（"不问那台的人" ✓）。
-        assert_eq!(state_after_ask_seen(TrustState::Idle), TrustState::Trusted);
-        // ⭐ 周期性广播重复到达 ⇒ ⭐ 不把已有状态冲回去 ✓（这一条甲前后都成立 ✓）。
-        assert_eq!(state_after_ask_seen(TrustState::Trusted), TrustState::Trusted);
+    fn seeing_the_ask_is_not_agreeing() {
+        // ⭐⭐ 2026-10-26（owner 拍 A）：⭐ 收到"想信任"那条广播 ⇒ **不算同意** ✓ ⇒ 状态不变 ✓。
+        assert_eq!(state_after_ask_seen(TrustState::Idle), TrustState::Idle);
+        // ⭐ 已经信任的那台，周期性广播重复到达也不把状态冲回去 ✓。
+        assert_eq!(
+            state_after_ask_seen(TrustState::Trusted),
+            TrustState::Trusted
+        );
     }
 
     #[test]
@@ -706,8 +712,16 @@ mod tests {
             Some("ask-1".to_string()),
             "⭐ 开完就能按那一台读到 ask ✓（⭐ 比对码的料 ✓）"
         );
-        assert_eq!(h.outbound_secret(1_500), "", "⛔ 一个字节的 secret 都不许出线 ✗");
-        assert_eq!(h.pending_asks(1_500), Vec::<String>::new(), "⭐ 不是「被人问」那一支 ✓");
+        assert_eq!(
+            h.outbound_secret(1_500),
+            "",
+            "⛔ 一个字节的 secret 都不许出线 ✗"
+        );
+        assert_eq!(
+            h.pending_asks(1_500),
+            Vec::<String>::new(),
+            "⭐ 不是「被人问」那一支 ✓"
+        );
     }
 
     /// 否则它算不出比对码（owner 2026-10-17 真机："点接入了，也没有（码）" ✓）。
@@ -750,7 +764,11 @@ mod tests {
         let mut h = TrustHandshake::default();
         h.begin("dev-b", "bbb", 1_000, TRUST_TTL_MS);
         h.note_ask_with("dev-c", "ccc", 1_000, TRUST_TTL_MS);
-        assert_eq!(h.ask_for("dev-b", 1_500), None, "⛔ 对着旧那台的那轮已作废 ✓");
+        assert_eq!(
+            h.ask_for("dev-b", 1_500),
+            None,
+            "⛔ 对着旧那台的那轮已作废 ✓"
+        );
         assert_eq!(h.ask_for("dev-c", 1_500), Some("ccc".to_string()));
     }
 
@@ -793,7 +811,11 @@ mod tests {
     fn note_ask_never_publishes_a_secret_before_the_human_confirms() {
         let mut h = TrustHandshake::default();
         h.note_ask("dev-a", 1_000, TRUST_TTL_MS);
-        assert_eq!(h.outbound_secret(1_500), "", "没人点过 ⇒ 不许有 secret 出线");
+        assert_eq!(
+            h.outbound_secret(1_500),
+            "",
+            "没人点过 ⇒ 不许有 secret 出线"
+        );
         assert_eq!(h.outbound_ask(1_500), "", "被问的那台不发问");
         assert!(h.is_active(1_500));
         // ⭐ 本机的人点过之后 ⇒ ⭐ 才有 ✓。
@@ -806,7 +828,10 @@ mod tests {
     fn confirm_refuses_a_peer_that_never_asked() {
         let mut h = TrustHandshake::default();
         h.note_ask("dev-a", 1_000, TRUST_TTL_MS);
-        assert!(!h.confirm("dev-z", "sek-x", 1_500, TRUST_TTL_MS), "没问过我的一台不许确认");
+        assert!(
+            !h.confirm("dev-z", "sek-x", 1_500, TRUST_TTL_MS),
+            "没问过我的一台不许确认"
+        );
         assert_eq!(h.outbound_secret(1_600), "");
         // ⭐ 根本没人问过 ⇒ ⭐ 也不能确认 ✓。
         let mut empty = TrustHandshake::default();
@@ -826,7 +851,11 @@ mod tests {
         let mut g = TrustHandshake::default();
         g.note_ask("dev-a", 1_000, TRUST_TTL_MS);
         assert!(g.confirm("dev-a", "sek-1", 1_100, TRUST_TTL_MS));
-        assert_eq!(g.outbound_secret(1_100 + TRUST_TTL_MS), "", "过期后不许再带 secret");
+        assert_eq!(
+            g.outbound_secret(1_100 + TRUST_TTL_MS),
+            "",
+            "过期后不许再带 secret"
+        );
         // ⭐ 「⭐ 从来没有过 ✗」（⭐ 0 ✓）⭐ 不是"⭐ 过期 ✗" ✓ —— ⭐ 语义不同 ✓，⭐ 别混 ✓。
         let idle = TrustHandshake::default();
         assert!(!idle.is_expired(9_999_999), "没有进行中的东西 ≠ 过期");
@@ -854,7 +883,11 @@ mod tests {
     fn expired_asks_are_never_offered_for_adoption() {
         let mut h = TrustHandshake::default();
         h.note_ask("dev-a", 1_000, TRUST_TTL_MS);
-        assert_eq!(h.pending_asks(1_500), vec!["dev-a".to_string()], "没过期 ⇒ 看得见 ✓");
+        assert_eq!(
+            h.pending_asks(1_500),
+            vec!["dev-a".to_string()],
+            "没过期 ⇒ 看得见 ✓"
+        );
         assert_eq!(
             h.pending_asks(1_000 + TRUST_TTL_MS - 1),
             vec!["dev-a".to_string()],
@@ -865,7 +898,10 @@ mod tests {
             "⛔ 到点之后绝不许再被采纳 ✗（一台关过机的对端不许几天后被采纳）"
         );
         // ⭐ 过期那一档**说得出**：`drop_expired` 回 `true` ⇒ 调用方记日志 ✓；⛔ 清过就回 `false` ✗（别重复报 ✓）。
-        assert!(h.drop_expired(1_000 + TRUST_TTL_MS), "过期 ⇒ 必须回 true（好记日志）");
+        assert!(
+            h.drop_expired(1_000 + TRUST_TTL_MS),
+            "过期 ⇒ 必须回 true（好记日志）"
+        );
         assert!(
             !h.drop_expired(1_000 + TRUST_TTL_MS),
             "清过了再问 ⇒ false（⛔ 别每轮重复报同一条 ✗）"
@@ -881,7 +917,11 @@ mod tests {
         let mut h = TrustHandshake::default();
         h.note_ask("dev-a", 1_000, TRUST_TTL_MS);
         h.note_remote_confirm(2_000, TRUST_TTL_MS);
-        assert_eq!(h.state(), TrustState::Trusted, "甲：对面动过 ⇒ 自动采纳 ⇒ 直接信");
+        assert_eq!(
+            h.state(),
+            TrustState::Trusted,
+            "甲：对面动过 ⇒ 自动采纳 ⇒ 直接信"
+        );
         assert!(
             h.pending_asks(2_100).is_empty(),
             "采纳过的这一条不许再返回（否则每轮重写一遍卡片）"
@@ -889,11 +929,23 @@ mod tests {
         // ② ⭐ 本机点过那一档**现在接线了** ✗（`begin` 里推进 ✓ —— 这正是本轮修的缺口 ✓）。
         let mut g = TrustHandshake::default();
         g.begin("dev-b", "ask-1", 1_000, TRUST_TTL_MS);
-        assert_eq!(g.state(), TrustState::Trusted, "甲：`begin` ＝ 本机点过了 ⇒ 直接信");
+        assert_eq!(
+            g.state(),
+            TrustState::Trusted,
+            "甲：`begin` ＝ 本机点过了 ⇒ 直接信"
+        );
         g.note_ask("dev-a", 1_100, TRUST_TTL_MS);
-        assert_eq!(g.state(), TrustState::Trusted, "甲：对方发问 ⇒ 自动采纳 ⇒ 还是 Trusted");
+        assert_eq!(
+            g.state(),
+            TrustState::Trusted,
+            "甲：对方发问 ⇒ 自动采纳 ⇒ 还是 Trusted"
+        );
         g.note_remote_confirm(1_200, TRUST_TTL_MS);
-        assert_eq!(g.state(), TrustState::Trusted, "甲：两端都动过 ⇒ 仍 Trusted（幂等 ✓）");
+        assert_eq!(
+            g.state(),
+            TrustState::Trusted,
+            "甲：两端都动过 ⇒ 仍 Trusted（幂等 ✓）"
+        );
     }
 
     /// ⭐ `note_ask` 只许**记账** ✗：⭐ 周期性公告（30 秒一轮 ✓）不许把状态冲回 `Idle` ✓。
@@ -1001,11 +1053,23 @@ mod tests {
         let ask = "f".repeat(64);
         for (name, got) in [
             ("本机没身份", pairing_code_reading_of(None, "bb22", &ask)),
-            ("本机身份是空串", pairing_code_reading_of(Some("  "), "bb22", &ask)),
-            ("对面没报公钥", pairing_code_reading_of(Some("aa11"), "", &ask)),
-            ("这一轮没握手", pairing_code_reading_of(Some("aa11"), "bb22", "   ")),
+            (
+                "本机身份是空串",
+                pairing_code_reading_of(Some("  "), "bb22", &ask),
+            ),
+            (
+                "对面没报公钥",
+                pairing_code_reading_of(Some("aa11"), "", &ask),
+            ),
+            (
+                "这一轮没握手",
+                pairing_code_reading_of(Some("aa11"), "bb22", "   "),
+            ),
         ] {
-            assert_eq!(got.code, None, "⛔ {name} ⇒ 必须**读不到** ✗（⛔ 不许拿一个码冒充 ✗）");
+            assert_eq!(
+                got.code, None,
+                "⛔ {name} ⇒ 必须**读不到** ✗（⛔ 不许拿一个码冒充 ✗）"
+            );
             assert!(
                 got.reason.trim().len() > 8,
                 "⛔ {name} ⇒ 必须给**人话原因** ✗（⭐ 实测 {}）",
@@ -1029,6 +1093,11 @@ mod tests {
     /// 它是个 **tripwire**（⛔ 不是"永远不许加" ✗）；`WIRE_VERSION == 1` 那半**继续**有效 ✓
     /// （加可选字段**不许**升版本 ✓，否则新老互不可见 ✗）。
     /// 本次只动计数与这段说明，⛔ 不动任何产品代码 ✗。
+    ///
+    /// ⚠️⚠️ **2026-10-29 再改（owner 拍 B：J9 精确端口读数）：11 → 12 格** ✗ ——
+    /// 加的是 `NearbyPeer::announced_port: Option<u16>`（对端公告 `hub_base` 的端口 ✓；
+    /// `serde(default)` 那类可选格 ＋ ⛔ **不升 `WIRE_VERSION`** ✓ —— 与上一条**同一手法** ✓）。
+    /// ⭐ 那 12 格逐个都还在这条契约里：**只有可选的读数格在长** ✓，判定/凭证格一个没动 ✓。
     #[test]
     fn the_wire_version_and_the_nearby_contract_are_untouched() {
         let lan_src = include_str!("lan.rs");
@@ -1037,16 +1106,20 @@ mod tests {
             "⛔ **不许**升 `WIRE_VERSION` ✗（加字段只能「可选 ＋ 不升版本」✓；升了 ⇒ 新老互不可见 ✗）"
         );
         let sync_src = include_str!("sync.rs");
-        let at = sync_src.find("pub struct NearbyPeer {").expect("`NearbyPeer` 必须在");
+        let at = sync_src
+            .find("pub struct NearbyPeer {")
+            .expect("`NearbyPeer` 必须在");
         let body = &sync_src[at..sync_src[at..].find("\n}").map(|e| at + e).unwrap_or(at)];
         let fields = body
             .lines()
             .filter(|l| l.trim_start().starts_with("pub ") && l.trim_end().ends_with(','))
             .count();
         assert_eq!(
-            fields, 11,
+            fields, 12,
             "⛔ 给 `NearbyPeer` 加/删格**必须同时来改这一行并写明来由** ✗（tripwire ✓；实际 {fields} 格）\
-             —— ⚠️ 2026-10-16 由 8 改 11：08-b② 的 `short_id` ＋ P-B 的原因码等（各带日期注释 ✓）"
+             —— ⚠️ 2026-10-16 由 8 改 11：08-b② 的 `short_id` ＋ P-B 的原因码等（各带日期注释 ✓）；\
+             ⚠️ 2026-10-29 由 11 改 12：owner 拍 B 的 J9 精确端口读数 ⇒ `announced_port: Option<u16>`\
+             （可选格 ＋ ⛔ 不升 WIRE_VERSION ✓）"
         );
     }
 
@@ -1077,24 +1150,23 @@ mod tests {
         assert_eq!(idle.outbound_ask(9_999_999), "", "⭐ 没在等 ⇒ 空 ✓");
     }
 
-    /// ⭐ **判据③（锁，今天已绿 ✓）**：⭐ 收到 ask ⇒ ⭐ **一个字节都不登记** ✓
+    /// ⭐ **判据③（2026-10-26 owner 拍 A：两边各点一次确认）**：⭐ 收到 ask ⇒ ⭐ **一个字节都不登记** ✓
     /// （⭐ 与 `sync.rs` 那两条**同源** ✓ —— 本格只是把"我还认这条"钉在这里 ✓）。
-    /// ⭐ **判据③（**2026-10-17 改口径** ✗）**：⭐ 收到 ask ⇒ ⭐ **这一侧也登记对面** ✓
-    /// （owner 拍「一方配对成功，就双向通」✓ —— ⛔ 不再是 2026-10-12 的"一个字节都不登记"✗）。
+    /// ⚠️ 这一条**取代** 2026-10-17 的「收到 ask ⇒ 这一侧也登记对面」✗（R208 安全洞）。
     #[test]
-    fn receiving_an_ask_registers_reciprocally() {
+    fn receiving_an_ask_does_not_register_reciprocally() {
         let src = include_str!("sync.rs");
         assert!(
             src.contains("pub(crate) fn note_pending_trust_asks("),
             "⭐ 那条**唯一实现**要在 ✓（⭐ 名字改了这条要跟着改 ✓）"
         );
         assert!(
-            src.contains("receiving_a_trust_ask_registers_the_asker_so_both_directions_work"),
-            "⭐ 它是「收到 ask ⇒ 本侧也登记（双向通）」那条判据的名字 ✓"
+            src.contains("receiving_a_trust_ask_does_not_register_the_asker"),
+            "⭐ 它是「收到 ask ⇒ 不自动登记」那条判据的名字 ✓"
         );
         assert!(
-            src.contains("receiving_a_trust_ask_writes_only_the_pubkey_registration"),
-            "⭐ 同上（登记面收窄那条真变异 ✓）"
+            src.contains("receiving_a_trust_ask_writes_nothing"),
+            "⭐ 同上（源码级不写库那条真变异 ✓）"
         );
     }
 
@@ -1109,7 +1181,6 @@ mod tests {
         );
     }
 }
-
 
 /// ⭐⭐ **2026-10-25（配对码对不上）判据**：把"两端"的输入互换，**必须算出同一个码**。
 ///
@@ -1130,13 +1201,11 @@ mod pairing_code_agreement_tests {
         let peer_ask = "bbbb2222";
 
         // A 侧（我=MY，端=PEER）
-        let a = pairing_code_reading_both(
-            Some(MY_PUB), PEER_PUB, my_ask, peer_ask, MY_DEV, PEER_DEV,
-        );
+        let a =
+            pairing_code_reading_both(Some(MY_PUB), PEER_PUB, my_ask, peer_ask, MY_DEV, PEER_DEV);
         // B 侧（我=PEER，端=MY）—— 公钥/设备号/ask 全部互换
-        let b = pairing_code_reading_both(
-            Some(PEER_PUB), MY_PUB, peer_ask, my_ask, PEER_DEV, MY_DEV,
-        );
+        let b =
+            pairing_code_reading_both(Some(PEER_PUB), MY_PUB, peer_ask, my_ask, PEER_DEV, MY_DEV);
 
         let ca = a.code.expect("A 侧应算得出");
         let cb = b.code.expect("B 侧应算得出");

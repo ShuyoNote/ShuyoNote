@@ -232,6 +232,16 @@ export interface NearbyPeer {
   short_id: string;
   /** 收到它公告的来源地址（ip）。⚠️ 默认**不显示**（规格 §3.4：只用于排障）。 */
   addr: string;
+  /**
+   * ⭐ **2026-10-29（owner 拍 J9「精确端口读数」）**：⭐ 对端公告里 `hub_base` 的**端口** ✗
+   * —— 界面据此把「两端参数不一致」从**原因清单**升级成**精确比对**（「本机 :8788 / 对方 :47999」✓）。
+   *
+   * ⚠️ 解析**只在 Rust 一处**（`lan::port_of_base` ✓）：公告里有显式端口才给数字；
+   * 没报 `hub_base`／没有显式端口／坏 URL ⇒ **`null`**（⛔ 不按 http 默认 80 猜 ✗）。
+   * ⚠️ `undefined`（老构建没这一格）与 `null` **同一处置**：当作"对方没报端口" ✓。
+   * ⚠️ 端口号**可以显示给用户** ✓；⛔ **地址／设备号／配对暗号一律不进可见文案** ✗。
+   */
+  announced_port?: number | null;
   /** 它**自己声明**在服务哪些空间（远端 `space_id`）。界面不许自己算交集。 */
   spaces: string[];
   /** 它跟我**当前这个空间**相不相关（**Rust 判的**，界面直接显示）。 */
@@ -298,6 +308,8 @@ export interface MeshRoundReport {
   /** **说得出为什么**：用户要能分辨"没开"／"开了但网段里没人"／"有人但都拉不动"。 */
   note: string;
   candidates: number;
+  /** ⭐ 2026-10-29：本轮**真的收下**的页数（Rust 侧各对端 `applied` 之和）。 */
+  applied: number;
   peers: MeshPeerPullReport[];
   /** 本机窗口**实际**绑在哪儿（没开 ⇒ `null`）。 */
   window: string | null;
@@ -663,7 +675,14 @@ export type DictionaryMissKind = "empty" | "not_english" | "not_found" | "too_lo
 export type DictionaryLookupOutcome =
   | { status: "found"; query: string; matched: string; entry: DictionaryEntry }
   | { status: "not_found"; query: string; kind: DictionaryMissKind; message: string }
-  | { status: "unavailable"; message: string };
+  | { status: "unavailable"; message: string }
+  /**
+   * ⭐ task-14（2026-11-01）：**这一项被用户在「设置 → 能力」里停用了**。
+   *
+   * ⚠️ 与 `unavailable`（没装/坏了）**必须分开**：处置完全不同 —— 一个去下载，
+   * 一个去启用。混成一个状态，界面就只能说"未就绪"，把用户自己的选择说成故障。
+   */
+  | { status: "disabled"; message: string };
 
 /**
  * 词库 pack **首次下载**完成后的读数（对应 `dictionary.rs::PackInstallReport`）。
@@ -684,6 +703,14 @@ export interface DictionaryPackInstallReport {
 /** 词典状态读数（界面据此决定显不显示"本地词典"那一档；`entries: null` = 读不出来，不猜）。 */
 export interface DictionaryStatus {
   available: boolean;
+  /**
+   * ⭐ task-14：**盘上有没有那个词库文件** —— 与 `available` **不是一回事**：
+   * 有文件但被用户停用 ⇒ `installed: true` ／ `available: false` ／ `disabled: true`。
+   * 界面靠它把"已装但已停用"那一行留在「可用（已装）」里（⛔ 不许当成"没装" ✗）。
+   */
+  installed: boolean;
+  /** ⭐ task-14：这一项在「设置 → 能力」里被停用了（停用 ⇒ `available` 恒为 false）。 */
+  disabled: boolean;
   path: string | null;
   bytes: number | null;
   entries: number | null;
@@ -750,6 +777,32 @@ export interface RelayStatus {
   license: RelayLicenseView;
 }
 
+/**
+ * ⭐ task-14（2026-11-01）：一条能力在「设置 → 能力」里的**启停读数**
+ * （对应 Rust `abilities::AbilityEnabled`）。
+ *
+ * ⚠️ 它是**后端状态**，⛔ 不是界面自娱自乐的开关：`office-import` 的入口拦截、
+ * `dictionary_status` / `dictionary_lookup` 的 `disabled` 都读同一份（`<app_data>/abilities-state.json`）。
+ */
+export interface AbilityEnabledFlags {
+  id: string;
+  /** 缺省（后端没这条记录）= 启用；读不到状态 ⇒ 界面按启用处理（fail-open，与 Rust 同口径）。 */
+  enabled: boolean;
+  /** 能不能卸载：`builtin` / `local-endpoint` ⇒ `false`（可禁用，但没有可删的 pack）。 */
+  uninstallable: boolean;
+}
+
+/**
+ * ⭐ task-14：卸载的读数（对应 Rust `abilities::UninstallReport`）。
+ * ⚠️ `removed: false` = 它本来就不在（**幂等**，不是错误）；⛔ 界面不许把两者说成一样。
+ */
+export interface AbilityUninstallReport {
+  /** 那个 pack 目录的路径（删之前记下的）。 */
+  path: string;
+  removed: boolean;
+  bytes: number;
+}
+
 export interface CommandMap {
   // ---- 交付通道 shuyonote:// 的 OS 层（桌面） ----
   /**
@@ -780,6 +833,12 @@ export interface CommandMap {
     args: { packId: string; base64: string };
     result: { path: string; bytes: number; sha256: string; audit: string };
   };
+  // ⭐ task-14（2026-11-01）：能力的**启停**与**卸载**（桌面专属 —— 能力包只落在本机 packs 目录）。
+  //    ⚠️ 白名单是**闭集**（`office-import` / `ecdict-en-zh` / `vlm-ocr`），后端对别的 id 一律拒；
+  //    卸载**只删** `<app_data>/packs/<packId>` 且幂等；状态存 `<app_data>/abilities-state.json`（原子写）。
+  ability_states: { args: undefined; result: AbilityEnabledFlags[] };
+  ability_set_enabled: { args: { packId: string; enabled: boolean }; result: AbilityEnabledFlags[] };
+  ability_uninstall: { args: { packId: string }; result: AbilityUninstallReport };
   // ---- P0 格式引擎（Kreuzberg v4.10.x，MIT；桌面专属） ----
   // ⚠️ 只**取文本**：不写派生表（`attachment_text` / `chunks` 的唯一写入者仍是 `src/lib/extract/` ✓）。
   // 补的是本仓既有 TS 链吃不下的一类：eml／msg／zip／7z／gz／rtf／odt／epub／学术格式 ✓。
@@ -838,10 +897,10 @@ export interface CommandMap {
   // ---- Pages ----
   list_pages: { args: undefined; result: PageMeta[] };
   list_workspace_pages: { args: { workspaceId: string }; result: PageMeta[] };
-  get_page: { args: { id: string }; result: PageDetail };
-  delete_page: { args: { id: string }; result: void };
+  get_page: { args: { id: string; spaceId?: string }; result: PageDetail };
+  delete_page: { args: { id: string; spaceId?: string }; result: void };
   purge_page: { args: { id: string }; result: void };
-  restore_page: { args: { id: string }; result: void };
+  restore_page: { args: { id: string; spaceId?: string }; result: void };
   list_deleted: { args: undefined; result: PageMeta[] };
   create_page: { args: { args: { parent_id: string | null; title?: string; content_json?: string; content_text?: string } }; result: PageDetail };
   create_folder: { args: { args: { parent_id: string | null; title?: string } }; result: PageDetail };
@@ -1007,6 +1066,27 @@ export interface CommandMap {
   //    那一支），而不是假装发现了谁。契约形状与 `src-tauri/src/sync.rs::LanStatus` 逐字段相同。
   lan_status: { args: { workspaceId?: string | null }; result: LanStatus };
   /**
+   * ⭐ **2026-10-28（owner：「一步到位」·P1）**：**加密空间的逐条同步状态** ——
+   * 说清"为什么没数据"（本机锁着 / 对端锁着 / 对端不在线 / 可以拉），并给出"解锁后会自动接入 N 个空间"。
+   */
+  space_sync_state: {
+    args: undefined;
+    result: {
+      encrypted: {
+        wsId: string;
+        name: string;
+        unlocked: boolean;
+        room: string;
+        pendingInbox: number;
+        peersServing: string[];
+        peersTotal: number;
+        note: string;
+      }[];
+      pendingAdopt: number;
+      peersTotal: number;
+    };
+  };
+  /**
    * 丙-③-b ③：**对等交换（网格）跑一轮** —— 确认本机窗口 ＋ 从发现到的对端各拉一批。
    *
    * ⚠️ **两侧都实现**（不登记成 web 专属）：Web 平台**既没有发现层、也开不了本机端口**
@@ -1066,6 +1146,13 @@ export interface CommandMap {
     };
     result: MeshConfigState;
   };
+  /**
+   * ⭐ **2026-10-27（owner 拍 M2）**：**用户进入「局域网同步」页时**才把局域网前置备好
+   * （设备身份／自动组名／监听地址／档案行；只补不覆盖、幂等）。
+   * ⚠️ ⛔ 不在启动时调 —— 桌面保持「用户不配就不广播」那条隐私口径 ✓。
+   * 回的是**读数**（同 `mesh_set_config`）。
+   */
+  mesh_ensure_defaults: { args: { workspaceId?: string | null }; result: MeshConfigState };
 
   // ---- MCP 接入的面板（M1 收口，2026-10-06 ✓）----
   // 面板只要三件事：读状态／开关／轮换令牌 ✓；**通道那半不在这里**（它归 `mcp_channel` ✓）。
@@ -1077,6 +1164,19 @@ export interface CommandMap {
   mcp_set_write_grant: { args: { on: boolean }; result: McpStatus };
   // ⭐ R150：外部草稿的落库结果回执（写 mcp/apply.log ✓）
   mcp_log_apply_result: { args: { line: string }; result: void };
+  mcp_draft_state: { args: { draftId: string; state: string }; result: void };
+  space_package_import: { args: { payload: unknown }; result: unknown };
+  mcp_recent_drafts: { args: { limit?: number }; result: unknown[] };
+  mcp_download_grant: { args: { attId: string; spaceId?: string }; result: unknown };
+  mcp_recent_audit: { args: { limit?: number; onlyWrites?: boolean }; result: unknown[] };
+  mcp_hidden_spaces_get: { args: undefined; result: { spaceIds: string[] } };
+  mcp_hidden_spaces_set: { args: { spaceIds: string[] }; result: { spaceIds: string[] } };
+  // ⭐ B3（2026-10-29）：Rust→前端桥 —— 就绪信号 ＋ 结果回执（桌面专属：Web 没有本机 MCP 通道）
+  mcp_frontend_tool_ready: { args: undefined; result: void };
+  mcp_frontend_tool_respond: {
+    args: { requestId: string; name: string; data: number[]; error?: string | null };
+    result: void;
+  };
   // ⭐ R152：面板的四档选择（不接／只读／可写待确认／可写免确认）
   mcp_set_level: { args: { level: string }; result: McpStatus };
   move_page: { args: { args: { id: string; new_parent_id: string | null; sort_order: number } }; result: void };
@@ -1338,6 +1438,8 @@ export interface CommandMap {
       segments: { extractor: string; kind: string; text: string; loc: string }[];
       total: number;
       truncated: boolean;
+      /** 每个抽取器上次报的覆盖度（Rust `AttachmentTextPage.coverage`；空 = 未知，⛔ 不等于完整）。 */
+      coverage: { extractor: string; coverage: string }[];
     } | null;
   };
   /** 派生文本层的**桌面运输通道**（⚠️ **桌面专属**：Web 平台 TS 直接跑 sql.js，故 web.ts 故意不实现，
@@ -1363,9 +1465,15 @@ export interface CommandMap {
   // ---- Attachments ----
   save_image: { args: { args: { page_id: string | null; name: string | null; mime: string; data: number[] } }; result: AttachmentMeta };
   attachment_path: { args: { hash: string }; result: string };
+  /**
+   * ⭐ **2026-10-28（owner：「打开 html 变成 BIN 文件」）**：把这一件**以原始文件名/扩展名**
+   * 落一份临时副本，返回该路径（界面再交给系统默认应用打开）——
+   * 盘上那份是内容寻址的 `<hash>.bin`，直接打开会被系统当成二进制 ✗。
+   */
+  prepare_attachment_open: { args: { hash: string; name: string }; result: string };
   get_attachment: { args: { id: string }; result: AttachmentMeta };
   /** 原始字节以 ArrayBuffer 回传（Rust 侧用 tauri::ipc::Response），不走 JSON 数字数组。 */
-  read_attachment_bytes: { args: { hash: string }; result: ArrayBuffer };
+  read_attachment_bytes: { args: { hash: string; spaceId?: string }; result: ArrayBuffer };
   /**
    * ⭐ 2026-10-11（owner 拍「甲：一端点就通，图④为准」）：⭐ **一键信任** ✗ ——
    * 点「信任这台设备」⇒ 用本空间**已有的网格令牌**把对面登记好 ＋ 广播一条「我想信任你」⇒ **通** ✓。
@@ -1382,10 +1490,9 @@ export interface CommandMap {
    * ⇒ ⭐ 这一下的产物**不再是"共用口令的哈希"** ✗，⭐ 而是 ⭐ **把对方的公钥记进自己那份名单** ✗
    *   （`peerPubkey` ⇒ 门此后**验签** ✓）。
    *
-   * ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）** ✗：⭐ 上面「单方信任 ⇒ 单向」那半**作废** ✓
-   * ⇒ ⭐ 点这一下之后：本机登记对面 ✓，⭐ 对面收到这一轮 `trust_ask` 也会**互相登记** ✓
-   *   （`sync::note_pending_trust_asks` ✓）⇒ ⭐ **一次配对，两个方向都通** ✓（对面不用再点一次 ✓）。
-   * ⚠️ 真机来由：AMD 侧配对后拉本机每一轮 401（「这张卡不在名册里」）—— 那正是单方配对只开一个方向 ✓。
+   * ⭐⭐ **2026-10-26（owner 拍 A：两边各点一次确认，R208）** ✗：⭐ 撤销 2026-10-17 的「一方配对成功就双向通」✗
+   * ⇒ ⭐ 点这一下只开**本机允许它来拿**这一个方向 ✓；对面也要点一次「接入」并确认，**双向**才通 ✓
+   *   （`sync::note_pending_trust_asks` 现在**只读不写** ✓）。
    * ⚠️ 结果档随之变：`trusted` ／ `no_identity`（对面没报公钥 ⇒ 如实说、⛔ 不硬凑）／
    *   `not_configured` ／ `bad_peer`；⭐ `no_token` **退役**（⛔ 没口令也照样能信任 ✓）。
    */
@@ -1426,13 +1533,14 @@ export interface CommandMap {
   copy_attachment: { args: { hash: string; destPath: string }; result: void };
   import_attachment_files: { args: { pageId: string | null; paths: string[] }; result: AttachmentMeta[] };
   // pageId 为 null = 空间根下的「未整理」文件（page_id IS NULL）。
-  list_page_attachments: { args: { pageId: string | null }; result: AttachmentMeta[] };
+  list_page_attachments: { args: { pageId: string | null; spaceId?: string }; result: AttachmentMeta[] };
   // ⭐ 2026-10-12（owner 拍：**幂等但如实返回"删了 0 条"**）：返回**实际删掉的条数**
   //（`1` = 真删到，`0` = 本来就没这一行 ⇒ ⛔ **不报错**）；界面据此自己决定提示什么 ✓。
-  remove_attachment: { args: { id: string }; result: number };
+  remove_attachment: { args: { id: string; spaceId?: string }; result: number };
   remove_attachments: { args: { ids: string[] }; result: number };
-  move_attachment: { args: { id: string; newPageId: string }; result: void };
-  rename_attachment: { args: { id: string; name: string }; result: void };
+  move_attachment: { args: { id: string; newPageId: string; spaceId?: string }; result: void };
+  rename_attachment: { args: { id: string; name: string; spaceId?: string }; result: void };
+  detach_attachment: { args: { id: string; spaceId?: string }; result: void };
   restore_attachment: { args: { targetPageId: string; sourceId: string }; result: AttachmentMeta };
 
   // ---- Sync ----
@@ -1474,46 +1582,40 @@ export interface CommandMap {
    *  两者混同就会把桌面的自动同步也一起关掉。 */
   network_type: { args: undefined; result: string };
 
-  // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
-  // 参数键一律 camelCase：Tauri 2 只认 camelCase，再映射到 Rust 的 snake_case 形参。
-  // （result 里的字段来自 serde 序列化的 Rust 结构体，仍是 snake_case。）
-  team_register: { args: { serverUrl: string; email: string; password: string; display?: string | null; registerCode?: string | null }; result: { token: string } };
-  team_login: { args: { serverUrl: string; email: string; password: string }; result: { token: string } };
-  team_logout: { args: { serverUrl: string }; result: void };
-  team_list_spaces: { args: { serverUrl: string; token: string }; result: { id: string; name: string; role: string; owner_id: string }[] };
-  team_create_space: { args: { serverUrl: string; token: string; name: string; orgId?: string | null }; result: { id: string; name: string; role: string; owner_id: string } };
-  team_list_members: { args: { serverUrl: string; token: string; spaceId: string }; result: { user_id: string; email: string; role: string }[] };
-  team_invite_member: { args: { serverUrl: string; token: string; spaceId: string; email: string; role: string }; result: void };
-  team_set_member_role: { args: { serverUrl: string; token: string; spaceId: string; email: string; role: string }; result: void };
-  team_remove_member: { args: { serverUrl: string; token: string; spaceId: string; userId: string }; result: void };
-  team_get_session: { args: undefined; result: { server_url: string; token: string } };
-  team_get_me: { args: { serverUrl: string; token: string }; result: { email: string } };
-  team_get_server_email: { args: { serverUrl: string }; result: string | null };
+
+
+
+
+
+
+
+
+
+
+
+
   list_sync_history: { args: { limit?: number }; result: { ws_id: string; ws_name: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string; title: string }[] }[] };
   clear_sync_history: { args: undefined; result: void };
-  // ---- P0 org management (research group) ----
-  team_list_orgs: { args: { serverUrl: string; token: string }; result: { id: string; name: string; role: string; owner_id: string }[] };
-  team_create_org: { args: { serverUrl: string; token: string; name: string }; result: { id: string; name: string; role: string; owner_id: string } };
-  team_list_org_members: { args: { serverUrl: string; token: string; orgId: string }; result: { members: { user_id: string; email: string; role: string; disabled: boolean }[]; pending: { email: string; status: string }[] } };
-  team_invite_org_member: { args: { serverUrl: string; token: string; orgId: string; email: string; role: string }; result: void };
-  team_set_org_member_active: { args: { serverUrl: string; token: string; orgId: string; userId: string; active: boolean }; result: void };
-  team_remove_org_member: { args: { serverUrl: string; token: string; orgId: string; userId: string }; result: void };
-  team_approve_org_invite: { args: { serverUrl: string; token: string; orgId: string; email: string }; result: void };
-  team_reject_org_invite: { args: { serverUrl: string; token: string; orgId: string; email: string }; result: void };
-  team_deactivate_account: { args: { serverUrl: string; token: string }; result: void };
-  team_deactivate_org_member: { args: { serverUrl: string; token: string; orgId: string; userId: string }; result: void };
-  team_generate_org_invite_code: { args: { serverUrl: string; token: string; orgId: string }; result: string };
-  team_join_org_by_code: { args: { serverUrl: string; token: string; code: string }; result: void };
 
-  // ---- Near-realtime collaboration (P0.2 presence / P1 comments+notifications / P1.5 SSE) ----
-  team_presence_beat: { args: { serverUrl: string; token: string; spaceId: string; pageId?: string | null; deviceId?: string | null }; result: { ok: boolean; last_seen_at: number } };
-  team_online: { args: { serverUrl: string; token: string; spaceId: string }; result: { user_id: string; email?: string | null; page_id?: string | null; last_seen_at: number }[] };
-  team_list_comments: { args: { serverUrl: string; token: string; spaceId: string; pageId: string }; result: { id: string; parent_id?: string | null; author_id: string; body: string; created_at: number }[] };
-  team_add_comment: { args: { serverUrl: string; token: string; spaceId: string; pageId: string; body: string; parentId?: string | null; mentions?: string[] }; result: { id: string; created_at: number; notifications: string[] } };
-  team_delete_comment: { args: { serverUrl: string; token: string; spaceId: string; commentId: string }; result: void };
-  team_list_notifications: { args: { serverUrl: string; token: string }; result: { id: string; kind: string; actor_id: string; space_id?: string | null; page_id?: string | null; comment_id?: string | null; text: string; seen: number; created_at: number }[] };
-  team_seen_notification: { args: { serverUrl: string; token: string; id: string }; result: void };
-  team_seen_all_notifications: { args: { serverUrl: string; token: string }; result: void };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   // ---- Properties / Database ----
   list_attr_defs: { args: undefined; result: AttrDef[] };
@@ -1522,7 +1624,7 @@ export interface CommandMap {
   delete_attr: { args: { id: string }; result: void };
   reorder_attrs: { args: { ids: string[] }; result: void };
   set_page_prop: { args: { args: { page_id: string; attr_id: string; value: string } }; result: void };
-  remove_page_prop: { args: { pageId: string; attrId: string }; result: void };
+  remove_page_prop: { args: { pageId: string; attrId: string; spaceId?: string }; result: void };
   get_page_props: { args: { pageId: string }; result: PageProp[] };
   get_db_columns: { args: { dbPageId: string }; result: AttrDef[] };
   add_db_column: { args: { args: { db_page_id: string; attr_id: string } }; result: AttrDef[] };
@@ -1543,8 +1645,8 @@ export interface CommandMap {
   set_tag_color: { args: { tagId: string; color?: string | null }; result: void };
   delete_tag: { args: { tagId: string }; result: void };
   page_tags: { args: { pageId: string }; result: Tag[] };
-  add_tag: { args: { pageId: string; name: string }; result: Tag };
-  remove_tag: { args: { pageId: string; tagId: string }; result: void };
+  add_tag: { args: { pageId: string; name: string; spaceId?: string }; result: Tag };
+  remove_tag: { args: { pageId: string; tagId: string; spaceId?: string }; result: void };
   pages_by_tag: { args: { tagId: string }; result: PageMeta[] };
 
   // ---- Board ----
@@ -1620,7 +1722,7 @@ export interface CommandMap {
   cleanup_temp_files: { args: undefined; result: number };
   purge_deleted_workspaces: { args: undefined; result: { freed: number; workspaces: number } };
   list_versions: { args: { pageId: string }; result: PageVersion[] };
-  restore_version: { args: { versionId: string }; result: PageDetail };
+  restore_version: { args: { versionId: string; spaceId?: string }; result: PageDetail };
   clear_page_versions: { args: { pageId: string }; result: number };
   // 08-a②（2026-10-10）：本机名的读写。`null` ＝ **没设过**（界面显示"用主机名"✓，⛔ 不编假名 ✗）；
   // `set_device_name` 传空白 ⇒ **清掉设置** ✓，返回**回落到的主机名/默认名** ✓。
@@ -1721,6 +1823,13 @@ export interface CommandMap {
     };
   };
   import_backup: { args: { srcPath: string }; result: { imported: number; renamed: number } };
+  /**
+   * ⭐ **2026-10-28（owner：「本机备份 全空间打包，要能原样恢复」）**：
+   * **替换式恢复** —— 备份先解到 staging，**重启后**在打开任何库之前整份替换
+   * （当前数据另存到 `restore-prev-…/`，不删）。
+   * 与 `import_backup`（合并、重名改 id）是**两条不同的动作** ✓。
+   */
+  restore_backup_replace: { args: { srcPath: string }; result: { staged: boolean; note: string } };
   // ⭐ R138（2026-10-08，owner 选 A）：导出快照会**裁掉同步日志的历史**
   // ⇒ 多两格如实报告裁了多少（⛔ 不许静默：用户得知道包里少了什么 ✓）。
   export_workspace: {
@@ -1732,6 +1841,7 @@ export interface CommandMap {
   import_workspace: { args: { srcPath: string; name?: string | null }; result: WorkspaceMeta };
   write_text_file: { args: { path: string; content: string }; result: void };
   write_binary_file: { args: { path: string; data: number[] }; result: void };
+  read_binary_file: { args: { path: string }; result: number[] };
   read_text_file: { args: { path: string }; result: string };
   open_page_window: { args: { pageId: string }; result: void };
   /** 系统标题栏染色（仅 Windows 生效；caption/text 为 #RRGGBB 或 null）。 */

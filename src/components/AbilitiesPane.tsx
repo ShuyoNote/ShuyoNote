@@ -14,6 +14,16 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
 import { platform } from "../lib/platform";
+// ⭐ task-14（2026-11-01）：**启停 / 卸载** —— 状态那一半只有一处（`src/lib/abilities/state.ts`），
+//    与「Office 导入」那几条入口共用同一份读数（⛔ 不是在界面里各记一个 boolean ✗）。
+import {
+  type AbilityEnabledFlags,
+  abilityEnabledIn,
+  loadAbilityStates,
+  setAbilityEnabled,
+  uninstallAbility,
+} from "../lib/abilities/state";
+import { confirmDialog } from "../store/confirm";
 // ⚠️ 只从 `download.ts` 取 **pack id**（单一来源）——真下载已改由 Rust 做（见 `download()` 里那段注释），
 //    那个模块**保留**为"前端侧那套接口与判据"（它的 11 条判据就是它的凭据），⛔ 不是死代码。
 import { ECDICT_PACK_ID } from "../lib/dictionary/download";
@@ -135,6 +145,24 @@ export function AbilitiesPane() {
   /** ⭐ 2026-10-18：看图识字（`local-endpoint`）那颗「检查本机模型」的结果 ——
    *  ⚠️ **探不到 ≠ 没有**：连不上就显示"连不上"，⛔ 不许写成"没装模型" ✗（两者读起来一样、处置完全不同）。 */
   const [vlm, setVlm] = useState<{ busy: boolean; text: string } | null>(null);
+  /** ⭐ task-14（2026-11-01）：三条能力的**启停读数**（后端 `ability_states`）。
+   *  ⚠️ `null` ＝ 还没读到 / 读不到 ⇒ **按全启用**处理（fail-open，与 Rust 同口径）。
+   *  ⛔ 它不负责"强制"：词库被拒查、Office 导入被拦都在各自那一处（Rust / `pathImport.ts`）✓。 */
+  const [abilityFlags, setAbilityFlags] = useState<AbilityEnabledFlags[] | null>(null);
+  /** 正在对哪一条做启停/卸载（同一时刻只允许一个动作，按钮据此禁用）。 */
+  const [busyAbility, setBusyAbility] = useState<string | null>(null);
+  /** 启停/卸载的结果 —— ⚠️ 失败要把**真实错误**显示出来（⛔ 不许假装成功 ✗）。 */
+  const [notice, setNotice] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const got = await loadAbilityStates({ force: true });
+      if (alive) setAbilityFlags(got);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -151,8 +179,21 @@ export function AbilitiesPane() {
     let alive = true;
     void (async () => {
       try {
-        const st = await platform.executor.invoke<{ available: boolean; verified: boolean | null }>("dictionary_status");
-        if (alive) setPackReady(Boolean(st.available && st.verified));
+        // ⭐ task-14：多了两个读数 —— `installed`（盘上有没有那个文件）与 `disabled`（被用户停用）。
+        //    ⚠️ 已装判定因此是**两档**：① 能用且核验过 ⇒ 已装；② **已装但被停用**（`disabled && installed`）
+        //    ⇒ 也算"已装"，只是那一行要标「已禁用」并给「启用」按钮。
+        //    ⛔ 不许因为"停用了"就把它挪回「按需下载」✗（那是"没装"才有的待遇）。
+        const st = await platform.executor.invoke<{
+          available: boolean;
+          verified: boolean | null;
+          disabled?: boolean;
+          installed?: boolean;
+        }>("dictionary_status");
+        if (alive) {
+          const usable = Boolean(st.available && st.verified);
+          const installedButDisabled = Boolean(st.disabled && st.installed);
+          setPackReady(usable || installedButDisabled);
+        }
       } catch {
         // ⛔ 查不动 ⇒ 不假装已装 ✓（那条会**留在「按需下载」**里，用户还能再下一次 ✓）
         if (alive) setPackReady(false);
@@ -229,6 +270,97 @@ export function AbilitiesPane() {
     }
   };
 
+  /** ⭐ task-14：某个能力现在启用吗（读不到状态 ⇒ 启用；缺省＝启用，与后端同口径）。 */
+  const enabledOf = (id: string) => abilityEnabledIn(abilityFlags, id);
+  /** 能不能卸载：**以后端读数为准**；读数还没回来 ⇒ 回退到代码里那张表（只有词库真的下载过一个 pack）。 */
+  const canUninstallOf = (id: string) =>
+    abilityFlags?.find((f) => f.id === id)?.uninstallable ?? id === ECDICT_PACK_ID;
+  /** 不可卸载时那句人话（与 Rust `abilities::uninstall_refusal` **同口径**，⛔ 不另造一套说法 ✗）。 */
+  const uninstallReasonOf = (id: string): string => {
+    if (id === "office-import") {
+      return t(
+        "abilities.uninstallBlockedBuiltin",
+        "内置能力：随安装包一起提供，没有可卸载的下载包（可以改为「禁用」）",
+      );
+    }
+    if (id === "vlm-ocr") {
+      return t(
+        "abilities.uninstallBlockedLocal",
+        "本机端点能力：模型在你自己的 Ollama 里，本应用没有下载任何东西（可以改为「禁用」）",
+      );
+    }
+    return t("abilities.uninstallHint", "只会删掉本应用下载的那份 pack，不碰笔记、附件和其它设置。");
+  };
+
+  /** ⭐ 启用/停用：成功后用**后端回的那份读数**刷新（⛔ 不自己猜状态 ✗）。 */
+  const toggleAbility = async (a: Ability) => {
+    const next = !enabledOf(a.id);
+    setBusyAbility(a.id);
+    setNotice(null);
+    try {
+      const states = await setAbilityEnabled(a.id, next);
+      setAbilityFlags(states);
+    } catch (e) {
+      // ⛔ 不假装成功：把后端/平台那句**真实错误**原样摆出来
+      setNotice({
+        tone: "err",
+        text: `${t("abilities.toggleFailed", "切换启用状态失败")}：${String(e)}`,
+      });
+    } finally {
+      setBusyAbility(null);
+    }
+  };
+
+  /** ⭐ 卸载：先确认（说清"只删哪一份、不碰什么"）⇒ 调后端 ⇒ **重新读盘上事实**。 */
+  const removeAbility = async (a: Ability) => {
+    if (!canUninstallOf(a.id)) return;
+    const ok = await confirmDialog({
+      title: t("abilities.uninstallConfirmTitle", {
+        name: a.name,
+        defaultValue: `卸载「${a.name}」？`,
+      }),
+      message: t("abilities.uninstallConfirmMessage", {
+        id: a.id,
+        defaultValue:
+          `只会删除本应用下载的那份 pack（应用数据目录/packs/${a.id}），不会碰你的笔记、附件和其它设置。` +
+          "删掉后这一项会回到「按需下载」，需要时可以再下。",
+      }),
+      okLabel: t("abilities.uninstall", "卸载"),
+      cancelLabel: t("common.cancel", "取消"),
+      danger: true,
+    });
+    if (!ok) return;
+    setBusyAbility(a.id);
+    setNotice(null);
+    try {
+      const rep = await uninstallAbility(a.id);
+      // 盘上事实变了 ⇒ **重新读**（⛔ 不靠"我刚删过所以肯定没了"猜 ✗）；
+      // ECDICT 那份没了 ⇒ 它这块回到「按需下载」（`packReady=false`）。
+      setAbilityFlags(await loadAbilityStates({ force: true }));
+      if (a.id === ECDICT_PACK_ID) setPackReady(false);
+      setNotice({
+        tone: "ok",
+        text: rep.removed
+          ? t("abilities.uninstallDone", {
+              path: rep.path,
+              size: fmtMB(rep.bytes),
+              defaultValue: `已卸载：删掉了 ${rep.path}`,
+            })
+          : t("abilities.uninstallNoop", {
+              path: rep.path,
+              defaultValue: `已经卸载过了：${rep.path} 本来就不在`,
+            }),
+      });
+    } catch (e) {
+      setNotice({
+        tone: "err",
+        text: `${t("abilities.uninstallFailed", "卸载失败")}：${String(e)}`,
+      });
+    } finally {
+      setBusyAbility(null);
+    }
+  };
+
   // ⭐ 已装那一节 ＝ 源码里 `builtin` 的 ＋ ⭐ **盘上核实过的**可下载项 ✓（⛔ 不写死 ✗）；未核实的留在「按需下载」✓
   //   ⚠️ **第 0 片**：这三行原来吃**写死那份** ✗ ⇒ 现在吃**清单状态** ✓（⭐ 内容默认就是它 ✓）。
   const builtin = abilities.filter((a) => a.state === "builtin" || (a.state === "downloadable" && packReady));
@@ -254,6 +386,14 @@ export function AbilitiesPane() {
 
   return (
     <>
+      {/* ⭐ task-14：启停/卸载的结果都摆在这里 —— ⚠️ 失败要显示**真实错误**（⛔ 不许假装成功 ✗）。 */}
+      {notice ? (
+        <p className="set-hint" data-testid="ability-notice" data-tone={notice.tone}>
+          {notice.tone === "err" ? "× " : "√ "}
+          {notice.text}
+        </p>
+      ) : null}
+
       <section className="set-section">
         <div className="set-section-title">{t("abilities.builtinTitle", "可用（已装）")}</div>
         {builtin.length === 0 ? (
@@ -275,19 +415,54 @@ export function AbilitiesPane() {
             )}
           </p>
         ) : (
-          builtin.map((a) => (
-            <div className="set-row" key={a.id}>
-              <div className="set-row-text">
-                <div className="set-row-name">{a.name}</div>
-                <div className="set-row-sub">{a.summary}</div>
+          builtin.map((a) => {
+            const on = enabledOf(a.id);
+            const uninstallable = canUninstallOf(a.id);
+            const reason = uninstallReasonOf(a.id);
+            return (
+              <div className="set-row" key={a.id} data-ability={a.id} data-enabled={on ? "true" : "false"}>
+                <div className="set-row-text">
+                  <div className="set-row-name">{a.name}</div>
+                  <div className="set-row-sub">{a.summary}</div>
+                  {/* ⭐ task-14：停用了就**明说**（⛔ 不是悄悄少一个入口 ✗） */}
+                  {!on ? (
+                    <div className="set-row-sub" data-testid="ability-disabled-hint">
+                      {t("abilities.disabledHint", "这一项已被停用：不再参与任何功能，随时可以启用。")}
+                    </div>
+                  ) : null}
+                  {/* 不可卸载 ⇒ 把**理由**写在行里（⛔ 只靠禁用按钮的 hover 不够：触屏没有 hover ✗） */}
+                  {!uninstallable ? (
+                    <div className="set-row-sub" data-testid="ability-uninstall-reason" title={reason}>
+                      {reason}
+                    </div>
+                  ) : null}
+                </div>
+                {/* ⭐ 2026-10-11（owner 截图「优化这个界面」）：这一格原来复用 `.set-status` ✗ ——
+                    而那是**整块卡片**（`padding:12px 14px` ＋ 边框 ＋ 背景 ＋ **`margin-bottom:16px`** ✓）⇒
+                    ⭐ 既看着**像能点的按钮** ✗，⭐ 又把那一行撑高、还多出一大块节间空白 ✗。
+                    ⇒ ⭐ 换成**行内徽章** `.set-badge is-ok`（小胶囊 ＋ 成功色 ＋ 无边无阴影 ✓）。
+                    ⭐ task-14：停用那一档用 `.is-warn`（橙）＋ 「已禁用」，⛔ 不再写「已装」（那会是假话 ✗）。 */}
+                <span className={`set-badge ${on ? "is-ok" : "is-warn"}`} data-testid="ability-badge">
+                  {on ? `√ ${t("abilities.installed", "已装")}` : t("abilities.disabled", "已禁用")}
+                </span>
+                <AbilityToggle
+                  id={a.id}
+                  name={a.name}
+                  enabled={on}
+                  busy={busyAbility === a.id}
+                  onToggle={() => void toggleAbility(a)}
+                />
+                <AbilityUninstall
+                  id={a.id}
+                  name={a.name}
+                  uninstallable={uninstallable}
+                  reason={reason}
+                  busy={busyAbility === a.id}
+                  onUninstall={() => void removeAbility(a)}
+                />
               </div>
-              {/* ⭐ 2026-10-11（owner 截图「优化这个界面」）：这一格原来复用 `.set-status` ✗ ——
-                  而那是**整块卡片**（`padding:12px 14px` ＋ 边框 ＋ 背景 ＋ **`margin-bottom:16px`** ✓）⇒
-                  ⭐ 既看着**像能点的按钮** ✗，⭐ 又把那一行撑高、还多出一大块节间空白 ✗。
-                  ⇒ ⭐ 换成**行内徽章** `.set-badge is-ok`（小胶囊 ＋ 成功色 ＋ 无边无阴影 ✓）。 */}
-              <span className="set-badge is-ok">√ {t("abilities.installed", "已装")}</span>
-            </div>
-          ))
+            );
+          })
         )}
       </section>
 
@@ -302,22 +477,58 @@ export function AbilitiesPane() {
             "只在点「下载」时才联网；取回后按清单里钉的 sha256 硬校验，对不上就拒绝启用。",
           )}
         </p>
-        {downloadable.map((a) => (
-          <div className="set-row" key={a.id}>
-            <div className="set-row-text">
-              <div className="set-row-name">{a.name}</div>
-              <div className="set-row-sub">
-                {a.summary} · {fmtMB(a.bytes)} · sha256 {a.sha256?.slice(0, 12)}…
+        {downloadable.map((a) => {
+          const on = enabledOf(a.id);
+          return (
+            <div className="set-row" key={a.id} data-ability={a.id} data-enabled={on ? "true" : "false"}>
+              <div className="set-row-text">
+                <div className="set-row-name">{a.name}</div>
+                <div className="set-row-sub">
+                  {a.summary} · {fmtMB(a.bytes)} · sha256 {a.sha256?.slice(0, 12)}…
+                </div>
+                {/* ⭐ task-14：已停用 ⇒ 这一行也得说清（并且**不许**在停用状态下"顺手下一份"） */}
+                {!on ? (
+                  <div className="set-row-sub" data-testid="ability-disabled-hint">
+                    {t("abilities.disabledHint", "这一项已被停用：不再参与任何功能，随时可以启用。")}
+                  </div>
+                ) : null}
               </div>
+              {!on ? (
+                <span className="set-badge is-warn" data-testid="ability-badge">
+                  {t("abilities.disabled", "已禁用")}
+                </span>
+              ) : null}
+              <AbilityToggle
+                id={a.id}
+                name={a.name}
+                enabled={on}
+                busy={busyAbility === a.id}
+                onToggle={() => void toggleAbility(a)}
+              />
+              <button
+                className="set-btn is-primary"
+                data-testid="ability-download"
+                onClick={() => void download(a)}
+                disabled={phase.kind === "working" || busyAbility === a.id || !on}
+                title={
+                  !on
+                    ? t("abilities.downloadBlockedDisabled", "这一项已停用 ⇒ 先启用，再下载")
+                    : t("abilities.download", "下载")
+                }
+                aria-label={
+                  !on
+                    ? t("abilities.downloadBlockedDisabled", "这一项已停用 ⇒ 先启用，再下载")
+                    : t("abilities.download", "下载")
+                }
+              >
+                {/* ⭐ 2026-10-11：成功后同一颗按钮改叫「重新下载」✓。
+                    ⚠️ **如实记**：`phase` 是**这一节共用**的 ⇒ 今天这节只有一条可下载项 ⇒ 无碍 ✓；
+                    将来多于一条要改成**按条目**记状态 ✗（写在这里免得忘 ✓）。 */}
+                {phase.kind === "ok" ? t("abilities.redownload", "重新下载") : t("abilities.download", "下载")}
+              </button>
             </div>
-            <button className="set-btn is-primary" onClick={() => void download(a)} disabled={phase.kind === "working"}>
-              {/* ⭐ 2026-10-11：成功后同一颗按钮改叫「重新下载」✓。
-                  ⚠️ **如实记**：`phase` 是**这一节共用**的 ⇒ 今天这节只有一条可下载项 ⇒ 无碍 ✓；
-                  将来多于一条要改成**按条目**记状态 ✗（写在这里免得忘 ✓）。 */}
-              {phase.kind === "ok" ? t("abilities.redownload", "重新下载") : t("abilities.download", "下载")}
-            </button>
-          </div>
-        ))}
+          );
+        })}
         {/* ⭐ 2026-10-11（owner 截图「下载完了的界面优化一下」）：成功那档**不再是一句生数据** ✗ ——
             ⭐ 改成一张小成功卡：⭐ 第一行「√ 已保存到本地 · 85.6 MiB」✓，
             ⭐ 第二行灰字放 sha256 前 12 位与路径（⭐ 路径挂 `title` 悬停看全 ✓，⭐ 长路径自动折行 ✓）。
@@ -349,27 +560,73 @@ export function AbilitiesPane() {
       {localEndpoint.length > 0 ? (
         <section className="set-section" data-testid="local-endpoint-section">
           <div className="set-section-title">{t("abilities.localEndpointTitle", "需要本机模型（本应用不代下）")}</div>
-          {localEndpoint.map((a) => (
-            <div className="set-row" key={a.id} data-ability={a.id}>
-              <div className="set-row-text">
-                <div className="set-row-name">{a.name}</div>
-                <div className="set-row-sub">{a.summary}</div>
-                {a.note ? (
-                  <div className="set-row-sub set-row-note" title={a.note}>
-                    {a.note}
-                  </div>
+          {localEndpoint.map((a) => {
+            const on = enabledOf(a.id);
+            const uninstallable = canUninstallOf(a.id);
+            const reason = uninstallReasonOf(a.id);
+            return (
+              <div className="set-row" key={a.id} data-ability={a.id} data-enabled={on ? "true" : "false"}>
+                <div className="set-row-text">
+                  <div className="set-row-name">{a.name}</div>
+                  <div className="set-row-sub">{a.summary}</div>
+                  {a.note ? (
+                    <div className="set-row-sub set-row-note" title={a.note}>
+                      {a.note}
+                    </div>
+                  ) : null}
+                  {!on ? (
+                    <div className="set-row-sub" data-testid="ability-disabled-hint">
+                      {t("abilities.disabledHint", "这一项已被停用：不再参与任何功能，随时可以启用。")}
+                    </div>
+                  ) : null}
+                  {!uninstallable ? (
+                    <div className="set-row-sub" data-testid="ability-uninstall-reason" title={reason}>
+                      {reason}
+                    </div>
+                  ) : null}
+                </div>
+                {!on ? (
+                  <span className="set-badge is-warn" data-testid="ability-badge">
+                    {t("abilities.disabled", "已禁用")}
+                  </span>
                 ) : null}
+                <AbilityToggle
+                  id={a.id}
+                  name={a.name}
+                  enabled={on}
+                  busy={busyAbility === a.id}
+                  onToggle={() => void toggleAbility(a)}
+                />
+                <AbilityUninstall
+                  id={a.id}
+                  name={a.name}
+                  uninstallable={uninstallable}
+                  reason={reason}
+                  busy={busyAbility === a.id}
+                  onUninstall={() => void removeAbility(a)}
+                />
+                {/* ⭐ task-14：停用 ⇒ 「检查本机模型」这颗按钮**不可用**（并说清为什么） */}
+                <button
+                  className="set-btn is-primary"
+                  data-testid="check-local-vision"
+                  disabled={vlm?.busy === true || busyAbility === a.id || !on}
+                  title={
+                    !on
+                      ? t("abilities.disabledHint", "这一项已被停用：不再参与任何功能，随时可以启用。")
+                      : "检查本机模型"
+                  }
+                  aria-label={
+                    !on
+                      ? t("abilities.disabledHint", "这一项已被停用：不再参与任何功能，随时可以启用。")
+                      : "检查本机模型"
+                  }
+                  onClick={() => void checkLocalVision()}
+                >
+                  {vlm?.busy ? "检查中…" : "检查本机模型"}
+                </button>
               </div>
-              <button
-                className="set-btn is-primary"
-                data-testid="check-local-vision"
-                disabled={vlm?.busy === true}
-                onClick={() => void checkLocalVision()}
-              >
-                {vlm?.busy ? "检查中…" : "检查本机模型"}
-              </button>
-            </div>
-          ))}
+            );
+          })}
           {vlm && !vlm.busy ? (
             <p className="set-hint" data-testid="local-vision-result">
               {vlm.text}
@@ -412,5 +669,71 @@ export function AbilitiesPane() {
         {t("abilities.policy", "只下引擎与模型，不发用户内容，也没有遥测。下载源：api.gitcode.com（GitCode）。")}
       </p>
     </>
+  );
+}
+
+/**
+ * ⭐ task-14（2026-11-01）：「能力」页那一排操作 —— **启用/停用** 与 **卸载** 两颗键。
+ *
+ * ⚠️ 为什么抽成组件：已装 / 按需下载 / 本机端点**三节**都要同一套判定
+ * （抄三份 ⇒ 迟早有一份忘了"停用时不许再动作" ✗）。
+ * ⚠️ 两颗键都带 `title` ＋ `aria-label`：
+ *   · `title` 是**理由**（悬停看得到：为什么不能卸载／停用意味着什么）；
+ *   · `aria-label` 带上**这一项的名字** —— 读屏只念"禁用"等于没说是哪一条。
+ * ⚠️ 卸载在 builtin / local-endpoint 上是 `disabled`，理由同时写在**行里**（触屏没有 hover ✓）。
+ */
+function AbilityToggle(props: {
+  id: string;
+  name: string;
+  enabled: boolean;
+  busy: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useTranslation();
+  const label = props.enabled ? t("abilities.disable", "禁用") : t("abilities.enable", "启用");
+  const hint = props.enabled
+    ? "停用这一项：停用后与它相关的入口会**真的拒绝**（不是只变灰），随时可以再启用。"
+    : "重新启用这一项。";
+  return (
+    <button
+      className="set-btn"
+      data-testid="ability-toggle"
+      data-ability-id={props.id}
+      aria-pressed={!props.enabled}
+      disabled={props.busy}
+      title={`${label}「${props.name}」：${hint}`}
+      aria-label={`${label}「${props.name}」`}
+      onClick={props.onToggle}
+    >
+      {label}
+    </button>
+  );
+}
+
+function AbilityUninstall(props: {
+  id: string;
+  name: string;
+  uninstallable: boolean;
+  reason: string;
+  busy: boolean;
+  onUninstall: () => void;
+}) {
+  const { t } = useTranslation();
+  const label = t("abilities.uninstall", "卸载");
+  return (
+    <button
+      className="set-btn is-danger-ghost"
+      data-testid="ability-uninstall"
+      data-ability-id={props.id}
+      disabled={!props.uninstallable || props.busy}
+      title={props.uninstallable ? `${label}「${props.name}」：${props.reason}` : `不能卸载「${props.name}」：${props.reason}`}
+      aria-label={
+        props.uninstallable ? `${label}「${props.name}」` : `不能卸载「${props.name}」：${props.reason}`
+      }
+      onClick={props.onUninstall}
+    >
+      {/* ⚠️ 禁用**不等于**隐藏：按钮在那儿但点不动 ＋ 行里有理由 —— 用户才知道"为什么没有这颗键"。 */}
+      {label}
+    </button>
   );
 }

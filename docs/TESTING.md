@@ -45,6 +45,17 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 > ⚠️ 这条属于本文件反复出现的那一族（**假红**），但**成因与 L499/L526/L573 那三条都不同**：
 > 那三条是负载 / 超时 / 进程级全局状态，这一条是**环境冲突**（dev server 占了端口 + 动了被测试的文件）。
 > **判据是两次对照，不是推测。** 遇到时先看 `:5173` 在不在，别去改产品代码。
+
+> ### ⚠️ 验收脚本读 `sheet.cssRules` 时必须递归下沉 `@layer`（2026-10-31，S2 之后）
+>
+> App.css 从 S2 起把**全部既有规则**包进 `@layer legacy`。浏览器 CSSOM 里那是一个
+> `CSSLayerBlockRule`（有 `cssRules`、**没有** `conditionText` / `selectorText`）。
+> 任何"遍历 `sheet.cssRules` 找规则"的验收脚本，只下沉 `@media` 一层就会把层里的规则
+> **全部漏掉** ⇒ 静态判据整段**假红**（2026-10-31 CI 实测：`verify-mobile-overlays` 里
+> PDF 抽屉 / 头部 `data-collapse` / 命中区等 20+ 条一起红，而真浏览器行为全对、页面渲染正常）。
+> 做法：递归下沉**所有容器**（`@layer` / `@media` / `@supports`，媒体条件带着走），
+> 见 `scripts/verify-mobile-overlays.mjs` 里两处 `collect(...)`；本机复跑
+> `mobile-layout 68/68`、`mobile-overlays 756/756`、`mobile-views 249/249` 全绿。
 >
 > **为什么不直接判红/自动避开**：`vitest` 的收集失败信息在这条路径上**不指出是 5173 造成的**，
 > 而"跑之前要求先停 dev server"会与 mobile 组的前置要求打架。**如实记在这里，让人判断。**
@@ -56,8 +67,8 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 85 条（contract 58 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 29 条 · 命令 Rust 303 / web 277 / CommandMap 304
-基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 2795 · smoke-web 365 · check-pdf-reload 8 · check-panel-layout 61 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 70 · mobile-overlays 796 · mobile-views 249 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
+门禁 86 条（contract 58 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 9 / artifact 3 / deploy 1）· 能力 70 条 · 命令 Rust 289 / web 252 / CommandMap 290
+基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 3585 · smoke-web 365 · check-pdf-reload 8 · check-panel-layout 66 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 68 · mobile-overlays 756 · mobile-views 249 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
@@ -111,6 +122,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-plan-status` | **每篇方案头部要有 `状态：`，且"报完成"不许空口无凭**：判据只两条 —— ① `docs/plans/*.md` 的**头部**（第一个 `## ` 标题之前）必须有 `状态：` 字段；② 取值含 `已完成/已实现/已收口/已落地/已拍板/已定` 的，必须带 `证据：`，且证据里用**反引号或 markdown 链接**写出的每个仓内相对路径都要**真实存在**。2026-09-27 盘点 91 篇时实测出这条的由来：**「写状态」是 `2026-08-24` 才成为习惯的** —— 08-24 起头部统一是 `> 目标版本：…` ＋ `> 状态：规划（建议）。…`，而 08-22 及更早那批**根本没有这一行**；全文扫出 **51 篇缺状态行 ＋ 13 篇自报完成却无证据**。后果不是洁癖：那批里好几篇的功能**早已落地**（`roadmap.md` 有 `✅ M9（v1.13.0）`…`✅ M14（v1.37.0）`，都带版本号），**可它们在文档里和「未实装」长得一模一样** ⇒ 分不出哪些还有效，于是同一件事会被第二次立项。旧账冻结在 `scripts/plan-status-baseline.json`（**只减不增**）。⚠️ **状态取值是自由文本，门禁不发明词表** —— 它的第一版编了一个词表，据此把 24 篇判成"状态词非法"，而仓库实际在用的词有十几种（`已收口` `已实现` `已拍板` `已定` `规划` `提议` `施工单` `决策/建议` `进度口径` `待拍板` …）⇒ 已改成"没见过的词只提醒、不判红"；第一版还有第二个错：扫**全文**找状态，把正文里别的 `状态：` 字段误判成方案状态 ⇒ 现在只在**头部**找。**它不判状态对不对**（那是语义，靠人），只保证声明不空口 |
 | mobile | `mobile-views` | 主区整视图 ＋ 属性表 ＋ 小控件 ＋ **PDF 阅读器真 DOM**：窄屏下"整块视图不能用"这类坏法，布局门禁照不到 |
 | rust | `gm-conformance` | 国密对拍：这条线**同时保两份 SM4 实现**（应用层 RustCrypto / 库级 Tongsuo）⇒ 漂移的后果是"跨设备读不出对方的数据"，而它没有任何编译期信号 |
+| rust | `check-rustfmt` | **Rust 格式不再裸奔**（2026-10-29 owner：「给 CI 加上 fmt 步骤」）：跑 `cargo fmt --check`，只允许两个**登记例外** —— `capabilities_gen.rs`（生成物，必须与生成器逐字节一致）与 `plugins.rs`（`check-capabilities` 按原排版解析 dispatch 的 match 臂）。⛔ 新增例外要写理由；⛔ 别把「命令没跑起来」当成「0 处问题」（不是通过） |
 | rust | `rust-no-sm-crypto` | **回滚通道**：`--no-default-features`（不编国密）仍要能编译 ＋ 全量单测通过 —— 它是"一行可逆"那个承诺的实现，没人编就会腐烂 |
 | rust | `check-sys-deps-linux` | 上面那条的 **deb 实查**版：硬判据只能来自 `ci.yml` 的 `Linux system deps` 步，逐条按 `dpkg` 实查（表里凭空要求 CI 不装的包 ⇒ 门禁自己就是假话）。挂在 rust 组是因为**只有**这个 job 装了 Tauri 那套系统包 |
 | smoke | `tsc` | 类型错误 |
@@ -119,7 +131,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | sync | `two-device-sync` | 两设备并发编辑的同步一致性（真实 `applyChange` + 真实 sql.js） |
 | plugin | `examples-tsc` / `plugin-cli-validate` / `plugin-new-smoke` | "只看文档就能写出插件"：类型包、作者 CLI、脚手架生成的起点当场可用 |
 | browser | `check-pdf-reload` | StrictMode 下 PDF 二次加载交回已 detach 的 buffer（8 断言） |
-| browser | `check-panel-layout` | "文字被挤成一条竖柱"这类纯几何问题（61 断言；⭐ 2026-10-08 起还量**知识地图卡片的长名是否折行**——长名必须**单行 ＋ 省略号**，折行会把卡片顶高、名字被断成两截 ✓） |
+| browser | `check-panel-layout` | "文字被挤成一条竖柱"这类纯几何问题（66 断言；⭐ 2026-10-08 起还量**知识地图卡片的长名是否折行**——长名必须**单行 ＋ 省略号**，折行会把卡片顶高、名字被断成两截 ✓） |
 | browser | `check-web-build` | 构建产物打不开：v1.84.1 删掉 sql.js wasm / pdf worker，页面照开但 DB 初始化失败（13 断言；⭐ 2026-10-08 起还量 **AI 设置页的单卡宽度**与**正文不重复面板名**——真 Chromium 打开那一页取几何与 DOM ✓） |
 | browser | `check-editor-table-gesture` | **在表格单元格上拖选就报 `Lexical error #335`**（＝`tableObserver not found for tableKey`）：owner 2026-10-08 贴来的 1.92.6 生产控制台日志连发 6 次。⭐ 它抓的**第二层**才是真因 —— 2026-10-01 那次修复**只打在 `LexicalTable.dev.*`**，而线上走 `production` 产物 ⇒ **从没生效** ✗；本门禁跑 `pnpm build:web` 的**真产物**，只修 dev 的回归会当场变红（5 断言：① 只拖选必须 0 行；② 拖拽中表被撤掉也必须 0 行——②**先断言前提**"撤销后表真的没了"，否则它是空判据 ✗。⚠️ 判据要靠**真指针**：合成 `MouseEvent` 触不到 pointer 手势 ⇒ 会假绿） |
 | mobile | `mobile-layout` / `mobile-overlays` | 窄屏布局与浮层三类"功能直接不可用且不报错"的坏法（43 / 979 断言） |
@@ -235,6 +247,11 @@ node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要
      三个工具链读数一致 ⇒ 与工具链无关）。
      ⇒ 纪律：**fmt/lint 这类"没有输出=通过"的工具，必须先确认它真的跑了**（看退出码 + 看它有没有报
      "找不到清单/编译失败"），不能只看有没有 diff 行。
+   - **2026-10-29（owner 拍全仓 fmt）**：已按上面的正确跑法格式化；但**刻意保留两处例外**：
+     `src-tauri/src/capabilities_gen.rs`（生成物，必须与 `gen-capabilities` 逐字节一致 ⇒ 重排会让
+     `check-capabilities` 红）与 `src-tauri/src/plugins.rs`（`check-capabilities` 按**原排版**解析
+     dispatch 的 match 臂：重排后它会把参数口径读错 ⇒ 假红）。
+     ⇒ `cargo fmt --check` 现在**只**报这两个文件；⛔ 别为了"清零"去改门禁或改生成物。
    ⇒ 纪律：**要判成败就单独跑一次、把退出码取在命令本身上**（`cmd > log 2>&1; echo $?`），
    再让**日志**去做筛选；筛选的输出**永远不能**当成败依据。
    ⚠️ **更正（2026-09-20，macOS 侧指出）**：本条初稿把"macOS 侧那条假红"当成"管道取错退出码"的例子 ——
@@ -520,6 +537,11 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   `euleros-2.10.1` **不在**白名单）；每个 step 必须有合法 `name`（字符集受限，全角逗号与加号都不行）；
   action 只能用 `actions/xxx@vN`（`checkout-action@0.0.1` 这类简写校验器报"不存在"）。
   ⚠️ 剩下的边界只是**运行时**：本机没有 GitCode runner，所以"真跑一次"仍待首次合并到默认分支后确认。
+- **随包 Rust 桥是独立 crate ⇒ rust 组碰不到它**：`tools/shuyonote-mcp-rust`（只依赖 `serde_json`）
+  不在 `src-tauri` 包里，所以 rust 组的 `cargo test` 跑不到它的 8 条桥单测。它们由 `.github/workflows/ci.yml`
+  的 `rust-tests` job 里一条**具名 step** 跑（`cargo test --manifest-path tools/shuyonote-mcp-rust/Cargo.toml --locked`）。
+  ⚠️ 那个 step **不是注册门禁** ⇒ 本机 `pnpm verify:rust` 不跑它；要本机也覆盖得把它注册进
+  `scripts/lib/gates.mjs` 的 rust 组（另一次改动）。
 - **happy-dom 不等于浏览器**：`vitest` 跑在 happy-dom 里，**不做布局**、不按视口重算媒体查询，
   所以"文字挤成竖柱""弹层关不上"这类只能靠 browser / mobile 组（真实 Chromium）兜。
 - ⚠️ **Windows 上 `cargo test` 的红有三种形态 —— 看到红的第一件事是「认形态」**（2026-09-20 补齐）：

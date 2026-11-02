@@ -94,7 +94,9 @@ pub fn origin_ok(origin: Option<&str>) -> bool {
     if o.is_empty() {
         return true;
     }
-    let Some(rest) = o.strip_prefix("http://") else { return false };
+    let Some(rest) = o.strip_prefix("http://") else {
+        return false;
+    };
     loopback_host_port_ok(rest)
 }
 
@@ -125,7 +127,9 @@ fn loopback_host_port_ok(hostport: &str) -> bool {
 /// `Authorization: Bearer <token>` 恰好等于本次会话令牌吗 ✓（定长比较 ⇒ 不做提前返回 ✓）。
 pub fn bearer_ok(auth: Option<&str>, token: &str) -> bool {
     let Some(a) = auth else { return false };
-    let Some(got) = a.strip_prefix("Bearer ") else { return false };
+    let Some(got) = a.strip_prefix("Bearer ") else {
+        return false;
+    };
     let (a, b) = (got.as_bytes(), token.as_bytes());
     if a.len() != b.len() {
         return false;
@@ -151,14 +155,28 @@ pub fn resolve_config() -> Option<ChannelConfig> {
     let text = std::fs::read_to_string(&token_file).ok()?;
     let (token, granted) = parse_token_file(&text)?;
     let port_file = std::env::var(PORT_FILE_ENV).ok().unwrap_or_else(|| {
-        let dir = std::path::Path::new(&token_file).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let dir = std::path::Path::new(&token_file)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
         dir.join("mcp-channel.port").to_string_lossy().to_string()
     });
-    Some(ChannelConfig { session_id: session_id_of(&token), token, granted, port_file })
+    Some(ChannelConfig {
+        session_id: session_id_of(&token),
+        token,
+        granted,
+        port_file,
+    })
 }
 
 /// 一次请求的判定与执行 ✓（**纯函数形态**：给定配置 ＋ 请求头 ＋ 请求体 ⇒ 状态码 ＋ 响应体 ✓）。
-pub fn handle_request(cfg: &ChannelConfig, origin: Option<&str>, host: Option<&str>, auth: Option<&str>, body: &str) -> (u16, String) {
+pub fn handle_request(
+    cfg: &ChannelConfig,
+    origin: Option<&str>,
+    host: Option<&str>,
+    auth: Option<&str>,
+    body: &str,
+) -> (u16, String) {
     if !host_ok(host) {
         return (403, json_err("bad_host"));
     }
@@ -175,7 +193,10 @@ pub fn handle_request(cfg: &ChannelConfig, origin: Option<&str>, host: Option<&s
     let Some(method) = v.get("method").and_then(|m| m.as_str()) else {
         return (400, json_err("bad_args"));
     };
-    let args = v.get("args").cloned().unwrap_or_else(|| serde_json::json!({}));
+    let args = v
+        .get("args")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
     let args_json = args.to_string();
     // ⭐ 2026-10-06（M1 收口：把桥接上）：`__tools_list` 是**清单**，不是一次能力调用 ✓ ——
     //    它没有副作用、不碰任何空间/权限 ⇒ **不进** `dispatch_capability` ✓
@@ -185,21 +206,35 @@ pub fn handle_request(cfg: &ChannelConfig, origin: Option<&str>, host: Option<&s
     if method == "__tools_list" {
         // ⭐ M2（Task W2）：写面**只在免确认开关开着时**才拼上去 ✓ —— 关着时外部 agent 连"看都看不到"写工具 ✓
         //    （⛔ 不是"看得到但一调就拒" ✗：面里出现用不了的东西，M1 已经在 `coverage.report` 上踩过一次 ✓）。
-        return (200, format!("{{\"ok\":true,\"result\":{}}}", crate::mcp_host::tools_list_json(has_write_grant(&cfg.granted))));
+        return (
+            200,
+            format!(
+                "{{\"ok\":true,\"result\":{}}}",
+                crate::mcp_host::tools_list_json(has_write_grant(&cfg.granted))
+            ),
+        );
     }
     match crate::mcp_host::handle_external_call(&cfg.session_id, &cfg.granted, method, &args_json) {
         Ok(result) => (200, format!("{{\"ok\":true,\"result\":{}}}", result)),
-        Err(e) => (403, format!("{{\"ok\":false,\"error\":{}}}", serde_json::Value::String(e))),
+        Err(e) => (
+            403,
+            format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                serde_json::Value::String(e)
+            ),
+        ),
     }
 }
 
 fn json_err(code: &str) -> String {
-    format!("{{\"ok\":false,\"error\":{}}}", serde_json::Value::String(code.to_string()))
+    format!(
+        "{{\"ok\":false,\"error\":{}}}",
+        serde_json::Value::String(code.to_string())
+    )
 }
 
 /// 起服务（**开关关着就什么都不做** ✓）。返回实际绑定地址（给测试与日志用 ✓）。
 // ⚠️ 旧的 `start_if_enabled`（阻塞式 accept ＋ 只认 env）已在 2026-10-06 被下面那份**能停、且认配置文件**的实现取代 ✓ —— 不并存两份 ✗。
-
 
 /// 读一条请求 ⇒ 判定 ⇒ 回应 ⇒ 关连接 ✓（本机一跳，不做 keep-alive ✓）。
 fn serve_one(mut stream: TcpStream, cfg: &ChannelConfig) -> std::io::Result<()> {
@@ -252,7 +287,13 @@ fn serve_one(mut stream: TcpStream, cfg: &ChannelConfig) -> std::io::Result<()> 
     if !is_enabled() {
         return respond(&mut stream, 403, &json_err("disabled"));
     }
-    let (code, out) = handle_request(cfg, origin.as_deref(), host.as_deref(), auth.as_deref(), &body);
+    let (code, out) = handle_request(
+        cfg,
+        origin.as_deref(),
+        host.as_deref(),
+        auth.as_deref(),
+        &body,
+    );
     respond(&mut stream, code, &out)
 }
 
@@ -315,26 +356,75 @@ mod tests {
             (McpLevel::ReadAll, true, with_all.clone(), false),
             (McpLevel::WriteConfirm, true, with_write.clone(), false),
             (McpLevel::WriteAuto, true, with_write.clone(), true),
+            // ⭐ P1/甲：写全部空间 = 写 scope ＋ write:all-spaces ＋ read:all-spaces（owner 甲拍板后）；
+            (
+                McpLevel::WriteAll,
+                true,
+                {
+                    let mut v = reads.clone();
+                    v.push(READ_ALL_SCOPE.to_string());
+                    v.push(WRITE_SCOPE.to_string());
+                    v.push("write:all-spaces".to_string());
+                    v
+                },
+                true,
+            ),
         ];
         for (level, en, gr, aw) in table {
             let (e, g, a) = level_to_config(level, &[]);
             assert_eq!(e, en, "enabled 不对：{level:?}");
             assert_eq!(g, gr, "granted 不对：{level:?}");
-            assert_eq!(a, aw, "allow_write 不对：{level:?} ⛔ 可写待确认档绝不许置真 ✗");
+            assert_eq!(
+                a, aw,
+                "allow_write 不对：{level:?} ⛔ 可写待确认档绝不许置真 ✗"
+            );
         }
-        let (_, g, _) = level_to_config(McpLevel::WriteAuto, &["read:pages".into(), "delete:everything".into()]);
-        assert!(!g.iter().any(|s| s == "delete:everything"), "授权面不许被放大 ✗");
-        assert_eq!(g.len(), 4, "只该是读三项 ＋ write:pages ✓");
+        let (_, g, _) = level_to_config(
+            McpLevel::WriteAuto,
+            &["read:pages".into(), "delete:everything".into()],
+        );
+        assert!(
+            !g.iter().any(|s| s == "delete:everything"),
+            "授权面不许被放大 ✗"
+        );
+        assert_eq!(
+            g.len(),
+            default_read_scopes().len() + 1,
+            "只该是**默认读 scope 全家** ＋ write:pages ✓（B1a 起读档多了 tags/properties/page.current 三条）"
+        );
         // ⭐ 跨空间只读：给了就只在 ReadAll 那一档；换到别的读档必须**收回**（⛔ 不靠"以前给过"留着 ✗）
         let (_, g_all, _) = level_to_config(McpLevel::Read, &with_all);
-        assert!(!g_all.iter().any(|s| s == READ_ALL_SCOPE), "换回「只读」必须收回 read:all-spaces");
+        assert!(
+            !g_all.iter().any(|s| s == READ_ALL_SCOPE),
+            "换回「只读」必须收回 read:all-spaces"
+        );
         let (_, g_w, _) = level_to_config(McpLevel::WriteAuto, &with_all);
-        assert!(!g_w.iter().any(|s| s == READ_ALL_SCOPE), "可写档不许顺带保留跨空间读（它不在那一档的授权面里）");
+        assert!(
+            !g_w.iter().any(|s| s == READ_ALL_SCOPE),
+            "可写档不许顺带保留跨空间读（它不在那一档的授权面里）"
+        );
         assert_eq!(level_of(false, &with_write, true), McpLevel::Off);
         assert_eq!(level_of(true, &reads, false), McpLevel::Read);
         assert_eq!(level_of(true, &with_all, false), McpLevel::ReadAll);
         assert_eq!(level_of(true, &with_write, false), McpLevel::WriteConfirm);
         assert_eq!(level_of(true, &with_write, true), McpLevel::WriteAuto);
+        // ⭐ P1
+        let mut with_write_all = with_write.clone();
+        with_write_all.push("write:all-spaces".to_string());
+        assert_eq!(level_of(true, &with_write_all, false), McpLevel::WriteAll);
+        let (_, g_wa, aw) = level_to_config(McpLevel::WriteAll, &[]);
+        assert!(g_wa.iter().any(|s| s == "write:all-spaces"));
+        assert!(g_wa.iter().any(|s| s == WRITE_SCOPE));
+        assert!(
+            g_wa.iter().any(|s| s == READ_ALL_SCOPE),
+            "v2：写全部空间同时能读全部空间（owner 甲）"
+        );
+        assert!(aw, "可写（全部空间）免确认");
+        let (_, g_other, _) = level_to_config(McpLevel::WriteAuto, &with_write_all);
+        assert!(
+            !g_other.iter().any(|s| s == "write:all-spaces"),
+            "别的档必须收回 write:all-spaces"
+        );
     }
 
     /// ⭐ **R152 接线**：换档必须**换令牌**（R147 的教训 ✓）＋ 命令进 `lib.rs` ✓。
@@ -356,15 +446,23 @@ mod tests {
             line.contains("has_write_grant(&cfg.granted)"),
             "工具清单必须跟**权限**走 ✓（现在这行是：{line}）—— 按 allow_write 过滤会把\"可写待确认\"档的写工具误藏 ✗"
         );
-        assert!(!line.contains("allow_write()"), "⛔ 不许按 allow_write() 过滤清单 ✗（那是落库策略 ✓）");
+        assert!(
+            !line.contains("allow_write()"),
+            "⛔ 不许按 allow_write() 过滤清单 ✗（那是落库策略 ✓）"
+        );
         // ⚠️ 也不许在这里 `resolve_config()` 重解析 ✗ —— app 进程没有那两个环境变量 ⇒ 它会回 None
         //    ⇒ `granted=[]` ⇒ 写工具被误藏 ✓（2026-10-08 真机实测抓到的就是这个 ✓）。
-        assert!(!line.contains("resolve_config()"), "⛔ 清单要用这次请求自己的 cfg ✓，不许重解析 ✗");
+        assert!(
+            !line.contains("resolve_config()"),
+            "⛔ 清单要用这次请求自己的 cfg ✓，不许重解析 ✗"
+        );
     }
 
     fn changing_the_level_reissues_the_token_and_is_wired() {
         let src = include_str!("mcp_channel.rs");
-        let start = src.find("pub fn set_level(").expect("函数名改了就要同步改这里 ✓");
+        let start = src
+            .find("pub fn set_level(")
+            .expect("函数名改了就要同步改这里 ✓");
         let body = &src[start..];
         let end = body.find("\npub fn ").unwrap_or(body.len());
         assert!(
@@ -372,30 +470,83 @@ mod tests {
             "换档必须**换令牌** ✓（只写配置 ⇒ 面板读的 granted 来自令牌文件 ⇒ 会「点了没反应」✗）"
         );
         let lib = include_str!("lib.rs");
-        assert!(lib.contains("mcp_channel::mcp_set_level"), "命令必须在 lib.rs 注册 ✓");
+        assert!(
+            lib.contains("mcp_channel::mcp_set_level"),
+            "命令必须在 lib.rs 注册 ✓"
+        );
     }
 
     fn the_write_grant_adds_and_removes_exactly_the_write_scope() {
-        let read_only = vec![
-            "read:pages".to_string(),
-            "read:files".to_string(),
-            "read:backlinks".to_string(),
-        ];
+        // ⭐ B1a：读档的授权面 = `default_read_scopes()`（2026-10-29 起含 tags / properties /
+        //   page.current 三条新读 scope）—— ⛔ 不再在测试里手抄三个字符串（会与实现漂）。
+        let read_only = default_read_scopes();
         let on = granted_after_write_grant(&read_only, true);
         assert!(
             on.contains(&WRITE_SCOPE.to_string()),
             "授权后必须含写 ✓（否则写面还是打不开 ✗）"
         );
-        assert_eq!(on.len(), 4, "只该多出那一项 ✓");
+        assert_eq!(on.len(), read_only.len() + 1, "只该多出那一项 ✓");
         for s in &read_only {
-            assert!(on.contains(s), "读三项不许被写挤掉 ✓：{s}");
+            assert!(on.contains(s), "读 scope 不许被写挤掉 ✓：{s}");
         }
         let off = granted_after_write_grant(&on, false);
-        assert!(!off.contains(&WRITE_SCOPE.to_string()), "收回后不许还有写 ✓");
+        assert!(
+            !off.contains(&WRITE_SCOPE.to_string()),
+            "收回后不许还有写 ✓"
+        );
         assert_eq!(off, read_only, "收回后应当**回到原样** ✓");
-        // 旧配置文件可能没有 granted（空清单）⇒ 授权写也要把读三项补齐 ✓
-        assert_eq!(granted_after_write_grant(&[], true).len(), 4, "空清单 ⇒ 读三项 ＋ 写一项 ✓");
-        assert_eq!(granted_after_write_grant(&on, true), on, "重复授权不许重复加 ✓");
+        // 旧配置文件可能没有 granted（空清单）⇒ 授权写也要把默认读 scope 补齐 ✓
+        assert_eq!(
+            granted_after_write_grant(&[], true).len(),
+            default_read_scopes().len() + 1,
+            "空清单 ⇒ 默认读全家 ＋ 写一项 ✓"
+        );
+        assert_eq!(
+            granted_after_write_grant(&on, true),
+            on,
+            "重复授权不许重复加 ✓"
+        );
+    }
+
+    /// ⭐ **B1a**：升级来的旧授权快照（只有三个读 scope）要能**补齐新读 scope**，
+    /// 且⛔ 不顺手放大到 `read:all-spaces` / `write:pages`（那两条只由档位显式给 ✓）。
+    #[test]
+    fn an_old_grant_snapshot_gets_the_new_read_scopes_but_not_more() {
+        let old = vec![
+            "read:pages".to_string(),
+            "read:files".to_string(),
+            "read:backlinks".to_string(),
+        ];
+        let now = granted_with_default_reads(&old);
+        for s in ["read:tags", "read:properties", "read:page.current"] {
+            assert!(
+                now.iter().any(|x| x == s),
+                "旧快照必须补上 {s} ✓（否则 tags_list / properties_list / page_current 一调就拒 ✗）"
+            );
+        }
+        for s in [READ_ALL_SCOPE, WRITE_SCOPE] {
+            assert!(!now.iter().any(|x| x == s), "⛔ 补读不许顺手放大到 {s} ✗");
+        }
+        assert_eq!(now.len(), default_read_scopes().len());
+        // 已有项**原样在前**，缺的按 `default_read_scopes()` 的顺序追加（不是重新排序 ✓）
+        let want = [
+            "read:pages",
+            "read:files",
+            "read:backlinks",
+            "read:tags",
+            "read:properties",
+            "read:page.current",
+            // B1c：版本/回收站/只读导出
+            "read:versions",
+            "read:trash",
+            "export:files",
+        ];
+        assert_eq!(
+            now,
+            want.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            "已有项原样在前、缺的按默认读顺序追加 ✓"
+        );
+        assert_eq!(granted_with_default_reads(&now), now, "补齐必须幂等 ✓");
     }
 
     /// ⭐ **R147 的接线那一半**（函数对 ≠ 被调用 ✗）：命令面必须**落盘 config** ＋ **换令牌**，且**注册进 `lib.rs`** ✓。
@@ -405,7 +556,9 @@ mod tests {
     #[test]
     fn the_write_grant_is_wired_to_the_config_and_to_a_token_reissue() {
         let src = include_str!("mcp_channel.rs");
-        let start = src.find("pub fn set_write_grant(").expect("函数名改了就要同步改这里 ✓");
+        let start = src
+            .find("pub fn set_write_grant(")
+            .expect("函数名改了就要同步改这里 ✓");
         let body = &src[start..];
         let end = body.find("\npub fn ").unwrap_or(body.len());
         let body = &body[..end];
@@ -438,15 +591,24 @@ mod tests {
         assert!(origin_ok(Some("http://127.0.0.1:5173")));
         assert!(origin_ok(Some("http://localhost:8080")));
         assert!(origin_ok(None), "原生客户端可不发 Origin ✓");
-        assert!(!origin_ok(Some("http://127.0.0.1.evil.com")), "前缀一样但不是回环 ✗");
+        assert!(
+            !origin_ok(Some("http://127.0.0.1.evil.com")),
+            "前缀一样但不是回环 ✗"
+        );
         assert!(!origin_ok(Some("http://127.0.0.10")));
-        assert!(!origin_ok(Some("https://127.0.0.1")), "只认 http（本机一跳 ✓）");
+        assert!(
+            !origin_ok(Some("https://127.0.0.1")),
+            "只认 http（本机一跳 ✓）"
+        );
         assert!(!origin_ok(Some("http://evil.com")));
 
         assert!(host_ok(Some("127.0.0.1")));
         assert!(host_ok(Some("127.0.0.1:9000")));
         assert!(host_ok(Some("localhost:9000")));
-        assert!(!host_ok(Some("127.0.0.1.evil.com")), "DNS rebinding 那一类 ✗");
+        assert!(
+            !host_ok(Some("127.0.0.1.evil.com")),
+            "DNS rebinding 那一类 ✗"
+        );
         assert!(!host_ok(Some("127.0.0.10:9000")));
         assert!(!host_ok(None), "Host 缺失必须拒 ✓");
         assert!(!host_ok(Some("")));
@@ -472,21 +634,70 @@ mod tests {
         assert!(parse_token_file("\n").is_none(), "空文件 ⇒ 没有令牌 ✓");
         assert_eq!(session_id_of("tok-1"), session_id_of("tok-1"));
         assert_ne!(session_id_of("tok-1"), session_id_of("tok-2"));
-        assert!(!session_id_of("tok-1").contains("tok-1"), "会话号里不许出现令牌本身 ✓");
+        assert!(
+            !session_id_of("tok-1").contains("tok-1"),
+            "会话号里不许出现令牌本身 ✓"
+        );
     }
 
     #[test]
     fn request_gate_orders_host_origin_token_then_args() {
         let cfg = cfg();
-        assert_eq!(handle_request(&cfg, None, None, Some("Bearer tok-abc"), "{}").0, 403, "Host 必须在最前 ✓");
-        assert_eq!(handle_request(&cfg, Some("http://evil.com"), Some("127.0.0.1"), Some("Bearer tok-abc"), "{}").0, 403);
-        assert_eq!(handle_request(&cfg, None, Some("127.0.0.1"), Some("Bearer nope"), "{}").0, 401);
-        assert_eq!(handle_request(&cfg, None, Some("127.0.0.1"), Some("Bearer tok-abc"), "不是 JSON").0, 400);
-        assert_eq!(handle_request(&cfg, None, Some("127.0.0.1"), Some("Bearer tok-abc"), "{\"nope\":1}").0, 400);
+        assert_eq!(
+            handle_request(&cfg, None, None, Some("Bearer tok-abc"), "{}").0,
+            403,
+            "Host 必须在最前 ✓"
+        );
+        assert_eq!(
+            handle_request(
+                &cfg,
+                Some("http://evil.com"),
+                Some("127.0.0.1"),
+                Some("Bearer tok-abc"),
+                "{}"
+            )
+            .0,
+            403
+        );
+        assert_eq!(
+            handle_request(&cfg, None, Some("127.0.0.1"), Some("Bearer nope"), "{}").0,
+            401
+        );
+        assert_eq!(
+            handle_request(
+                &cfg,
+                None,
+                Some("127.0.0.1"),
+                Some("Bearer tok-abc"),
+                "不是 JSON"
+            )
+            .0,
+            400
+        );
+        assert_eq!(
+            handle_request(
+                &cfg,
+                None,
+                Some("127.0.0.1"),
+                Some("Bearer tok-abc"),
+                "{\"nope\":1}"
+            )
+            .0,
+            400
+        );
         // 三个都过 ⇒ 真的走到唯一入口 ✓（未知能力 ⇒ 唯一鉴权点给 unknown_capability ⇒ 403 ＋ 留痕 ✓）
-        let (code, body) = handle_request(&cfg, None, Some("127.0.0.1"), Some("Bearer tok-abc"), "{\"method\":\"nope.nope\",\"args\":{}}");
+        let (code, body) = handle_request(
+            &cfg,
+            None,
+            Some("127.0.0.1"),
+            Some("Bearer tok-abc"),
+            "{\"method\":\"nope.nope\",\"args\":{}}",
+        );
         assert_eq!(code, 403);
-        assert!(body.contains("unknown_capability"), "错误码要原样透出 ✓：{body}");
+        assert!(
+            body.contains("unknown_capability"),
+            "错误码要原样透出 ✓：{body}"
+        );
     }
 }
 
@@ -531,7 +742,9 @@ impl Default for FileConfig {
         Self {
             enabled: false,
             // ⚠️ 默认只给**读**权限（M1 是只读接入 ✓）；写随 M2，且 R87 要求免确认写**必须留痕** ✓。
-            granted: vec!["read:pages".to_string(), "read:files".to_string(), "read:backlinks".to_string()],
+            // ⭐ B1a：不再手抄一份读清单 —— 与 `default_read_scopes()` **同源**（否则新增读能力时
+            //   这里会静默漏掉，症状正是「新工具列在面上、一调就拒」）。
+            granted: default_read_scopes(),
             // ⛔ 免确认写**默认关** ✓（R87：可以开，不是默认开 ✓）
             allow_write: false,
         }
@@ -562,7 +775,9 @@ pub fn port_path() -> Option<PathBuf> {
 
 /// 读配置：**不存在／读不动／坏 JSON ⇒ 默认值**（＝默认关 ✓）—— 绝不因为配置文件坏了就"默认开" ✗。
 pub fn read_file_config() -> FileConfig {
-    let Some(p) = config_path() else { return FileConfig::default() };
+    let Some(p) = config_path() else {
+        return FileConfig::default();
+    };
     match std::fs::read_to_string(&p) {
         Ok(text) => serde_json::from_str::<FileConfig>(&text).unwrap_or_default(),
         Err(_) => FileConfig::default(),
@@ -606,7 +821,8 @@ pub fn has_write_grant(granted: &[String]) -> bool {
 }
 
 pub fn allow_write() -> bool {
-    std::env::var("SHUYONOTE_MCP_ALLOW_WRITE").ok().as_deref() == Some("on") || read_file_config().allow_write
+    std::env::var("SHUYONOTE_MCP_ALLOW_WRITE").ok().as_deref() == Some("on")
+        || read_file_config().allow_write
 }
 
 /// 改「免确认写」开关（写配置 ✓ ＋ 若正在监听 ⇒ **按新清单重启**，否则刚开的写面要等下次启动才出现 ✗）。
@@ -626,6 +842,8 @@ pub fn set_allow_write(on: bool) -> Result<McpStatus, String> {
 /// ⚠️ 在此之前**全仓没有任何地方把它加进 `granted`** ✗ ⇒ 面板那个「免确认写」开关是个**空开关** ✓
 /// （打开也只影响"草稿要不要自动落库" ✓，而它前面那道**授权门从来没开过** ✗）。
 pub(crate) const WRITE_SCOPE: &str = "write:pages";
+/// ⭐ P1：可写（全部空间）档显式授予的写 scope（默认关；⛔ 不替代 read:all-spaces）。
+pub(crate) const WRITE_ALL_SCOPE: &str = "write:all-spaces";
 
 /// ⭐ **2026-10-18**：**跨空间只读**那一条 scope —— 只有面板的「只读（全部空间）」档会给它 ✓。
 ///
@@ -637,13 +855,45 @@ pub(crate) const WRITE_SCOPE: &str = "write:pages";
 /// ⚠️ 默认**不给** ✓；插件 manifest **声明不了**它（不在注册表里）⇒ 插件面永远跨不了空间 ✓。
 pub(crate) const READ_ALL_SCOPE: &str = "read:all-spaces";
 
-/// 默认的**读**三项 ✓ —— 与 `FileConfig::default()` 同一份口径 ✓（只读是 M1 的边界 ✓）。
+/// 默认的**读** scope 全家 ✓ —— 「只读」及以上各档都会带上它们（只读是 M1 的边界 ✓）。
+///
+/// ⭐ **B1a（2026-10-29）加后三条**：只读档新增了 `tags_list` / `properties_list` / `page_current`
+/// 三个工具，它们分别要 `read:tags` / `read:properties` / `read:page.current` ——
+/// 不把这三个 scope 放进读档，工具就会**列在面上却一调就 `permission_denied`**
+/// （「面 = 此刻真能调的能力」；M1 在 `coverage.report` 上踩过同形 ✗）。
+/// ⭐ **B1c（2026-10-29）再加三条**：`versions_list` / `version_get`（`read:versions`）、
+/// `trash_list`（`read:trash`）、导出/下载句柄（`export:files`）—— 它们同样**不写笔记**：
+/// 句柄只会被 `blobs_fetch` 落进应用自己的 `exports/`，所以算只读档。
+/// 全部都是注册表里的 low risk 权限、都限 `current-space` ⇒ 读档的语义面没被放大。
 pub(crate) fn default_read_scopes() -> Vec<String> {
     vec![
         "read:pages".to_string(),
         "read:files".to_string(),
         "read:backlinks".to_string(),
+        "read:tags".to_string(),
+        "read:properties".to_string(),
+        "read:page.current".to_string(),
+        // B1c：版本快照 / 回收站清单 / 导出句柄（只读动作，见函数注释）
+        "read:versions".to_string(),
+        "read:trash".to_string(),
+        "export:files".to_string(),
     ]
+}
+
+/// 把「默认读 scope 全家」补齐到一份授权清单上 —— **只补读** ✓。
+///
+/// 为什么要它（B1a）：读档的授权是**令牌/配置文件里的快照**；上一版写下的那份只有三个读
+/// scope ⇒ 升级后新工具「列在面上、一调就拒」。起通道前补一次（并落盘），用户不必手动重选档位。
+/// ⛔ **不补** `read:all-spaces` / `write:pages` —— 那两条仍只由档位显式给（见 [`level_to_config`]）。
+/// 顺序：已有项原样保留，缺的按 [`default_read_scopes`] 的顺序追加（幂等 ✓）。
+pub(crate) fn granted_with_default_reads(base: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = base.to_vec();
+    for s in default_read_scopes() {
+        if !out.contains(&s) {
+            out.push(s);
+        }
+    }
+    out
 }
 
 /// ⭐ **纯函数**：把「授权写」这一档施加到一份权限清单上 ✓ ——
@@ -654,12 +904,9 @@ pub(crate) fn default_read_scopes() -> Vec<String> {
 /// · `on=true` ⇒ 确保含 `write:pages` ✓（已有不重复 ✓）；`on=false` ⇒ **移除**它 ✓（收回 ✓）；
 /// · **清单里别的东西一律不动** ✓（将来加了别的 scope 也不会被这一档吃掉 ✓）。
 pub(crate) fn granted_after_write_grant(base: &[String], on: bool) -> Vec<String> {
-    let mut out: Vec<String> = base.to_vec();
-    for s in default_read_scopes() {
-        if !out.contains(&s) {
-            out.push(s);
-        }
-    }
+    // ⭐ B1a：读 scope 的补齐与「起通道前那次补齐」共用一处（`granted_with_default_reads` ✓）——
+    //    否则"哪些读永远在"会有两份清单，必然漂。
+    let mut out: Vec<String> = granted_with_default_reads(base);
     let w = WRITE_SCOPE.to_string();
     if on {
         if !out.contains(&w) {
@@ -744,7 +991,43 @@ pub fn read_token() -> Option<String> {
 /// ③ 打包后的资源目录 `<resource>/mcp/index.mjs`（由命令层传进来 ✓；
 ///    ⭐ 2026-10-18 起**真的打进包**了 —— 三份平台包配置都写了
 ///    `"../tools/shuyonote-mcp/index.mjs": "mcp/index.mjs"` ⇒ 安装版也能自动填好路径 ✓）。
-fn resolve_bridge_from(start: &std::path::Path, resource_dir: Option<&std::path::Path>) -> Option<PathBuf> {
+fn resolve_bridge_from(
+    start: &std::path::Path,
+    resource_dir: Option<&std::path::Path>,
+) -> Option<PathBuf> {
+    // ⭐ 2026-10-31（C1/B）：**优先用随包发的 Rust 桥 exe**（用户机器不需要 Node、不需要联网）。
+    //   顺序：① 从 exe 目录往上有**开发构建产物**（`tools/shuyonote-mcp-rust/dist/…`）
+    //         ② 打包资源目录 `<resource>/mcp/shuyonote-mcp[.exe]`
+    //         ③ 都没有才退回 Node 桥（旧包/开发期）—— 过渡期两条都在，别让面板拿到不存在的路径。
+    let bin = if cfg!(windows) {
+        "shuyonote-mcp.exe"
+    } else {
+        "shuyonote-mcp"
+    };
+    let mut cur = Some(start.to_path_buf());
+    let mut hops = 0;
+    while let Some(dir) = cur {
+        let cand = dir
+            .join("tools")
+            .join("shuyonote-mcp-rust")
+            .join("dist")
+            .join(bin);
+        if cand.is_file() {
+            return Some(cand);
+        }
+        hops += 1;
+        if hops >= 8 {
+            break;
+        }
+        cur = dir.parent().map(std::path::Path::to_path_buf);
+    }
+    if let Some(res) = resource_dir {
+        let cand = res.join("mcp").join(bin);
+        if cand.is_file() {
+            return Some(cand);
+        }
+    }
+    // ③ Node 桥兜底（过渡期：旧安装包只带了 index.mjs；开发期 `src-tauri/mcp/` 还没构建时也是如此）
     let mut cur = Some(start.to_path_buf());
     let mut hops = 0;
     while let Some(dir) = cur {
@@ -854,6 +1137,9 @@ pub fn status_with_resources(resource_dir: Option<&std::path::Path>) -> McpStatu
         None => (None, file.granted.clone()),
     };
     let addr = current_addr();
+    // ⭐ B1a：令牌文件里那一行可能还是升级前写下的旧快照（缺 `read:tags` 等新读 scope）——
+    //   面板按**实际授权面**显示（与鉴权时 `ChannelConfig.granted` 同一口径：只补读 ✓）。
+    let granted = granted_with_default_reads(&granted);
     McpStatus {
         enabled: is_enabled(),
         running: addr.is_some(),
@@ -876,8 +1162,12 @@ pub fn status_with_resources(resource_dir: Option<&std::path::Path>) -> McpStatu
 fn start_listener(cfg: ChannelConfig) -> Result<Running, String> {
     let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
         .map_err(|e| format!("绑回环端口失败：{e}"))?;
-    let addr = listener.local_addr().map_err(|e| format!("读端口失败：{e}"))?;
-    listener.set_nonblocking(true).map_err(|e| format!("设非阻塞失败：{e}"))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|e| format!("读端口失败：{e}"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("设非阻塞失败：{e}"))?;
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     // 端口公布 ✓（写文件而不是 stdout/stderr：App 与桥之间没有 stdio 关系 ✓）
@@ -940,6 +1230,16 @@ pub fn set_enabled(enabled: bool) -> Result<McpStatus, String> {
     let was_enabled = read_file_config().enabled;
     let mut cfg = read_file_config();
     cfg.enabled = true;
+    // ⭐ B1a（2026-10-29）：旧配置里的 `granted` 是**写下来的快照**，可能缺后来新增的读 scope
+    //   （`read:tags` / `read:properties` / `read:page.current`）⇒ 起通道前**补齐并落盘**（只补读 ✓）。
+    //   ⚠️ **不主动换令牌**：鉴权用的是这里拼出来的 `ChannelConfig.granted`（见下），令牌文件里那一行
+    //   只用于面板展示；换令牌**不会**踢掉已连上的客户端 —— 桥（`tools/shuyonote-mcp/index.mjs`）
+    //   每次调用都重读端口/令牌文件（实测：同一桥进程内换令牌、换端口都自动跟上）。
+    //   ⚠️ 但客户端只在**启动时**拉起桥 ⇒ 「首次接入后要重启客户端」仍然成立（面板第 3 步据此措辞）。
+    let upgraded = granted_with_default_reads(&cfg.granted);
+    if upgraded != cfg.granted {
+        cfg.granted = upgraded;
+    }
     write_file_config(&cfg)?;
     if !was_enabled || token_path().map(|p| p.exists()).unwrap_or(false) == false {
         write_new_token(&cfg.granted)?;
@@ -1001,7 +1301,7 @@ pub fn start_if_enabled() -> Option<SocketAddr> {
 #[tauri::command]
 pub fn mcp_status(app: tauri::AppHandle) -> McpStatus {
     use tauri::Manager; // `app.path()` 要这个 trait 在作用域里 ✓
-    // ⭐ 2026-10-18：把打包资源目录也交给解析器（将来桥随包发时直接生效；现在通常是 `None` ✓）
+                        // ⭐ 2026-10-18：把打包资源目录也交给解析器（将来桥随包发时直接生效；现在通常是 `None` ✓）
     let res = app.path().resource_dir().ok();
     status_with_resources(res.as_deref())
 }
@@ -1085,6 +1385,9 @@ pub enum McpLevel {
     WriteConfirm,
     /// 可写、**免确认** ✓（直接落库；⚠️ 每一次写仍留一行审计 ✓）。
     WriteAuto,
+    /// ⭐ v2（owner 拍板「甲」）：可写（全部空间）= `write:pages` ＋ `write:all-spaces`
+    /// **同时给** `read:all-spaces`（要读目标页才能合并/改已有页面）；加密空间内容仍不可见。
+    WriteAll,
 }
 
 /// ⭐ **纯函数**：档位 ⇒ `(enabled, granted, allow_write)` ✓（**表驱动**判据就钉它 ✓）。
@@ -1098,7 +1401,12 @@ pub(crate) fn level_to_config(level: McpLevel, base: &[String]) -> (bool, Vec<St
     let reads = default_read_scopes();
     let mut granted: Vec<String> = base
         .iter()
-        .filter(|s| reads.contains(s) || s.as_str() == WRITE_SCOPE || s.as_str() == READ_ALL_SCOPE)
+        .filter(|s| {
+            reads.contains(s)
+                || s.as_str() == WRITE_SCOPE
+                || s.as_str() == READ_ALL_SCOPE
+                || s.as_str() == WRITE_ALL_SCOPE
+        })
         .cloned()
         .collect();
     for r in &reads {
@@ -1110,12 +1418,19 @@ pub(crate) fn level_to_config(level: McpLevel, base: &[String]) -> (bool, Vec<St
     let all = READ_ALL_SCOPE.to_string();
     if level == McpLevel::ReadAll {
         if !granted.contains(&all) {
-            granted.push(all);
+            granted.push(all.clone());
         }
     } else {
         granted.retain(|s| s != &all);
     }
-    let wants_write = matches!(level, McpLevel::WriteConfirm | McpLevel::WriteAuto);
+    // ⭐ v2（owner 拍「甲」）：WriteAll = 读全空间 ＋ 写全空间；其余档不变
+    if level == McpLevel::WriteAll && !granted.contains(&all) {
+        granted.push(all.clone());
+    }
+    let wants_write = matches!(
+        level,
+        McpLevel::WriteConfirm | McpLevel::WriteAuto | McpLevel::WriteAll
+    );
     let w = WRITE_SCOPE.to_string();
     if wants_write {
         if !granted.contains(&w) {
@@ -1124,12 +1439,22 @@ pub(crate) fn level_to_config(level: McpLevel, base: &[String]) -> (bool, Vec<St
     } else {
         granted.retain(|s| s != &w);
     }
+    // ⭐ P1：write:all-spaces 只由 WriteAll 给，其余档一律收回
+    let wa = WRITE_ALL_SCOPE.to_string();
+    if level == McpLevel::WriteAll {
+        if !granted.contains(&wa) {
+            granted.push(wa);
+        }
+    } else {
+        granted.retain(|s| s != &wa);
+    }
     match level {
         McpLevel::Off => (false, granted, false),
         McpLevel::Read => (true, granted, false),
         McpLevel::ReadAll => (true, granted, false),
         McpLevel::WriteConfirm => (true, granted, false),
         McpLevel::WriteAuto => (true, granted, true),
+        McpLevel::WriteAll => (true, granted, true),
     }
 }
 
@@ -1143,7 +1468,8 @@ pub fn level_of(enabled: bool, granted: &[String], allow_write: bool) -> McpLeve
         granted.iter().any(|s| s == READ_ALL_SCOPE),
         allow_write,
     ) {
-        // 写优先：带了 write:pages 就是写档（读全部空间与否不改变它是"可写"这件事 ✓）
+        // 写优先：带了 write:all-spaces 就是"可写（全部空间）"档；否则按免确认与否分档
+        (true, _, _) if granted.iter().any(|s| s == WRITE_ALL_SCOPE) => McpLevel::WriteAll,
         (true, _, false) => McpLevel::WriteConfirm,
         (true, _, true) => McpLevel::WriteAuto,
         (false, true, _) => McpLevel::ReadAll,
@@ -1204,7 +1530,10 @@ mod bridge_path_tests {
         let tag = format!(
             "{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         );
         let repo = std::env::temp_dir().join(format!("shuyonote-bridge-repo-{tag}"));
         let exe_dir = repo.join("src-tauri").join("target").join("debug");
@@ -1216,6 +1545,25 @@ mod bridge_path_tests {
             resolve_bridge_from(&exe_dir, None).as_deref(),
             Some(bridge.as_path()),
             "从 exe 目录往上找仓库里的桥（{exe_dir:?} → {bridge:?}）"
+        );
+
+        // ⭐ 2026-10-31（C1/B）：有随包 Rust 桥 exe 时**必须优先用它**（用户机器不依赖 Node）
+        let rust_bin_name = if cfg!(windows) {
+            "shuyonote-mcp.exe"
+        } else {
+            "shuyonote-mcp"
+        };
+        let rust_bin = repo
+            .join("tools")
+            .join("shuyonote-mcp-rust")
+            .join("dist")
+            .join(rust_bin_name);
+        std::fs::create_dir_all(rust_bin.parent().expect("parent")).unwrap();
+        std::fs::write(&rust_bin, b"bin").unwrap();
+        assert_eq!(
+            resolve_bridge_from(&exe_dir, None).as_deref(),
+            Some(rust_bin.as_path()),
+            "有随包 Rust 桥时优先用它（Node 桥只做兜底）"
         );
 
         // 干净的另一棵树：没有仓库，只有打包资源目录
@@ -1250,14 +1598,31 @@ mod bridge_path_tests {
     /// 而所有既有判据照样是绿的。这就是本仓最忌的那族：**行为悄悄变差、没有信号** ✗。
     #[test]
     fn every_platform_bundle_ships_the_bridge() {
-        for (name, text) in [
-            ("windows", include_str!("../tauri.windows.conf.json")),
-            ("linux", include_str!("../tauri.linux.conf.json")),
-            ("macos", include_str!("../tauri.macos.conf.json")),
+        for (name, text, rust_mapping) in [
+            (
+                "windows",
+                include_str!("../tauri.windows.conf.json"),
+                "\"../tools/shuyonote-mcp-rust/dist/shuyonote-mcp.exe\": \"mcp/shuyonote-mcp.exe\"",
+            ),
+            (
+                "linux",
+                include_str!("../tauri.linux.conf.json"),
+                "\"../tools/shuyonote-mcp-rust/dist/shuyonote-mcp\": \"mcp/shuyonote-mcp\"",
+            ),
+            (
+                "macos",
+                include_str!("../tauri.macos.conf.json"),
+                "\"../tools/shuyonote-mcp-rust/dist/shuyonote-mcp\": \"mcp/shuyonote-mcp\"",
+            ),
         ] {
             assert!(
                 text.contains("\"../tools/shuyonote-mcp/index.mjs\": \"mcp/index.mjs\""),
                 "{name} 的打包配置没有把桥映射到 mcp/index.mjs（安装版会拿不到 bridge_path）✗"
+            );
+            // ⭐ 2026-10-31（C1/B）：**必须**带上 Rust 桥 exe —— 否则用户机器没有 Node 就永远接不上
+            assert!(
+                text.contains(rust_mapping),
+                "{name} 的打包配置没有带上随包 Rust 桥（{rust_mapping}）✗"
             );
         }
         // 源文件真的在（`include_str!` 的映射指向它 ✓）
@@ -1275,7 +1640,9 @@ mod bridge_path_tests {
     #[test]
     fn verbatim_paths_are_shown_as_plain_paths() {
         assert_eq!(
-            display_path(std::path::Path::new(r"\\?\C:\Users\x\ShuyoNote\mcp\index.mjs")),
+            display_path(std::path::Path::new(
+                r"\\?\C:\Users\x\ShuyoNote\mcp\index.mjs"
+            )),
             r"C:\Users\x\ShuyoNote\mcp\index.mjs",
             "`\\\\?\\C:\\…` 必须折回 `C:\\…`（安装版面板的配置片段就是这条）"
         );
@@ -1334,7 +1701,10 @@ mod switch_tests {
 
         // ② 关 ⇒ `is_enabled()` 假（⇒ 每个请求会被 `disabled` 拒 ✓）＋ 端口文件被删 ✓
         set_enabled(false).expect("关开关");
-        assert!(!is_enabled(), "关掉之后 `is_enabled()` 必须为假 ⇒ 请求会被 `disabled` 拒 ✓");
+        assert!(
+            !is_enabled(),
+            "关掉之后 `is_enabled()` 必须为假 ⇒ 请求会被 `disabled` 拒 ✓"
+        );
         assert!(
             port_path().map(|p| !p.exists()).unwrap_or(true),
             "关掉要删端口文件 ✓（桥照着它连 ⇒ 文件在就说明还在听 ✗）"

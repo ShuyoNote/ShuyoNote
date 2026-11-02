@@ -7,6 +7,12 @@
 //
 // 方向性约定（整个模块只有这一条约定）：**宁可不切（多算 ⇒ 假红，看得见、改起来便宜），
 // 绝不漏切（少算 ⇒ 假绿，看不见）**。因此任何不确定的输入都返回"不切"。
+//
+// ⭐ 2026-10-28：**非文件尾部**的 `#[cfg(test)]` item 也要切 ✗ —— 真机撞到过：`mesh.rs` / `sync.rs`
+//   各有多处 `#[cfg(test)] mod`（只有最后一个到文件尾）⇒ 旧规则只切"尾部那一个"，
+//   前面那些测试模块里的 `content_json` / `content_text` 被当成生产面 ⇒ 两个文件"新增"直接红（假红）。
+//   ⇒ 现在：**每个能配对成功的 `#[cfg(test)]` item 都切**（含嵌套；重叠区间合并）；
+//   任一 item 配对失败 ⇒ 仍然全量计数（不确定就不切 ✓）。
 
 /**
  * 给 Rust 文本打区域掩码：`0` 代码 / `1` 行注释 / `2` 块注释 / `3` 字符串 / `4` 字符字面量。
@@ -128,13 +134,50 @@ export function rustTestTailStart(text, M = rustRegions(text)) {
 export const isTestFile = (rel) => /\.test\.(ts|tsx|mjs|js)$/.test(rel);
 
 /**
+ * 所有能**配对成功**的 `#[cfg(test)]` item 的区间（升序、重叠/嵌套已合并）。
+ * 返回 `null` 表示**有一个 item 配不上** ⇒ 调用方必须全量计数（宁可多算，不漏算）。
+ */
+export function rustTestRanges(text, M = rustRegions(text)) {
+  const re = /#\[cfg\(test\)\]/g;
+  const ranges = [];
+  for (let m; (m = re.exec(text)); ) {
+    if (M[m.index] !== 0) continue; // 注释或字符串里的假属性
+    const end = rustItemEnd(text, M, m.index);
+    if (end === null) return null;
+    ranges.push([m.index, end]);
+  }
+  if (!ranges.length) return [];
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const [s, e] of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+    else merged.push([s, e]);
+  }
+  return merged;
+}
+
+/**
  * 取"算作生产替换面"的那部分文本。返回 `null` 表示该文件不参与计数（测试文件）。
  * 排除测试**不是**放松：生产侧一处的余量都没有。
+ *
+ * 口径：去掉**每一个**配对成功的 `#[cfg(test)]` item（不是只去文件尾部那一个）；
+ * 注释/字符串里的假属性不算（由区域掩码保证）；任一 item 配不上 ⇒ 原样返回全量文本。
  */
 export function productionText(rel, text) {
   if (isTestFile(rel)) return null;
   if (!rel.endsWith(".rs")) return text;
   const M = rustRegions(text);
-  const cut = rustTestTailStart(text, M);
-  return cut === null ? text : text.slice(0, cut);
+  const ranges = rustTestRanges(text, M);
+  if (ranges === null || ranges.length === 0) return text;
+  let out = "";
+  let at = 0;
+  for (const [s, e] of ranges) {
+    out += text.slice(at, s);
+    // 保留换行、其余抹成空格：后续按行/正则计数时行号与边界都不会被拼坏
+    out += text.slice(s, e).replace(/[^\n]/g, " ");
+    at = e;
+  }
+  out += text.slice(at);
+  return out;
 }

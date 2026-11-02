@@ -1,0 +1,21 @@
+[package]
+name = "shuyonote-mcp"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.94"
+description = "ShuyoNote 的本机 MCP 桥（stdio ⇄ 本机通道，只搬运不判权限）"
+license = "AGPL-3.0-only"
+
+# 独立 crate（不在 src-tauri 那个包里）—— 原因见 scripts/build-mcp-bridge.mjs：
+# 放进 src-tauri 会让 tauri-build 在“桥还没编译出来”时就去校验 bundle.resources 的路径 ⇒ 死锁。
+[[bin]]
+name = "shuyonote-mcp"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

@@ -8,7 +8,10 @@
 //   ④ 标题缺失/空内容不许抛，也不许把 `undefined` 写进文件名或头部。
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createEditor, $getRoot, $createParagraphNode, $createTextNode } from "lexical";
-import { $createHeadingNode, HeadingNode, QuoteNode } from "@lexical/rich-text";
+import { $createHeadingNode, $createQuoteNode, HeadingNode, QuoteNode } from "@lexical/rich-text";
+import { $createListItemNode, $createListNode, ListItemNode, ListNode } from "@lexical/list";
+import { CalloutNode, $createCalloutNode } from "../editor/nodes/CalloutNode";
+import { MermaidNode, $createMermaidNode } from "../editor/nodes/MermaidNode";
 
 const saveMock = vi.fn();
 const writeMock = vi.fn();
@@ -101,9 +104,10 @@ describe("pageContentToMarkdown —— 段落里被包住的 mermaid 也必须�
     expect(md).not.toContain("\n\n\n");
   });
 
-  it("★ 控制组：段落里还有真文字 ⇒ 一个字都不动（⛔ 不误伤行内用法 ✗）", () => {
-    // 这是**有意保留的边界**（记在这儿，免得下一个人以为漏了）：`文字 ＋ 装饰块` 同段时不提级，
-    // 因为"把文字与块拆开"会改变语义；要覆盖它得先有 owner 的实例 ✓。
+  it("★ 段落里还有真文字（同段混排）⇒ 文字留下、图块提到顶层仍出围栏（2026-10-31 owner 报「导出丢了 mermaid 标记」）", () => {
+    // ⚠️ 2026-10-15 那版把这一档**故意留着不提级**（"拆开改变语义"）。2026-10-31 owner 又报
+    //    "导出 markdown 丢了 mermaid 图块的标记" ⇒ 同段混排正是会丢的四种形状之一（实测围栏 0 ✗）。
+    //    md 本来就没有"段落内的图"这种形态 ⇒ 文字与原段落留下、图块以顶层围栏导出，是唯一能带走的表示。
     const inline = JSON.stringify({
       root: {
         type: "root",
@@ -122,7 +126,7 @@ describe("pageContentToMarkdown —— 段落里被包住的 mermaid 也必须�
     });
     const md = pageContentToMarkdown(inline);
     expect(md).toContain("前面的文字");
-    expect(md).not.toContain("```mermaid");
+    expect(md).toContain("```mermaid\nflowchart LR\n  A-->B\n```");
   });
 });
 
@@ -176,5 +180,69 @@ describe("exportPageToMarkdown —— 把当前页存成 .md 文件", () => {
       exportPageToMarkdown({ id: "p3", title: "空页", docJson: EMPTY_JSON }),
     ).resolves.toContain("已导出");
     expect(writeMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("pageContentToMarkdown —— 引用 / 列表 / callout 里的 mermaid 也出围栏（2026-10-31 owner 报「导出丢了 mermaid 标记」）", () => {
+  // 现场：§2 那个"段落里恰好一个装饰节点"的提级只覆盖了**顶层段落**这一种形状。
+  // 图块在引用 / 列表项 / callout / 同段文字里时，`$convertToMarkdownString` 同样不走出围栏
+  // （实测四种形状围栏数全是 0 ✗）。修法：③ 把这些嵌套 mermaid 统一提到**顶层块之后**，
+  // 结构与文字原样保留、图块以顶层 ```mermaid 围栏导出。
+  const SRC = "flowchart LR\n  A-->B";
+  const FENCE = "```mermaid\n" + SRC + "\n```";
+
+  function mermaidJson(build: (root: ReturnType<typeof $getRoot>) => void): string {
+    const editor = createEditor({
+      namespace: "export-mermaid-shape-test",
+      nodes: [HeadingNode, QuoteNode, ListNode, ListItemNode, CalloutNode, MermaidNode],
+      onError: (e) => {
+        throw e;
+      },
+    });
+    editor.update(
+      () => {
+        $getRoot().append($createParagraphNode()); // root 不能空（同上面的纪律）
+        build($getRoot());
+      },
+      { discrete: true },
+    );
+    return JSON.stringify(editor.getEditorState().toJSON());
+  }
+
+  it("① 引用里的 mermaid", () => {
+    const md = pageContentToMarkdown(
+      mermaidJson((root) => {
+        const q = $createQuoteNode();
+        q.append($createMermaidNode(SRC));
+        root.append(q);
+      }),
+    );
+    expect(md).toContain(FENCE);
+  });
+
+  it("② 列表项里的 mermaid", () => {
+    const md = pageContentToMarkdown(
+      mermaidJson((root) => {
+        const item = $createListItemNode();
+        item.append($createMermaidNode(SRC));
+        const list = $createListNode("bullet");
+        list.append(item);
+        root.append(list);
+      }),
+    );
+    expect(md).toContain(FENCE);
+  });
+
+  it("③ callout 里的 mermaid", () => {
+    const md = pageContentToMarkdown(
+      mermaidJson((root) => {
+        const callout = $createCalloutNode();
+        const p = $createParagraphNode();
+        p.append($createMermaidNode(SRC));
+        callout.append(p);
+        root.append(callout);
+      }),
+    );
+    expect(md).toContain(FENCE);
   });
 });

@@ -127,7 +127,10 @@ mod tests {
     fn path_leaves_the_leaf_absent_but_makes_the_parent() {
         let p = path("t-path");
         assert!(!p.exists(), "path() 不应创建叶子（解压前要保持不存在）");
-        assert!(p.parent().unwrap().is_dir(), "父目录必须建好，否则解压建不动");
+        assert!(
+            p.parent().unwrap().is_dir(),
+            "父目录必须建好，否则解压建不动"
+        );
     }
 
     #[test]

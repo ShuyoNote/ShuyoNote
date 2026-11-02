@@ -23,9 +23,12 @@ import { fromDatetimeLocalValue, toDatetimeLocalValue } from "../lib/dateTimeVal
 export function DatetimeValueEditor({
   value,
   onChange,
+  onDone,
 }: {
   value: string;
   onChange: (v: string) => void;
+  /** 失焦时通知外层「编辑结束 ⇒ 回阅读态」（属性面板用；数据库单元格不传）。 */
+  onDone?: () => void;
 }) {
   return (
     <input
@@ -33,8 +36,10 @@ export function DatetimeValueEditor({
       step="1"
       className="prop-value"
       title="选择日期与时刻（可精确到秒）"
+      autoFocus
       value={toDatetimeLocalValue(value)}
       onChange={(e) => onChange(fromDatetimeLocalValue(e.target.value) ?? "")}
+      onBlur={() => onDone?.()}
     />
   );
 }

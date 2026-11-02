@@ -97,7 +97,10 @@ impl<'de> serde::Deserialize<'de> for PluginCommandParamOption {
             },
         }
         Ok(match Raw::deserialize(d)? {
-            Raw::Plain(s) => PluginCommandParamOption { label: s.clone(), value: s },
+            Raw::Plain(s) => PluginCommandParamOption {
+                label: s.clone(),
+                value: s,
+            },
             Raw::Full { value, label } => PluginCommandParamOption { value, label },
         })
     }
@@ -106,11 +109,22 @@ impl<'de> serde::Deserialize<'de> for PluginCommandParamOption {
 /// 校验用户填的值是否符合该项声明。**这是宿主侧的边界**：插件拿到的值必然是
 /// 声明类型里的一种，所以插件不需要自己防御"用户填了乱七八糟的东西"。
 pub(crate) fn validate_setting_value(decl: &SettingDecl, raw: &str) -> Result<String, String> {
-    let label = if decl.label.trim().is_empty() { decl.key.as_str() } else { decl.label.as_str() };
+    let label = if decl.label.trim().is_empty() {
+        decl.key.as_str()
+    } else {
+        decl.label.as_str()
+    };
     match decl.setting_type.as_str() {
         "number" => {
-            let n: f64 = raw.trim().parse().map_err(|_| format!("「{label}」需要一个数字"))?;
-            Ok(if n.fract() == 0.0 { format!("{}", n as i64) } else { format!("{n}") })
+            let n: f64 = raw
+                .trim()
+                .parse()
+                .map_err(|_| format!("「{label}」需要一个数字"))?;
+            Ok(if n.fract() == 0.0 {
+                format!("{}", n as i64)
+            } else {
+                format!("{n}")
+            })
         }
         "boolean" => match raw {
             "true" | "false" => Ok(raw.to_string()),
@@ -148,7 +162,10 @@ pub(crate) const MAX_THEME_TOKENS: usize = 40;
 /// **这不是风格检查，是安全边界**：这些值会被写进页面样式，所以必须挡住 `url(` 这类
 /// 会造成**外部请求**的写法（本项目「绝不跟踪」的承诺不允许这种口子），以及能破坏声明
 /// 结构的字符。前端应用前还会再筛一遍（纵深防御：校验器报错不代表加载时就不会遇到坏值）。
-pub(crate) fn validate_theme_value(token: &capabilities_gen::ThemeToken, raw: &str) -> Result<(), String> {
+pub(crate) fn validate_theme_value(
+    token: &capabilities_gen::ThemeToken,
+    raw: &str,
+) -> Result<(), String> {
     let v = raw.trim();
     if v.is_empty() {
         return Err("值是空的".to_string());
@@ -169,15 +186,25 @@ pub(crate) fn validate_theme_value(token: &capabilities_gen::ThemeToken, raw: &s
             let hex = v.starts_with('#')
                 && (4..=9).contains(&v.len())
                 && v[1..].chars().all(|c| c.is_ascii_hexdigit());
-            let func = lower.starts_with("rgb(") || lower.starts_with("rgba(") || lower.starts_with("hsl(") || lower.starts_with("hsla(");
+            let func = lower.starts_with("rgb(")
+                || lower.starts_with("rgba(")
+                || lower.starts_with("hsl(")
+                || lower.starts_with("hsla(");
             let named = matches!(lower.as_str(), "transparent" | "currentcolor" | "inherit")
                 || v.chars().all(|c| c.is_ascii_alphabetic());
             if !(hex || func || named) {
-                return Err("看起来不是颜色（可以是 #rgb / #rrggbb / rgb(...) / hsl(...) / 颜色名）".to_string());
+                return Err(
+                    "看起来不是颜色（可以是 #rgb / #rrggbb / rgb(...) / hsl(...) / 颜色名）"
+                        .to_string(),
+                );
             }
         }
         "length" => {
-            let starts_number = v.chars().next().map(|c| c.is_ascii_digit() || c == '.').unwrap_or(false);
+            let starts_number = v
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_digit() || c == '.')
+                .unwrap_or(false);
             let unit = ["px", "em", "rem", "%"].iter().any(|u| lower.ends_with(u));
             if !(v == "0" || (starts_number && unit)) {
                 return Err("看起来不是长度（可以是 0 / 4px / 0.5rem / 8% 这类）".to_string());
@@ -207,7 +234,10 @@ pub(crate) fn sanitized_theme(manifest: &Manifest) -> Option<ThemeDecl> {
     if tokens.is_empty() {
         None
     } else {
-        Some(ThemeDecl { name: t.name.clone(), tokens })
+        Some(ThemeDecl {
+            name: t.name.clone(),
+            tokens,
+        })
     }
 }
 
@@ -287,7 +317,11 @@ pub(crate) fn permission_metas(manifest: &Manifest) -> (Vec<PluginPermissionMeta
     let reasons: std::collections::HashMap<&str, &str> = manifest
         .permissions
         .as_ref()
-        .map(|ds| ds.iter().map(|d| (d.id.as_str(), d.reason.as_str())).collect())
+        .map(|ds| {
+            ds.iter()
+                .map(|d| (d.id.as_str(), d.reason.as_str()))
+                .collect()
+        })
         .unwrap_or_default();
     let metas = granted
         .iter()
@@ -299,7 +333,11 @@ pub(crate) fn permission_metas(manifest: &Manifest) -> (Vec<PluginPermissionMeta
                 reason: if baseline {
                     "（旧 manifest 未声明权限，按 v1 基线授权）".to_string()
                 } else {
-                    reasons.get(id.as_str()).copied().unwrap_or_default().to_string()
+                    reasons
+                        .get(id.as_str())
+                        .copied()
+                        .unwrap_or_default()
+                        .to_string()
                 },
                 risk: p.map(|p| p.risk.to_string()).unwrap_or_default(),
             }
@@ -380,7 +418,11 @@ pub(crate) fn sanitize_export_file_name(raw: &str) -> Option<String> {
     let base = raw.rsplit(['/', '\\']).next().unwrap_or("").trim();
     let cleaned: String = base.chars().filter(|c| !c.is_control()).collect();
     let cleaned = cleaned.trim().trim_matches('.').to_string();
-    if cleaned.is_empty() || cleaned == "." || cleaned == ".." || cleaned.contains("..") && cleaned.ends_with('.') {
+    if cleaned.is_empty()
+        || cleaned == "."
+        || cleaned == ".."
+        || cleaned.contains("..") && cleaned.ends_with('.')
+    {
         return None;
     }
     let mut out: String = cleaned.chars().take(120).collect();
@@ -443,6 +485,9 @@ pub struct PluginAuditEntry {
     pub ok: bool,
     /// 失败时的错误码前缀（permission_denied / unknown_capability / bad_args …）。
     pub error_code: Option<String>,
+    /// ⭐ 跨空间写 v1：这一条落在哪个空间（当前空间写 = None）。
+    #[serde(default)]
+    pub space_id: Option<String>,
     /// `capability = "host.run"` 这类**运行记录**上带的峰值常驻内存（字节）。
     ///
     /// 为什么记它：内存看门狗只能"拦住暴走"，而"这个插件平时吃多少"是另一件同样有用的事——
@@ -463,14 +508,22 @@ static PLUGIN_AUDIT_DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::A
 /// 追加写一行审计（JSON 行 ✓）。拿不到数据目录／打不开文件时**静默跳过** ✓：
 /// 审计不该因为目录没就绪就把调用方弄崩 ✗（那会把「记不上账」变成「功能坏了」✓）。
 fn persist_audit_line(entry: &PluginAuditEntry) {
-    let Some(dir) = crate::db::app_data_dir_ref() else { return; };
+    let Some(dir) = crate::db::app_data_dir_ref() else {
+        return;
+    };
     let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(dir.join(PLUGIN_AUDIT_LOG))
-    else { return; };
+    else {
+        return;
+    };
     use std::io::Write;
-    let _ = writeln!(f, "{}", serde_json::to_string(entry).unwrap_or_else(|_| "{}".to_string()));
+    let _ = writeln!(
+        f,
+        "{}",
+        serde_json::to_string(entry).unwrap_or_else(|_| "{}".to_string())
+    );
 }
 
 /// 丢弃了多少条（给界面／诊断用 ✓ R104=A：丢了多少要看得出来 ✓）。
@@ -509,17 +562,85 @@ fn push_run_audit(
     q.push_back(PluginAuditEntry {
         plugin_id: plugin_id.to_string(),
         capability: "host.run".to_string(),
-        source: "plugin".to_string(),   // ⚠️ 运行记录暂时固定；外部会话落地时改传 `external:<会话号>` ✓
+        source: "plugin".to_string(), // ⚠️ 运行记录暂时固定；外部会话落地时改传 `external:<会话号>` ✓
         scope: kind.to_string(),
         at_ms: now_ms(),
         ok,
         error_code,
+        space_id: None,
         peak_rss_bytes,
     });
-    if let Some(last) = q.back() { persist_audit_line(last); }
+    if let Some(last) = q.back() {
+        persist_audit_line(last);
+    }
 }
 
-fn push_audit(source: &str, plugin_id: &str, capability: &str, scope: &str, ok: bool, error_code: Option<String>) {
+/// ⭐ B2（2026-10-29）：写能力的**幂等表** —— 同一 `clientRequestId` 重复调用只落一次、只审计一条。
+///
+/// 为什么放在进程内存里：外部客户端的重试常发生在同一 App 生命周期内（超时/重连）；
+/// 跨重启的"绝对一次"要落盘表＋迁移，本版不做（如实：重启后同 id 会再执行一次）。
+static IDEMPOTENT_WRITES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, String)>>,
+> = std::sync::OnceLock::new();
+const IDEMPOTENT_TTL_SECS: u64 = 600;
+const IDEMPOTENT_CAPACITY: usize = 256;
+
+fn idempotent_lookup(key: &str) -> Option<String> {
+    let map =
+        IDEMPOTENT_WRITES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut g = map.lock().unwrap_or_else(|e| e.into_inner());
+    let now = std::time::Instant::now();
+    g.retain(|_, (at, _)| now.duration_since(*at).as_secs() < IDEMPOTENT_TTL_SECS);
+    g.get(key).map(|(_, out)| out.clone())
+}
+
+fn idempotent_remember(key: &str, out: &str) {
+    let map =
+        IDEMPOTENT_WRITES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut g = map.lock().unwrap_or_else(|e| e.into_inner());
+    let now = std::time::Instant::now();
+    g.retain(|_, (at, _)| now.duration_since(*at).as_secs() < IDEMPOTENT_TTL_SECS);
+    if g.len() >= IDEMPOTENT_CAPACITY {
+        if let Some(old) = g
+            .iter()
+            .min_by_key(|(_, (at, _))| *at)
+            .map(|(k, _)| k.clone())
+        {
+            g.remove(&old);
+        }
+    }
+    g.insert(key.to_string(), (now, out.to_string()));
+}
+
+thread_local! {
+  /// 本次调用要记进审计的空间（跨空间写时 = 目标空间；其它 = None）。
+  static AUDIT_SPACE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// ⭐ M2c：`package.import` 复用**现有插件审计环**（audit.tail 同一账本），不新造表。
+/// scope 里带 JSON 摘要（新空间 id/counts/warnings 数/来源），字段可从 audit.tail 读出。
+pub(crate) fn record_package_import(space_id: &str, summary: &serde_json::Value) {
+    let prev = AUDIT_SPACE.with(|s| s.borrow().clone());
+    AUDIT_SPACE.with(|s| *s.borrow_mut() = Some(space_id.to_string()));
+    push_audit(
+        "plugin",
+        "app.package.import",
+        "package.import",
+        &format!("app:{summary}"),
+        true,
+        None,
+    );
+    AUDIT_SPACE.with(|s| *s.borrow_mut() = prev);
+}
+fn push_audit(
+    source: &str,
+    plugin_id: &str,
+    capability: &str,
+    scope: &str,
+    ok: bool,
+    error_code: Option<String>,
+) {
+    let space_id = AUDIT_SPACE.with(|s| s.borrow().clone());
     let mut q = PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner());
     if q.len() >= PLUGIN_AUDIT_CAPACITY {
         q.pop_front();
@@ -533,9 +654,12 @@ fn push_audit(source: &str, plugin_id: &str, capability: &str, scope: &str, ok: 
         at_ms: now_ms(),
         ok,
         error_code,
+        space_id,
         peak_rss_bytes: None,
     });
-    if let Some(last) = q.back() { persist_audit_line(last); }
+    if let Some(last) = q.back() {
+        persist_audit_line(last);
+    }
 }
 
 /// 一条插件日志（作者侧 `__log(...)` 与 `__toast(...)` 都会进环形缓冲）。
@@ -589,7 +713,8 @@ pub(crate) struct Manifest {
     #[serde(default)]
     description: String,
     #[serde(default)]
-    #[allow(dead_code)] // 2026-09-25 收据：清单里**有**这个字段，解析进来是为了"不因多一个字段就拒收"；产品里还没展示它。删除条件 = 展示它，或确认清单规范里没有它
+    // 2026-09-25 收据：清单里**有**这个字段，解析进来是为了"不因多一个字段就拒收"；产品里还没展示它。删除条件 = 展示它，或确认清单规范里没有它
+    #[allow(dead_code)]
     author: Option<String>,
     #[serde(default = "default_main")]
     main: String,
@@ -793,7 +918,10 @@ pub(crate) fn normalize_extension(raw: &str) -> Option<String> {
     if t.is_empty() || t.len() > 16 {
         return None;
     }
-    if !t.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !t
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return None;
     }
     Some(format!(".{t}"))
@@ -818,7 +946,10 @@ pub(crate) fn sanitized_triggers(manifest: &Manifest) -> Vec<TriggerDecl> {
     for t in list.iter().take(MAX_TRIGGERS) {
         // 只渲染宿主真的接了的触发：kind 不认识、或认识了但还没实现的，一律不出现
         // （作者那边由校验器明说，而不是让他对着一个不出现的入口猜）。
-        if !capabilities_gen::trigger(t.kind.trim()).map(|k| k.hosted).unwrap_or(false) {
+        if !capabilities_gen::trigger(t.kind.trim())
+            .map(|k| k.hosted)
+            .unwrap_or(false)
+        {
             continue;
         }
         if t.command.trim().is_empty() {
@@ -947,10 +1078,7 @@ pub(crate) fn read_manifest(dir: &Path) -> Result<Manifest, String> {
     let p = dir.join("manifest.json");
     let text = std::fs::read_to_string(&p).map_err(|e| format!("读取 manifest 失败: {e}"))?;
     let m: Manifest = serde_json::from_str(&text).map_err(|e| format!("manifest 解析失败: {e}"))?;
-    let dirname = dir
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default();
+    let dirname = dir.file_name().and_then(|s| s.to_str()).unwrap_or_default();
     if m.id != dirname {
         return Err("manifest.id 必须等于目录名".to_string());
     }
@@ -964,11 +1092,18 @@ pub(crate) fn read_manifest(dir: &Path) -> Result<Manifest, String> {
     }
     // 声明式插件没有代码，所以不校验 main（写了的也不执行，由校验器提醒作者删掉）。
     if runtime == "logic" && !is_bare_file_name(&m.main) {
-        return Err("manifest.main 必须是同级文件名（不得含路径分隔符，也不得是 . 或 ..）".to_string());
+        return Err(
+            "manifest.main 必须是同级文件名（不得含路径分隔符，也不得是 . 或 ..）".to_string(),
+        );
     }
     // ABI 闸门：主版本不认识就直接拒载，而不是让插件在运行时零零碎碎地失败。
     if let Some(v) = &m.api_version {
-        let major = v.split('.').next().unwrap_or_default().parse::<u32>().unwrap_or(0);
+        let major = v
+            .split('.')
+            .next()
+            .unwrap_or_default()
+            .parse::<u32>()
+            .unwrap_or(0);
         if major != capabilities_gen::API_MAJOR {
             return Err(format!(
                 "插件 API 主版本不受支持：manifest.apiVersion={v}，本应用支持 {}",
@@ -1235,12 +1370,9 @@ where
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
             Err(format!("{what}超时（>{:?}）", timeout))
         }
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            Err("插件线程异常退出".to_string())
-        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err("插件线程异常退出".to_string()),
     }
 }
-
 
 /// 取第 `idx` 个参数并转成 Rust 字符串（类型不符/缺失一律当空串）。
 fn js_string_arg(args: &[JsValue], idx: usize) -> String {
@@ -1261,7 +1393,10 @@ fn js_string_arg(args: &[JsValue], idx: usize) -> String {
 
 /// v1 基线权限：给「没有 permissions 字段的老 manifest」用，避免升级即失效。
 fn baseline_permissions() -> Vec<String> {
-    capabilities_gen::permission_ids().iter().map(|s| s.to_string()).collect()
+    capabilities_gen::permission_ids()
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 /// 解析 manifest 的能力授权，并给出要记录给用户的警告。
@@ -1339,7 +1474,11 @@ struct EventDecision {
     warnings: Vec<String>,
 }
 
-fn decide_event(ev: Option<&capabilities_gen::PluginEvent>, on: &str, reason: &str) -> EventDecision {
+fn decide_event(
+    ev: Option<&capabilities_gen::PluginEvent>,
+    on: &str,
+    reason: &str,
+) -> EventDecision {
     let Some(ev) = ev else {
         return EventDecision {
             subscribe: false,
@@ -1349,7 +1488,10 @@ fn decide_event(ev: Option<&capabilities_gen::PluginEvent>, on: &str, reason: &s
     if !ev.hosted {
         return EventDecision {
             subscribe: false,
-            warnings: vec![format!("事件 {} 宿主还没开始发（订阅了现在也收不到）", ev.id)],
+            warnings: vec![format!(
+                "事件 {} 宿主还没开始发（订阅了现在也收不到）",
+                ev.id
+            )],
         };
     }
     let mut warnings = Vec::new();
@@ -1359,7 +1501,10 @@ fn decide_event(ev: Option<&capabilities_gen::PluginEvent>, on: &str, reason: &s
             ev.id
         ));
     }
-    EventDecision { subscribe: true, warnings }
+    EventDecision {
+        subscribe: true,
+        warnings,
+    }
 }
 
 /// 事件派发时展示给用户的事件声明（安装/启用界面看得到，才能授权）。
@@ -1375,14 +1520,24 @@ pub(crate) fn event_metas(manifest: &Manifest) -> Vec<PluginEventMeta> {
     let reasons: std::collections::HashMap<&str, &str> = manifest
         .events
         .as_ref()
-        .map(|ds| ds.iter().map(|d| (d.on.as_str(), d.reason.as_str())).collect())
+        .map(|ds| {
+            ds.iter()
+                .map(|d| (d.on.as_str(), d.reason.as_str()))
+                .collect()
+        })
         .unwrap_or_default();
     subscribed
         .iter()
         .map(|id| PluginEventMeta {
             id: id.clone(),
-            title: capabilities_gen::event(id).map(|e| e.title.to_string()).unwrap_or_else(|| id.clone()),
-            reason: reasons.get(id.as_str()).copied().unwrap_or_default().to_string(),
+            title: capabilities_gen::event(id)
+                .map(|e| e.title.to_string())
+                .unwrap_or_else(|| id.clone()),
+            reason: reasons
+                .get(id.as_str())
+                .copied()
+                .unwrap_or_default()
+                .to_string(),
         })
         .collect()
 }
@@ -1438,8 +1593,8 @@ fn with_read_conn<T>(f: impl FnOnce(&Connection) -> Result<T, String>) -> Result
                 let st = s.borrow();
                 (st.read_space.clone(), st.read_dir.clone())
             });
-            let space =
-                space.ok_or_else(|| "space_unknown: 无法确定当前空间，数据能力不可用".to_string())?;
+            let space = space
+                .ok_or_else(|| "space_unknown: 无法确定当前空间，数据能力不可用".to_string())?;
             let opened = match &dir {
                 Some(d) => crate::db::open_space_conn_at(&space, d),
                 None => crate::db::open_space_conn(&space),
@@ -1503,7 +1658,9 @@ fn kv_in_scope<T>(
     match scope {
         "space" => with_read_conn(|c| f(c, "space")),
         "app" => with_meta_conn(|c| f(c, "app")),
-        other => Err(format!("bad_args: scope 只能是 space 或 app（收到 {other}）")),
+        other => Err(format!(
+            "bad_args: scope 只能是 space 或 app（收到 {other}）"
+        )),
     }
 }
 
@@ -1581,7 +1738,16 @@ pub(crate) fn setting_scopes_of(manifest: &Manifest) -> std::collections::HashMa
         .as_ref()
         .map(|ds| {
             ds.iter()
-                .map(|d| (d.key.clone(), if d.scope == "app" { "app".to_string() } else { "space".to_string() }))
+                .map(|d| {
+                    (
+                        d.key.clone(),
+                        if d.scope == "app" {
+                            "app".to_string()
+                        } else {
+                            "space".to_string()
+                        },
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -1639,14 +1805,49 @@ type CapResult = Result<serde_json::Value, String>;
 /// 为什么要上限：这是给 AI/插件读的一页正文，单次几十万字会把上下文一口气撑爆。
 const MAX_PAGE_TEXT_LIMIT: i64 = 20_000;
 
-fn cap_page_current() -> CapResult {
-    Ok(serde_json::Value::String(
-        RUN_STATE.with(|s| s.borrow().current_page_json.clone()),
-    ))
+fn cap_page_current(include_anchors: bool) -> CapResult {
+    if !is_external_caller() {
+        return Ok(serde_json::Value::String(
+            RUN_STATE.with(|s| s.borrow().current_page_json.clone()),
+        ));
+    }
+    let current = RUN_STATE.with(|s| s.borrow().current_page_id.clone());
+    let Some(id) = current else {
+        return Ok(serde_json::json!({
+            "opened": false,
+            "note": "当前没有打开的页面（外部接入拿不到界面里「当前页」这个状态）—— \
+                     要读具体页面请先用 pages.list 发现 id，再用 pages.get 读；\
+                     这条工具不会为了「有东西返回」而编造一页。",
+        }));
+    };
+    cap_pages_get(&id, 0, MAX_PAGE_TEXT_LIMIT, include_anchors, None)
 }
 
-fn cap_pages_count() -> CapResult {
-    Ok(serde_json::json!(RUN_STATE.with(|s| s.borrow().page_count)))
+/// 一个空间里**未删除节点**的数量 —— 与 `pages.list` / `listPages` 同一条 SQL 口径。
+///
+/// ⚠️ **只此一处**：`pages.count` 与检索信封 `space_scope_snapshot_of` 都走它
+/// （两份 `COUNT(*)` 必然漂，而漂了不会报错——只会让两个工具对同一个空间给出两个页数）。
+fn count_nodes_in_space(c: &rusqlite::Connection) -> Result<i64, String> {
+    c.query_row(
+        "SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL",
+        [],
+        |r| r.get(0),
+    )
+    .map_err(|e| format!("db_error: {e}"))
+}
+
+/// `pages.count`：本空间未删除节点的数量。
+///
+/// 两条路的**读数来源**不同（B1a）：插件面沿用 `RunState.page_count`（宿主在 run 时用同一条
+/// SQL 在同一个库上算好的快照 ⇒ 读数等价，ABI 逐字节不变）；外部/MCP 面**没有**那份快照
+/// ⇒ 按库实算（与 `pages.list` 同一口径，判据要求 `pages_count == listPages.length`）。
+/// `spaceId` 给了就走 [`with_conn_for_space`]（跨空间那道门在那边，没有 `read:all-spaces`
+/// 会**明确拒**，⛔ 不静默回落到当前空间）。
+fn cap_pages_count(space_id: Option<&str>) -> CapResult {
+    if space_id.is_none() && !is_external_caller() {
+        return Ok(serde_json::json!(RUN_STATE.with(|s| s.borrow().page_count)));
+    }
+    with_conn_for_space(space_id, count_nodes_in_space).map(|n| serde_json::json!(n))
 }
 
 fn cap_editor_insert_text(text: &str) -> CapResult {
@@ -1673,7 +1874,140 @@ fn cap_log_write(message: &str, level: &str) -> CapResult {
 }
 
 /// 当前调用方有没有这个 scope（插件来自 manifest 的授权；外部来自令牌的 `granted` ✓）。
+/// ⭐ 跨空间写 v1 的回滚开关：`SHUYONOTE_MCP_CROSS_SPACE_WRITE=0/off/false` ⇒ 立即回到"拒绝跨空间写"。
+/// 默认 **on**（只有显式关才关；当前空间写不受影响）。
+#[cfg(test)]
+thread_local! {
+    static TEST_CROSS_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+#[cfg(test)]
+pub(crate) fn set_cross_off_for_test(v: bool) {
+    TEST_CROSS_OFF.with(|c| c.set(v));
+}
+
+pub(crate) fn cross_space_write_disabled() -> bool {
+    #[cfg(test)]
+    {
+        return TEST_CROSS_OFF.with(|c| c.get());
+    }
+    #[cfg(not(test))]
+    {
+        matches!(
+            std::env::var("SHUYONOTE_MCP_CROSS_SPACE_WRITE")
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "0" | "off" | "false" | "no"
+        )
+    }
+}
+
+/// 按目标空间取只读连接（当前空间 ⇒ 等价于 with_read_conn；别的空间 ⇒ with_conn_for_space 的读门）。
+fn with_target_space<T>(
+    space_id: &str,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>,
+) -> Result<T, String> {
+    with_conn_for_space(Some(space_id), f)
+}
+
+/// ⭐ AI 不可见空间清单：meta.sync_state 一行 JSON（默认空 = 不隐藏任何空间）。
+/// 已核实**不参与空间同步**（sync.rs：meta 只放 device_id/server_url/token）⇒ 本机偏好。
+pub(crate) fn ai_hidden_spaces_in(c: &rusqlite::Connection) -> Vec<String> {
+    let raw: Option<String> = c
+        .query_row(
+            "SELECT value FROM meta.sync_state WHERE key = 'ai_hidden_spaces'",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    let Some(raw) = raw else { return Vec::new() };
+    let mut ids: Vec<String> = serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default();
+    // 读时丢弃已删/不存在的空间（空间没了就自然不在清单里）
+    ids.retain(|id| {
+        c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM meta.workspaces WHERE id = ?1 AND deleted_at IS NULL)",
+            params![id],
+            |r| r.get::<_, bool>(0),
+        )
+        .unwrap_or(false)
+    });
+    ids
+}
+
+/// 遮蔽总开关：`SHUYONOTE_AI_HIDDEN_SPACES=off` ⇒ 跳过判断（清单保留）。
+pub(crate) fn ai_hidden_spaces_enabled() -> bool {
+    !matches!(
+        std::env::var("SHUYONOTE_AI_HIDDEN_SPACES")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "off" | "0" | "false" | "no"
+    )
+}
+
+fn hidden_spaces_now() -> Vec<String> {
+    if !ai_hidden_spaces_enabled() {
+        return Vec::new();
+    }
+    with_read_conn(|c| Ok(ai_hidden_spaces_in(c))).unwrap_or_default()
+}
+
+pub(crate) fn ai_hidden_refusal(space: &str) -> String {
+    format!("permission_denied: 空间「{space}」在 AI 不可见清单里（AI 不可见）")
+}
+
+/// 写清单（commands 层复用）：校验存在/去重/≤500。
+pub(crate) fn ai_hidden_spaces_set_in(
+    c: &rusqlite::Connection,
+    space_ids: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let mut clean: Vec<String> = Vec::new();
+    for raw in space_ids {
+        let id = raw.trim().to_string();
+        if id.is_empty() {
+            continue;
+        }
+        let exists: bool = c
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM meta.workspaces WHERE id = ?1 AND deleted_at IS NULL)",
+                params![id],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        if !exists {
+            return Err(format!(
+                "bad_args: 空间「{id}」不存在（先用 spaces.list 看 id）"
+            ));
+        }
+        if !clean.contains(&id) {
+            clean.push(id);
+        }
+    }
+    if clean.len() > 500 {
+        return Err("bad_args: AI 不可见空间最多 500 个".to_string());
+    }
+    let json = serde_json::to_string(&clean).map_err(|e| e.to_string())?;
+    c.execute(
+        "INSERT INTO meta.sync_state (key, value) VALUES ('ai_hidden_spaces', ?1)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![json],
+    )
+    .map_err(|e| format!("db_error: {e}"))?;
+    Ok(clean)
+}
 fn has_scope(id: &str) -> bool {
+    // ⭐ B1a（2026-10-29）修：两条路的授权**来源不同** ——
+    //   外部（MCP）在 `EXTERNAL_CALLER.granted`（令牌文件里那一行），插件在 `RunState.permissions`。
+    //   ⚠️ 之前这里**只看** RunState ⇒ 外部调用永远读不到 `read:all-spaces` ⇒
+    //   「只读（全部空间）」档的跨空间（`pages.list` / `pages.search` 的 `spaceId`，以及 B1a 的
+    //   `pages.count` / `pages.tree` / `tags.list` / `properties.list`）在 MCP 面**一调就拒**，
+    //   而插件那条路的测试全绿（本仓最忌的形状：判据只覆盖了一条路）。
+    //   ⛔ 这**不是**放宽：两处都只回答"这次调用被授予了什么"，判定仍只在 `dispatch_capability` 一处 ✓。
+    if let Some((_, granted)) = EXTERNAL_CALLER.with(|c| c.borrow().clone()) {
+        return granted.iter().any(|p| p == id);
+    }
     RUN_STATE.with(|s| s.borrow().permissions.iter().any(|p| p == id))
 }
 
@@ -1726,7 +2060,9 @@ fn with_conn_for_space<T>(
         .map_err(|e| format!("db_error: {e}"))
     })?;
     if !exists {
-        return Err(format!("bad_args: 找不到空间 {sid}（先用 spaces.list 看 id）"));
+        return Err(format!(
+            "bad_args: 找不到空间 {sid}（先用 spaces.list 看 id）"
+        ));
     }
     let opened = match RUN_STATE.with(|s| s.borrow().read_dir.clone()) {
         Some(d) => crate::db::open_space_conn_at(sid, &d),
@@ -1737,7 +2073,7 @@ fn with_conn_for_space<T>(
 }
 
 fn cap_pages_list(limit: i64, space_id: Option<&str>) -> CapResult {
-    let limit = limit.clamp(1, 200);
+    let limit = limit.clamp(1, crate::cap_limits::PAGE_MAX);
     with_conn_for_space(space_id, |c| {
         // created_at 一起给：插件判断"这页是不是刚建的"只能靠它（updated_at 会被编辑
         // 刷新）。写「孤立页巡检」「本周新建了哪些」这类插件时撞到的就是这个字段的缺失——
@@ -1764,6 +2100,156 @@ fn cap_pages_list(limit: i64, space_id: Option<&str>) -> CapResult {
     })
 }
 
+/// `pages.get` 的 `rev`（P1 读面，2026-10-29）：`<updated_at 毫秒>:<正文 JSON 的 sha256 前 8 位小写>`。
+///
+/// 它是**乐观并发令牌**，不是时间戳语义（P2 的写面原样带回它做冲突判定）：
+/// - 只用更新时间 ⇒ **同一毫秒**内的两次写会给出同一个令牌（并发窗口）；
+/// - 只用内容指纹 ⇒ 把内容改回原样时令牌**复现**（回退后旧令牌又"有效"）。
+/// 两半拼起来才同时挡住这两种。
+///
+/// 算不出（拿不到正文 JSON）⇒ `None`：调用方**如实不带这个键**，⛔ 不编一个。
+fn page_rev(updated_at: i64, doc_json: Option<&str>) -> Option<String> {
+    let doc = doc_json?;
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(doc.as_bytes());
+    let hex = hex::encode(h.finalize());
+    Some(format!("{updated_at}:{}", &hex[..8]))
+}
+
+/// 收集一个节点下的**文本叶子**（按文档顺序）：`text` 叶子贡献自己的文本，
+/// `linebreak` / `tab` 各贡献一个字符。
+///
+/// 为什么只认这三种：这正是 Lexical `$getRoot().getTextContent()` 里"文本由谁贡献"的固定集合。
+/// 自定义叶子的 `getTextContent` 覆盖（图片 / 公式 / 绘图…）⛔ **不在 Rust 里再抄一份** ——
+/// 那会变成第二份实现，且必然与编辑器漂移；它们的位置由下面的**逐叶子顺序对齐**自然跨过。
+fn collect_text_leaves(node: &serde_json::Value, out: &mut Vec<String>) {
+    match node.get("type").and_then(|v| v.as_str()) {
+        Some("text") => {
+            if let Some(t) = node.get("text").and_then(|v| v.as_str()) {
+                if !t.is_empty() {
+                    out.push(t.to_string());
+                }
+            }
+            return;
+        }
+        Some("linebreak") => {
+            out.push("\n".to_string());
+            return;
+        }
+        Some("tab") => {
+            out.push("\t".to_string());
+            return;
+        }
+        _ => {}
+    }
+    if let Some(children) = node.get("children").and_then(|c| c.as_array()) {
+        for child in children {
+            collect_text_leaves(child, out);
+        }
+    }
+}
+
+/// 每个**有块 id 的顶层块**的结束位置（按 Unicode 码点计数 —— 与分页同一条口径）。
+///
+/// 怎么定位：把该块的文本叶子按文档顺序，在正文里**逐片往后对齐**（从上一块的结束处开始找）。
+/// 为什么不是"把整块文本拼起来找整串"：正文由编辑器的 `$getRoot().getTextContent()` 派生，
+/// 块内**非行内**子节点之间是 `\n\n`（列表项之间就是），与朴素拼接不同 ⇒ 整串匹配在列表/嵌套块上
+/// 必然落空；**逐叶子**对齐天然跨过这些分隔符（判据里的列表用例钉的就是这一条）。
+///
+/// ⚠️ 两条边界必须写明（别把"尽力而为"读成"精确"）：
+/// 1. 边界取到"该块最后一个文本叶子结束"为止 —— 块尾的**装饰**（图片/公式等）不算进去；
+///    没有文本叶子的块（空段落、纯图片块）⇒ 边界＝块的**起点**；
+/// 2. 某片叶子在正文里找不到（例如正文文本列还没重建、与 JSON 不是同一代）⇒ **跳过这一片**，
+///    ⛔ 不去猜位置（猜出来的锚点会指到别的块上，比没有更糟）。
+fn block_end_offsets(doc_json: &str, text: &str) -> Vec<(String, usize)> {
+    let Ok(v) = crate::blocks::parse_json(doc_json) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    // 两个游标：`byte` 是正文里的**字节**位置，`chr` 是同一位置的**码点**位置。
+    // （`str::find` 走字节、分页/窗口走码点 ⇒ 必须成对推进，否则 emoji 一出现就错位。）
+    let mut byte = 0usize;
+    let mut chr = 0usize;
+    for block in crate::blocks::root_children(&v) {
+        let id = block
+            .get("blockId")
+            .and_then(|b| b.as_str())
+            .unwrap_or("")
+            .to_string();
+        let mut leaves = Vec::new();
+        collect_text_leaves(block, &mut leaves);
+        for leaf in leaves {
+            if let Some(rel) = text[byte..].find(&leaf) {
+                let at = byte + rel;
+                chr += text[byte..at].chars().count() + leaf.chars().count();
+                byte = at + leaf.len();
+            }
+        }
+        // 没有块 id 的块**给不了锚点**（不可寻址）—— 但它照样推进游标，否则后面全错位。
+        if !id.is_empty() {
+            out.push((id, chr));
+        }
+    }
+    out
+}
+
+/// 把块锚点**只插进本次返回的窗口**里 —— 块尾落在窗口内的块才标注（判据：分页截断时
+/// ⛔ 不许给没返回的块加锚点）。每个锚点一整行 HTML 注释 `<!-- b:<块 id> -->`，
+/// 前面补一个空行（与正文自己的 `\n\n` 接上就是"块后一空行 + 锚点行"）；**正文一个字不改**。
+fn annotated_window(
+    chars: &[char],
+    boundaries: &[(String, usize)],
+    off: usize,
+    lim: usize,
+) -> String {
+    let total = chars.len();
+    let start = off.min(total);
+    let end = off.saturating_add(lim).min(total);
+    let mut out = String::new();
+    let mut pos = start;
+    for (id, at) in boundaries {
+        let at = *at;
+        // 块尾不在本窗 ⇒ 不标注（⛔ 不给没返回的块加锚点）。
+        if at < start || at > end {
+            continue;
+        }
+        // 上一窗刚好读到块尾（`at == start` 且不是第一窗）⇒ 那个块不在本窗里，别重复标。
+        if at == start && start > 0 {
+            continue;
+        }
+        // 防御：块尾必须单调（对齐算法保证），真乱序就跳过 —— ⛔ 不把锚点乱插。
+        if at < pos {
+            continue;
+        }
+        out.extend(&chars[pos..at]);
+        out.push_str("\n\n<!-- b:");
+        out.push_str(id);
+        out.push_str(" -->");
+        pos = at;
+    }
+    out.extend(&chars[pos..end]);
+    out
+}
+
+/// 布尔参数的取值口径（`pages.get` 的 `includeAnchors` 用）：
+/// 真布尔 / 字符串 `"true"`·`"false"`·`"1"`·`"0"` / 数字（非 0 为真）都认，其它 ⇒ 默认值。
+///
+/// 为什么必须认字符串：插件 shim 是生成器按 `String(...)` 传布尔的 ⇒ 插件写 `false` 时
+/// 桌面上收到的是 `"false"`；不认它的话"显式关"与"没传"在两条路上是同一个结果。
+fn arg_bool(v: Option<&serde_json::Value>, default: bool) -> bool {
+    match v {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" => true,
+            "false" | "0" => false,
+            _ => default,
+        },
+        Some(serde_json::Value::Number(n)) => n.as_i64().map(|i| i != 0).unwrap_or(default),
+        _ => default,
+    }
+}
+
 /// `pages.get`：读一页的标题与正文。**支持分页**（`offset`/`limit`）。
 ///
 /// 口径（两条都必须写清，否则调用方会算错窗口）：
@@ -1775,37 +2261,105 @@ fn cap_pages_list(limit: i64, space_id: Option<&str>) -> CapResult {
 ///
 /// 返回值里带 `chars_total` / `offset` / `limit` 三个读数：**只读了窗口就当整页用**是这类工具
 /// 最常见的误用，而调用方光看返回正文的长度分不出"读完了"还是"被截了"。
-fn cap_pages_get(id: &str, offset: i64, limit: i64) -> CapResult {
+///
+/// ⭐ **P1 读面（2026-10-29）另加两样**（见方案 `docs/plans/2026-10-29-agent-block-write-p2.md`）：
+/// - `rev`：乐观并发令牌（形状见 [`page_rev`]）。**不受 `includeAnchors` 影响** ——
+///   它是 P2 写面的前置，读面一关开关就拿不到令牌的话，省 token 就得放弃并发安全；
+/// - **块锚点**：每个顶层块后一行 `<!-- b:<块 id> -->`，`includeAnchors`（默认 true）可关。
+///   锚点**只**插在本次窗口里，且**不改变正文任何字符** —— 关掉时正文与旧行为逐字节相同。
+///
+/// ⚠️ `chars_total` / `offset` / `limit` 量的始终是**正文**（不含锚点行）——
+/// 调用方按 `offset + 返回正文字数` 翻页的口径因此一个字没变（锚点行不该被算进"读了几个字"）。
+fn cap_pages_get(
+    id: &str,
+    offset: i64,
+    limit: i64,
+    include_anchors: bool,
+    space_id: Option<&str>,
+) -> CapResult {
+    with_conn_for_space(space_id, |c| {
+        // 读一页只走「那一层」的一次读（内容 ＋ 读面要的两个标量来自**同一行**）：
+        // `rev` 的两半必须配对，分两次查就有读到两代数据的窗口。
+        let Some(row) =
+            crate::doc_content::read_with_meta(c, id).map_err(|e| format!("db_error: {e}"))?
+        else {
+            // ⭐ 2026-10-31（WorkBuddy 评估修）：**不再返回 `null`** —— `null` 把
+            // 「页不存在/已删除」与「页是空的」压成同一个答案（外部 agent 只能猜）。
+            // 点名页 id 与**这次真正查的空间**；跨空间忘带 spaceId 时也照这里报（⛔ 不猜别的空间，
+            // 也不偷偷回落 —— 那是"搜错空间还装作成功"那一族错）。
+            let space = target_space_id(space_id);
+            let where_ = if space.is_empty() {
+                "当前空间".to_string()
+            } else {
+                format!("空间「{space}」")
+            };
+            return Err(format!(
+                "not_found: 页面 {id} 在{where_}不存在或已删除；若它在别的空间，请带 spaceId 再查（跨空间不会自动回落）"
+            ));
+        };
+        Ok(text_window_value(
+            id,
+            &row.content.title,
+            &row.kind,
+            &row.content.text,
+            &row.content.json,
+            Some(row.updated_at),
+            offset,
+            limit,
+            include_anchors,
+        ))
+    })
+}
+
+/// **正文窗口的唯一构造**（`pages.get` 与 B1c 的 `version.get` 共用）。
+///
+/// 为什么必须共用：这两条工具的返回值是同一份契约（`chars_total`/`offset`/`limit` 只量正文、
+/// 锚点只插本窗、`rev` 可选）。各写一份的话，"锚点行算不算进 offset"这类口径会一边一个样，
+/// 而**两侧都能跑、都返回合理结果** —— 与 2026-09-18 那次 `limit` 默认值漂移同族。
+///
+/// `rev_at`：`Some(更新时间)` ⇒ 按 [`page_rev`] 生成 `rev`；`None` ⇒ 不带（版本没有"更新时间"）。
+fn text_window_value(
+    id: &str,
+    title: &str,
+    kind: &str,
+    text: &str,
+    doc_json: &str,
+    rev_at: Option<i64>,
+    offset: i64,
+    limit: i64,
+    include_anchors: bool,
+) -> serde_json::Value {
     let off = offset.max(0) as usize;
     let lim = limit.clamp(1, MAX_PAGE_TEXT_LIMIT) as usize;
-    with_read_conn(|c| {
-        use rusqlite::OptionalExtension;
-        let row: Option<(String, String, String)> = c
-            .query_row(
-                "SELECT title, content_text, kind FROM pages WHERE id = ?1 AND deleted_at IS NULL",
-                params![id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .optional()
-            .map_err(|e| format!("db_error: {e}"))?;
-        let Some((title, text, kind)) = row else {
-            return Ok(serde_json::Value::Null);
-        };
-        // ⚠️ 先收成 `Vec<char>` 再切：`skip/take` 按**字符**走，与 TS 侧的 `Array.from` 同口径。
-        // （若按字节切，中文会被切坏；若按 UTF-16 码元切，emoji 会被切坏 —— 两种都试过是错的。）
-        let chars: Vec<char> = text.chars().collect();
-        let chars_total = chars.len();
-        let window: String = chars.iter().skip(off).take(lim).collect();
-        Ok(serde_json::json!({
-            "id": id,
-            "title": title,
-            "content_text": window,
-            "kind": kind,
-            "chars_total": chars_total,
-            "offset": off,
-            "limit": lim,
-        }))
-    })
+    // ⚠️ 先收成 `Vec<char>` 再切：`skip/take` 按**字符**走，与 TS 侧的 `Array.from` 同口径。
+    // （若按字节切，中文会被切坏；若按 UTF-16 码元切，emoji 会被切坏 —— 两种都试过是错的。）
+    let chars: Vec<char> = text.chars().collect();
+    let chars_total = chars.len();
+    let window: String = chars.iter().skip(off).take(lim).collect();
+    // 开关关掉 ⇒ 正文就是**旧行为的那个字符串**（逐字节相同，锚点一个字都不加）。
+    let body = if include_anchors {
+        let boundaries = block_end_offsets(doc_json, text);
+        annotated_window(&chars, &boundaries, off, lim)
+    } else {
+        window
+    };
+    let mut out = serde_json::json!({
+        "id": id,
+        "title": title,
+        "kind": kind,
+        "chars_total": chars_total,
+        "offset": off,
+        "limit": lim,
+    });
+    // 正文那一格的**键名**归「那一层」（`doc_content::PAGE_TEXT_KEY` 的说明）——
+    // 能力层不再自己写一遍落盘形态的名字。
+    out[crate::doc_content::PAGE_TEXT_KEY] = serde_json::json!(body);
+    if let Some(at) = rev_at {
+        if let Some(rev) = page_rev(at, Some(doc_json)) {
+            out["rev"] = serde_json::json!(rev);
+        }
+    }
+    out
 }
 
 /// `pages.search`：在本空间检索页面。
@@ -1820,7 +2374,7 @@ fn cap_pages_get(id: &str, offset: i64, limit: i64) -> CapResult {
 /// （`ops-publish-log` / `ops-redline-check` 都是 `var pages = api.pages.search(...) || []`），
 /// 空结果的**范围信息**由 MCP 面在外面包一层信封（`mcp_host::with_search_scope`）。
 fn cap_pages_search(q: &str, limit: i64, space_id: Option<&str>) -> CapResult {
-    let limit = limit.clamp(1, 100) as usize;
+    let limit = limit.clamp(1, crate::cap_limits::SEARCH_MAX) as usize;
     with_conn_for_space(space_id, |c| {
         let rows = crate::search::search_pages_for_capability(c, q, limit)?;
         Ok(serde_json::Value::Array(
@@ -1845,13 +2399,22 @@ fn cap_pages_search(q: &str, limit: i64, space_id: Option<&str>) -> CapResult {
 ///
 /// ⚠️ 信封里的 `spaceId` 必须是**这次真正搜的那个空间**（`spaceId` 参数给了就是它 ✓）——
 /// 否则"跨空间搜 A、信封说 B"比没有信封更糟 ✗。
-pub(crate) fn space_scope_snapshot_of(space_id: Option<&str>) -> Result<serde_json::Value, String> {
-    let target = space_id
+/// 这次读的是**哪个空间**（`spaceId` 省略/空 ⇒ 活动空间）—— 供响应体回填 `spaceId` 用。
+///
+/// ⚠️ 它只**读快照**、不判权限：跨空间那道门仍在 [`with_conn_for_space`] 里（唯一一处 ✓）。
+/// 拆出来是因为 B1b 的 `db.schema` / `db.rows` 与 `pages.tree` / 检索信封都要"响应里带
+/// **真正读的那个空间**"，⛔ 不能让三处各抄一遍"参数回声"（那会把"跨空间读 A、信封说 B"变成常态）。
+fn target_space_id(space_id: Option<&str>) -> String {
+    space_id
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .or_else(|| RUN_STATE.with(|s| s.borrow().read_space.clone()))
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+pub(crate) fn space_scope_snapshot_of(space_id: Option<&str>) -> Result<serde_json::Value, String> {
+    let target = target_space_id(space_id);
     with_conn_for_space(space_id, |c| {
         let name: Option<String> = c
             .query_row(
@@ -1860,13 +2423,7 @@ pub(crate) fn space_scope_snapshot_of(space_id: Option<&str>) -> Result<serde_js
                 |r| r.get(0),
             )
             .ok();
-        let page_count: i64 = c
-            .query_row(
-                "SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL",
-                [],
-                |r| r.get(0),
-            )
-            .map_err(|e| format!("db_error: {e}"))?;
+        let page_count: i64 = count_nodes_in_space(c)?;
         Ok(serde_json::json!({
             "spaceId": target,
             "spaceName": name.unwrap_or_default(),
@@ -1875,8 +2432,10 @@ pub(crate) fn space_scope_snapshot_of(space_id: Option<&str>) -> Result<serde_js
     })
 }
 
-fn cap_tags_list() -> CapResult {
-    with_read_conn(|c| {
+fn cap_tags_list(space_id: Option<&str>) -> CapResult {
+    // `space_id` 省略 ⇒ [`with_read_conn`]（与旧行为逐字节相同）；给了 ⇒ 跨空间那道门在
+    // [`with_conn_for_space`] 里（没有 `read:all-spaces` 会明确拒 ✓）。
+    with_conn_for_space(space_id, |c| {
         let mut stmt = c
             .prepare(
                 "SELECT t.id, t.name, COUNT(pt.page_id) FROM tags t
@@ -1939,14 +2498,20 @@ fn push_export(file_name: String, content: String) -> Result<(), String> {
     RUN_STATE.with(|s| {
         let mut st = s.borrow_mut();
         if st.exports.len() >= MAX_EXPORTS_PER_RUN {
-            return Err(format!("quota_exceeded: 一次运行最多导出 {MAX_EXPORTS_PER_RUN} 个文件"));
+            return Err(format!(
+                "quota_exceeded: 一次运行最多导出 {MAX_EXPORTS_PER_RUN} 个文件"
+            ));
         }
         if st.exports.iter().any(|e| e.file_name == file_name) {
             // 同名只留第一条：用户看到的是"保存 a.md"，多弹几次同样的对话框只会让人困惑
             return Ok(());
         }
         let bytes = content.len();
-        st.exports.push(PluginExport { file_name, content, bytes });
+        st.exports.push(PluginExport {
+            file_name,
+            content,
+            bytes,
+        });
         Ok(())
     })
 }
@@ -1977,9 +2542,9 @@ fn cap_files_export(file_name: &str, content: &str) -> CapResult {
     }
 }
 
-fn cap_files_list(page_id: Option<&str>) -> CapResult {
+fn cap_files_list(page_id: Option<&str>, space_id: Option<&str>) -> CapResult {
     let target = target_page_or_current(page_id)?;
-    with_read_conn(|c| {
+    with_conn_for_space(space_id, |c| {
         // 只给元数据，**不给字节**——读文件内容是另一个（更高风险的）能力。
         let mut stmt = c
             .prepare("SELECT id, name, mime, size FROM attachments WHERE page_id = ?1 ORDER BY created_at DESC")
@@ -2005,13 +2570,15 @@ fn cap_files_list(page_id: Option<&str>) -> CapResult {
 /// 与界面搜索同一套口径：①查询先归一元（`prepare_chunk_query`，兼容表意字）；
 /// ②只读 `chunks` / `chunk_embeddings`；③老库没有 `chunks` 表 ⇒ 空数组（不是错误）。
 /// 返回的每条带 `pageId`/`attId`/`loc` —— 插件拿到命中后要能**回链到原文位置**。
-fn cap_files_search(query: &str, limit: i64) -> CapResult {
+fn cap_files_search(query: &str, limit: i64, space_id: Option<&str>) -> CapResult {
     let q = crate::search::prepare_chunk_query(query);
     if q.is_empty() {
         return Err("bad_args: query 不能为空".to_string());
     }
-    let lim = limit.clamp(1, 100) as usize;
-    let hits = with_read_conn(|c| crate::search::search_chunks_in_conn(c, &q, lim, None, None))?;
+    let lim = limit.clamp(1, crate::cap_limits::SEARCH_MAX) as usize;
+    let hits = with_conn_for_space(space_id, |c| {
+        crate::search::search_chunks_in_conn(c, &q, lim, None, None)
+    })?;
     serde_json::to_value(&hits).map_err(|e| format!("internal: {e}"))
 }
 
@@ -2019,13 +2586,15 @@ fn cap_files_search(query: &str, limit: i64) -> CapResult {
 ///
 /// 与 `files.search` 同构：只读、走活动空间；**不存在** ⇒ `null`，**还没抽过** ⇒ `{segments: [], total: 0}`
 /// —— 两者必须分开，否则 AI 会把"还没索引"读成"文件里没有相关内容"。
-fn cap_files_read(id: &str, offset: i64, limit: i64) -> CapResult {
+fn cap_files_read(id: &str, offset: i64, limit: i64, space_id: Option<&str>) -> CapResult {
     if id.trim().is_empty() {
         return Err("bad_args: id 不能为空".to_string());
     }
     let off = offset.max(0) as usize;
     let lim = limit.clamp(1, crate::search::MAX_ATT_TEXT_LIMIT as i64) as usize;
-    let page = with_read_conn(|c| crate::search::read_attachment_text_in_conn(c, id, off, lim))?;
+    let page = with_conn_for_space(space_id, |c| {
+        crate::search::read_attachment_text_in_conn(c, id, off, lim)
+    })?;
     serde_json::to_value(&page).map_err(|e| format!("internal: {e}"))
 }
 
@@ -2053,7 +2622,11 @@ fn push_draft(key: String, summary: String, payload: serde_json::Value) {
     RUN_STATE.with(|s| {
         let mut st = s.borrow_mut();
         if !st.drafts.iter().any(|d| d.key == key) {
-            st.drafts.push(PluginDraft { key, summary, payload });
+            st.drafts.push(PluginDraft {
+                key,
+                summary,
+                payload,
+            });
         }
     });
 }
@@ -2068,28 +2641,76 @@ fn cap_pages_create(
     parent_id: Option<&str>,
     fence: Option<&str>,
     markdown: Option<bool>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+    space_id: Option<&str>,
 ) -> CapResult {
     if title.trim().is_empty() {
         return Err("bad_args: 新建页面需要 title".to_string());
     }
-    let summary = format!("新建页面「{title}」");
+    let target = space_id.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(space) = target {
+        if cross_space_write_disabled() {
+            return Err(
+                "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                    .to_string(),
+            );
+        }
+        // 目标空间必须存在且**未锁**（锁着 ⇒ 打不开 ⇒ 明确拒，⛔ 不回落当前空间）
+        let app_data = crate::db::app_data_dir_ref()
+            .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+        let exists = {
+            let m = crate::db::open_meta_conn_at(app_data)?;
+            let found: bool = m
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1 AND deleted_at IS NULL)",
+                    params![space],
+                    |r| r.get(0),
+                )
+                .map_err(|e| format!("db_error: {e}"))?;
+            found
+        };
+        if !exists {
+            return Err(format!("not_found: 空间 {space} 不存在"));
+        }
+        crate::db::open_space_conn_at(space, app_data).map_err(|e| {
+            format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
+        })?;
+    }
+    let summary = match target {
+        Some(space) => format!("新建页面「{title}」（将写入空间 {space}）"),
+        None => format!("新建页面「{title}」"),
+    };
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true,
+            "summary": summary,
+            "would": { "kind": "create_page", "title": title, "parentId": parent_id, "spaceId": target },
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
     push_draft(
         format!("create_page:{title}"),
         summary.clone(),
         serde_json::json!({
             "kind": "create_page",
-            "args": { "parent_id": parent_id, "title": title, "content_text": content, "fence": fence, "markdown": markdown },
+            "args": { "parent_id": parent_id, "title": title, "content_text": content, "fence": fence, "markdown": markdown, "spaceId": target },
         }),
     );
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
 }
 
-
 /// ⭐ **R167**：把一份 **Markdown 原文**整篇灌成一页 ✓（一次调用写完整页 ⇒ 不会被自动保存写回 ✓）。
 /// ⚠️ 解析**不在这里** ✗ —— Rust 侧没有 markdown 解析器 ✓；这里只把原文放进草稿 ✓，
 /// 由**应用自己**那条导入路径（`markdownToPageContent` ✓，`src/lib/mdPreview.ts:79` ✓）
 /// 在落库那一刻转成块 ✓ ⇒ 不另写第二份解析器 ✓（两份必然漂移 ✗）。
-fn cap_pages_import_markdown(title: &str, markdown: &str, parent_id: Option<&str>) -> CapResult {
+fn cap_pages_import_markdown(
+    title: &str,
+    markdown: &str,
+    parent_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
     if title.trim().is_empty() {
         return Err("bad_args: 导入 Markdown 需要 title".to_string());
     }
@@ -2101,7 +2722,16 @@ fn cap_pages_import_markdown(title: &str, markdown: &str, parent_id: Option<&str
         return Err("bad_args: markdown 超过 200KB 上限，请拆分后再导入".to_string());
     }
     // 守卫做完就**委托**给既有的建页那条路 ✓（少写一份 payload ⇒ 也不多写任何列名 ✓）
-    cap_pages_create(title, text, parent_id, None, Some(true))
+    cap_pages_create(
+        title,
+        text,
+        parent_id,
+        None,
+        Some(true),
+        dry_run,
+        _client_request_id,
+        None,
+    )
 }
 
 /// `pages.update`：**不写库**，只产出草稿（**整页替换**，走前端既有的 Markdown 导入管道）。
@@ -2117,7 +2747,12 @@ fn cap_pages_update(
     title: Option<&str>,
     markdown: Option<&str>,
     content: Option<&str>,
+    expected_rev: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+    space_id: Option<&str>,
 ) -> CapResult {
+    let space = write_target_space(space_id)?;
     let id = page_id.trim();
     if id.is_empty() {
         return Err("bad_args: 更新页面需要 id".to_string());
@@ -2127,7 +2762,10 @@ fn cap_pages_update(
     if md.is_none() && plain.is_none() {
         return Err("bad_args: 更新页面需要 markdown 或 content 之一".to_string());
     }
-    let body_len = md.map(|s| s.len()).or_else(|| plain.map(|s| s.len())).unwrap_or(0);
+    let body_len = md
+        .map(|s| s.len())
+        .or_else(|| plain.map(|s| s.len()))
+        .unwrap_or(0);
     if body_len > 200 * 1024 {
         return Err("bad_args: 新正文超过 200KB 上限，请拆分后再更新".to_string());
     }
@@ -2136,9 +2774,11 @@ fn cap_pages_update(
     // ⭐ 2026-10-18：摘要原来写的是页面 **UUID**（`更新页面 91d3…（整页替换）`）——
     //   那串字符对用户毫无意义 ⇒ 有标题就用标题，没有才退回 id。
     // 读不到（页不存在 / 空间锁定）⇒ `null`，**不编一个 0**（前端会如实显示"读不到原文"）。
-    let existing = with_read_conn(|c| Ok(crate::doc_content::read(c, id).ok().flatten()))
-        .ok()
-        .flatten();
+    let existing = with_target_space(&space, |c| {
+        Ok(crate::doc_content::read(c, id).ok().flatten())
+    })
+    .ok()
+    .flatten();
     let before_chars = existing.as_ref().map(|d| d.text.chars().count());
     let label = existing
         .as_ref()
@@ -2149,11 +2789,21 @@ fn cap_pages_update(
         Some(t) => format!("更新页面「{label}」（整页替换，标题改为「{t}」）"),
         None => format!("更新页面「{label}」（整页替换）"),
     };
+    let rev = with_target_space(&space, |c| check_expected_rev_in(c, &id, expected_rev))?;
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true,
+            "summary": summary,
+            "would": { "kind": "update_page", "pageId": id, "expectedRev": rev },
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
     push_draft(
         format!("update_page:{id}"),
         summary.clone(),
         serde_json::json!({
             "kind": "update_page",
+            "spaceId": space,
             "pageId": id,
             "title": new_title,
             "markdown": md,
@@ -2252,28 +2902,2415 @@ fn cap_spaces_switch(id: Option<&str>, name: Option<&str>) -> CapResult {
 }
 
 /// `blocks.append`：**不写库**，只产出草稿。省略 pageId 时用当前打开的页面。
-fn cap_blocks_append(page_id: Option<&str>, text: &str, fence: Option<&str>) -> CapResult {
+fn cap_blocks_append(
+    page_id: Option<&str>,
+    text: &str,
+    fence: Option<&str>,
+    expected_rev: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+    space_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
     if text.trim().is_empty() {
         return Err("bad_args: 追加内容需要 text".to_string());
     }
-    let target = target_page_or_current(page_id)?;
+    let current = target_space_id(None);
+    let target = if space != current {
+        page_id
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                "bad_args: 跨空间追加必须给 pageId（目标空间里没有\"当前打开的页\"）".to_string()
+            })?
+            .to_string()
+    } else {
+        target_page_or_current(page_id)?
+    };
+    let target_title = with_target_space(&space, |c| live_target_in(c, &target))
+        .map(|(t, _)| t)
+        .unwrap_or_else(|_| target.clone());
+    let rev = with_target_space(&space, |c| check_expected_rev_in(c, &target, expected_rev))?;
     let title = RUN_STATE.with(|s| {
         // 顺手把目标页标题查出来给用户看（只读，不改状态）；查不到就用 id。
         let _ = s.borrow().plugin_id.clone();
         String::new()
     });
     let _ = title;
-    let summary = format!("向页面 {target} 追加内容");
+    let summary = format!("向页面「{target_title}」追加内容");
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true,
+            "summary": summary,
+            "would": { "kind": "append_block", "pageId": target, "expectedRev": rev, "bytes": text.len() },
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
     push_draft(
         format!("append_block:{target}"),
         summary.clone(),
-        serde_json::json!({ "kind": "append_block", "pageId": target, "text": text, "fence": fence }),
+        serde_json::json!({ "kind": "append_block", "pageId": target, "text": text, "fence": fence, "spaceId": space }),
     );
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
 }
 
-fn cap_properties_list() -> CapResult {
+// ═══════════════════════════════════════════════════════════════════════════════
+// B1c（2026-10-29）· 只读扩容（版本／回收站／附件元数据）＋ 导出/下载**句柄**
+//
+//   ⛔ 本批**不写页面/块**：没有任何 `UPDATE pages` / `INSERT` / 草稿路径改动；
+//   导出/下载只回**句柄**（字节不塞上下文），句柄表与唯一落盘处都在 `crate::mcp_blobs`
+//   （单次 / TTL 120s / 绑会话 / 只写 `<appdata>/exports/`，⛔ 不接受任意目标路径）。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// 下载类工具的**单文件上限**（矩阵 §7：「>10 MB 需用户确认」）。
+///
+/// 本批没有"用户确认 UI"这条通道 ⇒ 超过就**明确报 `needs_confirm`**（⛔ 不静默下载、也不静默截断）。
+const MAX_INLINE_DOWNLOAD_BYTES: i64 = 10 * 1024 * 1024;
+
+/// 当前调用方身份（句柄绑会话用）：外部 ⇒ `external:<会话号>`；插件 ⇒ `plugin:<插件 id>`。
+///
+/// ⚠️ 只有两条路，且**绝不拿 token 原文**当身份（token 不进任何记录 —— 与审计那条口径同源）。
+pub(crate) fn caller_identity() -> String {
+    EXTERNAL_CALLER
+        .with(|c| c.borrow().clone())
+        .map(|(src, _)| src)
+        .unwrap_or_else(|| {
+            format!(
+                "plugin:{}",
+                RUN_STATE.with(|s| s.borrow().plugin_id.clone())
+            )
+        })
+}
+
+/// 当前读连接对应的**空间 id**（附件/版本都是空间内的数据；导出落盘要按它取钥匙）。
+fn current_read_space_id() -> Result<String, String> {
+    RUN_STATE
+        .with(|s| s.borrow().read_space.clone())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "space_unknown: 无法确定当前空间，数据能力不可用".to_string())
+}
+
+/// `versions.list`：页面历史版本清单（不含正文；正文用 `version.get`）。
+fn cap_versions_list(page_id: &str, limit: i64, space_id: Option<&str>) -> CapResult {
+    let page = page_id.trim();
+    if page.is_empty() {
+        return Err("bad_args: 需要 pageId".to_string());
+    }
+    let limit = limit.clamp(1, crate::cap_limits::LIST_MAX);
+    with_conn_for_space(space_id, |c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT id, title, created_at FROM page_versions
+                 WHERE page_id = ?1 ORDER BY created_at DESC LIMIT ?2",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows: Vec<serde_json::Value> = stmt
+            .query_map(params![page, limit], |r| {
+                Ok(serde_json::json!({
+                    "versionId": r.get::<_, String>(0)?,
+                    "title": r.get::<_, String>(1)?,
+                    "at": r.get::<_, i64>(2)?,
+                }))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::Value::Array(rows))
+    })
+}
+
+/// `version.get`：某个历史版本的正文（与 `pages.get` **同一份**窗口口径，见 [`text_window_value`]）。
+///
+/// 只读：版本表是**快照**，这里一个字都不会回滚（回滚是 B2 的 `pages.revert`，本批不做）。
+fn cap_version_get(
+    page_id: &str,
+    version_id: &str,
+    offset: i64,
+    limit: i64,
+    include_anchors: bool,
+    space_id: Option<&str>,
+) -> CapResult {
+    let page = page_id.trim();
+    let vid = version_id.trim();
+    if page.is_empty() {
+        return Err("bad_args: 需要 pageId".to_string());
+    }
+    if vid.is_empty() {
+        return Err("bad_args: 需要 versionId".to_string());
+    }
+    with_conn_for_space(space_id, |c| {
+        // 正文两列只经 `doc_content` 那一层读（`check-doc-content-access` 只减不增）
+        let row = crate::doc_content::version_body(c, page, vid)?;
+        let Some((title, doc_json, text, at)) = row else {
+            // ⚠️ 不存在 ⇒ `not_found`（⛔ 不返回空正文冒充"这个版本是空的"）。
+            return Err(format!("not_found: 页面 {page} 没有版本 {vid}"));
+        };
+        let mut v = text_window_value(
+            page,
+            &title,
+            "version",
+            &text,
+            &doc_json,
+            None,
+            offset,
+            limit,
+            include_anchors,
+        );
+        v["pageId"] = serde_json::json!(page);
+        v["versionId"] = serde_json::json!(vid);
+        v["at"] = serde_json::json!(at);
+        Ok(v)
+    })
+}
+
+/// `trash.list`：回收站（软删页面）清单 —— 只读，⛔ 不恢复、不清空。
+fn cap_trash_list(space_id: Option<&str>, limit: i64) -> CapResult {
+    let limit = limit.clamp(1, 200);
+    with_conn_for_space(space_id, |c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT id, title, deleted_at FROM pages
+                 WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT ?1",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows: Vec<serde_json::Value> = stmt
+            .query_map(params![limit], |r| {
+                Ok(serde_json::json!({
+                    "pageId": r.get::<_, String>(0)?,
+                    "title": r.get::<_, String>(1)?,
+                    "deletedAt": r.get::<_, i64>(2)?,
+                }))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::Value::Array(rows))
+    })
+}
+
+/// 附件在库里的那一行（**唯一一处**列顺序）：`(hash, name, mime, size, page_id)`。
+fn attachment_row_of(c: &rusqlite::Connection, att_id: &str) -> Result<AttachmentRowMeta, String> {
+    use rusqlite::OptionalExtension;
+    let row = c
+        .query_row(
+            "SELECT hash, name, mime, size, page_id FROM attachments WHERE id = ?1",
+            params![att_id],
+            |r| {
+                Ok(AttachmentRowMeta {
+                    hash: r.get(0)?,
+                    name: r.get(1)?,
+                    mime: r.get(2)?,
+                    size: r.get(3)?,
+                    page_id: r.get(4)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))?;
+    row.ok_or_else(|| format!("not_found: 附件 {att_id} 不存在"))
+}
+
+struct AttachmentRowMeta {
+    hash: String,
+    name: String,
+    mime: String,
+    size: i64,
+    page_id: Option<String>,
+}
+
+/// `files.stat`：附件元数据（`sha256` = 附件的内容指纹，附件就是按它内容寻址的）。
+fn cap_files_stat(att_id: &str, space_id: Option<&str>) -> CapResult {
+    let att = att_id.trim();
+    if att.is_empty() {
+        return Err("bad_args: 需要 attId".to_string());
+    }
+    let space = target_space_id(space_id);
+    with_conn_for_space(space_id, |c| {
+        let row = attachment_row_of(c, att)?;
+        Ok(serde_json::json!({
+            "attId": att,
+            "pageId": row.page_id,
+            "name": row.name,
+            "mime": row.mime,
+            "size": row.size,
+            "sha256": row.hash,
+            "spaceId": space,
+        }))
+    })
+}
+
+/// `files.extract_status`：单个附件的**抽取完整度**。
+///
+/// 复用 [`crate::search::read_attachment_text_in_conn`]（与 `files.read` 同一处）：
+/// `coverage` 原样透出 —— 空串 = **未知**（⛔ 不许读成"完整"，§15.10 的口径）。
+fn cap_files_extract_status(att_id: &str, space_id: Option<&str>) -> CapResult {
+    let att = att_id.trim();
+    if att.is_empty() {
+        return Err("bad_args: 需要 attId".to_string());
+    }
+    with_conn_for_space(space_id, |c| {
+        let row = attachment_row_of(c, att)?;
+        let Some(page) = crate::search::read_attachment_text_in_conn(c, att, 0, 0)
+            .map_err(|e| format!("db_error: {e}"))?
+        else {
+            return Err(format!("not_found: 附件 {att} 不存在"));
+        };
+        let extractors: Vec<serde_json::Value> = page
+            .coverage
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "extractor": r.extractor,
+                    "coverage": r.coverage,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({
+            "attId": att,
+            "name": row.name,
+            "extracted": page.total > 0,
+            "segments": page.total,
+            "extractors": extractors,
+            "note": "coverage 是抽取器报的**原始覆盖度**：空串/空数组 = 未知，⛔ 不许读成「完整」；\
+                     extracted:false 只说明还没抽过，不代表文件里没有内容。",
+        }))
+    })
+}
+
+/// `files.list_orphan`：未整理附件（`page_id IS NULL`）—— 只读，⛔ 不清理/删除。
+fn cap_files_list_orphan(limit: i64, offset: i64, space_id: Option<&str>) -> CapResult {
+    let limit = limit.clamp(1, crate::cap_limits::LIST_MAX);
+    let offset = offset.max(0);
+    with_conn_for_space(space_id, |c| {
+        let total: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM attachments WHERE page_id IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let mut stmt = c
+            .prepare(
+                "SELECT id, name, mime, size, hash, created_at FROM attachments
+                 WHERE page_id IS NULL ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let files: Vec<serde_json::Value> = stmt
+            .query_map(params![limit, offset], |r| {
+                Ok(serde_json::json!({
+                    "attId": r.get::<_, String>(0)?,
+                    "name": r.get::<_, String>(1)?,
+                    "mime": r.get::<_, String>(2)?,
+                    "size": r.get::<_, i64>(3)?,
+                    "sha256": r.get::<_, String>(4)?,
+                    "createdAt": r.get::<_, i64>(5)?,
+                }))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::json!({ "files": files, "total": total }))
+    })
+}
+
+/// ⭐ B：用户点「允许一次」⇒ 写一次性下载额度（TTL 5 分钟、进程内存）。
+#[tauri::command]
+pub fn mcp_download_grant(
+    db: tauri::State<'_, crate::db::Db>,
+    att_id: String,
+    space_id: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let att = att_id.trim();
+    if att.is_empty() {
+        return Err("bad_args: 需要 attId".to_string());
+    }
+    // attId 必须存在（不猜）；目标空间锁着 ⇒ 明确拒（与读同一口径）
+    let _ = with_conn_for_space(space_id.as_deref(), |c| attachment_row_of(c, att))?;
+    let space = target_space_id(space_id.as_deref());
+    let expires_at = now_ms() + DOWNLOAD_GRANT_TTL_MS;
+    set_download_grant(att, &space, expires_at);
+    Ok(serde_json::json!({ "ok": true, "expiresAt": expires_at }))
+}
+/// `files.download`：把附件字节取成**句柄**（⛔ 不回字节）。
+///
+/// 三道：① 附件要在库里；② 字节走**与界面同一条**明文口径（`attachments::plain_bytes_of`：
+/// 按空间取钥匙/解密/空壳/内容指纹）；③ >10 MB ⇒ `needs_confirm`（本批没有确认 UI，⛔ 不静默下载）。
+// ⭐ B：`files.download` 超限确认的**一次性额度**（进程内存；重启即丢，文档写明）。
+const DOWNLOAD_GRANT_TTL_MS: i64 = 5 * 60 * 1000;
+static DOWNLOAD_GRANTS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, i64>>,
+> = std::sync::OnceLock::new();
+fn download_grants() -> &'static std::sync::Mutex<std::collections::HashMap<String, i64>> {
+    DOWNLOAD_GRANTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+fn download_key(att_id: &str, space: &str) -> String {
+    format!("{att_id}|{space}")
+}
+pub(crate) fn set_download_grant(att_id: &str, space: &str, expires_at: i64) {
+    if let Ok(mut g) = download_grants().lock() {
+        g.insert(download_key(att_id, space), expires_at);
+    }
+}
+fn take_download_grant(att_id: &str, space: &str) -> bool {
+    let Ok(mut g) = download_grants().lock() else {
+        return false;
+    };
+    let key = download_key(att_id, space);
+    match g.get(&key).copied() {
+        Some(exp) if exp > now_ms() => {
+            g.remove(&key);
+            true
+        }
+        Some(_) => {
+            g.remove(&key);
+            false
+        }
+        None => false,
+    }
+}
+#[cfg(test)]
+static DOWNLOAD_LIMIT_OVERRIDE: std::sync::atomic::AtomicI64 =
+    std::sync::atomic::AtomicI64::new(-1);
+fn download_limit() -> i64 {
+    #[cfg(test)]
+    {
+        let v = DOWNLOAD_LIMIT_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed);
+        if v >= 0 {
+            return v;
+        }
+    }
+    MAX_INLINE_DOWNLOAD_BYTES
+}
+#[cfg(test)]
+pub(crate) fn set_download_limit_for_test(v: i64) {
+    DOWNLOAD_LIMIT_OVERRIDE.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+fn cap_files_download(att_id: &str, space_id: Option<&str>) -> CapResult {
+    let att = att_id.trim();
+    if att.is_empty() {
+        return Err("bad_args: 需要 attId".to_string());
+    }
+    let row = with_conn_for_space(space_id, |c| attachment_row_of(c, att))?;
+    let space = target_space_id(space_id);
+    let limit = download_limit();
+    let allowed_once = take_download_grant(att, &space);
+    if row.size > limit && !allowed_once {
+        crate::frontend_tool::notify(
+            "files.confirm_download",
+            &serde_json::json!({ "attId": att, "spaceId": space, "size": row.size, "thresholdBytes": limit }).to_string(),
+        );
+        return Err(format!(
+            "needs_confirm: 附件「{}」{} 字节，超过 {}MB 上限 —— needsConfirm=true thresholdBytes={}（去应用里允许一次后重试）",
+            row.name,
+            row.size,
+            limit / 1024 / 1024,
+            limit
+        ));
+    }
+    let app_data = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+    let bytes = crate::attachments::plain_bytes_of(app_data, &space, &row.hash)?;
+    if bytes.len() as i64 > limit && !allowed_once {
+        crate::frontend_tool::notify(
+            "files.confirm_download",
+            &serde_json::json!({ "attId": att, "spaceId": space, "size": bytes.len(), "thresholdBytes": limit }).to_string(),
+        );
+        return Err(format!(
+            "needs_confirm: 附件「{}」实际 {} 字节，超过 {}MB 上限 —— needsConfirm=true thresholdBytes={}（去应用里允许一次后重试）",
+            row.name,
+            bytes.len(),
+            limit / 1024 / 1024,
+            limit
+        ));
+    }
+    let (handle, expires_at, meta) = crate::mcp_blobs::put(
+        &caller_identity(),
+        crate::mcp_blobs::BlobMeta {
+            name: row.name.clone(),
+            mime: row.mime.clone(),
+            size: 0,
+            sha256: String::new(),
+            space_id: space,
+        },
+        bytes,
+    )?;
+    Ok(serde_json::json!({
+        "handle": handle,
+        "name": meta.name,
+        "size": meta.size,
+        "sha256": meta.sha256,
+        "expiresAt": expires_at,
+    }))
+}
+
+/// `blobs.fetch`：**句柄消费方**（本批唯一落盘处）。
+///
+/// 句柄单次、TTL 120s、绑会话（三条都在 [`crate::mcp_blobs`]）；落盘只进
+/// `<appdata>/exports/`（文件名清洗、不覆盖、sha 复核）—— ⛔ 调用方给不了路径。
+fn cap_blobs_fetch(handle: &str) -> CapResult {
+    let h = handle.trim();
+    if h.is_empty() {
+        return Err("bad_args: 需要 handle".to_string());
+    }
+    let (meta, bytes) = crate::mcp_blobs::take(&caller_identity(), h)?;
+    let app_data = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "bad_args: app data dir 未初始化".to_string())?;
+    let (path, size, sha256) = crate::mcp_blobs::write_to_exports(app_data, &meta, &bytes)?;
+    Ok(serde_json::json!({ "path": path, "size": size, "sha256": sha256 }))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// B3（2026-10-29）· **前端桥**能力的宿主侧：导出（句柄）＋ 覆盖率报告（JSON）
+//
+//   这三条能力的**唯一实现都在 TS**（Markdown/包渲染、抽取器注册表）。Rust 这一侧只做三件事：
+//   ① 目标校验（页/空间存在、不是文件夹；跨空间门沿用 `with_conn_for_space` 那套）；
+//   ② 通过 `crate::frontend_tool` 向前端要结果（方法白名单 / 5s 超时 / 前端没挂载立刻报）；
+//   ③ 导出类把字节登记进**同一张**句柄表（`mcp_blobs`，单次/TTL 120s/绑会话）。
+//   ⛔ 这里**不复制**任何 Markdown/zip/覆盖率计算逻辑（两份实现必然漂）。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// 导出类工具的**目标页校验**（只读）：页要存在、不能是文件夹。
+///
+/// 为什么要先校验：不存在/文件夹这两种情况**根本不该白跑一次前端**（大导出很贵），
+/// 而且错误码必须是稳定的 `not_found` / `bad_args`（⛔ 不把前端那句中文当错误码用）。
+fn export_target_page(page_id: &str) -> Result<String, String> {
+    let pid = page_id.trim();
+    if pid.is_empty() {
+        return Err("bad_args: 需要 pageId".to_string());
+    }
     with_read_conn(|c| {
+        use rusqlite::OptionalExtension;
+        let kind: Option<String> = c
+            .query_row(
+                "SELECT kind FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+                params![pid],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| format!("db_error: {e}"))?;
+        let Some(kind) = kind else {
+            return Err(format!("not_found: 页面 {pid} 不存在或已删除"));
+        };
+        if kind == "folder" {
+            return Err(format!(
+                "bad_args: 「{pid}」是文件夹，没有正文可导出（要整棵子树请用空间导出）"
+            ));
+        }
+        Ok(pid.to_string())
+    })
+}
+
+/// 把前端算好的导出**收成句柄**（⛔ 不回字节；句柄表与 `files.download` **同一张**）。
+///
+/// >10 MB ⇒ `needs_confirm`（与 `files.download` 同一条：本批没有确认 UI，⛔ 不静默交付大文件）；
+/// 0 字节 ⇒ `bad_args`（⛔ 不创建一个"看起来成功"的空文件）。
+fn export_handle_from_reply(reply: crate::frontend_tool::BridgeReply, mime: &str) -> CapResult {
+    if reply.bytes.is_empty() {
+        return Err("bad_args: 前端算出的导出是 0 字节（拒绝创建一个空文件）".to_string());
+    }
+    if reply.bytes.len() as i64 > MAX_INLINE_DOWNLOAD_BYTES {
+        return Err(format!(
+            "needs_confirm: 导出 {} 字节，超过 10MB 上限 —— 本批未接用户确认 UI，不能静默导出",
+            reply.bytes.len()
+        ));
+    }
+    let name = if reply.name.trim().is_empty() {
+        "导出文件".to_string()
+    } else {
+        reply.name.trim().to_string()
+    };
+    let space = target_space_id(None);
+    let (handle, expires_at, meta) = crate::mcp_blobs::put(
+        &caller_identity(),
+        crate::mcp_blobs::BlobMeta {
+            name,
+            mime: mime.to_string(),
+            size: 0,
+            sha256: String::new(),
+            space_id: space,
+        },
+        reply.bytes,
+    )?;
+    Ok(serde_json::json!({
+        "handle": handle,
+        "name": meta.name,
+        "size": meta.size,
+        "sha256": meta.sha256,
+        "expiresAt": expires_at,
+    }))
+}
+
+/// `export.markdown`（B3）：Markdown **句柄**。
+///
+/// * `pageId` ⇒ **单页** `.md`（与界面「导出为 Markdown」同口径：`pageContentToMarkdown` ＋ 标题头注释）；
+/// * `spaceId` ⇒ **整个空间**的 `.zip`（与界面「导出本空间为 Markdown ＋ 附件」同口径，附件一并带走）。
+/// 两个**只能给一个**（给两个/都不给 ⇒ `bad_args`，⛔ 不猜）。
+/// ⚠️ 整空间目前**只支持当前空间**：前端拿页面/附件都走当前空间连接（跨空间读取没有命令面入口）
+/// ⇒ 别的空间明确 `bad_args`（⛔ 不假装支持、也不静默导错空间）。
+fn cap_export_markdown(page_id: Option<&str>, space_id: Option<&str>) -> CapResult {
+    let page = page_id.map(str::trim).filter(|s| !s.is_empty());
+    let space = space_id.map(str::trim).filter(|s| !s.is_empty());
+    match (page, space) {
+        (None, None) => {
+            Err("bad_args: 需要 pageId 或 spaceId（单页导出 vs 整空间导出）".to_string())
+        }
+        (Some(pid), _) => {
+            let current = target_space_id(None);
+            let target = space.unwrap_or(&current).to_string();
+            let page = if target == current {
+                export_target_page(pid)?
+            } else {
+                with_conn_for_space(Some(target.as_str()), |c| {
+                    let Some(m) = crate::doc_content::read_with_meta(c, pid)? else {
+                        return Err(format!("not_found: 页面 {pid} 不存在或已读取失败"));
+                    };
+                    if m.kind == "folder" {
+                        return Err(format!(
+                            "bad_args: 「{}」是文件夹，没有正文可导出",
+                            m.content.title
+                        ));
+                    }
+                    Ok(pid.trim().to_string())
+                })?
+            };
+            let args = serde_json::json!({
+                "pageId": page,
+                "spaceId": if target == current { serde_json::Value::Null } else { serde_json::json!(target) },
+            })
+            .to_string();
+            let reply = crate::frontend_tool::call("export.markdown", &args)?;
+            export_handle_from_reply(reply, "text/markdown")
+        }
+        (None, Some(sid)) => {
+            let current = target_space_id(None);
+            if sid != current {
+                return Err(
+                    "bad_args: 整空间导出目前只支持当前空间（跨空间读取没有命令面入口）—— 请在应用里切到那个空间再导出"
+                        .to_string(),
+                );
+            }
+            // 空间名给前端做文件名（读 meta；读不到就退回中性名 —— 与界面同一条退法）
+            let snap = space_scope_snapshot_of(None)?;
+            let name = snap["spaceName"].as_str().unwrap_or("").to_string();
+            let args = serde_json::json!({ "spaceId": current, "spaceName": name }).to_string();
+            let reply = crate::frontend_tool::call("export.markdown", &args)?;
+            export_handle_from_reply(reply, "application/zip")
+        }
+    }
+}
+
+/// `export.docpackage`（B3）：`.shuyodoc` **句柄**（**只支持单页** —— 与 M1/UI 同口径）。
+///
+/// 打包仍走 `docPackWriter.ts::buildDocumentPackage`（企业版 reader 已验过的格式层），
+/// Rust 不碰格式（⛔ 不在这里再实现一遍 zip/checksums）。
+fn cap_export_docpackage(page_id: &str, space_id: Option<&str>) -> CapResult {
+    let current = target_space_id(None);
+    let target = space_id
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&current)
+        .to_string();
+    let page = if target == current {
+        export_target_page(page_id)?
+    } else {
+        with_conn_for_space(Some(target.as_str()), |c| {
+            let Some(m) = crate::doc_content::read_with_meta(c, page_id)? else {
+                return Err(format!("not_found: 页面 {page_id} 不存在或已读取失败"));
+            };
+            if m.kind == "folder" {
+                return Err(format!(
+                    "bad_args: 「{}」是文件夹，没有正文可导出",
+                    m.content.title
+                ));
+            }
+            Ok(page_id.trim().to_string())
+        })?
+    };
+    let args = serde_json::json!({
+        "pageId": page,
+        "spaceId": if target == current { serde_json::Value::Null } else { serde_json::json!(target) },
+    })
+    .to_string();
+    let reply = crate::frontend_tool::call("export.docpackage", &args)?;
+    export_handle_from_reply(reply, "application/zip")
+}
+
+/// `coverage.report`（B3）：**直接返回 JSON**（不进句柄表 —— 它是读数，不是文件）。
+///
+/// 前端用同一份 `scanLibraryCoverage` ＋ `coverageReportTool` 算出来（与界面「检查索引覆盖」、
+/// 应用内 AI 面**同一个函数**）；Rust 只解析再原样透出（⛔ 不改字段、不重算）。
+/// ⚠️ 覆盖率报告是**当前空间**的派生层口径：`spaceId` 只接受当前空间（别的空间 ⇒ `bad_args`，
+/// ⛔ 不假装支持跨空间）。
+fn cap_coverage_report(space_id: Option<&str>) -> CapResult {
+    let current = target_space_id(None);
+    if let Some(sid) = space_id.map(str::trim).filter(|s| !s.is_empty()) {
+        if sid != current {
+            return Err(
+                "bad_args: 覆盖率报告只覆盖当前空间（跨空间未接）—— 省略 spaceId 即当前空间"
+                    .to_string(),
+            );
+        }
+    }
+    let args = serde_json::json!({ "spaceId": current }).to_string();
+    let reply = crate::frontend_tool::call("coverage.report", &args)?;
+    serde_json::from_slice(&reply.bytes)
+        .map_err(|e| format!("bad_args: 前端覆盖率报告不是合法 JSON（{e}）"))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// B2-结构（2026-10-29）· **节点/文件夹/回收站/回滚/标签/属性**的写能力
+//
+//   全部是 `mediate: "draft"`（写能力只能是这样，见 `check-capabilities` 的 M2 那一段）：
+//   Rust 只做「校验目标 ＋ 产出草稿」，**落库仍然只有一处**（`src/lib/ai/apply.ts`）。
+//   四条贯穿口径（矩阵 §4）：
+//     ① `spaceId` 可选：省略/等于当前 ⇒ 当前空间；给别的空间 ⇒ `permission_denied`
+//        （`write:all-spaces` 档本版默认关，⛔ 不静默回落）；
+//     ② `expectedRev`（`updated_at:sha8`）：不一致 ⇒ `rev_conflict`（带当前 rev，⛔ 不覆盖）；
+//     ③ `dryRun`：**不产出草稿**、不审计（P2 判据 4），回「会做什么」；
+//     ④ `clientRequestId`：同 id 重复调用只落一次/只审计一条（在 `dispatch_capability` 那一层做）。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// 写目标空间（§4.1）。`write:all-spaces` 由「可写（全部空间）」档显式授予（默认关）；
+/// ⚠️ 本版只把**权限门**打开：跨空间落库链路（前端 apply 切空间）尚未接，⛔ 不假装已支持。
+fn write_target_space(space_id: Option<&str>) -> Result<String, String> {
+    let current = target_space_id(None);
+    let want = space_id.map(str::trim).filter(|s| !s.is_empty());
+    match want {
+        None => Ok(current),
+        Some(s) if s == current => Ok(current),
+        Some(target) => {
+            if has_scope("write:all-spaces") && !cross_space_write_disabled() {
+                Ok(target.to_string())
+            } else if cross_space_write_disabled() {
+                Err(
+                    "bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）"
+                        .to_string(),
+                )
+            } else {
+                Err(
+                    "permission_denied: 带 spaceId 写别的空间需要权限 write:all-spaces\
+                     （『可写（全部空间）』档，本版默认关）—— 省略 spaceId 即当前空间"
+                        .to_string(),
+                )
+            }
+        }
+    }
+}
+
+/// 当前页的乐观并发令牌：`<updated_at 毫秒>:<正文 JSON 的 sha256 前 8 位>`（与读面同一形态）。
+fn page_rev_of(c: &rusqlite::Connection, page_id: &str) -> Result<Option<String>, String> {
+    let Some(m) = crate::doc_content::read_with_meta(c, page_id)? else {
+        return Ok(None);
+    };
+    let digest = crate::mcp_blobs::sha256_hex(m.content.json.as_bytes());
+    Ok(Some(format!("{}:{}", m.updated_at, &digest[..8])))
+}
+
+/// 校验 `expectedRev`（给了就必须与当前一致；没给就只取当前值）。页不存在 ⇒ `not_found`。
+fn check_expected_rev(page_id: &str, expected: Option<&str>) -> Result<String, String> {
+    with_read_conn(|c| check_expected_rev_in(c, page_id, expected))
+}
+
+// ⭐ A2：结构类跨空间 —— 同一段校验按**目标空间**取连接，找不到就开目标空间读连接。
+// ⭐ A3：标签/属性跨空间 —— 读目标空间的 tags/attr_defs/page_tags（⛔ 不回落当前空间）。
+fn space_read<F, T>(space: &str, f: F) -> Result<T, String>
+where
+    F: FnOnce(&rusqlite::Connection) -> Result<T, String>,
+{
+    if is_active_space(space) {
+        with_read_conn(f)
+    } else {
+        with_conn_for_space(Some(space), f)
+    }
+}
+fn tag_id_at(space: &str, name: &str) -> Result<Option<String>, String> {
+    use rusqlite::OptionalExtension;
+    space_read(space, |c| {
+        c.query_row("SELECT id FROM tags WHERE name = ?1", params![name], |r| {
+            r.get(0)
+        })
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))
+    })
+}
+fn tag_linked_at(space: &str, page: &str, tag_id: &str) -> Result<i64, String> {
+    space_read(space, |c| {
+        c.query_row(
+            "SELECT COUNT(*) FROM page_tags WHERE page_id = ?1 AND tag_id = ?2",
+            params![page, tag_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("db_error: {e}"))
+    })
+}
+fn attr_at(space: &str, attr_id: &str) -> Result<Option<(String, String)>, String> {
+    use rusqlite::OptionalExtension;
+    space_read(space, |c| {
+        c.query_row(
+            "SELECT name, type FROM attr_defs WHERE id = ?1",
+            params![attr_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))
+    })
+}
+fn is_active_space(space: &str) -> bool {
+    RUN_STATE.with(|s| {
+        s.borrow()
+            .read_space
+            .as_deref()
+            .map(|a| a == space)
+            .unwrap_or(true)
+    })
+}
+fn live_target_at(space: &str, id: &str) -> Result<(String, String), String> {
+    if is_active_space(space) {
+        live_target(id)
+    } else {
+        with_conn_for_space(Some(space), |c| live_target_in(c, id))
+    }
+}
+fn check_expected_rev_at(space: &str, id: &str, expected: Option<&str>) -> Result<String, String> {
+    if is_active_space(space) {
+        check_expected_rev(id, expected)
+    } else {
+        with_conn_for_space(Some(space), |c| check_expected_rev_in(c, id, expected))
+    }
+}
+fn live_children_count_at(space: &str, id: &str) -> Result<i64, String> {
+    if is_active_space(space) {
+        with_read_conn(|c| live_children_count(c, id))
+    } else {
+        with_conn_for_space(Some(space), |c| live_children_count(c, id))
+    }
+}
+fn backlink_count_at(space: &str, id: &str) -> Result<i64, String> {
+    if is_active_space(space) {
+        with_read_conn(|c| backlink_count(c, id))
+    } else {
+        with_conn_for_space(Some(space), |c| backlink_count(c, id))
+    }
+}
+fn page_parent_at(space: &str, id: &str) -> Result<Option<String>, String> {
+    if is_active_space(space) {
+        with_read_conn(|c| {
+            c.query_row(
+                "SELECT parent_id FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+                params![id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .map_err(|e| format!("db_error: {e}"))
+        })
+    } else {
+        with_conn_for_space(Some(space), |c| {
+            c.query_row(
+                "SELECT parent_id FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+                params![id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .map_err(|e| format!("db_error: {e}"))
+        })
+    }
+}
+fn check_expected_rev_in(
+    c: &rusqlite::Connection,
+    page_id: &str,
+    expected: Option<&str>,
+) -> Result<String, String> {
+    let exp = expected.map(str::trim).filter(|s| !s.is_empty());
+    let cur = match page_rev_of(c, page_id) {
+        Ok(v) => v,
+        // 没给 expectedRev 时**容忍**"读不到当前空间"（老草稿路径本来就不碰库；⛔ 不把它变成硬失败）
+        Err(e) if exp.is_none() => return Ok(e),
+        Err(e) => return Err(e),
+    };
+    let Some(cur) = cur else {
+        return Err(format!("not_found: 页面 {page_id} 不存在或已删除"));
+    };
+    if let Some(exp) = exp {
+        if exp != cur {
+            return Err(format!(
+                "rev_conflict: expectedRev={exp}，当前 rev={cur}；请重新读 pages.get 再重试（currentRev={cur}）"
+            ));
+        }
+    }
+    Ok(cur)
+}
+
+/// 读活页的 `(title, kind)`；不存在/已软删 ⇒ `not_found`（写能力的目标校验统一走这一条）。
+fn live_target(page_id: &str) -> Result<(String, String), String> {
+    with_read_conn(|c| live_target_in(c, page_id))
+}
+
+fn live_target_in(c: &rusqlite::Connection, page_id: &str) -> Result<(String, String), String> {
+    let pid = page_id.trim();
+    if pid.is_empty() {
+        return Err("bad_args: 需要 pageId".to_string());
+    }
+    {
+        let Some(m) = crate::doc_content::read_with_meta(c, pid)? else {
+            return Err(format!("not_found: 页面 {pid} 不存在或已删除"));
+        };
+        Ok((m.content.title, m.kind))
+    }
+}
+
+/// 直接子项数（只数活着的子项；删除/移动前的提示与"非空文件夹拒绝"都靠它）。
+fn live_children_count(c: &rusqlite::Connection, page_id: &str) -> Result<i64, String> {
+    c.query_row(
+        "SELECT COUNT(*) FROM pages WHERE parent_id = ?1 AND deleted_at IS NULL",
+        params![page_id],
+        |r| r.get(0),
+    )
+    .map_err(|e| format!("db_error: {e}"))
+}
+
+/// 反链条数（删/移之前的如实提示；⛔ 不用它当"阻断"，矩阵只要求如实提示）。
+fn backlink_count(c: &rusqlite::Connection, page_id: &str) -> Result<i64, String> {
+    c.query_row(
+        "SELECT COUNT(*) FROM backlinks b JOIN pages p ON b.source_page_id = p.id
+         WHERE b.target_page_id = ?1 AND b.target_block_id = '' AND p.deleted_at IS NULL",
+        params![page_id],
+        |r| r.get(0),
+    )
+    .map_err(|e| format!("db_error: {e}"))
+}
+
+/// 写草稿（结构写统一出口）：`dryRun` ⇒ 不产出草稿、回"会做什么"。
+fn structural_draft(
+    dry_run: bool,
+    key: String,
+    summary: String,
+    payload: serde_json::Value,
+    space_id: &str,
+) -> CapResult {
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true,
+            "summary": summary,
+            "would": payload,
+            "spaceId": space_id,
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
+    push_draft(key, summary.clone(), payload);
+    Ok(serde_json::json!({
+        "drafted": true,
+        "summary": summary,
+        "spaceId": space_id,
+    }))
+}
+
+/// `folders.create`：在页面树里建一个文件夹（**没有**正文；不是页面）。
+fn cap_folders_create(
+    title: &str,
+    parent_id: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("bad_args: 新建文件夹需要 title".to_string());
+    }
+    if title.chars().count() > 200 {
+        return Err("bad_args: 文件夹标题超过 200 字上限".to_string());
+    }
+    let parent = parent_id.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(p) = parent {
+        live_target_at(&space, p).map_err(|_| format!("not_found: 上级节点 {p} 不存在或已删除"))?;
+    }
+    structural_draft(
+        dry_run,
+        format!("create_folder:{parent:?}:{title}"),
+        format!("新建文件夹「{title}」"),
+        serde_json::json!({
+            "kind": "create_folder",
+            "parent_id": parent,
+            "title": title,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `nodes.move`：移动节点（页面或文件夹 = 同一个 `movePage`；文件夹也是页面树节点）。
+fn cap_nodes_move(
+    id: &str,
+    new_parent_id: Option<&str>,
+    sort_order: i64,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (title, _kind) = live_target_at(&space, id)?;
+    let target = new_parent_id.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(p) = target {
+        // 环检测：不能移到自己或自己的后代下面（沿 parent 向上走，遇到自己 ⇒ 拒）
+        let (ptitle, _) = live_target_at(&space, p)
+            .map_err(|_| format!("not_found: 新上级 {p} 不存在或已删除"))?;
+        if p == id.trim() {
+            return Err("bad_args: 不能把节点移到自己下面（会成环）".to_string());
+        }
+        let rev = check_expected_rev_at(&space, id, expected_rev)?;
+        let mut cur = p.to_string();
+        for _ in 0..1000 {
+            let parent: Option<String> = page_parent_at(&space, &cur)?;
+            match parent {
+                None => break,
+                Some(up) if up == id.trim() => {
+                    return Err(format!(
+                        "bad_args: 不能把「{title}」移到它自己的后代「{ptitle}」下面（会成环；currentRev={rev}）"
+                    ));
+                }
+                Some(up) => cur = up,
+            }
+        }
+    }
+    let rev = check_expected_rev_at(&space, id, expected_rev)?;
+    let backlinks = backlink_count_at(&space, id)?;
+    structural_draft(
+        dry_run,
+        format!("move_node:{}", id.trim()),
+        match target {
+            Some(p) => format!("移动「{title}」到节点 {p} 下面（反链 {backlinks} 条）"),
+            None => format!("移动「{title}」到顶层（反链 {backlinks} 条）"),
+        },
+        serde_json::json!({
+            "kind": "move_node",
+            "id": id.trim(),
+            "newParentId": target,
+            "sortOrder": sort_order,
+            "expectedRev": rev,
+            "backlinks": backlinks,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `nodes.rename`：只改标题（正文不动）。落库那步仍走 `savePage`（快照＋同步变更同一条路）。
+fn cap_nodes_rename(
+    id: &str,
+    title: &str,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (old_title, _kind) = live_target_at(&space, id)?;
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("bad_args: 重命名需要 title".to_string());
+    }
+    if title.chars().count() > 200 {
+        return Err("bad_args: 标题超过 200 字上限".to_string());
+    }
+    let rev = check_expected_rev_at(&space, id, expected_rev)?;
+    structural_draft(
+        dry_run,
+        format!("rename_node:{}", id.trim()),
+        format!("把「{old_title}」改名为「{title}」"),
+        serde_json::json!({
+            "kind": "rename_node",
+            "id": id.trim(),
+            "title": title,
+            "expectedRev": rev,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `nodes.delete`：**软删**（进回收站，可恢复）。非空（有任何活着的子项）⇒ **拒绝并点名 N**。
+fn cap_nodes_delete(
+    id: &str,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (title, _kind) = live_target_at(&space, id)?;
+    let children = live_children_count_at(&space, id)?;
+    if children > 0 {
+        return Err(format!(
+            "bad_args: 「{title}」还有 {children} 个子项 —— 请先移走或删除它们（⛔ 不递归删）"
+        ));
+    }
+    let rev = check_expected_rev_at(&space, id, expected_rev)?;
+    let backlinks = backlink_count_at(&space, id)?;
+    structural_draft(
+        dry_run,
+        format!("delete_node:{}", id.trim()),
+        format!("删除「{title}」（移入回收站，可恢复；反链 {backlinks} 条）"),
+        serde_json::json!({
+            "kind": "delete_node",
+            "id": id.trim(),
+            "expectedRev": rev,
+            "backlinks": backlinks,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `trash.restore`：从回收站恢复（**只有**回收站里的节点可恢复；活着的 ⇒ `bad_args`）。
+fn cap_trash_restore(
+    id: &str,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let pid = id.trim();
+    if pid.is_empty() {
+        return Err("bad_args: 需要 id".to_string());
+    }
+    let row: Option<(String, Option<i64>)> = space_read(&space, |c| {
+        use rusqlite::OptionalExtension;
+        c.query_row(
+            "SELECT title, deleted_at FROM pages WHERE id = ?1",
+            params![pid],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?)),
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))
+    })?;
+    let Some((title, deleted_at)) = row else {
+        return Err(format!("not_found: 节点 {pid} 不存在"));
+    };
+    if deleted_at.is_none() {
+        return Err(format!(
+            "bad_args: 「{title}」不在回收站（它还活着）—— 不需要恢复"
+        ));
+    }
+    structural_draft(
+        dry_run,
+        format!("restore_page:{pid}"),
+        format!("从回收站恢复「{title}」"),
+        serde_json::json!({
+            "kind": "restore_page",
+            "id": pid,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `pages.revert`：回退到**仍在版本历史里**的某一版（超出保留期/不存在 ⇒ `not_found`）。
+fn cap_pages_revert(
+    page_id: &str,
+    version_id: &str,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (title, _kind) = live_target_at(&space, page_id)?;
+    let vid = version_id.trim();
+    if vid.is_empty() {
+        return Err("bad_args: 需要 versionId".to_string());
+    }
+    // 版本必须属于这一页（版本历史是回滚的**唯一**目标；⛔ 不跨页回滚、⛔ 不删原写审计）
+    let belongs: Option<String> = space_read(&space, |c| {
+        use rusqlite::OptionalExtension;
+        c.query_row(
+            "SELECT title FROM page_versions WHERE page_id = ?1 AND id = ?2",
+            params![page_id.trim(), vid],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))
+    })?;
+    if belongs.is_none() {
+        return Err(format!(
+            "not_found: 页面 {page_id} 的版本历史里没有 {vid}（超出保留期/已被清理）"
+        ));
+    }
+    let rev = check_expected_rev_at(&space, page_id, expected_rev)?;
+    structural_draft(
+        dry_run,
+        format!("revert_page:{}:{vid}", page_id.trim()),
+        format!("把「{title}」回退到版本 {vid}（回退本身也会留一条新版本/审计）"),
+        serde_json::json!({
+            "kind": "revert_page",
+            "pageId": page_id.trim(),
+            "versionId": vid,
+            "expectedRev": rev,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `tags.remove`：把某个标签从一页上摘掉（**不删标签本身**；删除标签是另一件事）。
+fn cap_tags_remove(
+    name: &str,
+    page_id: Option<&str>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("bad_args: 移除标签需要 name".to_string());
+    }
+    let target = target_page_or_current(page_id)?;
+    let (title, _) = live_target_at(&space, &target)?;
+    let tag_id: Option<String> = tag_id_at(&space, name)?;
+    let Some(tag_id) = tag_id else {
+        return Err(format!("not_found: 没有名为「{name}」的标签"));
+    };
+    let linked: i64 = tag_linked_at(&space, &target, &tag_id)?;
+    if linked == 0 {
+        return Err(format!("not_found: 页面「{title}」没有标签「{name}」"));
+    }
+    let rev = check_expected_rev_at(&space, &target, expected_rev)?;
+    structural_draft(
+        dry_run,
+        format!("remove_tag:{target}:{name}"),
+        format!("把标签「{name}」从页面「{title}」上摘掉"),
+        serde_json::json!({
+            "kind": "remove_tag",
+            "pageId": target,
+            "tagId": tag_id,
+            "name": name,
+            "expectedRev": rev,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `properties.unset`：去掉页面上的一个属性值（属性定义仍在；**不删定义**）。
+fn cap_properties_unset(
+    attr_id: &str,
+    page_id: Option<&str>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let attr_id = attr_id.trim();
+    if attr_id.is_empty() {
+        return Err("bad_args: 去掉属性需要 attrId".to_string());
+    }
+    let target = target_page_or_current(page_id)?;
+    let (title, _) = live_target_at(&space, &target)?;
+    let attr_name: Option<String> = space_read(&space, |c| {
+        use rusqlite::OptionalExtension;
+        c.query_row(
+            "SELECT name FROM attr_defs WHERE id = ?1",
+            params![attr_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))
+    })?;
+    let Some(attr_name) = attr_name else {
+        return Err(format!(
+            "not_found: 属性 {attr_id} 不存在（先用 properties.list 查）"
+        ));
+    };
+    let rev = check_expected_rev_at(&space, &target, expected_rev)?;
+    structural_draft(
+        dry_run,
+        format!("unset_page_prop:{target}:{attr_id}"),
+        format!("去掉页面「{title}」的属性「{attr_name}」"),
+        serde_json::json!({
+            "kind": "unset_page_prop",
+            "pageId": target,
+            "attrId": attr_id,
+            "expectedRev": rev,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+// ── B2-块（2026-10-29）：blocks.patch / insert / delete ──
+//
+// 仍然**只产草稿**（M2 的写能力只能是 `mediate:"draft"`；落库只有 `src/lib/ai/apply.ts` 一处，
+// Markdown→块的解析也只在前端那一份 `markdownToPageContent` 里）。Rust 这一侧做四件事：
+// ① 顶层块寻址（用 `doc_content::block_snapshots` 既有读法，⛔ 不另写一份块解析）；
+// ② 并发令牌（`updated_at:sha8`）与 **`rev_conflict` 带 currentRev ＋ 当前 markdown（带锚点）**
+//    —— markdown 由前端桥算（`markdown.render`），前端未挂载时如实退回"正文带锚点"；
+// ③ `dryRun`：不产草稿、不记审计；④ 返回 `rev` / `changed` / `newBlockId`（确认后即可继续用）。
+
+/// 块 → 页面（`blocks` 是派生化表；用它定位比让调用方传 pageId 少一个必填参数）。
+fn block_page_of(block_id: &str) -> Result<String, String> {
+    with_read_conn(|c| block_page_of_in(c, block_id))
+}
+
+fn block_page_of_in(c: &rusqlite::Connection, block_id: &str) -> Result<String, String> {
+    let bid = block_id.trim();
+    if bid.is_empty() {
+        return Err("bad_args: 需要 blockId".to_string());
+    }
+    {
+        use rusqlite::OptionalExtension;
+        c.query_row(
+            "SELECT page_id FROM blocks WHERE block_id = ?1",
+            params![bid],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))?
+        .ok_or_else(|| format!("not_found: 块 {bid} 不存在（用 blocks.list 查）"))
+    }
+}
+
+/// 该页的**顶层**块 id（顺序即文档顺序）；页不存在 ⇒ `not_found`。
+fn top_blocks_of(page_id: &str) -> Result<Vec<String>, String> {
+    with_read_conn(|c| top_blocks_of_in(c, page_id))
+}
+
+fn top_blocks_of_in(c: &rusqlite::Connection, page_id: &str) -> Result<Vec<String>, String> {
+    let pid = page_id.trim();
+    {
+        let Some(m) = crate::doc_content::read_with_meta(c, pid)? else {
+            return Err(format!("not_found: 页面 {pid} 不存在或已删除"));
+        };
+        match crate::doc_content::block_snapshots(&m.content.json) {
+            Some(bs) => Ok(bs.into_iter().map(|b| b.block_id).collect()),
+            None => Err(
+                "bad_args: 页面结构不支持块级寻址（顶层块缺少 blockId）—— 可先用 pages.update 整页重写一次".to_string(),
+            ),
+        }
+    }
+}
+
+/// 写前的并发校验；冲突 ⇒ `rev_conflict`，**带 currentRev 与当前 markdown（带锚点）**。
+///
+/// markdown 用**前端桥**算（Rust 没有 markdown 渲染器 —— ⛔ 不在这里造第二份）；前端没挂载时
+/// 如实退化成正文（带 `<!-- b:… -->` 锚点），并说明为什么。
+fn blocks_rev_guard(page_id: &str, expected: Option<&str>) -> Result<String, String> {
+    with_read_conn(|c| blocks_rev_guard_in(c, page_id, expected))
+}
+
+fn blocks_rev_guard_in(
+    c: &rusqlite::Connection,
+    page_id: &str,
+    expected: Option<&str>,
+) -> Result<String, String> {
+    let cur = page_rev_of(c, page_id)?
+        .ok_or_else(|| format!("not_found: 页面 {page_id} 不存在或已删除"))?;
+    if let Some(exp) = expected.map(str::trim).filter(|s| !s.is_empty()) {
+        if exp != cur {
+            let md = crate::frontend_tool::call(
+                "markdown.render",
+                &serde_json::json!({ "pageId": page_id }).to_string(),
+            )
+            .ok()
+            .and_then(|r| serde_json::from_slice::<serde_json::Value>(&r.bytes).ok())
+            .and_then(|v| v["markdown"].as_str().map(str::to_string))
+            .unwrap_or_else(|| {
+                "（前端未挂载 ⇒ 取不到 markdown；可用 pages.get 的 includeAnchors 正文带锚点来 diff）"
+                    .to_string()
+            });
+            let current: String = (|| -> Result<String, String> {
+                let Some(m) = crate::doc_content::read_with_meta(c, page_id)? else {
+                    return Ok(String::new());
+                };
+                Ok(m.content.text)
+            })()?;
+            return Err(format!(
+                "rev_conflict: expectedRev={exp}，当前 rev={cur}\ncurrentRev={cur}\n当前 markdown（带块锚点）：\n{md}\n当前正文（带锚点）：\n{current}"
+            ));
+        }
+    }
+    Ok(cur)
+}
+
+/// 块内容入参：`markdown` 与 `text` **二选一**（都空 ⇒ `bad_args`；都非空 ⇒ 以 markdown 为准并提示）。
+fn block_body_arg(markdown: Option<&str>, text: Option<&str>) -> Result<(String, bool), String> {
+    let md = markdown.map(str::trim).filter(|s| !s.is_empty());
+    let tx = text.map(str::trim).filter(|s| !s.is_empty());
+    match (md, tx) {
+        (None, None) => Err("bad_args: 需要 markdown 或 text 之一（新块内容）".to_string()),
+        (Some(m), _) => {
+            if m.len() > 200 * 1024 {
+                return Err("bad_args: 新块内容超过 200KB 上限，请拆分".to_string());
+            }
+            Ok((m.to_string(), true))
+        }
+        (None, Some(t)) => {
+            if t.len() > 200 * 1024 {
+                return Err("bad_args: 新块内容超过 200KB 上限，请拆分".to_string());
+            }
+            Ok((t.to_string(), false))
+        }
+    }
+}
+
+/// `blocks.patch`：整块替换（块 id 不变）。
+fn cap_blocks_patch(
+    block_id: &str,
+    markdown: Option<&str>,
+    text: Option<&str>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let page = with_target_space(&space, |c| block_page_of_in(c, block_id))?;
+    let tops = with_target_space(&space, |c| top_blocks_of_in(c, &page))?;
+    let bid = block_id.trim().to_string();
+    if !tops.iter().any(|b| b == &bid) {
+        return Err(format!("not_found: 块 {bid} 不是页面 {page} 的顶层块"));
+    }
+    let (body, is_md) = block_body_arg(markdown, text)?;
+    let rev = with_target_space(&space, |c| blocks_rev_guard_in(c, &page, expected_rev))?;
+    let mut would = serde_json::json!({
+        "kind": "blocks_patch", "pageId": page, "blockId": bid,
+        "expectedRev": rev, "spaceId": space,
+    });
+    would[if is_md { "markdown" } else { "plain" }] = serde_json::json!(body);
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true, "applied": false, "rev": rev, "changed": [bid],
+            "would": would, "summary": "整块替换（演练）",
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
+    let summary = format!("替换块「{bid}」");
+    push_draft(format!("blocks_patch:{page}:{bid}"), summary.clone(), would);
+    Ok(serde_json::json!({
+        "drafted": true, "applied": false, "awaiting_confirm": true,
+        "rev": rev, "changed": [bid], "spaceId": space, "summary": summary,
+        "note": "草稿已生成，用户确认后才落库（applied 仍为 false）",
+    }))
+}
+
+/// `blocks.insert`：在某块之后插入（缺省页首）；返回 `newBlockId`（确认后即可用）。
+fn cap_blocks_insert(
+    page_id: Option<&str>,
+    after_block_id: Option<&str>,
+    markdown: Option<&str>,
+    text: Option<&str>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let after = after_block_id.map(str::trim).filter(|s| !s.is_empty());
+    let page = match (page_id.map(str::trim).filter(|s| !s.is_empty()), after) {
+        (Some(p), _) => p.to_string(),
+        (None, Some(a)) => block_page_of(a)?,
+        (None, None) => {
+            return Err("bad_args: 需要 pageId 或 afterBlockId 之一（至少给一个）".to_string())
+        }
+    };
+    let tops = with_target_space(&space, |c| top_blocks_of_in(c, &page))?;
+    if let Some(a) = after {
+        if !tops.iter().any(|b| b == a) {
+            return Err(format!("not_found: 块 {a} 不是页面 {page} 的顶层块"));
+        }
+    }
+    let (body, is_md) = block_body_arg(markdown, text)?;
+    let rev = with_target_space(&space, |c| blocks_rev_guard_in(c, &page, expected_rev))?;
+    let new_block_id = uuid::Uuid::new_v4().to_string();
+    let mut would = serde_json::json!({
+        "kind": "blocks_insert", "pageId": page, "afterBlockId": after,
+        "newBlockId": new_block_id, "expectedRev": rev, "spaceId": space,
+    });
+    would[if is_md { "markdown" } else { "plain" }] = serde_json::json!(body);
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true, "applied": false, "rev": rev,
+            "newBlockId": new_block_id, "would": would,
+            "summary": "插入块（演练）",
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
+    let summary = format!("在页面「{page}」插入块");
+    push_draft(
+        format!("blocks_insert:{page}:{new_block_id}"),
+        summary.clone(),
+        would,
+    );
+    Ok(serde_json::json!({
+        "drafted": true, "applied": false, "awaiting_confirm": true,
+        "rev": rev, "newBlockId": new_block_id, "spaceId": space, "summary": summary,
+        "note": "草稿已生成，用户确认后才落库（applied 仍为 false）；确认后 newBlockId 即生效",
+    }))
+}
+
+/// `blocks.delete`：删除一个顶层块（不留空占位）。
+fn cap_blocks_delete(
+    block_id: &str,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let page = with_target_space(&space, |c| block_page_of_in(c, block_id))?;
+    let tops = with_target_space(&space, |c| top_blocks_of_in(c, &page))?;
+    let bid = block_id.trim().to_string();
+    if !tops.iter().any(|b| b == &bid) {
+        return Err(format!("not_found: 块 {bid} 不是页面 {page} 的顶层块"));
+    }
+    if tops.len() <= 1 {
+        return Err(
+            "bad_args: 这是页面上最后一个顶层块 —— 删掉会留下空页面（⛔ 不制造空块/空页）"
+                .to_string(),
+        );
+    }
+    let rev = with_target_space(&space, |c| blocks_rev_guard_in(c, &page, expected_rev))?;
+    let would = serde_json::json!({
+        "kind": "blocks_delete", "pageId": page, "blockId": bid,
+        "expectedRev": rev, "spaceId": space,
+    });
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true, "applied": false, "rev": rev, "changed": [bid],
+            "would": would, "summary": "删除块（演练）",
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
+    let summary = format!("删除块「{bid}」");
+    push_draft(
+        format!("blocks_delete:{page}:{bid}"),
+        summary.clone(),
+        would,
+    );
+    Ok(serde_json::json!({
+        "drafted": true, "applied": false, "awaiting_confirm": true,
+        "rev": rev, "changed": [bid], "spaceId": space, "summary": summary,
+        "note": "草稿已生成，用户确认后才落库（applied 仍为 false）",
+    }))
+}
+
+// ── B2-附件与模板（2026-10-29）：files.move / rename / delete（引用检查）＋ templates.apply ──
+//
+// 仍然只产草稿（`mediate:"draft"`）；落库由 `src/lib/ai/apply.ts` 在用户确认后走**既有命令**
+// （`move_attachment` / `rename_attachment` / `remove_attachment` / `createPage`）。
+// ⛔ 本批**不做** `files.upload_to_page` 与 `import.docpackage`：MCP 面没有受控的"原始字节/文件"
+//    入口（⛔ 不接受任意路径）；要做得单独建受控上传通道（见报告降级）。
+
+pub(crate) fn attachment_meta_in(
+    c: &rusqlite::Connection,
+    id: &str,
+) -> Result<(String, String, Option<String>), String> {
+    use rusqlite::OptionalExtension;
+    let att = id.trim();
+    c.query_row(
+        "SELECT name, hash, page_id FROM attachments WHERE id = ?1",
+        params![att],
+        |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+            ))
+        },
+    )
+    .optional()
+    .map_err(|e| format!("db_error: {e}"))?
+    .ok_or_else(|| format!("not_found: 附件 {att} 不存在（该空间内）"))
+}
+
+fn attachment_meta(id: &str) -> Result<(String, String, Option<String>), String> {
+    let att = id.trim();
+    if att.is_empty() {
+        return Err("bad_args: 需要 attId".to_string());
+    }
+    with_read_conn(|c| {
+        use rusqlite::OptionalExtension;
+        c.query_row(
+            "SELECT name, hash, page_id FROM attachments WHERE id = ?1",
+            params![att],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))?
+        .ok_or_else(|| format!("not_found: 附件 {att} 不存在"))
+    })
+}
+
+fn check_expected_sha(hash: &str, expected: Option<&str>) -> Result<(), String> {
+    if let Some(exp) = expected.map(str::trim).filter(|s| !s.is_empty()) {
+        if exp != hash {
+            return Err(format!(
+                "rev_conflict: expectedSha={exp}，当前 sha={hash}（请先用 files.stat 重新读）"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `files.move`：改附件归属（字节不动）。
+fn cap_files_move(
+    att_id: &str,
+    to_page_id: &str,
+    expected_sha: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (name, hash, from) = if is_active_space(&space) {
+        attachment_meta(att_id)?
+    } else {
+        with_conn_for_space(Some(&space), |c| attachment_meta_in(c, att_id))?
+    };
+    // toPageId 必须属于**同一个目标空间**（否则 bad_args，不回落当前空间）
+    let (ptitle, _) = if is_active_space(&space) {
+        live_target(to_page_id)
+            .map_err(|_| format!("not_found: 目标页面 {to_page_id} 不存在或已删除"))?
+    } else {
+        with_conn_for_space(Some(&space), |c| live_target_in(c, to_page_id)).map_err(|_| {
+            format!("bad_args: 目标页 {to_page_id} 不在该空间（或已删除）—— 不回落当前空间")
+        })?
+    };
+    check_expected_sha(&hash, expected_sha)?;
+    structural_draft(
+        dry_run,
+        format!("move_attachment:{}", att_id.trim()),
+        format!(
+            "把附件「{name}」移到「{ptitle}」（原归属：{}）",
+            from.as_deref().unwrap_or("未整理")
+        ),
+        serde_json::json!({
+            "kind": "move_attachment",
+            "attId": att_id.trim(),
+            "toPageId": to_page_id.trim(),
+            "expectedSha": hash,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `files.rename`：改显示名（按界面同一条 mime 修复规则；⛔ 不动字节）。
+fn cap_files_rename(
+    att_id: &str,
+    name: &str,
+    expected_sha: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let new_name = name.trim();
+    if new_name.is_empty() {
+        return Err("bad_args: 重命名附件需要 name".to_string());
+    }
+    if new_name.chars().count() > 255 {
+        return Err("bad_args: 附件名超过 255 字上限".to_string());
+    }
+    let (old, hash, _) = if is_active_space(&space) {
+        attachment_meta(att_id)?
+    } else {
+        // 跨空间：源附件必须在**目标空间**里，否则 not_found 点名（不回落当前空间）
+        with_conn_for_space(Some(&space), |c| attachment_meta_in(c, att_id))?
+    };
+    check_expected_sha(&hash, expected_sha)?;
+    structural_draft(
+        dry_run,
+        format!("rename_attachment:{}", att_id.trim()),
+        format!("把附件「{old}」改名为「{new_name}」"),
+        serde_json::json!({
+            "kind": "rename_attachment",
+            "attId": att_id.trim(),
+            "name": new_name,
+            "spaceId": space,
+            "expectedSha": hash,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `files.delete`：**先做正文引用检查**（`attachment://<sha>`）——还有引用 ⇒ 拒绝并点名页面。
+fn cap_files_delete(
+    att_id: &str,
+    expected_sha: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (name, hash, _) = if is_active_space(&space) {
+        attachment_meta(att_id)?
+    } else {
+        with_conn_for_space(Some(&space), |c| attachment_meta_in(c, att_id))?
+    };
+    check_expected_sha(&hash, expected_sha)?;
+    let needle = format!("attachment://{hash}");
+    let refs: Vec<String> = with_conn_for_space(Some(&space), |c| {
+        let mut stmt = c
+            .prepare("SELECT id, title FROM pages WHERE deleted_at IS NULL")
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        let mut hits = Vec::new();
+        for (id, title) in rows {
+            if let Some(doc) = crate::doc_content::read(c, &id)? {
+                if doc.json.contains(&needle) {
+                    hits.push(title);
+                }
+            }
+        }
+        Ok(hits)
+    })?;
+    if !refs.is_empty() {
+        return Err(format!(
+            "bad_args: 附件「{name}」仍被正文引用（{} 页：{}）—— 请先从正文删掉引用再删（⛔ 不静默删）",
+            refs.len(),
+            refs.join("、")
+        ));
+    }
+    structural_draft(
+        dry_run,
+        format!("delete_attachment:{}", att_id.trim()),
+        format!("删除附件「{name}」（正文已无引用）"),
+        serde_json::json!({
+            "kind": "delete_attachment",
+            "attId": att_id.trim(),
+            "spaceId": space,
+            "expectedSha": hash,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `templates.apply`：用模板**新建**一页（永远新建、⛔ 不覆盖）。
+fn cap_templates_apply(
+    template_id: &str,
+    parent_id: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let tid = template_id.trim();
+    if tid.is_empty() {
+        return Err("bad_args: 需要 templateId".to_string());
+    }
+    let parent = parent_id.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(p) = parent {
+        live_target(p).map_err(|_| format!("not_found: 上级节点 {p} 不存在或已删除"))?;
+    }
+    let name: Option<String> = with_read_conn(|c| {
+        use rusqlite::OptionalExtension;
+        c.query_row(
+            "SELECT name FROM meta.templates WHERE id = ?1",
+            params![tid],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))
+    })?;
+    let Some(name) = name else {
+        return Err(format!(
+            "not_found: 模板 {tid} 不存在（先用 templates.list 查）"
+        ));
+    };
+    structural_draft(
+        dry_run,
+        format!("apply_template:{tid}"),
+        format!("用模板「{name}」新建一页"),
+        serde_json::json!({
+            "kind": "apply_template",
+            "templateId": tid,
+            "parentId": parent,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+// ── B2-补遗-1（2026-10-29）：受控上传通道（**系统文件选择框**）＋ import.docpackage ＋ files.detach ──
+//
+// 三条仍只产草稿（`mediate:"draft"`）：真正的"选文件 / 读包 / 置空 page_id"发生在用户**确认草稿之后**
+// 的 apply 步骤 —— 文件路径只能来自**用户在系统对话框里亲自选**（⛔ Agent 给不了 paths）：
+//   · upload：`platform.dialog.open` → `import_attachment_files`（既有内容寻址写入）→ 同名 `-N`；
+//   · import.docpackage：M1 的 `importDocumentPackage`（它自己弹选择框、读包、永远新建）；
+//   · detach：新命令 `detach_attachment`（`page_id = NULL`，保留字节）。
+
+/// `files.upload_to_page`：再确认后由**用户选文件**上传并绑定到该页。
+fn cap_files_upload(
+    page_id: &str,
+    name: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (title, _) = live_target(page_id)?;
+    let hint = name.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(h) = hint {
+        if h.chars().count() > 255 {
+            return Err("bad_args: 期望文件名超过 255 字上限".to_string());
+        }
+    }
+    structural_draft(
+        dry_run,
+        format!("upload_attachment:{}", page_id.trim()),
+        match hint {
+            Some(h) => format!("上传附件到「{title}」（期望文件名「{h}」；**需要你亲自选文件**）"),
+            None => format!("上传附件到「{title}」（**需要你亲自选文件**）"),
+        },
+        serde_json::json!({
+            "kind": "upload_attachment",
+            "pageId": page_id.trim(),
+            "nameHint": hint,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `import.docpackage`：确认后由用户选 `.shuyodoc`，复用 M1 读包，**永远新建**。
+fn cap_import_docpackage(
+    parent_id: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let parent = parent_id.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(p) = parent {
+        live_target(p).map_err(|_| format!("not_found: 上级节点 {p} 不存在或已删除"))?;
+    }
+    structural_draft(
+        dry_run,
+        "import_docpackage".to_string(),
+        "导入 .shuyodoc（**需要你亲自选文件**；永远新建、不覆盖）".to_string(),
+        serde_json::json!({
+            "kind": "import_docpackage",
+            "parentId": parent,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+/// `files.detach`：把附件从页面摘掉（`page_id = NULL` ⇒ 未整理；**字节保留**）。
+fn cap_files_detach(
+    att_id: &str,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let (name, _hash, page) = if is_active_space(&space) {
+        attachment_meta(att_id)?
+    } else {
+        with_conn_for_space(Some(&space), |c| attachment_meta_in(c, att_id))?
+    };
+    let Some(page) = page else {
+        return Err(format!(
+            "bad_args: 附件「{name}」已经是未整理状态（无需再摘除）"
+        ));
+    };
+    structural_draft(
+        dry_run,
+        format!("detach_attachment:{}", att_id.trim()),
+        format!("把附件「{name}」从页面 {page} 摘除（保留文件，变未整理）"),
+        serde_json::json!({
+            "kind": "detach_attachment",
+            "attId": att_id.trim(),
+            "fromPageId": page,
+            "spaceId": space,
+        }),
+        &space,
+    )
+}
+
+// ── B2-补遗-2（2026-10-29）：db.rows_write / db.rows_delete ──
+//
+// **事实核对**（与矩阵假设不同，按代码实况实现）：数据库的"行"是**数据库页的子页面**
+// （`pages.parent_id = 数据库页` ＋ `page_props`），**不是正文 JSON 里的 db 块** ——
+// `database.rs::query_db_rows` 就是从 `pages` 装配出来的。
+// ⇒ apply 侧用**既有**命令落库（`createPage` / `setPageProp` / `deletePage`），**零新写库入口**；
+//   Rust 这一侧只做**列/类型/必填校验**并产出**规范化后的草稿值**。
+
+/// 允许写的列类型（只支持简单表格的原始列）。
+const DB_WRITABLE_TYPES: &[&str] = &["text", "number", "date", "select", "tag"];
+
+fn db_col_of<'a>(
+    columns: &'a [crate::models::AttrDef],
+    key: &str,
+) -> Option<&'a crate::models::AttrDef> {
+    columns
+        .iter()
+        .find(|c| c.id == key)
+        .or_else(|| columns.iter().find(|c| c.name == key))
+}
+
+/// 规范化一个值；失败 ⇒ 说清"第几行第几列、为什么"。
+fn db_normalize_value(
+    row_no: usize,
+    col: &crate::models::AttrDef,
+    raw: &serde_json::Value,
+) -> Result<String, String> {
+    let label = format!("第 {} 行的列「{}」", row_no, col.name);
+    match col.attr_type.as_str() {
+        "formula" => Err(format!(
+            "{label} 是**公式列** —— 本工具只写原始列（⛔ 不重算公式）"
+        )),
+        "rollup" => Err(format!(
+            "{label} 是**汇总列** —— 本工具只写原始列（⛔ 不重算汇总）"
+        )),
+        "ref" => Err(format!(
+            "{label} 是**关系列** —— 本工具只支持简单表格原始列"
+        )),
+        t if !DB_WRITABLE_TYPES.contains(&t) => Err(format!(
+            "{label} 的类型「{t}」不在支持范围（只支持 text/number/date/select/tag）"
+        )),
+        "number" => {
+            let n = raw
+                .as_f64()
+                .or_else(|| raw.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+                .ok_or_else(|| format!("{label} 是数字列，值 {raw} 不是数字"))?;
+            if !n.is_finite() {
+                return Err(format!("{label} 是数字列，值必须是有限数"));
+            }
+            // 与界面一致：数字列里存的是**文本**形态
+            Ok(if n.fract() == 0.0 {
+                format!("{}", n as i64)
+            } else {
+                format!("{n}")
+            })
+        }
+        "date" => {
+            let s = raw.as_str().unwrap_or("");
+            let b = s.as_bytes();
+            let ok = b.len() >= 10
+                && b[4] == b'-'
+                && b[7] == b'-'
+                && b[..4].iter().all(|c| c.is_ascii_digit())
+                && b[5..7].iter().all(|c| c.is_ascii_digit())
+                && b[8..10].iter().all(|c| c.is_ascii_digit());
+            if !ok {
+                return Err(format!(
+                    "{label} 是日期列，值必须是 YYYY-MM-DD 形态（收到 {raw}）"
+                ));
+            }
+            Ok(s.to_string())
+        }
+        "select" => {
+            let s = raw.as_str().unwrap_or("");
+            if !col.options.iter().any(|o| o == s) {
+                return Err(format!(
+                    "{label} 是单选列，值「{s}」不在选项里（可选：{}）",
+                    col.options.join(" / ")
+                ));
+            }
+            Ok(s.to_string())
+        }
+        _ => Ok(match raw {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        }),
+    }
+}
+
+fn cap_db_rows_write(
+    page_id: &str,
+    rows: Option<&serde_json::Value>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let pid = page_id.trim();
+    if pid.is_empty() {
+        return Err("bad_args: 需要 pageId（数据库页）".to_string());
+    }
+    let list = rows
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "bad_args: rows 必须是数组".to_string())?;
+    if list.is_empty() {
+        return Err("bad_args: rows 不能为空".to_string());
+    }
+    let (columns, normalized) = space_read(&space, |c| {
+        crate::database::require_db_page(c, pid)?;
+        let columns = crate::database::db_columns(c, pid)?;
+        let mut out: Vec<serde_json::Value> = Vec::new();
+        for (i, row) in list.iter().enumerate() {
+            let no = i + 1;
+            let obj = row
+                .as_object()
+                .ok_or_else(|| format!("bad_args: 第 {no} 行不是对象"))?;
+            let row_id = obj
+                .get("rowId")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let title = obj
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            if let Some(rid) = row_id {
+                let exists: bool = c
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM pages WHERE id = ?1 AND parent_id = ?2 AND deleted_at IS NULL)",
+                        params![rid, pid],
+                        |r| r.get(0),
+                    )
+                    .map_err(|e| format!("db_error: {e}"))?;
+                if !exists {
+                    return Err(format!(
+                        "not_found: 第 {no} 行的 rowId「{rid}」不是该数据库页的行"
+                    ));
+                }
+            } else if title.is_none() {
+                return Err(format!("bad_args: 第 {no} 行是新增行 ⇒ 必须有 title"));
+            }
+            let values = obj
+                .get("values")
+                .and_then(|v| v.as_object())
+                .ok_or_else(|| format!("bad_args: 第 {no} 行缺少 values 对象"))?;
+            let mut props: Vec<serde_json::Value> = Vec::new();
+            for (key, raw) in values {
+                let col = db_col_of(&columns, key).ok_or_else(|| {
+                    format!("bad_args: 第 {no} 行：未知列「{key}」（可用 db.schema 查列 id/名字）")
+                })?;
+                let value = db_normalize_value(no, col, raw)?;
+                props.push(serde_json::json!({ "attrId": col.id, "value": value }));
+            }
+            let mut row_out = serde_json::json!({ "props": props });
+            if let Some(rid) = row_id {
+                row_out["rowId"] = serde_json::json!(rid);
+            }
+            if let Some(t) = title {
+                row_out["title"] = serde_json::json!(t);
+            }
+            out.push(row_out);
+        }
+        Ok((columns.len(), out))
+    })?;
+    let _ = columns;
+    let rev = with_target_space(&space, |c| blocks_rev_guard_in(c, pid, expected_rev))?;
+    let changed: Vec<String> = normalized
+        .iter()
+        .filter_map(|r| r.get("rowId").and_then(|v| v.as_str()).map(str::to_string))
+        .collect();
+    let new_rows = normalized.len() - changed.len();
+    let payload = serde_json::json!({
+        "kind": "db_rows_write",
+        "pageId": pid,
+        "rows": normalized,
+        "expectedRev": rev,
+        "spaceId": space,
+    });
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true, "applied": false, "rev": rev,
+            "changed": changed, "newRows": new_rows, "would": payload,
+            "summary": "数据库行写入（演练）",
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
+    let summary = format!(
+        "数据库行写入（改 {} 行 / 增 {} 行）",
+        changed.len(),
+        new_rows
+    );
+    push_draft(format!("db_rows_write:{pid}"), summary.clone(), payload);
+    Ok(serde_json::json!({
+        "drafted": true, "applied": false, "awaiting_confirm": true,
+        "rev": rev, "changed": changed, "newRows": new_rows,
+        "spaceId": space, "summary": summary,
+        "note": "草稿已生成，用户确认后才落库（applied 仍为 false）",
+    }))
+}
+
+fn cap_db_rows_delete(
+    page_id: &str,
+    row_ids: Option<&serde_json::Value>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let pid = page_id.trim();
+    if pid.is_empty() {
+        return Err("bad_args: 需要 pageId（数据库页）".to_string());
+    }
+    let ids: Vec<String> = row_ids
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "bad_args: rowIds 必须是数组".to_string())?
+        .iter()
+        .filter_map(|v| {
+            v.as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        })
+        .collect();
+    if ids.is_empty() {
+        return Err("bad_args: rowIds 不能为空".to_string());
+    }
+    space_read(&space, |c| {
+        crate::database::require_db_page(c, pid)?;
+        for rid in &ids {
+            let exists: bool = c
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pages WHERE id = ?1 AND parent_id = ?2 AND deleted_at IS NULL)",
+                    params![rid, pid],
+                    |r| r.get(0),
+                )
+                .map_err(|e| format!("db_error: {e}"))?;
+            if !exists {
+                return Err(format!(
+                    "not_found: 行「{rid}」不是该数据库页的行（已删或不存在）"
+                ));
+            }
+        }
+        Ok(())
+    })?;
+    let rev = with_target_space(&space, |c| blocks_rev_guard_in(c, pid, expected_rev))?;
+    let payload = serde_json::json!({
+        "kind": "db_rows_delete", "pageId": pid, "rowIds": ids,
+        "expectedRev": rev, "spaceId": space,
+    });
+    if dry_run {
+        return Ok(serde_json::json!({
+            "dryRun": true, "applied": false, "rev": rev, "changed": ids,
+            "would": payload, "summary": "数据库行删除（演练）",
+            "note": "dryRun：没有生成草稿、不会落库（审计也不加）",
+        }));
+    }
+    let summary = format!("删除数据库行（{} 行）", ids.len());
+    push_draft(format!("db_rows_delete:{pid}"), summary.clone(), payload);
+    Ok(serde_json::json!({
+        "drafted": true, "applied": false, "awaiting_confirm": true,
+        "rev": rev, "changed": ids, "spaceId": space, "summary": summary,
+        "note": "草稿已生成，用户确认后才落库（applied 仍为 false）",
+    }))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// UX-①（2026-10-30）：写闭环 —— `draftId`（写工具返回）＋ `drafts.status` ＋ `audit.tail`
+//
+// 三条口径：
+//   · `draftId` 在**产草稿那一刻**生成（同一次调用稳定；`dryRun` 不生成），并写进交给前端的
+//     draft payload ⇒ apply 侧确认/拒绝后回写状态（`mcp_draft_state` 命令）；
+//   · 状态只有 pending → applied/rejected；超过 TTL（10 分钟）读作 `expired`（⛔ 不删记录，
+//     也不把"没见过"说成过期）；查询**只回本会话**；
+//   · `audit.tail` 只读**本会话**最近 N 条（默认 20 / 上限 100），⛔ 不回正文、不回别的会话。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const DRAFT_STATE_TTL_MS: i64 = 10 * 60 * 1000;
+const DRAFT_STATE_CAPACITY: usize = 512;
+
+struct DraftStateRow {
+    source: String,
+    tool: String,
+    capability: String,
+    state: String,
+    at_ms: i64,
+    expires_ms: i64,
+}
+
+static DRAFT_STATES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, DraftStateRow>>,
+> = std::sync::OnceLock::new();
+
+fn draft_states() -> &'static std::sync::Mutex<std::collections::HashMap<String, DraftStateRow>> {
+    DRAFT_STATES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// dispatch 产出草稿后调用：登记 pending，并把 `draftId` 写进**最后一条**草稿的 payload。
+pub(crate) fn attach_draft_id(id: &str, source: &str, tool: &str, capability: &str) {
+    let now = now_ms();
+    if let Ok(mut g) = draft_states().lock() {
+        if g.len() >= DRAFT_STATE_CAPACITY {
+            if let Some(old) = g
+                .iter()
+                .min_by_key(|(_, r)| r.at_ms)
+                .map(|(k, _)| k.clone())
+            {
+                g.remove(&old);
+            }
+        }
+        g.insert(
+            id.to_string(),
+            DraftStateRow {
+                source: source.to_string(),
+                tool: tool.to_string(),
+                capability: capability.to_string(),
+                state: "pending".to_string(),
+                at_ms: now,
+                expires_ms: now + DRAFT_STATE_TTL_MS,
+            },
+        );
+    }
+    RUN_STATE.with(|s| {
+        let mut st = s.borrow_mut();
+        if let Some(last) = st.drafts.last_mut() {
+            last.payload["draftId"] = serde_json::json!(id);
+        }
+    });
+}
+
+/// 前端回写：pending → applied / rejected（其它状态值 ⇒ `bad_args`）。
+pub(crate) fn mark_draft_state(id: &str, state: &str) -> Result<(), String> {
+    let st = state.trim();
+    if st != "applied" && st != "rejected" {
+        return Err("bad_args: state 只能是 applied / rejected".to_string());
+    }
+    let mut g = draft_states()
+        .lock()
+        .map_err(|_| "internal: 草稿状态表锁坏了".to_string())?;
+    let Some(row) = g.get_mut(id.trim()) else {
+        return Err(format!(
+            "not_found: 草稿 {} 不存在（可能已过期被清）",
+            id.trim()
+        ));
+    };
+    if row.state != "pending" {
+        return Ok(()); // 幂等：重复回写按最后一次语义忽略（⛔ 不报错打断 apply 收尾）
+    }
+    if now_ms() > row.expires_ms {
+        return Err(format!(
+            "not_found: 草稿 {} 已过期，状态不再回写",
+            id.trim()
+        ));
+    }
+    row.state = st.to_string();
+    Ok(())
+}
+
+/// Tauri 命令：apply 侧（确认/拒绝后）回写草稿状态。桌面专属。
+#[tauri::command]
+pub fn mcp_draft_state(draft_id: String, state: String) -> Result<(), String> {
+    mark_draft_state(&draft_id, &state)
+}
+
+fn draft_state_view(id: &str) -> Result<serde_json::Value, String> {
+    let caller = caller_identity();
+    let g = draft_states()
+        .lock()
+        .map_err(|_| "internal: 草稿状态表锁坏了".to_string())?;
+    let Some(row) = g.get(id.trim()) else {
+        return Err(format!(
+            "not_found: 草稿 {} 不存在（换会话后不可见）",
+            id.trim()
+        ));
+    };
+    // 只回**本人会话**（外部 = external:<session>；插件 = plugin:<id>）
+    if row.source != caller {
+        return Err(format!(
+            "not_found: 草稿 {} 不存在（别的会话的草稿不可见）",
+            id.trim()
+        ));
+    }
+    let expired = now_ms() > row.expires_ms && row.state == "pending";
+    Ok(serde_json::json!({
+        "draftId": id.trim(),
+        "state": if expired { "expired" } else { row.state.as_str() },
+        "at": row.at_ms,
+        "tool": row.tool,
+        "capabilityId": row.capability,
+    }))
+}
+
+/// `drafts.status`（读）：一条草稿的当前状态（只回本会话）。
+fn cap_drafts_status(draft_id: &str) -> CapResult {
+    if draft_id.trim().is_empty() {
+        return Err("bad_args: 需要 draftId".to_string());
+    }
+    draft_state_view(draft_id)
+}
+
+/// `audit.tail`（读）：**本会话**最近 N 条审计（默认 20 / 上限 100；⛔ 不含正文）。
+/// ⭐ P1：面板「最近草稿」——只列**外部接入会话**的草稿（插件内部草稿不混进来），按时间倒序。
+#[tauri::command]
+pub fn mcp_recent_drafts(limit: Option<i64>) -> Result<serde_json::Value, String> {
+    let limit = limit.unwrap_or(5).clamp(1, 50) as usize;
+    let now = now_ms();
+    let mut rows: Vec<serde_json::Value> = draft_states()
+        .lock()
+        .map_err(|_| "internal: 草稿状态表锁坏了".to_string())?
+        .iter()
+        .filter(|(_, r)| r.source.starts_with("external:"))
+        .map(|(id, r)| {
+            let expired = now > r.expires_ms && r.state == "pending";
+            serde_json::json!({
+                "draftId": id,
+                "tool": r.tool,
+                "capabilityId": r.capability,
+                "state": if expired { "expired" } else { r.state.as_str() },
+                "at": r.at_ms,
+            })
+        })
+        .collect();
+    rows.sort_by_key(|r| -(r["at"].as_i64().unwrap_or(0)));
+    rows.truncate(limit);
+    Ok(serde_json::json!(rows))
+}
+
+/// ⭐ P1：面板「最近审计」——本机视角（外部接入 ＋ 插件的最近 N 条；⛔ 不含正文）。
+#[tauri::command]
+pub fn mcp_recent_audit(
+    limit: Option<i64>,
+    only_writes: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
+    let only_writes = only_writes.unwrap_or(false);
+    let is_write = |capability: &str| {
+        crate::capabilities_gen::CAPABILITIES
+            .iter()
+            .any(|c| c.id == capability && c.kind == "write")
+    };
+    let mut rows: Vec<serde_json::Value> = crate::plugins::plugin_audit(None, Some(2000))
+        .into_iter()
+        .filter(|e| !only_writes || is_write(&e.capability))
+        .map(|e| {
+            serde_json::json!({
+                "at": e.at_ms,
+                "tool": e.capability,
+                "capabilityId": e.capability,
+                "ok": e.ok,
+                "code": e.error_code,
+            })
+        })
+        .collect();
+    let start = rows.len().saturating_sub(limit);
+    Ok(serde_json::json!(rows.drain(start..).collect::<Vec<_>>()))
+}
+
+fn cap_audit_tail(limit: i64, only_writes: bool) -> CapResult {
+    let limit = limit.clamp(1, crate::cap_limits::SEARCH_MAX) as usize;
+    let is_write = |capability: &str| {
+        crate::capabilities_gen::CAPABILITIES
+            .iter()
+            .any(|c| c.id == capability && c.kind == "write")
+    };
+    let caller = caller_identity();
+    let (source_filter, plugin_filter): (Option<String>, Option<String>) =
+        match caller.strip_prefix("external:") {
+            Some(session) => (Some(format!("external:{session}")), None),
+            None => (
+                Some("plugin".to_string()),
+                caller.strip_prefix("plugin:").map(str::to_string),
+            ),
+        };
+    let rows: Vec<serde_json::Value> = crate::plugins::plugin_audit(None, Some(2000))
+        .into_iter()
+        .filter(|e| {
+            source_filter
+                .as_deref()
+                .map(|s| e.source == s)
+                .unwrap_or(false)
+        })
+        .filter(|e| {
+            plugin_filter
+                .as_deref()
+                .map(|p| e.plugin_id == p)
+                .unwrap_or(true)
+        })
+        .filter(|e| !only_writes || is_write(&e.capability))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|e| {
+            serde_json::json!({
+                "at": e.at_ms,
+                "tool": e.capability,
+                "capabilityId": e.capability,
+                "ok": e.ok,
+                "code": e.error_code,
+            })
+        })
+        .collect();
+    let start = rows.len().saturating_sub(limit);
+    Ok(serde_json::json!(rows[start..].to_vec()))
+}
+
+/// `templates.list`（UX-②）：本空间用户模板清单（与 `templates.apply` 配对；空表 ⇒ []）。
+fn cap_templates_list() -> CapResult {
+    with_read_conn(|c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT id, name FROM meta.templates WHERE built_in = 0 ORDER BY sort_order ASC, created_at ASC",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows: Vec<serde_json::Value> = stmt
+            .query_map([], |r| Ok(serde_json::json!({ "templateId": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?, "title": r.get::<_, String>(1)? })))
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::json!(rows))
+    })
+}
+
+/// `space.current`（UX-③）：当前活动空间 + 页面计数（与 spaces.list 的 active 同一数据）。
+fn cap_space_current() -> CapResult {
+    with_read_conn(|c| {
+        let active = crate::workspaces::active_workspace_id(c).unwrap_or_default();
+        let name: String = c
+            .query_row(
+                "SELECT name FROM meta.workspaces WHERE id = ?1",
+                params![active],
+                |r| r.get(0),
+            )
+            .unwrap_or_default();
+        let page_count: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        Ok(serde_json::json!({ "spaceId": active, "name": name, "pageCount": page_count }))
+    })
+}
+
+/// `export.page_markdown`（UX-⑦）：只接受 pageId 的单页导出（拆名后行为不变）。
+fn cap_export_page_markdown(page_id: &str, space_id: Option<&str>) -> CapResult {
+    // ⭐ B：pageId 与 spaceId 可同时给（跨空间导单页）；spaceId=当前空间等价于省略
+    cap_export_markdown(Some(page_id), space_id.filter(|s| !s.trim().is_empty()))
+}
+
+/// `export.space_markdown`（UX-⑦）：只接受 spaceId（省略=当前空间）的整空间导出。
+fn cap_export_space_markdown(space_id: Option<&str>, page_id: Option<&str>) -> CapResult {
+    if page_id.map(str::trim).filter(|s| !s.is_empty()).is_some() {
+        return Err(
+            "bad_args: export_space_markdown 只接受 spaceId（单页请用 export_page_markdown）"
+                .to_string(),
+        );
+    }
+    let current = target_space_id(None);
+    let target = space_id
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&current);
+    cap_export_markdown(None, Some(target))
+}
+
+fn cap_properties_list(space_id: Option<&str>) -> CapResult {
+    with_conn_for_space(space_id, |c| {
         let mut stmt = c
             .prepare("SELECT id, name, type FROM attr_defs ORDER BY sort_order, name")
             .map_err(|e| format!("db_error: {e}"))?;
@@ -2292,35 +5329,341 @@ fn cap_properties_list() -> CapResult {
     })
 }
 
+/// `pages.tree`（B1a，2026-10-29）：一次给出**整个空间**的树结构。
+///
+/// 为什么不再新建 Rust 命令（可行性核对 B1a 的硬口径「零新建命令」）：
+/// 它读的就是 `listPages`（`commands.rs::list_pages`）**同一张表、同一组列** —— 只是把
+/// `parent_id` / `kind` / `sort_order` 一起带出来并由调用方拼树。⛔ 没有第二套查询口径：
+/// 计数走 [`count_nodes_in_space`]（与 `pages.list` 同一条 SQL），节点走下面这一条 SELECT。
+///
+/// 三条判据（挂载级）：① 节点数 == `pages.list` 的页数；② `parentId` / `kind` / `order` 与库一致；
+/// ③ 超过 `limit`（默认与上限都是 2000）⇒ `truncated:true` 并给 `total`（如实说，别把截断当全量）。
+fn cap_pages_tree(space_id: Option<&str>, limit: i64) -> CapResult {
+    let limit = limit.clamp(1, 2000);
+    // 目标空间 id／名字 ＋ 跨空间那道门：与检索信封**同一条解析**（`space_scope_snapshot_of` ✓）。
+    //   先取快照再开连接：`spaceId` 必须回的是**真正读的那个空间**，不是"参数原样回声"。
+    let snap = space_scope_snapshot_of(space_id)?;
+    let space = snap["spaceId"].as_str().unwrap_or_default().to_string();
+    let name = snap["spaceName"].as_str().unwrap_or_default().to_string();
+    with_conn_for_space(space_id, move |c| {
+        let total = count_nodes_in_space(c)?;
+        let mut stmt = c
+            .prepare(
+                "SELECT id, title, kind, parent_id, sort_order FROM pages WHERE deleted_at IS NULL
+                 ORDER BY sort_order ASC, created_at ASC, id ASC LIMIT ?1",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let nodes: Vec<serde_json::Value> = stmt
+            .query_map(rusqlite::params![limit], |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, String>(0)?,
+                    "title": r.get::<_, String>(1)?,
+                    "kind": r.get::<_, String>(2)?,
+                    "parentId": r.get::<_, Option<String>>(3)?,
+                    "order": r.get::<_, f64>(4)?,
+                }))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        // `total` 是**库里真实的节点数**（不是本次返回数）—— 截断与否只能由它判 ✓
+        let returned = nodes.len() as i64;
+        Ok(serde_json::json!({
+            "spaceId": space,
+            "spaceName": name,
+            "nodes": nodes,
+            "total": total,
+            "truncated": returned < total,
+        }))
+    })
+}
+
+/// `db.schema`（B1b，2026-10-29）：一个数据库页的**结构**（列 / 视图 / 关系列）。
+///
+/// 「与 UI 同源」不是形容词 —— 它**复用** UI 那两条查询：
+/// 列走 `database::db_columns`（= `getDbColumns` 的 SQL）、视图走 `database::db_views`
+/// （= `listDbViews` 的 SQL）⇒ ⛔ 这里不写第二份查询（两份必然漂，而漂了不会报错）。
+///
+/// 三条口径：
+///   ① **公式/汇总列只标类型、不计算**（矩阵 §13.2-6 / §4.4）：`isFormula:true` / `isRollup:true`
+///      是给调用方的**信号**（"这一列不是原始值，要算你自己算或看界面"），⛔ 这里不算；
+///   ② `relations` ＝ `type = "ref"` 的那些列（本应用的"关系列"就是它，取值形如 `p:<pageId>`）；
+///   ③ `spaceId` 省略 ⇒ 活动空间；给了就走 [`with_conn_for_space`] 那道**跨空间门**
+///      （没有 `read:all-spaces` ⇒ 明确 `permission_denied`，⛔ 不静默回落当前空间）。
+fn cap_db_schema(page_id: &str, space_id: Option<&str>) -> CapResult {
+    let space = target_space_id(space_id);
+    with_conn_for_space(space_id, |c| {
+        crate::database::require_db_page(c, page_id)?;
+        let columns = crate::database::db_columns(c, page_id)?;
+        let views = crate::database::db_views(c, page_id)?;
+        let cols: Vec<serde_json::Value> = columns
+            .iter()
+            .map(|a| {
+                let mut v = serde_json::json!({
+                    "id": a.id,
+                    "name": a.name,
+                    "type": a.attr_type,
+                });
+                // ⚠️ 只**标明**，不计算（见函数注释 ①）。
+                if a.attr_type == "formula" {
+                    v["isFormula"] = serde_json::json!(true);
+                }
+                if a.attr_type == "rollup" {
+                    v["isRollup"] = serde_json::json!(true);
+                }
+                v
+            })
+            .collect();
+        let relations: Vec<serde_json::Value> = columns
+            .iter()
+            .filter(|a| a.attr_type == "ref")
+            .map(|a| {
+                serde_json::json!({
+                    "id": a.id,
+                    "name": a.name,
+                    "type": a.attr_type,
+                })
+            })
+            .collect();
+        let view_list: Vec<serde_json::Value> = views
+            .iter()
+            .map(|v| {
+                serde_json::json!({
+                    "id": v.id,
+                    "name": v.name,
+                    "type": v.view_type,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({
+            "pageId": page_id.trim(),
+            "spaceId": space,
+            "views": view_list,
+            "columns": cols,
+            "relations": relations,
+        }))
+    })
+}
+
+/// `db.rows` 单次响应体的上限（矩阵 §7「文本返回 ≤200 KB/次」）—— 超了就**截断并如实标**
+/// （⛔ 不悄悄丢：调用方得知道它看到的不全）。
+use crate::cap_limits::BODY_CAP_BYTES as MAX_DB_ROWS_BYTES;
+
+/// `db.rows`（B1b，2026-10-29）：一个数据库页的**行**，只给**原始值**。
+///
+/// 三条硬口径：
+///   ① **过滤与分页全在 Rust（SQL）侧**（[`crate::database::query_db_rows`]）：`where` 编成
+///      参数化 WHERE、`LIMIT/OFFSET` 编进 SQL ⇒ ⛔ 不「拉全表回 JS 侧再筛」；
+///   ② **只给原始值**：值就是 `page_props.value` / 标签名原样字符串，⛔ 不重算公式/汇总 ——
+///      回话里的 `note` 必须把这句话说出来（矩阵 §13.2-6：「可能与界面计算值不同」）；
+///   ③ `where` 的字段**必须**来自 `db.schema` 报出的列（id 或列名；**id 优先**，列名在空间内 UNIQUE），
+///      操作符白名单见 [`crate::database::WHERE_OPS_TEXT`]；越界/未知字段/坏操作符 ⇒ `invalid_args`
+///      （人话 ＋ 点名第几条），⛔ 不许 500 / 静默返回空。
+/// ⭐ P2：pages.changes_since（页级增量；不做块级 diff）。
+fn cap_pages_changes_since(
+    since_value: Option<&serde_json::Value>,
+    limit: i64,
+    space_id: Option<&str>,
+) -> CapResult {
+    let raw =
+        since_value.ok_or_else(|| "bad_args: 需要 since（ms 时间戳或 ISO 时间）".to_string())?;
+    let since: i64 = match raw {
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .ok_or_else(|| "bad_args: since 数字不是整数".to_string())?,
+        serde_json::Value::String(s) => {
+            let t = s.trim();
+            if t.chars().all(|c| c.is_ascii_digit()) {
+                t.parse::<i64>()
+                    .map_err(|_| "bad_args: since 不是合法时间戳".to_string())?
+            } else {
+                chrono::DateTime::parse_from_rfc3339(t)
+                    .map(|d| d.timestamp_millis())
+                    .map_err(|_| "bad_args: since 只接受 ms 时间戳或 ISO/RFC3339".to_string())?
+            }
+        }
+        _ => return Err("bad_args: since 只接受 ms 时间戳或 ISO/RFC3339".to_string()),
+    };
+    let limit = limit.clamp(1, crate::cap_limits::LIST_MAX);
+    let fetch = limit + 1;
+    with_conn_for_space(space_id, |c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT id, title, kind, updated_at FROM pages
+                 WHERE deleted_at IS NULL AND updated_at > ?1
+                 ORDER BY updated_at DESC, id ASC LIMIT ?2",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows: Vec<(String, String, String, i64)> = stmt
+            .query_map(params![since, fetch], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        let truncated = rows.len() as i64 > limit;
+        let mut pages: Vec<serde_json::Value> = Vec::new();
+        for (id, title, kind, updated_at) in rows.into_iter().take(limit as usize) {
+            let rev = page_rev_of(c, &id)?.unwrap_or_default();
+            pages.push(serde_json::json!({
+                "pageId": id, "title": title, "rev": rev, "updatedAt": updated_at, "kind": kind,
+            }));
+        }
+        Ok(serde_json::json!({
+            "pages": pages,
+            "truncated": truncated,
+        }))
+    })
+}
+
+fn cap_db_rows(
+    page_id: &str,
+    view_id: Option<&str>,
+    where_value: Option<&serde_json::Value>,
+    limit: i64,
+    offset: i64,
+    space_id: Option<&str>,
+) -> CapResult {
+    // 默认 100、上限 500（矩阵：分页参数由**这一层**夹取，SQL 只看见夹过的值）。
+    let limit = limit.clamp(1, crate::cap_limits::DB_ROWS_MAX);
+    let offset = offset.max(0);
+    let space = target_space_id(space_id);
+    with_conn_for_space(space_id, |c| {
+        crate::database::require_db_page(c, page_id)?;
+        let columns = crate::database::db_columns(c, page_id)?;
+        let filters = crate::database::parse_row_filters(where_value, &columns)?;
+        // `viewId`：必须是**这个库**的视图 —— 认不出来就明确拒（⛔ 不静默当成"没有视图"，
+        // 那会让调用方以为过滤生效了而其实没有）。
+        let view = match view_id.map(str::trim).filter(|s| !s.is_empty()) {
+            None => None,
+            Some(vid) => {
+                let views = crate::database::db_views(c, page_id)?;
+                Some(views.into_iter().find(|v| v.id == vid).ok_or_else(|| {
+                    format!(
+                        "invalid_args: viewId「{vid}」不是这个库的视图 —— 先用 db.schema 看 views"
+                    )
+                })?)
+            }
+        };
+        let page =
+            crate::database::query_db_rows(c, page_id, &filters, view.as_ref(), limit, offset)?;
+        let total = page.total;
+        let mut rows: Vec<serde_json::Value> = page
+            .rows
+            .into_iter()
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.page_id,
+                    "values": r.values,
+                })
+            })
+            .collect();
+        // 本次窗口还剩多少行没给（= 过滤后总数 － offset）：`truncated` 只由它和 200 KB 两件事决定。
+        let available = (total - offset).max(0);
+        let mut truncated = (rows.len() as i64) < available;
+        let note = "values 是**原始值**（page_props / 标签表的原样字符串），本工具**不重算公式/汇总** —— \
+                    可能与界面里显示的计算值不同；`truncated:true` 表示本次没给全（调 limit/offset 翻页，\
+                    或缩小 where）。";
+        let envelope = |rows: &[serde_json::Value], truncated: bool| {
+            serde_json::json!({
+                "pageId": page_id.trim(),
+                "spaceId": space,
+                "total": total,
+                "returned": rows.len(),
+                "rows": rows,
+                "truncated": truncated,
+                "note": note,
+            })
+        };
+        let mut body = envelope(&rows, truncated);
+        // 200 KB 上限：从尾部丢行直到装得下（至少保证空 rows 也装得下 ⇒ 循环必然终止）。
+        let too_big = |v: &serde_json::Value| {
+            serde_json::to_string(v)
+                .map(|s| s.len() > MAX_DB_ROWS_BYTES)
+                .unwrap_or(false)
+        };
+        if too_big(&body) {
+            while !rows.is_empty() {
+                rows.pop();
+                truncated = true;
+                body = envelope(&rows, truncated);
+                if !too_big(&body) {
+                    break;
+                }
+            }
+        }
+        Ok(body)
+    })
+}
+
 /// `properties.set`：**不写库**，只产出草稿（改的是既有页面的属性）。
-fn cap_properties_set(attr_id: &str, value: &str, page_id: Option<&str>) -> CapResult {
-    if attr_id.trim().is_empty() {
+fn cap_properties_set(
+    attr_id: &str,
+    value: &str,
+    page_id: Option<&str>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
+    let attr_id = attr_id.trim();
+    if attr_id.is_empty() {
         return Err("bad_args: 设置属性需要 attrId".to_string());
     }
     let target = target_page_or_current(page_id)?;
-    let summary = format!("给页面 {target} 设置属性 {attr_id} = {value}");
-    push_draft(
+    let (title, _) = live_target_at(&space, &target)?;
+    let attr: Option<(String, String)> = attr_at(&space, attr_id)?;
+    let Some((attr_name, attr_type)) = attr else {
+        return Err(format!(
+            "not_found: 属性 {attr_id} 不存在（先用 properties.list 查）"
+        ));
+    };
+    if attr_type == "number" && value.trim().parse::<f64>().is_err() {
+        return Err(format!(
+            "bad_args: 属性「{attr_name}」是数字类型，值「{value}」不是数字"
+        ));
+    }
+    let rev = check_expected_rev(&target, expected_rev)?;
+    structural_draft(
+        dry_run,
         format!("set_page_prop:{target}:{attr_id}"),
-        summary.clone(),
-        serde_json::json!({ "kind": "set_page_prop", "pageId": target, "attrId": attr_id, "value": value }),
-    );
-    Ok(serde_json::json!({ "drafted": true, "summary": summary }))
+        format!("给页面「{title}」设置属性「{attr_name}」= {value}"),
+        serde_json::json!({
+            "kind": "set_page_prop", "pageId": target, "attrId": attr_id,
+            "value": value, "expectedRev": rev, "spaceId": space,
+        }),
+        &space,
+    )
 }
 
 /// `tags.add`：**不写库**，只产出草稿（标签不存在时由落库那一步新建）。
-fn cap_tags_add(name: &str, page_id: Option<&str>) -> CapResult {
+fn cap_tags_add(
+    name: &str,
+    page_id: Option<&str>,
+    expected_rev: Option<&str>,
+    space_id: Option<&str>,
+    dry_run: bool,
+    _client_request_id: Option<&str>,
+) -> CapResult {
+    let space = write_target_space(space_id)?;
     let name = name.trim();
     if name.is_empty() {
         return Err("bad_args: 加标签需要 name".to_string());
     }
     let target = target_page_or_current(page_id)?;
-    let summary = format!("给页面 {target} 加标签「{name}」");
-    push_draft(
+    let (title, _) = live_target_at(&space, &target)?;
+    let rev = check_expected_rev_at(&space, &target, expected_rev)?;
+    structural_draft(
+        dry_run,
         format!("add_tag:{target}:{name}"),
-        summary.clone(),
-        serde_json::json!({ "kind": "add_tag", "pageId": target, "name": name }),
-    );
-    Ok(serde_json::json!({ "drafted": true, "summary": summary }))
+        format!("给页面「{title}」加标签「{name}」"),
+        serde_json::json!({
+            "kind": "add_tag", "pageId": target, "name": name,
+            "expectedRev": rev, "spaceId": space,
+        }),
+        &space,
+    )
 }
 
 /// `blocks.list`：列出页面顶级块（id + 文本）。
@@ -2332,10 +5675,10 @@ fn cap_tags_add(name: &str, page_id: Option<&str>) -> CapResult {
 /// 之前这个能力是唯一一个"必须显式给 id"的读能力，而插件又**拿不到当前页 id**
 /// （`page.current` 只给 content_json）：等于"能往当前页写，却读不到当前页"。
 /// 写参考插件时撞到的就是这个不对称——大纲 / 改写 / 导出当前页这一整类插件都被卡住。
-fn cap_blocks_list(page_id: Option<&str>, limit: i64) -> CapResult {
-    let limit = limit.clamp(1, 500) as usize;
+fn cap_blocks_list(page_id: Option<&str>, limit: i64, space_id: Option<&str>) -> CapResult {
+    let limit = limit.clamp(1, crate::cap_limits::BLOCKS_MAX) as usize;
     let target = target_page_or_current(page_id)?;
-    with_read_conn(|c| {
+    with_conn_for_space(space_id, |c| {
         // ★ 读出口走「文档内容」那一层（阶段 0 接口收口）：谓词与原 SQL 逐字相同。
         //   ⚠️ 搬运前的语义是"**任何**取不到（SQL 错误 **或** 页不存在/已软删）都报同一句
         //   `bad_args: 未找到页面`" —— 这里两段 `.map_err` 保留那条语义，不做区分。
@@ -2382,7 +5725,9 @@ pub(crate) fn judge_capability(capability_id: &str, declared: &[String]) -> Resu
     };
     if let Some(perm) = cap.permission {
         if !declared.iter().any(|p| p == perm) {
-            return Err(CapDeny::PermissionDenied { permission: perm.to_string() });
+            return Err(CapDeny::PermissionDenied {
+                permission: perm.to_string(),
+            });
         }
     }
     Ok(())
@@ -2390,7 +5735,9 @@ pub(crate) fn judge_capability(capability_id: &str, declared: &[String]) -> Resu
 
 /// 某个能力的 scope（只在拒绝路上用一次 ✓；查不到就是 `"?“`，与原来 unknown 那条一致 ✓）。
 fn capability_scope_or_unknown(capability_id: &str) -> &'static str {
-    capabilities_gen::lookup(capability_id).map(|c| c.scope).unwrap_or("?")
+    capabilities_gen::lookup(capability_id)
+        .map(|c| c.scope)
+        .unwrap_or("?")
 }
 
 thread_local! {
@@ -2407,7 +5754,11 @@ thread_local! {
 ///
 /// ⚠️ **只由 `mcp_host.rs` 用** ✓ —— 插件那条路不许借它换身份 ✗（换了身份就等于绕过 manifest 声明 ✓）。
 /// ⚠️ 判定本身**不在这里** ✓：权限仍然只在 `dispatch_capability` 里判一次（唯一鉴权点 ✓）。
-pub(crate) fn with_external_caller<T>(session_id: &str, granted: &[String], f: impl FnOnce() -> T) -> T {
+pub(crate) fn with_external_caller<T>(
+    session_id: &str,
+    granted: &[String],
+    f: impl FnOnce() -> T,
+) -> T {
     let prev = EXTERNAL_CALLER.with(|c| {
         c.borrow_mut()
             .replace((format!("external:{session_id}"), granted.to_vec()))
@@ -2415,6 +5766,16 @@ pub(crate) fn with_external_caller<T>(session_id: &str, granted: &[String], f: i
     let out = f();
     EXTERNAL_CALLER.with(|c| *c.borrow_mut() = prev);
     out
+}
+
+/// 这次调用是不是**外部宿主（MCP）**发起的 ✓（= `EXTERNAL_CALLER` 有值）。
+///
+/// ⚠️ 用途**只有一个**（B1a，2026-10-29）：少数能力的**读数来源**在两条路上不同 ——
+/// 插件面沿用宿主在 run 时给的快照（`RunState.page_count` / `current_page_json`，ABI 不变），
+/// 外部面没有那份快照 ⇒ 必须按库实算 / 如实说"没有当前页"。
+/// ⛔ **不许**用它改任何权限判定（权限仍然只在 `dispatch_capability` 一处判 ✓）。
+fn is_external_caller() -> bool {
+    EXTERNAL_CALLER.with(|c| c.borrow().is_some())
 }
 
 /// ⭐ **2026-10-08**：把「**当前空间**」装进这条线程的 `RUN_STATE` ✓ —— 外部（MCP）那条路缺的就是这一步 ✗。
@@ -2444,8 +5805,57 @@ pub(crate) fn with_external_caller<T>(session_id: &str, granted: &[String], f: i
 /// 读的那支要能**拿夹具目录**测 ✓，装的这支要能**注一个空间**测 ✓ ——
 /// 合在一起就只能依赖真实应用数据目录 ✗（判据会去读开发机上的真库 ✗，那是本工作区禁过的事 ✓）。
 pub(crate) fn with_active_space<T>(f: impl FnOnce() -> T) -> T {
+    // ⭐ 2026-11-02（**仅测试构建**）：判据可以把「当前空间 ＋ 数据目录」钉到自己的私有目录
+    //   （见 [`with_active_space_in_test`]）。生产构建里这一段**一行都不生成**。
+    #[cfg(test)]
+    if let Some((space, dir)) = ACTIVE_SPACE_OVERRIDE.with(|o| o.borrow().clone()) {
+        return with_active_space_dir_from(Some(space), Some(dir), f);
+    }
     let space = crate::db::app_data_dir_ref().and_then(resolve_active_space_from);
     with_active_space_from(space, f)
+}
+
+/// ⭐ **测试专用**：把这次调用的「当前空间 ＋ 数据目录」钉到**调用方给的私有目录**。
+///
+/// 为什么要有这个口子（2026-11-02，CI 偶发红的真因）：`mcp_host` 那两条判据的形态是
+/// **「数据目录逐字节不变」**（外部写请求在用户确认前一个字都不许落库），而它们读的是
+/// `db::ensure_test_app_data_dir()` —— 那个目录是**整个测试二进制共用**的 ⇒ 别的模块在这个
+/// 窗口里写一次 `spaces/default.db` 就会翻指纹（**CI 实测**：前后不一致，唯一变的是
+/// `spaces/default.db`）。让它们各自带一个**私有** app-data 目录 ⇒ 窗口里只有**被测调用**
+/// 一个写者 ⇒ 判据**确定性**成立（不再依赖"别的用例都不写共享目录"这个承诺）。
+///
+/// ⚠️ **覆盖范围没有变小**：这条调用能打开的库只有「当前空间」与 `meta.db`
+/// （`with_read_conn` / `with_conn_for_space` / `with_meta_conn` 全都跟着 `read_dir` 走，
+/// 见 `with_conn_for_space` 里那两处），两者都在这个私有目录里 —— 而且 `*.db-wal` /
+/// `*.db-shm` 的噪声也没了（共享目录里别人的连接会让 sidecar 出现/消失，那同样会翻指纹）。
+///
+/// 与 `with_active_space_from` 的关系：同一条装/恢复路径（thread-local），只是**同时**装
+/// `read_dir`；`None` 的那一支仍是"走默认应用数据目录"（与生产逐字相同）。
+#[cfg(test)]
+thread_local! {
+    static ACTIVE_SPACE_OVERRIDE: std::cell::RefCell<Option<(String, std::path::PathBuf)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// 装/恢复私有目录（**测试专用**，见 [`with_active_space_in_test`]）。
+///
+/// 顺带清掉 `META_CONN` 那条线程缓存：它是按 `read_dir` 打开的，换了目录还留着就是
+/// "上一份夹具的连接答这一次调用"（与 `with_active_space_from` 清 `READ_CONN` 同一个理由）。
+#[cfg(test)]
+pub(crate) fn with_active_space_in_test<T>(
+    space: &str,
+    dir: &std::path::Path,
+    f: impl FnOnce() -> T,
+) -> T {
+    let prev = ACTIVE_SPACE_OVERRIDE.with(|o| {
+        let mut g = o.borrow_mut();
+        std::mem::replace(&mut *g, Some((space.to_string(), dir.to_path_buf())))
+    });
+    META_CONN.with(|c| *c.borrow_mut() = None);
+    let out = with_active_space_dir_from(Some(space.to_string()), Some(dir.to_path_buf()), f);
+    META_CONN.with(|c| *c.borrow_mut() = None);
+    ACTIVE_SPACE_OVERRIDE.with(|o| *o.borrow_mut() = prev);
+    out
 }
 
 /// 读「当前空间」：`sync_state['active_workspace_id']` ✓；**没有就退到最早那个未删除的工作区** ✓
@@ -2480,12 +5890,26 @@ fn resolve_active_space_from(dir: &std::path::Path) -> Option<String> {
 /// 装/恢复那一半（**可注入** ⇒ 判据测得了 ✓）。`None` ⇒ **一个字都不装** ✓
 /// （⇒ 那句 `space_unknown` 仍然如实报 ✓，绝不静默读错空间 ✗）。
 pub(crate) fn with_active_space_from<T>(space: Option<String>, f: impl FnOnce() -> T) -> T {
+    with_active_space_dir_from(space, None, f)
+}
+
+/// [`with_active_space_from`] 的完整形态：`dir` 给了就**同时**装 `read_dir`
+/// （数据能力会开那个目录里的库）；`None` ＝ 走默认应用数据目录（**生产路径唯一的那一支** ✓）。
+///
+/// 拆出 `dir` 只为一件事：测试要能把「当前空间」钉到自己的私有 app-data 目录
+/// （见 [`with_active_space_in_test`]）—— 判据的"数据目录逐字节不变"才不会被**别的用例**
+/// 在同一个共享目录里写一次而打断。
+fn with_active_space_dir_from<T>(
+    space: Option<String>,
+    dir: Option<std::path::PathBuf>,
+    f: impl FnOnce() -> T,
+) -> T {
     let prev = RUN_STATE.with(|s| {
         let mut st = s.borrow_mut();
         let prev = (st.read_space.clone(), st.read_dir.clone());
         if let Some(sp) = space {
             st.read_space = Some(sp);
-            st.read_dir = None;
+            st.read_dir = dir;
         }
         prev
     });
@@ -2543,7 +5967,14 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
     let cap = match capabilities_gen::lookup(method) {
         Some(c) => c,
         None => {
-            push_audit(&source, &plugin_id, method, "?", false, Some("unknown_capability".into()));
+            push_audit(
+                &source,
+                &plugin_id,
+                method,
+                "?",
+                false,
+                Some("unknown_capability".into()),
+            );
             return Err(format!("unknown_capability: 宿主没有名为 {method} 的能力"));
         }
     };
@@ -2554,7 +5985,14 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         match serde_json::from_str(args_json) {
             Ok(v) => v,
             Err(e) => {
-                push_audit(&source, &plugin_id, method, cap.scope, false, Some("bad_args".into()));
+                push_audit(
+                    &source,
+                    &plugin_id,
+                    method,
+                    cap.scope,
+                    false,
+                    Some("bad_args".into()),
+                );
                 return Err(format!("bad_args: 参数不是合法 JSON（{e}）"));
             }
         }
@@ -2599,21 +6037,165 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         }
     };
 
+    // ⭐ B2（2026-10-29）：写能力的 **dryRun / clientRequestId** 统一在这一层处理
+    //   （与唯一鉴权点同一处；⛔ 不让每个新写能力各自实现一遍 —— 那必然漏）。
+    let is_write = cap.kind == "write";
+    let dry_run = arg_bool(args.get("dryRun"), false);
+    let idem_key: Option<String> = if is_write {
+        args.get("clientRequestId")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|id| format!("{source}|{method}|{id}"))
+    } else {
+        None
+    };
+    if let Some(key) = idem_key.as_ref() {
+        if let Some(hit) = idempotent_lookup(key) {
+            return Ok(hit);
+        }
+    }
+    // ⭐ AI 不可见空间清单：唯一拦截点（读/写/跨空间统一；只对 ai:true 能力）
+    if cap.ai && ai_hidden_spaces_enabled() {
+        let target = arg_opt_str("spaceId")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| target_space_id(None));
+        if method != "spaces.list" && hidden_spaces_now().iter().any(|s| s == &target) {
+            return Err(ai_hidden_refusal(&target));
+        }
+    }
+    // ⭐ 跨空间写 v1 守卫（单一处）：
+    //   · 写能力带 spaceId（≠ 当前空间）⇒ 只有 pages.create 支持；其它明确 unsupported（⛔ 不回落）
+    //   · 回滚开关关着 ⇒ 一律拒绝
+    {
+        let current = target_space_id(None);
+        let target = arg_opt_str("spaceId")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && s != &current);
+        AUDIT_SPACE.with(|s| *s.borrow_mut() = target.clone());
+        if cap.kind == "write" {
+            if let Some(space) = target {
+                if cross_space_write_disabled() {
+                    return Err("bad_args: 跨空间写已被 SHUYONOTE_MCP_CROSS_SPACE_WRITE 关闭（目标空间未写入）".to_string());
+                }
+                if !matches!(
+                    method,
+                    "pages.create"
+                        | "pages.update"
+                        | "blocks.append"
+                        | "blocks.patch"
+                        | "blocks.delete"
+                        | "blocks.insert"
+                        | "files.rename"
+                        | "files.delete"
+                        | "files.move"
+                        | "files.detach"
+                        | "nodes.move"
+                        | "nodes.rename"
+                        | "nodes.delete"
+                        | "folders.create"
+                        | "tags.add"
+                        | "tags.remove"
+                        | "properties.set"
+                        | "properties.unset"
+                        | "db.rows_write"
+                        | "db.rows_delete"
+                        | "trash.restore"
+                        | "pages.revert"
+                ) {
+                    return Err(format!(
+                        "bad_args: {method} 暂不支持跨空间（v1 只支持 pages.create；目标空间 {space} 未写入）"
+                    ));
+                }
+                if !has_scope("write:all-spaces") {
+                    return Err(format!(
+                        "permission_denied: 写别的空间需要权限 write:all-spaces（『可写（全部空间）』档）—— 省略 spaceId 即当前空间（目标空间 {space} 未写入）"
+                    ));
+                }
+            }
+        }
+    }
     let out = match cap.id {
-        "page.current" => cap_page_current(),
-        "pages.count" => cap_pages_count(),
+        "page.current" => cap_page_current(arg_bool(args.get("includeAnchors"), true)),
+        "pages.count" => cap_pages_count(arg_opt_str("spaceId").as_deref()),
+        "pages.tree" => cap_pages_tree(arg_opt_str("spaceId").as_deref(), arg_i64("limit", 2000)),
         "pages.list" => cap_pages_list(arg_i64("limit", 50), arg_opt_str("spaceId").as_deref()),
-        "pages.get" => cap_pages_get(&arg_str("id")?, arg_i64("offset", 0), arg_i64("limit", 6000)),
+        // `includeAnchors` 走 **可选** 读法（`args.get`）—— 注册表声明它是可选、默认 true，
+        // 而 `arg_bool` 同时认 `true/false` 与 `"true"/"false"`（插件 shim 传的是字符串）。
+        "pages.get" => cap_pages_get(
+            &arg_str("id")?,
+            arg_i64("offset", 0),
+            arg_i64("limit", 6000),
+            arg_bool(args.get("includeAnchors"), true),
+            arg_opt_str("spaceId").as_deref(),
+        ),
         "pages.search" => cap_pages_search(
             &arg_str("q")?,
             arg_i64("limit", 8),
             arg_opt_str("spaceId").as_deref(),
         ),
-        "tags.list" => cap_tags_list(),
+        "tags.list" => cap_tags_list(arg_opt_str("spaceId").as_deref()),
         "backlinks.list" => cap_backlinks_list(arg_opt_str("pageId").as_deref()),
-        "files.list" => cap_files_list(arg_opt_str("pageId").as_deref()),
-        "files.search" => cap_files_search(&arg_str("query")?, arg_i64("limit", 10)),
-        "files.read" => cap_files_read(&arg_str("id")?, arg_i64("offset", 0), arg_i64("limit", 200)),
+        "files.list" => cap_files_list(
+            arg_opt_str("pageId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+        ),
+        "files.search" => cap_files_search(
+            &arg_str("query")?,
+            arg_i64("limit", 10),
+            arg_opt_str("spaceId").as_deref(),
+        ),
+        "files.read" => cap_files_read(
+            &arg_str("id")?,
+            arg_i64("offset", 0),
+            arg_i64("limit", 200),
+            arg_opt_str("spaceId").as_deref(),
+        ),
+        // B1c（2026-10-29）：版本／回收站／附件元数据 ＋ 导出/下载句柄
+        "versions.list" => cap_versions_list(
+            &arg_str("pageId")?,
+            arg_i64("limit", 50),
+            arg_opt_str("spaceId").as_deref(),
+        ),
+        "version.get" => cap_version_get(
+            &arg_str("pageId")?,
+            &arg_str("versionId")?,
+            arg_i64("offset", 0),
+            arg_i64("limit", 6000),
+            arg_bool(args.get("includeAnchors"), true),
+            arg_opt_str("spaceId").as_deref(),
+        ),
+        "trash.list" => cap_trash_list(arg_opt_str("spaceId").as_deref(), arg_i64("limit", 50)),
+        "files.stat" => cap_files_stat(&arg_str("attId")?, arg_opt_str("spaceId").as_deref()),
+        "files.extract_status" => {
+            cap_files_extract_status(&arg_str("attId")?, arg_opt_str("spaceId").as_deref())
+        },
+        "files.list_orphan" => cap_files_list_orphan(
+            arg_i64("limit", 50),
+            arg_i64("offset", 0),
+            arg_opt_str("spaceId").as_deref(),
+        ),
+        "files.download" => {
+            cap_files_download(&arg_str("attId")?, arg_opt_str("spaceId").as_deref())
+        },
+        "blobs.fetch" => cap_blobs_fetch(&arg_str("handle")?),
+        // B3：导出（句柄，复用同一张句柄表）＋覆盖率报告（JSON）
+        "export.markdown" => cap_export_markdown(
+            arg_opt_str("pageId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+        ),
+        "export.docpackage" => {
+            cap_export_docpackage(&arg_str("pageId")?, arg_opt_str("spaceId").as_deref())
+        }
+        "export.page_markdown" => {
+            cap_export_page_markdown(&arg_str("pageId")?, arg_opt_str("spaceId").as_deref())
+        }
+        "export.space_markdown" => cap_export_space_markdown(
+            arg_opt_str("spaceId").as_deref(),
+            arg_opt_str("pageId").as_deref(),
+        ),
+        "coverage.report" => cap_coverage_report(arg_opt_str("spaceId").as_deref()),
         "files.export" => cap_files_export(&arg_str("fileName")?, &arg_str("content")?),
         "kv.get" => cap_kv_get(&arg_str("key")?, &scope_arg(&args)),
         "kv.set" => cap_kv_set(&arg_str("key")?, &arg_str("value")?, &scope_arg(&args)),
@@ -2621,41 +6203,251 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         // scope 由 manifest 声明决定（不由插件选）：设置里常有 token/路径这类东西，
         // 声明为 space 才落加密库，声明为 app 才落 meta.db（明文）。
         "settings.get" => cap_settings_get(&arg_str("key")?),
-        "blocks.list" => cap_blocks_list(arg_opt_str("pageId").as_deref(), arg_i64("limit", 100)),
-        "properties.list" => cap_properties_list(),
+        "blocks.list" => cap_blocks_list(
+            arg_opt_str("pageId").as_deref(),
+            arg_i64("limit", 100),
+            arg_opt_str("spaceId").as_deref(),
+        ),
+        "properties.list" => cap_properties_list(arg_opt_str("spaceId").as_deref()),
+        // B1b（2026-10-29）：数据库结构化读 —— 两条都是 `read:pages`、都支持可选 `spaceId`
+        // （跨空间门在 `with_conn_for_space` 里，与 pages.list / pages.tree 同一处）。
+        "db.schema" => cap_db_schema(&arg_str("pageId")?, arg_opt_str("spaceId").as_deref()),
+        "pages.changes_since" => cap_pages_changes_since(
+            Some(&serde_json::json!(arg_str("since")?)),
+            arg_i64("limit", 50),
+            arg_opt_str("spaceId").as_deref(),
+        ),
+        "db.rows" => cap_db_rows(
+            &arg_str("pageId")?,
+            arg_opt_str("viewId").as_deref(),
+            args.get("where"),
+            arg_i64("limit", crate::cap_limits::DB_ROWS_DEFAULT),
+            arg_i64("offset", 0),
+            arg_opt_str("spaceId").as_deref(),
+        ),
         "properties.set" => cap_properties_set(
             &arg_str("attrId")?,
             &arg_str("value")?,
             arg_opt_str("pageId").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
         ),
-        "tags.add" => cap_tags_add(&arg_str("name")?, arg_opt_str("pageId").as_deref()),
+        "properties.unset" => cap_properties_unset(
+            &arg_str("attrId")?,
+            arg_opt_str("pageId").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "tags.add" => cap_tags_add(
+            &arg_str("name")?,
+            arg_opt_str("pageId").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "tags.remove" => cap_tags_remove(
+            &arg_str("name")?,
+            arg_opt_str("pageId").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        // B2-结构：文件夹 / 节点移动/改名/软删 / 回收站恢复 / 版本回退
+        "folders.create" => cap_folders_create(
+            &arg_str("title")?,
+            arg_opt_str("parentId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "nodes.move" => cap_nodes_move(
+            &arg_str("id")?,
+            arg_opt_str("newParentId").as_deref(),
+            arg_i64("sortOrder", 0),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "nodes.rename" => cap_nodes_rename(
+            &arg_str("id")?,
+            &arg_str("title")?,
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "nodes.delete" => cap_nodes_delete(
+            &arg_str("id")?,
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "trash.restore" => cap_trash_restore(
+            &arg_str("id")?,
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "pages.revert" => cap_pages_revert(
+            &arg_str("pageId")?,
+            &arg_str("versionId")?,
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
         "pages.importMarkdown" => cap_pages_import_markdown(
             &arg_str("title")?,
             &arg_str("markdown")?,
             arg_opt_str("parentId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "pages.import_markdown" => cap_pages_import_markdown(
+            &arg_str("title")?,
+            &arg_str("markdown")?,
+            arg_opt_str("parentId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
         ),
         "pages.update" => cap_pages_update(
             &arg_str("id")?,
             arg_opt_str("title").as_deref(),
             arg_opt_str("markdown").as_deref(),
             arg_opt_str("content").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
         ),
         "spaces.list" => cap_spaces_list(),
-        "spaces.switch" => cap_spaces_switch(
-            arg_opt_str("id").as_deref(),
-            arg_opt_str("name").as_deref(),
-        ),
+        "space.current" => cap_space_current(),
+        "spaces.switch" => {
+            cap_spaces_switch(arg_opt_str("id").as_deref(), arg_opt_str("name").as_deref())
+        }
+        "templates.list" => cap_templates_list(),
         "pages.create" => cap_pages_create(
             &arg_str("title")?,
-            &args.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            arg_opt_str("content").as_deref().unwrap_or(""),
             arg_opt_str("parentId").as_deref(),
             arg_opt_str("fence").as_deref(),
             None,
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
         ),
         "blocks.append" => cap_blocks_append(
             arg_opt_str("pageId").as_deref(),
             &arg_str("text")?,
             arg_opt_str("fence").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+        ),
+        "blocks.patch" => cap_blocks_patch(
+            &arg_str("blockId")?,
+            arg_opt_str("markdown").as_deref(),
+            arg_opt_str("text").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "blocks.insert" => cap_blocks_insert(
+            arg_opt_str("pageId").as_deref(),
+            arg_opt_str("afterBlockId").as_deref(),
+            arg_opt_str("markdown").as_deref(),
+            arg_opt_str("text").as_deref(),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "blocks.delete" => cap_blocks_delete(
+            &arg_str("blockId")?,
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "files.move" => cap_files_move(
+            &arg_str("attId")?,
+            &arg_str("toPageId")?,
+            arg_opt_str("expectedSha").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "files.rename" => cap_files_rename(
+            &arg_str("attId")?,
+            &arg_str("name")?,
+            arg_opt_str("expectedSha").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "files.delete" => cap_files_delete(
+            &arg_str("attId")?,
+            arg_opt_str("expectedSha").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "templates.apply" => cap_templates_apply(
+            &arg_str("templateId")?,
+            arg_opt_str("parentId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "files.upload_to_page" => cap_files_upload(
+            &arg_str("pageId")?,
+            arg_opt_str("name").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "import.docpackage" => cap_import_docpackage(
+            arg_opt_str("parentId").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "files.detach" => cap_files_detach(
+            &arg_str("attId")?,
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "db.rows_write" => cap_db_rows_write(
+            &arg_str("pageId")?,
+            args.get("rows"),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "db.rows_delete" => cap_db_rows_delete(
+            &arg_str("pageId")?,
+            args.get("rowIds"),
+            arg_opt_str("expectedRev").as_deref(),
+            arg_opt_str("spaceId").as_deref(),
+            arg_bool(args.get("dryRun"), false),
+            arg_opt_str("clientRequestId").as_deref(),
+        ),
+        "drafts.status" => cap_drafts_status(&arg_str("draftId")?),
+        "audit.tail" => cap_audit_tail(
+            arg_i64("limit", 20),
+            arg_bool(args.get("onlyWrites"), false),
         ),
         "editor.insertText" => cap_editor_insert_text(&arg_str("text")?),
         "user.notify" => cap_user_notify(&arg_str("message")?),
@@ -2664,18 +6456,42 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             cap_log_write(&arg_str("message")?, level)
         }
         other => {
-            push_audit(&source, &plugin_id, other, cap.scope, false, Some("unknown_capability".into()));
+            push_audit(
+                &source,
+                &plugin_id,
+                other,
+                cap.scope,
+                false,
+                Some("unknown_capability".into()),
+            );
             return Err(format!("unknown_capability: {other}"));
         }
     };
     match out {
-        Ok(v) => {
-            push_audit(&source, &plugin_id, method, cap.scope, true, None);
-            serde_json::to_string(&v).map_err(|e| e.to_string())
+        Ok(mut v) => {
+            // ⭐ UX-①（2026-10-30）：产出草稿的写调用 ⇒ 生成 draftId（dryRun 不产草稿 ⇒ 不加）
+            if !dry_run && v.get("drafted").and_then(|x| x.as_bool()) == Some(true) {
+                let id = uuid::Uuid::new_v4().to_string();
+                attach_draft_id(&id, &source, method, cap.id);
+                v["draftId"] = serde_json::json!(id);
+            }
+            // dryRun：不产生草稿（各 cap 自己保证）＋ **审计不加**（P2 判据 4）
+            if !dry_run {
+                push_audit(&source, &plugin_id, method, cap.scope, true, None);
+            }
+            let text = serde_json::to_string(&v).map_err(|e| e.to_string())?;
+            if !dry_run {
+                if let Some(key) = idem_key.as_ref() {
+                    idempotent_remember(key, &text);
+                }
+            }
+            Ok(text)
         }
         Err(e) => {
-            let code = error_code_of(&e);
-            push_audit(&source, &plugin_id, method, cap.scope, false, code);
+            if !dry_run {
+                let code = error_code_of(&e);
+                push_audit(&source, &plugin_id, method, cap.scope, false, code);
+            }
             Err(e)
         }
     }
@@ -2683,7 +6499,11 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
 
 /// `__cap(method, argsJson)` → JSON 字符串（shim 侧解析）。
 /// 失败抛 JS 异常：插件可以 catch，也可以让宿主把它显示成可见错误。
-fn host_cap(_this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> boa_engine::JsResult<JsValue> {
+fn host_cap(
+    _this: &JsValue,
+    args: &[JsValue],
+    _ctx: &mut Context,
+) -> boa_engine::JsResult<JsValue> {
     let method = js_string_arg(args, 0);
     let args_json = js_string_arg(args, 1);
     match dispatch_capability(&method, &args_json) {
@@ -2721,7 +6541,11 @@ fn legacy_toast(_t: &JsValue, args: &[JsValue], _c: &mut Context) -> boa_engine:
     )
 }
 
-fn legacy_insert(_t: &JsValue, args: &[JsValue], _c: &mut Context) -> boa_engine::JsResult<JsValue> {
+fn legacy_insert(
+    _t: &JsValue,
+    args: &[JsValue],
+    _c: &mut Context,
+) -> boa_engine::JsResult<JsValue> {
     let text = js_string_arg(args, 0);
     legacy_dispatch(
         "editor.insertText",
@@ -2766,8 +6590,8 @@ fn discover_commands(source: &str, state: &RunState) -> Result<Vec<PluginCommand
         .to_string(&mut ctx)
         .map_err(|e| e.to_string())?
         .to_std_string_escaped();
-    let cmds: Vec<PluginCommandMeta> = serde_json::from_str(&described)
-        .map_err(|e| format!("命令元数据解析失败: {e}"))?;
+    let cmds: Vec<PluginCommandMeta> =
+        serde_json::from_str(&described).map_err(|e| format!("命令元数据解析失败: {e}"))?;
     Ok(cmds)
 }
 
@@ -2833,7 +6657,12 @@ fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
 
 /// Execute a single plugin command in a fresh boa context (re-evaluate the
 /// plugin, then run the command). Returns the command's result string.
-fn run_command(source: &str, command_id: &str, args_json: &str, state: &RunState) -> Result<String, String> {
+fn run_command(
+    source: &str,
+    command_id: &str,
+    args_json: &str,
+    state: &RunState,
+) -> Result<String, String> {
     let mut ctx = plugin_context(RUN_LOOP_LIMIT);
     set_run_state(&mut ctx, state)?;
     eval_plugin_preamble(&mut ctx)?;
@@ -2863,7 +6692,16 @@ fn run_command_timeout(
     command_id: &str,
     args_json: &str,
     state: &RunState,
-) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>), String> {
+) -> Result<
+    (
+        String,
+        String,
+        Vec<String>,
+        Vec<PluginDraft>,
+        Vec<PluginExport>,
+    ),
+    String,
+> {
     let source = source.to_string();
     let command_id = command_id.to_string();
     // RunState 是纯数据（String/usize），可 move 进线程；RUN_STATE/thread_local
@@ -2977,7 +6815,16 @@ fn run_command_via_host(
     args_json: &str,
     state: &RunState,
     run_id: Option<u64>,
-) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>), String> {
+) -> Result<
+    (
+        String,
+        String,
+        Vec<String>,
+        Vec<PluginDraft>,
+        Vec<PluginExport>,
+    ),
+    String,
+> {
     let (message, insert, toasts, drafts, exports, _dropped) = run_via_host(
         source,
         command_id,
@@ -2999,15 +6846,24 @@ fn run_event_via_host(
     payload_json: &str,
     state: &RunState,
 ) -> Result<(String, Vec<String>, Vec<PluginDraft>), String> {
-    let (message, _insert, toasts, drafts, exports, _dropped) =
-        run_via_host(source, event, payload_json, state, crate::plugin_host::HostRunMode::Event, None)?;
+    let (message, _insert, toasts, drafts, exports, _dropped) = run_via_host(
+        source,
+        event,
+        payload_json,
+        state,
+        crate::plugin_host::HostRunMode::Event,
+        None,
+    )?;
     // 事件里没有保存对话框可弹，也没有人在等：真的出现导出请求就**明确丢弃并留痕**
     // （与"事件里的 insert 会被忽略"同一条规矩，见调用点）。
     if !exports.is_empty() {
         push_log(
             &state.plugin_id,
             "warn",
-            &format!("事件 {event} 里有 {} 次 api.files.export：事件没有保存对话框，已忽略", exports.len()),
+            &format!(
+                "事件 {event} 里有 {} 次 api.files.export：事件没有保存对话框，已忽略",
+                exports.len()
+            ),
         );
     }
     Ok((message, toasts, drafts))
@@ -3020,7 +6876,17 @@ fn run_via_host(
     state: &RunState,
     mode: crate::plugin_host::HostRunMode,
     run_id: Option<u64>,
-) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>, usize), String> {
+) -> Result<
+    (
+        String,
+        String,
+        Vec<String>,
+        Vec<PluginDraft>,
+        Vec<PluginExport>,
+        usize,
+    ),
+    String,
+> {
     let timeout = if mode == crate::plugin_host::HostRunMode::Event {
         EVENT_TIMEOUT
     } else {
@@ -3041,7 +6907,17 @@ fn run_via_host_with_timeout(
     mode: crate::plugin_host::HostRunMode,
     timeout: std::time::Duration,
     run_id: Option<u64>,
-) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>, usize), String> {
+) -> Result<
+    (
+        String,
+        String,
+        Vec<String>,
+        Vec<PluginDraft>,
+        Vec<PluginExport>,
+        usize,
+    ),
+    String,
+> {
     let req = crate::plugin_host::HostRunRequest {
         plugin_id: state.plugin_id.clone(),
         source: source.to_string(),
@@ -3054,7 +6930,11 @@ fn run_via_host_with_timeout(
         current_page_json: state.current_page_json.clone(),
         page_count: state.page_count,
     };
-    let what_label = if mode == crate::plugin_host::HostRunMode::Event { "插件事件" } else { "插件执行" };
+    let what_label = if mode == crate::plugin_host::HostRunMode::Event {
+        "插件事件"
+    } else {
+        "插件执行"
+    };
 
     // 子进程在**本线程**起（约 5 ms），句柄留一份给"超时即杀"用，流交给工作线程。
     let mut client = spawn_host_client()?;
@@ -3071,7 +6951,8 @@ fn run_via_host_with_timeout(
         .spawn(move || {
             // 能力在**这条线程**上执行：上下文装在这里，`with_read_conn` 也在这里惰性开连接。
             install_run_state(&serve_state);
-            let served = client.run_with_server(req, |method, args| dispatch_capability(method, args));
+            let served =
+                client.run_with_server(req, |method, args| dispatch_capability(method, args));
             let (drafts, exports, cap_toasts, cap_insert) = take_run_state_outputs();
             let dropped = exports.len();
             clear_run_state();
@@ -3088,14 +6969,21 @@ fn run_via_host_with_timeout(
     let cancelled_by_user = run_id.is_some_and(take_cancelled);
     // 峰值内存在这里读一次（进程被杀之后读不到了），下面的每条出口都要带上它。
     let peak_rss = peak_rss_handle.bytes();
-    let kind = if mode == crate::plugin_host::HostRunMode::Event { "event" } else { "command" };
+    let kind = if mode == crate::plugin_host::HostRunMode::Event {
+        "event"
+    } else {
+        "command"
+    };
     let (served, drafts, exports, cap_toasts, cap_insert, dropped) = match received {
         Ok(v) => v,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
             // **超时 = 杀进程**（方案 §3.3）：不再"放弃等待"留一个跑到天荒地老的子进程。
             // 杀掉之后工作线程会因管道断开而自行退出。
             killer.kill();
-            let msg = format!("timeout: {what_label}超时（>{:?}），已终止宿主进程", timeout);
+            let msg = format!(
+                "timeout: {what_label}超时（>{:?}），已终止宿主进程",
+                timeout
+            );
             record_run_end(&state.plugin_id, kind, &Err(msg.clone()), peak_rss);
             return Err(msg);
         }
@@ -3124,7 +7012,11 @@ fn run_via_host_with_timeout(
         }
     };
     // 两种插入来源合并：能力那条（父进程）优先，JS 原生那条（子进程）兜底。
-    let insert_text = if cap_insert.is_empty() { res.insert_text } else { cap_insert };
+    let insert_text = if cap_insert.is_empty() {
+        res.insert_text
+    } else {
+        cap_insert
+    };
     let mut toasts = cap_toasts;
     for t in res.toasts {
         if !toasts.contains(&t) {
@@ -3245,18 +7137,23 @@ pub(crate) fn run_in_host_process(
         crate::plugin_host::HostRunMode::Command => {
             run_command_timeout(&req.source, &req.command_id, &req.args_json, &state)
         }
-        crate::plugin_host::HostRunMode::Event => run_event_timeout(&req.source, &req.command_id, &req.args_json, &state)
-            .map(|(message, toasts, drafts)| (message, String::new(), toasts, drafts, Vec::new())),
+        crate::plugin_host::HostRunMode::Event => {
+            run_event_timeout(&req.source, &req.command_id, &req.args_json, &state).map(
+                |(message, toasts, drafts)| (message, String::new(), toasts, drafts, Vec::new()),
+            )
+        }
     };
     match outcome {
-        Ok((message, insert_text, toasts, drafts, exports)) => Ok(crate::plugin_host::HostRunResult {
-            message,
-            insert_text,
-            toasts,
-            // 形状原样透传：草稿/导出的落地规则只在父进程与前端那一侧，这里不做第二套。
-            drafts: serde_json::to_value(&drafts).unwrap_or(serde_json::Value::Null),
-            exports: serde_json::to_value(&exports).unwrap_or(serde_json::Value::Null),
-        }),
+        Ok((message, insert_text, toasts, drafts, exports)) => {
+            Ok(crate::plugin_host::HostRunResult {
+                message,
+                insert_text,
+                toasts,
+                // 形状原样透传：草稿/导出的落地规则只在父进程与前端那一侧，这里不做第二套。
+                drafts: serde_json::to_value(&drafts).unwrap_or(serde_json::Value::Null),
+                exports: serde_json::to_value(&exports).unwrap_or(serde_json::Value::Null),
+            })
+        }
         Err(e) => Err(classify_run_error(&e)),
     }
 }
@@ -3348,7 +7245,11 @@ pub struct PluginSettingView {
 
 /// 读一个插件的设置声明 + 当前值。
 #[tauri::command]
-pub async fn plugin_settings(app: AppHandle, db: State<'_, Db>, plugin_id: String) -> Result<Vec<PluginSettingView>, String> {
+pub async fn plugin_settings(
+    app: AppHandle,
+    db: State<'_, Db>,
+    plugin_id: String,
+) -> Result<Vec<PluginSettingView>, String> {
     if !is_safe_plugin_id(&plugin_id) {
         return Err("非法插件 id".to_string());
     }
@@ -3411,7 +7312,11 @@ pub async fn plugin_settings(app: AppHandle, db: State<'_, Db>, plugin_id: Strin
         };
         out.push(PluginSettingView {
             key: d.key.clone(),
-            label: if d.label.trim().is_empty() { d.key.clone() } else { d.label.clone() },
+            label: if d.label.trim().is_empty() {
+                d.key.clone()
+            } else {
+                d.label.clone()
+            },
             setting_type: d.setting_type.clone(),
             description: d.description.clone(),
             scope: scope.to_string(),
@@ -3450,7 +7355,8 @@ pub async fn set_plugin_setting(
     let full = format!("{SETTING_PREFIX}{key}");
     let now = now_ms();
     if decl.scope == "app" {
-        let dir = crate::db::app_data_dir_ref().ok_or_else(|| "db_error: app data dir 未初始化".to_string())?;
+        let dir = crate::db::app_data_dir_ref()
+            .ok_or_else(|| "db_error: app data dir 未初始化".to_string())?;
         let mc = crate::db::open_meta_conn_at(dir).map_err(|e| format!("db_error: {e}"))?;
         mc.execute(
             "INSERT INTO plugin_data (plugin_id, scope, key, value, updated_at) VALUES (?1, 'app', ?2, ?3, ?4)
@@ -3468,7 +7374,8 @@ pub async fn set_plugin_setting(
             )
             .ok()
         };
-        let space = active.ok_or_else(|| "space_unknown: 当前没有活动空间，无法保存空间级设置".to_string())?;
+        let space = active
+            .ok_or_else(|| "space_unknown: 当前没有活动空间，无法保存空间级设置".to_string())?;
         let sc = crate::db::open_space_conn(&space).map_err(|e| map_open_error(e))?;
         sc.execute(
             "INSERT INTO plugin_data (plugin_id, scope, key, value, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
@@ -3494,7 +7401,12 @@ const EVENT_TIMEOUT: Duration = Duration::from_secs(2);
 /// 事件 payload 的体积上限（它就是页面 id / 标题这类小字段）。
 const MAX_EVENT_PAYLOAD_BYTES: usize = 4 * 1024;
 
-fn run_event(source: &str, event: &str, payload_json: &str, state: &RunState) -> Result<String, String> {
+fn run_event(
+    source: &str,
+    event: &str,
+    payload_json: &str,
+    state: &RunState,
+) -> Result<String, String> {
     let mut ctx = plugin_context(RUN_LOOP_LIMIT);
     set_run_state(&mut ctx, state)?;
     eval_plugin_preamble(&mut ctx)?;
@@ -3587,7 +7499,9 @@ pub async fn emit_plugin_event(
     }
     let payload_json = payload_json.unwrap_or_default();
     if payload_json.len() > MAX_EVENT_PAYLOAD_BYTES {
-        return Err(format!("事件 payload 过大（上限 {MAX_EVENT_PAYLOAD_BYTES} 字节）"));
+        return Err(format!(
+            "事件 payload 过大（上限 {MAX_EVENT_PAYLOAD_BYTES} 字节）"
+        ));
     }
     if !payload_json.is_empty() {
         match serde_json::from_str::<serde_json::Value>(&payload_json) {
@@ -3611,13 +7525,21 @@ pub async fn emit_plugin_event(
     let root = plugins_root(&app)?;
     // 结果里带插件显示名，前端提示才写得像人话。
     let mut out: Vec<PluginEventOutcome> = Vec::new();
-    let mut targets: Vec<(String, String, String, Vec<String>, std::collections::HashMap<String, String>)> = Vec::new();
+    let mut targets: Vec<(
+        String,
+        String,
+        String,
+        Vec<String>,
+        std::collections::HashMap<String, String>,
+    )> = Vec::new();
     let (page_count, current_page_json, read_space, enabled_ids) = {
         let c = conn(&db);
         let page_count: usize = c
-            .query_row("SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL", [], |r| {
-                r.get::<_, i64>(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
             .map(|n| n as usize)
             .unwrap_or(0);
         let current_page_json = payload_page_id
@@ -3625,7 +7547,10 @@ pub async fn emit_plugin_event(
             .and_then(|id| {
                 // ★ 读出口走那一层；搬运前的 `.ok()` 会把**SQL 错误也一起吞掉**，
                 //   这里 `read(...).ok()` 保持同一条语义（不新增报错面）。
-                crate::doc_content::read(&c, id).ok().flatten().map(|d| d.json)
+                crate::doc_content::read(&c, id)
+                    .ok()
+                    .flatten()
+                    .map(|d| d.json)
             })
             .unwrap_or_default();
         let read_space = c
@@ -3724,11 +7649,26 @@ pub async fn emit_plugin_event(
                     if drafts.is_empty() { "info" } else { "info" },
                     &format!(
                         "事件 {event}：{}{}",
-                        if message.is_empty() { "已处理" } else { message.as_str() },
-                        if drafts.is_empty() { String::new() } else { format!("（产出 {} 项待确认改动）", drafts.len()) }
+                        if message.is_empty() {
+                            "已处理"
+                        } else {
+                            message.as_str()
+                        },
+                        if drafts.is_empty() {
+                            String::new()
+                        } else {
+                            format!("（产出 {} 项待确认改动）", drafts.len())
+                        }
                     ),
                 );
-                out.push(PluginEventOutcome { plugin_id: id, plugin_name: name, message, toasts, drafts, error: None });
+                out.push(PluginEventOutcome {
+                    plugin_id: id,
+                    plugin_name: name,
+                    message,
+                    toasts,
+                    drafts,
+                    error: None,
+                });
             }
             Err(e) => {
                 push_log(&id, "error", &format!("事件 {event} 处理失败：{e}"));
@@ -3867,7 +7807,10 @@ impl ApprovalDrift {
     }
 }
 
-pub(crate) fn approval_drift(snapshot: &ApprovalSnapshot, current: &ApprovalSnapshot) -> ApprovalDrift {
+pub(crate) fn approval_drift(
+    snapshot: &ApprovalSnapshot,
+    current: &ApprovalSnapshot,
+) -> ApprovalDrift {
     ApprovalDrift {
         added_permissions: current
             .permissions
@@ -3991,7 +7934,12 @@ fn enabled(c: &Connection, id: &str) -> bool {
 }
 
 /// 记启停状态。**启用时同时记一份授权快照**——"点启用"就是用户看那份权限清单并同意的时刻。
-fn set_enabled(c: &Connection, id: &str, on: bool, snapshot: Option<&ApprovalSnapshot>) -> Result<(), String> {
+fn set_enabled(
+    c: &Connection,
+    id: &str,
+    on: bool,
+    snapshot: Option<&ApprovalSnapshot>,
+) -> Result<(), String> {
     c.execute(
         "INSERT INTO meta.plugin_install (plugin_id, enabled, installed_at) VALUES (?1, ?2, ?3)
          ON CONFLICT(plugin_id) DO UPDATE SET enabled = excluded.enabled",
@@ -4118,13 +8066,20 @@ pub fn scan_plugin_source(source: &str) -> Vec<PluginFact> {
     // 大段编码数据：常见于内嵌资源，也常见于混淆/打包产物。
     let longest_encoded = source
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='))
-        .filter(|tok| tok.len() >= 512 && tok.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='))
+        .filter(|tok| {
+            tok.len() >= 512
+                && tok
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
+        })
         .map(|tok| tok.len())
         .max();
     if let Some(len) = longest_encoded {
         facts.push(PluginFact {
             code: "embedded_blob".into(),
-            text: format!("含一段 {len} 字符的连续编码文本（通常是内嵌资源，也可能是打包/混淆后的代码）"),
+            text: format!(
+                "含一段 {len} 字符的连续编码文本（通常是内嵌资源，也可能是打包/混淆后的代码）"
+            ),
         });
     }
 
@@ -4145,7 +8100,13 @@ pub fn scan_plugin_source(source: &str) -> Vec<PluginFact> {
 
     // 网络访问：这一版**没有任何联网能力**，所以任何「看起来在联网」的写法都值得指出
     // ——它要么是死代码，要么是在等一个还不存在的能力。
-    for needle in ["XMLHttpRequest", "fetch(", "WebSocket", "require(\"http", "require('http"] {
+    for needle in [
+        "XMLHttpRequest",
+        "fetch(",
+        "WebSocket",
+        "require(\"http",
+        "require('http",
+    ] {
         if source.contains(needle) {
             facts.push(PluginFact {
                 code: "network_hint".into(),
@@ -4272,7 +8233,10 @@ pub enum PublisherKeyVerdict {
     /// 与固定的那把一致 → 正常。
     Match,
     /// **换了 key**：拒绝，并让用户明确决定（新旧指纹都要摆出来）。
-    Changed { pinned_fingerprint: String, incoming_fingerprint: String },
+    Changed {
+        pinned_fingerprint: String,
+        incoming_fingerprint: String,
+    },
 }
 
 /// 索引里的发布者签名这一关：**验签 + TOFU 判定**，返回"装成功后要固定哪把 key"。
@@ -4369,7 +8333,12 @@ fn read_publisher_key(c: &Connection, id: &str) -> Option<PublisherKeyView> {
 }
 
 /// 固定（或改固定）一个插件的发布者公钥。
-fn pin_publisher_key(c: &Connection, id: &str, key: &str, source: &str) -> Result<PublisherKeyView, String> {
+fn pin_publisher_key(
+    c: &Connection,
+    id: &str,
+    key: &str,
+    source: &str,
+) -> Result<PublisherKeyView, String> {
     let fingerprint = plugin_index::publisher_key_fingerprint(key)?;
     let now = now_ms();
     c.execute(
@@ -4403,10 +8372,7 @@ pub struct RevokedKeyEntry {
 }
 
 /// 把一份索引里"被撤回的发布者密钥"记进离线列表（与版本撤回同一套语义）。
-fn record_revoked_keys(
-    c: &Connection,
-    index: &plugin_index::PluginIndex,
-) -> Result<usize, String> {
+fn record_revoked_keys(c: &Connection, index: &plugin_index::PluginIndex) -> Result<usize, String> {
     let now = now_ms();
     let mut n = 0usize;
     for rk in &index.revoked_keys {
@@ -4732,7 +8698,9 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
         let (revoked, publisher_key, publisher_key_revoked) = {
             let c = conn(&db);
             let pinned = read_publisher_key(&c, &manifest.id);
-            let key_revoked = pinned.as_ref().and_then(|p| read_revoked_key(&c, &p.fingerprint));
+            let key_revoked = pinned
+                .as_ref()
+                .and_then(|p| read_revoked_key(&c, &p.fingerprint));
             (
                 read_revocation(&c, &manifest.id).filter(|r| r.version == manifest.version),
                 pinned,
@@ -4746,10 +8714,18 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             // 这里必须给空集合，否则界面会显示「需要 11 项基线权限」这种假信息
             // （那是给「有代码但没声明权限」的老插件用的兜底）。
             if manifest.permissions.is_some() {
-                push_log(&manifest.id, "warn", "声明式插件没有代码，manifest.permissions 不会被用到");
+                push_log(
+                    &manifest.id,
+                    "warn",
+                    "声明式插件没有代码，manifest.permissions 不会被用到",
+                );
             }
             if manifest.events.is_some() {
-                push_log(&manifest.id, "warn", "声明式插件没有代码，manifest.events 收不到任何事件");
+                push_log(
+                    &manifest.id,
+                    "warn",
+                    "声明式插件没有代码，manifest.events 收不到任何事件",
+                );
             }
             let (permissions, permissions_baseline, events) = runtime_metas(&manifest);
             // 主题是纯数据，声明式插件同样可以出主题（它没有代码，这正是最安全的一类）
@@ -4843,7 +8819,12 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
 }
 
 #[tauri::command]
-pub fn set_plugin_enabled(app: AppHandle, db: State<Db>, id: String, enabled: bool) -> Result<(), String> {
+pub fn set_plugin_enabled(
+    app: AppHandle,
+    db: State<Db>,
+    id: String,
+    enabled: bool,
+) -> Result<(), String> {
     if !is_safe_plugin_id(&id) {
         return Err("非法插件 id".to_string());
     }
@@ -4864,7 +8845,11 @@ pub fn set_plugin_enabled(app: AppHandle, db: State<Db>, id: String, enabled: bo
 /// 这是插件新增权限/事件之后唯一的放行方式（见 `approval_state`）——不是让用户去点一次
 /// 无关的开关，而是一个明确的动作：他看了新增的那几项再确认。
 #[tauri::command]
-pub fn approve_plugin(app: AppHandle, db: State<'_, Db>, id: String) -> Result<ApprovalState, String> {
+pub fn approve_plugin(
+    app: AppHandle,
+    db: State<'_, Db>,
+    id: String,
+) -> Result<ApprovalState, String> {
     if !is_safe_plugin_id(&id) {
         return Err("非法插件 id".to_string());
     }
@@ -4921,9 +8906,11 @@ pub async fn run_plugin_command(
         let c = conn(&db);
         run_gates(&c, &manifest)?;
         let page_count: usize = c
-            .query_row("SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL", [], |r| {
-                r.get::<_, i64>(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
             .map(|n| n as usize)
             .unwrap_or(0);
         let current_page_json = if let Some(id) = current_id.as_deref() {
@@ -4971,8 +8958,16 @@ pub async fn run_plugin_command(
     let (message, insert, toasts, drafts, exports) =
         run_command_via_host(&source, &command_id, &args_json, &state, run_id)?;
     Ok(PluginRunResult {
-        message: if message.is_empty() { "已执行".to_string() } else { message },
-        insert: if insert.is_empty() { None } else { Some(insert) },
+        message: if message.is_empty() {
+            "已执行".to_string()
+        } else {
+            message
+        },
+        insert: if insert.is_empty() {
+            None
+        } else {
+            Some(insert)
+        },
         toasts,
         drafts,
         // 导出请求**还没写盘**：前端拿到后逐个弹保存对话框（用户选位置才算数）
@@ -5033,7 +9028,11 @@ pub async fn install_plugin(
         // 这种 URI —— 拿它 `ends_with(".zip")` **必然为假**，于是手机上装 zip 插件包
         // 永远报"只支持 .zip 插件包"。桌面两者等价（`effective_name()` 退化成
         // `src.file_name()`，而 `src` 就是 `source_path`），所以桌面行为不变。
-        if !picked.effective_name().to_ascii_lowercase().ends_with(".zip") {
+        if !picked
+            .effective_name()
+            .to_ascii_lowercase()
+            .ends_with(".zip")
+        {
             return Err("只支持 .zip 插件包，或一个插件目录".to_string());
         }
         let bytes = std::fs::read(&src).map_err(|e| format!("读取插件包失败：{e}"))?;
@@ -5190,10 +9189,18 @@ fn install_from_dir(
     let commands = if runtime == "declarative" {
         // 与加载路径同样的提醒：声明式插件没有代码，这些字段不会被用到。
         if manifest.permissions.is_some() {
-            push_log(&manifest.id, "warn", "声明式插件没有代码，manifest.permissions 不会被用到");
+            push_log(
+                &manifest.id,
+                "warn",
+                "声明式插件没有代码，manifest.permissions 不会被用到",
+            );
         }
         if manifest.events.is_some() {
-            push_log(&manifest.id, "warn", "声明式插件没有代码，manifest.events 收不到任何事件");
+            push_log(
+                &manifest.id,
+                "warn",
+                "声明式插件没有代码，manifest.events 收不到任何事件",
+            );
         }
         // 零代码插件不可能注册命令，也就没有"跑一遍 discovery 看它注册了什么"这回事。
         Vec::new()
@@ -5267,12 +9274,19 @@ fn install_from_dir(
         Some(old) => push_log(
             &manifest.id,
             "info",
-            &format!("已更新：{old} → {}（来源：{source_kind}）", manifest.version),
+            &format!(
+                "已更新：{old} → {}（来源：{source_kind}）",
+                manifest.version
+            ),
         ),
         None => {
             // 来源不是"本地文件夹"时，在插件日志里留一行出处（索引装完之后能追溯是谁给的）。
             if source_kind != "local" {
-                push_log(&manifest.id, "info", &format!("已安装（来源：{source_kind}）"));
+                push_log(
+                    &manifest.id,
+                    "info",
+                    &format!("已安装（来源：{source_kind}）"),
+                );
             }
         }
     }
@@ -5334,22 +9348,14 @@ fn index_http_client() -> Result<reqwest::Client, String> {
 
 /// 带体积上限的 GET。上限在**读取过程中**也守着：只看 `Content-Length` 会被
 /// "不报长度、慢慢灌"的服务器绕过。
-async fn http_get_capped(
-    client: &reqwest::Client,
-    url: &str,
-    cap: u64,
-) -> Result<Vec<u8>, String> {
-    let mut resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| {
-            if e.is_connect() || e.is_timeout() {
-                format!("无法连接到 {url}（网络或地址不可达）")
-            } else {
-                format!("请求 {url} 失败：{e}")
-            }
-        })?;
+async fn http_get_capped(client: &reqwest::Client, url: &str, cap: u64) -> Result<Vec<u8>, String> {
+    let mut resp = client.get(url).send().await.map_err(|e| {
+        if e.is_connect() || e.is_timeout() {
+            format!("无法连接到 {url}（网络或地址不可达）")
+        } else {
+            format!("请求 {url} 失败：{e}")
+        }
+    })?;
     if !resp.status().is_success() {
         return Err(format!("{url} 返回 HTTP {}", resp.status()));
     }
@@ -5368,7 +9374,11 @@ async fn http_get_capped(
         }
     }
     let mut out: Vec<u8> = Vec::new();
-    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("读取 {url} 失败：{e}"))? {
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| format!("读取 {url} 失败：{e}"))?
+    {
         if out.len() as u64 + chunk.len() as u64 > cap {
             return Err(format!(
                 "{url} 超过体积上限 {} MiB（已中止下载）",
@@ -5493,10 +9503,7 @@ pub fn ignore_plugin_revocation(db: State<'_, Db>, id: String) -> Result<Revocat
     )
     .map_err(|e| e.to_string())?;
     push_log(&id, "warn", "用户选择忽略索引的撤回（仍然使用）");
-    Ok(RevocationView {
-        ignored: true,
-        ..v
-    })
+    Ok(RevocationView { ignored: true, ..v })
 }
 
 /// 已固定下来的发布者公钥（界面显示指纹用）。
@@ -5620,8 +9627,11 @@ pub fn subscribe_plugin_index(
 #[tauri::command]
 pub fn unsubscribe_plugin_index(db: State<'_, Db>, url: String) -> Result<(), String> {
     let c = conn(&db);
-    c.execute("DELETE FROM plugin_index_subscription WHERE url = ?1", params![url])
-        .map_err(|e| e.to_string())?;
+    c.execute(
+        "DELETE FROM plugin_index_subscription WHERE url = ?1",
+        params![url],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -5697,7 +9707,11 @@ async fn check_subscriptions_into(db: &Db, subs: &[IndexSubscriptionView], app_v
 ///
 /// 刻意不含任何评分或结论——治理这一块只把可查证的东西摆出来，判断留给用户。
 #[tauri::command]
-pub async fn plugin_facts(app: AppHandle, db: State<'_, Db>, id: String) -> Result<PluginFacts, String> {
+pub async fn plugin_facts(
+    app: AppHandle,
+    db: State<'_, Db>,
+    id: String,
+) -> Result<PluginFacts, String> {
     if !is_safe_plugin_id(&id) {
         return Err("非法插件 id".to_string());
     }
@@ -5708,7 +9722,9 @@ pub async fn plugin_facts(app: AppHandle, db: State<'_, Db>, id: String) -> Resu
     let manifest = read_manifest(&dir)?;
     let runtime = runtime_of(&manifest).to_string();
     let main_file = manifest.main.clone();
-    let main_bytes = std::fs::metadata(dir.join(&main_file)).map(|m| m.len()).unwrap_or(0);
+    let main_bytes = std::fs::metadata(dir.join(&main_file))
+        .map(|m| m.len())
+        .unwrap_or(0);
     let (file_count, total_bytes) = dir_stats(&dir);
     let source = if runtime == "logic" {
         load_plugin_source(&dir, &manifest).ok()
@@ -5973,7 +9989,9 @@ pub fn plugin_logs(plugin_id: Option<String>, limit: Option<usize>) -> Vec<Plugi
         .into_iter()
         .filter(|l| plugin_id.as_deref().is_none_or(|p| l.plugin_id == p))
         .collect();
-    let keep = limit.unwrap_or(PLUGIN_LOG_CAPACITY).min(PLUGIN_LOG_CAPACITY);
+    let keep = limit
+        .unwrap_or(PLUGIN_LOG_CAPACITY)
+        .min(PLUGIN_LOG_CAPACITY);
     if filtered.len() > keep {
         filtered.drain(0..filtered.len() - keep);
     }
@@ -5994,7 +10012,9 @@ pub fn plugin_audit(plugin_id: Option<String>, limit: Option<usize>) -> Vec<Plug
         .into_iter()
         .filter(|e| plugin_id.as_deref().is_none_or(|p| e.plugin_id == p))
         .collect();
-    let keep = limit.unwrap_or(PLUGIN_AUDIT_CAPACITY).min(PLUGIN_AUDIT_CAPACITY);
+    let keep = limit
+        .unwrap_or(PLUGIN_AUDIT_CAPACITY)
+        .min(PLUGIN_AUDIT_CAPACITY);
     if filtered.len() > keep {
         filtered.drain(0..filtered.len() - keep);
     }
@@ -6004,7 +10024,10 @@ pub fn plugin_audit(plugin_id: Option<String>, limit: Option<usize>) -> Vec<Plug
 /// 清空能力调用审计。
 #[tauri::command]
 pub fn clear_plugin_audit() {
-    PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    PLUGIN_AUDIT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
 }
 
 /// 清空插件日志。
@@ -6038,7 +10061,10 @@ register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false,
     #[test]
     fn reports_missing_command() {
         let source = r#"register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false, run: function(){ return "x"; } });"#;
-        let state = RunState { page_count: 0, ..Default::default() };
+        let state = RunState {
+            page_count: 0,
+            ..Default::default()
+        };
         let res = run_command_msg_in_host_for_test(source, "t.nope", "", &state).unwrap();
         assert!(res.contains("命令不存在"));
     }
@@ -6054,7 +10080,8 @@ register({ id: "t.ins", title: "Insert", description: "", closeOnRun: false,
             permissions: vec!["write:page.current".to_string()],
             ..Default::default()
         };
-        let (message, insert, ..) = run_command_in_host_for_test(source, "t.ins", "", &state).unwrap();
+        let (message, insert, ..) =
+            run_command_in_host_for_test(source, "t.ins", "", &state).unwrap();
         assert_eq!(message, "ok");
         // 插入文本产生在**子进程**（JS 侧的原生函数），随结果帧回来；
         // 父进程那边的 `editor.insertText` 能力走的是另一条（同样会被合并进来）。
@@ -6079,7 +10106,8 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
     return found.length ? ("LEAK:" + found.join(",")) : "clean";
   } });
 "#;
-        let res = run_command_msg_in_host_for_test(source, "t.probe", "", &RunState::default()).unwrap();
+        let res =
+            run_command_msg_in_host_for_test(source, "t.probe", "", &RunState::default()).unwrap();
         assert_eq!(res, "clean", "沙箱里出现了宿主能力");
     }
 
@@ -6139,8 +10167,9 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
     fn with_timeout_passes_through_results_and_errors() {
         let ok: Result<u32, String> = with_timeout(RUN_TIMEOUT, "测试", || Ok(7));
         assert_eq!(ok.unwrap(), 7);
-        let err: Result<u32, String> =
-            with_timeout(RUN_TIMEOUT, "测试", || Err("插件初始化失败: boom".to_string()));
+        let err: Result<u32, String> = with_timeout(RUN_TIMEOUT, "测试", || {
+            Err("插件初始化失败: boom".to_string())
+        });
         assert!(err.unwrap_err().contains("boom"));
     }
 
@@ -6148,7 +10177,15 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
 
     #[test]
     fn plugin_id_whitelist() {
-        for good in ["demo", "a", "my-plugin", "plugin_1", "a.b", "x-y-z-9", "a..b"] {
+        for good in [
+            "demo",
+            "a",
+            "my-plugin",
+            "plugin_1",
+            "a.b",
+            "x-y-z-9",
+            "a..b",
+        ] {
             assert!(is_safe_plugin_id(good), "{good} 应当合法");
         }
         // 注意 `..-` 是**合法**的：`root.join("..-")` 只是名字里带点的普通目录，
@@ -6166,7 +10203,17 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
             assert!(is_bare_file_name(good), "{good} 应当被接受");
         }
         // 目录 / 相对跳转 / 绝对路径 / 空：拒绝
-        for bad in ["", ".", "..", "./", "sub/main.js", "../main.js", "a/../main.js", "/etc/passwd", "sub/"] {
+        for bad in [
+            "",
+            ".",
+            "..",
+            "./",
+            "sub/main.js",
+            "../main.js",
+            "a/../main.js",
+            "/etc/passwd",
+            "sub/",
+        ] {
             assert!(!is_bare_file_name(bad), "{bad} 应当被拒绝");
         }
     }
@@ -6278,7 +10325,11 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
 "#;
         let cmds = discover_commands(source, &RunState::default()).unwrap();
         let ids: Vec<&str> = cmds.iter().map(|c| c.id.as_str()).collect();
-        assert_eq!(ids, vec!["d.one", "d.two"], "discovery 必须真的把命令收集出来");
+        assert_eq!(
+            ids,
+            vec!["d.one", "d.two"],
+            "discovery 必须真的把命令收集出来"
+        );
         assert_eq!(cmds[1].title, "Two");
         assert_eq!(cmds[1].description, "第二");
         // closeOnRun 此前是死字段：宿主版 register 用 as_string() == "true" 解析布尔，
@@ -6323,7 +10374,16 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         command_id: &str,
         args_json: &str,
         state: &RunState,
-    ) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>), String> {
+    ) -> Result<
+        (
+            String,
+            String,
+            Vec<String>,
+            Vec<PluginDraft>,
+            Vec<PluginExport>,
+        ),
+        String,
+    > {
         let _g = capability_test_guard();
         ensure_host_exe();
         // 碰数据库的能力（`api.kv` / `api.settings` 的 app scope）要写 meta.db，而它的路径来自
@@ -6398,7 +10458,8 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         let err = client
             .run(crate::plugin_host::HostRunRequest {
                 plugin_id: "t".into(),
-                source: "register({ id: 'c', title: 'C', run: function () { return 'x'; } });".into(),
+                source: "register({ id: 'c', title: 'C', run: function () { return 'x'; } });"
+                    .into(),
                 command_id: "c".into(),
                 mode: crate::plugin_host::HostRunMode::Command,
                 ..Default::default()
@@ -6458,9 +10519,15 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         assert!(err.contains("cancelled") && err.contains("已终止"), "{err}");
         // 三条一起才说明"是**杀**掉了它"，而不是"它自己跑完了"或"被别的原因终结了"：
         // ① 很快返回（不然就是等满了 30s 墙钟）；② 不是超时；③ 不是内存看门狗。
-        assert!(elapsed < std::time::Duration::from_secs(5), "取消要立刻生效（实际 {elapsed:?}）");
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "取消要立刻生效（实际 {elapsed:?}）"
+        );
         assert!(!err.contains("timeout"), "不该是等到墙钟超时：{err}");
-        assert!(!err.contains("out_of_memory"), "不该是内存看门狗动的刀：{err}");
+        assert!(
+            !err.contains("out_of_memory"),
+            "不该是内存看门狗动的刀：{err}"
+        );
 
         // 收尾要干净：取消标记被消费、登记被摘掉（再取消一次应当返回 false）
         assert!(!take_cancelled(run_id), "取消标记不该留到下一次运行");
@@ -6529,7 +10596,11 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         .unwrap();
         assert!(msg.contains("炸了"), "{msg}");
         let rows = plugin_audit(Some("audit-run".to_string()), None);
-        let failed = rows.iter().rev().find(|r| r.capability == "host.run").expect("应当有记录");
+        let failed = rows
+            .iter()
+            .rev()
+            .find(|r| r.capability == "host.run")
+            .expect("应当有记录");
         assert!(!failed.ok);
         assert_eq!(failed.error_code.as_deref(), Some("plugin_error"));
         clear_plugin_audit();
@@ -6598,24 +10669,47 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
             default: None,
             options: opts
                 .into_iter()
-                .map(|v| PluginCommandParamOption { value: v.into(), label: String::new() })
+                .map(|v| PluginCommandParamOption {
+                    value: v.into(),
+                    label: String::new(),
+                })
                 .collect(),
             description: String::new(),
             scope: "space".into(),
         };
         // 数字：规范化成整/小数
-        assert_eq!(validate_setting_value(&decl("number", vec![]), " 42 ").unwrap(), "42");
-        assert_eq!(validate_setting_value(&decl("number", vec![]), "1.5").unwrap(), "1.5");
-        assert!(validate_setting_value(&decl("number", vec![]), "abc").unwrap_err().contains("目标文件夹"));
+        assert_eq!(
+            validate_setting_value(&decl("number", vec![]), " 42 ").unwrap(),
+            "42"
+        );
+        assert_eq!(
+            validate_setting_value(&decl("number", vec![]), "1.5").unwrap(),
+            "1.5"
+        );
+        assert!(validate_setting_value(&decl("number", vec![]), "abc")
+            .unwrap_err()
+            .contains("目标文件夹"));
         // 布尔：只认 true/false
-        assert_eq!(validate_setting_value(&decl("boolean", vec![]), "true").unwrap(), "true");
+        assert_eq!(
+            validate_setting_value(&decl("boolean", vec![]), "true").unwrap(),
+            "true"
+        );
         assert!(validate_setting_value(&decl("boolean", vec![]), "yes").is_err());
         // 下拉：必须是候选项之一
-        assert_eq!(validate_setting_value(&decl("select", vec!["a", "b"]), "b").unwrap(), "b");
+        assert_eq!(
+            validate_setting_value(&decl("select", vec!["a", "b"]), "b").unwrap(),
+            "b"
+        );
         assert!(validate_setting_value(&decl("select", vec!["a"]), "c").is_err());
-        assert!(validate_setting_value(&decl("select", vec![]), "c").is_err(), "声明了 select 却没有选项要报错");
+        assert!(
+            validate_setting_value(&decl("select", vec![]), "c").is_err(),
+            "声明了 select 却没有选项要报错"
+        );
         // 未知类型当字符串
-        assert_eq!(validate_setting_value(&decl("weird", vec![]), "随便").unwrap(), "随便");
+        assert_eq!(
+            validate_setting_value(&decl("weird", vec![]), "随便").unwrap(),
+            "随便"
+        );
     }
 
     #[test]
@@ -6639,7 +10733,10 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
             &state,
         )
         .unwrap();
-        assert!(remove.contains("permission_denied"), "删保留键也必须被拒：{remove}");
+        assert!(
+            remove.contains("permission_denied"),
+            "删保留键也必须被拒：{remove}"
+        );
     }
 
     #[test]
@@ -6691,13 +10788,19 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         );
         let (subscribed, warnings) = resolve_events(&m);
         assert_eq!(subscribed, vec!["page.saved".to_string()]);
-        assert!(warnings.iter().any(|w| w.contains("未知事件")), "{warnings:?}");
+        assert!(
+            warnings.iter().any(|w| w.contains("未知事件")),
+            "{warnings:?}"
+        );
 
         // 没写 events → **一个都不订阅**（与权限的基线授权不同：后台运行不能默认给）
         let none = manifest_of(r#"{ "id": "e", "name": "E" }"#);
         let (subscribed, warnings) = resolve_events(&none);
         assert!(subscribed.is_empty());
-        assert!(warnings.is_empty(), "缺 events 不该报警告：那是显式的默认值");
+        assert!(
+            warnings.is_empty(),
+            "缺 events 不该报警告：那是显式的默认值"
+        );
     }
 
     #[test]
@@ -6740,7 +10843,11 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         // 未知事件：同样不算订阅，提示是另一句（别把"没接"和"不认识"混成一句）
         let unknown = decide_event(None, "no.such.event", "随便写");
         assert!(!unknown.subscribe);
-        assert!(unknown.warnings.iter().any(|w| w.contains("未知事件")), "{:?}", unknown.warnings);
+        assert!(
+            unknown.warnings.iter().any(|w| w.contains("未知事件")),
+            "{:?}",
+            unknown.warnings
+        );
     }
 
     #[test]
@@ -6753,19 +10860,26 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
                 ev.id
             ));
             let (subscribed, warnings) = resolve_events(&m);
-            assert_eq!(subscribed, vec![ev.id.to_string()], "{} 应当订阅成功", ev.id);
+            assert_eq!(
+                subscribed,
+                vec![ev.id.to_string()],
+                "{} 应当订阅成功",
+                ev.id
+            );
             assert!(warnings.is_empty(), "{} 不该有警告：{warnings:?}", ev.id);
             assert_eq!(event_metas(&m).len(), 1, "{} 应当出现在启用界面", ev.id);
         }
 
         // 缺 reason：仍然订阅（理由是否齐全不该让订阅失败），但必须提醒——用户看不到
         // 一个后台运行理由，就没法授权。
-        let no_reason = manifest_of(
-            r#"{ "id": "e", "name": "E", "events": [ { "on": "import.finished" } ] }"#,
-        );
+        let no_reason =
+            manifest_of(r#"{ "id": "e", "name": "E", "events": [ { "on": "import.finished" } ] }"#);
         let (subscribed, warnings) = resolve_events(&no_reason);
         assert_eq!(subscribed, vec!["import.finished".to_string()]);
-        assert!(warnings.iter().any(|w| w.contains("没有写 reason")), "{warnings:?}");
+        assert!(
+            warnings.iter().any(|w| w.contains("没有写 reason")),
+            "{warnings:?}"
+        );
     }
 
     #[test]
@@ -6774,7 +10888,10 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         let m = manifest_of(r#"{ "id": "e", "name": "E", "events": [ { "on": "page.saved" } ] }"#);
         let (subscribed, warnings) = resolve_events(&m);
         assert_eq!(subscribed.len(), 1);
-        assert!(warnings.iter().any(|w| w.contains("reason")), "{warnings:?}");
+        assert!(
+            warnings.iter().any(|w| w.contains("reason")),
+            "{warnings:?}"
+        );
     }
 
     #[test]
@@ -6793,6 +10910,33 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
     #[test]
     fn event_handler_runs_and_drafts_are_collected() {
         let _g = log_test_guard();
+        // ⚠️ **本用例整段**拿 crate 级 DB 锁（只测试用，`#[cfg(test)]`）—— 不是只包下面那次 seed：
+        // `mcp_host::w3_draft_tests` 的两条判据比的是**共享测试数据目录**的逐字节指纹，而本用例
+        // 后面 `run_event_in_host_for_test` 起的事件派发还会**打开**共享目录里的空间库（连接一开一关
+        // 就会让 `*.db-wal` / `*.db-shm` 出现／消失 —— 那同样会翻指纹）。实测（两进程并发）：
+        // 只包 seed ⇒ 仍会因"数据没变、但 sidecar 出现"而假红；整段包住 ⇒ 不再重叠。
+        // 锁顺序：本用例**已经先拿了 `log_test_guard()`**（局部锁）⇒ 符合「先局部、后 DB」✓；
+        // 本锁在函数末尾随 guard 一起释放（届时 `capability_test_guard()` 早已由 helper 释放）⇒
+        // 持有期间不会再等别的测试锁 ⇒ 不会成环。
+        let _db = crate::mcp_host::lock_db_writes_for_test();
+        let dir = crate::db::ensure_test_app_data_dir().to_path_buf();
+        let space: String = {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            m.query_row(
+                "SELECT id FROM workspaces WHERE deleted_at IS NULL LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at) VALUES ('p1', ?1, NULL, '甲', '{}', 'x', 'page', 0, 10, 10)",
+                params![space],
+            )
+            .unwrap();
+        }
         let src = r#"
 on("page.saved", function (payload) {
   api.tags.add("已保存-" + payload.title);   // 写能力 → 产出草稿，不落库
@@ -6803,11 +10947,26 @@ on("page.saved", function (payload) {
         // 所以作者省略 pageId 时写的是刚保存的那一页。
         let mut state = state_with(&["write:tags"]);
         state.current_page_id = Some("p1".to_string());
-        let (msg, _toasts, drafts) =
-            run_event_in_host_for_test(src, "page.saved", r#"{"pageId":"p1","title":"甲"}"#, &state).unwrap();
+        state.read_space = Some(space.clone());
+        state.read_dir = Some(dir.clone());
+        let (msg, _toasts, drafts) = run_event_in_host_for_test(
+            src,
+            "page.saved",
+            r#"{"pageId":"p1","title":"甲"}"#,
+            &state,
+        )
+        .unwrap();
         assert!(msg.contains("处理了 甲"), "{msg}");
-        assert_eq!(drafts.len(), 1, "事件里的写操作必须产出草稿，由用户确认后才落库");
-        assert!(drafts[0].summary.contains("已保存-甲"), "{:?}", drafts[0].summary);
+        assert_eq!(
+            drafts.len(),
+            1,
+            "事件里的写操作必须产出草稿，由用户确认后才落库"
+        );
+        assert!(
+            drafts[0].summary.contains("已保存-甲"),
+            "{:?}",
+            drafts[0].summary
+        );
     }
 
     #[test]
@@ -6831,7 +10990,8 @@ on("page.saved", function (payload) {
 on("page.saved", function () { throw new Error("第一个炸了"); });
 on("page.saved", function () { return "第二个正常"; });
 "#;
-        let (msg, _, _) = run_event_in_host_for_test(src, "page.saved", "{}", &RunState::default()).unwrap();
+        let (msg, _, _) =
+            run_event_in_host_for_test(src, "page.saved", "{}", &RunState::default()).unwrap();
         assert!(msg.contains("第一个炸了"), "错误必须回传而不是被吞：{msg}");
         assert!(msg.contains("第二个正常"), "后面的处理器仍要执行：{msg}");
     }
@@ -6916,8 +11076,10 @@ register({
     fn command_without_params_keeps_working() {
         let _g = log_test_guard();
         // 老插件：`run()` 不声明参数、也不接受参数 —— 必须原样可用
-        let src = r#"register({ id: "old.run", title: "老命令", run: function () { return "ok"; } });"#;
-        let (msg, _, _, _, _) = run_command_in_host_for_test(src, "old.run", "", &RunState::default()).unwrap();
+        let src =
+            r#"register({ id: "old.run", title: "老命令", run: function () { return "ok"; } });"#;
+        let (msg, _, _, _, _) =
+            run_command_in_host_for_test(src, "old.run", "", &RunState::default()).unwrap();
         assert_eq!(msg, "ok");
         let cmds = discover_commands(src, &RunState::default()).unwrap();
         assert!(cmds[0].params.is_empty(), "没声明参数时不应凭空多出参数");
@@ -6933,7 +11095,8 @@ register({ id: "s.run", title: "结构化", run: function () {
 }});
 "#;
         let (msg, insert, toasts, _, _) =
-            run_command_in_host_for_test(src, "s.run", "", &state_with(&["write:page.current"])).unwrap();
+            run_command_in_host_for_test(src, "s.run", "", &state_with(&["write:page.current"]))
+                .unwrap();
         assert_eq!(msg, "完成");
         assert_eq!(insert, "追加的文本");
         assert_eq!(toasts, vec!["提示一".to_string(), "提示二".to_string()]);
@@ -6967,11 +11130,17 @@ register({ id: "s.run", title: "结构化", run: function () {
             run_command_in_host_for_test(&src, "e.run", "", &state).unwrap();
 
         assert_eq!(exports.len(), 1, "应当登记一条导出请求");
-        assert_eq!(exports[0].file_name, "想要的名字.md", "目录部分必须被去掉：插件给不出路径");
+        assert_eq!(
+            exports[0].file_name, "想要的名字.md",
+            "目录部分必须被去掉：插件给不出路径"
+        );
         assert_eq!(exports[0].content, "正文内容");
         assert_eq!(exports[0].bytes, "正文内容".len());
         assert!(msg.contains("queued=true"));
-        assert!(!target.exists(), "**这一步绝不能写盘**：写不写由用户在保存对话框里决定");
+        assert!(
+            !target.exists(),
+            "**这一步绝不能写盘**：写不写由用户在保存对话框里决定"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -6981,7 +11150,8 @@ register({ id: "s.run", title: "结构化", run: function () {
         // 没声明 export:files：拒绝（与其他能力一样，逐次校验，不靠 UI 隐藏）
         let src = r#"register({ id: "e.deny", title: "E", description: "", closeOnRun: false,
   run: function () { try { api.files.export("a.md", "x"); } catch (e) { return String(e); } return "no-throw"; } });"#;
-        let (msg, _i, _t, _d, exports) = run_command_in_host_for_test(src, "e.deny", "", &state_with(&[])).unwrap();
+        let (msg, _i, _t, _d, exports) =
+            run_command_in_host_for_test(src, "e.deny", "", &state_with(&[])).unwrap();
         assert!(msg.contains("permission_denied"), "实际：{msg}");
         assert!(exports.is_empty(), "被拒的调用不该留下导出请求");
 
@@ -6993,7 +11163,8 @@ register({ id: "s.run", title: "结构化", run: function () {
     try { api.files.export("a.md", ""); } catch (e) { out.push(String(e).indexOf("bad_args") >= 0 ? "bad_args" : String(e)); }
     return out.join(" | ");
   } });"#;
-        let (msg, ..) = run_command_in_host_for_test(bad, "e.bad", "", &state_with(&["export:files"])).unwrap();
+        let (msg, ..) =
+            run_command_in_host_for_test(bad, "e.bad", "", &state_with(&["export:files"])).unwrap();
         assert_eq!(msg, "bad_args | bad_args");
     }
 
@@ -7006,7 +11177,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         let big = "x".repeat(MAX_EXPORT_BYTES + 1);
         let err = cap_files_export("a.md", &big).unwrap_err();
         assert!(err.contains("quota_exceeded"), "实际：{err}");
-        assert!(cap_files_export("a.md", &"x".repeat(MAX_EXPORT_BYTES)).is_ok(), "正好到上限应当放行");
+        assert!(
+            cap_files_export("a.md", &"x".repeat(MAX_EXPORT_BYTES)).is_ok(),
+            "正好到上限应当放行"
+        );
 
         // 次数上限：超出的那条被拒，已登记的不受影响
         RUN_STATE.with(|s| s.borrow_mut().exports.clear());
@@ -7032,15 +11206,24 @@ register({ id: "s.run", title: "结构化", run: function () {
     #[test]
     fn export_file_names_are_sanitized() {
         assert_eq!(sanitize_export_file_name("a.md").as_deref(), Some("a.md"));
-        assert_eq!(sanitize_export_file_name("  /tmp/x/笔记.md  ").as_deref(), Some("笔记.md"));
-        assert_eq!(sanitize_export_file_name(r"C:\Users\me\导出.csv").as_deref(), Some("导出.csv"));
+        assert_eq!(
+            sanitize_export_file_name("  /tmp/x/笔记.md  ").as_deref(),
+            Some("笔记.md")
+        );
+        assert_eq!(
+            sanitize_export_file_name(r"C:\Users\me\导出.csv").as_deref(),
+            Some("导出.csv")
+        );
         // 结尾的点/空格在 Windows 上会落到别的名字，直接切掉
         assert_eq!(sanitize_export_file_name("名字.").as_deref(), Some("名字"));
         // 只剩点、纯空白、带控制字符到什么都不剩 → 拒
         assert!(sanitize_export_file_name("..").is_none());
         assert!(sanitize_export_file_name("   ").is_none());
         assert!(sanitize_export_file_name("/").is_none());
-        assert!(sanitize_export_file_name("a\u{0}b").is_some(), "控制字符是滤掉而不是整名作废");
+        assert!(
+            sanitize_export_file_name("a\u{0}b").is_some(),
+            "控制字符是滤掉而不是整名作废"
+        );
         assert_eq!(sanitize_export_file_name("a\u{0}b").as_deref(), Some("ab"));
     }
 
@@ -7049,8 +11232,12 @@ register({ id: "s.run", title: "结构化", run: function () {
         let _g = log_test_guard();
         // 结构化返回**不是**绕过权限的后门：没有 write:page.current 时 insert 仍被拒
         let src = r#"register({ id: "s.deny", title: "结构化", run: function () { return { insert: "不该写入" }; } });"#;
-        let (_msg, insert, _, _, _) = run_command_in_host_for_test(src, "s.deny", "", &state_with(&[])).unwrap();
-        assert!(insert.is_empty(), "未授予写权限时不应写入，实际：{insert:?}");
+        let (_msg, insert, _, _, _) =
+            run_command_in_host_for_test(src, "s.deny", "", &state_with(&[])).unwrap();
+        assert!(
+            insert.is_empty(),
+            "未授予写权限时不应写入，实际：{insert:?}"
+        );
     }
 
     #[test]
@@ -7059,7 +11246,8 @@ register({ id: "s.run", title: "结构化", run: function () {
         let src = r#"register({ id: "a.run", title: "参数", run: function (args) { return "收到" + JSON.stringify(args); } });"#;
         // 第一道在命令层（`run_plugin_command` 要求 JSON 对象）；这里验证第二道：
         // 直接 eval 到 `__run` 时，非具名的参数（数组）也退回空对象而不是被当成参数用
-        let (msg, _, _, _, _) = run_command_in_host_for_test(src, "a.run", "[1,2,3]", &RunState::default()).unwrap();
+        let (msg, _, _, _, _) =
+            run_command_in_host_for_test(src, "a.run", "[1,2,3]", &RunState::default()).unwrap();
         assert_eq!(msg, "收到{}", "数组不是合法参数对象，应退回空对象");
     }
 
@@ -7075,7 +11263,8 @@ register({ id: "s.run", title: "结构化", run: function () {
     return "count=" + api.pages.count();
   } });"#;
         let state = state_with(&["read:pages", "write:page.current"]);
-        let (msg, insert, toasts, _drafts, _exports) = run_command_in_host_for_test(source, "t.api", "", &state).unwrap();
+        let (msg, insert, toasts, _drafts, _exports) =
+            run_command_in_host_for_test(source, "t.api", "", &state).unwrap();
         assert_eq!(msg, "count=0");
         assert_eq!(insert, "新文本");
         assert_eq!(toasts, vec!["来自 api.notify".to_string()]);
@@ -7098,19 +11287,27 @@ register({ id: "s.run", title: "结构化", run: function () {
         // 老写法不能成为绕过点。
         let source = r#"register({ id: "t.legacy", title: "L", description: "", closeOnRun: false,
   run: function(){ return "count=" + __pages(); } });"#;
-        let denied = run_command_msg_in_host_for_test(source, "t.legacy", "", &state_with(&[])).unwrap();
-        assert!(denied.contains("permission_denied"), "老全局也要过权限校验，实际: {denied}");
+        let denied =
+            run_command_msg_in_host_for_test(source, "t.legacy", "", &state_with(&[])).unwrap();
+        assert!(
+            denied.contains("permission_denied"),
+            "老全局也要过权限校验，实际: {denied}"
+        );
 
         let mut ok_state = state_with(&["read:pages"]);
         ok_state.page_count = 7;
-        assert_eq!(run_command_msg_in_host_for_test(source, "t.legacy", "", &ok_state).unwrap(), "count=7");
+        assert_eq!(
+            run_command_msg_in_host_for_test(source, "t.legacy", "", &ok_state).unwrap(),
+            "count=7"
+        );
     }
 
     #[test]
     fn unknown_capability_is_rejected() {
         let source = r#"register({ id: "t.unknown", title: "U", description: "", closeOnRun: false,
   run: function(){ return String(__cap("pages.deleteEverything", "{}")); } });"#;
-        let res = run_command_msg_in_host_for_test(source, "t.unknown", "", &state_with(&[])).unwrap();
+        let res =
+            run_command_msg_in_host_for_test(source, "t.unknown", "", &state_with(&[])).unwrap();
         assert!(res.contains("unknown_capability"), "实际: {res}");
     }
 
@@ -7138,15 +11335,24 @@ register({ id: "s.run", title: "结构化", run: function () {
             std::fs::write(d.join("manifest.json"), v.to_string()).unwrap();
             d
         };
-        let good = mk("good", serde_json::json!({"id":"good","name":"G","main":"main.js","apiVersion":"1.0.0"}));
+        let good = mk(
+            "good",
+            serde_json::json!({"id":"good","name":"G","main":"main.js","apiVersion":"1.0.0"}),
+        );
         assert!(read_manifest(&good).is_ok(), "同主版本应当放行");
 
-        let future = mk("future", serde_json::json!({"id":"future","name":"F","main":"main.js","apiVersion":"2.0.0"}));
+        let future = mk(
+            "future",
+            serde_json::json!({"id":"future","name":"F","main":"main.js","apiVersion":"2.0.0"}),
+        );
         let err = read_manifest(&future).unwrap_err();
         assert!(err.contains("主版本不受支持"), "实际: {err}");
 
         // 缺 apiVersion：放行（老 manifest 兼容），由 resolve_permissions 记警告
-        let legacy = mk("legacy", serde_json::json!({"id":"legacy","name":"L","main":"main.js"}));
+        let legacy = mk(
+            "legacy",
+            serde_json::json!({"id":"legacy","name":"L","main":"main.js"}),
+        );
         assert!(read_manifest(&legacy).is_ok());
 
         let _ = std::fs::remove_dir_all(&base);
@@ -7176,8 +11382,14 @@ register({ id: "s.run", title: "结构化", run: function () {
             capabilities_gen::PERMISSION_LIST.len(),
             "老 manifest 应拿到基线授权"
         );
-        assert!(warnings.iter().any(|w| w.contains("基线")), "应记录基线授权警告: {warnings:?}");
-        assert!(warnings.iter().any(|w| w.contains("apiVersion")), "应提醒补 apiVersion");
+        assert!(
+            warnings.iter().any(|w| w.contains("基线")),
+            "应记录基线授权警告: {warnings:?}"
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("apiVersion")),
+            "应提醒补 apiVersion"
+        );
     }
 
     #[test]
@@ -7191,8 +11403,14 @@ register({ id: "s.run", title: "结构化", run: function () {
             main: "main.js".into(),
             api_version: Some("1.0.0".into()),
             permissions: Some(vec![
-                PermissionDecl { id: "read:pages".into(), reason: String::new() },
-                PermissionDecl { id: "net:https:example.com".into(), reason: "未来能力".into() },
+                PermissionDecl {
+                    id: "read:pages".into(),
+                    reason: String::new(),
+                },
+                PermissionDecl {
+                    id: "net:https:example.com".into(),
+                    reason: "未来能力".into(),
+                },
             ]),
             settings: None,
             runtime: None,
@@ -7202,7 +11420,11 @@ register({ id: "s.run", title: "结构化", run: function () {
             events: None,
         };
         let (granted, warnings) = resolve_permissions(&m);
-        assert_eq!(granted, vec!["read:pages".to_string()], "未知权限应被忽略而不是静默全拒");
+        assert_eq!(
+            granted,
+            vec!["read:pages".to_string()],
+            "未知权限应被忽略而不是静默全拒"
+        );
         assert!(warnings.iter().any(|w| w.contains("没有写 reason")));
         assert!(warnings.iter().any(|w| w.contains("未知权限")));
     }
@@ -7232,7 +11454,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(!baseline);
         assert_eq!(metas.len(), 1);
         assert_eq!(metas[0].id, "read:pages");
-        assert_eq!(metas[0].title, "读取本空间页面统计", "标题来自注册表，不是裸 id");
+        assert_eq!(
+            metas[0].title, "读取本空间页面统计",
+            "标题来自注册表，不是裸 id"
+        );
         assert_eq!(metas[0].reason, "为了显示页面数");
 
         // 老 manifest：走基线授权，且界面要能如实标注
@@ -7255,7 +11480,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         let (metas2, baseline2) = permission_metas(&legacy);
         assert!(baseline2);
         assert_eq!(metas2.len(), capabilities_gen::PERMISSION_LIST.len());
-        assert!(metas2[0].reason.contains("基线"), "基线授权必须说清楚是怎么来的");
+        assert!(
+            metas2[0].reason.contains("基线"),
+            "基线授权必须说清楚是怎么来的"
+        );
     }
 
     // ---- 导入触发（M11.9）：扩展名规范化 + 只渲染读得懂的声明 ----
@@ -7292,7 +11520,10 @@ register({ id: "s.run", title: "结构化", run: function () {
             "md\\",
             "aaaaaaaaaaaaaaaaaaaa",
         ] {
-            assert!(normalize_extension(bad).is_none(), "{bad:?} 不该被当成扩展名");
+            assert!(
+                normalize_extension(bad).is_none(),
+                "{bad:?} 不该被当成扩展名"
+            );
         }
     }
 
@@ -7313,8 +11544,15 @@ register({ id: "s.run", title: "结构化", run: function () {
         .unwrap();
         let m = read_manifest(&dir).unwrap();
         let views = m.views.as_ref().unwrap();
-        assert_eq!(views[0].placement.as_deref(), Some("rail"), "manifest 里的落点要被读到");
-        assert_eq!(views[1].placement, None, "没写就是没写（前端按 overlay 处理，默认只有一处）");
+        assert_eq!(
+            views[0].placement.as_deref(),
+            Some("rail"),
+            "manifest 里的落点要被读到"
+        );
+        assert_eq!(
+            views[1].placement, None,
+            "没写就是没写（前端按 overlay 处理，默认只有一处）"
+        );
     }
 
     #[test]
@@ -7357,7 +11595,11 @@ register({ id: "s.run", title: "结构化", run: function () {
         .unwrap();
         let m2 = read_manifest(&dir).unwrap();
         assert_eq!(
-            m2.views.as_ref().unwrap()[0].query.updated_within_days.as_ref().and_then(|f| f.literal()),
+            m2.views.as_ref().unwrap()[0]
+                .query
+                .updated_within_days
+                .as_ref()
+                .and_then(|f| f.literal()),
             Some(7)
         );
         let _ = std::fs::remove_dir_all(&base);
@@ -7373,7 +11615,11 @@ register({ id: "s.run", title: "结构化", run: function () {
             { "kind": "import", "extensions": ["没 有"], "command": "imp.run" }
         ]));
         let got = sanitized_triggers(&m);
-        assert_eq!(got.len(), 2, "读得懂的只有 import 与 export 那两条：{got:?}");
+        assert_eq!(
+            got.len(),
+            2,
+            "读得懂的只有 import 与 export 那两条：{got:?}"
+        );
         assert_eq!(got[0].kind, "import");
         assert_eq!(got[0].command, "imp.run", "命令 id 去掉首尾空白");
         assert_eq!(
@@ -7403,13 +11649,21 @@ register({ id: "s.run", title: "结构化", run: function () {
         let many: Vec<serde_json::Value> = (0..(MAX_TRIGGERS + 3))
             .map(|i| serde_json::json!({ "kind": "import", "extensions": [format!(".e{i}")], "command": "imp.run" }))
             .collect();
-        assert_eq!(sanitized_triggers(&trigger_manifest(serde_json::json!(many))).len(), MAX_TRIGGERS);
+        assert_eq!(
+            sanitized_triggers(&trigger_manifest(serde_json::json!(many))).len(),
+            MAX_TRIGGERS
+        );
 
-        let exts: Vec<String> = (0..(MAX_TRIGGER_EXTENSIONS + 5)).map(|i| format!(".e{i}")).collect();
+        let exts: Vec<String> = (0..(MAX_TRIGGER_EXTENSIONS + 5))
+            .map(|i| format!(".e{i}"))
+            .collect();
         let one = trigger_manifest(serde_json::json!([
             { "kind": "import", "extensions": exts, "command": "imp.run" }
         ]));
-        assert_eq!(sanitized_triggers(&one)[0].extensions.len(), MAX_TRIGGER_EXTENSIONS);
+        assert_eq!(
+            sanitized_triggers(&one)[0].extensions.len(),
+            MAX_TRIGGER_EXTENSIONS
+        );
     }
 
     // ---- 安装行 / 私有数据 / 审计 ----
@@ -7456,19 +11710,37 @@ register({ id: "s.run", title: "结构化", run: function () {
 
         // 一模一样 → 不算扩张
         let same = approval_snapshot(&manifest_with(&["read:pages"], &["page.saved"], "1.0.1"));
-        assert!(approval_drift(&base, &same).is_empty(), "只有版本号变了不该要求重新确认");
+        assert!(
+            approval_drift(&base, &same).is_empty(),
+            "只有版本号变了不该要求重新确认"
+        );
 
         // 顺序变了（声明顺序/解析顺序不同）→ 也不算：快照是排序后的集合
-        let reordered = approval_snapshot(&manifest_with(&["read:tags", "read:pages"], &["page.opened", "page.saved"], "1.0.0"));
-        let base2 = approval_snapshot(&manifest_with(&["read:pages", "read:tags"], &["page.saved", "page.opened"], "1.0.0"));
+        let reordered = approval_snapshot(&manifest_with(
+            &["read:tags", "read:pages"],
+            &["page.opened", "page.saved"],
+            "1.0.0",
+        ));
+        let base2 = approval_snapshot(&manifest_with(
+            &["read:pages", "read:tags"],
+            &["page.saved", "page.opened"],
+            "1.0.0",
+        ));
         assert!(approval_drift(&base2, &reordered).is_empty());
 
         // 收敛（删掉一项）→ 不算：用户当初同意的是更多东西，缩减不增加他的风险
         let shrunk = approval_snapshot(&manifest_with(&[], &[], "1.0.0"));
-        assert!(approval_drift(&base, &shrunk).is_empty(), "缩减声明不该打断用户");
+        assert!(
+            approval_drift(&base, &shrunk).is_empty(),
+            "缩减声明不该打断用户"
+        );
 
         // 新增权限 / 新增事件 → 都必须报出来，且说得出具体是哪一项
-        let grown = approval_snapshot(&manifest_with(&["read:pages", "write:pages"], &["page.saved", "page.deleted"], "1.1.0"));
+        let grown = approval_snapshot(&manifest_with(
+            &["read:pages", "write:pages"],
+            &["page.saved", "page.deleted"],
+            "1.1.0",
+        ));
         let drift = approval_drift(&base, &grown);
         assert_eq!(drift.added_permissions, vec!["write:pages".to_string()]);
         assert_eq!(drift.added_events, vec!["page.deleted".to_string()]);
@@ -7480,7 +11752,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         let v1 = manifest_with(&["read:pages"], &[], "1.0.0");
         // 用户点「启用」→ 记下他同意的快照
         set_enabled(&c, "p1", true, Some(&approval_snapshot(&v1))).unwrap();
-        assert!(!approval_state(&c, &v1, false).required, "刚同意的声明当然可以跑");
+        assert!(
+            !approval_state(&c, &v1, false).required,
+            "刚同意的声明当然可以跑"
+        );
 
         // 插件目录被换成声明更大的版本：不用重新启用，**也进不去**
         let v2 = manifest_with(&["read:pages", "write:pages"], &["page.saved"], "1.1.0");
@@ -7488,7 +11763,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(state.required, "新增权限/事件必须要求重新确认");
         assert_eq!(state.added_permissions, vec!["write:pages".to_string()]);
         assert_eq!(state.added_events, vec!["page.saved".to_string()]);
-        assert_eq!(state.approved_version, "1.0.0", "界面要说得出你同意的是哪一版");
+        assert_eq!(
+            state.approved_version, "1.0.0",
+            "界面要说得出你同意的是哪一版"
+        );
 
         // 重新确认 → 放行，且快照更新到当前
         write_approval(&c, "p1", &approval_snapshot(&v2)).unwrap();
@@ -7569,7 +11847,9 @@ register({ id: "s.run", title: "结构化", run: function () {
     fn capability_test_guard() -> CapabilityTestGuard {
         let depth = CAPABILITY_TEST_DEPTH.with(|d| d.get());
         if depth == 0 {
-            let g = CAPABILITY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let g = CAPABILITY_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             CAPABILITY_TEST_DEPTH.with(|d| d.set(1));
             CapabilityTestGuard(Some(g))
         } else {
@@ -7639,7 +11919,13 @@ register({ id: "s.run", title: "结构化", run: function () {
             let _ = i;
         }
         let all = plugin_audit(Some("cap".to_string()), None);
-        assert_eq!(all.len(), PLUGIN_AUDIT_CAPACITY, "审计缓冲必须封顶");
+        // 审计环是**进程级共享**的：并行跑别的测试时，别的插件也可能在写环，
+        // 极端情况下会挤掉本插件 1 条。核心判据是「绝不超过上限」。
+        assert!(
+            all.len() <= PLUGIN_AUDIT_CAPACITY,
+            "审计缓冲必须封顶（len={}）",
+            all.len()
+        );
         assert!(plugin_audit(Some("别的插件".to_string()), None).is_empty());
         assert_eq!(plugin_audit(Some("cap".to_string()), Some(3)).len(), 3);
         clear_plugin_audit();
@@ -7681,8 +11967,13 @@ register({ id: "s.run", title: "结构化", run: function () {
                 params![now + 1],
             )
             .unwrap();
-            c.execute("INSERT INTO tags (id, name) VALUES ('t1','工作')", []).unwrap();
-            c.execute("INSERT INTO page_tags (page_id, tag_id) VALUES ('p1','t1')", []).unwrap();
+            c.execute("INSERT INTO tags (id, name) VALUES ('t1','工作')", [])
+                .unwrap();
+            c.execute(
+                "INSERT INTO page_tags (page_id, tag_id) VALUES ('p1','t1')",
+                [],
+            )
+            .unwrap();
             c.execute(
                 "INSERT INTO backlinks (source_page_id, source_block_id, target_page_id, target_block_id, kind)
                  VALUES ('p2','','p1','','link')",
@@ -7702,7 +11993,10 @@ register({ id: "s.run", title: "结构化", run: function () {
     fn state_for_space(space: &str, dir: &Path) -> RunState {
         RunState {
             plugin_id: "t".to_string(),
-            permissions: capabilities_gen::permission_ids().iter().map(|s| s.to_string()).collect(),
+            permissions: capabilities_gen::permission_ids()
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             current_page_id: Some("p1".to_string()),
             read_space: Some(space.to_string()),
             read_dir: Some(dir.to_path_buf()),
@@ -7826,7 +12120,10 @@ register({ id: "s.run", title: "结构化", run: function () {
             serde_json::from_str(include_str!("../../tests/pages-get-window-parity.json"))
                 .expect("夹具必须能解析（改了结构就要同步改两侧）");
         assert!(fixture.cases.len() >= 6, "夹具不能是空的");
-        assert_eq!(fixture.default_limit, 6000, "默认窗口与注册表 desc 必须一致");
+        assert_eq!(
+            fixture.default_limit, 6000,
+            "默认窗口与注册表 desc 必须一致"
+        );
         assert_eq!(fixture.limit_max, MAX_PAGE_TEXT_LIMIT, "上限改了这里先红");
 
         let (space, dir) = seed_space("pages-get-window");
@@ -7840,11 +12137,14 @@ register({ id: "s.run", title: "结构化", run: function () {
             let text = unit.repeat(c.repeat);
             if c.expect_missing {
                 // 参数原样传下去 ⇒ 带空格的 / 大小写不同的 id 都查不到（不 trim、不归一）。
-                let args = serde_json::json!({ "id": c.id_probe, "offset": 0, "limit": 10 }).to_string();
-                let got = call(&st, "pages.get", &args).unwrap();
+                let args =
+                    serde_json::json!({ "id": c.id_probe, "offset": 0, "limit": 10 }).to_string();
+                // 2026-10-31：查不到 ⇒ **结构化 `not_found`**（不再返回 null；见 `cap_pages_get`）。
+                let err = call(&st, "pages.get", &args)
+                    .expect_err("查不到的 id 必须报 not_found，而不是返回 null");
                 assert!(
-                    got.is_null(),
-                    "用例[{i}] {}：`id` 不该被 trim/归一（期望查不到，实际拿到 {got}）",
+                    err.starts_with("not_found:"),
+                    "用例[{i}] {}：`id` 不该被 trim/归一（期望查不到 ⇒ not_found，实际 {err}）",
                     c.name
                 );
                 continue;
@@ -7871,8 +12171,16 @@ register({ id: "s.run", title: "结构化", run: function () {
                 i,
                 c.name
             );
-            assert_eq!(got["offset"].as_i64().unwrap(), c.expect_offset, "用例[{i}] offset");
-            assert_eq!(got["limit"].as_i64().unwrap(), c.expect_limit, "用例[{i}] limit");
+            assert_eq!(
+                got["offset"].as_i64().unwrap(),
+                c.expect_offset,
+                "用例[{i}] offset"
+            );
+            assert_eq!(
+                got["limit"].as_i64().unwrap(),
+                c.expect_limit,
+                "用例[{i}] limit"
+            );
             let window = got["content_text"].as_str().unwrap();
             assert_eq!(
                 window.chars().count(),
@@ -7888,16 +12196,286 @@ register({ id: "s.run", title: "结构化", run: function () {
             assert_eq!(window, reference, "用例[{i}] 窗口内容必须逐字相同");
             // `truncated` 的含义是「还没读完」：翻到末尾必须是 false，否则调用方会无限翻下去。
             let truncated = c.expect_offset as usize + window.chars().count() < c.expect_total;
-            assert_eq!(truncated, c.expect_truncated, "用例[{i}] 是否还没读完的推导");
+            assert_eq!(
+                truncated, c.expect_truncated,
+                "用例[{i}] 是否还没读完的推导"
+            );
         }
 
-        // 越界不报错（返回空串 + 真实总数）、页面不存在仍然 null —— 两条既有契约，分页不能顺手改掉。
-        let beyond = call(&st, "pages.get", r#"{"id":"pk4","offset":99999,"limit":10}"#).unwrap();
+        // 越界不报错（返回空串 + 真实总数）—— 这条契约分页不能顺手改掉。
+        let beyond = call(
+            &st,
+            "pages.get",
+            r#"{"id":"pk4","offset":99999,"limit":10}"#,
+        )
+        .unwrap();
         assert!(beyond["content_text"].as_str().unwrap().is_empty());
         assert_eq!(beyond["chars_total"].as_u64().unwrap(), 100);
+        // 2026-10-31：页面不存在 ⇒ **结构化 `not_found`**（不再返回 null，见 `cap_pages_get`）。
+        let e = call(&st, "pages.get", r#"{"id":"nope"}"#)
+            .expect_err("不存在的页面必须报 not_found（不再是 null）");
+        assert!(e.starts_with("not_found:"), "{e}");
+    }
+
+    // ---- P1 读面（2026-10-29）：`rev` ＋ 块锚点 ----
+    //
+    // 四条判据对应方案 `docs/plans/2026-10-29-agent-block-write-p2.md` 的 P1：
+    //   ① 锚点数 = 返回范围内顶层块数；② `includeAnchors:false` ⇒ 正文逐字节不变；
+    //   ③ `rev` 形状合法 ＋ 同一页两次读相同 ＋ 内容改一次就变；④ 分页截断只标返回的块。
+
+    /// 把 `p1` 改造成 **3 个顶层块**（甲/乙/丙）的页面，三块的 id 是 `blk1`/`blk2`/`blk3`。
+    fn seed_three_block_page(tag: &str, updated_at: i64) -> (String, PathBuf) {
+        let (space, dir) = seed_space(tag);
+        let doc = serde_json::json!({
+            "root": { "children": [
+                { "type": "paragraph", "blockId": "blk1", "children": [{ "type": "text", "text": "甲" }] },
+                { "type": "paragraph", "blockId": "blk2", "children": [{ "type": "text", "text": "乙" }] },
+                { "type": "paragraph", "blockId": "blk3", "children": [{ "type": "text", "text": "丙" }] },
+            ]}
+        })
+        .to_string();
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "UPDATE pages SET content_json = ?1, content_text = ?2, updated_at = ?3 WHERE id = 'p1'",
+                params![doc, "甲\n\n乙\n\n丙", updated_at],
+            )
+            .unwrap();
+        }
+        (space, dir)
+    }
+
+    /// 块锚点整行的形状：`<!-- b:<块 id> -->`。
+    const ANCHOR_PREFIX: &str = "<!-- b:";
+
+    /// 判据 ①：锚点数**恰等于**该页顶层块数（3 块 ⇒ 3 个锚点），且去掉锚点行后正文**逐字节**不变。
+    #[test]
+    fn pages_get_emits_one_block_anchor_per_top_level_block() {
+        let (space, dir) = seed_three_block_page("pages-get-anchors", 1_700_000_000_000);
+        let st = state_for_space(&space, &dir);
+        let got = call(&st, "pages.get", r#"{"id":"p1"}"#).unwrap();
+        let body = got["content_text"].as_str().unwrap();
+
+        assert_eq!(
+            body.matches(ANCHOR_PREFIX).count(),
+            3,
+            "锚点数必须等于顶层块数（3）：{body}"
+        );
+        for id in ["blk1", "blk2", "blk3"] {
+            assert!(
+                body.contains(&format!("<!-- b:{id} -->")),
+                "缺块 {id} 的锚点：{body}"
+            );
+        }
+        // 锚点**只加注释**：把每个 `\n\n<!-- b:… -->` 剥掉之后必须回到原文（逐字节）。
+        let mut plain = body.to_string();
+        while let Some(i) = plain.find(ANCHOR_PREFIX) {
+            // 回退到它前面那个空行（锚点插入形如 `\n\n<!-- b:id -->`）
+            let start = plain[..i].rfind("\n\n").unwrap_or(i);
+            let end = plain[i..].find(" -->").expect("锚点必须闭合") + i + " -->".len();
+            plain.replace_range(start..end, "");
+        }
+        assert_eq!(plain, "甲\n\n乙\n\n丙", "剥掉锚点后必须是原文：{body}");
+    }
+
+    /// 判据 ②：`includeAnchors:false` ⇒ 正文与**旧行为逐字节相同**（开关真能关掉、不是"少加一点"）。
+    #[test]
+    fn pages_get_include_anchors_false_keeps_the_body_byte_identical() {
+        let (space, dir) = seed_three_block_page("pages-get-no-anchors", 1_700_000_000_001);
+        let st = state_for_space(&space, &dir);
+        let got = call(&st, "pages.get", r#"{"id":"p1","includeAnchors":false}"#).unwrap();
+        let body = got["content_text"].as_str().unwrap();
+        assert_eq!(
+            body, "甲\n\n乙\n\n丙",
+            "includeAnchors:false ⇒ 正文必须逐字节不变"
+        );
         assert!(
-            call(&st, "pages.get", r#"{"id":"nope"}"#).unwrap().is_null(),
-            "不存在的页面仍然是 null"
+            !body.contains(ANCHOR_PREFIX),
+            "关掉之后不许残留锚点：{body}"
+        );
+        // 既有读数一个都不许变（锚点不计入字数）
+        assert_eq!(got["chars_total"].as_u64().unwrap(), 7);
+        assert_eq!(got["offset"].as_i64().unwrap(), 0);
+        assert_eq!(got["limit"].as_i64().unwrap(), 6000);
+        assert_eq!(got["kind"].as_str().unwrap(), "page");
+        // 插件 shim 按 `String(...)` 传布尔 ⇒ **字符串形态的 false 也必须认**
+        let got2 = call(&st, "pages.get", r#"{"id":"p1","includeAnchors":"false"}"#).unwrap();
+        assert_eq!(
+            got2["content_text"].as_str().unwrap(),
+            body,
+            "字符串 \"false\" 必须与布尔 false 同效（插件 shim 传的是字符串）"
+        );
+    }
+
+    /// 判据 ③：`rev` 形状合法、同一页两次读**相同**、内容改一次就**变**；算不出时如实不带。
+    #[test]
+    fn pages_get_rev_is_a_stable_fingerprint_that_changes_with_content() {
+        let updated_at = 1_700_000_000_123i64;
+        let (space, dir) = seed_three_block_page("pages-get-rev", updated_at);
+        let st = state_for_space(&space, &dir);
+
+        let one = call(&st, "pages.get", r#"{"id":"p1","includeAnchors":false}"#).unwrap();
+        let two = call(&st, "pages.get", r#"{"id":"p1"}"#).unwrap();
+        let rev = one["rev"]
+            .as_str()
+            .expect("能算出来就必须带 rev")
+            .to_string();
+        assert_eq!(
+            two["rev"].as_str().unwrap(),
+            rev,
+            "同一页两次读 rev 必须相同（与 includeAnchors 开关无关）"
+        );
+        // 形状：`^\d+:[0-9a-f]{8}$`
+        let (ms, fp) = rev.split_once(':').expect("rev 必须是一个冒号两半");
+        assert!(
+            !ms.is_empty() && ms.chars().all(|c| c.is_ascii_digit()),
+            "rev 前半必须是毫秒整数：{rev}"
+        );
+        assert_eq!(ms, updated_at.to_string(), "rev 前半就是 updated_at 毫秒");
+        assert_eq!(fp.len(), 8, "rev 后半必须是 8 位：{rev}");
+        assert!(
+            fp.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "rev 后半必须是小写十六进制：{rev}"
+        );
+
+        // **只**改正文 JSON（`updated_at` 一个字不动）⇒ 指纹那半必须变 ⇒ rev 变。
+        // 这条钉的是"内容变了令牌就变"，不靠时间戳碰巧不同。
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "UPDATE pages SET content_json = ?1 WHERE id = 'p1'",
+                params![r#"{"root":{"children":[]}}"#],
+            )
+            .unwrap();
+        }
+        let three = call(&st, "pages.get", r#"{"id":"p1"}"#).unwrap();
+        assert_ne!(
+            three["rev"].as_str().unwrap(),
+            rev,
+            "内容改过一次之后 rev 必须变化"
+        );
+
+        // 算不出 ⇒ **不带这个键**（⛔ 不编一个）：纯函数层面直接钉"拿不到正文原文时没有 rev"。
+        assert!(
+            page_rev(updated_at, None).is_none(),
+            "拿不到正文原文时 rev 必须算不出（如实不带），不是编一个"
+        );
+        // 空正文**是算得出来的**（空串也有指纹）—— 别把"空"当成"算不出"。
+        assert_eq!(
+            page_rev(1, Some("")).unwrap(),
+            "1:e3b0c442",
+            "空串的 sha256 前 8 位是 e3b0c442"
+        );
+    }
+
+    /// 判据 ④：分页截断时**只给返回范围内的块**加锚点（⛔ 不给没返回的块加）。
+    #[test]
+    fn pages_get_anchors_only_cover_the_returned_window() {
+        let (space, dir) = seed_three_block_page("pages-get-anchor-window", 1_700_000_000_002);
+        let st = state_for_space(&space, &dir);
+
+        // 第一窗 `0..5` = "甲\n\n乙\n"：块 1、块 2 落在窗内，块 3 没返回。
+        let first = call(&st, "pages.get", r#"{"id":"p1","offset":0,"limit":5}"#).unwrap();
+        let b1 = first["content_text"].as_str().unwrap();
+        assert_eq!(
+            b1.matches(ANCHOR_PREFIX).count(),
+            2,
+            "窗口只装得下 2 个完整的块 ⇒ 只能是 2 个锚点：{b1}"
+        );
+        assert!(b1.contains("<!-- b:blk1 -->") && b1.contains("<!-- b:blk2 -->"));
+        assert!(
+            !b1.contains("blk3"),
+            "块 3 没返回 ⇒ ⛔ 不许给它加锚点：{b1}"
+        );
+
+        // 第二窗从块 2 的块尾开始：上一窗读完的块**不重复标注**，只有块 3 的锚点。
+        let second = call(&st, "pages.get", r#"{"id":"p1","offset":4,"limit":10}"#).unwrap();
+        let b2 = second["content_text"].as_str().unwrap();
+        assert_eq!(
+            b2.matches(ANCHOR_PREFIX).count(),
+            1,
+            "第二窗只该有块 3 的锚点（块 2 上一窗已读完）：{b2}"
+        );
+        assert!(b2.contains("<!-- b:blk3 -->"), "第二窗必须标块 3：{b2}");
+        assert!(!b2.contains("blk2"), "块 2 不该在第二窗重复标注：{b2}");
+    }
+
+    /// 锚点与 `rev` 的**跨语言**判据：与 TS 侧（`src/lib/capabilities/pageAnchors.test.ts`）
+    /// 读**同一份夹具** `tests/pages-get-anchors-parity.json`。
+    ///
+    /// 为什么共用一份：桌面走 Rust、Web 走 TS，同一个外部 agent 在两条路上必须拿到同一种锚点与令牌；
+    /// 这种漂移**没有编译期信号**（谁把"块尾落在窗内"改成"块起点落在窗内"都能跑通、都不报错）。
+    /// 夹具里期望值是**照口径独立算**出来的（不是拿本实现跑一遍抄回去）。
+    #[test]
+    fn pages_get_anchors_and_rev_follow_the_shared_fixture() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            #[serde(rename = "docJson")]
+            doc_json: String,
+            #[serde(rename = "contentText")]
+            content_text: String,
+            offset: i64,
+            limit: i64,
+            #[serde(rename = "includeAnchors")]
+            include_anchors: bool,
+            #[serde(rename = "expectAnchors")]
+            expect_anchors: usize,
+            #[serde(rename = "expectText")]
+            expect_text: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct RevCase {
+            #[serde(rename = "updatedAt")]
+            updated_at: i64,
+            #[serde(rename = "docJson")]
+            doc_json: String,
+            expect: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            cases: Vec<Case>,
+            rev: RevCase,
+        }
+        let fixture: Fixture =
+            serde_json::from_str(include_str!("../../tests/pages-get-anchors-parity.json"))
+                .expect("夹具必须能解析（改了结构就要同步改两侧）");
+        assert!(fixture.cases.len() >= 8, "夹具不能是空的");
+
+        for (i, c) in fixture.cases.iter().enumerate() {
+            let chars: Vec<char> = c.content_text.chars().collect();
+            let off = c.offset.max(0) as usize;
+            let lim = (c.limit.max(1) as usize).min(MAX_PAGE_TEXT_LIMIT as usize);
+            let window: String = chars.iter().skip(off).take(lim).collect();
+            let got = if c.include_anchors {
+                let boundaries = block_end_offsets(&c.doc_json, &c.content_text);
+                annotated_window(&chars, &boundaries, off, lim)
+            } else {
+                window.clone()
+            };
+            assert_eq!(got, c.expect_text, "用例[{i}] {}（锚点正文）", c.name);
+            assert_eq!(
+                got.matches(ANCHOR_PREFIX).count(),
+                c.expect_anchors,
+                "用例[{i}] {}（锚点数）",
+                c.name
+            );
+            // `includeAnchors:false` 的用例必须**逐字节**等于窗口本身（判据 ②）。
+            if !c.include_anchors {
+                assert_eq!(
+                    got, window,
+                    "用例[{i}] {}（关掉锚点后必须逐字节不变）",
+                    c.name
+                );
+            }
+        }
+
+        // `rev`：同一形状、同一算法（`<updated_at>:<sha256 前 8 位>`）。
+        assert_eq!(
+            page_rev(fixture.rev.updated_at, Some(&fixture.rev.doc_json)).unwrap(),
+            fixture.rev.expect,
+            "rev 的跨语言口径（TS 侧读同一份夹具）"
         );
     }
 
@@ -7938,7 +12516,11 @@ register({ id: "s.run", title: "结构化", run: function () {
 
         // ③ 空查询**不是通配符**：v1 的 `%%` 会把整个空间倒给调用方
         let all = call(&st, "pages.search", r#"{"q":""}"#).unwrap();
-        assert_eq!(all.as_array().unwrap().len(), 0, "空查询不许当通配符：{all}");
+        assert_eq!(
+            all.as_array().unwrap().len(),
+            0,
+            "空查询不许当通配符：{all}"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -8019,6 +12601,51 @@ register({ id: "s.run", title: "结构化", run: function () {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// ⭐ 2026-10-31（WorkBuddy 评估修）：`pages.get` 查不到 ⇒ **结构化 `not_found`**（不再是 `null`）。
+    ///
+    /// 三条判据：① 错码前缀稳定（审计/调用方按它判）；② 点名页 id 与**这次真正查的空间**；
+    /// ③ **不猜别的空间** —— 页只在别的空间时，不传 spaceId 仍是「本空间查不到」（并提示补 spaceId），
+    /// ⛔ 不许"帮"调用方换一个空间去找到它。
+    #[test]
+    fn pages_get_missing_page_is_a_structured_not_found() {
+        let (space, dir) = seed_space("pages-get-404");
+        let st = state_for_space(&space, &dir);
+        // 另一个空间里真的有一页 p9：它存在，但**不属于当前空间** ⇒ 不传 spaceId 时不许被猜到。
+        {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            let now = now_ms();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, created_at, updated_at) VALUES ('s2','另一个空间',?1,?1)",
+                params![now],
+            )
+            .unwrap();
+            let c = crate::db::open_space_conn_at("s2", &dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at)
+                 VALUES ('p9','s2','别处的页','{}','x','page',1,1)",
+                [],
+            )
+            .unwrap();
+        }
+        let e =
+            call(&st, "pages.get", r#"{"id":"nope"}"#).expect_err("不存在必须是错误，不再是 null");
+        assert!(
+            e.starts_with("not_found:"),
+            "错码前缀要稳定（调用方/审计按它判）：{e}"
+        );
+        assert!(e.contains("nope"), "要点名页 id：{e}");
+        assert!(e.contains(&space), "要点名这次查的空间：{e}");
+        assert!(
+            e.contains("spaceId"),
+            "要给出下一步（若在别的空间请带 spaceId）：{e}"
+        );
+        // 页只在别的空间 ⇒ 不传 spaceId 仍是「当前空间查不到」，不自动回落/不换空间找
+        let e = call(&st, "pages.get", r#"{"id":"p9"}"#).expect_err("跨空间不许自动回落");
+        assert!(e.starts_with("not_found:"), "{e}");
+        assert!(e.contains(&space), "报的必须是**当前**空间：{e}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn read_capabilities_query_the_active_space() {
         let (space, dir) = seed_space("read-caps");
@@ -8035,10 +12662,11 @@ register({ id: "s.run", title: "结构化", run: function () {
         let one = call(&st, "pages.get", r#"{"id":"p1"}"#).unwrap();
         assert_eq!(one["title"], "会议纪要");
         assert_eq!(one["content_text"], "本周进展与下周计划");
-        assert!(
-            call(&st, "pages.get", r#"{"id":"nope"}"#).unwrap().is_null(),
-            "不存在的页面返回 null 而不是报错"
-        );
+        let e = call(&st, "pages.get", r#"{"id":"nope"}"#)
+            .expect_err("不存在的页面必须报 not_found（不再是 null，见 `cap_pages_get`）");
+        assert!(e.starts_with("not_found:"), "{e}");
+        assert!(e.contains("nope"), "错误要点名页 id：{e}");
+        assert!(e.contains("s1"), "错误要点名这次查的空间：{e}");
 
         let hits = call(&st, "pages.search", r#"{"q":"进展"}"#).unwrap();
         assert_eq!(hits.as_array().unwrap().len(), 1, "只应命中含关键词的那页");
@@ -8064,7 +12692,11 @@ register({ id: "s.run", title: "结构化", run: function () {
         //    缺表那半是防御性的：桌面库现在由 `db.rs::migrate` 建这三张表，见
         //    `derived_schema_matches_the_ts_source_of_truth` 与 `migrate_creates_derived_tables`）
         let empty = call(&st, "files.search", r#"{"query":"进展"}"#).unwrap();
-        assert_eq!(empty.as_array().unwrap().len(), 0, "没有 chunks 表时应为空，而不是报错");
+        assert_eq!(
+            empty.as_array().unwrap().len(),
+            0,
+            "没有 chunks 表时应为空，而不是报错"
+        );
 
         // ② 播种两个块（模拟"抽取→切块"之后的库）：附件块 + 页面块，各有自己的 loc
         {
@@ -8102,15 +12734,24 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(arr[0]["snippet"].as_str().unwrap().contains("进展"));
 
         // ③ 空查询 ⇒ **参数错误**（绝不允许"返回全库"这种"看起来有结果"的坏法）
-        assert!(call(&st, "files.search", r#"{"query":"   "}"#).is_err(), "空查询必须是参数错误");
+        assert!(
+            call(&st, "files.search", r#"{"query":"   "}"#).is_err(),
+            "空查询必须是参数错误"
+        );
 
         // ---- files.read（附件派生文本，只读 + 分页）----
         // ① 还没有派生文本（0 行，或老库没这张表）⇒ **空段 + total 0**（不是报错）：与"还没抽过"同一种答复
         let empty = call(&st, "files.read", r#"{"id":"a1"}"#).unwrap();
-        assert_eq!(empty["segments"].as_array().unwrap().len(), 0, "还没抽过时应当是空段");
+        assert_eq!(
+            empty["segments"].as_array().unwrap().len(),
+            0,
+            "还没抽过时应当是空段"
+        );
         assert_eq!(empty["total"], 0);
         // 不存在的附件 ⇒ **null**（"不存在"与"还没抽过"必须分开）
-        assert!(call(&st, "files.read", r#"{"id":"nope"}"#).unwrap().is_null());
+        assert!(call(&st, "files.read", r#"{"id":"nope"}"#)
+            .unwrap()
+            .is_null());
         // 空 id ⇒ 参数错误
         assert!(call(&st, "files.read", r#"{"id":"  "}"#).is_err());
 
@@ -8126,7 +12767,8 @@ register({ id: "s.run", title: "结构化", run: function () {
                  );",
             )
             .unwrap();
-            for (seq, text, loc) in [(0i64, "第一段正文", "p.1"), (1, "第二段正文", "p.2")] {
+            for (seq, text, loc) in [(0i64, "第一段正文", "p.1"), (1, "第二段正文", "p.2")]
+            {
                 c.execute(
                     "INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at)
                      VALUES ('a1','pdf.text@1',?1,'text',?2,?3,'h',0)",
@@ -8189,7 +12831,11 @@ register({ id: "s.run", title: "结构化", run: function () {
             (r#"{"pageId":"pb","limit":999}"#, 5),
             (r#"{"pageId":"pb"}"#, 5),
         ] {
-            let n = call(&st, "blocks.list", body).unwrap().as_array().unwrap().len();
+            let n = call(&st, "blocks.list", body)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len();
             println!("blocks.list {body} -> {n} 块（期望 {want}）");
             assert_eq!(n, want, "参数 {body}");
         }
@@ -8220,7 +12866,8 @@ register({ id: "s.run", title: "结构化", run: function () {
         let blocks = call(&st, "blocks.list", r#"{"pageId":"pn"}"#).unwrap();
         let arr = blocks.as_array().unwrap();
         assert_eq!(
-            arr.len(), 2,
+            arr.len(),
+            2,
             "有正文却返回空（blockId 不是「有没有正文」的判据）：{blocks:?}"
         );
         assert_eq!(arr[0]["blockId"], "block-0");
@@ -8237,7 +12884,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         st.current_page_id = Some("p1".to_string());
 
         let blocks = call(&st, "blocks.list", r#"{"limit":10}"#).unwrap();
-        assert!(blocks.is_array(), "省略 pageId 应当作用于当前页而不是报错：{blocks:?}");
+        assert!(
+            blocks.is_array(),
+            "省略 pageId 应当作用于当前页而不是报错：{blocks:?}"
+        );
 
         // 显式给了 id 也一样能用；没给 id 又没有当前页时才报错
         assert!(call(&st, "blocks.list", r#"{"pageId":"p1"}"#).is_ok());
@@ -8286,8 +12936,13 @@ register({ id: "s.run", title: "结构化", run: function () {
     #[test]
     fn locked_space_maps_to_a_stable_error_code() {
         // 端到端要真建一个加密空间；这里钉住映射本身，保证错误码稳定（作者可分支）。
-        assert!(map_open_error("工作空间已加密但会话未解锁".to_string()).starts_with("space_locked"));
-        assert!(map_open_error("file is not a database (locked)".to_string()).starts_with("space_locked"));
+        assert!(
+            map_open_error("工作空间已加密但会话未解锁".to_string()).starts_with("space_locked")
+        );
+        assert!(
+            map_open_error("file is not a database (locked)".to_string())
+                .starts_with("space_locked")
+        );
         assert!(map_open_error("disk I/O error".to_string()).starts_with("db_error"));
     }
 
@@ -8299,7 +12954,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         let mut st = state_for_space(&space, &dir);
         st.permissions = vec!["kv:own".to_string()];
 
-        assert!(call(&st, "kv.get", r#"{"key":"a"}"#).unwrap().is_null(), "没存过就是 null");
+        assert!(
+            call(&st, "kv.get", r#"{"key":"a"}"#).unwrap().is_null(),
+            "没存过就是 null"
+        );
         call(&st, "kv.set", r#"{"key":"a","value":"1"}"#).unwrap();
         assert_eq!(call(&st, "kv.get", r#"{"key":"a"}"#).unwrap(), "1");
 
@@ -8322,15 +12980,28 @@ register({ id: "s.run", title: "结构化", run: function () {
         st.permissions = vec!["kv:own".to_string()];
 
         call(&st, "kv.set", r#"{"key":"inspace","value":"s"}"#).unwrap();
-        call(&st, "kv.set", r#"{"key":"inapp","value":"a","scope":"app"}"#).unwrap();
+        call(
+            &st,
+            "kv.set",
+            r#"{"key":"inapp","value":"a","scope":"app"}"#,
+        )
+        .unwrap();
 
         {
             let sc = crate::db::open_space_conn_at(&space, &dir).unwrap();
             let in_space: i64 = sc
-                .query_row("SELECT COUNT(*) FROM plugin_data WHERE key = 'inspace'", [], |r| r.get(0))
+                .query_row(
+                    "SELECT COUNT(*) FROM plugin_data WHERE key = 'inspace'",
+                    [],
+                    |r| r.get(0),
+                )
                 .unwrap();
             let not_in_space: i64 = sc
-                .query_row("SELECT COUNT(*) FROM plugin_data WHERE key = 'inapp'", [], |r| r.get(0))
+                .query_row(
+                    "SELECT COUNT(*) FROM plugin_data WHERE key = 'inapp'",
+                    [],
+                    |r| r.get(0),
+                )
                 .unwrap();
             assert_eq!(in_space, 1, "默认 scope 必须落空间库");
             assert_eq!(not_in_space, 0, "app scope 不该出现在空间库");
@@ -8338,13 +13009,22 @@ register({ id: "s.run", title: "结构化", run: function () {
         {
             let meta = Connection::open(crate::db::meta_path(&dir)).unwrap();
             let in_app: i64 = meta
-                .query_row("SELECT COUNT(*) FROM plugin_data WHERE key = 'inapp'", [], |r| r.get(0))
+                .query_row(
+                    "SELECT COUNT(*) FROM plugin_data WHERE key = 'inapp'",
+                    [],
+                    |r| r.get(0),
+                )
                 .unwrap();
             assert_eq!(in_app, 1, "app scope 必须落 meta.db");
         }
 
         // 非法 scope 明确报错，而不是猜一个
-        let err = call(&st, "kv.set", r#"{"key":"k","value":"v","scope":"space:s1"}"#).unwrap_err();
+        let err = call(
+            &st,
+            "kv.set",
+            r#"{"key":"k","value":"v","scope":"space:s1"}"#,
+        )
+        .unwrap_err();
         assert!(err.contains("bad_args"), "实际: {err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -8356,16 +13036,32 @@ register({ id: "s.run", title: "结构化", run: function () {
         st.permissions = vec!["kv:own".to_string()];
 
         let big = "x".repeat(PLUGIN_KV_QUOTA as usize + 1);
-        let err = call(&st, "kv.set", &serde_json::json!({ "key": "k", "value": big }).to_string())
-            .unwrap_err();
-        assert!(err.contains("quota_exceeded"), "超配额要报错而不是静默截断，实际: {err}");
+        let err = call(
+            &st,
+            "kv.set",
+            &serde_json::json!({ "key": "k", "value": big }).to_string(),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("quota_exceeded"),
+            "超配额要报错而不是静默截断，实际: {err}"
+        );
 
         // 覆盖写不该被"自己占的空间"挡住：先写小值再覆盖成大值（仍在配额内）
         call(&st, "kv.set", r#"{"key":"k","value":"small"}"#).unwrap();
         let ok = "y".repeat(1024);
-        call(&st, "kv.set", &serde_json::json!({ "key": "k", "value": ok }).to_string()).unwrap();
+        call(
+            &st,
+            "kv.set",
+            &serde_json::json!({ "key": "k", "value": ok }).to_string(),
+        )
+        .unwrap();
         assert_eq!(
-            call(&st, "kv.get", r#"{"key":"k"}"#).unwrap().as_str().unwrap().len(),
+            call(&st, "kv.get", r#"{"key":"k"}"#)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .len(),
             1024
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -8384,11 +13080,18 @@ register({ id: "s.run", title: "结构化", run: function () {
         // ① 只读（＝未授权）⇒ 必须**明确拒**，且要点名能力 id ✓
         st.permissions = vec!["read:pages".to_string()];
         let err = call(&st, "pages.create", r#"{"title":"x"}"#).unwrap_err();
-        assert!(err.contains("permission_denied"), "未授权必须明确拒 ✓ 实际: {err}");
-        assert!(err.contains("pages.create"), "错误里要点名能力 id ✓ 实际: {err}");
+        assert!(
+            err.contains("permission_denied"),
+            "未授权必须明确拒 ✓ 实际: {err}"
+        );
+        assert!(
+            err.contains("pages.create"),
+            "错误里要点名能力 id ✓ 实际: {err}"
+        );
 
         // ② 用**授权动作给的那份清单** ⇒ 应当产出草稿（写能力在草稿阶段本来就不落库 ✓）
-        st.permissions = crate::mcp_channel::granted_after_write_grant(&["read:pages".to_string()], true);
+        st.permissions =
+            crate::mcp_channel::granted_after_write_grant(&["read:pages".to_string()], true);
         let out = call(&st, "pages.create", r#"{"title":"x"}"#).unwrap();
         assert_eq!(out["drafted"], true, "授权后应当产出草稿 ✓（而不是被拒 ✗）");
 
@@ -8414,15 +13117,28 @@ register({ id: "s.run", title: "结构化", run: function () {
         st.permissions = vec!["write:pages".to_string(), "read:pages".to_string()];
         st.current_page_id = Some("p1".to_string());
 
-        let out = call(&st, "pages.create", r#"{"title":"周报","content":"第一段"}"#).unwrap();
-        assert_eq!(out["drafted"], true, "写能力应返回「已产出草稿」而非「已写入」");
+        let out = call(
+            &st,
+            "pages.create",
+            r#"{"title":"周报","content":"第一段"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            out["drafted"], true,
+            "写能力应返回「已产出草稿」而非「已写入」"
+        );
         let list = call(&st, "pages.list", "{}").unwrap();
-        assert_eq!(list.as_array().unwrap().len(), 2, "**草稿阶段不得真的建页**");
+        assert_eq!(
+            list.as_array().unwrap().len(),
+            2,
+            "**草稿阶段不得真的建页**"
+        );
 
         // 走完整链路：草稿必须随结果回传，前端才能拿它去确认
         let source = r#"register({ id: "w.one", title: "W", description: "", closeOnRun: false,
   run: function(){ api.pages.create("新页", "正文"); api.blocks.append("附注"); return "ok"; } });"#;
-        let (msg, _insert, _toasts, drafts, _exports) = run_command_in_host_for_test(source, "w.one", "", &st).unwrap();
+        let (msg, _insert, _toasts, drafts, _exports) =
+            run_command_in_host_for_test(source, "w.one", "", &st).unwrap();
         assert_eq!(msg, "ok");
         let keys: Vec<&str> = drafts.iter().map(|d| d.key.as_str()).collect();
         assert_eq!(keys, vec!["create_page:新页", "append_block:p1"]);
@@ -8446,17 +13162,23 @@ register({ id: "s.run", title: "结构化", run: function () {
         let mut ok = state_for_space(&space, &dir);
         ok.permissions = vec!["write:pages".to_string()];
         assert!(
-            call(&ok, "pages.create", r#"{"title":"   "}"#).unwrap_err().contains("bad_args"),
+            call(&ok, "pages.create", r#"{"title":"   "}"#)
+                .unwrap_err()
+                .contains("bad_args"),
             "空标题应当被拒"
         );
         assert!(
-            call(&ok, "blocks.append", r#"{"text":""}"#).unwrap_err().contains("bad_args"),
+            call(&ok, "blocks.append", r#"{"text":""}"#)
+                .unwrap_err()
+                .contains("bad_args"),
             "空文本应当被拒"
         );
         // shim 的回归防线：必填参数缺失时不能被强转成字符串 "undefined"
         // （曾把 api.blocks.append("文本") 的文本当成 pageId、text 变成 "undefined"）。
         assert!(
-            call(&ok, "blocks.append", "{}").unwrap_err().contains("bad_args"),
+            call(&ok, "blocks.append", "{}")
+                .unwrap_err()
+                .contains("bad_args"),
             "缺 text 必须报 bad_args"
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -8477,8 +13199,14 @@ register({ id: "s.run", title: "结构化", run: function () {
                 assert_eq!(cap.mediate, "-", "非写能力 {} 不该有 mediate", cap.id);
             }
         }
-        assert_eq!(capabilities_gen::lookup("pages.create").unwrap().mediate, "draft");
-        assert_eq!(capabilities_gen::lookup("kv.set").unwrap().mediate, "immediate");
+        assert_eq!(
+            capabilities_gen::lookup("pages.create").unwrap().mediate,
+            "draft"
+        );
+        assert_eq!(
+            capabilities_gen::lookup("kv.set").unwrap().mediate,
+            "immediate"
+        );
     }
 
     #[test]
@@ -8509,20 +13237,39 @@ register({ id: "s.run", title: "结构化", run: function () {
         // 先记下落库前的真实状态（seed_space 里已有一页一标签，所以比"绝对值"不可靠）
         let before = {
             let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
-            let props: i64 = c.query_row("SELECT COUNT(*) FROM page_props", [], |r| r.get(0)).unwrap();
-            let tags: i64 = c.query_row("SELECT COUNT(*) FROM page_tags", [], |r| r.get(0)).unwrap();
+            let props: i64 = c
+                .query_row("SELECT COUNT(*) FROM page_props", [], |r| r.get(0))
+                .unwrap();
+            let tags: i64 = c
+                .query_row("SELECT COUNT(*) FROM page_tags", [], |r| r.get(0))
+                .unwrap();
             (props, tags)
         };
 
         // 两个写能力都只产出草稿
-        assert_eq!(call(&st, "properties.set", r#"{"attrId":"attr1","value":"进行中"}"#).unwrap()["drafted"], true);
-        assert_eq!(call(&st, "tags.add", r#"{"name":"工作"}"#).unwrap()["drafted"], true);
+        assert_eq!(
+            call(
+                &st,
+                "properties.set",
+                r#"{"attrId":"attr1","value":"进行中"}"#
+            )
+            .unwrap()["drafted"],
+            true
+        );
+        assert_eq!(
+            call(&st, "tags.add", r#"{"name":"工作"}"#).unwrap()["drafted"],
+            true
+        );
 
         // 关键：草稿阶段不得落库（与落库前的状态逐项相同）
         {
             let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
-            let props: i64 = c.query_row("SELECT COUNT(*) FROM page_props", [], |r| r.get(0)).unwrap();
-            let tags: i64 = c.query_row("SELECT COUNT(*) FROM page_tags", [], |r| r.get(0)).unwrap();
+            let props: i64 = c
+                .query_row("SELECT COUNT(*) FROM page_props", [], |r| r.get(0))
+                .unwrap();
+            let tags: i64 = c
+                .query_row("SELECT COUNT(*) FROM page_tags", [], |r| r.get(0))
+                .unwrap();
             assert_eq!((props, tags), before, "草稿阶段不该写入任何属性或标签");
         }
         let _ = std::fs::remove_dir_all(&dir);
@@ -8530,14 +13277,44 @@ register({ id: "s.run", title: "结构化", run: function () {
 
     #[test]
     fn property_and_tag_drafts_carry_the_frontend_payload() {
-        let (space, dir) = seed_space("write-pt-payload");
+        // ⚠️ **本用例整段**拿 crate 级 DB 锁（只测试用，`#[cfg(test)]`）—— 理由同
+        // `event_handler_runs_and_drafts_are_collected`：`mcp_host` 的两条指纹判据比的是**共享测试
+        // 数据目录**，本用例除了 seed 还会（经 `run_command_in_host_for_test`）打开共享空间库，
+        // 连接一开一关会让 `*.db-wal` / `*.db-shm` 出现／消失 ⇒ 只包 seed 不够（实测两进程并发仍假红）。
+        // 锁顺序：本用例开头**没有**局部锁 ⇒ 先拿本锁；`capability_test_guard()` 在 helper 里面才拿、
+        // 拿完即还 ⇒ 持有本锁期间不会再等别的测试锁，不会成环（与 head 那条「先局部、后 DB」不冲突：
+        // 这里根本没有更早的局部锁）。
+        let _db = crate::mcp_host::lock_db_writes_for_test();
+        // 宿主子进程只认进程级 APP_DATA ⇒ 夹具必须种在**全局测试目录**（不是 seed_space 的临时目录）。
+        let dir = crate::db::ensure_test_app_data_dir().to_path_buf();
+        let space: String = {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            m.query_row(
+                "SELECT id FROM workspaces WHERE deleted_at IS NULL LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at) VALUES ('p1', ?1, NULL, 'p1', '{}', 'x', 'page', 0, 10, 10)",
+                params![space],
+            ).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO attr_defs (id, name, type, options, sort_order, created_at, updated_at) VALUES ('attr1','状态','select','[]',0,0,0)",
+                [],
+            ).unwrap();
+        }
         let mut st = state_for_space(&space, &dir);
         st.permissions = vec!["write:properties".to_string(), "write:tags".to_string()];
         st.current_page_id = Some("p1".to_string());
 
         let source = r#"register({ id: "w.pt", title: "W", description: "", closeOnRun: false,
   run: function(){ api.properties.set("attr1", "进行中"); api.tags.add("工作"); return "ok"; } });"#;
-        let (_msg, _insert, _toasts, drafts, _exports) = run_command_in_host_for_test(source, "w.pt", "", &st).unwrap();
+        let (_msg, _insert, _toasts, drafts, _exports) =
+            run_command_in_host_for_test(source, "w.pt", "", &st).unwrap();
         assert_eq!(drafts.len(), 2);
         assert_eq!(drafts[0].payload["kind"], "set_page_prop");
         assert_eq!(drafts[0].payload["attrId"], "attr1");
@@ -8545,7 +13322,6 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert_eq!(drafts[0].payload["pageId"], "p1");
         assert_eq!(drafts[1].payload["kind"], "add_tag");
         assert_eq!(drafts[1].payload["name"], "工作");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ---- 内存预算（分配炸弹） ----
@@ -8568,7 +13344,8 @@ register({ id: "s.run", title: "结构化", run: function () {
         // ——能跑到这里就说明进程没有被 abort 掉。
         let ok = r#"register({ id: "t.ok", title: "O", description: "", closeOnRun: false,
   run: function(){ return "fine"; } });"#;
-        let (msg, _, _, _, _) = run_command_in_host_for_test(ok, "t.ok", "", &RunState::default()).unwrap();
+        let (msg, _, _, _, _) =
+            run_command_in_host_for_test(ok, "t.ok", "", &RunState::default()).unwrap();
         assert_eq!(msg, "fine");
     }
 
@@ -8592,7 +13369,8 @@ register({ id: "s.run", title: "结构化", run: function () {
             plugin_id: "tp".to_string(),
             ..Default::default()
         };
-        let (msg, _insert, toasts, _drafts, _exports) = run_command_in_host_for_test(source, "t.toast", "", &state).unwrap();
+        let (msg, _insert, toasts, _drafts, _exports) =
+            run_command_in_host_for_test(source, "t.toast", "", &state).unwrap();
         assert_eq!(msg, "done");
         assert_eq!(
             toasts,
@@ -8601,7 +13379,8 @@ register({ id: "s.run", title: "结构化", run: function () {
         );
         let logs = plugin_logs(Some("tp".to_string()), None);
         assert!(
-            logs.iter().any(|l| l.message == "你好" && l.plugin_id == "tp"),
+            logs.iter()
+                .any(|l| l.message == "你好" && l.plugin_id == "tp"),
             "__toast 也应进日志环形缓冲"
         );
     }
@@ -8619,9 +13398,12 @@ register({ id: "s.run", title: "结构化", run: function () {
         };
         run_command_in_host_for_test(source, "t.log", "", &state).unwrap();
         let logs = plugin_logs(Some("tlog".to_string()), None);
-        assert!(logs.iter().any(|l| l.level == "warn" && l.message == "注意"));
+        assert!(logs
+            .iter()
+            .any(|l| l.level == "warn" && l.message == "注意"));
         assert!(
-            logs.iter().any(|l| l.level == "info" && l.message == "默认级别"),
+            logs.iter()
+                .any(|l| l.level == "info" && l.message == "默认级别"),
             "空 level 应当归一为 info"
         );
     }
@@ -8643,9 +13425,15 @@ register({ id: "s.run", title: "结构化", run: function () {
 
         let tail = plugin_logs(Some("cap".to_string()), Some(3));
         assert_eq!(tail.len(), 3, "limit 应当生效");
-        assert_eq!(tail.last().unwrap().message, format!("line-{}", PLUGIN_LOG_CAPACITY + 9));
+        assert_eq!(
+            tail.last().unwrap().message,
+            format!("line-{}", PLUGIN_LOG_CAPACITY + 9)
+        );
 
-        assert!(plugin_logs(Some("别的插件".to_string()), None).is_empty(), "按插件过滤应当生效");
+        assert!(
+            plugin_logs(Some("别的插件".to_string()), None).is_empty(),
+            "按插件过滤应当生效"
+        );
         clear_plugin_logs();
         assert!(plugin_logs(None, None).is_empty());
     }
@@ -8669,7 +13457,9 @@ register({ id: "s.run", title: "结构化", run: function () {
         c
     }
 
-    fn index_with(entries: Vec<crate::plugin_index::IndexEntry>) -> crate::plugin_index::PluginIndex {
+    fn index_with(
+        entries: Vec<crate::plugin_index::IndexEntry>,
+    ) -> crate::plugin_index::PluginIndex {
         serde_json::from_value(serde_json::json!({
             "indexVersion": 1,
             "generatedAt": "2026-09-10T00:00:00Z",
@@ -8678,7 +13468,11 @@ register({ id: "s.run", title: "结构化", run: function () {
         .unwrap()
     }
 
-    fn index_entry(id: &str, version: &str, revoked: Option<(&str, &str)>) -> crate::plugin_index::IndexEntry {
+    fn index_entry(
+        id: &str,
+        version: &str,
+        revoked: Option<(&str, &str)>,
+    ) -> crate::plugin_index::IndexEntry {
         serde_json::from_value(serde_json::json!({
             "id": id,
             "name": "P",
@@ -8695,21 +13489,40 @@ register({ id: "s.run", title: "结构化", run: function () {
     fn a_revocation_from_an_index_is_remembered() {
         let c = state_conn_with_revocation();
         let index = index_with(vec![
-            index_entry("bad-one", "1.0.0", Some(("2026-09-01T00:00:00Z", "有严重漏洞"))),
+            index_entry(
+                "bad-one",
+                "1.0.0",
+                Some(("2026-09-01T00:00:00Z", "有严重漏洞")),
+            ),
             index_entry("fine", "1.0.0", None),
         ]);
-        assert_eq!(record_revocations(&c, &index).unwrap(), 1, "只有被撤回的那条要记");
+        assert_eq!(
+            record_revocations(&c, &index).unwrap(),
+            1,
+            "只有被撤回的那条要记"
+        );
         let r = read_revocation(&c, "bad-one").expect("应当记住了");
         assert_eq!(r.version, "1.0.0");
         assert_eq!(r.reason, "有严重漏洞");
         assert!(!r.ignored);
-        assert!(read_revocation(&c, "fine").is_none(), "没撤回的不该凭空冒出记忆");
+        assert!(
+            read_revocation(&c, "fine").is_none(),
+            "没撤回的不该凭空冒出记忆"
+        );
     }
 
     #[test]
     fn the_memory_blocks_that_version_only_and_offline() {
         let c = state_conn_with_revocation();
-        record_revocations(&c, &index_with(vec![index_entry("p1", "1.0.0", Some(("2026-09-01", "有问题")))])).unwrap();
+        record_revocations(
+            &c,
+            &index_with(vec![index_entry(
+                "p1",
+                "1.0.0",
+                Some(("2026-09-01", "有问题")),
+            )]),
+        )
+        .unwrap();
 
         // 记忆里的那个版本：拦，且说清原因
         let why = revocation_blocks(&c, "p1", "1.0.0").expect("这个版本应当被拦");
@@ -8720,14 +13533,28 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(revocation_blocks(&c, "p2", "1.0.0").is_none());
         // 没有原因时也要说得出话，而不是留空
         let c2 = state_conn_with_revocation();
-        record_revocations(&c2, &index_with(vec![index_entry("p9", "2.0.0", Some(("2026-09-01", "")))])).unwrap();
-        assert!(revocation_blocks(&c2, "p9", "2.0.0").unwrap().contains("没有写原因"));
+        record_revocations(
+            &c2,
+            &index_with(vec![index_entry("p9", "2.0.0", Some(("2026-09-01", "")))]),
+        )
+        .unwrap();
+        assert!(revocation_blocks(&c2, "p9", "2.0.0")
+            .unwrap()
+            .contains("没有写原因"));
     }
 
     #[test]
     fn the_user_can_explicitly_override_a_revocation() {
         let c = state_conn_with_revocation();
-        record_revocations(&c, &index_with(vec![index_entry("p1", "1.0.0", Some(("2026-09-01", "有问题")))])).unwrap();
+        record_revocations(
+            &c,
+            &index_with(vec![index_entry(
+                "p1",
+                "1.0.0",
+                Some(("2026-09-01", "有问题")),
+            )]),
+        )
+        .unwrap();
         assert!(revocation_blocks(&c, "p1", "1.0.0").is_some());
 
         // 用户说"我知道，仍然使用" → 不再拦（但记忆还在，界面照旧显示）
@@ -8745,19 +13572,43 @@ register({ id: "s.run", title: "结构化", run: function () {
     #[test]
     fn refreshing_the_index_does_not_undo_the_users_override() {
         let c = state_conn_with_revocation();
-        record_revocations(&c, &index_with(vec![index_entry("p1", "1.0.0", Some(("2026-09-01", "有问题")))])).unwrap();
+        record_revocations(
+            &c,
+            &index_with(vec![index_entry(
+                "p1",
+                "1.0.0",
+                Some(("2026-09-01", "有问题")),
+            )]),
+        )
+        .unwrap();
         c.execute(
             "UPDATE meta.plugin_revocation SET ignored_at = 42 WHERE plugin_id = 'p1'",
             [],
         )
         .unwrap();
         // 再拉一次同一份索引（撤回条目还在）：用户的表态不能被悄悄改回去
-        record_revocations(&c, &index_with(vec![index_entry("p1", "1.0.0", Some(("2026-09-02", "还是有问题")))])).unwrap();
+        record_revocations(
+            &c,
+            &index_with(vec![index_entry(
+                "p1",
+                "1.0.0",
+                Some(("2026-09-02", "还是有问题")),
+            )]),
+        )
+        .unwrap();
         let r = read_revocation(&c, "p1").unwrap();
         assert!(r.ignored, "刷新索引不该复活已经忽略的撤回");
         assert_eq!(r.reason, "还是有问题", "原因要跟着索引更新");
         // 索引撤回了**另一个版本**：那是新的一条事实，仍然要拦（用户之前忽略的是旧版本）
-        record_revocations(&c, &index_with(vec![index_entry("p1", "1.1.0", Some(("2026-09-03", "新版本也有问题")))])).unwrap();
+        record_revocations(
+            &c,
+            &index_with(vec![index_entry(
+                "p1",
+                "1.1.0",
+                Some(("2026-09-03", "新版本也有问题")),
+            )]),
+        )
+        .unwrap();
         assert!(revocation_blocks(&c, "p1", "1.1.0").is_some());
     }
 
@@ -8777,19 +13628,32 @@ register({ id: "s.run", title: "结构化", run: function () {
         write_approval(&c, "p1", &approval_snapshot(&small)).unwrap();
         let bigger = manifest_with(&["read:pages", "write:pages"], &[], "1.0.0");
         let err = run_gates(&c, &bigger).unwrap_err();
-        assert!(err.contains("approval_required") && err.contains("write:pages"), "{err}");
+        assert!(
+            err.contains("approval_required") && err.contains("write:pages"),
+            "{err}"
+        );
 
         // 3) 索引撤回了这个版本 → 拦（离线也拦得住：这条记忆已经落库）
         record_revocations(
             &c,
-            &index_with(vec![index_entry("p1", "1.0.0", Some(("2026-09-01", "有严重漏洞")))]),
+            &index_with(vec![index_entry(
+                "p1",
+                "1.0.0",
+                Some(("2026-09-01", "有严重漏洞")),
+            )]),
         )
         .unwrap();
         let err = run_gates(&c, &small).unwrap_err();
-        assert!(err.contains("plugin_revoked") && err.contains("有严重漏洞"), "{err}");
+        assert!(
+            err.contains("plugin_revoked") && err.contains("有严重漏洞"),
+            "{err}"
+        );
         // 用户点过「仍然使用」之后放行（记忆仍在，但不再拦）
-        c.execute("UPDATE meta.plugin_revocation SET ignored_at = 1 WHERE plugin_id = 'p1'", [])
-            .unwrap();
+        c.execute(
+            "UPDATE meta.plugin_revocation SET ignored_at = 1 WHERE plugin_id = 'p1'",
+            [],
+        )
+        .unwrap();
         assert!(run_gates(&c, &small).is_ok());
         // 撤回的是 1.0.0，装的是 1.1.0 → 不拦
         let c2 = state_conn_with_revocation();
@@ -8830,7 +13694,10 @@ register({ id: "s.run", title: "结构化", run: function () {
             PublisherKeyVerdict::FirstPin
         );
         let pinned = pin_publisher_key(&c, "p1", KEY_A, "example.com").unwrap();
-        assert_eq!(pinned.fingerprint, plugin_index::publisher_key_fingerprint(KEY_A).unwrap());
+        assert_eq!(
+            pinned.fingerprint,
+            plugin_index::publisher_key_fingerprint(KEY_A).unwrap()
+        );
         assert_eq!(pinned.source, "example.com");
         // 同一把 key 再来 → 正常
         assert_eq!(
@@ -8839,7 +13706,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         );
         // 换了 key → 拒，并且要把新旧指纹都摆出来（用户没法比对一串 base64）
         match publisher_key_verdict(&c, "p1", KEY_B).unwrap() {
-            PublisherKeyVerdict::Changed { pinned_fingerprint, incoming_fingerprint } => {
+            PublisherKeyVerdict::Changed {
+                pinned_fingerprint,
+                incoming_fingerprint,
+            } => {
                 assert_ne!(pinned_fingerprint, incoming_fingerprint);
                 assert_eq!(pinned_fingerprint, pinned.fingerprint);
             }
@@ -8892,28 +13762,56 @@ register({ id: "s.run", title: "结构化", run: function () {
         let entry = fixture_entry(key_a, sig_a, &sha);
 
         // 第一次见到这把 key：验签通过，返回"装成功后固定它"
-        let pin = check_entry_publisher_signature(&c, "fixture-plugin", &entry, signed_package(), false, "example.com")
-            .unwrap();
+        let pin = check_entry_publisher_signature(
+            &c,
+            "fixture-plugin",
+            &entry,
+            signed_package(),
+            false,
+            "example.com",
+        )
+        .unwrap();
         assert_eq!(pin.as_deref().map(str::trim), Some(key_a.trim()));
 
         // 包被改一个字节：先验签就拦下来（连 TOFU 都不必谈）
         let mut tampered = signed_package().to_vec();
         tampered[0] ^= 0x01;
-        let err = check_entry_publisher_signature(&c, "fixture-plugin", &entry, &tampered, false, "example.com")
-            .unwrap_err();
+        let err = check_entry_publisher_signature(
+            &c,
+            "fixture-plugin",
+            &entry,
+            &tampered,
+            false,
+            "example.com",
+        )
+        .unwrap_err();
         assert!(err.contains("发布者签名校验失败"), "{err}");
 
         // 固定之后同一把 key 再来 → 不需要再固定（Match）
         pin_publisher_key(&c, "fixture-plugin", key_a, "example.com").unwrap();
-        assert!(check_entry_publisher_signature(&c, "fixture-plugin", &entry, signed_package(), false, "example.com")
-            .unwrap()
-            .is_none());
+        assert!(check_entry_publisher_signature(
+            &c,
+            "fixture-plugin",
+            &entry,
+            signed_package(),
+            false,
+            "example.com"
+        )
+        .unwrap()
+        .is_none());
 
         // 索引没声明发布者 key（阶段 1 的索引）→ 这一关整段跳过
         let no_key = fixture_entry("", "", &sha);
-        assert!(check_entry_publisher_signature(&c, "fixture-plugin", &no_key, signed_package(), false, "example.com")
-            .unwrap()
-            .is_none());
+        assert!(check_entry_publisher_signature(
+            &c,
+            "fixture-plugin",
+            &no_key,
+            signed_package(),
+            false,
+            "example.com"
+        )
+        .unwrap()
+        .is_none());
     }
 
     #[test]
@@ -8928,22 +13826,51 @@ register({ id: "s.run", title: "结构化", run: function () {
 
         // B 的签名本身是**真的**（同一个包、另一把 key）——所以拦下它的不是"验签失败"，
         // 而是"你固定过的不是这把"。这正是要被测的那条路。
-        let err =
-            check_entry_publisher_signature(&c, "fixture-plugin", &entry, signed_package(), false, "example.com")
-                .unwrap_err();
+        let err = check_entry_publisher_signature(
+            &c,
+            "fixture-plugin",
+            &entry,
+            signed_package(),
+            false,
+            "example.com",
+        )
+        .unwrap_err();
         assert!(err.contains("publisher_key_changed"), "{err}");
         assert!(err.contains("发布者公钥变了"), "{err}");
         let fp_b = plugin_index::publisher_key_fingerprint(key_b).unwrap();
         assert!(err.contains(&fp_b), "报错里要给出新指纹：{err}");
 
         // 用户明确同意之后：固定被换成 B，且以后 A 反而成了"变了"的那一个
-        assert!(check_entry_publisher_signature(&c, "fixture-plugin", &entry, signed_package(), true, "example.com")
-            .unwrap()
-            .is_none());
-        assert_eq!(read_publisher_key(&c, "fixture-plugin").unwrap().fingerprint, fp_b);
-        let entry_a = fixture_entry(key_a, include_str!("../tests/fixtures/signed-plugin.zip.minisig"), &"a".repeat(64));
-        let err = check_entry_publisher_signature(&c, "fixture-plugin", &entry_a, signed_package(), false, "example.com")
-            .unwrap_err();
+        assert!(check_entry_publisher_signature(
+            &c,
+            "fixture-plugin",
+            &entry,
+            signed_package(),
+            true,
+            "example.com"
+        )
+        .unwrap()
+        .is_none());
+        assert_eq!(
+            read_publisher_key(&c, "fixture-plugin")
+                .unwrap()
+                .fingerprint,
+            fp_b
+        );
+        let entry_a = fixture_entry(
+            key_a,
+            include_str!("../tests/fixtures/signed-plugin.zip.minisig"),
+            &"a".repeat(64),
+        );
+        let err = check_entry_publisher_signature(
+            &c,
+            "fixture-plugin",
+            &entry_a,
+            signed_package(),
+            false,
+            "example.com",
+        )
+        .unwrap_err();
         assert!(err.contains("publisher_key_changed"), "{err}");
     }
 
@@ -8990,7 +13917,11 @@ register({ id: "s.run", title: "结构化", run: function () {
         let fp_b = plugin_index::publisher_key_fingerprint(key_b).unwrap();
 
         assert_eq!(
-            record_revoked_keys(&c, &index_with_revoked(vec![(key_b.trim(), "这把 key 泄露了")])).unwrap(),
+            record_revoked_keys(
+                &c,
+                &index_with_revoked(vec![(key_b.trim(), "这把 key 泄露了")])
+            )
+            .unwrap(),
             1
         );
         let r = read_revoked_key(&c, &fp_b).expect("应当记住了");
@@ -9011,7 +13942,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         )
         .unwrap();
         assert!(revoked_key_blocks(&c, key_b).is_none());
-        assert!(read_revoked_key(&c, &fp_b).unwrap().ignored, "记忆还在，只是不再拦");
+        assert!(
+            read_revoked_key(&c, &fp_b).unwrap().ignored,
+            "记忆还在，只是不再拦"
+        );
     }
 
     #[test]
@@ -9043,7 +13977,11 @@ register({ id: "s.run", title: "结构化", run: function () {
         )
         .unwrap();
         let view = plugin_index::index_view(&index, "1.88.0", None);
-        assert!(view.plugins[0].blocked.contains("发布者密钥已被索引撤回"), "{:?}", view.plugins[0].blocked);
+        assert!(
+            view.plugins[0].blocked.contains("发布者密钥已被索引撤回"),
+            "{:?}",
+            view.plugins[0].blocked
+        );
         assert!(view.plugins[0].blocked.contains("滥用"));
         // 界面也要能看到"撤回了哪把 key"
         assert_eq!(view.revoked_keys.len(), 1);
@@ -9066,14 +14004,14 @@ register({ id: "s.run", title: "结构化", run: function () {
 
         record_revoked_keys(&c, &index_with_revoked(vec![(key_b.trim(), "泄露")])).unwrap();
         let err = run_gates(&c, &manifest).unwrap_err();
-        assert!(err.contains("publisher_key_revoked") && err.contains("泄露"), "{err}");
+        assert!(
+            err.contains("publisher_key_revoked") && err.contains("泄露"),
+            "{err}"
+        );
 
         // 用户表态后放行；而换成另一把 key 的插件不受影响
-        c.execute(
-            "UPDATE meta.plugin_revoked_key SET ignored_at = 1",
-            [],
-        )
-        .unwrap();
+        c.execute("UPDATE meta.plugin_revoked_key SET ignored_at = 1", [])
+            .unwrap();
         assert!(run_gates(&c, &manifest).is_ok());
     }
 
@@ -9085,13 +14023,31 @@ register({ id: "s.run", title: "结构化", run: function () {
         let entry = fixture_entry(key_b, sig_b, &"a".repeat(64));
         record_revoked_keys(&c, &index_with_revoked(vec![(key_b.trim(), "泄露")])).unwrap();
 
-        let err = check_entry_publisher_signature(&c, "fixture-plugin", &entry, signed_package(), false, "example.com")
-            .unwrap_err();
-        assert!(err.contains("publisher_key_revoked") && err.contains("不接受这份包"), "{err}");
+        let err = check_entry_publisher_signature(
+            &c,
+            "fixture-plugin",
+            &entry,
+            signed_package(),
+            false,
+            "example.com",
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("publisher_key_revoked") && err.contains("不接受这份包"),
+            "{err}"
+        );
         // 用户表态之后才可能装上（这里只验"放行到下一步"：不再是撤回拦的）
-        c.execute("UPDATE meta.plugin_revoked_key SET ignored_at = 1", []).unwrap();
-        assert!(check_entry_publisher_signature(&c, "fixture-plugin", &entry, signed_package(), false, "example.com")
-            .is_ok());
+        c.execute("UPDATE meta.plugin_revoked_key SET ignored_at = 1", [])
+            .unwrap();
+        assert!(check_entry_publisher_signature(
+            &c,
+            "fixture-plugin",
+            &entry,
+            signed_package(),
+            false,
+            "example.com"
+        )
+        .is_ok());
     }
 
     #[test]
@@ -9104,7 +14060,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         ));
         // 用户点了「信任新密钥」→ 记录被换掉，此后按新的比
         let view = pin_publisher_key(&c, "p1", KEY_B, "example.com").unwrap();
-        assert_eq!(view.fingerprint, plugin_index::publisher_key_fingerprint(KEY_B).unwrap());
+        assert_eq!(
+            view.fingerprint,
+            plugin_index::publisher_key_fingerprint(KEY_B).unwrap()
+        );
         assert_eq!(
             publisher_key_verdict(&c, "p1", KEY_B).unwrap(),
             PublisherKeyVerdict::Match
@@ -9121,18 +14080,31 @@ register({ id: "s.run", title: "结构化", run: function () {
     #[test]
     fn the_scan_reports_what_it_can_actually_see() {
         // 干净的小插件：一条事实都不该编出来
-        assert!(scan_plugin_source("register({ id: 'a', run: function(){ return __pages(); } });").is_empty());
+        assert!(
+            scan_plugin_source("register({ id: 'a', run: function(){ return __pages(); } });")
+                .is_empty()
+        );
 
         // 动态代码
         let f = scan_plugin_source("var x = eval('1+1'); var y = new Function('return 1');");
-        let dyn_fact = f.iter().find(|x| x.code == "dynamic_code").expect("要报出动态代码");
+        let dyn_fact = f
+            .iter()
+            .find(|x| x.code == "dynamic_code")
+            .expect("要报出动态代码");
         assert!(dyn_fact.text.contains("eval( ×1"), "{}", dyn_fact.text);
-        assert!(dyn_fact.text.contains("new Function( ×1"), "{}", dyn_fact.text);
+        assert!(
+            dyn_fact.text.contains("new Function( ×1"),
+            "{}",
+            dyn_fact.text
+        );
 
         // 大段编码文本（放在一处不代表它是恶意的——事实就是"有这么一段"）
         let blob = "A".repeat(600);
         let f = scan_plugin_source(&format!("var data = '{blob}';"));
-        let blob_fact = f.iter().find(|x| x.code == "embedded_blob").expect("要报出内嵌编码段");
+        let blob_fact = f
+            .iter()
+            .find(|x| x.code == "embedded_blob")
+            .expect("要报出内嵌编码段");
         assert!(blob_fact.text.contains("600 字符"), "{}", blob_fact.text);
         // 短一点的编码串不报（避免噪音）
         let f = scan_plugin_source(&format!("var data = '{}';", "A".repeat(64)));
@@ -9140,28 +14112,56 @@ register({ id: "s.run", title: "结构化", run: function () {
 
         // 超长单行（压缩/打包产物）
         let f = scan_plugin_source(&format!("var a = 1;\nvar b = '{}';", "x".repeat(2500)));
-        let line_fact = f.iter().find(|x| x.code == "long_line").expect("要报出超长单行");
+        let line_fact = f
+            .iter()
+            .find(|x| x.code == "long_line")
+            .expect("要报出超长单行");
         assert!(line_fact.text.contains("第 2 行"), "{}", line_fact.text);
 
         // 看起来在联网：报，并且说清"这一版没有联网能力"
         let f = scan_plugin_source("fetch('https://example.com')");
-        let net = f.iter().find(|x| x.code == "network_hint").expect("要报出联网迹象");
+        let net = f
+            .iter()
+            .find(|x| x.code == "network_hint")
+            .expect("要报出联网迹象");
         assert!(net.text.contains("没有任何联网能力"), "{}", net.text);
     }
 
     #[test]
     fn the_fact_sheet_says_what_kind_of_plugin_it_is() {
         // 零代码插件：一条事实就够（也是最重要的一条）
-        let f = build_plugin_facts("declarative", 0, 1, 512, None, Some(false), "abcdef1234", "abcdef1234");
+        let f = build_plugin_facts(
+            "declarative",
+            0,
+            1,
+            512,
+            None,
+            Some(false),
+            "abcdef1234",
+            "abcdef1234",
+        );
         // 内容一致性 + "零代码"这两条：对零代码插件同样成立（它的 manifest 也能被改）
         assert_eq!(f.len(), 2);
         assert_eq!(f[0].code, "content_unchanged");
-        assert!(f[0].text.contains("abcdef12"), "要给出可核对的前缀：{}", f[0].text);
+        assert!(
+            f[0].text.contains("abcdef12"),
+            "要给出可核对的前缀：{}",
+            f[0].text
+        );
         assert_eq!(f[1].code, "no_code");
         assert!(f[1].text.contains("没有一行可执行的代码"));
 
         // 有代码的：体积事实 + 扫描事实
-        let f = build_plugin_facts("logic", 1024, 3, 4096, Some("eval('x')"), Some(false), "aaa", "aaa");
+        let f = build_plugin_facts(
+            "logic",
+            1024,
+            3,
+            4096,
+            Some("eval('x')"),
+            Some(false),
+            "aaa",
+            "aaa",
+        );
         // 第一条是"内容有没有被改过"（对所有插件都成立），第二条才是体积
         assert_eq!(f[0].code, "content_unchanged");
         assert_eq!(f[1].code, "entry_size");
@@ -9216,8 +14216,11 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert_eq!(a.pubkey, KEY_A);
         assert_eq!(a.last_ok, None, "还没查过就说「查过了」，那是编的");
 
-        c.execute("DELETE FROM plugin_index_subscription WHERE url = ?1", params!["https://b.test/index.json"])
-            .unwrap();
+        c.execute(
+            "DELETE FROM plugin_index_subscription WHERE url = ?1",
+            params!["https://b.test/index.json"],
+        )
+        .unwrap();
         assert_eq!(all_subscriptions(&c).len(), 1);
     }
 
@@ -9240,7 +14243,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert_eq!(count_updates(&index, &[]), 0);
         // 版本比不出来时不谎报"可更新"（install_action 会判成 Replace——这里如实跟着它）
         let vague = index_with(vec![index_entry("vague", "2.0", None)]);
-        assert_eq!(count_updates(&vague, &[("vague".to_string(), "weird".to_string())]), 1);
+        assert_eq!(
+            count_updates(&vague, &[("vague".to_string(), "weird".to_string())]),
+            1
+        );
     }
 
     /// 逐个检查的**真**验收：一个正常索引 + 一个 404，两条各自记各自的结果。
@@ -9272,7 +14278,8 @@ register({ id: "s.run", title: "结构化", run: function () {
                 ],
             }))
             .unwrap()
-        })]).await;
+        })])
+        .await;
         let bad = serve(vec![("/nothing.json", b"x".to_vec())]).await;
 
         let c = state_conn_with_subscriptions();
@@ -9346,7 +14353,13 @@ register({ id: "s.run", title: "结构化", run: function () {
     #[test]
     fn the_content_hash_is_stable_and_notices_real_changes() {
         let dir = temp_dir("hash-a");
-        write_plugin_dir(&dir, "p1", "1.0.0", "register({id:'p1.a'});", &[("x.txt", "hello")]);
+        write_plugin_dir(
+            &dir,
+            "p1",
+            "1.0.0",
+            "register({id:'p1.a'});",
+            &[("x.txt", "hello")],
+        );
         let h1 = dir_content_hash(&dir).unwrap();
         // 同样的内容 → 同样的指纹（mtime 之类不该掺进来，否则每次读都"被改过"）
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -9356,7 +14369,11 @@ register({ id: "s.run", title: "结构化", run: function () {
         std::fs::write(dir.join("x.txt"), "hellp").unwrap();
         assert_ne!(dir_content_hash(&dir).unwrap(), h1);
         std::fs::write(dir.join("x.txt"), "hello").unwrap();
-        assert_eq!(dir_content_hash(&dir).unwrap(), h1, "改回去应当回到同一个指纹");
+        assert_eq!(
+            dir_content_hash(&dir).unwrap(),
+            h1,
+            "改回去应当回到同一个指纹"
+        );
 
         // 加文件 / 删文件 / 改名（只hash内容的话改名会看不出来）
         std::fs::write(dir.join("y.txt"), "new").unwrap();
@@ -9385,10 +14402,13 @@ register({ id: "s.run", title: "结构化", run: function () {
     #[test]
     fn all_revocations_lists_what_was_seen() {
         let c = state_conn_with_revocation();
-        record_revocations(&c, &index_with(vec![
-            index_entry("a", "1.0.0", Some(("2026-09-01", "x"))),
-            index_entry("b", "2.0.0", Some(("2026-09-02", "y"))),
-        ]))
+        record_revocations(
+            &c,
+            &index_with(vec![
+                index_entry("a", "1.0.0", Some(("2026-09-01", "x"))),
+                index_entry("b", "2.0.0", Some(("2026-09-02", "y"))),
+            ]),
+        )
         .unwrap();
         let all = all_revocations(&c);
         assert_eq!(all.len(), 2);
@@ -9401,16 +14421,33 @@ register({ id: "s.run", title: "结构化", run: function () {
     fn install_action_only_refuses_a_provable_downgrade() {
         assert_eq!(install_action(None, "1.0.0"), InstallAction::Fresh);
         assert_eq!(install_action(Some("1.0.0"), "1.0.0"), InstallAction::Same);
-        assert_eq!(install_action(Some("1.0.0"), "1.2.0"), InstallAction::Replace);
+        assert_eq!(
+            install_action(Some("1.0.0"), "1.2.0"),
+            InstallAction::Replace
+        );
         // 逐段比较，不是字符串比较（1.10 > 1.9）
-        assert_eq!(install_action(Some("1.9.0"), "1.10.0"), InstallAction::Replace);
-        assert_eq!(install_action(Some("1.10.0"), "1.9.0"), InstallAction::Downgrade);
+        assert_eq!(
+            install_action(Some("1.9.0"), "1.10.0"),
+            InstallAction::Replace
+        );
+        assert_eq!(
+            install_action(Some("1.10.0"), "1.9.0"),
+            InstallAction::Downgrade
+        );
         // 预发布尾巴不参与主段比较
-        assert_eq!(install_action(Some("1.0.0"), "1.0.1-rc.1"), InstallAction::Replace);
+        assert_eq!(
+            install_action(Some("1.0.0"), "1.0.1-rc.1"),
+            InstallAction::Replace
+        );
 
         // 比不出来（作者写 1.2 / v2 / 日期串）→ 不拒：那种情况下"谁更新"无从判断，
         // 而用户已经明确选了这份包。硬拒只留给能证明的降级。
-        for (was, now) in [("1.2", "1.3"), ("v2", "1.0.0"), ("1.0.0", "v2"), ("2026.09", "2026.1")] {
+        for (was, now) in [
+            ("1.2", "1.3"),
+            ("v2", "1.0.0"),
+            ("1.0.0", "v2"),
+            ("2026.09", "2026.1"),
+        ] {
             assert_eq!(
                 install_action(Some(was), now),
                 InstallAction::Replace,
@@ -9438,8 +14475,20 @@ register({ id: "s.run", title: "结构化", run: function () {
     fn replacing_an_installed_plugin_swaps_content_and_drops_removed_files() {
         let src = temp_dir("upgrade-src");
         let dest = temp_dir("upgrade-dest");
-        write_plugin_dir(&dest, "p1", "1.0.0", "register({id:'p1.a'});", &[("legacy.txt", "old")]);
-        write_plugin_dir(&src, "p1", "1.1.0", "register({id:'p1.a'});", &[("fresh.txt", "new")]);
+        write_plugin_dir(
+            &dest,
+            "p1",
+            "1.0.0",
+            "register({id:'p1.a'});",
+            &[("legacy.txt", "old")],
+        );
+        write_plugin_dir(
+            &src,
+            "p1",
+            "1.1.0",
+            "register({id:'p1.a'});",
+            &[("fresh.txt", "new")],
+        );
 
         let manifest: Manifest = serde_json::from_value(serde_json::json!({
             "id": "p1", "name": "P", "version": "1.1.0", "main": "main.js"
@@ -9453,7 +14502,8 @@ register({ id: "s.run", title: "结构化", run: function () {
             "新版本里删掉的文件必须跟着消失——否则旧代码会以「没人再引用」的方式留在盘上"
         );
         let on_disk: Manifest =
-            serde_json::from_str(&std::fs::read_to_string(dest.join("manifest.json")).unwrap()).unwrap();
+            serde_json::from_str(&std::fs::read_to_string(dest.join("manifest.json")).unwrap())
+                .unwrap();
         assert_eq!(on_disk.version, "1.1.0");
         let _ = std::fs::remove_dir_all(&src);
         let _ = std::fs::remove_dir_all(&dest);
@@ -9469,7 +14519,11 @@ register({ id: "s.run", title: "结构化", run: function () {
     #[test]
     fn every_shipped_example_plugin_can_be_installed() {
         let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/plugins");
-        assert!(examples.is_dir(), "找不到示例插件目录：{}", examples.display());
+        assert!(
+            examples.is_dir(),
+            "找不到示例插件目录：{}",
+            examples.display()
+        );
         let root = temp_dir("examples-install");
         let c = state_conn_with_revocation();
 
@@ -9518,20 +14572,35 @@ register({ id: "s.run", title: "结构化", run: function () {
             }
         }
         let _ = std::fs::remove_dir_all(&root);
-        assert!(failures.is_empty(), "有 {} 个示例插件装不上：\n{}", failures.len(), failures.join("\n"));
-        assert_eq!(declarative_seen, 4, "四个零代码示例插件都要被覆盖到，实际 {declarative_seen}");
+        assert!(
+            failures.is_empty(),
+            "有 {} 个示例插件装不上：\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+        assert_eq!(
+            declarative_seen, 4,
+            "四个零代码示例插件都要被覆盖到，实际 {declarative_seen}"
+        );
     }
 
     #[test]
     fn a_failed_replacement_rolls_back_to_the_old_version() {
         let src = temp_dir("upgrade-src-bad");
         let dest = temp_dir("upgrade-dest-keep");
-        write_plugin_dir(&dest, "p1", "1.0.0", "register({id:'p1.a'});", &[("legacy.txt", "old")]);
+        write_plugin_dir(
+            &dest,
+            "p1",
+            "1.0.0",
+            "register({id:'p1.a'});",
+            &[("legacy.txt", "old")],
+        );
         // 新版本的入口文件**不存在**：写盘过程中必然失败，正是要验的那条路
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(
             src.join("manifest.json"),
-            serde_json::json!({ "id": "p1", "name": "P", "version": "2.0.0", "main": "main.js" }).to_string(),
+            serde_json::json!({ "id": "p1", "name": "P", "version": "2.0.0", "main": "main.js" })
+                .to_string(),
         )
         .unwrap();
 
@@ -9544,7 +14613,8 @@ register({ id: "s.run", title: "结构化", run: function () {
 
         // 磁盘上还是原来那一版，能跑的老插件不该被半装的新版本毁掉
         let on_disk: Manifest =
-            serde_json::from_str(&std::fs::read_to_string(dest.join("manifest.json")).unwrap()).unwrap();
+            serde_json::from_str(&std::fs::read_to_string(dest.join("manifest.json")).unwrap())
+                .unwrap();
         assert_eq!(on_disk.version, "1.0.0");
         assert!(dest.join("main.js").exists());
         assert!(dest.join("legacy.txt").exists());
@@ -9570,19 +14640,27 @@ register({ id: "s.run", title: "结构化", run: function () {
         const COMMUNITY_INDEX_PUBKEY: &str = "untrusted comment: minisign public key 305A2DFBAC0773C1\nRWTBcwes+y1aMIEdFdER5PCz4QsdYqVlBSMr6++SnWdoRUVI3DLcduK4\n";
         let index_url = std::env::var("SHUYONOTE_LIVE_INDEX")
             .unwrap_or_else(|_| "https://community.shuyo.cn/plugins/plugin-index.json".to_string());
-        let wanted = std::env::var("SHUYONOTE_LIVE_PLUGIN").unwrap_or_else(|_| "md-outline".to_string());
-        let pubkey = std::env::var("SHUYONOTE_LIVE_INDEX_PUBKEY").unwrap_or_else(|_| COMMUNITY_INDEX_PUBKEY.to_string());
+        let wanted =
+            std::env::var("SHUYONOTE_LIVE_PLUGIN").unwrap_or_else(|_| "md-outline".to_string());
+        let pubkey = std::env::var("SHUYONOTE_LIVE_INDEX_PUBKEY")
+            .unwrap_or_else(|_| COMMUNITY_INDEX_PUBKEY.to_string());
 
         // 1) 拉索引并**验索引签名**（托管方签了就必须验得过）
         let (view, index) = load_plugin_index(&index_url, Some(&pubkey), "1.89.1")
             .await
             .expect("线上索引必须能拉取并通过索引签名校验");
-        eprintln!("索引 OK：owner={} 插件 {} 个", view.owner.as_ref().map(|o| o.name.as_str()).unwrap_or("?"), index.plugins.len());
+        eprintln!(
+            "索引 OK：owner={} 插件 {} 个",
+            view.owner.as_ref().map(|o| o.name.as_str()).unwrap_or("?"),
+            index.plugins.len()
+        );
 
         // 默认**逐个装完索引里所有条目**（不是抽查一个）：线上清单上有几个，就应当有几个装得上。
         // 这条是从一次真实事故里改出来的——19 个插件里有 4 个**声明式**插件在安装路径上被自己的
         // 验收标准拒掉（`declarative_no_code`），而抽查（或只跑"能不能解析索引"）完全看不见。
-        let all = std::env::var("SHUYONOTE_LIVE_ALL").map(|v| v != "0").unwrap_or(true);
+        let all = std::env::var("SHUYONOTE_LIVE_ALL")
+            .map(|v| v != "0")
+            .unwrap_or(true);
         let entries: Vec<_> = if all {
             index.plugins.clone()
         } else {
@@ -9603,26 +14681,51 @@ register({ id: "s.run", title: "结构化", run: function () {
             let blocked = plugin_index::entry_block_reason(entry, "1.89.1", &index.revoked_keys);
             assert!(blocked.is_empty(), "{} 装不了：{blocked}", entry.id);
 
-            let bytes = http_get_capped(&client, &entry.download_url, plugin_index::MAX_PACKAGE_BYTES)
-                .await
-                .unwrap_or_else(|e| panic!("{} 的包下载失败：{e}", entry.id));
+            let bytes = http_get_capped(
+                &client,
+                &entry.download_url,
+                plugin_index::MAX_PACKAGE_BYTES,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{} 的包下载失败：{e}", entry.id));
             plugin_index::verify_sha256(&bytes, &entry.sha256)
                 .unwrap_or_else(|e| panic!("{} 的 sha256 对不上：{e}", entry.id));
-            let pin = check_entry_publisher_signature(&conn, &entry.id, entry, &bytes, false, "community.shuyo.cn")
-                .unwrap_or_else(|e| panic!("{} 的发布者签名验不过：{e}", entry.id));
+            let pin = check_entry_publisher_signature(
+                &conn,
+                &entry.id,
+                entry,
+                &bytes,
+                false,
+                "community.shuyo.cn",
+            )
+            .unwrap_or_else(|e| panic!("{} 的发布者签名验不过：{e}", entry.id));
             assert!(pin.is_some(), "{} 应当带发布者签名", entry.id);
 
             let meta = install_bytes_into(&root, &conn, &bytes, "index:community.shuyo.cn")
                 .unwrap_or_else(|e| panic!("{} 从线上索引装不上：{e}", entry.id));
             assert_eq!(meta.id, entry.id);
-            assert!(!meta.enabled, "{} 新装必须默认未启用（安装 ≠ 授权）", entry.id);
+            assert!(
+                !meta.enabled,
+                "{} 新装必须默认未启用（安装 ≠ 授权）",
+                entry.id
+            );
             assert!(
                 root.join(format!("{}/manifest.json", entry.id)).is_file(),
                 "{} 的插件目录要就位",
                 entry.id
             );
-            let _ = pin_publisher_key(&conn, &entry.id, pin.as_deref().unwrap(), "community.shuyo.cn");
-            installed.push((entry.id.clone(), meta.version.clone(), bytes.len(), meta.commands.len()));
+            let _ = pin_publisher_key(
+                &conn,
+                &entry.id,
+                pin.as_deref().unwrap(),
+                "community.shuyo.cn",
+            );
+            installed.push((
+                entry.id.clone(),
+                meta.version.clone(),
+                bytes.len(),
+                meta.commands.len(),
+            ));
         }
 
         eprintln!("线上索引逐条安装：{} 个全部成功", installed.len());
@@ -9689,14 +14792,25 @@ register({ id: "s.run", title: "结构化", run: function () {
 
         // 2) 下载 + 两层校验（sha256 与发布者签名）
         let client = index_http_client().unwrap();
-        let bytes = http_get_capped(&client, &entry.download_url, plugin_index::MAX_PACKAGE_BYTES)
-            .await
-            .unwrap();
+        let bytes = http_get_capped(
+            &client,
+            &entry.download_url,
+            plugin_index::MAX_PACKAGE_BYTES,
+        )
+        .await
+        .unwrap();
         plugin_index::verify_sha256(&bytes, &entry.sha256).unwrap();
         // 安装表 + 信任存储（生产库里由 db.rs 建；测试库里由前面几个 helper 建）
         let conn = state_conn_with_revoked_keys();
-        let pin = check_entry_publisher_signature(&conn, "fixture-plugin", &entry, &bytes, false, "127.0.0.1")
-            .unwrap();
+        let pin = check_entry_publisher_signature(
+            &conn,
+            "fixture-plugin",
+            &entry,
+            &bytes,
+            false,
+            "127.0.0.1",
+        )
+        .unwrap();
         assert_eq!(pin.as_deref().map(str::trim), Some(key_a.trim()));
 
         // 3) 装进一个临时插件根目录（真解包 + 真 discovery + 真落盘 + 真记账）
@@ -9705,12 +14819,23 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert_eq!(meta.id, "fixture-plugin");
         assert_eq!(meta.version, "1.0.0");
         assert!(!meta.enabled, "新装必须默认未启用（安装 ≠ 授权）");
-        assert_eq!(meta.replaced_version, None, "这是新装，不该报「替换了哪一版」");
-        assert_eq!(meta.commands.len(), 1, "真跑了一遍 discovery，应当发现夹具里那个命令");
-        assert!(root.join("fixture-plugin/manifest.json").is_file(), "插件目录要就位");
+        assert_eq!(
+            meta.replaced_version, None,
+            "这是新装，不该报「替换了哪一版」"
+        );
+        assert_eq!(
+            meta.commands.len(),
+            1,
+            "真跑了一遍 discovery，应当发现夹具里那个命令"
+        );
+        assert!(
+            root.join("fixture-plugin/manifest.json").is_file(),
+            "插件目录要就位"
+        );
 
         // 4) 装成功之后才固定发布者密钥（并且能在库里查到）
-        let pinned = pin_publisher_key(&conn, "fixture-plugin", &pin.unwrap(), "127.0.0.1").unwrap();
+        let pinned =
+            pin_publisher_key(&conn, "fixture-plugin", &pin.unwrap(), "127.0.0.1").unwrap();
         assert_eq!(
             pinned.fingerprint,
             plugin_index::publisher_key_fingerprint(key_a).unwrap()
@@ -9723,16 +14848,20 @@ register({ id: "s.run", title: "结构化", run: function () {
             )
             .unwrap();
         assert_eq!(ver, "1.0.0");
-        assert_eq!(src, "index:127.0.0.1", "来源要记成「从哪来的」，而不是笼统的 local");
+        assert_eq!(
+            src, "index:127.0.0.1",
+            "来源要记成「从哪来的」，而不是笼统的 local"
+        );
 
         // 5) 同一份包再装一次：同版本 → 重装（替换），并且报出替换掉的那一版
         let again = install_from_dir(&root, &conn, &resolve_extracted(&bytes), "index:127.0.0.1");
         let again = again.unwrap();
         assert_eq!(again.replaced_version.as_deref(), Some("1.0.0"));
         // 降级要拒：把目录里的 manifest 改成更高的版本再装旧包
-        let mut higher: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(root.join("fixture-plugin/manifest.json")).unwrap())
-                .unwrap();
+        let mut higher: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("fixture-plugin/manifest.json")).unwrap(),
+        )
+        .unwrap();
         higher["version"] = serde_json::json!("9.9.9");
         std::fs::write(
             root.join("fixture-plugin/manifest.json"),
@@ -9842,7 +14971,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         let err = http_get_capped(&client, &format!("{base}/big.bin"), 64 * 1024)
             .await
             .unwrap_err();
-        assert!(err.contains("超过体积上限") && !err.contains("已中止下载"), "{err}");
+        assert!(
+            err.contains("超过体积上限") && !err.contains("已中止下载"),
+            "{err}"
+        );
         // 不报长度的：必须在读取途中中止（只看响应头的实现会在这里放行）
         let err = http_get_capped(&client, &format!("{base}/stream.bin"), 64 * 1024)
             .await
@@ -9867,9 +14999,13 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert_eq!(view.plugins[0].blocked, "", "这条应当是可安装的");
 
         // 给了公钥却没签名文件 → 失败（fail closed，不能"取不到就当没要求"）
-        let err = load_plugin_index(&format!("{base}/index.json"), Some("RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3"), "1.87.0")
-            .await
-            .unwrap_err();
+        let err = load_plugin_index(
+            &format!("{base}/index.json"),
+            Some("RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3"),
+            "1.87.0",
+        )
+        .await
+        .unwrap_err();
         assert!(err.contains("取不到签名文件"), "{err}");
 
         // 签名文件是垃圾 → 明确报"签名不合法"
@@ -9981,14 +15117,22 @@ register({ id: "s.run", title: "结构化", run: function () {
         let seen = with_active_space_from(Some("sp-external".to_string()), || {
             RUN_STATE.with(|s| s.borrow().read_space.clone())
         });
-        assert_eq!(seen.as_deref(), Some("sp-external"), "外部那条路必须能看见当前空间 ✓");
+        assert_eq!(
+            seen.as_deref(),
+            Some("sp-external"),
+            "外部那条路必须能看见当前空间 ✓"
+        );
         assert_eq!(
             RUN_STATE.with(|s| s.borrow().read_space.clone()),
             None,
             "用完必须恢复原值 ✓"
         );
-        let seen_none = with_active_space_from(None, || RUN_STATE.with(|s| s.borrow().read_space.clone()));
-        assert_eq!(seen_none, None, "注 None ⇒ 一个字都不许装 ✓（否则会静默读错空间 ✗）");
+        let seen_none =
+            with_active_space_from(None, || RUN_STATE.with(|s| s.borrow().read_space.clone()));
+        assert_eq!(
+            seen_none, None,
+            "注 None ⇒ 一个字都不许装 ✓（否则会静默读错空间 ✗）"
+        );
 
         // ② 解析：没有键 ⇒ 退到最早；有键 ⇒ 取它
         let dir = std::env::temp_dir().join(format!("shuyonote-mcp-space-{}", std::process::id()));
@@ -10041,9 +15185,16 @@ register({ id: "s.run", title: "结构化", run: function () {
     }
 
     fn cap_search_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("shuyonote-capsearch-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("shuyonote-capsearch-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        if let Err(e) = std::fs::create_dir_all(crate::db::spaces_dir(&dir)) {
+            // 判据里**说清是哪个路径**（Windows 上 PermissionDenied 常常是"路径不对"的伪装）
+            panic!(
+                "建夹具目录失败 {e}：{dir:?}（temp={:?}）",
+                std::env::temp_dir()
+            );
+        }
         drop(crate::db::open_meta_conn_at(&dir).unwrap());
         dir
     }
@@ -10081,7 +15232,9 @@ register({ id: "s.run", title: "结构化", run: function () {
         //   `all(|h| h["pageId"] != "p9")` 就变成 `null == "p1"`（红）与 `null != "p9"`（**恒真**）。
         //   回链的 `page_id`/`att_id` 是**表里的列**（`search.rs` 的 ChunkHit 直接读它们，
         //   不从 `page:p1#0` 这个 id 串里拆）⇒ 夹具必须把列填对。
-        let page_id = id.strip_prefix("page:").map(|rest| rest.split('#').next().unwrap_or(rest));
+        let page_id = id
+            .strip_prefix("page:")
+            .map(|rest| rest.split('#').next().unwrap_or(rest));
         c.execute(
             "INSERT INTO chunks (id, page_id, att_id, ord, loc, lang, text, hash) VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, 'h1')",
             params![id, page_id, att, ord, loc, text],
@@ -10092,8 +15245,11 @@ register({ id: "s.run", title: "结构化", run: function () {
     /// ① 空 query 是**调用错误**（`bad_args`），不是"搜了没命中"。
     #[test]
     fn cap_files_search_rejects_an_empty_query_with_bad_args() {
-        let err = cap_files_search("   ", 10).unwrap_err();
-        assert!(err.starts_with("bad_args"), "空 query 应当是 bad_args：{err}");
+        let err = cap_files_search("   ", 10, None).unwrap_err();
+        assert!(
+            err.starts_with("bad_args"),
+            "空 query 应当是 bad_args：{err}"
+        );
     }
 
     /// ② `limit` 夹取（0/负 ⇒ 1；上限之内给全）。
@@ -10107,10 +15263,18 @@ register({ id: "s.run", title: "结构化", run: function () {
         drop(c);
         point_cap_search_at(&dir, "s1");
 
-        let one = cap_files_search("周会纪要", 0).unwrap();
-        assert_eq!(one.as_array().unwrap().len(), 1, "limit=0 ⇒ 夹到 1（与注册表 desc 同值）");
-        let all = cap_files_search("周会纪要", 1000).unwrap();
-        assert_eq!(all.as_array().unwrap().len(), 5, "只有 5 条命中 ⇒ 上限之内全给");
+        let one = cap_files_search("周会纪要", 0, None).unwrap();
+        assert_eq!(
+            one.as_array().unwrap().len(),
+            1,
+            "limit=0 ⇒ 夹到 1（与注册表 desc 同值）"
+        );
+        let all = cap_files_search("周会纪要", 1000, None).unwrap();
+        assert_eq!(
+            all.as_array().unwrap().len(),
+            5,
+            "只有 5 条命中 ⇒ 上限之内全给"
+        );
 
         unpoint_cap_search(&dir);
     }
@@ -10124,7 +15288,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         drop(c);
         point_cap_search_at(&dir, "s1");
 
-        let hits = cap_files_search("第\u{2F00}段", 10).unwrap();
+        let hits = cap_files_search("第\u{2F00}段", 10, None).unwrap();
         assert_eq!(
             hits.as_array().unwrap().len(),
             1,
@@ -10146,11 +15310,14 @@ register({ id: "s.run", title: "结构化", run: function () {
         drop(s2);
         point_cap_search_at(&dir, "s1"); // 活动空间 = s1
 
-        let hits = cap_files_search("周会纪要", 10).unwrap();
+        let hits = cap_files_search("周会纪要", 10, None).unwrap();
         let arr = hits.as_array().unwrap();
         assert_eq!(arr.len(), 1, "只该命中活动空间（s1）：{arr:?}");
         assert_eq!(arr[0]["pageId"], "p1");
-        assert!(arr.iter().all(|h| h["pageId"] != "p9"), "s2 的块不许泄漏进来");
+        assert!(
+            arr.iter().all(|h| h["pageId"] != "p9"),
+            "s2 的块不许泄漏进来"
+        );
 
         unpoint_cap_search(&dir);
     }
@@ -10176,14 +15343,17 @@ register({ id: "s.run", title: "结构化", run: function () {
         drop(c);
         point_cap_search_at(&dir, "s1");
 
-        let hits = cap_files_search("周会纪要", 10).unwrap();
+        let hits = cap_files_search("周会纪要", 10, None).unwrap();
         let hit = &hits.as_array().unwrap()[0];
-        let page = cap_files_read("a1", 0, 10).unwrap();
+        let page = cap_files_read("a1", 0, 10, None).unwrap();
         assert_eq!(
             hit["loc"], page["segments"][0]["loc"],
             "检索命中的 loc 与 files.read 的段 loc 必须是同一口径：hit={hit:?} page={page:?}"
         );
-        assert_eq!(hit["attId"], "a1", "附件块要把 attId 带出来（消费方靠它回链）");
+        assert_eq!(
+            hit["attId"], "a1",
+            "附件块要把 attId 带出来（消费方靠它回链）"
+        );
 
         unpoint_cap_search(&dir);
     }
@@ -10195,10 +15365,3987 @@ register({ id: "s.run", title: "结构化", run: function () {
         drop(crate::db::open_space_conn_at("s1", &dir).unwrap());
         point_cap_search_at(&dir, "s1");
 
-        let hits = cap_files_search("周会纪要", 10).unwrap();
-        assert_eq!(hits, serde_json::json!([]), "空库 ⇒ 空数组（不是错误、也不是 null）");
+        let hits = cap_files_search("周会纪要", 10, None).unwrap();
+        assert_eq!(
+            hits,
+            serde_json::json!([]),
+            "空库 ⇒ 空数组（不是错误、也不是 null）"
+        );
 
         unpoint_cap_search(&dir);
     }
-}
+    // ---- B1a（2026-10-29）只读扩容的**数据级**判据 -------------------------------------------
+    //
+    // 为什么放在这一层：跨空间/权限/计数/树形都发生在能力层（`cap_*` ＋ `with_conn_for_space`），
+    // 而夹具空间只有这里搭得起来（`cap_search_dir` ＋ `point_cap_search_at` 是既有的夹具口径 ✓）。
+    // 挂载级那一半（工具面 / 「不接」档的表驱动拒绝 / 当前页如实）在 `mcp_host.rs` 的测试里。
+    //
+    // 夹具：当前空间 4 个节点（folder f1 → page p1/p2，顶层 database db1）＋ 1 个标签 ＋ 1 个属性定义；
+    //       另一个空间 2 个页面（跨空间判据要读它，并且要能分辨"读的是哪个空间"）。
 
+    fn b1a_fixture(tag: &str) -> PathBuf {
+        let dir = cap_search_dir(tag);
+        // meta：空间名字（tree 的 spaceName 从这里读，⛔ 不是参数回声）
+        {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES ('b1a-space', '夹具空间', '#000', '', 1, 1, 1)",
+                [],
+            )
+            .unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES ('b1a-other', '别处空间', '#000', '', 2, 2, 2)",
+                [],
+            )
+            .unwrap();
+        }
+        // 当前空间：4 个节点 ＋ 标签 ＋ 属性定义
+        {
+            let c = crate::db::open_space_conn_at("b1a-space", &dir).unwrap();
+            for (id, parent, title, kind, order, at) in [
+                ("f1", None, "资料", "folder", 0.0, 10),
+                ("p1", Some("f1"), "第一页", "page", 1.0, 11),
+                ("p2", Some("f1"), "第二页", "page", 2.0, 12),
+                ("db1", None, "任务库", "database", 3.0, 13),
+            ] {
+                c.execute(
+                    "INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at)
+                     VALUES (?1, 'b1a-space', ?2, ?3, ?4, ?5, ?6, ?6)",
+                    params![id, parent, title, kind, order, at],
+                )
+                .unwrap();
+            }
+            c.execute("INSERT INTO tags (id, name) VALUES ('t1', '待办')", [])
+                .unwrap();
+            c.execute(
+                "INSERT INTO page_tags (page_id, tag_id) VALUES ('p1', 't1')",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO attr_defs (id, name, type, options, sort_order, created_at, updated_at)
+                 VALUES ('a1', '状态', 'select', '[]', 0, 1, 1)",
+                [],
+            )
+            .unwrap();
+        }
+        // 另一个空间：2 个页面
+        {
+            let c = crate::db::open_space_conn_at("b1a-other", &dir).unwrap();
+            for (id, at) in [("x1", 20), ("x2", 21)] {
+                c.execute(
+                    "INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at)
+                     VALUES (?1, 'b1a-other', NULL, ?1, 'page', 0, ?2, ?2)",
+                    params![id, at],
+                )
+                .unwrap();
+            }
+        }
+        dir
+    }
+
+    /// ⭐ **判据 2 / 5 / 6**（只读档可调 ＋ `count == listPages.length` ＋ 无当前页如实）：
+    /// 用 `mcp_channel::default_read_scopes()` —— 也就是「只读」档**真实**给出的授权面 ——
+    /// 在夹具空间上逐条真调这 5 条工具。
+    #[test]
+    fn b1a_read_level_serves_every_new_tool_on_the_current_space() {
+        let dir = b1a_fixture("b1a-read");
+        point_cap_search_at(&dir, "b1a-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let (cur, count, tags, props, tree, listed) =
+            with_external_caller("b1a-read", &granted, || {
+                (
+                    dispatch_capability("page.current", "{}"),
+                    dispatch_capability("pages.count", "{}"),
+                    dispatch_capability("tags.list", "{}"),
+                    dispatch_capability("properties.list", "{}"),
+                    dispatch_capability("pages.tree", "{}"),
+                    dispatch_capability("pages.list", r#"{"limit":200}"#),
+                )
+            });
+
+        // ① 没有打开的页面 ⇒ 如实（不是错误、⛔ 不编一页）
+        let cur: serde_json::Value =
+            serde_json::from_str(&cur.expect("page.current 在只读档必须可调")).unwrap();
+        assert_eq!(
+            cur["opened"],
+            serde_json::json!(false),
+            "外部没有当前页 ⇒ 必须如实说：{cur}"
+        );
+        assert!(cur.get("id").is_none(), "⛔ 不许编造页面 id：{cur}");
+
+        // ② pages.count 必须等于 listPages.length（判据 5）
+        let count: i64 = serde_json::from_str(&count.expect("pages.count 应可调")).unwrap();
+        let listed: Vec<serde_json::Value> =
+            serde_json::from_str(&listed.expect("pages.list 应可调")).unwrap();
+        assert_eq!(
+            count as usize,
+            listed.len(),
+            "pages_count 必须与 listPages.length 一致"
+        );
+        assert_eq!(count, 4, "夹具里当前空间有 4 个未删除节点");
+
+        // ③ tags.list 形状与页面数（[{id,name,page_count}]）
+        let tags: Vec<serde_json::Value> =
+            serde_json::from_str(&tags.expect("tags.list 应可调")).unwrap();
+        assert_eq!(tags.len(), 1, "夹具里只有 1 个标签");
+        assert_eq!(tags[0]["id"], "t1");
+        assert_eq!(tags[0]["name"], "待办");
+        assert_eq!(tags[0]["page_count"], 1, "该标签只挂在 p1 上");
+
+        // ④ properties.list 形状 [{id,name,type}]
+        let props: Vec<serde_json::Value> =
+            serde_json::from_str(&props.expect("properties.list 应可调")).unwrap();
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0]["id"], "a1");
+        assert_eq!(props[0]["type"], "select");
+
+        // ⑤ pages.tree：节点数 ＝ listPages 页数、父子与 kind 正确（判据 4 的前两半）
+        let tree: serde_json::Value =
+            serde_json::from_str(&tree.expect("pages.tree 应可调")).unwrap();
+        assert_eq!(tree["spaceId"], "b1a-space");
+        assert_eq!(
+            tree["spaceName"], "夹具空间",
+            "空间名要真读 meta（不是参数回声）"
+        );
+        assert_eq!(tree["total"], 4);
+        assert_eq!(tree["truncated"], serde_json::json!(false));
+        let nodes = tree["nodes"].as_array().expect("nodes 必须是数组");
+        assert_eq!(nodes.len(), listed.len(), "节点数必须等于 listPages 的页数");
+        // 顺序＝树顺序（sort_order → created_at）：f1, p1, p2, db1
+        let ids: Vec<&str> = nodes.iter().map(|n| n["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["f1", "p1", "p2", "db1"]);
+        assert_eq!(nodes[0]["kind"], "folder");
+        assert!(
+            nodes[0]["parentId"].is_null(),
+            "顶层节点的 parentId 必须是 null"
+        );
+        assert_eq!(nodes[1]["kind"], "page");
+        assert_eq!(nodes[1]["parentId"], "f1", "p1 的父级是文件夹 f1");
+        assert_eq!(nodes[3]["kind"], "database");
+        assert_eq!(
+            nodes[1]["order"],
+            serde_json::json!(1.0),
+            "order 必须是树里的排序值"
+        );
+
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ **判据 4 后半**：超过 `limit` ⇒ `truncated:true` 并给 `total`（如实说，别把截断当全量）。
+    #[test]
+    fn b1a_pages_tree_marks_truncation_honestly() {
+        let dir = b1a_fixture("b1a-tree");
+        point_cap_search_at(&dir, "b1a-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let (cut, full) = with_external_caller("b1a-tree", &granted, || {
+            (
+                dispatch_capability("pages.tree", r#"{"limit":2}"#),
+                dispatch_capability("pages.tree", r#"{"limit":2000}"#),
+            )
+        });
+        let cut: serde_json::Value = serde_json::from_str(&cut.unwrap()).unwrap();
+        assert_eq!(
+            cut["nodes"].as_array().unwrap().len(),
+            2,
+            "limit=2 ⇒ 只回 2 个节点"
+        );
+        assert_eq!(cut["total"], 4, "total 是库里真实的节点数（不是返回数）");
+        assert_eq!(
+            cut["truncated"],
+            serde_json::json!(true),
+            "被截断必须如实标 true"
+        );
+        let full: serde_json::Value = serde_json::from_str(&full.unwrap()).unwrap();
+        assert_eq!(full["nodes"].as_array().unwrap().len(), 4);
+        assert_eq!(full["truncated"], serde_json::json!(false));
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ **判据 3**：带 `spaceId` 在「只读」档 ⇒ **明确拒**（permission_denied 且点名 `read:all-spaces`）；
+    /// 在「只读（全部空间）」档 ⇒ **真能读那个空间**（读数与当前空间不同，否则"读到了"没法证）。
+    #[test]
+    fn b1a_cross_space_needs_read_all_and_then_reads_the_other_space() {
+        let dir = b1a_fixture("b1a-cross");
+        point_cap_search_at(&dir, "b1a-space");
+        let read = crate::mcp_channel::default_read_scopes();
+        let cases = [
+            ("pages.count", r#"{"spaceId":"b1a-other"}"#),
+            ("pages.tree", r#"{"spaceId":"b1a-other"}"#),
+            ("tags.list", r#"{"spaceId":"b1a-other"}"#),
+            ("properties.list", r#"{"spaceId":"b1a-other"}"#),
+        ];
+        let denied: Vec<Result<String, String>> =
+            with_external_caller("b1a-cross-read", &read, || {
+                cases
+                    .iter()
+                    .map(|(m, a)| dispatch_capability(m, a))
+                    .collect()
+            });
+        for ((method, _), r) in cases.iter().zip(denied.iter()) {
+            let e = r
+                .as_ref()
+                .expect_err(&format!("{method} 在只读档带 spaceId 必须被拒"));
+            assert!(
+                e.contains("permission_denied"),
+                "{method} 必须是 permission_denied：{e}"
+            );
+            assert!(
+                e.contains("read:all-spaces"),
+                "{method} 的拒绝要点名缺 read:all-spaces：{e}"
+            );
+        }
+        // 只读（全部空间）档
+        let mut all = read.clone();
+        all.push(crate::mcp_channel::READ_ALL_SCOPE.to_string());
+        let (count, tree) = with_external_caller("b1a-cross-all", &all, || {
+            (
+                dispatch_capability("pages.count", r#"{"spaceId":"b1a-other"}"#),
+                dispatch_capability("pages.tree", r#"{"spaceId":"b1a-other"}"#),
+            )
+        });
+        let count: i64 =
+            serde_json::from_str(&count.expect("全部空间档必须能读跨空间计数")).unwrap();
+        assert_eq!(
+            count, 2,
+            "读到的必须是**那个**空间的页数（2），不是当前空间（4）"
+        );
+        let tree: serde_json::Value =
+            serde_json::from_str(&tree.expect("全部空间档必须能读跨空间树")).unwrap();
+        assert_eq!(tree["spaceId"], "b1a-other");
+        assert_eq!(tree["spaceName"], "别处空间");
+        assert_eq!(tree["nodes"].as_array().unwrap().len(), 2);
+        unpoint_cap_search(&dir);
+    }
+
+    // ---- B1b（2026-10-29）`db.schema` / `db.rows` 的**数据级**判据 -----------------------------
+    //
+    // 挂载级那一半（工具面里在不在、「不接」档是否逐条 permission_denied）在 `mcp_host.rs`。
+    // 这里钉的是数据语义：列/视图/关系列与 UI 同源、公式列只标不算、where 五种操作符、
+    // 坏输入逐条点名、分页切片、200 KB 截断、跨空间两档。
+    //
+    // 夹具：当前空间 b1b-space（名称「夹具空间」）——
+    //   · 数据库页 db1（kind=database）＋ 4 个数据行 r1..r4（kind=page，updated_at 递减）
+    //     和 1 个普通页 plain1（用来验"pageId 不是数据库页"）；
+    //   · 列：a1 状态(select) / a2 分数(number) / a3 备注(text) / a5 公式(formula) /
+    //     a6 关联(ref) / a7 标签列(tag)；
+    //   · 视图：v1 表格（无过滤）、v2「只看甲」（标题过滤「甲」＋按标题升序）；
+    //   · 行值：r1{a1 进行中, a2 10, a3 甲备注, a5 **a1+a2**（原始值，不是计算值）, a6 p:r2}
+    //           r2{a1 完成, a2 20, a3 乙备注, a6 p:r1}；r3{a1 进行中, a2 30}；r4 无属性；
+    //   · r1 打标签 t1 待办 ＋ t2 重要（标签列原始值 = "待办, 重要"）。
+    //   另一个空间 b1b-other（名称「别处空间」）：数据库页 odb1 ＋ 1 个数据行 orow。
+    fn b1b_fixture(tag: &str) -> PathBuf {
+        let dir = cap_search_dir(tag);
+        {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES ('b1b-space', '夹具空间', '#000', '', 1, 1, 1)",
+                [],
+            )
+            .unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES ('b1b-other', '别处空间', '#000', '', 2, 2, 2)",
+                [],
+            )
+            .unwrap();
+        }
+        {
+            let c = crate::db::open_space_conn_at("b1b-space", &dir).unwrap();
+            for (id, title, kind, at) in [
+                ("db1", "任务库", "database", 200),
+                ("plain1", "普通页", "folder", 201),
+                ("r1", "甲", "page", 104),
+                ("r2", "乙", "page", 103),
+                ("r3", "丙", "page", 102),
+                ("r4", "丁", "page", 101),
+            ] {
+                c.execute(
+                    "INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at)
+                     VALUES (?1, 'b1b-space', NULL, ?2, ?3, 0, ?4, ?4)",
+                    params![id, title, kind, at],
+                )
+                .unwrap();
+            }
+            for (id, name, ty, ord) in [
+                ("a1", "状态", "select", 0.0),
+                ("a2", "分数", "number", 1.0),
+                ("a3", "备注", "text", 2.0),
+                ("a5", "公式", "formula", 3.0),
+                ("a6", "关联", "ref", 4.0),
+                ("a7", "标签列", "tag", 5.0),
+            ] {
+                c.execute(
+                    "INSERT INTO attr_defs (id, name, type, options, sort_order, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, '[]', ?4, 1, 1)",
+                    params![id, name, ty, ord],
+                )
+                .unwrap();
+                c.execute(
+                    "INSERT INTO database_columns (db_page_id, attr_id, sort_order) VALUES ('db1', ?1, ?2)",
+                    params![id, ord],
+                )
+                .unwrap();
+            }
+            c.execute(
+                "INSERT INTO db_views (id, db_page_id, name, view_type, config, sort_order, created_at)
+                 VALUES ('v1', 'db1', '表格', 'table', '{}', 0, 1)",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO db_views (id, db_page_id, name, view_type, config, sort_order, created_at)
+                 VALUES ('v2', 'db1', '只看甲', 'table',
+                         '{\"filter\":\"甲\",\"sort\":{\"key\":\"__title\",\"dir\":1}}', 1, 1)",
+                [],
+            )
+            .unwrap();
+            for (page, attr, value) in [
+                ("r1", "a1", "进行中"),
+                ("r1", "a2", "10"),
+                ("r1", "a3", "甲备注"),
+                // ⚠️ 公式列的**原始值**故意存一个能看出来的串：本工具必须原样返回它、
+                //    ⛔ 不许把它算成 10+?（矩阵 §13.2-6：db.rows 只给原始值）。
+                ("r1", "a5", "a1+a2"),
+                ("r1", "a6", "p:r2"),
+                ("r2", "a1", "完成"),
+                ("r2", "a2", "20"),
+                ("r2", "a3", "乙备注"),
+                ("r2", "a6", "p:r1"),
+                ("r3", "a1", "进行中"),
+                ("r3", "a2", "30"),
+            ] {
+                c.execute(
+                    "INSERT INTO page_props (page_id, attr_id, value) VALUES (?1, ?2, ?3)",
+                    params![page, attr, value],
+                )
+                .unwrap();
+            }
+            c.execute("INSERT INTO tags (id, name) VALUES ('t1', '待办')", [])
+                .unwrap();
+            c.execute("INSERT INTO tags (id, name) VALUES ('t2', '重要')", [])
+                .unwrap();
+            c.execute(
+                "INSERT INTO page_tags (page_id, tag_id) VALUES ('r1', 't1')",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO page_tags (page_id, tag_id) VALUES ('r1', 't2')",
+                [],
+            )
+            .unwrap();
+        }
+        {
+            let c = crate::db::open_space_conn_at("b1b-other", &dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at)
+                 VALUES ('odb1', 'b1b-other', NULL, '别处的库', 'database', 0, 1, 1)",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at)
+                 VALUES ('orow', 'b1b-other', NULL, '别处的行', 'page', 0, 2, 2)",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO attr_defs (id, name, type, options, sort_order, created_at, updated_at)
+                 VALUES ('da1', '名字', 'text', '[]', 0, 1, 1)",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO database_columns (db_page_id, attr_id, sort_order) VALUES ('odb1', 'da1', 0)",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO page_props (page_id, attr_id, value) VALUES ('orow', 'da1', '别的')",
+                [],
+            )
+            .unwrap();
+        }
+        dir
+    }
+
+    /// 在夹具上追加一行「巨大」的数据行（给 200 KB 截断用）：它 updated_at 最小 ⇒ 排最后，
+    /// 截断时先被丢掉的正是它（这样断言能同时看到 total 不变、returned 变少、truncated:true）。
+    fn b1b_add_huge_row(dir: &std::path::Path) {
+        let c = crate::db::open_space_conn_at("b1b-space", dir).unwrap();
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at)
+             VALUES ('r5', 'b1b-space', NULL, '戊', 'page', 0, 100, 100)",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO page_props (page_id, attr_id, value) VALUES ('r5', 'a3', ?1)",
+            params!["x".repeat(210 * 1024)],
+        )
+        .unwrap();
+    }
+
+    /// ⭐ 判据 1：`db.schema` 的列/视图/关系列与 UI **同源**（同一份 fixture 的真值），
+    /// 且**公式列 `isFormula:true`**、原始值里那个公式串**没被计算**（下一用例断言值）。
+    #[test]
+    fn b1b_db_schema_reports_columns_views_and_relations_like_the_ui() {
+        let dir = b1b_fixture("b1b-schema");
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let out = with_external_caller("b1b-schema", &granted, || {
+            dispatch_capability("db.schema", r#"{"pageId":"db1"}"#)
+        })
+        .expect("db.schema 在只读档必须可调");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["pageId"], "db1");
+        assert_eq!(v["spaceId"], "b1b-space");
+        // 视图：与 list_db_views 同一条 SQL（顺序 sort_order → created_at）
+        let views = v["views"].as_array().expect("views 必须是数组");
+        assert_eq!(views.len(), 2);
+        assert_eq!(views[0]["id"], "v1");
+        assert_eq!(views[0]["name"], "表格");
+        assert_eq!(views[0]["type"], "table");
+        assert_eq!(views[1]["id"], "v2");
+        assert_eq!(views[1]["name"], "只看甲");
+        // 列：顺序 = database_columns.sort_order；类型原样；公式列带 isFormula
+        let cols = v["columns"].as_array().expect("columns 必须是数组");
+        let ids: Vec<&str> = cols.iter().map(|c| c["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["a1", "a2", "a3", "a5", "a6", "a7"]);
+        assert_eq!(cols[0]["name"], "状态");
+        assert_eq!(cols[0]["type"], "select");
+        assert_eq!(cols[1]["type"], "number");
+        assert_eq!(
+            cols[3]["isFormula"],
+            serde_json::json!(true),
+            "公式列必须标明 isFormula:true（矩阵 §13.2-6）"
+        );
+        assert!(cols[3].get("isRollup").is_none(), "公式列不该带 isRollup");
+        // 关系列单列在 relations 里（type=ref 的那些）
+        let rels = v["relations"].as_array().expect("relations 必须是数组");
+        assert_eq!(rels.len(), 1, "夹具里只有 a6 是 ref 关系列");
+        assert_eq!(rels[0]["id"], "a6");
+        assert_eq!(rels[0]["name"], "关联");
+        assert_eq!(rels[0]["type"], "ref");
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ 判据 1（值那一半）＋ 判据 2（无 where ⇒ 行数 = 表行数、total 正确）：
+    /// 只给**原始值** —— 公式列的 "a1+a2" 原样返回（⛔ 不计算），标签列的原始值是拼好的名字。
+    #[test]
+    fn b1b_db_rows_without_where_returns_every_row_and_the_raw_values() {
+        let dir = b1b_fixture("b1b-all");
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let out = with_external_caller("b1b-all", &granted, || {
+            dispatch_capability("db.rows", r#"{"pageId":"db1"}"#)
+        })
+        .expect("db.rows 在只读档必须可调");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["pageId"], "db1");
+        assert_eq!(v["spaceId"], "b1b-space");
+        assert_eq!(v["total"], 4, "夹具里 db1 有 4 个数据行");
+        assert_eq!(v["returned"], 4);
+        assert_eq!(v["truncated"], serde_json::json!(false));
+        let rows = v["rows"].as_array().unwrap();
+        // 默认顺序：updated_at DESC（r1 最新）
+        let ids: Vec<&str> = rows.iter().map(|r| r["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["r1", "r2", "r3", "r4"]);
+        // 原始值：公式列**原样**（⛔ 不是 10 或 "10+…" 的计算结果）
+        assert_eq!(rows[0]["values"]["a5"], "a1+a2", "公式列只给原始值");
+        assert_eq!(rows[0]["values"]["a1"], "进行中");
+        assert_eq!(rows[0]["values"]["a2"], "10");
+        assert_eq!(
+            rows[0]["values"]["a7"], "待办, 重要",
+            "标签列原始值 = 标签名按名字排序后逗号相连（与 queryDatabase 一致）"
+        );
+        assert_eq!(rows[0]["values"]["a6"], "p:r2", "关系列原样给 p:<id>");
+        // 4 号行没有任何属性 ⇒ values 是空对象（不是编一堆空串）
+        assert_eq!(rows[3]["values"], serde_json::json!({}));
+        // 回话必须**说出**"原始值、可能与界面计算值不同"（矩阵 §13.2-6）
+        assert!(
+            v["note"].as_str().unwrap_or_default().contains("原始值"),
+            "note 必须说明只给原始值：{v}"
+        );
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ 判据 2：`where` 单条件 / 多条件 AND 各一条（字段**id 与列名**都接受）。
+    #[test]
+    fn b1b_db_rows_where_single_and_multi_conditions() {
+        let dir = b1b_fixture("b1b-where");
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let (one, two) = with_external_caller("b1b-where", &granted, || {
+            (
+                // 单条件：用**列名**匹配
+                dispatch_capability(
+                    "db.rows",
+                    r#"{"pageId":"db1","where":[{"field":"状态","op":"=","value":"进行中"}]}"#,
+                ),
+                // 多条件 AND：用**列 id**（数值列按数值比较）
+                dispatch_capability(
+                    "db.rows",
+                    r#"{"pageId":"db1","where":[{"field":"a1","op":"=","value":"进行中"},{"field":"a2","op":">","value":15}]}"#,
+                ),
+            )
+        });
+        let one: serde_json::Value = serde_json::from_str(&one.unwrap()).unwrap();
+        assert_eq!(one["total"], 2, "状态=进行中 ⇒ r1/r3");
+        let ids: Vec<&str> = one["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["r1", "r3"]);
+        let two: serde_json::Value = serde_json::from_str(&two.unwrap()).unwrap();
+        assert_eq!(two["total"], 1, "进行中 AND 分数>15 ⇒ 只剩 r3");
+        assert_eq!(two["rows"][0]["id"], "r3");
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ 判据 2：`in` / `contains` / `is_null` 各一条。
+    #[test]
+    fn b1b_db_rows_supports_in_contains_and_is_null() {
+        let dir = b1b_fixture("b1b-ops");
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let (in_r, contains_r, null_r) = with_external_caller("b1b-ops", &granted, || {
+            (
+                dispatch_capability(
+                    "db.rows",
+                    r#"{"pageId":"db1","where":[{"field":"a1","op":"in","value":["完成"]}]}"#,
+                ),
+                dispatch_capability(
+                    "db.rows",
+                    r#"{"pageId":"db1","where":[{"field":"a3","op":"contains","value":"甲备"}]}"#,
+                ),
+                dispatch_capability(
+                    "db.rows",
+                    r#"{"pageId":"db1","where":[{"field":"a2","op":"is_null"}]}"#,
+                ),
+            )
+        });
+        let in_v: serde_json::Value = serde_json::from_str(&in_r.unwrap()).unwrap();
+        assert_eq!(in_v["total"], 1);
+        assert_eq!(in_v["rows"][0]["id"], "r2");
+        let contains_v: serde_json::Value = serde_json::from_str(&contains_r.unwrap()).unwrap();
+        assert_eq!(contains_v["total"], 1);
+        assert_eq!(contains_v["rows"][0]["id"], "r1");
+        let null_v: serde_json::Value = serde_json::from_str(&null_r.unwrap()).unwrap();
+        assert_eq!(null_v["total"], 1, "没有分数的只有 r4");
+        assert_eq!(null_v["rows"][0]["id"], "r4");
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ 判据 3：坏输入逐条 `invalid_args`（未知字段 / 坏操作符 / `in` 非数组 / where 非数组），
+    /// **点名第几条**，且⛔ 不许 Ok(空数组) 伪装成"没有匹配"。
+    #[test]
+    fn b1b_db_rows_invalid_inputs_are_named_not_swallowed() {
+        let dir = b1b_fixture("b1b-bad");
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let cases = [
+            (
+                "unknown-field",
+                r#"{"pageId":"db1","where":[{"field":"不存在的列","op":"=","value":"x"}]}"#,
+                "不存在的列",
+            ),
+            (
+                "bad-op",
+                r#"{"pageId":"db1","where":[{"field":"a1","op":"like","value":"x"}]}"#,
+                "like",
+            ),
+            (
+                "in-not-array",
+                r#"{"pageId":"db1","where":[{"field":"a1","op":"in","value":"进行中"}]}"#,
+                "数组",
+            ),
+            (
+                "where-not-array",
+                r#"{"pageId":"db1","where":{"field":"a1","op":"=","value":"x"}}"#,
+                "where 必须是数组",
+            ),
+        ];
+        for (label, args, needle) in cases {
+            let r = with_external_caller(label, &granted, || dispatch_capability("db.rows", args));
+            let e = r.expect_err(&format!("{label} 必须被拒（⛔ 不许 500 / 静默空）：{args}"));
+            assert!(
+                e.contains("invalid_args"),
+                "{label} 的错误码必须是 invalid_args：{e}"
+            );
+            assert!(
+                e.contains(needle),
+                "{label} 的判语必须点名问题（要含「{needle}」）：{e}"
+            );
+            assert!(
+                e.contains("where[0]") || label == "where-not-array",
+                "{label} 要点名第几条：{e}"
+            );
+        }
+        // pageId 指向普通页 / 不存在 ⇒ 也是 invalid_args（不是 500、也不是"空库"）
+        for (label, args) in [
+            ("not-db", r#"{"pageId":"plain1"}"#),
+            ("missing-page", r#"{"pageId":"nope"}"#),
+        ] {
+            let r =
+                with_external_caller(label, &granted, || dispatch_capability("db.schema", args));
+            let e = r.expect_err(&format!("{label} 必须被拒"));
+            assert!(e.contains("invalid_args"), "{label}：{e}");
+        }
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ 判据 4（前半）：`limit=2&offset=2` ⇒ 正确切片、`total` 不变（分页在 Rust 侧执行）。
+    #[test]
+    fn b1b_db_rows_paginates_with_limit_and_offset() {
+        let dir = b1b_fixture("b1b-page");
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let out = with_external_caller("b1b-page", &granted, || {
+            dispatch_capability("db.rows", r#"{"pageId":"db1","limit":2,"offset":2}"#)
+        })
+        .expect("带 limit/offset 的 db.rows 必须可调");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["total"], 4, "total 是过滤后的总行数（不受 limit 影响）");
+        assert_eq!(v["returned"], 2);
+        let ids: Vec<&str> = v["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["r3", "r4"], "offset=2 跳过 r1/r2 后是 r3/r4");
+        assert_eq!(
+            v["truncated"],
+            serde_json::json!(false),
+            "这一页正好把剩下的给完了 ⇒ 不算截断"
+        );
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ 判据 4（后半）：响应体超 200 KB ⇒ **提前截断并 `truncated:true`**（total 不变）。
+    #[test]
+    fn b1b_db_rows_truncates_the_body_at_200kb_and_says_so() {
+        let dir = b1b_fixture("b1b-big");
+        b1b_add_huge_row(&dir);
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let out = with_external_caller("b1b-big", &granted, || {
+            dispatch_capability("db.rows", r#"{"pageId":"db1"}"#)
+        })
+        .expect("db.rows 必须可调");
+        assert!(
+            out.len() <= 200 * 1024,
+            "响应体必须 ≤200KB（实际 {} 字节）",
+            out.len()
+        );
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["total"], 5, "total 仍是真实行数（不因截断变）");
+        assert_eq!(
+            v["truncated"],
+            serde_json::json!(true),
+            "撞了 200KB 上限必须如实标 truncated"
+        );
+        assert!(
+            (v["returned"].as_i64().unwrap()) < 5,
+            "至少要丢掉那行巨大的（returned={}）",
+            v["returned"]
+        );
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⭐ 判据 5：带 `spaceId` 在「只读」档 ⇒ **两条工具都明确拒**（点名 `read:all-spaces`）；
+    /// 「只读（全部空间）」档 ⇒ **真能读别的空间**（读到的是那个空间的库/行，不是当前空间）。
+    #[test]
+    fn b1b_db_tools_follow_the_cross_space_permission_gate() {
+        let dir = b1b_fixture("b1b-cross");
+        point_cap_search_at(&dir, "b1b-space");
+        let read = crate::mcp_channel::default_read_scopes();
+        let cases = [
+            ("db.schema", r#"{"pageId":"odb1","spaceId":"b1b-other"}"#),
+            ("db.rows", r#"{"pageId":"odb1","spaceId":"b1b-other"}"#),
+        ];
+        let denied: Vec<Result<String, String>> =
+            with_external_caller("b1b-cross-read", &read, || {
+                cases
+                    .iter()
+                    .map(|(m, a)| dispatch_capability(m, a))
+                    .collect()
+            });
+        for ((method, _), r) in cases.iter().zip(denied.iter()) {
+            let e = r
+                .as_ref()
+                .expect_err(&format!("{method} 在只读档带 spaceId 必须被拒"));
+            assert!(
+                e.contains("permission_denied"),
+                "{method} 必须是 permission_denied：{e}"
+            );
+            assert!(
+                e.contains("read:all-spaces"),
+                "{method} 的拒绝要点名缺 read:all-spaces：{e}"
+            );
+        }
+        // 只读（全部空间）档
+        let mut all = read.clone();
+        all.push(crate::mcp_channel::READ_ALL_SCOPE.to_string());
+        let (schema, rows) = with_external_caller("b1b-cross-all", &all, || {
+            (
+                dispatch_capability("db.schema", r#"{"pageId":"odb1","spaceId":"b1b-other"}"#),
+                dispatch_capability("db.rows", r#"{"pageId":"odb1","spaceId":"b1b-other"}"#),
+            )
+        });
+        let schema: serde_json::Value =
+            serde_json::from_str(&schema.expect("全部空间档必须能读跨空间结构")).unwrap();
+        assert_eq!(schema["spaceId"], "b1b-other");
+        assert_eq!(schema["columns"].as_array().unwrap().len(), 1);
+        assert_eq!(schema["columns"][0]["name"], "名字");
+        let rows: serde_json::Value =
+            serde_json::from_str(&rows.expect("全部空间档必须能读跨空间行")).unwrap();
+        assert_eq!(rows["spaceId"], "b1b-other");
+        assert_eq!(rows["total"], 1);
+        assert_eq!(rows["rows"][0]["id"], "orow");
+        assert_eq!(rows["rows"][0]["values"]["da1"], "别的");
+        unpoint_cap_search(&dir);
+    }
+
+    /// `viewId`：套用视图保存的**标题过滤**（与界面同口径）——认不出的 viewId ⇒ `invalid_args`。
+    #[test]
+    fn b1b_db_rows_applies_the_saved_view_filter() {
+        let dir = b1b_fixture("b1b-view");
+        point_cap_search_at(&dir, "b1b-space");
+        let granted = crate::mcp_channel::default_read_scopes();
+        let (ok_r, bad_r) = with_external_caller("b1b-view", &granted, || {
+            (
+                dispatch_capability("db.rows", r#"{"pageId":"db1","viewId":"v2"}"#),
+                dispatch_capability("db.rows", r#"{"pageId":"db1","viewId":"nope"}"#),
+            )
+        });
+        let v: serde_json::Value = serde_json::from_str(&ok_r.unwrap()).unwrap();
+        assert_eq!(v["total"], 1, "v2 的标题过滤「甲」只留 r1");
+        assert_eq!(v["rows"][0]["id"], "r1");
+        let e = bad_r.expect_err("认不出的 viewId 必须被拒（⛔ 不静默当成没有视图）");
+        assert!(e.contains("invalid_args") && e.contains("nope"), "{e}");
+        unpoint_cap_search(&dir);
+    }
+    // ---- B1c（2026-10-29）只读（版本/回收站/附件）＋ 导出/下载句柄 ----
+    //
+    // 夹具：一个空间里 2 页（p1 有历史版本；p2 在回收站）＋ 4 个附件
+    //   a1 挂 p1（有派生文本/覆盖度）、a2/a4 未整理、a3 名字带 `../`（文件名清洗判据）、
+    //   a4 只在库里标成 >10MB（needs_confirm 判据，不需要真造 11MB 字节）。
+    // 附件的**字节**落在测试 app-data 目录里（能力层按全局 app data 取字节，与生产同一条路）。
+    struct B1cFixture {
+        dir: PathBuf,
+        space: String,
+        app_data: PathBuf,
+        a3_hash: String,
+        a3_bytes: Vec<u8>,
+    }
+
+    fn b1c_write_attachment(
+        app_data: &std::path::Path,
+        space: &str,
+        hash: &str,
+        ext: &str,
+        bytes: &[u8],
+    ) {
+        let dir = crate::attachments::space_attachments_dir(app_data, space);
+        let path = crate::attachments::bucket_path(&dir, hash, ext);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+    }
+
+    fn b1c_fixture(tag: &str) -> B1cFixture {
+        let dir = cap_search_dir(tag);
+        let space = format!("b1c-{tag}");
+        let app_data = crate::db::ensure_test_app_data_dir().to_path_buf();
+        {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES (?1, '夹具空间', '#000', '', 1, 1, 1)",
+                params![space],
+            )
+            .unwrap();
+        }
+        let a3_bytes = b"dirty name payload".to_vec();
+        let a3_hash = crate::mcp_blobs::sha256_hex(&a3_bytes);
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            // 页面：p1 正常、p2 软删（回收站）
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '第一页', '{}', '甲乙丙丁戊', 'page', 0, 10, 10)",
+                params![space],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
+                 VALUES ('p2', ?1, NULL, '删掉的页', '{}', '', 'page', 1, 11, 11, 123)",
+                params![space],
+            )
+            .unwrap();
+            // 历史版本：正文 5 字，content_json 里有一个带 blockId 的顶层块（用来验锚点）
+            let doc = r#"{"root":{"type":"root","children":[{"type":"paragraph","children":[{"type":"text","text":"甲乙丙丁戊"}],"blockId":"b-ver"}]}}"#;
+            c.execute(
+                "INSERT INTO page_versions (id, page_id, title, content_json, content_text, created_at)
+                 VALUES ('v1', 'p1', '第一版', ?1, '甲乙丙丁戊', 100)",
+                params![doc],
+            )
+            .unwrap();
+            // 附件：a1 挂 p1；a2 未整理；a3 名字带 ../（清洗判据）；a4 未整理且标成 11MB
+            let a1_bytes = b"hello attachment".to_vec();
+            let a1_hash = crate::mcp_blobs::sha256_hex(&a1_bytes);
+            c.execute(
+                "INSERT INTO attachments (id, page_id, name, mime, size, hash, created_at)
+                 VALUES ('a1', 'p1', '扫描件.pdf', 'application/pdf', ?1, ?2, 50)",
+                params![a1_bytes.len() as i64, a1_hash],
+            )
+            .unwrap();
+            let a2_bytes = b"orphan".to_vec();
+            let a2_hash = crate::mcp_blobs::sha256_hex(&a2_bytes);
+            c.execute(
+                "INSERT INTO attachments (id, page_id, name, mime, size, hash, created_at)
+                 VALUES ('a2', NULL, '孤儿.txt', 'text/plain', ?1, ?2, 40)",
+                params![a2_bytes.len() as i64, a2_hash],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO attachments (id, page_id, name, mime, size, hash, created_at)
+                 VALUES ('a3', 'p1', '../../逃逸.pdf', 'application/pdf', ?1, ?2, 30)",
+                params![a3_bytes.len() as i64, a3_hash],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO attachments (id, page_id, name, mime, size, hash, created_at)
+                 VALUES ('a4', NULL, '大件.bin', 'application/octet-stream', ?1, 'deadbeef', 20)",
+                params![11 * 1024 * 1024_i64],
+            )
+            .unwrap();
+            // a1 的派生文本 ＋ 覆盖度（unknown ≠ complete：这里给一份"没抽全"的原始 JSON）
+            c.execute(
+                "INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at, coverage)
+                 VALUES ('a1', 'pdf.text@1', 0, 'para', '甲', 'p.1', ?1, 1, '{\"complete\":false}')",
+                params![a1_hash],
+            )
+            .unwrap();
+        }
+        b1c_write_attachment(
+            &app_data,
+            &space,
+            &crate::mcp_blobs::sha256_hex(b"hello attachment"),
+            "pdf",
+            b"hello attachment",
+        );
+        b1c_write_attachment(
+            &app_data,
+            &space,
+            &crate::mcp_blobs::sha256_hex(b"orphan"),
+            "txt",
+            b"orphan",
+        );
+        b1c_write_attachment(&app_data, &space, &a3_hash, "pdf", &a3_bytes);
+        B1cFixture {
+            dir,
+            space,
+            app_data,
+            a3_hash,
+            a3_bytes,
+        }
+    }
+
+    fn b1c_cleanup(f: &B1cFixture) {
+        unpoint_cap_search(&f.dir);
+        let _ = std::fs::remove_dir_all(crate::attachments::space_attachments_dir(
+            &f.app_data,
+            &f.space,
+        ));
+    }
+
+    /// ⭐ 判据：版本清单形状 ＋ `version.get` 与 `pages.get` **同一套窗口/锚点口径**；
+    /// 版本不存在 ⇒ `not_found`（⛔ 不返回空正文冒充）。
+    #[test]
+    fn b1c_versions_list_and_get_share_the_pages_get_window() {
+        let f = b1c_fixture("b1c-ver");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let (list, part, whole, missing) = with_external_caller("b1c-ver", &granted, || {
+            (
+                dispatch_capability("versions.list", r#"{"pageId":"p1"}"#),
+                dispatch_capability(
+                    "version.get",
+                    r#"{"pageId":"p1","versionId":"v1","offset":1,"limit":2}"#,
+                ),
+                dispatch_capability(
+                    "version.get",
+                    r#"{"pageId":"p1","versionId":"v1","includeAnchors":false}"#,
+                ),
+                dispatch_capability("version.get", r#"{"pageId":"p1","versionId":"nope"}"#),
+            )
+        });
+        let list: Vec<serde_json::Value> =
+            serde_json::from_str(&list.expect("versions.list 应可调")).unwrap();
+        assert_eq!(list.len(), 1, "夹具里 p1 只有 1 个历史版本");
+        assert_eq!(list[0]["versionId"], "v1");
+        assert_eq!(list[0]["at"], 100);
+        assert_eq!(list[0]["title"], "第一版");
+
+        let v: serde_json::Value =
+            serde_json::from_str(&part.expect("version.get 应可调")).unwrap();
+        assert_eq!(v["pageId"], "p1");
+        assert_eq!(v["versionId"], "v1");
+        assert_eq!(v["at"], 100);
+        assert_eq!(
+            v["chars_total"], 5,
+            "chars_total 量的是整页字符数（不是本窗）"
+        );
+        assert_eq!(v["offset"], 1);
+        assert_eq!(v["limit"], 2);
+        assert_eq!(
+            v[crate::doc_content::PAGE_TEXT_KEY],
+            serde_json::json!("乙丙"),
+            "按字符切窗口（码点，不是字节）"
+        );
+        // includeAnchors=false ⇒ 正文逐字等于纯文本（不带锚点行）
+        let w: serde_json::Value =
+            serde_json::from_str(&whole.expect("version.get 应可调")).unwrap();
+        assert_eq!(
+            w[crate::doc_content::PAGE_TEXT_KEY],
+            serde_json::json!("甲乙丙丁戊")
+        );
+        // 默认 includeAnchors=true ⇒ 带一行块锚点（与 pages.get 同一个构造）
+        let anchored = with_external_caller("b1c-ver-anchored", &granted, || {
+            dispatch_capability("version.get", r#"{"pageId":"p1","versionId":"v1"}"#)
+        });
+        let a: serde_json::Value = serde_json::from_str(&anchored.unwrap()).unwrap();
+        assert!(
+            a[crate::doc_content::PAGE_TEXT_KEY]
+                .as_str()
+                .unwrap_or_default()
+                .contains("<!-- b:b-ver -->"),
+            "默认要在块后加锚点：{a}"
+        );
+        let e = missing.expect_err("不存在的版本必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据：回收站只列软删页面；空态是**空数组**（不是错误）。
+    #[test]
+    fn b1c_trash_list_lists_only_soft_deleted_pages() {
+        let f = b1c_fixture("b1c-trash");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let out = with_external_caller("b1c-trash", &granted, || {
+            dispatch_capability("trash.list", "{}")
+        });
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&out.expect("trash.list 应可调")).unwrap();
+        assert_eq!(rows.len(), 1, "夹具里只有 p2 在回收站");
+        assert_eq!(rows[0]["pageId"], "p2");
+        assert_eq!(rows[0]["deletedAt"], 123);
+        assert!(
+            rows.iter().all(|r| r["pageId"] != "p1"),
+            "没删的页面不许出现在回收站里"
+        );
+        // 空态：把 p2 恢复 ⇒ 空数组
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute("UPDATE pages SET deleted_at = NULL WHERE id = 'p2'", [])
+                .unwrap();
+        }
+        let empty = with_external_caller("b1c-trash-2", &granted, || {
+            dispatch_capability("trash.list", "{}")
+        });
+        let empty_val: serde_json::Value =
+            serde_json::from_str(&empty.expect("空回收站不是错误")).unwrap();
+        assert_eq!(
+            empty_val,
+            serde_json::json!([]),
+            "空态必须是空数组（不是错误、也不是 null）"
+        );
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据：附件元数据 / 抽取完整度 / 未整理列表的形状；不存在 ⇒ `not_found`。
+    #[test]
+    fn b1c_files_metadata_shapes_and_not_found() {
+        let f = b1c_fixture("b1c-meta");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let (stat, stat_missing, extract, extract_missing, orphan) =
+            with_external_caller("b1c-meta", &granted, || {
+                (
+                    dispatch_capability("files.stat", r#"{"attId":"a1"}"#),
+                    dispatch_capability("files.stat", r#"{"attId":"nope"}"#),
+                    dispatch_capability("files.extract_status", r#"{"attId":"a1"}"#),
+                    dispatch_capability("files.extract_status", r#"{"attId":"nope"}"#),
+                    dispatch_capability("files.list_orphan", r#"{"limit":200,"offset":0}"#),
+                )
+            });
+        let s: serde_json::Value = serde_json::from_str(&stat.expect("files.stat 应可调")).unwrap();
+        assert_eq!(s["attId"], "a1");
+        assert_eq!(s["pageId"], "p1");
+        assert_eq!(s["name"], "扫描件.pdf");
+        assert_eq!(s["mime"], "application/pdf");
+        assert_eq!(
+            s["sha256"],
+            serde_json::json!(crate::mcp_blobs::sha256_hex(b"hello attachment")),
+            "sha256 必须是真内容指纹"
+        );
+        assert_eq!(s["spaceId"], f.space);
+        assert!(stat_missing.unwrap_err().contains("not_found"));
+
+        let x: serde_json::Value =
+            serde_json::from_str(&extract.expect("files.extract_status 应可调")).unwrap();
+        assert_eq!(x["attId"], "a1");
+        assert_eq!(x["extracted"], serde_json::json!(true));
+        assert_eq!(x["segments"], 1);
+        assert_eq!(x["extractors"][0]["extractor"], "pdf.text@1");
+        assert!(
+            x["extractors"][0]["coverage"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("complete"),
+            "覆盖度要原样透出（未知≠完整）：{x}"
+        );
+        assert!(extract_missing.unwrap_err().contains("not_found"));
+
+        let o: serde_json::Value =
+            serde_json::from_str(&orphan.expect("files.list_orphan 应可调")).unwrap();
+        assert_eq!(o["total"], 2, "未整理的是 a2 与 a4");
+        let ids: Vec<&str> = o["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["attId"].as_str().unwrap())
+            .collect();
+        assert!(ids.contains(&"a2") && ids.contains(&"a4"), "实际 {ids:?}");
+        assert!(!ids.contains(&"a1"), "挂在页面上的附件不算未整理");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据（句柄）：**单次 / 绑会话 / 落盘只在 exports/＋文件名清洗 / sha 一致 / 不接受任意路径**。
+    ///
+    /// TTL 那一条在 `mcp_blobs` 的单元判据里用"测试专用过期"验（⛔ 不真等 120 秒）。
+    #[test]
+    fn b1c_handle_is_single_use_session_bound_and_cleans_the_file_name() {
+        let f = b1c_fixture("b1c-handle");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        // 会话 A 拿句柄
+        let got = with_external_caller("b1c-sess-a", &granted, || {
+            dispatch_capability("files.download", r#"{"attId":"a3"}"#)
+        });
+        let v: serde_json::Value =
+            serde_json::from_str(&got.expect("files.download 应可调")).unwrap();
+        assert!(v.get("bytes").is_none(), "⛔ 句柄类**不许**回字节：{v}");
+        let handle = v["handle"].as_str().unwrap().to_string();
+        assert!(handle.len() >= 32, "句柄要够长（128bit+ 随机）：{handle}");
+        assert_eq!(v["sha256"], serde_json::json!(f.a3_hash));
+        assert_eq!(v["size"], f.a3_bytes.len() as i64);
+        assert!(
+            v["expiresAt"].as_i64().unwrap_or(0) > 0,
+            "要回 expiresAt：{v}"
+        );
+
+        // 会话 B 兑换不了（而且**不会**把 A 的句柄消耗掉）
+        let cross = with_external_caller("b1c-sess-b", &granted, || {
+            dispatch_capability("blobs.fetch", &format!(r#"{{"handle":"{handle}"}}"#))
+        });
+        assert!(
+            cross.unwrap_err().contains("not_found"),
+            "别的会话的句柄必须 not_found"
+        );
+
+        // 会话 A 第一次兑换成功：落在 exports/、文件名清洗、**额外传的 destPath 被忽略**
+        let fetch = with_external_caller("b1c-sess-a", &granted, || {
+            dispatch_capability(
+                "blobs.fetch",
+                &format!(r#"{{"handle":"{handle}","destPath":"C:\\Windows\\evil.txt"}}"#),
+            )
+        });
+        let g: serde_json::Value =
+            serde_json::from_str(&fetch.expect("blobs.fetch 应可调")).unwrap();
+        let path = std::path::PathBuf::from(g["path"].as_str().unwrap());
+        let exports = crate::mcp_blobs::exports_dir(&f.app_data);
+        assert_eq!(
+            path.parent(),
+            Some(exports.as_path()),
+            "⛔ 必须落在 exports/ 里（任意目标路径不被接受）：{path:?}"
+        );
+        assert_eq!(
+            path.file_name().unwrap().to_string_lossy(),
+            "逃逸.pdf",
+            "文件名要清洗（目录部分被摘掉）"
+        );
+        assert_eq!(
+            g["sha256"],
+            serde_json::json!(f.a3_hash),
+            "sha256 与句柄一致"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            f.a3_bytes,
+            "落盘字节必须一致"
+        );
+
+        // 二次使用 ⇒ 已作废
+        let again = with_external_caller("b1c-sess-a", &granted, || {
+            dispatch_capability("blobs.fetch", &format!(r#"{{"handle":"{handle}"}}"#))
+        });
+        assert!(
+            again.unwrap_err().contains("not_found"),
+            "句柄单次使用：第二次必须失败"
+        );
+
+        // 清理：落盘文件与附件夹具
+        let _ = std::fs::remove_file(&path);
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据：>10MB **明确报 `needs_confirm`**（本批没有确认 UI ⇒ ⛔ 不静默下载）。
+    #[test]
+    fn b1c_download_over_10mb_says_needs_confirm() {
+        let f = b1c_fixture("b1c-big");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let err = with_external_caller("b1c-big", &granted, || {
+            dispatch_capability("files.download", r#"{"attId":"a4"}"#)
+        })
+        .expect_err(">10MB 必须报错");
+        assert!(err.contains("needs_confirm"), "必须是 needs_confirm：{err}");
+        assert!(err.contains("10MB"), "要说清是 10MB 上限：{err}");
+        b1c_cleanup(&f);
+    }
+
+    // ---- B3（2026-10-29）前端桥：导出（句柄，复用同一张句柄表）＋ 覆盖率报告（JSON） ----
+    //
+    // 桥的另一半（真前端）在 `frontend_tool.rs` 的假前端里（按方法回固定字节）⇒ 这里验的是
+    // 「能力层 → 桥 → 句柄/JSON」这条接线，以及**失败面**（前端不在 ⇒ 立刻 frontend_unavailable）。
+    fn b3_frontend() {
+        crate::frontend_tool::install_test_frontend_for_tests();
+    }
+
+    fn b3_json(s: String) -> serde_json::Value {
+        serde_json::from_str(&s).expect("回话必须是 JSON ✓")
+    }
+
+    /// ⭐ 判据 3（Markdown 侧）：`export.markdown` 回**句柄**、字节可被 `blobs.fetch` 取回、
+    /// 句柄仍是**单次**（与 `files.download` 共用同一张表）。
+    #[test]
+    fn b3_export_markdown_page_returns_a_single_use_handle() {
+        let _serial = crate::frontend_tool::test_lock();
+        b3_frontend();
+        let f = b1c_fixture("b3-md");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let got = with_external_caller("b3-md", &granted, || {
+            dispatch_capability("export.markdown", r#"{"pageId":"p1"}"#)
+        });
+        let v = b3_json(got.expect("export.markdown 应可调"));
+        assert_eq!(v["name"], "测试.md", "文件名由前端给：{v}");
+        assert!(v.get("bytes").is_none(), "⛔ 句柄类不许回字节：{v}");
+        assert_eq!(
+            v["sha256"],
+            serde_json::json!(crate::mcp_blobs::sha256_hex("# 测试\n".as_bytes())),
+            "sha256 必须按**前端交回的字节**算：{v}"
+        );
+        let handle = v["handle"].as_str().unwrap().to_string();
+        // 取回：落盘内容逐字节等于前端给的字节
+        let fetched = with_external_caller("b3-md", &granted, || {
+            dispatch_capability("blobs.fetch", &format!(r#"{{"handle":"{handle}"}}"#))
+        });
+        let g = b3_json(fetched.expect("blobs.fetch 应可调"));
+        let path = g["path"].as_str().unwrap().to_string();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            "# 测试\n".as_bytes(),
+            "落盘字节必须等于前端交回的字节"
+        );
+        assert_eq!(g["sha256"], v["sha256"], "两处 sha256 必须一致");
+        // 单次：第二次必须失败（句柄表与 files.download 是同一张）
+        let again = with_external_caller("b3-md", &granted, || {
+            dispatch_capability("blobs.fetch", &format!(r#"{{"handle":"{handle}"}}"#))
+        });
+        assert!(
+            again.unwrap_err().contains("not_found"),
+            "句柄单次使用：第二次必须 not_found"
+        );
+        let _ = std::fs::remove_file(&path);
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ `export.markdown` 的目标口径：pageId / spaceId **只能给一个**；整空间只支持当前空间。
+    #[test]
+    fn b3_export_markdown_target_rules_are_explicit() {
+        let _serial = crate::frontend_tool::test_lock();
+        b3_frontend();
+        let f = b1c_fixture("b3-md-rules");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        // 整空间（当前空间）⇒ 可以
+        let ok = with_external_caller("b3-md-rules", &granted, || {
+            dispatch_capability(
+                "export.markdown",
+                &format!(r#"{{"spaceId":"{}"}}"#, f.space),
+            )
+        });
+        assert!(ok.is_ok(), "当前空间的整空间导出应可调：{:?}", ok.err());
+        // 单页跨空间需 read:all-spaces；不存在的目标 / 都不给 ⇒ 明确拒（⛔ 不猜）
+        let e = with_external_caller("b3-md-rules", &granted, || {
+            dispatch_capability("export.markdown", r#"{"pageId":"p1","spaceId":"x"}"#)
+        })
+        .expect_err("缺 read:all-spaces 必拒");
+        assert!(e.contains("read:all-spaces"), "{e}");
+        for args in [r#"{}"#.to_string(), r#"{"spaceId":"别的空间"}"#.to_string()] {
+            let e = with_external_caller("b3-md-rules", &granted, || {
+                dispatch_capability("export.markdown", &args)
+            })
+            .expect_err("非法目标必须拒");
+            assert!(
+                e.contains("bad_args") || e.contains("permission_denied"),
+                "{args} ⇒ {e}"
+            );
+        }
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 3（`.shuyodoc` 侧）＋ 目标校验：页不存在 ⇒ `not_found`；文件夹 ⇒ `bad_args`。
+    #[test]
+    fn b3_export_docpackage_returns_handle_and_validates_the_target() {
+        let _serial = crate::frontend_tool::test_lock();
+        b3_frontend();
+        let f = b1c_fixture("b3-dp");
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('f1', ?1, NULL, '资料', '{}', '', 'folder', 0, 10, 10)",
+                params![f.space],
+            )
+            .unwrap();
+        }
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let got = with_external_caller("b3-dp", &granted, || {
+            dispatch_capability("export.docpackage", r#"{"pageId":"p1"}"#)
+        });
+        let v = b3_json(got.expect("export.docpackage 应可调"));
+        assert_eq!(v["name"], "测试.shuyodoc", "文件名由前端给：{v}");
+        assert!(v.get("handle").is_some() && v.get("bytes").is_none());
+        assert_eq!(
+            v["sha256"],
+            serde_json::json!(crate::mcp_blobs::sha256_hex(b"PK-test")),
+            "sha 必须按字节算：{v}"
+        );
+        // 不存在 ⇒ not_found；文件夹 ⇒ bad_args
+        let missing = with_external_caller("b3-dp", &granted, || {
+            dispatch_capability("export.docpackage", r#"{"pageId":"p2"}"#)
+        })
+        .expect_err("已删除的页必须 not_found");
+        assert!(missing.contains("not_found"), "{missing}");
+        let folder = with_external_caller("b3-dp", &granted, || {
+            dispatch_capability("export.docpackage", r#"{"pageId":"f1"}"#)
+        })
+        .expect_err("文件夹必须 bad_args");
+        assert!(folder.contains("bad_args"), "{folder}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 7：`coverage.report` **原样透出前端那份 JSON**（⛔ Rust 不改字段/不重算），
+    /// 且 `spaceId` 只接受当前空间（别的空间 ⇒ `bad_args`）。
+    #[test]
+    fn b3_coverage_report_returns_frontend_json_verbatim() {
+        let _serial = crate::frontend_tool::test_lock();
+        b3_frontend();
+        let f = b1c_fixture("b3-cov");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let got = with_external_caller("b3-cov", &granted, || {
+            dispatch_capability("coverage.report", "{}")
+        });
+        let v = b3_json(got.expect("coverage.report 应可调"));
+        assert_eq!(
+            v,
+            serde_json::json!({ "ok": true }),
+            "必须**逐字段**等于前端给的 JSON：{v}"
+        );
+        // 当前空间 ⇒ 可以；别的空间 ⇒ bad_args
+        let same = with_external_caller("b3-cov", &granted, || {
+            dispatch_capability(
+                "coverage.report",
+                &format!(r#"{{"spaceId":"{}"}}"#, f.space),
+            )
+        });
+        assert!(same.is_ok(), "当前空间应可调：{:?}", same.err());
+        let other = with_external_caller("b3-cov", &granted, || {
+            dispatch_capability("coverage.report", r#"{"spaceId":"别的空间"}"#)
+        })
+        .expect_err("别的空间必须 bad_args");
+        assert!(other.contains("bad_args"), "{other}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 2：**前端不在** ⇒ 立刻 `frontend_unavailable`（⛔ 不许挂死、也不许空成功）。
+    #[test]
+    fn b3_export_without_a_mounted_frontend_says_frontend_unavailable() {
+        let _serial = crate::frontend_tool::test_lock();
+        b3_frontend();
+        crate::frontend_tool::set_ready_for_tests(false);
+        let f = b1c_fixture("b3-unavail");
+        point_cap_search_at(&f.dir, &f.space);
+        let granted = crate::mcp_channel::default_read_scopes();
+        let t0 = std::time::Instant::now();
+        let e = with_external_caller("b3-unavail", &granted, || {
+            dispatch_capability("export.markdown", r#"{"pageId":"p1"}"#)
+        })
+        .expect_err("前端没挂载必须报错");
+        assert!(e.contains("frontend_unavailable"), "{e}");
+        assert!(
+            t0.elapsed() < std::time::Duration::from_millis(1000),
+            "没有前端时**不许**等满超时（实际 {:?}）",
+            t0.elapsed()
+        );
+        crate::frontend_tool::set_ready_for_tests(true);
+        b1c_cleanup(&f);
+    }
+
+    // ── B2-结构（2026-10-29）：节点/文件夹/回收站/回退/标签/属性 的写判据 ──
+    fn b2_granted() -> Vec<String> {
+        let mut g = crate::mcp_channel::default_read_scopes();
+        g.push("write:pages".to_string());
+        g.push("write:tags".to_string());
+        g.push("write:properties".to_string());
+        g.push("write:files".to_string());
+        g
+    }
+
+    /// ⭐ 判据 ②：删**非空文件夹** ⇒ 拒绝并点名 N 个子项（⛔ 不递归删）。
+    #[test]
+    fn b2_deleting_a_non_empty_folder_is_refused_with_the_child_count() {
+        let f = b1c_fixture("b2-nonempty");
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('f1', ?1, NULL, '资料', '{}', '', 'folder', 0, 10, 10)",
+                params![f.space],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('c1', ?1, 'f1', '子页', '{}', '', 'page', 0, 11, 11)",
+                params![f.space],
+            )
+            .unwrap();
+        }
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        let e = with_external_caller("b2-nonempty", &g, || {
+            dispatch_capability("nodes.delete", r#"{"id":"f1"}"#)
+        })
+        .expect_err("非空文件夹必须拒绝");
+        assert!(e.contains("bad_args"), "{e}");
+        assert!(e.contains("1 个子项"), "必须点名 N 个子项：{e}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 ③：`nodes.move` 成环 ⇒ 拒绝；成功时草稿里有新父级与 id（id 不变）。
+    #[test]
+    fn b2_move_rejects_cycles_and_drafts_the_new_parent() {
+        let f = b1c_fixture("b2-move");
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('f1', ?1, NULL, '资料', '{}', '', 'folder', 0, 10, 10)",
+                params![f.space],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('c1', ?1, 'f1', '子页', '{}', '', 'page', 0, 11, 11)",
+                params![f.space],
+            )
+            .unwrap();
+        }
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        // f1 → 自己的子页 c1 下面 ⇒ 成环
+        let e = with_external_caller("b2-move", &g, || {
+            dispatch_capability("nodes.move", r#"{"id":"f1","newParentId":"c1"}"#)
+        })
+        .expect_err("成环必须拒绝");
+        assert!(e.contains("bad_args") && e.contains("环"), "{e}");
+        // 正常移动：c1 → 顶层
+        let (out, drafts) = with_external_caller("b2-move-ok", &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability("nodes.move", r#"{"id":"c1","newParentId":null}"#)
+            })
+        });
+        out.expect("正常移动应产出草稿");
+        assert_eq!(drafts.len(), 1, "应恰好一条草稿");
+        let p = drafts[0].payload.clone();
+        assert_eq!(p["kind"], "move_node");
+        assert_eq!(p["id"], "c1");
+        assert!(p["newParentId"].is_null(), "顶层 ⇒ null：{p}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 ④：`pages.revert` 只能回退到**版本历史里**的版本；超期/不存在 ⇒ `not_found`。
+    #[test]
+    fn b2_revert_only_accepts_versions_still_in_history() {
+        let f = b1c_fixture("b2-revert");
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute(
+                "INSERT INTO page_versions (id, page_id, title, content_json, content_text, created_at)
+                 VALUES ('b2v1', 'p1', '标题', '{}', '正文', 9)",
+                [],
+            )
+            .unwrap();
+        }
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        let (out, drafts) = with_external_caller("b2-revert", &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability("pages.revert", r#"{"pageId":"p1","versionId":"b2v1"}"#)
+            })
+        });
+        out.expect("版本还在历史里 ⇒ 应产出草稿");
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].payload["kind"], "revert_page");
+        // 不存在的版本 ⇒ not_found（⛔ 不假装成功）
+        let e = with_external_caller("b2-revert-miss", &g, || {
+            dispatch_capability("pages.revert", r#"{"pageId":"p1","versionId":"nope"}"#)
+        })
+        .expect_err("版本不在历史里必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 ⑤ + idempotency：`dryRun` 不产草稿、不审计；同一 `clientRequestId` 只落一次、只审一条。
+    #[test]
+    fn b2_dry_run_and_client_request_id_behave() {
+        let f = b1c_fixture("b2-dry");
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        let session = "b2-dry-run";
+        let (out, drafts) = with_external_caller(session, &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability("nodes.delete", r#"{"id":"p1","dryRun":true}"#)
+            })
+        });
+        let v: serde_json::Value = serde_json::from_str(&out.expect("dryRun 应 OK")).unwrap();
+        assert_eq!(v["dryRun"], true, "{v}");
+        assert!(drafts.is_empty(), "dryRun 不许产草稿：{drafts:?}");
+        let rows = crate::plugins::plugin_audit(Some("external".to_string()), Some(200))
+            .into_iter()
+            .filter(|e| e.source == format!("external:{session}"))
+            .count();
+        assert_eq!(rows, 0, "dryRun 不记审计");
+        // clientRequestId：两次调用只产一条草稿、只审一条
+        let args = r#"{"id":"p1","clientRequestId":"req-b2-struct-1"}"#;
+        let (o1, d1) = with_external_caller("b2-idem", &g, || {
+            with_fresh_drafts(|| dispatch_capability("nodes.delete", args))
+        });
+        let (o2, d2) = with_external_caller("b2-idem", &g, || {
+            with_fresh_drafts(|| dispatch_capability("nodes.delete", args))
+        });
+        assert_eq!(o1.unwrap(), o2.unwrap(), "同 id 第二次必须返回同一结果");
+        assert_eq!(d1.len(), 1, "第一次产一条草稿");
+        assert_eq!(d2.len(), 0, "同 id 第二次**不许**再产草稿");
+        let rows: Vec<_> = crate::plugins::plugin_audit(Some("external".to_string()), Some(200))
+            .into_iter()
+            .filter(|e| e.source == "external:b2-idem")
+            .collect();
+        assert_eq!(rows.len(), 1, "同 id 只审一条（实际 {} 条）", rows.len());
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 ①/⑤：成功的结构写 ⇒ 恰好一条审计；标签/属性的目标校验。
+    #[test]
+    fn b2_structural_writes_audit_once_and_validate_targets() {
+        let f = b1c_fixture("b2-audit");
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute("INSERT INTO tags (id, name) VALUES ('t1', '标签甲')", [])
+                .unwrap();
+            c.execute(
+                "INSERT INTO page_tags (page_id, tag_id) VALUES ('p1', 't1')",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO attr_defs (id, name, type, sort_order, created_at, updated_at) VALUES ('a1', '评分', 'number', 0, 1, 1)",
+                [],
+            )
+            .unwrap();
+        }
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        let session = "b2-audit-1";
+        with_external_caller(session, &g, || {
+            dispatch_capability("folders.create", r#"{"title":"新文件夹"}"#)
+        })
+        .expect("建文件夹应 OK");
+        let rows: Vec<_> = crate::plugins::plugin_audit(Some("external".to_string()), Some(200))
+            .into_iter()
+            .filter(|e| e.source == format!("external:{session}"))
+            .collect();
+        assert_eq!(rows.len(), 1, "每次写恰一条审计（实际 {}）", rows.len());
+        assert!(rows[0].ok);
+        // tags.remove：不存在的标签 ⇒ not_found；存在 ⇒ 草稿
+        let e = with_external_caller("b2-audit-2", &g, || {
+            dispatch_capability("tags.remove", r#"{"pageId":"p1","name":"没有这个"}"#)
+        })
+        .expect_err("不存在的标签必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        let (out, drafts) = with_external_caller("b2-audit-3", &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability("tags.remove", r#"{"pageId":"p1","name":"标签甲"}"#)
+            })
+        });
+        out.expect("移除已存在的标签应产草稿");
+        assert_eq!(drafts.len(), 1);
+        // properties.set：数字属性给非数字 ⇒ bad_args；properties.unset 不存在 ⇒ not_found
+        let e = with_external_caller("b2-audit-4", &g, || {
+            dispatch_capability(
+                "properties.set",
+                r#"{"pageId":"p1","attrId":"a1","value":"不是数字"}"#,
+            )
+        })
+        .expect_err("数字属性给非数字必须 bad_args");
+        assert!(e.contains("bad_args"), "{e}");
+        let e = with_external_caller("b2-audit-5", &g, || {
+            dispatch_capability("properties.unset", r#"{"pageId":"p1","attrId":"nope"}"#)
+        })
+        .expect_err("不存在的属性必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        b1c_cleanup(&f);
+    }
+
+    // ── B2-块（2026-10-29）：blocks.patch/insert/delete ──
+    fn b2_blocks_fixture(tag: &str) -> B1cFixture {
+        let f = b1c_fixture(tag);
+        let doc = r#"{"root":{"type":"root","children":[
+            {"type":"paragraph","blockId":"blk1","children":[{"type":"text","text":"第一块"}]},
+            {"type":"paragraph","blockId":"blk2","children":[{"type":"text","text":"第二块"}]}
+        ]}}"#;
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute(
+                "UPDATE pages SET content_json = ?1, content_text = '第一块\\n第二块' WHERE id = 'p1'",
+                params![doc],
+            )
+            .unwrap();
+            for (i, bid) in ["blk1", "blk2"].iter().enumerate() {
+                c.execute(
+                    "INSERT INTO blocks (block_id, page_id, created_at, updated_at) VALUES (?1, 'p1', ?2, ?2)",
+                    params![bid, 10 + i as i64],
+                )
+                .unwrap();
+            }
+        }
+        point_cap_search_at(&f.dir, &f.space);
+        f
+    }
+
+    fn p1_rev() -> String {
+        with_read_conn(|c| page_rev_of(c, "p1")).unwrap().unwrap()
+    }
+
+    /// ⭐ 判据 ④：`rev_conflict` 必须带 `currentRev` ＋ **当前 markdown（带锚点）**；正确 rev 才产草稿。
+    #[test]
+    fn b2_blocks_patch_conflict_carries_rev_and_markdown() {
+        let f = b2_blocks_fixture("b2b-patch");
+        crate::frontend_tool::install_test_frontend_for_tests();
+        let g = b2_granted();
+        // 先让当前 rev 变一下，再用一个肯定过期的 expectedRev
+        with_external_caller("b2b-patch-0", &g, || {
+            dispatch_capability(
+                "blocks.patch",
+                r#"{"blockId":"blk1","markdown":"新内容","expectedRev":"0:deadbeef"}"#,
+            )
+        })
+        .expect_err("过期 rev 必须 rev_conflict");
+        let e = with_external_caller("b2b-patch", &g, || {
+            dispatch_capability(
+                "blocks.patch",
+                r#"{"blockId":"blk1","markdown":"新内容","expectedRev":"0:deadbeef"}"#,
+            )
+        })
+        .expect_err("过期 rev 必须 rev_conflict");
+        assert!(e.contains("rev_conflict"), "{e}");
+        assert!(e.contains("currentRev="), "必须带 currentRev：{e}");
+        assert!(e.contains("当前 markdown"), "必须带当前 markdown：{e}");
+        assert!(e.contains("current markdown"), "markdown 由前端桥给：{e}");
+        // 正确 rev ⇒ 产草稿，payload 里块 id 不变
+        let rev = p1_rev();
+        let args = format!(r#"{{"blockId":"blk1","markdown":"新内容","expectedRev":"{rev}"}}"#);
+        let (out, drafts) = with_external_caller("b2b-patch-ok", &g, || {
+            with_fresh_drafts(|| dispatch_capability("blocks.patch", &args))
+        });
+        let v: serde_json::Value = serde_json::from_str(&out.expect("正确 rev 应产草稿")).unwrap();
+        assert_eq!(v["applied"], false, "M2：确认前 applied 必须 false：{v}");
+        assert_eq!(v["changed"], serde_json::json!(["blk1"]));
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].payload["blockId"], "blk1");
+        assert_eq!(drafts[0].payload["kind"], "blocks_patch");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 ⑤/⑨：`dryRun` 不产草稿；`spaceId` 跨空间 ⇒ 拒并点名 write:all-spaces；
+    /// insert 返回 `newBlockId`、delete 拒绝删最后一个块。
+    #[test]
+    fn b2_blocks_insert_delete_dryrun_and_space_wall() {
+        let f = b2_blocks_fixture("b2b-ins");
+        crate::frontend_tool::install_test_frontend_for_tests();
+        let g = b2_granted();
+        let rev = p1_rev();
+        // dryRun：不产草稿
+        let args = format!(
+            r#"{{"pageId":"p1","afterBlockId":"blk1","markdown":"插入","expectedRev":"{rev}","dryRun":true}}"#
+        );
+        let (out, drafts) = with_external_caller("b2b-ins-dry", &g, || {
+            with_fresh_drafts(|| dispatch_capability("blocks.insert", &args))
+        });
+        let v: serde_json::Value = serde_json::from_str(&out.expect("dryRun 应 OK")).unwrap();
+        assert_eq!(v["dryRun"], true);
+        assert!(drafts.is_empty(), "dryRun 不许产草稿");
+        // 真实 insert：返回 newBlockId
+        let args2 = format!(
+            r#"{{"pageId":"p1","afterBlockId":"blk1","markdown":"插入","expectedRev":"{rev}"}}"#
+        );
+        let (out2, drafts2) = with_external_caller("b2b-ins", &g, || {
+            with_fresh_drafts(|| dispatch_capability("blocks.insert", &args2))
+        });
+        let v2: serde_json::Value = serde_json::from_str(&out2.expect("insert 应 OK")).unwrap();
+        assert!(v2["newBlockId"].as_str().unwrap_or("").len() > 8, "{v2}");
+        assert_eq!(drafts2.len(), 1);
+        // delete：删 blk2 可以；只剩一个块时再删 ⇒ 拒绝（不造空页）
+        let args3 = format!(r#"{{"blockId":"blk2","expectedRev":"{rev}"}}"#);
+        with_external_caller("b2b-del", &g, || {
+            with_fresh_drafts(|| dispatch_capability("blocks.delete", &args3))
+        })
+        .0
+        .expect("删 blk2 应产草稿");
+        // 跨空间 spaceId ⇒ 拒并点名
+        let e = with_external_caller("b2b-space", &g, || {
+            dispatch_capability(
+                "blocks.patch",
+                r#"{"blockId":"blk1","markdown":"x","spaceId":"别的空间"}"#,
+            )
+        })
+        .expect_err("跨空间必须拒");
+        assert!(
+            e.contains("permission_denied") && e.contains("write:all-spaces"),
+            "{e}"
+        );
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 判据 ③/⑦：写能力只产草稿时**不落库**；成功调用恰一条审计（与全局口径同一条）。
+    #[test]
+    fn b2_blocks_calls_audit_once_and_never_write_before_confirm() {
+        let f = b2_blocks_fixture("b2b-audit");
+        crate::frontend_tool::install_test_frontend_for_tests();
+        let g = b2_granted();
+        let before: String = with_read_conn(|c| {
+            c.query_row("SELECT content_text FROM pages WHERE id='p1'", [], |r| {
+                r.get(0)
+            })
+            .map_err(|e| e.to_string())
+        })
+        .unwrap();
+        let rev = p1_rev();
+        let args = format!(r#"{{"blockId":"blk1","markdown":"改掉","expectedRev":"{rev}"}}"#);
+        let session = "b2b-audit-1";
+        let (out, _drafts) = with_external_caller(session, &g, || {
+            with_fresh_drafts(|| dispatch_capability("blocks.patch", &args))
+        });
+        out.expect("应产草稿");
+        let after: String = with_read_conn(|c| {
+            c.query_row("SELECT content_text FROM pages WHERE id='p1'", [], |r| {
+                r.get(0)
+            })
+            .map_err(|e| e.to_string())
+        })
+        .unwrap();
+        assert_eq!(before, after, "确认前**不许**落库（两态应当相同）");
+        let rows: Vec<_> = crate::plugins::plugin_audit(Some("external".to_string()), Some(200))
+            .into_iter()
+            .filter(|e| e.source == format!("external:{session}"))
+            .collect();
+        assert_eq!(rows.len(), 1, "恰好一条审计");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ B2-附件与模板（2026-10-29）：引用检查、dryRun、目标校验、模板 not_found。
+    #[test]
+    fn b2_files_delete_checks_references_and_dryrun_is_side_effect_free() {
+        let f = b1c_fixture("b2f-files");
+        point_cap_search_at(&f.dir, &f.space);
+        let (att_id, hash): (String, String) = with_read_conn(|c| {
+            c.query_row(
+                "SELECT id, hash FROM attachments WHERE hash IS NOT NULL LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .unwrap();
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            let doc = format!(
+                r#"{{"root":{{"type":"root","children":[{{"type":"paragraph","blockId":"b1","children":[{{"type":"text","text":"见附件 attachment://{hash}"}}]}}]}}}}"#
+            );
+            c.execute(
+                "UPDATE pages SET content_json = ?1 WHERE id = 'p1'",
+                params![doc],
+            )
+            .unwrap();
+        }
+        let g = b2_granted();
+        let args = format!(r#"{{"attId":"{att_id}"}}"#);
+        let e = with_external_caller("b2f-ref", &g, || dispatch_capability("files.delete", &args))
+            .expect_err("正文仍引用 ⇒ 必须拒绝");
+        assert!(e.contains("bad_args") && e.contains("仍被正文引用"), "{e}");
+        assert!(e.contains("第一页"), "必须点名引用页面：{e}");
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute("UPDATE pages SET content_json = '{}' WHERE id = 'p1'", [])
+                .unwrap();
+        }
+        let dry = format!(r#"{{"attId":"{att_id}","dryRun":true}}"#);
+        let (out, drafts) = with_external_caller("b2f-dry", &g, || {
+            with_fresh_drafts(|| dispatch_capability("files.delete", &dry))
+        });
+        let v: serde_json::Value = serde_json::from_str(&out.expect("dryRun 应 OK")).unwrap();
+        assert_eq!(v["dryRun"], true);
+        assert!(drafts.is_empty(), "dryRun 不许产草稿");
+        let (out2, drafts2) = with_external_caller("b2f-del", &g, || {
+            with_fresh_drafts(|| dispatch_capability("files.delete", &args))
+        });
+        out2.expect("无引用应产草稿");
+        assert_eq!(drafts2.len(), 1);
+        let e = with_external_caller("b2f-move", &g, || {
+            dispatch_capability("files.move", r#"{"attId":"x","toPageId":"nope"}"#)
+        })
+        .expect_err("附件不存在必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        let e = with_external_caller("b2f-rename", &g, || {
+            dispatch_capability(
+                "files.rename",
+                &format!(r#"{{"attId":"{att_id}","name":"  "}}"#),
+            )
+        })
+        .expect_err("空名必须 bad_args");
+        assert!(e.contains("bad_args"), "{e}");
+        let e = with_external_caller("b2f-tpl", &g, || {
+            dispatch_capability("templates.apply", r#"{"templateId":"nope"}"#)
+        })
+        .expect_err("模板不存在必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ B2-补遗-1：detach 置空 page_id（字节不变）、重复 detach 拒绝；upload/import dryRun 不产草稿；目标校验。
+    #[test]
+    fn b2x_upload_import_detach_controls() {
+        let f = b1c_fixture("b2x");
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        let (att, hash): (String, String) = with_read_conn(|c| {
+            c.query_row(
+                "SELECT id, hash FROM attachments WHERE page_id IS NOT NULL AND hash IS NOT NULL LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .unwrap();
+        let (out, drafts) = with_external_caller("b2x-detach", &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability("files.detach", &format!(r#"{{"attId":"{att}"}}"#))
+            })
+        });
+        out.expect("detach 应产草稿");
+        assert_eq!(drafts.len(), 1);
+        // 执行落库那一步（命令内层）——摘除后 page_id=NULL、hash 不变
+        with_read_conn(|c| crate::attachments::detach_attachment_row(c, &att).map(|_| ()))
+            .expect("detach 应成功");
+        let (page_after, hash_after): (Option<String>, String) = with_read_conn(|c| {
+            c.query_row(
+                "SELECT page_id, hash FROM attachments WHERE id = ?1",
+                params![att],
+                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?)),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .unwrap();
+        assert!(page_after.is_none(), "page_id 必须置空");
+        assert_eq!(hash_after, hash, "sha/字节指纹必须不变");
+        let e = with_external_caller("b2x-detach2", &g, || {
+            dispatch_capability("files.detach", &format!(r#"{{"attId":"{att}"}}"#))
+        })
+        .expect_err("已未整理必须明确拒绝");
+        assert!(e.contains("bad_args"), "{e}");
+        let (o, d) = with_external_caller("b2x-upload", &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability("files.upload_to_page", r#"{"pageId":"p1","dryRun":true}"#)
+            })
+        });
+        let v: serde_json::Value = serde_json::from_str(&o.expect("dryRun 应 OK")).unwrap();
+        assert_eq!(v["dryRun"], true);
+        assert!(d.is_empty(), "dryRun 不产草稿");
+        let e = with_external_caller("b2x-upload2", &g, || {
+            dispatch_capability("files.upload_to_page", r#"{"pageId":"nope"}"#)
+        })
+        .expect_err("页不存在必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        let (o2, d2) = with_external_caller("b2x-import", &g, || {
+            with_fresh_drafts(|| dispatch_capability("import.docpackage", r#"{"dryRun":true}"#))
+        });
+        let v2: serde_json::Value = serde_json::from_str(&o2.expect("dryRun 应 OK")).unwrap();
+        assert_eq!(v2["dryRun"], true);
+        assert!(d2.is_empty(), "dryRun 不产草稿");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ UX-①：写工具返回 draftId；drafts.status 四态；audit.tail 只回本人会话。
+    #[test]
+    fn ux1_draft_id_status_and_audit_tail_are_session_scoped() {
+        let f = b1c_fixture("ux1");
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        let (out, drafts) = with_external_caller("ux1-w", &g, || {
+            with_fresh_drafts(|| dispatch_capability("pages.create", r#"{"title":"x"}"#))
+        });
+        let v: serde_json::Value = serde_json::from_str(&out.expect("应产草稿")).unwrap();
+        let draft_id = v["draftId"].as_str().unwrap_or("").to_string();
+        assert!(!draft_id.is_empty(), "写工具必须返回 draftId：{v}");
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].payload["draftId"], draft_id);
+        let (out2, d2) = with_external_caller("ux1-dry", &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability("pages.create", r#"{"title":"x","dryRun":true}"#)
+            })
+        });
+        let v2: serde_json::Value = serde_json::from_str(&out2.expect("dryRun OK")).unwrap();
+        assert!(v2.get("draftId").is_none(), "dryRun 不生成 draftId");
+        assert!(d2.is_empty());
+        let st = |id: &str| -> serde_json::Value {
+            with_external_caller("ux1-w", &g, || crate::plugins::cap_drafts_status(id)).unwrap()
+        };
+        assert_eq!(st(&draft_id)["state"], "pending");
+        crate::plugins::mark_draft_state(&draft_id, "applied").expect("回写 applied");
+        assert_eq!(st(&draft_id)["state"], "applied");
+        assert_eq!(st(&draft_id)["capabilityId"], "pages.create");
+        crate::plugins::attach_draft_id(
+            "ux1-rej",
+            "external:ux1-w",
+            "pages.create",
+            "pages.create",
+        );
+        crate::plugins::mark_draft_state("ux1-rej", "rejected").expect("回写 rejected");
+        assert_eq!(st("ux1-rej")["state"], "rejected");
+        crate::plugins::attach_draft_id(
+            "ux1-exp",
+            "external:ux1-w",
+            "pages.create",
+            "pages.create",
+        );
+        if let Ok(mut map) = crate::plugins::draft_states().lock() {
+            if let Some(r) = map.get_mut("ux1-exp") {
+                r.expires_ms = 1;
+            }
+        }
+        assert_eq!(st("ux1-exp")["state"], "expired");
+        let other = with_external_caller("ux1-other", &g, || {
+            crate::plugins::cap_drafts_status(&draft_id)
+        });
+        assert!(
+            other.unwrap_err().contains("not_found"),
+            "别的会话必须看不到"
+        );
+        let tail = |sid: &str| -> serde_json::Value {
+            with_external_caller(sid, &g, || crate::plugins::cap_audit_tail(100, false)).unwrap()
+        };
+        let before = tail("ux1-w").as_array().unwrap().len();
+        assert!(before > 0, "本会话应有审计");
+        with_external_caller("ux1-stranger", &g, || {
+            dispatch_capability("pages.count", "{}")
+        })
+        .unwrap();
+        let after = tail("ux1-w");
+        assert_eq!(
+            after.as_array().unwrap().len(),
+            before,
+            "别的会话审计不许出现"
+        );
+        b1c_cleanup(&f);
+        /// ⭐ UX-⑦：拆分后的显式工具只接受自己的参数（给错 ⇒ bad_args 点名）。
+        #[test]
+        fn ux7_export_split_rejects_the_other_parameter() {
+            let e = super::cap_export_page_markdown("p1", Some("other")).unwrap_err();
+            assert!(
+                e.contains("bad_args") && e.contains("space_markdown"),
+                "{e}"
+            );
+            let e = super::cap_export_space_markdown(None, Some("p1")).unwrap_err();
+            assert!(e.contains("bad_args") && e.contains("page_markdown"), "{e}");
+        }
+    }
+
+    /// ⭐ UX-④：9 条附件/历史版本能力的 `spaceId` 门（表驱动）；只读（全部空间）档能读另一空间。
+    #[test]
+    fn ux4_files_and_versions_space_id_gate() {
+        let f = b1c_fixture("ux4");
+        let second = "ux4-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES (?1, '第二空间', '#000', '', 2, 1, 1)",
+                params![second],
+            )
+            .unwrap();
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '第二页', '{}', '', 'page', 0, 10, 10)",
+                params![second],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+                 VALUES ('a1', 'p1', 'r.pdf', ?1, 'application/pdf', 3, 10)",
+                params!["f".repeat(64)],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO page_versions (id, page_id, title, content_json, content_text, created_at)
+                 VALUES ('v1', 'p1', '旧版', '{}', '正文', 9)",
+                [],
+            )
+            .unwrap();
+        }
+        point_cap_search_at(&f.dir, &f.space);
+        let read_only = crate::mcp_channel::default_read_scopes();
+        let cases: [(&str, &str); 9] = [
+            ("files.list", r#"{"pageId":"p1"}"#),
+            ("files.search", r#"{"query":"x"}"#),
+            ("files.read", r#"{"id":"a1"}"#),
+            ("files.stat", r#"{"attId":"a1"}"#),
+            ("files.extract_status", r#"{"attId":"a1"}"#),
+            ("files.list_orphan", r#"{"limit":10}"#),
+            ("files.download", r#"{"attId":"a1"}"#),
+            ("versions.list", r#"{"pageId":"p1"}"#),
+            ("version.get", r#"{"pageId":"p1","versionId":"v1"}"#),
+        ];
+        for (method, args) in cases {
+            let with_space = args.replacen("{", &format!(r#"{{"spaceId":"{second}","#), 1);
+            let e = with_external_caller("ux4-gate", &read_only, || {
+                dispatch_capability(method, &with_space)
+            })
+            .expect_err("无 read:all-spaces 必须拒");
+            assert!(
+                e.contains("permission_denied") && e.contains("read:all-spaces"),
+                "{method} 必须点名 read:all-spaces：{e}"
+            );
+        }
+        // 「只读（全部空间）」档 ⇒ 能读另一空间
+        let mut read_all = read_only.clone();
+        read_all.push("read:all-spaces".to_string());
+        let ok = with_external_caller("ux4-all", &read_all, || {
+            dispatch_capability(
+                "files.list",
+                &format!(r#"{{"pageId":"p1","spaceId":"{second}"}}"#),
+            )
+        });
+        assert!(ok.is_ok(), "全部空间档应能读 attachments：{:?}", ok.err());
+        let v = with_external_caller("ux4-all2", &read_all, || {
+            dispatch_capability(
+                "versions.list",
+                &format!(r#"{{"pageId":"p1","spaceId":"{second}"}}"#),
+            )
+        });
+        assert!(v.is_ok(), "全部空间档应能读版本：{:?}", v.err());
+        // 省略参数 ⇒ 旧行为（当前空间）
+        with_external_caller("ux4-cur", &read_only, || {
+            dispatch_capability("files.list", r#"{"pageId":"p1"}"#)
+        })
+        .expect("省略 spaceId 必须与旧行为一致");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ P1：write_all 档放行权限门（跨空间写不再 permission_denied）；别的档仍拒。
+    /// ＋ 面板两个只读命令：只列外部会话草稿、limit 上限生效。
+    #[test]
+    fn p1_write_all_gate_and_recent_reads() {
+        let f = b1c_fixture("p1");
+        point_cap_search_at(&f.dir, &f.space);
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        let e = with_external_caller("p1-wa", &g, || {
+            dispatch_capability(
+                "import.docpackage",
+                r#"{"path":"x","spaceId":"other-space"}"#,
+            )
+        })
+        .expect_err("仍未接的工具 ⇒ 应 bad_args 而不是 permission_denied");
+        assert!(e.contains("bad_args"), "{e}");
+        assert!(
+            !e.contains("permission_denied"),
+            "授予全部空间后不应再报权限：{e}"
+        );
+        // 没有该 scope ⇒ 仍 permission_denied
+        let g2 = b2_granted();
+        let e2 = with_external_caller("p1-no", &g2, || {
+            dispatch_capability(
+                "blocks.patch",
+                r#"{"pageId":"p1","blockId":"b1","markdown":"x","spaceId":"other-space"}"#,
+            )
+        })
+        .expect_err("无 write:all-spaces 必须拒");
+        assert!(
+            e2.contains("permission_denied") && e2.contains("write:all-spaces"),
+            "{e2}"
+        );
+        // 面板命令：外部草稿 + limit 夹取；插件草稿不混入
+        crate::plugins::attach_draft_id("p1-d1", "external:p1-wa", "pages.create", "pages.create");
+        crate::plugins::attach_draft_id("p1-d2", "plugin:demo", "pages.create", "pages.create");
+        let rows = crate::plugins::mcp_recent_drafts(Some(100)).unwrap();
+        let arr = rows.as_array().unwrap();
+        assert!(arr.len() <= 50, "limit 上限 50");
+        assert!(
+            arr.iter().all(|r| r["draftId"] != "p1-d2"),
+            "插件草稿不混入面板"
+        );
+        assert!(arr.iter().any(|r| r["draftId"] == "p1-d1"));
+        // 审计命令：limit 上限
+        let audit = crate::plugins::mcp_recent_audit(Some(1000), None).unwrap();
+        assert!(audit.as_array().unwrap().len() <= 100, "limit 上限 100");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ P2：audit_tail 的 onlyWrites；changes_since 的页级增量（空窗口/改页/rev/limit）。
+    #[test]
+    fn p2_only_writes_and_changes_since() {
+        let f = b1c_fixture("p2");
+        point_cap_search_at(&f.dir, &f.space);
+        let g = b2_granted();
+        with_external_caller("p2-sess", &g, || dispatch_capability("pages.count", "{}")).unwrap();
+        with_external_caller("p2-sess", &g, || {
+            dispatch_capability("pages.create", r#"{"title":"写一页"}"#)
+        })
+        .unwrap();
+        let tail = |only_writes: bool| -> serde_json::Value {
+            with_external_caller("p2-sess", &g, || {
+                crate::plugins::cap_audit_tail(100, only_writes)
+            })
+            .unwrap()
+        };
+        let all = tail(false).as_array().unwrap().clone();
+        let writes = tail(true).as_array().unwrap().clone();
+        assert!(!all.is_empty() && !writes.is_empty());
+        assert!(
+            writes.iter().all(|r| r["capabilityId"] == "pages.create"),
+            "onlyWrites=true 只回写：{writes:?}"
+        );
+        assert!(
+            all.iter().any(|r| r["capabilityId"] == "pages.count"),
+            "onlyWrites=false 也要有读调用：{all:?}"
+        );
+        let empty = with_external_caller("p2-cs", &g, || {
+            dispatch_capability("pages.changes_since", r#"{"since":1000}"#)
+        })
+        .unwrap();
+        let ev: serde_json::Value = serde_json::from_str(&empty).unwrap();
+        assert!(ev["pages"].as_array().unwrap().is_empty());
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute(
+                "UPDATE pages SET updated_at = 9999999999999 WHERE id = 'p1'",
+                [],
+            )
+            .unwrap();
+        }
+        let got = with_external_caller("p2-cs2", &g, || {
+            dispatch_capability(
+                "pages.changes_since",
+                r#"{"since":1000000000000,"limit":50}"#,
+            )
+        })
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&got).unwrap();
+        let pages = v["pages"].as_array().unwrap();
+        assert_eq!(pages.len(), 1, "只出现改过的页：{v}");
+        assert_eq!(pages[0]["pageId"], "p1");
+        let detail = with_external_caller("p2-get", &g, || {
+            dispatch_capability("pages.get", r#"{"id":"p1"}"#)
+        })
+        .unwrap();
+        let d: serde_json::Value = serde_json::from_str(&detail).unwrap();
+        assert_eq!(
+            pages[0]["rev"], d["rev"],
+            "changes_since.rev 必须与 pages.get 一致"
+        );
+        assert_eq!(v["truncated"], false);
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p2b', ?1, NULL, '第二页', '{}', '', 'page', 0, 1, 9999999999998)",
+                params![f.space],
+            )
+            .unwrap();
+        }
+        let one = with_external_caller("p2-cs3", &g, || {
+            dispatch_capability(
+                "pages.changes_since",
+                r#"{"since":1000000000000,"limit":1}"#,
+            )
+        })
+        .unwrap();
+        let o: serde_json::Value = serde_json::from_str(&one).unwrap();
+        assert_eq!(o["pages"].as_array().unwrap().len(), 1);
+        assert_eq!(o["truncated"], true, "还有没给完的页 ⇒ truncated:true");
+        let e = with_external_caller("p2-cs4", &g, || {
+            dispatch_capability("pages.changes_since", r#"{"since":"not-a-date"}"#)
+        })
+        .expect_err("坏 since 必须 bad_args");
+        assert!(e.contains("bad_args"), "{e}");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 跨空间写 v1：pages.create 写到目标空间；当前空间零变化；changes 同写；审计带 spaceId。
+    /// 另测：缺档、unsupported、回滚开关、目标空间打不开（locked）。
+    #[test]
+    fn cross_space_write_v1_create_page_only() {
+        // ⚠️ **本用例整段**拿 crate 级 DB 锁（只测试用，`#[cfg(test)]`）：本用例（含开头的
+        // `b1c_fixture` 与末尾 `b1c_cleanup`）会往**共享测试目录**写 `spaces/cross-second.db`
+        // 与 `meta.db`，而 `mcp_host::w3_draft_tests` 的指纹判据比的是该目录下
+        // `*.db` / `*.db-wal` / `*.db-shm` 的 sha ⇒ 不整段包住就会在它的窗口里翻指纹
+        // （两进程并发实测会红；见 `DB_WRITE_TEST_LOCK` 的注释）。
+        // 锁顺序：本用例**没有**更早的局部锁（不拿 `capability_test_guard()` / `log_test_guard()`；
+        // `dispatch_capability` / `with_external_caller` / `with_fresh_drafts` 内部都不拿测试锁）
+        // ⇒ 先拿本锁即可；持有期间不会再等别的测试锁 ⇒ 不成环。
+        let _db = crate::mcp_host::lock_db_writes_for_test();
+        let f = b1c_fixture("cross-write");
+        point_cap_search_at(&f.dir, &f.space);
+        let app = crate::db::ensure_test_app_data_dir().to_path_buf();
+        std::fs::create_dir_all(crate::db::spaces_dir(&app)).ok();
+        let second = "cross-second";
+        {
+            let m = crate::db::open_meta_conn_at(&app).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id', 'cross-test-device')",
+                [],
+            )
+            .ok();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES (?1, '第二空间', '#000', '', 2, 1, 1)",
+                params![second],
+            )
+            .unwrap();
+        }
+        // 目标空间先建好库（空），并记录当前空间快照
+        crate::db::open_space_conn_at(second, &app).unwrap();
+        let snap = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (
+                q("SELECT COUNT(*) FROM pages"),
+                q("SELECT COUNT(*) FROM changes"),
+                q("SELECT COUNT(*) FROM page_versions"),
+                q("SELECT COUNT(*) FROM attachments"),
+            )
+        };
+        let before = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            snap(&c)
+        };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        // ① 草稿带目标空间
+        let (out, drafts) = with_external_caller("cross-a", &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability(
+                    "pages.create",
+                    &format!(r#"{{"title":"跨空间新页","spaceId":"{second}"}}"#),
+                )
+            })
+        });
+        out.expect("应产草稿");
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].payload["args"]["spaceId"], second);
+        // ⑤ 审计行带 spaceId
+        let audit_row = crate::plugins::plugin_audit(Some("external".to_string()), Some(50))
+            .into_iter()
+            .find(|e| e.source == "external:cross-a")
+            .expect("应有审计");
+        assert_eq!(audit_row.space_id.as_deref(), Some(second));
+        // 落库那一步（命令内层；测试里直接调用同一函数）
+        let page = crate::commands::create_page_in_space(
+            second,
+            None,
+            Some("跨空间新页".to_string()),
+            Some("{}".to_string()),
+            Some("正文".to_string()),
+        )
+        .expect("目标空间应可写");
+        // 目标空间：pages + changes 都有
+        {
+            let c = crate::db::open_space_conn_at(second, &app).unwrap();
+            let n: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM pages WHERE id = ?1",
+                    params![page.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 1, "目标空间必须有这页");
+            let ch: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM changes WHERE entity = 'page' AND entity_id = ?1",
+                    params![page.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(ch >= 1, "目标空间必须记 changes（否则设备永不同步）");
+        }
+        // ① 当前空间零变化
+        let after = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            snap(&c)
+        };
+        assert_eq!(
+            before, after,
+            "当前空间 pages/changes/versions/attachments 必须逐项不变"
+        );
+        // ③ 缺 write:all-spaces ⇒ 仍 permission_denied 点名
+        let g_no = b2_granted();
+        let e = with_external_caller("cross-b", &g_no, || {
+            dispatch_capability(
+                "pages.create",
+                &format!(r#"{{"title":"x","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("缺档必须拒");
+        assert!(
+            e.contains("permission_denied") && e.contains("write:all-spaces"),
+            "{e}"
+        );
+        // ④ 不支持的写工具带 spaceId ⇒ 明确 unsupported，不回落
+        let e = with_external_caller("cross-c", &g, || {
+            dispatch_capability(
+                "import.docpackage",
+                &format!(r#"{{"path":"x","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("blocks.patch 跨空间必须 unsupported");
+        assert!(
+            e.contains("bad_args") && e.contains("暂不支持跨空间"),
+            "{e}"
+        );
+        // ② 目标空间打不开（locked 代理：写坏一个已登记空间的 db 文件）
+        {
+            let bad = "cross-locked";
+            let m = crate::db::open_meta_conn_at(&app).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+                 VALUES (?1, '锁着', '#000', '', 3, 1, 1)",
+                params![bad],
+            )
+            .unwrap();
+            std::fs::write(crate::db::space_db_path(&app, bad), b"not a database").unwrap();
+        }
+        let e = crate::commands::create_page_in_space(
+            "cross-locked",
+            None,
+            Some("x".to_string()),
+            None,
+            None,
+        )
+        .expect_err("打不开的目标空间必须明确拒");
+        assert!(
+            e.contains("permission_denied") && e.contains("locked"),
+            "{e}"
+        );
+        // ⑥ 回滚开关正反两向
+        set_cross_off_for_test(true);
+        let e = with_external_caller("cross-d", &g, || {
+            dispatch_capability(
+                "pages.create",
+                &format!(r#"{{"title":"x","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("开关关着必须拒");
+        assert!(e.contains("bad_args") && e.contains("关闭"), "{e}");
+        let e2 =
+            crate::commands::create_page_in_space(second, None, Some("x".to_string()), None, None)
+                .expect_err("开关关着命令层也必须拒");
+        assert!(e2.contains("bad_args"), "{e2}");
+        set_cross_off_for_test(false);
+        crate::commands::create_page_in_space(second, None, Some("恢复".to_string()), None, None)
+            .expect("去掉开关后应恢复");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ v2：write_all 扩读；pages.update/blocks.* 草稿带 spaceId；跨空间读两档门；回滚开关。
+    #[test]
+    fn v2_cross_space_edit_and_read_gate() {
+        // ⚠️ **本用例整段**拿 crate 级 DB 锁（只测试用，`#[cfg(test)]`）：理由同
+        // `cross_space_write_v1_create_page_only` —— 本用例（含 `b1c_fixture` / `b1c_cleanup`）
+        // 会往**共享测试目录**写 `spaces/v2-second.db` 与 `meta.db`，撞 `mcp_host::w3_draft_tests`
+        // 的逐字节指纹判据。
+        // 锁顺序：本用例**没有**更早的局部锁（同 v1：`dispatch_capability` 等 helper 内部不拿测试锁）
+        // ⇒ 先拿本锁即可，持有期间不再等别的测试锁 ⇒ 不成环。
+        let _db = crate::mcp_host::lock_db_writes_for_test();
+        let f = b1c_fixture("v2");
+        point_cap_search_at(&f.dir, &f.space);
+        let app = crate::db::ensure_test_app_data_dir().to_path_buf();
+        std::fs::create_dir_all(crate::db::spaces_dir(&app)).ok();
+        let second = "v2-second";
+        {
+            let m = crate::db::open_meta_conn_at(&app).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','v2-dev')",
+                [],
+            )
+            .ok();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,'二','#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+        }
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id', 'v2-dev')",
+                [],
+            )
+            .ok();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,'二','#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+        }
+        let doc = r#"{"root":{"type":"root","children":[{"type":"paragraph","blockId":"b1","children":[{"type":"text","text":"旧"}]},{"type":"paragraph","blockId":"b2","children":[{"type":"text","text":"二"}]}]}}"#;
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '目标页', ?2, '旧', 'page', 0, 10, 10)",
+                params![second, doc],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO blocks (block_id, page_id, created_at, updated_at) VALUES ('b1', 'p1', 10, 10), ('b2', 'p1', 11, 11)",
+                [],
+            )
+            .unwrap();
+        }
+        let snap = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (
+                q("SELECT COUNT(*) FROM pages"),
+                q("SELECT COUNT(*) FROM changes"),
+                q("SELECT COUNT(*) FROM page_versions"),
+                q("SELECT COUNT(*) FROM attachments"),
+            )
+        };
+        let before = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            snap(&c)
+        };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        // 四个写工具草稿都带 spaceId
+        for (method, args) in [
+            (
+                "pages.update",
+                format!(r#"{{"id":"p1","markdown":"新","spaceId":"{second}"}}"#),
+            ),
+            (
+                "blocks.append",
+                format!(r#"{{"pageId":"p1","text":"加","spaceId":"{second}"}}"#),
+            ),
+            (
+                "blocks.patch",
+                format!(r#"{{"pageId":"p1","blockId":"b1","markdown":"改","spaceId":"{second}"}}"#),
+            ),
+            (
+                "blocks.delete",
+                format!(r#"{{"pageId":"p1","blockId":"b1","spaceId":"{second}"}}"#),
+            ),
+        ] {
+            let (o, d) = with_external_caller("v2-w", &g, || {
+                with_fresh_drafts(|| dispatch_capability(method, &args))
+            });
+            o.unwrap_or_else(|e| panic!("{method} 应产草稿：{e}"));
+            assert_eq!(
+                d[0].payload["spaceId"], second,
+                "{method} 草稿必须带 spaceId"
+            );
+        }
+        // 落库（模拟 apply）⇒ 目标改到 + changes 有；当前空间逐项不变
+        let newdoc = r#"{"root":{"type":"root","children":[{"type":"paragraph","blockId":"b1","children":[{"type":"text","text":"新"}]}]}}"#;
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            crate::commands::save_page_in(
+                &c,
+                crate::commands::SavePageArgs {
+                    id: "p1".to_string(),
+                    title: None,
+                    content_json: Some(newdoc.to_string()),
+                    content_text: Some("新".to_string()),
+                    space_id: None,
+                },
+            )
+            .expect("目标空间保存应成功");
+            let n: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM changes WHERE entity='page'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(n >= 1, "目标空间 changes 必须有记录");
+        }
+        let after = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            snap(&c)
+        };
+        assert_eq!(
+            before, after,
+            "当前空间 pages/changes/versions/attachments 逐项不变"
+        );
+        // 读：write_all 能读；只读全部空间能读；只读当前带 spaceId 拒
+        let get = |grants: &[String]| {
+            with_external_caller("v2-r", grants, || {
+                dispatch_capability(
+                    "pages.get",
+                    &format!(r#"{{"id":"p1","spaceId":"{second}"}}"#),
+                )
+            })
+        };
+        assert!(get(&g).is_ok(), "write_all 应能读目标页");
+        let read_all = vec!["read:pages".to_string(), "read:all-spaces".to_string()];
+        assert!(get(&read_all).is_ok(), "只读（全部空间）应能读");
+        assert!(get(&["read:pages".to_string()])
+            .unwrap_err()
+            .contains("read:all-spaces"));
+        // 缺档 / 不支持 / 开关
+        let e = with_external_caller("v2-no", &b2_granted(), || {
+            dispatch_capability(
+                "blocks.patch",
+                &format!(r#"{{"pageId":"p1","blockId":"b1","markdown":"x","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        let e = with_external_caller("v2-f", &g, || {
+            dispatch_capability(
+                "files.upload_to_page",
+                &format!(r#"{{"pageId":"p1","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("未支持工具必须 unsupported");
+        assert!(e.contains("暂不支持跨空间"), "{e}");
+        set_cross_off_for_test(true);
+        let e = with_external_caller("v2-off", &g, || {
+            dispatch_capability(
+                "blocks.patch",
+                &format!(r#"{{"pageId":"p1","blockId":"b1","markdown":"x","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        set_cross_off_for_test(false);
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ AI 不可见空间清单：默认空不改变行为；隐藏空间后读写拒、spaces.list 过滤、当前空间隐藏拒、清空恢复。
+    #[test]
+    fn ai_hidden_spaces_mask_only_ai_surface() {
+        let f = b1c_fixture("hidden");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "hidden-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,'二','#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+            m.execute(
+                "INSERT OR REPLACE INTO sync_state (key, value) VALUES ('ai_hidden_spaces','[]')",
+                [],
+            )
+            .unwrap();
+        }
+        let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+        c.execute(
+            "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+             VALUES ('p1', ?1, NULL, '二页', '{}', 'x', 'page', 0, 10, 10)",
+            params![second],
+        )
+        .unwrap();
+        drop(c);
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        let read = |sid: &str| {
+            with_external_caller("hidden", &g, || {
+                dispatch_capability("pages.get", &format!(r#"{{"id":"p1","spaceId":"{sid}"}}"#))
+            })
+        };
+        // 默认空 ⇒ 与不带清单一致（能读）
+        assert!(read(second).is_ok(), "默认空清单不应影响读");
+        let hide = |ids: &[&str]| {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            let json = serde_json::to_string(ids).unwrap();
+            m.execute(
+                "INSERT OR REPLACE INTO sync_state (key, value) VALUES ('ai_hidden_spaces', ?1)",
+                params![json],
+            )
+            .unwrap();
+        };
+        hide(&[second]);
+        let e = read(second).expect_err("隐藏空间必须拒");
+        assert!(
+            e.contains("AI 不可见") && e.contains("permission_denied"),
+            "{e}"
+        );
+        for method in ["pages.list", "blocks.list"] {
+            let e = with_external_caller("hidden", &g, || {
+                dispatch_capability(
+                    method,
+                    &format!(r#"{{"pageId":"p1","spaceId":"{second}"}}"#),
+                )
+            })
+            .expect_err("读必须拒");
+            assert!(e.contains("AI 不可见"), "{method}: {e}");
+        }
+        let e = with_external_caller("hidden", &g, || {
+            dispatch_capability(
+                "blocks.patch",
+                &format!(r#"{{"pageId":"p1","blockId":"b1","markdown":"x","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("写必须拒");
+        assert!(e.contains("AI 不可见"), "{e}");
+        let spaces =
+            with_external_caller("hidden", &g, || dispatch_capability("spaces.list", "{}"))
+                .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&spaces).unwrap();
+        assert!(
+            !v["spaces"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s["spaceId"] == second),
+            "spaces.list 不能含隐藏空间"
+        );
+        // 当前空间隐藏 ⇒ 不带 spaceId 也拒
+        hide(&[second, &f.space]);
+        let e = with_external_caller("hidden", &g, || dispatch_capability("pages.list", "{}"))
+            .expect_err("当前空间隐藏必须拒");
+        assert!(e.contains("AI 不可见"), "{e}");
+        let e = with_external_caller("hidden", &g, || {
+            dispatch_capability("pages.create", r#"{"title":"x"}"#)
+        })
+        .expect_err("当前空间隐藏写必须拒");
+        assert!(e.contains("AI 不可见"), "{e}");
+        // 用户侧不受影响：meta 里空间行仍存在，用户路径（非 dispatch）可读
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            let n: i64 = m
+                .query_row(
+                    "SELECT COUNT(*) FROM workspaces WHERE id = ?1",
+                    params![second],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 1, "用户侧空间仍在");
+        }
+        // 清空 ⇒ 恢复
+        hide(&[]);
+        assert!(read(second).is_ok(), "清空清单必须立即恢复");
+        // env off ⇒ 跳过
+        hide(&[second]);
+        std::env::set_var("SHUYONOTE_AI_HIDDEN_SPACES", "off");
+        assert!(read(second).is_ok(), "env off 应跳过遮蔽");
+        std::env::remove_var("SHUYONOTE_AI_HIDDEN_SPACES");
+        // 写清单校验：非法 id / 超 500
+        {
+            let m = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            let e =
+                crate::plugins::ai_hidden_spaces_set_in(&m, vec!["nope".to_string()]).unwrap_err();
+            assert!(e.contains("bad_args"), "{e}");
+            let many: Vec<String> = (0..501).map(|i| format!("s{i}")).collect();
+            let e = crate::plugins::ai_hidden_spaces_set_in(&m, many).unwrap_err();
+            assert!(e.contains("bad_args"), "{e}");
+        }
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 验收补齐：默认空清单与"key 不存在"/"env off" 的响应**逐字节一致**；
+    /// 用户侧命令实现（fetch_page，与 get_page 同一实现）隐藏后仍可读；清单去重。
+    #[test]
+    fn hidden_spaces_bytewise_equal_and_user_path() {
+        let f = b1c_fixture("hidden2");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "hidden2-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            for id in [second, "hidden2-a", "hidden2-b"] {
+                m.execute(
+                    "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                    params![id],
+                )
+                .unwrap();
+            }
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '二页', '{}', 'x', 'page', 0, 10, 10)",
+                params![second],
+            )
+            .unwrap();
+        }
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        let get_cross = || {
+            with_external_caller("h2", &g, || {
+                dispatch_capability(
+                    "pages.get",
+                    &format!(r#"{{"id":"p1","spaceId":"{second}"}}"#),
+                )
+            })
+            .unwrap()
+        };
+        let set_key = |value: Option<&str>| {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            match value {
+                None => {
+                    m.execute("DELETE FROM sync_state WHERE key='ai_hidden_spaces'", [])
+                        .unwrap();
+                }
+                Some(j) => {
+                    m.execute("INSERT OR REPLACE INTO sync_state (key, value) VALUES ('ai_hidden_spaces', ?1)", params![j]).unwrap();
+                }
+            }
+        };
+        // ① key 不存在 vs [] vs env off ⇒ 完整 JSON 逐字节一致
+        set_key(None);
+        let absent = get_cross();
+        set_key(Some("[]"));
+        let empty = get_cross();
+        std::env::set_var("SHUYONOTE_AI_HIDDEN_SPACES", "off");
+        let off = get_cross();
+        std::env::remove_var("SHUYONOTE_AI_HIDDEN_SPACES");
+        assert_eq!(absent, empty, "key 不存在 与 [] 必须逐字节一致");
+        assert_eq!(absent, off, "env off 与 [] 必须逐字节一致");
+        println!(
+            "[hidden-byte-diff] len={} sha={} (absent=empty=off)",
+            absent.len(),
+            crate::mcp_blobs::sha256_hex(absent.as_bytes())
+        );
+        // ② 用户侧真路径：fetch_page 就是 get_page 的实现（只差 State 解包与 kind 检查）
+        set_key(Some(&serde_json::to_string(&vec![second]).unwrap()));
+        let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+        let page = crate::commands::fetch_page(&c, "p1").expect("用户侧 fetch_page 必须仍能读 A");
+        assert_eq!(page.title, "二页");
+        let e = with_external_caller("h2", &g, || {
+            dispatch_capability(
+                "pages.get",
+                &format!(r#"{{"id":"p1","spaceId":"{second}"}}"#),
+            )
+        })
+        .unwrap_err();
+        assert!(e.contains("AI 不可见"), "AI 路径必须拒：{e}");
+        // ③ 去重：set(["a","a","b"]) ⇒ ["a","b"]
+        let c2 = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+        let stored = crate::plugins::ai_hidden_spaces_set_in(
+            &c2,
+            vec!["hidden2-a".into(), "hidden2-a".into(), "hidden2-b".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            stored,
+            vec!["hidden2-a".to_string(), "hidden2-b".to_string()],
+            "必须去重且保序"
+        );
+        let read_back = crate::plugins::ai_hidden_spaces_in(&c2);
+        assert_eq!(read_back, stored, "落盘读回一致");
+        set_key(Some("[]"));
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ A1：files.rename 跨空间（目标空间内改名；当前空间四计数不变；缺档/unsupported/开关）。
+    #[test]
+    fn a1_files_rename_cross_space() {
+        let f = b1c_fixture("a1");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "a1-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','a1-dev')",
+                [],
+            )
+            .ok();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,'二','#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '二页', '{}', 'x', 'page', 0, 10, 10)",
+                params![second],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO attachments (id, page_id, name, mime, size, hash, created_at)
+                 VALUES ('a1','p1','旧名.txt','text/plain',3,?1,10)",
+                params!["a".repeat(64)],
+            )
+            .unwrap();
+        }
+        let snap = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (
+                q("SELECT COUNT(*) FROM pages"),
+                q("SELECT COUNT(*) FROM changes"),
+                q("SELECT COUNT(*) FROM page_versions"),
+                q("SELECT COUNT(*) FROM attachments"),
+            )
+        };
+        let before = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            snap(&c)
+        };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        let (out, drafts) = with_external_caller("a1-w", &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability(
+                    "files.rename",
+                    &format!(r#"{{"attId":"a1","name":"新名.txt","spaceId":"{second}"}}"#),
+                )
+            })
+        });
+        out.expect("应产草稿");
+        assert_eq!(drafts[0].payload["spaceId"], second);
+        // 模拟 apply：目标空间单连接实现
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            crate::attachments::rename_attachment_in(&c, "a1", "新名.txt")
+                .expect("目标空间改名应成功");
+            let name: String = c
+                .query_row("SELECT name FROM attachments WHERE id='a1'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert_eq!(name, "新名.txt", "目标空间附件必须真改名");
+            let ch: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM changes WHERE entity='attachment'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(ch >= 1, "目标空间 changes 必须有附件变更记录");
+        }
+        let after = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            snap(&c)
+        };
+        assert_eq!(before, after, "当前空间四计数逐项不变");
+        // 缺档 ⇒ 点名 write:all-spaces
+        let e = with_external_caller("a1-no", &b2_granted(), || {
+            dispatch_capability(
+                "files.rename",
+                &format!(r#"{{"attId":"a1","name":"x.txt","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        // 源附件不在目标空间 ⇒ not_found
+        let e = with_external_caller("a1-miss", &g, || {
+            dispatch_capability(
+                "files.rename",
+                &format!(r#"{{"attId":"没有","name":"x.txt","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("目标空间没有该附件必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        // unsupported：files.upload_to_page 仍不在白名单
+        let e = with_external_caller("a1-fm", &g, || {
+            dispatch_capability(
+                "files.upload_to_page",
+                &format!(r#"{{"pageId":"p1","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("未支持工具必须 unsupported");
+        assert!(e.contains("暂不支持跨空间"), "{e}");
+        // 回滚开关
+        set_cross_off_for_test(true);
+        let e = with_external_caller("a1-off", &g, || {
+            dispatch_capability(
+                "files.rename",
+                &format!(r#"{{"attId":"a1","name":"x.txt","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        set_cross_off_for_test(false);
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ v3-A1：files.delete 跨空间（引用保护/坏库拒绝/四计数不变/缺档/not_found/开关）。
+    #[test]
+    fn a1_files_delete_cross_space() {
+        let f = b1c_fixture("a1del");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "a1del-second";
+        let bad = "a1del-bad";
+        let hash = "b".repeat(64);
+        std::fs::create_dir_all(crate::db::spaces_dir(&f.dir)).ok();
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','a1del-dev')",
+                [],
+            )
+            .ok();
+            for id in [second] {
+                m.execute(
+                    "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                    params![id],
+                )
+                .unwrap();
+            }
+        }
+
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '二页', '{}', 'x', 'page', 0, 10, 10)",
+                params![second],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO attachments (id, page_id, name, mime, size, hash, created_at)
+                 VALUES ('a1','p1','x.txt','text/plain',3,?1,10)",
+                params![hash],
+            )
+            .unwrap();
+        }
+        let four = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (
+                q("SELECT COUNT(*) FROM pages"),
+                q("SELECT COUNT(*) FROM changes"),
+                q("SELECT COUNT(*) FROM page_versions"),
+                q("SELECT COUNT(*) FROM attachments"),
+            )
+        };
+        // 跨空间引用保护：当前空间正文引用该 sha ⇒ 拒并点名
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute(
+                "UPDATE pages SET content_json = ?1 WHERE id = 'p1'",
+                params![format!(r#"{{"root":{{"type":"root","children":[{{"type":"paragraph","children":[{{"type":"text","text":"attachment://{hash}"}}]}}]}}}}"#)],
+            )
+            .unwrap();
+        }
+        let before = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        let e = crate::attachments::delete_attachment_cross_space(&f.dir, "a1", second)
+            .expect_err("引用存在必须拒");
+        assert!(e.contains("仍被其它空间引用"), "{e}");
+        assert!(e.contains(&f.space), "必须点名引用它的空间：{e}");
+        // 坏库空间 ⇒ 拒绝（无法确认引用）
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                params![bad],
+            )
+            .unwrap();
+        }
+        std::fs::write(crate::db::space_db_path(&f.dir, bad), b"not a database").unwrap();
+        {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            c.execute("UPDATE pages SET content_json = '{}' WHERE id = 'p1'", [])
+                .unwrap();
+        }
+        let e = crate::attachments::delete_attachment_cross_space(&f.dir, "a1", second)
+            .expect_err("坏库必须拒");
+        assert!(e.contains("无法确认引用"), "{e}");
+        // 移掉坏空间后 ⇒ 删除成功；目标计数 -1、changes 有 delete；当前四计数不变
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute("DELETE FROM workspaces WHERE id = ?1", params![bad])
+                .unwrap();
+        }
+        let before = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        let n = crate::attachments::delete_attachment_cross_space(&f.dir, "a1", second)
+            .expect("通过后应删成功");
+        assert_eq!(n, 1);
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            let left: i64 = c
+                .query_row("SELECT COUNT(*) FROM attachments WHERE id='a1'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert_eq!(left, 0, "目标空间附件应被删");
+            let del: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM changes WHERE entity='attachment' AND op='delete'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(del >= 1, "目标空间 changes 必须有 delete 记录");
+        }
+        let after = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        assert_eq!(before, after, "当前空间四计数逐项不变");
+        // 缺档 / not_found / 开关（能力层）
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        let e = with_external_caller("a1d-no", &b2_granted(), || {
+            dispatch_capability(
+                "files.delete",
+                &format!(r#"{{"attId":"a1","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        let e = with_external_caller("a1d-miss", &g, || {
+            dispatch_capability(
+                "files.delete",
+                &format!(r#"{{"attId":"没有","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("目标空间无该附件必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        set_cross_off_for_test(true);
+        let e = crate::attachments::delete_attachment_cross_space(&f.dir, "a1", second)
+            .expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        set_cross_off_for_test(false);
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ v3-A1：files.move 跨空间（目标 page_id 真变；toPageId 跨空间拒；四计数不变）。
+    #[test]
+    fn a1_files_move_cross_space() {
+        let f = b1c_fixture("a1mv");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "a1mv-second";
+        let other = "a1mv-other";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            for id in [second, other] {
+                m.execute(
+                    "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                    params![id],
+                )
+                .unwrap();
+            }
+            m.execute(
+                "INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','a1mv-dev')",
+                [],
+            )
+            .ok();
+        }
+        for (sp, pid) in [(second, "p1"), (second, "p2"), (other, "q1")] {
+            let c = crate::db::open_space_conn_at(sp, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES (?1, ?2, NULL, ?1, '{}', 'x', 'page', 0, 10, 10)",
+                params![pid, sp],
+            )
+            .unwrap();
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO attachments (id, page_id, name, mime, size, hash, created_at)
+                 VALUES ('a1','p1','x.txt','text/plain',3,?1,10)",
+                params!["c".repeat(64)],
+            )
+            .unwrap();
+        }
+        let four = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (
+                q("SELECT COUNT(*) FROM pages"),
+                q("SELECT COUNT(*) FROM changes"),
+                q("SELECT COUNT(*) FROM page_versions"),
+                q("SELECT COUNT(*) FROM attachments"),
+            )
+        };
+        let before = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        let (out, drafts) = with_external_caller("a1mv-w", &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability(
+                    "files.move",
+                    &format!(r#"{{"attId":"a1","toPageId":"p2","spaceId":"{second}"}}"#),
+                )
+            })
+        });
+        out.expect("应产草稿");
+        assert_eq!(drafts[0].payload["spaceId"], second);
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            crate::attachments::move_attachment_in(&c, "a1", "p2").expect("目标空间移动应成功");
+            let page_id: String = c
+                .query_row("SELECT page_id FROM attachments WHERE id='a1'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert_eq!(page_id, "p2", "目标空间附件 page_id 必须真变");
+            let ch: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM changes WHERE entity='attachment'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(ch >= 1, "目标空间 changes 必须有 attachment 变更");
+        }
+        let after = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        assert_eq!(before, after, "当前空间四计数逐项不变");
+        // toPageId 属于别的空间 ⇒ bad_args 含"不在该空间"
+        let e = with_external_caller("a1mv-x", &g, || {
+            dispatch_capability(
+                "files.move",
+                &format!(r#"{{"attId":"a1","toPageId":"q1","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("跨空间目标页必须拒");
+        assert!(e.contains("不在该空间") || e.contains("bad_args"), "{e}");
+        // toPageId 不存在 ⇒ bad_args/not_found
+        let e = with_external_caller("a1mv-miss", &g, || {
+            dispatch_capability(
+                "files.move",
+                &format!(r#"{{"attId":"a1","toPageId":"nope","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("不存在目标页必须拒");
+        assert!(e.contains("bad_args") || e.contains("not_found"), "{e}");
+        // 缺档 / 目标空间无附件 / 开关
+        let e = with_external_caller("a1mv-no", &b2_granted(), || {
+            dispatch_capability(
+                "files.move",
+                &format!(r#"{{"attId":"a1","toPageId":"p2","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        let e = with_external_caller("a1mv-na", &g, || {
+            dispatch_capability(
+                "files.move",
+                &format!(r#"{{"attId":"没有","toPageId":"p2","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("目标空间无该附件必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        set_cross_off_for_test(true);
+        let e = with_external_caller("a1mv-off", &g, || {
+            dispatch_capability(
+                "files.move",
+                &format!(r#"{{"attId":"a1","toPageId":"p2","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        set_cross_off_for_test(false);
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ v3-A1：files.detach 跨空间（page_id=NULL、hash/size 不变、changes、四计数、二次 detach 拒）。
+    #[test]
+    fn a1_files_detach_cross_space() {
+        let f = b1c_fixture("a1dt");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "a1dt-second";
+        let hash = "d".repeat(64);
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','a1dt-dev')",
+                [],
+            )
+            .ok();
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '二页', '{}', 'x', 'page', 0, 10, 10)",
+                params![second],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO attachments (id, page_id, name, mime, size, hash, created_at)
+                 VALUES ('a1','p1','x.txt','text/plain',3,?1,10)",
+                params![hash],
+            )
+            .unwrap();
+        }
+        let four = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (
+                q("SELECT COUNT(*) FROM pages"),
+                q("SELECT COUNT(*) FROM changes"),
+                q("SELECT COUNT(*) FROM page_versions"),
+                q("SELECT COUNT(*) FROM attachments"),
+            )
+        };
+        let before = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        let (out, drafts) = with_external_caller("a1dt-w", &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability(
+                    "files.detach",
+                    &format!(r#"{{"attId":"a1","spaceId":"{second}"}}"#),
+                )
+            })
+        });
+        out.expect("应产草稿");
+        assert_eq!(drafts[0].payload["spaceId"], second);
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            crate::attachments::detach_attachment_inner(&c, "a1").expect("目标空间 detach 应成功");
+            let (page, h, size): (Option<String>, String, i64) = c
+                .query_row(
+                    "SELECT page_id, hash, size FROM attachments WHERE id='a1'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap();
+            assert!(page.is_none(), "page_id 必须变 NULL");
+            assert_eq!(h, hash, "sha 不变");
+            assert_eq!(size, 3, "字节大小不变（不是删除）");
+            let ch: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM changes WHERE entity='attachment'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(ch >= 1, "changes 必须有 attachment 变更");
+        }
+        let after = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        assert_eq!(before, after, "当前空间四计数逐项不变");
+        // 已未整理 ⇒ 拒绝（选"明确拒绝"，与既有语义一致）
+        let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+        let e =
+            crate::attachments::detach_attachment_inner(&c, "a1").expect_err("二次 detach 必须拒");
+        assert!(e.contains("已经是未整理"), "{e}");
+        drop(c);
+        // 缺档 / not_found / 开关
+        let e = with_external_caller("a1dt-no", &b2_granted(), || {
+            dispatch_capability(
+                "files.detach",
+                &format!(r#"{{"attId":"a1","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        let e = with_external_caller("a1dt-na", &g, || {
+            dispatch_capability(
+                "files.detach",
+                &format!(r#"{{"attId":"没有","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("目标空间无该附件必须 not_found");
+        assert!(e.contains("not_found"), "{e}");
+        set_cross_off_for_test(true);
+        let e = with_external_caller("a1dt-off", &g, || {
+            dispatch_capability(
+                "files.detach",
+                &format!(r#"{{"attId":"a1","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        set_cross_off_for_test(false);
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ B：export 单页跨空间（只读全部空间档；缺档点名；四计数不变；句柄单次/跨会话）。
+    #[test]
+    fn b_export_page_cross_space_handle_and_gates() {
+        let _serial = crate::frontend_tool::test_lock();
+        crate::frontend_tool::install_test_frontend_for_tests();
+        let f = b1c_fixture("b-exp");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "b-exp-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '目标页', '{}', '正文', 'page', 0, 10, 10)",
+                params![second],
+            )
+            .unwrap();
+        }
+        let four = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (
+                q("SELECT COUNT(*) FROM pages"),
+                q("SELECT COUNT(*) FROM changes"),
+                q("SELECT COUNT(*) FROM page_versions"),
+                q("SELECT COUNT(*) FROM attachments"),
+            )
+        };
+        let before = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        let read_all = vec![
+            "read:pages".to_string(),
+            "export:files".to_string(),
+            "read:all-spaces".to_string(),
+        ];
+        let got = with_external_caller("b-exp", &read_all, || {
+            dispatch_capability(
+                "export.markdown",
+                &format!(r#"{{"pageId":"p1","spaceId":"{second}"}}"#),
+            )
+        });
+        let v: serde_json::Value =
+            serde_json::from_str(&got.expect("只读全部空间档应能跨空间导出")).unwrap();
+        let handle = v["handle"].as_str().unwrap_or("").to_string();
+        assert!(!handle.is_empty(), "必须回句柄：{v}");
+        // 缺 read:all-spaces ⇒ 点名
+        let e = with_external_caller(
+            "b-exp-no",
+            &["read:pages".to_string(), "export:files".to_string()],
+            || {
+                dispatch_capability(
+                    "export.markdown",
+                    &format!(r#"{{"pageId":"p1","spaceId":"{second}"}}"#),
+                )
+            },
+        )
+        .expect_err("缺 read:all-spaces 必须拒");
+        assert!(e.contains("read:all-spaces"), "{e}");
+        // 写工具在只读全部空间档 ⇒ permission_denied（不能写）
+        let e = with_external_caller("b-exp-w", &read_all, || {
+            dispatch_capability("pages.create", r#"{"title":"x"}"#)
+        })
+        .expect_err("只读档写必须拒");
+        assert!(
+            e.contains("permission_denied") && e.contains("write:pages"),
+            "{e}"
+        );
+        // 句柄单次 + 跨会话
+        let cross = with_external_caller("b-exp-other", &read_all, || {
+            dispatch_capability("blobs.fetch", &format!(r#"{{"handle":"{handle}"}}"#))
+        });
+        assert!(
+            cross.unwrap_err().contains("not_found"),
+            "跨会话必须 not_found"
+        );
+        let fetch = with_external_caller("b-exp", &read_all, || {
+            dispatch_capability("blobs.fetch", &format!(r#"{{"handle":"{handle}"}}"#))
+        });
+        let g: serde_json::Value =
+            serde_json::from_str(&fetch.expect("本会话第一次应能取回")).unwrap();
+        let _ = std::fs::remove_file(g["path"].as_str().unwrap_or(""));
+        let again = with_external_caller("b-exp", &read_all, || {
+            dispatch_capability("blobs.fetch", &format!(r#"{{"handle":"{handle}"}}"#))
+        });
+        assert!(
+            again.unwrap_err().contains("not_found"),
+            "句柄单次：第二次必须失败"
+        );
+        // 四计数不变
+        let after = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        assert_eq!(before, after, "导出前后当前空间四计数逐项不变");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ 一致性批：blocks.insert 跨空间（目标页校验、草稿带 spaceId、四计数、缺档/开关）。
+    #[test]
+    fn blocks_insert_cross_space_draft_and_gates() {
+        let f = b1c_fixture("bi-x");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "bi-x-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','bi-x-dev')",
+                [],
+            )
+            .ok();
+        }
+        let doc = r#"{"root":{"type":"root","children":[{"type":"paragraph","blockId":"b1","children":[{"type":"text","text":"旧"}]}]}}"#;
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '目标页', ?2, '旧', 'page', 0, 10, 10)",
+                params![second, doc],
+            )
+            .unwrap();
+            c.execute("INSERT OR REPLACE INTO blocks (block_id, page_id, created_at, updated_at) VALUES ('b1','p1',10,10)", []).unwrap();
+        }
+        let four = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (
+                q("SELECT COUNT(*) FROM pages"),
+                q("SELECT COUNT(*) FROM changes"),
+                q("SELECT COUNT(*) FROM page_versions"),
+                q("SELECT COUNT(*) FROM attachments"),
+            )
+        };
+        let before = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        let (out, drafts) = with_external_caller("bi-x", &g, || {
+            with_fresh_drafts(|| {
+                dispatch_capability(
+                    "blocks.insert",
+                    &format!(
+                        r#"{{"pageId":"p1","afterBlockId":"b1","markdown":"插入","spaceId":"{second}"}}"#
+                    ),
+                )
+            })
+        });
+        out.expect("跨空间 insert 应产草稿（目标页/块在目标空间校验通过）");
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].payload["spaceId"], second);
+        assert!(drafts[0].payload["newBlockId"].is_string());
+        let after = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        assert_eq!(before, after, "当前空间四计数逐项不变");
+        // 缺档
+        let e = with_external_caller("bi-x-no", &b2_granted(), || {
+            dispatch_capability(
+                "blocks.insert",
+                &format!(r#"{{"pageId":"p1","markdown":"x","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        // 回滚开关
+        set_cross_off_for_test(true);
+        let e = with_external_caller("bi-x-off", &g, || {
+            dispatch_capability(
+                "blocks.insert",
+                &format!(r#"{{"pageId":"p1","markdown":"x","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        set_cross_off_for_test(false);
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ B：files.download 超限确认（事件不阻塞；一次性额度；过期/拒绝仍拒）。
+    #[test]
+    fn b_download_oversize_confirm_grant_once() {
+        let f = b1c_fixture("dl-grant");
+        point_cap_search_at(&f.dir, &f.space);
+        crate::frontend_tool::take_notify_log();
+        let read = crate::mcp_channel::default_read_scopes();
+        let call = |g: &[String]| {
+            with_external_caller("dl", g, || {
+                dispatch_capability("files.download", r#"{"attId":"a3"}"#)
+            })
+        };
+        // 阈值注入为 5 字节（a3=18 字节 ⇒ 超限）；无额度 ⇒ needs_confirm + 事件
+        crate::plugins::set_download_limit_for_test(5);
+        let e = call(&read).expect_err("超限无额度必须 needs_confirm");
+        assert!(
+            e.contains("needs_confirm") && e.contains("thresholdBytes=5"),
+            "{e}"
+        );
+        assert!(
+            crate::frontend_tool::take_notify_log().contains(&"files.confirm_download".to_string()),
+            "超限必须异步发确认事件"
+        );
+        // grant ⇒ 重试成功拿句柄；第三次又拒（one-shot）
+        crate::plugins::set_download_grant("a3", &f.space, crate::db::now_ms() + 60_000);
+        let v: serde_json::Value =
+            serde_json::from_str(&call(&read).expect("有额度应成功")).unwrap();
+        assert!(
+            v["handle"].as_str().unwrap_or("").len() >= 32,
+            "应回句柄：{v}"
+        );
+        let e = call(&read).expect_err("额度用掉后第三次必须再 needs_confirm");
+        assert!(e.contains("needs_confirm"), "{e}");
+        // 过期额度 ⇒ 仍拒
+        crate::plugins::set_download_grant("a3", &f.space, 1);
+        let e = call(&read).expect_err("过期额度必须拒");
+        assert!(e.contains("needs_confirm"), "{e}");
+        // 未超限（默认阈值）⇒ 直接成功且**不发事件**
+        crate::plugins::set_download_limit_for_test(-1);
+        crate::frontend_tool::take_notify_log();
+        call(&read).expect("未超限应直接成功");
+        assert!(
+            crate::frontend_tool::take_notify_log().is_empty(),
+            "未超限不许发确认事件"
+        );
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ A2：结构类四工具跨空间（目标空间真改/校验/非空拒/缺档/回滚/四计数）。
+    #[test]
+    fn a2_structure_cross_space() {
+        let f = b1c_fixture("a2s");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "a2s-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','a2s-dev')",
+                [],
+            )
+            .ok();
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            for (id, parent, title, kind) in [
+                ("p1", None, "甲", "page"),
+                ("p2", Some("p1"), "乙", "page"),
+                ("f1", None, "空夹", "folder"),
+                ("f2", None, "非空夹", "folder"),
+                ("c1", Some("f2"), "子", "page"),
+                ("d1", None, "叶", "page"),
+            ] {
+                c.execute(
+                    "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, '{}', 'x', ?5, 0, 10, 10)",
+                    params![id, second, parent, title, kind],
+                )
+                .unwrap();
+            }
+        }
+        let four = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (
+                q("SELECT COUNT(*) FROM pages"),
+                q("SELECT COUNT(*) FROM changes"),
+                q("SELECT COUNT(*) FROM page_versions"),
+                q("SELECT COUNT(*) FROM attachments"),
+            )
+        };
+        let before = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        // 四个 capability 都能对目标空间产草稿
+        for (tool, args) in [
+            (
+                "nodes.rename",
+                format!(r#"{{"id":"p1","title":"改名","spaceId":"{second}"}}"#),
+            ),
+            (
+                "nodes.move",
+                format!(r#"{{"id":"p2","newParentId":null,"spaceId":"{second}"}}"#),
+            ),
+            (
+                "nodes.delete",
+                format!(r#"{{"id":"d1","spaceId":"{second}"}}"#),
+            ),
+            (
+                "folders.create",
+                format!(r#"{{"title":"新夹","spaceId":"{second}"}}"#),
+            ),
+        ] {
+            let (out, drafts) = with_external_caller("a2s", &g, || {
+                with_fresh_drafts(|| dispatch_capability(tool, &args))
+            });
+            out.unwrap_or_else(|e| panic!("{tool} 应产草稿：{e}"));
+            assert_eq!(drafts.len(), 1, "{tool}");
+            assert_eq!(drafts[0].payload["spaceId"], second, "{tool}");
+        }
+        // 目标空间真改：move/delete/create（走单连接实现）
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            crate::commands::move_page_in(
+                &c,
+                &crate::commands::MovePageArgs {
+                    id: "p2".into(),
+                    new_parent_id: None,
+                    sort_order: 0.0,
+                    space_id: None,
+                },
+            )
+            .expect("目标空间移动");
+            let p2parent: Option<String> = c
+                .query_row("SELECT parent_id FROM pages WHERE id='p2'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert!(p2parent.is_none(), "目标空间 p2 应移到顶层");
+            crate::commands::delete_page_in(&c, &"f1".to_string()).expect("目标空间软删");
+            let del: Option<i64> = c
+                .query_row("SELECT deleted_at FROM pages WHERE id='f1'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert!(del.is_some(), "目标空间 f1 应被软删");
+            let folder = crate::commands::create_node_in(
+                &c,
+                second,
+                None,
+                Some("新夹".into()),
+                "folder",
+                None,
+                None,
+            )
+            .expect("目标空间建夹");
+            assert_eq!(folder.title, "新夹");
+        }
+        // 跨空间 parentId ⇒ not_found（不回落当前空间）
+        let e = with_external_caller("a2s-x", &g, || {
+            dispatch_capability(
+                "nodes.move",
+                &format!(
+                    r#"{{"id":"p2","newParentId":"{0}","spaceId":"{second}"}}"#,
+                    f.space
+                ),
+            )
+        })
+        .expect_err("parent 在别的空间必须拒");
+        assert!(e.contains("not_found") || e.contains("bad_args"), "{e}");
+        // 非空文件夹删除 ⇒ 拒
+        let e = with_external_caller("a2s-nf", &g, || {
+            dispatch_capability(
+                "nodes.delete",
+                &format!(r#"{{"id":"f2","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("非空文件夹必须拒");
+        assert!(e.contains("bad_args"), "{e}");
+        // 缺档 / 回滚
+        let e = with_external_caller("a2s-no", &b2_granted(), || {
+            dispatch_capability(
+                "folders.create",
+                &format!(r#"{{"title":"x","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        set_cross_off_for_test(true);
+        let e = with_external_caller("a2s-off", &g, || {
+            dispatch_capability(
+                "nodes.rename",
+                &format!(r#"{{"id":"p1","title":"x","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        set_cross_off_for_test(false);
+        let after = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        assert_eq!(before, after, "当前空间四计数逐项不变");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ A3：标签/属性四工具跨空间（目标空间真改/四计数/跨空间 pageId 拒/缺档/开关）。
+    #[test]
+    fn a3_tags_props_cross_space() {
+        let _serial = capability_test_guard();
+        let f = b1c_fixture("a3tp");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "a3tp-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','a3tp-dev')",
+                [],
+            )
+            .ok();
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES ('p1', ?1, NULL, '目标页', '{}', 'x', 'page', 0, 10, 10)",
+                params![second],
+            )
+            .unwrap();
+            let cur = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            cur.execute("INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at) VALUES ('cur-p1', ?1, NULL, '当前页', '{}', 'x', 'page', 0, 10, 10)", params![f.space]).unwrap();
+            c.execute(
+                "INSERT OR IGNORE INTO tags (id, name) VALUES ('tag1','乙标签')",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT OR IGNORE INTO page_tags (page_id, tag_id) VALUES ('p1','tag1')",
+                [],
+            )
+            .unwrap();
+            c.execute("INSERT OR REPLACE INTO attr_defs (id, name, type, created_at, updated_at) VALUES ('attr1','数值','text',10,10)", []).unwrap();
+            let ac: i64 = c
+                .query_row("SELECT COUNT(*) FROM attr_defs WHERE id='attr1'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert_eq!(ac, 1, "夹具 attr_defs 应写入目标空间");
+        }
+        let four = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (
+                q("SELECT COUNT(*) FROM pages"),
+                q("SELECT COUNT(*) FROM changes"),
+                q("SELECT COUNT(*) FROM page_versions"),
+                q("SELECT COUNT(*) FROM attachments"),
+            )
+        };
+        let before = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        for (tool, args) in [
+            (
+                "tags.add",
+                format!(r#"{{"name":"甲标签","pageId":"p1","spaceId":"{second}"}}"#),
+            ),
+            (
+                "tags.remove",
+                format!(r#"{{"name":"乙标签","pageId":"p1","spaceId":"{second}"}}"#),
+            ),
+            (
+                "properties.set",
+                format!(r#"{{"attrId":"attr1","value":"42","pageId":"p1","spaceId":"{second}"}}"#),
+            ),
+            (
+                "properties.unset",
+                format!(r#"{{"attrId":"attr1","pageId":"p1","spaceId":"{second}"}}"#),
+            ),
+        ] {
+            let (out, drafts) = with_external_caller("a3tp", &g, || {
+                with_fresh_drafts(|| dispatch_capability(tool, &args))
+            });
+            out.unwrap_or_else(|e| panic!("{tool} 应产草稿：{e}"));
+            assert_eq!(drafts.len(), 1, "{tool}");
+            assert_eq!(drafts[0].payload["spaceId"], second, "{tool}");
+        }
+        // 目标空间真改（命令内核）
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            crate::tags::add_tag_in(&c, "p1", "甲标签").expect("目标空间加标签");
+            crate::properties::set_page_prop_impl(&c, "p1", "attr1", "42").expect("目标空间设属性");
+            let n: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM page_tags WHERE page_id='p1'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(n >= 1, "目标空间应有标签关联");
+            let props = crate::properties::get_page_props_impl(&c, "p1").expect("读属性");
+            assert!(!props.is_empty(), "目标空间应有属性值");
+            crate::tags::remove_tag_in(&c, "p1", "tag1").expect("目标空间移除标签");
+            crate::properties::remove_page_prop_impl(&c, "p1", "attr1").expect("目标空间去属性");
+        }
+        // 跨空间 pageId（当前空间的页）⇒ 拒
+        let e = with_external_caller("a3tp-x", &g, || {
+            dispatch_capability(
+                "tags.add",
+                &format!(
+                    r#"{{"name":"x","pageId":"{0}","spaceId":"{second}"}}"#,
+                    "cur-p1"
+                ),
+            )
+        })
+        .expect_err("pageId 在别的空间必须拒");
+        assert!(e.contains("not_found") || e.contains("bad_args"), "{e}");
+        // 缺档 / 回滚
+        let e = with_external_caller("a3tp-no", &b2_granted(), || {
+            dispatch_capability(
+                "tags.add",
+                &format!(r#"{{"name":"x","pageId":"p1","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        set_cross_off_for_test(true);
+        let e = with_external_caller("a3tp-off", &g, || {
+            dispatch_capability(
+                "properties.set",
+                &format!(r#"{{"attrId":"attr1","value":"1","pageId":"p1","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        set_cross_off_for_test(false);
+        let after = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        assert_eq!(before, after, "当前空间四计数逐项不变");
+        b1c_cleanup(&f);
+    }
+
+    /// ⭐ A4：db 行/回收站/回退四工具跨空间（目标空间真改/四计数/跨空间目标拒/缺档/开关）。
+    #[test]
+    fn a4_db_trash_revert_cross_space() {
+        let f = b1c_fixture("a4d");
+        point_cap_search_at(&f.dir, &f.space);
+        let second = "a4d-second";
+        {
+            let m = crate::db::open_meta_conn_at(&f.dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES (?1,?1,'#000','',2,1,1)",
+                params![second],
+            )
+            .unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO sync_state (key, value) VALUES ('device_id','a4d-dev')",
+                [],
+            )
+            .ok();
+        }
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            for (id, parent, title, kind, deleted) in [
+                ("p1", None, "目标页", "page", None),
+                ("db1", None, "数据库", "database", None),
+                ("tr", None, "回收站页", "page", Some(100i64)),
+                ("r1", Some("db1"), "行一", "page", None),
+            ] {
+                c.execute(
+                    "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
+                     VALUES (?1, ?2, ?3, ?4, '{}', 'x', ?5, 0, 10, 10, ?6)",
+                    params![id, second, parent, title, kind, deleted],
+                )
+                .unwrap();
+            }
+            {
+                let cur = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+                cur.execute("INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at) VALUES ('cur-p1', ?, NULL, '当前页', '{}', 'x', 'page', 0, 10, 10)", params![f.space]).unwrap();
+            }
+            c.execute(
+                "INSERT OR REPLACE INTO page_versions (id, page_id, title, content_json, content_text, created_at)
+                 VALUES ('v1','p1','旧标题','{}','x',10)",
+                [],
+            )
+            .ok();
+        }
+        let four = |c: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let q = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+            (
+                q("SELECT COUNT(*) FROM pages"),
+                q("SELECT COUNT(*) FROM changes"),
+                q("SELECT COUNT(*) FROM page_versions"),
+                q("SELECT COUNT(*) FROM attachments"),
+            )
+        };
+        let before = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        let mut g = b2_granted();
+        g.push("write:all-spaces".to_string());
+        g.push("read:all-spaces".to_string());
+        for (tool, args) in [
+            (
+                "trash.restore",
+                format!(r#"{{"id":"tr","spaceId":"{second}"}}"#),
+            ),
+            (
+                "pages.revert",
+                format!(r#"{{"pageId":"p1","versionId":"v1","spaceId":"{second}"}}"#),
+            ),
+            (
+                "db.rows_write",
+                format!(
+                    r#"{{"pageId":"db1","rows":[{{"title":"新行","values":{{}}}}],"spaceId":"{second}"}}"#
+                ),
+            ),
+            (
+                "db.rows_delete",
+                format!(r#"{{"pageId":"db1","rowIds":["r1"],"spaceId":"{second}"}}"#),
+            ),
+        ] {
+            let (out, drafts) = with_external_caller("a4d", &g, || {
+                with_fresh_drafts(|| dispatch_capability(tool, &args))
+            });
+            out.unwrap_or_else(|e| panic!("{tool} 应产草稿：{e}"));
+            assert_eq!(drafts.len(), 1, "{tool}");
+            assert_eq!(drafts[0].payload["spaceId"], second, "{tool}");
+        }
+        // 目标空间真改（命令内核）
+        {
+            let c = crate::db::open_space_conn_at(second, &f.dir).unwrap();
+            crate::trash::restore_page_in(&c, "tr").expect("目标空间恢复");
+            let del: Option<i64> = c
+                .query_row("SELECT deleted_at FROM pages WHERE id='tr'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert!(del.is_none(), "目标空间 tr 应恢复");
+            crate::versions::restore_version_in_conn(&c, "v1").expect("目标空间回退");
+            let saved = crate::commands::create_node_in(
+                &c,
+                second,
+                Some("db1".into()),
+                Some("新行".into()),
+                "page",
+                None,
+                None,
+            )
+            .expect("目标空间写入行");
+            assert_eq!(saved.title, "新行");
+            crate::commands::delete_page_in(&c, &"r1".to_string()).expect("目标空间删行");
+            let dd: Option<i64> = c
+                .query_row("SELECT deleted_at FROM pages WHERE id='r1'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert!(dd.is_some(), "目标空间 r1 应软删");
+        }
+        // 跨空间目标（当前空间页/版本）⇒ 拒
+        let e = with_external_caller("a4d-x", &g, || {
+            dispatch_capability(
+                "trash.restore",
+                &format!(r#"{{"id":"{0}","spaceId":"{second}"}}"#, "cur-p1"),
+            )
+        })
+        .expect_err("目标页不在该空间必须拒");
+        assert!(e.contains("not_found"), "{e}");
+        let e = with_external_caller("a4d-v", &g, || {
+            dispatch_capability(
+                "pages.revert",
+                &format!(r#"{{"pageId":"p1","versionId":"没有版本","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("版本不在目标页必须拒");
+        assert!(e.contains("not_found") || e.contains("bad_args"), "{e}");
+        // 缺档 / 回滚
+        let e = with_external_caller("a4d-no", &b2_granted(), || {
+            dispatch_capability(
+                "trash.restore",
+                &format!(r#"{{"id":"tr","spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("缺 write:all-spaces 必须拒");
+        assert!(e.contains("write:all-spaces"), "{e}");
+        set_cross_off_for_test(true);
+        let e = with_external_caller("a4d-off", &g, || {
+            dispatch_capability(
+                "db.rows_delete",
+                &format!(r#"{{"pageId":"db1","rowIds":["r1"],"spaceId":"{second}"}}"#),
+            )
+        })
+        .expect_err("开关关着必须拒");
+        assert!(e.contains("关闭"), "{e}");
+        set_cross_off_for_test(false);
+        let after = {
+            let c = crate::db::open_space_conn_at(&f.space, &f.dir).unwrap();
+            four(&c)
+        };
+        assert_eq!(before, after, "当前空间四计数逐项不变");
+        b1c_cleanup(&f);
+    }
+}

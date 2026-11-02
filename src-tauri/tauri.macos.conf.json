@@ -3,7 +3,8 @@
   "bundle": {
     "resources": {
       "../tools/shuyonote-mcp/index.mjs": "mcp/index.mjs",
-      "../tools/shuyonote-mcp/paths.mjs": "mcp/paths.mjs"
+      "../tools/shuyonote-mcp/paths.mjs": "mcp/paths.mjs",
+      "../tools/shuyonote-mcp-rust/dist/shuyonote-mcp": "mcp/shuyonote-mcp"
     },
     "macOS": {
       "files": {

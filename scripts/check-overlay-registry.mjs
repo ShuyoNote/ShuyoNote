@@ -227,6 +227,13 @@ const EXEMPT_FROM_MOBILE_PASS = new Map([
         "锚在侧栏备份按钮上的下拉菜单（`usePopover` 已管定位与窄屏 is-sheet）；整屏几何验收里没有它 —— 属未验证项",
     },
   ],
+  [
+    "mobile-space-sheet",
+    {
+      reason:
+        "移动端专属「切换空间」底部面板（`MobileSpaceSheet`）：由首页空间胶囊 / 设置行的 local state 打开，不是全应用级浮层；几何验收暂未纳入 —— 属未验证项",
+    },
+  ],
   // ── 已登记、但**几何验收还没纳入**的两层（属"未验证项"） ──────────────────────
   // 它们都需要"真实的 PDF 字节 / 装了视图声明的插件实例"才能打开，
   // `verify-mobile-overlays.mjs` 在全新实例里取不到触发器；

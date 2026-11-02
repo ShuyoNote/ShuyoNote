@@ -1,0 +1,71 @@
+/* S4（2026-11-01）：域抽取器搬出的**关系图控件域（`.graph-controls*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+.graph-controls {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-1);
+  box-shadow: var(--shadow-sm);
+}
+
+.graph-controls button {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: 5px;
+  padding: 3px var(--space-2);
+  font-size: var(--fs-13);
+  cursor: pointer;
+  min-width: 24px;
+}
+
+.graph-controls button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.graph-controls button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.graph-controls .graph-toggle-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.graph-controls-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 2px;
+}
+
+@media (max-width: 768px) {
+/* ---------- 关系图：控制面板换行 + 命中区 44 ---------- */  .graph-controls {
+    left: 8px;
+    right: 8px;
+    top: 8px;
+    flex-wrap: wrap;
+    row-gap: var(--space-1);
+    max-width: calc(100% - 16px);
+    padding: var(--space-1) 6px;
+  }
+.graph-controls button { min-height: 44px; }
+/* 分隔条只对"同一行内的分组"有意义；换行之后它会悬在行尾，反而像多余的空格。 */
+  .graph-controls-sep { display: none; }
+}
+}

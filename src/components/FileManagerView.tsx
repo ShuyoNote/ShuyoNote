@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { platform } from "../lib/platform";
+import { NOT_DOWNLOADED_HINT, fetchLocalAttachmentPath, openAttachmentWithSystem } from "../lib/localBytesHint";
 import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
 import { useFileManagerStore } from "../store/fileManager";
@@ -14,6 +15,9 @@ import { useFilePreview } from "../store/filePreview";
 import type { AttachmentMeta, PageMeta } from "../types";
 import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon, DownloadIcon, TrashIcon, UploadIcon, HistoryIcon } from "./icons";
 import { importOfficeAttachmentAsPage } from "../lib/office/pickOfficeFile";
+// ⭐ 2026-10-29（M1 最后一段）：文件区「导入文档包」—— 选 `.shuyodoc` ⇒ 解包校验 ⇒ **新建一页**。
+// 整条流程（选文件 / 解 zip / 整包校验 / 资产入库 / 建页）都在那一层，⛔ 这里不自己解包、不手写库。
+import { importDocumentPackage } from "../lib/docPackageTransfer";
 import { PluginMenuItems } from "./PluginMenuItems";
 import { fileContextArgs } from "../lib/pluginMenus";
 import { attachmentFetchHint } from "../lib/attachmentFetchHint";
@@ -171,6 +175,8 @@ export function FileManagerView() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [files, setFiles] = useState<AttachmentMeta[]>([]);
   const [importing, setImporting] = useState(false);
+  /** 导入 `.shuyodoc` 的进行中态（与"上传文件"分开：两条路互不禁用，但各自不许重入）。 */
+  const [importingDoc, setImportingDoc] = useState(false);
   const [fileQuery, setFileQuery] = useState("");
   const [dragging, setDragging] = useState(false);
   const [moving, setMoving] = useState<AttachmentMeta | null>(null);
@@ -321,6 +327,29 @@ export function FileManagerView() {
     await importPaths(paths);
   };
 
+  /**
+   * ⭐ 2026-10-29（owner 方案 `docs/plans/2026-10-29-shuyodoc-m1.md`，M1）：导入一个 `.shuyodoc`。
+   *
+   * 口径（owner 已拍）：**永远新建一页**、同名也新建、⛔ 不覆盖任何已有页面；父级＝当前所在文件夹 / 空间根。
+   * 结果句由 `lib/docPackageTransfer.ts` 给（失败时那句话是 `openDocumentPackage` 的**原文**：
+   * 它已经点名"哪个条目、为什么"）⇒ 这里**原样** toast，⛔ 不换措辞、⛔ 不吞。
+   */
+  const importDocPackage = async () => {
+    if (importingDoc) return;
+    setImportingDoc(true);
+    try {
+      const outcome = await importDocumentPackage(folderId ?? null);
+      toast(outcome.message, outcome.ok ? "success" : "error");
+      if (outcome.ok) {
+        // 新页既在页面树里（`useNotes.loadPages` 已由那一层刷新），也可能带附件 ⇒ 顺带重读本目录
+        loadFiles();
+        useFileManagerStore.getState().bumpRevision();
+      }
+    } finally {
+      setImportingDoc(false);
+    }
+  };
+
   const importPaths = async (paths: string[]) => {
     if (paths.length === 0) return;
     setImporting(true);
@@ -331,6 +360,12 @@ export function FileManagerView() {
       // 而不是被静默丢弃（此前根目录拖拽是直接 return）。
       const metas = await api.importAttachmentFiles(folderId ?? null, paths);
       setFiles((prev) => [...metas, ...prev]);
+      // ⭐ 2026-10-27（owner 截图：「文件上传后，出现未下载标识」）：**上传成功要重读盘上字节**。
+      //   为什么必须有这一句：`onDisk` 是"盘上有哪些 hash"的读数，它只在挂载/切换文件夹/取字节成功后刷新；
+      //   刚上传的字节**已经在盘上**，但旧集合里没有它 ⇒ 新行会被误标「未下载」（真机：zip 明明 6 MB 落在
+      //   `attachments/<空间>/f7/<hash>.zip`）。⛔ 别指望"自动预取"那条路帮忙：它只在**取回成功**时才
+      //   `loadOnDisk()`，而个人空间没有服务器、对端也拿不到 ⇒ 它必然失败 ⇒ 标记就再也刷不掉。
+      loadOnDisk();
       useFileManagerStore.getState().bumpRevision();
       toast(`已上传 ${metas.length} 个文件`, "success");
     } catch (e) {
@@ -424,18 +459,33 @@ export function FileManagerView() {
     setMoving(null);
   };
 
-  const openFile = async (path: string) => {
-    if (!path) return;
+  const openFile = async (file: AttachmentMeta) => {
+    // ⭐ **2026-10-28（owner：「在侧边栏打开一个 html 文件失败」／「打开 html 变成 BIN 文件」）**：
+    //   先确保本机有字节（没有就取回），再按**原始文件名**落临时副本交给系统 ✓（不再 `.bin`）。
     try {
-      await platform.opener.openPath(path);
+      await openAttachmentWithSystem(file.path, file.hash, file.name);
     } catch (e) {
-      toast(`打开失败：${e}`, "error");
+      toast(`打开失败：${e instanceof Error ? e.message : String(e)}`, "error");
     }
   };
-  const revealFile = async (path: string) => {
-    if (!path) return;
+  const revealFile = async (path: string, hash?: string) => {
+    // ⭐ **2026-10-28（owner：「在文件夹中打开失效了」）**：本机**还没有字节**时，先按需取回，再显示 ✓
+    //   （原来 `if (!path) return;` 静默什么都不做 ⇒ 看起来就是"按钮坏了" ✗）。
+    let local = path;
+    if (!local) {
+      if (!hash) {
+        toast(NOT_DOWNLOADED_HINT, "info");
+        return;
+      }
+      try {
+        local = await fetchLocalAttachmentPath(hash);
+      } catch (e) {
+        toast(`取回失败：${e instanceof Error ? e.message : String(e)}（${NOT_DOWNLOADED_HINT}）`, "error");
+        return;
+      }
+    }
     try {
-      await platform.opener.revealItemInDir(path);
+      await platform.opener.revealItemInDir(local);
     } catch (e) {
       toast(`打开失败：${e}`, "error");
     }
@@ -729,7 +779,7 @@ export function FileManagerView() {
         useFilePreview.getState().open(row.file!);
       } else {
         toast("正在用系统默认应用打开…", "info");
-        openFile(row.file!.path);
+        openFile(row.file!);
       }
     } else if (row.kind === "folder") {
       setFolderId(row.pageId!);
@@ -885,6 +935,19 @@ export function FileManagerView() {
           >
             <UploadIcon className="fm-btn-icon" width={18} height={18} />
             <span className="fm-btn-text">{importing ? t("files.uploading") : `＋ ${t("files.upload")}`}</span>
+          </button>
+          {/* ⭐ 2026-10-29（M1）：导入 `.shuyodoc` 文档包 —— 与「上传」并列（同一块「往这里放东西」的动作区）。
+              ⚠️ 文案与提示**都说清"新建"**：owner 定的口径是"导入永远新建、同名也新建"，
+                 ⛔ 不许让用户以为它会覆盖/合并已有页面。 */}
+          <button
+            className="fm-btn"
+            onClick={importDocPackage}
+            disabled={importingDoc}
+            title="导入 .shuyodoc 文档包（新建一页，同名也新建，不会覆盖已有页面）"
+            aria-label="导入文档包"
+          >
+            <DownloadIcon className="fm-btn-icon" width={18} height={18} />
+            <span className="fm-btn-text">{importingDoc ? "正在导入…" : "导入文档包"}</span>
           </button>
           <div className="fm-view-toggle" role="group" aria-label="视图切换">
             <button
@@ -1245,7 +1308,7 @@ export function FileManagerView() {
                         title="在文件夹中显示"
                         onClick={(e) => {
                           e.stopPropagation();
-                          revealFile(row.file!.path);
+                          revealFile(row.file!.path, row.file!.hash);
                         }}
                       >
                         📂
@@ -1333,7 +1396,7 @@ export function FileManagerView() {
                   {row.file && !onDisk.has(row.file.hash)
                     ? ctxItem(<DownloadIcon width={14} height={14} />, "从服务器下载", () => { void fetchBytes(row.file!); closeCtx(); })
                     : ctxItem(<DownloadIcon width={14} height={14} />, "下载", () => { downloadFile(row.file!); closeCtx(); })}
-                  {ctxItem(<FolderIcon width={14} height={14} />, "在文件夹中显示", () => { revealFile(row.file!.path); closeCtx(); })}
+                  {ctxItem(<FolderIcon width={14} height={14} />, "在文件夹中显示", () => { revealFile(row.file!.path, row.file!.hash); closeCtx(); })}
                   {/* 窄屏把行内那六个小按钮收进了这一份面板，所以面板必须**功能完整**：
                       少一项就等于"手机上某个动作消失了"——那比按钮小更糟。 */}
                   {row.file!.mime === "application/pdf" &&

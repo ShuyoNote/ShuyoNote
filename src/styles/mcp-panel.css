@@ -1,0 +1,802 @@
+/* MCP 接入面板（跨空间支持矩阵改版）的**专用样式**。
+ *
+ * ⚠️ 为什么不写在 `src/App.css`：那条文件由另一条线在收缩（改它必冲突）⇒ 本面板的新样式
+ *   全部收在这一个文件里，由 `src/App.tsx` 在 `import "./App.css"` 之后 import
+ *   （同在设置页的既有类 `set-*` / `set-badge` / `mcp-access-*` 继续复用 ✓）。
+ *
+ * ⚠️ 颜色一律用**既有 CSS 变量**（`--text` / `--text-dim` / `--text-faint` / `--border` /
+ *   `--surface` / `--card-bg` / `--hover` / `--accent` / `--accent-soft` / `--success` /
+ *   `--warning` / `--danger`；深色主题由变量自己跟 ✓）——⛔ 不自造变量、不写死颜色。
+ *
+ * 结构：① 分段导航 ② 档位单选卡（3 列 → ≤900px 单列）③ 能力分类（2 列网格）④ 状态卡（2 列 → 窄屏单列）
+ *   ⑤ 权限 chips ⑥ 写操作警示条。窄屏全部纵向堆叠，⛔ 不许横向溢出。
+ */
+
+/* S2（2026-10-31）：与 App.css 同属 legacy 层 —— 保持「本文件在 App.css 之后 import ⇒ 同特异性覆盖」的原语义。
+   若留在层外会压过 App.css 全部规则（层外 > 分层），那会改变既有视觉。判据见 src/lib/cssLayers.test.ts */
+@layer legacy {
+
+/* ═══ ① 顶栏：分段导航 ＋ 状态 chip ＋「如何接入」 ═══════════════════════ */
+.mcp-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 0 10px;
+  margin: 0 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.mcp-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.mcp-nav-link {
+  padding: 5px 10px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-12-5);
+  color: var(--text-dim);
+  text-decoration: none;
+  background: transparent;
+}
+.mcp-nav-link:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.mcp-topbar-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.mcp-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+  background: var(--surface);
+}
+.mcp-status-chip.is-on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* ═══ ①.5 首屏接入引导（三步 ＋ 右侧配置片段/令牌） ═══════════════════════ */
+.mcp-onboard-tip {
+  margin: 2px 0 var(--space-3);
+  padding: 6px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+  font-size: var(--fs-12-5);
+  color: var(--text-dim);
+}
+/* 两列等高：左列步骤，右列卡片（卡片内部 flex，片段区吃掉多余高度） */
+.mcp-onboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr);
+  gap: 22px;
+  align-items: start;
+}
+.mcp-onboard-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mcp-step {
+  display: flex;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.mcp-step-no {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+.mcp-step-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.mcp-step-title {
+  font-size: var(--fs-13-5);
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+}
+/* 统一的说明小字（原来的 .mcp-step-desc / .mcp-step-path 合并成这一档） */
+.mcp-step-desc,
+.mcp-step-note {
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mcp-step-note code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-11-5);
+  padding: 0 3px;
+  border-radius: var(--radius-xs);
+  background: var(--hover);
+}
+/* 常见客户端的配置文件位置：两行小盒（标签 + 等宽路径，超长省略号，不撑破列宽） */
+.mcp-path-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.mcp-path-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+}
+.mcp-path-label {
+  flex: 0 0 92px;
+  font-size: var(--fs-11-5);
+  color: var(--text-faint);
+}
+.mcp-path-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-11-5);
+  color: var(--text-dim);
+}
+/* 读数：标签列固定宽 ⇒ 两行左对齐 */
+.mcp-step-readings {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 9px;
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.mcp-kv {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: var(--space-2);
+  font-size: var(--fs-12);
+  line-height: 1.5;
+}
+.mcp-kv-label {
+  color: var(--text-faint);
+}
+.mcp-kv-value {
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mcp-step-body .set-btn {
+  align-self: flex-start;
+}
+.mcp-detect-btn {
+  margin-top: 1px;
+}
+/* 右侧卡片：头部 / 片段（吃满高度，横向不滚） / 底部令牌栏 */
+.mcp-config-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card-bg);
+  overflow: hidden;
+}
+.mcp-config-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 9px var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.mcp-config-title {
+  font-size: var(--fs-12-5);
+  font-weight: 600;
+  color: var(--text);
+}
+.mcp-config-card .mcp-config-snippet {
+  flex: none;
+  /* 2026-10-31（owner 截图，C1）：190px 太矮（标准 npx 13 行都露不全）；
+     但固定 320px 对 5 行的 npx 形态又太空 ⇒ 改成"随内容自适应、封顶 360px"：
+       · 标准 npx（13 行）⇒ 自然展开约 250px，不留大片空白；
+       · 离线（20 行）⇒ 到 360px 封顶，超出走纵向滚动；长路径仍横向滚动。 */
+  height: auto;
+  /* 两种形态行数差很多：随包 7 行（~140px）、npx 13 行（~250px）⇒ 下限只兜住"别贴成一条" */
+  min-height: 160px;
+  max-height: 360px;
+  margin: 0;
+  padding: 10px var(--space-3);
+  border: 0;
+  border-radius: 0;
+  background: var(--bg);
+  overflow: auto;
+  scrollbar-width: thin;
+  /* 代码块不折行（折行会把路径从中间劈开、更难读）——长行横向滚动 */
+  white-space: pre;
+  font-size: var(--fs-11-5);
+  line-height: 1.55;
+}
+.mcp-config-card .mcp-config-snippet::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.mcp-config-card .mcp-config-snippet::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-faint) 35%, transparent);
+  border-radius: var(--radius-xs);
+}
+.mcp-config-card .mcp-config-snippet::-webkit-scrollbar-track {
+  background: transparent;
+}
+.mcp-config-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 10px var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.mcp-token-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.mcp-token-label {
+  flex: none;
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+}
+.mcp-config-foot .mcp-access-token {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: hidden;
+}
+.mcp-config-foot .mcp-access-token-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--hover);
+  font-size: var(--fs-11-5);
+  color: var(--text-dim);
+}
+.mcp-token-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mcp-token-actions .set-btn {
+  padding: var(--space-1) 10px;
+  font-size: var(--fs-12);
+}
+
+.mcp-panel {
+  min-width: 0;
+}
+
+.mcp-title-hint {
+  margin-left: 10px;
+  font-size: var(--fs-11-5);
+  font-weight: 400;
+  color: var(--text-faint);
+}
+/* 区块标题：**允许换行**（窄屏时「接入外部 AI」不再被拆成"接入外部 / AI"），
+   标题文字本身不折行；副标题在窄屏**单独占一行**（不跟标题抢宽）。 */
+.mcp-section-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+}
+.mcp-section-title-text {
+  white-space: nowrap;
+}
+.mcp-section-title .mcp-title-hint {
+  margin-left: 0;
+}
+/* 「当前允许」摘要的分隔符：前面带不换行空格（JSX 里是 `\u00a0· `）——
+   375 下折行时分隔符不会跑到行首 ✓ */
+.mcp-sep {
+  white-space: nowrap;
+}
+
+/* ═══ ② 权限档位：六张单选卡 ═══════════════════════════════════════════════ */
+.mcp-levels-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: var(--space-1) 0 10px;
+}
+
+/* 视觉由本类接管（`.ai-settings-tab` 只作为既有判据/兼容的类名钩子，它的下划线页签样式在这里被覆盖） */
+.mcp-level-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px var(--space-3);
+  border: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-12-5);
+  text-align: left;
+  cursor: pointer;
+}
+.mcp-level-card:hover {
+  border-color: var(--accent);
+}
+.mcp-level-card.is-on {
+  border-color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+  color: var(--text);
+  font-weight: 400;
+}
+.mcp-level-card:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.mcp-level-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.mcp-radio {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-faint);
+  box-sizing: border-box;
+}
+.mcp-radio.is-on {
+  border-color: var(--accent);
+  background: radial-gradient(circle, var(--accent) 0 3px, transparent 3.5px);
+}
+.mcp-level-title {
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mcp-risk {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-11);
+  line-height: 16px;
+  border: 1px solid transparent;
+}
+.mcp-risk-off {
+  color: var(--text-faint);
+  background: var(--hover);
+}
+.mcp-risk-low {
+  color: var(--success);
+  background: var(--hover);
+  border-color: var(--success);
+}
+.mcp-risk-mid {
+  color: var(--warning);
+  background: var(--hover);
+  border-color: var(--warning);
+}
+.mcp-risk-high {
+  color: var(--danger);
+  background: var(--hover);
+  border-color: var(--danger);
+}
+.mcp-level-desc {
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* 选中卡下方的「当前允许」摘要 */
+.mcp-allow-row {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  font-size: var(--fs-12-5);
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mcp-allow-row b {
+  color: var(--text);
+  font-weight: 600;
+}
+.mcp-invariant {
+  color: var(--text-faint);
+}
+
+/* ═══ ③ 能力：筛选 ＋ 可展开分类 ＋ 两列网格 ═════════════════════════════ */
+.mcp-cap-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 var(--space-2);
+}
+.mcp-cap-total {
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+  margin-right: var(--space-1);
+}
+.mcp-filter-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--fs-12);
+  cursor: pointer;
+}
+.mcp-filter-btn:hover {
+  background: var(--hover);
+}
+.mcp-filter-btn.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.mcp-cap-category {
+  border-top: 1px solid var(--border);
+}
+.mcp-cap-category:last-of-type {
+  border-bottom: 1px solid var(--border);
+}
+.mcp-cap-cat-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 2px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-12-5);
+  text-align: left;
+  cursor: pointer;
+}
+.mcp-cap-cat-head:hover {
+  background: var(--hover);
+}
+.mcp-caret {
+  flex: none;
+  width: 12px;
+  color: var(--text-faint);
+}
+.mcp-cap-cat-name {
+  flex: none;
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* 折叠态也可见的**占比条**：长度 = 该分类条数 / 清单条数。
+   宽度取**百分比基**（0 0 40%）而不是 flex-grow —— 这样每一行的条宽**一样**，
+   各分类长度才真的可比（⛔ 不然名字长的行条短，看着像占比不同）。 */
+.mcp-cap-bar {
+  flex: 0 0 40%;
+  max-width: 200px;
+  min-width: 60px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--hover);
+  overflow: hidden;
+}
+.mcp-cap-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+.mcp-cap-cat-note {
+  font-size: var(--fs-11-5);
+  font-weight: 400;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+.mcp-cap-cat-count {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.mcp-cap-grid {
+  display: none;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-1) 18px;
+  padding: 2px 0 10px 18px;
+}
+/* 折叠 = `display:none`（内容**仍在 DOM**：机器读数不随展开状态漂 ✓） */
+.mcp-cap-category[data-open="true"] .mcp-cap-grid {
+  display: grid;
+}
+.mcp-cap-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 2px 0;
+  font-size: var(--fs-12);
+  color: var(--text-dim);
+}
+/* 工具名：单行，超出用省略号（⛔ 不再折成两三行把行高撑乱） */
+.mcp-cap-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 46%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-11-5);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcp-cap-item-tail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: auto;
+}
+/* 描述：**固定 1 行 + ellipsis**（owner：桌面像文字墙、375 下被截半） */
+.mcp-cap-brief {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 徽章：**固定列宽**（折叠/展开、1280/375 都对齐同一列，换行不齐的问题就没了） */
+.mcp-cap-item .set-badge {
+  flex: 0 0 96px;
+  width: 96px;
+  justify-content: center;
+  text-align: center;
+  font-size: var(--fs-11);
+  line-height: 16px;
+  padding: 1px 0;
+}
+
+/* ═══ ④ 状态卡 ═══════════════════════════════════════════════════════════ */
+.mcp-status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.mcp-stat-card {
+  margin: var(--space-1) 0 10px;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card-bg);
+}
+.mcp-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) 18px;
+}
+.mcp-stat-cell {
+  min-width: 0;
+}
+.mcp-stat-label {
+  font-size: var(--fs-11-5);
+  color: var(--text-faint);
+  margin-bottom: 3px;
+}
+.mcp-stat-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-12-5);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mcp-stat-addr code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-12);
+}
+.mcp-stat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.mcp-stat-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: var(--fs-12-5);
+  color: var(--text-dim);
+}
+.mcp-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+/* ═══ ⑤ 权限 chips（granted 分组） ═══════════════════════════════════════ */
+.mcp-scope-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+.mcp-scope-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.mcp-scope-label {
+  flex: none;
+  width: 4.5em;
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+}
+.mcp-scope-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+.mcp-chip {
+  padding: 1px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-11);
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+/* 「全部空间」是跨空间授权（比当前空间更大）⇒ 高亮 ✓ */
+.mcp-chip.is-all {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.mcp-scope-empty {
+  font-size: var(--fs-12);
+  color: var(--text-faint);
+}
+
+/* ═══ ⑥ 写操作警示条 ═════════════════════════════════════════════════════ */
+.mcp-write-warning {
+  margin: 10px 0 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--warning);
+  border-radius: 10px;
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  line-height: 1.5;
+}
+
+/* ═══ 窄屏：纵向堆叠（纯 CSS，不改结构） ═════════════════════════════════ */
+@media (max-width: 900px) {
+  .mcp-onboard-grid {
+    grid-template-columns: 1fr;
+  }
+  .mcp-levels-grid {
+    grid-template-columns: 1fr;
+  }
+  .mcp-cap-grid {
+    grid-template-columns: 1fr;
+    padding-left: var(--space-2);
+  }
+}
+/* 手机宽度：标题副标题各占一行（375 下「接入外部 AI」不再被拆开） */
+@media (max-width: 560px) {
+  .mcp-section-title .mcp-title-hint {
+    flex: 1 0 100%;
+  }
+  .mcp-cap-cat-note {
+    display: none;
+  }
+}
+@media (max-width: 720px) {
+  .mcp-stat-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ⭐ 2026-10-31（owner 选 C1）：配置片段两种形态的切换（标准 npx / 离线随包桥）＋ 前提说明。
+   为什么放在标题行里而不是另起一行：片段卡片的头已经只有「标题 + 复制」两个元素，
+   切换器塞进去正好把"这是同一个片段的两种写法"表达清楚；再占一行会把卡片顶得很高。 */
+.mcp-config-head .mcp-snippet-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--hover);
+}
+.mcp-snippet-mode button {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--fs-11-5);
+  line-height: 1;
+  padding: 5px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.mcp-snippet-mode button.is-on {
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.mcp-snippet-hint {
+  margin: 0;
+  padding: 7px var(--space-3) 9px;
+  font-size: var(--fs-11-5);
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
+}
+}

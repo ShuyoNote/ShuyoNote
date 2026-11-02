@@ -171,11 +171,7 @@ pub fn resident_bytes(pid: u32) -> Option<u64> {
             return Some(counters.working_set_size as u64);
         }
     }
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "windows"
-    )))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         let _ = pid;
         None
@@ -190,11 +186,21 @@ struct RssWatchdog {
 }
 
 impl RssWatchdog {
-    fn start(killer: HostKiller, limit: u64, poll: std::time::Duration, peak: Arc<std::sync::atomic::AtomicU64>) -> Self {
+    fn start(
+        killer: HostKiller,
+        limit: u64,
+        poll: std::time::Duration,
+        peak: Arc<std::sync::atomic::AtomicU64>,
+    ) -> Self {
         use std::sync::atomic::{AtomicBool, Ordering};
         let stop = Arc::new(AtomicBool::new(false));
         let over_limit = Arc::new(AtomicBool::new(false));
-        let (stop2, over2, peak2, killer2) = (stop.clone(), over_limit.clone(), peak.clone(), killer.clone());
+        let (stop2, over2, peak2, killer2) = (
+            stop.clone(),
+            over_limit.clone(),
+            peak.clone(),
+            killer.clone(),
+        );
         let handle = std::thread::Builder::new()
             .name("plugin-host-rss".to_string())
             .spawn(move || {
@@ -214,7 +220,11 @@ impl RssWatchdog {
             .ok();
         // peak 不留在结构体里：它只被监控线程写入，读它的是 `PeakRssHandle`
         // （同一把 Arc）。留个访问器没人用，只会变成死代码。
-        RssWatchdog { stop, over_limit, handle }
+        RssWatchdog {
+            stop,
+            over_limit,
+            handle,
+        }
     }
 
     fn stop_and_join(&mut self) {
@@ -228,7 +238,6 @@ impl RssWatchdog {
     fn tripped(&self) -> bool {
         self.over_limit.load(std::sync::atomic::Ordering::Relaxed)
     }
-
 }
 
 /// 传给宿主子进程的环境变量**白名单**（方案 §3.7：默认全不给）。
@@ -444,7 +453,9 @@ pub fn write_frame<W: Write, T: Serialize>(w: &mut W, msg: &T) -> Result<(), Hos
 
 /// 读一帧。**干净的对端关闭**（一字节都还没读）返回 `Ok(None)`——那是"父进程收工了"，
 /// 不是错误；读到一半断掉才算 [`HostError::Eof`]。
-pub fn read_frame<R: Read, T: serde::de::DeserializeOwned>(r: &mut R) -> Result<Option<T>, HostError> {
+pub fn read_frame<R: Read, T: serde::de::DeserializeOwned>(
+    r: &mut R,
+) -> Result<Option<T>, HostError> {
     let mut len = [0u8; 4];
     match r.read_exact(&mut len) {
         Ok(()) => {}
@@ -539,7 +550,11 @@ pub fn serve_stdio() -> i32 {
 /// 正阻塞在"等这次命令跑完"，所以这一对读写不会与它抢 stdin/stdout；父进程那边同样在
 /// serve 循环里等，于是这一问一答是严格同步的——这也正是"父进程绝不能在持锁时等子进程"
 /// 那条铁律的另一面：**子进程等父进程的这段时间里，父进程手里不能有库锁**（方案 §7）。
-fn cap_rpc_round_trip(seq: &std::sync::atomic::AtomicU64, method: &str, args_json: &str) -> Result<String, String> {
+fn cap_rpc_round_trip(
+    seq: &std::sync::atomic::AtomicU64,
+    method: &str,
+    args_json: &str,
+) -> Result<String, String> {
     use std::sync::atomic::Ordering;
     let id = seq.fetch_add(1, Ordering::Relaxed);
     write_frame(
@@ -553,9 +568,16 @@ fn cap_rpc_round_trip(seq: &std::sync::atomic::AtomicU64, method: &str, args_jso
     .map_err(|e| format!("cap_transport: 发能力请求失败：{e}"))?;
 
     match read_frame::<_, HostIn>(&mut std::io::stdin()) {
-        Ok(Some(HostIn::CapResult { id: rid, ok, value, error })) => {
+        Ok(Some(HostIn::CapResult {
+            id: rid,
+            ok,
+            value,
+            error,
+        })) => {
             if rid != id {
-                return Err(format!("cap_transport: 能力回包 id 不对（期望 {id}，收到 {rid}）"));
+                return Err(format!(
+                    "cap_transport: 能力回包 id 不对（期望 {id}，收到 {rid}）"
+                ));
             }
             if ok {
                 Ok(value)
@@ -570,9 +592,12 @@ fn cap_rpc_round_trip(seq: &std::sync::atomic::AtomicU64, method: &str, args_jso
 }
 
 /// 给这一次运行装上"能力走 IPC"的通道（`CapMode::Rpc` 时由 `run_command_in_host_process` 调）。
-pub fn rpc_transport() -> std::sync::Arc<dyn Fn(&str, &str) -> Result<String, String> + Send + Sync> {
+pub fn rpc_transport() -> std::sync::Arc<dyn Fn(&str, &str) -> Result<String, String> + Send + Sync>
+{
     let seq = std::sync::atomic::AtomicU64::new(0);
-    std::sync::Arc::new(move |method: &str, args_json: &str| cap_rpc_round_trip(&seq, method, args_json))
+    std::sync::Arc::new(move |method: &str, args_json: &str| {
+        cap_rpc_round_trip(&seq, method, args_json)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -754,11 +779,27 @@ impl HostClient {
         let outcome = loop {
             match read_frame::<_, HostOut>(&mut self.stdout) {
                 Ok(Some(HostOut::Done(res))) => break Ok(res),
-                Ok(Some(HostOut::Failed { code, message })) => break Err(format!("{code}: {message}")),
-                Ok(Some(HostOut::Cap { id, method, args_json })) => {
+                Ok(Some(HostOut::Failed { code, message })) => {
+                    break Err(format!("{code}: {message}"))
+                }
+                Ok(Some(HostOut::Cap {
+                    id,
+                    method,
+                    args_json,
+                })) => {
                     let reply = match server(&method, &args_json) {
-                        Ok(value) => HostIn::CapResult { id, ok: true, value, error: String::new() },
-                        Err(error) => HostIn::CapResult { id, ok: false, value: String::new(), error },
+                        Ok(value) => HostIn::CapResult {
+                            id,
+                            ok: true,
+                            value,
+                            error: String::new(),
+                        },
+                        Err(error) => HostIn::CapResult {
+                            id,
+                            ok: false,
+                            value: String::new(),
+                            error,
+                        },
                     };
                     write_frame(&mut self.stdin, &reply).map_err(|e| e.to_string())?;
                 }
@@ -766,7 +807,10 @@ impl HostClient {
                 // 通道断了：**区分"插件把进程搞崩了"和"协议/管道出问题"**——前者是作者的
                 // bug（要指出来），后者是宿主的问题（别赖到插件头上）。
                 Ok(None) => {
-                    break Err(format!("plugin_crash: 宿主进程异常退出（{}）", self.killer().describe_exit()))
+                    break Err(format!(
+                        "plugin_crash: 宿主进程异常退出（{}）",
+                        self.killer().describe_exit()
+                    ))
                 }
                 Err(e) => {
                     break Err(format!(
@@ -798,7 +842,9 @@ impl HostClient {
     /// 峰值的**共享句柄**：`client` 会被移进工作线程，调用方要在那之前拿一份，
     /// 才能在这次运行结束之后读到峰值。
     pub fn peak_rss_handle(&self) -> PeakRssHandle {
-        PeakRssHandle { peak: self.peak_rss.clone() }
+        PeakRssHandle {
+            peak: self.peak_rss.clone(),
+        }
     }
 
     /// 调整常驻内存上限与轮询间隔（测试用：调成 1 字节就能确定性地验证"超限即杀"）。
@@ -809,7 +855,10 @@ impl HostClient {
 
     /// 拿一个只管"杀/看退出状态"的句柄（超时路径用）。
     pub fn killer(&self) -> HostKiller {
-        HostKiller { child: self.child.clone(), pid: self.child_pid }
+        HostKiller {
+            child: self.child.clone(),
+            pid: self.child_pid,
+        }
     }
 
     /// 收工：让子进程读到 `Shutdown` 就 return 0，并等它退出。
@@ -869,7 +918,10 @@ mod tests {
             );
         }
         // 参数也要照传（测试开关靠它）
-        let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
         assert_eq!(args, vec![HOST_FLAG.to_string(), CRASH_FLAG.to_string()]);
     }
 
@@ -883,7 +935,10 @@ mod tests {
             .map(|(k, _)| k.to_string_lossy().to_string())
             .collect();
         std::env::remove_var("SHUYONOTE_TEST_SECRET");
-        assert!(leaked.is_empty(), "应用环境里的 SHUYONOTE_TEST_SECRET 被递给子进程了：{leaked:?}");
+        assert!(
+            leaked.is_empty(),
+            "应用环境里的 SHUYONOTE_TEST_SECRET 被递给子进程了：{leaked:?}"
+        );
     }
 
     #[test]
@@ -893,8 +948,14 @@ mod tests {
         write_frame(&mut buf, &HostIn::Shutdown).unwrap();
 
         let mut r = std::io::Cursor::new(buf);
-        assert_eq!(read_frame::<_, HostIn>(&mut r).unwrap(), Some(HostIn::Run(req())));
-        assert_eq!(read_frame::<_, HostIn>(&mut r).unwrap(), Some(HostIn::Shutdown));
+        assert_eq!(
+            read_frame::<_, HostIn>(&mut r).unwrap(),
+            Some(HostIn::Run(req()))
+        );
+        assert_eq!(
+            read_frame::<_, HostIn>(&mut r).unwrap(),
+            Some(HostIn::Shutdown)
+        );
         // 读完就没了：干净关闭 → None（不是错误）
         assert_eq!(read_frame::<_, HostIn>(&mut r).unwrap(), None);
     }
@@ -903,38 +964,62 @@ mod tests {
     fn a_frame_split_across_writes_is_reassembled() {
         // 真实管道里帧会被切开：这里模拟"长度到了、body 还没到"。
         let mut whole = Vec::new();
-        write_frame(&mut whole, &HostOut::Failed { code: "c".into(), message: "m".into() }).unwrap();
+        write_frame(
+            &mut whole,
+            &HostOut::Failed {
+                code: "c".into(),
+                message: "m".into(),
+            },
+        )
+        .unwrap();
         let (head, tail) = whole.split_at(6);
         let mut stream = std::io::Cursor::new([head, tail].concat());
         assert_eq!(
             read_frame::<_, HostOut>(&mut stream).unwrap(),
-            Some(HostOut::Failed { code: "c".into(), message: "m".into() })
+            Some(HostOut::Failed {
+                code: "c".into(),
+                message: "m".into()
+            })
         );
         // 长度前缀说 2 字节、实际只有 1 字节 → 中途断掉，必须报 Eof 而不是当成空帧
         let mut truncated = std::io::Cursor::new(vec![0, 0, 0, 2, b'{']);
-        assert!(matches!(read_frame::<_, HostOut>(&mut truncated), Err(HostError::Eof)));
+        assert!(matches!(
+            read_frame::<_, HostOut>(&mut truncated),
+            Err(HostError::Eof)
+        ));
     }
 
     #[test]
     fn oversized_frame_is_rejected_before_allocating() {
         let mut f = std::io::Cursor::new((MAX_FRAME_BYTES as u32 + 1).to_be_bytes().to_vec());
-        assert!(matches!(read_frame::<_, HostOut>(&mut f), Err(HostError::TooLarge(_))));
+        assert!(matches!(
+            read_frame::<_, HostOut>(&mut f),
+            Err(HostError::TooLarge(_))
+        ));
     }
 
     #[test]
     fn malformed_frame_is_an_error_not_a_hang() {
         let body = b"not json".to_vec();
-        let mut f = std::io::Cursor::new(
-            [(body.len() as u32).to_be_bytes().to_vec(), body].concat(),
-        );
-        assert!(matches!(read_frame::<_, HostOut>(&mut f), Err(HostError::Malformed(_))));
+        let mut f =
+            std::io::Cursor::new([(body.len() as u32).to_be_bytes().to_vec(), body].concat());
+        assert!(matches!(
+            read_frame::<_, HostOut>(&mut f),
+            Err(HostError::Malformed(_))
+        ));
     }
 
     #[test]
     fn writing_a_frame_larger_than_the_cap_fails_instead_of_truncating() {
-        let big = HostOut::Failed { code: "c".into(), message: "x".repeat(MAX_FRAME_BYTES + 1) };
+        let big = HostOut::Failed {
+            code: "c".into(),
+            message: "x".repeat(MAX_FRAME_BYTES + 1),
+        };
         let mut buf = Vec::new();
-        assert!(matches!(write_frame(&mut buf, &big), Err(HostError::TooLarge(_))));
+        assert!(matches!(
+            write_frame(&mut buf, &big),
+            Err(HostError::TooLarge(_))
+        ));
         assert!(buf.is_empty(), "超限的帧不该写出去半个");
     }
 }

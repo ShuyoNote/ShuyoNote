@@ -6,6 +6,12 @@ export interface InputOptions {
   defaultValue?: string;
   okLabel?: string;
   cancelLabel?: string;
+  /**
+   * ⭐ **2026-10-28（owner 选 A：加密空间「一次性口令接入」向导）**：输入框类型 ——
+   * 默认 `text`；`password` 走遮点（口令不许明文摆在屏幕上 ✓）。
+   * ⚠️ 只影响**显示**，值照旧原样回给 `onSubmit`（调用方自己决定怎么用 ✓）。
+   */
+  type?: "text" | "password";
   // The plain-text input. Returns the trimmed value, or null when cancelled.
   onSubmit?: (value: string) => void;
 }

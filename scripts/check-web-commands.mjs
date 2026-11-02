@@ -114,6 +114,27 @@ const DESKTOP_ONLY_COMMANDS = new Map([
   //   ⚠️ 与上面那条的区别：⭐ 上面那条**只读** ✓，⭐ 这条**会写** ✓（⭐ 只往各空间自己目录写，⛔ 不删老那份 ✓）。
   ["adopt_legacy_refs_for_encrypted_spaces", "桌面专属：给加密空间补老明文的加密副本（要该空间的会话钥匙，且往它的附件目录写；Web 没有钥匙柜也没有分空间的加密附件树）"],
   ["mcp_set_level", "桌面专属：MCP 面板的四档选择（Web 上没有本机通道可开）"],
+  // ⭐ B3（2026-10-29）：Rust→前端桥的两条（就绪信号 ＋ 结果回执）。导出/覆盖率报告要用前端那份
+  // **唯一实现**；Web 上既没有本机 MCP 通道、也没有"Rust 叫前端算"这条桥 ⇒ 没有实现对象。
+  ["mcp_frontend_tool_ready", "桌面专属：前端桥就绪信号（Web 没有本机 MCP 通道，这条桥不会被调用）"],
+  // ⭐ UX-①（2026-10-30）：apply 侧回写草稿状态。Web 没有本机 MCP 写面也没草稿状态表 ⇒ 桌面专属。
+  ["mcp_draft_state", "桌面专属：回写 MCP 草稿状态（Web 没有本机 MCP 信道/草稿状态表）"],
+  // ⭐ P1（2026-10-30）：面板的只读读数（Web 没有本机 MCP 信道/状态表）。
+  ["mcp_recent_drafts", "桌面专属：最近草稿（Web 没有本机 MCP 草稿状态表）"],
+  ["mcp_recent_audit", "桌面专属：最近审计（Web 没有本机 MCP 审计环）"],
+  // ⭐ AI 不可见空间清单（本机 meta.db；Web 没有本机 MCP 信道）
+  ["mcp_hidden_spaces_get", "桌面专属：AI 不可见空间清单（Web 没有本机 MCP 信道/meta.db 偏好）"],
+  ["mcp_hidden_spaces_set", "桌面专属：AI 不可见空间清单（Web 没有本机 MCP 信道/meta.db 偏好）"],
+  // ⭐ B：下载超限确认的「允许一次」额度（进程内存，仅桌面）
+  ["mcp_download_grant", "桌面专属：下载超限确认额度（Web 没有本机 MCP 信道/进程内额度表）"],
+  // ⭐ M2c：空间包导入落库走 SQLite 事务（Web 无本地空间库/门禁不涉）
+  ["space_package_import", "桌面专属：空间包导入写本地 SQLite（Web 无本地空间库）"],
+  // ⭐ M2e：导入空间包时读本机文件字节（Web 无本地文件系统）
+  ["read_binary_file", "桌面专属：读本机文件原始字节（Web 无本地文件系统）"],
+  // ⭐ B2-补遗-1：把附件从页面摘除（page_id=NULL）。Web 上附件表走 sql.js、没有"未整理附件"这一层，
+  //   且这条命令只服务本机 MCP 写面 ⇒ 桌面专属。
+  ["detach_attachment", "桌面专属：把附件从页面摘除（Web 没有本机 MCP 写面；未整理附件这一层只在桌面附件树里）"],
+  ["mcp_frontend_tool_respond", "桌面专属：前端桥结果回执（同上；Web 侧没有等待前端结果的 Rust 调用方）"],
   // 隐私边界第 1 步（2026-09-23）：**按空间**启用/禁用加密 —— **桌面专属**。
   // 理由：Web 平台没有钥匙柜（E2EE 在浏览器里是空操作，见 `docs/web-sync-boundary.md`），
   // 而加密空间在 Web 上由 `src/lib/ciphertextSniff.ts` **明确拒掉**（提示去桌面端）⇒

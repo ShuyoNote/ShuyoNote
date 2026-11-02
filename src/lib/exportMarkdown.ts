@@ -33,7 +33,7 @@ import { BlockRefNode } from "../editor/nodes/BlockRefNode";
 import { BlockEmbedNode } from "../editor/nodes/BlockEmbedNode";
 import { AttachmentRefNode } from "../editor/nodes/AttachmentRefNode";
 import { DrawingNode, $isDrawingNode } from "../editor/nodes/DrawingNode";
-import { MermaidNode } from "../editor/nodes/MermaidNode";
+import { MermaidNode, $isMermaidNode } from "../editor/nodes/MermaidNode";
 
 const NODES = [
   HeadingNode,
@@ -294,7 +294,33 @@ export function pageContentToMarkdown(docJson: string, resolveImage?: ResolveIma
           .filter((k) => !$isLineBreakNode(k) && !($isTextNode(k) && k.getTextContent() === ""));
         if (rest.length === 0) para.remove();
       }
-      // ③ 就在这份 pending 状态上导出 ✓
+      // ③ 还嵌在**引用 / 列表 / callout / 同段文字**里的 mermaid 也提到根上（2026-10-31 owner 报：
+      //    "导出 markdown 丢了 mermaid 图块的标记"）。② 只处理"段落里恰好一个装饰节点"；
+      //    同段还有文字、或图块在引用/列表/callout 里时，`$convertToMarkdownString` 同样不走出围栏
+      //    （实测 quote/list/callout/inline 四种形状围栏数 = 0 ✗）。
+      //    ⇒ 统一把嵌套的 mermaid **提到它所在的顶层块之后**：文字/列表结构原样保留，
+      //      图块以顶层 ```mermaid 围栏导出（md 没有"段落内的图"这种形态，拆开是唯一能带走的表示）。
+      //    ⚠️ 与 ② 一样，必须在**同一次 update** 的 pending 树上做（见上面 ②① 的注释）。
+      const nestedMermaid: LexicalNode[] = [];
+      for (const top of $getRoot().getChildren()) {
+        if ($isMermaidNode(top)) continue;
+        const walk = (node: LexicalNode) => {
+          if (!$isElementNode(node)) return;
+          for (const child of node.getChildren()) {
+            if ($isMermaidNode(child)) nestedMermaid.push(child);
+            else if ($isElementNode(child)) walk(child);
+          }
+        };
+        walk(top);
+        if (nestedMermaid.length === 0) continue;
+        let anchor: LexicalNode = top;
+        for (const m of nestedMermaid.splice(0)) {
+          m.remove();
+          anchor.insertAfter(m);
+          anchor = m;
+        }
+      }
+      // ④ 就在这份 pending 状态上导出 ✓
       md = $convertToMarkdownString(transformers);
     },
     { discrete: true },
@@ -348,6 +374,18 @@ export type MarkdownPageInput = {
  *
  * @returns 一句给用户的话（取消 ⇒ 明确说"已取消"，⛔ 不假装成功 ✗）
  */
+/**
+ * 一页 `.md` 的**完整文件内容**（标题头注释 ＋ 正文）—— **唯一一份**。
+ *
+ * 为什么要单独抽出来（B3，2026-10-29）：界面「导出为 Markdown」与外部 MCP 的
+ * `export.markdown`（经 Rust→前端桥）必须交付**逐字节相同**的 Markdown。各写一遍
+ * （一个拼头注释、一个忘了拼）就会得到两种文件，而两边都能跑、都不会报错。
+ */
+export function markdownDocumentForPage(page: MarkdownPageInput): string {
+  const title = page.title || "未命名";
+  return `<!-- title: ${title} · id: ${page.id} -->\n` + pageContentToMarkdown(page.docJson);
+}
+
 export async function exportPageToMarkdown(page: MarkdownPageInput): Promise<string> {
   const title = page.title || "未命名";
   const path = await platform.dialog.save({
@@ -357,9 +395,7 @@ export async function exportPageToMarkdown(page: MarkdownPageInput): Promise<str
   });
   // 用户在对话框里点了取消 ⇒ 一个字节都不写 ✓（也不报成功 ✗）
   if (!path) return "已取消导出";
-  const md = pageContentToMarkdown(page.docJson);
-  const head = `<!-- title: ${title} · id: ${page.id} -->\n`;
-  await api.writeTextFile(path, head + md);
+  await api.writeTextFile(path, markdownDocumentForPage(page));
   return `已导出「${title}」到 ${path}`;
 }
 

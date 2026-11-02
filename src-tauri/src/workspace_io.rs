@@ -20,7 +20,7 @@ pub struct WorkspaceExportResult {
 /// Progress for long-running workspace export/import.
 #[derive(Clone, Serialize)]
 pub struct WorkspaceProgress {
-    pub phase: String,   // "export" | "import"
+    pub phase: String, // "export" | "import"
     pub done: usize,
     pub total: usize,
     pub bytes: u64,
@@ -37,14 +37,7 @@ struct WorkspaceMetaFile {
 
 // --- helpers ---
 
-fn emit(
-    app: &tauri::AppHandle,
-    phase: &str,
-    done: usize,
-    total: usize,
-    bytes: u64,
-    message: &str,
-) {
+fn emit(app: &tauri::AppHandle, phase: &str, done: usize, total: usize, bytes: u64, message: &str) {
     let _ = app.emit(
         "workspace-progress",
         WorkspaceProgress {
@@ -87,7 +80,11 @@ fn count_dir(dir: &Path) -> (usize, u64) {
 /// 重新加密页面，只写裸 `PRAGMA key` 会产出"默认参数（SHA512）"的快照，而本模块下一步
 /// `convert_space_db(dst, false, k)` 是用国密参数去读它的 ⇒ 接线构建里当场红
 /// （2026-09-22 实测：`snapshot_plaintext_from_an_encrypted_source_is_readable_without_a_key`）。
-pub(crate) fn backup_db_to(src: &Connection, dst: &Path, key: Option<&[u8; 32]>) -> Result<(), String> {
+pub(crate) fn backup_db_to(
+    src: &Connection,
+    dst: &Path,
+    key: Option<&[u8; 32]>,
+) -> Result<(), String> {
     let mut dst_conn = Connection::open(dst).map_err(|e| e.to_string())?;
     if let Some(k) = key {
         crate::security::key_conn_with(&dst_conn, k)?;
@@ -159,10 +156,7 @@ pub(crate) fn trim_changes_for_export(
             None,
             "同步档案里还没推过任何变更（游标 0）⇒ 导出不带变更日志".to_string(),
         ),
-        Some((_, last)) => (
-            Some(last),
-            format!("只保留还没推出去的变更（游标 {last}）"),
-        ),
+        Some((_, last)) => (Some(last), format!("只保留还没推出去的变更（游标 {last}）")),
     };
 
     let conn = Connection::open(dst).map_err(|e| format!("导出快照不可打开: {e}"))?;
@@ -335,56 +329,66 @@ pub async fn export_workspace(
     let hashes2 = referenced_hashes.clone();
     let trim2 = trim;
 
-    let out = tauri::async_runtime::spawn_blocking(move || -> Result<WorkspaceExportResult, String> {
-        let file = std::fs::File::create(&dest2).map_err(|e| e.to_string())?;
-        let mut zip = zip::ZipWriter::new(file);
-        let opts = zip::write::SimpleFileOptions::default();
-        let mut bytes = 0u64;
+    let out =
+        tauri::async_runtime::spawn_blocking(move || -> Result<WorkspaceExportResult, String> {
+            let file = std::fs::File::create(&dest2).map_err(|e| e.to_string())?;
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default();
+            let mut bytes = 0u64;
 
-        emit(&app2, "export", 0, 1, 0, "打包空间数据库…");
-        add_file_to_zip(&mut zip, "shuyonote.db", &tmp_db2, &mut bytes)?;
-        // ⭐ R138：把"快照里裁掉了什么"**说出来**（⛔ 不许静默 —— 用户得知道包里少了什么 ✓）。
-        if trim2.rows > 0 {
-            emit(&app2, "export", 0, 1, bytes, &format!("导出快照已瘦身：{}", trim2.why));
-        }
-
-        // workspace.json metadata.
-        let meta_json = serde_json::to_string(&space2).map_err(|e| e.to_string())?;
-        zip.start_file("workspace.json", opts).map_err(|e| e.to_string())?;
-        bytes += std::io::Write::write(&mut zip, meta_json.as_bytes()).map_err(|e| e.to_string())? as u64;
-
-        // Only the attachment bytes this space references (self-contained).
-        let mut done = 0usize;
-        let total = hashes2.len();
-        let mut matched = 0usize;
-        for hash in &hashes2 {
-            let path = crate::attachments::find_attachment(&app_data_dir2, &space_id2, hash);
-            if let Some(p) = path {
-                let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                let name = format!("attachments/{fname}");
-                emit(&app2, "export", done, total, bytes, "打包附件…");
-                add_file_to_zip(&mut zip, &name, &p, &mut bytes)?;
-                matched += 1;
+            emit(&app2, "export", 0, 1, 0, "打包空间数据库…");
+            add_file_to_zip(&mut zip, "shuyonote.db", &tmp_db2, &mut bytes)?;
+            // ⭐ R138：把"快照里裁掉了什么"**说出来**（⛔ 不许静默 —— 用户得知道包里少了什么 ✓）。
+            if trim2.rows > 0 {
+                emit(
+                    &app2,
+                    "export",
+                    0,
+                    1,
+                    bytes,
+                    &format!("导出快照已瘦身：{}", trim2.why),
+                );
             }
-            done += 1;
-        }
 
-        let finished = zip.finish().map_err(|e| e.to_string())?;
-        let size = finished.metadata().map_err(|e| e.to_string())?.len() as i64;
-        emit(&app2, "export", total, total, bytes, "导出完成…");
-        let _ = std::fs::remove_file(&tmp_db2);
-        Ok(WorkspaceExportResult {
-            // 报**用户选的位置**（URI 目标下中转文件路径对用户没有意义）。
-            path: dest_report,
-            size,
-            pages: 0,
-            attachments: matched,
-            trimmed_changes: trim2.rows,
-            trimmed_change_bytes: trim2.bytes,
+            // workspace.json metadata.
+            let meta_json = serde_json::to_string(&space2).map_err(|e| e.to_string())?;
+            zip.start_file("workspace.json", opts)
+                .map_err(|e| e.to_string())?;
+            bytes += std::io::Write::write(&mut zip, meta_json.as_bytes())
+                .map_err(|e| e.to_string())? as u64;
+
+            // Only the attachment bytes this space references (self-contained).
+            let mut done = 0usize;
+            let total = hashes2.len();
+            let mut matched = 0usize;
+            for hash in &hashes2 {
+                let path = crate::attachments::find_attachment(&app_data_dir2, &space_id2, hash);
+                if let Some(p) = path {
+                    let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                    let name = format!("attachments/{fname}");
+                    emit(&app2, "export", done, total, bytes, "打包附件…");
+                    add_file_to_zip(&mut zip, &name, &p, &mut bytes)?;
+                    matched += 1;
+                }
+                done += 1;
+            }
+
+            let finished = zip.finish().map_err(|e| e.to_string())?;
+            let size = finished.metadata().map_err(|e| e.to_string())?.len() as i64;
+            emit(&app2, "export", total, total, bytes, "导出完成…");
+            let _ = std::fs::remove_file(&tmp_db2);
+            Ok(WorkspaceExportResult {
+                // 报**用户选的位置**（URI 目标下中转文件路径对用户没有意义）。
+                path: dest_report,
+                size,
+                pages: 0,
+                attachments: matched,
+                trimmed_changes: trim2.rows,
+                trimmed_change_bytes: trim2.bytes,
+            })
         })
-    })
-    .await
-    .map_err(|e| e.to_string())??;
+        .await
+        .map_err(|e| e.to_string())??;
 
     // URI 目标：把中转文件整份搬进用户选的位置（桌面是空操作）。
     target.commit()?;
@@ -417,25 +421,34 @@ pub async fn import_workspace(
     // Extract zip off the main thread.
     let src2 = src.clone();
     let tmp_dir2 = tmp_dir.clone();
-    let Extracted { db_snapshot, att_src_dir, meta_file } = tauri::async_runtime::spawn_blocking(move || {
-        extract_workspace_zip(&src2, &tmp_dir2)
-    })
-    .await
-    .map_err(|e| e.to_string())??;
+    let Extracted {
+        db_snapshot,
+        att_src_dir,
+        meta_file,
+    } = tauri::async_runtime::spawn_blocking(move || extract_workspace_zip(&src2, &tmp_dir2))
+        .await
+        .map_err(|e| e.to_string())??;
 
     // Decide a fresh workspace id (import never clobbers an existing space).
     // 安全：zip 内的 workspace id 不可信（可能为 `../../x` 等穿越值），必须先过
     // `is_safe_space_id` 白名单再用于 `spaces/<id>.db` 路径拼接；不安全即改用 UUID。
     let new_id = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let raw = meta_file.as_ref().map(|m| m.id.clone()).filter(|i| !i.is_empty());
+        let raw = meta_file
+            .as_ref()
+            .map(|m| m.id.clone())
+            .filter(|i| !i.is_empty());
         let mut candidate = raw
             .filter(|i| crate::db::is_safe_space_id(i))
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         // Ensure uniqueness against meta.workspaces.
         loop {
             let exists: bool = c
-                .query_row("SELECT EXISTS(SELECT 1 FROM meta.workspaces WHERE id = ?1)", params![candidate], |r| r.get(0))
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM meta.workspaces WHERE id = ?1)",
+                    params![candidate],
+                    |r| r.get(0),
+                )
                 .map_err(|e| e.to_string())?;
             if !exists {
                 break;
@@ -445,10 +458,18 @@ pub async fn import_workspace(
         candidate
     };
 
-    let import_name = name
-        .unwrap_or_else(|| meta_file.as_ref().map(|m| m.name.clone()).unwrap_or_else(|| "导入空间".to_string()));
+    let import_name = name.unwrap_or_else(|| {
+        meta_file
+            .as_ref()
+            .map(|m| m.name.clone())
+            .unwrap_or_else(|| "导入空间".to_string())
+    });
     let import_name = import_name.trim();
-    let import_name = if import_name.is_empty() { "导入空间".to_string() } else { import_name.to_string() };
+    let import_name = if import_name.is_empty() {
+        "导入空间".to_string()
+    } else {
+        import_name.to_string()
+    };
 
     // Place the space DB at spaces/<id>.db.
     let target_db = spaces_dir.join(format!("{new_id}.db"));
@@ -465,7 +486,10 @@ pub async fn import_workspace(
     // 由空间隐私那一节引导用户显式开启加密 —— 绝不"偷偷用一个对不上的钥匙"。
     let encrypted = {
         let c = db.0.lock().expect("db mutex poisoned");
-        match (crate::space_crypto::session_master(), crate::space_crypto::keyring()) {
+        match (
+            crate::space_crypto::session_master(),
+            crate::space_crypto::keyring(),
+        ) {
             (Some(master), Some(mut kr)) => {
                 let key = crate::keyring::random_space_key();
                 kr.wrap(&master, &new_id, &key)?;
@@ -515,8 +539,14 @@ pub async fn import_workspace(
         )
         .map_err(|e| e.to_string())?
     };
-    let theme = meta_file.as_ref().map(|m| m.theme.clone()).unwrap_or_else(|| "#3370FF".to_string());
-    let icon = meta_file.as_ref().map(|m| m.icon.clone()).unwrap_or_default();
+    let theme = meta_file
+        .as_ref()
+        .map(|m| m.theme.clone())
+        .unwrap_or_else(|| "#3370FF".to_string());
+    let icon = meta_file
+        .as_ref()
+        .map(|m| m.icon.clone())
+        .unwrap_or_default();
     let now = now_ms();
     {
         let c = db.0.lock().expect("db mutex poisoned");
@@ -636,8 +666,11 @@ fn scan_workspace_zip(src: &Path, tmp_dir: &Path) -> Result<Extracted, String> {
             db_snapshot = Some(out_path);
         } else if is_meta {
             let mut s = String::new();
-            std::io::Read::read_to_string(&mut std::fs::File::open(&out_path).map_err(|e| e.to_string())?, &mut s)
-                .map_err(|e| e.to_string())?;
+            std::io::Read::read_to_string(
+                &mut std::fs::File::open(&out_path).map_err(|e| e.to_string())?,
+                &mut s,
+            )
+            .map_err(|e| e.to_string())?;
             meta_file = serde_json::from_str::<WorkspaceMetaFile>(&s).ok();
         } else {
             att_src_dir = Some("attachments".to_string());
@@ -645,7 +678,11 @@ fn scan_workspace_zip(src: &Path, tmp_dir: &Path) -> Result<Extracted, String> {
     }
 
     let db_snapshot = db_snapshot.ok_or_else(|| "空间包中缺少数据库文件".to_string())?;
-    Ok(Extracted { db_snapshot, att_src_dir, meta_file })
+    Ok(Extracted {
+        db_snapshot,
+        att_src_dir,
+        meta_file,
+    })
 }
 
 async fn copy_attachments_into_store(
@@ -753,11 +790,9 @@ fn rewrite_asset_refs_in_space_db(
         let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&content) else {
             continue; // 坏 JSON 不动（别把用户内容改坏）
         };
-        if rewrite_image_srcs(
-            &mut v,
-            &path_of,
-            |name| by_name.get(name).and_then(|h| path_of(h)),
-        ) {
+        if rewrite_image_srcs(&mut v, &path_of, |name| {
+            by_name.get(name).and_then(|h| path_of(h))
+        }) {
             let next = serde_json::to_string(&v).map_err(|e| e.to_string())?;
             crate::doc_content::write_page_doc_json(&conn, &id, &next)?;
             changed += 1;
@@ -843,7 +878,8 @@ mod tests {
         let changed = rewrite_image_srcs(
             &mut v,
             |h| {
-                (h == "aaaa1111").then(|| "C:\\Users\\x\\attachments\\ab\\cd\\aaaa1111.jpg".to_string())
+                (h == "aaaa1111")
+                    .then(|| "C:\\Users\\x\\attachments\\ab\\cd\\aaaa1111.jpg".to_string())
             },
             |name| {
                 (name == "IMG_20261010_130248.jpg")
@@ -852,12 +888,30 @@ mod tests {
         );
         assert!(changed, "应当报告「有改动」");
         let s = serde_json::to_string(&v).unwrap();
-        assert!(s.contains(r#""src":"C:\\Users\\x\\attachments\\ab\\cd\\aaaa1111.jpg""#), "已知 hash ⇒ 真实路径: {s}");
-        assert!(s.contains(r#""src":"asst:deadbeef""#), "找不到字节的 asst 引用必须原样保留: {s}");
-        assert!(s.contains(r#""src":"C:\\Users\\x\\attachments\\99\\88\\feed.jpg""#), "老 blob: 引用要按文件名救回来: {s}");
-        assert!(s.contains(r#""src":"blob:http://x/old-2""#), "名字也对不上 ⇒ 原样保留（不删不猜）: {s}");
-        assert!(s.contains(r#""src":"C:\\old\\keep.png""#), "已经是路径（或非图片节点）的 src 不许动: {s}");
-        assert!(s.contains("asst:not-a-src-field-keep-me"), "非 image 节点里的同形文本不许动: {s}");
+        assert!(
+            s.contains(r#""src":"C:\\Users\\x\\attachments\\ab\\cd\\aaaa1111.jpg""#),
+            "已知 hash ⇒ 真实路径: {s}"
+        );
+        assert!(
+            s.contains(r#""src":"asst:deadbeef""#),
+            "找不到字节的 asst 引用必须原样保留: {s}"
+        );
+        assert!(
+            s.contains(r#""src":"C:\\Users\\x\\attachments\\99\\88\\feed.jpg""#),
+            "老 blob: 引用要按文件名救回来: {s}"
+        );
+        assert!(
+            s.contains(r#""src":"blob:http://x/old-2""#),
+            "名字也对不上 ⇒ 原样保留（不删不猜）: {s}"
+        );
+        assert!(
+            s.contains(r#""src":"C:\\old\\keep.png""#),
+            "已经是路径（或非图片节点）的 src 不许动: {s}"
+        );
+        assert!(
+            s.contains("asst:not-a-src-field-keep-me"),
+            "非 image 节点里的同形文本不许动: {s}"
+        );
     }
 
     static TMP_SEQ: AtomicU32 = AtomicU32::new(0);
@@ -899,7 +953,8 @@ mod tests {
         let c = Connection::open(&src).unwrap();
         // 生产形状：空间库当 main ＋ `ATTACH … AS meta`（`meta.sync_profiles` 住在那边 ✓）。
         // 判据只用内存 meta，够覆盖"读限定名"这条（⚠️ 裸名在真形状下读不到 ⇒ 会静默不裁 ✗）。
-        c.execute_batch("ATTACH DATABASE ':memory:' AS meta").unwrap();
+        c.execute_batch("ATTACH DATABASE ':memory:' AS meta")
+            .unwrap();
         c.execute_batch(
             "CREATE TABLE meta.sync_profiles (ws_id TEXT PRIMARY KEY, server_url TEXT, last_pushed_seq INTEGER)",
         )
@@ -996,7 +1051,10 @@ mod tests {
             crate::security::key_conn_with(&c, &key).unwrap();
             snapshot_plaintext(&c, Some(&key), &dst).unwrap();
         }
-        assert!(!crate::security::space_db_is_encrypted(&dst), "导出契约要求明文库");
+        assert!(
+            !crate::security::space_db_is_encrypted(&dst),
+            "导出契约要求明文库"
+        );
         {
             // 注意：这里**故意**不设任何 PRAGMA key。
             let c = Connection::open(&dst).unwrap();
@@ -1062,7 +1120,10 @@ mod tests {
 
         let key = crate::crypto::derive_key("hunter2", &crate::crypto::random_salt()).unwrap();
         crate::security::convert_space_db(&src, true, Some(&key)).unwrap();
-        assert!(crate::security::space_db_is_encrypted(&src), "前置：源库应当是加密的");
+        assert!(
+            crate::security::space_db_is_encrypted(&src),
+            "前置：源库应当是加密的"
+        );
 
         let dst = dir.join("plain.db");
         {
@@ -1070,13 +1131,18 @@ mod tests {
             crate::security::key_conn_with(&c, &key).unwrap();
             snapshot_plaintext(&c, Some(&key), &dst).unwrap();
         }
-        assert!(!crate::security::space_db_is_encrypted(&dst), "导出契约要求明文库");
+        assert!(
+            !crate::security::space_db_is_encrypted(&dst),
+            "导出契约要求明文库"
+        );
 
         {
             // 故意不设任何 PRAGMA key：快照必须自己就能读。
             let c = Connection::open(&dst).unwrap();
             let got_state: Vec<u8> = c
-                .query_row("SELECT state FROM page_crdt WHERE page_id='p1'", [], |r| r.get(0))
+                .query_row("SELECT state FROM page_crdt WHERE page_id='p1'", [], |r| {
+                    r.get(0)
+                })
                 .expect("快照里必须有 page_crdt 那一行（CRDT 血统）");
             assert_eq!(got_state, lineage, "page_crdt 的字节必须逐字节过去");
             let got_cov: String = c
@@ -1106,7 +1172,10 @@ mod tests {
             zip.start_file("shuyonote.db", opts).unwrap();
             zip.write_all(b"SQLITE3[...]").unwrap();
             zip.start_file("workspace.json", opts).unwrap();
-            zip.write_all(r##"{"id":"ws-a","name":"项目空间","theme":"#00B578","icon":"star"}"##.as_bytes()).unwrap();
+            zip.write_all(
+                r##"{"id":"ws-a","name":"项目空间","theme":"#00B578","icon":"star"}"##.as_bytes(),
+            )
+            .unwrap();
             zip.start_file("attachments/abc123.png", opts).unwrap();
             zip.write_all(b"PNGDATA").unwrap();
             zip.finish().unwrap();
@@ -1145,8 +1214,11 @@ mod tests {
         )
         .unwrap();
         // A second space's attachment row in a separate DB; here we simply verify scoping.
-        conn.execute("INSERT INTO workspaces (id,name,created_at,updated_at) VALUES ('ws-b','b',1,1)", [])
-            .unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (id,name,created_at,updated_at) VALUES ('ws-b','b',1,1)",
+            [],
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO pages (id,workspace_id,title,created_at,updated_at) VALUES ('p2','ws-b','t',1,1)",
             [],

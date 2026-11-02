@@ -1,0 +1,74 @@
+/* S4（2026-11-01）：域抽取器搬出的**移动设置域（`.mset*`）**。
+
+- 选择器混排（`.a, .other`）已**拆成两条**：域部分搬到这里、其余留在 App.css 原位。
+- **保持原文件里的相对顺序**（核心规则与混合 @media 交错时不重排）—— 否则层叠会变
+  （properties 实测：`.properties-body` 在 600px 的 padding 从 4px 16px 变成 6px 12px）。
+- 纯搬运：不改声明/顺序；自包 `@layer legacy`，层序声明仍只在 App.css 顶部。
+*/
+@layer legacy {
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「设置」（效果图 `docs/plans/mobile/mockups/07-settings.svg`，规格 §4.7）
+   ⚠️ 只有手机档会渲染它（`App.tsx` 两处渲染点都按 `isMobile` 切 ✓）⇒ 不套 @media ✓。
+   ⚠️ 桌面档照旧走 `SettingsDialog` ✓ —— 这里**不动** `.set-*` 那套一个字 ✓。
+   ========================================================================== */
+.mset {
+  padding: 14px var(--space-4) calc(20px + var(--sab, 0px));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ⭐ 2026-10-19 第二刀：同步入口搬进设置屏（`<SyncPanel />` 自带触发器 ✓，组件未改 ✓）。
+   沿用原主界面那颗浮钮的命中区与外观口径（44×44 胶囊 ✓）——
+   它在一张卡片里，不再需要 fixed 定位 ✓。 */
+.mset .btn-sync {
+  min-width: 44px;
+  min-height: 44px;
+  margin-top: var(--space-1);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.mset {
+  background: var(--bg);
+}
+
+/* ---- 07 我的 / 设置：卡片＋分组＋分段控件 ---- */
+.mset {
+  padding: 18px var(--space-4) calc(var(--space-5) + var(--sab));
+  gap: 14px;
+}
+
+/* 「上次成功时间：暂无读数」—— 设计目标；后端暂时没有这个读数，文案不许写成已同步。 */
+.mset .btn-sync {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-radius: var(--radius-full);
+}
+
+/* ── 我的（设置）─────────────────────────────────────────────────────────── */
+.mset { gap: 10px; min-width: 0; }
+
+.mset .mset-sync-actions .btn-sync {
+  flex: none;
+  min-width: 0;
+  min-height: 40px;
+  height: 40px;
+  margin: 0;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-12);
+  font-weight: 650;
+  box-shadow: none;
+}
+}

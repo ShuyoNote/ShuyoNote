@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { useTagManagerStore } from "../store/tagManager";
@@ -23,9 +24,10 @@ function usePageTags(pageId: string) {
   return { tags, reload: load, bump: () => useTagManagerStore.getState().bump() };
 }
 
-// The page's tags shown as a Notion-style property row (label + chips). Hidden
-// when empty; the add button lives in the property-actions footer.
-export function TagRow({ pageId }: { pageId: string }) {
+// The page's tags shown as a Notion-style property row (label + chips).
+// `trailing` = 行尾那颗「＋」（属性表把它传进来，让"添加标签"入口与 chips 同格）；
+// 有 trailing 时即使一条标签都没有也渲染这一行（否则空标签页会没有添加入口）。
+export function TagRow({ pageId, trailing }: { pageId: string; trailing?: ReactNode }) {
   const { tags, reload, bump } = usePageTags(pageId);
   const removeTag = async (t: Tag) => {
     try {
@@ -36,7 +38,7 @@ export function TagRow({ pageId }: { pageId: string }) {
       toast(`移除失败：${e}`, "error");
     }
   };
-  if (tags.length === 0) return null;
+  if (tags.length === 0 && !trailing) return null;
   return (
     <div className="prop-row prop-row-tag">
       <span className="prop-name" title="标签">
@@ -52,6 +54,7 @@ export function TagRow({ pageId }: { pageId: string }) {
             </button>
           </span>
         ))}
+        {trailing}
       </div>
     </div>
   );

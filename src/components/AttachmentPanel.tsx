@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { platform } from "../lib/platform";
+import { NOT_DOWNLOADED_HINT, fetchLocalAttachmentPath, openAttachmentWithSystem } from "../lib/localBytesHint";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { useAttachmentsStore } from "../store/attachments";
@@ -160,16 +161,26 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
       void usePdfReader.getState().openPdf(a.id, a.name);
       return;
     }
-    if (!a.path) return;
+    // ⭐ **2026-10-28（owner：「打开 html 变成 BIN 文件」）**：按**原始文件名**落一份临时副本再打开 ✓
     try {
-      await platform.opener.openPath(a.path);
+      await openAttachmentWithSystem(a.path, a.hash, a.name);
     } catch (e) {
-      toast(`打开失败：${e}`, "error");
+      toast(`打开失败：${e instanceof Error ? e.message : String(e)}`, "error");
     }
   };
 
-  const revealFile = async (path: string) => {
-    if (!path) return;
+  const revealFile = async (a: AttachmentMeta) => {
+    // ⭐ **2026-10-28（owner：「在文件夹中打开失效了」）**：本机**还没有字节**时，先按需取回，再显示 ✓
+    //   （原来静默 return ⇒ 用户以为按钮坏了 ✗；取不回 ⇒ 如实说一句并给下一步 ✓）。
+    let path = a.path;
+    if (!path) {
+      try {
+        path = await fetchLocalAttachmentPath(a.hash);
+      } catch (e) {
+        toast(`取回失败：${e instanceof Error ? e.message : String(e)}（${NOT_DOWNLOADED_HINT}）`, "error");
+        return;
+      }
+    }
     try {
       await platform.opener.revealItemInDir(path);
     } catch (e) {
@@ -243,7 +254,7 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
                 <button title={a.mime === "application/pdf" ? "在阅读器中打开批注" : "打开"} onClick={() => openFile(a)}>
                   ↗
                 </button>
-                <button title="在文件夹中显示" onClick={() => revealFile(a.path)}>
+                <button title="在文件夹中显示" onClick={() => revealFile(a)}>
                   📂
                 </button>
                 <button title="移除附件" onClick={() => removeFile(a.id)}>

@@ -716,7 +716,7 @@ export interface McpStatus {
   token: string | null;
   granted: string[];
   /** ⭐ R152：当前档位（由 enabled/granted/allow_write **推导** ✓；面板据此显示 ✓）。 */
-  level: "off" | "read" | "read_all" | "write_confirm" | "write_auto";
+  level: "off" | "read" | "read_all" | "write_confirm" | "write_auto" | "write_all";
   /** ⭐ M2：免确认写开关的当前读数（默认 false ✓；开着时**每一次写都留审计** ✓） */
   allow_write: boolean;
   /** 这次是不是被**环境变量**打开的（面板要说清 ✓） */

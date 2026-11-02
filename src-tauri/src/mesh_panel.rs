@@ -79,7 +79,8 @@ fn live_workspaces(c: &Connection) -> Result<Vec<(String, String, String)>, Stri
             ))
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// ⭐ 这一侧**报出去的那一句** ✓（⭐ 与窗口**同一把尺** ✓）：空串 ⇒ 没在服务它 ✓。

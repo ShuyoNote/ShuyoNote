@@ -661,9 +661,6 @@ function putAuthSession(store: SqliteStore, s: SyncAuthSession): void {
     [s.server_url, s.email, s.user_id, s.token, s.created_at, s.expires_at],
   );
 }
-function clearAuthSession(store: SqliteStore, serverUrl: string): void {
-  store.run("DELETE FROM auth_sessions WHERE server_url = ?", [serverUrl]);
-}
 
 const EMPTY_PROFILE: SyncProfile = { ws_id: "", server_url: "", token: "", space_id: "", last_pushed_seq: 0, last_pulled_seq: 0, sync_attachments: 1 };
 function getProfile(store: SqliteStore, wsId: string): SyncProfile {
@@ -1459,6 +1456,20 @@ export function makeInvoke(store: SqliteStore) {
     if (cmd === "save_ability_pack") {
       throw new Error("按需下载仅桌面版支持（Web 版请使用桌面版）");
     }
+    // ⭐ task-14：能力的**启停 / 卸载**也是**桌面专属** —— 它们操作的是
+    //   `<app_data>/packs/<id>` 与 `<app_data>/abilities-state.json` 这两个**本机文件**；
+    //   Web 壳里没有"应用数据目录"这种受管位置 ⇒ 在浏览器里"实现"它只能是假的
+    //   （例如写进 localStorage，而那条路**没有任何入口会去读**）⇒ 如实说不支持，
+    //   ⛔ 不假装浏览器里也有一个能卸载的本机能力包（同 `save_ability_pack` 那条先例）。
+    if (cmd === "ability_states") {
+      throw new Error("能力状态仅桌面版支持（能力包只落在本机应用数据目录的 packs 里）");
+    }
+    if (cmd === "ability_set_enabled") {
+      throw new Error("启用/停用能力仅桌面版支持（状态文件在本机应用数据目录里）");
+    }
+    if (cmd === "ability_uninstall") {
+      throw new Error("卸载能力包仅桌面版支持（它删的是本机 packs 目录里的下载包）");
+    }
     // ⚠️ 同理：P0 格式引擎是本机原生库 ✓，浏览器里没有它 ⇒ **明说做不到** ✓
     //    （同 `email_fetch_*` 那几条的既有口径 ✓；⛔ 不假装能抽 ✗）。
     if (cmd === "extract_with_kreuzberg") {
@@ -1696,6 +1707,10 @@ export function makeInvoke(store: SqliteStore) {
       }
       return { granted: res?.granted === true } as T;
     }
+    if (cmd === "space_sync_state") {
+      // ⭐ 2026-10-28：Web 没有钥匙袋/加密空间这一档 ⇒ 如实回"没有"（⛔ 不假装有读数 ✗）。
+      return { encrypted: [], pendingAdopt: 0, peersTotal: 0 } as T;
+    }
     if (cmd === "lan_status") {
       // 甲-1 接线第 3 件：局域网发现的读数。**Web 上没有发现层**（UDP 收发在 Rust 侧，
       // 见 `src-tauri/src/lan.rs`）—— 所以这里如实回"配置地址那一档 ＋ 局域网不可用"，
@@ -1797,6 +1812,22 @@ export function makeInvoke(store: SqliteStore) {
         tokenSet: false,
         window: null,
         note: "Web 版开不了本机端口 ⇒ 网格这一档只在桌面版可用（设置没有落下）",
+      } as T;
+    }
+    if (cmd === "mesh_ensure_defaults") {
+      // ⭐ 2026-10-27（owner 拍 M2）：**备好局域网前置**在 Web 上同样不可用 ——
+      //   没有发现层、开不了本机端口 ⇒ 回一个"关着 ＋ 为什么"的读数（与 `mesh_set_config` 同一句人话），
+      //   ⛔ 不抛错（界面照常渲染）、⛔ 也不假装写了任何东西。
+      return {
+        enabled: false,
+        bind: null,
+        tokenSet: false,
+        window: null,
+        served: [],
+        paired: [],
+        note: "Web 版开不了本机端口 ⇒ 局域网这一档只在桌面版可用（没有自动开启任何东西）",
+        reach: "Web 版没有本机监听 ⇒ 别人拉不到",
+        announced: null,
       } as T;
     }
     if (cmd === "relay_status") {
@@ -2583,6 +2614,10 @@ export function makeInvoke(store: SqliteStore) {
       }
       return "" as T;
     }
+    if (cmd === "prepare_attachment_open") {
+      // ⭐ 2026-10-28：桌面才有"交给系统默认应用打开"这一档 —— Web 版如实拒绝（⛔ 不假装成功 ✗）。
+      throw new Error("Web 版没有系统默认应用可用 ⇒ 「用系统程序打开」只在桌面版有效");
+    }
     if (cmd === "get_attachment") {
       const id = String(a.id ?? "");
       const row = store.query<{ id: string; page_id: string | null; name: string; hash: string; mime: string; size: number }>(
@@ -2754,6 +2789,9 @@ export function makeInvoke(store: SqliteStore) {
     if (cmd === "dictionary_status") {
       return {
         available: false,
+        // ⭐ task-14：Web 壳里没有能力包落盘 ⇒ 既没装、也没"被停用"这回事（如实两个 false）
+        installed: false,
+        disabled: false,
         path: null,
         bytes: null,
         entries: null,
@@ -3263,80 +3301,7 @@ export function makeInvoke(store: SqliteStore) {
       }
       return out as T;
     }
-    // ---- auth (team edition login/register/logout; register needs the invite code) ----
-    if (cmd === "team_register") {
-      const args = a.args ?? a;
-      const server_url = String(args.server_url ?? args.serverUrl ?? "").trim().replace(/\/+$/, "");
-      const email = String(args.email ?? "");
-      const password = String(args.password ?? "");
-      const display = args.display ? String(args.display) : email;
-      const register_code = args.registerCode ? String(args.registerCode) : args.register_code ? String(args.register_code) : undefined;
-      const data = await syncFetch(server_url, "/auth/register", null, { email, password, display, register_code });
-      const token = data?.token ?? "";
-      const user_id = data?.user?.id ?? "";
-      const now = Date.now();
-      // expires_at 30 days (server drives the real expiry).
-      putAuthSession(store, { server_url, email, user_id, token, created_at: now, expires_at: now + 30 * 24 * 3600 * 1000 });
-      return data as T;
-    }
-    if (cmd === "team_login") {
-      const args = a.args ?? a;
-      const server_url = String(args.server_url ?? args.serverUrl ?? "").trim().replace(/\/+$/, "");
-      const email = String(args.email ?? "");
-      const password = String(args.password ?? "");
-      const data = await syncFetch(server_url, "/auth/login", null, { email, password });
-      const token = data?.token ?? "";
-      const user_id = data?.user?.id ?? "";
-      const now = Date.now();
-      putAuthSession(store, { server_url, email, user_id, token, created_at: now, expires_at: now + 30 * 24 * 3600 * 1000 });
-      return data as T;
-    }
-    if (cmd === "team_logout") {
-      const args = a.args ?? a;
-      const server_url = String(args.server_url ?? args.serverUrl ?? "");
-      const session = getAuthSession(store, server_url);
-      try {
-        if (session.token) await syncFetch(server_url, "/auth/logout", session.token, {});
-      } catch {
-        /* ignore */
-      }
-      clearAuthSession(store, server_url);
-      return undefined as T;
-    }
-    if (cmd === "team_get_session") {
-      const args = a.args ?? a;
-      const server_url = String(args.server_url ?? args.serverUrl ?? "");
-      const s = getAuthSession(store, server_url);
-      return { server_url: s.server_url, token: s.token, email: s.email, user_id: s.user_id } as T;
-    }
-    if (cmd === "team_get_me") {
-      const args = a.args ?? a;
-      const server_url = String(args.server_url ?? args.serverUrl ?? "");
-      const s = getAuthSession(store, server_url);
-      if (!s.token) throw new Error("未登录");
-      return (await syncFetch(server_url, "/auth/me", s.token)) as T;
-    }
-    if (cmd === "team_get_server_email") {
-      const args = a.args ?? a;
-      const server_url = String(args.server_url ?? args.serverUrl ?? "");
-      return (getAuthSession(store, server_url).email || null) as T;
-    }
-    if (cmd === "team_list_spaces") {
-      const args = a.args ?? a;
-      const server_url = String(args.server_url ?? args.serverUrl ?? "");
-      const s = getAuthSession(store, server_url);
-      // 优先用客户端传入的 token（refresh 常传 profile.token），auth_sessions 为空时也不致 no-token。
-      const tok = String(args.token ?? "") || s.token;
-      const res = (await syncFetch(server_url, "/spaces", tok)) as any;
-      // 服务端返回 { spaces: [...] }，转为数组；也容忍裸数组。
-      return (Array.isArray(res) ? res : (res?.spaces ?? [])) as T;
-    }
-    if (cmd === "team_create_space") {
-      const args = a.args ?? a;
-      const server_url = String(args.server_url ?? args.serverUrl ?? "");
-      const s = getAuthSession(store, server_url);
-      return (await syncFetch(server_url, "/spaces", s.token, { name: String(args.name ?? ""), org_id: args.org_id ?? null })) as T;
-    }
+    // ---- sync history / profiles —— 个人同步仍在用（团队那套已删）----
     if (cmd === "list_sync_history") return [] as T;
     if (cmd === "clear_sync_history") return undefined as T;
     if (cmd === "list_sync_profiles") return listProfiles(store) as T;
@@ -3443,142 +3408,8 @@ export function makeInvoke(store: SqliteStore) {
         return { ws_id: wsId, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e), attachments_paused: false, attachments_skipped_upload: 0, attachments_skipped_download: 0, ...attBudgetFields(null), ...pendingRemoteFields(store) } as T;
       }
     }
-    // ---- team spaces: members / roles / orgs (Bearer token from auth_sessions) ----
-    // Helper to grab the session token for a server, else "".
-    const teamToken = (serverUrl: string): string =>
-      String((a.args ?? a)?.token ?? "") || getAuthSession(store, serverUrl).token;
-    const serverArg = (): string => {
-      const ag = (a.args ?? a);
-      return String(ag.server_url ?? ag.serverUrl ?? "").trim().replace(/\/+$/, "");
-    };
-    // 兼容 camelCase（Tauri 2 命令契约）与旧 snake 键：优先读 camel，回退 snake。
-    // 此前几处 team_* 只读 snake，导致 spaceId/orgId/userId 为空，成员/组织命令 404。
-    const pv = (args: any, camel: string, snake: string): string =>
-      String(args?.[camel] ?? args?.[snake] ?? "");
-    if (cmd === "team_invite_member") {
-      const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(pv(args, "spaceId", "space_id")))}/members`;
-      return (await syncFetch(serverUrl, "", teamToken(serverArg()), { user_email: String(args.email ?? ""), role: String(args.role ?? "member") })) as T;
-    }
-    if (cmd === "team_set_member_role") {
-      const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(pv(args, "spaceId", "space_id")))}/members`;
-      return (await syncFetch(serverUrl, "", teamToken(serverArg()), { user_email: String(args.email ?? ""), role: String(args.role ?? "member") })) as T;
-    }
-    if (cmd === "team_list_members") {
-      const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(pv(args, "spaceId", "space_id")))}/members`;
-      const res = (await syncFetch(serverUrl, "", teamToken(serverArg()))) as any;
-      // 服务端返回 { members: [...] }，转为数组；也容忍裸数组。
-      return (Array.isArray(res) ? res : (res?.members ?? [])) as T;
-    }
-    if (cmd === "team_remove_member") {
-      const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(pv(args, "spaceId", "space_id")))}/members/${encodeURIComponent(String(pv(args, "userId", "user_id")))}`;
-      return (await syncFetch(serverUrl, "", teamToken(serverArg()), null, "DELETE")) as T;
-    }
-    if (cmd === "team_list_orgs") {
-      const res = (await syncFetch(serverArg(), "/orgs", teamToken(serverArg()))) as any;
-      // 服务端返回 { orgs: [...] }，转为数组；也容忍裸数组。
-      return (Array.isArray(res) ? res : (res?.orgs ?? [])) as T;
-    }
-    if (cmd === "team_invite_org_member") {
-      const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/members`;
-      return (await syncFetch(serverUrl, "", teamToken(serverArg()), { email: String(args.email ?? ""), role: String(args.role ?? "member") })) as T;
-    }
-    if (cmd === "team_set_org_member_active") {
-      const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/members/${encodeURIComponent(String(pv(args, "userId", "user_id")))}`;
-      return (await syncFetch(serverUrl, "", teamToken(serverArg()), { active: !!args.active }, "PATCH")) as T;
-    }
-    if (cmd === "team_remove_org_member") {
-      const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/members/${encodeURIComponent(String(pv(args, "userId", "user_id")))}`;
-      return (await syncFetch(serverUrl, "", teamToken(serverArg()), null, "DELETE")) as T;
-    }
-    if (cmd === "team_list_org_members") {
-      const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/members`;
-      return (await syncFetch(serverUrl, "", teamToken(serverArg()))) as T;
-    }
-    if (cmd === "team_reject_org_invite") {
-      const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/invites/reject`;
-      return (await syncFetch(serverUrl, "", teamToken(serverArg()), { email: String(args.email ?? "") })) as T;
-    }
-    if (cmd === "team_approve_org_invite") {
-      const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/invites/approve`;
-      return (await syncFetch(serverUrl, "", teamToken(serverArg()), { email: String(args.email ?? "") })) as T;
-    }
-    if (cmd === "team_generate_org_invite_code") {
-      const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/invite-code`;
-      return (await syncFetch(serverUrl, "", teamToken(serverArg()), {})) as T;
-    }
-    if (cmd === "team_join_org_by_code") {
-      const args = a.args ?? a;
-      return (await syncFetch(serverArg(), "/orgs/join", teamToken(serverArg()), { code: String(args.code ?? "") })) as T;
-    }
-    if (cmd === "team_presence_beat") {
-      const args = a.args ?? a;
-      const spaceId = pv(args, "spaceId", "space_id");
-      const url = `${serverArg()}/spaces/${encodeURIComponent(spaceId)}/presence`;
-      return (await syncFetch(url, "", teamToken(serverArg()), { page_id: pv(args, "pageId", "page_id") || null, device_id: pv(args, "deviceId", "device_id") })) as T;
-    }
-    if (cmd === "team_online") {
-      const args = a.args ?? a;
-      const spaceId = pv(args, "spaceId", "space_id");
-      const res = (await syncFetch(`${serverArg()}/spaces/${encodeURIComponent(spaceId)}/online`, "", teamToken(serverArg()))) as any;
-      return (Array.isArray(res) ? res : (res?.online ?? [])) as T;
-    }
-    if (cmd === "team_list_comments") {
-      const args = a.args ?? a;
-      const spaceId = pv(args, "spaceId", "space_id");
-      const pageId = pv(args, "pageId", "page_id");
-      const res = (await syncFetch(`${serverArg()}/spaces/${encodeURIComponent(spaceId)}/pages/${encodeURIComponent(pageId)}/comments`, "", teamToken(serverArg()))) as any;
-      return (Array.isArray(res) ? res : (res?.items ?? [])) as T;
-    }
-    if (cmd === "team_add_comment") {
-      const args = a.args ?? a;
-      const spaceId = pv(args, "spaceId", "space_id");
-      const pageId = pv(args, "pageId", "page_id");
-      const url = `${serverArg()}/spaces/${encodeURIComponent(spaceId)}/pages/${encodeURIComponent(pageId)}/comments`;
-      return (await syncFetch(url, "", teamToken(serverArg()), { body: String(args.body ?? ""), parent_id: pv(args, "parentId", "parent_id") || null, mentions: Array.isArray(args.mentions) ? args.mentions : [] })) as T;
-    }
-    if (cmd === "team_delete_comment") {
-      const args = a.args ?? a;
-      const spaceId = pv(args, "spaceId", "space_id");
-      const cid = pv(args, "commentId", "comment_id");
-      return (await syncFetch(`${serverArg()}/spaces/${encodeURIComponent(spaceId)}/comments/${encodeURIComponent(cid)}`, "", teamToken(serverArg()), null, "DELETE")) as T;
-    }
-    if (cmd === "team_list_notifications") {
-      const res = (await syncFetch(serverArg(), "/notifications", teamToken(serverArg()))) as any;
-      return (Array.isArray(res) ? res : (res?.items ?? [])) as T;
-    }
-    if (cmd === "team_seen_notification") {
-      const args = a.args ?? a;
-      return (await syncFetch(`${serverArg()}/notifications/${encodeURIComponent(String(args.id ?? ""))}/seen`, "", teamToken(serverArg()))) as T;
-    }
-    if (cmd === "team_seen_all_notifications") {
-      return (await syncFetch(serverArg(), "/notifications/seen-all", teamToken(serverArg()))) as T;
-    }
-    if (cmd === "team_create_org") {
-      const args = a.args ?? a;
-      return (await syncFetch(serverArg(), "/orgs", teamToken(serverArg()), { name: String(args.name ?? "") })) as T;
-    }
-    if (cmd === "team_deactivate_account") {
-      // DELETE /auth/account (logout the account). Emit body via POST-style DELETE w/o body.
-      return (await syncFetch(serverArg(), "/auth/account", teamToken(serverArg()), null, "DELETE")) as T;
-    }
-    if (cmd === "team_deactivate_org_member") {
-      const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/members/${encodeURIComponent(String(pv(args, "userId", "user_id")))}/deactivate`;
-      return (await syncFetch(serverUrl, "", teamToken(serverArg()), null, "POST")) as T;
-    }
-
     // ---- Encryption ----
+
     // Web 形态没有静态加密（`web.ts` 的 lock/unlock 都是空实现）：报"未开启"，
     // 算法字段与本构建的默认写入版本一致，别写成国密。
     // ★ owner 第三轮拍板（2026-09-24）：`set_encryption` / `disable_encryption`（应用级那两条）
@@ -3868,6 +3699,14 @@ export function makeInvoke(store: SqliteStore) {
       // Web 端整库就是同一个 store，没有"某个空间没解锁"这回事 ⇒ 恒为空数组
       // （保持与桌面 export_backup 同一个返回契约，界面无需分平台判断）。
       return { path: name, size: zip.length, skipped: [] } as T;
+    }
+    if (cmd === "restore_backup_replace") {
+      // ⭐ **2026-10-28（owner：「本机备份 全空间打包，要能原样恢复」）**：
+      //   替换式恢复靠"应用数据目录整份换掉"，Web 版没有这个目录（数据在 IndexedDB/localStorage）
+      //   ⇒ **如实拒绝**（⛔ 不假装成功 ✗）；Web 上请用「导入备份（合并）」。
+      throw new Error(
+        "Web 版没有本机数据目录 ⇒ 「原样恢复（替换）」只在桌面版可用；请在 Web 上用「导入备份（合并）」",
+      );
     }
     if (cmd === "import_backup") {
       // Merge import: each space in the backup (spaces/<id>.db, or a legacy single

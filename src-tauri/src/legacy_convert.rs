@@ -70,21 +70,34 @@ pub(crate) fn source_ext_for(target_ext: &str) -> &'static str {
 
 /// 输出是不是一个 OOXML 容器（zip）。只做**最便宜**的那一层：真正的解析交给 `ooxml.ts` 那一族。
 pub(crate) fn is_zip_container(bytes: &[u8]) -> bool {
-    bytes.len() >= 4 && bytes[0] == 0x50 && bytes[1] == 0x4b && (bytes[2] == 0x03 || bytes[2] == 0x05 || bytes[2] == 0x07)
+    bytes.len() >= 4
+        && bytes[0] == 0x50
+        && bytes[1] == 0x4b
+        && (bytes[2] == 0x03 || bytes[2] == 0x05 || bytes[2] == 0x07)
 }
 
 /// soffice 的候选位置（PATH 之外的三平台常见安装点）。顺序＝优先顺序。
 pub(crate) fn soffice_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if cfg!(target_os = "macos") {
-        out.push(PathBuf::from("/Applications/LibreOffice.app/Contents/MacOS/soffice"));
+        out.push(PathBuf::from(
+            "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+        ));
     }
     if cfg!(target_os = "windows") {
-        for base in ["C:\\Program Files\\LibreOffice", "C:\\Program Files (x86)\\LibreOffice"] {
+        for base in [
+            "C:\\Program Files\\LibreOffice",
+            "C:\\Program Files (x86)\\LibreOffice",
+        ] {
             out.push(PathBuf::from(base).join("program").join("soffice.exe"));
         }
     }
-    for p in ["/usr/bin/soffice", "/usr/local/bin/soffice", "/opt/libreoffice/program/soffice", "/snap/bin/libreoffice"] {
+    for p in [
+        "/usr/bin/soffice",
+        "/usr/local/bin/soffice",
+        "/opt/libreoffice/program/soffice",
+        "/snap/bin/libreoffice",
+    ] {
         out.push(PathBuf::from(p));
     }
     out
@@ -147,11 +160,13 @@ pub(crate) fn convert_with(
         stamp,
         TMP_SEQ.fetch_add(1, Ordering::Relaxed),
     ));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("建临时目录失败（{}）：{e}", dir.display()))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("建临时目录失败（{}）：{e}", dir.display()))?;
     let _guard = TempDirGuard(dir.clone());
 
     let input = dir.join(format!("input.{src_ext}"));
-    std::fs::write(&input, data).map_err(|e| format!("写临时输入失败（{}）：{e}", input.display()))?;
+    std::fs::write(&input, data)
+        .map_err(|e| format!("写临时输入失败（{}）：{e}", input.display()))?;
 
     let mut child = Command::new(bin)
         .arg("--headless")
@@ -181,10 +196,20 @@ pub(crate) fn convert_with(
                         s
                     });
                     let detail = out.ok().filter(|s| !s.is_empty()).unwrap_or_default();
-                    let tail: String = detail.chars().rev().take(300).collect::<String>().chars().rev().collect();
+                    let tail: String = detail
+                        .chars()
+                        .rev()
+                        .take(300)
+                        .collect::<String>()
+                        .chars()
+                        .rev()
+                        .collect();
                     return Err(format!(
                         "转换器以非零状态退出（{}）：{tail}",
-                        status.code().map(|c| c.to_string()).unwrap_or_else(|| "被信号结束".into())
+                        status
+                            .code()
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "被信号结束".into())
                     ));
                 }
                 break;
@@ -193,7 +218,10 @@ pub(crate) fn convert_with(
                 if Instant::now() >= deadline {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(format!("转换超时（{}秒）—— 已杀掉转换器并清理临时目录", timeout.as_secs()));
+                    return Err(format!(
+                        "转换超时（{}秒）—— 已杀掉转换器并清理临时目录",
+                        timeout.as_secs()
+                    ));
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -223,10 +251,17 @@ pub(crate) fn convert_with(
 /// **`to` 由抽取器决定**、**失败一律 `Err`**、**临时件自清**。
 #[tauri::command]
 pub fn convert_legacy_office(data: Vec<u8>, to: String) -> Result<Vec<u8>, String> {
-    let target_ext = target_ext_for(&to)
-        .ok_or_else(|| format!("不支持的目标格式：{to}（本命令只把旧 Office 转成 docx/xlsx/pptx）"))?;
+    let target_ext = target_ext_for(&to).ok_or_else(|| {
+        format!("不支持的目标格式：{to}（本命令只把旧 Office 转成 docx/xlsx/pptx）")
+    })?;
     let bin = find_soffice().ok_or_else(|| SOFFICE_MISSING.to_string())?;
-    convert_with(&bin, &data, target_ext, CONVERT_TIMEOUT, &std::env::temp_dir())
+    convert_with(
+        &bin,
+        &data,
+        target_ext,
+        CONVERT_TIMEOUT,
+        &std::env::temp_dir(),
+    )
 }
 
 #[cfg(test)]
@@ -239,7 +274,10 @@ mod tests {
         let d = std::env::temp_dir().join(format!(
             "legacy-convert-test-{}-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
             TMP_SEQ.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&d).unwrap();
@@ -256,7 +294,10 @@ mod tests {
         let pid = std::process::id();
         let a = tmp_dir_name(pid, 42, TMP_SEQ.fetch_add(1, Ordering::Relaxed));
         let b = tmp_dir_name(pid, 42, TMP_SEQ.fetch_add(1, Ordering::Relaxed));
-        assert_ne!(a, b, "同一 pid ＋ 同一纳秒必须靠序号区分（否则并行判据会互删目录）");
+        assert_ne!(
+            a, b,
+            "同一 pid ＋ 同一纳秒必须靠序号区分（否则并行判据会互删目录）"
+        );
     }
 
     /// 造一个假 `soffice`（Unix），行为按 `mode`：ok / fail / sleep / garbage / silent。
@@ -303,12 +344,19 @@ exit 0
     #[test]
     fn target_ext_only_accepts_the_three_ooxml_targets() {
         assert_eq!(
-            target_ext_for("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+            target_ext_for(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ),
             Some("docx")
         );
-        assert_eq!(target_ext_for("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"), Some("xlsx"));
         assert_eq!(
-            target_ext_for("application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+            target_ext_for("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+            Some("xlsx")
+        );
+        assert_eq!(
+            target_ext_for(
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            ),
             Some("pptx")
         );
         assert_eq!(target_ext_for("application/pdf"), None);
@@ -348,10 +396,19 @@ exit 0
         let args_file = dir.join("args.txt");
         let bin = fake_soffice(&dir, "ok", &args_file);
         let out = convert_with(&bin, b"old-bytes", "docx", Duration::from_secs(5), &dir).unwrap();
-        assert!(out.starts_with(&[0x50, 0x4b, 0x03, 0x04]), "应当回转换后的字节");
+        assert!(
+            out.starts_with(&[0x50, 0x4b, 0x03, 0x04]),
+            "应当回转换后的字节"
+        );
         let args = fs::read_to_string(&args_file).unwrap();
-        assert!(args.contains("--headless"), "argv 里要有 --headless：{args}");
-        assert!(args.contains("--convert-to"), "argv 里要有 --convert-to：{args}");
+        assert!(
+            args.contains("--headless"),
+            "argv 里要有 --headless：{args}"
+        );
+        assert!(
+            args.contains("--convert-to"),
+            "argv 里要有 --convert-to：{args}"
+        );
         assert!(args.contains("docx"), "argv 里要有目标格式：{args}");
         assert!(args.contains("--outdir"), "argv 里要有 --outdir：{args}");
         let _ = fs::remove_dir_all(&dir);
@@ -389,7 +446,9 @@ exit 0
             .into_iter()
             .find(|p| Path::new(p).exists());
         let Some(interp) = interp else {
-            println!("! 跳过行为那半：本机没有 /bin/dash 也没有 /bin/sh（`#[cfg(unix)]` 下不该发生）");
+            println!(
+                "! 跳过行为那半：本机没有 /bin/dash 也没有 /bin/sh（`#[cfg(unix)]` 下不该发生）"
+            );
             let _ = fs::remove_dir_all(&dir);
             return;
         };
@@ -425,7 +484,10 @@ exit 0
         let bin = fake_soffice(&dir, "fail", &dir.join("args.txt"));
         let err = convert_with(&bin, b"x", "docx", Duration::from_secs(5), &dir).unwrap_err();
         assert!(err.contains("非零状态"), "要说明是非零退出：{err}");
-        assert!(err.contains("could not be loaded"), "要带上子进程的原话（诊断就在这里）：{err}");
+        assert!(
+            err.contains("could not be loaded"),
+            "要带上子进程的原话（诊断就在这里）：{err}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -457,12 +519,19 @@ exit 0
         let started = Instant::now();
         let err = convert_with(&bin, b"x", "docx", Duration::from_millis(300), &root).unwrap_err();
         assert!(err.contains("超时"), "要报超时：{err}");
-        assert!(started.elapsed() < Duration::from_secs(4), "超时要真的生效（别等子进程自己结束）");
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "超时要真的生效（别等子进程自己结束）"
+        );
         // ★ 临时目录必须被清掉：这是"跑久了不会堆满临时件"的判据
         let leftovers: Vec<_> = fs::read_dir(&root)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with("shuyonote-legacy-"))
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("shuyonote-legacy-")
+            })
             .collect();
         assert!(leftovers.is_empty(), "超时后临时目录没清：{leftovers:?}");
         let _ = fs::remove_dir_all(&root);
@@ -471,12 +540,18 @@ exit 0
     #[test]
     fn command_rejects_an_unknown_target_before_touching_the_filesystem() {
         let err = convert_legacy_office(vec![1, 2, 3], "application/pdf".into()).unwrap_err();
-        assert!(err.contains("不支持的目标格式"), "不认识的目标要当场拒：{err}");
+        assert!(
+            err.contains("不支持的目标格式"),
+            "不认识的目标要当场拒：{err}"
+        );
     }
 
     #[test]
     fn missing_soffice_message_names_what_to_install() {
         assert!(SOFFICE_MISSING.contains("LibreOffice"));
-        assert!(SOFFICE_MISSING.contains("brew") || SOFFICE_MISSING.contains("apt"), "要给出装法");
+        assert!(
+            SOFFICE_MISSING.contains("brew") || SOFFICE_MISSING.contains("apt"),
+            "要给出装法"
+        );
     }
 }

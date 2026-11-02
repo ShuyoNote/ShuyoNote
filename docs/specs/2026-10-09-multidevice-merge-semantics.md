@@ -140,6 +140,25 @@
 - 重复接入同一对设备 ⇒ `changes` **不再增长**，且**不再产生第二份内容**（页面数也不许涨）。
 - 记的是「**融合事实**」（谁＋哪台＋何时），⛔ 不是「每次接入都记一笔」。
 
+## 4-bis. 墓碑（删除）在同步里的胜负 —— **旧 upsert 不许把删掉的页掀活**
+
+> 来由（owner 2026-10-27）：「多端同步时，文件夹和页面的关系乱了／有些删除的页面又出来了」。
+
+- **规则**：应用远端 `page/upsert` 时，若本机这一页**已是墓碑**（`pages.deleted_at` 非空）：
+  - 远端载荷的 `updated_at` **不比删除新** ⇒ ⛔ **不落库**（墓碑胜；这一笔按"已处理"推进游标）；
+  - 远端载荷的 `updated_at` **比删除新** ⇒ ✅ 允许掀墓碑（「删除之后又有人编辑/还原」的真实语义，
+    回收站「还原」正是靠这一条传播到别的设备）。
+- **为什么必须有这一条**：`doc_content::upsert_remote` 落库 SQL 里 `deleted_at = NULL` 是**有意**的
+  （还原要传播），于是**任何**远端 upsert 都有掀墓碑的权力 —— 对端离线/游标落后时它队列里的
+  **历史 upsert** 一到，删掉的页就静默复活（真机现场：`changes` 里 `delete` 在 `upsert` 之后、
+  而页面 `deleted_at IS NULL`）。
+- **判据**（会红）：
+  `sync::tests::a_stale_remote_upsert_does_not_resurrect_a_deleted_page`（旧 upsert ⇒ `KeptTombstone`，墓碑不动）
+  ＋ `sync::tests::a_newer_remote_upsert_still_restores_a_deleted_page`（新 upsert ⇒ 仍能掀墓碑，还原不被挡）。
+  ⚠️ 比的是**墙钟毫秒**（`page.updated_at` vs `deleted_at`），⛔ 不是服务端 `seq`（两条路语义不同）。
+- **落点**：`src-tauri/src/sync.rs::apply_upsert`（判定在合并**之前**）；
+  墓碑取证走 `doc_content::local_deleted_at`。
+
 ## 5. 可撤 ＋ 标来源
 
 ![② 同名空间融合的结果（含「来自平板」来源标记）](../assets/multidevice-2026-10-09/screen2.png)
@@ -289,6 +308,26 @@
 > `an_untrusted_device_cannot_merge_even_with_the_same_name`（身份闸）；判据闸本身另有 `mesh_merge_ledger` 的 m／n 两条。
 > ⚠️ **仍然没有**的：J5（可撤的界面入口与撤回读数）、J6（归一/名字显示面）；且以上都是**库级/函数级**判据，
 > ⛔ **不是**真机两端验收（那要两台新构建）。
+>
+> ⭐⭐ **2026-10-28 更新（owner 拍 R176-A 的落地）**：**J9／J10／J12／J13** 现在有**会红的 vitest 判据**，
+> 判据载体是 `src/lib/personalSyncReadout.test.ts`（纯函数层：路线／三格读数／端口校验／J9 诊断句／
+> 不再信任的文案）＋ `src/components/syncPanelPersonalTrust.wiring.test.ts`（面板接线层：三格读数真的挂在
+> 主视图、默认流程零端口输入与零密码输入、端口只在「高级」、解除那条路**只发** `device_unpair`、
+> Rust `device_unpair_at` 只动信任表／卡表）＋ `src/components/SyncReadout.test.tsx`（真渲染三层）。
+> **J11** 只到**源码级**（Rust 那半边必须 `forget_paired` ＋ `forget_paired_device` 两档都摘卡）——
+> ⛔ **不是**"对方再发一次 `/mesh/pull` 被拒"的真机验收（那要两台机器）。⚠️ 每一条的"会红"都做过真变异
+> （见各文件头部的变异说明），但仍**不等于**真机两端验收已做。
+>
+> ⭐⭐ **2026-10-29 更新（owner 拍 B：J9 精确端口读数）**：J9 从「原因清单」升级为**精确比对** ——
+> Rust `NearbyPeer` 新增 `announced_port: Option<u16>`（从对端公告 `hub_base` 解析；没显式端口／坏 URL ⇒
+> `None`，⛔ 不按 http 默认 80 猜 ✗；解析唯一实现 `lan::port_of_base` ✓）。判据载体：
+> `lan::j9_port_parse_tests`（有端口／无端口／坏 URL 各一条）＋ `sync::j9_announced_port_tests`
+> （读数来源 ＋ **`LanStatus` JSON 真的带 `"announced_port"`** 那一格，`null` 也要在）＋
+> `src/lib/personalSyncReadout.test.ts`（mismatch 精确句／match 不给端口原因／对端 None ⇒ 没法比对／
+> 本机读不到 ⇒ 说本机未读到；⛔ 不出现 ip／设备号／暗号）＋ `src/components/SyncReadout.test.tsx`
+> （诊断句真渲染）＋ `src/components/syncPanelPersonalTrust.wiring.test.ts`（面板真的把本机端口与
+> 对端 `announced_port` 传进诊断）。⚠️ **真机两端仍未验收**（本机起不了两个发现实体 ⇒ 判据只到
+> 编码层／函数层／面板接线层）。
 
 | id | 判据 | 命令／读数 | 期望 |
 |---|---|---|---|
@@ -300,7 +339,7 @@
 | **J6** | 归一规则生效 | 名字做成 `默认空间` / `默认空间 ` / `ＤＥＦＡＵＬＴ` 三种形态各接一次 | 按 §3 归一后同名 ⇒ 融合；⛔ 库里存的名字**未被改写** |
 | **J7** | 中继不可达时**不得静默不同步** | 断开中继，看同步状态面 | 必须说出走的是哪条路／为什么都没走成（⛔ 不许停在"正在同步…"） |
 | **J8** | 「服务 N 个空间」可读 | 多空间窗口下发一条**不带** `?space_id=` 的请求 | 被拒（`说不清要哪个，不猜`）；面板能读出 N |
-| **J9** | 两端发现参数不一致（端口／网段）⇒ **界面必须解释原因** | 两端设成**不同**广播端口各起一份，看同步状态面 | 必须印出**原因**（端口/参数不一致）✗；⛔ 只印"连不上" ⇒ 红 |
+| **J9** | 两端发现参数不一致（端口／网段）⇒ **界面必须解释原因**（⭐ **2026-10-29 owner 拍 B：精确比对**） | 看同步状态面那行诊断 ＋ 结构化读数：对端 `LanStatus.nearby[].announced_port`（Rust 从公告 `hub_base` 解析 ✓）vs 本机 `lanStatus.mesh.bind` 的端口 | ⭐ **两者都有且不等** ⇒ 必须印出**精确句**「端口不一致：本机 :8788 / 对方 :47999」✗；对端**没报端口** ⇒ 「对方没报端口（旧版本没法比对）」；本机读不到 ⇒ 「本机端口未读到」；⛔ 只印"连不上"／⛔ 只给原因清单而读得到端口却不比对 ⇒ **红** |
 | **J10** | 「不再信任」后 **本地数据零变化** | 解除前后比对：页面数／`attachments` 行数／空间库 sha | **完全相同**；⛔ 任一页或一条附件被删 ⇒ 红 |
 | **J11** | 「不再信任」后 **对方不得再拉到本机数据** | 解除后对方再发一次 `/mesh/pull?space_id=…` | 被拒（403／拒连）；⛔ 还能拉到 ⇒ 红 |
 | **J12** | 端口预置**不需要用户填** ⇒ 首次同步全流程**零手输端口** | 从新设备接入到第一次同步成功，数用户的输入项 | 端口输入 **0 次**；预置生效 |
