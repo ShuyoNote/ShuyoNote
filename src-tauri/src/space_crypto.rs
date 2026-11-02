@@ -344,8 +344,15 @@ pub fn verify_master_against_keyring(kr: &Keyring, master: &AppKeys) -> Result<(
 }
 
 /// 测试用：直接装/卸公开材料（**跨模块的集成判据**要用；生产路径走 `carry_keyring` / `store_keyring`）。
+///
+/// ⚠️ **写会话态就拿测试锁**（2026-11-02）：钥匙袋是**进程级**全局，而 `cargo test` 同进程多线程
+/// ⇒ 一个**不拿锁**的用例原本可以在别人的临界区里把它清掉（CI 偶发红的现场：
+/// `sync::tests::the_sync_bind_gate_…` 里 `disable_space` 报「钥匙袋不存在」）。
+/// 锁挂在**写入方**上 ⇒ 谁的临界区都不会被"清空"插进来。可重入（`security::test_lock`）⇒
+/// 已经持锁的用例调它不会自死锁。
 #[cfg(test)]
 pub(crate) fn set_keyring_for_test(kr: Option<Keyring>) {
+    let _g = crate::security::test_lock();
     *KEYRING.lock().unwrap() = kr;
 }
 
@@ -356,6 +363,8 @@ pub(crate) fn set_keyring_for_test(kr: Option<Keyring>) {
 /// 返回主密钥（有些判据要拿它去解盒子）。
 #[cfg(test)]
 pub(crate) fn set_space_box_for_test(space_id: &str, key: &[u8; 32], passphrase: &str) -> AppKeys {
+    // 同上：写进程级会话态 ⇒ 拿测试锁（可重入）。
+    let _g = crate::security::test_lock();
     let mut kr = Keyring::new();
     let master = kr.kdf.derive_master(passphrase).unwrap();
     kr.wrap(&master, space_id, key).unwrap();
@@ -370,7 +379,12 @@ pub fn session_master() -> Option<AppKeys> {
 }
 
 /// 装上 / 卸下会话主密钥（解锁 → 装；锁定 → 卸）。
+///
+/// ⚠️ `#[cfg(test)]` 那行：**写会话态就与测试临界区串行**（见 `security::test_lock`）。
+/// 生产构建里它**一行都不生成** ⇒ 产品行为/时序不受影响。
 pub fn set_session_master(keys: Option<AppKeys>) -> Result<(), String> {
+    #[cfg(test)]
+    let _g = crate::security::test_lock();
     *SESSION_MASTER
         .lock()
         .map_err(|_| "会话锁失效".to_string())? = keys;
@@ -385,6 +399,9 @@ pub fn set_session_master(keys: Option<AppKeys>) -> Result<(), String> {
 
 /// ⭐ B2：装上**按组派生**的主密钥表（解锁时由 [`masters_from_passphrase`] 产出）。
 pub fn set_session_masters(masters: Vec<(String, AppKeys)>) -> Result<(), String> {
+    // 同 `set_session_master`：只测试构建里拿锁。
+    #[cfg(test)]
+    let _g = crate::security::test_lock();
     *SESSION_MASTERS
         .lock()
         .map_err(|_| "会话锁失效".to_string())? = masters;
@@ -1038,7 +1055,7 @@ mod tests {
     /// 而且**连接正开着的那个空间**也要能启用（Windows 上文件被占用 ⇒ 必须先让开连接）。
     #[test]
     fn enabling_one_space_leaves_its_neighbour_alone_and_disable_rolls_it_back() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap(); // 与 security 的会话态测试串行
+        let _g = crate::security::test_lock(); // 与 security 的会话态测试串行
         let dir =
             std::env::temp_dir().join(format!("shuyonote-spacecrypto-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1166,7 +1183,7 @@ mod tests {
     /// 未分类放行但**要报出来**（不静默）。
     #[test]
     fn the_sync_gate_only_blocks_personal_spaces_that_are_not_encrypted() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let _g = crate::security::test_lock();
         let plain = SpaceCryptoStatus {
             space_id: "s".into(),
             name: "我的空间".into(),
@@ -1210,7 +1227,7 @@ mod tests {
     /// ⇒ 这一类"只有老库才会中"的迁移缺陷**天然抓不到**。这条判据**刻意造一张老表**。
     #[test]
     fn an_old_meta_db_gets_the_kind_column_so_classification_actually_sticks() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let _g = crate::security::test_lock();
         let dir = std::env::temp_dir().join(format!("shuyonote-oldmeta-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
@@ -1266,7 +1283,7 @@ mod tests {
     /// 分类标记的读写：认不出来 ⇒ `Unknown`（**不猜**）；写不存在的空间 ⇒ 报错。
     #[test]
     fn space_kind_round_trips_and_unknown_values_are_not_guessed() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let _g = crate::security::test_lock();
         let dir = std::env::temp_dir().join(format!("shuyonote-spacekind-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
@@ -1355,7 +1372,7 @@ mod tests {
     /// 显式 `overwrite=true` 才采纳，采纳之后**只凭那个口令**就能解出盒子里的钥匙。
     #[test]
     fn adopting_remote_material_refuses_to_overwrite_a_local_bag_unless_told_to() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let _g = crate::security::test_lock();
         let dir = std::env::temp_dir().join(format!("shuyonote-adopt-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
@@ -1435,7 +1452,7 @@ mod tests {
     /// ★ 坏材料**两头都不许过**：不许被推给服务端（读出来先验）、不许被写进本机。
     #[test]
     fn garbage_material_is_refused_on_both_ends() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let _g = crate::security::test_lock();
         let dir = std::env::temp_dir().join(format!("shuyonote-garbage-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
@@ -1462,7 +1479,7 @@ mod tests {
     /// **未分类的空间不许被藏掉**（它们正是"闸门没管到"的那批），已删除的空间不许出现。
     #[test]
     fn the_security_overview_lists_every_space_including_the_unclassified_ones() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let _g = crate::security::test_lock();
         let dir = std::env::temp_dir().join(format!("shuyonote-overview-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
@@ -1544,7 +1561,7 @@ mod tests {
     /// 口径只有一条，不靠用户事后自己去面板里分类（那正是"未分类＝闸门没管到它"的漏洞面）。
     #[test]
     fn an_imported_space_is_personal_so_the_gate_guides_encryption() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let _g = crate::security::test_lock();
         let dir = std::env::temp_dir().join(format!("shuyonote-import-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
@@ -1601,7 +1618,7 @@ mod tests {
     /// 于是"新建 ⇒ 没加密 ⇒ 绑同步被闸门拦住并引导设口令"这条链自动成立。
     #[test]
     fn a_locally_created_space_is_personal_so_the_gate_guides_the_user_to_encrypt() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let _g = crate::security::test_lock();
         let dir = std::env::temp_dir().join(format!("shuyonote-entrykind-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
@@ -1670,7 +1687,7 @@ mod tests {
     /// ③ 还要能**再试一次**：第一次失败不该把这个空间锁进"以后都开不了"的状态。
     #[test]
     fn a_failed_conversion_refuses_newer_columns_and_throws_away_the_box_it_just_minted() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let _g = crate::security::test_lock();
         let dir = std::env::temp_dir().join(format!("shuyonote-futcol-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
@@ -1750,7 +1767,7 @@ mod tests {
     /// 而且这条判据的连接**不再**开在 `enc-a` 上（存量库根本开不开 —— 那正是这一片要的事实）。
     #[test]
     fn enabling_a_space_whose_db_is_already_encrypted_refuses_to_mint_a_box() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let _g = crate::security::test_lock();
         let dir = std::env::temp_dir().join(format!("shuyonote-enable-enc-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
@@ -1853,7 +1870,7 @@ mod tests {
     /// ★ 没有袋子 ⇒ 一律 `None`（＝旧路，零回归）—— 这是本片最重要的一条。
     #[test]
     fn with_no_keyring_every_space_falls_back_to_the_legacy_path() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap(); // 会话态是进程级全局 ⇒ 与 security 的测试串行
+        let _g = crate::security::test_lock(); // 会话态是进程级全局 ⇒ 与 security 的测试串行
         set_session_master(None).unwrap();
         *KEYRING.lock().unwrap() = None;
         assert!(space_key("s1").unwrap().is_none());
@@ -1871,7 +1888,7 @@ mod tests {
     /// ★ 袋子里有它 ⇒ 用**它自己**那把；袋子里没有 ⇒ 旧路（**别的空间不受影响**）。
     #[test]
     fn only_the_spaces_in_the_keyring_get_their_own_key() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let _g = crate::security::test_lock();
         let (mut kr, m) = master("pw");
         let k1 = random_space_key();
         kr.wrap(&m, "s1", &k1).unwrap();
@@ -1899,7 +1916,7 @@ mod tests {
     /// 把真因伪装成"库打不开"）。
     #[test]
     fn a_known_space_with_a_locked_session_is_a_loud_error() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let _g = crate::security::test_lock();
         let (mut kr, m) = master("pw");
         kr.wrap(&m, "s1", &random_space_key()).unwrap();
         *KEYRING.lock().unwrap() = Some(kr);

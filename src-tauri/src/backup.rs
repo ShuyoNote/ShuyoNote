@@ -1594,7 +1594,7 @@ mod tests {
     //   ⚠️ 这会动**进程级全局**（KEYRING / SESSION_MASTER）⇒ 必须与其它会话态判据串行（`SEC_LOCK`）。
     #[test]
     fn snapshot_spaces_keys_the_encrypted_space_and_names_what_it_skips() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let _g = crate::security::test_lock();
         let dir = uniq_tmp("spaces");
         let _ = std::fs::remove_dir_all(&dir);
         let spaces = dir.join("spaces");

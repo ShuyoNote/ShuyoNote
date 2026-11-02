@@ -12,8 +12,71 @@ static LOCKED: AtomicBool = AtomicBool::new(false);
 /// 会话态（`LOCKED` / 钥匙袋 / **主密钥**）都是**进程级全局** ⇒
 /// 凡是会动它们的**测试**（`security::tests` 与 `space_crypto::tests`）必须共用这一把锁串行跑，
 /// 否则 cargo test 的多线程会把它们交错（表现：隔离跑绿、**全量跑红**）。
+///
+/// ⛔ **测试里不要再直接 `SEC_LOCK.lock()`** —— 一律经 [`test_lock`]（见那里的理由：可重入）。
 #[cfg(test)]
 pub(crate) static SEC_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 本线程已进入 [`test_lock`] 的层数（0 ＝ 当前没持锁）。只给重入计数用。
+#[cfg(test)]
+thread_local! {
+    static SESSION_TEST_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// [`test_lock`] 的守卫：`_owner` 为 `Some` 的那个（**最外层**）才真的持有 `SEC_LOCK`。
+#[cfg(test)]
+pub(crate) struct SessionTestGuard {
+    _owner: Option<std::sync::MutexGuard<'static, ()>>,
+}
+
+#[cfg(test)]
+impl Drop for SessionTestGuard {
+    fn drop(&mut self) {
+        // ⚠️ `Drop::drop` 先于字段析构 ⇒ 这里把层数清掉/减一，随后 `_owner`（如果是我拿的）
+        //    才把 `SEC_LOCK` 放回去。顺序反了的话，下一个 `test_lock()` 会在锁还握着时就重入。
+        if self._owner.is_some() {
+            SESSION_TEST_DEPTH.with(|d| d.set(0));
+        } else {
+            SESSION_TEST_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        }
+    }
+}
+
+/// **测试态的会话锁入口（可重入）** —— 凡是要动 / 依赖 `KEYRING` / `SESSION_MASTER` /
+/// `SESSION_MASTERS` / `LOCKED` 的测试都用它，⛔ 不要再手写 `SEC_LOCK.lock()`。
+///
+/// ## 它挡的是哪一次事故（2026-11-02，CI 偶发）
+/// `sync::tests::the_sync_bind_gate_blocks_only_personal_spaces_without_encryption` 偶发红在
+/// `disable_space(...).unwrap()`：**「钥匙袋不存在（这个空间不是按空间加密的）」**。
+/// 真因不是产品回归：`SEC_LOCK` 原先只串行**拿了它**的用例，而别的用例
+/// （`workspaces::tests` 里那两条）**清钥匙袋却完全不拿锁** ⇒ 它们能在别人的临界区里
+/// 把进程级钥匙袋清掉 ⇒ 假红。⇒ 两件事一起改：
+/// ① 写入方（`set_keyring_for_test` / `set_session_master` / `set_session_masters` /
+///    `set_space_box_for_test`）**自己**拿这把锁 ⇒ **任何清空都不可能插进持锁者的临界区**；
+/// ② 依赖会话态的用例用本函数持锁 ⇒ 它们的临界区互相串行。
+///
+/// ## 为什么**必须可重入**
+/// 有了 ①，一个已经持锁的用例在临界区里调 `enable_space` / `disable_space`（内部会写会话态）
+/// 就会**再进一次**同一把锁 ⇒ 非重入 `Mutex` 会**自死锁**（不是理论风险：上面那条 flake 的
+/// 临界区正是"建库 → enable_space → disable_space"）。
+/// 语义：同一线程重复进入只加计数，**只有最外层**真正拿/放 `SEC_LOCK`。
+///
+/// 中毒（别的用例 panic 过）按 `into_inner` 继续：一把被毒化的锁不该让后面所有用例都变红。
+#[cfg(test)]
+pub(crate) fn test_lock() -> SessionTestGuard {
+    let depth = SESSION_TEST_DEPTH.with(|d| d.get());
+    if depth > 0 {
+        SESSION_TEST_DEPTH.with(|d| d.set(depth + 1));
+        return SessionTestGuard { _owner: None };
+    }
+    let owner = SEC_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    SESSION_TEST_DEPTH.with(|d| d.set(1));
+    SessionTestGuard {
+        _owner: Some(owner),
+    }
+}
 
 fn conn<'a>(db: &'a State<'_, Db>) -> std::sync::MutexGuard<'a, Connection> {
     db.0.lock().expect("db mutex poisoned")
@@ -1288,7 +1351,40 @@ mod tests {
     // ★ 2026-09-23：**同一把锁也给 `space_crypto::tests` 用**（那里同样改 `KEYRING` /
     // `SESSION_MASTER` 这两个进程级全局）—— 隔离跑绿、全量跑红就是这么来的
     // （cargo test 的线程会把这些测试交错）。⇒ 提到模块级 `pub(crate)`，两处共用一把。
-    use super::SEC_LOCK;
+    // ⛔ 一律经 `test_lock()`（可重入）—— 直接 `SEC_LOCK.lock()` 会在调"写会话态"的
+    // 助手时自死锁（它们自己也要拿这把锁，见 `test_lock` 的注释）。
+    use super::test_lock;
+
+    /// ⭐ 2026-11-02：`test_lock()` 的**两条性质**自己也要有判据（它现在是所有会话态判据的地基）：
+    /// ① **可重入**（同一线程再进一次不死锁 —— 这是"持锁的用例在临界区里调 `enable_space`
+    ///    之类会写会话态的助手"能成立的前提）；② **仍然互斥**（持锁期间别的线程拿不到 ——
+    ///    可重入不能把锁变成"没锁"）。两条一起才说明它既能防 flake 又没把保护去掉。
+    #[test]
+    fn the_session_test_lock_is_reentrant_but_still_mutually_exclusive() {
+        let outer = test_lock();
+        // ① 同一线程再进一次：不许死锁（这正是"持锁的用例在临界区里调会写会话态的助手"的前提）
+        let inner = test_lock();
+        // ② 互斥：本线程持锁期间，`SEC_LOCK` 拿不到（`try_lock` 对同一把非重入 Mutex 也一样）
+        assert!(
+            super::SEC_LOCK.try_lock().is_err(),
+            "持锁期间必须拿不到（否则等于没锁 ⇒ 会话态又能被并行改）"
+        );
+        drop(inner);
+        assert!(
+            super::SEC_LOCK.try_lock().is_err(),
+            "内层守卫先放掉，**外层仍持锁** ⇒ 依然不许别人进"
+        );
+        drop(outer);
+        // 放干净之后**再进一次**：⛔ 不能断言"此刻一定是空闲的"（别的用例随时可能合法地拿着它 ⇒
+        // 那会变成一条假红的判据 ✓）；能拿回来本身就证明没有泄漏，而下面这句证明**真拿到了**：
+        // 若重入计数没归零，`test_lock()` 会误以为"本线程已持锁"而**不再真拿** ⇒ `try_lock` 成功 ⇒ 红 ✓。
+        let again = test_lock();
+        assert!(
+            super::SEC_LOCK.try_lock().is_err(),
+            "放掉之后再进来却没**真拿到**锁 ⇒ 重入计数没归零（可重入就变成'没锁'了 ✗）"
+        );
+        drop(again);
+    }
 
     /// A temp dir owning a real on-disk meta.db + a plaintext space DB, with `meta`
     /// ATTACHed on the returned space connection so the meta-slot config helpers and
@@ -1387,7 +1483,7 @@ mod tests {
     ///      而且那句话要说清"应用级加密已不再支持" —— **没有"退回旧钥匙"这条兜底**。
     #[test]
     fn key_space_conn_prefers_the_space_key_from_the_keyring() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let dir = std::env::temp_dir().join(uniq_tmp("spacekey"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
@@ -1463,7 +1559,7 @@ mod tests {
     /// 锁着 ⇒ **报错**（绝不静默放明文）；密文库而袋里没有它 ⇒ **报错**（应用级加密的存量库）。
     #[test]
     fn wire_payloads_use_the_space_key_and_never_silently_fall_back_to_plaintext() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let dir = std::env::temp_dir().join(uniq_tmp("wirekey"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
@@ -1526,7 +1622,7 @@ mod tests {
     /// 现在必须 `Err`，并且那句话要说清"应用级加密已不再支持 / 不会退回旧钥匙 / 不会把明文发出去"。
     #[test]
     fn a_ciphertext_space_without_a_box_is_refused_on_the_wire_never_plaintext() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let dir = std::env::temp_dir().join(uniq_tmp("nobox"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
@@ -1572,7 +1668,7 @@ mod tests {
     /// `encryption_enabled` 不再只读应用级标志；启动闸门嗅的是那个空间的文件。
     #[test]
     fn per_space_switch_and_startup_gate_look_at_the_space_itself() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let dir = std::env::temp_dir().join(uniq_tmp("perspace"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
@@ -1619,7 +1715,7 @@ mod tests {
 
     #[test]
     fn encrypted_db_roundtrip_and_sniff() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let dir = std::env::temp_dir().join(uniq_tmp("sniff"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -1794,7 +1890,7 @@ mod tests {
     //   再走**真实开库路径** `db::open_space_conn_at`，断言错误已经是可操作文本。
     #[test]
     fn open_space_conn_reports_an_actionable_error_for_a_mismatched_page_db() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let dir = std::env::temp_dir().join(uniq_tmp("mismatch"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("spaces")).unwrap();
@@ -1836,7 +1932,7 @@ mod tests {
 
     #[test]
     fn convert_space_db_encrypt_back_to_readable() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let dir = std::env::temp_dir().join(uniq_tmp("conv"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -1903,7 +1999,7 @@ mod tests {
     // is idempotent: converting an already-encrypted file is a no-op and stays readable).
     #[test]
     fn convert_space_db_is_idempotent_for_already_encrypted() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let dir = std::env::temp_dir().join(uniq_tmp("idem"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -1940,7 +2036,7 @@ mod tests {
     // **由解盒子回答口令对不对**）-> 读得到 -> 关掉（换回明文、扔掉盒子）。
     #[test]
     fn full_loop_enable_restart_unlock_readable_disable() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let dir = std::env::temp_dir().join(uniq_tmp("loop"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir.join("spaces")).unwrap();
@@ -2080,7 +2176,7 @@ mod tests {
     /// （与 `meta.workspaces.kind` 那次同一个教训，所以这条夹具**刻意手写老表结构**）。
     #[test]
     fn convert_space_db_tolerates_an_old_schema_space_file() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let dir = std::env::temp_dir().join(uniq_tmp("oldschema"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -2151,7 +2247,7 @@ mod tests {
     // correctly by keying the fresh connection (the "db.rs 打开点 PRAGMA key" item).
     #[test]
     fn open_space_conn_reads_encrypted_space() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let dir = std::env::temp_dir().join(uniq_tmp("osc"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir.join("spaces")).unwrap();
@@ -2227,7 +2323,7 @@ mod tests {
     // locked session cannot read the space; unlock re-opens it keyed and reads work.
     #[test]
     fn lock_closes_connection_unlock_reopens() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let dir = std::env::temp_dir().join(uniq_tmp("lock"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir.join("spaces")).unwrap();
@@ -2311,7 +2407,7 @@ mod tests {
 
     #[test]
     fn payload_roundtrip_when_enabled() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let (_t, c) = temp_ws();
         // ★ 「按空间」的形态：袋子里的盒子 ＋ 会话主密钥（`temp_ws()` 的连接开的正是 `default.db`）
         let (_master, space_key) = enable_space_meta(&c, "default", "supersecret");
@@ -2402,7 +2498,7 @@ mod tests {
     /// 空间级：启用加密时**记下**这个空间的版本；关闭时清掉。
     #[test]
     fn space_format_is_recorded_on_enable_and_cleared_on_disable() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let (_t, c) = temp_ws();
         assert_eq!(space_format(&c, "default"), None, "没启用时不该有记录");
         enable_space_meta(&c, "default", "supersecret");
@@ -2424,7 +2520,7 @@ mod tests {
     #[cfg(not(feature = "sm-crypto"))]
     #[test]
     fn space_guard_refuses_v2_in_the_default_build() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let (_t, c) = temp_ws();
         // 直接写一个"国密空间"的记录（模拟：这个空间的数据是国密版写下的）
         c.execute(
@@ -2446,7 +2542,7 @@ mod tests {
     #[cfg(feature = "sm-crypto")]
     #[test]
     fn space_guard_allows_v2_in_the_sm_build() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let (_t, c) = temp_ws();
         c.execute(
             "UPDATE meta.workspaces SET cipher_format = ?1 WHERE id = 'default'",
@@ -2525,7 +2621,7 @@ mod tests {
         //     真因：本模块的其它测试会 `enable_space_meta` / `enable_meta` 改**进程级**口令状态，
         //     而本测试**没拿 `SEC_LOCK`**（同模块另外几十个测试都拿了）⇒ 并行跑时读到别人开着的闸门 ⇒ 假红。
         //     ⚠️ 这不是产品 bug：同一笔在上一轮 CI 上是绿的、这一轮红，失败点就在这把锁上。
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let (_t, c) = temp_ws();
         let plain = "plaintext payload";
         assert_eq!(encrypt_payload(&c, plain).unwrap(), plain);
@@ -2534,7 +2630,7 @@ mod tests {
 
     #[test]
     fn lock_gates_key_and_sync() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let (_t, c) = temp_ws();
         // ★ 「按空间」的形态（原来是 `enable_meta` 造的那套应用级状态）
         enable_space_meta(&c, "default", "supersecret");
@@ -2568,7 +2664,7 @@ mod tests {
     #[cfg(feature = "sm-crypto")]
     #[test]
     fn national_crypto_covers_the_paths_it_still_has_and_the_space_path_stays_v1() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
         let (_t, c) = temp_ws();
         // 用**真**派生（不是 legacy_only）⇒ 手里有国密那一对密钥，写出去的就是 v2。
         let salt = crypto::random_salt();
@@ -2863,7 +2959,7 @@ mod tests {
     /// 空间 schema 的 kind 列（③ 对空间库同样查）、`convert_space_db` 的 `SELECT *`（④ 会红）。
     #[test]
     fn legacy_databases_survive_the_real_migrations() {
-        let _g = SEC_LOCK.lock().unwrap();
+        let _g = test_lock();
 
         // ---- ① 老库落地成一个真实 app 目录 ----
         let old = std::env::temp_dir().join(uniq_tmp("legacy"));
@@ -3381,7 +3477,7 @@ mod tests {
     #[test]
     fn provisioning_builds_an_encrypted_space_from_the_keyring() {
         use crate::keyring::{random_space_key, Keyring};
-        let _g = SEC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = test_lock();
         let dir = uniq_tmp("provision");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("spaces")).unwrap();

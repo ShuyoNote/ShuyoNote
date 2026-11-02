@@ -9046,10 +9046,11 @@ mod tests {
     /// AEAD）⇒ 如果没人钉住"换过的材料 ⇒ 打不开"，"服务端可以悄悄换盒子"这个洞就没人守。
     #[test]
     fn a_server_that_hands_over_a_different_bag_makes_the_second_device_fail_loudly() {
-        // 2026-10-29：panic 会让 SEC_LOCK 中毒、连累后续用例（CI #1440 实测）⇒ 中毒也继续跑。
-        let _g = crate::security::SEC_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // 2026-10-29：panic 会让会话锁中毒、连累后续用例（CI #1440 实测）⇒ 中毒也继续跑
+        //   （`security::test_lock` 内部就是 `unwrap_or_else(into_inner)`）。
+        // 2026-11-02：一律经 `security::test_lock()`（可重入）—— 切钥匙袋/会话主密钥的**助手自己
+        //   也拿这把锁**，所以持锁期间别人**清不掉**它（见 `security::test_lock` 的注释）。
+        let _g = crate::security::test_lock();
         let dir = temp_dir("swapped");
         let c = crate::db::open_space_conn_at("default", &dir).unwrap();
         crate::space_crypto::set_keyring_for_test(None);
@@ -10579,14 +10580,20 @@ mod tests {
     /// ⭐ 真正拦住"个人空间绑服务器"的是 `set_sync_profile` ✓（见那里装的真拦 ✓）。
     #[test]
     fn the_sync_bind_gate_blocks_only_personal_spaces_without_encryption() {
-        // 2026-10-29：同上 —— 别让别条用例的 panic 把这一条也毒成假红。
-        let _g = crate::security::SEC_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // 2026-10-29：同上 —— 别让别条用例的 panic 把这一条也毒成假红（`test_lock` 中毒也继续）。
+        // 2026-11-02（CI 偶发红的真因，`disable_space` 报「钥匙袋不存在」）：**只自己拿锁不够**
+        //   —— 原先 `workspaces::tests` 里有两条用例**清钥匙袋却完全不拿锁**，它们能在本用例的
+        //   临界区里把进程级袋子清掉 ⇒ 假红。现在两半都堵上了：
+        //   ① 会话态的**写入方**（`set_keyring_for_test` / `set_session_master` / …）自己拿这把锁
+        //      ⇒ 任何"清空"都无法插进持锁者的临界区（哪怕对方不拿锁）；
+        //   ② 本用例整段持锁 ⇒ 建库/开关加密都在同一个临界区里。
+        //   ⚠️ 必须是**可重入**的那把（`test_lock`）：下面 `enable_space` / `disable_space` 内部
+        //   也会写会话态 ⇒ 非重入 Mutex 会自死锁。
+        let _g = crate::security::test_lock();
         // 2026-10-29（CI no-sm 实测的 flake）：`pending_conn` 会**新建一个库**，而建库会吃
         //   **进程级** 钥匙袋/会话状态 ⇒ 并行用例若刚好留着别的空间的钥匙，新库会被加密封住，
         //   随后 `sync_bind_gate` 一读就报「库是密文…」⇒ 假红。⇒ 建库前先把这两格清空；
-        //   `SEC_LOCK` 保证清理期间没有别的用例改它们。
+        //   持锁期间没有别的用例能改它们。
         crate::space_crypto::set_keyring_for_test(None);
         crate::space_crypto::set_session_master(None).unwrap();
         let (c, dir) = pending_conn("syncgate");

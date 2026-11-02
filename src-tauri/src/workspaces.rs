@@ -1166,6 +1166,11 @@ mod tests {
     ///    （生产里 meta 就是文件 ✓）。
     #[test]
     fn switching_to_a_locked_encrypted_space_succeeds_and_never_opens_that_db() {
+        // ⚠️ 2026-11-02（CI 偶发 red 的真因之一）：本用例**造/清进程级会话态**（钥匙袋 ＋ 会话主密钥），
+        //   原先**不拿锁** ⇒ 它能在别人（如 `sync::tests::the_sync_bind_gate_…`）的临界区里
+        //   把钥匙袋清掉 ⇒ 那边 `disable_space` 报「钥匙袋不存在」⇒ 假红。
+        //   ⇒ 造/清会话态的用例必须与持锁者串行；可重入（`security::test_lock`）⇒ 不会自死锁。
+        let _g = crate::security::test_lock();
         let dir = std::env::temp_dir().join(format!("shuyo-switch-locked-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
@@ -1330,6 +1335,9 @@ mod tests {
     /// ⇒ `main` 路径变成空串 ⇒ **本判据必红** ✓。
     #[test]
     fn a_failed_park_rolls_the_main_connection_back_to_the_previous_space() {
+        // 同上一条：本用例也造/清进程级会话态（还写 `set_park_fail_for_test` 这个进程级开关）
+        //   ⇒ 拿同一把测试锁（可重入）。两条用例因此也互相串行，那个开关不会被对方踩到。
+        let _g = crate::security::test_lock();
         let dir = std::env::temp_dir().join(format!("shuyo-switch-park-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();

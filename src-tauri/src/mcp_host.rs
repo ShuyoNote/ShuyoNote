@@ -1003,25 +1003,26 @@ mod tools_list_tests {
 #[cfg(test)]
 static DRAFT_SINK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// ⚠️ **测试级串行锁：共享测试数据目录的「写者」**（2026-10-31，CI flake 修复）。
+/// ⚠️ **测试级串行锁：共享测试数据目录的「写者」**（2026-10-31；2026-11-02 改了口径）。
 ///
-/// 为什么需要：`crate::db::ensure_test_app_data_dir()` 返回的是**整个测试二进制共用**的目录
-/// （`db.rs` 里那个"必须只有这一个来源"的 helper），而 [`w3_draft_tests::fingerprint`] 比的是该
-/// 目录下**所有** `*.db` / `*.db-wal` / `*.db-shm` 的 sha ⇒ 只要**别的模块**的用例在这个窗口里往
-/// 共享目录写一次，那条"数据目录逐字节不变"的断言就红（**CI 实测**：`plugins::tests` 的两个
-/// seed 写了 `spaces/default.db` ⇒ `pages_update_never_auto_applies_…` 在 `mcp_host.rs:1155` 红）。
+/// 背景：`crate::db::ensure_test_app_data_dir()` 返回的是**整个测试二进制共用**的目录
+/// （`db.rs` 里那个"必须只有这一个来源"的 helper）。多个用例会往里 seed 同一个
+/// `spaces/default.db` / `meta.db` ⇒ 必须串行，否则**两个测试进程**同时写同一个库
+/// （本仓的复现脚本就是两进程并发跑；只加进程内 Mutex 挡不住，实测仍 12/12 红）。
+///
+/// ⚠️ **2026-11-02 改口径**：`mcp_host` 那两条"数据目录逐字节不变"的判据**不再拿这把锁** ——
+/// 它们改用**自己的私有 app-data 目录**（见 [`w3_draft_tests::private_app_data_dir`]）：
+/// 靠"所有写者都自觉拿锁"来保护别人的快照窗口是**不成立**的（CI 上翻指纹的正是**没拿锁**的
+/// 那个写者；`SEC_LOCK` 那族 flake 同形），靠"窗口里根本没有别的写者"才成立。
+/// 这把锁留给**共享目录自己的写者们**互相串行（跨进程那层仍然有用）。
 ///
 /// 实现是**两层**（都只测试用，`#[cfg(test)]`；⛔ 不是产品锁，产品代码不引用）：
-/// 1. **进程内**：`DB_WRITE_TEST_LOCK`（`std::sync::Mutex`）—— `cargo test` 是**一个进程多线程**，
-///    靠它串住同进程里的写者（**CI 那次红就是这种形态**）；
-/// 2. **跨进程**：共享测试目录里的一个 `.lock` 文件（`std::fs::File::lock`，`std` 自带 ⇒ ⛔ 无新依赖）
-///    —— 本仓的**复现脚本**是两个测试进程并发跑，只加 Mutex 挡不住（实测：只加进程内锁 ⇒ 复现仍
-///    12/12 红）；CI 一般用不到这一层，但临界区只有"一次 seed / 一个窗口"，多这一层不会拖慢。
-///    ⛔ 那个 `.lock` 文件**不会**被 `fingerprint` 算进去（它只收 `*.db` / `*.db-wal` / `*.db-shm`）。
+/// 1. **进程内**：`DB_WRITE_TEST_LOCK`（`std::sync::Mutex`）—— `cargo test` 是**一个进程多线程**；
+/// 2. **跨进程**：共享测试目录里的一个 `.lock` 文件（`std::fs::File::lock`，`std` 自带 ⇒ ⛔ 无新依赖）。
 ///
 /// 锁顺序：**先局部锁、后本锁**（`DRAFT_SINK_TEST_LOCK` / `LOG_TEST_LOCK` /
-/// `CAPABILITY_TEST_LOCK` → 本锁），⛔ 不许反序；持有本锁期间**只**做「快照 → 被测调用 → 断言」
-/// （或一次 seed），**不**在里面再拿别的测试锁 —— 因而不会成环。
+/// `CAPABILITY_TEST_LOCK` → 本锁），⛔ 不许反序；持有本锁期间**只**做「一次 seed」，
+/// **不**在里面再拿别的测试锁 —— 因而不会成环。
 #[cfg(test)]
 pub(crate) static DB_WRITE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -1063,10 +1064,11 @@ mod w3_draft_tests {
     use std::path::Path;
 
     /// **库文件**的逐字节指纹（路径 → 内容 sha256 ✓）：只收
-    /// ① 应用数据目录**顶层**、② `spaces/` **一层** 里的 `*.db` / `*.db-wal` / `*.db-shm` ✓。
+    /// ① `dir` **顶层**、② `dir/spaces/` **一层** 里的 `*.db` / `*.db-wal` / `*.db-shm` ✓。
     ///
-    /// ⚠️ 为什么**不**扫整棵测试目录：那是**所有测试共用**的（本仓的测试并行跑 ✓），别的测试
-    /// 新建的子目录会被误读成「这次调用落库了」⇒ **假红** ✓（本判据第一版就这么红的 ✓）。
+    /// ⚠️ 传进来的 `dir` 必须是**本用例私有**的那个（见 [`private_app_data_dir`]）：
+    /// 共享测试目录是**所有测试共用**的（本仓的测试并行跑 ✓），扫它就会把别人的写入读成
+    /// 「这次调用落库了」⇒ **假红** ✓（本判据第一版就这么红的 ✓）。
     /// ⚠️ 为什么用 sha256 而不是 mtime：mtime 会因为「读一下」就变 ✗，判据要抓的是**内容变化** ✓。
     fn fingerprint(dir: &Path) -> BTreeMap<String, String> {
         use sha2::{Digest, Sha256};
@@ -1098,13 +1100,102 @@ mod w3_draft_tests {
         out
     }
 
+    /// 给「数据目录**逐字节不变**」那两条判据造一个**私有** app-data 目录（2026-11-02）。
+    ///
+    /// 为什么必须私有：判据的形态是「整个数据目录在调用前后逐字节相同」，而
+    /// [`crate::db::ensure_test_app_data_dir`] 返回的是**整个测试二进制共用**的目录 ——
+    /// 别的模块在同一个窗口里写一次 `spaces/default.db`，那条断言就红（**CI 实测**：
+    /// 前后不一致，唯一变的是 `spaces/default.db`；真因不是产品回归，是**判据的窗口里
+    /// 有别的写者**）。
+    ///
+    /// ⚠️ **覆盖范围没有变小**（这不是"忽略某个文件"那种放宽 ✓）：外部调用能打开的库只有
+    /// 「当前空间」与 `meta.db` —— `with_read_conn` / `with_conn_for_space` / `with_meta_conn`
+    /// 全都跟着 `RUN_STATE.read_dir` 走（见 `plugins::with_conn_for_space` 里那两处），而
+    /// [`crate::plugins::with_active_space_in_test`] 把 `read_dir` 钉在这个目录上 ⇒
+    /// 它写哪儿都会被 [`fingerprint`] 抓到。私有目录还顺带消掉了 `*.db-wal` / `*.db-shm`
+    /// 的噪声（共享目录里别人的连接会让 sidecar 出现/消失，那同样会翻指纹）。
+    fn private_app_data_dir(tag: &str, seeded_page: &str) -> (std::path::PathBuf, String) {
+        // ⚠️ 放在**临时目录根下**、**不在** `db::test_app_data_dir_path()` 里面：
+        //    那边是共享测试目录，而 `db::tests` 有个 `remove_dir_all(<共享目录>)` 的夹具
+        //    （`db.rs` 的 `test_dir()`）⇒ 放进它里面等于把自己的夹具交给别人的清理动作。
+        let dir = std::env::temp_dir().join(format!("shuyonote-w3-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        let space = format!("w3-{tag}");
+        {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, created_at, updated_at) VALUES (?1, '判据空间', 1, 1)",
+                rusqlite::params![&space],
+            )
+            .unwrap();
+            m.execute(
+                "INSERT OR REPLACE INTO sync_state (key, value) VALUES (?1, ?2)",
+                rusqlite::params![crate::db::ACTIVE_KEY, &space],
+            )
+            .unwrap();
+        }
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at) VALUES (?1, ?2, NULL, 'p', '{}', 'x', 'page', 0, 10, 10)",
+                rusqlite::params![seeded_page, &space],
+            )
+            .unwrap();
+        }
+        (dir, space)
+    }
+
+    /// 快照**不能空转**：私有目录里必须真有被测空间的库，否则 `before` / `after` 都是空集
+    /// ⇒ 生成前后相等却什么也没证明（空扫最容易被当成"绿" ✗）。
+    fn assert_snapshot_covers_space(before: &BTreeMap<String, String>, space: &str) {
+        assert!(
+            before.keys().any(|k| k.ends_with(&format!("{space}.db"))),
+            "前置失败：私有目录的指纹里没有 `spaces/{space}.db`（拿到 {} 个文件）⇒ 这条判据会空转",
+            before.len()
+        );
+    }
+
+    /// 让私有夹具**静置**：把库打开再关一次，把"只有首次打开才会做"的那些写入先做掉。
+    ///
+    /// ⚠️ 这是 2026-11-02 实测出来的（不是预防性洁癖）：`db::migrate` 里有一条
+    /// 「`page_fts` 是空的、而 `pages` 已有行 ⇒ 回填 FTS」的幂等补数据 —— 夹具在
+    /// `open_space_conn_at` 之后才 INSERT 页面 ⇒ **被测调用那次单纯打开库**就会补一次 FTS ⇒
+    /// 库文件真的变了 ⇒ 判定「落库了」的假红（实测逐字：只有 `spaces/<space>.db` 的 sha 变了）。
+    /// 旧版把"库已经被人打开过 N 次"这件事**隐式**交给了共享目录（别的用例早把它打开过）⇒
+    /// 那正是"判据依赖别人跑过什么"的形态 ✗；私有目录必须自己静置。
+    fn settle(dir: &Path, space: &str) {
+        drop(crate::db::open_space_conn_at(space, dir).unwrap());
+    }
+
+    /// 静置后的指纹（**并复核它自己稳**）：先 `settle` 一次，取指纹，再 `settle` 一次，指纹必须一样。
+    ///
+    /// 复核这半句是判据的**前置**（不是断言被测调用）：夹具若"每打开一次就写一次库"，
+    /// 后面的「调用前后逐字节相同」就**测不出**被测调用做过什么 —— 那种红会把人指向产品，
+    /// 而真因在夹具。⇒ 让它以"前置失败"的形状红，并且说清是哪一半。
+    fn settled_fingerprint(dir: &Path, space: &str) -> BTreeMap<String, String> {
+        settle(dir, space);
+        let before = fingerprint(dir);
+        settle(dir, space);
+        assert_eq!(
+            before,
+            fingerprint(dir),
+            "前置失败：私有夹具**自己不稳**（每打开一次库就写一次）⇒ 下面的\
+             「调用前后逐字节相同」测不出被测调用，先修夹具（见 `settle` 的注释）"
+        );
+        assert_snapshot_covers_space(&before, space);
+        before
+    }
+
     #[test]
     fn external_write_is_drafted_not_landed() {
         // 出口是全局的 ⇒ 与 W4 那条串起来跑 ✓（不拿锁就会互相覆盖 ✗）
         let _serial = DRAFT_SINK_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let dir = crate::db::ensure_test_app_data_dir().to_path_buf();
+        // ⭐ 2026-11-02：数据目录**本用例私有**（不再用共享的 `ensure_test_app_data_dir`）——
+        // 判据断言的是"这个目录逐字节不变"，共享目录里别人的写入会把它弄红（CI flake 的真因）。
+        let (dir, space) = private_app_data_dir("create", "p-w3-create");
         // 装一个**测试出口**：真看见草稿才算数 ✓（比读源码猜有没有 emit 硬 ✗）
         let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1115,11 +1206,10 @@ mod w3_draft_tests {
             }
         });
 
-        // ⚠️ 锁粒度必须覆盖「快照 → 调用 → 断言」**整段**（只包快照 = 窗口没被保护 ⇒ 等于没加）：
-        // 共享目录是所有用例共用的，别的模块的**写者**（见 `DB_WRITE_TEST_LOCK` 的注释）必须在
-        // 这一段里进不来。锁顺序：本用例已先拿 `DRAFT_SINK_TEST_LOCK`（局部锁）⇒「先局部、后 DB」✓。
-        let _db = lock_db_writes_for_test();
-        let before = fingerprint(&dir);
+        // ⚠️ 窗口**不再**靠 `DB_WRITE_TEST_LOCK` 保护（那样只挡"愿意拿锁的写者"，而 CI 上翻指纹的
+        // 正是**没拿锁**的那个）：这个目录是**本用例私有**的 ⇒ 窗口里唯一的写者就是被测调用本身。
+        // 覆盖范围不变（见 `private_app_data_dir` 的注释）。夹具先**静置**（见 `settle`）。
+        let before = settled_fingerprint(&dir, &space);
         let session = "sdk-w3-draft-1";
         // 权限取**注册表里写的那一条** ✓（⛔ 不在测试里手抄权限名 ✗）
         let cap = crate::capabilities_gen::lookup("pages.create").expect("pages.create 必须存在 ✓");
@@ -1127,12 +1217,16 @@ mod w3_draft_tests {
             .permission
             .expect("写能力必须有 permission（注册表里写着 ✓）");
         assert!(!perm.is_empty());
-        let out = handle_external_call(
-            session,
-            &[perm.to_string()],
-            "pages.create",
-            r#"{"title":"周报","content":"第一段"}"#,
-        )
+        // 把「当前空间 ＋ 数据目录」钉到私有目录（`handle_external_call` 内部会装当前空间，
+        // 这个口子只改测试构建里它**装哪一个** —— 见 `plugins::with_active_space_in_test`）。
+        let out = crate::plugins::with_active_space_in_test(&space, &dir, || {
+            handle_external_call(
+                session,
+                &[perm.to_string()],
+                "pages.create",
+                r#"{"title":"周报","content":"第一段"}"#,
+            )
+        })
         .expect("外部写请求本身应当成功（它产出的是草稿 ✓）");
         let after = fingerprint(&dir);
 
@@ -1169,6 +1263,7 @@ mod w3_draft_tests {
         assert_eq!(rows.len(), 1, "写请求也要留痕 ✓（拿到 {} 条）", rows.len());
         assert!(rows[0].ok, "这次调用本身是成功的（草稿生成了 ✓）");
         assert_eq!(rows[0].capability, "pages.create");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `pages.update`（2026-10-17）：MCP 的**整页替换**入口 —— 同样只产出草稿。
@@ -1178,24 +1273,9 @@ mod w3_draft_tests {
         let _serial = DRAFT_SINK_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let _dir = crate::db::ensure_test_app_data_dir();
-        let dir = _dir.to_path_buf();
-        {
-            let m = crate::db::open_meta_conn_at(&dir).unwrap();
-            let space: String = m
-                .query_row(
-                    "SELECT id FROM workspaces WHERE deleted_at IS NULL LIMIT 1",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
-            c.execute(
-                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at) VALUES (?1, ?2, NULL, 'p', '{}', 'x', 'page', 0, 10, 10)",
-                rusqlite::params!["p-update-1", space],
-            )
-            .unwrap();
-        }
+        // ⭐ 2026-11-02：私有数据目录（同另外两条）—— 共享目录是**所有用例共用**的，
+        //   单跑时里面可能连一个工作区都没有（`query_row` 直接 panic）⇒ 自带一份夹具最稳。
+        let (dir, space) = private_app_data_dir("update-drafted", "p-update-1");
         let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen2 = seen.clone();
@@ -1208,12 +1288,14 @@ mod w3_draft_tests {
         let session = "sdk-w3-update-1";
         let cap = crate::capabilities_gen::lookup("pages.update").expect("pages.update 必须存在 ✓");
         let perm = cap.permission.expect("写能力必须有 permission ✓");
-        let out = handle_external_call(
-            session,
-            &[perm.to_string()],
-            "pages.update",
-            r##"{"id":"p-update-1","title":"新标题","markdown":"# 新标题\n\n新正文"}"##,
-        )
+        let out = crate::plugins::with_active_space_in_test(&space, &dir, || {
+            handle_external_call(
+                session,
+                &[perm.to_string()],
+                "pages.update",
+                r##"{"id":"p-update-1","title":"新标题","markdown":"# 新标题\n\n新正文"}"##,
+            )
+        })
         .expect("外部写请求本身应当成功（它产出的是草稿 ✓）");
 
         let got = seen.lock().map(|g| g.clone()).unwrap_or_default();
@@ -1230,6 +1312,7 @@ mod w3_draft_tests {
             out.contains("\"drafted\":true"),
             "回话要带 drafted ✓：{out}"
         );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// ⭐ 2026-10-18：**整页替换永远要人确认** —— 即使「免确认」档开着。
@@ -1242,23 +1325,9 @@ mod w3_draft_tests {
         let _serial = DRAFT_SINK_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let dir = crate::db::ensure_test_app_data_dir().to_path_buf();
-        {
-            let m = crate::db::open_meta_conn_at(&dir).unwrap();
-            let space: String = m
-                .query_row(
-                    "SELECT id FROM workspaces WHERE deleted_at IS NULL LIMIT 1",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
-            c.execute(
-                "INSERT OR REPLACE INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at) VALUES (?1, ?2, NULL, 'p', '{}', 'x', 'page', 0, 10, 10)",
-                rusqlite::params!["p-update-auto", space],
-            )
-            .unwrap();
-        }
+        // ⭐ 2026-11-02：私有数据目录（同 `external_write_is_drafted_not_landed`）——
+        // 断言的是"这个目录逐字节不变"，共享目录里别的用例写一次 `spaces/default.db` 就会假红。
+        let (dir, space) = private_app_data_dir("update-auto", "p-update-auto");
         let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen2 = seen.clone();
@@ -1268,20 +1337,20 @@ mod w3_draft_tests {
             }
         });
 
-        // ⚠️ 同 `external_write_is_drafted_not_landed`：整段「快照 → 调用 → 断言」拿 DB 锁
-        // （共享目录的写者见 `DB_WRITE_TEST_LOCK` 的注释）。锁顺序：已先拿 `DRAFT_SINK_TEST_LOCK`。
-        let _db = lock_db_writes_for_test();
-        let before = fingerprint(&dir);
+        let before = settled_fingerprint(&dir, &space);
         let session = "sdk-update-auto-1";
         let cap = crate::capabilities_gen::lookup("pages.update").expect("pages.update 必须存在 ✓");
         let perm = cap.permission.expect("写能力必须有 permission ✓");
-        let out = handle_external_call_with(
-            session,
-            &[perm.to_string()],
-            "pages.update",
-            r##"{"id":"p-update-auto","markdown":"整页替换的新正文"}"##,
-            true, // ⭐ 免确认开关**开着** —— 正是这条判据要挡的场景 ✓
-        )
+        // 当前空间 ＝ 私有目录里的那个空间 ⇒ `pages.update` 读/写都落在这个目录（覆盖范围不变）。
+        let out = crate::plugins::with_active_space_in_test(&space, &dir, || {
+            handle_external_call_with(
+                session,
+                &[perm.to_string()],
+                "pages.update",
+                r##"{"id":"p-update-auto","markdown":"整页替换的新正文"}"##,
+                true, // ⭐ 免确认开关**开着** —— 正是这条判据要挡的场景 ✓
+            )
+        })
         .expect("调用本身应当成功（它产出的是草稿 ✓）");
         let after = fingerprint(&dir);
 
@@ -1308,6 +1377,7 @@ mod w3_draft_tests {
             got[0].contains("update_page"),
             "payload 的 kind 必须是 update_page ✓"
         );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

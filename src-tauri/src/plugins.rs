@@ -5805,8 +5805,57 @@ fn is_external_caller() -> bool {
 /// 读的那支要能**拿夹具目录**测 ✓，装的这支要能**注一个空间**测 ✓ ——
 /// 合在一起就只能依赖真实应用数据目录 ✗（判据会去读开发机上的真库 ✗，那是本工作区禁过的事 ✓）。
 pub(crate) fn with_active_space<T>(f: impl FnOnce() -> T) -> T {
+    // ⭐ 2026-11-02（**仅测试构建**）：判据可以把「当前空间 ＋ 数据目录」钉到自己的私有目录
+    //   （见 [`with_active_space_in_test`]）。生产构建里这一段**一行都不生成**。
+    #[cfg(test)]
+    if let Some((space, dir)) = ACTIVE_SPACE_OVERRIDE.with(|o| o.borrow().clone()) {
+        return with_active_space_dir_from(Some(space), Some(dir), f);
+    }
     let space = crate::db::app_data_dir_ref().and_then(resolve_active_space_from);
     with_active_space_from(space, f)
+}
+
+/// ⭐ **测试专用**：把这次调用的「当前空间 ＋ 数据目录」钉到**调用方给的私有目录**。
+///
+/// 为什么要有这个口子（2026-11-02，CI 偶发红的真因）：`mcp_host` 那两条判据的形态是
+/// **「数据目录逐字节不变」**（外部写请求在用户确认前一个字都不许落库），而它们读的是
+/// `db::ensure_test_app_data_dir()` —— 那个目录是**整个测试二进制共用**的 ⇒ 别的模块在这个
+/// 窗口里写一次 `spaces/default.db` 就会翻指纹（**CI 实测**：前后不一致，唯一变的是
+/// `spaces/default.db`）。让它们各自带一个**私有** app-data 目录 ⇒ 窗口里只有**被测调用**
+/// 一个写者 ⇒ 判据**确定性**成立（不再依赖"别的用例都不写共享目录"这个承诺）。
+///
+/// ⚠️ **覆盖范围没有变小**：这条调用能打开的库只有「当前空间」与 `meta.db`
+/// （`with_read_conn` / `with_conn_for_space` / `with_meta_conn` 全都跟着 `read_dir` 走，
+/// 见 `with_conn_for_space` 里那两处），两者都在这个私有目录里 —— 而且 `*.db-wal` /
+/// `*.db-shm` 的噪声也没了（共享目录里别人的连接会让 sidecar 出现/消失，那同样会翻指纹）。
+///
+/// 与 `with_active_space_from` 的关系：同一条装/恢复路径（thread-local），只是**同时**装
+/// `read_dir`；`None` 的那一支仍是"走默认应用数据目录"（与生产逐字相同）。
+#[cfg(test)]
+thread_local! {
+    static ACTIVE_SPACE_OVERRIDE: std::cell::RefCell<Option<(String, std::path::PathBuf)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// 装/恢复私有目录（**测试专用**，见 [`with_active_space_in_test`]）。
+///
+/// 顺带清掉 `META_CONN` 那条线程缓存：它是按 `read_dir` 打开的，换了目录还留着就是
+/// "上一份夹具的连接答这一次调用"（与 `with_active_space_from` 清 `READ_CONN` 同一个理由）。
+#[cfg(test)]
+pub(crate) fn with_active_space_in_test<T>(
+    space: &str,
+    dir: &std::path::Path,
+    f: impl FnOnce() -> T,
+) -> T {
+    let prev = ACTIVE_SPACE_OVERRIDE.with(|o| {
+        let mut g = o.borrow_mut();
+        std::mem::replace(&mut *g, Some((space.to_string(), dir.to_path_buf())))
+    });
+    META_CONN.with(|c| *c.borrow_mut() = None);
+    let out = with_active_space_dir_from(Some(space.to_string()), Some(dir.to_path_buf()), f);
+    META_CONN.with(|c| *c.borrow_mut() = None);
+    ACTIVE_SPACE_OVERRIDE.with(|o| *o.borrow_mut() = prev);
+    out
 }
 
 /// 读「当前空间」：`sync_state['active_workspace_id']` ✓；**没有就退到最早那个未删除的工作区** ✓
@@ -5841,12 +5890,26 @@ fn resolve_active_space_from(dir: &std::path::Path) -> Option<String> {
 /// 装/恢复那一半（**可注入** ⇒ 判据测得了 ✓）。`None` ⇒ **一个字都不装** ✓
 /// （⇒ 那句 `space_unknown` 仍然如实报 ✓，绝不静默读错空间 ✗）。
 pub(crate) fn with_active_space_from<T>(space: Option<String>, f: impl FnOnce() -> T) -> T {
+    with_active_space_dir_from(space, None, f)
+}
+
+/// [`with_active_space_from`] 的完整形态：`dir` 给了就**同时**装 `read_dir`
+/// （数据能力会开那个目录里的库）；`None` ＝ 走默认应用数据目录（**生产路径唯一的那一支** ✓）。
+///
+/// 拆出 `dir` 只为一件事：测试要能把「当前空间」钉到自己的私有 app-data 目录
+/// （见 [`with_active_space_in_test`]）—— 判据的"数据目录逐字节不变"才不会被**别的用例**
+/// 在同一个共享目录里写一次而打断。
+fn with_active_space_dir_from<T>(
+    space: Option<String>,
+    dir: Option<std::path::PathBuf>,
+    f: impl FnOnce() -> T,
+) -> T {
     let prev = RUN_STATE.with(|s| {
         let mut st = s.borrow_mut();
         let prev = (st.read_space.clone(), st.read_dir.clone());
         if let Some(sp) = space {
             st.read_space = Some(sp);
-            st.read_dir = None;
+            st.read_dir = dir;
         }
         prev
     });
