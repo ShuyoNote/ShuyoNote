@@ -288,6 +288,12 @@ jobs:
           # ⚠️ macOS 公证**不在这里**：这里只给签名身份（前面的 step 已写进 GITHUB_ENV），
           # 不把 APPLE_ID/PASSWORD/TEAM_ID 交给 Tauri；公证由下面的显式脚本做，才有 Accepted/staple/spctl 证据。
 
+      - name: 显式签名（macOS：先嵌套——含随包 MCP——再外层 bundle）
+        # Tauri 只签主程序，不签 bundle.resources 带进来的可执行文件；2026-11-02 首轮 2.1.0
+        # 公证就是这样红的：`Resources/mcp/shuyonote-mcp` 没 Developer ID / 没时间戳 / 没 hardened runtime。
+        if: matrix.platform == 'macos-latest'
+        run: node scripts/sign-macos-app.mjs --identity "$APPLE_SIGNING_IDENTITY"
+
       - name: 产物自检（macOS：identifier / 版本 / 深链 / dmg / 签名）
         if: matrix.platform == 'macos-latest'
         run: pnpm check:macos-bundle
