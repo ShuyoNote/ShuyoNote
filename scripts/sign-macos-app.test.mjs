@@ -141,6 +141,8 @@ describe("sign-macos-app：嵌套 Mach-O 必须**递归**发现（第一版只�
     mk("Contents/Frameworks/sub/nested.dylib", THIN); // ← 再深一层：第一版发现不了
     mk("Contents/MacOS/shuyonote", THIN); // 主可执行文件：不进清单
     mk("Contents/Resources/readme.txt", [...Buffer.from("not a mach-o")]);
+    // 2026-11-02：随包 MCP 可执行文件在 Resources 下，Tauri 不会签它；notarytool 会逐条拒。
+    mk("Contents/Resources/mcp/shuyonote-mcp", THIN);
     if (nestedApp) mk("Contents/Frameworks/Inner.app/Contents/MacOS/inner", THIN);
     return app;
   }
@@ -149,7 +151,11 @@ describe("sign-macos-app：嵌套 Mach-O 必须**递归**发现（第一版只�
     const app = fixtureTree();
     const { found, refuses } = nestedMachOs(app, { mainExecutable: "Contents/MacOS/shuyonote" });
     expect(refuses).toEqual([]);
-    expect(found.sort()).toEqual(["Contents/Frameworks/libpdfium.dylib", "Contents/Frameworks/sub/nested.dylib"]);
+    expect(found.sort()).toEqual([
+      "Contents/Frameworks/libpdfium.dylib",
+      "Contents/Frameworks/sub/nested.dylib",
+      "Contents/Resources/mcp/shuyonote-mcp",
+    ]);
     // 顺序：更深的先签
     const order = signingOrder(found, "Contents/MacOS/shuyonote");
     expect(order[0]).toBe("Contents/Frameworks/sub/nested.dylib");

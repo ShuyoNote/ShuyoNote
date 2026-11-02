@@ -38,8 +38,10 @@ import { isMain } from "./lib/is-main.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** 包内需要单独先签的嵌套二进制：Frameworks 下的库、MacOS 下的辅助可执行文件。 */
-export const NESTED_DIRS = ["Contents/Frameworks", "Contents/MacOS"];
+/** 包内需要单独先签的嵌套二进制：Frameworks 下的库、MacOS 下的辅助可执行文件、
+ *  Resources 下的随包可执行文件（2026-11-02：`mcp/shuyonote-mcp` 就是这一类 ——
+ *  Tauri 只签主程序，不签 `bundle.resources` 带进来的可执行文件，公证会逐条拒）。 */
+export const NESTED_DIRS = ["Contents/Frameworks", "Contents/MacOS", "Contents/Resources"];
 
 /**
  * ★ **codesign 的参数**（纯函数，便于判据）—— 2026-09-22 按 Windows 侧的复核意见抽出。
