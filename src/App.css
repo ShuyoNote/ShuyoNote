@@ -286,26 +286,8 @@ body,
   background: var(--bg);
 }
 
-.app {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-  /* 状态栏 / 手势条 / 软键盘都从外壳上让开（`box-sizing: border-box`，
-     所以 padding 会真的把内容区压小，而不是把它顶出屏幕）。
-     这是"顶部 41px 触摸死区"的正面修法：**不把可交互的 UI 放进去**——
-     那一带属于 SystemUI 的窗口，应用永远收不到那里的触摸。 */
-  padding-top: var(--sat);
-  padding-right: var(--sar);
-  padding-bottom: max(var(--sab), var(--kb));
-  padding-left: var(--sal);
-}
-/* 顶部横幅之下的主体区：sidebar + main 横向排列 */
-.app-body {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
+
+
 /* 仅 Windows：系统标题栏下加一条淡细横线，区分标题栏与内容区 */
 html[data-platform="win"] .app-body {
   border-top: 1px solid var(--border);
@@ -408,21 +390,7 @@ html.mac-blurred .mac-light svg { opacity: 0; }
 
 
 
-.logo-mark {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent-soft), var(--cat-purple-soft));
-  color: var(--accent);
-  font-size: var(--fs-14);
-  font-weight: 700;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  box-shadow: var(--shadow-xs);
-}
+
 
 
 
@@ -665,11 +633,7 @@ select.sync-input {
 
 
 
-/* 组织头部邀请码：码 + 生成/重置按钮。 */
-/* 注册后「未入组」引导：清晰列出加入方式 + 提示组织≠空间。 */
-.org-empty-help .set-hint {
-  margin: 0 0 6px;
-}
+
 
 
 
@@ -753,9 +717,6 @@ select.sync-input {
 
 
 
-.new-menu {
-  position: relative;
-}
 
 
 
@@ -838,27 +799,10 @@ select.sync-input {
 
 
 
-/* View switch */
-.view-switch {
-  display: flex;
-  gap: 3px;
-  padding: 0 var(--space-2) var(--space-2);
-  background: var(--card-bg, var(--bg));
-  margin: var(--space-2) var(--space-2) 10px;
-  border-radius: var(--radius-md);
-  padding: 3px;
-}
 
-/* Board */
-.board {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  height: 100%;
-  /* 看板以拖拽/点选为主，取消文本选择，避免拖动时选中内容。 */
-  user-select: none;
-}
+
+
+
 
 
 
@@ -1061,14 +1005,7 @@ select.sync-input {
 
 
 
-.skeleton-row {
-  height: 28px;
-  border-radius: var(--radius-sm);
-  background: var(--hover);
-  background-image: linear-gradient(90deg, transparent, var(--hover-strong), transparent);
-  background-size: 200% 100%;
-  animation: shimmer 1.4s infinite;
-}
+
 
 @keyframes shimmer {
   0% { background-position: 200% 0; }
@@ -1205,15 +1142,7 @@ body.is-ai-open .main {
 
 
 
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  padding: var(--space-7);
-  text-align: center;
-  animation: fadeInUp 0.3s ease;
-}
+
 
 @keyframes fadeInUp {
   from {
@@ -1226,24 +1155,7 @@ body.is-ai-open .main {
   }
 }
 
-.empty-icon {
-  width: 72px;
-  height: 72px;
-  border-radius: 20px;
-  background: linear-gradient(135deg, var(--accent), #7b61ff);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--fs-34);
-  line-height: 1;
-  box-shadow: var(--shadow-md);
-}
 
-.empty-title {
-  font-size: var(--fs-18);
-  font-weight: 600;
-  color: var(--text);
-}
 
 
 
@@ -1259,12 +1171,6 @@ body.is-ai-open .main {
 
 
 
-.title-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-}
 
 
 
@@ -1315,14 +1221,10 @@ body.is-ai-open .main {
 
 
 
-.crop {
-  width: min(760px, 92vw);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
-  padding: var(--space-4);
-}
+
+
+
+
 
 
 
@@ -1489,10 +1391,7 @@ select.prop-value {
 
 
 
-.error-badge {
-  color: var(--danger);
-  font-size: var(--fs-12);
-}
+
 
 
 
@@ -1528,36 +1427,6 @@ select.prop-value {
 
 
 
-/* Find bar */
-.find-bar {
-  position: absolute;
-  top: 8px;
-  right: 24px;
-  z-index: 30;
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  padding: var(--space-1) 6px;
-}
-
-.find-input {
-  border: none;
-  outline: none;
-  font-size: var(--fs-13);
-  width: 140px;
-  font-family: inherit;
-}
-
-.find-count {
-  font-size: var(--fs-12);
-  color: var(--text-dim);
-  min-width: 40px;
-  text-align: center;
-}
 
 
 
@@ -1592,37 +1461,16 @@ select.prop-value {
 
 
 
-/* 根部浮层崩溃后的就地提示（components/PanelBoundary.tsx）。
-   两个要求：**看得见**（不静默吞掉错误，否则排查时只能靠猜）、**不抢焦点**（其余界面
-   照常可用，用户可以先干别的，不必被迫重载）。 */
-.panel-error {
-  position: fixed;
-  left: 50%;
-  bottom: 18px;
-  transform: translateX(-50%);
-  z-index: 4000;
-  max-width: min(720px, calc(100vw - 32px));
-  padding: 10px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--danger);
-  background: var(--card-bg);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
 
-.panel-error-title {
-  color: var(--danger);
-  font-size: var(--fs-13);
-  font-weight: 600;
-}
 
-.panel-error-detail {
-  color: var(--text-faint);
-  font-size: var(--fs-12);
-  word-break: break-all;
-}
+
+
+
+
+
+
+
+
 
 
 
@@ -1800,43 +1648,8 @@ select.prop-value {
 
 
 
-/* Link popover */
-.link-popover {
-  position: fixed;
-  z-index: 55;
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  max-width: 320px;
-  padding: var(--space-1);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  animation: pop 0.14s ease;
-}
 
-.link-url {
-  font-size: var(--fs-12);
-  color: var(--accent);
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 0 6px;
-}
 
-.link-input {
-  width: 180px;
-  height: 26px;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--text);
-  font-size: var(--fs-12);
-  outline: none;
-}
 
 
 
@@ -1862,12 +1675,6 @@ select.prop-value {
 
 
 
-.table-resize-handle {
-  position: fixed;
-  z-index: 56;
-  width: 6px;
-  cursor: col-resize;
-}
 
 
 
@@ -2029,42 +1836,6 @@ select.prop-value {
 
 
 
-.unlinked-mentions {
-  margin: 18px auto;
-  padding: 0 var(--doc-pad);
-  max-width: var(--doc-width);
-  width: 100%;
-}
-.unlinked-mentions-summary {
-  font-size: var(--fs-12);
-  font-weight: 700;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: var(--space-2);
-  cursor: pointer;
-  user-select: none;
-}
-.unlinked-mentions-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.unlinked-mention {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--fs-13);
-  color: var(--text);
-}
-.unlinked-mention-title {
-  font-weight: 600;
-}
-.unlinked-mention-desc {
-  color: var(--text-dim);
-  font-size: var(--fs-12);
-  flex: 1;
-}
 
 
 
@@ -2086,38 +1857,27 @@ select.prop-value {
 
 
 
-.backlink-block-row {
-  display: flex;
-  align-items: stretch;
-  gap: var(--space-2);
-}
 
 
 
 
 
-.backlink-block-page {
-  font-size: var(--fs-11);
-  font-weight: 600;
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
-.backlink-block-snippet {
-  font-size: var(--fs-13);
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
-.backlink-block-arrow {
-  align-self: center;
-  color: var(--text-faint);
-  flex-shrink: 0;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* Tags */
 
@@ -2298,19 +2058,6 @@ select.prop-value {
 
 
 
-/* Slash menu */
-.slash-menu {
-  z-index: 30;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
-  min-width: 220px;
-  padding: var(--space-1);
-  max-height: 340px;
-  overflow-y: auto;
-  animation: pop 0.16s ease;
-}
 
 
 
@@ -2318,44 +2065,16 @@ select.prop-value {
 
 
 
-.slash-icon {
-  width: 22px;
-  text-align: center;
-  font-size: var(--fs-13);
-  color: var(--text-dim);
-  flex-shrink: 0;
-}
 
-.slash-title {
-  flex: 1;
-}
 
-.slash-group {
-  font-size: var(--fs-11);
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  padding: var(--space-2) 10px var(--space-1);
-}
 
-.slash-shortcut {
-  flex-shrink: 0;
-  margin-left: auto;
-  padding-left: var(--space-3);
-  font-size: var(--fs-13);
-  color: var(--text-dim);
-  font-family: inherit;
-  white-space: nowrap;
-  opacity: 0.85;
-}
 
-.slash-empty {
-  padding: var(--space-3);
-  color: var(--text-dim);
-  font-size: var(--fs-13);
-  text-align: center;
-}
+
+
+
+
+
+
 
 
 
@@ -2455,28 +2174,6 @@ select.prop-value {
 
 
 
-/* "Pasted a link" choice bubble */
-.bookmark-paste-menu {
-  position: fixed;
-  z-index: 60;
-  min-width: 200px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  padding: 6px;
-}
-.bookmark-paste-hint {
-  font-size: var(--fs-11);
-  color: var(--text-faint);
-  padding: var(--space-1) var(--space-2) 6px;
-}
-
-
-
-.bpi-icon {
-  font-size: var(--fs-14);
-}
 
 
 
@@ -2510,52 +2207,23 @@ select.prop-value {
 
 
 
-/* Markdown toolbar */
 
-/* ---------- Toast ---------- */
-.toast-stack {
-  position: fixed;
-  left: 50%;
-  bottom: 28px;
-  transform: translateX(-50%);
-  z-index: 1500;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  pointer-events: none;
-}
 
-.toast {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  background: var(--text);
-  color: var(--bg);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  padding: 10px var(--space-4);
-  font-size: var(--fs-13);
-  max-width: 70vw;
-  pointer-events: auto;
-  cursor: pointer;
-  animation: pop 0.18s ease;
-}
 
-.toast-icon {
-  font-weight: 700;
-  line-height: 1;
-}
 
-.toast-success .toast-icon { color: #2bd49b; }
-.toast-error .toast-icon { color: #ff6b6b; }
-.toast-info .toast-icon { color: var(--accent); }
 
-.toast-msg {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2747,22 +2415,6 @@ p:has(> .editor-drawing-container) {
 
 
 
-.handwrite {
-  width: 620px;
-  max-width: 92vw;
-  height: 520px;
-  max-height: 88vh;
-  min-width: 460px;
-  min-height: 340px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  overflow: hidden;
-  resize: both;
-  display: flex;
-  flex-direction: column;
-}
 
 
 
@@ -3129,48 +2781,18 @@ p:has(> .editor-drawing-container) {
 
 
 
-.new-page-guide {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-start;
-  gap: var(--space-4);
-  padding: var(--space-2) var(--doc-pad) var(--space-7);
-  max-width: var(--doc-width);
-  margin: 0 auto;
-  background: var(--bg);
-  z-index: 5;
-}
 
-.new-page-guide-desc {
-  font-size: var(--fs-14);
-  color: var(--text-dim);
-  margin-bottom: 26px;
-  letter-spacing: 0.02em;
-}
 
-/* Action list */
-.new-page-guide-list {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-}
 
 
 
 
 
-/* "Create as database" view row */
-.new-page-guide-db {
-  margin-top: 44px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-4);
-}
+
+
+
+
+
 
 
 
@@ -3831,8 +3453,7 @@ p:has(> .editor-drawing-container) {
 
 
 
-/* P1 comments / notifications drawer */
-.comments-drawer-tabs button.active { color: var(--accent); background: var(--chip-bg); }
+
 
 
 
@@ -4875,118 +4496,9 @@ button.ui-toggle::after {
 
 
 
-/* ---------------------------------------------------------------------------
-   阶段 1 · **冲突提示条**（`components/ConflictBanner.tsx`）
-
-   裁定 (iii)："判不了就**不静默选边**" —— 同一块被两台设备同时改过时，这条提示出现在页面顶部，
-   逐条给出「本机那一版 / 远端那一版」两个按钮（留本地 / 用远端）。**没有冲突时它整条不渲染**。
-
-   为什么用 `.main` 的直接子元素：它属于"页面级状态"，与 `.editor-toolbar-bar` 同一层。
-   窄屏下**只换行、不裁**（`flex-wrap`）—— 44px 触摸目标那条纪律同样适用于这两个按钮。
-   --------------------------------------------------------------------------- */
-.conflict-banner {
-  flex: 0 0 auto;
-  margin: var(--space-2) var(--space-3) 0;
-  padding: 10px var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-sidebar);
-  color: var(--text);
-  font-size: var(--fs-13);
-}
-.conflict-banner-head {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1) 10px;
-  align-items: baseline;
-}
-.conflict-banner-title {
-  font-weight: 600;
-}
-.conflict-banner-hint {
-  color: var(--text-dim);
-}
-.conflict-banner-list {
-  list-style: none;
-  margin: var(--space-2) 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.conflict-item {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px var(--space-3);
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-}
-.conflict-item-texts {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  flex: 1 1 240px;
-}
-.conflict-side {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.conflict-item-actions {
-  display: flex;
-  gap: 6px;
-  flex: 0 0 auto;
-}
-.conflict-btn {
-  min-height: 44px;
-  min-width: 72px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--text);
-  cursor: pointer;
-}
-.conflict-btn:hover {
-  background: var(--hover);
-}
-.conflict-btn-primary {
-  border-color: var(--accent);
-  color: var(--accent-strong);
-}
 
 
 
-/* ---- S3 时间复盘页（components/TimelineReview.tsx）----
-   只读视图：按天回看「这些天做过什么」。两种空态**必须长得不一样**：
-   `.tl-empty-nopages`（还没有页面 ⇒ 引导去建）／`.tl-empty-noactivity`（有页面但这些天没活动 ⇒ 引导去翻旧账）——
-   那是 S3 第②条的界面落点 ✓；把它们合并成一句「暂无数据」就分不开了 ✗。 */
-.timeline-review { padding: var(--space-5) 28px; max-width: 780px; }
-.tl-title { font-size: 1.05rem; margin: 0 0 var(--space-1); }
-.tl-window-note, .tl-day-key { color: var(--text-faint); font-size: 0.8rem; }
-.tl-days { list-style: none; margin: var(--space-3) 0 0; padding: 0; }
-.tl-day { margin: 0 0 18px; }
-.tl-day-head { display: flex; align-items: baseline; gap: var(--space-2); border-bottom: 1px solid var(--border); padding-bottom: var(--space-1); }
-.tl-day-summary { color: var(--text-faint); font-size: 0.8rem; }
-.tl-day-key { margin-left: auto; }
-.tl-entries { list-style: none; margin: 6px 0 0; padding: 0; }
-.tl-entry { display: flex; align-items: center; }
-.tl-entry-btn { display: flex; align-items: baseline; gap: var(--space-2); width: 100%; padding: var(--space-1) 6px; border: 0; border-radius: var(--radius-sm); background: none; color: inherit; text-align: left; cursor: pointer; }
-.tl-entry-btn:hover { background: var(--hover); }
-.tl-kind { flex: none; padding: 1px 6px; border: 1px solid var(--border); border-radius: var(--radius-full); color: var(--text-faint); font-size: 0.72rem; }
-.tl-kind-created { border-color: var(--accent); color: var(--accent); }
-.tl-entry-time { margin-left: auto; color: var(--text-faint); font-size: 0.78rem; }
-.tl-blocks { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); margin-left: 6px; }
-.tl-block { display: inline-flex; align-items: baseline; gap: 3px; padding: 0 6px; border: 1px solid var(--border); border-radius: var(--radius-full); color: var(--text-faint); font-size: 0.74rem; }
-.tl-block-mark { font-weight: 600; }
-.tl-block-added { border-color: var(--accent); color: var(--accent); }
-.tl-block-removed { text-decoration: line-through; }
-.tl-block-more { color: var(--text-faint); font-size: 0.74rem; }
 
 
 
@@ -5000,9 +4512,6 @@ button.ui-toggle::after {
 
 
 
-.tl-empty { padding: var(--space-6) 28px; }
-.tl-empty-main { margin: 6px 0 2px; }
-.tl-empty-hint { color: var(--text-faint); font-size: 0.86rem; }
 
 
 
@@ -5064,27 +4573,6 @@ button.ui-toggle::after {
 
 
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   语音输入的**半截话气泡**（2026-10-06 owner 附图：「语音录入时，实时显示文字」✓）
-   照 Lexical playground 那枚的观感：浅底、圆角、字比正文大一点、浮在光标旁 ✓。
-   ⚠️ position: fixed ＋ pointer-events: none —— 它只是**回声**，不许挡住点击 ✗。
-   ───────────────────────────────────────────────────────────────────────────── */
-.speech-interim {
-  position: fixed;
-  z-index: 1600;
-  max-width: min(420px, calc(100vw - 32px));
-  padding: 10px var(--space-4);
-  border-radius: 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
-  color: var(--text);
-  font-size: var(--fs-19);
-  line-height: 1.4;
-  white-space: pre-wrap;
-  word-break: break-word;
-  pointer-events: none;
-}
 
 
 
@@ -5175,30 +4663,44 @@ button.ui-toggle::after {
 
 
 
-/* ⚠️ 2026-10-22：`.mnote-home`（手机档"回首页"浮标，R188 的 (b)）**已删** ——
-   两条真路已建好（阅读屏顶栏「‹ 阅读」＋ 底栏三格），它压在正文右下角只是冗余的第二条。
-   判据改由 `scripts/check-mobile-exit-routes.mjs` 承担（每个移动屏必须有 ≥1 条回家的路）。
-   历史与来由见 `src/App.tsx` 里那段退役注释（⛔ 别把"为什么曾经需要它"一起删掉）。 */
 
-/* ══════════════════════════════════════════════════════════════════════════
-   移动端「阅读」屏（效果图 `docs/plans/mobile/mockups/04-read.svg`，规格 §4.4）
-   ⚠️ 同 `.mhome` / `.mcap` / `.mset`：**只有手机档会渲染它**（`App.tsx` 的
-      `isMobile && currentId` 那一支 ✓）⇒ 这里**不套 @media** ✓。
-   ⛔ 桌面那套 `.editor-*` / `.note-scroll` 一个字没动 ✓。
-   ⚠️ 本段写在文件**最外层**（前一个块已闭合、净深度 0 ✓）。
-   ⚠️ 底部让出约 72px：右下角是底栏与「同步」胶囊（`position: fixed` ✓）——
-      不让开的话页脚会被压住 ✓（与 `.mcap-bar` 那次同一类处置 ✓）。
-   ========================================================================== */
-.mread {
-  /* ⭐ 2026-10-10：06 词条卡是 `position: absolute` 压在本屏上 ✓ ⇒ 本屏必须是定位上下文 ✓ */
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  min-height: 100%;
-  /* 顶部状态栏 ＋ 底部三个悬浮控件都让开 ✓ */
-  padding: calc(10px + var(--sat, 0px)) 0 calc(72px + var(--sab, 0px));
-  overflow: hidden;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -5473,9 +4975,7 @@ button.ui-toggle::after {
 
 
 
-.mread {
-  background: var(--bg);
-}
+
 
 
 
@@ -5756,8 +5256,7 @@ button.mset-row:focus-visible {
 
 
 
-/* ⭐ 2026-10-25 owner：冲突提示卡片上边加点留白 */
-.conflict-banner{margin-top:14px}
+
 
 
 
