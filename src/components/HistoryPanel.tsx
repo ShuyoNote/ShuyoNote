@@ -10,6 +10,8 @@ import { usePopover } from "../hooks/usePopover";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { seedPageCrdtStateAfterRestore } from "../lib/crdt/seedPageState";
+import { lineDiff, hasDiff, type DiffLine } from "../lib/textDiff";
+import { pageText } from "../lib/docContent";
 import { ClockIcon } from "./icons";
 
 // Compact, friendly timestamp: today/yesterday → 时:分, this year → 月日 时:分, else 年月日.
@@ -44,6 +46,8 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   // a11y（2026-11-01）：触发器与弹层用同一个 id 关联（aria-controls / aria-haspopup）。
   const popoverId = useId();
+  // P2（2026-11-02）：展开某版后可以点「与当前版本对比」；diff 只对当前展开的那条有效。
+  const [diff, setDiff] = useState<{ versionId: string; lines: DiffLine[] } | null>(null);
 
   // 窄屏 / 矮视口的形态与其余浮层一致：不再锚定触发按钮，而是带 `is-sheet` 走底部弹层
   // （见 hooks/usePopover.ts 与 App.css 末尾那段）。原来它只是 CSS 里的
@@ -87,6 +91,17 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, close]);
+
+  // P2（2026-11-02）：**恢复前对照** —— 把「这一版」与「当前正文」做逐行 diff。
+  // 只读当前页文本（getState 现取，不订阅整店）；加载不到就明确说，不给空对照。
+  const showDiff = (versionId: string, oldText: string) => {
+    const currentText = pageText(useNotes.getState().current);
+    if (!currentText) {
+      toast("当前页内容还没加载，稍后再试", "error");
+      return;
+    }
+    setDiff({ versionId, lines: lineDiff(oldText, currentText) });
+  };
 
   const restore = async (versionId: string) => {
     // ★ 2026-10-08：文案**与事实对齐** —— 恢复前会把当前内容先快照进历史
@@ -215,7 +230,10 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
                   <div className="history-meta">
                     <button
                       className="history-row"
-                      onClick={() => setExpanded((cur) => (cur === v.id ? null : v.id))}
+                      onClick={() => {
+                        setDiff(null);
+                        setExpanded((cur) => (cur === v.id ? null : v.id));
+                      }}
                       aria-expanded={expanded === v.id}
                       title={expanded === v.id ? "收起" : "展开看这一版的全文"}
                     >
@@ -232,10 +250,35 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
                         <pre className="history-full">{full || "(空)"}</pre>
                         <div className="history-full-foot">
                           <span className="history-full-hint">恢复后，当前内容会先存成一条历史版本</span>
-                          <button className="history-restore" onClick={() => restore(v.id)}>
-                            恢复这一版
-                          </button>
+                          <div className="history-full-actions">
+                            <button
+                              className="history-diff-btn"
+                              onClick={() => showDiff(v.id, full)}
+                              aria-label="与当前版本对比"
+                            >
+                              与当前版本对比
+                            </button>
+                            <button className="history-restore" onClick={() => restore(v.id)}>
+                              恢复这一版
+                            </button>
+                          </div>
                         </div>
+                        {diff && diff.versionId === v.id && (
+                          <div className="history-diff" role="region" aria-label="与当前版本的差异">
+                            {!hasDiff(diff.lines) ? (
+                              <div className="history-diff-empty">与当前版本没有差异</div>
+                            ) : (
+                              diff.lines.slice(0, 500).map((line, idx) => (
+                                <div key={idx} className={`history-diff-line is-${line.kind}`}>
+                                  <span className="history-diff-sign">
+                                    {line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}
+                                  </span>
+                                  <span className="history-diff-text">{line.text || " "}</span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

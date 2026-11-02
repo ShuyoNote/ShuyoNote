@@ -33,6 +33,16 @@ export interface DocContent {
   text: string;
 }
 
+/**
+ * 从**内存里的页对象**取正文文本（组件 ⛔ 不许直接摸落盘字段名）。
+ *
+ * 为什么放在这一层：`check-doc-content-access` 的口径是"直接访问只经那一层"；历史面板
+ * 「与当前版本对比」要读当前正文，走这个函数而不是在组件里点属性名。
+ */
+export function pageText(page: { content_text?: unknown } | null | undefined): string {
+  return typeof page?.content_text === "string" ? page.content_text : "";
+}
+
 /** 批量读出来的行：多一个 `id`（读单页时 id 是入参，不必回传）。 */
 export interface ContentRow extends DocContent {
   id: string;

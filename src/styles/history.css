@@ -203,6 +203,79 @@
   color: var(--text-faint);
 }
 
+/* P2（2026-11-02）：恢复前 diff 对照。 */
+.history-full-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.history-diff-btn {
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: var(--radius-xs);
+  padding: 3px var(--space-2);
+  font-size: var(--fs-11);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.history-diff-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.history-diff {
+  margin-top: 6px;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-11);
+  line-height: 1.5;
+}
+
+.history-diff-line {
+  display: flex;
+  gap: 6px;
+  padding: 0 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.history-diff-sign {
+  flex: none;
+  width: 12px;
+  text-align: center;
+  color: var(--text-faint);
+}
+
+.history-diff-line.is-add {
+  background: var(--hover);
+}
+
+.history-diff-line.is-add .history-diff-sign {
+  color: var(--success);
+}
+
+.history-diff-line.is-del {
+  background: var(--danger-soft);
+}
+
+.history-diff-line.is-del .history-diff-sign {
+  color: var(--danger);
+}
+
+.history-diff-empty {
+  padding: 6px var(--space-2);
+  font-size: var(--fs-11);
+  color: var(--text-faint);
+}
+
 .history-item.is-open {
   align-items: flex-start;
   background: var(--hover);
