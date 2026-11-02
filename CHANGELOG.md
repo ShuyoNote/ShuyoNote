@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-02
+
 ### 新增
 - **能力页：已装能力可「禁用 / 启用」与「卸载」—— 禁用是**真的生效**，不是改个颜色（task-14）** —— 「可用（已装）」每行多两颗键：**禁用/启用**、**卸载**。只有真的下载过 pack 的词库可卸载；`office-import`（内置）与 `vlm-ocr`（本机端点）**可禁用、不可卸载** —— 卸载键禁用，并把理由写在行里（⛔ 不是悄悄少一颗键）。卸载前先弹确认，说清**只删应用下载的那份 pack**（`<app_data>/packs/<id>`）、**不碰笔记/附件/设置**；成功后词库回到「按需下载」，失败把**真实错误**原样显示出来（⛔ 不假装成功）。后端新增 `ability_states` / `ability_set_enabled` / `ability_uninstall`：白名单闭集、状态存 `<app_data>/abilities-state.json` 且 **tmp＋rename 原子写**、卸载只删 `packs/<id>` 且**幂等**、拒绝 builtin / local-endpoint / 未知 id。**禁用是真拦截**：`dictionary_status` / `dictionary_lookup` 对被停用的词库返回 `disabled`（⛔ 不再说成"未安装"，界面标题也从「未就绪」改成「已停用」）；`office-import` 的三条入口（双击 `.docx` 的事件、面板选文件、「新建页 → 从导入文件创建…」）在 `pathImport.ts` **一处**统一拒绝并给人话，Rust 侧 `--import` 转交处也同步关闭；`vlm-ocr` 的「检查本机模型」在停用时不可用，停用状态下也不许顺手下载词库。判据：Rust `abilities` 5 条（状态往返＋原子写、白名单、真删 packs 目录、幂等）＋ `dictionary` 1 条；前端 `AbilitiesPane.test.tsx` 7 条 ＋ `abilities/state.test.ts` 7 条 ＋ `office/officeAbilityGate.test.ts` 2 条。
 - **选中文字的工具条新增「正文 / 标题 1–5」下拉** —— 选中文字后工具条左侧多一个下拉：把选区涉及的块在正文与标题 1–5 之间互转。**保留块 ID**（`((blockId))` 引用与 CRDT 身份不断）、保留文字与行内格式；跨多个块时一起转；列表/代码/引用/分栏等块不碰（它们有各自的结构语义）。判据 `src/editor/blockType.test.ts` 6/6（含「块 ID 保留」「跨两块各转各的」「新增的标题 4/5 真能转」）；截图在 `_tmp/acceptance/blocktype-menu-1-5.png`。
