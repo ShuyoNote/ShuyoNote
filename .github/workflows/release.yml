@@ -298,6 +298,23 @@ jobs:
         if: matrix.platform == 'macos-latest'
         run: pnpm check:macos-bundle
 
+      - name: 重建 DMG（macOS：用已签名的 .app 重新打）
+        # Tauri 的 DMG 是在**签名之前**打的（`tauri build` 里 app 与 dmg 同一趟产物），
+        # 所以即便 app 已补签、DMG 里仍是**旧 app**（2026-11-02 实测：app 公证 Accepted，
+        # DMG 里 `Resources/mcp/shuyonote-mcp` 仍报未签名/无时间戳/无 hardened runtime）。
+        # 重打 + 重签同一路径的 dmg，公证脚本随后会读它。
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/release/bundle/macos/ShuyoNote.app"
+          DMG="$(ls src-tauri/target/release/bundle/dmg/*.dmg | head -1)"
+          test -d "$APP"
+          test -n "$DMG"
+          hdiutil create -volname "ShuyoNote" -srcfolder "$APP" -ov -format UDZO "$DMG"
+          codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$DMG"
+          codesign -d --verbose=4 "$DMG" 2>&1 | grep -E 'Authority|Timestamp' || true
+
       - name: 公证 ＋ 装订 ＋ Gatekeeper 复核（macOS）
         if: matrix.platform == 'macos-latest'
         run: node scripts/notarize-macos.mjs
