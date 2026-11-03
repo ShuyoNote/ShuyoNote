@@ -361,9 +361,10 @@ export function AbilitiesPane() {
     }
   };
 
-  // ⭐ 已装那一节 ＝ 源码里 `builtin` 的 ＋ ⭐ **盘上核实过的**可下载项 ✓（⛔ 不写死 ✗）；未核实的留在「按需下载」✓
-  //   ⚠️ **第 0 片**：这三行原来吃**写死那份** ✗ ⇒ 现在吃**清单状态** ✓（⭐ 内容默认就是它 ✓）。
-  const builtin = abilities.filter((a) => a.state === "builtin" || (a.state === "downloadable" && packReady));
+  // 2026-11-03（owner 拍 A）：把「下载装上的资产」与「随包内置功能」**分开两节** ——
+  // ⛔ 内置项不再混进「可用（已装）」：那里写「已装」＋ 不能卸载，读起来像漏了卸载按钮 ✗。
+  const installed = abilities.filter((a) => a.state === "downloadable" && packReady);
+  const builtinOnly = abilities.filter((a) => a.state === "builtin");
   const downloadable = abilities.filter((a) => a.state === "downloadable" && !packReady);
   const missing = abilities.filter((a) => a.state === "not-available");
   /** ⭐ 2026-10-18：需要用户在自己机器上备模型的那些（看图识字）✓ */
@@ -394,28 +395,11 @@ export function AbilitiesPane() {
         </p>
       ) : null}
 
-      <section className="set-section">
-        <div className="set-section-title">{t("abilities.builtinTitle", "可用（已装）")}</div>
-        {builtin.length === 0 ? (
-          <p className="set-hint">
-            {t(
-              "abilities.builtinEmpty",
-              // ⚠️⭐ **2026-10-11 订正**：上一句写的是「P0 那套格式解析……**但还没并进应用**」✗ ——
-              //    ⭐ 它**已经并进来了**（Office 导入那条线合进 dev ✓：入口在右下角，双击 `.docx` 也能唤起 ✓）。
-              //    ⇒ 这句话**过时了** ⇒ 改成如实说：**已接入，只是还没登记进这张表** ✓（所以这节仍是空的 ✓）。
-              //    ⚠️ 如实记：**更彻底的做法**是把那条登记成 `ABILITIES` 里的一条（那这节就不空了 ✓）——
-              //    ⛔ 那要动能力注册表，**等 owner 拍**再动 ✓。
-              // ⚠️⭐ **2026-10-11 改实**：这句话原来写着「P0 那套格式解析（Word/Excel/PPT/邮件/压缩包…）
-              //    **已经并进本应用**」✗ —— ⭐ **那句是夸大的** ✗：导入链**只做 `.docx`** ✓
-              //    （`xlsxExtractor` / `pptxExtractor` 在 `ooxml.ts` 里存在，但导入链**没调**它们 ✓）。
-              //    ⇒ ⭐ 改成不含格式清单的实话 ✓。
-              //    ⚠️ 而且现在这条**根本不会显示**了 —— 「Word 导入」已经登记成 `builtin` ⇒ 这一节不空 ✓；
-              //       留着它是为了"哪天那条被拿走"时这节仍有话说 ✓。
-              "本应用目前还没有登记进下面这张表的「已接入」能力。",
-            )}
-          </p>
-        ) : (
-          builtin.map((a) => {
+      {/* 2026-11-03：这一节只列**下载装上**的包；没有就整节收起（⛔ 不拿内置项填门面 ✗）。 */}
+      {installed.length > 0 && (
+        <section className="set-section">
+          <div className="set-section-title">{t("abilities.installedTitle", "可用（已装）")}</div>
+          {installed.map((a) => {
             const on = enabledOf(a.id);
             const uninstallable = canUninstallOf(a.id);
             const reason = uninstallReasonOf(a.id);
@@ -424,24 +408,17 @@ export function AbilitiesPane() {
                 <div className="set-row-text">
                   <div className="set-row-name">{a.name}</div>
                   <div className="set-row-sub">{a.summary}</div>
-                  {/* ⭐ task-14：停用了就**明说**（⛔ 不是悄悄少一个入口 ✗） */}
                   {!on ? (
                     <div className="set-row-sub" data-testid="ability-disabled-hint">
                       {t("abilities.disabledHint", "这一项已被停用：不再参与任何功能，随时可以启用。")}
                     </div>
                   ) : null}
-                  {/* 不可卸载 ⇒ 把**理由**写在行里（⛔ 只靠禁用按钮的 hover 不够：触屏没有 hover ✗） */}
                   {!uninstallable ? (
                     <div className="set-row-sub" data-testid="ability-uninstall-reason" title={reason}>
                       {reason}
                     </div>
                   ) : null}
                 </div>
-                {/* ⭐ 2026-10-11（owner 截图「优化这个界面」）：这一格原来复用 `.set-status` ✗ ——
-                    而那是**整块卡片**（`padding:12px 14px` ＋ 边框 ＋ 背景 ＋ **`margin-bottom:16px`** ✓）⇒
-                    ⭐ 既看着**像能点的按钮** ✗，⭐ 又把那一行撑高、还多出一大块节间空白 ✗。
-                    ⇒ ⭐ 换成**行内徽章** `.set-badge is-ok`（小胶囊 ＋ 成功色 ＋ 无边无阴影 ✓）。
-                    ⭐ task-14：停用那一档用 `.is-warn`（橙）＋ 「已禁用」，⛔ 不再写「已装」（那会是假话 ✗）。 */}
                 <span className={`set-badge ${on ? "is-ok" : "is-warn"}`} data-testid="ability-badge">
                   {on ? `√ ${t("abilities.installed", "已装")}` : t("abilities.disabled", "已禁用")}
                 </span>
@@ -462,9 +439,45 @@ export function AbilitiesPane() {
                 />
               </div>
             );
-          })
-        )}
-      </section>
+          })}
+        </section>
+      )}
+
+      {/* 2026-11-03（owner 拍 A）：内置能力单独一节 —— 标「内置」不标「已装」，只留禁用/启用，⛔ 不显示卸载。 */}
+      {builtinOnly.length > 0 && (
+        <section className="set-section" data-testid="builtin-only-section">
+          <div className="set-section-title">{t("abilities.builtinOnlyTitle", "内置能力")}</div>
+          <p className="set-hint">
+            {t("abilities.builtinOnlyHint", "随安装包提供，无需下载；不可卸载，但可以停用。")}
+          </p>
+          {builtinOnly.map((a) => {
+            const on = enabledOf(a.id);
+            return (
+              <div className="set-row" key={a.id} data-ability={a.id} data-enabled={on ? "true" : "false"}>
+                <div className="set-row-text">
+                  <div className="set-row-name">{a.name}</div>
+                  <div className="set-row-sub">{a.summary}</div>
+                  {!on ? (
+                    <div className="set-row-sub" data-testid="ability-disabled-hint">
+                      {t("abilities.disabledHint", "这一项已被停用：不再参与任何功能，随时可以启用。")}
+                    </div>
+                  ) : null}
+                </div>
+                <span className={`set-badge ${on ? "is-ok" : "is-warn"}`} data-testid="ability-badge">
+                  {on ? t("abilities.builtin", "内置") : t("abilities.disabled", "已禁用")}
+                </span>
+                <AbilityToggle
+                  id={a.id}
+                  name={a.name}
+                  enabled={on}
+                  busy={busyAbility === a.id}
+                  onToggle={() => void toggleAbility(a)}
+                />
+              </div>
+            );
+          })}
+        </section>
+      )}
 
       {/* ⭐ 2026-10-11：⭐ 没有可下载的项时**整节收起来** ✗ —— 否则会剩一个空标题配上
           「只在点「下载」时才联网…」的说明，看着像坏了 ✓（⭐ 装机后词库已移到上一节 ✓）。 */}

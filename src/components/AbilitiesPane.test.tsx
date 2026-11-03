@@ -320,33 +320,40 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
   //         `xlsxExtractor` / `pptxExtractor`，但导入链**一次都没调**它们 ⇒
   //         用户面写"支持 Excel / PPT / 邮件 / 压缩包"就是**拿相邻的东西当证据** ✗（本仓栽过 ✓）。
   // ─────────────────────────────────────────────────────────────────────────────
-  it("⭐ i) 「可用（已装）」不再空 ＋ ⛔ 这条能力**不许**把没接线的格式说成支持", () => {
+  it("⭐ i) 内置能力单独一节（⛔ 不再混进「可用（已装）」）＋ 不许把没接线的格式说成支持", () => {
     const src = readFileSync(SRC_TSX, "utf8");
     expect(
       /id:\s*"office-import"[\s\S]*?state:\s*"builtin"/.exec(src),
-      "源码里没有把 office-import 登记成 builtin ⇒ 那一节又会是空的 ✗",
+      "源码里没有把 office-import 登记成 builtin ⇒ 内置能力那节没了 ✗",
     ).not.toBeNull();
 
-    const sec = [...host.querySelectorAll<HTMLElement>(".set-section")].find((s) =>
+    // 2026-11-03（owner 拍 A）：内置项**不再**出现在「可用（已装）」里 ——
+    // 那一节只放真正下载装上的资产（否则「已装」＋ 不可卸载读起来像漏了卸载按钮）。
+    const installedSec = [...host.querySelectorAll<HTMLElement>(".set-section")].find((s) =>
       (s.querySelector(".set-section-title")?.textContent ?? "").includes("可用（已装）"),
     );
-    expect(sec, "找不到「可用（已装）」那一节").not.toBeUndefined();
+    expect(
+      installedSec?.querySelectorAll(".set-row").length ?? 0,
+      "内置项混进了「可用（已装）」✗（那一节只该有下载装的包）",
+    ).toBe(0);
+
+    const sec = [...host.querySelectorAll<HTMLElement>(".set-section")].find((s) =>
+      (s.querySelector(".set-section-title")?.textContent ?? "").includes("内置能力"),
+    );
+    expect(sec, "找不到「内置能力」那一节").not.toBeUndefined();
     const rows = [...sec!.querySelectorAll<HTMLElement>(".set-row")];
-    expect(rows.length, "这一节应当**恰好一条**（多了少了都说明登记面变了）").toBe(1);
+    expect(rows.length, "这一节应当恰好一条（Word 导入）").toBe(1);
     const claim = rows[0].textContent ?? "";
-    expect(claim, "那条没写「已装」").toContain("已装");
+    expect(claim, "内置项要标「内置」，⛔ 不许写「已装」").toContain("内置");
+    expect(claim, "内置项⛔ 不该再写「已装」").not.toContain("已装");
     expect(claim, "那条的名字不是「Word 导入」").toContain("Word 导入");
     for (const bad of ["Excel", "PPT", "xlsx", "pptx", "邮件", "压缩包"]) {
       expect(claim, `⭐ 用户面写了「${bad}」⇒ 那个格式**没接线**（导入链只做 .docx）✗`).not.toContain(bad);
     }
 
     // 接线收据：这条能力得**真**有入口（⛔ 不是写一行字就说它有 ✗）
-    // ⚠️ 路径从 `SRC_TSX` 推（它本来就是真文件系统路径 ✓）——
-    //    ⛔ 别用 `new URL(…, import.meta.url)` ✗：**vitest 里那是 http URL** ⇒ `readFileSync`
-    //    报「The URL must be of scheme file」✗（两版都踩过：先拼成 `src/components/App.tsx` ✗，
-    //    再换成 import.meta.url ✗）⇒ 现在只把 `components/AbilitiesPane.tsx` 这段换成 `App.tsx` ✓。
     const app = readFileSync(SRC_TSX.replace(/components[\\/][^\\/]+$/, "App.tsx"), "utf8");
-    expect(app, "App 里没有 <OfficeImportPanel ⇒ 那这条就不是「已装」而是空话 ✗").toContain("<OfficeImportPanel");
+    expect(app, "App 里没有 <OfficeImportPanel ⇒ 那这条就是空话 ✗").toContain("<OfficeImportPanel");
   });
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -377,7 +384,7 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     flushSync(() => btn!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await settle();
     const installed = rowsIn("可用（已装）").map((r) => r.textContent ?? "");
-    expect(installed.length, "下完 ⇒ 已装那节应当是两条：Word 导入 ＋ 英汉词库").toBe(2);
+    expect(installed.length, "下完 ⇒ 已装那节只该有英汉词库一条（Word 导入在内置能力）").toBe(1);
     expect(installed.join("|"), "词库没移过去").toContain("英汉词库");
     expect(installed.join("|"), "它得写着「已装」").toContain("已装");
     expect(rowsIn("按需下载").length, "「按需下载」里不该再列它").toBe(0);
@@ -388,7 +395,7 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     await settle();
     // ⚠️ 这里不能重挂载（`beforeEach` 已经挂过、effect 依赖是 []）⇒ 判的是**默认那一态**：
     //    `available:false` / 查询失败 ⇒ ⭐ 词库**必须留在「按需下载」**✓，⛔ 不许跑进「已装」✗。
-    expect(rowsIn("可用（已装）").length, "查不到就当成没装 ⇒ 已装那节只应有 Word 导入一条").toBe(1);
+    expect(rowsIn("可用（已装）").length, "查不到就当成没装 ⇒ 已装那节不该出现（Word 导入在内置能力）").toBe(0);
     expect(rowsIn("按需下载").length, "查不到 ⇒ 它还留在「按需下载」里，用户还能再下一次").toBe(1);
     expect(rowsIn("可用（已装）").map((r) => r.textContent ?? "").join("|"), "⛔ 不许把没核过的词库说成已装 ✗").not.toContain(
       "英汉词库",
@@ -417,32 +424,28 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     await settle();
   };
 
-  it("⭐ l) 已装行有「禁用」「卸载」；内置那条**不可卸载但可禁用**（按钮禁用 ＋ 写明理由）", async () => {
+  it("⭐ l) 已装行有「禁用」「卸载」；内置项在「内置能力」只有禁用、没有卸载键", async () => {
     await mountWithDictInstalled();
-    const builtinRows = rowsIn("可用（已装）");
-    expect(builtinRows.length, "词库装好之后这一节是两条：Word 导入 ＋ 英汉词库").toBe(2);
+    const installedRows = rowsIn("可用（已装）");
+    expect(installedRows.length, "词库装好之后「可用（已装）」只该有英汉词库一条").toBe(1);
 
-    const office = rowOf("可用（已装）", "office-import");
+    const office = rowOf("内置能力", "office-import");
     const ecdict = rowOf("可用（已装）", "ecdict-en-zh");
-    expect(office, "找不到 Word 导入那一行").not.toBeNull();
+    expect(office, "找不到 Word 导入那一行（内置能力）").not.toBeNull();
     expect(ecdict, "找不到英汉词库那一行").not.toBeNull();
 
-    // 每行都有两颗键，且**都带 title / aria-label**（owner 口径：所有按钮都要有）
-    for (const row of [office!, ecdict!]) {
-      for (const testid of ["ability-toggle", "ability-uninstall"]) {
-        const b = btnOf(row, testid);
-        expect(b, `缺了 ${testid} 那颗键`).not.toBeNull();
-        expect((b!.getAttribute("title") ?? "").length, `${testid} 少了 title`).toBeGreaterThan(0);
-        expect((b!.getAttribute("aria-label") ?? "").length, `${testid} 少了 aria-label`).toBeGreaterThan(0);
-      }
+    // 内置项：只有禁用/启用，⛔ 没有卸载键、也不再显示“不可卸载”理由（那一套只属于已装资产）
+    expect(btnOf(office!, "ability-toggle"), "内置项必须有禁用/启用").not.toBeNull();
+    expect(btnOf(office!, "ability-uninstall"), "内置项⛔ 不该再有卸载键").toBeNull();
+    expect(office!.textContent ?? "", "内置项⛔ 不该再暗示“不可卸载”").not.toContain("没有可卸载的下载包");
+
+    // 已装资产：两颗键都在，且都带 title / aria-label
+    for (const testid of ["ability-toggle", "ability-uninstall"]) {
+      const b = btnOf(ecdict!, testid);
+      expect(b, `缺了 ${testid} 那颗键`).not.toBeNull();
+      expect((b!.getAttribute("title") ?? "").length, `${testid} 少了 title`).toBeGreaterThan(0);
+      expect((b!.getAttribute("aria-label") ?? "").length, `${testid} 少了 aria-label`).toBeGreaterThan(0);
     }
-
-    // builtin ⇒ 可**禁用**、不可**卸载**，且理由在行里可见（⛔ 只靠 hover 不够：触屏没有 hover）
-    expect(btnOf(office!, "ability-toggle")!.disabled, "内置能力必须**可以禁用**").toBe(false);
-    expect(btnOf(office!, "ability-uninstall")!.disabled, "内置能力⛔ 不该能卸载（没有下载包）").toBe(true);
-    expect((office!.textContent ?? ""), "不可卸载的理由要写在行里").toContain("内置能力");
-
-    // 词库是真的下载过一个 pack ⇒ 两颗键都能点
     expect(btnOf(ecdict!, "ability-uninstall")!.disabled, "词库是唯一可卸载的那条").toBe(false);
   });
 
@@ -488,7 +491,7 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     expect(opts!.danger, "破坏性动作要标 danger").toBe(true);
 
     expect(apiStub.abilityUninstall, "确认之后必须真调 ability_uninstall").toHaveBeenCalledWith("ecdict-en-zh");
-    expect(rowsIn("可用（已装）").length, "删掉之后「已装」只剩 Word 导入一条").toBe(1);
+    expect(rowsIn("可用（已装）").length, "删掉之后「可用（已装）」应当空掉（Word 导入在内置能力）").toBe(0);
     expect(rowsIn("按需下载").length, "词库必须回到「按需下载」（还能再下）").toBe(1);
     expect(
       (host.querySelector('[data-testid="ability-notice"]')?.textContent ?? ""),
@@ -503,7 +506,7 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     flushSync(() => btnOf(row, "ability-uninstall")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await settle();
     expect(apiStub.abilityUninstall, "取消之后⛔ 不许调卸载命令").not.toHaveBeenCalled();
-    expect(rowsIn("可用（已装）").length, "取消之后两条都还在").toBe(2);
+    expect(rowsIn("可用（已装）").length, "取消之后词库还在").toBe(1);
   });
 
   it("⭐ p) 卸载失败 ⇒ 把**真实错误**显示出来（⛔ 不许假装成功）", async () => {
@@ -517,7 +520,7 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     expect(notice, "失败必须有一处把它说出来").not.toBeNull();
     expect(notice!.getAttribute("data-tone"), "这一条是**错误**档").toBe("err");
     expect(notice!.textContent ?? "", "要显示后端那句真实错误，⛔ 不许吞掉").toContain("拒绝访问");
-    expect(rowsIn("可用（已装）").length, "失败 ⇒ 词库**还在**（⛔ 不许假装已经删了）").toBe(2);
+    expect(rowsIn("可用（已装）").length, "失败 ⇒ 词库**还在**（⛔ 不许假装已经删了）").toBe(1);
   });
 
   it("⭐ q) 后端说「已停用」⇒ 已装行标「已禁用」、vlm 的检查键不可用（禁用要真的影响入口）", async () => {
@@ -530,10 +533,14 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     remount();
     await settle();
 
-    // 停用 ≠ 没装：词库**仍然算已装**（所以它必须留在这一节、标已禁用）
-    expect(rowsIn("可用（已装）").length, "停用不等于没装 ⇒ 这一节仍是两条").toBe(2);
-    for (const id of ["office-import", "ecdict-en-zh"]) {
-      const row = rowOf("可用（已装）", id)!;
+    // 停用 ≠ 没装：词库**仍然算已装**（所以它必须留在「可用（已装）」、标已禁用）；
+    // 内置项在「内置能力」里也标已禁用。
+    expect(rowsIn("可用（已装）").length, "停用不等于没装 ⇒ 可用（已装）仍应有英汉词库一条").toBe(1);
+    for (const [section, id] of [
+      ["可用（已装）", "ecdict-en-zh"],
+      ["内置能力", "office-import"],
+    ] as const) {
+      const row = rowOf(section, id)!;
       expect(row.textContent ?? "", `${id} 那一行要写「已禁用」`).toContain("已禁用");
       expect(row.textContent ?? "", `${id} 那一行⛔ 不许再写「已装」`).not.toContain("√ 已装");
     }
