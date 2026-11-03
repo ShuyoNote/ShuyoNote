@@ -29,8 +29,13 @@ export function updateStatus(latest: string | null, current: string): UpdateStat
 
 export const RELEASES_URL = "https://gitcode.com/shuyo-cn/ShuyoNote/releases";
 
-/** The stable "latest" release channel that always carries the newest metadata. */
-export const LATEST_MANIFEST_URL = "https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/latest/latest.json";
+/** The stable "latest" release channel that always carries the newest metadata.
+ *
+ * ⚠️ 2026-11-02（v2.1.0 发版实测）：GitCode release 下载 URL 被 CDN 缓存
+ * （`x-ccdn-cachettl: 31536000`）钉在 2.0.0，重传资产也不刷新 ⇒ 2.0.0 客户端
+ * 永远看到「已是最新」。v2.1.1 起改由国内主站托管（每次发版随 Web 版一起更新），
+ * 不再依赖 GitCode release 下载缓存。*/
+export const LATEST_MANIFEST_URL = "https://shuyo.cn/app/latest.json";
 
 /**
  * Dev-only debug hook: appending `?updateDebug=<version>` to the URL forces an

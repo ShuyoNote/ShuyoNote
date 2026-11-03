@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-11-02
+
+### 修复
+- **检查更新永远显示「已是最新」（2.1.0 发版当天实测）** —— GitCode release 下载 URL `.../releases/download/latest/latest.json` 被 CDN 缓存 **一年**（`x-ccdn-cachettl: 31536000`，`age: 637714`），origin 上的 `latest.json` 资产已更新到 2.1.0、但 CDN 仍返回 2.0.0 ⇒ 2.0.0 客户端点「检查更新」读到 2.0.0，永远显示「v2.0.0 已是最新」。重传资产、PATCH release、带 `Cache-Control`/`X-CCDN-*`/`?download=1` 均不刷新，GitCode 也无 purge API。现在更新入口切到**国内主站** `https://shuyo.cn/app/latest.json`（每次发版随 Web 版一起 `scp` 部署，无此 CDN 缓存），`src-tauri/tauri.conf.json` 与 `src/lib/updates.ts` 的 `LATEST_MANIFEST_URL`、`scripts/check-release-state.mjs` 的 `CHANNEL` 三处同步。**边界**：2.0.0 客户端内置的旧地址无法远程改，需手动安装一次 2.1.1；2.1.1 起自动更新恢复。
+
 ## [2.1.0] - 2026-11-02
 
 ### 新增
