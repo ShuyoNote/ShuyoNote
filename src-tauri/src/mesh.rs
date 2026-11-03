@@ -6027,6 +6027,7 @@ mod tests {
     fn lan_peer_of(device: &str, base: Option<&str>, spaces: &[&str]) -> crate::lan::Peer {
         crate::lan::Peer {
             announce: crate::lan::LanAnnounce {
+                listen_port: None,
                 trust_ask: String::new(),
                 trust_secret: String::new(),
                 v: 1,
@@ -6104,6 +6105,7 @@ mod tests {
     fn announced(device: &str, base: &str, spaces: &[&str]) -> Peer {
         Peer {
             announce: LanAnnounce {
+                listen_port: None,
                 trust_ask: String::new(),
                 trust_secret: String::new(),
                 v: crate::lan::WIRE_VERSION,
