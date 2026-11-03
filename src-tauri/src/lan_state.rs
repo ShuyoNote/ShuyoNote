@@ -17,7 +17,7 @@
 //! 以及**驱动那两件事的循环**（[`start`]：一个 tokio 任务，绑 UDP ＋ 周期广播 ＋ 收报入库 ＋
 //! 按 TTL 腾过期行）。"这一轮走哪个地址"仍是 `lan::resolve_base` 的活（纯函数、判据在那儿）。
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use tauri::Emitter;
@@ -25,6 +25,43 @@ use tauri::Manager;
 
 use crate::db::Db;
 use crate::lan::{self, Peer, PeerTable};
+
+/// ⭐ 2026-11-03：发现层**实际监听的端口**（0 = 还没绑上）—— 供 `lan_status` 的可见读数使用。
+///
+/// 为什么需要它：端口候选列表（`lan::CANDIDATE_PORTS`）让每一端可能绑在**不同**端口上，
+/// 界面上的「发现频道」必须报**实际**那个（⛔ 不是写死 47821 ✗）。
+static DISCOVERY_PORT: AtomicU16 = AtomicU16::new(0);
+
+/// ⭐ 2026-11-03：发现层最近一次「候选端口全绑不上」的原因（绑上后清空）。
+///
+/// 旧实现只静默重试 ⇒ 用户只看到「发现不了同步电脑」，零线索；这一格让失败**说得出来**
+/// （接在 `lan_status.line` 末尾，见 `lan::discovery_suffix`）。
+static DISCOVERY_ERROR: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+fn discovery_error_cell() -> &'static Mutex<Option<String>> {
+    DISCOVERY_ERROR.get_or_init(|| Mutex::new(None))
+}
+
+/// 发现层**实际监听**的 UDP 端口；`None` = 还没绑上（或这一进程没起发现层）。
+pub fn listen_port() -> Option<u16> {
+    let p = DISCOVERY_PORT.load(Ordering::SeqCst);
+    (p != 0).then_some(p)
+}
+
+/// 发现层最近一次绑定失败的原因（成功绑定后会被清空）。
+pub fn discovery_error() -> Option<String> {
+    discovery_error_cell()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+fn set_discovery(port: Option<u16>, error: Option<String>) {
+    DISCOVERY_PORT.store(port.unwrap_or(0), Ordering::SeqCst);
+    *discovery_error_cell()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = error;
+}
 
 /// ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 本机那份**握手中**的状态 ✓（⭐ 进程级一份 ✓）。
 ///
@@ -1093,6 +1130,7 @@ pub fn announces_for_with_mesh(
             space_kind,
         )
         .unwrap_or_else(|| lan::LanAnnounce {
+            listen_port: None,
             v: lan::WIRE_VERSION,
             device_id: dev.to_string(),
             device_name: device_name.trim().to_string(),
@@ -1218,9 +1256,43 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         //    ⭐ 而 `start()` 自身有 `OnceLock` 幂等 ⇒ ⭐ **首次失败之后这次会话永久没有发现层** ✓
         //    （⭐ 即使占用者（多半是"上一个实例还没退干净"）两秒后就退出了 ✓）。
         //    真机读数：本机 12 天里 10048 出现过 **9 次**，全是偶发（⭐ 端口随时能绑上 ✓）。
-        //    ⇒ ⭐ 现在走 `bind_listener_with_retry`：**退避重试到绑上为止** ✓（1s→2s→…→30s 封顶 ✓）。
-        //    ⚠️ 它**不会返回错误** ✓ ⇒ 下面那句"没得听也没得喊"的旧注释不再成立 ✓。
-        let sock = lan::bind_listener_with_retry(lan::lan_port()).await;
+        //    ⇒ ⭐ 2026-11-03 再进一步：**候选端口列表**（`lan::lan_ports()`）—— 单个端口被
+        //    Windows 保留段（Hyper-V/WSL 动态保留）占掉时，不再让整个发现层永久起不来：
+        //    按顺序试，绑到哪个就是哪个，并把**实际端口**写进公告（`listen_port`）。
+        //    全失败 ⇒ 退避重试（1s→2s→…→30s 封顶）；失败原因记进进程级 `DISCOVERY_ERROR`
+        //    （`lan_status.line` 末尾会如实显示，见 `lan::discovery_suffix`）。
+        let ports = lan::lan_ports();
+        let (sock, listen_port) = {
+            const MAX_DELAY_MS: u64 = 30_000;
+            let mut delay_ms: u64 = 1_000;
+            let mut last_logged: u64 = 0;
+            loop {
+                match lan::bind_first_free(&ports).await {
+                    Ok((sock, port)) => {
+                        set_discovery(Some(port), None);
+                        if last_logged > 0 {
+                            eprintln!(
+                                "[lan] 发现层起来了（UDP {port} 已绑定，在候选 {ports:?} 里）"
+                            );
+                        } else {
+                            eprintln!("[lan] 发现层已监听 UDP {port}（候选 {ports:?}）");
+                        }
+                        break (sock, port);
+                    }
+                    Err(e) => {
+                        set_discovery(None, Some(e.clone()));
+                        if last_logged != delay_ms {
+                            eprintln!(
+                                "[lan] 发现层：候选端口全绑不上（{delay_ms}ms 后重试，同步照旧）：{e}"
+                            );
+                            last_logged = delay_ms;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
+                    }
+                }
+            }
+        };
         // ⚠️ 这里**不再**预先把目标算死（原来是这样）——目标要每一轮带上"已经认识的对端"，
         //    见下面 ③ 里 `lan::announce_targets` 那段注释（真机抓到的单向发现）。
         let state = LanState::global(&device_id);
@@ -1442,12 +1514,11 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 // ⭐ **P0 片（2026-10-13）**：外面再套一层 `append_extra_targets` ✓ —— 它只在
                 //    `SHUYONOTE_LAN_EXTRA_TARGETS` 被设了时才追加（⛔ 不设 ⇒ 原样返回 ✓），
                 //    服务的是**只有测试才有的形态**（两个发现实体同机互指 ✓，见那函数的注释 ✓）。
-                //    ⚠️ 底下那句 `announce_targets(lan::LAN_PORT, &state.peers(now))` **保持逐字不变** ✗
-                //    （有判据按源码逐字钉它 ✓）。
-                let targets = lan::append_extra_targets(lan::announce_targets(
-                    lan::LAN_PORT,
-                    &state.peers(now),
-                ));
+                //    ⚠️ 2026-11-03：改用**多候选端口版** `announce_targets_all`（每个候选端口各发
+                //    一条广播/回环；对端报了 `listen_port` 就单播到它自报的端口 ⇒ 两端绑在不同
+                //    候选端口上也发现得到）。源码级判据同步更新到新调用（见本文件 tests）。
+                let targets =
+                    lan::append_extra_targets(lan::announce_targets_all(&ports, &state.peers(now)));
                 // ⭐ **2026-10-09（task-8）**：走**唯一入口** `announces_for_this_round` ✓ ——
                 //    它在发之前把 `space_id` 换成**解析后的空间**（个人空间 ⇒ 配对暗号 ✓）。
                 //    ⛔ 不要再退回"把 `profiles` 直接喂给 `announces_for_with_mesh`" ✗
@@ -1461,7 +1532,10 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
                     announces_for_this_round(&c, &device_id, &device_name, &profiles, &mesh_bases)
                 };
-                for a in announced {
+                for mut a in announced {
+                    // ⭐ 2026-11-03：把**本机实际监听的端口**写进公告 —— 对端据此单播回来
+                    //    （两端可能绑在不同候选端口上；老对端忽略这一格，仍按候选端口全打）。
+                    a.listen_port = Some(listen_port);
                     // ⭐ **2026-10-09（task-8）**：**每一轮公告都留一行读数** ✓ ——
                     // "发出去几条 / 目标长什么样 / **哪一条失败了、为什么**" 以前**完全不可见** ✗
                     // （`announce_once` 只留最后一条错误、且只在**全部**失败时才报 ⇒ 部分失败静默 ✗）。
@@ -2091,6 +2165,7 @@ mod tests {
     fn peer_of(device: &str, base: &str, spaces: &[&str]) -> Peer {
         Peer {
             announce: LanAnnounce {
+                listen_port: None,
                 trust_ask: String::new(),
                 trust_secret: String::new(),
                 v: WIRE_VERSION,
@@ -2570,8 +2645,13 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            code.contains("lan::announce_targets(lan::LAN_PORT, &state.peers(now))"),
+            code.contains("lan::announce_targets_all(") && code.contains("&state.peers(now),"),
             "公告目标没有按「活的表」现算 ⇒ 认识的对端也发不到（单向发现会回来）"
+        );
+        // ⭐ 2026-11-03：公告必须携带**本机实际监听的端口**（两端可能绑在不同候选端口上）。
+        assert!(
+            code.contains("a.listen_port = Some(listen_port);"),
+            "公告没带实际监听端口 ⇒ 对端只能盲打候选端口（端口回退就白做了）"
         );
         // ⚠️ 这条"不许出现"的模式**必须拼出来**：`include_str!` 把**本判据自己**也读进去了，
         //    写成字面量就会自己命中自己（第一版就是这么假红的）。
@@ -2908,6 +2988,7 @@ mod short_id_tests {
     fn peer_with_ask(device: &str, ask: &str, seen_at: i64) -> crate::lan::Peer {
         crate::lan::Peer {
             announce: crate::lan::LanAnnounce {
+                listen_port: None,
                 trust_ask: ask.to_string(),
                 trust_secret: String::new(),
                 v: crate::lan::WIRE_VERSION,
