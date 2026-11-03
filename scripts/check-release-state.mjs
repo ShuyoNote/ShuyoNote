@@ -44,7 +44,9 @@ const DEEP = process.argv.includes("--deep");
 const PINNED_IP = argOf("--pinned-ip") ?? process.env.GH_PINNED_IP ?? "";
 const VERSION = (argOf("--version") ?? JSON.parse(readFileSync("package.json", "utf8")).version).replace(/^v/, "");
 const TAG = `v${VERSION}`;
-const CHANNEL = "https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/latest/latest.json";
+// 2026-11-02：入口从 GitCode release 下载 URL 切到国内主站 —— 前者被 CDN
+// （x-ccdn-cachettl=31536000）缓存一年，重传资产不刷新，2.0.0 客户端永远“已是最新”。
+const CHANNEL = "https://shuyo.cn/app/latest.json";
 const GH_REPO = "ShuyoNote/ShuyoNote";
 const WEB_ENTRIES = ["https://shuyonote.github.io/ShuyoNote/", "https://shuyo.cn/app/"];
 

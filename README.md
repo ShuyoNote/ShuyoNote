@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.1.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-2.1.1-blue" alt="version">
   <a href="https://github.com/ShuyoNote/ShuyoNote/actions/workflows/ci.yml"><img src="https://github.com/ShuyoNote/ShuyoNote/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.50-3370ff" alt="lexical">
@@ -30,7 +30,7 @@
 
 - **国际 / GitHub Pages**：[https://shuyonote.github.io/ShuyoNote/](https://shuyonote.github.io/ShuyoNote/)
 - **国内 / 自托管主站**：[https://shuyo.cn/app/](https://shuyo.cn/app/)
-- **下载 2.1.0**：[GitHub Releases](https://github.com/ShuyoNote/ShuyoNote/releases/)（Windows / Linux / macOS / Android）
+- **下载 2.1.1**：[GitHub Releases](https://github.com/ShuyoNote/ShuyoNote/releases/)（Windows / Linux / macOS / Android）
 - **国内镜像 / GitCode**：[GitCode Releases](https://gitcode.com/shuyo-cn/ShuyoNote/releases/)（Windows / Linux / macOS / Android）
 
 > Web 版与桌面版共用同一套前端与数据模型（浏览器端本地优先、离线可用，用 sql.js + IndexedDB）。2.0 起同一 WiFi 多设备直连；**个人多设备**用「设备直连」（局域网 / 虚拟局域网，数据不过服务器；跨网另需自部署中继，尚未进正式包）；⭐ **团队 / 多人协作已移除**：`shuyonote-sync-server` 已于 **2026-10-29 归档**（**不再作为在售服务端**），团队 / 企业能力由**独立闭源企业版** `enterprise-server` 承载 ⇒ **2026-10-29 第二阶段**：团队 UI 与前端契约（`team_*`）**已删除** ⇒ 客户端**不再有任何团队入口**（含旧配置的界面）；**2026-10-29 第三阶段**：**Rust 团队实现也已删除** ✅（`sync.rs` 里 31 个 `team_*` 函数、9 个 `Team*` 类型、`AuthUserId`/`parse_team_me`/presence 隐私闸等 helper 全部移除）；**`sync_profiles`／工作区同步机制保留**（个人同步与历史团队空间数据仍要读得懂）；`specs/` 与企业 IM 契约**保留**（企业版仍引用）。Web 版不支持多设备 / 团队同步。
@@ -489,6 +489,7 @@ ShuyoNote/
 - [x] **跨平台架构（M16 全端通吃）**：平台无关核心 + 可插拔平台壳 → 浏览器 PWA / 鸿蒙 ArkWeb（可插拔壳）；**安卓 / iOS 走 Tauri 原生壳**（同一份 Rust 内核）
 - [x] **2.0.0（2026-10-25）**：同一 WiFi 多设备直连（LAN Sync）/ MCP 五档权限 / 跨网订阅与许可证体系；CRDT 代码已接入、双机 D1–D6 验收中；跨网中继数据面不进正式包。
 - [x] **2.1.0（2026-11-02）**：MCP 面板重设计（档位单选 / 能力分类 / 接入引导）/ 空间包导入导出 / 属性区类型化与 B1–B3 收尾 / 能力页禁用·启用·卸载 / 版本历史恢复数据修复 + 几何 + diff 对照 + a11y / S4 App.css 域拆分收口（26,439 → 781 行）。
+- [x] **2.1.1（2026-11-02，hotfix）**：更新入口从 GitCode release 下载 URL 切到 `shuyo.cn/app/latest.json` —— GitCode CDN 把 `latest.json` 缓存了一年（`x-ccdn-cachettl: 31536000`），重传资产不刷新，2.0.0 客户端永远显示「已是最新」。2.0.0 用户需手动装一次 2.1.1，之后自动更新恢复。
 - [x] **Android 移动端**：**2.0.0 APK 已发布**（Tauri 原生壳；**CI 已跑通**——`.github/workflows/android.yml` 出自检包、`.github/workflows/release.yml` 出对外发版件，**两者都用正式密钥签名并硬比对指纹**，见 [RELEASING.md](docs/RELEASING.md) §⑨）；逐条真机验收 / 上架材料继续。iOS：打包链路已打通、界面 / 真机待验（见 [docs/MOBILE.md](docs/MOBILE.md)）。
 
 > 详细演进路线与里程碑，见 [docs/roadmap.md](docs/roadmap.md)。

@@ -16,6 +16,15 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchUpdateManifest, ANDROID_PLATFORM_KEY, LATEST_MANIFEST_URL } from "./updates";
 
+// 2026-11-02：GitCode release 下载 URL 被 CDN 缓存一年，导致 2.0.0 客户端永远
+// “已是最新”。入口切到国内主站后，这个常量就是唯一事实源（三处同步：tauri.conf /
+// updates.ts / check-release-state.mjs）——⛔ 不许再改回 GitCode release 下载 URL。
+describe("更新清单入口", () => {
+  it("走国内主站 shuyo.cn（不再走被 CDN 缓存的 GitCode release 下载 URL）", () => {
+    expect(LATEST_MANIFEST_URL).toBe("https://shuyo.cn/app/latest.json");
+  });
+});
+
 /** 真实的 apk 字节指纹形状：`sha256:` + 64 位小写 hex（此处是 8 组 8 字符，凑满 64）。 */
 const APK_SHA256 = "42457c12deadbeef00112233445566778899aabbccddeeff0011223344556677";
 

@@ -28,14 +28,14 @@ export type DesktopUpdateResult =
     }
   | { state: "unavailable"; error?: string };
 
-/** Desktop-only: native fetch of the gitcode `latest.json`.
+/** Desktop-only: native fetch of the `latest.json` updater manifest.
  *
- * The WebView's browser `fetch` to gitcode is blocked by CORS: gitcode 302s to a
- * `file-cdn.gitcode.com` signature URL whose response carries no
- * `Access-Control-Allow-Origin` for the app origin, so the redirect is denied
- * (`[Error] Cross-origin redirection ...`). This goes through reqwest on the
- * Rust side, which is not subject to CORS and follows the redirect, returning
- * the manifest. Degrades to `null` on failure (offline/not reachable). */
+ * The WebView's browser `fetch` to the old gitcode URL was blocked by CORS
+ * (gitcode 302s to a `file-cdn.gitcode.com` signature URL without
+ * `Access-Control-Allow-Origin`); this goes through reqwest on the Rust side,
+ * which is not subject to CORS and follows the redirect. Degrades to `null` on
+ * failure (offline/not reachable). 2026-11-02：入口已切到 `shuyo.cn/app/latest.json`
+ * （GitCode CDN 把 latest.json 缓存了一年，重传资产不刷新）。 */
 export async function fetchUpdateManifestNative(url?: string): Promise<UpdateManifest | null> {
   try {
     return await invoke<UpdateManifest | null>("fetch_update_manifest", { url });

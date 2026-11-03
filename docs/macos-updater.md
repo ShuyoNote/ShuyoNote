@@ -118,7 +118,7 @@ base64 -i developerID_application.p12 | pbcopy     # macOS 自带，pbcopy 直�
   "plugins": {
     "updater": {
       "pubkey": "<已配好，与 Windows/Linux 共用同一把>",
-      "endpoints": ["https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/latest/latest.json"]
+      "endpoints": ["https://shuyo.cn/app/latest.json"]
     }
   },
   "bundle": {
