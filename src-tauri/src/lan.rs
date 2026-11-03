@@ -63,6 +63,34 @@ pub fn lan_port() -> u16 {
         .unwrap_or(LAN_PORT)
 }
 
+/// **候选发现端口**（顺序即优先级）—— 2026-11-03 加。
+///
+/// 为什么需要候选：Windows 上 Hyper-V/WSL 一类组件会**动态保留整段端口**。实测（AMD，2026-11-03）
+/// 本机 ≈44610–48700 整段 TCP/UDP 都绑不上，`47821` 正好在里面 ⇒ **单端口写死 = 发现层永久起不来**
+/// （症状：既不收也不发公告，界面只表现为「发现不了同步电脑」）。
+///
+/// 选 `47821` 作首选是为了**旧客户端兼容**（旧版只认 47821）；`44500` 是"远离常见保留段"的兜底。
+/// 详见 `docs/plans/2026-11-03-lan-discovery-port-fallback.md`。
+pub const CANDIDATE_PORTS: [u16; 3] = [LAN_PORT, LAN_PORT + 1, 44500];
+
+/// 发现层**这一轮该试的端口列表** —— 2026-11-03 加。
+///
+/// - 设了 `SHUYONOTE_LAN_PORT` ⇒ 只试那一个（逃生门／双实例判据，语义与 [`lan_port`] 一致）；
+/// - 否则 ⇒ 按 [`CANDIDATE_PORTS`] 顺序全试。
+///
+/// ⚠️ 环境变量一旦使用，**两端必须同一个值**：公告会携带实际端口（[`LanAnnounce::listen_port`]），
+/// 但冷启动的第一轮广播仍要打同一个频道。
+pub fn lan_ports() -> Vec<u16> {
+    match std::env::var("SHUYONOTE_LAN_PORT")
+        .ok()
+        .and_then(|v| v.trim().parse::<u16>().ok())
+        .filter(|p| *p != 0)
+    {
+        Some(p) => vec![p],
+        None => CANDIDATE_PORTS.to_vec(),
+    }
+}
+
 /// **把注入的额外出站目标追加到一批目标的末尾** ✓（`SHUYONOTE_LAN_EXTRA_TARGETS`，逗号分隔 `ip:port`）
 /// —— ⛔ 同样**只服务只有测试才有的形态** ✗，⛔ 不设时**原样返回**（逐字相等，判据钉着 ✓）。
 ///
@@ -236,6 +264,15 @@ pub struct LanAnnounce {
     /// ⇒ ⭐ **不升 `WIRE_VERSION`** ✓（⭐ 与 `short_id`（08-b②）／`trust_ask` 同一个手法 ✓）。
     #[serde(default)]
     pub pubkey: String,
+    /// ⭐ 2026-11-03：**我在哪个 UDP 端口上听公告**（发现频道）。
+    ///
+    /// 用途：端口候选列表（[`CANDIDATE_PORTS`]）让每一端可能绑在不同端口上；
+    /// 收到这一格后，认识的对端可以**单播到它真正在听的端口**（见 [`announce_targets_all`]）。
+    ///
+    /// ⚠️ `#[serde(default)]` ＋ 本结构**没有** `deny_unknown_fields` ⇒ 老对端收到这一格**直接忽略**
+    /// ⇒ **不升 `WIRE_VERSION`**（与 `short_id`／`trust_ask`／`pubkey` 同一手法）；新对端读老公告 ⇒ `None`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listen_port: Option<u16>,
 }
 
 impl Default for LanAnnounce {
@@ -259,6 +296,7 @@ impl Default for LanAnnounce {
             trust_ask: String::new(),
             trust_secret: String::new(),
             pubkey: String::new(),
+            listen_port: None,
         }
     }
 }
@@ -580,6 +618,7 @@ pub fn announce_for_own_hub(
         return None;
     }
     Some(LanAnnounce {
+        listen_port: None,
         v: WIRE_VERSION,
         device_id: dev.to_string(),
         device_name: device_name.trim().to_string(),
@@ -678,6 +717,22 @@ pub fn status_line(
         line.push_str(" ｜ 其中没有服务这个空间的中枢");
     }
     line
+}
+
+/// ⭐ 2026-11-03：**发现频道的可见读数**（纯函数）—— 接在状态行末尾，现有面板直接显示 `line`。
+///
+/// - 已监听 ⇒ ` ｜ 发现频道 :47821`
+/// - 全失败 ⇒ ` ｜ ⚠️ 发现频道监听失败（…原因…）`（原因里已含每个候选的错误原文）
+/// - 两者都空 ⇒ 空串（⛔ 不产生半个分句 ✗）
+///
+/// ⚠️ 为什么必须可见：旧实现绑不上只静默重试，界面只表现为「发现不了同步电脑」——
+/// 2026-11-03 那次「整段端口被系统保留」正是这样被藏了一整轮。
+pub fn discovery_suffix(port: Option<u16>, error: Option<&str>) -> String {
+    match (port, error.map(str::trim).filter(|e| !e.is_empty())) {
+        (Some(p), _) if p != 0 => format!(" ｜ 发现频道 :{p}"),
+        (_, Some(e)) => format!(" ｜ ⚠️ 发现频道监听失败（{e}）"),
+        _ => String::new(),
+    }
 }
 
 // ── 运行时（甲-1 第二片）：真的收发 ＋ 对端表 ────────────────────────────────────────────
@@ -972,6 +1027,54 @@ pub async fn bind_listener_with_retry(port: u16) -> UdpSocket {
     }
 }
 
+/// **按候选顺序绑第一个能绑上的端口**，返回「socket ＋ 实际绑定端口」—— 2026-11-03 加。
+///
+/// 全失败时把**每个候选**的错误逐条拼进返回值（⛔ 不吞原因 ✗）：调用方据此决定重试／报可见失败。
+pub async fn bind_first_free(ports: &[u16]) -> Result<(UdpSocket, u16), String> {
+    let mut errors: Vec<String> = Vec::new();
+    for &port in ports {
+        match bind_listener(port).await {
+            Ok(sock) => return Ok((sock, port)),
+            Err(e) => errors.push(e),
+        }
+    }
+    Err(format!(
+        "候选端口全部绑不上（{} 个）：{}",
+        ports.len(),
+        errors.join("；")
+    ))
+}
+
+/// 按候选列表**退避重试到绑上一个**（1s→2s→…→30s 封顶；每档只记一行）—— 2026-11-03 加。
+///
+/// ⚠️ 与 [`bind_listener_with_retry`] 同一套重试纪律，区别只是"一轮里有多个候选"；
+/// 这条**永不返回错误**（发现层是加分项），但每次"一轮全失败"都会留一行原因（可观测性）。
+pub async fn bind_first_free_with_retry(ports: &[u16]) -> (UdpSocket, u16) {
+    const MAX_DELAY_MS: u64 = 30_000;
+    let mut delay_ms: u64 = 1_000;
+    let mut last_logged: u64 = 0;
+    loop {
+        match bind_first_free(ports).await {
+            Ok((sock, port)) => {
+                if last_logged > 0 {
+                    eprintln!("[lan] 发现层起来了（UDP {port} 已绑定，在候选 {ports:?} 里）");
+                }
+                return (sock, port);
+            }
+            Err(e) => {
+                if last_logged != delay_ms {
+                    eprintln!(
+                        "[lan] 发现层：候选端口全绑不上（{delay_ms}ms 后重试，同步照旧）：{e}"
+                    );
+                    last_logged = delay_ms;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod bind_retry_tests {
     use super::*;
@@ -1070,6 +1173,41 @@ pub fn announce_targets(port: u16, peers: &[Peer]) -> Vec<SocketAddr> {
         let a = SocketAddr::new(ip, port);
         if !out.contains(&a) {
             out.push(a);
+        }
+    }
+    out
+}
+
+/// ⭐ 2026-11-03：**多候选端口版**的公告目标（生产路径用它；旧 [`announce_targets`] 原样保留给既有判据）。
+///
+/// = 每个候选端口各一条受限广播 ＋ 回环，＋ 已认识的对端：
+///   · 它报了 [`LanAnnounce::listen_port`] ⇒ 单播到**它自报的端口**（端口由对端公告决定，⛔ 不是我们猜 ✗）
+///   · 没报（老对端）⇒ 对每个候选端口各打一次（它多半在 47821 上听）
+///
+/// ⚠️ 安全语义不变：`addr` 仍取**报文来源 IP**（对端不许替我们挑地址）；新增的只有"它在哪个端口听"。
+pub fn announce_targets_all(own_ports: &[u16], peers: &[Peer]) -> Vec<SocketAddr> {
+    let mut out: Vec<SocketAddr> = Vec::new();
+    for &port in own_ports {
+        out.extend(default_targets(port));
+    }
+    for p in peers {
+        let ip = p.addr.trim();
+        if ip.is_empty() {
+            continue;
+        }
+        // 只认字面 IPv4/IPv6（`addr` 是**报文来源**，不是我们编的）。
+        let Ok(ip) = ip.parse::<IpAddr>() else {
+            continue;
+        };
+        let target_ports: Vec<u16> = match p.announce.listen_port {
+            Some(lp) if lp != 0 => vec![lp],
+            _ => own_ports.to_vec(),
+        };
+        for port in target_ports {
+            let a = SocketAddr::new(ip, port);
+            if !out.contains(&a) {
+                out.push(a);
+            }
         }
     }
     out
@@ -1316,6 +1454,7 @@ mod tests {
     fn peer(device: &str, base: Option<&str>, spaces: &[&str]) -> Peer {
         Peer {
             announce: LanAnnounce {
+                listen_port: None,
                 trust_ask: String::new(),
                 trust_secret: String::new(),
                 v: WIRE_VERSION,
@@ -1485,6 +1624,7 @@ mod tests {
 
     fn announce_of(device: &str, base: Option<&str>, spaces: &[&str]) -> LanAnnounce {
         LanAnnounce {
+            listen_port: None,
             trust_ask: String::new(),
             trust_secret: String::new(),
             v: WIRE_VERSION,
@@ -2509,6 +2649,7 @@ mod multi_space_peer_table_tests {
 
     fn announce(device: &str, space: &str, name: &str, kind: &str, base: &str) -> LanAnnounce {
         LanAnnounce {
+            listen_port: None,
             v: WIRE_VERSION,
             device_id: device.to_string(),
             device_name: "WIN".to_string(),
@@ -2965,5 +3106,171 @@ mod j9_port_parse_tests {
             "方括号 IPv6 的端口也读得出（地址该不该直连另判）"
         );
         assert_eq!(port_of_base("http://[::1]"), None);
+    }
+}
+
+/// ⭐ 2026-11-03：端口候选／回退／公告携带端口 —— 直接判据（方案 §3）。
+///
+/// ⚠️ 这里**不测环境变量**：`SHUYONOTE_LAN_PORT` 是进程级的，并行判据会互相踩（本仓已有前例）；
+/// 环境变量那条语义仍由既有 `lan_port()` 判据守着。
+#[cfg(test)]
+mod port_fallback_tests {
+    use super::*;
+    use tokio::net::UdpSocket;
+
+    async fn free_port() -> u16 {
+        let probe = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let p = probe.local_addr().unwrap().port();
+        drop(probe);
+        p
+    }
+
+    fn peer_with(ip: &str, listen_port: Option<u16>) -> Peer {
+        Peer {
+            announce: LanAnnounce {
+                v: WIRE_VERSION,
+                device_id: "dev-a".into(),
+                listen_port,
+                ..Default::default()
+            },
+            addr: ip.to_string(),
+            seen_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn candidate_ports_are_distinct_and_start_with_the_legacy_port() {
+        assert_eq!(CANDIDATE_PORTS[0], LAN_PORT);
+        assert_eq!(LAN_PORT, 47821);
+        let mut seen = CANDIDATE_PORTS.to_vec();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(
+            seen.len(),
+            CANDIDATE_PORTS.len(),
+            "候选端口不许重复：{CANDIDATE_PORTS:?}"
+        );
+        assert!(CANDIDATE_PORTS.iter().all(|p| *p != 0));
+    }
+
+    /// 判据：第一个候选被占 ⇒ 绑第二个，并**返回实际端口**（不是"以为绑了 47821"）。
+    #[tokio::test]
+    async fn bind_first_free_skips_occupied_and_returns_actual_port() {
+        let occupied = free_port().await;
+        let squatter = UdpSocket::bind(("0.0.0.0", occupied))
+            .await
+            .expect("占用者要能绑上");
+        let free = free_port().await;
+        let (sock, port) = match bind_first_free(&[occupied, free]).await {
+            Ok(v) => v,
+            Err(e) => panic!("第二个候选应能绑上，却报错：{e}"),
+        };
+        assert_eq!(port, free, "必须返回实际绑上的那个端口");
+        assert_eq!(sock.local_addr().unwrap().port(), free);
+        drop(squatter);
+    }
+
+    /// 判据：全被占 ⇒ 报错，且**点名每个候选**（不然用户看不出"为什么起不来"）。
+    #[tokio::test]
+    async fn bind_first_free_reports_every_candidate_on_total_failure() {
+        let occupied = free_port().await;
+        let squatter = UdpSocket::bind(("0.0.0.0", occupied))
+            .await
+            .expect("占用者要能绑上");
+        match bind_first_free(&[occupied]).await {
+            Ok(_) => panic!("全被占不该成功"),
+            Err(e) => assert!(e.contains(&occupied.to_string()), "错误要点名候选：{e}"),
+        }
+        drop(squatter);
+    }
+
+    /// 判据：目标覆盖**每个候选端口**的广播＋回环；对端报了 `listen_port` ⇒ 单播用它；
+    /// 老对端（没报）⇒ 候选端口全打；坏 addr 跳过。
+    #[test]
+    fn announce_targets_all_covers_every_candidate_and_uses_self_reported_port() {
+        let ports = [47821u16, 44500u16];
+        let peers = vec![
+            peer_with("192.168.1.5", Some(47999)),
+            peer_with("192.168.1.6", None),
+        ];
+        let t = announce_targets_all(&ports, &peers);
+        for p in ports {
+            assert!(
+                t.iter()
+                    .any(|a| a.to_string() == format!("255.255.255.255:{p}")),
+                "候选 {p} 的受限广播缺失：{t:?}"
+            );
+            assert!(
+                t.iter().any(|a| a.to_string() == format!("127.0.0.1:{p}")),
+                "候选 {p} 的回环缺失：{t:?}"
+            );
+        }
+        assert!(
+            t.iter().any(|a| a.to_string() == "192.168.1.5:47999"),
+            "报了端口的对端必须单播到它自报的那个端口：{t:?}"
+        );
+        for p in ports {
+            assert!(
+                t.iter()
+                    .any(|a| a.to_string() == format!("192.168.1.6:{p}")),
+                "没报端口的老对端必须按候选端口全打（缺 {p}）：{t:?}"
+            );
+        }
+        let t2 = announce_targets_all(
+            &[47821],
+            &[peer_with("", None), peer_with("not-an-ip", None)],
+        );
+        assert!(t2.iter().all(|a| a.ip().to_string() != "not-an-ip"));
+    }
+
+    /// 判据：公告线格式带 `listen_port` 能往返；**老公告（没有这一格）必须还能解**。
+    #[test]
+    fn announce_wire_carries_listen_port_and_old_wire_still_decodes() {
+        let a = LanAnnounce {
+            v: WIRE_VERSION,
+            device_id: "dev-a".into(),
+            listen_port: Some(47822),
+            ..Default::default()
+        };
+        let raw = encode_announce(&a).unwrap();
+        assert!(raw.contains("\"listen_port\":47822"), "{raw}");
+        assert_eq!(decode_announce(&raw).unwrap().listen_port, Some(47822));
+        // 兼容方向：老公告没有这一格 ⇒ None（不是解码失败）
+        let old = r#"{"v":1,"device_id":"dev-old"}"#;
+        assert_eq!(decode_announce(old).unwrap().listen_port, None);
+        // 版本不认识仍拒收（不因为多/少这一格而放宽）
+        let bad = r#"{"v":2,"device_id":"dev-b"}"#;
+        assert_eq!(decode_announce(bad), Err(AnnounceReject::UnknownVersion));
+    }
+
+    /// 判据：状态行后缀只有两种人话，且**不产生半个分句**。
+    #[test]
+    fn discovery_suffix_says_success_or_failure_and_never_half_a_sentence() {
+        assert_eq!(discovery_suffix(Some(47821), None), " ｜ 发现频道 :47821");
+        let failing = discovery_suffix(None, Some("候选端口全部绑不上（3 个）：…"));
+        assert!(failing.contains("发现频道监听失败"), "{failing}");
+        assert_eq!(discovery_suffix(None, None), "");
+        assert_eq!(discovery_suffix(Some(0), None), "", "0 不是可监听的端口");
+    }
+
+    /// ★ 真机判据（2026-11-03 加）：**拿真实候选列表真绑一次** —— 只要本机还有任意一个候选空着就必须成功。
+    ///
+    /// 现场意义：AMD 那台 Windows 上 47821/47822 都落在系统保留段里（`EADDRINUSE`），
+    /// 这条应当绑上 **44500**；这也是「端口回退真的有用」的机器级读数（不是合成端口）。
+    /// ⚠️ 三个候选**全被占**时它才真红 —— 那种机器上发现层本来就起不来（状态行会明说原因）。
+    #[tokio::test]
+    async fn bind_first_free_over_real_candidates_still_finds_one_on_this_machine() {
+        let ports = lan_ports();
+        let (sock, port) = match bind_first_free(&ports).await {
+            Ok(v) => v,
+            Err(e) => panic!("这台机器上一个候选都绑不上（发现层会起不来）：{e}"),
+        };
+        println!("[probe] 候选 {ports:?} ⇒ 实际绑上 {port}");
+        assert!(
+            ports.contains(&port),
+            "绑上的端口必须来自候选列表：{port} ∉ {ports:?}"
+        );
+        assert_eq!(sock.local_addr().unwrap().port(), port);
+        drop(sock);
     }
 }
