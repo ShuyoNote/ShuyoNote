@@ -45,12 +45,16 @@ if (r.error) {
   process.exit(2);
 }
 const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
+// ⚠️ Windows 上 cargo 会把差异路径印成 `\\?\C:\…`（扩展长度前缀），且 `path.relative` 返回**反斜杠**；
+//    而下面 `ALLOW` 的键是 `src-tauri/src/…`（正斜杠）。不归一化 ⇒ 登记例外永远匹配不上
+//    ⇒ **干净树也报红**（2026-10-29 登记的已知跨平台 bug，2026-11-03 修；判据见 ledger 的这条）。
+const normPath = (p) => p.replace(/^\\\\\?\\/, "").replace(/\\/g, "/");
 // cargo fmt 的差异行形态：`Diff in /abs/path/file.rs:12:`（每处一行）
 const diffFiles = [
   ...new Set(
     [...out.matchAll(/^Diff in (.+?):\d+:/gm)].map((m) => {
-      const abs = m[1].trim();
-      return relative(ROOT, resolve(ROOT, abs));
+      const abs = normPath(m[1].trim());
+      return normPath(relative(ROOT, resolve(ROOT, abs)));
     }),
   ),
 ];
