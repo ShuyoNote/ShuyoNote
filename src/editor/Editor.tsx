@@ -37,6 +37,7 @@ import { PageLinkPlugin } from "./plugins/PageLinkPlugin";
 import { InlineFormulaPlugin } from "./plugins/InlineFormulaPlugin";
 import { ImagePastePlugin } from "./plugins/ImagePastePlugin";
 import { BookmarkPastePlugin } from "./plugins/BookmarkPastePlugin";
+import { CodePasteCleanPlugin } from "./plugins/CodePasteCleanPlugin";
 import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
 import { FindPlugin } from "./plugins/FindPlugin";
 import { SelectionToolbarPlugin } from "./plugins/SelectionToolbarPlugin";
@@ -729,6 +730,7 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <AiSpaceTriggerPlugin />
         <ImagePastePlugin pageId={pageId} />
         <BookmarkPastePlugin />
+        <CodePasteCleanPlugin />
         {/* ⭐⭐ **2026-10-12（owner：「打开」）**：⭐ **恢复块拖拽** ✗ —— 推翻 2026-10-02 那句
             「只恢复手柄与菜单、不恢复拖拽」✓（⛔ 旧那行注释不删 ✗，它是"曾经关过、为什么关"的记录 ✓）。
             ⚠️ 拖拽的**唯一入口**仍是 `BlockDragPlugin` 里的 `beginDrag()` ✓（⛔ 没有第二条路 ✗）——
