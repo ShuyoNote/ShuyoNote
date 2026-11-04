@@ -45,7 +45,7 @@ function toBytes(raw: unknown): Uint8Array {
   return Uint8Array.from(raw as ArrayLike<number>);
 }
 
-/** 笔记内图片的下载：附件走内容寻址字节，外链 / data URL 走浏览器下载。 */
+/** 笔记内图片的下载：先取到字节，再走**保存对话框**（外链不允许跨域读取时明确报错，不静默丢到 Downloads）。 */
 export async function downloadNoteImage(opts: {
   src: string;
   alt?: string;
@@ -54,21 +54,34 @@ export async function downloadNoteImage(opts: {
 }): Promise<void> {
   const name = imageFileName(opts.alt, opts.mime ?? undefined, opts.src, opts.hash ?? undefined);
   try {
+    let bytes: Uint8Array;
     if (opts.hash) {
-      const bytes = toBytes(await api.readAttachmentBytes(opts.hash));
-      const path = await platform.dialog.save({
-        title: "保存图片",
-        defaultPath: name,
-        filters: [{ name: "图片", extensions: [name.split(".").pop() || "png"] }],
-      });
-      if (!path) return;
+      bytes = toBytes(await api.readAttachmentBytes(opts.hash));
+    } else {
+      const resp = await fetch(opts.src);
+      if (!resp.ok) throw new Error(`读取图片失败（HTTP ${resp.status}）`);
+      bytes = new Uint8Array(await resp.arrayBuffer());
+    }
+
+    const path = await platform.dialog.save({
+      title: "保存图片",
+      defaultPath: name,
+      filters: [{ name: "图片", extensions: [name.split(".").pop() || "png"] }],
+    });
+    if (!path) return; // 用户取消目录选择
+    try {
       await api.writeBinaryFile(path, Array.from(bytes));
       toast("图片已保存", "success");
       return;
+    } catch {
+      // Web/PWA 没有本地写盘命令：退回浏览器下载（目录由浏览器设置决定）。
+      const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: opts.mime || "application/octet-stream" }));
+      saveBlobUrl(url, name);
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      toast("已交给浏览器下载", "success");
     }
-    saveBlobUrl(opts.src, name);
   } catch (e) {
-    toast(`保存图片失败：${String(e)}`, "error");
+    toast(`保存图片失败：${String(e)}。外链图片可能禁止跨域读取，可在浏览器打开原图后另存。`, "error");
   }
 }
 
