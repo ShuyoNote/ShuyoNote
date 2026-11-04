@@ -11,6 +11,7 @@ import {
 } from "lexical";
 import type { CSSProperties, JSX } from "react";
 import { MediaResolver } from "./MediaResolver";
+import { NoteImage } from "../ImageHover";
 import { EXPORT_HASH_ATTR, EXPORT_MIME_ATTR } from "../../lib/exportInline";
 import { blockIdOf, blockRevOf, withBlockId, withBlockRev } from "./blockIdHelpers";
 
@@ -135,16 +136,15 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
         src={this.__src}
         render={(url) =>
           url ? (
-            <img
+            <NoteImage
               src={url}
               alt={this.__altText}
-              className={
+              hash={this.__hash}
+              mime={this.__mime}
+              imgClassName={
                 this.__inline ? `editor-image editor-image-inline${sized}` : "editor-image"
               }
               style={style}
-              draggable={false}
-              onError={(e) => e.currentTarget.classList.add("editor-image-broken")}
-              onLoad={(e) => e.currentTarget.classList.remove("editor-image-broken")}
             />
           ) : (
             <span className="editor-image editor-image-empty" />
