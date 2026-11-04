@@ -718,6 +718,111 @@
   text-align: center;
 }
 
+/* 悬停工具条：查看大图 / 下载。 */
+.editor-image-hover {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+}
+
+.editor-image-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: var(--space-1);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.editor-image-hover:hover .editor-image-actions,
+.editor-image-hover:focus-within .editor-image-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.editor-image-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.16));
+}
+
+.editor-image-action:hover {
+  background: var(--hover);
+}
+
+/* 触屏没有 hover：工具条常驻（不影响桌面端的悬停行为）。 */
+@media (hover: none) {
+  .editor-image-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.image-lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  background: rgba(0, 0, 0, 0.82);
+}
+
+.image-lightbox-inner {
+  position: relative;
+  max-width: 92vw;
+  max-height: 90vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-lightbox-inner img {
+  display: block;
+  max-width: 92vw;
+  max-height: 88vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.image-lightbox-close {
+  position: absolute;
+  top: -14px;
+  right: -14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.16));
+}
+
+.image-lightbox-close:hover {
+  background: var(--hover);
+}
+
 .editor-image {
   display: inline-block;
   max-width: 100%;

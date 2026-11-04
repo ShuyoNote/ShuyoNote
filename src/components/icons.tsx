@@ -1066,3 +1066,15 @@ export function HomeIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/** 最大化 / 查看大图。 */
+export function MaximizeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+      <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+      <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
+      <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+    </Icon>
+  );
+}

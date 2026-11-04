@@ -6094,6 +6094,7 @@ mod r146_mesh_scope_tests {
             "me-dev",
             &[crate::lan::Peer {
                 announce: crate::lan::LanAnnounce {
+                    listen_port: None,
                     trust_ask: String::new(),
                     trust_secret: String::new(),
                     v: crate::lan::WIRE_VERSION,
@@ -6706,7 +6707,15 @@ pub fn lan_status(db: State<'_, Db>, workspace_id: Option<String>) -> Result<Lan
         .map(|r| r.kind.as_str())
         .unwrap_or("")
         .to_string();
-    let line = lan::status_line(route.as_ref(), &peers, &space_id, observed);
+    // ⭐ 2026-11-03：状态行末尾接**发现频道的可见读数**（实际监听端口／监听失败原因）——
+    //    现有面板本来就显示 `line`，因此不需要改前端；失败不再只藏在日志里。
+    //    见 `lan::discovery_suffix`（纯函数）与方案 `docs/plans/2026-11-03-lan-discovery-port-fallback.md`。
+    let discovery_error = crate::lan_state::discovery_error();
+    let line = format!(
+        "{}{}",
+        lan::status_line(route.as_ref(), &peers, &space_id, observed),
+        lan::discovery_suffix(crate::lan_state::listen_port(), discovery_error.as_deref())
+    );
     // ★ 丙档「附近设备」（2026-09-29，T1）：**把对端表上抛**（需求 §3.2 —— 不是"没有料"，是"料没上抛"）。
     //   ⚠️ 用的是**上面那一次** `state.peers(now)`（`:3219`）：`peers`（数量）与 `nearby`（列表）
     //      必须来自**同一次读数**（`INV-NEARBY-one-source`），所以 `peers.len() == nearby.len()`
@@ -9968,6 +9977,7 @@ mod tests {
     fn lan_peer(device: &str, base: &str, spaces: &[&str]) -> Peer {
         Peer {
             announce: crate::lan::LanAnnounce {
+                listen_port: None,
                 trust_ask: String::new(),
                 trust_secret: String::new(),
                 v: crate::lan::WIRE_VERSION,
@@ -11940,6 +11950,7 @@ mod tests {
     ) -> crate::lan::Peer {
         crate::lan::Peer {
             announce: crate::lan::LanAnnounce {
+                listen_port: None,
                 trust_ask: String::new(),
                 trust_secret: String::new(),
                 v: crate::lan::WIRE_VERSION,
@@ -12660,6 +12671,7 @@ mod tests {
 
         let peer = |device: &str, spaces: &[&str]| crate::lan::Peer {
             announce: crate::lan::LanAnnounce {
+                listen_port: None,
                 trust_ask: String::new(),
                 trust_secret: String::new(),
                 v: 1,
