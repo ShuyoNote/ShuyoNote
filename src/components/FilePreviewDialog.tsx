@@ -235,6 +235,27 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
       filters: [{ name: "PDF", extensions: ["pdf"] }],
     });
     if (!path) return;
+    // ⭐ 只把**正文**交给打印：复制到 `body > .pdf-print-root`，打印时其余 DOM 一律
+    //    display:none（见 print.css 头部那段真读数）。⛔ 不能只靠打印 CSS 藏壳 ——
+    //    WebView2 会按纸张宽度重排，`max-width:768px` 变真 ⇒ 窄屏布局（含底层阅读屏）
+    //    会被一起印进 PDF ✗（实测 10 页没有一页是正文）。
+    const source = bodyRef.current?.querySelector(".fm-md-preview");
+    if (!source) {
+      toast("导出 PDF 失败：找不到要打印的正文", "error");
+      return;
+    }
+    const host = document.createElement("div");
+    host.className = "pdf-print-root";
+    host.appendChild(source.cloneNode(true));
+    document.body.appendChild(host);
+    document.documentElement.classList.add("pdf-exporting");
+    // ⚠️ 画布底色只能走**行内样式**：`html`/`body` 的背景由主题样式表（无 layer）设，
+    //    `print.css` 在 `@layer legacy` 里压不过它 ⇒ 纸面会印成主题深色（实测页边一圈深蓝）。
+    //    body 的背景会**传播成整张纸的底色**，所以两处都要压。
+    const prevHtmlBg = document.documentElement.style.backgroundColor;
+    const prevBodyBg = document.body.style.backgroundColor;
+    document.documentElement.style.backgroundColor = "#ffffff";
+    document.body.style.backgroundColor = "#ffffff";
     try {
       // 图片/字体先就绪，避免打印快照里是空白（与 printDoc 同一条口径）。
       await waitForPrintAssets(document);
@@ -242,6 +263,11 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
       toast("已导出 PDF", "success");
     } catch (e) {
       toast(`导出 PDF 失败：${String(e)}`, "error");
+    } finally {
+      document.documentElement.style.backgroundColor = prevHtmlBg;
+      document.body.style.backgroundColor = prevBodyBg;
+      document.documentElement.classList.remove("pdf-exporting");
+      host.remove();
     }
   };
 

@@ -1,81 +1,69 @@
 /* 直接导出 PDF 的打印样式：只保留阅读正文，隐藏 app 外壳与按钮。
    ⚠️ 必须**最后** import（App.tsx 的 S4-53 之后）——不靠 `!important`，
-   靠同一 `@layer legacy` 里的源码顺序压过前面的壳样式。 */
+   靠同一 `@layer legacy` 里的源码顺序压过前面的壳样式。
+
+   ⭐ 2026-11-05 改：**靠 `display: none` 藏壳不够** —— 实测导出时 WebView2 会按纸张宽度
+   重新排版，`@media (max-width:768px)` 变真 ⇒ React 切到窄屏布局，底层 `MobileRead`
+   被一起印进 PDF（真读数：10 页里没有一页是这份 .md 的正文）。
+   ⇒ 现在由 `FilePreviewDialog.exportDirectPdf` 把正文节点复制到 `body > .pdf-print-root`，
+   打印时**只**渲染这一棵子树；其余一切 display:none。 */
 @layer legacy {
+/* 屏幕上不显示（导出期间才临时存在；⛔ 别让它闪一下）。打印时由下面的 !important 打开。 */
+.pdf-print-root {
+  display: none;
+}
+
 @media print {
+  /* ① 导出期间只留 print root：其余全部不参与排版（不给它们占位，避免空白页）。 */
+  html.pdf-exporting body > * {
+    display: none !important;
+  }
+
+  html.pdf-exporting body > .pdf-print-root {
+    display: block !important;
+  }
+
+  html.pdf-exporting .pdf-print-root {
+    /* 打印一律「白纸黑字」：主题可能是暗色，但 PDF 是拿去读/打印的，不该印成一块深色底。
+       （变量在这里就地覆盖 ⇒ 子树里所有 var() 都跟着变，不必逐个元素改色。） */
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --text: #1f2328;
+    --text-dim: #57606a;
+    --text-faint: #6e7781;
+    --border: #d0d7de;
+    --border-strong: #afb8c1;
+    --hover: rgba(0, 0, 0, 0.03);
+    background: #ffffff;
+    color: #1f2328;
+  }
+
+  html.pdf-exporting,
+  html.pdf-exporting body {
+    background: #ffffff;
+  }
+
+  html.pdf-exporting .fm-md-preview {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    color: var(--text);
+  }
+
+  html.pdf-exporting .fm-md-preview img {
+    max-width: 100%;
+  }
+
   @page {
     margin: 12mm;
     size: A4;
   }
 
   html,
-  body,
-  #root,
-  .app,
-  .app-body,
-  .main,
-  .fm-preview-overlay,
-  .fm-preview {
+  body {
     height: auto;
     max-height: none;
     overflow: visible;
-    background: #fff;
-  }
-
-  .app-body {
-    display: block;
-  }
-
-  .activity-bar,
-  .sidebar,
-  .titlebar,
-  .top-tools,
-  .editor-toolbar-bar,
-  .breadcrumbs,
-  .fm-preview-head,
-  .fm-preview-pathbar,
-  .fm-preview-read,
-  .fm-md-outline,
-  .fm-md-outline-resizer,
-  .toast,
-  .toast-stack,
-  .update-banner,
-  .mobile-tabbar {
-    display: none;
-  }
-
-  .main {
-    width: auto;
-    height: auto;
-  }
-
-  .fm-preview-overlay,
-  .fm-preview {
-    position: static;
-    inset: auto;
-    width: auto;
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
-  }
-
-  .fm-preview-body,
-  .fm-md-wrap,
-  .fm-md-body {
-    display: block;
-    height: auto;
-    overflow: visible;
-    padding: 0;
-  }
-
-  .fm-md-preview {
-    max-width: none;
-    margin: 0;
-    padding: 0;
-  }
-
-  .fm-md-preview img {
-    max-width: 100%;
   }
 
   html {
