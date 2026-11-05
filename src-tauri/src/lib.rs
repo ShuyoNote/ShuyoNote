@@ -52,6 +52,8 @@ mod block_rev;
 mod blocks;
 mod bookmark;
 mod commands;
+// 只读文档直接导出 PDF（Windows WebView2 PrintToPdf；其它平台诚实返回不支持）。
+mod print_pdf;
 mod crypto;
 pub mod office_import;
 // 国密（SM4-CBC ＋ HMAC-SM3）应用层 AEAD —— **2026-09-20 起是默认特性**（方案 §3.4「无兼容快路」）；
@@ -1284,6 +1286,7 @@ pub fn run() {
             versions::restore_version,
             versions::clear_page_versions,
             backup::export_backup,
+    print_pdf::export_webview_pdf,
             backup::import_backup,
             // ⭐ 2026-10-28（owner：「本机备份 全空间打包，要能原样恢复」）：
             //   替换式恢复 —— 解到 staging，**重启后**在打开任何库之前整份替换（旧数据另存一份）

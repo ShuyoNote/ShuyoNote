@@ -7,6 +7,7 @@
 ### 新增
 - **页面面包屑补上当前页** —— 祖先链原来只到父级，当前页标题缺一个“终点”；现在尾部显示不可点的当前页（`aria-current="page"`），父级/文件夹仍可点跳转。
 - **外部 `.md` 的路径上下文** —— 复用内置 `FilePreviewDialog` 打开外部 md 时，文件名 `title` 带完整路径，并多一颗「在文件夹中显示」；不把文件系统目录伪装成 app 页面面包屑。
+- **外部 `.md` 直接导出 PDF（Windows）** —— 阅读器路径条新增导出按钮：先弹保存对话框，再用 WebView2 `PrintToPdf` **直接写 PDF**，不经过系统打印窗口；打印样式只保留阅读正文（隐藏外壳/按钮），图片字体先就绪。macOS/Linux 暂无等价稳定 API，不显示该按钮（仍可用原打印导出）。
 
 - **外部 `.md` 复用内置文件预览器（不另做阅读器）** —— 双击 / 「打开方式 → ShuyoNote」仍走安装器的 `--import` 入口，但 `.md` / `.markdown` 不再进 Office 导入：直接调用 `useFilePreview.openPath`，由现有的 `FilePreviewDialog` 在主阅读区打开（**不建页、不写库、不把图片入库**）。相对图片按 `.md` 所在目录读成 blob URL；目录/宽度/转为笔记等按钮全部沿用内置阅读器已有那套；顶部额外给外部文件一个「设为默认」引导（不静默改默认关联）。判据 `src/lib/markdownFile.test.ts` 8/8、`src/lib/office/requestBridge.test.ts` 12/12、`src/editor/mdToHtml.test.ts` 14/14。
 - **macOS / Linux 的 `.md` 打开方式** —— 新增 `tauri.macos.conf.json` / `tauri.linux.conf.json` 的 `bundle.fileAssociations`（`role: Viewer` / `rank: Alternate`，只作候选不抢默认）；macOS 的 `RunEvent::Opened` 与 Linux 的裸路径 argv 都收敛到同一队列；Windows 继续走 NSIS「打开方式」候选。

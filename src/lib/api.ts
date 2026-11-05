@@ -859,6 +859,8 @@ export const api = {
   writeTextFile: (path: string, content: string) =>
     invoke("write_text_file", { path, content }),
   writeBinaryFile: (path: string, data: number[]) => invoke("write_binary_file", { path, data }),
+  /** Windows：把当前阅读器页面直接打印成 PDF（不弹系统打印对话框）。 */
+  exportWebviewPdf: (path: string) => invoke("export_webview_pdf", { path }),
   readBinaryFile: (path: string) =>
     (invoke("read_binary_file", { path }) as Promise<number[]>).then((a) => Uint8Array.from(a)),
   readTextFile: (path: string) => invoke("read_text_file", { path }),

@@ -3978,6 +3978,10 @@ export function makeInvoke(store: SqliteStore) {
       emit(3, 3, "导入完成");
       return { id: newId, name, created_at: now, updated_at: now } as T;
     }
+    if (cmd === "export_webview_pdf") {
+      // 直接导出 PDF 依赖桌面 WebView 的打印引擎；Web/PWA 没有这条能力。
+      throw new Error("Web 平台不支持直接导出 PDF（需桌面版）");
+    }
     if (cmd === "write_text_file") {
       // Write text to a browser-side "file": trigger a real download named after
       // the target so content actually leaves the browser.

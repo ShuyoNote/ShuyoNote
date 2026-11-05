@@ -255,6 +255,8 @@ import "./styles/drawing.css";
 import "./styles/editor-chrome.css";
 // S4-53（2026-11-02）：App.css 收尾 —— 剩余 app 规则（壳/属性/编辑器浮层/提示/时间线/移动阅读）。
 import "./styles/app-residual.css";
+// 直接导出 PDF 的打印样式：必须最后 import（不靠 !important，靠源码顺序）。
+import "./styles/print.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only

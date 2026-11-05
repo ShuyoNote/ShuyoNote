@@ -13,10 +13,11 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { usePdfReader } from "../store/pdfReader";
 import { useFileManagerStore } from "../store/fileManager";
-import { ConvertToPageIcon, CopyIcon, FitWidthIcon, FolderIcon, MoreHorizontalIcon, OutlineIcon, ReadAnnotateIcon } from "./icons";
+import { ConvertToPageIcon, CopyIcon, FitWidthIcon, FolderIcon, MoreHorizontalIcon, OutlineIcon, PrintIcon, ReadAnnotateIcon } from "./icons";
 import { hydrateMermaidBlocks } from "../lib/mdMermaid";
 import { openSystemSettingsUri } from "../lib/openExternal";
 import { compactPathForDisplay } from "../lib/markdownFile";
+import { waitForPrintAssets } from "../lib/print";
 import { toast } from "../store/toast";
 import { useResolvedTheme } from "../store/theme";
 import { fitScaleOf, nextZoomFromWheel } from "../lib/imageZoom";
@@ -194,6 +195,7 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
   const [dragging, setDragging] = useState(false);
 
   const isMd = target?.mime === "text/markdown";
+  const isWindows = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
   // ⚠️ 这里原先写的是 `const folderId = useFileManagerStore.getState().folderId`（**渲染期快照**）：
   // 它既不是订阅（folderId 变了本组件不会重渲染 ⇒ 用户点了"导入为页面"落到的还是旧目录），
   // 也不比"点击时现取"更好。动作里读 `getState()` 才是这份状态唯一正确的用法（见下面的按钮）。
@@ -221,6 +223,26 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
       /* 落到下面的文字提示 */
     }
     // 不弹 toast 的 import 太重；这里用系统设置页失败时也不必打断阅读。
+  };
+
+  /** Windows：当前阅读器页面直接写 PDF（WebView2 PrintToPdf，不经过系统打印对话框）。 */
+  const exportDirectPdf = async (): Promise<void> => {
+    if (!target?.path) return;
+    const base = target.name.replace(/\.[^.]+$/, "") || "document";
+    const path = await platform.dialog.save({
+      title: "导出 PDF",
+      defaultPath: `${base}.pdf`,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (!path) return;
+    try {
+      // 图片/字体先就绪，避免打印快照里是空白（与 printDoc 同一条口径）。
+      await waitForPrintAssets(document);
+      await api.exportWebviewPdf(path);
+      toast("已导出 PDF", "success");
+    } catch (e) {
+      toast(`导出 PDF 失败：${String(e)}`, "error");
+    }
   };
 
   // Hydrate ```mermaid fenced blocks whenever their HTML (or the theme) changes.
@@ -457,6 +479,16 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
               <FolderIcon aria-hidden />
             </button>
           ) : null}
+          {isMd && target.path && isWindows ? (
+            <button
+              className="fm-preview-read"
+              onClick={() => void exportDirectPdf()}
+              title="直接导出 PDF（不弹打印对话框）"
+              aria-label="直接导出 PDF"
+            >
+              <PrintIcon aria-hidden />
+            </button>
+          ) : null}
           {isMd && target.path ? (
             <button
               className="fm-preview-read"
@@ -470,7 +502,16 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
         </div>
         {isMd && target.path ? (
           <div className="fm-preview-pathbar" title={target.path}>
-            <span className="fm-preview-path">{compactPathForDisplay(target.path)}</span>
+            {isWindows ? (
+              <button
+                className="fm-preview-path-copy"
+                title="直接导出 PDF"
+                aria-label="直接导出 PDF"
+                onClick={() => void exportDirectPdf()}
+              >
+                <PrintIcon aria-hidden />
+              </button>
+            ) : null}
             <button
               className="fm-preview-path-copy"
               title="复制完整路径"
@@ -484,6 +525,7 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
             >
               <CopyIcon aria-hidden />
             </button>
+            <span className="fm-preview-path">{compactPathForDisplay(target.path)}</span>
           </div>
         ) : null}
         <div className="fm-preview-body">

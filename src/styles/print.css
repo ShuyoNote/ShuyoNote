@@ -1,0 +1,86 @@
+/* 直接导出 PDF 的打印样式：只保留阅读正文，隐藏 app 外壳与按钮。
+   ⚠️ 必须**最后** import（App.tsx 的 S4-53 之后）——不靠 `!important`，
+   靠同一 `@layer legacy` 里的源码顺序压过前面的壳样式。 */
+@layer legacy {
+@media print {
+  @page {
+    margin: 12mm;
+    size: A4;
+  }
+
+  html,
+  body,
+  #root,
+  .app,
+  .app-body,
+  .main,
+  .fm-preview-overlay,
+  .fm-preview {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    background: #fff;
+  }
+
+  .app-body {
+    display: block;
+  }
+
+  .activity-bar,
+  .sidebar,
+  .titlebar,
+  .top-tools,
+  .editor-toolbar-bar,
+  .breadcrumbs,
+  .fm-preview-head,
+  .fm-preview-pathbar,
+  .fm-preview-read,
+  .fm-md-outline,
+  .fm-md-outline-resizer,
+  .toast,
+  .toast-stack,
+  .update-banner,
+  .mobile-tabbar {
+    display: none;
+  }
+
+  .main {
+    width: auto;
+    height: auto;
+  }
+
+  .fm-preview-overlay,
+  .fm-preview {
+    position: static;
+    inset: auto;
+    width: auto;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .fm-preview-body,
+  .fm-md-wrap,
+  .fm-md-body {
+    display: block;
+    height: auto;
+    overflow: visible;
+    padding: 0;
+  }
+
+  .fm-md-preview {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .fm-md-preview img {
+    max-width: 100%;
+  }
+
+  html {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+}
