@@ -438,9 +438,9 @@ function NoteEditor({ pageId }: { pageId: string }) {
     el.style.height = `${el.scrollHeight}px`;
   }, [title]);
 
-  // Build breadcrumb trail from the page tree.
+  // Build breadcrumb trail from the page tree（祖先 + 当前页；当前页只显示、不可点）。
   const breadcrumbs = useMemo(() => {
-    const chain: { id: string; title: string; kind: string }[] = [];
+    const chain: { id: string; title: string; kind: string; current?: boolean }[] = [];
     const map = new Map(pages.map((p) => [p.id, p]));
     let cur = map.get(pageId);
     const visited = new Set<string>();
@@ -453,6 +453,10 @@ function NoteEditor({ pageId }: { pageId: string }) {
       } else {
         break;
       }
+    }
+    const self = map.get(pageId);
+    if (self) {
+      chain.push({ id: self.id, title: self.title || "未命名", kind: self.kind, current: true });
     }
     return chain;
   }, [pages, pageId]);
@@ -895,17 +899,23 @@ function NoteEditor({ pageId }: { pageId: string }) {
             {breadcrumbs.map((b, i) => (
               <span key={b.id}>
                 {i > 0 && <span className="crumb-sep">/</span>}
-                <button
-                  className="crumb"
-                  onClick={() =>
-                    b.kind === "folder"
-                      ? (useFileManagerStore.getState().setFolderId(b.id),
-                        useViewStore.getState().setView("files"))
-                      : openPage(b.id)
-                  }
-                >
-                  {b.title}
-                </button>
+                {b.current ? (
+                  <span className="crumb crumb-current" aria-current="page">
+                    {b.title}
+                  </span>
+                ) : (
+                  <button
+                    className="crumb"
+                    onClick={() =>
+                      b.kind === "folder"
+                        ? (useFileManagerStore.getState().setFolderId(b.id),
+                          useViewStore.getState().setView("files"))
+                        : openPage(b.id)
+                    }
+                  >
+                    {b.title}
+                  </button>
+                )}
               </span>
             ))}
           </div>

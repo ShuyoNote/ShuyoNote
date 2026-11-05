@@ -5,6 +5,9 @@
 ## [Unreleased]
 
 ### 新增
+- **页面面包屑补上当前页** —— 祖先链原来只到父级，当前页标题缺一个“终点”；现在尾部显示不可点的当前页（`aria-current="page"`），父级/文件夹仍可点跳转。
+- **外部 `.md` 的路径上下文** —— 复用内置 `FilePreviewDialog` 打开外部 md 时，文件名 `title` 带完整路径，并多一颗「在文件夹中显示」；不把文件系统目录伪装成 app 页面面包屑。
+
 - **外部 `.md` 复用内置文件预览器（不另做阅读器）** —— 双击 / 「打开方式 → ShuyoNote」仍走安装器的 `--import` 入口，但 `.md` / `.markdown` 不再进 Office 导入：直接调用 `useFilePreview.openPath`，由现有的 `FilePreviewDialog` 在主阅读区打开（**不建页、不写库、不把图片入库**）。相对图片按 `.md` 所在目录读成 blob URL；目录/宽度/转为笔记等按钮全部沿用内置阅读器已有那套；顶部额外给外部文件一个「设为默认」引导（不静默改默认关联）。判据 `src/lib/markdownFile.test.ts` 8/8、`src/lib/office/requestBridge.test.ts` 12/12、`src/editor/mdToHtml.test.ts` 14/14。
 - **macOS / Linux 的 `.md` 打开方式** —— 新增 `tauri.macos.conf.json` / `tauri.linux.conf.json` 的 `bundle.fileAssociations`（`role: Viewer` / `rank: Alternate`，只作候选不抢默认）；macOS 的 `RunEvent::Opened` 与 Linux 的裸路径 argv 都收敛到同一队列；Windows 继续走 NSIS「打开方式」候选。
 - **笔记里的图片支持悬停「查看大图 / 下载」** —— 鼠标移到图片上（或键盘聚焦）出现两颗按钮：放大镜打开全屏预览（Esc / 点遮罩关闭，登记进浮层栈，Android 返回键先关它）；下载统一先取图片字节，再弹**目录选择**（保存对话框），附件走内容寻址、外链/data URL 走 fetch；只有 Web/PWA 没有本地写盘能力时才退回浏览器下载。触屏无 hover 时按钮常驻。判据 `src/editor/imageHover.test.ts` 2/2（扩展名推断与文件名清洗）。

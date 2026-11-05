@@ -13,7 +13,7 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { usePdfReader } from "../store/pdfReader";
 import { useFileManagerStore } from "../store/fileManager";
-import { ConvertToPageIcon, FitWidthIcon, MoreHorizontalIcon, OutlineIcon, ReadAnnotateIcon } from "./icons";
+import { ConvertToPageIcon, FitWidthIcon, FolderIcon, MoreHorizontalIcon, OutlineIcon, ReadAnnotateIcon } from "./icons";
 import { hydrateMermaidBlocks } from "../lib/mdMermaid";
 import { openSystemSettingsUri } from "../lib/openExternal";
 import { useResolvedTheme } from "../store/theme";
@@ -407,7 +407,7 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
     <div className={`fm-preview-overlay ${inline ? "is-inline" : ""}`} onClick={inline ? undefined : close}>
       <div className="fm-preview" onClick={inline ? undefined : (e) => e.stopPropagation()}>
         <div className="fm-preview-head">
-          <span className="fm-preview-name">{target.name}</span>
+          <span className="fm-preview-name" title={target.path || target.name}>{target.name}</span>
           {/* ⚠️ **2026-10-04 去掉**（owner：「去掉 md 文档的关闭按钮」）—— 这颗 × 是我上一批为
               `inline` 形态补的出口 ✗。
               ⭐ 去掉之后**还能怎么关**（都在，随时可用）：
@@ -445,6 +445,16 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
               <ConvertToPageIcon aria-hidden />
             </button>
           )}
+          {isMd && target.path ? (
+            <button
+              className="fm-preview-read"
+              onClick={() => void platform.opener.revealItemInDir(target.path)}
+              title="在文件夹中显示"
+              aria-label="在文件夹中显示"
+            >
+              <FolderIcon aria-hidden />
+            </button>
+          ) : null}
           {isMd && target.path ? (
             <button
               className="fm-preview-read"
