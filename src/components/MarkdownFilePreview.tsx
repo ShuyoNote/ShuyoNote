@@ -6,11 +6,13 @@ import { isDesktopPlatform } from "../lib/platform";
 import { markdownPreviewHtml } from "../lib/mdPreviewHtml";
 import { markdownToPageContent } from "../lib/mdPreview";
 import {
+  assignPreviewHeadingIds,
   dirNameOf,
   fileNameOf,
   markdownTitleFromText,
   resolveMarkdownAssetPath,
   stripTitleHeading,
+  type MarkdownTocItem,
 } from "../lib/markdownFile";
 import { useMarkdownFilePreview } from "../store/markdownFilePreview";
 import { useNotes } from "../store/notes";
@@ -140,6 +142,7 @@ export function MarkdownFilePreview() {
   const [importing, setImporting] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [text, setText] = useState("");
+  const [toc, setToc] = useState<MarkdownTocItem[]>([]);
   const urlsRef = useRef<string[]>([]);
 
   useOverlayLayer("markdownFilePreview", !!path, close);
@@ -153,6 +156,7 @@ export function MarkdownFilePreview() {
     setLoading(true);
     setWarnings([]);
     setText("");
+    setToc([]);
     for (const u of urlsRef.current) URL.revokeObjectURL(u);
     urlsRef.current = [];
 
@@ -169,8 +173,10 @@ export function MarkdownFilePreview() {
         const base = markdownPreviewHtml(content);
         const enriched = await attachPreviewAssets(base, dirNameOf(path), urlsRef.current);
         if (cancelled) return;
+        const withIds = assignPreviewHeadingIds(enriched.html);
         setText(content);
-        setHtml(enriched.html);
+        setHtml(withIds.html);
+        setToc(withIds.toc);
         setWarnings(enriched.missing.map((n) => `图片未找到：${n}`));
       } catch (e) {
         if (!cancelled) setError(String(e instanceof Error ? e.message : e));
@@ -269,18 +275,37 @@ export function MarkdownFilePreview() {
         </div>
         <div className="markdown-file-preview-path">{path}</div>
         <div className="markdown-file-preview-body">
-          {loading ? (
-            <div className="markdown-file-preview-hint">正在读取…</div>
-          ) : error ? (
-            <div className="markdown-file-preview-error">{error}</div>
-          ) : (
-            <>
-              {warnings.length > 0 ? (
-                <div className="markdown-file-preview-warn">{warnings.join("；")}</div>
-              ) : null}
-              <div className="fm-md-preview" dangerouslySetInnerHTML={{ __html: html }} />
-            </>
-          )}
+          <div className="markdown-file-preview-main">
+            {loading ? (
+              <div className="markdown-file-preview-hint">正在读取…</div>
+            ) : error ? (
+              <div className="markdown-file-preview-error">{error}</div>
+            ) : (
+              <>
+                {warnings.length > 0 ? (
+                  <div className="markdown-file-preview-warn">{warnings.join("；")}</div>
+                ) : null}
+                <div className="fm-md-preview" dangerouslySetInnerHTML={{ __html: html }} />
+              </>
+            )}
+          </div>
+          {!loading && !error && toc.length > 0 ? (
+            <aside className="markdown-file-preview-toc" aria-label="目录">
+              <div className="markdown-file-preview-toc-title">目录</div>
+              {toc.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`markdown-file-preview-toc-item is-l${item.level}`}
+                  onClick={() => {
+                    document.getElementById(item.id)?.scrollIntoView({ block: "start", behavior: "smooth" });
+                  }}
+                >
+                  {item.text}
+                </button>
+              ))}
+            </aside>
+          ) : null}
         </div>
       </div>
     </div>,

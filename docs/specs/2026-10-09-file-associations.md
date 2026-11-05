@@ -103,6 +103,7 @@ using the **\"open\" verb as default**"*。而 `nsis/installer.nsi` 里 **`OpenW
   **不建页、不写库、不把图片入库**；Esc / 点遮罩 / × 关闭，Android 返回键先关它。
 - 预览按 `.md` 所在目录读取相对图片（`api.readBinaryFile` → blob URL），
   `mdToHtml` 渲染 + `DOMPurify` 消毒；外链/data URL 原样保留。
+- 右侧目录取 h1–h3（点击平滑跳转，窄屏隐藏），路径行固定高度、不参与 flex 压缩。
 - 顶部只有 **「导入为笔记」** 才建页：复用 `markdownToPageContent`，
   本地相对图片内联为 data URL（单张 ≤2 MB、总量 ≤8 MB；源文件不写回，
   也不把本地绝对路径带进库里）。

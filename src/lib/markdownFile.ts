@@ -43,6 +43,39 @@ export function stripTitleHeading(text: string, path: string): string {
   return source.replace(/^\s{0,3}#\s+.+?(?:\r?\n|$)/m, "");
 }
 
+export interface MarkdownTocItem {
+  id: string;
+  text: string;
+  level: number;
+}
+
+function headingSlug(text: string, index: number): string {
+  const slug = text
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
+  return `md-preview-${slug || "section"}-${index}`;
+}
+
+/**
+ * 给预览 HTML 的 h1–h3 加稳定 id，并抽出一份目录。
+ * id 用序号去重 ⇒ 同名标题不会互相抢锚点。
+ */
+export function assignPreviewHeadingIds(html: string): { html: string; toc: MarkdownTocItem[] } {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const toc: MarkdownTocItem[] = [];
+  const headings = Array.from(doc.querySelectorAll("h1, h2, h3"));
+  headings.forEach((h, i) => {
+    const text = (h.textContent ?? "").trim();
+    if (!text) return;
+    const id = headingSlug(text, i);
+    h.setAttribute("id", id);
+    toc.push({ id, text, level: Number(h.tagName.slice(1)) });
+  });
+  return { html: doc.body.innerHTML, toc };
+}
+
 function isExternalRef(ref: string): boolean {
   // `C:\…` / `C:/…` 是本地绝对路径，不是 scheme。
   if (/^[a-zA-Z]:[\\/]/.test(ref)) return false;

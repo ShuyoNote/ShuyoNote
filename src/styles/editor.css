@@ -1356,6 +1356,7 @@
 .markdown-file-preview-head {
   display: flex;
   align-items: center;
+  flex: none;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border);
@@ -1428,6 +1429,8 @@
 }
 
 .markdown-file-preview-path {
+  flex: none;
+  line-height: 1.4;
   padding: 0 var(--space-4) var(--space-2);
   color: var(--text-dim);
   font-size: var(--fs-12);
@@ -1437,15 +1440,69 @@
 }
 
 .markdown-file-preview-body {
+  display: flex;
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: 0 var(--space-5) var(--space-5);
+  overflow: hidden;
 }
 
-.markdown-file-preview-body .fm-md-preview {
+.markdown-file-preview-main {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: var(--space-3) var(--space-5) var(--space-5);
+}
+
+.markdown-file-preview-main .fm-md-preview {
   max-width: none;
   margin: 0;
+}
+
+.markdown-file-preview-toc {
+  flex: none;
+  width: 220px;
+  overflow: auto;
+  padding: var(--space-3) var(--space-3) var(--space-5);
+  border-left: 1px solid var(--border);
+  background: var(--hover);
+}
+
+.markdown-file-preview-toc-title {
+  margin-bottom: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  font-weight: 600;
+}
+
+.markdown-file-preview-toc-item {
+  display: block;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-13);
+}
+
+.markdown-file-preview-toc-item:hover {
+  background: var(--hover);
+}
+
+.markdown-file-preview-toc-item.is-l2 {
+  padding-left: var(--space-4);
+  color: var(--text-dim);
+}
+
+.markdown-file-preview-toc-item.is-l3 {
+  padding-left: var(--space-6);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
 }
 
 .markdown-file-preview-hint,
@@ -1471,6 +1528,10 @@
   background: var(--hover);
 }
 
+@media (max-width: 900px) {
+  .markdown-file-preview-toc { display: none; }
+}
+
 @media (max-width: 640px) {
   .markdown-file-preview-overlay {
     padding: var(--space-2);
@@ -1479,8 +1540,9 @@
     width: 100%;
     max-height: 94vh;
   }
-  .markdown-file-preview-body {
-    padding: 0 var(--space-3) var(--space-3);
+  .markdown-file-preview-main {
+    padding: var(--space-3);
   }
 }
 }
+

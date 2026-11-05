@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assignPreviewHeadingIds,
   dirNameOf,
   fileNameOf,
   isMarkdownPath,
@@ -32,6 +33,17 @@ describe("外部 Markdown 打开 · 路径与标题", () => {
   it("③b 导入正文去掉被当作页面标题的那一行 H1（避免标题出现两次）", () => {
     expect(stripTitleHeading("# 季度计划\n\n正文", "D:\\x\\a.md")).toBe("\n正文");
     expect(stripTitleHeading("正文\n\n## 小节", "D:\\x\\a.md")).toBe("正文\n\n## 小节");
+  });
+
+  it("③c 目录：h1–h3 加 id，同名标题 id 不冲突", () => {
+    const out = assignPreviewHeadingIds("<h1>标题</h1><h2>小节</h2><h2>小节</h2><h4>太深</h4>");
+    expect(out.toc.map((t) => [t.level, t.text])).toEqual([
+      [1, "标题"],
+      [2, "小节"],
+      [2, "小节"],
+    ]);
+    expect(new Set(out.toc.map((t) => t.id)).size).toBe(3);
+    expect(out.html).toContain('id="md-preview-');
   });
 });
 
