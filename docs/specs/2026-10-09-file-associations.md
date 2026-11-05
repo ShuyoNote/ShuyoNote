@@ -104,8 +104,8 @@ using the **\"open\" verb as default**"*。而 `nsis/installer.nsi` 里 **`OpenW
 - 预览按 `.md` 所在目录读取相对图片（`api.readBinaryFile` → blob URL），
   `mdToHtml` 渲染 + `DOMPurify` 消毒；外链/data URL 原样保留。
 - 顶部只有 **「导入为笔记」** 才建页：复用 `markdownToPageContent`，
-  本地相对图片经 `api.importAttachmentFiles` 入库并补 ImageNode 的 `hash/mime`；
-  **源文件不写回**。
+  本地相对图片内联为 data URL（单张 ≤2 MB、总量 ≤8 MB；源文件不写回，
+  也不把本地绝对路径带进库里）。
 - 判据：`src/lib/markdownFile.test.ts`（路径/标题/相对资源）与
   `src/lib/office/requestBridge.test.ts` 的 "md 先分流、不进 Office"。
 
