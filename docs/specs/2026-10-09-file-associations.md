@@ -93,3 +93,20 @@ using the **\"open\" verb as default**"*。而 `nsis/installer.nsi` 里 **`OpenW
   可 grep 复核；**但这不等于编译过** ✗
 - **没做真卸载读数**：卸载还原只在配置与模板层核（模板 `APP_UNASSOCIATE` 的还原逻辑 ＋ 本 hook
   的精确清理），没有"装一次再卸一次、注册表干净"的实机读数 ✗
+
+## 7. 2026-11-05：`.md` 打开改为**只读预览**（owner 拍板）
+
+`.md` / `.markdown` 与 `.docx` 一样通过 `--import` 唤起，但前端在 `OfficeImportPanel` 的事件分流里
+**先截住 Markdown**（`lib/markdownFile.ts` 的 `isMarkdownPath`）：
+
+- **打开 ≠ 导入**：只打开 `MarkdownFilePreview` 浮层（登记进浮层栈），
+  **不建页、不写库、不把图片入库**；Esc / 点遮罩 / × 关闭，Android 返回键先关它。
+- 预览按 `.md` 所在目录读取相对图片（`api.readBinaryFile` → blob URL），
+  `mdToHtml` 渲染 + `DOMPurify` 消毒；外链/data URL 原样保留。
+- 顶部只有 **「导入为笔记」** 才建页：复用 `markdownToPageContent`，
+  本地相对图片经 `api.importAttachmentFiles` 入库并补 ImageNode 的 `hash/mime`；
+  **源文件不写回**。
+- 判据：`src/lib/markdownFile.test.ts`（路径/标题/相对资源）与
+  `src/lib/office/requestBridge.test.ts` 的 "md 先分流、不进 Office"。
+
+⚠️ 当前只登记了 Windows NSIS 的 `.md` 打开方式；macOS/Linux 的 document type 仍在后续范围。

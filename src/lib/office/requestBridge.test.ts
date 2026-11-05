@@ -246,4 +246,26 @@ describe("office-import://request ⇒ 真建页（task-14 ④）", () => {
       new RegExp(`office_import::${OFFICE_IMPORT_TAKE_COMMAND}\\s*,`),
     );
   });
+
+  it("k) `.md` 请求先被只读预览分流，不进 Office 导入", async () => {
+    let md = 0;
+    let office = 0;
+    const unlisten = await mountOfficeImportRequests(
+      async () => {
+        office++;
+        throw new Error("Office 导入不该被调用");
+      },
+      {
+        listen: async () => () => {},
+        takePending: async () => ["C:\\tmp\\readme.md"],
+        onMarkdownRequest: (path) => {
+          md++;
+          return /\.md$/i.test(path);
+        },
+      },
+    );
+    expect(md, "md 路径没有先走只读预览分流").toBe(1);
+    expect(office, "md 路径被误送进 Office 导入").toBe(0);
+    unlisten();
+  });
 });

@@ -1328,4 +1328,159 @@
 }
 
 .editor-content blockquote { border-left: 3px solid var(--border-strong, #d0d0d0); background: var(--hover, rgba(0,0,0,.03)); padding: 6px 10px; margin: var(--space-2) 0; border-radius: var(--radius-xs); }
+
+/* ---------- 外部 .md 只读预览（owner 2026-11-05） ---------- */
+.markdown-file-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.markdown-file-preview {
+  display: flex;
+  flex-direction: column;
+  width: min(980px, 94vw);
+  max-height: 88vh;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
+}
+
+.markdown-file-preview-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.markdown-file-preview-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+}
+
+.markdown-file-preview-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.markdown-file-preview-badge {
+  flex: none;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-12);
+}
+
+.markdown-file-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+
+.markdown-file-preview-import {
+  height: 30px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xs);
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+  cursor: pointer;
+  font-size: var(--fs-13);
+}
+
+.markdown-file-preview-import:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.markdown-file-preview-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.markdown-file-preview-close:hover {
+  background: var(--hover);
+}
+
+.markdown-file-preview-path {
+  padding: 0 var(--space-4) var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-file-preview-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--space-5) var(--space-5);
+}
+
+.markdown-file-preview-body .fm-md-preview {
+  max-width: none;
+  margin: 0;
+}
+
+.markdown-file-preview-hint,
+.markdown-file-preview-error,
+.markdown-file-preview-warn {
+  margin: var(--space-3) 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-xs);
+  font-size: var(--fs-13);
+}
+
+.markdown-file-preview-hint {
+  color: var(--text-dim);
+}
+
+.markdown-file-preview-error {
+  color: var(--danger, #b42318);
+  background: var(--danger-soft, rgba(180, 35, 24, 0.08));
+}
+
+.markdown-file-preview-warn {
+  color: var(--text-dim);
+  background: var(--hover);
+}
+
+@media (max-width: 640px) {
+  .markdown-file-preview-overlay {
+    padding: var(--space-2);
+  }
+  .markdown-file-preview {
+    width: 100%;
+    max-height: 94vh;
+  }
+  .markdown-file-preview-body {
+    padding: 0 var(--space-3) var(--space-3);
+  }
+}
 }

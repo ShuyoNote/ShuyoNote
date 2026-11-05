@@ -256,6 +256,7 @@ import "./styles/editor-chrome.css";
 // S4-53（2026-11-02）：App.css 收尾 —— 剩余 app 规则（壳/属性/编辑器浮层/提示/时间线/移动阅读）。
 import "./styles/app-residual.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
+import { MarkdownFilePreview } from "./components/MarkdownFilePreview";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
 // when the user switches to graph / board / files / template-center (the default
@@ -1307,6 +1308,7 @@ function AppShell() {
           {/* ⚠️ **2026-10-04 改**：⭐ 顶层这份**只在浮层形态**渲染 ✗ —— 桌面端它在上面那条 `.main` 分支里 ✓
               （⭐ 与紧邻的 `{pdfWhere === "overlay" && <PdfReader />}` 同一写法 ✓）。 */}
           {previewWhere === "overlay" && <FilePreviewDialog />}
+          <MarkdownFilePreview />
           <CommunitySaveDialog />
           <MarkdownExportDialog />
           <PdfReader />
@@ -1483,6 +1485,7 @@ function AppShell() {
         <CommunitySaveDialog />
         {/* 窄屏才用全屏浮层；桌面端它在内容区里（见上面 pdfWhere 那条分支）。 */}
         {pdfWhere === "overlay" && <PdfReader />}
+        <MarkdownFilePreview />
         <FormulaEditorDialog />
         {/* ⭐ task-14：Office 导入的**唯一入口**（右下角小按钮 ＋ `office-import://request` 监听）。
             ⚠️ 它**不是浮层**（容器类名不以 `-overlay`/`-popover` 结尾 ⇒ 无需登记返回栈 ✓）；

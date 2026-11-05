@@ -67,6 +67,11 @@ export function realOfficeImportRequestHandler(parentId: string | null): OfficeR
 
 export interface MountOfficeRequestsOptions {
   /**
+   * 先于 Office 处理的一条分流：返回 `true` 表示这条路径已被别的入口接管
+   * （例如 `.md` 走只读预览）⇒ 不再调 Office 导入处理器。
+   */
+  onMarkdownRequest?: (path: string) => boolean;
+  /**
    * 订阅器（默认走 `platform.event.listen` ✓）。**注入是为了判据**：
    * 不依赖真宿主也能验"事件一到就去 drain 并建页" ✓。
    */
@@ -131,7 +136,9 @@ export async function mountOfficeImportRequests(
     const paths = (await takePending()) ?? [];
     for (const path of paths) {
       if (disposed) return;
-      await handler(String(path));
+      const p = String(path);
+      if (options.onMarkdownRequest?.(p)) continue;
+      await handler(p);
     }
   };
 
