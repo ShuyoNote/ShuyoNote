@@ -321,9 +321,6 @@ const OVERLAYS = [
   // 2026-11-04：笔记图片 hover「查看大图」；由编辑器里的图片节点打开，随编辑器卸载。
   // `optional`：这一层没有独立入口（必须先有图片节点），移动端验收若拿不到就跳过而不是假红。
   { id: "imageLightbox", label: "图片预览", root: ".image-lightbox-overlay", box: ".image-lightbox-inner", sheet: false, fullscreen: true, optional: true },
-  // 2026-11-05：外部 .md 双击「打开方式」的只读预览；由文件路径事件打开，没有菜单入口。
-  // `optional`：必须在有真实 .md 路径被唤起时才会出现，拿不到就跳过而不是假红。
-  { id: "markdownFilePreview", label: "Markdown 只读预览", root: ".markdown-file-preview-overlay", box: ".markdown-file-preview", sheet: false, fullscreen: true, optional: true },
 ];
 
 /** 主要操作按钮的文案（验收口径写在任务里，别改）。 */

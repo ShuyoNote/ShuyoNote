@@ -1370,7 +1370,7 @@ function AppShell() {
         /* ⭐ 2026-11-05（owner）：外部 `.md` 进**主阅读区**，不再用模态浮层。
            它排在 PDF/文件预览前面：外部文档打开时应当占满内容区；
            关闭只清 path，底层 view 原样保留 ⇒ 回到刚才的页面/视图。 */
-        <div className="main markdown-main"><MarkdownFilePreview inline /></div>
+        <div className="main markdown-main"><MarkdownFilePreview /></div>
       ) : pdfWhere === "inline" ? (
         <div className="main pdf-main"><PdfReader inline /></div>
       ) : previewWhere === "inline" ? (

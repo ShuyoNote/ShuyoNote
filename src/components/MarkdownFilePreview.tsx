@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 
 import { api } from "../lib/api";
 import { isDesktopPlatform } from "../lib/platform";
@@ -18,8 +17,6 @@ import {
 import { useMarkdownFilePreview } from "../store/markdownFilePreview";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
-import { useOverlayLayer } from "../hooks/useOverlayLayer";
-import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { XIcon } from "./icons";
 
 const MAX_PREVIEW_CHARS = 2 * 1024 * 1024;
@@ -134,7 +131,7 @@ async function inlineMarkdownAssets(
  * - 顶部「导入为笔记」才复制成新页面（本地相对图片入库为附件）；
  * - Esc / 点遮罩 / × 关闭；Android 返回键登记进浮层栈。
  */
-export function MarkdownFilePreview({ inline = false }: { inline?: boolean }) {
+export function MarkdownFilePreview() {
   const path = useMarkdownFilePreview((s) => s.path);
   const close = useMarkdownFilePreview((s) => s.close);
   const [html, setHtml] = useState("");
@@ -145,9 +142,6 @@ export function MarkdownFilePreview({ inline = false }: { inline?: boolean }) {
   const [text, setText] = useState("");
   const [toc, setToc] = useState<MarkdownTocItem[]>([]);
   const urlsRef = useRef<string[]>([]);
-
-  useOverlayLayer("markdownFilePreview", !!path && !inline, close);
-  useOverlayScrollLock(!!path && !inline);
 
   useEffect(() => {
     if (!path) return;
@@ -333,19 +327,5 @@ export function MarkdownFilePreview({ inline = false }: { inline?: boolean }) {
     </div>
   );
 
-  if (inline) {
-    return <div className="markdown-file-preview-page">{card}</div>;
-  }
-
-  return createPortal(
-    <div
-      className="markdown-file-preview-overlay"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) close();
-      }}
-    >
-      {card}
-    </div>,
-    document.body,
-  );
+  return <div className="markdown-file-preview-page">{card}</div>;
 }
