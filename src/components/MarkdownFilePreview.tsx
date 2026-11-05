@@ -29,7 +29,9 @@ function bytesToBase64(bytes: Uint8Array): string {
   for (let i = 0; i < bytes.length; i += chunk) {
     bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
-  return btoa(bin);
+  // ⚠️ 行内 Markdown 图片的解析器把 `=` 当“尺寸提示”分隔符；
+  // base64 末尾的 `=` 会把它截断 ⇒ 去掉 padding（浏览器 data URL 仍能解码）。
+  return btoa(bin).replace(/=+$/, "");
 }
 
 function mimeOfPath(path: string): string {
