@@ -35,6 +35,19 @@
   color: var(--text);
 }
 
+/* 当前页：面包屑的终点，只显示、不可点（避免点了"没反应"）。 */
+.crumb-current {
+  color: var(--text);
+  font-weight: 600;
+  cursor: default;
+  padding: 2px var(--space-1);
+}
+
+.crumb-current:hover {
+  background: transparent;
+  color: var(--text);
+}
+
 .crumb-sep {
   margin: 0 2px;
   color: var(--text-faint);

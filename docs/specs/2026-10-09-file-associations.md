@@ -93,3 +93,58 @@ using the **\"open\" verb as default**"*。而 `nsis/installer.nsi` 里 **`OpenW
   可 grep 复核；**但这不等于编译过** ✗
 - **没做真卸载读数**：卸载还原只在配置与模板层核（模板 `APP_UNASSOCIATE` 的还原逻辑 ＋ 本 hook
   的精确清理），没有"装一次再卸一次、注册表干净"的实机读数 ✗
+
+## 7. 2026-11-05：外部 `.md` 复用**内置文件预览器**（owner 拍板）
+
+`.md` / `.markdown` 与 `.docx` 一样通过 `--import` / 文件打开事件唤起，但前端在
+`OfficeImportPanel` 的事件分流里**先截住 Markdown**（`lib/markdownFile.ts` 的 `isMarkdownPath`）：
+
+- **不另做 md 阅读器**：调用 `useFilePreview.openPath(path)`，复用已有的
+  `FilePreviewDialog`（与文件区里预览 md 附件是同一个组件）在主阅读区只读打开。
+  「目录」「宽度切换」「转为笔记」等按钮全部沿用内置阅读器那一套。
+- **打开 ≠ 导入**：`openPath` 只读文件、渲 HTML，**不建页、不写库、不把图片入库**；
+  关闭/切视图只清 target，底层 view 原样保留。
+- 外部文件不在附件库里：`openPath` 用 `api.readTextFile` 读原文，并把相对图片
+  （`![](images/a.png)`）按 md 所在目录经 `api.readBinaryFile` 读成 blob URL 后替换；
+  关闭时回收这些 URL。外链 / data URL 原样保留。
+- 外部 target 用 `{ id: "external:<path>", name, hash: "", mime: "text/markdown", path }`
+  这种形状喂给现有 parser；`importAsPage` 对 `path` 分支走 `readTextFile`，不读附件 hash。
+- 顶部额外给外部文件一个「设为默认」引导（打开系统默认应用页），
+  **不静默改默认关联**。
+- 平台：
+  - Windows 继续走 NSIS 的 `installerHooks`（只加「打开方式」候选，不抢默认）。
+  - macOS / Linux 走 `tauri.macos.conf.json` / `tauri.linux.conf.json` 的
+    `bundle.fileAssociations`（`role: Viewer`, `rank: Alternate`，也只作候选）。
+  - macOS 冷/热启动的 `RunEvent::Opened` 与 Windows/Linux 的裸路径 argv
+    都收敛到 `office_import` 的同一个队列/事件。
+- 渲染器补齐了常被 Markdown 文档用到的 GFM/CommonMark 子集：setext 标题、
+  任务列表（只读勾选框）、autolink；表格/围栏代码/Mermaid/引用/相对图片沿用原实现。
+- 判据：`src/lib/markdownFile.test.ts`（路径/标题/相对资源/目录）、
+  `src/lib/office/requestBridge.test.ts`（md 先分流、不进 Office）、
+  `src/editor/mdToHtml.test.ts`（setext / 任务列表 / autolink）。
+
+⚠️ 当前没有做「静默把 `.md` 默认程序改成 ShuyoNote」：那是系统级选择，只给引导，不代用户决定。
+
+## 8. 2026-11-05：直接导出 PDF（Windows · WebView2 `PrintToPdf`）
+
+`.md` 阅读器路径条左侧有「直接导出 PDF」（`isWindows` 才渲染）。它**不弹系统打印对话框**：
+用 WebView2 `ICoreWebView2_7::PrintToPdf` 直接写文件，前端只弹一次「导出 PDF」保存对话框。
+
+- **只印正文**：导出时把 `.fm-md-preview` 克隆到 `body > .pdf-print-root`，打印期给 `<html>` 加
+  `pdf-exporting` ⇒ 其余 DOM 全部 `display:none`。PDF 里没有侧栏 / 按钮 / 标题栏 / 底层页面。
+  ⛔ **不能只靠打印 CSS 藏壳**：打印版面宽由纸张决定（A4 210mm − 12mm×2 边距 ≈ **703 CSS px**），
+  低于 768px 断点 ⇒ 应用会真的重渲染成移动版，把「‹ 阅读」那屏一起印进 PDF
+  （实测：10 页里没有一页是这份 `.md` 的正文）。
+- **导出期冻结响应式**：`src/hooks/useMobile.ts` 的 `isPrintLayout()` 在 `pdf-exporting` 期间为真
+  ⇒ `useMobile()` / `useMobileOverlayViewport()` 一律按**桌面**返回；屏幕真的窄（拖窄窗口 / 手机）
+  仍走移动版式，变化只在导出那几百毫秒内。
+- **纸张与底色**：纸张/页边距必须由 `ICoreWebView2PrintSettings` 显式指定
+  （A4 = 8.27×11.69in、12mm ≈ 0.4724in）——`@page { size: A4 }` 在 `PrintToPdf` 路径**不生效**，
+  不传设置时默认是 Letter。另：PDF 的**画布底色**取自 WebView2 的默认背景色
+  （`lib.rs` 为防白闪设的 `Color(11, 21, 51)`），`html`/`body` 背景压不住 ⇒ 打印前临时改白、
+  打完回主线程还原（`src-tauri/src/print_pdf.rs`）。
+- **判据（2026-11-05 本机实跑 1 次）**：`_tmp/scratch/md-open-test.md`（含 1 张相对图片）
+  ⇒ 1 页 A4、白底、内嵌 480×180 PNG、文本提取逐字只有正文标题/段落/列表/代码；
+  全程只出现「导出 PDF」保存对话框，无系统打印窗口；`pnpm verify` 66/66。
+  ⚠️ 这是**一次性人工读数**，没有自动化判据（`PrintToPdf` 要真 WebView，PR 里别当成长期回归）。
+

@@ -33,3 +33,18 @@ export async function openExternalUrl(raw: string): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * 打开**系统设置页**（`ms-settings:` / `x-apple.systempreferences:`）。
+ * 与外部网站不同：这是 OS 自己的设置 URI，不受 http(s) 白名单约束；
+ * 但调用点仍**不许**自己碰 `platform.opener.openUrl`（真总闸判据要求唯一出口）。
+ */
+export async function openSystemSettingsUri(uri: string): Promise<boolean> {
+  try {
+    await platform.opener.openUrl(uri);
+    return true;
+  } catch (e) {
+    toast(`打不开系统设置：${e instanceof Error ? e.message : String(e)}`, "error");
+    return false;
+  }
+}

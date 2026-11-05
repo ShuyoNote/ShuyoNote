@@ -1328,4 +1328,27 @@
 }
 
 .editor-content blockquote { border-left: 3px solid var(--border-strong, #d0d0d0); background: var(--hover, rgba(0,0,0,.03)); padding: 6px 10px; margin: var(--space-2) 0; border-radius: var(--radius-xs); }
+
+/* GFM 任务列表：只读预览用 CSS 勾选框，不引入可交互 input。 */
+.fm-md-preview .task-list {
+  list-style: none;
+  padding-left: var(--space-2);
 }
+
+.fm-md-preview .task-list-item::before {
+  display: inline-block;
+  width: 1.2em;
+  color: var(--text-dim);
+}
+
+.fm-md-preview .task-todo::before {
+  content: "☐";
+}
+
+.fm-md-preview .task-done::before {
+  content: "☑";
+  color: var(--accent);
+}
+
+}
+

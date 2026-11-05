@@ -52,6 +52,8 @@ mod block_rev;
 mod blocks;
 mod bookmark;
 mod commands;
+// 只读文档直接导出 PDF（Windows WebView2 PrintToPdf；其它平台诚实返回不支持）。
+mod print_pdf;
 mod crypto;
 pub mod office_import;
 // 国密（SM4-CBC ＋ HMAC-SM3）应用层 AEAD —— **2026-09-20 起是默认特性**（方案 §3.4「无兼容快路」）；
@@ -1284,6 +1286,7 @@ pub fn run() {
             versions::restore_version,
             versions::clear_page_versions,
             backup::export_backup,
+    print_pdf::export_webview_pdf,
             backup::import_backup,
             // ⭐ 2026-10-28（owner：「本机备份 全空间打包，要能原样恢复」）：
             //   替换式恢复 —— 解到 staging，**重启后**在打开任何库之前整份替换（旧数据另存一份）
@@ -1419,8 +1422,20 @@ pub fn run() {
 ])
         .build(app_context())
         .expect("error while running tauri application")
-        .run(|_app_handle, event| match event {
+        .run(|app_handle, event| match event {
             tauri::RunEvent::Ready => log_lifecycle("ready", ""),
+            // macOS/iOS：系统“打开方式”在冷启动/热启动都会发 Opened（file:// URL）。
+            // 与 Windows/Linux 的 `--import` 收敛到同一个队列 ⇒ 前端只认一条事件。
+            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+            tauri::RunEvent::Opened { urls } => {
+                for url in urls {
+                    if let Ok(path) = url.to_file_path() {
+                        let p = path.to_string_lossy().to_string();
+                        office_import::set_pending_import(&p);
+                        let _ = tauri::Emitter::emit(app_handle, office_import::IMPORT_EVENT, p);
+                    }
+                }
+            }
             tauri::RunEvent::ExitRequested { code, .. } => {
                 log_lifecycle("exit_requested", &format!("code={code:?}"));
             }

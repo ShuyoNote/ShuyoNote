@@ -25,13 +25,28 @@ export {
 import { MOBILE_QUERY, SHORT_QUERY, isMobileOverlayViewport, isMobileViewport } from "../lib/platform/shape";
 
 
+/**
+ * **导出 PDF 期间**：响应式判定一律按「桌面」算。
+ *
+ * 为什么必须这样：`PrintToPdf` 的版面宽度是**纸张正文宽度** —— A4 210mm 减去 12mm×2 页边距
+ * ≈ **703 CSS px**，落在 768px 断点以下 ⇒ 打印时 `matchMedia` 会把桌面应用判成手机，
+ * React 真的重渲染成移动版（真读数：导出 PDF 里出现移动端的「阅读」屏 + 底部提示）。
+ * 导出期间带上 `pdf-exporting` 类 ⇒ 这里返回 true，两个响应式 hook 都按桌面返回。
+ *
+ * ⚠️ 只是「打印期冻结」，屏幕上的窄窗口行为**不变**（窄窗口本该是移动版式）。
+ */
+export function isPrintLayout(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.documentElement.classList.contains("pdf-exporting");
+}
+
 export function useMobile(): boolean {
-  const [isMobile, setIsMobile] = useState<boolean>(isMobileViewport);
+  const [isMobile, setIsMobile] = useState<boolean>(() => isMobileViewport() && !isPrintLayout());
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
     const mql = window.matchMedia(MOBILE_QUERY);
-    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches && !isPrintLayout());
     mql.addEventListener("change", onChange);
     return () => mql.removeEventListener("change", onChange);
   }, []);
@@ -45,7 +60,7 @@ export function useMobile(): boolean {
     }
   }, [isMobile]);
 
-  return isMobile;
+  return isMobile && !isPrintLayout();
 }
 
 /**
@@ -59,18 +74,19 @@ export function useMobile(): boolean {
  * 在 360 宽下把正文挤出屏幕（页面图 x=99 / 宽 306 ⇒ 右溢出）。
  */
 export function useMobileOverlayViewport(): boolean {
-  const [isOverlay, setIsOverlay] = useState<boolean>(() => isMobileOverlayViewport());
+  const [isOverlay, setIsOverlay] = useState<boolean>(() => isMobileOverlayViewport() && !isPrintLayout());
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
     // 回调里重新**算一遍**（而不是读 `e.matches`）：两个查询谁变了都要重算，
     // 而 `e.matches` 只说那一条查询自己的结果。
     return subscribeOverlayViewport((q) => window.matchMedia(q), () =>
-      setIsOverlay(isMobileOverlayViewport()),
+      setIsOverlay(isMobileOverlayViewport() && !isPrintLayout()),
     );
   }, []);
 
-  return isOverlay;
+  // ⚠️ 导出 PDF 期间不算"窄/矮"（见 `isPrintLayout`）：纸张正文宽 ≈703px 会掉进断点。
+  return isOverlay && !isPrintLayout();
 }
 
 /**

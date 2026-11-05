@@ -13,8 +13,12 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { usePdfReader } from "../store/pdfReader";
 import { useFileManagerStore } from "../store/fileManager";
-import { ConvertToPageIcon, FitWidthIcon, OutlineIcon, ReadAnnotateIcon } from "./icons";
+import { ConvertToPageIcon, CopyIcon, FitWidthIcon, FolderIcon, MoreHorizontalIcon, OutlineIcon, PrintIcon, ReadAnnotateIcon } from "./icons";
 import { hydrateMermaidBlocks } from "../lib/mdMermaid";
+import { openSystemSettingsUri } from "../lib/openExternal";
+import { compactPathForDisplay } from "../lib/markdownFile";
+import { waitForPrintAssets } from "../lib/print";
+import { toast } from "../store/toast";
 import { useResolvedTheme } from "../store/theme";
 import { fitScaleOf, nextZoomFromWheel } from "../lib/imageZoom";
 
@@ -191,6 +195,7 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
   const [dragging, setDragging] = useState(false);
 
   const isMd = target?.mime === "text/markdown";
+  const isWindows = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
   // ⚠️ 这里原先写的是 `const folderId = useFileManagerStore.getState().folderId`（**渲染期快照**）：
   // 它既不是订阅（folderId 变了本组件不会重渲染 ⇒ 用户点了"导入为页面"落到的还是旧目录），
   // 也不比"点击时现取"更好。动作里读 `getState()` 才是这份状态唯一正确的用法（见下面的按钮）。
@@ -199,6 +204,70 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
     if (target && target.mime === "application/pdf") {
       usePdfReader.getState().openPdf(target.id, target.name);
       close();
+    }
+  };
+
+  /** 外部 .md 才需要：把系统默认打开方式引导到 ShuyoNote（不静默改默认）。 */
+  const openDefaultAppsGuide = (): void => {
+    const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
+    try {
+      if (/Windows/i.test(ua)) {
+        void openSystemSettingsUri("ms-settings:defaultapps");
+        return;
+      }
+      if (/Macintosh|Mac OS X/i.test(ua)) {
+        void openSystemSettingsUri("x-apple.systempreferences:com.apple.preference.extensions");
+        return;
+      }
+    } catch {
+      /* 落到下面的文字提示 */
+    }
+    // 不弹 toast 的 import 太重；这里用系统设置页失败时也不必打断阅读。
+  };
+
+  /** Windows：当前阅读器页面直接写 PDF（WebView2 PrintToPdf，不经过系统打印对话框）。 */
+  const exportDirectPdf = async (): Promise<void> => {
+    if (!target?.path) return;
+    const base = target.name.replace(/\.[^.]+$/, "") || "document";
+    const path = await platform.dialog.save({
+      title: "导出 PDF",
+      defaultPath: `${base}.pdf`,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (!path) return;
+    // ⭐ 只把**正文**交给打印：复制到 `body > .pdf-print-root`，打印时其余 DOM 一律
+    //    display:none（见 print.css 头部那段真读数）。⛔ 不能只靠打印 CSS 藏壳 ——
+    //    WebView2 会按纸张宽度重排，`max-width:768px` 变真 ⇒ 窄屏布局（含底层阅读屏）
+    //    会被一起印进 PDF ✗（实测 10 页没有一页是正文）。
+    const source = bodyRef.current?.querySelector(".fm-md-preview");
+    if (!source) {
+      toast("导出 PDF 失败：找不到要打印的正文", "error");
+      return;
+    }
+    const host = document.createElement("div");
+    host.className = "pdf-print-root";
+    host.appendChild(source.cloneNode(true));
+    document.body.appendChild(host);
+    document.documentElement.classList.add("pdf-exporting");
+    // ⚠️ 画布底色只能走**行内样式**：`html`/`body` 的背景由主题样式表（无 layer）设，
+    //    `print.css` 在 `@layer legacy` 里压不过它 ⇒ 纸面会印成主题深色（实测页边一圈深蓝）。
+    //    body 的背景会**传播成整张纸的底色**，所以两处都要压。
+    const prevHtmlBg = document.documentElement.style.backgroundColor;
+    const prevBodyBg = document.body.style.backgroundColor;
+    document.documentElement.style.backgroundColor = "#ffffff";
+    document.body.style.backgroundColor = "#ffffff";
+    try {
+      // 图片/字体先就绪，避免打印快照里是空白（与 printDoc 同一条口径）。
+      await waitForPrintAssets(document);
+      await api.exportWebviewPdf(path);
+      toast("已导出 PDF", "success");
+    } catch (e) {
+      toast(`导出 PDF 失败：${String(e)}`, "error");
+    } finally {
+      document.documentElement.style.backgroundColor = prevHtmlBg;
+      document.body.style.backgroundColor = prevBodyBg;
+      document.documentElement.classList.remove("pdf-exporting");
+      host.remove();
     }
   };
 
@@ -388,7 +457,7 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
     <div className={`fm-preview-overlay ${inline ? "is-inline" : ""}`} onClick={inline ? undefined : close}>
       <div className="fm-preview" onClick={inline ? undefined : (e) => e.stopPropagation()}>
         <div className="fm-preview-head">
-          <span className="fm-preview-name">{target.name}</span>
+          <span className="fm-preview-name" title={target.path || target.name}>{target.name}</span>
           {/* ⚠️ **2026-10-04 去掉**（owner：「去掉 md 文档的关闭按钮」）—— 这颗 × 是我上一批为
               `inline` 形态补的出口 ✗。
               ⭐ 去掉之后**还能怎么关**（都在，随时可用）：
@@ -426,7 +495,55 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
               <ConvertToPageIcon aria-hidden />
             </button>
           )}
+          {isMd && target.path ? (
+            <button
+              className="fm-preview-read"
+              onClick={() => void platform.opener.revealItemInDir(target.path)}
+              title="在文件夹中显示"
+              aria-label="在文件夹中显示"
+            >
+              <FolderIcon aria-hidden />
+            </button>
+          ) : null}
+          {isMd && target.path && isWindows ? (
+            <button
+              className="fm-preview-read"
+              onClick={() => void exportDirectPdf()}
+              title="直接导出 PDF（不弹打印对话框）"
+              aria-label="直接导出 PDF"
+            >
+              <PrintIcon aria-hidden />
+            </button>
+          ) : null}
+          {isMd && target.path ? (
+            <button
+              className="fm-preview-read"
+              onClick={openDefaultAppsGuide}
+              title="把 .md / .markdown 的默认打开方式设为 ShuyoNote（需系统确认）"
+              aria-label="设为默认 Markdown 打开方式"
+            >
+              <MoreHorizontalIcon aria-hidden />
+            </button>
+          ) : null}
         </div>
+        {isMd && target.path ? (
+          <div className="fm-preview-pathbar" title={target.path}>
+            <button
+              className="fm-preview-path-copy"
+              title="复制完整路径"
+              aria-label="复制完整路径"
+              onClick={() => {
+                void navigator.clipboard?.writeText(target.path).then(
+                  () => toast("已复制路径", "success"),
+                  () => toast("复制失败", "error"),
+                );
+              }}
+            >
+              <CopyIcon aria-hidden />
+            </button>
+            <span className="fm-preview-path">{compactPathForDisplay(target.path)}</span>
+          </div>
+        ) : null}
         <div className="fm-preview-body">
           {target.mime.startsWith("image/") ? (
             asset.url ? (

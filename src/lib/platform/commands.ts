@@ -1901,6 +1901,7 @@ export interface CommandMap {
   //    （与 `mesh_sync_now` 同一处置 —— ⛔ 不假装连上了 ✗，⛔ 也不显示 0 天 ✗）。
   relay_status: { args: undefined; result: RelayStatus };
   relay_probe: { args: undefined; result: RelayStatus };
+  export_webview_pdf: { args: { path: string }; result: void };
 
   // ---- 个人版「跨网同步订阅」：设备身份 ＋ 发卡站受控请求（2026-10-18）----
   // ⚠️ 私钥**只在 Rust**：`license_sign` 签的是**调用方给的字节**（四条字节由

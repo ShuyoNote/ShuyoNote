@@ -26,6 +26,13 @@ describe("markdownToPageContent", () => {
     expect(r!.content_text).toContain("const x = 1;");
   });
 
+  it("imports a data-URL image (base64 padding stripped) as an image node", () => {
+    const r = markdownToPageContent("![x](data:image/png;base64,iVBORw0KGgo)");
+    expect(r).not.toBeNull();
+    expect(r!.content_json).toContain('"type":"image"');
+    expect(r!.content_text).not.toContain("iVBORw0KGgo");
+  });
+
   it("returns null for empty / whitespace input", () => {
     expect(markdownToPageContent("")).toBeNull();
     expect(markdownToPageContent("   ")).toBeNull();

@@ -35,6 +35,8 @@ import { OFFICE_IMPORT_ABILITY_ID, isAbilityEnabled } from "../lib/abilities/sta
 import { measureOne, renderRetentionReport, type RetentionRow } from "../lib/office/retention";
 import { realOfficePathDeps, type OfficePathOutcome } from "../lib/office/pathImport";
 import { mountOfficeImportRequests, realOfficeImportRequestHandler } from "../lib/office/requestBridge";
+import { isMarkdownPath } from "../lib/markdownFile";
+import { useFilePreview } from "../store/filePreview";
 import { platform } from "../lib/platform";
 import { toast } from "../store/toast";
 
@@ -65,6 +67,15 @@ export function OfficeImportPanel({ parentId = null }: { parentId?: string | nul
       setOpen(true);
       announce(result);
       return result;
+    }, {
+      // ⭐ 2026-11-05（owner）：「md 文档用 ShuyoNote 直接打开，默认只读展示」
+      //    文件关联对 .md 也走同一个 `--import`；这里只请求只读预览浮层，
+      //    **不转成 Office 导入** —— 点「导入为笔记」才建页。
+      onMarkdownRequest: (path) => {
+        if (!isMarkdownPath(path)) return false;
+        useFilePreview.getState().openPath(path);
+        return true;
+      },
     })
       .then((u) => {
         if (disposed) u();

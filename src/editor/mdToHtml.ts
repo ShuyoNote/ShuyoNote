@@ -23,6 +23,14 @@ export function inlineToHtml(s: string): string {
   let rest = s;
   while (rest.length > 0) {
     const matches: Array<{ idx: number; len: number; rep: string }> = [];
+    // CommonMark autolink: <https://example.com> / <mailto:a@b.c>
+    const auto = rest.match(/<((?:https?|mailto):[^>\s]+)>/i);
+    if (auto)
+      matches.push({
+        idx: auto.index!,
+        len: auto[0].length,
+        rep: `<a href="${auto[1]}">${escapeHtml(auto[1])}</a>`,
+      });
     const tag = rest.match(RE_HTML_TAG);
     if (tag) matches.push({ idx: tag.index!, len: tag[0].length, rep: tag[0] });
 
@@ -176,14 +184,24 @@ export function mdToHtml(text: string): string {
       continue;
     }
 
-    // Unordered list.
+    // Unordered list (GFM task list: `- [ ]` / `- [x]`).
     if (/^\s{0,3}[-*+]\s+/.test(line)) {
-      const items: string[] = [];
+      const items: Array<{ text: string; checked: boolean | null }> = [];
       while (i < lines.length && /^\s{0,3}[-*+]\s+/.test(lines[i])) {
-        items.push(lines[i].replace(/^\s{0,3}[-*+]\s+/, ""));
+        const raw = lines[i].replace(/^\s{0,3}[-*+]\s+/, "");
+        const task = raw.match(/^\[([ xX])\]\s+(.*)$/);
+        items.push(task ? { text: task[2], checked: task[1].toLowerCase() === "x" } : { text: raw, checked: null });
         i++;
       }
-      out.push(`<ul>${items.map((it) => `<li>${inlineToHtml(it)}</li>`).join("")}</ul>`);
+      const hasTask = items.some((it) => it.checked !== null);
+      const lis = items
+        .map((it) =>
+          it.checked === null
+            ? `<li>${inlineToHtml(it.text)}</li>`
+            : `<li class="task-list-item ${it.checked ? "task-done" : "task-todo"}">${inlineToHtml(it.text)}</li>`,
+        )
+        .join("");
+      out.push(`<ul${hasTask ? ' class="task-list"' : ""}>${lis}</ul>`);
       continue;
     }
 
@@ -222,6 +240,21 @@ export function mdToHtml(text: string): string {
         html += "</tbody></table>";
         out.push(html);
         i = j;
+        continue;
+      }
+    }
+
+    // Setext heading: title underlined by `===` (h1) or `---` (h2).
+    if (i + 1 < lines.length && !blank(line)) {
+      const next = lines[i + 1].trim();
+      if (/^=+\s*$/.test(next)) {
+        out.push(`<h1>${inlineToHtml(trimmed)}</h1>`);
+        i += 2;
+        continue;
+      }
+      if (/^-+\s*$/.test(next) && !/^\s{0,3}([-*+]|\d+\.)\s+/.test(line)) {
+        out.push(`<h2>${inlineToHtml(trimmed)}</h2>`);
+        i += 2;
         continue;
       }
     }

@@ -6,6 +6,16 @@
       "../tools/shuyonote-mcp/paths.mjs": "mcp/paths.mjs",
       "../tools/shuyonote-mcp-rust/dist/shuyonote-mcp": "mcp/shuyonote-mcp"
     },
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "name": "Markdown 文档",
+        "description": "Markdown 文档（只读打开）",
+        "mimeType": "text/markdown",
+        "role": "Viewer",
+        "rank": "Alternate"
+      }
+    ],
     "macOS": {
       "files": {
         "Frameworks/libpdfium.dylib": "vendor/pdfium/mac-univ/lib/libpdfium.dylib"

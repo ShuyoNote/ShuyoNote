@@ -43,6 +43,15 @@ describe("mdToHtml block constructs", () => {
     expect(out).toContain("<th>a</th><th>b</th>");
     expect(out).toContain("<td>1</td><td>2</td>");
   });
+
+  it("converts setext headings and GFM task lists", () => {
+    expect(mdToHtml("标题\n===")).toContain("<h1>标题</h1>");
+    expect(mdToHtml("小节\n---")).toContain("<h2>小节</h2>");
+    const tasks = mdToHtml("- [ ] 未完成\n- [x] 已完成");
+    expect(tasks).toContain('class="task-list"');
+    expect(tasks).toContain("task-todo");
+    expect(tasks).toContain("task-done");
+  });
 });
 
 describe("inlineToHtml", () => {
@@ -59,6 +68,12 @@ describe("inlineToHtml", () => {
   it("link and image", () => {
     expect(inlineToHtml("[文本](https://a.b)")).toBe('<a href="https://a.b">文本</a>');
     expect(inlineToHtml("![图](x.png)")).toBe('<img src="x.png" alt="图">');
+  });
+
+  it("CommonMark autolink", () => {
+    expect(inlineToHtml("<https://example.com/a>")).toBe(
+      '<a href="https://example.com/a">https://example.com/a</a>',
+    );
   });
 
   it("leaves existing HTML tags untouched", () => {

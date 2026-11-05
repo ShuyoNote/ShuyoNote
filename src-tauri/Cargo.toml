@@ -238,6 +238,10 @@ objc2 = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+# 直接导出 PDF：WebView2 的 ICoreWebView2_7::PrintToPdf（不弹打印对话框）。
+# 版本与 Tauri 传递进来的 webview2-com 保持同一份（Cargo.lock 0.38.2）。
+webview2-com = "=0.38.2"
+windows = { version = "0.61", default-features = false }
 
 # Android 专属：**SQLCipher 需要一个加密后端**，这里用 libsqlite3-sys 官方提供的
 # vendored-openssl 变体，从源码构建 OpenSSL（借助 NDK 的 clang + Perl），并静态链接 libcrypto。

@@ -62,6 +62,12 @@ fn unquote(raw: &str) -> String {
     t.to_string()
 }
 
+/// 裸路径（Linux/macOS 的文件关联直接给 `app %U`，不带 `--import`）。
+fn looks_like_import_path(path: &str) -> bool {
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    matches!(ext.as_str(), "docx" | "docm" | "md" | "markdown")
+}
+
 /// 从 argv（**不含程序名自身**）判启动模式（⭐ **纯函数** ⇒ 可单测 ✓）。
 pub fn startup_from_args<I: IntoIterator<Item = String>>(args: I) -> Startup {
     let mut it = args.into_iter();
@@ -89,6 +95,13 @@ pub fn startup_from_args<I: IntoIterator<Item = String>>(args: I) -> Startup {
                     return Startup::Import { path };
                 }
                 return Startup::Normal;
+            }
+        }
+        // Linux/macOS 文件关联给的是裸路径（Tauri 生成的 `Exec=… %U`）⇒ 不能只认开关。
+        if !arg.starts_with('-') {
+            let path = unquote(&arg);
+            if looks_like_import_path(&path) {
+                return Startup::Import { path };
             }
         }
     }
@@ -202,6 +215,23 @@ mod tests {
     fn no_flag_is_normal() {
         assert_eq!(startup_from_args(args(&[])), Startup::Normal);
         assert_eq!(startup_from_args(args(&["--other", "x"])), Startup::Normal);
+    }
+
+    #[test]
+    fn bare_markdown_path_is_import() {
+        // Linux/macOS 的 `.desktop` / Info.plist 由 Tauri 生成，给的是裸路径而不是 --import。
+        assert_eq!(
+            startup_from_args(args(&["/home/u/docs/README.md"])),
+            Startup::Import {
+                path: "/home/u/docs/README.md".to_string()
+            }
+        );
+        assert_eq!(
+            startup_from_args(args(&["C:\\tmp\\a.markdown"])),
+            Startup::Import {
+                path: "C:\\tmp\\a.markdown".to_string()
+            }
+        );
     }
 
     #[test]
