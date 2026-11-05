@@ -256,8 +256,6 @@ import "./styles/editor-chrome.css";
 // S4-53（2026-11-02）：App.css 收尾 —— 剩余 app 规则（壳/属性/编辑器浮层/提示/时间线/移动阅读）。
 import "./styles/app-residual.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
-import { MarkdownFilePreview } from "./components/MarkdownFilePreview";
-import { useMarkdownFilePreview } from "./store/markdownFilePreview";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
 // when the user switches to graph / board / files / template-center (the default
@@ -1149,7 +1147,6 @@ function AppShell() {
   const loadPages = useNotes((s) => s.loadPages);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
-  const markdownPath = useMarkdownFilePreview((s) => s.path);
   const templateOpen = useViewStore((s) => s.view === "templates");
   useSyncStream();
   // 中继租约的兜底续期：6 小时一次（面板不常开，光靠面板挂载不够）。
@@ -1366,12 +1363,7 @@ function AppShell() {
             aria-hidden
           />
         )}
-      {markdownPath ? (
-        /* ⭐ 2026-11-05（owner）：外部 `.md` 进**主阅读区**，不再用模态浮层。
-           它排在 PDF/文件预览前面：外部文档打开时应当占满内容区；
-           关闭只清 path，底层 view 原样保留 ⇒ 回到刚才的页面/视图。 */
-        <div className="main markdown-main"><MarkdownFilePreview /></div>
-      ) : pdfWhere === "inline" ? (
+      {pdfWhere === "inline" ? (
         <div className="main pdf-main"><PdfReader inline /></div>
       ) : previewWhere === "inline" ? (
         /* ⚠️ **2026-10-04 加**：⭐ 文件预览在桌面端也进主区 ✓（与上面 PDF 那条**逐字同形** ✓）——

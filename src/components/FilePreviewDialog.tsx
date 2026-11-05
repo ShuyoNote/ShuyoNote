@@ -13,8 +13,9 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { usePdfReader } from "../store/pdfReader";
 import { useFileManagerStore } from "../store/fileManager";
-import { ConvertToPageIcon, FitWidthIcon, OutlineIcon, ReadAnnotateIcon } from "./icons";
+import { ConvertToPageIcon, FitWidthIcon, MoreHorizontalIcon, OutlineIcon, ReadAnnotateIcon } from "./icons";
 import { hydrateMermaidBlocks } from "../lib/mdMermaid";
+import { openSystemSettingsUri } from "../lib/openExternal";
 import { useResolvedTheme } from "../store/theme";
 import { fitScaleOf, nextZoomFromWheel } from "../lib/imageZoom";
 
@@ -200,6 +201,24 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
       usePdfReader.getState().openPdf(target.id, target.name);
       close();
     }
+  };
+
+  /** 外部 .md 才需要：把系统默认打开方式引导到 ShuyoNote（不静默改默认）。 */
+  const openDefaultAppsGuide = (): void => {
+    const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
+    try {
+      if (/Windows/i.test(ua)) {
+        void openSystemSettingsUri("ms-settings:defaultapps");
+        return;
+      }
+      if (/Macintosh|Mac OS X/i.test(ua)) {
+        void openSystemSettingsUri("x-apple.systempreferences:com.apple.preference.extensions");
+        return;
+      }
+    } catch {
+      /* 落到下面的文字提示 */
+    }
+    // 不弹 toast 的 import 太重；这里用系统设置页失败时也不必打断阅读。
   };
 
   // Hydrate ```mermaid fenced blocks whenever their HTML (or the theme) changes.
@@ -426,6 +445,16 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
               <ConvertToPageIcon aria-hidden />
             </button>
           )}
+          {isMd && target.path ? (
+            <button
+              className="fm-preview-read"
+              onClick={openDefaultAppsGuide}
+              title="把 .md / .markdown 的默认打开方式设为 ShuyoNote（需系统确认）"
+              aria-label="设为默认 Markdown 打开方式"
+            >
+              <MoreHorizontalIcon aria-hidden />
+            </button>
+          ) : null}
         </div>
         <div className="fm-preview-body">
           {target.mime.startsWith("image/") ? (

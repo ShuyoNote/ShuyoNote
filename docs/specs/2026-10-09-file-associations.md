@@ -94,32 +94,31 @@ using the **\"open\" verb as default**"*。而 `nsis/installer.nsi` 里 **`OpenW
 - **没做真卸载读数**：卸载还原只在配置与模板层核（模板 `APP_UNASSOCIATE` 的还原逻辑 ＋ 本 hook
   的精确清理），没有"装一次再卸一次、注册表干净"的实机读数 ✗
 
-## 7. 2026-11-05：`.md` 打开改为**内置只读阅读器**（owner 拍板）
+## 7. 2026-11-05：外部 `.md` 复用**内置文件预览器**（owner 拍板）
 
 `.md` / `.markdown` 与 `.docx` 一样通过 `--import` / 文件打开事件唤起，但前端在
 `OfficeImportPanel` 的事件分流里**先截住 Markdown**（`lib/markdownFile.ts` 的 `isMarkdownPath`）：
 
-- **打开 ≠ 导入**：直接在**主阅读区**渲染 `MarkdownFilePreview`（`App.tsx` 的 `markdownPath` 分支），
-  **不建页、不写库、不把图片入库**；关闭后回到打开前的页面/视图。
-- **形态**：只作为主阅读区的**内联**内容渲染（`.markdown-file-preview-page`），
-  ⛔ 没有 portal、没有遮罩、不登记浮层栈 ⇒ `verify-mobile-overlays.mjs` 里原先那层
-  `markdownFilePreview` 已删（它不再是浮层）。
-  ⚠️ **Android 返回键**因此不再由预览接管（`useOverlayLayer` 已移除）；
-  若真机上「预览态按返回键应先关预览」，需要另立一项并补判据 —— **目前没有这条读数**。
-- 预览按 `.md` 所在目录读取相对图片（`api.readBinaryFile` → blob URL），
-  `mdToHtml` 渲染 + `DOMPurify` 消毒；外链/data URL 原样保留。
-- 右侧目录取 h1–h3（点击平滑跳转，窄屏隐藏），路径行固定高度、不参与 flex 压缩。
-- 顶部有 **「设为默认」**（打开系统默认应用页并给出口径，**不静默改默认关联**）
-  和 **「导入为笔记」**（显式复制；源文件不写回）。
-- 本地相对图片内联为 data URL（单张 ≤2 MB、总量 ≤8 MB），不把本地绝对路径带进库里。
-- 渲染器补齐了常被 Markdown 文档用到的 GFM/CommonMark 子集：setext 标题、
-  任务列表（只读勾选框）、autolink；表格/围栏代码/Mermaid/引用/相对图片沿用原实现。
+- **不另做 md 阅读器**：调用 `useFilePreview.openPath(path)`，复用已有的
+  `FilePreviewDialog`（与文件区里预览 md 附件是同一个组件）在主阅读区只读打开。
+  「目录」「宽度切换」「转为笔记」等按钮全部沿用内置阅读器那一套。
+- **打开 ≠ 导入**：`openPath` 只读文件、渲 HTML，**不建页、不写库、不把图片入库**；
+  关闭/切视图只清 target，底层 view 原样保留。
+- 外部文件不在附件库里：`openPath` 用 `api.readTextFile` 读原文，并把相对图片
+  （`![](images/a.png)`）按 md 所在目录经 `api.readBinaryFile` 读成 blob URL 后替换；
+  关闭时回收这些 URL。外链 / data URL 原样保留。
+- 外部 target 用 `{ id: "external:<path>", name, hash: "", mime: "text/markdown", path }`
+  这种形状喂给现有 parser；`importAsPage` 对 `path` 分支走 `readTextFile`，不读附件 hash。
+- 顶部额外给外部文件一个「设为默认」引导（打开系统默认应用页），
+  **不静默改默认关联**。
 - 平台：
   - Windows 继续走 NSIS 的 `installerHooks`（只加「打开方式」候选，不抢默认）。
   - macOS / Linux 走 `tauri.macos.conf.json` / `tauri.linux.conf.json` 的
     `bundle.fileAssociations`（`role: Viewer`, `rank: Alternate`，也只作候选）。
   - macOS 冷/热启动的 `RunEvent::Opened` 与 Windows/Linux 的裸路径 argv
     都收敛到 `office_import` 的同一个队列/事件。
+- 渲染器补齐了常被 Markdown 文档用到的 GFM/CommonMark 子集：setext 标题、
+  任务列表（只读勾选框）、autolink；表格/围栏代码/Mermaid/引用/相对图片沿用原实现。
 - 判据：`src/lib/markdownFile.test.ts`（路径/标题/相对资源/目录）、
   `src/lib/office/requestBridge.test.ts`（md 先分流、不进 Office）、
   `src/editor/mdToHtml.test.ts`（setext / 任务列表 / autolink）。

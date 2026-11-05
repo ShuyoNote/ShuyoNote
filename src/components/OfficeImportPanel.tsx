@@ -36,7 +36,7 @@ import { measureOne, renderRetentionReport, type RetentionRow } from "../lib/off
 import { realOfficePathDeps, type OfficePathOutcome } from "../lib/office/pathImport";
 import { mountOfficeImportRequests, realOfficeImportRequestHandler } from "../lib/office/requestBridge";
 import { isMarkdownPath } from "../lib/markdownFile";
-import { useMarkdownFilePreview } from "../store/markdownFilePreview";
+import { useFilePreview } from "../store/filePreview";
 import { platform } from "../lib/platform";
 import { toast } from "../store/toast";
 
@@ -73,7 +73,7 @@ export function OfficeImportPanel({ parentId = null }: { parentId?: string | nul
       //    **不转成 Office 导入** —— 点「导入为笔记」才建页。
       onMarkdownRequest: (path) => {
         if (!isMarkdownPath(path)) return false;
-        useMarkdownFilePreview.getState().open(path);
+        useFilePreview.getState().openPath(path);
         return true;
       },
     })
