@@ -94,20 +94,29 @@ using the **\"open\" verb as default**"*。而 `nsis/installer.nsi` 里 **`OpenW
 - **没做真卸载读数**：卸载还原只在配置与模板层核（模板 `APP_UNASSOCIATE` 的还原逻辑 ＋ 本 hook
   的精确清理），没有"装一次再卸一次、注册表干净"的实机读数 ✗
 
-## 7. 2026-11-05：`.md` 打开改为**只读预览**（owner 拍板）
+## 7. 2026-11-05：`.md` 打开改为**内置只读阅读器**（owner 拍板）
 
-`.md` / `.markdown` 与 `.docx` 一样通过 `--import` 唤起，但前端在 `OfficeImportPanel` 的事件分流里
-**先截住 Markdown**（`lib/markdownFile.ts` 的 `isMarkdownPath`）：
+`.md` / `.markdown` 与 `.docx` 一样通过 `--import` / 文件打开事件唤起，但前端在
+`OfficeImportPanel` 的事件分流里**先截住 Markdown**（`lib/markdownFile.ts` 的 `isMarkdownPath`）：
 
-- **打开 ≠ 导入**：只打开 `MarkdownFilePreview` 浮层（登记进浮层栈），
-  **不建页、不写库、不把图片入库**；Esc / 点遮罩 / × 关闭，Android 返回键先关它。
+- **打开 ≠ 导入**：直接在**主阅读区**渲染 `MarkdownFilePreview`（`App.tsx` 的 `markdownPath` 分支），
+  **不建页、不写库、不把图片入库**；关闭后回到打开前的页面/视图。
 - 预览按 `.md` 所在目录读取相对图片（`api.readBinaryFile` → blob URL），
   `mdToHtml` 渲染 + `DOMPurify` 消毒；外链/data URL 原样保留。
 - 右侧目录取 h1–h3（点击平滑跳转，窄屏隐藏），路径行固定高度、不参与 flex 压缩。
-- 顶部只有 **「导入为笔记」** 才建页：复用 `markdownToPageContent`，
-  本地相对图片内联为 data URL（单张 ≤2 MB、总量 ≤8 MB；源文件不写回，
-  也不把本地绝对路径带进库里）。
-- 判据：`src/lib/markdownFile.test.ts`（路径/标题/相对资源）与
-  `src/lib/office/requestBridge.test.ts` 的 "md 先分流、不进 Office"。
+- 顶部有 **「设为默认」**（打开系统默认应用页并给出口径，**不静默改默认关联**）
+  和 **「导入为笔记」**（显式复制；源文件不写回）。
+- 本地相对图片内联为 data URL（单张 ≤2 MB、总量 ≤8 MB），不把本地绝对路径带进库里。
+- 渲染器补齐了常被 Markdown 文档用到的 GFM/CommonMark 子集：setext 标题、
+  任务列表（只读勾选框）、autolink；表格/围栏代码/Mermaid/引用/相对图片沿用原实现。
+- 平台：
+  - Windows 继续走 NSIS 的 `installerHooks`（只加「打开方式」候选，不抢默认）。
+  - macOS / Linux 走 `tauri.macos.conf.json` / `tauri.linux.conf.json` 的
+    `bundle.fileAssociations`（`role: Viewer`, `rank: Alternate`，也只作候选）。
+  - macOS 冷/热启动的 `RunEvent::Opened` 与 Windows/Linux 的裸路径 argv
+    都收敛到 `office_import` 的同一个队列/事件。
+- 判据：`src/lib/markdownFile.test.ts`（路径/标题/相对资源/目录）、
+  `src/lib/office/requestBridge.test.ts`（md 先分流、不进 Office）、
+  `src/editor/mdToHtml.test.ts`（setext / 任务列表 / autolink）。
 
-⚠️ 当前只登记了 Windows NSIS 的 `.md` 打开方式；macOS/Linux 的 document type 仍在后续范围。
+⚠️ 当前没有做「静默把 `.md` 默认程序改成 ShuyoNote」：那是系统级选择，只给引导，不代用户决定。

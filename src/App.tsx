@@ -257,6 +257,7 @@ import "./styles/editor-chrome.css";
 import "./styles/app-residual.css";
 import { OfficeImportPanel } from "./components/OfficeImportPanel";
 import { MarkdownFilePreview } from "./components/MarkdownFilePreview";
+import { useMarkdownFilePreview } from "./store/markdownFilePreview";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
 // when the user switches to graph / board / files / template-center (the default
@@ -1148,6 +1149,7 @@ function AppShell() {
   const loadPages = useNotes((s) => s.loadPages);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
+  const markdownPath = useMarkdownFilePreview((s) => s.path);
   const templateOpen = useViewStore((s) => s.view === "templates");
   useSyncStream();
   // 中继租约的兜底续期：6 小时一次（面板不常开，光靠面板挂载不够）。
@@ -1308,7 +1310,6 @@ function AppShell() {
           {/* ⚠️ **2026-10-04 改**：⭐ 顶层这份**只在浮层形态**渲染 ✗ —— 桌面端它在上面那条 `.main` 分支里 ✓
               （⭐ 与紧邻的 `{pdfWhere === "overlay" && <PdfReader />}` 同一写法 ✓）。 */}
           {previewWhere === "overlay" && <FilePreviewDialog />}
-          <MarkdownFilePreview />
           <CommunitySaveDialog />
           <MarkdownExportDialog />
           <PdfReader />
@@ -1365,7 +1366,12 @@ function AppShell() {
             aria-hidden
           />
         )}
-      {pdfWhere === "inline" ? (
+      {markdownPath ? (
+        /* ⭐ 2026-11-05（owner）：外部 `.md` 进**主阅读区**，不再用模态浮层。
+           它排在 PDF/文件预览前面：外部文档打开时应当占满内容区；
+           关闭只清 path，底层 view 原样保留 ⇒ 回到刚才的页面/视图。 */
+        <div className="main markdown-main"><MarkdownFilePreview inline /></div>
+      ) : pdfWhere === "inline" ? (
         <div className="main pdf-main"><PdfReader inline /></div>
       ) : previewWhere === "inline" ? (
         /* ⚠️ **2026-10-04 加**：⭐ 文件预览在桌面端也进主区 ✓（与上面 PDF 那条**逐字同形** ✓）——
@@ -1485,7 +1491,6 @@ function AppShell() {
         <CommunitySaveDialog />
         {/* 窄屏才用全屏浮层；桌面端它在内容区里（见上面 pdfWhere 那条分支）。 */}
         {pdfWhere === "overlay" && <PdfReader />}
-        <MarkdownFilePreview />
         <FormulaEditorDialog />
         {/* ⭐ task-14：Office 导入的**唯一入口**（右下角小按钮 ＋ `office-import://request` 监听）。
             ⚠️ 它**不是浮层**（容器类名不以 `-overlay`/`-popover` 结尾 ⇒ 无需登记返回栈 ✓）；

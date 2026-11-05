@@ -11,6 +11,16 @@
       "../tools/shuyonote-mcp/index.mjs": "mcp/index.mjs",
       "../tools/shuyonote-mcp/paths.mjs": "mcp/paths.mjs",
       "../tools/shuyonote-mcp-rust/dist/shuyonote-mcp": "mcp/shuyonote-mcp"
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "name": "Markdown 文档",
+        "description": "Markdown 文档（只读打开）",
+        "mimeType": "text/markdown",
+        "role": "Viewer",
+        "rank": "Alternate"
+      }
+    ]
   }
 }

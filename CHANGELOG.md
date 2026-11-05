@@ -5,7 +5,8 @@
 ## [Unreleased]
 
 ### 新增
-- **外部 `.md` 文件默认只读预览** —— 双击 / 「打开方式 → ShuyoNote」仍走安装器的 `--import` 入口，但 `.md` / `.markdown` 不再进 Office 导入：先弹出**只读预览**（不建页、不写库、不把图片悄悄入库），相对图片按 `.md` 所在目录解析，右侧带 **h1–h3 目录**（点击平滑跳到对应标题；窄屏收起），文件路径行不再被 flex 压缩裁切；顶部「导入为笔记」才显式复制成新页，本地相对图片内联进正文，源文件一个字不写。判据 `src/lib/markdownFile.test.ts` 8/8、`requestBridge.test.ts` 12/12（含“md 先分流、不进 Office”）。
+- **外部 `.md` 文件默认只读阅读器（主阅读区）** —— 双击 / 「打开方式 → ShuyoNote」仍走安装器的 `--import` 入口，但 `.md` / `.markdown` 不再进 Office 导入：直接在**主阅读区**渲染只读视图（不建页、不写库、不把图片悄悄入库），相对图片按 `.md` 所在目录解析，右侧带 **h1–h3 目录**（点击平滑跳转；窄屏收起），路径行固定高度不再被 flex 压缩裁切；顶部有「设为默认」引导和「导入为笔记」（显式复制、源文件不写回，本地图片内联为 data URL）。渲染器补了 setext 标题 / GFM 任务列表 / autolink。判据 `src/lib/markdownFile.test.ts` 8/8、`src/lib/office/requestBridge.test.ts` 12/12、`src/editor/mdToHtml.test.ts` 14/14。
+- **macOS / Linux 的 `.md` 打开方式** —— 新增 `tauri.macos.conf.json` / `tauri.linux.conf.json` 的 `bundle.fileAssociations`（`role: Viewer` / `rank: Alternate`，只作候选不抢默认）；macOS 的 `RunEvent::Opened` 与 Linux 的裸路径 argv 都收敛到同一队列；Windows 继续走 NSIS「打开方式」候选。
 - **笔记里的图片支持悬停「查看大图 / 下载」** —— 鼠标移到图片上（或键盘聚焦）出现两颗按钮：放大镜打开全屏预览（Esc / 点遮罩关闭，登记进浮层栈，Android 返回键先关它）；下载统一先取图片字节，再弹**目录选择**（保存对话框），附件走内容寻址、外链/data URL 走 fetch；只有 Web/PWA 没有本地写盘能力时才退回浏览器下载。触屏无 hover 时按钮常驻。判据 `src/editor/imageHover.test.ts` 2/2（扩展名推断与文件名清洗）。
 
 ### 修复

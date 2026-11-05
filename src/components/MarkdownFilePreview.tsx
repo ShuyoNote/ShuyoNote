@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 
 import { api } from "../lib/api";
 import { isDesktopPlatform } from "../lib/platform";
+import { openSystemSettingsUri } from "../lib/openExternal";
 import { markdownPreviewHtml } from "../lib/mdPreviewHtml";
 import { markdownToPageContent } from "../lib/mdPreview";
 import {
@@ -133,7 +134,7 @@ async function inlineMarkdownAssets(
  * - 顶部「导入为笔记」才复制成新页面（本地相对图片入库为附件）；
  * - Esc / 点遮罩 / × 关闭；Android 返回键登记进浮层栈。
  */
-export function MarkdownFilePreview() {
+export function MarkdownFilePreview({ inline = false }: { inline?: boolean }) {
   const path = useMarkdownFilePreview((s) => s.path);
   const close = useMarkdownFilePreview((s) => s.close);
   const [html, setHtml] = useState("");
@@ -145,8 +146,8 @@ export function MarkdownFilePreview() {
   const [toc, setToc] = useState<MarkdownTocItem[]>([]);
   const urlsRef = useRef<string[]>([]);
 
-  useOverlayLayer("markdownFilePreview", !!path, close);
-  useOverlayScrollLock(!!path);
+  useOverlayLayer("markdownFilePreview", !!path && !inline, close);
+  useOverlayScrollLock(!!path && !inline);
 
   useEffect(() => {
     if (!path) return;
@@ -238,6 +239,104 @@ export function MarkdownFilePreview() {
   };
 
   const fileName = fileNameOf(path);
+
+  const openDefaultAppsGuide = (): void => {
+    const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
+    try {
+      if (/Windows/i.test(ua)) {
+        void openSystemSettingsUri("ms-settings:defaultapps");
+        toast("在「默认应用」里搜索 ShuyoNote，把 .md 关联给它", "info");
+        return;
+      }
+      if (/Macintosh|Mac OS X/i.test(ua)) {
+        void openSystemSettingsUri("x-apple.systempreferences:com.apple.preference.extensions");
+        toast("在「扩展 / 默认应用」里把 Markdown 关联到 ShuyoNote", "info");
+        return;
+      }
+    } catch {
+      /* 打开系统设置失败就落到下面的文字提示 */
+    }
+    toast("在系统设置 → 默认应用里把 .md / .markdown 关联到 ShuyoNote", "info");
+  };
+
+  const card = (
+    <div className="markdown-file-preview" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="markdown-file-preview-head">
+        <div className="markdown-file-preview-title">
+          <span className="markdown-file-preview-name" title={path}>
+            {fileName}
+          </span>
+          <span className="markdown-file-preview-badge">只读预览</span>
+        </div>
+        <div className="markdown-file-preview-actions">
+          <button
+            type="button"
+            className="markdown-file-preview-default"
+            title="把 .md / .markdown 的默认打开方式设为 ShuyoNote（需要系统确认）"
+            onClick={openDefaultAppsGuide}
+          >
+            设为默认
+          </button>
+          <button
+            type="button"
+            className="markdown-file-preview-import"
+            disabled={loading || !!error || importing || !text.trim()}
+            onClick={() => void doImport()}
+          >
+            {importing ? "导入中…" : "导入为笔记"}
+          </button>
+          <button
+            type="button"
+            className="markdown-file-preview-close"
+            aria-label="关闭预览"
+            title="关闭"
+            onClick={close}
+          >
+            <XIcon />
+          </button>
+        </div>
+      </div>
+      <div className="markdown-file-preview-path">{path}</div>
+      <div className="markdown-file-preview-body">
+        <div className="markdown-file-preview-main">
+          {loading ? (
+            <div className="markdown-file-preview-hint">正在读取…</div>
+          ) : error ? (
+            <div className="markdown-file-preview-error">{error}</div>
+          ) : (
+            <>
+              {warnings.length > 0 ? (
+                <div className="markdown-file-preview-warn">{warnings.join("；")}</div>
+              ) : null}
+              <div className="fm-md-preview" dangerouslySetInnerHTML={{ __html: html }} />
+            </>
+          )}
+        </div>
+        {!loading && !error && toc.length > 0 ? (
+          <aside className="markdown-file-preview-toc" aria-label="目录">
+            <div className="markdown-file-preview-toc-title">目录</div>
+            {toc.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`markdown-file-preview-toc-item is-l${item.level}`}
+                onClick={() => {
+                  document.getElementById(item.id)?.scrollIntoView({ block: "start", behavior: "smooth" });
+                }}
+              >
+                {item.text}
+              </button>
+            ))}
+          </aside>
+        ) : null}
+      </div>
+    </div>
+  );
+
+  if (inline) {
+    return <div className="markdown-file-preview-page">{card}</div>;
+  }
+
   return createPortal(
     <div
       className="markdown-file-preview-overlay"
@@ -245,69 +344,7 @@ export function MarkdownFilePreview() {
         if (e.target === e.currentTarget) close();
       }}
     >
-      <div className="markdown-file-preview" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="markdown-file-preview-head">
-          <div className="markdown-file-preview-title">
-            <span className="markdown-file-preview-name" title={path}>
-              {fileName}
-            </span>
-            <span className="markdown-file-preview-badge">只读预览</span>
-          </div>
-          <div className="markdown-file-preview-actions">
-            <button
-              type="button"
-              className="markdown-file-preview-import"
-              disabled={loading || !!error || importing || !text.trim()}
-              onClick={() => void doImport()}
-            >
-              {importing ? "导入中…" : "导入为笔记"}
-            </button>
-            <button
-              type="button"
-              className="markdown-file-preview-close"
-              aria-label="关闭预览"
-              title="关闭"
-              onClick={close}
-            >
-              <XIcon />
-            </button>
-          </div>
-        </div>
-        <div className="markdown-file-preview-path">{path}</div>
-        <div className="markdown-file-preview-body">
-          <div className="markdown-file-preview-main">
-            {loading ? (
-              <div className="markdown-file-preview-hint">正在读取…</div>
-            ) : error ? (
-              <div className="markdown-file-preview-error">{error}</div>
-            ) : (
-              <>
-                {warnings.length > 0 ? (
-                  <div className="markdown-file-preview-warn">{warnings.join("；")}</div>
-                ) : null}
-                <div className="fm-md-preview" dangerouslySetInnerHTML={{ __html: html }} />
-              </>
-            )}
-          </div>
-          {!loading && !error && toc.length > 0 ? (
-            <aside className="markdown-file-preview-toc" aria-label="目录">
-              <div className="markdown-file-preview-toc-title">目录</div>
-              {toc.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`markdown-file-preview-toc-item is-l${item.level}`}
-                  onClick={() => {
-                    document.getElementById(item.id)?.scrollIntoView({ block: "start", behavior: "smooth" });
-                  }}
-                >
-                  {item.text}
-                </button>
-              ))}
-            </aside>
-          ) : null}
-        </div>
-      </div>
+      {card}
     </div>,
     document.body,
   );

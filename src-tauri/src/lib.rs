@@ -1419,8 +1419,20 @@ pub fn run() {
 ])
         .build(app_context())
         .expect("error while running tauri application")
-        .run(|_app_handle, event| match event {
+        .run(|app_handle, event| match event {
             tauri::RunEvent::Ready => log_lifecycle("ready", ""),
+            // macOS/iOS：系统“打开方式”在冷启动/热启动都会发 Opened（file:// URL）。
+            // 与 Windows/Linux 的 `--import` 收敛到同一个队列 ⇒ 前端只认一条事件。
+            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+            tauri::RunEvent::Opened { urls } => {
+                for url in urls {
+                    if let Ok(path) = url.to_file_path() {
+                        let p = path.to_string_lossy().to_string();
+                        office_import::set_pending_import(&p);
+                        let _ = tauri::Emitter::emit(app_handle, office_import::IMPORT_EVENT, p);
+                    }
+                }
+            }
             tauri::RunEvent::ExitRequested { code, .. } => {
                 log_lifecycle("exit_requested", &format!("code={code:?}"));
             }
