@@ -15,7 +15,7 @@
 // 产物：`tools/shuyonote-mcp-rust/dist/shuyonote-mcp[.exe]`（被 .gitignore 忽略）
 import { spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -33,7 +33,14 @@ if (r.status !== 0) {
   process.exit(r.status ?? 1);
 }
 
-const built = join(crateDir, "target", profile, binName);
+// 产物路径：**必须认 `CARGO_TARGET_DIR`** —— 有些机器为省盘把 target 目录重定向
+// （2026-11-04 AMD 实测：`CARGO_TARGET_DIR=D:\shuyo\cargo-target`，cargo 编到 D:，
+//  而本脚本原先去 `tools/shuyonote-mcp-rust/target/` 找 ⇒ 编完找不到产物 ⇒
+//  `pnpm run dev:desktop` 的 beforeDevCommand 直接非零、桌面 dev 起不来）。
+const targetRoot = process.env.CARGO_TARGET_DIR
+  ? resolve(repo, process.env.CARGO_TARGET_DIR)
+  : join(crateDir, "target");
+const built = join(targetRoot, profile, binName);
 if (!existsSync(built)) {
   console.error(`[mcp-bridge] 编译结束但找不到产物：${built}`);
   process.exit(1);
