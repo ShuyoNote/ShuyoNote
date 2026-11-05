@@ -101,6 +101,11 @@ using the **\"open\" verb as default**"*。而 `nsis/installer.nsi` 里 **`OpenW
 
 - **打开 ≠ 导入**：直接在**主阅读区**渲染 `MarkdownFilePreview`（`App.tsx` 的 `markdownPath` 分支），
   **不建页、不写库、不把图片入库**；关闭后回到打开前的页面/视图。
+- **形态**：只作为主阅读区的**内联**内容渲染（`.markdown-file-preview-page`），
+  ⛔ 没有 portal、没有遮罩、不登记浮层栈 ⇒ `verify-mobile-overlays.mjs` 里原先那层
+  `markdownFilePreview` 已删（它不再是浮层）。
+  ⚠️ **Android 返回键**因此不再由预览接管（`useOverlayLayer` 已移除）；
+  若真机上「预览态按返回键应先关预览」，需要另立一项并补判据 —— **目前没有这条读数**。
 - 预览按 `.md` 所在目录读取相对图片（`api.readBinaryFile` → blob URL），
   `mdToHtml` 渲染 + `DOMPurify` 消毒；外链/data URL 原样保留。
 - 右侧目录取 h1–h3（点击平滑跳转，窄屏隐藏），路径行固定高度、不参与 flex 压缩。

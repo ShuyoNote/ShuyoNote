@@ -125,11 +125,15 @@ async function inlineMarkdownAssets(
 }
 
 /**
- * 外部 `.md` 的**只读预览**浮层（双击 / “打开方式” 唤起）。
+ * 外部 `.md` 的**只读预览**（双击 / “打开方式” 唤起）。
+ *
+ * ⭐ 2026-11-05（owner）：只作为**主阅读区**的一部分内联渲染
+ * （`App.tsx` 的 `markdownPath` 分支），**不是浮层** —— 没有 portal、没有遮罩、
+ * 也不登记浮层栈（`useOverlayLayer` 已移除 ⇒ Android 返回键不归它管）。
  *
  * - 打开只读：不建页、不写库、不把图片悄悄入库；
  * - 顶部「导入为笔记」才复制成新页面（本地相对图片入库为附件）；
- * - Esc / 点遮罩 / × 关闭；Android 返回键登记进浮层栈。
+ * - Esc / 顶部 × 关闭；关闭只清 path，底层视图原样保留。
  */
 export function MarkdownFilePreview() {
   const path = useMarkdownFilePreview((s) => s.path);
