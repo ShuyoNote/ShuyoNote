@@ -17,7 +17,7 @@ import {
 import { useMarkdownFilePreview } from "../store/markdownFilePreview";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
-import { XIcon } from "./icons";
+import { OutlineIcon, XIcon } from "./icons";
 
 const MAX_PREVIEW_CHARS = 2 * 1024 * 1024;
 const MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024;
@@ -145,6 +145,9 @@ export function MarkdownFilePreview() {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [text, setText] = useState("");
   const [toc, setToc] = useState<MarkdownTocItem[]>([]);
+  const [tocOpen, setTocOpen] = useState(true);
+  const [activeId, setActiveId] = useState("");
+  const mainRef = useRef<HTMLDivElement | null>(null);
   const urlsRef = useRef<string[]>([]);
 
   useEffect(() => {
@@ -207,10 +210,8 @@ export function MarkdownFilePreview() {
     return () => window.removeEventListener("keydown", onKey);
   }, [path, close]);
 
-  if (!path) return null;
-
   const doImport = async () => {
-    if (importing || !text.trim()) return;
+    if (!path || importing || !text.trim()) return;
     setImporting(true);
     try {
       const prepared = await inlineMarkdownAssets(text, dirNameOf(path));
@@ -235,6 +236,27 @@ export function MarkdownFilePreview() {
       setImporting(false);
     }
   };
+
+  useEffect(() => {
+    const root = mainRef.current;
+    if (!root || toc.length === 0) return;
+    const onScroll = () => {
+      const top = root.getBoundingClientRect().top + 48;
+      let current = toc[0]?.id ?? "";
+      for (const item of toc) {
+        const el = document.getElementById(item.id);
+        if (!el) continue;
+        if (el.getBoundingClientRect().top <= top) current = item.id;
+        else break;
+      }
+      setActiveId(current);
+    };
+    onScroll();
+    root.addEventListener("scroll", onScroll, { passive: true });
+    return () => root.removeEventListener("scroll", onScroll);
+  }, [toc, html, loading]);
+
+  if (!path) return null;
 
   const fileName = fileNameOf(path);
 
@@ -269,6 +291,15 @@ export function MarkdownFilePreview() {
         <div className="markdown-file-preview-actions">
           <button
             type="button"
+            className={`markdown-file-preview-icon${tocOpen ? " is-active" : ""}`}
+            aria-label={tocOpen ? "收起目录" : "展开目录"}
+            title={tocOpen ? "收起目录" : "展开目录"}
+            onClick={() => setTocOpen((v) => !v)}
+          >
+            <OutlineIcon />
+          </button>
+          <button
+            type="button"
             className="markdown-file-preview-default"
             title="把 .md / .markdown 的默认打开方式设为 ShuyoNote（需要系统确认）"
             onClick={openDefaultAppsGuide}
@@ -285,7 +316,7 @@ export function MarkdownFilePreview() {
           </button>
           <button
             type="button"
-            className="markdown-file-preview-close"
+            className="markdown-file-preview-icon"
             aria-label="关闭预览"
             title="关闭"
             onClick={close}
@@ -294,9 +325,8 @@ export function MarkdownFilePreview() {
           </button>
         </div>
       </div>
-      <div className="markdown-file-preview-path">{path}</div>
       <div className="markdown-file-preview-body">
-        <div className="markdown-file-preview-main">
+        <div className="markdown-file-preview-main" ref={mainRef}>
           {loading ? (
             <div className="markdown-file-preview-hint">正在读取…</div>
           ) : error ? (
@@ -310,15 +340,16 @@ export function MarkdownFilePreview() {
             </>
           )}
         </div>
-        {!loading && !error && toc.length > 0 ? (
+        {tocOpen && !loading && !error && toc.length > 0 ? (
           <aside className="markdown-file-preview-toc" aria-label="目录">
             <div className="markdown-file-preview-toc-title">目录</div>
             {toc.map((item) => (
               <button
                 key={item.id}
                 type="button"
-                className={`markdown-file-preview-toc-item is-l${item.level}`}
+                className={`markdown-file-preview-toc-item is-l${item.level}${activeId === item.id ? " is-active" : ""}`}
                 onClick={() => {
+                  setActiveId(item.id);
                   document.getElementById(item.id)?.scrollIntoView({ block: "start", behavior: "smooth" });
                 }}
               >

@@ -1399,6 +1399,26 @@
   color: var(--text);
 }
 
+.markdown-file-preview-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.markdown-file-preview-icon:hover,
+.markdown-file-preview-icon.is-active {
+  background: var(--hover);
+  color: var(--text);
+}
+
 /* GFM 任务列表：只读预览用 CSS 勾选框，不引入可交互 input。 */
 .fm-md-preview .task-list {
   list-style: none;
@@ -1500,8 +1520,8 @@
 }
 
 .markdown-file-preview-main .fm-md-preview {
-  max-width: none;
-  margin: 0;
+  max-width: 820px;
+  margin: 0 auto;
 }
 
 .markdown-file-preview-toc {
@@ -1538,6 +1558,11 @@
 
 .markdown-file-preview-toc-item:hover {
   background: var(--hover);
+}
+
+.markdown-file-preview-toc-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .markdown-file-preview-toc-item.is-l2 {
