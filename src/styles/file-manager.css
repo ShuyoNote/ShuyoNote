@@ -261,6 +261,45 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* 外部 md：文件名之外再给一行「... › specs › 文件.md」的路径上下文。 */
+.fm-preview-pathbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 14px var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-12);
+}
+
+.fm-preview-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fm-preview-path-copy {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.fm-preview-path-copy:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
 .fm-preview-name {
   font-size: var(--fs-14);
   font-weight: 600;

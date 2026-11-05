@@ -43,6 +43,16 @@ export function stripTitleHeading(text: string, path: string): string {
   return source.replace(/^\s{0,3}#\s+.+?(?:\r?\n|$)/m, "");
 }
 
+/** 外部 md 路径的紧凑显示：只留最后 N 段，前面用 `…` 省略。 */
+export function compactPathForDisplay(path: string, keep = 2): string {
+  const parts = String(path ?? "").split(/[\\/]+/).filter(Boolean);
+  // Windows 盘符是根，不是一层目录（`C:\docs\a.md` 不该显示成 `… › docs › a.md`）。
+  if (parts.length > 1 && /^[a-zA-Z]:$/.test(parts[0])) parts.shift();
+  if (parts.length === 0) return "";
+  const shown = parts.slice(-Math.max(1, keep));
+  return `${parts.length > shown.length ? "… › " : ""}${shown.join(" › ")}`;
+}
+
 export interface MarkdownTocItem {
   id: string;
   text: string;

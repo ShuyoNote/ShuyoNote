@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assignPreviewHeadingIds,
+  compactPathForDisplay,
   dirNameOf,
   fileNameOf,
   isMarkdownPath,
@@ -44,6 +45,12 @@ describe("外部 Markdown 打开 · 路径与标题", () => {
     ]);
     expect(new Set(out.toc.map((t) => t.id)).size).toBe(3);
     expect(out.html).toContain('id="md-preview-');
+  });
+
+  it("③d 路径紧凑显示：只留最后几段，前面省略", () => {
+    expect(compactPathForDisplay("C:\\Users\\me\\docs\\specs\\a.md")).toBe("… › specs › a.md");
+    expect(compactPathForDisplay("C:\\docs\\a.md")).toBe("docs › a.md");
+    expect(compactPathForDisplay("C:\\docs\\a.md", 2)).toBe("docs › a.md");
   });
 });
 

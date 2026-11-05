@@ -13,9 +13,11 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { usePdfReader } from "../store/pdfReader";
 import { useFileManagerStore } from "../store/fileManager";
-import { ConvertToPageIcon, FitWidthIcon, FolderIcon, MoreHorizontalIcon, OutlineIcon, ReadAnnotateIcon } from "./icons";
+import { ConvertToPageIcon, CopyIcon, FitWidthIcon, FolderIcon, MoreHorizontalIcon, OutlineIcon, ReadAnnotateIcon } from "./icons";
 import { hydrateMermaidBlocks } from "../lib/mdMermaid";
 import { openSystemSettingsUri } from "../lib/openExternal";
+import { compactPathForDisplay } from "../lib/markdownFile";
+import { toast } from "../store/toast";
 import { useResolvedTheme } from "../store/theme";
 import { fitScaleOf, nextZoomFromWheel } from "../lib/imageZoom";
 
@@ -466,6 +468,24 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
             </button>
           ) : null}
         </div>
+        {isMd && target.path ? (
+          <div className="fm-preview-pathbar" title={target.path}>
+            <span className="fm-preview-path">{compactPathForDisplay(target.path)}</span>
+            <button
+              className="fm-preview-path-copy"
+              title="复制完整路径"
+              aria-label="复制完整路径"
+              onClick={() => {
+                void navigator.clipboard?.writeText(target.path).then(
+                  () => toast("已复制路径", "success"),
+                  () => toast("复制失败", "error"),
+                );
+              }}
+            >
+              <CopyIcon aria-hidden />
+            </button>
+          </div>
+        ) : null}
         <div className="fm-preview-body">
           {target.mime.startsWith("image/") ? (
             asset.url ? (
