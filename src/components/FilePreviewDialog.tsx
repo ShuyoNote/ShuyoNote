@@ -528,16 +528,6 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
         </div>
         {isMd && target.path ? (
           <div className="fm-preview-pathbar" title={target.path}>
-            {isWindows ? (
-              <button
-                className="fm-preview-path-copy"
-                title="直接导出 PDF"
-                aria-label="直接导出 PDF"
-                onClick={() => void exportDirectPdf()}
-              >
-                <PrintIcon aria-hidden />
-              </button>
-            ) : null}
             <button
               className="fm-preview-path-copy"
               title="复制完整路径"
