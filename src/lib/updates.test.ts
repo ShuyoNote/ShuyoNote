@@ -281,6 +281,19 @@ const RUST_UPDATES_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/updat
 /** **删掉全部空白**再找规则片段：rustfmt 换行/缩进变了不该让判据误报。 */
 const rustRules = RUST_UPDATES_RS.replace(/\s+/g, "");
 
+// 2026-11-06 实测事故：2.1.4 的「检查更新」显示 **版本 2.1.4、本次更新说明却是 2.0.0**。
+// 根因：tauri 更新器读 `shuyo.cn/app/latest.json`（新），而 Rust `fetch_update_manifest` 的
+// 默认 URL 还停在 **GitCode release 下载 URL** —— 那条被 CDN 缓存一年、重传不刷新，永远给
+// 2.0.0 的 notes。⇒ 两处入口必须是同一个字符串，漂移就会重现这个"版本与说明对不上"。
+describe("更新清单入口（Rust 与前端必须同一个）", () => {
+  it("Rust 的 DEFAULT_MANIFEST_URL = 前端 LATEST_MANIFEST_URL，且不再指向 GitCode release", () => {
+    const rustUrl = RUST_UPDATES_RS.match(/const DEFAULT_MANIFEST_URL: &str =\s*"([^"]+)"/)?.[1];
+    expect(rustUrl, "Rust 侧应当有 DEFAULT_MANIFEST_URL 常量").toBeDefined();
+    expect(rustUrl).toBe(LATEST_MANIFEST_URL);
+    expect(rustUrl).not.toMatch(/gitcode\.com\/.*\/releases\/download\/latest/);
+  });
+});
+
 describe("android 校验规则的跨语言对照（TS 与 Rust 必须同判）", () => {
   it("Rust 侧的规则片段还在（谁改了它，谁就得回来同步 TS 与上面的对照表）", () => {
     for (const [pattern, what] of [

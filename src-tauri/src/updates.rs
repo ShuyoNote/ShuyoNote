@@ -1,13 +1,13 @@
 //! 更新检查（桌面端 native 拉取发布清单）。
 //!
-//! 桌面 WebView 里用浏览器 `fetch` 请求 gitcode 的 `latest.json` 会被跨域拦截：
-//! gitcode 对该地址返回 **302 重定向**到 `file-cdn.gitcode.com` 的签名 URL
-//! （带 `auth_key`），而目标 CDN 响应不带 `Access-Control-Allow-Origin`，于是
+//! **为什么走 native 而不是浏览器 `fetch`**：桌面 WebView 里用浏览器 `fetch` 请求 gitcode 的
+//! `latest.json` 会被跨域拦截：gitcode 对该地址返回 **302 重定向**到 `file-cdn.gitcode.com`
+//! 的签名 URL（带 `auth_key`），而目标 CDN 响应不带 `Access-Control-Allow-Origin`，于是
 //! 浏览器按 CORS 拒绝，控制台报 `[Error] Cross-origin redirection ... denied`。
 //!
-//! 这里改走 native HTTP（reqwest）：不经过浏览器 CORS，且 reqwest 默认会
-//! 自动跟随 302→file-cdn 的重定向并拿到 `latest.json` 本体，前端桌面端再据此
-//! 对比版本。`fetch` 路径在浏览器里无法绕过 CORS，native 请求可以。
+//! ⚠️ **2026-11-02 起入口已从 gitcode 切到国内主站 `https://shuyo.cn/app/latest.json`**
+//! （GitCode CDN 把 release 附件缓存一年、重传不刷新；见 `DEFAULT_MANIFEST_URL` 的注释）。
+//! native HTTP（reqwest）仍然保留：它不经过浏览器 CORS，且能直接拿到清单本体。
 
 use serde::Serialize;
 
@@ -27,9 +27,13 @@ pub struct UpdateManifest {
     pub android_sha256: Option<String>,
 }
 
-/// 稳定发布渠道：gitcode 的 "latest" 通道，永远携带最新元数据。
-const DEFAULT_MANIFEST_URL: &str =
-    "https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/latest/latest.json";
+/// 稳定发布渠道：**国内主站**的 `latest.json`（发布时随 Web 版一起铺到主站）。
+///
+/// ⚠️ **不要改回 GitCode 的 `releases/download/latest/latest.json`**（2026-11-06 实测）：
+/// GitCode 的 CDN 对 release 附件带 `x-ccdn-cachettl=31536000`（缓存一年），**重传资产不刷新**
+/// ⇒ 那条 URL 会一直返回旧的清单（当时是 2.0.0）。这块与 `src/lib/updates.ts` 的
+/// `LATEST_MANIFEST_URL` 是**同一个渠道**，两处必须一致。
+const DEFAULT_MANIFEST_URL: &str = "https://shuyo.cn/app/latest.json";
 
 /// Android 发版件在更新器清单里的平台键（与 `scripts/lib/releaseArtifacts.mjs` 的
 /// `ANDROID_PLATFORM_KEY` 必须是同一个字符串）。
@@ -68,8 +72,8 @@ fn android_entry(j: &serde_json::Value) -> (Option<String>, Option<String>) {
     (url, sha256)
 }
 
-/// 拉取 gitcode 最新发布清单（latest.json）。前端桌面端调用，替代会被 CORS
-/// 拦截的浏览器 fetch。`url` 缺省用稳定发布渠道；失败返回 `Err`（前端按
+/// 拉取**国内主站**的最新发布清单（`latest.json`）。前端桌面端 / Android 调用，
+/// 替代会被 CORS 拦截的浏览器 fetch。`url` 缺省用稳定发布渠道；失败返回 `Err`（前端按
 /// 「无更新」降级，不会抛到 UI）。
 #[tauri::command]
 pub async fn fetch_update_manifest(url: Option<String>) -> Result<Option<UpdateManifest>, String> {
