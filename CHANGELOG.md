@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+## [2.1.6] - 2026-11-06
+
+> 更新安装：先结束外部客户端拉起的 MCP 桥（A+B）
+
 ### 修复
 - **更新安装会卡在 `shuyonote-mcp.exe`（显示「无法删除/覆盖文件」，更新装不上）** —— 这个 MCP 桥是**外部 AI 客户端**（Claude Desktop / Claude Code 等）按配置拉起的，不是本应用的子进程，主程序退出它仍在跑；而它就在安装目录 `mcp\` 下，Windows 上正在运行的 exe 无法被安装器删除/覆盖。现在**两道闸**：① 应用在 `downloadAndInstall` 之前调 Rust 命令 `mcp_kill_bridge_processes` 先结束桥进程（失败不阻断）；② NSIS 安装器在 `PREINSTALL` / `PREUNINSTALL` 钩子里同样 `taskkill /F /IM shuyonote-mcp.exe`（覆盖老客户端、手动双击安装包、卸载这些场景）。AI 客户端那条连接会断开一次，下次调用会自动拉起新版本的桥。
 
