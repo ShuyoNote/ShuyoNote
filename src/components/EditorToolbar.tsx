@@ -19,7 +19,7 @@ import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
 import { CommunityPublishDialog } from "./CommunityPublishDialog";
 import { PluginMenuItems } from "./PluginMenuItems";
-import { docHtml, printDoc } from "../lib/print";
+import { docHtml, exportDocToPdf, printDoc } from "../lib/print";
 import { inlineExportMedia } from "../lib/exportInline";
 import { renderExportMermaid } from "../lib/exportMermaid";
 import { exportPageToMarkdown } from "../lib/exportMarkdown";
@@ -232,7 +232,13 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
         if (mermaidReport.failed > 0) {
           toast(`有 ${mermaidReport.failed} 个图形渲染失败，PDF 里保留的是源码`, "info");
         }
-        await printDoc(inlined, { title });
+        // ⭐ 2026-11-06：Windows 优先**直出**（保存对话框直写、不弹系统打印对话框，A4/白底）；
+        //    其它平台（或直出不可用）回落 iframe ＋ 系统打印对话框的老路。
+        if (await exportDocToPdf(inlined, { title })) {
+          toast("已导出 PDF", "success");
+        } else {
+          await printDoc(inlined, { title });
+        }
       } catch (e) {
         toast(`导出失败：${e}`, "error");
       }

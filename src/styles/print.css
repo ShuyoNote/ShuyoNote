@@ -54,6 +54,48 @@
     max-width: 100%;
   }
 
+  /* ⭐ 2026-11-06：笔记 / 数据库也走同一棵打印根 —— `exportDocToPdf()` 把生成的正文 HTML
+     注入 `.pdf-print-root > .export-doc`，自带一份**作用域化**的 BASE_CSS。
+     这里只补两件事：① A4 正文宽约 703 CSS px，BASE_CSS 的 `max-width:720px` 会溢出；
+     ② 分页规则（长笔记跨页时不要把图片/代码/表格/引文腰斩）。 */
+  html.pdf-exporting .pdf-print-root .export-doc {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  html.pdf-exporting .pdf-print-root .export-doc img {
+    max-width: 100%;
+  }
+
+  /* 笔记里的表格自带列宽（Lexical 输出 `<col style="width:…px">`）⇒ A4 正文宽下会整体
+     超出右边被裁掉（实测：末列文字截断）。打印时改成 fixed 布局 + 100% 宽，列宽按比例收。 */
+  html.pdf-exporting .pdf-print-root .export-doc table {
+    width: 100%;
+    max-width: 100%;
+    table-layout: fixed;
+  }
+
+  html.pdf-exporting .pdf-print-root .export-doc th,
+  html.pdf-exporting .pdf-print-root .export-doc td {
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  html.pdf-exporting .pdf-print-root .export-doc img,
+  html.pdf-exporting .pdf-print-root .export-doc pre,
+  html.pdf-exporting .pdf-print-root .export-doc table,
+  html.pdf-exporting .pdf-print-root .export-doc blockquote,
+  html.pdf-exporting .pdf-print-root .export-doc .webbookmark-card {
+    break-inside: avoid;
+  }
+
+  html.pdf-exporting .pdf-print-root .export-doc h1,
+  html.pdf-exporting .pdf-print-root .export-doc h2,
+  html.pdf-exporting .pdf-print-root .export-doc h3 {
+    break-after: avoid;
+  }
+
   @page {
     margin: 12mm;
     size: A4;

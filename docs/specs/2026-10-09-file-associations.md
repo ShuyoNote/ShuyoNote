@@ -148,3 +148,22 @@ using the **\"open\" verb as default**"*。而 `nsis/installer.nsi` 里 **`OpenW
   全程只出现「导出 PDF」保存对话框，无系统打印窗口；`pnpm verify` 66/66。
   ⚠️ 这是**一次性人工读数**，没有自动化判据（`PrintToPdf` 要真 WebView，PR 里别当成长期回归）。
 
+## 9. 2026-11-06：同一套直出方案复用到**笔记 / 数据库**导出
+
+`.md` 阅读器那条直出路线抽成 `src/lib/print.ts` 的 `exportDocToPdf()`，笔记（`EditorToolbar` 的
+「导出为 PDF」）与数据库视图（`DatabaseView`）共用：
+
+- **内容来源不同**：md 那边克隆**已渲染的 DOM**；这里是新生成的 HTML（`$generateHtmlFromNodes`
+  ＋ mermaid 渲染 ＋ 媒体内联），所以额外注入一份**作用域化**的 `BASE_CSS`
+  （`scopeExportCss()`：每条选择器加 `.pdf-print-root .export-doc` 前缀，`body` 那条变成容器
+  本身）—— 否则独立文档的 `body { max-width:720px }` 会改到应用自己的 `body`。
+- **Windows**：`exportDocToPdf()` 弹保存对话框 → 建 `body > .pdf-print-root` → 调
+  `export_webview_pdf`（A4 / 白底 / 导出期冻结响应式全部复用）→ `finally` 清理；用户**取消保存**
+  返回 `true`（已处理），⛔ 不回落成系统打印对话框（否则会出现"取消后又弹一次"）。
+- **macOS / Linux**：`exportDocToPdf()` 返回 `false`，调用方回落原来的 iframe ＋
+  `window.print()`（`printDoc`）—— 与 md 阅读器一致，没有等价稳定 API。
+- **分页**：`print.css` 给 `.export-doc` 的 `img/pre/table/blockquote/webbookmark-card` 加
+  `break-inside: avoid`，正文宽改为 `max-width:none`（A4 正文宽约 703 CSS px，`720px` 会溢出）。
+- **判据**：与 §8 同一类**一次性人工读数**（需真 WebView），没有自动化门禁；非 Windows 的回落
+  路径由 `printDoc` 原有行为保证。
+
