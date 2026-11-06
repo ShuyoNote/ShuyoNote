@@ -41,7 +41,11 @@ const RUN = argOf("--run");
 const TAG = argOf("--tag") ? `v${String(argOf("--tag")).replace(/^v/, "")}` : null;
 const PARTS = Number(argOf("--parts") ?? 8);
 const WANT = /^(bundle-|android-release-apk)/;
-const SUBS = ["nsis", "deb", "appimage", "rpm", "dmg", "msi"];
+// ⚠️ `macos` 必须在名单里：`.app.tar.gz` ＋ 它的 `.sig` 落在 `bundle/macos/`，
+//    而它是 darwin 更新通道**唯一**认的产物（`release.mjs` 的清单只指向它）。
+//    2026-11-06 发 2.1.4 时这份名单漏了 macos ⇒ 取件"成功"、落位"成功"，但 macOS 产物没进
+//    bundle ⇒ release.mjs 报「只有 dmg 而没有 .app.tar.gz」。名单漏一项不会报错，只会静默少拷。
+const SUBS = ["nsis", "deb", "appimage", "rpm", "dmg", "msi", "macos"];
 
 if (!RUN && !TAG) {
   console.error("用法: node scripts/fetch-release-artifacts.mjs --tag v1.91.1 [--stage] 或 --run <id>");

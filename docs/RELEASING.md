@@ -41,6 +41,13 @@ pnpm changelog 1.84.0 "版本主题"
 ## ② 同步多处版本
 `package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml` / `src-tauri/Cargo.lock`(shuyonote version) / `README.md`(badge) / `docs/README.md`(当前版本)。`node scripts/check-versions.mjs` 会强制一致。
 
+> ⚠️ **`mobile-version.json` 不属于「发布产物」** —— 桌面号升级时，移动版号（它必须 ≥ 桌面号，见
+> `scripts/check-mobile-app-version.mjs`）**要先落在 `dev` 上**、随 `dev -> main` 合并进发布线；
+> ⛔ **不要**把它的 bump 塞进 `release: X.Y.Z` 那个提交 ⇒ 否则 `check-main-only-commits` 会判
+> 「发布线独占提交夹带了不属于发布产物的文件（`mobile-version.json`）」红。
+> **2026-11-06 发 2.1.4 时实测**：我把移动版号写进了 release 提交，`main` 推送触发的那条 CI 因此红；
+> `dev` 同步到同一 SHA 后，新触发的一条 CI 就绿了（同 SHA 新旧两条 run 并存是正常现象）。
+
 ## ③ 校验 + 构建
 ```bash
 pnpm run build        # check-versions + tsc + vite build
@@ -502,6 +509,14 @@ CI 取——run artifacts 的 `android-release-apk`，或 GitHub Release 上的
 **apk 没有 `.sig`（这是有意的例外）**：它的签名是 `apksigner` 打在**包内**的，不是旁边的 minisign 文件。
 所以 apk ①不参与「`.sig` 与字节互验」②不上传 `.sig`，清单里 `platforms["android-aarch64"].signature`
 写 **`sha256:<hex>`**（发布脚本现算）。安装时的强制签名校验由 Android 系统安装器负责。
+
+**dmg 也没有 `.sig`（同样是有意的例外，2026-11-06 补）**：macOS 的更新通道产物是 `.app.tar.gz`
+（清单 `darwin-*` 指向它），dmg 只给人手动下载安装。而 CI 在签完 `.app` 之后用 `hdiutil` **重打**
+dmg 再 codesign/公证（`3a01491e`，因为「Tauri 的 DMG 是签名前打的」）⇒ 重打后的字节与 tauri 那份
+dmg 不同，tauri 不可能为它产出可用的 minisign `.sig`。dmg 的来源/完整性由 Apple 签名链负责。
+⚠️ 所以**不要**为了让发布通过去手工造一个 dmg 的 `.sig`（那是另一对字节）；例外在
+`scripts/lib/releaseArtifacts.mjs` 的 `isDmg()` 里，与 `isApk()` 并列。
+
 ⚠️ **这个字段不能省**：`tauri-plugin-updater` 把每个平台条目解析成 `url` + `signature` **都必需**的结构，
 任何一条缺 `signature` 会让**整份 latest.json** 解析失败 ⇒ **桌面的自动更新一起挂**（症状是"点检查更新
 什么都不发生"）。写盘前由 `validateManifest` 硬拦（见下表）。
@@ -516,7 +531,7 @@ CI 取——run artifacts 的 `android-release-apk`，或 GitHub Release 上的
 | --- | --- |
 | 版本号整词匹配 | `1.84.6` 误纳 `1.84.60` 的产物 |
 | 同平台同类候选 → 报错 | 上次 run 的同版本残留，被随便挑一个发出去 |
-| 缺/空 `.sig` → 报错（**apk 例外**：签名在包内） | 旧实现只 warn 然后静默丢弃该产物，而 `latest.json` 留一个空签名条目 → 该平台更新静默失效 |
+| 缺/空 `.sig` → 报错（**两类例外：apk**——签名在包内；**dmg**——不进更新清单、由 Apple codesign/公证，见下） | 旧实现只 warn 然后静默丢弃该产物，而 `latest.json` 留一个空签名条目 → 该平台更新静默失效 |
 | **`.sig` 与安装包字节互验**（minisign 预哈希：BLAKE2b-512 + ed25519，见 `scripts/lib/`） | 安装包与 `.sig` 不是同一次构建的一对（手工从两次 run 各取一个）→ 用户更新时报校验失败 |
 | **缺 Android 发版件 → 报错** | 忘了 `--android-apk` ⇒ 清单里没有 `android-aarch64` ⇒ Android 更新入口静默消失 |
 | **写盘前 `validateManifest`**（每个平台条目都要有绝对 https 的 `url` 与非空 `signature`；android 必须是 `sha256:<64 hex>`） | 某个平台条目缺 `signature` ⇒ **整份 latest.json 解析失败** ⇒ 连桌面的更新通道一起挂 |

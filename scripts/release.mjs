@@ -284,6 +284,12 @@ if (!SKIP_SIG) {
       console.log(`  — ${a.name}：apk 无 minisign .sig，跳过（完整性由清单里的 sha256 记录，安装签名由系统安装器强制）`);
       continue;
     }
+    // ⭐ 2026-11-06：dmg 与 apk 同列「没有 .sig」的例外（见 releaseArtifacts 的 isDmg）。
+    //    不跳过的话这里会拿 sigText=null 去解析，报一句"无法解析"的假警告（实测 2.1.4）。
+    if (!a.sigPath) {
+      console.log(`  — ${a.name}：无 minisign .sig（不进更新清单；dmg 由 Apple codesign/公证）`);
+      continue;
+    }
     const r = await verifyArtifactSignature({ filePath: a.file, sigText: a.sigText, publicKey: pubKey });
     if (r.status === "ok") console.log(`  ✓ ${a.name}`);
     else if (r.status === "unsupported") console.warn(`  ⚠️ ${a.name}：${r.detail}（跳过校验，不阻断）`);
@@ -603,8 +609,9 @@ for (const a of picked) {
     writeFileSync(shaFile, `${a.sha256}  ${a.name}\n`, "utf8");
     await uploadFile(TAG, `${a.name}.sha256`, shaFile);
   }
-  // apk 没有独立的 `.sig` 文件（签名在包内），上传它只会 404/空文件。
-  if (isApk(a.name)) continue;
+  // apk 没有独立的 `.sig` 文件（签名在包内）；dmg 也没有（见 isDmg —— CI 用 hdiutil 重打后
+  // 的 dmg 不在 tauri 签名链上），上传它只会 404/空文件。两者都跳过。
+  if (isApk(a.name) || !a.sigPath) continue;
   await uploadFile(TAG, a.name + ".sig", a.sigPath);
 }
 if (webZip) {

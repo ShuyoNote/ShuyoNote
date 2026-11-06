@@ -135,6 +135,22 @@ export function isApk(name) {
 }
 
 /**
+ * macOS 的 `.dmg` 是**给人手动下载安装**的包，不是更新通道产物
+ * （darwin 的清单指向 `.app.tar.gz`，见 `isUpdaterArchive`）。
+ *
+ * ⇒ 它**没有** minisign `.sig`，也不该有：CI（`.github/workflows/release.yml`）在 tauri
+ *   签完 `.app` 之后用 `hdiutil` **重打** dmg 再 codesign / 公证（3a01491e，「Tauri 的 DMG
+ *   是签名前打的」），重打后的字节跟 tauri 那份 dmg 不同 ⇒ tauri 不可能为它产出可用的 `.sig`。
+ *
+ * ⚠️ 这不是"签名缺失"：dmg 的完整性/来源由 Apple `codesign` ＋ 公证负责，与 minisign 那套
+ *   更新器签名是两条链。2026-11-06 发 2.1.4 时，正是因为这里按"所有产物都要 `.sig`"硬失败，
+ *   整轮 GitCode 发布被拦下（`.app.tar.gz` 与其余安装包都有 `.sig`，只差 dmg）。
+ */
+export function isDmg(name) {
+  return /\.dmg$/i.test(name);
+}
+
+/**
  * 文件名后缀 → 更新器清单里的平台键（**可能不止一个**）。
  *
  * 为什么必须是数组：macOS 的 **universal** 产物（`--target universal-apple-darwin`，
@@ -306,10 +322,10 @@ export function selectArtifacts({ entries, version, explicit = [] }) {
   }
 
   // 缺 .sig 是硬错误：发布出去会让该平台的自动更新静默失效。
-  // **例外：apk**——它的签名在包内（apksigner），本来就没有旁边的 `.sig`；
-  // 清单里用 sha256 记录字节，见 isApk 的注释。
+  // **例外有两类**：apk（签名在包内）与 dmg（不进更新清单、由 Apple 签名/公证，见 isDmg）。
   for (const e of picked) {
     if (isApk(e.name)) continue;
+    if (isDmg(e.name)) continue;
     if (!e.sigPath) problems.push(`缺签名文件：${e.name}.sig（没有它就不能进更新通道）`);
     else if (!e.sigText || e.sigText.trim() === "") problems.push(`签名文件为空：${e.name}.sig`);
   }

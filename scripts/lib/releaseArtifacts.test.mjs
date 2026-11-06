@@ -142,6 +142,20 @@ describe("selectArtifacts", () => {
     expect(problems.join()).toMatch(/未找到任何属于 v1\.84\.6/);
   });
 
+  it("dmg 免 `.sig`（不进更新清单：darwin 指向 .app.tar.gz；dmg 由 Apple codesign/公证）", () => {
+    // 真实形状：CI 在签完 .app 后用 hdiutil 重打 dmg ⇒ tauri 不会给它产出可用的 minisign .sig。
+    // 2026-11-06 发 2.1.4 时这里曾按"所有产物都要 .sig"硬拦，导致整轮 GitCode 发布失败。
+    const { picked, problems } = selectArtifacts({
+      version: "1.84.6",
+      entries: [
+        entry("dmg", "ShuyoNote_1.84.6_aarch64.dmg", { sigPath: null, sigText: null }),
+        entry("macos", "ShuyoNote.app.tar.gz"),
+      ],
+    });
+    expect(problems).toEqual([]);
+    expect(picked.map((e) => e.name).sort()).toEqual(["ShuyoNote.app.tar.gz", "ShuyoNote_1.84.6_aarch64.dmg"]);
+  });
+
   it("apk 免 `.sig`（签名在包内，由 apksigner 打、系统安装器强制校验）", () => {
     const apkName = "ShuyoNote_1.84.6_andro" + "id-arm64-release.apk";
     const { picked, problems } = selectArtifacts({
