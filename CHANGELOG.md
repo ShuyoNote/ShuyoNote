@@ -1,8 +1,8 @@
-# Changelog
-
-本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
-
 ## [Unreleased]
+
+## [2.1.4] - 2026-11-06
+
+> 笔记 / 数据库导出 PDF 直出 + 打开系统设置修复 + md 阅读器 ⋯ 菜单
 
 ### 新增
 - **笔记 / 数据库的「导出为 PDF」在 Windows 上改为直出** —— 与 md 阅读器同一套：弹保存对话框后由 WebView2 `PrintToPdf` **直接写文件**，不再经过系统打印对话框；A4、白纸黑字，图片/代码/表格/引文不跨页腰斩。macOS/Linux 仍走原系统打印对话框（没有等价稳定 API）。
