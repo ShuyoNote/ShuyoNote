@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+## [2.1.5] - 2026-11-06
+
+> 检查更新：说明与版本对不上（清单入口统一到国内主站）
+
 ### 修复
 - **「检查更新」显示的「本次更新」说明与版本对不上（版本 2.1.4、说明却是 2.0.0）** —— tauri 更新器读国内主站 `shuyo.cn/app/latest.json`（新），而 Rust `fetch_update_manifest` 的**默认 URL 还停在 GitCode release 下载地址**；那条被 CDN 缓存一年、重传不刷新，永远返回 2.0.0 的清单。现在两处入口统一到 `shuyo.cn/app/latest.json`，并加跨语言判据（Rust 常量必须 = 前端 `LATEST_MANIFEST_URL`）。顺带修好 **Android 应用内更新**读到的 APK 地址/指纹（它读的是同一份清单，之前同样会拿到 2.0.0）。
 
