@@ -5,7 +5,7 @@ import { tagColor } from "../lib/tagColor";
 import { useNotes } from "../store/notes";
 import { useTemplates } from "../store/templates";
 import { toast } from "../store/toast";
-import { printDoc } from "../lib/print";
+import { exportDocToPdf, printDoc } from "../lib/print";
 import { TruncatedText } from "./TruncatedText";
 import type { AttrDef, DatabaseQuery, DatabaseRow, DbViewMeta } from "../types";
 import { fromDatetimeLocalValue, toDatetimeLocalValue } from "../lib/dateTimeValue";
@@ -851,9 +851,17 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
       )
       .join("");
     const body = `<h1>${title || "数据库"}</h1><div class="db-count">共 ${rows.length} 行</div><table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
-    // printDoc 现在是异步的（打印前要等图片/字体就绪，见 lib/print.ts）——
-    // 这里不需要等它，但不能让 float 的 Promise 逃逸成未处理拒绝。
-    void printDoc(body, { title });
+    // ⭐ 2026-11-06：Windows 优先直出（保存对话框直写，不弹系统打印对话框）；
+    //    其它平台回落 iframe ＋ 系统打印对话框。printDoc / 直出都是异步的（打印前要等
+    //    图片/字体就绪，见 lib/print.ts）—— 这里不阻塞，但不能让 float 的 Promise 逃逸。
+    void (async () => {
+      try {
+        if (await exportDocToPdf(body, { title })) toast("已导出 PDF", "success");
+        else await printDoc(body, { title });
+      } catch (e) {
+        toast(`导出失败：${e}`, "error");
+      }
+    })();
   };
 
   // 保存数据库为模板：连同列定义(database_json)一起存入「我的模板」。
