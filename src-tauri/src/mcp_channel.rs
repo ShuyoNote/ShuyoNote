@@ -1318,6 +1318,52 @@ pub fn mcp_rotate_token() -> Result<McpStatus, String> {
     rotate_token()
 }
 
+/// **更新安装前清场**（2026-11-06，owner 拍 A+B）：结束由外部 AI 客户端拉起的 MCP 桥进程。
+///
+/// 为什么需要：`shuyonote-mcp.exe` **不是本应用的子进程** —— 它由 MCP 客户端（Claude Desktop /
+/// Claude Code 等）按配置拉起，主程序退出它不会退；而它就装在安装目录 `mcp\` 下，Windows 上
+/// **正在运行的 exe 无法被安装器覆盖** ⇒ 自动更新会卡在替换这个文件（2026-11-06 实测：本机
+/// pid 3612 就跑在 `%LOCALAPPDATA%\Programs\ShuyoNote\mcp\shuyonote-mcp.exe`）。
+///
+/// 调用时机：桌面端在 `downloadAndInstall` **之前**调一次 —— 插件随后会用
+/// `std::process::exit(0)` 直接退出并拉起安装器，那一刻已经没有本进程的机会，所以不能只放在
+/// 退出钩子里。安装器侧另有 NSIS `PREINSTALL` 钩子兜底（老客户端／手动安装场景）。
+///
+/// 返回**结束的进程数**（0 = 本来没在跑，不是错误）。按镜像名杀：dev 构建的桥
+/// （`tools/shuyonote-mcp-rust/dist/`）同样会被结束 —— 同名的都是我们自己的桥。
+#[tauri::command]
+pub fn mcp_kill_bridge_processes() -> Result<u32, String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // 不弹控制台窗口（桌面应用里 spawn taskkill 否则会闪一个黑框）。
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let count = std::process::Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq shuyonote-mcp.exe", "/NH", "/FO", "CSV"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .filter(|l| l.to_ascii_lowercase().contains("shuyonote-mcp.exe"))
+                    .count() as u32
+            })
+            .unwrap_or(0);
+        if count > 0 {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/IM", "shuyonote-mcp.exe"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .status();
+        }
+        Ok(count)
+    }
+    #[cfg(not(windows))]
+    {
+        // macOS/Linux 允许直接替换正在运行的二进制 ⇒ 安装器不会卡在"文件被占用"上。
+        Ok(0)
+    }
+}
+
 /// ⭐ M2：改「免确认写」开关（面板 ✓）—— 默认关 ✓；开着时**每一次写都必须留审计** ✓（Task W4 ✓）。
 #[tauri::command]
 pub fn mcp_set_allow_write(on: bool) -> Result<McpStatus, String> {
