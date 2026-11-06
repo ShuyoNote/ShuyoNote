@@ -36,7 +36,7 @@ import { measureOne, renderRetentionReport, type RetentionRow } from "../lib/off
 import { realOfficePathDeps, type OfficePathOutcome } from "../lib/office/pathImport";
 import { mountOfficeImportRequests, realOfficeImportRequestHandler } from "../lib/office/requestBridge";
 import { isMarkdownPath } from "../lib/markdownFile";
-import { useFilePreview } from "../store/filePreview";
+import { openMarkdownPreviewAfterStartup } from "../lib/office/markdownPreview";
 import { platform } from "../lib/platform";
 import { toast } from "../store/toast";
 
@@ -73,7 +73,11 @@ export function OfficeImportPanel({ parentId = null }: { parentId?: string | nul
       //    **不转成 Office 导入** —— 点「导入为笔记」才建页。
       onMarkdownRequest: (path) => {
         if (!isMarkdownPath(path)) return false;
-        useFilePreview.getState().openPath(path);
+        // ⚠️ **2026-11-07 修（owner：「双击 md 冷启动失效」）**：不能直接 `openPath` ——
+        // 冷启动时这次打开会和「恢复上次打开的页面」赛跑，而 `openPage` 第一行就 close 预览
+        // ⇒ 刚开就被关掉（应用已开着时没这段恢复，所以只有冷启动坏）。
+        // 时机细节与判据见 `src/lib/office/markdownPreview.ts`。
+        openMarkdownPreviewAfterStartup(path);
         return true;
       },
     })
