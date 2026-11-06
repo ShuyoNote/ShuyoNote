@@ -41,6 +41,13 @@ pnpm changelog 1.84.0 "版本主题"
 ## ② 同步多处版本
 `package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml` / `src-tauri/Cargo.lock`(shuyonote version) / `README.md`(badge) / `docs/README.md`(当前版本)。`node scripts/check-versions.mjs` 会强制一致。
 
+> ⚠️ **`mobile-version.json` 不属于「发布产物」** —— 桌面号升级时，移动版号（它必须 ≥ 桌面号，见
+> `scripts/check-mobile-app-version.mjs`）**要先落在 `dev` 上**、随 `dev -> main` 合并进发布线；
+> ⛔ **不要**把它的 bump 塞进 `release: X.Y.Z` 那个提交 ⇒ 否则 `check-main-only-commits` 会判
+> 「发布线独占提交夹带了不属于发布产物的文件（`mobile-version.json`）」红。
+> **2026-11-06 发 2.1.4 时实测**：我把移动版号写进了 release 提交，`main` 推送触发的那条 CI 因此红；
+> `dev` 同步到同一 SHA 后，新触发的一条 CI 就绿了（同 SHA 新旧两条 run 并存是正常现象）。
+
 ## ③ 校验 + 构建
 ```bash
 pnpm run build        # check-versions + tsc + vite build
