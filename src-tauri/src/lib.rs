@@ -53,9 +53,9 @@ mod blocks;
 mod bookmark;
 mod commands;
 // 只读文档直接导出 PDF（Windows WebView2 PrintToPdf；其它平台诚实返回不支持）。
-mod print_pdf;
 mod crypto;
 pub mod office_import;
+mod print_pdf;
 // 国密（SM4-CBC ＋ HMAC-SM3）应用层 AEAD —— **2026-09-20 起是默认特性**（方案 §3.4「无兼容快路」）；
 // 要编旧行为（只写 v1）用 `--no-default-features`。
 // 默认包里它整个不存在 ⇒ 默认构建既不多编一个 crate，也不可能写出 v2 密文。

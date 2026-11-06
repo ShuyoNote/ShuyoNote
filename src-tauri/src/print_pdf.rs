@@ -31,8 +31,8 @@ async fn export_webview_pdf_windows(app: tauri::AppHandle, path: String) -> Resu
 
     use tauri::Manager;
     use webview2_com::Microsoft::Web::WebView2::Win32::{
-        ICoreWebView2_7, ICoreWebView2Controller2, ICoreWebView2Environment6,
-        ICoreWebView2PrintSettings, COREWEBVIEW2_COLOR,
+        ICoreWebView2Controller2, ICoreWebView2Environment6, ICoreWebView2PrintSettings,
+        ICoreWebView2_7, COREWEBVIEW2_COLOR,
     };
     use webview2_com::PrintToPdfCompletedHandler;
     use windows::core::{Interface, HSTRING, PCWSTR};
@@ -107,11 +107,7 @@ async fn export_webview_pdf_windows(app: tauri::AppHandle, path: String) -> Resu
             }));
             unsafe {
                 webview7
-                    .PrintToPdf(
-                        PCWSTR(file.as_ptr()),
-                        Some(&settings),
-                        &handler,
-                    )
+                    .PrintToPdf(PCWSTR(file.as_ptr()), Some(&settings), &handler)
                     .map_err(|e| format!("启动 PrintToPdf 失败：{e}"))?;
             }
             Ok(())
