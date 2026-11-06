@@ -1159,6 +1159,8 @@ export interface CommandMap {
   mcp_status: { args: undefined; result: McpStatus };
   mcp_set_enabled: { args: { enabled: boolean }; result: McpStatus };
   mcp_rotate_token: { args: undefined; result: McpStatus };
+  // 更新安装前结束外部客户端拉起的 MCP 桥（返回结束的进程数；0 = 本来没在跑）。
+  mcp_kill_bridge_processes: { args: undefined; result: number };
   mcp_set_allow_write: { args: { on: boolean }; result: McpStatus };
   // ⭐ 2026-10-08（R147）：授权写入（write:pages）—— 未授权时写能力会被明确拒 ✓
   mcp_set_write_grant: { args: { on: boolean }; result: McpStatus };

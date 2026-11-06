@@ -123,6 +123,16 @@ export async function checkDesktopUpdate(): Promise<DesktopUpdateResult> {  if (
             console.warn("[updater] 忽略进度回调异常:", err);
           }
         };
+        // ⭐ 2026-11-06（owner 拍 A+B）：安装前先结束外部客户端拉起的 MCP 桥。
+        // 它不在应用进程树里（Claude Desktop 等按配置拉起），又占着安装目录里的
+        // `shuyonote-mcp.exe`；Windows 安装器**覆盖不了正在运行的 exe** ⇒ 更新会卡住。
+        // 失败不算错（本来就没在跑 / 拿不到权限都继续更新；安装器侧还有 NSIS 钩子兜底）。
+        try {
+          const killed = await invoke<number>("mcp_kill_bridge_processes");
+          if (killed > 0) console.info(`[updater] 已结束 ${killed} 个 MCP 桥进程（否则会锁住安装文件）`);
+        } catch (e) {
+          console.warn("[updater] 清理 MCP 桥失败（继续更新）:", e);
+        }
         // Prefer the single-step `downloadAndInstall` (official recommended form).
         try {
           if (typeof (update as any).downloadAndInstall === "function") {

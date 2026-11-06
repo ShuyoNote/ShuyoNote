@@ -1377,6 +1377,9 @@ pub fn run() {
   mcp_channel::mcp_status,
   mcp_channel::mcp_set_enabled,
   mcp_channel::mcp_rotate_token,
+  // ⭐ 2026-11-06（A+B）：更新安装前结束外部客户端拉起的 MCP 桥（它会锁住安装目录里的
+  // `shuyonote-mcp.exe`，Windows 安装器覆盖不了正在运行的 exe）。
+  mcp_channel::mcp_kill_bridge_processes,
   // ⭐ M2（Task W2）：免确认写开关 —— 默认关 ✓
   mcp_channel::mcp_set_allow_write,
   mcp_channel::mcp_set_write_grant,

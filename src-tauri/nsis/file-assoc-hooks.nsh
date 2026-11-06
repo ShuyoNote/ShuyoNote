@@ -82,3 +82,33 @@
   !insertmacro SHUYONOTE_OPENWITH_UNREGISTER "md" "ShuyoNote.md"
   !insertmacro UPDATEFILEASSOC
 !macroend
+
+; ============================================================================
+; 安装/更新/卸载前的清场（2026-11-06，owner 拍 A+B）
+;
+; **问题**：`shuyonote-mcp.exe` **不是本应用的子进程** —— 它由外部 AI 客户端（Claude Desktop /
+; Claude Code 等）按配置拉起，主程序退出它不会退；而它就装在安装目录 `mcp\` 下，Windows 上
+; **正在运行的 exe 无法被安装器覆盖 / 删除** ⇒ 更新会卡在替换这个文件（2026-11-06 实测：本机
+; pid 3612 就跑在 `%LOCALAPPDATA%\Programs\ShuyoNote\mcp\shuyonote-mcp.exe`）。
+;
+; **两道闸**：① 应用侧在 `downloadAndInstall` 之前调 Rust 命令
+; `mcp_kill_bridge_processes`（见 src/lib/updater.ts，覆盖"应用内自动更新"）；
+; ② 就是这里 —— NSIS 钩子，覆盖"老客户端 / 用户手动双击安装包 / 卸载"这些应用没机会先行清场的场景。
+;
+; `nsExec::Exec` 隐藏控制台黑框；退出码**故意不判**：没在跑时 taskkill 返回非 0，那是正常情况，
+; 不能因此挡住安装。杀完再让模板原有的 `CheckIfAppIsRunning` 检查主程序。
+; ============================================================================
+!macro SHUYONOTE_KILL_MCP_BRIDGE
+  nsExec::Exec 'taskkill /F /IM shuyonote-mcp.exe'
+  Pop $0
+!macroend
+
+; 模板 666 行插入 —— 在 CheckIfAppIsRunning 之前。
+!macro NSIS_HOOK_PREINSTALL
+  !insertmacro SHUYONOTE_KILL_MCP_BRIDGE
+!macroend
+
+; 模板 803 行插入 —— 卸载同样要能删掉 mcp\ 下的桥。
+!macro NSIS_HOOK_PREUNINSTALL
+  !insertmacro SHUYONOTE_KILL_MCP_BRIDGE
+!macroend
