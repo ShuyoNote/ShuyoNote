@@ -13,7 +13,7 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { usePdfReader } from "../store/pdfReader";
 import { useFileManagerStore } from "../store/fileManager";
-import { ConvertToPageIcon, CopyIcon, FitWidthIcon, FolderIcon, MoreHorizontalIcon, OutlineIcon, PrintIcon, ReadAnnotateIcon } from "./icons";
+import { CheckIcon, ConvertToPageIcon, CopyIcon, FitWidthIcon, FolderIcon, MoreHorizontalIcon, OutlineIcon, PrintIcon, ReadAnnotateIcon } from "./icons";
 import { hydrateMermaidBlocks } from "../lib/mdMermaid";
 import { openSystemSettingsUri } from "../lib/openExternal";
 import { compactPathForDisplay } from "../lib/markdownFile";
@@ -193,6 +193,26 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
   //      （它加 `.fm-md-preview.is-full` ⇒ `max-width: none` ✓，接线见下面的 className ✓）。
   const [contentFull, setContentFull] = useState(true);
   const [dragging, setDragging] = useState(false);
+  // ⭐ 2026-11-06：顶栏「⋯」做成**真菜单**（外部 md 才出现）—— 原先这颗 ⋯ 只挂了一个
+  //    「设为默认打开方式」的动作、图标语义是错的（owner 截图指出）。现在二级菜单收三件事：
+  //    在文件夹中显示 / 复制完整路径 / 设为默认；⛔ 不再与路径条上的复制按钮重复（那颗已删）。
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!moreRef.current?.contains(e.target as Node)) setMoreOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMoreOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [moreOpen]);
 
   const isMd = target?.mime === "text/markdown";
   const isWindows = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
@@ -495,16 +515,6 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
               <ConvertToPageIcon aria-hidden />
             </button>
           )}
-          {isMd && target.path ? (
-            <button
-              className="fm-preview-read"
-              onClick={() => void platform.opener.revealItemInDir(target.path)}
-              title="在文件夹中显示"
-              aria-label="在文件夹中显示"
-            >
-              <FolderIcon aria-hidden />
-            </button>
-          ) : null}
           {isMd && target.path && isWindows ? (
             <button
               className="fm-preview-read"
@@ -516,31 +526,59 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
             </button>
           ) : null}
           {isMd && target.path ? (
-            <button
-              className="fm-preview-read"
-              onClick={openDefaultAppsGuide}
-              title="把 .md / .markdown 的默认打开方式设为 ShuyoNote（需系统确认）"
-              aria-label="设为默认 Markdown 打开方式"
-            >
-              <MoreHorizontalIcon aria-hidden />
-            </button>
+            <div className="fm-preview-more" ref={moreRef}>
+              <button
+                className={`fm-preview-read${moreOpen ? " is-on" : ""}`}
+                onClick={() => setMoreOpen((v) => !v)}
+                title="更多"
+                aria-label="更多操作"
+                aria-haspopup="menu"
+                aria-expanded={moreOpen}
+              >
+                <MoreHorizontalIcon aria-hidden />
+              </button>
+              {moreOpen ? (
+                <div className="fm-preview-more-menu" role="menu">
+                  <button
+                    className="fm-preview-more-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setMoreOpen(false);
+                      void platform.opener.revealItemInDir(target.path!);
+                    }}
+                  >
+                    <FolderIcon aria-hidden /> 在文件夹中显示
+                  </button>
+                  <button
+                    className="fm-preview-more-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setMoreOpen(false);
+                      void navigator.clipboard?.writeText(target.path!).then(
+                        () => toast("已复制路径", "success"),
+                        () => toast("复制失败", "error"),
+                      );
+                    }}
+                  >
+                    <CopyIcon aria-hidden /> 复制完整路径
+                  </button>
+                  <button
+                    className="fm-preview-more-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setMoreOpen(false);
+                      openDefaultAppsGuide();
+                    }}
+                  >
+                    <CheckIcon aria-hidden /> 设为默认打开方式
+                  </button>
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </div>
         {isMd && target.path ? (
           <div className="fm-preview-pathbar" title={target.path}>
-            <button
-              className="fm-preview-path-copy"
-              title="复制完整路径"
-              aria-label="复制完整路径"
-              onClick={() => {
-                void navigator.clipboard?.writeText(target.path).then(
-                  () => toast("已复制路径", "success"),
-                  () => toast("复制失败", "error"),
-                );
-              }}
-            >
-              <CopyIcon aria-hidden />
-            </button>
             <span className="fm-preview-path">{compactPathForDisplay(target.path)}</span>
           </div>
         ) : null}

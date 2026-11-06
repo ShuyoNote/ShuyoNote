@@ -300,6 +300,60 @@
   color: var(--text);
 }
 
+/* ⭐ 2026-11-06：顶栏「⋯」的二级菜单（仅外部 md）。原先这颗 ⋯ 只挂一个动作（设为默认），
+   图标语义是错的 ⇒ 现在它是一张真菜单：在文件夹中显示 / 复制完整路径 / 设为默认打开方式。
+   ⚠️ 位置用 absolute（锚在按钮容器上）而不是 fixed：`.fm-preview-head` 没有 overflow 收口，
+   菜单往下弹不会被裁；z-index 高于正文即可。 */
+.fm-preview-more {
+  position: relative;
+  flex: none;
+}
+
+.fm-preview-more .fm-preview-read.is-on {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.fm-preview-more-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  min-width: 190px;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.fm-preview-more-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-13);
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.fm-preview-more-item:hover {
+  background: var(--hover);
+}
+
+.fm-preview-more-item svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--text-dim);
+}
+
 .fm-preview-name {
   font-size: var(--fs-14);
   font-weight: 600;

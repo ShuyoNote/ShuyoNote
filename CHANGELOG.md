@@ -10,6 +10,9 @@
 ### 修复
 - **md 阅读器「设为默认」点了只弹「打不开系统设置」（Not allowed to open url ms-settings:defaultapps）** —— Tauri opener 的默认 URL 白名单只放 `http(s)/mailto/tel`，`ms-settings:` / `x-apple.systempreferences:` 被 scope 拦下；在 `src-tauri/capabilities/default.json` 补这两个 scheme（只放系统设置页，其它自定 scheme 仍未放行）。本机实测：点「设为默认」⇒ 前台切到系统「设置」、不再出现错误 toast。
 
+### 变更
+- **md 阅读器顶栏的「⋯」改成真菜单** —— 原先这颗 ⋯ 只挂一个「设为默认打开方式」的动作（图标语义是错的，owner 截图指出）；现在它展开二级菜单：「在文件夹中显示 / 复制完整路径 / 设为默认打开方式」，工具栏只留高频动作，路径条上那颗复制按钮随之去掉（⛔ 不再重复）。
+
 ## [2.1.3] - 2026-11-05
 
 > 外部 `.md` 阅读器（复用内置预览器 + Windows 直接导出 PDF）+ 面包屑补当前页
