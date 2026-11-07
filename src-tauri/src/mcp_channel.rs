@@ -1000,8 +1000,8 @@ fn resolve_bridge_from(
     //
     // 为什么：安装目录里的 `mcp\shuyonote-mcp.exe` 会被外部 MCP 客户端拉起并**长期占用**，
     // 而 Windows 不允许覆盖正在运行的 exe ⇒ 每次更新都可能卡在"无法打开要写入的文件"。
-    // 现在应用启动时把随包的桥复制到 `<app data>/mcp-bin/<版本>/`（见 `ensure_bridge_copy`），
-    // 自动填给客户端的也是这一份 ⇒ **安装器永远不碰运行中的桥**，与"客户端会自动重启桥"彻底解耦。
+    // 现在应用启动时把随包的桥复制到 `<app data>/mcp-bin/`（**稳定路径、不带版本号**），
+    // 自动填给客户端的也是这一份 ⇒ **安装器永远不碰运行中的桥**，且客户端配置**写一次永久有效**。
     // ⚠️ 老配置仍指向安装目录那份：那条路由安装器的「杀→删→改名腾位」兜底（见 hooks）。
     if let Some(p) = user_copy {
         if p.is_file() {
@@ -1102,12 +1102,23 @@ fn resolve_bridge_path(resource_dir: Option<&std::path::Path>) -> Option<String>
 //
 // 背景：安装目录里的 `mcp\shuyonote-mcp.exe` 由外部 MCP 客户端拉起并长期占用，而 Windows
 // 不允许覆盖正在运行的 exe ⇒ 更新卡在替换它（2026-11-06/07 两次真机事故）。
-// 现在应用启动时把随包的桥复制到 `<app data>/mcp-bin/<版本>/`，自动填入的配置指向这份 ⇒
-// **安装器不碰运行中的桥**。老配置（仍指安装目录）由安装器的「杀→删→改名」兜底。
+// 现在应用启动时把随包的桥复制到 `<app data>/mcp-bin/`（**路径稳定、不带版本号**）：
+// 客户端配置写一次永久有效，且**安装器不碰运行中的桥**（见 `ensure_bridge_copy_in`）。
+// 老配置（仍指安装目录）由安装器的「杀→删→改名」兜底。
 
-/// 用户目录下的桥副本目录：`<app data>/mcp-bin/<版本>/`（版本隔离 ⇒ 换版本时正在跑的旧副本还能继续用）。
-pub(crate) fn bridge_copy_dir_in(app_data: &std::path::Path) -> PathBuf {
-    app_data.join("mcp-bin").join(env!("CARGO_PKG_VERSION"))
+/// 用户目录下的桥目录：`<app data>/mcp-bin/`。
+///
+/// ⚠️ **路径稳定、不带版本号**（2026-11-07 定：owner 问「这个配置能全局性吗」）：
+/// 每个 MCP 客户端（Claude Desktop / DeepSeek Harness / Cursor / VS Code…）各读**自己的**配置文件，
+/// 没有 OS 级的"全局 MCP 配置"可写；能做的"全局"就是**让这份片段一次填、永久有效** ——
+/// 路径不随版本变，升级后客户端不用改配置。
+pub(crate) fn bridge_user_dir(app_data: &std::path::Path) -> PathBuf {
+    app_data.join("mcp-bin")
+}
+
+/// 稳定的桥路径（客户端配置里填的就是它）。
+pub(crate) fn bridge_stable_path_in(app_data: &std::path::Path) -> PathBuf {
+    bridge_user_dir(app_data).join(bridge_bin_name())
 }
 
 /// 桥 exe 的文件名（与打包资源 `mcp/` 里的一致）。
@@ -1119,10 +1130,14 @@ fn bridge_bin_name() -> &'static str {
     }
 }
 
-/// **把随包的桥复制到用户目录**（幂等；返回复制后的 exe 路径）。
+/// **把随包的桥复制到用户目录的稳定路径**（幂等；返回复制后的 exe 路径）。
 ///
 /// 只在「资源里真的有桥」且「用户目录那份不存在 / 大小不同」时才写；写失败如实返回 `None`
 /// （面板就继续退回安装目录那份 —— 复制失败不该把"自动填路径"一起弄坏）。
+///
+/// ⚠️ 目标**可能正被 MCP 客户端占用**：Windows 不允许覆盖运行中的 exe，但**允许重命名**
+/// ⇒ 先把旧的改名成 `.old-<时间戳>` 腾出稳定路径，再把新文件挪进来。正在跑的旧进程继续跑它那份
+/// 改名后的映像，客户端的**配置不需要改**（路径一直不变）。
 pub(crate) fn ensure_bridge_copy_in(
     app_data: &std::path::Path,
     resource_dir: Option<&std::path::Path>,
@@ -1132,19 +1147,24 @@ pub(crate) fn ensure_bridge_copy_in(
     if !src_bin.is_file() {
         return None;
     }
-    let dst_dir = bridge_copy_dir_in(app_data);
-    if std::fs::create_dir_all(&dst_dir).is_err() {
-        return None;
-    }
-    let dst_bin = dst_dir.join(bridge_bin_name());
+    let dir = bridge_user_dir(app_data);
+    std::fs::create_dir_all(&dir).ok()?;
+    let dst_bin = dir.join(bridge_bin_name());
     let size = |p: &std::path::Path| std::fs::metadata(p).ok().map(|m| m.len());
     if size(&src_bin) != size(&dst_bin) {
-        let tmp = dst_dir.join(format!("{}.tmp", bridge_bin_name()));
-        if std::fs::copy(&src_bin, &tmp).is_err() {
-            let _ = std::fs::remove_file(&tmp);
-            return None;
+        let tmp = dir.join(format!("{}.new", bridge_bin_name()));
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::copy(&src_bin, &tmp).ok()?;
+        if dst_bin.is_file() {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let old = dir.join(format!("{}.old-{stamp}", bridge_bin_name()));
+            if std::fs::rename(&dst_bin, &old).is_err() {
+                let _ = std::fs::remove_file(&dst_bin);
+            }
         }
-        let _ = std::fs::remove_file(&dst_bin);
         if std::fs::rename(&tmp, &dst_bin).is_err() {
             let _ = std::fs::remove_file(&tmp);
             return None;
@@ -1159,19 +1179,19 @@ pub(crate) fn ensure_bridge_copy_in(
     for extra in ["index.mjs", "paths.mjs"] {
         let s = src_dir.join(extra);
         if s.is_file() {
-            let d = dst_dir.join(extra);
+            let d = dir.join(extra);
             if size(&s) != size(&d) {
                 let _ = std::fs::copy(&s, &d);
             }
         }
     }
-    // 清掉更早版本的副本（best effort：正在跑的那份删不掉 ⇒ 忽略错误，下次启动再清）。
-    if let Some(root) = dst_dir.parent() {
-        if let Ok(rd) = std::fs::read_dir(root) {
-            for e in rd.flatten() {
-                if e.path() != dst_dir {
-                    let _ = std::fs::remove_dir_all(e.path());
-                }
+    // 清掉历史版本留下的副本（best effort：正在跑的那份删不掉 ⇒ 忽略错误，下次启动再清）。
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        let prefix = format!("{}.old-", bridge_bin_name());
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with(&prefix) {
+                let _ = std::fs::remove_file(e.path());
             }
         }
     }
@@ -1187,7 +1207,7 @@ pub fn ensure_bridge_copy(resource_dir: Option<&std::path::Path>) -> Option<Path
 /// 已经复制好的用户目录桥（`None` = 还没复制 / 不在安装形态）。
 fn user_bridge_copy() -> Option<PathBuf> {
     let data = crate::db::app_data_dir_ref()?;
-    let p = bridge_copy_dir_in(&data).join(bridge_bin_name());
+    let p = bridge_stable_path_in(&data);
     p.is_file().then_some(p)
 }
 
@@ -1779,7 +1799,8 @@ mod bridge_path_tests {
     /// ⭐ 2026-11-07（owner：「要更彻底的方案」）：桥要**复制到用户目录**，且解析**优先**用复制件。
     ///
     /// 为什么：安装目录里的桥被外部客户端长期占用，Windows 不允许覆盖运行中的 exe ⇒ 更新会卡在
-    /// 替换它。复制到 `<app data>/mcp-bin/<版本>/` 后，自动填给客户端的是那份 ⇒ 安装器不碰运行中的桥。
+    /// 替换它。复制到 `<app data>/mcp-bin/`（稳定路径）后，自动填给客户端的就是那份 ⇒
+    /// 安装器不碰运行中的桥，且**客户端配置不随版本失效**。
     #[test]
     fn copies_bridge_to_user_dir_and_prefers_it() {
         let tag = format!(
@@ -1800,14 +1821,21 @@ mod bridge_path_tests {
         let copy = ensure_bridge_copy_in(&app, Some(&res)).expect("应当复制成功");
         assert!(copy.is_file(), "复制后文件应存在：{copy:?}");
         assert_eq!(std::fs::read(&copy).unwrap(), b"bridge-bytes");
-        assert!(
-            copy.starts_with(app.join("mcp-bin").join(env!("CARGO_PKG_VERSION"))),
-            "副本必须落在 <appdata>/mcp-bin/<版本>/ 下：{copy:?}"
+        assert_eq!(
+            copy,
+            app.join("mcp-bin").join(bridge_bin_name()),
+            "副本必须是**稳定路径**（不带版本号）⇒ 客户端配置写一次永久有效"
         );
 
         // 幂等：再跑一次还是同一路径、内容不变
         let again = ensure_bridge_copy_in(&app, Some(&res)).expect("再跑一次也要成功");
         assert_eq!(again, copy, "重复调用不该换路径");
+
+        // 升级形态：资源里的桥变了 ⇒ 稳定路径上那份要被替换（旧件改名/清掉），路径仍不变
+        std::fs::write(&src, b"bridge-bytes-v2-longer").unwrap();
+        let updated = ensure_bridge_copy_in(&app, Some(&res)).expect("升级后也要成功");
+        assert_eq!(updated, copy, "升级不能换路径（客户端配置不失效）");
+        assert_eq!(std::fs::read(&copy).unwrap(), b"bridge-bytes-v2-longer");
 
         // 解析优先用用户目录复制件（哪怕资源目录里也有、exe 旁边也有仓库）
         assert_eq!(
