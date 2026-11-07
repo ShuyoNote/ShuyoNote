@@ -193,6 +193,16 @@ pub(crate) fn handle_external_call_with(
         obj.insert("awaiting_confirm".into(), serde_json::Value::Bool(!auto));
         obj.insert("auto_apply".into(), serde_json::Value::Bool(auto));
         if auto {
+            // ⭐ 2026-11-07（WorkBuddy 评估：同一条响应里两套话）：能力层对覆盖式写会回
+            //   `applied:false` ＋ note「草稿已生成，用户确认后才落库」；而免确认档这里是**直接交给
+            //   应用端落库、不等确认** ⇒ 那句 note 已经不成立，必须清掉，否则 Agent 会误判。
+            let stale_note = obj
+                .get("note")
+                .and_then(|n| n.as_str())
+                .map_or(false, |s| s.contains("确认后才落库"));
+            if stale_note {
+                obj.remove("note");
+            }
             // ⭐ 2026-11-07（真机：跨空间 22 次 nodes.move 回 drafted/auto_apply 成功，实际一条没落库）：
             //   落库是**应用端异步**做的（`ai/apply.ts`），这里只能如实说明"还没落"，失败也只写
             //   `mcp/apply.log`、不会回传 ⇒ agent 别把 auto_apply 读成"已写入"。

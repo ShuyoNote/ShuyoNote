@@ -589,7 +589,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -650,7 +650,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -1319,7 +1319,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写 v1：只有 pages.create 真正支持；目标锁着 ⇒ permission_denied（locked）；需『可写（全部空间）』档。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         }
       ],
       "returns": {
@@ -1441,7 +1441,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -1514,7 +1514,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -1569,7 +1569,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -1831,7 +1831,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -1891,7 +1891,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -2023,7 +2023,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -2083,7 +2083,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -2137,7 +2137,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -2213,7 +2213,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⚠️ 本工具暂不支持跨空间写；带别的空间 ⇒ bad_args（⛔ 不回落当前空间）。"
         },
         {
           "name": "dryRun",
@@ -2267,7 +2267,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -2316,7 +2316,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⚠️ 本工具暂不支持跨空间写；带别的空间 ⇒ bad_args（⛔ 不回落当前空间）。"
         },
         {
           "name": "dryRun",
@@ -2364,7 +2364,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -2419,7 +2419,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -2486,7 +2486,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -2546,7 +2546,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -2601,7 +2601,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -2650,7 +2650,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -2710,7 +2710,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -2771,7 +2771,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",
@@ -2832,7 +2832,7 @@
           "name": "spaceId",
           "type": "string",
           "required": false,
-          "desc": "目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。"
+          "desc": "目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。"
         },
         {
           "name": "dryRun",

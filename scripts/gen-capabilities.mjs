@@ -1154,6 +1154,9 @@ export function genPackageJson(reg) {
  * ⚠️ 别在任何提示词里写死工具名：不同客户端可能改写不合规字符（**本条未复核** ✗，不当作已核实 ✓）。
  */
 const CROSS_SPACE_WRITE = new Set([
+  // ⭐ 2026-11-07：白名单由「10 条」补齐到 v3 的 **22 条写面**（与 docs/mcp-external-ai.md §5 一致）。
+  //   旧集合漏了结构类/标签属性类/db 行/回收站/回退/上传，导致生成出来的工具描述说“跨空间不支持”，
+  //   而实现其实已支持（WorkBuddy 评估指出的“文档滞后于实现”的根因之一）。
   "pages.create",
   "pages.update",
   "blocks.append",
@@ -1164,6 +1167,19 @@ const CROSS_SPACE_WRITE = new Set([
   "files.delete",
   "files.move",
   "files.detach",
+  "files.upload_to_page",
+  "folders.create",
+  "nodes.move",
+  "nodes.rename",
+  "nodes.delete",
+  "tags.add",
+  "tags.remove",
+  "properties.set",
+  "properties.unset",
+  "db.rows_write",
+  "db.rows_delete",
+  "trash.restore",
+  "pages.revert",
 ]);
 
 /** 跨空间支持判定（读侧：声明了 spaceId；写侧：白名单）。 */
@@ -1220,7 +1236,15 @@ export function genMcpTools(reg, kind = "read") {
       // ⭐ 2026-10-17：`mcpDesc` 优先 —— 外部面**结果形状不同**的能力（目前只有 `pages.search`：
       //   外部面多包一层范围信封，插件面仍是裸数组）必须能各自说清自己的返回值。
       //   两份描述**不是**两份语义：检索本身仍是同一个引擎（`cap_pages_search`）✓。
-      description: (c.mcpDesc ?? c.desc ?? c.title) + crossSpaceLine(c),
+      // ⭐ 2026-11-07（WorkBuddy 评估缺陷 D）：写面统一补一句“写完必须独立复核” ——
+      //   落库是应用端**异步**做的、失败只写 apply.log 不回传，这条纪律必须让 agent 在
+      //   工具描述里就看到（以前只存在于用户自己的整理记录里）。
+      description:
+        (c.mcpDesc ?? c.desc ?? c.title) +
+        crossSpaceLine(c) +
+        (kind === "write"
+          ? " ⚠️ 写完必须独立复核：落库由应用端随后异步执行（失败只写 <app data>/mcp/apply.log，不回传），本响应不代表已写入。"
+          : ""),
       inputSchema: {
         type: "object",
         properties,
