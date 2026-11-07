@@ -438,7 +438,26 @@ if (NO_PLUGINS) {
 // **同一份清单、同一套结构**里，客户端不需要第二条通道。
 const { picks, notes } = manifestPicks(picked);
 for (const n of notes) console.log(`[release] ${n}`);
-const notes_ = process.env.RELEASE_NOTES ?? `ShuyoNote v${version}`;
+
+/**
+ * 清单/发行说明里那句话：先看 `RELEASE_NOTES` 环境变量，否则取 CHANGELOG 里该版本的
+ * `> 一句话主题`（`pnpm changelog <ver> "<主题>"` 写进去的那行）。
+ *
+ * 为什么要有这条默认值（2026-11-07 实测）：之前默认写 `ShuyoNote v${version}` ⇒ 应用里
+ * 「本次更新」只有一行版本号（用户截图问「为何没有更新内容」）；而那一句主题本来就已经
+ * 在 CHANGELOG 里了，没有理由让发版人再手抄一遍（也一定会有人忘）。
+ */
+function changelogThemeFor(v) {
+  try {
+    const text = readFileSync(join(root, "CHANGELOG.md"), "utf8");
+    const m = text.match(new RegExp(`^## \\[${v.replace(/\./g, "\\.")}\\][^\\n]*\\n\\n> (.*)$`, "m"));
+    const theme = m?.[1]?.trim();
+    return theme && theme.length > 0 ? theme : null;
+  } catch {
+    return null;
+  }
+}
+const notes_ = process.env.RELEASE_NOTES ?? changelogThemeFor(version) ?? `ShuyoNote v${version}`;
 const platforms = {};
 for (const [key, a] of picks) {
   // apk 没有 minisign `.sig`：signature 写 `sha256:<hex>`（字节指纹在上面指纹那一步算过）。
@@ -588,11 +607,31 @@ const body = bi >= 0 && process.argv[bi + 1]
   ? readFileSync(process.argv[bi + 1], "utf8")
   : `# ShuyoNote v${version}\n\n${notes_}\n\n## 安装（Windows x64）\n下载 \`ShuyoNote_${version}_x64-setup.exe\` 运行即可。`;
 
+// ⭐ 2026-11-07（实测事故）：GitCode 的 release 有 `release_status`（`latest`/`pre`/`none`），
+// **它决定网页「发行版」列表里哪一条挂绿标「最新版本」**。之前我们创建 release 时不带这个字段
+// ⇒ 每版都是 `none`，网页的「最新版本」一直停在手工创建过的 v2.0.0（用户截图问「为何没有更新内容」）。
+// ⇒ 创建时带 `release_status: "latest"`；重跑（release 已存在）时用 PATCH 把它挪过来
+// （⚠️ PATCH 的 `name`/`body` 是**必填**，只传 `release_status` 会 400）。
+let releaseExisted = true;
 try {
   await apiFetch("GET", `${API}/releases/tags/${TAG}`);
 } catch {
-  await apiFetch("POST", `${API}/releases`, JSON.stringify({ tag_name: TAG, name: `ShuyoNote v${version}`, body, prerelease: false }));
-  console.log(`  创建 release ${TAG}`);
+  releaseExisted = false;
+}
+if (!releaseExisted) {
+  await apiFetch(
+    "POST",
+    `${API}/releases`,
+    JSON.stringify({ tag_name: TAG, name: `ShuyoNote v${version}`, body, prerelease: false, release_status: "latest" }),
+  );
+  console.log(`  创建 release ${TAG}（标记为「最新版本」）`);
+} else {
+  await apiFetch(
+    "PATCH",
+    `${API}/releases/${TAG}`,
+    JSON.stringify({ name: `ShuyoNote v${version}`, body, release_status: "latest" }),
+  );
+  console.log(`  release ${TAG} 已存在 ⇒ 更新说明并标记为「最新版本」`);
 }
 for (const a of picked) {
   await uploadFile(TAG, a.name, a.file);
