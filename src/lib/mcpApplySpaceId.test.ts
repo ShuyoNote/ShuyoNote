@@ -52,6 +52,26 @@ describe("跨空间 apply · space_id / spaceId 键名回归", () => {
     expect(fn("savePage").mock.calls[0][0].space_id).toBe(TARGET);
   });
 
+  // ⭐ 2026-11-07 真机（跨空间 22 次 nodes.move 全部"报成功但没写"）：
+  //   根因是 apply 里 rev 回读没带目标空间 ⇒ 在当前空间找不到该 id ⇒「页面不存在」⇒ 移动没执行。
+  //   这三条把「rev 回读必须带目标空间」钉住（只断言走 movePage 的 space_id 抓不到它）。
+  it("A2b：move/rename/delete 的 rev 回读必须带目标空间（否则跨空间必假失败）", async () => {
+    vi.clearAllMocks();
+    fn("getPage").mockImplementation(async () => null);
+    await applyDraft({ kind: "move_node", id: "p2", newParentId: null, expectedRev: "1:deadbeef", spaceId: TARGET });
+    expect(fn("getPage").mock.calls[0]).toEqual(["p2", TARGET]);
+
+    vi.clearAllMocks();
+    fn("getPage").mockImplementation(async () => null);
+    await applyDraft({ kind: "rename_node", id: "p3", title: "新名", expectedRev: "1:deadbeef", spaceId: TARGET });
+    expect(fn("getPage").mock.calls[0]).toEqual(["p3", TARGET]);
+
+    vi.clearAllMocks();
+    fn("getPage").mockImplementation(async () => null);
+    await applyDraft({ kind: "delete_node", id: "p4", expectedRev: "1:deadbeef", spaceId: TARGET });
+    expect(fn("getPage").mock.calls[0]).toEqual(["p4", TARGET]);
+  });
+
   it("A3：add_tag/remove_tag 平参数 spaceId；set/unset_page_prop 分别 args.space_id / 平参数 spaceId", async () => {
     expect((await applyDraft({ kind: "add_tag", pageId: "p1", name: "x", spaceId: TARGET })).ok).toBe(true);
     expect(fn("addTag").mock.calls[0]).toEqual(["p1", "x", TARGET]);

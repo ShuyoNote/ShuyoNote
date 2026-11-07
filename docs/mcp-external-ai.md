@@ -24,7 +24,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 | 只读（全部空间） | `read_all` | 同上，跨所有空间（加密空间锁着时读不到内容） | 需要跨空间检索时开 |
 | 可写（每次确认） | `write_confirm` | 写工具**都先产草稿、等你确认**（含节点整理/回收站恢复/版本回退/标签与属性）；整页替换永远要确认 | **要写就用这个（推荐）** |
 | 可写（免确认） | `write_auto` | 所有写操作**直接落库、不询问**；每次写仍留一行审计 | ⚠️ 只在刚备份过、且信任该 AI 时短开 |
-| 可写（全部空间） | `write_all` | 上面两档的**全集**：可读写**所有空间**（`write:pages` ＋ `write:all-spaces`，并同时具备 `read:all-spaces`）；写是**免确认**（每次写仍留一行审计）；跨空间写要用它 —— 默认关，只有你显式选这一档才授出 | ⚠️ 最宽的一档：只在"确实要让 AI 改别的空间"时短开，用完切回 |
+| 可写（全部空间） | `write_all` | 上面两档的**全集**：可读写**所有空间**（写 scope 全家 `write:pages/files/properties/tags` ＋ `write:all-spaces`，并同时具备 `read:all-spaces`）；写是**免确认**（每次写仍留一行审计）；跨空间写要用它 —— 默认关，只有你显式选这一档才授出 | ⚠️ 最宽的一档：只在"确实要让 AI 改别的空间"时短开，用完切回 |
 
 ⚠️ **切档会换新令牌**（旧令牌立刻失效），但**不用重启外部 MCP 客户端** —— 桥**每次调用**
 都重新读 `port`/`token` 两个文件（`tools/shuyonote-mcp-rust/src/main.rs` 的 `read_endpoint` ＋ `call_app`），
@@ -145,6 +145,7 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - **审计的保留口径**：每次调用记一行（谁/何时/哪个能力/成败/错误码，⛔ 不含正文）。`audit_tail` 读的是**进程内最近 500 条**的环（超了丢最老的），同时逐行追加到应用数据目录的 `plugin-audit.jsonl`（**重启不丢**）。⇒ 说"每一次都能查到"要加限定：**跨过 500 条的旧记录只能在 jsonl 里翻**，不是无限期在线可查；`dryRun` 不写审计；
 - **写一致性与幂等**：所有写工具都是**草稿确认**（不经你确认不落库）；支持 `expectedRev`（`updated_at:sha8`，与 `pages.get` 的 `rev` 同一形态）——不一致 ⇒ `rev_conflict`（带当前 rev，⛔ 不覆盖）；`dryRun:true` 只回"会做什么"（不产草稿、不记审计）；`clientRequestId` 同 id 重复调用只落一次、只审一条（进程内 10 分钟）；
 - **跨空间写（v3 白名单 22 条写面）**：带 `spaceId` 时**写到目标空间**（不是"搬到目标空间"）—— 附件类（`files.move/rename/delete/detach/upload_to_page`）、结构类（`nodes.move/rename/delete`、`folders.create`）、标签/属性类（`tags.add/remove`、`properties.set/unset`）、db 行/回收站/回退类（`db.rows_write/delete`、`trash.restore`、`pages.revert`）以及 `pages.create`/`pages.update`/`blocks.append/patch/delete` 均已接。需要「可写（全部空间）」档；目标空间**锁着/打不开** ⇒ `permission_denied`（含 locked）；`pageId`/`parentId`/`toPageId` 等**必须属于目标空间**（否则 `not_found`/`bad_args`，⛔ 不回落当前空间）；目标空间的 `changes`＋审计（带 `spaceId`）照写；回滚开关 `SHUYONOTE_MCP_CROSS_SPACE_WRITE=0`；**未接的写工具**带 `spaceId` 仍 `bad_args: … 暂不支持跨空间`；
+  ⚠️ **2026-11-07 修正**：结构类三工具（`nodes.move/rename/delete`）此前带 `spaceId` 会**假成功** —— 应用端 `apply` 的 rev 回读没带目标空间 ⇒ 在当前空间找不到该 id ⇒「页面不存在」而草稿已判成功（真机上 22 次移动全丢）。现在 rev 回读与后续命令都带目标空间，跨空间结构写**真的落库**；同时 `auto_apply` 回话新增 `apply_note` 字段明确"落库是应用端随后异步做的、失败只写 `<app data>/mcp/apply.log`，本响应不代表已写入"。
 - **块级写的边界**：`blocks_*` 只动**顶层块**（不做整篇锚点对齐、不做嵌套块编辑）；`applied` 在调用时**永远是 false** —— 写能力都是草稿确认，用户确认后才落库；`rev_conflict` 里的 markdown 由应用窗口算（窗口没开时退回正文带锚点，如实说明）；
 - **附件与模板写的边界**：`files_delete` 不做静默删除（正文仍引用 ⇒ 拒绝并点名）；`files_upload_to_page` / `import_docpackage` **已实现**（受控入口：⛔ Agent 不接受任意路径，确认草稿后由**用户亲自在系统文件选择框选文件**）；`db_rows_write/delete` **已实现**（2026-10-30 跨空间批：目标空间校验 ＋ 草稿确认）；
 - **上传/导入走系统文件选择框**：`files_upload_to_page` / `import_docpackage` **不接受 Agent 传的任何路径**，确认草稿后由**用户亲自选文件**；用户取消 ⇒ `cancelled`（不静默成功/失败）；>10MB 上传 ⇒ `needs_confirm`。
@@ -166,6 +167,8 @@ ShuyoNote 内置一个**本机 MCP 通道**：外部 AI 客户端（支持 MCP �
 - 清单与档位判据：[能力暴露矩阵](plans/2026-10-29-agent-capability-exposure-matrix.md)；块级写方案：[P2 方案](plans/2026-10-29-agent-block-write-p2.md)（**已落地**，留作设计出处）。
 
 ## 10. 版本
+
+- 2026-11-07：**两个外部通道写语义缺陷修复（运营真机反馈）**：① 结构类跨空间写（`nodes_move/rename/delete`）**假成功** —— 应用端 apply 的 rev 回读没带目标空间 ⇒ 在当前空间找不到目标 id ⇒「页面不存在」，而通道已回 `drafted/auto_apply`（真机：运营空间 22 次移动全丢）。现在 rev 回读与落库命令都带目标空间 ⇒ 跨空间结构写真的生效；`auto_apply` 回话补 **`apply_note`**：落库是应用端随后**异步**做的、失败只写 `mcp/apply.log` 且不回传，**别把 `auto_apply` 读成「已写入」**。② 「可写」档写 scope 不全 —— 之前只授 `write:pages` ⇒ `files_delete/move/rename/upload_to_page/detach`、`properties_set/unset`、`tags_add/remove` **工具可见却一调就 `permission_denied`**；现在写档按被写工具实际用到的 scope 全家授予（`write:pages/files/properties/tags`），与工具清单一致（`apiVersion` 仍是 1.27.0 的口径；本版只补授权面，没有新增工具）。
 
 - 2026-10-31：**按实测反馈对账（WorkBuddy 会话记录指出 8 处过期/缺失）**：① 权限档位 **五个 → 六个**（补「可写（全部空间）」＝免确认 ＋ 每次写留审计）；② **切档/换令牌不用重启客户端**（Rust 桥每次调用重读 `port`/`token`；只有新增 server 首次要重启客户端）；③ §3.2 改为「**面板复制**」为首路径，并列 **随包（零 Node/零 env）** 与 **npx（Node ≥20 ＋联网）** 两形态，并写明**应用必须开着**；④ 跨空间写白名单 **22 条写面**（v3-A1–A4，含结构/标签属性/db 行/回收站/回退/附件）；⑤ `pages_get` 对不存在页/跨空间失配 ⇒ **结构化 `not_found`**（不再返回 `null`）；⑥ `pages_search` 信封补 **`truncated`**（命中被 `limit` 截断时为 true）；⑦ 前端桥失败**分型**：`frontend_unavailable`（带原因、立刻返回）/ `frontend_timeout`，**事件出口不再吞错**；⑧ §7 补「**AI 不可见空间**」与「审计＝进程内 500 条环 ＋ 落盘 `plugin-audit.jsonl`」两句，§9 改为只列仍未接的项。
 
