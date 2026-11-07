@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+## [2.1.11] - 2026-11-07
+
+> 外部通道：写权限自动迁移 ＋ 工具描述按实况修正
+
 ### 修复
 - **升级后「可写」档仍缺 `write:files/tags/properties`：9 个写工具（`files.delete/move/rename/upload_to_page/detach`、`tags.add/remove`、`properties.set/unset`）一调就 `permission_denied`，重启/重装都不自愈** —— 根因是外部通道的授权是**落盘快照**，旧版「可写」只写 `write:pages`，升级后没人重算。现在起通道前按「本来就已授权写」自动补齐写 scope 全家（只读档不放大）⇒ 升级后重启应用即生效，不必手动重选档位。
 - **免确认写的响应里两套话** —— 能力层回的是「草稿已生成，用户确认后才落库」＋ `applied:false`，而免确认档实际是应用端随后异步落库、不等确认；同一条响应两种语义会误导 Agent。现在免确认时清掉那句旧 note，只留 `apply_note`（本响应不代表已写入、失败只写 `apply.log`）。
