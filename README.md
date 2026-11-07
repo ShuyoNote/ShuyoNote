@@ -30,7 +30,7 @@
 
 - **国际 / GitHub Pages**：[https://shuyonote.github.io/ShuyoNote/](https://shuyonote.github.io/ShuyoNote/)
 - **国内 / 自托管主站**：[https://shuyo.cn/app/](https://shuyo.cn/app/)
-- **下载 2.1.10**：[GitHub Releases](https://github.com/ShuyoNote/ShuyoNote/releases/)（Windows / Linux / macOS / Android）
+- **下载 2.1.11**：[GitHub Releases](https://github.com/ShuyoNote/ShuyoNote/releases/)（Windows / Linux / macOS / Android）
 - **国内镜像 / GitCode**：[GitCode Releases](https://gitcode.com/shuyo-cn/ShuyoNote/releases/)（Windows / Linux / macOS / Android）
 
 > Web 版与桌面版共用同一套前端与数据模型（浏览器端本地优先、离线可用，用 sql.js + IndexedDB）。2.0 起同一 WiFi 多设备直连；**个人多设备**用「设备直连」（局域网 / 虚拟局域网，数据不过服务器；跨网另需自部署中继，尚未进正式包）；⭐ **团队 / 多人协作已移除**：`shuyonote-sync-server` 已于 **2026-10-29 归档**（**不再作为在售服务端**），团队 / 企业能力由**独立闭源企业版** `enterprise-server` 承载 ⇒ **2026-10-29 第二阶段**：团队 UI 与前端契约（`team_*`）**已删除** ⇒ 客户端**不再有任何团队入口**（含旧配置的界面）；**2026-10-29 第三阶段**：**Rust 团队实现也已删除** ✅（`sync.rs` 里 31 个 `team_*` 函数、9 个 `Team*` 类型、`AuthUserId`/`parse_team_me`/presence 隐私闸等 helper 全部移除）；**`sync_profiles`／工作区同步机制保留**（个人同步与历史团队空间数据仍要读得懂）；`specs/` 与企业 IM 契约**保留**（企业版仍引用）。Web 版不支持多设备 / 团队同步。
