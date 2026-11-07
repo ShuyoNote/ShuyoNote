@@ -340,9 +340,10 @@ mod tests {
     #[test]
     fn the_five_levels_map_to_exactly_three_fields() {
         let reads = default_read_scopes();
+        let writes = default_write_scopes();
         let with_write = {
             let mut v = reads.clone();
-            v.push(WRITE_SCOPE.to_string());
+            v.extend(writes.iter().cloned());
             v
         };
         let with_all = {
@@ -356,14 +357,14 @@ mod tests {
             (McpLevel::ReadAll, true, with_all.clone(), false),
             (McpLevel::WriteConfirm, true, with_write.clone(), false),
             (McpLevel::WriteAuto, true, with_write.clone(), true),
-            // ⭐ P1/甲：写全部空间 = 写 scope ＋ write:all-spaces ＋ read:all-spaces（owner 甲拍板后）；
+            // ⭐ P1/甲：写全部空间 = 写 scope 全家 ＋ write:all-spaces ＋ read:all-spaces（owner 甲拍板后）；
             (
                 McpLevel::WriteAll,
                 true,
                 {
                     let mut v = reads.clone();
                     v.push(READ_ALL_SCOPE.to_string());
-                    v.push(WRITE_SCOPE.to_string());
+                    v.extend(writes.iter().cloned());
                     v.push("write:all-spaces".to_string());
                     v
                 },
@@ -389,8 +390,8 @@ mod tests {
         );
         assert_eq!(
             g.len(),
-            default_read_scopes().len() + 1,
-            "只该是**默认读 scope 全家** ＋ write:pages ✓（B1a 起读档多了 tags/properties/page.current 三条）"
+            default_read_scopes().len() + default_write_scopes().len(),
+            "只该是**默认读 scope 全家** ＋ **写 scope 全家**（write:pages/files/properties/tags ✓ —— 2026-11-07 起不再只给 write:pages）"
         );
         // ⭐ 跨空间只读：给了就只在 ReadAll 那一档；换到别的读档必须**收回**（⛔ 不靠"以前给过"留着 ✗）
         let (_, g_all, _) = level_to_config(McpLevel::Read, &with_all);
@@ -479,27 +480,31 @@ mod tests {
     fn the_write_grant_adds_and_removes_exactly_the_write_scope() {
         // ⭐ B1a：读档的授权面 = `default_read_scopes()`（2026-10-29 起含 tags / properties /
         //   page.current 三条新读 scope）—— ⛔ 不再在测试里手抄三个字符串（会与实现漂）。
+        // ⭐ 2026-11-07：写档的授权面 = **写 scope 全家**（不再只 write:pages）—— 真机实测
+        //   files.delete / properties.set / tags.add 曾「列在面上、一调就 permission_denied」。
         let read_only = default_read_scopes();
         let on = granted_after_write_grant(&read_only, true);
-        assert!(
-            on.contains(&WRITE_SCOPE.to_string()),
-            "授权后必须含写 ✓（否则写面还是打不开 ✗）"
+        for w in default_write_scopes() {
+            assert!(on.contains(&w), "授权后必须含写 scope {w} ✓（否则对应写工具一调就拒 ✗）");
+        }
+        assert_eq!(
+            on.len(),
+            read_only.len() + default_write_scopes().len(),
+            "只该多出写 scope 全家 ✓"
         );
-        assert_eq!(on.len(), read_only.len() + 1, "只该多出那一项 ✓");
         for s in &read_only {
             assert!(on.contains(s), "读 scope 不许被写挤掉 ✓：{s}");
         }
         let off = granted_after_write_grant(&on, false);
-        assert!(
-            !off.contains(&WRITE_SCOPE.to_string()),
-            "收回后不许还有写 ✓"
-        );
+        for w in default_write_scopes() {
+            assert!(!off.contains(&w), "收回后不许还有写 scope {w} ✓");
+        }
         assert_eq!(off, read_only, "收回后应当**回到原样** ✓");
         // 旧配置文件可能没有 granted（空清单）⇒ 授权写也要把默认读 scope 补齐 ✓
         assert_eq!(
             granted_after_write_grant(&[], true).len(),
-            default_read_scopes().len() + 1,
-            "空清单 ⇒ 默认读全家 ＋ 写一项 ✓"
+            default_read_scopes().len() + default_write_scopes().len(),
+            "空清单 ⇒ 默认读全家 ＋ 写 scope 全家 ✓"
         );
         assert_eq!(
             granted_after_write_grant(&on, true),
@@ -524,8 +529,11 @@ mod tests {
                 "旧快照必须补上 {s} ✓（否则 tags_list / properties_list / page_current 一调就拒 ✗）"
             );
         }
-        for s in [READ_ALL_SCOPE, WRITE_SCOPE] {
+        for s in [READ_ALL_SCOPE, WRITE_ALL_SCOPE] {
             assert!(!now.iter().any(|x| x == s), "⛔ 补读不许顺手放大到 {s} ✗");
+        }
+        for w in default_write_scopes() {
+            assert!(!now.iter().any(|x| x == &w), "⛔ 补读不许顺手放大到写 scope {w} ✗");
         }
         assert_eq!(now.len(), default_read_scopes().len());
         // 已有项**原样在前**，缺的按 `default_read_scopes()` 的顺序追加（不是重新排序 ✓）
@@ -845,6 +853,24 @@ pub(crate) const WRITE_SCOPE: &str = "write:pages";
 /// ⭐ P1：可写（全部空间）档显式授予的写 scope（默认关；⛔ 不替代 read:all-spaces）。
 pub(crate) const WRITE_ALL_SCOPE: &str = "write:all-spaces";
 
+/// ⭐ **2026-11-07（真机事故：`files.delete` 一调就 `permission_denied`）**：写档要给的**全部**写 scope。
+///
+/// 之前「可写」只给 `write:pages` ⇒ `files.delete/move/rename/upload_to_page/detach`（要 `write:files`）、
+/// `properties.set/unset`（要 `write:properties`）、`tags.add/remove`（要 `write:tags`）**全部列在工具面上、
+/// 一调就被拒**（外部 AI 真机实测；工具清单里它们明明标着这些权限）。读档早年也踩过同一形状，已按
+/// `default_read_scopes()` 收口 ⇒ 写档这里同样按「被写工具实际用到的 scope 全家」给。
+pub(crate) const WRITE_SCOPES: &[&str] = &[
+    "write:pages",
+    "write:files",
+    "write:properties",
+    "write:tags",
+];
+
+/// 写档的默认写 scope 全家（顺序固定；用于档位映射与判据）。
+pub(crate) fn default_write_scopes() -> Vec<String> {
+    WRITE_SCOPES.iter().map(|s| s.to_string()).collect()
+}
+
 /// ⭐ **2026-10-18**：**跨空间只读**那一条 scope —— 只有面板的「只读（全部空间）」档会给它 ✓。
 ///
 /// 为什么不是注册表里的 `permission`：注册表那条门禁要求"每条权限至少被一条能力用到"，
@@ -907,13 +933,14 @@ pub(crate) fn granted_after_write_grant(base: &[String], on: bool) -> Vec<String
     // ⭐ B1a：读 scope 的补齐与「起通道前那次补齐」共用一处（`granted_with_default_reads` ✓）——
     //    否则"哪些读永远在"会有两份清单，必然漂。
     let mut out: Vec<String> = granted_with_default_reads(base);
-    let w = WRITE_SCOPE.to_string();
     if on {
-        if !out.contains(&w) {
-            out.push(w);
+        for w in default_write_scopes() {
+            if !out.contains(&w) {
+                out.push(w);
+            }
         }
     } else {
-        out.retain(|s| s != &w);
+        out.retain(|s| !WRITE_SCOPES.contains(&s.as_str()));
     }
     out
 }
@@ -1609,7 +1636,7 @@ pub(crate) fn level_to_config(level: McpLevel, base: &[String]) -> (bool, Vec<St
         .iter()
         .filter(|s| {
             reads.contains(s)
-                || s.as_str() == WRITE_SCOPE
+                || WRITE_SCOPES.contains(&s.as_str())
                 || s.as_str() == READ_ALL_SCOPE
                 || s.as_str() == WRITE_ALL_SCOPE
         })
@@ -1637,13 +1664,14 @@ pub(crate) fn level_to_config(level: McpLevel, base: &[String]) -> (bool, Vec<St
         level,
         McpLevel::WriteConfirm | McpLevel::WriteAuto | McpLevel::WriteAll
     );
-    let w = WRITE_SCOPE.to_string();
     if wants_write {
-        if !granted.contains(&w) {
-            granted.push(w);
+        for w in default_write_scopes() {
+            if !granted.contains(&w) {
+                granted.push(w);
+            }
         }
     } else {
-        granted.retain(|s| s != &w);
+        granted.retain(|s| !WRITE_SCOPES.contains(&s.as_str()));
     }
     // ⭐ P1：write:all-spaces 只由 WriteAll 给，其余档一律收回
     let wa = WRITE_ALL_SCOPE.to_string();

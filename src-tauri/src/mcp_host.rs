@@ -192,6 +192,18 @@ pub(crate) fn handle_external_call_with(
         // ⚠️ 关着免确认 ⇒ `awaiting_confirm: true`；开着 ⇒ 前端会直接落库（也不弹框 ✓）
         obj.insert("awaiting_confirm".into(), serde_json::Value::Bool(!auto));
         obj.insert("auto_apply".into(), serde_json::Value::Bool(auto));
+        if auto {
+            // ⭐ 2026-11-07（真机：跨空间 22 次 nodes.move 回 drafted/auto_apply 成功，实际一条没落库）：
+            //   落库是**应用端异步**做的（`ai/apply.ts`），这里只能如实说明"还没落"，失败也只写
+            //   `mcp/apply.log`、不会回传 ⇒ agent 别把 auto_apply 读成"已写入"。
+            obj.insert(
+                "apply_note".into(),
+                serde_json::Value::String(
+                    "auto_apply：应用端随后异步落库（本响应不代表已经写入）。失败只写 <app data>/mcp/apply.log，不会回传；要确认结果请稍后重读页面/树。"
+                        .to_string(),
+                ),
+            );
+        }
         if !delivered {
             obj.insert("delivered".into(), serde_json::Value::Bool(false));
             obj.insert(

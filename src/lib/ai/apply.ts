@@ -204,7 +204,9 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
     case "move_node": {
       const id = String(p.id ?? "");
       if (!id) return { ok: false, message: "move_node 需要 id" };
-      const rp = await revProblem(id, p.expectedRev);
+      // ⚠️ 2026-11-07 真机（跨空间 22 次移动全丢）：rev 回读必须带目标空间，否则在**当前空间**找
+      //   这个 id ⇒ 一律「页面不存在」⇒ 移动根本没执行（MCP 那边却已回了 drafted/auto_apply 成功）。
+      const rp = await revProblem(id, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
       await api.movePage({
         id,
@@ -219,7 +221,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const id = String(p.id ?? "");
       const title = String(p.title ?? "").trim();
       if (!id || !title) return { ok: false, message: "rename_node 参数不完整" };
-      const rp = await revProblem(id, p.expectedRev);
+      const rp = await revProblem(id, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
       const page = await api.savePage({ id, title, space_id: typeof p.spaceId === "string" ? p.spaceId : undefined });
       return { ok: true, message: `已改名为「${page.title}」`, page };
@@ -228,7 +230,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
     case "delete_node": {
       const id = String(p.id ?? "");
       if (!id) return { ok: false, message: "delete_node 需要 id" };
-      const rp = await revProblem(id, p.expectedRev);
+      const rp = await revProblem(id, p.expectedRev, typeof p.spaceId === "string" ? p.spaceId : undefined);
       if (rp) return { ok: false, message: rp };
       await api.deletePage(id, typeof p.spaceId === "string" ? p.spaceId : undefined);
       return { ok: true, message: "已移入回收站（可恢复）" };

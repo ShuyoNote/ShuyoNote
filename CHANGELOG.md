@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### 修复
+- **外部 MCP 通道：跨空间 `nodes.move` / `nodes.rename` / `nodes.delete` 报成功但没落库** —— 应用端落库前的 rev 回读没带目标空间 ⇒ 在当前空间找不到目标页 ⇒「页面不存在」（真机：运营空间 **22 次移动全丢**，而通道已回 `drafted` / `auto_apply` 成功）。现在 rev 回读与落库命令都带目标空间，跨空间结构写**真的生效**。另外 `auto_apply` 回话新增 **`apply_note`**：明确「落库是应用端随后**异步**做的、失败只写 `<app data>/mcp/apply.log` 且不会回传」——⛔ 不许再把 `auto_apply` 读成「已写入」。
+- **「可写」档写 scope 不全：`files.delete` / `properties.set|unset` / `tags.add|remove` 工具可见却一调就 `permission_denied`** —— 可写档此前只授 `write:pages`；现在按被写工具实际用到的 scope 全家授予（`write:pages` ＋ `write:files` ＋ `write:properties` ＋ `write:tags`），与工具清单一致（真机：清理孤儿附件被 `write:files` 挡住）。
+
 ## [2.1.9] - 2026-11-07
 
 > MCP 配置稳定路径（不带版本号，写一次永久有效）
