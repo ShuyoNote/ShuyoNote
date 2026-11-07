@@ -30,7 +30,7 @@
 
 - **国际 / GitHub Pages**：[https://shuyonote.github.io/ShuyoNote/](https://shuyonote.github.io/ShuyoNote/)
 - **国内 / 自托管主站**：[https://shuyo.cn/app/](https://shuyo.cn/app/)
-- **下载 2.1.2**：[GitHub Releases](https://github.com/ShuyoNote/ShuyoNote/releases/)（Windows / Linux / macOS / Android）
+- **下载 2.1.10**：[GitHub Releases](https://github.com/ShuyoNote/ShuyoNote/releases/)（Windows / Linux / macOS / Android）
 - **国内镜像 / GitCode**：[GitCode Releases](https://gitcode.com/shuyo-cn/ShuyoNote/releases/)（Windows / Linux / macOS / Android）
 
 > Web 版与桌面版共用同一套前端与数据模型（浏览器端本地优先、离线可用，用 sql.js + IndexedDB）。2.0 起同一 WiFi 多设备直连；**个人多设备**用「设备直连」（局域网 / 虚拟局域网，数据不过服务器；跨网另需自部署中继，尚未进正式包）；⭐ **团队 / 多人协作已移除**：`shuyonote-sync-server` 已于 **2026-10-29 归档**（**不再作为在售服务端**），团队 / 企业能力由**独立闭源企业版** `enterprise-server` 承载 ⇒ **2026-10-29 第二阶段**：团队 UI 与前端契约（`team_*`）**已删除** ⇒ 客户端**不再有任何团队入口**（含旧配置的界面）；**2026-10-29 第三阶段**：**Rust 团队实现也已删除** ✅（`sync.rs` 里 31 个 `team_*` 函数、9 个 `Team*` 类型、`AuthUserId`/`parse_team_me`/presence 隐私闸等 helper 全部移除）；**`sync_profiles`／工作区同步机制保留**（个人同步与历史团队空间数据仍要读得懂）；`specs/` 与企业 IM 契约**保留**（企业版仍引用）。Web 版不支持多设备 / 团队同步。
@@ -44,6 +44,17 @@
 - **外部 AI 接入（MCP）五档权限**：默认关闭；读写边界由你定；写操作先草稿，调用留审计。
 - **订阅与许可证体系**：许可卡 + 短期租约；到期只停跨网；宽限 14 天。
 - **同页并发合并（CRDT）**：代码已接入；双机 D1–D6 验收中；**本版不对外宣称 CRDT 协作已上线**。
+
+## 2.1 更新（2026-11-07）
+
+> 这一版的关键词是「能力可管、包能带走、更新装得上」——MCP 桥也从 Node 换成了 Rust（随包、零依赖）。
+
+- **MCP 桥改 Rust，随包零依赖**：不再需要 Node、不需要联网，AI 客户端配一行路径即可；2.1.9 起配置改成**稳定路径**，写一次永久有效，升级不用重填。
+- **空间包可带走**：`.shuyospace` 整空间导入（目录树是唯一真相，导入时重算 id、重写正文引用）；单页包 / 整库备份沿用。
+- **能力页可管**：已装能力可禁用 / 启用 / 卸载；Word 导入这类内置能力单独标「内置」，不混进「可用（已装）」。
+- **图片可悬停「查看大图 / 下载」**：全屏预览（Esc / 遮罩关闭，Android 返回键先关它）+ 取字节后弹目录选择保存。
+- **外部 `.md` 阅读器**（2.1.3）：复用内置预览器，不建页不写库；Windows 上可直接导出 PDF（A4 白底、只打正文）。
+- **更新链路修整**：检查更新的说明与版本不再错版（入口统一 `shuyo.cn/app/latest.json`）；Windows 上更新不再被 MCP 桥占用卡住（2.1.5–2.1.10）。
 
 ## 为什么选 ShuyoNote
 
@@ -491,6 +502,7 @@ ShuyoNote/
 - [x] **2.1.0（2026-11-02）**：MCP 面板重设计（档位单选 / 能力分类 / 接入引导）/ 空间包导入导出 / 属性区类型化与 B1–B3 收尾 / 能力页禁用·启用·卸载 / 版本历史恢复数据修复 + 几何 + diff 对照 + a11y / S4 App.css 域拆分收口（26,439 → 781 行）。
 - [x] **2.1.1（2026-11-02，hotfix）**：更新入口从 GitCode release 下载 URL 切到 `shuyo.cn/app/latest.json` —— GitCode CDN 把 `latest.json` 缓存了一年（`x-ccdn-cachettl: 31536000`），重传资产不刷新，2.0.0 客户端永远显示「已是最新」。2.0.0 用户需手动装一次 2.1.1，之后自动更新恢复。
 - [x] **2.1.2（2026-11-04）**：内置能力独立小节（Word 导入标「内置」、只保留禁用/启用）/ 富文档粘贴代码块行号清理 / 笔记图片悬停「查看大图 / 下载」+ 保存目录选择。
+- [x] **2.1.3 – 2.1.10（2026-11-05 ~ 11-07，补丁集）**：外部 `.md` 阅读器 + Windows 直接导出 PDF / 面包屑补当前页 / 更新与 MCP 桥占用修复 / 检查更新入口统一到 `shuyo.cn/app/latest.json` / MCP 配置稳定路径 / 外部 MCP 通道跨空间结构写与可写档权限修复。
 - [x] **Android 移动端**：**2.0.0 APK 已发布**（Tauri 原生壳；**CI 已跑通**——`.github/workflows/android.yml` 出自检包、`.github/workflows/release.yml` 出对外发版件，**两者都用正式密钥签名并硬比对指纹**，见 [RELEASING.md](docs/RELEASING.md) §⑨）；逐条真机验收 / 上架材料继续。iOS：打包链路已打通、界面 / 真机待验（见 [docs/MOBILE.md](docs/MOBILE.md)）。
 
 > 详细演进路线与里程碑，见 [docs/roadmap.md](docs/roadmap.md)。
