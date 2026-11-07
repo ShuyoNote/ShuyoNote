@@ -994,11 +994,23 @@ pub fn read_token() -> Option<String> {
 fn resolve_bridge_from(
     start: &std::path::Path,
     resource_dir: Option<&std::path::Path>,
+    user_copy: Option<&std::path::Path>,
 ) -> Option<PathBuf> {
-    // ⭐ 2026-10-31（C1/B）：**优先用随包发的 Rust 桥 exe**（用户机器不需要 Node、不需要联网）。
-    //   顺序：① 从 exe 目录往上有**开发构建产物**（`tools/shuyonote-mcp-rust/dist/…`）
-    //         ② 打包资源目录 `<resource>/mcp/shuyonote-mcp[.exe]`
-    //         ③ 都没有才退回 Node 桥（旧包/开发期）—— 过渡期两条都在，别让面板拿到不存在的路径。
+    // ⭐ 2026-11-07（**更彻底**，owner：「要更彻底的方案」）：优先用**复制到用户目录的那份桥**。
+    //
+    // 为什么：安装目录里的 `mcp\shuyonote-mcp.exe` 会被外部 MCP 客户端拉起并**长期占用**，
+    // 而 Windows 不允许覆盖正在运行的 exe ⇒ 每次更新都可能卡在"无法打开要写入的文件"。
+    // 现在应用启动时把随包的桥复制到 `<app data>/mcp-bin/<版本>/`（见 `ensure_bridge_copy`），
+    // 自动填给客户端的也是这一份 ⇒ **安装器永远不碰运行中的桥**，与"客户端会自动重启桥"彻底解耦。
+    // ⚠️ 老配置仍指向安装目录那份：那条路由安装器的「杀→删→改名腾位」兜底（见 hooks）。
+    if let Some(p) = user_copy {
+        if p.is_file() {
+            return Some(p.to_path_buf());
+        }
+    }
+    // ② 从 exe 目录往上有**开发构建产物**（`tools/shuyonote-mcp-rust/dist/…`）
+    // ②' 打包资源目录 `<resource>/mcp/shuyonote-mcp[.exe]`
+    // ③ 都没有才退回 Node 桥（旧包/开发期）—— 过渡期两条都在，别让面板拿到不存在的路径。
     let bin = if cfg!(windows) {
         "shuyonote-mcp.exe"
     } else {
@@ -1082,7 +1094,101 @@ fn resolve_bridge_path(resource_dir: Option<&std::path::Path>) -> Option<String>
         }
     }
     let start = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    resolve_bridge_from(&start, resource_dir).map(|p| display_path(&p))
+    let copy = user_bridge_copy();
+    resolve_bridge_from(&start, resource_dir, copy.as_deref()).map(|p| display_path(&p))
+}
+
+// ---- 桥复制到用户目录（2026-11-07「更彻底」方案）-----------------------------------
+//
+// 背景：安装目录里的 `mcp\shuyonote-mcp.exe` 由外部 MCP 客户端拉起并长期占用，而 Windows
+// 不允许覆盖正在运行的 exe ⇒ 更新卡在替换它（2026-11-06/07 两次真机事故）。
+// 现在应用启动时把随包的桥复制到 `<app data>/mcp-bin/<版本>/`，自动填入的配置指向这份 ⇒
+// **安装器不碰运行中的桥**。老配置（仍指安装目录）由安装器的「杀→删→改名」兜底。
+
+/// 用户目录下的桥副本目录：`<app data>/mcp-bin/<版本>/`（版本隔离 ⇒ 换版本时正在跑的旧副本还能继续用）。
+pub(crate) fn bridge_copy_dir_in(app_data: &std::path::Path) -> PathBuf {
+    app_data.join("mcp-bin").join(env!("CARGO_PKG_VERSION"))
+}
+
+/// 桥 exe 的文件名（与打包资源 `mcp/` 里的一致）。
+fn bridge_bin_name() -> &'static str {
+    if cfg!(windows) {
+        "shuyonote-mcp.exe"
+    } else {
+        "shuyonote-mcp"
+    }
+}
+
+/// **把随包的桥复制到用户目录**（幂等；返回复制后的 exe 路径）。
+///
+/// 只在「资源里真的有桥」且「用户目录那份不存在 / 大小不同」时才写；写失败如实返回 `None`
+/// （面板就继续退回安装目录那份 —— 复制失败不该把"自动填路径"一起弄坏）。
+pub(crate) fn ensure_bridge_copy_in(
+    app_data: &std::path::Path,
+    resource_dir: Option<&std::path::Path>,
+) -> Option<PathBuf> {
+    let src_dir = resource_dir?.join("mcp");
+    let src_bin = src_dir.join(bridge_bin_name());
+    if !src_bin.is_file() {
+        return None;
+    }
+    let dst_dir = bridge_copy_dir_in(app_data);
+    if std::fs::create_dir_all(&dst_dir).is_err() {
+        return None;
+    }
+    let dst_bin = dst_dir.join(bridge_bin_name());
+    let size = |p: &std::path::Path| std::fs::metadata(p).ok().map(|m| m.len());
+    if size(&src_bin) != size(&dst_bin) {
+        let tmp = dst_dir.join(format!("{}.tmp", bridge_bin_name()));
+        if std::fs::copy(&src_bin, &tmp).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+            return None;
+        }
+        let _ = std::fs::remove_file(&dst_bin);
+        if std::fs::rename(&tmp, &dst_bin).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+            return None;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&dst_bin, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+    // 顺手把 Node 桥的伴随文件也带上（老包/过渡期；缺了不影响 Rust 桥）。
+    for extra in ["index.mjs", "paths.mjs"] {
+        let s = src_dir.join(extra);
+        if s.is_file() {
+            let d = dst_dir.join(extra);
+            if size(&s) != size(&d) {
+                let _ = std::fs::copy(&s, &d);
+            }
+        }
+    }
+    // 清掉更早版本的副本（best effort：正在跑的那份删不掉 ⇒ 忽略错误，下次启动再清）。
+    if let Some(root) = dst_dir.parent() {
+        if let Ok(rd) = std::fs::read_dir(root) {
+            for e in rd.flatten() {
+                if e.path() != dst_dir {
+                    let _ = std::fs::remove_dir_all(e.path());
+                }
+            }
+        }
+    }
+    Some(dst_bin)
+}
+
+/// 生产路径：用应用数据目录复制桥（启动时调；见 `lib.rs` 的 `.setup()`）。
+pub fn ensure_bridge_copy(resource_dir: Option<&std::path::Path>) -> Option<PathBuf> {
+    let data = crate::db::app_data_dir_ref()?;
+    ensure_bridge_copy_in(&data, resource_dir)
+}
+
+/// 已经复制好的用户目录桥（`None` = 还没复制 / 不在安装形态）。
+fn user_bridge_copy() -> Option<PathBuf> {
+    let data = crate::db::app_data_dir_ref()?;
+    let p = bridge_copy_dir_in(&data).join(bridge_bin_name());
+    p.is_file().then_some(p)
 }
 
 /// 给 GUI／命令用的状态读数 ✓（含令牌全文 —— 本机同一用户 ✓，面板要能"复制给 agent" ✓）。
@@ -1320,6 +1426,11 @@ pub fn mcp_rotate_token() -> Result<McpStatus, String> {
 
 /// **更新安装前清场**（2026-11-06，owner 拍 A+B）：结束由外部 AI 客户端拉起的 MCP 桥进程。
 ///
+/// ⚠️ **2026-11-07 实测补强**：MCP 客户端会在 kill 之后 3 秒内把桥**自动重新拉起**
+/// （kill pid 8648 ⇒ pid 14444，父进程就是客户端）⇒ 只 kill 一次赢不了安装器写文件那一步。
+/// 现在：① 连杀 3 轮（每轮间隔 400ms）；② 仍被锁时把 `mcp\shuyonote-mcp.exe` **改名成 `.old`**
+/// 腾位（Windows 允许重命名正在运行的 exe，本机实测 ✓），安装器随后照常写新文件。
+///
 /// 为什么需要：`shuyonote-mcp.exe` **不是本应用的子进程** —— 它由 MCP 客户端（Claude Desktop /
 /// Claude Code 等）按配置拉起，主程序退出它不会退；而它就装在安装目录 `mcp\` 下，Windows 上
 /// **正在运行的 exe 无法被安装器覆盖** ⇒ 自动更新会卡在替换这个文件（2026-11-06 实测：本机
@@ -1338,24 +1449,53 @@ pub fn mcp_kill_bridge_processes() -> Result<u32, String> {
         use std::os::windows::process::CommandExt;
         // 不弹控制台窗口（桌面应用里 spawn taskkill 否则会闪一个黑框）。
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let count = std::process::Command::new("tasklist")
-            .args(["/FI", "IMAGENAME eq shuyonote-mcp.exe", "/NH", "/FO", "CSV"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .map(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .filter(|l| l.to_ascii_lowercase().contains("shuyonote-mcp.exe"))
-                    .count() as u32
-            })
-            .unwrap_or(0);
-        if count > 0 {
+        fn running_count() -> u32 {
+            std::process::Command::new("tasklist")
+                .args(["/FI", "IMAGENAME eq shuyonote-mcp.exe", "/NH", "/FO", "CSV"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .map(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .filter(|l| l.to_ascii_lowercase().contains("shuyonote-mcp.exe"))
+                        .count() as u32
+                })
+                .unwrap_or(0)
+        }
+
+        // ⚠️ 只 kill 一次不够（2026-11-07 真机实测）：MCP 客户端会在 **3 秒内**把桥重新拉起来
+        // （kill 掉 pid 8648 ⇒ 立刻变成 pid 14444，父进程就是那个客户端）⇒ 安装器轮到写文件时
+        // 又被锁住（用户截图「无法打开要写入的文件」）。所以这里杀 3 轮、每轮之间等 400ms。
+        let mut seen = 0;
+        for _ in 0..3 {
+            let n = running_count();
+            if n == 0 {
+                break;
+            }
+            seen = seen.max(n);
             let _ = std::process::Command::new("taskkill")
                 .args(["/F", "/IM", "shuyonote-mcp.exe"])
                 .creation_flags(CREATE_NO_WINDOW)
                 .status();
+            std::thread::sleep(std::time::Duration::from_millis(400));
         }
-        Ok(count)
+
+        // ⭐ 改名腾位（Windows **允许重命名正在运行的 exe**，本机实测 ✓）：杀不赢/又被拉起时，
+        //   把安装目录里的 `mcp\shuyonote-mcp.exe` 改名成 `.old` ⇒ 安装器随后能写新文件；
+        //   旧进程继续跑改名后的映像，客户端下次重启桥自然用上新的。`.old` 下次安装/卸载时清。
+        //   ⚠️ 只在**文件确实被锁**（写打开失败）时才改名：正常能杀干净时不动文件，避免"更新取消后桥路径缺失"。
+        if let Some(dir) = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+        {
+            let exe = dir.join("mcp").join("shuyonote-mcp.exe");
+            if exe.is_file() && std::fs::OpenOptions::new().write(true).open(&exe).is_err() {
+                let old = dir.join("mcp").join("shuyonote-mcp.exe.old");
+                let _ = std::fs::remove_file(&old);
+                let _ = std::fs::rename(&exe, &old);
+            }
+        }
+        Ok(seen)
     }
     #[cfg(not(windows))]
     {
@@ -1588,7 +1728,7 @@ mod bridge_path_tests {
         std::fs::write(&bridge, "// bridge\n").unwrap();
         std::fs::create_dir_all(&exe_dir).unwrap();
         assert_eq!(
-            resolve_bridge_from(&exe_dir, None).as_deref(),
+            resolve_bridge_from(&exe_dir, None, None).as_deref(),
             Some(bridge.as_path()),
             "从 exe 目录往上找仓库里的桥（{exe_dir:?} → {bridge:?}）"
         );
@@ -1607,7 +1747,7 @@ mod bridge_path_tests {
         std::fs::create_dir_all(rust_bin.parent().expect("parent")).unwrap();
         std::fs::write(&rust_bin, b"bin").unwrap();
         assert_eq!(
-            resolve_bridge_from(&exe_dir, None).as_deref(),
+            resolve_bridge_from(&exe_dir, None, None).as_deref(),
             Some(rust_bin.as_path()),
             "有随包 Rust 桥时优先用它（Node 桥只做兜底）"
         );
@@ -1620,7 +1760,7 @@ mod bridge_path_tests {
         let no_repo = clean.join("somewhere").join("deeper");
         std::fs::create_dir_all(&no_repo).unwrap();
         assert_eq!(
-            resolve_bridge_from(&no_repo, Some(&res)).as_deref(),
+            resolve_bridge_from(&no_repo, Some(&res), None).as_deref(),
             Some(res.join("mcp").join("index.mjs").as_path()),
             "没有仓库时退到资源目录（<resource>/mcp/index.mjs）"
         );
@@ -1628,12 +1768,55 @@ mod bridge_path_tests {
         let empty_res = clean.join("empty-res");
         std::fs::create_dir_all(&empty_res).unwrap();
         assert!(
-            resolve_bridge_from(&no_repo, Some(&empty_res)).is_none(),
+            resolve_bridge_from(&no_repo, Some(&empty_res), None).is_none(),
             "两处都没有 ⇒ 如实 None（⛔ 不编路径）"
         );
 
         let _ = std::fs::remove_dir_all(&repo);
         let _ = std::fs::remove_dir_all(&clean);
+    }
+
+    /// ⭐ 2026-11-07（owner：「要更彻底的方案」）：桥要**复制到用户目录**，且解析**优先**用复制件。
+    ///
+    /// 为什么：安装目录里的桥被外部客户端长期占用，Windows 不允许覆盖运行中的 exe ⇒ 更新会卡在
+    /// 替换它。复制到 `<app data>/mcp-bin/<版本>/` 后，自动填给客户端的是那份 ⇒ 安装器不碰运行中的桥。
+    #[test]
+    fn copies_bridge_to_user_dir_and_prefers_it() {
+        let tag = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(format!("shuyonote-bridge-copy-{tag}"));
+        let res = root.join("resources");
+        let app = root.join("appdata");
+        let src = res.join("mcp").join(bridge_bin_name());
+        std::fs::create_dir_all(src.parent().expect("parent")).unwrap();
+        std::fs::write(&src, b"bridge-bytes").unwrap();
+
+        let copy = ensure_bridge_copy_in(&app, Some(&res)).expect("应当复制成功");
+        assert!(copy.is_file(), "复制后文件应存在：{copy:?}");
+        assert_eq!(std::fs::read(&copy).unwrap(), b"bridge-bytes");
+        assert!(
+            copy.starts_with(app.join("mcp-bin").join(env!("CARGO_PKG_VERSION"))),
+            "副本必须落在 <appdata>/mcp-bin/<版本>/ 下：{copy:?}"
+        );
+
+        // 幂等：再跑一次还是同一路径、内容不变
+        let again = ensure_bridge_copy_in(&app, Some(&res)).expect("再跑一次也要成功");
+        assert_eq!(again, copy, "重复调用不该换路径");
+
+        // 解析优先用用户目录复制件（哪怕资源目录里也有、exe 旁边也有仓库）
+        assert_eq!(
+            resolve_bridge_from(&root.join("nowhere"), Some(&res), Some(&copy)),
+            Some(copy.clone()),
+            "用户目录复制件必须优先"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// ⭐ 2026-10-18：**桥必须随包发** —— 三份平台包配置里都要有

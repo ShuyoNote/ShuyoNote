@@ -84,31 +84,45 @@
 !macroend
 
 ; ============================================================================
-; 安装/更新/卸载前的清场（2026-11-06，owner 拍 A+B）
+; 安装/更新/卸载前的清场（2026-11-06 首版，2026-11-07 补「改名腾位」兜底）
 ;
 ; **问题**：`shuyonote-mcp.exe` **不是本应用的子进程** —— 它由外部 AI 客户端（Claude Desktop /
-; Claude Code 等）按配置拉起，主程序退出它不会退；而它就装在安装目录 `mcp\` 下，Windows 上
-; **正在运行的 exe 无法被安装器覆盖 / 删除** ⇒ 更新会卡在替换这个文件（2026-11-06 实测：本机
-; pid 3612 就跑在 `%LOCALAPPDATA%\Programs\ShuyoNote\mcp\shuyonote-mcp.exe`）。
+; DeepSeek Harness 等）按配置拉起，主程序退出它不会退；而它就装在安装目录 `mcp\` 下，Windows 上
+; **正在运行的 exe 无法被覆盖 / 删除** ⇒ 更新会卡在替换这个文件。
 ;
-; **两道闸**：① 应用侧在 `downloadAndInstall` 之前调 Rust 命令
-; `mcp_kill_bridge_processes`（见 src/lib/updater.ts，覆盖"应用内自动更新"）；
-; ② 就是这里 —— NSIS 钩子，覆盖"老客户端 / 用户手动双击安装包 / 卸载"这些应用没机会先行清场的场景。
+; **为什么光 kill 不够（2026-11-07 真机实测）**：MCP 客户端会**自动把桥重新拉起来** ——
+; 实测 kill 掉 pid 8648 之后 **3 秒内** 就变成 pid 14444（父进程就是那个客户端）。
+; ⇒ `taskkill` 赢了也只是一瞬间，安装器轮到写文件时又被锁住（用户截图：无法打开要写入的文件）。
 ;
-; `nsExec::Exec` 隐藏控制台黑框；退出码**故意不判**：没在跑时 taskkill 返回非 0，那是正常情况，
-; 不能因此挡住安装。杀完再让模板原有的 `CheckIfAppIsRunning` 检查主程序。
+; **兜底**：Windows **允许重命名正在运行的 exe**（本机实测 ✓）。所以杀不掉/又被拉起时，
+; 就把旧文件改名成 `.old` 腾出原名位置 ⇒ 安装器随后照常写入新 exe；旧进程继续跑它那份改名后的映像，
+; 等客户端下次重启桥时自然用上新的。`.old` 下次安装/卸载时再清（删不掉也无害）。
+;
+; 三道闸：① 应用侧 `mcp_kill_bridge_processes`（覆盖"应用内自动更新"）；② 本文件的
+; PREINSTALL / PREUNINSTALL（覆盖老客户端 / 手动双击安装包 / 卸载）；③ 上面的改名兜底。
 ; ============================================================================
-!macro SHUYONOTE_KILL_MCP_BRIDGE
+!macro SHUYONOTE_KILL_MCP_BRIDGE_FILES DONE_LABEL
+  ; 先杀，再等 0.6s 让它真的退（客户端可能马上又拉起来 —— 所以下面还有改名兜底）。
   nsExec::Exec 'taskkill /F /IM shuyonote-mcp.exe'
   Pop $0
+  Sleep 600
+  ; 清掉上一次留下的 `.old`（那时它没在跑；删不掉也无害）。
+  Delete "$INSTDIR\mcp\shuyonote-mcp.exe.old"
+  ; 正常情况（杀成功了）这一下就删掉了。
+  Delete "$INSTDIR\mcp\shuyonote-mcp.exe"
+  ; 还在 ⇒ 客户端已经把桥重新拉起、文件被锁 ⇒ 改名腾位（Windows 允许重命名正在运行的 exe）。
+  IfFileExists "$INSTDIR\mcp\shuyonote-mcp.exe" 0 ${DONE_LABEL}
+    System::Call 'kernel32::MoveFileW(w "$INSTDIR\mcp\shuyonote-mcp.exe", w "$INSTDIR\mcp\shuyonote-mcp.exe.old") i .r0'
+    Delete "$INSTDIR\mcp\shuyonote-mcp.exe.old"
+  ${DONE_LABEL}:
 !macroend
 
 ; 模板 666 行插入 —— 在 CheckIfAppIsRunning 之前。
 !macro NSIS_HOOK_PREINSTALL
-  !insertmacro SHUYONOTE_KILL_MCP_BRIDGE
+  !insertmacro SHUYONOTE_KILL_MCP_BRIDGE_FILES shuyo_mcp_bridge_done_inst
 !macroend
 
 ; 模板 803 行插入 —— 卸载同样要能删掉 mcp\ 下的桥。
 !macro NSIS_HOOK_PREUNINSTALL
-  !insertmacro SHUYONOTE_KILL_MCP_BRIDGE
+  !insertmacro SHUYONOTE_KILL_MCP_BRIDGE_FILES shuyo_mcp_bridge_done_uninst
 !macroend
