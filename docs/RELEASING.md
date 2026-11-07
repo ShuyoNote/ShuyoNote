@@ -523,6 +523,13 @@ dmg 不同，tauri 不可能为它产出可用的 minisign `.sig`。dmg 的来�
 
 建议用 `--body` 传发布说明（从 `CHANGELOG.md` 对应版本段生成，`###` 降一级即可）；不传则只有一行 `ShuyoNote vX.Y.Z`，与 CHANGELOG 脱节。
 
+> **`latest.json` 的 `notes`（应用里「本次更新」那一段）现在会自动取 CHANGELOG 该版本的 `> 一句话主题`**
+> （可用 `RELEASE_NOTES=…` 覆盖）—— ⛔ 不用再手抄一遍，不传也不会只剩一行版本号（2026-11-07 实测：
+> 2.1.7 之前每版应用里都只显示 `ShuyoNote vX.Y.Z`，用户问「为何没有更新内容」）。
+> **同一轮会把该版 release 标成 GitCode 的「最新版本」**（`release_status: "latest"`；重跑时用 PATCH
+> 挪标记，PATCH 的 `name`/`body` 是必填）—— 否则网页「发行版」列表的绿标会一直停在旧版本
+> （实测 2.1.7 时停在 v2.0.0，同上）。
+
 ### 发布前的自动拦截（都在 `scripts/release.mjs`，发布前跑 `--dry-run` 可先看一眼）
 
 更新通道的故障几乎都是「发布时毫无征兆、用户点检查更新才炸」，所以下面的检查都是**硬失败**（列出全部问题后中止，不做任何发布）：

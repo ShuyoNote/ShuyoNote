@@ -756,6 +756,20 @@ pub fn run() {
                 eprintln!("failed to init db: {e}");
                 std::io::Error::other(e.to_string())
             })?;
+
+            // ⭐ 2026-11-07（owner：「要更彻底的方案」）：把随包的 MCP 桥**复制到用户目录**
+            // （`<app data>/mcp-bin/<版本>/`），自动填给客户端的就是那份 ⇒ 安装器更新时
+            // **永远不碰运行中的桥**（它由外部 MCP 客户端长期占用，Windows 不允许覆盖运行中的 exe）。
+            // 老配置仍指向安装目录那份 ⇒ 安装器侧另有「杀掉→改名腾位」兜底（`nsis/file-assoc-hooks.nsh`）。
+            // 只在打包形态做（dev 构建继续用仓库里那份）；失败只打一行，行为退回旧口径。
+            #[cfg(not(debug_assertions))]
+            {
+                let res = app.path().resource_dir().ok();
+                match mcp_channel::ensure_bridge_copy(res.as_deref()) {
+                    Some(p) => println!("[mcp] 桥已复制到用户目录：{}", p.display()),
+                    None => eprintln!("[mcp] 桥复制到用户目录失败（退回安装目录那份）"),
+                }
+            }
             // E1: if workspace encryption is enabled, default to the locked state on
             // launch so the passphrase must be re-entered before any encrypted sync.
             security::startup_lock(&conn);
