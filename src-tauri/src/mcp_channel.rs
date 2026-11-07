@@ -485,7 +485,10 @@ mod tests {
         let read_only = default_read_scopes();
         let on = granted_after_write_grant(&read_only, true);
         for w in default_write_scopes() {
-            assert!(on.contains(&w), "授权后必须含写 scope {w} ✓（否则对应写工具一调就拒 ✗）");
+            assert!(
+                on.contains(&w),
+                "授权后必须含写 scope {w} ✓（否则对应写工具一调就拒 ✗）"
+            );
         }
         assert_eq!(
             on.len(),
@@ -533,7 +536,10 @@ mod tests {
             assert!(!now.iter().any(|x| x == s), "⛔ 补读不许顺手放大到 {s} ✗");
         }
         for w in default_write_scopes() {
-            assert!(!now.iter().any(|x| x == &w), "⛔ 补读不许顺手放大到写 scope {w} ✗");
+            assert!(
+                !now.iter().any(|x| x == &w),
+                "⛔ 补读不许顺手放大到写 scope {w} ✗"
+            );
         }
         assert_eq!(now.len(), default_read_scopes().len());
         // 已有项**原样在前**，缺的按 `default_read_scopes()` 的顺序追加（不是重新排序 ✓）
