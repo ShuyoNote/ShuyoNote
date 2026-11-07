@@ -283,7 +283,7 @@ register({
   - `pageId`: `string` —— 数据库页 id
   - `rows`: `array`（可选） —— 数组（**调用时必须提供**；缺失/空 ⇒ `bad_args`）——行数组：每行 `{rowId?（有=改，无=增）, title?（新增行必填）, values:{<columnId|列名>: 原始值}}`
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
   - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
 
@@ -298,7 +298,7 @@ register({
   - `pageId`: `string` —— 数据库页 id
   - `rowIds`: `array`（可选） —— 数组（**调用时必须提供**；缺失/空 ⇒ `bad_args`）——要删的行 id 列表（必须是该数据库页的子行）
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
   - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
 
@@ -481,7 +481,7 @@ register({
   - `fence`: `string`（可选） —— 块类型：填 mermaid 时把这次内容作为**一整块** mermaid 图源码写入（编辑器会把它升级成图块）；省略＝按普通段落。
   - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写 v1：只有 pages.create 真正支持；目标锁着 ⇒ permission_denied（locked）；需『可写（全部空间）』档。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
 
 ### `blocks.append` — 向页面追加内容（草稿确认）
 
@@ -511,7 +511,7 @@ register({
   - `markdown`: `string`（可选） —— 新块内容（Markdown，经应用自己的解析转块）——与 text 二选一
   - `text`: `string`（可选） —— 新块内容（纯文本）——与 markdown 二选一
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带 currentRev ＋ 当前 markdown 带锚点），⛔ 不覆盖
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, applied:false, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条（进程内 10 分钟）
 
@@ -528,7 +528,7 @@ register({
   - `markdown`: `string`（可选） —— 新块内容（Markdown，经应用自己的解析转块）——与 text 二选一
   - `text`: `string`（可选） —— 新块内容（纯文本）——与 markdown 二选一
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带 currentRev ＋ 当前 markdown 带锚点），⛔ 不覆盖
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, applied:false, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条（进程内 10 分钟）
 
@@ -542,7 +542,7 @@ register({
 - 参数：
   - `blockId`: `string` —— 要删除的顶层块 id
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带 currentRev ＋ 当前 markdown 带锚点），⛔ 不覆盖
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, applied:false, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条（进程内 10 分钟）
 
@@ -617,7 +617,7 @@ register({
   - `value`: `string` —— 
   - `pageId`: `string`（可选） —— 目标页面 id；省略=当前页
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
 
@@ -632,7 +632,7 @@ register({
   - `name`: `string` —— 标签名（不存在则新建）
   - `pageId`: `string`（可选） —— 目标页面 id；省略=当前页
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
 
@@ -668,7 +668,7 @@ register({
   - `attId`: `string` —— 
   - `toPageId`: `string` —— 目标页面/文件夹 id
   - `expectedSha`: `string`（可选） —— 附件内容指纹（`hash`，来自 files.stat 的 sha256）；不一致 ⇒ `rev_conflict`
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
   - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
 
@@ -683,7 +683,7 @@ register({
   - `attId`: `string` —— 
   - `name`: `string` —— 新显示名（≤255 字；扩展名会影响 mime，与界面同一条规则）
   - `expectedSha`: `string`（可选） —— 附件内容指纹（`hash`，来自 files.stat 的 sha256）；不一致 ⇒ `rev_conflict`
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
   - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
 
@@ -697,7 +697,7 @@ register({
 - 参数：
   - `attId`: `string` —— 
   - `expectedSha`: `string`（可选） —— 附件内容指纹（`hash`，来自 files.stat 的 sha256）；不一致 ⇒ `rev_conflict`
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
   - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
 
@@ -718,7 +718,7 @@ register({
 - 参数：
   - `templateId`: `string` —— 
   - `parentId`: `string`（可选） —— 新页的父节点 id；省略=顶层
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 本工具暂不支持跨空间写；带别的空间 ⇒ bad_args（⛔ 不回落当前空间）。
   - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
   - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
 
@@ -732,7 +732,7 @@ register({
 - 参数：
   - `pageId`: `string` —— 
   - `name`: `string`（可选） —— 期望的文件名（可选；同名自动 `-N` 不覆盖）
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
   - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
 
@@ -745,7 +745,7 @@ register({
 - 返回：{drafted,summary}——**不代表已导入**；确认后弹选择框，取消 ⇒ cancelled
 - 参数：
   - `parentId`: `string`（可选） —— 新页的父节点 id；省略=顶层
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 本工具暂不支持跨空间写；带别的空间 ⇒ bad_args（⛔ 不回落当前空间）。
   - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
   - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
 
@@ -758,7 +758,7 @@ register({
 - 返回：{drafted,summary}——**不代表已摘除**
 - 参数：
   - `attId`: `string` —— 
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产草稿、不落库、不记审计
   - `clientRequestId`: `string`（可选） —— 幂等键：同 id 重复调用只落一次、只审一条
 
@@ -772,7 +772,7 @@ register({
 - 参数：
   - `title`: `string` —— 文件夹名
   - `parentId`: `string`（可选） —— 上级节点 id；省略=顶层
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
 
@@ -788,7 +788,7 @@ register({
   - `newParentId`: `string`（可选） —— 新上级节点 id；省略/null=移到顶层
   - `sortOrder`: `number`（可选） —— 同级排序位（默认 0）
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
 
@@ -803,7 +803,7 @@ register({
   - `id`: `string` —— 
   - `title`: `string` —— 新标题（≤200 字）
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
 
@@ -817,7 +817,7 @@ register({
 - 参数：
   - `id`: `string` —— 要软删的节点 id
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`）
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
 
@@ -830,7 +830,7 @@ register({
 - 返回：{drafted,summary,spaceId}——**不代表已恢复**
 - 参数：
   - `id`: `string` —— 回收站里的节点 id
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
 
@@ -845,7 +845,7 @@ register({
   - `pageId`: `string` —— 
   - `versionId`: `string` —— 版本 id（来自 versions.list）
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
 
@@ -860,7 +860,7 @@ register({
   - `name`: `string` —— 标签名（不带 #）
   - `pageId`: `string`（可选） —— 目标页面 id；省略=当前页
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
 
@@ -875,7 +875,7 @@ register({
   - `attrId`: `string` —— 属性定义 id（来自 properties.list）
   - `pageId`: `string`（可选） —— 目标页面 id；省略=当前页
   - `expectedRev`: `string`（可选） —— 乐观并发令牌（`updated_at:sha8`，来自 `pages.get` 的 `rev`）；不一致 ⇒ `rev_conflict`（带当前 rev），⛔ 不覆盖
-  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⚠️ 跨空间写 v1 **暂不支持本工具**（只有 pages.create 支持）；带别的空间 ⇒ bad_args（不会回落当前空间）。
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略=当前空间）。⭐ 跨空间写已支持（v3 白名单；需『可写（全部空间）』档）；目标锁着/打不开 ⇒ permission_denied（locked），⛔ 不回落当前空间。
   - `dryRun`: `boolean`（可选） —— 只演练不产生草稿、不落库、不记审计（默认 false）；返回 `{dryRun:true, summary, would}`
   - `clientRequestId`: `string`（可选） —— 幂等键：同一个 id 重复调用只落一次、只审一条（进程内 10 分钟内有效；重启后会再执行一次）
 

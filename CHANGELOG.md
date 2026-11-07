@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+### 修复
+- **升级后「可写」档仍缺 `write:files/tags/properties`：9 个写工具（`files.delete/move/rename/upload_to_page/detach`、`tags.add/remove`、`properties.set/unset`）一调就 `permission_denied`，重启/重装都不自愈** —— 根因是外部通道的授权是**落盘快照**，旧版「可写」只写 `write:pages`，升级后没人重算。现在起通道前按「本来就已授权写」自动补齐写 scope 全家（只读档不放大）⇒ 升级后重启应用即生效，不必手动重选档位。
+- **免确认写的响应里两套话** —— 能力层回的是「草稿已生成，用户确认后才落库」＋ `applied:false`，而免确认档实际是应用端随后异步落库、不等确认；同一条响应两种语义会误导 Agent。现在免确认时清掉那句旧 note，只留 `apply_note`（本响应不代表已写入、失败只写 `apply.log`）。
+
+### 变更
+- **MCP 工具描述按 v3 实况修正**：跨空间写白名单的生成器从 10 条补齐到 **22 条写面**（结构类／标签属性类／db 行／回收站／回退／上传此前被误标「暂不支持」）；同时所有写面工具描述统一补一句「写完必须独立复核：落库由应用端随后异步执行，失败只写 `<app data>/mcp/apply.log` 不回传，本响应不代表已写入」。
+- **已知未修（下一次）**：MCP 的 `export_*`（页面/空间 Markdown、`.shuyodoc`）与 `coverage_report` 仍稳定返回 `frontend_timeout`（前端桥「请求已发出但没回执」，源码里处理器是注册的，断点待仪器化定位）；这两条链路对 MCP 仍不可用。
+
 ## [2.1.10] - 2026-11-07
 
 > 外部 MCP 通道：跨空间结构写真的落库（不再假成功）＋ 可写档补全 files/properties/tags 权限

@@ -516,6 +516,33 @@ mod tests {
         );
     }
 
+    /// ⭐ **2026-11-07（WorkBuddy 评估 + 真机复测）**：升级旧快照时，**已授权写**的要补齐写 scope 全家。
+    ///
+    /// 反例（修复前）：`{reads…, write:pages, write:all-spaces}` 起通道后仍是这份 ⇒
+    /// `files.delete`/`tags.add`/`properties.set` 一调就 `permission_denied`，且重启不自愈。
+    #[test]
+    fn an_old_grant_snapshot_gets_all_write_scopes_only_if_it_already_had_write() {
+        let mut old = default_read_scopes();
+        old.push("read:all-spaces".into());
+        old.push(WRITE_SCOPE.into());
+        old.push(WRITE_ALL_SCOPE.into());
+        let now = upgraded_granted(&old);
+        for w in default_write_scopes() {
+            assert!(now.contains(&w), "已授权写的旧快照必须补齐写 scope {w} ✓");
+        }
+        assert!(
+            now.iter().any(|s| s == WRITE_ALL_SCOPE),
+            "补写不许把 write:all-spaces 弄丢 ✓"
+        );
+
+        // ⛔ 只读档不放大：一个写 scope 都不许加
+        let ro = upgraded_granted(&default_read_scopes());
+        for w in default_write_scopes() {
+            assert!(!ro.contains(&w), "⛔ 只读档不许凭空拿到写 scope {w} ✗");
+        }
+        assert_eq!(ro, default_read_scopes(), "只读档应原样返回 ✓");
+    }
+
     /// ⭐ **B1a**：升级来的旧授权快照（只有三个读 scope）要能**补齐新读 scope**，
     /// 且⛔ 不顺手放大到 `read:all-spaces` / `write:pages`（那两条只由档位显式给 ✓）。
     #[test]
@@ -926,6 +953,25 @@ pub(crate) fn granted_with_default_reads(base: &[String]) -> Vec<String> {
         }
     }
     out
+}
+
+/// ⭐ **2026-11-07（WorkBuddy 评估 + 真机复测）**：升级旧授权快照（起通道前跑一次）。
+///
+/// ① 补默认读 scope 全家（B1a）；② **本来就已授权写**时补写 scope 全家 —— 2.1.10 之前「可写」只写
+/// `write:pages`，用户升级后快照里仍没有 `write:files/tags/properties` ⇒ 9 个写工具一调就
+/// `permission_denied`，且重启/重装都不自愈（只有手动重选档位才会重算）；③ 只读档**不放大**
+/// （`has_write=false` 时一个写 scope 都不加）。
+pub(crate) fn upgraded_granted(base: &[String]) -> Vec<String> {
+    let mut g = granted_with_default_reads(base);
+    let has_write = g.iter().any(|s| s == WRITE_SCOPE || s == WRITE_ALL_SCOPE);
+    if has_write {
+        for w in default_write_scopes() {
+            if !g.contains(&w) {
+                g.push(w);
+            }
+        }
+    }
+    g
 }
 
 /// ⭐ **纯函数**：把「授权写」这一档施加到一份权限清单上 ✓ ——
@@ -1391,11 +1437,15 @@ pub fn set_enabled(enabled: bool) -> Result<McpStatus, String> {
     cfg.enabled = true;
     // ⭐ B1a（2026-10-29）：旧配置里的 `granted` 是**写下来的快照**，可能缺后来新增的读 scope
     //   （`read:tags` / `read:properties` / `read:page.current`）⇒ 起通道前**补齐并落盘**（只补读 ✓）。
+    // ⭐ 2026-11-07（WorkBuddy 评估 + 真机复测）：写档的快照同样会过期 —— 2.1.10 之前「可写」只写
+    //   `write:pages`，用户升级后快照里仍然没有 `write:files/tags/properties` ⇒ **9 个写工具一调就
+    //   permission_denied，且重装/重启都不自愈**（只有手动重选档位才会重算）。⇒ 这里按「本来就已授权写」
+    //   这个事实补齐写 scope 全家；⛔ 只读档不放大（`has_write=false` 时一个都不加）。
     //   ⚠️ **不主动换令牌**：鉴权用的是这里拼出来的 `ChannelConfig.granted`（见下），令牌文件里那一行
     //   只用于面板展示；换令牌**不会**踢掉已连上的客户端 —— 桥（`tools/shuyonote-mcp/index.mjs`）
     //   每次调用都重读端口/令牌文件（实测：同一桥进程内换令牌、换端口都自动跟上）。
     //   ⚠️ 但客户端只在**启动时**拉起桥 ⇒ 「首次接入后要重启客户端」仍然成立（面板第 3 步据此措辞）。
-    let upgraded = granted_with_default_reads(&cfg.granted);
+    let upgraded = upgraded_granted(&cfg.granted);
     if upgraded != cfg.granted {
         cfg.granted = upgraded;
     }
