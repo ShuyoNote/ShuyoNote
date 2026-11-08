@@ -530,6 +530,12 @@ export const api = {
   /** P6.3「按需取字节」：用户主动下载单件附件（返回落盘字节数）。
    *  复用同步那条下载实现，且**不受 C1 预算闸门约束**——显式操作照做。 */
   downloadAttachment: (wsId: string, hash: string) => invoke("download_attachment", { wsId, hash }),
+  /**
+   * ⭐ **P3-4 第四步（task-71）**：取消某件附件的下载 —— 只置进程级标记；下载循环命中后
+   * 停止并**保留 .part**（下次重试续传）。取消不是失败（返回"标记是否已置"）。
+   */
+  cancelAttachmentDownload: (hash: string) =>
+    invoke("cancel_attachment_download", { hash }) as Promise<boolean>,
   /** C1 预算刹车（2026-09-15）：磁盘余量下限 / 单文件阈值 / 本轮总量上限 / 仅 Wi-Fi。
    *  ⚠️ `setSyncBudget` 回显的是**夹取后**的值（磁盘余量下限不可关）⇒ 界面应当用返回值刷新自己。 */
   getSyncBudget: () => invoke("get_sync_budget"),

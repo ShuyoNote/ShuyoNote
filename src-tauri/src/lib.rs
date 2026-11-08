@@ -1328,6 +1328,8 @@ pub fn run() {
             // P6.3「按需取字节」：用户主动下载**单件**附件（复用同步那条下载实现，
             // 刻意不受 C1 预算闸门约束——显式操作照做）。
             sync::download_attachment,
+            // ⭐ P3-4 第四步（task-71）：取消附件下载（保留 .part；只置进程级标记）。
+            sync::cancel_attachment_download,
             // C1 预算刹车（2026-09-15）：磁盘余量下限 / 单文件阈值 / 本轮总量上限。
             // 设备级设置，存 meta.sync_state 的 KV。
             sync::get_sync_budget,

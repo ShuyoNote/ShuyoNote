@@ -259,6 +259,8 @@ export function FileManagerView() {
   const [downloadProgress, setDownloadProgress] = useState<
     Record<string, { downloaded: number; total: number | null }>
   >({});
+  // ⭐ P3-4 第四步（task-71）：取消提示（"已取消，可重试续传"；按 hash 显示在行上）。
+  const [cancelledHash, setCancelledHash] = useState<string | null>(null);
   const loadOnDisk = () => {
     api
       .listAttachmentHashes()
@@ -290,6 +292,7 @@ export function FileManagerView() {
       return false;
     }
     setFetching(f.hash);
+    setCancelledHash(null);
     try {
       // ★ 丙-④：字节可能来自服务器、也可能来自网段里的对端 ⇒ 显示 Rust 拼好的那句原文
       //   （写死"已下载"看着一样，但用户看不出"到底是谁给的" —— 而对端那条路正是丙要兑现的）。
@@ -298,7 +301,12 @@ export function FileManagerView() {
       toast(res.note, "success");
       return true;
     } catch (e) {
-      // 与打开路径共用同一套分类（`attachmentFetchHint`）："取不回"要说清怎么办，
+      // ⭐ task-71：**取消不是失败** —— 不弹错误 toast；行上提示"已取消，可重试续传"。
+      if (/已取消/.test(String(e))) {
+        setCancelledHash(f.hash);
+        return false;
+      }
+      // 与打开路径共用同一套分类（`attachmentFetchHint`）："取不回"要说清楚怎么办，
       // 不能一律甩一句原文（2026-09-19 社区缺陷帖 #6）。
       toast(attachmentFetchHint(e), "error");
       return false;
@@ -312,6 +320,25 @@ export function FileManagerView() {
         return next;
       });
     }
+  };
+
+  // ⭐ task-71：取消正在进行的附件下载（保留 .part；下次重试续传）。
+  //   ⚠️ 只发一条"置标记"命令；下载循环自己会在下一块前停下。这里立刻清 progress 并给行内提示，
+  //   ⛔ 不弹错误 toast（取消不是失败）。
+  const cancelDownload = async (hash: string) => {
+    try {
+      await api.cancelAttachmentDownload(hash);
+    } catch {
+      // 取消是尽力而为：命令失败也照常清掉本地进度（下载失败/结束会自行收尾）。
+    }
+    setDownloadProgress((prev) => {
+      if (!(hash in prev)) return prev;
+      const next = { ...prev };
+      delete next[hash];
+      return next;
+    });
+    setFetching((cur) => (cur === hash ? null : cur));
+    setCancelledHash(hash);
   };
 
   // Streaming import progress from the backend (content-addressed, large-file safe).
@@ -1326,6 +1353,15 @@ export function FileManagerView() {
                       </button>
                       {/* P6.2/P6.3：字节不在本机时，「下载」的含义变成**先从服务器取回来**
                           （否则 save-as 只会失败说"附件不存在"）。取回成功后这一行立刻恢复正常。 */}
+                      {cancelledHash === row.file!.hash && (
+                        <span
+                          className="fm-attachment-progress"
+                          data-testid="attachment-download-cancelled"
+                          style={{ marginRight: 4, fontSize: 11 }}
+                        >
+                          已取消，可重试续传
+                        </span>
+                      )}
                       {!onDisk.has(row.file!.hash) ? (
                         <>
                           <button
@@ -1339,14 +1375,27 @@ export function FileManagerView() {
                             {fetching === row.file!.hash ? "…" : "☁"}
                           </button>
                           {fetching === row.file!.hash && (
-                            <span className="fm-attachment-progress" style={{ marginRight: 4, fontSize: 11 }} aria-live="polite">
-                              {downloadProgress[row.file!.hash]
-                                ? attachmentDownloadLabel(
-                                    downloadProgress[row.file!.hash].downloaded,
-                                    downloadProgress[row.file!.hash].total,
-                                  )
-                                : "下载中…"}
-                            </span>
+                            <>
+                              <span className="fm-attachment-progress" style={{ marginRight: 4, fontSize: 11 }} aria-live="polite">
+                                {downloadProgress[row.file!.hash]
+                                  ? attachmentDownloadLabel(
+                                      downloadProgress[row.file!.hash].downloaded,
+                                      downloadProgress[row.file!.hash].total,
+                                    )
+                                  : "下载中…"}
+                              </span>
+                              {/* ⭐ task-71：下载中可取消（保留 .part，可重试续传）。 */}
+                              <button
+                                data-testid="attachment-download-cancel"
+                                title="取消下载（已下载部分保留，可稍后重试续传）"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void cancelDownload(row.file!.hash);
+                                }}
+                              >
+                                ✕
+                              </button>
+                            </>
                           )}
                         </>
                       ) : (

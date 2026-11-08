@@ -1676,6 +1676,8 @@ export interface CommandMap {
    *  ★★ 丙-④（2026-09-26）：**字节有两个来源**（绑了服务端 ⇒ 先问服务端；再按发现到的
    *  对端依次试），所以回的是**读数**而不是一个数字：`note` 由 Rust 拼好（界面原样显示，
    *  别自己按 `source` 再写一句 —— 那样就有两处口径）。 */
+  /** ⭐ P3-4 第四步（task-71）：取消某件附件的下载（只置进程级标记；保留 .part 供续传）。 */
+  cancel_attachment_download: { args: { hash: string }; result: boolean };
   download_attachment: {
     args: { wsId: string; hash: string };
     result: {

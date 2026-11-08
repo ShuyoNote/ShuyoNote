@@ -2068,6 +2068,10 @@ pub async fn download_attachment(
     if !is_valid_attachment_hash(&hash) {
         return Err("附件标识不合法".to_string());
     }
+    // ⭐ task-71：先清**上次残留**的取消标记（上一次命令异常退出可能没清），
+    //   再用 RAII 保证本次任何返回路径都清零。
+    clear_attachment_download_cancel(&hash);
+    let _cancel_guard = AttachmentDownloadCancelGuard(hash.clone());
     let (profile, mime) = {
         let c = db.0.lock().expect("db mutex poisoned");
         // ⭐ 2026-10-24（图片块同步）：**不能**要求"一定有一行同步档案" —— 个人空间走网格时
@@ -2167,6 +2171,7 @@ pub async fn download_attachment(
                             note: format!("已从服务器取回这一件（{} 字节）", size),
                         })
                     }
+                    Err(e) if e == ATTACHMENT_DOWNLOAD_CANCELLED => return Err(e),
                     Err(e) => server_err = Some(e),
                 }
             }
@@ -2269,6 +2274,7 @@ pub async fn download_attachment(
                         note: format!("已从对端「{}」取回这一件（{size} 字节）", p.device_id),
                     })
                 }
+                Err(e) if e == ATTACHMENT_DOWNLOAD_CANCELLED => return Err(e),
                 Err(e) => tried.push(format!("{}：{e}", p.device_id)),
             },
             Err(e) => tried.push(format!("{}：{e}", p.device_id)),
@@ -8059,12 +8065,15 @@ async fn download_one_attachment(
                     let got = std::fs::metadata(attachment_part_path(attachments_dir, &item.hash))
                         .map(|m| m.len())
                         .unwrap_or(0);
+                    // ⭐ task-71：取消**不是失败** ⇒ 终态进度不带 error（UI 不弹错误 toast；
+                    //   行上由 UI 自己显示"已取消，可重试续传"）。
+                    let cancelled = e == ATTACHMENT_DOWNLOAD_CANCELLED;
                     sink(DownloadProgressUpdate {
                         hash: item.hash.clone(),
                         downloaded: got,
                         total: expected_size.map(|s| s.max(0) as u64),
                         done: true,
-                        error: Some(e.clone()),
+                        error: if cancelled { None } else { Some(e.clone()) },
                     });
                 }
             }
@@ -8108,6 +8117,68 @@ pub(crate) fn attachment_resume_offset(part_len: Option<u64>, expected: Option<i
 fn attachment_download_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+// ── ⭐ P3-4 第四步（task-71）：**附件下载可取消**（保留 .part 供续传）─────────────────────────
+//
+// 语义：
+// * 命令 `cancel_attachment_download(hash)` 只置一个**进程级**标记（Mutex<HashSet>），立即返回；
+// * 下载循环**每块前**检查该 hash；命中 ⇒ 停止、**保留 .part**、回可读"已取消"；
+// * 每次 `download_attachment` 结束时（成功/失败/取消）**清掉标记**（⛔ 不让下一次误取消）；
+// * 重复取消**幂等**；同一 hash 的并发仍由 `attachment_download_lock` 串行（语义不变）。
+pub const ATTACHMENT_DOWNLOAD_CANCELLED: &str = "已取消（已保留 .part，可重试续传）";
+
+static ATTACHMENT_DOWNLOAD_CANCELS: std::sync::OnceLock<std::sync::Mutex<HashSet<String>>> =
+    std::sync::OnceLock::new();
+
+fn attachment_download_cancel_set() -> &'static std::sync::Mutex<HashSet<String>> {
+    ATTACHMENT_DOWNLOAD_CANCELS.get_or_init(|| std::sync::Mutex::new(HashSet::new()))
+}
+
+/// 是否命中"这一件已被用户取消下载"（hash 大小写归一；非法 hash ⇒ false）。
+pub(crate) fn attachment_download_is_cancelled(hash: &str) -> bool {
+    let h = hash.trim().to_ascii_lowercase();
+    if !is_valid_attachment_hash(&h) {
+        return false;
+    }
+    attachment_download_cancel_set()
+        .lock()
+        .map(|g| g.contains(&h))
+        .unwrap_or(false)
+}
+
+/// 置取消标记（幂等；返回 true 表示"标记已在"）。
+pub(crate) fn request_cancel_attachment_download(hash: &str) -> Result<bool, String> {
+    let h = hash.trim().to_ascii_lowercase();
+    if !is_valid_attachment_hash(&h) {
+        return Err("附件标识不合法".to_string());
+    }
+    attachment_download_cancel_set()
+        .lock()
+        .map(|mut g| g.insert(h))
+        .map_err(|_| "取消标记锁坏了".to_string())
+}
+
+/// 清取消标记（下载结束/失败/取消后都清；幂等）。
+pub(crate) fn clear_attachment_download_cancel(hash: &str) {
+    let h = hash.trim().to_ascii_lowercase();
+    if let Ok(mut g) = attachment_download_cancel_set().lock() {
+        g.remove(&h);
+    }
+}
+
+/// RAII：`download_attachment` 任何返回路径都清掉本 hash 的取消标记。
+struct AttachmentDownloadCancelGuard(String);
+impl Drop for AttachmentDownloadCancelGuard {
+    fn drop(&mut self) {
+        clear_attachment_download_cancel(&self.0);
+    }
+}
+
+/// ⭐ **P3-4（task-71）**：用户取消某一件附件下载（保留 `.part`，下次可续传）。
+#[tauri::command]
+pub fn cancel_attachment_download(hash: String) -> Result<bool, String> {
+    request_cancel_attachment_download(&hash)
 }
 
 /// ⭐ **P3-4（task-49）**：按本机 `.part` 与元数据里的期望大小算续传起点（读库版）。
@@ -8197,6 +8268,12 @@ pub(crate) async fn download_body_to_part(
     let mut last_emit_bytes: u64 = 0;
     let mut last_emit_at = std::time::Instant::now();
     loop {
+        // ⭐ task-71：**每块前**检查取消标记（命中 ⇒ 立即停止，保留已写字节供续传）。
+        if attachment_download_is_cancelled(hash) {
+            let _ = file.flush().await;
+            drop(file);
+            return Err(ATTACHMENT_DOWNLOAD_CANCELLED.to_string());
+        }
         let n = match body.read(&mut buf).await {
             Ok(n) => n,
             Err(e) => {
@@ -14089,6 +14166,88 @@ mod encrypted_sync_note_tests {
         // 时间门槛：≥200 ms 就发（哪怕只多了 1 字节）。
         assert!(should_emit_download_progress(1, Duration::from_millis(200)));
         assert!(should_emit_download_progress(0, Duration::from_millis(201)));
+    }
+
+    // ── ⭐ P3-4 第四步（task-71）：下载取消标记 ──────────────────────────────────
+
+    fn unique_test_hash(tag: &str) -> String {
+        // 64 hex；带进程/标签避免并行测试互相影响（只用于标记集合）。
+        let seed = format!("{}-{tag}", std::process::id());
+        let mut out = String::new();
+        for b in seed.bytes() {
+            out.push_str(&format!("{b:02x}"));
+        }
+        while out.len() < 64 {
+            out.push('0');
+        }
+        out.truncate(64);
+        out
+    }
+
+    #[test]
+    fn attachment_cancel_mark_is_idempotent_and_can_be_cleared() {
+        let hash = unique_test_hash("cancel");
+        assert!(!attachment_download_is_cancelled(&hash), "初始未取消");
+        assert!(request_cancel_attachment_download(&hash).unwrap());
+        assert!(attachment_download_is_cancelled(&hash));
+        // 重复取消幂等（第二次返回 false ＝ "本来就在"，不报错）。
+        assert!(!request_cancel_attachment_download(&hash).unwrap());
+        assert!(attachment_download_is_cancelled(&hash));
+        // 大小写归一：同一件用大写也命中。
+        assert!(attachment_download_is_cancelled(&hash.to_ascii_uppercase()));
+        clear_attachment_download_cancel(&hash);
+        assert!(!attachment_download_is_cancelled(&hash), "清理后不再误取消");
+    }
+
+    #[test]
+    fn attachment_cancel_rejects_bad_hash() {
+        assert!(request_cancel_attachment_download("not-a-hash").is_err());
+        assert!(!attachment_download_is_cancelled("not-a-hash"));
+        clear_attachment_download_cancel("not-a-hash"); // 幂等、不 panic
+    }
+
+    /// 源码级：**每块前**检查取消 → 保留 .part 返回"已取消"；命令结束清标记；取消不冒充失败。
+    #[test]
+    fn the_download_loop_checks_cancel_per_chunk_and_cleans_the_mark() {
+        let src = include_str!("sync.rs");
+        let body = src
+            .split("pub(crate) async fn download_body_to_part(")
+            .nth(1)
+            .expect("download_body_to_part 必须在");
+        let body = &body[..body.find("\n}\n").unwrap_or(body.len())];
+        let check_at = body
+            .find("attachment_download_is_cancelled(hash)")
+            .expect("循环里必须每块检查取消");
+        let read_at = body.find("body.read(&mut buf)").expect("读块");
+        assert!(check_at < read_at, "⛔ 取消检查必须在读下一块之前");
+        assert!(
+            body.contains("ATTACHMENT_DOWNLOAD_CANCELLED"),
+            "返回可读已取消"
+        );
+        assert!(
+            body.contains("file.flush().await"),
+            "取消前要 flush 已写字节（保留 .part）"
+        );
+        // 命令入口：清残留标记 + RAII 保证任何返回路径都清。
+        let cmd = src
+            .split("pub async fn download_attachment(")
+            .nth(1)
+            .expect("download_attachment 必须在");
+        let cmd = &cmd[..cmd.find("\n}\n").unwrap_or(cmd.len())];
+        assert!(cmd.contains("clear_attachment_download_cancel(&hash)"));
+        assert!(cmd.contains("AttachmentDownloadCancelGuard(hash.clone())"));
+        // 取消 ⇒ 立刻中止整条命令（不再试下一台/服务器兜底）。
+        assert!(cmd.contains("Err(e) if e == ATTACHMENT_DOWNLOAD_CANCELLED => return Err(e)"));
+        // 终态进度把取消按"非失败"发（error=None）。
+        let one = src
+            .split("async fn download_one_attachment(")
+            .nth(1)
+            .expect("download_one_attachment 必须在");
+        let one = &one[..one.find("\n}\n").unwrap_or(one.len())];
+        assert!(one.contains("let cancelled = e == ATTACHMENT_DOWNLOAD_CANCELLED;"));
+        assert!(one.contains("error: if cancelled { None } else { Some(e.clone()) }"));
+        // 命令已注册。
+        assert!(include_str!("lib.rs").contains("sync::cancel_attachment_download,"));
     }
 
     #[test]

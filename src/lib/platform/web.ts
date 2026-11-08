@@ -3352,6 +3352,10 @@ export function makeInvoke(store: SqliteStore) {
     //
     // 与桌面同构，但 Web 的"落盘"就是 blobStore。⚠️ 同样**不受 C1 预算闸门约束**
     // （显式操作照做），也不查磁盘余量（浏览器没有那个 API，见 syncAttachments 里的说明）。
+    if (cmd === "cancel_attachment_download") {
+      // ⭐ P3-4 第四步：Web 没有 Rust 下载循环 ⇒ 没有可取消的下载（⛔ 不假装取消成功）。
+      return false as T;
+    }
     if (cmd === "download_attachment") {
       const args = a.args ?? a;
       const wsId = String(args.wsId ?? args.ws_id ?? wsIdNow());
