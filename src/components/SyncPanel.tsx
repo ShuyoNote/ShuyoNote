@@ -4,9 +4,12 @@ import { useMobileNav } from "../store/mobileNav";
 import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
-import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer, type SpaceSyncState } from "../lib/api";
+import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer, type MeshRoundReport, type SpaceSyncState } from "../lib/api";
 import { startEncryptedAdopt } from "../lib/encryptedAdopt";
 import { MeshMissingSpaces } from "./MeshMissingSpaces";
+// ⭐ P1「连接体检」（2026-11-08）：只读现有读数 → 结构化诊断 ＋ 复制诊断包（⛔ 不新增命令 ✗）。
+//   入口在「局域网同步」状态卡里（见下面 `mesh-diagnose-entry` ✓）；纯函数在 `src/lib/meshDiagnose.ts` ✓。
+import { MeshDiagnoseDialog } from "./MeshDiagnoseDialog";
 import { autoPickPeer } from "../lib/pairTarget"; // ⭐ 常驻判据在 src/lib/pairTarget.test.ts ✓
 import { peerIdentityLine } from "../lib/peerIdentity"; // ⭐ 规格 J21 的**唯一实现**（信任前展示身份 ✓）
 import { toast } from "../store/toast";
@@ -216,6 +219,11 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   // 发现层是进程常驻的（`setup` 里就起了），面板关着就没人看这一行（少一次 IPC/秒）。
   // ⚠️ `line` 是 Rust 侧 `lan::status_line` 的**原文**，这里**只显示、不解释**（档位由 Route 决定）。
   const [lanStatus, setLanStatus] = useState<LanStatus | null>(null);
+  /** ⭐ P1「连接体检」（2026-11-08）：对话框开关 ＋ **本轮网格读数**。
+   *  ⚠️ `lastRound` 只用来把「上一轮网格同步」那一项喂给体检（⛔ 不新增读数／⛔ 不改同步逻辑 ✗）；
+   *  它就是 `syncMeshNow` 刚拿到的那个返回值 ✓。 */
+  const [meshDiagnoseOpen, setMeshDiagnoseOpen] = useState(false);
+  const [lastRound, setLastRound] = useState<MeshRoundReport | null>(null);
   /** ⭐ **2026-10-29（owner 选 B）：设备名从「设置 → 账户」搬到这里** ✗ ——
    *  它影响的是"同网段的设备在「附近的设备」里看到你叫什么"，属**局域网同步**这一档；
    *  而团队 UI 删掉之后「账户」页只剩这一格 ⇒ 整页撤掉（`SettingsDialog` 同步删 `AccountPane`）✓。
@@ -719,6 +727,8 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
     const timer = setInterval(() => setStatus(progress()), 500);
     try {
       const rep = await api.meshSyncNow(activeId ?? null);
+      // ⭐ P1「连接体检」：把本轮读数留给体检的「上一轮网格同步」那一项（⛔ 不改这一轮的判定 ✗）。
+      setLastRound(rep);
       clearInterval(timer);
       // 人话**原样来自 Rust**（`rep.note`）—— 面板不许自己遍历读数拼句子。
       // ⭐ A：只补一格它没说的数——「本轮收下几页」（没有收到 ⇒ 空串，不补废话）。
@@ -741,6 +751,20 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
     }
   };
 
+  // ⭐ P1「连接体检」（2026-11-08）：「重新读取」只**重读一次 `lan_status`** ——
+  //   ⛔ 不新开第二条同步路 ✗（同步仍是 `syncMeshNow` 那一颗）；也⛔ 不在这里自己判档：
+  //   读数原样交给 `lanStatus`，体检的结论全部由 `lib/meshDiagnose.ts` 这个纯函数算 ✓。
+  //   ⚠️ 读不到 ⇒ 把读数置空（体检里如实显示 unknown）—— ⛔ 不拿上一次读数冒充这一次 ✗。
+  const reloadLanForDiagnose = async () => {
+    try {
+      const st = await api.lanStatus(activeId);
+      setLanStatus(st);
+      setLanMeshActive(!!st.mesh.enabled);
+    } catch {
+      setLanStatus(null);
+    }
+  };
+
   // ⭐ C（owner 2026-10-29）：失败历史行的**行内动作** —— 只对"设备直连（网格）"那类记录给重试
   //   （服务端那条路已随团队 UI 归档；重试它没有后端可打）。复制诊断不含任何内部 id。
   const retryMeshHistory = async (idx: number, h: (typeof history)[number]) => {
@@ -749,6 +773,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
     setStatus(`正在重试「${h.ws_name?.trim() || "这个空间"}」…`);
     try {
       const rep = await api.meshSyncNow(h.ws_id);
+      setLastRound(rep);
       setStatus(`重试完成：${rep.note}${meshRoundSummaryText(rep.applied)}`);
       await loadPendingRemote();
       useNotes.getState().loadPages();
@@ -1382,6 +1407,25 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                   onClick={() => void saveDeviceName()}
                 >
                   {deviceNameSaving ? "保存中…" : "保存"}
+                </button>
+              </div>
+            )}
+            {/* ⭐ P1「连接体检」（2026-11-08）：**只读现有读数**的结构化诊断 ＋ 复制诊断包。
+                位置就在「局域网同步」状态卡里（设备名下面）—— 用户排障时先看这一片 ✓。
+                ⚠️ 门槛＝桌面版（发现层是 Rust 的 UDP；Web 没有这一层 ⇒ 摆在 Web 上只会是一屏 unknown ✓，
+                  那反而像"坏了"）。⛔ 它不改任何现有同步逻辑、也⛔ 不新增第二条同步路 ✗。 */}
+            {isDesktopPlatform() && (
+              <div className="sync-device-name" data-testid="mesh-diagnose-entry">
+                <span className="sync-device-name-label">连接体检</span>
+                <span className="sync-hint" style={{ flex: "1 1 auto", minWidth: 0 }}>
+                  检查发现层、端口与每台设备为什么连不上
+                </span>
+                <button
+                  className="sync-mini-btn"
+                  data-testid="mesh-diagnose-open"
+                  onClick={() => setMeshDiagnoseOpen(true)}
+                >
+                  打开体检
                 </button>
               </div>
             )}
@@ -2270,6 +2314,17 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
           )}
           </SyncAdvancedFold>
         </div>
+      )}
+      {/* ⭐ P1「连接体检」（2026-11-08）：对话框挂在这里（内容区那一支也要能开）——
+          ⛔ 它不进 `.sync-foot` / 不改同步面板的常驻 chrome ✗；浮层登记在组件自己里 ✓。 */}
+      {isDesktopPlatform() && (
+        <MeshDiagnoseDialog
+          open={meshDiagnoseOpen}
+          status={lanStatus}
+          round={lastRound}
+          onReload={reloadLanForDiagnose}
+          onClose={() => setMeshDiagnoseOpen(false)}
+        />
       )}
     </div>
   );
