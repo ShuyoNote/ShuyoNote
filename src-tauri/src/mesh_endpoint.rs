@@ -202,6 +202,86 @@ pub async fn endpoint_for_peer(
     relay_endpoint_for(peer, node_id).await
 }
 
+// ⚠️ **测试专用注入（cfg(test)，⛔ 不改生产选路）**：进程级 `OnceCell` 里的 iroh 端点绑定在
+// "第一次初始化它的那个 tokio runtime"上；`#[tokio::test]` 各自建 runtime，测试结束时该 runtime
+// 被 drop ⇒ **后面再用全局 Registry 的测试会拿到一个已停摆的端点**（本目录 E2E 实测踩到）。
+// 生产只有一个常驻 runtime，没这个问题。⇒ 单进程 E2E 用**自己的 Registry** 注入，仍走
+// `endpoint_for_peer` 的生产分支；全局 Registry 的单例性由另一条测试核对。
+#[cfg(all(test, feature = "lan-quic", not(feature = "relay")))]
+static TEST_REGISTRY_OVERRIDE: std::sync::OnceLock<
+    std::sync::Arc<crate::lan_quic::LanQuicRegistry>,
+> = std::sync::OnceLock::new();
+
+#[cfg(all(test, feature = "lan-quic", not(feature = "relay")))]
+fn test_override_registry(registry: std::sync::Arc<crate::lan_quic::LanQuicRegistry>) {
+    let _ = TEST_REGISTRY_OVERRIDE.set(registry);
+}
+
+/// 测试共享的 Registry：**在一条常驻线程的 runtime 上初始化**，因此不会随某个 `#[tokio::test]`
+/// 的 runtime 结束而停摆（见上方注释）。整个测试进程一份；用完不清理（测试进程退出即释放）。
+#[cfg(all(test, feature = "lan-quic", not(feature = "relay")))]
+fn test_shared_registry() -> std::sync::Arc<crate::lan_quic::LanQuicRegistry> {
+    static SHARED: std::sync::OnceLock<std::sync::Arc<crate::lan_quic::LanQuicRegistry>> =
+        std::sync::OnceLock::new();
+    SHARED
+        .get_or_init(|| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .expect("测试专用 runtime");
+                let registry = rt
+                    .block_on(crate::lan_quic::LanQuicRegistry::new(
+                        iroh::SecretKey::generate(),
+                    ))
+                    .expect("测试共享 Registry 初始化");
+                tx.send(std::sync::Arc::new(registry))
+                    .expect("回传 Registry");
+                // 让 iroh 的驱动/连接留在**这条常驻 runtime** 上，直到进程退出。
+                rt.block_on(std::future::pending::<()>());
+            });
+            rx.recv().expect("测试共享 Registry 初始化线程没回话")
+        })
+        .clone()
+}
+
+/// P3-2a 测试专用**串行锁**：两个用"测试共享 Registry"的用例会各自发起 QUIC 连接
+/// （其中一条故意连不可达地址、要等 iroh 30s 超时），而 Registry 的骨架版 `connect_gate`
+/// 是**全局**的 —— 不串行时，E2E 的快速连接会被那条 30s 连接堵住（实测：偶发 30s 超时）。
+#[cfg(all(test, feature = "lan-quic", not(feature = "relay")))]
+fn test_registry_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    &LOCK
+}
+
+/// 测试注入的 Registry（非测试构建恒 `None`）。
+///
+/// ⚠️ 刻意**不**在函数体里写 cfg(test) 属性字面量：`lib.rs` 的 relay 门判据用
+/// `mesh_endpoint.rs` 里**第一个 cfg(test) 属性**当"测试模块起点"（见
+/// `the_relay_gate_call_site_is_behind_the_relay_feature`）⇒ 生产段里出现那个字面量会把
+/// 它后面的 `gate_for_new_tunnel` 调用点截掉（本笔实测：判据报"实际 0 处"）。⇒ 用独立
+/// cfg 函数把条件挡在函数层面。
+#[cfg(all(test, feature = "lan-quic", not(feature = "relay")))]
+fn test_registry_override() -> Option<std::sync::Arc<crate::lan_quic::LanQuicRegistry>> {
+    TEST_REGISTRY_OVERRIDE.get().cloned()
+}
+
+#[cfg(all(not(test), feature = "lan-quic", not(feature = "relay")))]
+fn test_registry_override() -> Option<std::sync::Arc<crate::lan_quic::LanQuicRegistry>> {
+    None
+}
+
+/// 选路要用的 Registry：测试注入优先（见上），否则生产进程级懒初始化。
+#[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+async fn quic_registry_for_wiring(
+) -> Result<std::sync::Arc<crate::lan_quic::LanQuicRegistry>, String> {
+    if let Some(r) = test_registry_override() {
+        return Ok(r);
+    }
+    crate::lan_quic::process_registry().await
+}
+
 /// LAN 直连：原料齐全 ⇒ `QuicThenHttpEndpoint`（QUIC 首、HTTP fallback）；否则/失败 ⇒ 原 `LanEndpoint`。
 #[cfg(all(feature = "lan-quic", not(feature = "relay")))]
 async fn lan_quic_or_http(
@@ -219,7 +299,7 @@ async fn lan_quic_or_http(
         );
         return Ok(Box::new(LanEndpoint::new(&peer.base, client)));
     }
-    let registry = match crate::lan_quic::process_registry().await {
+    let registry = match quic_registry_for_wiring().await {
         Ok(r) => r,
         Err(why) => {
             eprintln!(
@@ -1106,11 +1186,11 @@ mod quic_wiring_tests {
 
     #[tokio::test]
     async fn valid_but_unreachable_quic_falls_back_to_http_after_first_failure() {
-        // Registry 初始化要用真实设备身份（写进测试 app-data 目录）。
-        crate::db::ensure_test_app_data_dir();
-        let registry = crate::lan_quic::process_registry()
-            .await
-            .expect("进程级 Registry 必须能懒初始化");
+        let _serial = super::test_registry_lock().lock().await;
+        // ⚠️ 与 E2E 同因：用常驻 runtime 上的测试共享 Registry（不用全局 process_registry，
+        // 那会绑在某个测试 runtime 上、测试结束就停摆）。
+        test_override_registry(test_shared_registry());
+        let registry = test_shared_registry();
         let before = registry.connect_attempts();
 
         let http = spawn_http_ok("HTTP-AFTER-QUIC-FAIL").await;
@@ -1138,6 +1218,125 @@ mod quic_wiring_tests {
         assert!(
             registry.connect_attempts() > before,
             "必须真的先试过 QUIC（Registry connect_attempts 要增加），否则判据没覆盖回退路径"
+        );
+    }
+}
+
+/// ⭐ **P3-2a 单进程端到端**（仅 lan-quic 非 relay）：从 **`endpoint_for_peer` 入口**真的走一次
+/// QUIC —— 证明"公告原料齐 ⇒ 选 QUIC 且成功"，而不只是各零件单测。
+///
+/// 判据形状（为什么"成功只可能来自 QUIC"）：
+/// * 本地起一个**真 QUIC 服务端**（独立 secret），只有它会返回 `QUIC-ONLY-RESPONSE`；
+/// * `peer.base` 故意给 **不可达** 的 `http://127.0.0.1:1` ⇒ 若请求真走了 HTTP fallback，
+///   结果只可能是 `Err`（连接被拒）；
+/// * 因此 `get` 拿到 `200 + QUIC-ONLY-RESPONSE`、且服务端确认收到那条请求 ⇒ **只能来自 QUIC**。
+///
+/// ⚠️ 本模块走**生产接线** ⇒ 用的是全局 `process_registry`（`OnceCell`）。共享性检查见
+/// `the_process_registry_is_a_shared_singleton`；对"测试互相污染"的核对与结论写在报告里。
+#[cfg(all(test, feature = "lan-quic", not(feature = "relay")))]
+mod quic_single_process_e2e_tests {
+    use super::*;
+    use crate::lan_quic::{bind_direct, LanQuicEndpoint};
+    use crate::relay_tunnel::{read_request, write_reply, TunnelReply};
+    use iroh::SecretKey;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn ipv4_port(ep: &LanQuicEndpoint) -> u16 {
+        ep.local_addrs()
+            .iter()
+            .find_map(|s| match s {
+                std::net::SocketAddr::V4(v4) if v4.port() != 0 => Some(v4.port()),
+                _ => None,
+            })
+            .expect("端点必须至少绑上一个 IPv4 端口")
+    }
+
+    #[tokio::test]
+    async fn a_get_from_endpoint_for_peer_succeeds_only_via_quic() {
+        let _serial = super::test_registry_lock().lock().await;
+        // ⚠️ 不用全局 process_registry：它绑在首次初始化它的测试 runtime 上，测试结束就停摆
+        //（见 `quic_registry_for_wiring` 上方注释）。这里注入**常驻 runtime 上的测试共享 Registry**，
+        // 但仍然走 `endpoint_for_peer` 的生产分支（只有 Registry 来源不同）。
+        test_override_registry(test_shared_registry());
+
+        // a) 本地真 QUIC 服务端：接一条连接、读一次请求、回固定 200/body。
+        let server = bind_direct(SecretKey::generate())
+            .await
+            .expect("本地 QUIC 服务端");
+        let port = ipv4_port(&server);
+        let node_hex = server.node_id_hex();
+        let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+        let server_task = tokio::spawn(async move {
+            let Some(incoming) = server.accept().await else {
+                panic!("端点已关，接不到连接");
+            };
+            let conn = incoming.await.expect("QUIC 握手");
+            let (mut send, mut recv) = conn.accept_bi().await.expect("接流");
+            let req = read_request(&mut recv).await.expect("读请求");
+            let target = req.target.clone();
+            write_reply(
+                &mut send,
+                &TunnelReply {
+                    status: 200,
+                    body: b"QUIC-ONLY-RESPONSE".to_vec(),
+                },
+            )
+            .await
+            .expect("写应答");
+            send.finish().expect("收流");
+            let _ = seen_tx.send(target);
+            // 客户端连接由全局 Registry 缓存；这里等它关（测试收尾会 abort 本任务）。
+            let _ = conn.closed().await;
+        });
+
+        // b) peer.base 不可达 ⇒ HTTP fallback 若被走到只会失败。
+        let peer = crate::mesh::MeshPeer {
+            device_id: "dev-e2e".to_string(),
+            base: "http://127.0.0.1:1".to_string(),
+            quic_addrs: vec![format!("127.0.0.1:{port}")],
+            node_id: node_hex,
+        };
+
+        // c) 走生产入口 `endpoint_for_peer`（不是直接 new QuicMeshEndpoint）。
+        let ep = endpoint_for_peer(&peer, reqwest::Client::new())
+            .await
+            .expect("原料齐全 ⇒ 必须构造出 QUIC 复合端点");
+        let reply = tokio::time::timeout(
+            Duration::from_secs(30),
+            ep.get("/mesh/manifest?space_id=e2e", None, None),
+        )
+        .await
+        .expect("30 秒内必须完成（同机 QUIC）")
+        .expect("HTTP fallback 不可达 ⇒ 成功只能来自 QUIC");
+        assert_eq!(reply.status, 200, "状态来自 QUIC 服务端");
+        assert_eq!(
+            reply.body, "QUIC-ONLY-RESPONSE",
+            "正文只可能是 QUIC 服务端返回的那一份"
+        );
+        assert_eq!(
+            seen_rx.await.expect("服务端必须收到请求"),
+            "/mesh/manifest?space_id=e2e",
+            "服务端看到的 target 必须原样"
+        );
+        server_task.abort();
+    }
+
+    /// ⭐ 全局 Registry 的**共享性**核对：两次调用必须是**同一个** Arc（`OnceCell` 一进程一份）。
+    /// 这既是生产语义（一进程一端点），也是"测试会不会互相污染"的关键事实：共享的是**端点**，
+    /// 连接缓存按**对端 node id** 分键 ⇒ 不同测试用不同服务端身份时互不串用。
+    #[tokio::test]
+    async fn the_process_registry_is_a_shared_singleton() {
+        crate::db::ensure_test_app_data_dir();
+        let a = crate::lan_quic::process_registry()
+            .await
+            .expect("进程级 Registry 必须能懒初始化");
+        let b = crate::lan_quic::process_registry()
+            .await
+            .expect("第二次调用必须成功");
+        assert!(
+            Arc::ptr_eq(&a, &b),
+            "process_registry 必须是同一份 Arc（否则每次挑传输都新起端点）"
         );
     }
 }
