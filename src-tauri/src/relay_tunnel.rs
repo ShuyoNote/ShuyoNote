@@ -401,19 +401,52 @@ impl<R: AsyncRead + Unpin> tokio::io::AsyncRead for StreamReplyReader<R> {
     }
 }
 
-#[cfg(feature = "relay")]
+/// ⭐ **P3-2a（2026-11-08）**：本模块从 `relay` 放宽到 **`lan-quic`** —— 里面的
+/// **直连帧搬运**（`bind`/`bind_direct`/`request`/`serve_one_conn`）只靠 iroh 本体，
+/// 无中继也能用 ✓；**relay 专属**的 `bind_with_relay*`（RelayMode/中继地址/许可那一套）
+/// 仍各自挂 `#[cfg(feature = "relay")]` ✓ ⇒ `lan-quic` 构建里一个 relay 符号都不编 ✓。
+#[cfg(feature = "lan-quic")]
 pub mod iroh_tunnel {
     use super::{read_reply, read_request, write_reply, write_request, TunnelReply, TunnelRequest};
 
     /// 隧道专用的 ALPN（与 iroh 上别的协议区分）。
     pub const ALPN: &[u8] = b"shuyo-mesh-tunnel/1";
 
+    /// ⭐ **P3-2a（2026-11-08）**：**无中继**绑定（`Minimal` 预设：⛔ 不配中继、⛔ 不配发现 ⇒ 只走直连地址）。
+    ///
+    /// 这是 `lan-quic` 构建**唯一**的起端点路径（`bind()` 在 lan-quic-only 构建里也走它 ✓）；
+    /// `relay` 构建里的 `bind()` 仍走原来的 `bind_with_relay(None, None)`（行为/日志一字不变 ✓）。
+    /// ⚠️ 固定 `udp_port` 时绑 **IPv4 通配**；端口被占 ⇒ 如实报错（⛔ 不静默退回随机 ✗）。
+    pub async fn bind_direct(
+        secret: iroh::SecretKey,
+        udp_port: Option<u16>,
+    ) -> Result<iroh::Endpoint, String> {
+        let mut builder = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+            .secret_key(secret)
+            .alpns(vec![ALPN.to_vec()]);
+        if let Some(p) = udp_port {
+            builder = builder
+                .bind_addr((std::net::Ipv4Addr::UNSPECIFIED, p))
+                .map_err(|e| format!("固定 UDP 端口 {p} 失败：{e}"))?;
+        }
+        builder
+            .bind()
+            .await
+            .map_err(|e| format!("起 iroh 端点失败（无中继）：{e}"))
+    }
+
     /// 起一个端点：`Minimal` 预设（⛔ 不配中继、不配发现 ⇒ 只走**直连地址**）。
     ///
     /// ⚠️ `Minimal` 只有在开了 `tls-ring` 时才会装上加密提供者（否则 `bind` 会失败），
     /// 所以 `Cargo.toml` 里 `iroh` 那行显式带了 `features = ["tls-ring"]`。
+    /// ⭐ **P3-2a**：`relay` 构建**行为不变**（仍走 `bind_with_relay(None, None)`，含那条中继状态日志 ✓）；
+    /// `lan-quic`-only 构建走 [`bind_direct`]（无中继读数可打 ✓）。
     pub async fn bind(secret: iroh::SecretKey) -> Result<iroh::Endpoint, String> {
-        bind_with_relay(secret, None, None).await
+        #[cfg(feature = "relay")]
+        let ep = bind_with_relay(secret, None, None).await;
+        #[cfg(not(feature = "relay"))]
+        let ep = bind_direct(secret, None).await;
+        ep
     }
 
     /// ⭐ **2026-10-25（异网寻址）**：起端点时可以挂到一条**中继**上。
@@ -421,6 +454,9 @@ pub mod iroh_tunnel {
     /// · 给了中继 ⇒ 本机在对端**不在同一网络**时也能被找到（靠中继打洞/转发）
     /// · ⛔ 不给 ⇒ 只走直连地址（同网才通）—— 与今天的行为一致
     /// · 租约（token）按上游约定挂在 URL 的 `?token=` 上（`iroh-relay` 认这个查询参数）
+    ///
+    /// ⚠️ **P3-2a**：relay 专属（`RelayMode`/中继地址）⇒ 仍只在 `--features relay` 下编。
+    #[cfg(feature = "relay")]
     pub async fn bind_with_relay(
         secret: iroh::SecretKey,
         relay: Option<&str>,
@@ -433,6 +469,7 @@ pub mod iroh_tunnel {
     ///
     /// `udp_port=None` ⇒ 随机（与今天行为完全一致 ✓）；给了就绑那个口（IPv4 通配）。
     /// ⚠️ 端口被占用 ⇒ 如实报错（⛔ 不静默退回随机 —— 那会让"我固定了"变成谎话）。
+    #[cfg(feature = "relay")]
     pub async fn bind_with_relay_on_port(
         secret: iroh::SecretKey,
         relay: Option<&str>,
@@ -445,6 +482,7 @@ pub mod iroh_tunnel {
     /// ⭐ **2026-10-25（真机：热点 NAT 打不通洞 ⇒ 连接时通时不通）**：
     /// `relay_only=true` ⇒ **只走中继**（关掉直连 IP 传输）。
     /// ⚠️ 没配中继时这个开关**无意义**（关掉直连就彻底没路了）⇒ 只有配了中继才生效。
+    #[cfg(feature = "relay")]
     pub async fn bind_with_relay_full(
         secret: iroh::SecretKey,
         relay: Option<&str>,

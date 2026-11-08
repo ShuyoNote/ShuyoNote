@@ -123,6 +123,12 @@ mod relay_route;
 // ⭐ 2026-10-25（Step 2b-1）：隧道帧协议 —— 把**原样 HTTP 请求**搬到对端的一条字节流上
 //   （⛔ 不依赖 iroh：入参是 AsyncRead/AsyncWrite，谁给流都行；iroh 接线是 Step 2b-2）
 mod relay_tunnel;
+// ⭐ **P3-2a（2026-11-08）**：**无中继 QUIC 直连端点骨架** —— 只在 `--features lan-quic` 下编。
+//   ⚠️ 本笔只建端点/暴露 node_id＋本地 UDP 地址＋connect；⛔ 不接同步轮次、⛔ 不改默认/relay 行为。
+//   `relay` 构建也带 `lan-quic`（feature 分层）⇒ 这个模块在 relay 构建里同样编，但**没有任何调用者**
+//   （除它自己的测试）；正式接线是 P3-2 后续步骤。
+#[cfg(feature = "lan-quic")]
+mod lan_quic;
 // 评估用探针（2026-09-30）：量一次**真实网格窗口**的 `/mesh/pull` 在线上多少字节。
 // ⚠️ 它必须待在 crate 内（`mod mesh` 是私有的 ⇒ 外部 crate 拿不到 `start`/`MeshConfig`）；
 //    默认 `#[ignore]`，跑法写在文件头。**它不碰 `mesh.rs`** ✓（那是 AMD 的写域）。
