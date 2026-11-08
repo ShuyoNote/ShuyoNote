@@ -31,6 +31,8 @@ use shuyonote_lib::lan_quic::{
 
 const ROLE_ENV: &str = "SHUYONOTE_QUIC_TEST_ROLE";
 const DIR_ENV: &str = "SHUYONOTE_QUIC_TEST_DIR";
+/// ⭐ task-66：LAN 用例传本机非回环 IPv4；server 子进程据此写 `<lan_ip>:<port>`。
+const LAN_IP_ENV: &str = "SHUYONOTE_QUIC_TEST_LAN_IP";
 const SERVER_TEST: &str = "child_server_binds_and_serves_one_request";
 const CLIENT_TEST: &str = "child_client_requests_over_direct_quic";
 const TARGET: &str = "/mesh/manifest?space_id=two-process";
@@ -86,14 +88,26 @@ struct ChildGuard {
 }
 
 impl ChildGuard {
-    fn spawn(label: &'static str, role: &str, dir: &Path, exe: &Path, test_name: &str) -> Self {
-        let child = Command::new(exe)
-            .env(ROLE_ENV, role)
+    fn spawn(
+        label: &'static str,
+        role: &str,
+        dir: &Path,
+        exe: &Path,
+        test_name: &str,
+        lan_ip: Option<std::net::IpAddr>,
+    ) -> Self {
+        // 子进程只跑**这一个** `#[ignore]` 测试（exact 过滤；`--ignored` 让 libtest 允许跑它）。
+        let mut cmd = Command::new(exe);
+        cmd.env(ROLE_ENV, role)
             .env(DIR_ENV, dir)
-            // 子进程只跑**这一个** `#[ignore]` 测试（exact 过滤；`--ignored` 让 libtest 允许跑它）。
             .args(["--ignored", "--exact", test_name, "--test-threads=1"])
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        // ⭐ task-66：LAN 用例时让 server 子进程把**非回环网卡地址**写进 server.json。
+        if let Some(ip) = lan_ip {
+            cmd.env(LAN_IP_ENV, ip.to_string());
+        }
+        let child = cmd
             .spawn()
             .unwrap_or_else(|e| panic!("起 {label} 子进程失败：{e}"));
         ChildGuard {
@@ -175,8 +189,37 @@ fn unique_dir(tag: &str) -> PathBuf {
 
 // ─────────────────────────────── 父测试（唯一的非 ignore 测试） ───────────────────────────────
 
-#[test]
-fn two_processes_move_one_request_over_direct_quic() {
+/// ⭐ task-66：用标准库取一个**本机非回环 IPv4**（不新增依赖）：
+/// 绑 `0.0.0.0:0` → `connect` 一个外部地址（不会真发包，只为让内核选出口网卡）→ `local_addr().ip()`。
+/// 取不到（CI 只有 loopback / 无默认路由）⇒ `None`（LAN 用例 skip，不算失败）。
+fn non_loopback_ipv4() -> Option<std::net::Ipv4Addr> {
+    for target in ["192.0.2.1:80", "198.51.100.1:80", "8.8.8.8:80"] {
+        let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") else {
+            continue;
+        };
+        if sock.connect(target).is_err() {
+            continue;
+        }
+        if let Ok(local) = sock.local_addr() {
+            if let std::net::IpAddr::V4(v4) = local.ip() {
+                if !v4.is_loopback() && !v4.is_unspecified() {
+                    return Some(v4);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn is_loopback_addr_str(addr: &str) -> bool {
+    addr.parse::<std::net::SocketAddr>()
+        .map(|a| a.ip().is_loopback())
+        .unwrap_or(true)
+}
+
+/// 父测试的**唯一实现**（127 与 LAN 两个用例共用同一套父子协议/超时/ChildGuard）。
+/// `lan_ip=Some(ip)` ⇒ server 地址文件写 `<ip>:<port>`，并断言不是回环。
+fn run_direct_quic_case(tag: &str, lan_ip: Option<std::net::Ipv4Addr>) {
     // ① 无中继配置：本测试**不设且不允许**这些环境变量（否则"直连"可能被中继兜底冒充）。
     for k in [
         "SHUYONOTE_RELAY_URL",
@@ -188,13 +231,20 @@ fn two_processes_move_one_request_over_direct_quic() {
             "两进程验收要求**无中继配置**，但环境里设了 {k}"
         );
     }
-    let dir = unique_dir("quic");
+    let dir = unique_dir(tag);
     let exe = std::env::current_exe().expect("current_exe");
     let server_file = dir.join("server.json");
     let client_file = dir.join("client.json");
 
-    // ② 起 server 子进程 → 等它写出 node_id/port。
-    let mut server = ChildGuard::spawn("server", "server", &dir, &exe, SERVER_TEST);
+    // ② 起 server 子进程 → 等它写出 node_id/port/addr。
+    let mut server = ChildGuard::spawn(
+        "server",
+        "server",
+        &dir,
+        &exe,
+        SERVER_TEST,
+        lan_ip.map(std::net::IpAddr::V4),
+    );
     let addr = match wait_for_file(&server_file, WAIT_FILE_TIMEOUT) {
         Some(v) => v,
         None => {
@@ -208,6 +258,10 @@ fn two_processes_move_one_request_over_direct_quic() {
     let server_node = addr["nodeId"].as_str().expect("nodeId").to_string();
     let server_port = addr["port"].as_u64().expect("port") as u16;
     let server_pid_in_file = addr["pid"].as_u64().expect("pid") as u32;
+    let server_addr = addr["addr"]
+        .as_str()
+        .unwrap_or_else(|| panic!("server.json 必须带 addr：{addr}"))
+        .to_string();
     assert!(
         !server_node.is_empty() && server_port != 0,
         "server 必须报出非空 node_id 与真实 UDP 端口：{addr}"
@@ -217,9 +271,43 @@ fn two_processes_move_one_request_over_direct_quic() {
         server.id(),
         "server 产物里的 pid 必须就是父进程起的那个子进程"
     );
+    // ⭐ task-66：LAN 用例断言 server 报的是**非回环**地址，且确实绑定在 0.0.0.0（通配）。
+    match lan_ip {
+        Some(ip) => {
+            assert!(
+                !is_loopback_addr_str(&server_addr),
+                "LAN 用例的 server 地址必须非回环：{server_addr}"
+            );
+            assert_eq!(
+                server_addr.parse::<std::net::SocketAddr>().map(|a| a.ip()),
+                Ok(std::net::IpAddr::V4(ip)),
+                "server 地址必须就是本机 LAN IP：{server_addr}"
+            );
+            let bound = addr["boundAddrs"].as_array().cloned().unwrap_or_default();
+            let bound: Vec<String> = bound
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect();
+            assert!(
+                bound.iter().any(|b| b.starts_with("0.0.0.0:")),
+                "server 必须 bind 0.0.0.0（不锁回环）：{bound:?}"
+            );
+        }
+        None => assert!(
+            is_loopback_addr_str(&server_addr),
+            "127 用例的 server 地址必须是回环：{server_addr}"
+        ),
+    }
 
-    // ③ 起 client 子进程（它自己读 server.json、自己 bind、发一次 GET）。
-    let mut client = ChildGuard::spawn("client", "client", &dir, &exe, CLIENT_TEST);
+    // ③ 起 client 子进程（它自己读 server.json 的 addr、自己 bind、发一次 GET）。
+    let mut client = ChildGuard::spawn(
+        "client",
+        "client",
+        &dir,
+        &exe,
+        CLIENT_TEST,
+        lan_ip.map(std::net::IpAddr::V4),
+    );
     let deadline = Instant::now() + TOTAL_TIMEOUT;
     let server_st = server
         .wait_timeout(deadline.saturating_duration_since(Instant::now()))
@@ -270,6 +358,27 @@ fn two_processes_move_one_request_over_direct_quic() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn two_processes_move_one_request_over_direct_quic() {
+    run_direct_quic_case("quic", None);
+}
+
+/// ⭐ **task-66**：两进程走**本机真实网卡**的 IPv4（非回环），证明"LAN 地址可用"。
+/// 取不到非回环 IPv4（CI 可能只有 loopback）⇒ **skip 并打印原因**（返回 ok，不算失败）。
+#[test]
+fn two_processes_move_one_request_over_a_lan_address() {
+    let Some(ip) = non_loopback_ipv4() else {
+        eprintln!(
+            "[lan-quic-lan] SKIP：取不到本机非回环 IPv4（只有 loopback / 无默认路由）⇒ 本用例跳过，不算失败"
+        );
+        return;
+    };
+    eprintln!(
+        "[lan-quic-lan] 用本机 LAN IPv4：{ip}（server bind 0.0.0.0:0，地址文件写 {ip}:<port>）"
+    );
+    run_direct_quic_case("quic-lan", Some(ip));
+}
+
 // ─────────────────────────────── 子进程角色（`#[ignore]` + `--exact` 调度） ───────────────────────────────
 
 fn child_env() -> Option<(String, PathBuf)> {
@@ -306,9 +415,19 @@ fn child_server_binds_and_serves_one_request() {
         let ep = bind_direct(iroh::SecretKey::generate())
             .await
             .expect("server bind_direct");
+        let port = v4_port(&ep);
+        // ⭐ task-66：LAN 用例时写**非回环网卡地址**；普通用例写 127.0.0.1。
+        let lan_ip = std::env::var(LAN_IP_ENV).ok();
+        let addr = match lan_ip.as_deref() {
+            Some(ip) => format!("{ip}:{port}"),
+            None => format!("127.0.0.1:{port}"),
+        };
+        let bound: Vec<String> = ep.local_addrs().iter().map(|a| a.to_string()).collect();
         let payload = serde_json::json!({
             "nodeId": ep.node_id_hex(),
-            "port": v4_port(&ep),
+            "port": port,
+            "addr": addr,
+            "boundAddrs": bound,
             "pid": std::process::id(),
         });
         atomic_write(&dir.join("server.json"), &payload.to_string());
@@ -342,8 +461,12 @@ fn child_client_requests_over_direct_quic() {
             .expect("client 等不到 server.json");
         let node = server["nodeId"].as_str().expect("nodeId");
         let port = server["port"].as_u64().expect("port") as u16;
-        let addr = endpoint_addr(node, &[format!("127.0.0.1:{port}")])
-            .expect("server 地址必须能解析成 EndpointAddr");
+        // ⭐ task-66：地址由 server.json 的 `addr` 决定（127 回环 / LAN 网卡地址同一套协议）。
+        let addr_text = server["addr"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("127.0.0.1:{port}"));
+        let addr = endpoint_addr(node, &[addr_text]).expect("server 地址必须能解析成 EndpointAddr");
         let ep = bind_direct(iroh::SecretKey::generate())
             .await
             .expect("client bind_direct");
