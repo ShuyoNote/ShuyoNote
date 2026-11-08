@@ -1307,6 +1307,7 @@ pub fn run() {
             // C2 网络闸门（2026-09-15）：Android 上真查网络类型，其它平台回 "n/a"（闸门不适用）。
             net::network_type,
             sync::sync_workspace,
+            sync::sync_core_round,
             // 冲刺 CRDT S9（2026-09-23）：**血统 claim** —— 桌面侧与 web 侧同端点
             // （`POST /sync/lineage-claim`）、同口径。接上它之后这条命令才不是"web 专属"
             // （`scripts/check-web-commands.mjs` 的 `WEB_ONLY_COMMANDS` 已相应撤回）。

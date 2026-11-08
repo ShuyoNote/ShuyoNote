@@ -355,6 +355,17 @@ export interface MeshSyncAllSpace {
  * `spaces` 顺序＝Rust 逐空间串行编排顺序（＝`sync_profiles` 顺序）；
  * `applied/candidates` 只累加**成功**空间（失败行没有 report）。
  */
+/**
+ * ⭐ **P3-1a 第二刀（task-54）**：App 自动同步**一轮**的汇总（Rust `sync::SyncCoreRoundReport`）。
+ * · `server`：服务端那一支逐空间串行结果（只含 `server_url`＋`space_id` 都有的档案；失败行带 `error`）；
+ * · `mesh`：网格那一支所有 profiles 逐空间串行汇总（失败不连坐）。
+ * ⚠️ 定时器/网络闸门/退避仍在前端 —— 这条命令只做"编排"。
+ */
+export interface SyncCoreRoundReport {
+  server: WorkspaceSyncResult[];
+  mesh: MeshSyncAllReport;
+}
+
 export interface MeshSyncAllReport {
   spaces: MeshSyncAllSpace[];
   total: number;
@@ -1642,6 +1653,8 @@ export interface CommandMap {
     };
   };
   sync_workspace: { args: { wsId: string }; result: WorkspaceSyncResult };
+  /** ⭐ P3-1a 第二刀：App 自动同步**一轮**（服务端档案逐个串行 ＋ 所有 profiles 网格逐个串行）。 */
+  sync_core_round: { args: undefined; result: SyncCoreRoundReport };
   /** C1 预算刹车（2026-09-15）：设备级设置，存 `meta.sync_state` 的 KV。 */
   get_sync_budget: { args: undefined; result: SyncBudget };
   /** ⚠️ 回显的是**夹取后**的值（磁盘余量下限不可关：传 0 会回 256）⇒ 界面要用返回值纠正自己。 */

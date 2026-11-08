@@ -3,7 +3,7 @@ import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import type { WikiPageInput } from "./wikiExport";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
-import type { CommandMap, LanStatus, MeshConfigState, MeshPanelScope, MeshPanelSpaces, MeshRoundReport, MeshSyncAllReport, RelayStatus, SyncBudget, SyncStreamStatus } from "./platform/commands";
+import type { CommandMap, LanStatus, MeshConfigState, MeshPanelScope, MeshPanelSpaces, MeshRoundReport, MeshSyncAllReport, RelayStatus, SyncBudget, SyncCoreRoundReport, SyncStreamStatus } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 // The command name, args shape and result are validated at compile time against
@@ -23,7 +23,7 @@ const invoke = <K extends keyof CommandMap>(
 // `attachments_paused` 时只看了一处，于是 `SyncPanel` 通过 `import type { SyncProfile }
 // from "../lib/api"` 拿到的类型少了新字段、`tsc` 报 TS2339——而这还是**报错**的那种；
 // 同一个原因造成的静默不一致（比如 `conflicts` 曾经只在一边有）连报错都没有。
-export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult, LanStatus } from "./platform/commands";
+export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult, SyncCoreRoundReport, LanStatus } from "./platform/commands";
 /** ⭐ 2026-10-28：加密空间逐条同步状态（"为什么没数据"的读数）—— 契约在 `commands.ts` 一处。 */
 export type SpaceSyncState = CommandMap["space_sync_state"]["result"];
 export type { MeshRoundReport, MeshPeerPullReport, MeshConfigState } from "./platform/commands";
@@ -537,6 +537,12 @@ export const api = {
   /** C2 网络闸门：Android 上真查，其它平台 `"n/a"`（闸门不适用）。
    *  ⚠️ `"unknown"` = 不确定 ⇒ 调用方**不要**自动拉取；`"n/a"` = 不适用 ⇒ **不要**拦。 */
   networkType: () => invoke("network_type"),
+  /**
+   * ⭐ **P3-1a 第二刀（task-54）**：App 自动同步**一轮**（服务端档案逐个串行 ＋ 所有 profiles 网格逐个串行）。
+   * ⚠️ 定时器/网络闸门/退避仍由前端 `runAutoSyncRound` 负责；这条命令只做编排。
+   */
+  syncCoreRound: () =>
+    invoke("sync_core_round") as Promise<SyncCoreRoundReport>,
   syncWorkspace: async (wsId: string) => {
     const r = await invoke("sync_workspace", { wsId });
     emitSyncCompleted(r ? [r] : []);

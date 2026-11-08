@@ -72,14 +72,18 @@ describe("网格（丙-③-b）· 面板接线", () => {
     expect(panel, "读不到时不许用 [] 冒充「一台都没有」").toContain("if (Array.isArray(pairedNow))");
   });
 
-  it("①b 自动同步也对网格生效（⭐ P3-1a：一次 Rust 调用，不再逐空间 meshSyncNow）", () => {
+  it("①b 自动同步也对网格生效（⭐ P3-1a 第二刀：一次 syncCoreRound，服务端+网铬都下沉 Rust）", () => {
     const app = read("src/App.tsx");
-    expect(app, "自动同步那条路没跑网格 ⇒ 用户得手点同步才会换").toContain("api.meshSyncAllNow(");
-    // ⭐ P3-1a：自动路已经收成**一次**调用（逐空间串行编排沉到 Rust）⇒ ⛔ App 里不许再留逐空间循环。
-    expect(
-      app,
-      "自动同步不该再逐空间调 `api.meshSyncNow`（已收成一次 `meshSyncAllNow`；那会变成两条路）",
-    ).not.toContain("api.meshSyncNow(");
+    // ⭐ task-54：一轮编排（服务端档案逐个串行 ＋ 所有 profiles 网格逐个串行）收成**一次**调用。
+    expect(app, "自动同步那条路没跑 Rust 一轮编排 ⇒ 服务端/网格都不动").toContain("api.syncCoreRound(");
+    // ⛔ App 里不许再逐空间循环（那会变成第二套编排、失败连坐语义也各写一份）。
+    expect(app, "自动同步不该再逐空间调 `api.syncWorkspace`（已下沉 Rust）").not.toContain(
+      "api.syncWorkspace(",
+    );
+    expect(app, "自动同步不该再调 `api.meshSyncAllNow`（已并入 syncCoreRound）").not.toContain(
+      "api.meshSyncAllNow(",
+    );
+    expect(app, "自动同步不该再逐空间调 `api.meshSyncNow`").not.toContain("api.meshSyncNow(");
     // ⚠️ gate 只许有一处：Rust 侧 `mesh_sync_one` 自己早退；前端**不重判一遍**。
     //    （这条断言钉的是"别在 App 里再写一个 if (mesh.enabled)"那种第二份解释。）
     expect(app, "自动同步那条路里不该自己判网格开没开（gate 在 Rust 侧一处实现）").not.toContain("mesh.enabled");

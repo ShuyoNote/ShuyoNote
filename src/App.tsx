@@ -324,36 +324,28 @@ async function runAutoSyncRound(): Promise<void> {
     const profiles = await api.listSyncProfiles();
     // ⚠️ **服务端那条**：口径**逐字不变** —— 仍要求 `space_id` ＋ `server_url` ✓
     //（`space_id` 是"服务端给这个空间分配的 id"，⛔ 它**不是**"这个空间要不要同步"的判据 ✗）
+    // ⭐ P3-1a 第二刀：这一支只用来决定 **withSyncStatus 是否包这一轮**（旧语义：只有服务端档案
+    //   存在时才显示"正在自动同步…"）；真正跑几个空间由 Rust 再按同一口径筛。
     const bound = (profiles || []).filter((p: any) => p.space_id && p.server_url);
-    let syncResults: SyncLike[] = [];
-    if (bound.length) {
-      // P1：**自动同步必须配对 begin/end**（`withSyncStatus` 保证），
-      // 否则 Rust 侧的附件进度事件会把 store 置成"正在同步"且没人收尾，
-      // 面板就永远停在"正在同步…"（真机实测过）。
-      syncResults = await withSyncStatus("正在自动同步…", () =>
-        Promise.all(
-          bound.map((p: any) => api.syncWorkspace(p.ws_id).catch(() => null)),
-        ),
-      );
+    // ⭐⭐ **P3-1a 第二刀（task-54）**：App 自动同步的**一轮编排下沉 Rust** —— 一次调用
+    //   `syncCoreRound()`：服务端档案逐个串行 ＋ **所有 profiles** 网格逐个串行（失败不连坐）。
+    //   ⛔ 前端不再逐空间 `syncWorkspace`/`meshSyncAllNow`；定时器/网络闸门/退避**仍在这里**。
+    //   ⚠️ 面板手动/「立即同步」仍走单空间命令（带进度/重试，那是另一条路，本笔不动）。
+    const round = bound.length
+      ? // P1：**自动同步必须配对 begin/end**（`withSyncStatus` 保证），
+        // 否则 Rust 侧的附件进度事件会把 store 置成"正在同步"且没人收尾，
+        // 面板就永远停在"正在同步…"（真机实测过）。
+        await withSyncStatus("正在自动同步…", () => api.syncCoreRound())
+      : await api.syncCoreRound();
+    // 服务端那一支：失败行也保留（`error` 有值）；`roundWasEmpty` 只看 `pulled > 0`，语义不变。
+    const syncResults: SyncLike[] = (round?.server ?? []) as SyncLike[];
+    // 网格那一支：汇总里**成功空间**才有 `report`（失败行只有 error）⇒ 与旧行为一样"失败按没换到算"。
+    const meshReports: MeshLike[] = [];
+    for (const s of round?.mesh?.spaces ?? []) {
+      if (s.report) meshReports.push(s.report);
     }
-    // ★ 网格（丙）：⭐ **P3-1a 第一刀** —— 把"逐空间串行跑一轮"下沉到 Rust：
-    //   App 这里**一次调用** `meshSyncAllNow()`（Rust 逐空间串行、失败不连坐）。
-    //   面板手动/「立即同步」仍走**单空间** `meshSyncNow(ws_id)`（带进度/重试，那是另一条路）。
-    // ⚠️ "没配网格 ⇒ 一个字节都不动"这条 gate **只在 Rust 侧**（`mesh_sync_one` 自己早退）
-    // ——前端**不重复判一遍**（两处各解释一遍迟早漂）。
-    // ⚠️⚠️ **2026-10-09 修（真事故）**：这里原来滤 `p.space_id` —— **个人空间的 `space_id` 就是空串**
-    // ⇒ 个人空间＝"设备直连"的主用例被整批滤掉 ⇒ 自动路一个网格轮都不发。现在**对每一份档案都发**
-    //（整批交给 Rust 逐空间串行），配没配由 Rust 那**一处**判 ✓。
-    const meshCandidates = profiles || [];
-    let meshReports: MeshLike[] = [];
-    if (meshCandidates.length) {
-      const all = await api.meshSyncAllNow().catch(() => null);
-      // 汇总里**成功空间**才有 `report`（失败行只有 error）⇒ 与旧行为一样"失败按没换到算"。
-      const reports: MeshLike[] = [];
-      for (const s of all?.spaces ?? []) {
-        if (s.report) reports.push(s.report);
-      }
-      meshReports = reports;
+    // 旧行为：**有档案**才在这一轮末尾刷新页列表（空档案 ⇒ 一个字节都不动）。
+    if ((profiles || []).length > 0) {
       await useNotes.getState().loadPages();
     }
     // ★ 空闲退避（2026-09-30）：**跑完了才记时**（被闸门拦掉、或忙的时候不算"跑过" ✓）。

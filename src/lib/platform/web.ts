@@ -3400,6 +3400,24 @@ export function makeInvoke(store: SqliteStore) {
     // 而猜错的代价是"偷偷跑用户流量"（见 src-tauri/src/net.rs 的模块注释）。
     // 产品上 Web 版本就不提供多设备同步，这里更没有理由靠猜。
     if (cmd === "network_type") return "n/a" as T;
+    if (cmd === "sync_core_round") {
+      // ⭐ P3-1a 第二刀（task-54）：Web 形态没有网格发现层 ⇒ mesh 恒空；服务端那支按
+      //   `sync_workspace` 同一套实现逐档案串行（失败进各自行，不连坐）。
+      const server: any[] = [];
+      for (const p of listProfiles(store)) {
+        if (!p.server_url || !p.space_id) continue;
+        try {
+          const pushed = await doPush(store, p);
+          const pulled = await doPull(store, p);
+          const att = await syncAttachments(store, p);
+          const latest = getProfile(store, p.ws_id);
+          server.push({ ws_id: p.ws_id, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null, attachments_paused: att.paused, attachments_skipped_upload: att.skippedUpload, attachments_skipped_download: att.skippedDownload, ...attBudgetFields(att), ...pendingRemoteFields(store) });
+        } catch (e) {
+          server.push({ ws_id: p.ws_id, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e), attachments_paused: false, attachments_skipped_upload: 0, attachments_skipped_download: 0, ...attBudgetFields(null), ...pendingRemoteFields(store) });
+        }
+      }
+      return { server, mesh: { spaces: [], total: 0, ok: 0, failed: 0, applied: 0, candidates: 0 } } as T;
+    }
     if (cmd === "sync_workspace") {
       const wsId = String(a.wsId ?? a.ws_id ?? wsIdNow());
       const p = getProfile(store, wsId);

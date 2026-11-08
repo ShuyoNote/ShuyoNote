@@ -4475,10 +4475,11 @@ pub fn summarize_mesh_all(
 ///   落库/`mesh-applied` 事件）；⛔ **不并发**（并发会多窗口/多空间抢锁）；
 /// · **失败不连坐**：某个空间失败只记在它自己那一行（`error`），后面的空间照跑；
 /// · **空档案** ⇒ `spaces: []`、全 0（不报错、一个字节都不动）。
-#[tauri::command]
-pub async fn mesh_sync_all_now(
-    app: tauri::AppHandle,
-    db: State<'_, Db>,
+/// ⭐ **P3-1a 第二刀（task-54）**：`mesh_sync_all_now` 与 `sync_core_round` 共用的内部实现
+/// （逐空间串行、失败不连坐；空间来源＝`list_profiles`）。
+async fn mesh_sync_all_report(
+    app: &tauri::AppHandle,
+    db: &State<'_, Db>,
 ) -> Result<MeshSyncAllReport, String> {
     // 空间清单：与 App 自动同步同一数据源（`list_sync_profiles` 的底层 `list_profiles`）。
     let ws_ids: Vec<String> = {
@@ -4489,10 +4490,75 @@ pub async fn mesh_sync_all_now(
         Vec::with_capacity(ws_ids.len());
     for ws_id in ws_ids {
         // ⚠️ 串行 `await`：一空间跑完才跑下一个；失败只记这一行（⛔ 不连坐、⛔ 不提前 return）。
-        let r = mesh_sync_one(&app, &db, Some(ws_id.clone())).await;
+        let r = mesh_sync_one(app, db, Some(ws_id.clone())).await;
         results.push((ws_id, r));
     }
     Ok(summarize_mesh_all(results))
+}
+
+/// ⭐ **P3-1a 第一刀**：App 自动同步的**一次调用**入口（逐空间串行、失败不连坐）。
+#[tauri::command]
+pub async fn mesh_sync_all_now(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+) -> Result<MeshSyncAllReport, String> {
+    mesh_sync_all_report(&app, &db).await
+}
+
+/// ⭐ **P3-1a 第二刀（task-54）**：`sync_core_round` 的汇总（字段 camelCase）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncCoreRoundReport {
+    /// 服务端那一支：**逐空间串行**（只跑 `server_url` ＋ `space_id` 都有的档案；失败行带 `error`）。
+    pub server: Vec<WorkspaceSyncResult>,
+    /// 网格那一支：所有 profiles 逐空间串行（失败不连坐）。
+    pub mesh: MeshSyncAllReport,
+}
+
+/// ⭐ **P3-1a 第二刀（task-54）**：App 自动同步的**一轮** —— 服务端档案逐个串行 ＋ 所有 profiles
+/// 网格逐个串行，失败不连坐、保留每空间错误。
+///
+/// ⚠️ **定时器/网络闸门/退避仍在前端**（本笔只下沉"编排"）：这条命令不做任何节流/闸门判断。
+/// ⚠️ 与单空间 `sync_workspace` / `mesh_sync_now` 共用同一套内部实现（⛔ 不复制行为）。
+#[tauri::command]
+pub async fn sync_core_round(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+) -> Result<SyncCoreRoundReport, String> {
+    let profiles = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        list_profiles(&c)?
+    };
+    // ① 服务端那支：与旧 App 口径一致（`space_id` ＋ `server_url` 都非空才跑），逐空间**串行**。
+    let mut server: Vec<WorkspaceSyncResult> = Vec::new();
+    for p in &profiles {
+        if p.server_url.trim().is_empty() || p.space_id.trim().is_empty() {
+            continue;
+        }
+        // ⚠️ 失败**只进它自己那一行**（含错误原文），后面的空间照跑（⛔ 不提前 return）。
+        match sync_workspace_result(&app, &db, &p.ws_id).await {
+            Ok(row) => server.push(row),
+            Err(e) => server.push(workspace_sync_error_row(&p.ws_id, e)),
+        }
+    }
+    // ② 网格那支：**所有 profiles**（个人空间 `space_id` 常为空，但仍要跑网格）；
+    //    内部逐空间串行、失败不连坐（与 `mesh_sync_all_now` **同一实现**）。
+    let mesh = match mesh_sync_all_report(&app, &db).await {
+        Ok(r) => r,
+        Err(e) => {
+            // 列表都读不到是异常路径 ⇒ 不让整轮按死；如实记一行、回空汇总。
+            eprintln!("[sync] core round：网格汇总失败（服务端结果照回）：{e}");
+            MeshSyncAllReport {
+                spaces: Vec::new(),
+                total: 0,
+                ok: 0,
+                failed: 0,
+                applied: 0,
+                candidates: 0,
+            }
+        }
+    };
+    Ok(SyncCoreRoundReport { server, mesh })
 }
 
 /// ⭐⭐ **task-12（owner 拍 C：后台每 5 分钟一轮）**：**不靠界面**也把网格那一轮跑掉 ✓。
@@ -7454,6 +7520,87 @@ async fn sync_workspace_only(
     })
 }
 
+/// ⭐ **P3-1a 第二刀（task-54）**：`WorkspaceSyncResult` 的成功行（命令与 core round 共用一份映射）。
+fn workspace_sync_result_of(ws_id: String, rep: SyncReport) -> WorkspaceSyncResult {
+    WorkspaceSyncResult {
+        ws_id,
+        pushed: rep.pushed,
+        pulled: rep.pulled,
+        last_pushed_seq: rep.last_pushed_seq,
+        last_pulled_seq: rep.last_pulled_seq,
+        error: None,
+        conflicts: rep.conflicts,
+        block_conflict_pages: rep.block_conflict_pages,
+        pending_remote_pages: rep.pending_remote_pages,
+        attachments_paused: rep.attachments_paused,
+        attachments_skipped_upload: rep.attachments_skipped_upload,
+        attachments_skipped_download: rep.attachments_skipped_download,
+        attachments_paused_reason: rep.attachments_paused_reason,
+        attachments_skipped_too_large: rep.attachments_skipped_too_large,
+        attachments_failed: rep.attachments_failed,
+        attachments_bytes_downloaded: rep.attachments_bytes_downloaded,
+    }
+}
+
+/// ⭐ **P3-1a 第二刀（task-54）**：失败行（**保留每空间错误**；core round 用它"失败不连坐"）。
+fn workspace_sync_error_row(ws_id: &str, error: String) -> WorkspaceSyncResult {
+    WorkspaceSyncResult {
+        ws_id: ws_id.to_string(),
+        pushed: 0,
+        pulled: 0,
+        last_pushed_seq: 0,
+        last_pulled_seq: 0,
+        error: Some(error),
+        conflicts: Vec::new(),
+        block_conflict_pages: 0,
+        pending_remote_pages: 0,
+        attachments_paused: false,
+        attachments_skipped_upload: 0,
+        attachments_skipped_download: 0,
+        attachments_paused_reason: String::new(),
+        attachments_skipped_too_large: 0,
+        attachments_failed: 0,
+        attachments_bytes_downloaded: 0,
+    }
+}
+
+/// ⭐ **P3-1a 第二刀（task-54）**：`sync_workspace` 命令的**内部实现**（命令与 core round 共用）。
+///
+/// 行为/历史/错误话术与旧命令**逐字相同**：校验 server_url/space_id ⇒ `sync_workspace_only`
+/// ⇒ 成功/失败都写 `sync_history` ⇒ 映射成 `WorkspaceSyncResult`（失败仍是 `Err`，由命令原样返回；
+/// core round 把 `Err` 转成**它自己那一行**，不连坐其它空间）。
+async fn sync_workspace_result(
+    app: &tauri::AppHandle,
+    db: &State<'_, Db>,
+    ws_id: &str,
+) -> Result<WorkspaceSyncResult, String> {
+    let profile = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        get_profile(&c, ws_id)?
+    };
+    // 服务端 S5+ 的 push/pull 强制 require_space——多设备同步必须绑定一个团队空间。
+    // space_id 留空（单用户）无法走 require_space，服务端会 403。这里提前挡下，
+    // 给出明确的「需绑定团队空间」提示，而不是让请求打到服务端才 403。
+    if profile.server_url.is_empty() {
+        return Err("请先配置同步服务器".to_string());
+    }
+    if profile.space_id.is_empty() {
+        return Err("需绑定团队空间才能同步（多设备同步不支持留空）".to_string());
+    }
+    match sync_workspace_only(app, db, &profile).await {
+        Ok(rep) => {
+            write_sync_history(
+                db, ws_id, &profile, rep.pushed, rep.pulled, true, "", &rep.items,
+            );
+            Ok(workspace_sync_result_of(ws_id.to_string(), rep))
+        }
+        Err(e) => {
+            write_sync_history(db, ws_id, &profile, 0, 0, false, &e, &[]);
+            Err(e)
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn sync_now(
     app: tauri::AppHandle,
@@ -7518,48 +7665,8 @@ pub async fn sync_workspace(
     db: State<'_, Db>,
     ws_id: String,
 ) -> Result<WorkspaceSyncResult, String> {
-    let profile = {
-        let c = db.0.lock().expect("db mutex poisoned");
-        get_profile(&c, &ws_id)?
-    };
-    // 服务端 S5+ 的 push/pull 强制 require_space——多设备同步必须绑定一个团队空间。
-    // space_id 留空（单用户）无法走 require_space，服务端会 403。这里提前挡下，
-    // 给出明确的「需绑定团队空间」提示，而不是让请求打到服务端才 403。
-    if profile.server_url.is_empty() {
-        return Err("请先配置同步服务器".to_string());
-    }
-    if profile.space_id.is_empty() {
-        return Err("需绑定团队空间才能同步（多设备同步不支持留空）".to_string());
-    }
-    match sync_workspace_only(&app, &db, &profile).await {
-        Ok(rep) => {
-            write_sync_history(
-                &db, &ws_id, &profile, rep.pushed, rep.pulled, true, "", &rep.items,
-            );
-            Ok(WorkspaceSyncResult {
-                ws_id,
-                pushed: rep.pushed,
-                pulled: rep.pulled,
-                last_pushed_seq: rep.last_pushed_seq,
-                last_pulled_seq: rep.last_pulled_seq,
-                error: None,
-                conflicts: rep.conflicts,
-                block_conflict_pages: rep.block_conflict_pages,
-                pending_remote_pages: rep.pending_remote_pages,
-                attachments_paused: rep.attachments_paused,
-                attachments_skipped_upload: rep.attachments_skipped_upload,
-                attachments_skipped_download: rep.attachments_skipped_download,
-                attachments_paused_reason: rep.attachments_paused_reason,
-                attachments_skipped_too_large: rep.attachments_skipped_too_large,
-                attachments_failed: rep.attachments_failed,
-                attachments_bytes_downloaded: rep.attachments_bytes_downloaded,
-            })
-        }
-        Err(e) => {
-            write_sync_history(&db, &ws_id, &profile, 0, 0, false, &e, &[]);
-            Err(e)
-        }
-    }
+    // ⭐ P3-1a：命令体抽到内部实现（core round 复用同一份校验/历史/话术）。
+    sync_workspace_result(&app, &db, &ws_id).await
 }
 
 /// Record one sync run in `meta.sync_history` (best-effort; never blocks sync).
@@ -14334,6 +14441,69 @@ mod p31_mesh_sync_all_tests {
             "失败原因要原样带出"
         );
         assert!(out.spaces[2].report.is_some());
+    }
+
+    // ── ⭐ P3-1a 第二刀（task-54）：sync_core_round 编排 ─────────────────────────────
+
+    #[test]
+    fn workspace_sync_error_row_keeps_the_error_and_zeroes_the_readouts() {
+        let row = workspace_sync_error_row("ws-a", "服务端返回 500".to_string());
+        assert_eq!(row.ws_id, "ws-a");
+        assert_eq!(row.error.as_deref(), Some("服务端返回 500"));
+        assert_eq!((row.pushed, row.pulled), (0, 0));
+        assert!(row.conflicts.is_empty());
+        assert_eq!(row.attachments_bytes_downloaded, 0);
+    }
+
+    #[test]
+    fn sync_core_round_summary_is_camel_case_and_holds_both_halves() {
+        let server = vec![workspace_sync_error_row("ws-a", "x".to_string())];
+        let mesh = summarize_mesh_all(Vec::new());
+        let out = SyncCoreRoundReport { server, mesh };
+        let json = serde_json::to_string(&out).unwrap();
+        assert!(json.contains("\"server\":["), "{json}");
+        assert!(json.contains("\"mesh\":{"), "{json}");
+        assert!(json.contains("\"server\":["), "字段名 camelCase（顶层）");
+        assert!(
+            json.contains("\"ws_id\":\"ws-a\""),
+            "嵌套行保持既有 snake_case 契约（与 sync_workspace 同一形状）：{json}"
+        );
+    }
+
+    /// 源码级编排判据：命令/注册/两段串行/失败不连坐/复用同一实现。
+    #[test]
+    fn sync_core_round_is_registered_and_orchestrates_both_halves_serially() {
+        let src = include_str!("sync.rs");
+        let lib = include_str!("lib.rs");
+        assert!(
+            lib.contains("sync::sync_core_round,"),
+            "`sync_core_round` 必须注册进 generate_handler!"
+        );
+        assert!(src.contains("pub async fn sync_core_round("));
+        // 服务端那支：逐档案串行调内部实现；失败**进它自己那一行**、⛔ 不 `?` 提前 return。
+        assert!(
+            src.contains("for p in &profiles")
+                && src.contains("sync_workspace_result(&app, &db, &p.ws_id).await")
+                && src.contains("Err(e) => server.push(workspace_sync_error_row(&p.ws_id, e))"),
+            "服务端编排必须逐档案串行且失败不连坐"
+        );
+        // 网格那支：复用 `mesh_sync_all_report`（同 `mesh_sync_all_now` 唯一实现）。
+        assert!(
+            src.contains("mesh_sync_all_report(&app, &db).await"),
+            "core round 的网格必须复用 mesh_sync_all_now 的同一实现"
+        );
+        // 单空间命令行为不变：`sync_workspace` 只是委托同一内部实现。
+        let ws_cmd = src
+            .split("pub async fn sync_workspace(")
+            .nth(1)
+            .expect("sync_workspace 必须在");
+        assert!(
+            ws_cmd.contains("sync_workspace_result(&app, &db, &ws_id).await"),
+            "sync_workspace 命令必须只委托内部实现（校验/历史/话术不变）"
+        );
+        // core round ⛔ 不许自己造第二套单空间/窗口逻辑：服务端/网格都只经上面两处内部实现
+        // （本判据已由上面两句承重；这里不用字符串搜"有没有某个函数名"——那会被判据自己的
+        //  字符串命中，测了个寂寞）。
     }
 
     #[test]
