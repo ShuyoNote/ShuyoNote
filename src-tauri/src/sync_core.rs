@@ -26,6 +26,40 @@ pub const BASE_INTERVAL_MS: u64 = 5_000;
 /// 空转退避上限（60 秒）。
 pub const EMPTY_BACKOFF_MS: u64 = 60_000;
 
+/// ⭐ **P3-1a 第六刀（task-68）**：网络闸门拒绝后的下一跳（固定 60s；**不**增加 empty_streak）。
+pub const GATE_BACKOFF_MS: u64 = 60_000;
+/// 闸门拒绝日志限频（每分钟最多一行）。
+pub const GATE_LOG_INTERVAL_MS: u64 = 60_000;
+/// 上次打"被闸门挡下"日志的时刻（Unix ms；0＝从未）。
+static LAST_GATE_LOG_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// ⭐ **纯函数**：C2 网络闸门（与 `src/lib/syncGate.ts` **逐条同口径**）：
+/// * `wifi_only=false` ⇒ 放行（用户明确允许非 Wi-Fi）；
+/// * `kind == "n/a"` ⇒ 放行（桌面端闸门不适用；⛔ 不能当 unknown 拦掉）；
+/// * `kind == "wifi" | "ethernet"` ⇒ 放行；
+/// * 其余（含 `unknown`/`cellular`/空）⇒ **拒绝**（fail-safe：宁可少跑，不偷跑流量）。
+/// ⚠️ 与 JS 一样**只认小写字面量**（Android 契约返回值；⛔ 不做大小写兜底，否则两端会漂）。
+pub fn auto_sync_gate(wifi_only: bool, kind: &str) -> bool {
+    if !wifi_only {
+        return true;
+    }
+    let kind = kind.trim();
+    kind == "n/a" || kind == "wifi" || kind == "ethernet"
+}
+
+/// ⭐ 纯函数：闸门拒绝日志限频（距上次 ≥60s 才打；`last=0`＝第一次）。
+pub fn should_log_gate(now_ms: u64, last_ms: u64) -> bool {
+    last_ms == 0 || now_ms.saturating_sub(last_ms) >= GATE_LOG_INTERVAL_MS
+}
+
+/// 当前 Unix ms（限频/日志用）。
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// 调度器是否在跑（默认 false；`start_if_enabled` 真的起了任务才 true）。
 static RUNNING: AtomicBool = AtomicBool::new(false);
 /// ⭐ **P3-1a 第五刀（task-58）**：**runtime 开关**（命令面 `sync_core_set_enabled` 控；默认 false）。
@@ -219,6 +253,35 @@ fn start_loop(app: tauri::AppHandle) {
                 RUNNING.store(false, Ordering::SeqCst);
                 eprintln!("[sync-core] 已关闭（runtime/env 都关）⇒ 调度循环退出（当前轮已跑完）");
                 break;
+            }
+            // ⭐ **task-68**：**先过 C2 网络闸门，再跑 round**（前端闸门保留兜底；本处是 Core 自己的闸）。
+            //   · `wifi_only` 读设备级预算（读不到 DB/锁坏 ⇒ 按 JS 口径**放行**）：`read_budget` 缺键回默认；
+            //   · `network_type` 复用既有命令实现（桌面 = `n/a` ⇒ 放行；Android 才可能 cellular/unknown）；
+            //   · 拒绝 ⇒ **不跑 round**、**不增加 empty_streak**、下一跳固定 60s、日志限频 1/分钟。
+            let wifi_only = match app.try_state::<crate::db::Db>() {
+                Some(db) => {
+                    db.0.lock()
+                        .map(|c| crate::sync::read_budget(&c).wifi_only)
+                        .unwrap_or(false)
+                }
+                None => false,
+            };
+            let kind =
+                crate::net::network_type(app.clone()).unwrap_or_else(|_| "unknown".to_string());
+            if !auto_sync_gate(wifi_only, &kind) {
+                let now = now_unix_ms();
+                let last = LAST_GATE_LOG_MS.load(Ordering::SeqCst);
+                if should_log_gate(now, last) {
+                    LAST_GATE_LOG_MS.store(now, Ordering::SeqCst);
+                    eprintln!(
+                        "[sync-core] 网络闸门拒绝：wifi_only=true / network_type={kind} ⇒ 这一轮不跑（{GATE_BACKOFF_MS}ms 后再看；不增加空转计数）"
+                    );
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(GATE_BACKOFF_MS)) => {}
+                    _ = wake().notified() => {}
+                }
+                continue;
             }
             let result = match app.try_state::<crate::db::Db>() {
                 Some(db) => sync_core_round_inner(&app, &db).await,
@@ -570,5 +633,72 @@ mod tests {
         for forbidden in ["set_meta_state", "write", "save", "delete"] {
             assert!(!body.contains(forbidden), "开关命令不许写数据：{forbidden}");
         }
+    }
+
+    // ── ⭐ task-68：C2 网络闸门（wifi_only ＋ network_type）────────────────────
+
+    #[test]
+    fn auto_sync_gate_matches_the_frontend_matrix() {
+        // wifi_only 关 ⇒ 任何类型都放行（用户明确允许非 Wi-Fi）。
+        for kind in ["n/a", "wifi", "ethernet", "cellular", "unknown", ""] {
+            assert!(
+                auto_sync_gate(false, kind),
+                "wifi_only=false 必须放行：{kind}"
+            );
+        }
+        // wifi_only 开：n/a（桌面不适用）/ wifi / ethernet ⇒ 放行。
+        for kind in ["n/a", "wifi", "ethernet", " wifi ", "ethernet "] {
+            assert!(auto_sync_gate(true, kind), "应放行：{kind:?}");
+        }
+        // 其余（含 unknown/空）⇒ 拒绝（fail-safe：不偷跑流量）。
+        for kind in ["cellular", "unknown", "", "5g", "WIFI", "Ethernet"] {
+            assert!(!auto_sync_gate(true, kind), "必须拒绝：{kind:?}");
+        }
+    }
+
+    #[test]
+    fn gate_rejection_log_is_rate_limited_to_once_a_minute() {
+        assert!(should_log_gate(1_000, 0), "第一次一定打");
+        assert!(!should_log_gate(1_000 + GATE_LOG_INTERVAL_MS - 1, 1_000));
+        assert!(should_log_gate(1_000 + GATE_LOG_INTERVAL_MS, 1_000));
+        assert!(should_log_gate(61_000, 1_000), "距离 ≥60s 也打");
+        assert!(!should_log_gate(1_000, 1_000), "同一毫秒不重复打");
+    }
+
+    /// 源码级：循环里**先闸门后 round**；拒绝分支 `continue` 前不碰 `empty_streak`、退避固定 60s。
+    #[test]
+    fn the_loop_checks_the_network_gate_before_starting_a_round() {
+        let src = include_str!("sync_core.rs");
+        let prod = src.split("#[cfg(test)]").next().unwrap_or(src);
+        let loop_at = prod.find("fn start_loop(").expect("start_loop 必须在");
+        let loop_src = &prod[loop_at..];
+        let gate_at = loop_src
+            .find("if !auto_sync_gate(wifi_only, &kind)")
+            .expect("循环必须先评估网络闸门");
+        let round_at = loop_src
+            .find("sync_core_round_inner(&app, &db)")
+            .expect("循环必须在闸门之后才跑 round");
+        assert!(gate_at < round_at, "⛔ 必须先闸门、后 round");
+        // 读预算/网络类型的路径（不依赖前端）；读不到预算 ⇒ 放行（与 JS 口径一致）。
+        assert!(loop_src.contains("crate::sync::read_budget(&c)"));
+        assert!(loop_src.contains("crate::net::network_type("));
+        assert!(
+            loop_src.contains("unwrap_or(false)"),
+            "读不到预算/锁坏 ⇒ 放行"
+        );
+        // 拒绝分支：不跑 round、退避 60s、日志限频、不增加空转计数。
+        let blocked = &loop_src[gate_at..round_at];
+        assert!(blocked.contains("GATE_BACKOFF_MS"), "拒绝后必须 60s 退避");
+        assert!(blocked.contains("should_log_gate"), "日志必须限频");
+        assert!(
+            blocked.contains("continue"),
+            "拒绝后必须 continue（不跑 round）"
+        );
+        assert!(
+            !blocked.contains("empty_streak"),
+            "⛔ 闸门拒绝不许增加 empty_streak（不是空转）"
+        );
+        // 拒绝日志只说原因码/类型，不打 token/正文（这里没有这些变量）。
+        assert!(!blocked.contains("token"));
     }
 }
