@@ -400,8 +400,8 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
         if count == 0 {
             let now = now_ms();
             meta_conn.execute(
-                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES ('default','默认空间','#3370FF','',1,?1,?1)",
-                params![now],
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at, space_uid) VALUES ('default','默认空间','#3370FF','',1,?1,?1,?2)",
+                params![now, new_space_uid()],
             )?;
         }
         let active: String = meta_conn
@@ -548,7 +548,11 @@ pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             -- ★ 隐私边界第 2 步（2026-09-23）：**这个空间是个人空间还是团队空间**。
             -- 它**只是本地标记**：`''` = 未分类（**默认**，闸门对未分类一律放行 —— 绝不因为"没分类"就掐断同步）；
             -- `'personal'` = 个人空间（**必须**按空间加密后才允许绑定同步）；`'team'` = 团队空间（**免检**）。
-            kind        TEXT NOT NULL DEFAULT ''
+            kind        TEXT NOT NULL DEFAULT '',
+            -- ⭐ **P3-3b（2026-11-08）**：**空间稳定标识** —— 与"名字"分离的 32 位 hex
+            --（生成口径见 [`new_space_uid`]，uuid v4 的 simple hex；生成后不变）。
+            -- 老库由下面的幂等 ALTER ＋ 回填补上；⛔ 本笔**不消费**它（同步匹配仍是"同名即同空间"）。
+            space_uid   TEXT NOT NULL DEFAULT ''
         );
         -- ⭐ **U11/T5（2026-10-02）**：**逐台解除**能成立的地方 —— 每个空间记「我认哪些设备」✓。
         -- ⛔ **只存哈希**（`secret_sha256`）✗：明文只在本机"我要出示"的那一侧
@@ -879,6 +883,52 @@ pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             "ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT ''",
             [],
         )?;
+    }
+    // ⭐ **P3-3b（2026-11-08）**：`workspaces.space_uid` —— 老库补列 ＋ **逐行回填**。
+    //
+    // 口径（与 ADR §3.4 一致；本笔只铺数据层）：
+    // · 列：`TEXT NOT NULL DEFAULT ''`（已有行先空着，再回填）；
+    // · 回填：所有 `space_uid = ''` 的行各补一个**唯一** uid（事务内逐行；生成后永不变）；
+    // · uid 生成：`new_space_uid()` = `uuid::Uuid::new_v4().simple()`（32 位小写 hex，
+    //   与"既有 uuid 口径"一致；碰撞概率可忽略，回填/新建都再查一次保证不撞）。
+    // · ⛔ **不动** `id` / 库文件名 / `sync_profiles.ws_id` / 钥匙袋（那是后续笔的事）。
+    let has_space_uid: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'space_uid'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_space_uid == 0 {
+        conn.execute(
+            "ALTER TABLE workspaces ADD COLUMN space_uid TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    let missing: Vec<String> = conn
+        .prepare("SELECT id FROM workspaces WHERE space_uid = '' ORDER BY created_at ASC, id ASC")
+        .map_err(|e| e)?
+        .query_map([], |r| r.get(0))
+        .map_err(|e| e)?
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(|e| e)?;
+    if !missing.is_empty() {
+        let tx = conn.unchecked_transaction()?;
+        for id in missing {
+            let mut uid = new_space_uid();
+            // 唯一性：撞了就重生成（`uuid` 碰撞概率可忽略，这里只是把"可忽略"变成"不可能"）。
+            while tx.query_row(
+                "SELECT COUNT(*) FROM workspaces WHERE space_uid = ?1",
+                params![uid],
+                |r| r.get::<_, i64>(0),
+            )? > 0
+            {
+                uid = new_space_uid();
+            }
+            tx.execute(
+                "UPDATE workspaces SET space_uid = ?1 WHERE id = ?2 AND space_uid = ''",
+                params![uid, id],
+            )?;
+        }
+        tx.commit()?;
     }
     // sync_history.items was added later; backfill on pre-existing meta dbs.
     let has_items: i64 = conn.query_row(
@@ -1710,6 +1760,14 @@ pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
+/// ⭐ **P3-3b（2026-11-08）**：一个新的**空间稳定 uid**（32 位小写 hex）。
+///
+/// 口径：`uuid::Uuid::new_v4().simple()` —— 16 个随机字节的 uuid（既有依赖/既有 uuid 口径），
+/// 去掉连字符正好 32 位 hex。生成后**不变**；`meta.workspaces.space_uid` 的唯一来源。
+pub(crate) fn new_space_uid() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
 /// ⭐ 2026-10-23：**应用数据目录的解析**（`SHUYONOTE_DATA_DIR` 覆盖系统目录）。
 ///
 /// 为什么要这个开关：本机要跑"真·双端对测"（两个实例、两份数据、两个端口、回环互指），
@@ -2421,5 +2479,87 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM changes", [], |r| r.get(0))
             .unwrap();
         assert_eq!(still, 1);
+    }
+
+    /// ⭐ **P3-3b（2026-11-08）**：老库迁移民补 `workspaces.space_uid` —— 每行都被回填成
+    /// 32 位小写 hex、互不相同、**再跑一次迁移不变**；`id`/`name`/`created_at` 一个字节不改。
+    #[test]
+    fn meta_migrate_adds_space_uid_and_backfills_stable_unique_ids() {
+        let c = Connection::open_in_memory().unwrap();
+        // 手写"加 space_uid 之前"的老 schema（只有最初那四列），并放两行。
+        c.execute_batch(
+            "CREATE TABLE workspaces (
+                 id TEXT PRIMARY KEY,
+                 name TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 updated_at INTEGER NOT NULL
+             );
+             INSERT INTO workspaces VALUES ('old-a','老 A',1,1),('old-b','老 B',2,2);",
+        )
+        .unwrap();
+
+        meta_migrate(&c).unwrap();
+        let col: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'space_uid'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(col, 1, "老库必须补上 space_uid 列");
+
+        let read = || -> Vec<(String, String, String, i64)> {
+            let mut stmt = c
+                .prepare("SELECT id, name, space_uid, created_at FROM workspaces ORDER BY id")
+                .unwrap();
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        let first = read();
+        assert_eq!(first.len(), 2);
+        assert_eq!(first[0].0, "old-a");
+        assert_eq!(first[0].1, "老 A", "旧字段不许改");
+        assert_eq!(first[0].3, 1, "created_at 不许改");
+        for (id, _, uid, _) in &first {
+            assert_eq!(uid.len(), 32, "{id} 的 uid 必须是 32 位 hex：{uid:?}");
+            assert!(
+                uid.chars()
+                    .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()),
+                "{id} 的 uid 必须是小写 hex：{uid:?}"
+            );
+        }
+        assert_ne!(first[0].2, first[1].2, "不同空间 uid 必须不同");
+
+        // 幂等：再跑一次迁移，uid / id / 旧字段都不许变。
+        meta_migrate(&c).unwrap();
+        assert_eq!(read(), first, "重复迁移必须逐字不变（uid 生成后永久稳定）");
+    }
+
+    /// ⭐ **P3-3b**：**全新库**由 `init()` 种下的 `default` 空间也带 uid（且重复 init 不变）。
+    #[test]
+    fn init_seeds_the_default_space_with_a_stable_space_uid() {
+        let _guard = INIT_LOCK.lock().unwrap();
+        let uid_of = |conn: &Connection| -> String {
+            conn.query_row(
+                "SELECT space_uid FROM meta.workspaces WHERE id = 'default'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let conn = init(test_dir().to_path_buf()).unwrap();
+        let old = uid_of(&conn);
+        assert_eq!(old.len(), 32, "新库默认空间必须有 32 位 uid：{old:?}");
+        assert!(
+            old.chars()
+                .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()),
+            "uid 必须是小写 hex：{old:?}"
+        );
+        drop(conn);
+        // 再 init 一次（真实启动会这样）⇒ 不会重写 uid。
+        let conn2 = init(test_dir().to_path_buf()).unwrap();
+        assert_eq!(uid_of(&conn2), old, "重复 init 不许换 uid");
     }
 }

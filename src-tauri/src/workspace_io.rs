@@ -578,7 +578,7 @@ pub async fn import_workspace(
     //    否则 `cargo check` 会直接报 `missing field kind`（2026-10-10 实测就是这样抓到的 ✓）。
     let c = db.0.lock().expect("db mutex poisoned");
     c.query_row(
-        "SELECT id,name,theme,icon,sort_order,created_at,updated_at,kind FROM meta.workspaces WHERE id = ?1",
+        "SELECT id,name,theme,icon,sort_order,created_at,updated_at,kind,space_uid FROM meta.workspaces WHERE id = ?1",
         params![new_id],
         |r| {
             Ok(WorkspaceMeta {
@@ -591,6 +591,8 @@ pub async fn import_workspace(
                 updated_at: r.get(6)?,
                 // ⭐ 2026-10-10：与 `workspaces.rs::row_to_meta` 同一个下标（第 8 列）✓
                 kind: r.get(7)?,
+                // ⭐ P3-3b：第 9 列（与 `row_to_meta` 同一个下标）✓
+                space_uid: r.get(8)?,
                 // ⭐ 2026-10-10（`task-27`）：同 `list_workspaces` —— 派生读数（磁盘上是不是密文）。
                 // ⚠️ 导入这条路上**可能刚把这个库标成加密**（见上面 `set_space_encrypted_marked` 那段）
                 //    ⇒ 必须**真的嗅一次**，⛔ 不许写死 `false` ✗；拿不到目录 ⇒ `None` ＝ "读不到" ✓。

@@ -31,11 +31,14 @@ fn row_to_meta(row: &rusqlite::Row) -> rusqlite::Result<WorkspaceMeta> {
         //    2026-10-10 实测漏了一处（`create_workspace` 那条，见下面 `,kind` 那笔）⇒ 那是**运行期**
         //    `Invalid column index`，`cargo check` 与所有测试都不会红 ✓。
         kind: row.get(7)?,
+        // ⭐ P3-3b：**第 9 列**（追加在最后 ⇒ 前 8 个下标没动）。缺失/空串由迁移保证不会出现。
+        space_uid: row.get(8)?,
     })
 }
 
-// ⚠️ `kind` **追加在最后**：`row_to_meta` 按**下标**取值 ⇒ 插在中间会把后面每一列都错位 ✗。
-const WS_COLS: &str = "id,name,theme,icon,sort_order,created_at,updated_at,kind";
+// ⚠️ 列**只许追加在最后**：`row_to_meta` 按**下标**取值 ⇒ 插在中间会把后面每一列都错位 ✗。
+// 第 8 列 `kind`（2026-10-10）、第 9 列 `space_uid`（P3-3b 2026-11-08）都是追加。
+const WS_COLS: &str = "id,name,theme,icon,sort_order,created_at,updated_at,kind,space_uid";
 
 const ACCENTS: [&str; 8] = [
     "#3370FF", "#00B578", "#FF8A1E", "#7B61FF", "#00A9C7", "#D9A300", "#F54A45", "#646A73",
@@ -437,8 +440,8 @@ fn insert_space_row(
     kind: crate::space_crypto::SpaceKind,
 ) -> Result<(), String> {
     c.execute(
-        "INSERT INTO meta.workspaces (id, name, theme, icon, sort_order, created_at, updated_at, encrypted, kind)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO meta.workspaces (id, name, theme, icon, sort_order, created_at, updated_at, encrypted, kind, space_uid)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             id,
             name,
@@ -448,7 +451,9 @@ fn insert_space_row(
             now,
             now,
             if encrypted { 1 } else { 0 },
-            kind.as_str()
+            kind.as_str(),
+            // ⭐ P3-3b：新空间**创建时就带**稳定 uid（老库由迁移回填补齐）。
+            crate::db::new_space_uid()
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -963,7 +968,8 @@ mod tests {
                  updated_at INTEGER NOT NULL DEFAULT 0,
                  deleted_at INTEGER,
                  encrypted INTEGER NOT NULL DEFAULT 0,
-                 kind TEXT NOT NULL DEFAULT ''
+                 kind TEXT NOT NULL DEFAULT '',
+                 space_uid TEXT NOT NULL DEFAULT ''
              );",
         )
         .unwrap();
@@ -993,6 +999,51 @@ mod tests {
         // 大小写与空白照收（界面给的是字面量，但别为多一个空格就报错）
         insert_chosen_space(&c, "s-team2", "大家的2", "#e33", 3.0, 1_000, " Team ").unwrap();
         assert_eq!(kind_of(&c, "s-team2"), "team");
+    }
+
+    /// ⭐ **P3-3b（2026-11-08）**：新建/导入空间时**带上稳定 `space_uid`**（32 位小写 hex、互不相同，
+    /// 且 `id` 不改；老库由 `db::meta_migrate` 回填）。
+    #[test]
+    fn new_spaces_get_a_stable_unique_space_uid() {
+        fn uid_of(c: &rusqlite::Connection, id: &str) -> String {
+            c.query_row(
+                "SELECT space_uid FROM meta.workspaces WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        }
+        fn is_uid(s: &str) -> bool {
+            s.len() == 32
+                && s.chars()
+                    .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+        }
+
+        let c = conn_with_workspaces();
+        insert_new_local_space(&c, "uid-a", "甲", "#e11", 1.0, 1_000).unwrap();
+        insert_imported_space(&c, "uid-b", "乙", "#e12", "", 2.0, 2_000, false).unwrap();
+
+        let a = uid_of(&c, "uid-a");
+        let b = uid_of(&c, "uid-b");
+        assert!(is_uid(&a), "新空间 uid 必须是 32 位小写 hex：{a:?}");
+        assert!(is_uid(&b), "导入空间同样要带 uid：{b:?}");
+        assert_ne!(a, b, "不同空间的 uid 不许相同");
+        // 列表读数真的把这一格带出来（`WS_COLS` 追加在最后；`row_to_meta` 第 9 列）。
+        assert!(
+            WS_COLS.contains("space_uid"),
+            "list_workspaces 的列清单必须带 space_uid"
+        );
+        // id 不变（⛔ 不改 id：文件名/钥匙袋仍按旧 id）。
+        assert_eq!(
+            c.query_row(
+                "SELECT COUNT(*) FROM meta.workspaces WHERE id IN ('uid-a','uid-b')",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            2,
+            "id 必须原样保留"
+        );
     }
 
     /// ★ A1 判据（**窄进**）：界面传了别的东西 ⇒ **报错**，而且**一行都不写**。

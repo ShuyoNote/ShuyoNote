@@ -85,6 +85,13 @@ pub struct WorkspaceMeta {
     /// ⚠️ 它**不是** `meta.workspaces` 的列（是**文件系统**上的事实）⇒ ⛔ 不进 `WS_COLS` ✗。
     #[serde(default)]
     pub encrypted_on_disk: Option<bool>,
+    /// ⭐ **P3-3b（2026-11-08）**：**空间稳定 uid**（32 位小写 hex；`meta.workspaces.space_uid`）。
+    ///
+    /// ⚠️ 与 `id` **不是一回事**：`id` 是本地文件名/钥匙袋的键（⛔ 本笔不动它）；`space_uid` 是
+    /// 将来"同名即同空间"之外那个**稳定标识**（ADR §3.4）。老库由 `db::meta_migrate` 回填 ⇒
+    /// 迁移后**必非空**；`#[serde(default)]` 只为容忍缺字段的旧载荷。
+    #[serde(default)]
+    pub space_uid: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
