@@ -28,6 +28,13 @@
 //! ```
 //!
 //! ⚠️ 本模块**没有** iroh 依赖（只读 JSON）：默认构建也能编 ⇒ 将来"跨网开关/诊断"直接用它。
+//!
+//! ## ⭐ 和局域网的关系：**LAN 优先**（2026-11-08 P0）
+//!
+//! 路线表是**跨网兜底**，不是局域网的替代品：LAN 已经发现的设备**保留 LAN 路径**，
+//! 路线表只补「LAN 没发现」的跨网设备（[`merge_route_peers`] 只追加、不摘除）。
+//! ⛔ 反过来做（摘掉 LAN 候选、换成 relay 并放最前）会让**中继服务器不可达时，
+//! 同一局域网的两台设备连直连都同步不了** —— 那是 2026-11-08 确认的 P0 缺陷。
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -138,7 +145,7 @@ struct RawEntry {
 }
 
 /// 把路线表里的设备变成**网格对端**（纯函数，可单测）：
-/// * 已在局域网候选里的设备**跳过**（同一设备不该被拉两次）
+/// * 已在候选里的设备（＝**LAN 已经发现**）⇒ **跳过** —— LAN 优先，同一设备不该被拉两次
 /// * base 一律写成 `relay:<node_id>`（由 `mesh_endpoint::endpoint_for_peer` 认这个前缀）
 pub fn virtual_peers_from(
     routes: &[RelayRoute],
@@ -154,36 +161,43 @@ pub fn virtual_peers_from(
         .collect()
 }
 
-/// 回合装配用：把路线表里的对端**补进**候选（原地追加）。
+/// 回合装配用：把路线表里的**跨网**对端**补进**候选（原地追加，⛔ 不摘除任何已有候选）。
+///
+/// ⭐ **LAN 优先（2026-11-08 P0）**：LAN 已经发现的设备保留 LAN 路径；
+/// 只有 LAN 没发现的设备才补 `relay:<node_id>`（追加在末尾，LAN 候选排前面）。
 ///
 /// ⚠️ **默认构建什么都不做** —— 跨网只有 `--features relay` 才可用，
 /// 否则每轮都会拿着 `relay:` 前缀去撞"没编入跨网"的错误（那是噪音，不是功能）。
-/// ⚠️ 路线表读不了 ⇒ 打一行日志（⛔ 静默吞掉会让人以为"配了却没生效"）。
+/// ⚠️ 路线表读不了 ⇒ 打一行日志（⛔ 静默吞掉会让人以为"配了却没生效"；也⛔ 因此打断本轮 —— LAN 照跑）。
 pub fn append_virtual_peers(out: &mut Vec<crate::mesh::MeshPeer>) {
     #[cfg(feature = "relay")]
     {
         let routes = match load_routes() {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[mesh] 跨网路线表读不了 ⇒ 本轮不跑跨网：{e}");
+                eprintln!("[mesh] 跨网路线表读不了 ⇒ 本轮不跑跨网（LAN 候选照旧）：{e}");
                 return;
             }
         };
         if routes.is_empty() {
             return;
         }
-        // ⭐ 2026-10-25（owner 拍「B」）：路线表里有的设备**优先走跨网**。
-        //   之前是「LAN 候选里已有 ⇒ 跳过」⇒ 同一局域网里 relay 永远不会被触发。
-        //   现在改成：把这些设备从 LAN 候选里**摘掉**，换成 `relay:<node_id>` 并放到最前。
-        let replaced = merge_route_peers(out, &routes);
-        if replaced > 0 {
+        // 先记下"本来就有哪些 relay 候选"，只用来把日志点名说准（⛔ 不参与取舍）。
+        let relay_before: std::collections::HashSet<String> = out
+            .iter()
+            .filter(|p| p.base.starts_with(crate::mesh_endpoint::RELAY_BASE_PREFIX))
+            .map(|p| p.device_id.clone())
+            .collect();
+        let added = merge_route_peers(out, &routes);
+        if added > 0 {
             eprintln!(
-                "[mesh] 跨网路线表：补了 {replaced} 个对端（{}；优先于 LAN）",
-                routes
-                    .iter()
-                    .filter(|r| out.iter().any(|p| p.device_id == r.device_id
-                        && p.base.starts_with(crate::mesh_endpoint::RELAY_BASE_PREFIX)))
-                    .map(|r| r.device_id.clone())
+                "[mesh] 跨网路线表：补了 {added} 个跨网对端（{}；LAN 已发现的设备保持 LAN）",
+                out.iter()
+                    .filter(
+                        |p| p.base.starts_with(crate::mesh_endpoint::RELAY_BASE_PREFIX)
+                            && !relay_before.contains(&p.device_id)
+                    )
+                    .map(|p| p.device_id.clone())
                     .collect::<Vec<_>>()
                     .join("、")
             );
@@ -196,28 +210,34 @@ pub fn append_virtual_peers(out: &mut Vec<crate::mesh::MeshPeer>) {
     }
 }
 
-/// ⭐ 纯函数（可单测）：把路线表里的设备**优先化** ——
-/// 从 `out` 里摘掉同 `device_id` 的 LAN 候选，再把 `relay:<node_id>` 插到最前。
-/// 返回**实际换成跨网的设备数**（路线表里没有的 LAN 对端保持原样）。
+/// ⭐ 纯函数（可单测）：把路线表里**LAN 没发现**的设备补成 `relay:<node_id>` 候选。
 ///
-/// ⚠️ 为什么不再「已有就跳过」：同网验收时 LAN 发现永远先命中 ⇒ relay 那条路
-/// 永远不补、永远测不到（2026-10-25 真机读数）。路线表是**显式配置** ⇒ 它该赢。
+/// * 候选里已有同 `device_id` 的设备（LAN 已发现）⇒ **跳过，保留原 LAN 路径**；
+/// * 候选里已有同 `relay:<node_id>`（幂等/重复调用）⇒ 跳过（⛔ 拉两次）；
+/// * 其余 ⇒ **追加在末尾**（LAN 候选仍排前面）；
+/// * ⛔ **不 retain、不替换、不重排** —— 一条已有候选都不会被摘掉。
+///
+/// 返回**实际追加的跨网对端数**。
+///
+/// ⚠️ 为什么不再是 2026-10-25 的「路线表优先」（摘掉同 id 的 LAN 候选、换成 relay 放最前）：
+/// 那会让**中继服务器不可达时，同网设备连局域网路径都没有** ⇒ 局域网跟着中继一起挂
+/// （2026-11-08 确认的 P0 缺陷）。relay 的定位是"LAN 没发现时的跨网兜底"，
+/// ⛔ 它不该有权限降级一条已经可用的 LAN 路径。
 pub fn merge_route_peers(out: &mut Vec<crate::mesh::MeshPeer>, routes: &[RelayRoute]) -> usize {
     if routes.is_empty() {
         return 0;
     }
-    let configured: std::collections::HashSet<&str> =
-        routes.iter().map(|r| r.device_id.as_str()).collect();
-    let before = out.len();
-    out.retain(|p| !configured.contains(p.device_id.as_str()));
-    let replaced = before - out.len();
-    let mut virtuals = virtual_peers_from(routes, &Default::default());
-    if virtuals.is_empty() {
-        return replaced;
-    }
-    virtuals.append(out);
-    *out = virtuals;
-    replaced
+    // 已经在候选里的设备（LAN 已发现 / 上一轮已补过）⇒ 不再补 relay。
+    let already: std::collections::HashSet<String> =
+        out.iter().map(|p| p.device_id.clone()).collect();
+    // 同一条 relay 地址已在候选里 ⇒ 也不重复补（防御重复调用）。
+    let mut virtuals: Vec<crate::mesh::MeshPeer> = virtual_peers_from(routes, &already)
+        .into_iter()
+        .filter(|p| !out.iter().any(|q| q.base == p.base))
+        .collect();
+    let added = virtuals.len();
+    out.append(&mut virtuals);
+    added
 }
 
 #[cfg(test)]
@@ -290,16 +310,42 @@ mod tests {
         );
     }
 
-    /// ⭐ 2026-10-25（owner 拍「B」）：路线表里的设备**优先走跨网** ——
-    /// 不能因为 LAN 候选里已有同 device_id 就跳过（真机就是这样永远测不到 relay）。
+    /// ⭐⭐ **判据 A（2026-11-08 P0）**：LAN 已发现的设备**保留 LAN 路径** ——
+    /// 即使路线表里配了同一个 `device_id`，也⛔ 不摘掉、⛔ 不替换成 relay。
+    ///
+    /// 这条挡的就是 P0 事故：摘掉 LAN ⇒ 中继服务器一挂，同网设备连直连都同步不了。
     #[test]
-    fn configured_routes_replace_the_same_device_lan_candidate_and_go_first() {
+    fn a_lan_peer_keeps_its_lan_path_even_when_a_route_exists() {
         use crate::mesh::MeshPeer;
         let routes = parse_routes(&format!(
             r#"{{"dev-a": {{"node_id": "{OK_ID}", "addrs": ["192.168.0.5:8788"]}}}}"#
         ))
         .unwrap();
-        let mut out = vec![
+        let lan = MeshPeer {
+            device_id: "dev-a".into(),
+            base: "http://192.168.0.5:8788".into(),
+        };
+        let mut out = vec![lan.clone()];
+        let added = merge_route_peers(&mut out, &routes);
+        assert_eq!(added, 0, "LAN 已发现的设备不该再补 relay");
+        assert_eq!(out, vec![lan], "LAN 候选必须原样保留（⛔ 被摘掉/替换）");
+        assert!(
+            !out.iter()
+                .any(|p| p.base.starts_with(crate::mesh_endpoint::RELAY_BASE_PREFIX)),
+            "同网设备不该出现 relay 候选（LAN 优先）"
+        );
+    }
+
+    /// ⭐⭐ **判据 B**：只有路线表的跨网设备 ⇒ 补 `relay:<node_id>`；
+    /// LAN 候选**一个不少、顺序不变**，relay 追加在末尾（LAN 优先）。
+    #[test]
+    fn a_route_only_peer_is_added_as_a_relay_fallback() {
+        use crate::mesh::MeshPeer;
+        let routes = parse_routes(&format!(
+            r#"{{"dev-cross": {{"node_id": "{OK_ID}", "relay": "http://112.124.60.73:8880"}}}}"#
+        ))
+        .unwrap();
+        let before = vec![
             MeshPeer {
                 device_id: "dev-b".into(),
                 base: "http://192.168.0.6:8788".into(),
@@ -309,27 +355,85 @@ mod tests {
                 base: "http://192.168.0.5:8788".into(),
             },
         ];
-        let replaced = merge_route_peers(&mut out, &routes);
-        assert_eq!(replaced, 1, "dev-a 应从 LAN 被替换成跨网");
-        assert_eq!(out.len(), 2, "不许重复拉同一个 device");
-        assert_eq!(out[0].device_id, "dev-a", "跨网候选必须排在前面");
-        assert!(out[0]
-            .base
-            .starts_with(crate::mesh_endpoint::RELAY_BASE_PREFIX));
-        assert_eq!(out[1].device_id, "dev-b", "无关的 LAN 对端要保持原样");
+        let mut out = before.clone();
+        let added = merge_route_peers(&mut out, &routes);
+        assert_eq!(added, 1, "只补 LAN 没发现的那一台");
+        assert_eq!(out.len(), before.len() + 1, "⛔ 不许重复拉同一台");
+        assert_eq!(&out[..before.len()], &before[..], "LAN 候选原样保留在最前");
+        assert_eq!(out[before.len()].device_id, "dev-cross");
+        assert_eq!(
+            out[before.len()].base,
+            format!("{}{}", crate::mesh_endpoint::RELAY_BASE_PREFIX, OK_ID),
+            "跨网对端的 base 必须是 relay:<node_id>"
+        );
     }
 
-    /// 路线表为空 ⇒ 一个候选都不动。
+    /// ⭐⭐ **判据 C**：路线表为空 ⇒ 候选**原样不动**（数量、内容、顺序都不变）。
     #[test]
     fn no_routes_leave_candidates_untouched() {
         use crate::mesh::MeshPeer;
-        let mut out = vec![MeshPeer {
-            device_id: "dev-a".into(),
-            base: "http://x:1".into(),
-        }];
+        let before = vec![
+            MeshPeer {
+                device_id: "dev-a".into(),
+                base: "http://x:1".into(),
+            },
+            MeshPeer {
+                device_id: "dev-b".into(),
+                base: "http://y:2".into(),
+            },
+        ];
+        let mut out = before.clone();
         assert_eq!(merge_route_peers(&mut out, &[]), 0);
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].base, "http://x:1");
+        assert_eq!(out, before);
+    }
+
+    /// ⭐⭐ **判据 D（LAN 集合不被缩减）**：路线表覆盖若干设备、其中有的 LAN 已发现 ——
+    /// `out` 里**原有的每一条候选都还在**（base 逐字节相同），只多出 LAN 没发现的跨网设备。
+    ///
+    /// 读法：「relay 不可达」只影响那些**只能走 relay** 的跨网设备；
+    /// LAN 候选不依赖 relay 路线表是否可达 ⇒ 中继挂了局域网照跑（P0 不变量）。
+    #[test]
+    fn the_route_table_never_shrinks_the_lan_candidate_set() {
+        use crate::mesh::MeshPeer;
+        let routes = parse_routes(&format!(
+            r#"{{
+                "dev-a": {{"node_id": "{OK_ID}", "addrs": ["192.168.0.5:8788"]}},
+                "dev-b": {{"node_id": "{OK_ID}", "addrs": ["192.168.0.6:8788"]}},
+                "dev-cross": {{"node_id": "{OK_ID}", "relay": "http://112.124.60.73:8880"}}
+            }}"#
+        ))
+        .unwrap();
+        let before = vec![
+            MeshPeer {
+                device_id: "dev-a".into(),
+                base: "http://192.168.0.5:8788".into(),
+            },
+            MeshPeer {
+                device_id: "dev-b".into(),
+                base: "http://192.168.0.6:8788".into(),
+            },
+            MeshPeer {
+                device_id: "dev-lan-only".into(),
+                base: "http://192.168.0.9:8788".into(),
+            },
+        ];
+        let mut out = before.clone();
+        let added = merge_route_peers(&mut out, &routes);
+        assert_eq!(added, 1, "只补 dev-cross 这一台跨网设备");
+        assert_eq!(out.len(), before.len() + 1);
+        assert_eq!(
+            &out[..before.len()],
+            &before[..],
+            "原有候选一条都不许少 / 不许被换掉（LAN 优先）"
+        );
+        for p in &before {
+            assert!(out.contains(p), "路线表不许缩减 LAN 集合：丢了 {p:?}");
+        }
+        assert_eq!(
+            out.last().unwrap().device_id,
+            "dev-cross",
+            "跨网设备补在末尾"
+        );
     }
 
     /// ⭐ 口径②：坏 JSON ⇒ 报错（⛔ 不当成空表）。
