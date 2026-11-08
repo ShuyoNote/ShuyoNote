@@ -216,6 +216,63 @@ pub fn batch_merge_gate(
     }
 }
 
+/// ⭐ **P3-3b（2026-11-08，纯函数层第一刀）**：**按稳定 `space_uid` 判"是不是同一个空间"**。
+///
+/// 口径（三态，⛔ 不是 `bool`）：
+/// * 两边 `trim` 后**都非空** ⇒ `Some(相等?)`（uid 是 32 位 hex，⛔ 不做大小写/相似度折叠，只 trim）；
+/// * **任一边为空** ⇒ `None` —— ⭐ **判不了**（老对端没报 / 本机老空间还没回填）⇒ **交给名字兜底**；
+///   ⛔ **绝不**把"空 vs 空"当成相同、也⛔ 不把"空 vs 非空"当成不同（那会拿"没数据"冒充结论）。
+///
+/// ⚠️ 本笔**只做纯函数/判据**：公告里的 `hub_space_uids` / `NearbyPeer.space_uids` 已经透传，
+/// 但**接线（真正用它替换同名判定）是 P3-3b 后续**，⛔ 这里不改任何调用点。
+pub fn same_space_uid(local_uid: &str, peer_uid: &str) -> Option<bool> {
+    let (a, b) = (local_uid.trim(), peer_uid.trim());
+    if a.is_empty() || b.is_empty() {
+        return None;
+    }
+    Some(a == b)
+}
+
+/// ⭐⭐ **P3-3b（2026-11-08）**：`batch_merge_gate` 的 **uid 优先、名字兜底** 版本（纯函数，未接线）。
+///
+/// 顺序与旧闸**逐条一致**（类别 → 对面名字 → 身份 → 名字结论），唯一差别在第 ③ 步：
+/// 1. 类别：判不出 ⇒ `NotEligible(KindUnknown)`；不是个人空间 ⇒ `NotEligible(NotPersonal)`（不变）；
+/// 2. 对面**没带空间名** ⇒ `NotEligible(NoPeerName)`（不变 —— 即使 uid 相同也**不**越级允许：
+///    名字是"这是哪个空间"的人话载体，缺它就说不清融的是什么）；
+/// 3. "同名"结论：`same_space_uid` 有结论 ⇒ **用它**；`None`（任一边空）⇒ 回落
+///    [`same_space_name_by_trim`]（旧口径）；
+/// 4. 之后仍走 [`merge_gate`]：身份判不出/不同人 ⇒ 照样拒绝（uid 相同也**不**绕过身份闸）。
+///
+/// **旧行为保持**：两边 uid 都空/判不了时，本函数与 [`batch_merge_gate`] **逐字等价**（判据覆盖矩阵）。
+pub fn batch_merge_gate_uid(
+    kind: Option<SpaceKind>,
+    local_name: &str,
+    local_uid: &str,
+    peer_name: Option<&str>,
+    peer_uid: Option<&str>,
+    identity: &SamePerson,
+) -> BatchMerge {
+    // ① 类别（与 `batch_merge_gate` 同一把尺；⛔ 不默认成个人空间）。
+    let Some(kind) = kind else {
+        return BatchMerge::NotEligible(NotEligibleWhy::KindUnknown);
+    };
+    if !kind.merge_eligible() {
+        return BatchMerge::NotEligible(NotEligibleWhy::NotPersonal(kind));
+    }
+    // ② 对面名字（与旧闸同一口径：缺 ⇒ 判不了"这是哪个空间" ⇒ 不参与）。
+    let Some(peer_name) = peer_name.map(str::trim).filter(|n| !n.is_empty()) else {
+        return BatchMerge::NotEligible(NotEligibleWhy::NoPeerName);
+    };
+    // ③ **uid 有结论就用它**；判不了（任一边空）才回落名字（旧口径）。
+    let same_space = same_space_uid(local_uid, peer_uid.unwrap_or(""))
+        .unwrap_or_else(|| same_space_name_by_trim(local_name, peer_name));
+    // ④ 身份闸与旧闸**同一实现**（⛔ 不在这里重写顺序）。
+    match merge_gate(identity, same_space) {
+        MergeGate::Allow => BatchMerge::Allow,
+        refuse => BatchMerge::Refuse(refuse),
+    }
+}
+
 // ─────────────────────────── 数据形状 ───────────────────────────
 
 /// 一条融合记录 —— ⭐ 回答「**撤销它要动哪几行**」（[`MergeRecord::moved`]）。
@@ -1617,5 +1674,206 @@ mod tests {
             batch_merge_gate(Some(SpaceKind::Personal), "工作", Some("工作"), &no),
             BatchMerge::Refuse(MergeGate::RefuseDifferentPerson)
         );
+    }
+}
+
+/// ⭐ **P3-3b**：`same_space_uid` ＋ `batch_merge_gate_uid` 的纯函数判据（不接线）。
+#[cfg(test)]
+mod p33b_uid_gate_tests {
+    use super::*;
+
+    fn yes() -> SamePerson {
+        SamePerson::Yes(IdentityBasis::PairedDevice)
+    }
+    fn no() -> SamePerson {
+        SamePerson::No(IdentityBasis::PairedDevice)
+    }
+    fn unknown() -> SamePerson {
+        SamePerson::Unknown(WhyUnknown::NotPaired)
+    }
+
+    #[test]
+    fn same_space_uid_is_three_valued_and_only_compares_two_present_uids() {
+        assert_eq!(same_space_uid("uid-a", "uid-a"), Some(true));
+        assert_eq!(
+            same_space_uid(" uid-a ", "uid-a"),
+            Some(true),
+            "trim 后比较"
+        );
+        assert_eq!(
+            same_space_uid("UID-A", "uid-a"),
+            Some(false),
+            "⛔ 不做大小写折叠（hex 口径本来就小写）"
+        );
+        assert_eq!(same_space_uid("uid-a", "uid-b"), Some(false));
+        // 任一边空 ⇒ **判不了**（⛔ 不把空当相同/不同）。
+        assert_eq!(same_space_uid("", "uid-a"), None);
+        assert_eq!(same_space_uid("uid-a", ""), None);
+        assert_eq!(same_space_uid("  ", "  "), None);
+    }
+
+    #[test]
+    fn uid_equal_wins_over_a_different_name() {
+        let got = batch_merge_gate_uid(
+            Some(SpaceKind::Personal),
+            "工作",
+            "uid-a",
+            Some("另一个名字"),
+            Some("uid-a"),
+            &yes(),
+        );
+        assert_eq!(
+            got,
+            BatchMerge::Allow,
+            "uid 相同 ⇒ 同一空间（即使名字不同）"
+        );
+    }
+
+    #[test]
+    fn uid_different_wins_over_the_same_name() {
+        let got = batch_merge_gate_uid(
+            Some(SpaceKind::Personal),
+            "工作",
+            "uid-a",
+            Some("工作"),
+            Some("uid-b"),
+            &yes(),
+        );
+        assert_eq!(
+            got,
+            BatchMerge::Refuse(MergeGate::RefuseDifferentName),
+            "uid 不同 ⇒ 不是同名（⛔ 名字相同也不允许融）"
+        );
+    }
+
+    #[test]
+    fn one_or_both_uids_missing_falls_back_to_the_name() {
+        // 一边空 ⇒ 名字兜底：同名 ⇒ Allow。
+        assert_eq!(
+            batch_merge_gate_uid(
+                Some(SpaceKind::Personal),
+                "工作",
+                "uid-a",
+                Some("工作"),
+                None,
+                &yes()
+            ),
+            BatchMerge::Allow
+        );
+        // 一边空 ＋ 不同名 ⇒ 旧口径拒绝。
+        assert_eq!(
+            batch_merge_gate_uid(
+                Some(SpaceKind::Personal),
+                "工作",
+                "",
+                Some("别的"),
+                Some("uid-a"),
+                &yes()
+            ),
+            BatchMerge::Refuse(MergeGate::RefuseDifferentName)
+        );
+        // 两边都空 ⇒ 名字兜底（与旧闸逐字等价，见下一条矩阵判据）。
+        assert_eq!(
+            batch_merge_gate_uid(
+                Some(SpaceKind::Personal),
+                "工作",
+                "",
+                Some("工作"),
+                None,
+                &yes()
+            ),
+            BatchMerge::Allow
+        );
+    }
+
+    #[test]
+    fn identity_gate_still_applies_even_when_uids_match() {
+        assert_eq!(
+            batch_merge_gate_uid(
+                Some(SpaceKind::Personal),
+                "工作",
+                "uid-a",
+                Some("工作"),
+                Some("uid-a"),
+                &no()
+            ),
+            BatchMerge::Refuse(MergeGate::RefuseDifferentPerson),
+            "uid 相同也不许绕过身份闸（不同人）"
+        );
+        assert_eq!(
+            batch_merge_gate_uid(
+                Some(SpaceKind::Personal),
+                "工作",
+                "uid-a",
+                Some("工作"),
+                Some("uid-a"),
+                &unknown()
+            ),
+            BatchMerge::Refuse(MergeGate::RefuseUnknownIdentity),
+            "uid 相同也不许绕过身份闸（判不出）"
+        );
+    }
+
+    #[test]
+    fn category_and_no_peer_name_branches_are_unchanged() {
+        // 团队空间 ⇒ 不参与（即使 uid 相同）。
+        assert_eq!(
+            batch_merge_gate_uid(
+                Some(SpaceKind::Team),
+                "工作",
+                "uid-a",
+                Some("工作"),
+                Some("uid-a"),
+                &yes()
+            ),
+            BatchMerge::NotEligible(NotEligibleWhy::NotPersonal(SpaceKind::Team))
+        );
+        assert_eq!(
+            batch_merge_gate_uid(None, "工作", "uid-a", Some("工作"), Some("uid-a"), &yes()),
+            BatchMerge::NotEligible(NotEligibleWhy::KindUnknown)
+        );
+        // 对面没带名字 ⇒ 不参与（uid 相同也不越级允许：说不清融的是哪个空间）。
+        assert_eq!(
+            batch_merge_gate_uid(
+                Some(SpaceKind::Personal),
+                "工作",
+                "uid-a",
+                None,
+                Some("uid-a"),
+                &yes()
+            ),
+            BatchMerge::NotEligible(NotEligibleWhy::NoPeerName)
+        );
+    }
+
+    /// **旧行为保持**：uid 都空/判不了时，与 `batch_merge_gate` **逐字等价**（覆盖类别/名字/身份矩阵）。
+    #[test]
+    fn without_uids_the_old_gate_result_is_reproduced_exactly() {
+        let names = [
+            ("工作", Some("工作")),
+            ("工作", Some(" 工作 ")),
+            ("工作", Some("别的")),
+            ("", Some("工作")),
+            ("工作", None),
+            ("工作", Some("")),
+        ];
+        let kinds = [None, Some(SpaceKind::Personal), Some(SpaceKind::Team)];
+        let ids = [yes(), no(), unknown()];
+        for kind in kinds {
+            for (local, peer) in names {
+                for identity in &ids {
+                    let old = batch_merge_gate(kind, local, peer, identity);
+                    // 两边 uid 都空（announcement 老对端/老空间）⇒ 必须与旧闸完全一样。
+                    let new = batch_merge_gate_uid(kind, local, "", peer, None, identity);
+                    assert_eq!(
+                        new, old,
+                        "uid 空时必须与旧闸逐字等价：kind={kind:?} local={local:?} peer={peer:?}"
+                    );
+                    // 只有一边空 ⇒ 同样回落名字，结果也应一致。
+                    let one = batch_merge_gate_uid(kind, local, "uid-local", peer, None, identity);
+                    assert_eq!(one, old, "只有本机有 uid ⇒ 回落名字，结果同旧闸");
+                }
+            }
+        }
     }
 }
