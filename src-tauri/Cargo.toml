@@ -56,14 +56,22 @@ sm-library = []
 #   它会回一句"这个构建没编入 MuPDF，请用带 mupdf-rollback 的构建"（判据守着，见 commands.rs）。
 mupdf-rollback = ["dep:mupdf-sys"]
 
-# ⭐ 2026-10-25（跨网中继「数据面」Step 2a · **owner 已拍**）：
-#   **`iroh` 只在 `--features relay` 里带，默认不带** ⇒ 默认产物的体积/编译时间一个字不变。
-#   为什么需要它：今天 `Cargo.lock` 里只有 `iroh-relay`/`iroh-base`/`iroh-dns`
-#   （那是"中继服务器协议 ＋ 基础类型"），**它们不能自己收发数据** ⇒ 隧道要 `iroh` 的 `Endpoint`
+# ⭐ 2026-10-25（跨网中继「数据面」Step 2a · **owner 已拍**）＋
+# ⭐ 2026-11-08（P3-2a · ADR §3.2 **feature 拆分**）：
+#   **`iroh` 只在 QUIC 那一档 feature 里带，默认不带** ⇒ 默认产物的体积/编译时间一个字不变。
+#   为什么需要它：`Cargo.lock` 里原本只有 `iroh-relay`/`iroh-base`/`iroh-dns`
+#   （那是"中继服务器协议 ＋ 基础类型"），**它们不能自己收发数据** ⇒ 端点要 `iroh` 的 `Endpoint`
 #   （QUIC ＋ 打洞）。方案：`docs/plans/2026-10-25-relay-data-plane-minimal-plan.md` §五 ①。
-#   ⚠️ 判据（默认不该带）：`cargo tree -e normal` 里**没有** `iroh v…`
-#   ＋ 默认构建的测试 `the_relay_data_plane_is_off_by_default` 断言 `cfg!(feature = "relay")` 为假。
-relay = ["dep:iroh"]
+#   ⭐ **P3-2a 起拆成两层**（ADR `docs/plans/2026-11-08-personal-sync-2.0-p3-adr.md` §3.2）：
+#     · `lan-quic` = `["dep:iroh"]` —— **无中继**的 QUIC 端点本体（LAN/手动地址直连；P3-2 才接线）；
+#     · `relay`    = `["lan-quic"]` —— 在它之上叠加 relay 配置/许可/中继地址（`--features relay` 仍兼容）。
+#   ⚠️ `lan-quic` 单独开时**不许**编进 relay 许可/relay 配置那几条路（它们仍只挂在 `feature = "relay"` 下，
+#      判据 `relay_feature_tests::the_relay_license_gate_is_compiled_only_for_relay_builds` ✓）。
+#   ⚠️ 判据（默认不该带）：`cargo tree -e normal` 里**没有** `iroh v…`；测试模块 `relay_feature_tests`
+#      断言 `relay`/`lan-quic` 都不在 `default`、`iroh` 仍 optional 且钉版本、`relay ⇒ lan-quic`。
+#   ⚠️ 这里**只拆 feature**：⛔ 不建端点、⛔ 不改传输行为、⛔ 不动正式发版命令（P3-2 后续步骤做）。
+lan-quic = ["dep:iroh"]
+relay = ["lan-quic"]
 
 [dependencies]
 # ⭐ 2026-11-08（owner 已拍 DEC-2 A / P1「App 托盘常驻」）：开 `tray-icon` ——

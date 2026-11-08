@@ -1662,18 +1662,32 @@ mod capability_scope_tests {
     }
 }
 
-/// ⭐⭐ **2026-10-25（数据面 Step 2a 判据）**：**`iroh` 只在 `--features relay` 里带**（owner 2026-10-25 拍）。
+/// ⭐⭐ **2026-10-25（数据面 Step 2a 判据）** ＋ ⭐ **2026-11-08（P3-2a · ADR §3.2 feature 拆分）**：
+/// **`iroh` 只在 `lan-quic` 那一档 feature 里带；`relay` 叠在 `lan-quic` 上**。
 ///
 /// 为什么判在 `Cargo.toml` 上而不是判 `cfg!`：
 /// `cfg!(feature = "relay")` 在默认测试构建里**恒为假**（那只是"当前这次构建"），
-/// 判它等于什么都没判；真正的风险是**后人把 `relay` 加进 `default = [...]`** ——
+/// 判它等于什么都没判；真正的风险是**后人把 `relay`／`lan-quic` 加进 `default = [...]`** ——
 /// 那会让默认产物凭空多出一整套 QUIC/打洞依赖（体积与编译时间），而所有测试照绿。
 ///
 /// **变异**：把 `relay` 写进 `default = ["sm-crypto", "relay"]` ⇒ 第一条红；
-/// 删掉 `iroh` 那行的 `optional = true` ⇒ 第二条红。
+/// 把 `relay` 改回 `["dep:iroh"]`（丢掉 `lan-quic`）⇒ `relay_builds_on_top_of_lan_quic` 红；
+/// 删掉 `iroh` 那行的 `optional = true` ⇒ `the_iroh_dependency_is_optional` 红。
 #[cfg(test)]
 mod relay_feature_tests {
     const MANIFEST: &str = include_str!("../Cargo.toml");
+    /// 与 `mesh_endpoint.rs` 里**许可门的位置**同源：本文件只读它来断言"lan-quic 构建不编许可门"。
+    const MESH_ENDPOINT: &str = include_str!("mesh_endpoint.rs");
+
+    /// 某条**顶格** feature 定义行（`name = [...]`）；找不到 ⇒ `None`。
+    /// ⚠️ 只认顶格（feature 区）—— 依赖表里的 `relay-*`／缩进行不会被误认 ✓。
+    fn feature_line(name: &str) -> Option<String> {
+        let prefix = format!("{name} =");
+        MANIFEST
+            .lines()
+            .find(|l| l.starts_with(&prefix))
+            .map(|l| l.trim().to_string())
+    }
 
     #[test]
     fn the_relay_feature_is_not_in_the_default_set() {
@@ -1683,7 +1697,19 @@ mod relay_feature_tests {
             .expect("Cargo.toml 里必须有 `default = [...]`");
         assert!(
             !line.contains("relay"),
-            "owner 2026-10-25 拍：`iroh` 只在 `--features relay` 里带 ⇒ `default` 不许含 relay：{line}"
+            "owner 2026-10-25 拍：`iroh` 只在 QUIC feature 里带 ⇒ `default` 不许含 relay：{line}"
+        );
+    }
+
+    #[test]
+    fn the_lan_quic_feature_is_not_in_the_default_set() {
+        let line = MANIFEST
+            .lines()
+            .find(|l| l.trim_start().starts_with("default ="))
+            .expect("Cargo.toml 里必须有 `default = [...]`");
+        assert!(
+            !line.contains("lan-quic"),
+            "P3-2a：`lan-quic` 也不许进 `default`（默认产物不加 QUIC/打洞依赖）：{line}"
         );
     }
 
@@ -1701,5 +1727,69 @@ mod relay_feature_tests {
             line.contains("=1.3.0"),
             "`iroh` 版本要与 `iroh-relay` 钉同一版（=1.3.0），否则隧道版本头对不上：{line}"
         );
+    }
+
+    #[test]
+    fn lan_quic_is_the_feature_that_pulls_in_iroh() {
+        let line = feature_line("lan-quic")
+            .expect("Cargo.toml 必须有 `lan-quic = [\"dep:iroh\"]`（P3-2a feature 拆分）");
+        assert!(
+            line.contains("dep:iroh"),
+            "`lan-quic` 必须带 `dep:iroh`（无中继 QUIC 端点本体）：{line}"
+        );
+    }
+
+    #[test]
+    fn relay_builds_on_top_of_lan_quic() {
+        let relay = feature_line("relay").expect("Cargo.toml 必须有 `relay = [...]`");
+        assert!(
+            relay.contains("lan-quic"),
+            "ADR §3.2：`relay` 必须叠在 `lan-quic` 上（relay ⇒ lan-quic）：{relay}"
+        );
+        assert!(
+            !relay.contains("dep:iroh"),
+            "`relay` 不许绕过 `lan-quic` 直接带 `iroh`（那会把两层又并回去）：{relay}"
+        );
+    }
+
+    /// ADR §3.2 的"lan-quic 构建不调用许可/relay 配置符号"：
+    /// 许可门（`gate_for_new_tunnel`）所在函数今天仍只挂 `feature = "relay"`。
+    /// ⚠️ P3-2a 后续会给 `lan-quic` 加 `lan_quic_endpoint_for`（不过许可门）——那时这条要按新形状更新。
+    #[test]
+    fn the_relay_license_gate_is_compiled_only_for_relay_builds() {
+        let idx = MESH_ENDPOINT
+            .find("gate_for_new_tunnel")
+            .expect("mesh_endpoint.rs 里应当还有许可门（`gate_for_new_tunnel`）");
+        let head = &MESH_ENDPOINT[..idx];
+        let at = head
+            .rfind("#[cfg(")
+            .expect("许可门所在函数必须有 `#[cfg(...)]` 属性");
+        let attr = &head[at..];
+        assert!(
+            attr.contains("feature = \"relay\""),
+            "许可门必须仍只挂在 `feature = \"relay\"` 下：{attr}"
+        );
+        assert!(
+            !MESH_ENDPOINT.contains("feature = \"lan-quic\""),
+            "本轮还没有 lan-quic 专属代码 ⇒ ⛔ 不许把许可门编进 lan-quic 构建（将来加 `lan_quic_endpoint_for` 时再更新这条）"
+        );
+    }
+
+    /// 当前这次构建的 feature 自检：开了 `lan-quic` ⇒ `cfg!` 必须为真。
+    #[test]
+    #[cfg(feature = "lan-quic")]
+    fn this_build_has_lan_quic_on() {
+        assert!(
+            cfg!(feature = "lan-quic"),
+            "构建时开了 lan-quic ⇒ cfg 必须为真"
+        );
+    }
+
+    /// 默认构建（不带 QUIC feature）⇒ 两档都为假（与"默认产物不变"同一个判据）。
+    #[test]
+    #[cfg(not(feature = "lan-quic"))]
+    fn the_default_build_has_neither_quic_nor_relay() {
+        assert!(!cfg!(feature = "lan-quic"), "默认构建不许带 lan-quic");
+        assert!(!cfg!(feature = "relay"), "默认构建不许带 relay");
     }
 }
