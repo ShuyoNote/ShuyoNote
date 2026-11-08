@@ -327,6 +327,78 @@ pub async fn quic_endpoint_for(
     Ok(Box::new(QuicMeshEndpoint::new(registry, addr)))
 }
 
+/// ⭐ **P3-2a 回退组合器**：`first`（QUIC）优先，失败时**打一行日志再回退 HTTP**。
+///
+/// 语义（本笔只做组合，⛔ 不改 `endpoint_for_peer` 选路）：
+/// * `get`：先 `first.get` —— **成功就直接回**（⛔ 不重复请求、⛔ 不碰 HTTP）；
+///   失败 ⇒ 打**一行**可读日志（只含 target 与原因；⛔ 不含 token/签名）→ `fallback.get`；
+/// * `get_stream`：**直接走 HTTP fallback**（QUIC 适配器明确不支持流式；本笔不做 QUIC 流式）；
+/// * `first` 抽象成 `Box<dyn Endpoint + Send>` ⇒ 测试可塞假端点，生产可塞 [`QuicMeshEndpoint`]。
+///
+/// ⚠️ **骨架阶段**：尚无正式调用者（接线是 P3-2 后续）⇒ 显式 `allow(dead_code)`；接线后删除。
+#[cfg(feature = "lan-quic")]
+#[allow(dead_code)]
+pub struct QuicThenHttpEndpoint {
+    first: Box<dyn Endpoint + Send>,
+    fallback: LanEndpoint,
+}
+
+#[cfg(feature = "lan-quic")]
+impl QuicThenHttpEndpoint {
+    /// 用「优先端点（通常是 QUIC）＋ HTTP fallback 的 base/client」构造。
+    #[allow(dead_code)]
+    pub fn with_http_fallback(
+        first: Box<dyn Endpoint + Send>,
+        base: &str,
+        client: reqwest::Client,
+    ) -> Self {
+        Self {
+            first,
+            fallback: LanEndpoint::new(base, client),
+        }
+    }
+}
+
+#[cfg(feature = "lan-quic")]
+impl Endpoint for QuicThenHttpEndpoint {
+    fn get<'a>(
+        &'a self,
+        target: &'a str,
+        auth: Option<(&'a str, i64, &'a str)>,
+        token: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<HttpReply, String>> + Send + 'a>> {
+        Box::pin(async move {
+            match self.first.get(target, auth, token).await {
+                Ok(reply) => Ok(reply),
+                Err(why) => {
+                    // ⚠️ 只有一行、只含 target/原因：日志行由 [`fallback_log_line`] 这一处拼装
+                    //（它**不接** token/签名参数 ⇒ 从类型上就不可能把机密拼进去）。
+                    eprintln!("{}", fallback_log_line(target, &why));
+                    self.fallback.get(target, auth, token).await
+                }
+            }
+        })
+    }
+
+    fn get_stream<'a>(
+        &'a self,
+        target: &'a str,
+        auth: Option<(&'a str, i64, &'a str)>,
+        token: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<(u16, AttachmentBody), String>> + Send + 'a>> {
+        // 流式一律走 HTTP fallback（⛔ 不先试 QUIC —— 那会白建一条连接又失败）。
+        self.fallback.get_stream(target, auth, token)
+    }
+}
+
+/// 回退日志行的**唯一**构造点（纯函数）：只接收 `target` 与 `why` ⇒ 类型上就**不可能**拼进
+/// token/签名。测试直接核这一行的形状（含 target/原因、只有一行、不含机密）。
+#[cfg(feature = "lan-quic")]
+#[allow(dead_code)] // 骨架阶段：唯一调用点在"尚无正式构造者"的组合器里（见上方 allow 说明）
+fn fallback_log_line(target: &str, why: &str) -> String {
+    format!("[mesh-endpoint] P3-2a：QUIC 首次尝试失败 ⇒ 回退 HTTP（target={target}；原因={why}）")
+}
+
 /// 拼一个 base 与 target（**唯一一处**；`trim_end_matches('/')` 的老口径保持不变 ✓）。
 pub fn join(base: &str, target: &str) -> String {
     format!("{}{}", base.trim_end_matches('/'), target)
@@ -534,5 +606,212 @@ mod quic_endpoint_tests {
         assert!(err.contains("第 1 条"), "要点名第几条：{err}");
 
         registry.close().await;
+    }
+}
+
+/// ⭐ **P3-2a：`QuicThenHttpEndpoint` 回退组合器判据**（只在 `--features lan-quic` 下编）。
+///
+/// 用**假首端点**（计数/固定结果）＋ **最小本地 HTTP 服务**（计数/固定应答），不建真实 QUIC。
+/// 只验四件事：成功不碰 HTTP、失败正好回退一次、`get_stream` 走 HTTP、日志行形状不泄密。
+#[cfg(all(test, feature = "lan-quic"))]
+mod quic_fallback_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// 假首端点：记录被调用次数，按固定结果返回。
+    struct FakeEndpoint {
+        calls: Arc<AtomicUsize>,
+        result: Result<HttpReply, String>,
+    }
+
+    impl Endpoint for FakeEndpoint {
+        fn get<'a>(
+            &'a self,
+            _target: &'a str,
+            _auth: Option<(&'a str, i64, &'a str)>,
+            _token: Option<&'a str>,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<HttpReply, String>> + Send + 'a>,
+        > {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                self.result.clone()
+            })
+        }
+    }
+
+    /// 最小本地 HTTP 服务：接连接就计数，回一个固定 `201` ＋ 正文。
+    struct FakeHttp {
+        base: String,
+        accepted: Arc<AtomicUsize>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    async fn spawn_http_ok(body: &'static str) -> FakeHttp {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("起最小 HTTP 服务");
+        let addr = listener.local_addr().expect("本地地址");
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&accepted);
+        let task = tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                counter.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    // 读掉请求（reqwest 一次请求一连接；本服务只回一个固定应答）。
+                    let mut buf = vec![0u8; 4096];
+                    let _ = sock.read(&mut buf).await;
+                    let resp = format!(
+                        "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        FakeHttp {
+            base: format!("http://{addr}"),
+            accepted,
+            task,
+        }
+    }
+
+    /// ① 首端点成功 ⇒ 只调 first 一次、HTTP **零请求**、状态/正文来自 first；
+    /// ② 再请求一次 ⇒ first 计数变 2、HTTP 仍是 0（"成功绝不重复请求/不偷偷走 HTTP"）。
+    #[tokio::test]
+    async fn a_successful_first_call_never_touches_http() {
+        let http = spawn_http_ok("HTTP-BODY").await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let first = FakeEndpoint {
+            calls: Arc::clone(&calls),
+            result: Ok(HttpReply {
+                status: 200,
+                body: "QUIC-BODY".to_string(),
+            }),
+        };
+        let ep = QuicThenHttpEndpoint::with_http_fallback(
+            Box::new(first),
+            &http.base,
+            reqwest::Client::new(),
+        );
+
+        let reply = ep
+            .get("/mesh/manifest?space_id=x", None, None)
+            .await
+            .expect("首端点成功");
+        assert_eq!(reply.status, 200);
+        assert_eq!(reply.body, "QUIC-BODY", "成功时状态/正文必须来自 first");
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "first 只该被调用一次");
+
+        // 再请求一次：first 计数 +1，但 HTTP 仍然零请求。
+        let reply2 = ep
+            .get("/mesh/manifest?space_id=x", None, None)
+            .await
+            .expect("首端点成功");
+        assert_eq!(reply2.body, "QUIC-BODY");
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "每次请求各调 first 一次");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            http.accepted.load(Ordering::SeqCst),
+            0,
+            "first 成功时 HTTP 一个连接都不许建（⛔ 不重复请求、⛔ 不偷偷回退）"
+        );
+        http.task.abort();
+    }
+
+    /// ③ first 失败 ⇒ **恰好一次** HTTP 回退，返回 HTTP 的状态/正文；日志行形状可核。
+    #[tokio::test]
+    async fn a_failed_first_call_falls_back_to_http_once() {
+        let http = spawn_http_ok("HTTP-BODY").await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let first = FakeEndpoint {
+            calls: Arc::clone(&calls),
+            result: Err("假 QUIC 失败：连接被拒绝".to_string()),
+        };
+        let ep = QuicThenHttpEndpoint::with_http_fallback(
+            Box::new(first),
+            &http.base,
+            reqwest::Client::new(),
+        );
+
+        let reply = ep
+            .get("/mesh/manifest?space_id=x", None, Some("SECRET-TOKEN"))
+            .await
+            .expect("失败必须回退到 HTTP 并成功");
+        assert_eq!(reply.status, 201, "状态来自 HTTP fallback");
+        assert_eq!(reply.body, "HTTP-BODY", "正文来自 HTTP fallback");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "first 只试一次（⛔ 不重试）"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            http.accepted.load(Ordering::SeqCst),
+            1,
+            "失败后只回退一次 HTTP"
+        );
+
+        // 日志行：一行、含 target 与原因、不含 token/签名。
+        let line = fallback_log_line("/mesh/manifest?space_id=x", "假 QUIC 失败：连接被拒绝");
+        assert_eq!(line.lines().count(), 1, "日志必须只有一行：{line}");
+        assert!(
+            line.contains("target=/mesh/manifest?space_id=x"),
+            "要带 target：{line}"
+        );
+        assert!(
+            line.contains("假 QUIC 失败：连接被拒绝"),
+            "要带原因：{line}"
+        );
+        assert!(
+            !line.contains("SECRET-TOKEN"),
+            "⛔ 日志不许带 token：{line}"
+        );
+        assert!(!line.contains("sig"), "⛔ 日志不许带签名：{line}");
+        http.task.abort();
+    }
+
+    /// ④ `get_stream` **直接走 HTTP**（⛔ 不先试 QUIC），状态与字节内容都来自 fallback。
+    #[tokio::test]
+    async fn get_stream_goes_straight_to_http() {
+        let http = spawn_http_ok("STREAM-BODY").await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let first = FakeEndpoint {
+            calls: Arc::clone(&calls),
+            result: Ok(HttpReply {
+                status: 200,
+                body: "QUIC-NEVER".to_string(),
+            }),
+        };
+        let ep = QuicThenHttpEndpoint::with_http_fallback(
+            Box::new(first),
+            &http.base,
+            reqwest::Client::new(),
+        );
+
+        let (status, mut body) = ep
+            .get_stream("/mesh/attachment?hash=abc", None, None)
+            .await
+            .expect("流式走 HTTP fallback");
+        assert_eq!(status, 201);
+        let mut got = Vec::new();
+        body.read_to_end(&mut got).await.expect("读流");
+        assert_eq!(
+            std::str::from_utf8(&got).expect("UTF-8 正文"),
+            "STREAM-BODY"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "get_stream ⛔ 不许先试 QUIC（会白建连接）"
+        );
+        http.task.abort();
     }
 }
