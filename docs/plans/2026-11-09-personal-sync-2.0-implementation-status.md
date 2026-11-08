@@ -17,14 +17,14 @@
 | P3-2a 接入 | `endpoint_for_peer` 仅 `lan-quic && !relay` 选 QUIC；默认/relay 行为不变 | 三档 `cargo check`；default/relay 不进入分支判据 |
 | P3-3a 影子 | canonical 比较、真实空间扫描、dev 看门、手动体检、近 7 天历史、回滚演练 | 影子 9 + 诊断 5/10 + 历史 14 + rollback 2 |
 | P3-3b uid | `space_uid` 列/迁移/公告/载荷/融合闸/自动建/钥匙袋映射/别名开盒 | `db` 15、`sync` 162、`keyring` 23 |
-| P3-4 附件 | 服务端 Range、客户端 offset 续传、完整 sha 校验、进度事件+UI | `mesh::` 107、`sync::` 159、Range/续传/进度判据 |
+| P3-4 附件 | 服务端 Range、客户端 offset 续传、完整 sha 校验、进度事件+UI、取消（保留 .part） | `mesh::` 107、`sync::` 165、Range/续传/进度/取消判据 |
 | P3-1a Core | 保存唤醒、`sync_core_round` 下沉、Rust 调度器（桌面默认）、wifi/ethernet 闸门、前端回退 | `sync_core` 36；`pnpm verify` 66/66 |
 | P3-1b daemon | `--sync-core-daemon`、单写者锁、App/daemon 互斥、角色+确认停止、回环 IPC `/status` `/round` `/shutdown` | `sync_core_daemon` 21；三档 check |
 
 ## 2. 本轮最终验收读数（2026-11-09）
 
 ```text
-pnpm verify                         66/66（失败 0、环境不具备 0）
+pnpm verify                         66/66（失败 0、环境不具备 0；2026-11-09 复核）
 cargo test --lib（TMPDIR canonical）1503 passed / 0 failed / 23 ignored
 三档 cargo check（默认/lan-quic/relay）0/0/0
 两进程 QUIC（127 + 非回环 LAN）      2 passed / 2 ignored
@@ -43,7 +43,7 @@ relay 本地 TLS 验收                  通过 6/失败 0；正控/错 SAN/停�
 ⛔ App 全面转 daemon：App 仍持有 DB 写者；daemon 仅无头模式 + 回环 IPC；
    未做 App 通过 IPC 执行同步/读取全部数据、Windows 无 TERM 的自动停止
 ⛔ P3-3a 真正 7 天 0 差异观察（只做了历史落盘/裁剪，未等满 7 天）
-⛔ P3-4 分块清单/暂停取消（可选，未做）
+⛔ P3-4 分块清单/暂停（取消已做；暂停/分块清单未做，可选）
 ⛔ 正式包/发版不包含 QUIC/relay 数据面；跨网中继仍未进正式包
 ```
 
