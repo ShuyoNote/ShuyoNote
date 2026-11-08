@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+## [2.1.12] - 2026-11-08
+
+> MCP：前端桥回执修复（导出/覆盖率报告恢复可用）
+
 ### 修复
 - **MCP 前端桥「请求发出去了、前端从没回执」—— `export_*` 与 `coverage_report` 因此 100% `frontend_timeout`（历史审计 94 次 0 成功）**：Rust 出口把**已经是 JSON 字符串**的请求又 `to_string()` 了一次，前端收到的是 string，`requestId`/`method` 读不到 ⇒ 直接 `return`、永不回执。现在 Rust 发**对象**，前端同时兼容字符串/对象（防版本错配）；真机（dev 构建）验证：`export_page_markdown` 返回句柄、`coverage_report` 返回报告，均不再超时。
 
