@@ -1,6 +1,6 @@
 # 个人版同步 2.0 · P3 落地 ADR（daemon ／ 单 QUIC 端点 ／ 块级 CRDT）
 
-> 状态：草案（实施依据，待 DEC-A..E 拍板） ｜ 2026-11-08
+> 状态：草案（实施依据；2026-11-08 owner 按推荐拍板 DEC-A..E 全选 A） ｜ 2026-11-08
 > 上位：`docs/plans/2026-11-08-personal-sync-2.0-requirements.md` §5 P3
 > 口径：只读研究结论；每个结论保留 1–2 个 `file:line`；不贴原始证据清单。
 
