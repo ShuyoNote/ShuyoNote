@@ -1769,6 +1769,12 @@ export function makeInvoke(store: SqliteStore) {
         window: null,
       } as T;
     }
+    if (cmd === "mesh_sync_all_now") {
+      // ⭐ P3-1a：与上面 `mesh_sync_now` **同一条硬事实** —— Web 没有发现层、也开不了本机端口
+      //   ⇒ 回**结构完整、全 0** 的汇总（`spaces: []` ＝ "这一档没有可跑的空间"，
+      //   ⛔ 不假装拉过、⛔ 不编 per-space 行）。
+      return { spaces: [], total: 0, ok: 0, failed: 0, applied: 0, candidates: 0 } as T;
+    }
     if (cmd === "mesh_missing_spaces") {
       // ⭐ 2026-10-23：候选表只在桌面版有（它要发现层与配对名单；Web 两样都没有）。
       //   ⚠️ 回**空表**而不是抛错：这是"这一档没有"，界面照常渲染（⛔ 不是"没有候选"）。

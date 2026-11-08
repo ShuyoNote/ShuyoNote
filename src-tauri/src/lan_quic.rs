@@ -173,6 +173,7 @@ impl LanQuicRegistry {
     ///
     /// ⚠️ 今天本模块内没有非测试调用者（接收入站/公告地址是 P3-2 的活）⇒ 暂时显式 allow，
     /// 免得在 `cargo check --features lan-quic` 里多出一条"新写的死代码"噪音。
+    /// ⏳ **2026-11-08 收据**：P3-2 接入站监听（`process_registry` 持端点 accept 循环）后删掉本 allow。
     #[allow(dead_code)]
     pub fn endpoint(&self) -> &Arc<LanQuicEndpoint> {
         &self.endpoint

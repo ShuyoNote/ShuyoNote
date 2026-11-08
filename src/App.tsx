@@ -333,18 +333,24 @@ async function runAutoSyncRound(): Promise<void> {
         ),
       );
     }
-    // ★ 网格（丙）：**每一份档案**都各跑一轮对等交换；失败不连坐（每条自己 `.catch`）。
-    // ⚠️ "没配网格 ⇒ 一个字节都不动"这条 gate **只在 Rust 侧**（`mesh_sync_now` 自己早退）
+    // ★ 网格（丙）：⭐ **P3-1a 第一刀** —— 把"逐空间串行跑一轮"下沉到 Rust：
+    //   App 这里**一次调用** `meshSyncAllNow()`（Rust 逐空间串行、失败不连坐）。
+    //   面板手动/「立即同步」仍走**单空间** `meshSyncNow(ws_id)`（带进度/重试，那是另一条路）。
+    // ⚠️ "没配网格 ⇒ 一个字节都不动"这条 gate **只在 Rust 侧**（`mesh_sync_one` 自己早退）
     // ——前端**不重复判一遍**（两处各解释一遍迟早漂）。
-    // ⚠️⚠️ **2026-10-09 修（真事故）**：这里原来写的是 `if (withSpace.length)` ✗，而 `withSpace`
-    // 滤的是 `p.space_id` —— **个人空间的 `space_id` 就是空串** ✗（那正是 2026-10-08 那一整批修的口径）
-    // ⇒ **个人空间＝"设备直连"的主用例**，却因为"没有服务端空间 id"被**整批滤掉** ✗
-    // ⇒ 自动同步那条路**一个 `meshSyncNow` 都不发** ⇒ 网格**一次都不跑** ✗（用户只能手点面板才会同步）。
-    // ⇒ 现在：**对每一份档案都发**，配没配由 Rust 侧那**一处**判 ✓（与上面同一句口径，不新增第二处判据 ✓）。
+    // ⚠️⚠️ **2026-10-09 修（真事故）**：这里原来滤 `p.space_id` —— **个人空间的 `space_id` 就是空串**
+    // ⇒ 个人空间＝"设备直连"的主用例被整批滤掉 ⇒ 自动路一个网格轮都不发。现在**对每一份档案都发**
+    //（整批交给 Rust 逐空间串行），配没配由 Rust 那**一处**判 ✓。
     const meshCandidates = profiles || [];
     let meshReports: MeshLike[] = [];
     if (meshCandidates.length) {
-      meshReports = await Promise.all(meshCandidates.map((p: any) => api.meshSyncNow(p.ws_id).catch(() => null)));
+      const all = await api.meshSyncAllNow().catch(() => null);
+      // 汇总里**成功空间**才有 `report`（失败行只有 error）⇒ 与旧行为一样"失败按没换到算"。
+      const reports: MeshLike[] = [];
+      for (const s of all?.spaces ?? []) {
+        if (s.report) reports.push(s.report);
+      }
+      meshReports = reports;
       await useNotes.getState().loadPages();
     }
     // ★ 空闲退避（2026-09-30）：**跑完了才记时**（被闸门拦掉、或忙的时候不算"跑过" ✓）。

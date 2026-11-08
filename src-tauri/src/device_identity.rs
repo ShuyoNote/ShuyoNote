@@ -45,6 +45,7 @@ impl DeviceIdentity {
     ///
     /// ⚠️ 只读、⛔ 不写回；唯一的消费方是进程级 QUIC Registry 的懒初始化
     /// （只在 `all(feature="lan-quic", not(feature="relay"))` 构建里接线 ⇒ relay 档暂无人用）。
+    /// ⏳ **2026-11-08 收据**：relay 构建开始接线 QUIC 端点身份时删掉这条 `cfg_attr` allow。
     #[cfg_attr(feature = "relay", allow(dead_code))]
     pub fn seed_bytes(&self) -> [u8; 32] {
         self.signing.to_bytes()

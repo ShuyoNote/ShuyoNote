@@ -4059,8 +4059,18 @@ pub async fn mesh_sync_now(
     db: State<'_, Db>,
     workspace_id: Option<String>,
 ) -> Result<crate::mesh::MeshRoundReport, String> {
+    mesh_sync_one(&app, &db, workspace_id).await
+}
+
+/// 单空间跑一轮的**唯一实现**：`mesh_sync_now` 与批量 `mesh_sync_all_now` 共用
+/// （⛔ 不复制行为 —— 批量命令只是"逐空间串行调它"）。
+async fn mesh_sync_one(
+    app: &tauri::AppHandle,
+    db: &State<'_, Db>,
+    workspace_id: Option<String>,
+) -> Result<crate::mesh::MeshRoundReport, String> {
     // ① 认空间（**两个**空间 id ＋ 本机设备号）
-    let scope = mesh_scope(&db, workspace_id.as_deref())?;
+    let scope = mesh_scope(db, workspace_id.as_deref())?;
 
     // ② 设置 ＋ 发现层（没开发现层 ⇒ 对端表是空的，**如实**回"网段里没人"）
     let (cfg, peers) = {
@@ -4214,6 +4224,104 @@ pub async fn mesh_sync_now(
         );
     }
     Ok(report)
+}
+
+/// ⭐ **P3-1a 第一刀**：一个空间在"全部空间同步"里的结果（`report` 与 `error` 互斥）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshSyncAllSpace {
+    pub ws_id: String,
+    /// 成功时的那一轮读数（与单空间 `mesh_sync_now` 同形）。
+    pub report: Option<crate::mesh::MeshRoundReport>,
+    /// 失败原因（⛔ 不带其他空间连坐；`None` ＝ 这个空间成功）。
+    pub error: Option<String>,
+}
+
+/// ⭐ **P3-1a 第一刀**：`mesh_sync_all_now` 的汇总（App 自动同步只读这一份）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshSyncAllReport {
+    /// 逐空间结果（顺序＝`sync_profiles` 顺序，与 App 自动同步同一数据源/口径）。
+    pub spaces: Vec<MeshSyncAllSpace>,
+    pub total: usize,
+    pub ok: usize,
+    pub failed: usize,
+    /// 各空间 `applied` 之和（本轮真的收下的页数）。
+    pub applied: usize,
+    /// 各空间 `candidates` 之和（本轮够格当网格对端的台数）。
+    pub candidates: usize,
+}
+
+/// ⭐ **P3-1a（纯函数）**：把逐空间结果汇总成读数 —— 判据够得着（不碰 DB/网络）。
+///
+/// 口径：**失败不连坐**（每个空间各一行，`ok/failed` 分别计数）；`applied/candidates`
+/// 只累加**成功**空间的读数（失败那行没有 report ⇒ 不编 0 以外的数）。
+pub fn summarize_mesh_all(
+    results: Vec<(String, Result<crate::mesh::MeshRoundReport, String>)>,
+) -> MeshSyncAllReport {
+    let mut spaces = Vec::with_capacity(results.len());
+    let mut ok = 0usize;
+    let mut failed = 0usize;
+    let mut applied = 0usize;
+    let mut candidates = 0usize;
+    for (ws_id, r) in results {
+        match r {
+            Ok(report) => {
+                ok += 1;
+                applied += report.applied;
+                candidates += report.candidates;
+                spaces.push(MeshSyncAllSpace {
+                    ws_id,
+                    report: Some(report),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                failed += 1;
+                spaces.push(MeshSyncAllSpace {
+                    ws_id,
+                    report: None,
+                    error: Some(e),
+                });
+            }
+        }
+    }
+    MeshSyncAllReport {
+        total: spaces.len(),
+        spaces,
+        ok,
+        failed,
+        applied,
+        candidates,
+    }
+}
+
+/// ⭐ **P3-1a 第一刀**：App 自动同步的**一次调用**入口 —— 逐空间串行编排（下沉到 Rust）。
+///
+/// 行为：
+/// · **空间来源**：`list_profiles`（与 `list_sync_profiles` 同一 SQL/口径：只列未删除的工作区）；
+/// · **逐空间串行**：每个空间调 [`mesh_sync_one`]（＝`mesh_sync_now` 的实现，复用既有窗口/gate/
+///   落库/`mesh-applied` 事件）；⛔ **不并发**（并发会多窗口/多空间抢锁）；
+/// · **失败不连坐**：某个空间失败只记在它自己那一行（`error`），后面的空间照跑；
+/// · **空档案** ⇒ `spaces: []`、全 0（不报错、一个字节都不动）。
+#[tauri::command]
+pub async fn mesh_sync_all_now(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+) -> Result<MeshSyncAllReport, String> {
+    // 空间清单：与 App 自动同步同一数据源（`list_sync_profiles` 的底层 `list_profiles`）。
+    let ws_ids: Vec<String> = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        list_profiles(&c)?.into_iter().map(|p| p.ws_id).collect()
+    };
+    let mut results: Vec<(String, Result<crate::mesh::MeshRoundReport, String>)> =
+        Vec::with_capacity(ws_ids.len());
+    for ws_id in ws_ids {
+        // ⚠️ 串行 `await`：一空间跑完才跑下一个；失败只记这一行（⛔ 不连坐、⛔ 不提前 return）。
+        let r = mesh_sync_one(&app, &db, Some(ws_id.clone())).await;
+        results.push((ws_id, r));
+    }
+    Ok(summarize_mesh_all(results))
 }
 
 /// ⭐⭐ **task-12（owner 拍 C：后台每 5 分钟一轮）**：**不靠界面**也把网格那一轮跑掉 ✓。
@@ -13290,6 +13398,101 @@ mod quic_addrs_passthrough_tests {
         assert_eq!(
             with[0].invitable, without[0].invitable,
             "`quic_addrs` 不许影响 invitable"
+        );
+    }
+}
+
+/// ⭐ **P3-1a 第一刀**：`mesh_sync_all_now` 的纯函数/接线判据（不碰 DB/网络/AppHandle）。
+#[cfg(test)]
+mod p31_mesh_sync_all_tests {
+    use super::*;
+
+    fn report(candidates: usize, applied: usize) -> crate::mesh::MeshRoundReport {
+        crate::mesh::MeshRoundReport {
+            enabled: true,
+            note: "测试".to_string(),
+            candidates,
+            applied,
+            peers: Vec::new(),
+            window: None,
+        }
+    }
+
+    #[test]
+    fn empty_profiles_summarize_to_zero_and_no_spaces() {
+        let out = summarize_mesh_all(Vec::new());
+        assert_eq!(out.total, 0);
+        assert_eq!(out.ok, 0);
+        assert_eq!(out.failed, 0);
+        assert_eq!(out.applied, 0);
+        assert_eq!(out.candidates, 0);
+        assert!(out.spaces.is_empty());
+    }
+
+    #[test]
+    fn one_space_carries_its_round_report_and_sums() {
+        let out = summarize_mesh_all(vec![("ws-a".to_string(), Ok(report(2, 3)))]);
+        assert_eq!(out.total, 1);
+        assert_eq!(out.ok, 1);
+        assert_eq!(out.failed, 0);
+        assert_eq!(out.applied, 3);
+        assert_eq!(out.candidates, 2);
+        assert_eq!(out.spaces[0].ws_id, "ws-a");
+        assert!(out.spaces[0].error.is_none());
+        assert_eq!(out.spaces[0].report.as_ref().unwrap().applied, 3);
+    }
+
+    #[test]
+    fn a_failure_does_not_poison_the_other_spaces() {
+        // 顺序也必须是输入顺序（Rust 侧串行编排，App 只按这个顺序读）。
+        let out = summarize_mesh_all(vec![
+            ("ws-a".to_string(), Ok(report(1, 2))),
+            ("ws-b".to_string(), Err("这个空间拉不动（假）".to_string())),
+            ("ws-c".to_string(), Ok(report(4, 5))),
+        ]);
+        assert_eq!(out.total, 3);
+        assert_eq!(out.ok, 2);
+        assert_eq!(out.failed, 1);
+        assert_eq!(out.applied, 7, "只累加成功空间的 applied");
+        assert_eq!(out.candidates, 5, "只累加成功空间的 candidates");
+        assert_eq!(
+            out.spaces
+                .iter()
+                .map(|s| s.ws_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ws-a", "ws-b", "ws-c"],
+            "汇总顺序＝串行编排顺序"
+        );
+        assert!(out.spaces[0].report.is_some());
+        assert!(out.spaces[1].report.is_none());
+        assert_eq!(
+            out.spaces[1].error.as_deref(),
+            Some("这个空间拉不动（假）"),
+            "失败原因要原样带出"
+        );
+        assert!(out.spaces[2].report.is_some());
+    }
+
+    #[test]
+    fn the_command_is_registered_and_reuses_the_single_space_implementation() {
+        // ① Rust 命令已注册进 generate_handler!（否则前端点下去只会 "command not found"）。
+        assert!(
+            include_str!("lib.rs").contains("sync::mesh_sync_all_now,"),
+            "`mesh_sync_all_now` 必须注册进 generate_handler!"
+        );
+        // ② 单空间实现只有一处（批量命令复用 `mesh_sync_one`，⛔ 不抄第二份 round 逻辑）。
+        let src = include_str!("sync.rs");
+        assert!(
+            src.contains("async fn mesh_sync_one("),
+            "缺单空间唯一实现 mesh_sync_one"
+        );
+        assert!(
+            src.contains("mesh_sync_one(&app, &db, Some(ws_id.clone())).await"),
+            "批量命令必须逐空间串行调 mesh_sync_one"
+        );
+        assert!(
+            src.contains("pub async fn mesh_sync_all_now("),
+            "缺 mesh_sync_all_now 命令本体"
         );
     }
 }

@@ -412,6 +412,8 @@ async fn relay_endpoint_for(
 /// ⚠️ 它**不拥有** Registry（`Arc` 共享）：一进程一端点由持有 Registry 的接线方保证。
 // ⚠️ **P3-2a 接线后**：`lan-quic` 非 relay 构建已由 `endpoint_for_peer` 真正使用 ⇒ 那档**没有 allow**；
 // `relay` 构建仍走旧 HTTP/relay 路径 ⇒ 这些适配器暂无人调用，仅在 relay 档保留 allow（可读噪音归零）。
+// ⏳ **2026-11-08 收据**：relay 构建也接入 QUIC 选路（或适配器被删）时，删掉本块各条
+//   `cfg_attr(feature = "relay", allow(dead_code))`。
 #[cfg(feature = "lan-quic")]
 #[cfg_attr(feature = "relay", allow(dead_code))]
 pub struct QuicMeshEndpoint {
@@ -422,6 +424,7 @@ pub struct QuicMeshEndpoint {
 #[cfg(feature = "lan-quic")]
 impl QuicMeshEndpoint {
     /// 用「已解析好的对端地址 ＋ 已有 Registry」构造（工厂 [`quic_endpoint_for`] 是正常入口）。
+    /// ⏳ **2026-11-08 收据**：relay 构建也使用本构造器时删掉这条 allow。
     #[cfg_attr(feature = "relay", allow(dead_code))]
     pub fn new(
         registry: std::sync::Arc<crate::lan_quic::LanQuicRegistry>,
@@ -468,6 +471,7 @@ impl Endpoint for QuicMeshEndpoint {
 /// * 地址坏/超上限 ⇒ 点名第几条（同上）。
 ///
 /// ⚠️ 它**不**决定"该不该走 QUIC"：选路仍是 P3-2 的事；调用方只在明确要走 QUIC 时调它。
+/// ⏳ **2026-11-08 收据**：relay 构建的选路也调用本工厂时删掉这条 allow。
 #[cfg(feature = "lan-quic")]
 #[cfg_attr(feature = "relay", allow(dead_code))]
 pub async fn quic_endpoint_for(
@@ -488,6 +492,7 @@ pub async fn quic_endpoint_for(
 ///
 /// ⚠️ **P3-2a 接线后**：`lan-quic` 非 relay 构建由 `endpoint_for_peer` 使用 ⇒ 那档无 allow；
 /// `relay` 构建仍走旧路径 ⇒ 仅 relay 档保留 allow。
+/// ⏳ **2026-11-08 收据**：relay 构建也走本组合器时删掉这条 allow。
 #[cfg(feature = "lan-quic")]
 #[cfg_attr(feature = "relay", allow(dead_code))]
 pub struct QuicThenHttpEndpoint {
@@ -498,6 +503,7 @@ pub struct QuicThenHttpEndpoint {
 #[cfg(feature = "lan-quic")]
 impl QuicThenHttpEndpoint {
     /// 用「优先端点（通常是 QUIC）＋ HTTP fallback 的 base/client」构造。
+    /// ⏳ **2026-11-08 收据**：relay 构建也使用本构造器时删掉这条 allow。
     #[cfg_attr(feature = "relay", allow(dead_code))]
     pub fn with_http_fallback(
         first: Box<dyn Endpoint + Send>,
@@ -545,6 +551,7 @@ impl Endpoint for QuicThenHttpEndpoint {
 
 /// 回退日志行的**唯一**构造点（纯函数）：只接收 `target` 与 `why` ⇒ 类型上就**不可能**拼进
 /// token/签名。测试直接核这一行的形状（含 target/原因、只有一行、不含机密）。
+/// ⏳ **2026-11-08 收据**：relay 构建也走回退组合器时删掉这条 allow。
 #[cfg(feature = "lan-quic")]
 #[cfg_attr(feature = "relay", allow(dead_code))]
 fn fallback_log_line(target: &str, why: &str) -> String {

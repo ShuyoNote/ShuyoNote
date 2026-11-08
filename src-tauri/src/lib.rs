@@ -1237,6 +1237,8 @@ pub fn run() {
             // 丙-③-b：**对等交换的产品入口**（确认窗口 ＋ 从发现到的对端各拉一轮）
             // ＋ **设置面**（写监听地址 / 口令，并把窗口的开关跟着改）。
             sync::mesh_sync_now,
+            // ⭐ P3-1a：App 自动同步的**一次调用**入口（Rust 侧逐空间串行编排）。
+            sync::mesh_sync_all_now,
             sync::mesh_missing_spaces,
             sync::mesh_create_spaces,
             sync::mesh_set_config,

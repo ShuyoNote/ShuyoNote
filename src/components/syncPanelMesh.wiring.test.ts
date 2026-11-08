@@ -72,10 +72,15 @@ describe("网格（丙-③-b）· 面板接线", () => {
     expect(panel, "读不到时不许用 [] 冒充「一台都没有」").toContain("if (Array.isArray(pairedNow))");
   });
 
-  it("①b 自动同步也对网格生效（不是只有手点「同步」才换）", () => {
+  it("①b 自动同步也对网格生效（⭐ P3-1a：一次 Rust 调用，不再逐空间 meshSyncNow）", () => {
     const app = read("src/App.tsx");
-    expect(app, "自动同步那条路没跑网格 ⇒ 用户得手点同步才会换").toContain("api.meshSyncNow(");
-    // ⚠️ gate 只许有一处：Rust 侧 `mesh_sync_now` 自己早退；前端**不重判一遍**。
+    expect(app, "自动同步那条路没跑网格 ⇒ 用户得手点同步才会换").toContain("api.meshSyncAllNow(");
+    // ⭐ P3-1a：自动路已经收成**一次**调用（逐空间串行编排沉到 Rust）⇒ ⛔ App 里不许再留逐空间循环。
+    expect(
+      app,
+      "自动同步不该再逐空间调 `api.meshSyncNow`（已收成一次 `meshSyncAllNow`；那会变成两条路）",
+    ).not.toContain("api.meshSyncNow(");
+    // ⚠️ gate 只许有一处：Rust 侧 `mesh_sync_one` 自己早退；前端**不重判一遍**。
     //    （这条断言钉的是"别在 App 里再写一个 if (mesh.enabled)"那种第二份解释。）
     expect(app, "自动同步那条路里不该自己判网格开没开（gate 在 Rust 侧一处实现）").not.toContain("mesh.enabled");
   });
@@ -149,6 +154,8 @@ describe("网格（丙-③-b）· 面板接线", () => {
     expect(commandsTs, "`LanStatus` 少了 mesh").toContain("mesh: MeshConfigState;");
     expect(commandsTs, "缺 `mesh_set_config` 的契约条目").toContain("mesh_set_config:");
     expect(commandsTs, "缺 `mesh_sync_now` 的契约条目").toContain("mesh_sync_now:");
+    // ⭐ P3-1a：自动同步那条**一次调用**的契约必须在（面板手动路仍是上面那条）。
+    expect(commandsTs, "缺 `mesh_sync_all_now` 的契约条目").toContain("mesh_sync_all_now:");
     // Web 的 `lan_status` 必须回同一形状：**如实说"这一档不可用"**，而不是少一个字段。
     expect(webTs).toContain("Web 版开不了本机端口 ⇒ 网格这一档只在桌面版可用");
     // ⭐ **U8（2026-10-01）扩的一条**（⛔ 上面几条**没删** ✗ —— 形状改了要**加**判据，不是换掉 ✓）：

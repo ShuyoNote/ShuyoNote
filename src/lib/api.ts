@@ -3,7 +3,7 @@ import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import type { WikiPageInput } from "./wikiExport";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
-import type { CommandMap, LanStatus, MeshConfigState, MeshPanelScope, MeshPanelSpaces, MeshRoundReport, RelayStatus, SyncBudget, SyncStreamStatus } from "./platform/commands";
+import type { CommandMap, LanStatus, MeshConfigState, MeshPanelScope, MeshPanelSpaces, MeshRoundReport, MeshSyncAllReport, RelayStatus, SyncBudget, SyncStreamStatus } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 // The command name, args shape and result are validated at compile time against
@@ -575,6 +575,11 @@ export const api = {
    */
   meshSyncNow: (workspaceId?: string | null) =>
     invoke("mesh_sync_now", { workspaceId: workspaceId ?? null }) as Promise<MeshRoundReport>,
+  /**
+   * ⭐ **P3-1a 第一刀**：**App 自动同步的"一次调用"** —— Rust 侧逐空间串行跑所有空间并回汇总。
+   * ⚠️ 面板手动/「立即同步」仍走上一行 `meshSyncNow(ws_id)`（单空间）；这是两条不同的路。
+   */
+  meshSyncAllNow: () => invoke("mesh_sync_all_now") as Promise<MeshSyncAllReport>,
   /**
    * ⭐ **2026-10-23**：「对端有、本机没有」的个人空间候选表（**只读**）。
    * 界面把它列成勾选清单，勾了才调 `mesh_create_spaces` —— ⛔ 不许在这里顺手建。

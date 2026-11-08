@@ -327,6 +327,34 @@ export interface MeshRoundReport {
 }
 
 /**
+ * ⭐ **P3-1a 第一刀**：一个空间在「全部空间同步」里的结果
+ * （与 Rust `sync::MeshSyncAllSpace` 逐字段相同）。
+ *
+ * ⚠️ `report` 与 `error` **互斥**：成功 ⇒ `report != null && error == null`；
+ * 失败 ⇒ `report == null && error != null`（失败不连坐，其它空间照跑）。
+ */
+export interface MeshSyncAllSpace {
+  wsId: string;
+  report: MeshRoundReport | null;
+  error: string | null;
+}
+
+/**
+ * ⭐ **P3-1a 第一刀**：`mesh_sync_all_now` 的汇总（与 Rust `sync::MeshSyncAllReport` 逐字段相同）。
+ *
+ * `spaces` 顺序＝Rust 逐空间串行编排顺序（＝`sync_profiles` 顺序）；
+ * `applied/candidates` 只累加**成功**空间（失败行没有 report）。
+ */
+export interface MeshSyncAllReport {
+  spaces: MeshSyncAllSpace[];
+  total: number;
+  ok: number;
+  failed: number;
+  applied: number;
+  candidates: number;
+}
+
+/**
  * ⭐ **P1.5 主件 · A1**（2026-10-13）：一个空间在"网格面"上的形状 ✗
  * （与 Rust `mesh_panel::MeshPanelScope` **逐字段相同** ✓）。
  *
@@ -1106,6 +1134,14 @@ export interface CommandMap {
    * 契约形状与 `src-tauri/src/mesh.rs::MeshRoundReport` 逐字段相同。
    */
   mesh_sync_now: { args: { workspaceId?: string | null }; result: MeshRoundReport };
+  /**
+   * ⭐ **P3-1a 第一刀**：**App 自动同步的一次调用入口** —— Rust 侧逐空间**串行**跑一轮并回汇总。
+   *
+   * ⚠️ **只服务自动同步**：面板手动/「立即同步」仍走上面的 `mesh_sync_now`（单空间，带进度）。
+   * ⚠️ **两侧都实现**（不登记成 web 专属）：Web 上没有发现层/本机窗口 ⇒ 回**结构完整、全 0** 的汇总
+   * （⛔ 不假装拉过；`spaces: []` 表示"这一档没有可跑的空间"）。
+   */
+  mesh_sync_all_now: { args: undefined; result: MeshSyncAllReport };
   /**
    * ⭐ **2026-10-23**：「对端有、本机没有」的个人空间候选表（**只读**）。
    * 界面把它列出来给用户勾，勾了才调下面的 `mesh_create_spaces`。
