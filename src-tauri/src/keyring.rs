@@ -687,6 +687,44 @@ impl Keyring {
         Ok(())
     }
 
+    /// ⭐ **P3-3b（task-48）**：本机 id **没有盒子**时，按 `space_uids` 找同 uid 的**唯一**对端盒子。
+    ///
+    /// 返回：`Ok(None)` = 本机这个空间**没有 uid 映射**（拿不到线索 ⇒ 调用方走旧错误）；
+    /// `Ok(Some(盒子原本的 space_id))` = 唯一候选（解密要用**它**调 `open_plaintext`，盒子绑的是它）；
+    /// `Err` = 有映射但**没有候选**或有**多个候选**（歧义不猜）/ 候选自己映射对不上。
+    ///
+    /// ⚠️ 只在"直接 id 一个盒子都没有"时调用 —— 直接命中仍走完全旧的行为。
+    fn alias_box_id(&self, space_id: &str) -> Result<Option<String>, String> {
+        let Some(uid) = self.space_uid(space_id) else {
+            return Ok(None);
+        };
+        if uid.trim().is_empty() {
+            return Ok(None);
+        }
+        // 候选 = 全组里"有盒子 && 自己的 uid 映射就是同一个 uid && id != 本空间"的那些 id。
+        let mut ids: Vec<String> = Vec::new();
+        for (_, _, spaces, _) in self.groups() {
+            for id in spaces.keys() {
+                if id != space_id
+                    && self.space_uid(id).map(str::trim) == Some(uid.trim())
+                    && !ids.contains(id)
+                {
+                    ids.push(id.clone());
+                }
+            }
+        }
+        match ids.len() {
+            0 => Err(format!(
+                "这个空间（{space_id}）在钥匙袋里没有盒子，uid 映射 {uid} 也找不到同 uid 的盒子 ⇒ 打不开"
+            )),
+            1 => Ok(Some(ids.remove(0))),
+            n => Err(format!(
+                "这个空间（{space_id}）没有自己的盒子，而 uid {uid} 在袋里对应 **{n} 条**候选盒子（{}）⇒ 歧义，不猜",
+                ids.join(" / ")
+            )),
+        }
+    }
+
     /// 从袋子里取一把空间密钥。取不出 ⇒ **报错**（绝不回退成明文或空钥匙）。
     pub fn unwrap_key(
         &self,
@@ -706,9 +744,25 @@ impl Keyring {
             }
         }
         if found {
-            Err("这个盒子解不开：口令不对，或者这把锁被改过".to_string())
-        } else {
-            Err(format!("钥匙袋里没有空间「{space_id}」的盒子"))
+            return Err("这个盒子解不开：口令不对，或者这把锁被改过".to_string());
+        }
+        // ⭐ P3-3b：本机 id 没有盒子 ⇒ 按 uid 找**唯一**对端盒子；用**盒子原本的 id** 解。
+        match self.alias_box_id(space_id)? {
+            None => Err(format!("钥匙袋里没有空间「{space_id}」的盒子")),
+            Some(alias) => {
+                for (_, _, spaces, _) in self.groups() {
+                    let Some(b) = spaces.get(&alias) else {
+                        continue;
+                    };
+                    let raw =
+                        hex::decode(&b.box_hex).map_err(|e| format!("盒子不是合法 hex：{e}"))?;
+                    if let Ok(plain) = crypto::decrypt(&raw, master) {
+                        // ⚠️ 盒子绑定的是**它原本的 id**（`alias`），不是请求的 `space_id`。
+                        return open_plaintext(&plain, &alias);
+                    }
+                }
+                Err("这个盒子解不开：口令不对，或者这把锁被改过".to_string())
+            }
         }
     }
 
@@ -737,9 +791,37 @@ impl Keyring {
             }
         }
         if found {
-            Err("这个盒子解不开：口令不对，或者这把锁被改过".to_string())
-        } else {
-            Err(format!("钥匙袋里没有空间「{space_id}」的盒子"))
+            return Err("这个盒子解不开：口令不对，或者这把锁被改过".to_string());
+        }
+        // ⭐ P3-3b：与 `unwrap_key` 同一套别名规则；这里多一步"候选所在组有没有主密钥"。
+        match self.alias_box_id(space_id)? {
+            None => Err(format!("钥匙袋里没有空间「{space_id}」的盒子")),
+            Some(alias) => {
+                let mut missing_group_master = false;
+                for (fp, kdf, spaces, _) in self.groups() {
+                    let Some(b) = spaces.get(&alias) else {
+                        continue;
+                    };
+                    let _ = kdf;
+                    let Some((_, master)) = masters.iter().find(|(id, _)| id == &fp) else {
+                        missing_group_master = true;
+                        continue;
+                    };
+                    let raw =
+                        hex::decode(&b.box_hex).map_err(|e| format!("盒子不是合法 hex：{e}"))?;
+                    if let Ok(plain) = crypto::decrypt(&raw, master) {
+                        // ⚠️ 盒子绑定的是候选原本的 id。
+                        return open_plaintext(&plain, &alias);
+                    }
+                }
+                if missing_group_master {
+                    Err(format!(
+                        "这个空间（{space_id}）的盒子在另一组公开材料里（候选 {alias}），但**那一组的主密钥没解锁** ⇒ 打不开"
+                    ))
+                } else {
+                    Err("这个盒子解不开：口令不对，或者这把锁被改过".to_string())
+                }
+            }
         }
     }
 
@@ -1279,5 +1361,128 @@ mod tests {
         assert!(kr.remove("sp-a"));
         assert_eq!(kr.space_uid("sp-a"), None);
         assert_eq!(kr.space_id_by_uid("uid-a"), None);
+    }
+
+    // ── ⭐ 2026-11-08（P3-3b task-48）：本机 id 无盒时按 uid 别名打开对端盒子 ──────────────
+
+    /// ⭐（a/f）本机 id 没有盒子、uid 指向**唯一**对端盒子 ⇒ 两版 `unwrap_key*` 都解出同一把钥匙，
+    /// 且**盒子/JSON/版本一个字节都不动**（⛔ 不重封、不把别名写回盒子）。
+    #[test]
+    fn a_unique_uid_alias_opens_the_peer_box_for_a_locally_missing_id() {
+        let (mut kr, m) = fresh_group("我家猫叫mimi");
+        let key = random_space_key();
+        kr.wrap(&m, "sp-peer", &key).unwrap();
+        // ⚠️ 同一组里允许"两个 id 共用同一 uid"**只**出现在合并/历史材料里（set_* 会挡重复），
+        //   判据这里直接构造该形状（别名路径就是为它准备的）。
+        kr.space_uids.insert("sp-peer".into(), "uid-shared".into());
+        kr.space_uids.insert("sp-local".into(), "uid-shared".into());
+
+        let before = kr.to_json().unwrap();
+        assert_eq!(
+            kr.unwrap_key(&m, "sp-local").unwrap(),
+            key,
+            "单主密钥版：uid 别名必须解出同一把空间钥匙"
+        );
+        let masters = vec![(Keyring::group_fingerprint(&kr.kdf), m)];
+        assert_eq!(
+            kr.unwrap_key_with_groups(&masters, "sp-local").unwrap(),
+            key,
+            "多组版：同一条别名规则"
+        );
+        assert_eq!(
+            kr.to_json().unwrap(),
+            before,
+            "⛔ 打开别名盒子不许重封/改盒子/写回别名"
+        );
+        assert_eq!(kr.v, KEYRING_VERSION, "⛔ 不升版");
+    }
+
+    /// ⭐（b）**直接盒子优先**：本机 id 自己有盒子 ⇒ 走旧路径，哪怕 uid 还指向别的盒子。
+    #[test]
+    fn a_direct_box_wins_over_the_uid_alias() {
+        let (mut kr, m) = fresh_group("pw");
+        let local_key = random_space_key();
+        let peer_key = random_space_key();
+        kr.wrap(&m, "sp-local", &local_key).unwrap();
+        kr.wrap(&m, "sp-peer", &peer_key).unwrap();
+        kr.space_uids.insert("sp-local".into(), "uid-shared".into());
+        kr.space_uids.insert("sp-peer".into(), "uid-shared".into());
+
+        assert_eq!(
+            kr.unwrap_key(&m, "sp-local").unwrap(),
+            local_key,
+            "直接命中必须优先（⛔ 不许被别名抢走）"
+        );
+        let masters = vec![(Keyring::group_fingerprint(&kr.kdf), m)];
+        assert_eq!(
+            kr.unwrap_key_with_groups(&masters, "sp-local").unwrap(),
+            local_key
+        );
+    }
+
+    /// ⭐（c）同 uid 有**多条**候选盒子 ⇒ 可读错误（歧义，不猜）。
+    #[test]
+    fn two_boxes_sharing_a_uid_are_refused_as_ambiguous() {
+        let (mut kr, m) = fresh_group("pw");
+        kr.wrap(&m, "sp-peer-1", &random_space_key()).unwrap();
+        kr.wrap(&m, "sp-peer-2", &random_space_key()).unwrap();
+        kr.space_uids
+            .insert("sp-peer-1".into(), "uid-shared".into());
+        kr.space_uids
+            .insert("sp-peer-2".into(), "uid-shared".into());
+        kr.space_uids.insert("sp-local".into(), "uid-shared".into());
+
+        let err = kr.unwrap_key(&m, "sp-local").unwrap_err();
+        assert!(err.contains("歧义"), "要说清是歧义：{err}");
+        assert!(err.contains("2 条"), "要报候选条数：{err}");
+        // 直接命中那两个之一仍照旧能开（歧义只影响"本机 id 无盒"的别名路径）。
+        assert!(kr.unwrap_key(&m, "sp-peer-1").is_ok());
+    }
+
+    /// ⭐（d）无映射 ⇒ **旧的**"没有这个空间的盒子"；有映射但无候选 ⇒ 另一句明确错误。
+    #[test]
+    fn missing_mapping_keeps_the_old_error_and_an_empty_alias_set_says_so() {
+        let (mut kr, m) = fresh_group("pw");
+        kr.wrap(&m, "sp-other", &random_space_key()).unwrap();
+
+        let err = kr.unwrap_key(&m, "sp-zzz").unwrap_err();
+        assert_eq!(
+            err, "钥匙袋里没有空间「sp-zzz」的盒子",
+            "无 uid 映射 ⇒ 旧错误逐字不变"
+        );
+        let masters = vec![(Keyring::group_fingerprint(&kr.kdf), m)];
+        assert_eq!(
+            kr.unwrap_key_with_groups(&masters, "sp-zzz").unwrap_err(),
+            "钥匙袋里没有空间「sp-zzz」的盒子"
+        );
+
+        // 有映射、但袋里没有任何同 uid 的盒子 ⇒ 明确说清（⛔ 不混成旧错误、更不静默给钥匙）。
+        assert!(kr.set_space_uid_for_local_space("sp-mapped", "uid-nowhere"));
+        let err = kr.unwrap_key(&m, "sp-mapped").unwrap_err();
+        assert!(err.contains("sp-mapped") && err.contains("找不到"), "{err}");
+    }
+
+    /// ⭐（e）错主密钥：别名路径同样**报错不出钥匙**；多组版缺那组主密钥要说清"没解锁"。
+    #[test]
+    fn a_wrong_master_on_an_alias_box_is_still_loud() {
+        let (mut kr, m) = fresh_group("pw");
+        let key = random_space_key();
+        kr.wrap(&m, "sp-peer", &key).unwrap();
+        kr.space_uids.insert("sp-peer".into(), "uid-shared".into());
+        kr.space_uids.insert("sp-local".into(), "uid-shared".into());
+
+        let (_, wrong) = fresh_group("another-passphrase");
+        let err = kr.unwrap_key(&wrong, "sp-local").unwrap_err();
+        assert!(err.contains("解不开"), "错主密钥必须报解不开：{err}");
+
+        // 多组版：候选盒子所在组的主密钥缺失 ⇒ 明确报"那一组没解锁"。
+        let (other, _om) = fresh_group("pw");
+        let empty: Vec<(String, AppKeys)> = Vec::new();
+        let err = kr.unwrap_key_with_groups(&empty, "sp-local").unwrap_err();
+        assert!(
+            err.contains("没解锁") || err.contains("主密钥"),
+            "缺组主密钥不能伪装成'盒子没有/口令不对'：{err}"
+        );
+        let _ = other;
     }
 }
