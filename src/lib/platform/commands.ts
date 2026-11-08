@@ -281,6 +281,17 @@ export interface NearbyPeer {
   /** ⭐ 上面那一格的**原因码** ✓（⛔ 不含任何值 ✗ —— 尤其**不含公钥** ✓）：
    *  `"ok"`（比过 ✓）／`"peer_no_key"`（对面没报 ✓）／`"no_record"`（本机没记过 ✓）。 */
   key_reason: string;
+  /**
+   * ⭐⭐ **2026-11-08（P3-0b 消费第一步）**：对方公告里报的 **QUIC/iroh 端点候选地址**
+   * （Rust `lan::LanAnnounce.quic_addrs` → `sync::NearbyPeer.quic_addrs`；
+   *  元素是**不透明字符串**，形如 `ip:port`）。
+   *
+   * ⚠️ **P3-2 才消费**：⛔ 界面**不许**把它显示成"可用／已连接"、⛔ 不许据此改任何同步行为；
+   * 本笔只把读数透到契约里（`Rust` 侧**原样复制**，不解析/不校验/不去重）。
+   * ⚠️ 老对端没报／旧 Rust 构建缺这一格 ⇒ `undefined`；**`undefined` 与空数组同一处置**
+   * （都是"没有"），⛔ 不许拿它当"一定连得上"或"一定连不上"的证据（P3-2 才校验）。
+   */
+  quic_addrs?: string[];
 }
 
 /** 一轮网格交换里**一台对端**那一行（与 Rust `mesh::PeerPullReport` 逐字段相同）。 */

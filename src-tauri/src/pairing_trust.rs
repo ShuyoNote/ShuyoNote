@@ -1098,6 +1098,13 @@ mod tests {
     /// 加的是 `NearbyPeer::announced_port: Option<u16>`（对端公告 `hub_base` 的端口 ✓；
     /// `serde(default)` 那类可选格 ＋ ⛔ **不升 `WIRE_VERSION`** ✓ —— 与上一条**同一手法** ✓）。
     /// ⭐ 那 12 格逐个都还在这条契约里：**只有可选的读数格在长** ✓，判定/凭证格一个没动 ✓。
+    ///
+    /// ⚠️⚠️ **2026-11-08 再改（P3-0b 消费第一步）：12 → 13 格** ✗ ——
+    /// 加的是 `NearbyPeer::quic_addrs: Vec<String>`（对端公告里报的 QUIC/iroh 端点候选地址；
+    /// **原样透传、不消费** ✓；老对端/旧公告 ⇒ 空表 ✓）。
+    /// 它是**可选读数格**：公告侧 `#[serde(default)]` ⇒ ⛔ **不升 `WIRE_VERSION`** ✓
+    /// （`WIRE_VERSION == 1` 那半照旧有效 ✓）；判定/凭证格仍然一个没动 ✓。
+    /// ⭐ 本次只动计数与这段说明，⛔ 不动任何产品代码 ✗。
     #[test]
     fn the_wire_version_and_the_nearby_contract_are_untouched() {
         let lan_src = include_str!("lan.rs");
@@ -1115,11 +1122,13 @@ mod tests {
             .filter(|l| l.trim_start().starts_with("pub ") && l.trim_end().ends_with(','))
             .count();
         assert_eq!(
-            fields, 12,
+            fields, 13,
             "⛔ 给 `NearbyPeer` 加/删格**必须同时来改这一行并写明来由** ✗（tripwire ✓；实际 {fields} 格）\
              —— ⚠️ 2026-10-16 由 8 改 11：08-b② 的 `short_id` ＋ P-B 的原因码等（各带日期注释 ✓）；\
              ⚠️ 2026-10-29 由 11 改 12：owner 拍 B 的 J9 精确端口读数 ⇒ `announced_port: Option<u16>`\
-             （可选格 ＋ ⛔ 不升 WIRE_VERSION ✓）"
+             （可选格 ＋ ⛔ 不升 WIRE_VERSION ✓）；\
+             ⚠️ 2026-11-08 由 12 改 13：P3-0b 消费第一步 ⇒ `quic_addrs: Vec<String>`\
+             （公告可选格＋原样透传、不消费；⛔ 不升 WIRE_VERSION ✓）"
         );
     }
 

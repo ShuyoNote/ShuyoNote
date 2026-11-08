@@ -6966,6 +6966,15 @@ pub struct NearbyPeer {
     /// ⭐ 上面那一格的**原因码** ✓（⛔ 不含任何值 ✗ —— 尤其**不含公钥本身** ✓）：`"ok"`（两边都有、比过 ✓）
     /// ／`"peer_no_key"`（对面没报公钥 ✓）／`"no_record"`（本机册子里没记过它 ✓）。
     pub key_reason: String,
+    /// ⭐⭐ **2026-11-08（P3-0b 消费第一步）**：⭐ 对端公告里报的 **QUIC/iroh 端点候选地址** ✗
+    /// （`lan::LanAnnounce.quic_addrs` ✓，元素是**不透明字符串**，形如 `ip:port`）。
+    ///
+    /// ⚠️ **今天只透传、不消费** ✗：⛔ 不建 QUIC 端点、⛔ 不参与任何判定（挑路仍是 `lan` / `mesh`
+    /// 那一套 ✓）、⛔ 界面**不许**把它显示成"可用" ✗ —— P3-2 才解释/校验/使用它 ✓。
+    /// ⚠️ **原样复制**（⛔ 本笔不 trim/不解析/不校验/不去重 ✗ —— 解释权在 P3-2 那一处）。
+    /// ⚠️ 老对端没报这一格 ⇒ **空表** ✓（`Vec::new()`，⛔ 不是 `None`/`undefined` ✗ ——
+    /// 与公告的 `#[serde(default)]` 同一口径：读不到＝空表，"没有"是一个结论 ✓）。
+    pub quic_addrs: Vec<String>,
 }
 
 /// ⭐ **P-B（2026-10-13）**：这一条**为什么**不服务当前空间 ✗ —— ⭐ **纯函数**（判据不打桩、不开网络、不碰库 ✓）。
@@ -7066,6 +7075,9 @@ pub(crate) fn nearby_of_with(
                 // ⭐ P-3a：逐台"钥匙变了吗" ✓（`None` ＝ 读不到 ✓，原因在下一格 ✓）
                 key_changed,
                 key_reason: key_reason.to_string(),
+                // ⭐ 2026-11-08（P3-0b 消费第一步）：公告里的 QUIC 候选地址**原样透传** ✓
+                //   （⛔ 本笔不 trim/不解析/不校验/不去重 ✗ —— P3-2 才消费；老对端没报 ⇒ 空表 ✓）。
+                quic_addrs: p.announce.quic_addrs.clone(),
             }
         })
         .collect()
@@ -13146,6 +13158,133 @@ mod j9_announced_port_tests {
         assert!(
             json.contains("\"announced_port\":null"),
             "没报也要显式给出 null（⛔ 别让这一格凭空消失 ✗）：{json}"
+        );
+    }
+}
+
+/// ⭐ **2026-11-08（P3-0b 消费第一步）**：`LanAnnounce.quic_addrs` → `NearbyPeer.quic_addrs` 的透传判据。
+///
+/// 只钉四件事（都不联网、不建端点、不消费地址）：
+/// ① 新公告带地址 ⇒ 读数**逐字**带出（顺序/字符串原样；⛔ 本笔不 trim/不解析/不去重 ✗）；
+/// ② 老公告没有这一格 ⇒ **空表**（`Vec::new()`，⛔ 不是 `None`/`undefined` ✗），且线格式里**显式给 `[]`**；
+/// ③ 其它字段与 peers **计数/顺序**不变（`INV-NEARBY-one-source`：一条公告一行）；
+/// ④ 它**不参与任何判定**（`serves_current` / `invitable` 与带不带地址无关）。
+#[cfg(test)]
+mod quic_addrs_passthrough_tests {
+    use super::*;
+
+    fn peer_with(device: &str, addrs: Vec<&str>) -> lan::Peer {
+        let mut a = lan::LanAnnounce::default();
+        a.device_id = device.to_string();
+        a.device_name = "对端".to_string();
+        a.short_id = "Q1W2E".to_string();
+        a.hub_base = Some("http://192.168.1.9:8788".to_string());
+        a.hub_spaces = vec!["sp".to_string()];
+        a.quic_addrs = addrs.into_iter().map(str::to_string).collect();
+        lan::Peer {
+            announce: a,
+            addr: "192.168.1.9".to_string(),
+            seen_at_ms: 0,
+        }
+    }
+
+    /// 空网格读数（只为把 `LanStatus` 拼完整 —— 本判据只关心 `nearby` 那一段的线格式 ✓）。
+    fn empty_mesh() -> crate::mesh::MeshConfigState {
+        crate::mesh::MeshConfigState {
+            enabled: false,
+            bind: None,
+            token_set: false,
+            window: None,
+            served: Vec::new(),
+            paired: Vec::new(),
+            note: String::new(),
+            reach: String::new(),
+            announced: None,
+        }
+    }
+
+    fn status_with(nearby: Vec<NearbyPeer>) -> LanStatus {
+        LanStatus {
+            enabled: false,
+            peers: 0,
+            kind: String::new(),
+            line: String::new(),
+            mesh: empty_mesh(),
+            nearby,
+        }
+    }
+
+    #[test]
+    fn a_new_announce_passes_quic_addrs_through_verbatim() {
+        let got = nearby_of(
+            &[peer_with(
+                "dev-a",
+                vec!["10.0.0.9:47831", "[fe80::1]:47831"],
+            )],
+            "me",
+            "sp",
+        );
+        assert_eq!(got.len(), 1);
+        assert_eq!(
+            got[0].quic_addrs,
+            vec!["10.0.0.9:47831".to_string(), "[fe80::1]:47831".to_string()],
+            "公告里的地址要**逐字**上抛（顺序也不许变）"
+        );
+        // 线格式：这一格必须真的出现在 `LanStatus.nearby` 里（snake_case，与其余字段一致），
+        // 否则前端契约加了字段也永远读不到。
+        let json = serde_json::to_string(&status_with(got)).expect("序列化不失败");
+        assert!(
+            json.contains("\"quic_addrs\":[\"10.0.0.9:47831\",\"[fe80::1]:47831\"]"),
+            "线格式里必须带 `quic_addrs` 且值逐字：{json}"
+        );
+    }
+
+    #[test]
+    fn an_old_announce_yields_an_empty_vec_not_undefined() {
+        let got = nearby_of(&[peer_with("dev-old", vec![])], "me", "sp");
+        assert!(
+            got[0].quic_addrs.is_empty(),
+            "老对端没报这一格 ⇒ 空表（⛔ 不是 None/undefined ✗）"
+        );
+        let json = serde_json::to_string(&status_with(got)).expect("序列化不失败");
+        assert!(
+            json.contains("\"quic_addrs\":[]"),
+            "线格式里必须**显式给 []**（前端不必区分「老构建缺格」与「真的没有」；P3-2 再讲区别）：{json}"
+        );
+    }
+
+    #[test]
+    fn other_fields_and_peer_count_are_untouched() {
+        let peers = vec![
+            peer_with("dev-a", vec!["10.0.0.9:1"]),
+            peer_with("dev-b", vec![]),
+        ];
+        let got = nearby_of(&peers, "me", "sp");
+        assert_eq!(
+            got.len(),
+            peers.len(),
+            "INV-NEARBY-one-source：一条公告一行，⛔ 不因这一格增删 ✗"
+        );
+        assert_eq!(got[0].device_id, "dev-a");
+        assert_eq!(got[1].device_id, "dev-b", "顺序保持公告顺序");
+        assert_eq!(got[0].announced_port, Some(8788), "其它字段读数不变");
+        assert_eq!(got[1].announced_port, Some(8788), "其它字段读数不变");
+        assert_eq!(got[0].short_id, "Q1W2E");
+        assert!(
+            got[0].serves_current,
+            "判定仍只看原有数据（hub_spaces 命中）"
+        );
+
+        // ④ 新字段不参与判定：带不带地址，结论必须一致。
+        let with = nearby_of(&[peer_with("dev-a", vec!["10.0.0.9:1"])], "me", "sp");
+        let without = nearby_of(&[peer_with("dev-a", vec![])], "me", "sp");
+        assert_eq!(
+            with[0].serves_current, without[0].serves_current,
+            "`quic_addrs` 不许影响 serves_current"
+        );
+        assert_eq!(
+            with[0].invitable, without[0].invitable,
+            "`quic_addrs` 不许影响 invitable"
         );
     }
 }
