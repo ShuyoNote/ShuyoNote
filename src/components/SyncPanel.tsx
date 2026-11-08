@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { isMobileViewport } from "../hooks/useMobile";
 import { useMobileNav } from "../store/mobileNav";
 import { usePopover } from "../hooks/usePopover";
@@ -10,6 +10,18 @@ import { MeshMissingSpaces } from "./MeshMissingSpaces";
 // ⭐ P1「连接体检」（2026-11-08）：只读现有读数 → 结构化诊断 ＋ 复制诊断包（⛔ 不新增命令 ✗）。
 //   入口在「局域网同步」状态卡里（见下面 `mesh-diagnose-entry` ✓）；纯函数在 `src/lib/meshDiagnose.ts` ✓。
 import { MeshDiagnoseDialog } from "./MeshDiagnoseDialog";
+// ⭐ P1「全部空间立即同步」（2026-11-08）：**纯前端串行** —— 目标选择/进度/汇总/失败重试全在
+//   `src/lib/meshAllSpaces.ts`（纯函数、可单测 ✓）；组件只负责按顺序调**既有** `api.meshSyncNow`。
+//   ⛔ 不新增第二条同步路 ✗（就是单空间「立即同步」那颗按钮用的同一个命令）。
+import {
+  allSyncFailures,
+  allSyncProgressText,
+  allSyncSummary,
+  pickAllSyncSpaces,
+  type AllSyncResult,
+  type AllSyncRun,
+  type AllSyncTarget,
+} from "../lib/meshAllSpaces";
 import { autoPickPeer } from "../lib/pairTarget"; // ⭐ 常驻判据在 src/lib/pairTarget.test.ts ✓
 import { peerIdentityLine } from "../lib/peerIdentity"; // ⭐ 规格 J21 的**唯一实现**（信任前展示身份 ✓）
 import { toast } from "../store/toast";
@@ -224,6 +236,20 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
    *  它就是 `syncMeshNow` 刚拿到的那个返回值 ✓。 */
   const [meshDiagnoseOpen, setMeshDiagnoseOpen] = useState(false);
   const [lastRound, setLastRound] = useState<MeshRoundReport | null>(null);
+  /** ⭐ P1「全部空间立即同步」（2026-11-08）：这一轮的现场 ＋ 停止入口 ＋ 进度用的节拍。
+   *  ⚠️ `allSyncStopRef` 里放的是**当前这一轮**的停止函数（点「停止」只置一个本地标志：
+   *  正在跑的那一个空间会跑完，之后不再开下一个 —— 串行、⛔ 不硬掐进程）。
+   *  ⚠️ `allSyncNow` 只为让「已 Ns」走字；不参与任何判定。 */
+  const [allSync, setAllSync] = useState<AllSyncRun | null>(null);
+  const allSyncStopRef = useRef<null | (() => void)>(null);
+  const [allSyncNow, setAllSyncNow] = useState(0);
+  // 只在这一轮跑着的时候走字（0.5s 一拍；停了就清掉定时器 —— ⛔ 不让一个空转的 interval 常驻）。
+  useEffect(() => {
+    if (!allSync?.running) return;
+    setAllSyncNow(Date.now());
+    const timer = window.setInterval(() => setAllSyncNow(Date.now()), 500);
+    return () => window.clearInterval(timer);
+  }, [allSync?.running]);
   /** ⭐ **2026-10-29（owner 选 B）：设备名从「设置 → 账户」搬到这里** ✗ ——
    *  它影响的是"同网段的设备在「附近的设备」里看到你叫什么"，属**局域网同步**这一档；
    *  而团队 UI 删掉之后「账户」页只剩这一格 ⇒ 整页撤掉（`SettingsDialog` 同步删 `AccountPane`）✓。
@@ -715,6 +741,9 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   //      找 `${rep.note}` 与 `loadPages()`（⛔ 别把它挪走，否则那条源码级判据会红）。
   const syncMeshNow = async () => {
     if (meshBusy) return;
+    // ⭐ P1「全部空间立即同步」：**串行**是这一档的硬口径（并发会多窗口/多空间抢锁）⇒
+    //  「全部空间」这一轮跑着的时候，单空间那颗按钮不许另起一条路（按钮也 disabled）。
+    if (allSync?.running) return;
     setMeshBusy(true);
     // ⭐ A（owner 2026-10-29）：**本轮进度** —— 手动同步一次一个空间（`mesh_sync_now(workspace_id)`），
     //   所以不说"第 N/M 个空间"（那不存在）；说真话：本空间、附近几台、已几秒。
@@ -769,6 +798,8 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   //   （服务端那条路已随团队 UI 归档；重试它没有后端可打）。复制诊断不含任何内部 id。
   const retryMeshHistory = async (idx: number, h: (typeof history)[number]) => {
     if (retryingHistory !== null) return;
+    // ⭐ 同一把串行尺：全部空间那一轮跑着时不另起一条（历史行「重试」也是 `mesh_sync_now`）。
+    if (allSync?.running) return;
     setRetryingHistory(idx);
     setStatus(`正在重试「${h.ws_name?.trim() || "这个空间"}」…`);
     try {
@@ -814,6 +845,101 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
 
   const statusKind = (s: string): "ok" | "err" | "warn" =>
     /失败|错误|不支持|不存在|无效/.test(s) ? "err" : /^请/.test(s) ? "warn" : "ok";
+
+  // ⭐ P1「全部空间立即同步」（2026-11-08）：**串行**跑一轮 —— 一次只开一个空间，
+  //   上一台的 `mesh_sync_now` 返回后才开下一台（并发会多窗口/多空间抢锁 ✓）。
+  //   ⚠️ 全程**同一个命令**（`api.meshSyncNow(ws_id)`）与**同一份结果形状**（`MeshRoundReport`），
+  //   ⛔ 不新增第二条同步路 ✗；单空间「立即同步」的行为一个字没改（它也加了同一把串行尺 ✓）。
+  //   ⚠️ 收尾（页面列表/待取回/历史/局域网读数）与单空间那次**同一套**，免得两处各练一遍。
+  const runAllSpacesSerial = async (targets: AllSyncTarget[]) => {
+    if (allSyncStopRef.current) return; // 已有一轮在跑（双击/重入保护）
+    let stopped = false;
+    const startedAt = Date.now();
+    const nearbyCount = Array.isArray(lanStatus?.nearby) ? lanStatus.nearby.length : 0;
+    let cur: AllSyncRun = {
+      targets,
+      done: 0,
+      current: null,
+      results: [],
+      stopped: false,
+      startedAt,
+      nearbyCount,
+      running: true,
+    };
+    // 「停止」只置一个本地标志：正在跑的那一个空间会跑完，之后不再开下一个。
+    allSyncStopRef.current = () => {
+      stopped = true;
+    };
+    setAllSync(cur);
+    setStatus(allSyncProgressText(cur, Date.now()));
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        if (stopped) break;
+        const target = targets[i];
+        cur = { ...cur, current: target };
+        setAllSync(cur);
+        setStatus(allSyncProgressText(cur, Date.now()));
+        let result: AllSyncResult;
+        try {
+          const rep = await api.meshSyncNow(target.wsId);
+          // ⚠️ 失败/收下页数一律取 Rust 的读数（`applied`），⛔ 界面不自己遍历 `peers` 数 ✗。
+          result = {
+            target,
+            ok: true,
+            applied: Number.isFinite(rep.applied) ? rep.applied : 0,
+            note: rep.note ?? "",
+            error: null,
+          };
+          setLastRound(rep);
+        } catch (e) {
+          result = { target, ok: false, applied: 0, note: "", error: String(e) };
+        }
+        cur = { ...cur, current: null, done: cur.done + 1, results: [...cur.results, result] };
+        setAllSync(cur);
+      }
+    } finally {
+      cur = { ...cur, current: null, running: false, stopped };
+      allSyncStopRef.current = null;
+      setAllSync(cur);
+      setStatus(allSyncSummary(cur).text);
+      try {
+        useNotes.getState().loadPages();
+        await loadPendingRemote();
+        void loadHistory();
+        setLanNonce((n) => n + 1);
+      } catch {
+        // 收尾读数失败不改变这一轮的结论（状态行已经写好）；下一拍轮询会补上。
+      }
+    }
+  };
+
+  /** 「全部空间立即同步」入口：挑目标（个人空间）→ 串行跑。分类读不到就按现有空间列表全算。 */
+  const startAllSpacesSync = async () => {
+    if (meshBusy || allSync?.running || allSyncStopRef.current) return;
+    const kindByWs = new Map<string, string>();
+    if (isDesktopPlatform()) {
+      try {
+        const sec = await api.spaceSecurityOverview();
+        if (Array.isArray(sec)) for (const v of sec) kindByWs.set(v.space_id, v.kind);
+      } catch {
+        // 分类读不到 ⇒ 纯函数兜底：按现有空间列表全算（⛔ 不静默少同步几个空间）。
+      }
+    }
+    const targets = pickAllSyncSpaces(spaces, kindByWs);
+    if (targets.length === 0) {
+      setStatus("没有可同步的个人空间");
+      return;
+    }
+    await runAllSpacesSerial(targets);
+  };
+
+  /** 只重跑失败的那几个（⛔ 不重跑已经成功的那几个 ✗）。 */
+  const retryAllSyncFailures = () => {
+    if (!allSync || allSync.running) return;
+    const failures = allSyncFailures(allSync);
+    if (failures.length === 0) return;
+    void runAllSpacesSerial(failures);
+  };
 
 
   /**
@@ -1383,6 +1509,60 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                 `heroRoute` 那行；本轮按 R176-A 把它列成**必有项**，用**逐格可点名来源**的三格回来 ✓
                 （旧判据「`heroRoute` 不许再出现」仍然绿 —— 它钉的是旧标识 ✓）。 */}
             {isPersonalActive && isDesktopPlatform() && <SyncReadout {...personalReadout} />}
+            {/* ⭐ P1「全部空间立即同步」（2026-11-08）：个人版「一次把所有个人空间都拉一轮」。
+                ⚠️ 门槛＝个人空间 ＋ 桌面（局域网那一档只在桌面；团队空间走服务器、不是这条路径）。
+                ⚠️ 串行：按钮触发后**一次只跑一个空间**；跑着时这颗按钮变「停止」、
+                  单空间「立即同步」与历史行「重试」都会被挡（并发会抢锁）。
+                ⚠️ 完成后的汇总/失败清单沿用 `meshAllSpaces.ts` 的纯函数口径；失败项可再试。 */}
+            {isPersonalActive && isDesktopPlatform() && (
+              <>
+                <div className="sync-device-name" data-testid="mesh-all-sync-row">
+                  <span className="sync-device-name-label">全部空间</span>
+                  <span
+                    className="sync-hint"
+                    style={{ flex: "1 1 auto", minWidth: 0 }}
+                    data-testid="mesh-all-sync-progress"
+                  >
+                    {allSync
+                      ? allSync.running
+                        ? allSyncProgressText(allSync, allSyncNow || Date.now())
+                        : allSyncSummary(allSync).text
+                      : "按顺序逐个空间跑一轮局域网同步（一次一个，不并发）"}
+                  </span>
+                  {allSync?.running ? (
+                    <button
+                      className="sync-mini-btn"
+                      data-testid="mesh-all-sync-stop"
+                      onClick={() => allSyncStopRef.current?.()}
+                    >
+                      停止
+                    </button>
+                  ) : allSync && allSyncFailures(allSync).length > 0 ? (
+                    <button
+                      className="sync-mini-btn"
+                      data-testid="mesh-all-sync-retry"
+                      onClick={() => retryAllSyncFailures()}
+                    >
+                      重试失败项
+                    </button>
+                  ) : (
+                    <button
+                      className="sync-mini-btn"
+                      data-testid="mesh-all-sync-start"
+                      disabled={meshBusy || !!allSync?.running}
+                      onClick={() => void startAllSpacesSync()}
+                    >
+                      全部空间立即同步
+                    </button>
+                  )}
+                </div>
+                {allSync && !allSync.running && allSyncFailures(allSync).length > 0 && (
+                  <div className="sync-hint" data-testid="mesh-all-sync-failures">
+                    失败：{allSyncFailures(allSync).map((x) => x.name).join("、")}
+                  </div>
+                )}
+              </>
+            )}
             {/* ⭐ **2026-10-29（owner 选 B）：设备名搬进「局域网同步」** ✗ ——
                 它就是「附近的设备／已配对列表」里别人看到的名字；原来住在「设置 → 账户」，
                 而团队 UI 删掉后那一页只剩这一格 ⇒ 整页撤掉，改在这里 ✓。
@@ -1594,7 +1774,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                           <button
                             className="sync-btn"
                             data-testid="nearby-sync"
-                            disabled={meshBusy}
+                            disabled={meshBusy || !!allSync?.running}
                             onClick={() => void syncMeshNow()}
                           >
                             立即同步
