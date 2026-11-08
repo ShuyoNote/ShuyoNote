@@ -190,6 +190,15 @@ pub struct LanAnnounce {
     /// ⚠️ `#[serde(default)]` ⇒ 老对端不发也收得下；⛔ 不升 `WIRE_VERSION`。
     #[serde(default)]
     pub hub_space_encrypted: Vec<bool>,
+    /// ⭐ **P3-3b 第二小步（2026-11-08）**：**这些空间的稳定 `space_uid`**（与 `hub_spaces` **同序**；
+    /// 元素是 `meta.workspaces.space_uid`，32 位 hex；读不到/老空间 ⇒ **空串占位**，保证与
+    /// `hub_spaces` 一一对齐 —— 消费侧按**下标**配对，⛔ 不自己猜/重新排序）。
+    ///
+    /// ⚠️ **只传播、不消费**：融合/挑对端今天仍只看 `hub_spaces`（同名即同空间）；按 uid 匹配是 P3-3b 后续。
+    /// ⚠️ `#[serde(default)]` ＋ `skip_serializing_if = "Vec::is_empty"` ⇒ 老对端不发也收得下；
+    ///   **空表时线上一个字节都不多**（与"加这一格之前"逐字节相同）⇒ ⛔ **不升 `WIRE_VERSION`** ✗。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hub_space_uids: Vec<String>,
     /// ⭐⭐ **2026-10-26（移动端局域网同步）· 已按 2026-10-28 R209-B 收窄**：⭐ 本机的**同步组名**
     /// （内部名 `mesh_room`；个人空间子房间号的种子 ✓，见 `sync::personal_room_for`）✗。
     /// ⚠️ **历史（不删）**：2026-10-26 起它曾**随公告发出去**，当时的依据是
@@ -304,6 +313,7 @@ impl Default for LanAnnounce {
             hub_space_kinds: Vec::new(),
             hub_space_names: Vec::new(),
             hub_space_encrypted: Vec::new(),
+            hub_space_uids: Vec::new(),
             room: String::new(),
             room_auto: false,
             fp: String::new(),
@@ -670,6 +680,9 @@ pub fn announce_for_own_hub(
         room_auto: false,
         // ★ 见上面那段：`fp` ＝ 应用级事实 `device_id`（B 片施工单 §8.3 的收口）。
         fp: dev.to_string(),
+        // ⭐ P3-3b：纯函数不碰库（读不到 uid）⇒ 空表，由 `lan_state::announces_for_with_mesh`
+        //   在调用点按 `hub_spaces` 同序填（两个产出点同一句 ✓）。
+        hub_space_uids: Vec::new(),
         // ⭐ P3-0b（2026-11-08）：纯函数**永远给空表** ✓ —— 它不碰进程状态（拿不到端点/网卡），
         //   真相在**发送点**：`lan_state::fill_quic_addrs` 在 `all(lan-quic, not(relay))` 构建里
         //   把「可达 IP ＋ QUIC 端点实际 UDP 端口」填进这一格 ✓；默认/relay 构建那个函数原样返回
@@ -1486,6 +1499,7 @@ mod tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                hub_space_uids: Vec::new(),
                 room: String::new(),
                 room_auto: false,
                 fp: "fp".into(),
@@ -1657,6 +1671,7 @@ mod tests {
             hub_space_kinds: Vec::new(),
             hub_space_names: Vec::new(),
             hub_space_encrypted: Vec::new(),
+            hub_space_uids: Vec::new(),
             room: String::new(),
             room_auto: false,
             fp: "fp".into(),
@@ -2683,6 +2698,7 @@ mod multi_space_peer_table_tests {
             hub_spaces: vec![space.to_string()],
             hub_space_names: vec![name.to_string()],
             hub_space_encrypted: Vec::new(),
+            hub_space_uids: Vec::new(),
             room: String::new(),
             room_auto: false,
             hub_space_kinds: vec![kind.to_string()],
@@ -3325,6 +3341,7 @@ mod quic_addrs_compat_tests {
             hub_space_names: Vec::new(),
             hub_space_kinds: Vec::new(),
             hub_space_encrypted: Vec::new(),
+            hub_space_uids: Vec::new(),
             room: String::new(),
             room_auto: false,
             fp: "fp".into(),
@@ -3474,5 +3491,64 @@ mod quic_addrs_compat_tests {
             a.quic_addrs.is_empty(),
             "纯函数不能编地址；该格由 lan_state 的发送点填"
         );
+    }
+}
+
+/// ⭐ **P3-3b 第二小步（2026-11-08）**：`hub_space_uids` 的**兼容性 + 对齐**判据
+/// （不联网、不碰库；只钉线格式与"与 `hub_spaces` 同序"这两件事）。
+#[cfg(test)]
+mod hub_space_uids_compat_tests {
+    use super::*;
+
+    fn announce_with(spaces: Vec<&str>, uids: Vec<&str>) -> LanAnnounce {
+        let mut a = LanAnnounce::default();
+        a.device_id = "dev-a".to_string();
+        a.hub_base = Some("http://192.168.1.5:8788".to_string());
+        a.hub_spaces = spaces.into_iter().map(str::to_string).collect();
+        a.hub_space_uids = uids.into_iter().map(str::to_string).collect();
+        a
+    }
+
+    /// ① 老公告（没有这一格）⇒ 空表，且解码不报错；**WIRE_VERSION 仍 1**。
+    #[test]
+    fn an_old_announce_without_uids_decodes_to_empty() {
+        let old = r#"{"v":1,"device_id":"dev-old","device_name":"老设备","short_id":"OLD01","hub_base":"http://192.168.1.7:8787","hub_spaces":["sp-1"],"hub_space_names":[],"hub_space_kinds":[],"hub_space_encrypted":[],"fp":"dev-old","trust_ask":"","trust_secret":"","pubkey":""}"#;
+        let a = decode_announce(old).expect("老公告必须照常收下");
+        assert!(a.hub_space_uids.is_empty(), "老对端缺这一格 ⇒ 空表");
+        assert_eq!(a.v, WIRE_VERSION, "WIRE_VERSION 不许被这一格抬升");
+        assert_eq!(WIRE_VERSION, 1, "版本仍严格是 1");
+    }
+
+    /// ② 空 uid 表 ⇒ **线上一个字节都不多**（与"加这一格之前"同形）。
+    #[test]
+    fn empty_uids_add_no_wire_bytes() {
+        let raw = encode_announce(&announce_with(vec!["sp-1"], vec![])).expect("编码不失败");
+        assert!(
+            !raw.contains("hub_space_uids"),
+            "空表必须不上线（skip_serializing_if）：{raw}"
+        );
+        assert!(
+            raw.contains("\"hub_spaces\":[\"sp-1\"]"),
+            "旧字段原样：{raw}"
+        );
+    }
+
+    /// ③ 新公告带 uid ⇒ **与 `hub_spaces` 同序**、可 roundtrip；缺 uid 时用**空串占位**保持对齐。
+    #[test]
+    fn uids_round_trip_in_the_same_order_as_hub_spaces() {
+        let a = announce_with(vec!["sp-a", "sp-b"], vec!["uid-a", ""]);
+        let raw = encode_announce(&a).expect("编码不失败");
+        assert!(
+            raw.contains("\"hub_space_uids\":[\"uid-a\",\"\"]"),
+            "uid 必须与 hub_spaces 同序（缺的用空串占位）：{raw}"
+        );
+        let back = decode_announce(&raw).expect("新公告可解码");
+        assert_eq!(back.hub_space_uids, a.hub_space_uids);
+        assert_eq!(
+            back.hub_space_uids.len(),
+            back.hub_spaces.len(),
+            "占位策略：uid 表与 hub_spaces **一一对齐**"
+        );
+        assert_eq!(back.v, WIRE_VERSION, "带新字段也不升版本");
     }
 }

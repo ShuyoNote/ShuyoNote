@@ -6214,6 +6214,7 @@ mod r146_mesh_scope_tests {
                     hub_space_kinds: Vec::new(),
                     hub_space_names: Vec::new(),
                     hub_space_encrypted: Vec::new(),
+                    hub_space_uids: Vec::new(),
                     room: String::new(),
                     room_auto: false,
                     fp: "fp".into(),
@@ -7088,6 +7089,13 @@ pub struct NearbyPeer {
     /// ⚠️ 老对端没报这一格 ⇒ **空表** ✓（`Vec::new()`，⛔ 不是 `None`/`undefined` ✗ ——
     /// 与公告的 `#[serde(default)]` 同一口径：读不到＝空表，"没有"是一个结论 ✓）。
     pub quic_addrs: Vec<String>,
+    /// ⭐ **P3-3b 第二小步（2026-11-08）**：对端公告里的 **`hub_space_uids`** ✓
+    /// （与 `spaces` **同序**；元素是 32 位 hex，读不到时是**空串占位**）。
+    ///
+    /// ⚠️ **只透传、不消费** ✗：⛔ 不参与 `serves_current`/`invitable` 任何判定、⛔ 不改融合匹配
+    /// （今天仍是"同名即同空间"）；P3-3b 后续才拿它当稳定标识 ✓。
+    /// ⚠️ **原样复制**（⛔ 不 trim/不校验/不去重 —— 解释权在消费侧那一处）；老对端 ⇒ 空表 ✓。
+    pub space_uids: Vec<String>,
 }
 
 /// ⭐ **P-B（2026-10-13）**：这一条**为什么**不服务当前空间 ✗ —— ⭐ **纯函数**（判据不打桩、不开网络、不碰库 ✓）。
@@ -7191,6 +7199,8 @@ pub(crate) fn nearby_of_with(
                 // ⭐ 2026-11-08（P3-0b 消费第一步）：公告里的 QUIC 候选地址**原样透传** ✓
                 //   （⛔ 本笔不 trim/不解析/不校验/不去重 ✗ —— P3-2 才消费；老对端没报 ⇒ 空表 ✓）。
                 quic_addrs: p.announce.quic_addrs.clone(),
+                // ⭐ P3-3b：公告里的 `hub_space_uids` **原样透传**（与 `spaces` 同序；不消费）
+                space_uids: p.announce.hub_space_uids.clone(),
             }
         })
         .collect()
@@ -10115,6 +10125,7 @@ mod tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                hub_space_uids: Vec::new(),
                 room: String::new(),
                 room_auto: false,
                 fp: "fp".into(),
@@ -12089,6 +12100,7 @@ mod tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                hub_space_uids: Vec::new(),
                 room: String::new(),
                 room_auto: false,
                 fp: device.to_string(),
@@ -12811,6 +12823,7 @@ mod tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                hub_space_uids: Vec::new(),
                 room: String::new(),
                 room_auto: false,
                 fp: "fp".into(),
@@ -13493,6 +13506,81 @@ mod p31_mesh_sync_all_tests {
         assert!(
             src.contains("pub async fn mesh_sync_all_now("),
             "缺 mesh_sync_all_now 命令本体"
+        );
+    }
+}
+
+/// ⭐ **P3-3b 第二小步（2026-11-08）**：`LanAnnounce.hub_space_uids` → `NearbyPeer.space_uids` 的**纯透传**判据。
+#[cfg(test)]
+mod space_uids_passthrough_tests {
+    use super::*;
+
+    fn peer_with(device: &str, spaces: Vec<&str>, uids: Vec<&str>) -> lan::Peer {
+        let mut a = lan::LanAnnounce::default();
+        a.device_id = device.to_string();
+        a.device_name = "对端".to_string();
+        a.short_id = "Q1W2E".to_string();
+        a.hub_base = Some("http://192.168.1.9:8788".to_string());
+        a.hub_spaces = spaces.into_iter().map(str::to_string).collect();
+        a.hub_space_uids = uids.into_iter().map(str::to_string).collect();
+        lan::Peer {
+            announce: a,
+            addr: "192.168.1.9".to_string(),
+            seen_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn a_new_announce_passes_space_uids_through_verbatim_and_in_order() {
+        let got = nearby_of(
+            &[peer_with(
+                "dev-a",
+                vec!["sp", "sp2"],
+                vec!["uid-a", "uid-b"],
+            )],
+            "me",
+            "sp",
+        );
+        assert_eq!(got.len(), 1);
+        assert_eq!(
+            got[0].space_uids,
+            vec!["uid-a".to_string(), "uid-b".to_string()],
+            "公告里的 uid 必须**原样逐字**上抛（顺序也不许变）"
+        );
+        // 线格式：snake_case 显式给数组（老构建缺格与空表同一处置）。
+        let json = serde_json::to_string(&got[0]).expect("序列化不失败");
+        assert!(
+            json.contains("\"space_uids\":[\"uid-a\",\"uid-b\"]"),
+            "线格式必须带 space_uids 且逐字：{json}"
+        );
+    }
+
+    #[test]
+    fn an_old_announce_yields_an_empty_vec_not_undefined() {
+        let got = nearby_of(&[peer_with("dev-old", vec!["sp"], vec![])], "me", "sp");
+        assert!(
+            got[0].space_uids.is_empty(),
+            "老对端没报这一格 ⇒ 空表（⛔ 不是 None/undefined ✓）"
+        );
+        let json = serde_json::to_string(&got[0]).expect("序列化不失败");
+        assert!(json.contains("\"space_uids\":[]"), "线上显式给 []：{json}");
+    }
+
+    #[test]
+    fn space_uids_never_affect_serves_current_or_invitable() {
+        let with = nearby_of(&[peer_with("dev-a", vec!["sp"], vec!["uid-a"])], "me", "sp");
+        let without = nearby_of(&[peer_with("dev-a", vec!["sp"], vec![])], "me", "sp");
+        assert_eq!(
+            with[0].serves_current, without[0].serves_current,
+            "`space_uids` 不许影响 serves_current（融合匹配本笔不接）"
+        );
+        assert_eq!(
+            with[0].invitable, without[0].invitable,
+            "`space_uids` 不许影响 invitable"
+        );
+        assert!(
+            with[0].serves_current,
+            "判定仍只看 hub_spaces（沿用原有数据）"
         );
     }
 }

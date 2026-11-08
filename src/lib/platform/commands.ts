@@ -292,6 +292,16 @@ export interface NearbyPeer {
    * （都是"没有"），⛔ 不许拿它当"一定连得上"或"一定连不上"的证据（P3-2 才校验）。
    */
   quic_addrs?: string[];
+  /**
+   * ⭐ **P3-3b 第二小步（2026-11-08）**：对端公告里的 `hub_space_uids`
+   * （Rust `lan::LanAnnounce.hub_space_uids` → `sync::NearbyPeer.space_uids`；
+   *  与 `spaces` **同序**，元素 32 位 hex，读不到时是**空串占位**）。
+   *
+   * ⚠️ **只透传、不消费**：P3-3b 后续才拿它当**稳定空间标识**；⛔ 今天**不得据此改任何行为**
+   * （融合/挑对端仍只看 `spaces`/`serves_current`）；老构建缺这一格 ⇒ `undefined`
+   * （与空数组同一处置 = "没有"）。
+   */
+  space_uids?: string[];
 }
 
 /** 一轮网格交换里**一台对端**那一行（与 Rust `mesh::PeerPullReport` 逐字段相同）。 */

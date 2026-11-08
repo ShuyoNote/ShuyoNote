@@ -1122,13 +1122,15 @@ mod tests {
             .filter(|l| l.trim_start().starts_with("pub ") && l.trim_end().ends_with(','))
             .count();
         assert_eq!(
-            fields, 13,
+            fields, 14,
             "⛔ 给 `NearbyPeer` 加/删格**必须同时来改这一行并写明来由** ✗（tripwire ✓；实际 {fields} 格）\
              —— ⚠️ 2026-10-16 由 8 改 11：08-b② 的 `short_id` ＋ P-B 的原因码等（各带日期注释 ✓）；\
              ⚠️ 2026-10-29 由 11 改 12：owner 拍 B 的 J9 精确端口读数 ⇒ `announced_port: Option<u16>`\
              （可选格 ＋ ⛔ 不升 WIRE_VERSION ✓）；\
              ⚠️ 2026-11-08 由 12 改 13：P3-0b 消费第一步 ⇒ `quic_addrs: Vec<String>`\
-             （公告可选格＋原样透传、不消费；⛔ 不升 WIRE_VERSION ✓）"
+             （公告可选格＋原样透传、不消费；⛔ 不升 WIRE_VERSION ✓）；\
+             ⚠️ 2026-11-08 由 13 改 14：P3-3b 第二小步 ⇒ `space_uids: Vec<String>`\
+             （与公告 `hub_space_uids` 同序；原样透传、不参与融合匹配；⛔ 不升 WIRE_VERSION ✓）"
         );
     }
 

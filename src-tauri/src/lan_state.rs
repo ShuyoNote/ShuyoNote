@@ -1010,6 +1010,7 @@ pub fn announces_for(
         profiles,
         &[],
         &[],
+        &[],
     )
 }
 
@@ -1074,6 +1075,17 @@ pub(crate) fn announces_for_this_round(
     //    ⛔ 少任何一半都会丢东西：少了前者 ⇒ 个人空间 0 条公告；少了后者 ⇒ 公告里没短标识。
     // ⭐ 2026-10-19（B1）：⭐ 空间名**每轮读一次** ✗（与短标识／公钥同一个手法 ✓：⛔ 不「一条公告读一次」）。
     //   ⚠️ 只读 ✓（读路径不许写库 ✓）；读不到 ⇒ 空表 ⇒ 公告里**不带名字**（⛔ 不塞空串 ✓）。
+    // ⭐ P3-3b：本轮公告要带的 `space_uid`（每轮读一次；与 `space_meta` 同一手法）。
+    //   ⚠️ 只读；读不到/老空间 ⇒ 空串占位（由 `announces_for_with_mesh` 按 hub_spaces 对齐填）。
+    let space_uids: Vec<(String, String)> = match c
+        .prepare("SELECT id, COALESCE(space_uid, '') FROM meta.workspaces WHERE deleted_at IS NULL")
+    {
+        Ok(mut st) => st
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
     let space_meta: Vec<(String, String, String)> = match c.prepare(
         "SELECT id, COALESCE(name, ''), COALESCE(kind, '') FROM meta.workspaces WHERE deleted_at IS NULL",
     ) {
@@ -1102,6 +1114,7 @@ pub(crate) fn announces_for_this_round(
         &resolved,
         mesh_bases,
         &space_meta,
+        &space_uids,
     );
     for a in &mut out {
         // ⚠️ 不留任何兼容尾巴：`room` 一律空 ✓（⛔ 别"只对老对端发"✗ —— 那还是发 ✓）。
@@ -1133,6 +1146,9 @@ pub fn announces_for_with_mesh(
     // ⭐ 2026-10-19（B1）：⭐ `(ws_id, 空间名, 类别)` ✗ —— 只往公告里带，⛔ 今天不参与任何判定。
     //   ⚠️ 同样**当参数传进来**（本函数是纯函数 ✓，读库那一步在 `announces_for_this_round` ✓）。
     space_meta: &[(String, String, String)],
+    // ⭐ P3-3b（2026-11-08）：⭐ `(ws_id, space_uid)` ✗ —— 只往公告里带（与 `hub_spaces` 同序对齐），
+    //   ⛔ 今天不参与任何判定。同样**当参数传进来**（纯函数 ✓）。
+    space_uids: &[(String, String)],
 ) -> Vec<lan::LanAnnounce> {
     let dev = local_device_id.trim();
     // ⚠️ 没有设备身份 ⇒ **一条都不发**：`decode_announce` 会以 `NoDeviceId` 丢掉它，
@@ -1201,6 +1217,8 @@ pub fn announces_for_with_mesh(
             //   完全隐形 —— 掉包判据要看的就是这个。
             fp: dev.to_string(),
             quic_addrs: Vec::new(),
+            // ⭐ P3-3b：uid 由下面统一按 hub_spaces 同序填（这个兜底构造点不单独读库）。
+            hub_space_uids: Vec::new(),
         });
         // ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 把"⭐ 我想信任谁 ✗"／"⭐ 我给谁的那把 ✗"带上 ✓。
         //    ⚠️ 在**调用点之后**填 ✗（⭐ `announce_for_own_hub` 是纯函数 ✓，⭐ 它不该知道进程状态 ✓）；
@@ -1223,6 +1241,17 @@ pub fn announces_for_with_mesh(
             vec![space.to_string()]
         } else {
             Vec::new()
+        };
+        // ⭐ P3-3b：与 `hub_spaces` **同序**填 uid（本笔每个公告只代言一个空间 ⇒ 一格；
+        //   读不到 ⇒ **空串占位**，保持 len 对齐；`hub_spaces` 为空 ⇒ uid 也为空）。
+        a.hub_space_uids = if a.hub_spaces.is_empty() {
+            Vec::new()
+        } else {
+            vec![space_uids
+                .iter()
+                .find(|(id, _)| id.trim() == ws.trim())
+                .map(|(_, uid)| uid.trim().to_string())
+                .unwrap_or_default()]
         };
         // ⭐ 2026-10-24（macOS 侧抓包定位）：**兜底分支漏了「类别」** ✗ —— `lan.rs:510` 那条
         //   「代言」分支是填的，而"只开网格、不绑服务端"的个人空间**必走兜底**
@@ -2290,6 +2319,7 @@ mod tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                hub_space_uids: Vec::new(),
                 room: String::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
@@ -2563,7 +2593,8 @@ mod tests {
             should_run_discovery(&profiles, &["sp-1".to_string()]),
             "开了网格 ⇒ 发现层要起"
         );
-        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &bases, &[]);
+        let got =
+            announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &bases, &[], &[]);
         assert_eq!(got.len(), 1, "{got:#?}");
         assert_eq!(got[0].hub_base.as_deref(), Some("http://192.168.1.5:8788"));
         assert_eq!(got[0].hub_spaces, vec!["sp-1".to_string()]);
@@ -2575,7 +2606,8 @@ mod tests {
     fn a_mesh_base_overrides_the_configured_server_in_the_announce() {
         let profiles = profiles_of(&[("sp-1", "https://s.example.com")]);
         let bases = mesh_bases_of(&[("sp-1", "http://10.0.0.7:9000")]);
-        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &bases, &[]);
+        let got =
+            announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &bases, &[], &[]);
         assert_eq!(got.len(), 1);
         assert_eq!(
             got[0].hub_base.as_deref(),
@@ -2590,16 +2622,20 @@ mod tests {
         // ① 半截配置（有地址没空间）：不开发现层、不发言
         let half = profiles_of(&[("", "http://192.168.1.5:8787")]);
         assert!(!should_run_discovery(&half, &[]));
-        assert!(announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &half, &[], &[]).is_empty());
+        assert!(
+            announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &half, &[], &[], &[]).is_empty()
+        );
         // ② 绑上了：开，而且报的是配置地址（甲那条路）
         let bound = profiles_of(&[("sp-1", "http://192.168.1.5:8787")]);
         assert!(should_run_discovery(&bound, &[]));
-        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &bound, &[], &[]);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &bound, &[], &[], &[]);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].hub_base.as_deref(), Some("http://192.168.1.5:8787"));
         // ③ 什么都没配：不开、不发言
         assert!(!should_run_discovery(&[], &[]));
-        assert!(announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &[], &[], &[]).is_empty());
+        assert!(
+            announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &[], &[], &[], &[]).is_empty()
+        );
     }
 
     /// ⭐ 2026-10-11（**设备身份** ✓，方案 `2026-10-11-device-identity-keys.md` §4 第 2 步 ✓）：
@@ -2614,7 +2650,7 @@ mod tests {
         let profiles = profiles_of(&[("sp-1", "http://192.168.1.5:8787")]);
         // ⭐ 形状正确的公钥（32 字节 ⇒ 64 个十六进制字符 ✓；值本身随便 ✓）
         let pk = "ab".repeat(32);
-        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", &pk, &profiles, &[], &[]);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", &pk, &profiles, &[], &[], &[]);
         assert_eq!(got.len(), 1, "{got:#?}");
         assert_eq!(
             got[0].pubkey, pk,
@@ -2625,7 +2661,7 @@ mod tests {
         let back = crate::lan::decode_announce(&raw).expect("解码");
         assert_eq!(back.pubkey, pk);
         // ⭐ 没身份（空串）⇒ **照旧发得出来** ✓（⛔ 不因为"没有身份"就不发言 ✗）
-        let none = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &[], &[]);
+        let none = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &[], &[], &[]);
         assert_eq!(none.len(), 1, "没有身份也要照旧发言（发现与身份是两件事）");
         assert_eq!(
             none[0].pubkey, "",
@@ -3114,6 +3150,7 @@ mod short_id_tests {
                 hub_space_kinds: Vec::new(),
                 hub_space_names: Vec::new(),
                 hub_space_encrypted: Vec::new(),
+                hub_space_uids: Vec::new(),
                 room: String::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
@@ -3744,5 +3781,62 @@ mod p31_event_round_tests {
             "request_round_now 必须置 pending（真正跑不跑由 start 循环的 gate 判）"
         );
         EVENT_ROUND_PENDING.store(false, Ordering::SeqCst);
+    }
+}
+
+/// ⭐ **P3-3b 第二小步**：发送侧 `hub_space_uids` 与 `hub_spaces` **同序对齐**（纯函数，不碰库）。
+#[cfg(test)]
+mod p33b_hub_space_uids_tests {
+    use super::*;
+
+    fn announce_for(uid_map: &[(&str, &str)]) -> lan::LanAnnounce {
+        let profiles = vec![("sp".to_string(), String::new(), "ws-a".to_string())];
+        let mesh_bases = vec![("sp".to_string(), "http://192.168.1.5:8788".to_string())];
+        let space_meta = vec![(
+            "ws-a".to_string(),
+            "我的空间".to_string(),
+            "personal".to_string(),
+        )];
+        let space_uids: Vec<(String, String)> = uid_map
+            .iter()
+            .map(|(id, uid)| (id.to_string(), uid.to_string()))
+            .collect();
+        let got = announces_for_with_mesh(
+            "dev-a",
+            "本机",
+            "T3ST1",
+            "",
+            &profiles,
+            &mesh_bases,
+            &space_meta,
+            &space_uids,
+        );
+        assert_eq!(got.len(), 1, "前提：这个空间配了网格 ⇒ 应当发言");
+        got.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn the_uid_of_the_serving_workspace_is_carried_in_the_same_slot_as_hub_spaces() {
+        let a = announce_for(&[("ws-a", "uid-a"), ("ws-b", "uid-b")]);
+        assert_eq!(a.hub_spaces, vec!["sp".to_string()]);
+        assert_eq!(
+            a.hub_space_uids,
+            vec!["uid-a".to_string()],
+            "按 **ws_id** 找到对应 uid（不是按 ws 的位置/名字）；与 hub_spaces 同序"
+        );
+        assert_eq!(a.hub_space_uids.len(), a.hub_spaces.len());
+    }
+
+    #[test]
+    fn a_missing_uid_uses_an_empty_placeholder_so_the_arrays_stay_aligned() {
+        // 老空间（迁移还没跑到/读不到）⇒ 空串占位，⛔ 不许省略/截短（消费侧按下标配对）。
+        let a = announce_for(&[]);
+        assert_eq!(a.hub_spaces, vec!["sp".to_string()]);
+        assert_eq!(
+            a.hub_space_uids,
+            vec![String::new()],
+            "缺 uid ⇒ 空串占位，保持与 hub_spaces 一一对齐"
+        );
+        assert_eq!(a.hub_space_uids.len(), a.hub_spaces.len());
     }
 }
