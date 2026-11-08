@@ -245,6 +245,88 @@ async fn relay_endpoint_for(
     Err("这个构建没编入跨网隧道（需要 --features relay）".to_string())
 }
 
+// ═══════════════════ P3-2a：QUIC 直连适配器（只在 --features lan-quic 下编） ═══════════════════
+//
+// 这一块是**接线件**，不是选路：`endpoint_for_peer` 的默认/relay 分支一个字没动（见上面），
+// 本笔也**不接同步轮次**。它只提供一条显式路径：
+//   `MeshPeer`（已带 `node_id`/`quic_addrs` 原料）＋ `LanQuicRegistry` ⇒ 一个实现既有 `Endpoint` trait 的端点。
+// ⛔ 不消费地址到 `endpoint_for_peer`、⛔ 不做 LAN/relay 优先级判定（那是 P3-2 后续）。
+
+/// ⭐ **P3-2a 适配器**：把 `LanQuicRegistry`（QUIC 请求）适配成既有的 [`Endpoint`] trait。
+///
+/// * `get`：`GET target` → `TunnelRequest`（三格鉴权头 ＋ `authorization: Bearer …` 与 `LanEndpoint` 同形）
+///   → `registry.request(peer, …)`（**复用缓存连接**）→ [`HttpReply`]（状态/体逐字语义与 LanEndpoint 对齐）；
+/// * `get_stream`：**不覆写** ⇒ 用 trait 默认实现（明确回"这个端点不支持流式"；附件流式是后续步骤）。
+///
+/// ⚠️ 它**不拥有** Registry（`Arc` 共享）：一进程一端点由持有 Registry 的接线方保证。
+// ⚠️ **骨架阶段的显式例外**：本笔只建"路径存在且可测"，接线（选路/轮次）是 P3-2 后续
+// ⇒ 在非测试构建里这些项还没有调用者。**真接线后请删掉这三处 `#[allow(dead_code)]`**。
+#[cfg(feature = "lan-quic")]
+#[allow(dead_code)]
+pub struct QuicMeshEndpoint {
+    registry: std::sync::Arc<crate::lan_quic::LanQuicRegistry>,
+    peer: iroh::EndpointAddr,
+}
+
+#[cfg(feature = "lan-quic")]
+impl QuicMeshEndpoint {
+    /// 用「已解析好的对端地址 ＋ 已有 Registry」构造（工厂 [`quic_endpoint_for`] 是正常入口）。
+    #[allow(dead_code)]
+    pub fn new(
+        registry: std::sync::Arc<crate::lan_quic::LanQuicRegistry>,
+        peer: iroh::EndpointAddr,
+    ) -> Self {
+        Self { registry, peer }
+    }
+}
+
+#[cfg(feature = "lan-quic")]
+impl Endpoint for QuicMeshEndpoint {
+    fn get<'a>(
+        &'a self,
+        target: &'a str,
+        auth: Option<(&'a str, i64, &'a str)>,
+        token: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<HttpReply, String>> + Send + 'a>> {
+        Box::pin(async move {
+            // 与 `RelayEndpoint::get` **同一套头**（名字取自 mesh，⛔ 不另立一份）。
+            let mut req = crate::relay_tunnel::TunnelRequest::new("GET", target);
+            if let Some((device_id, ts, sig)) = auth {
+                req = req
+                    .with_header(crate::mesh::HDR_DEVICE, device_id)
+                    .with_header(crate::mesh::HDR_TS, &ts.to_string())
+                    .with_header(crate::mesh::HDR_SIG, sig);
+            }
+            if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
+                req = req.with_header("authorization", &format!("Bearer {t}"));
+            }
+            let reply = self.registry.request(self.peer.clone(), &req).await?;
+            Ok(HttpReply {
+                status: reply.status,
+                body: String::from_utf8_lossy(&reply.body).into_owned(),
+            })
+        })
+    }
+}
+
+/// ⭐ **P3-2a 工厂**：给定**已带原料**的 `MeshPeer` ＋ 已有 Registry ⇒ 一个 QUIC `Endpoint`。
+///
+/// 错误边界（全部**可读**、⛔ 不静默降级）：
+/// * `peer.node_id` 不是 64 位 hex ⇒ 报错（来自 [`crate::lan_quic::endpoint_addr`]）；
+/// * `peer.quic_addrs` 为空 ⇒ 明确"只有 node id 连不上"（同上）；
+/// * 地址坏/超上限 ⇒ 点名第几条（同上）。
+///
+/// ⚠️ 它**不**决定"该不该走 QUIC"：选路仍是 P3-2 的事；调用方只在明确要走 QUIC 时调它。
+#[cfg(feature = "lan-quic")]
+#[allow(dead_code)]
+pub async fn quic_endpoint_for(
+    peer: &crate::mesh::MeshPeer,
+    registry: std::sync::Arc<crate::lan_quic::LanQuicRegistry>,
+) -> Result<Box<dyn Endpoint + Send>, String> {
+    let addr = crate::lan_quic::endpoint_addr(&peer.node_id, &peer.quic_addrs)?;
+    Ok(Box::new(QuicMeshEndpoint::new(registry, addr)))
+}
+
 /// 拼一个 base 与 target（**唯一一处**；`trim_end_matches('/')` 的老口径保持不变 ✓）。
 pub fn join(base: &str, target: &str) -> String {
     format!("{}{}", base.trim_end_matches('/'), target)
@@ -286,5 +368,171 @@ mod tests {
             Err(e) => e,
         };
         assert!(err.contains("--features relay"), "要说清怎么办：{err}");
+    }
+}
+
+/// ⭐ **P3-2a：`QuicMeshEndpoint` 适配器判据**（只在 `--features lan-quic` 下编）。
+///
+/// 只验三件事（⛔ 不选路、不接同步轮次）：
+/// 1) 一次真的 `Endpoint::get`：状态 200／正文逐字／三格鉴权头 ＋ `authorization` **原样到达服务端**；
+/// 2) `get_stream` 明确拒绝（⛔ 不静默退回整包读）；
+/// 3) `quic_endpoint_for` 的错误边界：空 `node_id`、空 `quic_addrs`、坏 `node_id`、坏地址都点名。
+#[cfg(all(test, feature = "lan-quic"))]
+mod quic_endpoint_tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use crate::lan_quic::{bind_direct, LanQuicEndpoint, LanQuicRegistry};
+    use crate::relay_tunnel::{read_request, write_reply, TunnelReply};
+    use iroh::SecretKey;
+
+    fn ipv4_port(ep: &LanQuicEndpoint) -> u16 {
+        ep.local_addrs()
+            .iter()
+            .find_map(|s| match s {
+                std::net::SocketAddr::V4(v4) if v4.port() != 0 => Some(v4.port()),
+                _ => None,
+            })
+            .expect("端点必须至少绑上一个 IPv4 端口")
+    }
+
+    fn peer_with(node_id: &str, addrs: Vec<String>) -> crate::mesh::MeshPeer {
+        crate::mesh::MeshPeer {
+            device_id: "dev-a".to_string(),
+            // ⚠️ base 故意是个连不上的占位：走 QUIC 这条路时它必须**被忽略**。
+            base: "http://unused.invalid:1".to_string(),
+            quic_addrs: addrs,
+            node_id: node_id.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_quic_endpoint_get_carries_status_body_and_auth_headers() {
+        let server = bind_direct(SecretKey::generate())
+            .await
+            .expect("服务端端点");
+        let port = ipv4_port(&server);
+        let node_hex = server.node_id_hex();
+        let serve = tokio::spawn(async move {
+            let Some(incoming) = server.accept().await else {
+                panic!("端点已关，接不到连接");
+            };
+            let conn = incoming.await.expect("QUIC 握手");
+            let (mut send, mut recv) = conn.accept_bi().await.expect("接流");
+            let req = read_request(&mut recv).await.expect("读请求");
+            // 头/方法/target 必须**原样**到达服务端（与 LAN HTTP 路径同一套鉴权材料）。
+            assert_eq!(req.method, "GET");
+            assert_eq!(req.target, "/mesh/manifest?space_id=x");
+            assert_eq!(req.header(crate::mesh::HDR_DEVICE), Some("dev-a"));
+            assert_eq!(req.header(crate::mesh::HDR_TS), Some("1700000000000"));
+            assert_eq!(req.header(crate::mesh::HDR_SIG), Some("sig-hex"));
+            assert_eq!(req.header("authorization"), Some("Bearer tok-1"));
+            write_reply(
+                &mut send,
+                &TunnelReply {
+                    status: 200,
+                    body: b"{\"ok\":true}".to_vec(),
+                },
+            )
+            .await
+            .expect("写应答");
+            send.finish().expect("收流");
+            let _ = conn.closed().await;
+        });
+
+        let registry = Arc::new(
+            LanQuicRegistry::new(SecretKey::generate())
+                .await
+                .expect("注册表"),
+        );
+        let peer = peer_with(&node_hex, vec![format!("127.0.0.1:{port}")]);
+        let ep = quic_endpoint_for(&peer, Arc::clone(&registry))
+            .await
+            .expect("工厂应能建出 QUIC 端点");
+
+        let reply = tokio::time::timeout(
+            Duration::from_secs(30),
+            ep.get(
+                "/mesh/manifest?space_id=x",
+                Some(("dev-a", 1_700_000_000_000, "sig-hex")),
+                Some("tok-1"),
+            ),
+        )
+        .await
+        .expect("30 秒内必须完成")
+        .expect("QUIC get 应成功");
+        assert_eq!(reply.status, 200, "状态码要逐字带出");
+        assert_eq!(reply.body, "{\"ok\":true}", "正文要逐字带出");
+
+        // ⛔ 附件流式：本适配器**明确不支持**（用 trait 默认实现，不许静默退回整包读）。
+        let err = match ep.get_stream("/mesh/attachment?hash=x", None, None).await {
+            Ok(_) => panic!("get_stream 必须拒绝（⛔ 不许静默退回整包读）"),
+            Err(e) => e,
+        };
+        assert!(err.contains("不支持流式"), "要说清不支持什么：{err}");
+
+        registry.close().await;
+        serve.await.expect("服务任务不应 panic");
+    }
+
+    #[tokio::test]
+    async fn quic_endpoint_for_refuses_missing_or_bad_materials() {
+        let registry = Arc::new(
+            LanQuicRegistry::new(SecretKey::generate())
+                .await
+                .expect("注册表"),
+        );
+        let good_node = registry.endpoint().node_id_hex();
+
+        // ① 空 node_id
+        let err = match quic_endpoint_for(
+            &peer_with("", vec!["1.2.3.4:4433".to_string()]),
+            Arc::clone(&registry),
+        )
+        .await
+        {
+            Ok(_) => panic!("空 node_id 必须报错"),
+            Err(e) => e,
+        };
+        assert!(err.contains("node_id"), "要点名 node_id：{err}");
+
+        // ② 空 quic_addrs（只有 node id 连不上）
+        let err = match quic_endpoint_for(&peer_with(&good_node, Vec::new()), Arc::clone(&registry))
+            .await
+        {
+            Ok(_) => panic!("空地址必须报错"),
+            Err(e) => e,
+        };
+        assert!(
+            err.contains("QUIC 地址") || err.contains("quic_addrs"),
+            "要说清没有地址：{err}"
+        );
+
+        // ③ 坏 node_id（长度/hex）
+        let err = match quic_endpoint_for(
+            &peer_with("abc", vec!["1.2.3.4:4433".to_string()]),
+            Arc::clone(&registry),
+        )
+        .await
+        {
+            Ok(_) => panic!("坏 node_id 必须报错"),
+            Err(e) => e,
+        };
+        assert!(err.contains("node_id") && err.contains("64"), "{err}");
+
+        // ④ 坏地址（点名第几条）
+        let err = match quic_endpoint_for(
+            &peer_with(&good_node, vec!["nope".to_string()]),
+            Arc::clone(&registry),
+        )
+        .await
+        {
+            Ok(_) => panic!("坏地址必须报错"),
+            Err(e) => e,
+        };
+        assert!(err.contains("第 1 条"), "要点名第几条：{err}");
+
+        registry.close().await;
     }
 }
