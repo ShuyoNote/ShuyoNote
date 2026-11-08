@@ -620,6 +620,37 @@ fn not_eligible_reason(why: crate::mesh_merge_ledger::NotEligibleWhy) -> &'stati
 pub struct MeshPeer {
     pub device_id: String,
     pub base: String,
+    /// ⭐ **P3-2a 接线前的原料（只装不用）**：对端公告里报的 **QUIC/iroh 端点候选地址**
+    /// （`lan::LanAnnounce.quic_addrs` 原样；元素是不透明字符串，形如 `ip:port`）。
+    ///
+    /// ⚠️ 本笔**不消费**：⛔ 不选路、⛔ 不建连接、⛔ 不参与任何判定（`endpoint_for_peer`/round 照旧读不到它）。
+    /// ⚠️ 老对端/旧版对端没报这一格 ⇒ **空表**（⛔ 不是 `None`/编造 ✗）。
+    pub quic_addrs: Vec<String>,
+    /// ⭐ **P3-2a 接线前的原料（只装不用）**：对端的 **iroh node id**（64 位小写 hex）。
+    ///
+    /// **来源依据（同源假设）**：设备身份是 `ed25519_dalek` 的 Ed25519 公钥
+    /// （`device_identity.rs:1-19` 与 `:27-33`），而 iroh 的 `SecretKey`／`PublicKey` 也是
+    /// `ed25519_dalek::SigningKey`／`VerifyingKey`（`iroh-base-1.3.0/src/key.rs:261/337/122`）
+    /// ⇒ 同一个设备 seed 派生出的 `pubkey` **就是** iroh node id；ADR §3.3 也要求端点身份取
+    /// `device/identity.hex` 的 seed。⚠️ 但**今天** relay 隧道的 seed 来自 `relay/config.json`
+    /// （≠ 设备身份）⇒ 旧 relay 构建报的节点 id 可能不等于 `pubkey`。
+    /// ⇒ 本格 = 公告 `pubkey` 的规范化副本（trim＋小写），注释只作**同源假设**；
+    /// **P3-2 真接线时以实际端点 id 为准**（⛔ 本笔不消费 ✗）。
+    pub node_id: String,
+}
+
+impl MeshPeer {
+    /// 便捷构造：只有 `(device_id, base)` 的候选 —— **QUIC 原料留空**（行为与加字段之前一致）。
+    ///
+    /// ⚠️ 它⛔不会替调用方猜 node_id/地址（那两个字段只能从公告或路线表来）。
+    pub fn new(device_id: &str, base: &str) -> Self {
+        Self {
+            device_id: device_id.to_string(),
+            base: base.to_string(),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
+        }
+    }
 }
 
 /// ★ **一台对端能不能被直接拉**（＝可以被邀请）—— **唯一的一把尺**，返回它的基址。
@@ -729,6 +760,10 @@ pub fn mesh_peers_by_name(
         out.push(MeshPeer {
             device_id: id.to_string(),
             base,
+            // ⭐ P3-2a 原料：公告有什么就带什么（老对端 ⇒ 空表/空串）；⛔ 本笔不消费。
+            quic_addrs: p.announce.quic_addrs.clone(),
+            // 同源假设（见字段注释）：pubkey 规范化成小写 64 hex；空 ⇒ 空串。
+            node_id: p.announce.pubkey.trim().to_ascii_lowercase(),
         });
     }
     out.sort_by(|a, b| a.device_id.cmp(&b.device_id)); // 确定性（判据要能逐字节比）
@@ -4194,6 +4229,9 @@ pub fn retry_pending_revokes(app: &tauri::AppHandle, peers: &[crate::lan::Peer])
             MeshPeer {
                 device_id: p.device.clone(),
                 base: base.trim_end_matches('/').to_string(),
+                // ⭐ P3-2a 原料：同一条公告（`pr`）里有就带；⛔ 本句不消费，行为不变。
+                quic_addrs: pr.announce.quic_addrs.clone(),
+                node_id: pr.announce.pubkey.trim().to_ascii_lowercase(),
             },
             pr.announce.hub_spaces.clone(),
             p.device.clone(),
@@ -6021,6 +6059,8 @@ mod tests {
         MeshPeer {
             device_id: device.to_string(),
             base: base.to_string(),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
         }
     }
 
@@ -7938,6 +7978,8 @@ mod tests {
         let peer = MeshPeer {
             device_id: "dev-x".to_string(),
             base: "http://not-used.invalid:1".to_string(),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
         };
         let got = fetch_peer_manifest(&fake, &peer, "space-z", None, None)
             .await
@@ -7993,6 +8035,8 @@ mod tests {
         let peer = MeshPeer {
             device_id: "dev-x".to_string(),
             base: "http://not-used.invalid:1".to_string(),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
         };
         let (rows, max) = pull_from_peer(&fake, &peer, "space-z", 0, None, None, "")
             .await
@@ -10074,6 +10118,8 @@ mod tests {
         let peer = MeshPeer {
             device_id: "dev-me".to_string(),
             base: format!("http://{addr}"),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
         };
         let out_target = crate::mesh::pull_target(space, 0, "");
         let (ts2, sig2) = crate::mesh::sign_request(&c, "dev-peer", space, "GET", &out_target, now)
@@ -10238,6 +10284,8 @@ mod tests {
         let near = |dev: &str, addr: SocketAddr| MeshPeer {
             device_id: dev.to_string(),
             base: format!("http://{addr}"),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
         };
         let client = mesh_http_client();
         let sign = |c: &Connection, dev: &str| {
@@ -10839,5 +10887,72 @@ mod locked_mark_tests {
             .expect("库开得开 ⇒ 加成功");
         assert!(!h.is_locked(proto), "⛔ 连接进来了就不该再说自己锁着 ✗");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// ⭐ **P3-2a 接线前的原料装填**（2026-11-08）：`MeshPeer.quic_addrs` / `node_id` **只装不用**。
+///
+/// 判据只回答三件事（⛔ 不选路、不建连接、不改同步行为）：
+/// ① 老公告/旧候选 ⇒ 两个原料格都是空（不是 panic、不是编造）；
+/// ② 新公告带 `quic_addrs`＋`pubkey` ⇒ 候选**逐字**带出（``node_id`` = pubkey 的 trim+小写规范化）；
+/// ③ 候选的**数量/顺序/过滤/base** 与加字段之前完全一致（这两格不参与任何判定）。
+#[cfg(test)]
+mod quic_peer_materials_tests {
+    use super::*;
+
+    /// 造一条"服务 sp、LAN 基址"的公告；`quic`/`pubkey` 按需给。
+    fn lan_peer(device: &str, base: &str, quic: Vec<&str>, pubkey: &str) -> crate::lan::Peer {
+        let mut a = crate::lan::LanAnnounce::default();
+        a.device_id = device.to_string();
+        a.hub_base = Some(base.to_string());
+        a.hub_spaces = vec!["sp".to_string()];
+        a.pubkey = pubkey.to_string();
+        a.quic_addrs = quic.into_iter().map(str::to_string).collect();
+        crate::lan::Peer {
+            announce: a,
+            addr: "192.168.1.9".to_string(),
+            seen_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn candidates_carry_quic_materials_and_keep_count_order_and_base() {
+        let old = lan_peer("dev-b", "http://192.168.1.20:8788", vec![], "");
+        let new = lan_peer(
+            "dev-a",
+            "http://192.168.1.21:8788",
+            vec!["192.168.1.21:4433", "[::1]:4434"],
+            &"AB".repeat(32),
+        );
+        let got = mesh_peers_by_name("sp", "", "me", &[old, new], false);
+        // ③ 数量/顺序/过滤/base 与加字段之前一致（两台的 bas 都是 LAN、都服务 sp）。
+        assert_eq!(got.len(), 2, "候选数量不许因原料字段改变");
+        assert_eq!(
+            got.iter().map(|p| p.device_id.as_str()).collect::<Vec<_>>(),
+            vec!["dev-a", "dev-b"],
+            "既有排序（device_id）不变"
+        );
+        assert_eq!(got[0].base, "http://192.168.1.21:8788", "base 原样");
+        assert_eq!(got[1].base, "http://192.168.1.20:8788", "base 原样");
+        // ② 新公告逐字带出；node_id = pubkey 规范化（大写→小写）。
+        assert_eq!(
+            got[0].quic_addrs,
+            vec!["192.168.1.21:4433".to_string(), "[::1]:4434".to_string()],
+            "公告里的 quic_addrs 要逐字上抛"
+        );
+        assert_eq!(got[0].node_id, "ab".repeat(32), "pubkey 的 trim+小写副本");
+        // ① 老公告 ⇒ 空（不是 panic/编造）。
+        assert!(got[1].quic_addrs.is_empty(), "老公告没报 ⇒ 空表");
+        assert!(got[1].node_id.is_empty(), "老公告没报 pubkey ⇒ 空串");
+    }
+
+    /// ⭐ `MeshPeer::new` 只给 `(device_id, base)`：QUIC 原料**留空**（与加字段前行为一致）。
+    #[test]
+    fn the_new_helper_leaves_the_quic_materials_empty() {
+        let p = MeshPeer::new("dev-x", "http://192.168.1.5:8788");
+        assert_eq!(p.device_id, "dev-x");
+        assert_eq!(p.base, "http://192.168.1.5:8788");
+        assert!(p.quic_addrs.is_empty(), "helper 不替调用方猜地址");
+        assert!(p.node_id.is_empty(), "helper 不替调用方猜 node id");
     }
 }

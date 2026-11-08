@@ -157,6 +157,8 @@ pub fn virtual_peers_from(
         .map(|r| crate::mesh::MeshPeer {
             device_id: r.device_id.clone(),
             base: format!("{}{}", crate::mesh_endpoint::RELAY_BASE_PREFIX, r.node_id),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
         })
         .collect()
 }
@@ -324,6 +326,8 @@ mod tests {
         let lan = MeshPeer {
             device_id: "dev-a".into(),
             base: "http://192.168.0.5:8788".into(),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
         };
         let mut out = vec![lan.clone()];
         let added = merge_route_peers(&mut out, &routes);
@@ -349,10 +353,14 @@ mod tests {
             MeshPeer {
                 device_id: "dev-b".into(),
                 base: "http://192.168.0.6:8788".into(),
+                quic_addrs: Vec::new(),
+                node_id: String::new(),
             },
             MeshPeer {
                 device_id: "dev-a".into(),
                 base: "http://192.168.0.5:8788".into(),
+                quic_addrs: Vec::new(),
+                node_id: String::new(),
             },
         ];
         let mut out = before.clone();
@@ -376,10 +384,14 @@ mod tests {
             MeshPeer {
                 device_id: "dev-a".into(),
                 base: "http://x:1".into(),
+                quic_addrs: Vec::new(),
+                node_id: String::new(),
             },
             MeshPeer {
                 device_id: "dev-b".into(),
                 base: "http://y:2".into(),
+                quic_addrs: Vec::new(),
+                node_id: String::new(),
             },
         ];
         let mut out = before.clone();
@@ -407,14 +419,20 @@ mod tests {
             MeshPeer {
                 device_id: "dev-a".into(),
                 base: "http://192.168.0.5:8788".into(),
+                quic_addrs: Vec::new(),
+                node_id: String::new(),
             },
             MeshPeer {
                 device_id: "dev-b".into(),
                 base: "http://192.168.0.6:8788".into(),
+                quic_addrs: Vec::new(),
+                node_id: String::new(),
             },
             MeshPeer {
                 device_id: "dev-lan-only".into(),
                 base: "http://192.168.0.9:8788".into(),
+                quic_addrs: Vec::new(),
+                node_id: String::new(),
             },
         ];
         let mut out = before.clone();

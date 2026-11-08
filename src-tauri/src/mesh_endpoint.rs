@@ -278,6 +278,8 @@ mod tests {
         let peer = crate::mesh::MeshPeer {
             device_id: "dev-x".to_string(),
             base: format!("{RELAY_BASE_PREFIX}0123456789abcdef"),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
         };
         let err = match endpoint_for_peer(&peer, reqwest::Client::new()).await {
             Ok(_) => panic!("relay: 前缀必须走跨网分支（⛔ 不许当 LAN）"),

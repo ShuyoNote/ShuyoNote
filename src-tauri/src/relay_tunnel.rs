@@ -1284,6 +1284,8 @@ mod tests {
         let peer = crate::mesh::MeshPeer {
             device_id: "dev-a".to_string(),
             base: "http://unused.invalid:1".to_string(),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
         };
         let (rows, max_seq) = crate::mesh::pull_from_peer(
             &relay_ep,
