@@ -75,6 +75,9 @@ import { PanelBoundary } from "./components/PanelBoundary";
 import { Editor } from "./editor/Editor";
 import { useSyncStream } from "./hooks/useSyncStream";
 import { useSyncProgress } from "./hooks/useSyncProgress";
+// ⭐ P3-3a 第二小步（task-52）：**dev-only** 的 CRDT 影子看门（内部用 `import.meta.env.DEV` 自门控；
+//   生产构建里不装定时器/不扫描/不 console；⛔ 不改任何数据与 UI 行为）。
+import { useCrdtShadowWatch } from "./lib/useCrdtShadowWatch";
 import { useExternalDrafts } from "./hooks/useExternalDrafts";
 import { useMcpFrontendTools } from "./hooks/useMcpFrontendTools";
 import { AUTO_SYNC_CHANGED_EVENT, effectiveAutoSyncMs, setLanMeshActive } from "./lib/syncMode";
@@ -1177,6 +1180,8 @@ function AppShell() {
   useMcpFrontendTools();
   // P1：把 Rust 侧的附件同步进度接进 useSyncStatus（Web 引擎自己会上报，不需要这条）。
   useSyncProgress();
+  // ⭐ P3-3a：CRDT 影子看门（**仅 dev**；活动空间/页列表变化后防抖 3s 扫一次，只 console.info）。
+  useCrdtShadowWatch(pages.length);
   // ★ 2026-09-29：**开机就把「局域网这一档开着吗」读一次**。
   //
   // ⚠️ 位置很要紧：它**必须在 `AppShell` 里**，不能放在 `NoteEditor` 里 ——
