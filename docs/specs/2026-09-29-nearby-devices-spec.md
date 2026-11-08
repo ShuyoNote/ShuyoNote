@@ -173,6 +173,12 @@ pub struct NearbyPeer {
     /// （不是我自己 · 服务这个空间 · `hub_base` 是局域网地址，`mesh.rs:221-235`）。
     /// ⇒ 界面据它决定那一行**有没有**「邀请」这个动作。
     pub invitable: bool,
+    /// ⭐ **2026-11-08（P3-0b 消费第一步）**：对端公告里报的 **QUIC/iroh 端点候选地址**
+    /// （`lan::LanAnnounce.quic_addrs`；元素是不透明字符串，形如 `ip:port`）。
+    ///
+    /// **原样透传**：⛔ 不消费、⛔ 不参与任何判定、⛔ 界面不显示为"可用" ✗；
+    /// 老对端没报这一格 ⇒ **空数组**（不是 `null`/`undefined`）。P3-2 才解释/校验/使用它。
+    pub quic_addrs: Vec<String>,
 }
 
 /// `LanStatus` 的**新增字段**（其余字段一个字不动）。
@@ -210,6 +216,10 @@ export interface NearbyPeer {
   servesCurrent: boolean;
   /** ★ 它能不能被直接拉（＝可以邀请）：与 `mesh::mesh_peers` 同一套过滤。 */
   invitable: boolean;
+  /** ⭐ 2026-11-08（P3-0b 消费第一步）：公告里的 QUIC/iroh 端点候选地址（**透传读数格**）。
+   *  ⛔ P3-2 才消费：不显示为"可用"、不改同步行为；老对端/旧 Rust 构建缺这一格 ⇒ `undefined`，
+   *  与空数组**同一处置**。 */
+  quic_addrs?: string[];
 }
 
 export interface LanStatus {
@@ -247,6 +257,9 @@ return {
 - ❌ **不加 `fp`**：它**就是** `device_id`（`lan.rs:79-83`），加一个就是两个字段说同一件事。
 - ❌ **不加 `hub_base`**：它就是网格那一路的地址，而"能不能被拉"已经收进 `invitable` 一个布尔。
   ⚠️ 若将来邀请**要指到具体地址**，那属**邀请协议**的载荷，不属"列表读数"（两张表不该混）。
+- ✅ **2026-11-08 例外（P3-0b 消费第一步）：加 `quic_addrs`**（Rust `Vec<String>` / TS `quic_addrs?: string[]`）
+  —— 它是**透传读数格**：原样带出公告里的 QUIC 候选地址、**不消费、不参与任何判定、界面不显示为"可用"**；
+  老对端空数组 / `undefined` **同一处置**。⛔ 不是把上面三条边界推翻 ✗；P3-2 才解释/校验/使用它。
 
 ---
 

@@ -1682,7 +1682,9 @@ mod capability_scope_tests {
 #[cfg(test)]
 mod relay_feature_tests {
     const MANIFEST: &str = include_str!("../Cargo.toml");
-    /// 与 `mesh_endpoint.rs` 里**许可门的位置**同源：本文件只读它来断言"lan-quic 构建不编许可门"。
+    /// 与 `mesh_endpoint.rs` 里**许可门的调用点**同源：本文件只读它来断言
+    /// 「许可**模块**仍编，但**调用点**只在 relay cfg 下」—— ⛔ 不是"整份文件不许出现 lan-quic" ✗
+    /// （ADR 下一步就会加 `lan_quic_endpoint_for`，那本来就该编进 lan-quic 构建）。
     const MESH_ENDPOINT: &str = include_str!("mesh_endpoint.rs");
 
     /// 某条**顶格** feature 定义行（`name = [...]`）；找不到 ⇒ `None`。
@@ -1758,40 +1760,77 @@ mod relay_feature_tests {
         );
     }
 
-    /// ADR §3.2 的"lan-quic 构建不调用许可/relay 配置符号"：
-    /// 许可门（`gate_for_new_tunnel`）所在函数今天仍只挂 `feature = "relay"`。
-    /// ⚠️ P3-2a 后续会给 `lan-quic` 加 `lan_quic_endpoint_for`（不过许可门）——那时这条要按新形状更新。
+    /// ⭐ **ADR §3.2 的准确口径（2026-11-08 复核修正）**：许可**模块**
+    /// （`relay_client` / `relay_license` / `license_http`）在默认与 `lan-quic` 构建里**照编** ✓；
+    /// 被 feature 隔离的是**调用点** —— `gate_for_new_tunnel` 在 `mesh_endpoint.rs` 的
+    /// **非测试代码里应当恰好 1 处调用**，且它所在函数挂 `#[cfg(feature = "relay")]`
+    /// ⇒ `lan-quic` 构建里**没有这处调用**（模块在、门不在）✓。
+    ///
+    /// ⛔ **不再**断言"文件里不许出现 `feature = "lan-quic"`" ✗ —— ADR 下一步就会加
+    /// `lan_quic_endpoint_for`（那是 lan-quic 该编的）⇒ 那种断言预期必红，已撤掉。
     #[test]
-    fn the_relay_license_gate_is_compiled_only_for_relay_builds() {
-        let idx = MESH_ENDPOINT
-            .find("gate_for_new_tunnel")
-            .expect("mesh_endpoint.rs 里应当还有许可门（`gate_for_new_tunnel`）");
-        let head = &MESH_ENDPOINT[..idx];
-        let at = head
+    fn the_relay_gate_call_site_is_behind_the_relay_feature() {
+        // 非测试代码 = 第一个 `#[cfg(test)]` 之前（`mesh_endpoint.rs` 的测试模块在文件尾部）。
+        let test_at = MESH_ENDPOINT
+            .find("#[cfg(test)]")
+            .unwrap_or(MESH_ENDPOINT.len());
+        let prod = &MESH_ENDPOINT[..test_at];
+
+        // 只数**调用**（`gate_for_new_tunnel(`），⛔ 不数定义/注释里提到它的地方。
+        let needle = "gate_for_new_tunnel";
+        let mut calls: Vec<usize> = Vec::new();
+        let mut from = 0usize;
+        while let Some(rel) = prod[from..].find(needle) {
+            let at = from + rel;
+            let line_start = prod[..at].rfind('\n').map(|i| i + 1).unwrap_or(0);
+            let line = prod[line_start..].lines().next().unwrap_or("").trim_start();
+            // 注释行里"提到"这个符号不算调用点（例如文档里写 `gate_for_new_tunnel(...)`）。
+            let in_line_comment = line.starts_with("//") || line.starts_with('*');
+            let after = &prod[at + needle.len()..];
+            let before = prod[..at].trim_end();
+            // 调用：名字后面紧跟 `(`；定义：名字前面是 `fn `。
+            if !in_line_comment && after.trim_start().starts_with('(') && !before.ends_with("fn") {
+                calls.push(at);
+            }
+            from = at + needle.len();
+        }
+        assert_eq!(
+            calls.len(),
+            1,
+            "`mesh_endpoint.rs` 非测试代码里 `gate_for_new_tunnel` 的调用点必须**恰好 1 处**（实际 {} 处）：{:?}",
+            calls.len(),
+            calls
+                .iter()
+                .map(|i| prod[*i..(*i + 40).min(prod.len())].trim())
+                .collect::<Vec<_>>()
+        );
+
+        // 找这个调用所在的函数：最近一个 `fn ` 关键字 → 名字；再看它声明前的 cfg 属性。
+        let call = calls[0];
+        let head = &prod[..call];
+        let fn_at = head.rfind("fn ").expect("调用点必须在某个函数里");
+        let name: String = head[fn_at + 3..]
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        let attr_region = &head[..fn_at];
+        let cfg_at = attr_region
             .rfind("#[cfg(")
             .expect("许可门所在函数必须有 `#[cfg(...)]` 属性");
-        let attr = &head[at..];
+        let attr = &attr_region[cfg_at..];
         assert!(
             attr.contains("feature = \"relay\""),
-            "许可门必须仍只挂在 `feature = \"relay\"` 下：{attr}"
+            "许可门所在函数 `{name}` 的 cfg 必须含 `feature = \"relay\"`（实际：{attr}）"
         );
         assert!(
-            !MESH_ENDPOINT.contains("feature = \"lan-quic\""),
-            "本轮还没有 lan-quic 专属代码 ⇒ ⛔ 不许把许可门编进 lan-quic 构建（将来加 `lan_quic_endpoint_for` 时再更新这条）"
+            !attr.contains("feature = \"lan-quic\""),
+            "⛔ 许可门不许挂到 `lan-quic` 上（实际：{attr}）"
         );
     }
 
-    /// 当前这次构建的 feature 自检：开了 `lan-quic` ⇒ `cfg!` 必须为真。
-    #[test]
-    #[cfg(feature = "lan-quic")]
-    fn this_build_has_lan_quic_on() {
-        assert!(
-            cfg!(feature = "lan-quic"),
-            "构建时开了 lan-quic ⇒ cfg 必须为真"
-        );
-    }
-
-    /// 默认构建（不带 QUIC feature）⇒ 两档都为假（与"默认产物不变"同一个判据）。
+    /// 默认构建（不带 QUIC feature）⇒ 两档都为假（**构建形状自检**；manifest 级的真正守卫在上面几条）。
+    /// ⚠️ `lan-quic` 的**实义**判据不在 `cfg!` 恒真上 —— 留给 P3-2 的端点/连接计数
+    /// （一进程一端点、同对端连拉 10 次只 `connect` 1 次），所以这里只保留默认构建这一侧的互补断言。
     #[test]
     #[cfg(not(feature = "lan-quic"))]
     fn the_default_build_has_neither_quic_nor_relay() {
