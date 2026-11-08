@@ -777,6 +777,46 @@ pub fn background_round_due(
 /// ⭐ **task-12**：后台那一轮**是不是还在跑**（⛔ 不许两轮叠在一起 ✗）。
 static BACKGROUND_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
+/// ⭐ **P3-1a（第一小步）**：**本地刚保存成功** ⇒ 事件唤醒后台轮。
+///
+/// 形状：一个进程级 `Notify` ＋ 一个 pending 原子位。`request_round_now()` 只做两件事：
+/// 置 pending、`notify_one` 叫醒 `start` 循环里那个 `select!`。**真正跑不跑**由循环里的
+/// gate 决定（暂停 env / 没配网格 / 上一轮在飞 / 2s 合并窗）—— ⛔ 唤醒**不绕**任何既有 gate。
+static ROUND_NOTIFY: tokio::sync::Notify = tokio::sync::Notify::const_new();
+static EVENT_ROUND_PENDING: AtomicBool = AtomicBool::new(false);
+
+/// ⭐ **P3-1a**：事件触发轮的**最小间隔** —— 连续保存/连续命令在 2 秒内只合并成一轮。
+pub const EVENT_ROUND_MIN_GAP_MS: i64 = 2_000;
+
+/// ⭐ **P3-1a（纯函数）**：距上一次事件轮是否已过最小间隔（`last <= 0` ＝ 还没跑过 ⇒ 立刻可跑）。
+pub fn event_round_due(last_event_ms: i64, now_ms: i64) -> bool {
+    last_event_ms <= 0 || now_ms.saturating_sub(last_event_ms) >= EVENT_ROUND_MIN_GAP_MS
+}
+
+/// ⭐ **P3-1a（纯函数）**：事件轮**现在能不能跑** —— 把"合并窗口＋既有 gate"一次说清。
+///
+/// 四个条件全部满足才跑：① **没暂停**（`SHUYONOTE_MESH_AUTOSYNC=0` 那档照旧生效）；
+/// ② **至少一个网格空间**（⛔ 没配 ⇒ 一个字节都不动）；③ **上一轮不在飞**（⛔ 不叠轮）；
+/// ④ 距上次事件轮已过 [`EVENT_ROUND_MIN_GAP_MS`]（2s 合并）。
+pub fn event_round_ready(
+    paused: bool,
+    meshed_n: usize,
+    in_flight: bool,
+    last_event_ms: i64,
+    now_ms: i64,
+) -> bool {
+    !paused && meshed_n > 0 && !in_flight && event_round_due(last_event_ms, now_ms)
+}
+
+/// ⭐ **P3-1a**：请求"本地刚保存，后台轮醒来跑一轮"（**只在保存成功后调**）。
+///
+/// ⚠️ 只置位 + 叫醒，不直接跑：真正的 gate/合并由 `start` 循环里的 `event_round_ready` 判
+///（`commands::save_page` 是命令线程，不能在这里 await/持锁/起轮）。
+pub fn request_round_now() {
+    EVENT_ROUND_PENDING.store(true, Ordering::SeqCst);
+    ROUND_NOTIFY.notify_one();
+}
+
 /// ⭐ **task-12（Lead 拍）**：最近**连续几次**后台轮是空手的（`候选 0` ✓）——
 /// ⭐ 找到对端 ⇒ **清零** ✓／空手 ⇒ **+1** ✓／收到公告 ⇒ **清零** ✓ ⇒ 下一次等多久由
 /// [`background_round_interval_ms`] 决定 ✓。
@@ -1324,6 +1364,8 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         //   真机日志显示"启动后 3 秒就跑第一轮 ⇒ 候选 0（对端公告 27 秒后才到）⇒ 白跑一次 ✓"
         //   ⇒ 从 `background_round_initial_last()` 起算 ⇒ 第一轮落在**启动后约 45 秒** ✓。
         let mut last_bg_round_ms: i64 = background_round_initial_last(crate::db::now_ms());
+        // ⭐ P3-1a：上一次"事件唤醒轮"的时刻（0 ＝ 还没跑过 ⇒ 第一次事件可立刻跑）。
+        let mut last_event_round_ms: i64 = 0;
         // ⭐ **2026-10-09（task-8）**：本机**在用**哪些空间（解析后 ✓）—— 只为**日志**里
         //   「这条公告与本机空间匹不匹配」那一句判定 ✓（⛔ 不参与任何路由决策 ✗）。
         //   ⚠️ 先取一次再进循环：否则第一片收到的公告会报"本机还没有可匹配的空间"（假读数 ✗）。
@@ -1357,29 +1399,38 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             //   口径：⭐ 收到并入库 ⇒ 说清来源/对端/它代言的空间/**与本机匹不匹配** ✓；
             //        收到但没进表（自己的回环 / 坏报文 / 超长）⇒ ⭐ **必须说出原因** ✓；
             //        这一片什么都没收到 ⇒ ⛔ **不打日志** ✗（每 1s 一次，打就是刷屏 ✓）。
-            match lan::recv_into_within(&sock, state, RECV_SLICE_MS).await {
-                Ok(lan::RecvOutcome::Peer(p)) => {
-                    // ⭐ **task-12（Lead 拍）**：⭐ **收到公告 ⇒ 这一档有戏** ✓ ⇒ 把"空转连击"清零 ✓
-                    //   （"一旦候选 ≥1 或收到过公告 ⇒ 恢复常态" ✓）。
-                    BACKGROUND_EMPTY_STREAK.store(0, Ordering::SeqCst);
-                    BACKGROUND_HEARD_TOTAL.fetch_add(1, Ordering::SeqCst);
-                    eprintln!("{}", lan::announce_recv_line(&p, &own_spaces));
+            // ⭐ **P3-1a**：后台轮等待处 = 「收发切片」vs「本地保存事件唤醒」（`select!`）。
+            //   收到唤醒 ⇒ 这一片不处理收包（下一片照常），随后由事件分支决定跑不跑。
+            // `recv_into_within` 内部是 UDP 收包＋超时 ⇒ 这里取消是安全的（数据留在 socket 队列）。
+            let recv = tokio::select! {
+                r = lan::recv_into_within(&sock, state, RECV_SLICE_MS) => Some(r),
+                _ = ROUND_NOTIFY.notified() => None,
+            };
+            if let Some(recv) = recv {
+                match recv {
+                    Ok(lan::RecvOutcome::Peer(p)) => {
+                        // ⭐ **task-12（Lead 拍）**：⭐ **收到公告 ⇒ 这一档有戏** ✓ ⇒ 把"空转连击"清零 ✓
+                        //   （"一旦候选 ≥1 或收到过公告 ⇒ 恢复常态" ✓）。
+                        BACKGROUND_EMPTY_STREAK.store(0, Ordering::SeqCst);
+                        BACKGROUND_HEARD_TOTAL.fetch_add(1, Ordering::SeqCst);
+                        eprintln!("{}", lan::announce_recv_line(&p, &own_spaces));
+                    }
+                    Ok(lan::RecvOutcome::OwnAnnounce { from }) => {
+                        eprintln!(
+                            "{}",
+                            lan::announce_drop_line(
+                                &from,
+                                "这是**我自己**的公告（回环回来的）⇒ 有意丢弃"
+                            )
+                        );
+                    }
+                    Ok(lan::RecvOutcome::Rejected { from, reason }) => {
+                        eprintln!("{}", lan::announce_drop_line(&from, &reason));
+                    }
+                    // 这一片没人说话 —— 正常，不刷屏 ✓
+                    Ok(lan::RecvOutcome::Nothing) => {}
+                    Err(e) => eprintln!("[mesh] 收公告出错：{e}"),
                 }
-                Ok(lan::RecvOutcome::OwnAnnounce { from }) => {
-                    eprintln!(
-                        "{}",
-                        lan::announce_drop_line(
-                            &from,
-                            "这是**我自己**的公告（回环回来的）⇒ 有意丢弃"
-                        )
-                    );
-                }
-                Ok(lan::RecvOutcome::Rejected { from, reason }) => {
-                    eprintln!("{}", lan::announce_drop_line(&from, &reason));
-                }
-                // 这一片没人说话 —— 正常，不刷屏 ✓
-                Ok(lan::RecvOutcome::Nothing) => {}
-                Err(e) => eprintln!("[mesh] 收公告出错：{e}"),
             }
             // ② 按需启用（每轮重读：绑了同步才发言，见口径 2）。
             //    ⚠️ 判别式走 `should_enable(bound_profile_count(..))` —— 与判据用的是**同一把尺**
@@ -1579,6 +1630,41 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 // ⚠️ **不管发出去几条都记时刻**：一条没发出去只说明"这个网段的广播被禁了"
                 //    （受限网络），每 1s 重试一次等于自己打自己 ⇒ 到点才试下一轮。
                 last_announce_ms = now;
+            }
+            // ⭐ **P3-1a**：本地保存事件 → 唤醒后台轮（2s 合并；⛔ 不绕 paused/未配网格/在飞 gate）。
+            if EVENT_ROUND_PENDING.swap(false, Ordering::SeqCst) {
+                let paused = autosync_paused();
+                let gate_open = !paused && !meshed.is_empty();
+                if !event_round_ready(
+                    paused,
+                    meshed.len(),
+                    BACKGROUND_IN_FLIGHT.load(Ordering::SeqCst),
+                    last_event_round_ms,
+                    now,
+                ) {
+                    // ⛔ 不绕 gate：暂停/没配网格 ⇒ 事件作废（不排队，免得门开了被误触发）；
+                    // 门开着只是"上一轮在飞"或"2s 合并窗未到" ⇒ 保留 pending，下一片再试。
+                    if gate_open {
+                        EVENT_ROUND_PENDING.store(true, Ordering::SeqCst);
+                    }
+                } else {
+                    last_event_round_ms = now;
+                    // 事件轮也重算原后台节拍（下一轮仍按 `background_round_interval_ms` 的 backoff ✓）。
+                    last_bg_round_ms = now;
+                    match spawn_background_round(&app2, &device_id, &mesh_cfgs, &state.peers(now)) {
+                        Some(what) => eprintln!(
+                            "[{}] [mesh] 后台一轮：本地保存唤醒（{what}）",
+                            lan::log_stamp()
+                        ),
+                        None => {
+                            EVENT_ROUND_PENDING.store(true, Ordering::SeqCst);
+                            eprintln!(
+                                "[{}] [mesh] 后台一轮：本地保存唤醒被跳过（上一轮还没跑完，保留待下一片）",
+                                lan::log_stamp()
+                            );
+                        }
+                    }
+                }
             }
             // ⭐⭐ **task-12（owner 拍 C）**：**后台自主节拍** —— 不靠界面也跑一轮 ✓（每 ≥5 分钟 ✓）。
             //   ⚠️ 三条边界：① 只在**真的开了网格**的空间上跑 ✓（`meshed` ✓ ⇒ ⛔ 没配的一个字节都不动 ✗）；
@@ -3596,5 +3682,67 @@ mod space_room_coverage_tests {
             );
         }
         assert!(addrs.len() <= crate::lan_quic::MAX_QUIC_ADDRS);
+    }
+}
+
+/// ⭐ **P3-1a：本地保存事件唤醒**的纯函数判据（合并窗口 / gate 不绕）。
+#[cfg(test)]
+mod p31_event_round_tests {
+    use super::*;
+
+    #[test]
+    fn event_round_due_respects_the_two_second_merge_window() {
+        assert!(event_round_due(0, 12_345), "还没跑过 ⇒ 立刻可跑");
+        assert!(
+            !event_round_due(1_000, 1_000 + EVENT_ROUND_MIN_GAP_MS - 1),
+            "2s 窗口内 ⇒ 合并（不跑）"
+        );
+        assert!(
+            event_round_due(1_000, 1_000 + EVENT_ROUND_MIN_GAP_MS),
+            "窗口到点 ⇒ 跑"
+        );
+        // 连续保存/连续唤醒：+100ms 不跑，+2000ms 才跑。
+        assert!(!event_round_due(5_000, 5_100));
+        assert!(event_round_due(5_000, 7_000));
+    }
+
+    #[test]
+    fn event_round_ready_does_not_bypass_paused_or_unconfigured_or_inflight_gates() {
+        let now = 10_000;
+        assert!(
+            event_round_ready(false, 1, false, 0, now),
+            "正常：未暂停 / 有网格 / 不在飞 / 首轮"
+        );
+        assert!(
+            !event_round_ready(true, 1, false, 0, now),
+            "暂停 env（SHUYONOTE_MESH_AUTOSYNC=0）⇒ 不跑（⛔ 不绕 gate）"
+        );
+        assert!(
+            !event_round_ready(false, 0, false, 0, now),
+            "一个网格空间都没配 ⇒ 不跑（⛔ 一个字节都不动）"
+        );
+        assert!(
+            !event_round_ready(false, 1, true, 0, now),
+            "上一轮在飞 ⇒ 不叠轮"
+        );
+        assert!(
+            !event_round_ready(false, 1, false, now - 100, now),
+            "2s 合并窗内 ⇒ 不跑"
+        );
+        assert!(
+            event_round_ready(false, 1, false, now - 2_000, now),
+            "窗口外 ⇒ 跑"
+        );
+    }
+
+    #[test]
+    fn request_round_now_marks_pending_without_running_a_round() {
+        EVENT_ROUND_PENDING.store(false, Ordering::SeqCst);
+        request_round_now();
+        assert!(
+            EVENT_ROUND_PENDING.load(Ordering::SeqCst),
+            "request_round_now 必须置 pending（真正跑不跑由 start 循环的 gate 判）"
+        );
+        EVENT_ROUND_PENDING.store(false, Ordering::SeqCst);
     }
 }
