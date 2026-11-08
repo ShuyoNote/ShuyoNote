@@ -246,6 +246,26 @@ jobs:
         # 现在它跑在 .mjs 里，绕开了 YAML 标量规则；`check-workflow-yaml` 另有窄规则兜底。
         run: node scripts/test-report.mjs --group rust --json test-report-rust.json
 
+      # ★ 2026-11-08（复核 #4 最小步）：**feature 构建也要进 CI**。
+      #
+      # 为什么加：`--features lan-quic` / `--features relay` 下的 cfg 代码（`lan_quic.rs`、
+      # `relay_tunnel::iroh_tunnel` 的 relay 子集、以及这些 feature 专属的判据）此前**没有任何
+      # CI 编译过** —— 它们只在有人本机手动加 feature 时才被看见；cfg 写坏时默认 `cargo test`
+      # 永远是绿的。这里只做 **`cargo check --lib`**（编译检查，不跑测试）：先把"编得过"钉进 CI。
+      # ⛔ **不替换/不削弱**现有的默认 `cargo test`：默认档仍是唯一跑测试的那一步。
+      #
+      # 为什么两条都要：`relay` 叠在 `lan-quic` 上（feature 分层，见 `Cargo.toml` 与 ADR §3.2），
+      # 但两者启用的代码面不同（`lan-quic` 只开 iroh 本体；`relay` 才编 `bind_with_relay*` 等）
+      # ⇒ 只 check `relay` 会漏掉"`lan-quic` 单独构建编不过"这一档，所以分开两步、分开报红。
+      #
+      # 超时/并发：本 job 本来就装齐了 Linux 系统依赖 ＋ rust 工具链；这两步复用同一个 target
+      # 目录的增量编译 ⇒ 不新增 job、不改 `concurrency`/超时设置（只多两次 check 的编译时间）。
+      - name: Rust feature 构建检查（--features lan-quic，--lib）
+        run: cargo check --manifest-path src-tauri/Cargo.toml --features lan-quic --lib
+
+      - name: Rust feature 构建检查（--features relay，--lib）
+        run: cargo check --manifest-path src-tauri/Cargo.toml --features relay --lib
+
       - name: 失败时把「哪条门禁红了」变成注解（rust 组）
         # 与默认组/浏览器组那两步**同一个理由**，而这一步的必要性是它自己证明的（2026-09-19）：
         # rust 组改成红之后，注解是空的、日志要 admin ⇒ 只能看到"exit code 1"，
