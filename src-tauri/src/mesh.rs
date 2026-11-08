@@ -4419,7 +4419,18 @@ pub(crate) fn pull_target(space_id: &str, since: i64, name_sha: &str) -> String 
 
 /// ⭐ `/mesh/attachment` 要的 target（⭐ 同上：一处拼 ✗）。
 pub(crate) fn attachment_target(space_id: &str, hash: &str) -> String {
-    format!("/mesh/attachment?space_id={space_id}&hash={hash}")
+    attachment_target_from(space_id, hash, 0)
+}
+
+/// ⭐ **P3-4 续传（task-49）**：带 `offset` 的附件 target —— `offset == 0` 时与
+/// [`attachment_target`] **逐字节相同**（不写多余参数）；`>0` ⇒ 追加 `&offset=N`
+/// （服务端按它回 206 切片；**签名与发送必须用同一串**）。
+pub(crate) fn attachment_target_from(space_id: &str, hash: &str, offset: u64) -> String {
+    if offset == 0 {
+        format!("/mesh/attachment?space_id={space_id}&hash={hash}")
+    } else {
+        format!("/mesh/attachment?space_id={space_id}&hash={hash}&offset={offset}")
+    }
 }
 
 /// ⭐ 为**这一次请求**签一份凭证 ✗（⭐ `(ts_ms, sig_hex)` ✓）。
@@ -5751,6 +5762,33 @@ fn handle_attachment(state: &State, target: &str, headers: &[(String, String)]) 
     if let Some(range_header) = header_of(headers, "range") {
         return serve_attachment_range(data_dir, &space_id, &hash, key.as_ref(), range_header);
     }
+    // ⭐ **P3-4 续传（task-49）**：`?offset=N` —— 与 Range **共存时 Range 优先**（上面已返回）。
+    //   `0`/缺省 ⇒ 继续走下面旧的全量 200 路径（**逐字节不变**）；`>0` ⇒ 复用既有单段切片逻辑
+    //   （206 ＋ `Content-Range`；越界 416 `bytes */len`；空文件 416）。解析失败 ⇒ 400。
+    match query_get(target, "offset") {
+        Ok(Some(raw)) => {
+            let raw = raw.trim();
+            if !raw.is_empty() {
+                match raw.parse::<u64>() {
+                    Ok(0) => {}
+                    Ok(n) => {
+                        return serve_attachment_range(
+                            data_dir,
+                            &space_id,
+                            &hash,
+                            key.as_ref(),
+                            &format!("bytes={n}-"),
+                        )
+                    }
+                    Err(_) => {
+                        return Reply::json(400, "Bad Request", json_error("offset 不是非负整数"))
+                    }
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(e) => return Reply::json(400, "Bad Request", json_error(&e)),
+    }
     match crate::attachments::read_attachment_bytes_at(data_dir, &space_id, &hash) {
         Ok(raw) => match crate::security::decrypt_attachment_bytes(key.as_ref(), &raw) {
             // ⭐⭐ **2026-10-27（owner：「彻底解决」）**：**不往外发空壳/坏件** ✗ ——
@@ -5808,8 +5846,26 @@ pub async fn request_attachment_from_peer(
     //   形状同 `pull_from_peer`：由调用方签好再传（签名要拿库锁，⛔ 不许跨 await 持锁）。
     auth: Option<(&str, i64, &str)>,
 ) -> Result<(u16, crate::mesh_endpoint::AttachmentBody), String> {
-    // ⚠️ target 只拼一次（`attachment_target`）—— 签的是它、发的也是它（⛔ 两处各拼一份会漂）。
-    let target = attachment_target(space_id, hash);
+    // ⚠️ offset=0 ⇒ 与旧调用**逐字节相同**（target 不带 offset）。
+    request_attachment_from_peer_at(client, peer, space_id, hash, token, auth, 0).await
+}
+
+/// ⭐ **P3-4 续传（task-49）**：带 `offset` 的版本 —— `offset == 0` 时 target/行为与
+/// [`request_attachment_from_peer`] 完全相同；`>0` ⇒ target 带 `&offset=N`（服务端回 206 切片）。
+///
+/// ⚠️ 签名必须由调用方按**同一串带 offset 的 target** 签好再传（这里不签：签名要拿库锁）。
+#[allow(clippy::too_many_arguments)]
+pub async fn request_attachment_from_peer_at(
+    client: &reqwest::Client,
+    peer: &MeshPeer,
+    space_id: &str,
+    hash: &str,
+    token: Option<&str>,
+    auth: Option<(&str, i64, &str)>,
+    offset: u64,
+) -> Result<(u16, crate::mesh_endpoint::AttachmentBody), String> {
+    // ⚠️ target 只拼一次（`attachment_target_from`）—— 签的是它、发的也是它（⛔ 两处各拼一份会漂）。
+    let target = attachment_target_from(space_id, hash, offset);
     // ⭐ 2026-10-25（数据面 Step 6）：**附件也走端点** —— 局域网与跨网隧道用同一条路，
     //   区别只在 `endpoint_for_peer` 挑出来的实现（流式接口，⛔ 不整包读进内存）。
     let ep = crate::mesh_endpoint::endpoint_for_peer(peer, client.clone()).await?;
@@ -8321,6 +8377,191 @@ mod tests {
         assert_eq!(cr.as_deref(), Some("bytes */0"), "RFC：*/0");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐ **P3-4 续传（task-49）**：服务端 `?offset=N` 切片 ＋ 客户端 `.part` 续传（真回环）。
+    ///
+    /// 覆盖：无 offset/0 ⇒ 200 全量（旧行为）；offset>0 ⇒ 206 切片；
+    /// offset 越界 ⇒ 416 `*/len`；offset 非数字 ⇒ 400；Range 与 offset 共存时 **Range 优先**；
+    /// 半截 `.part` 续传后**完整文件 sha 正确**；失败**保留** `.part`；老对端回 200 ⇒ 从头重下。
+    #[tokio::test]
+    async fn attachment_offset_requests_and_part_resume_work_over_real_http() {
+        let bytes: Vec<u8> = b"0123456789".to_vec();
+        let hash = crate::db::sha256_hex_bytes(&bytes);
+        let dir = temp_dir("att-offset");
+        let conn = Arc::new(Mutex::new(space_conn("A")));
+        let bucket = {
+            let g = conn.lock().unwrap();
+            let space = crate::sync::space_id_of(&g).unwrap_or_default();
+            crate::attachments::space_attachments_dir(&dir, &space)
+        };
+        std::fs::create_dir_all(&bucket).unwrap();
+        let file = crate::attachments::bucket_path(&bucket, &hash, "bin");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, &bytes).unwrap();
+
+        let win = start1(
+            MeshConfig {
+                bind: "127.0.0.1:0".into(),
+                device_id: "A".into(),
+                data_dir: Some(dir.clone()),
+            },
+            conn,
+        )
+        .unwrap();
+        let base = format!(
+            "http://{}/mesh/attachment?space_id=space-x&hash={hash}",
+            win.addr()
+        );
+        let client = mesh_http_client();
+
+        async fn fetch(
+            client: &reqwest::Client,
+            url: &str,
+            extra: Option<&str>,
+        ) -> (u16, Option<String>, Vec<u8>) {
+            let mut req = client.get(url).header("Authorization", "Bearer lan-token");
+            if let Some(x) = extra {
+                req = req.header("Range", x);
+            }
+            let resp = req.send().await.expect("请求窗口失败");
+            let code = resp.status().as_u16();
+            let cr = resp
+                .headers()
+                .get("content-range")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            (code, cr, resp.bytes().await.expect("读体").to_vec())
+        }
+
+        // ① 无 offset／offset=0 ⇒ 200 全量（旧行为逐字节）。
+        for url in [base.clone(), format!("{base}&offset=0")] {
+            let (code, cr, body) = fetch(&client, &url, None).await;
+            assert_eq!(code, 200, "无/零 offset ⇒ 全量 200：{url}");
+            assert_eq!(cr, None);
+            assert_eq!(body, bytes);
+        }
+        // ② offset=4 ⇒ 206 尾段 ＋ Content-Range。
+        let (code, cr, body) = fetch(&client, &format!("{base}&offset=4"), None).await;
+        assert_eq!(code, 206);
+        assert_eq!(cr.as_deref(), Some("bytes 4-9/10"));
+        assert_eq!(body, b"456789");
+        // ③ offset 越界 ⇒ 416；非数字 ⇒ 400。
+        let (code, cr, _b) = fetch(&client, &format!("{base}&offset=10"), None).await;
+        assert_eq!(code, 416);
+        assert_eq!(cr.as_deref(), Some("bytes */10"));
+        let (code, _cr, _b) = fetch(&client, &format!("{base}&offset=abc"), None).await;
+        assert_eq!(code, 400);
+        // ④ 与 Range 共存 ⇒ **Range 优先**。
+        let (code, cr, body) = fetch(&client, &format!("{base}&offset=4"), Some("bytes=0-1")).await;
+        assert_eq!(code, 206);
+        assert_eq!(cr.as_deref(), Some("bytes 0-1/10"), "Range 优先于 offset");
+        assert_eq!(body, b"01");
+
+        // ⑤ 真续传：半截 `.part` ＋ offset 请求 ⇒ 完整文件 sha 正确、`.part` 变最终名。
+        let dest = temp_dir("att-resume-dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        let part = crate::sync::attachment_part_path(&dest, &hash);
+        std::fs::write(&part, &bytes[..4]).unwrap();
+        let offset = crate::sync::attachment_resume_offset(Some(4), Some(10));
+        assert_eq!(offset, 4, "半截 part ⇒ 从 4 续");
+        let resp = client
+            .get(format!("{base}&offset={offset}"))
+            .header("Authorization", "Bearer lan-token")
+            .send()
+            .await
+            .unwrap();
+        let (st, mut body) = crate::mesh_endpoint::body_from_reqwest(resp);
+        assert_eq!(st, 206);
+        let size = crate::sync::download_body_to_part(
+            st,
+            &mut body,
+            "对端",
+            &hash,
+            "bin",
+            &dest,
+            None,
+            Some(10),
+            offset,
+        )
+        .await
+        .expect("续传应当成功");
+        assert_eq!(size, 10);
+        let final_path = dest.join(&hash[0..2]).join(format!("{hash}.bin"));
+        assert_eq!(
+            std::fs::read(&final_path).unwrap(),
+            bytes,
+            "完整文件逐字节相同"
+        );
+        assert!(!part.exists(), "成功后 `.part` 必须消失");
+
+        // ⑥ 失败（大小对不上）⇒ **保留 `.part`**（供下次续传，不删/不改随机名）。
+        let dest2 = temp_dir("att-resume-fail");
+        std::fs::create_dir_all(&dest2).unwrap();
+        let part2 = crate::sync::attachment_part_path(&dest2, &hash);
+        std::fs::write(&part2, &bytes[..4]).unwrap();
+        let resp = client
+            .get(format!("{base}&offset=4"))
+            .header("Authorization", "Bearer lan-token")
+            .send()
+            .await
+            .unwrap();
+        let (st, mut body) = crate::mesh_endpoint::body_from_reqwest(resp);
+        let err = crate::sync::download_body_to_part(
+            st,
+            &mut body,
+            "对端",
+            &hash,
+            "bin",
+            &dest2,
+            None,
+            Some(11), // 故意错的期望大小
+            4,
+        )
+        .await
+        .expect_err("期望大小不符必须失败");
+        assert!(err.contains("字节数对不上"), "{err}");
+        assert!(part2.exists(), "⛔ 失败必须保留 `.part`");
+        assert_eq!(
+            std::fs::read(&part2).unwrap().len(),
+            10,
+            "已收到的字节留着续传"
+        );
+
+        // ⑦ 老对端/旧路径回 **200**（不支持 offset）⇒ 从头重下、仍得到完整文件。
+        let dest3 = temp_dir("att-restart");
+        std::fs::create_dir_all(&dest3).unwrap();
+        let part3 = crate::sync::attachment_part_path(&dest3, &hash);
+        std::fs::write(&part3, &bytes[..4]).unwrap();
+        let resp = client
+            .get(&base) // 无 offset ⇒ 200 全量
+            .header("Authorization", "Bearer lan-token")
+            .send()
+            .await
+            .unwrap();
+        let (st, mut body) = crate::mesh_endpoint::body_from_reqwest(resp);
+        assert_eq!(st, 200);
+        let size = crate::sync::download_body_to_part(
+            st,
+            &mut body,
+            "对端",
+            &hash,
+            "bin",
+            &dest3,
+            None,
+            Some(10),
+            4, // 调用方以为能续，但对端回 200 ⇒ 必须识别为全量并从 0 写
+        )
+        .await
+        .expect("200 响应必须按全量处理");
+        assert_eq!(size, 10);
+        let final3 = dest3.join(&hash[0..2]).join(format!("{hash}.bin"));
+        assert_eq!(std::fs::read(&final3).unwrap(), bytes);
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dest);
+        let _ = std::fs::remove_dir_all(&dest2);
+        let _ = std::fs::remove_dir_all(&dest3);
     }
 
     /// ★ 丙-④：**"取不到"那句话要说得清是四种里的哪一种**（纯函数，判据不打桩、不看网络）。

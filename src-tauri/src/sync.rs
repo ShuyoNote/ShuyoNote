@@ -2135,6 +2135,8 @@ pub async fn download_attachment(
                     &attachments_dir,
                     session_key.as_ref(),
                     &db,
+                    // 中央服务端接口不支持 offset ⇒ 全量（旧行为）；`.part` 会被从头重写。
+                    0,
                 )
                 .await
                 {
@@ -2197,10 +2199,13 @@ pub async fn download_attachment(
         //   `pair_secret` 可能为空（`secret_sha256` 没值），只带口令 ⇒ 对面 401
         //   （真机：拉取那条路一直自带签名，所以同步能通、按需取字节却永远失败）。
         //   签的是 `attachment_target` 那串（与发出去的 target **同一处拼**）。
-        let (peer_secret, auth) = {
+        // ⭐ P3-4 续传：每台对端各算一次起点（上一台失败可能已经写大了 `.part`）；
+        //   签名用的 target 必须与发出去的**同一串**（都带这个 offset）。
+        let (peer_secret, auth, offset) = {
             let c = db.0.lock().expect("db mutex poisoned");
             let device = device_id(&c).unwrap_or_default();
-            let target = crate::mesh::attachment_target(&proto_space, &hash);
+            let offset = attachment_resume_offset_for(&c, &attachments_dir, &hash);
+            let target = crate::mesh::attachment_target_from(&proto_space, &hash, offset);
             let signed = crate::mesh::sign_request(
                 &c,
                 &device,
@@ -2210,16 +2215,17 @@ pub async fn download_attachment(
                 crate::db::now_ms(),
             );
             let secret = crate::mesh::pair_secret_for(&c, &proto_space, &p.device_id);
-            (secret, signed.map(|(ts, sig)| (device, ts, sig)))
+            (secret, signed.map(|(ts, sig)| (device, ts, sig)), offset)
         };
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
-        match crate::mesh::request_attachment_from_peer(
+        match crate::mesh::request_attachment_from_peer_at(
             &mesh_client,
             p,
             &proto_space,
             &hash,
             peer_secret.as_deref(),
             auth_ref,
+            offset,
         )
         .await
         {
@@ -2231,6 +2237,7 @@ pub async fn download_attachment(
                 &attachments_dir,
                 session_key.as_ref(),
                 &db,
+                offset,
             )
             .await
             {
@@ -7791,10 +7798,12 @@ async fn download_one_attachment(
     attachments_dir: &Path,
     session_key: Option<&crate::crypto::AppKeys>,
     db: &State<'_, Db>,
+    // ⭐ P3-4 续传：已落 `.part` 的字节数（0 ＝ 全量/旧行为）。只在**对端那条**会 >0。
+    offset: u64,
 ) -> Result<i64, String> {
-    if !(200..300).contains(&status) {
-        return Err(format!("{who} 返回 {status}"));
-    }
+    // ⭐ P3-4：**进程内串行锁**（固定 `.part` 只有一份；同一进程里并发下同一件会互相抢）。
+    //   ⚠️ 是 `tokio::sync::Mutex`（跨 await 持有合法）；锁内**不持** std db 锁跨 await。
+    let _guard = attachment_download_lock().lock().await;
     // ⭐ 2026-10-27（owner：「补」）：本机元数据里这一件的**期望大小**（拿不到 ⇒ None）。
     //   只用来挡"下了一半 / 空响应"；⛔ 不拿它当"唯一真相"（元数据本身可能缺）✗。
     let expected_size: Option<i64> = {
@@ -7808,92 +7817,37 @@ async fn download_one_attachment(
         .map_err(|e| e.to_string())?
     };
     let ext = ext_from_mime(&item.mime);
-    let path = attachments_dir
+    let final_path = attachments_dir
         .join(&item.hash[0..2])
         .join(format!("{}.{}", item.hash, ext));
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = final_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     // ⭐⭐ **2026-10-27（owner：「彻底解决」）**：盘上那份若是**空壳**，先删掉再下 ——
     //   否则下面 `if !path.exists()` 会把它当"本机已有字节"直接跳过 ⇒ 下载成功了也修不好 ✓。
-    if path.exists() && crate::attachments::is_empty_attachment_shell(&path, session_key) {
+    if final_path.exists()
+        && crate::attachments::is_empty_attachment_shell(&final_path, session_key)
+    {
         eprintln!(
             "[附件] {} 盘上那份是空壳（明文 0 字节）⇒ 先删掉再取回",
             &item.hash[..12.min(item.hash.len())]
         );
-        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&final_path);
     }
     let mut size: i64 = 0;
-    if !path.exists() {
-        // ⚠️ 临时文件名**必须唯一**（2026-09-15 真机验收修）：原先固定用 `<hash>.part`，
-        // 于是"同一件被并发下载"时两个请求会抢同一个临时文件——一个 rename 走之后，
-        // 另一个 rename 就 ENOENT（真机上观测到 `取回文件失败：No such file or directory (os error 2)`，
-        // 且白下了一遍）。用 uuid 后缀让每次尝试各写各的。
-        // （`.part` 结尾仍被 `local_set` 排除，不会被当成本地已有字节。）
-        let tmp = attachments_dir.join(format!("{}.{}.part", item.hash, uuid::Uuid::new_v4()));
-        let mut file = tokio::fs::File::create(&tmp)
-            .await
-            .map_err(|e| e.to_string())?;
-        // ⭐ 2026-10-25（Step 6）：正文是**流**（`AsyncRead`），按块搬运 —— 局域网与隧道同一条路。
-        let mut buf = vec![0u8; 64 * 1024];
-        // ⭐⭐ **2026-10-27（owner：「彻底解决」）**：**边搬边算内容指纹** ⇒ 落地前与 `item.hash` 对账。
-        //   这一道最根本：0 字节、截断、串件、对端发了个空壳的密文……**任何"字节不对"都收不进来** ✓
-        //   （前两道 size 检查只是先用更人话的消息挡住最常见的两种）。
-        let mut hasher = Sha256::new();
-        loop {
-            let n = match tokio::io::AsyncReadExt::read(&mut body, &mut buf).await {
-                Ok(n) => n,
-                Err(e) => {
-                    // 半成品必须删掉：留着白占磁盘，也让"本轮下了多少"说不清。
-                    // （`.part` 已被 `local_set` 排除，不会被当成本地已有，但仍要清。）
-                    drop(file);
-                    let _ = std::fs::remove_file(&tmp);
-                    return Err(e.to_string());
-                }
-            };
-            if n == 0 {
-                break;
-            }
-            size += n as i64;
-            hasher.update(&buf[..n]);
-            file.write_all(&buf[..n]).await.map_err(|e| e.to_string())?;
-        }
-        file.flush().await.map_err(|e| e.to_string())?;
-        drop(file);
-        // ⭐⭐ **2026-10-27（owner：「这个页面没有同步完整？」→「补」）**：**空响应不许落盘** ✗。
-        //   真机现场（保险柜·濮阳数友企业支付宝）：对端回了一次 **0 字节**，这里照样 rename 落盘
-        //   ⇒ 加密后只有 42 B 的"空壳" ⇒ 而"盘上有没有这个 hash"是 `ensureAttachmentBytes` 的
-        //   短路判据 ⇒ 图片块永久破图（`naturalWidth=0`）。⇒ 两道门：① 0 字节拒收；
-        //   ② 本机元数据知道期望大小时，字节数对不上也拒收（挡"下了一半"）。
-        if let Err(why) = attachment_size_ok(size, expected_size) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(format!("{who}：{why}"));
-        }
-        // ⭐ 2026-10-27（owner：「彻底解决」）：**最终一道** —— 内容指纹对账。
-        let got_hash: String = hasher
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        if !got_hash.eq_ignore_ascii_case(item.hash.trim()) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(format!(
-                "{who}：字节与**内容指纹**对不上（要 {}…、收到 {}…）⇒ 不落盘（空壳/截断/串件都挡在这里）",
-                &item.hash[..12.min(item.hash.len())],
-                &got_hash[..12.min(got_hash.len())]
-            ));
-        }
-        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
-        // E1: when at-rest encryption is on, store the downloaded PLAINTEXT
-        // encrypted (nonce||ct) like every other attachment, so the read path
-        // (decrypt/passthrough) and the at-rest guarantee stay consistent.
-        if let Some(k) = session_key {
-            if let Ok(plain) = std::fs::read(&path) {
-                if let Ok(bytes) = security::encrypt_attachment_bytes(Some(k), &plain) {
-                    let _ = std::fs::write(&path, &bytes);
-                }
-            }
-        }
+    if !final_path.exists() {
+        size = download_body_to_part(
+            status,
+            &mut body,
+            who,
+            &item.hash,
+            ext,
+            attachments_dir,
+            session_key,
+            expected_size,
+            offset,
+        )
+        .await?;
     }
     // B4（2026-09-15）：**只有当这个 hash 还没有任何行时**才插一行兜底。
     {
@@ -7907,6 +7861,173 @@ async fn download_one_attachment(
         )?;
     }
     Ok(size)
+}
+
+/// ⭐ **P3-4（task-49）**：固定 `.part` 路径 —— **每个 hash 一个**（并发由进程内锁串行化）。
+pub(crate) fn attachment_part_path(attachments_dir: &Path, hash: &str) -> PathBuf {
+    attachments_dir.join(format!("{hash}.part"))
+}
+
+/// ⭐ **P3-4（task-49，纯函数）**：从 `.part` 长度与期望大小算**续传起点**。
+///
+/// 口径：**只有**"期望大小已知（>0）＋ part 存在且 0 < len < 期望"才续传；其余一律 0（全量）。
+/// ⛔ 不拿 part 当完整文件、⛔ 不猜期望大小。
+pub(crate) fn attachment_resume_offset(part_len: Option<u64>, expected: Option<i64>) -> u64 {
+    let Some(want) = expected.filter(|w| *w > 0).map(|w| w as u64) else {
+        return 0;
+    };
+    match part_len {
+        Some(n) if n > 0 && n < want => n,
+        _ => 0,
+    }
+}
+
+/// ⭐ **P3-4（task-49）**：进程内串行锁（跨 await；同一进程同时只下载一件附件）。
+fn attachment_download_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// ⭐ **P3-4（task-49）**：按本机 `.part` 与元数据里的期望大小算续传起点（读库版）。
+pub(crate) fn attachment_resume_offset_for(
+    c: &Connection,
+    attachments_dir: &Path,
+    hash: &str,
+) -> u64 {
+    let expected: Option<i64> = c
+        .query_row(
+            "SELECT size FROM attachments WHERE hash = ?1 AND size > 0 LIMIT 1",
+            params![hash],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    let part_len = std::fs::metadata(attachment_part_path(attachments_dir, hash))
+        .ok()
+        .map(|m| m.len());
+    attachment_resume_offset(part_len, expected)
+}
+
+/// ⭐ **P3-4（task-49）**：把**一条**附件流落进固定 `.part`（续传时追加），完成前做
+/// **大小 ＋ 全文件 sha256** 校验，成功才 rename 到最终名；**失败保留 `.part`**（供下次续传）。
+///
+/// 口径：
+/// * `offset > 0` 且响应不是 200（对端支持续传）⇒ 追加；**响应 200** ⇒ 老对端/中央服务端
+///   不支持 offset ⇒ **从头重下**（截断 `.part`，旧行为不变）；
+/// * `.part` 长度与 `offset` 不符 ⇒ 报错并保留 part；
+/// * 中途读流失败/大小对不上/sha 对不上 ⇒ **保留 `.part`**（不删、不用随机名）；
+/// * 0 字节 ⇒ 拒收（保留 0 字节 part 无意义，但按"失败保留"纪律不在这里删）。
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn download_body_to_part(
+    status: u16,
+    body: &mut crate::mesh_endpoint::AttachmentBody,
+    who: &str,
+    hash: &str,
+    ext: &str,
+    attachments_dir: &Path,
+    session_key: Option<&crate::crypto::AppKeys>,
+    expected_size: Option<i64>,
+    offset: u64,
+) -> Result<i64, String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    if !(200..300).contains(&status) {
+        return Err(format!("{who} 返回 {status}"));
+    }
+    let part = attachment_part_path(attachments_dir, hash);
+    // 响应 200 ＝ 对方给的是**全量**（老对端 / 中央服务端不支持 offset）⇒ 从头写。
+    let effective_offset = if status == 200 { 0 } else { offset };
+    let mut hasher = Sha256::new();
+    let mut file = if effective_offset > 0 {
+        let part_len = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+        if part_len != effective_offset {
+            return Err(format!(
+                "续传起点对不上：.part 有 {part_len} 字节、要按 {effective_offset} 续传 ⇒ 保留 .part，下次再试"
+            ));
+        }
+        // 全文件指纹 = 已有 part 的哈希 + 新字节。
+        let mut old = tokio::fs::File::open(&part)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            let n = old.read(&mut buf).await.map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+        }
+        tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(&part)
+            .await
+            .map_err(|e| e.to_string())?
+    } else {
+        tokio::fs::File::create(&part)
+            .await
+            .map_err(|e| e.to_string())?
+    };
+    let mut received: u64 = 0;
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = match body.read(&mut buf).await {
+            Ok(n) => n,
+            Err(e) => {
+                // 失败**保留** .part（下次从已收到的字节续传；⛔ 不删、不用随机名）。
+                drop(file);
+                return Err(format!("{who}：读取正文失败（已保留 .part 供续传）：{e}"));
+            }
+        };
+        if n == 0 {
+            break;
+        }
+        received += n as u64;
+        hasher.update(&buf[..n]);
+        if let Err(e) = file.write_all(&buf[..n]).await {
+            drop(file);
+            return Err(format!("{who}：写 .part 失败（已保留现有字节）：{e}"));
+        }
+    }
+    file.flush().await.map_err(|e| e.to_string())?;
+    drop(file);
+    let total = effective_offset + received;
+    // ① 大小（0 字节/与期望不符都拒收）—— 失败保留 part。
+    if let Err(why) = attachment_size_ok(total as i64, expected_size) {
+        return Err(format!("{who}：{why}（已保留 .part 供续传）"));
+    }
+    // ② **全文件**内容指纹（不是只算新字节）—— 失败保留 part。
+    let got_hash: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    if !got_hash.eq_ignore_ascii_case(hash.trim()) {
+        return Err(format!(
+            "{who}：完整文件字节与**内容指纹**对不上（要 {}…、收到 {}…）⇒ 不落盘（已保留 .part）",
+            &hash[..12.min(hash.len())],
+            &got_hash[..12.min(got_hash.len())]
+        ));
+    }
+    // ③ 成功 ⇒ rename 到最终名；删掉 `.part`（rename 已经把它移走，这里只为兜底 Windows 语义）。
+    let final_path = attachments_dir
+        .join(&hash[0..2])
+        .join(format!("{hash}.{ext}"));
+    if let Some(parent) = final_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::rename(&part, &final_path).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(&part);
+    // E1: when at-rest encryption is on, store the downloaded PLAINTEXT encrypted
+    // (nonce||ct) like every other attachment, so the read path
+    // (decrypt/passthrough) and the at-rest guarantee stay consistent.
+    if let Some(k) = session_key {
+        if let Ok(plain) = std::fs::read(&final_path) {
+            if let Ok(bytes) = security::encrypt_attachment_bytes(Some(k), &plain) {
+                let _ = std::fs::write(&final_path, &bytes);
+            }
+        }
+    }
+    Ok(total as i64)
 }
 
 /// ⭐ **2026-10-27（owner：「这个页面没有同步完整？」→「补」）**：下载到的字节数**能不能信** ——
@@ -8413,6 +8534,7 @@ async fn sync_attachments(
             &attachments_dir,
             session_key.as_ref(),
             db,
+            0,
         )
         .await
         {
@@ -13617,6 +13739,45 @@ mod encrypted_sync_note_tests {
         // ④ 对端在服务 ⇒ 可以说"能拉"
         assert!(encrypted_sync_note(true, 1, 1, 0).contains("可以直接拉取"));
         assert!(encrypted_sync_note(true, 1, 1, 5).contains("待应用"));
+    }
+
+    // ── ⭐ P3-4 续传（task-49）：纯函数判据 ───────────────────────────────────────────
+
+    #[test]
+    fn resume_offset_only_resumes_a_nonempty_part_shorter_than_the_expected_size() {
+        // 正常：0 < part < 期望 ⇒ 从 part 末尾续。
+        assert_eq!(attachment_resume_offset(Some(4), Some(10)), 4);
+        // 期望大小未知 ⇒ 不续（⛔ 不猜）。
+        assert_eq!(attachment_resume_offset(Some(4), None), 0);
+        // 期望大小非法/0 ⇒ 不续。
+        assert_eq!(attachment_resume_offset(Some(4), Some(0)), 0);
+        assert_eq!(attachment_resume_offset(Some(4), Some(-1)), 0);
+        // 空 part / 已够大 / 不存在 ⇒ 全量。
+        assert_eq!(attachment_resume_offset(Some(0), Some(10)), 0);
+        assert_eq!(attachment_resume_offset(Some(10), Some(10)), 0);
+        assert_eq!(attachment_resume_offset(Some(12), Some(10)), 0);
+        assert_eq!(attachment_resume_offset(None, Some(10)), 0);
+    }
+
+    #[test]
+    fn the_part_path_is_fixed_per_hash_and_offset_keeps_the_old_target_shape() {
+        let dir = std::path::Path::new("/tmp/attachments");
+        let h = "a".repeat(64);
+        assert_eq!(
+            attachment_part_path(dir, &h),
+            dir.join(format!("{h}.part")),
+            "固定 `<hash>.part`（⛔ 不用随机名）"
+        );
+        let old = crate::mesh::attachment_target("sp", &h);
+        assert_eq!(
+            crate::mesh::attachment_target_from("sp", &h, 0),
+            old,
+            "offset=0 必须与旧 target **逐字节相同**"
+        );
+        assert!(
+            crate::mesh::attachment_target_from("sp", &h, 7).ends_with("&offset=7"),
+            "offset>0 才追加参数"
+        );
     }
 }
 
