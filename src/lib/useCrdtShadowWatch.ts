@@ -7,6 +7,11 @@
 import { useEffect, useRef } from "react";
 import { shadowScanSpace, type ShadowScanApi } from "./crdtShadowScan";
 import type { ShadowRowsResult } from "./crdtShadow";
+import {
+  SHADOW_HISTORY_KEY,
+  parseShadowHistory,
+  recordShadowDay,
+} from "./crdtShadowHistory";
 import { useSpaceStore } from "../store/space";
 
 export interface CrdtShadowWatchDeps {
@@ -18,6 +23,13 @@ export interface CrdtShadowWatchDeps {
   isDev?: boolean;
   /** 日志出口（默认 `console.info`；判据用假的）。 */
   consoleInfo?: (message: string, data: ShadowRowsResult) => void;
+  /**
+   * ⭐ task-67：历史存储（默认 `localStorage`；判据注入假实现）。
+   * `null` ⇒ 不写（判据用来证明"没存储也能跑"）。
+   */
+  storage?: Pick<Storage, "getItem" | "setItem"> | null;
+  /** 当前时间（判据注入固定日期；默认 `new Date()`）。 */
+  now?: () => Date;
 }
 
 const DEFAULT_DEBOUNCE_MS = 3000;
@@ -39,6 +51,15 @@ export function useCrdtShadowWatch(
   scanRef.current = deps.scan;
   const infoRef = useRef(deps.consoleInfo);
   infoRef.current = deps.consoleInfo;
+  const storageRef = useRef(deps.storage);
+  storageRef.current =
+    deps.storage === undefined
+      ? typeof localStorage !== "undefined"
+        ? localStorage
+        : null
+      : deps.storage;
+  const nowRef = useRef(deps.now);
+  nowRef.current = deps.now;
 
   useEffect(() => {
     if (!isDev || !activeSpaceId) return;
@@ -53,6 +74,23 @@ export function useCrdtShadowWatch(
             ((message: string, data: ShadowRowsResult) => console.info(message, data));
           // ⚠️ 只打计数/差异页 id（summary 本身已脱敏）。
           log(`[crdt-shadow] ${activeSpaceId}`, summary);
+          // ⭐ task-67：**dev 才写**近 7 天历史（生产 effect 在 `!isDev` 就 return，根本走不到这里）。
+          //   ⚠️ 只存计数；同一天覆盖；坏 JSON ⇒ parse 给空表 ⇒ 重写为合法数组（重置）。
+          //   ⚠️ 存储异常（隐私模式/配额）⇒ 只吞掉，⛔ 不影响扫描/应用。
+          const storage = storageRef.current;
+          if (storage) {
+            try {
+              const parsed = parseShadowHistory(storage.getItem(SHADOW_HISTORY_KEY));
+              const next = recordShadowDay(
+                parsed.records,
+                summary,
+                (nowRef.current ?? (() => new Date()))(),
+              );
+              storage.setItem(SHADOW_HISTORY_KEY, JSON.stringify(next));
+            } catch {
+              // 存储坏了/写不进 ⇒ 观测仍可用（下次再试）。
+            }
+          }
         })
         .catch((e) => {
           if (cancelled) return;

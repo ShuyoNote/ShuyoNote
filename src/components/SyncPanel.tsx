@@ -13,6 +13,14 @@ import { MeshDiagnoseDialog } from "./MeshDiagnoseDialog";
 // ⭐ P3-3a 第三小步（task-56）：CRDT 影子**手动体检** —— 只读扫描当前空间，文案全是纯函数，
 //   ⛔ 不自动修复/不改数据/不显示正文（差异只回数量）。
 import { shadowScanSpace } from "../lib/crdtShadowScan";
+// ⭐ P3-3a 第四小步（task-67）：影子观测近 7 天历史（只读；纯函数解析/摘要，面板只显示）。
+import {
+  SHADOW_HISTORY_KEY,
+  parseShadowHistory,
+  shadowHistoryCopyText,
+  summarizeShadowHistory,
+  type ShadowHistorySummary,
+} from "../lib/crdtShadowHistory";
 import type { ShadowRowsResult } from "../lib/crdtShadow";
 import {
   diagnoseCopyText,
@@ -325,6 +333,39 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
       unlisten?.();
     };
   }, [open, contentOnly]);
+  // ⭐ task-67：只读影子观测历史；坏 JSON/读不出 ⇒ unknown（⛔ 不假装"无记录"）。
+  const [shadowHistory, setShadowHistory] = useState<ShadowHistorySummary | null>(null);
+  useEffect(() => {
+    if ((!open && !contentOnly) || !isDesktopPlatform()) return;
+    let alive = true;
+    try {
+      const raw =
+        typeof localStorage !== "undefined"
+          ? localStorage.getItem(SHADOW_HISTORY_KEY)
+          : null;
+      const parsed = parseShadowHistory(raw);
+      const structurallyBad = parsed.reasons.some(
+        (r) => r === "历史不是合法 JSON" || r === "历史不是数组",
+      );
+      if (alive) {
+        setShadowHistory(summarizeShadowHistory(structurallyBad ? null : parsed.records));
+      }
+    } catch {
+      if (alive) setShadowHistory(summarizeShadowHistory(null));
+    }
+    return () => {
+      alive = false;
+    };
+  }, [open, contentOnly]);
+  const copyShadowHistory = async () => {
+    const summary = shadowHistory ?? summarizeShadowHistory(null);
+    try {
+      await navigator.clipboard.writeText(shadowHistoryCopyText(summary));
+      toast("影子观测摘要已复制（不含正文/内部标识）", "success");
+    } catch (e) {
+      toast(`复制失败：${e}`, "error");
+    }
+  };
   const [lastRound, setLastRound] = useState<MeshRoundReport | null>(null);
   /** ⭐ P1「全部空间立即同步」（2026-11-08）：这一轮的现场 ＋ 停止入口 ＋ 进度用的节拍。
    *  ⚠️ `allSyncStopRef` 里放的是**当前这一轮**的停止函数（点「停止」只置一个本地标志：
@@ -2518,6 +2559,30 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                         ? "○"
                         : "—"}
                   </span>
+                </div>
+              )}
+
+              {/* ⭐ P3-3a 第四小步（task-67）：**影子观测**只读行（高级区；桌面；只显示计数/日期）。
+                  ⛔ 不提供清除/修复/自动改数据；"复制摘要"只走脱敏文案。 */}
+              {isDesktopPlatform() && (
+                <div className="sync-device-name" data-testid="crdt-shadow-history">
+                  <span className="sync-device-name-label">影子观测</span>
+                  <span
+                    className="sync-hint"
+                    style={{ flex: "1 1 auto", minWidth: 0 }}
+                    data-testid="crdt-shadow-history-text"
+                  >
+                    {shadowHistory?.text ?? "无记录（还没跑过影子扫描）"}
+                  </span>
+                  {shadowHistory && shadowHistory.days > 0 && (
+                    <button
+                      className="sync-mini-btn"
+                      data-testid="crdt-shadow-history-copy"
+                      onClick={() => void copyShadowHistory()}
+                    >
+                      复制摘要
+                    </button>
+                  )}
                 </div>
               )}
 

@@ -68,9 +68,10 @@ describe("SyncPanel · 同步核心行接线", () => {
     expect(panel).toContain("syncCoreRowText(coreStatus)");
     expect(panel).toContain("本版只读");
     // ⛔ 这一行不许有开关/按钮去"启用 Core"，也不许写任何设置。
+    // ⭐ task-67：只读行切片到「影子观测」之前（下一行自带"复制摘要"按钮，不算本行的开关）。
     const row = panel.slice(
       panel.indexOf('data-testid="sync-core-status"'),
-      panel.indexOf('data-testid="crdt-shadow-diagnose-row"'),
+      panel.indexOf('data-testid="crdt-shadow-history"'),
     );
     expect(row).not.toContain("<button");
     expect(row).not.toContain("meshSetConfig");
