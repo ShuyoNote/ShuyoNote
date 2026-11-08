@@ -39,9 +39,9 @@ export async function applyDraftAndRefresh(payload: unknown): Promise<ApplyResul
   const draftId = typeof (payload as { draftId?: unknown })?.draftId === "string"
     ? String((payload as { draftId: string }).draftId)
     : "";
-  const report = (state: "applied" | "rejected") => {
+  const report = (state: "applied" | "rejected", resultId?: string) => {
     if (!draftId) return;
-    void api.mcpDraftState(draftId, state).catch(() => undefined);
+    void api.mcpDraftState(draftId, state, resultId).catch(() => undefined);
   };
   let res: ApplyResult;
   try {
@@ -50,7 +50,7 @@ export async function applyDraftAndRefresh(payload: unknown): Promise<ApplyResul
     report("rejected");
     throw e;
   }
-  report(res.ok ? "applied" : "rejected");
+  report(res.ok ? "applied" : "rejected", res.resultId ?? res.page?.id);
   const notes = useNotes.getState();
   // ⭐ R150：**外部写过的页要打标记** ✓ —— 否则那条排在去抖槽里的旧补丁会在约 0.4 秒后
   //   把它盖回去 ✗（现场读数见 `lib/pendingSave.ts` 的头注 ✓）。

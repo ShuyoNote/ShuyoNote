@@ -5029,6 +5029,8 @@ struct DraftStateRow {
     tool: String,
     capability: String,
     state: String,
+    /// ⭐ 2026-11-08：落地后的结果 id（创建类写 = 新页面/文件夹 id）—— `drafts.status` 回给 agent。
+    result: Option<String>,
     at_ms: i64,
     expires_ms: i64,
 }
@@ -5061,6 +5063,7 @@ pub(crate) fn attach_draft_id(id: &str, source: &str, tool: &str, capability: &s
                 tool: tool.to_string(),
                 capability: capability.to_string(),
                 state: "pending".to_string(),
+                result: None,
                 at_ms: now,
                 expires_ms: now + DRAFT_STATE_TTL_MS,
             },
@@ -5075,7 +5078,11 @@ pub(crate) fn attach_draft_id(id: &str, source: &str, tool: &str, capability: &s
 }
 
 /// 前端回写：pending → applied / rejected（其它状态值 ⇒ `bad_args`）。
-pub(crate) fn mark_draft_state(id: &str, state: &str) -> Result<(), String> {
+pub(crate) fn mark_draft_state(
+    id: &str,
+    state: &str,
+    result_id: Option<&str>,
+) -> Result<(), String> {
     let st = state.trim();
     if st != "applied" && st != "rejected" {
         return Err("bad_args: state 只能是 applied / rejected".to_string());
@@ -5099,13 +5106,20 @@ pub(crate) fn mark_draft_state(id: &str, state: &str) -> Result<(), String> {
         ));
     }
     row.state = st.to_string();
+    if let Some(rid) = result_id.map(str::trim).filter(|s| !s.is_empty()) {
+        row.result = Some(rid.to_string());
+    }
     Ok(())
 }
 
 /// Tauri 命令：apply 侧（确认/拒绝后）回写草稿状态。桌面专属。
 #[tauri::command]
-pub fn mcp_draft_state(draft_id: String, state: String) -> Result<(), String> {
-    mark_draft_state(&draft_id, &state)
+pub fn mcp_draft_state(
+    draft_id: String,
+    state: String,
+    result_id: Option<String>,
+) -> Result<(), String> {
+    mark_draft_state(&draft_id, &state, result_id.as_deref())
 }
 
 fn draft_state_view(id: &str) -> Result<serde_json::Value, String> {
@@ -5133,6 +5147,8 @@ fn draft_state_view(id: &str) -> Result<serde_json::Value, String> {
         "at": row.at_ms,
         "tool": row.tool,
         "capabilityId": row.capability,
+        // ⭐ 2026-11-08：创建类写落地后的结果 id（没落地/非创建类 ⇒ null）
+        "resultId": row.result,
     }))
 }
 
@@ -17245,7 +17261,8 @@ register({ id: "s.run", title: "结构化", run: function () {
             with_external_caller("ux1-w", &g, || crate::plugins::cap_drafts_status(id)).unwrap()
         };
         assert_eq!(st(&draft_id)["state"], "pending");
-        crate::plugins::mark_draft_state(&draft_id, "applied").expect("回写 applied");
+        crate::plugins::mark_draft_state(&draft_id, "applied", Some("node-new-1"))
+            .expect("回写 applied");
         assert_eq!(st(&draft_id)["state"], "applied");
         assert_eq!(st(&draft_id)["capabilityId"], "pages.create");
         crate::plugins::attach_draft_id(
@@ -17254,7 +17271,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             "pages.create",
             "pages.create",
         );
-        crate::plugins::mark_draft_state("ux1-rej", "rejected").expect("回写 rejected");
+        crate::plugins::mark_draft_state("ux1-rej", "rejected", None).expect("回写 rejected");
         assert_eq!(st("ux1-rej")["state"], "rejected");
         crate::plugins::attach_draft_id(
             "ux1-exp",
@@ -19349,3 +19366,4 @@ register({ id: "s.run", title: "结构化", run: function () {
         b1c_cleanup(&f);
     }
 }
+
