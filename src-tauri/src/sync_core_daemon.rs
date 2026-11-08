@@ -243,12 +243,14 @@ pub fn terminate_allowed(info: &LockInfo, user_confirmed: bool) -> bool {
 /// 等 daemon 退出的最长时间（≤5s，任务口径）。
 pub const DAEMON_STOP_WAIT_MS: u64 = 5_000;
 
-/// ⭐ **用户确认后**：`kill -TERM` daemon，等 ≤5s，然后按 `role=app` 重新抢锁。
+/// ⭐ **用户确认后**：**优先 IPC 优雅停止**，失败/超时才回退 `kill -TERM`，等 ≤5s 重抢锁。
 ///
 /// ⚠️ **安全边界**（调用方必须是"用户已确认"那一支）：
-/// * 只接受 **role=daemon** 的锁（杀前**重新读文件**校验，防竞态/旧信息）；
+/// * 只接受 **role=daemon** 的锁（停止前**重新读文件**校验，防竞态/旧信息）；
 /// * pid 必须与锁里一致且活着；⛔ 不杀 app/unknown/死 pid；
-/// * Windows：本版不做进程管理，**明确报错**（⛔ 不假装能停）；
+/// * **IPC 优先**：读 endpoint → 回环 `POST /shutdown`（短超时）→ 轮询锁/pid；IPC 成功
+///   但 `IPC_SHUTDOWN_GRACE_MS` 内没退出/失败 ⇒ 才 TERM 兜底；
+/// * Windows 没有 TERM ⇒ IPC 是唯一自动路（失败则明确报"请手动停止"）；
 /// * 等 pid 退出后靠 `acquire_in(role=app)` 重新抢（死 pid 的残余锁会自动回收）。
 pub fn stop_daemon_and_retry(app_data_dir: &Path, pid: u32) -> Result<SingleWriterLock, String> {
     let path = lock_path(app_data_dir);
@@ -265,35 +267,92 @@ pub fn stop_daemon_and_retry(app_data_dir: &Path, pid: u32) -> Result<SingleWrit
             info.pid
         ));
     }
-    #[cfg(unix)]
-    {
-        let status = std::process::Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .status()
-            .map_err(|e| format!("发送 TERM 失败：{e}"))?;
-        if !status.success() {
-            return Err(format!("发送 TERM 失败（kill 退出码 {status:?}）"));
+    // ① **IPC 优先**：daemon 自己提供的 /shutdown（带 token、只回环；旧版 daemon 没有该路由 ⇒ 失败）。
+    let ipc_requested = match read_endpoint(&endpoint_path(app_data_dir)) {
+        Ok(ep) => {
+            let ok = shutdown_via_ipc(&ep);
+            if ok {
+                eprintln!("[single-writer] 已通过 IPC 请求 daemon 优雅退出（pid={pid}）");
+            }
+            ok
         }
+        Err(_) => false,
+    };
+    if !ipc_requested && !cfg!(unix) {
+        return Err(
+            "这个平台不支持自动停止 sync_core daemon（IPC 不可用）：请手动停止它后重开 App"
+                .to_string(),
+        );
     }
-    #[cfg(not(unix))]
-    {
-        return Err("这个平台不支持自动停止 sync_core daemon：请手动停止它后重开 App".to_string());
-    }
-    // 等 pid 退出（≤5s），然后重抢锁。
-    let deadline =
-        std::time::Instant::now() + std::time::Duration::from_millis(DAEMON_STOP_WAIT_MS);
+    let start = std::time::Instant::now();
+    let deadline = start + std::time::Duration::from_millis(DAEMON_STOP_WAIT_MS);
+    let mut termed = false;
     loop {
         if !pid_alive(pid) {
             return acquire_in(app_data_dir, LockRole::App);
         }
+        let elapsed = start.elapsed().as_millis() as u64;
+        // ② IPC 已请求 ⇒ 给它一个短宽限；没请求/超过宽限 ⇒ TERM 兜底。
+        let grace_over = !ipc_requested || elapsed >= IPC_SHUTDOWN_GRACE_MS;
+        if !termed && grace_over {
+            #[cfg(unix)]
+            {
+                send_term(pid)?;
+                termed = true;
+                eprintln!("[single-writer] IPC 未在宽限内让 daemon 退出 ⇒ 回退 TERM（pid={pid}）");
+            }
+            #[cfg(not(unix))]
+            {
+                return Err(format!(
+                    "IPC 停止 daemon（pid={pid}）没在 {}ms 内生效；这个平台没有 TERM 兜底 ⇒ 请手动停止",
+                    IPC_SHUTDOWN_GRACE_MS
+                ));
+            }
+        }
         if std::time::Instant::now() >= deadline {
             return Err(format!(
-                "已发送 TERM，但 daemon（pid={pid}）在 {}ms 内没退出 ⇒ 请手动处理",
+                "已尝试 IPC/TERM，但 daemon（pid={pid}）在 {}ms 内没退出 ⇒ 请手动处理",
                 DAEMON_STOP_WAIT_MS
             ));
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+}
+
+/// 发 TERM（unix）；错误可读（⛔ 不含 token）。
+#[cfg(unix)]
+fn send_term(pid: u32) -> Result<(), String> {
+    let status = std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status()
+        .map_err(|e| format!("发送 TERM 失败：{e}"))?;
+    if !status.success() {
+        return Err(format!("发送 TERM 失败（kill 退出码 {status:?}）"));
+    }
+    Ok(())
+}
+
+/// 回环 `POST /shutdown`（短超时；HTTP 2xx＝已受理）。⛔ 不打印/不返回 token。
+fn shutdown_via_ipc(ep: &SyncCoreEndpoint) -> bool {
+    let url = format!("http://127.0.0.1:{}/shutdown", ep.port);
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(IPC_STATUS_TIMEOUT_MS))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let resp = tauri::async_runtime::block_on(
+        client
+            .post(&url)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", ep.token),
+            )
+            .send(),
+    );
+    matches!(resp, Ok(r) if r.status().is_success())
 }
 
 /// ⭐ App 启动抢锁的**唯一入口**（失败路径里才弹框/终止；成功返回持有到进程退出的锁）。
@@ -425,9 +484,13 @@ pub fn run_daemon() -> i32 {
         app_data_dir.display(),
         lock_path(&app_data_dir).display()
     );
-    // ⑤ 阻塞（本笔不引 tokio signal feature；进程被终止即结束；锁残留由 pid 回收兜底）。
-    tauri::async_runtime::block_on(std::future::pending::<()>());
-    unreachable!("daemon 循环永不返回")
+    // ⑤ 阻塞直到 **shutdown Notify**（`POST /shutdown` 触发；Ctrl-C 仍由 OS 终止兜底）。
+    //   ⚠️ Notify 有 permit 语义 ⇒ 即使通知早于这一行到达也不会丢。
+    tauri::async_runtime::block_on(async {
+        shutdown_notify().notified().await;
+    });
+    eprintln!("[sync-core-daemon] 收到 IPC 优雅停止 ⇒ 退出（endpoint/锁由 Drop 清理）");
+    0
 }
 
 // ── ⭐ P3-1b IPC 骨架（task-63）：回环 endpoint ＋ Bearer 鉴权 ＋ 最小 HTTP/1.1 ──────────────
@@ -452,6 +515,15 @@ pub const IPC_MAX_BODY_BYTES: usize = 1024;
 const IPC_MAX_HEADER_BYTES: usize = 8 * 1024;
 /// App 只读查询 `/status` 的短超时（daemon 不在 ⇒ 快速降级，不卡 UI）。
 pub const IPC_STATUS_TIMEOUT_MS: u64 = 400;
+/// ⭐ task-64：**IPC 优雅停止**的等待窗口 —— 超过它还没退出才回退 TERM。
+pub const IPC_SHUTDOWN_GRACE_MS: u64 = 2_000;
+
+/// daemon 主循环等待的 shutdown 信号；`POST /shutdown` 先回 200 再 `notify_one()`。
+static SHUTDOWN: std::sync::OnceLock<tokio::sync::Notify> = std::sync::OnceLock::new();
+
+fn shutdown_notify() -> &'static tokio::sync::Notify {
+    SHUTDOWN.get_or_init(tokio::sync::Notify::new)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SyncCoreEndpoint {
@@ -573,6 +645,8 @@ pub fn parse_http_request(head: &[u8]) -> Result<ParsedRequest, String> {
 pub enum IpcRoute {
     Status,
     Round,
+    /// ⭐ task-64：优雅停止（先回 200 再唤醒主循环）。
+    Shutdown,
 }
 
 /// 鉴权/路由结果里的拒绝码。
@@ -687,7 +761,10 @@ pub fn authorize_request(req: &ParsedRequest, token: &str) -> Result<IpcRoute, I
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/status") => Ok(IpcRoute::Status),
         ("POST", "/round") => Ok(IpcRoute::Round),
-        ("GET", "/round") | ("POST", "/status") => Err(IpcReject::MethodNotAllowed),
+        ("POST", "/shutdown") => Ok(IpcRoute::Shutdown),
+        ("GET", "/round") | ("POST", "/status") | ("GET", "/shutdown") => {
+            Err(IpcReject::MethodNotAllowed)
+        }
         _ => Err(IpcReject::NotFound),
     }
 }
@@ -812,7 +889,18 @@ async fn handle_ipc_conn(
             return Ok(());
         }
     };
+    // ⭐ task-64：**先回 200，再 Notify**（响应先落到 socket，App 侧能立刻看到"优雅停止已受理"；
+    //   若先 Notify，主循环可能在我们写响应前就退出 ⇒ App 看到的是连接被关）。
+    if route == IpcRoute::Shutdown {
+        let _ = sock
+            .write_all(&ipc_http_response(200, "OK", b"{\"ok\":true}"))
+            .await;
+        let _ = sock.flush().await;
+        shutdown_notify().notify_one();
+        return Ok(());
+    }
     let body = match route {
+        IpcRoute::Shutdown => unreachable!("shutdown 已在上面的分支提前返回"),
         IpcRoute::Status => serde_json::to_vec(&crate::sync_core::snapshot())
             .map_err(|e| format!("status 序列化失败：{e}"))?,
         IpcRoute::Round => {
@@ -1522,8 +1610,10 @@ mod tests {
         let ok = |m: &str, p: &str| authorize_request(&req(m, p, valid_headers(token), 0), token);
         assert_eq!(ok("GET", "/status"), Ok(IpcRoute::Status));
         assert_eq!(ok("POST", "/round"), Ok(IpcRoute::Round));
+        assert_eq!(ok("POST", "/shutdown"), Ok(IpcRoute::Shutdown));
         assert_eq!(ok("POST", "/status"), Err(IpcReject::MethodNotAllowed));
         assert_eq!(ok("GET", "/round"), Err(IpcReject::MethodNotAllowed));
+        assert_eq!(ok("GET", "/shutdown"), Err(IpcReject::MethodNotAllowed));
         assert_eq!(ok("PUT", "/status"), Err(IpcReject::NotFound));
         assert_eq!(ok("GET", "/../status"), Err(IpcReject::NotFound));
         assert_eq!(ok("GET", "/status/extra"), Err(IpcReject::NotFound));
@@ -1589,5 +1679,120 @@ mod tests {
         assert!(lock_at < init_at && init_at < ipc_at && ipc_at < sched_at);
         // 命令已注册。
         assert!(include_str!("lib.rs").contains("sync_core_daemon::sync_core_ipc_status,"));
+    }
+
+    // ── ⭐ task-64：/shutdown 优雅停止 + App IPC 优先 ───────────────────────────
+
+    #[test]
+    fn shutdown_notify_wakes_the_daemon_waiter() {
+        // Notify 有 permit 语义：先 notify 再 await 也不会丢。
+        let woke = tauri::async_runtime::block_on(async {
+            shutdown_notify().notify_one();
+            tokio::time::timeout(
+                std::time::Duration::from_millis(200),
+                shutdown_notify().notified(),
+            )
+            .await
+            .is_ok()
+        });
+        assert!(woke, "notify_one 之后阻塞等待必须被唤醒");
+    }
+
+    #[test]
+    fn ipc_shutdown_uses_the_same_auth_and_is_post_only() {
+        let token = "0123456789abcdef0123456789abcdef";
+        let headers = valid_headers(token);
+        assert_eq!(
+            authorize_request(&req("POST", "/shutdown", headers.clone(), 0), token),
+            Ok(IpcRoute::Shutdown)
+        );
+        // GET ⇒ 405（同其他已知路径）。
+        assert_eq!(
+            authorize_request(&req("GET", "/shutdown", headers.clone(), 0), token),
+            Err(IpcReject::MethodNotAllowed)
+        );
+        // 无/错 token ⇒ 401；非回环 Host/Origin ⇒ 403（与 /status 完全同一把尺）。
+        assert_eq!(
+            authorize_request(
+                &req("POST", "/shutdown", hdr(&[("Host", "127.0.0.1:1")]), 0),
+                token
+            ),
+            Err(IpcReject::Unauthorized)
+        );
+        for bad_host in ["127.0.0.1.evil", "192.168.1.5:8788", "evil.com"] {
+            let h = hdr(&[
+                ("Authorization", &format!("Bearer {token}")),
+                ("Host", bad_host),
+            ]);
+            assert_eq!(
+                authorize_request(&req("POST", "/shutdown", h, 0), token),
+                Err(IpcReject::Forbidden)
+            );
+        }
+        let h = hdr(&[
+            ("Authorization", &format!("Bearer {token}")),
+            ("Host", "127.0.0.1:1"),
+            ("Origin", "http://evil.com"),
+        ]);
+        assert_eq!(
+            authorize_request(&req("POST", "/shutdown", h, 0), token),
+            Err(IpcReject::Forbidden)
+        );
+    }
+
+    /// 源码级：先回 200 再 Notify；daemon 主循环等 Notify；App 停止路径 IPC 优先、TERM 兜底、
+    /// 且仍先校验 role/pid（确认门在 acquire_for_app_or_exit，已有判据）。
+    #[test]
+    fn shutdown_responds_before_notify_and_stop_prefers_ipc() {
+        let me = include_str!("sync_core_daemon.rs");
+        let prod = me.split("#[cfg(test)]").next().unwrap_or(me);
+        // ① handler：200 响应写入/flush 都在 notify 之前。
+        let shutdown_branch = prod
+            .split("if route == IpcRoute::Shutdown {")
+            .nth(1)
+            .expect("shutdown 分支必须在");
+        let branch = &shutdown_branch[..shutdown_branch
+            .find("return Ok(())")
+            .unwrap_or(shutdown_branch.len())];
+        let write_at = branch.find("ipc_http_response(200").expect("先回 200");
+        let flush_at = branch.find(".flush()").expect("flush");
+        let notify_at = branch
+            .find("shutdown_notify().notify_one()")
+            .expect("再 Notify");
+        assert!(
+            write_at < flush_at && flush_at < notify_at,
+            "⛔ 必须先回 200 再 Notify"
+        );
+        // ② 主循环等 Notify（不再 pending），正常退出 0。
+        assert!(prod.contains("shutdown_notify().notified().await"));
+        assert!(!prod.contains("std::future::pending::<()>()"));
+        assert!(prod.contains("收到 IPC 优雅停止"));
+        // ③ App 停止路径：先 role/pid 校验 → IPC → 宽限 → TERM；顺序钉死。
+        let stop = prod
+            .split("pub fn stop_daemon_and_retry(")
+            .nth(1)
+            .expect("stop 必须在");
+        let role_at = stop
+            .find("if !terminate_allowed(&info, true)")
+            .expect("role 校验");
+        let pid_at = stop.find("if info.pid != Some(pid)").expect("pid 校验");
+        let ipc_at = stop.find("shutdown_via_ipc(&ep)").expect("IPC 优先");
+        let term_at = stop.find("send_term(pid)?").expect("TERM 兜底");
+        assert!(role_at < pid_at && pid_at < ipc_at && ipc_at < term_at);
+        assert!(stop.contains("IPC_SHUTDOWN_GRACE_MS"));
+        assert!(stop.contains("回退 TERM"));
+        // ④ IPC 停止本身也走 Bearer POST /shutdown（短超时、不打印 token）。
+        let helper = prod
+            .split("fn shutdown_via_ipc(")
+            .nth(1)
+            .expect("shutdown_via_ipc 必须在");
+        let helper = match helper.find("/// ⭐ App 启动抢锁") {
+            Some(end) => &helper[..end],
+            None => helper,
+        };
+        assert!(helper.contains("/shutdown"));
+        assert!(helper.contains("AUTHORIZATION"));
+        assert!(helper.contains("IPC_STATUS_TIMEOUT_MS"));
+        assert!(!helper.contains("eprintln!"));
     }
 }
