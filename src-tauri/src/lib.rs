@@ -261,6 +261,7 @@ mod space_snapshot_client;
 mod storage;
 mod sync;
 mod sync_core;
+mod sync_core_daemon;
 mod tags;
 mod tempdir;
 mod templates;
@@ -521,6 +522,12 @@ fn show_main_window(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // ⭐ **P3-1b（task-59）**：`--sync-core-daemon` 无头 daemon 分流 —— **必须在任何
+    //   Tauri / 单实例初始化之前**（与 `plugin_host::HOST_FLAG` 同款）。没有这个 flag
+    //   ⇒ 这一句只做一次纯参数判断，后面逐字走原来那条启动路（⛔ 不建锁/不起任务）。
+    if sync_core_daemon::is_daemon_flag(std::env::args().skip(1)) {
+        std::process::exit(sync_core_daemon::run_daemon());
+    }
     // M11.13 阶段 1：**宿主子进程分流必须在最前面**——在任何 Tauri / 单实例初始化之前。
     // 放在后面会出两个真实后果（见方案 §7）：macOS 上多一个 Dock 图标；single-instance
     // 插件把子进程当成"第二个实例"，于是用户开第二个窗口时被"唤起已有窗口"。
