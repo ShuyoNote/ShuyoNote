@@ -1,0 +1,32 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>03 私有中继</title></head><body>
+<div class="page">
+  <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 03 / 订阅：私有中继（可选，用户自己部署）</span></div>
+  <h1>跨网可选：部署在你自己的服务器</h1>
+  <div class="sub">我们不运营公共中继。付费订阅提供安装包与许可证；中继跑在用户自己的云主机/NAS，数据不经过 ShuyoNote。</div>
+  <div class="frame" style="margin-top:16px">
+    <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">设置 / 同步 / 跨网（私有中继）</span><span class="crumb">订阅：有效 · 2027-05-01 到期</span></div>
+    <div class="body">
+      <div class="split">
+        <div class="card">
+          <div class="section-title" style="margin-top:0">三步接入</div>
+          <div class="steps">
+            <div class="step"><div class="num">1</div><div><div class="h">下载并部署官方中继安装包</div><div class="p">在你的 Linux 云主机/NAS 上执行（systemd 或 Docker）；需要域名/TLS 时按文档配反代。</div><div class="code">curl -fsSL https://shuyo.cn/relay/install.sh | bash</div></div></div>
+            <div class="step"><div class="num">2</div><div><div class="h">粘贴中继地址与许可证</div><div class="p">许可证绑定部署实例/设备位数；离线可用，到期只收回“跨网”，局域网照常。</div><div class="code">relay.example.com:443  ·  许可证 SYRL-****-****-****</div></div></div>
+            <div class="step"><div class="num">3</div><div><div class="h">测试并保存</div><div class="p">测试会做：DNS/TCP/握手/身份；通过后只对“跨网设备”启用，同网仍优先直连。</div><div class="actions" style="margin-top:6px"><span class="btn primary">测试连接</span><span class="btn">保存</span></div></div></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="section-title" style="margin-top:0">当前状态</div>
+          <div class="row"><span class="name">中继地址</span><span class="state">relay.example.com:443</span><span class="badge ok">已连接</span></div>
+          <div class="row"><span class="name">证书</span><span class="state">Let's Encrypt · 剩余 71 天</span><span class="badge ok">有效</span></div>
+          <div class="row"><span class="name">许可证</span><span class="state">个人订阅 · 3 个设备位</span><span class="badge info">有效</span></div>
+          <div class="row"><span class="name">跨网流量</span><span class="state">今日 42 MB · 只在直连失败时使用</span><span class="meta">明细 ›</span></div>
+          <div class="callout" style="margin-top:12px">局域网优先：同一 Wi-Fi 下仍然直连，不经过中继。中继服务器不可达时，界面只提示“跨网暂不可用”，局域网同步继续。</div>
+          <div class="note" style="margin-top:10px">合规提醒：中继部署在用户自己的服务器，部署方需自行确认当地备案/运营商条款/数据合规责任；本产品不运营公共中继。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>ShuyoNote · 个人付费订阅版 · 需求效果图</span><span>P2 交付 · 官方安装包 + 许可证 + 客户端配置；无中继时 P1 完全可用</span></div>
+</div>
+</body></html>

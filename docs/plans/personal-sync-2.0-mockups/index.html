@@ -1,0 +1,29 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>个人版同步 2.0 · 效果图</title>
+<style>
+:root{--bg:#17181b;--panel:#202226;--line:#34373d;--text:#eceff4;--dim:#9aa1ab;--faint:#6b727d;--accent:#5b8cff;--ok:#3ecf8e;--warn:#f0b35b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1460px;margin:0 auto;padding:34px 30px 60px}h1{font-size:30px;margin:0 0 8px}.sub{color:var(--dim);font-size:14px;line-height:1.7}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px}.card{border:1px solid var(--line);border-radius:16px;background:var(--panel);overflow:hidden}
+.card img{display:block;width:100%;height:auto}.card .meta{padding:14px 16px}.card .t{font-size:15px;font-weight:700;margin-bottom:4px}.card .d{font-size:12.5px;color:var(--faint);line-height:1.6}
+.dec{border:1px solid var(--line);border-radius:16px;background:var(--panel);padding:18px 20px;margin-top:22px}.dec h2{font-size:16px;margin:0 0 10px}.dec td{padding:7px 10px;border-top:1px solid var(--line);font-size:12.5px;color:var(--dim);vertical-align:top}.dec td:first-child{color:var(--text);font-weight:650;white-space:nowrap}.dec table{width:100%;border-collapse:collapse}.rec{color:var(--ok)}
+.foot{color:var(--faint);font-size:11.5px;margin-top:20px;border-top:1px solid #26282c;padding-top:12px}
+</style></head><body><div class="wrap">
+<h1>个人版同步 2.0 · 效果图</h1>
+<div class="sub">原则：<b>没有中继服务器，局域网同步与 MCP 必须完整可用；中继只作为付费可选的私有部署。</b>以下 4 张图对应 P1/P2/P3 的关键界面。</div>
+<div class="grid">
+  <div class="card"><a href="01-lan-home.png"><img src="01-lan-home.png" alt="默认局域网同步"></a><div class="meta"><div class="t">01 · 默认局域网：打开即用</div><div class="d">不需要服务器；按空间显示状态；全部空间同步；连接体检入口；私有中继收在高级里。</div></div></div>
+  <div class="card"><a href="02-diagnose.png"><img src="02-diagnose.png" alt="连接体检"></a><div class="meta"><div class="t">02 · 连接体检：把“为什么不同步”说清楚</div><div class="d">接口/发现端口/同步窗口/对端可达/配对秘密/房间/最近一轮；手动 IP 兜底；复制脱敏诊断包。</div></div></div>
+  <div class="card"><a href="03-private-relay.png"><img src="03-private-relay.png" alt="私有中继"></a><div class="meta"><div class="t">03 · 私有中继：付费可选，用户自己部署</div><div class="d">官方安装包 + 许可证；三步接入；LAN 优先、中继兜底；中继故障不影响局域网；合规责任提示。</div></div></div>
+  <div class="card"><a href="04-background-mcp.png"><img src="04-background-mcp.png" alt="后台与 MCP"></a><div class="meta"><div class="t">04 · 后台与 MCP：同步独立，MCP 本地优先</div><div class="d">关窗继续同步、托盘；MCP 不依赖中继；无 UI 危险写默认拒绝；后台 MCP 默认关。</div></div></div>
+</div>
+<div class="dec"><h2>需要拍板的 6 件事（白话）</h2>
+<table>
+<tr><td>DEC-1 传输</td><td>A 先 HTTP + mDNS/手动/并发，P3 再 QUIC（<span class="rec">推荐</span>）｜B 直接 QUIC 直连</td></tr>
+<tr><td>DEC-2 后台</td><td>A 先 App 托盘常驻（<span class="rec">推荐</span>）｜B 直接独立 daemon</td></tr>
+<tr><td>DEC-3 CRDT</td><td>A P3 双写/灰度迁移普通笔记页（<span class="rec">推荐</span>）｜B 暂不迁，维持页级</td></tr>
+<tr><td>DEC-4 私有中继</td><td>A 官方安装包 + 许可证，用户自部署（<span class="rec">推荐</span>）｜B 我们运营公共中继（不建议）｜C 不做跨网</td></tr>
+<tr><td>DEC-5 MCP</td><td>A V1 留在 App（<span class="rec">推荐</span>）｜B 托盘常驻可用｜C P3 迁 daemon</td></tr>
+<tr><td>DEC-6 中继启用</td><td>A 默认不启用、配置后才用（<span class="rec">推荐</span>）｜B 订阅用户默认启用</td></tr>
+</table></div>
+<div class="foot">完整需求：[2026-11-08-personal-sync-2.0-requirements.md](../2026-11-08-personal-sync-2.0-requirements.md) ｜ 效果图源：本目录 HTML/CSS，PNG 为 2x 渲染。</div>
+</div></body></html>

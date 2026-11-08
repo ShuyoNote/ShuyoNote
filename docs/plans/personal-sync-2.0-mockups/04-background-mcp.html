@@ -1,0 +1,40 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>04 后台与 MCP</title><style>.body{padding:14px 18px}.card{padding:12px 14px}.setting{padding:7px 0}.tray{margin-top:4px}.tray .item{padding:6px 9px}.section-title{margin:10px 0 4px}</style></head><body>
+<div class="page">
+  <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 04 / 后台常驻与 MCP：同步独立，MCP 本地优先</span></div>
+  <h1>关窗继续同步；MCP 不依赖中继</h1>
+  <div class="sub">后台只负责同步与本地数据；MCP 是本机回环能力，没中继、没登录、没同步时也应可用。</div>
+  <div class="frame" style="margin-top:16px">
+    <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">设置 / 后台与外部 AI</span><span class="crumb">当前：托盘常驻 · 同步中</span></div>
+    <div class="body">
+      <div class="split">
+        <div class="card">
+          <div class="section-title" style="margin-top:0">后台</div>
+          <div class="setting"><div class="switch on"></div><div class="txt"><div class="t">关窗后继续同步</div><div class="d">窗口关闭不退出进程；托盘可见；真正“退出”才停。</div></div></div>
+          <div class="setting"><div class="switch"></div><div class="txt"><div class="t">开机自动启动</div><div class="d">默认关；需要“随时同步”的用户可开。</div></div></div>
+          <div class="setting"><div class="switch on"></div><div class="txt"><div class="t">电池省电</div><div class="d">低电量时拉长间隔；手动同步始终可用。</div></div></div>
+          <div class="setting"><div class="switch on"></div><div class="txt"><div class="t">仅 Wi-Fi 自动同步</div><div class="d">蜂窝网络下不自动跑；手动仍可。</div></div></div>
+          <div class="section-title">托盘预览</div>
+          <div class="tray">
+            <div class="head">ShuyoNote</div>
+            <div class="item"><span>● 同步中 · 2 台直连</span><span class="s">12s</span></div>
+            <div class="item"><span>全部空间立即同步</span></div>
+            <div class="item"><span>暂停 1 小时</span></div>
+            <div class="item" style="color:var(--faint)">退出（停止后台同步）</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="section-title" style="margin-top:0">MCP（本机外部 AI 接入）</div>
+          <div class="row"><span class="name">本机通道</span><span class="state">127.0.0.1 + 令牌 · 只绑回环</span><span class="badge ok">运行中</span></div>
+          <div class="row"><span class="name">依赖中继？</span><span class="state">否：同步/局域网/中继都不可用时仍可调用</span><span class="badge gray">独立</span></div>
+          <div class="row"><span class="name">危险写确认</span><span class="state">删除/覆盖需确认；无窗口时默认拒绝</span><span class="badge warn">安全</span></div>
+          <div class="row"><span class="name">工具范围</span><span class="state">只读默认开启；写权限按档授权</span><span class="meta">权限 ›</span></div>
+          <div class="section-title">高级：后台 MCP（默认关）</div>
+          <div class="setting"><div class="switch"></div><div class="txt"><div class="t">关窗/退出后仍允许外部 AI 调用</div><div class="d">安全口径变化：会常驻本机回环通道；需托盘可见；危险写默认拒绝。</div></div></div>
+          <div class="note">默认不做：MCP 留在这台机器；若要另一台机器上的 AI 访问，走用户自己的私有中继/VPN/隧道，而不是公共中继。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>ShuyoNote · 个人付费订阅版 · 需求效果图</span><span>P1 后台开关 / P3 可选 daemon＋MCP 驻留 · MCP 永远不依赖中继</span></div>
+</div>
+</body></html>

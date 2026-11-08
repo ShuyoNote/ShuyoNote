@@ -1,0 +1,36 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>02 连接体检</title></head><body>
+<div class="page">
+  <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 02 / 连接体检：把“为什么不同步”说清楚</span></div>
+  <h1>连接体检</h1>
+  <div class="sub">不要求用户看日志。每一项都给“在哪、通不通、下一步做什么”；一键复制脱敏诊断包。</div>
+  <div class="frame" style="margin-top:18px">
+    <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">同步 / 连接体检</span><span class="crumb">最近一次检查：3 秒前</span></div>
+    <div class="body">
+      <div class="split">
+        <div class="card">
+          <div class="section-title" style="margin-top:0">本机</div>
+          <div class="check"><div class="ic ok">✓</div><div><div class="t">网络接口</div><div class="d">en0 · 192.168.0.100（Wi-Fi）</div></div></div>
+          <div class="check"><div class="ic ok">✓</div><div><div class="t">发现频道</div><div class="d">UDP 47821 已监听；候选 47822–47830</div></div></div>
+          <div class="check"><div class="ic ok">✓</div><div><div class="t">同步窗口</div><div class="d">0.0.0.0:8788 · 服务 3 个空间</div></div></div>
+          <div class="check"><div class="ic warn">!</div><div><div class="t">系统代理</div><div class="d">检测到 HTTP 代理 127.0.0.1:7890；局域网已显式绕过，不影响</div></div></div>
+          <div class="section-title">对端</div>
+          <div class="check"><div class="ic ok">✓</div><div><div class="t">Windows PC</div><div class="d">192.168.0.105:8788 可达 · 配对秘密“有” · 房间匹配</div></div></div>
+          <div class="check"><div class="ic warn">!</div><div><div class="t">MacBook Air</div><div class="d">发现得到，但 TCP 8788 不可达（可能防火墙/端口被占）</div></div></div>
+          <div class="check"><div class="ic ok">✓</div><div><div class="t">最近一轮</div><div class="d">2 台对端 · 收下 3 页 · 0 失败 · 12 秒前</div></div></div>
+        </div>
+        <div class="card">
+          <div class="section-title" style="margin-top:0">手动添加设备（广播被挡时）</div>
+          <div class="input"><span>192.168.0.105:8788</span><span style="flex:none;color:var(--accent2)">添加</span></div>
+          <div class="hint" style="margin-top:8px">只填 IP:端口；设备号/信任仍走正常确认。手动地址与自动发现同时保留。</div>
+          <div class="actions"><span class="btn primary">重新体检</span><span class="btn">复制诊断包</span></div>
+          <div class="callout" style="margin-top:14px">诊断包只含：接口/IP、端口、对端短标识、失败原因、最近一轮计数；<b>不含页面正文、令牌、配对秘密</b>。</div>
+          <div class="section-title">下一步建议</div>
+          <div class="check"><div class="ic warn">1</div><div><div class="t">MacBook Air 不可达</div><div class="d">确认它仍在同一 Wi-Fi；检查它是否开着同步；再点“重新体检”。</div></div></div>
+          <div class="check"><div class="ic ok">2</div><div><div class="t">Windows PC 正常</div><div class="d">无需操作；上一轮已同步 3 页。</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>ShuyoNote · 个人付费订阅版 · 需求效果图</span><span>P1 交付 · 判据：每项检查都有真实读数/原因；无中继时同样可用</span></div>
+</div>
+</body></html>
