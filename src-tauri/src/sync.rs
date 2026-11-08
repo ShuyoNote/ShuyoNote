@@ -9211,6 +9211,39 @@ mod p33b_missing_uid_tests {
     }
 }
 
+/// ⭐ **P1 第一刀（task-53）**：写一台**已发现对端**的手动 base（覆盖自动发现报的地址）。
+///
+/// ⚠️ 只覆盖"候选 base"：⛔ 不改信任/配对/同步协议；公告仍用于"它是否在服务当前空间"的判断。
+/// 校验委托 [`crate::mesh::validate_manual_peer_base`]（非法值**当场报错**，不静默落下）。
+#[tauri::command]
+pub fn mesh_set_manual_peer(
+    db: tauri::State<'_, crate::db::Db>,
+    device_id: String,
+    base: String,
+) -> Result<bool, String> {
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    crate::mesh::set_manual_peer_base(&c, &device_id, &base)
+}
+
+/// ⭐ **P1 第一刀（task-53）**：清除一台设备的手动 base（幂等；本来没有 ⇒ `false`，不报错）。
+#[tauri::command]
+pub fn mesh_clear_manual_peer(
+    db: tauri::State<'_, crate::db::Db>,
+    device_id: String,
+) -> Result<bool, String> {
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    crate::mesh::clear_manual_peer_base(&c, &device_id)
+}
+
+/// ⭐ **P1 第一刀（task-53）**：读全部手动 base（`device_id → base`；只读、脱敏无正文）。
+#[tauri::command]
+pub fn mesh_manual_peers(
+    db: tauri::State<'_, crate::db::Db>,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    Ok(crate::mesh::manual_peer_bases(&c))
+}
+
 #[cfg(test)]
 mod attachment_peer_space_tests {
     //! ⭐ 2026-10-24（图片块同步的真因之一）：个人档的 `sync_profiles.space_id` **是空串**，

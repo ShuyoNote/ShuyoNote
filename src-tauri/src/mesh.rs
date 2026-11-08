@@ -34,6 +34,7 @@
 //! - 不做 NAT 穿透 / 跨网段 / 中继 / Web 参与（简报 §7 一字不改）；
 //! - 不做附件的对端选择（简报 §13 的 ④）。
 
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
@@ -743,6 +744,102 @@ pub fn invitable_base_for(
     Some(base.trim_end_matches('/').to_string())
 }
 
+// ───────────────── ⭐ P1 第一刀（task-53）：已发现对端的**手动 base 覆盖** ─────────────────
+//
+// 口径（只覆盖"候选 base"，⛔ 不改信任/配对/同步协议）：
+// · 存储＝**meta 的一个 KV**（`mesh_manual_peer_bases`，JSON 对象 `device_id → base`，最小实现）；
+// · 覆盖**只对"公告里确实在服务当前空间"的设备生效**（`lan::serves_space` 那一道不变）——
+//   ⛔ 绝不因为一条覆盖就凭空加入一台没被发现/没服务当前空间的设备；
+// · 无覆盖 ⇒ 旧行为逐字不变（仍用公告 `hub_base`）。
+
+/// meta KV 的键（值＝`{device_id: base}` 的 JSON 对象）。
+pub const MANUAL_PEER_BASES_KEY: &str = "mesh_manual_peer_bases";
+
+/// ⭐ **校验**一条手动 base（命令面唯一入口；⛔ 不静默接受非法值）。
+///
+/// 规则：`http://` 或 `https://` 开头；**主机非空**；**端口必须显式**且 1..=65535；
+/// 不许空白/路径/用户信息；返回**去掉尾部 `/`** 的规范形态（与 `invitable_base_for` 同一写法）。
+pub fn validate_manual_peer_base(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("手动地址不能为空".to_string());
+    }
+    let Some((scheme, rest)) = trimmed
+        .strip_prefix("http://")
+        .map(|r| ("http://", r))
+        .or_else(|| trimmed.strip_prefix("https://").map(|r| ("https://", r)))
+    else {
+        return Err("手动地址必须以 http:// 或 https:// 开头".to_string());
+    };
+    let rest = rest.trim_end_matches('/');
+    if rest.is_empty() {
+        return Err("手动地址缺少主机".to_string());
+    }
+    if rest.chars().any(char::is_whitespace) {
+        return Err("手动地址不能含空白".to_string());
+    }
+    if rest.contains('/') {
+        return Err("手动地址只填「主机:端口」，不要路径".to_string());
+    }
+    if rest.contains('@') {
+        return Err("手动地址不要带用户信息".to_string());
+    }
+    let Some((host, port)) = rest.rsplit_once(':') else {
+        return Err("手动地址必须显式写端口（主机:端口）".to_string());
+    };
+    let host = host.trim_matches(|c| c == '[' || c == ']');
+    if host.is_empty() {
+        return Err("手动地址缺少主机".to_string());
+    }
+    if port.is_empty() || port.parse::<u16>().ok().filter(|p| *p > 0).is_none() {
+        return Err("手动地址的端口必须是 1..=65535".to_string());
+    }
+    Ok(format!("{scheme}{rest}"))
+}
+
+/// 读全部手动覆盖（meta KV；坏 JSON ⇒ 空表，⛔ 不让读路径报错/崩）。
+pub fn manual_peer_bases(c: &rusqlite::Connection) -> BTreeMap<String, String> {
+    crate::sync::get_meta_state(c, MANUAL_PEER_BASES_KEY)
+        .and_then(|v| serde_json::from_str::<BTreeMap<String, String>>(&v).ok())
+        .unwrap_or_default()
+}
+
+/// ⭐ 写入/覆盖一台设备的 base（幂等：同值 ⇒ `Ok(false)` 且不写库）。返回"真的变了吗"。
+pub fn set_manual_peer_base(
+    c: &rusqlite::Connection,
+    device_id: &str,
+    base: &str,
+) -> Result<bool, String> {
+    let id = device_id.trim();
+    if id.is_empty() {
+        return Err("设备 id 不能为空".to_string());
+    }
+    let base = validate_manual_peer_base(base)?;
+    let mut map = manual_peer_bases(c);
+    if map.get(id).map(String::as_str) == Some(base.as_str()) {
+        return Ok(false);
+    }
+    map.insert(id.to_string(), base);
+    let json = serde_json::to_string(&map).map_err(|e| e.to_string())?;
+    crate::sync::set_meta_state(c, MANUAL_PEER_BASES_KEY, &json)?;
+    Ok(true)
+}
+
+/// ⭐ 清除一台设备的手动 base（幂等：本来没有 ⇒ `Ok(false)`，不报错）。
+pub fn clear_manual_peer_base(c: &rusqlite::Connection, device_id: &str) -> Result<bool, String> {
+    let id = device_id.trim();
+    if id.is_empty() {
+        return Err("设备 id 不能为空".to_string());
+    }
+    let mut map = manual_peer_bases(c);
+    if map.remove(id).is_none() {
+        return Ok(false);
+    }
+    let json = serde_json::to_string(&map).map_err(|e| e.to_string())?;
+    crate::sync::set_meta_state(c, MANUAL_PEER_BASES_KEY, &json)?;
+    Ok(true)
+}
+
 /// 从发现层那张表里挑出**这次要拉的对象** —— 纯函数（判据不打桩、不看真实网络）。
 ///
 /// 三条过滤见 [`invitable_base`]（**它就是那三条**，本函数不再自己写一遍）。
@@ -762,6 +859,31 @@ pub fn mesh_peers_by_name(
     my_device: &str,
     peers: &[crate::lan::Peer],
     local_encrypted: bool,
+) -> Vec<MeshPeer> {
+    // ⭐ 旧签名=无覆盖（空表 ⇒ 与加覆盖之前**逐字相同**）。
+    mesh_peers_by_name_with_overrides(
+        space_id,
+        space_name,
+        my_device,
+        peers,
+        local_encrypted,
+        &BTreeMap::new(),
+    )
+}
+
+/// ⭐ **P1 手动地址（task-53）**：[`mesh_peers_by_name`] 的**带手动覆盖**版本。
+///
+/// 覆盖优先级：`manual[device_id]`（同 `validate_manual_peer_base` 再验一遍）**优先于**公告
+/// `hub_base`；**但"这台设备是否在服务当前空间"仍只看公告**（`lan::serves_space` 那一道，
+/// 与 `invitable_base_for` 同一把尺）⇒ ⛔ **绝不因为一条覆盖凭空加入未知/不服务当前空间的设备**。
+/// 无覆盖的设备完全走旧逻辑（逐字不变）。
+pub fn mesh_peers_by_name_with_overrides(
+    space_id: &str,
+    space_name: &str,
+    my_device: &str,
+    peers: &[crate::lan::Peer],
+    local_encrypted: bool,
+    manual: &BTreeMap<String, String>,
 ) -> Vec<MeshPeer> {
     if space_id.trim().is_empty() && space_name.trim().is_empty() {
         return Vec::new();
@@ -783,10 +905,19 @@ pub fn mesh_peers_by_name(
                 continue;
             }
         }
-        let Some(base) = invitable_base_for(space_id, space_name, my_device, p) else {
+        let id = p.announce.device_id.trim();
+        // ⭐ 两条前置（与 `invitable_base_for` 同尺）：不是自己 ＋ 公告说它在服务当前空间。
+        if id.is_empty() || id == my_device.trim() || !crate::lan::serves_space(space_id, p) {
+            continue;
+        }
+        // ⭐ 覆盖优先；覆盖值再验一遍（防止外部写坏的 KV）。没有覆盖 ⇒ 旧逻辑（公告 base）。
+        let base = manual
+            .get(id)
+            .and_then(|b| validate_manual_peer_base(b).ok())
+            .or_else(|| invitable_base_for(space_id, space_name, my_device, p));
+        let Some(base) = base else {
             continue;
         };
-        let id = p.announce.device_id.trim();
         if out.iter().any(|q| q.device_id == id || q.base == base) {
             continue; // 同一台 / 同一个地址只拉一次
         }
@@ -1914,8 +2045,19 @@ pub async fn round(
                 .map(|p| crate::security::space_db_is_encrypted(std::path::Path::new(p)))
         })
         .unwrap_or(false);
-    let mut candidates =
-        mesh_peers_by_name(space_id, &space_name, my_device, peers, local_encrypted);
+    // ⭐ P1 手动地址：候选里用 meta 的覆盖值（没有覆盖 ⇒ 与旧逻辑逐字相同）。
+    let manual_bases = conn
+        .lock()
+        .map(|g| manual_peer_bases(&g))
+        .unwrap_or_default();
+    let mut candidates = mesh_peers_by_name_with_overrides(
+        space_id,
+        &space_name,
+        my_device,
+        peers,
+        local_encrypted,
+        &manual_bases,
+    );
     // ⭐ 2026-10-25（Step 3-2）：**把跨网路线表里的对端也喂进本轮**
     //   ⚠️ 默认构建什么都不做（跨网只有 --features relay 才可用）；坏了只打日志、不打断本轮。
     crate::relay_route::append_virtual_peers(&mut candidates);
@@ -5133,7 +5275,15 @@ pub async fn sealed_round(
     };
     let local_encrypted =
         crate::security::space_db_is_encrypted(&crate::db::space_db_path(dir, db_space));
-    let targets = mesh_peers_by_name(proto_space, &name, my_device, peers, local_encrypted);
+    let manual_bases = manual_peer_bases(&meta);
+    let targets = mesh_peers_by_name_with_overrides(
+        proto_space,
+        &name,
+        my_device,
+        peers,
+        local_encrypted,
+        &manual_bases,
+    );
     if targets.is_empty() {
         let note = "锁着：网段里没有能直接拉的对端（这一轮一个字节都没动）".to_string();
         // ⭐ 2026-10-28（owner「继续」／amd 锁态实验）：**锁着这条路的读数必须可见** ✗ ——
@@ -6482,6 +6632,134 @@ mod tests {
     ///
     /// **变异**：把 `invitable_base` 里那道 `if !crate::lan::is_lan_base(base)` 删掉 ⇒ 本判据**必须红** ✓
     /// （那时公网基址会进候选 ⇒ "个人版可能去连一个服务器" ✗）。
+    // ── ⭐ P1 手动地址第一刀（task-53）：校验 / 存储 / 候选覆盖 ─────────────────────
+
+    #[test]
+    fn manual_peer_base_validation_accepts_only_http_host_port() {
+        // 合法（尾部 `/` 归一掉）。
+        assert_eq!(
+            validate_manual_peer_base(" http://192.168.1.5:8788/ ").unwrap(),
+            "http://192.168.1.5:8788"
+        );
+        assert_eq!(
+            validate_manual_peer_base("https://peer.example:9443").unwrap(),
+            "https://peer.example:9443"
+        );
+        // 非法：scheme / 缺端口 / 坏端口 / 空主机 / 路径 / 用户信息 / 空白 / 空串。
+        for bad in [
+            "ftp://192.168.1.5:8788",
+            "192.168.1.5:8788",
+            "http://192.168.1.5",
+            "http://192.168.1.5:",
+            "http://192.168.1.5:0",
+            "http://192.168.1.5:70000",
+            "http://:8788",
+            "http://192.168.1.5:8788/path",
+            "http://u:p@192.168.1.5:8788",
+            "http://192.168.1.5 :8788",
+            "   ",
+        ] {
+            assert!(
+                validate_manual_peer_base(bad).is_err(),
+                "非法手动地址必须当场拒绝（⛔ 不静默接受）：{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn manual_peer_storage_is_idempotent_and_clear_restores_old_path() {
+        let c = space_conn("A");
+        assert!(set_manual_peer_base(&c, "dev-peer", "http://192.168.1.6:8788").unwrap());
+        assert_eq!(
+            manual_peer_bases(&c).get("dev-peer").map(String::as_str),
+            Some("http://192.168.1.6:8788")
+        );
+        // 幂等：同值 ⇒ false、不重复写。
+        assert!(!set_manual_peer_base(&c, "dev-peer", "http://192.168.1.6:8788").unwrap());
+        // 非法值 ⇒ Err 且旧值不动。
+        assert!(set_manual_peer_base(&c, "dev-peer", "ftp://x:1").is_err());
+        assert_eq!(
+            manual_peer_bases(&c).get("dev-peer").map(String::as_str),
+            Some("http://192.168.1.6:8788")
+        );
+        // 空 id ⇒ Err。
+        assert!(set_manual_peer_base(&c, "  ", "http://192.168.1.6:8788").is_err());
+        assert!(clear_manual_peer_base(&c, "  ").is_err());
+        // 清除幂等：第一次 true、第二次 false（不报错）。
+        assert!(clear_manual_peer_base(&c, "dev-peer").unwrap());
+        assert!(!clear_manual_peer_base(&c, "dev-peer").unwrap());
+        assert!(manual_peer_bases(&c).is_empty());
+    }
+
+    #[test]
+    fn a_manual_base_overrides_the_announced_one_but_never_adds_unknown_devices() {
+        let peers = vec![lan_peer_of(
+            "dev-peer",
+            Some("http://192.168.1.6:8788"),
+            &["sp-1"],
+        )];
+        // 无覆盖 ⇒ 旧行为逐字不变（公告 base）。
+        let old = mesh_peers_by_name("sp-1", "", "me", &peers, false);
+        assert_eq!(old.len(), 1);
+        assert_eq!(old[0].base, "http://192.168.1.6:8788");
+
+        // 有覆盖 ⇒ 候选 base 变手动值；device_id/其他字段不变。
+        let mut manual = BTreeMap::new();
+        manual.insert("dev-peer".to_string(), "http://10.0.0.9:9000".to_string());
+        let got = mesh_peers_by_name_with_overrides("sp-1", "", "me", &peers, false, &manual);
+        assert_eq!(got.len(), 1, "覆盖不许改变候选数量");
+        assert_eq!(got[0].device_id, "dev-peer");
+        assert_eq!(
+            got[0].base, "http://10.0.0.9:9000",
+            "⭐ 覆盖优先于公告 base"
+        );
+
+        // 给"没被发现"的设备写覆盖 ⇒ **⛔ 不凭空加入**（候选仍只有公告里那一台）。
+        manual.insert("ghost".to_string(), "http://10.0.0.10:9000".to_string());
+        let got = mesh_peers_by_name_with_overrides("sp-1", "", "me", &peers, false, &manual);
+        assert_eq!(got.len(), 1, "⛔ 手动覆盖不许凭空加设备");
+        assert!(got.iter().all(|p| p.device_id != "ghost"));
+
+        // 公告说它服务别的空间 ⇒ 有覆盖也**不进候选**（"服务当前空间"仍只看公告）。
+        let other = vec![lan_peer_of(
+            "dev-peer",
+            Some("http://192.168.1.6:8788"),
+            &["sp-other"],
+        )];
+        assert!(
+            mesh_peers_by_name_with_overrides("sp-1", "", "me", &other, false, &manual).is_empty(),
+            "⛔ 覆盖不许绕过\"服务当前空间\"这一道"
+        );
+
+        // 公告没报地址（None）＋ 有覆盖 ⇒ 用覆盖（这正是手动地址的用途）。
+        let no_base = vec![lan_peer_of("dev-peer", None, &["sp-1"])];
+        assert!(
+            mesh_peers("sp-1", "me", &no_base).is_empty(),
+            "旧行为：没报地址不进"
+        );
+        let got = mesh_peers_by_name_with_overrides("sp-1", "", "me", &no_base, false, &manual);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].base, "http://10.0.0.9:9000");
+    }
+
+    #[test]
+    fn manual_override_keeps_the_old_order_and_dedupe() {
+        let peers = vec![
+            lan_peer_of("dev-b", Some("http://192.168.1.7:8788"), &["sp-1"]),
+            lan_peer_of("dev-a", Some("http://192.168.1.8:8788"), &["sp-1"]),
+        ];
+        let mut manual = BTreeMap::new();
+        manual.insert("dev-a".to_string(), "http://10.0.0.1:9000".to_string());
+        let got = mesh_peers_by_name_with_overrides("sp-1", "", "me", &peers, false, &manual);
+        assert_eq!(
+            got.iter().map(|p| p.device_id.as_str()).collect::<Vec<_>>(),
+            vec!["dev-a", "dev-b"],
+            "顺序仍按 device_id（判据要能逐字节比）"
+        );
+        assert_eq!(got[0].base, "http://10.0.0.1:9000");
+        assert_eq!(got[1].base, "http://192.168.1.7:8788");
+    }
+
     #[test]
     fn the_mesh_never_dials_a_public_base() {
         for bad in [

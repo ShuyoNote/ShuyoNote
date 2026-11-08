@@ -1775,6 +1775,13 @@ export function makeInvoke(store: SqliteStore) {
       //   ⛔ 不假装拉过、⛔ 不编 per-space 行）。
       return { spaces: [], total: 0, ok: 0, failed: 0, applied: 0, candidates: 0 } as T;
     }
+    if (cmd === "mesh_manual_peers") {
+      // ⭐ P1 手动地址：Web 没有设备发现层 ⇒ 没有可覆盖的对端；回空表（界面照常渲染）。
+      return {} as T;
+    }
+    if (cmd === "mesh_set_manual_peer" || cmd === "mesh_clear_manual_peer") {
+      throw new Error("Web 版没有设备发现层 ⇒ 手动地址只在桌面版可用");
+    }
     if (cmd === "mesh_missing_spaces") {
       // ⭐ 2026-10-23：候选表只在桌面版有（它要发现层与配对名单；Web 两样都没有）。
       //   ⚠️ 回**空表**而不是抛错：这是"这一档没有"，界面照常渲染（⛔ 不是"没有候选"）。

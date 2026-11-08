@@ -627,6 +627,17 @@ export const api = {
    */
   meshEnsureDefaults: (workspaceId?: string | null) =>
     invoke("mesh_ensure_defaults", { workspaceId: workspaceId ?? null }) as Promise<MeshConfigState>,
+  /**
+   * ⭐ **P1 手动地址（2026-11-08）**：给已发现对端写手动 base（覆盖自动发现地址）。
+   * ⚠️ 只覆盖"候选 base"；公告仍决定"它是否在服务当前空间"（⛔ 不凭空加设备）。
+   */
+  meshSetManualPeer: (deviceId: string, base: string) =>
+    invoke("mesh_set_manual_peer", { deviceId, base }) as Promise<boolean>,
+  /** ⭐ 清除手动 base（幂等；恢复公告地址）。 */
+  meshClearManualPeer: (deviceId: string) =>
+    invoke("mesh_clear_manual_peer", { deviceId }) as Promise<boolean>,
+  /** ⭐ 读全部手动 base（只读、脱敏）。 */
+  meshManualPeers: () => invoke("mesh_manual_peers") as Promise<Record<string, string>>,
   // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
   // 传 `server_url` 会被判为「缺少必填键 serverUrl」——这是运行时错误，TS 查不出来，
   // 所以 CommandMap 里也按 camelCase 声明，并由 check-web-commands 兜底校验。

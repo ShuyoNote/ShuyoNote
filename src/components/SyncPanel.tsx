@@ -462,6 +462,56 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
    *  ⚠️ **R176-A**：屏上要显示的就是它的**设备名 ＋ 短标识** ✓ —— ⛔ 不显示 `device_id` ✗
    *  （唯一实现是 `peerIdentityLine(device_name, short_id)` ✓，见 `../lib/peerIdentity.ts` ✓）。 */
   const [pairPeer, setPairPeer] = useState<NearbyPeer | null>(null);
+  // ⭐ **P1 手动地址（task-53）**：已发现对端的**手动 base 覆盖**（只覆盖候选地址，不改信任/配对）。
+  //   · 只对「服务当前空间」或「已信任」的那一行显示入口（与 §任务口径一致）；
+  //   · 地图式读全部覆盖（`device_id → base`），清除即回落到公告地址；
+  //   · 保存/清除后只**重读这一张表**（⛔ 不动 lanStatus/不改其他 UI）。
+  const [manualPeers, setManualPeers] = useState<Record<string, string>>({});
+  const [manualEdit, setManualEdit] = useState<{ deviceId: string; base: string } | null>(null);
+  const [manualBusy, setManualBusy] = useState<string | null>(null);
+  const refreshManualPeers = async () => {
+    try {
+      const map = await api.meshManualPeers();
+      // 判据/老 mock 可能给 `undefined/null` ⇒ 当空表（⛔ 不让它把整行打崩）。
+      setManualPeers(map && typeof map === "object" ? map : {});
+    } catch {
+      // 读不到只影响这一行读数（⛔ 不弹错、不影响同步）。
+    }
+  };
+  useEffect(() => {
+    void refreshManualPeers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const saveManualPeer = async (deviceId: string) => {
+    const raw = manualEdit?.deviceId === deviceId ? manualEdit.base : "";
+    if (!raw.trim()) {
+      toast("手动地址不能为空（要 http:// 或 https:// 主机:端口）", "error");
+      return;
+    }
+    setManualBusy(deviceId);
+    try {
+      await api.meshSetManualPeer(deviceId, raw.trim());
+      await refreshManualPeers();
+      setManualEdit(null);
+      toast("手动地址已保存（下一轮设备直连生效）", "success");
+    } catch (e) {
+      toast(`手动地址没保存：${e instanceof Error ? e.message : String(e)}`, "error");
+    } finally {
+      setManualBusy(null);
+    }
+  };
+  const clearManualPeer = async (deviceId: string) => {
+    setManualBusy(deviceId);
+    try {
+      await api.meshClearManualPeer(deviceId);
+      await refreshManualPeers();
+      toast("已清除手动地址（下一轮恢复公告地址）", "success");
+    } catch (e) {
+      toast(`没清除成：${e instanceof Error ? e.message : String(e)}`, "error");
+    } finally {
+      setManualBusy(null);
+    }
+  };
   /**
    * ⭐ **R110（owner 2026-10-02 拍 A）**：**这段码给哪一台**（空 ＝ 不指定 ✓）。
    * ⚠️ 存的是**对方的 `device_id`**（进载荷、也用于本机先登记 ✓）—— 但**屏幕上只显示短码** ✓：
@@ -1723,6 +1773,69 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                         {!p.invitable && p.serves_current && (
                           <span className="sync-hint">它没报可以直连的地址</span>
                         )}
+                        {/* ⭐ P1 手动地址（task-53）：只对「服务当前空间／已信任」的行显示。
+                            ⛔ 不改其他动作；清除即回落到公告地址；保存后下一轮候选才用它。 */}
+                        {(p.serves_current || paired) &&
+                          ((manualPeers ?? {})[p.device_id] ? (
+                            <span className="sync-hint" data-testid="nearby-manual-current">
+                              手动地址：{(manualPeers ?? {})[p.device_id]}
+                              <button
+                                className="sync-mini-btn"
+                                data-testid="nearby-manual-clear"
+                                disabled={manualBusy === p.device_id}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void clearManualPeer(p.device_id);
+                                }}
+                              >
+                                清除
+                              </button>
+                            </span>
+                          ) : manualEdit?.deviceId === p.device_id ? (
+                            <span className="sync-hint" data-testid="nearby-manual-edit">
+                              <input
+                                className="sync-input"
+                                data-testid="nearby-manual-input"
+                                placeholder="http://192.168.1.5:8788"
+                                value={manualEdit.base}
+                                onChange={(e) =>
+                                  setManualEdit({ deviceId: p.device_id, base: e.target.value })
+                                }
+                              />
+                              <button
+                                className="sync-mini-btn"
+                                data-testid="nearby-manual-save"
+                                disabled={manualBusy === p.device_id}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void saveManualPeer(p.device_id);
+                                }}
+                              >
+                                保存
+                              </button>
+                              <button
+                                className="sync-mini-btn"
+                                data-testid="nearby-manual-cancel"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setManualEdit(null);
+                                }}
+                              >
+                                取消
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              className="sync-mini-btn"
+                              data-testid="nearby-manual-address"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setManualEdit({ deviceId: p.device_id, base: "" });
+                              }}
+                            >
+                              手动地址
+                            </button>
+                          ))}
                       </div>
                       {/* ⭐⭐ **R176-A（owner 2026-10-28 拍 A）⑤** ✗：「不再信任」的**语义写在按钮旁** ✓ ——
                           ⭐ 只停止同步、⭐ **本机数据一个字节都不动**（owner 最怕的是"取消信任把笔记删了"✓）。

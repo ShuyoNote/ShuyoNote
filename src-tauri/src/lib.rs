@@ -1242,6 +1242,9 @@ pub fn run() {
             sync::mesh_missing_spaces,
             sync::mesh_create_spaces,
             sync::mesh_set_config,
+            sync::mesh_set_manual_peer,
+            sync::mesh_clear_manual_peer,
+            sync::mesh_manual_peers,
             // ⭐ 2026-10-27（owner 拍 M2）：用户**进入「局域网同步」页**时才备好局域网前置
             //   （设备身份／自动组名／监听地址／档案行）—— ⛔ 不在启动时自动写（桌面隐私口径不变 ✓）。
             sync::mesh_ensure_defaults,

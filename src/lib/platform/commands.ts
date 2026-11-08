@@ -1211,6 +1211,17 @@ export interface CommandMap {
    */
   mesh_ensure_defaults: { args: { workspaceId?: string | null }; result: MeshConfigState };
 
+  /**
+   * ⭐ **P1 手动地址（2026-11-08）**：给**已发现对端**写一个手动 base（覆盖自动发现报的地址）。
+   * ⚠️ 只覆盖"候选 base"：不改信任/配对/同步协议；非法 scheme/无端口 ⇒ Rust 当场报错（不静默落下）。
+   * 回 `true` = 真的改了，`false` = 同值（幂等）。
+   */
+  mesh_set_manual_peer: { args: { deviceId: string; base: string }; result: boolean };
+  /** ⭐ 清除一台设备的手动 base（幂等；本来没有 ⇒ `false`，不报错）。 */
+  mesh_clear_manual_peer: { args: { deviceId: string }; result: boolean };
+  /** ⭐ 读全部手动 base（`device_id → base`；只读、脱敏）。 */
+  mesh_manual_peers: { args: undefined; result: Record<string, string> };
+
   // ---- MCP 接入的面板（M1 收口，2026-10-06 ✓）----
   // 面板只要三件事：读状态／开关／轮换令牌 ✓；**通道那半不在这里**（它归 `mcp_channel` ✓）。
   mcp_status: { args: undefined; result: McpStatus };
