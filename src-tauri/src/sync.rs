@@ -4520,10 +4520,11 @@ pub struct SyncCoreRoundReport {
 ///
 /// ⚠️ **定时器/网络闸门/退避仍在前端**（本笔只下沉"编排"）：这条命令不做任何节流/闸门判断。
 /// ⚠️ 与单空间 `sync_workspace` / `mesh_sync_now` 共用同一套内部实现（⛔ 不复制行为）。
-#[tauri::command]
-pub async fn sync_core_round(
-    app: tauri::AppHandle,
-    db: State<'_, Db>,
+/// ⭐ **P3-1a 第三刀（task-55）**：`sync_core_round` 的**内部实现**（命令与 Rust 调度器共用；
+/// 行为/返回与命令**同形**）。
+pub(crate) async fn sync_core_round_inner(
+    app: &tauri::AppHandle,
+    db: &State<'_, Db>,
 ) -> Result<SyncCoreRoundReport, String> {
     let profiles = {
         let c = db.0.lock().expect("db mutex poisoned");
@@ -4536,14 +4537,14 @@ pub async fn sync_core_round(
             continue;
         }
         // ⚠️ 失败**只进它自己那一行**（含错误原文），后面的空间照跑（⛔ 不提前 return）。
-        match sync_workspace_result(&app, &db, &p.ws_id).await {
+        match sync_workspace_result(app, db, &p.ws_id).await {
             Ok(row) => server.push(row),
             Err(e) => server.push(workspace_sync_error_row(&p.ws_id, e)),
         }
     }
     // ② 网格那支：**所有 profiles**（个人空间 `space_id` 常为空，但仍要跑网格）；
     //    内部逐空间串行、失败不连坐（与 `mesh_sync_all_now` **同一实现**）。
-    let mesh = match mesh_sync_all_report(&app, &db).await {
+    let mesh = match mesh_sync_all_report(app, db).await {
         Ok(r) => r,
         Err(e) => {
             // 列表都读不到是异常路径 ⇒ 不让整轮按死；如实记一行、回空汇总。
@@ -4559,6 +4560,15 @@ pub async fn sync_core_round(
         }
     };
     Ok(SyncCoreRoundReport { server, mesh })
+}
+
+/// ⭐ **P3-1a 第三刀（task-55）**：命令只委托内部实现（前端调用面/返回形状不变）。
+#[tauri::command]
+pub async fn sync_core_round(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+) -> Result<SyncCoreRoundReport, String> {
+    sync_core_round_inner(&app, &db).await
 }
 
 /// ⭐⭐ **task-12（owner 拍 C：后台每 5 分钟一轮）**：**不靠界面**也把网格那一轮跑掉 ✓。

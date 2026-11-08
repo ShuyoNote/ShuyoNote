@@ -260,6 +260,7 @@ mod security;
 mod space_snapshot_client;
 mod storage;
 mod sync;
+mod sync_core;
 mod tags;
 mod tempdir;
 mod templates;
@@ -855,6 +856,9 @@ pub fn run() {
             // launch so the passphrase must be re-entered before any encrypted sync.
             security::startup_lock(&conn);
             app.manage(Db(Mutex::new(conn)));
+            // ⭐ P3-1a 第三刀（task-55）：Rust sync_core 调度器 —— **默认关闭**，
+            //   只有 `SHUYONOTE_SYNC_CORE=1/true/on` 才启动（缺省该函数立刻返回，零行为变化）。
+            crate::sync_core::start_if_enabled(app.handle());
             // ⭐⭐ **2026-10-26（移动端局域网同步）**：⭐ 手机/平板**没有桌面那张「设备直连」设置卡** ✗
             //   （owner 2026-10-14 把那张卡删了）⇒ 移动端要在**启动时**把设备直连的两样前置备好，
             //   否则发现层永远不发言（`should_run_discovery` 恒假）⇒ 手机在「附近的设备」里
