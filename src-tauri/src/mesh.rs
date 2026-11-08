@@ -804,6 +804,14 @@ pub fn manual_peer_bases(c: &rusqlite::Connection) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
+/// ⭐ **task-65**：**两种连接形状都能读**的手动 KV（锁态给的是 `open_meta_conn_at` 的裸 meta；
+/// 生产空间连接是"空间库 ＋ ATTACH meta"）。读路径只读，不写。
+pub fn manual_peer_bases_any(c: &rusqlite::Connection) -> BTreeMap<String, String> {
+    crate::sync::get_meta_state_any(c, MANUAL_PEER_BASES_KEY)
+        .and_then(|v| serde_json::from_str::<BTreeMap<String, String>>(&v).ok())
+        .unwrap_or_default()
+}
+
 /// ⭐ **task-62**：手动添加设备时的 `device_id` 校验（与"设备标识"同口径）：
 /// 去空白后非空、≤128、只允许字母/数字/`-`/`_`/`.`（⛔ 空格/控制符/中文一律拒绝）。
 pub fn validate_manual_device_id(raw: &str) -> Result<String, String> {
@@ -5340,6 +5348,34 @@ fn handle_pull(state: &State, target: &str) -> Reply {
     }
 }
 
+/// ⭐ **task-65**：锁态（打不开空间库）下的候选构造 —— 与正常 `round` **同一个追加函数**：
+/// 从 **meta**（锁态唯一可读的库）读手动 KV ＋ `paired_devices(db_space, device_level)`，
+/// 已发现候选之后只追加**本空间已配对**的手动设备；未配对 ⛔ 不加。只读，不解密/不写库。
+pub(crate) fn sealed_round_candidates(
+    meta: &Connection,
+    proto_space: &str,
+    space_name: &str,
+    my_device: &str,
+    peers: &[crate::lan::Peer],
+    local_encrypted: bool,
+    db_space: &str,
+    device_level: bool,
+) -> Vec<MeshPeer> {
+    let manual_bases = manual_peer_bases_any(meta);
+    let paired_ids: Vec<String> = paired_devices(meta, db_space, device_level)
+        .map(|v| v.into_iter().map(|d| d.device_id).collect())
+        .unwrap_or_default();
+    mesh_peers_by_name_with_manual(
+        proto_space,
+        space_name,
+        my_device,
+        peers,
+        local_encrypted,
+        &manual_bases,
+        &paired_ids,
+    )
+}
+
 /// ⭐ 2026-10-23（S3c-接②）：**锁着时的那一轮** —— 不开空间库，只把对端的封包收进 `meta.mesh_inbox`。
 ///
 /// 与 [`round`] 的关系：`round` 要一条**空间连接**（读设置、读名字、落库）；库打不开时那条路走不了
@@ -5355,6 +5391,8 @@ pub async fn sealed_round(
     db_space: &str,
     my_device: &str,
     peers: &[crate::lan::Peer],
+    // ⭐ task-65：本空间配对档位（设备级/空间级）—— 锁态也要用它读**本空间已配对**名单。
+    device_level: bool,
 ) -> Result<MeshRoundReport, String> {
     let meta = crate::db::open_meta_conn_at(dir)?;
     // 空间名：锁着时只能从 meta 读（空间库里那份开不了 ✓）
@@ -5372,14 +5410,17 @@ pub async fn sealed_round(
     };
     let local_encrypted =
         crate::security::space_db_is_encrypted(&crate::db::space_db_path(dir, db_space));
-    let manual_bases = manual_peer_bases(&meta);
-    let targets = mesh_peers_by_name_with_overrides(
+    // ⭐ task-65：锁态也追加"**本空间已配对**"的手动候选（同一纯函数；未配对不加）。
+    //   ⚠️ 只读 meta；不解密/不应用/不新增任何写库路径（下面仍只搬密封包）。
+    let targets = sealed_round_candidates(
+        &meta,
         proto_space,
         &name,
         my_device,
         peers,
         local_encrypted,
-        &manual_bases,
+        db_space,
+        device_level,
     );
     if targets.is_empty() {
         let note = "锁着：网段里没有能直接拉的对端（这一轮一个字节都没动）".to_string();
@@ -6916,6 +6957,123 @@ mod tests {
         // 旧 builder 对同一份 manual/peers **逐字不变**（不追加 ghost）。
         let old = mesh_peers_by_name_with_overrides("sp-1", "", "me", &peers, false, &manual);
         assert_eq!(old.len(), 2);
+    }
+
+    /// ⭐ task-65：锁态 fixture —— 从 **meta** 读配对名单/手动 KV，只追加已配对设备。
+    #[test]
+    fn sealed_round_candidates_append_only_paired_manual_devices_from_meta() {
+        let dir = temp_dir("sealed-manual");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        let meta = crate::db::open_meta_conn_at(&dir).unwrap();
+        meta.execute(
+            "INSERT INTO workspaces (id, name, created_at, updated_at) VALUES ('sp-locked', '工作', 1, 1)",
+            [],
+        )
+        .unwrap();
+        // 两条配对：一条空间级、一条设备级；另有一条**未配对**的手动。
+        crate::db::pair_device(
+            &meta,
+            paired_row_key("sp-locked", false),
+            "dev-paired",
+            "tok",
+        )
+        .unwrap();
+        crate::db::pair_device(&meta, paired_row_key("sp-locked", true), "dev-dl", "tok").unwrap();
+        let manual: BTreeMap<String, String> = [
+            ("dev-paired", "http://10.0.0.1:9000"),
+            ("dev-dl", "http://10.0.0.2:9000"),
+            ("dev-ghost", "http://10.0.0.3:9000"),
+        ]
+        .iter()
+        .map(|(d, b)| (d.to_string(), b.to_string()))
+        .collect();
+        crate::sync::set_meta_state_any(
+            &meta,
+            MANUAL_PEER_BASES_KEY,
+            &serde_json::to_string(&manual).unwrap(),
+        )
+        .unwrap();
+        // 空间级：只有 dev-paired（dev-dl 是设备级，dev-ghost 未配对）。
+        let got = sealed_round_candidates(
+            &meta,
+            "proto-locked",
+            "工作",
+            "me",
+            &[],
+            false,
+            "sp-locked",
+            false,
+        );
+        assert_eq!(
+            got.iter().map(|p| p.device_id.as_str()).collect::<Vec<_>>(),
+            vec!["dev-paired"],
+            "⛔ 未配对的手动设备不许进锁态候选；设备级配对也不许串到空间级"
+        );
+        assert_eq!(got[0].base, "http://10.0.0.1:9000");
+        // 设备级：只用设备级配对行（dev-dl）。
+        let dl = sealed_round_candidates(
+            &meta,
+            "proto-locked",
+            "工作",
+            "me",
+            &[],
+            false,
+            "sp-locked",
+            true,
+        );
+        assert_eq!(
+            dl.iter().map(|p| p.device_id.as_str()).collect::<Vec<_>>(),
+            vec!["dev-dl"]
+        );
+        // 正常 path 的旧 builder 对同一份 manual 不追加（行为不变）。
+        assert!(
+            mesh_peers_by_name_with_overrides(
+                "proto-locked",
+                "工作",
+                "me",
+                &[],
+                false,
+                &manual_peer_bases(&meta)
+            )
+            .is_empty(),
+            "旧 builder 不许追加手动设备"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 源码级：锁态只读 meta（配对/手动 KV）→ 同一个 append 函数；仍不解密/不应用/不开空间库。
+    #[test]
+    fn sealed_round_reads_meta_only_and_keeps_the_sealed_semantics() {
+        let src = include_str!("mesh.rs");
+        let helper = src
+            .split("pub(crate) fn sealed_round_candidates(")
+            .nth(1)
+            .expect("helper 必须在");
+        let helper = &helper[..helper.find("\n}").unwrap_or(helper.len())];
+        assert!(helper.contains("manual_peer_bases_any(meta)"));
+        assert!(helper.contains("paired_devices(meta, db_space, device_level)"));
+        assert!(helper.contains("mesh_peers_by_name_with_manual("));
+        // sealed_round 用 helper 建候选，且没有解密/应用/开空间库。
+        let round = src
+            .split("pub async fn sealed_round(")
+            .nth(1)
+            .expect("sealed_round 必须在");
+        let round = &round[..round
+            .find("\npub fn stash_sealed_rows(")
+            .unwrap_or(round.len())];
+        assert!(round.contains("sealed_round_candidates("));
+        for forbidden in [
+            "unseal_rows(",
+            "drain_inbox(",
+            "apply_mesh_records",
+            "open_space_conn_at",
+            "crate::db::init(",
+        ] {
+            assert!(
+                !round.contains(forbidden),
+                "⛔ 锁态轮不许解密/应用/打开空间库：{forbidden}"
+            );
+        }
     }
 
     /// 源码级：生产轮次把「本空间已配对」名单喂给候选构造；旧入口不追加。

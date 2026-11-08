@@ -916,7 +916,15 @@ fn spawn_background_round(
                 }
                 None => match crate::db::app_data_dir_ref() {
                     Some(dir) => {
-                        crate::mesh::sealed_round(dir, &proto_space, &db_space, &dev, &peers).await
+                        crate::mesh::sealed_round(
+                            dir,
+                            &proto_space,
+                            &db_space,
+                            &dev,
+                            &peers,
+                            device_level,
+                        )
+                        .await
                     }
                     None => Err("app data 目录读不到 ⇒ 这一轮连搬运缓存都读不了".to_string()),
                 },

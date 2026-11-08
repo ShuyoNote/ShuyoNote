@@ -4335,8 +4335,15 @@ async fn mesh_sync_one(
         None => match crate::db::app_data_dir_ref() {
             Some(dir) => {
                 // 锁着/打不开 ⇒ 走封包那条路（只进 inbox，不解密不应用 ✓）—— 与后台轮同口径。
-                crate::mesh::sealed_round(dir, &scope.space, &scope.db_space, &scope.device, &peers)
-                    .await?
+                crate::mesh::sealed_round(
+                    dir,
+                    &scope.space,
+                    &scope.db_space,
+                    &scope.device,
+                    &peers,
+                    scope.device_level,
+                )
+                .await?
             }
             None => {
                 return Err("app data 目录读不到 ⇒ 这一轮连搬运缓存都读不了".to_string());
