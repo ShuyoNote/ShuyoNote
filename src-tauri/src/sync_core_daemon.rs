@@ -403,6 +403,20 @@ pub fn run_daemon() -> i32 {
     };
     crate::security::startup_lock(&conn);
     app.manage(crate::db::Db(std::sync::Mutex::new(conn)));
+    // ③.5 ⭐ task-63：**IPC**（锁 → DB → IPC → 调度器 的顺序）。起不来**只记日志**，
+    //     不影响 daemon 主循环（App 侧查询会降级为 reachable=false）。
+    let _ipc = match tauri::async_runtime::block_on(start_ipc(app.handle().clone())) {
+        Ok((port, guard)) => {
+            eprintln!(
+                "[sync-core-daemon] 回环 IPC 已启动（127.0.0.1:{port}；endpoint 文件 0600；token 不打印）"
+            );
+            Some(guard)
+        }
+        Err(e) => {
+            eprintln!("[sync-core-daemon] IPC 起不来（不影响主循环，App 查询会降级）：{e}");
+            None
+        }
+    };
     // ④ 打开 sync_core runtime 开关（懒启动调度循环；daemon 默认启用）。
     crate::sync_core::set_runtime_enabled(app.handle(), true);
     eprintln!(
@@ -414,6 +428,510 @@ pub fn run_daemon() -> i32 {
     // ⑤ 阻塞（本笔不引 tokio signal feature；进程被终止即结束；锁残留由 pid 回收兜底）。
     tauri::async_runtime::block_on(std::future::pending::<()>());
     unreachable!("daemon 循环永不返回")
+}
+
+// ── ⭐ P3-1b IPC 骨架（task-63）：回环 endpoint ＋ Bearer 鉴权 ＋ 最小 HTTP/1.1 ──────────────
+//
+// 安全边界（本文件的承重）：
+// * **只绑回环** `127.0.0.1:0`（⛔ 不绑 0.0.0.0/LAN）；
+// * endpoint 文件 `<app data>/sync_core.endpoint.json`（`{port, token}`；unix 0600），
+//   `Drop` 尽力删除；token 用 `crypto::random_32` **32 hex 字符**（16 字节）；
+// * 所有请求：`Authorization: Bearer <token>`（常数时间比较）＋ `Host`/`Origin` **必须是回环**
+//   （挡 DNS rebinding：`127.0.0.1.evil` 这类**不**算回环）；否则 401/403；
+// * 只提供 `GET /status`、`POST /round`；其他路径 404、已知路径错方法 405、请求体 >1KiB 413；
+// * ⛔ 不打印 token、错误信息不夹带 token；⛔ 本笔 App 只**只读**查询 `/status`，不触发 round。
+
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+/// daemon 回环 endpoint 文件名（唯一出处）。
+pub const ENDPOINT_FILE_NAME: &str = "sync_core.endpoint.json";
+/// IPC 请求体上限（本笔 round 不需要请求体；只防滥用）。
+pub const IPC_MAX_BODY_BYTES: usize = 1024;
+/// IPC 单连接读请求头上限。
+const IPC_MAX_HEADER_BYTES: usize = 8 * 1024;
+/// App 只读查询 `/status` 的短超时（daemon 不在 ⇒ 快速降级，不卡 UI）。
+pub const IPC_STATUS_TIMEOUT_MS: u64 = 400;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SyncCoreEndpoint {
+    pub port: u16,
+    pub token: String,
+}
+
+/// endpoint 文件路径。
+pub fn endpoint_path(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join(ENDPOINT_FILE_NAME)
+}
+
+/// 写 endpoint（unix 权限 **0600**；含 token ⇒ ⛔ 不 world-readable）。
+pub fn write_endpoint(path: &Path, ep: &SyncCoreEndpoint) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("建 endpoint 目录失败：{e}"))?;
+    }
+    let text = serde_json::to_string(ep).map_err(|e| format!("endpoint 序列化失败：{e}"))?;
+    #[cfg(unix)]
+    {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|e| format!("建 endpoint 文件失败：{e}"))?;
+        f.write_all(text.as_bytes())
+            .map_err(|e| format!("写 endpoint 失败：{e}"))?;
+        // 已存在文件可能旧权限更宽：显式再设一次。
+        let _ = std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, text).map_err(|e| format!("写 endpoint 失败：{e}"))?;
+    }
+    Ok(())
+}
+
+/// 读 endpoint；文件不存在/坏 JSON/字段非法 ⇒ 可读 `Err`（调用方降级，不抛 UI）。
+pub fn read_endpoint(path: &Path) -> Result<SyncCoreEndpoint, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            "daemon 未运行（没有 endpoint 文件）".to_string()
+        } else {
+            format!("读 endpoint 失败：{e}")
+        }
+    })?;
+    let ep: SyncCoreEndpoint = serde_json::from_str(&text)
+        .map_err(|_| "endpoint 文件内容坏了（JSON 不合法）".to_string())?;
+    if ep.port == 0 || ep.token.trim().is_empty() || ep.token.len() > 128 {
+        return Err("endpoint 文件字段非法（port/token）".to_string());
+    }
+    Ok(ep)
+}
+
+/// endpoint 文件守门：`Drop` 尽力删除（daemon 退出后 App 查不到 ⇒ 降级）。
+pub struct EndpointFileGuard {
+    path: PathBuf,
+}
+
+impl EndpointFileGuard {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl Drop for EndpointFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// 解析后的最小 HTTP/1.1 请求（判据可直接喂）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedRequest {
+    pub method: String,
+    pub path: String,
+    pub headers: BTreeMap<String, String>,
+    pub body_len: usize,
+}
+
+/// 解析请求头（到 `\r\n\r\n`；方法/路径/头；⛔ 不解析 body 内容）。
+pub fn parse_http_request(head: &[u8]) -> Result<ParsedRequest, String> {
+    let text = std::str::from_utf8(head).map_err(|_| "请求头不是 UTF-8".to_string())?;
+    let head_end = text.find("\r\n\r\n").ok_or("请求头不完整（没有空行）")?;
+    let mut lines = text[..head_end].split("\r\n");
+    let first = lines.next().ok_or("缺请求行")?;
+    let mut parts = first.split_whitespace();
+    let method = parts.next().ok_or("缺方法")?.to_ascii_uppercase();
+    let target = parts.next().ok_or("缺路径")?;
+    let path = target.split('?').next().unwrap_or(target).to_string();
+    let mut headers = BTreeMap::new();
+    let mut body_len = 0usize;
+    for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        let (name, value) = line.split_once(':').ok_or("请求头缺冒号")?;
+        let name = name.trim().to_ascii_lowercase();
+        let value = value.trim().to_string();
+        if name == "content-length" {
+            body_len = value.parse::<usize>().map_err(|_| "Content-Length 非法")?;
+        }
+        headers.insert(name, value);
+    }
+    Ok(ParsedRequest {
+        method,
+        path,
+        headers,
+        body_len,
+    })
+}
+
+/// 路由决策（鉴权通过后）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IpcRoute {
+    Status,
+    Round,
+}
+
+/// 鉴权/路由结果里的拒绝码。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IpcReject {
+    Unauthorized,
+    Forbidden,
+    MethodNotAllowed,
+    NotFound,
+    PayloadTooLarge,
+    BadRequest,
+}
+
+impl IpcReject {
+    pub fn status_code(self) -> u16 {
+        match self {
+            IpcReject::Unauthorized => 401,
+            IpcReject::Forbidden => 403,
+            IpcReject::MethodNotAllowed => 405,
+            IpcReject::NotFound => 404,
+            IpcReject::PayloadTooLarge => 413,
+            IpcReject::BadRequest => 400,
+        }
+    }
+
+    pub fn reason(self) -> &'static str {
+        match self {
+            IpcReject::Unauthorized => "unauthorized",
+            IpcReject::Forbidden => "forbidden",
+            IpcReject::MethodNotAllowed => "method_not_allowed",
+            IpcReject::NotFound => "not_found",
+            IpcReject::PayloadTooLarge => "payload_too_large",
+            IpcReject::BadRequest => "bad_request",
+        }
+    }
+}
+
+/// 常数时间字符串比较（token 不许因为比较耗时泄露前缀）。
+pub fn ct_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Host 头必须是**回环**：`127.0.0.1` / `localhost` / `[::1]`（可带端口）；
+/// ⛔ `127.0.0.1.evil`、`localhost.evil`、LAN IP、任意域名都不算。
+pub fn is_loopback_host_header(value: &str) -> bool {
+    let v = value.trim();
+    if v.starts_with('[') {
+        // [::1]:port（`]` 之后只允许空或 `:port`；⛔ `[::1].evil` 不算）。
+        let Some(end) = v.find(']') else { return false };
+        let host = &v[1..end];
+        let rest = &v[end + 1..];
+        return host == "::1" && (rest.is_empty() || rest.starts_with(':'));
+    }
+    let host = v.split(':').next().unwrap_or(v);
+    host == "127.0.0.1" || host == "localhost"
+}
+
+/// Origin（若带）必须是回环：`http(s)://127.0.0.1[:port]` / `localhost` / `[::1]`。
+pub fn is_loopback_origin(value: &str) -> bool {
+    let v = value.trim();
+    let rest = v
+        .strip_prefix("http://")
+        .or_else(|| v.strip_prefix("https://"))
+        .unwrap_or("");
+    if rest.is_empty() {
+        return false;
+    }
+    let authority = rest.split('/').next().unwrap_or(rest);
+    is_loopback_host_header(authority)
+}
+
+/// 鉴权 ＋ 路由 ＋ 方法限制（纯函数；判据直接喂）。
+pub fn authorize_request(req: &ParsedRequest, token: &str) -> Result<IpcRoute, IpcReject> {
+    // ① token（Authorization: Bearer <token>；⛔ 不做大小写模糊匹配 token 本身）。
+    let auth = req
+        .headers
+        .get("authorization")
+        .map(String::as_str)
+        .unwrap_or("");
+    let Some(bearer) = auth.strip_prefix("Bearer ") else {
+        return Err(IpcReject::Unauthorized);
+    };
+    if !ct_eq(bearer.trim(), token) {
+        return Err(IpcReject::Unauthorized);
+    }
+    // ② 回环 Host（HTTP/1.1 必须带；缺 ⇒ 403）。
+    let Some(host) = req.headers.get("host") else {
+        return Err(IpcReject::Forbidden);
+    };
+    if !is_loopback_host_header(host) {
+        return Err(IpcReject::Forbidden);
+    }
+    // ③ Origin 若带，也必须回环（挡浏览器跨站/DNS rebinding）。
+    if let Some(origin) = req.headers.get("origin") {
+        if !is_loopback_origin(origin) {
+            return Err(IpcReject::Forbidden);
+        }
+    }
+    // ④ 请求体上限（本笔不需要 body；只防滥用）。
+    if req.body_len > IPC_MAX_BODY_BYTES {
+        return Err(IpcReject::PayloadTooLarge);
+    }
+    // ⑤ 路由/方法。
+    match (req.method.as_str(), req.path.as_str()) {
+        ("GET", "/status") => Ok(IpcRoute::Status),
+        ("POST", "/round") => Ok(IpcRoute::Round),
+        ("GET", "/round") | ("POST", "/status") => Err(IpcReject::MethodNotAllowed),
+        _ => Err(IpcReject::NotFound),
+    }
+}
+
+/// 最小 JSON 响应（`Connection: close`）。
+fn ipc_http_response(code: u16, reason: &str, body: &[u8]) -> Vec<u8> {
+    let mut head = format!(
+        "HTTP/1.1 {code} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
+        body.len()
+    );
+    head.push_str("\r\n");
+    let mut out = head.into_bytes();
+    out.extend_from_slice(body);
+    out
+}
+
+/// 启动回环 IPC（只为 daemon 用；失败由调用方**只记日志**、不影响 daemon 主循环）。
+///
+/// 返回 `(port, guard)`：guard Drop 时删 endpoint 文件。token **不打印**。
+pub async fn start_ipc(app: tauri::AppHandle) -> Result<(u16, EndpointFileGuard), String> {
+    use tauri::Manager as _;
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .map_err(|e| format!("绑回环失败：{e}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| format!("读 IPC 端口失败：{e}"))?
+        .port();
+    let app_data_dir = crate::db::resolve_app_data_dir(app.path().app_data_dir().ok())
+        .ok_or("拿不到应用数据目录")?;
+    let token = hex::encode(&crate::crypto::random_32()[..16]); // 32 hex
+    let path = endpoint_path(&app_data_dir);
+    write_endpoint(
+        &path,
+        &SyncCoreEndpoint {
+            port,
+            token: token.clone(),
+        },
+    )?;
+    let guard = EndpointFileGuard::new(path);
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let (sock, _) = match listener.accept().await {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("[sync-core-ipc] accept 失败（继续监听）：{e}");
+                    continue;
+                }
+            };
+            let app = app.clone();
+            let token = token.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = handle_ipc_conn(sock, app, token).await;
+            });
+        }
+    });
+    Ok((port, guard))
+}
+
+/// 单连接：读头（上限/超时）→ 鉴权 → 路由 → 响应（⛔ 错误不夹带 token）。
+async fn handle_ipc_conn(
+    mut sock: tokio::net::TcpStream,
+    app: tauri::AppHandle,
+    token: String,
+) -> Result<(), String> {
+    use tauri::Manager as _;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let mut buf = Vec::with_capacity(1024);
+    let mut tmp = [0u8; 1024];
+    let read_head = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                return Ok(());
+            }
+            if buf.len() > IPC_MAX_HEADER_BYTES {
+                return Err("请求头过大".to_string());
+            }
+            let n = sock.read(&mut tmp).await.map_err(|e| e.to_string())?;
+            if n == 0 {
+                return Err("连接提前关闭".to_string());
+            }
+            buf.extend_from_slice(&tmp[..n]);
+        }
+    })
+    .await;
+    let req = match read_head {
+        Ok(Ok(())) => match parse_http_request(&buf) {
+            Ok(r) => r,
+            Err(_) => {
+                let _ = sock
+                    .write_all(&ipc_http_response(
+                        400,
+                        "Bad Request",
+                        b"{\"error\":\"bad_request\"}",
+                    ))
+                    .await;
+                return Ok(());
+            }
+        },
+        _ => {
+            let _ = sock
+                .write_all(&ipc_http_response(
+                    400,
+                    "Bad Request",
+                    b"{\"error\":\"bad_request\"}",
+                ))
+                .await;
+            return Ok(());
+        }
+    };
+    let route = match authorize_request(&req, &token) {
+        Ok(r) => r,
+        Err(rej) => {
+            let body = serde_json::json!({ "error": rej.reason() }).to_string();
+            let _ = sock
+                .write_all(&ipc_http_response(
+                    rej.status_code(),
+                    rej.reason(),
+                    body.as_bytes(),
+                ))
+                .await;
+            return Ok(());
+        }
+    };
+    let body = match route {
+        IpcRoute::Status => serde_json::to_vec(&crate::sync_core::snapshot())
+            .map_err(|e| format!("status 序列化失败：{e}"))?,
+        IpcRoute::Round => {
+            let db = app.state::<crate::db::Db>();
+            match crate::sync::sync_core_round_inner(&app, &db).await {
+                Ok(report) => {
+                    serde_json::to_vec(&report).map_err(|e| format!("round 序列化失败：{e}"))?
+                }
+                Err(e) => {
+                    // ⚠️ 错误只回可读原因（不含 token/路径）。
+                    let body = serde_json::json!({ "error": e }).to_string();
+                    let _ = sock
+                        .write_all(&ipc_http_response(
+                            500,
+                            "Internal Server Error",
+                            body.as_bytes(),
+                        ))
+                        .await;
+                    return Ok(());
+                }
+            }
+        }
+    };
+    let _ = sock.write_all(&ipc_http_response(200, "OK", &body)).await;
+    Ok(())
+}
+
+/// ⭐ **App 只读查询**（task-63）：`{reachable, reason?, status?}` —— daemon 不在/文件坏/超时
+/// **一律降级**（⛔ 不抛 UI、⛔ 不触发 round、⛔ 不带 token 到错误里）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncCoreIpcStatus {
+    pub reachable: bool,
+    pub reason: Option<String>,
+    pub status: Option<crate::sync_core::SyncCoreStatus>,
+}
+
+/// ⭐ App 侧只读命令：读 endpoint → 短超时 GET `/status`；失败只回 reason。
+#[tauri::command]
+pub async fn sync_core_ipc_status(app: tauri::AppHandle) -> SyncCoreIpcStatus {
+    use tauri::Manager as _;
+    let Some(app_data_dir) = crate::db::resolve_app_data_dir(app.path().app_data_dir().ok()) else {
+        return SyncCoreIpcStatus {
+            reachable: false,
+            reason: Some("拿不到应用数据目录".to_string()),
+            status: None,
+        };
+    };
+    let ep = match read_endpoint(&endpoint_path(&app_data_dir)) {
+        Ok(ep) => ep,
+        Err(reason) => {
+            return SyncCoreIpcStatus {
+                reachable: false,
+                reason: Some(reason),
+                status: None,
+            };
+        }
+    };
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(IPC_STATUS_TIMEOUT_MS))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return SyncCoreIpcStatus {
+                reachable: false,
+                reason: Some(format!("建 HTTP 客户端失败：{e}")),
+                status: None,
+            };
+        }
+    };
+    let url = format!("http://127.0.0.1:{}/status", ep.port);
+    match client
+        .get(&url)
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {}", ep.token),
+        )
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let code = resp.status();
+            if !code.is_success() {
+                return SyncCoreIpcStatus {
+                    reachable: false,
+                    reason: Some(format!("daemon 回 HTTP {}", code.as_u16())),
+                    status: None,
+                };
+            }
+            match resp.json::<crate::sync_core::SyncCoreStatus>().await {
+                Ok(status) => SyncCoreIpcStatus {
+                    reachable: true,
+                    reason: None,
+                    status: Some(status),
+                },
+                Err(_) => SyncCoreIpcStatus {
+                    reachable: false,
+                    reason: Some("daemon 回的 status 不是合法 JSON".to_string()),
+                    status: None,
+                },
+            }
+        }
+        Err(e) if e.is_timeout() => SyncCoreIpcStatus {
+            reachable: false,
+            reason: Some("daemon 响应超时".to_string()),
+            status: None,
+        },
+        Err(e) => SyncCoreIpcStatus {
+            reachable: false,
+            reason: Some(if e.is_connect() {
+                "daemon 不在（连不上回环端口）".to_string()
+            } else {
+                format!("查 daemon 状态失败：{e}")
+            }),
+            status: None,
+        },
+    }
 }
 
 #[cfg(test)]
@@ -828,5 +1346,248 @@ mod tests {
         let init_at = setup.find("let conn = db::init(").expect("db::init");
         assert!(lock_at < restore_at && lock_at < init_at);
         assert!(setup[lock_at..init_at].contains("app.handle().exit(code)"));
+    }
+
+    // ── ⭐ task-63：IPC endpoint / 鉴权 / 回环 / 降级 ─────────────────────────────
+
+    fn hdr(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_ascii_lowercase(), v.to_string()))
+            .collect()
+    }
+
+    fn req(
+        method: &str,
+        path: &str,
+        headers: BTreeMap<String, String>,
+        body_len: usize,
+    ) -> ParsedRequest {
+        ParsedRequest {
+            method: method.to_string(),
+            path: path.to_string(),
+            headers,
+            body_len,
+        }
+    }
+
+    fn valid_headers(token: &str) -> BTreeMap<String, String> {
+        hdr(&[
+            ("Authorization", &format!("Bearer {token}")),
+            ("Host", "127.0.0.1:49152"),
+        ])
+    }
+
+    #[test]
+    fn endpoint_file_round_trips_with_0600_and_is_removed_on_drop() {
+        let dir = temp_dir("endpoint");
+        let path = endpoint_path(&dir);
+        let ep = SyncCoreEndpoint {
+            port: 49152,
+            token: "a".repeat(32),
+        };
+        write_endpoint(&path, &ep).expect("写 endpoint");
+        assert_eq!(read_endpoint(&path).unwrap(), ep);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(
+                mode, 0o600,
+                "endpoint 含 token ⇒ 必须 0600（实际 {mode:o}）"
+            );
+        }
+        let guard = EndpointFileGuard::new(path.clone());
+        drop(guard);
+        assert!(!path.exists(), "Drop 必须尽力删除 endpoint 文件");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_and_corrupt_endpoint_files_degrade_readably() {
+        let dir = temp_dir("endpoint-bad");
+        let path = endpoint_path(&dir);
+        assert!(read_endpoint(&path).unwrap_err().contains("daemon 未运行"));
+        std::fs::write(&path, "not json").unwrap();
+        assert!(read_endpoint(&path).unwrap_err().contains("坏了"));
+        std::fs::write(&path, r#"{"port":0,"token":"x"}"#).unwrap();
+        assert!(read_endpoint(&path).unwrap_err().contains("非法"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ipc_requires_bearer_token_and_loopback_host_origin() {
+        let token = "0123456789abcdef0123456789abcdef";
+        // 无/错 token ⇒ 401（不论路径，先鉴权）。
+        assert_eq!(
+            authorize_request(
+                &req("GET", "/status", hdr(&[("Host", "127.0.0.1:1")]), 0),
+                token
+            ),
+            Err(IpcReject::Unauthorized)
+        );
+        assert_eq!(
+            authorize_request(
+                &req(
+                    "GET",
+                    "/status",
+                    hdr(&[("Authorization", "Bearer wrong"), ("Host", "127.0.0.1:1")]),
+                    0
+                ),
+                token
+            ),
+            Err(IpcReject::Unauthorized)
+        );
+        // 正确 token ＋ Host 回环 ⇒ 通过。
+        assert_eq!(
+            authorize_request(&req("GET", "/status", valid_headers(token), 0), token),
+            Ok(IpcRoute::Status)
+        );
+        // Host 非回环 ⇒ 403（含前缀攻击形状）。
+        for bad_host in [
+            "127.0.0.1.evil",
+            "localhost.evil",
+            "192.168.1.5:8788",
+            "",
+            "evil.com",
+        ] {
+            let h = hdr(&[
+                ("Authorization", &format!("Bearer {token}")),
+                ("Host", bad_host),
+            ]);
+            assert_eq!(
+                authorize_request(&req("GET", "/status", h, 0), token),
+                Err(IpcReject::Forbidden),
+                "⛔ 非回环 Host 必须 403：{bad_host:?}"
+            );
+        }
+        // 缺 Host ⇒ 403。
+        assert_eq!(
+            authorize_request(
+                &req(
+                    "GET",
+                    "/status",
+                    hdr(&[("Authorization", &format!("Bearer {token}"))]),
+                    0
+                ),
+                token
+            ),
+            Err(IpcReject::Forbidden)
+        );
+        // Origin 若带，非回环 ⇒ 403；回环 ⇒ 通过。
+        for origin in [
+            "http://evil.com",
+            "http://127.0.0.1.evil",
+            "https://192.168.1.5:8788",
+        ] {
+            let h = hdr(&[
+                ("Authorization", &format!("Bearer {token}")),
+                ("Host", "127.0.0.1:1"),
+                ("Origin", origin),
+            ]);
+            assert_eq!(
+                authorize_request(&req("GET", "/status", h, 0), token),
+                Err(IpcReject::Forbidden),
+                "⛔ 非回环 Origin 必须 403：{origin}"
+            );
+        }
+        for origin in [
+            "http://127.0.0.1:3000",
+            "http://localhost:1420",
+            "https://[::1]:1",
+        ] {
+            let h = hdr(&[
+                ("Authorization", &format!("Bearer {token}")),
+                ("Host", "127.0.0.1:1"),
+                ("Origin", origin),
+            ]);
+            assert_eq!(
+                authorize_request(&req("GET", "/status", h, 0), token),
+                Ok(IpcRoute::Status),
+                "回环 Origin 应通过：{origin}"
+            );
+        }
+        // 回环判定本身（Host 可带端口；IPv6 方括号）。
+        assert!(is_loopback_host_header("127.0.0.1"));
+        assert!(is_loopback_host_header("127.0.0.1:8788"));
+        assert!(is_loopback_host_header("localhost:1420"));
+        assert!(is_loopback_host_header("[::1]:49152"));
+        assert!(!is_loopback_host_header("[::1].evil"));
+        assert!(!is_loopback_host_header("0.0.0.0:8788"));
+    }
+
+    #[test]
+    fn ipc_routes_methods_404_and_body_cap() {
+        let token = "0123456789abcdef0123456789abcdef";
+        let ok = |m: &str, p: &str| authorize_request(&req(m, p, valid_headers(token), 0), token);
+        assert_eq!(ok("GET", "/status"), Ok(IpcRoute::Status));
+        assert_eq!(ok("POST", "/round"), Ok(IpcRoute::Round));
+        assert_eq!(ok("POST", "/status"), Err(IpcReject::MethodNotAllowed));
+        assert_eq!(ok("GET", "/round"), Err(IpcReject::MethodNotAllowed));
+        assert_eq!(ok("PUT", "/status"), Err(IpcReject::NotFound));
+        assert_eq!(ok("GET", "/../status"), Err(IpcReject::NotFound));
+        assert_eq!(ok("GET", "/status/extra"), Err(IpcReject::NotFound));
+        // 请求体上限。
+        assert_eq!(
+            authorize_request(
+                &req(
+                    "POST",
+                    "/round",
+                    valid_headers(token),
+                    IPC_MAX_BODY_BYTES + 1
+                ),
+                token
+            ),
+            Err(IpcReject::PayloadTooLarge)
+        );
+        // 解析：缺空行/坏头 ⇒ Err。
+        assert!(parse_http_request(b"GET /status HTTP/1.1\r\nHost: x\r\n").is_err());
+        assert!(parse_http_request(b"GET /status HTTP/1.1\r\nHost 127.0.0.1\r\n\r\n").is_err());
+        let parsed = parse_http_request(
+            b"POST /round?x=1 HTTP/1.1\r\nHost: 127.0.0.1:1\r\nContent-Length: 0\r\n\r\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.method, "POST");
+        assert_eq!(parsed.path, "/round");
+        assert_eq!(parsed.body_len, 0);
+    }
+
+    /// 源码级安全边界：只绑回环、endpoint 0600、token 不打印、路由只有两个、App 命令只读。
+    #[test]
+    fn the_ipc_skeleton_is_loopback_only_and_the_app_command_is_read_only() {
+        let me = include_str!("sync_core_daemon.rs");
+        let prod = me.split("#[cfg(test)]").next().unwrap_or(me);
+        assert!(
+            prod.contains(r#"TcpListener::bind(("127.0.0.1", 0))"#),
+            "⛔ 必须绑 127.0.0.1:0"
+        );
+        assert!(!prod.contains(r#"bind(("0.0.0.0""#), "⛔ 不许绑 0.0.0.0");
+        assert!(me.contains(".mode(0o600)"), "endpoint 必须 0600");
+        assert!(me.contains("token 不打印"), "token 不许打印");
+        // 路由只有 /status 与 /round（⛔ 不加别的）。
+        assert!(me.contains(r#"("GET", "/status") => Ok(IpcRoute::Status)"#));
+        assert!(me.contains(r#"("POST", "/round") => Ok(IpcRoute::Round)"#));
+        // App 命令只 GET /status，不触发 round；失败一律 reachable=false。
+        let cmd = me
+            .split("pub async fn sync_core_ipc_status(")
+            .nth(1)
+            .expect("App 只读命令必须在");
+        let cmd = cmd.split("#[cfg(test)]").next().unwrap_or(cmd);
+        assert!(cmd.contains("/status"));
+        assert!(!cmd.contains("/round"), "⛔ 本笔 App 命令不许触发 round");
+        assert!(!cmd.contains("post("), "⛔ 只读：不许 POST");
+        assert!(cmd.contains("IPC_STATUS_TIMEOUT_MS"));
+        assert!(cmd.contains("reachable: false"));
+        // daemon 启动顺序：锁 → DB → IPC → 调度器。
+        let run = me.split("pub fn run_daemon()").nth(1).expect("run_daemon");
+        let lock_at = run.find("acquire_in(&app_data_dir").expect("锁");
+        let init_at = run.find("crate::db::init(").expect("DB");
+        let ipc_at = run.find("start_ipc(app.handle().clone())").expect("IPC");
+        let sched_at = run
+            .find("set_runtime_enabled(app.handle(), true)")
+            .expect("调度器");
+        assert!(lock_at < init_at && init_at < ipc_at && ipc_at < sched_at);
+        // 命令已注册。
+        assert!(include_str!("lib.rs").contains("sync_core_daemon::sync_core_ipc_status,"));
     }
 }

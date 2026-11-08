@@ -377,6 +377,16 @@ export interface SyncCoreRoundEvent {
   nextDelayMs: number;
 }
 
+/**
+ * ⭐ **P3-1b IPC 只读查询（task-63）**：daemon 的 `/status` 结果包装。
+ * daemon 不在/文件坏/超时 ⇒ `reachable=false` + `reason`（**不抛 UI**）；`status=null`。
+ */
+export interface SyncCoreIpcStatus {
+  reachable: boolean;
+  reason: string | null;
+  status: SyncCoreStatus | null;
+}
+
 /** ⭐ 只读状态读数（Rust `sync_core::SyncCoreStatus`；默认 `enabled/running=false`）。 */
 export interface SyncCoreStatus {
   /** 有效开关（env OR runtime）。 */
@@ -1686,6 +1696,8 @@ export interface CommandMap {
   sync_core_status: { args: undefined; result: SyncCoreStatus };
   /** ⭐ P3-1a 第五刀：runtime 开关（桌面 App 按闸门启停 Core；返回最新状态）。 */
   sync_core_set_enabled: { args: { enabled: boolean }; result: SyncCoreStatus };
+  /** ⭐ P3-1b：只读查询 daemon IPC `/status`（失败降级为 reachable=false，不抛 UI）。 */
+  sync_core_ipc_status: { args: undefined; result: SyncCoreIpcStatus };
   /** C1 预算刹车（2026-09-15）：设备级设置，存 `meta.sync_state` 的 KV。 */
   get_sync_budget: { args: undefined; result: SyncBudget };
   /** ⚠️ 回显的是**夹取后**的值（磁盘余量下限不可关：传 0 会回 256）⇒ 界面要用返回值纠正自己。 */

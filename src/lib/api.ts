@@ -3,7 +3,7 @@ import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import type { WikiPageInput } from "./wikiExport";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
-import type { CommandMap, LanStatus, MeshConfigState, MeshPanelScope, MeshPanelSpaces, MeshRoundReport, MeshSyncAllReport, RelayStatus, SyncBudget, SyncCoreRoundReport, SyncCoreStatus, SyncStreamStatus } from "./platform/commands";
+import type { CommandMap, LanStatus, MeshConfigState, MeshPanelScope, MeshPanelSpaces, MeshRoundReport, MeshSyncAllReport, RelayStatus, SyncBudget, SyncCoreRoundReport, SyncCoreStatus, SyncCoreIpcStatus, SyncStreamStatus } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 // The command name, args shape and result are validated at compile time against
@@ -23,7 +23,7 @@ const invoke = <K extends keyof CommandMap>(
 // `attachments_paused` 时只看了一处，于是 `SyncPanel` 通过 `import type { SyncProfile }
 // from "../lib/api"` 拿到的类型少了新字段、`tsc` 报 TS2339——而这还是**报错**的那种；
 // 同一个原因造成的静默不一致（比如 `conflicts` 曾经只在一边有）连报错都没有。
-export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult, SyncCoreRoundReport, SyncCoreStatus, SyncCoreRoundEvent, LanStatus } from "./platform/commands";
+export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult, SyncCoreRoundReport, SyncCoreStatus, SyncCoreRoundEvent, SyncCoreIpcStatus, LanStatus } from "./platform/commands";
 /** ⭐ 2026-10-28：加密空间逐条同步状态（"为什么没数据"的读数）—— 契约在 `commands.ts` 一处。 */
 export type SpaceSyncState = CommandMap["space_sync_state"]["result"];
 export type { MeshRoundReport, MeshPeerPullReport, MeshConfigState } from "./platform/commands";
@@ -554,6 +554,11 @@ export const api = {
    */
   syncCoreSetEnabled: (enabled: boolean) =>
     invoke("sync_core_set_enabled", { enabled }) as Promise<SyncCoreStatus>,
+  /**
+   * ⭐ **P3-1b（task-63）**：只读查询 daemon 的回环 IPC `/status`。daemon 不在/超时/文件坏
+   * ⇒ `{reachable:false, reason}`（Rust 侧已降级，⛔ 不抛 UI、⛔ 不触发 round）。
+   */
+  syncCoreIpcStatus: () => invoke("sync_core_ipc_status") as Promise<SyncCoreIpcStatus>,
   syncWorkspace: async (wsId: string) => {
     const r = await invoke("sync_workspace", { wsId });
     emitSyncCompleted(r ? [r] : []);

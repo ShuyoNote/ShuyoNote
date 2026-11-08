@@ -109,7 +109,7 @@ pub fn round_had_changes(report: &SyncCoreRoundReport) -> bool {
 }
 
 /// 发给前端的**每轮事件**（`sync-core-round`；脱敏：只有计数，无空间名/hash/路径/正文）。
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncCoreRoundEvent {
     pub server_spaces: usize,
@@ -126,7 +126,7 @@ pub struct SyncCoreRoundEvent {
 }
 
 /// ⭐ **P3-1a 第四刀（task-57）**：`sync_core_status` 的返回（**只读、脱敏**：只有计数）。
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncCoreStatus {
     /// **有效**开关（`env OR runtime`；默认 false）。
