@@ -42,6 +42,7 @@ import {
   MAX_BRIDGE_FILE_BYTES,
   MAX_BRIDGE_FILES,
   bridgeLimitError,
+  normalizeFrontendToolPayload,
   registerMcpFrontendTools,
   _resetOversizeGrantsForTests,
   _setOversizeClockForTests,
@@ -333,3 +334,23 @@ describe("B · files.confirm_download（只发不等，允许一次才写额度�
     expect(api.mcpDownloadGrant).not.toHaveBeenCalled();
   });
 });
+
+// ⭐ 2026-11-08 真机（export_*/coverage_report 100% frontend_timeout）：
+//   根因是 Rust 出口把 payload 传成了 JSON 字符串，前端按对象读 ⇒ requestId 空 ⇒ 永不回执。
+//   这条钉住「字符串/对象都要能吃」。
+describe("前端桥请求 payload 归一化（string/object 双兼容）", () => {
+  it("对象 payload 原样返回", () => {
+    const req = { requestId: "r1", method: "export.markdown", args: { pageId: "p1" } };
+    expect(normalizeFrontendToolPayload(req)).toEqual(req);
+  });
+  it("JSON 字符串 payload 能解析（旧 Rust 出口的形态）", () => {
+    const req = { requestId: "r2", method: "coverage.report", args: {} };
+    expect(normalizeFrontendToolPayload(JSON.stringify(req))).toEqual(req);
+  });
+  it("坏字符串/空值 ⇒ undefined（不抛）", () => {
+    expect(normalizeFrontendToolPayload("{not json")).toBeUndefined();
+    expect(normalizeFrontendToolPayload(null)).toBeUndefined();
+    expect(normalizeFrontendToolPayload(undefined)).toBeUndefined();
+  });
+});
+

@@ -285,12 +285,33 @@ async function renderMarkdownWithAnchors(
   };
 }
 
+/**
+ * 前端桥请求的 payload 归一化（⭐ 2026-11-08 真机定位的回归点）。
+ *
+ * 历史 bug：Rust 出口用 `payload.to_string()` 把**已经是 JSON 字符串**的内容又传给 `emit`
+ * ⇒ 前端收到的是 string，`req.requestId` 读不到 ⇒ 直接 return ⇒ Rust 等满 5 秒报
+ * `frontend_timeout`（export_* / coverage_report 因此 100% 不可用）。
+ * 现在两边都兼容：对象原样用、字符串先 parse，坏数据返回 undefined（不抛）。
+ */
+export function normalizeFrontendToolPayload(raw: unknown): FrontendToolRequest | undefined {
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw) as FrontendToolRequest;
+    } catch {
+      return undefined;
+    }
+  }
+  return raw && typeof raw === "object" ? (raw as FrontendToolRequest) : undefined;
+}
+
 export function registerMcpFrontendTools(): () => void {
   let unlisten: (() => void) | undefined;
   let alive = true;
   void platform.event
     .listen<FrontendToolRequest>(FRONTEND_TOOL_EVENT, (e) => {
-      const req = e?.payload;
+      // ⚠️ 2026-11-08：payload 可能是对象（新 Rust 出口）也可能是 **JSON 字符串**（旧出口）——
+      //   以前只按对象读 ⇒ requestId 空 ⇒ 直接 return ⇒ Rust 等满 5s 报 `frontend_timeout`。
+      const req = normalizeFrontendToolPayload((e as unknown as { payload?: unknown })?.payload ?? e);
       const requestId = String(req?.requestId ?? "");
       if (!requestId) return;
       void (async () => {
@@ -338,3 +359,7 @@ export function registerMcpFrontendTools(): () => void {
     unlisten?.();
   };
 }
+
+
+
+

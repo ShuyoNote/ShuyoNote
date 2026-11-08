@@ -1,5 +1,8 @@
 ## [Unreleased]
 
+### 修复
+- **MCP 前端桥「请求发出去了、前端从没回执」—— `export_*` 与 `coverage_report` 因此 100% `frontend_timeout`（历史审计 94 次 0 成功）**：Rust 出口把**已经是 JSON 字符串**的请求又 `to_string()` 了一次，前端收到的是 string，`requestId`/`method` 读不到 ⇒ 直接 `return`、永不回执。现在 Rust 发**对象**，前端同时兼容字符串/对象（防版本错配）；真机（dev 构建）验证：`export_page_markdown` 返回句柄、`coverage_report` 返回报告，均不再超时。
+
 ## [2.1.11] - 2026-11-07
 
 > 外部通道：写权限自动迁移 ＋ 工具描述按实况修正
@@ -8599,3 +8602,4 @@
 - 暗色 / 亮色 / 跟随系统三态主题
 - 命令面板（`Ctrl+K`，插件命令扩展点）
 - 多窗口（页面弹出独立窗口编辑）
+

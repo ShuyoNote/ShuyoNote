@@ -841,7 +841,12 @@ pub fn run() {
                 // ⛔ 不许变成"没人应答"再空等 5 秒超时。stderr 诊断保留（失败原因也出现在应用日志里）。
                 frontend_tool::set_emitter(move |event, payload| {
                     use tauri::Emitter;
-                    h.emit(event, payload.to_string()).map_err(|e| {
+                    // ⚠️ 2026-11-08 真机定位：这里原先把 payload（已经是 JSON 字符串）再 `to_string()`
+                    //   ⇒ 前端收到的 payload 是**字符串**，`req.method` 读不到 ⇒ 回执永远不发 ⇒ 5s 超时。
+                    //   改成发**对象**（与草稿出口 `mcp:external-drafts` 同一形态）。
+                    let v: serde_json::Value = serde_json::from_str(payload)
+                        .unwrap_or(serde_json::Value::String(payload.to_string()));
+                    h.emit(event, v).map_err(|e| {
                         eprintln!("[mcp] 前端桥事件发送失败（{event}）：{e}");
                         e.to_string()
                     })
