@@ -317,8 +317,28 @@ fn peer_space_name_in_batch(c: &Connection, rows: &[MeshRow]) -> Option<String> 
     None
 }
 
-/// ⭐ **融合闸的接线处**（读本机类别/名字、对面名字、信任名单 ⇒ 纯函数
-/// `mesh_merge_ledger::batch_merge_gate`）—— 顺序与口径全在纯函数里，这里只负责取数。
+/// 这一批是不是**从某台对端的某个 `space_uid`** 来的 —— 从载荷里读 `_space_uid`（与 `_space_name` 同处）。
+///
+/// ⚠️ 与 [`peer_space_name_in_batch`] 同一形状：解密封包后再读；**老载荷/老对端 ⇒ `None`**（不猜）。
+fn peer_space_uid_in_batch(c: &Connection, rows: &[MeshRow]) -> Option<String> {
+    for r in rows {
+        if r.entity != "page" || r.op != "upsert" {
+            continue;
+        }
+        let Some(payload) = r.payload.as_deref() else {
+            continue;
+        };
+        let plain =
+            crate::security::decrypt_payload(c, payload).unwrap_or_else(|_| payload.to_string());
+        if let Some(uid) = crate::sync::space_uid_of_payload(&plain) {
+            return Some(uid);
+        }
+    }
+    None
+}
+
+/// ⭐ **融合闸的接线处**（读本机类别/名字/uid、对面名字/uid、信任名单 ⇒ 纯函数
+/// `mesh_merge_ledger::batch_merge_gate_uid`）—— 顺序与口径全在纯函数里，这里只负责取数。
 fn peer_merge_decision(
     c: &Connection,
     rows: &[MeshRow],
@@ -327,16 +347,21 @@ fn peer_merge_decision(
     device_level: bool,
     peer_name_hint: Option<&str>,
 ) -> crate::mesh_merge_ledger::BatchMerge {
-    use crate::mesh_merge_ledger::{batch_merge_gate, IdentityOracle, PairedDeviceOracle};
+    use crate::mesh_merge_ledger::{batch_merge_gate_uid, IdentityOracle, PairedDeviceOracle};
 
     let kind = crate::sync::local_space_kind(c);
     let local_name = crate::sync::local_space_name(c).unwrap_or_default();
+    // ⭐ P3-3b：本机 uid（取不到 ⇒ 空串 ⇒ 纯函数回落名字，旧行为不变）。
+    let local_uid = crate::sync::local_space_uid(c).unwrap_or_default();
     // ⭐ 调用方（`pull_and_absorb`）已经知道"这是按哪个名配上的空间" ⇒ 优先用它；
     //   hint 为空（老调用点/判据）才回退到"从载荷里扫 `_space_name`"的旧口径。
     let peer_name = peer_name_hint
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty())
         .or_else(|| peer_space_name_in_batch(c, rows));
+    // ⭐ P3-3b：对端 uid（与名字同源：从这一批载荷里读 `_space_uid`；⛔ 不从公告/调用点猜）。
+    //   ⚠️ 不改 `peer_merge_decision` 的签名 ⇒ 老调用点零改动。
+    let peer_uid = peer_space_uid_in_batch(c, rows);
     // ⭐ 身份 = 第一档「本机显式信任过那台」（`mesh_paired_devices`；读法与界面/门同一处 ✓）。
     //   ⚠️ 名单读不出来 ⇒ 空名单 ⇒ 落 `Unknown(NotPaired)` ⇒ **不融合**（保守方向 ✓），并**留痕**。
     let paired: Vec<String> = match paired_devices(c, space_id, device_level) {
@@ -352,7 +377,15 @@ fn peer_merge_decision(
         paired_devices: &paired,
     };
     let identity = oracle.same_person(peer_device, &local_name);
-    batch_merge_gate(kind, &local_name, peer_name.as_deref(), &identity)
+    // ⭐ P3-3b：**uid 两边都有 ⇒ 按 uid 判同名；否则回落名字**（纯函数里实现，这里只取数）。
+    batch_merge_gate_uid(
+        kind,
+        &local_name,
+        &local_uid,
+        peer_name.as_deref(),
+        peer_uid.as_deref(),
+        &identity,
+    )
 }
 
 /// 这一次融合要记进账本的东西（⭐ `moved` ＝ 这一批并进来的**页 id**；`kept_before` ＝ 并入前本机已有几条）。
@@ -6986,7 +7019,8 @@ mod tests {
             "CREATE TABLE IF NOT EXISTS meta.workspaces (
                  id TEXT PRIMARY KEY, name TEXT NOT NULL,
                  created_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0,
-                 kind TEXT NOT NULL DEFAULT '');
+                 kind TEXT NOT NULL DEFAULT '',
+                 space_uid TEXT NOT NULL DEFAULT '');
              CREATE TABLE IF NOT EXISTS meta.mesh_paired_devices (
                  space_id TEXT NOT NULL, device_id TEXT NOT NULL,
                  secret_sha256 TEXT NOT NULL, added_at_ms INTEGER NOT NULL,
@@ -10740,6 +10774,149 @@ mod tests {
             !body.contains("active_space_id("),
             "⛔ 不许用 `attachments::active_space_id`（全局活动空间）找附件目录 —— \
              它随界面切空间而变：非活动空间 404，拿错目录还可能跨空间发字节"
+        );
+    }
+
+    // ───────────────── ⭐ P3-3b：融合闸 uid 优先、名字兜底（接线判据） ─────────────────
+
+    /// 给本机空间设 uid（空串 ＝ 老空间/没迁移）。
+    fn set_local_uid(c: &Connection, uid: &str) {
+        let ws: String = c
+            .query_row(
+                "SELECT id FROM workspaces ORDER BY rowid ASC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        c.execute(
+            "UPDATE meta.workspaces SET space_uid = ?1 WHERE id = ?2",
+            params![uid, ws],
+        )
+        .unwrap();
+    }
+
+    /// 一条对端来的页 upsert，**同时**挂 `_space_name` 与 `_space_uid`（与推那一侧同一组函数）。
+    fn peer_row_with_uid(
+        seq: i64,
+        pg: &PageDetail,
+        space_name: Option<&str>,
+        space_uid: Option<&str>,
+    ) -> MeshRow {
+        let payload = serde_json::to_string(pg).unwrap();
+        let payload = match space_name {
+            Some(n) => crate::sync::with_space_name(&payload, n).unwrap(),
+            None => payload,
+        };
+        let payload = match space_uid {
+            Some(u) => crate::sync::with_space_uid(&payload, u).unwrap(),
+            None => payload,
+        };
+        MeshRow {
+            device_seq: seq,
+            entity: "page".to_string(),
+            entity_id: pg.id.clone(),
+            op: "upsert".to_string(),
+            payload: Some(payload),
+            updated_at: pg.updated_at,
+            sealed: None,
+        }
+    }
+
+    /// ⭐ uid 相同、名字不同 ⇒ **允许融合**（uid 优先）＋ 页真的落库。
+    #[test]
+    fn a_matching_space_uid_merges_even_when_the_names_differ() {
+        let c = space_conn("B");
+        merge_fixture(&c, "工作", "personal", &["平板"]);
+        set_local_uid(&c, "uid-a");
+        let mut p = page("p1", "从平板来的", 10);
+        p.workspace_id = "对面那台的空间 id".to_string();
+        let rows = vec![peer_row_with_uid(1, &p, Some("另一个名字"), Some("uid-a"))];
+
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
+        assert_eq!(
+            ab.merge,
+            PeerMergeState::Merged,
+            "⭐ uid 相同 ⇒ 同一空间（即使名字不同）: {ab:?}"
+        );
+        assert!(ab.applied > 0);
+        assert!(content_of(&c, "p1").contains("从平板来的"));
+    }
+
+    /// ⭐ uid 不同、名字相同 ⇒ **拒绝**（uid 优先；不是同名）。
+    #[test]
+    fn a_different_space_uid_is_refused_even_when_the_names_match() {
+        let c = space_conn("B");
+        merge_fixture(&c, "工作", "personal", &["平板"]);
+        set_local_uid(&c, "uid-a");
+        let rows = vec![peer_row_with_uid(
+            1,
+            &page("p1", "不该进来", 10),
+            Some("工作"),
+            Some("uid-b"),
+        )];
+
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
+        assert_eq!(
+            ab.merge,
+            PeerMergeState::Refused(MergeGate::RefuseDifferentName),
+            "⛔ uid 不同却融了：{ab:?}"
+        );
+        assert_eq!((ab.applied, ab.tail), (0, 0), "被拒 ⇒ 不落库、水位不前进");
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+
+    /// ⭐ 任一边缺 uid ⇒ **回落旧的名字判定**（逐字旧行为）。
+    #[test]
+    fn a_missing_uid_falls_back_to_the_name_gate() {
+        // ① 本机没有 uid（老库/没迁移）＋ 同名 ⇒ 旧行为：Allow。
+        let c = space_conn("B");
+        merge_fixture(&c, "工作", "personal", &["平板"]);
+        let rows = vec![peer_row_with_uid(
+            1,
+            &page("p1", "旧路", 10),
+            Some("工作"),
+            Some("uid-peer"),
+        )];
+        let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
+        assert_eq!(
+            ab.merge,
+            PeerMergeState::Merged,
+            "本机缺 uid ⇒ 回落名字: {ab:?}"
+        );
+
+        // ② 对端没有 uid ＋ 同名 ⇒ 旧行为：Allow。
+        let c2 = space_conn("B");
+        merge_fixture(&c2, "工作", "personal", &["平板"]);
+        set_local_uid(&c2, "uid-local");
+        let rows2 = vec![peer_row_with_uid(
+            1,
+            &page("p1", "旧路", 10),
+            Some("工作"),
+            None,
+        )];
+        let ab2 = absorb_peer_batch(&c2, &rows2, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
+        assert_eq!(
+            ab2.merge,
+            PeerMergeState::Merged,
+            "对端缺 uid ⇒ 回落名字: {ab2:?}"
+        );
+
+        // ③ 两边都缺 ＋ 不同名 ⇒ 旧行为：RefuseDifferentName。
+        let c3 = space_conn("B");
+        merge_fixture(&c3, "工作", "personal", &["平板"]);
+        let rows3 = vec![peer_row_with_uid(
+            1,
+            &page("p1", "不该进来", 10),
+            Some("别的"),
+            None,
+        )];
+        let ab3 = absorb_peer_batch(&c3, &rows3, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
+        assert_eq!(
+            ab3.merge,
+            PeerMergeState::Refused(MergeGate::RefuseDifferentName)
         );
     }
 }

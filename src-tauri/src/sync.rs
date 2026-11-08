@@ -392,6 +392,33 @@ fn prune_mesh_outbox(c: &Connection, device: &str, seqs: &[i64]) {
 /// · **收**那一侧：`mesh::absorb_peer_batch` 拿对面载荷里的这一格与本机这一格比（[`local_space_name`]）。
 pub const SPACE_NAME_PAYLOAD_FIELD: &str = "_space_name";
 
+/// ⭐ **P3-3b 第二小步（2026-11-08）**：载荷里挂**本机空间稳定 uid** 的字段名。
+///
+/// 与 [`SPACE_NAME_PAYLOAD_FIELD`] **同一处挂/同一处读**（推：`record_page_upsert`；收：融合闸）；
+/// ⚠️ **它不替代名字**：融合闸是 **uid 有结论用 uid、判不了回落名字**（`mesh_merge_ledger::batch_merge_gate_uid`）。
+pub const SPACE_UID_PAYLOAD_FIELD: &str = "_space_uid";
+
+/// 本机当前空间的 **`space_uid`**（`meta.workspaces.space_uid`，由 P3-3b 迁移回填）。
+///
+/// ⚠️ **取不到 ⇒ `None`**（老库还没迁移/那一格空/表读不到）—— 与 `local_space_name` 同一条纪律：
+/// uid 只是"融合用的判据"，丢的是那一次 uid 判等，⛔ **不许让保存失败** ✗。
+pub(crate) fn local_space_uid(c: &Connection) -> Option<String> {
+    let uid: String = c
+        .query_row(
+            "SELECT COALESCE(space_uid, '') FROM meta.workspaces
+             WHERE id = (SELECT id FROM workspaces ORDER BY rowid ASC LIMIT 1)",
+            [],
+            |r| r.get(0),
+        )
+        .ok()?;
+    let uid = uid.trim().to_string();
+    if uid.is_empty() {
+        None
+    } else {
+        Some(uid)
+    }
+}
+
 /// 本机这个空间**对用户显示的名字**（每个空间库恰好一行 `workspaces` ✓ —— 见 `doc_content.rs:409-411`）。
 ///
 /// ## ⭐⭐ 2026-10-17 订正：**先读 `meta.workspaces`**（用户改过名的那一份），读不到才回退空间库自己那一行
@@ -970,6 +997,41 @@ pub(crate) fn space_name_of_payload(payload_json: &str) -> Option<String> {
     }
 }
 
+/// 把**本机空间 uid** 挂到载荷上（推那一侧用）—— 与 [`with_space_name`] **逐条同形**：
+/// 空 uid ⇒ 载荷逐字节不变；不是 JSON ⇒ 响亮报错；非对象 ⇒ 原样返回。
+pub(crate) fn with_space_uid(payload_json: &str, space_uid: &str) -> Result<String, String> {
+    let uid = space_uid.trim();
+    if uid.is_empty() {
+        return Ok(payload_json.to_string());
+    }
+    let mut value: serde_json::Value =
+        serde_json::from_str(payload_json).map_err(|e| e.to_string())?;
+    let Some(obj) = value.as_object_mut() else {
+        return Ok(payload_json.to_string());
+    };
+    obj.insert(
+        SPACE_UID_PAYLOAD_FIELD.to_string(),
+        serde_json::Value::String(uid.to_string()),
+    );
+    serde_json::to_string(&value).map_err(|e| e.to_string())
+}
+
+/// 从载荷里读空间 uid。**老载荷/老对端 ⇒ `None`**（不是错误）；空串/非字符串 ⇒ `None`
+/// —— ⛔ 不从 id 反推、⛔ 不伪造一个 uid。
+pub(crate) fn space_uid_of_payload(payload_json: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(payload_json).ok()?;
+    let s = value
+        .get(SPACE_UID_PAYLOAD_FIELD)?
+        .as_str()?
+        .trim()
+        .to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
 pub fn record_page_upsert(c: &Connection, page: &PageDetail) -> Result<(), String> {
     let payload = serde_json::to_string(page).map_err(|e| e.to_string())?;
     // ★ §11.4 收口（第 42 轮）· **推**那一半：这一页有 CRDT 状态 ⇒ 把它挂到载荷上
@@ -1010,6 +1072,11 @@ pub fn record_page_upsert(c: &Connection, page: &PageDetail) -> Result<(), Strin
     //   ⚠️ 顺序是"先戳后名" ⇒ 谁后挂谁在最外层，两种挂件的读法都是按键取 ⇒ 互不影响 ✓。
     let payload = match local_space_name(c) {
         Some(name) => with_space_name(&payload, &name)?,
+        None => payload,
+    };
+    // ⭐ P3-3b：再把**本机空间 uid** 挂进载荷（与空间名同一处；取不到 ⇒ 载荷不变 ⇒ 收侧回落按名）。
+    let payload = match local_space_uid(c) {
+        Some(uid) => with_space_uid(&payload, &uid)?,
         None => payload,
     };
     record_change(
@@ -9888,6 +9955,8 @@ mod tests {
         //   本条的意图仍是"没有 `crdt_state` ＋ 其余同值于裸 `PageDetail`" ✓）。
         if let Some(obj) = after.as_object_mut() {
             obj.remove("_space_name");
+            // ⭐ P3-3b：本笔起还**无条件**挂「空间 uid」那一格（同一处挂件）⇒ 一并摘掉再比。
+            obj.remove("_space_uid");
         }
         assert_eq!(
             after, bare,
@@ -13066,6 +13135,99 @@ mod tests {
                 Some(crate::mesh_merge_ledger::SpaceKind::Unclassified),
                 "⭐ 读到了（未分类）与读不到**必须分得开**"
             );
+        }
+
+        /// ⭐ **P3-3b（2026-11-08）**：`_space_uid` 挂件与 `_space_name` **逐条同形**。
+        #[test]
+        fn space_uid_really_lands_in_the_payload_and_is_never_invented() {
+            let p = with_space_uid(&payload(), "  uid-a  ").unwrap();
+            assert_eq!(
+                space_uid_of_payload(&p).as_deref(),
+                Some("uid-a"),
+                "⛔ 没挂上（或没折空白）"
+            );
+            assert!(p.contains("_space_uid"), "键名必须是 `_space_uid`");
+            let v: serde_json::Value = serde_json::from_str(&p).unwrap();
+            let orig: serde_json::Value = serde_json::from_str(&payload()).unwrap();
+            assert_eq!(v["title"], orig["title"], "⛔ 页内容被改了");
+            // 老载荷/空串/坏形状 ⇒ None（⛔ 不从 workspace_id 或别处伪造一个 uid）。
+            assert_eq!(
+                space_uid_of_payload(&payload()),
+                None,
+                "老载荷无这一格 ⇒ None"
+            );
+            assert_eq!(space_uid_of_payload(r#"{"workspace_id":"w1"}"#), None);
+            assert_eq!(space_uid_of_payload(r#"{"_space_uid":""}"#), None);
+            assert_eq!(space_uid_of_payload(r#"{"_space_uid":123}"#), None);
+            // 空 uid ⇒ 载荷逐字节不变。
+            assert_eq!(with_space_uid(&payload(), "").unwrap(), payload());
+            assert_eq!(with_space_uid(&payload(), "   ").unwrap(), payload());
+            // 坏形状与名字那一格同一条纪律。
+            assert!(with_space_uid("not json", "uid-a").is_err());
+            assert_eq!(with_space_uid("[1,2]", "uid-a").unwrap(), "[1,2]");
+        }
+
+        /// ⭐ 本机 uid 读 `meta.workspaces.space_uid`；读不到/空串 ⇒ `None`（回落名字，不许让保存失败）。
+        #[test]
+        fn local_space_uid_reads_meta_and_degrades_to_none() {
+            let c = rusqlite::Connection::open_in_memory().unwrap();
+            c.execute_batch(
+                "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE workspaces (
+                 id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                 created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE meta.workspaces (
+                 id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT '',
+                 space_uid TEXT NOT NULL DEFAULT '');
+             INSERT INTO workspaces VALUES ('ws-1', '默认空间', 1, 1);
+             INSERT INTO meta.workspaces (id, name, kind, space_uid)
+                 VALUES ('ws-1', '项目', 'personal', 'uid-a');",
+            )
+            .unwrap();
+            assert_eq!(local_space_uid(&c).as_deref(), Some("uid-a"));
+            // 空串 ⇒ None（与"读不到"同一处置：回落名字）。
+            c.execute(
+                "UPDATE meta.workspaces SET space_uid = '' WHERE id = 'ws-1'",
+                [],
+            )
+            .unwrap();
+            assert_eq!(local_space_uid(&c), None);
+            // 没有 meta 表 ⇒ None（不许 panic/Err）。
+            let bare = rusqlite::Connection::open_in_memory().unwrap();
+            assert_eq!(local_space_uid(&bare), None);
+        }
+
+        /// ⭐ 推的那一侧真的挂上 `_space_uid`（`record_page_upsert` 与挂空间名同一处）。
+        #[test]
+        fn pushing_a_page_carries_the_local_space_uid() {
+            let (c, dir) = super::pending_conn("push-uid");
+            // 空间库那一行的 id ＝ "ws"；给 meta.workspaces 补同一行 ＋ uid。
+            c.execute(
+                "INSERT INTO meta.workspaces (id, name, created_at, updated_at, kind, space_uid)
+                 VALUES ('ws', '工作', 1, 1, 'personal', 'uid-push')",
+                [],
+            )
+            .unwrap();
+            let page = super::remote_page("p1", &super::page_json("b1", 1, "字"));
+            record_page_upsert(&c, &page).unwrap();
+            let payload: String = c
+                .query_row(
+                    "SELECT payload FROM changes WHERE entity_id = 'p1' ORDER BY seq DESC LIMIT 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                space_uid_of_payload(&payload).as_deref(),
+                Some("uid-push"),
+                "⛔ 推出去的载荷必须带本机 space_uid"
+            );
+            assert_eq!(
+                space_name_of_payload(&payload).as_deref(),
+                Some("工作"),
+                "旧字段（空间名）必须原样还在"
+            );
+            let _ = std::fs::remove_dir_all(dir);
         }
 
         /// ⭐⑧ **融合账本**：一个 meta KV、记一笔读得回；**账本坏 ⇒ 如实报错**（⛔ 不静默当空账）。
