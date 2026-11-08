@@ -833,6 +833,32 @@ pub fn run() {
 
             let app_data_dir = db::resolve_app_data_dir(app.path().app_data_dir().ok())
                 .ok_or_else(|| std::io::Error::other("拿不到应用数据目录（也没有 SHUYONOTE_DATA_DIR）"))?;
+            // ⭐ **P3-1b 第二小步（task-60）**：**单写者锁 —— 必须在本进程打开任何库之前拿到**。
+            //   · daemon 正在跑（或另一个写者占着）⇒ 可读失败：**不 init DB、不应用暂存恢复**，
+            //     弹一句系统对话框说明原因，然后 `exit(1)` ＋ setup 返回 Err；
+            //   · 成功 ⇒ 锁 **托管进 app**（只在进程退出时 Drop；⛔ 不许提前释放）。
+            //   ⛔ 这一格是"不会两个进程同时开库"的唯一保证：App 与 daemon 抢**同一个文件**。
+            let db_lock = match sync_core_daemon::acquire_in(&app_data_dir) {
+                Ok(l) => l,
+                Err(e) => {
+                    let msg = format!(
+                        "ShuyoNote 的数据目录正被另一个进程使用（sync_core daemon 或另一实例）：\n{e}\n\n请先停止它再打开，或改用 daemon 模式。"
+                    );
+                    eprintln!("[single-writer] {msg}");
+                    {
+                        use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+                        let _ = app
+                            .dialog()
+                            .message(msg.clone())
+                            .title("ShuyoNote 无法启动")
+                            .kind(MessageDialogKind::Error)
+                            .blocking_show();
+                    }
+                    app.handle().exit(1);
+                    return Err(std::io::Error::other(format!("单写者锁被占用：{e}")).into());
+                }
+            };
+            app.manage(db_lock);
             // ⭐⭐ **2026-10-28（owner：「本机备份 全空间打包，要能原样恢复」）**：
             //   「原样恢复」是**重启生效**的 —— 在**打开任何库之前**把 staging 换上来
             //   （当前数据整份挪到 `restore-prev-<毫秒>/`，⛔ 不删 ✗）。失败不影响启动（如实打一行）。

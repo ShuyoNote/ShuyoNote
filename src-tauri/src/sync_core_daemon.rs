@@ -32,9 +32,17 @@ pub fn is_daemon_flag(args: impl IntoIterator<Item = String>) -> bool {
     args.into_iter().any(|a| a == DAEMON_FLAG)
 }
 
-/// daemon 锁的路径（`<app data>/sync_core.lock`）。
+/// 单写者锁的路径（`<app data>/sync_core.lock`）。
 pub fn lock_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join(LOCK_FILE_NAME)
+}
+
+/// ⭐ **可复用入口（App 与 daemon 共用）**：按 app data 目录抢同一把单写者锁。
+///
+/// ⚠️ **必须在 `db::init` 之前**调用（App 的 setup 已按这个顺序接线；
+/// 判据钉住 lock < db::init）。失败信息含**持有者 pid 与锁路径**（可读）。
+pub fn acquire_in(app_data_dir: &Path) -> Result<SingleWriterLock, String> {
+    SingleWriterLock::acquire(&lock_path(app_data_dir))
 }
 
 /// ⭐ 纯函数：锁文件内容 → pid（只认第一行整数；坏内容 ⇒ None）。
@@ -158,7 +166,7 @@ pub fn run_daemon() -> i32 {
         return 2;
     };
     // ② **先抢单写者锁**（失败 ⇒ 可读错误退出，⛔ 不碰 DB）。
-    let _lock = match SingleWriterLock::acquire(&lock_path(&app_data_dir)) {
+    let _lock = match acquire_in(&app_data_dir) {
         Ok(l) => l,
         Err(e) => {
             eprintln!("[sync-core-daemon] {e}");
@@ -312,5 +320,81 @@ mod tests {
         }
         // ⑤ 默认不变：没命中 flag 时 `run()` 里不建锁、不起 daemon 任务。
         assert!(!lib.contains("lock_path(&"));
+    }
+
+    /// ⭐ task-60：App 与 daemon 抢的是**同一个文件路径** ⇒ 两者不会同时开库。
+    #[test]
+    fn app_and_daemon_share_one_lock_so_they_never_open_the_db_together() {
+        let dir = temp_dir("shared");
+        // daemon 先占（模拟 daemon 已启动）。
+        let daemon = acquire_in(&dir).expect("daemon 应当先拿到锁");
+        assert!(lock_path(&dir).is_file());
+        // App（同一入口 acquire_in）⇒ 可读失败（含持有 pid 与路径）。
+        let err = match acquire_in(&dir) {
+            Ok(_) => panic!("⛔ App 与 daemon 不许同时开库（第二把锁必须失败）"),
+            Err(e) => e,
+        };
+        assert!(err.contains("另一个 sync_core daemon"), "{err}");
+        assert!(
+            err.contains(&std::process::id().to_string()),
+            "要能读到持有者 pid：{err}"
+        );
+        assert!(err.contains("sync_core.lock"), "要能读到锁路径：{err}");
+        // App 那条路失败时**不删/不抢** daemon 的锁：daemon 仍持有。
+        assert!(lock_path(&dir).is_file());
+        drop(daemon);
+        assert!(!lock_path(&dir).exists(), "正常退出（Drop）必须释放锁");
+        // 释放后下一方可以拿（两种入口同一个语义）。
+        let again = acquire_in(&dir).expect("释放后必须能再拿");
+        drop(again);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 源码级：App 在 **db::init 之前**拿锁；失败路径不 init DB、可读、退出非 0；
+    /// 成功路径把锁交给 app 管理（Drop 时机＝进程退出）。
+    #[test]
+    fn the_app_takes_the_same_lock_before_any_database_open_and_exits_on_failure() {
+        let lib = include_str!("lib.rs");
+        let setup_at = lib.find(".setup(|app| {").expect("App setup 必须在");
+        let setup = &lib[setup_at..];
+        let lock_at = setup
+            .find("sync_core_daemon::acquire_in(&app_data_dir)")
+            .expect("App setup 必须在 db::init 之前拿单写者锁");
+        let restore_at = setup
+            .find("apply_staged_restore")
+            .expect("staged restore 必须在");
+        let init_at = setup.find("let conn = db::init(").expect("db::init 必须在");
+        assert!(
+            lock_at < restore_at,
+            "⛔ 锁必须在「恢复暂存」之前拿（恢复会动库文件）"
+        );
+        assert!(restore_at < init_at, "前提：暂存恢复本来就在 db::init 之前");
+        assert!(
+            lock_at < init_at,
+            "⛔ 单写者锁必须在 db::init 之前（否则两个进程会同时开库）"
+        );
+        // 失败路径：可读日志 ＋ 系统对话框尝试 ＋ exit(1) ＋ setup 返回 Err（不继续 init DB）。
+        let failure = &setup[lock_at..init_at];
+        assert!(failure.contains("[single-writer]"), "失败要有一行可读日志");
+        assert!(
+            failure.contains("blocking_show()"),
+            "要尝试系统对话框说明原因"
+        );
+        assert!(failure.contains("app.handle().exit(1)"), "失败必须退出非 0");
+        assert!(
+            failure.contains("return Err("),
+            "setup 失败必须返回 Err（⛔ 不继续落库）"
+        );
+        assert!(
+            failure.contains("daemon"),
+            "错误话术要说明 daemon/另一个进程"
+        );
+        // 成功路径：锁交给 app 管理到进程退出（不再手动 drop）。
+        let success = &setup[lock_at..restore_at];
+        assert!(
+            success.contains("app.manage(db_lock)"),
+            "App 必须把锁托管到 app（进程退出才 Drop）"
+        );
+        assert!(!success.contains("drop(db_lock)"), "⛔ 不许提前释放锁");
     }
 }
