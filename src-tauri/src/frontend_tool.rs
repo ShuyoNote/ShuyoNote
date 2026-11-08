@@ -32,6 +32,15 @@ use std::time::Duration;
 pub(crate) const BRIDGE_EVENT: &str = "mcp:frontend-tool-request";
 /// 等应答的上限（默认 5 秒；判据用短超时注入，⛔ 不真等 5 秒）。
 const TIMEOUT_MS: u64 = 5_000;
+
+/// ⭐ 2026-11-08：诊断开关（默认静默）。回执类问题只有“看到三段时序”才定得了位；
+/// 常驻日志会污染审计，所以做成 `SHUYONOTE_MCP_DEBUG=1` 才打（第四轮评估的 P2 建议）。
+fn debug_enabled() -> bool {
+    std::env::var_os("SHUYONOTE_MCP_DEBUG").is_some_and(|v| {
+        let s = v.to_string_lossy();
+        !s.is_empty() && s != "0"
+    })
+}
 /// **方法白名单**：只有这几个方法能被能力层调用（⛔ 任意方法名 ⇒ `bad_args`）。
 const ALLOWED_METHODS: &[&str] = &[
     "export.markdown",
@@ -164,6 +173,12 @@ pub(crate) fn call_with_timeout(
     // ⭐ 2026-10-31：出口失败**立刻**报 `frontend_unavailable`（⛔ 不吞错、⛔ 不空等超时）——
     // 出口失败说明"这条桥现在送不出去"（窗口销毁/事件系统不可用），与"前端在但没回"是两件事，
     // 给用户的下一步也不同：前者要重开窗口/应用，后者可以重试。
+    if debug_enabled() {
+        eprintln!(
+            "[ft-debug] emit {} req={} timeout={}ms",
+            method, request_id, timeout_ms
+        );
+    }
     if let Err(e) = emit(BRIDGE_EVENT, &payload) {
         cleanup(&request_id);
         return Err(format!("frontend_unavailable: 前端事件发送失败（{e}）"));
@@ -203,6 +218,9 @@ pub(crate) fn respond_error(request_id: &str, error: &str) -> Result<(), String>
 }
 
 fn settle(request_id: &str, out: Result<BridgeReply, String>) -> Result<(), String> {
+    if debug_enabled() {
+        eprintln!("[ft-debug] settle req={} ok={}", request_id, out.is_ok());
+    }
     let tx = {
         let mut g = pending()
             .lock()
