@@ -10,6 +10,18 @@ import { MeshMissingSpaces } from "./MeshMissingSpaces";
 // ⭐ P1「连接体检」（2026-11-08）：只读现有读数 → 结构化诊断 ＋ 复制诊断包（⛔ 不新增命令 ✗）。
 //   入口在「局域网同步」状态卡里（见下面 `mesh-diagnose-entry` ✓）；纯函数在 `src/lib/meshDiagnose.ts` ✓。
 import { MeshDiagnoseDialog } from "./MeshDiagnoseDialog";
+// ⭐ P3-3a 第三小步（task-56）：CRDT 影子**手动体检** —— 只读扫描当前空间，文案全是纯函数，
+//   ⛔ 不自动修复/不改数据/不显示正文（差异只回数量）。
+import { shadowScanSpace } from "../lib/crdtShadowScan";
+import type { ShadowRowsResult } from "../lib/crdtShadow";
+import {
+  diagnoseCopyText,
+  diagnoseDetailLines,
+  diagnoseErrorText,
+  diagnoseFootnote,
+  diagnoseHeadline,
+  diagnoseTone,
+} from "../lib/crdtShadowDiagnose";
 // ⭐ P1「全部空间立即同步」（2026-11-08）：**纯前端串行** —— 目标选择/进度/汇总/失败重试全在
 //   `src/lib/meshAllSpaces.ts`（纯函数、可单测 ✓）；组件只负责按顺序调**既有** `api.meshSyncNow`。
 //   ⛔ 不新增第二条同步路 ✗（就是单空间「立即同步」那颗按钮用的同一个命令）。
@@ -235,6 +247,10 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
    *  ⚠️ `lastRound` 只用来把「上一轮网格同步」那一项喂给体检（⛔ 不新增读数／⛔ 不改同步逻辑 ✗）；
    *  它就是 `syncMeshNow` 刚拿到的那个返回值 ✓。 */
   const [meshDiagnoseOpen, setMeshDiagnoseOpen] = useState(false);
+  // ⭐ P3-3a（task-56）：CRDT 影子体检（只读、当前空间）—— 运行中禁按钮；结果只存脱敏汇总。
+  const [crdtShadowBusy, setCrdtShadowBusy] = useState(false);
+  const [crdtShadowResult, setCrdtShadowResult] = useState<ShadowRowsResult | null>(null);
+  const [crdtShadowError, setCrdtShadowError] = useState<string | null>(null);
   const [lastRound, setLastRound] = useState<MeshRoundReport | null>(null);
   /** ⭐ P1「全部空间立即同步」（2026-11-08）：这一轮的现场 ＋ 停止入口 ＋ 进度用的节拍。
    *  ⚠️ `allSyncStopRef` 里放的是**当前这一轮**的停止函数（点「停止」只置一个本地标志：
@@ -863,6 +879,37 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
       setStatus(`重试失败：${e}`);
     } finally {
       setRetryingHistory(null);
+    }
+  };
+
+  // ⭐ P3-3a（task-56）：手动体检当前空间的 CRDT 影子（只读；失败只 toast/行内，不影响同步）。
+  const runCrdtShadowDiagnose = async () => {
+    if (crdtShadowBusy) return;
+    if (!activeId) {
+      toast("请先选择一个空间", "error");
+      return;
+    }
+    setCrdtShadowBusy(true);
+    setCrdtShadowError(null);
+    try {
+      setCrdtShadowResult(await shadowScanSpace(activeId));
+    } catch (e) {
+      setCrdtShadowResult(null);
+      const msg = diagnoseErrorText(e);
+      setCrdtShadowError(msg);
+      toast(msg, "error");
+    } finally {
+      setCrdtShadowBusy(false);
+    }
+  };
+  const copyCrdtShadowSummary = async () => {
+    if (!crdtShadowResult) return;
+    try {
+      // ⛔ 摘要只有计数/结论（不含正文/内部标识）—— 拼法唯一实现见 `crdtShadowDiagnose`。
+      await navigator.clipboard.writeText(diagnoseCopyText(crdtShadowResult));
+      toast("体检摘要已复制（不含正文/内部标识）", "success");
+    } catch (e) {
+      toast(`复制失败：${e}`, "error");
     }
   };
 
@@ -2237,6 +2284,66 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                   · **同步密码**：⭐ **自动派生**、用户**不用知道**它 ⇒ 这一格**只读**一句「自动生成 · 不用你填」✓
                     （⛔ 没有手填框 ✗ —— 口径与理由见 `personalSyncReadout.ts` 里那段"为什么没有手动入口"✓）。
                   ⚠️ 只在**个人空间 ＋ 桌面**出现：团队档的远程路径是服务器，端口/密码不是它的事 ✓。 */}
+              {/* ⭐ P3-3a 第三小步（task-56）：**手动 CRDT 影子体检**（高级区；桌面）。
+                  只读：比对「落盘正文」与该页 CRDT 状态的投影；⛔ 不显示正文、⛔ 不自动修复、
+                  ⛔ 不改任何数据；差异页只回**数量**（内部 page id 不进界面）。 */}
+              {isDesktopPlatform() && (
+                <details className="sync-row" data-testid="crdt-shadow-diagnose-row">
+                  <summary>
+                    <span className="sync-row-label">CRDT 影子体检</span>
+                    <span className="sync-row-value">
+                      {crdtShadowBusy
+                        ? "体检中…"
+                        : crdtShadowResult
+                          ? `${crdtShadowResult.differ} 页不一致`
+                          : "只读检查"}
+                    </span>
+                    <span className="sync-row-caret" aria-hidden>›</span>
+                  </summary>
+                  <div className="sync-row-body">
+                    <div className="sync-field">
+                      <span className="sync-hint">
+                        比对「落盘正文」与该页 CRDT 状态的投影：只显示计数，不显示内容、不自动修复、不改数据。
+                      </span>
+                      <button
+                        className="sync-mini-btn"
+                        data-testid="crdt-shadow-run"
+                        disabled={crdtShadowBusy}
+                        onClick={() => void runCrdtShadowDiagnose()}
+                      >
+                        {crdtShadowBusy ? "体检中…" : "开始体检"}
+                      </button>
+                    </div>
+                    {crdtShadowError && (
+                      <div className="sync-hint" data-testid="crdt-shadow-error">
+                        {crdtShadowError}
+                      </div>
+                    )}
+                    {crdtShadowResult && (
+                      <div
+                        className={`sync-hint crdt-shadow-result is-${diagnoseTone(crdtShadowResult)}`}
+                        data-testid="crdt-shadow-result"
+                      >
+                        <div>{diagnoseHeadline(crdtShadowResult)}</div>
+                        <ul>
+                          {diagnoseDetailLines(crdtShadowResult).map((line) => (
+                            <li key={line}>{line}</li>
+                          ))}
+                        </ul>
+                        <div>{diagnoseFootnote(crdtShadowResult)}</div>
+                        <button
+                          className="sync-mini-btn"
+                          data-testid="crdt-shadow-copy"
+                          onClick={() => void copyCrdtShadowSummary()}
+                        >
+                          复制摘要
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              )}
+
               {isPersonalActive && isDesktopPlatform() && (
                 <>
                   <details className="sync-row" data-testid="mesh-port-row">
