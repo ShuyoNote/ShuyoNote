@@ -804,22 +804,38 @@ pub fn manual_peer_bases(c: &rusqlite::Connection) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
+/// ⭐ **task-62**：手动添加设备时的 `device_id` 校验（与"设备标识"同口径）：
+/// 去空白后非空、≤128、只允许字母/数字/`-`/`_`/`.`（⛔ 空格/控制符/中文一律拒绝）。
+pub fn validate_manual_device_id(raw: &str) -> Result<String, String> {
+    let id = raw.trim();
+    if id.is_empty() {
+        return Err("设备 id 不能为空".to_string());
+    }
+    if id.len() > 128 {
+        return Err("设备 id 太长（>128）".to_string());
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        return Err("设备 id 只能包含字母/数字/-/_/.（不能有空格或控制符）".to_string());
+    }
+    Ok(id.to_string())
+}
+
 /// ⭐ 写入/覆盖一台设备的 base（幂等：同值 ⇒ `Ok(false)` 且不写库）。返回"真的变了吗"。
 pub fn set_manual_peer_base(
     c: &rusqlite::Connection,
     device_id: &str,
     base: &str,
 ) -> Result<bool, String> {
-    let id = device_id.trim();
-    if id.is_empty() {
-        return Err("设备 id 不能为空".to_string());
-    }
+    let id = validate_manual_device_id(device_id)?;
     let base = validate_manual_peer_base(base)?;
     let mut map = manual_peer_bases(c);
-    if map.get(id).map(String::as_str) == Some(base.as_str()) {
+    if map.get(&id).map(String::as_str) == Some(base.as_str()) {
         return Ok(false);
     }
-    map.insert(id.to_string(), base);
+    map.insert(id, base);
     let json = serde_json::to_string(&map).map_err(|e| e.to_string())?;
     crate::sync::set_meta_state(c, MANUAL_PEER_BASES_KEY, &json)?;
     Ok(true)
@@ -827,12 +843,9 @@ pub fn set_manual_peer_base(
 
 /// ⭐ 清除一台设备的手动 base（幂等：本来没有 ⇒ `Ok(false)`，不报错）。
 pub fn clear_manual_peer_base(c: &rusqlite::Connection, device_id: &str) -> Result<bool, String> {
-    let id = device_id.trim();
-    if id.is_empty() {
-        return Err("设备 id 不能为空".to_string());
-    }
+    let id = validate_manual_device_id(device_id)?;
     let mut map = manual_peer_bases(c);
-    if map.remove(id).is_none() {
+    if map.remove(&id).is_none() {
         return Ok(false);
     }
     let json = serde_json::to_string(&map).map_err(|e| e.to_string())?;
@@ -869,6 +882,57 @@ pub fn mesh_peers_by_name(
         local_encrypted,
         &BTreeMap::new(),
     )
+}
+
+/// ⭐ **P1 手动地址第二刀（task-62）**：把**手动添加的、当前空间已配对**的设备追加到候选**末尾**。
+///
+/// 安全边界（⛔ 不凭空信任）：
+/// * 只追加 `device_id` 在 `paired`（**本空间/设备级**配对名单）里的条目 —— 未配对 ⇒ **不加**；
+/// * 不是自己；device_id 非空；base 必须过 [`validate_manual_peer_base`]（KV 可能被外部写坏）；
+/// * 去重：已在 `out`（已发现/已覆盖）里的 device_id 不再加；base 与现有候选相同也不加；
+/// * 顺序：**已发现的候选保持原顺序**，手动追加的部分按 device_id 排序 ⇒ 确定性。
+///
+/// 返回追加了几台（判据/读数用；⛔ 不改变已发现候选的数量/顺序）。
+pub fn append_manual_candidates(
+    out: &mut Vec<MeshPeer>,
+    my_device: &str,
+    manual: &BTreeMap<String, String>,
+    paired: &[String],
+) -> usize {
+    let is_paired = |id: &str| paired.iter().any(|p| p.trim() == id);
+    let mut ids: Vec<&String> = manual
+        .keys()
+        .filter(|id| {
+            let id = id.trim();
+            !id.is_empty()
+                && id != my_device.trim()
+                && is_paired(id)
+                && !out.iter().any(|q| q.device_id == id)
+        })
+        .collect();
+    ids.sort();
+    let mut added = 0usize;
+    for id in ids {
+        let id = id.trim();
+        let Some(base) = manual
+            .get(id)
+            .and_then(|b| validate_manual_peer_base(b).ok())
+        else {
+            continue; // KV 里的坏值 ⇒ 不进候选（⛔ 不静默连一个坏地址）
+        };
+        if out.iter().any(|q| q.base == base) {
+            continue;
+        }
+        out.push(MeshPeer {
+            device_id: id.to_string(),
+            base,
+            // 手动设备没有公告/QUIC 材料：留空，走 HTTP（⛔ 不编）。
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
+        });
+        added += 1;
+    }
+    added
 }
 
 /// ⭐ **P1 手动地址（task-53）**：[`mesh_peers_by_name`] 的**带手动覆盖**版本。
@@ -931,6 +995,31 @@ pub fn mesh_peers_by_name_with_overrides(
         });
     }
     out.sort_by(|a, b| a.device_id.cmp(&b.device_id)); // 确定性（判据要能逐字节比）
+    out
+}
+
+/// ⭐ **P1 手动设备（task-62）**：已发现候选（含覆盖）＋ **手动添加且已配对** 的设备追加末尾。
+///
+/// ⚠️ 旧函数 [`mesh_peers_by_name`] / [`mesh_peers_by_name_with_overrides`] 语义**逐字不变**
+/// （它们不追加手动设备；只有生产轮次 `round` 走这一个）。
+pub fn mesh_peers_by_name_with_manual(
+    space_id: &str,
+    space_name: &str,
+    my_device: &str,
+    peers: &[crate::lan::Peer],
+    local_encrypted: bool,
+    manual: &BTreeMap<String, String>,
+    paired: &[String],
+) -> Vec<MeshPeer> {
+    let mut out = mesh_peers_by_name_with_overrides(
+        space_id,
+        space_name,
+        my_device,
+        peers,
+        local_encrypted,
+        manual,
+    );
+    append_manual_candidates(&mut out, my_device, manual, paired);
     out
 }
 
@@ -2046,17 +2135,25 @@ pub async fn round(
         })
         .unwrap_or(false);
     // ⭐ P1 手动地址：候选里用 meta 的覆盖值（没有覆盖 ⇒ 与旧逻辑逐字相同）。
-    let manual_bases = conn
+    //   ⭐ task-62：再追加"手动添加 **且本空间已配对**"的设备（末尾；未配对 ⛔ 不加）。
+    let (manual_bases, paired_ids) = conn
         .lock()
-        .map(|g| manual_peer_bases(&g))
+        .map(|g| {
+            let manual = manual_peer_bases(&g);
+            let paired = paired_devices(&g, space_id, device_level)
+                .map(|v| v.into_iter().map(|d| d.device_id).collect::<Vec<_>>())
+                .unwrap_or_default();
+            (manual, paired)
+        })
         .unwrap_or_default();
-    let mut candidates = mesh_peers_by_name_with_overrides(
+    let mut candidates = mesh_peers_by_name_with_manual(
         space_id,
         &space_name,
         my_device,
         peers,
         local_encrypted,
         &manual_bases,
+        &paired_ids,
     );
     // ⭐ 2026-10-25（Step 3-2）：**把跨网路线表里的对端也喂进本轮**
     //   ⚠️ 默认构建什么都不做（跨网只有 --features relay 才可用）；坏了只打日志、不打断本轮。
@@ -6685,6 +6782,15 @@ mod tests {
         // 空 id ⇒ Err。
         assert!(set_manual_peer_base(&c, "  ", "http://192.168.1.6:8788").is_err());
         assert!(clear_manual_peer_base(&c, "  ").is_err());
+        // ⭐ task-62：手动添加设备的 id 同口径校验（非空/长度/字符集）。
+        assert_eq!(validate_manual_device_id(" dev-peer ").unwrap(), "dev-peer");
+        assert!(validate_manual_device_id("dev peer").is_err(), "⛔ 空格");
+        assert!(validate_manual_device_id("设备").is_err(), "⛔ 非 ASCII");
+        assert!(
+            validate_manual_device_id(&"a".repeat(129)).is_err(),
+            "⛔ 超长"
+        );
+        assert!(set_manual_peer_base(&c, "dev peer", "http://192.168.1.6:8788").is_err());
         // 清除幂等：第一次 true、第二次 false（不报错）。
         assert!(clear_manual_peer_base(&c, "dev-peer").unwrap());
         assert!(!clear_manual_peer_base(&c, "dev-peer").unwrap());
@@ -6740,6 +6846,103 @@ mod tests {
         let got = mesh_peers_by_name_with_overrides("sp-1", "", "me", &no_base, false, &manual);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].base, "http://10.0.0.9:9000");
+    }
+
+    /// ⭐ task-62：未发现的设备**只有已配对**才追加进候选；未配对 ⛔ 不凭空信任。
+    #[test]
+    fn an_undiscovered_manual_device_enters_candidates_only_after_pairing() {
+        let peers: Vec<crate::lan::Peer> = Vec::new();
+        let mut manual = BTreeMap::new();
+        manual.insert("ghost".to_string(), "http://10.0.0.9:9000".to_string());
+        // 未配对 ⇒ 不进候选（旧路径也逐字不变）。
+        let got = mesh_peers_by_name_with_manual("sp-1", "", "me", &peers, false, &manual, &[]);
+        assert!(got.is_empty(), "⛔ 未配对的手动设备不许进候选");
+        assert!(mesh_peers_by_name("sp-1", "", "me", &peers, false).is_empty());
+        assert!(
+            mesh_peers_by_name_with_overrides("sp-1", "", "me", &peers, false, &manual).is_empty(),
+            "旧的 with_overrides 也不许追加"
+        );
+        // 已配对 ⇒ 追加末尾、base 用手动值。
+        let got = mesh_peers_by_name_with_manual(
+            "sp-1",
+            "",
+            "me",
+            &peers,
+            false,
+            &manual,
+            &["ghost".to_string()],
+        );
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].device_id, "ghost");
+        assert_eq!(got[0].base, "http://10.0.0.9:9000");
+    }
+
+    #[test]
+    fn manual_devices_append_after_discovered_and_are_deduped_safely() {
+        let peers = vec![
+            lan_peer_of("dev-b", Some("http://192.168.1.7:8788"), &["sp-1"]),
+            lan_peer_of("dev-a", Some("http://192.168.1.8:8788"), &["sp-1"]),
+        ];
+        let mut manual = BTreeMap::new();
+        // dev-a 已发现（覆盖 base）；ghost-z/ghost-c 未发现但已配对；ghost-x 未配对；自己；坏值；重复 base。
+        manual.insert("dev-a".to_string(), "http://10.0.0.1:9000".to_string());
+        manual.insert("ghost-z".to_string(), "http://10.0.0.2:9000".to_string());
+        manual.insert("ghost-c".to_string(), "http://10.0.0.3:9000".to_string());
+        manual.insert("ghost-x".to_string(), "http://10.0.0.4:9000".to_string());
+        manual.insert("me".to_string(), "http://10.0.0.5:9000".to_string());
+        manual.insert("ghost-bad".to_string(), "ftp://bad:1".to_string());
+        manual.insert(
+            "ghost-dupbase".to_string(),
+            "http://10.0.0.3:9000".to_string(),
+        );
+        let paired = vec![
+            "dev-a".to_string(),
+            "ghost-z".to_string(),
+            "ghost-c".to_string(),
+            "me".to_string(),
+            "ghost-bad".to_string(),
+            "ghost-dupbase".to_string(),
+        ];
+        let got = mesh_peers_by_name_with_manual("sp-1", "", "me", &peers, false, &manual, &paired);
+        // 已发现优先、顺序不变（dev-a/dev-b，含覆盖），手动追加末尾按 id 排序。
+        assert_eq!(
+            got.iter().map(|p| p.device_id.as_str()).collect::<Vec<_>>(),
+            vec!["dev-a", "dev-b", "ghost-c", "ghost-z"],
+            "已发现优先；手动只加已配对且 append 末尾；去重/坏值/自己/重复 base 都排除"
+        );
+        assert_eq!(got[0].base, "http://10.0.0.1:9000", "已发现仍用覆盖");
+        assert_eq!(got[2].base, "http://10.0.0.3:9000");
+        assert_eq!(got[3].base, "http://10.0.0.2:9000");
+        // 旧 builder 对同一份 manual/peers **逐字不变**（不追加 ghost）。
+        let old = mesh_peers_by_name_with_overrides("sp-1", "", "me", &peers, false, &manual);
+        assert_eq!(old.len(), 2);
+    }
+
+    /// 源码级：生产轮次把「本空间已配对」名单喂给候选构造；旧入口不追加。
+    #[test]
+    fn the_production_round_reads_paired_devices_before_appending_manual_peers() {
+        let src = include_str!("mesh.rs");
+        let round_at = src.find("pub async fn round(").expect("round 必须在");
+        let round = &src[round_at..];
+        let paired_at = round
+            .find("paired_devices(&g, space_id, device_level)")
+            .expect("生产轮次必须读本空间配对名单");
+        let manual_at = round
+            .find("mesh_peers_by_name_with_manual(")
+            .expect("生产轮次必须用手动追加入口");
+        assert!(paired_at < manual_at, "先拿配对名单，再构造候选");
+        assert!(
+            round.contains("append_manual_candidates(&mut out, my_device, manual, paired)"),
+            "追加函数必须做配对门"
+        );
+        // 未配对不追加、坏 base 不进、只在已配对里头找。
+        let append = src
+            .split("pub fn append_manual_candidates(")
+            .nth(1)
+            .expect("append 必须在");
+        assert!(append.contains("is_paired(id)"));
+        assert!(append.contains("validate_manual_peer_base(b).ok()"));
+        assert!(append.contains("!out.iter().any(|q| q.device_id == id)"));
     }
 
     #[test]

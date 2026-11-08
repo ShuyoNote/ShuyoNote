@@ -557,6 +557,11 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   //   · 地图式读全部覆盖（`device_id → base`），清除即回落到公告地址；
   //   · 保存/清除后只**重读这一张表**（⛔ 不动 lanStatus/不改其他 UI）。
   const [manualPeers, setManualPeers] = useState<Record<string, string>>({});
+  // ⭐ P1 手动地址第二刀（task-62）：**未发现设备**的手动添加（device_id + base）。
+  //   ⚠️ 保存只是写 meta KV；**只有本空间已配对**的设备才会进候选（后端门），未配对不连接。
+  const [manualDeviceId, setManualDeviceId] = useState("");
+  const [manualDeviceBase, setManualDeviceBase] = useState("");
+  const [manualDeviceBusy, setManualDeviceBusy] = useState(false);
   const [manualEdit, setManualEdit] = useState<{ deviceId: string; base: string } | null>(null);
   const [manualBusy, setManualBusy] = useState<string | null>(null);
   const refreshManualPeers = async () => {
@@ -602,6 +607,41 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
       setManualBusy(null);
     }
   };
+  /** ⭐ task-62：手动添加**未发现**设备（device_id＋base）。后端只写 KV；配对门在候选构造那一侧。 */
+  const addManualDevice = async () => {
+    const id = manualDeviceId.trim();
+    const base = manualDeviceBase.trim();
+    if (!id) {
+      toast("设备 ID 不能为空", "error");
+      return;
+    }
+    if (!base) {
+      toast("设备地址不能为空（要 http:// 或 https:// 主机:端口）", "error");
+      return;
+    }
+    setManualDeviceBusy(true);
+    try {
+      await api.meshSetManualPeer(id, base);
+      await refreshManualPeers();
+      setManualDeviceId("");
+      setManualDeviceBase("");
+      const paired = duList.some((d) => d.deviceId === id);
+      toast(
+        paired
+          ? "已添加：这台已配对，下一轮会加入直连候选"
+          : "已保存：这台还没配对 ⇒ 不会进入候选（先在另一台/附近设备完成配对）",
+        "success",
+      );
+    } catch (e) {
+      toast(
+        `没保存成：${e instanceof Error ? e.message : String(e)}`,
+        "error",
+      );
+    } finally {
+      setManualDeviceBusy(false);
+    }
+  };
+
   /**
    * ⭐ **R110（owner 2026-10-02 拍 A）**：**这段码给哪一台**（空 ＝ 不指定 ✓）。
    * ⚠️ 存的是**对方的 `device_id`**（进载荷、也用于本机先登记 ✓）—— 但**屏幕上只显示短码** ✓：
@@ -2358,6 +2398,102 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                   · **同步密码**：⭐ **自动派生**、用户**不用知道**它 ⇒ 这一格**只读**一句「自动生成 · 不用你填」✓
                     （⛔ 没有手填框 ✗ —— 口径与理由见 `personalSyncReadout.ts` 里那段"为什么没有手动入口"✓）。
                   ⚠️ 只在**个人空间 ＋ 桌面**出现：团队档的远程路径是服务器，端口/密码不是它的事 ✓。 */}
+              {/* ⭐ P1 手动地址第二刀（task-62）：**手动添加未发现设备**（高级区；桌面）。
+                  只保存 device_id＋base；⛔ 不信任/不配对：候选构造只追加**本空间已配对**的设备，
+                  未配对 ⇒ 只保存、不连接（后端配对门；见 mesh::append_manual_candidates）。 */}
+              {isDesktopPlatform() && (
+                <details className="sync-row" data-testid="manual-device-entry">
+                  <summary>
+                    <span className="sync-row-label">手动添加设备</span>
+                    <span className="sync-row-value">
+                      已添加 {Object.keys(manualPeers ?? {}).length} 台
+                    </span>
+                    <span className="sync-row-caret" aria-hidden>›</span>
+                  </summary>
+                  <div className="sync-row-body">
+                    <div className="sync-field">
+                      <label htmlFor="manual-device-id">设备 ID</label>
+                      <input
+                        id="manual-device-id"
+                        className="sync-input"
+                        data-testid="manual-device-id"
+                        value={manualDeviceId}
+                        placeholder="对方的设备标识（字母/数字/-/_/.）"
+                        maxLength={128}
+                        onChange={(e) => setManualDeviceId(e.target.value)}
+                      />
+                    </div>
+                    <div className="sync-field">
+                      <label htmlFor="manual-device-base">设备地址</label>
+                      <input
+                        id="manual-device-base"
+                        className="sync-input"
+                        data-testid="manual-device-base"
+                        value={manualDeviceBase}
+                        placeholder="http://192.168.1.5:8788"
+                        onChange={(e) => setManualDeviceBase(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void addManualDevice();
+                        }}
+                      />
+                    </div>
+                    <div className="sync-field">
+                      <button
+                        className="sync-mini-btn"
+                        data-testid="manual-device-add"
+                        disabled={
+                          manualDeviceBusy ||
+                          !manualDeviceId.trim() ||
+                          !manualDeviceBase.trim()
+                        }
+                        onClick={() => void addManualDevice()}
+                      >
+                        {manualDeviceBusy ? "保存中…" : "添加"}
+                      </button>
+                    </div>
+                    <div className="sync-hint" data-testid="manual-device-hint">
+                      只有<b>本空间已配对</b>的设备会进入直连候选；未配对只保存、不连接（⛔
+                      不凭空信任）。请先在另一台/附近设备完成配对。
+                    </div>
+                    <div data-testid="manual-device-list">
+                      {Object.keys(manualPeers ?? {}).length === 0 ? (
+                        <div className="sync-hint" data-testid="manual-device-empty">
+                          还没有手动添加的设备
+                        </div>
+                      ) : (
+                        Object.entries(manualPeers ?? {})
+                          .sort(([a], [b]) => a.localeCompare(b))
+                          .map(([id, base]) => {
+                            const paired = duList.some((d) => d.deviceId === id);
+                            return (
+                              <div
+                                key={id}
+                                className="sync-hint"
+                                data-testid="manual-device-row"
+                                style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
+                              >
+                                <span data-testid="manual-device-row-id">{id}</span>
+                                <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{base}</span>
+                                <span data-testid="manual-device-pair-state">
+                                  {paired ? "已配对" : "未配对（不会进候选）"}
+                                </span>
+                                <button
+                                  className="sync-mini-btn"
+                                  data-testid="manual-device-remove"
+                                  disabled={manualDeviceBusy}
+                                  onClick={() => void clearManualPeer(id)}
+                                >
+                                  移除
+                                </button>
+                              </div>
+                            );
+                          })
+                      )}
+                    </div>
+                  </div>
+                </details>
+              )}
+
               {/* ⭐ P3-1a 第四刀（task-57）：**只读**「同步核心」状态行（高级区；桌面）。
                   默认 Core 不启动 ⇒ 显示「未启用」；读不出 ⇒ unknown（⛔ 不假装）。
                   ⚠️ 本版**不提供开关**（不从这里启用）。 */}
