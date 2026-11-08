@@ -3646,6 +3646,8 @@ struct Reply {
     reason: &'static str,
     content_type: &'static str,
     body: Vec<u8>,
+    /// ⭐ P3-4：额外的响应头（如 `Content-Range`）。**空 ⇒ 与旧响应逐字节相同**（不写任何多余头）。
+    headers: Vec<(String, String)>,
 }
 
 impl Reply {
@@ -3655,6 +3657,7 @@ impl Reply {
             reason,
             content_type: "application/json; charset=utf-8",
             body: body.into_bytes(),
+            headers: Vec::new(),
         }
     }
 
@@ -3666,6 +3669,23 @@ impl Reply {
             reason,
             content_type: "application/octet-stream",
             body,
+            headers: Vec::new(),
+        }
+    }
+
+    /// ⭐ P3-4：带额外响应头的字节应答（Range 用：`Content-Range`）。
+    fn bytes_with_headers(
+        code: u16,
+        reason: &'static str,
+        body: Vec<u8>,
+        headers: Vec<(String, String)>,
+    ) -> Self {
+        Reply {
+            code,
+            reason,
+            content_type: "application/octet-stream",
+            body,
+            headers,
         }
     }
 }
@@ -3688,13 +3708,17 @@ pub(crate) fn dispatch_tunnel(
 }
 
 fn respond(sock: &mut TcpStream, reply: &Reply) -> std::io::Result<()> {
-    let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    let mut head = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n",
         reply.code,
         reply.reason,
         reply.content_type,
         reply.body.len()
     );
+    for (name, value) in &reply.headers {
+        head.push_str(&format!("{name}: {value}\r\n"));
+    }
+    head.push_str("Connection: close\r\n\r\n");
     sock.write_all(head.as_bytes())?;
     sock.write_all(&reply.body)?;
     sock.flush()
@@ -3852,7 +3876,7 @@ pub(crate) fn dispatch(state: &State, req: &Request) -> Reply {
             }
             reply
         }
-        Route::Attachment => handle_attachment(state, &req.target),
+        Route::Attachment => handle_attachment(state, &req.target, &req.headers),
         Route::Keyring => handle_keyring(state),
         Route::Manifest => handle_manifest(state, &req.target),
         Route::Page => handle_page(state, &req.target),
@@ -5421,6 +5445,244 @@ fn serve_locked_outbox(state: &State, target: &str, _space: &str, since: i64, li
     )
 }
 
+/// ⭐ **P3-4**：单段 `Range` 的解析结论（纯函数入口在 [`resolve_single_range`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SingleRange {
+    /// 没有 Range（或 Range 头是空白）⇒ 200 全量（旧行为逐字不变）。
+    Full,
+    /// 合法单段（含闭区间 `start..=end`，两端都在 `0..len` 内）。
+    Slice { start: u64, end: u64 },
+}
+
+/// ⭐ **P3-4（纯函数）**：解析 `Range: bytes=…` —— 只支持**单段**；失败一律按 RFC 视为
+/// **不可满足**（调用方回 416 ＋ `Content-Range: bytes */len`）。
+///
+/// 支持的三种写法（明确写死，⛔ 不做猜）：
+/// * `bytes=start-end` ⇒ 闭区间（`end` 超过文件尾 ⇒ **截到 len-1**，与 RFC 一致）；
+/// * `bytes=start-`   ⇒ 从 start 到文件尾；
+/// * `bytes=-suffix`  ⇒ **最后 suffix 字节**（`suffix=0` ⇒ 416）。
+///
+/// 以下一律返回 `Err`（可读原因）：多个 range（含逗号）、非 `bytes` 单位、缺 `-`、非数字、
+/// `end < start`、`start >= len`、`len == 0`。
+fn resolve_single_range(header: Option<&str>, len: u64) -> Result<SingleRange, String> {
+    let Some(raw) = header.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(SingleRange::Full);
+    };
+    let lower = raw.to_ascii_lowercase();
+    let Some(spec) = lower.strip_prefix("bytes=") else {
+        return Err("Range 只支持 `bytes` 单位".to_string());
+    };
+    let spec = spec.trim();
+    if spec.contains(',') {
+        return Err("只支持**单段** Range（不支持多段）".to_string());
+    }
+    let (a, b) = match spec.split_once('-') {
+        Some((a, b)) => (a.trim(), b.trim()),
+        None => return Err("Range 格式不对（要 `bytes=start-end`）".to_string()),
+    };
+    if a.is_empty() && b.is_empty() {
+        return Err("Range 两端都空".to_string());
+    }
+    if len == 0 {
+        return Err("文件长度为 0 ⇒ Range 不可满足".to_string());
+    }
+    // `-suffix`：最后 suffix 字节。
+    if a.is_empty() {
+        let n: u64 = b
+            .parse()
+            .map_err(|_| format!("Range 的 suffix 不是数字：{b:?}"))?;
+        if n == 0 {
+            return Err("suffix 长度必须 > 0".to_string());
+        }
+        let start = len.saturating_sub(n);
+        return Ok(SingleRange::Slice {
+            start,
+            end: len - 1,
+        });
+    }
+    let start: u64 = a
+        .parse()
+        .map_err(|_| format!("Range 的 start 不是数字：{a:?}"))?;
+    if start >= len {
+        return Err(format!("start={start} 越界（文件长度 {len}）"));
+    }
+    let end = if b.is_empty() {
+        len - 1
+    } else {
+        b.parse::<u64>()
+            .map_err(|_| format!("Range 的 end 不是数字：{b:?}"))?
+    };
+    if end < start {
+        return Err(format!("end={end} < start={start}"));
+    }
+    // RFC 7233：end 超出文件尾 ⇒ 截到 len-1（⛔ 不报错）。
+    Ok(SingleRange::Slice {
+        start,
+        end: end.min(len - 1),
+    })
+}
+
+/// 请求头按名取（大小写不敏感）——`Range` 是外部输入，⛔ 不信任大小写。
+fn header_of<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.as_str())
+}
+
+/// ⭐ **P3-4**：从**明文**文件里按 offset/len 读一段（`File::seek` ＋ 定长 `read_exact`）——
+/// 大文件只读这一片，⛔ 不把整包读进内存。
+///
+/// ⚠️ 只在"盘上就是明文"（未启用空间加密）时走这条路；加密空间的 AEAD 需要整包解密，
+/// 那一路仍是"读全量密文再取切片"（如实写在报告里，⛔ 不假装支持随机访问）。
+fn read_plaintext_slice(path: &std::path::Path, start: u64, end: u64) -> Result<Vec<u8>, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let want = end
+        .checked_sub(start)
+        .and_then(|n| n.checked_add(1))
+        .ok_or_else(|| "Range 长度溢出".to_string())?;
+    let want_usize: usize = want
+        .try_into()
+        .map_err(|_| format!("Range 太长（{want} 字节）⇒ 拒绝一次性读入"))?;
+    let mut f = std::fs::File::open(path).map_err(|e| format!("打开附件失败：{e}"))?;
+    f.seek(SeekFrom::Start(start))
+        .map_err(|e| format!("定位附件失败：{e}"))?;
+    let mut buf = vec![0u8; want_usize];
+    f.read_exact(&mut buf)
+        .map_err(|e| format!("读取附件切片失败：{e}"))?;
+    Ok(buf)
+}
+
+/// ⭐ **P3-4**：`Range` 分支 —— 单段 206 / 不可满足 416；读取按 offset/len（明文盘不整包读）。
+///
+/// 口径（与全量那条共用同一套 404/500 语义）：
+/// * 文件不存在 ⇒ **404**（"这一台没有…"与全量同话术）；
+/// * 加密空间：先整包解密（AEAD 限制），再按区间切片；解不开 ⇒ **500**；
+/// * 明文空间：`metadata.len()` 定长度，`seek+read_exact` 只读请求那一片；
+/// * 空文件（len=0）带 Range ⇒ **416 ＋ `Content-Range: bytes */0`**（无 Range 时仍走旧的 404"空壳"语义）；
+/// * 区间合法 ⇒ **206** ＋ `Content-Range: bytes start-end/len`（`Content-Length` 由 `respond` 按切片长度写）。
+fn serve_attachment_range(
+    data_dir: &std::path::Path,
+    space_id: &str,
+    hash: &str,
+    key: Option<&crate::crypto::AppKeys>,
+    range_header: &str,
+) -> Reply {
+    let Some(path) = crate::attachments::find_attachment(data_dir, space_id, hash) else {
+        return Reply::json(
+            404,
+            "Not Found",
+            json_error(
+                "这一台没有这份附件字节（去问别的对端）：附件文件不存在（可能被移动或删除）",
+            ),
+        );
+    };
+    // ① 先拿到**长度**与（加密时的）明文；明文空间不整包读。
+    let (len, plain): (u64, Option<Vec<u8>>) = match key {
+        None => match std::fs::metadata(&path) {
+            Ok(m) => (m.len(), None),
+            Err(e) => {
+                return Reply::json(
+                    500,
+                    "Internal Server Error",
+                    json_error(&format!("读不到附件长度：{e}")),
+                )
+            }
+        },
+        Some(k) => {
+            // AEAD 需要整包解密（如实：加密空间**做不到**随机访问）。
+            let raw = match std::fs::read(&path) {
+                Ok(r) => r,
+                Err(e) => {
+                    return Reply::json(
+                        404,
+                        "Not Found",
+                        json_error(&format!("这一台没有这份附件字节（去问别的对端）：{e}")),
+                    )
+                }
+            };
+            match crate::security::decrypt_attachment_bytes(Some(k), &raw) {
+                Ok(p) => {
+                    // 与全量那条同一条纪律：坏件不发。
+                    if !crate::sync::attachment_digest_ok(hash, &p) {
+                        return Reply::json(
+                            500,
+                            "Internal Server Error",
+                            json_error(
+                                "本机这份字节与**内容指纹**对不上（坏件／被截断）⇒ 不往外发",
+                            ),
+                        );
+                    }
+                    let n = p.len() as u64;
+                    (n, Some(p))
+                }
+                Err(e) => {
+                    return Reply::json(
+                        500,
+                        "Internal Server Error",
+                        json_error(&format!("本机这份字节解不开：{e}")),
+                    )
+                }
+            }
+        }
+    };
+    // ② 解析 Range（失败 ⇒ RFC 416，带 */len；空文件带 Range 也走这条）。
+    let range = match resolve_single_range(Some(range_header), len) {
+        Ok(r) => r,
+        Err(why) => {
+            return Reply::bytes_with_headers(
+                416,
+                "Range Not Satisfiable",
+                json_error(&format!("Range 不可满足：{why}")).into_bytes(),
+                vec![("Content-Range".to_string(), format!("bytes */{len}"))],
+            )
+        }
+    };
+    let SingleRange::Slice { start, end } = range else {
+        // 空白 Range 头被当"没有 Range" ⇒ 旧 200 全量（走全量分支不可能到这里，兜底保守）。
+        return match plain {
+            Some(p) => Reply::bytes(200, "OK", p),
+            None => match crate::attachments::read_attachment_bytes_at(data_dir, space_id, hash) {
+                Ok(raw) => match crate::security::decrypt_attachment_bytes(key, &raw) {
+                    Ok(p) => Reply::bytes(200, "OK", p),
+                    Err(e) => Reply::json(
+                        500,
+                        "Internal Server Error",
+                        json_error(&format!("本机这份字节解不开：{e}")),
+                    ),
+                },
+                Err(e) => Reply::json(404, "Not Found", json_error(&e.to_string())),
+            },
+        };
+    };
+    // ③ 取切片（明文盘按 offset/len；加密盘从已解密的全量里切）。
+    let body = match plain {
+        Some(p) => match p.get(start as usize..=end as usize) {
+            Some(slice) => slice.to_vec(),
+            None => {
+                return Reply::json(
+                    500,
+                    "Internal Server Error",
+                    json_error("解密后的长度与切片区间对不上"),
+                )
+            }
+        },
+        None => match read_plaintext_slice(&path, start, end) {
+            Ok(b) => b,
+            Err(e) => return Reply::json(500, "Internal Server Error", json_error(&e)),
+        },
+    };
+    Reply::bytes_with_headers(
+        206,
+        "Partial Content",
+        body,
+        vec![(
+            "Content-Range".to_string(),
+            format!("bytes {start}-{end}/{len}"),
+        )],
+    )
+}
+
 /// ★ 丙-④：`GET /mesh/attachment?space_id=…&hash=…` —— 把**本机手上那一份**附件的字节发出去。
 ///
 /// 四条口径（每条都对应一种"用户的下一步完全不同"的情形，所以分开说）：
@@ -5430,7 +5692,7 @@ fn serve_locked_outbox(state: &State, target: &str, _space: &str, since: i64, li
 ///    前者该去问另一个对端，后者该重试（收侧靠 404 与 5xx 的区别决定要不要继续试下一台）；
 /// 4. **发的是明文**（与甲那条 `GET /attachments/<hash>` 一致）：盘上可能是加密存的（E1），
 ///    解密在**这一侧**做；收侧自己按它那把钥匙重新加密落盘。
-fn handle_attachment(state: &State, target: &str) -> Reply {
+fn handle_attachment(state: &State, target: &str, headers: &[(String, String)]) -> Reply {
     // ⭐ **U8**：同 `handle_pull` —— 鉴权与"取哪条连接"一次做完 ✓。
     // ⚠️ 这一处**尤其要紧**：下面的空间 id 是**从这条连接的 meta 里读的**
     //    ⇒ 取错连接 ＝ **把别的空间的附件字节发出去** ✗（跨空间泄漏，最坏的一种坏法）。
@@ -5485,6 +5747,10 @@ fn handle_attachment(state: &State, target: &str) -> Reply {
         }
     };
     let key = crate::attachments::space_key_for(data_dir, &space_id);
+    // ⭐ **P3-4**：有 `Range` ⇒ 走单段 206/416 分支；**没有 Range ⇒ 下面那段旧逻辑逐字不变**（200 全量）。
+    if let Some(range_header) = header_of(headers, "range") {
+        return serve_attachment_range(data_dir, &space_id, &hash, key.as_ref(), range_header);
+    }
     match crate::attachments::read_attachment_bytes_at(data_dir, &space_id, &hash) {
         Ok(raw) => match crate::security::decrypt_attachment_bytes(key.as_ref(), &raw) {
             // ⭐⭐ **2026-10-27（owner：「彻底解决」）**：**不往外发空壳/坏件** ✗ ——
@@ -7938,6 +8204,123 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir_a);
         let _ = std::fs::remove_dir_all(&dir_b);
+    }
+
+    /// ⭐ **P3-4**：附件 `Range`（单段）—— 真环回窗口，验状态码/`Content-Range`/切片字节；
+    /// 无 Range 时与旧行为**逐字节相同**（200 全量、无 `Content-Range`）。
+    #[tokio::test]
+    async fn attachment_range_requests_serve_single_segment_slices() {
+        let bytes: Vec<u8> = b"0123456789".to_vec();
+        let hash = crate::db::sha256_hex_bytes(&bytes);
+        let dir = temp_dir("att-range");
+        let conn = Arc::new(Mutex::new(space_conn("A")));
+        let bucket = {
+            let g = conn.lock().unwrap();
+            let space = crate::sync::space_id_of(&g).unwrap_or_default();
+            crate::attachments::space_attachments_dir(&dir, &space)
+        };
+        std::fs::create_dir_all(&bucket).unwrap();
+        let file = crate::attachments::bucket_path(&bucket, &hash, "bin");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, &bytes).unwrap();
+
+        let win = start1(
+            MeshConfig {
+                bind: "127.0.0.1:0".into(),
+                device_id: "A".into(),
+                data_dir: Some(dir.clone()),
+            },
+            conn,
+        )
+        .unwrap();
+        let url = format!(
+            "http://{}/mesh/attachment?space_id=space-x&hash={hash}",
+            win.addr()
+        );
+        let client = mesh_http_client();
+
+        async fn fetch(
+            client: &reqwest::Client,
+            url: &str,
+            range: Option<&str>,
+        ) -> (u16, Option<String>, Option<String>, Vec<u8>) {
+            let mut req = client.get(url).header("Authorization", "Bearer lan-token");
+            if let Some(r) = range {
+                req = req.header("Range", r);
+            }
+            let resp = req.send().await.expect("请求窗口失败");
+            let code = resp.status().as_u16();
+            let content_range = resp
+                .headers()
+                .get("content-range")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            let content_length = resp
+                .headers()
+                .get("content-length")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            let body = resp.bytes().await.expect("读响应体").to_vec();
+            (code, content_range, content_length, body)
+        }
+
+        // ① 无 Range ⇒ 旧行为：200 全量、没有 Content-Range、字节逐字相同。
+        let (code, cr, _cl, body) = fetch(&client, &url, None).await;
+        assert_eq!(code, 200, "无 Range ⇒ 200（旧行为）");
+        assert_eq!(cr, None, "无 Range ⇒ 不许出现 Content-Range");
+        assert_eq!(body, bytes, "全量字节必须逐字相同");
+
+        // ② 单段闭区间：`bytes=0-3` ⇒ 206 ＋ Content-Range ＋ 4 字节。
+        let (code, cr, cl, body) = fetch(&client, &url, Some("bytes=0-3")).await;
+        assert_eq!(code, 206);
+        assert_eq!(cr.as_deref(), Some("bytes 0-3/10"));
+        assert_eq!(cl.as_deref(), Some("4"), "Content-Length=end-start+1");
+        assert_eq!(body, b"0123");
+
+        // ③ `bytes=4-` ⇒ 尾段。
+        let (code, cr, _cl, body) = fetch(&client, &url, Some("bytes=4-")).await;
+        assert_eq!(code, 206);
+        assert_eq!(cr.as_deref(), Some("bytes 4-9/10"));
+        assert_eq!(body, b"456789");
+
+        // ④ `bytes=-4` ⇒ 最后 4 字节（本笔明确**支持** suffix 写法）。
+        let (code, cr, _cl, body) = fetch(&client, &url, Some("bytes=-4")).await;
+        assert_eq!(code, 206, "suffix 写法支持：{cr:?}");
+        assert_eq!(cr.as_deref(), Some("bytes 6-9/10"));
+        assert_eq!(body, b"6789");
+
+        // ⑤ end 超出文件尾 ⇒ 截到 len-1（RFC），仍 206。
+        let (code, cr, _cl, body) = fetch(&client, &url, Some("bytes=0-99")).await;
+        assert_eq!(code, 206);
+        assert_eq!(cr.as_deref(), Some("bytes 0-9/10"));
+        assert_eq!(body, bytes);
+
+        // ⑥ 不可满足/格式不对 ⇒ 416 ＋ `Content-Range: bytes */10` ＋ 可读错误体。
+        for bad in [
+            "bytes=9-3",     // end < start
+            "bytes=10-",     // start 越界
+            "bytes=0-1,3-4", // 多段
+            "items=0-3",     // 错单位
+            "bytes=abc",     // 坏数字
+            "bytes=-0",      // suffix=0
+        ] {
+            let (code, cr, _cl, body) = fetch(&client, &url, Some(bad)).await;
+            assert_eq!(code, 416, "{bad} 应当 416");
+            assert_eq!(cr.as_deref(), Some("bytes */10"), "{bad}");
+            let text = String::from_utf8_lossy(&body);
+            assert!(
+                text.contains("Range 不可满足"),
+                "{bad} 的可读错误体：{text}"
+            );
+        }
+
+        // ⑦ 空文件（len=0）＋ Range ⇒ 416 ＋ `bytes */0`（无 Range 时仍是旧的 404"空壳"语义）。
+        std::fs::write(&file, b"").unwrap();
+        let (code, cr, _cl, _body) = fetch(&client, &url, Some("bytes=0-3")).await;
+        assert_eq!(code, 416, "len=0 带 Range ⇒ 416");
+        assert_eq!(cr.as_deref(), Some("bytes */0"), "RFC：*/0");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// ★ 丙-④：**"取不到"那句话要说得清是四种里的哪一种**（纯函数，判据不打桩、不看网络）。
@@ -11194,5 +11577,74 @@ mod quic_ranked_addr_tests {
         // 确定性：同一输入两次结果逐字节相同。
         assert_eq!(rank_named_addrs(&locals), got);
         assert!(rank_named_addrs(&[]).is_empty());
+    }
+}
+
+/// ⭐ **P3-4**：单段 Range 解析的纯函数判据（不联网、不碰盘）。
+#[cfg(test)]
+mod p34_range_parser_tests {
+    use super::{resolve_single_range, SingleRange};
+
+    #[test]
+    fn no_or_blank_range_means_full() {
+        assert_eq!(resolve_single_range(None, 10).unwrap(), SingleRange::Full);
+        assert_eq!(
+            resolve_single_range(Some(""), 10).unwrap(),
+            SingleRange::Full
+        );
+        assert_eq!(
+            resolve_single_range(Some("   "), 10).unwrap(),
+            SingleRange::Full
+        );
+    }
+
+    #[test]
+    fn closed_open_and_suffix_forms_are_resolved_inclusively() {
+        assert_eq!(
+            resolve_single_range(Some("bytes=0-3"), 10).unwrap(),
+            SingleRange::Slice { start: 0, end: 3 }
+        );
+        assert_eq!(
+            resolve_single_range(Some("bytes=4-"), 10).unwrap(),
+            SingleRange::Slice { start: 4, end: 9 }
+        );
+        assert_eq!(
+            resolve_single_range(Some("bytes=-4"), 10).unwrap(),
+            SingleRange::Slice { start: 6, end: 9 }
+        );
+        // 单位大小写不敏感（RFC）。
+        assert_eq!(
+            resolve_single_range(Some("BYTES=1-2"), 10).unwrap(),
+            SingleRange::Slice { start: 1, end: 2 }
+        );
+        // end 超过尾 ⇒ 截到 len-1（RFC），⛔ 不报错。
+        assert_eq!(
+            resolve_single_range(Some("bytes=8-99"), 10).unwrap(),
+            SingleRange::Slice { start: 8, end: 9 }
+        );
+    }
+
+    #[test]
+    fn unsatisfiable_or_bad_forms_are_refused() {
+        for bad in [
+            "bytes=9-3",     // end < start
+            "bytes=10-",     // start 越界
+            "bytes=10-12",   // start 越界
+            "bytes=0-1,3-4", // 多段
+            "items=0-3",     // 错单位
+            "bytes=abc",     // 坏数字
+            "bytes=1-x",     // 坏数字
+            "bytes=-0",      // suffix 0
+            "bytes=0",       // 缺 -
+            "bytes=",        // 两端空
+        ] {
+            assert!(
+                resolve_single_range(Some(bad), 10).is_err(),
+                "{bad} 必须拒绝（调用方回 416）"
+            );
+        }
+        // len=0：任何 Range 都不可满足（连 `0-` 也是）。
+        assert!(resolve_single_range(Some("bytes=0-0"), 0).is_err());
+        assert!(resolve_single_range(Some("bytes=-1"), 0).is_err());
     }
 }
