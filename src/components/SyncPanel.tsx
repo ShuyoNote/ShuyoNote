@@ -4,7 +4,7 @@ import { useMobileNav } from "../store/mobileNav";
 import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
-import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer, type MeshRoundReport, type SpaceSyncState } from "../lib/api";
+import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer, type MeshRoundReport, type SpaceSyncState, type SyncCoreStatus } from "../lib/api";
 import { startEncryptedAdopt } from "../lib/encryptedAdopt";
 import { MeshMissingSpaces } from "./MeshMissingSpaces";
 // ⭐ P1「连接体检」（2026-11-08）：只读现有读数 → 结构化诊断 ＋ 复制诊断包（⛔ 不新增命令 ✗）。
@@ -188,6 +188,38 @@ const splitMeshBind = (bind: string): { addr: string; port: string } => {
 /** ⭐ **P-2a-1（2026-10-13）**：`contentOnly` ⇒ ⭐ **只渲染内容体**（⛔ 不带抽屉触发器 ✗、
  *  ⛔ 不带浮层定位 ✗）⇒ 让**同一份 JSX** 也能放进内容区（`App.tsx` 的 `view === "sync"` 那一支 ✓）。
  *  ⚠️ 默认 `false` ⇒ ⭐ **抽屉那支逐字不变** ✓（一行 JSX 都没搬 ✓）。 */
+/** ⭐ P3-1a 第四刀（task-57）：只读「同步核心」行的文案（纯函数 ⇒ 判据够得着）。 */
+export interface SyncCoreRowText {
+  detail: string;
+  tone: "muted" | "ok" | "warn";
+}
+
+/**
+ * 口径：
+ * · 读不到 ⇒ **unknown**（⛔ 不假装"未启用"）；
+ * · `enabled=false` ⇒ **未启用**（默认；本版只读，不从这里开启）；
+ * · 运行中/已停止 ＋ 上一轮脱敏计数（服务端/网格；没有上一轮就如实说）。
+ */
+export function syncCoreRowText(
+  status: SyncCoreStatus | "unknown" | null | undefined,
+): SyncCoreRowText {
+  if (status == null || status === "unknown") {
+    return { detail: "读不到（unknown）—— 这一台读不出调度器状态", tone: "muted" };
+  }
+  if (!status.enabled) {
+    return {
+      detail: "未启用（默认关闭；本版只读，不从这里开启 —— 要开需设置环境变量后重启）",
+      tone: "muted",
+    };
+  }
+  const last = status.lastRound;
+  const lastText = last
+    ? `｜上一轮：服务端 ${last.serverSpaces} 个空间（失败 ${last.serverErrors}）· 网格 ${last.meshSpaces} 个空间（收下 ${last.meshApplied} 条）`
+    : "｜还没跑过";
+  const state = status.running ? "运行中" : "已停止";
+  return { detail: `${state}${lastText}`, tone: status.running ? "ok" : "warn" };
+}
+
 export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {}) {
   // 面板比默认弹层宽/高，把实际尺寸告诉 usePopover，靠边打开时才不会被切掉。
   const { open, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>({
@@ -251,6 +283,48 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   const [crdtShadowBusy, setCrdtShadowBusy] = useState(false);
   const [crdtShadowResult, setCrdtShadowResult] = useState<ShadowRowsResult | null>(null);
   const [crdtShadowError, setCrdtShadowError] = useState<string | null>(null);
+  // ⭐ P3-1a（task-57）：**只读**同步核心状态（默认 null ⇒ 未读到；失败/读不出 ⇒ "unknown"）。
+  const [coreStatus, setCoreStatus] = useState<SyncCoreStatus | "unknown" | null>(null);
+  useEffect(() => {
+    // 与 `lan_status` 同一档门槛（浮层打开或内容区那一份）—— ⛔ 关着不读/不监听 ✗。
+    if ((!open && !contentOnly) || !isDesktopPlatform()) return;
+    let alive = true;
+    let unlisten: (() => void) | undefined;
+    const load = () => {
+      // ⚠️ 判据/老 mock 可能没有这一条命令 ⇒ 当 unknown（⛔ 不让它把整块面板打崩）。
+      try {
+        void api
+          .syncCoreStatus()
+          .then((st) => {
+            if (alive) setCoreStatus(st);
+          })
+          .catch(() => {
+            if (alive) setCoreStatus("unknown");
+          });
+      } catch {
+        if (alive) setCoreStatus("unknown");
+      }
+    };
+    load();
+    // Core 每跑完一轮会发这个事件 ⇒ 只重读状态行（⛔ 不改别的 UI/不新增同步路）。
+    // ⚠️ 判据/纯 Web 夹具里没有 Tauri invoke ⇒ 监听失败**只当没有**（⛔ 不让它变 unhandled rejection）。
+    try {
+      void platform.event
+        .listen<unknown>("sync-core-round", load)
+        .then((u) => {
+          unlisten = u;
+        })
+        .catch(() => {
+          // 没有事件通道：状态行仍是只读读数，不影响任何同步行为。
+        });
+    } catch {
+      // 同上（同步抛的夹具）。
+    }
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, [open, contentOnly]);
   const [lastRound, setLastRound] = useState<MeshRoundReport | null>(null);
   /** ⭐ P1「全部空间立即同步」（2026-11-08）：这一轮的现场 ＋ 停止入口 ＋ 进度用的节拍。
    *  ⚠️ `allSyncStopRef` 里放的是**当前这一轮**的停止函数（点「停止」只置一个本地标志：
@@ -2284,6 +2358,33 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                   · **同步密码**：⭐ **自动派生**、用户**不用知道**它 ⇒ 这一格**只读**一句「自动生成 · 不用你填」✓
                     （⛔ 没有手填框 ✗ —— 口径与理由见 `personalSyncReadout.ts` 里那段"为什么没有手动入口"✓）。
                   ⚠️ 只在**个人空间 ＋ 桌面**出现：团队档的远程路径是服务器，端口/密码不是它的事 ✓。 */}
+              {/* ⭐ P3-1a 第四刀（task-57）：**只读**「同步核心」状态行（高级区；桌面）。
+                  默认 Core 不启动 ⇒ 显示「未启用」；读不出 ⇒ unknown（⛔ 不假装）。
+                  ⚠️ 本版**不提供开关**（不从这里启用）。 */}
+              {isDesktopPlatform() && (
+                <div className="sync-device-name" data-testid="sync-core-status">
+                  <span className="sync-device-name-label">同步核心</span>
+                  <span
+                    className="sync-hint"
+                    style={{ flex: "1 1 auto", minWidth: 0 }}
+                    data-testid="sync-core-status-detail"
+                  >
+                    {syncCoreRowText(coreStatus).detail}
+                  </span>
+                  <span
+                    className="sync-hint"
+                    data-testid="sync-core-status-tone"
+                    title="只读状态"
+                  >
+                    {syncCoreRowText(coreStatus).tone === "ok"
+                      ? "●"
+                      : syncCoreRowText(coreStatus).tone === "warn"
+                        ? "○"
+                        : "—"}
+                  </span>
+                </div>
+              )}
+
               {/* ⭐ P3-3a 第三小步（task-56）：**手动 CRDT 影子体检**（高级区；桌面）。
                   只读：比对「落盘正文」与该页 CRDT 状态的投影；⛔ 不显示正文、⛔ 不自动修复、
                   ⛔ 不改任何数据；差异页只回**数量**（内部 page id 不进界面）。 */}

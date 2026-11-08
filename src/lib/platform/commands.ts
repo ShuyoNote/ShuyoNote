@@ -361,6 +361,30 @@ export interface MeshSyncAllSpace {
  * · `mesh`：网格那一支所有 profiles 逐空间串行汇总（失败不连坐）。
  * ⚠️ 定时器/网络闸门/退避仍在前端 —— 这条命令只做"编排"。
  */
+/**
+ * ⭐ **P3-1a 第四刀（task-57）**：`sync-core-round` 事件载荷（Rust `sync_core::SyncCoreRoundEvent`；
+ * camelCase；**脱敏**：只有计数，无空间名/正文/路径/hash）。
+ */
+export interface SyncCoreRoundEvent {
+  serverSpaces: number;
+  serverErrors: number;
+  meshSpaces: number;
+  meshOk: number;
+  meshFailed: number;
+  meshApplied: number;
+  hadChanges: boolean;
+  emptyStreak: number;
+  nextDelayMs: number;
+}
+
+/** ⭐ 只读状态读数（Rust `sync_core::SyncCoreStatus`；默认 `enabled/running=false`）。 */
+export interface SyncCoreStatus {
+  enabled: boolean;
+  running: boolean;
+  /** 最近一轮（没有 ⇒ null；⛔ 不编造）。 */
+  lastRound: SyncCoreRoundEvent | null;
+}
+
 export interface SyncCoreRoundReport {
   server: WorkspaceSyncResult[];
   mesh: MeshSyncAllReport;
@@ -1655,6 +1679,8 @@ export interface CommandMap {
   sync_workspace: { args: { wsId: string }; result: WorkspaceSyncResult };
   /** ⭐ P3-1a 第二刀：App 自动同步**一轮**（服务端档案逐个串行 ＋ 所有 profiles 网格逐个串行）。 */
   sync_core_round: { args: undefined; result: SyncCoreRoundReport };
+  /** ⭐ P3-1a 第四刀：只读状态（enabled/running/lastRound；脱敏；不新增写操作）。 */
+  sync_core_status: { args: undefined; result: SyncCoreStatus };
   /** C1 预算刹车（2026-09-15）：设备级设置，存 `meta.sync_state` 的 KV。 */
   get_sync_budget: { args: undefined; result: SyncBudget };
   /** ⚠️ 回显的是**夹取后**的值（磁盘余量下限不可关：传 0 会回 256）⇒ 界面要用返回值纠正自己。 */

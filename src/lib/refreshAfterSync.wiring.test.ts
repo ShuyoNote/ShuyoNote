@@ -53,8 +53,14 @@ describe("同步收口 ⇒ 当前打开的页要重读（接线判据）", () =>
     const at = app.indexOf('listen<{ spaceId: string; pages: string[] }>("mesh-applied"');
     expect(at, "前端没监听 mesh-applied").toBeGreaterThan(-1);
     const body = app.slice(at, at + 700);
-    expect(body, "收到 mesh-applied 没刷新当前页").toContain("refreshCurrent()");
-    expect(body, "没做「正在打字」节流 ⇒ 会在用户打字时重挂编辑器").toContain("isLocalEditRecent()");
+    // ⭐ P3-1a 第四刀（task-57）：`mesh-applied` 与 `sync-core-round` **共用同一条刷新路径**，
+    //   `refreshCurrent`/节流在那一处唯一实现里（本判据换对象、⛔ 没放宽：仍要求"收到就刷"）。
+    expect(body, "收到 mesh-applied 没走统一刷新路径").toContain("refreshAfterBackgroundApply()");
+    const helperAt = app.indexOf("function refreshAfterBackgroundApply");
+    expect(helperAt, "缺统一刷新路径 refreshAfterBackgroundApply").toBeGreaterThan(-1);
+    const helper = app.slice(helperAt, helperAt + 600);
+    expect(helper, "刷新路径没重读当前页").toContain("refreshCurrent()");
+    expect(helper, "没做「正在打字」节流 ⇒ 会在用户打字时重挂编辑器").toContain("isLocalEditRecent()");
   });
 
   // ⭐ 2026-10-28（owner 报「同步后空间列表没有自动刷新」）：**空间清单也要有人重读** ✗ ——

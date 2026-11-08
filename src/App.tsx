@@ -309,6 +309,18 @@ let syncEmptyStreak = 0;
 let syncLastRunAtMs: number | null = null;
 
 /**
+ * ⭐ **P3-1a 第四刀（task-57）**：后端后台轮（`mesh-applied` / `sync-core-round`）把别人的更改
+ * 并进库之后，前端统一这样刷新 —— 两条事件**共用这一条刷新路径**（⛔ 不各写一份）：
+ * · 重读页面列表；
+ * · 正在打字时**不**刷新当前页（`isLocalEditRecent` 与自动同步那一轮同一把尺）。
+ * ⚠️ 不弹 toast、不新增同步路、不写任何东西。
+ */
+function refreshAfterBackgroundApply(): void {
+  void useNotes.getState().loadPages();
+  if (!isLocalEditRecent()) void useNotes.getState().refreshCurrent();
+}
+
+/**
  * 跑一轮自动同步（**唯一实现**）。两个触发面都走它。
  *
  * 形状与原先的 `tick` 逐句相同：防重入 → 闸门 → 每空间档案 → 有服务端地址的走服务端那条 ＋
@@ -495,9 +507,26 @@ function NoteEditor({ pageId }: { pageId: string }) {
     let unlisten: (() => void) | null = null;
     void platform.event
       .listen<{ spaceId: string; pages: string[] }>("mesh-applied", () => {
-        void useNotes.getState().loadPages();
-        if (!isLocalEditRecent()) void useNotes.getState().refreshCurrent();
+        refreshAfterBackgroundApply();
       })
+      .then((u) => {
+        unlisten = u;
+      });
+    return () => unlisten?.();
+  }, []);
+
+  // ⭐ **P3-1a 第四刀（task-57）**：Rust **sync_core 调度器**每跑完一轮就发 `sync-core-round`
+  //   （只有计数、脱敏）。**默认 Core 不启动 ⇒ 事件不会来 ⇒ 行为零变化**；开了之后这里只做
+  //   和 `mesh-applied` **同一条**刷新（⛔ 不新增同步路、⛔ 不弹 toast）。
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void platform.event
+      .listen<{ hadChanges: boolean; emptyStreak: number; nextDelayMs: number }>(
+        "sync-core-round",
+        () => {
+          refreshAfterBackgroundApply();
+        },
+      )
       .then((u) => {
         unlisten = u;
       });

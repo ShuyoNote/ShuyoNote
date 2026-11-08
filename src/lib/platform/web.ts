@@ -3400,6 +3400,10 @@ export function makeInvoke(store: SqliteStore) {
     // 而猜错的代价是"偷偷跑用户流量"（见 src-tauri/src/net.rs 的模块注释）。
     // 产品上 Web 版本就不提供多设备同步，这里更没有理由靠猜。
     if (cmd === "network_type") return "n/a" as T;
+    if (cmd === "sync_core_status") {
+      // ⭐ P3-1a 第四刀：Web 没有 Rust 调度器 ⇒ 恒 disabled/not running、无上一轮（⛔ 不假装）。
+      return { enabled: false, running: false, lastRound: null } as T;
+    }
     if (cmd === "sync_core_round") {
       // ⭐ P3-1a 第二刀（task-54）：Web 形态没有网格发现层 ⇒ mesh 恒空；服务端那支按
       //   `sync_workspace` 同一套实现逐档案串行（失败进各自行，不连坐）。

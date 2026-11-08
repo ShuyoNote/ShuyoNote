@@ -93,6 +93,33 @@ pub struct SyncCoreRoundEvent {
     pub next_delay_ms: u64,
 }
 
+/// ⭐ **P3-1a 第四刀（task-57）**：`sync_core_status` 的返回（**只读、脱敏**：只有计数）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncCoreStatus {
+    /// env 门控值（`SHUYONOTE_SYNC_CORE` 是否为 1/true/on；**默认 false**）。
+    pub enabled: bool,
+    /// 调度任务是否真的在跑（默认 false）。
+    pub running: bool,
+    /// 最近一轮的脱敏汇总（没有 ⇒ null）。
+    pub last_round: Option<SyncCoreRoundEvent>,
+}
+
+/// ⭐ 纯函数：读一次状态快照（命令只委托它，判据够得着）。
+pub fn snapshot() -> SyncCoreStatus {
+    SyncCoreStatus {
+        enabled: enabled_from_env(),
+        running: running(),
+        last_round: last_round(),
+    }
+}
+
+/// ⭐ **P3-1a 第四刀（task-57）**：只读状态命令（**不新增任何写操作**）。
+#[tauri::command]
+pub fn sync_core_status() -> SyncCoreStatus {
+    snapshot()
+}
+
 /// ⭐ 纯函数：汇总 → 事件载荷（脱敏）。
 pub fn round_event(report: &SyncCoreRoundReport, empty_streak: u32) -> SyncCoreRoundEvent {
     let had_changes = round_had_changes(report);
@@ -338,5 +365,79 @@ mod tests {
             !lib.contains("async_runtime::spawn(async move {\n            let mut empty_streak"),
             "⛔ 不许在 lib.rs 里另起一份调度循环"
         );
+    }
+
+    #[test]
+    fn status_shape_is_sanitized_and_defaults_to_not_running() {
+        let st = snapshot();
+        // `enabled` 只由 env 决定（判据不依赖外部 env 的具体值，只要求与纯函数一致）。
+        assert_eq!(st.enabled, enabled_from_env());
+        // 测试进程里没启动调度器 ⇒ running=false（默认关闭的又一条读数）。
+        assert!(!st.running, "测试进程没有启动调度器 ⇒ running 必须 false");
+        assert!(
+            st.last_round.is_none(),
+            "没跑过 ⇒ lastRound=null（⛔ 不编造）"
+        );
+        let json = serde_json::to_string(&st).unwrap();
+        for key in ["\"enabled\":", "\"running\":", "\"lastRound\":null"] {
+            assert!(json.contains(key), "status 字段形状：{json}");
+        }
+        // 脱敏：状态里不许出现空间名/正文/路径/hash 一类内容。
+        for forbidden in ["content", "path", "/Users/", ".db", "hash"] {
+            assert!(
+                !json.contains(forbidden),
+                "status 必须脱敏，不许含 {forbidden}：{json}"
+            );
+        }
+    }
+
+    #[test]
+    fn last_round_event_can_be_reported_without_leaking_ids() {
+        // 直接构造事件（与调度器写入 LAST_ROUND 的形状相同）。
+        let ev = round_event(
+            &SyncCoreRoundReport {
+                server: Vec::new(),
+                mesh: MeshSyncAllReport {
+                    spaces: Vec::new(),
+                    total: 0,
+                    ok: 0,
+                    failed: 0,
+                    applied: 0,
+                    candidates: 0,
+                },
+            },
+            2,
+        );
+        let mut st = snapshot();
+        st.last_round = Some(ev);
+        let json = serde_json::to_string(&st).unwrap();
+        assert!(json.contains("\"lastRound\":{"), "{json}");
+        assert!(json.contains("\"emptyStreak\":2"), "{json}");
+        for forbidden in ["ws-", "spaceId", "pageId", "content", "path"] {
+            assert!(!json.contains(forbidden), "lastRound 必须脱敏：{json}");
+        }
+    }
+
+    /// 源码级：命令已注册、只委托 `snapshot`，且**没有任何写操作**。
+    #[test]
+    fn the_status_command_is_registered_read_only_and_delegates_to_snapshot() {
+        let src = include_str!("sync_core.rs");
+        let lib = include_str!("lib.rs");
+        assert!(
+            lib.contains("sync_core::sync_core_status,"),
+            "`sync_core_status` 必须注册进 generate_handler!"
+        );
+        let cmd = src
+            .split("pub fn sync_core_status(")
+            .nth(1)
+            .expect("sync_core_status 必须在");
+        let body = &cmd[..cmd.find("\n}").unwrap_or(cmd.len())];
+        assert!(body.contains("snapshot()"), "命令只委托 snapshot()");
+        for forbidden in ["set_meta_state", "write", "remove_file", "save", "delete"] {
+            assert!(
+                !body.contains(forbidden),
+                "状态命令必须是只读：不许 {forbidden}"
+            );
+        }
     }
 }
