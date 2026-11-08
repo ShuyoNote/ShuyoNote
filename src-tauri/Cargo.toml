@@ -66,7 +66,12 @@ mupdf-rollback = ["dep:mupdf-sys"]
 relay = ["dep:iroh"]
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "devtools"] }
+# ⭐ 2026-11-08（owner 已拍 DEC-2 A / P1「App 托盘常驻」）：开 `tray-icon` ——
+#   托盘/菜单栏图标 ＋ 菜单（打开主窗口 / 退出）是 Tauri 官方 API，挂在 `tauri::tray` 模块下，
+#   该模块**只在这个 feature 开着时才存在**（`tauri` 的 `src/lib.rs`：`#[cfg(all(desktop, feature = "tray-icon"))]`）。
+#   ⚠️ 它不改任何前端契约/DB/同步协议：只多一个 OS 层图标与两条菜单动作。
+#   ⚠️ 默认包体积/编译时间会因为 `tray-icon`/`muda` 多编两个已有依赖（`Cargo.lock` 里本来就有，⛔ 不新增下载）。
+tauri = { version = "2", features = ["protocol-asset", "devtools", "tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }

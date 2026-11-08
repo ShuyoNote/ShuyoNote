@@ -437,6 +437,81 @@ fn log_lifecycle(kind: &str, detail: &str) {
     }
 }
 
+/// P1（DEC-2 A，2026-11-08 拍板）：**托盘是否真的建起来了**。
+///
+/// ⚠️ 它不是"托盘句柄"（句柄由 Tauri 自己持有），只是一个**布尔读数**，给
+/// `RunEvent::WindowEvent::CloseRequested` 用：只有托盘在，才敢把「关闭」改成「隐藏」。
+/// 托盘建不起来（例如 Linux 没有 AppIndicator / 系统不支持）时若还隐藏窗口，
+/// 进程就成了**关不掉也找不回来**的幽灵（Windows 上尤其致命）⇒ 那种情况按原样关闭。
+#[cfg(desktop)]
+#[derive(Clone, Copy)]
+struct TrayReady(bool);
+
+/// P1：建托盘/菜单栏图标 ＋ 菜单（**打开主窗口** / **退出**），返回是否建成。
+///
+/// 边界（这一片只做这一件事，⛔ 不新增第二条同步路）：
+/// · 图标用 App 自己的：`default_window_icon()` 在 macOS 上取 `tauri.conf.json` 里第一个
+///   `.png`（即 `icons/32x32.png`）；macOS 侧 `tray-icon` 会把它缩到菜单栏的 18pt。
+/// · ⛔ **不做「立即同步」**：`sync_now` 是 `#[tauri::command]`（吃 `State<Db>`、由前端自己
+///   刷新界面状态），从托盘直接调会绕开前端那份状态更新 ⇒ 那正是要求里说的"第二条同步路"。
+///   等 P3-1a 把调度搬下来再接；⛔ 也不新增设置 UI、不碰 DB/同步协议/MCP。
+/// · 失败**不阻断启动**：如实打一行，退回"关窗真的关"（见 [`TrayReady`]）。
+#[cfg(desktop)]
+fn setup_tray(app: &tauri::App) -> bool {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    use tauri::tray::TrayIconBuilder;
+
+    let build = || -> tauri::Result<()> {
+        let open = MenuItem::with_id(app, "tray-open", "打开主窗口", true, None::<&str>)?;
+        let sep = PredefinedMenuItem::separator(app)?;
+        let quit = MenuItem::with_id(app, "tray-quit", "退出 ShuyoNote", true, None::<&str>)?;
+        let menu = Menu::with_items(app, &[&open, &sep, &quit])?;
+
+        let mut builder = TrayIconBuilder::with_id("main-tray")
+            .menu(&menu)
+            .tooltip("ShuyoNote")
+            .on_menu_event(|app, event| match event.id.as_ref() {
+                "tray-open" => {
+                    log_lifecycle("tray_open_main_window", "");
+                    show_main_window(app);
+                }
+                // ⭐ 这是**唯一**的托盘退出路径：真退出（`app.exit(0)`），不是隐藏。
+                //   与「关窗」严格分开 —— 关窗只隐藏，退出才停进程（要求 2 的原话）。
+                "tray-quit" => {
+                    log_lifecycle("tray_quit", &format!("pid={}", std::process::id()));
+                    app.exit(0);
+                }
+                _ => {}
+            });
+        if let Some(icon) = app.default_window_icon() {
+            builder = builder.icon(icon.clone());
+        }
+        builder.build(app)?;
+        Ok(())
+    };
+
+    match build() {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!("[tray] ⚠️ 托盘创建失败（关窗将退回「真的关闭」）：{e}");
+            false
+        }
+    }
+}
+
+/// P1：把主窗口叫回来 —— 托盘「打开主窗口」与 macOS 点 Dock 图标**共用这一处**。
+#[cfg(desktop)]
+fn show_main_window(app: &tauri::AppHandle) {
+    match app.get_webview_window("main") {
+        Some(w) => {
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+        }
+        None => log_lifecycle("show_main_window_missing", "找不到 label=main 的窗口"),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // M11.13 阶段 1：**宿主子进程分流必须在最前面**——在任何 Tauri / 单实例初始化之前。
@@ -988,6 +1063,15 @@ pub fn run() {
             #[cfg(target_os = "android")]
             lan_android::ensure_multicast_lock(&_window);
 
+            // ⭐ P1（DEC-2 A，2026-11-08 拍板）：**托盘常驻**。
+            //   放在 setup **末尾**：主窗口已经建好，`default_window_icon()` 也取得到；
+            //   失败不阻断启动 —— 只记一行，关窗行为退回"真的关闭"（见 `TrayReady`）。
+            #[cfg(desktop)]
+            {
+                let tray_ready = setup_tray(app);
+                app.manage(TrayReady(tray_ready));
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1458,13 +1542,57 @@ pub fn run() {
                     }
                 }
             }
+            // ⭐ P1（DEC-2 A）：macOS「点 Dock 图标」＝ 把隐藏的主窗口叫回来。
+            //   没有这一条的话，关窗隐藏后点 Dock 一点反应都没有 —— 那不是常驻，是失联。
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => {
+                log_lifecycle("reopen", "");
+                show_main_window(app_handle);
+            }
             tauri::RunEvent::ExitRequested { code, .. } => {
                 log_lifecycle("exit_requested", &format!("code={code:?}"));
             }
             tauri::RunEvent::Exit => log_lifecycle("exit", ""),
             tauri::RunEvent::WindowEvent { label, event, .. } => match event {
-                tauri::WindowEvent::CloseRequested { .. } => {
-                    log_lifecycle("window_close_requested", &format!("label={label}"));
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    // ⭐ P1（DEC-2 A）：**关窗 ≠ 退出**。
+                    //   桌面端默认把"关闭"改成"隐藏"：进程与后台任务（同步/备份/MCP 桥）继续跑，
+                    //   托盘图标照旧在；真正退出只有托盘「退出 ShuyoNote」或 Cmd+Q / 系统明确退出路径。
+                    //   ⚠️ 托盘没建起来时**不**这么改（[`TrayReady`]）：否则窗口一关就再也找不回来。
+                    #[cfg(desktop)]
+                    {
+                        let tray_ready = app_handle
+                            .try_state::<TrayReady>()
+                            .map(|s| (*s).0)
+                            .unwrap_or(false);
+                        if tray_ready {
+                            api.prevent_close();
+                            match app_handle.get_webview_window(&label) {
+                                Some(w) => {
+                                    let _ = w.hide();
+                                    log_lifecycle(
+                                        "window_close_requested",
+                                        &format!("label={label}; 已隐藏（托盘常驻），进程继续"),
+                                    );
+                                }
+                                None => log_lifecycle(
+                                    "window_close_requested",
+                                    &format!("label={label}; 找不到窗口，未隐藏"),
+                                ),
+                            }
+                        } else {
+                            log_lifecycle(
+                                "window_close_requested",
+                                &format!("label={label}; 托盘不可用，按原样关闭"),
+                            );
+                        }
+                    }
+                    #[cfg(not(desktop))]
+                    {
+                        // 移动端没有托盘（P1 只承诺桌面）：行为一个字不改，只留日志。
+                        let _ = &api;
+                        log_lifecycle("window_close_requested", &format!("label={label}"));
+                    }
                 }
                 tauri::WindowEvent::Destroyed => {
                     log_lifecycle("window_destroyed", &format!("label={label}"));
