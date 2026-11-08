@@ -8,13 +8,24 @@ describe("App · Core 与前端定时器的启停决策", () => {
   it("① 按纯函数决策去开关 Core；评估时点覆盖 mount/online/offline/visibility/换档", () => {
     expect(app).toContain("shouldEnableRustCore(");
     expect(app).toContain("api.syncCoreSetEnabled(");
-    expect(app).toContain("shouldAutoSyncNow()");
     for (const ev of ['"online"', '"offline"', '"visibilitychange"', "AUTO_SYNC_CHANGED_EVENT"]) {
       expect(app, `缺评估时点 ${ev}`).toContain(ev);
     }
     // 只有"要开 ＋ 命令回报 enabled"才算 Core 接管（老内核/Web 回落 timer）。
     expect(app).toContain("st?.enabled === true");
     expect(app).toContain("setCoreActive(active)");
+  });
+
+  it("①b ⭐ task-69：桌面 Core 决策**不再调用** shouldAutoSyncNow（闸门在 Rust Core 内）", () => {
+    const start = app.indexOf("const desktop = isDesktopPlatform();");
+    expect(start, "Core 决策 effect 必须在").toBeGreaterThan(-1);
+    const effect = app.slice(start, app.indexOf("}, [autoSyncMs]);", start));
+    expect(effect).toContain("shouldEnableRustCore({ isDesktop: desktop, autoSyncMs })");
+    expect(effect).not.toContain("shouldAutoSyncNow");
+    expect(effect).not.toContain("gateAllowed");
+    // 前端闸门仍保留在回退定时器/编辑触发那条路上（runAutoSyncRound 内）。
+    expect(app).toContain("shouldAutoSyncNow()");
+    expect(app).toContain("await shouldAutoSyncNow()");
   });
 
   it("② Core 接管时**不排**前端定时器；关闭/回退时保留今天的 setTimeout 循环", () => {

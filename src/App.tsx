@@ -802,11 +802,13 @@ function NoteEditor({ pageId }: { pageId: string }) {
     window.addEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
     return () => window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
   }, []);
-  // ⭐ **P3-1a 第五刀（task-58）**：按「桌面/移动端 ＋ 间隔 ＋ 网络闸门」评估由谁跑节拍。
-  //   · 桌面 ＋ 闸门放行 ＋ 间隔>0 ⇒ `sync_core_set_enabled(true)`（懒启动 Rust 调度器）；
-  //   · 移动端 / 闸门拒绝 / 间隔 0 / 老内核没有该命令 ⇒ `false` ⇒ **回退前端定时器**（行为同今天）。
-  //   ⚠️ 评估时点：mount、online/offline、visibilitychange、同步方式变化（AUTO_SYNC_CHANGED_EVENT）。
-  //   ⚠️ 闸门日志仍由 `shouldAutoSyncNow()` 那一处打印；本 effect 只**读**结果，不新增第二条判断。
+  // ⭐ **P3-1a 第五刀（task-58）＋ 收尾（task-69）**：按「桌面/移动端 ＋ 间隔」评估由谁跑节拍。
+  //   · 桌面 ＋ 间隔>0 ⇒ `sync_core_set_enabled(true)`（懒启动 Rust 调度器）；
+  //   · 移动端 / 间隔 0 / 老内核没有该命令 ⇒ `false` ⇒ **回退前端定时器**（行为同今天）。
+  //   ⭐ **task-69**：桌面分支**不再**调 `shouldAutoSyncNow()` 来开关 Core —— Core 已内置同一把
+  //      C2 闸门（Rust 每轮拒/放）；前端闸门只保留在 timer 回退与编辑触发那条路上。
+  //   ⚠️ 评估时点：mount、online/offline、visibilitychange、同步方式变化（AUTO_SYNC_CHANGED_EVENT）——
+  //      网络变化不再决定 core/timer，只是保持"重新评估"的既有节拍。
   useEffect(() => {
     const desktop = isDesktopPlatform();
     let cancelled = false;
@@ -816,9 +818,8 @@ function NoteEditor({ pageId }: { pageId: string }) {
         if (desktop) void api.syncCoreSetEnabled(false).catch(() => {});
         return;
       }
-      const gateAllowed = await shouldAutoSyncNow();
-      if (cancelled) return;
-      const wantCore = shouldEnableRustCore({ isDesktop: desktop, autoSyncMs, gateAllowed });
+      // ⭐ task-69：桌面 Core 决策只看 `isDesktop`＋`autoSyncMs`（网络闸门在 Rust Core 内每轮判）。
+      const wantCore = shouldEnableRustCore({ isDesktop: desktop, autoSyncMs });
       let active = false;
       try {
         const st = await api.syncCoreSetEnabled(wantCore);
