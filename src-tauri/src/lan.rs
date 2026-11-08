@@ -273,6 +273,20 @@ pub struct LanAnnounce {
     /// ⇒ **不升 `WIRE_VERSION`**（与 `short_id`／`trust_ask`／`pubkey` 同一手法）；新对端读老公告 ⇒ `None`。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listen_port: Option<u16>,
+    /// ⭐⭐ **2026-11-08（P3-0b 第一小步）**：⭐ **本机的 QUIC/iroh 端点候选地址** ✗
+    /// —— 为 P3-2「单 QUIC 端点」的 `EndpointAddr` 来源铺路 ✓。
+    ///
+    /// ⚠️ **本笔只是把字段带上线** ✗：⛔ 不建 QUIC 端点、⛔ 不加任何依赖、⛔ 不监听新端口；
+    /// ⚠️ **P3-2 才消费** ✓ —— 今天发送侧一律给**空表**（见 [`announce_for_own_hub`] ✓），
+    /// 接收侧也⛔ 不许拿它改变任何现有 HTTP/发现行为 ✗（挑路仍只走 [`resolve_base`] ✓）。
+    /// 元素是**不透明字符串**（形如 `ip:port`；P3-2 才解释/校验）⇒ 本笔**不解析、不校验**。
+    ///
+    /// ⚠️ `#[serde(default)]` ＋ 本结构**没有** `deny_unknown_fields` ⇒ 老对端收到**直接忽略** ✓；
+    ///   新对端读老公告 ⇒ 空表（**不是错误** ✓）。`skip_serializing_if` ⇒ 空表时**线上一个字节都不多**
+    ///   （空表编码与"加这一格之前"**逐字节相同** ✓）⇒ ⛔ **不升 `WIRE_VERSION`** ✗
+    ///   （与 `short_id`／`trust_ask`／`pubkey`／`listen_port` 同一手法 ✓）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quic_addrs: Vec<String>,
 }
 
 impl Default for LanAnnounce {
@@ -297,6 +311,7 @@ impl Default for LanAnnounce {
             trust_secret: String::new(),
             pubkey: String::new(),
             listen_port: None,
+            quic_addrs: Vec::new(),
         }
     }
 }
@@ -655,6 +670,10 @@ pub fn announce_for_own_hub(
         room_auto: false,
         // ★ 见上面那段：`fp` ＝ 应用级事实 `device_id`（B 片施工单 §8.3 的收口）。
         fp: dev.to_string(),
+        // ⭐ P3-0b（2026-11-08）：本笔**发送侧先给空表** ✓ —— 字段先上线，值等 P3-2 的单 QUIC 端点。
+        //   ⛔ 本笔不枚举地址、也不承诺任何"看起来像 QUIC 地址"的候选 ✗（空表是诚实的"还没有"；
+        //   编一个出来反而会让 P3-2 的消费者拿到永远连不上的值）。⛔ 不升 `WIRE_VERSION` ✗。
+        quic_addrs: Vec::new(),
     })
 }
 
@@ -1470,6 +1489,7 @@ mod tests {
                 room_auto: false,
                 fp: "fp".into(),
                 pubkey: String::new(),
+                quic_addrs: Vec::new(),
             },
             addr: "192.168.1.9".into(),
             seen_at_ms: 0,
@@ -1640,6 +1660,7 @@ mod tests {
             room_auto: false,
             fp: "fp".into(),
             pubkey: String::new(),
+            quic_addrs: Vec::new(),
         }
     }
 
@@ -2665,6 +2686,7 @@ mod multi_space_peer_table_tests {
             room_auto: false,
             hub_space_kinds: vec![kind.to_string()],
             fp: device.to_string(),
+            quic_addrs: Vec::new(),
         }
     }
 
@@ -3272,5 +3294,165 @@ mod port_fallback_tests {
         );
         assert_eq!(sock.local_addr().unwrap().port(), port);
         drop(sock);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⭐ **P3-0b 第一小步（2026-11-08）**：`quic_addrs` 的**兼容性**判据。
+//
+// 这一组只回答四件事（都不联网、不建端点、不依赖新字段的值）：
+//   ① **老公告**（加这一格之前线上的 JSON）⇒ 解码成空表，**不报错**；
+//   ② **空表不改变任何线字节**（编码与加字段之前逐字节相同 ⇒ ⛔ 不升 `WIRE_VERSION` 的底气）；
+//   ③ 带地址的新公告 **roundtrip** ＋ 两个方向的跨版本兼容（老端忽略新字段／新端读得到老 JSON＋字段）；
+//   ④ **版本严格相等**没被放宽（`WIRE_VERSION` 仍是 1；0／2／99 一律 `UnknownVersion`）。
+#[cfg(test)]
+mod quic_addrs_compat_tests {
+    use super::*;
+
+    /// 一条**加 `quic_addrs` 之前**的公告 JSON（逐字取老线格式：没有这一格）。
+    const OLD_WIRE: &str = r#"{"v":1,"device_id":"dev-old","device_name":"老设备","short_id":"OLD01","hub_base":"http://192.168.1.7:8787","hub_spaces":["sp-1"],"hub_space_names":[],"hub_space_kinds":[],"hub_space_encrypted":[],"fp":"dev-old","trust_ask":"","trust_secret":"","pubkey":""}"#;
+
+    /// 加字段之前那种"最小形状"：空表时线上的样子必须**逐字节不变**。
+    fn minimal() -> LanAnnounce {
+        LanAnnounce {
+            v: WIRE_VERSION,
+            device_id: "dev-a".into(),
+            device_name: "本机".into(),
+            short_id: "A1B2C".into(),
+            hub_base: None,
+            hub_spaces: Vec::new(),
+            hub_space_names: Vec::new(),
+            hub_space_kinds: Vec::new(),
+            hub_space_encrypted: Vec::new(),
+            room: String::new(),
+            room_auto: false,
+            fp: "fp".into(),
+            trust_ask: String::new(),
+            trust_secret: String::new(),
+            pubkey: String::new(),
+            listen_port: None,
+            quic_addrs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn an_old_announce_without_quic_addrs_decodes_to_empty() {
+        let a = decode_announce(OLD_WIRE).expect("老公告必须照样收得下（⛔ 不许因为新字段报错）");
+        assert_eq!(
+            a.quic_addrs,
+            Vec::<String>::new(),
+            "老公告没有这一格 ⇒ 空表（读不到 ≠ 错误）"
+        );
+        // 其它字段逐字不变（这条是"公告结构其它字段不许动"的直接判据）。
+        assert_eq!(a.v, WIRE_VERSION);
+        assert_eq!(a.device_id, "dev-old");
+        assert_eq!(a.device_name, "老设备");
+        assert_eq!(a.short_id, "OLD01");
+        assert_eq!(a.hub_base.as_deref(), Some("http://192.168.1.7:8787"));
+        assert_eq!(a.hub_spaces, vec!["sp-1".to_string()]);
+        assert_eq!(a.hub_space_names, Vec::<String>::new());
+        assert_eq!(a.hub_space_kinds, Vec::<String>::new());
+        assert_eq!(a.hub_space_encrypted, Vec::<bool>::new());
+        assert_eq!(a.room, "");
+        assert!(!a.room_auto);
+        assert_eq!(a.fp, "dev-old");
+        assert_eq!(a.trust_ask, "");
+        assert_eq!(a.trust_secret, "");
+        assert_eq!(a.pubkey, "");
+        assert_eq!(a.listen_port, None);
+    }
+
+    #[test]
+    fn empty_quic_addrs_do_not_change_a_single_wire_byte() {
+        let a = minimal();
+        let raw = encode_announce(&a).unwrap();
+        assert!(
+            !raw.contains("quic_addrs"),
+            "空表不许出现在线上（`skip_serializing_if`）⇒ 老对端看不到这一格：{raw}"
+        );
+        // 与"加字段之前"最直接的比对：逐字节等于一份写死的老线格式。
+        assert_eq!(
+            raw,
+            r#"{"v":1,"device_id":"dev-a","device_name":"本机","short_id":"A1B2C","hub_base":null,"hub_spaces":[],"hub_space_names":[],"hub_space_kinds":[],"hub_space_encrypted":[],"fp":"fp","trust_ask":"","trust_secret":"","pubkey":""}"#
+        );
+    }
+
+    #[test]
+    fn the_field_set_is_byte_for_byte_unchanged_apart_from_the_optional_field() {
+        let mut a = minimal();
+        // 把所有"有 skip"的字段都填上 ⇒ 线格式里每一格都出现，顺序/名字/值可逐字比对。
+        a.room = "room-x".into();
+        a.room_auto = true;
+        a.listen_port = Some(47821);
+        assert_eq!(
+            encode_announce(&a).unwrap(),
+            r#"{"v":1,"device_id":"dev-a","device_name":"本机","short_id":"A1B2C","hub_base":null,"hub_spaces":[],"hub_space_names":[],"hub_space_kinds":[],"hub_space_encrypted":[],"room":"room-x","room_auto":true,"fp":"fp","trust_ask":"","trust_secret":"","pubkey":"","listen_port":47821}"#,
+            "既有字段的**名字/顺序/值**必须逐字不变（新字段空 ⇒ 不出现）"
+        );
+        // 新字段有值 ⇒ **只多这一格**（追加在最后；不重排任何既有字段）。
+        a.quic_addrs = vec!["192.168.1.5:47831".into(), "[fe80::1]:47831".into()];
+        assert_eq!(
+            encode_announce(&a).unwrap(),
+            r#"{"v":1,"device_id":"dev-a","device_name":"本机","short_id":"A1B2C","hub_base":null,"hub_spaces":[],"hub_space_names":[],"hub_space_kinds":[],"hub_space_encrypted":[],"room":"room-x","room_auto":true,"fp":"fp","trust_ask":"","trust_secret":"","pubkey":"","listen_port":47821,"quic_addrs":["192.168.1.5:47831","[fe80::1]:47831"]}"#
+        );
+    }
+
+    #[test]
+    fn quic_addrs_round_trips_and_old_wire_still_decodes() {
+        // ① 新公告带地址 ⇒ 编解码往返（值原样、不解析、不校验）。
+        let mut a = minimal();
+        a.quic_addrs = vec!["10.0.0.9:47831".into(), "[fe80::1]:47831".into()];
+        let raw = encode_announce(&a).unwrap();
+        assert!(raw.contains("\"quic_addrs\":[\"10.0.0.9:47831\",\"[fe80::1]:47831\"]"));
+        assert_eq!(
+            decode_announce(&raw).unwrap(),
+            a,
+            "带地址的公告要能原样解回来"
+        );
+
+        // ② 老端（本笔之前的结构）收到带这一格的 JSON ⇒ 未知字段**直接忽略**，其它字段不受影响。
+        let mut v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        v.as_object_mut().unwrap().remove("quic_addrs");
+        let a_old = decode_announce(&serde_json::to_string(&v).unwrap()).unwrap();
+        assert!(a_old.quic_addrs.is_empty(), "删掉这一格 ⇒ 空表");
+        assert_eq!(a_old.device_id, a.device_id);
+        assert_eq!(a_old.fp, a.fp);
+
+        // ③ 反向兼容：给老 JSON 手工加上这一格 ⇒ 新端读得到（老发送端升级前也能被新端理解）。
+        let mut v: serde_json::Value = serde_json::from_str(OLD_WIRE).unwrap();
+        v.as_object_mut().unwrap().insert(
+            "quic_addrs".into(),
+            serde_json::json!(["192.168.1.9:47831"]),
+        );
+        let a_new = decode_announce(&serde_json::to_string(&v).unwrap()).unwrap();
+        assert_eq!(a_new.quic_addrs, vec!["192.168.1.9:47831".to_string()]);
+        assert_eq!(a_new.device_id, "dev-old", "老字段仍逐字保留");
+    }
+
+    #[test]
+    fn wire_version_is_still_strictly_one() {
+        assert_eq!(
+            WIRE_VERSION, 1,
+            "本笔⛔ 不升线版本（只加一个 serde default 字段）"
+        );
+        let mut a = minimal();
+        a.quic_addrs = vec!["10.0.0.9:47831".into()];
+        assert_eq!(a.v, WIRE_VERSION);
+        assert!(encode_announce(&a).unwrap().contains("\"v\":1"));
+        // 严格相等：0／2／99 一律拒（⛔ 不许因为新字段放宽成"<="或">="）。
+        for bad in [0u32, WIRE_VERSION + 1, 99] {
+            a.v = bad;
+            assert_eq!(
+                decode_announce(&encode_announce(&a).unwrap()),
+                Err(AnnounceReject::UnknownVersion),
+                "v={bad} 必须按严格相等拒"
+            );
+        }
+        // v=1 且带新字段 ⇒ 收（新字段不算"版本不认识"）。
+        a.v = WIRE_VERSION;
+        assert!(
+            decode_announce(&encode_announce(&a).unwrap()).is_ok(),
+            "v=1 ＋ quic_addrs ⇒ 必须能收"
+        );
     }
 }

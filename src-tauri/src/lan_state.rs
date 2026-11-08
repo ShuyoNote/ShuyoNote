@@ -1160,6 +1160,7 @@ pub fn announces_for_with_mesh(
             //   **没资格代言**（`hub_base: None`），而 `fp` 留空会让它在"谁在说话"这件事上
             //   完全隐形 —— 掉包判据要看的就是这个。
             fp: dev.to_string(),
+            quic_addrs: Vec::new(),
         });
         // ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 把"⭐ 我想信任谁 ✗"／"⭐ 我给谁的那把 ✗"带上 ✓。
         //    ⚠️ 在**调用点之后**填 ✗（⭐ `announce_for_own_hub` 是纯函数 ✓，⭐ 它不该知道进程状态 ✓）；
@@ -2181,6 +2182,7 @@ mod tests {
                 room: String::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
+                quic_addrs: Vec::new(),
             },
             addr: "192.168.1.9".into(),
             seen_at_ms: 1_000,
@@ -3004,6 +3006,7 @@ mod short_id_tests {
                 room: String::new(),
                 fp: "fp".into(),
                 pubkey: String::new(),
+                quic_addrs: Vec::new(),
             },
             addr: "192.168.1.9".into(),
             seen_at_ms: seen_at,
