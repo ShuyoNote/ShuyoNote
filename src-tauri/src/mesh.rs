@@ -8483,6 +8483,7 @@ mod tests {
             None,
             Some(10),
             offset,
+            None,
         )
         .await
         .expect("续传应当成功");
@@ -8517,6 +8518,7 @@ mod tests {
             None,
             Some(11), // 故意错的期望大小
             4,
+            None,
         )
         .await
         .expect_err("期望大小不符必须失败");
@@ -8551,6 +8553,7 @@ mod tests {
             None,
             Some(10),
             4, // 调用方以为能续，但对端回 200 ⇒ 必须识别为全量并从 0 写
+            None,
         )
         .await
         .expect("200 响应必须按全量处理");

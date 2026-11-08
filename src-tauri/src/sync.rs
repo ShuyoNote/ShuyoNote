@@ -2104,6 +2104,24 @@ pub async fn download_attachment(
         hash: hash.clone(),
         mime,
     };
+    // ⭐ P3-4 第三小步（task-50）：命令路径的**进度 sink** —— 通过 `AppHandle` 发
+    //   `attachment-download-progress`（camelCase）；`AppHandle` 克隆进闭包，失败只忽略。
+    //   ⚠️ 自动同步那条路（`sync_attachments`）传 `None`，行为完全不变。
+    let progress_app = app.clone();
+    let progress_ws = ws_id.clone();
+    let progress_sink = move |u: DownloadProgressUpdate| {
+        let _ = progress_app.emit(
+            "attachment-download-progress",
+            AttachmentDownloadProgress {
+                space_id: progress_ws.clone(),
+                hash: u.hash,
+                downloaded: u.downloaded,
+                total: u.total,
+                done: u.done,
+                error: u.error,
+            },
+        );
+    };
 
     // ── ① 服务端那条（绑了才走；不绑 ⇒ **不再是错误**，丙-④ 之前这里直接报"请先配置同步服务器"）
     let mut server_err: Option<String> = None;
@@ -2137,6 +2155,7 @@ pub async fn download_attachment(
                     &db,
                     // 中央服务端接口不支持 offset ⇒ 全量（旧行为）；`.part` 会被从头重写。
                     0,
+                    Some(&progress_sink),
                 )
                 .await
                 {
@@ -2238,6 +2257,7 @@ pub async fn download_attachment(
                 session_key.as_ref(),
                 &db,
                 offset,
+                Some(&progress_sink),
             )
             .await
             {
@@ -7789,6 +7809,56 @@ pub fn set_sync_budget(db: State<'_, Db>, budget: SyncBudget) -> Result<SyncBudg
 /// **必须只有一份实现**（原来那段注释就写着"P6.3 不许再写第二份下载实现"）。
 /// 把"怎么要"留给调用方、把"拿到之后怎么办"留在这里，是唯一能让两条路共用它的切法。
 /// `who` 只进错误文案（"服务端返回 404" / "对端 Mate40 返回 404" —— 用户的下一步不一样）。
+// ── ⭐ P3-4 第三小步（task-50）：附件下载进度（可选 sink；⛔ 不改协议/落盘/校验） ──
+
+/// 下载进度的一次**更新**（核心层 → 命令层；`space_id` 由命令层补，核心层只认 hash）。
+#[derive(Debug, Clone)]
+pub(crate) struct DownloadProgressUpdate {
+    pub hash: String,
+    /// 已经落到 `.part` 的**完整文件**字节数（含续传起点）。
+    pub downloaded: u64,
+    /// 期望总大小（元数据里没有 ⇒ `None`，前端显示「已 X MB」）。
+    pub total: Option<u64>,
+    /// `true` ＝ 终态（成功或失败；失败时看 `error`）。
+    pub done: bool,
+    pub error: Option<String>,
+}
+
+/// 进度回调：`None` ＝ 不关心进度（自动同步那条路）；⛔ 不许因为进度上报失败影响下载。
+pub(crate) type DownloadProgressSink<'a> = &'a (dyn Fn(DownloadProgressUpdate) + Send + Sync);
+
+/// 发给前端的**事件载荷**（camelCase：`spaceId` / `hash` / `downloaded` / `total` / `done` / `error`）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentDownloadProgress {
+    pub space_id: String,
+    pub hash: String,
+    pub downloaded: u64,
+    /// 未知 ⇒ `null`（前端显示「已 X MB」而不是假装知道百分比）。
+    pub total: Option<u64>,
+    /// 终态标记（完成/失败都发一次 ⇒ UI 据此收起进度）。
+    pub done: bool,
+    /// 失败原因（成功/中间态 ⇒ `None`）。
+    pub error: Option<String>,
+}
+
+/// ⭐ **P3-4（task-50，纯函数）**：下载百分比（`total` 未知/0 ⇒ `None`；结果夹在 0..=100）。
+///
+/// ⚠️ 不知道总大小就**不编百分比**（前端显示「下载中（已 X MB）」）—— 与"读不到 ≠ 读到 0"同一条纪律。
+pub(crate) fn download_progress_percent(downloaded: u64, total: Option<u64>) -> Option<u32> {
+    let total = total.filter(|t| *t > 0)?;
+    Some((downloaded.saturating_mul(100) / total).min(100) as u32)
+}
+
+/// ⭐ **P3-4（task-50，纯函数）**：是否该发一条**中间**进度 —— 字节增量 ≥ 256 KiB **或**
+/// 距上次 ≥ 200 ms（两条任一满足就发；终态不走这里，总是发一次）。
+pub(crate) fn should_emit_download_progress(
+    since_bytes: u64,
+    since_time: std::time::Duration,
+) -> bool {
+    since_bytes >= 256 * 1024 || since_time >= std::time::Duration::from_millis(200)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn download_one_attachment(
     status: u16,
@@ -7800,6 +7870,8 @@ async fn download_one_attachment(
     db: &State<'_, Db>,
     // ⭐ P3-4 续传：已落 `.part` 的字节数（0 ＝ 全量/旧行为）。只在**对端那条**会 >0。
     offset: u64,
+    // ⭐ P3-4 第三小步：可选进度 sink（命令层传 emit 闭包；自动同步传 `None`）。
+    progress: Option<DownloadProgressSink<'_>>,
 ) -> Result<i64, String> {
     // ⭐ P3-4：**进程内串行锁**（固定 `.part` 只有一份；同一进程里并发下同一件会互相抢）。
     //   ⚠️ 是 `tokio::sync::Mutex`（跨 await 持有合法）；锁内**不持** std db 锁跨 await。
@@ -7836,7 +7908,7 @@ async fn download_one_attachment(
     }
     let mut size: i64 = 0;
     if !final_path.exists() {
-        size = download_body_to_part(
+        let res = download_body_to_part(
             status,
             &mut body,
             who,
@@ -7846,8 +7918,34 @@ async fn download_one_attachment(
             session_key,
             expected_size,
             offset,
+            progress,
         )
-        .await?;
+        .await;
+        // ⭐ 终态**总是**发一次（完成/失败都发 ⇒ UI 一定收起进度）。
+        if let Some(sink) = progress {
+            match &res {
+                Ok(done_size) => sink(DownloadProgressUpdate {
+                    hash: item.hash.clone(),
+                    downloaded: (*done_size).max(0) as u64,
+                    total: Some((*done_size).max(0) as u64),
+                    done: true,
+                    error: None,
+                }),
+                Err(e) => {
+                    let got = std::fs::metadata(attachment_part_path(attachments_dir, &item.hash))
+                        .map(|m| m.len())
+                        .unwrap_or(0);
+                    sink(DownloadProgressUpdate {
+                        hash: item.hash.clone(),
+                        downloaded: got,
+                        total: expected_size.map(|s| s.max(0) as u64),
+                        done: true,
+                        error: Some(e.clone()),
+                    });
+                }
+            }
+        }
+        size = res?;
     }
     // B4（2026-09-15）：**只有当这个 hash 还没有任何行时**才插一行兜底。
     {
@@ -7929,6 +8027,7 @@ pub(crate) async fn download_body_to_part(
     session_key: Option<&crate::crypto::AppKeys>,
     expected_size: Option<i64>,
     offset: u64,
+    progress: Option<DownloadProgressSink<'_>>,
 ) -> Result<i64, String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     if !(200..300).contains(&status) {
@@ -7969,6 +8068,10 @@ pub(crate) async fn download_body_to_part(
     };
     let mut received: u64 = 0;
     let mut buf = vec![0u8; 64 * 1024];
+    // ⭐ 进度节流：字节增量 ≥256KiB 或距上次 ≥200ms（纯函数判据在 `should_emit_download_progress`）。
+    let total_hint = expected_size.filter(|s| *s > 0).map(|s| s as u64);
+    let mut last_emit_bytes: u64 = 0;
+    let mut last_emit_at = std::time::Instant::now();
     loop {
         let n = match body.read(&mut buf).await {
             Ok(n) => n,
@@ -7986,6 +8089,23 @@ pub(crate) async fn download_body_to_part(
         if let Err(e) = file.write_all(&buf[..n]).await {
             drop(file);
             return Err(format!("{who}：写 .part 失败（已保留现有字节）：{e}"));
+        }
+        if let Some(sink) = progress {
+            let downloaded = effective_offset + received;
+            if should_emit_download_progress(
+                downloaded.saturating_sub(last_emit_bytes),
+                last_emit_at.elapsed(),
+            ) {
+                sink(DownloadProgressUpdate {
+                    hash: hash.to_string(),
+                    downloaded,
+                    total: total_hint,
+                    done: false,
+                    error: None,
+                });
+                last_emit_bytes = downloaded;
+                last_emit_at = std::time::Instant::now();
+            }
         }
     }
     file.flush().await.map_err(|e| e.to_string())?;
@@ -8535,6 +8655,8 @@ async fn sync_attachments(
             session_key.as_ref(),
             db,
             0,
+            // 自动同步不展示逐件进度（本笔只接命令路径）。
+            None,
         )
         .await
         {
@@ -13777,6 +13899,66 @@ mod encrypted_sync_note_tests {
         assert!(
             crate::mesh::attachment_target_from("sp", &h, 7).ends_with("&offset=7"),
             "offset>0 才追加参数"
+        );
+    }
+    // ── ⭐ P3-4 第三小步（task-50）：下载进度纯函数判据 ──────────────────────────────
+
+    #[test]
+    fn download_progress_percent_is_none_when_total_is_unknown_and_clamped_otherwise() {
+        assert_eq!(download_progress_percent(0, Some(10)), Some(0));
+        assert_eq!(download_progress_percent(4, Some(10)), Some(40));
+        assert_eq!(download_progress_percent(10, Some(10)), Some(100));
+        // 未知/0 总大小 ⇒ 不编百分比（前端显示「已 X MB」）。
+        assert_eq!(download_progress_percent(4, None), None);
+        assert_eq!(download_progress_percent(4, Some(0)), None);
+        // 超过总量（异常读数）也夹在 100，不虚报 >100%。
+        assert_eq!(download_progress_percent(20, Some(10)), Some(100));
+    }
+
+    #[test]
+    fn download_progress_throttle_is_either_256kib_or_200ms() {
+        use std::time::Duration;
+        assert!(!should_emit_download_progress(0, Duration::ZERO));
+        assert!(!should_emit_download_progress(
+            100,
+            Duration::from_millis(199)
+        ));
+        // 字节门槛：≥256 KiB 就发（哪怕刚发过）。
+        assert!(should_emit_download_progress(256 * 1024, Duration::ZERO));
+        assert!(should_emit_download_progress(
+            300_000,
+            Duration::from_millis(1)
+        ));
+        // 时间门槛：≥200 ms 就发（哪怕只多了 1 字节）。
+        assert!(should_emit_download_progress(1, Duration::from_millis(200)));
+        assert!(should_emit_download_progress(0, Duration::from_millis(201)));
+    }
+
+    #[test]
+    fn download_progress_payload_is_camel_case_and_total_can_be_null() {
+        let p = AttachmentDownloadProgress {
+            space_id: "ws".to_string(),
+            hash: "h".to_string(),
+            downloaded: 4,
+            total: None,
+            done: false,
+            error: None,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"spaceId\":\"ws\""), "{json}");
+        assert!(json.contains("\"downloaded\":4"), "{json}");
+        assert!(json.contains("\"total\":null"), "未知总量要 null：{json}");
+        assert!(json.contains("\"done\":false"), "{json}");
+        // 终态失败带 error
+        let failed = AttachmentDownloadProgress {
+            done: true,
+            error: Some("网络中断".to_string()),
+            ..p
+        };
+        let json = serde_json::to_string(&failed).unwrap();
+        assert!(
+            json.contains("\"done\":true") && json.contains("网络中断"),
+            "{json}"
         );
     }
 }

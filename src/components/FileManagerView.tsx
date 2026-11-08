@@ -22,6 +22,11 @@ import { PluginMenuItems } from "./PluginMenuItems";
 import { fileContextArgs } from "../lib/pluginMenus";
 import { attachmentFetchHint } from "../lib/attachmentFetchHint";
 import {
+  ATTACHMENT_DOWNLOAD_PROGRESS_EVENT,
+  attachmentDownloadLabel,
+  type AttachmentDownloadProgressPayload,
+} from "../lib/attachmentDownloadProgress";
+import {
   FM_VIEW_KEY,
   defaultFileView,
   readSavedFileView,
@@ -249,6 +254,11 @@ export function FileManagerView() {
   // 所以"数据库里有一行、盘上没文件"能被如实标出来。
   const [onDisk, setOnDisk] = useState<Set<string>>(new Set());
   const [fetching, setFetching] = useState<string | null>(null);
+  // ⭐ P3-4 第三小步（task-50）：按 hash 的下载进度（只存"正在下载"的；终态来就删）。
+  //   ⚠️ 不新增全局 store：这一屏自己用、生命周期与组件一致 ⇒ 本地 state 足够。
+  const [downloadProgress, setDownloadProgress] = useState<
+    Record<string, { downloaded: number; total: number | null }>
+  >({});
   const loadOnDisk = () => {
     api
       .listAttachmentHashes()
@@ -294,6 +304,13 @@ export function FileManagerView() {
       return false;
     } finally {
       setFetching(null);
+      // 兜底：若终态事件因故没来（命令在发事件前就失败），也别把进度挂在行上。
+      setDownloadProgress((prev) => {
+        if (!(f.hash in prev)) return prev;
+        const next = { ...prev };
+        delete next[f.hash];
+        return next;
+      });
     }
   };
 
@@ -309,6 +326,33 @@ export function FileManagerView() {
     }).then((fn) => {
       unlisten = fn;
     });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  // ⭐ P3-4 第三小步（task-50）：监听 Rust 的逐件下载进度；终态（含失败）清掉该 hash。
+  //   ⚠️ 只认**当前空间**的事件（事件里带 `spaceId`）；组件卸载时取消监听。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    platform.event
+      .listen<AttachmentDownloadProgressPayload>(ATTACHMENT_DOWNLOAD_PROGRESS_EVENT, (event) => {
+        const p = event.payload;
+        const active = useSpaceStore.getState().activeId;
+        if (active && p.spaceId !== active) return;
+        setDownloadProgress((prev) => {
+          const next = { ...prev };
+          if (p.done) {
+            delete next[p.hash];
+          } else {
+            next[p.hash] = { downloaded: p.downloaded, total: p.total ?? null };
+          }
+          return next;
+        });
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
     return () => {
       unlisten?.();
     };
@@ -1283,16 +1327,28 @@ export function FileManagerView() {
                       {/* P6.2/P6.3：字节不在本机时，「下载」的含义变成**先从服务器取回来**
                           （否则 save-as 只会失败说"附件不存在"）。取回成功后这一行立刻恢复正常。 */}
                       {!onDisk.has(row.file!.hash) ? (
-                        <button
-                          title="从服务器下载到本机"
-                          disabled={fetching === row.file!.hash}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void fetchBytes(row.file!);
-                          }}
-                        >
-                          {fetching === row.file!.hash ? "…" : "☁"}
-                        </button>
+                        <>
+                          <button
+                            title="从服务器下载到本机"
+                            disabled={fetching === row.file!.hash}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void fetchBytes(row.file!);
+                            }}
+                          >
+                            {fetching === row.file!.hash ? "…" : "☁"}
+                          </button>
+                          {fetching === row.file!.hash && (
+                            <span className="fm-attachment-progress" style={{ marginRight: 4, fontSize: 11 }} aria-live="polite">
+                              {downloadProgress[row.file!.hash]
+                                ? attachmentDownloadLabel(
+                                    downloadProgress[row.file!.hash].downloaded,
+                                    downloadProgress[row.file!.hash].total,
+                                  )
+                                : "下载中…"}
+                            </span>
+                          )}
+                        </>
                       ) : (
                         <button
                           title="下载"
