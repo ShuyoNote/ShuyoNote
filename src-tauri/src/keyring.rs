@@ -151,6 +151,12 @@ pub struct KeyringGroup {
     /// 空间名（只用于"自动建同名空间"；是元数据，不是秘密）。
     #[serde(default)]
     pub space_names: BTreeMap<String, String>,
+    /// ⭐ **P3-3b（2026-11-08）**：`space_id → space_uid`（稳定身份，跨设备一致；**元数据、不是秘密**）。
+    ///
+    /// ⚠️ `#[serde(default)]` ⇒ 老袋子缺这一格**照样解**；`skip_serializing_if` ⇒ 空表**不上线**
+    /// （空袋子的 JSON 与加这一格之前逐字节相同；`material_fingerprint` 不变）。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub space_uids: BTreeMap<String, String>,
 }
 
 /// **钥匙袋**：公开参数 ＋ 每个空间一个盒子。这一整个 JSON **可以同步/可以放服务端**
@@ -163,6 +169,12 @@ pub struct Keyring {
     pub spaces: BTreeMap<String, WrappedBox>,
     #[serde(default)]
     pub space_names: BTreeMap<String, String>,
+    /// ⭐ **P3-3b（2026-11-08）**：主组的 `space_id → space_uid`（稳定身份；元数据、不是秘密）。
+    ///
+    /// ⚠️ `#[serde(default)]` ⇒ 老袋子缺这一格**照样解**；空表不上线（`skip_serializing_if`）⇒
+    /// 老袋子的 `to_json`/指纹**逐字节不变**；⛔ **不升 `KEYRING_VERSION`**（仍 2，纯可选字段）。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub space_uids: BTreeMap<String, String>,
     /// ⭐ 另外那些组的公开材料（从别的设备合并来的）。
     #[serde(default)]
     pub extra_groups: Vec<KeyringGroup>,
@@ -229,6 +241,7 @@ impl Keyring {
             kdf: KdfParams::fresh(),
             spaces: BTreeMap::new(),
             space_names: BTreeMap::new(),
+            space_uids: BTreeMap::new(),
             extra_groups: Vec::new(),
         }
     }
@@ -345,6 +358,138 @@ impl Keyring {
         false
     }
 
+    /// ⭐ **P3-3b（2026-11-08）**：这个空间的稳定 `space_uid`（主组优先，再各组找）。
+    ///
+    /// ⚠️ 只查**已存在的映射**（老袋子/没设过 ⇒ `None`）；⛔ 不从 `space_id`/名字反推一个 uid。
+    pub fn space_uid(&self, space_id: &str) -> Option<&str> {
+        if let Some(uid) = self.space_uids.get(space_id) {
+            let uid = uid.trim();
+            if !uid.is_empty() {
+                return Some(uid);
+            }
+        }
+        self.extra_groups.iter().find_map(|g| {
+            g.space_uids
+                .get(space_id)
+                .map(|u| u.trim())
+                .filter(|u| !u.is_empty())
+        })
+    }
+
+    /// ⭐ **P3-3b**：`space_uid → space_id`（全组唯一命中才返回；**多命中 ⇒ `None`**）。
+    ///
+    /// 口径：uid 是"稳定身份" ⇒ 同一袋子里**两个不同空间报同一个 uid** 只能说明数据坏了/冲突；
+    /// 这时**不猜**（⛔ 不按 BTreeMap 顺序取第一个冒充"唯一"）—— 交给上层按"判不出"处理。
+    pub fn space_id_by_uid(&self, uid: &str) -> Option<&str> {
+        let uid = uid.trim();
+        if uid.is_empty() {
+            return None;
+        }
+        let mut hit: Option<&str> = None;
+        for id in self
+            .space_uids
+            .iter()
+            .map(|(id, u)| (id.as_str(), u.as_str()))
+            .chain(
+                self.extra_groups
+                    .iter()
+                    .flat_map(|g| g.space_uids.iter().map(|(id, u)| (id.as_str(), u.as_str()))),
+            )
+        {
+            if id.1.trim() != uid {
+                continue;
+            }
+            match hit {
+                None => hit = Some(id.0),
+                Some(prev) if prev == id.0 => {}
+                Some(_) => return None, // 多命中 ⇒ 判不出
+            }
+        }
+        hit
+    }
+
+    /// ⭐ **P3-3b**：给**袋里已有的**空间设 uid（回「真的变了吗」✓）。
+    ///
+    /// 口径（与 [`Self::set_space_name`] 同一条纪律）：
+    /// · 只写它**所在的那一组**（主组/额外组各存各的）；
+    /// · 已是同一个 uid ⇒ `false`（调用方据此**不写库**）；
+    /// · 空白 uid / 袋里没有这个空间 ⇒ `false`（⛔ 不凭空造条目 ✗）；
+    /// · **同一组里这个 uid 已经属于别的空间** ⇒ `false`（⛔ 不制造"一 uid 两空间"；先由上层裁决）；
+    /// · 给同一空间换新 uid ⇒ 覆盖旧映射（`true`）。
+    pub fn set_space_uid(&mut self, space_id: &str, uid: &str) -> bool {
+        let uid = uid.trim();
+        if uid.is_empty() {
+            return false;
+        }
+        let taken = |m: &BTreeMap<String, String>| {
+            m.iter().any(|(id, u)| id != space_id && u.trim() == uid)
+        };
+        if self.spaces.contains_key(space_id) {
+            if self.space_uids.get(space_id).map(|u| u.trim()) == Some(uid) {
+                return false;
+            }
+            if taken(&self.space_uids) {
+                return false;
+            }
+            self.space_uids
+                .insert(space_id.to_string(), uid.to_string());
+            return true;
+        }
+        for g in self.extra_groups.iter_mut() {
+            if g.spaces.contains_key(space_id) {
+                if g.space_uids.get(space_id).map(|u| u.trim()) == Some(uid) {
+                    return false;
+                }
+                if taken(&g.space_uids) {
+                    return false;
+                }
+                g.space_uids.insert(space_id.to_string(), uid.to_string());
+                return true;
+            }
+        }
+        false
+    }
+
+    /// ⭐ **P3-3b**：把另一份材料里的 `space_id → uid` 并进来（**只合映射**，不动盒子）。
+    ///
+    /// 冲突口径：同一空间两边映射到**不同 uid** ⇒ **保留本地**、记进
+    /// [`MergeReport::conflicting_spaces`]（与"盒子不同"共用同一列 —— 两种冲突都表示
+    /// "这个空间需要人拍一下"，⛔ 不静默覆盖本地）。
+    ///
+    /// ⚠️ 由 [`Self::merge_from`] 自动调用（`space_crypto::merge_material` 那条路同源）；
+    /// 单独调用它是给"只补映射"的迁移场景留的入口。
+    pub fn merge_space_uids_from(&mut self, other: &Keyring) -> MergeReport {
+        let mut report = MergeReport::default();
+        let local_primary_fp = Self::group_fingerprint(&self.kdf);
+        let mut incoming: Vec<KeyringGroup> = vec![KeyringGroup {
+            kdf: other.kdf.clone(),
+            spaces: other.spaces.clone(),
+            space_names: other.space_names.clone(),
+            space_uids: other.space_uids.clone(),
+        }];
+        incoming.extend(other.extra_groups.iter().cloned());
+        for g in incoming {
+            let fp = Self::group_fingerprint(&g.kdf);
+            if fp == local_primary_fp {
+                Self::merge_group_uids(&mut self.space_uids, &g.space_uids, &g.spaces, &mut report);
+            } else if let Some(extra) = self
+                .extra_groups
+                .iter_mut()
+                .find(|e| Self::group_fingerprint(&e.kdf) == fp)
+            {
+                Self::merge_group_uids(
+                    &mut extra.space_uids,
+                    &g.space_uids,
+                    &g.spaces,
+                    &mut report,
+                );
+            } else {
+                self.extra_groups.push(g);
+            }
+        }
+        report
+    }
+
     /// 全部空间的 id（各组并集，排序）。
     pub fn space_ids(&self) -> Vec<String> {
         let mut v: Vec<String> = self.spaces.keys().cloned().collect();
@@ -381,12 +526,14 @@ impl Keyring {
             kdf: other.kdf.clone(),
             spaces: other.spaces.clone(),
             space_names: other.space_names.clone(),
+            space_uids: other.space_uids.clone(),
         }];
         incoming.extend(other.extra_groups.iter().cloned());
         for g in incoming {
             let fp = Self::group_fingerprint(&g.kdf);
             if fp == local_primary_fp {
                 Self::merge_group_spaces(&mut self.spaces, &mut self.space_names, &g, &mut report);
+                Self::merge_group_uids(&mut self.space_uids, &g.space_uids, &g.spaces, &mut report);
             } else if let Some(extra) = self
                 .extra_groups
                 .iter_mut()
@@ -396,6 +543,12 @@ impl Keyring {
                     &mut extra.spaces,
                     &mut extra.space_names,
                     &g,
+                    &mut report,
+                );
+                Self::merge_group_uids(
+                    &mut extra.space_uids,
+                    &g.space_uids,
+                    &g.spaces,
                     &mut report,
                 );
             } else {
@@ -430,6 +583,38 @@ impl Keyring {
         }
         for (space, name) in &incoming.space_names {
             names.entry(space.clone()).or_insert_with(|| name.clone());
+        }
+    }
+
+    /// ⭐ P3-3b：合并一组内的 `space_id → uid`（本地优先；冲突记进 `conflicting_spaces`）。
+    ///
+    /// ⚠️ 只收"对端确实有盒子的空间"（`boxes`）—— 映射不能凭空造出袋里没有的空间。
+    fn merge_group_uids(
+        uids: &mut BTreeMap<String, String>,
+        incoming: &BTreeMap<String, String>,
+        boxes: &BTreeMap<String, WrappedBox>,
+        report: &mut MergeReport,
+    ) {
+        for (space, uid) in incoming {
+            let uid = uid.trim();
+            if uid.is_empty() || !boxes.contains_key(space) {
+                continue;
+            }
+            match uids.get(space) {
+                None => {
+                    uids.insert(space.clone(), uid.to_string());
+                }
+                Some(local) if local.trim() == uid => {}
+                Some(_) => {
+                    // 冲突：**保留本地**，并让上层能看见"这个空间需要人拍"。
+                    eprintln!(
+                        "[keyring] space_uid 映射冲突：空间 {space} 本地与对端不同 ⇒ 保留本地（⛔ 不覆盖）"
+                    );
+                    if !report.conflicting_spaces.contains(space) {
+                        report.conflicting_spaces.push(space.clone());
+                    }
+                }
+            }
         }
     }
 
@@ -521,9 +706,11 @@ impl Keyring {
     pub fn remove(&mut self, space_id: &str) -> bool {
         let mut removed = self.spaces.remove(space_id).is_some();
         self.space_names.remove(space_id);
+        self.space_uids.remove(space_id);
         for g in &mut self.extra_groups {
             removed |= g.spaces.remove(space_id).is_some();
             g.space_names.remove(space_id);
+            g.space_uids.remove(space_id);
         }
         removed
     }
@@ -881,5 +1068,164 @@ mod tests {
         assert_eq!(kr.groups().len(), 1, "v1 = 只有主组");
         assert!(kr.has("sp-old"));
         assert_eq!(kr.space_ids(), vec!["sp-old".to_string()]);
+    }
+
+    // ── ⭐ 2026-11-08（P3-3b）：space_id → space_uid 映射（元数据，不改盒子/不升版） ──────────
+
+    /// 老袋子（v1/v2 都没有 `space_uids` 这一格）⇒ 空表且**照样解**。
+    #[test]
+    fn older_materials_without_space_uids_still_load_with_empty_maps() {
+        let v1 = r#"{"v":1,"kdf":{"algo":"argon2id","salt_hex":"00112233445566778899aabbccddeeff","m_kib":65536,"t":2,"p":1,"sm_iterations":null},"spaces":{"sp-old":{"box_hex":"00"}}}"#;
+        let kr = Keyring::from_json(v1).unwrap();
+        assert!(kr.space_uids.is_empty(), "老 v1 缺这一格 ⇒ 空表");
+        // v2（extra_groups 也没有这一格）同样要能读
+        let v2 = r#"{"v":2,"kdf":{"algo":"argon2id","salt_hex":"00112233445566778899aabbccddeeff","m_kib":65536,"t":2,"p":1,"sm_iterations":null},"spaces":{},"space_names":{},"extra_groups":[{"kdf":{"algo":"argon2id","salt_hex":"ffeeddccbbaa99887766554433221100","m_kib":65536,"t":2,"p":1,"sm_iterations":null},"spaces":{},"space_names":{}}]}"#;
+        let kr2 = Keyring::from_json(v2).unwrap();
+        assert!(kr2.space_uids.is_empty());
+        assert!(kr2.extra_groups[0].space_uids.is_empty());
+        assert_eq!(kr2.v, KEYRING_VERSION, "不升版：仍认 2");
+    }
+
+    /// 空映射**不上线**：没有 uid 的袋子 JSON 与加字段之前同形（也碰不到指纹/同步字节）。
+    #[test]
+    fn an_empty_uid_map_is_not_serialized_and_a_filled_one_roundtrips() {
+        let mut kr = Keyring::new();
+        kr.wrap(&master("pw"), "sp-a", &random_space_key()).unwrap();
+        let empty_json = kr.to_json().unwrap();
+        assert!(
+            !empty_json.contains("space_uids"),
+            "空表不许上线（老袋子字节不变）：{empty_json}"
+        );
+
+        assert!(kr.set_space_uid("sp-a", " uid-a "), "首次设置要返回 true");
+        assert_eq!(kr.space_uid("sp-a"), Some("uid-a"), "取回时 trim");
+        let json = kr.to_json().unwrap();
+        assert!(json.contains("space_uids"), "非空映射必须写进 JSON：{json}");
+        let back = Keyring::from_json(&json).unwrap();
+        assert_eq!(back.space_uid("sp-a"), Some("uid-a"), "roundtrip");
+        assert_eq!(back.v, KEYRING_VERSION, "⛔ 不升版");
+    }
+
+    /// `set_space_uid`：幂等、只认袋里已有的空间、空白不设、同组重复 uid 拒绝、同空间可换。
+    #[test]
+    fn set_space_uid_is_idempotent_and_refuses_ambiguous_mappings() {
+        let m = master("pw");
+        let mut kr = Keyring::new();
+        kr.wrap(&m, "sp-a", &random_space_key()).unwrap();
+        kr.wrap(&m, "sp-b", &random_space_key()).unwrap();
+
+        assert!(kr.set_space_uid("sp-a", "uid-a"));
+        assert!(!kr.set_space_uid("sp-a", "uid-a"), "同一值 ⇒ false（幂等）");
+        assert!(!kr.set_space_uid("sp-a", "  "), "空白 uid ⇒ false");
+        assert!(
+            !kr.set_space_uid("sp-zzz", "uid-x"),
+            "袋里没这个空间 ⇒ false"
+        );
+        assert!(
+            !kr.set_space_uid("sp-b", "uid-a"),
+            "同组重复 uid ⇒ false（不制造一 uid 两空间）"
+        );
+        assert_eq!(kr.space_uid("sp-b"), None);
+        // 同一空间换成新 uid ⇒ 覆盖，旧值不再是它的
+        assert!(kr.set_space_uid("sp-a", "uid-a2"));
+        assert_eq!(kr.space_uid("sp-a"), Some("uid-a2"));
+        assert_eq!(kr.space_id_by_uid("uid-a"), None);
+        assert_eq!(kr.space_id_by_uid("uid-a2"), Some("sp-a"));
+        // 空格子/未知 uid ⇒ None（不猜）
+        assert_eq!(kr.space_id_by_uid("  "), None);
+        assert_eq!(kr.space_id_by_uid("uid-zzz"), None);
+    }
+
+    /// uid → space_id：**全组唯一命中**才返回；跨组多命中 ⇒ `None`（⛔ 不按顺序取第一个冒充唯一）。
+    #[test]
+    fn space_id_by_uid_is_only_returned_when_the_match_is_unique() {
+        let (mut a, ma) = fresh_group("同一句口令八字");
+        a.wrap(&ma, "sp-a", &random_space_key()).unwrap();
+        assert!(a.set_space_uid("sp-a", "uid-shared"));
+        assert_eq!(a.space_id_by_uid("uid-shared"), Some("sp-a"));
+
+        // 另一个组（不同盐）里再出现同一个 uid ⇒ 多命中 ⇒ 判不出。
+        let (mut b, mb) = fresh_group("同一句口令八字");
+        b.wrap(&mb, "sp-b", &random_space_key()).unwrap();
+        b.set_space_uid("sp-b", "uid-shared");
+        a.merge_from(&b);
+        assert_eq!(a.groups().len(), 2, "前提：两组");
+        assert_eq!(
+            a.space_uid("sp-b"),
+            Some("uid-shared"),
+            "跨组按 space_id 仍查得到"
+        );
+        assert_eq!(
+            a.space_id_by_uid("uid-shared"),
+            None,
+            "⛔ 多命中不许按 BTreeMap 顺序取第一个"
+        );
+    }
+
+    /// 合并：同组补映射；同空间不同 uid ⇒ **保留本地 ＋ 记冲突**（与盒子冲突共用一列）。
+    #[test]
+    fn merging_space_uids_keeps_local_on_conflict_and_reports_it() {
+        let (mut a, ma) = fresh_group("同一句口令八字");
+        a.wrap(&ma, "sp-a", &random_space_key()).unwrap();
+        let mut b = a.clone();
+        assert!(a.set_space_uid("sp-a", "uid-local"));
+        assert!(b.set_space_uid("sp-a", "uid-peer"));
+
+        let r = a.merge_from(&b);
+        assert_eq!(
+            a.space_uid("sp-a"),
+            Some("uid-local"),
+            "⛔ 冲突不许覆盖本地"
+        );
+        assert!(
+            r.conflicting_spaces.contains(&"sp-a".to_string()),
+            "冲突要被报告出来（与盒子冲突共用同一列）：{r:?}"
+        );
+        // 幂等：再并一次，本地仍是 uid-local。
+        let _ = a.merge_from(&b);
+        assert_eq!(a.space_uid("sp-a"), Some("uid-local"));
+
+        // 对端新空间带来的 uid 照常并入（不同组）。
+        let (mut c, mc) = fresh_group("同一句口令八字");
+        c.wrap(&mc, "sp-c", &random_space_key()).unwrap();
+        c.set_space_uid("sp-c", "uid-c");
+        let r2 = a.merge_from(&c);
+        assert_eq!(r2.added_groups, 1, "{r2:?}");
+        assert_eq!(
+            a.space_uid("sp-c"),
+            Some("uid-c"),
+            "新组的 uid 要一起并进来"
+        );
+        assert_eq!(a.space_id_by_uid("uid-c"), Some("sp-c"));
+    }
+
+    /// `merge_space_uids_from`：只合映射、不动盒子；且映射不能凭空造出袋里没有的空间条目。
+    #[test]
+    fn standalone_uid_merge_only_touches_existing_spaces() {
+        let (mut a, ma) = fresh_group("同一句口令八字");
+        a.wrap(&ma, "sp-a", &random_space_key()).unwrap();
+        let mut b = a.clone();
+        b.set_space_uid("sp-a", "uid-a");
+        b.space_uids.insert("sp-orphan".into(), "uid-orphan".into()); // 袋里没有盒子
+        let r = a.merge_space_uids_from(&b);
+        assert!(r.conflicting_spaces.is_empty());
+        assert_eq!(a.space_uid("sp-a"), Some("uid-a"));
+        assert_eq!(
+            a.space_uid("sp-orphan"),
+            None,
+            "⛔ 映射不许凭空造出袋里没有的空间"
+        );
+    }
+
+    /// 扔盒子时映射一起清掉（不留"有 uid 没盒子"的残条目）。
+    #[test]
+    fn removing_a_space_also_removes_its_uid_mapping() {
+        let m = master("pw");
+        let mut kr = Keyring::new();
+        kr.wrap(&m, "sp-a", &random_space_key()).unwrap();
+        assert!(kr.set_space_uid("sp-a", "uid-a"));
+        assert!(kr.remove("sp-a"));
+        assert_eq!(kr.space_uid("sp-a"), None);
+        assert_eq!(kr.space_id_by_uid("uid-a"), None);
     }
 }
