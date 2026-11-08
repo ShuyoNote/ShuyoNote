@@ -39,6 +39,11 @@
 //! ```text
 //! cargo test --manifest-path src-tauri/Cargo.toml --lib --features lan-quic lan_quic
 //! ```
+// ⚠️ **骨架阶段的显式例外**：本模块到 P3-2a 第四小步为止**只被测试调用**（`mesh`/`sync` 还没接线）
+// ⇒ 端点/注册表/解析/选路这些 `pub` 项在非测试构建里全是"死代码"。等 P3-2 真接线后，
+// **请删掉这一行**并按真实使用收窄（⛔ 别让它永久静默掉真正写坏的死代码）。
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -47,14 +52,12 @@ use std::sync::{Arc, Mutex};
 use iroh::endpoint::Connection;
 use iroh::{Endpoint, EndpointAddr, PublicKey, SecretKey};
 
-use crate::relay_tunnel::{
-    iroh_tunnel, read_reply, read_request, write_reply, write_request, TunnelReply, TunnelRequest,
-};
+use crate::relay_tunnel::{iroh_tunnel, read_reply, write_request, TunnelReply, TunnelRequest};
 
 /// 一个**无中继**的 QUIC/iroh 端点（持有 iroh `Endpoint` 本体）。
 ///
-/// ⚠️ 它**只是骨架**：没有连接缓存、没有注册表、没有重试预算；每次 `connect` 直接问 iroh。
-/// 生命周期归调用方（测试里用完 `close()`；P3-2 接线时归常驻 Sync Core）。
+/// ⚠️ 它**只是骨架**：**本类型不做连接缓存**（缓存/复用归 [`LanQuicRegistry`]），也没有重试预算；
+/// 每次 `connect` 直接问 iroh。生命周期归调用方（测试里用完 `close()`；P3-2 接线时归常驻 Sync Core）。
 pub struct LanQuicEndpoint {
     ep: Endpoint,
 }
@@ -297,9 +300,171 @@ fn hex32(b: &[u8; 32]) -> String {
     s
 }
 
+// ───────────────────── 地址解析 ＋ 选路（纯函数；不建连接、不执行） ─────────────────────
+
+/// 公告里 `quic_addrs` 的**条数上限**（防被灌爆；UDP 公告另外还有 `MAX_ANNOUNCE_BYTES`）。
+///
+/// ⚠️ 超限策略本笔选**如实报错**（⛔ 不静默截断 ✗）：截断会悄悄丢掉地址，而"丢了一半地址"
+/// 与"全都能用"在下游看起来一样 —— 与"坏地址要点名"同一条纪律。
+pub const MAX_QUIC_ADDRS: usize = 8;
+
+/// 把公告里的 `quic_addrs` 解析成 `SocketAddr` 列表（**纯函数**）。
+///
+/// 口径（P3-2a 第四小步）：
+/// * **只收 `IP:port`**：IPv4 `1.2.3.4:4433`；IPv6 必须带方括号 `[::1]:4433`（标准解析认）；
+/// * **去重保序**：同一个地址（含 IPv6 等价写法）只留第一次出现的位置；
+/// * **空表 ⇒ 空 vec**（"对端没报"不是错误）；
+/// * **坏地址 ⇒ 可读错误并点名第几条**（⛔ 不静默丢 ✗）；
+/// * **超 [`MAX_QUIC_ADDRS`] ⇒ 如实报错**（见常量的理由）。
+pub fn parse_quic_addrs(addrs: &[String]) -> Result<Vec<SocketAddr>, String> {
+    if addrs.len() > MAX_QUIC_ADDRS {
+        return Err(format!(
+            "quic_addrs 有 {} 条，超过上限 {MAX_QUIC_ADDRS} 条（⛔ 不静默截断）",
+            addrs.len()
+        ));
+    }
+    let mut out: Vec<SocketAddr> = Vec::with_capacity(addrs.len());
+    for (i, raw) in addrs.iter().enumerate() {
+        let addr: SocketAddr = raw.trim().parse().map_err(|_| {
+            format!(
+                "quic_addrs 第 {} 条不是 IP:port（IPv6 要带方括号）：{raw:?}",
+                i + 1
+            )
+        })?;
+        if !out.contains(&addr) {
+            out.push(addr);
+        }
+    }
+    Ok(out)
+}
+
+/// 64 位 hex → iroh [`PublicKey`]（`node_id` 的唯一解析口；公告/路线表同一形状，大小写都收）。
+pub fn public_key_from_hex(node_id_hex: &str) -> Result<PublicKey, String> {
+    let s = node_id_hex.trim();
+    if s.len() != 64 {
+        return Err(format!(
+            "node_id 必须是 64 位 hex（现在 {} 位：{s:?}）",
+            s.len()
+        ));
+    }
+    let bytes = s.as_bytes();
+    let mut raw = [0u8; 32];
+    for (i, slot) in raw.iter_mut().enumerate() {
+        *slot = (hex_nibble(bytes[2 * i])? << 4) | hex_nibble(bytes[2 * i + 1])?;
+    }
+    PublicKey::from_bytes(&raw).map_err(|e| format!("node_id 不是合法 iroh 公钥：{e}"))
+}
+
+fn hex_nibble(b: u8) -> Result<u8, String> {
+    match b {
+        b'0'..=b'9' => Ok(b - b'0'),
+        b'a'..=b'f' => Ok(b - b'a' + 10),
+        b'A'..=b'F' => Ok(b - b'A' + 10),
+        _ => Err(format!("node_id 里有非 hex 字符：{:?}", b as char)),
+    }
+}
+
+/// 把 `node_id`（64 位 hex）＋ 公告里的地址拼成 iroh 的 [`EndpointAddr`]（**纯函数**）。
+///
+/// 口径：
+/// * `node_id` 走 [`public_key_from_hex`]（长度/非法字符都点名报错）；
+/// * 地址走 [`parse_quic_addrs`]（同一上限/去重/点名口径）；
+/// * **地址为空 ⇒ 明确错误**：只有 node id 没有地址时今天没有发现层兜底、**连不上**
+///   （⛔ 不许生成一个"看起来能连"的空地址端点 ✗）。
+pub fn endpoint_addr(node_id_hex: &str, addrs: &[String]) -> Result<EndpointAddr, String> {
+    let id = public_key_from_hex(node_id_hex)?;
+    let parsed = parse_quic_addrs(addrs)?;
+    if parsed.is_empty() {
+        return Err(format!(
+            "对端 node_id={node_id_hex} 没报任何 QUIC 地址 ⇒ 只有 node id 连不上（发现层还没做）"
+        ));
+    }
+    let transport: std::collections::BTreeSet<iroh::TransportAddr> =
+        parsed.iter().map(|a| iroh::TransportAddr::Ip(*a)).collect();
+    Ok(EndpointAddr {
+        id,
+        addrs: transport,
+    })
+}
+
+/// 选路**候选**（只分类、不执行）—— 枚举顺序即需求 FR-2 的优先级语义。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportChoice {
+    /// 同网段 **QUIC 直连**（公告 `quic_addrs`；P3-2 才真正接线）。
+    LanQuic,
+    /// 同网段 **HTTP 直连**（现有 mesh 那条路）。
+    LanHttp,
+    /// 手动地址（路线表 `addrs` / 用户填的 IP:port）。
+    Manual,
+    /// 旧 HTTP fallback（配置的服务端地址等）。
+    HttpFallback,
+    /// **私有中继** —— 只兜底。
+    Relay,
+}
+
+impl TransportChoice {
+    /// 稳定短名（日志/判据用；⛔ 不是用户可见文案）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TransportChoice::LanQuic => "lan-quic",
+            TransportChoice::LanHttp => "lan-http",
+            TransportChoice::Manual => "manual",
+            TransportChoice::HttpFallback => "http-fallback",
+            TransportChoice::Relay => "relay",
+        }
+    }
+}
+
+/// 选路输入（全部来自现有读数/配置；本函数⛔ 不联网、⛔ 不判定"真的可达"）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PathOptions {
+    /// 同网段有没有 HTTP 直连地址（现有 mesh 的读数）。
+    pub has_lan_http: bool,
+    /// 公告里有没有 QUIC 候选地址（`parse_quic_addrs` 之后非空）。
+    pub quic_addrs_nonempty: bool,
+    /// 有没有手动地址（路线表 `addrs`）。
+    pub has_manual_addr: bool,
+    /// 有没有旧 HTTP fallback。
+    pub has_http_fallback: bool,
+    /// 有没有配私有中继。
+    pub relay_configured: bool,
+}
+
+/// **纯函数**：按需求 FR-2 给出**有序**候选：
+/// `LAN 直连（HTTP/QUIC） > 手动 > HTTP fallback > 私有中继`（README/ADR §3.5 同一条）。
+///
+/// ⚠️ 它**只分类、不执行**：不知道哪个地址真的可达；"relay 只兜底"由**顺序**表达 ——
+/// relay 永远排在所有直连候选之后，且只有在 `relay_configured` 时才出现。
+/// ⚠️ LAN 两条的内部顺序固定为 **QUIC 在前、HTTP 在后**（P3-2 的方向；HTTP 保留作 fallback）。
+pub fn transport_preference(o: PathOptions) -> Vec<TransportChoice> {
+    let mut out = Vec::with_capacity(4);
+    if o.quic_addrs_nonempty {
+        out.push(TransportChoice::LanQuic);
+    }
+    if o.has_lan_http {
+        out.push(TransportChoice::LanHttp);
+    }
+    if o.has_manual_addr {
+        out.push(TransportChoice::Manual);
+    }
+    if o.has_http_fallback {
+        out.push(TransportChoice::HttpFallback);
+    }
+    if o.relay_configured {
+        out.push(TransportChoice::Relay);
+    }
+    out
+}
+
+/// 首选（有序候选的第一条；一个都没有 ⇒ `None`）—— 只是 [`transport_preference`] 的便捷读数。
+pub fn primary_transport(o: PathOptions) -> Option<TransportChoice> {
+    transport_preference(o).first().copied()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::relay_tunnel::{read_request, write_reply};
     use std::time::Duration;
 
     /// 取服务端点**已绑定端口**里的 IPv4 那个（IPv6 通配的端口也一样，但回环 IPv4 最稳）。
@@ -631,5 +796,165 @@ mod tests {
         );
         registry.close().await;
         serve.await.expect("服务任务不应 panic");
+    }
+    // ── P3-2a 第四小步：地址解析 ＋ 选路（纯函数；不建连接） ──
+
+    fn valid_node_hex() -> String {
+        hex32(SecretKey::generate().public().as_bytes())
+    }
+
+    #[test]
+    fn parse_quic_addrs_accepts_ipv4_and_bracketed_ipv6_and_dedupes_in_order() {
+        let raw = vec![
+            "192.168.1.5:4433".to_string(),
+            "[::1]:4433".to_string(),
+            "192.168.1.5:4433".to_string(), // 重复
+            "[2001:db8::1]:4434".to_string(),
+            "[::1]:4433".to_string(), // 重复
+        ];
+        let got = parse_quic_addrs(&raw).expect("合法地址");
+        assert_eq!(got.len(), 3, "去重保序：{got:?}");
+        assert_eq!(got[0].to_string(), "192.168.1.5:4433");
+        assert_eq!(got[1].to_string(), "[::1]:4433");
+        assert_eq!(got[2].to_string(), "[2001:db8::1]:4434");
+        // 等价的 IPv6 压缩写法应当被视为同一地址
+        let got = parse_quic_addrs(&[
+            "[::1]:4433".to_string(),
+            "[0:0:0:0:0:0:0:1]:4433".to_string(),
+        ])
+        .expect("IPv6 等价写法");
+        assert_eq!(got.len(), 1, "IPv6 等价写法必须去重");
+    }
+
+    #[test]
+    fn parse_quic_addrs_names_the_bad_index_and_refuses_overflow() {
+        let bad = vec!["192.168.1.5:4433".to_string(), "not-an-addr".to_string()];
+        let err = parse_quic_addrs(&bad).expect_err("坏地址必须报错");
+        assert!(err.contains("第 2 条"), "要点名第几条：{err}");
+        assert!(err.contains("IP:port"), "要说清正确写法：{err}");
+        assert!(err.contains("not-an-addr"), "要把坏值带出来：{err}");
+
+        // IPv6 不带方括号 ⇒ 标准解析失败 ⇒ 点名（⛔ 不许当 IPv4 糊过去）
+        let err = parse_quic_addrs(&["::1:4433".to_string()]).expect_err("无方括号 IPv6 必须报错");
+        assert!(err.contains("第 1 条"), "{err}");
+
+        // 上限：恰好 8 条可以，9 条如实报错（不静默截断）
+        let eight: Vec<String> = (0..8).map(|i| format!("10.0.0.{}:4433", i + 1)).collect();
+        assert_eq!(parse_quic_addrs(&eight).unwrap().len(), 8);
+        let nine: Vec<String> = (0..9).map(|i| format!("10.0.0.{}:4433", i + 1)).collect();
+        let err = parse_quic_addrs(&nine).expect_err("超上限必须报错");
+        assert!(err.contains("上限"), "{err}");
+        assert!(err.contains('9'), "{err}");
+    }
+
+    #[test]
+    fn parse_quic_addrs_accepts_an_empty_table() {
+        assert!(
+            parse_quic_addrs(&[]).unwrap().is_empty(),
+            "空表 = 对端没报，不是错误"
+        );
+    }
+
+    #[test]
+    fn endpoint_addr_needs_a_valid_node_id_and_at_least_one_addr() {
+        let node = valid_node_hex();
+        let a = endpoint_addr(
+            &node,
+            &["192.168.1.5:4433".to_string(), "[::1]:4434".to_string()],
+        )
+        .expect("合法 node_id ＋ 地址");
+        assert_eq!(
+            hex32(a.id.as_bytes()),
+            node,
+            "node_id 要原样落进 EndpointAddr.id"
+        );
+        assert_eq!(a.addrs.len(), 2, "两个地址都要进去（TransportAddr::Ip）");
+
+        // node_id 长度/字符坏 ⇒ 点名
+        let err = endpoint_addr(&node[..62], &["1.2.3.4:1".to_string()])
+            .expect_err("短 node_id 必须报错");
+        assert!(err.contains("64 位 hex"), "{err}");
+        let bad = format!("z{}", &node[1..]);
+        let err = endpoint_addr(&bad, &["1.2.3.4:1".to_string()]).expect_err("非 hex 必须报错");
+        assert!(err.contains("非 hex"), "{err}");
+        // 空地址 ⇒ 明确错误（只有 node id 连不上）
+        let err = endpoint_addr(&node, &[]).expect_err("空地址必须报错");
+        assert!(err.contains("没报任何 QUIC 地址"), "{err}");
+        // 坏地址错误要透传（并点名第几条）
+        let err = endpoint_addr(&node, &["nope".to_string()]).expect_err("坏地址必须报错");
+        assert!(err.contains("第 1 条"), "{err}");
+    }
+
+    #[test]
+    fn transport_preference_keeps_lan_first_and_relay_as_the_last_resort() {
+        // ① 同网：LAN 两档都可用 ⇒ relay 配了也只排最后（⛔ 不许抢 LAN）
+        let o = PathOptions {
+            quic_addrs_nonempty: true,
+            has_lan_http: true,
+            has_manual_addr: true,
+            has_http_fallback: true,
+            relay_configured: true,
+        };
+        let pref = transport_preference(o);
+        assert_eq!(
+            pref,
+            vec![
+                TransportChoice::LanQuic,
+                TransportChoice::LanHttp,
+                TransportChoice::Manual,
+                TransportChoice::HttpFallback,
+                TransportChoice::Relay,
+            ],
+            "FR-2 顺序：LAN 直连 > 手动 > HTTP fallback > 私有中继"
+        );
+        assert_eq!(
+            primary_transport(o),
+            Some(TransportChoice::LanQuic),
+            "同网首选 LAN，⛔ 不是 relay"
+        );
+
+        // ② 同网只有 HTTP（没有 QUIC 地址）⇒ HTTP 直连首选、仍不走 relay
+        let o = PathOptions {
+            has_lan_http: true,
+            has_http_fallback: true,
+            relay_configured: true,
+            ..Default::default()
+        };
+        assert_eq!(primary_transport(o), Some(TransportChoice::LanHttp));
+
+        // ③ 跨网：没有任何直连候选 ⇒ relay 才是首选（且只有它）
+        let o = PathOptions {
+            relay_configured: true,
+            ..Default::default()
+        };
+        assert_eq!(transport_preference(o), vec![TransportChoice::Relay]);
+        assert_eq!(primary_transport(o), Some(TransportChoice::Relay));
+
+        // ④ 跨网且没配 relay ⇒ **没有候选**（不是"假装有"）
+        assert!(transport_preference(PathOptions::default()).is_empty());
+        assert_eq!(primary_transport(PathOptions::default()), None);
+
+        // ⑤ 手动地址 / HTTP fallback 都排在 relay 之前
+        let o = PathOptions {
+            has_manual_addr: true,
+            has_http_fallback: true,
+            relay_configured: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            transport_preference(o),
+            vec![
+                TransportChoice::Manual,
+                TransportChoice::HttpFallback,
+                TransportChoice::Relay,
+            ]
+        );
+
+        // ⑥ 枚举短名（日志/判据用）稳定
+        assert_eq!(TransportChoice::LanQuic.as_str(), "lan-quic");
+        assert_eq!(TransportChoice::LanHttp.as_str(), "lan-http");
+        assert_eq!(TransportChoice::Manual.as_str(), "manual");
+        assert_eq!(TransportChoice::HttpFallback.as_str(), "http-fallback");
+        assert_eq!(TransportChoice::Relay.as_str(), "relay");
     }
 }
