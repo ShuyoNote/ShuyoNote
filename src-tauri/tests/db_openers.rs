@@ -9,10 +9,19 @@
 //!
 //! # 登记表是什么
 //!
-//! [`REGISTERED`] 的每一条是 `(源文件, 函数名, 用途一句话)`：
-//! * **只有**这些 `(文件, 函数)` 里允许出现开库调用；
-//! * 同一函数里开多次只算一条（键是文件＋函数，不是行）；
+//! [`REGISTERED`] 的每一条是 `(源文件, 函数名, 允许的连接数, 用途一句话)`：
+//! * **只有**这些 `(文件, 函数)` 里允许出现开库调用，且**处数必须等于登记数**；
+//! * **同一函数里多开一条连接也要登记** —— 这是 2026-11-08 的收紧点：本文件挡的是“新增写者”，
+//!   而“在已登记的函数里再开一条”同样是一个新写者（以前按 `(文件, 函数)` 去重会漏掉它）；
+//! * 处数**变少**（删/合并连接）也要同步改：数字偏大 = 给未来偷加的一条留了空位；
 //! * 登记表**不许有重复/过期条目**（过期 = 源码里已经没有开库点了 ⇒ 会悄悄放行未来的同名函数）。
+//!
+//! # 维护动作（**有意**的成本，别绕过）
+//!
+//! 1. **加**一处开库/旁路连接 ⇒ 那个函数的 `expected_count` ＋1（新函数则整条新增）；
+//! 2. **删/合并**连接 ⇒ `expected_count` −1；删到 0 ⇒ 删掉整条登记（否则 `registry_has_no_stale_entries` 红）；
+//! 3. 改完跑 `cargo test --manifest-path src-tauri/Cargo.toml --test db_openers`；
+//! 4. ⚠️ **不要**为了让红变绿而随手改数字：每个数字背后是一条真连接，先问它和 P3-1b 单连接计划的关系。
 //!
 //! # 扫描口径（“开库点”指什么）
 //!
@@ -21,7 +30,7 @@
 //! 2. **旁路连接**：对 `open_space_conn` / `open_space_conn_at` / `open_space_conn_inner`
 //!    / `open_meta_conn` / `open_meta_conn_at` 的**调用**（它们最终都会开一条新连接）；
 //!    ⚠️ 这些 helper 的**定义**不算调用点（它们内部自己的 `Connection::open` 会被第 1 条抓到 ✓）。
-//! 3. 命中按**所在函数**归属（最近一个 `fn name(`），`file + fn` 是登记键。
+//! 3. 每处命中按**所在函数**归属（最近一个 `fn name(`）并**逐处计数**；登记键是 `file + fn`，判据比的是**处数**。
 //!
 //! # 明确不扫（**已知漏扫**，别把本测试当成“证明没有其它开库点”）
 //!
@@ -40,325 +49,423 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// 允许开库的 `(源文件, 函数, 用途一句话)` —— 2026-11-08 只读盘点的结果（71 条）。
+/// 允许开库的 `(源文件, 函数, 该函数内允许的连接数, 用途一句话)` —— 2026-11-08 只读盘点的结果：
+/// **71 个函数 / 86 处连接**（59 个函数 1 处；10 个 2 处；`space_import::import_space_package_in` 3 处；
+/// `db::init` 4 处 —— 分布原因见各条用途）。
 ///
 /// ⚠️ 加一条**不是**“让测试变绿”的手段：先问“这条新连接由谁负责、和 P3-1b 的单连接计划什么关系”。
+/// ⚠️ **同一个已登记函数里多开一条**也会红（判据 `a_second_connection_in_the_same_function_is_caught_unless_registered`）。
 /// ⚠️ 条目过期（源码里已经没有开库点）会让 [`registry_has_no_stale_entries`] 红。
-const REGISTERED: &[(&str, &str, &str)] = &[
+const REGISTERED: &[(&str, &str, usize, &str)] = &[
     (
         "src/attachments.rs",
         "backfill_attachment_changes_all",
+        1,
         "跨空间回填附件变更行：逐空间直连打开空间库",
     ),
     (
         "src/attachments.rs",
-        "migrate_legacy_layout",
-        "旧附件布局迁移：逐空间连接改引用",
-    ),
-    (
-        "src/attachments.rs",
-        "list_page_attachments",
-        "列页面附件：跨空间读该空间库",
-    ),
-    (
-        "src/attachments.rs",
-        "delete_attachment_cross_space",
-        "跨空间删附件：逐空间连接清引用",
-    ),
-    (
-        "src/attachments.rs",
         "cross_space_refs",
+        1,
         "扫附件被哪些空间引用：逐空间只读连接",
     ),
     (
         "src/attachments.rs",
-        "move_attachment",
-        "跨空间移动附件：源/目标空间连接",
+        "delete_attachment_cross_space",
+        1,
+        "跨空间删附件：逐空间连接清引用",
     ),
     (
         "src/attachments.rs",
         "detach_attachment",
+        1,
         "摘下附件引用：逐空间连接",
     ),
     (
         "src/attachments.rs",
+        "list_page_attachments",
+        1,
+        "列页面附件：跨空间读该空间库",
+    ),
+    (
+        "src/attachments.rs",
+        "migrate_legacy_layout",
+        2,
+        "旧附件布局迁移：逐空间连接改引用",
+    ),
+    (
+        "src/attachments.rs",
+        "move_attachment",
+        1,
+        "跨空间移动附件：源/目标空间连接",
+    ),
+    (
+        "src/attachments.rs",
         "rename_attachment",
+        1,
         "跨空间改名附件：逐空间连接",
     ),
-    (
-        "src/backup.rs",
-        "orphan_space_ids",
-        "备份前找孤儿空间：直开 meta",
-    ),
-    ("src/backup.rs", "backup_db", "备份目标库：直开目标文件"),
-    (
-        "src/backup.rs",
-        "snapshot_spaces",
-        "逐空间拍快照：直开各空间库",
-    ),
+    ("src/backup.rs", "backup_db", 1, "备份目标库：直开目标文件"),
     (
         "src/backup.rs",
         "export_backup",
+        1,
         "导出备份：直开 meta 读清单",
     ),
     (
         "src/backup.rs",
-        "space_exists",
-        "备份前查空间存在：直开 meta",
+        "import_backup",
+        2,
+        "导入备份：直开快照与目标库",
+    ),
+    (
+        "src/backup.rs",
+        "orphan_space_ids",
+        1,
+        "备份前找孤儿空间：直开 meta",
     ),
     (
         "src/backup.rs",
         "register_space",
+        1,
         "导入/恢复时登记空间：直开 meta",
     ),
     (
         "src/backup.rs",
-        "import_backup",
-        "导入备份：直开快照与目标库",
+        "snapshot_spaces",
+        1,
+        "逐空间拍快照：直开各空间库",
+    ),
+    (
+        "src/backup.rs",
+        "space_exists",
+        1,
+        "备份前查空间存在：直开 meta",
     ),
     (
         "src/backup_verify.rs",
         "count_pages_in_spaces",
+        1,
         "备份校验：只读方式逐空间数页数",
     ),
     (
         "src/commands.rs",
-        "list_workspace_pages",
-        "命令：列某空间页列表（开该空间库）",
-    ),
-    (
-        "src/commands.rs",
-        "get_page",
-        "命令：读某空间单页（开该空间库）",
+        "create_folder",
+        1,
+        "命令：建文件夹（开该空间库）",
     ),
     (
         "src/commands.rs",
         "create_page_in_space",
+        2,
         "命令：在指定空间建页（meta＋空间库）",
     ),
     (
         "src/commands.rs",
-        "create_folder",
-        "命令：建文件夹（开该空间库）",
+        "delete_page",
+        1,
+        "命令：删页（开该空间库）",
     ),
-    ("src/commands.rs", "save_page", "命令：存页（开该空间库）"),
-    ("src/commands.rs", "delete_page", "命令：删页（开该空间库）"),
-    ("src/commands.rs", "move_page", "命令：移页（开该空间库）"),
+    (
+        "src/commands.rs",
+        "get_page",
+        1,
+        "命令：读某空间单页（开该空间库）",
+    ),
+    (
+        "src/commands.rs",
+        "list_workspace_pages",
+        1,
+        "命令：列某空间页列表（开该空间库）",
+    ),
+    (
+        "src/commands.rs",
+        "move_page",
+        1,
+        "命令：移页（开该空间库）",
+    ),
+    (
+        "src/commands.rs",
+        "save_page",
+        1,
+        "命令：存页（开该空间库）",
+    ),
     (
         "src/db.rs",
-        "open_prepared_space_at",
-        "换库后重开：主连接的唯一准备入口",
+        "init",
+        4,
+        "启动初始化：建/开 meta 与空间库主连接",
     ),
     (
         "src/db.rs",
         "open_meta_conn_at",
+        1,
         "meta.db 的独立连接（插件/窗口旁路用）",
     ),
     (
         "src/db.rs",
-        "open_space_conn_inner",
-        "空间库唯一的底层开库实现（key/WAL/ATTACH meta）",
+        "open_prepared_space_at",
+        1,
+        "换库后重开：主连接的唯一准备入口",
     ),
-    ("src/db.rs", "init", "启动初始化：建/开 meta 与空间库主连接"),
     (
         "src/db.rs",
         "open_space_conn",
+        1,
         "任意空间库的旁路连接入口（无显式目录）",
     ),
     (
         "src/db.rs",
         "open_space_conn_at",
+        1,
         "任意空间库的旁路连接入口（带显式目录，可测）",
+    ),
+    (
+        "src/db.rs",
+        "open_space_conn_inner",
+        1,
+        "空间库唯一的底层开库实现（key/WAL/ATTACH meta）",
     ),
     (
         "src/dictionary.rs",
         "open_readonly",
+        1,
         "词典数据只读打开（第三方只读库）",
     ),
     (
         "src/gm_provider.rs",
-        "library_recognizes_gm_labels",
-        "探测加密后端能力：一次性内存库",
+        "generate_sm3_fixture",
+        1,
+        "生成国密夹具临时库（校验用）",
     ),
     (
         "src/gm_provider.rs",
-        "generate_sm3_fixture",
-        "生成国密夹具临时库（校验用）",
+        "library_recognizes_gm_labels",
+        1,
+        "探测加密后端能力：一次性内存库",
     ),
     (
         "src/lan_state.rs",
         "spawn_background_round",
+        1,
         "后台网格轮次：逐空间旁路连接",
-    ),
-    ("src/mesh.rs", "ensure_window", "确保网格窗口：开该空间库"),
-    (
-        "src/mesh.rs",
-        "open_window_at",
-        "网格窗口连接（每窗口一条空间库连接）",
     ),
     (
         "src/mesh.rs",
         "add_space",
+        1,
         "窗口增加服务空间：再开一条空间库连接",
     ),
-    ("src/mesh.rs", "load_cards", "窗口载入配对卡：开 meta 连接"),
+    (
+        "src/mesh.rs",
+        "ensure_window",
+        1,
+        "确保网格窗口：开该空间库",
+    ),
+    (
+        "src/mesh.rs",
+        "load_cards",
+        1,
+        "窗口载入配对卡：开 meta 连接",
+    ),
+    (
+        "src/mesh.rs",
+        "open_window_at",
+        1,
+        "网格窗口连接（每窗口一条空间库连接）",
+    ),
     (
         "src/mesh.rs",
         "read_public_material",
+        1,
         "读加密空间公开材料：开 meta 连接",
     ),
     (
         "src/mesh.rs",
         "sealed_round",
+        1,
         "密文轮次收封包：开 meta 连接",
     ),
     (
         "src/mesh.rs",
         "serve_locked_outbox",
+        1,
         "锁定态发件箱服务：开 meta 连接",
     ),
     (
         "src/mesh_wire_bytes.rs",
         "conn_with",
+        1,
         "测试夹具（未 cfg(test) 隔离：生产模块内的内存库）",
     ),
     (
         "src/plugins.rs",
-        "with_read_conn",
-        "插件只读通道：按空间开库",
-    ),
-    (
-        "src/plugins.rs",
-        "with_meta_conn",
-        "插件 meta 通道：开 meta",
-    ),
-    (
-        "src/plugins.rs",
-        "with_conn_for_space",
-        "插件读写通道：按空间开库",
-    ),
-    (
-        "src/plugins.rs",
         "cap_pages_create",
+        2,
         "插件能力建页：meta＋空间库",
     ),
     (
         "src/plugins.rs",
-        "resolve_active_space_from",
-        "解析活动空间：开 meta",
-    ),
-    (
-        "src/plugins.rs",
         "plugin_settings",
+        2,
         "读插件设置：meta 与空间库",
     ),
     (
         "src/plugins.rs",
+        "resolve_active_space_from",
+        1,
+        "解析活动空间：开 meta",
+    ),
+    (
+        "src/plugins.rs",
         "set_plugin_setting",
+        2,
         "写插件设置：meta 与空间库",
     ),
     (
-        "src/properties.rs",
-        "set_page_prop",
-        "跨空间写属性：开该空间库",
+        "src/plugins.rs",
+        "with_conn_for_space",
+        2,
+        "插件读写通道：按空间开库",
+    ),
+    (
+        "src/plugins.rs",
+        "with_meta_conn",
+        1,
+        "插件 meta 通道：开 meta",
+    ),
+    (
+        "src/plugins.rs",
+        "with_read_conn",
+        2,
+        "插件只读通道：按空间开库",
     ),
     (
         "src/properties.rs",
         "remove_page_prop",
+        1,
         "跨空间删属性：开该空间库",
     ),
-    ("src/search.rs", "search", "跨空间搜索：逐空间只读连接"),
     (
-        "src/security.rs",
-        "rebuild_space_db",
-        "重建空间库：直开源/目标文件",
+        "src/properties.rs",
+        "set_page_prop",
+        1,
+        "跨空间写属性：开该空间库",
     ),
+    ("src/search.rs", "search", 1, "跨空间搜索：逐空间只读连接"),
     (
         "src/security.rs",
         "convert_space_db",
+        2,
         "加密/解密转换：直开临时/目标库",
     ),
     (
         "src/security.rs",
         "lock_encryption_impl",
+        1,
         "锁定加密：把主连接换成内存库",
     ),
     (
         "src/security.rs",
         "provision_spaces_from_keyring",
+        1,
         "按钥匙袋补建空间库：直开新建文件",
+    ),
+    (
+        "src/security.rs",
+        "rebuild_space_db",
+        2,
+        "重建空间库：直开源/目标文件",
+    ),
+    (
+        "src/space_crypto.rs",
+        "disable_space",
+        1,
+        "关闭空间加密：同上",
     ),
     (
         "src/space_crypto.rs",
         "enable_space",
+        1,
         "开启空间加密：换库前用内存库占位",
     ),
-    ("src/space_crypto.rs", "disable_space", "关闭空间加密：同上"),
     (
         "src/space_import.rs",
         "import_space_package_in",
+        3,
         "导入空间包：开 meta 与目标空间库",
     ),
     (
         "src/storage.rs",
-        "scan_attachment_facts",
-        "附件盘点：逐空间旁路连接",
+        "purge_deleted_workspaces",
+        1,
+        "清理已删空间：逐空间旁路连接",
     ),
     (
         "src/storage.rs",
-        "purge_deleted_workspaces",
-        "清理已删空间：逐空间旁路连接",
+        "scan_attachment_facts",
+        1,
+        "附件盘点：逐空间旁路连接",
     ),
     (
         "src/sync.rs",
         "mesh_sync_now",
+        1,
         "手动网格同步：逐空间旁路连接",
     ),
-    ("src/tags.rs", "add_tag", "跨空间加标签：开该空间库"),
-    ("src/tags.rs", "remove_tag", "跨空间删标签：开该空间库"),
+    ("src/tags.rs", "add_tag", 1, "跨空间加标签：开该空间库"),
+    ("src/tags.rs", "remove_tag", 1, "跨空间删标签：开该空间库"),
     (
         "src/trash.rs",
         "restore_page",
+        1,
         "跨空间恢复回收站页：开该空间库",
     ),
     (
         "src/versions.rs",
         "restore_version",
+        1,
         "跨空间恢复版本：开该空间库",
     ),
     (
         "src/workspace_io.rs",
         "backup_db_to",
+        1,
         "快照拷贝：直开目标文件",
     ),
     (
         "src/workspace_io.rs",
-        "trim_changes_for_export",
-        "导出裁剪变更日志：直开快照",
+        "rewrite_asset_refs_in_space_db",
+        1,
+        "导入后改写附件引用：直开空间库文件",
     ),
     (
         "src/workspace_io.rs",
         "snapshot_plaintext",
+        1,
         "明文快照：直开目标文件",
     ),
     (
         "src/workspace_io.rs",
-        "rewrite_asset_refs_in_space_db",
-        "导入后改写附件引用：直开空间库文件",
-    ),
-    (
-        "src/workspaces.rs",
-        "park_locked_connection",
-        "锁定态：把主连接换成内存库",
+        "trim_changes_for_export",
+        1,
+        "导出裁剪变更日志：直开快照",
     ),
     (
         "src/workspaces.rs",
         "copy_page_to_workspace",
+        1,
         "跨空间复制页：开目标空间库",
+    ),
+    (
+        "src/workspaces.rs",
+        "park_locked_connection",
+        1,
+        "锁定态：把主连接换成内存库",
     ),
 ];
 
-/// 一个真实开库点（按函数归并后的首次命中位置）。
+/// **一处**真实开库命中（⛔ 不按函数归并：同一函数里两条连接就是两个 `Hit` —— 判据数的是处数）。
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Hit {
     /// `src/xxx.rs`（相对 `src-tauri/`，正斜杠）。
@@ -603,7 +710,7 @@ fn test_line_ranges(src: &str) -> Vec<(usize, usize)> {
     ranges
 }
 
-/// 扫**一份源码文本**，返回真实开库点（每个 `(file, fn, kind)` 只留第一次命中）。
+/// 扫**一份源码文本**，返回**每一处**真实开库命中（⛔ 不按函数去重：判据要数“函数内有几处”）。
 fn scan_source(file: &str, src: &str) -> Vec<Hit> {
     let blank = blank_noncode(src);
     let ranges = test_line_ranges(src);
@@ -623,7 +730,6 @@ fn scan_source(file: &str, src: &str) -> Vec<Hit> {
     let fn_re = Regex::new(r"\bfn\s+([A-Za-z0-9_]+)\s*[<(]").unwrap();
 
     let mut out: Vec<Hit> = Vec::new();
-    let mut seen: BTreeSet<(String, &'static str)> = BTreeSet::new();
     for (re, kind) in [(&direct, "direct"), (&helper, "helper")] {
         for m in re.find_iter(&blank) {
             let idx = m.start();
@@ -640,9 +746,6 @@ fn scan_source(file: &str, src: &str) -> Vec<Hit> {
                 .last()
                 .map(|c| c[1].to_string())
                 .unwrap_or_else(|| "<top>".to_string());
-            if !seen.insert((func.clone(), kind)) {
-                continue;
-            }
             out.push(Hit {
                 file: file.to_string(),
                 func,
@@ -685,25 +788,145 @@ fn scan_tree() -> (Vec<Hit>, usize) {
     (hits, files.len())
 }
 
-/// 某 `(文件, 函数)` 是否登记过（线性查 71 条足够快；也免得为此再造一份键）。
-fn is_registered(file: &str, func: &str) -> bool {
-    REGISTERED.iter().any(|(f, n, _)| *f == file && *n == func)
+/// 某 `(文件, 函数)` 登记了几处连接（没有 ⇒ `None`）。
+fn registered_count(file: &str, func: &str) -> Option<usize> {
+    REGISTERED
+        .iter()
+        .find(|(f, n, _, _)| *f == file && *n == func)
+        .map(|(_, _, count, _)| *count)
 }
 
-/// 真实命中里**没有登记**的那些（守卫本体：非空 ⇒ 测试红）。
-fn unregistered(hits: &[Hit]) -> Vec<Hit> {
+/// 在任意「登记表」里查某函数允许几处（夹具测试喂假表时也走它）。
+fn expected_for(expected: &[(&str, &str, usize, &str)], file: &str, func: &str) -> Option<usize> {
+    expected.iter().find_map(|e| {
+        if e.0 == file && e.1 == func {
+            Some(e.2)
+        } else {
+            None
+        }
+    })
+}
+
+/// 真实命中里**没有登记**的那些（供夹具测试用；守卫本体见 [`count_problems`]）。
+fn unregistered(hits: &[Hit]) -> Vec<&Hit> {
     hits.iter()
-        .filter(|h| !is_registered(&h.file, &h.func))
-        .cloned()
+        .filter(|h| registered_count(&h.file, &h.func).is_none())
         .collect()
+}
+
+/// 一处“与登记表对不上”的问题。三类分开说 —— 处置完全不同：
+/// * `Unregistered`：整个函数没登记（真·新写者）；
+/// * `TooMany`：**同一个已登记函数里多了一条**（本次收紧要抓的那种）；
+/// * `TooFew`：登记数比实际多（删/合并了连接但没改数字 ⇒ 会给未来偷加的一条留空位）。
+#[derive(Debug, PartialEq, Eq)]
+enum CountProblem {
+    Unregistered {
+        file: String,
+        func: String,
+        actual: usize,
+    },
+    TooMany {
+        file: String,
+        func: String,
+        expected: usize,
+        actual: usize,
+    },
+    TooFew {
+        file: String,
+        func: String,
+        expected: usize,
+        actual: usize,
+    },
+}
+
+impl CountProblem {
+    fn sort_key(&self) -> (u8, &str, &str) {
+        match self {
+            CountProblem::Unregistered { file, func, .. } => (0, file, func),
+            CountProblem::TooMany { file, func, .. } => (1, file, func),
+            CountProblem::TooFew { file, func, .. } => (2, file, func),
+        }
+    }
+}
+
+impl std::fmt::Display for CountProblem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CountProblem::Unregistered { file, func, actual } => write!(
+                f,
+                "{file}::{func} 有 {actual} 处开库/旁路连接，但**整个函数没登记** \
+                 ⇒ 新写者？把 (文件, 函数, {actual}, 用途) 加进 REGISTERED"
+            ),
+            CountProblem::TooMany {
+                file,
+                func,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "{file}::{func} 实际 {actual} 处 > 登记 expected={expected} \
+                 ⇒ **同一个已登记函数里又加了一条连接**（同函数新增写者也要登记！）\
+                 把 expected 改成 {actual}，并在用途里说清为什么多一条"
+            ),
+            CountProblem::TooFew {
+                file,
+                func,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "{file}::{func} 实际 {actual} 处 < 登记 expected={expected} \
+                 ⇒ 连接被删/合并了？把 expected 改成 {actual} —— 数字偏大会给未来偷加的一条留空位"
+            ),
+        }
+    }
+}
+
+/// 守卫本体：把「真实命中数」与「登记表」**逐函数、按处数**对比；返回的每条都是要人处理的差异。
+///
+/// ⚠️ 夹具测试直接喂「假登记表」进来（见 `a_second_connection_in_the_same_function_...`），
+/// 所以这里**不读**全局 `REGISTERED`。
+fn count_problems(hits: &[Hit], expected: &[(&str, &str, usize, &str)]) -> Vec<CountProblem> {
+    let mut actual: std::collections::BTreeMap<(&str, &str), usize> =
+        std::collections::BTreeMap::new();
+    for h in hits {
+        *actual
+            .entry((h.file.as_str(), h.func.as_str()))
+            .or_default() += 1;
+    }
+    let mut problems = Vec::new();
+    for ((file, func), n) in &actual {
+        match expected_for(expected, file, func) {
+            None => problems.push(CountProblem::Unregistered {
+                file: file.to_string(),
+                func: func.to_string(),
+                actual: *n,
+            }),
+            Some(exp) if *n > exp => problems.push(CountProblem::TooMany {
+                file: file.to_string(),
+                func: func.to_string(),
+                expected: exp,
+                actual: *n,
+            }),
+            Some(exp) if *n < exp => problems.push(CountProblem::TooFew {
+                file: file.to_string(),
+                func: func.to_string(),
+                expected: exp,
+                actual: *n,
+            }),
+            _ => {}
+        }
+    }
+    problems.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+    problems
 }
 
 /// 登记表里**源码中已经找不到**的条目（过期 ⇒ 测试红，免得它悄悄放行未来的同名函数）。
 fn stale_entries(hits: &[Hit]) -> Vec<(&'static str, &'static str)> {
     REGISTERED
         .iter()
-        .filter(|(file, func, _)| !hits.iter().any(|h| h.file == *file && h.func == *func))
-        .map(|(file, func, _)| (*file, *func))
+        .filter(|(file, func, _, _)| !hits.iter().any(|h| h.file == *file && h.func == *func))
+        .map(|(file, func, _, _)| (*file, *func))
         .collect()
 }
 
@@ -717,12 +940,18 @@ fn the_registry_is_not_empty_and_entries_are_well_formed() {
         REGISTERED.len()
     );
     let mut seen = BTreeSet::new();
+    let mut total = 0usize;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for (file, func, purpose) in REGISTERED {
+    for (file, func, count, purpose) in REGISTERED {
         assert!(
             seen.insert((*file, *func)),
             "登记表重复条目：({file}, {func}) —— 重复会让“过期条目”判据失真"
         );
+        assert!(
+            *count >= 1,
+            "登记条目 {file}::{func} 的 expected_count 是 0：没有连接就该删掉整条登记，别留一个放行位"
+        );
+        total += *count;
         assert!(
             func.trim().len() >= 3,
             "登记条目 {file} 的函数名太短：{func:?}"
@@ -736,6 +965,10 @@ fn the_registry_is_not_empty_and_entries_are_well_formed() {
             "登记表指向的源码文件不存在：{file}（改名/删除后要同步登记表）"
         );
     }
+    assert!(
+        total >= 80,
+        "登记表合计只有 {total} 处连接（2026-11-08 收紧时是 86 处）—— 数字被改坏了？先重跑盘点"
+    );
 }
 
 #[test]
@@ -746,8 +979,8 @@ fn the_scan_actually_covers_the_tree_and_the_core_openers() {
         "只扫到 {files} 个 .rs 文件 —— 扫描面明显变小了（是不是目录/扩展名规则改坏了？）"
     );
     assert!(
-        hits.len() >= 60,
-        "只命中 {} 个开库点（2026-11-08 是 71 个）—— 扫描器可能静默失效了（这正是它要防的那类假绿）",
+        hits.len() >= 80,
+        "只命中 {} 处开库/旁路连接（2026-11-08 收紧时是 86 处 / 71 个函数）—— 扫描器可能静默失效了（这正是它要防的那类假绿）",
         hits.len()
     );
     let keys: BTreeSet<(&str, &str)> = hits
@@ -782,15 +1015,15 @@ fn the_scan_actually_covers_the_tree_and_the_core_openers() {
 #[test]
 fn every_real_db_open_point_is_registered() {
     let (hits, _) = scan_tree();
-    let missing = unregistered(&hits);
+    // ⚠️ 判据是**逐函数的处数**，不是只看“函数名在不在表里”：同一个已登记函数里多开一条也在这里红。
+    let problems = count_problems(&hits, REGISTERED);
     assert!(
-        missing.is_empty(),
-        "发现 {} 个**未登记**的开库点 —— 新开一条连接前先想清楚它和 P3-1b 单连接计划的关系，\
-         然后把 (文件, 函数, 用途) 加进 REGISTERED：\n{}",
-        missing.len(),
-        missing
+        problems.is_empty(),
+        "开库点与登记表对不上（{} 条）—— 按下面逐条改 REGISTERED（加/删连接都要同步改 expected_count）：\n{}",
+        problems.len(),
+        problems
             .iter()
-            .map(|h| format!("  - {h}（用途缺失）"))
+            .map(|p| format!("  - {p}"))
             .collect::<Vec<_>>()
             .join("\n")
     );
@@ -848,6 +1081,67 @@ fn the_scanner_catches_a_new_helper_caller() {
     assert!(
         scan_source("src/fixture.rs", def).is_empty(),
         "helper 定义行不算开库调用"
+    );
+}
+
+#[test]
+fn a_second_connection_in_the_same_function_is_caught_unless_registered() {
+    // 同一函数里**两处** `Connection::open` —— 收紧后必须数成 2 处（⛔ 不许按函数去重成 1）。
+    let src =
+        "fn twice() {\n    let a = Connection::open(&p)?;\n    let b = Connection::open(&q)?;\n}\n";
+    let hits = scan_source("src/fixture.rs", src);
+    assert_eq!(
+        hits.len(),
+        2,
+        "同一函数的两处连接必须各算一处（旧实现按函数去重 ⇒ 这里会是 1）：{hits:?}"
+    );
+
+    // 登记 expected=1 ⇒ 必须红，并点名 TooMany（“同函数新增写者”）。
+    let expect_one: &[(&str, &str, usize, &str)] = &[("src/fixture.rs", "twice", 1, "夹具")];
+    let problems = count_problems(&hits, expect_one);
+    assert_eq!(
+        problems.len(),
+        1,
+        "expected=1 实际 2 处 ⇒ 应恰好一条 TooMany：{problems:?}"
+    );
+    match &problems[0] {
+        CountProblem::TooMany {
+            expected,
+            actual,
+            func,
+            ..
+        } => {
+            assert_eq!(*expected, 1);
+            assert_eq!(*actual, 2);
+            assert_eq!(func, "twice");
+        }
+        other => panic!("应当是 TooMany（同函数新增写者），实得 {other:?}"),
+    }
+
+    // 登记 expected=2 ⇒ 绿。
+    let expect_two: &[(&str, &str, usize, &str)] = &[("src/fixture.rs", "twice", 2, "夹具")];
+    assert!(
+        count_problems(&hits, expect_two).is_empty(),
+        "expected=2 ⇒ 两处连接刚好对上，必须绿"
+    );
+
+    // 反向：实际 1 处、登记 2 ⇒ TooFew（删/合并连接没改数字）。
+    let one = scan_source(
+        "src/fixture.rs",
+        "fn once() {\n    let a = Connection::open(&p)?;\n}\n",
+    );
+    let expect_too_much: &[(&str, &str, usize, &str)] = &[("src/fixture.rs", "once", 2, "夹具")];
+    let pf = count_problems(&one, expect_too_much);
+    assert!(
+        matches!(
+            pf.as_slice(),
+            [CountProblem::TooFew {
+                expected: 2,
+                actual: 1,
+                ..
+            }]
+        ),
+        "实际 1 处 vs 登记 2 处 ⇒ 必须报 TooFew：{pf:?}"
     );
 }
 
