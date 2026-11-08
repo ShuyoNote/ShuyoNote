@@ -128,7 +128,7 @@ mod relay_tunnel;
 //   `relay` 构建也带 `lan-quic`（feature 分层）⇒ 这个模块在 relay 构建里同样编，但**没有任何调用者**
 //   （除它自己的测试）；正式接线是 P3-2 后续步骤。
 #[cfg(feature = "lan-quic")]
-mod lan_quic;
+pub mod lan_quic;
 // 评估用探针（2026-09-30）：量一次**真实网格窗口**的 `/mesh/pull` 在线上多少字节。
 // ⚠️ 它必须待在 crate 内（`mod mesh` 是私有的 ⇒ 外部 crate 拿不到 `start`/`MeshConfig`）；
 //    默认 `#[ignore]`，跑法写在文件头。**它不碰 `mesh.rs`** ✓（那是 AMD 的写域）。

@@ -454,6 +454,65 @@ pub async fn local_quic_addrs() -> Vec<String> {
     announce_quic_addrs_named(&local_addrs, port)
 }
 
+// ───────────────── P3-2a 两 OS 进程验收辅助（只给 tests/lan_quic_two_process.rs） ─────────────────
+//
+// ⚠️ 它们**不是同步路径**：正常同步不会调用（落在这里只是为了让 integration test 能复用
+//   同一套隧道帧，而不必把 `relay_tunnel` 私有模块整体公开）。行为与 `iroh_tunnel::request` /
+//    `serve_one_conn` 同一口径（同一 ALPN、同一套帧）。
+
+/// ⭐ **P3-2a 两进程验收辅助（服务端）**：接受**一条**连接、读**一次**请求、回固定 200/body，
+/// 返回收到的 target（父测试可核对）。
+///
+/// ⚠️ 只给 `tests/lan_quic_two_process.rs` 的子进程用；⛔ 不是生产同步入口。
+#[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+pub async fn serve_one_request_text(
+    ep: &LanQuicEndpoint,
+    reply_body: &str,
+) -> Result<String, String> {
+    let Some(incoming) = ep.accept().await else {
+        return Err("端点已关，接不到连接".to_string());
+    };
+    let conn = incoming.await.map_err(|e| format!("QUIC 握手失败：{e}"))?;
+    let (mut send, mut recv) = conn
+        .accept_bi()
+        .await
+        .map_err(|e| format!("接流失败：{e}"))?;
+    let req = crate::relay_tunnel::read_request(&mut recv)
+        .await
+        .map_err(|e| format!("读请求失败：{e}"))?;
+    let target = req.target.clone();
+    crate::relay_tunnel::write_reply(
+        &mut send,
+        &TunnelReply {
+            status: 200,
+            body: reply_body.as_bytes().to_vec(),
+        },
+    )
+    .await
+    .map_err(|e| format!("写应答失败：{e}"))?;
+    send.finish().map_err(|e| format!("收流失败：{e}"))?;
+    // 等客户端关（与 `serve_one_conn` 同一收尾口径）。
+    let _ = conn.closed().await;
+    Ok(target)
+}
+
+/// ⭐ **P3-2a 两进程验收辅助（客户端）**：向对端发**一次** `GET target`，回 `(status, body)`。
+///
+/// ⚠️ 只给 `tests/lan_quic_two_process.rs` 的子进程用；⛔ 不是生产同步入口。
+#[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+pub async fn request_text(
+    ep: &LanQuicEndpoint,
+    peer: EndpointAddr,
+    target: &str,
+) -> Result<(u16, String), String> {
+    let req = crate::relay_tunnel::TunnelRequest::new("GET", target);
+    let reply = iroh_tunnel::request(&ep.ep, peer, &req).await?;
+    Ok((
+        reply.status,
+        String::from_utf8_lossy(&reply.body).into_owned(),
+    ))
+}
+
 /// 32 字节 → 64 位小写 hex（与公告/路线表的 `node_id` 同一形状；不引新依赖）。
 fn hex32(b: &[u8; 32]) -> String {
     let mut s = String::with_capacity(64);
