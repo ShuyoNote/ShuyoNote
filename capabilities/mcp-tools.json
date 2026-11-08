@@ -691,7 +691,7 @@
   {
     "name": "export_docpackage",
     "capabilityId": "export.docpackage",
-    "description": "把**一页**导出成 `.shuyodoc`/docpackage 并只回句柄。参数: pageId（必填）, spaceId（可选；跨空间需 read:all-spaces，整空间导出不支持）。句柄单次/TTL 120s/绑会话。 跨空间：支持（带 spaceId 读指定空间）",
+    "description": "把**一页**导出成 `.shuyodoc`/docpackage 并只回句柄。参数: pageId（必填）, spaceId（可选；跨空间需 read:all-spaces，整空间导出不支持）。句柄单次/TTL 120s/绑会话。 跨空间：不支持（带 spaceId ⇒ bad_args）",
     "inputSchema": {
       "type": "object",
       "properties": {

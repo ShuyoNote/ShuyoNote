@@ -3493,7 +3493,10 @@ fn cap_export_markdown(page_id: Option<&str>, space_id: Option<&str>) -> CapResu
             let snap = space_scope_snapshot_of(None)?;
             let name = snap["spaceName"].as_str().unwrap_or("").to_string();
             let args = serde_json::json!({ "spaceId": current, "spaceName": name }).to_string();
-            let reply = crate::frontend_tool::call("export.markdown", &args)?;
+            // ⭐ 2026-11-08：整空间导出要打 zip（含全部附件）—— 5s 是**单页**的预算，
+            //   百 MB 空间必然撞线（真机 5266ms）。这条单独放宽到 60s；单页仍走 5s。
+            let reply =
+                crate::frontend_tool::call_with_timeout("export.markdown", &args, 60_000)?;
             export_handle_from_reply(reply, "application/zip")
         }
     }
@@ -3513,18 +3516,12 @@ fn cap_export_docpackage(page_id: &str, space_id: Option<&str>) -> CapResult {
     let page = if target == current {
         export_target_page(page_id)?
     } else {
-        with_conn_for_space(Some(target.as_str()), |c| {
-            let Some(m) = crate::doc_content::read_with_meta(c, page_id)? else {
-                return Err(format!("not_found: 页面 {page_id} 不存在或已读取失败"));
-            };
-            if m.kind == "folder" {
-                return Err(format!(
-                    "bad_args: 「{}」是文件夹，没有正文可导出",
-                    m.content.title
-                ));
-            }
-            Ok(page_id.trim().to_string())
-        })?
+        // ⭐ 2026-11-08（第四轮评估复验）：跨空间 `.shuyodoc` 导出实测在「前端取目标空间页面」
+        //   这一步失败，且只回笼统「页面不存在」——与其半通，不如**明确拒绝**（与整空间导出一致）。
+        return Err(
+            "bad_args: `.shuyodoc` 导出目前只支持当前空间（跨空间请在应用里切到那个空间再导出）"
+                .to_string(),
+        );
     };
     let args = serde_json::json!({
         "pageId": page,

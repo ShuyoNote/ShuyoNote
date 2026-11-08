@@ -1167,7 +1167,6 @@ const CROSS_SPACE_WRITE = new Set([
   "files.delete",
   "files.move",
   "files.detach",
-  "files.upload_to_page",
   "folders.create",
   "nodes.move",
   "nodes.rename",
@@ -1185,6 +1184,9 @@ const CROSS_SPACE_WRITE = new Set([
 /** 跨空间支持判定（读侧：声明了 spaceId；写侧：白名单）。 */
 export function crossSpaceOf(c) {
   if (c.kind === "write") return CROSS_SPACE_WRITE.has(c.id);
+  // ⭐ 2026-11-08：`export.docpackage` 声明了 spaceId，但**跨空间实测走不通**（前端取目标空间页面失败）
+  //   ⇒ 描述不再声称支持（避免 agent 绕路）；等真正接通再恢复。
+  if (c.id === "export.docpackage") return false;
   return (c.args ?? []).some((a) => a.name === "spaceId");
 }
 
@@ -1301,3 +1303,5 @@ if (isEntry) {
     console.log(`能力注册表已生成：${Object.keys(files).length} 个文件`);
   }
 }
+
+

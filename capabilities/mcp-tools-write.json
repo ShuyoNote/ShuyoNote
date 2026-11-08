@@ -523,7 +523,7 @@
     "kind": "write",
     "name": "files_upload_to_page",
     "capabilityId": "files.upload_to_page",
-    "description": "上传附件到页面。⚠️ **确认后系统会弹文件选择框，由用户亲自选文件**（⛔ 不接受任意路径）；同名自动 `-N` 不覆盖；>10MB ⇒ `needs_confirm`；用户取消 ⇒ `cancelled`。参数: pageId, name(可选)。写操作 ⇒ 只产草稿等确认。 跨空间：支持（带 spaceId 写到指定空间，不是搬移） ⚠️ 写完必须独立复核：落库由应用端随后异步执行（失败只写 <app data>/mcp/apply.log，不回传），本响应不代表已写入。参数 dryRun:true 只预览不落库（建议先预览再真写）。",
+    "description": "上传附件到页面。⚠️ **确认后系统会弹文件选择框，由用户亲自选文件**（⛔ 不接受任意路径）；同名自动 `-N` 不覆盖；>10MB ⇒ `needs_confirm`；用户取消 ⇒ `cancelled`。参数: pageId, name(可选)。写操作 ⇒ 只产草稿等确认。 跨空间：不支持（带 spaceId ⇒ bad_args） ⚠️ 写完必须独立复核：落库由应用端随后异步执行（失败只写 <app data>/mcp/apply.log，不回传），本响应不代表已写入。参数 dryRun:true 只预览不落库（建议先预览再真写）。",
     "inputSchema": {
       "type": "object",
       "properties": {
