@@ -332,6 +332,8 @@ pub async fn process_registry() -> Result<Arc<LanQuicRegistry>, String> {
 /// 口径（消费侧 [`parse_quic_addrs`] 必须能解析）：
 /// * 格式：`ip:port`；IPv6 由 `SocketAddr` 的 Display 自动加方括号（`[fe80::1]:47831`）；
 /// * **排除回环 / unspecified**（`127.0.0.0/8`、`::1`、`0.0.0.0`、`::` —— 报了也只是噪音）；
+/// * **排除 IPv6 link-local（fe80::/10）** —— `if-addrs` 不给 scope id，对端无法用（见 [`is_ipv6_link_local`]）；
+/// * **IPv4 优先于 IPv6**（排序键第一维；上限截断时也先保 IPv4），IPv6 全局/ULA 保留；
 /// * **去重保序**（同一 IP 只留一条；IPv6 等价写法由 `SocketAddr` 归一）；
 /// * **上限 [`MAX_QUIC_ADDRS`] 条**（与解析侧同一个上限）；
 /// * 端口 0 ⇒ **空表**（还没绑上，报一个没人算得出的端口没有意义）。
@@ -343,7 +345,7 @@ pub fn announce_quic_addrs(local_ips: &[IpAddr], udp_port: u16) -> Vec<String> {
     }
     let mut cands: Vec<SocketAddr> = local_ips
         .iter()
-        .filter(|ip| !ip.is_loopback() && !ip.is_unspecified())
+        .filter(|ip| !ip.is_loopback() && !ip.is_unspecified() && !is_ipv6_link_local(**ip))
         .map(|ip| SocketAddr::new(*ip, udp_port))
         .collect();
     // 确定性：IPv4 在前、按地址字节排（同一组网卡每次跑出来顺序一样，判据才能逐字节比）。
@@ -357,6 +359,16 @@ pub fn announce_quic_addrs(local_ips: &[IpAddr], udp_port: u16) -> Vec<String> {
         .take(MAX_QUIC_ADDRS)
         .map(|a| a.to_string())
         .collect()
+}
+
+/// **IPv6 link-local（fe80::/10）⇒ 排除**：`if-addrs` 只给 `IpAddr`（**没有 scope id**），
+/// 对端拿到也无法指定出口网卡，实际基本不可达（报了只会让对端白试一轮）。
+/// IPv6 全局/ULA（`2000::/3`、`fc00::/7`）**保留** —— 它们不带 scope 也能用。
+fn is_ipv6_link_local(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80,
+        IpAddr::V4(_) => false,
+    }
 }
 
 /// 从端点已绑定 sockets 里取**实际 UDP 端口**（IPv4 优先；全 0 ⇒ `None`）。
@@ -1086,7 +1098,8 @@ mod tests {
             "0.0.0.0",
             "192.168.1.5",
             "192.168.1.5", // 重复
-            "fe80::1",
+            "fe80::1",     // link-local（无 scope）⇒ 必须排除
+            "2001:db8::1", // 全局 IPv6 ⇒ 保留
             "::1",
         ]
         .iter()
@@ -1097,9 +1110,9 @@ mod tests {
             got,
             vec![
                 "192.168.1.5:47831".to_string(),
-                "[fe80::1]:47831".to_string()
+                "[2001:db8::1]:47831".to_string()
             ],
-            "IPv4 在前、去重、排除回环/通配、IPv6 带方括号"
+            "IPv4 在前、去重、排除回环/通配/link-local、IPv6 带方括号"
         );
         assert!(
             parse_quic_addrs(&got).is_ok(),
@@ -1119,6 +1132,75 @@ mod tests {
             .map(|s| s.parse().unwrap())
             .collect();
         assert!(announce_quic_addrs(&filtered, 1).is_empty());
+    }
+
+    /// ⭐ P3-2a 地址质量：IPv4 优先、link-local 剔除、全局 IPv6 保留（混合/仅 link-local/仅全局三组）。
+    #[test]
+    fn announce_quic_addrs_prefers_ipv4_drops_link_local_and_keeps_global_ipv6() {
+        // a) 混合：2 个 IPv4 ＋ 全局 IPv6 ＋ ULA ＋ link-local ⇒ IPv4 全在前、link-local 消失。
+        let ips: Vec<IpAddr> = [
+            "192.168.1.5",
+            "10.0.0.2",
+            "2001:db8::1",
+            "fd00::1",
+            "fe80::1",
+            "::1",
+        ]
+        .iter()
+        .map(|s| s.parse().unwrap())
+        .collect();
+        let got = announce_quic_addrs(&ips, 47831);
+        assert_eq!(
+            got,
+            vec![
+                "10.0.0.2:47831".to_string(),
+                "192.168.1.5:47831".to_string(),
+                "[2001:db8::1]:47831".to_string(),
+                "[fd00::1]:47831".to_string(),
+            ],
+            "IPv4 全在 IPv6 之前；fe80:: 被排除；全局/ULA IPv6 保留"
+        );
+        assert!(
+            parse_quic_addrs(&got).is_ok(),
+            "混合列表也必须能被消费侧解析：{got:?}"
+        );
+
+        // b) 只有 link-local ⇒ 空表（⛔ 不造一个对端用不了的地址）。
+        let only_ll: Vec<IpAddr> = ["fe80::1", "fe80::dead:beef"]
+            .iter()
+            .map(|s| s.parse().unwrap())
+            .collect();
+        assert!(
+            announce_quic_addrs(&only_ll, 47831).is_empty(),
+            "只有 link-local ⇒ 空表"
+        );
+
+        // c) 只有全局 IPv6 ⇒ 保留（方括号格式、可解析）。
+        let only_global = announce_quic_addrs(&["2001:db8::5".parse().unwrap()], 47831);
+        assert_eq!(
+            only_global,
+            vec!["[2001:db8::5]:47831".to_string()],
+            "全局 IPv6 必须保留"
+        );
+        assert!(parse_quic_addrs(&only_global).is_ok());
+
+        // d) IPv4 优先也体现在**上限截断**上：3 个 IPv4 ＋ 10 个全局 IPv6 ⇒ 前 8 条含全部 IPv4。
+        let mut many: Vec<IpAddr> = (1..=3)
+            .map(|i| IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, i)))
+            .collect();
+        many.extend(
+            (1..=10).map(|i| IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, i))),
+        );
+        let capped = announce_quic_addrs(&many, 47831);
+        assert_eq!(capped.len(), MAX_QUIC_ADDRS);
+        assert!(
+            capped[..3].iter().all(|s| s.starts_with("10.0.0.")),
+            "上限截断后 IPv4 仍必须全部保留在前：{capped:?}"
+        );
+        assert!(
+            capped.iter().skip(3).all(|s| s.starts_with('[')),
+            "IPv4 之后才是 IPv6：{capped:?}"
+        );
     }
 
     #[test]
