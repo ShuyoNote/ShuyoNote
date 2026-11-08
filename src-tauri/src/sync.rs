@@ -490,13 +490,17 @@ pub enum AutoCreateSpace {
 pub fn auto_create_space_decision(
     peer_name: &str,
     peer_kind: &str,
-    local: &[(String, String, String)],
+    // ⭐ P3-3b：对端报的 `space_uid`（老对端为空串 ⇒ 完全回落旧的按名判定）。
+    peer_uid: &str,
+    // ⭐ P3-3b：本机空间四元组 `(id, name, kind, space_uid)`（第 4 格是本笔新增）。
+    local: &[(String, String, String, String)],
     tombstoned: &[String],
     paired: bool,
     encryption_on: bool,
     peer_encrypted: bool,
 ) -> AutoCreateSpace {
     let name = peer_name.trim();
+    let uid = peer_uid.trim();
     if !paired {
         return AutoCreateSpace::Skip("not_paired");
     }
@@ -512,7 +516,17 @@ pub fn auto_create_space_decision(
     if name.is_empty() {
         return AutoCreateSpace::Skip("no_name");
     }
-    let same_name_personal = local.iter().any(|(_, n, k)| {
+    // ⭐⭐ **P3-3b：uid 优先** —— 对端报了 uid 时，先按 uid 与本机已有空间匹配；
+    //   命中 ⇒ 视为**已有**（即使名字不同 ⇒ 不建新；这是"稳定身份"那条 ADR 的落点）。
+    //   ⚠️ uid 为空/没命中 ⇒ **完全回落**下面的旧按名判定（逐字不变）。
+    if !uid.is_empty()
+        && local
+            .iter()
+            .any(|(_, _, _, local_uid)| !local_uid.trim().is_empty() && local_uid.trim() == uid)
+    {
+        return AutoCreateSpace::Skip("exists");
+    }
+    let same_name_personal = local.iter().any(|(_, n, k, _)| {
         k.trim() == "personal" && crate::mesh_merge_ledger::same_space_name_by_trim(n, name)
     });
     if same_name_personal {
@@ -539,14 +553,16 @@ pub fn auto_create_space_decision(
 ///
 /// ⚠️ 纯函数：`local`（本机空间三元组）、`tombstoned`（删过的名字）、`paired`（信任过的设备号）
 /// 全由调用方从库里读好传进来 ⇒ 判据不打桩、不碰库、不联网。
+/// ⭐ **P3-3b** 起返回 `(name, kind, uid)` 三元组：`uid` 是对端报的 `space_uid`（空串＝没有）；
+/// 自动建空间时**继承**它（旧对端仍按名 + 随机 uid）。
 pub fn peer_spaces_to_create(
     peers: &[crate::lan::Peer],
-    local: &[(String, String, String)],
+    local: &[(String, String, String, String)],
     tombstoned: &[String],
     paired: &[String],
     encryption_on: bool,
-) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = Vec::new();
+) -> Vec<(String, String, String)> {
+    let mut out: Vec<(String, String, String)> = Vec::new();
     for p in peers {
         let dev = p.announce.device_id.trim();
         let is_paired = paired.iter().any(|d| d.trim() == dev);
@@ -560,9 +576,17 @@ pub fn peer_spaces_to_create(
                 .map(String::as_str)
                 .unwrap_or("");
             let peer_encrypted = crate::lan::announced_encrypted_for(p, "", name).unwrap_or(false);
+            // ⭐ P3-3b：平行数组按下标取 uid；缺格/空串当作"没有 uid"。
+            let peer_uid = p
+                .announce
+                .hub_space_uids
+                .get(i)
+                .map(|u| u.trim().to_string())
+                .unwrap_or_default();
             match auto_create_space_decision(
                 name,
                 kind,
+                &peer_uid,
                 local,
                 tombstoned,
                 is_paired,
@@ -571,8 +595,12 @@ pub fn peer_spaces_to_create(
             ) {
                 AutoCreateSpace::Create => {
                     let n = name.trim().to_string();
-                    if !out.iter().any(|(x, _)| x == &n) {
-                        out.push((n, kind.trim().to_string()));
+                    // 去重：**uid 相同**或**名字相同**都算同一个（旧口径"按名字去重"保留）。
+                    let dup = out.iter().any(|(x, _, u)| {
+                        x == &n || (!peer_uid.is_empty() && !u.is_empty() && u == &peer_uid)
+                    });
+                    if !dup {
+                        out.push((n, kind.trim().to_string(), peer_uid));
                     }
                 }
                 AutoCreateSpace::Skip(_) => {}
@@ -597,6 +625,10 @@ pub struct MissingPeerSpace {
     pub from_names: Vec<String>,
     /// 这个名字在本机**删过**（墓碑）⇒ 界面单列、默认不勾、勾的时候多问一句
     pub tombstoned: bool,
+    /// ⭐ **P3-3b**：对端公告里这个空间的 `space_uid`（老对端/没报 ⇒ `None`）。
+    /// ⚠️ **只增字段、不删字段**（旧前端忽略它即可）；创建时继承它（见 `create_peer_spaces_by_name`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space_uid: Option<String>,
 }
 
 /// 一台对端的**显示名** —— ⛔ **不许回落成 `device_id`**（本仓既有规矩：设备 id 不进用户可见的句子）。
@@ -624,7 +656,7 @@ fn display_name_of(a: &crate::lan::LanAnnounce) -> String {
 /// 输出：**按名字排序、按名字去重**（两台对端报同一个名字 ⇒ 一行，`from` 里两台）✓。
 pub fn missing_peer_spaces(
     peers: &[crate::lan::Peer],
-    local: &[(String, String, String)],
+    local: &[(String, String, String, String)],
     tombstoned: &[String],
     paired: &[String],
 ) -> Vec<MissingPeerSpace> {
@@ -645,6 +677,13 @@ pub fn missing_peer_spaces(
                 .map(String::as_str)
                 .unwrap_or("");
             let n = name.trim();
+            // ⭐ P3-3b：对端 uid（平行数组按下标取；缺格/空串当作没有）。
+            let peer_uid = p
+                .announce
+                .hub_space_uids
+                .get(i)
+                .map(|u| u.trim().to_string())
+                .unwrap_or_default();
             // ⭐ 2026-10-24：加密空间**不进"可建"候选表**（"按名建明文空间"的另一条入口）。
             //   正确路径＝公开材料 ＋ 解锁后按 id 建密文空间。
             if crate::lan::announced_encrypted_for(p, "", n).unwrap_or(false) {
@@ -654,8 +693,16 @@ pub fn missing_peer_spaces(
             if kind.trim() != "personal" || n.is_empty() {
                 continue;
             }
+            // ⭐ P3-3b：**uid 先匹配** —— 对端报的 uid 命中本机已有空间 ⇒ 视为已有（即使名字不同）。
+            let exists_by_uid = !peer_uid.is_empty()
+                && local
+                    .iter()
+                    .any(|(_, _, _, lu)| !lu.trim().is_empty() && lu.trim() == peer_uid);
+            if exists_by_uid {
+                continue;
+            }
             // 本机已有同名**个人**空间 ⇒ 不列（那是"路由过去"，⛔ 不是"再建一个"）。
-            let exists = local.iter().any(|(_, ln, lk)| {
+            let exists = local.iter().any(|(_, ln, lk, _)| {
                 lk.trim() == "personal" && crate::mesh_merge_ledger::same_space_name_by_trim(ln, n)
             });
             if exists {
@@ -675,12 +722,22 @@ pub fn missing_peer_spaces(
                     }
                     // 任一台把它当"删过的名字" ⇒ 整行都按墓碑处理（保守方向 ✓）。
                     row.tombstoned = row.tombstoned || tomb;
+                    // ⭐ P3-3b：第一台报了 uid 的就采用（同名的两台若 uid 不同，保留先到的那一个，
+                    //   ⛔ 不在这一层猜谁更权威；真正建的时候会再按 uid 校验一次）。
+                    if row.space_uid.is_none() && !peer_uid.is_empty() {
+                        row.space_uid = Some(peer_uid.clone());
+                    }
                 }
                 None => out.push(MissingPeerSpace {
                     name: n.to_string(),
                     from: vec![dev.clone()],
                     from_names: vec![display_name_of(&p.announce)],
                     tombstoned: tomb,
+                    space_uid: if peer_uid.is_empty() {
+                        None
+                    } else {
+                        Some(peer_uid.clone())
+                    },
                 }),
             }
         }
@@ -719,14 +776,14 @@ pub(crate) fn create_missing_peer_spaces(
     mesh_bind: Option<&str>,
     encryption_on: bool,
 ) -> Result<Vec<String>, String> {
-    let local: Vec<(String, String, String)> = {
+    let local: Vec<(String, String, String, String)> = {
         let mut st = c
-            .prepare("SELECT id, COALESCE(name, ''), COALESCE(kind, '') FROM meta.workspaces WHERE deleted_at IS NULL")
+            .prepare("SELECT id, COALESCE(name, ''), COALESCE(kind, ''), COALESCE(space_uid, '') FROM meta.workspaces WHERE deleted_at IS NULL")
             .map_err(|e| e.to_string())?;
         let rows = st
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .map_err(|e| e.to_string())?;
-        let out: Vec<(String, String, String)> = rows.filter_map(|r| r.ok()).collect();
+        let out: Vec<(String, String, String, String)> = rows.filter_map(|r| r.ok()).collect();
         out
     };
     // 墓碑：**删过的名字**（G3）—— 只取名字，不看 id。
@@ -770,11 +827,18 @@ pub(crate) fn create_missing_peer_spaces(
     }
     let plan = peer_spaces_to_create(peers, &local, &tombstoned, &paired, encryption_on);
     let mut created: Vec<String> = Vec::new();
-    for (name, kind) in plan {
+    for (name, kind, peer_uid) in plan {
         let id = uuid::Uuid::new_v4().to_string();
         let now = crate::db::now_ms();
-        // ① 先写 meta 那一行（`create_space_db_at` 里的 ensure_space_workspace 要读它）
-        crate::workspaces::insert_chosen_space(c, &id, &name, "blue", 1.0, now, &kind)?;
+        // ① 先写 meta 那一行（`create_space_db_at` 里的 ensure_space_workspace 要读它）。
+        //   ⭐ P3-3b：对端带 uid ⇒ **继承它**（两端稳定身份一致）；没有 ⇒ 旧随机 uid。
+        if peer_uid.trim().is_empty() {
+            crate::workspaces::insert_chosen_space(c, &id, &name, "blue", 1.0, now, &kind)?;
+        } else {
+            crate::workspaces::insert_chosen_space_with_uid(
+                c, &id, &name, "blue", 1.0, now, &kind, &peer_uid,
+            )?;
+        }
         // ② 建库
         if let Err(e) = crate::db::create_space_db_at(dir, &id) {
             // ③ 回滚：⛔ 不留"有行没库"
@@ -808,12 +872,12 @@ pub(crate) fn list_missing_peer_spaces(
     c: &Connection,
     peers: &[crate::lan::Peer],
 ) -> Result<Vec<MissingPeerSpace>, String> {
-    let local: Vec<(String, String, String)> = {
+    let local: Vec<(String, String, String, String)> = {
         let mut st = c
-            .prepare("SELECT id, COALESCE(name, ''), COALESCE(kind, '') FROM meta.workspaces WHERE deleted_at IS NULL")
+            .prepare("SELECT id, COALESCE(name, ''), COALESCE(kind, ''), COALESCE(space_uid, '') FROM meta.workspaces WHERE deleted_at IS NULL")
             .map_err(|e| e.to_string())?;
         let rows = st
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .map_err(|e| e.to_string())?;
         rows.filter_map(|r| r.ok()).collect()
     };
@@ -867,7 +931,20 @@ pub(crate) fn create_peer_spaces_by_name(
         };
         let id = uuid::Uuid::new_v4().to_string();
         let now = crate::db::now_ms();
-        crate::workspaces::insert_chosen_space(c, &id, &cand.name, "blue", 1.0, now, "personal")?;
+        // ⭐ P3-3b：候选里带 uid ⇒ 新空间**继承**它；否则旧随机 uid。
+        match cand
+            .space_uid
+            .as_deref()
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+        {
+            Some(uid) => crate::workspaces::insert_chosen_space_with_uid(
+                c, &id, &cand.name, "blue", 1.0, now, "personal", uid,
+            )?,
+            None => crate::workspaces::insert_chosen_space(
+                c, &id, &cand.name, "blue", 1.0, now, "personal",
+            )?,
+        }
         if let Err(e) = crate::db::create_space_db_at(dir, &id) {
             let _ = c.execute("DELETE FROM meta.workspaces WHERE id = ?1", params![id]);
             return Err(format!("为「{}」建库失败（已回滚）：{e}", cand.name));
@@ -8649,11 +8726,56 @@ mod missing_peer_spaces_tests {
         }
     }
 
-    fn local(spaces: &[(&str, &str)]) -> Vec<(String, String, String)> {
+    fn local(spaces: &[(&str, &str)]) -> Vec<(String, String, String, String)> {
         spaces
             .iter()
             .enumerate()
-            .map(|(i, (n, k))| (format!("ws-{i}"), n.to_string(), k.to_string()))
+            .map(|(i, (n, k))| {
+                (
+                    format!("ws-{i}"),
+                    n.to_string(),
+                    k.to_string(),
+                    String::new(),
+                )
+            })
+            .collect()
+    }
+
+    /// ⭐ P3-3b：带 uid 的本机空间（第 4 格）。
+    /// 造一台"对端"：`(空间名, 类别, uid)` 平行数组（uid 空串 ＝ 老对端没报）。
+    fn peer_with_uids(dev: &str, spaces: &[(&str, &str, &str)]) -> crate::lan::Peer {
+        let mut a = crate::lan::announce_for_own_hub(
+            dev,
+            "对端",
+            "S1D",
+            "http://192.168.1.5:8788",
+            "room",
+            "",
+            "",
+        )
+        .expect("公告要造得出来");
+        a.hub_space_names = spaces.iter().map(|(n, _, _)| n.to_string()).collect();
+        a.hub_space_kinds = spaces.iter().map(|(_, k, _)| k.to_string()).collect();
+        a.hub_space_uids = spaces.iter().map(|(_, _, u)| u.to_string()).collect();
+        crate::lan::Peer {
+            announce: a,
+            addr: "127.0.0.1".to_string(),
+            seen_at_ms: 0,
+        }
+    }
+
+    fn local_with_uids(spaces: &[(&str, &str, &str)]) -> Vec<(String, String, String, String)> {
+        spaces
+            .iter()
+            .enumerate()
+            .map(|(i, (n, k, u))| {
+                (
+                    format!("ws-{i}"),
+                    n.to_string(),
+                    k.to_string(),
+                    u.to_string(),
+                )
+            })
             .collect()
     }
 
@@ -8745,6 +8867,106 @@ pub fn mesh_create_spaces(
     let peers = crate::lan_state::LanState::global(&dev).peers(crate::db::now_ms());
     create_peer_spaces_by_name(&c, &dir, &peers, &names)
 }
+
+mod p33b_missing_uid_tests {
+    use super::*;
+
+    /// 造一台"对端"：`(空间名, 类别, uid)` 平行数组（uid 空串 ＝ 老对端没报）。
+    fn peer_with_uids(dev: &str, spaces: &[(&str, &str, &str)]) -> crate::lan::Peer {
+        let mut a = crate::lan::announce_for_own_hub(
+            dev,
+            "对端",
+            "S1D",
+            "http://192.168.1.5:8788",
+            "room",
+            "",
+            "",
+        )
+        .expect("公告要造得出来");
+        a.hub_space_names = spaces.iter().map(|(n, _, _)| n.to_string()).collect();
+        a.hub_space_kinds = spaces.iter().map(|(_, k, _)| k.to_string()).collect();
+        a.hub_space_uids = spaces.iter().map(|(_, _, u)| u.to_string()).collect();
+        crate::lan::Peer {
+            announce: a,
+            addr: "127.0.0.1".to_string(),
+            seen_at_ms: 0,
+        }
+    }
+
+    fn local_with_uids(spaces: &[(&str, &str, &str)]) -> Vec<(String, String, String, String)> {
+        spaces
+            .iter()
+            .enumerate()
+            .map(|(i, (n, k, u))| {
+                (
+                    format!("ws-{i}"),
+                    n.to_string(),
+                    k.to_string(),
+                    u.to_string(),
+                )
+            })
+            .collect()
+    }
+
+    /// ⭐ P3-3b（a）：**对端 uid 命中本机已有 uid（名字不同）⇒ 视为已有**：不列缺失、不建。
+    #[test]
+    fn a_peer_uid_match_hides_the_candidate_even_when_the_name_differs() {
+        let peers = vec![peer_with_uids(
+            "dev-a",
+            &[("对端的名字", "personal", "uid-a")],
+        )];
+        let got = missing_peer_spaces(
+            &peers,
+            &local_with_uids(&[("本机的名字", "personal", "uid-a")]),
+            &[],
+            &["dev-a".to_string()],
+        );
+        assert!(
+            got.is_empty(),
+            "uid 命中本机已有空间 ⇒ ⛔ 不许再列/再建（名字不同也一样）：{got:?}"
+        );
+    }
+
+    /// ⭐ P3-3b（b）：uid 未命中但**名字相同** ⇒ 旧行为：仍然视为已有（不列缺失）。
+    #[test]
+    fn a_name_match_still_hides_the_candidate_when_the_uid_differs() {
+        let peers = vec![peer_with_uids("dev-a", &[("工作", "personal", "uid-peer")])];
+        let got = missing_peer_spaces(
+            &peers,
+            &local_with_uids(&[("工作", "personal", "uid-local")]),
+            &[],
+            &["dev-a".to_string()],
+        );
+        assert!(
+            got.is_empty(),
+            "uid 不同但名字相同 ⇒ 旧按名判定保留：已有，不列"
+        );
+    }
+
+    /// ⭐ P3-3b（c/d）：缺失候选**带出对端 uid**（老对端 ⇒ `None`）。
+    #[test]
+    fn a_missing_candidate_carries_the_peer_uid_when_present() {
+        let peers = vec![
+            peer_with_uids("dev-a", &[("新空间", "personal", "uid-new")]),
+            peer_with_uids("dev-b", &[("老空间", "personal", "")]),
+        ];
+        let got = missing_peer_spaces(
+            &peers,
+            &local_with_uids(&[("本机", "personal", "uid-local")]),
+            &[],
+            &["dev-a".to_string(), "dev-b".to_string()],
+        );
+        let new = got.iter().find(|x| x.name == "新空间").expect("要有新空间");
+        assert_eq!(
+            new.space_uid.as_deref(),
+            Some("uid-new"),
+            "候选必须带出对端 uid"
+        );
+        let old = got.iter().find(|x| x.name == "老空间").expect("要有老空间");
+        assert_eq!(old.space_uid, None, "老对端没报 uid ⇒ None（⛔ 不伪造）");
+    }
+}
+
 #[cfg(test)]
 mod attachment_peer_space_tests {
     //! ⭐ 2026-10-24（图片块同步的真因之一）：个人档的 `sync_profiles.space_id` **是空串**，
@@ -9120,10 +9342,11 @@ mod tests {
                 seen_at_ms: 0,
             }
         }
-        let local: Vec<(String, String, String)> = vec![(
+        let local: Vec<(String, String, String, String)> = vec![(
             "ws-a".to_string(),
             "运营".to_string(),
             "personal".to_string(),
+            String::new(),
         )];
         let none: Vec<String> = Vec::new();
         let paired = vec!["dev-b".to_string(), "dev-c".to_string()];
@@ -9136,7 +9359,7 @@ mod tests {
         let got = peer_spaces_to_create(&peers, &local, &none, &paired, false);
         assert_eq!(
             got,
-            vec![("产品".to_string(), "personal".to_string())],
+            vec![("产品".to_string(), "personal".to_string(), String::new())],
             "应当只建一个「产品」"
         );
 
@@ -9153,7 +9376,7 @@ mod tests {
         let got = peer_spaces_to_create(&short, &local, &none, &paired, false);
         assert_eq!(
             got,
-            vec![("产品".to_string(), "personal".to_string())],
+            vec![("产品".to_string(), "personal".to_string(), String::new())],
             "缺类别那一格不许建"
         );
     }
@@ -9169,70 +9392,159 @@ mod tests {
                 "ws-a".to_string(),
                 "运营".to_string(),
                 "personal".to_string(),
+                String::new(),
             ),
-            ("ws-b".to_string(), "产品".to_string(), "team".to_string()),
+            (
+                "ws-b".to_string(),
+                "产品".to_string(),
+                "team".to_string(),
+                String::new(),
+            ),
         ];
         let none: Vec<String> = Vec::new();
 
         // ① 正常：已配对 ＋ 对端 personal ＋ 本机没同名 ⇒ 建
         assert_eq!(
-            auto_create_space_decision("客户", "personal", &local, &none, true, false, false),
+            auto_create_space_decision("客户", "personal", "", &local, &none, true, false, false),
             AutoCreateSpace::Create
         );
 
         // ①b ⭐ 2026-10-24：**对端那个空间是加密的 ⇒ 绝不按名建明文空间**（真机事故的闸）。
         assert_eq!(
-            auto_create_space_decision("保险柜", "personal", &local, &none, true, false, true),
+            auto_create_space_decision("保险柜", "personal", "", &local, &none, true, false, true),
             AutoCreateSpace::Skip("peer_encrypted")
         );
 
         // ② G1：没配对 ⇒ 不建（⛔ 任何情况下都不许未配对设备往本机建空间）
         assert_eq!(
-            auto_create_space_decision("客户", "personal", &local, &none, false, false, false),
+            auto_create_space_decision("客户", "personal", "", &local, &none, false, false, false),
             AutoCreateSpace::Skip("not_paired")
         );
 
         // ③ G2：对端是 team ／ 没报类别 ⇒ 不建
         assert_eq!(
-            auto_create_space_decision("客户", "team", &local, &none, true, false, false),
+            auto_create_space_decision("客户", "team", "", &local, &none, true, false, false),
             AutoCreateSpace::Skip("not_personal")
         );
         assert_eq!(
-            auto_create_space_decision("客户", "", &local, &none, true, false, false),
+            auto_create_space_decision("客户", "", "", &local, &none, true, false, false),
             AutoCreateSpace::Skip("not_personal")
         );
 
         // ④ 本机已有同名**个人**空间 ⇒ 不是"建"，是"路由过去"
         assert_eq!(
-            auto_create_space_decision("运营", "personal", &local, &none, true, false, false),
+            auto_create_space_decision("运营", "personal", "", &local, &none, true, false, false),
             AutoCreateSpace::Skip("exists")
         );
         // ⚠️ 边角：本机有同名但那是 **team** ⇒ 仍然算"没有同名个人空间" ⇒ 允许建
         //   （team 与 personal 是两回事；团队空间不参与按名融合 ✓）
         assert_eq!(
-            auto_create_space_decision("产品", "personal", &local, &none, true, false, false),
+            auto_create_space_decision("产品", "personal", "", &local, &none, true, false, false),
             AutoCreateSpace::Create
         );
 
         // ⑤ G3 墓碑：这个名字本机删过 ⇒ 不再建（专治"删了又活"）
         let tomb = vec!["客户".to_string()];
         assert_eq!(
-            auto_create_space_decision("客户", "personal", &local, &tomb, true, false, false),
+            auto_create_space_decision("客户", "personal", "", &local, &tomb, true, false, false),
             AutoCreateSpace::Skip("tombstoned")
         );
 
         // ⑥ 加密：本机开着加密 ⇒ 不在加密盘上建明文空间
         assert_eq!(
-            auto_create_space_decision("客户", "personal", &local, &none, true, true, false),
+            auto_create_space_decision("客户", "personal", "", &local, &none, true, true, false),
             AutoCreateSpace::Skip("encrypted")
         );
 
         // ⑦ 空名 ⇒ 不建
         assert_eq!(
-            auto_create_space_decision("   ", "personal", &local, &none, true, false, false),
+            auto_create_space_decision("   ", "personal", "", &local, &none, true, false, false),
             AutoCreateSpace::Skip("no_name")
         );
     }
+    /// ⭐ **P3-3b（c/d）**：自动建空间 —— 对端带 uid ⇒ 新空间**继承**该 uid；老对端 ⇒ 随机 uid。
+    #[test]
+    fn auto_created_spaces_inherit_the_peer_uid_or_get_a_random_one() {
+        fn peer(dev: &str, names: &[&str], uids: &[&str]) -> crate::lan::Peer {
+            let mut a = crate::lan::LanAnnounce {
+                v: crate::lan::WIRE_VERSION,
+                device_id: dev.to_string(),
+                ..Default::default()
+            };
+            a.hub_base = Some("http://192.168.1.9:8787".to_string());
+            a.hub_spaces = vec!["room-1".to_string()];
+            a.hub_space_names = names.iter().map(|s| s.to_string()).collect();
+            a.hub_space_kinds = names.iter().map(|_| "personal".to_string()).collect();
+            a.hub_space_uids = uids.iter().map(|s| s.to_string()).collect();
+            crate::lan::Peer {
+                announce: a,
+                addr: "192.168.1.9".to_string(),
+                seen_at_ms: 0,
+            }
+        }
+
+        let dir = std::env::temp_dir().join(format!("shuyo-peer-uid-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        {
+            let m = Connection::open(crate::db::meta_path(&dir)).unwrap();
+            crate::db::meta_migrate(&m).unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, kind, created_at, updated_at, space_uid)
+                 VALUES ('ws-a', '工作', 'personal', 1, 1, 'uid-local')",
+                [],
+            )
+            .unwrap();
+            m.execute(
+                "INSERT INTO mesh_paired_devices (space_id, device_id, secret_sha256, added_at_ms)
+                 VALUES ('device', 'dev-b', 'x', 1)",
+                [],
+            )
+            .unwrap();
+        }
+        crate::db::create_space_db_at(&dir, "ws-a").unwrap();
+        let c = Connection::open(crate::db::space_db_path(&dir, "ws-a")).unwrap();
+        let meta = crate::db::meta_path(&dir)
+            .display()
+            .to_string()
+            .replace('\'', "''");
+        c.execute(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""), [])
+            .unwrap();
+
+        // ① 对端带 uid ⇒ 新空间继承它（即使名字是本机没有的新名字）。
+        let peers = vec![peer("dev-b", &["产品"], &["uid-peer"])];
+        let got = create_missing_peer_spaces(&c, &dir, &peers, None, false).unwrap();
+        assert_eq!(got, vec!["产品".to_string()]);
+        let inherited: String = c
+            .query_row(
+                "SELECT space_uid FROM meta.workspaces WHERE name = '产品' AND deleted_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            inherited, "uid-peer",
+            "⛔ 新空间的 uid 必须继承对端（稳定身份）"
+        );
+
+        // ② 老对端没报 uid ⇒ 旧行为：按名建，uid 由本机随机生成（非空 32 hex）。
+        let old = vec![peer("dev-b", &["客户"], &[])];
+        let got2 = create_missing_peer_spaces(&c, &dir, &old, None, false).unwrap();
+        assert_eq!(got2, vec!["客户".to_string()]);
+        let random: String = c
+            .query_row(
+                "SELECT space_uid FROM meta.workspaces WHERE name = '客户' AND deleted_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(random.len(), 32, "老对端 ⇒ 随机 32 位 hex uid：{random:?}");
+        assert!(random.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert_ne!(random, "uid-peer");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     /// 造一个全新的"设备目录"（带 meta，丢弃连接）。

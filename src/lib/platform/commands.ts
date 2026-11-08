@@ -1156,7 +1156,7 @@ export interface CommandMap {
    * ⭐ **2026-10-23**：「对端有、本机没有」的个人空间候选表（**只读**）。
    * 界面把它列出来给用户勾，勾了才调下面的 `mesh_create_spaces`。
    */
-  mesh_missing_spaces: { args: undefined; result: { name: string; from: string[]; tombstoned: boolean }[] };
+  mesh_missing_spaces: { args: undefined; result: { name: string; from: string[]; tombstoned: boolean; spaceUid?: string | null }[] };
   /** ⭐ **2026-10-23**：按用户勾的名字建空间（幂等；只认候选表里有的名字）。 */
   mesh_create_spaces: { args: { names: string[] }; result: string[] };
   /**

@@ -358,6 +358,7 @@ pub(crate) fn insert_new_local_space(
         now,
         false,
         crate::space_crypto::SpaceKind::Personal,
+        None,
     )
 }
 
@@ -379,7 +380,36 @@ pub(crate) fn insert_chosen_space(
     raw: &str,
 ) -> Result<(), String> {
     let kind = parse_new_space_kind(raw)?;
-    insert_space_row(c, id, name, theme, "", sort_order, now, false, kind)
+    insert_space_row(c, id, name, theme, "", sort_order, now, false, kind, None)
+}
+
+/// ⭐ **P3-3b**：新建空间时**继承对端 uid**（只有自动建空间会用；⛔ 其他路径仍随机生成）。
+///
+/// ⚠️ `space_uid` 为空/空白 ⇒ 回落 [`insert_chosen_space`] 的随机 uid —— 调用方不用自己判。
+pub(crate) fn insert_chosen_space_with_uid(
+    c: &rusqlite::Connection,
+    id: &str,
+    name: &str,
+    theme: &str,
+    sort_order: f64,
+    now: i64,
+    raw: &str,
+    space_uid: &str,
+) -> Result<(), String> {
+    let kind = parse_new_space_kind(raw)?;
+    let uid = space_uid.trim();
+    insert_space_row(
+        c,
+        id,
+        name,
+        theme,
+        "",
+        sort_order,
+        now,
+        false,
+        kind,
+        if uid.is_empty() { None } else { Some(uid) },
+    )
 }
 
 /// 建空间时**只认两个值**（`"personal"` / `"team"`）。
@@ -424,6 +454,7 @@ pub(crate) fn insert_imported_space(
         now,
         encrypted,
         crate::space_crypto::SpaceKind::Personal,
+        None,
     )
 }
 
@@ -438,7 +469,14 @@ fn insert_space_row(
     now: i64,
     encrypted: bool,
     kind: crate::space_crypto::SpaceKind,
+    // ⭐ P3-3b：`Some(uid)` ＝ 继承对端稳定 uid（自动建空间）；`None` ⇒ 随机生成（旧行为）。
+    space_uid: Option<&str>,
 ) -> Result<(), String> {
+    let space_uid = space_uid
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(crate::db::new_space_uid);
     c.execute(
         "INSERT INTO meta.workspaces (id, name, theme, icon, sort_order, created_at, updated_at, encrypted, kind, space_uid)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -452,8 +490,7 @@ fn insert_space_row(
             now,
             if encrypted { 1 } else { 0 },
             kind.as_str(),
-            // ⭐ P3-3b：新空间**创建时就带**稳定 uid（老库由迁移回填补齐）。
-            crate::db::new_space_uid()
+            space_uid
         ],
     )
     .map_err(|e| e.to_string())?;
