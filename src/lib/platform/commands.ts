@@ -1166,7 +1166,7 @@ export interface CommandMap {
   mcp_set_write_grant: { args: { on: boolean }; result: McpStatus };
   // ⭐ R150：外部草稿的落库结果回执（写 mcp/apply.log ✓）
   mcp_log_apply_result: { args: { line: string }; result: void };
-  mcp_draft_state: { args: { draftId: string; state: string }; result: void };
+  mcp_draft_state: { args: { draftId: string; state: string; resultId?: string }; result: void };
   space_package_import: { args: { payload: unknown }; result: unknown };
   mcp_recent_drafts: { args: { limit?: number }; result: unknown[] };
   mcp_download_grant: { args: { attId: string; spaceId?: string }; result: unknown };

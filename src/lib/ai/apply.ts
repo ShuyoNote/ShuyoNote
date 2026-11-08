@@ -21,6 +21,8 @@ export interface ApplyResult {
   ok: boolean;
   message: string;
   page?: PageDetail;
+  /** ⭐ 2026-11-08：创建类写落地后的结果 id（新页面/文件夹）—— 供 `drafts.status` 回给 agent。 */
+  resultId?: string;
 }
 
 /** 写前乐观并发校验：草稿带了 `expectedRev` 就必须与当前一致（不一致 ⇒ 拒，⛔ 不覆盖）。 */
@@ -198,7 +200,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       if (!title) return { ok: false, message: "create_folder 需要 title" };
       const spaceId = typeof p.spaceId === "string" ? p.spaceId : undefined;
       const folder = await api.createFolder({ parent_id: p.parent_id ?? null, title, space_id: spaceId });
-      return { ok: true, message: `已创建文件夹「${folder.title ?? title}」` };
+      return { ok: true, message: `已创建文件夹「${folder.title ?? title}」`, resultId: folder.id };
     }
 
     case "move_node": {

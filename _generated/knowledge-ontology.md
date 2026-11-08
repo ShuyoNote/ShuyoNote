@@ -6,7 +6,7 @@
 | 源 | 值 |
 |---|---|
 | 注册表文件 | `capabilities/capabilities.json` |
-| 注册表 sha256 | `95579e90069f8a4b24bf1a021313c618d64731ee36b54b9030ddac4f840e7961` |
+| 注册表 sha256 | `176b8aa09e0ec17e35124a5cf0fc16f5ab0e04e1f30705d26685dcb4cae7ffeb` |
 | `registryVersion` | 1 |
 | `apiVersion` | 1.27.0 |
 | 能力条数 | **70**（按 `kind`：host 2 / read 36 / write 32） |

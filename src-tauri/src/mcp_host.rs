@@ -94,7 +94,12 @@ pub(crate) fn set_external_draft_sink(f: impl Fn(&str, &str) + Send + Sync + 'st
 /// 加法式写（新建页 / 追加块 / 导入 Markdown）可以由用户显式开免确认；
 /// **覆盖式的不行** —— 对一份"默认推荐"级别的知识库来说，一次误会就是一次数据丢失。
 fn needs_confirmation(method: &str) -> bool {
-    matches!(method, "pages.update")
+    // ⭐ 2026-11-08（owner 拍板「B：只拦难恢复的」）：覆盖式写 ＋ **删除类**要确认；
+    //   改名不拦（错了一眼能看出、能改回），加法的创建/追加也不拦。
+    matches!(
+        method,
+        "pages.update" | "nodes.delete" | "files.delete" | "db.rows_delete"
+    )
 }
 
 /// 把这一批草稿交给出口 ✓（没装出口 ⇒ **出声**：宁可日志里留一句，也不静默吞掉 ✗）。
@@ -1688,5 +1693,33 @@ mod w4_audit_tests {
         );
         assert!(long_cjk_retry_hint(r#"{"q":""}"#).is_none(), "空 q 不给");
         assert!(long_cjk_retry_hint(r#"{}"#).is_none(), "缺 q 不给");
+    }
+}
+
+// ⭐ 2026-11-08（owner 拍板 B）：免确认档里**删除类**仍要人确认；改名/加法式写不拦。
+// 反例：这一条之前只有 `pages.update`，于是 `nodes.delete` / `files.delete` 在免确认档直接落库。
+#[cfg(test)]
+mod confirm_rules_tests {
+    use super::*;
+
+    #[test]
+    fn destructive_writes_need_confirmation_even_in_auto_mode() {
+        for m in [
+            "pages.update",
+            "nodes.delete",
+            "files.delete",
+            "db.rows_delete",
+        ] {
+            assert!(needs_confirmation(m), "{m} 必须走确认 ✓");
+        }
+        for m in [
+            "nodes.rename",
+            "files.rename",
+            "blocks.patch",
+            "pages.create",
+            "blocks.append",
+        ] {
+            assert!(!needs_confirmation(m), "{m} 不该被拦（改名/加法式写）✓");
+        }
     }
 }

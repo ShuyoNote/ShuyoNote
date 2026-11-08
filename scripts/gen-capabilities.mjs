@@ -1243,7 +1243,7 @@ export function genMcpTools(reg, kind = "read") {
         (c.mcpDesc ?? c.desc ?? c.title) +
         crossSpaceLine(c) +
         (kind === "write"
-          ? " ⚠️ 写完必须独立复核：落库由应用端随后异步执行（失败只写 <app data>/mcp/apply.log，不回传），本响应不代表已写入。"
+          ? " ⚠️ 写完必须独立复核：落库由应用端随后异步执行（失败只写 <app data>/mcp/apply.log，不回传），本响应不代表已写入。参数 dryRun:true 只预览不落库（建议先预览再真写）。"
           : ""),
       inputSchema: {
         type: "object",
