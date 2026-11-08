@@ -134,6 +134,70 @@ pub fn fill_space_names(c: &Connection) -> Result<usize, String> {
     Ok(added)
 }
 
+/// ⭐ **P3-3b（task-47）**：把本机**未删除空间**的 `meta.workspaces.space_uid` 填进钥匙袋映射并落盘。
+///
+/// 口径（与 [`fill_space_names`] 同一套纪律）：
+/// 1. meta 里**没有袋子** ⇒ `Ok(0)`（旧路，不是错误）；
+/// 2. **锁着/没有主密钥** ⇒ `Ok(0)` 跳过（不报错，不影响解锁/同步）；
+/// 3. 只填 `uid` **非空**、空间**未删除**的行；用 `set_space_uid_for_local_space`
+///    （袋里**还没有盒子**的本机空间也先登记 uid —— 自动建的空间在启用加密前就是这种形状）；
+/// 4. 有变化才写回（只写 `meta.sync_state` 的袋子那一格，**⛔ 不重封盒子、⛔ 不换盐、⛔ 不升版**）；
+/// 5. 写回后刷新**进程内**材料副本（本函数只在解锁/保存路径调；启动锁态那条路不调）。
+pub fn fill_space_uids(c: &Connection) -> Result<usize, String> {
+    // ② 锁态/无主密钥 ⇒ 跳过（不报错）。
+    if session_masters().is_empty() && session_master().is_none() {
+        return Ok(0);
+    }
+    let Some(text) = sync::get_meta_state(c, META_KEYRING) else {
+        return Ok(0); // 没有袋子 ⇒ 没什么可填的
+    };
+    let mut kr = Keyring::from_json(&text)?;
+    let rows: Vec<(String, String)> = match c
+        .prepare("SELECT id, COALESCE(space_uid, '') FROM meta.workspaces WHERE deleted_at IS NULL")
+    {
+        Ok(mut st) => st
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default(),
+        Err(_) => Vec::new(), // 没有那张表 ⇒ 没有可填的（不是错误）
+    };
+    let mut added = 0usize;
+    for (id, uid) in rows {
+        let uid = uid.trim();
+        if uid.is_empty() {
+            continue;
+        }
+        if kr.set_space_uid_for_local_space(&id, uid) {
+            added += 1;
+        }
+    }
+    if added > 0 {
+        sync::set_meta_state(c, META_KEYRING, &kr.to_json()?)?;
+        if let Ok(mut g) = KEYRING.lock() {
+            *g = Some(kr.clone());
+        }
+    }
+    Ok(added)
+}
+
+/// ⭐ **P3-3b（task-47）**：只读读数 —— **进程内**材料里这个空间的 `space_uid`（没有 ⇒ `None`）。
+pub fn keyring_space_uid(space_id: &str) -> Option<String> {
+    keyring().and_then(|kr| kr.space_uid(space_id).map(str::to_string))
+}
+
+/// ⭐ **P3-3b（task-47）**：只读读数（带连接版）—— 先查进程内副本，再退回 **meta** 里那份材料
+/// （没解锁/启动早期也能读到"材料里登记了什么"）。
+pub fn keyring_space_uid_in(c: &Connection, space_id: &str) -> Option<String> {
+    if let Some(uid) = keyring_space_uid(space_id) {
+        return Some(uid);
+    }
+    let text = sync::get_meta_state(c, META_KEYRING)?;
+    Keyring::from_json(&text)
+        .ok()?
+        .space_uid(space_id)
+        .map(str::to_string)
+}
+
 /// 把公开材料**载入**本进程（解锁/启用时调）。`None` ＝ meta 里没有 ⇒ 保持为空（旧路）。
 pub fn carry_keyring(c: &Connection) -> Result<(), String> {
     let loaded = match sync::get_meta_state(c, META_KEYRING) {
@@ -221,6 +285,10 @@ pub fn adopt_material(c: &Connection, json: &str, overwrite: bool) -> Result<Ado
         .map_err(|e| format!("这份公开材料读不懂（**没有采纳，本机一个字节都没改**）：{e}"))?;
     let spaces = kr.space_ids().len();
     store_keyring(c, &kr)?; // 落 meta ＋ 装进本进程
+                            // ⭐ P3-3b：采纳后同一次保存补本机空间的 uid 映射（锁态自动跳过）。
+    if let Err(e) = fill_space_uids(c) {
+        eprintln!("[keyring] 采纳公开材料后补 space_uid 映射失败（不影响采纳）：{e}");
+    }
     Ok(AdoptReport {
         adopted: true,
         already_local: false,
@@ -266,6 +334,9 @@ pub fn merge_material(c: &Connection, json: &str) -> Result<crate::keyring::Merg
         let groups = theirs.groups().len();
         let spaces = theirs.space_ids().len();
         store_keyring(c, &theirs)?;
+        if let Err(e) = fill_space_uids(c) {
+            eprintln!("[keyring] 并入公开材料后补 space_uid 映射失败（不影响合并）：{e}");
+        }
         return Ok(crate::keyring::MergeReport {
             added_groups: groups,
             added_spaces: spaces,
@@ -278,6 +349,10 @@ pub fn merge_material(c: &Connection, json: &str) -> Result<crate::keyring::Merg
     // 冲突（同空间不同盒子）⇒ ⛔ 不覆盖：原样保留本地。报告里已列出，调用方必须记/显示。
     // ⚠️ 只落 meta（别动进程内缓存：见 `store_keyring_meta_only` 的头注）。
     store_keyring_meta_only(c, &mine)?;
+    // ⭐ P3-3b：同一保存点补映射（锁态自动跳过；失败只记日志）。
+    if let Err(e) = fill_space_uids(c) {
+        eprintln!("[keyring] 合并公开材料后补 space_uid 映射失败（不影响合并）：{e}");
+    }
     Ok(report)
 }
 
@@ -865,6 +940,10 @@ pub fn enable_space(
 
     // ④ 记下"这个空间的数据是哪一版密文"（§0-C 的 per-space 标记）
     crate::security::set_space_encrypted_marked(conn, space_id, true)?;
+    // ⭐ P3-3b：启用加密/新建盒子之后，同一次保存补 uid 映射（本机空间 uid 已在 meta）。
+    if let Err(e) = fill_space_uids(conn) {
+        eprintln!("[keyring] 启用加密后补 space_uid 映射失败（不影响加密本身）：{e}");
+    }
     Ok(key)
 }
 
@@ -1972,5 +2051,170 @@ mod tests {
             "★ 改过参数必须推出另一把（否则'按材料记的参数派生'就是假的）"
         );
         assert_eq!(KdfParams::fresh().algo, "argon2id");
+    }
+
+    // ── ⭐ 2026-11-08（P3-3b task-47）：把本机 meta.space_uid 填进钥匙袋映射 ──────────────
+
+    /// 本机未删除空间：一个袋里有盒子（sp-a）、一个袋里没盒子（sp-plain，自动建空间那种形状）、
+    /// 一个已删除（sp-gone：⛔ 不许填）。
+    fn uid_fixture() -> (Connection, Keyring, AppKeys) {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.workspaces (
+                 id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
+                 space_uid TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             INSERT INTO meta.workspaces (id, name, space_uid) VALUES
+                 ('sp-a', '工作', 'uid-a'),
+                 ('sp-plain', '自动建的空间', 'uid-peer'),
+                 ('sp-gone', '已删', 'uid-gone');
+             UPDATE meta.workspaces SET deleted_at = 7 WHERE id = 'sp-gone';",
+        )
+        .unwrap();
+        let (mut kr, m) = master("我家猫叫mimi");
+        kr.wrap(&m, "sp-a", &[7u8; 32]).unwrap();
+        kr.wrap(&m, "sp-gone", &[8u8; 32]).unwrap();
+        kr.space_names.insert("sp-a".into(), "工作".into());
+        sync::set_meta_state(&c, META_KEYRING, &kr.to_json().unwrap()).unwrap();
+        (c, kr, m)
+    }
+
+    fn unlock_session(kr: &Keyring, m: &AppKeys) {
+        crate::space_crypto::set_session_masters(vec![(Keyring::group_fingerprint(&kr.kdf), *m)])
+            .unwrap();
+        crate::space_crypto::set_session_master(Some(*m)).unwrap();
+    }
+
+    fn reset_session() {
+        let _ = crate::space_crypto::set_session_masters(Vec::new());
+        let _ = crate::space_crypto::set_session_master(None);
+        set_keyring_for_test(None);
+    }
+
+    /// ⭐（a）解锁态：本机未删除空间的 uid 被填入、**幂等**、可经只读读数拿到；删除的不填。
+    #[test]
+    fn filling_space_uids_registers_live_local_spaces_and_is_idempotent() {
+        let _g = crate::security::test_lock();
+        let (c, kr, m) = uid_fixture();
+        unlock_session(&kr, &m);
+
+        let added = fill_space_uids(&c).unwrap();
+        assert_eq!(added, 2, "sp-a（有盒子）＋ sp-plain（没盒子也要登记）");
+        let after = Keyring::from_json(&sync::get_meta_state(&c, META_KEYRING).unwrap()).unwrap();
+        assert_eq!(after.space_uid("sp-a"), Some("uid-a"));
+        assert_eq!(after.space_uid("sp-plain"), Some("uid-peer"));
+        assert_eq!(after.space_uid("sp-gone"), None, "⛔ 已删除的空间不许填");
+        assert_eq!(
+            after.space_ids(),
+            kr.space_ids(),
+            "登记映射不许造盒子（sp-plain 仍不在 space_ids 里）"
+        );
+        // 只读读数：进程内副本 ＋ meta 回退都能拿到
+        assert_eq!(keyring_space_uid("sp-a").as_deref(), Some("uid-a"));
+        assert_eq!(
+            keyring_space_uid_in(&c, "sp-plain").as_deref(),
+            Some("uid-peer")
+        );
+        assert_eq!(keyring_space_uid_in(&c, "sp-gone"), None);
+
+        assert_eq!(fill_space_uids(&c).unwrap(), 0, "幂等：再填一次没有变化");
+        reset_session();
+    }
+
+    /// ⭐（b）锁态/没有主密钥：**跳过、不写、不报错**（meta 一个字节都不变）。
+    #[test]
+    fn filling_space_uids_is_a_noop_while_locked() {
+        let _g = crate::security::test_lock();
+        let (c, _kr, _m) = uid_fixture();
+        reset_session(); // 无主密钥
+        let before = sync::get_meta_state(&c, META_KEYRING).unwrap();
+        assert_eq!(fill_space_uids(&c).unwrap(), 0, "锁态 ⇒ 跳过（不是错误）");
+        let after = sync::get_meta_state(&c, META_KEYRING).unwrap();
+        assert_eq!(before, after, "锁态下一次写都不许发生");
+        assert_eq!(keyring_space_uid_in(&c, "sp-a"), None);
+    }
+
+    /// ⭐（c）自动建空间继承 uid 后（袋里还没盒子）⇒ 映射可查；同一次保存路径补。
+    #[test]
+    fn an_auto_created_space_uid_becomes_queryable_once_recorded() {
+        let _g = crate::security::test_lock();
+        // 形状＝task-43 自动建：meta 那行已有对端 uid（袋里暂时没有盒子）。
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.workspaces (
+                 id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
+                 space_uid TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             INSERT INTO meta.workspaces (id, name, space_uid)
+                 VALUES ('ws-auto', '产品', 'uid-peer-inherited');",
+        )
+        .unwrap();
+        let (mut kr, m) = master("pw");
+        kr.wrap(&m, "sp-other", &[9u8; 32]).unwrap();
+        sync::set_meta_state(&c, META_KEYRING, &kr.to_json().unwrap()).unwrap();
+        unlock_session(&kr, &m);
+
+        assert_eq!(fill_space_uids(&c).unwrap(), 1);
+        assert_eq!(
+            keyring_space_uid_in(&c, "ws-auto").as_deref(),
+            Some("uid-peer-inherited"),
+            "自动建继承的 uid 必须在同一次保存里可查"
+        );
+        let after = Keyring::from_json(&sync::get_meta_state(&c, META_KEYRING).unwrap()).unwrap();
+        assert!(after.space_uid("ws-auto").is_some());
+        assert_eq!(
+            after.space_ids(),
+            vec!["sp-other".to_string()],
+            "只是登记 uid，⛔ 不会凭空给 ws-auto 造一个盒子"
+        );
+        reset_session();
+    }
+
+    /// ⭐（d）老袋子（v1、无映射）仍能解盒子；填映射不改钥匙/盒子。
+    #[test]
+    fn an_old_material_without_uids_still_opens_before_and_after_filling() {
+        let _g = crate::security::test_lock();
+        let (c, kr, m) = uid_fixture();
+        // 把材料降成 v1（无 space_uids；老袋子形状）
+        let old_json = kr.to_json().unwrap().replace("\"v\": 2", "\"v\": 1");
+        let old = Keyring::from_json(&old_json).unwrap();
+        assert_eq!(old.v, 1);
+        sync::set_meta_state(&c, META_KEYRING, &old_json).unwrap();
+        unlock_session(&kr, &m);
+
+        let key_before = old.unwrap_key(&m, "sp-a").unwrap();
+        assert_eq!(fill_space_uids(&c).unwrap(), 2);
+        let after = Keyring::from_json(&sync::get_meta_state(&c, META_KEYRING).unwrap()).unwrap();
+        assert_eq!(after.space_uid("sp-a"), Some("uid-a"));
+        assert_eq!(
+            after.unwrap_key(&m, "sp-a").unwrap(),
+            key_before,
+            "填映射不许换钥匙"
+        );
+        reset_session();
+    }
+
+    /// ⭐（e）**不重封**：盒子字节/空间名/盐/KDF/版本都不变，唯一变化是 `space_uids`。
+    #[test]
+    fn filling_space_uids_never_reseals_boxes_or_touches_metadata() {
+        let _g = crate::security::test_lock();
+        let (c, kr, m) = uid_fixture();
+        unlock_session(&kr, &m);
+        let before: serde_json::Value =
+            serde_json::from_str(&sync::get_meta_state(&c, META_KEYRING).unwrap()).unwrap();
+        fill_space_uids(&c).unwrap();
+        let after: serde_json::Value =
+            serde_json::from_str(&sync::get_meta_state(&c, META_KEYRING).unwrap()).unwrap();
+        for k in ["v", "kdf", "spaces", "space_names"] {
+            assert_eq!(before.get(k), after.get(k), "⛔ `{k}` 不许被填映射改动");
+        }
+        assert!(
+            after.get("space_uids").is_some(),
+            "唯一应当变化的就是 space_uids"
+        );
+        assert_eq!(after["v"], serde_json::json!(2), "⛔ 不升版（仍 2）");
+        reset_session();
     }
 }

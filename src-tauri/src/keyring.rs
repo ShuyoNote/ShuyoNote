@@ -450,6 +450,58 @@ impl Keyring {
         false
     }
 
+    /// ⭐ **P3-3b（task-47）**：给**本机未删除空间**记 uid —— 哪怕袋里**还没有它的盒子**也记。
+    ///
+    /// 与 [`Self::set_space_uid`] 的区别：那个只认"袋里已有盒子的空间"；本方法服务于
+    /// "把本机 `meta.workspaces.space_uid` 填进材料"（自动建出来的空间在**启用加密之前**没有盒子，
+    /// 但它的稳定 uid 应当先登记，之后启用/合并时就不再丢）。
+    ///
+    /// 口径：trim；空 uid / 同值 ⇒ `false`；袋里已有盒子 ⇒ 写它**所在组**；没有盒子 ⇒ 写主组映射
+    /// （⛔ 不造盒子、⛔ 不改变 `space_ids()`）。冲突（同组该 uid 已属别的空间）⇒ `false`。
+    pub fn set_space_uid_for_local_space(&mut self, space_id: &str, uid: &str) -> bool {
+        let space_id = space_id.trim();
+        let uid = uid.trim();
+        if space_id.is_empty() || uid.is_empty() {
+            return false;
+        }
+        let taken = |m: &BTreeMap<String, String>| {
+            m.iter().any(|(id, u)| id != space_id && u.trim() == uid)
+        };
+        if self.spaces.contains_key(space_id) {
+            if self.space_uids.get(space_id).map(|u| u.trim()) == Some(uid) {
+                return false;
+            }
+            if taken(&self.space_uids) {
+                return false;
+            }
+            self.space_uids
+                .insert(space_id.to_string(), uid.to_string());
+            return true;
+        }
+        for g in self.extra_groups.iter_mut() {
+            if g.spaces.contains_key(space_id) {
+                if g.space_uids.get(space_id).map(|u| u.trim()) == Some(uid) {
+                    return false;
+                }
+                if taken(&g.space_uids) {
+                    return false;
+                }
+                g.space_uids.insert(space_id.to_string(), uid.to_string());
+                return true;
+            }
+        }
+        // 袋里还没有盒子：登记在主组（只登记，不造盒子 / 不进 `space_ids()`）。
+        if self.space_uids.get(space_id).map(|u| u.trim()) == Some(uid) {
+            return false;
+        }
+        if taken(&self.space_uids) {
+            return false;
+        }
+        self.space_uids
+            .insert(space_id.to_string(), uid.to_string());
+        true
+    }
+
     /// ⭐ **P3-3b**：把另一份材料里的 `space_id → uid` 并进来（**只合映射**，不动盒子）。
     ///
     /// 冲突口径：同一空间两边映射到**不同 uid** ⇒ **保留本地**、记进

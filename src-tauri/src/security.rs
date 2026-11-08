@@ -1250,6 +1250,10 @@ pub(crate) fn unlock_encryption_impl(
     }
     crate::space_crypto::set_session_master(primary)?;
     LOCKED.store(false, Ordering::SeqCst);
+    // ⭐ P3-3b：解锁成功 ⇒ 把本机未删除空间的 `space_uid` 填进材料映射（失败只记日志，不影响解锁）。
+    if let Err(e) = crate::space_crypto::fill_space_uids(conn) {
+        eprintln!("[keyring] 解锁后补 space_uid 映射失败（不影响解锁，可下次再补）：{e}");
+    }
     let active = crate::workspaces::active_workspace_id(conn)?;
     // Re-open the active space DB keyed — without this PRAGMA key the app would fail to
     // read it after a locked restart. ⚠️ 存量（应用级加密的）库在这一步响亮失败。
