@@ -349,6 +349,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-10-29-mcp-capability-feasibility.md](plans/2026-10-29-mcp-capability-feasibility.md) | 能力暴露底层可行性核对（B1 前置）：逐条「已有命令/需扩展/需新建/不做」 |
 | [plans/2026-11-03-lan-discovery-port-fallback.md](plans/2026-11-03-lan-discovery-port-fallback.md) | 局域网发现端口「候选列表 ＋ 公告携带实际端口 ＋ 失败可见」：Windows 保留段吃掉 47821 时不再让发现层永久起不来（含 2026-11-03 真机读数） |
 | [plans/2026-11-08-personal-sync-2.0-requirements.md](plans/2026-11-08-personal-sync-2.0-requirements.md) | ⭐ **个人版同步 2.0 需求说明书（草案，待拍板）**：无中继时局域网同步/本机 MCP 必须完整可用；付费用户用官方安装包**私有部署**中继（不运营公共中继）；含 P0 解耦 → P1 局域网体验 → P2 私有中继 → P3 daemon/QUIC/块级 CRDT 的完整验收、效果图与 6 项待拍板白话说 明 |
+| [plans/2026-11-08-personal-sync-2.0-p3-adr.md](plans/2026-11-08-personal-sync-2.0-p3-adr.md) | ⭐ **个人版同步 2.0 P3 落地 ADR（草案，待 DEC-A..E）**：daemon 两段式/DB 单写者/回环 IPC/托盘/升级；lan-quic feature 拆分、单 iroh 端点、UDP 公告带 quic_addrs、HTTP 退出 C1–C4；CRDT 影子闸/space_uid/不首刀清单；MCP 无 UI 危险写三档；阶段判据、R1–R8 与不建议清单 |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
 > 「还差 **0b** 公开材料可同步」**已作废** —— 0b 那条（经服务器搬钥匙袋）**已整条删除**
