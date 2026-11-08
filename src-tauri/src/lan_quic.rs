@@ -45,7 +45,7 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -323,6 +323,90 @@ pub async fn process_registry() -> Result<Arc<LanQuicRegistry>, String> {
         })
         .await
         .cloned()
+}
+
+// ───────────────────── 公告用的本机 QUIC 地址（P3-2a 数据面最后一步） ─────────────────────
+
+/// 纯函数：把「本机 IP 列表 ＋ 端点实际 UDP 端口」拼成**公告可发**的 `quic_addrs`。
+///
+/// 口径（消费侧 [`parse_quic_addrs`] 必须能解析）：
+/// * 格式：`ip:port`；IPv6 由 `SocketAddr` 的 Display 自动加方括号（`[fe80::1]:47831`）；
+/// * **排除回环 / unspecified**（`127.0.0.0/8`、`::1`、`0.0.0.0`、`::` —— 报了也只是噪音）；
+/// * **去重保序**（同一 IP 只留一条；IPv6 等价写法由 `SocketAddr` 归一）；
+/// * **上限 [`MAX_QUIC_ADDRS`] 条**（与解析侧同一个上限）；
+/// * 端口 0 ⇒ **空表**（还没绑上，报一个没人算得出的端口没有意义）。
+///
+/// ⚠️ 它是纯函数 ⇒ 判据直接喂假 IP 就能钉住（不必真有网卡）。
+pub fn announce_quic_addrs(local_ips: &[IpAddr], udp_port: u16) -> Vec<String> {
+    if udp_port == 0 {
+        return Vec::new();
+    }
+    let mut cands: Vec<SocketAddr> = local_ips
+        .iter()
+        .filter(|ip| !ip.is_loopback() && !ip.is_unspecified())
+        .map(|ip| SocketAddr::new(*ip, udp_port))
+        .collect();
+    // 确定性：IPv4 在前、按地址字节排（同一组网卡每次跑出来顺序一样，判据才能逐字节比）。
+    cands.sort_by_key(|a| match a.ip() {
+        IpAddr::V4(v4) => (0u8, u32::from(v4) as u128),
+        IpAddr::V6(v6) => (1u8, u128::from(v6)),
+    });
+    cands.dedup();
+    cands
+        .into_iter()
+        .take(MAX_QUIC_ADDRS)
+        .map(|a| a.to_string())
+        .collect()
+}
+
+/// 从端点已绑定 sockets 里取**实际 UDP 端口**（IPv4 优先；全 0 ⇒ `None`）。
+///
+/// ⚠️ iroh 通常同时绑 `0.0.0.0:p` 与 `[::]:p` ⇒ 这里只取端口，**不拿通配地址对外**
+///（对外地址由 [`announce_quic_addrs`] 用网卡枚举结果拼）。
+fn bound_udp_port(bound: &[SocketAddr]) -> Option<u16> {
+    bound
+        .iter()
+        .find(|s| matches!(s, SocketAddr::V4(v4) if v4.port() != 0))
+        .map(|s| s.port())
+        .or_else(|| bound.iter().find(|s| s.port() != 0).map(|s| s.port()))
+}
+
+/// 公告失败日志的唯一拼装点（纯函数）⇒ 测试可核内容。
+#[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+fn quic_announce_log_line(why: &str) -> String {
+    format!("[lan-quic] P3-2a：本轮公告不带 quic_addrs（原因={why}）")
+}
+
+/// ⭐ **P3-2a 最后一步**：本轮公告该带的 `quic_addrs`（本机**可达 IP** ＋ 端点**实际 UDP 端口**）。
+///
+/// 只在这个 cfg 下真正产地址：`all(feature="lan-quic", not(feature="relay"))`。
+/// * Registry 起不来 / 取不到端口 / 枚举不到地址 ⇒ **空表 ＋ 一行日志**（⛔ 不 panic、⛔ 不影响 LAN HTTP）；
+/// * 枚举复用 [`crate::mesh::local_addrs`]（既有唯一碰系统的那一处）⇒ 不新造依赖、不另写枚举。
+#[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+pub async fn local_quic_addrs() -> Vec<String> {
+    let registry = match process_registry().await {
+        Ok(r) => r,
+        Err(why) => {
+            eprintln!(
+                "{}",
+                quic_announce_log_line(&format!("进程级 QUIC Registry 初始化失败：{why}"))
+            );
+            return Vec::new();
+        }
+    };
+    let Some(port) = bound_udp_port(&registry.endpoint().local_addrs()) else {
+        eprintln!(
+            "{}",
+            quic_announce_log_line("本机 QUIC 端点还没有已绑定的 UDP 端口")
+        );
+        return Vec::new();
+    };
+    let local_ips = crate::mesh::local_addrs();
+    if local_ips.is_empty() {
+        eprintln!("{}", quic_announce_log_line("枚举不到本机网卡地址"));
+        return Vec::new();
+    }
+    announce_quic_addrs(&local_ips, port)
 }
 
 /// 32 字节 → 64 位小写 hex（与公告/路线表的 `node_id` 同一形状；不引新依赖）。
@@ -991,5 +1075,89 @@ mod tests {
         assert_eq!(TransportChoice::Manual.as_str(), "manual");
         assert_eq!(TransportChoice::HttpFallback.as_str(), "http-fallback");
         assert_eq!(TransportChoice::Relay.as_str(), "relay");
+    }
+
+    // ── P3-2a 数据面最后一步：公告用的 QUIC 地址 ──
+
+    #[test]
+    fn announce_quic_addrs_formats_filters_dedupes_and_caps() {
+        let ips: Vec<IpAddr> = [
+            "127.0.0.1",
+            "0.0.0.0",
+            "192.168.1.5",
+            "192.168.1.5", // 重复
+            "fe80::1",
+            "::1",
+        ]
+        .iter()
+        .map(|s| s.parse().unwrap())
+        .collect();
+        let got = announce_quic_addrs(&ips, 47831);
+        assert_eq!(
+            got,
+            vec![
+                "192.168.1.5:47831".to_string(),
+                "[fe80::1]:47831".to_string()
+            ],
+            "IPv4 在前、去重、排除回环/通配、IPv6 带方括号"
+        );
+        assert!(
+            parse_quic_addrs(&got).is_ok(),
+            "公告发出去的格式必须能被消费侧解析：{got:?}"
+        );
+        // 端口 0 / 空输入 ⇒ 空表（还没绑上，不报一个没人算得出的端口）。
+        assert!(announce_quic_addrs(&ips, 0).is_empty());
+        assert!(announce_quic_addrs(&[], 47831).is_empty());
+        // 上限：10 条不同 IP ⇒ 只留 8 条。
+        let many: Vec<IpAddr> = (1..=10)
+            .map(|i| IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, i)))
+            .collect();
+        assert_eq!(announce_quic_addrs(&many, 47831).len(), MAX_QUIC_ADDRS);
+        // 全部被过滤 ⇒ 空表。
+        let filtered: Vec<IpAddr> = ["127.0.0.1", "0.0.0.0", "::1"]
+            .iter()
+            .map(|s| s.parse().unwrap())
+            .collect();
+        assert!(announce_quic_addrs(&filtered, 1).is_empty());
+    }
+
+    #[test]
+    fn bound_udp_port_prefers_ipv4_and_ignores_zero() {
+        let v = |s: &str| s.parse::<SocketAddr>().unwrap();
+        assert_eq!(
+            bound_udp_port(&[v("0.0.0.0:0"), v("0.0.0.0:47831"), v("[::]:47831")]),
+            Some(47831)
+        );
+        assert_eq!(bound_udp_port(&[v("0.0.0.0:0")]), None);
+        assert_eq!(bound_udp_port(&[]), None);
+        assert_eq!(bound_udp_port(&[v("[::]:47832")]), Some(47832));
+    }
+
+    /// ⭐ 真实端点：公告地址非空、每条可解析、端口＝端点实际 UDP 端口、无回环/通配、≤8、去重。
+    #[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+    #[tokio::test]
+    async fn local_quic_addrs_are_real_parseable_and_on_the_endpoint_port() {
+        crate::db::ensure_test_app_data_dir();
+        let addrs = local_quic_addrs().await;
+        assert!(
+            !addrs.is_empty(),
+            "端点起得来且本机有网卡时，公告不许是空表：{addrs:?}"
+        );
+        let registry = process_registry().await.expect("进程级 Registry");
+        let port = bound_udp_port(&registry.endpoint().local_addrs()).expect("端点实际端口");
+        let parsed = parse_quic_addrs(&addrs).expect("公告地址必须能被消费侧解析");
+        assert_eq!(parsed.len(), addrs.len(), "每条都该解析成功（去重后）");
+        for a in &parsed {
+            assert_eq!(a.port(), port, "端口必须＝端点实际绑定端口：{a} vs {port}");
+            assert!(
+                !a.ip().is_loopback() && !a.ip().is_unspecified(),
+                "不许回环/通配：{a}"
+            );
+        }
+        assert!(addrs.len() <= MAX_QUIC_ADDRS, "上限：{addrs:?}");
+        assert!(
+            addrs.windows(2).all(|w| w[0] != w[1]),
+            "不许重复：{addrs:?}"
+        );
     }
 }

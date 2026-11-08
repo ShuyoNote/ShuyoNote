@@ -1220,6 +1220,28 @@ pub fn should_run_discovery(
 
 // ── 接线（甲-1 接线第 1 件）：真循环 ─────────────────────────────────────────────────────
 
+/// ⭐ **P3-2a 最后一步（发送侧）**：给本轮公告填上本机 QUIC 端点地址。
+///
+/// 口径：
+/// * `all(feature="lan-quic", not(feature="relay"))` ⇒ 从 [`crate::lan_quic::local_quic_addrs`] 取
+///   「可达 IP ＋ 端点实际 UDP 端口」（每轮算一次；Registry 已懒初始化、枚举很轻）；
+/// * **默认/relay 构建 ⇒ 原样返回**（发送侧仍空表，行为与 P3-0b 逐字相同；⛔ 不升 `WIRE_VERSION`）；
+/// * 失败降级已收在 `local_quic_addrs` 里：空表 ＋ 一行日志（⛔ 不 panic、⛔ 不影响 LAN HTTP）。
+#[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+async fn fill_quic_addrs(mut out: Vec<lan::LanAnnounce>) -> Vec<lan::LanAnnounce> {
+    let addrs = crate::lan_quic::local_quic_addrs().await;
+    for a in &mut out {
+        a.quic_addrs = addrs.clone();
+    }
+    out
+}
+
+#[cfg(not(all(feature = "lan-quic", not(feature = "relay"))))]
+async fn fill_quic_addrs(out: Vec<lan::LanAnnounce>) -> Vec<lan::LanAnnounce> {
+    // 默认/relay 构建：发送侧仍空表（P3-0b 的逐字行为）。
+    out
+}
+
 /// ★ **启动监听 ＋ 广播**（施工单 §7 第 1 件）。**幂等**：同一个进程起过一次就直接返回。
 ///
 /// ⚠️ **不在调用线程上绑 socket**：`bind_listener` 走一次 `spawn` 在 Tauri 的 tokio 运行时里
@@ -1533,6 +1555,9 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
                     announces_for_this_round(&c, &device_id, &device_name, &profiles, &mesh_bases)
                 };
+                // ⭐ P3-2a：再给每条公告填本机 QUIC 地址（⚠️ 在 DB 锁**之外** await；
+                //   默认/relay 构建这一步原样返回 ⇒ 空表不变）。
+                let announced = fill_quic_addrs(announced).await;
                 for mut a in announced {
                     // ⭐ 2026-11-03：把**本机实际监听的端口**写进公告 —— 对端据此单播回来
                     //    （两端可能绑在不同候选端口上；老对端忽略这一格，仍按候选端口全打）。
@@ -3507,5 +3532,69 @@ mod space_room_coverage_tests {
             "abcdefabcdefabcdefabcdefabcdefab",
             "⭐ 旧版对端兼容不破：老公告里的派生房间号照样能对上"
         );
+    }
+
+    /// ⭐ P3-2a 发送侧（默认/relay 构建）：`fill_quic_addrs` 必须**原样返回**（公告仍空表）。
+    #[cfg(not(all(feature = "lan-quic", not(feature = "relay"))))]
+    #[tokio::test]
+    async fn round_keeps_quic_addrs_empty_outside_the_lan_quic_wiring() {
+        let a = crate::lan::announce_for_own_hub(
+            "dev-a",
+            "本机",
+            "",
+            "http://192.168.1.5:8788",
+            "sp",
+            "名称",
+            "personal",
+        )
+        .expect("代言公告");
+        assert!(
+            a.quic_addrs.is_empty(),
+            "前提：纯函数产出的公告本就没有地址"
+        );
+        let out = fill_quic_addrs(vec![a]).await;
+        assert!(
+            out[0].quic_addrs.is_empty(),
+            "默认/relay 构建的 fill_quic_addrs 必须不填（发送侧仍空表，P3-0b 逐字行为）"
+        );
+    }
+
+    /// ⭐ P3-2a 发送侧（lan-quic 非 relay）：公告真的带上本机 QUIC 地址（可解析、端口＝端点实际端口）。
+    #[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+    #[tokio::test]
+    async fn round_carries_real_quic_addrs_only_in_the_lan_quic_wiring() {
+        crate::db::ensure_test_app_data_dir();
+        let a = crate::lan::announce_for_own_hub(
+            "dev-a",
+            "本机",
+            "",
+            "http://192.168.1.5:8788",
+            "sp",
+            "名称",
+            "personal",
+        )
+        .expect("代言公告");
+        let out = fill_quic_addrs(vec![a]).await;
+        let addrs = &out[0].quic_addrs;
+        assert!(!addrs.is_empty(), "接线构建的公告必须带真实 QUIC 地址");
+        let parsed = crate::lan_quic::parse_quic_addrs(addrs).expect("消费侧必须能解析");
+        let registry = crate::lan_quic::process_registry()
+            .await
+            .expect("进程级 Registry");
+        let port = registry
+            .endpoint()
+            .local_addrs()
+            .iter()
+            .find(|s| s.port() != 0)
+            .map(|s| s.port())
+            .expect("端点实际端口");
+        for a in &parsed {
+            assert_eq!(a.port(), port, "端口必须是端点实际 UDP 端口：{a}");
+            assert!(
+                !a.ip().is_loopback() && !a.ip().is_unspecified(),
+                "不许回环/通配：{a}"
+            );
+        }
+        assert!(addrs.len() <= crate::lan_quic::MAX_QUIC_ADDRS);
     }
 }

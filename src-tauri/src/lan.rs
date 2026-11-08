@@ -670,9 +670,10 @@ pub fn announce_for_own_hub(
         room_auto: false,
         // ★ 见上面那段：`fp` ＝ 应用级事实 `device_id`（B 片施工单 §8.3 的收口）。
         fp: dev.to_string(),
-        // ⭐ P3-0b（2026-11-08）：本笔**发送侧先给空表** ✓ —— 字段先上线，值等 P3-2 的单 QUIC 端点。
-        //   ⛔ 本笔不枚举地址、也不承诺任何"看起来像 QUIC 地址"的候选 ✗（空表是诚实的"还没有"；
-        //   编一个出来反而会让 P3-2 的消费者拿到永远连不上的值）。⛔ 不升 `WIRE_VERSION` ✗。
+        // ⭐ P3-0b（2026-11-08）：纯函数**永远给空表** ✓ —— 它不碰进程状态（拿不到端点/网卡），
+        //   真相在**发送点**：`lan_state::fill_quic_addrs` 在 `all(lan-quic, not(relay))` 构建里
+        //   把「可达 IP ＋ QUIC 端点实际 UDP 端口」填进这一格 ✓；默认/relay 构建那个函数原样返回
+        //   ⇒ 发送侧仍空表 ✓（空表是诚实的"还没有"；⛔ 不升 `WIRE_VERSION` ✗）。
         quic_addrs: Vec::new(),
     })
 }
@@ -3453,6 +3454,25 @@ mod quic_addrs_compat_tests {
         assert!(
             decode_announce(&encode_announce(&a).unwrap()).is_ok(),
             "v=1 ＋ quic_addrs ⇒ 必须能收"
+        );
+    }
+
+    /// ⭐ P3-2a 发送侧约定：**纯函数永远不自己填** `quic_addrs`（值只由发送点填）。
+    #[test]
+    fn the_pure_factory_never_fills_quic_addrs() {
+        let a = announce_for_own_hub(
+            "dev-a",
+            "本机",
+            "",
+            "http://192.168.1.5:8788",
+            "sp",
+            "名称",
+            "personal",
+        )
+        .expect("代言公告");
+        assert!(
+            a.quic_addrs.is_empty(),
+            "纯函数不能编地址；该格由 lan_state 的发送点填"
         );
     }
 }
