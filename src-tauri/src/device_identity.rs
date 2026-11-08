@@ -39,6 +39,17 @@ impl DeviceIdentity {
         URL_SAFE_NO_PAD.encode(self.signing.verifying_key().to_bytes())
     }
 
+    /// ⭐ **P3-2a**：只读暴露 **ed25519 seed**（32 字节）—— 专给"iroh 端点身份取设备身份"
+    /// （ADR §3.3）用：`iroh::SecretKey::from_bytes(seed)` 派生出的 node id **就是**本机
+    /// `pubkey`（两者同为 `ed25519_dalek`，见 `lan_quic`/`mesh::MeshPeer` 的注释）。
+    ///
+    /// ⚠️ 只读、⛔ 不写回；唯一的消费方是进程级 QUIC Registry 的懒初始化
+    /// （只在 `all(feature="lan-quic", not(feature="relay"))` 构建里接线 ⇒ relay 档暂无人用）。
+    #[cfg_attr(feature = "relay", allow(dead_code))]
+    pub fn seed_bytes(&self) -> [u8; 32] {
+        self.signing.to_bytes()
+    }
+
     /// 对**调用方给出的字节**签名，返回 base64url。
     ///
     /// ⚠️ 被签名的四条字节由前端 `src/lib/license/signedBytes.ts` 拼装（**只此一处**布局）；

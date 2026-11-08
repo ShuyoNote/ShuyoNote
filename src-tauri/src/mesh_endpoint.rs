@@ -171,6 +171,9 @@ pub const RELAY_BASE_PREFIX: &str = "relay:";
 ///   没编入时返回**可读错误**，⛔ 不静默当成局域网地址去连）
 ///
 /// ⚠️ 跨网那一侧今天仍要**路线表**给出地址（发现层还没做）：只有 node id 连不上 ⇒ 明确报错。
+// ⚠️ **P3-2a 接线边界**：这段是**默认/relay 构建**的原文（一个字没改，只是加了 cfg）——
+// `all(lan-quic, not(relay))` 构建走下面那个同名的接线版本；默认/relay 永远编译这一份。
+#[cfg(not(all(feature = "lan-quic", not(feature = "relay"))))]
 pub async fn endpoint_for_peer(
     peer: &crate::mesh::MeshPeer,
     client: reqwest::Client,
@@ -179,6 +182,74 @@ pub async fn endpoint_for_peer(
         return Ok(Box::new(LanEndpoint::new(&peer.base, client)));
     };
     relay_endpoint_for(peer, node_id).await
+}
+
+// ═════════ P3-2a 最后接线（**只在 lan-quic 非 relay 构建**；默认/relay 不编这一块） ═════════
+//
+// 语义：LAN 直连（`http://…` base）时，若 `MeshPeer` 原料齐全 ⇒ QUIC 优先、失败/不可用回退 HTTP；
+// 原料缺失/Registry 失败/端点构造失败 ⇒ 打一行原因后**返回原 `LanEndpoint`**（⛔ 不阻断）。
+// `relay:` 前缀分支**完全不动**（仍走 `relay_endpoint_for`）。
+#[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+pub async fn endpoint_for_peer(
+    peer: &crate::mesh::MeshPeer,
+    client: reqwest::Client,
+) -> Result<Box<dyn Endpoint + Send>, String> {
+    let Some(node_id) = peer.base.strip_prefix(RELAY_BASE_PREFIX) else {
+        // base 是 http://… ⇒ LAN 直连：这里才尝试 QUIC。
+        return lan_quic_or_http(peer, client).await;
+    };
+    // ⚠️ relay: 前缀分支与默认构建**逐字同一路径**（下面这个函数本身没改）。
+    relay_endpoint_for(peer, node_id).await
+}
+
+/// LAN 直连：原料齐全 ⇒ `QuicThenHttpEndpoint`（QUIC 首、HTTP fallback）；否则/失败 ⇒ 原 `LanEndpoint`。
+#[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+async fn lan_quic_or_http(
+    peer: &crate::mesh::MeshPeer,
+    client: reqwest::Client,
+) -> Result<Box<dyn Endpoint + Send>, String> {
+    if peer.quic_addrs.is_empty() || peer.node_id.trim().is_empty() {
+        // 老对端/旧公告：没有原料 ⇒ 与接线前完全一致（纯 HTTP），只留一行可读日志。
+        eprintln!(
+            "{}",
+            quic_setup_log_line(
+                &peer.device_id,
+                "对端没报 node_id/quic_addrs（老对端或旧公告）"
+            )
+        );
+        return Ok(Box::new(LanEndpoint::new(&peer.base, client)));
+    }
+    let registry = match crate::lan_quic::process_registry().await {
+        Ok(r) => r,
+        Err(why) => {
+            eprintln!(
+                "{}",
+                quic_setup_log_line(
+                    &peer.device_id,
+                    &format!("进程级 QUIC Registry 初始化失败：{why}")
+                )
+            );
+            return Ok(Box::new(LanEndpoint::new(&peer.base, client)));
+        }
+    };
+    match quic_endpoint_for(peer, registry).await {
+        Ok(first) => Ok(Box::new(QuicThenHttpEndpoint::with_http_fallback(
+            first, &peer.base, client,
+        ))),
+        Err(why) => {
+            eprintln!(
+                "{}",
+                quic_setup_log_line(&peer.device_id, &format!("QUIC 端点构造失败：{why}"))
+            );
+            Ok(Box::new(LanEndpoint::new(&peer.base, client)))
+        }
+    }
+}
+
+/// 接线失败回退日志的唯一拼装点（纯函数）：只接 peer/原因 ⇒ ⛔ 不含 token/签名。
+#[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+fn quic_setup_log_line(device_id: &str, why: &str) -> String {
+    format!("[mesh-endpoint] P3-2a：QUIC 端点不可用 ⇒ 走 HTTP（peer={device_id}；原因={why}）")
 }
 
 #[cfg(feature = "relay")]
@@ -259,10 +330,10 @@ async fn relay_endpoint_for(
 /// * `get_stream`：**不覆写** ⇒ 用 trait 默认实现（明确回"这个端点不支持流式"；附件流式是后续步骤）。
 ///
 /// ⚠️ 它**不拥有** Registry（`Arc` 共享）：一进程一端点由持有 Registry 的接线方保证。
-// ⚠️ **骨架阶段的显式例外**：本笔只建"路径存在且可测"，接线（选路/轮次）是 P3-2 后续
-// ⇒ 在非测试构建里这些项还没有调用者。**真接线后请删掉这三处 `#[allow(dead_code)]`**。
+// ⚠️ **P3-2a 接线后**：`lan-quic` 非 relay 构建已由 `endpoint_for_peer` 真正使用 ⇒ 那档**没有 allow**；
+// `relay` 构建仍走旧 HTTP/relay 路径 ⇒ 这些适配器暂无人调用，仅在 relay 档保留 allow（可读噪音归零）。
 #[cfg(feature = "lan-quic")]
-#[allow(dead_code)]
+#[cfg_attr(feature = "relay", allow(dead_code))]
 pub struct QuicMeshEndpoint {
     registry: std::sync::Arc<crate::lan_quic::LanQuicRegistry>,
     peer: iroh::EndpointAddr,
@@ -271,7 +342,7 @@ pub struct QuicMeshEndpoint {
 #[cfg(feature = "lan-quic")]
 impl QuicMeshEndpoint {
     /// 用「已解析好的对端地址 ＋ 已有 Registry」构造（工厂 [`quic_endpoint_for`] 是正常入口）。
-    #[allow(dead_code)]
+    #[cfg_attr(feature = "relay", allow(dead_code))]
     pub fn new(
         registry: std::sync::Arc<crate::lan_quic::LanQuicRegistry>,
         peer: iroh::EndpointAddr,
@@ -318,7 +389,7 @@ impl Endpoint for QuicMeshEndpoint {
 ///
 /// ⚠️ 它**不**决定"该不该走 QUIC"：选路仍是 P3-2 的事；调用方只在明确要走 QUIC 时调它。
 #[cfg(feature = "lan-quic")]
-#[allow(dead_code)]
+#[cfg_attr(feature = "relay", allow(dead_code))]
 pub async fn quic_endpoint_for(
     peer: &crate::mesh::MeshPeer,
     registry: std::sync::Arc<crate::lan_quic::LanQuicRegistry>,
@@ -335,9 +406,10 @@ pub async fn quic_endpoint_for(
 /// * `get_stream`：**直接走 HTTP fallback**（QUIC 适配器明确不支持流式；本笔不做 QUIC 流式）；
 /// * `first` 抽象成 `Box<dyn Endpoint + Send>` ⇒ 测试可塞假端点，生产可塞 [`QuicMeshEndpoint`]。
 ///
-/// ⚠️ **骨架阶段**：尚无正式调用者（接线是 P3-2 后续）⇒ 显式 `allow(dead_code)`；接线后删除。
+/// ⚠️ **P3-2a 接线后**：`lan-quic` 非 relay 构建由 `endpoint_for_peer` 使用 ⇒ 那档无 allow；
+/// `relay` 构建仍走旧路径 ⇒ 仅 relay 档保留 allow。
 #[cfg(feature = "lan-quic")]
-#[allow(dead_code)]
+#[cfg_attr(feature = "relay", allow(dead_code))]
 pub struct QuicThenHttpEndpoint {
     first: Box<dyn Endpoint + Send>,
     fallback: LanEndpoint,
@@ -346,7 +418,7 @@ pub struct QuicThenHttpEndpoint {
 #[cfg(feature = "lan-quic")]
 impl QuicThenHttpEndpoint {
     /// 用「优先端点（通常是 QUIC）＋ HTTP fallback 的 base/client」构造。
-    #[allow(dead_code)]
+    #[cfg_attr(feature = "relay", allow(dead_code))]
     pub fn with_http_fallback(
         first: Box<dyn Endpoint + Send>,
         base: &str,
@@ -394,7 +466,7 @@ impl Endpoint for QuicThenHttpEndpoint {
 /// 回退日志行的**唯一**构造点（纯函数）：只接收 `target` 与 `why` ⇒ 类型上就**不可能**拼进
 /// token/签名。测试直接核这一行的形状（含 target/原因、只有一行、不含机密）。
 #[cfg(feature = "lan-quic")]
-#[allow(dead_code)] // 骨架阶段：唯一调用点在"尚无正式构造者"的组合器里（见上方 allow 说明）
+#[cfg_attr(feature = "relay", allow(dead_code))]
 fn fallback_log_line(target: &str, why: &str) -> String {
     format!("[mesh-endpoint] P3-2a：QUIC 首次尝试失败 ⇒ 回退 HTTP（target={target}；原因={why}）")
 }
@@ -813,5 +885,259 @@ mod quic_fallback_tests {
             "get_stream ⛔ 不许先试 QUIC（会白建连接）"
         );
         http.task.abort();
+    }
+}
+
+/// 测试用**最小 HTTP 服务**（默认/relay/lan-quic 三档通用；不依赖 feature）。
+#[cfg(test)]
+mod http_test_support {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    pub struct HttpStub {
+        pub base: String,
+        accepted: Arc<AtomicUsize>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl HttpStub {
+        pub fn accepted(&self) -> usize {
+            self.accepted.load(Ordering::SeqCst)
+        }
+    }
+
+    impl Drop for HttpStub {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    /// 起一个本地最小 HTTP 服务：接连接就计数，回固定 `201` ＋ 正文（不解析路径）。
+    pub async fn spawn_http_ok(body: &'static str) -> HttpStub {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("起最小 HTTP 服务");
+        let addr = listener.local_addr().expect("本地地址");
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&accepted);
+        let task = tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                counter.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 4096];
+                    let _ = sock.read(&mut buf).await;
+                    let resp = format!(
+                        "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        HttpStub {
+            base: format!("http://{addr}"),
+            accepted,
+            task,
+        }
+    }
+}
+
+/// ⭐ **不回归证据（默认构建）**：即使 `MeshPeer` 带了 QUIC 原料，默认构建的 `endpoint_for_peer`
+/// 仍必须是**原 HTTP 路径**（QUIC 接线只在 `all(lan-quic, not(relay))` 下编）。
+#[cfg(all(test, not(feature = "lan-quic")))]
+mod default_endpoint_keeps_http_tests {
+    use super::http_test_support::spawn_http_ok;
+    use super::*;
+
+    #[tokio::test]
+    async fn default_build_ignores_quic_materials_and_uses_http() {
+        let http = spawn_http_ok("HTTP-BODY").await;
+        let peer = crate::mesh::MeshPeer {
+            device_id: "dev-default".to_string(),
+            base: http.base.clone(),
+            // 原料故意"看起来齐全"：默认构建也必须忽略它们。
+            quic_addrs: vec!["127.0.0.1:1".to_string()],
+            node_id: "ab".repeat(32),
+        };
+        let ep = endpoint_for_peer(&peer, reqwest::Client::new())
+            .await
+            .expect("默认构建必须仍返回 HTTP 端点");
+        let reply = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            ep.get("/mesh/manifest?space_id=x", None, None),
+        )
+        .await
+        .expect("10 秒内必须完成")
+        .expect("HTTP 请求成功");
+        assert_eq!(reply.status, 201);
+        assert_eq!(reply.body, "HTTP-BODY", "默认构建不许走 QUIC");
+    }
+}
+
+/// ⭐ **不回归证据（relay 构建）**：relay 构建即使对端原料齐全、甚至 QUIC 服务真的在跑，
+/// `endpoint_for_peer` 也必须仍返回旧 HTTP 端点（新接线只在 `all(lan-quic, not(relay))` 下编）。
+#[cfg(all(test, feature = "relay"))]
+mod relay_endpoint_keeps_http_tests {
+    use super::http_test_support::spawn_http_ok;
+    use super::*;
+
+    fn ipv4_port(ep: &crate::lan_quic::LanQuicEndpoint) -> u16 {
+        ep.local_addrs()
+            .iter()
+            .find_map(|s| match s {
+                std::net::SocketAddr::V4(v4) if v4.port() != 0 => Some(v4.port()),
+                _ => None,
+            })
+            .expect("端点必须至少绑上一个 IPv4 端口")
+    }
+
+    #[tokio::test]
+    async fn relay_build_never_enters_the_quic_wiring_branch() {
+        // 真起一个 QUIC 服务端：如果 relay 构建误接了新分支，请求会落到这里（正文 QUIC-BODY）。
+        let quic_server = crate::lan_quic::bind_direct(iroh::SecretKey::generate())
+            .await
+            .expect("QUIC 服务端");
+        let qport = ipv4_port(&quic_server);
+        let qnode = quic_server.node_id_hex();
+        let quic_task = tokio::spawn(async move {
+            let Some(incoming) = quic_server.accept().await else {
+                panic!("端点已关");
+            };
+            let conn = incoming.await.expect("QUIC 握手");
+            let _ = crate::relay_tunnel::iroh_tunnel::serve_one_conn(conn, |_req| {
+                crate::relay_tunnel::TunnelReply {
+                    status: 200,
+                    body: b"QUIC-BODY".to_vec(),
+                }
+            })
+            .await;
+        });
+
+        let http = spawn_http_ok("HTTP-BODY").await;
+        let peer = crate::mesh::MeshPeer {
+            device_id: "dev-relay".to_string(),
+            base: http.base.clone(),
+            quic_addrs: vec![format!("127.0.0.1:{qport}")],
+            node_id: qnode,
+        };
+        let ep = endpoint_for_peer(&peer, reqwest::Client::new())
+            .await
+            .expect("relay 构建必须仍返回旧 HTTP 端点");
+        let reply = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            ep.get("/mesh/manifest?space_id=x", None, None),
+        )
+        .await
+        .expect("10 秒内必须完成")
+        .expect("HTTP 请求成功");
+        assert_eq!(reply.status, 201, "relay 构建走 HTTP fallback 路径");
+        assert_eq!(
+            reply.body, "HTTP-BODY",
+            "relay 构建 ⛔ 不许进入 QUIC 接线分支（进了就会拿到 QUIC-BODY）"
+        );
+        quic_task.abort();
+    }
+}
+
+/// ⭐ **P3-2a 最后接线判据（仅 lan-quic 非 relay）**：
+/// 原料缺失/坏 ⇒ 原 HTTP；原料合法但 QUIC 不可达 ⇒ 先试 QUIC 失败、再回退 HTTP。
+#[cfg(all(test, feature = "lan-quic", not(feature = "relay")))]
+mod quic_wiring_tests {
+    use super::http_test_support::spawn_http_ok;
+    use super::*;
+
+    #[tokio::test]
+    async fn missing_materials_keep_the_plain_http_endpoint() {
+        let http = spawn_http_ok("HTTP-BODY").await;
+        let peer = crate::mesh::MeshPeer {
+            device_id: "dev-old".to_string(),
+            base: http.base.clone(),
+            // 老对端/旧公告：两格都空。
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
+        };
+        let ep = endpoint_for_peer(&peer, reqwest::Client::new())
+            .await
+            .expect("原料缺失也必须成功（回退 HTTP）");
+        let reply = ep
+            .get("/mesh/manifest?space_id=x", None, None)
+            .await
+            .expect("HTTP 请求成功");
+        assert_eq!(reply.status, 201);
+        assert_eq!(reply.body, "HTTP-BODY");
+    }
+
+    #[tokio::test]
+    async fn bad_materials_fall_back_to_http_with_a_readable_line() {
+        let http = spawn_http_ok("HTTP-BODY").await;
+        let peer = crate::mesh::MeshPeer {
+            device_id: "dev-bad".to_string(),
+            base: http.base.clone(),
+            quic_addrs: vec!["not-an-addr".to_string()],
+            node_id: "abc".to_string(), // 长度/hex 都坏
+        };
+        let ep = endpoint_for_peer(&peer, reqwest::Client::new())
+            .await
+            .expect("坏原料必须回退 HTTP，而不是让整次挑传输失败");
+        let reply = ep
+            .get("/mesh/manifest?space_id=x", None, None)
+            .await
+            .expect("HTTP 请求成功");
+        assert_eq!(reply.status, 201);
+        assert_eq!(reply.body, "HTTP-BODY");
+
+        // 日志行（纯函数）可核：一行、含 peer 与原因、⛔ 不含 token/签名。
+        let line = quic_setup_log_line(
+            "dev-bad",
+            "QUIC 端点构造失败：quic_addrs 第 1 条不是 IP:port",
+        );
+        assert_eq!(line.lines().count(), 1, "日志必须只有一行：{line}");
+        assert!(line.contains("peer=dev-bad"), "要带 peer：{line}");
+        assert!(line.contains("原因="), "要带原因：{line}");
+        assert!(!line.contains("SECRET-TOKEN"), "⛔ 不含 token：{line}");
+        assert!(!line.contains("sig"), "⛔ 不含签名：{line}");
+        assert_eq!(http.accepted(), 1, "只该回退一次 HTTP");
+    }
+
+    #[tokio::test]
+    async fn valid_but_unreachable_quic_falls_back_to_http_after_first_failure() {
+        // Registry 初始化要用真实设备身份（写进测试 app-data 目录）。
+        crate::db::ensure_test_app_data_dir();
+        let registry = crate::lan_quic::process_registry()
+            .await
+            .expect("进程级 Registry 必须能懒初始化");
+        let before = registry.connect_attempts();
+
+        let http = spawn_http_ok("HTTP-AFTER-QUIC-FAIL").await;
+        let node_hex = hex::encode(iroh::SecretKey::generate().public().as_bytes());
+        let peer = crate::mesh::MeshPeer {
+            device_id: "dev-quic".to_string(),
+            base: http.base.clone(),
+            // 合法但**不可达**的 QUIC 地址：第一次请求会先试 QUIC、失败后走 HTTP。
+            // ⚠️ 本判据会等 iroh 的连接超时（约 30s）—— 不加生产超时，只如实等待失败。
+            quic_addrs: vec!["127.0.0.1:1".to_string()],
+            node_id: node_hex,
+        };
+        let ep = endpoint_for_peer(&peer, reqwest::Client::new())
+            .await
+            .expect("合法原料必须构造出复合端点");
+        let reply = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            ep.get("/mesh/manifest?space_id=x", None, None),
+        )
+        .await
+        .expect("60 秒内必须完成（QUIC 超时 + HTTP 回退）")
+        .expect("QUIC 失败后 HTTP 必须成功");
+        assert_eq!(reply.status, 201);
+        assert_eq!(reply.body, "HTTP-AFTER-QUIC-FAIL");
+        assert!(
+            registry.connect_attempts() > before,
+            "必须真的先试过 QUIC（Registry connect_attempts 要增加），否则判据没覆盖回退路径"
+        );
     }
 }

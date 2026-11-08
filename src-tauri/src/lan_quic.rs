@@ -290,6 +290,41 @@ async fn request_on_conn(conn: &Connection, req: &TunnelRequest) -> Result<Tunne
     Ok(reply)
 }
 
+// ───────────────────── 进程级 Registry（P3-2a 最后接线；仅 lan-quic 非 relay） ─────────────────────
+
+/// 进程级 Registry 的懒初始化槽（**一进程一份**）。
+///
+/// ⚠️ 为什么放在这里而不是 mesh_endpoint：Registry 归 `lan_quic` 所有，mesh_endpoint 只是
+/// 一个使用方；`OnceCell` 保证"先到先得"，并发首次调用只会真正 bind 一次。
+#[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+static PROCESS_REGISTRY: tokio::sync::OnceCell<Arc<LanQuicRegistry>> =
+    tokio::sync::OnceCell::const_new();
+
+/// ⭐ **P3-2a 最后接线**：拿**进程级** Registry（首次调用时懒初始化，之后复用同一份）。
+///
+/// 身份取本机设备身份 seed（`device_identity::load_default()` → `SecretKey::from_bytes`）——
+/// 这样公告里的 `pubkey` 与 iroh node id 同源（ADR §3.3）。
+///
+/// ⚠️ 初始化失败**只返回 Err**（调用方打一行日志后回退 HTTP；⛔ 不 panic、⛔ 不阻断默认路径）。
+/// ⚠️ 只在 `all(feature="lan-quic", not(feature="relay"))` 下编：relay 构建仍走旧 HTTP/relay 路径。
+#[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+pub async fn process_registry() -> Result<Arc<LanQuicRegistry>, String> {
+    PROCESS_REGISTRY
+        .get_or_try_init(|| async {
+            let identity = crate::device_identity::load_default()
+                .map_err(|e| format!("读不到本机设备身份（QUIC 端点身份要用它）：{e}"))?;
+            let secret = SecretKey::from_bytes(&identity.seed_bytes());
+            let endpoint = bind_direct(secret)
+                .await
+                .map_err(|e| format!("起进程级无中继 QUIC 端点失败：{e}"))?;
+            Ok::<Arc<LanQuicRegistry>, String>(Arc::new(LanQuicRegistry::from_endpoint(Arc::new(
+                endpoint,
+            ))))
+        })
+        .await
+        .cloned()
+}
+
 /// 32 字节 → 64 位小写 hex（与公告/路线表的 `node_id` 同一形状；不引新依赖）。
 fn hex32(b: &[u8; 32]) -> String {
     let mut s = String::with_capacity(64);
