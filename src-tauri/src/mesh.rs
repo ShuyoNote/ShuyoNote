@@ -2800,6 +2800,26 @@ pub fn local_addrs_named() -> Vec<(String, IpAddr)> {
     }
 }
 
+/// ⭐ **P3-2a 地址质量（只读入口）**：给一组 `(网卡名, IP)` 按 [`lan_rank_key`] **排序＋按 IP 去重**。
+///
+/// ⚠️ **纯函数**：不枚举系统、不过滤（loopback/unspecified 的取舍留给调用方）、
+/// ⛔ 不改 [`lan_rank_key`] / [`announced_bases_with_named`] / [`local_addrs_named`] 的任何现有语义。
+/// 排序：真实网卡 < 虚拟网卡（WSL/Hyper-V/Docker/utun…）→ link-local 靠后 → 地址字节序。
+pub fn rank_named_addrs(locals: &[(String, IpAddr)]) -> Vec<(String, IpAddr)> {
+    let mut out: Vec<(String, IpAddr)> = locals.to_vec();
+    out.sort_by_key(|(name, ip)| lan_rank_key(Some(name.as_str()), *ip));
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|(_, ip)| seen.insert(*ip));
+    out
+}
+
+/// ⭐ **P3-2a 地址质量（只读枚举入口）**：枚举本机地址并按 [`rank_named_addrs`] 排序。
+///
+/// 用途：`lan_quic` 的公告地址可以复用 mesh 的"真实网卡优先"口径（不必再自造一份网卡名表）。
+pub fn ranked_local_addrs_named() -> Vec<(String, IpAddr)> {
+    rank_named_addrs(&local_addrs_named())
+}
+
 /// 这张网卡**名字**看起来是不是"本机内部"的虚拟网卡（WSL / Hyper-V / Docker / 环回 / 仅主机 ✓）。
 ///
 /// ⚠️ **刻意只列"明显不是对端能到的"那几家** ✓：⛔ 不列 Tailscale / ZeroTier 这类 ✗
@@ -10954,5 +10974,46 @@ mod quic_peer_materials_tests {
         assert_eq!(p.base, "http://192.168.1.5:8788");
         assert!(p.quic_addrs.is_empty(), "helper 不替调用方猜地址");
         assert!(p.node_id.is_empty(), "helper 不替调用方猜 node id");
+    }
+}
+
+/// ⭐ **P3-2a 地址质量第二刀**：`mesh::rank_named_addrs` 的只读排序判据（真机读数形状夹具）。
+#[cfg(test)]
+mod quic_ranked_addr_tests {
+    use super::*;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn ranked_named_addrs_put_the_real_wlan_before_virtual_adapters() {
+        // 夹具形状取自真机读数：WSL 的 vEthernet / WLAN / utun 隧道。
+        let locals = vec![
+            ("vEthernet (WSL)".to_string(), ip("172.18.224.1")),
+            ("en0".to_string(), ip("192.168.43.190")),
+            ("utun3".to_string(), ip("10.128.166.117")),
+            ("en0".to_string(), ip("192.168.43.190")), // 重复
+        ];
+        let got = rank_named_addrs(&locals);
+        assert_eq!(got.len(), 3, "按 IP 去重：{got:?}");
+        assert_eq!(
+            got[0].1,
+            ip("192.168.43.190"),
+            "真实 WLAN 必须排第一：{got:?}"
+        );
+        let pos = |name: &str| {
+            got.iter()
+                .position(|(n, _)| n == name)
+                .unwrap_or_else(|| panic!("缺 {name}：{got:?}"))
+        };
+        assert!(
+            pos("vEthernet (WSL)") > pos("en0"),
+            "WSL 虚拟网卡必须排在真实网卡后：{got:?}"
+        );
+        assert!(pos("utun3") > pos("en0"), "utun 必须排在真实网卡后");
+        // 确定性：同一输入两次结果逐字节相同。
+        assert_eq!(rank_named_addrs(&locals), got);
+        assert!(rank_named_addrs(&[]).is_empty());
     }
 }

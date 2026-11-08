@@ -340,25 +340,56 @@ pub async fn process_registry() -> Result<Arc<LanQuicRegistry>, String> {
 ///
 /// ⚠️ 它是纯函数 ⇒ 判据直接喂假 IP 就能钉住（不必真有网卡）。
 pub fn announce_quic_addrs(local_ips: &[IpAddr], udp_port: u16) -> Vec<String> {
+    // 兼容 wrapper：没有网卡名的旧调用点 ⇒ 用空名参与排序（虚拟/真实同档，行为与上一版一致）。
+    let named: Vec<(String, IpAddr)> = local_ips.iter().map(|ip| (String::new(), *ip)).collect();
+    announce_quic_addrs_named(&named, udp_port)
+}
+
+/// 同 [`announce_quic_addrs`]，但**带网卡名** ⇒ 同族内按 mesh 的 `lan_rank_key` 排序
+/// （真实网卡在 WSL/Hyper-V/Docker/utun 等虚拟网卡前、link-local 靠后）。
+///
+/// 口径（与无名字版一致，只是排序更准）：
+/// * **IPv4 全在 IPv6 前**（产品口径）；
+/// * 同一地址族内按 [`crate::mesh::rank_named_addrs`] 的顺序（它复用 `lan_rank_key`）；
+/// * 过滤 loopback / unspecified / IPv6 link-local（fe80::/10，无 scope id）；
+/// * 去重、上限 [`MAX_QUIC_ADDRS`]、端口 0 ⇒ 空表 —— 全部不变。
+pub fn announce_quic_addrs_named(local_addrs: &[(String, IpAddr)], udp_port: u16) -> Vec<String> {
     if udp_port == 0 {
         return Vec::new();
     }
-    let mut cands: Vec<SocketAddr> = local_ips
+    let filtered: Vec<(String, IpAddr)> = local_addrs
         .iter()
-        .filter(|ip| !ip.is_loopback() && !ip.is_unspecified() && !is_ipv6_link_local(**ip))
-        .map(|ip| SocketAddr::new(*ip, udp_port))
+        .filter(|(_, ip)| !ip.is_loopback() && !ip.is_unspecified() && !is_ipv6_link_local(*ip))
+        .cloned()
         .collect();
-    // 确定性：IPv4 在前、按地址字节排（同一组网卡每次跑出来顺序一样，判据才能逐字节比）。
-    cands.sort_by_key(|a| match a.ip() {
-        IpAddr::V4(v4) => (0u8, u32::from(v4) as u128),
-        IpAddr::V6(v6) => (1u8, u128::from(v6)),
-    });
-    cands.dedup();
-    cands
-        .into_iter()
-        .take(MAX_QUIC_ADDRS)
-        .map(|a| a.to_string())
-        .collect()
+    // mesh 已有的"真实网卡优先"排序（纯函数、只读；不改它的口径）。
+    let ranked = crate::mesh::rank_named_addrs(&filtered);
+    // IPv4 全部在前（保持各自在 ranked 里的相对顺序），随后才是 IPv6。
+    let mut ips: Vec<IpAddr> = Vec::with_capacity(ranked.len());
+    ips.extend(
+        ranked
+            .iter()
+            .filter(|(_, ip)| matches!(ip, IpAddr::V4(_)))
+            .map(|(_, ip)| *ip),
+    );
+    ips.extend(
+        ranked
+            .iter()
+            .filter(|(_, ip)| matches!(ip, IpAddr::V6(_)))
+            .map(|(_, ip)| *ip),
+    );
+    let mut out: Vec<String> = Vec::with_capacity(ips.len());
+    for ip in ips {
+        let addr = SocketAddr::new(ip, udp_port).to_string();
+        if out.contains(&addr) {
+            continue;
+        }
+        out.push(addr);
+        if out.len() == MAX_QUIC_ADDRS {
+            break;
+        }
+    }
+    out
 }
 
 /// **IPv6 link-local（fe80::/10）⇒ 排除**：`if-addrs` 只给 `IpAddr`（**没有 scope id**），
@@ -413,12 +444,13 @@ pub async fn local_quic_addrs() -> Vec<String> {
         );
         return Vec::new();
     };
-    let local_ips = crate::mesh::local_addrs();
-    if local_ips.is_empty() {
+    // ⭐ 用**带网卡名**的排序入口（真实网卡在 WSL/utun 等虚拟网卡前；mesh 的既有口径）。
+    let local_addrs = crate::mesh::ranked_local_addrs_named();
+    if local_addrs.is_empty() {
         eprintln!("{}", quic_announce_log_line("枚举不到本机网卡地址"));
         return Vec::new();
     }
-    announce_quic_addrs(&local_ips, port)
+    announce_quic_addrs_named(&local_addrs, port)
 }
 
 /// 32 字节 → 64 位小写 hex（与公告/路线表的 `node_id` 同一形状；不引新依赖）。
@@ -1201,6 +1233,56 @@ mod tests {
             capped.iter().skip(3).all(|s| s.starts_with('[')),
             "IPv4 之后才是 IPv6：{capped:?}"
         );
+    }
+
+    /// ⭐ P3-2a 地址质量第二刀：**带网卡名**的公告地址 —— 真实 WLAN 排第一、虚拟网卡靠后、
+    /// 同族内按 mesh 的 `lan_rank_key`、IPv4 全在 IPv6 前。
+    #[test]
+    fn announce_quic_addrs_named_puts_the_real_wlan_before_virtual_adapters() {
+        let ip = |s: &str| -> IpAddr { s.parse().unwrap() };
+        let locals: Vec<(String, IpAddr)> = vec![
+            ("vEthernet (WSL)".to_string(), ip("172.18.224.1")),
+            ("en0".to_string(), ip("192.168.43.190")),
+            ("utun3".to_string(), ip("10.128.166.117")),
+            ("en0".to_string(), ip("fe80::1")), // link-local ⇒ 过滤
+            ("en0".to_string(), ip("2001:db8::1")),
+            ("lo0".to_string(), ip("127.0.0.1")), // 回环 ⇒ 过滤
+            ("any".to_string(), ip("0.0.0.0")),   // 通配 ⇒ 过滤
+        ];
+        let got = announce_quic_addrs_named(&locals, 47831);
+        assert_eq!(
+            got,
+            vec![
+                "192.168.43.190:47831".to_string(),
+                "10.128.166.117:47831".to_string(),
+                "172.18.224.1:47831".to_string(),
+                "[2001:db8::1]:47831".to_string(),
+            ],
+            "真实 WLAN 第一；虚拟 IPv4 靠后；全局 IPv6 最后；link-local/回环/通配被过滤"
+        );
+        assert!(
+            parse_quic_addrs(&got).is_ok(),
+            "公告发出去的格式必须能被消费侧解析：{got:?}"
+        );
+        // 去重/端口 0/上限与无名字版同一口径。
+        let dup = vec![
+            ("en0".to_string(), ip("192.168.43.190")),
+            ("en0".to_string(), ip("192.168.43.190")),
+        ];
+        assert_eq!(announce_quic_addrs_named(&dup, 1).len(), 1, "按 IP 去重");
+        assert!(
+            announce_quic_addrs_named(&locals, 0).is_empty(),
+            "端口 0 ⇒ 空"
+        );
+        let many: Vec<(String, IpAddr)> = (1..=10)
+            .map(|i| {
+                (
+                    format!("en{i}"),
+                    IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, i)),
+                )
+            })
+            .collect();
+        assert_eq!(announce_quic_addrs_named(&many, 1).len(), MAX_QUIC_ADDRS);
     }
 
     #[test]
