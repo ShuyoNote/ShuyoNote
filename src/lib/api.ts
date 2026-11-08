@@ -548,6 +548,12 @@ export const api = {
    * `lastRound` 只有计数、已脱敏）。⛔ 本命令没有任何写操作/开关。
    */
   syncCoreStatus: () => invoke("sync_core_status") as Promise<SyncCoreStatus>,
+  /**
+   * ⭐ **P3-1a 第五刀（task-58）**：runtime 开关（桌面 App 按网络闸门/同步方式启停 Core）。
+   * ⚠️ 命令本身只改内存里的开关、不写库；失败（老内核/Web）⇒ 调用方回落前端定时器。
+   */
+  syncCoreSetEnabled: (enabled: boolean) =>
+    invoke("sync_core_set_enabled", { enabled }) as Promise<SyncCoreStatus>,
   syncWorkspace: async (wsId: string) => {
     const r = await invoke("sync_workspace", { wsId });
     emitSyncCompleted(r ? [r] : []);

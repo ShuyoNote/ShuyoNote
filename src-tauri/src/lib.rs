@@ -1313,6 +1313,7 @@ pub fn run() {
             sync::sync_workspace,
             sync::sync_core_round,
             sync_core::sync_core_status,
+            sync_core::sync_core_set_enabled,
             // 冲刺 CRDT S9（2026-09-23）：**血统 claim** —— 桌面侧与 web 侧同端点
             // （`POST /sync/lineage-claim`）、同口径。接上它之后这条命令才不是"web 专属"
             // （`scripts/check-web-commands.mjs` 的 `WEB_ONLY_COMMANDS` 已相应撤回）。

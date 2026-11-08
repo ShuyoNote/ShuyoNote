@@ -82,6 +82,8 @@ import { useExternalDrafts } from "./hooks/useExternalDrafts";
 import { useMcpFrontendTools } from "./hooks/useMcpFrontendTools";
 import { AUTO_SYNC_CHANGED_EVENT, effectiveAutoSyncMs, setLanMeshActive } from "./lib/syncMode";
 import { shouldAutoSyncNow } from "./lib/syncGate";
+// ⭐ P3-1a 第五刀（task-58）：**自动同步走 Core 还是前端定时器**的纯决策（唯一实现）。
+import { shouldEnableRustCore } from "./lib/syncCoreMode";
 // 空闲退避（2026-09-30）：自动同步那一轮的节拍判据（纯函数；三条口径与"兜底"都在那里 ✓）
 import {
   decideHiddenTick,
@@ -789,6 +791,9 @@ function NoteEditor({ pageId }: { pageId: string }) {
   //   从来没人动过下拉框的机器上，间隔那个键一个字都没写(=0) ⇒ 读裸值会让定时器**不挂**，
   //   而面板显示的是「近实时」＋承诺"连不上时退回每 5 分钟兜底一次"（真机实测抓到的口径不一致）。
   const [autoSyncMs, setAutoSyncMs] = useState(() => effectiveAutoSyncMs());
+  // ⭐ P3-1a 第五刀（task-58）：**Rust Core 是否接管自动节拍**。true ⇒ 下面**不排**前端 setTimeout；
+  //   false（移动端/闸门拒绝/间隔 0/老内核没有该命令）⇒ 回退今天的前端定时器。
+  const [coreActive, setCoreActive] = useState(false);
   // 面板改了「同步方式」⇒ 它会广播（`writeAutoSyncMs` / `broadcastAutoSyncChanged`）⇒ 这里跟一下，
   // 定时器才会按新档位重挂。
   // ⚠️ 没有这一步的话：面板改档 → App 不重渲染 → 定时器还按**老**间隔跑（"我选了按间隔，可它没动"）。
@@ -797,7 +802,54 @@ function NoteEditor({ pageId }: { pageId: string }) {
     window.addEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
     return () => window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
   }, []);
+  // ⭐ **P3-1a 第五刀（task-58）**：按「桌面/移动端 ＋ 间隔 ＋ 网络闸门」评估由谁跑节拍。
+  //   · 桌面 ＋ 闸门放行 ＋ 间隔>0 ⇒ `sync_core_set_enabled(true)`（懒启动 Rust 调度器）；
+  //   · 移动端 / 闸门拒绝 / 间隔 0 / 老内核没有该命令 ⇒ `false` ⇒ **回退前端定时器**（行为同今天）。
+  //   ⚠️ 评估时点：mount、online/offline、visibilitychange、同步方式变化（AUTO_SYNC_CHANGED_EVENT）。
+  //   ⚠️ 闸门日志仍由 `shouldAutoSyncNow()` 那一处打印；本 effect 只**读**结果，不新增第二条判断。
   useEffect(() => {
+    const desktop = isDesktopPlatform();
+    let cancelled = false;
+    const evaluate = async () => {
+      if (!desktop || autoSyncMs <= 0) {
+        if (!cancelled) setCoreActive(false);
+        if (desktop) void api.syncCoreSetEnabled(false).catch(() => {});
+        return;
+      }
+      const gateAllowed = await shouldAutoSyncNow();
+      if (cancelled) return;
+      const wantCore = shouldEnableRustCore({ isDesktop: desktop, autoSyncMs, gateAllowed });
+      let active = false;
+      try {
+        const st = await api.syncCoreSetEnabled(wantCore);
+        // 只有"要开 ＋ 命令回报有效开关为真"才算 Core 接管（老内核/Web 会回落 timer）。
+        active = wantCore && st?.enabled === true;
+      } catch {
+        active = false;
+      }
+      if (!cancelled) setCoreActive(active);
+    };
+    void evaluate();
+    const onAny = () => void evaluate();
+    window.addEventListener("online", onAny);
+    window.addEventListener("offline", onAny);
+    window.addEventListener(AUTO_SYNC_CHANGED_EVENT, onAny);
+    document.addEventListener("visibilitychange", onAny);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("online", onAny);
+      window.removeEventListener("offline", onAny);
+      window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, onAny);
+      document.removeEventListener("visibilitychange", onAny);
+      // 卸载/换档时把 Core 关掉（前端定时器会由下面那个 effect 重新按需挂上）。
+      if (desktop) void api.syncCoreSetEnabled(false).catch(() => {});
+    };
+  }, [autoSyncMs]);
+
+  useEffect(() => {
+    // ⭐ task-58：**Core 接管时不排前端 setTimeout 循环**（否则同一节拍双发）；
+    //   编辑触发仍走 `requestAutoSyncRound`（命令路径），不受这里影响。
+    if (coreActive) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
     // ★ 用户**换档**（或本 effect 重挂）⇒ 退避清零：他刚表达过"我要这个节拍"，
@@ -856,7 +908,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
       document.removeEventListener("visibilitychange", onVisibility);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, loadPages, autoSyncMs]);
+  }, [api, loadPages, autoSyncMs, coreActive]);
 
   /**
    * ★ 2026-09-29（本笔）：**正文上传触发** —— 「编辑器改了 ⇒ 防抖 ⇒ 立刻上传」。

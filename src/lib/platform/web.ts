@@ -3402,7 +3402,12 @@ export function makeInvoke(store: SqliteStore) {
     if (cmd === "network_type") return "n/a" as T;
     if (cmd === "sync_core_status") {
       // ⭐ P3-1a 第四刀：Web 没有 Rust 调度器 ⇒ 恒 disabled/not running、无上一轮（⛔ 不假装）。
-      return { enabled: false, running: false, lastRound: null } as T;
+      return { enabled: false, runtimeEnabled: false, running: false, lastRound: null } as T;
+    }
+    if (cmd === "sync_core_set_enabled") {
+      // ⭐ P3-1a 第五刀：Web 没有 Rust 调度器 ⇒ 开关恒无效、恒 disabled/not running；
+      //   App 会因 `enabled=false` 回落前端定时器（⛔ 不假装开了）。
+      return { enabled: false, runtimeEnabled: false, running: false, lastRound: null } as T;
     }
     if (cmd === "sync_core_round") {
       // ⭐ P3-1a 第二刀（task-54）：Web 形态没有网格发现层 ⇒ mesh 恒空；服务端那支按

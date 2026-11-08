@@ -6,6 +6,7 @@ import type { SyncCoreStatus } from "../lib/api";
 
 const status = (patch: Partial<SyncCoreStatus>): SyncCoreStatus => ({
   enabled: false,
+  runtimeEnabled: false,
   running: false,
   lastRound: null,
   ...patch,

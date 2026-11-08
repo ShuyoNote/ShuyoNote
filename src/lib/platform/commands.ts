@@ -379,7 +379,10 @@ export interface SyncCoreRoundEvent {
 
 /** ⭐ 只读状态读数（Rust `sync_core::SyncCoreStatus`；默认 `enabled/running=false`）。 */
 export interface SyncCoreStatus {
+  /** 有效开关（env OR runtime）。 */
   enabled: boolean;
+  /** ⭐ task-58：runtime 开关（App 按闸门启停 Core 用的那个位；默认 false）。 */
+  runtimeEnabled: boolean;
   running: boolean;
   /** 最近一轮（没有 ⇒ null；⛔ 不编造）。 */
   lastRound: SyncCoreRoundEvent | null;
@@ -1681,6 +1684,8 @@ export interface CommandMap {
   sync_core_round: { args: undefined; result: SyncCoreRoundReport };
   /** ⭐ P3-1a 第四刀：只读状态（enabled/running/lastRound；脱敏；不新增写操作）。 */
   sync_core_status: { args: undefined; result: SyncCoreStatus };
+  /** ⭐ P3-1a 第五刀：runtime 开关（桌面 App 按闸门启停 Core；返回最新状态）。 */
+  sync_core_set_enabled: { args: { enabled: boolean }; result: SyncCoreStatus };
   /** C1 预算刹车（2026-09-15）：设备级设置，存 `meta.sync_state` 的 KV。 */
   get_sync_budget: { args: undefined; result: SyncBudget };
   /** ⚠️ 回显的是**夹取后**的值（磁盘余量下限不可关：传 0 会回 256）⇒ 界面要用返回值纠正自己。 */

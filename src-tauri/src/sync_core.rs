@@ -28,6 +28,14 @@ pub const EMPTY_BACKOFF_MS: u64 = 60_000;
 
 /// 调度器是否在跑（默认 false；`start_if_enabled` 真的起了任务才 true）。
 static RUNNING: AtomicBool = AtomicBool::new(false);
+/// ⭐ **P3-1a 第五刀（task-58）**：**runtime 开关**（命令面 `sync_core_set_enabled` 控；默认 false）。
+static RUNTIME_ENABLED: AtomicBool = AtomicBool::new(false);
+/// 关掉时唤醒睡眠中的调度循环 ⇒ **下一轮立刻不跑**（当前轮可跑完）。
+static WAKE: std::sync::OnceLock<tokio::sync::Notify> = std::sync::OnceLock::new();
+
+fn wake() -> &'static tokio::sync::Notify {
+    WAKE.get_or_init(tokio::sync::Notify::new)
+}
 /// 最近一轮的脱敏汇总（给调试/判据读；不落盘、不含正文）。
 static LAST_ROUND: Mutex<Option<SyncCoreRoundEvent>> = Mutex::new(None);
 
@@ -43,6 +51,30 @@ pub fn enabled_from_env_value(value: Option<&str>) -> bool {
 /// 读进程环境变量（唯一读点）。
 pub fn enabled_from_env() -> bool {
     enabled_from_env_value(std::env::var(ENV_SYNC_CORE).ok().as_deref())
+}
+
+/// ⭐ runtime 开关（默认 false；命令面设置）。
+pub fn runtime_enabled() -> bool {
+    RUNTIME_ENABLED.load(Ordering::SeqCst)
+}
+
+/// ⭐ **有效开关**：`env OR runtime`（env=1 仍强制开启；runtime 是桌面 App 默认走的那条）。
+pub fn enabled_now() -> bool {
+    enabled_from_env() || runtime_enabled()
+}
+
+/// ⭐ **P3-1a 第五刀（task-58）**：runtime 开关（命令体唯一入口）——设置后立即返回状态快照。
+///
+/// * `enabled=true`：置位；**任务没起就懒启动一次**（已跑 ⇒ 不重复起）；
+/// * `enabled=false`：清位 ＋ **唤醒睡眠**（下一轮检查到关闭就退出循环，当前轮可跑完）。
+pub fn set_runtime_enabled(app: &tauri::AppHandle, enabled: bool) -> SyncCoreStatus {
+    RUNTIME_ENABLED.store(enabled, Ordering::SeqCst);
+    if enabled {
+        start_loop(app.clone());
+    } else {
+        wake().notify_waiters();
+    }
+    snapshot()
 }
 
 /// ⭐ 纯函数：本轮到底要不要跑（关闭/暂停 ⇒ 不跑）。
@@ -97,8 +129,10 @@ pub struct SyncCoreRoundEvent {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncCoreStatus {
-    /// env 门控值（`SHUYONOTE_SYNC_CORE` 是否为 1/true/on；**默认 false**）。
+    /// **有效**开关（`env OR runtime`；默认 false）。
     pub enabled: bool,
+    /// ⭐ task-58：runtime 开关（命令面；默认 false）。
+    pub runtime_enabled: bool,
     /// 调度任务是否真的在跑（默认 false）。
     pub running: bool,
     /// 最近一轮的脱敏汇总（没有 ⇒ null）。
@@ -108,7 +142,8 @@ pub struct SyncCoreStatus {
 /// ⭐ 纯函数：读一次状态快照（命令只委托它，判据够得着）。
 pub fn snapshot() -> SyncCoreStatus {
     SyncCoreStatus {
-        enabled: enabled_from_env(),
+        enabled: enabled_now(),
+        runtime_enabled: runtime_enabled(),
         running: running(),
         last_round: last_round(),
     }
@@ -118,6 +153,13 @@ pub fn snapshot() -> SyncCoreStatus {
 #[tauri::command]
 pub fn sync_core_status() -> SyncCoreStatus {
     snapshot()
+}
+
+/// ⭐ **P3-1a 第五刀（task-58）**：runtime 开关（桌面 App 默认用它按闸门启停 Core；
+/// 移动端/闸门拒绝时 App 会把它关掉并回退前端定时器）。**不新增任何写库操作**。
+#[tauri::command]
+pub fn sync_core_set_enabled(app: tauri::AppHandle, enabled: bool) -> SyncCoreStatus {
+    set_runtime_enabled(&app, enabled)
 }
 
 /// ⭐ 纯函数：汇总 → 事件载荷（脱敏）。
@@ -151,22 +193,33 @@ pub fn last_round() -> Option<SyncCoreRoundEvent> {
 ///
 /// ⚠️ **默认行为零变化**：env 缺省 ⇒ 第一行就返回（不起任务、不碰 app/DB、不发事件）。
 pub fn start_if_enabled(app: &tauri::AppHandle) {
-    if !enabled_from_env() {
+    if !enabled_now() {
         eprintln!(
-            "[sync-core] 未启用（{ENV_SYNC_CORE} 不是 1/true/on）⇒ 不启动调度器（默认行为不变）"
+            "[sync-core] 未启用（{ENV_SYNC_CORE} 不是 1/true/on 且 runtime 未开）⇒ 不启动调度器（默认行为不变）"
         );
         return;
     }
+    start_loop(app.clone());
+}
+
+/// ⭐ **懒启动的唯一实现**：`RUNNING.swap` 保证**不重复起**任务；循环第一件事检查有效开关，
+/// 被关掉就退出（`sync_core_set_enabled(false)` 还会 `wake()` 把它从睡眠里叫醒）。
+fn start_loop(app: tauri::AppHandle) {
     if RUNNING.swap(true, Ordering::SeqCst) {
         return; // 已经起过
     }
     eprintln!(
         "[sync-core] 已启用：有变化 {BASE_INTERVAL_MS}ms / 空转退避上限 {EMPTY_BACKOFF_MS}ms"
     );
-    let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut empty_streak: u32 = 0;
         loop {
+            // ⭐ task-58：被 runtime 关掉 ⇒ **下一轮立刻不跑**并退出循环（当前轮已跑完）。
+            if !enabled_now() {
+                RUNNING.store(false, Ordering::SeqCst);
+                eprintln!("[sync-core] 已关闭（runtime/env 都关）⇒ 调度循环退出（当前轮已跑完）");
+                break;
+            }
             let result = match app.try_state::<crate::db::Db>() {
                 Some(db) => sync_core_round_inner(&app, &db).await,
                 None => Err("Db 还没托管（这一轮跳过）".to_string()),
@@ -193,13 +246,19 @@ pub fn start_if_enabled(app: &tauri::AppHandle) {
                 if let Err(e) = app.emit("sync-core-round", &ev) {
                     eprintln!("[sync-core] emit sync-core-round 失败（不影响下一轮）：{e}");
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                // 关闭时会 `wake()` ⇒ 不用等满退避就能退出（下一轮顶部检查开关）。
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(delay)) => {}
+                    _ = wake().notified() => {}
+                }
             } else {
-                tokio::time::sleep(std::time::Duration::from_millis(next_delay_ms(
-                    empty_streak,
-                    false,
-                )))
-                .await;
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(next_delay_ms(
+                        empty_streak,
+                        false,
+                    ))) => {}
+                    _ = wake().notified() => {}
+                }
             }
         }
     });
@@ -367,11 +426,16 @@ mod tests {
         );
     }
 
+    /// 全局 runtime 开关是进程级的 ⇒ 会改它的判据必须串行（并行会让 status 判据偶发红）。
+    static RUNTIME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn status_shape_is_sanitized_and_defaults_to_not_running() {
+        let _g = RUNTIME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let st = snapshot();
-        // `enabled` 只由 env 决定（判据不依赖外部 env 的具体值，只要求与纯函数一致）。
-        assert_eq!(st.enabled, enabled_from_env());
+        // `enabled` = env OR runtime（判据不依赖外部 env 的具体值，只要求与纯函数一致）。
+        assert_eq!(st.enabled, enabled_from_env() || runtime_enabled());
+        assert_eq!(st.runtime_enabled, runtime_enabled());
         // 测试进程里没启动调度器 ⇒ running=false（默认关闭的又一条读数）。
         assert!(!st.running, "测试进程没有启动调度器 ⇒ running 必须 false");
         assert!(
@@ -379,7 +443,12 @@ mod tests {
             "没跑过 ⇒ lastRound=null（⛔ 不编造）"
         );
         let json = serde_json::to_string(&st).unwrap();
-        for key in ["\"enabled\":", "\"running\":", "\"lastRound\":null"] {
+        for key in [
+            "\"enabled\":",
+            "\"runtimeEnabled\":",
+            "\"running\":",
+            "\"lastRound\":null",
+        ] {
             assert!(json.contains(key), "status 字段形状：{json}");
         }
         // 脱敏：状态里不许出现空间名/正文/路径/hash 一类内容。
@@ -393,6 +462,7 @@ mod tests {
 
     #[test]
     fn last_round_event_can_be_reported_without_leaking_ids() {
+        let _g = RUNTIME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // 直接构造事件（与调度器写入 LAST_ROUND 的形状相同）。
         let ev = round_event(
             &SyncCoreRoundReport {
@@ -438,6 +508,67 @@ mod tests {
                 !body.contains(forbidden),
                 "状态命令必须是只读：不许 {forbidden}"
             );
+        }
+    }
+
+    #[test]
+    fn runtime_toggle_is_idempotent_and_reflected_in_status() {
+        let _g = RUNTIME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let before = runtime_enabled();
+        // 默认 false（进程里从没开过）。
+        if !enabled_from_env() {
+            assert!(
+                !runtime_enabled(),
+                "默认 runtime=false（Core 由 env 或 App 显式开）"
+            );
+        }
+        // 开 ⇒ status 立刻反映（enabled 是 env OR runtime；runtimeEnabled 是原值）。
+        RUNTIME_ENABLED.store(true, Ordering::SeqCst);
+        let on = snapshot();
+        assert!(on.runtime_enabled);
+        assert!(on.enabled);
+        // 幂等：再置一次还是 true，不炸。
+        RUNTIME_ENABLED.store(true, Ordering::SeqCst);
+        assert!(runtime_enabled());
+        // 关 ⇒ 下一轮不跑（有效开关在 env 也关时变 false）。
+        RUNTIME_ENABLED.store(false, Ordering::SeqCst);
+        assert!(!runtime_enabled());
+        assert_eq!(snapshot().enabled, enabled_from_env());
+        RUNTIME_ENABLED.store(before, Ordering::SeqCst);
+    }
+
+    /// 源码级：命令已注册、开关走同一个 runtime 位、true 时**懒启动且不重复起**、false 时唤醒退出。
+    #[test]
+    fn runtime_enable_command_lazily_starts_and_disable_wakes_the_loop() {
+        let src = include_str!("sync_core.rs");
+        let lib = include_str!("lib.rs");
+        assert!(
+            lib.contains("sync_core::sync_core_set_enabled,"),
+            "`sync_core_set_enabled` 必须注册进 generate_handler!"
+        );
+        // 有效开关 = env OR runtime（默认关闭仍成立）。
+        assert!(
+            src.contains("enabled_from_env() || runtime_enabled()"),
+            "有效开关必须是 env OR runtime"
+        );
+        // true ⇒ 懒启动（唯一实现 start_loop，RUNNING.swap 防重复）。
+        assert!(src.contains("pub fn set_runtime_enabled("));
+        assert!(src.contains("start_loop(app.clone())"));
+        assert!(src.contains("if RUNNING.swap(true, Ordering::SeqCst)"));
+        // false ⇒ 唤醒；循环顶部检查开关并退出（当前轮可跑完）。
+        assert!(src.contains("wake().notify_waiters()"));
+        assert!(src.contains("if !enabled_now() {"));
+        assert!(src.contains("调度循环退出"));
+        // 命令体只调 set_runtime_enabled（⛔ 不另写一份启动/停止逻辑）。
+        let cmd = src
+            .split("pub fn sync_core_set_enabled(")
+            .nth(1)
+            .expect("sync_core_set_enabled 必须在");
+        let body = &cmd[..cmd.find("\n}").unwrap_or(cmd.len())];
+        assert!(body.contains("set_runtime_enabled(&app, enabled)"));
+        // ⛔ 不写库/不动 sync_state。
+        for forbidden in ["set_meta_state", "write", "save", "delete"] {
+            assert!(!body.contains(forbidden), "开关命令不许写数据：{forbidden}");
         }
     }
 }
