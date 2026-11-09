@@ -1392,6 +1392,7 @@ mod quic_single_process_e2e_tests {
     use iroh::SecretKey;
     use std::sync::Arc;
     use std::time::Duration;
+    use tokio::io::AsyncReadExt;
 
     fn ipv4_port(ep: &LanQuicEndpoint) -> u16 {
         ep.local_addrs()
@@ -1468,6 +1469,74 @@ mod quic_single_process_e2e_tests {
         assert_eq!(
             seen_rx.await.expect("服务端必须收到请求"),
             "/mesh/manifest?space_id=e2e",
+            "服务端看到的 target 必须原样"
+        );
+        server_task.abort();
+    }
+
+    /// ⭐ **2026-11-09（附件也走直连）**：`get_stream` 从**生产入口**走一次真 QUIC，
+    /// 且字节**逐字节**不变（用非 UTF-8 字节，证明走的不是 `get` 的字符串路径）。
+    ///
+    /// 判据形状同 `get` 那条：真 QUIC 服务端回二进制，`peer.base` 不可达
+    /// ⇒ 读到这些字节只可能来自 QUIC；服务端确认 target 原样。
+    #[tokio::test]
+    async fn a_stream_from_endpoint_for_peer_carries_binary_bytes_via_quic() {
+        let _serial = super::test_registry_lock().lock().await;
+        test_override_registry(test_shared_registry());
+
+        const BINARY: &[u8] = &[0x00, 0x9F, 0x92, 0x96, 0xFF, 0x41, 0x42]; // 含非 UTF-8
+        let server = bind_direct(SecretKey::generate())
+            .await
+            .expect("本地 QUIC 服务端");
+        let port = ipv4_port(&server);
+        let node_hex = server.node_id_hex();
+        let payload = BINARY.to_vec();
+        let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+        let server_task = tokio::spawn(async move {
+            let Some(incoming) = server.accept().await else {
+                panic!("端点已关，接不到连接");
+            };
+            let conn = incoming.await.expect("QUIC 握手");
+            let (mut send, mut recv) = conn.accept_bi().await.expect("接流");
+            let req = read_request(&mut recv).await.expect("读请求");
+            let target = req.target.clone();
+            write_reply(
+                &mut send,
+                &TunnelReply {
+                    status: 200,
+                    body: payload,
+                },
+            )
+            .await
+            .expect("写应答");
+            send.finish().expect("收流");
+            let _ = seen_tx.send(target);
+            let _ = conn.closed().await;
+        });
+
+        let peer = crate::mesh::MeshPeer {
+            device_id: "dev-e2e-stream".to_string(),
+            base: "http://127.0.0.1:1".to_string(),
+            quic_addrs: vec![format!("127.0.0.1:{port}")],
+            node_id: node_hex,
+        };
+        let ep = endpoint_for_peer(&peer, reqwest::Client::new())
+            .await
+            .expect("原料齐全 ⇒ 必须构造出 QUIC 复合端点");
+        let (status, mut body) = tokio::time::timeout(
+            Duration::from_secs(30),
+            ep.get_stream("/mesh/attachment?space_id=e2e&hash=abc", None, None),
+        )
+        .await
+        .expect("30 秒内必须完成（同机 QUIC）")
+        .expect("HTTP fallback 不可达 ⇒ 成功只能来自 QUIC");
+        assert_eq!(status, 200, "状态来自 QUIC 服务端");
+        let mut got = Vec::new();
+        body.read_to_end(&mut got).await.expect("读流");
+        assert_eq!(got, BINARY, "附件字节必须逐字节不变（含非 UTF-8 字节）");
+        assert_eq!(
+            seen_rx.await.expect("服务端必须收到请求"),
+            "/mesh/attachment?space_id=e2e&hash=abc",
             "服务端看到的 target 必须原样"
         );
         server_task.abort();
