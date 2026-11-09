@@ -407,7 +407,8 @@ async fn relay_endpoint_for(
 ///
 /// * `get`：`GET target` → `TunnelRequest`（三格鉴权头 ＋ `authorization: Bearer …` 与 `LanEndpoint` 同形）
 ///   → `registry.request(peer, …)`（**复用缓存连接**）→ [`HttpReply`]（状态/体逐字语义与 LanEndpoint 对齐）；
-/// * `get_stream`：**不覆写** ⇒ 用 trait 默认实现（明确回"这个端点不支持流式"；附件流式是后续步骤）。
+/// * `get_stream`：**先 QUIC（隧道整包缓冲成流，2026-11-09）**，失败/不支持再 HTTP fallback
+///   （附件字节因此也走直连隧道；`relay_tunnel::MAX_BODY_BYTES` 上限内的件都支持）。
 ///
 /// ⚠️ 它**不拥有** Registry（`Arc` 共享）：一进程一端点由持有 Registry 的接线方保证。
 // ⚠️ **P3-2a 接线后**：`lan-quic` 非 relay 构建已由 `endpoint_for_peer` 真正使用 ⇒ 那档**没有 allow**；
@@ -461,6 +462,50 @@ impl Endpoint for QuicMeshEndpoint {
             })
         })
     }
+
+    /// ⭐ **2026-11-09（附件也走直连）**：QUIC 隧道帧支持 64MB 正文
+    /// （`relay_tunnel::MAX_BODY_BYTES`）⇒ 这里把**整包缓冲**成一条单向流
+    /// （⛔ 不是真流式；非 2xx / 超上限 ⇒ Err，由组合器回退 HTTP）。
+    /// 鉴权与 `get` 同形：三格头 ＋ `authorization: Bearer …`（与 `LanEndpoint` 同一套）。
+    fn get_stream<'a>(
+        &'a self,
+        target: &'a str,
+        auth: Option<(&'a str, i64, &'a str)>,
+        token: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<(u16, AttachmentBody), String>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut req = crate::relay_tunnel::TunnelRequest::new("GET", target);
+            if let Some((device_id, ts, sig)) = auth {
+                req = req
+                    .with_header(crate::mesh::HDR_DEVICE, device_id)
+                    .with_header(crate::mesh::HDR_TS, &ts.to_string())
+                    .with_header(crate::mesh::HDR_SIG, sig);
+            }
+            if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
+                req = req.with_header("authorization", &format!("Bearer {t}"));
+            }
+            let reply = self
+                .registry
+                .request(self.peer.clone(), &req)
+                .await
+                .map_err(|e| format!("QUIC 附件请求失败：{e}"))?;
+            if reply.status != 200 && reply.status != 206 {
+                return Err(format!(
+                    "QUIC 附件请求 HTTP {}（body={} B）",
+                    reply.status,
+                    reply.body.len()
+                ));
+            }
+            let (mut writer, reader) = tokio::io::duplex(64 * 1024);
+            let body = reply.body;
+            tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt;
+                let _ = writer.write_all(&body).await;
+                let _ = writer.shutdown().await;
+            });
+            Ok((reply.status, Box::pin(reader) as AttachmentBody))
+        })
+    }
 }
 
 /// ⭐ **P3-2a 工厂**：给定**已带原料**的 `MeshPeer` ＋ 已有 Registry ⇒ 一个 QUIC `Endpoint`。
@@ -487,7 +532,7 @@ pub async fn quic_endpoint_for(
 /// 语义（本笔只做组合，⛔ 不改 `endpoint_for_peer` 选路）：
 /// * `get`：先 `first.get` —— **成功就直接回**（⛔ 不重复请求、⛔ 不碰 HTTP）；
 ///   失败 ⇒ 打**一行**可读日志（只含 target 与原因；⛔ 不含 token/签名）→ `fallback.get`；
-/// * `get_stream`：**直接走 HTTP fallback**（QUIC 适配器明确不支持流式；本笔不做 QUIC 流式）；
+/// * `get_stream`：**先 QUIC（隧道整包缓冲成流）**，失败/不支持再 HTTP fallback（2026-11-09）；
 /// * `first` 抽象成 `Box<dyn Endpoint + Send>` ⇒ 测试可塞假端点，生产可塞 [`QuicMeshEndpoint`]。
 ///
 /// ⚠️ **P3-2a 接线后**：`lan-quic` 非 relay 构建由 `endpoint_for_peer` 使用 ⇒ 那档无 allow；
@@ -549,8 +594,23 @@ impl Endpoint for QuicThenHttpEndpoint {
         auth: Option<(&'a str, i64, &'a str)>,
         token: Option<&'a str>,
     ) -> Pin<Box<dyn Future<Output = Result<(u16, AttachmentBody), String>> + Send + 'a>> {
-        // 流式一律走 HTTP fallback（⛔ 不先试 QUIC —— 那会白建一条连接又失败）。
-        self.fallback.get_stream(target, auth, token)
+        // ⭐ 2026-11-09（附件也走直连）：先 QUIC（隧道整包缓冲），失败再 HTTP ——
+        // 与 `get` 同一条组合语义（成功不重复请求；失败才打一行日志）。
+        Box::pin(async move {
+            let started = std::time::Instant::now();
+            match self.first.get_stream(target, auth, token).await {
+                Ok(pair) => Ok(pair),
+                // 适配器明确"不支持流式" ⇒ 正常回退，不当作故障打日志。
+                Err(why) if why.contains("不支持流式") => {
+                    self.fallback.get_stream(target, auth, token).await
+                }
+                Err(why) => {
+                    let why = format!("{why}（QUIC 尝试耗时 {}ms）", started.elapsed().as_millis());
+                    eprintln!("{}", fallback_log_line(target, &why));
+                    self.fallback.get_stream(target, auth, token).await
+                }
+            }
+        })
     }
 }
 
@@ -776,7 +836,8 @@ mod quic_endpoint_tests {
 /// ⭐ **P3-2a：`QuicThenHttpEndpoint` 回退组合器判据**（只在 `--features lan-quic` 下编）。
 ///
 /// 用**假首端点**（计数/固定结果）＋ **最小本地 HTTP 服务**（计数/固定应答），不建真实 QUIC。
-/// 只验四件事：成功不碰 HTTP、失败正好回退一次、`get_stream` 走 HTTP、日志行形状不泄密。
+/// 只验五件事：成功不碰 HTTP、失败正好回退一次、`get_stream` 首端点优先/不支持时回退、
+/// 日志行形状不泄密。
 #[cfg(all(test, feature = "lan-quic"))]
 mod quic_fallback_tests {
     use super::*;
@@ -789,6 +850,9 @@ mod quic_fallback_tests {
     struct FakeEndpoint {
         calls: Arc<AtomicUsize>,
         result: Result<HttpReply, String>,
+        /// `get_stream` 的结果：`Some(Ok(body))` ⇒ 支持流式；`Some(Err)` ⇒ 指定的失败；
+        /// `None` ⇒ 用 trait 默认实现（"不支持流式"）。
+        stream: Option<Result<&'static str, String>>,
     }
 
     impl Endpoint for FakeEndpoint {
@@ -803,6 +867,35 @@ mod quic_fallback_tests {
             Box::pin(async move {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 self.result.clone()
+            })
+        }
+
+        fn get_stream<'a>(
+            &'a self,
+            _target: &'a str,
+            _auth: Option<(&'a str, i64, &'a str)>,
+            _token: Option<&'a str>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<(u16, AttachmentBody), String>> + Send + 'a,
+            >,
+        > {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                match &self.stream {
+                    None => Err("这个端点不支持流式（附件暂不能走它）".to_string()),
+                    Some(Err(e)) => Err(e.clone()),
+                    Some(Ok(body)) => {
+                        let (mut writer, reader) = tokio::io::duplex(64 * 1024);
+                        let bytes = body.as_bytes().to_vec();
+                        tokio::spawn(async move {
+                            use tokio::io::AsyncWriteExt;
+                            let _ = writer.write_all(&bytes).await;
+                            let _ = writer.shutdown().await;
+                        });
+                        Ok((200, Box::pin(reader) as AttachmentBody))
+                    }
+                }
             })
         }
     }
@@ -859,6 +952,7 @@ mod quic_fallback_tests {
                 status: 200,
                 body: "QUIC-BODY".to_string(),
             }),
+            stream: None,
         };
         let ep = QuicThenHttpEndpoint::with_http_fallback(
             Box::new(first),
@@ -898,6 +992,7 @@ mod quic_fallback_tests {
         let first = FakeEndpoint {
             calls: Arc::clone(&calls),
             result: Err("假 QUIC 失败：连接被拒绝".to_string()),
+            stream: None,
         };
         let ep = QuicThenHttpEndpoint::with_http_fallback(
             Box::new(first),
@@ -942,9 +1037,9 @@ mod quic_fallback_tests {
         http.task.abort();
     }
 
-    /// ④ `get_stream` **直接走 HTTP**（⛔ 不先试 QUIC），状态与字节内容都来自 fallback。
+    /// ④ `get_stream`：首端点**支持流式**时 ⇒ 走首端点（⛔ 不碰 HTTP）。
     #[tokio::test]
-    async fn get_stream_goes_straight_to_http() {
+    async fn get_stream_prefers_the_first_endpoint_when_it_supports_streaming() {
         let http = spawn_http_ok("STREAM-BODY").await;
         let calls = Arc::new(AtomicUsize::new(0));
         let first = FakeEndpoint {
@@ -953,6 +1048,7 @@ mod quic_fallback_tests {
                 status: 200,
                 body: "QUIC-NEVER".to_string(),
             }),
+            stream: Some(Ok("QUIC-STREAM")),
         };
         let ep = QuicThenHttpEndpoint::with_http_fallback(
             Box::new(first),
@@ -963,7 +1059,47 @@ mod quic_fallback_tests {
         let (status, mut body) = ep
             .get_stream("/mesh/attachment?hash=abc", None, None)
             .await
-            .expect("流式走 HTTP fallback");
+            .expect("首端点支持流式");
+        assert_eq!(status, 200);
+        let mut got = Vec::new();
+        body.read_to_end(&mut got).await.expect("读流");
+        assert_eq!(
+            std::str::from_utf8(&got).expect("UTF-8 正文"),
+            "QUIC-STREAM"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "首端点只该被调用一次");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            http.accepted.load(Ordering::SeqCst),
+            0,
+            "首端点成功时 HTTP 一个连接都不许建"
+        );
+        http.task.abort();
+    }
+
+    /// ⑤ 首端点明确"不支持流式" ⇒ **静默回退 HTTP**（不当作故障），状态/字节都来自 fallback。
+    #[tokio::test]
+    async fn get_stream_falls_back_to_http_when_the_first_endpoint_cannot_stream() {
+        let http = spawn_http_ok("STREAM-BODY").await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let first = FakeEndpoint {
+            calls: Arc::clone(&calls),
+            result: Ok(HttpReply {
+                status: 200,
+                body: "QUIC-NEVER".to_string(),
+            }),
+            stream: None,
+        };
+        let ep = QuicThenHttpEndpoint::with_http_fallback(
+            Box::new(first),
+            &http.base,
+            reqwest::Client::new(),
+        );
+
+        let (status, mut body) = ep
+            .get_stream("/mesh/attachment?hash=abc", None, None)
+            .await
+            .expect("回退 HTTP 成功");
         assert_eq!(status, 201);
         let mut got = Vec::new();
         body.read_to_end(&mut got).await.expect("读流");
@@ -971,11 +1107,9 @@ mod quic_fallback_tests {
             std::str::from_utf8(&got).expect("UTF-8 正文"),
             "STREAM-BODY"
         );
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            0,
-            "get_stream ⛔ 不许先试 QUIC（会白建连接）"
-        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "首端点试过一次");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(http.accepted.load(Ordering::SeqCst), 1, "回退恰好一次 HTTP");
         http.task.abort();
     }
 }
