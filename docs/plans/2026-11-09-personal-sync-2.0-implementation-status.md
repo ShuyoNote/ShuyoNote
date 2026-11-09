@@ -54,14 +54,16 @@ pid_alive：Windows 真机崩溃/强杀后残留锁被新进程回收（21 passe
 · 1a8f6304 —— 同名但 uid 不同 ⇒ 独立拒绝理由 RefuseDifferentUid（owner 批 C；只改理由/判据，
   不改判等规则/payload/公告字段/用户可见同步行为）；全量 lib 1502 passed / 0 failed / 23 ignored
 
-未达：QUIC 直连两侧均 timed out（HTTP 回退正常）——排查中；短期修不了则明确落
-     「V1 只保证 HTTP 回退」+ 判据，不含糊。
+未达：QUIC 直连两侧均 timed out（HTTP 回退正常）——**根因已定位并修复（4d608d86）**：
+     公告 `pubkey` 读 DB `device_identity_sk`、iroh 端点身份读文件 `device/identity.hex`，两把钥匙
+     ⇒ TLS 校验必败（两侧对称，与防火墙无关）；修复=端点改用与公告同源的 DB seed（只读、pub(crate)）；
+     真机复测**待对端重建同一提交后**验证；验不过再按「V1 只保证 HTTP 回退+判据」落，不含糊。
 ```
 
 ## 3. 未验 / 未做（如实单列）
 
 ```text
-✅ 跨机真机主链：AMD⇄Windows 已验收（见 §2.1）；⚠️ QUIC 真实直连仍未通（两侧 timed out ⇒ HTTP 回退正常）
+✅ 跨机真机主链：AMD⇄Windows 已验收（见 §2.1）；⚠️ QUIC 真实直连根因已定位并修复（4d608d86），真机复测待对端重建
 ⛔ 私有中继真机：未部署真实 relay/nginx/caddy；TLS 只验自检（可达/SAN/到期），
    未验客户端握手、8882/udp 外网、ACME/域名
 ⛔ App 全面转 daemon：App 仍持有 DB 写者；daemon 仅无头模式 + 回环 IPC；
