@@ -526,11 +526,16 @@ impl Endpoint for QuicThenHttpEndpoint {
         token: Option<&'a str>,
     ) -> Pin<Box<dyn Future<Output = Result<HttpReply, String>> + Send + 'a>> {
         Box::pin(async move {
+            let started = std::time::Instant::now();
             match self.first.get(target, auth, token).await {
                 Ok(reply) => Ok(reply),
                 Err(why) => {
                     // ⚠️ 只有一行、只含 target/原因：日志行由 [`fallback_log_line`] 这一处拼装
                     //（它**不接** token/签名参数 ⇒ 从类型上就不可能把机密拼进去）。
+                    // ⭐ 2026-11-09（真机排查）：把 **QUIC 尝试耗时** 拼进“原因”里 ——
+                    //   “立刻失败（TLS/身份）”与“30s 空等（网络不通）”是两种完全不同的病，
+                    //   没有这个读数只能猜（本次 QUIC timed out 排查就卡在这一步）。
+                    let why = format!("{why}（QUIC 尝试耗时 {}ms）", started.elapsed().as_millis());
                     eprintln!("{}", fallback_log_line(target, &why));
                     self.fallback.get(target, auth, token).await
                 }

@@ -343,9 +343,14 @@ pub async fn process_registry() -> Result<Arc<LanQuicRegistry>, String> {
             let endpoint = bind_direct(secret)
                 .await
                 .map_err(|e| format!("起进程级无中继 QUIC 端点失败：{e}"))?;
-            Ok::<Arc<LanQuicRegistry>, String>(Arc::new(LanQuicRegistry::from_endpoint(Arc::new(
-                endpoint,
-            ))))
+            let registry = Arc::new(LanQuicRegistry::from_endpoint(Arc::new(endpoint)));
+            // ⭐ 2026-11-09（QUIC 真机排查开关，默认静默）：先量"端点身份 vs 公告 pubkey 是否同源" ——
+            //   这是区分「TLS 校验必败（立刻失败）」与「网络不通（30s 空等）」的第一道判据。
+            //   只在 `SHUYONOTE_LAN_DEBUG_QUIC=1` 时打一行（不含任何私钥材料）。
+            if std::env::var_os("SHUYONOTE_LAN_DEBUG_QUIC").is_some() {
+                eprintln!("[quic-debug] node_id={}", registry.endpoint().node_id_hex());
+            }
+            Ok::<Arc<LanQuicRegistry>, String>(registry)
         })
         .await
         .cloned()
