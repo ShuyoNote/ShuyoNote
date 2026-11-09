@@ -15,8 +15,9 @@ import { usePdfReader } from "../store/pdfReader";
 import { useFileManagerStore } from "../store/fileManager";
 import { CheckIcon, ConvertToPageIcon, CopyIcon, FitWidthIcon, FolderIcon, MoreHorizontalIcon, OutlineIcon, PrintIcon, ReadAnnotateIcon } from "./icons";
 import { hydrateMermaidBlocks } from "../lib/mdMermaid";
-import { openSystemSettingsUri } from "../lib/openExternal";
-import { compactPathForDisplay } from "../lib/markdownFile";
+import { openExternalUrl, openSystemSettingsUri } from "../lib/openExternal";
+import { compactPathForDisplay, dirNameOf, resolveMarkdownAssetPath } from "../lib/markdownFile";
+import { classifyHref, findAnchorTarget } from "../lib/mdPreviewLinks";
 import { waitForPrintAssets } from "../lib/print";
 import { toast } from "../store/toast";
 import { useResolvedTheme } from "../store/theme";
@@ -329,6 +330,54 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
     setActiveOut(item.idx);
   };
 
+  /**
+   * ⭐ 2026-11-09（owner：「以只读方式打开 md 后，里面的链接要能正确跳转打开」）：
+   * 只读预览是 `dangerouslySetInnerHTML` 的纯 HTML ⇒ `<a>` 没人接管：外链会让 WebView 自己跳
+   * （或毫无反应）、相对路径更是没有去处。这里用**事件委托**统一接管：
+   *   · `#标题` ⇒ 在本文档里滚到同名标题（渲染器不给标题加 id，按文字匹配，见 `mdPreviewLinks`）；
+   *   · `http(s)` / `mailto:` ⇒ 走全应用唯一外链总闸 `openExternalUrl`（开关关了会明确告知）；
+   *   · 相对/绝对文件路径 ⇒ 相对**当前 md 所在目录**解析；`.md/.markdown/.txt` 用本预览器再打开，
+   *     其余（pdf/图片/表格…）用系统程序打开；
+   *   · 解析不了（例如附件预览没有磁盘目录）⇒ 说清原因，⛔ 不静默。
+   */
+  const handleMdLinkClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const a = (e.target as HTMLElement | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+    if (!a || !e.currentTarget.contains(a)) return;
+    const action = classifyHref(a.getAttribute("href"));
+    if (action.kind === "none") return;
+    e.preventDefault();
+
+    if (action.kind === "external") {
+      void openExternalUrl(action.href);
+      return;
+    }
+    if (action.kind === "anchor") {
+      const root = bodyRef.current?.querySelector(".fm-md-preview") ?? null;
+      const hit = findAnchorTarget(root, action.anchor);
+      if (!hit) {
+        toast(`本篇没有找到「${action.anchor}」这个小标题`, "info");
+        return;
+      }
+      hit.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+
+    const baseDir = target?.path ? dirNameOf(target.path) : "";
+    const abs = resolveMarkdownAssetPath(baseDir, action.path);
+    const isAbsolute = !!abs && (/^[a-zA-Z]:[\\/]/.test(abs) || abs.startsWith("/"));
+    if (!abs || (!baseDir && !isAbsolute)) {
+      toast("这是相对路径链接：只有「从磁盘打开」的文档才能跳转（附件预览没有原目录）", "info");
+      return;
+    }
+    if (/\.(md|markdown|txt)$/i.test(abs)) {
+      useFilePreview.getState().openPath(abs);
+      return;
+    }
+    void platform.opener
+      .openPath(abs)
+      .catch(() => toast(`打不开这个文件：${abs}（可能已移动或删除）`, "error"));
+  };
+
   // 拖拽目录栏手柄改宽：记录起点 x 与初始宽，pointermove 里按差值更新。
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault();
@@ -624,7 +673,7 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
               <div className="fm-preview-unsupported">加载 Markdown…</div>
             ) : mdHtml ? (
               <div className="fm-md-wrap">
-                <div className="fm-md-body" ref={bodyRef}>
+                <div className="fm-md-body" ref={bodyRef} onClick={handleMdLinkClick}>
                   <div
                     className={`fm-md-preview${contentFull ? " is-full" : ""}`}
                     dangerouslySetInnerHTML={{ __html: mdHtml }}
