@@ -1258,6 +1258,13 @@ pub async fn announce_once(
     a: &LanAnnounce,
 ) -> Result<AnnounceOutcome, String> {
     let raw = encode_announce(a)?;
+    // ⭐ 2026-11-09（真机排查用诊断开关，默认静默）：对端报「你的公告里少了某一格」（例如
+    //   `hub_space_uids`）时，唯一的直接证据就是**实际发出去的那份 JSON**。常驻打印会刷屏
+    //   （每轮每空间一条），所以只在 `SHUYONOTE_LAN_DEBUG_ANNOUNCE=1` 时打。
+    //   ⚠️ 公告里没有 token/私钥（`trust_secret` 是配对期的一次性材料）—— 但排障日志仍只留在本机。
+    if std::env::var_os("SHUYONOTE_LAN_DEBUG_ANNOUNCE").is_some() {
+        eprintln!("[announce-debug] {raw}");
+    }
     let mut failures: Vec<(SocketAddr, String)> = Vec::new();
     for t in targets {
         if let Err(e) = sock.send_to(raw.as_bytes(), t).await {
