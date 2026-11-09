@@ -409,9 +409,9 @@ const REGISTERED: &[(&str, &str, usize, &str)] = &[
     ),
     (
         "src/sync.rs",
-        "mesh_sync_now",
+        "mesh_sync_one",
         1,
-        "手动网格同步：逐空间旁路连接",
+        "手动/批量网格同步的唯一实现（mesh_sync_now 只做命令面转发）：逐空间旁路连接",
     ),
     ("src/tags.rs", "add_tag", 1, "跨空间加标签：开该空间库"),
     ("src/tags.rs", "remove_tag", 1, "跨空间删标签：开该空间库"),
@@ -994,7 +994,7 @@ fn the_scan_actually_covers_the_tree_and_the_core_openers() {
         ("src/db.rs", "init"),
         ("src/mesh.rs", "open_window_at"),
         ("src/lan_state.rs", "spawn_background_round"),
-        ("src/sync.rs", "mesh_sync_now"),
+        ("src/sync.rs", "mesh_sync_one"),
         ("src/workspaces.rs", "park_locked_connection"),
     ] {
         assert!(
