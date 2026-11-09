@@ -301,6 +301,15 @@ async fn request_on_conn(conn: &Connection, req: &TunnelRequest) -> Result<Tunne
 static PROCESS_REGISTRY: tokio::sync::OnceCell<Arc<LanQuicRegistry>> =
     tokio::sync::OnceCell::const_new();
 
+/// 回落到**文件**身份（`device/identity.hex`）—— 仅当 DB 里还没建过设备身份时用
+/// （那种老库/未走写路径的形态下，公告 `pubkey` 也是空 ⇒ 正常不会真的尝试 QUIC）。
+#[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+fn file_identity_secret() -> Result<SecretKey, String> {
+    let identity = crate::device_identity::load_default()
+        .map_err(|e| format!("读不到本机设备身份（QUIC 端点身份要用它）：{e}"))?;
+    Ok(SecretKey::from_bytes(&identity.seed_bytes()))
+}
+
 /// ⭐ **P3-2a 最后接线**：拿**进程级** Registry（首次调用时懒初始化，之后复用同一份）。
 ///
 /// 身份取本机设备身份 seed（`device_identity::load_default()` → `SecretKey::from_bytes`）——
@@ -312,9 +321,25 @@ static PROCESS_REGISTRY: tokio::sync::OnceCell<Arc<LanQuicRegistry>> =
 pub async fn process_registry() -> Result<Arc<LanQuicRegistry>, String> {
     PROCESS_REGISTRY
         .get_or_try_init(|| async {
-            let identity = crate::device_identity::load_default()
-                .map_err(|e| format!("读不到本机设备身份（QUIC 端点身份要用它）：{e}"))?;
-            let secret = SecretKey::from_bytes(&identity.seed_bytes());
+            // ⭐ 2026-11-09（真机：两侧 QUIC 都 timed out）：端点身份必须与**公告 pubkey 同源**。
+            //   公告 pubkey 读 `meta.sync_state['device_identity_sk']`（`device_key`）；
+            //   这里原先读**文件** `device/identity.hex`（`device_identity`）—— 两把不同的钥匙
+            //   ⇒ iroh 的 TLS 校验拿 SNI 里的期望 id 比证书 SPKI 必然失败（两侧对称超时，与防火墙无关）。
+            //   现在：优先用 DB 那把 seed（**只读**连接，⛔ 不写库）；DB 还没建身份 ⇒ 才回落文件身份。
+            let secret = match crate::db::app_data_dir_ref() {
+                Some(dir) => {
+                    let conn = rusqlite::Connection::open_with_flags(
+                        crate::db::meta_path(dir),
+                        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                    )
+                    .map_err(|e| format!("读不到 meta.db（QUIC 端点身份要用它）：{e}"))?;
+                    match crate::device_key::seed_bytes_of(&conn)? {
+                        Some(seed) => SecretKey::from_bytes(&seed),
+                        None => file_identity_secret()?,
+                    }
+                }
+                None => file_identity_secret()?,
+            };
             let endpoint = bind_direct(secret)
                 .await
                 .map_err(|e| format!("起进程级无中继 QUIC 端点失败：{e}"))?;

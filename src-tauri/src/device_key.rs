@@ -90,6 +90,25 @@ pub fn public_key_hex_of(c: &Connection) -> Result<Option<String>, String> {
     )))
 }
 
+/// 2026-11-09 (real-machine root cause of QUIC timeout on both sides): READ-ONLY accessor of
+/// this device's 32-byte ed25519 seed -- it MUST be the same key [`public_key_hex_of`] uses,
+/// because the QUIC (iroh) endpoint identity has to match the `pubkey` advertised in announces
+/// (otherwise iroh's TLS verifier compares the expected node id in SNI against the cert SPKI and
+/// always fails -- both sides time out symmetrically, unrelated to firewalls).
+///
+/// WARNING: read-only. Does NOT create a key and does NOT write the DB.
+/// `None` = no device identity in DB yet (old DB / write path never ran) => caller falls back.
+pub(crate) fn seed_bytes_of(c: &Connection) -> Result<Option<[u8; 32]>, String> {
+    let Some(stored) = crate::sync::get_meta_state_any(c, DEVICE_IDENTITY_SK) else {
+        return Ok(None);
+    };
+    let t = stored.trim();
+    if t.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(secret_from_hex(t)?.to_bytes()))
+}
+
 /// ⭐ 那串是不是**形状正确的公钥**（⭐ 32 字节 ⇒ 64 个十六进制字符 ✓）—— ⛔ 不猜、⛔ 不补位 ✗。
 ///
 /// ⭐ **一处实现** ✗：门那一侧（`mesh_trust` ✓）与抄码载荷（`pairing` ✓）按**同一把尺**判它 ✓ ——
@@ -264,6 +283,34 @@ mod tests {
         }
     }
 
+    /// ⭐ **2026-11-09（真机：QUIC 两侧 timed out 的根因）**：`seed_bytes_of` 必须与公告公钥
+    /// **同一把钥匙**（这样 iroh 端点身份与公告 `pubkey` 才对得上），且**只读/只给 crate 内部**。
+    #[test]
+    fn seed_bytes_of_is_the_same_key_as_the_announced_public_key() {
+        let c = fixture();
+        let id = load_or_create(&c).expect("先建一把身份");
+        let seed = seed_bytes_of(&c)
+            .expect("读 seed 不报错")
+            .expect("刚建过 ⇒ 必须有 seed");
+        let derived = hex::encode(SigningKey::from_bytes(&seed).verifying_key().as_bytes());
+        assert_eq!(
+            derived,
+            id.public_key_hex(),
+            "seed 派生出的公钥必须就是公告 pubkey"
+        );
+        assert_eq!(
+            public_key_hex_of(&c).unwrap().unwrap(),
+            id.public_key_hex(),
+            "公告读路径与 QUIC 身份必须同源"
+        );
+        // 空库 ⇒ None（⛔ 不许在这里现生成、⛔ 不写库）
+        let empty = fixture();
+        assert!(
+            seed_bytes_of(&empty).unwrap().is_none(),
+            "没有身份 ⇒ None（只读，不建键）"
+        );
+    }
+
     /// ⭐ 判据⑤（**文本级** ✓，⭐ 这条钉的是"出口只有那两个" ✗）：⭐ 私钥**没有**任何取出去的函数 ✓。
     ///
     /// ⚠️ 为什么用文本级 ✗：类型层面"私钥不许泄漏"是**可以被类型表达**的 ✓（`SigningKey` 只以私有字段存在 ✓），
@@ -285,6 +332,9 @@ mod tests {
             concat!("pub fn ", "private"),
             concat!("pub fn ", "export_sk"),
             concat!("pub fn ", "to_bytes"),
+            // ⭐ 2026-11-09：QUIC 端点身份要与公告 pubkey 同源 ⇒ 需要 crate 内部拿 seed；
+            //   ⛔ 但绝不许它变成公开面（`pub fn`），否则这条判据的初衷（私钥不外泄）就破了。
+            concat!("pub fn ", "seed_bytes_of"),
         ] {
             assert!(
                 !code.contains(banned),
