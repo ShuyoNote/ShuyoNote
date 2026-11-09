@@ -50,8 +50,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// 允许开库的 `(源文件, 函数, 该函数内允许的连接数, 用途一句话)` —— 2026-11-08 只读盘点的结果：
-/// **71 个函数 / 86 处连接**（59 个函数 1 处；10 个 2 处；`space_import::import_space_package_in` 3 处；
-/// `db::init` 4 处 —— 分布原因见各条用途）。
+/// **72 个函数 / 87 处连接**（59 个函数 1 处；10 个 2 处；`space_import::import_space_package_in` 3 处；
+/// `db::init` 4 处 —— 分布原因见各条用途；2026-11-09 增 `lan_quic::process_registry` 1 处）。
 ///
 /// ⚠️ 加一条**不是**“让测试变绿”的手段：先问“这条新连接由谁负责、和 P3-1b 的单连接计划什么关系”。
 /// ⚠️ **同一个已登记函数里多开一条**也会红（判据 `a_second_connection_in_the_same_function_is_caught_unless_registered`）。
@@ -243,6 +243,12 @@ const REGISTERED: &[(&str, &str, usize, &str)] = &[
         "library_recognizes_gm_labels",
         1,
         "探测加密后端能力：一次性内存库",
+    ),
+    (
+        "src/lan_quic.rs",
+        "process_registry",
+        1,
+        "QUIC 端点身份：只读打开 meta.db 取 device_identity_sk seed（与公告 pubkey 同源；不写库）",
     ),
     (
         "src/lan_state.rs",
