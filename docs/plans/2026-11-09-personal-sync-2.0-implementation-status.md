@@ -60,6 +60,9 @@ pid_alive：Windows 真机崩溃/强杀后残留锁被新进程回收（21 passe
 · 5014cace —— **生产路径补服务侧 accept 循环**：原先只有客户端 connect，服务端 accept 只在
   测试与 relay 构建里起过 ⇒ 对端打进来的 QUIC 连接没人接 ⇒ 对称超时/零回包；
   现起 lan-quic-serve 线程，请求走同一套 `dispatch_tunnel`
+· 1a0e36b4 —— QUIC **缓存连接上的请求无超时** ⇒ 对端重启/换端口后后台一轮永久卡死
+  （RAII 守卫不归还 ⇒ 之后每轮都"跳过"，静默停摆）；每请求 20s 超时 + 超时/失败驱逐该连接
+  + 下一次重连（真机：20s 超时⇒驱逐⇒`connect OK 13ms` 恢复，后台轮继续完成）
 
 QUIC 直连真机验收（2026-11-09 15:2x，两侧 dev 5014cace）：
   AMD `[quic-debug] connect OK peer_id=d3181332… elapsed=16ms`
