@@ -1136,7 +1136,8 @@ mod tests {
     }
 
     #[test]
-    fn lock_pid_parsing_is_lenient_but_bounded() {        assert_eq!(parse_lock_pid("1234\njunk"), Some(1234));
+    fn lock_pid_parsing_is_lenient_but_bounded() {
+        assert_eq!(parse_lock_pid("1234\njunk"), Some(1234));
         assert_eq!(parse_lock_pid(" 42 "), Some(42));
         assert_eq!(parse_lock_pid(""), None);
         assert_eq!(parse_lock_pid("not-a-pid"), None);
