@@ -3114,7 +3114,7 @@ pub fn ranked_local_addrs_named() -> Vec<(String, IpAddr)> {
 /// ⇒ `announced_base` 报出去 **`http://10.128.166.117:8788`** ⇒ 同网段的电脑**永远连不上**，
 /// 且界面上一个字都不会提示 ✗（与 2026-10-09 那次 WSL 抢第一位同形）。
 /// ⚠️ **只是降权、不是排除** ✓（没有别的私有 IPv4 时它们照旧会被报 ✓，虚拟局域网那档不受影响 ✓）。
-fn is_virtual_if_name(name: &str) -> bool {
+pub(crate) fn is_virtual_if_name(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     const NEEDLES: [&str; 13] = [
         "vethernet", // Hyper-V / WSL 的 vEthernet

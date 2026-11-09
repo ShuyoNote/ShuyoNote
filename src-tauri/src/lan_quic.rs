@@ -390,7 +390,16 @@ pub fn announce_quic_addrs_named(local_addrs: &[(String, IpAddr)], udp_port: u16
     }
     let filtered: Vec<(String, IpAddr)> = local_addrs
         .iter()
-        .filter(|(_, ip)| !ip.is_loopback() && !ip.is_unspecified() && !is_ipv6_link_local(*ip))
+        // 2026-11-09 (real machine: both sides QUIC timeout, identity now proven equal):
+        // virtual-adapter addresses must NOT be advertised -- their 172.x sorts BEFORE the real
+        // 192.168.x inside `EndpointAddr.addrs` (BTreeSet) => both sides dial an unreachable
+        // address first and time out symmetrically (measured 30s / 89.7s empty waits).
+        .filter(|(name, ip)| {
+            !crate::mesh::is_virtual_if_name(name)
+                && !ip.is_loopback()
+                && !ip.is_unspecified()
+                && !is_ipv6_link_local(*ip)
+        })
         .cloned()
         .collect();
     // mesh 已有的"真实网卡优先"排序（纯函数、只读；不改它的口径）。
@@ -403,12 +412,9 @@ pub fn announce_quic_addrs_named(local_addrs: &[(String, IpAddr)], udp_port: u16
             .filter(|(_, ip)| matches!(ip, IpAddr::V4(_)))
             .map(|(_, ip)| *ip),
     );
-    ips.extend(
-        ranked
-            .iter()
-            .filter(|(_, ip)| matches!(ip, IpAddr::V6(_)))
-            .map(|(_, ip)| *ip),
-    );
+    // 2026-11-09 V1: do NOT advertise IPv6. The announce carries ONE port, but on this machine
+    // the v6 endpoint binds a DIFFERENT port (measured 50531 v4 vs 50533 v6) => every IPv6 entry
+    // would point at a port nobody listens on (a guaranteed extra timeout).
     let mut out: Vec<String> = Vec::with_capacity(ips.len());
     for ip in ips {
         let addr = SocketAddr::new(ip, udp_port).to_string();
@@ -1230,11 +1236,8 @@ mod tests {
         let got = announce_quic_addrs(&ips, 47831);
         assert_eq!(
             got,
-            vec![
-                "192.168.1.5:47831".to_string(),
-                "[2001:db8::1]:47831".to_string()
-            ],
-            "IPv4 在前、去重、排除回环/通配/link-local、IPv6 带方括号"
+            vec!["192.168.1.5:47831".to_string()],
+            "V1 只报 IPv4（IPv6 一律不报，理由见 announce_quic_addrs_named 的注释）；去重、排除回环/通配/link-local"
         );
         assert!(
             parse_quic_addrs(&got).is_ok(),
@@ -1258,7 +1261,7 @@ mod tests {
 
     /// ⭐ P3-2a 地址质量：IPv4 优先、link-local 剔除、全局 IPv6 保留（混合/仅 link-local/仅全局三组）。
     #[test]
-    fn announce_quic_addrs_prefers_ipv4_drops_link_local_and_keeps_global_ipv6() {
+    fn announce_quic_addrs_prefers_ipv4_and_drops_ipv6_in_v1() {
         // a) 混合：2 个 IPv4 ＋ 全局 IPv6 ＋ ULA ＋ link-local ⇒ IPv4 全在前、link-local 消失。
         let ips: Vec<IpAddr> = [
             "192.168.1.5",
@@ -1277,10 +1280,8 @@ mod tests {
             vec![
                 "10.0.0.2:47831".to_string(),
                 "192.168.1.5:47831".to_string(),
-                "[2001:db8::1]:47831".to_string(),
-                "[fd00::1]:47831".to_string(),
             ],
-            "IPv4 全在 IPv6 之前；fe80:: 被排除；全局/ULA IPv6 保留"
+            "V1 只报 IPv4；IPv6（全局/ULA/link-local）一律不报"
         );
         assert!(
             parse_quic_addrs(&got).is_ok(),
@@ -1297,16 +1298,14 @@ mod tests {
             "只有 link-local ⇒ 空表"
         );
 
-        // c) 只有全局 IPv6 ⇒ 保留（方括号格式、可解析）。
+        // c) 只有全局 IPv6 ⇒ **空表**（V1 不报 IPv6：公告只有一个端口，而 v6 端点端口不同）。
         let only_global = announce_quic_addrs(&["2001:db8::5".parse().unwrap()], 47831);
-        assert_eq!(
-            only_global,
-            vec!["[2001:db8::5]:47831".to_string()],
-            "全局 IPv6 必须保留"
+        assert!(
+            only_global.is_empty(),
+            "V1 不报 IPv6 ⇒ 空表：{only_global:?}"
         );
-        assert!(parse_quic_addrs(&only_global).is_ok());
 
-        // d) IPv4 优先也体现在**上限截断**上：3 个 IPv4 ＋ 10 个全局 IPv6 ⇒ 前 8 条含全部 IPv4。
+        // d) IPv6 被拒后上限只按 IPv4 算：3 个 IPv4 ＋ 10 个 IPv6 ⇒ 只剩 3 条 IPv4。
         let mut many: Vec<IpAddr> = (1..=3)
             .map(|i| IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, i)))
             .collect();
@@ -1314,14 +1313,14 @@ mod tests {
             (1..=10).map(|i| IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, i))),
         );
         let capped = announce_quic_addrs(&many, 47831);
-        assert_eq!(capped.len(), MAX_QUIC_ADDRS);
-        assert!(
-            capped[..3].iter().all(|s| s.starts_with("10.0.0.")),
-            "上限截断后 IPv4 仍必须全部保留在前：{capped:?}"
+        assert_eq!(
+            capped.len(),
+            3,
+            "V1 只报 IPv4 ⇒ 上限内只有 3 条：{capped:?}"
         );
         assert!(
-            capped.iter().skip(3).all(|s| s.starts_with('[')),
-            "IPv4 之后才是 IPv6：{capped:?}"
+            capped.iter().all(|s| s.starts_with("10.0.0.")),
+            "只剩 IPv4：{capped:?}"
         );
     }
 
@@ -1342,13 +1341,8 @@ mod tests {
         let got = announce_quic_addrs_named(&locals, 47831);
         assert_eq!(
             got,
-            vec![
-                "192.168.43.190:47831".to_string(),
-                "10.128.166.117:47831".to_string(),
-                "172.18.224.1:47831".to_string(),
-                "[2001:db8::1]:47831".to_string(),
-            ],
-            "真实 WLAN 第一；虚拟 IPv4 靠后；全局 IPv6 最后；link-local/回环/通配被过滤"
+            vec!["192.168.43.190:47831".to_string()],
+            "V1 只报真实网卡 IPv4：虚拟网卡（vEthernet/WSL/utun）与 IPv6 都不进公告（两者都会让对端拨到没人听的地址/端口）；link-local/回环/通配被过滤"
         );
         assert!(
             parse_quic_addrs(&got).is_ok(),
