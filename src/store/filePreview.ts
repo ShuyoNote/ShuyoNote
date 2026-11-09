@@ -44,6 +44,12 @@ async function renderExternalMarkdown(path: string): Promise<{ html: string; url
   return { html: doc.body.innerHTML, urls };
 }
 
+/** ⭐ 2026-11-09（owner 选 A）：只读预览的「点链接跳过去」返回栈的一项。 */
+export interface MdBackEntry {
+  target: AttachmentMeta;
+  scrollTop: number;
+}
+
 interface FilePreviewState {
   /** The attachment being previewed (image/video/audio/pdf/md). Null = closed. */
   target: AttachmentMeta | null;
@@ -53,9 +59,19 @@ interface FilePreviewState {
   mdImporting: boolean;
   /** 外部 md 相对图片的 blob URL（关闭/切换时回收）。 */
   mdUrls: string[];
-  open: (a: AttachmentMeta) => void;
+  /** ⭐ 2026-11-09：返回栈（只记「预览里点链接跳转」；文件树另开不算）。 */
+  mdBackStack: MdBackEntry[];
+  /** ⭐ 后退要恢复的滚动位置（预览器消费一次后清空）。 */
+  mdScrollRestore: number | null;
+  open: (a: AttachmentMeta, opts?: { keepHistory?: boolean }) => void;
   /** 用**内置文件预览器**打开一个磁盘上的 .md（不建页、不入库）。 */
-  openPath: (path: string) => void;
+  openPath: (path: string, opts?: { keepHistory?: boolean }) => void;
+  /** ⭐ 预览里点链接：把当前文档压栈，再打开目标（⛔ 不用于文件树/别处打开）。 */
+  followLink: (path: string, scrollTop: number) => void;
+  /** ⭐ 后退一份；没有可退 ⇒ false（按钮据此置灰）。 */
+  goBack: () => boolean;
+  /** ⭐ 消费后清空滚动恢复点（避免下次打开误跳到旧位置）。 */
+  clearScrollRestore: () => void;
   close: () => void;
   /** Convert the previewed .md into a new page under the current folder. */
   importAsPage: (parentId: string | null) => Promise<void>;
@@ -67,8 +83,12 @@ export const useFilePreview = create<FilePreviewState>((set, get) => ({
   mdLoading: false,
   mdImporting: false,
   mdUrls: [],
+  mdBackStack: [],
+  mdScrollRestore: null,
 
-  open: (a) => {
+  open: (a, opts) => {
+    // ⭐ 文件树/别处打开 ⇒ 清返回栈（只有预览里点链接才压栈，见 `followLink`）。
+    if (!opts?.keepHistory) set({ mdBackStack: [], mdScrollRestore: null });
     const old = get().mdUrls;
     for (const u of old) URL.revokeObjectURL(u);
     set({ target: a, mdHtml: null, mdLoading: false, mdUrls: [] });
@@ -100,7 +120,8 @@ export const useFilePreview = create<FilePreviewState>((set, get) => ({
     }
   },
 
-  openPath: (path) => {
+  openPath: (path, opts) => {
+    if (!opts?.keepHistory) set({ mdBackStack: [], mdScrollRestore: null });
     const p = String(path ?? "").trim();
     if (!p) return;
     if (!isDesktopPlatform()) {
@@ -139,8 +160,39 @@ export const useFilePreview = create<FilePreviewState>((set, get) => ({
   close: () => {
     const old = get().mdUrls;
     for (const u of old) URL.revokeObjectURL(u);
-    set({ target: null, mdHtml: null, mdLoading: false, mdImporting: false, mdUrls: [] });
+    set({
+      target: null,
+      mdHtml: null,
+      mdLoading: false,
+      mdImporting: false,
+      mdUrls: [],
+      mdBackStack: [],
+      mdScrollRestore: null,
+    });
   },
+
+  followLink: (path, scrollTop) => {
+    const cur = get().target;
+    const stack = get().mdBackStack;
+    set({
+      mdBackStack: cur ? [...stack, { target: cur, scrollTop }] : stack,
+      mdScrollRestore: null,
+    });
+    get().openPath(path, { keepHistory: true });
+  },
+
+  goBack: () => {
+    const stack = get().mdBackStack;
+    if (stack.length === 0) return false;
+    const last = stack[stack.length - 1];
+    set({ mdBackStack: stack.slice(0, -1), mdScrollRestore: last.scrollTop });
+    const t = last.target;
+    if (t.path && t.id.startsWith("external:")) get().openPath(t.path, { keepHistory: true });
+    else get().open(t, { keepHistory: true });
+    return true;
+  },
+
+  clearScrollRestore: () => set({ mdScrollRestore: null }),
 
   importAsPage: async (parentId) => {
     const { target, mdImporting } = get();

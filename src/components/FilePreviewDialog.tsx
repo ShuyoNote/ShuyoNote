@@ -13,7 +13,7 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { usePdfReader } from "../store/pdfReader";
 import { useFileManagerStore } from "../store/fileManager";
-import { CheckIcon, ConvertToPageIcon, CopyIcon, FitWidthIcon, FolderIcon, MoreHorizontalIcon, OutlineIcon, PrintIcon, ReadAnnotateIcon } from "./icons";
+import { CheckIcon, ChevronLeftIcon, ConvertToPageIcon, CopyIcon, FitWidthIcon, FolderIcon, MoreHorizontalIcon, OutlineIcon, PrintIcon, ReadAnnotateIcon } from "./icons";
 import { hydrateMermaidBlocks } from "../lib/mdMermaid";
 import { openExternalUrl, openSystemSettingsUri } from "../lib/openExternal";
 import { compactPathForDisplay, dirNameOf, resolveMarkdownAssetPath } from "../lib/markdownFile";
@@ -176,6 +176,11 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
   const mdImporting = useFilePreview((s) => s.mdImporting);
   const close = useFilePreview((s) => s.close);
   const importAsPage = useFilePreview((s) => s.importAsPage);
+  // ⭐ 2026-11-09（owner 选 A）：只读预览的「点链接跳过去」返回栈（文件树另开不算历史）。
+  const mdBackDepth = useFilePreview((s) => s.mdBackStack.length);
+  const goBack = useFilePreview((s) => s.goBack);
+  const mdScrollRestore = useFilePreview((s) => s.mdScrollRestore);
+  const clearScrollRestore = useFilePreview((s) => s.clearScrollRestore);
   const bodyRef = useRef<HTMLDivElement>(null);
   const theme = useResolvedTheme(); // re-render mermaid when theme changes
   const [outline, setOutline] = useState<MdOutlineItem[]>([]);
@@ -321,6 +326,32 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
     if (isMd && bodyRef.current) bodyRef.current.scrollTop = 0;
   }, [isMd, target?.id, mdHtml]);
 
+  // ⭐ 2026-11-09（A 口径）：后退回到上一份文档时恢复它当时的滚动位置（只消费一次）。
+  useEffect(() => {
+    if (!isMd || mdLoading || mdHtml == null) return;
+    if (mdScrollRestore == null) return;
+    if (bodyRef.current) bodyRef.current.scrollTop = mdScrollRestore;
+    clearScrollRestore();
+  }, [isMd, mdHtml, mdLoading, mdScrollRestore, clearScrollRestore]);
+
+  // ⭐ 键盘后退：Alt+← 或 Backspace（只读预览没有编辑区；输入框里不抢键）。
+  useEffect(() => {
+    if (!isMd) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      const isBack =
+        (e.altKey && e.key === "ArrowLeft") ||
+        (e.key === "Backspace" && !e.altKey && !e.ctrlKey && !e.metaKey);
+      if (!isBack) return;
+      if (useFilePreview.getState().mdBackStack.length === 0) return;
+      e.preventDefault();
+      useFilePreview.getState().goBack();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isMd]);
+
   const scrollToOutline = (item: MdOutlineItem) => {
     const root = bodyRef.current?.querySelector(".fm-md-preview");
     if (!root) return;
@@ -370,7 +401,8 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
       return;
     }
     if (/\.(md|markdown|txt)$/i.test(abs)) {
-      useFilePreview.getState().openPath(abs);
+      // ⭐ 压栈再打开（A 口径：只有「预览里点链接」才算历史；文件树另开不算）。
+      useFilePreview.getState().followLink(abs, bodyRef.current?.scrollTop ?? 0);
       return;
     }
     void platform.opener
@@ -526,6 +558,17 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
     <div className={`fm-preview-overlay ${inline ? "is-inline" : ""}`} onClick={inline ? undefined : close}>
       <div className="fm-preview" onClick={inline ? undefined : (e) => e.stopPropagation()}>
         <div className="fm-preview-head">
+          {isMd && mdBackDepth > 0 && (
+            <button
+              className="fm-preview-read fm-preview-back"
+              onClick={() => goBack()}
+              disabled={mdLoading}
+              title="后退（Alt+← / Backspace）"
+              aria-label="后退到上一份文档"
+            >
+              <ChevronLeftIcon aria-hidden />
+            </button>
+          )}
           <span className="fm-preview-name" title={target.path || target.name}>{target.name}</span>
           {/* ⚠️ **2026-10-04 去掉**（owner：「去掉 md 文档的关闭按钮」）—— 这颗 × 是我上一批为
               `inline` 形态补的出口 ✗。
