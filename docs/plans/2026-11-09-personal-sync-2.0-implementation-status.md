@@ -1,6 +1,6 @@
 # 个人版同步 2.0 实施状态（P0–P3）
 
-> **状态：实施中（代码/判据大部分已落；AMD⇄Windows 跨机主链**已真机验收**，QUIC 直连未通；真实私有中继/TLS 反代仍未验）** ｜ 2026-11-09
+> **状态：实施中（代码/判据大部分已落；AMD⇄Windows 跨机主链**已真机验收（含 QUIC 直连）**；真实私有中继/TLS 反代仍未验）** ｜ 2026-11-09
 > 上位：[需求说明书](2026-11-08-personal-sync-2.0-requirements.md) ｜ [P3 ADR](2026-11-08-personal-sync-2.0-p3-adr.md)
 > 口径：只写**盘上/判据能证明的**；未验项单列，不写成已验收。
 
@@ -48,22 +48,29 @@ HTTP 回退 ✓（QUIC 首次失败自动回退，拉取/融合不受影响）
 人裁决：pending_remote_pages=1 ⇒ owner 已在界面裁决，复查为 0
 pid_alive：Windows 真机崩溃/强杀后残留锁被新进程回收（21 passed / 0 failed，与本机读数一致）
 
-本批两条修复：
+本批修复（含 QUIC 三层根因，全部真机验证）：
 · 7c88e74c —— `lan.rs::merge_announce` 合并「一空间一条公告」时保持 hub_space_uids 与
   hub_spaces 同序对齐（修：候选 uid 恒空 ⇒ 建空间回落随机 uid）；三态判据
 · 1a8f6304 —— 同名但 uid 不同 ⇒ 独立拒绝理由 RefuseDifferentUid（owner 批 C；只改理由/判据，
   不改判等规则/payload/公告字段/用户可见同步行为）；全量 lib 1502 passed / 0 failed / 23 ignored
+· 4d608d86 —— QUIC 端点身份改用与公告 pubkey 同源的 DB seed（只读、pub(crate)）：
+  原先公告读 `device_identity_sk`、iroh 读文件 `device/identity.hex`（两把钥匙 ⇒ TLS 必败）
+· dc5a63c3 —— QUIC 公告只报真实网卡 IPv4：虚拟网卡 172.x 在 `EndpointAddr.addrs`（BTreeSet）
+  里排在 192.168.x 前 ⇒ 双方先拨不可达地址；IPv6 端点端口与 v4 不同（公告只有一个端口）
+· 5014cace —— **生产路径补服务侧 accept 循环**：原先只有客户端 connect，服务端 accept 只在
+  测试与 relay 构建里起过 ⇒ 对端打进来的 QUIC 连接没人接 ⇒ 对称超时/零回包；
+  现起 lan-quic-serve 线程，请求走同一套 `dispatch_tunnel`
 
-未达：QUIC 直连两侧均 timed out（HTTP 回退正常）——**根因已定位并修复（4d608d86）**：
-     公告 `pubkey` 读 DB `device_identity_sk`、iroh 端点身份读文件 `device/identity.hex`，两把钥匙
-     ⇒ TLS 校验必败（两侧对称，与防火墙无关）；修复=端点改用与公告同源的 DB seed（只读、pub(crate)）；
-     真机复测**待对端重建同一提交后**验证；验不过再按「V1 只保证 HTTP 回退+判据」落，不含糊。
+QUIC 直连真机验收（2026-11-09 15:2x，两侧 dev 5014cace）：
+  AMD `[quic-debug] connect OK peer_id=d3181332… elapsed=16ms`
+  Windows `connect OK 17ms / 23ms`；node_id == 公告 pubkey（两侧逐字相同）；本轮零回退
+  lan_quic 判据 20 passed / 0 failed；公告只剩单条真实 v4（192.168.43.190:<端口>）
 ```
 
 ## 3. 未验 / 未做（如实单列）
 
 ```text
-✅ 跨机真机主链：AMD⇄Windows 已验收（见 §2.1）；⚠️ QUIC 真实直连根因已定位并修复（4d608d86），真机复测待对端重建
+✅ 跨机真机主链：AMD⇄Windows 已验收（见 §2.1，含 **QUIC 直连**：两侧 connect OK 16/17/23ms）
 ⛔ 私有中继真机：未部署真实 relay/nginx/caddy；TLS 只验自检（可达/SAN/到期），
    未验客户端握手、8882/udp 外网、ACME/域名
 ⛔ App 全面转 daemon：App 仍持有 DB 写者；daemon 仅无头模式 + 回环 IPC；
@@ -75,7 +82,7 @@ pid_alive：Windows 真机崩溃/强杀后残留锁被新进程回收（21 passe
 
 ## 4. 下一步（按剩余价值）
 
-1. 第二台设备真机：AMD⇄Windows **主链已验收**（§2.1）；剩 QUIC 真实直连（两侧 timed out）、双向编辑真机、附件续传真机；
+1. 第二台设备真机：AMD⇄Windows **主链已验收（含 QUIC 直连、双向编辑）**（§2.1）；剩附件续传真机、真实私有 relay/TLS 反代；
 2. 真实私有 relay + TLS 反代：在用户自己的 Linux 服务器部署，跑客户端握手/8882 UDP；
 3. App↔daemon IPC 完整化（或明确 V1 保持“App 写者 + daemon 仅无头”）；
 4. 7 天影子观察后，再决定 CRDT 默认灰度。
