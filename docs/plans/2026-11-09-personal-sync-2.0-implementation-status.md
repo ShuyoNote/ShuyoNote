@@ -74,6 +74,10 @@ QUIC 直连真机验收（2026-11-09 15:2x，两侧 dev 5014cace）：
 
 ```text
 ✅ 跨机真机主链：AMD⇄Windows 已验收（见 §2.1，含 **QUIC 直连**：两侧 connect OK 16/17/23ms）
+⛔ 附件走 mesh 直连**未接线**（2026-11-09 真机复核）：`mesh::request_attachment_from_peer` /
+   `attachment_target` 生产路径**无调用**（仅测试；构建警告 `request_attachment_from_peer is never used`），
+   生产附件下载仍是 `sync.rs` 里 `client.get({att_base}/attachments/<hash>)` 走 HTTP 8788；
+   ⚠️ 与 QUIC 融合互不影响（HTTP 回退一直是通的），但"附件也走直连隧道"需单独一单
 ⛔ 私有中继真机：未部署真实 relay/nginx/caddy；TLS 只验自检（可达/SAN/到期），
    未验客户端握手、8882/udp 外网、ACME/域名
 ⛔ App 全面转 daemon：App 仍持有 DB 写者；daemon 仅无头模式 + 回环 IPC；
