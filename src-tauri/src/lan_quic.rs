@@ -244,11 +244,23 @@ impl LanQuicRegistry {
     ) -> Result<TunnelReply, String> {
         let key = peer.id;
         let conn = self.get_or_connect(peer).await?;
-        match request_on_conn(&conn, req).await {
-            Ok(reply) => Ok(reply),
-            Err(e) => {
+        // ⭐ 2026-11-09（真机：后台一轮卡死 —— 日志每 2 分钟「上一轮还没跑完」，从此再也不同步）：
+        //   **缓存连接上的请求原先没有超时** ⇒ 对端重启/连接半死时 `read_reply` 永久挂住
+        //   ⇒ 后台轮的 RAII 闸（`BACKGROUND_IN_FLIGHT`）永不归还 ⇒ 整机同步静默停摆。
+        //   这里给每次请求一个上限；超时/失败都**驱逐缓存连接**，下一次自动重连（与既有失败路径一致）。
+        let attempt = tokio::time::timeout(REQUEST_TIMEOUT, request_on_conn(&conn, req)).await;
+        match attempt {
+            Ok(Ok(reply)) => Ok(reply),
+            Ok(Err(e)) => {
                 self.evict_if_same(key, &conn);
                 Err(e)
+            }
+            Err(_) => {
+                self.evict_if_same(key, &conn);
+                Err(format!(
+                    "QUIC 请求超时（{}s，连接可能已失效；已驱逐缓存，下一次会重连）",
+                    REQUEST_TIMEOUT.as_secs()
+                ))
             }
         }
     }
@@ -298,6 +310,11 @@ impl LanQuicRegistry {
 ///
 /// ⚠️ 每条请求开一条新的双向流（同一条 QUIC 连接可并发多流 ✓），并且**不关整条连接**
 /// （关了就没法复用；关连接只发生在错误/驱逐时）。
+///
+/// ⭐ 2026-11-09：调用方 [`LanQuicRegistry::request`] 现在会给它套**超时** —— 缓存连接半死时
+/// 不能无限等（否则后台轮永不结束）。本函数自身保持不超时（便于测试单独驱动）。
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 async fn request_on_conn(conn: &Connection, req: &TunnelRequest) -> Result<TunnelReply, String> {
     let (mut send, mut recv) = conn
         .open_bi()
