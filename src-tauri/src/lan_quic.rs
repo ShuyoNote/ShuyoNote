@@ -204,6 +204,14 @@ impl LanQuicRegistry {
             return Ok(c);
         }
         self.connect_attempts.fetch_add(1, Ordering::Relaxed);
+        // ⭐ 2026-11-09（第二层 QUIC 排查开关，默认静默）：把**这次真正要拨的 id/地址集**打出来 ——
+        //   用来区分“对端公告已只剩单条 v4”与“本进程 peer 缓存里仍是旧的 172.x/IPv6”（后者会继续空等）。
+        if std::env::var_os("SHUYONOTE_LAN_DEBUG_QUIC").is_some() {
+            eprintln!(
+                "[quic-debug] connect peer_id={} addrs={:?}",
+                peer.id, peer.addrs
+            );
+        }
         let conn = self.endpoint.connect(peer).await?;
         let arc = Arc::new(conn);
         self.conns
