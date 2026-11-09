@@ -20,6 +20,7 @@ const createPage = vi.fn();
 const getPage = vi.fn();
 const writePageProjection = vi.fn();
 const savePageState = vi.fn();
+const openPage = vi.fn();
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -30,6 +31,10 @@ vi.mock("../lib/api", () => ({
     writePageProjection: (...args: unknown[]) => writePageProjection(...args),
     savePageState: (...args: unknown[]) => savePageState(...args),
   },
+}));
+
+vi.mock("../store/notes", () => ({
+  useNotes: { getState: () => ({ openPage: (...a: unknown[]) => openPage(...a) }) },
 }));
 
 // i18n 在判据里不需要真的初始化：`t` 直接回键名（断言更好写，也不依赖词条）
@@ -68,6 +73,7 @@ describe("LineageConflictBanner（页级血统冲突）", () => {
     getPage.mockReset();
     writePageProjection.mockReset();
     savePageState.mockReset();
+    openPage.mockReset();
   });
 
   afterEach(() => {
@@ -107,6 +113,7 @@ describe("LineageConflictBanner（页级血统冲突）", () => {
     expect(writePageProjection).toHaveBeenCalledWith("p1", PEER_JSON);   // ① 写回**对端那版** ✓
     expect(savePageState).toHaveBeenCalledWith("p1", expect.any(Uint8Array));  // ② 清本机状态 ✓
     expect(resolveLineageConflict).toHaveBeenCalledWith("lc1", "remote");       // ③ 裁决记 remote ✓
+    expect(openPage, "④ 必须让编辑器重载该页（否则空缓冲区会把刚采纳的内容覆盖回去）").toHaveBeenCalledWith("p1");
   });
 
   it("⑦ 采用对端时「清本机状态」必须发生在「记裁决」之前（顺序错了＝选择会被静默撤销 ✗）", async () => {
@@ -116,11 +123,12 @@ describe("LineageConflictBanner（页级血统冲突）", () => {
     writePageProjection.mockImplementation(async () => { order.push("save"); });
     savePageState.mockImplementation(async () => { order.push("clear"); });
     resolveLineageConflict.mockImplementation(async () => { order.push("resolve"); });
+    openPage.mockImplementation(async () => { order.push("reload"); });
     await render();
     await act(async () => {});
     const btn = buttons().find((b) => b.textContent === "lineage.adoptRemote") as HTMLButtonElement;
     await act(async () => { btn.click(); });
-    expect(order).toEqual(["save", "clear", "resolve"]);
+    expect(order).toEqual(["save", "clear", "resolve", "reload"]);
   });
 it("③ ★「另存为新页」⇒ 建一个新页（标题带后缀、内容是对端那版）＋ 记成 saved-as-new", async () => {
     listLineageConflicts.mockResolvedValue(ROW);

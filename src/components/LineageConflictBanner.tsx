@@ -20,6 +20,7 @@ import { api } from "../lib/api";
 import { deriveContentText } from "../lib/contentText";
 import { pageCreationArgsFromDocJson } from "../lib/docContent";
 import { useSyncStatus } from "../store/syncStatus";
+import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 
 type LineageRow = NonNullable<Awaited<ReturnType<typeof api.listLineageConflicts>>>;
@@ -83,6 +84,11 @@ export function LineageConflictBanner({ pageId }: { pageId: string }) {
       await api.savePageState(pageId, new Uint8Array());
       await api.resolveLineageConflict(row.id, "remote");
       toast(t("lineage.adopted"), "success");
+      // ⭐ 2026-11-09（真机：点「采用对端那一版」后页面仍是空的，约 1 分钟后**被编辑器里的空缓冲区
+      //   覆盖成空** —— DB 里 pending 已清、裁决记了 remote，但 content_json 回到 empty-page）：
+      //   写回投影只动"落盘那一列"，打开着的编辑器手里还是旧（空）文档 ⇒ 必须**让它重载这一页**，
+      //   否则下一次自动保存把刚采纳的对端内容盖掉。放在裁决之后：重载时横幅该消失了。
+      await useNotes.getState().openPage(pageId);
       refresh();
     } catch (e) {
       toast(String(e), "error");
