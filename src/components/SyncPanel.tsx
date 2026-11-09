@@ -1168,6 +1168,28 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   /** 「全部空间立即同步」入口：挑目标（个人空间）→ 串行跑。分类读不到就按现有空间列表全算。 */
   const startAllSpacesSync = async () => {
     if (meshBusy || allSync?.running || allSyncStopRef.current) return;
+    // ⭐ 2026-11-09：**新建的空间不会自己进 `sync_profiles`**（那张表只由 `meshEnsureDefaults`
+    //   在“进同步页/首次配置”时补）⇒ 不补的话，本机公告/发现层看不到这个新空间，
+    //   对端也就选不到它（真机表现：新建空间后要重启才同步得到）。
+    //   `meshEnsureDefaults` 只补不覆盖（幂等）；⚠️ 只在**本机网格已启用**时补 ——
+    //   否则会把“从没开启局域网”的桌面意外打开广播（隐私口径：不配就不广播）。
+    if (isDesktopPlatform() && lanStatus?.mesh?.bind) {
+      try {
+        await api.meshEnsureDefaults();
+      } catch {
+        // 补不上不拦这一轮：空间本身仍在，只是公告可能晚一轮
+      }
+    }
+    // ⭐ 2026-11-09（AMD 真机实测：新建/删除空间后必须重启 app，「全部空间立即同步」才认新列表）：
+    //   根因是目标列表取的是**组件挂载时那份 `spaces` 快照**。这里改成**点按钮时现取一次**工作空间；
+    //   读不到才回退快照（⛔ 不静默少同步几个空间 —— 与下面“分类读不到”同一兜底口径）。
+    let liveSpaces = spaces;
+    try {
+      const list = await api.listWorkspaces();
+      if (Array.isArray(list) && list.length > 0) liveSpaces = list;
+    } catch {
+      // 读不到 ⇒ 用挂载时的快照兜底（照常能跑，只是可能漏掉刚建/刚删的）
+    }
     const kindByWs = new Map<string, string>();
     if (isDesktopPlatform()) {
       try {
@@ -1177,7 +1199,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
         // 分类读不到 ⇒ 纯函数兜底：按现有空间列表全算（⛔ 不静默少同步几个空间）。
       }
     }
-    const targets = pickAllSyncSpaces(spaces, kindByWs);
+    const targets = pickAllSyncSpaces(liveSpaces, kindByWs);
     if (targets.length === 0) {
       setStatus("没有可同步的个人空间");
       return;
