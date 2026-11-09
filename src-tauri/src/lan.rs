@@ -810,12 +810,16 @@ pub fn announced_encrypted_for(p: &crate::lan::Peer, want: &str, want_name: &str
 }
 
 fn merge_announce(old: &LanAnnounce, new: &LanAnnounce) -> LanAnnounce {
-    fn triples(a: &LanAnnounce) -> Option<Vec<(String, String, String)>> {
+    fn triples(a: &LanAnnounce) -> Option<Vec<(String, String, String, String)>> {
         let aligned = a.hub_space_names.len() == a.hub_spaces.len()
             && a.hub_space_kinds.len() == a.hub_spaces.len();
         if !aligned {
             return None;
         }
+        // ⭐ 2026-11-09（真机：候选 uid 恒空 ⇒ 建空间回落随机 uid）：四元组里**必须带 uid**。
+        //   老对端没有这一格（空表）⇒ 一律空串（≠ 错位）；报了但长度对不上 ⇒ 同样按"不知道"处理。
+        let uids_aligned =
+            a.hub_space_uids.is_empty() || a.hub_space_uids.len() == a.hub_spaces.len();
         Some(
             a.hub_spaces
                 .iter()
@@ -825,6 +829,14 @@ fn merge_announce(old: &LanAnnounce, new: &LanAnnounce) -> LanAnnounce {
                         s.trim().to_string(),
                         a.hub_space_names[i].trim().to_string(),
                         a.hub_space_kinds[i].trim().to_string(),
+                        if uids_aligned {
+                            a.hub_space_uids
+                                .get(i)
+                                .map(|u| u.trim().to_string())
+                                .unwrap_or_default()
+                        } else {
+                            String::new()
+                        },
                     )
                 })
                 .collect(),
@@ -834,12 +846,12 @@ fn merge_announce(old: &LanAnnounce, new: &LanAnnounce) -> LanAnnounce {
     // 名字/类别：一侧对不齐 ⇒ 整格留空（"不知道"比"错配"好）。
     let merged_triples = match (triples(old), triples(new)) {
         (Some(a), Some(b)) => {
-            let mut v: Vec<(String, String, String)> = Vec::new();
-            for (space, name, kind) in a.into_iter().chain(b.into_iter()) {
+            let mut v: Vec<(String, String, String, String)> = Vec::new();
+            for (space, name, kind, uid) in a.into_iter().chain(b.into_iter()) {
                 if space.is_empty() {
                     continue;
                 }
-                match v.iter_mut().find(|(s, _, _)| s == &space) {
+                match v.iter_mut().find(|(s, _, _, _)| s == &space) {
                     Some(slot) => {
                         if !name.is_empty() {
                             slot.1 = name;
@@ -847,8 +859,11 @@ fn merge_announce(old: &LanAnnounce, new: &LanAnnounce) -> LanAnnounce {
                         if !kind.is_empty() {
                             slot.2 = kind;
                         }
+                        if !uid.is_empty() {
+                            slot.3 = uid;
+                        }
                     }
-                    None => v.push((space, name, kind)),
+                    None => v.push((space, name, kind, uid)),
                 }
             }
             Some(v)
@@ -862,9 +877,16 @@ fn merge_announce(old: &LanAnnounce, new: &LanAnnounce) -> LanAnnounce {
         (None, None) => None,
     };
     if let Some(v) = merged_triples {
-        out.hub_spaces = v.iter().map(|(s, _, _)| s.clone()).collect();
-        out.hub_space_names = v.iter().map(|(_, n, _)| n.clone()).collect();
-        out.hub_space_kinds = v.iter().map(|(_, _, k)| k.clone()).collect();
+        out.hub_spaces = v.iter().map(|(s, _, _, _)| s.clone()).collect();
+        out.hub_space_names = v.iter().map(|(_, n, _, _)| n.clone()).collect();
+        out.hub_space_kinds = v.iter().map(|(_, _, k, _)| k.clone()).collect();
+        // ⭐ 2026-11-09：uid 必须与 `hub_spaces` **同序对齐**（否则下游按下标取 uid 会拿到空
+        //   ⇒ `create_peer_spaces_by_name` 回落随机 uid）；全空 ⇒ 仍发空表（"老对端没报" ≠ "报了一排空串"）。
+        out.hub_space_uids = if v.iter().any(|(_, _, _, u)| !u.is_empty()) {
+            v.iter().map(|(_, _, _, u)| u.clone()).collect()
+        } else {
+            Vec::new()
+        };
         // ⭐ 2026-10-24：加密标记只在**两边都按 1:1 对齐**时合并；任一侧没报 ⇒ 整格留空（＝不知道）。
         let enc_aligned = old.hub_space_encrypted.len() == old.hub_spaces.len()
             && new.hub_space_encrypted.len() == new.hub_spaces.len();
@@ -895,6 +917,8 @@ fn merge_announce(old: &LanAnnounce, new: &LanAnnounce) -> LanAnnounce {
         out.hub_spaces = spaces;
         out.hub_space_names = Vec::new();
         out.hub_space_kinds = Vec::new();
+        // ⚠️ 对齐不了 ⇒ uid 也**整格留空**（⛔ 别留 `new.clone()` 那条长度 1 的旧表 —— 那会按下标错配）。
+        out.hub_space_uids = Vec::new();
         out.hub_space_encrypted = Vec::new();
     }
     if out
@@ -2755,6 +2779,80 @@ mod multi_space_peer_table_tests {
         assert_eq!(
             a.hub_space_kinds,
             vec!["personal".to_string(), "personal".to_string()]
+        );
+    }
+
+    /// ⭐ 2026-11-09（真机：候选 uid 恒空 ⇒ 建空间回落随机 uid）：
+    /// 合并「一空间一条公告」时 `hub_space_uids` 必须与 `hub_spaces` **同序对齐**；
+    /// 老对端没报（空表）⇒ 仍空表；一侧缺失 ⇒ 该格空串占位（⛔ 不拿别的空间的 uid 错配）。
+    #[test]
+    fn merging_keeps_space_uids_aligned_with_hub_spaces() {
+        let mk = |space: &str, name: &str, uid: Option<&str>| {
+            let mut a = announce("win", space, name, "personal", "http://192.168.0.103:8788");
+            if let Some(u) = uid {
+                a.hub_space_uids = vec![u.to_string()];
+            }
+            a
+        };
+        // ① 两条都带 uid ⇒ 合并后与 hub_spaces 同序对齐
+        let t = PeerTable::new("me".to_string());
+        t.upsert(Peer {
+            announce: mk("room-a", "工作", Some("uid-a")),
+            addr: "192.168.0.103".to_string(),
+            seen_at_ms: 1,
+        });
+        t.upsert(Peer {
+            announce: mk("room-b", "测试", Some("uid-b")),
+            addr: "192.168.0.103".to_string(),
+            seen_at_ms: 2,
+        });
+        let live = t.live(3);
+        assert_eq!(live.len(), 1);
+        let a = &live[0].announce;
+        assert_eq!(
+            a.hub_spaces,
+            vec!["room-a".to_string(), "room-b".to_string()]
+        );
+        assert_eq!(
+            a.hub_space_uids,
+            vec!["uid-a".to_string(), "uid-b".to_string()],
+            "合并后 uid 必须与 hub_spaces 逐格对齐（否则下游取到空/错配 ⇒ 建空间回落随机 uid）"
+        );
+
+        // ② 一侧没报 uid（老对端/老载荷）⇒ 该格空串占位，仍与 hub_spaces 对齐
+        let t2 = PeerTable::new("me".to_string());
+        t2.upsert(Peer {
+            announce: mk("room-a", "工作", Some("uid-a")),
+            addr: "192.168.0.103".to_string(),
+            seen_at_ms: 1,
+        });
+        t2.upsert(Peer {
+            announce: mk("room-b", "测试", None),
+            addr: "192.168.0.103".to_string(),
+            seen_at_ms: 2,
+        });
+        let a2 = &t2.live(3)[0].announce;
+        assert_eq!(
+            a2.hub_space_uids,
+            vec!["uid-a".to_string(), String::new()],
+            "缺的那一格必须是空串占位（⛔ 不是拿别的空间的 uid）"
+        );
+
+        // ③ 两条都没报 ⇒ 仍空表（"不知道" ≠ "报了一排空串"）
+        let t3 = PeerTable::new("me".to_string());
+        t3.upsert(Peer {
+            announce: mk("room-a", "工作", None),
+            addr: "192.168.0.103".to_string(),
+            seen_at_ms: 1,
+        });
+        t3.upsert(Peer {
+            announce: mk("room-b", "测试", None),
+            addr: "192.168.0.103".to_string(),
+            seen_at_ms: 2,
+        });
+        assert!(
+            t3.live(3)[0].announce.hub_space_uids.is_empty(),
+            "两条都没报 ⇒ 空表（⛔ 不塞一排空串冒充有值）"
         );
     }
 
