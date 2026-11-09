@@ -250,7 +250,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 objc2 = "0.6"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
 # 直接导出 PDF：WebView2 的 ICoreWebView2_7::PrintToPdf（不弹打印对话框）。
 # 版本与 Tauri 传递进来的 webview2-com 保持同一份（Cargo.lock 0.38.2）。
 webview2-com = "=0.38.2"

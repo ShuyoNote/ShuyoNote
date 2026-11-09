@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   loadPages: vi.fn(async () => {}),
   /** ⭐ 明确信号（判据 ④／f）：每空间读数由**这一格**给，⛔ 不再从错误串里嗅 ✗。 */
   overview: vi.fn(async () => [] as unknown[]),
+  createWorkspace: vi.fn(),
+  listWorkspaces: vi.fn(),
 }));
 
 // ⚠️ 只桩 `api`／`toast`／`notes` 三处 ✓；`../lib/vault` 用**真的** ✓
@@ -34,6 +36,8 @@ vi.mock("../lib/api", () => ({
     {
       setActiveWorkspaceId: (...a: unknown[]) => mocks.setActive(...a),
       spaceSecurityOverview: () => mocks.overview(),
+      createWorkspace: (...a: unknown[]) => mocks.createWorkspace(...a),
+      listWorkspaces: () => mocks.listWorkspaces(),
     },
     { get: (t, k) => (k in t ? (t as Record<string, unknown>)[k as string] : async () => []) },
   ),
@@ -56,6 +60,8 @@ beforeEach(() => {
   mocks.overview.mockReset();
   mocks.overview.mockResolvedValue([]); // 默认：读不到读数 ⇒ 走"别的失败"那一档（保守 ✓）
   mocks.loadPages.mockClear();
+  mocks.createWorkspace.mockReset();
+  mocks.listWorkspaces.mockReset();
   useSpaceStore.setState({ spaces: [PROD, SAFE, WORK] as never, activeId: PROD.id });
 });
 
@@ -154,5 +160,18 @@ describe("设置-空间 · 切到打不开的空间：拒绝必须可见", () =>
     await useSpaceStore.getState().switchTo(WORK.id);
 
     expect(mocks.loadPages).toHaveBeenCalledWith({ restoreSpaceId: WORK.id });
+  });
+  // ⭐ 2026-11-09（owner 报「新建空间后，左上空间切换器列表不刷新」）：
+  //   创建成功后，store 里那份 spaces 必须**已经含新空间**且 ctiveId 指向它 ——
+  //   切换器直接订阅这份，所以这是"打开就能看到"的判据（页面那边还会在打开时再读一次兜底）。
+  it("d) create 成功后：spaces 含新空间、activeId 指向新空间", async () => {
+    const NEW = { id: "new-space", name: "新空间", created_at: 9, updated_at: 9 };
+    mocks.createWorkspace.mockResolvedValueOnce(NEW);
+    mocks.listWorkspaces.mockResolvedValueOnce([PROD, SAFE, WORK, NEW]);
+
+    expect(await useSpaceStore.getState().create("新空间", "personal")).toBe(true);
+    const st = useSpaceStore.getState();
+    expect(st.spaces.map((s) => s.id)).toContain("new-space");
+    expect(st.activeId).toBe("new-space");
   });
 });

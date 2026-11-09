@@ -1200,6 +1200,8 @@ export function PageTree(_props: {
     //   不再问"个人/团队"（`chooseDialog` 那一段连同 `kind` 一起移除 ✓；⛔ 不留死代码 ✗）。
     const ok = await useSpaceStore.getState().create(name, "personal");
     if (ok) {
+      // ⭐ 2026-11-09：创建后再**强制重读**一次空间列表 —— 让切换器立刻看到新空间（用户报的缺陷）。
+      await useSpaceStore.getState().load();
       await useNotes.getState().loadPages();
       const newActive = useSpaceStore.getState().activeId;
       const name2 = useSpaceStore.getState().spaces.find((s) => s.id === newActive)?.name;
@@ -1379,7 +1381,13 @@ export function PageTree(_props: {
           <button
             ref={spaceChooser.triggerRef}
             className="sidebar-title"
-            onClick={spaceChooser.toggle}
+            onClick={() => {
+              // ⭐ 2026-11-09（owner 报「新建空间后空间切换器列表不刷新」）：**打开切换器时强制重读一次**。
+              //   根因候选：`create()` 内部的 `listWorkspaces()` 与页面其它读竞争/或那次读到的还是旧快照；
+              //   无论如何，"打开列表就取真读数"是用户期望的语义（也把外部新建/导入的空间一并带进来）。
+              if (!spaceChooser.open) void useSpaceStore.getState().load();
+              spaceChooser.toggle();
+            }}
             title="切换工作空间"
           >
             <span

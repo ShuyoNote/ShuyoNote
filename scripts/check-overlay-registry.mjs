@@ -210,6 +210,7 @@ const EXEMPT_COMPONENTS = new Map([
   ["src/editor/plugins/DictionaryLookupPlugin.tsx", { kind: "inline", reason: "编辑器内联浮层（划词释义卡 `.dict-popover`）：由 Lexical 插件自己的 state 管、随编辑器卸载，Esc/点浮层外面自己关 ⇒ 不接管安卓返回键" }],
   // ── 不是"可关闭浮层" ──────────────────────────────────────────────────────
   ["src/components/SpaceTransferProgress.tsx", { kind: "not-a-layer", reason: "全局导出/导入进度条：没有关闭动作（不吃点击、不吃 Esc）" }],
+  ["src/components/PageAttachmentDrop.tsx", { kind: "not-a-layer", reason: "拖拽落点提示层 `page-drop-overlay`：`pointer-events:none`、无关闭动作、不吃点击/Esc，只在拖拽悬停的那几秒显示文案" }],
   // ── ⚠️ `gap` 级别的"同类缺口"目前**已经清零**（2026-09-15 第二轮） ─────────────
   // 上一轮留下的三处（`PdfReader` 浮层形态 / `PluginViewOverlay` / `FilePreviewDialog`）
   // 各接了一条 `useOverlayLayer`，因此不再是 `A` 判据下的"未登记"；它们转由 `B` 判据接管

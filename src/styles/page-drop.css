@@ -1,0 +1,36 @@
+/* 外部文件拖拽的落点提示层（2026-11-09，owner 选 A+）。
+   ⚠️ 只负责“看得见的反馈”：`pointer-events: none` —— 它绝不能挡住鼠标/拖拽命中，
+   否则 `elementFromPoint` 永远命中它自己，落点判定就退化成“总是正文”。
+   ⚠️ 分文件 CSS 的形状要求（`src/lib/cssLayers.test.ts` ⑤）：顶层只许层块 ⇒ 全部包进 `@layer legacy`；
+   层序声明仍只在 `App.css` 顶部。字号/圆角必须用 token（`src/lib/cssTokens.test.ts`）。 */
+
+@layer legacy {
+  .page-drop-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 3000;
+    pointer-events: none;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 96px;
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  .page-drop-overlay-pill {
+    padding: 10px 18px;
+    border-radius: var(--radius-full);
+    font-size: var(--fs-13);
+    line-height: 1.4;
+    color: #fff;
+    background: var(--accent, #3370ff);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+    max-width: min(520px, 86vw);
+    text-align: center;
+  }
+
+  /* 拖到附件区时用中性色，避免用户以为会插正文。 */
+  .page-drop-overlay.is-attachments .page-drop-overlay-pill {
+    background: #4b5563;
+  }
+}

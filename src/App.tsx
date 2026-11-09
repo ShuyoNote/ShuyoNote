@@ -13,6 +13,7 @@ import { useWindowChrome, applyDecorations } from "./store/windowChrome";
 import { BacklinksPanel } from "./components/BacklinksPanel";
 import { UnlinkedMentionsPanel } from "./components/UnlinkedMentionsPanel";
 import { AttachmentPanel } from "./components/AttachmentPanel";
+import { PageAttachmentDrop } from "./components/PageAttachmentDrop";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import { DatabaseView } from "./components/DatabaseView";
 import { TableOfContents } from "./components/TableOfContents";
@@ -171,6 +172,8 @@ import "./styles/community.css";
 import "./styles/mobile-read.css";
 // S4-17（2026-11-01）：编辑器域（`.editor-*` / `.block-selection*`）。
 import "./styles/editor.css";
+// 2026-11-09：外部文件拖拽的落点高亮层（`.page-drop-overlay*`）。
+import "./styles/page-drop.css";
 // S4-18（2026-11-01）：侧栏与空间切换域（`.sidebar*` / `.space-*`；`.space-item-crypto` 共享规则除外）。
 import "./styles/sidebar-space.css";
 // S4-19（2026-11-01）：数据库表格域（`.db-*`）。
@@ -1136,7 +1139,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
         </div>
         <InlineAiDraftBar />
         <PropertiesPanel pageId={pageId} />
-        <div className="editor-stage">
+        <div className="editor-stage" data-drop-zone="page-editor">
           <ErrorBoundary>
             <Editor
               key={`${pageId}:${reloadTick}`}
@@ -1150,7 +1153,11 @@ function NoteEditor({ pageId }: { pageId: string }) {
         </div>
         <BacklinksPanel pageId={pageId} />
         <UnlinkedMentionsPanel />
-        <AttachmentPanel pageId={pageId} />
+        {/* 2026-11-09（owner 选 A+）：拖进「正文区」= 挂本页 + 正文插卡片；拖进「附件区」= 只挂附件。 */}
+        <div data-drop-zone="attachments">
+          <AttachmentPanel pageId={pageId} />
+        </div>
+        <PageAttachmentDrop pageId={pageId} />
       </div>
       {/* Tag picker modal, opened by the page-actions "添加标签" row. */}
       <TagAddButton pageId={pageId} />

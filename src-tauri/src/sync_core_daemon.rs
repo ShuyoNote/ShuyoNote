@@ -119,7 +119,34 @@ pub fn pid_alive(pid: u32) -> bool {
         }
         true
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        // ⭐ 2026-11-09（真机实测）：原先非 unix 一律 `true`（"保守当作活着"）⇒ **强杀/崩溃后
+        //   `sync_core.lock` 里的死 pid 永远被当成活人**，应用**再也打不开**（真机现场：
+        //   `另一个 ShuyoNote 实例正在使用数据目录（pid=23148）`，而 23148 已经不存在）。
+        //   现在用 Win32 查真实存活：能打开句柄且退出码仍是 `STILL_ACTIVE` ⇒ 活；否则 ⇒ 死（可回收）。
+        //   ⚠️ `OpenProcess` 失败按**死**处理（锁持有者与本进程同用户，正常不会拒；打不开更可能是
+        //   进程已退出）。查退出码失败 ⇒ 保守当作活（宁可不回收，也不抢活人的锁）。
+        use windows_sys::Win32::Foundation::{CloseHandle, FALSE};
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        const STILL_ACTIVE: u32 = 259;
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+            if handle.is_null() {
+                return false;
+            }
+            let mut code: u32 = 0;
+            let ok = GetExitCodeProcess(handle, &mut code);
+            let _ = CloseHandle(handle);
+            if ok == 0 {
+                return true;
+            }
+            code == STILL_ACTIVE
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
         true
@@ -1096,9 +1123,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // ⭐ 2026-11-09（真机现场：强杀后 `sync_core.lock` 留着死 pid ⇒ 应用打不开）：
+    //   **PID 存活判定必须真的去问操作系统**。Windows 以前一律返回 `true`（"保守"），
+    //   于是这条断言在 Windows 上从来没人跑到过 —— 它今天就是那次"打不开"的机器判据。
     #[test]
-    fn lock_pid_parsing_is_lenient_but_bounded() {
-        assert_eq!(parse_lock_pid("1234\njunk"), Some(1234));
+    fn pid_alive_asks_the_os_and_reports_dead_for_a_missing_pid() {
+        assert!(pid_alive(std::process::id()), "自己必须算活着");
+        assert!(
+            !pid_alive(999_999_999),
+            "一个不存在的 pid 必须算死（否则残留锁永远不回收 ⇒ 应用再也打不开）"
+        );
+    }
+
+    #[test]
+    fn lock_pid_parsing_is_lenient_but_bounded() {        assert_eq!(parse_lock_pid("1234\njunk"), Some(1234));
         assert_eq!(parse_lock_pid(" 42 "), Some(42));
         assert_eq!(parse_lock_pid(""), None);
         assert_eq!(parse_lock_pid("not-a-pid"), None);
