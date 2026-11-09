@@ -100,10 +100,15 @@ QUIC 直连真机验收（2026-11-09 15:2x，两侧 dev 5014cace）：
 
 ```text
 ✅ 跨机真机主链：AMD⇄Windows 已验收（见 §2.1，含 **QUIC 直连**：两侧 connect OK 16/17/23ms）
-⛔ 附件走 mesh 直连**未接线**（2026-11-09 真机复核）：`mesh::request_attachment_from_peer` /
-   `attachment_target` 生产路径**无调用**（仅测试；构建警告 `request_attachment_from_peer is never used`），
-   生产附件下载仍是 `sync.rs` 里 `client.get({att_base}/attachments/<hash>)` 走 HTTP 8788；
-   ⚠️ 与 QUIC 融合互不影响（HTTP 回退一直是通的），但"附件也走直连隧道"需单独一单
+🔄 附件「按需取字节」已走 Endpoint（2026-11-09 修正 + 接线）：
+   · 原状态：`mesh::request_attachment_from_peer_at` **生产有调用**（按需下载/续传），它走
+     `endpoint_for_peer(...).get_stream(...)`；但组合器的 `get_stream` 当时**直接走 HTTP**
+     ⇒ 附件字节永远 HTTP（先前记的"生产无调用"是只看了非 `_at` 的旧包装，已修正）。
+   · 2026-11-09 `f07d06ec`：`get_stream` 改为 **QUIC 优先**（隧道整包缓冲，≤64MB；
+     首端点成功时 HTTP 零连接；不支持/失败静默回退 HTTP）；判据 4/4。真机验收待补
+     （需对端在测试空间新增一件附件后点「下载」）。
+   · 仍走 HTTP 的：`sync_attachments`（服务端自动同步那条，`client.get({att_base}/attachments/<hash>)`）
+     —— 与个人版 LAN「按需取字节」是两条路，后者才是本轮目标。
 ✅ 私有 relay 真机（TLS 版）：已部署 shuyo.cn（8881 HTTPS 外网 200 / 8882 QUIC 握手成功；
    客户端握手 **allow + deny 双面**都有外网真机读数）—— 见 §2.2；交付包已出（sha 见 §2.2）
 ⛔ relay 仍缺：ACME/域名（仍外部签发）、反代形态（B）未实测、`relay selfcheck` 四项
