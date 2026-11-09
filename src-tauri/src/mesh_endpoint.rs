@@ -496,6 +496,11 @@ impl Endpoint for QuicMeshEndpoint {
                     reply.body.len()
                 ));
             }
+            // 真机验收证据：**这一行 = 附件字节确实走了 QUIC**（⛔ 不含 token/签名）。
+            eprintln!(
+                "[mesh-endpoint] 附件走 QUIC（target={target}；{} B）",
+                reply.body.len()
+            );
             let (mut writer, reader) = tokio::io::duplex(64 * 1024);
             let body = reply.body;
             tokio::spawn(async move {
