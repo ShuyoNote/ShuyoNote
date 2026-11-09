@@ -87,10 +87,23 @@ impl LanQuicEndpoint {
     /// ⚠️ **不重试**（骨架层只有单次尝试；重试预算是 P3-2 的事 —— 现有的
     /// `iroh_tunnel::request` 仍带它自己的 3×20s 重试，本方法不替代它）。
     pub async fn connect(&self, peer: EndpointAddr) -> Result<iroh::endpoint::Connection, String> {
-        self.ep
-            .connect(peer, iroh_tunnel::ALPN)
-            .await
-            .map_err(|e| format!("无中继 QUIC 连接失败：{e}"))
+        let peer_id = peer.id;
+        let started = std::time::Instant::now();
+        let out = self.ep.connect(peer, iroh_tunnel::ALPN).await;
+        // ⭐ 2026-11-09（QUIC 真机排查开关，默认静默）：成功也要留一行 —— 否则"没有回退日志"
+        //   与"根本没尝试 QUIC"分不开（真机复测时需要正证据）。
+        if std::env::var_os("SHUYONOTE_LAN_DEBUG_QUIC").is_some() {
+            let elapsed = started.elapsed().as_millis();
+            match &out {
+                Ok(_) => eprintln!("[quic-debug] connect OK peer_id={peer_id} elapsed={elapsed}ms"),
+                Err(e) => {
+                    eprintln!(
+                        "[quic-debug] connect FAIL peer_id={peer_id} elapsed={elapsed}ms err={e}"
+                    )
+                }
+            }
+        }
+        out.map_err(|e| format!("无中继 QUIC 连接失败：{e}"))
     }
 
     /// 接一条入站连接（`None` ＝ 端点已关）。与 iroh 的 `accept` 同形，骨架层不做额外包装。
