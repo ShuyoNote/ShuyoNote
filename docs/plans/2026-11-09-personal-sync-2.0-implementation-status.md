@@ -1,6 +1,6 @@
 # 个人版同步 2.0 实施状态（P0–P3）
 
-> **状态：实施中（代码/判据大部分已落；跨机真机与真实私有中继/TLS 反代仍未验）** ｜ 2026-11-09
+> **状态：实施中（代码/判据大部分已落；AMD⇄Windows 跨机主链**已真机验收**，QUIC 直连未通；真实私有中继/TLS 反代仍未验）** ｜ 2026-11-09
 > 上位：[需求说明书](2026-11-08-personal-sync-2.0-requirements.md) ｜ [P3 ADR](2026-11-08-personal-sync-2.0-p3-adr.md)
 > 口径：只写**盘上/判据能证明的**；未验项单列，不写成已验收。
 
@@ -34,10 +34,34 @@ relay 本地 TLS 验收                  通过 6/失败 0；正控/错 SAN/停�
 
 > ⚠️ `cargo test --lib` 在 macOS 默认 `TMPDIR` 下会撞既有 `/var`↔`/private/var` 路径断言（3 条 `workspaces`）；用 `TMPDIR=$(cd "$TMPDIR" && pwd -P)` 复跑即全绿。这是既有环境问题，不是本系列改动引入。
 
+## 2.1 跨机真机验收（AMD ⇄ Windows，2026-11-09 10:36，主链已完成）
+
+```text
+环境：AMD dev 1a8f6304 ／ Windows dev 1a8f6304，同 Wi-Fi（192.168.43.190 ⇄ 192.168.43.206），均 --features lan-quic
+发现 ✓（UDP 公告互见；Windows 发现层 47821 被系统保留段占 ⇒ 走候选回退 44500）
+配对 ✓（device-level；mesh_paired_devices 带公钥；入站拉取 200）
+HTTP 回退 ✓（QUIC 首次失败自动回退，拉取/融合不受影响）
+公告 uid 继承 ✓（候选带 603e88fc… ⇒ 勾建空间继承同名 uid，非随机）
+融合 Allow ✓（sync_history pulled=5 / ok=1）
+落库 ✓：pages=2（「开始」「T-B」）｜ attachments=1（5,242,880 B，sha b26d7e22… 对齐）｜
+        changes=0（应用后清账）｜ 附件/页面读数与对端 payload 一致
+人裁决：pending_remote_pages=1 ⇒ owner 已在界面裁决，复查为 0
+pid_alive：Windows 真机崩溃/强杀后残留锁被新进程回收（21 passed / 0 failed，与本机读数一致）
+
+本批两条修复：
+· 7c88e74c —— `lan.rs::merge_announce` 合并「一空间一条公告」时保持 hub_space_uids 与
+  hub_spaces 同序对齐（修：候选 uid 恒空 ⇒ 建空间回落随机 uid）；三态判据
+· 1a8f6304 —— 同名但 uid 不同 ⇒ 独立拒绝理由 RefuseDifferentUid（owner 批 C；只改理由/判据，
+  不改判等规则/payload/公告字段/用户可见同步行为）；全量 lib 1502 passed / 0 failed / 23 ignored
+
+未达：QUIC 直连两侧均 timed out（HTTP 回退正常）——排查中；短期修不了则明确落
+     「V1 只保证 HTTP 回退」+ 判据，不含糊。
+```
+
 ## 3. 未验 / 未做（如实单列）
 
 ```text
-⛔ 跨机真机：QUIC 只做了同机两进程（含 LAN IP），未在第二台设备跑
+✅ 跨机真机主链：AMD⇄Windows 已验收（见 §2.1）；⚠️ QUIC 真实直连仍未通（两侧 timed out ⇒ HTTP 回退正常）
 ⛔ 私有中继真机：未部署真实 relay/nginx/caddy；TLS 只验自检（可达/SAN/到期），
    未验客户端握手、8882/udp 外网、ACME/域名
 ⛔ App 全面转 daemon：App 仍持有 DB 写者；daemon 仅无头模式 + 回环 IPC；
@@ -49,7 +73,7 @@ relay 本地 TLS 验收                  通过 6/失败 0；正控/错 SAN/停�
 
 ## 4. 下一步（按剩余价值）
 
-1. 第二台设备真机：同 Wi-Fi 跑 `--features lan-quic` 两实例/两机，验公告互见、QUIC 实际直连、失败回退 HTTP；
+1. 第二台设备真机：AMD⇄Windows **主链已验收**（§2.1）；剩 QUIC 真实直连（两侧 timed out）、双向编辑真机、附件续传真机；
 2. 真实私有 relay + TLS 反代：在用户自己的 Linux 服务器部署，跑客户端握手/8882 UDP；
 3. App↔daemon IPC 完整化（或明确 V1 保持“App 写者 + daemon 仅无头”）；
 4. 7 天影子观察后，再决定 CRDT 默认灰度。
