@@ -48,4 +48,12 @@ describe("「全部空间立即同步」的目标列表必须是实时读取", (
     expect(body, "要调 meshEnsureDefaults 补档案行").toContain("api.meshEnsureDefaults()");
     expect(body, "⛔ 不许在未启用网格时补（会把桌面意外开成广播）").toContain("lanStatus?.mesh?.bind");
   });
+
+  it("④ 进入同步页（网格已启用）也补一次档案行 —— 覆盖“面板开着时新建空间”", () => {
+    const calls = (src.match(/api\.meshEnsureDefaults\(/g) ?? []).length;
+    expect(calls, "应至少三处：首次配置 / 全部空间同步 / 进页补档案行").toBeGreaterThanOrEqual(3);
+    expect(src, "进页补档案行必须挂在 mesh.bind 已启用这一档").toMatch(
+      /useEffect\(\(\) => \{[\s\S]{0,400}?api\.meshEnsureDefaults\(\)[\s\S]{0,200}?\}, \[lanStatus\?\.mesh\?\.bind\]\);/,
+    );
+  });
 });

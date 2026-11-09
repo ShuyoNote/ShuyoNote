@@ -1293,6 +1293,16 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPersonalActive, activeId, lanStatus]);
 
+  // ⭐ 2026-11-09（真机：新建空间后要重启才同步得到）：`sync_profiles` 的档案行只在“首次进入本页”
+  //   那一次补（上面那个 effect）——**之后新建的空间**不会自己进表 ⇒ 公告/发现层看不到它。
+  //   这里在「网格已启用」的前提下，每次进本页再补一次：`meshEnsureDefaults` 只补不覆盖（幂等）。
+  //   ⛔ 没启用网格时一个字节都不写 —— 否则会把“从没开启局域网”的桌面意外打开广播（隐私口径）。
+  useEffect(() => {
+    if (!isDesktopPlatform() || !lanStatus?.mesh?.bind) return;
+    void api.meshEnsureDefaults().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lanStatus?.mesh?.bind]);
+
   /** ⭐ 2026-10-27（M2）：开启 / 关闭局域网发现（用户可逆）—— 关闭只清监听地址（配对关系保留 ✓）。 */
   const lanToggle = async () => {
     if (!activeId) return;
