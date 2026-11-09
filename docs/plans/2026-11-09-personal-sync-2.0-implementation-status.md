@@ -1,6 +1,6 @@
 # 个人版同步 2.0 实施状态（P0–P3）
 
-> **状态：实施中（代码/判据大部分已落；AMD⇄Windows 跨机主链**已真机验收（含 QUIC 直连）**；真实私有中继/TLS 反代仍未验）** ｜ 2026-11-09
+> **状态：实施中（代码/判据大部分已落；AMD⇄Windows 跨机主链**已真机验收（含 QUIC 直连）**；私有 relay TLS 版已真机部署（allow 路径未验））** ｜ 2026-11-09
 > 上位：[需求说明书](2026-11-08-personal-sync-2.0-requirements.md) ｜ [P3 ADR](2026-11-08-personal-sync-2.0-p3-adr.md)
 > 口径：只写**盘上/判据能证明的**；未验项单列，不写成已验收。
 
@@ -70,6 +70,30 @@ QUIC 直连真机验收（2026-11-09 15:2x，两侧 dev 5014cace）：
   lan_quic 判据 20 passed / 0 failed；公告只剩单条真实 v4（192.168.43.190:<端口>）
 ```
 
+## 2.2 私有 relay 真机（TLS 版，2026-11-09）
+
+```text
+部署：owner 服务器 shuyo.cn（阿里云 Ubuntu x86_64）—— 由 Windows 侧按 relay 仓 `5f3c6d0b` 部署
+  relay-server 自带 TLS：--tls-cert/--tls-key（Let's Encrypt fullchain/privkey，热重载）
+  ＋ --https-listen 0.0.0.0:8881 ＋ --quic-listen 0.0.0.0:8882（--listen 8880 保留给旧客户端）
+真机读数（Windows 侧，外网）：
+  · HTTPS 8881：`curl https://shuyo.cn:8881/` ⇒ 200（0.237s；服务端本机 200/0.099s，真证书无 -k）
+  · QUIC 8882/udp：`openssl s_client -quic …` ⇒ CONNECTION ESTABLISHED / QUICv1 /
+    TLS_AES_256_GCM_SHA384 / Peer certificate: CN=shuyo.cn（链由 HTTPS curl 验过）
+  · 客户端 live 探针（--features relay，url=https://shuyo.cn:8881）⇒
+    `relay_probe=denied reason=device_mismatch … license=ok 剩余29天`；中继 journal
+    `deny reason=device_mismatch jti=… stage=license` ⇒ TLS 通了、按闸门干净拒绝（部署许可证绑设备，属预期）
+交付包（AMD 产出，2026-11-09 16:2x，relay 仓 5f3c6d0b）：
+  · Linux tar.gz 4,018,334 B ｜ sha256 7adfe489c6afbb97b003b06902012d9820498fc84172f3ccbc2a809cd9c69290
+  · bin/relay-server 11,456,328 B ｜ sha256 89533bc71849745017513872d96d14daaed1e2d0e8a6b7e4aa3b4c98f0bc60ec
+  · `check-package --dir` ⇒ exit 0（树 10 文件、清单/许可/版本/凭据四类过；1 条「自检四项」未核如实带出）；
+    `--self-test` 16/16；tar 清单/VERSION/MANIFEST/SHA256SUMS 齐
+本机 TLS 冒烟（WSL2，自签、非交付）：`relay tls=on` ⇒ https 127.0.0.1:45131 + quic 47910；
+  `curl -k https://…` ⇒ 200（0.0469s）；只给 cert 不给 key ⇒ exit 2；不给 TLS ⇒ HTTP-only
+未验：**allow 路径**（需要部署许可证 `dev` 名单里的一台设备身份/租约）；ACME（证书仍外部签发）、
+  状态页 `cert.days_left`（仍 null）、`relay selfcheck` 四项、反代形态（B）
+```
+
 ## 3. 未验 / 未做（如实单列）
 
 ```text
@@ -78,8 +102,10 @@ QUIC 直连真机验收（2026-11-09 15:2x，两侧 dev 5014cace）：
    `attachment_target` 生产路径**无调用**（仅测试；构建警告 `request_attachment_from_peer is never used`），
    生产附件下载仍是 `sync.rs` 里 `client.get({att_base}/attachments/<hash>)` 走 HTTP 8788；
    ⚠️ 与 QUIC 融合互不影响（HTTP 回退一直是通的），但"附件也走直连隧道"需单独一单
-⛔ 私有中继真机：未部署真实 relay/nginx/caddy；TLS 只验自检（可达/SAN/到期），
-   未验客户端握手、8882/udp 外网、ACME/域名
+✅ 私有 relay 真机（TLS 版）：已部署 shuyo.cn（8881 HTTPS 外网 200 / 8882 QUIC 握手成功；
+   客户端 live 探针 `device_mismatch` 干净拒绝）—— 见 §2.2；交付包已出（sha 见 §2.2）
+⛔ relay 仍缺：**allow 路径**（需部署许可证 dev 名单设备）、ACME/域名（仍外部签发）、
+   反代形态（B）未实测、`relay selfcheck` 四项
 ⛔ App 全面转 daemon：App 仍持有 DB 写者；daemon 仅无头模式 + 回环 IPC；
    未做 App 通过 IPC 执行同步/读取全部数据、Windows 无 TERM 的自动停止
 ⛔ P3-3a 真正 7 天 0 差异观察（只做了历史落盘/裁剪，未等满 7 天）
@@ -89,7 +115,7 @@ QUIC 直连真机验收（2026-11-09 15:2x，两侧 dev 5014cace）：
 
 ## 4. 下一步（按剩余价值）
 
-1. 第二台设备真机：AMD⇄Windows **主链已验收（含 QUIC 直连、双向编辑）**（§2.1）；剩附件续传真机、真实私有 relay/TLS 反代；
-2. 真实私有 relay + TLS 反代：在用户自己的 Linux 服务器部署，跑客户端握手/8882 UDP；
+1. 第二台设备真机：AMD⇄Windows **主链已验收（含 QUIC 直连、双向编辑）**（§2.1）；剩附件续传真机；
+2. 私有 relay 剩余：**allow 路径**（部署许可证 dev 名单设备）＋反代形态（B）实测＋ACME（可选）；
 3. App↔daemon IPC 完整化（或明确 V1 保持“App 写者 + daemon 仅无头”）；
 4. 7 天影子观察后，再决定 CRDT 默认灰度。
