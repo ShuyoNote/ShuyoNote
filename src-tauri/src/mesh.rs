@@ -3700,6 +3700,33 @@ impl Drop for MeshHandle {
     }
 }
 
+/// ⭐ 2026-11-09（真机：两侧 QUIC 都 30–90s 空等、aioquic Initial 打进来**零回包**）：
+/// 生产路径原先**只有 QUIC 客户端**（`connect`）；服务侧 `accept()` 循环只在**测试**与
+/// **relay** 构建里起过 ⇒ 对端打进来的 QUIC 连接**没人 accept** ⇒ 对称超时。
+///
+/// 这里补生产服务侧循环：接连接 → `iroh_tunnel::serve_one_conn` → **本机同一套**
+/// [`dispatch_tunnel`]（鉴权/路由/租约判定全复用，⛔ 不另写一套）。
+#[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+async fn serve_quic_forever(state: Arc<State>) -> Result<(), String> {
+    let registry = crate::lan_quic::process_registry().await?;
+    let ep = registry.endpoint().clone();
+    loop {
+        let Some(incoming) = ep.accept().await else {
+            return Err("QUIC 端点已关".to_string());
+        };
+        let st = state.clone();
+        tokio::spawn(async move {
+            let Ok(conn) = incoming.await else { return };
+            let _ = crate::relay_tunnel::iroh_tunnel::serve_one_conn(conn, move |req| {
+                let (status, body) =
+                    dispatch_tunnel(&st, &req.method, &req.target, req.headers.clone());
+                crate::relay_tunnel::TunnelReply { status, body }
+            })
+            .await;
+        });
+    }
+}
+
 /// 起一个网格窗口（阻塞式 accept 线程 ＋ 每连接一个线程；**不引任何依赖**）。
 pub fn start(
     cfg: MeshConfig,
@@ -3751,6 +3778,38 @@ pub fn start(
         served_pulls: served_pulls.clone(),
         locked: locked.clone(),
     });
+
+    // ⭐ 2026-11-09（真机：两侧 QUIC 都 30–90s 空等、aioquic Initial 打进来**零回包**）：
+    //   生产路径原先**只有客户端**（`connect`）—— 服务侧 `accept()` 循环只存在于
+    //   **测试**与 **relay** 构建里 ⇒ 对端打进来的 QUIC 连接**没人 accept**
+    //   ⇒ 对称超时（身份/地址/防火墙都排除后剩下的那一层）。
+    //   这里给 lan-quic 构建补一个服务侧循环：与 relay 那条**同构**（独立线程＋当前线程 runtime），
+    //   请求交给**本机同一套** `dispatch_tunnel`（⛔ 不另写路由/鉴权）。
+    #[cfg(all(feature = "lan-quic", not(feature = "relay")))]
+    {
+        static QUIC_SERVE_ONCE: AtomicBool = AtomicBool::new(false);
+        if !QUIC_SERVE_ONCE.swap(true, Ordering::SeqCst) {
+            let st = state.clone();
+            std::thread::Builder::new()
+                .name("lan-quic-serve".to_string())
+                .spawn(move || {
+                    let rt = match tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        Ok(rt) => rt,
+                        Err(e) => {
+                            eprintln!("[lan-quic] 服务侧没起来（运行时建不了）：{e}");
+                            return;
+                        }
+                    };
+                    if let Err(e) = rt.block_on(serve_quic_forever(st)) {
+                        eprintln!("[lan-quic] 服务侧退出：{e}");
+                    }
+                })
+                .ok();
+        }
+    }
 
     // ⭐ 2026-10-25（Step 7）：跨网隧道**服务侧**（只在 `--features relay` 时编）。
     //   ⚠️ 起不来只打一行日志 —— ⛔ 不许因此影响局域网那条路（它是默认路径）。
