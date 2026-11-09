@@ -264,10 +264,11 @@ pub fn batch_merge_gate_uid(
         return BatchMerge::NotEligible(NotEligibleWhy::NoPeerName);
     };
     // ③ **uid 有结论就用它**；判不了（任一边空）才回落名字（旧口径）。
-    let same_space = same_space_uid(local_uid, peer_uid.unwrap_or(""))
-        .unwrap_or_else(|| same_space_name_by_trim(local_name, peer_name));
-    // ④ 身份闸与旧闸**同一实现**（⛔ 不在这里重写顺序）。
-    match merge_gate(identity, same_space) {
+    let uid_verdict = same_space_uid(local_uid, peer_uid.unwrap_or(""));
+    let same_name = same_space_name_by_trim(local_name, peer_name);
+    // ④ 身份闸与旧闸**同一实现**（⛔ 不在这里重写顺序）；⭐ owner 批 C：只把
+    //    「同名但 uid 不同」的理由单独分出来（判等规则一个字没动）。
+    match merge_gate_by_uid(identity, uid_verdict, same_name) {
         MergeGate::Allow => BatchMerge::Allow,
         refuse => BatchMerge::Refuse(refuse),
     }
@@ -858,6 +859,9 @@ pub enum MergeGate {
     RefuseDifferentPerson,
     /// 同一人、但**名字不同** ⇒ 不融（按名融合的既有口径）。
     RefuseDifferentName,
+    /// ⭐ **2026-11-09（owner 批 C）**：同一人、**同名但 `space_uid` 不同** ⇒ 不融
+    /// （DEC-D A：同名不同 uid 要用户确认一次；⛔ 与「名字不同」分开，否则日志会把人带偏）。
+    RefuseDifferentUid,
 }
 
 /// ⭐⭐ **Q1–Q4 的唯一实现**（纯函数 ⇒ 判据够得着）。
@@ -878,6 +882,44 @@ pub fn merge_gate(identity: &SamePerson, same_name: bool) -> MergeGate {
                 MergeGate::RefuseDifferentName
             }
         }
+    }
+}
+
+/// ⭐ **2026-11-09（owner 批 C）**：`batch_merge_gate_uid` 的**理由分层**版本 —— 只把
+/// 「同名但 uid 不同」从「名字不同」里分出来，**判等规则一个字不改**。
+///
+/// 顺序与 [`merge_gate`] 逐条一致（身份 → 同名结论），唯一差别：uid 有结论时用 uid 的结论，
+/// 且 uid 判否 **且** 名字同名 ⇒ [`MergeGate::RefuseDifferentUid`]（⛔ 不再落到 `RefuseDifferentName`）。
+///
+/// | 身份 | uid 结论 | 名字 | 结果 |
+/// |---|---|---|---|
+/// | Unknown / No | 任意 | 任意 | `RefuseUnknownIdentity` / `RefuseDifferentPerson`（**不变**） |
+/// | Yes | `Some(true)` | 任意 | `Allow`（同名同 uid；⛔ uid 相等也不绕过身份） |
+/// | Yes | `Some(false)` ＋ 同名 | — | `RefuseDifferentUid`（DEC-D 人确认场景；**只改理由**） |
+/// | Yes | `Some(false)` ＋ 不同名 | — | `RefuseDifferentName`（旧档不回归） |
+/// | Yes | `None`（任一边空） | 同名 | `Allow`（旧回落口径） |
+/// | Yes | `None` | 不同名 | `RefuseDifferentName`（旧口径） |
+pub fn merge_gate_by_uid(
+    identity: &SamePerson,
+    uid_verdict: Option<bool>,
+    same_name: bool,
+) -> MergeGate {
+    match identity {
+        // Q1/Q2 与 `merge_gate` 逐字同源：身份先判，uid 不能绕过身份。
+        SamePerson::Unknown(_) => MergeGate::RefuseUnknownIdentity,
+        SamePerson::No(_) => MergeGate::RefuseDifferentPerson,
+        SamePerson::Yes(_) => match uid_verdict {
+            Some(true) => MergeGate::Allow,
+            Some(false) if same_name => MergeGate::RefuseDifferentUid,
+            Some(false) => MergeGate::RefuseDifferentName,
+            None => {
+                if same_name {
+                    MergeGate::Allow
+                } else {
+                    MergeGate::RefuseDifferentName
+                }
+            }
+        },
     }
 }
 
@@ -1741,8 +1783,85 @@ mod p33b_uid_gate_tests {
         );
         assert_eq!(
             got,
+            BatchMerge::Refuse(MergeGate::RefuseDifferentUid),
+            "uid 不同 ⇒ 不是同名（⛔ 名字相同也不允许融）；⭐ 2026-11-09（owner 批 C）：\
+             同名不同 uid 必须落到独立理由 RefuseDifferentUid"
+        );
+    }
+
+    /// ⭐ **2026-11-09（owner 批 C）**：三条必须是**机器判据**，而且旧档不许回归。
+    ///
+    /// | 场景 | 期望 |
+    /// |---|---|
+    /// | 同名 ＋ uid 不同 | `RefuseDifferentUid`（⛔ 不再是 `RefuseDifferentName`） |
+    /// | 名字不同（uid 有/无都一样） | `RefuseDifferentName`（旧档不回归） |
+    /// | 同名 ＋ uid 相同 | `Allow`（正向不误伤） |
+    /// | 同名 ＋ 任一边 uid 缺（老对端） | `Allow`（旧回落口径，行为不变） |
+    #[test]
+    fn c_uid_mismatch_has_its_own_reason_and_name_mismatch_keeps_its_own() {
+        // ① 同名 + uid 不同 ⇒ RefuseDifferentUid（owner 批 C 的第一条）
+        assert_eq!(
+            batch_merge_gate_uid(
+                Some(SpaceKind::Personal),
+                "工作",
+                "uid-a",
+                Some("工作"),
+                Some("uid-b"),
+                &yes()
+            ),
+            BatchMerge::Refuse(MergeGate::RefuseDifferentUid),
+            "① 同名 + uid 不同 ⇒ RefuseDifferentUid"
+        );
+        // ② 名字不同 ⇒ 仍是 RefuseDifferentName（uid 有/无都算旧档）
+        assert_eq!(
+            batch_merge_gate_uid(
+                Some(SpaceKind::Personal),
+                "工作",
+                "uid-a",
+                Some("别的"),
+                Some("uid-b"),
+                &yes()
+            ),
             BatchMerge::Refuse(MergeGate::RefuseDifferentName),
-            "uid 不同 ⇒ 不是同名（⛔ 名字相同也不允许融）"
+            "② 名字不同 ＋ uid 不同 ⇒ 仍是 RefuseDifferentName"
+        );
+        assert_eq!(
+            batch_merge_gate_uid(
+                Some(SpaceKind::Personal),
+                "工作",
+                "",
+                Some("别的"),
+                None,
+                &yes()
+            ),
+            BatchMerge::Refuse(MergeGate::RefuseDifferentName),
+            "② 名字不同 ＋ 老对端没 uid ⇒ 仍是 RefuseDifferentName"
+        );
+        // ③ 同名 + uid 相同 ⇒ Allow（正向不误伤）
+        assert_eq!(
+            batch_merge_gate_uid(
+                Some(SpaceKind::Personal),
+                "工作",
+                "uid-a",
+                Some("工作"),
+                Some("uid-a"),
+                &yes()
+            ),
+            BatchMerge::Allow,
+            "③ 同名 + uid 相同 ⇒ Allow"
+        );
+        // ③b 同名 + 任一边 uid 缺（老对端）⇒ Allow（旧回落口径，行为一个字没改）
+        assert_eq!(
+            batch_merge_gate_uid(
+                Some(SpaceKind::Personal),
+                "工作",
+                "",
+                Some("工作"),
+                None,
+                &yes()
+            ),
+            BatchMerge::Allow,
+            "③ 同名 + uid 判不了 ⇒ 回落名字 ⇒ Allow（旧口径不变）"
         );
     }
 

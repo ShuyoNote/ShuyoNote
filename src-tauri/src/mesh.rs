@@ -628,6 +628,9 @@ fn gate_reason(gate: crate::mesh_merge_ledger::MergeGate) -> &'static str {
     match gate {
         MergeGate::Allow => "允许（不该走到这里）",
         MergeGate::RefuseDifferentName => "名字不一样（trim 后不是逐字相等）",
+        MergeGate::RefuseDifferentUid => {
+            "同名但空间 uid 不一样（DEC-D：要人确认一次；不是名字不同）"
+        }
         MergeGate::RefuseUnknownIdentity => "判不出是不是同一个人（这台不在本机信任名单里）",
         MergeGate::RefuseDifferentPerson => "判得出、但不是同一个人",
     }
@@ -12124,8 +12127,9 @@ mod tests {
         let ab = absorb_peer_batch(&c, &rows, "平板", DEVICE_LEVEL_SPACE, true, None).unwrap();
         assert_eq!(
             ab.merge,
-            PeerMergeState::Refused(MergeGate::RefuseDifferentName),
-            "⛔ uid 不同却融了：{ab:?}"
+            PeerMergeState::Refused(MergeGate::RefuseDifferentUid),
+            "⛔ uid 不同却融了：{ab:?}；⭐ 2026-11-09（owner 批 C）：同名不同 uid 的拒绝理由\
+             必须是独立的 RefuseDifferentUid（⛔ 不再是 RefuseDifferentName）"
         );
         assert_eq!((ab.applied, ab.tail), (0, 0), "被拒 ⇒ 不落库、水位不前进");
         let n: i64 = c
