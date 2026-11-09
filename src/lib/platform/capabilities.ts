@@ -32,6 +32,18 @@ export function isMacDesktopUserAgent(ua: string): boolean {
 }
 
 /**
+ * 纯函数：是否 **Windows 桌面**（UA 判）。
+ *
+ * 为什么需要它：窗口创建时在 Windows 上**关掉了 Tauri 的 OS 拖拽**（`drag_and_drop(false)`，
+ * 否则自绘标题栏拖不动窗口）⇒ 「拖文件进窗口」只能靠 HTML5 拖拽 ＋ 字节导入那条兜底路；
+ * 而 macOS 上 Tauri 的拖拽事件是好的。判错的代价：拖拽功能在一整类机器上静默失效。
+ */
+export function isWindowsDesktopUserAgent(ua: string): boolean {
+  if (isMobileUserAgent(ua)) return false;
+  return /Windows NT/i.test(ua);
+}
+
+/**
  * 纯函数：聚合邮箱是否可用。**桌面专属**（2026-09-13 定）。
  *
  * 它走 `native-tls`（桌面用系统 TLS），Android 上要为此从源码交叉编译一份 OpenSSL；

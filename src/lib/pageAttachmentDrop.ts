@@ -43,3 +43,4 @@ export function toCssPoint(
 export function dropHintText(zone: PageDropZone): string {
   return zone === "editor" ? "松开：挂到本页，并在正文插入附件卡片" : "松开：只加到附件区（正文不动）";
 }
+

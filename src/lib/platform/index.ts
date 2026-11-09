@@ -15,6 +15,7 @@ import {
   computeEmailSupported,
   isMacDesktopUserAgent as isMacDesktopUserAgentPure,
   isMobileUserAgent as isMobileUserAgentPure,
+  isWindowsDesktopUserAgent as isWindowsDesktopUserAgentPure,
 } from "./capabilities";
 
 export type { Platform } from "./types";
@@ -65,6 +66,19 @@ export function isMacDesktopPlatform(): boolean {
   if (!isTauri()) return false;
   const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
   return isMacDesktopUserAgentPure(ua);
+}
+
+/**
+ * 是否 **Windows 桌面壳** —— 用来选「拖文件进窗口」走哪条路。
+ *
+ * 为什么不是所有桌面都一样：窗口创建时在 Windows 上 `drag_and_drop(false)`（否则自绘标题栏
+ * 拖不动窗口）⇒ Tauri 的 OS 拖拽事件收不到 ⇒ 只能走 **HTML5 拖拽 ＋ 字节导入**；
+ * macOS 仍走 Tauri 事件。⛔ 别拿 `isDesktopPlatform()` 当近似（它只表示"有 Rust 内核"）。
+ */
+export function isWindowsDesktopPlatform(): boolean {
+  if (!isTauri()) return false;
+  const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
+  return isWindowsDesktopUserAgentPure(ua);
 }
 
 /**

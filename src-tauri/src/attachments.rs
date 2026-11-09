@@ -1306,6 +1306,65 @@ pub fn write_attachment_bytes(
     })
 }
 
+/// ⭐ 2026-11-09（真机：Windows 上窗口创建时 `drag_and_drop(false)` —— 为了让自绘标题栏能拖窗口
+/// ⇒ Tauri 的 OS 拖拽事件收不到）⇒ 用 **HTML5 拖拽**拿到的 `File` 字节导入附件（前端 File API
+/// 没有本地路径）。语义与 [`import_attachment_files`] 相同（落当前空间、内容寻址去重、写变更记录），
+/// 只是输入从"路径"换成"字节"。
+///
+/// ⚠️ 只用于**拖拽**这条兜底路；文件选择框那条仍走路径（大文件不会进内存）。
+#[tauri::command]
+pub fn import_attachment_bytes(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    page_id: Option<String>,
+    name: String,
+    mime: String,
+    data: Vec<u8>,
+) -> Result<AttachmentMeta, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let space = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        active_space_id(&c)
+    };
+    let key = space_key_for(&app_data_dir, &space);
+    let attachments_dir = space_attachments_dir(&app_data_dir, &space);
+    std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
+
+    let hash = crate::db::sha256_hex_bytes(&data);
+    let ext = ext_from_mime(&mime);
+    let path = bucket_path(&attachments_dir, &hash, ext);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    // 与 `import_attachment_files` 同一套：内容寻址 ⇒ 同 hash 的字节已经在盘上就不重写。
+    if !path.exists() {
+        let bytes = crate::security::encrypt_attachment_bytes(key.as_ref(), &data)?;
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    }
+
+    let c = db.0.lock().expect("db mutex poisoned");
+    let id = uuid::Uuid::new_v4().to_string();
+    let size = data.len() as i64;
+    c.execute(
+        "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![id, page_id, name, hash, mime, size, now_ms()],
+    )
+    .map_err(|e| e.to_string())?;
+    let now = now_ms();
+    let payload = serde_json::json!({ "id": &id, "page_id": &page_id, "name": &name, "hash": &hash, "mime": &mime, "size": size }).to_string();
+    record_change(&c, "attachment", &id, "upsert", Some(&payload), now)?;
+
+    Ok(AttachmentMeta {
+        id,
+        name,
+        hash,
+        mime,
+        size,
+        path: path.to_string_lossy().into_owned(),
+    })
+}
+
 /// Import arbitrary files by their on-disk paths (streaming, content-addressed).
 /// The file picker runs in the frontend; only the chosen paths cross the IPC
 /// boundary, so arbitrarily large files never get serialized into memory.

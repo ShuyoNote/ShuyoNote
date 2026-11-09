@@ -2674,6 +2674,20 @@ export function makeInvoke(store: SqliteStore) {
       );
       return resolved as T;
     }
+    if (cmd === "import_attachment_bytes") {
+      // ⭐ 2026-11-09：Windows 拖拽兜底（桌面壳关掉 OS 拖拽 ⇒ 用字节导入）。Web 侧语义一致：
+      //   内容寻址落 blobStore ＋ 插一行（pageId 归属）＋ 写一条变更记录。
+      const pageId = a.pageId ?? a.page_id ?? null;
+      const bytes = Uint8Array.from((a.data ?? []) as number[]);
+      const mime = String(a.mime ?? "application/octet-stream");
+      const name = String(a.name ?? "file");
+      const hash = await contentHash(bytes);
+      await blobStore.put(hash, bytes);
+      const att = { id: uid(), name, hash, mime, size: bytes.length, path: blobUrl(bytes, mime) };
+      insertAttachmentRow(store, { id: att.id, page_id: pageId, name, hash, mime, size: att.size });
+      recordChange(store, "attachment", att.id, "upsert", { id: att.id, page_id: pageId, name, hash, mime, size: att.size }, Date.now());
+      return att as T;
+    }
     if (cmd === "import_attachment_files") {
       // paths are file names registered by dialog.open → blobStore, metadata row.
       // The owning folder/page comes in as `pageId` (api passes `{ pageId, paths }`,

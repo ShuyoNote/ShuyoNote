@@ -73,3 +73,4 @@ describe("dropHintText：两个区必须说清“插不插正文”", () => {
     expect(dropHintText("editor")).not.toBe(dropHintText("attachments"));
   });
 });
+

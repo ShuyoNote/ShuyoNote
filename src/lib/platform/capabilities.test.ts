@@ -3,7 +3,7 @@
 // 为什么值得单独测：判错的代价是"入口显示了、点下去必然失败"——
 // 而移动端那条路**在开发机上根本走不到**（开发机是桌面），所以只能靠这里钉住。
 import { describe, expect, it } from "vitest";
-import { computeEmailSupported, isMacDesktopUserAgent, isMobileUserAgent } from "./capabilities";
+import { computeEmailSupported, isMacDesktopUserAgent, isMobileUserAgent, isWindowsDesktopUserAgent } from "./capabilities";
 
 describe("isMobileUserAgent", () => {
   it("认得 Android / iOS 的 UA", () => {
@@ -66,3 +66,18 @@ describe("computeEmailSupported（聚合邮箱＝桌面专属）", () => {
     expect(computeEmailSupported(false, ANDROID)).toBe(false);
   });
 });
+describe("isWindowsDesktopUserAgent：拖拽走哪条路的判据", () => {
+  it("Windows 桌面 ⇒ true", () => {
+    expect(isWindowsDesktopUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")).toBe(true);
+  });
+
+  it("macOS 桌面 ⇒ false（macOS 仍走 Tauri 的拖拽事件）", () => {
+    expect(isWindowsDesktopUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15")).toBe(false);
+  });
+
+  it("Android / iPhone ⇒ false（不是桌面，也没有文件拖拽）", () => {
+    expect(isWindowsDesktopUserAgent("Mozilla/5.0 (Linux; Android 14) Mobile")).toBe(false);
+    expect(isWindowsDesktopUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)")).toBe(false);
+  });
+});
+

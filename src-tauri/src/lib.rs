@@ -1370,6 +1370,7 @@ pub fn run() {
             attachments::write_attachment_bytes,
             legacy_convert::convert_legacy_office,
             attachments::import_attachment_files,
+            attachments::import_attachment_bytes,
             attachments::list_page_attachments,
             attachments::list_all_pdf_attachments,
             attachments::remove_attachment,

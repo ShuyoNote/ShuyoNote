@@ -1650,6 +1650,12 @@ export interface CommandMap {
   };
   copy_attachment: { args: { hash: string; destPath: string }; result: void };
   import_attachment_files: { args: { pageId: string | null; paths: string[] }; result: AttachmentMeta[] };
+  // ⭐ 2026-11-09：Windows 桌面壳的 OS 拖拽被关掉（保自绘标题栏可拖）⇒ 拖拽走 HTML5 `File` 字节
+  //（前端 File API 没有本地路径）；语义与 import_attachment_files 相同，只是输入换成字节。
+  import_attachment_bytes: {
+    args: { pageId: string | null; name: string; mime: string; data: number[] };
+    result: AttachmentMeta;
+  };
   // pageId 为 null = 空间根下的「未整理」文件（page_id IS NULL）。
   list_page_attachments: { args: { pageId: string | null; spaceId?: string }; result: AttachmentMeta[] };
   // ⭐ 2026-10-12（owner 拍：**幂等但如实返回"删了 0 条"**）：返回**实际删掉的条数**

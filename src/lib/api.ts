@@ -721,6 +721,22 @@ export const api = {
     emitImportFinished(metas ?? [], pageId);
     return metas;
   },
+  /**
+   * ⭐ 2026-11-09（Windows 拖拽兜底）：用**字节**导入一个附件。
+   * 桌面壳在 Windows 上把 Tauri 的 OS 拖拽关掉了（否则自绘标题栏拖不动窗口）⇒ 拖拽只能走
+   * HTML5 `File`（没有本地路径）⇒ 读到字节后走这条；语义与 `importAttachmentFiles` 相同
+   * （当前空间、内容寻址、写变更记录）。
+   */
+  importAttachmentBytes: async (
+    pageId: string | null,
+    name: string,
+    mime: string,
+    data: number[],
+  ) => {
+    const meta = await invoke("import_attachment_bytes", { pageId, name, mime, data });
+    emitImportFinished(meta ? [meta] : [], pageId);
+    return meta;
+  },
   /** pageId 传 null 列出空间根下的「未整理」文件（page_id IS NULL）。 */
   listPageAttachments: (pageId: string | null, spaceId?: string) =>
     invoke("list_page_attachments", { pageId, spaceId }),
