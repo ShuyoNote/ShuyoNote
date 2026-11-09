@@ -1,18 +1,16 @@
 // 外部文件拖拽：正文区 = 挂附件 + 插入正文卡片；附件区 = 只挂附件（owner 2026-11-09 选 A+）。
 //
-// 关键约束：**桌面壳的 HTML5 拖拽被 `dragDropEnabled` 抑制** ⇒ 桌面只能靠 Tauri 的
-// `webview.onDragDropEvent`（over/leave/drop + 物理像素坐标），再用 `elementFromPoint`
-// 找出鼠标下是「正文区」还是「附件区」。Web 平台没有本地文件路径 ⇒ 明确提示走附件按钮
-// （⛔ 不假装支持：拖进来的 `File` 没有路径，`import_attachment_files` 拿不到）。
-//
-// ⭐ 2026-11-09（真机：正文和附件区都拖不进去）：**Windows 上这个抑制是反过来的** ——
-// 窗口创建时为了让自绘标题栏能拖窗口，显式 `drag_and_drop(false)`（见 `src-tauri/src/lib.rs`）
-// ⇒ Tauri 的 OS 拖拽事件**根本不会发**；而 WebView2 的 HTML5 拖拽在这一档是**可用**的。
-// ⇒ Windows 桌面走「HTML5 拖拽 ＋ 读字节 ＋ `import_attachment_bytes`」；macOS 仍走 Tauri 事件。
+// ⭐ 2026-11-09 真机两轮定位（正文/附件区都拖不进去）：
+//   ① 窗口创建时曾显式 `drag_and_drop(false)`（为让自绘标题栏能拖窗口）⇒ **tao 跳过
+//      `OleInitialize`** ⇒ wry 的 `RegisterDragDrop` 失败（静默）⇒ Tauri 的 OS 拖拽事件
+//      一条都收不到，HTML5 也被 `SetAllowExternalDrop(false)` 抑制 ⇒ 两条路同时死。
+//   ② 现在**不再关**（默认 true）⇒ Tauri 事件会来；同时仍注册一份 HTML5 回退
+//      （同一份落点判定；真机 Windows 上拿到的是 `File`，没有本地路径 ⇒ 按字节导入）。
+//   两条路共用 400ms 去重：同一次松手只导一次。
+//   Web 平台没有本地文件路径 ⇒ 明确提示走附件按钮（⛔ 不假装支持）。
 import { useEffect, useState } from "react";
 import { $getRoot } from "lexical";
 import { platform } from "../lib/platform";
-import { isWindowsDesktopPlatform } from "../lib/platform";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { useAttachmentsStore } from "../store/attachments";
@@ -108,47 +106,30 @@ export function PageAttachmentDrop({ pageId }: { pageId: string }) {
   useEffect(() => {
     if (!pageId) return;
     let disposed = false;
-    let unlisten: (() => void) | undefined;
+    const cleanups: Array<() => void> = [];
+    // 同一次拖拽**只导一次**：Windows 上 Tauri 事件与 HTML5 回退可能同时到（两条路都在），
+    // 用一个时间窗去重（400ms 足够覆盖同一次松手的两条回调）。
+    let lastDropAt = 0;
+    const accepted = () => {
+      const now = Date.now();
+      if (now - lastDropAt < 400) return false;
+      lastDropAt = now;
+      return true;
+    };
     const zoneAt = (x: number, y: number) => resolveDropZone(document.elementFromPoint(x, y));
     const finishPaths = (paths: string[], zone: PageDropZone) => {
       setHint(null);
+      if (!accepted()) return;
       void importDroppedAttachments(pageId, paths, zone);
     };
     const finishFiles = (files: File[], zone: PageDropZone) => {
       setHint(null);
+      if (!accepted()) return;
       void importDroppedFiles(pageId, files, zone);
     };
 
-    // ⭐ Windows 桌面：Tauri 的 OS 拖拽在窗口创建时被关掉（保自绘标题栏可拖）⇒ 走 HTML5。
-    if (hasTauriShell() && isWindowsDesktopPlatform()) {
-      const onOver = (e: DragEvent) => {
-        if (!e.dataTransfer?.types?.includes("Files")) return;
-        e.preventDefault();
-        setHint(zoneAt(e.clientX, e.clientY));
-      };
-      const onLeave = () => setHint(null);
-      const onDrop = (e: DragEvent) => {
-        const files = Array.from(e.dataTransfer?.files ?? []);
-        if (files.length === 0) return;
-        e.preventDefault();
-        e.stopPropagation();
-        finishFiles(files, zoneAt(e.clientX, e.clientY));
-      };
-      const onDragEnd = () => setHint(null);
-      window.addEventListener("dragover", onOver);
-      window.addEventListener("dragleave", onLeave);
-      window.addEventListener("drop", onDrop);
-      window.addEventListener("dragend", onDragEnd);
-      return () => {
-        disposed = true;
-        window.removeEventListener("dragover", onOver);
-        window.removeEventListener("dragleave", onLeave);
-        window.removeEventListener("drop", onDrop);
-        window.removeEventListener("dragend", onDragEnd);
-      };
-    }
-
     if (hasTauriShell()) {
+      // ① Tauri 的 OS 拖拽事件（Windows 上 2026-11-09 起不再 `drag_and_drop(false)`，事件会来）。
       platform.webview
         .onDragDropEvent((event) => {
           // Tauri 的 over/drop 事件带 `position`（物理像素）；`leave` 不带。
@@ -171,12 +152,42 @@ export function PageAttachmentDrop({ pageId }: { pageId: string }) {
         })
         .then((fn) => {
           if (disposed) fn();
-          else unlisten = fn;
+          else cleanups.push(fn);
         })
         .catch((e: unknown) => {
           // ⛔ 不静默：监听注册失败（权限/API 变化）必须让用户看得见，否则就是"拖了没反应"。
           toast(`拖拽监听没起来（仍可用附件按钮）：${String(e)}`, "error");
         });
+
+      // ② HTML5 拖拽回退（同一份落点判定）：某些配置下 Tauri 的 handler 装不上时还能用；
+      //    真机上 Windows 走这条也拿到的是 `File`（没有路径）⇒ 按字节导入。
+      //    捕获阶段：编辑器/其它控件可能在自己 handler 里 stopPropagation。
+      const onEnterOrOver = (e: DragEvent) => {
+        if (!e.dataTransfer?.types?.includes("Files")) return;
+        e.preventDefault();
+        setHint(zoneAt(e.clientX, e.clientY));
+      };
+      const onLeave = () => setHint(null);
+      const onDrop = (e: DragEvent) => {
+        const files = Array.from(e.dataTransfer?.files ?? []);
+        if (files.length === 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        finishFiles(files, zoneAt(e.clientX, e.clientY));
+      };
+      const onDragEnd = () => setHint(null);
+      window.addEventListener("dragenter", onEnterOrOver, true);
+      window.addEventListener("dragover", onEnterOrOver, true);
+      window.addEventListener("dragleave", onLeave, true);
+      window.addEventListener("drop", onDrop, true);
+      window.addEventListener("dragend", onDragEnd, true);
+      cleanups.push(() => {
+        window.removeEventListener("dragenter", onEnterOrOver, true);
+        window.removeEventListener("dragover", onEnterOrOver, true);
+        window.removeEventListener("dragleave", onLeave, true);
+        window.removeEventListener("drop", onDrop, true);
+        window.removeEventListener("dragend", onDragEnd, true);
+      });
     } else {
       // Web 平台：HTML5 拖拽有 File 但没有**本地路径** ⇒ 诚实提示，不假装成功。
       const onOver = (e: DragEvent) => {
@@ -194,17 +205,16 @@ export function PageAttachmentDrop({ pageId }: { pageId: string }) {
       window.addEventListener("dragover", onOver);
       window.addEventListener("dragleave", onLeave);
       window.addEventListener("drop", onDrop);
-      return () => {
-        disposed = true;
+      cleanups.push(() => {
         window.removeEventListener("dragover", onOver);
         window.removeEventListener("dragleave", onLeave);
         window.removeEventListener("drop", onDrop);
-      };
+      });
     }
 
     return () => {
       disposed = true;
-      unlisten?.();
+      for (const fn of cleanups) fn();
     };
   }, [pageId]);
 
@@ -215,5 +225,6 @@ export function PageAttachmentDrop({ pageId }: { pageId: string }) {
     </div>
   );
 }
+
 
 

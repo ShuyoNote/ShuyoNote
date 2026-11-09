@@ -7,7 +7,7 @@
 - **只读 Markdown 预览支持后退（A 口径）**：只有「预览里点链接跳过去」才记历史；顶栏出现 `←`（无历史不出现），`Alt+←` / `Backspace` 也能退；后退会**恢复上一份文档当时的滚动位置**；从文件树另开一份会清空历史（避免退回到上个会话）。
 
 ### 修复
-- Windows 上把文件拖进窗口没反应：桌面壳为保自绘标题栏可拖关掉了 Tauri 的 OS 拖拽 ⇒ 改走 HTML5 拖拽 + 按字节导入（正文区插卡片／附件区只挂），macOS 不变
+- **Windows 上把文件拖进窗口完全没反应**（正文和附件区都是）：窗口创建时 `drag_and_drop(false)`（为自绘标题栏能拖窗口）会让 tao 跳过 `OleInitialize`，wry 的 `RegisterDragDrop` **静默失败** ⇒ OS 拖拽事件一条都收不到，HTML5 也被抑制。现在默认开启拖拽（tao 初始化 COM），前端同时注册 Tauri 事件 + HTML5 回退（400ms 去重）——拖正文插卡片、拖附件区只挂；另新增 `import_attachment_bytes` 支持“没有本地路径”的字节导入。⚠️ 代价：Windows 上自绘标题栏（`data-tauri-drag-region`）拖窗可能失效（默认标题栏是系统的）。
 - **新建空间后左上空间切换器列表不即时刷新**：打开切换器前强制重读一次空间列表，创建成功后再重读一次（不再依赖创建那一笔里的读取是否赶上）。
 - **强杀/崩溃后应用打不开（`sync_core.lock` 死 pid 残留）**：Windows 侧 PID 存活判定原先是"非 unix 一律当作活着" ⇒ 残留锁永远不回收。现在用 Win32 查真实存活（`OpenProcess` + `GetExitCodeProcess`），死锁可被回收；新增判据 `pid_alive_asks_the_os_and_reports_dead_for_a_missing_pid`。
 

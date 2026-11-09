@@ -1032,14 +1032,14 @@ pub fn run() {
             let main_builder = main_builder
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
                 .hidden_title(true);
-            // 关键：Windows 上内置 drag-drop handler 开着时，HTML5 拖拽
-            // API 不可用——data-tauri-drag-region 正是依赖它拖窗口，所以
-            // 标题栏拖不动。这里关掉，让标题栏可拖；文件视图需要 OS 拖文件
-            // 时前端临时开（见 titlebar::set_drag_drop_enabled）。
-            // 注意：drag_and_drop 是 Windows/WebView2 专用 API，Linux/mac 的
-            // builder 无此方法，故按平台条件编译。
-            #[cfg(target_os = "windows")]
-            let main_builder = main_builder.drag_and_drop(false);
+            // ⚠️ 2026-11-09（真机：拖文件进窗口**完全没反应**，连 Tauri 事件都没有）：
+            //   这里原先开着 `#[cfg(windows)] main_builder.drag_and_drop(false)`（为了
+            //   `data-tauri-drag-region` 能拖窗口）⇒ tao 跳过 `OleInitialize` ⇒ wry 的
+            //   `RegisterDragDrop` 注册失败（静默）⇒ **OS 拖拽事件一条都收不到**。
+            //   现在**不再关**（默认 true）：tao 会 `OleInitialize` 并装 IDropTarget，
+            //   wry/tauri 也装自己的 handler ⇒ 前端能收到 `onDragDropEvent`。
+            //   代价如实记：Windows 上 `data-tauri-drag-region`（自绘标题栏拖窗）可能失效；
+            //   默认标题栏是**系统**的（decorations(true)），自绘标题栏是用户显式开的选项。
             let _window = main_builder
                 // 关键注释：Windows 上 dragDropEnabled 默认 true，此时
                 // data-tauri-drag-region 不生效（标题栏拖不动）。这里显式关掉，
@@ -1878,3 +1878,4 @@ mod relay_feature_tests {
         assert!(!cfg!(feature = "relay"), "默认构建不许带 relay");
     }
 }
+
