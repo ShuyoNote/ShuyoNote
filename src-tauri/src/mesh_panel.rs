@@ -130,6 +130,49 @@ pub fn mesh_panel_spaces(db: State<'_, crate::db::Db>) -> Result<MeshPanelSpaces
     })
 }
 
+/// ⭐ **2026-11-10（owner 批 B）**：当前空间里**待确认**的「同名但 uid 不同」冲突（只读、只含元数据）。
+///
+/// 背景：融合闸 `RefuseDifferentUid` 会一直拒绝，而原先**没有任何确认入口** ⇒ 用户看到的就是
+/// “同名空间永远同步不过去”。这条命令把冲突列出来，界面给一个「确认是同一空间」按钮。
+#[tauri::command]
+pub fn mesh_uid_conflicts(
+    db: State<'_, crate::db::Db>,
+) -> Result<Vec<crate::mesh_uid_confirm::MeshUidConflict>, String> {
+    let app_data = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "bad_state: app data dir 未初始化".to_string())?;
+    let space = {
+        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+        crate::attachments::active_space_id(&c)
+    };
+    let sc = crate::db::open_space_conn_at(&space, app_data)?;
+    crate::mesh_uid_confirm::list_candidates(&sc).map_err(|e| e.to_string())
+}
+
+/// ⭐ **2026-11-10（owner 批 B）**：确认「这一台对端的这个 uid」就是本机同名空间 —— 之后融合闸放行。
+///
+/// ⚠️ 只写两行元数据（确认记录 ＋ 移出候选），⛔ 不碰任何页面正文 ✗。
+#[tauri::command]
+pub fn mesh_uid_confirm(
+    db: State<'_, crate::db::Db>,
+    peer_device: String,
+    peer_uid: String,
+) -> Result<bool, String> {
+    let app_data = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "bad_state: app data dir 未初始化".to_string())?;
+    let space = {
+        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+        crate::attachments::active_space_id(&c)
+    };
+    let sc = crate::db::open_space_conn_at(&space, app_data)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    crate::mesh_uid_confirm::confirm(&sc, peer_device.trim(), peer_uid.trim(), now)
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

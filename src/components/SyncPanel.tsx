@@ -7,6 +7,7 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer, type MeshRoundReport, type SpaceSyncState, type SyncCoreStatus } from "../lib/api";
 import { startEncryptedAdopt } from "../lib/encryptedAdopt";
 import { MeshMissingSpaces } from "./MeshMissingSpaces";
+import { MeshUidConflicts } from "./MeshUidConflicts";
 // ⭐ P1「连接体检」（2026-11-08）：只读现有读数 → 结构化诊断 ＋ 复制诊断包（⛔ 不新增命令 ✗）。
 //   入口在「局域网同步」状态卡里（见下面 `mesh-diagnose-entry` ✓）；纯函数在 `src/lib/meshDiagnose.ts` ✓。
 import { MeshDiagnoseDialog } from "./MeshDiagnoseDialog";
@@ -1896,6 +1897,8 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
             </div>
             {/* ⭐ 2026-10-23：「对端有、你没有的空间」—— 用户勾了才建（默认一个都不勾） */}
             <MeshMissingSpaces />
+            {/* ⭐ 2026-11-10（owner 批 B）：同名但空间身份不同的确认入口 */}
+            <MeshUidConflicts />
             </div>
           </header>
 
@@ -3063,5 +3066,6 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
     </div>
   );
 }
+
 
 

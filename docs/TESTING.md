@@ -67,7 +67,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 86 条（contract 58 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 9 / artifact 3 / deploy 1）· 能力 70 条 · 命令 Rust 301 / web 263 / CommandMap 302
+门禁 86 条（contract 58 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 9 / artifact 3 / deploy 1）· 能力 70 条 · 命令 Rust 303 / web 265 / CommandMap 304
 基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 3585 · smoke-web 365 · check-pdf-reload 8 · check-panel-layout 66 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 68 · mobile-overlays 756 · mobile-views 249 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
@@ -935,3 +935,4 @@ node scripts/joint-acceptance.mjs --run j1              # 跑一格（cargo 格�
 > 那次"把 `check-plugin-hosting` 的进度数字当成 `2280/4560 断言`"的事故，其回归用例也在那里。
 > 写这套单测时它还立刻抓出两个真问题：①"通过了却解析不出读数"（解析链断了）此前**不会**报违规；
 > ②cargo 的 `test result` 行每个测试二进制一行，只取第一行会把 Rust 读数算少一大截。
+

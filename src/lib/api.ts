@@ -3,7 +3,7 @@ import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import type { WikiPageInput } from "./wikiExport";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
-import type { CommandMap, LanStatus, MeshConfigState, MeshPanelScope, MeshPanelSpaces, MeshRoundReport, MeshSyncAllReport, RelayStatus, SyncBudget, SyncCoreRoundReport, SyncCoreStatus, SyncCoreIpcStatus, SyncStreamStatus } from "./platform/commands";
+import type { CommandMap, LanStatus, MeshConfigState, MeshPanelScope, MeshPanelSpaces, MeshUidConflict, MeshRoundReport, MeshSyncAllReport, RelayStatus, SyncBudget, SyncCoreRoundReport, SyncCoreStatus, SyncCoreIpcStatus, SyncStreamStatus } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 // The command name, args shape and result are validated at compile time against
@@ -625,6 +625,11 @@ export const api = {
   meshPanelScopes: () => invoke("mesh_panel_scopes") as Promise<MeshPanelScope[]>,
   /** ⚠️ `offer` **本片留空**（**待 B 片** ✓）⇒ ⛔ 别把空数组读成"没有" ✗。 */
   meshPanelSpaces: () => invoke("mesh_panel_spaces") as Promise<MeshPanelSpaces>,
+  /** ⭐ 2026-11-10（owner 批 B）：同名但 space_uid 不同的待确认冲突（只含元数据）。 */
+  meshUidConflicts: () => invoke("mesh_uid_conflicts") as Promise<MeshUidConflict[]>,
+  /** 确认「这一台对端的这个 uid」＝本机同名空间（之后融合闸放行；只写同步元数据）。 */
+  meshUidConfirm: (a: { peerDevice: string; peerUid: string }) =>
+    invoke("mesh_uid_confirm", a) as Promise<boolean>,
   /** ⭐ **P-4 片③-a（2026-10-14）**：⭐ 逐台「对码」读数 ✓（⭐ 比对码由**后端**算 ✓ ——
    *  `code: null` ＝ **读不到** ✓，人话原因在 `reason` 里 ✓）。 */
   pairingCodeReading: (a: { peerDeviceId: string; peerPubkey: string }) =>
@@ -995,4 +1000,5 @@ export const api = {
     body: string | null;
   }) => invoke("license_http_request", args) as Promise<{ status: number; body: string }>,
 };
+
 

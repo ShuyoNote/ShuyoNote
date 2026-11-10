@@ -379,14 +379,33 @@ fn peer_merge_decision(
     };
     let identity = oracle.same_person(peer_device, &local_name);
     // ⭐ P3-3b：**uid 两边都有 ⇒ 按 uid 判同名；否则回落名字**（纯函数里实现，这里只取数）。
-    batch_merge_gate_uid(
+    let gate = batch_merge_gate_uid(
         kind,
         &local_name,
         &local_uid,
         peer_name.as_deref(),
         peer_uid.as_deref(),
         &identity,
-    )
+    );
+    // ⭐ 2026-11-10（owner 批 B）：同名但 uid 不同 ⇒ 记候选 ＋ 用户确认过一次才放行。
+    //   ⛔ 确认只对 `RefuseDifferentUid` 生效，不绕过身份/名字闸（纯函数 `apply_confirmation` 有判据）。
+    if let crate::mesh_merge_ledger::BatchMerge::Refuse(g) = gate {
+        if matches!(g, crate::mesh_merge_ledger::MergeGate::RefuseDifferentUid) {
+            let confirmed_gate = crate::mesh_uid_confirm::decide(
+                c,
+                g,
+                peer_device,
+                peer_uid.as_deref(),
+                &local_name,
+                peer_name.as_deref().unwrap_or(""),
+                crate::lan_state::now_ms(),
+            );
+            if matches!(confirmed_gate, crate::mesh_merge_ledger::MergeGate::Allow) {
+                return crate::mesh_merge_ledger::BatchMerge::Allow;
+            }
+        }
+    }
+    gate
 }
 
 /// 这一次融合要记进账本的东西（⭐ `moved` ＝ 这一批并进来的**页 id**；`kept_before` ＝ 并入前本机已有几条）。

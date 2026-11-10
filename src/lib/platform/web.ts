@@ -1815,6 +1815,15 @@ export function makeInvoke(store: SqliteStore) {
         local: metas.map((m) => ({ id: m.id, name: m.name })),
       } as T;
     }
+    if (cmd === "mesh_uid_conflicts") {
+      // ⭐ 2026-11-10（owner 批 B）：Web 版**没有设备直连层** ⇒ 不存在"另一台设备同名不同 uid"
+      //   ⇒ 如实回**空列表**（⛔ 不编一条假冲突 ✗）。
+      return [] as T;
+    }
+    if (cmd === "mesh_uid_confirm") {
+      // 没有网格层 ⇒ 无从确认；如实回 false（界面据此提示"这一档只在桌面版可用"）。
+      return false as T;
+    }
     if (cmd === "mesh_set_config") {
       // 丙-③-b-2b：**写网格设置**。Web 上同样不可用（没有发现层、开不了端口）——
       // 但这里**不抛错**：设置面回一个"关着 ＋ 为什么"的读数，界面照常能渲染，

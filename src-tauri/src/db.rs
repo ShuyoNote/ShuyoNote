@@ -1174,6 +1174,23 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         CREATE INDEX IF NOT EXISTS idx_attachments_hash ON attachments(hash);
         CREATE INDEX IF NOT EXISTS idx_attachments_page ON attachments(page_id);
 
+        -- ⭐ 2026-11-10（owner 批 B）：同名但 space_uid 不同 ⇒ 先拒绝、记候选，用户确认一次后放行。
+        --    ⚠️ 只存元数据（设备 id / 对端 uid / 名字 / 时刻）—— ⛔ 不存页面正文 ✗。
+        CREATE TABLE IF NOT EXISTS mesh_uid_candidates (
+            peer_device  TEXT NOT NULL,
+            peer_uid     TEXT NOT NULL,
+            local_name   TEXT NOT NULL DEFAULT '',
+            peer_name    TEXT NOT NULL DEFAULT '',
+            last_seen_at INTEGER NOT NULL,
+            PRIMARY KEY (peer_device, peer_uid)
+        );
+        CREATE TABLE IF NOT EXISTS mesh_uid_confirmations (
+            peer_device  TEXT NOT NULL,
+            peer_uid     TEXT NOT NULL,
+            confirmed_at INTEGER NOT NULL,
+            PRIMARY KEY (peer_device, peer_uid)
+        );
+
         CREATE TABLE IF NOT EXISTS backlinks (
             source_page_id  TEXT NOT NULL,
             source_block_id TEXT NOT NULL DEFAULT '',

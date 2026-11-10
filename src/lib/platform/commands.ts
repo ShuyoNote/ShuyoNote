@@ -449,6 +449,25 @@ export interface MeshPanelSpaces {
   local: MeshPanelSpace[];
 }
 
+/**
+ * ⭐ 2026-11-10（owner 批 B）：一条「同名但 `space_uid` 不同」的待确认冲突。
+ *
+ * ⚠️ 只含**同步元数据**（对端设备 id / 对端报的空间 uid / 两边的名字 / 最近时刻）——
+ * ⛔ 不含任何页面正文 ✗。界面文案里**不显示** `peerUid`（内部标识）。
+ */
+export interface MeshUidConflict {
+  /** 对端设备 id（只用于调确认命令，⛔ 不进界面文案）。 */
+  peerDevice: string;
+  /** 对端那一侧报的 `space_uid`（内部标识，⛔ 不进界面文案）。 */
+  peerUid: string;
+  /** 本机这个空间的名字。 */
+  localName: string;
+  /** 对端载荷里报的空间名。 */
+  peerName: string;
+  /** 最近一次看到冲突的时刻（毫秒）。 */
+  lastSeenAt: number;
+}
+
 /** 网格设置的**读数**（与 Rust `mesh::MeshConfigState` 逐字段相同）。 */export interface MeshConfigState {
   enabled: boolean;
   bind: string | null;
@@ -1231,6 +1250,10 @@ export interface CommandMap {
     result: { code: string | null; reason: string };
   };
   mesh_panel_spaces: { args: undefined; result: MeshPanelSpaces };
+  /** ⭐ 2026-11-10（owner 批 B）：同名但 `space_uid` 不同的**待确认**冲突（只含元数据、不含正文）。 */
+  mesh_uid_conflicts: { args: undefined; result: MeshUidConflict[] };
+  /** 确认「这一台对端的这个 uid」就是本机同名空间 ⇒ 融合闸放行（只写同步元数据）。 */
+  mesh_uid_confirm: { args: { peerDevice: string; peerUid: string }; result: boolean };
   /**
    * 丙-③-b-2b：**写网格设置**（监听地址 / 口令），并把窗口的开关跟着改。
    *

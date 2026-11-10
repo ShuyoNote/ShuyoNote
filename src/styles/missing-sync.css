@@ -56,5 +56,8 @@
 
 .mesh-missing-create:disabled { background: var(--hover); color: var(--text-faint); cursor: default; }
 
+.mesh-uid-confirm { margin-left: auto; border: none; background: var(--accent); color: var(--on-accent); font-size: var(--fs-12); font-weight: 500; padding: var(--space-2) 12px; border-radius: var(--radius-md); cursor: pointer; flex: none; }
+.mesh-uid-confirm:disabled { background: var(--hover); color: var(--text-faint); cursor: default; }
 .mesh-missing-done { margin-top: var(--space-2); font-size: var(--fs-11-5); color: var(--success); }
 }
+

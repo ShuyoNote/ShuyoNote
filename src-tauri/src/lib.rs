@@ -35,6 +35,9 @@ mod mesh_trust;
 //    `mesh_panel_scopes`（每个空间"对外宣称"的状态）＋ `mesh_panel_spaces`（本机有哪些空间 ✓；`offer` 待 B 片）。
 mod device_key;
 mod mesh_panel;
+// ⭐ 2026-11-10（owner 批 B）：「同名但 space_uid 不同」的**人确认一次**入口 ——
+//    冲突候选落库 ＋ 确认记录；融合闸 `RefuseDifferentUid` 经确认后放行（不绕过身份/名字闸）。
+mod mesh_uid_confirm;
 // 「能力」按需下载包的落盘（2026-10-02）—— ⚠️ **不信任 webview**：白名单 ＋ 体积上限 ＋
 // sha256 自己再算一遍，三条任一不过就拒收 ✓（见 `abilities.rs` 头部）。
 mod abilities;
@@ -1256,6 +1259,9 @@ pub fn run() {
             //    ⭐ 只读 ✓（⛔ 一个字节都不写 ✗、⛔ 一个包都不发 ✗）；⛔ 回给界面的字段不含内部标识 ✓。
             mesh_panel::mesh_panel_scopes,
             mesh_panel::mesh_panel_spaces,
+            // ⭐ 2026-11-10（owner 批 B）：「同名但 uid 不同」冲突的列表与确认（只碰元数据）。
+            mesh_panel::mesh_uid_conflicts,
+            mesh_panel::mesh_uid_confirm,
             // 甲-1 接线第 1／3 件（2026-09-25）：局域网发现的**启动**与**读数**。
             // ⚠️ 只有桌面：发现靠 Rust 收发的 UDP（`lan.rs`），Web 平台上没有这一层 ——
             //    Web 侧的实现如实回"配置地址那一档 ＋ 局域网不可用"（不是假装发现了谁）。
