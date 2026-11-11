@@ -174,10 +174,35 @@ pub fn apply_confirmation(
     }
 }
 
+/// ⭐ **P0-2（2026-11-11）**：本机对某台对端确认记录里保存的“对端 uid” —— 随 pull 请求带给它。
+///
+/// 用法：A 在本机点过“确认是同一空间”后，下一轮 A 拉 B 时把 `(A 的空间 uid, B 的空间 uid)`
+/// 带在请求里；B 验签通过且确认 `B 的空间 uid` 与自己对得上 ⇒ B 也记一条确认（一次确认双向放行）。
+pub fn confirmed_peer_uid(c: &Connection, peer_device: &str) -> Option<String> {
+    if ensure_schema(c).is_err() {
+        return None;
+    }
+    c.query_row(
+        "SELECT peer_uid FROM mesh_uid_confirmations WHERE peer_device = ?1 ORDER BY confirmed_at DESC LIMIT 1",
+        [peer_device],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::mesh_merge_ledger::MergeGate;
+
+    #[test]
+    fn 对端_uid_读得回_没确认过就是_none() {
+        let c = conn();
+        assert_eq!(confirmed_peer_uid(&c, "dev-b"), None);
+        confirm(&c, "dev-b", "uid-b", 10).unwrap();
+        assert_eq!(confirmed_peer_uid(&c, "dev-b"), Some("uid-b".to_string()));
+        assert_eq!(confirmed_peer_uid(&c, "dev-other"), None);
+    }
 
     fn conn() -> Connection {
         let c = Connection::open_in_memory().unwrap();

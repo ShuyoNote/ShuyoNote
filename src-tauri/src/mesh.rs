@@ -1072,8 +1072,25 @@ pub async fn pull_from_peer(
     //   （空串 ＝ 这次调用不带：判据/探针用 ✓）。
     name_sha: &str,
 ) -> Result<(Vec<MeshRow>, i64), String> {
+    pull_from_peer_with_confirm(ep, peer, space_id, since, token, auth, name_sha, None).await
+}
+
+/// ⭐ **P0-2（2026-11-11）**：与 [`pull_from_peer`] 同一实现，多一格「身份确认」——
+/// 由有 DB 的那一侧（`pull_and_absorb`）算好传进来；签名/发送用**同一个 target**。
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn pull_from_peer_with_confirm(
+    ep: &dyn crate::mesh_endpoint::Endpoint,
+    peer: &MeshPeer,
+    space_id: &str,
+    since: i64,
+    token: Option<&str>,
+    auth: Option<(&str, i64, &str)>,
+    // 同上：空串＝不带。
+    name_sha: &str,
+    confirm: Option<(&str, &str)>,
+) -> Result<(Vec<MeshRow>, i64), String> {
     // ⚠️ target **只拼一次** ✗：⭐ 签的是它、发的也是它 ✓（⛔ 两处各拼一份 ⇒ 一漂就验不过 ✗）。
-    let target = pull_target(space_id, since, name_sha);
+    let target = pull_target_with_confirm(space_id, since, name_sha, confirm);
     // ⭐ Step 1b：只认端点（reqwest 的三格头/错误链都收进 `LanEndpoint` 里了）
     let reply = ep
         .get(&target, auth, token)
@@ -1219,6 +1236,20 @@ pub async fn pull_and_absorb(
             _ => (String::new(), String::new()),
         }
     };
+    // ⭐ P0-2（2026-11-11）：本轮要带给对端的「身份确认」（只在本机确认过这台对端时才有）。
+    //   ⛔ 签名/发送用同一串（见 `pull_target_with_confirm`）；拿不到就 None（旧行为不变）。
+    let confirm: Option<(String, String)> = {
+        let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+        let local_uid = crate::sync::local_space_uid(&g).unwrap_or_default();
+        let peer_uid = crate::mesh_uid_confirm::confirmed_peer_uid(&g, &peer.device_id)
+            .unwrap_or_default();
+        if local_uid.trim().is_empty() || peer_uid.trim().is_empty() {
+            None
+        } else {
+            Some((local_uid, peer_uid))
+        }
+    };
+    let confirm_ref = confirm.as_ref().map(|(a, b)| (a.as_str(), b.as_str()));
     // ⭐⭐ **2026-10-20（真机：游标越界 ⇒ 永久静默）**：先按原游标拉；若发现
     //   **对端高水位 < 我的游标** ⇒ 说明这格游标不是"对方那条计数"里的值（历史遗留 / 换了空间）
     //   ⇒ **归零重拉一次**，并如实记一行（⛔ 不静默、⛔ 不每次轮都重拉：只在这一情形下发生 ✓）。
@@ -1248,7 +1279,7 @@ pub async fn pull_and_absorb(
             }
         };
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
-        pull_from_peer(&*ep, peer, space_id, since, token, auth_ref, &name_sha).await?
+        pull_from_peer_with_confirm(&*ep, peer, space_id, since, token, auth_ref, &name_sha, confirm_ref).await?
     };
     // ⭐ 游标越界 ⇒ 归零重拉一次（只重拉一次；还得再拿锁算签名 ⇒ 与上面同一套）
     if max_seq > 0 && since > max_seq {
@@ -1279,7 +1310,7 @@ pub async fn pull_and_absorb(
             }
         };
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
-        let again = pull_from_peer(&*ep, peer, space_id, 0, token, auth_ref, &name_sha).await?;
+        let again = pull_from_peer_with_confirm(&*ep, peer, space_id, 0, token, auth_ref, &name_sha, confirm_ref).await?;
         rows = again.0;
         max_seq = again.1.max(max_seq);
     }
@@ -1334,7 +1365,7 @@ pub async fn pull_and_absorb(
             let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
             // ⚠️ 探针**不许静默**：进没进、回来几条、错在哪 —— 都要看得见 ✓
             //   （第一版用 `if let Ok` 把 Err 吞了 ⇒ 现场只看到"什么也没发生" ✗）
-            let probe = pull_from_peer(&*ep, peer, space_id, 0, token, auth_ref, &name_sha).await;
+            let probe = pull_from_peer_with_confirm(&*ep, peer, space_id, 0, token, auth_ref, &name_sha, confirm_ref).await;
             let probe_rows = match probe {
                 Err(e) => {
                     eprintln!(
@@ -4197,7 +4228,7 @@ pub(crate) fn dispatch(state: &State, req: &Request) -> Reply {
         Route::Pull => {
             // ★ **T-10**：**在线上真的发生过**的拉取在这里计数（`authorized` 之后 ⇒ 只数被服务的）。
             state.served_pulls.fetch_add(1, Ordering::Relaxed);
-            let reply = handle_pull(state, &req.target);
+            let reply = handle_pull(state, req);
             // ⚠️ 只打两种：封包通道（要验"P2 第二半"）与任何失败 —— 否则每个空间每轮都刷屏 ✓
             if caps_has_sealed1(&req.target) || reply.code >= 400 {
                 eprintln!("{} ｜ {}", pull_log_line(&req.target, reply.code, &reply.body), pull_diag(state, req));
@@ -4743,6 +4774,26 @@ pub(crate) fn pull_target(space_id: &str, since: i64, name_sha: &str) -> String 
     format!(
         "/mesh/pull?space_id={space_id}&since={since}&limit={MAX_LIMIT}&caps=sealed1&name_sha={name_sha}"
     )
+}
+
+/// ⭐ **P0-2（2026-11-11）**：带「身份确认」的 pull target —— 只在真有一条确认时追加两格：
+/// `confirm_uid`（我方空间 uid）＋ `confirm_peer_uid`（我确认过的对端 uid）。
+/// ⚠️ 签的就是这一串（⛔ 两处各拼一份会漂）。
+pub(crate) fn pull_target_with_confirm(
+    space_id: &str,
+    since: i64,
+    name_sha: &str,
+    confirm: Option<(&str, &str)>,
+) -> String {
+    let base = pull_target(space_id, since, name_sha);
+    match confirm {
+        Some((local_uid, peer_uid))
+            if !local_uid.trim().is_empty() && !peer_uid.trim().is_empty() =>
+        {
+            format!("{base}&confirm_uid={local_uid}&confirm_peer_uid={peer_uid}")
+        }
+        _ => base,
+    }
 }
 
 /// ⭐ `/mesh/attachment` 要的 target（⭐ 同上：一处拼 ✗）。
@@ -5368,7 +5419,9 @@ pub async fn fetch_peer_page(
     Ok(Some((payload.to_string(), updated_at)))
 }
 
-fn handle_pull(state: &State, target: &str) -> Reply {
+fn handle_pull(state: &State, req: &Request) -> Reply {
+    // ⭐ P0-2（2026-11-11）：签名那一档要读头，所以整条请求传进来（target 仍从 req 取）。
+    let target = req.target.as_str();
     // ⭐ **U8**：**鉴权 ＋ 取哪条连接**一次做完（`select_space` 里就是那条白名单判据 ✓）。
     // ⛔ 别在这里再写一遍 `space != …` ✗ —— 两处判据迟早会漂，而漂的方向是"漏"✗。
     let space = match query_get(target, "space_id") {
@@ -5405,6 +5458,30 @@ fn handle_pull(state: &State, target: &str) -> Reply {
             )
         }
     };
+    // ⭐ P0-2（2026-11-11）：随 pull 带来的「身份确认」。三条门槛：
+    //   ① 请求**签名验过**（`authorized_signed`，拿不到签名 ⇒ 忽略，⛔ 不让整条 pull 失败）；
+    //   ② 对方说的“对端 uid”＝本机这个空间的 uid（否则不是针对我这一份）；
+    //   ③ 同名由**收侧的融合闸**在那批数据到来时再判一次（§13.10 第 6 条）。
+    //   ⇒ 一次确认双向放行；旧对端不带这两格 ⇒ 行为逐字不变 ✓。
+    if let (Ok(Some(cur_uid)), Ok(Some(peer_uid))) = (
+        query_get(target, "confirm_uid"),
+        query_get(target, "confirm_peer_uid"),
+    ) {
+        let (cur_uid, peer_uid) = (cur_uid.trim().to_string(), peer_uid.trim().to_string());
+        if !cur_uid.is_empty() && !peer_uid.is_empty() {
+            if let Ok((_sp, dev)) = authorized_signed(state, req) {
+                let mine = crate::sync::local_space_uid(&g).unwrap_or_default();
+                if !mine.trim().is_empty() && mine.trim() == peer_uid {
+                    let _ = crate::mesh_uid_confirm::confirm(
+                        &g,
+                        &dev,
+                        &cur_uid,
+                        crate::db::now_ms(),
+                    );
+                }
+            }
+        }
+    }
     // ⭐ 2026-10-20：把**我这一栏的高水位**一起发出去（收侧据此判断"游标是不是越界了"）。
     let max_device_seq = max_own_device_seq(&g, &state.cfg.device_id).unwrap_or(0);
     // ⭐⭐ **2026-10-28（owner：「一步到位」·P2）**：**加密空间对认得封包的对端，直接发封包** ✓
@@ -9451,6 +9528,26 @@ mod tests {
             fake.seen.lock().unwrap().as_slice(),
             [pull_target("space-z", 0, "").as_str()],
             "端点收到的必须是**原样 target**（⭐ 签名与发送同一份：断言就用同一个 `pull_target`）"
+        );
+    }
+
+    /// ⭐ P0-2（2026-11-11）：带「身份确认」的 target 只在真有一条确认时多两格。
+    #[test]
+    fn pull_target_carries_uid_confirmation_only_when_present() {
+        let base = pull_target("space-z", 5, "abc");
+        assert_eq!(pull_target_with_confirm("space-z", 5, "abc", None), base);
+        assert_eq!(
+            pull_target_with_confirm("space-z", 5, "abc", Some(("uid-a", "uid-b"))),
+            format!("{base}&confirm_uid=uid-a&confirm_peer_uid=uid-b")
+        );
+        // 空串 ⇒ 不带（旧行为逐字不变）
+        assert_eq!(
+            pull_target_with_confirm("space-z", 5, "abc", Some(("", "uid-b"))),
+            base
+        );
+        assert_eq!(
+            pull_target_with_confirm("space-z", 5, "abc", Some(("uid-a", "   "))),
+            base
         );
     }
 
