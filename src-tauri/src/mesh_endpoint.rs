@@ -435,6 +435,29 @@ impl QuicMeshEndpoint {
     }
 }
 
+/// ⭐ **2026-11-11（真机：QUIC 附件首块 0 字节）**：附件分块请求的**唯一构造点**
+/// （三格鉴权头 ＋ Bearer ＋ `range`），首块与后续块共用，⛔ 不两处各拼一份。
+#[cfg(feature = "lan-quic")]
+fn attachment_chunk_request(
+    target: &str,
+    auth: Option<&(String, i64, String)>,
+    token: Option<&str>,
+    start: u64,
+    end: u64,
+) -> crate::relay_tunnel::TunnelRequest {
+    let mut req = crate::relay_tunnel::TunnelRequest::new("GET", target);
+    if let Some((device_id, ts, sig)) = auth {
+        req = req
+            .with_header(crate::mesh::HDR_DEVICE, device_id)
+            .with_header(crate::mesh::HDR_TS, &ts.to_string())
+            .with_header(crate::mesh::HDR_SIG, sig);
+    }
+    if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
+        req = req.with_header("authorization", &format!("Bearer {t}"));
+    }
+    req.with_header("range", &format!("bytes={start}-{end}"))
+}
+
 #[cfg(feature = "lan-quic")]
 impl Endpoint for QuicMeshEndpoint {
     fn get<'a>(
@@ -488,51 +511,87 @@ impl Endpoint for QuicMeshEndpoint {
                 let target_owned = target.to_string();
                 let auth_owned = auth.map(|(d, ts, s)| (d.to_string(), ts, s.to_string()));
                 let token_owned = token.map(|t| t.to_string());
+                // ⭐ 2026-11-11（真机：QUIC 首块失败却返回"成功空流" ⇒ 消费方落 0 字节 `.part`，
+                //   界面上是一次"取回失败"且日志还冒充成功）：**首块在这里同步打** ——
+                //   失败/非 2xx/空正文 ⇒ Err ⇒ 组合器回退 HTTP（真把字节取回来）。
+                let first_end = start0.saturating_add(CHUNK - 1);
+                let first_req = attachment_chunk_request(
+                    &target_owned,
+                    auth_owned.as_ref(),
+                    token_owned.as_deref(),
+                    start0,
+                    first_end,
+                );
+                let reply0 = registry
+                    .request(peer.clone(), &first_req)
+                    .await
+                    .map_err(|e| format!("QUIC 附件首块失败：{e}"))?;
+                if reply0.status != 200 && reply0.status != 206 {
+                    return Err(format!(
+                        "QUIC 附件首块 HTTP {}（body={} B）",
+                        reply0.status,
+                        reply0.body.len()
+                    ));
+                }
+                if reply0.body.is_empty() {
+                    return Err("QUIC 附件首块正文为空（回退 HTTP 取）".to_string());
+                }
+                let first_len = reply0.body.len() as u64;
+                let mut total: u64 = first_len;
+                let mut start = start0.saturating_add(first_len);
+                let finished = first_len < CHUNK;
                 tokio::spawn(async move {
                     use tokio::io::AsyncWriteExt;
-                    let mut start = start0;
-                    let mut total: u64 = 0;
-                    loop {
-                        let end = start.saturating_add(CHUNK - 1);
-                        let mut req =
-                            crate::relay_tunnel::TunnelRequest::new("GET", &target_owned);
-                        if let Some((device_id, ts, sig)) = auth_owned.as_ref() {
-                            req = req
-                                .with_header(crate::mesh::HDR_DEVICE, device_id)
-                                .with_header(crate::mesh::HDR_TS, &ts.to_string())
-                                .with_header(crate::mesh::HDR_SIG, sig);
-                        }
-                        if let Some(t) =
-                            token_owned.as_deref().map(str::trim).filter(|t| !t.is_empty())
-                        {
-                            req = req.with_header("authorization", &format!("Bearer {t}"));
-                        }
-                        req = req.with_header("range", &format!("bytes={start}-{end}"));
-                        match registry.request(peer.clone(), &req).await {
-                            Ok(reply) if reply.status == 200 || reply.status == 206 => {
-                                if reply.body.is_empty() {
-                                    break;
+                    if writer.write_all(&reply0.body).await.is_err() {
+                        let _ = writer.shutdown().await;
+                        return; // 消费方停了（暂停/取消）⇒ 直接收工
+                    }
+                    let mut ok = true;
+                    if !finished {
+                        loop {
+                            let end = start.saturating_add(CHUNK - 1);
+                            let req = attachment_chunk_request(
+                                &target_owned,
+                                auth_owned.as_ref(),
+                                token_owned.as_deref(),
+                                start,
+                                end,
+                            );
+                            match registry.request(peer.clone(), &req).await {
+                                Ok(reply) if reply.status == 200 || reply.status == 206 => {
+                                    if reply.body.is_empty() {
+                                        break;
+                                    }
+                                    total = total.saturating_add(reply.body.len() as u64);
+                                    if writer.write_all(&reply.body).await.is_err() {
+                                        ok = false;
+                                        break; // 消费方停了
+                                    }
+                                    start = start.saturating_add(reply.body.len() as u64);
+                                    if (reply.body.len() as u64) < CHUNK {
+                                        break; // 最后一块
+                                    }
                                 }
-                                total = total.saturating_add(reply.body.len() as u64);
-                                if writer.write_all(&reply.body).await.is_err() {
-                                    break; // 消费方停了（暂停/取消）⇒ 直接收工
-                                }
-                                start = start.saturating_add(reply.body.len() as u64);
-                                if (reply.body.len() as u64) < CHUNK {
-                                    break; // 最后一块
+                                Ok(reply) if reply.status == 416 => break, // 已到末尾
+                                _ => {
+                                    ok = false;
+                                    break; // 中途失败 ⇒ 如实记，不冒充成功
                                 }
                             }
-                            Ok(reply) if reply.status == 416 => break, // 已到末尾
-                            _ => break, // 中途失败 ⇒ 断开（sha 会失败，⛔ 不冒充成功）
                         }
                     }
                     let _ = writer.shutdown().await;
-                    // 真机验收证据：这一行 = 附件字节确实走了 QUIC（⛔ 不含 token/签名）。
-                    eprintln!(
-                        "[mesh-endpoint] 附件走 QUIC（target={target_owned}；{total} B；chunk={CHUNK}B）"
-                    );
+                    if ok {
+                        eprintln!(
+                            "[mesh-endpoint] 附件走 QUIC（target={target_owned}；{total} B；chunk={CHUNK}B）"
+                        );
+                    } else {
+                        eprintln!(
+                            "[mesh-endpoint] 附件 QUIC 中途失败（已写 {total} B；target={target_owned}）"
+                        );
+                    }
                 });
-                return Ok((206, Box::pin(reader) as AttachmentBody));
+                return Ok((reply0.status, Box::pin(reader) as AttachmentBody));
             }
             // ── 非附件：保持原来的“整包缓冲成流”路径（逐字不变）──
             let mut req = crate::relay_tunnel::TunnelRequest::new("GET", target);
