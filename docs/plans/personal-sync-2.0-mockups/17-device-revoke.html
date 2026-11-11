@@ -1,0 +1,31 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>17 设备撤销与邀请过期（目标态）</title></head><body>
+<div class="page">
+  <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 17 / 目标态 · 未开工（§13.5 U1/U2 补充：坏情况）</span></div>
+  <h1>撤销前说清代价，邀请过期能重来</h1>
+  <div class="sub">目标态：撤销设备<b>先二次确认</b>并写明“已同步副本收不回、旧数据不会重新加密”；邀请过期/被撤销有明确提示与重新生成；离线设备回来时状态如实。</div>
+  <div class="frame" style="margin-top:16px">
+    <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">设置 / 同步 / 设备与安全</span><span class="crumb">目标态 · 未开工</span></div>
+    <div class="body">
+      <div class="split">
+        <div class="card" style="border-color:#5b2a2a">
+          <div class="section-title" style="margin-top:0;color:var(--danger)">撤销「旧笔记本」？</div>
+          <div class="check"><div class="ic warn">!</div><div><div class="t">撤销后：它再也拉不到新数据</div><div class="d">本机与其它设备继续正常同步。</div></div></div>
+          <div class="check"><div class="ic warn">!</div><div><div class="t">已经同步到它上面的数据：收不回</div><div class="d">局域网直连没有“远程删除”能力，如实说明。</div></div></div>
+          <div class="check"><div class="ic warn">!</div><div><div class="t">后续新数据：换新密钥</div><div class="d">旧数据不会重新加密；旧密钥仍能解它已经拿到的旧数据。</div></div></div>
+          <div class="actions" style="margin-top:12px;justify-content:flex-end"><span class="btn ghost">取消</span><span class="btn primary" style="background:var(--danger);border-color:var(--danger)">确认撤销</span></div>
+        </div>
+        <div class="card">
+          <div class="section-title" style="margin-top:0">邀请：过期与回来</div>
+          <div class="row"><span class="name">SHUYO-7K2M-9QX4</span><span class="state">已过期（10 分钟有效）</span><span class="badge warn">已过期</span></div>
+          <div class="actions" style="margin-top:8px"><span class="btn primary">重新生成邀请</span></div>
+          <div class="row" style="margin-top:10px"><span class="name">旧笔记本</span><span class="state">仍是已撤销 ⇒ 拒绝连接；要恢复须重新邀请配对</span><span class="badge warn">已撤销</span></div>
+          <div class="callout" style="margin-top:12px">判据：撤销有二次确认与三条代价说明；过期邀请可用；已撤销设备回来后<b>不会自动恢复</b>。</div>
+          <div class="note" style="margin-top:10px">密钥轮换是独立动作（§13.10 第 7 条）：撤销 ≠ 轮换；轮换保护“之后”的数据。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>ShuyoNote · 个人付费订阅版 · 需求效果图</span><span>目标态 · ⛔ 未实现｜验收判据见需求文档 §13.5 U1–U2 ＋ §13.10</span></div>
+</div>
+</body></html>
+

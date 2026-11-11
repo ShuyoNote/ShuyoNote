@@ -1,0 +1,30 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>15 推送与反熵 · 坏情况（目标态）</title></head><body>
+<div class="page">
+  <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 15 / 目标态 · 未开工（§13.3 F1/F2 补充：水位不符/通道断开）</span></div>
+  <h1>两种“看起来正常但其实不对”的情况</h1>
+  <div class="sub">目标态：① 对端声称的水位比本机验证到的高 ⇒ <b>不跳过</b>，按本地验证水位重拉并留痕；② 推送通道断开 ⇒ <b>如实降级</b>为按间隔拉取，⛔ 不装成“还在推送”。</div>
+  <div class="frame" style="margin-top:16px">
+    <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">设置 / 同步 / 多设备</span><span class="crumb">目标态 · 未开工</span></div>
+    <div class="body">
+      <div class="split">
+        <div class="card" style="border-color:#5b2a2a">
+          <div class="section-title" style="margin-top:0;color:var(--danger)">① 水位不符（不跳过）</div>
+          <div class="row"><span class="name">Windows PC 声称</span><span class="state">工作 · 已到 <b>128</b></span><span class="badge warn">声称</span></div>
+          <div class="row"><span class="name">本机已验证</span><span class="state">工作 · 只到 <b>120</b></span><span class="badge ok">已验证</span></div>
+          <div class="row"><span class="name">本机动作</span><span class="state" style="color:var(--warn)">按 120 之后<b>重新拉取</b>（⛔ 不跳过 121–128）</span><span class="badge warn">已记一条</span></div>
+          <div class="callout" style="margin-top:12px">水位只是<b>提示</b>，跳过只依据本机已验证应用的结果；不符时在记录里留一条“对端声明与本地不符”，可排查。</div>
+        </div>
+        <div class="card">
+          <div class="section-title" style="margin-top:0">② 推送通道断开（如实降级）</div>
+          <div class="row"><span class="name">通道状态</span><span class="state">断开 12 秒 · 正在重连（第 2 次，退避 5 秒）</span><span class="badge warn">已降级</span></div>
+          <div class="row"><span class="name">当前行为</span><span class="state">退回按间隔拉取（约 2 分钟一轮）</span><span class="badge info">兜底</span></div>
+          <div class="row"><span class="name">通知延迟</span><span class="state">—（通道断开时<b>不显示</b>“推送中”）</span><span class="meta">—</span></div>
+          <div class="callout" style="margin-top:12px">判据：通道断开 ≤1 秒内状态改为“已降级”，并说明退回哪条路；恢复后再切回推送。</div>
+          <div class="note" style="margin-top:10px">⛔ 不把“降级”显示成绿色；⛔ 不拿旧延迟读数冒充当前读数。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>ShuyoNote · 个人付费订阅版 · 需求效果图</span><span>目标态 · ⛔ 未实现｜验收判据见需求文档 §13.3 F1–F2 ＋ §13.10</span></div>
+</div>
+</body></html>

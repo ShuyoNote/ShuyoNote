@@ -25,6 +25,11 @@
   <div class="card"><a href="11-watermark-matrix.png"><img src="11-watermark-matrix.png" alt="水位矩阵与批量确认（目标态）"></a><div class="meta"><div class="t">11 · 设备×空间水位矩阵（目标态）</div><div class="d">谁缺谁的数据一眼看清；同名空间一次确认批量生效、双向传播（§13.4 A1–A3）。</div></div></div>
   <div class="card"><a href="12-device-lifecycle.png"><img src="12-device-lifecycle.png" alt="邀请配对与设备管理（目标态）"></a><div class="meta"><div class="t">12 · 邀请配对与设备管理（目标态）</div><div class="d">已信任设备签发邀请；撤销/换机/密钥轮换；失败自动重试并给下一步（§13.5 U1–U4）。</div></div></div>
   <div class="card"><a href="13-sync-graph.png"><img src="13-sync-graph.png" alt="多设备同步图与诊断（目标态）"></a><div class="meta"><div class="t">13 · 多设备同步图与诊断（目标态）</div><div class="d">按“边”给最近成功/延迟/失败原因/是否经中转；诊断包升级，仍不含正文/令牌（§13.6 O1–O2）。</div></div></div>
+  <div style="grid-column:1/-1;margin:16px 0 0;font-size:13.5px;color:#f0b35b;font-weight:650">目标态 · 补充：「坏情况」—— ⛔ 未实现，回答“出问题时界面长什么样、说清什么”</div>
+  <div class="card"><a href="14-connection-degraded.png"><img src="14-connection-degraded.png" alt="重连失败（目标态）"></a><div class="meta"><div class="t">14 · 重连失败（目标态）</div><div class="d">退避 5s→10s→30s（上限 60s）；连续失败 5 次停止自动重连并给原因/动作；⛔ 不无限重试、不把“连不上”说成“正在连接”。</div></div></div>
+  <div class="card"><a href="15-watermark-mismatch.png"><img src="15-watermark-mismatch.png" alt="水位不符与通道断开（目标态）"></a><div class="meta"><div class="t">15 · 水位不符 / 通道断开（目标态）</div><div class="d">对端声称水位高于本机验证 ⇒ <b>不跳过</b>、重拉并留痕；通道断开 ⇒ 如实降级为按间隔拉取，⛔ 不装“推送中”。</div></div></div>
+  <div class="card"><a href="16-matrix-unknown.png"><img src="16-matrix-unknown.png" alt="矩阵读不到（目标态）"></a><div class="meta"><div class="t">16 · 矩阵读不到（目标态）</div><div class="d">读不到显示「—」＋原因（离线/未开同步/本机没有），⛔ 不显示 0、不冒充“已同步”。</div></div></div>
+  <div class="card"><a href="17-device-revoke.png"><img src="17-device-revoke.png" alt="撤销与邀请过期（目标态）"></a><div class="meta"><div class="t">17 · 撤销与邀请过期（目标态）</div><div class="d">撤销前二次确认并写明“已同步副本收不回、旧数据不重新加密”；邀请过期可重生成；已撤销设备回来不自动恢复。</div></div></div>
 </div>
 <div class="dec"><h2>需要拍板的 6 件事（白话）· 2026-11-11 状态</h2>
 <table>

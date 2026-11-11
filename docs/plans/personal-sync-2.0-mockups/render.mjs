@@ -26,6 +26,10 @@ const FILES = [
   "11-watermark-matrix",
   "12-device-lifecycle",
   "13-sync-graph",
+  "14-connection-degraded",
+  "15-watermark-mismatch",
+  "16-matrix-unknown",
+  "17-device-revoke",
 ];
 
 const candidates = [

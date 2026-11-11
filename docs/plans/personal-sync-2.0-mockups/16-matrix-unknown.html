@@ -1,0 +1,37 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>16 水位矩阵 · 读不到（目标态）</title><style>
+  table.mx{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:4px}
+  table.mx th,table.mx td{border-top:1px solid var(--line);padding:8px 6px;text-align:left}
+  table.mx th{color:var(--faint);font-weight:600;font-size:11.5px}
+  table.mx td.unknown{color:var(--warn)}
+</style></head><body>
+<div class="page">
+  <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 16 / 目标态 · 未开工（§13.4 A2 补充：读不到）</span></div>
+  <h1>读不到就说读不到，不显示 0</h1>
+  <div class="sub">目标态：矩阵里<b>读不到</b>的格子显示「—」并给出原因（设备离线 / 该空间没开同步 / 本机没有这个空间）；点进去看到为什么读不到，⛔ 不把“没数据”画成“0”。</div>
+  <div class="frame" style="margin-top:16px">
+    <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">设置 / 同步 / 多设备</span><span class="crumb">目标态 · 未开工</span></div>
+    <div class="body">
+      <div class="split" style="grid-template-columns:1.1fr .9fr">
+        <div class="card">
+          <div class="section-title" style="margin-top:0">设备 × 空间水位</div>
+          <table class="mx">
+            <tr><th>空间</th><th>本机</th><th>Windows PC</th><th>旧笔记本</th></tr>
+            <tr><td>工作</td><td>128</td><td>差 3</td><td class="unknown">—（离线）</td></tr>
+            <tr><td>产品</td><td>96</td><td>96</td><td class="unknown">—（未开同步）</td></tr>
+            <tr><td>保险柜</td><td>44</td><td>44</td><td class="unknown">—（本机没有）</td></tr>
+          </table>
+          <div class="callout" style="margin-top:12px">「—」不是 0，也不是“已同步”；每个「—」点进去都能看到<b>具体原因</b>。</div>
+        </div>
+        <div class="card">
+          <div class="section-title" style="margin-top:0">点进「—」：为什么读不到</div>
+          <div class="check"><div class="ic warn">1</div><div><div class="t">设备离线 / 不可达</div><div class="d">没有心跳也没有公告 ⇒ 不知道它到哪一轮（⛔ 不猜）。</div></div></div>
+          <div class="check"><div class="ic warn">2</div><div><div class="t">该空间没开同步</div><div class="d">对端这台设备没有为这个空间开启同步 ⇒ 它没有水位。</div></div></div>
+          <div class="check"><div class="ic warn">3</div><div><div class="t">本机没有这个空间</div><div class="d">对端有、本机没有 ⇒ 这一列对你不适用（不是“差很多”）。</div></div></div>
+          <div class="note" style="margin-top:10px">判据：读不到显示「—」＋原因；⛔ 不显示 0 / “已同步”；原因必须来自真实读数。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>ShuyoNote · 个人付费订阅版 · 需求效果图</span><span>目标态 · ⛔ 未实现｜验收判据见需求文档 §13.4 A2</span></div>
+</div>
+</body></html>

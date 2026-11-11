@@ -215,6 +215,10 @@ relay 服务器关机 + 配了路线表 + 两机同 Wi-Fi ⇒ LAN 同步成功�
 | 11 | **目标态·未开工**（§13.4）：设备×空间水位矩阵 ＋ 同名空间批量确认（双向传播） | [11-watermark-matrix.png](personal-sync-2.0-mockups/11-watermark-matrix.png) |
 | 12 | **目标态·未开工**（§13.5）：邀请式配对 ＋ 设备撤销/换机/密钥轮换 ＋ 失败自动处理 | [12-device-lifecycle.png](personal-sync-2.0-mockups/12-device-lifecycle.png) |
 | 13 | **目标态·未开工**（§13.6）：多设备同步图（按“边”给读数）＋ 诊断包升级 | [13-sync-graph.png](personal-sync-2.0-mockups/13-sync-graph.png) |
+| 14 | **目标态·未开工（坏情况）**（§13.2 S1）：重连失败 —— 退避有上限、失败到阈值就停止并给原因/动作 | [14-connection-degraded.png](personal-sync-2.0-mockups/14-connection-degraded.png) |
+| 15 | **目标态·未开工（坏情况）**（§13.3 F1/F2）：水位不符不跳过 ＋ 通道断开如实降级 | [15-watermark-mismatch.png](personal-sync-2.0-mockups/15-watermark-mismatch.png) |
+| 16 | **目标态·未开工（坏情况）**（§13.4 A2）：读不到显示「—」＋原因，⛔ 不显示 0 | [16-matrix-unknown.png](personal-sync-2.0-mockups/16-matrix-unknown.png) |
+| 17 | **目标态·未开工（坏情况）**（§13.5 U1/U2）：撤销二次确认与代价说明 ＋ 邀请过期 ＋ 已撤销设备回来不自动恢复 | [17-device-revoke.png](personal-sync-2.0-mockups/17-device-revoke.png) |
 
 > ⚠️ 效果图源在本目录 `*.html` ＋ `mock.css`；改动后跑
 > `node docs/plans/personal-sync-2.0-mockups/render.mjs` 重渲染 2x PNG（本机无浏览器时 exit 2，不算图坏）。

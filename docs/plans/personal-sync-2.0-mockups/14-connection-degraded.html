@@ -1,0 +1,30 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>14 连接监督器 · 坏情况（目标态）</title></head><body>
+<div class="page">
+  <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 14 / 目标态 · 未开工（§13.2 S1 补充：重连失败）</span></div>
+  <h1>重连失败时：停下并说清，不无限重试</h1>
+  <div class="sub">目标态：退避序列 5s → 10s → 30s（上限 60s）；连续失败 5 次 ⇒ <b>停止自动重连</b>并标“建议检查”，同时给出可读原因与动作（重试/打开诊断/忽略此设备）。</div>
+  <div class="frame" style="margin-top:16px">
+    <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">设置 / 同步 / 多设备</span><span class="crumb">目标态 · 未开工</span></div>
+    <div class="body">
+      <div class="split">
+        <div class="card">
+          <div class="section-title" style="margin-top:0">设备连接</div>
+          <div class="row"><span class="name">Windows PC</span><span class="state">QUIC · 心跳 3 秒前 · 在线</span><span class="badge ok">已连接</span></div>
+          <div class="row"><span class="name">MacBook Air</span><span class="state">重连失败 · 第 5 次 · 退避 30 秒后重试</span><span class="badge warn">退避中</span></div>
+          <div class="row"><span class="name">旧笔记本</span><span class="state">连续失败 5 次 ⇒ <b style="color:var(--danger)">已停止自动重连</b> · 建议检查</span><span class="badge warn">建议检查</span></div>
+          <div class="callout" style="margin-top:12px">⛔ 不无限重试（耗电/发热且无意义）；停止后仍可手动「重试」或「打开诊断」。</div>
+        </div>
+        <div class="card">
+          <div class="section-title" style="margin-top:0">点开一行：最后一次错误</div>
+          <div class="check"><div class="ic warn">!</div><div><div class="t">旧笔记本 · 最后一次错误（原文）</div><div class="d">Connection refused（对端进程未监听）· 尝试 5 次 · 最近 10:41</div></div></div>
+          <div class="check"><div class="ic ok">✓</div><div><div class="t">本机网络</div><div class="d">en0 192.168.0.100 正常；不是本机断网</div></div></div>
+          <div class="check"><div class="ic warn">!</div><div><div class="t">下一步建议</div><div class="d">确认对端是否开着同步；仍失败 ⇒ 打开诊断复制包。</div></div></div>
+          <div class="actions" style="margin-top:10px"><span class="btn primary">重试</span><span class="btn">打开诊断</span><span class="btn ghost">忽略此设备</span></div>
+          <div class="note" style="margin-top:10px">判据：退避有上限、停止有阈值、原因原文可见；⛔ 不把“连不上”说成“正在连接”。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>ShuyoNote · 个人付费订阅版 · 需求效果图</span><span>目标态 · ⛔ 未实现｜验收判据见需求文档 §13.2 S1 ＋ §13.12</span></div>
+</div>
+</body></html>
