@@ -604,28 +604,42 @@ pub mod iroh_tunnel {
         Ok(reply)
     }
 
-    /// 服务侧：接一个连接 → 接一条流 → 读请求 → `handler` → 写回应（一次一条，简单为先）。
+    /// 服务侧：接一个连接 → **在同一连接上循环接流**（每流一次请求/应答）。
+    ///
+    /// ⭐ **2026-11-11（真机：每轮 3s 长尾）**：旧实现**一条连接只服务一条流**，然后就
+    /// `conn.closed().await` 等着客户端关 ⇒ 客户端把这条连接缓存下来，下一条请求开流后
+    /// **永远等不到应答**，直到 3s/20s 超时才知道要换连接。
+    /// ⇒ 改为**同一连接上循环 `accept_bi`**：缓存连接才真的可复用（每轮 3s 长尾消失）。
     pub async fn serve_one_conn<H>(
         conn: iroh::endpoint::Connection,
-        handler: H,
+        mut handler: H,
     ) -> Result<(), String>
     where
-        H: FnOnce(&TunnelRequest) -> TunnelReply,
+        H: FnMut(&TunnelRequest) -> TunnelReply,
     {
-        let (mut send, mut recv) = conn
-            .accept_bi()
-            .await
-            .map_err(|e| format!("接流失败：{e}"))?;
-        let req = read_request(&mut recv)
-            .await
-            .map_err(|e| format!("读请求失败：{e}"))?;
-        let reply = handler(&req);
-        write_reply(&mut send, &reply)
-            .await
-            .map_err(|e| format!("写回应失败：{e}"))?;
-        send.finish().map_err(|e| format!("收流失败：{e}"))?;
-        conn.closed().await;
-        Ok(())
+        loop {
+            let (mut send, mut recv) = match conn.accept_bi().await {
+                Ok(v) => v,
+                // 连接关/对端走 ⇒ 正常收工（⛔ 不当作错误）
+                Err(_) => return Ok(()),
+            };
+            let req = match read_request(&mut recv).await {
+                Ok(r) => r,
+                Err(e) => {
+                    // 这一条流坏了：结束这条流，继续服务同一连接上的下一条（除非连接已关）。
+                    let _ = send.finish();
+                    if conn.close_reason().is_some() {
+                        return Ok(());
+                    }
+                    return Err(format!("读请求失败：{e}"));
+                }
+            };
+            let reply = handler(&req);
+            write_reply(&mut send, &reply)
+                .await
+                .map_err(|e| format!("写回应失败：{e}"))?;
+            send.finish().map_err(|e| format!("收流失败：{e}"))?;
+        }
     }
 }
 
