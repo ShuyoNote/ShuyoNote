@@ -2237,3 +2237,14 @@
   }
 }
 }
+
+/* ⭐ 2026-11-11（owner 选 A）：同步状态总览（对齐效果图 01 的四格读数）。
+   数据来源：history / liveSyncing / allSync（⛔ 不新造参数、不编数字）。 */
+@layer legacy {
+.sync-overview { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.sync-overview-cell { display: flex; flex-direction: column; gap: 2px; min-width: 92px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.sync-overview-cell b { font-size: var(--fs-13-5); font-weight: 650; color: var(--text); }
+.sync-overview-cell i { font-style: normal; font-size: var(--fs-11); color: var(--text-dim); }
+.sync-overview-cell.is-bad b { color: var(--danger); }
+}
+

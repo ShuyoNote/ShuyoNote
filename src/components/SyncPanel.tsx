@@ -716,7 +716,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   const attName = useSyncStatus((s) => s.attName);
   const syncDurationMs = useSyncStatus((s) => s.durationMs);
   const [history, setHistory] = useState<{ ws_id: string; ws_name: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string; title: string }[] }[]>([]);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(true); // ⭐ 2026-11-11（A）：默认展开——记录要能被看见
   const [detailOpenIdx, setDetailOpenIdx] = useState<number | null>(null);
   // A+C（owner 2026-10-29）：失败那条正在重试 / 复制诊断时的忙碌位。
   const [retryingHistory, setRetryingHistory] = useState<number | null>(null);
@@ -1513,6 +1513,22 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   // ⚠️ 圆点：同步中 ⇒ 蓝；**已配对＋在线** ⇒ 绿；其余 ⇒ 无色（⛔ 不给一个「看起来很健康」的绿 ✗）。
   // ⭐ 同上：**同步关掉了就该无色** ✗ —— 否则会出现"绿点 ＋ 同步已关"这种自相矛盾的画面 ✓。
   // ⭐ 跟上面对齐："在跑"一律用 `liveSyncing || syncing` ✓（⛔ 别让圆点和那句话用两把尺 ✗）。
+  // ⭐ 2026-11-11（owner 选 A：补「同步状态总览」，对齐效果图 01）：
+  //   四个读数全部由**已有来源**算出，⛔ 不造新参数/不编数字：
+  //   · 上次成功 ← `history` 里最近一条 `ok=true`（⛔ 没有就写「—」）；
+  //   · 下次自动 ← 最近一轮 + 后台节拍 120s（`BACKGROUND_ROUND_MS`；空轮重试 60s，这里标「约」）；
+  //   · 正在同步 ← `liveSyncing`（引擎真信号）或「全部空间」这一下在跑；
+  //   · 失败数 ← 已加载历史里的失败条数（面板打开时刷新，口径与历史列表同一份）。
+  const overviewLastOkAt = history.find((h) => h.ok)?.at ?? 0;
+  const overviewLastRoundAt = history[0]?.at ?? 0;
+  const overviewLastOk = overviewLastOkAt ? relTime(overviewLastOkAt) : "—";
+  const overviewNextAuto = (() => {
+    if (!overviewLastRoundAt) return "等第一轮";
+    const leftSec = Math.round((overviewLastRoundAt + 120_000 - Date.now()) / 1000);
+    return leftSec > 0 ? `约 ${leftSec} 秒后` : "下一轮随时";
+  })();
+  const overviewFailCount = history.filter((h) => !h.ok).length;
+  const overviewSyncing = liveSyncing || Boolean(allSync?.running);
   const heroDot =
     syncMode === "off" ? "" : liveSyncing ? " is-busy" : meshPaired && meshOnline ? " is-ok" : "";
   const nearbySecondColumn = (p: NearbyPeer) => {
@@ -1783,6 +1799,26 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                 }
               })()}
             />
+            {/* ⭐ 2026-11-11（owner 选 A）：同步状态总览 —— 四个读数（上次成功 / 下次自动 /
+                正在同步 / 失败数），对齐效果图 01；全部来自已有读数，⛔ 不造新参数。 */}
+            <div className="sync-overview" data-testid="sync-overview">
+              <span className="sync-overview-cell">
+                <b data-testid="sync-overview-last-ok">{overviewLastOk}</b>
+                <i>上次成功</i>
+              </span>
+              <span className="sync-overview-cell">
+                <b data-testid="sync-overview-next">{overviewNextAuto}</b>
+                <i>下次自动（约 2 分钟一轮）</i>
+              </span>
+              <span className="sync-overview-cell">
+                <b data-testid="sync-overview-syncing">{overviewSyncing ? "同步中" : "空闲"}</b>
+                <i>当前状态</i>
+              </span>
+              <span className={`sync-overview-cell${overviewFailCount > 0 ? " is-bad" : ""}`}>
+                <b data-testid="sync-overview-failed">{overviewFailCount}</b>
+                <i>失败（最近记录里）</i>
+              </span>
+            </div>
             {/* ⭐⭐ **R176-A（owner 2026-10-28 拍 A）④「能读的状态」** ✗：状态条下面**紧挨着**摆那三格
                 ——「这一轮走的是：设备直连」／「服务 N 个空间」／「本机：已信任 N 台」✓
                 （⭐ 个人版专属：团队档那条路是服务器，规模读数的口径不同 ✓ ⇒ 只在个人空间显示 ✓；
@@ -3066,6 +3102,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
     </div>
   );
 }
+
 
 
 
