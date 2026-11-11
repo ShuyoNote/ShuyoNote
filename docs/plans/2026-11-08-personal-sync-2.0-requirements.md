@@ -202,10 +202,16 @@ relay 服务器关机 + 配了路线表 + 两机同 Wi-Fi ⇒ LAN 同步成功�
 
 | 图 | 内容 | 文件 |
 |---|---|---|
-| 01 | 默认局域网：无需服务器、按空间状态、连接体检入口 | [01-lan-home.png](personal-sync-2.0-mockups/01-lan-home.png) |
-| 02 | 连接体检：本机/对端/最近一轮/手动地址/诊断包 | [02-diagnose.png](personal-sync-2.0-mockups/02-diagnose.png) |
-| 03 | 私有中继：三步部署/许可证/状态/局域网优先提示 | [03-private-relay.png](personal-sync-2.0-mockups/03-private-relay.png) |
+| 01 | 默认局域网：无需服务器、按空间状态、**QUIC 直连/HTTP 回退读数**、**同名空间待确认行**、连接体检入口 | [01-lan-home.png](personal-sync-2.0-mockups/01-lan-home.png) |
+| 02 | 连接体检：本机/对端/**QUIC 端点与握手**/最近一轮/手动地址/诊断包 | [02-diagnose.png](personal-sync-2.0-mockups/02-diagnose.png) |
+| 03 | 私有中继：三步部署/许可证/**中继自带 TLS（8881 HTTPS + 8882 QUIC）**/状态/局域网优先提示 | [03-private-relay.png](personal-sync-2.0-mockups/03-private-relay.png) |
 | 04 | 后台与 MCP：关窗同步、托盘、MCP 独立、无 UI 危险写拒绝 | [04-background-mcp.png](personal-sync-2.0-mockups/04-background-mcp.png) |
+| 05 | 同名 ≠ 同一空间：冲突先停、人确认一次、双向放行（2026-11-10 owner 批 B） | [05-uid-confirm.png](personal-sync-2.0-mockups/05-uid-confirm.png) |
+| 06 | 附件下载：QUIC 优先、暂停/续传/取消、sha256 校验四态 | [06-attachment-progress.png](personal-sync-2.0-mockups/06-attachment-progress.png) |
+| 07 | 跨网失败三态：证书问题/许可证到期/端口未通 —— 只收回跨网，局域网照常 | [07-relay-errors.png](personal-sync-2.0-mockups/07-relay-errors.png) |
+
+> ⚠️ 效果图源在本目录 `*.html` ＋ `mock.css`；改动后跑
+> `node docs/plans/personal-sync-2.0-mockups/render.mjs` 重渲染 2x PNG（本机无浏览器时 exit 2，不算图坏）。
 
 ## 7. 非功能指标
 

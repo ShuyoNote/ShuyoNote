@@ -1,9 +1,9 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>01 局域网默认</title><style>.row .state{white-space:nowrap}.row .meta{white-space:nowrap}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>01 局域网默认</title><style>.row .state{white-space:nowrap}.row .meta{white-space:nowrap}.state.warn{color:var(--warn)}</style></head><body>
 <div class="page">
   <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 01 / 默认：纯局域网，不需要服务器</span></div>
   <h1>打开就能同步，不需要中继</h1>
-  <div class="sub">同一 Wi-Fi 下自动发现；没有服务器、没有订阅、没有“先配一下”。中继只出现在高级设置里，作为可选兜底。</div>
-  <div class="legend"><span class="badge ok">● 已连接 · 直连</span><span class="badge info">2 台设备</span><span class="badge gray">3 个空间</span></div>
+  <div class="sub">同一 Wi-Fi 下自动发现；没有服务器、没有订阅、没有“先配一下”。传输 <b>QUIC 优先、HTTP 回退</b>，中继只出现在高级设置里，作为可选兜底。</div>
+  <div class="legend"><span class="badge ok">● QUIC 直连 · 17ms</span><span class="badge info">2 台设备</span><span class="badge gray">3 个空间</span></div>
   <div class="frame" style="margin-top:18px">
     <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">产品 / 同步</span><span class="crumb">本机：MacBook Pro · 192.168.0.100</span></div>
     <div class="body">
@@ -12,11 +12,13 @@
           <div class="left">
             <span class="badge ok">● 局域网已连接</span>
             <h2>2 台设备 · 直连</h2>
-            <p>MacBook Pro ↔ Windows PC 正在直连。最近一轮 12 秒前完成；没有走任何服务器。</p>
+            <p>MacBook Pro ↔ Windows PC 走 QUIC 直连（17ms）；对端只开 HTTP 时自动回退，界面会写明原因。最近一轮 12 秒前完成；没有走任何服务器。</p>
             <div class="stats">
               <span><b>3</b>个空间在同步</span>
               <span><b>+5 / −2</b>上次收发页面</span>
               <span><b>0</b>个失败</span>
+              <span><b>12 秒前</b>上次成功</span>
+              <span><b>约 4 分 48 秒</b>下次自动</span>
             </div>
             <div class="actions">
               <span class="btn primary">全部空间立即同步</span>
@@ -27,8 +29,8 @@
           <div style="width:250px">
             <div class="card" style="background:var(--panel2);padding:12px 14px">
               <div class="section-title" style="margin-top:0">设备</div>
-              <div class="row" style="padding:8px 0"><span class="name">Windows PC</span><span class="state">直连</span><span class="meta">刚刚</span></div>
-              <div class="row" style="padding:8px 0"><span class="name">MacBook Air</span><span class="state">直连</span><span class="meta">20 秒前</span></div>
+              <div class="row" style="padding:8px 0"><span class="name">Windows PC</span><span class="state">QUIC 17ms</span><span class="meta">刚刚</span></div>
+              <div class="row" style="padding:8px 0"><span class="name">MacBook Air</span><span class="state">HTTP 回退</span><span class="meta">20 秒前</span></div>
             </div>
           </div>
         </div>
@@ -39,12 +41,13 @@
           <div class="row"><span class="name">工作</span><span class="state">已同步</span><span class="meta">↑3 ↓5</span></div>
           <div class="row"><span class="name">产品</span><span class="state">差 2 页 · 稍后自动同步</span><span class="meta">↑0 ↓2</span></div>
           <div class="row"><span class="name">保险柜</span><span class="state">锁着 · 解锁后自动应用 3 条封包</span><span class="meta">已收</span></div>
+          <div class="row"><span class="name">山焦招标</span><span class="state warn">身份不一致 · 待确认</span><span class="meta">去确认 ›</span></div>
         </div>
         <div class="card">
           <div class="section-title" style="margin-top:0">高级（可选）</div>
           <div class="row"><span class="name">跨网同步</span><span class="state">未配置 · 不影响局域网</span><span class="meta">私有中继 ›</span></div>
           <div class="row"><span class="name">手动添加设备</span><span class="state">广播被挡时用 IP:端口兜底</span><span class="meta">添加 ›</span></div>
-          <div class="row"><span class="name">连接诊断</span><span class="state">发现 / 端口 / 信任 / 房间 / 上一轮</span><span class="meta">查看 ›</span></div>
+          <div class="row"><span class="name">连接诊断</span><span class="state">发现 / 端口 / QUIC / 信任 / 上一轮</span><span class="meta">查看 ›</span></div>
         </div>
       </div>
     </div>

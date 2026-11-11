@@ -72,3 +72,5 @@ h1{font-size:34px;font-weight:750;letter-spacing:-.4px;margin:14px 0 8px}
 .tray .head{color:var(--faint);font-size:11px;padding:4px 10px 6px}
 .note{font-size:11.5px;color:var(--faint);line-height:1.55}
 .legend{position:absolute;right:44px;top:34px;display:flex;gap:8px;align-items:center;color:var(--faint);font-size:11.5px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+

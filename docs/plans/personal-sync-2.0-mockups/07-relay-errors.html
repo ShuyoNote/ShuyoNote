@@ -1,0 +1,36 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>07 跨网失败三态</title></head><body>
+<div class="page">
+  <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 07 / 跨网失败三态：只收回跨网，局域网照常</span></div>
+  <h1>跨网出问题时，本机不受影响</h1>
+  <div class="sub">私有中继的失败要能<strong>一眼看出是哪一种</strong>，并给出下一步；无论哪种，<strong>本地读写与局域网同步都不降级</strong>。</div>
+  <div class="frame" style="margin-top:18px">
+    <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">设置 / 同步 / 跨网（私有中继）</span><span class="crumb">局域网：已连接 · 2 台设备</span></div>
+    <div class="body">
+      <div class="grid3">
+        <div class="card" style="border-color:#5b2a2a">
+          <div class="section-title" style="margin-top:0;color:var(--danger)">① 证书问题</div>
+          <div style="font-size:14px;font-weight:700;margin:6px 0">TLS 握手失败：证书过期/不匹配</div>
+          <div class="d" style="font-size:12px;color:var(--faint);line-height:1.6">中继的证书到期或域名对不上 ⇒ <b>跨网暂停</b>；局域网与本地照常。<br>下一步：部署人续期证书（certbot）或修 SAN；relay 会按小时重读证书，无需重启。</div>
+          <div class="actions" style="margin-top:10px"><span class="btn primary">重新检测</span><span class="btn ghost">查看部署文档</span></div>
+        </div>
+        <div class="card" style="border-color:#5a4524">
+          <div class="section-title" style="margin-top:0;color:var(--warn)">② 许可证到期</div>
+          <div style="font-size:14px;font-weight:700;margin:6px 0">到期只收回“跨网”</div>
+          <div class="d" style="font-size:12px;color:var(--faint);line-height:1.6">订阅到期 ⇒ 跨网连接被拒（理由可读）；<b>本地读写/搜索/编辑/局域网同步全部照常</b>。到期≠软件不能用。<br>下一步：续期许可证后自动恢复。</div>
+          <div class="actions" style="margin-top:10px"><span class="btn">续期入口</span><span class="btn ghost">了解许可</span></div>
+        </div>
+        <div class="card" style="border-color:#5a4524">
+          <div class="section-title" style="margin-top:0;color:var(--warn)">③ 端口/配置未通</div>
+          <div style="font-size:14px;font-weight:700;margin:6px 0">8881/8882 不可达</div>
+          <div class="d" style="font-size:12px;color:var(--faint);line-height:1.6">HTTPS 8881 或 QUIC 8882/udp 未放行 / 证书链不完整 ⇒ 测试连接失败。<br>下一步：放行端口、确认 TLS 证书链、再点「重新检测」。</div>
+          <div class="actions" style="margin-top:10px"><span class="btn primary">重新检测</span><span class="btn ghost">复制诊断</span></div>
+        </div>
+      </div>
+      <div class="callout" style="margin-top:16px">共同口径：<b>跨网失败不降级局域网</b>；中继不可达时只显示“跨网暂不可用”，本机与同 Wi-Fi 同步继续。</div>
+      <div class="hint" style="margin-top:10px">读数如实：状态页里证书剩余天数在未解析前显示「—」（⛔ 不编数字）；relay selfcheck 四项未做前不写“已通过”。</div>
+    </div>
+  </div>
+  <div class="footer"><span>ShuyoNote · 个人付费订阅版 · 需求效果图</span><span>P2 交付 · 判据：三种失败各有独立理由/下一步；局域网可用性不受影响</span></div>
+</div>
+</body></html>
+

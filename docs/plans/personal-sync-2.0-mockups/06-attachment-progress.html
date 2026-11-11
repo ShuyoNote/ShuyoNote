@@ -1,0 +1,67 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>06 附件下载</title><style>
+  .progress{height:8px;border-radius:999px;background:#2c2f35;overflow:hidden;margin-top:8px}
+  .progress > i{display:block;height:100%;width:62%;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  .meta-line{display:flex;gap:12px;color:var(--faint);font-size:12px;margin-top:6px}
+  .file-ic{width:34px;height:34px;border-radius:9px;background:#1a2a4d;border:1px solid #2f4475;color:var(--accent2);display:flex;align-items:center;justify-content:center;font-size:16px;flex:none}
+</style></head><body>
+<div class="page">
+  <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 06 / 附件下载：QUIC 优先，可暂停/续传</span></div>
+  <h1>大附件也能断点续传</h1>
+  <div class="sub">附件「点下载」走 <b>QUIC 优先</b>（对端不支持/失败自动回退 HTTP）；暂停/取消都会保留 <b>.part</b>，下次接着下；完成前做 sha256 校验。</div>
+  <div class="frame" style="margin-top:18px">
+    <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">页面 / 附件</span><span class="crumb">对端：Windows PC · 直连</span></div>
+    <div class="body">
+      <div class="split">
+        <div class="card">
+          <div class="section-title" style="margin-top:0">附件</div>
+          <div class="row" style="align-items:flex-start">
+            <div class="file-ic">⬇</div>
+            <div style="flex:1;min-width:0">
+              <div class="name" style="width:auto">q-20261109.bin</div>
+              <div class="state" style="color:var(--dim)">下载中 · <b>QUIC</b> · 2.0 MB</div>
+              <div class="progress"><i></i></div>
+              <div class="meta-line"><span>62%</span><span>1.2 MB/s</span><span>剩余 1 秒</span><span>sha256 待校验</span></div>
+            </div>
+            <div class="actions" style="margin:0"><span class="btn ghost">暂停</span><span class="btn ghost">取消</span></div>
+          </div>
+          <div class="row" style="align-items:flex-start">
+            <div class="file-ic">⏸</div>
+            <div style="flex:1;min-width:0">
+              <div class="name" style="width:auto">design-kit.zip</div>
+              <div class="state" style="color:var(--warn)">已暂停 · .part 已保留（可续传）</div>
+              <div class="meta-line"><span>已下载 18.4 MB / 40 MB</span><span>HTTP 回退原因：对端 QUIC 握手超时</span></div>
+            </div>
+            <div class="actions" style="margin:0"><span class="btn primary">继续</span><span class="btn ghost">取消</span></div>
+          </div>
+          <div class="row" style="align-items:flex-start">
+            <div class="file-ic">✓</div>
+            <div style="flex:1;min-width:0">
+              <div class="name" style="width:auto">2026-预算.xlsx</div>
+              <div class="state">已完成 · sha256 一致</div>
+            </div>
+            <div class="actions" style="margin:0"><span class="btn ghost">打开</span></div>
+          </div>
+          <div class="row" style="align-items:flex-start">
+            <div class="file-ic" style="background:#301a1a;border-color:#5b2a2a;color:var(--danger)">!</div>
+            <div style="flex:1;min-width:0">
+              <div class="name" style="width:auto">report.pdf</div>
+              <div class="state" style="color:var(--danger)">失败 · sha256 校验不一致（已丢弃坏文件）</div>
+              <div class="meta-line"><span>下一步：点「重试」重新下载</span></div>
+            </div>
+            <div class="actions" style="margin:0"><span class="btn">重试</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="section-title" style="margin-top:0">这条路的规矩（与实现同一套）</div>
+          <div class="check"><div class="ic ok">1</div><div><div class="t">QUIC 优先，失败自动回退 HTTP</div><div class="d">首端点成功 ⇒ HTTP 零连接；不支持/失败 ⇒ 回退并写明原因。</div></div></div>
+          <div class="check"><div class="ic ok">2</div><div><div class="t">暂停/取消保留 .part</div><div class="d">下次「继续」从断点续传，不从头下。</div></div></div>
+          <div class="check"><div class="ic ok">3</div><div><div class="t">完成前 sha256 校验</div><div class="d">不一致 ⇒ 丢弃坏文件并提示重试，⛔ 不留半截当成功。</div></div></div>
+          <div class="check"><div class="ic ok">4</div><div><div class="t">进度/速度/剩余时间</div><div class="d">由后端事件推送；界面只展示，不自己算。</div></div></div>
+          <div class="callout" style="margin-top:12px">两条传输走<b>同一份状态机</b>：QUIC 与 HTTP 的暂停/续传/取消/校验行为必须一致，否则用户会遇到“这条路能续、那条路不能”。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>ShuyoNote · 个人付费订阅版 · 需求效果图</span><span>P3-4 交付 · 判据：QUIC/HTTP 同状态机；暂停→续传；取消保留 .part；sha256 一致</span></div>
+</div>
+</body></html>

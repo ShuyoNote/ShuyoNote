@@ -1,0 +1,31 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>05 同名空间确认</title></head><body>
+<div class="page">
+  <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 05 / 同名空间身份不一致：确认一次</span></div>
+  <h1>同名 ≠ 同一空间</h1>
+  <div class="sub">两台机器上都有「山焦招标」，但空间身份（space_uid）不同。为了不把两个不同空间悄悄并在一起，同步会先停下，等你确认一次。</div>
+  <div class="frame" style="margin-top:18px">
+    <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">产品 / 同步</span><span class="crumb">本机：Windows PC · 192.168.0.105</span></div>
+    <div class="body">
+      <div class="split">
+        <div class="card">
+          <div class="section-title" style="margin-top:0">按空间</div>
+          <div class="row"><span class="name">工作</span><span class="state">已同步</span><span class="meta">↑3 ↓5</span></div>
+          <div class="row"><span class="name">产品</span><span class="state">差 2 页 · 稍后自动同步</span><span class="meta">↑0 ↓2</span></div>
+          <div class="row" style="background:var(--panel2);border-radius:8px"><span class="name">山焦招标</span><span class="state" style="color:var(--warn)">身份不一致 · 待确认</span><span class="meta">去确认 ›</span></div>
+          <div class="callout" style="margin-top:14px">在确认之前：这批数据<b>一条都不落库、水位不前进</b>；每轮还会再拉一次（不会丢，也不会偷偷合并）。</div>
+        </div>
+        <div class="card" style="border-color:#5a4524">
+          <div class="section-title" style="margin-top:0;color:var(--warn)">需要你确认一次</div>
+          <div style="font-size:14px;font-weight:700;margin:6px 0 8px">「山焦招标」和另一台设备的同名空间是同一个空间吗？</div>
+          <div class="check"><div class="ic ok">A</div><div><div class="t">本机这一侧</div><div class="d">名称「山焦招标」· 身份 a1ff…（内部标识，仅示意）</div></div></div>
+          <div class="check"><div class="ic warn">B</div><div><div class="t">另一台设备这一侧</div><div class="d">名称「山焦招标」· 身份 3101…（内部标识，仅示意）</div></div></div>
+          <div class="callout" style="margin-top:12px">确认后：两台会按<b>同一空间</b>融合；<b>另一台也会收到这次确认</b>（一次确认、双向放行）。融合可在同步记录里回滚。</div>
+          <div class="note" style="margin-top:10px">只改同步元数据（设备/空间身份/时刻），<b>不动页面内容与本地数据</b>。⛔ 本确认不绕过身份/名字闸。</div>
+          <div class="actions" style="margin-top:14px;justify-content:flex-end"><span class="btn ghost">取消</span><span class="btn primary">确认是同一空间</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>ShuyoNote · 个人付费订阅版 · 需求效果图</span><span>P0 交付 · 判据：确认前双向都不落库；确认后只对该设备/uid 放行；不绕身份/名字闸</span></div>
+</div>
+</body></html>
