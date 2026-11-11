@@ -1506,6 +1506,36 @@ pub fn is_transient_recv_error(e: &str) -> bool {
         || e.contains("connection reset")
 }
 
+/// ⭐ **2026-11-11（真机：AP 过滤 UDP 广播，双向都发现不了）**：把「手动添加的设备」也当**公告单播目标**。
+///
+/// 口径：手动填过 `http://IP:HTTP端口` 的对端，说明**人确认过它在哪** ⇒ 就单播到它的
+/// `IP:<公告候选端口>`（HTTP 端口 ≠ 公告端口，⛔ 不要混用）；host 不是 IP 字面量 ⇒ 跳过（判据可核）。
+pub fn unicast_targets_from_bases(
+    bases: &std::collections::BTreeMap<String, String>,
+    ports: &[u16],
+) -> Vec<std::net::SocketAddr> {
+    let mut out = Vec::new();
+    for base in bases.values() {
+        let rest = base.trim().trim_end_matches('/');
+        let rest = rest
+            .strip_prefix("http://")
+            .or_else(|| rest.strip_prefix("https://"))
+            .unwrap_or(rest);
+        // base 形如 `IP:HTTP端口`（端口不是公告端口，⛔ 别拿来发公告）。
+        let host = rest.rsplit_once(':').map(|(h, _)| h).unwrap_or(rest);
+        let Ok(ip) = host.parse::<std::net::IpAddr>() else {
+            continue;
+        };
+        for p in ports {
+            let sa = std::net::SocketAddr::new(ip, *p);
+            if !out.contains(&sa) {
+                out.push(sa);
+            }
+        }
+    }
+    out
+}
+
 pub async fn recv_into_within(
     sock: &UdpSocket,
     state: &crate::lan_state::LanState,
@@ -1525,6 +1555,21 @@ pub async fn recv_into_within(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ⭐ 2026-11-11：手动设备也单播发公告（广播被 AP 过滤时的兜底）。
+    #[test]
+    fn manual_bases_become_unicast_announce_targets() {
+        use std::collections::BTreeMap;
+        let mut bases = BTreeMap::new();
+        bases.insert("dev-a".to_string(), "http://172.16.174.37:8788".to_string());
+        bases.insert("dev-b".to_string(), "https://192.168.43.190:8788/".to_string());
+        bases.insert("dev-host".to_string(), "http://relay.example.com:8788".to_string());
+        let out = unicast_targets_from_bases(&bases, &[47821, 47822]);
+        assert!(out.contains(&"172.16.174.37:47821".parse().unwrap()));
+        assert!(out.contains(&"192.168.43.190:47822".parse().unwrap()));
+        // 主机名不是 IP 字面量 ⇒ 跳过（⛔ 不猜 DNS）
+        assert_eq!(out.len(), 4, "两个 IP × 两个公告端口：{out:?}");
+    }
 
     /// ⭐ 2026-11-11：只有"ICMP 复位/连接被强迫关闭"算抖动量；别的错误必须照旧上报。
     #[test]

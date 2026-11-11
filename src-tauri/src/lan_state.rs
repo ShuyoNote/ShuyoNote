@@ -1631,8 +1631,21 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 //    ⚠️ 2026-11-03：改用**多候选端口版** `announce_targets_all`（每个候选端口各发
                 //    一条广播/回环；对端报了 `listen_port` 就单播到它自报的端口 ⇒ 两端绑在不同
                 //    候选端口上也发现得到）。源码级判据同步更新到新调用（见本文件 tests）。
-                let targets =
+                // ⭐ 2026-11-11（真机：AP 过滤 UDP 广播 ⇒ 双向发现不了）：
+                //   把「手动添加的设备」也加进**单播公告目标**（只认 IP 字面量；端口用候选公告端口）。
+                //   ⛔ 不改 `announce_targets_all` 的语义（那条有源码级判据盯着）。
+                let manual_unicast = {
+                    let db = app2.state::<Db>();
+                    let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+                    lan::unicast_targets_from_bases(&crate::mesh::manual_peer_bases_any(&c), &ports)
+                };
+                let mut targets =
                     lan::append_extra_targets(lan::announce_targets_all(&ports, &state.peers(now)));
+                for t in manual_unicast {
+                    if !targets.contains(&t) {
+                        targets.push(t);
+                    }
+                }
                 // ⭐ **2026-10-09（task-8）**：走**唯一入口** `announces_for_this_round` ✓ ——
                 //    它在发之前把 `space_id` 换成**解析后的空间**（个人空间 ⇒ 配对暗号 ✓）。
                 //    ⛔ 不要再退回"把 `profiles` 直接喂给 `announces_for_with_mesh`" ✗
