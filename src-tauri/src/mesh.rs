@@ -1205,6 +1205,42 @@ pub fn round_touched_pages(r: &MeshRoundReport) -> Vec<String> {
     out
 }
 
+/// ⭐ **§13 Phase 0（2026-11-11）**：一轮网格同步的**基线读数**（只进日志，⛔ 不进界面/协议）。
+///
+/// 口径（可核）：
+/// * `gap` = 对端高水位 − 本轮起点（≥0；对端**没报**高水位（0）⇒ 0，⛔ 不冒充"刚好齐"）；
+/// * `ms` = 本轮墙钟耗时（含网络 + 落库）；
+/// * `recovered_after_ms` = 上一次失败到这次成功之间的毫秒（只在**恢复那一轮**出现）。
+pub(crate) fn metrics_line(
+    space: &str,
+    peer: &str,
+    since: i64,
+    max_seq: i64,
+    fetched: usize,
+    applied: usize,
+    ms: u128,
+    recovered_after_ms: Option<i64>,
+) -> String {
+    let gap = if max_seq > 0 {
+        (max_seq - since).max(0)
+    } else {
+        0
+    };
+    let rec = recovered_after_ms
+        .map(|v| format!(" recovered_after_ms={v}"))
+        .unwrap_or_default();
+    format!(
+        "[sync-metrics] space={space} peer={peer} since={since} max_seq={max_seq} gap={gap} fetched={fetched} applied={applied} ms={ms}{rec}"
+    )
+}
+
+/// 每台对端（按空间）的"上次成功/上次失败"时刻（内存；重启即清）。
+type RoundHealth = std::sync::Mutex<std::collections::HashMap<String, (i64, i64)>>;
+static ROUND_HEALTH: std::sync::OnceLock<RoundHealth> = std::sync::OnceLock::new();
+fn round_health() -> &'static RoundHealth {
+    ROUND_HEALTH.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
 /// 跟**一台**对端交换一轮：读水位 ⇒ 拉 ⇒ 收下 ⇒ **水位推进到批尾**。
 ///
 /// ⚠️ 锁**不跨 `await`**：读一次、放掉、拉完再拿一次（否则一次网络卡顿会把整个库锁住）。
@@ -1220,6 +1256,13 @@ pub async fn pull_and_absorb(
     //   它只用来选「信任名单是哪一行」（`paired_row_key`，个人档＝空串那一行 ✓）。
     device_level: bool,
 ) -> Result<PeerPullReport, String> {
+    let metrics_t0 = std::time::Instant::now();
+    let metrics_key = format!("{space_id}|{}", peer.device_id);
+    let metrics_last_err = round_health()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&metrics_key).map(|(_, e)| *e))
+        .unwrap_or(0);
     let since = {
         let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
         peer_cursor(&g, space_id, &peer.device_id)
@@ -1241,8 +1284,8 @@ pub async fn pull_and_absorb(
     let confirm: Option<(String, String)> = {
         let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
         let local_uid = crate::sync::local_space_uid(&g).unwrap_or_default();
-        let peer_uid = crate::mesh_uid_confirm::confirmed_peer_uid(&g, &peer.device_id)
-            .unwrap_or_default();
+        let peer_uid =
+            crate::mesh_uid_confirm::confirmed_peer_uid(&g, &peer.device_id).unwrap_or_default();
         if local_uid.trim().is_empty() || peer_uid.trim().is_empty() {
             None
         } else {
@@ -1279,7 +1322,17 @@ pub async fn pull_and_absorb(
             }
         };
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
-        pull_from_peer_with_confirm(&*ep, peer, space_id, since, token, auth_ref, &name_sha, confirm_ref).await?
+        pull_from_peer_with_confirm(
+            &*ep,
+            peer,
+            space_id,
+            since,
+            token,
+            auth_ref,
+            &name_sha,
+            confirm_ref,
+        )
+        .await?
     };
     // ⭐ 游标越界 ⇒ 归零重拉一次（只重拉一次；还得再拿锁算签名 ⇒ 与上面同一套）
     if max_seq > 0 && since > max_seq {
@@ -1310,7 +1363,17 @@ pub async fn pull_and_absorb(
             }
         };
         let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
-        let again = pull_from_peer_with_confirm(&*ep, peer, space_id, 0, token, auth_ref, &name_sha, confirm_ref).await?;
+        let again = pull_from_peer_with_confirm(
+            &*ep,
+            peer,
+            space_id,
+            0,
+            token,
+            auth_ref,
+            &name_sha,
+            confirm_ref,
+        )
+        .await?;
         rows = again.0;
         max_seq = again.1.max(max_seq);
     }
@@ -1365,7 +1428,17 @@ pub async fn pull_and_absorb(
             let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
             // ⚠️ 探针**不许静默**：进没进、回来几条、错在哪 —— 都要看得见 ✓
             //   （第一版用 `if let Ok` 把 Err 吞了 ⇒ 现场只看到"什么也没发生" ✗）
-            let probe = pull_from_peer_with_confirm(&*ep, peer, space_id, 0, token, auth_ref, &name_sha, confirm_ref).await;
+            let probe = pull_from_peer_with_confirm(
+                &*ep,
+                peer,
+                space_id,
+                0,
+                token,
+                auth_ref,
+                &name_sha,
+                confirm_ref,
+            )
+            .await;
             let probe_rows = match probe {
                 Err(e) => {
                     eprintln!(
@@ -1451,6 +1524,31 @@ pub async fn pull_and_absorb(
     // ⭐ P3：顺带对一次"页清单"（只读、6 小时一次）—— 把"你这儿有、我这儿没有"如实打出来。
     //   ⚠️ 这一版**只报告不自动补**（自动按 id 取页是下一步；先让缺口可见，再动手补）。
     maybe_report_manifest_gap(conn, &*ep, peer, space_id, token, device_level).await;
+    // ⭐ §13 Phase 0：这一轮的基线读数（只进日志）+ 恢复时长（上次失败 → 这次成功）。
+    {
+        let now = crate::db::now_ms();
+        let recovered = if metrics_last_err > 0 {
+            Some((now - metrics_last_err).max(0))
+        } else {
+            None
+        };
+        eprintln!(
+            "{}",
+            metrics_line(
+                space_id,
+                &peer.device_id,
+                since,
+                max_seq,
+                fetched,
+                ab.applied,
+                metrics_t0.elapsed().as_millis(),
+                recovered,
+            )
+        );
+        if let Ok(mut m) = round_health().lock() {
+            m.insert(metrics_key, (now, 0));
+        }
+    }
     Ok(PeerPullReport {
         peer: peer.device_id.clone(),
         fetched,
@@ -5472,12 +5570,8 @@ fn handle_pull(state: &State, req: &Request) -> Reply {
             if let Ok((_sp, dev)) = authorized_signed(state, req) {
                 let mine = crate::sync::local_space_uid(&g).unwrap_or_default();
                 if !mine.trim().is_empty() && mine.trim() == peer_uid {
-                    let _ = crate::mesh_uid_confirm::confirm(
-                        &g,
-                        &dev,
-                        &cur_uid,
-                        crate::db::now_ms(),
-                    );
+                    let _ =
+                        crate::mesh_uid_confirm::confirm(&g, &dev, &cur_uid, crate::db::now_ms());
                 }
             }
         }
@@ -12708,5 +12802,24 @@ mod p34_range_parser_tests {
         // len=0：任何 Range 都不可满足（连 `0-` 也是）。
         assert!(resolve_single_range(Some("bytes=0-0"), 0).is_err());
         assert!(resolve_single_range(Some("bytes=-1"), 0).is_err());
+    }
+}
+
+#[cfg(test)]
+mod p0_metrics_tests {
+    use super::metrics_line;
+
+    /// ⭐ §13 Phase 0：基线读数行可核 —— gap 有值、恢复时长只在"知道上次失败"时出现。
+    #[test]
+    fn metrics_line_carries_gap_and_recovery_readings() {
+        let a = metrics_line("sp", "dev", 10, 13, 2, 2, 42, Some(900));
+        assert!(a.contains("gap=3"), "{a}");
+        assert!(a.contains("recovered_after_ms=900"), "{a}");
+        let b = metrics_line("sp", "dev", 10, 0, 0, 0, 5, None);
+        assert!(
+            b.contains("gap=0"),
+            "对端没报高水位 ⇒ gap 记 0（⛔ 不冒充刚好齐）：{b}"
+        );
+        assert!(!b.contains("recovered_after_ms"), "{b}");
     }
 }
