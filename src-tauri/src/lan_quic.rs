@@ -236,20 +236,27 @@ impl LanQuicRegistry {
 
     /// 走缓存连接发一次请求（复用同一条 QUIC 连接，每次请求各开一条双向流）。
     ///
-    /// ⚠️ 失败 ⇒ **移除缓存并关连接**，再把错误原样返回（下一次调用会自动重连 ✓）。
+    /// ⭐ **2026-11-11（真机长尾 20s）**：缓存连接可能**已死**（对端重启/换网/空闲被关），
+    /// 旧实现照样复用它、等满 20s 才驱逐 ⇒ 一轮 20s 长尾（真机 39 轮 >5s）。
+    /// 现在：
+    /// ① 命中缓存 ⇒ 先用 **3s** 短超时试；超时/失败 ⇒ **驱逐**；
+    /// ② 再用**新连接**重试一次（全量 20s）；失败 ⇒ 驱逐并如实报错（组合器回退 HTTP）。
+    /// ⚠️ 错误说明仍写清"是超时还是连接错误"（排障要看得出）。
     pub async fn request(
         &self,
         peer: EndpointAddr,
         req: &TunnelRequest,
     ) -> Result<TunnelReply, String> {
         let key = peer.id;
+        if let Some(conn) = self.cached(key) {
+            match tokio::time::timeout(CACHED_ATTEMPT_TIMEOUT, request_on_conn(&conn, req)).await {
+                Ok(Ok(reply)) => return Ok(reply),
+                // 两种失败都先驱逐这条（死连接不再拖下一轮）
+                Ok(Err(_)) | Err(_) => self.evict_if_same(key, &conn),
+            }
+        }
         let conn = self.get_or_connect(peer).await?;
-        // ⭐ 2026-11-09（真机：后台一轮卡死 —— 日志每 2 分钟「上一轮还没跑完」，从此再也不同步）：
-        //   **缓存连接上的请求原先没有超时** ⇒ 对端重启/连接半死时 `read_reply` 永久挂住
-        //   ⇒ 后台轮的 RAII 闸（`BACKGROUND_IN_FLIGHT`）永不归还 ⇒ 整机同步静默停摆。
-        //   这里给每次请求一个上限；超时/失败都**驱逐缓存连接**，下一次自动重连（与既有失败路径一致）。
-        let attempt = tokio::time::timeout(REQUEST_TIMEOUT, request_on_conn(&conn, req)).await;
-        match attempt {
+        match tokio::time::timeout(REQUEST_TIMEOUT, request_on_conn(&conn, req)).await {
             Ok(Ok(reply)) => Ok(reply),
             Ok(Err(e)) => {
                 self.evict_if_same(key, &conn);
@@ -258,7 +265,7 @@ impl LanQuicRegistry {
             Err(_) => {
                 self.evict_if_same(key, &conn);
                 Err(format!(
-                    "QUIC 请求超时（{}s，连接可能已失效；已驱逐缓存，下一次会重连）",
+                    "QUIC 请求超时（{}s，新连接也没通；已驱逐缓存，下一次会重连）",
                     REQUEST_TIMEOUT.as_secs()
                 ))
             }
@@ -314,6 +321,8 @@ impl LanQuicRegistry {
 /// ⭐ 2026-11-09：调用方 [`LanQuicRegistry::request`] 现在会给它套**超时** —— 缓存连接半死时
 /// 不能无限等（否则后台轮永不结束）。本函数自身保持不超时（便于测试单独驱动）。
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// ⭐ 2026-11-11：**缓存连接**的短超时 —— 死连接最多拖 3s（旧实现一律等满 20s，真机长尾 39 轮 >5s）。
+const CACHED_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
 async fn request_on_conn(conn: &Connection, req: &TunnelRequest) -> Result<TunnelReply, String> {
     let (mut send, mut recv) = conn
