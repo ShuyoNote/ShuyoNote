@@ -194,7 +194,10 @@ pub(crate) fn caps_has_sealed1(target: &str) -> bool {
 
 /// ⭐ **2026-11-11（§13 A2）**：只读面板要读“本机这一栏已发到哪” ⇒ 开一个 crate 内只读入口
 /// （原函数保持私有，语义不变）。
-pub(crate) fn max_own_device_seq_for_ui(c: &Connection, own_device: &str) -> Result<i64, String> {
+pub(crate) fn max_own_device_seq_for_ui(
+    c: &Connection,
+    own_device: &str,
+) -> Result<i64, String> {
     max_own_device_seq(c, own_device)
 }
 
@@ -7014,7 +7017,6 @@ mod tests {
     fn lan_peer_of(device: &str, base: Option<&str>, spaces: &[&str]) -> crate::lan::Peer {
         crate::lan::Peer {
             announce: crate::lan::LanAnnounce {
-                dirty: false,
                 listen_port: None,
                 trust_ask: String::new(),
                 trust_secret: String::new(),
@@ -7446,7 +7448,6 @@ mod tests {
     fn announced(device: &str, base: &str, spaces: &[&str]) -> Peer {
         Peer {
             announce: LanAnnounce {
-                dirty: false,
                 listen_port: None,
                 trust_ask: String::new(),
                 trust_secret: String::new(),

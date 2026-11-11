@@ -1062,11 +1062,13 @@ mod tests {
             .expect("注册表");
         for i in 0..3 {
             let req = TunnelRequest::new("GET", &format!("/multi/{i}"));
-            let reply =
-                tokio::time::timeout(Duration::from_secs(5), registry.request(peer.clone(), &req))
-                    .await
-                    .expect("5s 内必须完成（同一连接应可复用）")
-                    .expect("请求必须成功");
+            let reply = tokio::time::timeout(
+                Duration::from_secs(5),
+                registry.request(peer.clone(), &req),
+            )
+            .await
+            .expect("5s 内必须完成（同一连接应可复用）")
+            .expect("请求必须成功");
             assert_eq!(
                 String::from_utf8_lossy(&reply.body),
                 format!("ok:/multi/{i}"),

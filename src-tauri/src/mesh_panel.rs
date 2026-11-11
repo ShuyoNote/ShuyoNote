@@ -225,7 +225,9 @@ fn parse_peer_cursors(rows: &[(String, String)]) -> Vec<(String, i64)> {
 /// 口径：**只读**（不建连接、不发包、不写库）；对端只用**序号**表示（内部 id 不上界面）。
 /// ⭐ 2026-11-12（§13 S1）：顺带给出“在线视角”（最近一次成功同步是否在 TTL 内；没有记录 ⇒ 未知）。
 #[tauri::command]
-pub fn mesh_watermarks(db: State<'_, crate::db::Db>) -> Result<MeshWatermarks, String> {
+pub fn mesh_watermarks(
+    db: State<'_, crate::db::Db>,
+) -> Result<MeshWatermarks, String> {
     /// 在线视角 TTL：同步轮间隔约 2 分钟 ⇒ 两倍＝4 分钟没成功就按“离线”看。
     const ONLINE_TTL_MS: i64 = 4 * 60_000;
     let app_data = crate::db::app_data_dir_ref()
@@ -265,11 +267,7 @@ pub fn mesh_watermarks(db: State<'_, crate::db::Db>) -> Result<MeshWatermarks, S
                 index: i + 1,
                 cursor,
                 online,
-                last_ok_ago_ms: if last_ok > 0 {
-                    Some(now - last_ok)
-                } else {
-                    None
-                },
+                last_ok_ago_ms: if last_ok > 0 { Some(now - last_ok) } else { None },
             }
         })
         .collect();
