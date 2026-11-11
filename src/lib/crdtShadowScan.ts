@@ -17,12 +17,18 @@ export interface ShadowScanApi {
   listWorkspacePages: (spaceId: string) => Promise<Array<{ id: string }>>;
   getPage: (id: string) => Promise<unknown>;
   readPageState: (id: string) => Promise<Uint8Array | null>;
+  /**
+   * ⭐ 2026-11-11（P0-1b）：读该页**待合并的远端状态**（只用来给差异分类：有 ⇒ 已知噪声）。
+   * 不注入 ⇒ 差异一律算 `differUnexplained`（保守方向 ✓）。
+   */
+  readPendingStates?: (id: string) => Promise<unknown[]>;
 }
 
 export const defaultShadowScanApi: ShadowScanApi = {
   listWorkspacePages: (spaceId) => api.listWorkspacePages(spaceId),
   getPage: (id) => api.getPage(id),
   readPageState: (id) => api.readPageState(id),
+  readPendingStates: (id) => api.readPendingPageStates(id),
 };
 
 export function emptyShadowRows(): ShadowRowsResult {
@@ -33,6 +39,8 @@ export function emptyShadowRows(): ShadowRowsResult {
     differ: 0,
     uncomparable: 0,
     differPageIds: [],
+    differPending: 0,
+    differUnexplained: 0,
   };
 }
 
@@ -85,6 +93,18 @@ export async function shadowScanSpace(
     } else if (cmp.reason === "differ") {
       out.differ += 1;
       out.differPageIds.push(id);
+      // ⭐ 2026-11-11（P0-1b）：差异分类 —— 该页有**待合并的远端状态** ⇒ 已知噪声；
+      //   否则落 `differUnexplained`（待查；读不到也按“待查”算，保守方向 ✓）。
+      let pendingCount = 0;
+      if (deps.readPendingStates) {
+        try {
+          pendingCount = (await deps.readPendingStates(id)).length;
+        } catch {
+          pendingCount = 0;
+        }
+      }
+      if (pendingCount > 0) out.differPending = (out.differPending ?? 0) + 1;
+      else out.differUnexplained = (out.differUnexplained ?? 0) + 1;
     } else {
       out.uncomparable += 1;
     }

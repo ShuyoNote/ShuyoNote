@@ -58,6 +58,8 @@ describe("shadowScanSpace：真实空间形状的只读扫描", () => {
       differ: 0,
       uncomparable: 0,
       differPageIds: [],
+      differPending: 0,
+      differUnexplained: 0,
     };
     await expect(shadowScanSpace("", { ...apiOf({}), listWorkspacePages: async () => [] })).resolves.toEqual(zeros);
     await expect(shadowScanSpace("boom-list", apiOf({}))).resolves.toEqual(zeros);
@@ -101,5 +103,22 @@ describe("shadowScanSpace：真实空间形状的只读扫描", () => {
     expect(got.total).toBe(2);
     expect(got.uncomparable).toBe(1);
     expect(got.equal).toBe(1);
+  });
+
+  it("差异分类：有待合并远端状态 ⇒ differPending；没有 ⇒ differUnexplained", async () => {
+    const json = withIds(buildJson());
+    const state = contentJsonToYDoc(json).update;
+    const changed = json.replace("扫描第二段", "扫描第二段（改过）");
+    const api: ShadowScanApi = {
+      listWorkspacePages: async () => [{ id: "p-pending" }, { id: "p-other" }],
+      getPage: async () => ({ content_json: changed }),
+      readPageState: async () => state,
+      readPendingStates: async (id) =>
+        id === "p-pending" ? [{ seq: 1, state: new Uint8Array([1]) }] : [],
+    };
+    const got = await shadowScanSpace("sp", api);
+    expect(got.differ).toBe(2);
+    expect(got.differPending).toBe(1);
+    expect(got.differUnexplained).toBe(1);
   });
 });

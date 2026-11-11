@@ -35,6 +35,21 @@ const rec = (date: string, differ = 0): ShadowDayRecord => ({
 const at = (y: number, m: number, d: number) => new Date(y, m - 1, d, 12, 0, 0);
 
 describe("crdtShadowHistory：记录", () => {
+  it("⓪ 差异分类随摘要落库；旧记录没有这两列也照样解析（P0-1b）", () => {
+    const split = dayRecordFromSummary(
+      rows({ total: 3, withState: 3, equal: 1, differ: 2, differPending: 1, differUnexplained: 1 }),
+      at(2026, 11, 9),
+    );
+    expect(split).toMatchObject({ differ: 2, differPending: 1, differUnexplained: 1 });
+    // 旧记录（没有分类字段）⇒ 解析保留，不判坏。
+    const parsed = parseShadowHistory(JSON.stringify([rec("2026-11-01", 1)]));
+    expect(parsed.records.map((r) => r.date)).toEqual(["2026-11-01"]);
+    // 分类之和超过 differ ⇒ 坏记录。
+    expect(
+      validateShadowDayRecord({ ...rec("2026-11-02", 1), differPending: 1, differUnexplained: 1 }),
+    ).toContain("超过");
+  });
+
   it("同一天只留最新一次（覆盖，不累加）", () => {
     let list = recordShadowDay([], rows({ total: 3, withState: 2, equal: 2, differ: 1 }), at(2026, 11, 9));
     expect(list).toHaveLength(1);

@@ -44,6 +44,16 @@ export interface ShadowRowsResult {
   uncomparable: number;
   /** **只**给不一致的 page id（⛔ 不含正文；顺序＝输入顺序）。 */
   differPageIds: string[];
+  /**
+   * ⭐ 2026-11-11（P0-1b）：差异里「**有远端状态待合并**」的页数 —— 已知噪声（不是异常）。
+   * ⚠️ 只由 `shadowScanSpace` 填（`shadowComparePages` 不填，保持纯函数形状不变）。
+   */
+  differPending?: number;
+  /**
+   * ⭐ 2026-11-11（P0-1b）：差异里「**没有待合并、却投影 ≠ CRDT**」的页数 —— 待查。
+   * ⚠️ 当前没有“写入来源”字段 ⇒ MCP/裁决写入也会落在这里（见 `docs/plans/…status` 的口径说明）。
+   */
+  differUnexplained?: number;
 }
 
 /**

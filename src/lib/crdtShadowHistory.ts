@@ -19,6 +19,10 @@ export interface ShadowDayRecord {
   equal: number;
   differ: number;
   uncomparable: number;
+  /** ⭐ 2026-11-11（P0-1b）：差异里“有远端状态待合并”的页数（已知噪声）。旧记录缺省 = 0。 */
+  differPending?: number;
+  /** ⭐ 差异里“没有待合并、却投影≠CRDT”的页数（待查）。旧记录缺省 = 0。 */
+  differUnexplained?: number;
 }
 
 export interface ShadowHistoryParseResult {
@@ -61,6 +65,16 @@ export function validateShadowDayRecord(v: unknown): string | null {
   }
   if ((r.withState as number) > (r.total as number)) return "withState 超过 total";
   if ((r.differ as number) > (r.total as number)) return "differ 超过 total";
+  // ⭐ 2026-11-11（P0-1b）：差异分类字段可选（旧记录没有）；有就必须是合法计数。
+  for (const k of ["differPending", "differUnexplained"] as const) {
+    if (r[k] !== undefined && !isCount(r[k])) return `计数非法：${k}`;
+  }
+  const splitSum =
+    (typeof r.differPending === "number" ? r.differPending : 0) +
+    (typeof r.differUnexplained === "number" ? r.differUnexplained : 0);
+  if (splitSum > (r.differ as number)) {
+    return "差异分类之和超过 differ";
+  }
   return null;
 }
 
@@ -73,6 +87,9 @@ export function dayRecordFromSummary(summary: ShadowRowsResult, now: Date): Shad
     equal: summary.equal,
     differ: summary.differ,
     uncomparable: summary.uncomparable,
+    // ⭐ 2026-11-11（P0-1b）：差异分类（旧调用方不给这两个字段 ⇒ 写 0，形状保持兼容）。
+    differPending: summary.differPending ?? 0,
+    differUnexplained: summary.differUnexplained ?? 0,
   };
 }
 
