@@ -89,7 +89,26 @@ impl LanQuicEndpoint {
     pub async fn connect(&self, peer: EndpointAddr) -> Result<iroh::endpoint::Connection, String> {
         let peer_id = peer.id;
         let started = std::time::Instant::now();
-        let out = self.ep.connect(peer, iroh_tunnel::ALPN).await;
+        // ⭐ 2026-11-11（真机：偶发一条 30s 长尾，原因逐字 `无中继 QUIC 连接失败：timed out`）：
+        //   iroh 直连的默认超时是 30s ⇒ 这里加 **6s 上限**，超时立刻回退 HTTP（⛔ 不再拖满 30s）。
+        let out =
+            match tokio::time::timeout(CONNECT_TIMEOUT, self.ep.connect(peer, iroh_tunnel::ALPN))
+                .await
+            {
+                Ok(r) => r,
+                Err(_) => {
+                    if std::env::var_os("SHUYONOTE_LAN_DEBUG_QUIC").is_some() {
+                        eprintln!(
+                            "[quic-debug] connect TIMEOUT peer_id={peer_id} limit={}s",
+                            CONNECT_TIMEOUT.as_secs()
+                        );
+                    }
+                    return Err(format!(
+                        "无中继 QUIC 连接失败：连接超时（{}s 上限）",
+                        CONNECT_TIMEOUT.as_secs()
+                    ));
+                }
+            };
         // ⭐ 2026-11-09（QUIC 真机排查开关，默认静默）：成功也要留一行 —— 否则"没有回退日志"
         //   与"根本没尝试 QUIC"分不开（真机复测时需要正证据）。
         if std::env::var_os("SHUYONOTE_LAN_DEBUG_QUIC").is_some() {
@@ -365,6 +384,9 @@ impl LanQuicRegistry {
 /// ⭐ 2026-11-09：调用方 [`LanQuicRegistry::request`] 现在会给它套**超时** —— 缓存连接半死时
 /// 不能无限等（否则后台轮永不结束）。本函数自身保持不超时（便于测试单独驱动）。
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// ⭐ 2026-11-11：**iroh 直连 connect** 的短上限 —— 默认 30s ⇒ 真机偶发一条 30s 长尾（原因逐字
+/// `无中继 QUIC 连接失败：timed out`）；封顶 6s，超时立刻回退 HTTP。
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(6);
 /// ⭐ 2026-11-11：**缓存连接**的短超时 —— 死连接最多拖 3s（旧实现一律等满 20s，真机长尾 39 轮 >5s）。
 const CACHED_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
