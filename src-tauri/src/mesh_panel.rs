@@ -181,6 +181,10 @@ pub struct MeshPeerWatermark {
     pub index: usize,
     /// 本机已收该对端到哪个 `device_seq`（0 ＝ 还没收过）。
     pub cursor: i64,
+    /// ⭐ 2026-11-12（§13 S1）：最近一次成功同步是否在 TTL 内（`null` ＝ **还没有成功记录**，结论未知）。
+    pub online: Option<bool>,
+    /// ⭐ 距离最近一次成功同步过了多少毫秒（`null` ＝ 还没有成功记录）。
+    pub last_ok_ago_ms: Option<i64>,
 }
 
 /// ⭐ **2026-11-11（§13 A2 第一刀）**：当前空间的只读水位读数（本机高水位 ＋ 各对端已收水位）。
@@ -192,33 +196,40 @@ pub struct MeshWatermarks {
     pub local_max_seq: i64,
     /// 各对端的已收水位（按水位降序；⛔ 只有序号，没有设备 id）。
     pub peers: Vec<MeshPeerWatermark>,
+    /// ⭐ 2026-11-12（§13 S1）：在线/离线/未知（未知＝还没有成功记录，⛔ 不冒充离线）。
+    pub online_count: usize,
+    pub offline_count: usize,
+    pub unknown_count: usize,
     /// 口径说明（人话；界面照抄）。
     pub note: String,
 }
 
-/// 纯函数：从 `sync_state` 的 `(key, value)` 里挑出 `mesh_cursor:<space>:<device>` 解析水位。
+/// 纯函数：从 `sync_state` 的 `(key, value)` 里挑出 `mesh_cursor:<space>:<device>`，回 `(device, 水位)`。
 /// ⛔ 不猜：key 形状不对／值不是整数 ⇒ 跳过（⛔ 不把坏值当 0 混进来）。
-fn parse_peer_cursors(rows: &[(String, String)]) -> Vec<i64> {
-    let mut out: Vec<i64> = rows
+fn parse_peer_cursors(rows: &[(String, String)]) -> Vec<(String, i64)> {
+    let mut out: Vec<(String, i64)> = rows
         .iter()
         .filter_map(|(k, v)| {
             let rest = k.strip_prefix("mesh_cursor:")?;
-            let (_space, _dev) = rest.rsplit_once(':')?;
-            v.trim().parse::<i64>().ok()
+            let (_space, dev) = rest.rsplit_once(':')?;
+            let cursor = v.trim().parse::<i64>().ok()?;
+            Some((dev.to_string(), cursor))
         })
         .collect();
-    out.sort_unstable();
-    out.reverse();
+    out.sort_unstable_by(|a, b| b.1.cmp(&a.1));
     out
 }
 
 /// ⭐ **2026-11-11（§13 A2）**：只读「设备×空间水位」——当前空间：本机高水位 ＋ 各对端已收水位。
 ///
 /// 口径：**只读**（不建连接、不发包、不写库）；对端只用**序号**表示（内部 id 不上界面）。
+/// ⭐ 2026-11-12（§13 S1）：顺带给出“在线视角”（最近一次成功同步是否在 TTL 内；没有记录 ⇒ 未知）。
 #[tauri::command]
 pub fn mesh_watermarks(
     db: State<'_, crate::db::Db>,
 ) -> Result<MeshWatermarks, String> {
+    /// 在线视角 TTL：同步轮间隔约 2 分钟 ⇒ 两倍＝4 分钟没成功就按“离线”看。
+    const ONLINE_TTL_MS: i64 = 4 * 60_000;
     let app_data = crate::db::app_data_dir_ref()
         .ok_or_else(|| "bad_state: app data dir 未初始化".to_string())?;
     let space = {
@@ -237,19 +248,37 @@ pub fn mesh_watermarks(
         .map_err(|e| e.to_string())?
         .filter_map(Result::ok)
         .collect();
+    let now = crate::db::now_ms();
+    let mut online_count = 0usize;
+    let mut offline_count = 0usize;
+    let mut unknown_count = 0usize;
     let peers = parse_peer_cursors(&rows)
         .into_iter()
         .enumerate()
-        .map(|(i, cursor)| MeshPeerWatermark {
-            index: i + 1,
-            cursor,
+        .map(|(i, (dev, cursor))| {
+            let last_ok = crate::mesh::round_health_last_ok(&dev);
+            let online = crate::mesh::presence_online(last_ok, now, ONLINE_TTL_MS);
+            match online {
+                Some(true) => online_count += 1,
+                Some(false) => offline_count += 1,
+                None => unknown_count += 1,
+            }
+            MeshPeerWatermark {
+                index: i + 1,
+                cursor,
+                online,
+                last_ok_ago_ms: if last_ok > 0 { Some(now - last_ok) } else { None },
+            }
         })
         .collect();
     Ok(MeshWatermarks {
         space_name,
         local_max_seq,
         peers,
-        note: "只读：对端按序号显示（内部设备 id 不上界面）；cursor ＝ 本机已收该对端到的位置".to_string(),
+        online_count,
+        offline_count,
+        unknown_count,
+        note: "只读：对端按序号显示（内部设备 id 不上界面）；cursor ＝ 本机已收该对端到的位置；在线＝最近一次成功同步在 4 分钟内有记录".to_string(),
     })
 }
 
@@ -269,7 +298,29 @@ mod tests {
             ("other_key".to_string(), "3".to_string()),
         ];
         let got = parse_peer_cursors(&rows);
-        assert_eq!(got, vec![12, 7], "只留良构且有序（降序）；坏值/坏 key 跳过");
+        assert_eq!(
+            got,
+            vec![("dev-a".to_string(), 12), ("dev-b".to_string(), 7)],
+            "只留良构且按水位降序；坏值/坏 key 跳过"
+        );
+    }
+
+    /// ⭐ 2026-11-12（§13 S1）：在线视角三态 —— 没有成功记录＝未知（⛔ 不冒充离线）；TTL 内＝在线。
+    #[test]
+    fn presence_is_unknown_without_success_and_uses_ttl() {
+        assert_eq!(
+            crate::mesh::presence_online(0, 1_000_000, 240_000),
+            None,
+            "没有成功记录 ⇒ 未知"
+        );
+        assert_eq!(
+            crate::mesh::presence_online(900_000, 1_000_000, 240_000),
+            Some(true)
+        );
+        assert_eq!(
+            crate::mesh::presence_online(500_000, 1_000_000, 240_000),
+            Some(false)
+        );
     }
 
     /// ⭐ 一个最小的 meta 库（照 `lan_state.rs:988` 的那份夹具 ✓ ＋ 本模块要用到的三列 ✓）。

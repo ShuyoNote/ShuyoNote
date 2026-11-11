@@ -477,6 +477,10 @@ export interface MeshPeerWatermark {
   index: number;
   /** 本机已收该对端到哪个 `device_seq`（0 ＝ 还没收过）。 */
   cursor: number;
+  /** ⭐ 2026-11-12（§13 S1）：最近一次成功同步在 TTL 内吗？`null` ＝ 还没有成功记录（未知）。 */
+  online: boolean | null;
+  /** ⭐ 距离最近一次成功同步过了多少毫秒（`null` ＝ 还没有成功记录）。 */
+  lastOkAgoMs: number | null;
 }
 
 /** ⭐ **§13 A2 第一刀**：当前空间的只读水位读数（本机高水位 ＋ 各对端已收水位）。 */
@@ -484,6 +488,10 @@ export interface MeshWatermarks {
   spaceName: string;
   localMaxSeq: number;
   peers: MeshPeerWatermark[];
+  /** ⭐ 2026-11-12（§13 S1）：在线/离线/未知（未知＝还没有成功记录）。 */
+  onlineCount: number;
+  offlineCount: number;
+  unknownCount: number;
   /** 口径说明（人话；界面可原样展示）。 */
   note: string;
 }

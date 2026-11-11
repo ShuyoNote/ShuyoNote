@@ -1830,6 +1830,9 @@ export function makeInvoke(store: SqliteStore) {
         spaceName: "",
         localMaxSeq: 0,
         peers: [],
+        onlineCount: 0,
+        offlineCount: 0,
+        unknownCount: 0,
         note: "Web 版没有设备直连水位",
       } as T;
     }

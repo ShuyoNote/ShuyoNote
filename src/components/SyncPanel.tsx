@@ -720,7 +720,15 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   const [watermarks, setWatermarks] = useState<{
     spaceName: string;
     localMaxSeq: number;
-    peers: { index: number; cursor: number }[];
+    peers: {
+      index: number;
+      cursor: number;
+      online: boolean | null;
+      lastOkAgoMs: number | null;
+    }[];
+    onlineCount: number;
+    offlineCount: number;
+    unknownCount: number;
     note: string;
   } | null>(null);
   const [historyOpen, setHistoryOpen] = useState(true); // ⭐ 2026-11-11（A）：默认展开——记录要能被看见
@@ -2844,7 +2852,9 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                 <summary>
                   <span className="sync-row-label">各对端水位</span>
                   <span className="sync-row-value">
-                    本机 {watermarks.localMaxSeq} ｜ 对端 {watermarks.peers.length} 台
+                    本机 {watermarks.localMaxSeq} ｜ 对端 {watermarks.peers.length} 台（在线{" "}
+                    {watermarks.onlineCount} / 离线 {watermarks.offlineCount} / 未知{" "}
+                    {watermarks.unknownCount}）
                   </span>
                   <span className="sync-row-caret" aria-hidden>›</span>
                 </summary>
@@ -2853,7 +2863,19 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                     {watermarks.peers.length === 0
                       ? "还没有对端水位（没和任何设备同步过）"
                       : watermarks.peers
-                          .map((p) => `对端 ${p.index}：已收至 ${p.cursor}`)
+                          .map((p) => {
+                            const state =
+                              p.online === true
+                                ? "在线"
+                                : p.online === false
+                                  ? "离线"
+                                  : "未知";
+                            const ago =
+                              p.lastOkAgoMs != null
+                                ? `，上次成功 ${Math.max(1, Math.round(p.lastOkAgoMs / 1000))} 秒前`
+                                : "";
+                            return `对端 ${p.index}：已收至 ${p.cursor}（${state}${ago}）`;
+                          })
                           .join(" ｜ ")}
                     <div className="sync-hint" style={{ marginTop: 4 }}>
                       {watermarks.note}

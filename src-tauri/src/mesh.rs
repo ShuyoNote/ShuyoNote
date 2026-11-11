@@ -1250,6 +1250,32 @@ fn round_health() -> &'static RoundHealth {
     ROUND_HEALTH.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
+/// ⭐ **2026-11-12（§13 S1 第一刀）**：在线视角的**纯函数** —— `last_ok_ms <= 0`（还没有成功记录）
+/// ⇒ `None`（结论未知，⛔ 不冒充离线）；否则按 TTL 判在线。
+pub(crate) fn presence_online(last_ok_ms: i64, now_ms: i64, online_ttl_ms: i64) -> Option<bool> {
+    if last_ok_ms <= 0 {
+        return None;
+    }
+    Some(now_ms.saturating_sub(last_ok_ms) <= online_ttl_ms)
+}
+
+/// 读某台对端**最近一次成功同步**的时刻（跨空间取最大；0 ＝ 从来没成功过）。
+///
+/// ⚠️ 只读内存里的 `[sync-metrics]` 同源读数（⛔ 不额外发包、不写库）。
+pub(crate) fn round_health_last_ok(device: &str) -> i64 {
+    let suffix = format!("|{device}");
+    round_health()
+        .lock()
+        .map(|m| {
+            m.iter()
+                .filter(|(k, _)| k.ends_with(&suffix))
+                .map(|(_, (ok, _))| *ok)
+                .max()
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+}
+
 /// 跟**一台**对端交换一轮：读水位 ⇒ 拉 ⇒ 收下 ⇒ **水位推进到批尾**。
 ///
 /// ⚠️ 锁**不跨 `await`**：读一次、放掉、拉完再拿一次（否则一次网络卡顿会把整个库锁住）。
