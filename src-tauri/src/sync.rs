@@ -8020,6 +8020,8 @@ async fn download_one_attachment(
     // ⭐ P3-4：**进程内串行锁**（固定 `.part` 只有一份；同一进程里并发下同一件会互相抢）。
     //   ⚠️ 是 `tokio::sync::Mutex`（跨 await 持有合法）；锁内**不持** std db 锁跨 await。
     let _guard = attachment_download_lock().lock().await;
+    // ⭐ 2026-11-11（真机验收：P0-3 四项里的「耗时」一直没打点）：从拿到锁开始计时，完成时打一行。
+    let started = std::time::Instant::now();
     // ⭐ 2026-10-27（owner：「补」）：本机元数据里这一件的**期望大小**（拿不到 ⇒ None）。
     //   只用来挡"下了一半 / 空响应"；⛔ 不拿它当"唯一真相"（元数据本身可能缺）✗。
     let expected_size: Option<i64> = {
@@ -8105,6 +8107,15 @@ async fn download_one_attachment(
             &format!("{}.{}", item.hash, ext),
         )?;
     }
+    // ⭐ 2026-11-11（补 P0-3 的「耗时」读数）：只进本机日志；⛔ 不含 token/签名。
+    //   `who` 是既有的来源标签（「服务端」/「对端 <device_id>」）—— 与别的日志同一口径。
+    eprintln!(
+        "[附件] 取回完成：{}… ｜ {} B ｜ {} ｜ 用时 {} ms",
+        &item.hash[..12.min(item.hash.len())],
+        size,
+        who,
+        started.elapsed().as_millis()
+    );
     Ok(size)
 }
 
