@@ -1,0 +1,31 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>09 连接监督器（目标态）</title></head><body>
+<div class="page">
+  <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 09 / 目标态 · 未开工（需求 §13.2 稳定）</span></div>
+  <h1>多设备：连接自己会恢复</h1>
+  <div class="sub">目标态：每台设备一条被监督的连接（心跳/空闲回收/重连退避）；换网、对端重启、一台设备不可达，都不再靠“下一轮 2 分钟自愈”，而且<b>一台坏了不拖累别的</b>。</div>
+  <div class="frame" style="margin-top:16px">
+    <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">设置 / 同步 / 多设备</span><span class="crumb">目标态 · 未开工</span></div>
+    <div class="body">
+      <div class="split">
+        <div class="card">
+          <div class="section-title" style="margin-top:0">设备连接（每台一条监督）</div>
+          <div class="row"><span class="name">Windows PC</span><span class="state">QUIC · 心跳 3 秒前 · 在线</span><span class="badge ok">已连接</span></div>
+          <div class="row"><span class="name">MacBook Air</span><span class="state">HTTP · 心跳 8 秒前 · 在线</span><span class="badge ok">已连接</span></div>
+          <div class="row"><span class="name">旧笔记本</span><span class="state">离线 · 12 分钟前 · 重连退避 4 秒</span><span class="badge warn">重连中</span></div>
+          <div class="row"><span class="name">iPad</span><span class="state">未配对 · 不参与</span><span class="badge gray">未配对</span></div>
+          <div class="callout" style="margin-top:12px">按对端并发：旧笔记本重连时，Windows PC 与 MacBook Air 的同步<b>照常进行</b>，不排队等它。</div>
+        </div>
+        <div class="card">
+          <div class="section-title" style="margin-top:0">自动恢复（最近事件）</div>
+          <div class="check"><div class="ic ok">10:12</div><div><div class="t">换网（Wi-Fi → 热点）</div><div class="d">立即重播公告 ＋ 重建 QUIC；新地址已通知 2 台对端</div></div></div>
+          <div class="check"><div class="ic ok">10:13</div><div><div class="t">对端重启</div><div class="d">连接监督器 3.2 秒内重连成功；无人工操作</div></div></div>
+          <div class="check"><div class="ic warn">10:14</div><div><div class="t">旧笔记本不可达</div><div class="d">只影响这一条边；另外两台继续同步（失败隔离）</div></div></div>
+          <div class="check"><div class="ic ok">10:15</div><div><div class="t">恢复后补差</div><div class="d">按水位只拉缺的 3 页，不重拉已同步的</div></div></div>
+          <div class="callout" style="margin-top:12px">目标判据：对端重启后 ≤15 秒恢复；换网后 ≤30 秒恢复；1 台不可达不延长另外两台的同步时延。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>ShuyoNote · 个人付费订阅版 · 需求效果图</span><span>目标态 · ⛔ 未实现｜验收判据见需求文档 §13.2 S1–S4</span></div>
+</div>
+</body></html>

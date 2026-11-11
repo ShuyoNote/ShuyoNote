@@ -1,0 +1,41 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>11 水位矩阵与批量确认（目标态）</title><style>
+  table.mx{width:100%;border-collapse:collapse;font-size:12px;margin-top:4px}
+  table.mx th,table.mx td{border-top:1px solid var(--line);padding:7px 6px;text-align:left}
+  table.mx th{color:var(--faint);font-weight:600;font-size:11.5px}
+  table.mx td.ok{color:var(--ok)}
+  table.mx td.warn{color:var(--warn)}
+  table.mx td.bad{color:var(--danger)}
+</style></head><body>
+<div class="page">
+  <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 11 / 目标态 · 未开工（需求 §13.4 准确）</span></div>
+  <h1>谁缺谁的数据，一眼看清</h1>
+  <div class="sub">目标态：每个空间 × 每台设备的<b>同步水位矩阵</b>（谁到哪一轮、差几条），加上<b>同名空间批量确认</b>。⛔ 水位全部来自真实记录，不编数字。</div>
+  <div class="frame" style="margin-top:16px">
+    <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">设置 / 同步 / 多设备</span><span class="crumb">矩阵读数：最近一轮后</span></div>
+    <div class="body">
+      <div class="split" style="grid-template-columns:1.1fr .9fr">
+        <div class="card">
+          <div class="section-title" style="margin-top:0">设备 × 空间水位</div>
+          <table class="mx">
+            <tr><th>空间</th><th>本机</th><th>Windows PC</th><th>MacBook Air</th><th>旧笔记本</th></tr>
+            <tr><td>工作</td><td class="ok">128</td><td class="warn">差 3</td><td class="ok">128</td><td class="bad">离线 · 118</td></tr>
+            <tr><td>产品</td><td class="ok">96</td><td class="ok">96</td><td class="ok">96</td><td class="bad">离线 · 90</td></tr>
+            <tr><td>保险柜</td><td class="ok">44</td><td class="ok">44</td><td class="ok">44</td><td>—</td></tr>
+            <tr><td>山焦招标</td><td class="warn">待确认</td><td class="warn">待确认</td><td>—</td><td>—</td></tr>
+          </table>
+          <div class="callout" style="margin-top:12px">每个格子点进去能看到<b>为什么差</b>（离线 / 失败原因 / 待确认）；⛔ 不把“读不到”显示成“0”。</div>
+        </div>
+        <div class="card">
+          <div class="section-title" style="margin-top:0">同名空间：一次确认，批量生效</div>
+          <div class="row"><span class="name">山焦招标</span><span class="state">2 台对端都报了同名但 uid 不同</span><span class="badge warn">待确认</span></div>
+          <div class="row"><span class="name">工作备份</span><span class="state">1 台对端同名但 uid 不同</span><span class="badge warn">待确认</span></div>
+          <div class="actions" style="margin-top:12px;justify-content:flex-end"><span class="btn ghost">取消</span><span class="btn primary">批量确认（2 个空间）</span></div>
+          <div class="callout" style="margin-top:12px">确认后<b>随同步带给对端</b>（双向），不用两头各点一次；融合仍可在记录里回滚。</div>
+          <div class="note" style="margin-top:10px">CRDT 块级灰度（P3）：依赖 7 天影子观察数据；灰度开关可回滚，回滚后数据一致。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>ShuyoNote · 个人付费订阅版 · 需求效果图</span><span>目标态 · ⛔ 未实现｜验收判据见需求文档 §13.4 A1–A3</span></div>
+</div>
+</body></html>

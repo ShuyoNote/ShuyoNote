@@ -1,0 +1,41 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>10 局域网推送与反熵（目标态）</title><style>
+  .big{display:flex;gap:16px;margin-top:10px}
+  .big .k{display:flex;flex-direction:column;gap:2px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);min-width:120px}
+  .big b{font-size:19px;font-weight:700}
+  .big i{font-style:normal;font-size:11px;color:var(--faint)}
+</style></head><body>
+<div class="page">
+  <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 10 / 目标态 · 未开工（需求 §13.3 快速）</span></div>
+  <h1>局域网里：改完就通知，缺的才拉</h1>
+  <div class="sub">目标态：QUIC 长连接上跑<b>推送/订阅</b>（A 改完通知 B/C 来拉），再叠加<b>反熵水位</b>（只拉自己缺的那一段）。同一 Wi-Fi 下目标从“最坏约 2 分钟”变成“秒级”。</div>
+  <div class="frame" style="margin-top:16px">
+    <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">设置 / 同步 / 多设备</span><span class="crumb">目标态 · 未开工</span></div>
+    <div class="body">
+      <div class="split">
+        <div class="card">
+          <div class="section-title" style="margin-top:0">推送通道</div>
+          <div class="row"><span class="name">通道状态</span><span class="state">已连接（QUIC 长连接 · 3 台设备共用）</span><span class="badge ok">在线</span></div>
+          <div class="row"><span class="name">通知延迟</span><span class="state">最近 10 次平均 0.4 秒</span><span class="badge info">读数</span></div>
+          <div class="row"><span class="name">兜底</span><span class="state">通道断开时自动退回按间隔拉取（现有行为）</span><span class="badge gray">降级</span></div>
+          <div class="big">
+            <span class="k"><b>0.6 秒</b><i>改完 → 对端可见（p50）</i></span>
+            <span class="k"><b>1.8 秒</b><i>p95（目标 ≤2 秒）</i></span>
+            <span class="k"><b>2 分钟</b><i>旧行为最坏值（对比）</i></span>
+          </div>
+          <div class="callout" style="margin-top:14px">目标判据：同一 Wi-Fi 下 A 改完 ≤2 秒 B 可见；通道断开时<b>如实降级</b>到按间隔拉取，⛔ 不假装“推送中”。</div>
+        </div>
+        <div class="card">
+          <div class="section-title" style="margin-top:0">反熵：只拉缺的</div>
+          <div class="row"><span class="name">本机已到</span><span class="state">工作 · 128 ｜ 产品 · 96 ｜ 保险柜 · 44</span><span class="meta">水位</span></div>
+          <div class="row"><span class="name">Windows PC</span><span class="state">缺本机 3 页 ⇒ 只拉这 3 页</span><span class="badge info">拉取 3</span></div>
+          <div class="row"><span class="name">MacBook Air</span><span class="state">无缺口 ⇒ 本次跳过</span><span class="badge ok">跳过</span></div>
+          <div class="row"><span class="name">旧笔记本</span><span class="state">离线过 1 小时 ⇒ 重连后按水位补差</span><span class="badge warn">补差中</span></div>
+          <div class="callout" style="margin-top:12px">局域网枢纽（可选）：A 与 C 互相发现不了时，可经 B 中转收敛；开关与“经谁中转”在状态里说清楚。</div>
+          <div class="note" style="margin-top:10px">调度自适应：最近编辑的空间优先；空闲空间退避；公告在多设备时节流。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>ShuyoNote · 个人付费订阅版 · 需求效果图</span><span>目标态 · ⛔ 未实现｜验收判据见需求文档 §13.3 F1–F3</span></div>
+</div>
+</body></html>

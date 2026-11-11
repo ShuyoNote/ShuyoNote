@@ -210,6 +210,11 @@ relay 服务器关机 + 配了路线表 + 两机同 Wi-Fi ⇒ LAN 同步成功�
 | 06 | 附件下载：QUIC 优先、暂停/续传/取消、sha256 校验四态 | [06-attachment-progress.png](personal-sync-2.0-mockups/06-attachment-progress.png) |
 | 07 | 跨网失败三态：证书问题/许可证到期/端口未通 —— 只收回跨网，局域网照常 | [07-relay-errors.png](personal-sync-2.0-mockups/07-relay-errors.png) |
 | 08 | 同步记录与状态：四格总览（上次成功/下次自动/当前状态/失败数）＋ 默认展开的记录列表（时间/↑↓/原因/明细/重试） | [08-sync-records.png](personal-sync-2.0-mockups/08-sync-records.png) |
+| 09 | **目标态·未开工**（§13.2）：连接监督器 —— 心跳/空闲回收/重连退避、换网与重启自动恢复、失败隔离 | [09-connection-supervisor.png](personal-sync-2.0-mockups/09-connection-supervisor.png) |
+| 10 | **目标态·未开工**（§13.3）：局域网推送/订阅（改完即通知 ≤2s）＋ 反熵（只拉缺的水位）＋ 调度自适应 | [10-lan-push-antientropy.png](personal-sync-2.0-mockups/10-lan-push-antientropy.png) |
+| 11 | **目标态·未开工**（§13.4）：设备×空间水位矩阵 ＋ 同名空间批量确认（双向传播） | [11-watermark-matrix.png](personal-sync-2.0-mockups/11-watermark-matrix.png) |
+| 12 | **目标态·未开工**（§13.5）：邀请式配对 ＋ 设备撤销/换机/密钥轮换 ＋ 失败自动处理 | [12-device-lifecycle.png](personal-sync-2.0-mockups/12-device-lifecycle.png) |
+| 13 | **目标态·未开工**（§13.6）：多设备同步图（按“边”给读数）＋ 诊断包升级 | [13-sync-graph.png](personal-sync-2.0-mockups/13-sync-graph.png) |
 
 > ⚠️ 效果图源在本目录 `*.html` ＋ `mock.css`；改动后跑
 > `node docs/plans/personal-sync-2.0-mockups/render.mjs` 重渲染 2x PNG（本机无浏览器时 exit 2，不算图坏）。

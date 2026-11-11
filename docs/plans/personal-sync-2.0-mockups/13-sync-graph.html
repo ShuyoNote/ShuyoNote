@@ -1,0 +1,32 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>13 多设备同步图与诊断（目标态）</title></head><body>
+<div class="page">
+  <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 13 / 目标态 · 未开工（需求 §13.6 可观测）</span></div>
+  <h1>多设备里，哪条边断了</h1>
+  <div class="sub">目标态：一条<b>设备边</b>一行（最近成功 / 延迟 / 失败原因 / 是否经中转），加<b>升级版诊断包</b>。目标：3 台设备时能一眼指出“哪一台不同步、为什么”。</div>
+  <div class="frame" style="margin-top:16px">
+    <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">设置 / 同步 / 多设备</span><span class="crumb">目标态 · 未开工</span></div>
+    <div class="body">
+      <div class="split" style="grid-template-columns:1.1fr .9fr">
+        <div class="card">
+          <div class="section-title" style="margin-top:0">同步图（按“边”列）</div>
+          <div class="row"><span class="name">本机 ↔ Windows PC</span><span class="state">QUIC · 最近成功 12 秒前 · 延迟 0.3 秒</span><span class="badge ok">正常</span></div>
+          <div class="row"><span class="name">本机 ↔ MacBook Air</span><span class="state">经 Windows PC 中转 · 最近成功 4 秒前</span><span class="badge info">经中转</span></div>
+          <div class="row"><span class="name">本机 ↔ 旧笔记本</span><span class="state">离线 · 失败原因：对端不在同一网络</span><span class="badge warn">不可达</span></div>
+          <div class="row"><span class="name">PC ↔ MacBook Air</span><span class="state">在它们各自那一侧 · 由对端面板报</span><span class="badge gray">对端读数</span></div>
+          <div class="callout" style="margin-top:12px">每条边三个数：<b>最近成功时间 / 同步延迟 / 失败原因</b>；⛔ 读不到就写“读不到”，不显示绿色冒充正常。</div>
+        </div>
+        <div class="card">
+          <div class="section-title" style="margin-top:0">诊断包升级</div>
+          <div class="check"><div class="ic ok">✓</div><div><div class="t">设备 × 空间矩阵</div><div class="d">谁到哪一轮、差几条（与 11 号图同源）。</div></div></div>
+          <div class="check"><div class="ic ok">✓</div><div><div class="t">连接状态与最近 N 轮</div><div class="d">每台设备的心跳/重连次数/失败原因。</div></div></div>
+          <div class="check"><div class="ic warn">!</div><div><div class="t">⛔ 仍不含正文 / 令牌 / 配对秘密</div><div class="d">只含元数据；导出前可预览。</div></div></div>
+          <div class="actions" style="margin-top:12px"><span class="btn primary">复制诊断包</span><span class="btn">导出文件</span></div>
+          <div class="callout" style="margin-top:12px">目标判据：诊断包能回答“多设备里哪一台不同步、为什么”；面板里每条读数点得出来源。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>ShuyoNote · 个人付费订阅版 · 需求效果图</span><span>目标态 · ⛔ 未实现｜验收判据见需求文档 §13.6 O1–O2</span></div>
+</div>
+</body></html>
+

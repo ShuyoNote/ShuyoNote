@@ -21,6 +21,11 @@ const FILES = [
   "06-attachment-progress",
   "07-relay-errors",
   "08-sync-records",
+  "09-connection-supervisor",
+  "10-lan-push-antientropy",
+  "11-watermark-matrix",
+  "12-device-lifecycle",
+  "13-sync-graph",
 ];
 
 const candidates = [
