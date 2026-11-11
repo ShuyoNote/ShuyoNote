@@ -1309,7 +1309,7 @@ pub async fn pull_and_absorb(
             if device_id.trim().is_empty() {
                 None
             } else {
-                let target = pull_target(space_id, since, &name_sha);
+                let target = pull_target_with_confirm(space_id, since, &name_sha, confirm_ref);
                 sign_request(
                     &g,
                     &device_id,
@@ -1350,7 +1350,7 @@ pub async fn pull_and_absorb(
             if device_id.trim().is_empty() {
                 None
             } else {
-                let target = pull_target(space_id, 0, &name_sha);
+                let target = pull_target_with_confirm(space_id, 0, &name_sha, confirm_ref);
                 sign_request(
                     &g,
                     &device_id,
@@ -1413,7 +1413,7 @@ pub async fn pull_and_absorb(
                 if device_id.trim().is_empty() {
                     None
                 } else {
-                    let target = pull_target(space_id, 0, &name_sha);
+                    let target = pull_target_with_confirm(space_id, 0, &name_sha, confirm_ref);
                     sign_request(
                         &g,
                         &device_id,
@@ -9642,6 +9642,21 @@ mod tests {
         assert_eq!(
             pull_target_with_confirm("space-z", 5, "abc", Some(("uid-a", "   "))),
             base
+        );
+    }
+
+    /// ⭐ 2026-11-11（真机 401「签名对不上」的真因）：签名用的 target 必须**与发送的是同一串** ——
+    /// 带确认时就是 `pull_target_with_confirm(...)`；原来签名处用了不带 confirm 的
+    /// `pull_target(space_id, …)` ⇒ 签的少两格、发的多两格 ⇒ 对端验签失败回 401。
+    ///
+    /// ⚠️ 判据串**拆成两段再拼**：整串写在源码里会被 `include_str!` 自己匹配到（自指假红）。
+    #[test]
+    fn the_signed_pull_target_always_carries_the_confirmation_it_sends() {
+        let src = include_str!("mesh.rs");
+        let forbidden = concat!("let target = pull_target(", "space_id");
+        assert!(
+            !src.contains(forbidden),
+            "⛔ 签名处不许用不带 confirm 的 pull_target：签的与发的必须同一串"
         );
     }
 
