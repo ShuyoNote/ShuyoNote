@@ -1,6 +1,6 @@
 # 个人版同步 2.0 实施状态（P0–P3）
 
-> **状态：实施中（代码/判据大部分已落；AMD⇄Windows 跨机主链**已真机验收（含 QUIC 直连）**；私有 relay TLS 版已真机验收（allow/deny 双面）；附件按需取字节真机已通（sha 对齐；QUIC 证据行待复跑补抓））** ｜ 2026-11-09
+> **状态：实施中（代码/判据大部分已落；AMD⇄Windows 跨机主链**已真机验收（含 QUIC 直连）**；私有 relay TLS 版已真机验收（allow/deny 双面）；P0-2 双向确认已真机成立；附件按需取字节真机已通（sha 对齐），QUIC 证据行等 Windows「单播公告」修复后补抓（本网 UDP 广播被 AP 过滤））** ｜ 2026-11-09
 > 上位：[需求说明书](2026-11-08-personal-sync-2.0-requirements.md) ｜ [P3 ADR](2026-11-08-personal-sync-2.0-p3-adr.md)
 > 口径：只写**盘上/判据能证明的**；未验项单列，不写成已验收。
 
@@ -108,6 +108,16 @@ QUIC 直连真机验收（2026-11-09 15:2x，两侧 dev 5014cace）：
    · ⚠️ 当时 dev 日志已被后续 20h 输出覆盖：**「附件走 QUIC」证据行/回退行/耗时没有留下逐字读数**
      ⇒ 本条不写成"四件读数齐"；待双方 app 同时在线时复跑一次补抓（删本机文件→点下载→读新日志）。
    · 仍走 HTTP 的：`sync_attachments`（服务端自动同步那条，`client.get({att_base}/attachments/<hash>)`）。
+   · 2026-11-11 `fc621bef`：按需取字节的**候选**与同步轮次同一套（公告＋**手动地址里已配对**的设备）——
+     本网 UDP 广播被 AP 过滤时，点下载不再报「附近没有能问的对端」（判据 1/1；真机取字节待对端在线）。
+
+✅ P0-2「同名但 uid 不同」双向确认（2026-11-11 真机）：
+   · AMD 点一次（13:04:06）⇒ 双方确认行都出现（AMD 13:04:06 / Windows 13:37:17），候选清空；
+     Windows 侧**没有再点** ⇒ 「一次确认、双向放行」成立。
+   · 顺带修掉 Windows 该功能的两笔真 bug：`99c2cdc2`（`MeshUidConflict` 缺 serde camelCase ⇒
+     点确认报 missing key peerDevice）、`bba417b3`（带 confirm 的 pull 签名 target 与发送 target 不一致 ⇒ 对端 401）。
+   · ⛔ 附件「走 QUIC」证据行：本网（BSSID 98:1a:35:31:9b:e0）**UDP 广播被 AP 过滤** ⇒ 双方收不到公告
+     ⇒ 无 `quic_addrs` ⇒ 只能回退 HTTP；Windows 正在做「手动设备也单播发公告」的修复，修好后补抓。
 ✅ 私有 relay 真机（TLS 版）：已部署 shuyo.cn（8881 HTTPS 外网 200 / 8882 QUIC 握手成功；
    客户端握手 **allow + deny 双面**都有外网真机读数）—— 见 §2.2；交付包已出（sha 见 §2.2）
 ⛔ relay 仍缺：ACME/域名（仍外部签发）、反代形态（B）未实测、`relay selfcheck` 四项
