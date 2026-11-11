@@ -155,6 +155,29 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
     }
   };
 
+  // ⭐ 2026-11-11（真机：本机没有字节时面板没有显式「重新下载」入口 —— 只能靠打开页面时的
+  //   自动预取；而预取一旦在本次挂载里失败过就不会再试 ⇒ 用户只剩「打开失败 / path doesn't exist」）。
+  //   这里给一行一个显式按钮：本机有字节时也会重新取一遍（幂等覆盖），失败如实 toast。
+  const [downloading, setDownloading] = useState("");
+
+  const downloadFile = async (a: AttachmentMeta) => {
+    const wsId = useSpaceStore.getState().activeId;
+    if (!wsId) {
+      toast("当前没有活动空间，取不回这件附件", "info");
+      return;
+    }
+    setDownloading(a.hash);
+    try {
+      const got = await api.downloadAttachment(wsId, a.hash);
+      useAttachmentsStore.getState().bump();
+      toast(got.note || "已取回附件", "success");
+    } catch (e) {
+      toast(`取回失败：${e instanceof Error ? e.message : String(e)}（${NOT_DOWNLOADED_HINT}）`, "error");
+    } finally {
+      setDownloading("");
+    }
+  };
+
   const openFile = async (a: AttachmentMeta) => {
     // PDF 附件：不是用默认程序打开，而是直接进内置阅读器做批注/阅读。
     if (a.mime === "application/pdf") {
@@ -253,6 +276,14 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
               <div className="attachment-actions">
                 <button title={a.mime === "application/pdf" ? "在阅读器中打开批注" : "打开"} onClick={() => openFile(a)}>
                   ↗
+                </button>
+                <button
+                  title="下载（本机没有字节时先取回；有字节也会重新取一遍）"
+                  data-testid="attachment-download"
+                  disabled={downloading === a.hash}
+                  onClick={() => void downloadFile(a)}
+                >
+                  {downloading === a.hash ? "…" : "⬇"}
                 </button>
                 <button title="在文件夹中显示" onClick={() => revealFile(a)}>
                   📂
