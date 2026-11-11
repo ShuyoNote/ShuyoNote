@@ -161,10 +161,16 @@ pub async fn bind_direct_on_port(
 pub struct LanQuicRegistry {
     endpoint: Arc<LanQuicEndpoint>,
     conns: Mutex<HashMap<PublicKey, Arc<Connection>>>,
+    /// ⭐ 2026-11-11：每条缓存连接**上次用到的时刻**（`db::now_ms`）—— 空闲超 TTL 就主动换新。
+    last_used: Mutex<HashMap<PublicKey, i64>>,
     /// 连接闸：**唯一一个**在"缓存未命中"时批量建链的入口（拿它期间不再查一次缓存）。
     connect_gate: tokio::sync::Mutex<()>,
     connect_attempts: AtomicUsize,
 }
+
+/// ⭐ 2026-11-11（真机 3s 尾巴）：空闲超过这个时间就**主动重连**，不再复用可能已被对端关掉的连接。
+/// 取值 60s：比一次同步轮（约 2 分钟）短，又能挡住"高频请求每次都重连"。
+const IDLE_TTL_MS: i64 = 60_000;
 
 impl LanQuicRegistry {
     /// 用一把注入的身份起一个新注册表（内部 `bind_direct` 一个无中继端点）。
@@ -177,6 +183,7 @@ impl LanQuicRegistry {
         Self {
             endpoint,
             conns: Mutex::new(HashMap::new()),
+            last_used: Mutex::new(HashMap::new()),
             connect_gate: tokio::sync::Mutex::new(()),
             connect_attempts: AtomicUsize::new(0),
         }
@@ -208,12 +215,12 @@ impl LanQuicRegistry {
     /// ⇒ 只建 1 条（判据 `concurrent_requests_share_one_connection`）。
     pub async fn get_or_connect(&self, peer: EndpointAddr) -> Result<Arc<Connection>, String> {
         let key = peer.id;
-        if let Some(c) = self.cached(key) {
+        if let Some(c) = self.cached_fresh(key).await {
             return Ok(c);
         }
         // 连接闸：拿住它再查一次 ⇒ 并发同 peer 只 connect 一次（骨架层的简单实现）。
         let _gate = self.connect_gate.lock().await;
-        if let Some(c) = self.cached(key) {
+        if let Some(c) = self.cached_fresh(key).await {
             return Ok(c);
         }
         self.connect_attempts.fetch_add(1, Ordering::Relaxed);
@@ -231,6 +238,7 @@ impl LanQuicRegistry {
             .lock()
             .map_err(|_| "连接缓存的锁被毒掉了".to_string())?
             .insert(key, Arc::clone(&arc));
+        self.touch(key);
         Ok(arc)
     }
 
@@ -248,16 +256,22 @@ impl LanQuicRegistry {
         req: &TunnelRequest,
     ) -> Result<TunnelReply, String> {
         let key = peer.id;
-        if let Some(conn) = self.cached(key) {
+        if let Some(conn) = self.cached_fresh(key).await {
             match tokio::time::timeout(CACHED_ATTEMPT_TIMEOUT, request_on_conn(&conn, req)).await {
-                Ok(Ok(reply)) => return Ok(reply),
+                Ok(Ok(reply)) => {
+                    self.touch(key);
+                    return Ok(reply);
+                }
                 // 两种失败都先驱逐这条（死连接不再拖下一轮）
                 Ok(Err(_)) | Err(_) => self.evict_if_same(key, &conn),
             }
         }
         let conn = self.get_or_connect(peer).await?;
         match tokio::time::timeout(REQUEST_TIMEOUT, request_on_conn(&conn, req)).await {
-            Ok(Ok(reply)) => Ok(reply),
+            Ok(Ok(reply)) => {
+                self.touch(key);
+                Ok(reply)
+            }
             Ok(Err(e)) => {
                 self.evict_if_same(key, &conn);
                 Err(e)
@@ -275,6 +289,9 @@ impl LanQuicRegistry {
     /// **强制**关掉某对端的缓存连接（下次请求会重连）。返回"原本在不在缓存里"。
     pub async fn evict(&self, peer: PublicKey) -> bool {
         let removed = self.conns.lock().ok().and_then(|mut m| m.remove(&peer));
+        if let Ok(mut m) = self.last_used.lock() {
+            m.remove(&peer);
+        }
         match removed {
             Some(c) => {
                 c.close(0u32.into(), b"evicted");
@@ -291,6 +308,9 @@ impl LanQuicRegistry {
             .lock()
             .map(|mut m| m.drain().map(|(_, c)| c).collect())
             .unwrap_or_default();
+        if let Ok(mut m) = self.last_used.lock() {
+            m.clear();
+        }
         for c in drained {
             c.close(0u32.into(), b"registry-close");
         }
@@ -299,6 +319,30 @@ impl LanQuicRegistry {
 
     fn cached(&self, key: PublicKey) -> Option<Arc<Connection>> {
         self.conns.lock().ok().and_then(|m| m.get(&key).cloned())
+    }
+
+    /// ⭐ 2026-11-11：**空闲 TTL** —— 超过 [`IDLE_TTL_MS`] 没用的连接直接换新，
+    /// ⛔ 不拿可能已被对端关掉的连接再赌一次 3s 超时（真机均摊 ~2.8s 的尾巴就是它）。
+    async fn cached_fresh(&self, key: PublicKey) -> Option<Arc<Connection>> {
+        let conn = self.cached(key)?;
+        let now = crate::db::now_ms();
+        let last = self
+            .last_used
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&key).copied())
+            .unwrap_or(0);
+        if last > 0 && now.saturating_sub(last) <= IDLE_TTL_MS {
+            return Some(conn);
+        }
+        self.evict(key).await;
+        None
+    }
+
+    fn touch(&self, key: PublicKey) {
+        if let Ok(mut m) = self.last_used.lock() {
+            m.insert(key, crate::db::now_ms());
+        }
     }
 
     /// 只有命中的仍是**同一条**连接时才移除（避免把并发中别人刚建的新连接误删）。
