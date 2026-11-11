@@ -16,6 +16,7 @@ use rusqlite::Connection;
 
 /// 一条待确认的冲突（只含元数据）。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MeshUidConflict {
     /// 对端设备 id。
     pub peer_device: String,
@@ -246,5 +247,31 @@ mod tests {
         // 幂等：重复确认不报错
         confirm(&c, "dev-a", "uid-peer-1", 4000).unwrap();
         assert!(is_confirmed(&c, "dev-a", "uid-peer-1"));
+    }
+
+    /// ⭐ 2026-11-11（真机：点确认报 `missing required key peerDevice`）：
+    /// 列表命令的 JSON **键必须是 camelCase** —— 前端 `MeshUidConflict` 读的是
+    /// `peerDevice`／`localName`；少了 `rename_all` ⇒ 界面字段全 `undefined`
+    /// ⇒ 点确认时参数被 JSON 丢掉 ⇒ 后端报缺 key。
+    #[test]
+    fn conflict_row_serializes_with_camel_case_keys_for_the_panel() {
+        let row = MeshUidConflict {
+            peer_device: "dev-a".into(),
+            peer_uid: "uid-1".into(),
+            local_name: "山焦招标".into(),
+            peer_name: "山焦招标".into(),
+            last_seen_at: 7,
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        for key in [
+            "\"peerDevice\"",
+            "\"peerUid\"",
+            "\"localName\"",
+            "\"peerName\"",
+            "\"lastSeenAt\"",
+        ] {
+            assert!(json.contains(key), "缺 {key}：{json}");
+        }
+        assert!(!json.contains("peer_device"), "⛔ 不许 snake_case：{json}");
     }
 }
