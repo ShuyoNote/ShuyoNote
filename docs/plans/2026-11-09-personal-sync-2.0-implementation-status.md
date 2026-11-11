@@ -1,6 +1,6 @@
 # 个人版同步 2.0 实施状态（P0–P3）
 
-> **状态：实施中（代码/判据大部分已落；AMD⇄Windows 跨机主链**已真机验收（含 QUIC 直连）**；私有 relay TLS 版已真机验收（allow/deny 双面））** ｜ 2026-11-09
+> **状态：实施中（代码/判据大部分已落；AMD⇄Windows 跨机主链**已真机验收（含 QUIC 直连）**；私有 relay TLS 版已真机验收（allow/deny 双面）；附件按需取字节真机已通（sha 对齐；QUIC 证据行待复跑补抓））** ｜ 2026-11-09
 > 上位：[需求说明书](2026-11-08-personal-sync-2.0-requirements.md) ｜ [P3 ADR](2026-11-08-personal-sync-2.0-p3-adr.md)
 > 口径：只写**盘上/判据能证明的**；未验项单列，不写成已验收。
 
@@ -100,20 +100,19 @@ QUIC 直连真机验收（2026-11-09 15:2x，两侧 dev 5014cace）：
 
 ```text
 ✅ 跨机真机主链：AMD⇄Windows 已验收（见 §2.1，含 **QUIC 直连**：两侧 connect OK 16/17/23ms）
-🔄 附件「按需取字节」已走 Endpoint（2026-11-09 修正 + 接线）：
-   · 原状态：`mesh::request_attachment_from_peer_at` **生产有调用**（按需下载/续传），它走
-     `endpoint_for_peer(...).get_stream(...)`；但组合器的 `get_stream` 当时**直接走 HTTP**
-     ⇒ 附件字节永远 HTTP（先前记的"生产无调用"是只看了非 `_at` 的旧包装，已修正）。
-   · 2026-11-09 `f07d06ec`：`get_stream` 改为 **QUIC 优先**（隧道整包缓冲，≤64MB；
-     首端点成功时 HTTP 零连接；不支持/失败静默回退 HTTP）；判据 4/4。真机验收待补
-     （需对端在测试空间新增一件附件后点「下载」）。
-   · 仍走 HTTP 的：`sync_attachments`（服务端自动同步那条，`client.get({att_base}/attachments/<hash>)`）
-     —— 与个人版 LAN「按需取字节」是两条路，后者才是本轮目标。
+✅ 附件「按需取字节」真机已通（2026-11-10 10:15）：`q-20261109.bin`（2,097,152 B，
+   hash 7d75e8db…）经「下载」取回：落盘 size=2,097,152、sha256 逐字 == 对端 hash、
+   路径 `<appdata>/attachments/<space>/7d/7d75e8db….bin`，mtime 10:15:07。
+   · 代码链：`request_attachment_from_peer_at` → `endpoint_for_peer(...).get_stream(...)`
+     → `f07d06ec` 起 **QUIC 优先**（隧道整包缓冲 ≤64MB，失败/不支持回退 HTTP）；判据 4/4 + 真 QUIC e2e 3/3。
+   · ⚠️ 当时 dev 日志已被后续 20h 输出覆盖：**「附件走 QUIC」证据行/回退行/耗时没有留下逐字读数**
+     ⇒ 本条不写成"四件读数齐"；待双方 app 同时在线时复跑一次补抓（删本机文件→点下载→读新日志）。
+   · 仍走 HTTP 的：`sync_attachments`（服务端自动同步那条，`client.get({att_base}/attachments/<hash>)`）。
 ✅ 私有 relay 真机（TLS 版）：已部署 shuyo.cn（8881 HTTPS 外网 200 / 8882 QUIC 握手成功；
    客户端握手 **allow + deny 双面**都有外网真机读数）—— 见 §2.2；交付包已出（sha 见 §2.2）
 ⛔ relay 仍缺：ACME/域名（仍外部签发）、反代形态（B）未实测、`relay selfcheck` 四项
-⛔ App 全面转 daemon：App 仍持有 DB 写者；daemon 仅无头模式 + 回环 IPC；
-   未做 App 通过 IPC 执行同步/读取全部数据、Windows 无 TERM 的自动停止
+✅ App 全面转 daemon —— **V1 口径：保持现状**（owner 2026-11-09 拍板）：App 仍是唯一 DB 写者，
+   daemon 仅无头模式 + 回环 IPC；不扩 App↔IPC（留待后续版本）。
 ⛔ P3-3a 真正 7 天 0 差异观察（只做了历史落盘/裁剪，未等满 7 天）
 ⛔ P3-4 分块清单/暂停（取消已做；暂停/分块清单未做，可选）
 ⛔ 正式包/发版不包含 QUIC/relay 数据面；跨网中继仍未进正式包
