@@ -209,6 +209,7 @@ relay 服务器关机 + 配了路线表 + 两机同 Wi-Fi ⇒ LAN 同步成功�
 | 05 | 同名 ≠ 同一空间：冲突先停、人确认一次、双向放行（2026-11-10 owner 批 B） | [05-uid-confirm.png](personal-sync-2.0-mockups/05-uid-confirm.png) |
 | 06 | 附件下载：QUIC 优先、暂停/续传/取消、sha256 校验四态 | [06-attachment-progress.png](personal-sync-2.0-mockups/06-attachment-progress.png) |
 | 07 | 跨网失败三态：证书问题/许可证到期/端口未通 —— 只收回跨网，局域网照常 | [07-relay-errors.png](personal-sync-2.0-mockups/07-relay-errors.png) |
+| 08 | 同步记录与状态：四格总览（上次成功/下次自动/当前状态/失败数）＋ 默认展开的记录列表（时间/↑↓/原因/明细/重试） | [08-sync-records.png](personal-sync-2.0-mockups/08-sync-records.png) |
 
 > ⚠️ 效果图源在本目录 `*.html` ＋ `mock.css`；改动后跑
 > `node docs/plans/personal-sync-2.0-mockups/render.mjs` 重渲染 2x PNG（本机无浏览器时 exit 2，不算图坏）。

@@ -20,6 +20,7 @@ const FILES = [
   "05-uid-confirm",
   "06-attachment-progress",
   "07-relay-errors",
+  "08-sync-records",
 ];
 
 const candidates = [

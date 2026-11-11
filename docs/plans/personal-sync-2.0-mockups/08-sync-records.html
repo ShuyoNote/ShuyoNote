@@ -1,0 +1,97 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css"><title>08 同步记录与状态</title><style>
+  .overview{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .ov{display:flex;flex-direction:column;gap:2px;min-width:96px;padding:7px 11px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
+  .ov b{font-size:14px;font-weight:650;color:var(--text)}
+  .ov i{font-style:normal;font-size:11px;color:var(--faint)}
+  .ov.bad b{color:var(--danger)}
+  .rec{display:flex;gap:10px;padding:10px 2px;border-top:1px solid var(--line);align-items:flex-start}
+  .rec:first-child{border-top:0}
+  .rec-ic{width:22px;height:22px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex:none}
+  .rec-ic.ok{background:#173026;color:var(--ok);border:1px solid #2c5b48}
+  .rec-ic.err{background:#301a1a;color:var(--danger);border:1px solid #5b2a2a}
+  .rec-main{flex:1;min-width:0}
+  .rec-top{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .rec-at{color:var(--dim);font-size:12.5px}
+  .rec-stats{color:var(--faint);font-size:12px}
+  .rec-msg{color:var(--faint);font-size:12px;margin-top:3px;line-height:1.5}
+  .rec-msg b{color:var(--dim);font-weight:600}
+  .rec-actions{display:flex;gap:8px;align-items:center;flex:none}
+  .rec-link{color:var(--accent2);font-size:12px;cursor:default}
+  .btn.tiny{padding:4px 9px;font-size:11.5px;border-radius:7px}
+  .hist-head{display:flex;align-items:center;gap:8px}
+  .hist-head .t{font-size:13px;color:var(--faint);font-weight:650;letter-spacing:.4px}
+  .hist-count{color:var(--faint);font-size:11.5px;border:1px solid var(--line);border-radius:999px;padding:0 7px}
+  .hist-clear{margin-left:auto;color:var(--faint);font-size:12px;border:none;background:transparent;padding:4px 6px;cursor:default}
+  .callout.sm{font-size:12px;padding:9px 12px}
+</style></head><body>
+<div class="page">
+  <div class="kicker"><b>ShuyoNote 个人版同步 2.0</b><span>·</span><span>效果图 08 / 同步记录与状态：一眼看到“发生了什么”</span></div>
+  <h1>同步记录：不用翻日志</h1>
+  <div class="sub">状态卡下面四格读数（<b>上次成功 / 下次自动 / 当前状态 / 失败数</b>），下面就是<b>默认展开</b>的同步记录：每行给时间、↑推/↓拉、失败原因、可展开明细、失败可重试；记录只保留最近 100 条，可一键清空。</div>
+  <div class="frame" style="margin-top:16px">
+    <div class="topbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">产品 / 同步</span><span class="crumb">本机：Windows PC · 192.168.0.105</span></div>
+    <div class="body">
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span class="badge ok">● 已和 2 台设备配对</span>
+          <span style="color:var(--dim);font-size:13px">对方就在附近，自动同步开着</span>
+          <span style="margin-left:auto;color:var(--faint);font-size:12px">最近一轮：12 秒前</span>
+        </div>
+        <div class="overview">
+          <span class="ov"><b>12 秒前</b><i>上次成功</i></span>
+          <span class="ov"><b>约 1 分 48 秒后</b><i>下次自动（约 2 分钟一轮）</i></span>
+          <span class="ov"><b>空闲</b><i>当前状态</i></span>
+          <span class="ov bad"><b>1</b><i>失败（最近记录里）</i></span>
+        </div>
+      </div>
+      <div class="split" style="margin-top:14px;grid-template-columns:1.35fr .65fr">
+        <div class="card">
+          <div class="hist-head">
+            <span class="hist-count">15</span>
+            <span class="t">同步历史（默认展开）</span>
+            <button class="hist-clear">清空</button>
+          </div>
+          <div class="rec">
+            <div class="rec-ic ok">✓</div>
+            <div class="rec-main">
+              <div class="rec-top"><span class="rec-at">2 分钟前</span><span class="rec-stats">↑ 2 · ↓ 5</span><span class="rec-link">5 项明细 ▾</span></div>
+              <div class="rec-msg">设备直连（网格）：拉了 2 台对端；收下 5 条、送出去 2 条</div>
+            </div>
+          </div>
+          <div class="rec">
+            <div class="rec-ic err">✗</div>
+            <div class="rec-main">
+              <div class="rec-top"><span class="rec-at">5 分钟前</span><span class="rec-stats">↑ 0 · ↓ 0</span><span class="rec-link">1 项明细 ▾</span></div>
+              <div class="rec-msg">设备直连（网格）：<b>不融合</b>——同名但空间 uid 不一样（要人确认一次；这批一条都不落库、水位不前进）</div>
+              <div style="display:flex;gap:8px;margin-top:6px"><button class="btn tiny">重试</button><span style="color:var(--faint);font-size:11.5px;align-self:center">去同步面板点「确认是同一空间」</span></div>
+            </div>
+          </div>
+          <div class="rec">
+            <div class="rec-ic ok">✓</div>
+            <div class="rec-main">
+              <div class="rec-top"><span class="rec-at">8 分钟前</span><span class="rec-stats">↑ 0 · ↓ 3</span><span class="rec-link">3 项明细 ▾</span></div>
+              <div class="rec-msg">设备直连（网格）：QUIC 直连 17ms；收下 3 条</div>
+            </div>
+          </div>
+          <div class="rec">
+            <div class="rec-ic ok">✓</div>
+            <div class="rec-main">
+              <div class="rec-top"><span class="rec-at">12 分钟前</span><span class="rec-stats">↑ 1 · ↓ 0</span></div>
+              <div class="rec-msg">附件 2.0 MB 已送达对端（sha256 校验一致）</div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="section-title" style="margin-top:0">这条记录里有什么</div>
+          <div class="check"><div class="ic ok">✓</div><div><div class="t">时间 · 方向 · 条数</div><div class="d">这一轮什么时候跑的、推了几条、拉了几条。</div></div></div>
+          <div class="check"><div class="ic ok">✓</div><div><div class="t">结果与原因</div><div class="d">成功/失败分开写；失败给可读原因（不是错误码）。</div></div></div>
+          <div class="check"><div class="ic ok">✓</div><div><div class="t">明细与重试</div><div class="d">可按页展开“这一轮动了哪几页”；失败可原地重试。</div></div></div>
+          <div class="check"><div class="ic warn">!</div><div><div class="t">⛔ 不含正文 / 令牌 / 配对秘密</div><div class="d">只记元数据；诊断包同一条。</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>ShuyoNote · 个人付费订阅版 · 需求效果图</span><span>P1 交付 · 判据：四格来自真实读数；记录默认展开；失败可重试；不含正文/令牌；只留最近 100 条</span></div>
+</div>
+</body></html>
+

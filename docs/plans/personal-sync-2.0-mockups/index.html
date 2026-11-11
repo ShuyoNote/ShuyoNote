@@ -9,7 +9,7 @@
 .foot{color:var(--faint);font-size:11.5px;margin-top:20px;border-top:1px solid #26282c;padding-top:12px}
 </style></head><body><div class="wrap">
 <h1>个人版同步 2.0 · 效果图</h1>
-<div class="sub">原则：<b>没有中继服务器，局域网同步与 MCP 必须完整可用；中继只作为付费可选的私有部署。</b>以下 7 张图对应 P1/P2/P3 的关键界面；<b>2026-11-11 更新</b>：补上与已实现能力一致的读数（QUIC 直连、relay 自带 TLS、同名空间确认、附件下载、跨网失败三态）。</div>
+<div class="sub">原则：<b>没有中继服务器，局域网同步与 MCP 必须完整可用；中继只作为付费可选的私有部署。</b>以下 8 张图对应 P1/P2/P3 的关键界面；<b>2026-11-11 更新</b>：补上与已实现能力一致的读数（QUIC 直连、relay 自带 TLS、同名空间确认、附件下载、跨网失败三态）。</div>
 <div class="grid">
   <div class="card"><a href="01-lan-home.png"><img src="01-lan-home.png" alt="默认局域网同步"></a><div class="meta"><div class="t">01 · 默认局域网：打开即用</div><div class="d">不需要服务器；按空间显示状态；QUIC 直连/HTTP 回退读数；全部空间同步；连接体检入口；<b>同名空间待确认</b>行；私有中继收在高级里。</div></div></div>
   <div class="card"><a href="02-diagnose.png"><img src="02-diagnose.png" alt="连接体检"></a><div class="meta"><div class="t">02 · 连接体检：把“为什么不同步”说清楚</div><div class="d">接口/发现端口/同步窗口/<b>QUIC 端点</b>/对端可达（<b>QUIC 握手耗时</b>）/配对秘密/房间/最近一轮；手动 IP 兜底；复制脱敏诊断包。</div></div></div>
@@ -18,6 +18,7 @@
   <div class="card"><a href="05-uid-confirm.png"><img src="05-uid-confirm.png" alt="同名空间确认"></a><div class="meta"><div class="t">05 · 同名 ≠ 同一空间：确认一次</div><div class="d">两台都有同名空间但身份不同 ⇒ 同步先停、不落库；用户点「确认是同一空间」后<b>一次确认、双向放行</b>（不绕身份/名字闸，可回滚）。</div></div></div>
   <div class="card"><a href="06-attachment-progress.png"><img src="06-attachment-progress.png" alt="附件下载"></a><div class="meta"><div class="t">06 · 附件下载：QUIC 优先、可暂停/续传</div><div class="d">下载中/已暂停/完成/失败四态；QUIC 失败自动回退 HTTP；暂停/取消保留 <code>.part</code>；完成前 sha256 校验。</div></div></div>
   <div class="card"><a href="07-relay-errors.png"><img src="07-relay-errors.png" alt="跨网失败三态"></a><div class="meta"><div class="t">07 · 跨网失败三态：只收回跨网</div><div class="d">证书问题 / 许可证到期 / 端口与配置未通，各自有独立理由与下一步；<b>局域网与本地永远不降级</b>。</div></div></div>
+  <div class="card"><a href="08-sync-records.png"><img src="08-sync-records.png" alt="同步记录与状态"></a><div class="meta"><div class="t">08 · 同步记录与状态：不用翻日志</div><div class="d">状态卡下四格读数（上次成功/下次自动/当前状态/失败数）；<b>同步历史默认展开</b>，每行给时间、↑推/↓拉、原因、明细、失败可重试；只留最近 100 条。</div></div></div>
 </div>
 <div class="dec"><h2>需要拍板的 6 件事（白话）· 2026-11-11 状态</h2>
 <table>
@@ -30,3 +31,4 @@
 </table></div>
 <div class="foot">完整需求：[2026-11-08-personal-sync-2.0-requirements.md](../2026-11-08-personal-sync-2.0-requirements.md) ｜ 效果图源：本目录 HTML/CSS（`mock.css`），PNG 为 2x 渲染 ｜ 渲染：`puppeteer-core` + 本机浏览器（见 `render.mjs`）。</div>
 </div></body></html>
+
