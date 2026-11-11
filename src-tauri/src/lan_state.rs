@@ -1466,6 +1466,9 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     }
                     // 这一片没人说话 —— 正常，不刷屏 ✓
                     Ok(lan::RecvOutcome::Nothing) => {}
+                    // ⭐ 2026-11-11：Windows 的 ICMP 复位（10054/连接被强迫关闭）是**网线抖动**，
+                    //   这一片跳过、⛔ 不刷屏（每 1s 刷一行的日志会把真错误埋掉）。
+                    Err(e) if crate::lan::is_transient_recv_error(&e) => {}
                     Err(e) => eprintln!("[mesh] 收公告出错：{e}"),
                 }
             }

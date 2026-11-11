@@ -1495,6 +1495,17 @@ pub async fn recv_into(
 
 /// [`recv_into`] 的**带超时**外壳：最多等 `slice_ms`；超时 ⇒ [`RecvOutcome::Nothing`]
 /// （⚠️ **与"自己的公告"分得开** ✗ —— 旧版两件都回 `None` ✓，那正是判不了的那一格 ✓）。
+/// ⭐ **2026-11-11（真机：收公告刷屏 `os error 10054`）**：Windows 上 UDP 收包会遇到
+/// 「远程主机强迫关闭了一个现有的连接」/ `WSAECONNRESET(10054)` —— 那通常是**之前的发包**
+/// 触发了 ICMP 不可达，下一片收包把错误带上来，**不是发现层坏了**。
+/// ⇒ 这一片跳过、⛔ 不刷屏；⚠️ 其它错误**照旧上报**（⛔ 别把真错误一起吞掉）。
+pub fn is_transient_recv_error(e: &str) -> bool {
+    e.contains("10054")
+        || e.contains("强迫关闭")
+        || e.contains("Connection reset")
+        || e.contains("connection reset")
+}
+
 pub async fn recv_into_within(
     sock: &UdpSocket,
     state: &crate::lan_state::LanState,
@@ -1514,6 +1525,17 @@ pub async fn recv_into_within(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ⭐ 2026-11-11：只有"ICMP 复位/连接被强迫关闭"算抖动量；别的错误必须照旧上报。
+    #[test]
+    fn transient_recv_errors_are_classified_narrowly() {
+        assert!(is_transient_recv_error(
+            "收公告失败：远程主机强迫关闭了一个现有的连接。 (os error 10054)"
+        ));
+        assert!(is_transient_recv_error("Connection reset by peer"));
+        assert!(!is_transient_recv_error("拒绝访问。 (os error 5)"));
+        assert!(!is_transient_recv_error("报文解码失败"));
+    }
 
     fn peer(device: &str, base: Option<&str>, spaces: &[&str]) -> Peer {
         Peer {
