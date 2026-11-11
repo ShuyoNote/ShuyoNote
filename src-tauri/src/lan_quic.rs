@@ -257,13 +257,27 @@ impl LanQuicRegistry {
     ) -> Result<TunnelReply, String> {
         let key = peer.id;
         if let Some(conn) = self.cached_fresh(key).await {
+            let dbg = std::env::var_os("SHUYONOTE_LAN_DEBUG_QUIC").is_some();
             match tokio::time::timeout(CACHED_ATTEMPT_TIMEOUT, request_on_conn(&conn, req)).await {
                 Ok(Ok(reply)) => {
                     self.touch(key);
                     return Ok(reply);
                 }
-                // 两种失败都先驱逐这条（死连接不再拖下一轮）
-                Ok(Err(_)) | Err(_) => self.evict_if_same(key, &conn),
+                Ok(Err(e)) => {
+                    if dbg {
+                        eprintln!("[quic-debug] 缓存连接请求失败（立即换新）：{e}");
+                    }
+                    self.evict_if_same(key, &conn);
+                }
+                Err(_) => {
+                    if dbg {
+                        eprintln!(
+                            "[quic-debug] 缓存连接请求超时（{}s，换新重试）",
+                            CACHED_ATTEMPT_TIMEOUT.as_secs()
+                        );
+                    }
+                    self.evict_if_same(key, &conn);
+                }
             }
         }
         let conn = self.get_or_connect(peer).await?;
