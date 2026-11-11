@@ -2211,8 +2211,22 @@ pub async fn download_attachment(
                 .path()
                 .map(|p| crate::security::space_db_is_encrypted(std::path::Path::new(p)))
                 .unwrap_or(false);
-            let candidates =
-                crate::mesh::mesh_peers_by_name(&proto, &name, &device, &peers, local_encrypted);
+            // ⭐ 2026-11-11（真机：广播被热点隔离时点下载报「附近没有能问的对端」）：
+            //   候选必须与**同步轮次**用同一套（含**手动地址**那档）—— 原来只吃发现层公告
+            //   ⇒ 公告一断，连手动地址里已配对的设备也"看不见"（同步能拉、点下载说没人）。
+            let manual = crate::mesh::manual_peer_bases(&c);
+            let paired: Vec<String> = crate::mesh::paired_devices(&c, &ws_id, device_level)
+                .map(|v| v.into_iter().map(|d| d.device_id).collect())
+                .unwrap_or_default();
+            let candidates = crate::mesh::mesh_peers_by_name_with_manual(
+                &proto,
+                &name,
+                &device,
+                &peers,
+                local_encrypted,
+                &manual,
+                &paired,
+            );
             (candidates, proto)
         }
     };
@@ -14275,6 +14289,28 @@ mod encrypted_sync_note_tests {
         assert!(
             json.contains("\"done\":true") && json.contains("网络中断"),
             "{json}"
+        );
+    }
+
+    /// ⭐ 2026-11-11（真机：广播被热点隔离时点下载报「附近没有能问的对端」）：
+    /// 下载的候选必须与**同步轮次**同一套 —— 含「手动地址 ＋ 已配对」那一档；
+    /// 原来只吃发现层公告 ⇒ 公告一断，手动地址里的已配对设备也"看不见"。
+    ///
+    /// ⚠️ 判据串**拆两段再拼**：整串写在源码里会被 `include_str!` 自己匹配到（自指假红）。
+    #[test]
+    fn attachment_download_candidates_include_manual_paired_peers() {
+        let src = include_str!("sync.rs");
+        let old = concat!("crate::mesh::mesh_peers_by_name(", "&proto");
+        assert!(!src.contains(old), "⛔ 下载候选不许再只吃发现层公告");
+        let with_manual = concat!("crate::mesh::mesh_peers_by_name_", "with_manual(");
+        assert!(
+            src.contains(with_manual),
+            "下载候选必须走带手动地址的版本（与同步轮次同一套）"
+        );
+        let paired = concat!("crate::mesh::paired_devices(", "&c, &ws_id, device_level)");
+        assert!(
+            src.contains(paired),
+            "手动设备只追加**已配对**的 ⇒ 下载候选必须读 paired_devices"
         );
     }
 }
