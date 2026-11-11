@@ -1036,6 +1036,54 @@ mod tests {
         assert_eq!(seen.len(), 10, "服务端必须真的接到 10 条流：{seen:?}");
     }
 
+    /// ⭐ **2026-11-11（真机每轮 3s 长尾的真因回归判据）**：**生产服务端 `serve_one_conn`
+    /// 必须能在同一连接上连续服务多条流**。旧实现一条连接只服务一条流 ⇒ 第二次请求等应答直到
+    /// 超时、驱逐后重连（`connect_attempts` 变 2、每轮 3s）。
+    #[tokio::test]
+    async fn serve_one_conn_serves_multiple_streams_on_one_connection() {
+        let server = bind_direct(SecretKey::generate())
+            .await
+            .expect("服务端端点");
+        let peer = loopback_addr(&server, ipv4_port(&server));
+        let serve = tokio::spawn(async move {
+            let Some(incoming) = server.accept().await else {
+                panic!("端点已关，接不到连接");
+            };
+            let conn = incoming.await.expect("QUIC 握手");
+            crate::relay_tunnel::iroh_tunnel::serve_one_conn(conn, |req| TunnelReply {
+                status: 200,
+                body: format!("ok:{}", req.target).into_bytes(),
+            })
+            .await
+        });
+
+        let registry = LanQuicRegistry::new(SecretKey::generate())
+            .await
+            .expect("注册表");
+        for i in 0..3 {
+            let req = TunnelRequest::new("GET", &format!("/multi/{i}"));
+            let reply = tokio::time::timeout(
+                Duration::from_secs(5),
+                registry.request(peer.clone(), &req),
+            )
+            .await
+            .expect("5s 内必须完成（同一连接应可复用）")
+            .expect("请求必须成功");
+            assert_eq!(
+                String::from_utf8_lossy(&reply.body),
+                format!("ok:/multi/{i}"),
+                "第 {i} 条应答要对得上"
+            );
+        }
+        assert_eq!(
+            registry.connect_attempts(),
+            1,
+            "3 次请求只应 connect 一次（服务端必须循环接流；旧实现这里会是 2~3）"
+        );
+        registry.close().await;
+        let _ = tokio::time::timeout(Duration::from_secs(5), serve).await;
+    }
+
     /// ⭐⭐ **连接复用判据 ②**：**并发 8 次**同 peer request ⇒ 仍只 connect 1 次、只 1 条缓存连接。
     #[tokio::test]
     async fn concurrent_requests_share_one_connection() {
