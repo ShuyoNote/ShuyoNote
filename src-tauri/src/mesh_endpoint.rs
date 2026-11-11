@@ -474,6 +474,67 @@ impl Endpoint for QuicMeshEndpoint {
         token: Option<&'a str>,
     ) -> Pin<Box<dyn Future<Output = Result<(u16, AttachmentBody), String>> + Send + 'a>> {
         Box::pin(async move {
+            // ⭐ **P0-3（2026-11-11）**：附件走**分块流式** —— 每块 4MB 用 `Range` 头单独请求，
+            //   收到一块就写进管道（内存有界，⛔ 不再整包缓冲 64MB）；断点/续传由调用方传进来的
+            //   `offset` 决定起点，暂停/取消 = 消费方停止读 → 写失败 → 循环退出。
+            //   ⚠️ 中途失败就断开流（消费方 sha256 校验会失败并重试），⛔ 不冒充成功。
+            //   其它 target（pull/manifest/page）保持原“整包缓冲”路径，行为逐字不变。
+            if target.starts_with("/mesh/attachment") {
+                const CHUNK: u64 = 4 * 1024 * 1024;
+                let start0 = attachment_offset_in_target(target);
+                let (mut writer, reader) = tokio::io::duplex(64 * 1024);
+                let registry = self.registry.clone();
+                let peer = self.peer.clone();
+                let target_owned = target.to_string();
+                let auth_owned = auth.map(|(d, ts, s)| (d.to_string(), ts, s.to_string()));
+                let token_owned = token.map(|t| t.to_string());
+                tokio::spawn(async move {
+                    use tokio::io::AsyncWriteExt;
+                    let mut start = start0;
+                    let mut total: u64 = 0;
+                    loop {
+                        let end = start.saturating_add(CHUNK - 1);
+                        let mut req =
+                            crate::relay_tunnel::TunnelRequest::new("GET", &target_owned);
+                        if let Some((device_id, ts, sig)) = auth_owned.as_ref() {
+                            req = req
+                                .with_header(crate::mesh::HDR_DEVICE, device_id)
+                                .with_header(crate::mesh::HDR_TS, &ts.to_string())
+                                .with_header(crate::mesh::HDR_SIG, sig);
+                        }
+                        if let Some(t) =
+                            token_owned.as_deref().map(str::trim).filter(|t| !t.is_empty())
+                        {
+                            req = req.with_header("authorization", &format!("Bearer {t}"));
+                        }
+                        req = req.with_header("range", &format!("bytes={start}-{end}"));
+                        match registry.request(peer.clone(), &req).await {
+                            Ok(reply) if reply.status == 200 || reply.status == 206 => {
+                                if reply.body.is_empty() {
+                                    break;
+                                }
+                                total = total.saturating_add(reply.body.len() as u64);
+                                if writer.write_all(&reply.body).await.is_err() {
+                                    break; // 消费方停了（暂停/取消）⇒ 直接收工
+                                }
+                                start = start.saturating_add(reply.body.len() as u64);
+                                if (reply.body.len() as u64) < CHUNK {
+                                    break; // 最后一块
+                                }
+                            }
+                            Ok(reply) if reply.status == 416 => break, // 已到末尾
+                            _ => break, // 中途失败 ⇒ 断开（sha 会失败，⛔ 不冒充成功）
+                        }
+                    }
+                    let _ = writer.shutdown().await;
+                    // 真机验收证据：这一行 = 附件字节确实走了 QUIC（⛔ 不含 token/签名）。
+                    eprintln!(
+                        "[mesh-endpoint] 附件走 QUIC（target={target_owned}；{total} B；chunk={CHUNK}B）"
+                    );
+                });
+                return Ok((206, Box::pin(reader) as AttachmentBody));
+            }
+            // ── 非附件：保持原来的“整包缓冲成流”路径（逐字不变）──
             let mut req = crate::relay_tunnel::TunnelRequest::new("GET", target);
             if let Some((device_id, ts, sig)) = auth {
                 req = req
@@ -496,11 +557,6 @@ impl Endpoint for QuicMeshEndpoint {
                     reply.body.len()
                 ));
             }
-            // 真机验收证据：**这一行 = 附件字节确实走了 QUIC**（⛔ 不含 token/签名）。
-            eprintln!(
-                "[mesh-endpoint] 附件走 QUIC（target={target}；{} B）",
-                reply.body.len()
-            );
             let (mut writer, reader) = tokio::io::duplex(64 * 1024);
             let body = reply.body;
             tokio::spawn(async move {
@@ -510,6 +566,46 @@ impl Endpoint for QuicMeshEndpoint {
             });
             Ok((reply.status, Box::pin(reader) as AttachmentBody))
         })
+    }
+}
+
+/// ⭐ **P0-3（2026-11-11）**：从 `/mesh/attachment?...&offset=N` 里取续传起点（没有 ⇒ 0）。
+fn attachment_offset_in_target(target: &str) -> u64 {
+    let mut rest = target;
+    while let Some(i) = rest.find("offset=") {
+        let after = &rest[i + "offset=".len()..];
+        let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !digits.is_empty() {
+            return digits.parse::<u64>().unwrap_or(0);
+        }
+        rest = after;
+    }
+    0
+}
+
+#[cfg(test)]
+mod p03_tests {
+    use super::attachment_offset_in_target;
+
+    /// ⭐ P0-3（2026-11-11）：续传起点只从 target 的 `offset=` 取；没有/非法 ⇒ 0（旧行为）。
+    #[test]
+    fn attachment_offset_is_parsed_from_target() {
+        assert_eq!(
+            attachment_offset_in_target("/mesh/attachment?space_id=s&hash=h"),
+            0
+        );
+        assert_eq!(
+            attachment_offset_in_target("/mesh/attachment?space_id=s&hash=h&offset=0"),
+            0
+        );
+        assert_eq!(
+            attachment_offset_in_target("/mesh/attachment?space_id=s&hash=h&offset=8388608"),
+            8_388_608
+        );
+        assert_eq!(
+            attachment_offset_in_target("/mesh/attachment?space_id=s&offset=abc&hash=h"),
+            0
+        );
     }
 }
 
