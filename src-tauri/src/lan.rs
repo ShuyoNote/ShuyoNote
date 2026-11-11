@@ -296,6 +296,11 @@ pub struct LanAnnounce {
     ///   （与 `short_id`／`trust_ask`／`pubkey`／`listen_port` 同一手法 ✓）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub quic_addrs: Vec<String>,
+    /// ⭐ **2026-11-12（§13 F1 第一刀）**：这次公告是不是「本地刚有改动」
+    /// （发送侧只在本地保存后的那一轮置 true；接收侧看到 true ⇒ **立刻唤醒自己一轮**去拉，不等 2 分钟）。
+    /// 老对端忽略、老公告缺省 false ⇒ 行为不变，⛔ 不升 WIRE_VERSION。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dirty: bool,
 }
 
 impl Default for LanAnnounce {
@@ -322,6 +327,7 @@ impl Default for LanAnnounce {
             pubkey: String::new(),
             listen_port: None,
             quic_addrs: Vec::new(),
+            dirty: false,
         }
     }
 }
@@ -644,6 +650,7 @@ pub fn announce_for_own_hub(
     }
     Some(LanAnnounce {
         listen_port: None,
+        dirty: false,
         v: WIRE_VERSION,
         device_id: dev.to_string(),
         device_name: device_name.trim().to_string(),
@@ -1556,14 +1563,38 @@ pub async fn recv_into_within(
 mod tests {
     use super::*;
 
+    /// ⭐ 2026-11-12（§13 F1）：`dirty` 这一格必须**线上兼容** —— false 时一个字节都不多、
+    /// 老报文（缺这一格）照样收得下（⛔ 不升 WIRE_VERSION）。
+    #[test]
+    fn announce_dirty_flag_is_wire_compatible() {
+        let a = LanAnnounce::default();
+        let plain = serde_json::to_string(&a).expect("序列化");
+        assert!(
+            !plain.contains("\"dirty\""),
+            "dirty=false 时不该多一个字节（老对端逐字节不变）：{plain}"
+        );
+        let mut b = LanAnnounce::default();
+        b.dirty = true;
+        let with = serde_json::to_string(&b).expect("序列化");
+        assert!(with.contains("\"dirty\":true"), "true 时必须带上：{with}");
+        let parsed: LanAnnounce = serde_json::from_str(&plain).expect("老报文收得下");
+        assert!(!parsed.dirty);
+    }
+
     /// ⭐ 2026-11-11：手动设备也单播发公告（广播被 AP 过滤时的兜底）。
     #[test]
     fn manual_bases_become_unicast_announce_targets() {
         use std::collections::BTreeMap;
         let mut bases = BTreeMap::new();
         bases.insert("dev-a".to_string(), "http://172.16.174.37:8788".to_string());
-        bases.insert("dev-b".to_string(), "https://192.168.43.190:8788/".to_string());
-        bases.insert("dev-host".to_string(), "http://relay.example.com:8788".to_string());
+        bases.insert(
+            "dev-b".to_string(),
+            "https://192.168.43.190:8788/".to_string(),
+        );
+        bases.insert(
+            "dev-host".to_string(),
+            "http://relay.example.com:8788".to_string(),
+        );
         let out = unicast_targets_from_bases(&bases, &[47821, 47822]);
         assert!(out.contains(&"172.16.174.37:47821".parse().unwrap()));
         assert!(out.contains(&"192.168.43.190:47822".parse().unwrap()));
@@ -1585,6 +1616,7 @@ mod tests {
     fn peer(device: &str, base: Option<&str>, spaces: &[&str]) -> Peer {
         Peer {
             announce: LanAnnounce {
+                dirty: false,
                 listen_port: None,
                 trust_ask: String::new(),
                 trust_secret: String::new(),
@@ -1757,6 +1789,7 @@ mod tests {
 
     fn announce_of(device: &str, base: Option<&str>, spaces: &[&str]) -> LanAnnounce {
         LanAnnounce {
+            dirty: false,
             listen_port: None,
             trust_ask: String::new(),
             trust_secret: String::new(),
@@ -2784,6 +2817,7 @@ mod multi_space_peer_table_tests {
 
     fn announce(device: &str, space: &str, name: &str, kind: &str, base: &str) -> LanAnnounce {
         LanAnnounce {
+            dirty: false,
             listen_port: None,
             v: WIRE_VERSION,
             device_id: device.to_string(),
@@ -3504,6 +3538,7 @@ mod quic_addrs_compat_tests {
     /// 加字段之前那种"最小形状"：空表时线上的样子必须**逐字节不变**。
     fn minimal() -> LanAnnounce {
         LanAnnounce {
+            dirty: false,
             v: WIRE_VERSION,
             device_id: "dev-a".into(),
             device_name: "本机".into(),

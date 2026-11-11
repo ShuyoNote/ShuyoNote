@@ -3495,8 +3495,7 @@ fn cap_export_markdown(page_id: Option<&str>, space_id: Option<&str>) -> CapResu
             let args = serde_json::json!({ "spaceId": current, "spaceName": name }).to_string();
             // ⭐ 2026-11-08：整空间导出要打 zip（含全部附件）—— 5s 是**单页**的预算，
             //   百 MB 空间必然撞线（真机 5266ms）。这条单独放宽到 60s；单页仍走 5s。
-            let reply =
-                crate::frontend_tool::call_with_timeout("export.markdown", &args, 60_000)?;
+            let reply = crate::frontend_tool::call_with_timeout("export.markdown", &args, 60_000)?;
             export_handle_from_reply(reply, "application/zip")
         }
     }
@@ -6183,7 +6182,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         "files.stat" => cap_files_stat(&arg_str("attId")?, arg_opt_str("spaceId").as_deref()),
         "files.extract_status" => {
             cap_files_extract_status(&arg_str("attId")?, arg_opt_str("spaceId").as_deref())
-        },
+        }
         "files.list_orphan" => cap_files_list_orphan(
             arg_i64("limit", 50),
             arg_i64("offset", 0),
@@ -6191,7 +6190,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         ),
         "files.download" => {
             cap_files_download(&arg_str("attId")?, arg_opt_str("spaceId").as_deref())
-        },
+        }
         "blobs.fetch" => cap_blobs_fetch(&arg_str("handle")?),
         // B3：导出（句柄，复用同一张句柄表）＋覆盖率报告（JSON）
         "export.markdown" => cap_export_markdown(
@@ -19363,4 +19362,3 @@ register({ id: "s.run", title: "结构化", run: function () {
         b1c_cleanup(&f);
     }
 }
-

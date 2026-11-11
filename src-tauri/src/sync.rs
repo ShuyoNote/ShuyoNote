@@ -6476,6 +6476,7 @@ mod r146_mesh_scope_tests {
             "me-dev",
             &[crate::lan::Peer {
                 announce: crate::lan::LanAnnounce {
+                    dirty: false,
                     listen_port: None,
                     trust_ask: String::new(),
                     trust_secret: String::new(),
@@ -10997,6 +10998,7 @@ mod tests {
     fn lan_peer(device: &str, base: &str, spaces: &[&str]) -> Peer {
         Peer {
             announce: crate::lan::LanAnnounce {
+                dirty: false,
                 listen_port: None,
                 trust_ask: String::new(),
                 trust_secret: String::new(),
@@ -12972,6 +12974,7 @@ mod tests {
     ) -> crate::lan::Peer {
         crate::lan::Peer {
             announce: crate::lan::LanAnnounce {
+                dirty: false,
                 listen_port: None,
                 trust_ask: String::new(),
                 trust_secret: String::new(),
@@ -13695,6 +13698,7 @@ mod tests {
 
         let peer = |device: &str, spaces: &[&str]| crate::lan::Peer {
             announce: crate::lan::LanAnnounce {
+                dirty: false,
                 listen_port: None,
                 trust_ask: String::new(),
                 trust_secret: String::new(),

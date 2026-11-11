@@ -784,6 +784,9 @@ static BACKGROUND_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 /// gate 决定（暂停 env / 没配网格 / 上一轮在飞 / 2s 合并窗）—— ⛔ 唤醒**不绕**任何既有 gate。
 static ROUND_NOTIFY: tokio::sync::Notify = tokio::sync::Notify::const_new();
 static EVENT_ROUND_PENDING: AtomicBool = AtomicBool::new(false);
+/// ⭐ **2026-11-12（§13 F1 第一刀）**：本地刚保存过 ⇒ 下一条公告带 `dirty=true`
+/// （对端收到即唤醒自己一轮去拉，不等 2 分钟；⛔ 不升线上版本）。
+static ANNOUNCE_DIRTY_PENDING: AtomicBool = AtomicBool::new(false);
 
 /// ⭐ **P3-1a**：事件触发轮的**最小间隔** —— 连续保存/连续命令在 2 秒内只合并成一轮。
 pub const EVENT_ROUND_MIN_GAP_MS: i64 = 2_000;
@@ -1194,6 +1197,7 @@ pub fn announces_for_with_mesh(
             space_kind,
         )
         .unwrap_or_else(|| lan::LanAnnounce {
+            dirty: false,
             listen_port: None,
             v: lan::WIRE_VERSION,
             device_id: dev.to_string(),
@@ -1451,6 +1455,11 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                         BACKGROUND_EMPTY_STREAK.store(0, Ordering::SeqCst);
                         BACKGROUND_HEARD_TOTAL.fetch_add(1, Ordering::SeqCst);
                         eprintln!("{}", lan::announce_recv_line(&p, &own_spaces));
+                        // ⭐ 2026-11-12（§13 F1 第一刀）：对端说“我刚有改动” ⇒ **立刻唤醒一轮**
+                        //   去拉（不等 2 分钟）。老对端没有这一格 ⇒ false ⇒ 行为不变。
+                        if p.announce.dirty {
+                            crate::lan_state::request_round_now();
+                        }
                     }
                     Ok(lan::RecvOutcome::OwnAnnounce { from }) => {
                         eprintln!(
@@ -1661,7 +1670,16 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 };
                 // ⭐ P3-2a：再给每条公告填本机 QUIC 地址（⚠️ 在 DB 锁**之外** await；
                 //   默认/relay 构建这一步原样返回 ⇒ 空表不变）。
-                let announced = fill_quic_addrs(announced).await;
+                // ⭐ F1：这一轮要不要标 `dirty`（本地保存后一条公告内有效；换成 false 即消费掉）。
+                let dirty_now = ANNOUNCE_DIRTY_PENDING.swap(false, Ordering::SeqCst);
+                let announced: Vec<_> = fill_quic_addrs(announced)
+                    .await
+                    .into_iter()
+                    .map(|mut a| {
+                        a.dirty = dirty_now;
+                        a
+                    })
+                    .collect();
                 for mut a in announced {
                     // ⭐ 2026-11-03：把**本机实际监听的端口**写进公告 —— 对端据此单播回来
                     //    （两端可能绑在不同候选端口上；老对端忽略这一格，仍按候选端口全打）。
@@ -1688,6 +1706,12 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             if EVENT_ROUND_PENDING.swap(false, Ordering::SeqCst) {
                 let paused = autosync_paused();
                 let gate_open = !paused && !meshed.is_empty();
+                // ⭐ F1：本地保存 ⇒ 立刻公告（下一片；不等 30s 间隔），并带上 dirty 标记。
+                //   ⚠️ 只在门开着时置：暂停/没配网格时**不许**对外发"我有改动"。
+                if gate_open {
+                    ANNOUNCE_DIRTY_PENDING.store(true, Ordering::SeqCst);
+                    last_announce_ms = 0;
+                }
                 if !event_round_ready(
                     paused,
                     meshed.len(),
@@ -2330,6 +2354,7 @@ mod tests {
     fn peer_of(device: &str, base: &str, spaces: &[&str]) -> Peer {
         Peer {
             announce: LanAnnounce {
+                dirty: false,
                 listen_port: None,
                 trust_ask: String::new(),
                 trust_secret: String::new(),
@@ -3161,6 +3186,7 @@ mod short_id_tests {
     fn peer_with_ask(device: &str, ask: &str, seen_at: i64) -> crate::lan::Peer {
         crate::lan::Peer {
             announce: crate::lan::LanAnnounce {
+                dirty: false,
                 listen_port: None,
                 trust_ask: ask.to_string(),
                 trust_secret: String::new(),
