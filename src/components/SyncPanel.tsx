@@ -716,6 +716,13 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   const attName = useSyncStatus((s) => s.attName);
   const syncDurationMs = useSyncStatus((s) => s.durationMs);
   const [history, setHistory] = useState<{ ws_id: string; ws_name: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string; title: string }[] }[]>([]);
+  // ⭐ 2026-11-11（§13 A2）：只读「各对端水位」（对端只回序号，⛔ 不显示内部设备 id）。
+  const [watermarks, setWatermarks] = useState<{
+    spaceName: string;
+    localMaxSeq: number;
+    peers: { index: number; cursor: number }[];
+    note: string;
+  } | null>(null);
   const [historyOpen, setHistoryOpen] = useState(true); // ⭐ 2026-11-11（A）：默认展开——记录要能被看见
   const [detailOpenIdx, setDetailOpenIdx] = useState<number | null>(null);
   // A+C（owner 2026-10-29）：失败那条正在重试 / 复制诊断时的忙碌位。
@@ -856,6 +863,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
         }),
       );
       await loadHistory();
+      await loadWatermarks();
       await loadPendingRemote();
     } catch (e) {
       setStatus(String(e));
@@ -896,9 +904,18 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
     }
   };
 
-  // 清空同步历史（本地 meta.only）。
-  const clearHistory = async () => {
+  // ⭐ 2026-11-11（§13 A2）：只读「各对端水位」——读不到就不显示（⛔ 不编 0）。
+  const loadWatermarks = async () => {
     try {
+      const w = await api.meshWatermarks();
+      setWatermarks(w && typeof w === "object" ? w : null);
+    } catch {
+      setWatermarks(null);
+    }
+  };
+
+  // 清空同步历史（本地 meta.only）。
+  const clearHistory = async () => {    try {
       await api.clearSyncHistory();
       setHistory([]);
       setStatus("同步历史已清空");
@@ -2819,6 +2836,32 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
               ⇒ ⭐ 这句连同那个理由一起退役 ✓（⛔ 不留一句描述已删东西的注释 ✗）。 */}
           <div className="sync-group is-advanced">
 
+
+            {/* ⭐ 2026-11-11（§13 A2）：只读「各对端水位」——本机已发到哪 ＋ 各对端已收到哪。
+                ⚠️ 对端只用**序号**（内部设备 id 不上界面）；读不到就不显示（⛔ 不编 0）。 */}
+            {watermarks && (watermarks.localMaxSeq > 0 || watermarks.peers.length > 0) && (
+              <details className="sync-row">
+                <summary>
+                  <span className="sync-row-label">各对端水位</span>
+                  <span className="sync-row-value">
+                    本机 {watermarks.localMaxSeq} ｜ 对端 {watermarks.peers.length} 台
+                  </span>
+                  <span className="sync-row-caret" aria-hidden>›</span>
+                </summary>
+                <div className="sync-row-body">
+                  <div className="sync-hint" data-testid="mesh-watermarks">
+                    {watermarks.peers.length === 0
+                      ? "还没有对端水位（没和任何设备同步过）"
+                      : watermarks.peers
+                          .map((p) => `对端 ${p.index}：已收至 ${p.cursor}`)
+                          .join(" ｜ ")}
+                    <div className="sync-hint" style={{ marginTop: 4 }}>
+                      {watermarks.note}
+                    </div>
+                  </div>
+                </div>
+              </details>
+            )}
 
             {/* ⑥ 同步历史 ← 原来吸底条里的 `.sync-history`（内部结构一个字没改）。
                 它以前是 `.sync-foot` 的常驻内容 —— 折进这里之后吸底条只剩读数行。 */}

@@ -468,6 +468,26 @@ export interface MeshUidConflict {
   lastSeenAt: number;
 }
 
+/**
+ * ⭐ **2026-11-11（§13 A2）**：一条对等体的只读水位（⛔ 不含 `device_id`／正文）。
+ * 界面按 `index` 显示（内部设备 id 不上界面 —— `INV-UI-copy-no-internal-ids`）。
+ */
+export interface MeshPeerWatermark {
+  /** 对端序号（1 起）。 */
+  index: number;
+  /** 本机已收该对端到哪个 `device_seq`（0 ＝ 还没收过）。 */
+  cursor: number;
+}
+
+/** ⭐ **§13 A2 第一刀**：当前空间的只读水位读数（本机高水位 ＋ 各对端已收水位）。 */
+export interface MeshWatermarks {
+  spaceName: string;
+  localMaxSeq: number;
+  peers: MeshPeerWatermark[];
+  /** 口径说明（人话；界面可原样展示）。 */
+  note: string;
+}
+
 /** 网格设置的**读数**（与 Rust `mesh::MeshConfigState` 逐字段相同）。 */export interface MeshConfigState {
   enabled: boolean;
   bind: string | null;
@@ -1254,6 +1274,8 @@ export interface CommandMap {
   mesh_uid_conflicts: { args: undefined; result: MeshUidConflict[] };
   /** 确认「这一台对端的这个 uid」就是本机同名空间 ⇒ 融合闸放行（只写同步元数据）。 */
   mesh_uid_confirm: { args: { peerDevice: string; peerUid: string }; result: boolean };
+  /** ⭐ 2026-11-11（§13 A2）：只读「设备×空间水位」（对端只回序号，⛔ 无设备 id/正文）。 */
+  mesh_watermarks: { args: undefined; result: MeshWatermarks };
   /**
    * 丙-③-b-2b：**写网格设置**（监听地址 / 口令），并把窗口的开关跟着改。
    *

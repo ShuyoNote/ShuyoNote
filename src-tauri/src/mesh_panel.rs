@@ -173,9 +173,104 @@ pub fn mesh_uid_confirm(
     Ok(true)
 }
 
+/// ⭐ **2026-11-11（§13 A2）**：一条对等体的**只读水位**（⛔ 不含 `device_id`／正文）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshPeerWatermark {
+    /// 对端序号（1 起；⚠️ 内部 device_id 不上界面 —— `INV-UI-copy-no-internal-ids`）。
+    pub index: usize,
+    /// 本机已收该对端到哪个 `device_seq`（0 ＝ 还没收过）。
+    pub cursor: i64,
+}
+
+/// ⭐ **2026-11-11（§13 A2 第一刀）**：当前空间的只读水位读数（本机高水位 ＋ 各对端已收水位）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshWatermarks {
+    pub space_name: String,
+    /// 本机这一栏已发到哪个 `device_seq`。
+    pub local_max_seq: i64,
+    /// 各对端的已收水位（按水位降序；⛔ 只有序号，没有设备 id）。
+    pub peers: Vec<MeshPeerWatermark>,
+    /// 口径说明（人话；界面照抄）。
+    pub note: String,
+}
+
+/// 纯函数：从 `sync_state` 的 `(key, value)` 里挑出 `mesh_cursor:<space>:<device>` 解析水位。
+/// ⛔ 不猜：key 形状不对／值不是整数 ⇒ 跳过（⛔ 不把坏值当 0 混进来）。
+fn parse_peer_cursors(rows: &[(String, String)]) -> Vec<i64> {
+    let mut out: Vec<i64> = rows
+        .iter()
+        .filter_map(|(k, v)| {
+            let rest = k.strip_prefix("mesh_cursor:")?;
+            let (_space, _dev) = rest.rsplit_once(':')?;
+            v.trim().parse::<i64>().ok()
+        })
+        .collect();
+    out.sort_unstable();
+    out.reverse();
+    out
+}
+
+/// ⭐ **2026-11-11（§13 A2）**：只读「设备×空间水位」——当前空间：本机高水位 ＋ 各对端已收水位。
+///
+/// 口径：**只读**（不建连接、不发包、不写库）；对端只用**序号**表示（内部 id 不上界面）。
+#[tauri::command]
+pub fn mesh_watermarks(
+    db: State<'_, crate::db::Db>,
+) -> Result<MeshWatermarks, String> {
+    let app_data = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "bad_state: app data dir 未初始化".to_string())?;
+    let space = {
+        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+        crate::attachments::active_space_id(&c)
+    };
+    let sc = crate::db::open_space_conn_at(&space, app_data)?;
+    let space_name = crate::sync::local_space_name(&sc).unwrap_or_default();
+    let device = crate::sync::device_id(&sc).unwrap_or_default();
+    let local_max_seq = crate::mesh::max_own_device_seq_for_ui(&sc, &device).unwrap_or(0);
+    let mut stmt = sc
+        .prepare("SELECT key, value FROM sync_state WHERE key LIKE 'mesh_cursor:%'")
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<(String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+    let peers = parse_peer_cursors(&rows)
+        .into_iter()
+        .enumerate()
+        .map(|(i, cursor)| MeshPeerWatermark {
+            index: i + 1,
+            cursor,
+        })
+        .collect();
+    Ok(MeshWatermarks {
+        space_name,
+        local_max_seq,
+        peers,
+        note: "只读：对端按序号显示（内部设备 id 不上界面）；cursor ＝ 本机已收该对端到的位置".to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ⭐ 2026-11-11（§13 A2）：只读水位矩阵的**解析**判据 —— 只认 `mesh_cursor:<space>:<device>`，
+    /// 值必须是非负整数；形状不对/不是整数 ⇒ 跳过（⛔ 不猜、不把坏值当 0 混进来）。
+    #[test]
+    fn parse_peer_cursors_keeps_only_well_formed_positive_rows() {
+        let rows = vec![
+            ("mesh_cursor:sp:dev-a".to_string(), "12".to_string()),
+            ("mesh_cursor:sp:dev-b".to_string(), "7".to_string()),
+            ("mesh_cursor:sp:dev-c".to_string(), "abc".to_string()),
+            ("mesh_cursor:broken".to_string(), "9".to_string()),
+            ("other_key".to_string(), "3".to_string()),
+        ];
+        let got = parse_peer_cursors(&rows);
+        assert_eq!(got, vec![12, 7], "只留良构且有序（降序）；坏值/坏 key 跳过");
+    }
 
     /// ⭐ 一个最小的 meta 库（照 `lan_state.rs:988` 的那份夹具 ✓ ＋ 本模块要用到的三列 ✓）。
     ///

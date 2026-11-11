@@ -1824,6 +1824,15 @@ export function makeInvoke(store: SqliteStore) {
       // 没有网格层 ⇒ 无从确认；如实回 false（界面据此提示"这一档只在桌面版可用"）。
       return false as T;
     }
+    if (cmd === "mesh_watermarks") {
+      // Web 版没有设备直连层 ⇒ 没有"对端水位"可读；如实回空（⛔ 不编读数）。
+      return {
+        spaceName: "",
+        localMaxSeq: 0,
+        peers: [],
+        note: "Web 版没有设备直连水位",
+      } as T;
+    }
     if (cmd === "mesh_set_config") {
       // 丙-③-b-2b：**写网格设置**。Web 上同样不可用（没有发现层、开不了端口）——
       // 但这里**不抛错**：设置面回一个"关着 ＋ 为什么"的读数，界面照常能渲染，

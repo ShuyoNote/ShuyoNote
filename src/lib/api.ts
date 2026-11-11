@@ -3,7 +3,7 @@ import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import type { WikiPageInput } from "./wikiExport";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
-import type { CommandMap, LanStatus, MeshConfigState, MeshPanelScope, MeshPanelSpaces, MeshUidConflict, MeshRoundReport, MeshSyncAllReport, RelayStatus, SyncBudget, SyncCoreRoundReport, SyncCoreStatus, SyncCoreIpcStatus, SyncStreamStatus } from "./platform/commands";
+import type { CommandMap, LanStatus, MeshConfigState, MeshPanelScope, MeshPanelSpaces, MeshUidConflict, MeshWatermarks, MeshRoundReport, MeshSyncAllReport, RelayStatus, SyncBudget, SyncCoreRoundReport, SyncCoreStatus, SyncCoreIpcStatus, SyncStreamStatus } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 // The command name, args shape and result are validated at compile time against
@@ -630,6 +630,8 @@ export const api = {
   /** 确认「这一台对端的这个 uid」＝本机同名空间（之后融合闸放行；只写同步元数据）。 */
   meshUidConfirm: (a: { peerDevice: string; peerUid: string }) =>
     invoke("mesh_uid_confirm", a) as Promise<boolean>,
+  /** ⭐ 2026-11-11（§13 A2）：只读「设备×空间水位」（对端只回序号，⛔ 无设备 id）。 */
+  meshWatermarks: () => invoke("mesh_watermarks") as Promise<MeshWatermarks>,
   /** ⭐ **P-4 片③-a（2026-10-14）**：⭐ 逐台「对码」读数 ✓（⭐ 比对码由**后端**算 ✓ ——
    *  `code: null` ＝ **读不到** ✓，人话原因在 `reason` 里 ✓）。 */
   pairingCodeReading: (a: { peerDeviceId: string; peerPubkey: string }) =>

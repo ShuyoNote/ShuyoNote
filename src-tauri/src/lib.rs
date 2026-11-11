@@ -1262,6 +1262,8 @@ pub fn run() {
             // ⭐ 2026-11-10（owner 批 B）：「同名但 uid 不同」冲突的列表与确认（只碰元数据）。
             mesh_panel::mesh_uid_conflicts,
             mesh_panel::mesh_uid_confirm,
+            // ⭐ 2026-11-11（§13 A2）：只读「设备×空间水位」。
+            mesh_panel::mesh_watermarks,
             // 甲-1 接线第 1／3 件（2026-09-25）：局域网发现的**启动**与**读数**。
             // ⚠️ 只有桌面：发现靠 Rust 收发的 UDP（`lan.rs`），Web 平台上没有这一层 ——
             //    Web 侧的实现如实回"配置地址那一档 ＋ 局域网不可用"（不是假装发现了谁）。
