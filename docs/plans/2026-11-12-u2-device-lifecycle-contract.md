@@ -4,8 +4,9 @@
 证据：既有实现 `../../src-tauri/src/sync.rs`（`device_unpair` / `device_unpair_at` / `device_unpair_served`）＋
 `../../src/components/SyncPanel.tsx`（「不再信任」二次确认 ＋ `duUnpair`）＋
 `../../src-tauri/src/mesh.rs`（撤销后拒绝的判据：`unpairing_one_device_only_stops_that_device` 等）
-片 1（2026-11-12）：`../../src/lib/peerRemovedHint.ts`（「被移出 / 没配对」两种说法，唯一实现）＋
-`../../src/lib/peerRemovedHint.test.ts`（4 条）＋ `../../src/components/syncPanelRevokedHint.wiring.test.ts`（3 条）；
+片 1（2026-11-12）：`../../src/lib/peerRemovedHint.ts`（「被移出 / 没配对」两种说法；⚠️ 名单为空时**两种都说**，
+因为撤销会通知对端删卡）＋ `../../src/lib/peerRemovedHint.test.ts`（4 条）＋
+`../../src/components/syncPanelRevokedHint.wiring.test.ts`（3 条）；
 `tsc --noEmit` 0；全量 vitest 门禁 ✓；`check-hook-order` / `check-store-subscriptions` / `check-overlay-registry` 全绿
 上位：[个人同步 2.0 需求](2026-11-08-personal-sync-2.0-requirements.md) §13.5 U2（"撤销后该设备**再也拉不到**新数据（有判据）"）
 前置：[U1 邀请式配对](2026-11-12-u1-invite-pairing-contract.md) 已完成（撤销后要重新加入 ⇒ 走邀请/配对）
@@ -26,6 +27,7 @@
 | 能力 | 现状 | 判据（机器可核） |
 |---|---|---|
 | 撤销命令 | `device_unpair(workspace_id: Option, peer_device_id)`：删本机名单那一行 ＋ 从运行窗口摘卡 | `sync.rs`：`unpairing_a_personal_card_is_machine_wide_and_a_team_card_is_per_space` |
+| **撤销通知对端**（真机 2026-11-12 查实） | 撤销时入队 `pending revoke`（`unpairing_records_a_pending_revoke_for_the_peer`）；对端在线 ⇒ 发 `GET /mesh/revoked`，对端 `handle_revoked` 把**本机那张卡也删掉**（所以被撤方本地名单会变空） | `mesh.rs`：`retry_pending_revokes`（72h 上限、老版本 404 如实放弃）、`handle_revoked` |
 | 撤销后拒绝新连接 | 该设备下次请求 ⇒ 401（"没有登记过这台设备的公钥"） | `mesh.rs`：`unpairing_one_device_only_stops_that_device`、`merge_gate_d1_unpaired_device_is_refused` |
 | 只撤一台、别人不受影响 | ✅ | 同上 ＋ `unpairing_records_a_pending_revoke_for_the_peer` |
 | 撤销后不被迁移带回 | ✅ | `sync.rs`：`a_migration_never_resurrects_a_device_the_user_unpaired` |
@@ -42,9 +44,11 @@
   ① 它拉不动你的内容了；② **笔记和附件一个字节都不会删**；③ 想再连要**重新配对/邀请**；
   ④ ⭐ 新增（本轮补）**已同步到它上面的副本删不掉，本机也无法远程擦除**。
   ⛔ 不许用 Markdown `**`（纯文本确认框里会显示星号）；⛔ 不许出现裸设备号。
-- **C4（被移出方如实说）** 被撤设备再拉取失败时，界面必须**说清楚**是「对方不再信任这台设备
-  （可能已被移出）」，⛔ 不许只说"同步失败/网络错误"（那会让人反复排查网络）。
-  判据：源码级＋真机（见 §4）。
+- **C4（被移出方如实说）** 被撤设备再拉取失败时，界面必须**说清楚**这是"不再被信任"，
+  ⛔ 不许只说"同步失败/网络错误"（那会让人反复排查网络）。⚠️ 真机 2026-11-12 查实：
+  撤销**会通知对端并删掉对端的卡** ⇒ 被撤方本地名单变空 ⇒ **"名单里没有它"分不出"没配对过"与"被移出"**；
+  ⇒ 文案必须**同时覆盖两种**（"可能从没配对过，也可能对方已把这台设备移出；如果之前配对过 ⇒ 对方已撤销"），
+  并在"本机名单里还有它"时用更确定的"已被移出"那句。判据：源码级＋真机（见 §4）。
 - **C5（重新加入必须邀请）** 被撤设备要回来 ⇒ 必须**重新配对/邀请**；⛔ 不许自动恢复；
   迁移/换机不得把已撤设备带回（现状判据已钉，保持）。
 - **C6（不留材料）** 撤销只动名单/卡；⛔ 不写密钥材料、⛔ 不改 `space_uid`、⛔ 不删本机数据。
