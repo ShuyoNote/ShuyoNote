@@ -77,8 +77,12 @@ F1 端到端（真机，两侧 485e1a8c）  ✅ 2026-11-12 09:41：我方保存�
    「可能自己好的」/ ③A 一句话+可点按钮 / ④A 后台也重试）**：契约
    `docs/plans/2026-11-12-u3-failure-recovery-contract.md`；**片 1–3 已落地**（`retry_plan` /
    `auto_retryable` 纯函数，后台轮接入 `advance_auto_retry`/`background_round_due_with_retry`，
-   界面 `auto-retry-stopped` 标记指向既有手动入口）；判据：Rust 5 条真值表 + wiring 2/2；
-   剩 **片 4 真机**（网络类按 60/120 实跑一次；401 零自动重试）。
+   界面 `auto-retry-stopped` 标记指向既有手动入口）；判据：Rust 6 条真值表 + wiring 2/2；
+   **片 4 真机部分通过（2026-11-12）**：① 4 次网络类失败后停止 ✓（日志 `[16:43:08] 已停止自动重试`，
+   `stopped=true/streak=4`）；② 修回地址后成功一轮 ⇒ `streak=0/stopped=false` ✓；
+   ⚠️ 60 s 间隔真机被"轮时长 3.3 min + 前端自动保存立即触发事件轮"覆盖，未取干净读数（判据以真值表为准）；
+   ⏳ 401 零重试仍待 AMD 撤销一次。**真机还抓到并修掉一个调度 bug**：第一版按"上次开跑+间隔"算，
+   会被"跳过"分支重置 ⇒ 实测 60s 变 7–11 分钟；已改**独立截止时刻** `AUTO_RETRY_NEXT_AT_MS`。
 5) A1 CRDT 灰度（⛔ 必须等 7 天影子观察，最早 2026-11-18 收口；分批＋可回退，默认值由 owner 拍）
 5) relay ACME 自动化（当前证书外部签发；可做方案：certbot hook + 热重载，或内置 ACME 客户端）
 6) §13 其余：F2 反熵、F3 调度、U3 失败自动、U4 冲突引导、O1 同步图、O2 诊断包

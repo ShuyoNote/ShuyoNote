@@ -11,7 +11,10 @@
 （生产后台轮改用它；老 4 参 `background_round_due` 保留给既有判据）；`../../src-tauri/src/mesh.rs` 的
 `MeshConfigState.auto_retry_stopped/auto_retry_streak` 由 `lan_status` 补（`config_state` 保持纯函数）；
 判据 `advance_auto_retry_stops_after_four_transient_failures`（1/1）＋ `background_interval_uses_retry_plan_until_stopped`（1/1）
-＋ `background_round_due_honours_the_accelerated_retry`（1/1）
+＋ `background_round_due_honours_the_accelerated_retry`（1/1）＋ `retry_deadline_overrides_the_regular_cadence`（1/1）
+⚠️ **真机修出的 bug（2026-11-12 16:14–16:43）**：第一版按「上次开跑 ＋ 间隔」算 ⇒ 「跳过（上一轮在飞）」分支
+重置 `last_bg_round_ms` ⇒ 实测 60 s 被拉成 7–11 分钟；已改成**独立截止时刻** `AUTO_RETRY_NEXT_AT_MS`
+（在**这一轮真的结束**时算，跳过不重置），截止时刻优先于常规节拍（600 s 退避不会被 5 分钟常态抢跑）。
 片 3（2026-11-12）：`../../src/components/SyncPanel.tsx` 的 `data-testid="auto-retry-stopped"`（连续 N 次 → 指向**已有**手动入口）；
 `../../src/components/syncPanelAutoRetry.wiring.test.ts`（2/2）；`tsc --noEmit` 0；全量 vitest 门禁 ✓
 
@@ -76,7 +79,7 @@
 | 1 ✅ | 纯函数 `retry_plan` ＋ 原因分类映射表（Rust；唯一实现） | 单测真值表（`retry_plan_follows_the_60_120_300_600_cap` ＋ `auto_retryable_only_for_transient_network_failures`，含"身份类零重试/原因变化清零/4 次封顶"） |
 | 2 ✅ | 后台轮接入：固定 60 s → `retry_plan`；停止状态可读 | 源码级接线判据 ＋ 既有 `background_round_interval_ms` 判据换对象（新增 3 条真值表：`advance_auto_retry` / `background_interval_with_retry` / `due_with_retry`） |
 | 3 ✅ | 界面：失败行「一句话＋按钮」＋「已停止自动重试」标记 | wiring 判据（`syncPanelAutoRetry.wiring.test.ts` 2/2）＋ 组件渲染（指向已有手动入口，⛔ 新按钮） |
-| 4 | 真机：网络类重试一次；401 零重试一次（与 AMD） | 两侧日志/界面读数 |
+| 4 ⏳ | 真机：网络类重试一次；401 零重试一次（与 AMD） | **部分通过（2026-11-12）**：① **4 次网络类失败后停止已验证**（真机日志 `[16:43:08] 已停止自动重试（连续 4 次网络类失败）`；`lan_status` 读数 `stopped=true / streak=4`）② **恢复已验证**（修回地址后成功一轮 ⇒ `streak=0 / stopped=false`）③ ⚠️ **60 s 间隔未取到干净读数**：一轮要跑 9 空间 ≈ 3.3 min，且前端自动保存会立刻触发事件轮（用户保存本来就该立即同步）⇒ 真机上"纯 60 s 路径"被事件轮覆盖；判据以纯函数真值表为准，真机只证"会按计划停/会恢复"④ **401 零重试仍待 AMD 撤销一次**（未做） |
 
 ## 6. 风险与回滚
 

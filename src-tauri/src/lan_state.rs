@@ -766,31 +766,27 @@ pub fn background_round_due(
     empty_streak: usize,
 ) -> bool {
     // ⭐ **U3（2026-11-12）**：老 4 参签名保留（既有判据照旧用它）⇒ 等价于"没有加速重试在跑"。
-    background_round_due_with_retry(last_ms, now_ms, meshed_n, empty_streak, 0, false)
+    background_round_due_with_retry(last_ms, now_ms, meshed_n, empty_streak, 0)
 }
 
-/// ⭐ **U3（2026-11-12，owner 拍 ①A/②A）**：带**加速重试状态**的"后台轮该不该跑"（生产路径用它）。
+/// ⭐ **U3（2026-11-12，owner 拍 ①A/②A）**：带**加速重试截止时刻**的"后台轮该不该跑"（生产路径用它）。
+///
+/// ⚠️ 与 `background_round_interval_with_retry` 的区别：**那一版按"上次开跑 + 间隔"算**，真机实测被
+/// 「跳过（上一轮在飞）」重置计时器冲掉；这一版只认**上一轮结束时刻算出的截止时间**。
 pub fn background_round_due_with_retry(
     last_ms: i64,
     now_ms: i64,
     meshed_n: usize,
     empty_streak: usize,
-    retry_streak: usize,
-    retry_stopped: bool,
+    next_at_ms: i64,
 ) -> bool {
     // ⭐ ① **一个网格空间都没有 ⇒ 不跑** ✓ —— "没配 ⇒ 一个字节都不动"一个字不变 ✓（判据钉着 ✓）。
     if meshed_n == 0 {
         return false;
     }
-    // ⭐ ② 到点就跑 ✓（`last_ms <= 0` ＝ 还没跑过 ⇒ 第一轮就跑 ✓ —— 复用 `announce_due` 的同一口径 ✓，
-    //    ⛔ 不另立一套 ✗：两处各写一遍的间隔判断迟早会漂 ✓）。
-    // ⭐ **U3（2026-11-12）**：间隔现在由 `background_round_interval_with_retry` 出 ——
-    //   失败且可重试 ⇒ 60/120/300/600（加速重试）；否则走 task-12 的 empty_streak 节拍（一个字不变）。
-    announce_due(
-        last_ms,
-        now_ms,
-        background_round_interval_with_retry(empty_streak, retry_streak, retry_stopped),
-    )
+    // ⭐ ② 常规节拍（task-12 的 empty_streak 规则，一个字不变）—— 但加速截止时间**优先**。
+    let base_due = announce_due(last_ms, now_ms, background_round_interval_ms(empty_streak));
+    retry_due(base_due, next_at_ms, now_ms)
 }
 
 /// ⭐ **task-12**：后台那一轮**是不是还在跑**（⛔ 不许两轮叠在一起 ✗）。
@@ -932,7 +928,37 @@ pub fn background_round_interval_with_retry(
     }
 }
 
-/// 已停止加速重试吗（给 `lan_status` 读数用；⛔ 不暴露计数细节给界面也行，但保留以便读数）。
+/// ⭐ **U3 片 2（2026-11-12）**：**加速重试的截止时刻**（毫秒；0 ＝ 没有在加速）。
+///
+/// 为什么必须独立于 `last_bg_round_ms`：真机实测（16:14-16:43）发现 —— 一轮要跑 9 个空间 ≈ 3 分钟，
+/// 而「上一轮还没跑完 ⇒ 跳过」那条分支会把 `last_bg_round_ms` 重置成"现在"，
+/// ⇒ 按 `last_bg_round_ms + 间隔` 算出来的加速节拍**被跳过它自己的重置冲掉**（实测 60/120/300/600 都变成 7–11 分钟）。
+/// ⇒ 截止时刻在**上一轮真的结束时**算好并独立存着：跳过不重置它，只有"真开跑"或"不再需要加速"才清。
+static AUTO_RETRY_NEXT_AT_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// ⭐ **U3（纯函数）**：这一拍后台轮该不该跑 —— 加速截止时间**优先**于常规节拍。
+///
+/// 口径：有截止时刻（>0）⇒ 只认它（到点就跑；⛔ 常规节拍不许抢跑 —— 否则 600 s 的退避会被 5 分钟常态提前打穿）；
+/// 没有 ⇒ 走原来的 `base_due`（task-12 的 empty_streak 节拍，一个字不变）。
+pub fn retry_due(base_due: bool, next_at_ms: i64, now_ms: i64) -> bool {
+    if next_at_ms > 0 {
+        now_ms >= next_at_ms
+    } else {
+        base_due
+    }
+}
+
+/// 当前加速重试截止时刻（给生产循环与读数用；0 ＝ 没在加速）。
+pub fn auto_retry_next_at() -> i64 {
+    AUTO_RETRY_NEXT_AT_MS.load(Ordering::SeqCst)
+}
+
+/// 清掉加速截止时刻（真开跑 / 成功 / 身份类 / 已停止 时调）。
+fn clear_auto_retry_deadline() {
+    AUTO_RETRY_NEXT_AT_MS.store(0, Ordering::SeqCst);
+}
+
+/// 已停止加速重试吗（给 `lan_status` 读数用）。
 pub fn auto_retry_stopped() -> bool {
     AUTO_RETRY_STOPPED.load(Ordering::SeqCst)
 }
@@ -1201,9 +1227,18 @@ fn spawn_background_round(
             let prev = auto_retry_streak();
             let was_stopped = auto_retry_stopped();
             let retriable = retriable_any && !identity_any;
+            let decision = retry_plan(prev, retriable);
             let (next, stopped) = advance_auto_retry(prev, fail_any, retriable);
             AUTO_RETRY_STREAK.store(next, Ordering::SeqCst);
             AUTO_RETRY_STOPPED.store(stopped, Ordering::SeqCst);
+            // ⭐ U3 片 2 修正（2026-11-12 真机教训）：截止时刻在**这一轮真的结束**时算，
+            //   ⛔ 不再用「上次开跑 + 间隔」（那条会被「跳过」分支重置 ⇒ 实测 60s 变 7 分钟）。
+            match decision {
+                RetryDecision::Retry { after_ms } if fail_any && retriable && !stopped => {
+                    AUTO_RETRY_NEXT_AT_MS.store(crate::db::now_ms() + after_ms, Ordering::SeqCst)
+                }
+                _ => clear_auto_retry_deadline(),
+            }
             if stopped && !was_stopped {
                 eprintln!(
                     "[{}] [mesh] 后台一轮：**已停止自动重试**（连续 {} 次网络类失败 ⇒ 回常态节拍；可手动重试）",
@@ -1211,8 +1246,10 @@ fn spawn_background_round(
                     next
                 );
             } else if was_stopped && !stopped {
+                // ⚠️ 两种退出"已停止"的路径：① 成功一轮；② 这一轮是**身份类**失败（本来就不该加速）。
+                //   ⛔ 文案不许断言"没有失败" —— 身份类失败也是失败，只是不加速。
                 eprintln!(
-                    "[{}] [mesh] 后台一轮：自动重试**已恢复**（这一轮没有失败）",
+                    "[{}] [mesh] 后台一轮：加速重试**已退出**（回常态节拍）",
                     lan::log_stamp()
                 );
             }
@@ -1989,6 +2026,8 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     last_bg_round_ms = now;
                     match spawn_background_round(&app2, &device_id, &mesh_cfgs, &state.peers(now)) {
                         Some(what) => {
+                            // ⭐ U3：真开跑了 ⇒ 加速截止时刻已消费（⛔ 别让它再触发一次）。
+                            clear_auto_retry_deadline();
                             eprintln!("{}", local_save_wake_line(&what, last_local_save_source()))
                         }
                         None => {
@@ -2018,12 +2057,13 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 now,
                 meshed.len(),
                 BACKGROUND_EMPTY_STREAK.load(Ordering::SeqCst),
-                auto_retry_streak(),
-                auto_retry_stopped(),
+                auto_retry_next_at(),
             ) {
                 last_bg_round_ms = now;
                 match spawn_background_round(&app2, &device_id, &mesh_cfgs, &state.peers(now)) {
                     Some(what) => {
+                        // ⭐ U3：真开跑了 ⇒ 截止时刻已消费（跳过那一支**不许**清它 —— 那正是真机踩过的坑）。
+                        clear_auto_retry_deadline();
                         eprintln!("[{}] [mesh] 后台一轮：开跑（{what}）", lan::log_stamp())
                     }
                     None => eprintln!(
@@ -4230,39 +4270,67 @@ mod p31_event_round_tests {
     fn background_round_due_honours_the_accelerated_retry() {
         use super::background_round_due_with_retry;
         let last = 1_000i64;
+        // 加速截止 last+60s（常规节拍是 5 分钟）⇒ 60 s 到点就跑
         assert!(background_round_due_with_retry(
             last,
             last + 60_000,
             1,
             0,
-            1,
-            false
+            last + 60_000
         ));
         assert!(!background_round_due_with_retry(
             last,
             last + 59_999,
             1,
             0,
-            1,
-            false
+            last + 60_000
         ));
-        // 停止后回常态（empty_streak=0 ⇒ 5 分钟）：60 s 不跑、5 分钟跑
+        // ⭐ 截止时刻**优先**：600 s 的退避不许被 5 分钟常态提前打穿
+        assert!(!background_round_due_with_retry(
+            last,
+            last + 300_000,
+            1,
+            0,
+            last + 600_000
+        ));
+        assert!(background_round_due_with_retry(
+            last,
+            last + 600_000,
+            1,
+            0,
+            last + 600_000
+        ));
+        // 没有截止 ⇒ 回 task-12 常态（empty_streak=0 ⇒ 5min）
         assert!(!background_round_due_with_retry(
             last,
             last + 60_000,
             1,
             0,
-            4,
-            true
+            0
         ));
         assert!(background_round_due_with_retry(
             last,
             last + super::BACKGROUND_ROUND_MS,
             1,
             0,
-            4,
-            true
+            0
         ));
+    }
+
+    /// ⭐ **U3 片 2 修正（2026-11-12 真机教训）**：截止时刻优先于常规节拍 ——
+    /// 真机实测的 bug 是「跳过」分支重置了 `last_bg_round_ms` ⇒ 60 s 变 7 分钟；本判据钉住纯函数口径。
+    #[test]
+    fn retry_deadline_overrides_the_regular_cadence() {
+        use super::retry_due;
+        assert!(retry_due(false, 5_000, 5_000), "到截止就必须跑");
+        assert!(!retry_due(false, 5_000, 4_999));
+        assert!(
+            !retry_due(true, 600_000, 300_000),
+            "⛔ 常规节拍不许抢跑 600 s 的退避（真机 bug 的机器版）"
+        );
+        assert!(retry_due(true, 600_000, 600_000));
+        assert!(retry_due(true, 0, 0), "没有截止 ⇒ 只认常规节拍");
+        assert!(!retry_due(false, 0, 9_999));
     }
 
     /// ⭐ **2026-11-12（§13 F1 修复：dirty 活锁）**：只有「本地保存」触发的轮才许发 dirty；
