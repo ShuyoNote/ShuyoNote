@@ -36,6 +36,21 @@ pub const PAIRING_VERSION: u32 = 1;
 /// 共用一个版本号会让"哪个版本对应哪种载荷"变成猜 ✓。
 pub const DEVICE_PAIR_VERSION: u32 = 1;
 
+/// ⭐ **2026-11-12（U1 邀请式配对）**：**邀请**的线版本 —— 与普通抄码 [`DEVICE_PAIR_VERSION`] **分开**。
+///
+/// 邀请 = 普通设备直连载荷 ＋ **有效期（`exp`）／一次性 nonce／发起方签名（`sig`）** 三格
+/// ＋ 可选的可达地址（`addrs`）。老版本读到 `v=2` ⇒ **大声拒**（⛔ 不回落成"没签名也认"）。
+pub const INVITE_VERSION: u32 = 2;
+
+/// 邀请有效期：需求 §13.10 ⑤ 规定 **10 分钟**。
+pub const INVITE_TTL_MS: i64 = 10 * 60 * 1000;
+
+/// 邀请 nonce 的十六进制长度：**32 字符 = 128 bit**（≥ 需求 §13.10 ⑤ 的 80 bit）。
+pub const INVITE_NONCE_HEX_LEN: usize = 32;
+
+/// 邀请签名覆盖的**域前缀**（换算法/换字段集合时必须换它 ⇒ 旧签名当场失效，⛔ 不静默沿用）。
+const INVITE_SIGN_DOMAIN: &str = "shuyo-invite-v2";
+
 /// ⭐ **设备直连载荷**（`U1`／T2）：搬的是**接线**，⛔ 不是钥匙袋 ✗。
 ///
 /// 它回答的是"**第二台设备怎么连上第一台**"：绑哪个地址、带什么口令。
@@ -110,6 +125,24 @@ pub struct DevicePairPayload {
     ///   ⇒ ⛔ 别为了"让老版本能解析"把这格删掉 ✗（那等于把 1C 又放开 ✓）。
     #[serde(default)]
     pub pubkey: String,
+    /// ⭐ **2026-11-12（U1 邀请）**：发起方当前**可达的** `IP:端口`（发现层被 AP 过滤时 B 直接连；
+    /// ⛔ 非秘密；普通抄码不写这一格 ⇒ 序列化时**省略**，老码逐字节不变）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub addrs: Vec<String>,
+    /// ⭐ **U1 邀请**：到期时刻（unix ms）。`0` ＝ **不是邀请**（普通抄码；⛔ 不猜成永久邀请）。
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub exp: i64,
+    /// ⭐ **U1 邀请**：一次性 nonce（32 hex = 128 bit；⛔ 不是口令、⛔ 不参与口令派生）。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub nonce: String,
+    /// ⭐ **U1 邀请**：发起方对「除 `sig` 外全部字段」的 Ed25519 签名（hex）。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sig: String,
+}
+
+/// `serde` 的 `skip_serializing_if` 小助手：`0` ＝ 不是邀请 ⇒ 这一格不写（老码逐字节不变）。
+fn is_zero_i64(v: &i64) -> bool {
+    *v == 0
 }
 
 /// ⭐ **把「我这台的绑定写法」折成「对方可以照抄」的那一份**（2026-10-01 修：owner 追问抓到的**真错** ✓）。
@@ -191,6 +224,11 @@ pub fn device_pair_from(
         // ⚠️ 公钥**不在这里填** ✗：它由 [`stamp_pubkey`] 单独装 ✓（⭐ 那一格要**先验形状** ✓，
         //   而本函数的老签名有二十来个调用点（多为判据夹具 ✓）⇒ ⛔ 不为它改签名 ✗）。
         pubkey: String::new(),
+        // ⭐ U1：普通抄码**不带**邀请那四格（序列化时省略 ⇒ 逐字节与今天一致）。
+        addrs: Vec::new(),
+        exp: 0,
+        nonce: String::new(),
+        sig: String::new(),
     })
 }
 
@@ -222,14 +260,40 @@ pub fn encode_device_pair(p: &DevicePairPayload) -> Result<String, String> {
 
 /// 解码。三条都**当场报错、不猜**：版本不认识、字段多出来、必填为空。
 pub fn decode_device_pair(raw: &str) -> Result<DevicePairPayload, String> {
-    let p: DevicePairPayload = serde_json::from_str(raw)
-        .map_err(|e| format!("这不是一个设备直连载荷（或字段对不上）：{e}"))?;
+    let p = parse_device_pair(raw)?;
+    // ⚠️ **版本先判，再看形状** ✗ —— 顺序是既有行为（旧判据按它断言"版本"两个字 ✓）。
     if p.v != DEVICE_PAIR_VERSION {
         return Err(format!(
             "设备直连载荷版本 {} 本版不认识（本版认到 {DEVICE_PAIR_VERSION}）—— 请升级应用后再扫",
             p.v
         ));
     }
+    ensure_device_pair_shape(&p)?;
+    Ok(p)
+}
+
+/// ⭐ **2026-11-12（U1）**：邀请的解码 —— 与抄码**同一套字段与白名单**，只多一条"必须是邀请版本"。
+///
+/// ⚠️ 普通抄码走到这里 ⇒ **大声拒**（⛔ 不当成"不带有效期的邀请"收下 ✗）。
+pub fn decode_invite(raw: &str) -> Result<DevicePairPayload, String> {
+    let p = parse_device_pair(raw)?;
+    if p.v != INVITE_VERSION {
+        return Err(format!(
+            "这不是邀请（版本 {}；邀请是 {INVITE_VERSION}）—— 普通抄码请走「接入」那条路",
+            p.v
+        ));
+    }
+    ensure_device_pair_shape(&p)?;
+    Ok(p)
+}
+
+/// 只做 JSON 解析（`deny_unknown_fields` 在这一层生效）；版本与形状由两个入口各自判。
+fn parse_device_pair(raw: &str) -> Result<DevicePairPayload, String> {
+    serde_json::from_str(raw).map_err(|e| format!("这不是一个设备直连载荷（或字段对不上）：{e}"))
+}
+
+/// 形状：地址非空 ＋ 公钥形状正确（1C 之后**没有公钥就进不来**）。
+fn ensure_device_pair_shape(p: &DevicePairPayload) -> Result<(), String> {
     if p.bind.trim().is_empty() {
         return Err("载荷里的地址是空的 ⇒ 收下也没用（**没有采纳**）".to_string());
     }
@@ -246,7 +310,116 @@ pub fn decode_device_pair(raw: &str) -> Result<DevicePairPayload, String> {
     // ⚠️ 口令**不再是凭证** ✓（1C ✓）⇒ ⛔ 这里**不再因为 `token` 空而拒** ✗。
     //   ⭐ 这行注释是**有意的路标**：上一版这里写着「地址或口令是空的 ⇒ 拒」✓ ——
     //   ⭐ 那一条在 1C 之后就是错的 ✓（它会拒掉本版自己产出、而且**更安全**的码 ✓）。
-    Ok(p)
+    Ok(())
+}
+
+/// ⭐ **2026-11-12（U1 邀请）**：签名覆盖的字节 —— 除 `sig` 外**全部字段**、固定顺序、带域前缀。
+///
+/// ⚠️ 为什么不用 JSON 文本本身：`serde_json` 的键序/转义一旦哪天变，签名就会**静默换算法**；
+/// 这里逐字段拼串 ⇒ 稳定、可测；换字段集合时**必须换** [`INVITE_SIGN_DOMAIN`] ⇒ 旧签名当场失效。
+pub fn invite_signing_bytes(p: &DevicePairPayload) -> Vec<u8> {
+    format!(
+        "{INVITE_SIGN_DOMAIN}\nv={}\nbind={}\naddrs={}\ntoken={}\nfp={}\nfrom={}\nto={}\npubkey={}\nexp={}\nnonce={}",
+        p.v,
+        p.bind,
+        p.addrs.join(","),
+        p.token,
+        p.fp,
+        p.from_device_id,
+        p.to_device_id,
+        p.pubkey,
+        p.exp,
+        p.nonce
+    )
+    .into_bytes()
+}
+
+/// ⭐ **2026-11-12（U1 邀请）**：把一份**已填好 bind/token/from/to（并已装公钥）**的普通载荷
+/// 升级成邀请：设版本、装可达地址、算到期时刻、签名字段。
+///
+/// `sign` 是签名闭包（生产传 `device_key::DeviceIdentity::sign_hex`；判据里传真 ed25519 key）。
+/// ⚠️ 先验再发：nonce 形状、公钥、签发时刻不合格 ⇒ **当场拒**（⛔ 不产出"对面必然拒收"的码）。
+pub fn invite_from(
+    mut base: DevicePairPayload,
+    addrs: Vec<String>,
+    now_ms: i64,
+    nonce_hex: &str,
+    sign: &dyn Fn(&[u8]) -> String,
+) -> Result<DevicePairPayload, String> {
+    let nonce = nonce_hex.trim().to_ascii_lowercase();
+    if !is_128bit_hex(&nonce) {
+        return Err(format!(
+            "邀请的一次性随机数是 {} 个字符，不是 {} 个十六进制字符（= 128 bit）⇒ 不发",
+            nonce.len(),
+            INVITE_NONCE_HEX_LEN
+        ));
+    }
+    if !crate::device_key::is_public_key_hex(&base.pubkey) {
+        return Err("邀请要先装好发起方公钥（`stamp_pubkey`）再签，否则对面只能当面拒".to_string());
+    }
+    if now_ms <= 0 {
+        return Err("邀请的签发时刻不对（<= 0）⇒ 不发".to_string());
+    }
+    base.v = INVITE_VERSION;
+    base.addrs = addrs
+        .into_iter()
+        .map(|a| a.trim().to_string())
+        .filter(|a| !a.is_empty())
+        .collect();
+    base.exp = now_ms.saturating_add(INVITE_TTL_MS);
+    base.nonce = nonce;
+    base.sig = String::new();
+    let sig = sign(&invite_signing_bytes(&base)).trim().to_ascii_lowercase();
+    if sig.is_empty() {
+        return Err("签名器返回了空签名 ⇒ 不发".to_string());
+    }
+    base.sig = sig;
+    Ok(base)
+}
+
+/// ⭐ **2026-11-12（U1 邀请）**：邀请的**纯判定**（不碰 IO）。
+///
+/// 判定顺序：版本 → 有效期存在／未过期 → nonce 形状 → **是否已用过**（由调用方查台账）
+/// → 指定给谁 → **签名**。每条都**大声说原因**（⛔ 不静默拒）。
+pub fn invite_decision(
+    p: &DevicePairPayload,
+    now_ms: i64,
+    nonce_already_used: bool,
+    my_device_id: &str,
+) -> Result<(), String> {
+    if p.v != INVITE_VERSION {
+        return Err(format!(
+            "这不是邀请载荷（版本 {}；邀请是 {INVITE_VERSION}）",
+            p.v
+        ));
+    }
+    if p.exp <= 0 {
+        return Err("邀请没有有效期 ⇒ 拒（⛔ 不猜成永久邀请）".to_string());
+    }
+    if now_ms > p.exp {
+        return Err("邀请已过期（有效期 10 分钟）⇒ 请让那台重新生成一个".to_string());
+    }
+    if !is_128bit_hex(&p.nonce) {
+        return Err("邀请的一次性随机数形状不对（要 32 个十六进制字符 = 128 bit）⇒ 拒".to_string());
+    }
+    if nonce_already_used {
+        return Err("这个邀请**已经用过**（一次性）⇒ 请让那台重新生成".to_string());
+    }
+    let to = p.to_device_id.trim();
+    if !to.is_empty() && to != my_device_id.trim() {
+        return Err("这个邀请**不是给这台设备的** ⇒ 拒".to_string());
+    }
+    if p.sig.is_empty()
+        || !crate::device_key::verify_hex(&p.pubkey, &invite_signing_bytes(p), &p.sig)
+    {
+        return Err("邀请的签名对不上（可能被改过）⇒ 拒".to_string());
+    }
+    Ok(())
+}
+
+/// 邀请 nonce 的**唯一**形状判据：恰好 [`INVITE_NONCE_HEX_LEN`] 个十六进制字符（= 128 bit）。
+fn is_128bit_hex(s: &str) -> bool {
+    s.len() == INVITE_NONCE_HEX_LEN && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// **一张二维码能装多少字节**：QR version 40、纠错级 **L**、**字节模式** = **2953** 字节。
@@ -1139,5 +1312,97 @@ mod tests {
             device_pair_from("127.0.0.1:8788", "k7Qm-2pRt", "f", "").is_ok(),
             "回环（本机自测）仍可用"
         );
+    }
+
+    // ═══════════════ ⭐ U1 邀请（2026-11-12）═══════════════
+    // 契约：docs/plans/2026-11-12-u1-invite-pairing-contract.md
+    // 本片只做**纯函数**（不碰库、不起宿主）：编解码 ＋ 通行性判定 ＋ 签名覆盖。
+
+    /// 夹具：真 Ed25519 签名（与生产同一把算法；不碰库）。
+    fn invite_fixture(now_ms: i64, nonce: &str) -> DevicePairPayload {
+        use ed25519_dalek::{Signer, SigningKey};
+        let sk = SigningKey::from_bytes(&[7u8; 32]);
+        let pk = hex::encode(sk.verifying_key().as_bytes());
+        let mut base = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "dev-a", "dev-b").unwrap();
+        stamp_pubkey(&mut base, &pk).unwrap();
+        invite_from(
+            base,
+            vec!["192.168.1.5:8788".to_string()],
+            now_ms,
+            nonce,
+            &|m| hex::encode(sk.sign(m).to_bytes()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn an_invite_needs_128_bit_nonce_and_round_trips() {
+        let now = 1_800_000_000_000i64;
+        let inv = invite_fixture(now, &"0f".repeat(16)); // 32 hex = 128 bit
+        assert_eq!(inv.v, INVITE_VERSION);
+        assert_eq!(inv.exp, now + INVITE_TTL_MS, "有效期必须是签发 + 10 分钟");
+        let raw = encode_device_pair(&inv).unwrap();
+        let back = decode_invite(&raw).unwrap();
+        assert_eq!(back, inv, "邀请编解码必须逐字节往返");
+        assert!(invite_decision(&back, now, false, "dev-b").is_ok(), "正常邀请必须放行");
+        // 熵不足 ⇒ 产出侧**当场**拒（不产出"对面必然拒收"的码）
+        assert!(
+            invite_from(back.clone(), vec![], now, "abcd", &|_| "ab".repeat(64)).is_err(),
+            "nonce 短于 128 bit ⇒ 不发"
+        );
+    }
+
+    #[test]
+    fn an_invite_is_rejected_when_expired_reused_or_misdirected() {
+        let now = 1_800_000_000_000i64;
+        let inv = invite_fixture(now, &"0f".repeat(16));
+        assert!(
+            invite_decision(&inv, now + INVITE_TTL_MS + 1, false, "dev-b").is_err(),
+            "过期必须拒"
+        );
+        assert!(
+            invite_decision(&inv, now, true, "dev-b").is_err(),
+            "用过（台账命中）必须拒"
+        );
+        assert!(
+            invite_decision(&inv, now, false, "dev-other").is_err(),
+            "指定给别的设备 ⇒ 必须拒"
+        );
+        assert!(
+            invite_decision(&inv, now, false, "").is_err(),
+            "邀请指定了对方而本机号为空 ⇒ 拒（不猜）"
+        );
+    }
+
+    #[test]
+    fn an_invite_signature_covers_every_field() {
+        let now = 1_800_000_000_000i64;
+        let inv = invite_fixture(now, &"0f".repeat(16));
+        assert!(invite_decision(&inv, now, false, "dev-b").is_ok());
+        let mut bad = inv.clone();
+        bad.bind = "0.0.0.0:8789".to_string();
+        assert!(invite_decision(&bad, now, false, "dev-b").is_err(), "改 bind 必须拒");
+        let mut bad = inv.clone();
+        bad.exp += 1;
+        assert!(invite_decision(&bad, now, false, "dev-b").is_err(), "改 exp 必须拒");
+        let mut bad = inv.clone();
+        bad.addrs.push("10.0.0.9:8788".to_string());
+        assert!(invite_decision(&bad, now, false, "dev-b").is_err(), "改 addrs 必须拒");
+        let mut bad = inv.clone();
+        bad.nonce = "11".repeat(16);
+        assert!(invite_decision(&bad, now, false, "dev-b").is_err(), "改 nonce 必须拒");
+    }
+
+    /// 回归：普通抄码**不许**被写上邀请字段（老码逐字节不变），也不能当邀请收下。
+    #[test]
+    fn a_plain_pair_code_is_not_an_invite_and_keeps_its_old_bytes() {
+        let p = pair_with_key("0.0.0.0:8788", "k7Qm-2pRt", "fp-a", "");
+        let raw = encode_device_pair(&p).unwrap();
+        assert!(
+            !raw.contains("\"exp\"") && !raw.contains("\"nonce\""),
+            "普通抄码序列化不许多出邀请字段（老码逐字节不变）：{raw}"
+        );
+        assert!(decode_invite(&raw).is_err(), "普通抄码不能当邀请收下");
+        assert!(decode_device_pair(&raw).is_ok(), "老入口照旧可用");
     }
 }
