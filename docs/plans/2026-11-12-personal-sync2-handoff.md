@@ -37,6 +37,9 @@ F1 第一刀修复：dirty 活锁       ✅ e45e4272（对端 dirty 唤醒的轮
                                   6 处测试字面量 `dirty:false` ⇒ 原 `cargo test --lib` 编不过 E0063×6）
                                   事故读数（08:42–08:59 两边自激）：本机日志 57.3 MB / CPU 1625 s /
                                   dirty:true 70,227 条（占 announce 99.8%）；修后全量 1519 passed / 0 failed
+                                  修复后本机自证（09:26–09:29，固定构建）：**一次保存 ⇒ 恰好 1 轮 dirty（9 条）**；
+                                  之后静默窗口 dirty=0；分钟时间戳行数 59–145（活锁时 3,000–10,000）；
+                                  对端 dirty 仍能唤醒（09:27:50/53 各一次）但**我们不回发 dirty** ⇒ 活锁断开
 清理                         ✅ 0518456b（还原 cargo fmt 误格式化的 capabilities_gen.rs / plugins.rs 等）
 ```
 
