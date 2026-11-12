@@ -787,6 +787,13 @@ static EVENT_ROUND_PENDING: AtomicBool = AtomicBool::new(false);
 /// ⭐ **2026-11-12（§13 F1 第一刀）**：本地刚保存过 ⇒ 下一条公告带 `dirty=true`
 /// （对端收到即唤醒自己一轮去拉，不等 2 分钟；⛔ 不升线上版本）。
 static ANNOUNCE_DIRTY_PENDING: AtomicBool = AtomicBool::new(false);
+/// ⭐ **2026-11-12（§13 F1 修复：dirty 活锁）**：**这个 pending 轮是不是「本地保存」触发的**。
+///
+/// 为什么必须分开：对端公告带 `dirty` 时我们也要唤醒一轮去拉（[`request_round_now_from_peer`]），
+/// 但如果那一轮**也**置 `ANNOUNCE_DIRTY_PENDING` ⇒ 我们又发 `dirty` ⇒ 对端再唤醒我们 ⇒
+/// **两边互相唤醒，永不停**（2026-11-12 真机实测：一边 57 MB 日志、CPU 1625s / 23 min）。
+/// ⇒ 只有本地保存的那一轮许发 `dirty`；对端唤醒的轮**只拉不发**。
+static LOCAL_SAVE_PENDING: AtomicBool = AtomicBool::new(false);
 
 /// ⭐ **P3-1a**：事件触发轮的**最小间隔** —— 连续保存/连续命令在 2 秒内只合并成一轮。
 pub const EVENT_ROUND_MIN_GAP_MS: i64 = 2_000;
@@ -816,8 +823,27 @@ pub fn event_round_ready(
 /// ⚠️ 只置位 + 叫醒，不直接跑：真正的 gate/合并由 `start` 循环里的 `event_round_ready` 判
 ///（`commands::save_page` 是命令线程，不能在这里 await/持锁/起轮）。
 pub fn request_round_now() {
+    // ⭐ 2026-11-12（F1 修复）：本地保存 ⇒ 这一轮**可以**对外发 dirty。
+    LOCAL_SAVE_PENDING.store(true, Ordering::SeqCst);
     EVENT_ROUND_PENDING.store(true, Ordering::SeqCst);
     ROUND_NOTIFY.notify_one();
+}
+
+/// ⭐ **2026-11-12（§13 F1 修复）**：**对端公告说"我刚有改动"** ⇒ 只唤醒「拉一轮」。
+///
+/// ⛔ **不许**置 [`LOCAL_SAVE_PENDING`]：我们这一轮没产生任何本地改动，再发 `dirty` 只会让
+/// 对端也唤醒一轮并回发 `dirty` ⇒ 两边互相唤醒的活锁（真机实测过）。
+pub fn request_round_now_from_peer() {
+    EVENT_ROUND_PENDING.store(true, Ordering::SeqCst);
+    ROUND_NOTIFY.notify_one();
+}
+
+/// ⭐ **2026-11-12（§13 F1 修复，纯函数）**：这一轮事件轮要不要「立刻公告 ＋ 标 dirty」。
+///
+/// 判据只有两条：① 触发源是**本地保存**（对端 dirty 唤醒的轮 ⛔ 不发）；② **网格门开着**
+/// （暂停/没配网格 ⇒ 不许对外说"我有改动"）。
+pub fn event_round_announces_dirty(from_local_save: bool, gate_open: bool) -> bool {
+    from_local_save && gate_open
 }
 
 /// ⭐ **task-12（Lead 拍）**：最近**连续几次**后台轮是空手的（`候选 0` ✓）——
@@ -1457,8 +1483,10 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                         eprintln!("{}", lan::announce_recv_line(&p, &own_spaces));
                         // ⭐ 2026-11-12（§13 F1 第一刀）：对端说“我刚有改动” ⇒ **立刻唤醒一轮**
                         //   去拉（不等 2 分钟）。老对端没有这一格 ⇒ false ⇒ 行为不变。
+                        //   ⚠️ **F1 修复**：必须走「只唤醒、不置 dirty」的入口 —— 走本地保存那
+                        //   个入口会让这一轮也发 dirty，两边互相唤醒 ⇒ 活锁（真机实测过）。
                         if p.announce.dirty {
-                            crate::lan_state::request_round_now();
+                            crate::lan_state::request_round_now_from_peer();
                         }
                     }
                     Ok(lan::RecvOutcome::OwnAnnounce { from }) => {
@@ -1706,12 +1734,10 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             if EVENT_ROUND_PENDING.swap(false, Ordering::SeqCst) {
                 let paused = autosync_paused();
                 let gate_open = !paused && !meshed.is_empty();
-                // ⭐ F1：本地保存 ⇒ 立刻公告（下一片；不等 30s 间隔），并带上 dirty 标记。
-                //   ⚠️ 只在门开着时置：暂停/没配网格时**不许**对外发"我有改动"。
-                if gate_open {
-                    ANNOUNCE_DIRTY_PENDING.store(true, Ordering::SeqCst);
-                    last_announce_ms = 0;
-                }
+                // ⭐ **2026-11-12（F1 修复：dirty 活锁）**：先取「这一轮是不是本地保存触发的」。
+                //   ⛔ F1 第一刀原来在这里无条件置 dirty，且对端 dirty 唤醒的轮走同一分支
+                //   ⇒ 你 dirty 唤醒我、我这一轮又 dirty ⇒ 两边互相唤醒（真机活锁）。
+                let from_local_save = LOCAL_SAVE_PENDING.swap(false, Ordering::SeqCst);
                 if !event_round_ready(
                     paused,
                     meshed.len(),
@@ -1723,9 +1749,21 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     // 门开着只是"上一轮在飞"或"2s 合并窗未到" ⇒ 保留 pending，下一片再试。
                     if gate_open {
                         EVENT_ROUND_PENDING.store(true, Ordering::SeqCst);
+                        // ⚠️ 这一轮**还没真的跑** ⇒ 本地保存那格要一起留着，不然 dirty 被吞掉。
+                        if from_local_save {
+                            LOCAL_SAVE_PENDING.store(true, Ordering::SeqCst);
+                        }
                     }
                 } else {
                     last_event_round_ms = now;
+                    // ⭐ F1 修复：**只有本地保存**触发的轮才「立刻公告 ＋ 标 dirty」；
+                    //   对端 dirty 唤醒的轮**只拉不发**（否则两边互相唤醒）。
+                    //   ⚠️ 放在「轮真的会跑」这一支：原来每个 tick 都重刷 `last_announce_ms=0`，
+                    //   会在 2s 合并窗里把公告按 tick 频率刷出去（日志暴涨的另一半原因）。
+                    if event_round_announces_dirty(from_local_save, gate_open) {
+                        ANNOUNCE_DIRTY_PENDING.store(true, Ordering::SeqCst);
+                        last_announce_ms = 0;
+                    }
                     // 事件轮也重算原后台节拍（下一轮仍按 `background_round_interval_ms` 的 backoff ✓）。
                     last_bg_round_ms = now;
                     match spawn_background_round(&app2, &device_id, &mesh_cfgs, &state.peers(now)) {
@@ -3831,6 +3869,76 @@ mod p31_event_round_tests {
             "request_round_now 必须置 pending（真正跑不跑由 start 循环的 gate 判）"
         );
         EVENT_ROUND_PENDING.store(false, Ordering::SeqCst);
+        LOCAL_SAVE_PENDING.store(false, Ordering::SeqCst);
+    }
+
+    /// ⭐ **2026-11-12（§13 F1 修复：dirty 活锁）**：只有「本地保存」触发的轮才许发 dirty；
+    /// 对端 dirty 唤醒的轮**只拉不发**。否则「你 dirty 唤醒我 ⇒ 我这一轮也 dirty ⇒ 又唤醒你」
+    /// 永动（2026-11-12 真机实测：一边 57 MB 日志、CPU 1625 s / 23 min）。
+    #[test]
+    fn only_the_local_save_waker_marks_the_next_announce_dirty() {
+        EVENT_ROUND_PENDING.store(false, Ordering::SeqCst);
+        LOCAL_SAVE_PENDING.store(false, Ordering::SeqCst);
+        ANNOUNCE_DIRTY_PENDING.store(false, Ordering::SeqCst);
+
+        // ① 纯函数真值表：只有「本地保存 ＋ 门开着」才发
+        assert!(event_round_announces_dirty(true, true));
+        assert!(!event_round_announces_dirty(false, true), "对端唤醒的轮不许发 dirty");
+        assert!(!event_round_announces_dirty(true, false), "门关着不许发 dirty");
+        assert!(!event_round_announces_dirty(false, false));
+
+        // ② 对端 dirty 唤醒 ⇒ 只置轮次，不冒充本地保存
+        request_round_now_from_peer();
+        assert!(
+            EVENT_ROUND_PENDING.load(Ordering::SeqCst),
+            "对端 dirty 必须唤醒一轮"
+        );
+        assert!(
+            !LOCAL_SAVE_PENDING.load(Ordering::SeqCst),
+            "对端 dirty ⛔ 不许冒充本地保存"
+        );
+        let from_local = LOCAL_SAVE_PENDING.swap(false, Ordering::SeqCst);
+        assert!(
+            !event_round_announces_dirty(from_local, true),
+            "对端唤醒的轮 ⛔ 不许再发 dirty（那会两边互相唤醒）"
+        );
+
+        // ③ 本地保存 ⇒ 置 pending，且本轮可以发 dirty
+        EVENT_ROUND_PENDING.store(false, Ordering::SeqCst);
+        request_round_now();
+        assert!(EVENT_ROUND_PENDING.load(Ordering::SeqCst));
+        let from_local = LOCAL_SAVE_PENDING.swap(false, Ordering::SeqCst);
+        assert!(
+            event_round_announces_dirty(from_local, true),
+            "本地保存的轮必须发 dirty"
+        );
+        assert!(!ANNOUNCE_DIRTY_PENDING.load(Ordering::SeqCst));
+        EVENT_ROUND_PENDING.store(false, Ordering::SeqCst);
+    }
+
+    /// ⭐ **2026-11-12（§13 F1 修复，源码级判据）**：接收侧看到 `dirty` 时必须走
+    /// `request_round_now_from_peer()`；⛔ 不许走 `request_round_now()` ——
+    /// 后者是「本地保存 ⇒ 可发 dirty」专用入口，走错就是活锁。
+    #[test]
+    fn receiving_a_dirty_announce_uses_the_peer_waker() {
+        let src = include_str!("lan_state.rs");
+        // ⚠️ 只扫**生产段**：本判据自己的名字与字符串也在文件里，自指会让判据失真。
+        let test_at = src
+            .find("fn receiving_a_dirty_announce_uses_the_peer_waker")
+            .expect("本判据必须在文件里");
+        let prod = &src[..test_at];
+        let recv_at = prod
+            .find("if p.announce.dirty {")
+            .expect("接收侧 dirty 分支必须在");
+        let branch = &prod[recv_at..(recv_at + 400).min(prod.len())];
+        assert!(
+            branch.contains("request_round_now_from_peer()"),
+            "接收侧 dirty 必须走「只唤醒、不置 dirty」的入口：{branch}"
+        );
+        assert!(
+            !branch.contains("request_round_now();"),
+            "接收侧 dirty ⛔ 不许走本地保存入口（会活锁）：{branch}"
+        );
     }
 }
 
