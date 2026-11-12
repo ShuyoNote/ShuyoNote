@@ -1,7 +1,8 @@
 # U1 邀请式配对 —— 契约草案（2026-11-12）
 
-状态：**契约已拍板**（owner 2026-11-12：D1=A 不带材料 / D2=A 默认免核对 / D3=A 首刀不做短码）；实现从**片 1** 开始
-证据：（待补 —— 片 1 落地后此处填提交与判据读数；⛔ 未落地前不写）
+状态：**契约已拍板**（owner 2026-11-12：D1=A 不带材料 / D2=A 默认免核对 / D3=A 首刀不做短码）；**片 1 已落地**，片 2–4 待做
+证据：片 1（纯函数）`4c14c62b` —— `cargo test --lib pairing::` **33 passed / 0 failed**，其中 4 条新判据：
+128 bit nonce 往返、过期/重放/指定别人必拒、签名覆盖每个字段、普通抄码逐字节不变（不许被写上邀请字段）
 上位：[个人同步 2.0 需求](2026-11-08-personal-sync-2.0-requirements.md) §13.5 U1 ／ §13.10 ⑤（邀请：高熵 ≥80 bit、10 分钟有效、绑定「哪个空间 ＋ 接受方身份」、未使用可撤销）
 现有件（**只复用，不造第二套**）：
 - [`src-tauri/src/pairing.rs`](../../src-tauri/src/pairing.rs) —— `DevicePairPayload`（`v` / `bind` / `token` / `fp` / `from_device_id` / `to_device_id` / `pubkey`）＋ `check_code`（整份载荷的比对码，**60 bit 下限不变**）
@@ -109,8 +110,8 @@ B（新设备）：
 ## 8. 分片与回滚（每片先判据后实现）
 
 ```text
-片 1（纯函数）：InvitePayload 编解码 + 过期/签名/字段判定（不碰 IO）
-                判据：§6 的 1/2/5/6/7（先看它红）
+片 1（纯函数）：InvitePayload 编解码 + 过期/签名/字段判定（不碰 IO）  ✅ `4c14c62b`
+                判据：§6 的 1/2/5/6/7（先看它红）—— 4 条已绿（pairing 33/0）
 片 2（Rust 命令）：invite_export / invite_import（复用 decide_device_pair_import 与 remember_peer_card）
                 判据：§6 的 3/4；命令数同步 docs/TESTING.md 与 commands.ts
 片 3（界面）：A 的「生成邀请」＋ B 的「接入」＋ 倒计时/错误话术（⛔ 不先写文案）
