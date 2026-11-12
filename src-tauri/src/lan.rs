@@ -1421,13 +1421,17 @@ pub fn announce_recv_line(peer: &Peer, our_spaces: &[String]) -> String {
         .filter(|b| !b.is_empty())
         .unwrap_or("(不代言)");
     format!(
-        "[{}] [mesh] 收到公告：来源 {} ｜ 对端 {} ｜ 它代言 {} 个空间 [{}] ｜ 它报的地址 {} ｜ {}（本机空间 [{}]）",
+        "[{}] [mesh] 收到公告：来源 {} ｜ 对端 {} ｜ 它代言 {} 个空间 [{}] ｜ 它报的地址 {} ｜ dirty={} ｜ {}（本机空间 [{}]）",
         log_stamp(),
         peer.addr,
         short_id(&peer.announce.device_id),
         theirs.len(),
         if theirs_shown.is_empty() { "无".to_string() } else { theirs_shown.join("、") },
         base,
+        // ⭐ F1（2026-11-12）：对端"我刚有改动"的**位**必须出现在接收侧日志里 ——
+        //   原来只能靠"收到公告后 1 秒内起轮"当行为证据（⛔ 不能从日志直接读）。
+        //   ⚠️ 老对端没有这一格 ⇒ false（行为不变）；`dirty=false` 也要打（"没有"是可断言的结果）。
+        peer.announce.dirty,
         verdict,
         if ours_shown.is_empty() { "无".to_string() } else { ours_shown.join("、") }
     )
@@ -2330,6 +2334,24 @@ mod tests {
         assert!(
             ok.contains("匹配") && !ok.contains("不匹配"),
             "同空间要说「匹配」✓：{ok}"
+        );
+
+        // ⭐ **F1 小尾巴（2026-11-12）**：接收侧日志必须**直接读出 dirty 位** ——
+        //   ⛔ 不许再靠"收到公告后 1 秒内起轮"当行为证据（那只能证明"跑了"，读不出"为什么跑"）。
+        assert!(
+            ok.contains("dirty=false"),
+            "对端没改动时也要打 dirty=false（\"没有\"是可断言的结果 ✓）：{ok}"
+        );
+        let mut hot = peer(
+            "dev-a",
+            Some("http://192.168.1.5:8788"),
+            &["123456789Ok,./"],
+        );
+        hot.announce.dirty = true;
+        let hot_line = announce_recv_line(&hot, &["123456789Ok,./".to_string()]);
+        assert!(
+            hot_line.contains("dirty=true"),
+            "对端说\"我刚有改动\"时，接收侧日志必须打出 dirty=true ✓：{hot_line}"
         );
     }
 

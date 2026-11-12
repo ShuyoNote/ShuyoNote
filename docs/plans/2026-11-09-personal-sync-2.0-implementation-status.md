@@ -108,8 +108,11 @@ AMD 侧（同侧时钟）：
   · [sync-metrics] space=1c0264c4… since=249 max_seq=250 gap=1 fetched=1 applied=1
   · 游标 249→250（与我方观测「入站拉取 since=250」互证）
   · 该轮 announce-debug 无 dirty（dirty 总数停在启动那 10 条）；测试页标题跨机逐字一致
-⚠️ 边界：本刀不是「QUIC 长连接推送/订阅」（那仍是 F1 目标态）；接收侧日志不打印 dirty 位，
-   证据是「收到公告后 1 s 内出现事件轮」的行为证据
+⚠️ 边界：本刀不是「QUIC 长连接推送/订阅」（那仍是 F1 目标态）；
+   ✅ 接收侧日志**已可直接读出 dirty 位**（2026-11-12）：`lan.rs::announce_recv_line` 输出带
+   `dirty=true/false`，真机重启后实测首行「收到公告：来源 172.16.174.37 ｜ 对端 4b345a0a ｜ … ｜ dirty=false ｜
+   ✅ 与本机空间匹配」；判据 `lan::tests::a_received_announce_from_another_space_says_so_and_why` 补 2 条断言
+   （`dirty=false` 与 `dirty=true` 都要能打）。此前只能靠「收到公告后 1 s 内出现事件轮」的行为证据。
 ⚠️ 活锁事故与修复见交接单 §2/§7（事故读数：日志 57.3 MB / CPU 1625 s / dirty 70,227 条）
 ```
 

@@ -3883,8 +3883,14 @@ mod p31_event_round_tests {
 
         // ① 纯函数真值表：只有「本地保存 ＋ 门开着」才发
         assert!(event_round_announces_dirty(true, true));
-        assert!(!event_round_announces_dirty(false, true), "对端唤醒的轮不许发 dirty");
-        assert!(!event_round_announces_dirty(true, false), "门关着不许发 dirty");
+        assert!(
+            !event_round_announces_dirty(false, true),
+            "对端唤醒的轮不许发 dirty"
+        );
+        assert!(
+            !event_round_announces_dirty(true, false),
+            "门关着不许发 dirty"
+        );
         assert!(!event_round_announces_dirty(false, false));
 
         // ② 对端 dirty 唤醒 ⇒ 只置轮次，不冒充本地保存

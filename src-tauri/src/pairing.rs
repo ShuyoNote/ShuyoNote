@@ -369,7 +369,9 @@ pub fn invite_from(
     base.exp = now_ms.saturating_add(INVITE_TTL_MS);
     base.nonce = nonce;
     base.sig = String::new();
-    let sig = sign(&invite_signing_bytes(&base)).trim().to_ascii_lowercase();
+    let sig = sign(&invite_signing_bytes(&base))
+        .trim()
+        .to_ascii_lowercase();
     if sig.is_empty() {
         return Err("签名器返回了空签名 ⇒ 不发".to_string());
     }
@@ -1344,7 +1346,10 @@ mod tests {
         let raw = encode_device_pair(&inv).unwrap();
         let back = decode_invite(&raw).unwrap();
         assert_eq!(back, inv, "邀请编解码必须逐字节往返");
-        assert!(invite_decision(&back, now, false, "dev-b").is_ok(), "正常邀请必须放行");
+        assert!(
+            invite_decision(&back, now, false, "dev-b").is_ok(),
+            "正常邀请必须放行"
+        );
         // 熵不足 ⇒ 产出侧**当场**拒（不产出"对面必然拒收"的码）
         assert!(
             invite_from(back.clone(), vec![], now, "abcd", &|_| "ab".repeat(64)).is_err(),
@@ -1381,16 +1386,28 @@ mod tests {
         assert!(invite_decision(&inv, now, false, "dev-b").is_ok());
         let mut bad = inv.clone();
         bad.bind = "0.0.0.0:8789".to_string();
-        assert!(invite_decision(&bad, now, false, "dev-b").is_err(), "改 bind 必须拒");
+        assert!(
+            invite_decision(&bad, now, false, "dev-b").is_err(),
+            "改 bind 必须拒"
+        );
         let mut bad = inv.clone();
         bad.exp += 1;
-        assert!(invite_decision(&bad, now, false, "dev-b").is_err(), "改 exp 必须拒");
+        assert!(
+            invite_decision(&bad, now, false, "dev-b").is_err(),
+            "改 exp 必须拒"
+        );
         let mut bad = inv.clone();
         bad.addrs.push("10.0.0.9:8788".to_string());
-        assert!(invite_decision(&bad, now, false, "dev-b").is_err(), "改 addrs 必须拒");
+        assert!(
+            invite_decision(&bad, now, false, "dev-b").is_err(),
+            "改 addrs 必须拒"
+        );
         let mut bad = inv.clone();
         bad.nonce = "11".repeat(16);
-        assert!(invite_decision(&bad, now, false, "dev-b").is_err(), "改 nonce 必须拒");
+        assert!(
+            invite_decision(&bad, now, false, "dev-b").is_err(),
+            "改 nonce 必须拒"
+        );
     }
 
     /// 回归：普通抄码**不许**被写上邀请字段（老码逐字节不变），也不能当邀请收下。

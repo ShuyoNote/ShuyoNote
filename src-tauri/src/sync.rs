@@ -3573,7 +3573,10 @@ pub struct InviteRow {
     pub revoked_at: Option<i64>,
 }
 
-fn invite_lookup(c: &Connection, nonce: &str) -> Result<Option<(Option<i64>, Option<i64>)>, String> {
+fn invite_lookup(
+    c: &Connection,
+    nonce: &str,
+) -> Result<Option<(Option<i64>, Option<i64>)>, String> {
     c.query_row(
         "SELECT used_at, revoked_at FROM meta.mesh_invites WHERE nonce = ?1",
         params![nonce],
@@ -3637,7 +3640,8 @@ fn invite_rows(c: &Connection, limit: usize) -> Result<Vec<InviteRow>, String> {
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// ⭐ **U1（owner 2026-11-12 拍 D3=A）**：生成一段邀请（链接/二维码/文件都行；⛔ 不做短码）。
@@ -3676,9 +3680,8 @@ pub fn invite_export(
         hex::encode(&r[..16])
     };
     let identity = crate::device_key::load_or_create(&c)?;
-    let invite = crate::pairing::invite_from(payload, addrs, now_ms, &nonce, &|m| {
-        identity.sign_hex(m)
-    })?;
+    let invite =
+        crate::pairing::invite_from(payload, addrs, now_ms, &nonce, &|m| identity.sign_hex(m))?;
     let text = crate::pairing::encode_device_pair(&invite)?;
     let qr_fits = crate::pairing::fits_single_qr(&text);
     let qr_svg = if qr_fits {
@@ -15108,7 +15111,8 @@ mod invite_ledger_tests {
 
     fn ledger_conn() -> Connection {
         let c = Connection::open_in_memory().unwrap();
-        c.execute_batch("ATTACH DATABASE ':memory:' AS meta;").unwrap();
+        c.execute_batch("ATTACH DATABASE ':memory:' AS meta;")
+            .unwrap();
         c.execute_batch(
             "CREATE TABLE meta.mesh_invites (
                 nonce          TEXT PRIMARY KEY,
@@ -15142,9 +15146,14 @@ mod invite_ledger_tests {
         let sk = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
         let inv = signed_invite(&sk);
         invite_record(&c, &inv, 1_800_000_000_000).unwrap();
-        let (used, revoked) = invite_lookup(&c, &inv.nonce).unwrap().expect("台账里必须有这一行");
+        let (used, revoked) = invite_lookup(&c, &inv.nonce)
+            .unwrap()
+            .expect("台账里必须有这一行");
         assert!(used.is_none() && revoked.is_none(), "刚发出 ⇒ 未用未撤");
-        assert!(invite_mark_used(&c, &inv.nonce, 1_800_000_000_001).unwrap(), "第一次标记已用必须成功");
+        assert!(
+            invite_mark_used(&c, &inv.nonce, 1_800_000_000_001).unwrap(),
+            "第一次标记已用必须成功"
+        );
         assert!(
             !invite_mark_used(&c, &inv.nonce, 1_800_000_000_002).unwrap(),
             "已用过的不能再标记（一次性）"
@@ -15162,7 +15171,9 @@ mod invite_ledger_tests {
         let inv = signed_invite(&sk);
         invite_record(&c, &inv, 1_800_000_000_000).unwrap();
         assert!(invite_mark_revoked(&c, &inv.nonce, 1_800_000_000_100).unwrap());
-        let (_, revoked) = invite_lookup(&c, &inv.nonce).unwrap().expect("台账里必须有这一行");
+        let (_, revoked) = invite_lookup(&c, &inv.nonce)
+            .unwrap()
+            .expect("台账里必须有这一行");
         assert!(revoked.is_some(), "撤销后台账必须记着");
         // 采纳侧：撤销 ⇒ 拒（`invite_import` 就是先查这一格再判）
         assert!(
