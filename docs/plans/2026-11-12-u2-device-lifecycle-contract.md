@@ -70,6 +70,8 @@
 |---|---|---|
 | 1 ✅ | 文案补 C3④ ＋ 被移出方提示（C4） | 新增 `peerRemovedHint.test.ts` 4/4 ＋ `syncPanelRevokedHint.wiring.test.ts` 3/3（源码级）；`tsc --noEmit` 0；全量 vitest 门禁 ✓；`check-hook-order` / `check-store-subscriptions` / `check-overlay-registry` 全绿 |
 | 2 | 真机：Windows「不再信任」AMD ⇒ 日志/读数（AMD 拉取 401；AMD 侧提示；重新邀请后恢复） | 两侧日志原文 ＋ 时间线（≤1 分钟为提示出现目标） |
+| 2a ✅ | 真机第一半（2026-11-12 14:38:20.965）：`device_unpair` ⇒ 对端拉取**立刻 401**（原文："没有登记过这台设备的公钥（没被信任过，或已被逐台解除）"）；对端侧 `peer-removed-hint` **真机出现**（但走了"没配对过"文案 ⇒ 见 2b）；**恢复（重新邀请）未完成**（对端窗口未取走邀请，15:11:52 过期） | 两侧日志原文（我方 `入站拉取 ⇒ 401`；AMD reply-3 侧 401 原文） |
+| 2b ✅ | 真机抓到并修复的方案漏洞：撤销**会通知对端并删对端的卡**（`pending revoke` → `GET /mesh/revoked` → `handle_revoked` → `device_unpair_served`）⇒ 被撤方名单变空 ⇒ "名单里没有它"分不出"没配对/被移出"；文案改成两种都说（`747fe90f`），判据 7/7、tsc 0、全量 vitest ✓ | `mesh.rs` 代码链 ＋ AMD reply-3 的 DOM 原文 |
 | 3 | 收口：契约状态/交接单/implementation-status 记录 | `check-plan-status`、`check-doc-links` |
 
 ## 6. 风险与回滚
