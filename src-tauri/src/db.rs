@@ -591,6 +591,20 @@ pub(crate) fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             PRIMARY KEY (space_id, device_id, device_seq)
         );
         CREATE INDEX IF NOT EXISTS idx_mesh_outbox_age ON mesh_outbox(space_id, mirrored_at);
+        -- ⭐ 2026-11-12（U1 邀请式配对）：**邀请台账**（设备级；放 meta.db，与 `device_id` 同处）。
+        --    一行 = 一段**已发出**的邀请。⛔ 不存邀请正文 ✗（正文含窗口口令；这里只留"这个 nonce
+        --    是谁发的、给谁、什么时候到期、用没用过/撤没撤" ⇒ 判"一次性/可撤销"只需要这几格）。
+        --    ⚠️ **设备级**（owner 2026-11-12 拍：邀请=整台设备 ⇒ 不按空间分行 ✓）。
+        CREATE TABLE IF NOT EXISTS mesh_invites (
+            nonce          TEXT PRIMARY KEY,          -- 32 hex = 128 bit（一次性 id）
+            from_device_id TEXT NOT NULL,             -- 谁签发的
+            to_device_id   TEXT NOT NULL DEFAULT '',  -- 指定给哪台（空 = 不指定，谁先拿到谁用）
+            exp            INTEGER NOT NULL,          -- 到期时刻（unix ms；签发 + 10 分钟）
+            created_at     INTEGER NOT NULL,
+            used_at        INTEGER,                   -- 用过一次的时刻（⛔ 不复用）
+            revoked_at     INTEGER                    -- 人在「没用掉的邀请」里撤销的时刻
+        );
+        CREATE INDEX IF NOT EXISTS idx_mesh_invites_exp ON mesh_invites(exp);
         -- ⭐ 2026-10-23（S3c，方案 `docs/plans/2026-10-23-sync-while-locked.md` §7.4）：
         --   **锁着时收下的封包**（"先存、不解密、不应用"）；解锁后由 `drain` 逐条解封、走现有 apply。
         -- ⚠️ 三条边界：① 只存**封好的**（⛔ 明文不进这张表 ✗ —— 它是给"库打不开"那一刻用的）；

@@ -753,6 +753,39 @@ export interface DevicePairImportOutcome {
   message: string;
 }
 
+/** ⭐ U1（2026-11-12，owner 拍 D1=A/D2=A/D3=A）：**邀请**生成读数（`invite_export`）。 */
+export interface InviteExportOutcome {
+  /** `not_configured` ＝ 这台还没配好设备直连（没地址/没口令）⇒ 没有东西可以邀请过去。 */
+  outcome: "ok" | "not_configured";
+  /** 邀请原文（紧凑 JSON）。⚠️ **含窗口口令** —— 只发给你自己那台设备。 */
+  text: string;
+  qr_svg: string | null;
+  qr_fits: boolean;
+  bytes: number;
+  /** 一次性 nonce（32 hex）。界面拿它去「没用掉的邀请」里撤销。 */
+  nonce: string;
+  /** 到期时刻（unix ms；签发 + 10 分钟）。 */
+  exp: number;
+  /** 一句人话（界面原样显示）。 */
+  message: string;
+}
+
+/** ⭐ U1：邀请采纳读数（`invite_import`）。`rejected` ⇒ **一个字节都没写**。 */
+export interface InviteImportOutcome {
+  outcome: "ok" | "rejected";
+  message: string;
+}
+
+/** ⭐ U1：邀请台账的一行（只含元数据，⛔ 不含邀请正文）。 */
+export interface InviteRow {
+  nonce: string;
+  to_device_id: string;
+  exp: number;
+  created_at: number;
+  used_at: number | null;
+  revoked_at: number | null;
+}
+
 export interface PairingExportOutcome {
   outcome: "ok" | "no_material";
   /** 配对载荷原文（紧凑 JSON）。`no_material` 时是空串。**不是秘密**，但要只交给自己那台设备。 */
@@ -1158,6 +1191,34 @@ export interface CommandMap {
       };
     };
     result: DevicePairImportOutcome;
+  };
+  // ⭐ U1（2026-11-12，owner 拍 D1=A/D2=A/D3=A）：**邀请式配对** —— 桌面专属
+  //（Web 没有发现层/窗口；理由同样登记在 `check-web-commands` 的 `DESKTOP_ONLY_COMMANDS`）。
+  // ⚠️ 注释**不许**夹在 `{` 与 `args` 之间（`check-web-commands` 认条目用 `name: {\s*args`）。
+  invite_export: {
+    args: {
+      spaceId: string;
+      peerDeviceId?: string | null;
+      peerPubkey?: string | null;
+    };
+    result: InviteExportOutcome;
+  };
+  invite_import: {
+    args: {
+      spaceId: string;
+      text: string;
+    };
+    result: InviteImportOutcome;
+  };
+  invite_list: {
+    args: undefined;
+    result: InviteRow[];
+  };
+  invite_revoke: {
+    args: {
+      nonce: string;
+    };
+    result: boolean;
   };
   pairing_import: {
     args: {

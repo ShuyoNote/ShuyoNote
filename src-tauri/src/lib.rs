@@ -1366,6 +1366,13 @@ pub fn run() {
             // ⭐ U11/T5：**逐台解除**（只踢那一台 ✓）
             sync::device_unpair,
             sync::device_pair_import,
+            // ⭐ U1（2026-11-12，owner 拍 D1=A/D2=A/D3=A）：邀请式配对四条 ——
+            // 复用上面 device_pair_* 的实现（邀请 = 抄码 + exp/nonce/sig；台账在 meta.db，设备级）。
+            // 桌面专属（同上面两条：Web 没有发现层/窗口）。
+            sync::invite_export,
+            sync::invite_import,
+            sync::invite_list,
+            sync::invite_revoke,
             sync::list_sync_history,
             sync::clear_sync_history,
             attachments::save_image,

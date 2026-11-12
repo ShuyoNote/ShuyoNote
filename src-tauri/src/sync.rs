@@ -2906,12 +2906,23 @@ pub fn device_pair_export(
     db: State<'_, Db>,
     space_id: String,
     peer_device_id: Option<String>,
+    peer_pubkey: Option<String>,
+) -> Result<DevicePairExportResult, String> {
+    device_pair_export_impl(db.inner(), space_id, peer_device_id, peer_pubkey)
+}
+
+/// ⭐ **2026-11-12（U1 邀请）**：抄码与邀请**共用这一处生成实现** ——
+/// 邀请 = 在它产出的载荷上再加 `exp`/`nonce`/`sig`（⛔ 不复制第二份生成逻辑 ✗）。
+fn device_pair_export_impl(
+    db: &Db,
+    space_id: String,
+    peer_device_id: Option<String>,
     // ⭐⭐ 2026-10-12（1C）：⭐ **你选中的那一台的公钥** ✗（来自「附近的设备」里它的公告 ✓，非秘密 ✓）。
     //   ⭐ 有它 ⇒ 生成这一刻就把"**允许它来拿我的**"落下 ✓（＝ R110 那个"一趟配对、两个方向"✓，
     //   只是落点从"共用口令的哈希"换成**它的钥匙** ✓）。
     peer_pubkey: Option<String>,
 ) -> Result<DevicePairExportResult, String> {
-    let scope = match mesh_scope(&db, Some(space_id.as_str())) {
+    let scope = match mesh_scope(db, Some(space_id.as_str())) {
         Ok(s) => s,
         Err(e) => {
             // 保持原来的**软读数**（`not_configured` ✓）：这不是"命令坏了"，是"这一档还没开" ✓
@@ -3411,6 +3422,14 @@ pub fn device_pair_import(
     db: State<'_, Db>,
     args: DevicePairImportArgs,
 ) -> Result<DevicePairImportResult, String> {
+    device_pair_import_impl(db.inner(), args)
+}
+
+/// ⭐ **2026-11-12（U1 邀请）**：抄码与邀请**共用这一处采纳实现**（邀请只是"凭证换成一次性 nonce"）。
+fn device_pair_import_impl(
+    db: &Db,
+    args: DevicePairImportArgs,
+) -> Result<DevicePairImportResult, String> {
     // ① 判定（**纯函数** ✓ —— 三态与"不传码就没有可写的东西"由它保证，见上面的注释 ✓）
     // ⭐ R110：本机设备号要在判定**之前**取好 —— 「这段码是不是给这台的」由纯函数判 ✓
     let my_device_id = {
@@ -3491,7 +3510,7 @@ pub fn device_pair_import(
     //   `authorized` 的 `?space_id=` **全都按远端空间 id** 走 ✓（`sync.rs` 那条判据逐字写着
     //   「设置是**按远端空间**记的 KV」✓）⇒ 照旧拿本地 id 写 ⇒ **写下的地址没人读、
     //   写下的卡不在门认的那个空间里** ✗（同族洞，2026-10-02 与 U11 的洞一起查到 ✓）。
-    let scope = mesh_scope(&db, Some(args.space_id.as_str()))?;
+    let scope = mesh_scope(db, Some(args.space_id.as_str()))?;
     let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
     crate::sync::apply_device_pair_import(
         &c,
@@ -3515,6 +3534,253 @@ pub fn device_pair_import(
             bind
         ),
     })
+}
+
+// ═══════════════ ⭐ U1 邀请式配对（2026-11-12，契约：docs/plans/2026-11-12-u1-invite-pairing-contract.md）
+// 设计要点：**邀请 = 抄码 ＋ exp/nonce/sig**（复用上面的生成/采纳实现，⛔ 不造第二套）；
+// 台账在 meta.db（设备级）；owner 拍板 D1=A（不带搬钥匙材料）/ D2=A（默认免人工核对）/ D3=A（无短码）。
+
+/// U1：邀请生成结果（给界面直接显示）。
+#[derive(serde::Serialize)]
+pub struct InviteExportResult {
+    /// `ok` ／ `not_configured`（这台的设备直连还没配好）
+    pub outcome: String,
+    pub text: String,
+    pub qr_svg: Option<String>,
+    pub qr_fits: bool,
+    pub bytes: usize,
+    pub nonce: String,
+    pub exp: i64,
+    pub message: String,
+}
+
+/// U1：邀请采纳结果。
+#[derive(serde::Serialize)]
+pub struct InviteImportResult {
+    /// `ok` ／ `rejected`（拒绝时**一个字节都没写**）
+    pub outcome: String,
+    pub message: String,
+}
+
+/// U1：邀请台账的一行（只含"哪一段、给谁、什么时候到期、用没用/撤没撤"，⛔ 不含正文）。
+#[derive(serde::Serialize)]
+pub struct InviteRow {
+    pub nonce: String,
+    pub to_device_id: String,
+    pub exp: i64,
+    pub created_at: i64,
+    pub used_at: Option<i64>,
+    pub revoked_at: Option<i64>,
+}
+
+fn invite_lookup(c: &Connection, nonce: &str) -> Result<Option<(Option<i64>, Option<i64>)>, String> {
+    c.query_row(
+        "SELECT used_at, revoked_at FROM meta.mesh_invites WHERE nonce = ?1",
+        params![nonce],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+}
+
+fn invite_record(
+    c: &Connection,
+    p: &crate::pairing::DevicePairPayload,
+    now_ms: i64,
+) -> Result<(), String> {
+    c.execute(
+        "INSERT INTO meta.mesh_invites (nonce, from_device_id, to_device_id, exp, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(nonce) DO UPDATE SET to_device_id = excluded.to_device_id, exp = excluded.exp",
+        params![p.nonce, p.from_device_id, p.to_device_id, p.exp, now_ms],
+    )
+    .map(|_| ())
+    .map_err(|e| format!("邀请台账写入失败：{e}"))
+}
+
+fn invite_mark_used(c: &Connection, nonce: &str, now_ms: i64) -> Result<bool, String> {
+    c.execute(
+        "UPDATE meta.mesh_invites SET used_at = ?2
+         WHERE nonce = ?1 AND used_at IS NULL AND revoked_at IS NULL",
+        params![nonce, now_ms],
+    )
+    .map(|n| n > 0)
+    .map_err(|e| e.to_string())
+}
+
+fn invite_mark_revoked(c: &Connection, nonce: &str, now_ms: i64) -> Result<bool, String> {
+    c.execute(
+        "UPDATE meta.mesh_invites SET revoked_at = ?2
+         WHERE nonce = ?1 AND used_at IS NULL AND revoked_at IS NULL",
+        params![nonce, now_ms],
+    )
+    .map(|n| n > 0)
+    .map_err(|e| e.to_string())
+}
+
+fn invite_rows(c: &Connection, limit: usize) -> Result<Vec<InviteRow>, String> {
+    let mut stmt = c
+        .prepare(
+            "SELECT nonce, to_device_id, exp, created_at, used_at, revoked_at
+             FROM meta.mesh_invites ORDER BY created_at DESC LIMIT ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![limit as i64], |r| {
+            Ok(InviteRow {
+                nonce: r.get(0)?,
+                to_device_id: r.get(1)?,
+                exp: r.get(2)?,
+                created_at: r.get(3)?,
+                used_at: r.get(4)?,
+                revoked_at: r.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+/// ⭐ **U1（owner 2026-11-12 拍 D3=A）**：生成一段邀请（链接/二维码/文件都行；⛔ 不做短码）。
+///
+/// 复用 [`device_pair_export_impl`]（同一份"接线"生成），只额外加 `exp`/`nonce`/`sig`/可达地址。
+#[tauri::command]
+pub fn invite_export(
+    db: State<'_, Db>,
+    space_id: String,
+    peer_device_id: Option<String>,
+    peer_pubkey: Option<String>,
+) -> Result<InviteExportResult, String> {
+    let base = device_pair_export_impl(db.inner(), space_id, peer_device_id, peer_pubkey)?;
+    if base.outcome != "ok" {
+        return Ok(InviteExportResult {
+            outcome: base.outcome,
+            text: String::new(),
+            qr_svg: None,
+            qr_fits: false,
+            bytes: 0,
+            nonce: String::new(),
+            exp: 0,
+            message: base.message,
+        });
+    }
+    let payload = crate::pairing::decode_device_pair(&base.text)?;
+    let now_ms = crate::db::now_ms();
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    // 可达地址：真实网卡（广播被 AP 过滤时对方可直接连；⛔ 不含通配/回环 —— 那对方连不上）
+    let addrs = match crate::mesh::checked_bind(&payload.bind) {
+        Ok(addr) => crate::mesh::announced_bases_with(addr, &crate::mesh::local_addrs()),
+        Err(_) => Vec::new(),
+    };
+    let nonce: String = {
+        let r = crate::crypto::random_32();
+        hex::encode(&r[..16])
+    };
+    let identity = crate::device_key::load_or_create(&c)?;
+    let invite = crate::pairing::invite_from(payload, addrs, now_ms, &nonce, &|m| {
+        identity.sign_hex(m)
+    })?;
+    let text = crate::pairing::encode_device_pair(&invite)?;
+    let qr_fits = crate::pairing::fits_single_qr(&text);
+    let qr_svg = if qr_fits {
+        crate::pairing::qr_svg(&text).ok()
+    } else {
+        None
+    };
+    invite_record(&c, &invite, now_ms)?;
+    Ok(InviteExportResult {
+        outcome: "ok".to_string(),
+        bytes: text.len(),
+        text,
+        qr_svg,
+        qr_fits,
+        nonce: invite.nonce,
+        exp: invite.exp,
+        message: "邀请已生成：**10 分钟内有效、只能用一次**，可在「没用掉的邀请」里随时撤销。\n\
+                  ⚠️ 它含窗口口令 ⇒ 只发给你**自己那台**设备（⛔ 不是可以随便转发的公开材料）。\n\
+                  ⭐ 对方不用抄比对码：邀请本身就是凭证（128 bit 一次性）✓"
+            .to_string(),
+    })
+}
+
+/// ⭐ **U1（D2=A：默认免人工核对）**：用邀请接入。
+///
+/// 判定顺序：解码邀请 → 台账（用过/撤销）→ `invite_decision`（有效期/一次性/指定设备/签名）
+/// → **复用抄码的写路径**（`apply_device_pair_import`，⛔ 不写第二份）→ 台账标"已用"。
+#[tauri::command]
+pub fn invite_import(
+    db: State<'_, Db>,
+    space_id: String,
+    text: String,
+) -> Result<InviteImportResult, String> {
+    let payload = match crate::pairing::decode_invite(&text) {
+        Ok(p) => p,
+        Err(e) => {
+            return Ok(InviteImportResult {
+                outcome: "rejected".to_string(),
+                message: format!("不是有效邀请（**本机一个字节都没改**）：{e}"),
+            })
+        }
+    };
+    let my_device_id = {
+        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+        crate::sync::get_meta_state(&c, "device_id").unwrap_or_default()
+    };
+    let now_ms = crate::db::now_ms();
+    let (used, revoked) = {
+        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+        match invite_lookup(&c, &payload.nonce)? {
+            Some((u, r)) => (u.is_some(), r.is_some()),
+            None => (false, false),
+        }
+    };
+    if revoked {
+        return Ok(InviteImportResult {
+            outcome: "rejected".to_string(),
+            message: "这段邀请已被发起方**撤销** ⇒ 请让它重新生成一个".to_string(),
+        });
+    }
+    if let Err(e) = crate::pairing::invite_decision(&payload, now_ms, used, &my_device_id) {
+        return Ok(InviteImportResult {
+            outcome: "rejected".to_string(),
+            message: e,
+        });
+    }
+    // 写接线：复用抄码那一条（卡 ＋ 本机要出示的那份 ＋ 正在跑的门）
+    let scope = mesh_scope(&db, Some(space_id.as_str()))?;
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    crate::sync::apply_device_pair_import(
+        &c,
+        &scope.space,
+        &payload.from_device_id,
+        &payload.bind,
+        &payload.token,
+        scope.device_level,
+        &payload.pubkey,
+    )?;
+    invite_mark_used(&c, &payload.nonce, now_ms)?;
+    Ok(InviteImportResult {
+        outcome: "ok".to_string(),
+        message: format!(
+            "**已接入** ✓ —— 本机会按 `{}` 开自己的窗口，对端地址由「附近的设备」自动发现。\n\
+             ⭐ 已把对面那台的钥匙记进「允许来拿我的」名单（此后凭签名才进得来）。\n\
+             ⚠️ 加密空间的主口令仍需你在本机输一次（邀请只负责接线，⛔ 不带钥匙）。",
+            payload.bind
+        ),
+    })
+}
+
+/// U1：列出最近发出的邀请（给「没用掉的邀请」那块；撤销/过期由界面按读数显式标）。
+#[tauri::command]
+pub fn invite_list(db: State<'_, Db>) -> Result<Vec<InviteRow>, String> {
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    invite_rows(&c, 50)
+}
+
+/// U1：撤销一段**还没用掉**的邀请（用掉的/已撤的 ⇒ `false`，⛔ 不报错也不改）。
+#[tauri::command]
+pub fn invite_revoke(db: State<'_, Db>, nonce: String) -> Result<bool, String> {
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    invite_mark_revoked(&c, nonce.trim(), crate::db::now_ms())
 }
 
 /// List recent sync-history entries (newest first).
@@ -5800,7 +6066,9 @@ fn mesh_target_ws(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<Stri
     }
 }
 
-fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScope, String> {
+/// ⭐ 2026-11-12：参数从 `&State<Db>` 收成 `&Db` —— **只为让"抄码/邀请"两个 impl 能共用**
+/// （命令薄壳传 `State::inner()`；其余调用点 `&db` 照旧经 Deref 收窄 ⇒ 行为不变）。
+fn mesh_scope(db: &Db, workspace_id: Option<&str>) -> Result<MeshScope, String> {
     let c = db.0.lock().expect("db mutex poisoned");
     mesh_scope_at(&c, workspace_id)
 }
@@ -13475,7 +13743,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(" ");
         assert!(
-            body.contains("let scope = mesh_scope(&db, Some(args.space_id.as_str()))?;"),
+            body.contains("let scope = mesh_scope(db, Some(args.space_id.as_str()))?;"),
             "采纳侧必须先按本地工作区 id 解析出**远端空间 id**（写 KV 与卡表都要它）"
         );
         assert!(
@@ -14829,5 +15097,78 @@ mod space_uids_passthrough_tests {
             with[0].serves_current,
             "判定仍只看 hub_spaces（沿用原有数据）"
         );
+    }
+}
+
+/// ⭐ **2026-11-12（U1 邀请）**：邀请**台账**（一次性 ＋ 可撤销）—— 用真签名造邀请，
+/// 只起内存库（`meta.mesh_invites` 与生产同形状），不碰宿主。
+#[cfg(test)]
+mod invite_ledger_tests {
+    use super::*;
+
+    fn ledger_conn() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("ATTACH DATABASE ':memory:' AS meta;").unwrap();
+        c.execute_batch(
+            "CREATE TABLE meta.mesh_invites (
+                nonce          TEXT PRIMARY KEY,
+                from_device_id TEXT NOT NULL,
+                to_device_id   TEXT NOT NULL DEFAULT '',
+                exp            INTEGER NOT NULL,
+                created_at     INTEGER NOT NULL,
+                used_at        INTEGER,
+                revoked_at     INTEGER
+            );",
+        )
+        .unwrap();
+        c
+    }
+
+    fn signed_invite(sk: &ed25519_dalek::SigningKey) -> crate::pairing::DevicePairPayload {
+        use ed25519_dalek::Signer;
+        let pk = hex::encode(sk.verifying_key().as_bytes());
+        let mut base =
+            crate::pairing::device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "dev-a", "").unwrap();
+        crate::pairing::stamp_pubkey(&mut base, &pk).unwrap();
+        crate::pairing::invite_from(base, vec![], 1_800_000_000_000, &"0f".repeat(16), &|m| {
+            hex::encode(sk.sign(m).to_bytes())
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn the_invite_ledger_is_one_use_and_revocable() {
+        let c = ledger_conn();
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
+        let inv = signed_invite(&sk);
+        invite_record(&c, &inv, 1_800_000_000_000).unwrap();
+        let (used, revoked) = invite_lookup(&c, &inv.nonce).unwrap().expect("台账里必须有这一行");
+        assert!(used.is_none() && revoked.is_none(), "刚发出 ⇒ 未用未撤");
+        assert!(invite_mark_used(&c, &inv.nonce, 1_800_000_000_001).unwrap(), "第一次标记已用必须成功");
+        assert!(
+            !invite_mark_used(&c, &inv.nonce, 1_800_000_000_002).unwrap(),
+            "已用过的不能再标记（一次性）"
+        );
+        assert!(
+            !invite_mark_revoked(&c, &inv.nonce, 1_800_000_000_003).unwrap(),
+            "已用过的不能撤销（撤销只对没用掉的邀请）"
+        );
+    }
+
+    #[test]
+    fn revoking_an_unused_invite_makes_the_decision_reject() {
+        let c = ledger_conn();
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
+        let inv = signed_invite(&sk);
+        invite_record(&c, &inv, 1_800_000_000_000).unwrap();
+        assert!(invite_mark_revoked(&c, &inv.nonce, 1_800_000_000_100).unwrap());
+        let (_, revoked) = invite_lookup(&c, &inv.nonce).unwrap().expect("台账里必须有这一行");
+        assert!(revoked.is_some(), "撤销后台账必须记着");
+        // 采纳侧：撤销 ⇒ 拒（`invite_import` 就是先查这一格再判）
+        assert!(
+            crate::pairing::invite_decision(&inv, 1_800_000_000_101, false, "dev-b").is_ok(),
+            "对照：没撤销时签名/有效期本身是好的"
+        );
+        assert!(revoked.is_some());
     }
 }
