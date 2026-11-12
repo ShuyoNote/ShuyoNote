@@ -813,20 +813,26 @@ pub fn save_page(db: State<Db>, mut args: SavePageArgs) -> Result<PageDetail, St
             let c = crate::db::open_space_conn_at(&space, app_data).map_err(|e| {
                 format!("permission_denied: 目标空间「{space}」已锁定或无法打开（locked）：{e}")
             })?;
-            return save_page_and_wake(&c, args);
+            return save_page_and_wake(&c, args, "save_page:跨空间");
         }
     }
     let c = conn(&db);
-    save_page_and_wake(&c, args)
+    save_page_and_wake(&c, args, "save_page:当前空间")
 }
 
 /// ⭐ **P3-1a**：`save_page` 的**唯一落库成功点** —— 成功后才请求后台同步轮醒来。
 ///
 /// ⚠️ 只在 `save_page_in(...)?` **成功之后**调：任何失败都会经 `?` 提前返回 ⇒ ⛔ 不触发唤醒。
-fn save_page_and_wake(c: &Connection, args: SavePageArgs) -> Result<PageDetail, String> {
+/// ⭐ **F1 小尾巴（2026-11-12）**：`source` 是**代码里的常量标签**（"跨空间"/"当前空间"），
+///   只用于日志里读出"这一次轮是谁保存的"（真机出现过 3 次未解释的本地保存）。
+fn save_page_and_wake(
+    c: &Connection,
+    args: SavePageArgs,
+    source: &'static str,
+) -> Result<PageDetail, String> {
     let detail = save_page_in(c, args)?;
     // 本地保存成功 ⇒ 事件唤醒后台轮（2s 合并；暂停/未配网格/在飞等 gate 由 `lan_state` 判）。
-    crate::lan_state::request_round_now();
+    crate::lan_state::request_round_now_from_source(source);
     Ok(detail)
 }
 
@@ -1819,7 +1825,7 @@ mod save_page_round_wake_tests {
             .find("mod save_page_round_wake_tests")
             .expect("本测试模块必须在文件里");
         let prod = &src[..test_at];
-        // ① 唯一落库成功点：`save_page_in(...)?` 之后才 `request_round_now()`。
+        // ① 唯一落库成功点：`save_page_in(...)?` 之后才 `request_round_now_from_source(...)`。
         let helper_at = prod
             .find("fn save_page_and_wake(")
             .expect("必须有 save_page_and_wake（唯一落库成功点）");
@@ -1828,21 +1834,25 @@ mod save_page_round_wake_tests {
             .find("save_page_in(c, args)?")
             .expect("helper 里先 save_page_in(c, args)?");
         let wake = body
-            .find("crate::lan_state::request_round_now()")
-            .expect("helper 里要有 request_round_now()");
+            .find("crate::lan_state::request_round_now_from_source(source)")
+            .expect("helper 里要有 request_round_now_from_source(source)");
         assert!(
             db_call < wake,
             "唤醒必须在 save_page_in 成功（? 之后）才调：db={db_call} wake={wake}"
         );
-        // ② 两个出口（跨空间/当前空间）都走同一 helper，而不是各自直调。
+        // ② 两个出口（跨空间/当前空间）都走同一 helper，且各自带**可读的来源标签**。
         assert_eq!(
-            prod.matches("save_page_and_wake(&c, args)").count(),
+            prod.matches("save_page_and_wake(&c, args, ").count(),
             2,
-            "跨空间 + 当前空间两个出口都应走 save_page_and_wake"
+            "跨空间 + 当前空间两个出口都应走 save_page_and_wake（带来源标签）"
+        );
+        assert!(
+            prod.contains("save_page:跨空间") && prod.contains("save_page:当前空间"),
+            "两个出口都要给日志读得懂的保存来源（真机出现过'不知道谁保存的'）"
         );
         // ③ 失败路径不唤醒：全文件只有 helper 里那一处调用。
         assert_eq!(
-            prod.matches("crate::lan_state::request_round_now()")
+            prod.matches("crate::lan_state::request_round_now_from_source(")
                 .count(),
             1,
             "只该有落库成功点这一处调用（失败路径不许触发）"

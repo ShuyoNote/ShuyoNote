@@ -795,6 +795,12 @@ static ANNOUNCE_DIRTY_PENDING: AtomicBool = AtomicBool::new(false);
 /// ⇒ 只有本地保存的那一轮许发 `dirty`；对端唤醒的轮**只拉不发**。
 static LOCAL_SAVE_PENDING: AtomicBool = AtomicBool::new(false);
 
+/// ⭐ **F1 小尾巴（2026-11-12）**：最近一次"本地保存唤醒"的**来源标签**（日志用）。
+///
+/// 为什么要有：真机出现过「本地保存唤醒」但**不知道是谁保存的**（3 次未解释的 dirty 轮）。
+/// 只存**代码里的常量标签**（`&'static str`，⛔ 不许运行时拼接）⇒ 日志里不会带用户内容。
+static LAST_SAVE_SOURCE: Mutex<&'static str> = Mutex::new("未记录");
+
 /// ⭐ **P3-1a**：事件触发轮的**最小间隔** —— 连续保存/连续命令在 2 秒内只合并成一轮。
 pub const EVENT_ROUND_MIN_GAP_MS: i64 = 2_000;
 
@@ -822,11 +828,43 @@ pub fn event_round_ready(
 ///
 /// ⚠️ 只置位 + 叫醒，不直接跑：真正的 gate/合并由 `start` 循环里的 `event_round_ready` 判
 ///（`commands::save_page` 是命令线程，不能在这里 await/持锁/起轮）。
+///
+/// ⚠️ 它等价于 [`request_round_now_from_source`] 的**未记录来源**版本（老调用点/测试用）。
 pub fn request_round_now() {
+    request_round_now_from_source("未记录");
+}
+
+/// ⭐ **F1 小尾巴（2026-11-12）**：带**保存来源**的唤醒入口。
+///
+/// 为什么要有：真机出现过「本地保存唤醒」但**不知道是谁保存的**（3 次未解释的 dirty 轮）。
+/// 现在把来源标签记下来，日志那一行直接打「保存来源：…」——判据只看日志，不再靠猜。
+///
+/// ⚠️ 只接受 `&'static str`：来源是**代码里的常量标签**，⛔ 不许运行时拼接
+///（避免把用户内容/路径写进日志；与"日志不含内容"同一条纪律）。
+/// ⚠️ 它仍置 [`LOCAL_SAVE_PENDING`]（这就是"本地保存"入口，可以对外发 dirty）。
+pub fn request_round_now_from_source(source: &'static str) {
+    if let Ok(mut s) = LAST_SAVE_SOURCE.lock() {
+        *s = source;
+    }
     // ⭐ 2026-11-12（F1 修复）：本地保存 ⇒ 这一轮**可以**对外发 dirty。
     LOCAL_SAVE_PENDING.store(true, Ordering::SeqCst);
     EVENT_ROUND_PENDING.store(true, Ordering::SeqCst);
     ROUND_NOTIFY.notify_one();
+}
+
+/// 最近一次"本地保存唤醒"的**来源标签**（日志用；未记录 ⇒ `"未记录"`）。
+pub fn last_local_save_source() -> &'static str {
+    LAST_SAVE_SOURCE.lock().map(|s| *s).unwrap_or("未记录")
+}
+
+/// ⭐ **F1 小尾巴（2026-11-12，纯函数）**：那一行唤醒日志 —— 必须能直接读出**保存来源**。
+///
+/// 判据：`what`（这一轮覆盖哪些空间）＋ `source`（谁唤醒的）都要在；`source` 为空/未记录时也**照实打**。
+pub fn local_save_wake_line(what: &str, source: &str) -> String {
+    format!(
+        "[{}] [mesh] 后台一轮：本地保存唤醒（{what}）｜ 保存来源：{source}",
+        lan::log_stamp()
+    )
 }
 
 /// ⭐ **2026-11-12（§13 F1 修复）**：**对端公告说"我刚有改动"** ⇒ 只唤醒「拉一轮」。
@@ -1767,10 +1805,9 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     // 事件轮也重算原后台节拍（下一轮仍按 `background_round_interval_ms` 的 backoff ✓）。
                     last_bg_round_ms = now;
                     match spawn_background_round(&app2, &device_id, &mesh_cfgs, &state.peers(now)) {
-                        Some(what) => eprintln!(
-                            "[{}] [mesh] 后台一轮：本地保存唤醒（{what}）",
-                            lan::log_stamp()
-                        ),
+                        Some(what) => {
+                            eprintln!("{}", local_save_wake_line(&what, last_local_save_source()))
+                        }
                         None => {
                             EVENT_ROUND_PENDING.store(true, Ordering::SeqCst);
                             eprintln!(
@@ -3868,6 +3905,33 @@ mod p31_event_round_tests {
             EVENT_ROUND_PENDING.load(Ordering::SeqCst),
             "request_round_now 必须置 pending（真正跑不跑由 start 循环的 gate 判）"
         );
+        EVENT_ROUND_PENDING.store(false, Ordering::SeqCst);
+        LOCAL_SAVE_PENDING.store(false, Ordering::SeqCst);
+    }
+
+    /// ⭐ **F1 小尾巴（2026-11-12）**：本地保存唤醒那行日志必须**直接读出保存来源**
+    ///（真机出现过 3 次"不知道谁保存的"dirty 轮 ⇒ 口径：日志里读得到，不靠猜）。
+    #[test]
+    fn local_save_wake_line_names_the_save_source() {
+        let line = local_save_wake_line("9 个空间", "save_page:当前空间");
+        assert!(line.contains("本地保存唤醒"), "{line}");
+        assert!(line.contains("9 个空间"), "这一轮覆盖什么要在：{line}");
+        assert!(
+            line.contains("save_page:当前空间"),
+            "保存来源必须在：{line}"
+        );
+        // ⚠️ 没记录来源时也照实打，⛔ 不许编一个
+        let unknown = local_save_wake_line("2 个空间", "未记录");
+        assert!(unknown.contains("保存来源：未记录"), "{unknown}");
+    }
+
+    /// ⭐ **F1 小尾巴**：带来源的入口真的把来源记下来（日志才读得到）。
+    #[test]
+    fn request_round_now_from_source_records_that_source() {
+        EVENT_ROUND_PENDING.store(false, Ordering::SeqCst);
+        request_round_now_from_source("save_page:测试");
+        assert_eq!(last_local_save_source(), "save_page:测试");
+        assert!(EVENT_ROUND_PENDING.load(Ordering::SeqCst));
         EVENT_ROUND_PENDING.store(false, Ordering::SeqCst);
         LOCAL_SAVE_PENDING.store(false, Ordering::SeqCst);
     }
