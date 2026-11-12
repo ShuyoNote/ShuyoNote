@@ -804,6 +804,76 @@ static LAST_SAVE_SOURCE: Mutex<&'static str> = Mutex::new("未记录");
 /// ⭐ **P3-1a**：事件触发轮的**最小间隔** —— 连续保存/连续命令在 2 秒内只合并成一轮。
 pub const EVENT_ROUND_MIN_GAP_MS: i64 = 2_000;
 
+/// ⭐ **U3（2026-11-12，owner 拍 A）**：自动重试的**递进表** —— 60 s → 120 s → 300 s → 600 s（封顶）。
+///
+/// 语义：`attempts_done` = **已经自动重试过几次**（0 ⇒ 第一次重试等 60 s）。
+/// 表长 = 允许的**自动重试次数**：4 次都失败 ⇒ [`RetryDecision::Stop`]（⛔ 不再自动发起）。
+pub const AUTO_RETRY_SCHEDULE_MS: [i64; 4] = [60_000, 120_000, 300_000, 600_000];
+
+/// ⭐ **U3（纯函数）**：下一次自动重试要等多久，或者**该停了**。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryDecision {
+    /// 等 `after_ms` 再自动重试一次。
+    Retry { after_ms: i64 },
+    /// ⛔ 不再自动重试（到上限 / 这类失败根本不该自动重试）。
+    Stop,
+}
+
+/// ⭐ **U3（2026-11-12，owner 拍 A/A）**：自动重试计划 —— **纯函数**，界面与后台共用同一份。
+///
+/// 判据（契约 C1/C2）：
+/// * `retriable == false`（身份类/拿不准）⇒ **一次都不自动重试**，直接 [`RetryDecision::Stop`]；
+/// * 已重试 `attempts_done` 次 ⇒ 按 [`AUTO_RETRY_SCHEDULE_MS`] 取下一次等待；到上限 ⇒ Stop。
+pub fn retry_plan(attempts_done: usize, retriable: bool) -> RetryDecision {
+    if !retriable {
+        return RetryDecision::Stop;
+    }
+    match AUTO_RETRY_SCHEDULE_MS.get(attempts_done) {
+        Some(&after_ms) => RetryDecision::Retry { after_ms },
+        None => RetryDecision::Stop,
+    }
+}
+
+/// ⭐ **U3（2026-11-12，owner 拍 ②A）**：这类失败**该不该**自动重试 —— **默认不重试**（拿不准 ⇒ 不试）。
+///
+/// 口径：
+/// * **可能自己好的**（网络/端口/发现层/暂时没对端）⇒ `true`；
+/// * **身份类**（401/被移出/没配对/空间不匹配/锁着/口令）⇒ `false`（重试也没用，要给动作）；
+/// * 其它/不认识 ⇒ `false`（⛔ 拿不准时重试 4 次是白试；宁可让人看）。
+pub fn auto_retryable(reason: &str) -> bool {
+    let s = reason.trim();
+    if s.is_empty() {
+        return false;
+    }
+    // ① 身份类：先判（即使文案里同时出现"超时"也不许自动重试）
+    const IDENTITY: [&str; 9] = [
+        "401",
+        "没被信任过",
+        "没有登记过这台设备的公钥",
+        "已被移出",
+        "已被逐台解除",
+        "没配对过",
+        "还没配对过",
+        "不匹配",
+        "锁着",
+    ];
+    if IDENTITY.iter().any(|m| s.contains(m)) {
+        return false;
+    }
+    // ② 网络/环境类：可能自己好
+    const TRANSIENT: [&str; 8] = [
+        "timeout",
+        "超时",
+        "连接被拒",
+        "connection refused",
+        "connection reset",
+        "error sending request",
+        "端口被占",
+        "地址已被占用",
+    ];
+    TRANSIENT.iter().any(|m| s.contains(m))
+}
+
 /// ⭐ **P3-1a（纯函数）**：距上一次事件轮是否已过最小间隔（`last <= 0` ＝ 还没跑过 ⇒ 立刻可跑）。
 pub fn event_round_due(last_event_ms: i64, now_ms: i64) -> bool {
     last_event_ms <= 0 || now_ms.saturating_sub(last_event_ms) >= EVENT_ROUND_MIN_GAP_MS
@@ -3934,6 +4004,68 @@ mod p31_event_round_tests {
         assert!(EVENT_ROUND_PENDING.load(Ordering::SeqCst));
         EVENT_ROUND_PENDING.store(false, Ordering::SeqCst);
         LOCAL_SAVE_PENDING.store(false, Ordering::SeqCst);
+    }
+
+    /// ⭐ **U3（2026-11-12，owner 拍 A）**：自动重试计划真值表 —— 60/120/300/600 封顶、第 4 次后停。
+    #[test]
+    fn retry_plan_follows_the_60_120_300_600_cap() {
+        use super::{retry_plan, RetryDecision};
+        let expect = [
+            (0usize, 60_000i64),
+            (1, 120_000),
+            (2, 300_000),
+            (3, 600_000),
+        ];
+        for (attempts, after_ms) in expect {
+            assert_eq!(
+                retry_plan(attempts, true),
+                RetryDecision::Retry { after_ms },
+                "第 {attempts} 次重试应等 {after_ms} ms"
+            );
+        }
+        assert_eq!(
+            retry_plan(4, true),
+            RetryDecision::Stop,
+            "4 次都失败 ⇒ 必须停（⛔ 不许无限重试）"
+        );
+        assert_eq!(
+            retry_plan(0, false),
+            RetryDecision::Stop,
+            "不该自动重试的失败 ⇒ 一次都不试"
+        );
+        assert_eq!(retry_plan(9, false), RetryDecision::Stop);
+    }
+
+    /// ⭐ **U3（owner 拍 ②A）**：只有"可能自己好的"才自动重试；身份类**零重试**、不认识的也不试。
+    #[test]
+    fn auto_retryable_only_for_transient_network_failures() {
+        use super::auto_retryable;
+        // 可能自己好的
+        for ok in [
+            "error sending request for url (http://…): timeout",
+            "连接超时",
+            "connection refused",
+            "端口被占",
+            "地址已被占用",
+        ] {
+            assert!(auto_retryable(ok), "网络类应可自动重试：{ok}");
+        }
+        // 身份类：重试也没用
+        for no in [
+            "401",
+            "没被信任过，或已被逐台解除",
+            "没有登记过这台设备的公钥",
+            "这个空间里没有登记过这台设备的公钥（没被信任过）",
+            "空间不匹配",
+            "会话锁着（请先输口令）",
+        ] {
+            assert!(!auto_retryable(no), "身份类不许自动重试：{no}");
+        }
+        // 身份类在前：即使同一句里也出现"超时"，也不许自动重试（反例）
+        assert!(!auto_retryable("401 之前 timeout 过一次"));
+        // 不认识 / 空 ⇒ 不试（拿不准就不试）
+        assert!(!auto_retryable(""));
+        assert!(!auto_retryable("某个没见过的错误"));
     }
 
     /// ⭐ **2026-11-12（§13 F1 修复：dirty 活锁）**：只有「本地保存」触发的轮才许发 dirty；
