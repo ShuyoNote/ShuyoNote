@@ -1,6 +1,6 @@
 # U2 设备生命周期（撤销）—— 契约草案（2026-11-12）
 
-状态：**契约已拍板**（owner 2026-11-12：①A 撤销**立刻生效** / ②A 首刀**只做移出、不换空间密钥** / ③A 被移出方**如实说** / ④A 同名空间**不自动合并**，与既有 DEC-D=A 一致）；**片 1（文案＋被移出提示）已落地**
+状态：**契约已拍板并完成**（owner 2026-11-12：①A 撤销**立刻生效** / ②A 首刀**只做移出、不换空间密钥** / ③A 被移出方**如实说** / ④A 同名空间**不自动合并**，与既有 DEC-D=A 一致）；**片 1–3 全部落地，真机双向通过**（撤销→401→恢复，2026-11-12）
 证据：既有实现 `../../src-tauri/src/sync.rs`（`device_unpair` / `device_unpair_at` / `device_unpair_served`）＋
 `../../src/components/SyncPanel.tsx`（「不再信任」二次确认 ＋ `duUnpair`）＋
 `../../src-tauri/src/mesh.rs`（撤销后拒绝的判据：`unpairing_one_device_only_stops_that_device` 等）
@@ -72,7 +72,7 @@
 | 2✅ | 真机：Windows「不再信任」AMD ⇒ 日志/读数（AMD 拉取 401；AMD 侧提示；重新邀请后恢复） | 两侧日志原文 ＋ 时间线（≤1 分钟为提示出现目标） |
 | 2a ✅ | 真机第一半（2026-11-12 14:38:20.965）：`device_unpair` ⇒ 对端拉取**立刻 401**（原文："没有登记过这台设备的公钥（没被信任过，或已被逐台解除）"）；对端侧 `peer-removed-hint` **真机出现**（但走了"没配对过"文案 ⇒ 见 2b） | 两侧日志原文（我方 `入站拉取 ⇒ 401`；AMD reply-3 侧 401 原文） |
 | 2b ✅ | 真机抓到并修复的方案漏洞：撤销**会通知对端并删对端的卡**（`pending revoke` → `GET /mesh/revoked` → `handle_revoked` → `device_unpair_served`）⇒ 被撤方名单变空 ⇒ "名单里没有它"分不出"没配对/被移出"；文案改成两种都说（`747fe90f`），判据 7/7、tsc 0、全量 vitest ✓ | `mesh.rs` 代码链 ＋ AMD reply-3 的 DOM 原文 |
-| 2c ✅ | 真机第二半 —— **恢复**（2026-11-12 15:20）：双方各用**方法 A**（生成时 peer 绑定）写回对方卡；我方 `mesh.paired` 含 `4b345a0a`（addedAtMs 15:00:40.841）⇒ 我拉对端 `ok fetched=0 applied=0 cursor=185`（不再是 401）；对端拉我方 `since=254/255 ⇒ 200`、`pk_for_dev=true`；我方保存 marker `U2-RESTORE-1794468054501`（15:20:54.501）。对端 applied 读数由 AMD 在 reply-7 报 ⇒ 见交接单/信件 | 我方日志原文 ＋ mailbox reply-6（`b75d3c57`） |
+| 2c ✅ | 真机第二半 —— **恢复**（2026-11-12 15:20）：双方各用**方法 A**（生成时 peer 绑定）写回对方卡；我方 `mesh.paired` 含 `4b345a0a`（addedAtMs 15:00:40.841）⇒ 我拉对端 `ok fetched=0 applied=0 cursor=185`（不再是 401）；对端拉我方 `since=254/255 ⇒ 200`、`pk_for_dev=true`；我方保存 marker `U2-RESTORE-1794468054501`（15:20:54.501）；**对端读数（AMD reply-7）**：`space=1c02 since=254 max_seq=255 gap=1 fetched=1 applied=1 ms=47`（15:20:56）、marker 落库（updated_at 15:20:54.507）、`mesh_paired_devices`=1 | 我方日志原文 ＋ AMD reply-7（mailbox `f60b65b8`） |
 | 3 | 收口：契约状态/交接单/implementation-status 记录 | `check-plan-status`、`check-doc-links` |
 
 ## 6. 风险与回滚

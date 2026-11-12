@@ -152,6 +152,9 @@ owner 拍板：①A 撤销立刻生效 / ②A 只做移出、不换空间密钥 
   · 我方 `mesh.paired` 含 4b345a0a（addedAtMs 15:00:40.841）；我方拉对端 `ok fetched=0 applied=0 cursor=185`（不再 401）
   · 对端拉我方 `since=254/255 ⇒ 200`、`pk_for_dev=true`
   · 我方保存 marker `U2-RESTORE-1794468054501`（15:20:54.501，1c02）
+  · 对端读数（AMD reply-7）：`space=1c02 since=254 max_seq=255 gap=1 fetched=1 applied=1 ms=47`（15:20:56）、
+    marker 落库 updated_at 15:20:54.507、`mesh_paired_devices`=1
+⇒ 撤销→401→重新邀请恢复：**双向端到端成立**（U2 片 2 通过）
 ⚠️ 未做（owner ②A 明确非目标）：密钥轮换（换空间密钥）⇒ 已同步副本删不掉、旧数据不可回溯保护
 ```
 
