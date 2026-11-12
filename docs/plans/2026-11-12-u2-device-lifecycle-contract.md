@@ -1,9 +1,12 @@
 # U2 设备生命周期（撤销）—— 契约草案（2026-11-12）
 
-状态：**契约已拍板**（owner 2026-11-12：①A 撤销**立刻生效** / ②A 首刀**只做移出、不换空间密钥** / ③A 被移出方**如实说** / ④A 同名空间**不自动合并**，与既有 DEC-D=A 一致）
+状态：**契约已拍板**（owner 2026-11-12：①A 撤销**立刻生效** / ②A 首刀**只做移出、不换空间密钥** / ③A 被移出方**如实说** / ④A 同名空间**不自动合并**，与既有 DEC-D=A 一致）；**片 1（文案＋被移出提示）已落地**
 证据：既有实现 `../../src-tauri/src/sync.rs`（`device_unpair` / `device_unpair_at` / `device_unpair_served`）＋
 `../../src/components/SyncPanel.tsx`（「不再信任」二次确认 ＋ `duUnpair`）＋
 `../../src-tauri/src/mesh.rs`（撤销后拒绝的判据：`unpairing_one_device_only_stops_that_device` 等）
+片 1（2026-11-12）：`../../src/lib/peerRemovedHint.ts`（「被移出 / 没配对」两种说法，唯一实现）＋
+`../../src/lib/peerRemovedHint.test.ts`（4 条）＋ `../../src/components/syncPanelRevokedHint.wiring.test.ts`（3 条）；
+`tsc --noEmit` 0；全量 vitest 门禁 ✓；`check-hook-order` / `check-store-subscriptions` / `check-overlay-registry` 全绿
 上位：[个人同步 2.0 需求](2026-11-08-personal-sync-2.0-requirements.md) §13.5 U2（"撤销后该设备**再也拉不到**新数据（有判据）"）
 前置：[U1 邀请式配对](2026-11-12-u1-invite-pairing-contract.md) 已完成（撤销后要重新加入 ⇒ 走邀请/配对）
 
@@ -61,7 +64,7 @@
 
 | 片 | 内容 | 判据 |
 |---|---|---|
-| 1 | 文案补 C3④ ＋ 被移出方提示（C4） | 新增/扩展 wiring 测试（源码级）；`pnpm exec tsc`；`node scripts/check-hook-order.mjs`、`check-store-subscriptions` |
+| 1 ✅ | 文案补 C3④ ＋ 被移出方提示（C4） | 新增 `peerRemovedHint.test.ts` 4/4 ＋ `syncPanelRevokedHint.wiring.test.ts` 3/3（源码级）；`tsc --noEmit` 0；全量 vitest 门禁 ✓；`check-hook-order` / `check-store-subscriptions` / `check-overlay-registry` 全绿 |
 | 2 | 真机：Windows「不再信任」AMD ⇒ 日志/读数（AMD 拉取 401；AMD 侧提示；重新邀请后恢复） | 两侧日志原文 ＋ 时间线（≤1 分钟为提示出现目标） |
 | 3 | 收口：契约状态/交接单/implementation-status 记录 | `check-plan-status`、`check-doc-links` |
 

@@ -8,6 +8,9 @@ import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer
 import { startEncryptedAdopt } from "../lib/encryptedAdopt";
 import { MeshMissingSpaces } from "./MeshMissingSpaces";
 import { MeshUidConflicts } from "./MeshUidConflicts";
+// ⭐ U2 C4（owner 2026-11-12 ③A）：被移出的一方要**如实说**（区分「没配对过」与「曾被信任但已被移出」）。
+//   ⛔ 不许把两种都写成"同步失败" —— 那会让人反复排查网络/重启。
+import { findPeerRemovedHint } from "../lib/peerRemovedHint";
 // ⭐ U1（2026-11-12，owner 拍 D1=A/D2=A/D3=A）：邀请式配对 —— 生成 / 接入 /「没用掉的邀请」（可撤销）。
 //   桌面专属（邀请要设备直连窗口；Web 没有这一层）；挂载点见下面「附近的设备」之后。
 import { InvitePairingSection } from "./InvitePairingSection";
@@ -529,6 +532,9 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   //      而"从哈希取几位显示"会把"绝不出哈希"那条自己破掉 ✓
   const [duList, setDuList] = useState<{ deviceId: string; addedAtMs: number }[]>([]);
   const [duBusy, setDuBusy] = useState("");
+  // ⭐ U2 C4（owner 2026-11-12 ③A）：上一轮网格里若有对端回 401（不认本机），按本机名单判断是
+  //   「曾被信任但已被移出」还是「从来没配对过」——两种说法不同（唯一实现 `../lib/peerRemovedHint`）。
+  const peerRemoved = findPeerRemovedHint(lastRound, (peer) => duList.some((d) => d.deviceId === peer));
   useEffect(() => {
     if (!activeId) return;
     let alive = true;
@@ -560,7 +566,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
       // ⭐ **R176-A（owner 2026-10-28 拍 A）⑤**：两个承诺都写进这句 ✓ ——
       //   ① **不删数据**：笔记和附件**一个字节都不会删** ✓（owner 最怕"取消信任把笔记删了"）；
       //   ② 想再连要**重新配对** ✓（解除 ≠ 永久失联 ✓；旧判据 `syncPanelDeviceUnpair` ② 钉的就是这个词 ✓）。
-      message: "不再信任后，这一台拉不动你的内容了；笔记和附件一个字节都不会删。想再连要重新配对一次。",
+      message: "不再信任后，这一台立刻拉不动你的内容了；笔记和附件一个字节都不会删。已经同步到它上面的副本删不掉，本机也没法远程擦除；想再连要重新配对一次。",
     });
     if (!ok) return;
     setDuBusy(deviceId);
@@ -2229,6 +2235,15 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                 );
               }}
             />
+          )}
+
+          {/* ⭐ U2 C4（owner 2026-11-12 ③A）：被移出/没配对 —— **如实说**并给下一步。
+              ⛔ 不许把这两种都写成"同步失败"（那会让人反复排查网络）。
+              文案唯一实现：`../lib/peerRemovedHint`；判据：`syncPanelRevokedHint.wiring.test.ts`。 */}
+          {peerRemoved && (
+            <div className="sync-hint" data-testid="peer-removed-hint" role="status">
+              {peerRemoved}
+            </div>
           )}
 
           {/* ⭐ U1（2026-11-12，owner 拍 D1=A/D2=A/D3=A）：**邀请式配对** —— 生成 / 接入 /

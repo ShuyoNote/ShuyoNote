@@ -352,7 +352,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-11-09-personal-sync-2.0-implementation-status.md](plans/2026-11-09-personal-sync-2.0-implementation-status.md) | ⭐ **个人版同步 2.0 实施状态**：P0–P3 已完成项/判据、最终验收读数（pnpm verify 66、cargo lib 1503/0、两进程 QUIC、relay 本地 TLS）、未验项（跨机/真实 relay/App 转 daemon/7 天观察） |
 | [plans/2026-11-12-personal-sync2-handoff.md](plans/2026-11-12-personal-sync2-handoff.md) | ⭐ **个人版同步 2.0 交接单（换会话/换机器必读）**：当前 HEAD、已收口项与判据读数、未完成顺序、红线与待拍板、常用命令、已知坑 |
 | [plans/2026-11-12-u1-invite-pairing-contract.md](plans/2026-11-12-u1-invite-pairing-contract.md) | ⭐ **U1 邀请式配对 —— ✅ 已完成（片1–4，2026-11-12 真机双向）**：邀请＝`DevicePairPayload`＋`exp`(10min)/`nonce`(128bit)/`sig` 的一次性凭证（D1=A 不带材料 / D2=A 默认免核对 / D3=A 不做短码）；四条命令＋界面＋台账；真机读数见 `implementation-status §2.4` |
-| [plans/2026-11-12-u2-device-lifecycle-contract.md](plans/2026-11-12-u2-device-lifecycle-contract.md) | ⭐ **U2 设备生命周期（撤销）—— 契约草案（owner 2026-11-12 拍 ①A 立刻生效 / ②A 只做移出、不换密钥 / ③A 被移出方如实说 / ④A 同名空间不自动合并）**：复用既有 `device_unpair` 与 mesh 撤销判据；缺口＝代价说明（副本删不掉/无法远程擦除）＋被移出方提示＋真机验收；密钥轮换明确非目标 |
+| [plans/2026-11-12-u2-device-lifecycle-contract.md](plans/2026-11-12-u2-device-lifecycle-contract.md) | ⭐ **U2 设备生命周期（撤销）—— 契约已拍板（①A 立刻生效 / ②A 只做移出、不换密钥 / ③A 被移出方如实说 / ④A 同名不自动合并）；片 1 已落地**（二次确认补「副本删不掉/无法远程擦除/要重新配对」＋被移出提示 `peerRemovedHint`）；剩片 2 真机验收 |
 | [plans/2026-11-08-personal-sync-2.0-p3-adr.md](plans/2026-11-08-personal-sync-2.0-p3-adr.md) | ⭐ **个人版同步 2.0 P3 落地 ADR（草案；DEC-A..E 已按推荐拍板 A）**：daemon 两段式/DB 单写者/回环 IPC/托盘/升级；lan-quic feature 拆分、单 iroh 端点、UDP 公告带 quic_addrs、HTTP 退出 C1–C4；CRDT 影子闸/space_uid/不首刀清单；MCP 无 UI 危险写三档；阶段判据、R1–R8 与不建议清单 |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
