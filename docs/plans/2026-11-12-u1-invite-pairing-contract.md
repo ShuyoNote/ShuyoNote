@@ -1,12 +1,16 @@
 # U1 邀请式配对 —— 契约草案（2026-11-12）
 
-状态：**契约已拍板**（owner 2026-11-12：D1=A 不带材料 / D2=A 默认免核对 / D3=A 首刀不做短码）；**片 1、片 2 已落地**，片 3（界面）/ 片 4（真机）待做
+状态：**契约已拍板**（owner 2026-11-12：D1=A 不带材料 / D2=A 默认免核对 / D3=A 首刀不做短码）；**片 1–3 已落地**，片 4（真机验收）待做
 证据：片 1（纯函数）`4c14c62b` —— `cargo test --lib pairing::` **33 passed / 0 failed**，其中 4 条新判据：
 128 bit nonce 往返、过期/重放/指定别人必拒、签名覆盖每个字段、普通抄码逐字节不变（不许被写上邀请字段）
 片 2（命令＋台账）`0455f826` —— `cargo test --lib` 过滤 `invite` **7 passed / 0 failed**（含台账一次性/可撤销 2 条）、
 `device_pair` **16 passed**、`pairing::` **33 passed**；命令契约同步 Rust **308** / CommandMap **309**；
 `check-web-commands` ✓、`check-doc-facts` ✓；四条命令在 `DESKTOP_ONLY_COMMANDS` **显式登记**（D2 的口径变更写在那里）
 ＋ `_workspace/mutation-evidence.json` 的 `gateSha256` 已更新（`e528467` / 合并 `9ce941a`）
+片 3（界面）本笔 —— 新组件 `src/components/InvitePairingSection.tsx`（生成/接入/「没用掉的邀请」+撤销，
+桌面专属、挂在「附近的设备」之后）＋ 接线判据 `syncPanelInvite.wiring.test.ts` **4/4**；
+`tsc --noEmit` **0**；全量 `vitest` 门禁 **4096/4112 通过**（16 skipped）；`check-hook-order` / `check-store-subscriptions` /
+`check-overlay-registry` / `check-web-commands` 全绿
 上位：[个人同步 2.0 需求](2026-11-08-personal-sync-2.0-requirements.md) §13.5 U1 ／ §13.10 ⑤（邀请：高熵 ≥80 bit、10 分钟有效、绑定「哪个空间 ＋ 接受方身份」、未使用可撤销）
 现有件（**只复用，不造第二套**）：
 - [`src-tauri/src/pairing.rs`](../../src-tauri/src/pairing.rs) —— `DevicePairPayload`（`v` / `bind` / `token` / `fp` / `from_device_id` / `to_device_id` / `pubkey`）＋ `check_code`（整份载荷的比对码，**60 bit 下限不变**）
@@ -119,8 +123,9 @@ B（新设备）：
 片 2（Rust 命令）：invite_export / invite_import（复用 decide_device_pair_import 与 remember_peer_card）  ✅ `0455f826`
                 另加 invite_list / invite_revoke（「没用掉的邀请」＋撤销，owner 2026-11-12 拍）
                 判据：§6 的 3/4（台账一次性/撤销 2 条已绿）＋ 命令契约三向对账 ✓
-片 3（界面）：A 的「生成邀请」＋ B 的「接入」＋ 倒计时/错误话术（⛔ 不先写文案）
-                判据：wiring 测试（入口在、话术不泄内部标识）
+片 3（界面）：A 的「生成邀请」＋ B 的「接入」＋ 倒计时/错误话术（⛔ 不先写文案）  ✅ 本笔
+                组件 `InvitePairingSection.tsx`（生成/复制/二维码/倒计时/「没用掉的邀请」+撤销）
+                判据：`syncPanelInvite.wiring.test.ts` 4/4（挂载/四条命令走 api 包装/三个动作与话术/不泄内部标识）
 片 4（真机）：A 生成 → B 接入 → 两台同步 ⇒ 记录 ≤1 分钟读数
 回滚：不在正式包（dev 档）；旧设备读到新邀请码 ⇒ 大声拒（不回落到"没签名也认"）
 ```

@@ -29,6 +29,8 @@ export type SpaceSyncState = CommandMap["space_sync_state"]["result"];
 export type { MeshRoundReport, MeshPeerPullReport, MeshConfigState } from "./platform/commands";
 export type { NearbyPeer } from "./platform/commands";
 export type { DevicePairExportOutcome, DevicePairImportOutcome, DeviceUnpairOutcome } from "./platform/commands";
+/** ⭐ U1（2026-11-12，owner 拍 D1=A/D2=A/D3=A）：邀请式配对三种读数 —— 契约在 `commands.ts` 一处。 */
+export type { InviteExportOutcome, InviteImportOutcome, InviteRow } from "./platform/commands";
 
 /** 空间分类（与 Rust `space_crypto::SpaceKind` 对齐）。
  *  ⚠️ **2026-10-04**：⭐ 没有「未分类」这一档了 ✗（owner：未分类按个人空间处理）——
@@ -494,6 +496,22 @@ export const api = {
    */
   devicePairImport: (args: { space_id: string; text: string; confirmed_check_code?: string }) =>
     invoke("device_pair_import", { args }),
+  /**
+   * ⭐ **U1（2026-11-12，owner 拍 D1=A/D2=A/D3=A）**：**生成邀请** ——
+   * 复用设备直连载荷，再加 `exp`（10 分钟）/ `nonce`（128 bit）/ `sig`；同时写 `meta.mesh_invites` 台账。
+   * ⚠️ 邀请**不带**搬钥匙材料（加密空间的主口令仍要在新设备输一次）。
+   */
+  inviteExport: (spaceId: string, peerDeviceId?: string, peerPubkey?: string) =>
+    invoke("invite_export", { spaceId, peerDeviceId, peerPubkey }),
+  /**
+   * ⭐ U1：**用邀请接入** —— 判定顺序：台账（用过/撤销）→ 有效期/一次性/指定设备/签名 →
+   * 复用抄码的写路径 → 台账标"已用"。`rejected` ⇒ **本机一个字节都没写**。
+   */
+  inviteImport: (spaceId: string, text: string) => invoke("invite_import", { spaceId, text }),
+  /** ⭐ U1：最近发出的邀请（给「没用掉的邀请」列表；撤销用 `nonce`）。 */
+  inviteList: () => invoke("invite_list"),
+  /** ⭐ U1：撤销一段**还没用掉**的邀请；已用/已撤销 ⇒ `false`（⛔ 不改任何字节）。 */
+  inviteRevoke: (nonce: string) => invoke("invite_revoke", { nonce }),
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),

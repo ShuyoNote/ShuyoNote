@@ -8,6 +8,9 @@ import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer
 import { startEncryptedAdopt } from "../lib/encryptedAdopt";
 import { MeshMissingSpaces } from "./MeshMissingSpaces";
 import { MeshUidConflicts } from "./MeshUidConflicts";
+// ⭐ U1（2026-11-12，owner 拍 D1=A/D2=A/D3=A）：邀请式配对 —— 生成 / 接入 /「没用掉的邀请」（可撤销）。
+//   桌面专属（邀请要设备直连窗口；Web 没有这一层）；挂载点见下面「附近的设备」之后。
+import { InvitePairingSection } from "./InvitePairingSection";
 // ⭐ P1「连接体检」（2026-11-08）：只读现有读数 → 结构化诊断 ＋ 复制诊断包（⛔ 不新增命令 ✗）。
 //   入口在「局域网同步」状态卡里（见下面 `mesh-diagnose-entry` ✓）；纯函数在 `src/lib/meshDiagnose.ts` ✓。
 import { MeshDiagnoseDialog } from "./MeshDiagnoseDialog";
@@ -2227,6 +2230,13 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
               }}
             />
           )}
+
+          {/* ⭐ U1（2026-11-12，owner 拍 D1=A/D2=A/D3=A）：**邀请式配对** —— 生成 / 接入 /
+              「没用掉的邀请」（可撤销）。挂在「附近的设备」之后（owner 选的入口位置）；
+              ⚠️ 桌面专属（邀请要设备直连窗口，Web 没有这一层）。
+              契约：docs/plans/2026-11-12-u1-invite-pairing-contract.md
+              判据：src/components/syncPanelInvite.wiring.test.ts */}
+          {isDesktopPlatform() && <InvitePairingSection activeId={activeId ?? ""} />}
 
           {/* ⭐⭐ **2026-10-28（owner：「同步面板适配一下视觉体系」）**：本块**用回**面板既有的那套零件 ✗ ——
               「段标题 ＋ 数量胶囊」＋「`sync-nearby-row` 卡片（头像/主信息/状态点/胶囊）」✓，
