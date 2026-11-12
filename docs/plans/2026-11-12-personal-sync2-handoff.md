@@ -11,7 +11,10 @@
 ShuyoNote  dev = 0518456b（origin 同步；GitHub 镜像因网络未推）
 relay      main = dabfd8d5
 collab     HEAD = d3542091（origin 同步）
-本机 dev   ：pid 32148（2026-11-12 08:08 启动，--disable-gpu + lan-quic + 调试环境变量；见 §6 启动命令）
+本机 dev   ：**已停**（2026-11-12 09:05 因 F1 活锁止损；重启命令见 §6）
+              ⚠️ 直跑形态（可脚本化）：`Start-Process src-tauri\target\debug\shuyonote.exe` ＋
+                 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--disable-gpu --remote-debugging-port=9222'`
+                 （CDP 只绑回环；日志 `_tmp/scratch/dev-*.log.err`）——`pnpm tauri dev` 的输出有时进不了重定向文件
 ```
 
 ## 2. 已收口（有证据/读数）
@@ -29,14 +32,21 @@ A2 第一刀：只读「设备×空间水位」 ✅ 360f21b5（mesh_watermarks�
 S1 第一刀：在线三态             ✅ 235b1ac1（在线/离线/未知；TTL 4 分钟；未知不冒充离线）
 F1 第一刀：改动即公告           ✅ db3a4c77（dirty 公告；发送侧保存后立刻公告，接收侧收到即唤醒一轮；
                                   线上兼容：false 零字节、缺省解析 false，不升 WIRE_VERSION）
+F1 第一刀修复：dirty 活锁       ✅ e45e4272（对端 dirty 唤醒的轮**不再**发 dirty —— 只有本地保存的轮置；
+                                  `last_announce_ms=0` 挪进「轮真会跑」那一支；顺带补回 0518456b 误删的
+                                  6 处测试字面量 `dirty:false` ⇒ 原 `cargo test --lib` 编不过 E0063×6）
+                                  事故读数（08:42–08:59 两边自激）：本机日志 57.3 MB / CPU 1625 s /
+                                  dirty:true 70,227 条（占 announce 99.8%）；修后全量 1519 passed / 0 failed
 清理                         ✅ 0518456b（还原 cargo fmt 误格式化的 capabilities_gen.rs / plugins.rs 等）
 ```
 
 ## 3. 未完成（推荐顺序）
 
 ```text
-1) F1 端到端验证（需 AMD 拉 0518456b 重启）：
-   保存 → 立刻公告(dirty) → 对端立刻唤醒拉取；量「保存到对端拉到」的延迟（目标 ≤10s）
+1) F1 端到端验证（需 AMD 拉 e45e4272 重启）：
+   第一轮测量因活锁作废（08:57:23 的 t0 不认）；修复后重测：
+   保存 → 立刻公告(dirty) → 对端立刻唤醒拉取；取**同侧读数**（我方 save→公告；AMD 公告→metrics），
+   ⛔ 不要跨机相减（两机时钟未校准）
 2) U1 邀请配对（一次性邀请码/链接；二维码可选）
 3) U2 设备生命周期（撤销/轮换两层：先软撤销后换钥；撤销必须人点）
 4) A1 CRDT 灰度（⛔ 必须等 7 天影子观察，最早 2026-11-18 收口；分批＋可回退，默认值由 owner 拍）
@@ -107,6 +117,13 @@ node docs/plans/personal-sync-2.0-mockups/render.mjs      # 需要 Edge（路径
   修在 relay_tunnel::iroh_tunnel::serve_one_conn（循环 accept_bi）；对端不升级则仍慢
 · cargo fmt 会重排生成文件（capabilities_gen.rs）与 rustfmt 豁免文件（plugins.rs）⇒ ⛔ 别整树 fmt；
   已发生一次，用 0518456b 还原
+· ⚠️ **「格式化」提交也要跑一次 `cargo test --no-run`**：0518456b 自称只还原 fmt，实际删掉了
+  mesh.rs/sync.rs 里 6 处测试字面量的 `dirty:false` ⇒ `cargo test --lib` 编不过（E0063×6）；
+  e45e4272 已补回
+· ⚠️ **F1 第一刀曾有 dirty 活锁**：「对端 dirty 唤醒」与「本地保存」共用 request_round_now ⇒
+  被唤醒那一轮也发 dirty ⇒ 两边互相唤醒（08:42–08:59 实测：日志 57 MB / CPU 1625 s）。
+  已修 e45e4272：接收侧走 `request_round_now_from_peer()`（只唤醒、不置 dirty）；
+  判据两条（纯函数真值表 ＋ 源码级「接收侧不许走本地保存入口」）
 · 端口 1420 残留 vite 进程 ⇒ dev 启动 beforeDevCommand 失败；先杀 node(vite) 再起
 · dev 窗口黑屏 ⇒ 带 --disable-gpu 启动
 · 推送被拒先 sweep-tmp-retention --apply；GitHub 镜像当前网络不可达（ssh.github.com:443）
