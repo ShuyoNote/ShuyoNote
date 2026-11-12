@@ -7434,7 +7434,7 @@ pub fn lan_status(db: State<'_, Db>, workspace_id: Option<String>) -> Result<Lan
     // ★ 丙-③-b-2b-2：把**网格（对等交换）那一档的读数**一并交出去 —— 设置面板要用的就是它。
     //   ⚠️ **只读**：这里**不**开窗（开窗归 `mesh_set_config` / 发现层循环），
     //   面板打开一次不该顺手开一个端口；已经开着的话 `window_addr` 会把**实际地址**读出来。
-    let mesh = {
+    let mut mesh = {
         let c = db.0.lock().expect("db mutex poisoned");
         // ⭐ **2026-10-08**：这四行读数（设置／窗口地址／服务的空间／认过的设备）以前直接吃**原始**
         //   `space_id` ✓，而个人空间那一列就是**空串** ✗ ⇒ `cfg` 被硬写成"空设置" ⇒ 面板显示
@@ -7449,6 +7449,10 @@ pub fn lan_status(db: State<'_, Db>, workspace_id: Option<String>) -> Result<Lan
             .unwrap_or_default();
         mesh_config_state_at(&c, &raw_space_id, &ws)?
     };
+    // ⭐ **U3（2026-11-12，owner 拍 ①A）**：把"自动重试是否已停"挂到读数上 ——
+    //   ⛔ 不改 `config_state` 的纯函数签名（判据按纯函数打桩），状态从 `lan_state` 读。
+    mesh.auto_retry_stopped = crate::lan_state::auto_retry_stopped();
+    mesh.auto_retry_streak = crate::lan_state::auto_retry_streak();
 
     Ok(LanStatus {
         enabled,
@@ -14701,6 +14705,9 @@ mod j9_announced_port_tests {
             note: String::new(),
             reach: String::new(),
             announced: None,
+            // ⭐ U3（2026-11-12）：自动重试读数（默认未停/未加速）
+            auto_retry_stopped: false,
+            auto_retry_streak: 0,
         }
     }
 
@@ -14781,6 +14788,9 @@ mod quic_addrs_passthrough_tests {
             note: String::new(),
             reach: String::new(),
             announced: None,
+            // ⭐ U3（2026-11-12）：自动重试读数（默认未停/未加速）
+            auto_retry_stopped: false,
+            auto_retry_streak: 0,
         }
     }
 

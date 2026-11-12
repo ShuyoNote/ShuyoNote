@@ -3085,6 +3085,14 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                   {/* ⭐ 2026-10-18：个人版「跨网同步订阅」的状态与续期（桌面专属 —— Web 没有本机私钥）。
                       ⚠️ 停卡那一档写的是「已停卡 · 只停了跨网」，⛔ 不许写"已过期"（判据 `license/uiText.test.ts`）。 */}
                   <LicenseSection />
+                  {/* ⭐ **U3（2026-11-12，owner 拍 ①A）**：自动重试已停止 —— **如实显示**并指向
+                      **已有**手动入口（⛔ 不新造按钮/新同步路）。判据 `syncPanelAutoRetry.wiring.test.ts`。 */}
+                  {lanStatus.mesh?.autoRetryStopped && (
+                    <div className="sync-hint" data-testid="auto-retry-stopped" role="status">
+                      自动重试已停止（连续 {lanStatus.mesh.autoRetryStreak ?? 4} 次网络类失败）——
+                      用上面的「立即同步」或「全部空间立即同步」手动重试。
+                    </div>
+                  )}
               {/* ⭐⭐ **2026-10-14（owner：「和上面重复了」⇒ 拍「整张卡连输入框一起去掉」）** ✗ ——
                   ⭐ 这一块原来是「设备直连设置」那张卡 ✓（说明 ＋ 监听地址输入框 ＋ 保存地址 ＋ 用自动选开启
                   ＋ 关掉网格 ＋ `<MeshAdvancedForm` ✓）⇒ ⛔ **整张卡已删** ✗。

@@ -765,13 +765,32 @@ pub fn background_round_due(
     meshed_n: usize,
     empty_streak: usize,
 ) -> bool {
+    // ⭐ **U3（2026-11-12）**：老 4 参签名保留（既有判据照旧用它）⇒ 等价于"没有加速重试在跑"。
+    background_round_due_with_retry(last_ms, now_ms, meshed_n, empty_streak, 0, false)
+}
+
+/// ⭐ **U3（2026-11-12，owner 拍 ①A/②A）**：带**加速重试状态**的"后台轮该不该跑"（生产路径用它）。
+pub fn background_round_due_with_retry(
+    last_ms: i64,
+    now_ms: i64,
+    meshed_n: usize,
+    empty_streak: usize,
+    retry_streak: usize,
+    retry_stopped: bool,
+) -> bool {
     // ⭐ ① **一个网格空间都没有 ⇒ 不跑** ✓ —— "没配 ⇒ 一个字节都不动"一个字不变 ✓（判据钉着 ✓）。
     if meshed_n == 0 {
         return false;
     }
     // ⭐ ② 到点就跑 ✓（`last_ms <= 0` ＝ 还没跑过 ⇒ 第一轮就跑 ✓ —— 复用 `announce_due` 的同一口径 ✓，
     //    ⛔ 不另立一套 ✗：两处各写一遍的间隔判断迟早会漂 ✓）。
-    announce_due(last_ms, now_ms, background_round_interval_ms(empty_streak))
+    // ⭐ **U3（2026-11-12）**：间隔现在由 `background_round_interval_with_retry` 出 ——
+    //   失败且可重试 ⇒ 60/120/300/600（加速重试）；否则走 task-12 的 empty_streak 节拍（一个字不变）。
+    announce_due(
+        last_ms,
+        now_ms,
+        background_round_interval_with_retry(empty_streak, retry_streak, retry_stopped),
+    )
 }
 
 /// ⭐ **task-12**：后台那一轮**是不是还在跑**（⛔ 不许两轮叠在一起 ✗）。
@@ -872,6 +891,55 @@ pub fn auto_retryable(reason: &str) -> bool {
         "地址已被占用",
     ];
     TRANSIENT.iter().any(|m| s.contains(m))
+}
+
+/// ⭐ **U3（2026-11-12，owner 拍 A/C1）**：自动重试的**连击计数**（已经用掉几次加速重试）。
+static AUTO_RETRY_STREAK: AtomicUsize = AtomicUsize::new(0);
+/// ⭐ **U3**：**已停止加速重试**（4 次都失败 ⇒ 回常态节拍；面板上要有标记，⛔ 不许只在日志里）。
+static AUTO_RETRY_STOPPED: AtomicBool = AtomicBool::new(false);
+
+/// ⭐ **U3（纯函数）**：一轮结束后，自动重试状态怎么变。
+///
+/// 输入：上一轮留下的 `prev_streak`（已用掉几次加速重试）、这一轮**有没有失败**、失败**是否属于可自动重试**。
+/// 输出：`(下一次的 streak, 是否已停止加速)`。
+///
+/// 口径（owner 拍 ②A/C1）：
+/// * 没失败 ⇒ 清零、不停止（恢复正常）；
+/// * 失败但**不可自动重试**（身份类/不认识）⇒ 清零、不停止（⛔ 不做加速重试，回常态节拍 —— 重试也没用）；
+/// * 失败且可重试 ⇒ 按 [`retry_plan`]：还能重试 ⇒ streak+1；到上限 ⇒ 停止加速（streak 保留 4 便于界面说"连续 4 次"）。
+pub fn advance_auto_retry(prev_streak: usize, failed: bool, retriable: bool) -> (usize, bool) {
+    if !failed || !retriable {
+        return (0, false);
+    }
+    match retry_plan(prev_streak, true) {
+        RetryDecision::Retry { .. } => (prev_streak + 1, false),
+        RetryDecision::Stop => (AUTO_RETRY_SCHEDULE_MS.len(), true),
+    }
+}
+
+/// ⭐ **U3（纯函数）**：后台轮下一次该等多久 —— 加速重试优先，否则走原有节拍（task-12 的 empty_streak 规则）。
+pub fn background_round_interval_with_retry(
+    empty_streak: usize,
+    retry_streak: usize,
+    retry_stopped: bool,
+) -> i64 {
+    if retry_stopped || retry_streak == 0 {
+        return background_round_interval_ms(empty_streak);
+    }
+    match retry_plan(retry_streak - 1, true) {
+        RetryDecision::Retry { after_ms } => after_ms,
+        RetryDecision::Stop => background_round_interval_ms(empty_streak),
+    }
+}
+
+/// 已停止加速重试吗（给 `lan_status` 读数用；⛔ 不暴露计数细节给界面也行，但保留以便读数）。
+pub fn auto_retry_stopped() -> bool {
+    AUTO_RETRY_STOPPED.load(Ordering::SeqCst)
+}
+
+/// 已经用掉几次加速重试（0 ＝ 没有在加速）。
+pub fn auto_retry_streak() -> usize {
+    AUTO_RETRY_STREAK.load(Ordering::SeqCst)
 }
 
 /// ⭐ **P3-1a（纯函数）**：距上一次事件轮是否已过最小间隔（`last <= 0` ＝ 还没跑过 ⇒ 立刻可跑）。
@@ -1028,6 +1096,10 @@ fn spawn_background_round(
         let mut found_any = false;
         let mut candidates_total: usize = 0;
         let heard_before = BACKGROUND_HEARD_TOTAL.load(Ordering::SeqCst);
+        // ⭐ **U3（2026-11-12）**：这一轮的失败面 —— 决定"下一轮要不要加速重试"（owner 拍 ①A/②A）。
+        let mut fail_any = false;
+        let mut retriable_any = false;
+        let mut identity_any = false;
         for (proto_space, db_space, device_level) in pairs {
             // ⭐ 2026-10-11（设备级 ✓）：⭐ 判定**在上面那一处算好**（`mesh::is_device_level_space` ✓）
             //   再传进来 ✗ —— `mesh_round_once` 自己不判 ✓（否则就是第二份口径 ✓；方案 §9.1／§10.3 ✓）。
@@ -1084,6 +1156,15 @@ fn spawn_background_round(
                     }
                     let pulled: usize = r.peers.iter().map(|p| p.applied).sum();
                     let bad = r.peers.iter().filter(|p| p.error.is_some()).count();
+                    // ⭐ U3：按失败原因分类 —— 网络类 ⇒ 可加速重试；身份类 ⇒ 不许加速（重试也没用）。
+                    for p in r.peers.iter().filter(|p| p.error.is_some()) {
+                        fail_any = true;
+                        if auto_retryable(p.error.as_deref().unwrap_or("")) {
+                            retriable_any = true;
+                        } else {
+                            identity_any = true;
+                        }
+                    }
                     eprintln!(
                         "[{}] [mesh] 后台一轮完成：空间 {} ｜ 候选 {} ｜ 收下 {} 条{}",
                         lan::log_stamp(),
@@ -1097,11 +1178,43 @@ fn spawn_background_round(
                         }
                     );
                 }
-                Err(e) => eprintln!(
-                    "[{}] [mesh] 后台一轮失败：空间 {} ｜ {e}",
+                Err(e) => {
+                    // ⭐ U3：整轮异常也按同一把尺分类（别把"锁着/口令"当成网络抖动去重试）。
+                    fail_any = true;
+                    if auto_retryable(&e) {
+                        retriable_any = true;
+                    } else {
+                        identity_any = true;
+                    }
+                    eprintln!(
+                        "[{}] [mesh] 后台一轮失败：空间 {} ｜ {e}",
+                        lan::log_stamp(),
+                        crate::lan::mask_space(&proto_space)
+                    )
+                }
+            }
+        }
+        // ⭐ **U3（2026-11-12，owner 拍 ①A/②A）**：这一轮的失败决定"下一轮要不要加速重试"。
+        //   身份类（401/被移出/没配对…）⇒ **不加速**（回常态节拍，界面给动作）；
+        //   网络类 ⇒ 60/120/300/600 递进，4 次后**停止加速**并留标记（⛔ 不无限重试）。
+        {
+            let prev = auto_retry_streak();
+            let was_stopped = auto_retry_stopped();
+            let retriable = retriable_any && !identity_any;
+            let (next, stopped) = advance_auto_retry(prev, fail_any, retriable);
+            AUTO_RETRY_STREAK.store(next, Ordering::SeqCst);
+            AUTO_RETRY_STOPPED.store(stopped, Ordering::SeqCst);
+            if stopped && !was_stopped {
+                eprintln!(
+                    "[{}] [mesh] 后台一轮：**已停止自动重试**（连续 {} 次网络类失败 ⇒ 回常态节拍；可手动重试）",
                     lan::log_stamp(),
-                    crate::lan::mask_space(&proto_space)
-                ),
+                    next
+                );
+            } else if was_stopped && !stopped {
+                eprintln!(
+                    "[{}] [mesh] 后台一轮：自动重试**已恢复**（这一轮没有失败）",
+                    lan::log_stamp()
+                );
             }
         }
         // ⭐ **task-12（Lead 拍 B ＋ 上限）**：⭐ **找到对端 ⇒ 清零** ✓／**空手 ⇒ +1** ✓ ——
@@ -1900,11 +2013,13 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                         lan::log_stamp()
                     );
                 }
-            } else if background_round_due(
+            } else if background_round_due_with_retry(
                 last_bg_round_ms,
                 now,
                 meshed.len(),
                 BACKGROUND_EMPTY_STREAK.load(Ordering::SeqCst),
+                auto_retry_streak(),
+                auto_retry_stopped(),
             ) {
                 last_bg_round_ms = now;
                 match spawn_background_round(&app2, &device_id, &mesh_cfgs, &state.peers(now)) {
@@ -4066,6 +4181,88 @@ mod p31_event_round_tests {
         // 不认识 / 空 ⇒ 不试（拿不准就不试）
         assert!(!auto_retryable(""));
         assert!(!auto_retryable("某个没见过的错误"));
+    }
+
+    /// ⭐ **U3 片 2（2026-11-12）**：失败推进状态机 —— 网络类 4 次后停止加速；身份类不加速；成功清零。
+    #[test]
+    fn advance_auto_retry_stops_after_four_transient_failures() {
+        use super::advance_auto_retry;
+        let mut streak = 0usize;
+        for expected in 1..=4usize {
+            let (s, st) = advance_auto_retry(streak, true, true);
+            assert_eq!(s, expected, "第 {expected} 次可重试失败后 streak 应 +1");
+            assert!(!st, "第 {expected} 次时还不该停");
+            streak = s;
+        }
+        assert_eq!(
+            advance_auto_retry(streak, true, true),
+            (4, true),
+            "4 次后必须停（⛔ 不许无限重试）"
+        );
+        // 身份类：不加速（连 streak 都不该攒）
+        assert_eq!(advance_auto_retry(2, true, false), (0, false));
+        // 成功：清零、不停
+        assert_eq!(advance_auto_retry(4, false, true), (0, false));
+        assert_eq!(advance_auto_retry(4, false, false), (0, false));
+    }
+
+    /// ⭐ **U3 片 2**：加速重试优先于常规节拍；**停止后回常态节拍**（⛔ 不停在 60 s 空转）。
+    #[test]
+    fn background_interval_uses_retry_plan_until_stopped() {
+        use super::{background_round_interval_with_retry, BACKGROUND_RETRY_MS};
+        assert_eq!(background_round_interval_with_retry(0, 1, false), 60_000);
+        assert_eq!(background_round_interval_with_retry(0, 2, false), 120_000);
+        assert_eq!(background_round_interval_with_retry(0, 3, false), 300_000);
+        assert_eq!(background_round_interval_with_retry(0, 4, false), 600_000);
+        // 停止 / 没加速 ⇒ 回 task-12 节拍（empty_streak=1 ⇒ 60s；0 ⇒ 5min）
+        assert_eq!(
+            background_round_interval_with_retry(1, 4, true),
+            BACKGROUND_RETRY_MS
+        );
+        assert_eq!(
+            background_round_interval_with_retry(0, 0, false),
+            super::BACKGROUND_ROUND_MS
+        );
+    }
+
+    /// ⭐ **U3 片 2**：`background_round_due_with_retry` —— 加速中按 60 s 到点，停止后按常态。
+    #[test]
+    fn background_round_due_honours_the_accelerated_retry() {
+        use super::background_round_due_with_retry;
+        let last = 1_000i64;
+        assert!(background_round_due_with_retry(
+            last,
+            last + 60_000,
+            1,
+            0,
+            1,
+            false
+        ));
+        assert!(!background_round_due_with_retry(
+            last,
+            last + 59_999,
+            1,
+            0,
+            1,
+            false
+        ));
+        // 停止后回常态（empty_streak=0 ⇒ 5 分钟）：60 s 不跑、5 分钟跑
+        assert!(!background_round_due_with_retry(
+            last,
+            last + 60_000,
+            1,
+            0,
+            4,
+            true
+        ));
+        assert!(background_round_due_with_retry(
+            last,
+            last + super::BACKGROUND_ROUND_MS,
+            1,
+            0,
+            4,
+            true
+        ));
     }
 
     /// ⭐ **2026-11-12（§13 F1 修复：dirty 活锁）**：只有「本地保存」触发的轮才许发 dirty；

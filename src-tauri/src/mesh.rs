@@ -2865,6 +2865,12 @@ pub struct MeshConfigState {
     /// （⛔ 拿 `window` 会写出 `0.0.0.0` ✗，那是**编造** ✓）。
     /// ⚠️ 界面**只取它的 host** ✓（`new URL(...).hostname` ✓ —— 结构化字段 ✓，⛔ 不解析人话 ✗）。
     pub announced: Option<String>,
+    /// ⭐ **U3（2026-11-12，owner 拍 ①A）**：**自动重试已停止**（连续 4 次网络类失败 ⇒ 回常态节拍）。
+    /// ⚠️ 它只是**读数**（界面据此显示"已停止自动重试"并指向手动入口），⛔ 不是动作、也⛔ 不是错误。
+    /// ⚠️ 身份类失败**不会**把它置真（那类根本不做加速重试 —— 见 `lan_state::auto_retryable`）。
+    pub auto_retry_stopped: bool,
+    /// 已经用掉几次加速重试（0 ＝ 没在加速；界面用它说"连续 N 次"）。
+    pub auto_retry_streak: usize,
 }
 
 /// 把"设置 ＋ 窗口实际地址"变成给人看的读数 —— **纯函数**（判据不打桩）。
@@ -2937,6 +2943,9 @@ pub fn config_state(
         reach,
         // ⭐ 与上面 `reach` 里那句「报出去的是枚举到的 …」**同一个来源** ✓（`announced_base` ✓，纯函数 ✓）。
         announced: window.and_then(announced_base),
+        // ⭐ **U3（2026-11-12）**：这里给**默认值**（纯函数不读全局）；真实状态由 `lan_status` 补。
+        auto_retry_stopped: false,
+        auto_retry_streak: 0,
     }
 }
 

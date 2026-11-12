@@ -75,9 +75,10 @@ F1 端到端（真机，两侧 485e1a8c）  ✅ 2026-11-12 09:41：我方保存�
    ⚠️ 未做（owner ②A）：密钥轮换；已同步副本删不掉、旧数据不可回溯保护（设计事实）。
 4) U3 失败自动处理与建议 —— **契约已拍板（2026-11-12：①A 温和递进+4 次封顶 / ②A 只自动重试
    「可能自己好的」/ ③A 一句话+可点按钮 / ④A 后台也重试）**：契约
-   `docs/plans/2026-11-12-u3-failure-recovery-contract.md`；**片 1 已落地**（`retry_plan` /
-   `auto_retryable` 纯函数 ＋ 真值表判据 2/2）；剩片 2 后台接入（固定 60s → plan）、片 3 界面
-   建议按钮/「已停止自动重试」、片 4 真机（网络类一次 ＋ 401 零重试）。
+   `docs/plans/2026-11-12-u3-failure-recovery-contract.md`；**片 1–3 已落地**（`retry_plan` /
+   `auto_retryable` 纯函数，后台轮接入 `advance_auto_retry`/`background_round_due_with_retry`，
+   界面 `auto-retry-stopped` 标记指向既有手动入口）；判据：Rust 5 条真值表 + wiring 2/2；
+   剩 **片 4 真机**（网络类按 60/120 实跑一次；401 零自动重试）。
 5) A1 CRDT 灰度（⛔ 必须等 7 天影子观察，最早 2026-11-18 收口；分批＋可回退，默认值由 owner 拍）
 5) relay ACME 自动化（当前证书外部签发；可做方案：certbot hook + 热重载，或内置 ACME 客户端）
 6) §13 其余：F2 反熵、F3 调度、U3 失败自动、U4 冲突引导、O1 同步图、O2 诊断包

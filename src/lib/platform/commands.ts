@@ -536,6 +536,14 @@ export interface MeshWatermarks {
    * ⚠️ 界面**只取 host** ✓（`new URL(...).hostname` ✓ 结构化 ✓，⛔ 不解析人话 ✗）。
    */
   announced: string | null;
+  /**
+   * ⭐ **U3（2026-11-12，owner 拍 ①A）**：**自动重试是否已停止**（连续 4 次网络类失败 ⇒ 回常态节拍）。
+   * ⚠️ 只是读数：界面显示"已停止自动重试"并指向**已有的**手动入口（「立即同步」/「全部空间立即同步」）。
+   * ⛔ 身份类失败（401/被移出/没配对）不会把它置真 —— 那类根本不做加速重试。
+   */
+  autoRetryStopped?: boolean;
+  /** 已经用掉几次加速重试（0 ＝ 没在加速）；界面用它说"连续 N 次"。 */
+  autoRetryStreak?: number;
 }
 
 /**
