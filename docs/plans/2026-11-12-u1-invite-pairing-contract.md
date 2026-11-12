@@ -1,7 +1,7 @@
 # U1 邀请式配对 —— 契约草案（2026-11-12）
 
-状态：**契约已拍板**（owner 2026-11-12：D1=A 不带材料 / D2=A 默认免核对 / D3=A 首刀不做短码）；**片 1–3 已落地**，片 4（真机验收）待做
-证据：片 1（纯函数）`4c14c62b` —— `cargo test --lib pairing::` **33 passed / 0 failed**，其中 4 条新判据：
+状态：**契约已拍板**（owner 2026-11-12：D1=A 不带材料 / D2=A 默认免核对 / D3=A 首刀不做短码）；**片 1–4 全部完成**（2026-11-12 真机双向）
+证据：代码 `../../src/components/InvitePairingSection.tsx` ＋ `../../src-tauri/src/sync.rs`；片 1（纯函数）`4c14c62b` —— `cargo test --lib pairing::` **33 passed / 0 failed**，其中 4 条新判据：
 128 bit nonce 往返、过期/重放/指定别人必拒、签名覆盖每个字段、普通抄码逐字节不变（不许被写上邀请字段）
 片 2（命令＋台账）`0455f826` —— `cargo test --lib` 过滤 `invite` **7 passed / 0 failed**（含台账一次性/可撤销 2 条）、
 `device_pair` **16 passed**、`pairing::` **33 passed**；命令契约同步 Rust **308** / CommandMap **309**；
@@ -11,6 +11,10 @@
 桌面专属、挂在「附近的设备」之后）＋ 接线判据 `syncPanelInvite.wiring.test.ts` **4/4**；
 `tsc --noEmit` **0**；全量 `vitest` 门禁 **4096/4112 通过**（16 skipped）；`check-hook-order` / `check-store-subscriptions` /
 `check-overlay-registry` / `check-web-commands` 全绿
+片 4（真机双向，2026-11-12）—— 方向②（AMD 生成 → Windows 导入）**12:37:57 ok / 30 ms / 未过期**；
+方向①等价路径（AMD **生成时 peer 绑定**，R110「一趟配对、两个方向」）**13:49:59 生成 → 13:50:07 落卡 → 13:50:11 applied=1**；
+我方独立核对：对端拉我方 `since=254 ⇒ 200 pk_for_dev=true`、我方拉对端 `fetched=1 applied=1 cursor=184`、
+1c02 里 `U1-E2E-1794458288928` 在（`75bf3cbd`）；详见 implementation-status §2.4
 上位：[个人同步 2.0 需求](2026-11-08-personal-sync-2.0-requirements.md) §13.5 U1 ／ §13.10 ⑤（邀请：高熵 ≥80 bit、10 分钟有效、绑定「哪个空间 ＋ 接受方身份」、未使用可撤销）
 现有件（**只复用，不造第二套**）：
 - [`src-tauri/src/pairing.rs`](../../src-tauri/src/pairing.rs) —— `DevicePairPayload`（`v` / `bind` / `token` / `fp` / `from_device_id` / `to_device_id` / `pubkey`）＋ `check_code`（整份载荷的比对码，**60 bit 下限不变**）
@@ -126,17 +130,18 @@ B（新设备）：
 片 3（界面）：A 的「生成邀请」＋ B 的「接入」＋ 倒计时/错误话术（⛔ 不先写文案）  ✅ 本笔
                 组件 `InvitePairingSection.tsx`（生成/复制/二维码/倒计时/「没用掉的邀请」+撤销）
                 判据：`syncPanelInvite.wiring.test.ts` 4/4（挂载/四条命令走 api 包装/三个动作与话术/不泄内部标识）
-片 4（真机）：A 生成 → B 接入 → 两台同步 ⇒ 记录 ≤1 分钟读数  ⏳ **完成一半**（2026-11-12）
+片 4（真机双向）：A 生成 → B 接入 → 两台同步  ✅ **2026-11-12 通过**（详见 implementation-status §2.4）
                 · 方向②（AMD 生成 → Windows 接入）：**12:37:57 接入成功**（`invite_import` ok，30 ms，未过期）
                 · 同步现场：我方窗口对该设备 **401 → 200**（接入前「没有登记过这台设备的公钥」，接入后 served）；
                   我方保存 `U1-E2E-1794458288928`（t0 12:38:08.928，测试空间 1c02）
-                · 对端读数（AMD reply-9）：`since=252 max_seq=254 gap=2 fetched=1 applied=0 ms=23`，
+                · 对端读数（AMD reply-9，接入前）：`since=252 max_seq=254 gap=2 fetched=1 applied=0 ms=23`，
                   **applied=0 的原因逐字**「不融合（判不出是不是同一个人（这台不在本机信任名单里））」×34
-                  ⇒ 证实「邀请只让**导入方**信任**发起方**」是**单向**的；反向信任要由另一个方向的邀请落到它那边
-                · 方向①（Windows 生成 → AMD 接入）：**四次邀请全部过期**（11:59/12:40/13:04/13:29 生成，
-                  各 10 分钟 TTL）—— AMD 侧 agent 每 ~30 分钟才醒一波；第 4 次它 13:24 回「醒了、同轮轮询」
-                  但 13:39 前**没有来取**（agent 轮次结束 ≠ 进程在跑）⇒ 窗口全部错过（非功能问题）；
-                  已改协议「它先喊『我保持醒着，现在发』并**同轮持续 fetch**，我方即刻生成」（reply-14）
+                  ⇒ 证实「邀请只让**导入方**信任**发起方**」是**单向**的；反向信任要另一次落卡
+                · 方向①最终走的是**等价路径 A**（AMD **生成时 peer 绑定**，R110「一趟配对、两个方向」）：
+                  13:49:59 生成 ⇒ 13:50:07 落卡 ⇒ 13:50:11 `fetched=1 applied=1`；我方独立核对见 implementation-status §2.4
+                · 过程事实（⛔ 不当成通过）：方向①走「邀请导入」路线 4 次（11:59/12:40/13:04/13:29）都因
+                  AMD 侧 agent 轮次/睡眠错过 10 分钟窗口 ⇒ 「10 分钟 TTL ＋ 异步对方」需要对方保持醒着；
+                  不改 TTL、不为此放水
                 回滚：不在正式包（dev 档）；旧设备读到新邀请码 ⇒ 大声拒（不回落到"没签名也认"）
 ```
 
