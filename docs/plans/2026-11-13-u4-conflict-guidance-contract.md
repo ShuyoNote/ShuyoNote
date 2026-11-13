@@ -1,8 +1,11 @@
 # U4 冲突裁决引导 —— 契约草案（2026-11-13）
 
-状态：**契约已拍板**（owner 2026-11-13：D1=B 摘要＋短片段 / D2=A 只自动安全情形 / D3=A 一页内批量 / D4=A 给推荐＋理由）；⛔ 未改实现
+状态：**契约已拍板**（owner 2026-11-13：D1=B 摘要＋短片段 / D2=A 只自动安全情形 / D3=A 一页内批量 / D4=A 给推荐＋理由）；**片 1（纯函数＋判据）已落地**，片 2–4 待做
 上位：[个人同步 2.0 需求](2026-11-08-personal-sync-2.0-requirements.md) §13.5 U4（"diff 摘要、批量裁决、推荐项；只在真两难时问人；冲突页有可读差异（⛔ 不回正文原文）；可批量；默认项有理由"）
 证据：现状盘点（代码为证）—— `../../src/components/ConflictBanner.tsx`（块级提示条：`page_conflicts` 两选一「留本地/用远端」，用 `fragmentText` 取纯文本片段做识别）＋
+片 1（2026-11-13）：`../../src/lib/conflictAdvice.ts`（`conflictAdvice` / `conflictSummary` / `clipSnippet` 纯函数）＋
+`../../src/lib/conflictAdvice.test.ts`（8 条：推荐真值表 / 两难 ask / 片段上限 / 摘要含块类型与量级 /
+**正文反例：第 41 字之后不许出现在摘要里**）；`tsc --noEmit` 0；全量 vitest 门禁 ✓
 `../../src-tauri/src/db.rs` 的 `page_conflicts`（块级，可逐块裁决）＋
 `../../src-tauri/src/sync.rs` 的 `list_page_conflicts` / `resolve_page_conflict`（local/remote）＋
 页级三选一（`list_pending_remote_pages` / `resolve_pending_remote_page`：merge / take_remote / keep_local —— 见 `docs/plans/2026-09-22-merge-push-and-cursor-forensics.md`）
@@ -54,7 +57,7 @@
 
 | 片 | 内容 | 判据 |
 |---|---|---|
-| 1 | 纯函数 `conflictAdvice` ＋ `conflictSummary`（唯一实现） | 真值表 ＋ "摘要不含正文"反例断言 |
+| 1 ✅ | 纯函数 `conflictAdvice` ＋ `conflictSummary`（唯一实现） | 真值表 ＋ "摘要不含正文"反例断言（`conflictAdvice.test.ts` 8/8） |
 | 2 | 数据面：块级 row 已够则前端算摘要；不够则给命令加只读字段（⛔ 不扩语义） | 源码级/契约级判据 |
 | 3 | 界面：摘要＋推荐＋理由＋批量（带确认） | wiring ＋ 组件渲染判据 |
 | 4 | 真机：两机同块冲突一次；两难一次 | 两侧读数 |
