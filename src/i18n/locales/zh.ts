@@ -166,6 +166,14 @@ export default {
     keepLocal: "留本地",
     useRemote: "用远端",
     resolved: "已按你的选择合并这一块",
+    advicePrefix: "建议",
+    tiePrefix: "两难",
+    batchTitle: "按同一策略处理本页冲突？",
+    batchMessage:
+      "将影响 {{count}} 块（本页所有未裁决冲突）。每一块的另一版仍在版本历史里，不会丢。",
+    batchKeepLocal: "本页全部留本地（{{count}} 块）",
+    batchUseRemote: "本页全部用远端（{{count}} 块）",
+    batchDone: "已处理 {{count}} 块",
   },
   // 冲刺 §13.3 第 2 条 · **页级血统冲突**提示条（`components/LineageConflictBanner.tsx`）
   lineage: {

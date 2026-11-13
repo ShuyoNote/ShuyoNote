@@ -102,9 +102,10 @@ U3 真机（AMD 侧读数）        ✅ 网络类：18:00:38 停 → **365 s** �
    会被"跳过"分支重置 ⇒ 实测 60s 变 7–11 分钟；已改**独立截止时刻** `AUTO_RETRY_NEXT_AT_MS`。
 5) U4 冲突裁决引导 —— **契约已拍板（2026-11-13：D1=B 摘要+≤40 字片段 / D2=A 只自动安全情形 /
    D3=A 仅一页内批量 / D4=A 给推荐+理由）**：契约
-   `docs/plans/2026-11-13-u4-conflict-guidance-contract.md`；**片 1 已落地**（`src/lib/conflictAdvice.ts`
-   纯函数 `conflictAdvice`/`conflictSummary`/`clipSnippet` ＋ 8 条判据，含"摘要不含正文反例"）；
-   剩片 2 数据面、片 3 界面（摘要+推荐+批量）、片 4 真机。
+   `docs/plans/2026-11-13-u4-conflict-guidance-contract.md`；**片 1–3 已落地**（`src/lib/conflictAdvice.ts`
+   纯函数 `conflictAdvice`/`conflictSummary`/`clipSnippet`；`src/lib/conflictShape.ts` 行→形状/建议；
+   `ConflictBanner` 显示摘要＋建议/两难＋主推荐按钮＋一页内批量（带确认））；判据 8＋8＋4 条；
+   剩片 4 真机（两机同块冲突一次；两难一次）。
 6) A1 CRDT 灰度（⛔ 必须等 7 天影子观察，最早 2026-11-18 收口；分批＋可回退，默认值由 owner 拍）
 7) relay ACME 自动化（当前证书外部签发；可做方案：certbot hook + 热重载，或内置 ACME 客户端）
 8) §13 其余：F2 反熵、F3 调度、O1 同步图、O2 诊断包

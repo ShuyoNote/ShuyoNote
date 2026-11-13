@@ -166,6 +166,14 @@ export default {
     keepLocal: "Keep local",
     useRemote: "Use remote",
     resolved: "Merged this block as you chose",
+    advicePrefix: "Suggested",
+    tiePrefix: "Two-way tie",
+    batchTitle: "Resolve the conflicts on this page with one strategy?",
+    batchMessage:
+      "This affects {{count}} block(s) — every unresolved conflict on this page. The other version of each block stays in version history.",
+    batchKeepLocal: "Keep local for this page ({{count}})",
+    batchUseRemote: "Use remote for this page ({{count}})",
+    batchDone: "Resolved {{count}} block(s)",
   },
   // Sprint §13.3 item 2 · page-level lineage conflict banner (`components/LineageConflictBanner.tsx`)
   lineage: {

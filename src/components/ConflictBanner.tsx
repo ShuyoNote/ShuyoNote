@@ -16,25 +16,14 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../lib/api";
+import { conflictSummary } from "../lib/conflictAdvice";
+import { conflictRowAdvice, conflictShapeFromRow } from "../lib/conflictShape";
+import { confirmDialog } from "../store/confirm";
 import { useEditorStore } from "../store/editor";
 import { useSyncStatus } from "../store/syncStatus";
 import { toast } from "../store/toast";
 
 type ConflictRow = Awaited<ReturnType<typeof api.listPageConflicts>>[number];
-
-/** 从一个块片段里取纯文本 —— 只为了让用户认出"是哪一块"（读不出来就给一句实话，不编）。 */
-function fragmentText(json: string): string {
-  try {
-    const node = JSON.parse(json) as { children?: Array<{ text?: string }> };
-    const text = (node.children ?? [])
-      .map((c) => (typeof c?.text === "string" ? c.text : ""))
-      .join("")
-      .trim();
-    return text || "（空块）";
-  } catch {
-    return "（读不出来）";
-  }
-}
 
 export function ConflictBanner({ pageId }: { pageId: string }) {
   const { t } = useTranslation();
@@ -78,36 +67,85 @@ export function ConflictBanner({ pageId }: { pageId: string }) {
     useEditorStore.getState().setFocusBlockId(row.block_id);
   };
 
+  /**
+   * ⭐ **U4 片 3（2026-11-13，owner 拍 D3=A）**：本页全部按同一策略处理（**仅一页内**）。
+   * ⚠️ 必须先二次确认「将影响 N 块」；逐块调既有 `resolvePageConflict`（⛔ 不新造命令/同步路）。
+   */
+  const batchDecide = async (choice: "local" | "remote") => {
+    const n = rows.length;
+    if (!n) return;
+    const ok = await confirmDialog({
+      title: t("conflicts.batchTitle"),
+      message: t("conflicts.batchMessage", { count: n }),
+    });
+    if (!ok) return;
+    let done = 0;
+    for (const row of rows) {
+      try {
+        await api.resolvePageConflict(row.id, choice);
+        done += 1;
+      } catch (e) {
+        toast(String(e), "error");
+        break;
+      }
+    }
+    if (done > 0) toast(t("conflicts.batchDone", { count: done }), "success");
+    refresh();
+  };
+
   return (
     <div className="conflict-banner" role="status">
       <div className="conflict-banner-head">
         <span className="conflict-banner-title">{t("conflicts.title", { count: rows.length })}</span>
         <span className="conflict-banner-hint">{t("conflicts.hint")}</span>
       </div>
+      {rows.length > 1 && (
+        <div className="conflict-banner-batch" data-testid="conflict-batch">
+          <button className="conflict-btn" onClick={() => void batchDecide("local")}>
+            {t("conflicts.batchKeepLocal", { count: rows.length })}
+          </button>
+          <button className="conflict-btn" onClick={() => void batchDecide("remote")}>
+            {t("conflicts.batchUseRemote", { count: rows.length })}
+          </button>
+        </div>
+      )}
       <ul className="conflict-banner-list">
-        {rows.map((row) => (
-          <li key={row.id} className="conflict-item">
-            <div className="conflict-item-texts">
-              <span className="conflict-side">
-                <b>{t("conflicts.local")}</b>：{fragmentText(row.local_json)}
-              </span>
-              <span className="conflict-side">
-                <b>{t("conflicts.remote")}</b>：{fragmentText(row.remote_json)}
-              </span>
-            </div>
-            <div className="conflict-item-actions">
-              <button className="conflict-btn conflict-btn-locate" onClick={() => jumpTo(row)}>
-                {t("conflicts.locate")}
-              </button>
-              <button className="conflict-btn" onClick={() => void decide(row, "local")}>
-                {t("conflicts.keepLocal")}
-              </button>
-              <button className="conflict-btn conflict-btn-primary" onClick={() => void decide(row, "remote")}>
-                {t("conflicts.useRemote")}
-              </button>
-            </div>
-          </li>
-        ))}
+        {rows.map((row) => {
+          // ⭐ U4 片 2/3：差异＝**摘要 ＋ ≤40 字片段**（⛔ 不铺正文）；推荐与理由来自纯函数（唯一实现）。
+          const summary = conflictSummary(conflictShapeFromRow(row));
+          const advice = conflictRowAdvice(row);
+          return (
+            <li key={row.id} className="conflict-item">
+              <div className="conflict-item-summary" data-testid="conflict-summary">
+                {summary}
+              </div>
+              <div
+                className={`conflict-item-advice${advice.choice === "ask" ? " is-tie" : ""}`}
+                data-testid="conflict-advice"
+              >
+                {advice.choice === "ask" ? t("conflicts.tiePrefix") : t("conflicts.advicePrefix")}：
+                {advice.reason}
+              </div>
+              <div className="conflict-item-actions">
+                <button className="conflict-btn conflict-btn-locate" onClick={() => jumpTo(row)}>
+                  {t("conflicts.locate")}
+                </button>
+                <button
+                  className={`conflict-btn${advice.fuller === "local" ? " conflict-btn-primary" : ""}`}
+                  onClick={() => void decide(row, "local")}
+                >
+                  {t("conflicts.keepLocal")}
+                </button>
+                <button
+                  className={`conflict-btn${advice.fuller === "remote" ? " conflict-btn-primary" : ""}`}
+                  onClick={() => void decide(row, "remote")}
+                >
+                  {t("conflicts.useRemote")}
+                </button>
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
