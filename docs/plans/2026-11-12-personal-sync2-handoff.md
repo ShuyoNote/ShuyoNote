@@ -91,6 +91,9 @@ U3 真机（AMD 侧读数）        ✅ 网络类：18:00:38 停 → **365 s** �
    `docs/plans/2026-11-12-u3-failure-recovery-contract.md`；**片 1–3 已落地**（`retry_plan` /
    `auto_retryable` 纯函数，后台轮接入 `advance_auto_retry`/`background_round_due_with_retry`，
    界面 `auto-retry-stopped` 标记指向既有手动入口）；判据：Rust 6 条真值表 + wiring 2/2；
+   **2026-11-13 补完 C2/C3**：失败行「一句话＋按钮」= `src/lib/syncFailureAdvice.ts`（纯函数，身份类先判，
+   与 Rust `auto_retryable` 标记**逐条同源**；判据 8/8）＋ `SyncPanel` 失败行上屏（4/4 wiring，
+   按钮只映射已有入口：重试/体检/复制诊断/去配对）；
    **片 4 真机部分通过（2026-11-12）**：① 4 次网络类失败后停止 ✓（日志 `[16:43:08] 已停止自动重试`，
    `stopped=true/streak=4`）；② 修回地址后成功一轮 ⇒ `streak=0/stopped=false` ✓；
    ⚠️ 60 s 间隔真机被"轮时长 3.3 min + 前端自动保存立即触发事件轮"覆盖，未取干净读数（判据以真值表为准）；
@@ -108,7 +111,8 @@ U3 真机（AMD 侧读数）        ✅ 网络类：18:00:38 停 → **365 s** �
    **片 4 未完成（待人工窗口）**：2026-11-13 第一次真机尝试失败 —— AMD 离线 10:19:37–10:23:25、10:20:05 保存
    `AMD-U4-B-101800`，但我方未在轮询窗口且 CDP `save_page` 绕过编辑器 rev 语义 ⇒ base 回到 `this is amd v2`/rev19，
    冲突未形成；**CDP 造冲突不可靠**，真机验收需两边用编辑器 UI 各改一次 + 互不可见窗口。
-6) A1 CRDT 灰度（⛔ 必须等 7 天影子观察，最早 2026-11-18 收口；分批＋可回退，默认值由 owner 拍）
+6) A1 CRDT 灰度（⛔ 必须等 7 天影子观察，最早 2026-11-18 收口；分批＋可回退，默认值由 owner 拍）——
+   观察步骤与判定口径已写进 `docs/plans/2026-11-13-a1-shadow-observation-runbook.md`（待执行）
 7) relay ACME 自动化（当前证书外部签发；可做方案：certbot hook + 热重载，或内置 ACME 客户端）
 8) §13 其余：F2 反熵、F3 调度、O1 同步图、O2 诊断包
 ```

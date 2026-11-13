@@ -1,6 +1,6 @@
 # U3 失败自动处理与建议 —— 契约草案（2026-11-12）
 
-状态：**契约已拍板**（owner 2026-11-12：①A **温和递进 + 4 次封顶** / ②A **只自动重试「可能自己好的」** / ③A 失败时**一句话 + 可点按钮** / ④A **后台也自动重试**）；**片 1–3 已落地**（纯函数＋后台接入＋界面标记），片 4 真机待做
+状态：**契约已拍板**（owner 2026-11-12：①A **温和递进 + 4 次封顶** / ②A **只自动重试「可能自己好的」** / ③A 失败时**一句话 + 可点按钮** / ④A **后台也自动重试**）；**片 1–3 已落地**（纯函数＋后台接入＋界面标记＋**失败行一句话/按钮映射**），片 4 部分通过（4 次停/恢复真机；60 s 与 401 以真值表为准）做
 证据：既有基础 `../../src-tauri/src/lan_state.rs`（`BACKGROUND_RETRY_MS` 固定 60 s、`background_round_interval_ms`、发现层绑端口 1s→30s 退避）＋
 `../../src/components/SyncPanel.tsx`（失败行/「全部空间立即同步」的失败重试、连接体检入口）＋
 上位 [个人同步 2.0 需求](2026-11-08-personal-sync-2.0-requirements.md) §13.5 U3（"常见失败自动重试成功或给出可执行动作"）
@@ -81,7 +81,7 @@
 |---|---|---|
 | 1 ✅ | 纯函数 `retry_plan` ＋ 原因分类映射表（Rust；唯一实现） | 单测真值表（`retry_plan_follows_the_60_120_300_600_cap` ＋ `auto_retryable_only_for_transient_network_failures`，含"身份类零重试/原因变化清零/4 次封顶"） |
 | 2 ✅ | 后台轮接入：固定 60 s → `retry_plan`；停止状态可读 | 源码级接线判据 ＋ 既有 `background_round_interval_ms` 判据换对象（新增 3 条真值表：`advance_auto_retry` / `background_interval_with_retry` / `due_with_retry`） |
-| 3 ✅ | 界面：失败行「一句话＋按钮」＋「已停止自动重试」标记 | wiring 判据（`syncPanelAutoRetry.wiring.test.ts` 2/2）＋ 组件渲染（指向已有手动入口，⛔ 新按钮） |
+| 3 ✅ | 界面：失败行「一句话＋按钮」＋「已停止自动重试」标记 | wiring 判据（`syncPanelAutoRetry.wiring.test.ts` 2/2）＋ 组件渲染（指向已有手动入口，⛔ 新按钮）；**2026-11-13 补完 C2/C3 映射**：`../../src/lib/syncFailureAdvice.ts`（纯函数，身份类先判；与 Rust `auto_retryable` 标记**逐条同源**）＋ `../../src/lib/syncFailureAdvice.test.ts`（8/8）＋ `../../src/components/syncPanelFailureAdvice.wiring.test.ts`（4/4，按钮只映射已有入口：重试/体检/复制诊断/去配对；⛔ 不新造命令） |
 | 4 ⏳ | 真机：网络类重试一次；401 零重试一次（与 AMD） | **部分通过（2026-11-12/13 回放）**：① **4 次网络类失败后停止已验证**（真机日志 `[16:43:08] 已停止自动重试（连续 4 次网络类失败）`；`lan_status` 读数 `stopped=true / streak=4`）② **恢复已验证**（修回地址后成功一轮 ⇒ `streak=0 / stopped=false`）③ ⚠️ **60 s 间隔未取到干净读数**：一轮要跑 9 空间 ≈ 3.3 min，且前端自动保存会立刻触发事件轮（用户保存本来就该立即同步）⇒ 真机上"纯 60 s 路径"被事件轮覆盖；判据以纯函数真值表为准，真机只证"会按计划停/会恢复"④ ⚠️ **401 零重试真机未制造出来**：AMD 撤销时 U2 的反向通知先删掉了对端卡 ⇒ 我方拉取变成「secret=无」本地跳过（全日志 2624 条），不是 401；401 只在通知丢失/离线时出现。**以纯函数真值表钉住**（401/被移出 ⇒ 零重试）。另：AMD 的"方法 A 加回"只写了它信任我方，我方卡需**自己**用 method A 补写（已补，paired 3→4） |
 
 ## 6. 风险与回滚

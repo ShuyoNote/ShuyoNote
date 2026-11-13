@@ -11,6 +11,10 @@ import { MeshUidConflicts } from "./MeshUidConflicts";
 // ⭐ U2 C4（owner 2026-11-12 ③A）：被移出的一方要**如实说**（区分「没配对过」与「曾被信任但已被移出」）。
 //   ⛔ 不许把两种都写成"同步失败" —— 那会让人反复排查网络/重启。
 import { findPeerRemovedHint } from "../lib/peerRemovedHint";
+// ⭐ **U3 片 3 扩展（2026-11-13）**：失败行的「一句话＋按钮」—— 文案/分类唯一来源是纯函数
+//   `syncFailureAdvice`（与 Rust `auto_retryable` 标记同源，判据 `syncFailureAdvice.test.ts` 钉住）。
+//   ⛔ 界面里不许再散写字符串判断；按钮只能是已有入口（重试/体检/复制诊断/去配对）。
+import { syncFailureAdvice } from "../lib/syncFailureAdvice";
 // ⭐ U1（2026-11-12，owner 拍 D1=A/D2=A/D3=A）：邀请式配对 —— 生成 / 接入 /「没用掉的邀请」（可撤销）。
 //   桌面专属（邀请要设备直连窗口；Web 没有这一层）；挂载点见下面「附近的设备」之后。
 import { InvitePairingSection } from "./InvitePairingSection";
@@ -2934,6 +2938,8 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                         {history.slice(0, 8).map((h, i) => {
                           const d = new Date(h.at).toLocaleString("zh-CN");
                           const open = detailOpenIdx === i;
+                          // ⭐ U3 片 3 扩展：失败行的一句话建议（纯函数唯一实现；成功行不给）
+                          const advice = !h.ok ? syncFailureAdvice(h.message) : null;
                           return (
                             <div key={i} className="sync-history-item">
                               <span className={`sync-history-status${h.ok ? " is-ok" : " is-err"}`}>{h.ok ? "✓" : "✗"}</span>
@@ -2953,6 +2959,11 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                                     </button>
                                   )}
                                 </div>
+                                {!h.ok && advice && advice.oneLiner && (
+                                  <div className="sync-history-advice" data-testid="sync-history-advice">
+                                    {advice.oneLiner}
+                                  </div>
+                                )}
                                 {h.message && <div className="sync-history-msg">{h.message}</div>}
                                 {!h.ok && (
                                   <div className="sync-history-actions">
@@ -2964,6 +2975,31 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                                         onClick={() => void retryMeshHistory(i, h)}
                                       >
                                         {retryingHistory === i ? "重试中…" : "重试"}
+                                      </button>
+                                    )}
+                                    {/* ⭐ U3 片 3 扩展：身份类 ⇒ 去配对（滚到已有「设备配对」区，⛔ 不新造入口） */}
+                                    {advice?.action === "pair" && (
+                                      <button
+                                        className="sync-history-action"
+                                        data-testid="sync-history-go-pair"
+                                        onClick={() => {
+                                          document
+                                            .querySelector('[data-testid="invite-pairing"]')
+                                            ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                                          setStatus("请在「设备配对」区里重新配对一次");
+                                        }}
+                                      >
+                                        去配对
+                                      </button>
+                                    )}
+                                    {/* ⭐ U3 片 3 扩展：锁着/空间不匹配/未知 ⇒ 打开已有「连接体检」 */}
+                                    {advice?.action === "diagnose" && (
+                                      <button
+                                        className="sync-history-action"
+                                        data-testid="sync-history-diagnose"
+                                        onClick={() => setMeshDiagnoseOpen(true)}
+                                      >
+                                        打开连接体检
                                       </button>
                                     )}
                                     <button
