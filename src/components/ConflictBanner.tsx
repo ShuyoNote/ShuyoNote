@@ -101,10 +101,10 @@ export function ConflictBanner({ pageId }: { pageId: string }) {
       </div>
       {rows.length > 1 && (
         <div className="conflict-banner-batch" data-testid="conflict-batch">
-          <button className="conflict-btn" onClick={() => void batchDecide("local")}>
+          <button className="conflict-btn" data-testid="conflict-batch-local" onClick={() => void batchDecide("local")}>
             {t("conflicts.batchKeepLocal", { count: rows.length })}
           </button>
-          <button className="conflict-btn" onClick={() => void batchDecide("remote")}>
+          <button className="conflict-btn" data-testid="conflict-batch-remote" onClick={() => void batchDecide("remote")}>
             {t("conflicts.batchUseRemote", { count: rows.length })}
           </button>
         </div>

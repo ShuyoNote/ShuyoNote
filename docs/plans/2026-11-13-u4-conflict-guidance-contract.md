@@ -11,7 +11,8 @@
 唯一安全推荐 = 一侧是另一侧前缀（含全部内容）；其余 `ask`）＋ `../../src/lib/conflictShape.test.ts`（8 条，含"形状里不放整段正文"反例）
 片 3（2026-11-13）：`../../src/components/ConflictBanner.tsx`（摘要行 `data-testid="conflict-summary"`、建议/两难行
 `conflict-advice`、推荐按钮主样式、一页内批量 `conflict-batch` 走 `confirmDialog`＋逐块 `resolvePageConflict`）＋
-`../../src/components/conflictGuidance.wiring.test.ts`（4/4）＋ `src/i18n/locales/{zh,en}.ts` 新词条；
+`../../src/components/conflictGuidance.wiring.test.ts`（4/4）＋ `../../src/components/ConflictBanner.U4.test.ts`（2/2：批量确认路径
+`confirmDialog` 带块数＋逐块既有命令；推荐按钮主样式／真两难不高亮）＋ `src/i18n/locales/{zh,en}.ts` 新词条；
 `tsc --noEmit` 0；全量 vitest 门禁 ✓
 `../../src-tauri/src/db.rs` 的 `page_conflicts`（块级，可逐块裁决）＋
 `../../src-tauri/src/sync.rs` 的 `list_page_conflicts` / `resolve_page_conflict`（local/remote）＋
