@@ -108,9 +108,11 @@ U3 真机（AMD 侧读数）        ✅ 网络类：18:00:38 停 → **365 s** �
    `docs/plans/2026-11-13-u4-conflict-guidance-contract.md`；**片 1–3 已落地**（`src/lib/conflictAdvice.ts`
    纯函数 `conflictAdvice`/`conflictSummary`/`clipSnippet`；`src/lib/conflictShape.ts` 行→形状/建议；
    `ConflictBanner` 显示摘要＋建议/两难＋主推荐按钮＋一页内批量（带确认））；判据 8＋8＋4 条；
-   **片 4 未完成（待人工窗口）**：2026-11-13 第一次真机尝试失败 —— AMD 离线 10:19:37–10:23:25、10:20:05 保存
-   `AMD-U4-B-101800`，但我方未在轮询窗口且 CDP `save_page` 绕过编辑器 rev 语义 ⇒ base 回到 `this is amd v2`/rev19，
-   冲突未形成；**CDP 造冲突不可靠**，真机验收需两边用编辑器 UI 各改一次 + 互不可见窗口。
+   **片 4 未完成（待人工窗口）**：2026-11-13 两次尝试都失败 —— ① AMD 离线 10:19:37–10:23:25、10:20:05 保存
+   `AMD-U4-B-101800`，但我方未在轮询窗口且 CDP `save_page` 绕过编辑器 rev 语义 ⇒ base 回到 `this is amd v2`/rev19；
+   ② 13:53 base 对齐（`U4-BASE-103852`/rev21）→ 13:55:39–14:16 离线，但 AMD 侧 owner 的编辑器编辑没落上
+   （回读 `this is amd v2`/rev22），我方也未读到窗口；随后 AMD 换网 ⇒ 互不可见。**CDP 造冲突不可靠**；
+   真机验收需同网 + 双方 owner 在编辑器前，且**改完用 `get_page` 自证内容已变**再交给对方。
 6) A1 CRDT 灰度（⛔ 必须等 7 天影子观察，最早 2026-11-18 收口；分批＋可回退，默认值由 owner 拍）——
    观察步骤与判定口径已写进 `docs/plans/2026-11-13-a1-shadow-observation-runbook.md`（待执行）
 7) relay ACME 自动化（当前证书外部签发；可做方案：certbot hook + 热重载，或内置 ACME 客户端）
