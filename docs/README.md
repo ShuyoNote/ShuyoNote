@@ -354,6 +354,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-11-12-u1-invite-pairing-contract.md](plans/2026-11-12-u1-invite-pairing-contract.md) | ⭐ **U1 邀请式配对 —— ✅ 已完成（片1–4，2026-11-12 真机双向）**：邀请＝`DevicePairPayload`＋`exp`(10min)/`nonce`(128bit)/`sig` 的一次性凭证（D1=A 不带材料 / D2=A 默认免核对 / D3=A 不做短码）；四条命令＋界面＋台账；真机读数见 `implementation-status §2.4` |
 | [plans/2026-11-12-u2-device-lifecycle-contract.md](plans/2026-11-12-u2-device-lifecycle-contract.md) | ⭐ **U2 设备生命周期（撤销）—— ✅ 已完成（片 1–3，2026-11-12 真机双向）**：撤销立刻生效（对端 401）＋ 文案补「副本删不掉/无法远程擦除/要重新配对」＋ 被移出提示（`peerRemovedHint`，真机抓到撤销会反向通知删卡并修正两种文案）；恢复双向通过（对端 `fetched=1 applied=1`）；密钥轮换明确非目标 |
 | [plans/2026-11-12-u3-failure-recovery-contract.md](plans/2026-11-12-u3-failure-recovery-contract.md) | ⭐ **U3 失败自动处理与建议 —— 契约已拍板（①A 温和递进+4 次封顶 / ②A 只自动重试「可能自己好的」/ ③A 一句话+可点按钮 / ④A 后台也重试）**：`retry_plan` 纯函数（60→120→300→600 s 封顶、身份类零重试）＋失败行建议按钮＋「已停止自动重试」标记；待实现 |
+| [plans/2026-11-13-u4-conflict-guidance-contract.md](plans/2026-11-13-u4-conflict-guidance-contract.md) | ⭐ **U4 冲突裁决引导 —— 契约已拍板（D1=B 摘要+≤40 字片段 / D2=A 只自动安全情形 / D3=A 仅一页内批量 / D4=A 给推荐+理由）**：块级冲突给差异摘要、推荐与理由、一页内批量（带影响块数确认）；⛔ 不回正文原文；待实现 |
 | [plans/2026-11-08-personal-sync-2.0-p3-adr.md](plans/2026-11-08-personal-sync-2.0-p3-adr.md) | ⭐ **个人版同步 2.0 P3 落地 ADR（草案；DEC-A..E 已按推荐拍板 A）**：daemon 两段式/DB 单写者/回环 IPC/托盘/升级；lan-quic feature 拆分、单 iroh 端点、UDP 公告带 quic_addrs、HTTP 退出 C1–C4；CRDT 影子闸/space_uid/不首刀清单；MCP 无 UI 危险写三档；阶段判据、R1–R8 与不建议清单 |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
