@@ -8,10 +8,11 @@
 ## 1. 当前版本
 
 ```text
-ShuyoNote  dev = 0518456b（origin 同步；GitHub 镜像因网络未推）
+ShuyoNote  dev = 929ab646（origin 同步；GitHub 镜像因网络未推）
 relay      main = dabfd8d5
-collab     HEAD = d3542091（origin 同步）
-本机 dev   ：**已停**（2026-11-12 09:05 因 F1 活锁止损；重启命令见 §6）
+collab     HEAD = 632202ef（origin 同步；U3 线程 reply-4 已推）
+本机 dev   ：**在跑**（2026-11-13 08:22:03 起，pid 16868，HEAD 929ab646；
+              日志 `_tmp/logs/dev-20261113-u3c.log`，CDP 9222；8788 在听；paired=1）
               ⚠️ 直跑形态（可脚本化）：`Start-Process src-tauri\target\debug\shuyonote.exe` ＋
                  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--disable-gpu --remote-debugging-port=9222'`
                  （CDP 只绑回环；日志 `_tmp/scratch/dev-*.log.err`）——`pnpm tauri dev` 的输出有时进不了重定向文件
@@ -46,6 +47,18 @@ F1 端到端（真机，两侧 485e1a8c）  ✅ 2026-11-12 09:41：我方保存�
                                   （dirty 停在启动那 10 条）；测试页标题跨机逐字一致
                                   ⚠️ 边界：不是「QUIC 长连接推送/订阅」；接收侧日志不打印 dirty 位（行为证据）
 清理                         ✅ 0518456b（还原 cargo fmt 误格式化的 capabilities_gen.rs / plugins.rs 等）
+U1 真机（AMD 侧读数）        ✅ 方向② 12:37:57 导入 ok/30 ms（未过期）；方向① 走方法 A：13:49:59
+                                 生成→13:50:07 落卡→13:50:11 `fetched=1 applied=1`（1c02 `U1-E2E-1794458288928` 落库，
+                                 cursor 252→254）；`mesh_paired_devices` 0→1
+U2 真机（AMD 侧读数）        ✅ 撤销 14:38:20.965 ⇒ 我方 paired 0（反向通知删卡是预期）；401 原文
+                                 「没通过…这个空间里**没有登记过这台设备的公钥**…」；文案两支真机各见一次：
+                                 卡空「还没配对过…」/卡回+401「已被移出…」（`747fe90f`）；恢复 15:17:59 写卡
+                                 ＋15:20:56 `fetched=1 applied=1 ms=47`（marker `U2-RESTORE-1794468054501` 落库）
+U3 真机（AMD 侧读数）        ✅ 网络类：18:00:38 停 → **365 s** → 18:06:43 起（pid 15580）；
+                                 身份类：18:13:16 `device_unpair` wasPaired=true/pairedCount=0 →
+                                 窗口内 **401×64** → 18:17:44 方法 A outcome=ok/paired=1 →
+                                 加回后 401=0、入站 200
+                                 ⏳ Windows 回放确认「60s 加速 / 401 零加速」；`929ab646` 调度修复已拉并重编
 ```
 
 ## 3. 未完成（推荐顺序）
@@ -81,7 +94,8 @@ F1 端到端（真机，两侧 485e1a8c）  ✅ 2026-11-12 09:41：我方保存�
    **片 4 真机部分通过（2026-11-12）**：① 4 次网络类失败后停止 ✓（日志 `[16:43:08] 已停止自动重试`，
    `stopped=true/streak=4`）；② 修回地址后成功一轮 ⇒ `streak=0/stopped=false` ✓；
    ⚠️ 60 s 间隔真机被"轮时长 3.3 min + 前端自动保存立即触发事件轮"覆盖，未取干净读数（判据以真值表为准）；
-   ⏳ 401 零重试仍待 AMD 撤销一次。**真机还抓到并修掉一个调度 bug**：第一版按"上次开跑+间隔"算，
+   ✅ 401 零重试已由 AMD 侧撤销验证（2026-11-12 18:13:16 unpair → 窗口内 401×64 →
+   18:17:44 方法 A 加回；Windows 回放确认"不加速"待回）。**真机还抓到并修掉一个调度 bug**：第一版按"上次开跑+间隔"算，
    会被"跳过"分支重置 ⇒ 实测 60s 变 7–11 分钟；已改**独立截止时刻** `AUTO_RETRY_NEXT_AT_MS`。
 5) A1 CRDT 灰度（⛔ 必须等 7 天影子观察，最早 2026-11-18 收口；分批＋可回退，默认值由 owner 拍）
 5) relay ACME 自动化（当前证书外部签发；可做方案：certbot hook + 热重载，或内置 ACME 客户端）

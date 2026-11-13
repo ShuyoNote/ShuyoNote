@@ -166,10 +166,28 @@ owner 拍板：①A 撤销立刻生效 / ②A 只做移出、不换空间密钥 
 ⚠️ 未做（owner ②A 明确非目标）：密钥轮换（换空间密钥）⇒ 已同步副本删不掉、旧数据不可回溯保护
 ```
 
+## 2.6 U3（失败自动重试）真机 —— AMD 侧补记（2026-11-12/13）
+
+```text
+网络类：AMD dev 停 **18:00:38** → 停 **365 s** → **18:06:43** 起（pid 15580）
+  ⇒ 供 Windows 侧验「连不上 ⇒ 60 s 加速重试」（其回放结论待回）
+身份类：18:13:16 device_unpair(workspace=171399b5…, peer=a6919f0d…)
+  ⇒ wasPaired=true / pairedCount=0
+  撤销窗口 18:13:16–18:17:45：AMD 日志 **401×64**（Windows 侧「拉不动」的另一面）
+  18:17:44 方法 A invite_export ⇒ outcome=ok（nonce 55e39fe9…）、paired 0→1
+  加回后：AMD 拉对端 **401=0**；对端拉 AMD 入站 **200**（space=7d8e… 等，served=true）
+调度 bug（Windows 用本轮读数抓到）：第一版「跳过分支」会重置间隔 ⇒ 60 s 变 7–11 分钟；
+  已修 **929ab646**（独立截止时刻 AUTO_RETRY_NEXT_AT_MS）
+  AMD 2026-11-13 08:22:03 拉并重编（pid 16868，日志 `_tmp/logs/dev-20261113-u3c.log`）
+⏳ 待 Windows 回放「60 s 加速出现 / 401 不加速」⇒ U3 片 4 收口
+契约：docs/plans/2026-11-12-u3-failure-recovery-contract.md
+```
+
 ## 3. 未验 / 未做（如实单列）
 
 ```text
 ✅ 跨机真机主链：AMD⇄Windows 已验收（见 §2.1，含 **QUIC 直连**：两侧 connect OK 16/17/23ms）
+✅ U3 自动重试真机：AMD 侧停/起与撤销→401→加回读数见 §2.6（Windows 回放确认待回）
 ✅ 附件「按需取字节」真机已通（2026-11-10 10:15）：`q-20261109.bin`（2,097,152 B，
    hash 7d75e8db…）经「下载」取回：落盘 size=2,097,152、sha256 逐字 == 对端 hash、
    路径 `<appdata>/attachments/<space>/7d/7d75e8db….bin`，mtime 10:15:07。
@@ -219,8 +237,8 @@ owner 拍板：①A 撤销立刻生效 / ②A 只做移出、不换空间密钥 
 
 ## 4. 下一步（按剩余价值）
 
-1. ✅ U1 邀请式配对已真机双向通过（§2.4）；下一件 = **U2 设备生命周期契约**（撤销/换机/密钥轮换，
-   owner 拍板 D 之后才动实现；契约草案待出）；
+1. ✅ U1/U2/U3 已真机通过或待回放确认（§2.4 / §2.5 / §2.6）；下一件 = relay 剩余项与
+   CRDT 7 天影子观察收口（见 §4.3/§4.5）；
 2. 第二台设备真机：AMD⇄Windows **主链已验收（含 QUIC 直连、双向编辑）**（§2.1）；剩附件续传真机；
 3. 私有 relay 剩余：反代形态（B）实测＋ACME（可选）＋`relay selfcheck` 四项；
 4. App↔daemon IPC 完整化（或明确 V1 保持“App 写者 + daemon 仅无头”）；
