@@ -61,6 +61,21 @@ U3 真机（AMD 侧读数）        ✅ 网络类：18:00:38 停 → **365 s** �
                                  ⏳ Windows 回放确认「60s 加速 / 401 零加速」；`929ab646` 调度修复已拉并重编
 ```
 
+### 发版进行中（2026-11-14 17:2x 收工，**未完成**）
+
+```text
+目标 2.1.15（owner 2026-11-14 拍）｜dev = c71d4ce6（两远端已同步）｜GitHub 镜像已补到 c71d4ce6
+已完成：六处版本同步 + CHANGELOG 落版 + 移动版号 2.1.15；本机全量门禁 66/66（report 在 .test-report-out/）
+卡点：GitHub CI 的 rust job 红（34 条 plugins::tests 找不到宿主二进制；11-10 之后既存债务）
+  已修：ensure_host_exe 自愈（找不到 bin 时自己 cargo build --bin shuyonote），WSL 实测 --lib plugins:: 185 passed
+  ⇒ 正等 c71d4ce6 的 CI + Android/macOS build 结论（云上跑，关机不影响）
+未做：main 推送（本地 main 已在 81028ea8，**未推**）；tag v2.1.15 未打
+下一步：
+ 1) 看 c71d4ce6 的 CI/macOS/Android 是否全绿（read-ci / ci-all-runs.mjs 同款脚本）
+ 2) 绿 ⇒ merge/推 main（两远端）→ 打 v2.1.15 tag 推两远端 → check-release-state 自检 → 发版说明
+ 3) 仍红 ⇒ 看 artifacts 的 test-report-rust.json；WSL 可复现（cargo 1.98.1；CARGO_TARGET_DIR=/tmp/lt5）
+```
+
 ### 2026-11-14 当日收口（读数都在 git）
 
 ```text
