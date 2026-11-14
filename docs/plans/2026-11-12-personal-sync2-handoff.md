@@ -8,10 +8,10 @@
 ## 1. 当前版本
 
 ```text
-ShuyoNote  dev = 929ab646（origin 同步；GitHub 镜像因网络未推）
+ShuyoNote  dev = **4d293075**（2026-11-14 15:4x；origin 同步；GitHub 镜像因网络未推）
 relay      main = dabfd8d5
-collab     HEAD = 632202ef（origin 同步；U3 线程 reply-4 已推）
-本机 dev   ：**在跑**（2026-11-13 08:22:03 起，pid 16868，HEAD 929ab646；
+collab     HEAD = 见信箱（U4 线程 reply-21/网络线程 reply-12 已推）
+本机 dev   ：**在跑**（2026-11-14 14:51:42 起，pid 17280，HEAD 4d293075；CDP 9222；8788 在听）
               日志 `_tmp/logs/dev-20261113-u3c.log`，CDP 9222；8788 在听；paired=1）
               ⚠️ 直跑形态（可脚本化）：`Start-Process src-tauri\target\debug\shuyonote.exe` ＋
                  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--disable-gpu --remote-debugging-port=9222'`
@@ -59,6 +59,20 @@ U3 真机（AMD 侧读数）        ✅ 网络类：18:00:38 停 → **365 s** �
                                  窗口内 **401×64** → 18:17:44 方法 A outcome=ok/paired=1 →
                                  加回后 401=0、入站 200
                                  ⏳ Windows 回放确认「60s 加速 / 401 零加速」；`929ab646` 调度修复已拉并重编
+```
+
+### 2026-11-14 当日收口（读数都在 git）
+
+```text
+· A1 影子比对 `equal=0` 根因定位：落盘带 `blockRev`、CRDT 投影不带 ⇒ 口径系统性偏差；**修法 A 已落地**
+  （比对前忽略 `blockRev`，判据 ⑯⑰⑱）＋ 双验证：UI「影子体检 0 页不一致」、真实 12 页夹具 `equal=12/12`。
+  ⛔ 旧观察数据作废；**7 天窗口从 2026-11-14 重算（最早 2026-11-21 收口）**。
+  见 `docs/plans/2026-11-14-a1-shadow-equal-zero-rootcause.md`。
+· U3 片 3 补完 C2/C3：失败行「一句话＋按钮」（`syncFailureAdvice` 与 Rust 标记逐条同源；4/4 wiring）。
+· U4 片 4 部分通过：UI 在真机用夹具冲突行取证（摘要/建议+主按钮/两难/批量确认/逐块执行）；
+  「两机各改一次产生真冲突」4 次尝试未成立（窗口/编辑没落上/rev 漂移/热点漂移）⇒ 待人工窗口。
+· 测试工具限制（联合排查）：`execCommand` 编辑**不记变更流水**（localMaxSeq 不变）；
+  真机验收必须用 CDP Input 键盘事件或真人输入（我方 Input 编辑实测 localMaxSeq 300→301）。
 ```
 
 ## 3. 未完成（推荐顺序）
