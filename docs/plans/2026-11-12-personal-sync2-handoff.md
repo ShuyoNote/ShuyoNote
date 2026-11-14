@@ -108,12 +108,12 @@ U3 真机（AMD 侧读数）        ✅ 网络类：18:00:38 停 → **365 s** �
    `docs/plans/2026-11-13-u4-conflict-guidance-contract.md`；**片 1–3 已落地**（`src/lib/conflictAdvice.ts`
    纯函数 `conflictAdvice`/`conflictSummary`/`clipSnippet`；`src/lib/conflictShape.ts` 行→形状/建议；
    `ConflictBanner` 显示摘要＋建议/两难＋主推荐按钮＋一页内批量（带确认））；判据 8＋8＋4 条；
-   **片 4 部分通过（2026-11-14）**：UI 在**真机 app** 上用夹具冲突行（本地 `page_conflicts`）验过 ——
-   摘要/建议+理由/推荐主按钮/两难 ask/批量「将影响 3 块」＋确认后逐块执行（1 成功、2 条如实报
-   「块已不在页面里」，无静默失败）；但**两机真冲突仍未成立**：前三次尝试分别栽在"未在轮询窗口 /
-   owner 编辑没落上 / 暂停重启把 blockRev 推高（25→27）导致同 rev 分叉丢失"。
-   ⇒ 真冲突验收需一次同网 + 双方 owner 在编辑器前的窗口，且**先收敛到同一 text+rev 再同时暂停改**。
-   ⚠️ CDP `save_page`/直接改库造出的冲突不得冒充真机读数（这次夹具行只用于 UI 取证，已如实标注）。
+   **片 4 部分通过（2026-11-14 收口）**：UI 在真机 app 上用夹具冲突行（本地 `page_conflicts`）验过 ——
+   摘要/建议+理由/推荐主按钮/两难 ask/批量「将影响 3 块」＋确认后逐块执行（无静默失败）；
+   但**两机真冲突 4 次尝试均未成立**：① 未在轮询窗口 ② owner 编辑没落上 ③ 暂停重启推高 rev
+   ④ AMD 断网前 base 被自动同步换成旧标记（`U4-BASE-103852`/rev34）、且回网时 Tashan 热点消失
+   落到 SXJMZBYXGS。⚠️ CDP/直接改库造出的冲突不得冒充真机读数（夹具行只用于 UI 取证，已标注）。
+   ⇒ 真冲突验收需**网络稳定 + 两边先收敛到同一 text+rev + 双方 owner 同时在编辑器前**的人工窗口。
 6) A1 CRDT 灰度（⛔ 必须等 7 天影子观察，最早 2026-11-18 收口；分批＋可回退，默认值由 owner 拍）——
    观察步骤与判定口径已写进 `docs/plans/2026-11-13-a1-shadow-observation-runbook.md`（待执行）
 7) relay ACME 自动化（当前证书外部签发；可做方案：certbot hook + 热重载，或内置 ACME 客户端）
