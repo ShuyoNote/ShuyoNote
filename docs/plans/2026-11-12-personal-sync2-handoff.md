@@ -116,8 +116,11 @@ U3 真机（AMD 侧读数）        ✅ 网络类：18:00:38 停 → **365 s** �
    ⇒ 真冲突验收需**网络稳定 + 两边先收敛到同一 text+rev + 双方 owner 同时在编辑器前**的人工窗口。
    ⚠️ 测试工具限制（2026-11-14 联合排查）：页面内 `execCommand` 编辑**不记变更流水**（`localMaxSeq` 不变）；
    必须用 **CDP `Input` 键盘事件或真人输入**（我方实测 Input 事件编辑 `localMaxSeq` 300→301，AMD execCommand 侧仍 207）。
-6) A1 CRDT 灰度（⛔ 必须等 7 天影子观察，最早 2026-11-18 收口；分批＋可回退，默认值由 owner 拍）——
-   观察步骤与判定口径已写进 `docs/plans/2026-11-13-a1-shadow-observation-runbook.md`（待执行）
+6) A1 CRDT 灰度（⛔ 必须等 7 天影子观察；分批＋可回退，默认值由 owner 拍）——
+   观察步骤与判定口径已写进 `docs/plans/2026-11-13-a1-shadow-observation-runbook.md`；
+   **2026-11-14 更正**：`equal=0` 根因定位（落盘带 `blockRev`、投影不带 ⇒ 口径系统性偏差），
+   **修法 A 已落地**（比对前忽略 `blockRev`；判据 ⑯⑰⑱，见 `docs/plans/2026-11-14-a1-shadow-equal-zero-rootcause.md`）
+   ⇒ 旧观察数据作废，**7 天窗口从 2026-11-14 重新起算（最早 2026-11-21 收口）**
 7) relay ACME 自动化（当前证书外部签发；可做方案：certbot hook + 热重载，或内置 ACME 客户端）
 8) §13 其余：F2 反熵、F3 调度、O1 同步图、O2 诊断包
 ```

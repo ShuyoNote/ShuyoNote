@@ -62,12 +62,31 @@ export interface ShadowRowsResult {
  * 那是**序列化形状**差异，不是内容差异；真实页面若按原样比会 100% 假 differ，影子就没用了。
  * 归一后仍走 canonical（键排序/数组保序）；⛔ `canonicalJson` 本身不加这个宽容（它只是规范化 JSON）。
  */
+/**
+ * ⭐ **A1 修法 A（owner 2026-11-14 拍）**：影子比对**不参与比较**的元数据键（唯一出处）。
+ *
+ * 来由（2026-11-14 根因定位）：落盘 block 带 `blockRev`、而 `projectStateToJson` 投影不带
+ * ⇒ canonical 必然不同 ⇒ **equal 永远 0**、differ≈全部（7 天观察数据作废）。
+ * 修法：比对前**显式忽略**这些键；⛔ 不许用通配/模糊匹配，⛔ 不许在别处再写一份名单。
+ * ⚠️ 代价（如实）：这样影子只回答"**内容**是否等价"；`blockRev` 的一致性**不在**影子读数里
+ * （投影不携带 rev，当前无法比较）——要测 rev 一致性得走 B 方案（把 rev 纳入投影）。
+ */
+export const SHADOW_IGNORED_KEYS = ["blockRev"] as const;
+
+/**
+ * 已知噪声归一（影子比对专用）：
+ * · `direction: null` ↔ `"ltr"`（yjs/编辑器往返的序列化默认值）；
+ * · 忽略 `SHADOW_IGNORED_KEYS` 里的元数据键（A1 修法 A）。
+ */
 function normalizeKnownNoise(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(normalizeKnownNoise);
   if (value && typeof value === "object") {
     const obj = value as Record<string, unknown>;
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(obj)) out[k] = normalizeKnownNoise(v);
+    for (const [k, v] of Object.entries(obj)) {
+      if ((SHADOW_IGNORED_KEYS as readonly string[]).includes(k)) continue;
+      out[k] = normalizeKnownNoise(v);
+    }
     if ("direction" in out && out.direction === null) out.direction = "ltr";
     return out;
   }
@@ -83,6 +102,14 @@ function canonicalForShadow(json: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * 诊断/判据用：影子比对实际使用的 canonical 形态（含已知归一与元数据忽略）。
+ * ⚠️ 只用于**只读诊断与判据**，⛔ 不要把它当"通用 JSON 规范化"（那用 `canonicalJson`）。
+ */
+export function shadowCanonicalJson(json: string): string | null {
+  return canonicalForShadow(json);
 }
 
 function canonicalize(value: unknown): unknown {

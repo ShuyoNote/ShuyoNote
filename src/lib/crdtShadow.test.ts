@@ -9,6 +9,8 @@ import { toLegacyDoc } from "./blockIdentity";
 import { contentJsonToYDoc } from "./crdt/yDocBridge";
 import {
   canonicalJson,
+  SHADOW_IGNORED_KEYS,
+  shadowCanonicalJson,
   shadowCompareProjection,
   shadowCompareRows,
 } from "./crdtShadow";
@@ -161,5 +163,40 @@ describe("shadowCompareRows：只回计数与 page id（脱敏）", () => {
       uncomparable: 0,
       differPageIds: [],
     });
+  });
+});
+
+// ⭐ A1 修法 A（owner 2026-11-14 拍）：影子比对**忽略元数据键**（`blockRev`）。
+// 来由：2026-11-14 根因定位 —— 落盘带 `blockRev`、投影不带 ⇒ canonical 必不同 ⇒ equal 永远 0。
+describe("A1 修法 A：影子忽略元数据键（blockRev）", () => {
+  const doc = (text: string, rev: number) =>
+    JSON.stringify({
+      root: {
+        children: [
+          { blockId: "b1", blockRev: rev, children: [{ type: "text", text, detail: 0, format: 0, mode: "normal", style: "", version: 1 }], direction: null, format: "", indent: 0, type: "paragraph", version: 1 },
+        ],
+      },
+    });
+
+  it("⑯ 只差 blockRev ⇒ 影子 canonical 相同（且名单里确实有 blockRev）", () => {
+    expect(SHADOW_IGNORED_KEYS).toContain("blockRev");
+    expect(shadowCanonicalJson(doc("同一段", 18))).toBe(shadowCanonicalJson(doc("同一段", 99)));
+  });
+
+  it("⑰ 内容不同 ⇒ 仍判不同（忽略的只是元数据，不是内容）", () => {
+    expect(shadowCanonicalJson(doc("甲", 18))).not.toBe(shadowCanonicalJson(doc("乙", 18)));
+  });
+
+  it("⑱ 真往返（落盘带 rev、投影不带 rev）⇒ shadowCompareProjection 判 equal", () => {
+    // ⚠️ 用**真编辑器 fixture**（文件头那条纪律：手写 schema 证明不了往返）
+    const stored = (() => {
+      const d = JSON.parse(withIds(fixture())) as { root: { children: Array<Record<string, unknown>> } };
+      d.root.children = d.root.children.map((c) => ({ ...c, blockRev: 18 }));
+      return JSON.stringify(d);
+    })();
+    const state = contentJsonToYDoc(stored).update;
+    const r = shadowCompareProjection(stored, state);
+    expect(r.equal, `reason=${r.reason ?? ""}`).toBe(true);
+    expect(r.reason).toBeUndefined();
   });
 });
