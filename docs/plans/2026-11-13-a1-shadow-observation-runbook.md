@@ -1,6 +1,9 @@
 # A1 CRDT 灰度 —— 影子观察 runbook（2026-11-13 准备，2026-11-18 起可判）
 
 状态：**待执行**（观察窗口未满；⛔ 现在不能拍灰度默认值）
+> ⚠️ **2026-11-14 更正**：`equal=0` 的根因已定位 —— 落盘 block 带 `blockRev`、CRDT 投影不带 ⇒ 比对口径系统性偏差，
+> **旧观察数据（11-09…11-14）作废**，不能用于灰度判定；修法待 owner 拍，见
+> [根因定位](2026-11-14-a1-shadow-equal-zero-rootcause.md)。修好并重跑 7 天窗口后再按本 runbook 收口。
 上位：[个人同步 2.0 需求](2026-11-08-personal-sync-2.0-requirements.md) §13.3 A1（"7 天影子观察后，再决定 CRDT 默认灰度"）＋
 [交接单](2026-11-12-personal-sync2-handoff.md) §3「A1 必须等 7 天影子观察，最早 2026-11-18 收口」
 证据（现状机制，代码为证）：`../../src/lib/crdtShadowHistory.ts`（`SHADOW_HISTORY_KEY = "shuyonote:crdt-shadow-history"`；
