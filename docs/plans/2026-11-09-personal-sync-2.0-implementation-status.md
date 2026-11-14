@@ -125,7 +125,7 @@ AMD 侧（同侧时钟）：
 
 ```text
 两侧：Windows（dev 22324）⇄ AMD（dev 8744），均在 SXJMZBYXGS / 172.16.174.x
-契约：docs/plans/2026-11-12-u1-invite-pairing-contract.md（D1=A/D2=A/D3=A；邀请 = 10 分钟、一次性、可撤销）
+契约：docs/plans/2026-11-12-u1-invite-pairing-contract.md（①=A/②=A/③=A；邀请 = 10 分钟、一次性、可撤销）
 代码：片1 4c14c62b ／ 片2 0455f826 ／ 片3 dbeb7299
 
 方向②（AMD 生成邀请 → Windows 导入接入）**12:37:57**：
