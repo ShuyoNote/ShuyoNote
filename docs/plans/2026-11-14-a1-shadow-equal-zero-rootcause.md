@@ -2,7 +2,8 @@
 
 状态：**已定位（只读诊断）**；修法**待 owner 拍**（A/B/C 三选一）；⛔ 在修好前 7 天观察数据**不可用于 A1 灰度判定**
 上位：[A1 影子观察 runbook](2026-11-13-a1-shadow-observation-runbook.md) ／ [需求 §13 A1](2026-11-08-personal-sync-2.0-requirements.md)
-证据：临时诊断（已删除的临时 vitest，只读、不打印正文）—— 取我方个人空间 `0ea903fc`（运营）**12 页**，
+证据：代码路径 `../../src/lib/crdtShadow.ts`（canonicalJson 比对口径）＋ `../../src/lib/crdt/yDocBridge.ts`（`projectStateToJson` 投影实现）；
+临时诊断（已删除的临时 vitest，只读、不打印正文）—— 取我方个人空间 0ea903fc（运营）**12 页**，
 逐页比较 `canonicalJson(落盘 content_json)` vs `canonicalJson(projectStateToJson(page_crdt.state))`：
 12/12 `equal=false`；所有页 `storedLen` 比 `projectedLen` 大数百字节；结构摘要显示**唯一系统性差异**：
 落盘 block 带 `blockRev` 键，而 **CRDT 投影不带 `blockRev`**（其余键相同、`rootKids` 数相同、首块文本相同）。
