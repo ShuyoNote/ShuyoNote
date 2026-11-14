@@ -114,6 +114,8 @@ U3 真机（AMD 侧读数）        ✅ 网络类：18:00:38 停 → **365 s** �
    ④ AMD 断网前 base 被自动同步换成旧标记（`U4-BASE-103852`/rev34）、且回网时 Tashan 热点消失
    落到 SXJMZBYXGS。⚠️ CDP/直接改库造出的冲突不得冒充真机读数（夹具行只用于 UI 取证，已标注）。
    ⇒ 真冲突验收需**网络稳定 + 两边先收敛到同一 text+rev + 双方 owner 同时在编辑器前**的人工窗口。
+   ⚠️ 测试工具限制（2026-11-14 联合排查）：页面内 `execCommand` 编辑**不记变更流水**（`localMaxSeq` 不变）；
+   必须用 **CDP `Input` 键盘事件或真人输入**（我方实测 Input 事件编辑 `localMaxSeq` 300→301，AMD execCommand 侧仍 207）。
 6) A1 CRDT 灰度（⛔ 必须等 7 天影子观察，最早 2026-11-18 收口；分批＋可回退，默认值由 owner 拍）——
    观察步骤与判定口径已写进 `docs/plans/2026-11-13-a1-shadow-observation-runbook.md`（待执行）
 7) relay ACME 自动化（当前证书外部签发；可做方案：certbot hook + 热重载，或内置 ACME 客户端）
