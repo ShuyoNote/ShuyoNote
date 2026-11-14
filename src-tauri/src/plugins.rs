@@ -10368,6 +10368,28 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
                 .and_then(|p| p.parent())
                 .expect("拿不到 target/<profile>");
             let candidate = profile_dir.join(format!("shuyonote{}", std::env::consts::EXE_SUFFIX));
+            if !candidate.exists() {
+                // ⭐ 2026-11-14（CI 实测）：在 GitHub runner 上 `cargo test` 有时**没有先把 bin 建出来**
+                // ⇒ 34 条 `plugins::tests::*` 一起红（错误信息说「请用 cargo test」而门禁用的就是它）。
+                // 这里**自愈**：找不到就自己调一次 `cargo build --bin shuyonote`（用同一个 CARGO/TARGET_DIR），
+                // 然后重新取。⛔ 不吞错：自愈失败仍然在下面那条 assert 上报（把 cargo 的退出码写进去）。
+                let mut healed = None;
+                if let Ok(cargo) = std::env::var("CARGO") {
+                    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+                    healed = std::process::Command::new(cargo)
+                        .arg("build")
+                        .arg("--manifest-path")
+                        .arg(&manifest)
+                        .arg("--bin")
+                        .arg("shuyonote")
+                        .status()
+                        .ok()
+                        .map(|st| st.code().unwrap_or(-1));
+                }
+                if let Some(code) = healed {
+                    eprintln!("[plugins] 宿主二进制缺失 ⇒ 已尝试 cargo build --bin shuyonote（exit={code}）");
+                }
+            }
             assert!(
                 candidate.exists(),
                 "找不到宿主二进制 {}：请用 `cargo test`（会先构建应用二进制），不要用 `cargo test --lib`",
