@@ -1,6 +1,6 @@
 [package]
 name = "shuyonote"
-version = "2.1.14"
+version = "2.1.15"
 description = "A local-first Notion-like note app"
 authors = ["you"]
 edition = "2021"
