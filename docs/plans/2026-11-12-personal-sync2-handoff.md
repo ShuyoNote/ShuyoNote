@@ -8,11 +8,12 @@
 ## 1. 当前版本
 
 ```text
-ShuyoNote  dev = **4d293075**（2026-11-14 15:4x；origin 同步；GitHub 镜像因网络未推）
-relay      main = dabfd8d5
-collab     HEAD = 见信箱（U4 线程 reply-21/网络线程 reply-12 已推）
-本机 dev   ：**在跑**（2026-11-14 14:51:42 起，pid 17280，HEAD 4d293075；CDP 9222；8788 在听）
-              日志 `_tmp/logs/dev-20261113-u3c.log`，CDP 9222；8788 在听；paired=1）
+ShuyoNote  dev = **f881e0e9**（2026-11-15；两远端已同步）
+           main = **c025558c**（= tag v2.1.15 的内容提交；两远端已推）
+           tag  = **v2.1.15**（annotated b48f8d99 → c025558c）
+relay      main = dabfd8d5（本文未复核，以 relay 仓为准）
+collab     HEAD = 见信箱（U4 线程 reply-22 已收口；当前待回 0）
+本机 dev   ：**未在跑**（2026-11-15 重启后未起；要用时见 §6 启动命令）
               ⚠️ 直跑形态（可脚本化）：`Start-Process src-tauri\target\debug\shuyonote.exe` ＋
                  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--disable-gpu --remote-debugging-port=9222'`
                  （CDP 只绑回环；日志 `_tmp/scratch/dev-*.log.err`）——`pnpm tauri dev` 的输出有时进不了重定向文件
@@ -45,7 +46,7 @@ F1 端到端（真机，两侧 485e1a8c）  ✅ 2026-11-12 09:41：我方保存�
                                   （进事件轮 61 ms）；AMD「收到公告→该轮拉完」**≤1 s**（拉取 60 ms，
                                   `fetched=1 applied=1`，游标 249→250）；该轮对方 announce **无 dirty**
                                   （dirty 停在启动那 10 条）；测试页标题跨机逐字一致
-                                  ⚠️ 边界：不是「QUIC 长连接推送/订阅」；接收侧日志不打印 dirty 位（行为证据）
+                                  ⚠️ 边界：不是「QUIC 长连接推送/订阅」；接收侧日志**已能打印 dirty 位**（2026-11-12 起；行为证据＋日志双证）
 清理                         ✅ 0518456b（还原 cargo fmt 误格式化的 capabilities_gen.rs / plugins.rs 等）
 U1 真机（AMD 侧读数）        ✅ 方向② 12:37:57 导入 ok/30 ms（未过期）；方向① 走方法 A：13:49:59
                                  生成→13:50:07 落卡→13:50:11 `fetched=1 applied=1`（1c02 `U1-E2E-1794458288928` 落库，
@@ -58,22 +59,20 @@ U3 真机（AMD 侧读数）        ✅ 网络类：18:00:38 停 → **365 s** �
                                  身份类：18:13:16 `device_unpair` wasPaired=true/pairedCount=0 →
                                  窗口内 **401×64** → 18:17:44 方法 A outcome=ok/paired=1 →
                                  加回后 401=0、入站 200
-                                 ⏳ Windows 回放确认「60s 加速 / 401 零加速」；`929ab646` 调度修复已拉并重编
+                                  ✅ Windows 回放已收口（见 implementation-status §2.6）：4 次停/恢复真机 ✓；60 s 与 401 以纯函数真值表为准（⛔ 不算真机全验）
 ```
 
-### 发版进行中（2026-11-14 17:2x 收工，**未完成**）
+### 发版状态（2026-11-15 更新）
 
 ```text
-目标 2.1.15（owner 2026-11-14 拍）｜dev = c71d4ce6（两远端已同步）｜GitHub 镜像已补到 c71d4ce6
-已完成：六处版本同步 + CHANGELOG 落版 + 移动版号 2.1.15；本机全量门禁 66/66（report 在 .test-report-out/）
-卡点：GitHub CI 的 rust job 红（34 条 plugins::tests 找不到宿主二进制；11-10 之后既存债务）
-  已修：ensure_host_exe 自愈（找不到 bin 时自己 cargo build --bin shuyonote），WSL 实测 --lib plugins:: 185 passed
-  ⇒ 正等 c71d4ce6 的 CI + Android/macOS build 结论（云上跑，关机不影响）
-未做：main 推送（本地 main 已在 81028ea8，**未推**）；tag v2.1.15 未打
-下一步：
- 1) 看 c71d4ce6 的 CI/macOS/Android 是否全绿（read-ci / ci-all-runs.mjs 同款脚本）
- 2) 绿 ⇒ merge/推 main（两远端）→ 打 v2.1.15 tag 推两远端 → check-release-state 自检 → 发版说明
- 3) 仍红 ⇒ 看 artifacts 的 test-report-rust.json；WSL 可复现（cargo 1.98.1；CARGO_TARGET_DIR=/tmp/lt5）
+2.1.15 已打 tag 并推两远端（tag 内容提交 = c025558c；annotated b48f8d99）
+已完成：六处版本同步 + CHANGELOG 落版 + 移动版号 2.1.15；本机全量门禁 66/66
+Release（tag 触发）三平台：Windows / Linux / Android **构建成功**；macOS **公证失败**
+  真因（notarytool 原文）：HTTP 403 A required agreement is missing or has expired
+  ⇒ Apple 开发者协议未签/过期（账号持有人去 developer.apple.com/account 与 App Store Connect 接受协议）
+  代码侧已修：tauri-build 升 2.7.3（Cargo 1.100 新布局下 pdfium.dll 拷错目录）＋ notarize 解析截取 JSON
+下一步（owner 签完协议后）：重跑 Release 的 failed jobs（run 43691943154）→ release job 自动补跑
+  → `node scripts/check-release-state.mjs` 核四个安装包
 ```
 
 ### 2026-11-14 当日收口（读数都在 git）
@@ -166,7 +165,7 @@ U3 真机（AMD 侧读数）        ✅ 网络类：18:00:38 停 → **365 s** �
 
 待 owner 拍（3 件）：
 ① ~~F1 验收口径~~ ✅ **已拍（owner 2026-11-12）：按「保存后 ≤10 s 对端拉到」**（实测 ≤1.75 s ＋ ≤1 s）
-② A1 CRDT 灰度默认（等 11-18 观察数据后）
+② A1 CRDT 灰度默认（等 2026-11-21 观察窗口收口后；见根因文档）
 ③ ~~发版时机~~ ✅ **已拍（owner 2026-11-12）：等 U1/U2 验收完再一起发**
 ④ ~~U1 契约三选~~ ✅ **已拍（owner 2026-11-12：①=A 不带材料 / ②=A 默认免核对 / ③=A 不做短码）**；
    另拍：邀请=**整台设备**、界面=**入口＋撤销列表**、片 2+3 一口气做到能点
@@ -179,7 +178,7 @@ U3 真机（AMD 侧读数）        ✅ 网络类：18:00:38 停 → **365 s** �
 每轮开头：git pull --no-rebase --no-edit → node tools/mail-pending.mjs --role personal
 回信：<thread>.reply-N.md（N 在远端取空号；先推再讨论）
 TO:/NEEDS-REPLY 写在自己那几行（围栏外）
-当前：11-11 主线程已收口（reply-50~58）；personal 待回还剩 3 封旧信（10-31 企业夹具、11-09/11-10 附件），
+当前：U4 线程已按 reply-22 收口；`mail-pending` 读数 **0 封**（2026-11-15）
       已被后续信覆盖，无需动
 ```
 
