@@ -1,119 +1,152 @@
-# 企业版版本矩阵 —— 标准版 / 增强版 / 行业版（草案 · 待评审）
+# 企业版版本矩阵 —— 标准版 / 增强版 / 行业版（v1 已拍板）
 
-状态：**草案（待评审）·未开工** —— 本文只定义对外三个 SKU 的边界、包差异、更新通道与升级路径；功能需求仍以企业仓规格为准，本文不复制功能清单。
+状态：**已拍板（owner 2026-11-15）· 代码/配置尚未完全对齐**
+证据：`../../../shuyonote-enterprise-client/docs/decisions/2026-11-15-enterprise-sku-matrix.md`
 
-上位：企业仓《规模分档与交付形态规格（Lite / Standard / Enterprise）v0.2》（2026-11-07）已定三档交付形态；《iroh 集成提案》（2026-10-16）只给了"打包变体"一句；《2026-11-14 角色—能力分层》已拍板标准版通用、行业包只进行业租户。三份文档之间缺一份**版本矩阵**，于是包命名、identifier、更新通道、entitlement 各自漂移。本文就是那份矩阵。
+本文只定义三个对外 SKU 的边界、Edition 映射、iroh、白标、identifier、更新通道与升级路径；功能需求仍以企业仓规格为准，本文不复制功能清单。
+
+> ⚠️ 本文件是**产品侧镜像**；四问的权威记录在企业仓决策文件。两边冲突时以企业仓决策为准。
 
 ---
 
-## 1. 结论先行：3 个对外 SKU（底座仍是一套内核）
+## 1. 先拆层：SKU、Edition、iroh、白标不是一回事
 
-| SKU | 对应交付档 | entitlement | 含 iroh（跨网直连） | 行业包 | 更新通道 | identifier 后缀 |
+| 层 | 取值 | 决定什么 |
+|---|---|---|
+| **SKU** | `standard` / `enhanced` / `industry` | 对外商品名、安装包、更新通道 |
+| **Edition** | `standard` / `professional` / `industry` | entitlement 能力基线 |
+| **iroh** | `false` / `true` | 构建变体；不是 Edition |
+| **白标** | `none` / add-on | 独立授权；不是 Edition |
+| **identifier** | 见下表 | 是否同机共存、能否原地升级 |
+
+⛔ 不再把 `enterprise-standard` 这类值写进 `edition` 字段。
+
+---
+
+## 2. 三个 SKU
+
+| SKU | 对外标题 | edition | iroh | 白标 | identifier | 更新通道 |
 |---|---|---|---|---|---|---|
-| **企业标准版** | Standard（11–300 人，T1） | `professional` | 否（编译期不启用） | `domain_packs: []` | `enterprise/standard` | `.enterprise.standard` |
-| **企业增强版** | Standard 的跨网变体 | `professional` + iroh | 是（打包层含 iroh） | `domain_packs: []` | `enterprise/enhanced` | `.enterprise.enhanced` |
-| **企业行业版** | Enterprise（300+ / 多集团，T2/T4） | `industry` + 增购 | 可选（建议默认含） | 按客户立项的行业包 | `enterprise/industry` | `.enterprise.industry` |
+| 标准版 `standard` | **ShuyoNote企业标准版** | `professional` | 否 | 不含 | `cn.shuyo.enterprise.standard` | `enterprise-stable` |
+| 增强版 `enhanced` | **ShuyoNote企业增强版** | `professional` | 是 | 不含 | `cn.shuyo.enterprise.standard` | `enterprise-enhanced` |
+| 行业版 `industry` | **ShuyoNote企业行业版** | `industry` | 可选 | 仅按 add-on | `cn.shuyo.enterprise.industry`（同机共存时） | `enterprise-industry` |
 
-补充两条边界：
+补充：
 
-- **Lite（2–10 人，T0 单机一体化）不在本文三个 SKU 内**：它是自助下载的小团队档，不涉及白标、多租户、行业包；`Lite → 标准版` 的迁移判据已在企业仓规格里（数据导出/导入演练）。
-- **客户名/白标（如"山西焦煤电子招采平台统一客户端"）不是版本**：它是租户 profile 与品牌配置，不得改变 SKU、entitlement、更新通道。
-
----
-
-## 2. 每个 SKU 的边界
-
-### 2.1 企业标准版
-
-- 目标：11–300 人的单一组织私有化部署（一客户一部署一租户）。
-- 包含：核心协作（空间/文档/讨论/页面讨论）、审计与多角色、白标展示、profile 装配（角色→能力→侧边栏/工作台）。
-- 不包含：iroh 跨网直连（编译期不启用）、行业角色/行业包、多租户/HA/等保密评。
-- 判定口径：`domain_packs == []`；产物里**不出现** iroh 符号与动态库。
-
-### 2.2 企业增强版
-
-- 定义：**标准版 + iroh 跨网直连能力包**，不是"更多功能"的泛指。
-- 目标：同一客户在多分支/弱网/跨网段场景下仍需直连协作。
-- 打包：同一个内核，仅构建配置打开 iroh；五层控制（编译时、打包时、组织级、空间级、设备级）中**前两层由构建配置保证**，后三层由 profile 与运行时数据控制。
-- 不包含：多租户、HA、行业包（这些仍属行业版）。
-
-### 2.3 企业行业版
-
-- 定义：**Enterprise 交付档 + `industry` entitlement + 行业包（domain_packs）**。
-- 行业角色（如招采的投标人/评标专家/代理项目经理）只存在于该行业租户的 profile 里，**不进核心角色表**；标准版与增强版一律不加载行业包。
-- 行业包必须有独立 id、版本号与验收判据；行业包清单不写进本文（按客户立项，避免把某客户需求当成产品通用需求）。
-- 跨网直连可选；多租户/HA/等保密评按项目交付。
+- **Lite** 是 2–10 人自助交付档，不在三个 SKU 内；它使用 `edition=standard`。
+- 标准版使用 `professional` entitlement 的原因：11–300 人需要组织 RBAC、会议、包导入导出；`standard` 基线不够。
+- 标题按 `SKU` 派生，⛔ 不按 `edition` 派生；否则标准版会变成“增强版”。
 
 ---
 
-## 3. 同一内核红线（不可分叉）
+## 3. iroh
 
-1. 一套代码、一个内核：三个 SKU 的差异**只允许**落在承担编译期开关、租户/行业配置、entitlement、打包与签名、品牌配置这五类位置。
-2. 禁止：为任一 SKU 复制整份代码、复制前端分支、在组件里写 `if (edition === …)` 散落判断。
-3. 能力装配走同一条链：capability → 角色 → 侧边栏/工作台（企业仓已拍板的装配契约），SKU 只改"配置输入"，不改装配代码。
+```text
+标准版：iroh=false
+增强版：iroh=true
+行业版：按项目配置
+```
+
+- iroh 是构建/能力开关，不是第四个 Edition。
+- 当前企业客户端 Cargo 无条件依赖 iroh；在加 feature gate 之前，**“标准版产物不含 iroh 符号”这条判据不成立**。
+- 必须先实现编译期 feature gate，才能把“标准版不含 iroh”写成验收通过。
 
 ---
 
-## 4. 构建与产物矩阵
+## 4. 白标
 
-每个 SKU 由一份版本配置驱动（建议字段）：
+```text
+标准版：不含白标
+增强版：不含白标
+行业版：白标按独立 add-on 授权
+OEM：单独授权，与 Edition 正交
+```
+
+客户白标（例如“山西焦煤电子招采平台统一客户端”）使用独立 identifier 与客户品牌配置；⛔ 不改变 SKU、Edition、identifier 规则或更新通道。
+
+---
+
+## 5. identifier 与升级
+
+| 路径 | 做法 | 数据 |
+|---|---|---|
+| 标准版 → 增强版 | 同 identifier，换包（仅 iroh 构建差异） | 不变，不迁移 |
+| 标准版/增强版 → 行业版 | 行业版独立 identifier 时，需显式数据迁移 | 迁移 |
+| 任意 → 降级 | 不做降级，只允许导出 | — |
+
+- 标准版/增强版必须共用 identifier，才能原地升级。
+- 标准版/增强版**不能同机共存**；更新通道分开，防止装错包。
+- 行业版是否与标准版同机共存，当前未做；若做，使用独立 identifier + 数据迁移。
+
+---
+
+## 6. 配置形状
 
 ```jsonc
 {
-  "edition": "enterprise-standard",
-  "productName": "ShuyoNote企业版·标准版",
-  "identifier": "cn.shuyo.shuyonote.enterprise.standard",
-  "updateChannel": "enterprise/standard",
+  "sku": "standard",
+  "edition": "professional",
   "features": { "iroh": false },
-  "domainPacks": [],
-  "branding": { "website": "https://shuyo.cn", "logo": "brand/" }
+  "identifier": "cn.shuyo.enterprise.standard",
+  "updateChannel": "enterprise-stable",
+  "branding": {
+    "brand": "ShuyoNote",
+    "product_name": "ShuyoNote企业",
+    "title_mode": "edition",
+    "website": "https://shuyo.cn",
+    "logo": "branding/logo.svg"
+  }
 }
 ```
 
-产物侧硬要求：
+增强版只改：
 
-- **identifier 三版互不相同**（相同会导致两个 SKU 互相覆盖安装）。
-- **更新通道互不相同**（共用会导致企业版被个人版或别的 SKU 顶掉）。
-- 安装包文件名必须含 edition，例如 `ShuyoNote_2.1.15_enterprise-standard_x64-setup.exe`。
-- 三个 SKU 使用**同一个版本号**；版本门禁需同时核对三份配置。
+```jsonc
+{
+  "sku": "enhanced",
+  "features": { "iroh": true },
+  "updateChannel": "enterprise-enhanced"
+}
+```
 
----
-
-## 5. 升级路径
-
-| 路径 | 做法 | 数据 | 判据 |
-|---|---|---|---|
-| Lite → 标准版 | 导出/导入演练 | 迁移后可用 | 企业仓 LIT-018/LIT-019 |
-| 标准版 → 增强版 | 同版本换包（iroh 仅构建差异） | 不变 | 换包后空间/文档/审计读数一致 |
-| 标准版/增强版 → 行业版 | 换租户 profile + 引入行业包 | 不变 | 行业角色出现、标准版仍 `domain_packs: []` |
-| 任意 → 降级 | 不做降级，只允许导出 | — | 文档与支持话术统一 |
+- `edition` 只允许 `standard/professional/industry`。
+- `branding.logo` 必须是真实文件，不能写目录。
+- `sku` 字段尚未进 tenant schema 与标题 resolver；这是实现待办，不是可选项。
+- 当前标准版 0.4.29 仍是 `edition=standard`；按本矩阵必须改为 `professional`，并回归 entitlement。
 
 ---
 
-## 6. 验收判据（可机器核）
+## 7. 验收判据
 
-- 三 SKU 同版本号；产物文件名含 edition。
-- identifier、updateChannel 三版互不相同。
-- 标准版产物不含 iroh（符号/动态库扫描为空）。
-- 增强版产物含 iroh 且跨网用例通过。
-- 行业版 profile 能装配出行业角色；标准版 `domain_packs == []`。
-- 品牌字段（标题/图标/官网）由同一份 branding 配置派生，三版各自正确。
-
----
-
-## 7. 待拍板（需 owner 决定）
-
-1. 增强版是**独立 SKU**（独立定价/许可），还是标准版的**可选增购**？
-2. 行业版对外命名：叫"企业行业版"，还是"企业版 · 行业版"？
-3. 行业包随主安装包分发（体积换简单），还是按需安装（体积换安装步骤）？
-4. Lite 是否纳入这套矩阵（当前不在，保持"小团队自助档"独立）？
+```text
+1. 三个 SKU 标题分别为 ShuyoNote企业标准版/增强版/行业版
+2. edition 取值只能是 standard/professional/industry
+3. 标准版 edition=professional；Lite edition=standard
+4. 标准版/增强版 identifier 相同，更新通道不同
+5. 标准版不含 iroh（feature gate 后符号扫描为空）
+6. 增强版 iroh=true 且跨网用例通过
+7. 行业版 profile 能装配行业角色；标准版 domain_packs=[]
+8. 标准版不含白标；客户白标独立配置
+9. branding 由同一份 resolver 派生；三版标题/Logo/官网正确
+```
 
 ---
 
-## 8. 引用与边界
+## 8. 仍未完成（实现，不是拍板）
 
-- 交付分档依据：`shuyonote-enterprise-client/docs/specs/2026-11-07-scale-tiers-and-delivery-forms-spec.md`（第 24–28 行）。
-- 打包变体依据：`shuyonote-enterprise-client/docs/sources/2026-10-16-enterprise-iroh-integration-proposal.md`（第 116 行）；五层控制见同一仓 `docs/specs/2026-10-16-enterprise-edition-workbench-requirements.md`（FR-IROH-04）。
-- 标准版通用与行业包边界：`shuyonote-enterprise-client/docs/decisions/2026-11-14-role-capability-layering.md`（结论 ①/⑤）。
-- 企业仓在本会话**只读**：本文是产品仓侧的矩阵草案，供企业侧评审；不修改企业仓任何文件，也不复制其功能清单。
-- 本文不替代功能需求：每个 SKU 的能力细节以企业仓对应 spec 为准；本文只回答"有哪几个版本、怎么分、怎么升级、怎么判"。
+```text
+1. tenant schema 增加 sku，并让标题 resolver 用 sku 而不是 edition
+2. 标准版配置从 edition=standard 改为 professional
+3. 服务端标准版 SHUYO_EDITION 同步为 professional，并回归 entitlement
+4. iroh 编译 feature gate
+5. 增强版/行业版 overlay 与更新通道目录
+6. 标准版/增强版同 identifier 的安装/升级实测
+```
+
+## 9. 引用
+
+- 四问权威决策：`../../../shuyonote-enterprise-client/docs/decisions/2026-11-15-enterprise-sku-matrix.md`
+- 规模分档：`../../../shuyonote-enterprise-client/docs/specs/2026-11-07-scale-tiers-and-delivery-forms-spec.md`
+- 白标授权：`../../../shuyonote-enterprise-client/docs/decisions/2026-10-28-white-label-edition-entitlement.md`
+- 品牌标题：`../../../shuyonote-enterprise-client/docs/decisions/2026-11-15-product-branding-and-setup-title.md`
+- iroh 五层控制：`../../../shuyonote-enterprise-client/docs/specs/2026-10-16-enterprise-edition-workbench-requirements.md`（FR-IROH-04）
