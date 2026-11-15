@@ -1,6 +1,6 @@
 # 企业版版本矩阵 —— 标准版 / 增强版 / 行业版（v1 已拍板）
 
-状态：**已拍板（owner 2026-11-15）· 标准版 SKU 标题/professional 已实现（0.4.30）；iroh/行业版/服务端部署待做**
+状态：**已拍板（owner 2026-11-15）· 标准版 SKU/professional + 标准服务端 canary 已验证（0.4.30）；iroh/行业版待做**
 证据：`../../../shuyonote-enterprise-client/docs/decisions/2026-11-15-enterprise-sku-matrix.md`
 
 本文只定义三个对外 SKU 的边界、Edition 映射、iroh、白标、identifier、更新通道与升级路径；功能需求仍以企业仓规格为准，本文不复制功能清单。
@@ -141,7 +141,7 @@ OEM：单独授权，与 Edition 正交
 3. 标准版配置改为 sku=standard / edition=professional
 
 待做：
-4. 服务端标准版 SHUYO_EDITION 同步 professional，并回归 entitlement
+4. 标准服务端 canary 已验证 professional entitlement
 5. iroh 编译 feature gate
 6. 增强版/行业版 overlay 与更新通道目录
 7. 标准版/增强版同 identifier 的安装/升级实测
