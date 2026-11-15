@@ -10362,21 +10362,41 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         static DONE: OnceLock<()> = OnceLock::new();
         DONE.get_or_init(|| {
             let exe = std::env::current_exe().expect("current_exe");
-            // target/<profile>/deps/<test-bin> → target/<profile>/shuyonote
-            let profile_dir = exe
-                .parent()
-                .and_then(|p| p.parent())
-                .expect("拿不到 target/<profile>");
-            let candidate = profile_dir.join(format!("shuyonote{}", std::env::consts::EXE_SUFFIX));
-            if !candidate.exists() {
-                // ⭐ 2026-11-14（CI 实测）：在 GitHub runner 上 `cargo test` 有时**没有先把 bin 建出来**
-                // ⇒ 34 条 `plugins::tests::*` 一起红（错误信息说「请用 cargo test」而门禁用的就是它）。
-                // 这里**自愈**：找不到就自己调一次 `cargo build --bin shuyonote`（用同一个 CARGO/TARGET_DIR），
-                // 然后重新取。⛔ 不吞错：自愈失败仍然在下面那条 assert 上报（把 cargo 的退出码写进去）。
-                let mut healed = None;
+            let suffix = std::env::consts::EXE_SUFFIX;
+            let bin = format!("shuyonote{suffix}");
+            let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+            let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+            // ① 常规：target/<profile>/deps/<test-bin> → target/<profile>/shuyonote
+            if let Some(profile_dir) = exe.parent().and_then(|p| p.parent()) {
+                candidates.push(profile_dir.join(&bin));
+            }
+            // ② 认 `CARGO_TARGET_DIR`（绝对/相对两种写法；相对按 cwd 与 manifest 各试一次）
+            if let Some(td) = std::env::var_os("CARGO_TARGET_DIR") {
+                let td = std::path::PathBuf::from(td);
+                let bases = if td.is_absolute() {
+                    vec![td]
+                } else {
+                    vec![
+                        std::env::current_dir().unwrap_or_default().join(&td),
+                        manifest_dir.join(&td),
+                    ]
+                };
+                for base in bases {
+                    candidates.push(base.join("debug").join(&bin));
+                }
+            }
+            // ③ 默认 target：<manifest>/target/debug/shuyonote（CI 实测 target 就是 src-tauri/target）
+            candidates.push(manifest_dir.join("target").join("debug").join(&bin));
+            let find = |list: &[std::path::PathBuf]| list.iter().find(|p| p.exists()).cloned();
+            if find(&candidates).is_none() {
+                // ⭐ 2026-11-14（CI 实测）：GitHub runner 上 `cargo test` 把 lib 测试二进制放在
+                // `target/<profile>/build/shuyonote/<hash>/out/` 下（不是 `deps/`）⇒ 按 current_exe
+                // 推不出 `target/debug/shuyonote`，34 条 `plugins::tests::*` 会一起红。
+                // 这里**自愈**：先自己 `cargo build --bin shuyonote`，建完再按候选表重找。
+                // ⛔ 不吞错：自愈失败仍会在下面那条 panic 里列出**所有试过的路径**。
                 if let Ok(cargo) = std::env::var("CARGO") {
-                    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
-                    healed = std::process::Command::new(cargo)
+                    let manifest = manifest_dir.join("Cargo.toml");
+                    let healed = std::process::Command::new(cargo)
                         .arg("build")
                         .arg("--manifest-path")
                         .arg(&manifest)
@@ -10385,17 +10405,24 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
                         .status()
                         .ok()
                         .map(|st| st.code().unwrap_or(-1));
-                }
-                if let Some(code) = healed {
-                    eprintln!("[plugins] 宿主二进制缺失 ⇒ 已尝试 cargo build --bin shuyonote（exit={code}）");
+                    if let Some(code) = healed {
+                        eprintln!(
+                            "[plugins] 宿主二进制缺失 ⇒ 已尝试 cargo build --bin shuyonote（exit={code}）"
+                        );
+                    }
                 }
             }
-            assert!(
-                candidate.exists(),
-                "找不到宿主二进制 {}：请用 `cargo test`（会先构建应用二进制），不要用 `cargo test --lib`",
-                candidate.display()
-            );
-            std::env::set_var("SHUYONOTE_PLUGIN_HOST_EXE", &candidate);
+            let Some(path) = find(&candidates) else {
+                panic!(
+                    "找不到宿主二进制，试过：{}",
+                    candidates
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ｜ ")
+                )
+            };
+            std::env::set_var("SHUYONOTE_PLUGIN_HOST_EXE", &path);
         });
     }
 
