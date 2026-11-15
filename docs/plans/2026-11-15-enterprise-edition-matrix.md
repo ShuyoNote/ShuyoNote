@@ -135,7 +135,7 @@ OEM：单独授权，与 Edition 正交
 ## 8. 仍未完成（实现，不是拍板）
 
 ```text
-已完成（0.4.30）：
+已完成（0.4.30/0.4.31）：
 1. tenant schema 增加 sku
 2. 标题 resolver 按 sku 派生
 3. 标准版配置改为 sku=standard / edition=professional
