@@ -92,7 +92,15 @@ export function codesignArgs(target) {
  */
 export function parseSubmit(stdout) {
   try {
-    const v = JSON.parse(String(stdout).trim());
+    // ⭐ 2026-11-15（v2.1.15 发版实测）：**不能对整段 stdout 直接 JSON.parse** ——
+    //   notarytool 有时会先打提示行（如 "Conducting pre-submission checks…"）再打 JSON，
+    //   于是整段 parse 失败 ⇒ 只报「输出解析不了」，把真正原因（status=Invalid／日志 issues）吞掉。
+    //   改为**截取第一个 `{` 到最后一个 `}`** 再解析；仍然解析不了 ⇒ null（不冒充通过）。
+    const s = String(stdout ?? "").trim();
+    const start = s.indexOf("{");
+    const end = s.lastIndexOf("}");
+    if (start < 0 || end <= start) return null;
+    const v = JSON.parse(s.slice(start, end + 1));
     if (!v || typeof v.id !== "string" || typeof v.status !== "string") return null;
     return { id: v.id, status: v.status, message: v.message ?? "" };
   } catch {
@@ -253,6 +261,10 @@ function notarizeTarget(kind, target, creds, { dryRun }) {
   const submit = parseSubmit(submitRes.out) ?? parseSubmit(submitRes.err);
   if (!submit || submit.status !== ACCEPTED) {
     console.error(`  ❌ notarytool：${submit ? `${submit.status}（${submit.message}）` : "输出解析不了"}`);
+    if (!submit) {
+      // 不吞原始输出：解析不了时**必须**把 notarytool 当时说了什么留下来（截断 800 字；不含口令）。
+      console.error(`    原始输出：${String(submitRes.out || submitRes.err || "(空)").slice(0, 800)}`);
+    }
     if (submit?.id) {
       const logRes = runAllowFail("xcrun", logArgs(submit.id, creds));
       const issues = parseNotaryLog(logRes.out || logRes.err);

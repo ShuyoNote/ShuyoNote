@@ -69,6 +69,16 @@ describe("notarize-macos：输出解析（解析不了 ≠ 通过）", () => {
     });
   });
 
+  it("⭐ 前后混了提示行也能解析出 JSON（2026-11-15：notarytool 会先打提示再打 JSON）", () => {
+    const mixed = [
+      "Conducting pre-submission checks for ShuyoNote.zip",
+      '{"id":"aaaaaaaa-bbbb","status":"Invalid","message":"see log"}',
+      "Submission complete.",
+    ].join("\n");
+    expect(parseSubmit(mixed)).toMatchObject({ id: "aaaaaaaa-bbbb", status: "Invalid" });
+    expect(parseSubmit("no json here at all")).toBeNull();
+  });
+
   it("★ 非 JSON（notarytool 版本/输出变了）⇒ null，调用方必须判失败", () => {
     expect(parseSubmit("Current status: Accepted")).toBeNull();
     expect(parseSubmit("")).toBeNull();
