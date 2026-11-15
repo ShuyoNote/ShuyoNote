@@ -36,6 +36,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ⭐ 2026-11-15（v2.1.15 重跑实测）：macOS runner 磁盘不足 —— 重建 DMG 时
+      #   `hdiutil create failed: No space left on device`（Rust release 产物 + 签名 + 原始 dmg 叠加）。
+      #   清理**不需要**的缓存/模拟器运行时（⛔ 不删 Xcode：notarytool / codesign 还要用它）。
+      - name: 释放磁盘空间（macOS 模拟器/缓存）
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          echo "== 清理前 =="; df -h /
+          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* || true
+          rm -rf "$HOME/Library/Developer/CoreSimulator/Caches"/* || true
+          rm -rf "$HOME/Library/Developer/Xcode/DerivedData"/* || true
+          rm -rf "$HOME/Library/Caches/Homebrew"/* || true
+          echo "== 清理后 =="; df -h /
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
