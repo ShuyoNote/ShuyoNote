@@ -1,7 +1,7 @@
 # 企业版版本矩阵 —— 标准版 / 增强版 / 行业版（v1 已拍板）
 
 状态：**已拍板（owner 2026-11-15）· 标准版 SKU/professional + 服务端 canary + iroh gate 已验证（0.4.31）；行业版/公网标准入口待做**
-证据：`../../../shuyonote-enterprise-client/docs/decisions/2026-11-15-enterprise-sku-matrix.md`
+证据：`../README.md`（方案索引登记） ｜ 企业仓权威决策（跨仓路径，CI 只检客户端仓 ⇒ 不用反引号，避免被当成本仓路径）：../shuyonote-enterprise-client/docs/decisions/2026-11-15-enterprise-sku-matrix.md
 
 本文只定义三个对外 SKU 的边界、Edition 映射、iroh、白标、identifier、更新通道与升级路径；功能需求仍以企业仓规格为准，本文不复制功能清单。
 
@@ -149,7 +149,7 @@ OEM：单独授权，与 Edition 正交
 
 ## 9. 引用
 
-- 四问权威决策：`../../../shuyonote-enterprise-client/docs/decisions/2026-11-15-enterprise-sku-matrix.md`
+- 四问权威决策（企业仓，跨仓路径）：../shuyonote-enterprise-client/docs/decisions/2026-11-15-enterprise-sku-matrix.md
 - 规模分档：`../../../shuyonote-enterprise-client/docs/specs/2026-11-07-scale-tiers-and-delivery-forms-spec.md`
 - 白标授权：`../../../shuyonote-enterprise-client/docs/decisions/2026-10-28-white-label-edition-entitlement.md`
 - 品牌标题：`../../../shuyonote-enterprise-client/docs/decisions/2026-11-15-product-branding-and-setup-title.md`
