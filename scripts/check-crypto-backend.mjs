@@ -211,8 +211,8 @@ export function collectPatchMarkers(dir) {
   for (const profile of ["debug", "release"]) {
     const buildDir = join(dir, profile, "build");
     for (const { entry, dir: entryDir } of listBuildScriptDirs(buildDir, "shuyonote")) {
-      const p = join(entryDir, "output");
-      if (!existsSync(p)) continue;
+      const p = buildOutputFileOf(entryDir);
+      if (!p) continue;
       let text;
       try {
         text = readFileSync(p, "utf8");
@@ -530,14 +530,29 @@ export function listBuildScriptDirs(buildDir, pkg) {
   return out;
 }
 
+/**
+ * build script 的 stdout 落盘文件：**两种布局**都要认。
+ * · 旧布局（Cargo < 1.100）：`build/<pkg>-<hash>/output`
+ * · 新布局（Cargo 1.100 起 build-dir v2 默认）：`build/<pkg>/<hash>/run/stdout`
+ *   （2026-11-15 在 WSL 装 1.100.0 实测：`<hash>/` 下是 `fingerprint/ out/ run/`，
+ *     而 `output` 文件已不存在 ⇒ 只认旧名的扫描永远拿不到产物。）
+ */
+export function buildOutputFileOf(entryDir) {
+  const legacy = join(entryDir, "output");
+  if (existsSync(legacy)) return legacy;
+  const modern = join(entryDir, "run", "stdout");
+  if (existsSync(modern)) return modern;
+  return null;
+}
+
 /** 收集所有 profile 下的产物，按 `output` 的 mtime 从新到旧。 */
 export function collect(dir) {
   const found = [];
   for (const profile of ["debug", "release"]) {
     const buildDir = join(dir, profile, "build");
     for (const { entry, dir: entryDir } of listBuildScriptDirs(buildDir, "libsqlite3-sys")) {
-      const outputPath = join(entryDir, "output");
-      if (!existsSync(outputPath)) continue;
+      const outputPath = buildOutputFileOf(entryDir);
+      if (!outputPath) continue;
       let text;
       try {
         text = readFileSync(outputPath, "utf8");

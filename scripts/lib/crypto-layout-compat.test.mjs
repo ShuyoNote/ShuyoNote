@@ -15,7 +15,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { listBuildScriptDirs } from "../check-crypto-backend.mjs";
+import { collectPatchMarkers, buildOutputFileOf, listBuildScriptDirs } from "../check-crypto-backend.mjs";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "cb-layout-"));
 
@@ -48,6 +48,41 @@ describe("Cargo build 布局兼容（两种布局都要认）", () => {
     expect(hit).toHaveLength(1);
     expect(hit[0].entry).toBe("libsqlite3-sys/0f0f0f0f0f0f0f0f");
     expect(hit[0].dir).toBe(outDir);
+    rmSync(t, { recursive: true, force: true });
+  });
+});
+
+describe("build script 的 stdout 位置（Cargo 1.100 改成 <hash>/run/stdout）", () => {
+  it("buildOutputFileOf：旧布局读 <hash>/output，新布局读 <hash>/run/stdout，都没有则 null", () => {
+    const t = tmp();
+    const legacy = join(t, "legacy");
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, "output"), "cargo:rustc-link-lib=dylib=crypto\n");
+    expect(buildOutputFileOf(legacy)).toBe(join(legacy, "output"));
+
+    const modern = join(t, "modern");
+    mkdirSync(join(modern, "run"), { recursive: true });
+    writeFileSync(join(modern, "run", "stdout"), "cargo:rustc-link-lib=dylib=crypto\n");
+    expect(buildOutputFileOf(modern)).toBe(join(modern, "run", "stdout"));
+
+    const empty = join(t, "empty");
+    mkdirSync(empty, { recursive: true });
+    expect(buildOutputFileOf(empty)).toBeNull();
+    rmSync(t, { recursive: true, force: true });
+  });
+
+  it("collectPatchMarkers：新布局 <pkg>/<hash>/run/stdout 里的补丁标记能读到", () => {
+    const t = tmp();
+    const runDir = join(t, "debug", "build", "shuyonote", "1a2b3c4d5e6f7a8b", "run");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "stdout"),
+      "warning: shuyonote@2.1.15: shuyonote: sm3/sm4 provider patch applied (patch=v1 target=linux marker=sqlite3.c)\n",
+    );
+    const got = collectPatchMarkers(t);
+    expect(got).toHaveLength(1);
+    expect(got[0].entry).toBe("shuyonote/1a2b3c4d5e6f7a8b");
+    expect(got[0].found).toBe(true);
     rmSync(t, { recursive: true, force: true });
   });
 });
