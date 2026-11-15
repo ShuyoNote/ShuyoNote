@@ -469,6 +469,26 @@ const REGISTERED: &[(&str, &str, usize, &str)] = &[
         1,
         "锁定态：把主连接换成内存库",
     ),
+    // ⭐ 2026-11-15（CI 红：`every_real_db_open_point_is_registered` 报 3 条未登记）：
+    // 同步面板新增的三条只读/写确认命令都走 `open_space_conn_at` 旁路开空间库。
+    (
+        "src/mesh_panel.rs",
+        "mesh_uid_conflicts",
+        1,
+        "同步面板：列同名空间 uid 冲突候选（旁路打开空间库）",
+    ),
+    (
+        "src/mesh_panel.rs",
+        "mesh_uid_confirm",
+        1,
+        "同步面板：确认同名空间 uid（旁路打开空间库写确认行）",
+    ),
+    (
+        "src/mesh_panel.rs",
+        "mesh_watermarks",
+        1,
+        "同步面板：读各对端水位（旁路打开空间库）",
+    ),
 ];
 
 /// **一处**真实开库命中（⛔ 不按函数归并：同一函数里两条连接就是两个 `Hit` —— 判据数的是处数）。
