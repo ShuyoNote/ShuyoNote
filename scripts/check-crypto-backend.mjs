@@ -210,10 +210,8 @@ export function collectPatchMarkers(dir) {
   const out = [];
   for (const profile of ["debug", "release"]) {
     const buildDir = join(dir, profile, "build");
-    if (!existsSync(buildDir)) continue;
-    for (const entry of readdirSync(buildDir)) {
-      if (!entry.startsWith("shuyonote-")) continue;
-      const p = join(buildDir, entry, "output");
+    for (const { entry, dir: entryDir } of listBuildScriptDirs(buildDir, "shuyonote")) {
+      const p = join(entryDir, "output");
       if (!existsSync(p)) continue;
       let text;
       try {
@@ -490,15 +488,55 @@ export function decide({ all, expected, patch = { expected: null, markers: [] },
   return { problems, notices };
 }
 
+/**
+ * 列出某个 profile 的 `build/` 目录下**某个 crate 的构建脚本产物目录**（兼容两种 Cargo 布局）：
+ *   · 旧布局：`build/<pkg>-<hash>/output`
+ *   · 新布局（Cargo 1.9x 起）：`build/<pkg>/<hash>/output`
+ * ⚠️ 2026-11-15 实测（CI 红）：GitHub runner 上的 cargo 已用新布局，旧扫描（只认 `<pkg>-*`）
+ *    会一条都找不到 ⇒ 本门禁与 `check-gm-wired` 都自报「未实查」（严格档按失败计）。
+ */
+export function listBuildScriptDirs(buildDir, pkg) {
+  const out = [];
+  if (!existsSync(buildDir)) return out;
+  let entries = [];
+  try {
+    entries = readdirSync(buildDir);
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    if (entry.startsWith(`${pkg}-`)) {
+      out.push({ entry, dir: join(buildDir, entry) });
+      continue;
+    }
+    if (entry !== pkg) continue;
+    // 新布局：build/<pkg>/<hash>/
+    let subs = [];
+    try {
+      subs = readdirSync(join(buildDir, entry));
+    } catch {
+      continue;
+    }
+    for (const sub of subs) {
+      const dir = join(buildDir, entry, sub);
+      try {
+        if (!statSync(dir).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      out.push({ entry: `${entry}/${sub}`, dir });
+    }
+  }
+  return out;
+}
+
 /** 收集所有 profile 下的产物，按 `output` 的 mtime 从新到旧。 */
 export function collect(dir) {
   const found = [];
   for (const profile of ["debug", "release"]) {
     const buildDir = join(dir, profile, "build");
-    if (!existsSync(buildDir)) continue;
-    for (const entry of readdirSync(buildDir)) {
-      if (!entry.startsWith("libsqlite3-sys-")) continue;
-      const outputPath = join(buildDir, entry, "output");
+    for (const { entry, dir: entryDir } of listBuildScriptDirs(buildDir, "libsqlite3-sys")) {
+      const outputPath = join(entryDir, "output");
       if (!existsSync(outputPath)) continue;
       let text;
       try {
