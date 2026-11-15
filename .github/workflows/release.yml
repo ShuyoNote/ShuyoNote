@@ -325,7 +325,25 @@ jobs:
           DMG="$(ls src-tauri/target/release/bundle/dmg/*.dmg | head -1)"
           test -d "$APP"
           test -n "$DMG"
-          hdiutil create -volname "ShuyoNote" -srcfolder "$APP" -ov -format UDZO "$DMG"
+
+          # ⭐ 2026-11-15 实测（v2.1.15）：runner 根盘仍有 97 GiB，但 `hdiutil create -srcfolder`
+          #   仍报 `No space left on device` —— 它按 `du` 估镜像尺寸，而 Cargo 1.100 的 build-dir
+          #   大量用硬链接（du 只算一份、hdiutil 按路径拷贝）⇒ 估小。改成按文件**表观大小**求和、
+          #   显式定尺寸（×2 + 300MB），挂载后拷贝，再压缩成只读 dmg。
+          SUM=$(find "$APP" -type f -exec stat -f '%z' {} + | awk '{s+=$1} END{print s+0}')
+          SIZE_MB=$(( SUM / 1048576 * 2 + 300 ))
+          echo "app 表观大小 $((SUM/1048576)) MiB ⇒ 临时镜像 ${SIZE_MB} MiB"
+          TMP=$(mktemp -d)
+          trap 'hdiutil detach "$TMP/mnt" >/dev/null 2>&1 || true' EXIT
+          hdiutil create -size "${SIZE_MB}m" -fs HFS+ -volname "ShuyoNote" -ov "$TMP/base.dmg" >/dev/null
+          hdiutil attach "$TMP/base.dmg" -nobrowse -mountpoint "$TMP/mnt" >/dev/null
+          rm -rf "$TMP/mnt/ShuyoNote.app"
+          cp -R "$APP" "$TMP/mnt/"
+          sync
+          hdiutil detach "$TMP/mnt" >/dev/null
+          rm -f "$DMG"
+          hdiutil convert "$TMP/base.dmg" -format UDZO -o "${DMG%.dmg}" >/dev/null
+          ls -l "$DMG"
           codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$DMG"
           codesign -d --verbose=4 "$DMG" 2>&1 | grep -E 'Authority|Timestamp' || true
 
