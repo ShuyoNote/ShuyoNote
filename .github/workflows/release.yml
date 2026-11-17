@@ -33,6 +33,10 @@ jobs:
           - platform: macos-latest
             bundles: app,dmg
     runs-on: ${{ matrix.platform }}
+    # ⭐ 2026-11-17（owner 拍：先发三平台）：macOS 公证被 Apple 协议 403 阻断（第 3 次重跑复现）。
+    #   macOS 这一格失败**不阻断** release（job 仍红、日志仍留 notarytool 原文；Release 正文自动标注缺 macOS）。
+    #   ⛔ 这是明确放宽一档，不是"macOS 绿了"；协议生效后应删掉本行并补发 macOS 包。
+    continue-on-error: ${{ matrix.platform == 'macos-latest' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -910,6 +914,14 @@ jobs:
           if [ -z "$BODY_SEG" ]; then echo "::warning::CHANGELOG.md 里没找到 [\] 段（正文会用兜底文案）—— 先看这个 job 有没有 checkout ✓"; BODY_SEG=$(printf '（CHANGELOG 里没找到 [%s] 段）' "$VER"); fi
           # 末尾补一段安装说明（与 CHANGELOG 段拼在一起 ✓，保留原有那句"未对拍"提醒 ✓）
           BODY_MD=$(printf '# ShuyoNote %s\n\n%s\n\n## 安装\n- **Windows**：`ShuyoNote_%s_x64-setup.exe`\n- **Linux**：`.deb` 或 `.AppImage`\n- **macOS（Apple Silicon）**：`ShuyoNote_%s_aarch64.dmg`（Developer ID 签名＋公证）\n- **Android**：`ShuyoNote_%s_android-arm64-release.apk`（arm64、正式密钥签名，可直接覆盖安装）\n- 桌面版安装后可在应用内「检查更新」下载并安装。\n\n⚠️ **本版未对拍**：国密的「跨实现双向对拍」（RustCrypto ↔ Tongsuo）9 项**未在本版 CI 运行**（CI 未装 Tongsuo）—— 这是**已知的未验项**，不是失败。细节与手动对拍入口见 docs/RELEASING.md（仓库内文档）。\n' "$TAG" "$BODY_SEG" "$VER" "$VER" "$VER")
+          # ⭐ 2026-11-17：macOS 因 Apple 协议 403 暂不随包（owner 拍板先发三平台）
+          #   ⇒ 真相是"本次没有 dmg"：正文必须**大声**标注缺件，⛔ 不许静默少一个平台。
+          DMG_N=$(find . -type f -name '*.dmg' | wc -l | tr -d ' ')
+          if [ "$DMG_N" -eq 0 ]; then
+            BODY_MD="$BODY_MD
+
+⚠️ **本次未附 macOS 安装包**：Apple 开发者协议未生效（notarytool 返 403 required agreement），macOS 版补发后另行公告。"
+          fi
           BODY_JSON=$(printf '%s' "$BODY_MD" | jq -Rs .)
           if [ -z "$RID" ]; then
             RESP=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
