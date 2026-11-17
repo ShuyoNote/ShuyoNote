@@ -8,9 +8,9 @@
 ## 1. 当前版本
 
 ```text
-ShuyoNote  dev = **f881e0e9**（2026-11-15；两远端已同步）
-           main = **c025558c**（= tag v2.1.15 的内容提交；两远端已推）
-           tag  = **v2.1.15**（annotated b48f8d99 → c025558c）
+ShuyoNote  dev = **047ba801**（2026-11-18；两远端已同步）
+           main = **047ba801**（= tag v2.1.15 的内容提交；两远端已推）
+           tag  = **v2.1.15**（annotated 5e32b690 → 047ba801）
 relay      main = dabfd8d5（本文未复核，以 relay 仓为准）
 collab     HEAD = 见信箱（U4 线程 reply-22 已收口；当前待回 0）
 本机 dev   ：**未在跑**（2026-11-15 重启后未起；要用时见 §6 启动命令）
@@ -65,14 +65,20 @@ U3 真机（AMD 侧读数）        ✅ 网络类：18:00:38 停 → **365 s** �
 ### 发版状态（2026-11-15 更新）
 
 ```text
-2.1.15 已打 tag 并推两远端（tag 内容提交 = c025558c；annotated b48f8d99）
+2.1.15 已发布到 GitHub Release（tag 内容提交 = 047ba801；annotated 5e32b690）
 已完成：六处版本同步 + CHANGELOG 落版 + 移动版号 2.1.15；本机全量门禁 66/66
-Release（tag 触发）三平台：Windows / Linux / Android **构建成功**；macOS **公证失败**
+Release（tag 触发）：Windows / Linux / Android **已出包并挂上 Release**；macOS **公证失败**
   真因（notarytool 原文）：HTTP 403 A required agreement is missing or has expired
   ⇒ Apple 开发者协议未签/过期（账号持有人去 developer.apple.com/account 与 App Store Connect 接受协议）
   代码侧已修：tauri-build 升 2.7.3（Cargo 1.100 新布局下 pdfium.dll 拷错目录）＋ notarize 解析截取 JSON
-下一步（owner 签完协议后）：重跑 Release 的 failed jobs（run 43691943154）→ release job 自动补跑
-  → `node scripts/check-release-state.mjs` 核四个安装包
+  ＋ DMG 重建改显式尺寸（hdiutil 按 du 估小）
+owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workflow 里 continue-on-error 仅 macOS；
+  Release 正文自动标注缺 macOS；协议生效后要删掉该行并补发）
+结果（2026-11-18）：GitHub Release v2.1.15 已生成，5 个资产（win exe / linux deb+AppImage / android apk+sha256）；
+  macOS 资产（已签名未公证的 dmg 与 app.tar.gz）已从 Release 删除，避免用户下到被 Gatekeeper 拦的包
+剩余（运营）：更新通道 /app/latest.json 与 version.json 仍是 2.1.12 ⇒ 需发 GitCode + 部署 /app（RELEASING §⑤⑥）；
+  check-release-state 当前 22 通过 / 2 失败（只剩这两条通道项）
+⚠️ 2026-11-18：本机查凭据标签时误把一行 GitCode 访问令牌打印到会话输出，已建议轮换（后续未再使用）
 ```
 
 ### 2026-11-14 当日收口（读数都在 git）

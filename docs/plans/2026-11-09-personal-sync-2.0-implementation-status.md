@@ -3,7 +3,7 @@
 > **状态：实施中（代码/判据大部分已落；AMD⇄Windows 跨机主链**已真机验收（含 QUIC 直连）**；私有 relay TLS 版已真机验收（allow/deny 双面）；P0-2 双向确认已真机成立；附件按需取字节真机已通（sha 对齐），**附件「走 QUIC」证据行已真机抓到（`2097152 B；chunk=4194304B`，无回退）**）** ｜ 2026-11-09（2026-11-15 复核）
 > 上位：[需求说明书](2026-11-08-personal-sync-2.0-requirements.md) ｜ [P3 ADR](2026-11-08-personal-sync-2.0-p3-adr.md)
 > 口径：只写**盘上/判据能证明的**；未验项单列，不写成已验收。
-> 发版：2.1.15 已打 tag（tag 内容提交 `c025558c`）；Release 三平台里 Windows/Linux/Android 构建成功，macOS 公证待 Apple 协议（403 required agreement）。
+> 发版：2.1.15 **GitHub Release 已发布**（tag 内容提交 `047ba801`；三平台：Windows / Linux / Android；macOS 因 Apple 协议 403 未附、补发后另行公告）；更新通道 `/app/latest.json` 仍 2.1.12，待运营发布 GitCode 并部署。
 
 ## 1. 已完成（代码 + 可执行判据）
 
