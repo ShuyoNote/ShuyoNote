@@ -4617,6 +4617,8 @@ async fn mesh_sync_one(
                 &scope.space,
                 &scope.device,
                 &peers,
+                // ⚠️ 手动同步**不跳过**（用户点了就是要试一遍；只有后台轮用本轮失败名单）。
+                &[],
                 scope.device_level,
             )
             .await?
@@ -4630,6 +4632,8 @@ async fn mesh_sync_one(
                     &scope.db_space,
                     &scope.device,
                     &peers,
+                    // ⚠️ 手动同步**不跳过**（用户点了就是要试一遍；只有后台轮带"本轮失败名单"）。
+                    &[],
                     scope.device_level,
                 )
                 .await?
@@ -4887,6 +4891,8 @@ pub(crate) async fn mesh_round_once(
     db_space: &str,
     my_device: &str,
     peers: &[crate::lan::Peer],
+    // ⭐ 2026-11-18（修法 i）：本轮已经失败过的对端（后台轮才有；空表 ⇒ 与改动前逐字相同）。
+    skip_peers: &[String],
     // ⭐⭐ 2026-10-11（设备级 ✓）：⭐ 同上 —— 判定由**调用方**从 `mesh_scope` 传进来 ✓（⛔ 不在这里再判一次 ✗）。
     device_level: bool,
 ) -> Result<crate::mesh::MeshRoundReport, String> {
@@ -4896,7 +4902,8 @@ pub(crate) async fn mesh_round_once(
         let c = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
         let _ = note_pending_trust_asks(&c, proto_space, my_device, peers, crate::db::now_ms());
     }
-    let mut report = crate::mesh::round(conn, proto_space, my_device, peers, device_level).await?;
+    let mut report =
+        crate::mesh::round(conn, proto_space, my_device, peers, skip_peers, device_level).await?;
     report.window = crate::mesh::window_addr(proto_space).map(|a| format!("http://{a}"));
     // ⭐ **可核读数**：只在这一档**真的开着**时计数 ✓（没开 ⇒ 不算"跑过一轮" ✓）。
     if report.enabled {

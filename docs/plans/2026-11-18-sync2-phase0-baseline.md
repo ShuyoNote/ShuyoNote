@@ -232,6 +232,38 @@ node scripts/measure-sync-baseline.mjs --log <文件> --json --max-lines 200000 
 留下的东西（都无害、都在同一 debug 开关下）：`[round-timing]`、`[peer-skip]`（有对端表时会打）、
 `[peer-err-class]`（**只打命中哪个词与长度，⛔ 不打错误原文** —— 原文里有对端地址）、以及那个纯函数与判据。
 
+## 4.11 ✅ 修法 i **下沉到内核后生效**（同日；owner 拍）
+
+第一版为什么无效（§4.10）：过滤放在 `spawn_background_round` 那一层，而候选还会被**手动地址**
+（`mesh_manual` KV）与跨网路线表**追加** —— 本机正是这种情况（LAN 对端表为空，手动那台照样在候选里）。
+
+下沉的做法（都是有判据的纯函数）：
+1. `mesh::drop_skipped_candidates(candidates, skip)` —— 候选**建完之后**再过滤（⛔ 不动顺序/数量；`skip` 空 ⇒ 原样返回）；
+2. `mesh::round(..., skip_peers: &[String], ...)` 与 `mesh::sealed_round(..., skip_peers, ...)` 各多一格；
+3. `sync::mesh_round_once(..., skip_peers, ...)` 往下传；**手动同步那两条路传 `&[]`**（用户点了就该试一遍）；
+4. `spawn_background_round` 的 `failed_peers` 直接作为 `skip_peers` 传下去（不再在这一层过滤 peers）。
+
+**复测（同一套埋点，第五次起 dev）**：
+
+```text
+[round-timing] space=f280… ok=true ms=21048      ← 第一台照旧等满一次超时
+[peer-err-class] skip=true hits=["error sending request"] len=442
+[peer-skip] 本轮已失败 1 台 ⇒ 本空间不再试它们（下一轮照旧重试）
+[round-timing] space=dbfd… ok=true ms=10
+[round-timing] space=7d8e… ok=true ms=15
+[round-timing] space=2ae7… ok=true ms=8
+[round-timing] space=53d6… ok=true ms=12
+[round-timing] space=c766… ok=true ms=8
+[round-timing] space=ee7e… ok=true ms=8
+[round-timing] space=f339… ok=true ms=8
+[round-timing] space=1c02… ok=true ms=8
+（第二、三轮同样形状：首空间 21046 / 21…，其余 5–8 ms）
+```
+
+⇒ **一轮从 ≈188 s 降到 ≈21.1 s**（只付一次超时，而不是九次），且**每轮都会重试**（清单只活一轮）。
+⚠️ 遗留：那 **21 s** 本身没变（它是"一个不可达对端的固定超时"），要再降得动超时或改传输（iii/ii，风险更大）。
+⚠️ 本机**没有真机对手**：这一格是"单机 + 不可达手动设备"的读数，⛔ 不等于"3 台设备里一台离线"也这个数。
+
 ## 5. 判据（这一页不许只靠嘴）
 
 - 纯函数：`scripts/lib/syncBaseline.test.mjs` —— 15 条：解析（`[sync-metrics]` 与 `[sync-latency]`，**都含 CRLF 真行**）、

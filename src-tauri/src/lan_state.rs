@@ -1272,16 +1272,13 @@ fn spawn_background_round(
             //   ⛔ 只诊断（同一 debug 开关），不改任何 gate/时序。
             let space_t0 = std::time::Instant::now();
             // ⭐ **2026-11-18（修法 i）**：这一轮里已经失败过的对端不再交给本空间。
-            let live_peers: Vec<lan::Peer> = peers
-                .iter()
-                .filter(|p| !failed_peers.iter().any(|d| d == &p.announce.device_id))
-                .cloned()
-                .collect();
-            if debug_latency() && live_peers.len() < peers.len() {
+            // ⭐ 2026-11-18（修法 i 下沉）：**不在这一层过滤 peers** —— 候选还会被手动地址/跨网路线
+            //   追加（实测 LAN 对端表为空时候选仍有一台手动设备）。名单交给 `mesh::round`，
+            //   在候选**建完之后**过滤（`drop_skipped_candidates`）。
+            if debug_latency() && !failed_peers.is_empty() {
                 eprintln!(
-                    "[peer-skip] 本轮已失败 {} 台 ⇒ 本空间只试 {} 台（剩余对端下一轮重试）",
-                    peers.len() - live_peers.len(),
-                    live_peers.len()
+                    "[peer-skip] 本轮已失败 {} 台 ⇒ 本空间不再试它们（下一轮照旧重试）",
+                    failed_peers.len()
                 );
             }
             let round_result = match crate::db::app_data_dir_ref()
@@ -1294,7 +1291,8 @@ fn spawn_background_round(
                         &proto_space,
                         &db_space,
                         &dev,
-                        &live_peers,
+                        &peers,
+                        &failed_peers,
                         device_level,
                     )
                     .await
@@ -1306,7 +1304,8 @@ fn spawn_background_round(
                             &proto_space,
                             &db_space,
                             &dev,
-                            &live_peers,
+                            &peers,
+                            &failed_peers,
                             device_level,
                         )
                         .await

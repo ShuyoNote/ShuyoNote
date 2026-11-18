@@ -1061,6 +1061,23 @@ pub fn mesh_peers_by_name_with_manual(
 
 // ─────────────────────────── 拉的那一侧 ───────────────────────────
 
+/// ⭐⭐ **2026-11-18（根因 A 修法 i 下沉，owner 拍，纯函数）**：把**本轮已经失败过**的对端从候选里去掉。
+///
+/// 为什么必须在这里做：候选**不只**来自调用方传进来的 LAN 对端 —— 手动地址（`mesh_manual` KV）与
+/// 跨网路线表都会**追加**候选（2026-11-18 实测：LAN 对端表为空时，候选仍有一台手动设备）。
+/// ⇒ 在 `spawn_background_round` 那一层过滤 peers 是**够不着**的（那一版复测未生效即此因）。
+///
+/// ⚠️ 只比 `device_id`（trim 后）；`skip` 为空 ⇒ **原样返回**（⛔ 不动顺序/数量）。
+pub fn drop_skipped_candidates(candidates: Vec<MeshPeer>, skip: &[String]) -> Vec<MeshPeer> {
+    if skip.is_empty() {
+        return candidates;
+    }
+    candidates
+        .into_iter()
+        .filter(|p| !skip.iter().any(|d| d.trim() == p.device_id.trim()))
+        .collect()
+}
+
 /// 拉一台对端**自己**的记录（游标之后的那一批）。
 ///
 /// ⭐ **2026-10-12（设备身份第 2 步）**：多一个 `auth` ✗（⭐ `(device_id, ts_ms, sig_hex)` ✓）——
@@ -2256,6 +2273,8 @@ pub async fn round(
     space_id: &str,
     my_device: &str,
     peers: &[crate::lan::Peer],
+    // ⭐ 2026-11-18（修法 i）：本轮已经失败过的对端（空表 ⇒ 与改动前逐字相同）。
+    skip_peers: &[String],
     // ⭐⭐ 2026-10-11（设备级 ✓）：⭐ 由**调用方**从 `mesh_scope` 传进来 ✗ ——
     //   ⛔ 本函数**不许**自己判"是不是个人档" ✗（那就成了第二份口径 ✓，方案 §9.1 ✓）。
     device_level: bool,
@@ -2349,6 +2368,8 @@ pub async fn round(
     // ⭐ 2026-10-25（Step 3-2）：**把跨网路线表里的对端也喂进本轮**
     //   ⚠️ 默认构建什么都不做（跨网只有 --features relay 才可用）；坏了只打日志、不打断本轮。
     crate::relay_route::append_virtual_peers(&mut candidates);
+    // ⭐ 2026-11-18（修法 i）：候选**建完之后**才过滤 —— 手动地址/跨网路线也会追加候选。
+    let candidates = drop_skipped_candidates(candidates, skip_peers);
     if candidates.is_empty() {
         return Ok(MeshRoundReport {
             enabled: true,
@@ -5684,6 +5705,8 @@ pub async fn sealed_round(
     db_space: &str,
     my_device: &str,
     peers: &[crate::lan::Peer],
+    // ⭐ 2026-11-18（修法 i）：本轮已失败的对端（空表 ⇒ 与改动前逐字相同）。
+    skip_peers: &[String],
     // ⭐ task-65：本空间配对档位（设备级/空间级）—— 锁态也要用它读**本空间已配对**名单。
     device_level: bool,
 ) -> Result<MeshRoundReport, String> {
@@ -5705,15 +5728,18 @@ pub async fn sealed_round(
         crate::security::space_db_is_encrypted(&crate::db::space_db_path(dir, db_space));
     // ⭐ task-65：锁态也追加"**本空间已配对**"的手动候选（同一纯函数；未配对不加）。
     //   ⚠️ 只读 meta；不解密/不应用/不新增任何写库路径（下面仍只搬密封包）。
-    let targets = sealed_round_candidates(
-        &meta,
-        proto_space,
-        &name,
-        my_device,
-        peers,
-        local_encrypted,
-        db_space,
-        device_level,
+    let targets = drop_skipped_candidates(
+        sealed_round_candidates(
+            &meta,
+            proto_space,
+            &name,
+            my_device,
+            peers,
+            local_encrypted,
+            db_space,
+            device_level,
+        ),
+        skip_peers,
     );
     if targets.is_empty() {
         let note = "锁着：网段里没有能直接拉的对端（这一轮一个字节都没动）".to_string();
@@ -6731,6 +6757,32 @@ mod tests {
     use super::*;
     use crate::lan::{LanAnnounce, Peer};
     use crate::models::PageDetail;
+
+    /// ⭐ **2026-11-18（根因 A 修法 i 下沉）**：候选过滤的判据 —— 只去掉名单里的，且**空名单原样**。
+    #[test]
+    fn drop_skipped_candidates_removes_only_the_listed_peers() {
+        let mk = |id: &str| MeshPeer {
+            device_id: id.to_string(),
+            base: format!("http://{id}:8788"),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
+        };
+        // ① 空名单 ⇒ **原样返回**（顺序与数量都不动 —— 这条保证"不带名单时行为逐字不变"）
+        let same = drop_skipped_candidates(vec![mk("a"), mk("b")], &[]);
+        assert_eq!(
+            same.iter().map(|p| p.device_id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
+        // ② 名单里的那台被去掉，其余保持原顺序（这台还可能来自手动地址/跨网路线 —— 正是这一层要管的）
+        let got = drop_skipped_candidates(vec![mk("a"), mk("b"), mk("c")], &["b".to_string()]);
+        assert_eq!(
+            got.iter().map(|p| p.device_id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "c"]
+        );
+        // ③ 名单里的空项/不存在的 id 不影响任何候选（⛔ 不许"认得出错就顺手删")
+        let untouched = drop_skipped_candidates(vec![mk("a")], &["  zz  ".to_string()]);
+        assert_eq!(untouched.len(), 1);
+    }
 
     // ── 两台"客户端栈"：各自一份空间库（带 meta），各自一个网格窗口
 
@@ -10339,7 +10391,7 @@ mod tests {
         );
 
         let peers = vec![announced("A", "http://127.0.0.1:9", &["space-x"])]; // 端口 9：连不上
-        let rep = round(&b, "space-x", "B", &peers, false).await.unwrap();
+        let rep = round(&b, "space-x", "B", &peers, &[], false).await.unwrap();
         assert!(!rep.enabled, "{rep:?}");
         assert_eq!(rep.candidates, 0);
         assert!(rep.peers.is_empty(), "没开就不许碰任何对端：{rep:?}");
