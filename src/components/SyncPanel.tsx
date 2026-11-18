@@ -3230,6 +3230,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
           status={lanStatus}
           round={lastRound}
           watermarks={watermarks}
+          history={history}
           onReload={reloadLanForDiagnose}
           onClose={() => setMeshDiagnoseOpen(false)}
         />

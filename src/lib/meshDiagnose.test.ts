@@ -23,6 +23,7 @@ import {
   levelCountText,
   meshDiagnosticText,
   portOfBind,
+  type SyncHistoryRow,
 } from "./meshDiagnose";
 
 /** 内部设备号：⛔ 诊断包**绝不许**出现它（脱敏判据的探针）。 */
@@ -471,7 +472,75 @@ describe("接线 · O2 水位矩阵", () => {
     const panel = readFileSync(resolve("src/components/SyncPanel.tsx"), "utf8");
     const dialog = readFileSync(resolve("src/components/MeshDiagnoseDialog.tsx"), "utf8");
     expect(panel).toContain("watermarks={watermarks}");
-    expect(dialog).toContain("{ watermarks }");
-    expect(dialog).toContain("diagnoseMesh(status, round, { watermarks })");
+    expect(panel).toContain("history={history}");
+    expect(dialog).toContain("{ watermarks, history }");
+    expect(dialog).toContain("diagnoseMesh(status, round, { watermarks, history })");
+  });
+});
+
+// ⭐ §13.6 O2 第二刀：最近 N 轮（最近发生了什么、失败原文）。
+describe("体检纯函数 · §13.6 O2 最近同步轮次", () => {
+  const AT = 1_700_000_000_000;
+  function rows(): SyncHistoryRow[] {
+    return [
+      {
+        at: AT - 60_000,
+        ok: false,
+        pushed: 0,
+        pulled: 0,
+        message: "**拉不动**：401",
+        items: [{}, {}],
+      },
+      { at: AT - 300_000, ok: true, pushed: 2, pulled: 3, message: "", items: [{}] },
+    ];
+  }
+
+  it("最近一轮失败 ⇒ 总结与逐轮都是 warn，原因带后端原文（去掉 Markdown 粗体标记）", () => {
+    const s = diagnoseMesh(okStatus(), null, { at: AT, history: rows() });
+    expectWellFormed(s);
+    const sum = item(s, "history")!;
+    expect(sum.level).toBe("warn");
+    expect(sum.reason).toContain("成功 1 · 失败 1");
+    const r1 = item(s, "history-1")!;
+    expect(r1.level).toBe("warn");
+    expect(r1.title).toContain("失败");
+    expect(r1.reason).toContain("拉不动：401");
+    expect(r1.reason).not.toContain("**");
+    expect(item(s, "history-2")!.level).toBe("ok");
+  });
+
+  it("全部成功 ⇒ history 项是 ok", () => {
+    const s = diagnoseMesh(okStatus(), null, {
+      at: AT,
+      history: [{ at: AT - 1000, ok: true, pushed: 1, pulled: 1, message: "", items: [] }],
+    });
+    expect(item(s, "history")!.level).toBe("ok");
+    expect(s.overall).toBe("ok");
+  });
+
+  it("不传历史 ⇒ 一项都不添（读不到 ≠ 没有失败）", () => {
+    const s = diagnoseMesh(okStatus(), null, { at: AT });
+    expect(s.history).toBeNull();
+    expect(s.items.some((i) => i.key === "history" || i.key.startsWith("history-"))).toBe(false);
+    expect(meshDiagnosticText(s)).not.toContain("最近同步轮次");
+  });
+
+  it("诊断包含最近轮次且脱敏：有轮次/拉取/推送，⛔ 无空间名/条目标题/设备号", () => {
+    const withTitle = rows().map((r) => ({
+      ...r,
+      // 模拟后端行里可能带的敏感字段：摘要函数只取白名单字段，它们不该出现。
+      ws_name: "研发空间",
+      items: [{ title: "机密页标题" }],
+    })) as unknown as SyncHistoryRow[];
+    const s = diagnoseMesh(okStatus(), null, { at: AT, history: withTitle });
+    const text = meshDiagnosticText(s);
+    expect(text).toContain("最近同步轮次");
+    expect(text).toContain("第 1 轮");
+    expect(text).toContain("拉取=0 · 推送=0");
+    expect(text).toContain("失败");
+    expect(text).not.toContain("研发空间");
+    expect(text).not.toContain("机密页标题");
+    expect(text).not.toContain(DEVICE_ID);
+    expect(text).not.toContain(PEER_ADDR);
   });
 });

@@ -21,6 +21,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { LanStatus, MeshRoundReport, MeshWatermarks } from "../lib/platform/commands";
+import type { SyncHistoryRow } from "../lib/meshDiagnose";
 import {
   LEVEL_LABEL,
   diagnoseMesh,
@@ -40,6 +41,8 @@ export interface MeshDiagnoseDialogProps {
   round?: MeshRoundReport | null;
   /** ⭐ §13.6 O2：当前空间水位读数（可选；用于"哪一台不同步、差多少"）。 */
   watermarks?: MeshWatermarks | null;
+  /** ⭐ §13.6 O2 第二刀：最近同步轮次（可选；用于"最近几轮发生了什么"）。 */
+  history?: SyncHistoryRow[] | null;
   /** 重新读一次 `lan_status`（由面板提供，⛔ 本组件不直接碰 api ✗）。 */
   onReload: () => Promise<void> | void;
   onClose: () => void;
@@ -66,6 +69,7 @@ export function MeshDiagnoseDialog({
   status,
   round,
   watermarks,
+  history,
   onReload,
   onClose,
 }: MeshDiagnoseDialogProps) {
@@ -73,7 +77,10 @@ export function MeshDiagnoseDialog({
   useOverlayLayer("mesh-diagnose", open, onClose);
   const [busy, setBusy] = useState(false);
   // 纯函数只在读数变化时重算（默认时间可能变，但用户看的是内容；at 只进诊断包）。
-  const diag = useMemo(() => diagnoseMesh(status, round, { watermarks }), [status, round, watermarks]);
+  const diag = useMemo(
+    () => diagnoseMesh(status, round, { watermarks, history }),
+    [status, round, watermarks, history],
+  );
 
   useEffect(() => {
     if (!open) return;

@@ -81,6 +81,8 @@ export interface MeshDiagnosis {
   peers: PeerDigest[];
   /** ⭐ §13.6 O2：当前空间的水位摘要（来自 `mesh_watermarks`；读不到＝null）。 */
   watermarks: WatermarkDigest | null;
+  /** ⭐ §13.6 O2 第二刀：最近 N 轮同步（来自 `listSyncHistory`；读不到＝null）。 */
+  history: HistoryDigest | null;
   /** 生成时刻（ms）；诊断包里会写成可读时间。 */
   at: number;
 }
@@ -125,6 +127,88 @@ export function watermarkDigest(w: MeshWatermarks | null | undefined): Watermark
         typeof p.lastOkAgoMs === "number" && Number.isFinite(p.lastOkAgoMs) ? p.lastOkAgoMs : null,
     })),
   };
+}
+
+/** ⭐ §13.6 O2 第二刀：一条同步历史（只取判据需要的字段；⛔ 不含条目标题/空间名）。 */
+export interface SyncHistoryRow {
+  at: number;
+  ok: boolean;
+  pushed: number;
+  pulled: number;
+  message: string;
+  /** 该轮明细条数（只数数量，⛔ 不读 title/entity_id）。 */
+  items?: unknown[];
+}
+
+export interface HistoryRoundDigest {
+  at: number;
+  ok: boolean;
+  pushed: number;
+  pulled: number;
+  message: string;
+  itemCount: number;
+}
+
+/** 最近 N 轮的脱敏摘要（读不到＝null；⛔ 不拿空数组冒充“没有失败”）。 */
+export interface HistoryDigest {
+  total: number;
+  okCount: number;
+  failCount: number;
+  rounds: HistoryRoundDigest[];
+}
+
+/** `listSyncHistory` 的读数 → 诊断用摘要（最多取最近 N 轮；⛔ 不含标题/空间名）。 */
+export function historyDigest(
+  rows: SyncHistoryRow[] | null | undefined,
+  limit = 5,
+): HistoryDigest | null {
+  if (!Array.isArray(rows)) return null;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const rounds = rows.slice(0, Math.max(0, limit)).map((r) => ({
+    at: num(r.at),
+    ok: r.ok === true,
+    pushed: num(r.pushed),
+    pulled: num(r.pulled),
+    message: String(r.message ?? "").slice(0, 200),
+    itemCount: Array.isArray(r.items) ? r.items.length : 0,
+  }));
+  return {
+    total: rows.length,
+    okCount: rows.filter((r) => r.ok === true).length,
+    failCount: rows.filter((r) => r.ok !== true).length,
+    rounds,
+  };
+}
+
+/** §13.6 O2 第二刀：把最近 N 轮变成「总结 ＋ 逐轮」体检项。 */
+function historyItems(h: HistoryDigest, at: number): DiagnoseItem[] {
+  const items: DiagnoseItem[] = [];
+  const level: DiagnoseLevel = h.failCount > 0 ? "warn" : "ok";
+  items.push({
+    key: "history",
+    level,
+    title: "最近的同步轮次",
+    reason:
+      `最近 ${h.total} 轮：成功 ${h.okCount} · 失败 ${h.failCount}` +
+      (h.rounds[0]
+        ? `；最近一轮${h.rounds[0].ok ? "成功" : "失败"}（拉取 ${h.rounds[0].pulled} · 推送 ${h.rounds[0].pushed}）`
+        : ""),
+    next: level === "ok" ? "不用处理" : "看下面逐轮原因；点「重试」或「立即同步」再试",
+  });
+  h.rounds.forEach((r, i) => {
+    const when = agoText(at - r.at);
+    const tail = `拉取 ${r.pulled} · 推送 ${r.pushed} · 明细 ${r.itemCount} 条`;
+    items.push({
+      key: `history-${i + 1}`,
+      level: r.ok ? "ok" : "warn",
+      title: r.ok ? "这一轮同步成功" : "这一轮同步失败",
+      reason:
+        `${when}：${r.ok ? "成功" : "失败"}；${tail}` +
+        (r.message ? `；后端原文：${plainText(r.message)}` : ""),
+      next: r.ok ? "不用处理" : "点「重试」；仍失败就看上面逐台/水位那几项",
+    });
+  });
+  return items;
 }
 
 /** 毫秒 → 人话（只用于诊断文本/体检原因；⛔ 不算"多久没同步"这类业务结论）。 */
@@ -328,7 +412,7 @@ function headlineOf(counts: Record<DiagnoseLevel, number>, overall: DiagnoseLeve
 export function diagnoseMesh(
   status: LanStatus | null | undefined,
   round?: MeshRoundReport | null,
-  opts?: { at?: number; watermarks?: MeshWatermarks | null },
+  opts?: { at?: number; watermarks?: MeshWatermarks | null; history?: SyncHistoryRow[] | null },
 ): MeshDiagnosis {
   const at = opts?.at ?? Date.now();
   const items: DiagnoseItem[] = [];
@@ -350,6 +434,7 @@ export function diagnoseMesh(
       items,
       peers: [],
       watermarks: null,
+      history: null,
       at,
     };
   }
@@ -636,9 +721,22 @@ export function diagnoseMesh(
   const wm = watermarkDigest(opts?.watermarks);
   if (wm) items.push(...watermarkItems(wm));
 
+  // ⑨ §13.6 O2 第二刀：最近 N 轮同步（可选）。读不到 ⇒ 不加项（⛔ 不拿空数组冒充"没有失败"）。
+  const hs = historyDigest(opts?.history);
+  if (hs) items.push(...historyItems(hs, at));
+
   const counts = countsOf(items);
   const overall = overallOf(counts);
-  return { overall, headline: headlineOf(counts, overall), counts, items, peers, watermarks: wm, at };
+  return {
+    overall,
+    headline: headlineOf(counts, overall),
+    counts,
+    items,
+    peers,
+    watermarks: wm,
+    history: hs,
+    at,
+  };
 }
 
 /** 读数的三档写法：开 / 关 / 未读到（⛔ 不让"读不到"混进"关"）。 */
@@ -716,6 +814,22 @@ export function meshDiagnosticText(d: MeshDiagnosis): string {
           ` · 最近成功=${agoText(p.lastOkAgoMs)}`,
       );
     }
+  }
+  // ⭐ §13.6 O2 第二刀：最近 N 轮（只写轮次读数与后端原文；⛔ 不含空间名/条目标题）。
+  if (d.history) {
+    const h = d.history;
+    lines.push(
+      "",
+      "最近同步轮次（脱敏：不含空间名与条目标题）：",
+      `  共 ${h.total} 轮：成功 ${h.okCount} · 失败 ${h.failCount}`,
+    );
+    h.rounds.forEach((r, i) => {
+      lines.push(
+        `  第 ${i + 1} 轮 ${agoText(d.at - r.at)} ${r.ok ? "成功" : "失败"}` +
+          ` · 拉取=${r.pulled} · 推送=${r.pushed} · 明细=${r.itemCount} 条` +
+          (r.message ? ` · 原文：${plainText(r.message)}` : ""),
+      );
+    });
   }
   lines.push(
     "",
