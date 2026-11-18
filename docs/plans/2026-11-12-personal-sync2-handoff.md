@@ -302,6 +302,13 @@ node scripts/check-web-commands.mjs   # 命令数应 304/266/305（改动后同�
 cd C:\Users\cnzen\zhai; node _workspace\bin\check-all.mjs   # 工作区门禁（唯一入口）
 node _workspace\bin\sweep-tmp-retention.mjs --apply          # 推送被 tmp-retention 拦时先跑
 
+# ⭐ 本机**能**跑的两个"未覆盖"组（2026-11-18 实测 —— 别再默认"本机跑不了"）
+node scripts/test-report.mjs --group browser     # 4 条 / ~32 s：pdf-reload 8/8、panel-layout 66/66、
+                                                 #   web-build 13/13、editor-table-gesture 5/5（用 Edge，不需 dev server）
+pnpm dev:web                                     # 先起 web dev server（**只绑 [::1]:5173**，见 §7）
+$env:APP_URL='http://localhost:5173'             #   写 127.0.0.1 会报「应用地址不可达 ⇒ 环境不具备」
+node scripts/test-report.mjs --group mobile      # 3 条 / ~543 s：layout 68/68、overlays 756/756、views 249/249
+
 # 真机读数
 # 日志：C:\Users\cnzen\zhai\_tmp\scratch\dev-*.log(.err)
 # 指标行：[sync-metrics] space=… peer=… since=… max_seq=… gap=… fetched=… applied=… ms=…
@@ -328,6 +335,9 @@ node docs/plans/personal-sync-2.0-mockups/render.mjs      # 需要 Edge（路径
   已修 e45e4272：接收侧走 `request_round_now_from_peer()`（只唤醒、不置 dirty）；
   判据两条（纯函数真值表 ＋ 源码级「接收侧不许走本地保存入口」）
 · 端口 1420 残留 vite 进程 ⇒ dev 启动 beforeDevCommand 失败；先杀 node(vite) 再起
+· ⚠️ **`pnpm dev:web` 只绑 IPv6 回环**（`[::1]:5173`；`Get-NetTCPConnection` 里既不是 `0.0.0.0` 也不是 `127.0.0.1`，2026-11-18 实测）⇒
+  mobile 组要么用 `APP_URL=http://localhost:5173`，要么 `http://[::1]:5173`；**写 `127.0.0.1:5173` 会一直报「应用地址不可达」**
+  （那句是"环境不具备"，不是代码红 —— 但很容易被当成门禁坏了）
 · dev 窗口黑屏 ⇒ 带 --disable-gpu 启动
 · 推送被拒先 sweep-tmp-retention --apply；GitHub 镜像当前网络不可达（ssh.github.com:443）
 · ⚠️ **本机 66 门禁全绿 ≠ CI 绿**（2026-11-18 实测踩到）：rust 组在 CI 上还多查 **`cargo fmt --check`**
