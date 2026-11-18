@@ -317,7 +317,13 @@ node docs/plans/personal-sync-2.0-mockups/render.mjs      # 需要 Edge（路径
 · 端口 1420 残留 vite 进程 ⇒ dev 启动 beforeDevCommand 失败；先杀 node(vite) 再起
 · dev 窗口黑屏 ⇒ 带 --disable-gpu 启动
 · 推送被拒先 sweep-tmp-retention --apply；GitHub 镜像当前网络不可达（ssh.github.com:443）
-· 别用 PowerShell Set-Content/python -c 写含中文文件；用编辑工具或 .py 脚本文件
+· ⚠️ **本机 66 门禁全绿 ≠ CI 绿**（2026-11-18 实测踩到）：rust 组在 CI 上还多查 **`cargo fmt --check`**
+  （2 个登记例外：`capabilities_gen.rs`、`plugins.rs`）与宿主子进程那几十条 ⇒ 本机 `win-cargo-test.ps1`（只 lib 目标）
+  **一条都覆盖不到格式**。那天 CI 红的就是格式（测试本身 1544 passed / 0 failed）。
+  ⇒ 改过任何 `.rs` 之后：**① 只对改过的文件跑 `rustfmt --edition 2021 <file>`（⛔ 别整树 `cargo fmt`）；
+  ② 推完必须 `node _workspace/bin/read-ci.mjs --sha <前缀>` 读一次**；
+  ③ 判据是「剩下来的 diff 只有那两个登记例外」，不是"我觉得我格式没问题"。
+  ⚠️ 顺带：连着推几笔时 **run 会被 `concurrency` 取消**（`cancelled` 不等于通过 ⇒ 最后一笔的 CI 才是准的）。
 · ⚠️ **「多设备同步图」看不到 ≠ 坏了**（2026-11-18 实测，找回它花了 ~40 分钟）：
   ① 它在「同步面板 → **高级**（折叠）→ 多设备同步图」里；
   ② 显示条件是 **当前空间有对端水位**（`mesh_watermarks.peers` 非空）⇒ 没水位就**按设计隐藏**（⛔ 不编 0）；
@@ -326,6 +332,7 @@ node docs/plans/personal-sync-2.0-mockups/render.mjs      # 需要 Edge（路径
   ④ ⚠️ 只拷 `.db` 去查会读到**旧库**（WAL 没合并）⇒ 必须连 `-wal`/`-shm` 一起拷（2026-11-18 先踩了一次）；
   ⑤ 切空间请用应用自己的入口 —— 只用 CDP 调 `set_active_workspace_id` **不会**把面板的 `mesh_watermarks` 换成新空间
      （实测 9 个空间轮着切，读数一直 0）
+· 别用 PowerShell Set-Content/python -c 写含中文文件；用编辑工具或 .py 脚本文件
 ```
 
 ## 8. 新会话开场检查
