@@ -1067,6 +1067,10 @@ pub fn request_round_now_from_source(source: &'static str) {
     }
     // ⭐ 2026-11-12（F1 修复）：本地保存 ⇒ 这一轮**可以**对外发 dirty。
     LOCAL_SAVE_PENDING.store(true, Ordering::SeqCst);
+    // ⭐⭐ **2026-11-18（慢支修法 B，第二版，owner 拍）**：**在保存这一刻**挂 dirty ——
+    //   公告于是不再等"这一轮能不能跑"（第一版把 `last_announce_ms=0` 每 tick 重刷 ⇒ 60 s 4,311 条公告，
+    //   被复测当场抓住）。⛔ 只有本地保存会挂它：对端 dirty 唤醒的轮不挂（活锁纪律）。
+    ANNOUNCE_DIRTY_PENDING.store(true, Ordering::SeqCst);
     // ⭐ §13.12 Phase 0：记下**保存这一刻**（`save_to_announce` 那一段的起点）。
     LOCAL_SAVE_AT_MS.store(crate::db::now_ms(), Ordering::SeqCst);
     // ⭐ **2026-11-18（慢支取证）**：给每次"武装"编号，好在日志里与"循环有没有看到它"配对。
@@ -1113,20 +1117,34 @@ pub fn event_round_announces_dirty(from_local_save: bool, gate_open: bool) -> bo
     from_local_save && gate_open
 }
 
-/// ⭐⭐ **2026-11-18（慢支修法 B，owner 拍）**：**保存后要不要"立刻"武装公告** —— ⛔ **不看这一轮能不能跑**。
+/// ⭐⭐ **2026-11-18（慢支修法 B，owner 拍；第二版）**：**节流版"立刻播"** ——
+/// `dirty` 挂着就**不必等满一个公告间隔**，但必须满足一个**最小间隔**（⛔ 不许每个 tick 都播）。
 ///
-/// 来由（实测，见 `docs/plans/2026-11-18-sync2-phase0-baseline.md` §4.7）：原来"标 dirty ＋ 立刻公告"
-/// 放在「轮真的能跑」那一支里 ⇒ 一轮在跑（对端不可达时一轮能跑几十秒）期间，**保存的公告**
-/// 只能等那一轮结束 ＋ 一个 30 s 公告节拍（实测慢支 **74 s**，远超 owner 拍的「保存后 ≤10 s」）。
+/// 来由（两次实测，见 `docs/plans/2026-11-18-sync2-phase0-baseline.md` §4.7–§4.9）：
+/// · 第一版把 `last_announce_ms = 0` 每 tick 重刷 ⇒ 60 s 里 **4,311** 条公告（dirty 4,302 条）——**当场被复测抓住**；
+/// · 正确形状：**"保存"那一刻**挂 `dirty`；公告条件 = 「到点」**或**「有 dirty 且离上次 ≥ 最小间隔」；
+///   `dirty` 由公告块自己 `swap(false)` 消费 ⇒ 一次保存只播一次。
 ///
-/// 口径（照旧只有两条，⛔ 一条都没放宽）：
-/// ① 触发源必须是**本地保存** —— 对端 dirty 唤醒的轮**不播**（那是 2026-11-12 的活锁纪律）；
-/// ② **门要开着**（暂停/没配网格 ⇒ 不许对外说"我有改动"）。
-/// `round_ready` 这一格**故意不参与判断**（它就是这次修法要去掉的那根依赖）。
-pub fn arm_announce_now(from_local_save: bool, gate_open: bool, round_ready: bool) -> bool {
-    let _ = round_ready; // ⛔ 故意不看它（见上面那一段）；留着参数是为了让判据能把它显式钉住。
-    from_local_save && gate_open
+/// ⛔ 活锁纪律没动：`dirty` 仍然只由**本地保存**挂上（对端 dirty 唤醒的轮不挂）。
+pub fn announce_due_with_dirty(
+    last_announce_ms: i64,
+    now_ms: i64,
+    interval_ms: i64,
+    dirty_pending: bool,
+    min_gap_ms: i64,
+) -> bool {
+    if announce_due(last_announce_ms, now_ms, interval_ms) {
+        return true;
+    }
+    if !dirty_pending {
+        return false;
+    }
+    // 有 dirty 但还没到常规间隔 ⇒ 只要离上一次公告够远就播（`last_announce_ms <= 0` ＝ 还没播过）。
+    last_announce_ms <= 0 || now_ms.saturating_sub(last_announce_ms) >= min_gap_ms
 }
+
+/// `dirty` 驱动公告的**最小间隔**：一次保存 1 秒内只播一次（保存可以很密，公告不能）。
+pub const DIRTY_ANNOUNCE_MIN_GAP_MS: i64 = 1_000;
 
 /// ⭐ **task-12（Lead 拍）**：最近**连续几次**后台轮是空手的（`候选 0` ✓）——
 /// ⭐ 找到对端 ⇒ **清零** ✓／空手 ⇒ **+1** ✓／收到公告 ⇒ **清零** ✓ ⇒ 下一次等多久由
@@ -2010,7 +2028,18 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             crate::mesh::retry_pending_revokes(&app2, &state.peers(now));
             state.set_enabled(should_run_discovery(&profiles, &meshed));
             // ③ 到点就喊一轮。
-            if state.is_enabled() && announce_due(last_announce_ms, now, ANNOUNCE_INTERVAL_MS) {
+            // ⭐⭐ **2026-11-18（修法 B，第二版）**：公告条件改成「到点 **或** 有 dirty 且离上次够远」——
+            //   dirty 由**保存那一刻**挂上（`request_round_now_from_source`），公告块自己 `swap(false)`
+            //   消费它 ⇒ **一次保存只播一次**；⛔ 不再每 tick 重刷 `last_announce_ms`（那版播了 4,311 条）。
+            if state.is_enabled()
+                && announce_due_with_dirty(
+                    last_announce_ms,
+                    now,
+                    ANNOUNCE_INTERVAL_MS,
+                    ANNOUNCE_DIRTY_PENDING.load(Ordering::SeqCst),
+                    DIRTY_ANNOUNCE_MIN_GAP_MS,
+                )
+            {
                 // ★★ 2026-09-26（真机抓到的**单向发现**）：目标**每一轮重算**，而且要带上
                 //    **已经认识的对端地址**（单播）。理由见 `lan::announce_targets` 的头注：
                 //    热点主机那条 `255.255.255.255` 按默认路由走**蜂窝** ⇒ 底下的客户端永远收不到；
@@ -2105,23 +2134,16 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 //   ⛔ F1 第一刀原来在这里无条件置 dirty，且对端 dirty 唤醒的轮走同一分支
                 //   ⇒ 你 dirty 唤醒我、我这一轮又 dirty ⇒ 两边互相唤醒（真机活锁）。
                 let from_local_save = LOCAL_SAVE_PENDING.swap(false, Ordering::SeqCst);
-                // ⭐⭐ **2026-11-18（慢支修法 B，owner 拍）**：**公告不等这一轮** ——
-                //   只要「本地保存 ＋ 门开着」就立刻武装（`last_announce_ms = 0` ⇒ 下一 tick 就播）。
-                //   ⛔ 这条原来放在 `else`（轮真的能跑）里 ⇒ 一轮在跑时公告要等它跑完（实测慢支 74 s）。
-                //   ⚠️ 活锁纪律一个字没动：仍然**只有本地保存**才播（`from_local_save`），
-                //   对端 dirty 唤醒的轮照旧只拉不发。
-                let round_ready = event_round_ready(
+                // ⚠️ dirty 的挂载**已挪到保存那一刻**（`request_round_now_from_source`）——
+                //   这里⛔ 不许再置一次，也⛔ 不许再重刷 `last_announce_ms`
+                //   （第一版就是每 tick 重刷 ⇒ 60 s 播了 4,311 条，被复测当场抓住）。
+                if !event_round_ready(
                     paused,
                     meshed.len(),
                     BACKGROUND_IN_FLIGHT.load(Ordering::SeqCst),
                     last_event_round_ms,
                     now,
-                );
-                if arm_announce_now(from_local_save, gate_open, round_ready) {
-                    ANNOUNCE_DIRTY_PENDING.store(true, Ordering::SeqCst);
-                    last_announce_ms = 0;
-                }
-                if !round_ready {
+                ) {
                     // ⛔ 不绕 gate：暂停/没配网格 ⇒ 事件作废（不排队，免得门开了被误触发）；
                     // 门开着只是"上一轮在飞"或"2s 合并窗未到" ⇒ 保留 pending，下一片再试。
                     if gate_open {
@@ -3388,32 +3410,35 @@ mod tests {
         }
     }
 
-    /// ⭐⭐ **2026-11-18（慢支修法 B，owner 拍）**：公告**不许**再等"这一轮能不能跑"。
-    ///
-    /// 这一格钉的就是那次 74 s 的形状：一轮在跑（`round_ready = false`）时，
-    /// **保存的公告仍然要立刻武装**（否则就只能等那一轮跑完 ＋ 一个公告节拍）。
+    /// ⭐⭐ **2026-11-18（慢支修法 B，第二版，owner 拍）**：`dirty` 驱动的公告**不许等 30 s 节拍**，
+    /// 但也**不许每 tick 都播** —— 第一版就是这么播了 4,311 条（复测当场抓住）。
     #[test]
-    fn a_local_save_arms_the_announce_even_when_a_round_is_still_running() {
-        // ① 这条就是修法本身：**轮没准备好也要播**
+    fn a_pending_dirty_announces_soon_but_never_twice_within_the_min_gap() {
+        let interval = ANNOUNCE_INTERVAL_MS;
+        // ① 到点 ⇒ 播（与旧行为一致）
+        assert!(announce_due_with_dirty(0, 10_000, interval, false, DIRTY_ANNOUNCE_MIN_GAP_MS));
+        assert!(announce_due_with_dirty(
+            10_000,
+            10_000 + interval,
+            interval,
+            false,
+            DIRTY_ANNOUNCE_MIN_GAP_MS
+        ));
+        // ② **有 dirty 但还没到 30 s** ⇒ 过了最小间隔就要播（这就是这次修法：保存后不再等节拍）
         assert!(
-            arm_announce_now(true, true, false),
-            "一轮在飞时保存也必须立刻武装公告（这正是 74 s 慢支要修的那一格）"
+            announce_due_with_dirty(10_000, 11_000, interval, true, DIRTY_ANNOUNCE_MIN_GAP_MS),
+            "保存后挂着 dirty ⇒ 过了最小间隔就该播（⛔ 不许再等 30 s 节拍）"
         );
-        assert!(arm_announce_now(true, true, true), "轮能跑时当然也要播");
-        // ② 活锁纪律没放宽：**对端 dirty 唤醒的轮**（`from_local_save=false`）一律不播
-        assert!(!arm_announce_now(false, true, false));
-        assert!(!arm_announce_now(false, true, true));
-        // ③ 门关着（暂停/没配网格）也不播
-        assert!(!arm_announce_now(true, false, false));
-        assert!(!arm_announce_now(true, false, true));
-        // ④ `round_ready` 这一格**故意不影响结果**（两两成对：其它三格相同、只换它）
-        for (save, gate) in [(true, true), (false, true), (true, false), (false, false)] {
-            assert_eq!(
-                arm_announce_now(save, gate, false),
-                arm_announce_now(save, gate, true),
-                "`round_ready` 不许再影响公告武装（save={save} gate={gate}）"
-            );
-        }
+        // ③ 但**最小间隔内不许重播**（否则一次保存刷出一屏公告 —— 第一版就是 4,311 条）
+        assert!(!announce_due_with_dirty(10_000, 10_100, interval, true, DIRTY_ANNOUNCE_MIN_GAP_MS));
+        assert!(!announce_due_with_dirty(10_000, 10_500, interval, true, DIRTY_ANNOUNCE_MIN_GAP_MS));
+        assert!(!announce_due_with_dirty(10_000, 10_999, interval, true, DIRTY_ANNOUNCE_MIN_GAP_MS));
+        // ④ 没 dirty 又没到点 ⇒ 不播（常规节拍照旧）
+        assert!(!announce_due_with_dirty(10_000, 20_000, interval, false, DIRTY_ANNOUNCE_MIN_GAP_MS));
+        // ⑤ 还没播过（`last <= 0`）且挂着 dirty ⇒ 立刻播
+        assert!(announce_due_with_dirty(0, 5, interval, true, DIRTY_ANNOUNCE_MIN_GAP_MS));
+        // ⑥ 最小间隔必须**明显小于**常规间隔（否则"提前播"没意义）
+        assert!(DIRTY_ANNOUNCE_MIN_GAP_MS < interval);
     }
 }
 
@@ -4555,7 +4580,8 @@ mod p31_event_round_tests {
         );
         assert!(!event_round_announces_dirty(false, false));
 
-        // ② 对端 dirty 唤醒 ⇒ 只置轮次，不冒充本地保存
+        // ② 对端 dirty 唤醒 ⇒ 只置轮次，不冒充本地保存，**也⛔ 不许挂 dirty**（挂了就会互相唤醒）
+        ANNOUNCE_DIRTY_PENDING.store(false, Ordering::SeqCst);
         request_round_now_from_peer();
         assert!(
             EVENT_ROUND_PENDING.load(Ordering::SeqCst),
@@ -4565,14 +4591,20 @@ mod p31_event_round_tests {
             !LOCAL_SAVE_PENDING.load(Ordering::SeqCst),
             "对端 dirty ⛔ 不许冒充本地保存"
         );
+        assert!(
+            !ANNOUNCE_DIRTY_PENDING.load(Ordering::SeqCst),
+            "对端 dirty ⛔ 不许挂本机 dirty（那会两边互相唤醒）"
+        );
         let from_local = LOCAL_SAVE_PENDING.swap(false, Ordering::SeqCst);
         assert!(
             !event_round_announces_dirty(from_local, true),
             "对端唤醒的轮 ⛔ 不许再发 dirty（那会两边互相唤醒）"
         );
 
-        // ③ 本地保存 ⇒ 置 pending，且本轮可以发 dirty
+        // ③ 本地保存 ⇒ 置 pending，且**这一刻就挂 dirty**（⭐ 2026-11-18 修法 B：
+        //   公告不再等"这一轮能不能跑"；只由公告块 `swap(false)` 消费 ⇒ 一次保存只播一次）
         EVENT_ROUND_PENDING.store(false, Ordering::SeqCst);
+        ANNOUNCE_DIRTY_PENDING.store(false, Ordering::SeqCst);
         request_round_now();
         assert!(EVENT_ROUND_PENDING.load(Ordering::SeqCst));
         let from_local = LOCAL_SAVE_PENDING.swap(false, Ordering::SeqCst);
@@ -4580,7 +4612,11 @@ mod p31_event_round_tests {
             event_round_announces_dirty(from_local, true),
             "本地保存的轮必须发 dirty"
         );
-        assert!(!ANNOUNCE_DIRTY_PENDING.load(Ordering::SeqCst));
+        assert!(
+            ANNOUNCE_DIRTY_PENDING.load(Ordering::SeqCst),
+            "本地保存那一刻就该挂 dirty（修法 B：⛔ 不许再等这一轮跑完）"
+        );
+        ANNOUNCE_DIRTY_PENDING.store(false, Ordering::SeqCst);
         EVENT_ROUND_PENDING.store(false, Ordering::SeqCst);
     }
 

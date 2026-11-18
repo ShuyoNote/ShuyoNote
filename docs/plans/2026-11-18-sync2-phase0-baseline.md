@@ -141,28 +141,36 @@ node scripts/measure-sync-baseline.mjs --log <文件> --json --max-lines 200000 
 ⚠️ 另外记一条**没解释**、也⛔ 没修的：`in_flight` 在 25 s 观察窗里**一次都没归还**。A 的机理是"串行 × 超时"，但
 "这一轮到底卡在哪一台/哪一步"**没有读数**（`spawn_background_round` 只在每空间结束时打一行）—— 要查清得给单空间耗时打点，属另一件事。
 
-## 4.8 ⭐ 修法 B **已落地并复测**（2026-11-18，owner 拍「改它」）
+## 4.8 ⭐ 修法 B **两版**（第一版被复测当场否决；第二版已落地并复测）
 
-改动（**一处移位**，`src-tauri/src/lan_state.rs`）：
-- 新增纯函数 `arm_announce_now(from_local_save, gate_open, round_ready)` —— **`round_ready` 故意不参与**；
-- 把「标 dirty ＋ `last_announce_ms = 0`」从「轮真的能跑」那一支**挪到**「本地保存 且 门开着」那一支；
-- 活锁纪律**一个字没放宽**：仍然只有**本地保存**（`from_local_save`）才播；对端 dirty 唤醒的轮照旧只拉不发；
-- 判据：`lan_state::tests::a_local_save_arms_the_announce_even_when_a_round_is_still_running`
-  （① 轮在飞也要播 ② 对端唤醒不播 ③ 门关着不播 ④ `round_ready` 换值不影响结果）。
+### 第一版（❌ 被复测否决，别照抄）
+把「标 dirty ＋ `last_announce_ms = 0`」从「轮真的能跑」那一支挪到「本地保存」那一支。
+**后果**：`last_announce_ms` 被**每个 tick 重刷** ⇒ 60 s 里 `公告：发出` **4,311 行**（`dirty=true` **4,302** 条）。
+⚠️ 这一版**只存在了几个小时、从未推送**；抓住它的是**同一套埋点＋一份 60 s 的日志**，不是评审。
+⇒ 记下来：**"提前播"必须自带节流**，否则就是把 30 s 的节拍换成每 tick 的节拍。
 
-**复测（同一套埋点，第三次起 dev）**：连做 3 次保存，两两间隔 12 s：
+### 第二版（✅ 已落地）
+- **挂 dirty 挪到"保存那一刻"**（`request_round_now_from_source`）—— 公告于是不必等"这一轮能不能跑"；
+- 公告条件改成纯函数 `announce_due_with_dirty(last, now, interval, dirty_pending, min_gap)`
+  ＝ **「到点」或「有 dirty 且离上次 ≥ 1 s（`DIRTY_ANNOUNCE_MIN_GAP_MS`）」**；
+  `dirty` 由公告块 `swap(false)` **消费** ⇒ **一次保存只播一次**；
+- 活锁纪律没动：`dirty` 仍只由**本地保存**挂上（对端 dirty 唤醒的轮不挂）。
+
+### 复测（同一套埋点，第四次起 dev；连做 3 次保存、间隔 12 s）
 
 ```text
-[wake-arm] n=1  [sync-latency] seg=save_to_announce ms=1160
-[wake-arm] n=2  [sync-latency] seg=save_to_announce ms=1107
-[wake-arm] n=3  [sync-latency] seg=save_to_announce ms=173
-[wake-arm] n=4  [sync-latency] seg=save_to_announce ms=207
+[wake-arm] n=1  [sync-latency] seg=save_to_announce ms=125
+[wake-arm] n=2  [sync-latency] seg=save_to_announce ms=48
+[wake-arm] n=3  [sync-latency] seg=save_to_announce ms=78
+[wake-arm] n=4  [sync-latency] seg=save_to_announce ms=60
+公告：发出 45 行（≈5 批 × 9 空间）｜ dirty=true 36 条｜ 后台一轮跳 21 s 一次 —— **没有风暴**
 ```
 
-⇒ **每一次保存都有读数，全部 ≤ 1.2 s**（修之前：同一会话里第 2/3 次保存**一条读数都没有**，另一会话量到 **74 s**）。
-⚠️ 老实标三条：① 样本 4 条、单机、无对端在线（对端不在线时"公告发出"本来就快于"对端拉到"）；
-② 这一刀**没改 A**（9 空间串行导致一轮几十秒仍在）—— 它影响的是"这一轮什么时候能跑完"，不再影响"公告什么时候发"；
-③ 「保存 → **对端可见**」仍需另一台机器在线才有读数（那是 `announce_to_round_done` ＋ 传输，本机量不到）。
+⇒ **每一次保存都有读数、全部 ≤ 125 ms**；公告量回到"每批一次"的量级（对比第一版的 4,311 行）。
+
+⚠️ 老实标三条：① 样本 4 条、单机、**对端不在线**（量的是"公告发出"，不是"对端可见"）；
+② 这一刀**没改 A**（9 空间串行、一轮几十秒仍在）—— 它只影响"这一轮什么时候跑完"，不再影响"公告什么时候发"；
+③ 「保存 → **对端可见**」仍需另一台在线才有读数（`announce_to_round_done` 段已就位，还没取到数）。
 
 ## 5. 判据（这一页不许只靠嘴）
 
