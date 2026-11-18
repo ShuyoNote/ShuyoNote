@@ -14,7 +14,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { MeshWatermarks, MeshPeerWatermark } from "./platform/commands";
-import { meshSyncGraph, meshSyncGraphText, type SyncHistoryRowLike } from "./meshSyncGraph";
+import {
+  meshSyncGraph,
+  meshSyncGraphDiagnosticLines,
+  meshSyncGraphText,
+  type SyncHistoryRowLike,
+} from "./meshSyncGraph";
 
 /** 空间名：⛔ 绝不许出现在图里（它可能带业务信息）。 */
 const SPACE_NAME = "山焦招标-内部";
@@ -215,6 +220,22 @@ describe("O1 数据面 · 逐空间的轮次（失败原因）", () => {
     expect(with_.edges).toEqual(without.edges);
     expect(without.missing.join(" ")).toContain("逐边失败原因");
   });
+
+  it("窄形状的调用方（行里没有 ws_id/ws_name）⇒ 并成**一个**空间，⛔ 不按行号拆成 N 个（那等于替它们编出独立关系）", () => {
+    const g = meshSyncGraph({
+      at: 1_700_000_100_000,
+      history: [
+        { at: 1_700_000_090_000, ok: false, pushed: 0, pulled: 0, message: "超时", items: [] },
+        { at: 1_700_000_080_000, ok: true, pushed: 1, pulled: 1, message: "", items: [] },
+      ],
+    });
+    expect(g.spaces).toHaveLength(1);
+    expect(g.spaces[0].rounds).toBe(2);
+    expect(g.spaces[0].okCount).toBe(1);
+    expect(g.spaces[0].failCount).toBe(1);
+    // 排第一的仍然是**最近**那条记录所属的桶（这里是同一桶）。
+    expect(g.spaces[0].lastFailAt).toBe(1_700_000_090_000);
+  });
 });
 
 describe("O1 数据面 · 脱敏（⛔ 不含空间名/id/设备号/设备名/条目标题）", () => {
@@ -254,5 +275,27 @@ describe("O1 数据面 · 脱敏（⛔ 不含空间名/id/设备号/设备名/�
     expect(text).toContain("空间 1");
     expect(text).toContain("落后 2");
     expect(text).toContain("这一版量不到");
+  });
+
+  it("诊断包段落（唯一实现）：有结论/逐台/逐空间，但⛔ 不列 missing 全文、也不跟 O2 两段撞标题", () => {
+    const g = meshSyncGraph({
+      at: 1_700_000_100_000,
+      watermarks: watermarks([peer({ index: 1, cursor: 98, online: true })]),
+      history: [historyRow({ ok: true })],
+    });
+    const lines = meshSyncGraphDiagnosticLines(g);
+    const text = lines.join("\n");
+    expect(text).toContain("结论：");
+    expect(text).toContain("对端 1：behind");
+    expect(text).toContain("各空间轮次");
+    expect(text).toContain("空间 1");
+    // 独立版里那些长句只属于独立版：诊断包里一句「本包没有」就够。
+    expect(text).not.toContain("这一版量不到");
+    expect(text).toContain("本包没有");
+    // 与 O2 已有的两段标题撞车 ⇒ 会让 O2 那两条 `not.toContain(...)` 判据假红。
+    expect(text).not.toContain("水位矩阵");
+    expect(text).not.toContain("最近同步轮次");
+    // ⛔ 逐台边永远不给"逐边失败原因"（历史是空间级的），要写清没有。
+    expect(text).toContain("逐边失败原因");
   });
 });

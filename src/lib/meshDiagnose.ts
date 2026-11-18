@@ -20,6 +20,12 @@
 
 import type { LanStatus, MeshRoundReport, MeshWatermarks, NearbyPeer } from "./platform/commands";
 import { READOUT_UNREAD, portMismatchNotice } from "./personalSyncReadout";
+import { agoText, plainText } from "./diagnoseText";
+import {
+  meshSyncGraph,
+  meshSyncGraphDiagnosticLines,
+  type MeshSyncGraph,
+} from "./meshSyncGraph";
 
 /** 一项体检查结论的四个级别。`unknown` ＝ **没有结论**（读不到），⛔ 不是"没问题"。 */
 export type DiagnoseLevel = "ok" | "warn" | "bad" | "unknown";
@@ -83,6 +89,12 @@ export interface MeshDiagnosis {
   watermarks: WatermarkDigest | null;
   /** ⭐ §13.6 O2 第二刀：最近 N 轮同步（来自 `listSyncHistory`；读不到＝null）。 */
   history: HistoryDigest | null;
+  /**
+   * ⭐ §13.6 **O1 接线**（owner 2026-11-18 拍：只进复制诊断包、主界面不动）：
+   * 多设备同步图（由 `meshSyncGraph()` 从**同一份** `watermarks` ＋ `history` 算出来）。
+   * ⛔ 组件里不许另算一遍；诊断包那一段直接用 `meshSyncGraphDiagnosticLines(graph)`。
+   */
+  graph: MeshSyncGraph;
   /** 生成时刻（ms）；诊断包里会写成可读时间。 */
   at: number;
 }
@@ -209,22 +221,6 @@ function historyItems(h: HistoryDigest, at: number): DiagnoseItem[] {
     });
   });
   return items;
-}
-
-/** 毫秒 → 人话（只用于诊断文本/体检原因；⛔ 不算"多久没同步"这类业务结论）。
- *
- * ⚠️ 导出是给 `meshSyncGraph.ts` 复用（一处实现，⛔ 不抄第二份）。
- */
-export function agoText(ms: number | null): string {
-  if (ms === null) return "还没有成功记录";
-  if (ms < 1000) return "刚刚";
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s} 秒前`;
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m} 分钟前`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h} 小时前`;
-  return `${Math.round(h / 24)} 天前`;
 }
 
 /** §13.6 O2：把水位摘要变成逐台体检项（"哪一台不同步、差多少、为什么"）。 */
@@ -438,6 +434,8 @@ export function diagnoseMesh(
       peers: [],
       watermarks: null,
       history: null,
+      // 连局域网读数都读不到 ⇒ 图也按"两支都没读到"记（⛔ 不拿 opts 里可能过期的读数装成现在）。
+      graph: meshSyncGraph({ at }),
       at,
     };
   }
@@ -738,6 +736,8 @@ export function diagnoseMesh(
     peers,
     watermarks: wm,
     history: hs,
+    // ⭐ §13.6 O1：图从**同一份**输入算（⛔ 不另取一份读数，也⛔ 不在组件里重算）。
+    graph: meshSyncGraph({ watermarks: opts?.watermarks, history: opts?.history, at }),
     at,
   };
 }
@@ -757,14 +757,6 @@ function keyText(p: PeerDigest): string {
   if (p.keyChanged === true) return "变了";
   if (p.keyChanged === false) return "未变";
   return `读不到（${p.keyReason || "无原因码"}）`;
-}
-
-/** 诊断包里的原因写成**纯文本**：后端原文可能带行内 Markdown 的 `**`（如 `round.note`），
- *  诊断包是给人贴进聊天框/工单的 ⇒ 只去掉成对标记本身，⛔ 不吞字、⛔ 不改语义。
- *
- * ⚠️ 导出是给 `meshSyncGraph.ts` 复用（一处实现，⛔ 不抄第二份）。 */
-export function plainText(s: string): string {
-  return s.replace(/\*\*/g, "");
 }
 
 /**
@@ -836,6 +828,10 @@ export function meshDiagnosticText(d: MeshDiagnosis): string {
       );
     });
   }
+  // ⭐ §13.6 **O1 接线**（owner 2026-11-18 拍：只进复制诊断包、主界面不动）：
+  //   图的段落由 `meshSyncGraphDiagnosticLines()` 一处生成（⛔ 这里不另拼一套格式）。
+  //   它只在**两支读数都读不到**时才最空 —— 但那时它仍要说清"读不到"，所以**永远加**这一段。
+  lines.push("", ...meshSyncGraphDiagnosticLines(d.graph));
   lines.push(
     "",
     "（这份诊断包只含读数与原因码；不含设备号、网络地址、配对秘密或页面内容。）",

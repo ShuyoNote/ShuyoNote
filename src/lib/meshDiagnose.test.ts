@@ -544,3 +544,94 @@ describe("体检纯函数 · §13.6 O2 最近同步轮次", () => {
     expect(text).not.toContain(PEER_ADDR);
   });
 });
+
+// ⭐ §13.6 **O1 接线**（owner 2026-11-18 拍：只进「连接体检」的复制诊断包，主界面一个像素不动）。
+// 钉三件事：① 图必须与体检用**同一份**读数（⛔ 组件里另算）；② 包里说得出**哪条边断了**；
+// ③ 包里仍然脱敏，且**不跟 O2 那两段撞标题**（否则 `not.toContain("水位矩阵")` 那类判据会假红）。
+describe("体检纯函数 · §13.6 O1 同步图（只进复制诊断包）", () => {
+  const AT = 1_700_000_000_000;
+
+  function wm(): MeshWatermarks {
+    return {
+      spaceName: "研发空间",
+      localMaxSeq: 120,
+      peers: [
+        { index: 1, cursor: 120, online: true, lastOkAgoMs: 12_000 },
+        { index: 2, cursor: 100, online: true, lastOkAgoMs: 60_000 },
+        { index: 3, cursor: 120, online: false, lastOkAgoMs: 3_600_000 },
+      ],
+      onlineCount: 2,
+      offlineCount: 1,
+      unknownCount: 0,
+      note: "读数来自本机记录",
+    };
+  }
+
+  /** 后端行的**完整**形状（含 `ws_name` / `items[].title` 这类不该进包的字段）。 */
+  function rows(): SyncHistoryRow[] {
+    return [
+      {
+        ws_id: "ws-secret-1",
+        ws_name: "研发空间",
+        at: AT - 60_000,
+        ok: false,
+        pushed: 0,
+        pulled: 0,
+        message: "**拉不动**：连接超时",
+        items: [{ title: "机密页标题" }],
+      },
+    ] as unknown as SyncHistoryRow[];
+  }
+
+  it("图与体检同一份读数：3 台里 1 台断，包里写得出是哪条边", () => {
+    const s = diagnoseMesh(okStatus(), null, { at: AT, watermarks: wm(), history: rows() });
+    // 纯函数结果本身（⛔ 不是组件里第二份实现）
+    expect(s.graph.edges).toHaveLength(3);
+    expect(s.graph.counts).toEqual({ ok: 1, behind: 1, down: 1, unknown: 0 });
+    expect(s.graph.at).toBe(AT);
+    const text = meshDiagnosticText(s);
+    expect(text).toContain("多设备同步图");
+    expect(text).toContain("断 1");
+    expect(text).toContain("对端 3：down");
+    expect(text).toContain("对端 2：behind");
+    expect(text).toContain("落后 20");
+    expect(text).toContain("各空间轮次");
+    // 后端原文照写（owner 拍③），但 `**` 要剥掉（诊断包是纯文本）
+    expect(text).toContain("拉不动：连接超时");
+    expect(text).not.toContain("**");
+  });
+
+  it("包里仍然脱敏：⛔ 无空间名/空间号/设备号/设备名/条目标题", () => {
+    const s = diagnoseMesh(okStatus(), null, { at: AT, watermarks: wm(), history: rows() });
+    const text = meshDiagnosticText(s);
+    expect(text).not.toContain("研发空间");
+    expect(text).not.toContain("ws-secret-1");
+    expect(text).not.toContain("机密页标题");
+    expect(text, `⛔ 泄漏设备号：${DEVICE_ID}`).not.toContain(DEVICE_ID);
+    expect(text, `⛔ 泄漏设备名：${DEVICE_NAME}`).not.toContain(DEVICE_NAME);
+    expect(text, `⛔ 泄漏地址：${PEER_ADDR}`).not.toContain(PEER_ADDR);
+  });
+
+  it("两支都没读到 ⇒ 图照样出现在包里，但写「读不到」而⛔ 不写 0 台、也⛔ 不跟 O2 两段撞标题", () => {
+    const s = diagnoseMesh(okStatus(), null, { at: AT });
+    expect(s.graph.readable).toEqual({ watermarks: false, history: false });
+    const text = meshDiagnosticText(s);
+    expect(text).toContain("多设备同步图");
+    expect(text).toContain("这一次读不到");
+    expect(text).not.toContain("水位矩阵");
+    expect(text).not.toContain("最近同步轮次");
+  });
+
+  it("界面读数整支读不到时（status=null）图也按「没读到」记 —— ⛔ 不拿过期读数装成现在", () => {
+    const s = diagnoseMesh(null, null, { at: AT, watermarks: wm(), history: rows() });
+    expect(s.graph.readable).toEqual({ watermarks: false, history: false });
+    expect(s.graph.edges).toHaveLength(0);
+  });
+
+  it("接线：对话框不另算图（只调 diagnoseMesh ＋ meshDiagnosticText），面板照旧传两支读数", () => {
+    const dialog = readFileSync(resolve(process.cwd(), "src/components/MeshDiagnoseDialog.tsx"), "utf8");
+    expect(dialog, "⛔ 对话框里另算了一份图 ⇒ 会出现两份真相源").not.toContain("meshSyncGraph(");
+    expect(dialog).toContain("diagnoseMesh(status, round, { watermarks, history })");
+    expect(dialog).toContain("meshDiagnosticText(diag)");
+  });
+});

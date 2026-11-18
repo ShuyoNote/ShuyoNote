@@ -27,11 +27,30 @@
 //
 // 判据：`src/lib/meshSyncGraph.test.ts`。
 
-import type { CommandMap, MeshWatermarks } from "./platform/commands";
-import { agoText, plainText } from "./meshDiagnose";
+import type { MeshWatermarks } from "./platform/commands";
+import { agoText, plainText } from "./diagnoseText";
 
-/** `list_sync_history` 的一行（直接取命令表里的真实形状，⛔ 不另抄一份类型）。 */
-export type SyncHistoryRowLike = CommandMap["list_sync_history"]["result"][number];
+/**
+ * `list_sync_history` 的一行（**结构化**声明：只点本函数真的读的字段）。
+ *
+ * ⚠️ 为什么不直接用 `CommandMap["list_sync_history"]["result"][number]`：
+ * `meshDiagnose.ts` 那张输入类型（O2 的 `SyncHistoryRow`）**故意更窄**（只留判据要的字段），
+ * 而真实命令结果在运行期是带 `ws_id` / `ws_name` 的 ⇒ 这里用**可选**字段接两边，
+ * 运行期不丢信息、类型上也不逼调用方多抄一层。
+ */
+export interface SyncHistoryRowLike {
+  at: number;
+  ok: boolean;
+  pushed: number;
+  pulled: number;
+  message: string;
+  /** 该轮明细（只数数量，⛔ 不读 `title`）。 */
+  items?: unknown[];
+  /** 空间内部 id（⛔ **只用于分组**，绝不写进结果）。 */
+  ws_id?: string;
+  /** 空间名（⛔ **只在缺 id 时当分组键**，绝不写进结果）。 */
+  ws_name?: string;
+}
 
 /** 一格读数的来源。`derived:` 前缀 ＝ 由同名命令的读数**算出**来（不是命令直接给的）。 */
 export type SyncGraphSource = "mesh_watermarks" | "derived:mesh_watermarks" | "list_sync_history";
@@ -196,13 +215,14 @@ function headlineOf(
 }
 
 /** 空间分组用的内部键 —— **只在本函数内用**，⛔ 绝不写进结果（结果只有「空间 N」）。 */
-function spaceKeyOf(row: SyncHistoryRowLike, i: number): string {
+function spaceKeyOf(row: SyncHistoryRowLike): string {
   const id = String(row.ws_id ?? "").trim();
   if (id) return id;
   const name = String(row.ws_name ?? "").trim();
   if (name) return name;
-  // 两格都空：按行号占位（⛔ 不把它们并成一个"未知空间" —— 那会编出一条不存在的关系）。
-  return `__row_${i}`;
+  // 两格都没有（窄形状的调用方）：**并到一个桶**，因为分不开。
+  // ⛔ 不按行号拆成 N 个"空间" —— 那等于替它们编出互相独立的关系。
+  return "__no_space_identity";
 }
 
 /** 逐空间聚合最近轮次（只读计数与后端原文；⛔ 不读 `items[].title`）。
@@ -222,8 +242,8 @@ function spacesOf(rows: SyncHistoryRowLike[]): SyncGraphSpace[] {
     latestAt: number;
   }
   const accs = new Map<string, Acc>();
-  rows.forEach((row, i) => {
-    const key = spaceKeyOf(row, i);
+  rows.forEach((row) => {
+    const key = spaceKeyOf(row);
     const at = numOrNull(row.at) ?? 0;
     const acc: Acc = accs.get(key) ?? {
       rounds: 0,
@@ -376,6 +396,64 @@ export function meshSyncGraph(input?: MeshSyncGraphInput): MeshSyncGraph {
  *
  * ⛔ 与结构同口径脱敏：只有「对端 N / 空间 N」、读数、原因码，没有空间名/设备号/地址/标题。
  */
+/**
+ * ⭐ **O1 接线（owner 2026-11-18 拍：只进「连接体检」的复制诊断包，主界面不动）**：
+ * 图的**诊断包段落**（缩进行；由 `meshDiagnosticText` 原样拼进去）。
+ *
+ * ⚠️ 与 `meshSyncGraphText` 的差别是**故意的**：
+ * · 这里不给标题/时间（诊断包自己有），也不列 `missing` 全文（那段话里有命令名与"水位矩阵"这类
+ *   会跟 O2 已有的两段标题撞车的词）⇒ 只留一句「本包没有」；
+ * · 一行边一行空间，贴进工单能一眼看出断的是哪条。
+ */
+export function meshSyncGraphDiagnosticLines(g: MeshSyncGraph): string[] {
+  const lines: string[] = [
+    "多设备同步图（当前空间逐台 ＋ 各空间轮次；脱敏：不含空间名、空间号、设备号、设备名、条目标题）",
+    `  结论：${g.headline}`,
+  ];
+  if (g.edges.length === 0) {
+    lines.push(
+      g.readable.watermarks
+        ? "  逐台：这一轮 0 台对端（真读数）"
+        : "  逐台：这一次读不到（⛔ 不等于 0 台）",
+    );
+  }
+  for (const e of g.edges) {
+    const cursor = e.reads.cursor.value;
+    const local = e.reads.localMaxSeq.value;
+    const lag = e.reads.lag.value;
+    const tail =
+      cursor === null || local === null
+        ? "已收/本机=未读到"
+        : `已收 ${cursor} / 本机 ${local} · 落后 ${lag ?? "未读到"}`;
+    lines.push(
+      `  ${e.to.replace("peer-", "对端 ")}：${e.status} · ${tail}` +
+        ` · 最近成功=${agoText(e.reads.lastOkAgoMs.value as number | null)}`,
+    );
+    lines.push(`    原因：${plainText(e.reason)}`);
+  }
+  lines.push("  各空间轮次：");
+  if (!g.readable.history) {
+    lines.push("    这一次读不到（⛔ 不等于没有失败）");
+  } else if (g.spaces.length === 0) {
+    lines.push("    历史里还没有轮次");
+  }
+  for (const s of g.spaces) {
+    const when =
+      s.lastFailAt === null ? "还没有失败记录" : `最近失败 ${agoText(g.at - s.lastFailAt)}`;
+    lines.push(
+      `    ${s.label}：${s.rounds} 轮（成功 ${s.okCount} / 失败 ${s.failCount}）；${when}` +
+        (s.lastFailMessage ? ` · 原文：${s.lastFailMessage}` : ""),
+    );
+  }
+  lines.push("  ⛔ 本包没有：逐边延迟（每轮耗时）、逐边失败原因（历史是空间级，不归属到某台）");
+  return lines;
+}
+
+/**
+ * 图的纯文本形态（独立版；⛔ 现在不接任何界面，诊断包用的是上面那个 `…DiagnosticLines`）。
+ *
+ * ⛔ 与结构同口径脱敏：只有「对端 N / 空间 N」、读数、原因码，没有空间名/设备号/地址/标题。
+ */
 export function meshSyncGraphText(g: MeshSyncGraph): string {
   const lines: string[] = [
     "多设备同步图（当前空间逐台 ＋ 各空间最近轮次；不含空间名、空间号、设备号、设备名、条目标题）",
@@ -389,37 +467,10 @@ export function meshSyncGraphText(g: MeshSyncGraph): string {
         ` · 来源=${n.source ?? "未读到"}`,
     ),
     "",
-    "边（当前空间逐台）：",
+    ...meshSyncGraphDiagnosticLines(g),
+    "",
+    "这一版量不到：",
+    ...g.missing.map((m) => `  - ${m}`),
   ];
-  if (g.edges.length === 0) {
-    lines.push(g.readable.watermarks ? "  这一轮没有对端（0 台是真读数）" : "  水位读不到 ⇒ 这一轮一条边都画不出来");
-  }
-  for (const e of g.edges) {
-    const cursor = e.reads.cursor.value;
-    const local = e.reads.localMaxSeq.value;
-    const lag = e.reads.lag.value;
-    const tail =
-      cursor === null || local === null
-        ? "已收/本机=未读到"
-        : `已收 ${cursor} / 本机 ${local} · 落后 ${lag ?? "未读到"}`;
-    lines.push(`  ${e.to.replace("peer-", "对端 ")}：${e.status} —— ${plainText(e.reason)}`);
-    lines.push(`    ${tail} · 最近成功=${agoText(e.reads.lastOkAgoMs.value as number | null)}`);
-  }
-  lines.push("", "空间（最近轮次；只有序号）：");
-  if (!g.readable.history) {
-    lines.push("  同步历史读不到");
-  } else if (g.spaces.length === 0) {
-    lines.push("  同步历史里还没有轮次");
-  }
-  for (const s of g.spaces) {
-    const when =
-      s.lastFailAt === null ? "还没有失败记录" : `最近失败 ${agoText(g.at - s.lastFailAt)}`;
-    lines.push(
-      `  ${s.label}：${s.rounds} 轮（成功 ${s.okCount} / 失败 ${s.failCount}）；${when}` +
-        (s.lastFailMessage ? ` · 原文：${s.lastFailMessage}` : ""),
-    );
-  }
-  lines.push("", "这一版量不到：");
-  for (const m of g.missing) lines.push(`  - ${m}`);
   return lines.join("\n");
 }
