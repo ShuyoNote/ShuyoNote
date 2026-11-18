@@ -1113,6 +1113,21 @@ pub fn event_round_announces_dirty(from_local_save: bool, gate_open: bool) -> bo
     from_local_save && gate_open
 }
 
+/// ⭐⭐ **2026-11-18（慢支修法 B，owner 拍）**：**保存后要不要"立刻"武装公告** —— ⛔ **不看这一轮能不能跑**。
+///
+/// 来由（实测，见 `docs/plans/2026-11-18-sync2-phase0-baseline.md` §4.7）：原来"标 dirty ＋ 立刻公告"
+/// 放在「轮真的能跑」那一支里 ⇒ 一轮在跑（对端不可达时一轮能跑几十秒）期间，**保存的公告**
+/// 只能等那一轮结束 ＋ 一个 30 s 公告节拍（实测慢支 **74 s**，远超 owner 拍的「保存后 ≤10 s」）。
+///
+/// 口径（照旧只有两条，⛔ 一条都没放宽）：
+/// ① 触发源必须是**本地保存** —— 对端 dirty 唤醒的轮**不播**（那是 2026-11-12 的活锁纪律）；
+/// ② **门要开着**（暂停/没配网格 ⇒ 不许对外说"我有改动"）。
+/// `round_ready` 这一格**故意不参与判断**（它就是这次修法要去掉的那根依赖）。
+pub fn arm_announce_now(from_local_save: bool, gate_open: bool, round_ready: bool) -> bool {
+    let _ = round_ready; // ⛔ 故意不看它（见上面那一段）；留着参数是为了让判据能把它显式钉住。
+    from_local_save && gate_open
+}
+
 /// ⭐ **task-12（Lead 拍）**：最近**连续几次**后台轮是空手的（`候选 0` ✓）——
 /// ⭐ 找到对端 ⇒ **清零** ✓／空手 ⇒ **+1** ✓／收到公告 ⇒ **清零** ✓ ⇒ 下一次等多久由
 /// [`background_round_interval_ms`] 决定 ✓。
@@ -2090,13 +2105,23 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 //   ⛔ F1 第一刀原来在这里无条件置 dirty，且对端 dirty 唤醒的轮走同一分支
                 //   ⇒ 你 dirty 唤醒我、我这一轮又 dirty ⇒ 两边互相唤醒（真机活锁）。
                 let from_local_save = LOCAL_SAVE_PENDING.swap(false, Ordering::SeqCst);
-                if !event_round_ready(
+                // ⭐⭐ **2026-11-18（慢支修法 B，owner 拍）**：**公告不等这一轮** ——
+                //   只要「本地保存 ＋ 门开着」就立刻武装（`last_announce_ms = 0` ⇒ 下一 tick 就播）。
+                //   ⛔ 这条原来放在 `else`（轮真的能跑）里 ⇒ 一轮在跑时公告要等它跑完（实测慢支 74 s）。
+                //   ⚠️ 活锁纪律一个字没动：仍然**只有本地保存**才播（`from_local_save`），
+                //   对端 dirty 唤醒的轮照旧只拉不发。
+                let round_ready = event_round_ready(
                     paused,
                     meshed.len(),
                     BACKGROUND_IN_FLIGHT.load(Ordering::SeqCst),
                     last_event_round_ms,
                     now,
-                ) {
+                );
+                if arm_announce_now(from_local_save, gate_open, round_ready) {
+                    ANNOUNCE_DIRTY_PENDING.store(true, Ordering::SeqCst);
+                    last_announce_ms = 0;
+                }
+                if !round_ready {
                     // ⛔ 不绕 gate：暂停/没配网格 ⇒ 事件作废（不排队，免得门开了被误触发）；
                     // 门开着只是"上一轮在飞"或"2s 合并窗未到" ⇒ 保留 pending，下一片再试。
                     if gate_open {
@@ -2128,14 +2153,8 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     // ⭐ 2026-11-18（慢支取证）：之前被挡下的那次保存唤醒，到这一刻才算排到 ——
                     //   打一行"等了多久"（⛔ 无开启关闭之分：诊断只在 debug 开关下输出）。
                     report_wake_blocked("spawned");
-                    // ⭐ F1 修复：**只有本地保存**触发的轮才「立刻公告 ＋ 标 dirty」；
-                    //   对端 dirty 唤醒的轮**只拉不发**（否则两边互相唤醒）。
-                    //   ⚠️ 放在「轮真的会跑」这一支：原来每个 tick 都重刷 `last_announce_ms=0`，
-                    //   会在 2s 合并窗里把公告按 tick 频率刷出去（日志暴涨的另一半原因）。
-                    if event_round_announces_dirty(from_local_save, gate_open) {
-                        ANNOUNCE_DIRTY_PENDING.store(true, Ordering::SeqCst);
-                        last_announce_ms = 0;
-                    }
+                    // ⚠️ dirty 武装**已挪到上面**（`arm_announce_now`，修法 B）—— 那里不再依赖
+                    //   "这一轮能不能跑"；这里⛔ 不要再置一次（否则就成了两份口径，且会重复刷公告）。
                     // 事件轮也重算原后台节拍（下一轮仍按 `background_round_interval_ms` 的 backoff ✓）。
                     last_bg_round_ms = now;
                     // ⭐ §13.12 Phase 0：这一轮是不是「对端 dirty」唤醒的（⛔ 与本地保存那一路分开）。
@@ -3366,6 +3385,34 @@ mod tests {
             let line = latency_line(seg, 1, 2).expect("有起点就该有读数");
             assert!(line.starts_with("[sync-latency] seg="), "前缀变了：{line}");
             assert!(line.contains(&format!("seg={seg} ")), "段名没写进去：{line}");
+        }
+    }
+
+    /// ⭐⭐ **2026-11-18（慢支修法 B，owner 拍）**：公告**不许**再等"这一轮能不能跑"。
+    ///
+    /// 这一格钉的就是那次 74 s 的形状：一轮在跑（`round_ready = false`）时，
+    /// **保存的公告仍然要立刻武装**（否则就只能等那一轮跑完 ＋ 一个公告节拍）。
+    #[test]
+    fn a_local_save_arms_the_announce_even_when_a_round_is_still_running() {
+        // ① 这条就是修法本身：**轮没准备好也要播**
+        assert!(
+            arm_announce_now(true, true, false),
+            "一轮在飞时保存也必须立刻武装公告（这正是 74 s 慢支要修的那一格）"
+        );
+        assert!(arm_announce_now(true, true, true), "轮能跑时当然也要播");
+        // ② 活锁纪律没放宽：**对端 dirty 唤醒的轮**（`from_local_save=false`）一律不播
+        assert!(!arm_announce_now(false, true, false));
+        assert!(!arm_announce_now(false, true, true));
+        // ③ 门关着（暂停/没配网格）也不播
+        assert!(!arm_announce_now(true, false, false));
+        assert!(!arm_announce_now(true, false, true));
+        // ④ `round_ready` 这一格**故意不影响结果**（两两成对：其它三格相同、只换它）
+        for (save, gate) in [(true, true), (false, true), (true, false), (false, false)] {
+            assert_eq!(
+                arm_announce_now(save, gate, false),
+                arm_announce_now(save, gate, true),
+                "`round_ready` 不许再影响公告武装（save={save} gate={gate}）"
+            );
         }
     }
 }
