@@ -211,8 +211,11 @@ function historyItems(h: HistoryDigest, at: number): DiagnoseItem[] {
   return items;
 }
 
-/** 毫秒 → 人话（只用于诊断文本/体检原因；⛔ 不算"多久没同步"这类业务结论）。 */
-function agoText(ms: number | null): string {
+/** 毫秒 → 人话（只用于诊断文本/体检原因；⛔ 不算"多久没同步"这类业务结论）。
+ *
+ * ⚠️ 导出是给 `meshSyncGraph.ts` 复用（一处实现，⛔ 不抄第二份）。
+ */
+export function agoText(ms: number | null): string {
   if (ms === null) return "还没有成功记录";
   if (ms < 1000) return "刚刚";
   const s = Math.round(ms / 1000);
@@ -757,8 +760,10 @@ function keyText(p: PeerDigest): string {
 }
 
 /** 诊断包里的原因写成**纯文本**：后端原文可能带行内 Markdown 的 `**`（如 `round.note`），
- *  诊断包是给人贴进聊天框/工单的 ⇒ 只去掉成对标记本身，⛔ 不吞字、⛔ 不改语义。 */
-function plainText(s: string): string {
+ *  诊断包是给人贴进聊天框/工单的 ⇒ 只去掉成对标记本身，⛔ 不吞字、⛔ 不改语义。
+ *
+ * ⚠️ 导出是给 `meshSyncGraph.ts` 复用（一处实现，⛔ 不抄第二份）。 */
+export function plainText(s: string): string {
   return s.replace(/\*\*/g, "");
 }
 

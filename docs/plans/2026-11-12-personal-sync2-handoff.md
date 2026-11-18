@@ -50,6 +50,11 @@ F1 端到端（真机，两侧 485e1a8c）  ✅ 2026-11-12 09:41：我方保存�
 清理                         ✅ 0518456b（还原 cargo fmt 误格式化的 capabilities_gen.rs / plugins.rs 等）
 O2 诊断包（水位矩阵＋最近 N 轮） ✅ 2026-11-18（第一刀：本机高水位/逐台已收/落后/在线三态/最近成功；
                               第二刀：最近 5 轮的成功/失败、拉取/推送、明细数、后端原文；⛔ 无空间名/设备号/地址/条目标题；判据 meshDiagnose.test.ts 9＋1）
+O1 多设备同步图（数据面第一刀） ✅ 2026-11-18（只读聚合＋纯函数，⛔ 不新增命令、⛔ 不接线）：
+                              `src/lib/meshSyncGraph.ts` 把 `mesh_watermarks` ＋ `list_sync_history` 聚合成
+                              设备节点＋边＋空间轮次；逐台四档 ok/behind/down/unknown、每格带 source；
+                              如实标注：对端只有**序号**（会重排）、逐边延迟/逐边失败原因现有读数里没有（进 missing）、
+                              读不到 ≠ 0（readable 分开记）；判据 meshSyncGraph.test.ts 13 条
 U1 真机（AMD 侧读数）        ✅ 方向② 12:37:57 导入 ok/30 ms（未过期）；方向① 走方法 A：13:49:59
                                  生成→13:50:07 落卡→13:50:11 `fetched=1 applied=1`（1c02 `U1-E2E-1794458288928` 落库，
                                  cursor 252→254）；`mesh_paired_devices` 0→1
@@ -158,7 +163,7 @@ owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workf
    **修法 A 已落地**（比对前忽略 `blockRev`；判据 ⑯⑰⑱，见 `docs/plans/2026-11-14-a1-shadow-equal-zero-rootcause.md`）
    ⇒ 旧观察数据作废，**7 天窗口从 2026-11-14 重新起算（最早 2026-11-21 收口）**
 7) relay ACME 自动化（当前证书外部签发；可做方案：certbot hook + 热重载，或内置 ACME 客户端）
-8) §13 其余：F2 反熵、F3 调度、O1 同步图、O2 诊断包
+8) §13 其余：F2 反熵、F3 调度、O1 同步图（**数据面第一刀已落 2026-11-18**，剩接线＋多空间矩阵需新命令）、O2 诊断包（两刀已落）
 ```
 
 ## 4. 红线与待拍板
