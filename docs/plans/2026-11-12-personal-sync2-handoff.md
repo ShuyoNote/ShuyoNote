@@ -8,12 +8,14 @@
 ## 1. 当前版本
 
 ```text
-ShuyoNote  dev = **047ba801**（2026-11-18；两远端已同步）
-           main = **047ba801**（= tag v2.1.15 的内容提交；两远端已推）
-           tag  = **v2.1.15**（annotated 5e32b690 → 047ba801）
+ShuyoNote  dev = **d8a71fb7**（2026-11-18；两远端已同步）
+           main = **f8712fb7**（tag 之后又落的一笔 README 文档提交；两远端已同步）
+           tag  = **v2.1.15**（annotated 5e32b690 → 047ba801；047ba801 是 main 的祖先）
+           ⚠️ 这三行是**读数不是承诺**：判据 = `git rev-parse --short=8 HEAD main` ＋
+              `git ls-remote origin|github refs/heads/dev|main`（⛔ 别照抄；读完再写）
 relay      main = dabfd8d5（本文未复核，以 relay 仓为准）
 collab     HEAD = 见信箱（U4 线程 reply-22 已收口；当前待回 0）
-本机 dev   ：**未在跑**（2026-11-15 重启后未起；要用时见 §6 启动命令）
+本机 dev   ：**未在跑**（2026-11-18 17:4x 收摊时已关；要用时见 §6 启动命令）
               ⚠️ 直跑形态（可脚本化）：`Start-Process src-tauri\target\debug\shuyonote.exe` ＋
                  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--disable-gpu --remote-debugging-port=9222'`
                  （CDP 只绑回环；日志 `_tmp/scratch/dev-*.log.err`）——`pnpm tauri dev` 的输出有时进不了重定向文件
@@ -102,8 +104,10 @@ owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workf
   Release 正文自动标注缺 macOS；协议生效后要删掉该行并补发）
 结果（2026-11-18）：GitHub Release v2.1.15 已生成，5 个资产（win exe / linux deb+AppImage / android apk+sha256）；
   macOS 资产（已签名未公证的 dmg 与 app.tar.gz）已从 Release 删除，避免用户下到被 Gatekeeper 拦的包
-剩余（运营）：更新通道 /app/latest.json 与 version.json 仍是 2.1.12 ⇒ 需发 GitCode + 部署 /app（RELEASING §⑤⑥）；
-  check-release-state 当前 22 通过 / 2 失败（只剩这两条通道项）
+剩余（运营）：**更新通道**还没跟上 —— 2026-11-18 盘点复跑 `check-release-state` = **22 通过 / 2 失败**，
+  两条都是通道项：①「通道 2.1.14 / 仓库 2.1.15」②「`https://shuyo.cn/app/` 的 version.json 实测 **2.1.14**」
+  （原来这里写「仍是 2.1.12」⇒ **已过期，按今天的读数改成 2.1.14**）；
+  GitHub Pages 那侧 `version.json` 已是 2.1.15 且 13 个 assets 全可达 ⇒ 差的只是**发 GitCode ＋ 部署 /app**（RELEASING §⑤⑥）
 ⚠️ 2026-11-18：本机查凭据标签时误把一行 GitCode 访问令牌打印到会话输出，已建议轮换（后续未再使用）
 ```
 
@@ -122,6 +126,13 @@ owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workf
 · 根因 A 量化（2b97de0c）：[round-timing] 每空间 21.06 s（±0.02 s）⇒ 9 空间 ≈188 s/轮
 · 修法 i 第一版（c00fea65）：⚠️ **未生效**（过滤在 spawn 那层，候选由 mesh::round 内部另建）⇒ 见 §3 第 11 条
 · 当日门禁：66/66（多次）｜全量 Rust lib 1536 passed / 0 failed（每次改动后都跑）
+· **文档盘点（同日收摊后）**：交接单点名的 **24 个提交号全部存在**（`git cat-file -e` 逐个核）；
+  §1 版本行原来还写着 047ba801 ⇒ 已改成实测读数（dev d8a71fb7 / main f8712fb7 / tag→047ba801）＋判据命令；
+  ⚠️ 盘点抓到一条**真漂移**：**GitHub 镜像的 `main` 落后 1 笔**（f8712fb7 只在 GitCode 侧）
+  ⇒ 已 `git push github main` 补齐（两远端 main 现在都是 f8712fb7；这一推会触发一次 CI，内容与 origin 相同）
+· `check-release-state` 复跑 = **22 通过 / 2 失败**，两条都是**更新通道**：
+  「通道 2.1.14 / 仓库 2.1.15」与「https://shuyo.cn/app/ 的 version.json 实测 2.1.14」；
+  GitHub Pages 那侧 `version.json` 已是 2.1.15 且 13 个 assets 全可达 ⇒ 差的只是**运营发 GitCode＋部署 /app**
 ```
 
 ### 2026-11-14 当日收口（读数都在 git）
