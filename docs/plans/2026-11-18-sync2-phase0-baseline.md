@@ -102,6 +102,45 @@ node scripts/measure-sync-baseline.mjs --log <文件> --json --max-lines 200000 
    ⛔ 不写成"已解释"，也⛔ 不写成"已修"；
 3. 这两份日志里**没有 `[sync-metrics]`**（本轮没真的拉到东西）⇒ 轮耗时基线仍取 §2 那批旧日志。
 
+## 4.7 ⭐ 慢支**根因已取证**（同日晚，加两条诊断行后实测；⛔ 未改行为）
+
+做法：加两条诊断行（都在同一个 `SHUYONOTE_LAN_DEBUG_ANNOUNCE` 开关下）——
+`[wake-arm]`（保存唤醒"武装"了几次）＋ `[wake-blocked] waited_ms=… outcome=…`（这次唤醒被挡多久才排到）。
+第三个会话的原始读数（同一处代码、只加诊断）：
+
+```text
+[wake-arm] n=1 source=save_page:当前空间
+[sync-latency] seg=save_to_announce ms=122          ← 快支
+[wake-arm] n=2 source=save_page:当前空间             ← 之后每次保存都"武装"了
+[wake-arm] n=3 source=save_page:当前空间
+（25 秒内没有任何 [wake-blocked] ⇒ 那两次到现在**还没排到**）
+```
+
+更细的一版（每 tick 打 `[wake-seen]`，取证用、**已撤掉**）把形状钉死了：
+
+```text
+[wake-seen] arm=1 from_local_save=true ready=true  gate_open=true in_flight=false meshed=9   ← 第一轮放行
+[wake-seen] arm=2 from_local_save=true ready=false gate_open=true in_flight=true  meshed=9   ← 之后每 tick 都是这句（连打 19+ 次）
+```
+
+⇒ **根因（两条，互不相同）**：
+
+| # | 是什么 | 证据 |
+|---|---|---|
+| **A** | **一轮能跑很久**：9 个空间**串行**，对端不可达时每台都要等连接/请求超时 ⇒ `in_flight=true` 持续 **几十秒**（会话 A 的 74 s 就是它 ＋ 一次公告节拍） | `in_flight=true` 连打 19+ tick；同一会话后来量到 74,386 ms |
+| **B** | **保存的唤醒只是"排队"、不发公告**：`ANNOUNCE_DIRTY_PENDING` 与 `last_announce_ms = 0` 只在「轮真的能跑」那一支才置 ⇒ 一轮在飞时，**这一轮的公告时刻完全取决于那一轮什么时候结束** | `ready=false` 时分支只 `store(pending)`，不碰公告 |
+
+⚠️ 后果：**任何落在一轮运行期间的保存，公告延迟 ≈ 该轮剩余时长 ＋ 一个公告节拍**。这正好违反 owner 2026-11-12 拍的 F1 口径「保存后 ≤10 s 对端拉到」。⛔ 官方结论到这儿为止；**修法未实施**（见下）。
+
+### 建议的修法（⛔ 需 owner 拍板，本轮没做）
+
+**只动 B**（小、可回退、不碰传输层）：把「标 dirty ＋ `last_announce_ms = 0`」从 `round_ready` 那一支**挪到"本地保存且门开着"这一支** ——
+公告本来就不需要等一轮跑完；而"对端 dirty 唤醒的轮不发 dirty"这条活锁纪律**照旧**（`from_local_save` 仍是唯一条件）。
+预期：快支保持 ≈0.1–0.2 s，慢支从「几十秒」降到「≤1 个 tick（~1 s）」；⛔ 不改 A（一轮串行时长属 F3/调度那块）。
+
+⚠️ 另外记一条**没解释**、也⛔ 没修的：`in_flight` 在 25 s 观察窗里**一次都没归还**。A 的机理是"串行 × 超时"，但
+"这一轮到底卡在哪一台/哪一步"**没有读数**（`spawn_background_round` 只在每空间结束时打一行）—— 要查清得给单空间耗时打点，属另一件事。
+
 ## 5. 判据（这一页不许只靠嘴）
 
 - 纯函数：`scripts/lib/syncBaseline.test.mjs` —— 15 条：解析（`[sync-metrics]` 与 `[sync-latency]`，**都含 CRLF 真行**）、

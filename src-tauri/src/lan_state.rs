@@ -821,6 +821,26 @@ static LOCAL_SAVE_PENDING: AtomicBool = AtomicBool::new(false);
 static LOCAL_SAVE_AT_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 /// 见上：收到**对端 dirty 公告**的本机时刻（0 ＝ 没有起点）。
 static PEER_DIRTY_SEEN_AT_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+/// ⭐ **2026-11-18（慢支取证）**：保存唤醒一共"武装"过几次（只用于日志配对，⛔ 不参与任何判断）。
+static WAKE_ARM_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// ⭐ **2026-11-18（慢支取证）**：这次保存的唤醒**从什么时候开始被挡住**（0 ＝ 没被挡）。
+/// 只在"被解开"时打**一行**（`[wake-blocked] waited_ms=… outcome=…`）—— ⛔ 不按 tick 刷屏。
+static WAKE_BLOCKED_SINCE_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// ⭐ **2026-11-18（慢支取证）**：把"这次保存的唤醒被挡了多久、最后怎么解的"打**一行**。
+///
+/// 为什么要有：2026-11-18 实测「保存 → 公告」双峰，慢支 **74 s**；取证发现慢支的形状是
+/// **`in_flight=true` 长时间不归还** ⇒ 这次保存的唤醒一直排在后面（`event_round_ready` 每条 tick 都 false）。
+/// 没有这一行，那种"等一轮跑完"只会变成一句无法核对的猜测。
+/// ⚠️ 只在 `SHUYONOTE_LAN_DEBUG_ANNOUNCE` 开着时输出；⛔ 不改变任何 gate/时序。
+fn report_wake_blocked(outcome: &str) {
+    let since = WAKE_BLOCKED_SINCE_MS.swap(0, Ordering::SeqCst);
+    if since <= 0 || !debug_latency() {
+        return;
+    }
+    let waited = crate::db::now_ms().saturating_sub(since).max(0);
+    eprintln!("[wake-blocked] waited_ms={waited} outcome={outcome}");
+}
 
 /// ⭐ **F1 小尾巴（2026-11-12）**：最近一次"本地保存唤醒"的**来源标签**（日志用）。
 ///
@@ -1049,6 +1069,12 @@ pub fn request_round_now_from_source(source: &'static str) {
     LOCAL_SAVE_PENDING.store(true, Ordering::SeqCst);
     // ⭐ §13.12 Phase 0：记下**保存这一刻**（`save_to_announce` 那一段的起点）。
     LOCAL_SAVE_AT_MS.store(crate::db::now_ms(), Ordering::SeqCst);
+    // ⭐ **2026-11-18（慢支取证）**：给每次"武装"编号，好在日志里与"循环有没有看到它"配对。
+    //   ⛔ 只诊断：不改变任何 gate/时序。
+    let n = WAKE_ARM_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+    if debug_latency() {
+        eprintln!("[wake-arm] n={n} source={source}");
+    }
     EVENT_ROUND_PENDING.store(true, Ordering::SeqCst);
     ROUND_NOTIFY.notify_one();
 }
@@ -2078,10 +2104,30 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                         // ⚠️ 这一轮**还没真的跑** ⇒ 本地保存那格要一起留着，不然 dirty 被吞掉。
                         if from_local_save {
                             LOCAL_SAVE_PENDING.store(true, Ordering::SeqCst);
+                            // ⭐ **2026-11-18（慢支取证）**：记下"这次保存的唤醒被挡住了"的起点
+                            //   （只记第一次；被解开时由 `report_wake_blocked` 打**一行**）。
+                            //   ⛔ 只诊断：不改变任何 gate。
+                            let _ = WAKE_BLOCKED_SINCE_MS.compare_exchange(
+                                0,
+                                crate::db::now_ms(),
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                            );
                         }
+                    } else if debug_latency() {
+                        // ⭐ **2026-11-18（72 s 慢支取证）**：这是**唯一会静默丢掉一次保存唤醒**的分支
+                        //   （门关着 ⇒ 事件作废、不排队、不打任何日志）⇒ 慢支到底是不是死在这里，
+                        //   只能靠这一行判定。⛔ 只诊断，不改行为。
+                        eprintln!(
+                            "[wake-drop] reason=gate_closed paused={paused} meshed={} from_local_save={from_local_save}",
+                            meshed.len()
+                        );
                     }
                 } else {
                     last_event_round_ms = now;
+                    // ⭐ 2026-11-18（慢支取证）：之前被挡下的那次保存唤醒，到这一刻才算排到 ——
+                    //   打一行"等了多久"（⛔ 无开启关闭之分：诊断只在 debug 开关下输出）。
+                    report_wake_blocked("spawned");
                     // ⭐ F1 修复：**只有本地保存**触发的轮才「立刻公告 ＋ 标 dirty」；
                     //   对端 dirty 唤醒的轮**只拉不发**（否则两边互相唤醒）。
                     //   ⚠️ 放在「轮真的会跑」这一支：原来每个 tick 都重刷 `last_announce_ms=0`，
