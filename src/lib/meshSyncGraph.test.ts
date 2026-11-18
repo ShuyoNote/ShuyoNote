@@ -11,13 +11,17 @@
 //
 // ⚠️ 本片**故意不接线**（红字：用户可见行为变更需 owner 拍板）。所以这里只判纯函数；
 //    接线判据等 owner 拍了再补一条 wiring（手法见 `syncPanelMesh.wiring.test.ts`）。
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type { MeshWatermarks, MeshPeerWatermark } from "./platform/commands";
 import {
+  SYNC_GRAPH_STATUS_TEXT,
   meshSyncGraph,
   meshSyncGraphDiagnosticLines,
   meshSyncGraphText,
+  syncGraphRows,
   type SyncHistoryRowLike,
 } from "./meshSyncGraph";
 
@@ -297,5 +301,77 @@ describe("O1 数据面 · 脱敏（⛔ 不含空间名/id/设备号/设备名/�
     expect(text).not.toContain("最近同步轮次");
     // ⛔ 逐台边永远不给"逐边失败原因"（历史是空间级的），要写清没有。
     expect(text).toContain("逐边失败原因");
+  });
+});
+
+// ⭐ §13.6 O1 第二刀（owner 2026-11-18 拍「在同步面板上真画出来」）：
+// 面板那几行**只能**由 `syncGraphRows()` 出 —— 组件不许自己判 online/lag（两份真相源）。
+describe("O1 面板行（syncGraphRows）", () => {
+  it("四档各自有中文词与颜色档（⛔ 不把英文状态码显示给用户）", () => {
+    const g = meshSyncGraph({
+      at: 1_700_000_100_000,
+      watermarks: watermarks([
+        peer({ index: 1, cursor: 100, online: true }),
+        peer({ index: 2, cursor: 97, online: true }),
+        peer({ index: 3, cursor: 100, online: false }),
+        peer({ index: 4, cursor: 0, online: null, lastOkAgoMs: null }),
+      ]),
+    });
+    const rows = syncGraphRows(g);
+    expect(rows.map((r) => r.status)).toEqual(["ok", "behind", "down", "unknown"]);
+    expect(rows.map((r) => r.statusText)).toEqual(["已齐", "落后", "断了", "未知"]);
+    expect(rows.map((r) => r.level)).toEqual(["ok", "warn", "bad", "unknown"]);
+    for (const r of rows) {
+      expect(r.label).toBe(`对端 ${r.key.split("peer-")[1]}`);
+      expect(r.detail).toContain("已收");
+      expect(r.detail).toContain("最近成功");
+      // ⛔ 英文状态码/设备号不许出现在给用户看的字段里
+      expect([r.label, r.statusText, r.detail].join(" ")).not.toContain(r.status);
+    }
+  });
+
+  it("落后几条写进 detail；读不到就写「未读到」而⛔ 不写 0", () => {
+    const g = meshSyncGraph({
+      at: 1_700_000_100_000,
+      watermarks: watermarks([peer({ index: 1, cursor: 98, online: true })]),
+    });
+    expect(syncGraphRows(g)[0].detail).toContain("落后 2");
+    const bad = meshSyncGraph({
+      at: 1_700_000_100_000,
+      watermarks: watermarks([
+        { index: 1, cursor: Number.NaN, online: true, lastOkAgoMs: 1_000 } as unknown as MeshPeerWatermark,
+      ]),
+    });
+    const row = syncGraphRows(bad)[0];
+    expect(row.statusText).toBe("未知");
+    expect(row.detail).toContain("未读到");
+    expect(row.detail).not.toContain("落后 0");
+  });
+
+  it("状态词表只有那四个（判据按它取；改词会先红在这一条）", () => {
+    expect(SYNC_GRAPH_STATUS_TEXT).toEqual({ ok: "已齐", behind: "落后", down: "断了", unknown: "未知" });
+  });
+});
+
+// ⭐ §13.6 O1 第二刀的**接线判据**（文本级，与 `syncPanelMesh.wiring.test.ts` 同一手法）：
+// 面板只负责摆，状态/读数一律来自纯函数 —— 这条钉的是"没有第二份判断"。
+describe("O1 接线 · 同步面板", () => {
+  const panel = readFileSync(resolve(process.cwd(), "src/components/SyncPanel.tsx"), "utf8");
+
+  it("面板用纯函数算图、用行渲染，并且有可供验收点到的 testid", () => {
+    expect(panel, "面板没拿这两支读数算图").toContain("meshSyncGraph({ watermarks, history })");
+    expect(panel, "面板没走唯一的行生成处").toContain("syncGraphRows(meshGraph)");
+    expect(panel, "没有图容器 testid ⇒ 验收/判据点不到它").toContain('data-testid="mesh-sync-graph"');
+    expect(panel, "没有逐行 testid ⇒ 数不出几台/哪条断了").toContain(
+      'data-testid="mesh-sync-graph-row"',
+    );
+    expect(panel, "没有汇总 testid ⇒ 折叠时看不到「断 N」").toContain(
+      'data-testid="mesh-sync-graph-summary"',
+    );
+  });
+
+  it("旧的自判句子已经退役（⛔ 同一屏两套状态口径）", () => {
+    expect(panel, "面板里还留着 `p.online === true` 自判 ⇒ 两份真相源").not.toContain("p.online === true");
+    expect(panel, "面板里还留着旧的「已收至」拼句").not.toContain("已收至");
   });
 });

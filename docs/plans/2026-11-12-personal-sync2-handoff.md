@@ -56,8 +56,13 @@ O1 多设备同步图（数据面第一刀 ＋ 接线） ✅ 2026-11-18（只读
                               如实标注：对端只有**序号**（会重排）、逐边延迟/逐边失败原因现有读数里没有（进 missing）、
                               读不到 ≠ 0（readable 分开记）；判据 meshSyncGraph.test.ts 14 条
                               **接线（owner 2026-11-18 拍三项）**：① 只进「连接体检」的**复制诊断包**
-                              （`meshSyncGraphDiagnosticLines()` 一处生成，主界面不动）② 暂不加新命令
+                              （`meshSyncGraphDiagnosticLines()` 一处生成）② 暂不加新命令
                               ③ 后端原文照写；判据 meshDiagnose.test.ts「§13.6 O1 同步图」5 条
+                              **同日第二刀（owner 拍「面板上真画出来」）**：同步面板 →高级→「多设备同步图」
+                              （默认展开，每台一行：已齐/落后/断了/未知 ＋ 读数；汇总「断 N」）；
+                              状态只由 `syncGraphRows()` 出，旧的自拼水位句已退役；判据 20 条
+                              （含面板接线：testid、`p.online === true` 与「已收至」不许再出现）
+                              ⚠️ 未做：真人目视效果；仍是**当前空间**
                               （共用件下沉 `src/lib/diagnoseText.ts` —— ⛔ 避开 meshDiagnose↔meshSyncGraph 循环 import）
 U1 真机（AMD 侧读数）        ✅ 方向② 12:37:57 导入 ok/30 ms（未过期）；方向① 走方法 A：13:49:59
                                  生成→13:50:07 落卡→13:50:11 `fetched=1 applied=1`（1c02 `U1-E2E-1794458288928` 落库，

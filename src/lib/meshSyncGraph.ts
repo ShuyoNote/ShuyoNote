@@ -397,8 +397,67 @@ export function meshSyncGraph(input?: MeshSyncGraphInput): MeshSyncGraph {
  * ⛔ 与结构同口径脱敏：只有「对端 N / 空间 N」、读数、原因码，没有空间名/设备号/地址/标题。
  */
 /**
- * ⭐ **O1 接线（owner 2026-11-18 拍：只进「连接体检」的复制诊断包，主界面不动）**：
+ * ⭐ **O1 面板第一刀（owner 2026-11-18 拍「在同步面板上真画出来」）**：
+ * 一条**给界面直接摆**的行（词、颜色档、读数都在这儿定好 —— ⛔ 组件里不许再判 `online`/`lag`）。
+ */
+export interface SyncGraphRow {
+  /** `self->peer-N`（与边上同一个键）。 */
+  key: string;
+  /** 显示名（`对端 N`；⛔ 不含设备号/设备名）。 */
+  label: string;
+  status: SyncGraphEdgeStatus;
+  /** 用户看到的那两个词（已齐 / 落后 / 断了 / 未知；⛔ 不显示英文码）。 */
+  statusText: string;
+  /** 颜色档（与 `DiagnoseLevel` 同名词汇；`unknown` ＝ 没有结论）。 */
+  level: "ok" | "warn" | "bad" | "unknown";
+  /** 一行读数（已收/本机/落后 ＋ 最近成功；⛔ 不含地址/设备号）。 */
+  detail: string;
+}
+
+/** 四档状态 → 界面上的两个词（判据按它取，⛔ 别在组件里另写一套）。 */
+export const SYNC_GRAPH_STATUS_TEXT: Record<SyncGraphEdgeStatus, string> = {
+  ok: "已齐",
+  behind: "落后",
+  down: "断了",
+  unknown: "未知",
+};
+
+const STATUS_LEVEL: Record<SyncGraphEdgeStatus, SyncGraphRow["level"]> = {
+  ok: "ok",
+  behind: "warn",
+  down: "bad",
+  unknown: "unknown",
+};
+
+/**
+ * 把图里**当前空间**的逐台边翻成界面行。**纯函数**（⛔ 不读环境、不读时钟）。
+ *
+ * ⚠️ 只出逐台边（空间轮次由「同步历史」那块负责，⛔ 界面上不重复摆两遍）。
+ */
+export function syncGraphRows(g: MeshSyncGraph): SyncGraphRow[] {
+  return g.edges.map((e) => {
+    const cursor = e.reads.cursor.value;
+    const local = e.reads.localMaxSeq.value;
+    const lag = e.reads.lag.value;
+    const got =
+      cursor === null || local === null
+        ? "已收/本机=未读到"
+        : `已收 ${cursor} / 本机 ${local}` + (lag === null ? "（落后未知）" : `（落后 ${lag}）`);
+    return {
+      key: e.key,
+      label: e.to.replace("peer-", "对端 "),
+      status: e.status,
+      statusText: SYNC_GRAPH_STATUS_TEXT[e.status],
+      level: STATUS_LEVEL[e.status],
+      detail: `${got} · 最近成功 ${agoText(e.reads.lastOkAgoMs.value as number | null)}`,
+    };
+  });
+}
+
+/**
+ * ⭐ **O1 接线（owner 2026-11-18 拍：进「连接体检」的复制诊断包）**：
  * 图的**诊断包段落**（缩进行；由 `meshDiagnosticText` 原样拼进去）。
+ * （同日第二刀：面板上也摆了这张图 —— 那一支走上面的 `syncGraphRows()`，⛔ 不是这里。）
  *
  * ⚠️ 与 `meshSyncGraphText` 的差别是**故意的**：
  * · 这里不给标题/时间（诊断包自己有），也不列 `missing` 全文（那段话里有命令名与"水位矩阵"这类

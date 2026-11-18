@@ -21,6 +21,10 @@ import { InvitePairingSection } from "./InvitePairingSection";
 // ⭐ P1「连接体检」（2026-11-08）：只读现有读数 → 结构化诊断 ＋ 复制诊断包（⛔ 不新增命令 ✗）。
 //   入口在「局域网同步」状态卡里（见下面 `mesh-diagnose-entry` ✓）；纯函数在 `src/lib/meshDiagnose.ts` ✓。
 import { MeshDiagnoseDialog } from "./MeshDiagnoseDialog";
+// ⭐ §13.6 O1（2026-11-18，owner 拍「在同步面板上真画出来」）：多设备同步图。
+//   读数/状态**只由纯函数算**（`meshSyncGraph` ＋ `syncGraphRows`），组件只负责摆 ——
+//   ⛔ 这里不许出现 `p.online === false` 这类自判（判据 `meshSyncGraph.test.ts` 的接线用例钉着）。
+import { meshSyncGraph, syncGraphRows } from "../lib/meshSyncGraph";
 // ⭐ P3-3a 第三小步（task-56）：CRDT 影子**手动体检** —— 只读扫描当前空间，文案全是纯函数，
 //   ⛔ 不自动修复/不改数据/不显示正文（差异只回数量）。
 import { shadowScanSpace } from "../lib/crdtShadowScan";
@@ -1673,6 +1677,10 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   const historyText = `${history.length} 条 · 今天 ${todayHistory.length} 项 · ${
     todayHistory.some((h) => !h.ok) ? "有失败" : "没有失败"
   }`;
+  // ⭐ §13.6 O1（owner 2026-11-18 拍「在面板上真画出来」）：图的**唯一**来源就是这条纯函数 ——
+  //   ⛔ 这下面不许再拿 `watermarks.peers` 自己拼状态（那就成了两份真相源）。
+  const meshGraph = meshSyncGraph({ watermarks, history });
+  const meshGraphRows = syncGraphRows(meshGraph);
   // 同步预算：两个档位与展开后下拉里的 <option> 逐字一致（见 `optMb`）。
   const budgetText = budget
     ? `磁盘余量 ${optMb(budget.disk_floor_mb)} · 单文件 ${budget.max_file_mb === 0 ? "不限" : optMb(budget.max_file_mb)}`
@@ -2874,41 +2882,40 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
           <div className="sync-group is-advanced">
 
 
-            {/* ⭐ 2026-11-11（§13 A2）：只读「各对端水位」——本机已发到哪 ＋ 各对端已收到哪。
-                ⚠️ 对端只用**序号**（内部设备 id 不上界面）；读不到就不显示（⛔ 不编 0）。 */}
-            {watermarks && (watermarks.localMaxSeq > 0 || watermarks.peers.length > 0) && (
-              <details className="sync-row">
+            {/* ⭐ **§13.6 O1（2026-11-18，owner 拍「在面板上真画出来」）**：多设备同步图。
+                一眼要能看出「哪条边断了」—— 每台一行，词只有四个：已齐 / 落后 / 断了 / 未知。
+                ⚠️ 状态与读数**全部**来自 `meshSyncGraph()` ＋ `syncGraphRows()`（纯函数，有判据）；
+                ⛔ 这里不许再拿 `watermarks.peers` 自己判在线/落后（两份真相源）。
+                ⚠️ 对端只用**序号**（内部设备 id 不上界面）；水位整支读不到 ⇒ 这块不显示（⛔ 不编 0）。 */}
+            {watermarks && meshGraph.readable.watermarks && meshGraphRows.length > 0 && (
+              <details className="sync-row" open>
                 <summary>
-                  <span className="sync-row-label">各对端水位</span>
-                  <span className="sync-row-value">
-                    本机 {watermarks.localMaxSeq} ｜ 对端 {watermarks.peers.length} 台（在线{" "}
-                    {watermarks.onlineCount} / 离线 {watermarks.offlineCount} / 未知{" "}
-                    {watermarks.unknownCount}）
+                  <span className="sync-row-label">多设备同步图</span>
+                  <span className="sync-row-value" data-testid="mesh-sync-graph-summary">
+                    对端 {meshGraphRows.length} 台 · 已齐 {meshGraph.counts.ok} / 落后{" "}
+                    {meshGraph.counts.behind} / 断 <b>{meshGraph.counts.down}</b> / 未知{" "}
+                    {meshGraph.counts.unknown}
                   </span>
                   <span className="sync-row-caret" aria-hidden>›</span>
                 </summary>
-                <div className="sync-row-body">
-                  <div className="sync-hint" data-testid="mesh-watermarks">
-                    {watermarks.peers.length === 0
-                      ? "还没有对端水位（没和任何设备同步过）"
-                      : watermarks.peers
-                          .map((p) => {
-                            const state =
-                              p.online === true
-                                ? "在线"
-                                : p.online === false
-                                  ? "离线"
-                                  : "未知";
-                            const ago =
-                              p.lastOkAgoMs != null
-                                ? `，上次成功 ${Math.max(1, Math.round(p.lastOkAgoMs / 1000))} 秒前`
-                                : "";
-                            return `对端 ${p.index}：已收至 ${p.cursor}（${state}${ago}）`;
-                          })
-                          .join(" ｜ ")}
-                    <div className="sync-hint" style={{ marginTop: 4 }}>
-                      {watermarks.note}
+                <div className="sync-row-body" data-testid="mesh-sync-graph">
+                  {meshGraphRows.map((r) => (
+                    <div
+                      key={r.key}
+                      className={`sync-hint mesh-sync-graph-row is-${r.level}`}
+                      data-testid="mesh-sync-graph-row"
+                    >
+                      <span className={`mesh-sync-graph-state is-${r.level}`}>{r.statusText}</span>{" "}
+                      <b>{r.label}</b>
+                      <span className="mesh-sync-graph-detail">：{r.detail}</span>
                     </div>
+                  ))}
+                  <div className="sync-hint" style={{ marginTop: 4 }}>
+                    词的意思：已齐＝对方收到了我这里的全部改动；落后＝还差几条；断了＝它离线或没在同步；
+                    未知＝还没有成功记录（⛔ 不当作离线）。
+                  </div>
+                  <div className="sync-hint" style={{ marginTop: 4 }}>
+                    ⚠️ 这张图只看得到 <b>当前空间</b>；每个空间 × 每台设备的全图要另加只读读数（见交接单）。
                   </div>
                 </div>
               </details>
