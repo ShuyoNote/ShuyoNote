@@ -100,6 +100,41 @@ export function splitMetricLines(text) {
 }
 
 /**
+ * ⭐ **§13.12 Phase 0 埋点（2026-11-18）**：解析一行 `[sync-latency] seg=<段名> ms=<差>`。
+ *
+ * 这两段是**本机两段时刻**（`lan_state::latency_line` 打的）：
+ * · `save_to_announce`：本地保存 → 那条带 `dirty` 的公告真的发出去；
+ * · `announce_to_round_done`：收到对端 `dirty` 公告 → 被唤醒的那一轮跑完。
+ *
+ * ⚠️ 两段**只能各自看、⛔ 不能跨机相减**：跨机的「改 → 对端可见」要共同时钟，日志里没有。
+ * ⚠️ 形状不对 ⇒ `null`（⛔ 不猜）；`seg` 只收 `[A-Za-z0-9_-]+`（代码常量，不是用户内容）。
+ *
+ * @param {string} line
+ * @returns {{seg: string, ms: number}|null}
+ */
+export function parseLatencyLine(line) {
+  const text = String(line ?? "").replace(/\r$/, "");
+  const at = text.indexOf("[sync-latency]");
+  if (at < 0) return null;
+  const body = text.slice(at + "[sync-latency]".length).trim();
+  if (!body) return null;
+  /** @type {Map<string,string>} */
+  const kv = new Map();
+  for (const token of body.split(/\s+/)) {
+    const eq = token.indexOf("=");
+    // ⚠️ 这一行只有两个字段 ⇒ **一个不带 `=` 的碎词就整行不认**：
+    //    否则 `seg=a b` 会被读成 `seg=a`（静默截断 = 猜）。⛔ 不是"宽松一点更好"。
+    if (eq <= 0) return null;
+    kv.set(token.slice(0, eq), token.slice(eq + 1));
+  }
+  const seg = kv.get("seg");
+  const ms = intOf(kv.get("ms"));
+  if (!seg || !/^[A-Za-z0-9_-]+$/.test(seg)) return null;
+  if (ms === null || ms < 0) return null;
+  return { seg, ms };
+}
+
+/**
  * 分位数（nearest-rank：取第 `ceil(p/100 × n)` 个，1 起；⛔ 不插值 —— 日志读数不该被"造"出来）。
  * @param {number[]} sortedAsc 已升序
  * @param {number} p 0..100
@@ -181,7 +216,20 @@ function groupBy(rows, keyOf) {
  * @property {number} applied
  * @property {GroupReading[]} spaces
  * @property {GroupReading[]} peers
+ * @property {LatencySegment[]} segments ⭐ 埋点两段（本机；⛔ 跨机不可相减）
  */
+
+/**
+ * @typedef {object} LatencySegment
+ * @property {string} seg  段名（代码常量：`save_to_announce` / `announce_to_round_done`）
+ * @property {PercStats} stats
+ */
+
+/** 已知段名（报告里给它们配人话；不认识的段名照原样列出 —— ⛔ 不静默丢）。 */
+export const LATENCY_SEGMENT_TEXT = {
+  save_to_announce: "保存 → 公告发出",
+  announce_to_round_done: "收到对端公告 → 该轮跑完",
+};
 
 /**
  * 汇总。**纯函数**（⛔ 不读文件、不读时钟）。`skipped` 由调用方传入（它才知道原文里有多少可疑行）。
@@ -189,10 +237,27 @@ function groupBy(rows, keyOf) {
  * @param {number} [skipped]
  * @returns {BaselineSummary}
  */
-export function summarizeMetrics(rows, skipped = 0) {
+export function summarizeMetrics(rows, skipped = 0, latencyRows = []) {
   const recoveredValues = rows.map((r) => r.recoveredAfterMs).filter((v) => v !== null);
   const spaces = groupBy(rows, (r) => r.space).map((g, i) => ({ ...g, label: `空间 ${i + 1}` }));
   const peers = groupBy(rows, (r) => r.peer).map((g, i) => ({ ...g, label: `对端 ${i + 1}` }));
+  // ⭐ 埋点两段：按段名分组（顺序：先已知的两段，再其它 —— ⛔ 不静默丢掉不认识的段名）
+  /** @type {Map<string, number[]>} */
+  const bySeg = new Map();
+  for (const r of latencyRows) {
+    const list = bySeg.get(r.seg);
+    if (list) list.push(r.ms);
+    else bySeg.set(r.seg, [r.ms]);
+  }
+  const knownOrder = Object.keys(LATENCY_SEGMENT_TEXT);
+  const segments = [...bySeg.entries()]
+    .sort((a, b) => {
+      const ia = knownOrder.indexOf(a[0]);
+      const ib = knownOrder.indexOf(b[0]);
+      if (ia !== ib) return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+      return b[1].length - a[1].length;
+    })
+    .map(([seg, values]) => ({ seg, stats: statsOf(values) }));
   return {
     rounds: rows.length,
     skipped: Math.max(0, skipped),
@@ -208,6 +273,7 @@ export function summarizeMetrics(rows, skipped = 0) {
     applied: rows.reduce((s, r) => s + r.applied, 0),
     spaces,
     peers,
+    segments,
   };
 }
 
@@ -215,6 +281,20 @@ export function summarizeMetrics(rows, skipped = 0) {
 function percText(s) {
   if (!s) return "没量到（⛔ 不算 0）";
   return `p50 ${s.p50}ms · p95 ${s.p95}ms · max ${s.max}ms · >1s ${s.over1s} 条 · >100ms ${s.over100ms} 条（${s.count} 轮）`;
+}
+
+/** @param {LatencySegment[]} segments */
+function segmentLines(segments) {
+  if (segments.length === 0) {
+    return [
+      "  （一条都没有：本批日志没打 [sync-latency]。只有在开着 SHUYONOTE_LAN_DEBUG_ANNOUNCE 时才会打）",
+    ];
+  }
+  return segments.map((s) => {
+    const human = LATENCY_SEGMENT_TEXT[s.seg];
+    const stats = percText(s.stats);
+    return `  ${s.seg}${human ? `（${human}）` : "（不认识的段名，照实列出）"}：${stats}`;
+  });
 }
 
 /** @param {GroupReading[]} groups */
@@ -241,6 +321,7 @@ export function formatBaselineReport(s, title = "个人版同步 2.0 · Phase 0 
       "没量到：这一批日志里没有一行能解析的 [sync-metrics]（⛔ 这不算基线，也不算通过）",
       `跳过/可疑行：${s.skipped}`,
       "能怎么量：让网格这一档跑起来打一轮同步，日志里每轮会写一行 [sync-metrics] … ms=…。",
+      `分段读数：${s.segments.length === 0 ? "一条都没有" : `${s.segments.length} 段（但没有轮次读数，⛔ 不作基数）`}`,
     );
     return lines.join("\n");
   }
@@ -258,6 +339,9 @@ export function formatBaselineReport(s, title = "个人版同步 2.0 · Phase 0 
     "",
     "按对端（编号代替设备号）：",
     ...groupLines(s.peers),
+    "",
+    "分段（⭐ 埋点：**本机两段时刻**，⛔ 跨机不可相减 —— 端到端还差「传输」那一段，日志里没有）：",
+    ...segmentLines(s.segments),
     "",
     "⚠️ 这份基线**量不到**：改→对端可见延迟、通知/轮询端到端时延、耗电/流量、换网恢复时间",
     "   （前两项要跨机对齐同一个时钟，日志里没有 ⇒ ⛔ 不许拿本机 ms 冒充「改→可见」）。",

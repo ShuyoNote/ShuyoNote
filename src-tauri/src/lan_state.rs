@@ -810,6 +810,18 @@ static ANNOUNCE_DIRTY_PENDING: AtomicBool = AtomicBool::new(false);
 /// ⇒ 只有本地保存的那一轮许发 `dirty`；对端唤醒的轮**只拉不发**。
 static LOCAL_SAVE_PENDING: AtomicBool = AtomicBool::new(false);
 
+/// ⭐⭐ **§13.12 Phase 0 埋点（2026-11-18，owner 拍「动埋点」）**：两段**本机时刻**，
+/// 用来量「保存 → 公告发出」与「收到对端 dirty 公告 → 这一轮跑完」。
+///
+/// ⚠️ **只报本机两段**（两个时刻都取自本机同一个时钟 ⇒ 可以相减）：
+/// 跨机的「改 → 对端可见」需要**共同时钟**，日志里没有 ⇒ ⛔ 不许把两台机器的读数相减
+/// （与 2026-11-12 F1 真机那次的裁决同一口径）。
+/// ⚠️ 默认**一个字都不打**：只在 `SHUYONOTE_LAN_DEBUG_ANNOUNCE` 开着时输出
+/// （与 `lan::announce_recv_line` 同一个开关）⇒ ⛔ 不是用户可见行为。
+static LOCAL_SAVE_AT_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+/// 见上：收到**对端 dirty 公告**的本机时刻（0 ＝ 没有起点）。
+static PEER_DIRTY_SEEN_AT_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
 /// ⭐ **F1 小尾巴（2026-11-12）**：最近一次"本地保存唤醒"的**来源标签**（日志用）。
 ///
 /// 为什么要有：真机出现过「本地保存唤醒」但**不知道是谁保存的**（3 次未解释的 dirty 轮）。
@@ -988,6 +1000,29 @@ pub fn event_round_ready(
     !paused && meshed_n > 0 && !in_flight && event_round_due(last_event_ms, now_ms)
 }
 
+/// ⭐ **§13.12 Phase 0 埋点（2026-11-18，纯函数）**：把**本机两段时刻**写成一行读数。
+///
+/// 形状：`[sync-latency] seg=<段名> ms=<两时刻之差>`
+/// · `seg=save_to_announce`：本地保存 → 那条带 `dirty` 的公告**真的发出去**；
+/// · `seg=announce_to_round_done`：收到对端 `dirty` 公告 → 被唤醒的那一轮**跑完**。
+///
+/// 三条口径（都是判据）：
+/// ① `started_ms <= 0`（没有起点）⇒ `None` —— ⛔ **不许拿 0 当"0 毫秒"**；
+/// ② 终点早于起点（时钟被改过）⇒ 取 **0**，⛔ 不写负数；
+/// ③ `seg` 只接受调用方传的**代码常量**（⛔ 不许运行时拼接用户内容）。
+pub fn latency_line(seg: &str, started_ms: i64, ended_ms: i64) -> Option<String> {
+    if started_ms <= 0 {
+        return None;
+    }
+    let ms = ended_ms.saturating_sub(started_ms).max(0);
+    Some(format!("[sync-latency] seg={seg} ms={ms}"))
+}
+
+/// 埋点开关：与 `lan::announce_recv_line` **同一个环境变量**（⛔ 不另立一套开关）。
+fn debug_latency() -> bool {
+    std::env::var_os("SHUYONOTE_LAN_DEBUG_ANNOUNCE").is_some()
+}
+
 /// ⭐ **P3-1a**：请求"本地刚保存，后台轮醒来跑一轮"（**只在保存成功后调**）。
 ///
 /// ⚠️ 只置位 + 叫醒，不直接跑：真正的 gate/合并由 `start` 循环里的 `event_round_ready` 判
@@ -1012,6 +1047,8 @@ pub fn request_round_now_from_source(source: &'static str) {
     }
     // ⭐ 2026-11-12（F1 修复）：本地保存 ⇒ 这一轮**可以**对外发 dirty。
     LOCAL_SAVE_PENDING.store(true, Ordering::SeqCst);
+    // ⭐ §13.12 Phase 0：记下**保存这一刻**（`save_to_announce` 那一段的起点）。
+    LOCAL_SAVE_AT_MS.store(crate::db::now_ms(), Ordering::SeqCst);
     EVENT_ROUND_PENDING.store(true, Ordering::SeqCst);
     ROUND_NOTIFY.notify_one();
 }
@@ -1036,6 +1073,8 @@ pub fn local_save_wake_line(what: &str, source: &str) -> String {
 /// ⛔ **不许**置 [`LOCAL_SAVE_PENDING`]：我们这一轮没产生任何本地改动，再发 `dirty` 只会让
 /// 对端也唤醒一轮并回发 `dirty` ⇒ 两边互相唤醒的活锁（真机实测过）。
 pub fn request_round_now_from_peer() {
+    // ⭐ §13.12 Phase 0：记下**收到对端 dirty 公告那一刻**（`announce_to_round_done` 的起点）。
+    PEER_DIRTY_SEEN_AT_MS.store(crate::db::now_ms(), Ordering::SeqCst);
     EVENT_ROUND_PENDING.store(true, Ordering::SeqCst);
     ROUND_NOTIFY.notify_one();
 }
@@ -1091,6 +1130,8 @@ fn spawn_background_round(
     device_id: &str,
     mesh_cfgs: &[(String, String, crate::mesh::MeshSettings, bool)],
     peers: &[lan::Peer],
+    // ⭐ §13.12 Phase 0：这一轮是不是「收到对端 dirty 公告」唤醒的（是 ⇒ 跑完时量那一段）。
+    peer_dirty_wake: bool,
 ) -> Option<String> {
     if BACKGROUND_IN_FLIGHT.swap(true, Ordering::SeqCst) {
         return None;
@@ -1261,6 +1302,20 @@ fn spawn_background_round(
             BACKGROUND_EMPTY_STREAK.store(0, Ordering::SeqCst);
         } else {
             BACKGROUND_EMPTY_STREAK.fetch_add(1, Ordering::SeqCst);
+        }
+        // ⭐ §13.12 Phase 0：这一轮**是被对端 dirty 公告唤醒的** ⇒ 量「收到公告 → 跑完」。
+        //   ⚠️ 只有这一种轮才量（本地保存唤醒的轮跟这条公告无关 ⇒ ⛔ 不许拿它冒充）。
+        //   起点同样 `swap(0)` 消费掉：量一次就够，⛔ 不让它跨轮复用成假读数。
+        if peer_dirty_wake {
+            if let Some(line) = latency_line(
+                "announce_to_round_done",
+                PEER_DIRTY_SEEN_AT_MS.swap(0, Ordering::SeqCst),
+                crate::db::now_ms(),
+            ) {
+                if debug_latency() {
+                    eprintln!("{line}");
+                }
+            }
         }
         // ⭐ **task-12（Lead 批）**：把"这一轮看到了什么"**落进库** ✓ ——
         //   ① `候选 0` 与 ② `看到了但没什么可拉` **再也不用猜** ✓（⭐ 日志会被句柄弄丢 ✗，⭐ 库里的键不会 ✓）。
@@ -1986,6 +2041,19 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 }
                 // ⚠️ **不管发出去几条都记时刻**：一条没发出去只说明"这个网段的广播被禁了"
                 //    （受限网络），每 1s 重试一次等于自己打自己 ⇒ 到点才试下一轮。
+                // ⭐ §13.12 Phase 0：只在**这一条真的带 dirty**时量「保存 → 公告发出」；
+                //   起点用 `swap(0)` 消费掉（量一次就够，⛔ 不让它跨轮复用成假读数）。
+                if dirty_now {
+                    if let Some(line) = latency_line(
+                        "save_to_announce",
+                        LOCAL_SAVE_AT_MS.swap(0, Ordering::SeqCst),
+                        crate::db::now_ms(),
+                    ) {
+                        if debug_latency() {
+                            eprintln!("{line}");
+                        }
+                    }
+                }
                 last_announce_ms = now;
             }
             // ⭐ **P3-1a**：本地保存事件 → 唤醒后台轮（2s 合并；⛔ 不绕 paused/未配网格/在飞 gate）。
@@ -2024,7 +2092,16 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     }
                     // 事件轮也重算原后台节拍（下一轮仍按 `background_round_interval_ms` 的 backoff ✓）。
                     last_bg_round_ms = now;
-                    match spawn_background_round(&app2, &device_id, &mesh_cfgs, &state.peers(now)) {
+                    // ⭐ §13.12 Phase 0：这一轮是不是「对端 dirty」唤醒的（⛔ 与本地保存那一路分开）。
+                    let peer_woken = !from_local_save
+                        && PEER_DIRTY_SEEN_AT_MS.load(Ordering::SeqCst) > 0;
+                    match spawn_background_round(
+                        &app2,
+                        &device_id,
+                        &mesh_cfgs,
+                        &state.peers(now),
+                        peer_woken,
+                    ) {
                         Some(what) => {
                             // ⭐ U3：真开跑了 ⇒ 加速截止时刻已消费（⛔ 别让它再触发一次）。
                             clear_auto_retry_deadline();
@@ -2060,7 +2137,14 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 auto_retry_next_at(),
             ) {
                 last_bg_round_ms = now;
-                match spawn_background_round(&app2, &device_id, &mesh_cfgs, &state.peers(now)) {
+                // ⭐ §13.12 Phase 0：常态节拍那一路**不是**对端 dirty 唤醒的 ⇒ 第四格 `false`。
+                match spawn_background_round(
+                    &app2,
+                    &device_id,
+                    &mesh_cfgs,
+                    &state.peers(now),
+                    false,
+                ) {
                     Some(what) => {
                         // ⭐ U3：真开跑了 ⇒ 截止时刻已消费（跳过那一支**不许**清它 —— 那正是真机踩过的坑）。
                         clear_auto_retry_deadline();
@@ -3213,6 +3297,30 @@ mod tests {
             false,
             "极端回绕也不许 panic"
         );
+    }
+
+    /// ⭐ **§13.12 Phase 0 埋点（2026-11-18）**：那一行读数的四条口径。
+    #[test]
+    fn latency_line_says_the_segment_and_never_fakes_a_zero() {
+        // ① 正常：两段时刻相减，段名照写
+        assert_eq!(
+            latency_line("save_to_announce", 1_000, 1_750).as_deref(),
+            Some("[sync-latency] seg=save_to_announce ms=750")
+        );
+        // ② 没有起点 ⇒ None（⛔ 不许拿 0 当"0 毫秒"）
+        assert_eq!(latency_line("save_to_announce", 0, 1_750), None);
+        assert_eq!(latency_line("announce_to_round_done", -5, 1_750), None);
+        // ③ 时钟被调回去 ⇒ 0，⛔ 不写负数
+        assert_eq!(
+            latency_line("announce_to_round_done", 2_000, 1_000).as_deref(),
+            Some("[sync-latency] seg=announce_to_round_done ms=0")
+        );
+        // ④ 两个段名是**代码常量**（判据按字面取；改名会先红在这一条）
+        for seg in ["save_to_announce", "announce_to_round_done"] {
+            let line = latency_line(seg, 1, 2).expect("有起点就该有读数");
+            assert!(line.starts_with("[sync-latency] seg="), "前缀变了：{line}");
+            assert!(line.contains(&format!("seg={seg} ")), "段名没写进去：{line}");
+        }
     }
 }
 

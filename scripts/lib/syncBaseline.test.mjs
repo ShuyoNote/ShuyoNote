@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatBaselineReport,
+  parseLatencyLine,
   parseMetricsLine,
   percentile,
   splitMetricLines,
@@ -149,5 +150,63 @@ describe("Phase 0 基线 · 汇总", () => {
     expect(text).toContain("不算通过");
     expect(text).toContain("4"); // 跳过/可疑行数照写
     expect(text).not.toContain("p50 0ms");
+  });
+});
+
+// ⭐ §13.12 Phase 0 埋点（2026-11-18，owner 拍「动埋点」）：两段**本机**时刻。
+// 口径：两段各报各的，⛔ 跨机不可相减（端到端还差"传输"那一段，日志里没有共同时钟）。
+describe("Phase 0 埋点 · [sync-latency] 两段", () => {
+  it("解析：段名 + 毫秒；CRLF 行也认", () => {
+    expect(parseLatencyLine("[sync-latency] seg=save_to_announce ms=750")).toEqual({
+      seg: "save_to_announce",
+      ms: 750,
+    });
+    expect(parseLatencyLine("[sync-latency] seg=announce_to_round_done ms=61\r")).toEqual({
+      seg: "announce_to_round_done",
+      ms: 61,
+    });
+  });
+
+  it("形状不对 ⇒ null（⛔ 不猜）：缺段名 / 毫秒非整数 / 负毫秒 / 段名带空格或路径", () => {
+    expect(parseLatencyLine("[sync-latency] ms=12")).toBeNull();
+    expect(parseLatencyLine("[sync-latency] seg=x ms=1.5")).toBeNull();
+    expect(parseLatencyLine("[sync-latency] seg=x ms=-3")).toBeNull();
+    expect(parseLatencyLine("[sync-latency] seg=a b ms=3")).toBeNull();
+    expect(parseLatencyLine("[sync-metrics] space=a peer=b since=0 max_seq=0 gap=0 fetched=0 applied=0 ms=1")).toBeNull();
+  });
+
+  it("汇总把两段分开算；报告里给人话，且不认识的段名照原样列出（⛔ 不静默丢）", () => {
+    const row = { space: "s", peer: "p", since: 0, maxSeq: 0, gap: 0, fetched: 0, applied: 0, ms: 10, recoveredAfterMs: null };
+    const s = summarizeMetrics(
+      [row, row],
+      0,
+      [
+        { seg: "save_to_announce", ms: 750 },
+        { seg: "save_to_announce", ms: 1250 },
+        { seg: "announce_to_round_done", ms: 61 },
+        { seg: "future_segment", ms: 9 },
+      ],
+    );
+    expect(s.segments.map((x) => x.seg)).toEqual([
+      "save_to_announce",
+      "announce_to_round_done",
+      "future_segment",
+    ]);
+    expect(s.segments[0].stats).toEqual({ count: 2, p50: 750, p95: 1250, max: 1250, over1s: 1, over100ms: 2 });
+    const text = formatBaselineReport(s);
+    expect(text).toContain("保存 → 公告发出");
+    expect(text).toContain("收到对端公告 → 该轮跑完");
+    expect(text).toContain("future_segment");
+    expect(text).toContain("不认识的段名");
+    // ⛔ 不把两段拼成"端到端"
+    expect(text).not.toContain("端到端 =");
+  });
+
+  it("一条埋点都没有 ⇒ 报告说清「没有」，⛔ 不写成 0ms", () => {
+    const row = { space: "s", peer: "p", since: 0, maxSeq: 0, gap: 0, fetched: 0, applied: 0, ms: 10, recoveredAfterMs: null };
+    const text = formatBaselineReport(summarizeMetrics([row], 0, []));
+    expect(text).toContain("一条都没有");
+    expect(text).toContain("SHUYONOTE_LAN_DEBUG_ANNOUNCE");
+    expect(text).not.toContain("save_to_announce（保存 → 公告发出）：没量到");
   });
 });

@@ -59,10 +59,30 @@ node scripts/measure-sync-baseline.mjs --log <文件> --json --max-lines 200000 
 下一步若要做 Phase 0 完整版，最省的是：**给「保存时刻」与「对端拉完时刻」各打一条带同一来源时钟的行**
 （同一台机器上打两个时刻才能相减；跨机只能各报各的，⛔ 不相减）。
 
+## 4.5 ⭐ 埋点已加（2026-11-18，owner 拍「动埋点」）——但**还没有真读数**
+
+上面 §4 那两格「量不到」，其中**两段是可以量的**（只要承认"跨机不可相减"）：
+
+| 段名 | 起点 | 终点 | 谁打的 |
+|---|---|---|---|
+| `save_to_announce` | 本地保存那一刻（`request_round_now_from_source`） | 那条带 `dirty` 的公告**真的发出去**那一刻 | `lan_state.rs::latency_line` |
+| `announce_to_round_done` | 收到对端 `dirty` 公告那一刻（`request_round_now_from_peer`） | 被它唤醒的那一轮**跑完** | 同上 |
+
+- 形状：`[sync-latency] seg=<段名> ms=<差>`；**默认一个字都不打** —— 只在
+  `SHUYONOTE_LAN_DEBUG_ANNOUNCE` 开着时输出（与 `announce_recv_line` 同一个开关）。
+- 口径三条（都有判据）：起点 ≤0 ⇒ **不打**（⛔ 不拿 0 当"0 毫秒"）；终点早于起点 ⇒ 记 **0**（⛔ 不写负数）；
+  起点用 `swap(0)` **消费掉**（⛔ 不许跨轮复用成假读数）。
+- ⛔ **仍然量不到端到端**：`保存 → 对端可见 = ① + 传输 + ②`，中间那一段要共同时钟。
+  ⇒ 报告里**分开列**，永不把两段拼成"端到端"（判据 `expect(text).not.toContain("端到端 =")`）。
+- ⚠️ **没有真读数**：本机当前没有开着 debug 开关跑过一轮（dev 应用未启动）⇒
+  这一格**是空的**，⛔ 不写 0、⛔ 不宣称"改→可见已量"。
+
 ## 5. 判据（这一页不许只靠嘴）
 
-- 纯函数：`scripts/lib/syncBaseline.test.mjs` —— 11 条：解析（含 **CRLF 真行**）、形状不对 ⇒ 跳过、
-  nearest-rank 分位数、汇总（耗时/缺口/恢复/分组）、**分组只有编号**、**没量到 ⇒ 报告写没量到**。
+- 纯函数：`scripts/lib/syncBaseline.test.mjs` —— 15 条：解析（`[sync-metrics]` 与 `[sync-latency]`，**都含 CRLF 真行**）、
+  形状不对 ⇒ 跳过、nearest-rank 分位数、汇总（耗时/缺口/恢复/分组/两段）、**分组只有编号**、
+  **两段不拼端到端**、**没量到 ⇒ 报告写没量到**。
+- Rust：`lan_state::tests::latency_line_says_the_segment_and_never_fakes_a_zero`（1 条，`win-cargo-test.ps1 -Filter latency_line` 实测 1 passed）。
 - 工具：`scripts/measure-sync-baseline.mjs` —— 一条都没解析到 ⇒ **exit 2**（没查过 ≠ 通过）。
 - ⛔ 这个工具**不是门禁**（不叫 `check-*`、不进 `scripts/lib/gates.mjs`）：它读的是机器上的日志，
   换台机器就没数据，挂着只会假红/假绿。

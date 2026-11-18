@@ -17,7 +17,12 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 
-import { formatBaselineReport, parseMetricsLine, summarizeMetrics } from "./lib/syncBaseline.mjs";
+import {
+  formatBaselineReport,
+  parseLatencyLine,
+  parseMetricsLine,
+  summarizeMetrics,
+} from "./lib/syncBaseline.mjs";
 
 function usage() {
   return [
@@ -74,18 +79,28 @@ function parseArgs(argv) {
 async function scanFile(file, maxLines) {
   /** @type {import("./lib/syncBaseline.mjs").MetricRow[]} */
   const rows = [];
+  /** @type {{seg: string, ms: number}[]} */
+  const latencies = [];
   let suspicious = 0;
   let seen = 0;
   const rl = createInterface({ input: createReadStream(file, { encoding: "utf8" }), crlfDelay: Infinity });
   for await (const line of rl) {
     seen += 1;
     if (maxLines > 0 && seen > maxLines) break;
-    if (!line.includes("[sync-metrics]")) continue;
-    const row = parseMetricsLine(line);
-    if (row) rows.push(row);
-    else suspicious += 1;
+    if (line.includes("[sync-metrics]")) {
+      const row = parseMetricsLine(line);
+      if (row) rows.push(row);
+      else suspicious += 1;
+      continue;
+    }
+    // ⭐ §13.12 埋点两段（同一份日志里混着；⛔ 与轮次读数是两回事）
+    if (line.includes("[sync-latency]")) {
+      const seg = parseLatencyLine(line);
+      if (seg) latencies.push(seg);
+      else suspicious += 1;
+    }
   }
-  return { rows, suspicious };
+  return { rows, latencies, suspicious };
 }
 
 async function main() {
@@ -115,14 +130,17 @@ async function main() {
 
   /** @type {import("./lib/syncBaseline.mjs").MetricRow[]} */
   const all = [];
+  /** @type {{seg: string, ms: number}[]} */
+  const latencies = [];
   let suspicious = 0;
   for (const file of args.logs) {
-    const { rows, suspicious: bad } = await scanFile(file, args.maxLines);
+    const { rows, latencies: segs, suspicious: bad } = await scanFile(file, args.maxLines);
     all.push(...rows);
+    latencies.push(...segs);
     suspicious += bad;
   }
 
-  const summary = summarizeMetrics(all, suspicious);
+  const summary = summarizeMetrics(all, suspicious, latencies);
   if (args.json) {
     // ⛔ 不输出原始 id：这里只给数字与编号标签。
     console.log(JSON.stringify(summary, null, 2));
