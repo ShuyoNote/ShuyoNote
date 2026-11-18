@@ -4902,8 +4902,15 @@ pub(crate) async fn mesh_round_once(
         let c = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
         let _ = note_pending_trust_asks(&c, proto_space, my_device, peers, crate::db::now_ms());
     }
-    let mut report =
-        crate::mesh::round(conn, proto_space, my_device, peers, skip_peers, device_level).await?;
+    let mut report = crate::mesh::round(
+        conn,
+        proto_space,
+        my_device,
+        peers,
+        skip_peers,
+        device_level,
+    )
+    .await?;
     report.window = crate::mesh::window_addr(proto_space).map(|a| format!("http://{a}"));
     // ⭐ **可核读数**：只在这一档**真的开着**时计数 ✓（没开 ⇒ 不算"跑过一轮" ✓）。
     if report.enabled {

@@ -6770,7 +6770,9 @@ mod tests {
         // ① 空名单 ⇒ **原样返回**（顺序与数量都不动 —— 这条保证"不带名单时行为逐字不变"）
         let same = drop_skipped_candidates(vec![mk("a"), mk("b")], &[]);
         assert_eq!(
-            same.iter().map(|p| p.device_id.as_str()).collect::<Vec<_>>(),
+            same.iter()
+                .map(|p| p.device_id.as_str())
+                .collect::<Vec<_>>(),
             vec!["a", "b"]
         );
         // ② 名单里的那台被去掉，其余保持原顺序（这台还可能来自手动地址/跨网路线 —— 正是这一层要管的）

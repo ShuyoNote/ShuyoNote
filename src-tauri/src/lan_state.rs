@@ -1318,11 +1318,7 @@ fn spawn_background_round(
                     if debug_latency() {
                         eprintln!(
                             "{}",
-                            round_timing_line(
-                                &proto_space,
-                                true,
-                                space_t0.elapsed().as_millis()
-                            )
+                            round_timing_line(&proto_space, true, space_t0.elapsed().as_millis())
                         );
                     }
                     // ⭐ 2026-10-24：后台轮也要告诉前端“改了哪些页”（网格没有 SSE；
@@ -1414,11 +1410,7 @@ fn spawn_background_round(
                     if debug_latency() {
                         eprintln!(
                             "{}",
-                            round_timing_line(
-                                &proto_space,
-                                false,
-                                space_t0.elapsed().as_millis()
-                            )
+                            round_timing_line(&proto_space, false, space_t0.elapsed().as_millis())
                         );
                     }
                 }
@@ -2284,8 +2276,8 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     // 事件轮也重算原后台节拍（下一轮仍按 `background_round_interval_ms` 的 backoff ✓）。
                     last_bg_round_ms = now;
                     // ⭐ §13.12 Phase 0：这一轮是不是「对端 dirty」唤醒的（⛔ 与本地保存那一路分开）。
-                    let peer_woken = !from_local_save
-                        && PEER_DIRTY_SEEN_AT_MS.load(Ordering::SeqCst) > 0;
+                    let peer_woken =
+                        !from_local_save && PEER_DIRTY_SEEN_AT_MS.load(Ordering::SeqCst) > 0;
                     match spawn_background_round(
                         &app2,
                         &device_id,
@@ -3510,7 +3502,10 @@ mod tests {
         for seg in ["save_to_announce", "announce_to_round_done"] {
             let line = latency_line(seg, 1, 2).expect("有起点就该有读数");
             assert!(line.starts_with("[sync-latency] seg="), "前缀变了：{line}");
-            assert!(line.contains(&format!("seg={seg} ")), "段名没写进去：{line}");
+            assert!(
+                line.contains(&format!("seg={seg} ")),
+                "段名没写进去：{line}"
+            );
         }
     }
 
@@ -3560,7 +3555,10 @@ mod tests {
     /// ⭐ **2026-11-18（根因 A 取证）**：每空间耗时的那一行 —— 形状固定、空间必须先脱敏。    #[test]
     fn round_timing_line_masks_the_space_and_keeps_the_shape() {
         let line = round_timing_line("2ae7009bff614f96c64c703021609443", true, 21_345);
-        assert!(line.starts_with("[round-timing] space="), "前缀变了：{line}");
+        assert!(
+            line.starts_with("[round-timing] space="),
+            "前缀变了：{line}"
+        );
         assert!(line.contains(" ok=true "), "结果没写进去：{line}");
         assert!(line.contains(" ms=21345"), "耗时没写进去：{line}");
         // ⛔ 原始空间 id 不许进日志（与 `[mesh] 后台一轮完成` 同一把尺：只留前 8 位 + 省略号）
@@ -3579,7 +3577,13 @@ mod tests {
     fn a_pending_dirty_announces_soon_but_never_twice_within_the_min_gap() {
         let interval = ANNOUNCE_INTERVAL_MS;
         // ① 到点 ⇒ 播（与旧行为一致）
-        assert!(announce_due_with_dirty(0, 10_000, interval, false, DIRTY_ANNOUNCE_MIN_GAP_MS));
+        assert!(announce_due_with_dirty(
+            0,
+            10_000,
+            interval,
+            false,
+            DIRTY_ANNOUNCE_MIN_GAP_MS
+        ));
         assert!(announce_due_with_dirty(
             10_000,
             10_000 + interval,
@@ -3593,13 +3597,43 @@ mod tests {
             "保存后挂着 dirty ⇒ 过了最小间隔就该播（⛔ 不许再等 30 s 节拍）"
         );
         // ③ 但**最小间隔内不许重播**（否则一次保存刷出一屏公告 —— 第一版就是 4,311 条）
-        assert!(!announce_due_with_dirty(10_000, 10_100, interval, true, DIRTY_ANNOUNCE_MIN_GAP_MS));
-        assert!(!announce_due_with_dirty(10_000, 10_500, interval, true, DIRTY_ANNOUNCE_MIN_GAP_MS));
-        assert!(!announce_due_with_dirty(10_000, 10_999, interval, true, DIRTY_ANNOUNCE_MIN_GAP_MS));
+        assert!(!announce_due_with_dirty(
+            10_000,
+            10_100,
+            interval,
+            true,
+            DIRTY_ANNOUNCE_MIN_GAP_MS
+        ));
+        assert!(!announce_due_with_dirty(
+            10_000,
+            10_500,
+            interval,
+            true,
+            DIRTY_ANNOUNCE_MIN_GAP_MS
+        ));
+        assert!(!announce_due_with_dirty(
+            10_000,
+            10_999,
+            interval,
+            true,
+            DIRTY_ANNOUNCE_MIN_GAP_MS
+        ));
         // ④ 没 dirty 又没到点 ⇒ 不播（常规节拍照旧）
-        assert!(!announce_due_with_dirty(10_000, 20_000, interval, false, DIRTY_ANNOUNCE_MIN_GAP_MS));
+        assert!(!announce_due_with_dirty(
+            10_000,
+            20_000,
+            interval,
+            false,
+            DIRTY_ANNOUNCE_MIN_GAP_MS
+        ));
         // ⑤ 还没播过（`last <= 0`）且挂着 dirty ⇒ 立刻播
-        assert!(announce_due_with_dirty(0, 5, interval, true, DIRTY_ANNOUNCE_MIN_GAP_MS));
+        assert!(announce_due_with_dirty(
+            0,
+            5,
+            interval,
+            true,
+            DIRTY_ANNOUNCE_MIN_GAP_MS
+        ));
         // ⑥ 最小间隔必须**明显小于**常规间隔（否则"提前播"没意义）
         assert!(DIRTY_ANNOUNCE_MIN_GAP_MS < interval);
     }
