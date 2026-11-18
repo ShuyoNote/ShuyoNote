@@ -3229,6 +3229,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
           open={meshDiagnoseOpen}
           status={lanStatus}
           round={lastRound}
+          watermarks={watermarks}
           onReload={reloadLanForDiagnose}
           onClose={() => setMeshDiagnoseOpen(false)}
         />

@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import type { LanStatus, MeshRoundReport, NearbyPeer } from "./platform/commands";
+import type { LanStatus, MeshRoundReport, MeshWatermarks, NearbyPeer } from "./platform/commands";
 import {
   LEVEL_LABEL,
   diagnoseMesh,
@@ -383,5 +383,95 @@ describe("面板接线 · 连接体检（文本级，与 syncPanelMesh.wiring.te
     // ⛔ 自己写的 JSX 文案不许用 Markdown 粗体（会在界面上原样显示星号）
     const bold = code.match(/\*\*[^*\n]{1,40}\*\*/g);
     expect(bold, `JSX 文本里出现了 Markdown 粗体：${bold?.[0]}`).toBeNull();
+  });
+});
+
+// ⭐ §13.6 O2：诊断包升级 —— 当前空间水位矩阵（哪一台不同步、差多少、为什么）。
+describe("体检纯函数 · §13.6 O2 水位矩阵", () => {
+  function wm(over: Partial<MeshWatermarks> = {}): MeshWatermarks {
+    return {
+      spaceName: "研发空间",
+      localMaxSeq: 120,
+      peers: [
+        { index: 1, cursor: 120, online: true, lastOkAgoMs: 12_000 },
+        { index: 2, cursor: 100, online: false, lastOkAgoMs: 3_600_000 },
+      ],
+      onlineCount: 1,
+      offlineCount: 1,
+      unknownCount: 0,
+      note: "读数来自本机记录",
+      ...over,
+    };
+  }
+
+  it("离线且落后 ⇒ warn，原因写清差多少、最近成功多久", () => {
+    const s = diagnoseMesh(okStatus(), null, { watermarks: wm() });
+    expectWellFormed(s);
+    const it2 = item(s, "watermark-2")!;
+    expect(it2.level).toBe("warn");
+    expect(it2.reason).toContain("落后 20");
+    expect(it2.reason).toContain("离线");
+    expect(it2.reason).toContain("1 小时前");
+    expect(s.overall).toBe("warn");
+  });
+
+  it("在线但没拉齐 ⇒ warn；已拉齐 ⇒ ok", () => {
+    const s = diagnoseMesh(okStatus(), null, {
+      watermarks: wm({
+        peers: [
+          { index: 1, cursor: 120, online: true, lastOkAgoMs: 1000 },
+          { index: 2, cursor: 119, online: true, lastOkAgoMs: 2000 },
+        ],
+        onlineCount: 2,
+        offlineCount: 0,
+      }),
+    });
+    expect(item(s, "watermark-1")!.level).toBe("ok");
+    expect(item(s, "watermark-2")!.level).toBe("warn");
+    expect(item(s, "watermark-2")!.title).toContain("在线但没拉齐");
+    expect(item(s, "watermark-2")!.reason).toContain("落后 1");
+  });
+
+  it("没有成功记录 ⇒ unknown（⛔ 不写成已齐）", () => {
+    const s = diagnoseMesh(okStatus(), null, {
+      watermarks: wm({
+        peers: [{ index: 1, cursor: 0, online: null, lastOkAgoMs: null }],
+        onlineCount: 0,
+        offlineCount: 0,
+        unknownCount: 1,
+      }),
+    });
+    expect(item(s, "watermark-1")!.level).toBe("unknown");
+    expect(item(s, "watermark-1")!.reason).toContain("还没有成功记录");
+  });
+
+  it("不传水位 ⇒ 一项都不添（旧构建/读不到，⛔ 不装成已齐）", () => {
+    const s = diagnoseMesh(okStatus(), null, { at: 1 });
+    expect(s.watermarks).toBeNull();
+    expect(s.items.some((i) => i.key.startsWith("watermark"))).toBe(false);
+    expect(meshDiagnosticText(s)).not.toContain("水位矩阵");
+  });
+
+  it("诊断包含矩阵且脱敏：有对端序号/落后，⛔ 无空间名/设备名/设备号/地址", () => {
+    const s = diagnoseMesh(okStatus(), null, { watermarks: wm() });
+    const text = meshDiagnosticText(s);
+    expect(text).toContain("水位矩阵");
+    expect(text).toContain("对端[2]");
+    expect(text).toContain("落后=20");
+    expect(text).not.toContain("研发空间");
+    expect(text).not.toContain(DEVICE_ID);
+    expect(text).not.toContain(DEVICE_NAME);
+    expect(text).not.toContain(PEER_ADDR);
+  });
+});
+
+// ⭐ §13.6 O2 接线：面板把 `mesh_watermarks` 传给对话框，对话框再交给纯函数（⛔ 组件里不自判）。
+describe("接线 · O2 水位矩阵", () => {
+  it("SyncPanel 传入 watermarks；对话框把它交给 diagnoseMesh", () => {
+    const panel = readFileSync(resolve("src/components/SyncPanel.tsx"), "utf8");
+    const dialog = readFileSync(resolve("src/components/MeshDiagnoseDialog.tsx"), "utf8");
+    expect(panel).toContain("watermarks={watermarks}");
+    expect(dialog).toContain("{ watermarks }");
+    expect(dialog).toContain("diagnoseMesh(status, round, { watermarks })");
   });
 });

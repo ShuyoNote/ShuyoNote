@@ -18,7 +18,7 @@
 //
 // 判据：`src/lib/meshDiagnose.test.ts`（纯函数 ≥5 场景 ＋ 脱敏 ＋ 面板接线）。
 
-import type { LanStatus, MeshRoundReport, NearbyPeer } from "./platform/commands";
+import type { LanStatus, MeshRoundReport, MeshWatermarks, NearbyPeer } from "./platform/commands";
 import { READOUT_UNREAD, portMismatchNotice } from "./personalSyncReadout";
 
 /** 一项体检查结论的四个级别。`unknown` ＝ **没有结论**（读不到），⛔ 不是"没问题"。 */
@@ -79,8 +79,129 @@ export interface MeshDiagnosis {
   items: DiagnoseItem[];
   /** 脱敏的设备摘要（诊断包用；界面不用它记事，界面用 `items`）。 */
   peers: PeerDigest[];
+  /** ⭐ §13.6 O2：当前空间的水位摘要（来自 `mesh_watermarks`；读不到＝null）。 */
+  watermarks: WatermarkDigest | null;
   /** 生成时刻（ms）；诊断包里会写成可读时间。 */
   at: number;
+}
+
+/**
+ * ⭐ §13.6 O2：水位矩阵里的一台对端（**脱敏**：只有序号与读数，
+ * ⛔ 不含 device_id / 设备名 / 地址 / 公钥）。
+ */
+export interface PeerWatermarkDigest {
+  index: number;
+  cursor: number;
+  online: boolean | null;
+  lastOkAgoMs: number | null;
+}
+
+/** ⭐ §13.6 O2：当前空间的水位摘要（⛔ 不含空间名 —— 空间名可能带业务信息）。 */
+export interface WatermarkDigest {
+  localMaxSeq: number;
+  peerCount: number;
+  onlineCount: number;
+  offlineCount: number;
+  unknownCount: number;
+  peers: PeerWatermarkDigest[];
+}
+
+/** `mesh_watermarks` → 诊断用摘要（读不到＝null；⛔ 不猜 0）。 */
+export function watermarkDigest(w: MeshWatermarks | null | undefined): WatermarkDigest | null {
+  if (!w || typeof w !== "object") return null;
+  const peers = Array.isArray(w.peers) ? w.peers : [];
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return {
+    localMaxSeq: num(w.localMaxSeq),
+    peerCount: peers.length,
+    onlineCount: num(w.onlineCount),
+    offlineCount: num(w.offlineCount),
+    unknownCount: num(w.unknownCount),
+    peers: peers.map((p) => ({
+      index: num(p.index),
+      cursor: num(p.cursor),
+      online: p.online === true ? true : p.online === false ? false : null,
+      lastOkAgoMs:
+        typeof p.lastOkAgoMs === "number" && Number.isFinite(p.lastOkAgoMs) ? p.lastOkAgoMs : null,
+    })),
+  };
+}
+
+/** 毫秒 → 人话（只用于诊断文本/体检原因；⛔ 不算"多久没同步"这类业务结论）。 */
+function agoText(ms: number | null): string {
+  if (ms === null) return "还没有成功记录";
+  if (ms < 1000) return "刚刚";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s} 秒前`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} 分钟前`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} 小时前`;
+  return `${Math.round(h / 24)} 天前`;
+}
+
+/** §13.6 O2：把水位摘要变成逐台体检项（"哪一台不同步、差多少、为什么"）。 */
+function watermarkItems(w: WatermarkDigest): DiagnoseItem[] {
+  const items: DiagnoseItem[] = [];
+  const lagging = w.peers.filter((p) => p.cursor < w.localMaxSeq);
+  const offline = w.peers.filter((p) => p.online === false);
+  const level: DiagnoseLevel =
+    offline.length > 0 || lagging.length > 0
+      ? "warn"
+      : w.peers.some((p) => p.online === null)
+        ? "unknown"
+        : "ok";
+  items.push({
+    key: "watermarks",
+    level,
+    title: "当前空间的水位矩阵",
+    reason:
+      `本机高水位 ${w.localMaxSeq}；对端 ${w.peerCount} 台` +
+      `（在线 ${w.onlineCount} · 离线 ${w.offlineCount} · 未知 ${w.unknownCount}）` +
+      (lagging.length > 0 ? `；其中 ${lagging.length} 台还没拉齐` : ""),
+    next: level === "ok" ? "不用处理" : "看下面逐台的水位差；等对端上线后点「立即同步」",
+  });
+  for (const p of w.peers) {
+    const lag = Math.max(0, w.localMaxSeq - p.cursor);
+    const detail =
+      `已收 ${p.cursor} / 本机 ${w.localMaxSeq}` +
+      (lag > 0 ? `（落后 ${lag}）` : "（已齐）") +
+      `；最近成功：${agoText(p.lastOkAgoMs)}`;
+    if (p.online === null) {
+      items.push({
+        key: `watermark-${p.index}`,
+        level: "unknown",
+        title: "这一台还没有成功记录",
+        reason: `对端 ${p.index}：${detail}`,
+        next: "等它上线后点「立即同步」；仍无记录就看它是否配对、是否同网段",
+      });
+    } else if (p.online === false) {
+      items.push({
+        key: `watermark-${p.index}`,
+        level: "warn",
+        title: "这一台离线",
+        reason: `对端 ${p.index}：离线；${detail}`,
+        next: "等它上线；它离线期间的变化会在重连后补拉",
+      });
+    } else if (lag > 0) {
+      items.push({
+        key: `watermark-${p.index}`,
+        level: "warn",
+        title: "这一台在线但没拉齐",
+        reason: `对端 ${p.index}：在线；${detail}`,
+        next: "点「立即同步」再试；仍落后就看同步历史里的失败原因",
+      });
+    } else {
+      items.push({
+        key: `watermark-${p.index}`,
+        level: "ok",
+        title: "这一台已拉齐",
+        reason: `对端 ${p.index}：在线；${detail}`,
+        next: "不用处理",
+      });
+    }
+  }
+  return items;
 }
 
 /** 把 `mesh.bind`（形如 `0.0.0.0:8788` / `[::]:8788`）拆出端口号。 */
@@ -207,7 +328,7 @@ function headlineOf(counts: Record<DiagnoseLevel, number>, overall: DiagnoseLeve
 export function diagnoseMesh(
   status: LanStatus | null | undefined,
   round?: MeshRoundReport | null,
-  opts?: { at?: number },
+  opts?: { at?: number; watermarks?: MeshWatermarks | null },
 ): MeshDiagnosis {
   const at = opts?.at ?? Date.now();
   const items: DiagnoseItem[] = [];
@@ -228,6 +349,7 @@ export function diagnoseMesh(
       counts: counts0,
       items,
       peers: [],
+      watermarks: null,
       at,
     };
   }
@@ -510,9 +632,13 @@ export function diagnoseMesh(
     }
   }
 
+  // ⑧ §13.6 O2：当前空间的水位矩阵（可选）。读不到 ⇒ 不加项（⛔ 不装成"已齐"）。
+  const wm = watermarkDigest(opts?.watermarks);
+  if (wm) items.push(...watermarkItems(wm));
+
   const counts = countsOf(items);
   const overall = overallOf(counts);
-  return { overall, headline: headlineOf(counts, overall), counts, items, peers, at };
+  return { overall, headline: headlineOf(counts, overall), counts, items, peers, watermarks: wm, at };
 }
 
 /** 读数的三档写法：开 / 关 / 未读到（⛔ 不让"读不到"混进"关"）。 */
@@ -571,6 +697,23 @@ export function meshDiagnosticText(d: MeshDiagnosis): string {
           ` · 服务当前空间=${p.servesCurrent ? "是" : "否"}（原因码 ${p.servesReason || "空"}）` +
           ` · 钥匙=${keyText(p)}` +
           ` · 身份材料=${p.hasIdentity ? "已报" : "未报"}`,
+      );
+    }
+  }
+  // ⭐ §13.6 O2：水位矩阵（只写序号与读数；⛔ 不含空间名/设备号/地址，见文件头第 3 条）。
+  if (d.watermarks) {
+    const w = d.watermarks;
+    lines.push(
+      "",
+      "水位矩阵（当前空间；脱敏：不含空间名、设备号与地址）：",
+      `  本机高水位=${w.localMaxSeq} · 对端 ${w.peerCount} 台（在线 ${w.onlineCount} / 离线 ${w.offlineCount} / 未知 ${w.unknownCount}）`,
+    );
+    for (const p of w.peers) {
+      const lag = Math.max(0, w.localMaxSeq - p.cursor);
+      lines.push(
+        `  对端[${p.index}] 已收=${p.cursor} · 本机=${w.localMaxSeq} · 落后=${lag}` +
+          ` · 在线=${p.online === null ? "未知" : p.online ? "是" : "否"}` +
+          ` · 最近成功=${agoText(p.lastOkAgoMs)}`,
       );
     }
   }
