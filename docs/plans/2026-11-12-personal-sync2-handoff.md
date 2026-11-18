@@ -64,6 +64,11 @@ O1 多设备同步图（数据面第一刀 ＋ 接线） ✅ 2026-11-18（只读
                               （含面板接线：testid、`p.online === true` 与「已收至」不许再出现）
                               ⚠️ 未做：真人目视效果；仍是**当前空间**
                               （共用件下沉 `src/lib/diagnoseText.ts` —— ⛔ 避开 meshDiagnose↔meshSyncGraph 循环 import）
+§13.12 Phase 0 基线（只读日志） ✅ 2026-11-18（只测量，⛔ 不改行为）：`[sync-metrics]` 1,463 轮合并读数
+                              p50 32ms / p95 81ms / max 15,158ms（>1s 7 条）、缺口 2 轮、
+                              `recovered_after_ms` 一次没出现；⚠️ 只有 1 台对端，「改→可见延迟」量不到
+                              工具 `scripts/measure-sync-baseline.mjs`（没量到 ⇒ exit 2）＋判据 11 条
+                              详见 docs/plans/2026-11-18-sync2-phase0-baseline.md
 U1 真机（AMD 侧读数）        ✅ 方向② 12:37:57 导入 ok/30 ms（未过期）；方向① 走方法 A：13:49:59
                                  生成→13:50:07 落卡→13:50:11 `fetched=1 applied=1`（1c02 `U1-E2E-1794458288928` 落库，
                                  cursor 252→254）；`mesh_paired_devices` 0→1
