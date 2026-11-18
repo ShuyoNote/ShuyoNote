@@ -374,4 +374,18 @@ describe("O1 接线 · 同步面板", () => {
     expect(panel, "面板里还留着 `p.online === true` 自判 ⇒ 两份真相源").not.toContain("p.online === true");
     expect(panel, "面板里还留着旧的「已收至」拼句").not.toContain("已收至");
   });
+
+  // ⭐ owner 2026-11-18 拍：「没有对端水位时也要说一声」（原来整块不显示 ⇒ 用户看不到这块东西）
+  it("空状态：没有对端水位时那块**照样显示**，并写一行「还没有对端水位」", () => {
+    // ① 显示条件**不再要求有行**（否则没数据就整块消失 —— 那正是 owner 说"看不到"的原因）
+    expect(panel, "显示条件里还带着 meshGraphRows.length > 0 ⇒ 没数据时整块消失").not.toContain(
+      "meshGraph.readable.watermarks && meshGraphRows.length > 0",
+    );
+    expect(panel, "显示条件应只看「水位读得到」").toContain(
+      "{watermarks && meshGraph.readable.watermarks && (",
+    );
+    // ② 空状态那一行必须在，且说得清"没和任何设备成功同步过"（⛔ 不许只写"暂无数据"）
+    expect(panel, "没有空状态文案 ⇒ 空着一块会让人以为坏了").toContain("这个空间还没有对端水位");
+    expect(panel, "空状态要给出原因（没成功同步过）").toContain("没和任何设备成功同步过");
+  });
 });

@@ -2887,7 +2887,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                 ⚠️ 状态与读数**全部**来自 `meshSyncGraph()` ＋ `syncGraphRows()`（纯函数，有判据）；
                 ⛔ 这里不许再拿 `watermarks.peers` 自己判在线/落后（两份真相源）。
                 ⚠️ 对端只用**序号**（内部设备 id 不上界面）；水位整支读不到 ⇒ 这块不显示（⛔ 不编 0）。 */}
-            {watermarks && meshGraph.readable.watermarks && meshGraphRows.length > 0 && (
+            {watermarks && meshGraph.readable.watermarks && (
               <details className="sync-row" open>
                 <summary>
                   <span className="sync-row-label">多设备同步图</span>
@@ -2899,6 +2899,16 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                   <span className="sync-row-caret" aria-hidden>›</span>
                 </summary>
                 <div className="sync-row-body" data-testid="mesh-sync-graph">
+                  {/* ⭐ owner 2026-11-18 拍：「没有对端水位时也要说一声」——
+                      原来没数据整块不显示 ⇒ 用户根本不知道有这块东西。⛔ 不编 0：
+                      这里说的是"还没和任何设备成功同步过"，不是"0 台已齐"。 */}
+                  {meshGraphRows.length === 0 && (
+                    <div className="sync-hint" data-testid="mesh-sync-graph-empty">
+                      这个空间还没有对端水位（还没和任何设备成功同步过）。
+                      <br />
+                      等有一次成功同步后，这里会逐台写「已齐 / 落后 / 断了 / 未知」。
+                    </div>
+                  )}
                   {meshGraphRows.map((r) => (
                     <div
                       key={r.key}
