@@ -199,6 +199,12 @@ owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workf
    「每 3 分钟不到一轮」。⚠️ 这轮 `ok=true`（**不报错**，只是没拉到）⇒ 只能靠这一行读数看出来。
    **候选修法（都没做）**：i 一轮内对同一对端只等一次超时（失败隔离，中等改动、需拍）；
    ii 空间并发（大）；iii 缩短那个 15 s 超时（小但风险最高）。读数见基线页 §4.9
+11) ⚠️ **根因 A 修法 i 第一版未生效（2026-11-18）**：名单过滤放在 `spawn_background_round` 这一层，
+   但每个空间的候选是 `sync::mesh_round_once → mesh::round` **内部另建**的（`state.peers()` 在发现层闸关着时是空表）
+   ⇒ 过滤器看到空名单，每空间仍 21 s。**下一步**：把"本轮跳过名单"下沉到候选构建处（`mesh::round` /
+   `round_candidates`），要动 `mesh.rs` 签名与它自己的判据 —— 属 S3 的正经改动，单独排。
+   现状判据：`only_a_network_failure_is_skipped_for_the_rest_of_the_round`（纯函数级，绿）；
+   诊断 `[round-timing]` / `[peer-skip]` / `[peer-err-class]`（⛔ 都不打错误原文）留在库内。详见基线页 §4.10
 ```
 
 ## 4. 红线与待拍板

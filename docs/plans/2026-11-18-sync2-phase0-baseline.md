@@ -206,6 +206,32 @@ node scripts/measure-sync-baseline.mjs --log <文件> --json --max-lines 200000 
 ⚠️ 我的建议：**先做 i**，判据写成"同一轮里对同一对端只等一次超时；下一轮照旧重试"，并保留 `[round-timing]` 作为读数。
 ⛔ 在此之前：**本页只报数，不宣称 A 已解决**。
 
+## 4.10 ⚠️ 修法 i **第一版未生效**（同日复测；⛔ 不写成"已修"）
+
+做的：`spawn_background_round` 里加一份**只活一轮**的失败名单 `failed_peers`，
+每空间只把"本轮还没失败过"的对端交给 round；是否跳过由纯函数
+`should_skip_peer_for_rest_of_round(err)` 决定（**只网络类**，⛔ 不改 U3 的词表；补一次小写归一，
+因为 Windows/reqwest 会吐 `Connection refused`）。判据 `only_a_network_failure_is_skipped_for_the_rest_of_the_round`（绿）。
+
+**复测：没生效。** 每空间仍然 21.07 / 21.18 / 21.07 s，`[peer-skip]` 一行都没有；而我加的分类诊断明确说：
+
+```text
+[peer-err-class] skip=true hits=["error sending request"] len=442
+[peer-err-class] skip=true hits=["error sending request"] len=538
+```
+
+⇒ 分类是对的、名单也进得去，但**过滤器那一侧看到的是空名单**。根因（从代码结构确认）：
+
+- `spawn_background_round` 的 `peers` 参数来自 `state.peers(now)`，而发现层在**自己的闸关着**时返回空表；
+- 但每个空间的候选**不是**从这个参数来的 —— 它由 `sync::mesh_round_once` → `mesh::round` 内部另建
+  （所以 `候选 1` 照样出现、每个空间照样 21 s）。
+
+⇒ **跳过名单必须下沉到候选构建处（`mesh::round` / `round_candidates`）**，在 `spawn_background_round` 这一层过滤是够不着的。
+⚠️ 这一步要动 `mesh.rs` 的签名与它自己的判据，**本轮没做**（时间到，且属于 S3 的正经改动）。
+
+留下的东西（都无害、都在同一 debug 开关下）：`[round-timing]`、`[peer-skip]`（有对端表时会打）、
+`[peer-err-class]`（**只打命中哪个词与长度，⛔ 不打错误原文** —— 原文里有对端地址）、以及那个纯函数与判据。
+
 ## 5. 判据（这一页不许只靠嘴）
 
 - 纯函数：`scripts/lib/syncBaseline.test.mjs` —— 15 条：解析（`[sync-metrics]` 与 `[sync-latency]`，**都含 CRLF 真行**）、

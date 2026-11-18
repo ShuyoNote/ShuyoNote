@@ -1146,8 +1146,25 @@ pub fn announce_due_with_dirty(
 /// `dirty` 驱动公告的**最小间隔**：一次保存 1 秒内只播一次（保存可以很密，公告不能）。
 pub const DIRTY_ANNOUNCE_MIN_GAP_MS: i64 = 1_000;
 
-/// ⭐ **2026-11-18（根因 A 取证，纯函数）**：一个空间在这一轮里花了多久。
+/// ⭐⭐ **2026-11-18（根因 A 修法 i，owner 拍，纯函数）**：本轮里这台对端还要不要继续试？
 ///
+/// 判据：**只有"会等超时"的那类失败**（`auto_retryable` ＝ 网络类）才在**本轮**跳过它 ——
+/// 因为它的代价是"每个空间各等满一次超时"（实测 21.06 s × 9 ≈ 188 s/轮）。
+/// ⛔ 身份类（401/被移出/没配对）**不跳过**：它们本来就不等超时，跳过只会掩盖"换个空间也许能成"。
+/// ⚠️ 这是**本轮**的跳过，⛔ 不是永久拉黑：下一轮照旧重试（`spawn_background_round` 的清单只活一轮）。
+pub fn should_skip_peer_for_rest_of_round(err: Option<&str>) -> bool {
+    match err {
+        Some(e) => {
+            // ⚠️ 只**复用** U3 的词表（⛔ 不另抄一份），并补一次**小写归一**：
+            //   Windows/reqwest 会吐 `Connection refused`（首字母大写），而词表里是小写 ——
+            //   不归一的话这一格会"看起来有判据、实际上永远匹配不上"。
+            auto_retryable(e) || auto_retryable(&e.to_ascii_lowercase())
+        }
+        None => false,
+    }
+}
+
+/// ⭐ **2026-11-18（根因 A 取证，纯函数）**：一个空间在这一轮里花了多久。///
 /// 形状：`[round-timing] space=<脱敏空间> ok=<true|false> ms=<耗时>`
 /// ⚠️ 空间名**必须**先过 `mask_space`（⛔ 原始 id/名字不进日志：与 `[mesh] 后台一轮完成` 同一把尺）。
 pub fn round_timing_line(space: &str, ok: bool, ms: u128) -> String {
@@ -1237,6 +1254,11 @@ fn spawn_background_round(
         let mut fail_any = false;
         let mut retriable_any = false;
         let mut identity_any = false;
+        // ⭐⭐ **2026-11-18（根因 A 修法 i，owner 拍）**：本轮里**已经等满超时**的对端 ——
+        //   后面的空间不再为它重等一次（实测每空间 21.06 s × 9 空间 ≈ 188 s/轮）。
+        //   ⚠️ 只跳过**网络类**失败（身份类本来就不等超时，跳它反而会把"某空间能成"变成误导）；
+        //   ⚠️ **下一轮照旧重试**（这个清单只活在这一轮里）。
+        let mut failed_peers: Vec<String> = Vec::new();
         for (proto_space, db_space, device_level) in pairs {
             // ⭐ 2026-10-11（设备级 ✓）：⭐ 判定**在上面那一处算好**（`mesh::is_device_level_space` ✓）
             //   再传进来 ✗ —— `mesh_round_once` 自己不判 ✓（否则就是第二份口径 ✓；方案 §9.1／§10.3 ✓）。
@@ -1249,6 +1271,19 @@ fn spawn_background_round(
             //   "一轮几十秒"到底是"网段没人"还是"每台对端等超时"，只有这一行能分开。
             //   ⛔ 只诊断（同一 debug 开关），不改任何 gate/时序。
             let space_t0 = std::time::Instant::now();
+            // ⭐ **2026-11-18（修法 i）**：这一轮里已经失败过的对端不再交给本空间。
+            let live_peers: Vec<lan::Peer> = peers
+                .iter()
+                .filter(|p| !failed_peers.iter().any(|d| d == &p.announce.device_id))
+                .cloned()
+                .collect();
+            if debug_latency() && live_peers.len() < peers.len() {
+                eprintln!(
+                    "[peer-skip] 本轮已失败 {} 台 ⇒ 本空间只试 {} 台（剩余对端下一轮重试）",
+                    peers.len() - live_peers.len(),
+                    live_peers.len()
+                );
+            }
             let round_result = match crate::db::app_data_dir_ref()
                 .and_then(|dir| crate::db::open_space_conn_at(&db_space, dir).ok())
             {
@@ -1259,7 +1294,7 @@ fn spawn_background_round(
                         &proto_space,
                         &db_space,
                         &dev,
-                        &peers,
+                        &live_peers,
                         device_level,
                     )
                     .await
@@ -1271,7 +1306,7 @@ fn spawn_background_round(
                             &proto_space,
                             &db_space,
                             &dev,
-                            &peers,
+                            &live_peers,
                             device_level,
                         )
                         .await
@@ -1314,6 +1349,41 @@ fn spawn_background_round(
                             retriable_any = true;
                         } else {
                             identity_any = true;
+                        }
+                    }
+                    // ⭐ **2026-11-18（根因 A 修法 i，owner 拍）**：**网络类**失败的对端记下来，
+                    //   本轮后面那些空间不再为它重等一次超时（实测每空间 21.06 s）。
+                    //   ⚠️ 只记网络类：身份类（401/被移出）本来就不等超时，跳它没有收益、还会误导。
+                    //   ⚠️ 这个清单**只活在这一轮**：下一轮照旧重试（⛔ 不是"永久拉黑"）。
+                    for p in r.peers.iter().filter(|p| p.error.is_some()) {
+                        if should_skip_peer_for_rest_of_round(p.error.as_deref())
+                            && !failed_peers.iter().any(|d| d == &p.peer)
+                        {
+                            failed_peers.push(p.peer.clone());
+                        }
+                        // ⭐ 2026-11-18（修法 i 取证）：只打"命中哪个词 + 判成什么"，
+                        //   ⛔ 不打错误原文（里面有对端地址）。
+                        if debug_latency() {
+                            let e = p.error.as_deref().unwrap_or("").to_ascii_lowercase();
+                            let hits: Vec<&str> = [
+                                "timeout",
+                                "超时",
+                                "连接被拒",
+                                "connection refused",
+                                "connection reset",
+                                "error sending request",
+                                "端口被占",
+                                "地址已被占用",
+                            ]
+                            .iter()
+                            .filter(|m| e.contains(*m))
+                            .copied()
+                            .collect();
+                            eprintln!(
+                                "[peer-err-class] skip={} hits={hits:?} len={}",
+                                should_skip_peer_for_rest_of_round(p.error.as_deref()),
+                                e.len()
+                            );
                         }
                     }
                     eprintln!(
@@ -3445,8 +3515,50 @@ mod tests {
         }
     }
 
-    /// ⭐ **2026-11-18（根因 A 取证）**：每空间耗时的那一行 —— 形状固定、空间必须先脱敏。
+    /// ⭐⭐ **2026-11-18（根因 A 修法 i，owner 拍）**：本轮跳过**只**给"会等超时"的那一类失败，
+    /// 而且**只跳过本轮**（下一轮照旧重试）。
     #[test]
+    fn only_a_network_failure_is_skipped_for_the_rest_of_the_round() {
+        // ① 网络类（会等超时）⇒ 本轮跳过（这就是那 188 s/轮 的来源）
+        //   ⚠️ 词表**只在 `auto_retryable` 一处**（U3 的契约）；这里只复用，⛔ 不新增词。
+        for reason in [
+            "连接超时",
+            "timeout",
+            "error sending request",
+            "connection refused",
+            "Connection refused", // 大写形态（Windows/reqwest 会这么吐）必须也能匹配
+        ] {
+            assert!(
+                should_skip_peer_for_rest_of_round(Some(reason)),
+                "网络类失败本轮该跳过：{reason}"
+            );
+        }
+        // ①c **真机那条原文**（2026-11-18 从 sync_history 抄下来的形状）也必须判成网络类
+        assert!(
+            should_skip_peer_for_rest_of_round(Some(
+                "拉对端 4b345a0a-bdbb-4075-8768-0605b30784a2 失败：error sending request for url (http://192.168.43.190:8788/mesh/pull?space_id=1c02&since=215&limit=1000)"
+            )),
+            "真机那条『error sending request …』必须判成网络类"
+        );
+        // ①b **词表里没有的原因 ⇒ 不跳过**（保守方向：宁可这轮慢，也不许因为"不认识"就少试一台）
+        for reason in ["network unreachable", "磁盘满了", "未知错误 X"] {
+            assert!(
+                !should_skip_peer_for_rest_of_round(Some(reason)),
+                "不认识的原因⛔ 不许当成网络类跳过：{reason}"
+            );
+        }
+        // ② 身份类 ⇒ 不跳过（它们本来就不等超时；跳过只会掩盖"换个空间也许能成"）
+        for reason in ["没通过", "401", "被移出", "没配对"] {
+            assert!(
+                !should_skip_peer_for_rest_of_round(Some(reason)),
+                "身份类失败⛔ 不许跳过：{reason}"
+            );
+        }
+        // ③ 没失败 ⇒ 当然不跳过
+        assert!(!should_skip_peer_for_rest_of_round(None));
+    }
+
+    /// ⭐ **2026-11-18（根因 A 取证）**：每空间耗时的那一行 —— 形状固定、空间必须先脱敏。    #[test]
     fn round_timing_line_masks_the_space_and_keeps_the_shape() {
         let line = round_timing_line("2ae7009bff614f96c64c703021609443", true, 21_345);
         assert!(line.starts_with("[round-timing] space="), "前缀变了：{line}");
