@@ -210,3 +210,17 @@ describe("Phase 0 埋点 · [sync-latency] 两段", () => {
     expect(text).not.toContain("save_to_announce（保存 → 公告发出）：没量到");
   });
 });
+
+  it("只有埋点、没有轮次读数时：分段照样列出来（⛔ 不因为缺轮次就把已有读数藏起来）", () => {
+    const text = formatBaselineReport(
+      summarizeMetrics([], 0, [
+        { seg: "save_to_announce", ms: 238 },
+        { seg: "save_to_announce", ms: 74386 },
+        { seg: "save_to_announce", ms: 123 },
+      ]),
+    );
+    expect(text).toContain("没量到");
+    expect(text).toContain("save_to_announce（保存 → 公告发出）");
+    expect(text).toContain("p50 238ms");
+    expect(text).toContain("max 74386ms");
+  });

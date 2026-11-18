@@ -321,7 +321,8 @@ export function formatBaselineReport(s, title = "个人版同步 2.0 · Phase 0 
       "没量到：这一批日志里没有一行能解析的 [sync-metrics]（⛔ 这不算基线，也不算通过）",
       `跳过/可疑行：${s.skipped}`,
       "能怎么量：让网格这一档跑起来打一轮同步，日志里每轮会写一行 [sync-metrics] … ms=…。",
-      `分段读数：${s.segments.length === 0 ? "一条都没有" : `${s.segments.length} 段（但没有轮次读数，⛔ 不作基数）`}`,
+      "分段读数（⭐ 埋点：这两格在有轮次读数之前就已经能量）：",
+      ...segmentLines(s.segments),
     );
     return lines.join("\n");
   }
