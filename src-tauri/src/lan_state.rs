@@ -1146,6 +1146,17 @@ pub fn announce_due_with_dirty(
 /// `dirty` 驱动公告的**最小间隔**：一次保存 1 秒内只播一次（保存可以很密，公告不能）。
 pub const DIRTY_ANNOUNCE_MIN_GAP_MS: i64 = 1_000;
 
+/// ⭐ **2026-11-18（根因 A 取证，纯函数）**：一个空间在这一轮里花了多久。
+///
+/// 形状：`[round-timing] space=<脱敏空间> ok=<true|false> ms=<耗时>`
+/// ⚠️ 空间名**必须**先过 `mask_space`（⛔ 原始 id/名字不进日志：与 `[mesh] 后台一轮完成` 同一把尺）。
+pub fn round_timing_line(space: &str, ok: bool, ms: u128) -> String {
+    format!(
+        "[round-timing] space={} ok={ok} ms={ms}",
+        crate::lan::mask_space(space)
+    )
+}
+
 /// ⭐ **task-12（Lead 拍）**：最近**连续几次**后台轮是空手的（`候选 0` ✓）——
 /// ⭐ 找到对端 ⇒ **清零** ✓／空手 ⇒ **+1** ✓／收到公告 ⇒ **清零** ✓ ⇒ 下一次等多久由
 /// [`background_round_interval_ms`] 决定 ✓。
@@ -1234,6 +1245,10 @@ fn spawn_background_round(
             //   同一个 `&db.0`，而 `mesh::round` 把这个 conn 当"空间连接"用（读设置、读名字、落库）
             //   ⇒ "10 个空间"其实是**同一份库跑了 10 次**（日志里那 10 条一模一样的拉取就是它 ✓）。
             //   ⚠️ 顺带接上"锁着也能收"：库打不开时走 `sealed_round`（只进 inbox，不解密不应用 ✓）。
+            // ⭐ **2026-11-18（根因 A 取证）**：每个空间各量一次耗时 ——
+            //   "一轮几十秒"到底是"网段没人"还是"每台对端等超时"，只有这一行能分开。
+            //   ⛔ 只诊断（同一 debug 开关），不改任何 gate/时序。
+            let space_t0 = std::time::Instant::now();
             let round_result = match crate::db::app_data_dir_ref()
                 .and_then(|dir| crate::db::open_space_conn_at(&db_space, dir).ok())
             {
@@ -1266,6 +1281,16 @@ fn spawn_background_round(
             };
             match round_result {
                 Ok(r) => {
+                    if debug_latency() {
+                        eprintln!(
+                            "{}",
+                            round_timing_line(
+                                &proto_space,
+                                true,
+                                space_t0.elapsed().as_millis()
+                            )
+                        );
+                    }
                     // ⭐ 2026-10-24：后台轮也要告诉前端“改了哪些页”（网格没有 SSE；
                     //   不刷新的话，编辑器里那份旧 doc 之后一保存就盖掉刚并进来的块）。
                     let touched = crate::mesh::round_touched_pages(&r);
@@ -1316,7 +1341,17 @@ fn spawn_background_round(
                         "[{}] [mesh] 后台一轮失败：空间 {} ｜ {e}",
                         lan::log_stamp(),
                         crate::lan::mask_space(&proto_space)
-                    )
+                    );
+                    if debug_latency() {
+                        eprintln!(
+                            "{}",
+                            round_timing_line(
+                                &proto_space,
+                                false,
+                                space_t0.elapsed().as_millis()
+                            )
+                        );
+                    }
                 }
             }
         }
@@ -3408,6 +3443,23 @@ mod tests {
             assert!(line.starts_with("[sync-latency] seg="), "前缀变了：{line}");
             assert!(line.contains(&format!("seg={seg} ")), "段名没写进去：{line}");
         }
+    }
+
+    /// ⭐ **2026-11-18（根因 A 取证）**：每空间耗时的那一行 —— 形状固定、空间必须先脱敏。
+    #[test]
+    fn round_timing_line_masks_the_space_and_keeps_the_shape() {
+        let line = round_timing_line("2ae7009bff614f96c64c703021609443", true, 21_345);
+        assert!(line.starts_with("[round-timing] space="), "前缀变了：{line}");
+        assert!(line.contains(" ok=true "), "结果没写进去：{line}");
+        assert!(line.contains(" ms=21345"), "耗时没写进去：{line}");
+        // ⛔ 原始空间 id 不许进日志（与 `[mesh] 后台一轮完成` 同一把尺：只留前 8 位 + 省略号）
+        assert!(
+            !line.contains("2ae7009bff614f96c64c703021609443"),
+            "空间 id 没脱敏：{line}"
+        );
+        let bad = round_timing_line("sp-1", false, 0);
+        assert!(bad.contains(" ok=false "));
+        assert!(bad.contains(" ms=0"));
     }
 
     /// ⭐⭐ **2026-11-18（慢支修法 B，第二版，owner 拍）**：`dirty` 驱动的公告**不许等 30 s 节拍**，
