@@ -18,9 +18,15 @@
 //
 // ## 这一版能量什么、量不到什么（如实写，⛔ 别让下一刀以为量过了）
 // ✅ 能：单轮拉取耗时分布（`ms`）、缺口（`gap>0` 的轮数）、恢复耗时分布（`recovered_after_ms`）、
-//       每台对端/每个空间的轮数与耗时（编号后）
+//       每台对端/每个空间的轮数与耗时（编号后）；
+//       ⭐ F2：**每台对端的水位差**（最大落后 / 缺口合计 / 「拉了但没融合」轮数）；
+//       ⭐ F3：**逐空间耗时**（`[round-timing]`）与每轮合计（按标签重复切块的**推断值**，见下）
 // ⛔ 不能：**改 → 对端可见延迟**（要「保存时刻」与「对端拉完时刻」跨机对齐，日志里没有共同时钟）、
 //       通知/轮询端到端时延（同上）、耗电/流量（日志里没有）、换网恢复时间（只有断连/重启类恢复）
+//
+// ⚠️ **`[round-timing]` 没有轮边界标记**：每轮合计只能按「同一空间标签在块内重复 ⇒ 新一轮」推断
+//    （Rust 侧每个空间每轮打一行）。⇒ 报告必须写明这是推断值；块大小不一致时**只把与最大块同大小的块
+//    当完整轮**，其余单独计 `partial` 块数，⛔ 不补齐、⛔ 不丢。
 //
 // 判据：`scripts/lib/syncBaseline.test.mjs`（含 **CRLF 真行** 那一格 —— 本仓踩过
 // 「`split("\n")` 在 CRLF 工作区整体静默失效」）。
@@ -135,6 +141,107 @@ export function parseLatencyLine(line) {
 }
 
 /**
+ * ⭐ **F3 Phase 0（2026-11-19）**：解析一行 `[round-timing] space=<脱敏标签> ok=<true|false> ms=<差>`。
+ *
+ * 这一行是 Rust 侧 `mesh.rs` 在**每个空间跑完**时打的（同一 debug 开关）。
+ * ⚠️ `space` 已被 `mask_space` 脱敏成 `f280…` 这种**前缀**形状 ⇒ 本文件只把它当**不透明标签**
+ *    用来切块/计数，⛔ 不还原、⛔ 不进报告（它仍然是内部 id 的前缀）。
+ * ⚠️ 形状不对 ⇒ `null`（⛔ 不猜）；一个不带 `=` 的碎词 ⇒ 整行不认（不静默截断）。
+ *
+ * @param {string} line
+ * @returns {{space: string, ok: boolean, ms: number}|null}
+ */
+export function parseRoundTimingLine(line) {
+  const text = String(line ?? "").replace(/\r$/, "");
+  const at = text.indexOf("[round-timing]");
+  if (at < 0) return null;
+  const body = text.slice(at + "[round-timing]".length).trim();
+  if (!body) return null;
+  /** @type {Map<string,string>} */
+  const kv = new Map();
+  for (const token of body.split(/\s+/)) {
+    const eq = token.indexOf("=");
+    if (eq <= 0) return null;
+    kv.set(token.slice(0, eq), token.slice(eq + 1));
+  }
+  const space = kv.get("space");
+  const okRaw = kv.get("ok");
+  const ms = intOf(kv.get("ms"));
+  if (!space || space.length > 64) return null;
+  if (okRaw !== "true" && okRaw !== "false") return null;
+  if (ms === null || ms < 0) return null;
+  return { space, ok: okRaw === "true", ms };
+}
+
+/**
+ * 每轮合计 = 每个空间耗时相加 —— **但日志里没有轮边界标记**，只能推断：
+ * 「同一个空间标签在当前块里已经出现过 ⇒ 上一条就是新一轮的第一条」。
+ * （Rust 侧每个空间每轮恰好打一行 ⇒ 标签重复不可能是同一轮。）
+ *
+ * ⚠️ 这是**推断值**：报告必须写明推法；块大小不一致时调用方只把"与最大块同大小"的块当完整轮。
+ *
+ * @param {{space: string, ok: boolean, ms: number}[]} rows
+ * @returns {{rows: {space: string, ok: boolean, ms: number}[], totalMs: number}[]}
+ */
+export function splitRoundBlocks(rows) {
+  /** @type {{rows: {space: string, ok: boolean, ms: number}[], totalMs: number}[]} */
+  const blocks = [];
+  /** @type {{space: string, ok: boolean, ms: number}[]} */
+  let cur = [];
+  /** @type {Set<string>} */
+  const seen = new Set();
+  for (const r of rows) {
+    if (seen.has(r.space)) {
+      blocks.push({ rows: cur, totalMs: cur.reduce((s, x) => s + x.ms, 0) });
+      cur = [];
+      seen.clear();
+    }
+    cur.push(r);
+    seen.add(r.space);
+  }
+  if (cur.length > 0) blocks.push({ rows: cur, totalMs: cur.reduce((s, x) => s + x.ms, 0) });
+  return blocks;
+}
+
+/**
+ * ⭐ **F3 Phase 0**：逐空间耗时 ＋ 每轮合计（推断）。
+ *
+ * @typedef {object} SchedulingReading
+ * @property {number} lines        解析成功的 `[round-timing]` 行数
+ * @property {number} spaces       不同空间标签数（同一批日志里应当稳定）
+ * @property {number} okLines      `ok=true` 的行数（不报错 ≠ 拉到了东西）
+ * @property {number} failedLines  `ok=false` 的行数
+ * @property {PercStats|null} perSpace 逐空间耗时
+ * @property {{count:number, full:number, partial:number, sizes:number[], perRound:PercStats|null}} blocks
+ */
+
+/**
+ * @param {{space: string, ok: boolean, ms: number}[]} rows
+ * @returns {SchedulingReading}
+ */
+export function summarizeRoundTiming(rows) {
+  const blocks = splitRoundBlocks(rows);
+  const sizes = blocks.map((b) => b.rows.length);
+  const maxSize = sizes.length > 0 ? Math.max(...sizes) : 0;
+  // ⚠️ 只把"与最大块同大小"的块当完整轮：⛔ 不补齐半轮（补齐 = 编读数），⛔ 也不丢（partial 单独计数）。
+  const full = blocks.filter((b) => b.rows.length === maxSize);
+  return {
+    lines: rows.length,
+    spaces: new Set(rows.map((r) => r.space)).size,
+    okLines: rows.filter((r) => r.ok).length,
+    failedLines: rows.filter((r) => !r.ok).length,
+    perSpace: statsOf(rows.map((r) => r.ms)),
+    blocks: {
+      count: blocks.length,
+      full: full.length,
+      partial: blocks.length - full.length,
+      sizes,
+      perRound: statsOf(full.map((b) => b.totalMs)),
+    },
+  };
+}
+
+/**
  * 分位数（nearest-rank：取第 `ceil(p/100 × n)` 个，1 起；⛔ 不插值 —— 日志读数不该被"造"出来）。
  * @param {number[]} sortedAsc 已升序
  * @param {number} p 0..100
@@ -179,6 +286,9 @@ function statsOf(values) {
  * @property {number} fetched
  * @property {number} applied
  * @property {number} gapped
+ * @property {number} totalGap  ⭐ F2：该组所有轮的 `gap` 之和（谁缺多少条）
+ * @property {number} maxGap    ⭐ F2：单轮最大落后
+ * @property {number} notAppliedRounds ⭐ F2：`fetched>0 且 applied<fetched` 的轮数（拉了但没融合）
  * @property {PercStats} lat
  */
 
@@ -200,6 +310,9 @@ function groupBy(rows, keyOf) {
       fetched: list.reduce((s, r) => s + r.fetched, 0),
       applied: list.reduce((s, r) => s + r.applied, 0),
       gapped: list.filter((r) => r.gap > 0).length,
+      totalGap: list.reduce((s, r) => s + Math.max(0, r.gap), 0),
+      maxGap: list.reduce((m, r) => Math.max(m, r.gap), 0),
+      notAppliedRounds: list.filter((r) => r.fetched > 0 && r.applied < r.fetched).length,
       lat: statsOf(list.map((r) => r.ms)),
     }));
 }
@@ -217,6 +330,7 @@ function groupBy(rows, keyOf) {
  * @property {GroupReading[]} spaces
  * @property {GroupReading[]} peers
  * @property {LatencySegment[]} segments ⭐ 埋点两段（本机；⛔ 跨机不可相减）
+ * @property {SchedulingReading} scheduling ⭐ F3：逐空间耗时 ＋ 每轮合计（推断，见 `splitRoundBlocks`）
  */
 
 /**
@@ -235,9 +349,11 @@ export const LATENCY_SEGMENT_TEXT = {
  * 汇总。**纯函数**（⛔ 不读文件、不读时钟）。`skipped` 由调用方传入（它才知道原文里有多少可疑行）。
  * @param {MetricRow[]} rows
  * @param {number} [skipped]
+ * @param {{seg: string, ms: number}[]} [latencyRows] ⭐ 埋点两段（本机）
+ * @param {{space: string, ok: boolean, ms: number}[]} [roundRows] ⭐ F3 `[round-timing]`
  * @returns {BaselineSummary}
  */
-export function summarizeMetrics(rows, skipped = 0, latencyRows = []) {
+export function summarizeMetrics(rows, skipped = 0, latencyRows = [], roundRows = []) {
   const recoveredValues = rows.map((r) => r.recoveredAfterMs).filter((v) => v !== null);
   const spaces = groupBy(rows, (r) => r.space).map((g, i) => ({ ...g, label: `空间 ${i + 1}` }));
   const peers = groupBy(rows, (r) => r.peer).map((g, i) => ({ ...g, label: `对端 ${i + 1}` }));
@@ -274,6 +390,7 @@ export function summarizeMetrics(rows, skipped = 0, latencyRows = []) {
     spaces,
     peers,
     segments,
+    scheduling: summarizeRoundTiming(roundRows),
   };
 }
 
@@ -303,8 +420,27 @@ function groupLines(groups) {
   return groups.map(
     (g) =>
       `  ${g.label}：${g.rounds} 轮 · ${g.lat.p50}/${g.lat.p95}/${g.lat.max} ms（p50/p95/max）` +
-      ` · 缺口 ${g.gapped} 轮 · fetched ${g.fetched} · applied ${g.applied}`,
+      ` · 缺口 ${g.gapped} 轮 / 合计 ${g.totalGap} 条（最大落后 ${g.maxGap}）` +
+      ` · 拉了没融合 ${g.notAppliedRounds} 轮 · fetched ${g.fetched} · applied ${g.applied}`,
   );
+}
+
+/**
+ * ⭐ **F3 Phase 0** 的调度读数（逐空间耗时 ＋ 每轮合计）。
+ * ⚠️ 每轮合计是**推断值**（日志没有轮边界标记）⇒ 报告里必须写出推法，⛔ 不冒充精确值。
+ * @param {SchedulingReading} s
+ */
+function schedulingLines(s) {
+  if (s.lines === 0) {
+    return [
+      "  （没量到：这批日志没有 [round-timing]；它只在 SHUYONOTE_LAN_DEBUG_ANNOUNCE 开着时才会打）",
+    ];
+  }
+  const first = `  逐空间耗时：${percText(s.perSpace)}（${s.lines} 条 / ${s.spaces} 个空间；ok ${s.okLines} · failed ${s.failedLines}）`;
+  const second =
+    `  每轮合计（**推断**：同一空间标签在块内重复 ⇒ 新一轮）：${percText(s.blocks.perRound)}` +
+    `（${s.blocks.full} 轮完整；不完整块 ${s.blocks.partial} 块不参与，⛔ 不补齐）`;
+  return [first, second];
 }
 
 /**
@@ -321,6 +457,8 @@ export function formatBaselineReport(s, title = "个人版同步 2.0 · Phase 0 
       "没量到：这一批日志里没有一行能解析的 [sync-metrics]（⛔ 这不算基线，也不算通过）",
       `跳过/可疑行：${s.skipped}`,
       "能怎么量：让网格这一档跑起来打一轮同步，日志里每轮会写一行 [sync-metrics] … ms=…。",
+      "调度（F3 Phase 0）读数（有 [round-timing] 就列出来，⛔ 不因为缺轮次就藏起来）：",
+      ...schedulingLines(s.scheduling),
       "分段读数（⭐ 埋点：这两格在有轮次读数之前就已经能量）：",
       ...segmentLines(s.segments),
     );
@@ -338,14 +476,19 @@ export function formatBaselineReport(s, title = "个人版同步 2.0 · Phase 0 
     "按空间（编号代替空间名/哈希）：",
     ...groupLines(s.spaces),
     "",
-    "按对端（编号代替设备号）：",
+    "按对端（编号代替设备号；缺口＝对端声称的高水位与本机游标之差，⭐ F2 的「谁缺谁几条」）：",
     ...groupLines(s.peers),
+    "",
+    "调度（F3 Phase 0，逐空间耗时来自 [round-timing]；⛔ 不改行为）：",
+    ...schedulingLines(s.scheduling),
     "",
     "分段（⭐ 埋点：**本机两段时刻**，⛔ 跨机不可相减 —— 端到端还差「传输」那一段，日志里没有）：",
     ...segmentLines(s.segments),
     "",
     "⚠️ 这份基线**量不到**：改→对端可见延迟、通知/轮询端到端时延、耗电/流量、换网恢复时间",
     "   （前两项要跨机对齐同一个时钟，日志里没有 ⇒ ⛔ 不许拿本机 ms 冒充「改→可见」）。",
+    "⚠️ 「拉了没融合」只说明 **fetched>0 且 applied<fetched**（对端有数据、本机没落库）；",
+    "   原因（空间名/身份对不上等）在**空间级 note** 里，日志读数给不出 ⇒ ⛔ 不猜。",
   );
   return lines.join("\n");
 }

@@ -21,6 +21,7 @@ import {
   formatBaselineReport,
   parseLatencyLine,
   parseMetricsLine,
+  parseRoundTimingLine,
   summarizeMetrics,
 } from "./lib/syncBaseline.mjs";
 
@@ -81,6 +82,8 @@ async function scanFile(file, maxLines) {
   const rows = [];
   /** @type {{seg: string, ms: number}[]} */
   const latencies = [];
+  /** @type {{space: string, ok: boolean, ms: number}[]} */
+  const roundRows = [];
   let suspicious = 0;
   let seen = 0;
   const rl = createInterface({ input: createReadStream(file, { encoding: "utf8" }), crlfDelay: Infinity });
@@ -98,9 +101,16 @@ async function scanFile(file, maxLines) {
       const seg = parseLatencyLine(line);
       if (seg) latencies.push(seg);
       else suspicious += 1;
+      continue;
+    }
+    // ⭐ F3 Phase 0：逐空间耗时（同一 debug 开关；⛔ 与 [sync-metrics] 不是同一条口径）
+    if (line.includes("[round-timing]")) {
+      const rt = parseRoundTimingLine(line);
+      if (rt) roundRows.push(rt);
+      else suspicious += 1;
     }
   }
-  return { rows, latencies, suspicious };
+  return { rows, latencies, roundRows, suspicious };
 }
 
 async function main() {
@@ -132,15 +142,18 @@ async function main() {
   const all = [];
   /** @type {{seg: string, ms: number}[]} */
   const latencies = [];
+  /** @type {{space: string, ok: boolean, ms: number}[]} */
+  const roundRows = [];
   let suspicious = 0;
   for (const file of args.logs) {
-    const { rows, latencies: segs, suspicious: bad } = await scanFile(file, args.maxLines);
+    const { rows, latencies: segs, roundRows: rts, suspicious: bad } = await scanFile(file, args.maxLines);
     all.push(...rows);
     latencies.push(...segs);
+    roundRows.push(...rts);
     suspicious += bad;
   }
 
-  const summary = summarizeMetrics(all, suspicious, latencies);
+  const summary = summarizeMetrics(all, suspicious, latencies, roundRows);
   if (args.json) {
     // ⛔ 不输出原始 id：这里只给数字与编号标签。
     console.log(JSON.stringify(summary, null, 2));

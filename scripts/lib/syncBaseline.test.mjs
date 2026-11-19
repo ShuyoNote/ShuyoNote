@@ -14,9 +14,12 @@ import {
   formatBaselineReport,
   parseLatencyLine,
   parseMetricsLine,
+  parseRoundTimingLine,
   percentile,
   splitMetricLines,
+  splitRoundBlocks,
   summarizeMetrics,
+  summarizeRoundTiming,
 } from "./syncBaseline.mjs";
 
 /** 真实日志里那一行的形状（缩略了内部 id 的长度，字段一个不少）。 */
@@ -209,8 +212,6 @@ describe("Phase 0 埋点 · [sync-latency] 两段", () => {
     expect(text).toContain("SHUYONOTE_LAN_DEBUG_ANNOUNCE");
     expect(text).not.toContain("save_to_announce（保存 → 公告发出）：没量到");
   });
-});
-
   it("只有埋点、没有轮次读数时：分段照样列出来（⛔ 不因为缺轮次就把已有读数藏起来）", () => {
     const text = formatBaselineReport(
       summarizeMetrics([], 0, [
@@ -224,3 +225,142 @@ describe("Phase 0 埋点 · [sync-latency] 两段", () => {
     expect(text).toContain("p50 238ms");
     expect(text).toContain("max 74386ms");
   });
+});
+
+// ⭐ F2/F3 Phase 0（2026-11-19）：调度读数（`[round-timing]` 逐空间耗时）＋ 水位差（每台对端落后几条）。
+// 口径：**只读日志、⛔ 不改行为**；日志里**没有轮边界标记** ⇒ 每轮合计是**推断值**，必须写明怎么推的。
+describe("F2/F3 Phase 0 · [round-timing] 逐空间耗时（F3 调度）", () => {
+  /** 真机日志里的形状（空间标签由 Rust 侧 `mask_space` 脱敏成 `f280…`）。 */
+  const T = "[round-timing] space=f280… ok=true ms=98";
+
+  it("解析：忠实读 ok 与 ms；CRLF 行也认；⛔ 不还原脱敏标签、也不打印它", () => {
+    expect(parseRoundTimingLine(T)).toEqual({ space: "f280…", ok: true, ms: 98 });
+    expect(parseRoundTimingLine("[round-timing] space=1c02… ok=false ms=21061\r")).toEqual({
+      space: "1c02…",
+      ok: false,
+      ms: 21061,
+    });
+  });
+
+  it("形状不对 ⇒ null（⛔ 不猜）：缺 space / ok 不是 true|false / ms 非整数或负数 / 带碎词", () => {
+    expect(parseRoundTimingLine("")).toBeNull();
+    expect(parseRoundTimingLine("[round-timing] space=x ok=true")).toBeNull(); // 缺 ms
+    expect(parseRoundTimingLine("[round-timing] ok=true ms=9")).toBeNull(); // 缺 space
+    expect(parseRoundTimingLine("[round-timing] space=x ok=yes ms=9")).toBeNull();
+    expect(parseRoundTimingLine("[round-timing] space=x ok=true ms=9.5")).toBeNull();
+    expect(parseRoundTimingLine("[round-timing] space=x ok=true ms=-1")).toBeNull();
+    expect(parseRoundTimingLine("[round-timing] space=x ok=true ms=9 掐了")).toBeNull();
+    expect(
+      parseRoundTimingLine("[sync-metrics] space=a peer=b since=0 max_seq=0 gap=0 fetched=0 applied=0 ms=1"),
+    ).toBeNull();
+  });
+
+  it("切块：**同一空间标签在块内重复** ⇒ 新一轮（日志没有轮边界标记，这是唯一可复算的推法）", () => {
+    const rows = ["a", "b", "c", "a", "b", "c"].map((space) => ({ space, ok: true, ms: 10 }));
+    const blocks = splitRoundBlocks(rows);
+    expect(blocks.map((b) => b.rows.length)).toEqual([3, 3]);
+    // 顺序不被重排（⛔ 不按标签排序 —— 那样会把"块"弄丢）
+    expect(blocks[0].rows.map((r) => r.space)).toEqual(["a", "b", "c"]);
+  });
+
+  it("每轮合计**只**在「块大小＝最大块」的块上算；不完整块单独计数，⛔ 不补齐、⛔ 不丢", () => {
+    const rows = [
+      // 完整一轮 3 个空间
+      { space: "a", ok: true, ms: 100 },
+      { space: "b", ok: true, ms: 200 },
+      { space: "c", ok: true, ms: 300 },
+      // 重启打断的半轮（只有 2 条）
+      { space: "a", ok: true, ms: 50 },
+      { space: "b", ok: false, ms: 70 },
+    ];
+    const s = summarizeRoundTiming(rows);
+    expect(s.lines).toBe(5);
+    expect(s.spaces).toBe(3);
+    expect(s.okLines).toBe(4);
+    expect(s.failedLines).toBe(1);
+    // ⚠️ `over100ms` 的既有口径是**严格 `> 100`**（与 `summarizeMetrics` 同一把尺）⇒ 100 那一条不算。
+    expect(s.perSpace).toEqual({ count: 5, p50: 100, p95: 300, max: 300, over1s: 0, over100ms: 2 });
+    expect(s.blocks.count).toBe(2);
+    expect(s.blocks.full).toBe(1);
+    expect(s.blocks.partial).toBe(1);
+    expect(s.blocks.perRound).toEqual({ count: 1, p50: 600, p95: 600, max: 600, over1s: 0, over100ms: 1 });
+    expect(s.blocks.sizes).toEqual([3, 2]);
+  });
+
+  it("一条都没有 ⇒ 报告写「没量到」，⛔ 不写成 0ms；已有轮次读数照旧列出来", () => {
+    const row = { space: "s", peer: "p", since: 0, maxSeq: 0, gap: 0, fetched: 0, applied: 0, ms: 10, recoveredAfterMs: null };
+    const text = formatBaselineReport(summarizeMetrics([row], 0, [], []));
+    // 报告头是「调度（F3 Phase 0，…）」⇒ 判据用前缀，⛔ 不钉死括号后的字
+    expect(text).toContain("调度（F3 Phase 0");
+    expect(text).toContain("没量到");
+    expect(text).not.toContain("逐空间耗时：p50 0ms");
+  });
+
+  it("报告里**不出现**空间标签原文（脱敏标签也不行 —— 它也是内部 id 的前缀）", () => {
+    const rows = [
+      { space: "f280…", ok: true, ms: 98 },
+      { space: "1c02…", ok: true, ms: 194 },
+    ];
+    const text = formatBaselineReport(summarizeMetrics([], 0, [], rows));
+    expect(text.includes("f280")).toBe(false);
+    expect(text.includes("1c02…")).toBe(false);
+    expect(text).toContain("逐空间耗时");
+  });
+});
+
+describe("F2 Phase 0 · 对端水位差（谁缺谁的数据）", () => {
+  function row(over = {}) {
+    return {
+      space: "s1",
+      peer: "p1",
+      since: 9,
+      maxSeq: 9,
+      gap: 0,
+      fetched: 0,
+      applied: 0,
+      ms: 10,
+      recoveredAfterMs: null,
+      ...over,
+    };
+  }
+
+  it("每台对端：最大落后 / 缺口合计 / 拉了但没融合的轮数，都从读数来", () => {
+    const s = summarizeMetrics([
+      row({ peer: "p1", since: 7, maxSeq: 9, gap: 2, fetched: 0, applied: 0 }),
+      row({ peer: "p1", since: 9, maxSeq: 9, gap: 0 }),
+      row({ peer: "p2", since: 0, maxSeq: 4, gap: 4, fetched: 2, applied: 0 }),
+      row({ peer: "p2", since: 3, maxSeq: 3, gap: 0, fetched: 1, applied: 1 }),
+    ]);
+    const byRounds = s.peers.filter((g) => g.rounds === 2);
+    expect(byRounds.length).toBe(2);
+    const maxGaps = byRounds.map((g) => g.maxGap).sort((a, b) => a - b);
+    const totalGaps = byRounds.map((g) => g.totalGap).sort((a, b) => a - b);
+    expect(maxGaps).toEqual([2, 4]);
+    expect(totalGaps).toEqual([2, 4]);
+    // 拉了但没融合：p2 那一轮 fetched 2 / applied 0 ⇒ 1 轮（p1 那轮 fetched 0 ⇒ 不算）
+    expect(Math.max(...byRounds.map((g) => g.notAppliedRounds))).toBe(1);
+  });
+
+  it("报告每台对端写出「缺口 N 轮 / 合计 K 条 · 拉了没融合 M 轮」，且⛔ 不打印设备号", () => {
+    const rows = [
+      row({ peer: "peer-zeta-9", since: 0, maxSeq: 4, gap: 4, fetched: 2, applied: 0 }),
+      row({ peer: "peer-zeta-9", since: 4, maxSeq: 4, gap: 0 }),
+    ];
+    const text = formatBaselineReport(summarizeMetrics(rows));
+    expect(text).toContain("对端 1");
+    expect(text).toContain("合计 4 条");
+    expect(text).toContain("拉了没融合 1 轮");
+    expect(text.includes("peer-zeta-9")).toBe(false);
+  });
+
+  it("applied=0 而 fetched>0 是**洞**：⛔ 不因为 gap 后来归零就写成已收敛", () => {
+    const rows = [
+      row({ peer: "p1", since: 0, maxSeq: 4, gap: 4, fetched: 2, applied: 0 }),
+      row({ peer: "p1", since: 4, maxSeq: 4, gap: 0 }),
+    ];
+    const g = summarizeMetrics(rows).peers[0];
+    expect(g.gapped).toBe(1);
+    expect(g.notAppliedRounds).toBe(1);
+    expect(g.totalGap).toBe(4);
+  });
+});
