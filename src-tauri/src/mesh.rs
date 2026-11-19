@@ -223,6 +223,32 @@ pub fn peer_cursor(c: &Connection, space_id: &str, peer_device: &str) -> i64 {
         .unwrap_or(0)
 }
 
+/// ⭐ **2026-11-19（owner 拍 ⑦-乙）**：**游标格不存在时补一格**（值 ＝ 已经收到的那条水位）。
+///
+/// 为什么要有：原来只在"水位前进"（`ab.tail > since`）时才写游标 ⇒
+/// **"我拉过它、它当时没有新数据"的对端永远没有游标行** ⇒ 面板「多设备同步图」看不见这条边
+/// （2026-11-19 真机：三台在场、一轮 `candidates 2` 全成功，图上只出现 1 台）。
+///
+/// 三条口径：
+/// ① **只在键不存在时写**（每台对端一辈子一次；⛔ 不改已存在的值 —— 那仍由 [`set_peer_cursor`] 管且只许前进）；
+/// ② `seq <= 0` 不写（0 没有信息量，⛔ 别造一条"已收到 0"的假水位）；
+/// ③ 写失败**不拦这一轮**（它只服务"图谱可见性"，⛔ 不许让它影响真实同步）。
+fn ensure_peer_cursor(
+    c: &Connection,
+    space_id: &str,
+    peer_device: &str,
+    seq: i64,
+) -> Result<(), String> {
+    if seq <= 0 {
+        return Ok(());
+    }
+    let key = cursor_key(space_id, peer_device);
+    if crate::sync::get_meta_state(c, &key).is_some() {
+        return Ok(());
+    }
+    crate::sync::set_meta_state(c, &key, &seq.to_string())
+}
+
 /// 推水位。**只许前进**（倒退会让已经收下的记录被再拉一遍 —— 幂等所以不错，但纯属浪费；
 /// 更糟的是"水位倒退"往往是别的 bug 的症状，这里当场挡住并报出来）。
 pub fn set_peer_cursor(
@@ -1561,6 +1587,11 @@ pub async fn pull_and_absorb(
             reset_peer_cursor(&g, space_id, &peer.device_id, ab.tail)?;
         } else if ab.tail > since {
             set_peer_cursor(&g, space_id, &peer.device_id, ab.tail)?;
+        }
+        // ⭐ 2026-11-19（owner 拍 ⑦-乙）：**没有新数据也要保证"这条边"在图上存在** ——
+        //   只在键不存在时补一格（值＝已收到的水位）；⛔ 失败不拦这一轮。
+        if let Err(e) = ensure_peer_cursor(&g, space_id, &peer.device_id, ab.tail) {
+            eprintln!("[mesh] 补记对端游标失败（不影响这一轮同步）：{e}");
         }
         let cursor_value = if healed { ab.tail } else { ab.tail.max(since) };
         (ab, cursor_value)
@@ -6784,6 +6815,23 @@ mod tests {
         // ③ 名单里的空项/不存在的 id 不影响任何候选（⛔ 不许"认得出错就顺手删")
         let untouched = drop_skipped_candidates(vec![mk("a")], &["  zz  ".to_string()]);
         assert_eq!(untouched.len(), 1);
+    }
+
+    /// ⭐ **2026-11-19（owner 拍 ⑦-乙）**：`ensure_peer_cursor` 的三条口径 ——
+    /// ① 没有格子 ⇒ 补一格（让"通了的边"在面板上可见）；② 已有格子 ⇒ **不覆盖**（前进仍归 `set_peer_cursor`）；
+    /// ③ `seq=0` ⇒ **一格都不写**（⛔ 不造"已收到 0"的假水位）。
+    #[test]
+    fn ensure_peer_cursor_creates_the_row_once_and_never_overwrites() {
+        let c = conn_with(Connection::open_in_memory().unwrap(), "me");
+        ensure_peer_cursor(&c, "sp-x", "dev-b", 7).unwrap();
+        assert_eq!(peer_cursor(&c, "sp-x", "dev-b"), 7, "第一次要落格");
+        ensure_peer_cursor(&c, "sp-x", "dev-b", 9).unwrap();
+        assert_eq!(peer_cursor(&c, "sp-x", "dev-b"), 7, "已有格子不许被覆盖");
+        ensure_peer_cursor(&c, "sp-x", "dev-c", 0).unwrap();
+        assert!(
+            crate::sync::get_meta_state(&c, &cursor_key("sp-x", "dev-c")).is_none(),
+            "seq=0 时不许落下游标键"
+        );
     }
 
     // ── 两台"客户端栈"：各自一份空间库（带 meta），各自一个网格窗口
