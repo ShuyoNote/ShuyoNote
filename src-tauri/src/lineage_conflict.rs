@@ -157,6 +157,34 @@ pub fn lineage_conflicts_of(
         .map_err(|e| e.to_string())
 }
 
+/// ⭐ **2026-11-19（owner 拍 A）**：**对端那版与本页正文是否已经一样** —— 一样就"没什么可裁决的"。
+///
+/// 来由（真机 2026-11-19）：冲突**还没裁决**，页面正文却已经被对端版本覆盖了（合并那一侧先写了），
+/// 于是 `remote_doc` 与当前页**逐字相同**，而冲突行一直挂着 ⇒ 横幅**永不消失**、同一页被反复检出。
+///
+/// 口径（⛔ 三条都不许猜）：
+/// ① 两边都按 JSON **解析**后逐值比较（对象键序无关、空白无关）；
+/// ② **任一侧解析不了 ⇒ `false`**（解析不了就不敢说"一样"，宁可继续问用户）；
+/// ③ 页面不存在/读不到 ⇒ `false`（同上）。
+pub fn projection_equals_page(
+    c: &Connection,
+    page_id: &str,
+    remote_doc: &str,
+) -> Result<bool, String> {
+    // ⚠️ 走「文档内容层」读（`doc_content::read`）—— ⛔ 不许在这里自己拼 SQL 读落盘正文列
+    //   （`check-doc-content-access` 判的是**文件级**直接访问，只减不增）。
+    let Some(local) = crate::doc_content::read(c, page_id)? else {
+        return Ok(false);
+    };
+    let (Ok(a), Ok(b)) = (
+        serde_json::from_str::<serde_json::Value>(&local.json),
+        serde_json::from_str::<serde_json::Value>(remote_doc),
+    ) else {
+        return Ok(false);
+    };
+    Ok(a == b)
+}
+
 /// ★ **裁决一条**：`choice` 只认 `local` / `saved-as-new`，其余**报错**（**不默认选边** ——
 /// 与 `resolve_page_conflict` 同一纪律）；已裁决的再裁决也**报错**（不静默成功）。
 pub fn resolve_lineage_conflict(
@@ -206,6 +234,43 @@ mod tests {
             params![id],
         )
         .unwrap();
+    }
+
+    /// ⭐ **2026-11-19（owner 拍 A）**：`projection_equals_page` 的三条口径 ——
+    /// 逐值相等（键序/空白无关）⇒ `true`；不同/解析不了/页不存在 ⇒ `false`（⛔ 不猜）。
+    #[test]
+    fn projection_equals_page_only_says_true_on_real_equality() {
+        let (c, dir) = conn("eq");
+        page(&c, "p1");
+        // ⚠️ 正文也走「文档内容层」写（`doc_content::write`）—— 判据文件同样受
+        //   `check-doc-content-access` 管（直接拼 SQL 写落盘列会被判红）。
+        crate::doc_content::write(
+            &c,
+            "p1",
+            &crate::doc_content::DocContent {
+                title: "页".to_string(),
+                json: r#"{"root":{"children":[{"text":"来自mac的冲突测试"}]}}"#.to_string(),
+                text: String::new(),
+            },
+            1,
+        )
+        .unwrap();
+        // ① 键序/空白不同但内容相同 ⇒ 一样（这是真机那种"已经被对端覆盖过"的形态）
+        assert!(projection_equals_page(
+            &c,
+            "p1",
+            "{ \"root\" : { \"children\" : [ { \"text\" : \"来自mac的冲突测试\" } ] } }"
+        )
+        .unwrap());
+        // ② 内容不同 ⇒ 不一样（继续问用户）
+        assert!(
+            !projection_equals_page(&c, "p1", r#"{"root":{"children":[{"text":"别的"}]}}"#)
+                .unwrap()
+        );
+        // ③ 对端那份不是合法 JSON / 页不存在 ⇒ 一律 false（⛔ 不许当成"一样"而替用户结案）
+        assert!(!projection_equals_page(&c, "p1", "not json").unwrap());
+        assert!(!projection_equals_page(&c, "missing", r#"{"root":{}}"#).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
