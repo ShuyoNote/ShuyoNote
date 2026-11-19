@@ -107,6 +107,10 @@ merge(local, remote_seq, remote_lineage_fp, local_lineage_fp):
 > `a_diverged_lineage_keeps_local_even_when_the_old_rules_would_take_remote`（**带反证**：不带指纹时旧规则确实覆盖；
 > 带分叉指纹后变 `KeptLocal` 且正文一字不动；再补超集 ⇒ 仍 `Applied`，防冻住正常同步）。
 >
+> ✅ **CI 读数（2026-11-19 20:1x）**：`4978ff8b` 的 CI **completed/success** ——
+> `单测 / 冒烟 / 契约` ✅ ｜ `移动端布局验收（真实 Chromium）` ✅ ｜ **`Rust 测试（cargo test，含宿主子进程集成测试）` ✅**
+> （这次 Rust 组跑了约 75 分钟，是今天最久的一次；此前同一 job 多在 37~55 分钟）。
+>
 > 📋 **S3 现状（2026-11-19 复核）**：S2 的**用户面已经现成** —— 面板「待取回」清单 ＋ 侧栏角标
 > （"有几页等你裁决"）＋三选项（`SyncPanel` 的 `listPendingRemotePages` / `resolve_pending_remote`），
 > 那一处文案本来就写着"另一类页本机那版**进了版本历史**"（不假装原样保留）。
