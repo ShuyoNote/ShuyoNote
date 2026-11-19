@@ -7081,6 +7081,8 @@ mod tests {
             sort_order: 0.0,
             created_at: 1,
             updated_at,
+            // ⭐ U4-B S1：夹具默认空（＝"不知道"）
+            lineage_fp: String::new(),
         }
     }
 

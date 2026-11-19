@@ -30,6 +30,8 @@ fn fetch_page_any(c: &Connection, id: &str) -> Result<PageDetail, String> {
                 sort_order: row.get(7)?,
                 created_at: row.get(8)?,
                 updated_at: row.get(9)?,
+                // ⭐ U4-B S1：读面不填（空 = "不知道" ⇒ 合并退回旧规则）；填它的是推送路径（下一步）
+                lineage_fp: String::new(),
             })
         },
     )

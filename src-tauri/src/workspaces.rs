@@ -897,6 +897,8 @@ pub fn copy_page_to_workspace(
             sort_order,
             created_at,
             updated_at: now,
+            // ⭐ U4-B S1：读面不填（空 = "不知道" ⇒ 合并退回旧规则）；填它的是推送路径（下一步）
+            lineage_fp: String::new(),
         };
         crate::sync::record_page_upsert(tgt, &detail)?;
     }

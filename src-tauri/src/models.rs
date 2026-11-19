@@ -38,6 +38,17 @@ pub struct PageDetail {
     pub sort_order: f64,
     pub created_at: i64,
     pub updated_at: i64,
+    /// ⭐ **2026-11-19（U4-B S1）**：这一版**写在哪条血统上** —— 该页 CRDT client id 集合，
+    /// 排序后逗号分隔（与 `lineage_conflict` 的 `mine_fp`／`remote_fp` **同一个函数产出** ⇒ 单一真相源）。
+    ///
+    /// 为什么放进载荷：合并点（`doc_content::merge`）只看得到 `dirty`/`seq`，**判不出血统是否分叉**
+    /// ⇒ 只能先按 LWW 覆盖，等打开页面才发现"两条血统"（横幅那句"本机这一版原样保留"因此在真机上不成立）。
+    /// 方案与判据：`docs/plans/2026-11-19-u4b-lineage-in-payload.md`。
+    ///
+    /// ⚠️ `#[serde(default)]` ⇒ **老对端不发也收得下**（读到空 = "不知道" ⇒ 退回旧规则，⛔ 不升 wire 版本）；
+    /// ⛔ 它是**血统**标识，**不是设备标识** —— 不许拿它判"同一台设备"。
+    #[serde(default)]
+    pub lineage_fp: String,
 }
 
 fn default_kind() -> String {
