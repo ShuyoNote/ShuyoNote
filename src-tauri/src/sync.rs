@@ -1382,6 +1382,22 @@ fn apply_upsert(
     }
     // ★ 合并判定搬进「文档内容」那一层（`crate::doc_content::merge`）——**唯一的合并点**：
     // 页级 LWW + dirty 优先本地 + seq 权威；阶段 1/2/3 换块级 LWW、CRDT 时只改那个函数。
+    //
+    // ⭐ **U4-B S2（2026-11-19）**：**血统分叉 ⇒ 留本机**（连"谁赢"都不判，直接不覆盖）。
+    //   本机这一版的血统来自 KV（保存时前端算的），远端那一版来自载荷 `_lineage_fp`。
+    //   任一侧没有 ⇒ 兼容 ⇒ 照旧走下面那三条（老对端/老数据行为**逐字不变**）。
+    //   ⚠️ 留本地这一支在拉取路径上会**顺手把对端那版存进暂存**（`stash_pending_remote`），
+    //     所以"不覆盖"不等于"丢掉对端那一版" ✓ —— 这正是方案 §4 的 D 格。
+    let local_fp = crate::sync::lineage_fp_of(c, &page.id);
+    if !crate::doc_content::lineage_compatible(local_fp.as_deref(), &page.lineage_fp) {
+        eprintln!(
+            "[sync] **血统分叉 ⇒ 留本机、不覆盖**（page={} 本机fp={:?} 远端fp={:?}）——对端那版会进暂存等用户裁决",
+            page.id,
+            local_fp.as_deref().unwrap_or(""),
+            page.lineage_fp
+        );
+        return Ok(UpsertApply::KeptLocal);
+    }
     let local = crate::doc_content::local_state(c, &page.id)?;
     if crate::doc_content::merge_with_stamp(local, sync_seq, stamp)
         == crate::doc_content::MergeDecision::KeepLocal
@@ -12129,8 +12145,54 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// ⭐⭐ 2026-10-27（owner：「多端同步时，有些删除的页面又出来了」）：**旧的远端 upsert 不许掀墓碑**。
-    ///
+    /// ⭐ **U4-B S2（2026-11-19）**：**血统分叉 ⇒ 连"谁赢"都不判，直接留本机**
+    /// （哪怕本机 `dirty=0`、远端 `seq` 更大 —— 旧规则在这种局面下会**静默覆盖**用户那一版）。
+    /// 四格里的三格（空/相等/超集）**必须**照旧走旧规则，否则正常同步会被冻住。
+    #[test]
+    fn a_diverged_lineage_keeps_local_even_when_the_old_rules_would_take_remote() {
+        let (c, dir) = pending_conn("lineage-gate");
+        let mine = page_json("b1", 1, "我本地改的");
+        // ① 反证：**不带指纹**（老路径）时，dirty=0 + 远端 seq 更大 ⇒ 旧规则**确实**会用远端
+        insert_local_page(&c, "p1", &mine, 1, 0);
+        assert_eq!(
+            apply_upsert(
+                &c,
+                &remote_page("p1", &page_json("b1", 9, "他改的")),
+                9,
+                None,
+                crate::doc_content::Ingest::Server
+            )
+            .unwrap(),
+            UpsertApply::Applied { unresolved: 0 },
+        );
+        assert!(local_json(&c, "p1").contains("他改的"));
+
+        // ② 真分叉：本机 fp 与远端 fp 各加了不同 id ⇒ 必须留本机、正文一个字都不动
+        insert_local_page(&c, "p2", &mine, 1, 0);
+        crate::sync::set_lineage_fp(&c, "p2", "1,2,9").unwrap();
+        let mut remote = remote_page("p2", &page_json("b1", 10, "他又改的"));
+        remote.lineage_fp = "1,2,8".to_string();
+        assert_eq!(
+            apply_upsert(&c, &remote, 10, None, crate::doc_content::Ingest::Server).unwrap(),
+            UpsertApply::KeptLocal,
+            "真分叉 ⇒ 留本机（⛔ 不许按 seq/dirty 判赢）"
+        );
+        assert_eq!(local_json(&c, "p2"), mine, "留本机 ⇒ 正文一个字都不许动");
+
+        // ③ 超集（本机 ⊆ 远端）⇒ **兼容** ⇒ 照旧用远端（防"把正常同步冻住"）
+        insert_local_page(&c, "p3", &mine, 1, 0);
+        crate::sync::set_lineage_fp(&c, "p3", "1,2").unwrap();
+        let mut superset = remote_page("p3", &page_json("b1", 11, "他合并后的"));
+        superset.lineage_fp = "1,2,8".to_string();
+        assert_eq!(
+            apply_upsert(&c, &superset, 11, None, crate::doc_content::Ingest::Server).unwrap(),
+            UpsertApply::Applied { unresolved: 0 },
+            "超集 ⇒ 兼容 ⇒ 旧规则照旧（⛔ 不许冻住正常同步）"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐⭐ 2026-10-27（owner：「多端同步时，有些删除的页面又出来了」）：**旧的远端 upsert 不许掀墓碑**。    ///
     /// 红读数（修前）：`apply_upsert` 直接走 `apply_remote_page`，而 `upsert_remote` 的 SQL 里
     /// `deleted_at = NULL` 是**有意**的（回收站还原靠它传播）⇒ 对端离线/游标落后时队列里的
     /// **历史 upsert** 一到，删掉的页就**静默复活**（真机现场：`changes` 里 delete 在 upsert 之后，

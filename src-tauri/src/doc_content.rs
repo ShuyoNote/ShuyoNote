@@ -646,6 +646,36 @@ pub enum StampWins {
     Local,
 }
 
+/// ⭐ **U4-B S2（2026-11-19）**：两份"血统指纹"是不是**同一条树**（能不能按旧规则继续判谁赢）。
+///
+/// 指纹形状：排序后的 CRDT client id，逗号分隔（与 `lineage_conflict` 的 `mine_fp`/`remote_fp` 同一口径）。
+///
+/// 四格（方案 §4）：
+/// · **任一侧为空** ⇒ `true`（不知道 ⇒ 退回旧规则：`dirty` 优先 → `seq` 大者 → 远端覆盖）；
+/// · **集合相等** ⇒ `true`；
+/// · **一侧是另一侧的子集/超集** ⇒ `true` —— 这是"本机同步过对端那条树"的正常形态，
+///   ⛔ 判成分叉会让**每一次正常同步都不覆盖**（livelock 风险）；
+/// · **其余（真分叉）** ⇒ `false` ⇒ 调用方**保留本机**、对端那版只进暂存。
+///
+/// ⚠️ 空串/纯空白一律按"没有指纹"处理；坏形状（非数字）**按字符串集合比**（⛔ 不猜、不还原）。
+pub fn lineage_compatible(local_fp: Option<&str>, remote_fp: &str) -> bool {
+    fn ids(s: &str) -> std::collections::BTreeSet<&str> {
+        s.split(',')
+            .map(str::trim)
+            .filter(|x| !x.is_empty())
+            .collect()
+    }
+    let Some(local_fp) = local_fp else {
+        return true;
+    };
+    let a = ids(local_fp);
+    let b = ids(remote_fp);
+    if a.is_empty() || b.is_empty() {
+        return true;
+    }
+    a.is_subset(&b) || b.is_subset(&a)
+}
+
 /// ★ **合并点**（带戳的那一版）—— 丙-③ 在**唯一合并点**上的注入。
 ///
 /// 口径两条：
@@ -1551,6 +1581,30 @@ mod tests {
     #[test]
     fn local_page_absent_takes_remote() {
         assert_eq!(merge(None, 7), MergeDecision::TakeRemote);
+    }
+
+    /// ⭐ **U4-B S2（2026-11-19）**：`lineage_compatible` 的四格真值表 ——
+    /// 空 ⇒ 兼容（退回旧规则）；相等/子集/超集 ⇒ 兼容；**真分叉** ⇒ 只有这一格报不兼容。
+    /// ⚠️ 这一条最容易被写歪的地方是"**超集**也被判成分叉" —— 那会让每次正常同步都不覆盖（livelock 风险）。
+    #[test]
+    fn lineage_compatible_only_rejects_true_divergence() {
+        // ① 空/缺 ⇒ 兼容（"不知道" 不许当成"分叉"）
+        assert!(lineage_compatible(None, "1,2"));
+        assert!(lineage_compatible(Some(""), "1,2"));
+        assert!(lineage_compatible(Some("  "), "1,2"));
+        assert!(lineage_compatible(Some("1,2"), ""));
+        // ② 相等（含顺序/空白/重复不同）⇒ 兼容
+        assert!(lineage_compatible(Some("1,2"), "2,1"));
+        assert!(lineage_compatible(Some(" 1 , 2 "), "1,2"));
+        assert!(lineage_compatible(Some("1,1,2"), "1,2"));
+        // ③ 子集 / 超集 ⇒ 兼容（"本机同步过对端那条树"的正常形态）
+        assert!(lineage_compatible(Some("1"), "1,2"), "子集 ⇒ 兼容");
+        assert!(lineage_compatible(Some("1,2,3"), "1,2"), "超集 ⇒ 兼容");
+        // ④ 真分叉（各加了不同的 id）⇒ 不兼容 —— 只有这一格拒绝覆盖
+        assert!(!lineage_compatible(Some("1,2,9"), "1,2,8"));
+        assert!(!lineage_compatible(Some("9"), "8"));
+        // ⑤ 坏形状：不猜、不还原 ⇒ 按字符串集合比（这里就是两个不相交的集合 ⇒ 不兼容）
+        assert!(!lineage_compatible(Some("abc"), "def"));
     }
 
     #[test]
