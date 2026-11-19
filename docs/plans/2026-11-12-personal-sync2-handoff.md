@@ -134,6 +134,14 @@ owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workf
   `单测 / 冒烟 / 契约` ✅ ｜ `移动端布局验收（真实 Chromium）` ✅ ｜ **`Rust 测试（cargo test，含宿主子进程集成测试）` ✅**
   ⇒ 今天的 A 修法（188 s → 21.1 s）与格式修复**拿到 CI 级证据**（本机 win-cargo-test 只 lib 目标，覆盖不到 fmt/sm-wired）
   ⚠️ 中间那几次 `1c40476f` 等的 run 被 `concurrency` 取消 ⇒ 只认**最后一笔**的结论
+· **CI 读数（2026-11-19 09:39 收口时补）**：`ac50500b` 的 CI **completed/success** ——
+  `单测 / 冒烟 / 契约` ✅ ｜ `移动端布局验收（真实 Chromium）` ✅ ｜ **`Rust 测试`** ✅ ｜ `Android` ✅ ｜ `macOS` ✅
+  ⇒ 11-19 那笔（影子作废过滤）＋ rebase 进来的 `2bcbd834`（wmi 依赖修）一起过 CI。
+  ⚠️ 这一笔在 origin 上被**另一侧**先推了 `2bcbd834` ⇒ 我 rebase 后重推（⛔ 没裸 force）；
+  GitHub 镜像因为留着 rebase 前我那笔，用了一次 `--force-with-lease=dev:<旧值>` 对齐（仅替换我自己的旧笔）。
+· **2026-11-19 本机覆盖面的新读数**：`browser` 组 4 条 / ~32 s（Edge，**不需** dev server）；
+  `mobile` 组 3 条 / ~543 s（要 `pnpm dev:web` ＋ `APP_URL=http://localhost:5173`；5173 **只绑 `[::1]`**）
+  ⇒ 这两组**本机可跑且全绿**（68/68、756/756、249/249），别再默认"本机跑不了"。
 · **文档盘点（同日收摊后）**：交接单点名的 **24 个提交号全部存在**（`git cat-file -e` 逐个核）；
   §1 版本行原来还写着 047ba801 ⇒ 已改成实测读数（dev d8a71fb7 / main f8712fb7 / tag→047ba801）＋判据命令；
   ⚠️ 盘点抓到一条**真漂移**：**GitHub 镜像的 `main` 落后 1 笔**（f8712fb7 只在 GitCode 侧）
