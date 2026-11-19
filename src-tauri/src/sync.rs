@@ -398,6 +398,13 @@ pub const SPACE_NAME_PAYLOAD_FIELD: &str = "_space_name";
 /// ⚠️ **它不替代名字**：融合闸是 **uid 有结论用 uid、判不了回落名字**（`mesh_merge_ledger::batch_merge_gate_uid`）。
 pub const SPACE_UID_PAYLOAD_FIELD: &str = "_space_uid";
 
+/// ⭐ **U4-B S1（2026-11-19）**：载荷里"这一版写在哪条血统上"的字段名。
+///
+/// 值 = 该页 CRDT client id 集合（排序、逗号分隔），由**前端**在保存时算好并存进 KV
+/// （`page_crdt` 在库里是不透明二进制，Rust 侧没有解码器 ⇒ 不在 Rust 里算）。
+/// ⚠️ 空/没有 ⇒ 载荷**逐字节不变**（老对端、老数据 ⇒ 收侧退回旧规则）；⛔ 不升 wire 版本。
+pub const LINEAGE_FP_PAYLOAD_FIELD: &str = "_lineage_fp";
+
 /// 本机当前空间的 **`space_uid`**（`meta.workspaces.space_uid`，由 P3-3b 迁移回填）。
 ///
 /// ⚠️ **取不到 ⇒ `None`**（老库还没迁移/那一格空/表读不到）—— 与 `local_space_name` 同一条纪律：
@@ -1058,8 +1065,52 @@ pub(crate) fn with_space_name(payload_json: &str, space_name: &str) -> Result<St
     serde_json::to_string(&value).map_err(|e| e.to_string())
 }
 
-/// 从载荷里读空间名。⭐ **老载荷／老对端 ⇒ `None`**（不是错误 ✓）；读不出来（形状不对）也 `None`
-/// —— 这一格**只用于"同名"提示** ⇒ 保守取"没有"最安全（⛔ 不猜、⛔ 不从 id 反推 ✗）。
+/// ⭐ **U4-B S1（2026-11-19）**：把任意字符串字段挂到载荷上（与 [`with_space_uid`] 同形）。
+///
+/// 空值 ⇒ 载荷**逐字节不变**；不是 JSON ⇒ 响亮报错；非对象 ⇒ 原样返回。
+/// 为什么单立一个：`_space_uid` / `_lineage_fp` 这类"外壳字段"以后还会加，
+/// 每加一个就复制二十行不是好账（规则只有一条：**空 ⇒ 不动字节**）。
+pub(crate) fn with_payload_string_field(
+    payload_json: &str,
+    field: &str,
+    value: &str,
+) -> Result<String, String> {
+    let v = value.trim();
+    if v.is_empty() {
+        return Ok(payload_json.to_string());
+    }
+    let mut parsed: serde_json::Value =
+        serde_json::from_str(payload_json).map_err(|e| e.to_string())?;
+    let Some(obj) = parsed.as_object_mut() else {
+        return Ok(payload_json.to_string());
+    };
+    obj.insert(field.to_string(), serde_json::Value::String(v.to_string()));
+    serde_json::to_string(&parsed).map_err(|e| e.to_string())
+}
+
+/// ⭐ **U4-B S1**：这一页"上一版写在哪条血统上"（KV `lineage_fp:<page>`；⛔ 读不到 = `None`，不猜）。
+pub fn lineage_fp_of(c: &Connection, page_id: &str) -> Option<String> {
+    get_meta_state(c, &format!("lineage_fp:{page_id}"))
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// ⭐ **U4-B S1**：记下"这一页之后推出去的版本写在哪条血统上"（**由前端在保存时算好再调**）。
+///
+/// ⚠️ 空串 ⇒ **删掉这一格**（＝"不知道"），⛔ 不写空值占位（空值会让"有没有血统"这件事变含糊）。
+pub fn set_lineage_fp(c: &Connection, page_id: &str, fp: &str) -> Result<(), String> {
+    let key = format!("lineage_fp:{page_id}");
+    let v = fp.trim();
+    if v.is_empty() {
+        return c
+            .execute("DELETE FROM meta.sync_state WHERE key = ?1", params![key])
+            .map(|_| ())
+            .map_err(|e| e.to_string());
+    }
+    set_meta_state(c, &key, v)
+}
+
+/// 从载荷里读空间名。⭐ **老载荷／老对端 ⇒ `None`**（不是错误 ✓）；读不出来（形状不对）也 `None`/// —— 这一格**只用于"同名"提示** ⇒ 保守取"没有"最安全（⛔ 不猜、⛔ 不从 id 反推 ✗）。
 pub(crate) fn space_name_of_payload(payload_json: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(payload_json).ok()?;
     let s = value
@@ -1111,6 +1162,13 @@ pub(crate) fn space_uid_of_payload(payload_json: &str) -> Option<String> {
 
 pub fn record_page_upsert(c: &Connection, page: &PageDetail) -> Result<(), String> {
     let payload = serde_json::to_string(page).map_err(|e| e.to_string())?;
+    // ⭐ **U4-B S1（2026-11-19）**：把"这一版写在哪条血统上"挂到载荷上（与"空间名/uid"同一处、同一手法）。
+    //   值来自**保存时前端算好的 KV**（`lineage_fp:<page>`）；没有 ⇒ **载荷逐字节不变**（老路径零感知）。
+    //   收侧据此判"两边血统是否分叉"（方案 `docs/plans/2026-11-19-u4b-lineage-in-payload.md` §4）。
+    let payload = match crate::sync::lineage_fp_of(c, &page.id) {
+        Some(fp) => with_payload_string_field(&payload, LINEAGE_FP_PAYLOAD_FIELD, &fp)?,
+        None => payload,
+    };
     // ★ §11.4 收口（第 42 轮）· **推**那一半：这一页有 CRDT 状态 ⇒ 把它挂到载荷上
     //   （与 TS 的 `withCrdtWire` 同一形状、同一字段名）。在此之前**桌面推出去的载荷从不带状态**
     //   ⇒ 桌面↔Web 之间那条 CRDT 链路是断的（Web 对端只能按块级 LWW 收）。
@@ -14244,6 +14302,37 @@ mod tests {
                 local_space_kind(&c),
                 Some(crate::mesh_merge_ledger::SpaceKind::Unclassified),
                 "⭐ 读到了（未分类）与读不到**必须分得开**"
+            );
+        }
+
+        /// ⭐ **U4-B S1（2026-11-19）**：`_lineage_fp` 挂件的四条口径 ——
+        /// ① 有值 ⇒ 挂上且**页内容不变**；② 空/没值 ⇒ 载荷**逐字节不变**（老路径零感知）；
+        /// ③ 坏 JSON ⇒ 响亮报错；非对象 ⇒ 原样返回；④ KV 里空串 ⇒ **删掉这一格**（＝不知道）。
+        #[test]
+        fn lineage_fp_lands_only_when_known_and_never_changes_page_bytes() {
+            let p =
+                with_payload_string_field(&payload(), LINEAGE_FP_PAYLOAD_FIELD, "  a,b  ").unwrap();
+            let v: serde_json::Value = serde_json::from_str(&p).unwrap();
+            assert_eq!(
+                v[LINEAGE_FP_PAYLOAD_FIELD], "a,b",
+                "⛔ 没挂上（或没折空白）"
+            );
+            let orig: serde_json::Value = serde_json::from_str(&payload()).unwrap();
+            assert_eq!(v["title"], orig["title"], "⛔ 页内容被改了");
+            // 空 ⇒ 逐字节不变
+            assert_eq!(
+                with_payload_string_field(&payload(), LINEAGE_FP_PAYLOAD_FIELD, "").unwrap(),
+                payload()
+            );
+            assert_eq!(
+                with_payload_string_field(&payload(), LINEAGE_FP_PAYLOAD_FIELD, "   ").unwrap(),
+                payload()
+            );
+            // 坏形状
+            assert!(with_payload_string_field("not json", LINEAGE_FP_PAYLOAD_FIELD, "a").is_err());
+            assert_eq!(
+                with_payload_string_field("[1,2]", LINEAGE_FP_PAYLOAD_FIELD, "a").unwrap(),
+                "[1,2]"
             );
         }
 

@@ -89,6 +89,13 @@ merge(local, remote_seq, remote_lineage_fp, local_lineage_fp):
 > Rust 侧没有 CRDT 解码器 ⇒ 这一格应当**由前端算（它手里有 live 的 CRDT 文档）、随保存带上、后端存 KV、
 > 推送时塞进载荷** —— 比在 Rust 里解 CRDT 稳得多。⇒ S1 的剩余部分是**前端算＋后端存**的接线（下一刀）。
 > ⚠️ 因此**现在所有载荷这一格都是空** ⇒ 合并行为与今天**逐字相同**（这是**有意**的：空＝不知道 ⇒ 退回旧规则）。
+>
+> ✅ **S1 的 Rust 半边已完成（2026-11-19 17:0x）**：ecord_page_upsert 会从 KV lineage_fp:<page> 取值挂到
+> 载荷 _lineage_fp（与 _space_name/_space_uid 同形：**空 ⇒ 载荷逐字节不变**）；
+> 读/写入口 sync::lineage_fp_of / sync::set_lineage_fp（空串 ⇒ **删格**＝不知道，⛔ 不写空占位）；
+> 判据 lineage_fp_lands_only_when_known_and_never_changes_page_bytes（挂上/空不变/坏 JSON/非对象）。
+> ⏭ **剩余**：前端在保存时算 lineageFingerprint(lineageClientIds(state)) 并写进那个 KV（要接保存路径）。
+> 现在 KV 无人写 ⇒ 行为仍与今天一致。
 
 
 ## 7. 风险与已知代价
