@@ -282,6 +282,15 @@ owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workf
    图目前只能把它画成"在线但还没收到过数据"（⛔ 说不到"为什么没融合"—— 那份理由在**空间级 note** 里，没传到图上）。
    ⑦-乙 本身仍然保留（判据 `ensure_peer_cursor_creates_the_row_once_and_never_overwrites`）：
    它管的是"对端有数据、只是上一次没写游标格"的情形（如库被清过）。
+   🔎 **2026-11-19 12:0x 查清了"身份对不上"是什么**（owner 让查）：
+   日志原文 `[mesh] **不融合**（同名但空间 uid 不一样（DEC-D：要人确认一次；不是名字不同））`；
+   库里证据（当前空间 `984b0376…`）：`mesh_uid_candidates` **1 行**
+   （对端 `6996fc8e…`、`peer_uid 921bc575…`、两边名字都是 `SYNC2-TEST-20261109`、`last_seen_at` 就在刚才），
+   `mesh_uid_confirmations` **0 行** ⇒ **从来没人确认过**。
+   ⇒ 修法是**你在面板上点一次**：同步面板里那块「**同名空间身份不一致（1）**」
+   （组件 `MeshUidConflicts`，按钮 `mesh-uid-confirm`）→ 点「确认「SYNC2-TEST-20261109」…」。
+   ⛔ 这是 DEC-D 的人为闸门（防把两个不同的同名空间合错），**agent 不得代点**；点完那条边就会有游标行、图上转成已齐/落后。
+
 
 
 
