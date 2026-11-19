@@ -12,6 +12,19 @@ export const SHADOW_HISTORY_KEY = "shuyonote:crdt-shadow-history";
 /** 只留最近 N 天。 */
 export const SHADOW_HISTORY_DAYS = 7;
 
+/**
+ * ⭐ **2026-11-19（owner 拍）**：**这一天之前**的影子记录**一律作废、不计入摘要**。
+ *
+ * 来由：`equal=0` 的根因（落盘 block 带 `blockRev`、CRDT 投影不带）在 **2026-11-14** 才修（修法 A），
+ * 那之前的"有差异"是**口径偏差**造出来的，不是真实差异（见
+ * `docs/plans/2026-11-14-a1-shadow-equal-zero-rootcause.md`）。
+ * ⇒ 面板上原先显示「最近 7 天 / 有差异 5 天」——那 5 天全是作废数据，会让人误以为现在还在差。
+ * ⚠️ **只过滤"计入"**：记录本身**不删**（`localStorage` 里原样留着，方便回看"为什么作废"）。
+ * ⚠️ 边界取值：`date >= "2026-11-14"` 才算有效（那一天是修法 A 落地当天，当天首扫 `equal 5 / differ 0`）。
+ */
+export const SHADOW_VALID_FROM_DATE = "2026-11-14";
+
+
 export interface ShadowDayRecord {
   date: string;
   total: number;
@@ -145,15 +158,17 @@ export function recordShadowDay(
 export type ShadowHistoryTone = "muted" | "ok" | "warn";
 
 export interface ShadowHistorySummary {
-  /** 有效天数（0 ⇒ 无记录/读不出）。 */
+  /** 有效天数（0 ⇒ 无记录/读不出/全是作废）。 */
   days: number;
   /** 历史读不出来（null/坏 JSON/非数组）⇒ unknown（⛔ 不假装"无记录"）。 */
   unknown: boolean;
   lastDate: string | null;
   last: ShadowDayRecord | null;
-  /** 近 7 天里有差异的天数。 */
+  /** 近 7 天里有差异的天数（**只数有效日**）。 */
   differDays: number;
   lastDifferDate: string | null;
+  /** ⭐ **2026-11-19**：`SHADOW_VALID_FROM_DATE` 之前的记录天数（**作废、不计入**；记录本身不删）。 */
+  voidedDays: number;
   text: string;
   tone: ShadowHistoryTone;
 }
@@ -170,6 +185,7 @@ export function summarizeShadowHistory(
       last: null,
       differDays: 0,
       lastDifferDate: null,
+      voidedDays: 0,
       text: "未知（历史读不出来或格式坏了）",
       tone: "muted",
     };
@@ -178,7 +194,10 @@ export function summarizeShadowHistory(
     .filter((r) => validateShadowDayRecord(r) === null)
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(-SHADOW_HISTORY_DAYS);
-  if (clean.length === 0) {
+  // ⭐ 2026-11-19（owner 拍）：口径修好（2026-11-14）之前的记录**作废** —— 只从"计入"里去掉，记录不删。
+  const valid = clean.filter((r) => r.date >= SHADOW_VALID_FROM_DATE);
+  const voidedDays = clean.length - valid.length;
+  if (valid.length === 0) {
     return {
       days: 0,
       unknown: false,
@@ -186,24 +205,30 @@ export function summarizeShadowHistory(
       last: null,
       differDays: 0,
       lastDifferDate: null,
-      text: "无记录（还没跑过影子扫描）",
+      voidedDays,
+      text:
+        voidedDays > 0
+          ? `无有效记录（另有 ${voidedDays} 天是 2026-11-14 之前的作废数据，不计入）`
+          : "无记录（还没跑过影子扫描）",
       tone: "muted",
     };
   }
-  const last = clean[clean.length - 1];
-  const differ = clean.filter((r) => r.differ > 0);
+  const last = valid[valid.length - 1];
+  const differ = valid.filter((r) => r.differ > 0);
   const lastDifferDate = differ.length ? differ[differ.length - 1].date : null;
+  const voidedNote = voidedDays > 0 ? `（另有 ${voidedDays} 天作废·不计入）` : "";
   const text =
     differ.length === 0
-      ? `最近 ${clean.length} 天无差异 / 最近 ${last.date}`
-      : `最近 ${clean.length} 天 / 有差异 ${differ.length} 天 / 最近 ${last.date} / 最近差异 ${lastDifferDate}`;
+      ? `最近 ${valid.length} 天无差异 / 最近 ${last.date}${voidedNote}`
+      : `最近 ${valid.length} 天 / 有差异 ${differ.length} 天 / 最近 ${last.date} / 最近差异 ${lastDifferDate}${voidedNote}`;
   return {
-    days: clean.length,
+    days: valid.length,
     unknown: false,
     lastDate: last.date,
     last,
     differDays: differ.length,
     lastDifferDate,
+    voidedDays,
     text,
     tone: differ.length > 0 ? "warn" : "ok",
   };
