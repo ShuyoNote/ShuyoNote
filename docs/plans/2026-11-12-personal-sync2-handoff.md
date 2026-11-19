@@ -136,6 +136,16 @@ owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workf
   `单测 / 冒烟 / 契约` ✅ ｜ `移动端布局验收（真实 Chromium）` ✅ ｜ **`Rust 测试（cargo test，含宿主子进程集成测试）` ✅**
   ⇒ 今天的 A 修法（188 s → 21.1 s）与格式修复**拿到 CI 级证据**（本机 win-cargo-test 只 lib 目标，覆盖不到 fmt/sm-wired）
   ⚠️ 中间那几次 `1c40476f` 等的 run 被 `concurrency` 取消 ⇒ 只认**最后一笔**的结论
+· **CI 读数（2026-11-19 12:2x 补）**：`1a7b863a`（⑦-乙）的三个 run 里 **Android 那条红了**，但**不是代码问题**：
+  `build-android` 在 `Build APK (arm64, unsigned)` 这一步挂掉，日志原文
+  ```
+  A problem occurred configuring project ':buildSrc'
+  > Could not find org.jetbrains.kotlin:kotlin-stdlib:2.0.21
+    Searched in: https://plugins.gradle.org/m2/...
+  ```
+  —— Rust 侧**已经编完**（`Finished release profile in 7m 35s`、`.so` 已 symlink 进 `jniLibs/arm64-v8a`），
+  红在 **Gradle 下不到 Kotlin 依赖**（CI 侧网络/仓库抖动）。同一套代码在 `ac50500b` 上 Android 是 ✅。
+  ⇒ 判据：**先看红在哪一步**（`.so` 有没有生成），别把"Gradle 拿不到依赖"读成"我们的 Rust 编不过"。
 · **CI 读数（2026-11-19 09:39 收口时补）**：`ac50500b` 的 CI **completed/success** ——
   `单测 / 冒烟 / 契约` ✅ ｜ `移动端布局验收（真实 Chromium）` ✅ ｜ **`Rust 测试`** ✅ ｜ `Android` ✅ ｜ `macOS` ✅
   ⇒ 11-19 那笔（影子作废过滤）＋ rebase 进来的 `2bcbd834`（wmi 依赖修）一起过 CI。
@@ -260,8 +270,7 @@ owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workf
       修法＝两边都读，但**必须按当前空间（对暗号 id）过滤**（不过滤会混进别的空间游标 —— 第一版混出 1505/475 假读数）。
       判据 `mesh_panel::tests::merge_peer_cursors_scopes_to_the_space_and_keeps_the_larger_value`。
    读数见基线页 §4.12–§4.13；面板真机截图 `_tmp/scratch/panel-graph-real-20261119.png`。
-13) ⚠️ **2026-11-19 三台在场时的读数（AMD＋Mac 都起来）**：
-   `lan_status.nearby` = **2 台**（`ZHAI-AMD` / `Mac`，两台都 `serves_current=true`、`reason=ok`；AMD 起初报过一次 `mismatch`）；
+13) ⚠️ **2026-11-19 三台在场时的读数（AMD＋Mac 都起来）**：   `lan_status.nearby` = **2 台**（`ZHAI-AMD` / `Mac`，两台都 `serves_current=true`、`reason=ok`；AMD 起初报过一次 `mismatch`）；
    一轮全部空间同步 **1.5 s**、每空间 `candidates 2`、全 `error:null`。
    ⚠️ **但「多设备同步图」只列出 1 台**（`对端 1 台 · 落后 1`，那台 cursor 215）。
    原因：图只列**有游标行**的对端（`mesh_cursor:<space>:<device>`），而**从没收到过数据的对端没有游标行**
@@ -357,6 +366,13 @@ pnpm tauri dev --features lan-quic      # 从 repos/ShuyoNote 跑
 & .\scripts\win-cargo-test.ps1 -Filter '<子串>'                      # 默认特性
 & .\scripts\win-cargo-test.ps1 -CargoArgs '--features','lan-quic' -Filter '<子串>'
 
+# ⭐ 2026-11-19：**集成测试（tests/）本机也能跑** —— 注入 v6 清单即可（上面那个脚本只管 lib 目标）
+#   ① cargo test --manifest-path src-tauri\Cargo.toml --tests --no-run   → 记下 deps\*.exe 的路径
+#   ② 给每个 exe 注入 Common-Controls v6 清单后直接运行：
+#        mt.exe -manifest v6.xml -outputresource:<拷出来的副本>;1  然后跑那个副本
+#   参考实现：_tmp/scratch/run-integration-test.ps1（一次性、不入库）
+#   ⇒ 2026-11-19 CI 报红的 `every_real_db_open_point_is_registered` 就是靠这条**在本机先复现并修掉**的
+
 # 前端/门禁
 pnpm exec tsc --noEmit
 node scripts/check-web-commands.mjs   # 命令数应 304/266/305（改动后同步 docs/TESTING.md）
@@ -417,6 +433,18 @@ node docs/plans/personal-sync-2.0-mockups/render.mjs      # 需要 Edge（路径
   ⑤ 切空间请用应用自己的入口 —— 只用 CDP 调 `set_active_workspace_id` **不会**把面板的 `mesh_watermarks` 换成新空间
      （实测 9 个空间轮着切，读数一直 0）
 · 别用 PowerShell Set-Content/python -c 写含中文文件；用编辑工具或 .py 脚本文件
+· ⚠️ **加/删一个"真实开库点"必须同步改 `src-tauri/tests/db_openers.rs` 的 `REGISTERED`**（2026-11-19 CI 红）：
+  那张表判的是**逐函数的处数**（同一函数多开一条连接也红）。我那天在 `mesh_watermarks` 里加了一条
+  `open_meta_conn_at` ⇒ 表里仍写 1 ⇒ 集成测试 `every_real_db_open_point_is_registered` 红；
+  本机 `win-cargo-test.ps1` 只跑 **lib 目标**，**这条根本跑不到** ⇒ 只有 CI 会报。
+  ⇒ 改法：把该行的 `expected_count` 1→2 并写清为什么（已改）。
+  ✅ 判据（本机可复现）：`cargo test --tests --no-run` ＋ 给 exe 注入 v6 清单后运行（见 §6「常用命令」）。
+· ⚠️ **日志里"宣告（锁着）"每秒刷一行，不是公告风暴**（2026-11-19 实测，先别当 bug 修）：
+  `[mesh] 绑定 … 这一轮少服务一个空间` 与 `[mesh] 宣告 <space>（**锁着**…）` 这两行由
+  **`ensure_window` 每 1 秒的切片重跑**打印（它在公告闸门**之前**），实测 35 分钟 2,905 / 2,898 行（≈1/s）；
+  而真正的公告仍按 `ANNOUNCE_INTERVAL_MS=30 s` 节流（同段时间 `公告：发出` 324 条 ≈ 每轮 8 个空间各一条 × ~40 轮）。
+  ⇒ 判据：**数 `公告：发出` 那一行**，别数"锁着"那行。
+  ⚠️ 但那句文案本身误导（打印时刻并不在公告），属于"该改文案"的小账，⛔ 不是本次要修的缺陷。
 ```
 
 ## 8. 新会话开场检查
