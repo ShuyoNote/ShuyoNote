@@ -3711,6 +3711,15 @@ export function makeInvoke(store: SqliteStore) {
       resolveLineageConflict(store, conflictId, String(a.choice ?? ""));
       return null as T;
     }
+    if (cmd === "set_page_lineage_fp") {
+      // ⭐ **U4-B S1（2026-11-19）**：**Web 侧是一项如实说明的空实现**。
+      //
+      // 为什么可以空：这一格唯一的消费者是**桌面 mesh 推载荷**（`record_page_upsert` 会把它挂到 `_lineage_fp`）；
+      // Web 平台**不拼那个载荷**（它走服务端同步，本文件里没有任何 `_space_name`/`_space_uid` 的挂载代码 ⇒ 同一条路）。
+      // ⇒ 在这里写进 KV 只会让"Web 与服务端"两套载荷口径分叉；⛔ 不做"看起来实现了"的假存储。
+      // ⚠️ 若将来 Web 也开始拼 page 载荷 ⇒ 这一条**必须**改成真的存下来（否则 Web 推出去的版本没有血统信息）。
+      return null as T;
+    }
     if (cmd === "list_stale_text_pages") {
       // 阶段 1 · B1：待重建正文的队列（字段名与 Rust 侧 `StaleTextQueue` 的 snake_case 对齐）。
       const q = staleTextQueue(store, Number(a.limit ?? 10));

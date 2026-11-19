@@ -1613,6 +1613,19 @@ pub fn resolve_lineage_conflict(
     crate::lineage_conflict::resolve_lineage_conflict(&c, &conflict_id, &choice, now_ms())
 }
 
+/// ⭐ **U4-B S1（2026-11-19）**：记下"这一页之后推出去的版本写在哪条血统上"（**前端算、后端存**）。
+///
+/// 为什么前端算：`page_crdt` 在库里是**不透明二进制**（`Vec<u8>`），Rust 侧没有 CRDT 解码器 ⇒
+/// 只有前端（手里有 live 文档）算得出 client id 集合。存进 KV 后，`record_page_upsert` 推那一侧
+/// 会把它挂到载荷 `_lineage_fp` 上（空 ⇒ 载荷逐字节不变）。
+///
+/// ⚠️ 空串 ⇒ **删掉那一格**（＝"不知道"），⛔ 不写空占位；判据见 `sync` 那侧。
+#[tauri::command]
+pub fn set_page_lineage_fp(db: State<Db>, page_id: String, fp: String) -> Result<(), String> {
+    let c = conn(&db);
+    crate::sync::set_lineage_fp(&c, &page_id, &fp)
+}
+
 /// **裁决一处冲突**：`choice` = `"local"` / `"remote"`（其余值一律报错，**不默认选边**）。
 ///
 /// 落库那一笔是**一次本地编辑**（`dirty = 1`）⇒ 会被推上去 —— "留本地"就是这么生效的。

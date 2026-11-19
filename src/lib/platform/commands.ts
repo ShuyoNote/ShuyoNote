@@ -1265,6 +1265,8 @@ export interface CommandMap {
     } | null;
   };
   resolve_lineage_conflict: { args: { conflictId: string; choice: string }; result: null };
+  // ⭐ U4-B S1（2026-11-19）：把"这一页写在哪条血统上"记进 KV（前端算 → 后端存 → 推的时候挂进载荷 `_lineage_fp`）。
+  set_page_lineage_fp: { args: { pageId: string; fp: string }; result: null };
   // 桌面「近实时」流通道（2026-09-23 第 48 轮）：Rust 订 SSE 变更流，**只发"有变更"事件**
   //（`sync-stream-change`），拉取仍由前端 `syncWorkspace` 发起 ⇒ 自动过 C2 闸门/防重入/状态行。
   // ⚠️ 这三条**只有桌面**：浏览器自带 SSE（Web 侧是 `useSyncStream.ts` 自己那条流）⇒ 硬在 `web.ts`

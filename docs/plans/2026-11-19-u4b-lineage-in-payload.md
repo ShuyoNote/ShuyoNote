@@ -94,7 +94,12 @@ merge(local, remote_seq, remote_lineage_fp, local_lineage_fp):
 > 载荷 _lineage_fp（与 _space_name/_space_uid 同形：**空 ⇒ 载荷逐字节不变**）；
 > 读/写入口 sync::lineage_fp_of / sync::set_lineage_fp（空串 ⇒ **删格**＝不知道，⛔ 不写空占位）；
 > 判据 lineage_fp_lands_only_when_known_and_never_changes_page_bytes（挂上/空不变/坏 JSON/非对象）。
-> ⏭ **剩余**：前端在保存时算 lineageFingerprint(lineageClientIds(state)) 并写进那个 KV（要接保存路径）。
+> ✅ **S1 完成（2026-11-19 18:2x，含真机端到端）**：保存路径（Editor.tsx 的 port.save 适配器）
+> 在写完 CRDT 状态后算 lineageFingerprint(lineageClientIds(state)) 并调 set_page_lineage_fp\n> （命令 ＋ TS 映射 ＋ Web 侧**如实空实现**：Web 不拼 page 载荷，已在代码里写明为什么）；
+> 失败只 warn、**不拦保存**。**真机读数**：保存 T-B 后 KV 出现
+> lineage_fp:97f58b7a… = 1603497604,2016424086,3458236520,4166478409，
+> 且该页**变更载荷里带同一个值**；老页（c41394eb / 75bf3cbd）**没有这一格** ⇒ 老路径逐字节不变 ✓。
+> ⏭ **下一刀 = S2**：合并点（doc_content::merge）接入 D 规则。
 > 现在 KV 无人写 ⇒ 行为仍与今天一致。
 
 

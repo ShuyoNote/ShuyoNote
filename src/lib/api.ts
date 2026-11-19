@@ -353,6 +353,15 @@ export const api = {
   savePageState: (id: string, state: Uint8Array) =>
     invoke("save_page_state", { args: { page_id: id, state: Array.from(state) } }),
   /**
+   * ⭐ **U4-B S1（2026-11-19）**：记下"这一页写在哪条血统上"（client id 集合，排序、逗号分隔）。
+   *
+   * 为什么由前端算：`page_crdt` 在库里是**不透明二进制**，Rust 侧没有 CRDT 解码器。
+   * 存进 KV 后，推那一侧会把它挂到载荷 `_lineage_fp`（空 ⇒ 载荷逐字节不变）。
+   * ⚠️ 失败**不许**把"保存"整件事拖红（它只服务"冲突时能不能判"）⇒ 调用方 catch 后 warn。
+   */
+  setPageLineageFp: (pageId: string, fp: string) =>
+    invoke("set_page_lineage_fp", { pageId, fp }),
+  /**
    * 冲刺 S9：**CRDT 血统 claim** —— 问同步服务"这一页的首条血统归谁"。
    *
    * ⚠️ `workspace_id` 是**本地**工作空间 id（页所属那一个）——**不是**远端 `space_id`。

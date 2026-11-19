@@ -1292,6 +1292,7 @@ pub fn run() {
             commands::record_lineage_conflict,
             commands::list_lineage_conflicts,
             commands::resolve_lineage_conflict,
+            commands::set_page_lineage_fp,
             // 阶段 1 · 正文文本的本地修复（合并/裁决之后由"有编辑器的那一侧"喂正确文本）
             commands::refresh_page_text,
             // 阶段 1 · B1："正文待重建"队列（补算器按它把合并/裁决过的页面补上）
