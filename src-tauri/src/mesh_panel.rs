@@ -220,6 +220,46 @@ fn parse_peer_cursors(rows: &[(String, String)]) -> Vec<(String, i64)> {
     out
 }
 
+/// ⭐ **2026-11-19 修**：游标行**两个库都要看** —— 生产上 `mesh_cursor:*` 写在 **meta.db**
+/// （`sync_state` 全局键），而空间库那份在多数机器上是空的（实测：meta 12 行 / 空间库 0 行）
+/// ⇒ 原来只读空间库 ⇒ 面板「多设备同步图」**永远空**（"同步成功却一台都没有"）。
+///
+/// ⚠️ **必须按当前空间（对暗号那个 id）过滤**：同一个 meta 库里挤着**所有空间**的游标
+/// （实测一次读出 5 台，其中 1505/475 其实是**别的空间**的计数）——
+/// 不过滤就会把别的空间的进度混进本空间，算出"已收 1505 / 本机 317（落后 0）"这种假读数（2026-11-19 实测过）。
+///
+/// 合并口径：**同一台设备取较大游标**（两处都有时不许让旧值盖新值），按游标降序。
+fn merge_peer_cursors(
+    space_key: &str,
+    meta_rows: &[(String, String)],
+    space_rows: &[(String, String)],
+) -> Vec<(String, i64)> {
+    // 只保留 `mesh_cursor:<当前空间>:<设备>` 这一族；别的空间一律不算。
+    if space_key.trim().is_empty() {
+        return Vec::new();
+    }
+    let prefix = format!("mesh_cursor:{}:", space_key);
+    let keep = |rows: &[(String, String)]| -> Vec<(String, String)> {
+        rows.iter()
+            .filter(|(k, _)| k.starts_with(&prefix))
+            .cloned()
+            .collect()
+    };
+    let mut by_dev: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for (dev, cursor) in parse_peer_cursors(&keep(meta_rows))
+        .into_iter()
+        .chain(parse_peer_cursors(&keep(space_rows)))
+    {
+        let e = by_dev.entry(dev).or_insert(cursor);
+        if cursor > *e {
+            *e = cursor;
+        }
+    }
+    let mut out: Vec<(String, i64)> = by_dev.into_iter().collect();
+    out.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    out
+}
+
 /// ⭐ **2026-11-11（§13 A2）**：只读「设备×空间水位」——当前空间：本机高水位 ＋ 各对端已收水位。
 ///
 /// 口径：**只读**（不建连接、不发包、不写库）；对端只用**序号**表示（内部 id 不上界面）。
@@ -238,19 +278,38 @@ pub fn mesh_watermarks(db: State<'_, crate::db::Db>) -> Result<MeshWatermarks, S
     let space_name = crate::sync::local_space_name(&sc).unwrap_or_default();
     let device = crate::sync::device_id(&sc).unwrap_or_default();
     let local_max_seq = crate::mesh::max_own_device_seq_for_ui(&sc, &device).unwrap_or(0);
-    let mut stmt = sc
-        .prepare("SELECT key, value FROM sync_state WHERE key LIKE 'mesh_cursor:%'")
-        .map_err(|e| e.to_string())?;
-    let rows: Vec<(String, String)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-        .map_err(|e| e.to_string())?
-        .filter_map(Result::ok)
-        .collect();
+    // ⭐ 2026-11-19 修：游标在 **meta.db**（生产实况），空间库那份通常为空 ⇒ 两边都读再合并。
+    //   ⚠️ 绑定要写得让借用活得够久（`query_map` 的行借用 `stmt`）。
+    let space_rows: Vec<(String, String)> = {
+        let mut stmt = sc
+            .prepare("SELECT key, value FROM sync_state WHERE key LIKE 'mesh_cursor:%'")
+            .map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?;
+        mapped.filter_map(Result::ok).collect()
+    };
+    let meta_rows: Vec<(String, String)> = {
+        // ⚠️ 必须显式开 **meta.db**：游标是"跨空间的全局计数"，`Db.0` 那一份不是它（实测读出来 0 行）。
+        let c = crate::db::open_meta_conn_at(app_data)?;
+        let mut stmt = c
+            .prepare("SELECT key, value FROM sync_state WHERE key LIKE 'mesh_cursor:%'")
+            .map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?;
+        mapped.filter_map(Result::ok).collect()
+    };
     let now = crate::db::now_ms();
+    // ⭐ 2026-11-19：水位必须**按当前空间**取（`mesh_cursor:<对暗号 id>:<设备>`）——
+    //   这里先把这个空间的"对暗号 id"算出来（与同步轮同一处口径：`mesh_scope_at`）。
+    let space_key = crate::sync::mesh_scope_at(&sc, Some(&space))
+        .map(|s| s.space)
+        .unwrap_or_default();
     let mut online_count = 0usize;
     let mut offline_count = 0usize;
     let mut unknown_count = 0usize;
-    let peers = parse_peer_cursors(&rows)
+    let peers = merge_peer_cursors(&space_key, &meta_rows, &space_rows)
         .into_iter()
         .enumerate()
         .map(|(i, (dev, cursor))| {
@@ -305,6 +364,32 @@ mod tests {
             vec![("dev-a".to_string(), 12), ("dev-b".to_string(), 7)],
             "只留良构且按水位降序；坏值/坏 key 跳过"
         );
+    }
+
+    /// ⭐ **2026-11-19（真机修）**：水位合并的判据 ——
+    /// ① 只认**当前空间**那一族 key（别的空间哪怕游标更大也不许混进来）；
+    /// ② 两个库（meta / 空间库）都有同一台时**取较大值**（不许旧值盖新值）；
+    /// ③ 空间 key 为空 ⇒ **一条都不返回**（⛔ 不猜"大概就是这台"）。
+    #[test]
+    fn merge_peer_cursors_scopes_to_the_space_and_keeps_the_larger_value() {
+        let meta = vec![
+            // 当前空间：dev-a 两个库里都有 → 取大的 50
+            ("mesh_cursor:sp-x:dev-a".to_string(), "50".to_string()),
+            // 别的空间：dev-b 游标 999 —— ⛔ 不许混进本空间（真机 2026-11-19 就是这么混出 1505 的）
+            ("mesh_cursor:sp-other:dev-b".to_string(), "999".to_string()),
+            ("mesh_cursor:sp-x:dev-c".to_string(), "7".to_string()),
+        ];
+        let space = vec![("mesh_cursor:sp-x:dev-a".to_string(), "12".to_string())];
+        let got = merge_peer_cursors("sp-x", &meta, &space);
+        assert_eq!(
+            got,
+            vec![("dev-a".to_string(), 50), ("dev-c".to_string(), 7)],
+            "按空间过滤＋同设备取大＋降序"
+        );
+        // 空间 key 为空 ⇒ 一条都不给（而不是"全给"或"随便给"）
+        assert!(merge_peer_cursors("", &meta, &space).is_empty());
+        // 本空间没有任何游标 ⇒ 空表（面板据此显示"还没有对端水位"）
+        assert!(merge_peer_cursors("sp-empty", &meta, &space).is_empty());
     }
 
     /// ⭐ 2026-11-12（§13 S1）：在线视角三态 —— 没有成功记录＝未知（⛔ 不冒充离线）；TTL 内＝在线。
