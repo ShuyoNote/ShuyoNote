@@ -1679,7 +1679,12 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   }`;
   // ⭐ §13.6 O1（owner 2026-11-18 拍「在面板上真画出来」）：图的**唯一**来源就是这条纯函数 ——
   //   ⛔ 这下面不许再拿 `watermarks.peers` 自己拼状态（那就成了两份真相源）。
-  const meshGraph = meshSyncGraph({ watermarks, history });
+  //   ⭐ 2026-11-19（owner 拍）：再喂一个「附近在线且服务当前空间的台数」——
+  //   否则"我拉过它、它当时没新东西"的对端**不落游标行** ⇒ 三台在场上图里只出现一台。
+  const onlineServingNearby = (lanStatus?.nearby ?? []).filter(
+    (p) => p.serves_current === true,
+  ).length;
+  const meshGraph = meshSyncGraph({ watermarks, history, onlineServingNearby });
   const meshGraphRows = syncGraphRows(meshGraph);
   // 同步预算：两个档位与展开后下拉里的 <option> 逐字一致（见 `optMb`）。
   const budgetText = budget

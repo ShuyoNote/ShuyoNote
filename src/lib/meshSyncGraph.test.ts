@@ -351,6 +351,43 @@ describe("O1 面板行（syncGraphRows）", () => {
   it("状态词表只有那四个（判据按它取；改词会先红在这一条）", () => {
     expect(SYNC_GRAPH_STATUS_TEXT).toEqual({ ok: "已齐", behind: "落后", down: "断了", unknown: "未知" });
   });
+
+  // ⭐ owner 2026-11-19 拍：「在线的也要列上」——三台在场上原来只画出一台（没游标行的边看不见）
+  it("⭐ 在线但还没收到过数据的对端也列一行：状态 unknown、原因写清「还没收到过」，⛔ 不写断了", () => {
+    const g = meshSyncGraph({
+      at: 1_700_000_100_000,
+      watermarks: watermarks([peer({ index: 1, cursor: 100, online: true })]),
+      onlineServingNearby: 2,
+    });
+    expect(g.edges).toHaveLength(2);
+    const extra = g.edges.find((e) => e.to === "peer-2")!;
+    expect(extra.status).toBe("unknown");
+    expect(extra.reason).toContain("在线");
+    expect(extra.reason).toContain("还没有收到过");
+    expect(extra.reason).not.toContain("离线");
+    expect(g.counts).toEqual({ ok: 1, behind: 0, down: 0, unknown: 1 });
+    expect(g.nodes.find((n) => n.key === "peer-2")!.identityBasis).toBe("online-ordinal");
+    // 读数一格都不许编：cursor/lag/lastOk 全是 null，且都进 missing
+    expect(extra.reads.cursor.value).toBeNull();
+    expect(extra.reads.lag.value).toBeNull();
+    expect(extra.reads.lastOkAgoMs.value).toBeNull();
+    expect(extra.missing.join(" ")).toContain("还没收到过");
+    // 面板那几行也要能出（状态词只有一个）
+    const rows = syncGraphRows(g);
+    expect(rows.map((r) => r.statusText)).toEqual(["已齐", "未知"]);
+  });
+
+  it("在线台数 ≤ 有游标的台数 ⇒ 不多加行（⛔ 不许凭空造对端）", () => {
+    const g = meshSyncGraph({
+      at: 1,
+      watermarks: watermarks([peer({ index: 1 }), peer({ index: 2 })]),
+      onlineServingNearby: 1,
+    });
+    expect(g.edges).toHaveLength(2);
+    // 完全不给这个输入 ⇒ 与从前逐字相同（旧调用方/旧测试不受影响）
+    const legacy = meshSyncGraph({ at: 1, watermarks: watermarks([peer({ index: 1 })]) });
+    expect(legacy.edges).toHaveLength(1);
+  });
 });
 
 // ⭐ §13.6 O1 第二刀的**接线判据**（文本级，与 `syncPanelMesh.wiring.test.ts` 同一手法）：
@@ -359,7 +396,12 @@ describe("O1 接线 · 同步面板", () => {
   const panel = readFileSync(resolve(process.cwd(), "src/components/SyncPanel.tsx"), "utf8");
 
   it("面板用纯函数算图、用行渲染，并且有可供验收点到的 testid", () => {
-    expect(panel, "面板没拿这两支读数算图").toContain("meshSyncGraph({ watermarks, history })");
+    // ⭐ 2026-11-19（owner 拍）：面板还要喂「附近在线且服务当前空间的台数」——
+    //   否则"拉过但没新数据"的对端不落游标行 ⇒ 三台在场上只画出一台。
+    expect(panel, "面板没喂在线台数 ⇒ 没记录的边画不出来").toContain("onlineServingNearby");
+    expect(panel, "面板没拿这两支读数算图").toContain(
+      "meshSyncGraph({ watermarks, history, onlineServingNearby })",
+    );
     expect(panel, "面板没走唯一的行生成处").toContain("syncGraphRows(meshGraph)");
     expect(panel, "没有图容器 testid ⇒ 验收/判据点不到它").toContain('data-testid="mesh-sync-graph"');
     expect(panel, "没有逐行 testid ⇒ 数不出几台/哪条断了").toContain(

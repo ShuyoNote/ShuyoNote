@@ -53,7 +53,12 @@ export interface SyncHistoryRowLike {
 }
 
 /** 一格读数的来源。`derived:` 前缀 ＝ 由同名命令的读数**算出**来（不是命令直接给的）。 */
-export type SyncGraphSource = "mesh_watermarks" | "derived:mesh_watermarks" | "list_sync_history";
+export type SyncGraphSource =
+  | "mesh_watermarks"
+  | "derived:mesh_watermarks"
+  | "list_sync_history"
+  /** ⭐ 2026-11-19：`lan_status.nearby`（只用来判断"这台在线且服务当前空间"）。 */
+  | "lan_status";
 
 /** 一格读数：值 ＋ 来源。`value === null` ⇒ `source === null`（读不到就不许声称有来源）。 */
 export interface GraphReadout {
@@ -75,9 +80,11 @@ export interface SyncGraphNode {
    * ⚠️ 这个节点靠什么被认出来：
    * · `self` ＝ 本机（唯一）；
    * · `cursor-ordinal` ＝ **只能是序号** —— `mesh_watermarks` 不含 `device_id`，而序号是按
-   *   已收水位降序**现算**的（两次读数之间可能重排）⇒ ⛔ 别把它当稳定键长期记。
+   *   已收水位降序**现算**的（两次读数之间可能重排）⇒ ⛔ 别把它当稳定键长期记；
+   * · ⭐ **2026-11-19**：`online-ordinal` ＝ **在线但还没有任何水位记录**的对端
+   *   （只从"附近有几台服务这个空间"推出来的行；同样是序号，⛔ 没有身份）。
    */
-  identityBasis: "self" | "cursor-ordinal";
+  identityBasis: "self" | "cursor-ordinal" | "online-ordinal";
   /** 这一节点的读数来自哪支（读不到 ⇒ `null`）。 */
   source: SyncGraphSource | null;
 }
@@ -150,6 +157,17 @@ export interface MeshSyncGraphInput {
   history?: SyncHistoryRowLike[] | null;
   /** 生成时刻（测试注入；省略＝现在）。 */
   at?: number;
+  /**
+   * ⭐ **2026-11-19（owner 拍）**：**附近在线、且声明服务当前空间**的台数
+   * （来自 `lan_status.nearby` 里 `serves_current === true` 的条目数）。
+   *
+   * 为什么需要：图只列**有游标行**的对端，而"我拉过它、它当时没有新东西"**不会落游标行**
+   * ⇒ 三台在场时图上只出现一台（2026-11-19 真机实测：nearby 2 台、图只 1 行）。
+   * ⇒ 这个数用来**补**出"在线但还没有记录"的行（状态 `unknown`，⛔ 不写成"断了"）。
+   * ⚠️ 只能做**计数相减**：图里对端只有序号、没有 `device_id`，没法与 `nearby` 逐台对齐
+   *   ⇒ 只保证"行数不少于在线台数"，不保证行与设备一一对应（照实写进 `missing`）。
+   */
+  onlineServingNearby?: number;
 }
 
 /** 有限数才当读数（⛔ 不把 `NaN`／字符串当 0）。 */
@@ -360,6 +378,42 @@ export function meshSyncGraph(input?: MeshSyncGraphInput): MeshSyncGraph {
     });
   });
 
+  // ⭐ **2026-11-19（owner 拍）**：把"在线、服务这个空间、但还没有任何水位记录"的对端**也列出来**。
+  //   只做**计数相减**（图里只有序号，没法与 `nearby` 的 device_id 逐台对齐）⇒ 只保证行数不少于在线台数。
+  //   ⛔ 状态写 `unknown`、⛔ 绝不写"断了"：没记录 ≠ 坏了。
+  const nearbyOnline = Math.max(0, Math.floor(numOrNull(input?.onlineServingNearby) ?? 0));
+  const extras = Math.max(0, nearbyOnline - peerRows.length);
+  for (let i = 0; i < extras; i += 1) {
+    const label = peerRows.length + i + 1;
+    const key = `peer-${label}`;
+    nodes.push({
+      key,
+      role: "peer",
+      label: `对端 ${label}`,
+      identityBasis: "online-ordinal",
+      source: "lan_status",
+    });
+    const reads: SyncGraphEdgeReads = {
+      cursor: readout(null, null),
+      localMaxSeq: readout(localMaxSeq, "mesh_watermarks"),
+      lag: readout(null, null),
+      online: readout(true, "lan_status"),
+      lastOkAgoMs: readout(null, null),
+      latencyMs: readout(null, null),
+    };
+    counts.unknown += 1;
+    edges.push({
+      key: `self->${key}`,
+      from: "self",
+      to: key,
+      kind: "peer-current-space",
+      status: "unknown",
+      reason: `对端 ${label}：在线（附近能看到它，它也说服务这个空间），但还没有收到过它的数据 ⇒ 没有水位/最近成功记录（⛔ 不是「断了」）`,
+      reads,
+      missing: ["这条边的水位与最近成功 —— 还没收到过它的数据，所以一个字都没有（⛔ 不编 0）"],
+    });
+  }
+
   const missing: string[] = [
     "逐边延迟（每轮耗时） —— `mesh_watermarks` 只有「最近一次成功多久」，没有逐轮耗时",
     "逐边失败原因 —— 同步历史是**空间级**行，没有「哪一台」这一维 ⇒ ⛔ 不许把空间级失败挂到某台对端上",
@@ -382,7 +436,7 @@ export function meshSyncGraph(input?: MeshSyncGraphInput): MeshSyncGraph {
     readable: { watermarks: watermarksReadable, history: historyReadable },
     headline: headlineOf(
       counts,
-      peerRows.length,
+      edges.length,
       { watermarks: watermarksReadable, history: historyReadable },
       historyRows.length,
       spaces.length,
@@ -440,9 +494,15 @@ export function syncGraphRows(g: MeshSyncGraph): SyncGraphRow[] {
     const local = e.reads.localMaxSeq.value;
     const lag = e.reads.lag.value;
     const got =
-      cursor === null || local === null
+      cursor === null && local === null
         ? "已收/本机=未读到"
-        : `已收 ${cursor} / 本机 ${local}` + (lag === null ? "（落后未知）" : `（落后 ${lag}）`);
+        : cursor === null
+          ? // ⭐ 2026-11-19：本机高水位知道、对端水位不知道（在线但还没收到过）—— ⛔ 不写"未读到"糊成一片
+            `已收=未读到 / 本机 ${local}（落后未知）`
+          : local === null
+            ? `已收 ${cursor} / 本机=未读到（落后未知）`
+            : `已收 ${cursor} / 本机 ${local}` +
+              (lag === null ? "（落后未知）" : `（落后 ${lag}）`);
     return {
       key: e.key,
       label: e.to.replace("peer-", "对端 "),
