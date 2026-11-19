@@ -671,9 +671,13 @@ fn is_fully_bound(space_id: &str, server_url: &str) -> bool {
 /// 广播间隔。**只决定"多久喊一次"，不决定"还在不在"** —— 那个由 `lan::PEER_TTL_MS` 管，
 /// 判据 `the_peer_ttl_outlives_the_announce_interval`（本文件 `tests`）钉着两者的大小关系。
 ///
-/// ⚠️ 30s 不是随手取的：网段里 N 台设备 ≈ 每 30s 就有 N 条广播（噪音可控），
-/// 而它对 `PEER_TTL_MS`（90s）有 3× 余量 ⇒ **连丢两条公告也还不至于把对端判死**。
-pub const ANNOUNCE_INTERVAL_MS: i64 = 30_000;
+/// ⚠️ **2026-11-19（owner 拍「掉线发现得太慢」）**：30 s → **10 s**。
+///   原来：公告 30 s ＋ TTL 90 s ⇒ 一台**关掉的机器**在面板上要**挂满 90 秒**才消失。
+///   现在：公告 10 s ＋ TTL 30 s（`lan.rs`）⇒ **≤30 秒**就能看出来，**仍保留 3× 余量**
+///   （丢两条公告才判死 —— 与从前同一个安全系数）。
+///   代价：网段里的广播量 ×3（3 台设备 ≈ 18 条/分钟，仍是每台每 10 秒一条的常数级）。
+///   ⛔ 不新增协议、⛔ 不要求对端升级：老对端 30 s 发一次，本机照样按 TTL 判死（只是慢一点）。
+pub const ANNOUNCE_INTERVAL_MS: i64 = 10_000;
 
 /// 收报的等待上限：每这么久回一次头，好让**广播与腾表**即使网段里一条公告都没有
 /// （`recv_from` 会一直等）也照常发生。
@@ -3619,9 +3623,12 @@ mod tests {
             DIRTY_ANNOUNCE_MIN_GAP_MS
         ));
         // ④ 没 dirty 又没到点 ⇒ 不播（常规节拍照旧）
+        // ⚠️ 2026-11-19：这里原来写死 `+10_000` —— 那时 interval 是 30 s，等于"才过 1/3"；
+        //   现在 interval 是 10 s ⇒ 那个数**正好到点**（会真播）。改用 `interval / 2`，
+        //   判据的**本意**（没到点就不播）与常量取值解耦。
         assert!(!announce_due_with_dirty(
             10_000,
-            20_000,
+            10_000 + interval / 2,
             interval,
             false,
             DIRTY_ANNOUNCE_MIN_GAP_MS
