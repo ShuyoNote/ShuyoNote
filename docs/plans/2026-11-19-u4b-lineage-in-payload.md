@@ -100,6 +100,20 @@ merge(local, remote_seq, remote_lineage_fp, local_lineage_fp):
 > lineage_fp:97f58b7a… = 1603497604,2016424086,3458236520,4166478409，
 > 且该页**变更载荷里带同一个值**；老页（c41394eb / 75bf3cbd）**没有这一格** ⇒ 老路径逐字节不变 ✓。
 > ⏭ **下一刀 = S2**：合并点（doc_content::merge）接入 D 规则。
+> ✅ **S2 完成（2026-11-19 18:5x）**：`doc_content::lineage_compatible`（空/相等/子集/**超集** ⇒ 兼容；
+> 只有**真分叉** ⇒ 不兼容）＋ `sync::apply_upsert` 在旧规则**之前**加闸：不兼容 ⇒ `UpsertApply::KeptLocal`
+> （拉取路径会**顺手把对端那版存进暂存**）＋ 一行 `[sync] 血统分叉 ⇒ 留本机、不覆盖`。
+> 判据：`lineage_compatible_only_rejects_true_divergence`（五格真值表）＋
+> `a_diverged_lineage_keeps_local_even_when_the_old_rules_would_take_remote`（**带反证**：不带指纹时旧规则确实覆盖；
+> 带分叉指纹后变 `KeptLocal` 且正文一字不动；再补超集 ⇒ 仍 `Applied`，防冻住正常同步）。
+>
+> 📋 **S3 现状（2026-11-19 复核）**：S2 的**用户面已经现成** —— 面板「待取回」清单 ＋ 侧栏角标
+> （"有几页等你裁决"）＋三选项（`SyncPanel` 的 `listPendingRemotePages` / `resolve_pending_remote`），
+> 那一处文案本来就写着"另一类页本机那版**进了版本历史**"（不假装原样保留）。
+> ⇒ S3 剩下的是**真机核对**（分叉时用户看到的是「待取回」而不是旧横幅），**与 S4 一起做**。
+>
+> ⏭ **下一刀 = S4**：两机真冲突验证（本机停同步 ＋ Mac 关 Wi-Fi 各写一版 → 连线）。
+> 期望：**本页正文仍是本机那版**、面板「待取回」＋1、日志出现 `[sync] 血统分叉 ⇒ 留本机` 一行。
 > 现在 KV 无人写 ⇒ 行为仍与今天一致。
 
 
