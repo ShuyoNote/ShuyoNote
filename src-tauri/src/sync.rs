@@ -14334,6 +14334,39 @@ mod tests {
                 with_payload_string_field("[1,2]", LINEAGE_FP_PAYLOAD_FIELD, "a").unwrap(),
                 "[1,2]"
             );
+            // ⑤ **结构体 ↔ 载荷键名必须一致**（今天差点写成两套：结构体叫 `lineage_fp`、载荷键叫 `_lineage_fp`
+            //   ⇒ 收侧永远读不到）。这里用一次往返把它钉住：空 ⇒ 键不出现；有 ⇒ 收得回来。
+            let page = crate::models::PageDetail {
+                id: "p1".to_string(),
+                workspace_id: "w1".to_string(),
+                parent_id: None,
+                title: "页".to_string(),
+                content_json: "{}".to_string(),
+                content_text: String::new(),
+                cover: String::new(),
+                icon: String::new(),
+                cover_height: 300,
+                cover_pos: 50.0,
+                kind: "page".to_string(),
+                sort_order: 1.0,
+                created_at: 1,
+                updated_at: 2,
+                lineage_fp: String::new(),
+            };
+            let empty_json = serde_json::to_string(&page).unwrap();
+            assert!(
+                !empty_json.contains(LINEAGE_FP_PAYLOAD_FIELD),
+                "空血统 ⇒ 载荷里**不许**出现这个键（否则老路径不是逐字节不变）"
+            );
+            let round_trip = format!(
+                r#"{{"id":"p1","workspace_id":"w1","parent_id":null,"title":"页","content_json":"{{}}","content_text":"","cover":"","icon":"","cover_height":300,"cover_pos":50.0,"kind":"page","sort_order":1.0,"created_at":1,"updated_at":2,"{}":"a,b"}}"#,
+                LINEAGE_FP_PAYLOAD_FIELD
+            );
+            let back: crate::models::PageDetail = serde_json::from_str(&round_trip).unwrap();
+            assert_eq!(
+                back.lineage_fp, "a,b",
+                "⛔ 收侧读不到（结构体字段名与载荷键名不一致）"
+            );
         }
 
         /// ⭐ **P3-3b（2026-11-08）**：`_space_uid` 挂件与 `_space_name` **逐条同形**。

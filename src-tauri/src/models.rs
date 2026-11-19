@@ -47,7 +47,15 @@ pub struct PageDetail {
     ///
     /// ⚠️ `#[serde(default)]` ⇒ **老对端不发也收得下**（读到空 = "不知道" ⇒ 退回旧规则，⛔ 不升 wire 版本）；
     /// ⛔ 它是**血统**标识，**不是设备标识** —— 不许拿它判"同一台设备"。
-    #[serde(default)]
+    ///
+    /// ⚠️ **2026-11-19 修正**：载荷里的键是 **`_lineage_fp`**（与 `_space_name`/`_space_uid` 同一套"外壳字段"约定：
+    /// 下划线前缀 ＝ 不是页内容）⇒ 这里必须 `rename`，否则**收侧永远读不到**（结构体字段名与载荷键名是两件事）。
+    /// 顺序也定死：`skip_serializing_if`（空 ⇒ 载荷里**没有这个键**，与老版本逐字节相同）→ 收侧 `default`（缺 ⇒ 空）。
+    #[serde(
+        rename = "_lineage_fp",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     pub lineage_fp: String,
 }
 
