@@ -260,6 +260,17 @@ owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workf
       修法＝两边都读，但**必须按当前空间（对暗号 id）过滤**（不过滤会混进别的空间游标 —— 第一版混出 1505/475 假读数）。
       判据 `mesh_panel::tests::merge_peer_cursors_scopes_to_the_space_and_keeps_the_larger_value`。
    读数见基线页 §4.12–§4.13；面板真机截图 `_tmp/scratch/panel-graph-real-20261119.png`。
+13) ⚠️ **2026-11-19 三台在场时的读数（AMD＋Mac 都起来）**：
+   `lan_status.nearby` = **2 台**（`ZHAI-AMD` / `Mac`，两台都 `serves_current=true`、`reason=ok`；AMD 起初报过一次 `mismatch`）；
+   一轮全部空间同步 **1.5 s**、每空间 `candidates 2`、全 `error:null`。
+   ⚠️ **但「多设备同步图」只列出 1 台**（`对端 1 台 · 落后 1`，那台 cursor 215）。
+   原因：图只列**有游标行**的对端（`mesh_cursor:<space>:<device>`），而**从没收到过数据的对端没有游标行**
+   ⇒ 另一台明明在线、也被本机拉过（`candidates 2`、`error:null`），却在图上**看不见**。
+   ⛔ 这与验收句「3 台设备时一眼看出**哪条边断了**」有落差：**"从没来过数据的边"现在画不出来**。
+   ⇒ 两条候选改法（都属用户可见/写路径变更，**待 owner 拍**）：
+     ⑦-甲：图也吃 `lan_status.nearby`，把"在线但从未收到"的对端列成一行（状态写 **未知/无记录**，⛔ 不写成"断了"）；
+     ⑦-乙：拉取成功（哪怕 `applied=0`）也**落一条游标行**（游标＝对方高水位），让"通了的边"立刻可见。
+
 ```
 
 ## 4. 红线与待拍板
