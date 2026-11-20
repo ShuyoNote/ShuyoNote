@@ -360,6 +360,45 @@ fn mirror_change_to_mesh_outbox(
 /// 搬运缓存的时间上限（方案 §6-② 的提案值：**7 天**；体积那一半由 S4 的水位裁剪补上）。
 const MESH_OUTBOX_KEEP_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
+/// ⭐ **F2-1（2026-11-20）**：**这一条密封镜像现在能不能删**（纯函数；⛔ 还没有接进那条 DELETE）。
+///
+/// 现状（`mirror_change_to_mesh_outbox` 末尾那句）只看时间：`mirrored_at < now - 7 天` ⇒ 删。
+/// 问题：**还有对端没拿到这一条**也照删 —— 那些对端从此永久缺这一段（F2-0 只能说"你缺了"，补不回来）。
+///
+/// 新口径（三条，按顺序）：
+/// ① `peer_cursors` 为空（本空间**没有任何已知对端游标**）⇒ **按时间删**（否则无界增长）；
+/// ② 有对端、且**每一个**游标都 `>= device_seq`（都拿到了）⇒ **按时间删**；
+/// ③ 有对端游标 `< device_seq`（还没拿到）⇒ **不删**，但最多多留 [`MIRROR_MAX_EXTRA_MS`]：
+///    超过 `keep_ms + 上限` 之后仍然删（⛔ 宁可让某个长期离线的对端丢一段，也不许镜像无界长）。
+///
+/// ⚠️ `device_seq` 与 `peer_cursors` **必须是同一把尺**（`changes.device_seq` / `mesh_cursor:*`）——
+///    两者混用会让"都拿到了"永远不成立，镜像就再也不会被清（无界增长的另一种形态）。
+pub fn may_drop_mirror(
+    mirrored_at: i64,
+    now: i64,
+    keep_ms: i64,
+    device_seq: i64,
+    peer_cursors: &[i64],
+) -> bool {
+    if keep_ms < 0 || device_seq < 0 {
+        return false; // 坏参数 ⇒ ⛔ 不删（保守）
+    }
+    let aged_out = now.saturating_sub(mirrored_at) >= keep_ms;
+    if !aged_out {
+        return false; // 还没到保留期：一律不删（与现状一致）
+    }
+    let all_caught_up = peer_cursors.iter().all(|c| *c >= device_seq);
+    if all_caught_up {
+        return true; // 没对端，或全部已收到 ⇒ 照旧按时间删
+    }
+    // 还有对端没拿到：多留一段，但有硬上限（防无界）
+    let hard_cap = keep_ms.saturating_add(MIRROR_MAX_EXTRA_MS);
+    now.saturating_sub(mirrored_at) >= hard_cap
+}
+
+/// ⭐ **F2-1**：为"还有对端没拿到"的条目**最多多留多久**（超过就照删，⛔ 不许无界增长）。
+pub const MIRROR_MAX_EXTRA_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
 /// 从搬运缓存里删掉这几位 —— 名单与 `changes` 那次删除**是同一份**（§ `record_change`）。
 ///
 /// ⚠️ 失败只记日志：删不掉只会让缓存变胖，⛔ 不许把用户这次保存弄挂 ✗。
@@ -14365,6 +14404,32 @@ mod tests {
                 Some(crate::mesh_merge_ledger::SpaceKind::Unclassified),
                 "⭐ 读到了（未分类）与读不到**必须分得开**"
             );
+        }
+
+        /// ⭐ **F2-1（2026-11-20）**：`may_drop_mirror` 的四格真值表 —— 只判"**这一条现在能不能删**"。
+        /// ⚠️ 它**还没接线**（那条 DELETE 仍只看时间）：这一组只是在把口径先钉死。
+        #[test]
+        fn may_drop_mirror_keeps_only_what_a_peer_still_needs() {
+            const DAY: i64 = 86_400_000;
+            let now = 1_000 * DAY;
+            // ① 还没到保留期 ⇒ 一律不删（与现状一致）
+            assert!(!may_drop_mirror(now - DAY, now, 7 * DAY, 5, &[]));
+            assert!(!may_drop_mirror(now - DAY, now, 7 * DAY, 5, &[0]));
+            // ② 到了保留期 + **没有任何已知对端** ⇒ 照旧删（⛔ 不许无界增长）
+            assert!(may_drop_mirror(now - 8 * DAY, now, 7 * DAY, 5, &[]));
+            // ③ 到了保留期 + 对端**都拿到了**（游标 >= 这一条）⇒ 删
+            assert!(may_drop_mirror(now - 8 * DAY, now, 7 * DAY, 5, &[5, 9]));
+            assert!(may_drop_mirror(now - 8 * DAY, now, 7 * DAY, 5, &[5]));
+            // ④ 到了保留期 + 有对端**还没拿到** ⇒ 多留（不删）
+            assert!(!may_drop_mirror(now - 8 * DAY, now, 7 * DAY, 5, &[4]));
+            assert!(!may_drop_mirror(now - 8 * DAY, now, 7 * DAY, 5, &[9, 2]));
+            // ⑤ 但硬上限到了 ⇒ 照删（⛔ 宁可让长期离线的对端丢一段，也不许无界）
+            let hard = 7 * DAY + MIRROR_MAX_EXTRA_MS;
+            assert!(may_drop_mirror(now - hard, now, 7 * DAY, 5, &[4]));
+            assert!(!may_drop_mirror(now - hard + 1, now, 7 * DAY, 5, &[4]));
+            // ⑥ 坏参数（负的保留期/负的 seq）⇒ 保守不删
+            assert!(!may_drop_mirror(now - 30 * DAY, now, -1, 5, &[]));
+            assert!(!may_drop_mirror(now - 30 * DAY, now, 7 * DAY, -1, &[]));
         }
 
         /// ⭐ **U4-B S1（2026-11-19）**：`_lineage_fp` 挂件的四条口径 ——
