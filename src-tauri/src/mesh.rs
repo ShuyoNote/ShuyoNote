@@ -97,6 +97,34 @@ struct PullResponse {
     /// ⚠️ `#[serde(default)]`：老版本对端不带这一格 ⇒ 读成 0（⇒ 客户端不敢乱重基 ✓）。
     #[serde(default)]
     max_device_seq: i64,
+    /// ⭐ **F2-0（2026-11-20）**：我这一栏**最老还有哪一条** `device_seq`（空 ⇒ 0）。
+    ///
+    /// 为什么必须有它：拉取是 `device_seq > since` ⇒ 只要我这侧**已经删掉了** `since` 之后的那一段
+    /// （`changes` 里同实体的旧 upsert 会被取代删除；锁着空间的密封镜像 `meta.mesh_outbox` 还有 **7 天**
+    /// 保留期），对端就会**永远缺着那一段而毫不知情** —— 它拿到后面的行、游标照常前进，日志里一行都不说。
+    /// ⇒ 把"我最老还有哪条"告诉它，它才能发现"**我落后到超出你的保留期了**"并如实报出来。
+    /// ⚠️ `#[serde(default)]`：老版本对端不带这一格 ⇒ 读成 0 ⇒ 收侧**沉默**（⛔ 不许把"不知道"说成"没丢"）。
+    /// ⚠️ 与 `max_device_seq` 同一把尺（都是 `device_seq`）—— 两格不同尺会让判据天天误报。
+    #[serde(default)]
+    min_device_seq: i64,
+}
+
+/// ⭐ **F2-0（2026-11-20）**：游标是否已经**落后到超出对端保留期**（那一段永久缺失）。
+///
+/// 口径（三条，缺一不可）：
+/// ① `min_seq <= 0` ⇒ `None`（对端没报／空表 ⇒ **不知道**，⛔ 不报警）；
+/// ② `cursor >= min_seq - 1` ⇒ `None`（还没丢：`cursor` 是"我收到了哪条"，下一条应当是 `cursor+1`）；
+/// ③ 否则返回 `(cursor + 1, min_seq - 1)` —— **闭区间**，就是那一段永久缺失的 `device_seq`。
+///
+/// ⚠️ **只报不修**：本函数不改任何拉取/重试策略（那是 F2-1/F2-2 的事，且要另行拍板）。
+pub fn missing_range(cursor: i64, min_seq: i64) -> Option<(i64, i64)> {
+    if min_seq <= 0 || cursor < 0 {
+        return None;
+    }
+    if cursor >= min_seq.saturating_sub(1) {
+        return None;
+    }
+    Some((cursor + 1, min_seq - 1))
 }
 
 /// 服务侧：**只服务我自己产生的**记录里、游标之后的那一批（按 `device_seq` 升序）。
@@ -204,6 +232,20 @@ pub(crate) fn max_own_device_seq_for_ui(c: &Connection, own_device: &str) -> Res
 fn max_own_device_seq(c: &Connection, own_device: &str) -> Result<i64, String> {
     c.query_row(
         "SELECT COALESCE(MAX(device_seq), 0) FROM changes WHERE device_id = ?1",
+        params![own_device],
+        |r| r.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// ⭐ **F2-0（2026-11-20）**：我这一栏 `changes.device_seq` 的**最老一条**（没有行 ⇒ 0）。
+///
+/// 只给 `/mesh/pull` 的响应带一格用（见 `PullResponse::min_device_seq`）——
+/// 收侧拿它与自己的 `cursor` 比，就能发现"**我落后到超出你的保留期了**"（`missing_range`）。
+/// ⚠️ 与 [`max_own_device_seq`] **同一张表、同一把尺**（`changes.device_seq`）。
+fn min_own_device_seq(c: &Connection, own_device: &str) -> Result<i64, String> {
+    c.query_row(
+        "SELECT COALESCE(MIN(device_seq), 0) FROM changes WHERE device_id = ?1",
         params![own_device],
         |r| r.get(0),
     )
@@ -1120,7 +1162,7 @@ pub async fn pull_from_peer(
     // ⭐ 2026-10-23（S3b-发）：本机空间名的哈希 ⇒ 对端锁着时按它找回"该发哪一份"
     //   （空串 ＝ 这次调用不带：判据/探针用 ✓）。
     name_sha: &str,
-) -> Result<(Vec<MeshRow>, i64), String> {
+) -> Result<(Vec<MeshRow>, i64, i64), String> {
     pull_from_peer_with_confirm(ep, peer, space_id, since, token, auth, name_sha, None).await
 }
 
@@ -1137,7 +1179,7 @@ pub(crate) async fn pull_from_peer_with_confirm(
     // 同上：空串＝不带。
     name_sha: &str,
     confirm: Option<(&str, &str)>,
-) -> Result<(Vec<MeshRow>, i64), String> {
+) -> Result<(Vec<MeshRow>, i64, i64), String> {
     // ⚠️ target **只拼一次** ✗：⭐ 签的是它、发的也是它 ✓（⛔ 两处各拼一份 ⇒ 一漂就验不过 ✗）。
     let target = pull_target_with_confirm(space_id, since, name_sha, confirm);
     // ⭐ Step 1b：只认端点（reqwest 的三格头/错误链都收进 `LanEndpoint` 里了）
@@ -1166,7 +1208,8 @@ pub(crate) async fn pull_from_peer_with_confirm(
     let body: PullResponse = serde_json::from_str(&reply.body)
         .map_err(|e| format!("对端 {} 的拉取响应不是 JSON：{e}", peer.device_id))?;
     // ⚠️ 老对端不带 `max_device_seq` ⇒ 0（`serde(default)`）⇒ 调用方**不会**据此重基 ✓
-    Ok((body.records, body.max_device_seq))
+    // ⭐ F2-0：`min_device_seq` 同理（老对端不带 ⇒ 0 ⇒ 收侧**沉默**，⛔ 不把"不知道"说成"没丢"）。
+    Ok((body.records, body.max_device_seq, body.min_device_seq))
 }
 
 /// 一轮对等交换的结果（给人看的读数，不是业务数据）。
@@ -1375,7 +1418,7 @@ pub async fn pull_and_absorb(
     // ⭐ Step 1b：**调用点挑传输实现**（今天只有局域网直连）；下面一处只认端点 ✓
     // ⭐ Step 3-1：**挑传输**收敛到一处（局域网 / 跨网隧道）
     let ep = crate::mesh_endpoint::endpoint_for_peer(peer, client.clone()).await?;
-    let (mut rows, mut max_seq) = {
+    let (mut rows, mut max_seq, min_seq) = {
         // ⭐ 签名要在**拿锁的那一小段**里算好 ✗（⛔ 不许跨 await 持锁 ✗）；拿不到身份 ⇒ `None` ✓
         //   （⭐ 那就只剩口令那一档 ✓ —— 与今天逐字相同 ✓）。
         let auth = {
@@ -1452,6 +1495,16 @@ pub async fn pull_and_absorb(
         rows = again.0;
         max_seq = again.1.max(max_seq);
     }
+    // ⭐ **F2-0（2026-11-20）**：**只报不修** —— 若我已经落后到**超出对端的保留期**，
+    //   就把那段"永远补不回来"的区间如实说出来（⛔ 不改变拉取/重试策略，也不动游标）。
+    //   为什么必须有这一句：拉取是 `device_seq > since`，对端只会回"后面还有什么"，
+    //   ⛔ **不会**告诉你"中间那一段我已经删了" ⇒ 用户只会看到"某几页怎么还是旧的"。
+    if let Some((from, to)) = missing_range(since, min_seq) {
+        eprintln!(
+            "[mesh] **缺口已过期**：我 cursor={since}，对端最老还有 {min_seq} ⇒ {from}..{to} 永久缺失\
+             （⛔ 不会自动补；要全量重同步或从备份恢复）"
+        );
+    }
     // ⭐⭐ **2026-10-20（旧对端不带 `max_device_seq`）**：**冷探针**。
     //   情形：`since > 0`、这次一条没拉到、对端又没报高水位（老版本）⇒
     //   "真的没有新东西"和"我的游标越界了"**长得一模一样** ✗ ⇒ 问一次 `since=0`：
@@ -1522,7 +1575,7 @@ pub async fn pull_and_absorb(
                     );
                     Vec::new()
                 }
-                Ok((r, _)) => r,
+                Ok((r, _, _)) => r,
             };
             eprintln!(
                 "[mesh {}] 冷探针：since={since}（越界候选）⇒ 探到 {} 条",
@@ -5671,6 +5724,8 @@ fn handle_pull(state: &State, req: &Request) -> Reply {
     }
     // ⭐ 2026-10-20：把**我这一栏的高水位**一起发出去（收侧据此判断"游标是不是越界了"）。
     let max_device_seq = max_own_device_seq(&g, &state.cfg.device_id).unwrap_or(0);
+    // ⭐ F2-0（2026-11-20）：再把**我这一栏最老还有哪条**发出去（收侧据此发现"它已经落后到超出我的保留期"）。
+    let min_device_seq = min_own_device_seq(&g, &state.cfg.device_id).unwrap_or(0);
     // ⭐⭐ **2026-10-28（owner：「一步到位」·P2）**：**加密空间对认得封包的对端，直接发封包** ✓
     //   ⇒ 一个**锁着**的对端也能先收下、解锁后自动补应用（原来明文会被 `stash_sealed_rows` 跳过 ⇒ 白跑）。
     let sealed_ok = caps_has_sealed1(target);
@@ -5687,7 +5742,7 @@ fn handle_pull(state: &State, req: &Request) -> Reply {
         Ok(records) => Reply::json(
             200,
             "OK",
-            serde_json::json!({ "records": records, "max_device_seq": max_device_seq }).to_string(),
+            serde_json::json!({ "records": records, "max_device_seq": max_device_seq, "min_device_seq": min_device_seq }).to_string(),
         ),
         Err(e) => Reply::json(500, "Internal Server Error", json_error(&e)),
     }
@@ -5827,7 +5882,7 @@ pub async fn sealed_round(
         // ⭐ Step 3-1：**挑传输**收敛到一处（局域网 / 跨网隧道）
         let ep = crate::mesh_endpoint::endpoint_for_peer(peer, client.clone()).await?;
         match pull_from_peer(&*ep, peer, proto_space, since, None, auth_ref, &name_sha).await {
-            Ok((rows, _max)) => {
+            Ok((rows, _max, _min)) => {
                 let n = stash_sealed_rows(&meta, db_space, &peer.device_id, &rows).unwrap_or(0);
                 stashed_total += n;
                 out.push(PeerPullReport {
@@ -6064,6 +6119,14 @@ fn serve_locked_outbox(state: &State, target: &str, _space: &str, since: i64, li
             |r| r.get(0),
         )
         .unwrap_or(0);
+    // ⭐ F2-0（2026-11-20）：锁态那一栏（sealed 镜像）**最老还有哪条** —— 收侧据此发现"落后到超出保留期"。
+    let min_device_seq: i64 = meta
+        .query_row(
+            "SELECT COALESCE(MIN(device_seq), 0) FROM mesh_outbox WHERE space_id = ?1 AND device_id = ?2",
+            params![ws, state.cfg.device_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
     let mut records: Vec<MeshRow> = Vec::new();
     match meta.prepare(
         "SELECT device_seq, updated_at, sealed FROM mesh_outbox
@@ -6090,7 +6153,7 @@ fn serve_locked_outbox(state: &State, target: &str, _space: &str, since: i64, li
     Reply::json(
         200,
         "OK",
-        serde_json::json!({ "records": records, "max_device_seq": max_device_seq }).to_string(),
+        serde_json::json!({ "records": records, "max_device_seq": max_device_seq, "min_device_seq": min_device_seq }).to_string(),
     )
 }
 
@@ -9759,10 +9822,12 @@ mod tests {
             quic_addrs: Vec::new(),
             node_id: String::new(),
         };
-        let (rows, max) = pull_from_peer(&fake, &peer, "space-z", 0, None, None, "")
+        let (rows, max, min) = pull_from_peer(&fake, &peer, "space-z", 0, None, None, "")
             .await
             .expect("假端点必须够用");
         assert_eq!(max, 7, "高水位必须照样读出来（游标越界那条判据靠它）");
+        // ⭐ F2-0（2026-11-20）：这一格的假响应**没有** `min_device_seq` ⇒ 0（老对端形状）⇒ 不报缺口。
+        assert_eq!(min, 0, "没有这一格 ⇒ 0 ⇒ 不报缺口");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].entity_id, "p1");
         assert_eq!(
@@ -12357,7 +12422,36 @@ mod tests {
         let old = r#"{"records":[]}"#;
         let parsed: PullResponse = serde_json::from_str(old).expect("老对端不带那一格也必须能解析");
         assert_eq!(parsed.max_device_seq, 0, "没有这一格 ⇒ 0（⇒ 客户端不重基）");
+        // ⭐ F2-0（2026-11-20）：`min_device_seq` 同理 —— 老对端不带 ⇒ 0 ⇒ `missing_range` 返回 None（沉默）。
+        assert_eq!(
+            parsed.min_device_seq, 0,
+            "没有这一格 ⇒ 0（⇒ 客户端不能说'你丢了'）"
+        );
+        assert_eq!(
+            missing_range(5, parsed.min_device_seq),
+            None,
+            "不知道 ⇒ 一行日志都不许打"
+        );
         assert!(parsed.records.is_empty());
+    }
+
+    /// ⭐ **F2-0（2026-11-20）**：`missing_range` 的四格真值表 —— 只判"**我已经落后到超出对方保留期**"。
+    /// ⚠️ 反例同样重要：`min_seq` 缺省（老对端）/ 还没丢 / 空表 时**一律 None**（⛔ 不许静默报警）。
+    #[test]
+    fn missing_range_only_fires_when_the_gap_is_really_gone() {
+        // ① 对端没报（老对端/空表）⇒ 不知道 ⇒ 不报
+        assert_eq!(missing_range(5, 0), None);
+        assert_eq!(missing_range(5, -1), None);
+        // ② 还没丢：下一条就是对方的 min（或已经超过）⇒ 不报
+        assert_eq!(missing_range(9, 10), None, "10 就是我的下一条 ⇒ 没丢");
+        assert_eq!(missing_range(10, 10), None);
+        assert_eq!(missing_range(12, 10), None);
+        // ③ 真丢了：返回闭区间（含"只缺 1 条"的边界）
+        assert_eq!(missing_range(9, 11), Some((10, 10)), "只缺 1 条也要报");
+        assert_eq!(missing_range(0, 11), Some((1, 10)));
+        assert_eq!(missing_range(5, 812), Some((6, 811)));
+        // ④ 负数游标（坏数据）⇒ 不报（⛔ 不猜）
+        assert_eq!(missing_range(-3, 10), None);
     }
 
     /// ⭐ 2026-10-24：`round_touched_pages` —— 网格拉完要告诉前端"改了哪些页"，
