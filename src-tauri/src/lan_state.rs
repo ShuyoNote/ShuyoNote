@@ -1212,11 +1212,51 @@ pub fn cooldown_until(now_ms: i64, cooldown_ms: i64) -> i64 {
 
 /// ⭐ **F3-2（2026-11-20）**：跨轮冷却的**参数**（owner「全面开火」时拍的保守档）。
 ///
-/// 为什么是 3 轮 / 30 秒：今天量到 `被跳过 8 次（按空间计）`、每轮合计 `p95 1661ms / max 21479ms` ——
-/// 尾巴来自"等明显连不上的对端超时"。3 轮 ≈ 半分钟量级的连续失败才算"真的不在"，
-/// 而 30 秒短到**一台刚回网的机器最多被晾半分钟**（⛔ 不是拉黑）。
+/// 为什么是 3 轮 / 180 秒：今天量到 `被跳过 8 次（按空间计）`、每轮合计 `p95 1661ms / max 21479ms` ——
+/// 尾巴来自"等明显连不上的对端超时"。
+/// ⚠️ **真机教训（2026-11-20 13:0x）**：第一版设 30 秒，结果一轮都没见到"仍在冷却窗内" ——
+///   因为**后台轮 120 秒才一拍，30 秒的窗早就过期了**（`被跳过` 照旧每轮重等一次超时）。
+///   ⇒ 冷却窗**必须长于轮间隔**才有效：改成 180 秒（1.5 个轮间隔）。
+/// ⚠️ 与"刚回网"的矛盾由 ② 解决：**收到该设备的公告 ⇒ 立刻清冷却**（公告＝它活着的实证），
+///   所以 180 秒不会把一台真的回来了的机器晾住。
 pub const PEER_COOLDOWN_MIN_MISSES: u32 = 3;
-pub const PEER_COOLDOWN_MS: i64 = 30_000;
+pub const PEER_COOLDOWN_MS: i64 = 180_000;
+
+/// ⭐ **F3-2（2026-11-20）**：收到某台设备的公告 ⇒ **清掉它在所有空间上的冷却与连续失败计数**。
+///
+/// 为什么是"所有空间"：公告是按设备发的（它代言哪些空间另说）⇒ 它活着这一条对所有空间都成立。
+/// ⚠️ 清不掉只记一行：⛔ 不许让"清冷却失败"影响收公告那条路。
+pub fn clear_peer_cooldowns(peer_device: &str) {
+    let Some(dir) = crate::db::app_data_dir_ref() else {
+        return;
+    };
+    let Ok(c) = crate::db::open_meta_conn_at(dir) else {
+        return;
+    };
+    // ⚠️ **真机教训（2026-11-20 13:3x）**：公告一来就清冷却，对"**有手动地址覆盖**"的设备是错的 ——
+    //   它在广播（我们收得到公告），但我们**根本不会去拨它的广播地址**（手动地址优先），
+    //   所以"收得到公告"并不能证明"手动那条路能通"。这正是今早实测的真实场景
+    //   （死的手动地址 192.168.43.190 ⇒ 190 秒/轮全失败，而我们照样每 10 秒听到它的公告）。
+    //   ⇒ 有手动覆盖 ⇒ **不清**（让冷却按 3 轮/180 秒工作）；没有覆盖 ⇒ 照清（它真的回来了）。
+    if let Some(mb) = crate::mesh::manual_peer_bases_any(&c).get(peer_device).cloned() {
+        if !mb.trim().is_empty() {
+            eprintln!(
+                "[peer-cooldown] 收到公告但该设备有**手动地址覆盖** ⇒ 冷却不因公告清零（公告证明的是它在广播，不是那条路能通）"
+            );
+            return;
+        }
+    }
+    let like_cd = format!("peer_cooldown:%:{peer_device}");
+    let like_ms = format!("peer_misses:%:{peer_device}");
+    for like in [like_cd, like_ms] {
+        if let Err(e) = c.execute(
+            "UPDATE meta.sync_state SET value = '0' WHERE key LIKE ?1",
+            rusqlite::params![like],
+        ) {
+            eprintln!("[peer-cooldown] 清冷却失败（不影响收公告）：{e}");
+        }
+    }
+}
 
 /// ⭐ **F3-2**：连续失败计数与冷却窗的**键名**（都在 `meta.sync_state`；⛔ 不新开表）。
 ///
@@ -2097,6 +2137,10 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                         BACKGROUND_EMPTY_STREAK.store(0, Ordering::SeqCst);
                         BACKGROUND_HEARD_TOTAL.fetch_add(1, Ordering::SeqCst);
                         eprintln!("{}", lan::announce_recv_line(&p, &own_spaces));
+                        // ⭐ **F3-2（2026-11-20）**：**收到它的公告 ⇒ 立刻清掉它的跨轮冷却**。
+                        //   理由：公告是"它活着、能说话"的**直接实证** —— 冷却判的是"可能不在"，
+                        //   实证一到就不该再拿历史失败拖住它（否则刚回网的机器会被白晾一个冷却窗）。
+                        clear_peer_cooldowns(&p.announce.device_id);
                         // ⭐ 2026-11-12（§13 F1 第一刀）：对端说“我刚有改动” ⇒ **立刻唤醒一轮**
                         //   去拉（不等 2 分钟）。老对端没有这一格 ⇒ false ⇒ 行为不变。
                         //   ⚠️ **F1 修复**：必须走「只唤醒、不置 dirty」的入口 —— 走本地保存那
