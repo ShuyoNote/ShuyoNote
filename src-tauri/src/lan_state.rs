@@ -1238,7 +1238,10 @@ pub fn clear_peer_cooldowns(peer_device: &str) {
     //   所以"收得到公告"并不能证明"手动那条路能通"。这正是今早实测的真实场景
     //   （死的手动地址 192.168.43.190 ⇒ 190 秒/轮全失败，而我们照样每 10 秒听到它的公告）。
     //   ⇒ 有手动覆盖 ⇒ **不清**（让冷却按 3 轮/180 秒工作）；没有覆盖 ⇒ 照清（它真的回来了）。
-    if let Some(mb) = crate::mesh::manual_peer_bases_any(&c).get(peer_device).cloned() {
+    if let Some(mb) = crate::mesh::manual_peer_bases_any(&c)
+        .get(peer_device)
+        .cloned()
+    {
         if !mb.trim().is_empty() {
             eprintln!(
                 "[peer-cooldown] 收到公告但该设备有**手动地址覆盖** ⇒ 冷却不因公告清零（公告证明的是它在广播，不是那条路能通）"
@@ -1246,8 +1249,8 @@ pub fn clear_peer_cooldowns(peer_device: &str) {
             return;
         }
     }
-    let like_cd = format!("peer_cooldown:%:{peer_device}");
-    let like_ms = format!("peer_misses:%:{peer_device}");
+    let like_cd = format!("peer_cooldown:{peer_device}");
+    let like_ms = format!("peer_misses:{peer_device}");
     for like in [like_cd, like_ms] {
         if let Err(e) = c.execute(
             "UPDATE meta.sync_state SET value = '0' WHERE key LIKE ?1",
@@ -1260,14 +1263,17 @@ pub fn clear_peer_cooldowns(peer_device: &str) {
 
 /// ⭐ **F3-2**：连续失败计数与冷却窗的**键名**（都在 `meta.sync_state`；⛔ 不新开表）。
 ///
-/// ⚠️ 键里带 **空间**：同一台对端在 A 空间连不上，不代表 B 空间也连不上（实测两空间服务不同）。
-pub fn peer_miss_key(space: &str, peer_device: &str) -> String {
-    format!("peer_misses:{space}:{peer_device}")
+/// ⚠️ **按设备、不按空间**（2026-11-20 15:2x 真机读数纠正的第一版）：第一版键里带空间，
+/// 结果**每轮只有一个空间**真的去试那台（第一个空间失败后，修法 i 的 `failed_peers` 会把其余 8 个空间都跳过）
+/// ⇒ 只有那 1 个空间的计数能累到 3 ⇒ 冷却只对 1 个空间生效、下一轮只省下 1 次尝试。
+/// 而"这台连不上"本来就是**设备级事实** ⇒ 改成按设备记（每次失败只在**本轮第一次**遇到它时 +1）。
+pub fn peer_miss_key(peer_device: &str) -> String {
+    format!("peer_misses:{peer_device}")
 }
 
 /// 见 [`peer_miss_key`]。
-pub fn peer_cooldown_key(space: &str, peer_device: &str) -> String {
-    format!("peer_cooldown:{space}:{peer_device}")
+pub fn peer_cooldown_key(peer_device: &str) -> String {
+    format!("peer_cooldown:{peer_device}")
 }
 
 /// ⭐ **2026-11-18（根因 A 取证，纯函数）**：一个空间在这一轮里花了多久。///
@@ -1365,6 +1371,8 @@ fn spawn_background_round(
         //   ⚠️ 只跳过**网络类**失败（身份类本来就不等超时，跳它反而会把"某空间能成"变成误导）；
         //   ⚠️ **下一轮照旧重试**（这个清单只活在这一轮里）。
         let mut failed_peers: Vec<String> = Vec::new();
+        // ⭐ F3-2：本轮**已记过失败**的设备（一台设备在本轮多个空间失败只记一次）。
+        let mut counted_fail: Vec<String> = Vec::new();
         for (proto_space, db_space, device_level) in pairs {
             // ⭐ 2026-10-11（设备级 ✓）：⭐ 判定**在上面那一处算好**（`mesh::is_device_level_space` ✓）
             //   再传进来 ✗ —— `mesh_round_once` 自己不判 ✓（否则就是第二份口径 ✓；方案 §9.1／§10.3 ✓）。
@@ -1392,12 +1400,10 @@ fn spawn_background_round(
                 let c = db2.0.lock().unwrap_or_else(|e| e.into_inner());
                 let now = crate::db::now_ms();
                 for p in &peers {
-                    let until = crate::sync::get_meta_state(
-                        &c,
-                        &peer_cooldown_key(&proto_space, &p.announce.device_id),
-                    )
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .unwrap_or(0);
+                    let until =
+                        crate::sync::get_meta_state(&c, &peer_cooldown_key(&p.announce.device_id))
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .unwrap_or(0);
                     if should_cooldown_peer(
                         0,
                         PEER_COOLDOWN_MIN_MISSES,
@@ -1465,11 +1471,17 @@ fn spawn_background_round(
                 let c = db3.0.lock().unwrap_or_else(|e| e.into_inner());
                 let now = crate::db::now_ms();
                 for p in &r.peers {
-                    let miss_key = peer_miss_key(&proto_space, &p.peer);
-                    let cd_key = peer_cooldown_key(&proto_space, &p.peer);
+                    let miss_key = peer_miss_key(&p.peer);
+                    let cd_key = peer_cooldown_key(&p.peer);
                     let network_fail =
                         p.error.is_some() && should_skip_peer_for_rest_of_round(p.error.as_deref());
                     if network_fail {
+                        // ⚠️ 每轮每设备只 +1：一台设备在这一轮的 9 个空间里可能各失败一次，
+                        //    而"它没回话"是一件事（⛔ 不许一轮就 +9 ⇒ 3 轮门槛变成"一天"）。
+                        if counted_fail.iter().any(|d| d == &p.peer) {
+                            continue;
+                        }
+                        counted_fail.push(p.peer.clone());
                         let n: u32 = crate::sync::get_meta_state(&c, &miss_key)
                             .and_then(|s| s.parse::<u32>().ok())
                             .unwrap_or(0)
@@ -3790,17 +3802,20 @@ mod tests {
         assert_eq!(cooldown_until(now, -5), now);
     }
 
-    /// ⭐ **F3-2（2026-11-20）**：冷却的**键按空间分开** —— 同一台对端在 A 空间连不上，
-    /// 不代表 B 空间也连不上（实测两空间服务不同）⇒ 键里必须带空间，⛔ 不许写成"按设备"一份。
+    /// ⭐ **F3-2（2026-11-20）**：冷却的**键按设备**（⛔ 不按空间）。
+    ///
+    /// ⚠️ **第一版是"按空间"，真机读数把它否掉了**：每轮只有**第一个**空间真的会去试那台
+    /// （第一处失败后修法 i 的 `failed_peers` 把其余 8 个空间都跳过）⇒ 只有 1 个空间的计数能累到 3
+    /// ⇒ 冷却只对一个空间生效（4 轮里只观察到 1 次跳过）。而"这台连不上"本来就是**设备级事实**。
     #[test]
-    fn cooldown_keys_are_scoped_per_space_and_per_peer() {
-        assert_eq!(peer_miss_key("sp1", "dev1"), "peer_misses:sp1:dev1");
-        assert_eq!(peer_cooldown_key("sp1", "dev1"), "peer_cooldown:sp1:dev1");
-        assert_ne!(peer_miss_key("sp1", "dev1"), peer_miss_key("sp2", "dev1"));
-        assert_ne!(peer_miss_key("sp1", "dev1"), peer_miss_key("sp1", "dev2"));
-        assert_ne!(
-            peer_miss_key("sp1", "dev1"),
-            peer_cooldown_key("sp1", "dev1")
+    fn cooldown_keys_are_scoped_per_device_not_per_space() {
+        assert_eq!(peer_miss_key("dev1"), "peer_misses:dev1");
+        assert_eq!(peer_cooldown_key("dev1"), "peer_cooldown:dev1");
+        assert_ne!(peer_miss_key("dev1"), peer_miss_key("dev2"));
+        assert_ne!(peer_miss_key("dev1"), peer_cooldown_key("dev1"));
+        // 键里**不许**再出现空间（否则又回到"每轮只有一个空间记账"的老坑）
+        assert!(
+            !peer_miss_key("dev1").contains(':') || peer_miss_key("dev1").matches(':').count() == 1
         );
     }
 
