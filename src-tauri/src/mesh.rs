@@ -127,6 +127,68 @@ pub fn missing_range(cursor: i64, min_seq: i64) -> Option<(i64, i64)> {
     Some((cursor + 1, min_seq - 1))
 }
 
+/// ⭐ **F2-2（2026-11-20）**：**段清单**版的缺口计算 —— 找出「我缺的、而且对端**已经没有了**」那些段。
+///
+/// 为什么需要它（`missing_range` 的射程只到"从头缺起的前缀洞"）：
+/// 对端可能只剩**中段**（例如 `[263],[355]`），而我的游标在 355 ⇒ `missing_range` 一声不吭，
+/// 264..354 就那样静默丢了。段清单能把这个洞找出来。
+///
+/// 口径（六条）：
+/// 1. `remote_ranges` 是**闭区间**、可以乱序/重叠/相邻 ⇒ 先归一（排序 ＋ 合并）；
+/// 2. 坏区间（`from > to`、任一为负）⇒ **整条丢掉**（⛔ 不猜它的意思）；
+/// 3. 只看 **`cursor + 1 ..= max`** 这一段：`max` = 归一后的**最大序号**（`> max` 的还没写，不算缺）；
+/// 4. 一个区间都没有 ⇒ **空**（"不知道" ≠ "没缺"，调用方据此**不报警**）；
+/// 5. `cursor < 0` ⇒ 空（坏输入，⛔ 不猜）；
+/// 6. 返回值是**闭区间**列表、按升序，相邻的洞**不合并**（它们本来就隔着已存在的段）。
+///
+/// ⚠️ **只算不改**：本函数不改任何拉取/重试/游标（F2-2 的接线要另行拍板）。
+pub fn missing_segments(cursor: i64, remote_ranges: &[(i64, i64)]) -> Vec<(i64, i64)> {
+    if cursor < 0 {
+        return Vec::new();
+    }
+    let mut rs: Vec<(i64, i64)> = remote_ranges
+        .iter()
+        .copied()
+        .filter(|(a, b)| *a >= 0 && *b >= *a)
+        .collect();
+    if rs.is_empty() {
+        return Vec::new();
+    }
+    rs.sort_by_key(|(a, _)| *a);
+    // 归一：合并重叠/相邻（相邻也算连续 ⇒ 中间没有洞）
+    let mut merged: Vec<(i64, i64)> = Vec::with_capacity(rs.len());
+    for (a, b) in rs {
+        match merged.last_mut() {
+            Some(last) if a <= last.1.saturating_add(1) => {
+                last.1 = last.1.max(b);
+            }
+            _ => merged.push((a, b)),
+        }
+    }
+    let max = merged.iter().map(|(_, b)| *b).max().unwrap_or(cursor);
+    if max <= cursor {
+        return Vec::new(); // 我比它的最大序号还靠前 ⇒ 没有"已消失"的洞
+    }
+    let mut holes: Vec<(i64, i64)> = Vec::new();
+    let mut want = cursor.saturating_add(1);
+    for (a, b) in merged {
+        if b < want {
+            continue;
+        }
+        if a > want {
+            holes.push((want, (a - 1).min(max)));
+        }
+        want = b.saturating_add(1);
+        if want > max {
+            break;
+        }
+    }
+    if want <= max {
+        holes.push((want, max));
+    }
+    holes
+}
+
 /// 服务侧：**只服务我自己产生的**记录里、游标之后的那一批（按 `device_seq` 升序）。
 ///
 /// ★ 这条 SQL 就是"没有账本"：
@@ -12433,6 +12495,31 @@ mod tests {
             "不知道 ⇒ 一行日志都不许打"
         );
         assert!(parsed.records.is_empty());
+    }
+
+    /// ⭐ **F2-2（2026-11-20）**：`missing_segments` 的七格 —— 校的是**段清单**版缺口（补 `missing_range` 的射程）。
+    #[test]
+    fn missing_segments_finds_holes_beyond_the_prefix_one() {
+        // ① 一个区间都没有（"不知道"）⇒ 空（⛔ 不报警）
+        assert!(missing_segments(5, &[]).is_empty());
+        // ② 连续无洞 ⇒ 空
+        assert_eq!(missing_segments(5, &[(1, 10)]), vec![]);
+        // ③ 前缀洞（`missing_range` 也能发现）—— 段清单同样给对
+        assert_eq!(missing_segments(0, &[(6, 10)]), vec![(1, 5)]);
+        // ④ **中段洞**（`missing_range` 完全发现不了的那种）：对端只剩 [1,5] 与 [11,15]，我游标 5
+        assert_eq!(missing_segments(5, &[(1, 5), (11, 15)]), vec![(6, 10)]);
+        // ⑤ 乱序 ＋ 重叠 ＋ 相邻 ⇒ 先归一
+        assert_eq!(
+            missing_segments(3, &[(8, 9), (4, 6), (6, 7), (10, 12)]),
+            vec![]
+        );
+        assert_eq!(missing_segments(3, &[(4, 6), (9, 12)]), vec![(7, 8)]);
+        // ⑥ 游标已经在最大序号之后 ⇒ 空（那些"洞"在我屁股后面，不影响我）
+        assert!(missing_segments(20, &[(1, 5), (11, 15)]).is_empty());
+        // ⑦ 坏区间整条丢掉；全是坏值 ⇒ 等同"不知道"；坏游标 ⇒ 空
+        assert_eq!(missing_segments(0, &[(5, 3), (7, 9)]), vec![(1, 6)]);
+        assert!(missing_segments(0, &[(5, 3), (-1, 4)]).is_empty());
+        assert!(missing_segments(-2, &[(1, 9)]).is_empty());
     }
 
     /// ⭐ **F2-0（2026-11-20）**：`missing_range` 的四格真值表 —— 只判"**我已经落后到超出对方保留期**"。
