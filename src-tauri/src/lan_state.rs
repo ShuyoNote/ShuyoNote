@@ -1168,6 +1168,48 @@ pub fn should_skip_peer_for_rest_of_round(err: Option<&str>) -> bool {
     }
 }
 
+/// ⭐ **F3-2（2026-11-20）**：一台对端**要不要在接下来若干轮里先别试**（跨轮冷却；纯函数，⛔ 还没接线）。
+///
+/// 现状：`should_skip_peer_for_rest_of_round` 只管**本轮**（清单只活一轮 ⇒ 下一轮照旧重试）。
+/// 今天量到的代价（`dev-20261119-uid.log.err`，459 轮 / 9 空间）：`被跳过 8 次（按空间计）`、
+/// 每轮合计 `p95 1661ms / max 21479ms` —— 尾巴几乎都来自"**等一个明显连不上的对端超时**"。
+///
+/// 口径（四条，按顺序）：
+/// 1. `consecutive_misses < min_misses` ⇒ **不冷却**（一次失败可能只是丢包，⛔ 不许一次就拉黑）；
+/// 2. 已经冷却中（`now < cooldown_until_ms`）⇒ **继续冷却**；
+/// 3. 冷却已过期 ⇒ **恢复重试**（⛔ 不许永久拉黑：那台机器可能已经修好了）；
+/// 4. `min_misses == 0` 或 `cooldown_ms <= 0` ⇒ **一律不冷却**（坏参数 ⇒ 保持现状，⛔ 不猜）。
+///
+/// ⚠️ 与 `should_skip_peer_for_rest_of_round` 的**分工**：那条判"**这一轮的错**该不该立刻收手"，
+///    这条判"**连续几轮都错**之后，接下来几轮还值不值得试"——两条都必须成立才跳（见判据）。
+/// ⚠️ **身份类错误（401/被移出/没配对）不适用**：它们不等超时，冷却没有收益（调用方负责不喂进来）。
+pub fn should_cooldown_peer(
+    consecutive_misses: u32,
+    min_misses: u32,
+    cooldown_until_ms: i64,
+    now_ms: i64,
+    cooldown_ms: i64,
+) -> bool {
+    if min_misses == 0 || cooldown_ms <= 0 {
+        return false;
+    }
+    if now_ms < cooldown_until_ms {
+        return true; // 还在冷却里
+    }
+    consecutive_misses >= min_misses
+}
+
+/// ⭐ **F3-2**：一次失败之后，冷却到什么时候（返回 `now + cooldown_ms`）。
+///
+/// ⚠️ 只在**真的该冷却**时调用（`should_cooldown_peer` 为真）；`cooldown_ms <= 0` ⇒ 原样返回 `now`
+/// （＝不设置冷却窗，⛔ 不拿负数造一个"永远冷却"的假象）。
+pub fn cooldown_until(now_ms: i64, cooldown_ms: i64) -> i64 {
+    if cooldown_ms <= 0 {
+        return now_ms;
+    }
+    now_ms.saturating_add(cooldown_ms)
+}
+
 /// ⭐ **2026-11-18（根因 A 取证，纯函数）**：一个空间在这一轮里花了多久。///
 /// 形状：`[round-timing] space=<脱敏空间> ok=<true|false> ms=<耗时>`
 /// ⚠️ 空间名**必须**先过 `mask_space`（⛔ 原始 id/名字不进日志：与 `[mesh] 后台一轮完成` 同一把尺）。
@@ -3577,6 +3619,31 @@ mod tests {
 
     /// ⭐⭐ **2026-11-18（慢支修法 B，第二版，owner 拍）**：`dirty` 驱动的公告**不许等 30 s 节拍**，
     /// 但也**不许每 tick 都播** —— 第一版就是这么播了 4,311 条（复测当场抓住）。
+    /// ⭐ **F3-2（2026-11-20）**：跨轮冷却的判据 —— 只判"**连续几轮都失败之后，接下来几轮还值不值得试**"。
+    /// ⚠️ 它**还没接线**（今天仍只有"本轮内跳过"）：这一组先把口径钉死，接线＝行为变更，要 owner 拍。
+    #[test]
+    fn cooldown_only_after_several_consecutive_misses_and_expires_itself() {
+        const CD: i64 = 60_000;
+        let now = 1_000_000;
+        // ① 没到门槛 ⇒ 不冷却（一次失败可能只是丢包）
+        assert!(!should_cooldown_peer(0, 3, 0, now, CD));
+        assert!(!should_cooldown_peer(2, 3, 0, now, CD));
+        // ② 到门槛且没有冷却窗 ⇒ 该冷却
+        assert!(should_cooldown_peer(3, 3, 0, now, CD));
+        assert!(should_cooldown_peer(9, 3, 0, now, CD));
+        // ③ 冷却窗内 ⇒ 继续冷却（哪怕 miss 数被重置成 0 —— 冷却本身就是判据）
+        assert!(should_cooldown_peer(0, 3, now + 1, now, CD));
+        // ④ 冷却窗过期 ⇒ 恢复重试（⛔ 不许永久拉黑）
+        assert!(!should_cooldown_peer(0, 2, now - 1, now, CD));
+        // ⑤ 坏参数 ⇒ 一律不冷却（保持现状，⛔ 不猜）
+        assert!(!should_cooldown_peer(99, 0, now + 999_999, now, CD));
+        assert!(!should_cooldown_peer(99, 3, 0, now, 0));
+        // ⑥ `cooldown_until` 的两格：正常加、坏参数原样
+        assert_eq!(cooldown_until(now, CD), now + CD);
+        assert_eq!(cooldown_until(now, 0), now);
+        assert_eq!(cooldown_until(now, -5), now);
+    }
+
     #[test]
     fn a_pending_dirty_announces_soon_but_never_twice_within_the_min_gap() {
         let interval = ANNOUNCE_INTERVAL_MS;
