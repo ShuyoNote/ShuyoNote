@@ -347,14 +347,80 @@ fn mirror_change_to_mesh_outbox(
         return;
     }
     // ⚠️ **必须有这一句**：镜像没有上限 ⇒ 明文库会跟着无限长（那 672 MB 的形状 ✗）。
-    //   保留期口径见方案 §6-②（7 天 / 64 MB，先到者）；体积那一半等 S4 的水位裁剪一起做，
-    //   这一处先把**时间**这一半关上（索引 `idx_mesh_outbox_age` 就是为它建的）。
-    if let Err(e) = c.execute(
-        "DELETE FROM meta.mesh_outbox WHERE space_id = ?1 AND mirrored_at < ?2",
-        params![space, crate::db::now_ms() - MESH_OUTBOX_KEEP_MS],
-    ) {
+    //   ⭐ **F2-1（2026-11-20，owner「全面开火」拍接线）**：从"只按时间删"换成三条件 ——
+    //     ① **时间**（7 天）+ ② **对端游标**（还有对端没拿到的，多留，但最多多留 7 天）+ ③ **条数上限**。
+    //   ⚠️ 任何一步算不出来 ⇒ **退回只按时间删**并如实打一行（⛔ 不许因为新判据坏了就不清）。
+    if let Err(e) = mesh_outbox_cleanup(c, &space) {
         eprintln!("[mesh] 搬运缓存过期清理失败（不影响保存）：{e}");
     }
+}
+
+/// ⭐ **F2-1（2026-11-20）**：镜像清理 —— 时间 ＋ 对端游标 ＋ 条数上限（三条件）。
+///
+/// 为什么要对端游标：现状只看时间 ⇒ **还有对端没拿到这一条**也照删 ⇒ 那台设备永久缺这一段
+/// （F2-0 只能把"你缺了"说出来，补不回来）。这里让"最落后的那台"决定下界（见 `retain_cutoff`）。
+///
+/// ⚠️ 三条边界（都是"不许因此不清"）：
+/// 1. 算不出 proto 空间（`mesh_scope_at` 失败）⇒ 退回只按时间删；
+/// 2. 这个空间没有任何已知对端游标 ⇒ `retain_cutoff` 返回 `i64::MAX` ⇒ 同样按时间删；
+/// 3. 条数上限**独立生效**：哪怕所有对端都落后，超过 `MESH_OUTBOX_MAX_ROWS` 也从最老的删（⛔ 无界增长更糟）。
+fn mesh_outbox_cleanup(c: &Connection, ws_space: &str) -> Result<(), String> {
+    let now = crate::db::now_ms();
+    let cutoff = match crate::sync::mesh_scope_at(c, Some(ws_space)) {
+        Ok(scope) => min_peer_cursor_for_space(c, &scope.space),
+        Err(_) => None, // 算不出 proto ⇒ 退回只按时间删（下面 cutoff 走 i64::MAX）
+    };
+    let cap = retain_cutoff(&cutoff.map(|v| vec![v]).unwrap_or_default());
+    let age_cut = now - MESH_OUTBOX_KEEP_MS;
+    c.execute(
+        "DELETE FROM meta.mesh_outbox
+          WHERE space_id = ?1 AND mirrored_at < ?2 AND device_seq <= ?3",
+        params![ws_space, age_cut, cap],
+    )
+    .map_err(|e| e.to_string())?;
+    // ② 条数上限：从最老的开始删到只剩 MESH_OUTBOX_MAX_ROWS 条（⛔ 与游标无关，体积必须封住）
+    let deleted = c
+        .execute(
+            "DELETE FROM meta.mesh_outbox
+              WHERE space_id = ?1 AND device_seq NOT IN (
+                    SELECT device_seq FROM meta.mesh_outbox
+                     WHERE space_id = ?1 ORDER BY device_seq DESC LIMIT ?2
+              )",
+            params![ws_space, MESH_OUTBOX_MAX_ROWS],
+        )
+        .map_err(|e| e.to_string())?;
+    if deleted > 0 {
+        eprintln!(
+            "[mesh] 搬运缓存超出每空间上限 {MESH_OUTBOX_MAX_ROWS} 条 ⇒ 删了最老的 {deleted} 条             （⛔ 可能含某台还没拿到的；它下次会缺这一段）"
+        );
+    }
+    Ok(())
+}
+
+/// ⭐ **F2-1**：这个空间里**最落后的已知对端游标**（没有 ⇒ `None`）。
+///
+/// 读法：`mesh_cursor:<proto>:<device>`（见 `crate::mesh::cursor_key`）—— 值解析不了就**跳过**
+/// （⛔ 不拿 0 当"最落后"，那会让镜像永远删不掉）。
+fn min_peer_cursor_for_space(c: &Connection, proto_space: &str) -> Option<i64> {
+    let like = format!("mesh_cursor:{proto_space}:%");
+    let mut stmt = c
+        .prepare("SELECT value FROM meta.sync_state WHERE key LIKE ?1")
+        .ok()?;
+    let rows = stmt
+        .query_map(params![like], |r| r.get::<_, String>(0))
+        .ok()?;
+    let mut out: Option<i64> = None;
+    for v in rows.flatten() {
+        let Ok(n) = v.parse::<i64>() else { continue };
+        if n < 0 {
+            continue;
+        }
+        out = Some(match out {
+            Some(m) => m.min(n),
+            None => n,
+        });
+    }
+    out
 }
 
 /// 搬运缓存的时间上限（方案 §6-② 的提案值：**7 天**；体积那一半由 S4 的水位裁剪补上）。
@@ -398,6 +464,32 @@ pub fn may_drop_mirror(
 
 /// ⭐ **F2-1**：为"还有对端没拿到"的条目**最多多留多久**（超过就照删，⛔ 不许无界增长）。
 pub const MIRROR_MAX_EXTRA_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+/// ⭐ **F2-1（2026-11-20）**：每个空间**最多留多少条**镜像（体积那一半的上限；⛔ 不许无界增长）。
+///
+/// 口径说明：这是"条数"不是"字节"—— 按字节要扫 payload 长度，代价高；按条数足以挡住"越存越多"。
+/// 超出时**从最老的开始删**，并打一行（⛔ 不静默：删掉的可能是某台还没拿到的）。
+pub const MESH_OUTBOX_MAX_ROWS: i64 = 20_000;
+
+/// ⭐ **F2-1**：`may_drop_mirror` 的 SQL 版 —— 把"哪些行**可以按时间删**"折成一个**序号下界**。
+///
+/// 语义：只有 `device_seq <= 返回值` 的行才允许按时间删（因为**所有**已知对端都已经拿到它们了）。
+/// · `peer_cursors` 为空（这个空间没有任何已知对端游标）⇒ `i64::MAX`（＝照旧按时间删，⛔ 不许因此永不清）；
+/// · 否则取**最小**的游标（最落后的那台决定一切）。
+/// ⚠️ 一把尺纪律：这里的 `peer_cursors` 必须是 `changes.device_seq` 口径（与 `mesh_cursor:*` 一致）。
+pub fn retain_cutoff(peer_cursors: &[i64]) -> i64 {
+    let mut min: Option<i64> = None;
+    for c in peer_cursors {
+        if *c < 0 {
+            continue; // 坏值 ⇒ 忽略（⛔ 不拿它当"最落后"，否则永远不删）
+        }
+        min = Some(match min {
+            Some(m) => m.min(*c),
+            None => *c,
+        });
+    }
+    min.unwrap_or(i64::MAX)
+}
 
 /// 从搬运缓存里删掉这几位 —— 名单与 `changes` 那次删除**是同一份**（§ `record_change`）。
 ///
@@ -14430,6 +14522,20 @@ mod tests {
             // ⑥ 坏参数（负的保留期/负的 seq）⇒ 保守不删
             assert!(!may_drop_mirror(now - 30 * DAY, now, -1, 5, &[]));
             assert!(!may_drop_mirror(now - 30 * DAY, now, 7 * DAY, -1, &[]));
+        }
+
+        /// ⭐ **F2-1（2026-11-20）**：`retain_cutoff` 的三格 —— 决定"按时间删"的下界。
+        /// ⚠️ 关键反例：**没有任何对端游标 ⇒ i64::MAX（照旧按时间删）**，
+        ///    否则"没有已知对端"这个正常状态会让镜像**永远删不掉**（无界增长的另一种形态）。
+        #[test]
+        fn retain_cutoff_is_decided_by_the_most_lagging_peer_and_never_blocks_cleanup() {
+            assert_eq!(retain_cutoff(&[]), i64::MAX, "没有对端 ⇒ 照旧按时间删");
+            assert_eq!(retain_cutoff(&[9]), 9);
+            assert_eq!(retain_cutoff(&[9, 4, 7]), 4, "最落后的那台决定一切");
+            assert_eq!(retain_cutoff(&[0]), 0, "0 是合法游标（还没拉到过）");
+            // 坏值（负数）⇒ 忽略；全是坏值 ⇒ 等同"没有对端"
+            assert_eq!(retain_cutoff(&[-5, 6]), 6);
+            assert_eq!(retain_cutoff(&[-5, -1]), i64::MAX);
         }
 
         /// ⭐ **U4-B S1（2026-11-19）**：`_lineage_fp` 挂件的四条口径 ——
