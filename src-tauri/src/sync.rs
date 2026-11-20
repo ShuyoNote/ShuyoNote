@@ -14524,6 +14524,49 @@ mod tests {
             assert!(!may_drop_mirror(now - 30 * DAY, now, 7 * DAY, -1, &[]));
         }
 
+        /// ⭐ **F2-1（2026-11-20）**：`min_peer_cursor_for_space` 的读取口径 —— 这是 SQL 那条路里**最容易静默失效**的一格。
+        ///
+        /// 三种失败形状都钉住：① 把**别的空间**的游标算进来（LIKE 写错）② 前缀相似的空间被串进来
+        /// （`proto-a` vs `proto-ab`）③ **坏值被当成 0**（那会让镜像永远删不掉）。
+        #[test]
+        fn min_peer_cursor_reads_only_this_space_and_skips_bad_values() {
+            let c = crate::sync::tests::conn_with_meta();
+            for (k, v) in [
+                ("mesh_cursor:proto-a:dev1", "9"),
+                ("mesh_cursor:proto-a:dev2", "3"),
+                ("mesh_cursor:proto-b:dev1", "1"), // 别的空间 ⇒ ⛔ 不算
+                ("mesh_cursor:proto-a:dev3", "abc"), // 坏值 ⇒ 跳过（⛔ 不当 0）
+                ("mesh_cursor:proto-a:dev4", "-7"), // 负值 ⇒ 跳过
+            ] {
+                c.execute(
+                    "INSERT INTO meta.sync_state(key, value) VALUES(?1, ?2)",
+                    params![k, v],
+                )
+                .unwrap();
+            }
+            assert_eq!(
+                min_peer_cursor_for_space(&c, "proto-a"),
+                Some(3),
+                "最落后那台决定下界；别的空间与坏值都不许参与"
+            );
+            // 前缀相似的空间不许串进来（`proto-a` vs `proto-ab`）
+            c.execute(
+                "INSERT INTO meta.sync_state(key, value) VALUES('mesh_cursor:proto-ab:dev1', '1')",
+                [],
+            )
+            .unwrap();
+            assert_eq!(
+                min_peer_cursor_for_space(&c, "proto-a"),
+                Some(3),
+                "LIKE 前缀不许把 proto-ab 的游标算进 proto-a"
+            );
+            assert_eq!(
+                min_peer_cursor_for_space(&c, "proto-zzz"),
+                None,
+                "没有这个空间的游标 ⇒ None（⛔ 不返回 0，否则镜像永远删不掉）"
+            );
+        }
+
         /// ⭐ **F2-1（2026-11-20）**：`retain_cutoff` 的三格 —— 决定"按时间删"的下界。
         /// ⚠️ 关键反例：**没有任何对端游标 ⇒ i64::MAX（照旧按时间删）**，
         ///    否则"没有已知对端"这个正常状态会让镜像**永远删不掉**（无界增长的另一种形态）。
