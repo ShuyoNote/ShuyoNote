@@ -381,6 +381,16 @@ owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workf
       （对端只剩 `[1,5]/[11,15]`、我游标 5 ⇒ 报 `6..10`），七格判据；⛔ 段清单的**接线**仍未做（要新端点或复用 pull，属行为变更）。
     · ✅ **F2-1 读取路径有真库判据（`b7fc58b5`）**：`min_peer_cursor_reads_only_this_space_and_skips_bad_values` ——
       钉住「别的空间不许算进来 / 前缀相似不许串 / 坏值跳过而非当 0 / 没有游标 ⇒ None」。
+    · 🔴 **2026-11-20 两笔 CI 真红（`8e248796`、`c36e88b9`）＋根因与教训**：
+      红的是 `every_real_db_open_point_is_registered`（`src-tauri/tests/db_openers.rs`）——
+      `8e248796` 新增的 `lan_state::clear_peer_cooldowns` 里有一处 `open_meta_conn_at`，**整个函数没进 `REGISTERED`**。
+      ⇒ **为什么本机一直绿**：`scripts/win-cargo-test.ps1` 只跑 `--lib`，而 CI 的 rust 组跑的是**全量 `cargo test`（含 `src-tauri/tests/*` 集成测试）**。
+      ⇒ **以后改到数据库开库点，本机必须补跑那一条**：
+      ```powershell
+      cargo test --manifest-path src-tauri/Cargo.toml --test db_openers --no-run
+      # 然后直接跑 db_openers-*.exe（本机不需要注入 v6 清单也能跑，实测 9/9）
+      ```
+      ⇒ 已修（登记 `("src/lan_state.rs", "clear_peer_cooldowns", 1, …)`），本地 9/9 通过。
     · ⚠️ **CI 口径提醒（2026-11-20 16:2x 实测）**：`71297fd4` 的 Rust 组是 **completed/cancelled**
       （被后一笔推送按并发策略取消）—— **取消 ≠ 通过**；当天最终绿要看 `b7fc58b5` 那轮跑完。
 

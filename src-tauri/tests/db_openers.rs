@@ -257,6 +257,12 @@ const REGISTERED: &[(&str, &str, usize, &str)] = &[
         "后台网格轮次：逐空间旁路连接",
     ),
     (
+        "src/lan_state.rs",
+        "clear_peer_cooldowns",
+        1,
+        "F3-2：收到公告后清掉该设备的跨轮冷却（打开 meta.db 写 sync_state）",
+    ),
+    (
         "src/mesh.rs",
         "add_space",
         1,
