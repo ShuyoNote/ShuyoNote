@@ -391,6 +391,18 @@ owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workf
       # 然后直接跑 db_openers-*.exe（本机不需要注入 v6 清单也能跑，实测 9/9）
       ```
       ⇒ 已修（登记 `("src/lan_state.rs", "clear_peer_cooldowns", 1, …)`），本地 9/9 通过。      ⇒ 已修（登记 `("src/lan_state.rs", "clear_peer_cooldowns", 1, …)`），本地 9/9 通过。
+20) ✅ **2026-11-20 「永久缺失」搬到界面上（`44b4c5a6`，owner 拍 ①）**：新只读命令 `list_sync_gaps`
+    （读 `peer_gap:<proto>:<device> = "cursor|min"` 签名，用**同一个** `mesh::missing_range` 还原闭区间段）＋
+    前端纯函数 `gapNoticeText`（空 ⇒ `null`、文案不许暗示会自动补）＋ 面板「高级」区一行（影子观测上面）。
+    真机：造出真缺口后面板渲染「⚠️ 有 58 条永久缺失（1..58）」，命令直读 `[{from:1,to:58}]`；
+    ⚠️ 当场抓到并修掉一个**陈旧 bug**：缺口消失后那行不消失（签名键从不清理）⇒ 改成缺口为空时写 `"0"`；复验已消失。
+    ⚠️ 踩点提醒：这次新增命令 ⇒ `docs/TESTING.md` 事实块（命令数 Rust 310 / web 268 / CommandMap 311）与
+    `tests/db_openers.rs` 的 REGISTERED（`list_sync_gaps` 2 处开库）都要同步改，否则 `check-doc-facts` / `db_openers` 会红。
+
+⬜ **今天留下的两条待办（都要 owner 拍）**：
+  · **F2-2b 定向补齐**：前置难点已写进设计稿 —— 只按序号计数**区分不了**「同实体旧 upsert 被取代删除（无害）」
+    与「保留期丢失（真丢）」，必须先能区分，否则会白补一堆。
+  · **A1 CRDT 灰度默认开**：窗口 11-14/18/19/20 四天有效，最早 **11-24**；需要每天开一次应用产生当日记录。
       ✅ **CI 复绿读数（2026-11-20 17:5x）**：`97aeb981` 的 CI = **completed/success**，三项全绿 ——
       `单测/冒烟/契约` ✅ ｜ `移动端布局（真实 Chromium）` ✅ ｜ **`Rust 测试（含宿主子进程集成测试）` ✅**
       （09:20Z 起跑，约 37 分钟；这是当天**最后一个**通过 CI 的代码提交）。
