@@ -1210,6 +1210,26 @@ pub fn cooldown_until(now_ms: i64, cooldown_ms: i64) -> i64 {
     now_ms.saturating_add(cooldown_ms)
 }
 
+/// ⭐ **F3-2（2026-11-20）**：跨轮冷却的**参数**（owner「全面开火」时拍的保守档）。
+///
+/// 为什么是 3 轮 / 30 秒：今天量到 `被跳过 8 次（按空间计）`、每轮合计 `p95 1661ms / max 21479ms` ——
+/// 尾巴来自"等明显连不上的对端超时"。3 轮 ≈ 半分钟量级的连续失败才算"真的不在"，
+/// 而 30 秒短到**一台刚回网的机器最多被晾半分钟**（⛔ 不是拉黑）。
+pub const PEER_COOLDOWN_MIN_MISSES: u32 = 3;
+pub const PEER_COOLDOWN_MS: i64 = 30_000;
+
+/// ⭐ **F3-2**：连续失败计数与冷却窗的**键名**（都在 `meta.sync_state`；⛔ 不新开表）。
+///
+/// ⚠️ 键里带 **空间**：同一台对端在 A 空间连不上，不代表 B 空间也连不上（实测两空间服务不同）。
+pub fn peer_miss_key(space: &str, peer_device: &str) -> String {
+    format!("peer_misses:{space}:{peer_device}")
+}
+
+/// 见 [`peer_miss_key`]。
+pub fn peer_cooldown_key(space: &str, peer_device: &str) -> String {
+    format!("peer_cooldown:{space}:{peer_device}")
+}
+
 /// ⭐ **2026-11-18（根因 A 取证，纯函数）**：一个空间在这一轮里花了多久。///
 /// 形状：`[round-timing] space=<脱敏空间> ok=<true|false> ms=<耗时>`
 /// ⚠️ 空间名**必须**先过 `mask_space`（⛔ 原始 id/名字不进日志：与 `[mesh] 后台一轮完成` 同一把尺）。
@@ -1321,6 +1341,43 @@ fn spawn_background_round(
             // ⭐ 2026-11-18（修法 i 下沉）：**不在这一层过滤 peers** —— 候选还会被手动地址/跨网路线
             //   追加（实测 LAN 对端表为空时候选仍有一台手动设备）。名单交给 `mesh::round`，
             //   在候选**建完之后**过滤（`drop_skipped_candidates`）。
+            //
+            // ⭐ **F3-2（2026-11-20，owner「全面开火」拍接线）**：把**上一轮留下的跨轮冷却**并进来 ——
+            //   与本轮内跳过走同一条过滤（`mesh::round` 的 `skipped`），⛔ 不另开一条"不试"的路。
+            //   ⚠️ 冷却窗是**会自己过期**的（`should_cooldown_peer` 里判 `now < until`）⇒ 到点就恢复重试。
+            let mut skipped: Vec<String> = failed_peers.clone();
+            let mut cooled_now: usize = 0;
+            {
+                let db2 = app2.state::<Db>();
+                let c = db2.0.lock().unwrap_or_else(|e| e.into_inner());
+                let now = crate::db::now_ms();
+                for p in &peers {
+                    let until = crate::sync::get_meta_state(
+                        &c,
+                        &peer_cooldown_key(&proto_space, &p.announce.device_id),
+                    )
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or(0);
+                    if should_cooldown_peer(
+                        0,
+                        PEER_COOLDOWN_MIN_MISSES,
+                        until,
+                        now,
+                        PEER_COOLDOWN_MS,
+                    ) {
+                        cooled_now += 1;
+                        if !skipped.iter().any(|d| d == &p.announce.device_id) {
+                            skipped.push(p.announce.device_id.clone());
+                        }
+                    }
+                }
+            }
+            if debug_latency() && cooled_now > 0 {
+                // ⛔ 不打设备号（与 `[peer-err-class]` 同一把尺：日志里只留计数）
+                eprintln!(
+                    "[peer-cooldown] {cooled_now} 台仍在冷却窗内 ⇒ 本空间这一轮不试它们（到点自动恢复）"
+                );
+            }
             if debug_latency() && !failed_peers.is_empty() {
                 eprintln!(
                     "[peer-skip] 本轮已失败 {} 台 ⇒ 本空间不再试它们（下一轮照旧重试）",
@@ -1338,7 +1395,7 @@ fn spawn_background_round(
                         &db_space,
                         &dev,
                         &peers,
-                        &failed_peers,
+                        &skipped,
                         device_level,
                     )
                     .await
@@ -1351,7 +1408,7 @@ fn spawn_background_round(
                             &db_space,
                             &dev,
                             &peers,
-                            &failed_peers,
+                            &skipped,
                             device_level,
                         )
                         .await
@@ -1359,6 +1416,51 @@ fn spawn_background_round(
                     None => Err("app data 目录读不到 ⇒ 这一轮连搬运缓存都读不了".to_string()),
                 },
             };
+            // ⭐ **F3-2（2026-11-20）**：按**这一轮的结果**记"连续网络类失败"，够 3 轮就设 30 秒冷却窗；
+            //   成功 ⇒ 清零（⛔ 不许让历史的失败拖累一个已经恢复的对端）。
+            //   ⚠️ 只记**网络类**（`should_skip_peer_for_rest_of_round`）—— 身份类（401/被移出）不等超时，
+            //      给它们冷却只会掩盖"换个空间也许能成"。
+            if let Ok(r) = &round_result {
+                let db3 = app2.state::<Db>();
+                let c = db3.0.lock().unwrap_or_else(|e| e.into_inner());
+                let now = crate::db::now_ms();
+                for p in &r.peers {
+                    let miss_key = peer_miss_key(&proto_space, &p.peer);
+                    let cd_key = peer_cooldown_key(&proto_space, &p.peer);
+                    let network_fail =
+                        p.error.is_some() && should_skip_peer_for_rest_of_round(p.error.as_deref());
+                    if network_fail {
+                        let n: u32 = crate::sync::get_meta_state(&c, &miss_key)
+                            .and_then(|s| s.parse::<u32>().ok())
+                            .unwrap_or(0)
+                            .saturating_add(1);
+                        let _ = crate::sync::set_meta_state(&c, &miss_key, &n.to_string());
+                        let until = crate::sync::get_meta_state(&c, &cd_key)
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .unwrap_or(0);
+                        if should_cooldown_peer(
+                            n,
+                            PEER_COOLDOWN_MIN_MISSES,
+                            until,
+                            now,
+                            PEER_COOLDOWN_MS,
+                        ) {
+                            let next = cooldown_until(now, PEER_COOLDOWN_MS);
+                            let _ = crate::sync::set_meta_state(&c, &cd_key, &next.to_string());
+                            if debug_latency() {
+                                eprintln!(
+                                    "[peer-cooldown] 连续 {n} 轮网络类失败 ⇒ 冷却 {}s（到点自动恢复；⛔ 不是拉黑）",
+                                    PEER_COOLDOWN_MS / 1000
+                                );
+                            }
+                        }
+                    } else if p.error.is_none() {
+                        // 成功 ⇒ 连续失败数与冷却窗一起清掉（⛔ 留着会让"恢复过一次"的对端下次更容易被冷却）
+                        let _ = crate::sync::set_meta_state(&c, &miss_key, "0");
+                        let _ = crate::sync::set_meta_state(&c, &cd_key, "0");
+                    }
+                }
+            }
             match round_result {
                 Ok(r) => {
                     if debug_latency() {
@@ -3642,6 +3744,20 @@ mod tests {
         assert_eq!(cooldown_until(now, CD), now + CD);
         assert_eq!(cooldown_until(now, 0), now);
         assert_eq!(cooldown_until(now, -5), now);
+    }
+
+    /// ⭐ **F3-2（2026-11-20）**：冷却的**键按空间分开** —— 同一台对端在 A 空间连不上，
+    /// 不代表 B 空间也连不上（实测两空间服务不同）⇒ 键里必须带空间，⛔ 不许写成"按设备"一份。
+    #[test]
+    fn cooldown_keys_are_scoped_per_space_and_per_peer() {
+        assert_eq!(peer_miss_key("sp1", "dev1"), "peer_misses:sp1:dev1");
+        assert_eq!(peer_cooldown_key("sp1", "dev1"), "peer_cooldown:sp1:dev1");
+        assert_ne!(peer_miss_key("sp1", "dev1"), peer_miss_key("sp2", "dev1"));
+        assert_ne!(peer_miss_key("sp1", "dev1"), peer_miss_key("sp1", "dev2"));
+        assert_ne!(
+            peer_miss_key("sp1", "dev1"),
+            peer_cooldown_key("sp1", "dev1")
+        );
     }
 
     #[test]
