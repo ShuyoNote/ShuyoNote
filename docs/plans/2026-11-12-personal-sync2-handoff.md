@@ -390,7 +390,10 @@ owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workf
       cargo test --manifest-path src-tauri/Cargo.toml --test db_openers --no-run
       # 然后直接跑 db_openers-*.exe（本机不需要注入 v6 清单也能跑，实测 9/9）
       ```
-      ⇒ 已修（登记 `("src/lan_state.rs", "clear_peer_cooldowns", 1, …)`），本地 9/9 通过。
+      ⇒ 已修（登记 `("src/lan_state.rs", "clear_peer_cooldowns", 1, …)`），本地 9/9 通过。      ⇒ 已修（登记 `("src/lan_state.rs", "clear_peer_cooldowns", 1, …)`），本地 9/9 通过。
+      ✅ **CI 复绿读数（2026-11-20 17:5x）**：`97aeb981` 的 CI = **completed/success**，三项全绿 ——
+      `单测/冒烟/契约` ✅ ｜ `移动端布局（真实 Chromium）` ✅ ｜ **`Rust 测试（含宿主子进程集成测试）` ✅**
+      （09:20Z 起跑，约 37 分钟；这是当天**最后一个**通过 CI 的代码提交）。
     · ⚠️ **CI 口径提醒（2026-11-20 16:2x 实测）**：`71297fd4` 的 Rust 组是 **completed/cancelled**
       （被后一笔推送按并发策略取消）—— **取消 ≠ 通过**；当天最终绿要看 `b7fc58b5` 那轮跑完。
 
