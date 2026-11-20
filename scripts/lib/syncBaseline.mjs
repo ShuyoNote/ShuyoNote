@@ -106,6 +106,50 @@ export function splitMetricLines(text) {
 }
 
 /**
+ * ⭐ **F3 Phase 0（2026-11-20）**：解析一行 `[peer-skip] 本轮已失败 N 台 ⇒ 本空间不再试它们（下一轮照旧重试）`。
+ *
+ * 为什么单独立一条：F3「调度自适应」要回答的第一个问题是"**这台设备多久没连上、被跳过几次**"——
+ * 而在改调度**之前**必须先把它量出来（⛔ 不改行为，先有读数）。
+ * ⚠️ 这行是**按空间**打的（同一轮里 9 个空间都可能各打一条）⇒ 计数时按"事件"算，别当成"轮数"。
+ * ⚠️ 形状不对 / 没有那个数字 ⇒ `null`（⛔ 不猜）。
+ *
+ * @param {string} line
+ * @returns {{failed: number}|null}
+ */
+export function parsePeerSkipLine(line) {
+  const text = String(line ?? "").replace(/\r$/, "");
+  if (!text.includes("[peer-skip]")) return null;
+  const m = text.match(/本轮已失败\s*(\d+)\s*台/);
+  if (!m) return null;
+  const failed = Number(m[1]);
+  if (!Number.isFinite(failed) || failed < 0) return null;
+  return { failed };
+}
+
+/**
+ * ⭐ **F3 Phase 0（2026-11-20）**：解析一行 `[peer-err-class] skip=<bool> hits=… len=<n>`。
+ *
+ * ⚠️ **`len=` 是什么，看代码定：** 它是 Rust 侧 `e.len()` —— **错误文本的字符数**，
+ *    **不是**"错误类数"（我第一版把它当类数，实测读出 441 那种不可能的值才发现的）。
+ * ⚠️ `hits=` 是 Rust 的 `Debug` 形状（**不许**在这里猜它的结构）⇒ 原文一律丢掉。
+ * ⚠️ 形状不对 ⇒ `null`（⛔ 不猜）。
+ *
+ * @param {string} line
+ * @returns {{skip: boolean, errLen: number}|null}
+ */
+export function parsePeerErrClassLine(line) {
+  const text = String(line ?? "").replace(/\r$/, "");
+  if (!text.includes("[peer-err-class]")) return null;
+  const skipM = text.match(/skip=(true|false)/);
+  const lenM = text.match(/\blen=(\d+)/);
+  if (!skipM || !lenM) return null;
+  const errLen = Number(lenM[1]);
+  if (!Number.isFinite(errLen) || errLen < 0) return null;
+  return { skip: skipM[1] === "true", errLen };
+}
+
+
+/**
  * ⭐ **§13.12 Phase 0 埋点（2026-11-18）**：解析一行 `[sync-latency] seg=<段名> ms=<差>`。
  *
  * 这两段是**本机两段时刻**（`lan_state::latency_line` 打的）：
@@ -353,7 +397,14 @@ export const LATENCY_SEGMENT_TEXT = {
  * @param {{space: string, ok: boolean, ms: number}[]} [roundRows] ⭐ F3 `[round-timing]`
  * @returns {BaselineSummary}
  */
-export function summarizeMetrics(rows, skipped = 0, latencyRows = [], roundRows = []) {
+export function summarizeMetrics(
+  rows,
+  skipped = 0,
+  latencyRows = [],
+  roundRows = [],
+  skipRows = [],
+  errRows = [],
+) {
   const recoveredValues = rows.map((r) => r.recoveredAfterMs).filter((v) => v !== null);
   const spaces = groupBy(rows, (r) => r.space).map((g, i) => ({ ...g, label: `空间 ${i + 1}` }));
   const peers = groupBy(rows, (r) => r.peer).map((g, i) => ({ ...g, label: `对端 ${i + 1}` }));
@@ -391,6 +442,7 @@ export function summarizeMetrics(rows, skipped = 0, latencyRows = [], roundRows 
     peers,
     segments,
     scheduling: summarizeRoundTiming(roundRows),
+    failures: summarizeSchedulingFailures(skipRows, errRows),
   };
 }
 
@@ -444,6 +496,47 @@ function schedulingLines(s) {
 }
 
 /**
+ * ⭐ **F3 Phase 0（2026-11-20）**：把"失败面"汇总成决策用的几个计数。
+ *
+ * 它是 F3「调度自适应」的**前置读数**：改调度之前先得知道
+ * 「跳过了多少次 / 一轮里记了几类错误 / 有多少次真的走到 skip」——⛔ 这一版**不改任何行为**。
+ *
+ * ⚠️ 口径（别读歪）：
+ * · `skipEvents` 是**按空间**的事件数（一轮里 9 个空间各打一条就是 9），⛔ 不是轮数；
+ * · `skippedPeers` 是那些行里"失败了几台"的**合计**（同一台在多空间会被重复计）；
+ * · `errTextChars` 是 `[peer-err-class]` 里 `len=` 的合计 —— **错误文本字符数**（不是类数、不是次数）；
+ * · 一条都没有 ⇒ `null`（⛔ 不写 0 —— "没量到"和"零失败"是两件事）。
+ *
+ * @param {{failed: number}[]} skipRows
+ * @param {{skip: boolean, kinds: number}[]} errRows
+ * @returns {{skipEvents: number, skippedPeers: number, errLines: number, errSkipped: number, errTextChars: number}|null}
+ */
+export function summarizeSchedulingFailures(skipRows = [], errRows = []) {
+  const skips = Array.isArray(skipRows) ? skipRows : [];
+  const errs = Array.isArray(errRows) ? errRows : [];
+  if (skips.length === 0 && errs.length === 0) return null;
+  return {
+    skipEvents: skips.length,
+    skippedPeers: skips.reduce((n, r) => n + (r.failed ?? 0), 0),
+    errLines: errs.length,
+    errSkipped: errs.filter((r) => r.skip).length,
+    errTextChars: errs.reduce((n, r) => n + (r.errLen ?? 0), 0),
+  };
+}
+
+/** 失败面那一节（没有读数时说"没量到"，⛔ 不写 0）。 */
+function failureLines(f) {
+  if (!f) {
+    return ["  （没量到：这批日志没有 [peer-skip] / [peer-err-class]；同样只在 debug 开关开着时才打）"];
+  }
+  return [
+    `  被跳过：${f.skipEvents} 次（按空间计）· 这些行里累计失败 ${f.skippedPeers} 台次`,
+    `  错误分类行：${f.errLines} 条（其中 skip=true ${f.errSkipped} 条）· 错误文本合计 ${f.errTextChars} 字符（hits 结构不解析）`,
+  ];
+}
+
+
+/**
  * 报告文本（**脱敏**：只有计数与编号；⛔ 不含空间哈希、设备号、文件路径）。
  *
  * 一条都没量到 ⇒ 第一行就写「没量到」，调用方据此退 2（**没查过 ≠ 通过**）。
@@ -459,6 +552,8 @@ export function formatBaselineReport(s, title = "个人版同步 2.0 · Phase 0 
       "能怎么量：让网格这一档跑起来打一轮同步，日志里每轮会写一行 [sync-metrics] … ms=…。",
       "调度（F3 Phase 0）读数（有 [round-timing] 就列出来，⛔ 不因为缺轮次就藏起来）：",
       ...schedulingLines(s.scheduling),
+      "失败面（F3 决策用；⛔ 本工具不改行为）：",
+      ...failureLines(s.failures),
       "分段读数（⭐ 埋点：这两格在有轮次读数之前就已经能量）：",
       ...segmentLines(s.segments),
     );
@@ -481,6 +576,9 @@ export function formatBaselineReport(s, title = "个人版同步 2.0 · Phase 0 
     "",
     "调度（F3 Phase 0，逐空间耗时来自 [round-timing]；⛔ 不改行为）：",
     ...schedulingLines(s.scheduling),
+    "",
+    "失败面（F3 决策用；⛔ 本工具不改行为）：",
+    ...failureLines(s.failures),
     "",
     "分段（⭐ 埋点：**本机两段时刻**，⛔ 跨机不可相减 —— 端到端还差「传输」那一段，日志里没有）：",
     ...segmentLines(s.segments),

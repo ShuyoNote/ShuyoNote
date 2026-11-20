@@ -14,12 +14,15 @@ import {
   formatBaselineReport,
   parseLatencyLine,
   parseMetricsLine,
+  parsePeerErrClassLine,
+  parsePeerSkipLine,
   parseRoundTimingLine,
   percentile,
   splitMetricLines,
   splitRoundBlocks,
   summarizeMetrics,
   summarizeRoundTiming,
+  summarizeSchedulingFailures,
 } from "./syncBaseline.mjs";
 
 /** 真实日志里那一行的形状（缩略了内部 id 的长度，字段一个不少）。 */
@@ -362,5 +365,73 @@ describe("F2 Phase 0 · 对端水位差（谁缺谁的数据）", () => {
     expect(g.gapped).toBe(1);
     expect(g.notAppliedRounds).toBe(1);
     expect(g.totalGap).toBe(4);
+  });
+});
+
+// ⭐ F3 Phase 0（2026-11-20）：失败面 —— 两条解析 ＋ 汇总 ＋ 报告一节。
+//    这一组是「改调度之前先把失败量出来」的唯一判据：⛔ 此工具不改任何同步行为。
+describe("F3 · 失败面（[peer-skip] / [peer-err-class]）", () => {
+  it("parsePeerSkipLine：只认那一个形状；数字缺失/坏 ⇒ null（⛔ 不猜）", () => {
+    expect(parsePeerSkipLine("[peer-skip] 本轮已失败 2 台 ⇒ 本空间不再试它们（下一轮照旧重试）")).toEqual({
+      failed: 2,
+    });
+    expect(parsePeerSkipLine("[peer-skip] 本轮已失败 0 台 ⇒ …")).toEqual({ failed: 0 });
+    expect(parsePeerSkipLine("[peer-skip] 没有那个数字")).toBeNull();
+    expect(parsePeerSkipLine("没有标记的普通行")).toBeNull();
+    expect(parsePeerSkipLine("[sync-metrics] space=a peer=b")).toBeNull();
+  });
+
+  it("parsePeerErrClassLine：skip 与 errLen 各归各位（len= 是错误文本字符数，不是类数）", () => {
+    // ⚠️ 这一条钉的正是第一版读歪的地方：441 这种值只能解释成「文本长度」，不可能是「类数」。
+    expect(parsePeerErrClassLine(`[peer-err-class] skip=true hits=["timeout"] len=441`)).toEqual({
+      skip: true,
+      errLen: 441,
+    });
+    expect(parsePeerErrClassLine("[peer-err-class] skip=false hits=[] len=0")).toEqual({
+      skip: false,
+      errLen: 0,
+    });
+    expect(parsePeerErrClassLine("[peer-err-class] skip=maybe len=1")).toBeNull();
+    expect(parsePeerErrClassLine("[peer-err-class] skip=true")).toBeNull();
+    expect(parsePeerErrClassLine("普通行")).toBeNull();
+  });
+
+  it("summarizeSchedulingFailures：一条都没有 ⇒ null（⛔ 不写 0：没量到 ≠ 零失败）", () => {
+    expect(summarizeSchedulingFailures([], [])).toBeNull();
+    expect(summarizeSchedulingFailures()).toBeNull();
+    const got = summarizeSchedulingFailures(
+      [{ failed: 2 }, { failed: 1 }],
+      [{ skip: true, errLen: 10 }, { skip: false, errLen: 5 }],
+    );
+    expect(got).toEqual({
+      skipEvents: 2,
+      skippedPeers: 3,
+      errLines: 2,
+      errSkipped: 1,
+      errTextChars: 15,
+    });
+  });
+
+  it("报告里那一节：有读数就列出来；没有就写「没量到」（⛔ 不写 0）", () => {
+    const row = {
+      space: "s",
+      peer: "p",
+      since: 0,
+      maxSeq: 0,
+      gap: 0,
+      fetched: 0,
+      applied: 0,
+      ms: 5,
+      recoveredAfterMs: null,
+    };
+    const withData = formatBaselineReport(
+      summarizeMetrics([row], 0, [], [], [{ failed: 2 }], [{ skip: true, errLen: 10 }]),
+    );
+    expect(withData).toContain("失败面（F3 决策用");
+    expect(withData).toContain("被跳过：1 次");
+    expect(withData).toContain("累计失败 2 台次");
+    expect(withData).toContain("错误文本合计 10 字符");
+    const empty = formatBaselineReport(summarizeMetrics([row], 0, [], [], [], []));
+    expect(empty).toContain("没量到：这批日志没有 [peer-skip]");
   });
 });

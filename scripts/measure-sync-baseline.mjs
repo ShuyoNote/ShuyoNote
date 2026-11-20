@@ -21,6 +21,8 @@ import {
   formatBaselineReport,
   parseLatencyLine,
   parseMetricsLine,
+  parsePeerErrClassLine,
+  parsePeerSkipLine,
   parseRoundTimingLine,
   summarizeMetrics,
 } from "./lib/syncBaseline.mjs";
@@ -84,6 +86,10 @@ async function scanFile(file, maxLines) {
   const latencies = [];
   /** @type {{space: string, ok: boolean, ms: number}[]} */
   const roundRows = [];
+  /** @type {{failed: number}[]} ⭐ F3（2026-11-20）：被跳过的事件（按空间） */
+  const skipRows = [];
+  /** @type {{skip: boolean, kinds: number}[]} ⭐ F3：错误分类行 */
+  const errRows = [];
   let suspicious = 0;
   let seen = 0;
   const rl = createInterface({ input: createReadStream(file, { encoding: "utf8" }), crlfDelay: Infinity });
@@ -108,9 +114,22 @@ async function scanFile(file, maxLines) {
       const rt = parseRoundTimingLine(line);
       if (rt) roundRows.push(rt);
       else suspicious += 1;
+      continue;
+    }
+    // ⭐ F3（2026-11-20）：失败面两条 —— 「被跳过」与「错误分类」（⛔ 只量不改行为）
+    if (line.includes("[peer-skip]")) {
+      const sk = parsePeerSkipLine(line);
+      if (sk) skipRows.push(sk);
+      else suspicious += 1;
+      continue;
+    }
+    if (line.includes("[peer-err-class]")) {
+      const ec = parsePeerErrClassLine(line);
+      if (ec) errRows.push(ec);
+      else suspicious += 1;
     }
   }
-  return { rows, latencies, roundRows, suspicious };
+  return { rows, latencies, roundRows, skipRows, errRows, suspicious };
 }
 
 async function main() {
@@ -144,16 +163,29 @@ async function main() {
   const latencies = [];
   /** @type {{space: string, ok: boolean, ms: number}[]} */
   const roundRows = [];
+  /** @type {{failed: number}[]} ⭐ F3（2026-11-20）：被跳过的事件（按空间） */
+  const skipRows = [];
+  /** @type {{skip: boolean, kinds: number}[]} ⭐ F3：错误分类行 */
+  const errRows = [];
   let suspicious = 0;
   for (const file of args.logs) {
-    const { rows, latencies: segs, roundRows: rts, suspicious: bad } = await scanFile(file, args.maxLines);
+    const {
+      rows,
+      latencies: segs,
+      roundRows: rts,
+      skipRows: sks,
+      errRows: ers,
+      suspicious: bad,
+    } = await scanFile(file, args.maxLines);
     all.push(...rows);
     latencies.push(...segs);
     roundRows.push(...rts);
+    skipRows.push(...sks);
+    errRows.push(...ers);
     suspicious += bad;
   }
 
-  const summary = summarizeMetrics(all, suspicious, latencies, roundRows);
+  const summary = summarizeMetrics(all, suspicious, latencies, roundRows, skipRows, errRows);
   if (args.json) {
     // ⛔ 不输出原始 id：这里只给数字与编号标签。
     console.log(JSON.stringify(summary, null, 2));
