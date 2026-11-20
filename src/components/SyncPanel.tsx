@@ -28,6 +28,8 @@ import { meshSyncGraph, syncGraphRows } from "../lib/meshSyncGraph";
 // ⭐ P3-3a 第三小步（task-56）：CRDT 影子**手动体检** —— 只读扫描当前空间，文案全是纯函数，
 //   ⛔ 不自动修复/不改数据/不显示正文（差异只回数量）。
 import { shadowScanSpace } from "../lib/crdtShadowScan";
+// ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：把后端那行"缺口已过期"搬到界面上。
+import { gapNoticeText, type SyncGap } from "../lib/syncGaps";
 // ⭐ P3-3a 第四小步（task-67）：影子观测近 7 天历史（只读；纯函数解析/摘要，面板只显示）。
 import {
   SHADOW_HISTORY_KEY,
@@ -348,6 +350,9 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
       unlisten?.();
     };
   }, [open, contentOnly]);
+  // ⭐ 2026-11-20：当前空间的**永久缺失**（只读；来自后端 `list_sync_gaps`）。
+  //   ⚠️ 空数组＝**没有已知缺口**（⛔ 不渲染"0 条"）；读失败＝保持空且不打扰用户（它只是提示面）。
+  const [syncGaps, setSyncGaps] = useState<SyncGap[]>([]);
   // ⭐ task-67：只读影子观测历史；坏 JSON/读不出 ⇒ unknown（⛔ 不假装"无记录"）。
   const [shadowHistory, setShadowHistory] = useState<ShadowHistorySummary | null>(null);
   useEffect(() => {
@@ -1277,8 +1282,19 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   // ⭐⭐ **2026-10-20（owner「没看到三个选项的界面」）**：面板**一打开就去读**待取回清单** ✓
   //   旧行为：清单**只在一轮同步之后**才被读（doSync 里）⇒ 刚打开面板、还没点同步时，
   //   队列里明明有 5 页，界面上却**一个字都没有** ✗（真机就是这么被耍的 ✓）。
+  /** ⭐ 2026-11-20：读"永久缺失"（只读；失败不打扰用户 —— 与 loadPendingRemote 同一口径）。 */
+  const loadSyncGaps = async () => {
+    try {
+      const rows = await api.listSyncGaps();
+      setSyncGaps(Array.isArray(rows) ? rows : []);
+    } catch {
+      setSyncGaps([]);
+    }
+  };
+
   useEffect(() => {
     void loadPendingRemote();
+    void loadSyncGaps();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2701,6 +2717,21 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                       : syncCoreRowText(coreStatus).tone === "warn"
                         ? "○"
                         : "—"}
+                  </span>
+                </div>
+              )}
+
+              {/* ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：**永久缺失**。
+                  只在**真有缺口**时出现（没有 ⇒ 整行不渲染，⛔ 不显示"0 条"这种噪音）；
+                  ⛔ 不提供"修复/重试"按钮：这段本来就补不回来（只能全量重同步或从备份恢复）。 */}
+              {gapNoticeText(syncGaps) && (
+                <div className="sync-device-name" data-testid="sync-permanent-gap">
+                  <span
+                    className="sync-hint"
+                    style={{ flex: "1 1 auto", minWidth: 0, color: "var(--warn, #b45309)" }}
+                    data-testid="sync-permanent-gap-text"
+                  >
+                    {gapNoticeText(syncGaps)}
                   </span>
                 </div>
               )}

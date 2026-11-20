@@ -187,6 +187,66 @@ pub struct MeshPeerWatermark {
     pub last_ok_ago_ms: Option<i64>,
 }
 
+/// ⭐ **2026-11-20（owner 拍「让报警出现在界面上」）**：一段**永久缺失**的序号（闭区间）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncGap {
+    pub from: i64,
+    pub to: i64,
+}
+
+/// ⭐ **2026-11-20**：把"缺口签名"（`cursor|min`）解析成一段永久缺失（纯函数，⛔ 不碰库）。
+///
+/// 口径：
+/// 1. 形状不对（不是 `a|b`、解析不出整数）⇒ `None`（⛔ 不猜）；
+/// 2. 复用 `mesh::missing_range`（**同一个判定函数**，⛔ 不在这里另写一份口径）；
+/// 3. 它判"没丢"时也返回 `None`（例如游标已追上）。
+pub fn gap_from_signature(sig: &str) -> Option<SyncGap> {
+    let (a, b) = sig.split_once('|')?;
+    let cursor: i64 = a.trim().parse().ok()?;
+    let min_seq: i64 = b.trim().parse().ok()?;
+    let (from, to) = crate::mesh::missing_range(cursor, min_seq)?;
+    Some(SyncGap { from, to })
+}
+
+/// ⭐ **2026-11-20（owner 拍「让报警出现在界面上」）**：只读「当前空间的永久缺失清单」。
+///
+/// 为什么要它：F2-0 的 `[mesh] 缺口已过期` 只打在 stderr —— 用户**永远看不见**"某空间缺了一段、
+/// 而且补不回来"。这一格把它搬到界面上（⛔ 仍然只读：不拉、不补、不改任何状态）。
+///
+/// 数据来源：`meta.sync_state` 的 `peer_gap:<proto>:<device> = "cursor|min"`（拉取那一轮写下的签名）。
+/// ⚠️ 只报**当前空间**的：跨空间的缺口混在一起会让用户不知道去哪儿处理。
+#[tauri::command]
+pub fn list_sync_gaps(db: State<'_, crate::db::Db>) -> Result<Vec<SyncGap>, String> {
+    let app_data = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "bad_state: app data dir 未初始化".to_string())?;
+    let space = {
+        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+        crate::attachments::active_space_id(&c)
+    };
+    let sc = crate::db::open_space_conn_at(&space, app_data)?;
+    let proto = crate::sync::mesh_scope_at(&sc, Some(&space))
+        .map(|s| s.space)
+        .unwrap_or_default();
+    if proto.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let like = format!("peer_gap:{proto}:%");
+    let c = crate::db::open_meta_conn_at(app_data)?;
+    let mut stmt = c
+        .prepare("SELECT value FROM sync_state WHERE key LIKE ?1")
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<String> = stmt
+        .query_map(rusqlite::params![like], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+    let mut out: Vec<SyncGap> = rows.iter().filter_map(|s| gap_from_signature(s)).collect();
+    out.sort_by_key(|g| g.from);
+    out.dedup();
+    Ok(out)
+}
+
 /// ⭐ **2026-11-11（§13 A2 第一刀）**：当前空间的只读水位读数（本机高水位 ＋ 各对端已收水位）。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -346,6 +406,30 @@ pub fn mesh_watermarks(db: State<'_, crate::db::Db>) -> Result<MeshWatermarks, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ⭐ **2026-11-20**：`gap_from_signature` 的五格 —— 界面那一行"永久缺失"的唯一判据。
+    /// ⚠️ 复用 `mesh::missing_range`（⛔ 不在这里另写一份口径）；形状不对 ⇒ `None`（⛔ 不猜）。
+    #[test]
+    fn gap_from_signature_parses_only_real_gaps() {
+        assert_eq!(gap_from_signature("5|10"), Some(SyncGap { from: 6, to: 9 }));
+        assert_eq!(
+            gap_from_signature("0|59"),
+            Some(SyncGap { from: 1, to: 58 })
+        );
+        // 只缺 1 条也要报
+        assert_eq!(
+            gap_from_signature("9|11"),
+            Some(SyncGap { from: 10, to: 10 })
+        );
+        // 已经追上 / 对端没报 min ⇒ 不报
+        assert_eq!(gap_from_signature("9|10"), None);
+        assert_eq!(gap_from_signature("50|0"), None);
+        // 坏形状一律 None（⛔ 不猜）
+        assert_eq!(gap_from_signature("x|y"), None);
+        assert_eq!(gap_from_signature("5"), None);
+        assert_eq!(gap_from_signature("5|10|"), None);
+        assert_eq!(gap_from_signature(""), None);
+    }
 
     /// ⭐ 2026-11-11（§13 A2）：只读水位矩阵的**解析**判据 —— 只认 `mesh_cursor:<space>:<device>`，
     /// 值必须是非负整数；形状不对/不是整数 ⇒ 跳过（⛔ 不猜、不把坏值当 0 混进来）。

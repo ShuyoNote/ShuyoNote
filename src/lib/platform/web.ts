@@ -1824,6 +1824,11 @@ export function makeInvoke(store: SqliteStore) {
       // 没有网格层 ⇒ 无从确认；如实回 false（界面据此提示"这一档只在桌面版可用"）。
       return false as T;
     }
+    if (cmd === "list_sync_gaps") {
+      // ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：Web 版没有设备直连层，
+      //   也就没有"缺口签名"可读 ⇒ **如实回空**（⛔ 不编读数、⛔ 不说"没有缺口"）。
+      return [] as T;
+    }
     if (cmd === "mesh_watermarks") {
       // Web 版没有设备直连层 ⇒ 没有"对端水位"可读；如实回空（⛔ 不编读数）。
       return {

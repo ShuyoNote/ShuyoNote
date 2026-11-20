@@ -1354,6 +1354,11 @@ export interface CommandMap {
   /** 确认「这一台对端的这个 uid」就是本机同名空间 ⇒ 融合闸放行（只写同步元数据）。 */
   mesh_uid_confirm: { args: { peerDevice: string; peerUid: string }; result: boolean };
   /** ⭐ 2026-11-11（§13 A2）：只读「设备×空间水位」（对端只回序号，⛔ 无设备 id/正文）。 */
+  /**
+   * ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：当前空间的**永久缺失**清单（只读）。
+   * ⚠️ 每段是**闭区间**（from..to），可能有多段；空数组 = 没有已知缺口（或还没有过拉取）。
+   */
+  list_sync_gaps: { args: undefined; result: Array<{ from: number; to: number }> };
   mesh_watermarks: { args: undefined; result: MeshWatermarks };
   /**
    * 丙-③-b-2b：**写网格设置**（监听地址 / 口令），并把窗口的开关跟着改。

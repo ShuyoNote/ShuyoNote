@@ -485,6 +485,12 @@ const REGISTERED: &[(&str, &str, usize, &str)] = &[
     ),
     (
         "src/mesh_panel.rs",
+        "list_sync_gaps",
+        2,
+        "同步面板：列当前空间的『永久缺失』（旁路开空间库取 proto ＋ 开 meta.db 读签名）",
+    ),
+    (
+        "src/mesh_panel.rs",
         "mesh_uid_confirm",
         1,
         "同步面板：确认同名空间 uid（旁路打开空间库写确认行）",

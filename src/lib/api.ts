@@ -659,6 +659,8 @@ export const api = {
     invoke("mesh_uid_confirm", a) as Promise<boolean>,
   /** ⭐ 2026-11-11（§13 A2）：只读「设备×空间水位」（对端只回序号，⛔ 无设备 id）。 */
   meshWatermarks: () => invoke("mesh_watermarks") as Promise<MeshWatermarks>,
+  /** ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：当前空间的**永久缺失**清单（只读）。 */
+  listSyncGaps: () => invoke("list_sync_gaps") as Promise<Array<{ from: number; to: number }>>,
   /** ⭐ **P-4 片③-a（2026-10-14）**：⭐ 逐台「对码」读数 ✓（⭐ 比对码由**后端**算 ✓ ——
    *  `code: null` ＝ **读不到** ✓，人话原因在 `reason` 里 ✓）。 */
   pairingCodeReading: (a: { peerDeviceId: string; peerPubkey: string }) =>

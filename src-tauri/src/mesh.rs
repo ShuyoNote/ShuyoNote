@@ -1624,6 +1624,19 @@ pub async fn pull_and_absorb(
             let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
             let _ = crate::sync::set_meta_state(&g, &key, &sig);
         }
+    } else {
+        // ⭐ **2026-11-20 真机修（陈旧 bug）**：缺口**不再成立**时必须把这个签名**清掉** ——
+        //   否则界面那一行会一直挂着"永久缺失 1..58"（我实测就撞上了：游标早已推过裁剪点，那行还在）。
+        //   口径：只在**键还在且不是 "0"** 时写一次（⛔ 不每轮都写）。
+        let key = format!("peer_gap:{space_id}:{}", peer.device_id);
+        let last = {
+            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+            crate::sync::get_meta_state(&g, &key)
+        };
+        if last.is_some() && last.as_deref() != Some("0") {
+            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+            let _ = crate::sync::set_meta_state(&g, &key, "0");
+        }
     }
     // ⭐ **F2-2a（2026-11-20，owner 拍接线）**：`min`/`max` 之外的**中段洞** ——
     //   `missing_range` 只看 cursor 与 min，发现不了"对端只剩两头、中间全没了"那种形态。

@@ -1264,6 +1264,7 @@ pub fn run() {
             mesh_panel::mesh_uid_confirm,
             // ⭐ 2026-11-11（§13 A2）：只读「设备×空间水位」。
             mesh_panel::mesh_watermarks,
+            mesh_panel::list_sync_gaps,
             // 甲-1 接线第 1／3 件（2026-09-25）：局域网发现的**启动**与**读数**。
             // ⚠️ 只有桌面：发现靠 Rust 收发的 UDP（`lan.rs`），Web 平台上没有这一层 ——
             //    Web 侧的实现如实回"配置地址那一档 ＋ 局域网不可用"（不是假装发现了谁）。
