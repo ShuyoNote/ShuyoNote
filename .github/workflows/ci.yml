@@ -216,6 +216,27 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # ⭐ **2026-11-20（owner 拍「加缓存」）**：这个仓**一直零缓存** ⇒ 每次 CI 都冷编译整棵依赖树
+      #   （tauri / iroh / …）。实测当天 12 次 rust 组的耗时：**19 / 23 / 24 / 30 / 31 / 32 / 33 / 52 分钟**
+      #   （`_tmp` 里那份 `read-ci` 读数），而测试本身只占约 9 分钟（本机全量 lib 530 s 量级）。
+      #   ⇒ 加一层 Rust 构建缓存，把"每次重编依赖"这部分压掉。
+      #
+      # 为什么用 `Swatinem/rust-cache` 而不是手写 `actions/cache`：
+      #   它按 `Cargo.lock` ＋ rustc 版本算 key、自动做"只存不覆盖/PR 用只读缓存"、并清掉无用 artifacts；
+      #   手写要自己处理 key 公式与 `save-if`，写错会**静默变成永久不命中**（这比没有缓存更糟：看不出没生效）。
+      #
+      # ⚠️ 三条边界：
+      #   1. `workspaces: src-tauri -> target` —— 这个仓的 target 在 `src-tauri/target`，
+      #      不写这一行它会去缓存**根目录**的 target（那里没有）⇒ 缓存永远空转；
+      #   2. 缓存只影响**速度**，不影响判定：同一份代码在命中/未命中两种情况下都必须给出同样结论
+      #      （所以它不能替代任何门禁，也不许因为"缓存里是绿的"就跳过测试）；
+      #   3. 缓存坏了就是**慢**，不会变红 —— 真出问题把 `shared-key` 或 `key` 换一个即可。
+      - name: Rust 构建缓存
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: rust-tests
+
       - name: 确保 rustfmt（rust 组的 fmt 门禁用它）
         # `dtolnay/rust-toolchain@stable` 的默认 profile 带 rustfmt；这一行是**显式钉住**：
         # 将来换 toolchain / 有人把 profile 改成 minimal 时，红在这一步（一眼看懂），
