@@ -1639,7 +1639,8 @@ pub async fn pull_and_absorb(
         if last.as_deref() != Some(sig.as_str()) {
             eprintln!(
                 "[mesh] 对端中段有洞：它的 changes 覆盖 {min_seq}..{max_seq} 但**只有 {avail_count} 条** \
-                 ⇒ {holes} 个序号已不存在（前缀洞由「缺口已过期」报，这条补中段；⛔ 不会自动补）"
+                 ⇒ {holes} 个序号已不存在（⚠️ **多数是「同实体旧 upsert 被取代删除」⇒ 设计如此、不是丢数据**；\
+                 真要判「丢段」看「缺口已过期」那行＋段清单；⛔ 这里不会自动补）"
             );
             let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
             let _ = crate::sync::set_meta_state(&g, &key, &sig);
