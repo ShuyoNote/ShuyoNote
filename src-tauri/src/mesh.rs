@@ -54,6 +54,24 @@ const MAX_BODY: usize = 8 * 1024 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(20);
 
+/// ⭐⭐ **S3（2026-11-21，owner「全面开火」）**：同一轮里**最多同时拉几台对端**（网络并发上限）。
+///
+/// 依据：一轮通常 ≤ 10 台（`U14`「单空间 ≤10 台」），而同一网段里真正活着的一般 2–4 台；
+/// 4 足够把"三台里一台卡死"那种尾巴压到 **1 倍**超时（而不是 3 台相加），
+/// 同时不往对端／本机堆 10 条并发连接。
+/// ⚠️ 它是**硬上限**：第 5 台要等前面有一台收工才起步（判据在 `round_candidates_inner` 的 ②）。
+/// ⚠️ 一轮的**总耗时**因此 ≈ `ceil(台数 / 4) × 每台超时` 的最坏值，而**不是** `台数 × 超时`。
+const PEER_PULL_CONCURRENCY: usize = 4;
+
+/// ⭐⭐ **S3（2026-11-21）**：**一台对端**自己那一份超时（罩住它抓取段的整段，含建端点）。
+///
+/// 为什么必须有它：`mesh_http_client()` **不设 `.timeout()`**（它刻意 `no_proxy()`，但没设超时），
+/// 对端"TCP 接得上、却一直不回响应头"时 `reqwest` 会**一直挂着** ——
+/// 这正是"一台超时拖住整轮"的真因（业务面板上只显示"1 台没拉动"，而轮次早就不动了）。
+/// ⚠️ 30 秒与 `IO_TIMEOUT`（裸 socket 读写）同一把尺；⛔ 别把它和"整轮超时"混成一件事
+/// （整轮没有超时：一轮里每台各有各的，加起来才是这一轮）。
+const PEER_PULL_TIMEOUT: Duration = Duration::from_secs(30);
+
 // ─────────────────────────── 过网形状（**没有号牌**） ───────────────────────────
 
 /// 一条要发给对端的记录 —— 与客户端 `do_push` 装进 `PushRequest` 的那一项**逐字段同形**。
@@ -1534,6 +1552,12 @@ pub(crate) fn round_health_last_ok(device: &str) -> i64 {
 /// ⚠️ 锁**不跨 `await`**：读一次、放掉、拉完再拿一次（否则一次网络卡顿会把整个库锁住）。
 /// ⚠️ 签名收的是 `&Mutex<Connection>`（不是 `Arc`）：窗口那一侧需要 `Arc` 来跨线程持有，
 /// **客户端这一侧不需要** —— 而 `State<'_, Db>` 给的正好是一个 `&Mutex<Connection>`。
+///
+/// ⭐⭐ **S3（2026-11-21，owner「全面开火」：一轮里对端之间并发）**：这一条现在是**两段**的组合 ——
+/// [`fetch_peer_changes`]（**只碰网络**，可以并发）＋ [`absorb_and_report`]（**落库**，必须串行）。
+/// 拆开**不改变**它对外的语义（串行调用方/判据照旧走这一个 ✓，返回的东西逐字段相同 ✓）；
+/// 拆开的唯一理由是让 [`round_candidates_inner`] 能"**前一段并起来、后一段串起来**"，
+/// 详见那一条的头注「并发模型」与「写库不并发是怎么保证的」。
 pub async fn pull_and_absorb(
     conn: &Mutex<Connection>,
     client: &reqwest::Client,
@@ -1544,6 +1568,57 @@ pub async fn pull_and_absorb(
     //   它只用来选「信任名单是哪一行」（`paired_row_key`，个人档＝空串那一行 ✓）。
     device_level: bool,
 ) -> Result<PeerPullReport, String> {
+    let ep = crate::mesh_endpoint::endpoint_for_peer(peer, client.clone()).await?;
+    let fetched = fetch_peer_changes(conn, ep, peer, space_id, token).await?;
+    absorb_and_report(conn, peer, space_id, token, device_level, fetched).await
+}
+
+/// 一台对端**抓取阶段**的全部产物 —— ⛔ **一条业务数据都没落库**（全在内存里）。
+///
+/// ⚠️ `ep` 也带过来：吸收段还要用它做 keyring／页清单／实体级对账（⛔ 不重连 ——
+///   重连既慢，又会让"这一台"在两段之间悄悄换了连接）。
+struct PeerFetch {
+    /// 这一轮从哪儿开始拉的（吸收段写回游标时要拿它比大小）。
+    since: i64,
+    rows: Vec<MeshRow>,
+    max_seq: i64,
+    min_seq: i64,
+    avail_count: i64,
+    /// F2-0 的"缺口已过期"区间（`None` ＝ 这一轮没这个读数）—— 抓取段算好，吸收段才打日志/写签名。
+    gap: Option<(i64, i64)>,
+    /// F2-2a 的"中段洞"个数（`0` ＝ 没洞）—— 同上，纯数值带过来。
+    holes: u64,
+    /// 本机空间名（吸收段的"按名融合"要拿它当 `peer_name_hint`）。
+    local_name: String,
+    /// 这一轮是不是**归零自愈**过（⇒ 游标写回允许倒退，见吸收段）。
+    healed: bool,
+    /// 抓取段自己耗掉的毫秒（网络 ＋ 短读库）—— 只用于 `[sync-metrics]` 那一行。
+    fetch_ms: u128,
+    /// 这一台上一次失败的毫秒（`round_health`）—— 用来算"恢复用了多久"。
+    last_err_ms: i64,
+    ep: Box<dyn crate::mesh_endpoint::Endpoint + Send>,
+}
+
+/// 一台对端的**抓取任务**（并发跑的单元）：结果是 `(下标, 抓取结果)`。
+///
+/// ⚠️ 下标是**必须**的：并发完成顺序是"谁先回来谁先到"，而写回必须按**候选原顺序**
+/// （判据③）⇒ 由这个下标把它落回原来的位置。
+type PeerFetchTask<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = (usize, Result<PeerFetch, String>)> + Send + 'a>>;
+
+/// 跟**一台**对端**只做网络那一段**：读水位 ⇒ 拉 ⇒（必要时）归零重拉／冷探针 ⇒ 把批次带回来。
+///
+/// ⛔ **这里不许出现业务数据的落库**（`absorb_peer_batch` 只能在 [`absorb_and_report`] 里调）——
+/// "写库不并发"就靠这条边界成立，见 [`round_candidates_inner`] 的头注。
+/// ⚠️ 这里**仅有的两处写**都是"这一台自己的小开关"，且都在 `conn.lock()` 的**同一小段**里完成、
+/// **⛔ 不跨 `await`**：① 游标越界 ⇒ `reset_peer_cursor(0)`；② 冷探针节流戳 `write_setting`。
+async fn fetch_peer_changes(
+    conn: &Mutex<Connection>,
+    ep: Box<dyn crate::mesh_endpoint::Endpoint + Send>,
+    peer: &MeshPeer,
+    space_id: &str,
+    token: Option<&str>,
+) -> Result<PeerFetch, String> {
     let metrics_t0 = std::time::Instant::now();
     let metrics_key = format!("{space_id}|{}", peer.device_id);
     let metrics_last_err = round_health()
@@ -1587,7 +1662,8 @@ pub async fn pull_and_absorb(
     let mut healed = false;
     // ⭐ Step 1b：**调用点挑传输实现**（今天只有局域网直连）；下面一处只认端点 ✓
     // ⭐ Step 3-1：**挑传输**收敛到一处（局域网 / 跨网隧道）
-    let ep = crate::mesh_endpoint::endpoint_for_peer(peer, client.clone()).await?;
+    // ⭐ S3（2026-11-21）：端点改由**调用方**建好传进来 ⇒ 这一段的耗时因此**只算这一台自己的**
+    //   （建端点那一点时间算在调用方的并发槽里，不重复计量）；下面只认 `ep` ✓
     let (mut rows, mut max_seq, min_seq, avail_count) = {
         // ⭐ 签名要在**拿锁的那一小段**里算好 ✗（⛔ 不许跨 await 持锁 ✗）；拿不到身份 ⇒ `None` ✓
         //   （⭐ 那就只剩口令那一档 ✓ —— 与今天逐字相同 ✓）。
@@ -1669,59 +1745,18 @@ pub async fn pull_and_absorb(
     //   就把那段"永远补不回来"的区间如实说出来（⛔ 不改变拉取/重试策略，也不动游标）。
     //   为什么必须有这一句：拉取是 `device_seq > since`，对端只会回"后面还有什么"，
     //   ⛔ **不会**告诉你"中间那一段我已经删了" ⇒ 用户只会看到"某几页怎么还是旧的"。
-    if let Some((from, to)) = missing_range(since, min_seq) {
-        // ⚠️ **去重**（2026-11-20 真机踩到）：这一行原来是**每轮每个空间各打一次** ——
-        //   长期存在的洞（老数据裁剪留下的）会让日志每轮刷 6+ 行，正是那种"刷多了就没人看"的噪声。
-        //   口径：同一 (空间,对端) 且签名 `cursor|min` 没变 ⇒ 只报一次；值变了（游标推进/对端变了）再报。
-        let key = format!("peer_gap:{space_id}:{}", peer.device_id);
-        let sig = format!("{since}|{min_seq}");
-        let last = {
-            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-            crate::sync::get_meta_state(&g, &key)
-        };
-        if last.as_deref() != Some(sig.as_str()) {
-            eprintln!(
-                "[mesh] **缺口已过期**：我 cursor={since}，对端最老还有 {min_seq} ⇒ {from}..{to} 永久缺失\
-                 （⛔ 不会自动补；要全量重同步或从备份恢复）"
-            );
-            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-            let _ = crate::sync::set_meta_state(&g, &key, &sig);
-        }
-    } else {
-        // ⭐ **2026-11-20 真机修（陈旧 bug）**：缺口**不再成立**时必须把这个签名**清掉** ——
-        //   否则界面那一行会一直挂着"永久缺失 1..58"（我实测就撞上了：游标早已推过裁剪点，那行还在）。
-        //   口径：只在**键还在且不是 "0"** 时写一次（⛔ 不每轮都写）。
-        let key = format!("peer_gap:{space_id}:{}", peer.device_id);
-        let last = {
-            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-            crate::sync::get_meta_state(&g, &key)
-        };
-        if last.is_some() && last.as_deref() != Some("0") {
-            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-            let _ = crate::sync::set_meta_state(&g, &key, "0");
-        }
-    }
     // ⭐ **F2-2a（2026-11-20，owner 拍接线）**：`min`/`max` 之外的**中段洞** ——
     //   `missing_range` 只看 cursor 与 min，发现不了"对端只剩两头、中间全没了"那种形态。
-    //   ⚠️ 这一格**只报不修**，而且**去重**：同一对端同一签名只报一次（否则每轮 9 个空间各刷一行）。
+    //
+    // ⭐⭐ **S3（2026-11-21，并发改造）**：这里现在**只算数值、一个字都不落库**
+    //   （`missing_range` / `holes_between` 都是纯函数）——「打日志 ＋ 写去重签名」那两段
+    //   挪到了吸收段（[`absorb_and_report`] 的开头），因为**写库只许发生在串行的吸收段**。
+    //   ⚠️ 口径**逐字不变**：值仍在这一刻算（＝仍用**冷探针之前**的 `max_seq`）。
+    //     这一条不是洁癖：探针会把 `max_seq` 从 0 改成尾号，若挪到探针之后再算，
+    //     `holes_between(min_seq, tail, avail_count=0)` 就会把"对端没报高水位"误报成
+    //     "中段有洞"（挪错位置时当场就能造出来的假读数）。
+    let gap = missing_range(since, min_seq);
     let holes = holes_between(min_seq, max_seq, avail_count);
-    if holes > 0 {
-        let key = format!("peer_holes:{space_id}:{}", peer.device_id);
-        let sig = format!("{min_seq}|{max_seq}|{avail_count}");
-        let last = {
-            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-            crate::sync::get_meta_state(&g, &key)
-        };
-        if last.as_deref() != Some(sig.as_str()) {
-            eprintln!(
-                "[mesh] 对端中段有洞：它的 changes 覆盖 {min_seq}..{max_seq} 但**只有 {avail_count} 条** \
-                 ⇒ {holes} 个序号已不存在（⚠️ **多数是「同实体旧 upsert 被取代删除」⇒ 设计如此、不是丢数据**；\
-                 真要判「丢段」看「缺口已过期」那行＋段清单；⛔ 这里不会自动补）"
-            );
-            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-            let _ = crate::sync::set_meta_state(&g, &key, &sig);
-        }
-    }
     // ⭐⭐ **2026-10-20（旧对端不带 `max_device_seq`）**：**冷探针**。
     //   情形：`since > 0`、这次一条没拉到、对端又没报高水位（老版本）⇒
     //   "真的没有新东西"和"我的游标越界了"**长得一模一样** ✗ ⇒ 问一次 `since=0`：
@@ -1820,6 +1855,106 @@ pub async fn pull_and_absorb(
         }
     }
 
+    Ok(PeerFetch {
+        since,
+        rows,
+        max_seq,
+        min_seq,
+        avail_count,
+        gap,
+        holes,
+        local_name,
+        healed,
+        fetch_ms: metrics_t0.elapsed().as_millis(),
+        last_err_ms: metrics_last_err,
+        ep,
+    })
+}
+
+/// 跟**一台**对端**只做落库那一段**：报缺口 ⇒ 吸收 ⇒ 推游标 ⇒ 旁路（keyring／页清单／实体级）⇒ 读数。
+///
+/// ⛔⛔ **这一段必须串行**：它里面的 `absorb_peer_batch` / 游标写 / 融合记账 / 实体级补页
+/// 都是"写同一个空间库"的动作。由 [`round_candidates_inner`] 用**顺序 `for` 循环**调用，
+/// ⛔ 不并发（那边的头注写了"写库不并发"是怎么被保证的）。
+/// ⚠️ 顺序口径与拆开之前**逐字相同**：缺口/中段洞仍**先于**吸收报（这样"吸收失败"时
+/// 那两行读数照样已经说出来了）。
+async fn absorb_and_report(
+    conn: &Mutex<Connection>,
+    peer: &MeshPeer,
+    space_id: &str,
+    token: Option<&str>,
+    device_level: bool,
+    fetched_batch: PeerFetch,
+) -> Result<PeerPullReport, String> {
+    let absorb_t0 = std::time::Instant::now();
+    let PeerFetch {
+        since,
+        rows,
+        max_seq,
+        min_seq,
+        avail_count,
+        gap,
+        holes,
+        local_name,
+        healed,
+        fetch_ms,
+        last_err_ms,
+        ep,
+    } = fetched_batch;
+    // ── ① 缺口（F2-0）＋ 中段洞（F2-2a）：**只报不修**；数值是抓取段算好带过来的
+    //   （见 `fetch_peer_changes` 里那两行 `let gap` / `let holes` 的注释：**必须在冷探针之前**算）。
+    //   ⭐ 顺序与拆开之前逐字相同：这两段仍然**先于**吸收（吸收失败时它们已经说出来了）。
+    if let Some((from, to)) = gap {
+        // ⚠️ **去重**（2026-11-20 真机踩到）：这一行原来是**每轮每个空间各打一次** ——
+        //   长期存在的洞（老数据裁剪留下的）会让日志每轮刷 6+ 行，正是那种"刷多了就没人看"的噪声。
+        //   口径：同一 (空间,对端) 且签名 `cursor|min` 没变 ⇒ 只报一次；值变了（游标推进/对端变了）再报。
+        let key = format!("peer_gap:{space_id}:{}", peer.device_id);
+        let sig = format!("{since}|{min_seq}");
+        let last = {
+            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+            crate::sync::get_meta_state(&g, &key)
+        };
+        if last.as_deref() != Some(sig.as_str()) {
+            eprintln!(
+                "[mesh] **缺口已过期**：我 cursor={since}，对端最老还有 {min_seq} ⇒ {from}..{to} 永久缺失\
+                 （⛔ 不会自动补；要全量重同步或从备份恢复）"
+            );
+            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+            let _ = crate::sync::set_meta_state(&g, &key, &sig);
+        }
+    } else {
+        // ⭐ **2026-11-20 真机修（陈旧 bug）**：缺口**不再成立**时必须把这个签名**清掉** ——
+        //   否则界面那一行会一直挂着"永久缺失 1..58"（我实测就撞上了：游标早已推过裁剪点，那行还在）。
+        //   口径：只在**键还在且不是 "0"** 时写一次（⛔ 不每轮都写）。
+        let key = format!("peer_gap:{space_id}:{}", peer.device_id);
+        let last = {
+            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+            crate::sync::get_meta_state(&g, &key)
+        };
+        if last.is_some() && last.as_deref() != Some("0") {
+            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+            let _ = crate::sync::set_meta_state(&g, &key, "0");
+        }
+    }
+    // ⚠️ 这一格**只报不修**，而且**去重**：同一对端同一签名只报一次（否则每轮 9 个空间各刷一行）。
+    if holes > 0 {
+        let key = format!("peer_holes:{space_id}:{}", peer.device_id);
+        let sig = format!("{min_seq}|{max_seq}|{avail_count}");
+        let last = {
+            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+            crate::sync::get_meta_state(&g, &key)
+        };
+        if last.as_deref() != Some(sig.as_str()) {
+            eprintln!(
+                "[mesh] 对端中段有洞：它的 changes 覆盖 {min_seq}..{max_seq} 但**只有 {avail_count} 条** \
+                 ⇒ {holes} 个序号已不存在（⚠️ **多数是「同实体旧 upsert 被取代删除」⇒ 设计如此、不是丢数据**；\
+                 真要判「丢段」看「缺口已过期」那行＋段清单；⛔ 这里不会自动补）"
+            );
+            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+            let _ = crate::sync::set_meta_state(&g, &key, &sig);
+        }
+    }
+    // ── ② 吸收（**写库的唯一入口**，整轮串行调用 ⇒ 任何时刻只有一个任务在写这个空间库 ✓）
     let fetched = rows.len();
     // ⭐ 2026-10-09（task-8）：把**这一批真的换过来的条**留给 `sync_history` 的明细 ✓。
     //    ⚠️ 与服务器那条路同一口径（`sync::item_title` ✓）、同一条 dir＝`"pull"`（网格这一轮只拉 ✓）。
@@ -1880,10 +2015,13 @@ pub async fn pull_and_absorb(
     //   ⛔ 不改"谁赢"、⛔ 不按序号补（序号洞大多无害 —— F2-2a 的真机教训）。
     maybe_reconcile_entities(conn, &*ep, peer, space_id, token, device_level).await;
     // ⭐ §13 Phase 0：这一轮的基线读数（只进日志）+ 恢复时长（上次失败 → 这次成功）。
+    //   ⭐ S3（2026-11-21）：`ms` 现在是**两截相加** —— 抓取段（`fetch_ms`，含网络）＋ 落库段（这里量的）。
+    //   ⛔ 刻意**不算**"排队等并发槽"的那段时间：那会让第 5 台看起来"自己很慢"（它网络其实很快），
+    //     而 `[sync-metrics]` 的用处正是"这一台自己慢不慢"。
     {
         let now = crate::db::now_ms();
-        let recovered = if metrics_last_err > 0 {
-            Some((now - metrics_last_err).max(0))
+        let recovered = if last_err_ms > 0 {
+            Some((now - last_err_ms).max(0))
         } else {
             None
         };
@@ -1896,12 +2034,12 @@ pub async fn pull_and_absorb(
                 max_seq,
                 fetched,
                 ab.applied,
-                metrics_t0.elapsed().as_millis(),
+                fetch_ms + absorb_t0.elapsed().as_millis(),
                 recovered,
             )
         );
         if let Ok(mut m) = round_health().lock() {
-            m.insert(metrics_key, (now, 0));
+            m.insert(format!("{space_id}|{}", peer.device_id), (now, 0));
         }
     }
     Ok(PeerPullReport {
@@ -2712,14 +2850,90 @@ pub(crate) fn mesh_http_client() -> reqwest::Client {
 ///
 /// ⭐ **2026-10-11（丙）**：`device_level` 由调用方传进来 ✗ —— 它决定 ⭐ **"本机要出示的那一份"
 /// 从哪一格读** ✗（个人档 ⇒ 空串那一格 ✓，与 `remember_peer_card` 写的那把键**同一把** ✓）。
+///
+/// ⭐⭐ **S3（2026-11-21，owner「全面开火」）**：这一条现在是"**并发抓取 ＋ 串行吸收**"，
+/// 具体见 [`round_candidates_inner`] 的头注（并发模型 / 每台自己超时 / 写库不并发）。
+/// 生产入口就是这一条：上限 [`PEER_PULL_CONCURRENCY`] 台、每台 [`PEER_PULL_TIMEOUT`]。
 pub async fn round_candidates(
     conn: &Mutex<Connection>,
     space_id: &str,
     candidates: Vec<MeshPeer>,
     device_level: bool,
 ) -> Result<MeshRoundReport, String> {
-    let client = mesh_http_client();
-    let mut out: Vec<PeerPullReport> = Vec::with_capacity(candidates.len());
+    round_candidates_inner(
+        conn,
+        space_id,
+        candidates,
+        device_level,
+        PEER_PULL_TIMEOUT,
+        mesh_http_client(),
+    )
+    .await
+}
+
+/// 判据专用：**与生产逐字同一条实现**，只把"每台超时"注入进来。
+///
+/// 为什么要留这个口子：判据①要证明"一台永远超时不会拖住整轮"，而生产的
+/// [`PEER_PULL_TIMEOUT`] 是 30 秒 —— 判据不可能真等 30 秒（本仓纪律：判据要秒级）。
+/// ⚠️ 除 `per_peer` 之外**没有任何差别**（同一个 `round_candidates_inner`、同一个 `mesh_http_client`）。
+#[cfg(test)]
+async fn round_candidates_with_timeout(
+    conn: &Mutex<Connection>,
+    space_id: &str,
+    candidates: Vec<MeshPeer>,
+    device_level: bool,
+    per_peer: Duration,
+) -> Result<MeshRoundReport, String> {
+    round_candidates_inner(
+        conn,
+        space_id,
+        candidates,
+        device_level,
+        per_peer,
+        mesh_http_client(),
+    )
+    .await
+}
+
+/// ⭐⭐ **S3（2026-11-21，owner「全面开火」）：一轮里对端之间并发**，但**落库严格串行**。
+///
+/// ## 并发模型（三条，都可由判据核）
+/// ① **抓取并发、吸收串行**：`candidates` 里每一台先各自跑 [`fetch_peer_changes`]
+///    （**只碰网络**），**同一时刻最多 [`PEER_PULL_CONCURRENCY`] 台**（`buffer_unordered` 的窗口就是它）；
+///    等全部有了结果（成功／失败／超时）之后，再**按 `candidates` 的原顺序**一台一台跑
+///    [`absorb_and_report`]（落库）。
+/// ② **每台一份自己的超时**（`per_peer`，生产 ＝ [`PEER_PULL_TIMEOUT`]）：只罩**那一台的抓取**，
+///    不罩别人、不罩整轮 ⇒ 一台卡住只是它自己那一行 `error`，⛔ 不会拖住本轮其它对端，
+///    也⛔ 不会让"整轮"变成一个无限长的等待。
+/// ③ **结果按原顺序写回**：并发完成顺序是"谁先回来谁先到"，落位靠**候选下标**
+///    （`got[idx]`）⇒ `MeshRoundReport.peers` 的顺序与串行版**逐个对得上**
+///    （界面文案 `round_note`、日志、`sync_history` 的口径一个字都不变 ✓）。
+///
+/// ## 「写库不并发」是怎么保证的（⭐ 本笔最关键的一条）
+/// **并发只发生在抓取段**。抓取段里和库有关的只有：
+/// ① **读**（`peer_cursor` / `read_setting` / `get_meta_state` / 读空间名与身份）；
+/// ② 两处**这一台自己的小开关**的短写（游标越界归零 `reset_peer_cursor`、冷探针节流戳 `write_setting`）——
+///    两处都在 `conn.lock()` 的**同一小段**里做完，**⛔ 没有一段持锁跨越 `await`**
+///    （本仓老规矩："锁不跨 await"）。⇒ 同一时刻最多一个任务摸着这个 `Connection`；
+///    也正因为**不跨 await**，被超时 drop 掉的那一台**不会**在持有锁的中间态被掐断。
+/// **业务数据的落库（`absorb_peer_batch` ＋ 游标推进 ＋ 融合记账 ＋ 实体级补页）全部只出现在
+/// [`absorb_and_report`] 里**，而那一段是被下面**顺序 `for` 循环**调用的 ⇒
+/// 任何时刻**最多一个任务在写这个空间库** ✓（一轮里也没有第二条写路径：整轮共用这一个
+/// `&Mutex<Connection>`）。
+/// ⇒ 一句可核的话：**并发的是网络，串行的是落库**；`absorb_peer_batch` 在网格这一档的
+///   调用点只有 `absorb_and_report` 一处。
+async fn round_candidates_inner(
+    conn: &Mutex<Connection>,
+    space_id: &str,
+    candidates: Vec<MeshPeer>,
+    device_level: bool,
+    per_peer: Duration,
+    client: reqwest::Client,
+) -> Result<MeshRoundReport, String> {
+    let n = candidates.len();
+    // ── ① 逐台读"本机要出示给它的那一份配对秘密"（读库、串行，⛔ 不做网络）
+    //    ⚠️ 这一步**必须先做完**再并发：它要 `conn.lock()`，而并发段里不该再排队抢锁。
+    let mut secrets: Vec<Option<String>> = Vec::with_capacity(n);
     for p in &candidates {
         // ⭐ **U11（A：门只认卡）**：出示的是**这一台**的那一份配对秘密 ✓
         //    ⛔ 不再用共享口令 ✗（它已退役 ✓）；本地没有这一台的那份 ⇒ 出示 `None`
@@ -2745,7 +2959,49 @@ pub async fn round_candidates(
             space_id,
             device_level
         );
-        match pull_and_absorb(conn, &client, p, space_id, secret.as_deref(), device_level).await {
+        secrets.push(secret);
+    }
+    // ── ② 并发抓取（上限 ＋ 每台自己超时）——**这一段里一行业务数据都不落库**
+    let mut tasks: Vec<PeerFetchTask<'_>> = Vec::with_capacity(n);
+    for (idx, p) in candidates.iter().enumerate() {
+        let secret = secrets[idx].clone();
+        let client = client.clone();
+        tasks.push(Box::pin(async move {
+            // 建端点也在这一台自己的计时/超时里（跨网对端建端点本身就可能很慢）
+            let work = async {
+                let ep = crate::mesh_endpoint::endpoint_for_peer(p, client).await?;
+                fetch_peer_changes(conn, ep, p, space_id, secret.as_deref()).await
+            };
+            match tokio::time::timeout(per_peer, work).await {
+                Ok(r) => (idx, r),
+                // ⚠️ 只有**这一台**被放弃：别的任务不受影响（它们各自在自己的槽里跑）✓
+                Err(_) => (idx, Err(peer_timeout_error(&p.device_id, per_peer))),
+            }
+        }));
+    }
+    // `buffer_unordered(limit)` ＝ "最多 `limit` 个 future 同时在飞"（＝判据②的并发上限），
+    // 完成顺序不保证 ⇒ 用下标落回原位（判据③）。
+    let mut got: Vec<Option<Result<PeerFetch, String>>> = (0..n).map(|_| None).collect();
+    {
+        use futures_util::stream::StreamExt;
+        let mut running = futures_util::stream::iter(tasks).buffer_unordered(PEER_PULL_CONCURRENCY);
+        while let Some((idx, r)) = running.next().await {
+            got[idx] = Some(r);
+        }
+    }
+    // ── ③ 串行吸收（**按原顺序**）——「写库不并发」就靠这个 `for` 循环
+    let mut out: Vec<PeerPullReport> = Vec::with_capacity(n);
+    for (idx, p) in candidates.iter().enumerate() {
+        let fetched = got[idx]
+            .take()
+            .expect("每一台对端都该有结果（成功／失败／超时 三选一）");
+        let rep = match fetched {
+            Ok(f) => {
+                absorb_and_report(conn, p, space_id, secrets[idx].as_deref(), device_level, f).await
+            }
+            Err(e) => Err(e),
+        };
+        match rep {
             Ok(rep) => {
                 eprintln!(
                     "[mesh {}] 拉 {} ⇒ ok fetched={} applied={} cursor={} max={} error={:?}",
@@ -2760,20 +3016,17 @@ pub async fn round_candidates(
                 out.push(rep)
             }
             // ⚠️ **不连坐**：这一台拉不动，别的照拉；错原样带回给界面。
-            Err(e) => out.push(PeerPullReport {
-                peer: p.device_id.clone(),
-                fetched: 0,
-                applied: 0,
-                cursor: 0,
-                max_seq: 0,
-                // 拉不动 ⇒ 一个字节都没换过，这两项必然是 0（不是"不知道"，是"没发生"）。
-                superseded: 0,
-                awaiting: 0,
-                items: Vec::new(),
-                // 拉取失败 ⇒ 融合判定没跑过（如实说"没发生"，⛔ 不假装"不融"）。
-                merge: PeerMergeState::NotRun,
-                error: Some(e),
-            }),
+            Err(e) => {
+                // ⭐ S3：**失败的也留一行日志** —— 新出现的失败模式（每台超时）如果只写进
+                //   `PeerPullReport`，排障时又变成"只能靠界面猜"（本仓被这条咬过多次）。
+                //   ⚠️ 成功那一行**逐字未变**；这一行是**新增**的（只多不多）。
+                eprintln!(
+                    "[mesh {}] 拉 {} ⇒ ⛔ 没拉动：{e}",
+                    crate::db::now_ms(),
+                    p.device_id
+                );
+                out.push(failed_peer_report(&p.device_id, e))
+            }
         }
     }
     let note = round_note(&out);
@@ -2785,6 +3038,41 @@ pub async fn round_candidates(
         peers: out,
         window: None,
     })
+}
+
+/// 一台对端的**失败读数**：拉不动 ⇒ 一个字节都没换过 ⇒ 下面这几项必然是 0（不是"不知道"，是"没发生"）。
+///
+/// ⚠️ 形状与拆开之前那段 `Err(e) => out.push(PeerPullReport { … })` **逐字段相同**。
+fn failed_peer_report(peer_device: &str, e: String) -> PeerPullReport {
+    PeerPullReport {
+        peer: peer_device.to_string(),
+        fetched: 0,
+        applied: 0,
+        cursor: 0,
+        max_seq: 0,
+        superseded: 0,
+        awaiting: 0,
+        items: Vec::new(),
+        // 拉取失败 ⇒ 融合判定没跑过（如实说"没发生"，⛔ 不假装"不融"）。
+        merge: PeerMergeState::NotRun,
+        error: Some(e),
+    }
+}
+
+/// 一台对端**在给定上限内没回来**时的读数文案。
+///
+/// ⚠️⚠️ 文案是被**门禁判据**读的，两个方向都⛔ 不许随便改：
+/// * **必须**含「超时」（`lan_state::auto_retryable` 的 `TRANSIENT` 词表）——
+///   否则 `should_skip_peer_for_rest_of_round`（本轮跳过）与 F3-2 跨轮冷却
+///   （`should_cooldown_peer` / `cooldown_until`）都认不出这是**网络类**失败，
+///   「一台卡死的对端」就会**每轮重新等满一次** —— 本笔要修的正是这件事；
+/// * **⛔ 不许**含身份类词（`401` / `不匹配` / `锁着` / `没配对过` …）——
+///   那会把网络类误判成身份类，冷却与加速重试就都不生效了。
+fn peer_timeout_error(peer_device: &str, per_peer: Duration) -> String {
+    format!(
+        "对端 {peer_device} 拉取超时（这一台超过 {} ms 没回来）：本轮放弃它，别的对端照拉",
+        per_peer.as_millis()
+    )
 }
 
 /// 把每一台的读数拼成**一句人话** —— 纯函数（判据不打桩、不看网络）。
@@ -12468,6 +12756,237 @@ mod tests {
             "总读数要把失败数说出来：{}",
             rep.note
         );
+    }
+
+    // ═══════════ ⭐ S3（2026-11-21）：一轮里**对端之间并发**（owner「全面开火」） ═══════════ //
+    //
+    // 三条判据，每条都能红；全是**夹具**（⛔ 不依赖真机、⛔ 不依赖真网段）：
+    //   ① 三台里一台"永远超时" ⇒ 整轮耗时 ≈ **最慢那台**，⛔ 不是三台相加；
+    //   ② 并发**上限**生效：第 5 台要**等**前面有一台收工；
+    //   ③ 汇总顺序与串行一致（按候选原顺序，成功/失败都在原位）。
+    //
+    // 夹具是**回环上的假对端**（真 TCP ＋ 真 HTTP，⛔ 不是把 `Endpoint` trait 换掉骗判据）：
+    //   · [`hang_peer`]：接受连接、收下请求、**一直不回话** ⇒ 只有"每台自己那份超时"能收掉它；
+    //   · [`slow_empty_pull`]：**慢** `delay` 之后回一个**合法**的空批 `/mesh/pull` 响应。
+    // ⚠️ 为什么必须是"慢"而不是"快"：判据①要能分辨"三台串行相加"与"并发取最慢那台" ——
+    //   两台好的若 1 毫秒就回来，两种模型只差几毫秒，测不出来。
+
+    /// 回环上的"**永远不回话**"的假对端。
+    ///
+    /// ⚠️ TCP 层是**通的**（`connect` 成功）⇒ `reqwest` 会一直等响应头 ⇒
+    /// 这正是真机"一台超时拖住整轮"的形状；⛔ 不是"连不上"（那种会立刻报错，测不出尾巴）。
+    struct HangPeer {
+        addr: std::net::SocketAddr,
+        _task: tokio::task::JoinHandle<()>,
+    }
+
+    async fn hang_peer() -> HangPeer {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("起'不回话'的假对端");
+        let addr = listener.local_addr().expect("地址");
+        let task = tokio::spawn(async move {
+            let mut held: Vec<tokio::net::TcpStream> = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                // ⛔ 不读、⛔ 不写、⛔ 不关：连接一直开着，调用方的请求永远悬着
+                held.push(sock);
+            }
+        });
+        HangPeer { addr, _task: task }
+    }
+
+    /// 回环上的"**慢但会回话**"的假对端：`/mesh/pull` 等 `delay` 后回**空批**；
+    /// 其它 target 立刻 404（⇒ keyring／页清单／实体级对账那几条旁路**不会**把耗时混进判据）。
+    struct SlowPeer {
+        addr: std::net::SocketAddr,
+        _task: tokio::task::JoinHandle<()>,
+    }
+
+    async fn slow_empty_pull(delay: std::time::Duration) -> SlowPeer {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("起'慢但会回话'的假对端");
+        let addr = listener.local_addr().expect("地址");
+        let task = tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    // 只读到**请求行结束**为止（够看清 target 就行；⛔ 不必把 body 读完）
+                    let mut buf = [0u8; 4096];
+                    let mut n = 0usize;
+                    loop {
+                        let k = sock.read(&mut buf[n..]).await.unwrap_or(0);
+                        if k == 0 || n + k == buf.len() {
+                            n += k;
+                            break;
+                        }
+                        n += k;
+                        if buf[..n].windows(2).any(|w| w == b"\r\n") {
+                            break;
+                        }
+                    }
+                    let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                    if head.starts_with("GET /mesh/pull") {
+                        tokio::time::sleep(delay).await;
+                        // ⚠️ **合法**的 `/mesh/pull` 响应（空批 ＋ 三格水位 0）⇒ 走的是**真**解析路径
+                        let body = r#"{"records":[],"max_device_seq":0,"min_device_seq":0,"available_count":0}"#;
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        let _ = sock.write_all(resp.as_bytes()).await;
+                    } else {
+                        let _ = sock
+                            .write_all(
+                                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                            )
+                            .await;
+                    }
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        SlowPeer { addr, _task: task }
+    }
+
+    /// ⭐ **判据①**：三台对端、**其中一台永远超时** ⇒ 整轮耗时 ≈ **最慢那台**，⛔ 不是三者相加。
+    ///
+    /// 读数对照（`per`＝800ms 的超时、两台好的各慢 400ms）：
+    /// · **串行**（改之前）≈ 400 ＋ 800 ＋ 400 ＝ **1600ms**；
+    /// · **并发**（本笔）≈ max(400, 800, 400) ＝ **800ms** 上下。
+    /// ⇒ 两个界把这两件事夹住：`< 1300ms`（没退化成相加）且 `>= 800ms`（超时真的等满了）。
+    #[tokio::test]
+    async fn one_hanging_peer_costs_one_timeout_not_the_sum_of_three() {
+        let conn = Mutex::new(space_conn("B"));
+        let per = std::time::Duration::from_millis(800);
+        let slow = std::time::Duration::from_millis(400);
+        let a = slow_empty_pull(slow).await;
+        let b = slow_empty_pull(slow).await;
+        let h = hang_peer().await;
+        let cands = vec![
+            mesh_peer("A", &format!("http://{}", a.addr)),
+            // ⚠️ 卡住的那台放**中间**：这样"完成顺序"必然是 A/B 先、H 后
+            mesh_peer("H", &format!("http://{}", h.addr)),
+            mesh_peer("B", &format!("http://{}", b.addr)),
+        ];
+        let t0 = std::time::Instant::now();
+        let rep = round_candidates_with_timeout(&conn, "space-x", cands, false, per)
+            .await
+            .unwrap();
+        let elapsed = t0.elapsed();
+        assert_eq!(rep.candidates, 3, "{rep:?}");
+        println!("[S3-DIAG] ① 并发 elapsed={elapsed:?}（串行口径 ≈1600ms）");
+        assert!(
+            elapsed < std::time::Duration::from_millis(1_300),
+            "① 一台卡住不许拖住整轮：实测 {elapsed:?}（串行会 ≥1600ms，并发应 ≈800ms）"
+        );
+        assert!(
+            elapsed >= per,
+            "① 卡住那台必须真的等满自己那份超时（否则测的就不是超时）：{elapsed:?}"
+        );
+        // 两台好的**不许被连坐**
+        for id in ["A", "B"] {
+            let r = rep
+                .peers
+                .iter()
+                .find(|p| p.peer == id)
+                .unwrap_or_else(|| panic!("{id} 必须有一行"));
+            assert!(r.error.is_none(), "{id} 被连坐了：{r:?}");
+        }
+        // 卡住那台：一行失败 ＋ 文案必须被**网络类**词表认出来（否则每轮都重等一次超时 —— 正是本笔要修的）
+        let hung = rep
+            .peers
+            .iter()
+            .find(|p| p.peer == "H")
+            .expect("卡住那台也要有一行");
+        let e = hung.error.as_deref().unwrap_or_default();
+        assert!(e.contains("超时"), "超时文案要能被 auto_retryable 认出来：{e}");
+        assert!(
+            crate::lan_state::should_skip_peer_for_rest_of_round(hung.error.as_deref()),
+            "①「永远超时」必须被**网络类**词表认成网络类（本轮跳过 ＋ F3-2 冷却都靠它）：{e}"
+        );
+        // 总读数口径不变：拉了几台 ＋ 几台没拉动
+        assert!(rep.note.contains("拉了 3 台对端"), "{}", rep.note);
+        assert!(rep.note.contains("1 台没拉动"), "{}", rep.note);
+    }
+
+    /// ⭐ **判据②**：并发**上限**生效 —— 5 台全卡住 ⇒ 第 5 台要**等**（＝两波，不是一波也不是五波）。
+    ///
+    /// 读数对照（`per`＝250ms）：一波 ≈250ms ｜ **上限 4 ⇒ 两波 ≈500ms** ｜ 串行 ≈1250ms。
+    /// ⇒ `>= 500ms` 排除"5 台全飞"，`< 1000ms` 排除"一台一台跑"；两个界只剩"上限 4"这一个解。
+    #[tokio::test]
+    async fn the_fifth_peer_waits_for_a_free_slot() {
+        // 判据的口径以 4 为准 —— 上限一改，下面那两个界就不再有意义，所以先钉住它
+        assert_eq!(PEER_PULL_CONCURRENCY, 4, "判据②的口径是'第 5 台要等'");
+        let conn = Mutex::new(space_conn("B"));
+        let per = std::time::Duration::from_millis(250);
+        let mut servers: Vec<HangPeer> = Vec::new();
+        let mut cands: Vec<MeshPeer> = Vec::new();
+        for i in 0..5 {
+            let s = hang_peer().await;
+            cands.push(mesh_peer(&format!("P{i}"), &format!("http://{}", s.addr)));
+            servers.push(s);
+        }
+        let t0 = std::time::Instant::now();
+        let rep = round_candidates_with_timeout(&conn, "space-x", cands, false, per)
+            .await
+            .unwrap();
+        let elapsed = t0.elapsed();
+        assert_eq!(rep.peers.len(), 5, "五台都要有一行（谁也没被悄悄丢掉）");
+        println!("[S3-DIAG] ② 五台（上限 4）elapsed={elapsed:?}（一波 ≈250ms，两波 ≈500ms）");
+        assert!(
+            rep.peers.iter().all(|p| p.error.is_some()),
+            "五台都卡住 ⇒ 五行都该是失败"
+        );
+        assert!(
+            elapsed >= per * 2,
+            "② 第 5 台必须等前面空出一个槽：实测 {elapsed:?}（< 2×超时 ⇒ 上限没生效）"
+        );
+        assert!(
+            elapsed < per * 4,
+            "② 也不许退化成串行：实测 {elapsed:?}（≈5×超时就是一台一台跑了）"
+        );
+        // ⚠️ 五台的失败**都是超时**（不是别的错）—— 否则上面那两个界可能被"别的快错"凑出来
+        for p in &rep.peers {
+            let e = p.error.as_deref().unwrap_or_default();
+            assert!(e.contains("超时"), "{} 的失败不是超时：{e}", p.peer);
+        }
+    }
+
+    /// ⭐ **判据③**：汇总顺序与串行一致 —— 成功／超时／立刻失败**都留在候选的原位**。
+    ///
+    /// 夹具故意让"完成顺序"与"候选顺序"**不同**：`Z`（连不上）最先完成，`A`（慢 60ms）第二，
+    /// `H`（卡住）最后；而 `peers` 必须仍是 `A / H / Z`。
+    #[tokio::test]
+    async fn the_round_report_keeps_the_candidate_order() {
+        let conn = Mutex::new(space_conn("B"));
+        let per = std::time::Duration::from_millis(300);
+        let slow = slow_empty_pull(std::time::Duration::from_millis(60)).await;
+        let hang = hang_peer().await;
+        let cands = vec![
+            mesh_peer("A", &format!("http://{}", slow.addr)),
+            mesh_peer("H", &format!("http://{}", hang.addr)),
+            mesh_peer("Z", "http://127.0.0.1:9"),
+        ];
+        let rep = round_candidates_with_timeout(&conn, "space-x", cands.clone(), false, per)
+            .await
+            .unwrap();
+        let got: Vec<&str> = rep.peers.iter().map(|p| p.peer.as_str()).collect();
+        assert_eq!(
+            got,
+            vec!["A", "H", "Z"],
+            "③ 汇总顺序必须与候选一致（⛔ 不是完成顺序）"
+        );
+        assert!(rep.peers[0].error.is_none(), "{:?}", rep.peers[0]);
+        assert!(rep.peers[1].error.is_some(), "{:?}", rep.peers[1]);
+        assert!(rep.peers[2].error.is_some(), "{:?}", rep.peers[2]);
+        // 再跑一轮：顺序仍然一致（水位/去重态都动过之后也不许串位）
+        let again = round_candidates_with_timeout(&conn, "space-x", cands, false, per)
+            .await
+            .unwrap();
+        let got2: Vec<&str> = again.peers.iter().map(|p| p.peer.as_str()).collect();
+        assert_eq!(got2, vec!["A", "H", "Z"], "③ 第二轮顺序也要一致");
     }
 
     // ═══════════ ⭐ T-10 · **十台设备的多端验证**（`U14` 的判据承载） ═══════════ //
