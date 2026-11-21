@@ -142,7 +142,24 @@ pull 回复新增一格：min_seq  （我这侧**最老**还有哪条 device_seq
   （例：对端只剩 `[1,5]` 与 `[11,15]`、我游标 5 ⇒ 报 `6..10`）。判据 `missing_segments_finds_holes_beyond_the_prefix_one`（七格：
   空/连续/前缀洞/中段洞/乱序重叠/游标越过/坏值）。⛔ **只算不改**：段清单的**接线**（新端点或复用 pull）仍未做、需另拍。  与判据 `may_drop_mirror_keeps_only_what_a_peer_still_needs`（六格）。
   ⛔ **那条 DELETE 一个字没动** —— 接线＝行为变更，**等 owner 拍**；
-- **F2-2 一行代码都没有**（段清单/定向补齐，等 F2-0/F2-1 的真机读数再谈）；
+- ✅ **F2-2b 已接线（2026-11-21，`feat/f22b-entity-pull`）**：**按实体**对账，⛔ 不按序号段补。
+  · 对端只读端点 `GET /mesh/entities?space_id=…`（`src-tauri/src/mesh.rs` 的 `handle_entities`）：
+    回 `{digest, entities:[{id, latest_seq}], truncated, count}`；`?digest_only=1` 只回摘要；
+    实体数 > 2000 ⇒ **只回** `{digest, truncated:true, count}`；空间锁着（库打不开）⇒ **409 ＋
+    `{unavailable:true}`**（⛔ 不编一份空表）。
+  · 客户端**一轮同步末尾**（`pull_and_absorb` 里 `maybe_reconcile_entities`）：先比摘要（一次很小的往返），
+    不一样才换逐实体表，用 `entities_to_pull` 得清单，一条条走**既有** `/mesh/page` ＋
+    `absorb_peer_batch`（⛔ 不另开写库路，⛔ 不改"谁赢"）。
+  · 本地那一份摘要 ＝ **已从这台对端收到过**的每实体最新 `device_seq`（`meta.sync_state` 的
+    `mesh_entity_seen:*`，吸收那一批时顺手记）—— ⛔ 不是本机 `changes`（那里面没有拉回来的实体，
+    否则摘要永远对不上、每轮重拉）。⇒ 摘要会收敛，一致后**只发一次摘要**就收手。
+  · ⚠️ **未做**：附件**字节**（走 `/mesh/attachment` 它自己的路，本片不碰）；对端按页取 404 的实体
+    （非页 / 对端也没了）**只计数并记 seen**，不让它每轮占掉"最多补 20 个"的名额。
+  · 判据 8 条（`the_entities_endpoint_*` 3 条、`absorbing_a_peers_batch_records_*`、
+    `entity_reconcile_*` 4 条），见 `src-tauri/src/mesh.rs` 的 `mod tests`；
+    全量 lib **1562/0/23 ignored**（本机 Windows）、默认组 67 门禁全绿。
+- **F2-2 的「段清单按序号补」仍未做**（本节上面那条 `missing_segments` 只算不改）—— 与 F2-2b 的
+  实体级对账是**两件事**：后者已经能补「我没有 / 对端更新」的实体，前者只在"真丢段"时才需要。
 - 今天能量到的只有缺口**结果**（对端 2：15 轮 / 82 条 / 最大落后 6），**没有**跨机可见的清单；
 - **"离线超 7 天"这个场景还没有读数** —— 它是 F2-0 的动机，但**未在真机复现过**；
 - 三台长期在线的窗口今天不具备（AMD 会被关、Mac 会睡）。
