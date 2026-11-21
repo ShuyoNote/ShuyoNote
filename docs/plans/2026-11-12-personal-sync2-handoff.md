@@ -399,6 +399,24 @@ owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workf
     ⚠️ 踩点提醒：这次新增命令 ⇒ `docs/TESTING.md` 事实块（命令数 Rust 310 / web 268 / CommandMap 311）与
     `tests/db_openers.rs` 的 REGISTERED（`list_sync_gaps` 2 处开库）都要同步改，否则 `check-doc-facts` / `db_openers` 会红。
 
+21) ✅ **2026-11-21 F3 一段「最近编辑的空间先跑」**：一轮里按**各空间库 `changes` 的最大 `updated_at`**
+    降序跑（⛔ 不新开表、⛔ 不改协议 —— 读的是同步日志里**已经在写**的那一列；信号本来就是现成的，
+    没有另造字段）。
+    · 纯函数 `lan_state::order_spaces_by_recent_edit`（**稳定**排序：有时刻的在前、按时刻降序；
+      `None` 彼此保持原相对顺序、全都没有时输出**逐项等于输入**）。
+    · 信号 `lan_state::space_last_edited_at` → `last_edited_at_query`（`SELECT MAX(updated_at) FROM changes`）。
+    · ⚠️ **只改顺序**：跑哪些空间（`mesh_cfgs` 那段 `.filter(...)`）与跑不跑（in_flight / paused / 无网格
+      三道闸）**一个字没动**；失败隔离/F3-2 冷却/F2 诊断的代码也没动（它们只看"这一空间这一轮成没成"）。
+      读不到（锁着 / 加密未解锁 / 库不在）⇒ 该空间**没有信号**，回落原顺序。
+    · 判据（`lan_state.rs` 的 `f3_space_order_tests`，5 条）：① 最近编辑的在先（含"时刻对调 ⇒ 顺序也对调"反证）
+      ② 集合不变（只重排）③ 没有记录 ⇒ 原顺序（且同一输入两次排序相同）④ 部分有记录时其余保持相对顺序
+      ⑤ 依据：`changes.MAX(updated_at)`（空表 ⇒ `None`，⛔ 不是 0 时刻）。
+    · ⚠️ 新增开库点 ⇒ `tests/db_openers.rs` 登记 `("src/lan_state.rs", "space_last_edited_at", 1, …)`（只读旁路连接）。
+    · 本机读数（2026-11-21）：`win-cargo-test.ps1` = **1574 passed / 0 failed / 23 ignored**（exit 0）；
+      `test-report` = **67 条全过**（失败 0 / 环境不具备 0）；`db_openers` = **9/9**。
+    · ⚠️ 本机冷建 Rust 目标要先绕两个环境坑（与代码无关）：`%TEMP%` 下 cl/lib 写不进临时文件 ⇒
+      `D8050 / LNK1104`；把 `$env:TMP`/`$env:TEMP` 指到**仓外可写目录**后一切正常（`win-cargo-test.ps1` 原样跑）。
+
 ⬜ **今天留下的两条待办（都要 owner 拍）**：
   · **F2-2b 定向补齐**：前置难点已写进设计稿 —— 只按序号计数**区分不了**「同实体旧 upsert 被取代删除（无害）」
     与「保留期丢失（真丢）」，必须先能区分，否则会白补一堆。

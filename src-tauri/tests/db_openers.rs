@@ -263,6 +263,15 @@ const REGISTERED: &[(&str, &str, usize, &str)] = &[
         "F3-2：收到公告后清掉该设备的跨轮冷却（打开 meta.db 写 sync_state）",
     ),
     (
+        "src/lan_state.rs",
+        "space_last_edited_at",
+        1,
+        // ⚠️ F3 一段（2026-11-21）：这一条是**新增写者盘点里唯一新增的连接**，且它**只读**——
+        //   为"一轮里最近编辑的空间先跑"按空间读 `changes.MAX(updated_at)`；跑完立刻 drop，
+        //   与真正跑轮次那条连接（`spawn_background_round`，仍 1 处）是两条不同的连接。
+        "F3 一段：给一轮的空间排序读最近编辑时刻（旁路只读连接，不改库）",
+    ),
+    (
         "src/mesh.rs",
         "add_space",
         1,
