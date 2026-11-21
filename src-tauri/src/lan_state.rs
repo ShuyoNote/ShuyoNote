@@ -1318,6 +1318,57 @@ impl Drop for BackgroundInFlightGuard {
     }
 }
 
+/// ⭐ **F3 一段（2026-11-21，owner 路线图 §13.3 F3「最近编辑空间优先」）**：一轮里
+/// **最近编辑过的空间先跑**（纯函数 ⇒ 判据够得着，不用真起一轮网格 ✓）。
+///
+/// 三条口径与 owner 的三条判据一一对应：
+/// 1. **最近编辑的在先** —— `last_edited` 里时刻大的排前面；
+/// 2. **集合不变** —— 只是**重排**输入那一个 `Vec`：长度与元素一一对应，⛔ 不筛、不去重、不补；
+/// 3. **没有编辑记录 ⇒ 原顺序** —— 排序是**稳定**的：无信号的条目彼此保持原相对顺序，
+///    全都没有记录时输出**逐项等于输入**（确定性；⛔ 不靠 `HashMap` 的遍历序）。
+///
+/// ⚠️ 键是 `ws`（本地空间 id ＝ 库文件名那一半），不是 `proto_space`（配对暗号）：`changes`
+///   住在**空间库**里，只能按库定位 ✓。
+pub(crate) fn order_spaces_by_recent_edit(
+    pairs: Vec<(String, String, bool)>,
+    last_edited: &std::collections::HashMap<String, i64>,
+) -> Vec<(String, String, bool)> {
+    let mut rows: Vec<(usize, (String, String, bool))> = pairs.into_iter().enumerate().collect();
+    rows.sort_by(|(ia, a), (ib, b)| {
+        let ka = last_edited.get(&a.1);
+        let kb = last_edited.get(&b.1);
+        // `Option<i64>` 的 `cmp`：`None` < `Some(_)` ⇒ 降序排即"有记录的先、且时刻大的在前" ✓；
+        // 相等（含两边都 `None`）时按**原下标**升序 ⇒ 稳定、确定 ✓。
+        kb.cmp(&ka).then(ia.cmp(ib))
+    });
+    rows.into_iter().map(|(_, p)| p).collect()
+}
+
+/// ⭐ **F3 一段**：这个空间**最近一次编辑的时刻**（`changes.MAX(updated_at)`，毫秒）。
+///
+/// 为什么是这一列：`changes` 是同步日志，`append_change` 落库时写的就是**这次变更发生的时刻**
+/// ⇒ "最近编辑"＝这张表的最大 `updated_at`；⛔ **不新开表**、⛔ **不改协议**、⛔ 不写任何东西 ✓。
+///
+/// ⚠️ **只读探测**：为排序而开的**一条旁路连接**（与下面真正跑轮次那条是两条 —— 排序要在
+///   开跑**之前**拿到全部信号）。打不开（锁着 / 加密未解锁 / 库不在）或表里一行都没有 ⇒ `None`
+///   ⇒ 该空间**没有排序信号**（回落原顺序 ✓，⛔ 不猜、也不因此少跑一个空间）。
+fn space_last_edited_at(dir: &std::path::Path, db_space: &str) -> Option<i64> {
+    let c = crate::db::open_space_conn_at(db_space, dir).ok()?;
+    last_edited_at_query(&c)
+}
+
+/// [`space_last_edited_at`] 的那一句 SQL（单独一层 ⇒ 判据能拿内存库钉住"读的是哪张表哪一列"）。
+///
+/// ⚠️ `MAX()` 在空表上是**一行 `NULL`**（不是零行）⇒ 必须按 `Option<i64>` 读再 `flatten`；
+/// 读成 `i64` 会在"这个空间还没编辑过"时变成错误（那正是判据③要的口径：没有记录 ≠ 0 时刻）。
+fn last_edited_at_query(c: &rusqlite::Connection) -> Option<i64> {
+    c.query_row("SELECT MAX(updated_at) FROM changes", [], |r| {
+        r.get::<_, Option<i64>>(0)
+    })
+    .ok()
+    .flatten()
+}
+
 /// ⭐ **task-12（owner 拍 C）**：把后台那一轮**扔出去跑** ✓（⛔ 不阻塞发现循环 ✗）。
 ///
 /// 返回一句人话（这一轮真的要跑了）／`None`（上一轮还没跑完 ⇒ **这一轮跳过** ✓，不是错误 ✓）。
@@ -1335,7 +1386,9 @@ fn spawn_background_round(
     if BACKGROUND_IN_FLIGHT.swap(true, Ordering::SeqCst) {
         return None;
     }
-    let pairs: Vec<(String, String, bool)> = mesh_cfgs
+    // ⚠️ `mut`：F3 一段会在**异步块里**按"最近编辑"重排（⛔ 不在发现层循环里排序 —— 那里排会
+    //   同步读 N 个空间库，把广播/收报那一步拖住 ✗）。
+    let mut pairs: Vec<(String, String, bool)> = mesh_cfgs
         .iter()
         .map(|(space, ws, _, device_level)| (space.clone(), ws.clone(), *device_level))
         .collect();
@@ -1373,6 +1426,29 @@ fn spawn_background_round(
         let mut failed_peers: Vec<String> = Vec::new();
         // ⭐ F3-2：本轮**已记过失败**的设备（一台设备在本轮多个空间失败只记一次）。
         let mut counted_fail: Vec<String> = Vec::new();
+        // ⭐ **F3 一段（owner 路线图 §13.3 F3「最近编辑空间优先」）**：⚠️ **只改顺序** ——
+        //   ① "跑哪些空间"仍是 `mesh_cfgs`（过滤在 `lan_state.rs` 那一段 `.filter(...)` 里，⛔ 一个字没动）；
+        //   ② "跑不跑"仍是上面那三道闸（in_flight / paused / 有没有网格）；⛔ 这里既不筛也不跳 ✓。
+        //   依据＝**已经在写**的本地信号：各空间库 `changes.MAX(updated_at)`（⛔ 不新开表、⛔ 不改协议）。
+        //   读不到（锁着 / 加密未解锁 / 库不在）⇒ 那个空间**没有信号** ⇒ 排在后面、彼此保持原顺序 ✓。
+        let last_edited: std::collections::HashMap<String, i64> =
+            match crate::db::app_data_dir_ref() {
+                Some(dir) => pairs
+                    .iter()
+                    .filter_map(|(_, ws, _)| space_last_edited_at(dir, ws).map(|t| (ws.clone(), t)))
+                    .collect(),
+                // ⚠️ 取不到 app data 目录 ⇒ 一个信号都没有 ⇒ 顺序**与原来逐项相同**（不报错、不少跑 ✓）。
+                None => std::collections::HashMap::new(),
+            };
+        if debug_latency() {
+            // ⛔ 不打空间 id（与 `[peer-err-class]` 同一把尺：日志里只留计数）。
+            eprintln!(
+                "[round-order] 最近编辑优先：{} 个空间里有 {} 个有编辑记录（其余按原顺序排在后面）",
+                pairs.len(),
+                last_edited.len()
+            );
+        }
+        pairs = order_spaces_by_recent_edit(pairs, &last_edited);
         for (proto_space, db_space, device_level) in pairs {
             // ⭐ 2026-10-11（设备级 ✓）：⭐ 判定**在上面那一处算好**（`mesh::is_device_level_space` ✓）
             //   再传进来 ✗ —— `mesh_round_once` 自己不判 ✓（否则就是第二份口径 ✓；方案 §9.1／§10.3 ✓）。
@@ -5146,5 +5222,145 @@ mod p33b_hub_space_uids_tests {
             "缺 uid ⇒ 空串占位，保持与 hub_spaces 一一对齐"
         );
         assert_eq!(a.hub_space_uids.len(), a.hub_spaces.len());
+    }
+}
+
+/// ⭐ **F3 一段（2026-11-21，owner 路线图 §13.3 F3「最近编辑空间优先」）**：三条判据 ＋ 一条**依据**判据。
+///
+/// ⚠️ 判据只看**纯函数**（⛔ 不起网格、⛔ 不联网、⛔ 不碰用户的库）：把"顺序"这件事从
+///   网络/锁/加密那一堆里单独拎出来钉死，真机上跑一轮读不到证据也不会让它静默变绿。
+#[cfg(test)]
+mod f3_space_order_tests {
+    use super::*;
+
+    fn pair(proto: &str, ws: &str) -> (String, String, bool) {
+        (proto.to_string(), ws.to_string(), false)
+    }
+
+    fn order(pairs: &[(String, String, bool)]) -> Vec<String> {
+        pairs.iter().map(|(_, ws, _)| ws.clone()).collect()
+    }
+
+    fn times(entries: &[(&str, i64)]) -> std::collections::HashMap<String, i64> {
+        entries.iter().map(|(w, t)| (w.to_string(), *t)).collect()
+    }
+
+    /// **判据①**：两个空间、**最近编辑的在先**。
+    ///
+    /// ⚠️ 反证格：同样的两个空间把时刻对调 ⇒ 顺序也必须对调（排的是时刻，不是名字/输入位置）。
+    #[test]
+    fn the_most_recently_edited_space_runs_first() {
+        let pairs = vec![pair("sp-old", "ws-old"), pair("sp-new", "ws-new")];
+        let got =
+            order_spaces_by_recent_edit(pairs.clone(), &times(&[("ws-old", 100), ("ws-new", 200)]));
+        assert_eq!(
+            order(&got),
+            vec!["ws-new".to_string(), "ws-old".to_string()],
+            "最近编辑过的那个必须先跑"
+        );
+
+        let got = order_spaces_by_recent_edit(pairs, &times(&[("ws-old", 900), ("ws-new", 200)]));
+        assert_eq!(
+            order(&got),
+            vec!["ws-old".to_string(), "ws-new".to_string()],
+            "把时刻对调 ⇒ 顺序必须跟着对调"
+        );
+    }
+
+    /// **判据②**：集合与原来一致 —— **只是顺序**（长度/元素/重复次数都不许变）。
+    #[test]
+    fn ordering_only_permutes_the_same_spaces() {
+        let pairs = vec![pair("a", "ws-1"), pair("b", "ws-2"), pair("c", "ws-3")];
+        let got =
+            order_spaces_by_recent_edit(pairs.clone(), &times(&[("ws-3", 300), ("ws-1", 100)]));
+        assert_eq!(got.len(), pairs.len(), "空间数不许变 —— F3 只改顺序");
+
+        let mut want = order(&pairs);
+        want.sort();
+        let mut have = order(&got);
+        have.sort();
+        assert_eq!(have, want, "跑哪些空间一个字都不许变（只是顺序）");
+
+        // 三元组整体逐项相等：proto_space / ws / device_level 都不许被换掉或丢字段。
+        let mut a = pairs;
+        a.sort();
+        let mut b = got;
+        b.sort();
+        assert_eq!(a, b);
+    }
+
+    /// **判据③**：**没有编辑记录时退回原顺序**（确定性）。
+    #[test]
+    fn without_any_edit_record_the_order_is_the_original_one() {
+        let pairs = vec![
+            pair("p-c", "ws-c"),
+            pair("p-a", "ws-a"),
+            pair("p-b", "ws-b"),
+        ];
+        assert_eq!(
+            order_spaces_by_recent_edit(pairs.clone(), &std::collections::HashMap::new()),
+            pairs,
+            "一个编辑记录都没有 ⇒ 输出必须**逐项等于输入**（⛔ 不许看 HashMap 的遍历序）"
+        );
+        // 同一份输入跑两遍必须一模一样（确定性，不是"这次刚好"）。
+        let m = times(&[("ws-b", 500)]);
+        assert_eq!(
+            order_spaces_by_recent_edit(pairs.clone(), &m),
+            order_spaces_by_recent_edit(pairs, &m),
+            "同一份输入两次排序必须相同"
+        );
+    }
+
+    /// 判据③的加强格：**部分**有记录 ⇒ 有记录的按时刻在前，**没有记录的保持原相对顺序**。
+    #[test]
+    fn spaces_without_a_record_keep_their_relative_order() {
+        let pairs = vec![pair("x", "ws-x"), pair("y", "ws-y"), pair("z", "ws-z")];
+        // 只有 y 有记录 ⇒ y 先，x/z 之间仍是原来的 x 在前。
+        let got = order_spaces_by_recent_edit(pairs, &times(&[("ws-y", 42)]));
+        assert_eq!(
+            order(&got),
+            vec!["ws-y".to_string(), "ws-x".to_string(), "ws-z".to_string()],
+            "有记录的先；没有记录的彼此保持原相对顺序"
+        );
+    }
+
+    /// **依据判据**：排序读的就是 `changes.MAX(updated_at)`（拿**真的表形**钉住，⛔ 不靠注释）。
+    ///
+    /// 空表必须是 `None`（`MAX()` 在空表上是一行 `NULL`）—— 读成 `0` 就会把"没编辑过"
+    /// 说成"1970 年编辑过"，判据③会假成立。
+    #[test]
+    fn the_edit_signal_is_the_max_updated_at_of_changes() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE changes (
+                 seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+                 device_id   TEXT NOT NULL,
+                 device_seq  INTEGER NOT NULL,
+                 entity      TEXT NOT NULL,
+                 entity_id   TEXT NOT NULL,
+                 op          TEXT NOT NULL,
+                 payload     TEXT,
+                 updated_at  INTEGER NOT NULL,
+                 UNIQUE(device_id, device_seq)
+             );",
+        )
+        .unwrap();
+        assert_eq!(
+            last_edited_at_query(&c),
+            None,
+            "这个空间还没编辑过 ⇒ 没有信号（⛔ 不是 0 时刻）"
+        );
+        c.execute_batch(
+            "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at)
+             VALUES ('dev-a', 1, 'page', 'p1', 'upsert', '{}', 111),
+                    ('dev-a', 2, 'page', 'p1', 'upsert', '{}', 999),
+                    ('dev-a', 3, 'page', 'p2', 'upsert', '{}', 555);",
+        )
+        .unwrap();
+        assert_eq!(
+            last_edited_at_query(&c),
+            Some(999),
+            "取全空间最大的 updated_at（＝最近那次编辑），不是第一行也不是最后一行的 seq"
+        );
     }
 }
