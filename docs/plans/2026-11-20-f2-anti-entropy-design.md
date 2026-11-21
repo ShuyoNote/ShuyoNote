@@ -158,6 +158,28 @@ pull 回复新增一格：min_seq  （我这侧**最老**还有哪条 device_seq
   · 判据 8 条（**F2-2b 接线那一片**：`the_entities_endpoint_*` 3 条、
     `absorbing_a_peers_batch_records_*`、`entity_reconcile_*` 4 条），见 `src-tauri/src/mesh.rs` 的 `mod tests`；
     全量 lib **1562/0/23 ignored**（本机 Windows）、默认组 67 门禁全绿。
+  · ⭐ **摘要口径收口（2026-11-21，`fix/digest-pullable`，owner 拍「选 ①」）**：真机（windows↔amd，
+    两端 `afbed315`）量到「实体级对账：仍在差异（对端摘要=…:21）；其中 2 个这一档补不了」**每轮都打**
+    ⇒ 与"下一轮应安静"的验收口径冲突。真因是**摘要的分母**：对端表里混着补不了的实体
+    （非页实体 —— 附件走它自己的路；对端已删的页），客户端按 `/mesh/page` 取必 404，
+    这些 id 记不进本地那一份（或记进去、对端那侧又没列）⇒ `after != 对端摘要` **永远成立**。
+    · **口径（两边同一个字面）**：只算 `entity == "page"` 的实体 —— 那是这条补齐路**真能补**的集合。
+      服务端 `handle_entities` 的 SQL 加 `AND entity = 'page'`（表与摘要一起过滤）；
+      客户端 `record_entity_seen` 只记 `r.entity == "page"` 的行。
+    · **补不了的仍如实计数**（日志「其中 N 个这一档补不了（不是页 / 对端也没了）」那一行，⛔ 不静默丢），
+      并 404 记 seen；只是**不进分母** ⇒ 它们不再让摘要永远差一点。
+    · **另一半（`align_entity_seen_to_peer_table`）**：本地那一份只会加、对端那张表会少（旧版记下的附件、
+      对端按保留期裁掉的）⇒ 那些行永远不是 `entities_to_pull` 的候选，却永远让摘要不等。
+      所以在"换了整张表"那一轮按**同一张表**对齐：只删「对端这张完整页表里没有」的行（⛔ 只删不编；
+      `truncated` 时根本不走这一步）。
+    · 判据（三条验收口径）：① 只有页实体且摘要一致 ⇒ **不发**「需补」也不发「仍在差异」（既有
+      `entity_reconcile_pulls_only_the_missing_entity_and_then_goes_quiet` 的"第二轮只有 digest_only"）；
+      ② 混入非页实体 ⇒ 摘要/表/count **都不受影响**（`the_entities_endpoint_returns_the_table_and_a_recomputable_digest`
+      ＋ `absorbing_a_peers_batch_records_the_entity_watermark_for_the_local_digest` 的附件那一格）；
+      ③ 页实体真的有差 / 对端已删的页 ⇒ 照旧要补或记 seen、补完摘要一致、下一轮安静
+      （`entity_reconcile_aligns_the_local_digest_to_the_peer_page_table_and_then_goes_quiet`）。
+    · ⚠️ **混合版本**：没升级的老客户端会看到更小的表（少了附件那些）⇒ 那侧摘要可能一直差一点，
+      直到它升级（⛔ 不影响同步、日志去重后只打一行）；新版客户端 ＋ 旧版服务端与今天逐字相同。
   · ⭐ **遗留风险③已收口（2026-11-21，`feat/seen-prune`）**：`mesh_entity_seen:*` 原先**每实体一行、
     且永不裁剪** ⇒ 随"见过多少实体"**无界增长**。现在每（空间·对端）最多留 **5000 行**
     （`MAX_ENTITY_SEEN_PER_PEER` ＋ `src-tauri/src/mesh.rs` 的 `prune_entity_seen`）：
@@ -174,8 +196,8 @@ pull 回复新增一格：min_seq  （我这侧**最老**还有哪条 device_seq
       `entity_seen_prune_costs_at_most_one_extra_pull_and_then_goes_quiet`（裁掉陈旧行 ⇒ 一条都不多补、
       摘要反而对齐；裁掉对面还持有的 ⇒ **恰好多补一次**，补完下一轮只发摘要 ⇒ 不会无限补）、
       `entity_seen_prune_cap_must_exceed_the_peer_table_response_cap`（5000 > 2000 机器钉住）、
-      `entity_reconcile_prunes_the_seen_rows_before_it_folds_the_after_digest`（**接线**：对账收尾真的会裁
-      —— 对端按页 404 那一档记的行不经过 `record_entity_seen`，只靠它兜住）。
+      `entity_reconcile_aligns_the_local_digest_to_the_peer_page_table_and_then_goes_quiet`（**接线**：
+      对账收尾按对端那张完整页表对齐 —— 对端已不列的旧行只删不编，404 那一档仍记 seen）。
 - **F2-2 的「段清单按序号补」仍未做**（本节上面那条 `missing_segments` 只算不改）—— 与 F2-2b 的
   实体级对账是**两件事**：后者已经能补「我没有 / 对端更新」的实体，前者只在"真丢段"时才需要。
 - 今天能量到的只有缺口**结果**（对端 2：15 轮 / 82 条 / 最大落后 6），**没有**跨机可见的清单；
