@@ -1603,8 +1603,9 @@ struct PeerFetch {
 ///
 /// ⚠️ 下标是**必须**的：并发完成顺序是"谁先回来谁先到"，而写回必须按**候选原顺序**
 /// （判据③）⇒ 由这个下标把它落回原来的位置。
-type PeerFetchTask<'a> =
-    std::pin::Pin<Box<dyn std::future::Future<Output = (usize, Result<PeerFetch, String>)> + Send + 'a>>;
+type PeerFetchTask<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = (usize, Result<PeerFetch, String>)> + Send + 'a>,
+>;
 
 /// 跟**一台**对端**只做网络那一段**：读水位 ⇒ 拉 ⇒（必要时）归零重拉／冷探针 ⇒ 把批次带回来。
 ///
@@ -5807,14 +5808,26 @@ const MAX_ENTITY_ROWS_IN_RESPONSE: usize = 2000;
 
 /// `GET /mesh/entities?space_id=…`（可选 `&digest_only=1`）—— 本机这一栏的实体表 ＋ 摘要。
 ///
-/// ## 五条口径
+/// ## 六条口径
 /// 1. **与 `/mesh/pull` 同一道门**（`dispatch` 里 `authorized` 已经跑过）：未配对 ⇒ 401、空间不对 ⇒ 403；
 /// 2. **数据源就是 `changes` 里"我自己"那一栏**：`GROUP BY entity_id` 取 `MAX(device_seq)`
 ///    —— 与 `serve_own_records` 同一把尺（`device_id = 我`），⛔ 不掺别人的账；
-/// 3. **只读**：⛔ 不写任何表、⛔ 不含 payload（实体 id 与序号就已经够对账了）；
-/// 4. **锁态**（这个空间我知道、但这一轮打不开）⇒ **409 ＋ `{"unavailable":true}`** ——
+/// 3. ⭐ **分母只算「可补实体」，而这一条路能补的只有页**（`changes.entity = 'page'`）：
+///    对账的补齐路径是 `/mesh/page`（按页 id 取一页），附件字节走它自己的 `/mesh/attachment`，
+///    其它实体走自己的路 —— 把它们算进这张表，客户端按页去取**必 404**，那几条**
+///    永远记不上本地那一份摘要 ⇒ 摘要永远差一点、每轮都换整张表、日志永远"仍在差异"**。
+///    所以**服务端与客户端用同一个口径**（客户端也只在 `entity == "page"` 时记 seen，
+///    见 `record_entity_seen`）⇒ 摘要的分母＝"这一条路真能补的实体"。⚠️ 这是 `fix/digest-pullable`
+///    的口径（owner 2026-11-21 拍「选 ①」）；⛔ 不是"少报"：补不了的那几个仍由客户端
+///    **如实计数并记进本地摘要**（日志里"这一档补不了 N 个"那一行），只是**不进分母**；
+///    ⚠️ **混合版本**：没升级的老客户端会看到一张更小的表（少了附件那些）⇒ 它本地那份摘要里
+///    若还留着那些行，就会一直"仍在差异"（每轮多换一次表、日志去重后只打一行）**直到它升级**；
+///    ⛔ 不妨碍同步（它照样只补页）。新版客户端 ＋ 旧版服务端则与今天逐字相同（旧表里的附件
+///    仍会被 404 记上 ⇒ 摘要照样收敛）。
+/// 4. **只读**：⛔ 不写任何表、⛔ 不含 payload（实体 id 与序号就已经够对账了）；
+/// 5. **锁态**（这个空间我知道、但这一轮打不开）⇒ **409 ＋ `{"unavailable":true}`** ——
 ///    如实说"给不了表"，⛔ 不编一份空表（空表会被客户端读成"对端一个实体都没有" ✗）；
-/// 5. **> 2000 个实体** ⇒ 只回 `{digest, truncated:true, count}`（客户端据此降级）。
+/// 6. **> 2000 个实体** ⇒ 只回 `{digest, truncated:true, count}`（客户端据此降级）。
 ///
 /// `digest_only=1` 时只回 `{digest, truncated, count}` —— 这是"先比摘要"的那一次往返：
 /// 响应大小与实体条数**无关**（一行 JSON），不一样才来换整张表。
@@ -5861,10 +5874,13 @@ fn handle_entities(state: &State, target: &str) -> Reply {
             )
         }
     };
+    // ⭐ **分母只算可补实体（页）** —— 口径与客户端的 `record_entity_seen` 成对，理由见函数头第 3 条。
+    //   ⚠️ 这条 WHERE 与客户端"记不记 seen"必须是**同一个字面**（`entity = 'page'`）：
+    //      两边漂了，摘要就会永远对不上（一面算进去、另一面没算）。
     let table: BTreeMap<String, i64> = match g
         .prepare(
             "SELECT entity_id, MAX(device_seq) FROM changes
-              WHERE device_id = ?1 GROUP BY entity_id ORDER BY entity_id ASC",
+              WHERE device_id = ?1 AND entity = 'page' GROUP BY entity_id ORDER BY entity_id ASC",
         )
         .and_then(|mut st| {
             st.query_map(params![own], |r| {
@@ -6215,6 +6231,19 @@ const MAX_ENTITY_REPAIR_PER_ROUND: usize = 20;
 // 每轮都把同一批实体重拉一遍（那不是补。⚠️ 这正是设计里"先比摘要"能成立的前提）。
 // `mesh_entity_seen:*` **只记"对端这一版我见过了"**，⛔ 不是第二条实体写库路（落库仍只有 `absorb_peer_batch` 那一条）。
 //
+// ## 分母口径：只算「可补实体」（`fix/digest-pullable`，owner 2026-11-21 拍「选 ①」）
+// 真机上量到过这一格：对端的表里混着**补不了**的实体（非页实体 —— 附件字节走 `/mesh/attachment`；
+// 对端已经删掉的页）⇒ 按页去取必 404。这些 id **记不进**本地那一份摘要（或者记进去、对端那一侧
+// 又没有它们），于是**摘要永远差一点**：每轮都换整张表、日志一直打"仍在差异"，
+// 而"下一轮应安静"这条验收口径永远不成立。
+// 所以两边用**同一个口径**过滤：只算 `entity == "page"` 的实体 —— 那是这一条路**真能补**的集合。
+//   · 服务端：`handle_entities` 的 SQL 带 `AND entity = 'page'`（表与摘要一起过滤）；
+//   · 客户端：`record_entity_seen` 只记 `r.entity == "page"` 的行；
+//   · **补不了的那几个仍如实计数**（`unpullable`）并记进本地摘要（404 是"这一档问过了"，
+//     ⛔ 不是瞎补），只是**不再进分母** ⇒ 它们不会再让摘要永远差一点，也⛔ **不许静默丢**；
+//   · 本地摘要里"对端这张表已经不列"的旧行（旧版记下的附件、对端裁掉的）由
+//     [`align_entity_seen_to_peer_table`] 按**同一张表**对齐掉 —— ⛔ 只删不编。
+//
 // ## 三条不改
 // ⛔ 不动 `page_lineage_conflicts` 的判定；⛔ 不过滤授权（门与签名原样）；⛔ 不改"谁赢"
 // （补回来的每一条都走既有 `absorb_peer_batch` → `apply_pulled_changes`，胜负仍由那一层判）。
@@ -6326,6 +6355,11 @@ fn entity_seen_prefix(space_id: &str, peer_device: &str) -> String {
 }
 
 /// 读回本地那一份（⛔ **不是**本机 `changes` —— 理由见上面 F2-2b 的大段注释）。
+///
+/// ⚠️ 它读的是**整栏**（这一（空间·对端）前缀下的每一行），不在这里按实体类型过滤：
+/// 新版只会往里写页实体（[`record_entity_seen`] 挡着非页），而旧版写过的非页行要靠
+/// [`align_entity_seen_to_peer_table`] 在"换了整张表"那一轮对齐掉（⛔ 不在这里静默忽略 ——
+/// 那会让"记录里有、摘要里没有"变成看不见的第三种状态）。
 fn entity_seen_map(c: &Connection, space_id: &str, peer_device: &str) -> BTreeMap<String, i64> {
     let prefix = entity_seen_prefix(space_id, peer_device);
     let mut out: BTreeMap<String, i64> = BTreeMap::new();
@@ -6379,11 +6413,18 @@ fn record_one_entity_seen(
 ///
 /// ⚠️ 只记 `device_seq > 0`：manifest 补页那一档塞的行是 `device_seq: 0`（**不是对端的账**，
 /// 是"按当前状态重播"）⇒ 记 0 会把已见过的更高序号盖掉，下一轮又去补一遍。
+/// ⚠️ **只记页实体**（`entity == "page"`）：摘要的分母是"这一条路真能补的实体"，而 `/mesh/page`
+/// 只认页 —— 附件字节走 `/mesh/attachment`、其它实体各有各的路。把非页实体记进这一份，
+/// 对端那张表（同样只算页）里就没有它们 ⇒ 摘要**永远差一点**（每轮换整张表、日志永远"仍在差异"）。
 /// ⚠️ 失败**不连坐这一批落库**：它只影响下一轮对账的摘要（最坏是多跑一次对账）。
 fn record_entity_seen(c: &Connection, space_id: &str, peer_device: &str, rows: &[MeshRow]) {
     let mut failed = 0usize;
     for r in rows {
         if r.device_seq <= 0 {
+            continue;
+        }
+        // ⭐ **分母只算可补实体**（与服务端 `handle_entities` 的 `AND entity = 'page'` 同一个字面）。
+        if r.entity != "page" {
             continue;
         }
         let key = format!(
@@ -6488,6 +6529,67 @@ fn prune_entity_seen(c: &Connection, space_id: &str, peer_device: &str, max_rows
     removed
 }
 
+/// ⭐ **分母对齐（`fix/digest-pullable`，2026-11-21）**：把本地那一份摘要**对齐到对端这张页实体表**。
+///
+/// 做什么：只删「这一（空间·对端）前缀下、**对端这张表里没有**」的那些行；⛔ 不改值、⛔ 不插占位、
+/// ⛔ 不碰别栏（前缀之外一行都不动）。
+///
+/// ## 为什么必须做（这是"摘要永远差一点"的另一半）
+/// 光把两边都过滤成页还不够：本地那一份只会**往里加**，而对端那张表会**少掉**一些 id ——
+/// ① 旧版客户端记下过非页实体（附件等）；② 对端把老的 `changes` 行裁掉了（保留期／条数上限）。
+/// 这些行**永远不可能是 `entities_to_pull` 的候选**（那个函数只遍历对端表），所以它们不会引发补，
+/// 但会让 `after != 对端摘要` **永远成立** ⇒ 每轮都换整张表、日志一直"仍在差异"。
+///
+/// ## 为什么"只删"是安全的（⛔ 不是丢数据 —— 这条是承重的）
+/// 删掉的那一行只表示"对端这张（**完整**、没 truncated 的）页实体表里没有这个 id"。而：
+/// · 要补的东西**只从对端这张表来**（[`entities_to_pull`] 遍历的是 `remote`）⇒ 删掉的 id 本来就不会被补；
+/// · 万一它将来又出现在对端表里（同一 id 新的 `device_seq`）⇒ 本地没有它 ⇒ 会被算成"我没有" ⇒
+///   **补一次、再记上**（最坏多补一次，⛔ 不会漏补）；
+/// · 对端表是**这一栏页实体的全集**（`truncated` 时本函数根本不会被调用 —— 调用点在上面挡着）。
+/// ⇒ 一句话：**它删掉的只是"比对的噪声"，不是任何可复制的数据。**
+///
+/// ## 为什么不放在折摘要之前"猜"
+/// 它需要**对端整张表**（不是为了摘要）—— 所以只能在"摘要不一样 ⇒ 换表"那一轮做；
+/// 摘要一样时两边**逐 id 逐序号相同**，没有可对齐的东西（⛔ 不必为此多换一次表）。
+///
+/// 返回删掉了几行（0 ＝ 已经对齐，什么都没动）。
+fn align_entity_seen_to_peer_table(
+    c: &Connection,
+    space_id: &str,
+    peer_device: &str,
+    peer_pages: &BTreeMap<String, i64>,
+) -> usize {
+    let prefix = entity_seen_prefix(space_id, peer_device);
+    // 先把要删的键**选出来**（与 `entity_seen_map` 同一前缀口径），再逐条删 —— 不在一句 SQL 里拼
+    // 几百个 `?`（SQLite 的参数上限因构建而异，几千个就可能撞上）。
+    let stale: Vec<String> = {
+        let Ok(mut st) =
+            c.prepare("SELECT key FROM meta.sync_state WHERE substr(key, 1, length(?1)) = ?1")
+        else {
+            // 读不到就**一行都不删**（⛔ 猜一份"全是旧的"然后清空是最坏的做法）。
+            return 0;
+        };
+        let Ok(rows) = st.query_map(params![prefix], |r| r.get::<_, String>(0)) else {
+            return 0;
+        };
+        rows.flatten()
+            .filter(|k| {
+                k.strip_prefix(&prefix)
+                    .is_some_and(|id| !peer_pages.contains_key(id))
+            })
+            .collect()
+    };
+    let mut removed = 0usize;
+    for key in stale {
+        if c.execute("DELETE FROM meta.sync_state WHERE key = ?1", params![key])
+            .is_ok()
+        {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 /// 一次 GET 的凭证（拿锁只做这一件事；⛔ 不跨 `await` 持锁 —— 本仓老规矩）。
 fn sign_get(
     conn: &Mutex<Connection>,
@@ -6507,7 +6609,11 @@ fn sign_get(
 ///
 /// 流程：本地那一份摘要 → 一次 `digest_only` 往返 → 一样就结束；不一样才换逐实体表 →
 /// [`entities_to_pull`] 得到"我没有 / 对端更新"的那些 → 逐条走**既有** `/mesh/page` ＋
-/// `absorb_peer_batch`（⛔ 不另开写库路）→ 再折一次摘要并打**一行**诊断（⛔ 不打实体 id）。
+/// `absorb_peer_batch`（⛔ 不另开写库路）→ **把本地那一份对齐到对端这张表**（只删对端已不列的
+/// 旧行）→ 再折一次摘要并打诊断（⛔ 不打实体 id）。
+///
+/// ⚠️ **分母口径**：摘要两端都只算**可补实体＝页**（`entity == "page"`）—— 见上面 F2-2b 大段注释的
+/// 「分母口径」一节。补不了的那几个（404 / 旧对端表里的非页实体）仍**如实计数**，只是不进分母。
 ///
 /// 失败的每一档都**降级**、不打断这一轮同步：
 /// · 拿不到摘要（网络/5xx）⇒ 记一句，跳过；
@@ -6594,7 +6700,7 @@ async fn maybe_reconcile_entities(
     let need = entities_to_pull(&local, &table.entities);
     // ④ 按实体补：只补清单上的；一条一条走 `/mesh/page` ＋ 既有 apply（⛔ 不另开写库路）
     let mut repaired = 0usize;
-    let mut not_page = 0usize;
+    let mut unpullable = 0usize;
     for (id, rseq) in need.iter().take(MAX_ENTITY_REPAIR_PER_ROUND) {
         let target = format!("/mesh/page?space_id={space_id}&id={id}");
         let auth = sign_get(conn, space_id, &target);
@@ -6631,13 +6737,15 @@ async fn maybe_reconcile_entities(
                     }
                 }
             }
-            // 不是页实体（附件走它自己的 `/mesh/attachment` 路，本片不碰）或对端也没了。
+            // 这一档补不了：① 页实体但**对端也没了**（墓碑 / 已删 —— `handle_page` 只在
+            // "这一台没有这一页"时回 404）；② 旧对端的表里混进来的非页实体（新版服务端已经
+            // 按 `entity = 'page'` 过滤，见 `handle_entities`）。
             // ⚠️ **要记 seen**：不记的话这些 id 每轮都会占掉"最多补 20 个"里的一格
-            //   （实体表按 id 排，附件/墓碑 id 排在前面时，页就永远轮不到 ⇒ 饥饿）。
-            //   404 是**确定**的（`handle_page` 只在"这一台没有这一页"时回 404）⇒ 记下来不是瞎补，
-            //   而是"这一版我问过了、这一档没有可拉的页"；下一轮不再重复问它。
+            //   （实体表按 id 排，旧对端的附件 id 排在前面时，页就永远轮不到 ⇒ 饥饿）；
+            //   而且记上之后**摘要才不再差这一点**（分母只算可补的页实体，404 是"这一档问过了"，
+            //   ⛔ 不是瞎补）；下一轮不再重复问它。
             Ok(None) => {
-                not_page += 1;
+                unpullable += 1;
                 if let Ok(g) = conn.lock() {
                     record_one_entity_seen(&g, space_id, &peer.device_id, id, *rseq);
                 }
@@ -6645,19 +6753,32 @@ async fn maybe_reconcile_entities(
             Err(e) => eprintln!("[mesh] 实体级对账：按实体取回失败（不影响这一轮同步）：{e}"),
         }
     }
-    // ⑤ 拉完再折一次摘要 ＋ 一行诊断（⛔ 不打 entity_id：日志会在诊断包里外传）
-    let after = {
+    // ⑤ 先把本地那一份**对齐到对端这张表**（分母口径），再折一次摘要 ＋ 打诊断
+    //    （⛔ 不打 entity_id：日志会在诊断包里外传）
+    let (after, aligned) = {
         let Ok(g) = conn.lock() else { return };
-        // ⭐ **F2-2b 遗留风险③**：补完再收一次上限 —— 两处补记里 `record_one_entity_seen`
-        //   （404 那一档）不经过 `record_entity_seen` ⇒ 这里补一次（正常路径它只是那条 `COUNT`）。
+        // ⭐ **`fix/digest-pullable`（2026-11-21）**：对端这张表是**这一栏页实体的全集**
+        //   （`truncated` 那一档在上面已经 return）⇒ 本地摘要里"对端已经不列"的行（旧版记下的
+        //   非页实体、对端按保留期／条数上限裁掉的、历史遗留）**永远补不上、也永远对不上**
+        //   ⇒ 摘要会**永远差一点**（每轮换整张表、日志一直"仍在差异"）。这里按**同一张表**
+        //   对齐掉：⛔ 只删不编（为什么安全见 `align_entity_seen_to_peer_table` 的注释）。
+        let aligned =
+            align_entity_seen_to_peer_table(&g, space_id, &peer.device_id, &table.entities);
+        // ⭐ **F2-2b 遗留风险③**：补完再收一次上限 —— 404 那一档的 `record_one_entity_seen`
+        //   不经过 `record_entity_seen` ⇒ 这里兜一次（正常路径它只是那条 `COUNT`）。
         //   ⚠️ 必须在折 `after` **之前**裁：`after` 要反映**真落库的那一份**，否则诊断与下一轮对不上。
         prune_entity_seen(&g, space_id, &peer.device_id, MAX_ENTITY_SEEN_PER_PEER);
         let m = entity_seen_map(&g, space_id, &peer.device_id);
-        entity_digest(&m)
+        (entity_digest(&m), aligned)
     };
-    // ⚠️ 去重（与 F2-2a 同一手法）：补不了的那几个会让 `need` 长期 > 0 ⇒ 同一签名只打一次，
-    //    否则每台对端每轮刷一行（"刷多了就没人看"）。签名 = 对端摘要 ＋ 需补数 ＋ 这轮补了几条。
-    let sig = format!("{}|{}|{repaired}", table.digest, need.len());
+    // ⚠️ 去重（与 F2-2a 同一手法）：同一签名只打一次，否则每台对端每轮刷一行（"刷多了就没人看"）。
+    //    签名 = 对端摘要 ＋ 对完之后的摘要 ＋ 需补数 ＋ 这轮补了几条 ＋ 这一档补不了几条。
+    let sig = format!(
+        "{}|{}|{}|{repaired}|{unpullable}",
+        table.digest,
+        after,
+        need.len()
+    );
     let key = format!("mesh_entities_report:{space_id}:{}", peer.device_id);
     let last = {
         let Ok(g) = conn.lock() else { return };
@@ -6666,19 +6787,34 @@ async fn maybe_reconcile_entities(
     if last.as_deref() == Some(sig.as_str()) {
         return;
     }
-    eprintln!(
-        "[mesh] 实体级对账：对端 {dev8} 台 ｜ 需补 {} 个实体 ｜ 摘要 before={before} after={after}",
-        need.len()
-    );
-    if after != table.digest {
+    if !need.is_empty() {
         eprintln!(
-            "[mesh] 实体级对账：仍在差异（对端摘要={}）{}⇒ 下一轮继续（⛔ 不按序号补、⛔ 不瞎补）",
-            table.digest,
-            if not_page > 0 {
-                format!("；其中 {not_page} 个这一档补不了（不是页 / 对端也没了）")
+            "[mesh] 实体级对账：对端 {dev8} 台 ｜ 需补 {} 个实体 ｜ 摘要 before={before} after={after}{}",
+            need.len(),
+            if aligned > 0 {
+                format!("；顺手对齐掉 {aligned} 条对端已不再列的旧摘要行")
             } else {
                 String::new()
             }
+        );
+    } else if aligned > 0 {
+        eprintln!(
+            "[mesh] 实体级对账：对端 {dev8} 台 ｜ 摘要对齐：清掉 {aligned} 条对端已不再列的旧行\
+             （⛔ 只删不编）⇒ 下一轮起安静"
+        );
+    }
+    // ⚠️ 补不了的必须**如实计数**（⛔ 不许静默丢）—— 但它们**不再影响摘要**：404 那一档已经
+    //    记进本地那一份（`record_one_entity_seen`），而分母口径在服务端与本地都只算页。
+    if unpullable > 0 {
+        eprintln!(
+            "[mesh] 实体级对账：对端 {dev8} 台 ｜ 其中 {unpullable} 个这一档补不了（不是页 / 对端也没了）\
+             ⇒ 已记入本地摘要，不再影响摘要（分母只算可补的页实体）"
+        );
+    }
+    if after != table.digest {
+        eprintln!(
+            "[mesh] 实体级对账：仍在差异（对端摘要={}）⇒ 下一轮继续（⛔ 不按序号补、⛔ 不瞎补）",
+            table.digest
         );
     }
     let Ok(g) = conn.lock() else { return };
@@ -11050,8 +11186,12 @@ mod tests {
 
     /// ⭐ **F2-2b**：`/mesh/entities` 是**真路由**，而且它回的表与摘要**能被复算**。
     ///
-    /// 三格：① 只认 GET；② 表里只有**这台设备自己那一栏**的 `MAX(device_seq)`（别人的账不许混进来）；
-    /// ③ `digest` 与 `entity_digest` 用同一张表折出**同一个串**（客户端"先比摘要"才成立）。
+    /// 四格：① 只认 GET；② 表里只有**这台设备自己那一栏**的 `MAX(device_seq)`（别人的账不许混进来）；
+    /// ③ ⭐ **分母只算可补实体（页）**：混进来的非页实体（附件）**不进表、不进摘要、count 也不加**
+    ///    —— 它按 `/mesh/page` 取必 404，算进去只会让摘要**永远差一点**（判据②）；
+    /// ④ `digest` 与 `entity_digest` 用**同一张页表**折出**同一个串**（客户端"先比摘要"才成立）。
+    ///
+    /// **变异**：把 SQL 里的 `AND entity = 'page'` 删掉 ⇒ 附件 `a1` 回来（count 3、摘要不等）⇒ 红。
     #[test]
     fn the_entities_endpoint_returns_the_table_and_a_recomputable_digest() {
         assert_eq!(route("GET", "/mesh/entities?space_id=s"), Route::Entities);
@@ -11063,6 +11203,7 @@ mod tests {
             let g = c.lock().unwrap();
             crate::sync::record_change(&g, "page", "p1", "upsert", Some("{}"), 1).unwrap();
             crate::sync::record_change(&g, "page", "p2", "upsert", Some("{}"), 2).unwrap();
+            // ⭐ 非页实体（附件字节走 `/mesh/attachment` 它自己的路）—— 不许影响这张表与摘要。
             crate::sync::record_change(&g, "attachment", "a1", "upsert", Some("{}"), 3).unwrap();
             // ⚠️ 另一台设备的账（真实库里 `changes` 会同时有别人的行）⇒ **不许**出现在这张表里
             g.execute(
@@ -11088,19 +11229,22 @@ mod tests {
         assert_eq!(code, 200, "{body}");
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         let mut expect: BTreeMap<String, i64> = BTreeMap::new();
-        // `record_change` 的 `device_seq` 就是自增 `seq` ⇒ 三行依次是 1 / 2 / 3
+        // `record_change` 的 `device_seq` 就是自增 `seq` ⇒ 两页依次是 1 / 2；附件 3 不进分母。
         expect.insert("p1".to_string(), 1);
         expect.insert("p2".to_string(), 2);
-        expect.insert("a1".to_string(), 3);
         assert_eq!(
             v["digest"].as_str().unwrap(),
             entity_digest(&expect),
-            "摘要必须由同一张表折出来：{body}"
+            "摘要必须由**同一张页表**折出来（附件不许进分母）：{body}"
         );
-        assert_eq!(v["count"].as_u64().unwrap(), 3);
+        assert_eq!(
+            v["count"].as_u64().unwrap(),
+            2,
+            "判据②：混入非页实体 ⇒ 分母不变：{body}"
+        );
         assert_eq!(v["truncated"].as_bool().unwrap(), false);
         let arr = v["entities"].as_array().unwrap();
-        assert_eq!(arr.len(), 3);
+        assert_eq!(arr.len(), 2, "表里只该有两个页实体：{body}");
         for it in arr {
             let id = it["id"].as_str().unwrap();
             assert_eq!(
@@ -11109,6 +11253,10 @@ mod tests {
                 "实体 {id} 的最新序号不对"
             );
         }
+        assert!(
+            !body.contains("\"a1\""),
+            "补不了的非页实体不许出现在表里（它按页取必 404）：{body}"
+        );
         assert!(
             !body.contains("not-mine"),
             "别的设备那一栏不许混进来：{body}"
@@ -11127,7 +11275,7 @@ mod tests {
             v.get("entities").is_none(),
             "只要摘要那一档不许回整张表：{body}"
         );
-        assert_eq!(v["count"].as_u64().unwrap(), 3);
+        assert_eq!(v["count"].as_u64().unwrap(), 2);
     }
 
     /// ⭐ **F2-2b**：实体数超过上限 ⇒ **只回摘要 ＋ `truncated:true`**。
@@ -11227,8 +11375,10 @@ mod tests {
     /// ⭐ **F2-2b**：`absorb` 要把"对端这一版我见过了"记进**本地那一份摘要**
     /// （`meta.sync_state` 的 `mesh_entity_seen:*`）—— 它是"先比摘要"能成立的前提。
     ///
-    /// 两条边界：① `device_seq = 0`（manifest 按当前状态重播那一档）**不记**；
-    /// ② 只记**变新**（旧值不许把新水位盖回去）。
+    /// 四条边界：① `device_seq = 0`（manifest 按当前状态重播那一档）**不记**；
+    /// ② 只记**变新**（旧值不许把新水位盖回去）；③ **只记页实体** —— 摘要的分母是"这一条路
+    /// 真能补的实体"，附件等非页实体记进去只会让摘要永远差一点（判据②：分母不变）；
+    /// ④ 别的对端分开记。
     #[test]
     fn absorbing_a_peers_batch_records_the_entity_watermark_for_the_local_digest() {
         let c = space_conn("B");
@@ -11256,6 +11406,27 @@ mod tests {
         // ③ 更新的照常推进
         absorb_peer_batch(&c, &[row(9)], "A", "ws", false, None).unwrap();
         assert_eq!(entity_seen_map(&c, "ws", "A").get("p9"), Some(&9));
+        // ③ 非页实体（附件）**不进这一份摘要** —— 分母只算可补的页实体。
+        let attach = MeshRow {
+            device_seq: 10,
+            entity: "attachment".to_string(),
+            entity_id: "a1".to_string(),
+            op: "upsert".to_string(),
+            payload: None,
+            updated_at: 1,
+            sealed: None,
+        };
+        absorb_peer_batch(&c, &[attach], "A", "ws", false, None).unwrap();
+        assert!(
+            entity_seen_map(&c, "ws", "A").get("a1").is_none(),
+            "判据②：非页实体不许进摘要（分母不变）"
+        );
+        assert_eq!(
+            entity_seen_map(&c, "ws", "A").len(),
+            1,
+            "非页实体一行都不许加：{:?}",
+            entity_seen_map(&c, "ws", "A")
+        );
         // ④ 别的对端的账分开记（同一空间 ≠ 同一台对端）
         assert!(entity_seen_map(&c, "ws", "OTHER").is_empty());
     }
@@ -11331,7 +11502,11 @@ mod tests {
                 "值最小的（对端最近没动过/早没了）必须先走：{stale}"
             );
         }
-        assert_eq!(m.get("p0"), Some(&10), "留下的行**值一个字不改**（只删不编）");
+        assert_eq!(
+            m.get("p0"),
+            Some(&10),
+            "留下的行**值一个字不改**（只删不编）"
+        );
         assert_eq!(m.get("p4999"), Some(&5009), "值最大的必须留住");
         // 别栏一行不动 + 幂等：已经在上限内 ⇒ 一行都不动
         assert_eq!(count_entity_seen(&c, "ws", "B"), 2);
@@ -11359,7 +11534,9 @@ mod tests {
     async fn entity_seen_prune_costs_at_most_one_extra_pull_and_then_goes_quiet() {
         // ═══ ① 裁掉的是陈旧行 ⇒ 一条都不用多补，摘要反而被这对齐（纯函数 ＋ 夹具）═══
         let c = space_conn("me");
-        let peer_map: BTreeMap<String, i64> = (0..5000).map(|i| (format!("p{i}"), 10 + i as i64)).collect();
+        let peer_map: BTreeMap<String, i64> = (0..5000)
+            .map(|i| (format!("p{i}"), 10 + i as i64))
+            .collect();
         seed_entity_seen(&c, "ws", "A", 0, 5000, 10);
         for (id, seq) in [("s0", 1i64), ("s1", 2)] {
             crate::sync::set_meta_state(
@@ -11374,7 +11551,10 @@ mod tests {
             entities_to_pull(&before, &peer_map).is_empty(),
             "前提：裁剪前没有要补的（对端有的我都有）"
         );
-        assert_eq!(prune_entity_seen(&c, "ws", "A", MAX_ENTITY_SEEN_PER_PEER), 2);
+        assert_eq!(
+            prune_entity_seen(&c, "ws", "A", MAX_ENTITY_SEEN_PER_PEER),
+            2
+        );
         let after = entity_seen_map(&c, "ws", "A");
         let need_after = entities_to_pull(&after, &peer_map);
         assert!(
@@ -11445,7 +11625,8 @@ mod tests {
         let c2 = Mutex::new(space_conn("me"));
         // 对端 6 个实体（值 1..6）；本地**全部收过**、再按"上限 5 行"模拟一次裁剪（真机上限是 5000，
         // 这里用小上限把"被裁掉且对端还持有"这一格造出来，判据本身量的是同一份代码）。
-        let peer6: BTreeMap<String, i64> = (0..6).map(|i| (format!("p{i}"), 1 + i as i64)).collect();
+        let peer6: BTreeMap<String, i64> =
+            (0..6).map(|i| (format!("p{i}"), 1 + i as i64)).collect();
         let table: Vec<(String, i64)> = peer6.iter().map(|(k, v)| (k.clone(), *v)).collect();
         {
             let g = c2.lock().unwrap();
@@ -11527,17 +11708,24 @@ mod tests {
         );
     }
 
-    /// ⭐ **接线判据（遗留风险③）**：`maybe_reconcile_entities` 收尾时**真的会裁**。
+    /// ⭐⭐ **接线判据（`fix/digest-pullable`）**：`maybe_reconcile_entities` 收尾时把本地那一份
+    /// **对齐到对端这张页表** —— 对端已经不列的行（旧版记下的非页实体、对端裁掉的）**必须清掉**，
+    /// 否则摘要**永远差一点**（每轮都换整张表、日志一直"仍在差异"）；而对端列表里、按页取 404 的
+    /// 页实体**必须记上**（它不再让摘要差），然后**下一轮只发一次摘要**。
     ///
-    /// 为什么必须单独钉：对端按页 404 那一档记 seen 走的是 `record_one_entity_seen`，
-    /// **不经过** `record_entity_seen` ⇒ 只靠"吸收那一批时顺手裁"盖不住它。
-    /// **变异**：删掉 `after` 块里那次 `prune_entity_seen(...)` ⇒ 本判据读到 5002 行 ⇒ 红。
+    /// 现场形状：本地 5001 条旧行（p1000..p5999 那 5000 条 ＋ p2@5）；对端只有 p1@7、p2@5，
+    /// 且 `/mesh/page` 全 404。
+    /// 期望：`need` 只有 p1 ⇒ 404 记上 ⇒ 对齐掉 5000 条旧行 ⇒ 摘要 == 对端摘要 ⇒ 下一轮安静。
+    ///
+    /// **变异**：删掉 `align_entity_seen_to_peer_table(...)` 这一句 ⇒ 5001 行残留、`after != 对端摘要`
+    /// ⇒ 第一段与"下一轮只发 digest_only"两处都红。
     #[tokio::test]
-    async fn entity_reconcile_prunes_the_seen_rows_before_it_folds_the_after_digest() {
+    async fn entity_reconcile_aligns_the_local_digest_to_the_peer_page_table_and_then_goes_quiet() {
         use crate::mesh_endpoint::{Endpoint, HttpReply};
         use std::future::Future;
         use std::pin::Pin;
         struct Fake {
+            peer_digest: String,
             seen: Mutex<Vec<String>>,
         }
         impl Endpoint for Fake {
@@ -11548,29 +11736,48 @@ mod tests {
                 _token: Option<&'a str>,
             ) -> Pin<Box<dyn Future<Output = Result<HttpReply, String>> + Send + 'a>> {
                 self.seen.lock().unwrap().push(target.to_string());
-                // 对端一个实体都没有（摘要必然与本地不同）⇒ 不补任何东西，只留下"收尾该裁"这一段路
-                let body = serde_json::json!({
-                    "digest": "fnv1a64:0000000000000000:0",
-                    "truncated": false,
-                    "count": 0,
-                    "entities": []
-                })
-                .to_string();
-                Box::pin(async move {
-                    Ok(HttpReply {
-                        status: 200,
-                        body,
-                    })
-                })
+                let (status, body) = if target.ends_with("digest_only=1") {
+                    (
+                        200,
+                        serde_json::json!({
+                            "digest": self.peer_digest, "truncated": false, "count": 2
+                        })
+                        .to_string(),
+                    )
+                } else if target == "/mesh/entities?space_id=space-z" {
+                    (
+                        200,
+                        serde_json::json!({
+                            "digest": self.peer_digest, "truncated": false, "count": 2,
+                            "entities": [
+                                {"id": "p1", "latest_seq": 7},
+                                {"id": "p2", "latest_seq": 5}
+                            ]
+                        })
+                        .to_string(),
+                    )
+                } else {
+                    // 对端也没了（墓碑 / 已删）⇒ 按页取就是 404
+                    (404, "{}".to_string())
+                };
+                Box::pin(async move { Ok(HttpReply { status, body }) })
             }
         }
+        let peer_map: BTreeMap<String, i64> = [("p1".to_string(), 7), ("p2".to_string(), 5)]
+            .into_iter()
+            .collect();
+        let peer_digest = entity_digest(&peer_map);
         let c = Mutex::new(space_conn("me"));
         {
             let g = c.lock().unwrap();
-            seed_entity_seen(&g, "space-z", "dev-x", 0, 5002, 10);
-            assert_eq!(count_entity_seen(&g, "space-z", "dev-x"), 5002);
+            // 旧版留下的非页/陈旧行：5000 条对端已经不列的 id（避开 p1/p2 的编号段）
+            seed_entity_seen(&g, "space-z", "dev-x", 1000, 5000, 10);
+            // 本地已经收到过 p2@5（只有 p1 该补）
+            assert!(record_one_entity_seen(&g, "space-z", "dev-x", "p2", 5));
+            assert_eq!(count_entity_seen(&g, "space-z", "dev-x"), 5001);
         }
         let fake = Fake {
+            peer_digest: peer_digest.clone(),
             seen: Mutex::new(Vec::new()),
         };
         let peer = MeshPeer {
@@ -11580,20 +11787,48 @@ mod tests {
             node_id: String::new(),
         };
         maybe_reconcile_entities(&c, &fake, &peer, "space-z", None, false).await;
-        let g = c.lock().unwrap();
-        assert_eq!(
-            count_entity_seen(&g, "space-z", "dev-x"),
-            MAX_ENTITY_SEEN_PER_PEER,
-            "对账收尾必须把这一栏收回上限内（否则 404 那一档记的行永远不会被裁）"
-        );
-        assert!(
-            fake.seen
+        {
+            let g = c.lock().unwrap();
+            assert_eq!(
+                count_entity_seen(&g, "space-z", "dev-x"),
+                2,
+                "对端这张页表里只有 p1/p2 ⇒ 其余旧行必须被对齐掉（⛔ 只删不编）"
+            );
+            let seen_map = entity_seen_map(&g, "space-z", "dev-x");
+            assert_eq!(seen_map.get("p2"), Some(&5));
+            assert_eq!(
+                seen_map.get("p1"),
+                Some(&7),
+                "404 那一档也要记上：它不再让摘要差这一点"
+            );
+            assert_eq!(
+                entity_digest(&seen_map),
+                peer_digest,
+                "判据：对齐之后摘要必须与对端一致（否则永远「仍在差异」）"
+            );
+        }
+        {
+            let pulls: Vec<String> = fake
+                .seen
                 .lock()
                 .unwrap()
                 .iter()
-                .all(|t| !t.starts_with("/mesh/page")),
-            "这一轮没有任何要补的 ⇒ 不许因为裁剪去拉页：{:?}",
-            fake.seen.lock().unwrap()
+                .filter(|t| t.starts_with("/mesh/page?"))
+                .cloned()
+                .collect();
+            assert_eq!(
+                pulls,
+                ["/mesh/page?space_id=space-z&id=p1"],
+                "只该问一次 p1（它 404）；⛔ 不许为对端已经不列的旧行去拉"
+            );
+        }
+        // 下一轮：摘要一致 ⇒ 只发一次摘要（⛔ 不再换表、⛔ 不再对齐）
+        fake.seen.lock().unwrap().clear();
+        maybe_reconcile_entities(&c, &fake, &peer, "space-z", None, false).await;
+        assert_eq!(
+            fake.seen.lock().unwrap().as_slice(),
+            ["/mesh/entities?space_id=space-z&digest_only=1"],
+            "可收敛的空间最终必须**安静**：一次往返就结束"
         );
     }
 
@@ -12901,7 +13136,10 @@ mod tests {
             .find(|p| p.peer == "H")
             .expect("卡住那台也要有一行");
         let e = hung.error.as_deref().unwrap_or_default();
-        assert!(e.contains("超时"), "超时文案要能被 auto_retryable 认出来：{e}");
+        assert!(
+            e.contains("超时"),
+            "超时文案要能被 auto_retryable 认出来：{e}"
+        );
         assert!(
             crate::lan_state::should_skip_peer_for_rest_of_round(hung.error.as_deref()),
             "①「永远超时」必须被**网络类**词表认成网络类（本轮跳过 ＋ F3-2 冷却都靠它）：{e}"
