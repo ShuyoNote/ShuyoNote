@@ -91,6 +91,62 @@ pub fn list_candidates(c: &Connection) -> rusqlite::Result<Vec<MeshUidConflict>>
     rows.collect()
 }
 
+/// ⭐ **A3（2026-11-21）**：用户**勾选的一条**要确认的键（前端只送勾选的那些，⛔ 不含名字/正文）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshUidKey {
+    pub peer_device: String,
+    pub peer_uid: String,
+}
+
+/// ⭐ **A3（2026-11-21）**：`mesh_uid_confirm_batch` 的读数（只回数量，⛔ 不回任何 uid/正文）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshUidBatchDone {
+    /// 真正写进确认表的对数（＝ 勾选命中数；**不做传播**）。
+    pub written: usize,
+}
+
+/// ⭐ **A3（2026-11-21）**：**纯函数** —— 勾选 ＋ 候选表 ⇒ 要写哪些确认键。
+///
+/// 三条判据（命令层与前端各自只负责其中一段，两边判据同名）：
+/// 1. **`batch-selected-only`**：批量阶段只从**勾选**里出发 —— 候选表里没有的键一行都不写
+///    （⛔ 不替调用方猜；与 `mesh_create_spaces`「只认候选表里有的名字」同一口径）；
+/// 2. **`no-propagation-on-batch`**：**不做传播**（owner 2026-11-21 拍）——
+///    ⛔ 另一个候选即使 `space_uid` **完全相同**、也**一行都不写**；
+///    理由：**不让用户没有逐行看见的行被写**（"同一个 uid ⇒ 同一个空间"这个推断
+///    不替用户做 —— 要写哪几行，只能由他勾哪几行决定）。这与旧版「同 uid 传播」是
+///    **口径变更**，不是实现细节；
+/// 3. **`empty-selection-writes-nothing`**：空选／全是空键／没有候选 ⇒ 空清单
+///    （命令层据此**不开库、不写行**）。
+pub fn plan_batch_confirm(
+    candidates: &[MeshUidConflict],
+    selected: &[MeshUidKey],
+) -> Vec<(String, String)> {
+    // ---- ① 批量：只认"勾了 **且** 候选表里真有"的键（trim 后比较；空键一律丢，⛔ 不猜）----
+    let mut write: Vec<(String, String)> = Vec::new();
+    for k in selected {
+        let (dev, uid) = (k.peer_device.trim(), k.peer_uid.trim());
+        if dev.is_empty() || uid.is_empty() {
+            continue;
+        }
+        if !candidates
+            .iter()
+            .any(|c| c.peer_device.trim() == dev && c.peer_uid.trim() == uid)
+        {
+            continue;
+        }
+        // ② 这里**没有**第二步传播：`write` 到上一步为止就定了 —— 勾了几行就写几行。
+        if !write.iter().any(|(d, u)| d == dev && u == uid) {
+            write.push((dev.to_string(), uid.to_string()));
+        }
+    }
+    // ③ 空选／一个都没命中 ⇒ 空清单（⛔ 不发请求、不写库）。
+    // 稳定顺序：同一个勾选集合永远算出同一份清单（判据/事务都按它走）。
+    write.sort();
+    write
+}
+
 /// 用户确认「这一台对端的这个 uid 就是我这台同名空间」。
 ///
 /// 幂等：重复确认只刷新时刻；同时把冲突候选移出列表。
@@ -195,6 +251,127 @@ pub fn confirmed_peer_uid(c: &Connection, peer_device: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::mesh_merge_ledger::MergeGate;
+
+    /// ⭐ A3（2026-11-21）判据 ① **`batch-selected-only`**：批量只写**勾了且候选表里有**的键。
+    ///
+    /// 未勾的不写；勾了但候选表里没有的（过期/伪造的键）也**不写**（⛔ 不替调用方猜）。
+    #[test]
+    fn batch_只写勾选且候选表里真有的键() {
+        let cands = vec![
+            cand("dev-a", "uid-1"),
+            cand("dev-b", "uid-1"),
+            cand("dev-a", "uid-2"),
+            cand("dev-c", "uid-9"),
+        ];
+        // 勾两对 ⇒ 只写这两对；另外两行（含**同 uid 的 dev-b**）一行都不写
+        let plan = plan_batch_confirm(&cands, &[key("dev-a", "uid-1"), key("dev-c", "uid-9")]);
+        assert_eq!(
+            plan,
+            vec![
+                ("dev-a".to_string(), "uid-1".to_string()),
+                ("dev-c".to_string(), "uid-9".to_string()),
+            ],
+            "勾哪几行就写哪几行"
+        );
+        // 勾一个候选表里根本不存在的键 ⇒ 一行都不写（⛔ 不替调用方猜）
+        assert!(plan_batch_confirm(&cands, &[key("dev-z", "uid-404")]).is_empty());
+        // 同一键勾两次 ⇒ 只写一行
+        assert_eq!(
+            plan_batch_confirm(&cands, &[key("dev-a", "uid-2"), key("dev-a", "uid-2")]),
+            vec![("dev-a".to_string(), "uid-2".to_string())],
+            "去重"
+        );
+    }
+
+    /// ⭐ A3 判据 ② **`no-propagation-on-batch`**（owner 2026-11-21 拍）：
+    /// **不做传播** —— 另一个候选即使 `space_uid` **完全相同**，只要没被勾，就**一行都不写**
+    /// （理由：不让用户没有逐行看见的行被写）。
+    #[test]
+    fn 批量不传播_同_uid_的其它候选一行都不写() {
+        let cands = vec![
+            // 同一台设备、同名、不同 uid
+            cand("dev-a", "uid-1"),
+            cand("dev-a", "uid-2"),
+            // **另一台设备、完全相同的 uid** ⇒ 旧口径会传播；新口径 ⛔ 一行都不写
+            cand("dev-b", "uid-1"),
+            // 另一台设备、不同 uid
+            cand("dev-b", "uid-9"),
+        ];
+        let plan = plan_batch_confirm(&cands, &[key("dev-a", "uid-1")]);
+        assert_eq!(
+            plan,
+            vec![("dev-a".to_string(), "uid-1".to_string())],
+            "⛔ 只写被勾的那一行 —— dev-b/uid-1 哪怕同 uid 也不写"
+        );
+        assert!(
+            !plan
+                .iter()
+                .any(|(d, u)| d == "dev-b" || u == "uid-2" || u == "uid-9"),
+            "⛔ 任何未被勾的候选都不许出现：{plan:?}"
+        );
+    }
+
+    /// ⭐ A3 判据 ③ **`empty-selection-writes-nothing`**：空选／空键／没有候选 ⇒ 空清单。
+    #[test]
+    fn 空选或没有候选_产出空计划() {
+        let cands = vec![cand("dev-a", "uid-1")];
+        for selected in [
+            vec![],
+            vec![key("", "")],
+            vec![key("  ", "uid-1")],
+            vec![key("dev-a", "   ")],
+        ] {
+            assert!(
+                plan_batch_confirm(&cands, &selected).is_empty(),
+                "空选/空键 ⇒ 不写：{selected:?}"
+            );
+        }
+        // 没有候选 ⇒ 哪怕勾了东西也不写
+        assert!(plan_batch_confirm(&[], &[key("dev-a", "uid-1")]).is_empty());
+    }
+
+    /// ⭐ A3（端到端那一半）：把清单**逐条**落进确认表 ⇒ **只**确认清单里的键；
+    /// 同 uid 的另一台**仍然没被确认**（判据 `no-propagation-on-batch`）。
+    #[test]
+    fn 计划落库后_只确认清单里的那一对_同_uid_的仍拒绝() {
+        let c = conn();
+        record_candidate(&c, "dev-a", "uid-1", "山焦招标", "山焦招标", 1).unwrap();
+        record_candidate(&c, "dev-b", "uid-1", "山焦招标", "山焦招标", 1).unwrap();
+        record_candidate(&c, "dev-a", "uid-2", "山焦招标", "山焦招标", 1).unwrap();
+        let cands = list_candidates(&c).unwrap();
+        let plan = plan_batch_confirm(&cands, &[key("dev-a", "uid-1")]);
+        for (dev, uid) in &plan {
+            confirm(&c, dev, uid, 10).unwrap();
+        }
+        assert!(is_confirmed(&c, "dev-a", "uid-1"), "勾中的那一对被确认");
+        assert!(
+            !is_confirmed(&c, "dev-b", "uid-1"),
+            "⛔ 同 uid 的另一台**没有**被写（不传播）"
+        );
+        assert!(!is_confirmed(&c, "dev-a", "uid-2"), "⛔ uid 不同更不会被写");
+        // dev-b/uid-1 仍在候选表里，等用户自己勾
+        assert!(list_candidates(&c)
+            .unwrap()
+            .iter()
+            .any(|r| r.peer_device == "dev-b" && r.peer_uid == "uid-1"));
+    }
+
+    fn key(dev: &str, uid: &str) -> MeshUidKey {
+        MeshUidKey {
+            peer_device: dev.into(),
+            peer_uid: uid.into(),
+        }
+    }
+
+    fn cand(dev: &str, uid: &str) -> MeshUidConflict {
+        MeshUidConflict {
+            peer_device: dev.into(),
+            peer_uid: uid.into(),
+            local_name: "山焦招标".into(),
+            peer_name: "山焦招标".into(),
+            last_seen_at: 1,
+        }
+    }
 
     #[test]
     fn 对端_uid_读得回_没确认过就是_none() {

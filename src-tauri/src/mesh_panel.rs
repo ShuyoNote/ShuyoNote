@@ -173,6 +173,60 @@ pub fn mesh_uid_confirm(
     Ok(true)
 }
 
+/// ⭐ **A3（2026-11-21，owner 拍「只批量、不传播」）**：**一次确认多对**同名 uid 候选。
+///
+/// 为什么要有它：原先每对设备、每对 uid 各点一次（DEC-D 人工闸）。这里只把
+/// "一次点击"的**覆盖范围**变成"勾了的那几对"：
+///
+/// 1. ⛔ **不代用户确认**：确认仍然只由界面上的一次点击发起（本命令没有后台调用点）；
+/// 2. 只写**勾选且候选表里真有**的键（判据 `batch-selected-only`）；
+/// 3. ⛔ **不做传播**（判据 `no-propagation-on-batch`）：另一个候选哪怕 `space_uid`
+///    **完全相同**，只要没被勾就**一行都不写** —— 不让用户没有逐行看见的行被写；
+/// 4. 空选／全是空键／没有候选 ⇒ **连空间库都不开**（判据 `empty-selection-writes-nothing`）。
+///
+/// ⚠️ 只写两张小表（确认记录 ＋ 移出候选），⛔ 不碰任何页面正文；整个写入在一个事务里。
+#[tauri::command]
+pub fn mesh_uid_confirm_batch(
+    db: State<'_, crate::db::Db>,
+    keys: Vec<crate::mesh_uid_confirm::MeshUidKey>,
+) -> Result<crate::mesh_uid_confirm::MeshUidBatchDone, String> {
+    use crate::mesh_uid_confirm::{plan_batch_confirm, MeshUidBatchDone};
+    let done_none = MeshUidBatchDone { written: 0 };
+    // ③ 空选 ⇒ **不开库、不写库**（判据 `empty-selection-writes-nothing`）。
+    let has_any = keys
+        .iter()
+        .any(|k| !k.peer_device.trim().is_empty() && !k.peer_uid.trim().is_empty());
+    if !has_any {
+        return Ok(done_none);
+    }
+    let app_data = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "bad_state: app data dir 未初始化".to_string())?;
+    let space = {
+        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+        crate::attachments::active_space_id(&c)
+    };
+    let mut sc = crate::db::open_space_conn_at(&space, app_data)?;
+    let candidates = crate::mesh_uid_confirm::list_candidates(&sc).map_err(|e| e.to_string())?;
+    // ① / ② 都在这个纯函数里（判据有单测）；这里只负责照清单写。
+    let write = plan_batch_confirm(&candidates, &keys);
+    if write.is_empty() {
+        return Ok(done_none);
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let tx = sc.transaction().map_err(|e| e.to_string())?;
+    for (peer_device, peer_uid) in &write {
+        crate::mesh_uid_confirm::confirm(&tx, peer_device, peer_uid, now)
+            .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(MeshUidBatchDone {
+        written: write.len(),
+    })
+}
+
 /// ⭐ **2026-11-11（§13 A2）**：一条对等体的**只读水位**（⛔ 不含 `device_id`／正文）。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

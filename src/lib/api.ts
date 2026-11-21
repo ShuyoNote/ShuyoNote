@@ -657,6 +657,15 @@ export const api = {
   /** 确认「这一台对端的这个 uid」＝本机同名空间（之后融合闸放行；只写同步元数据）。 */
   meshUidConfirm: (a: { peerDevice: string; peerUid: string }) =>
     invoke("mesh_uid_confirm", a) as Promise<boolean>,
+  /**
+   * ⭐ **A3（2026-11-21，owner 拍「只批量、不传播」）**：**一次确认多对**（批量勾选）。
+   *
+   * ① 只把**勾选的**键送上去（前端 `selectedPairs` 保证）；② ⛔ **不做传播** ——
+   * 同 uid 的其它候选只要没被勾就一行都不写（后端纯函数 `plan_batch_confirm` 同一判据）；
+   * ③ 空选 ⇒ 调用点**不发请求**。
+   */
+  meshUidConfirmBatch: (a: { keys: Array<{ peerDevice: string; peerUid: string }> }) =>
+    invoke("mesh_uid_confirm_batch", a) as Promise<{ written: number }>,
   /** ⭐ 2026-11-11（§13 A2）：只读「设备×空间水位」（对端只回序号，⛔ 无设备 id）。 */
   meshWatermarks: () => invoke("mesh_watermarks") as Promise<MeshWatermarks>,
   /** ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：当前空间的**永久缺失**清单（只读）。 */

@@ -504,6 +504,13 @@ const REGISTERED: &[(&str, &str, usize, &str)] = &[
         1,
         "同步面板：确认同名空间 uid（旁路打开空间库写确认行）",
     ),
+    // ⭐ A3（2026-11-21）：批量确认也走同一条旁路（空选时提前返回、不开库）。
+    (
+        "src/mesh_panel.rs",
+        "mesh_uid_confirm_batch",
+        1,
+        "同步面板：批量确认同名空间 uid（旁路打开空间库、单事务写确认行）",
+    ),
     (
         "src/mesh_panel.rs",
         "mesh_watermarks",

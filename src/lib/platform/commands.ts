@@ -469,6 +469,22 @@ export interface MeshUidConflict {
 }
 
 /**
+ * ⭐ **A3（2026-11-21）**：一条**用户勾选**的待确认键（＝ 确认表的主键）。
+ *
+ * ⚠️ 只在请求体里出现；⛔ 不进界面文案（内部标识，`INV-UI-copy-no-internal-ids`）。
+ */
+export interface MeshUidKey {
+  peerDevice: string;
+  peerUid: string;
+}
+
+/** ⭐ **A3（2026-11-21，owner 拍「只批量、不传播」）**：批量确认的**读数**（只回数量，⛔ 不回任何 uid/正文）。 */
+export interface MeshUidBatchDone {
+  /** 真正写进确认表的对数（＝ 勾选命中数；**不做传播**）。 */
+  written: number;
+}
+
+/**
  * ⭐ **2026-11-11（§13 A2）**：一条对等体的只读水位（⛔ 不含 `device_id`／正文）。
  * 界面按 `index` 显示（内部设备 id 不上界面 —— `INV-UI-copy-no-internal-ids`）。
  */
@@ -1353,6 +1369,17 @@ export interface CommandMap {
   mesh_uid_conflicts: { args: undefined; result: MeshUidConflict[] };
   /** 确认「这一台对端的这个 uid」就是本机同名空间 ⇒ 融合闸放行（只写同步元数据）。 */
   mesh_uid_confirm: { args: { peerDevice: string; peerUid: string }; result: boolean };
+  /**
+   * ⭐ **A3（2026-11-21，owner 拍「只批量、不传播」）**：**一次确认多对**（批量勾选）。
+   *
+   * 口径（三条判据与后端纯函数同名，见 `src-tauri/src/mesh_uid_confirm.rs`）：
+   * ① `batch-selected-only`：只写**勾选且候选表里真有**的键；
+   * ② `no-propagation-on-batch`：**不做传播** —— 同 uid 的其它候选只要没被勾，一行都不写；
+   * ③ `empty-selection-writes-nothing`：空选 ⇒ 不发请求、不开库、不写行。
+   *
+   * ⚠️ 确认动作仍然**只能由用户点击发起**（⛔ 无后台调用点）。
+   */
+  mesh_uid_confirm_batch: { args: { keys: MeshUidKey[] }; result: MeshUidBatchDone };
   /** ⭐ 2026-11-11（§13 A2）：只读「设备×空间水位」（对端只回序号，⛔ 无设备 id/正文）。 */
   /**
    * ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：当前空间的**永久缺失**清单（只读）。
