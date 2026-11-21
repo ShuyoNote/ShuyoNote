@@ -219,6 +219,64 @@ pub fn missing_segments(cursor: i64, remote_ranges: &[(i64, i64)]) -> Vec<(i64, 
     holes
 }
 
+/// ⭐ **F2-2b（2026-11-21）**：**实体级**对账 —— 我该向对端补哪些实体（纯函数，⛔ 还没接线）。
+///
+/// 为什么不能按**序号**补（这是 F2-2a 真机读数给的教训）：
+/// `record_change` 会把**同实体的旧 upsert 取代删除** ⇒ `device_seq` 天生稀疏，
+/// 序号"洞"里绝大多数是**无害的**（旧版本被取代）。按序号补 = 会去补一堆**已经不存在、也不需要**的东西。
+///
+/// 真正要保证的是：**对端那一版我能拿到最新**。所以口径是**按实体比"最新序号"**：
+/// · 只在 `remote` 有、我**没有** ⇒ 要补；
+/// · 两边都有但 `remote > local`（对端更新）⇒ 要补；
+/// · `local >= remote` ⇒ **不补**（我已有最新；或我这边更新，那是对端该来找我）；
+/// · 坏值（负数序号）⇒ 跳过（⛔ 不猜）；空 `remote` ⇒ 空（"不知道" ≠ "全都缺"）。
+///
+/// 返回**升序**的 `(entity_id, 对端最新序号)` —— 调用方据此按需 `pull`（接线要另行拍板）。
+pub fn entities_to_pull(
+    local: &std::collections::BTreeMap<String, i64>,
+    remote: &std::collections::BTreeMap<String, i64>,
+) -> Vec<(String, i64)> {
+    let mut out: Vec<(String, i64)> = Vec::new();
+    for (id, rseq) in remote {
+        if *rseq < 0 {
+            continue;
+        }
+        match local.get(id) {
+            Some(lseq) if *lseq >= *rseq => continue,
+            _ => out.push((id.clone(), *rseq)),
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// ⭐ **F2-2b**：把"实体→最新序号"折成一个**稳定摘要**（纯函数）。
+///
+/// 用途：先比摘要（一次往返、与条数无关），**不一样**才去换逐实体表（第二次往返）。
+/// ⚠️ 它不是密码学哈希，作用是"**同一份表在任何机器上折出同一个串**"：
+/// · 遍历顺序无关（`BTreeMap` 天然有序 ＋ 我们显式排序）；
+/// · 跨平台稳定（只用 `u64` 运算与字节拼接，⛔ 不用随机/时间）；
+/// · 空表 ⇒ 固定串（不是空串 —— 空串容易被当"没算"）。
+pub fn entity_digest(entity_latest: &std::collections::BTreeMap<String, i64>) -> String {
+    // FNV-1a 64：够快、够稳、实现只有几行（⛔ 不引依赖）
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for (id, seq) in entity_latest {
+        for b in id.as_bytes() {
+            h ^= u64::from(*b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        h ^= u64::from(b':');
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        for b in seq.to_string().as_bytes() {
+            h ^= u64::from(*b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        h ^= u64::from(b'\n');
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("fnv1a64:{h:016x}:{}", entity_latest.len())
+}
+
 /// 服务侧：**只服务我自己产生的**记录里、游标之后的那一批（按 `device_seq` 升序）。
 ///
 /// ★ 这条 SQL 就是"没有账本"：
@@ -12623,6 +12681,71 @@ mod tests {
         assert_eq!(missing_segments(0, &[(5, 3), (7, 9)]), vec![(1, 6)]);
         assert!(missing_segments(0, &[(5, 3), (-1, 4)]).is_empty());
         assert!(missing_segments(-2, &[(1, 9)]).is_empty());
+    }
+
+    /// ⭐ **F2-2b（2026-11-21）**：实体级对账 ＋ 摘要 —— **为什么不能按序号补**（F2-2a 真机给的教训）。
+    #[test]
+    fn entities_to_pull_compares_latest_per_entity_not_gaps() {
+        use std::collections::BTreeMap;
+        let m = |pairs: &[(&str, i64)]| -> BTreeMap<String, i64> {
+            pairs.iter().map(|(k, v)| ((*k).to_string(), *v)).collect()
+        };
+        // ① 完全一致 ⇒ 不补（哪怕两边序号**稀疏**、中间全是"洞"）
+        assert!(
+            entities_to_pull(&m(&[("p1", 5), ("p2", 9)]), &m(&[("p1", 5), ("p2", 9)])).is_empty()
+        );
+        // ② 对端更新 ⇒ 补这一条（并带回对端的最新序号）
+        assert_eq!(
+            entities_to_pull(&m(&[("p1", 5)]), &m(&[("p1", 7)])),
+            vec![("p1".to_string(), 7)]
+        );
+        // ③ 我没有这个实体 ⇒ 补
+        assert_eq!(
+            entities_to_pull(&m(&[]), &m(&[("p9", 1)])),
+            vec![("p9".to_string(), 1)]
+        );
+        // ④ 我这边更新（local > remote）⇒ **不补**（该由对端来找我）
+        assert!(entities_to_pull(&m(&[("p1", 9)]), &m(&[("p1", 3)])).is_empty());
+        // ⑤ 对端空表 = 不知道 ⇒ 空（⛔ 不把"不知道"当成"全都缺"）
+        assert!(entities_to_pull(&m(&[("p1", 1)]), &m(&[])).is_empty());
+        // ⑥ 坏值（负数）跳过；输出按实体 id 升序
+        let got = entities_to_pull(
+            &m(&[("p1", 1)]),
+            &m(&[("zz", 4), ("p1", 2), ("aa", -3), ("bb", 1)]),
+        );
+        assert_eq!(
+            got,
+            vec![
+                ("bb".to_string(), 1),
+                ("p1".to_string(), 2),
+                ("zz".to_string(), 4)
+            ]
+        );
+    }
+
+    /// ⭐ **F2-2b**：摘要的三条要求 —— 同表同串 / 变化即变 / 空表固定（⛔ 不是空串）。
+    #[test]
+    fn entity_digest_is_order_independent_stable_and_never_empty() {
+        use std::collections::BTreeMap;
+        let m = |pairs: &[(&str, i64)]| -> BTreeMap<String, i64> {
+            pairs.iter().map(|(k, v)| ((*k).to_string(), *v)).collect()
+        };
+        let a = entity_digest(&m(&[("p1", 1), ("p2", 2)]));
+        let b = entity_digest(&m(&[("p2", 2), ("p1", 1)])); // 插入顺序不同
+        assert_eq!(a, b, "同一份表必须折出同一个串（BTreeMap 已排序）");
+        assert_ne!(
+            a,
+            entity_digest(&m(&[("p1", 1), ("p2", 3)])),
+            "序号变了就必须变"
+        );
+        assert_ne!(a, entity_digest(&m(&[("p1", 1)])), "少一条也必须变");
+        let empty = entity_digest(&m(&[]));
+        assert!(
+            !empty.is_empty(),
+            "空表必须有固定串（空串容易被当\"没算\"）"
+        );
+        assert!(empty.starts_with("fnv1a64:"));
+        assert!(empty.ends_with(":0"), "空表的条数必须是 0");
     }
 
     /// ⭐ **F2-2a（2026-11-20）**：`holes_between` 的五格 —— 「中段有洞」的计数口径。
