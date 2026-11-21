@@ -6117,6 +6117,87 @@ fn record_entity_seen(c: &Connection, space_id: &str, peer_device: &str, rows: &
             "[mesh] 对端实体水位有 {failed} 条没记下来（只影响下一轮对账的摘要，不影响这一批落库）"
         );
     }
+    // ⭐ **F2-2b 遗留风险③**：这一批记完顺手收一次上限 —— 没超上限时**只有一条 `COUNT`**，
+    //   超了才删（「删多了安全、删少了才危险」的口径见 [`prune_entity_seen`] 的注释）。
+    prune_entity_seen(c, space_id, peer_device, MAX_ENTITY_SEEN_PER_PEER);
+}
+
+/// ⭐ **F2-2b 遗留风险③（2026-11-21）**：每（空间·对端）最多留多少条 `mesh_entity_seen:*` 行。
+///
+/// ## 为什么是 5000（三条依据，不是拍的）
+/// ① **对端实体表只有 ≤ [`MAX_ENTITY_ROWS_IN_RESPONSE`]（2000）行时才可能被用来补** ——
+///    超过 2000 行，服务端只回摘要（`truncated: true`）⇒ 那一轮**一条都不补**。
+///    ⇒ 本地这一份"真要去比"的规模**天生就在 2000 这一档**；5000 ＝ 2.5 倍，留两档余量
+///    （对端在 2000 附近浮动时，裁剪不必跟着抖）。
+/// ② **必须严格大于 2000**：若上限低于对端表的可用规模，就会出现"刚补回来、又被同一顺序裁掉、
+///    下一轮再补"的**空转**（每轮 20 条，永不收敛）。这条由判据
+///    `entity_seen_prune_cap_must_exceed_the_peer_table_response_cap` 机器钉住。
+/// ③ **体积有界**：一行 ≈ 键（前缀＋空间 id＋对端 id＋实体 id，几十字节）＋ 值（序号十几字节）
+///    ⇒ 5000 行 ≈ 300–500 KB／（空间·对端）**上限**；一台机"几个空间 × 几台对端"＝几 MB 以内。
+///    裁剪之前这一栏是**无界**的（见过多少实体就多少行，永不回收）。
+const MAX_ENTITY_SEEN_PER_PEER: usize = 5000;
+
+/// ⭐ **F2-2b 遗留风险③（2026-11-21）**：把这一（空间·对端）的 seen 行收进上限 —— **有界裁剪**。
+///
+/// ## 裁剪口径：只保留"最近还在动"的那些
+/// `meta.sync_state` **只有 `key` / `value` 两列**（没有时间戳填不进去，见 `lan_state.rs:925` 的量法）
+/// ⇒ "最近用到"只能从**值**里读：值就是「我从这台对端收到过的这一实体的最新 `device_seq`」，
+/// 对端**每动一次这个实体它就变大** ⇒ **值大的 ＝ 对端最近还在动的**。
+/// 所以保留：按值（`CAST(value AS INTEGER)`）**从大到小**取前 `max_rows` 条；同值时按键名升序
+/// ⇒ **确定性**（同一份库裁两次得同一份结果，不会抖）。
+///
+/// ## ⛔ 为什么"删多了"是安全的（⛔ 不会漏补 —— 这条是承重的，改之前先读）
+/// 被删的那一行，唯一后果是**本地那一份摘要里少了这个实体** ⇒ 下一轮对账
+/// [`entities_to_pull`] 会把它算成"我没有" ⇒ **多拉一次**（拉回来 `absorb` 会重新记上）。
+/// 而 **留着一行错的值** 才危险：摘要会"看起来对齐"而实际没补 ⇒ **漏补**。
+/// ⇒ 所以本函数是**只删不编**：⛔ 不改写任何一行的值、⛔ 不插入占位行、⛔ 不删别的键。
+/// ⇒ 一句话：**裁剪只会让已知的去重信息变少 ⇒ 最坏是多补一次，⛔ 不可能漏补。**
+///
+/// ## 不会无限补
+/// 行数 ≤ `max_rows` 时本函数**一行都不动**（返回 0）⇒ 收敛期的"摘要一致就收手"仍由既有对账负责。
+/// 而超过 `max_rows` 的**常见成因**是对端实体数本身就 > 2000（本地这一份只从对端那一栏收来）
+/// ⇒ 那一档对端**只回摘要**、对账**只报不补**（走不到按实体补），也就没有"裁了又补、补了又裁"
+/// 的空转 —— 这是上限必须取 `> MAX_ENTITY_ROWS_IN_RESPONSE` 的理由（判据③机器钉着）。
+///
+/// 返回**裁掉了几行**（0 ＝ 没超上限，什么都没动）。
+fn prune_entity_seen(c: &Connection, space_id: &str, peer_device: &str, max_rows: usize) -> usize {
+    // ⛔ 0 会把整栏删光（"记住对端这一版"这件事就没了）⇒ 最低 1 行；正常调用给的是 5000。
+    let max_rows = max_rows.max(1);
+    let prefix = entity_seen_prefix(space_id, peer_device);
+    // 先数（正常路径就这一条；`key` 是主键但前缀是 `substr` ⇒ 走不了索引，行数本身有界，够用）。
+    let Ok(n) = c.query_row(
+        "SELECT COUNT(*) FROM meta.sync_state WHERE substr(key, 1, length(?1)) = ?1",
+        params![prefix],
+        |r| r.get::<_, i64>(0),
+    ) else {
+        // 读不到就不裁（⛔ 猜一个数然后删是危险的：宁可让它继续长，也不能删错）。
+        return 0;
+    };
+    let n = n.max(0) as usize;
+    if n <= max_rows {
+        return 0;
+    }
+    let Ok(removed) = c.execute(
+        "DELETE FROM meta.sync_state
+          WHERE key IN (
+              SELECT key FROM meta.sync_state
+               WHERE substr(key, 1, length(?1)) = ?1
+               ORDER BY CAST(value AS INTEGER) DESC, key ASC
+               LIMIT -1 OFFSET ?2
+          )",
+        params![prefix, max_rows as i64],
+    ) else {
+        return 0;
+    };
+    if removed > 0 {
+        eprintln!(
+            "[mesh] 实体摘要裁剪：空间 {} 对端 {} 收掉 {removed} 行（上限 {max_rows}；\
+             ⛔ 只删不编 ⇒ 最坏多补一次，不会漏补）",
+            crate::lan::mask_space(space_id),
+            peer_device.chars().take(8).collect::<String>()
+        );
+    }
+    removed
 }
 
 /// 一次 GET 的凭证（拿锁只做这一件事；⛔ 不跨 `await` 持锁 —— 本仓老规矩）。
@@ -6279,6 +6360,10 @@ async fn maybe_reconcile_entities(
     // ⑤ 拉完再折一次摘要 ＋ 一行诊断（⛔ 不打 entity_id：日志会在诊断包里外传）
     let after = {
         let Ok(g) = conn.lock() else { return };
+        // ⭐ **F2-2b 遗留风险③**：补完再收一次上限 —— 两处补记里 `record_one_entity_seen`
+        //   （404 那一档）不经过 `record_entity_seen` ⇒ 这里补一次（正常路径它只是那条 `COUNT`）。
+        //   ⚠️ 必须在折 `after` **之前**裁：`after` 要反映**真落库的那一份**，否则诊断与下一轮对不上。
+        prune_entity_seen(&g, space_id, &peer.device_id, MAX_ENTITY_SEEN_PER_PEER);
         let m = entity_seen_map(&g, space_id, &peer.device_id);
         entity_digest(&m)
     };
@@ -10885,6 +10970,343 @@ mod tests {
         assert_eq!(entity_seen_map(&c, "ws", "A").get("p9"), Some(&9));
         // ④ 别的对端的账分开记（同一空间 ≠ 同一台对端）
         assert!(entity_seen_map(&c, "ws", "OTHER").is_empty());
+    }
+
+    // ───────── ⭐ F2-2b 遗留风险③（2026-11-21）：`mesh_entity_seen:*` 的**有界裁剪** ─────────
+    //
+    // 风险原文：每实体一行、且**无裁剪** ⇒ 随实体数无限增长。修法＝每（空间·对端）保留
+    // [`MAX_ENTITY_SEEN_PER_PEER`] 行（"值大的留下"＝对端最近还在动的）。
+    // ⛔ 判据要钉住的是：**裁多了最坏多补一次，⛔ 不可能漏补**（口径见 `prune_entity_seen` 的注释）。
+
+    /// 往 `meta.sync_state` 里塞 `n` 条 seen 行（`p{from}..p{from+n}`，值 `base + i`）—— 只给裁剪判据用。
+    fn seed_entity_seen(c: &Connection, space: &str, peer: &str, from: usize, n: usize, base: i64) {
+        for i in from..from + n {
+            crate::sync::set_meta_state(
+                c,
+                &format!("{}p{i}", entity_seen_prefix(space, peer)),
+                &(base + i as i64).to_string(),
+            )
+            .unwrap();
+        }
+    }
+
+    /// 数这一（空间·对端）在 `meta.sync_state` 里有几行（与 `prune_entity_seen` 同一前缀口径）。
+    fn count_entity_seen(c: &Connection, space: &str, peer: &str) -> usize {
+        c.query_row(
+            "SELECT COUNT(*) FROM meta.sync_state WHERE substr(key, 1, length(?1)) = ?1",
+            params![entity_seen_prefix(space, peer)],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap() as usize
+    }
+
+    /// ⭐ **判据①（遗留风险③）**：**超上限 ⇒ 行数回到上限内**，且**只删该删的**（别栏一行不动、留下的值一字不改）。
+    ///
+    /// 这里是"值大的留下"：活跃 5000 条（值 10..5009）＋ 陈旧 3 条（值 1..3，对端早就没有它们了）
+    /// ⇒ 裁掉的**必须恰好**是那 3 条陈旧行。
+    ///
+    /// **变异**：① `ORDER BY CAST(value AS INTEGER) DESC` 改 `ASC` ⇒ 留陈旧、裁活跃 ⇒ 本判据红；
+    /// ② `LIMIT -1 OFFSET ?2` 改 `LIMIT ?2` ⇒ 反着删、只留 3 行 ⇒ 红；
+    /// ③ 去掉 `substr(...) = ?1` 的前缀条件 ⇒ 别栏被一起裁 ⇒ 红。
+    #[test]
+    fn entity_seen_prune_brings_the_rows_back_under_the_cap() {
+        let c = space_conn("me");
+        seed_entity_seen(&c, "ws", "A", 0, 5000, 10);
+        for (i, id) in ["s0", "s1", "s2"].iter().enumerate() {
+            crate::sync::set_meta_state(
+                &c,
+                &format!("{}{}", entity_seen_prefix("ws", "A"), id),
+                &(i as i64 + 1).to_string(),
+            )
+            .unwrap();
+        }
+        // 别栏：同一空间另一台对端 ／ 同一台对端另一个空间 —— 裁剪⛔不许碰
+        seed_entity_seen(&c, "ws", "B", 0, 2, 1);
+        seed_entity_seen(&c, "ws2", "A", 0, 2, 1);
+
+        assert_eq!(count_entity_seen(&c, "ws", "A"), 5003);
+        assert_eq!(
+            prune_entity_seen(&c, "ws", "A", MAX_ENTITY_SEEN_PER_PEER),
+            3,
+            "超上限 3 行 ⇒ 恰好裁 3 行"
+        );
+        assert_eq!(
+            count_entity_seen(&c, "ws", "A"),
+            MAX_ENTITY_SEEN_PER_PEER,
+            "判据①：超上限 ⇒ 行数回到上限内"
+        );
+        let m = entity_seen_map(&c, "ws", "A");
+        assert_eq!(m.len(), MAX_ENTITY_SEEN_PER_PEER, "读回来也必须是上限内");
+        for stale in ["s0", "s1", "s2"] {
+            assert!(
+                m.get(stale).is_none(),
+                "值最小的（对端最近没动过/早没了）必须先走：{stale}"
+            );
+        }
+        assert_eq!(m.get("p0"), Some(&10), "留下的行**值一个字不改**（只删不编）");
+        assert_eq!(m.get("p4999"), Some(&5009), "值最大的必须留住");
+        // 别栏一行不动 + 幂等：已经在上限内 ⇒ 一行都不动
+        assert_eq!(count_entity_seen(&c, "ws", "B"), 2);
+        assert_eq!(count_entity_seen(&c, "ws2", "A"), 2);
+        assert_eq!(
+            prune_entity_seen(&c, "ws", "A", MAX_ENTITY_SEEN_PER_PEER),
+            0,
+            "上限之内不许再动（否则每轮都在删）"
+        );
+        assert_eq!(count_entity_seen(&c, "ws", "A"), MAX_ENTITY_SEEN_PER_PEER);
+    }
+
+    /// ⭐ **判据②（遗留风险③）**：裁剪后**再对账一次**最多多补一次、**不会无限补**。
+    ///
+    /// 两半：
+    /// ① **裁掉的正好是陈旧行**（对端表里没有它们）⇒ `entities_to_pull` **一条都不多**，
+    ///    而且摘要**被这对齐了**（陈旧多出来的行正是摘要长期对不上的真正原因）；
+    /// ② **裁掉的确实还在对端表里** ⇒ 恰好**多补一次**（同一实体在清单里不重复），
+    ///    补回来之后摘要与对端一致 ⇒ **下一轮对账只发一次摘要就收手**（⛔ 不会无限补）。
+    ///
+    /// **变异**：把 `prune_entity_seen` 改成"先删再插一条占位"或"把值改小" ⇒ 第①半的
+    /// `need_after` / 摘要一致当场红；把 `maybe_reconcile_entities` 里"摘要一致就 return"删掉
+    /// ⇒ 第②半第二轮不再只有 `digest_only` ⇒ 红。
+    #[tokio::test]
+    async fn entity_seen_prune_costs_at_most_one_extra_pull_and_then_goes_quiet() {
+        // ═══ ① 裁掉的是陈旧行 ⇒ 一条都不用多补，摘要反而被这对齐（纯函数 ＋ 夹具）═══
+        let c = space_conn("me");
+        let peer_map: BTreeMap<String, i64> = (0..5000).map(|i| (format!("p{i}"), 10 + i as i64)).collect();
+        seed_entity_seen(&c, "ws", "A", 0, 5000, 10);
+        for (id, seq) in [("s0", 1i64), ("s1", 2)] {
+            crate::sync::set_meta_state(
+                &c,
+                &format!("{}{}", entity_seen_prefix("ws", "A"), id),
+                &seq.to_string(),
+            )
+            .unwrap();
+        }
+        let before = entity_seen_map(&c, "ws", "A");
+        assert!(
+            entities_to_pull(&before, &peer_map).is_empty(),
+            "前提：裁剪前没有要补的（对端有的我都有）"
+        );
+        assert_eq!(prune_entity_seen(&c, "ws", "A", MAX_ENTITY_SEEN_PER_PEER), 2);
+        let after = entity_seen_map(&c, "ws", "A");
+        let need_after = entities_to_pull(&after, &peer_map);
+        assert!(
+            need_after.is_empty(),
+            "裁掉的正好是陈旧行 ⇒ **一条都不用多补**（这是「不会漏补」那一面的机械判据）：{need_after:?}"
+        );
+        assert_eq!(
+            entity_digest(&after),
+            entity_digest(&peer_map),
+            "而且摘要被这对齐了 —— 陈旧多出来的行正是「摘要永远对不上、每轮换整张表」的原因"
+        );
+        assert_eq!(
+            prune_entity_seen(&c, "ws", "A", MAX_ENTITY_SEEN_PER_PEER),
+            0,
+            "上限之内不再触发 ⇒ 不会每轮制造新的待补"
+        );
+
+        // ═══ ② 裁掉的还在对端表里 ⇒ 恰好多补一次，补完下一轮安静（走真接线）═══
+        use crate::mesh_endpoint::{Endpoint, HttpReply};
+        use std::future::Future;
+        use std::pin::Pin;
+        struct Fake {
+            peer_digest: String,
+            page_payload: String,
+            table: Vec<(String, i64)>,
+            seen: Mutex<Vec<String>>,
+        }
+        impl Endpoint for Fake {
+            fn get<'a>(
+                &'a self,
+                target: &'a str,
+                _auth: Option<(&'a str, i64, &'a str)>,
+                _token: Option<&'a str>,
+            ) -> Pin<Box<dyn Future<Output = Result<HttpReply, String>> + Send + 'a>> {
+                self.seen.lock().unwrap().push(target.to_string());
+                let (status, body) = if target.ends_with("digest_only=1") {
+                    (
+                        200,
+                        serde_json::json!({"digest": self.peer_digest, "truncated": false, "count": self.table.len()})
+                            .to_string(),
+                    )
+                } else if target == "/mesh/entities?space_id=space-z" {
+                    (
+                        200,
+                        serde_json::json!({
+                            "digest": self.peer_digest, "truncated": false, "count": self.table.len(),
+                            "entities": self
+                                .table
+                                .iter()
+                                .map(|(id, seq)| serde_json::json!({"id": id, "latest_seq": seq}))
+                                .collect::<Vec<_>>()
+                        })
+                        .to_string(),
+                    )
+                } else if target == "/mesh/page?space_id=space-z&id=p0" {
+                    (
+                        200,
+                        serde_json::json!({"id": "p0", "updated_at": 10, "payload": self.page_payload})
+                            .to_string(),
+                    )
+                } else {
+                    (404, "{}".to_string())
+                };
+                Box::pin(async move { Ok(HttpReply { status, body }) })
+            }
+        }
+
+        let c2 = Mutex::new(space_conn("me"));
+        // 对端 6 个实体（值 1..6）；本地**全部收过**、再按"上限 5 行"模拟一次裁剪（真机上限是 5000，
+        // 这里用小上限把"被裁掉且对端还持有"这一格造出来，判据本身量的是同一份代码）。
+        let peer6: BTreeMap<String, i64> = (0..6).map(|i| (format!("p{i}"), 1 + i as i64)).collect();
+        let table: Vec<(String, i64)> = peer6.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        {
+            let g = c2.lock().unwrap();
+            for (id, seq) in &peer6 {
+                crate::sync::set_meta_state(
+                    &g,
+                    &format!("{}{}", entity_seen_prefix("space-z", "dev-x"), id),
+                    &seq.to_string(),
+                )
+                .unwrap();
+            }
+            assert_eq!(
+                prune_entity_seen(&g, "space-z", "dev-x", 5),
+                1,
+                "模拟上限 5 ⇒ 恰好裁掉值最小的那一条（p0，值 1）"
+            );
+            assert_eq!(
+                entities_to_pull(&entity_seen_map(&g, "space-z", "dev-x"), &peer6),
+                vec![("p0".to_string(), 1)],
+                "被裁掉且对端还持有 ⇒ 清单里**恰好一条**（同一实体不重复、别的实体一个不多）"
+            );
+        }
+        let fake = Fake {
+            peer_digest: entity_digest(&peer6),
+            page_payload: serde_json::to_string(&page("p0", "对端的", 10)).unwrap(),
+            table,
+            seen: Mutex::new(Vec::new()),
+        };
+        let peer = MeshPeer {
+            device_id: "dev-x".to_string(),
+            base: "http://not-used.invalid:1".to_string(),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
+        };
+        maybe_reconcile_entities(&c2, &fake, &peer, "space-z", None, false).await;
+        {
+            let g = c2.lock().unwrap();
+            let seen_map = entity_seen_map(&g, "space-z", "dev-x");
+            assert_eq!(seen_map.len(), 6, "补回来又记上了（6 个实体都在）");
+            assert_eq!(
+                entity_digest(&seen_map),
+                fake.peer_digest,
+                "补完 ⇒ 摘要与对端一致（这是「下一轮安静」的前提）"
+            );
+        }
+        assert_eq!(
+            fake.seen
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|t| t.starts_with("/mesh/page"))
+                .count(),
+            1,
+            "只在裁剪后多补这**一次**：{:?}",
+            fake.seen.lock().unwrap()
+        );
+        // 再对账一次：摘要一致 ⇒ 只发一次摘要，⛔ 不再补、⛔ 不再裁
+        fake.seen.lock().unwrap().clear();
+        maybe_reconcile_entities(&c2, &fake, &peer, "space-z", None, false).await;
+        assert_eq!(
+            fake.seen.lock().unwrap().as_slice(),
+            ["/mesh/entities?space_id=space-z&digest_only=1"],
+            "判据②：裁剪之后**不会无限补** —— 补完即收敛，下一轮一次往返就结束"
+        );
+    }
+
+    /// ⭐ **判据③（遗留风险③）**：上限必须**严格大于**对端实体表的响应上限
+    /// （[`MAX_ENTITY_ROWS_IN_RESPONSE`]）。
+    ///
+    /// 为什么这条是承重的（也是 5000 这个值的依据②）：对端表在 `N+1 .. 2000` 这一档**能整张换回来**，
+    /// 若本地只留 N 行，则每轮都是"裁掉 → 补 20 → 记回 → 又被同一顺序裁掉"的**空转**（永不收敛）。
+    /// **变异**：把 `MAX_ENTITY_SEEN_PER_PEER` 改成 1500 ⇒ 本判据红。
+    #[test]
+    fn entity_seen_prune_cap_must_exceed_the_peer_table_response_cap() {
+        assert!(
+            MAX_ENTITY_SEEN_PER_PEER > MAX_ENTITY_ROWS_IN_RESPONSE,
+            "裁剪上限 {MAX_ENTITY_SEEN_PER_PEER} 必须 > 对端表的响应上限 {MAX_ENTITY_ROWS_IN_RESPONSE} \
+             —— 否则「裁了又补、补了又裁」永远收敛不了（⛔ 那不是有界裁剪，是空转）"
+        );
+    }
+
+    /// ⭐ **接线判据（遗留风险③）**：`maybe_reconcile_entities` 收尾时**真的会裁**。
+    ///
+    /// 为什么必须单独钉：对端按页 404 那一档记 seen 走的是 `record_one_entity_seen`，
+    /// **不经过** `record_entity_seen` ⇒ 只靠"吸收那一批时顺手裁"盖不住它。
+    /// **变异**：删掉 `after` 块里那次 `prune_entity_seen(...)` ⇒ 本判据读到 5002 行 ⇒ 红。
+    #[tokio::test]
+    async fn entity_reconcile_prunes_the_seen_rows_before_it_folds_the_after_digest() {
+        use crate::mesh_endpoint::{Endpoint, HttpReply};
+        use std::future::Future;
+        use std::pin::Pin;
+        struct Fake {
+            seen: Mutex<Vec<String>>,
+        }
+        impl Endpoint for Fake {
+            fn get<'a>(
+                &'a self,
+                target: &'a str,
+                _auth: Option<(&'a str, i64, &'a str)>,
+                _token: Option<&'a str>,
+            ) -> Pin<Box<dyn Future<Output = Result<HttpReply, String>> + Send + 'a>> {
+                self.seen.lock().unwrap().push(target.to_string());
+                // 对端一个实体都没有（摘要必然与本地不同）⇒ 不补任何东西，只留下"收尾该裁"这一段路
+                let body = serde_json::json!({
+                    "digest": "fnv1a64:0000000000000000:0",
+                    "truncated": false,
+                    "count": 0,
+                    "entities": []
+                })
+                .to_string();
+                Box::pin(async move {
+                    Ok(HttpReply {
+                        status: 200,
+                        body,
+                    })
+                })
+            }
+        }
+        let c = Mutex::new(space_conn("me"));
+        {
+            let g = c.lock().unwrap();
+            seed_entity_seen(&g, "space-z", "dev-x", 0, 5002, 10);
+            assert_eq!(count_entity_seen(&g, "space-z", "dev-x"), 5002);
+        }
+        let fake = Fake {
+            seen: Mutex::new(Vec::new()),
+        };
+        let peer = MeshPeer {
+            device_id: "dev-x".to_string(),
+            base: "http://not-used.invalid:1".to_string(),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
+        };
+        maybe_reconcile_entities(&c, &fake, &peer, "space-z", None, false).await;
+        let g = c.lock().unwrap();
+        assert_eq!(
+            count_entity_seen(&g, "space-z", "dev-x"),
+            MAX_ENTITY_SEEN_PER_PEER,
+            "对账收尾必须把这一栏收回上限内（否则 404 那一档记的行永远不会被裁）"
+        );
+        assert!(
+            fake.seen
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|t| !t.starts_with("/mesh/page")),
+            "这一轮没有任何要补的 ⇒ 不许因为裁剪去拉页：{:?}",
+            fake.seen.lock().unwrap()
+        );
     }
 
     /// ⭐⭐ **F2-2b 的接线判据**：摘要不一致 ⇒ 只拉「我没有 / 对端更新」的那个实体，
