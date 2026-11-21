@@ -468,6 +468,18 @@ export const GATES = [
     registered: "2026-09-28",
   },
   {
+    id: "check-ci-rust-groups",
+    group: "contract",
+    label: "CI 的两份 `--only` 名单并集 == 注册表的 rust 组（拆 job 后「拆完没人跑」的机器判据）",
+    cmd: "node scripts/check-ci-rust-groups.mjs",
+    incident:
+      "2026-11-21：为了把 rust 线从 1 个 39.1 分钟的串行 job 拆成 2 个并行 job，`ci.yml` 里出现**两份**" +
+      "`--only` 名单（各跑 rust 组的一部分）⇒ 那天起「往 rust 组加门禁」变成**要改两处**：只改一处 ⇒ " +
+      "那条门禁**没有任何 job 跑它**，而 CI **全绿**（与本仓 `mobile-views`、`check-hook-order` " +
+      "「只挂在 build 链上」那两次是同一族假绿）。拆 job 那一轮只有 4 处注释在提醒 —— 注释不是判据。",
+    registered: "2026-11-21",
+  },
+  {
     id: "check-doc-facts",
     group: "contract",
     label: "文档里的机器事实（门禁 / 能力 / 命令数）与代码一致",
