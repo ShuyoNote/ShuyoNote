@@ -1262,6 +1262,8 @@ pub fn run() {
             // ⭐ 2026-11-10（owner 批 B）：「同名但 uid 不同」冲突的列表与确认（只碰元数据）。
             mesh_panel::mesh_uid_conflicts,
             mesh_panel::mesh_uid_confirm,
+            // ⭐ A3（2026-11-21）：一次确认多对（批量勾选 ＋ 同 uid 传播；⛔ 仍只由用户点击发起）。
+            mesh_panel::mesh_uid_confirm_batch,
             // ⭐ 2026-11-11（§13 A2）：只读「设备×空间水位」。
             mesh_panel::mesh_watermarks,
             mesh_panel::list_sync_gaps,
