@@ -155,9 +155,27 @@ pull 回复新增一格：min_seq  （我这侧**最老**还有哪条 device_seq
     否则摘要永远对不上、每轮重拉）。⇒ 摘要会收敛，一致后**只发一次摘要**就收手。
   · ⚠️ **未做**：附件**字节**（走 `/mesh/attachment` 它自己的路，本片不碰）；对端按页取 404 的实体
     （非页 / 对端也没了）**只计数并记 seen**，不让它每轮占掉"最多补 20 个"的名额。
-  · 判据 8 条（`the_entities_endpoint_*` 3 条、`absorbing_a_peers_batch_records_*`、
-    `entity_reconcile_*` 4 条），见 `src-tauri/src/mesh.rs` 的 `mod tests`；
+  · 判据 8 条（**F2-2b 接线那一片**：`the_entities_endpoint_*` 3 条、
+    `absorbing_a_peers_batch_records_*`、`entity_reconcile_*` 4 条），见 `src-tauri/src/mesh.rs` 的 `mod tests`；
     全量 lib **1562/0/23 ignored**（本机 Windows）、默认组 67 门禁全绿。
+  · ⭐ **遗留风险③已收口（2026-11-21，`feat/seen-prune`）**：`mesh_entity_seen:*` 原先**每实体一行、
+    且永不裁剪** ⇒ 随"见过多少实体"**无界增长**。现在每（空间·对端）最多留 **5000 行**
+    （`MAX_ENTITY_SEEN_PER_PEER` ＋ `src-tauri/src/mesh.rs` 的 `prune_entity_seen`）：
+    · **上限的依据**：对端实体表只有 ≤ **2000** 行（`MAX_ENTITY_ROWS_IN_RESPONSE`）时才可能被用来补
+      ⇒ 真要拿去比的规模天生就在 2000 这一档；5000 ＝ 2.5 倍余量，而且**必须 > 2000**
+      （否则"裁掉 → 补 20 → 记回 → 又被同一顺序裁掉"每轮空转、永不收敛）；
+    · **裁谁**：`meta.sync_state` 只有 key/value 两列（没有时间戳）⇒ "最近用到"只能看**值**
+      —— 值＝对端那一实体的最新 `device_seq`，对端每动一次它就变大 ⇒ **保留值最大的 5000 条**
+      （同值按键名升序 ⇒ 结果确定、可复算）；体积 ⇒ 每（空间·对端）≈ 300–500 KB **上限**；
+    · ⛔ **只删不编**（不改任何一行的值、不插占位行）：删多了最坏是**多补一次**（拉回来会重新记上），
+      **不可能漏补**；反过来"留着一行错的/偏高的值"才会漏补 —— 这条写进了函数注释与判据名；
+    · 判据 3 条 ＋ 1 条接线（名字见 `src-tauri/src/mesh.rs` 的 `mod tests`）：
+      `entity_seen_prune_brings_the_rows_back_under_the_cap`（超上限 ⇒ 回到上限内；别栏不动、值不改）、
+      `entity_seen_prune_costs_at_most_one_extra_pull_and_then_goes_quiet`（裁掉陈旧行 ⇒ 一条都不多补、
+      摘要反而对齐；裁掉对面还持有的 ⇒ **恰好多补一次**，补完下一轮只发摘要 ⇒ 不会无限补）、
+      `entity_seen_prune_cap_must_exceed_the_peer_table_response_cap`（5000 > 2000 机器钉住）、
+      `entity_reconcile_prunes_the_seen_rows_before_it_folds_the_after_digest`（**接线**：对账收尾真的会裁
+      —— 对端按页 404 那一档记的行不经过 `record_entity_seen`，只靠它兜住）。
 - **F2-2 的「段清单按序号补」仍未做**（本节上面那条 `missing_segments` 只算不改）—— 与 F2-2b 的
   实体级对账是**两件事**：后者已经能补「我没有 / 对端更新」的实体，前者只在"真丢段"时才需要。
 - 今天能量到的只有缺口**结果**（对端 2：15 轮 / 82 条 / 最大落后 6），**没有**跨机可见的清单；
