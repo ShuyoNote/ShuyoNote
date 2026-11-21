@@ -494,6 +494,19 @@ jobs:
         # 见上面那条 ⚠️：全量 `cargo test` 里的 PDFium 对拍靠它才真跑（取不到就红在这一步）。
         run: node scripts/fetch-pdfium.mjs --check --platform linux-x64 || node scripts/fetch-pdfium.mjs --platform linux-x64
 
+      # 🔴 **2026-11-21 真机（拆 job 后第一轮就红，`509e5298`）**：必须先把依赖**编一次**。
+      #
+      # 红的原文（`rust-sm-wired` 的准备步骤）：
+      #   ❌ Cargo.lock 锁的是 libsqlite3-sys **0.38.2**，但 registry 里找到的是 [（无）]
+      #      ⇒ 不挑别的版本（按 mtime 挑会挑到陈旧副本）
+      # 根因：国密补丁要改 registry 里 `libsqlite3-sys-<ver>/sqlcipher` 的源码
+      #   （`scripts/lib/sm-library-source.mjs` 的 `resolveSqlcipherSource` 就是在 `registry/src/*/` 下找它），
+      #   而**解包发生在编译时**：`cargo fetch` 只下载、不把源码铺到 `registry/src/`（第一版修法就踩这个）。
+      # 旧单 job 里是 `rust-test` 先跑 `cargo test` 把它解出来的；拆成独立 job 后没人先跑过 ⇒ registry/src 是空的。
+      # ⇒ 这一步编一次默认特性（缓存命中后约 1.5 分钟），让 `registry/src/` 有那份源码。
+      - name: 先编一次默认特性（国密补丁要改 registry/src 里 libsqlite3-sys 的源码）
+        run: cargo build --manifest-path src-tauri/Cargo.toml --lib
+
       - name: Rust 国密接线构建（rust-sm-wired ＋ 两条产物/registry 检查）
         # 这 3 条合起来就是 `rust-tests` 那条 `--only` 名单的**补集**（9 条 rust 门禁全在 CI 里跑）。
         # 顺序按注册表：`rust-sm-wired` → `gm-registry-clean` → `check-crypto-backend`，
