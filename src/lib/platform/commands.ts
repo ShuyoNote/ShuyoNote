@@ -478,12 +478,10 @@ export interface MeshUidKey {
   peerUid: string;
 }
 
-/** ⭐ **A3（2026-11-21）**：批量确认的**读数**（只回数量，⛔ 不回任何 uid/正文）。 */
+/** ⭐ **A3（2026-11-21，owner 拍「只批量、不传播」）**：批量确认的**读数**（只回数量，⛔ 不回任何 uid/正文）。 */
 export interface MeshUidBatchDone {
-  /** 真正写进确认表的对数。 */
+  /** 真正写进确认表的对数（＝ 勾选命中数；**不做传播**）。 */
   written: number;
-  /** 其中来自**传播**（uid 相同、自己没被勾）的条数。 */
-  propagated: number;
 }
 
 /**
@@ -1372,11 +1370,11 @@ export interface CommandMap {
   /** 确认「这一台对端的这个 uid」就是本机同名空间 ⇒ 融合闸放行（只写同步元数据）。 */
   mesh_uid_confirm: { args: { peerDevice: string; peerUid: string }; result: boolean };
   /**
-   * ⭐ **A3（2026-11-21）**：**一次确认多对**（批量勾选 ＋ 同 uid 传播）。
+   * ⭐ **A3（2026-11-21，owner 拍「只批量、不传播」）**：**一次确认多对**（批量勾选）。
    *
    * 口径（三条判据与后端纯函数同名，见 `src-tauri/src/mesh_uid_confirm.rs`）：
    * ① `batch-selected-only`：只写**勾选且候选表里真有**的键；
-   * ② `propagate-same-uid-only`：只沿 **uid 相同** 传播（uid 不同 ⇒ 绝不传播）；
+   * ② `no-propagation-on-batch`：**不做传播** —— 同 uid 的其它候选只要没被勾，一行都不写；
    * ③ `empty-selection-writes-nothing`：空选 ⇒ 不发请求、不开库、不写行。
    *
    * ⚠️ 确认动作仍然**只能由用户点击发起**（⛔ 无后台调用点）。

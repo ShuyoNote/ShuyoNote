@@ -1,21 +1,21 @@
-// 判据：A3（2026-11-21）「批量勾选 ＋ 同 uid 传播」的前端那一半 —— **选择 ⇒ 要送的键**。
+// 判据：A3（2026-11-21，owner 拍「只批量、不传播」）的前端那一半 —— **选择 ⇒ 要送的键**。
 //
 // 三条判据名与 Rust 侧同名（`mesh_uid_confirm::plan_batch_confirm` 有对应单测）：
 // ① `batch-selected-only`：请求体逐个都在勾选里；未勾的行一个都不送；
-// ② `propagate-same-uid-only`：预览条数只数 uid 相同的；uid 不同 ⇒ 0；
+// ② `no-propagation-on-batch`：**不做传播** —— 勾一行只送一行，同 uid 的兄弟候选不送；
 // ③ `empty-selection-writes-nothing`：空选／空表 ⇒ 空数组（调用方据此不发请求）。
 import { describe, expect, it } from "vitest";
 
-import { sameUidExtra, selectedPairs, uidPairKey } from "./meshUidSelection";
+import { selectedPairs, uidPairKey } from "./meshUidSelection";
 
 /** 四行覆盖三种"看起来像"的关系（全部同名 —— 名字不参与判据）。 */
 const rows = [
   { peerDevice: "dev-a", peerUid: "uid-1", localName: "山焦招标" },
-  // 另一台设备、**同一个 uid** ⇒ 同一空间身份（会传播）
+  // 另一台设备、**同一个 uid**（旧口径会传播；新口径 ⛔ 不传播）
   { peerDevice: "dev-b", peerUid: "uid-1", localName: "山焦招标" },
-  // 同一台设备、**uid 不同** ⇒ ⛔ 绝不传播
+  // 同一台设备、**uid 不同**
   { peerDevice: "dev-a", peerUid: "uid-2", localName: "山焦招标" },
-  // 另一台、另一个 uid ⇒ ⛔ 不带
+  // 另一台、另一个 uid
   { peerDevice: "dev-c", peerUid: "uid-9", localName: "山焦招标" },
 ];
 
@@ -35,27 +35,24 @@ describe("meshUidSelection", () => {
     expect(selectedPairs(rows, check(["dev-z", "uid-404"]))).toEqual([]);
   });
 
-  it("② propagate-same-uid-only：只数 uid 相同的候选；uid 不同 ⇒ 0", () => {
-    // 勾 dev-a/uid-1 ⇒ 只有 dev-b/uid-1 会被一并确认（dev-a/uid-2 是同一台但 uid 不同）
-    expect(sameUidExtra(rows, [{ peerDevice: "dev-a", peerUid: "uid-1" }])).toBe(1);
-    // 勾 dev-a/uid-2 ⇒ 没有任何别的候选同 uid
-    expect(sameUidExtra(rows, [{ peerDevice: "dev-a", peerUid: "uid-2" }])).toBe(0);
-    // 勾全部 ⇒ 没有"额外"（每一行都在勾选里）
-    expect(sameUidExtra(rows, selectedPairs(rows, check(
+  it("② no-propagation-on-batch：勾一行只送一行 —— 同 uid 的兄弟候选**不**送", () => {
+    const one = selectedPairs(rows, check(["dev-a", "uid-1"]));
+    expect(one).toEqual([{ peerDevice: "dev-a", peerUid: "uid-1" }]);
+    // 断言"没有第二个"（dev-b/uid-1 与它 uid 完全相同，但没勾就不送）
+    expect(one).toHaveLength(1);
+    expect(one[0].peerDevice).toBe("dev-a");
+    // 全部勾上时才是四行（顺序跟 rows）
+    expect(selectedPairs(rows, check(
       ["dev-a", "uid-1"],
       ["dev-b", "uid-1"],
       ["dev-a", "uid-2"],
       ["dev-c", "uid-9"],
-    )))).toBe(0);
-    // ⛔ 名字相同不是传播理由：只认 uid
-    expect(sameUidExtra(rows, [{ peerDevice: "dev-c", peerUid: "uid-9" }])).toBe(0);
+    ))).toHaveLength(4);
   });
 
   it("③ empty-selection-writes-nothing：空选／空表 ⇒ 不发请求", () => {
     expect(selectedPairs(rows, new Set())).toEqual([]);
     expect(selectedPairs([], check(["dev-a", "uid-1"]))).toEqual([]);
-    expect(sameUidExtra(rows, [])).toBe(0);
-    expect(sameUidExtra([], [{ peerDevice: "dev-a", peerUid: "uid-1" }])).toBe(0);
   });
 
   it("行键把设备与 uid 都算进去（同一台设备的不同 uid 不是同一行）", () => {

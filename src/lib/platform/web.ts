@@ -1825,9 +1825,9 @@ export function makeInvoke(store: SqliteStore) {
       return false as T;
     }
     if (cmd === "mesh_uid_confirm_batch") {
-      // ⭐ A3（2026-11-21）：Web 版没有设备直连层 ⇒ 没有候选可确认；如实回"一行都没写"
-      //   （⛔ 不编 written>0；候选列表在 Web 上本来就是空的，界面根本不会走到这里）。
-      return { written: 0, propagated: 0 } as T;
+      // ⭐ A3（2026-11-21，owner 拍「只批量、不传播」）：Web 版没有设备直连层 ⇒ 没有候选可确认；
+      //   如实回"一行都没写"（⛔ 不编 written>0；候选列表在 Web 上本来就是空的，界面根本不会走到这里）。
+      return { written: 0 } as T;
     }
     if (cmd === "list_sync_gaps") {
       // ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：Web 版没有设备直连层，

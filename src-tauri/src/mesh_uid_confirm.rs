@@ -99,25 +99,12 @@ pub struct MeshUidKey {
     pub peer_uid: String,
 }
 
-/// ⭐ **A3（2026-11-21）**：批量确认的**纯函数计划** —— 「选择 ⇒ 哪些键要写」× 同 uid 传播。
-///
-/// ⚠️ 它**只算**：⛔ 不碰库、⛔ 不读时钟、⛔ 不发包。命令层照这份清单在**一个事务**里写。
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct BatchConfirmPlan {
-    /// 要写进 `mesh_uid_confirmations` 的键（去重、排序；＝ 勾选命中 ＋ 同 uid 传播）。
-    pub write: Vec<(String, String)>,
-    /// 其中**来自传播**（uid 相同、自己没被勾）的条数（界面用它说"另外几对也一并确认"）。
-    pub propagated: usize,
-}
-
 /// ⭐ **A3（2026-11-21）**：`mesh_uid_confirm_batch` 的读数（只回数量，⛔ 不回任何 uid/正文）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MeshUidBatchDone {
-    /// 真正写进确认表的对数。
+    /// 真正写进确认表的对数（＝ 勾选命中数；**不做传播**）。
     pub written: usize,
-    /// 其中来自传播（同 uid、未被勾选）的条数。
-    pub propagated: usize,
 }
 
 /// ⭐ **A3（2026-11-21）**：**纯函数** —— 勾选 ＋ 候选表 ⇒ 要写哪些确认键。
@@ -125,19 +112,19 @@ pub struct MeshUidBatchDone {
 /// 三条判据（命令层与前端各自只负责其中一段，两边判据同名）：
 /// 1. **`batch-selected-only`**：批量阶段只从**勾选**里出发 —— 候选表里没有的键一行都不写
 ///    （⛔ 不替调用方猜；与 `mesh_create_spaces`「只认候选表里有的名字」同一口径）；
-/// 2. **`propagate-same-uid-only`**：确认后把结论传播到**同一个 `space_uid`** 的候选，
-///    ⛔ uid 不同 ⇒ **绝不传播**（哪怕同一台设备）。
-///    ⚠️ 传播**只看 uid、不看设备**：`(peer_device, peer_uid)` 是候选表主键 ⇒
-///    "同一台设备的同一个 uid"不可能有第二条候选；能传播到的必然是**别的设备报了同一个
-///    uid** ＝ 同一个空间身份（这正是"每对设备各点一次"要省掉的那一半）。
-/// 3. **`empty-selection-writes-nothing`**：空选／全是空键／没有候选 ⇒ 空计划
+/// 2. **`no-propagation-on-batch`**：**不做传播**（owner 2026-11-21 拍）——
+///    ⛔ 另一个候选即使 `space_uid` **完全相同**、也**一行都不写**；
+///    理由：**不让用户没有逐行看见的行被写**（"同一个 uid ⇒ 同一个空间"这个推断
+///    不替用户做 —— 要写哪几行，只能由他勾哪几行决定）。这与旧版「同 uid 传播」是
+///    **口径变更**，不是实现细节；
+/// 3. **`empty-selection-writes-nothing`**：空选／全是空键／没有候选 ⇒ 空清单
 ///    （命令层据此**不开库、不写行**）。
 pub fn plan_batch_confirm(
     candidates: &[MeshUidConflict],
     selected: &[MeshUidKey],
-) -> BatchConfirmPlan {
+) -> Vec<(String, String)> {
     // ---- ① 批量：只认"勾了 **且** 候选表里真有"的键（trim 后比较；空键一律丢，⛔ 不猜）----
-    let mut picked: Vec<(String, String)> = Vec::new();
+    let mut write: Vec<(String, String)> = Vec::new();
     for k in selected {
         let (dev, uid) = (k.peer_device.trim(), k.peer_uid.trim());
         if dev.is_empty() || uid.is_empty() {
@@ -149,33 +136,15 @@ pub fn plan_batch_confirm(
         {
             continue;
         }
-        if !picked.iter().any(|(d, u)| d == dev && u == uid) {
-            picked.push((dev.to_string(), uid.to_string()));
+        // ② 这里**没有**第二步传播：`write` 到上一步为止就定了 —— 勾了几行就写几行。
+        if !write.iter().any(|(d, u)| d == dev && u == uid) {
+            write.push((dev.to_string(), uid.to_string()));
         }
     }
-    // ③ 空选 / 一个都没命中 ⇒ 空计划（⛔ 不发请求、不写库）。
-    if picked.is_empty() {
-        return BatchConfirmPlan::default();
-    }
-    // ---- ② 传播：只沿 **uid 相同** 扩散；uid 不同的一行都不带 ----
-    // 先把"这一批勾中的 uid"拷成自有集合 —— `picked` 随后要被 move 成 `write`。
-    let wanted: std::collections::HashSet<String> = picked.iter().map(|(_, u)| u.clone()).collect();
-    let mut write = picked;
-    let mut propagated = 0usize;
-    for c in candidates {
-        let (dev, uid) = (c.peer_device.trim(), c.peer_uid.trim());
-        if uid.is_empty() || !wanted.contains(uid) {
-            continue;
-        }
-        if write.iter().any(|(d, u)| d == dev && u == uid) {
-            continue;
-        }
-        write.push((dev.to_string(), uid.to_string()));
-        propagated += 1;
-    }
+    // ③ 空选／一个都没命中 ⇒ 空清单（⛔ 不发请求、不写库）。
     // 稳定顺序：同一个勾选集合永远算出同一份清单（判据/事务都按它走）。
     write.sort();
-    BatchConfirmPlan { write, propagated }
+    write
 }
 
 /// 用户确认「这一台对端的这个 uid 就是我这台同名空间」。
@@ -292,63 +261,57 @@ mod tests {
             cand("dev-a", "uid-1"),
             cand("dev-b", "uid-1"),
             cand("dev-a", "uid-2"),
+            cand("dev-c", "uid-9"),
         ];
-        let plan = plan_batch_confirm(&cands, &[key("dev-a", "uid-1")]);
+        // 勾两对 ⇒ 只写这两对；另外两行（含**同 uid 的 dev-b**）一行都不写
+        let plan = plan_batch_confirm(&cands, &[key("dev-a", "uid-1"), key("dev-c", "uid-9")]);
         assert_eq!(
-            plan.write,
+            plan,
             vec![
                 ("dev-a".to_string(), "uid-1".to_string()),
-                ("dev-b".to_string(), "uid-1".to_string()),
+                ("dev-c".to_string(), "uid-9".to_string()),
             ],
-            "勾一对一 ⇒ 写这一对 ＋ 同 uid 的另一台；⛔ 不写未勾的 uid-2"
+            "勾哪几行就写哪几行"
         );
-        assert_eq!(plan.propagated, 1, "另一台那条走的是传播");
-
         // 勾一个候选表里根本不存在的键 ⇒ 一行都不写（⛔ 不替调用方猜）
-        let plan = plan_batch_confirm(&cands, &[key("dev-z", "uid-404")]);
-        assert_eq!(plan, BatchConfirmPlan::default());
-
+        assert!(plan_batch_confirm(&cands, &[key("dev-z", "uid-404")]).is_empty());
         // 同一键勾两次 ⇒ 只写一行
-        let plan = plan_batch_confirm(&cands, &[key("dev-a", "uid-2"), key("dev-a", "uid-2")]);
         assert_eq!(
-            plan.write,
+            plan_batch_confirm(&cands, &[key("dev-a", "uid-2"), key("dev-a", "uid-2")]),
             vec![("dev-a".to_string(), "uid-2".to_string())],
-            "去重；且 uid-2 没有同 uid 的别的候选"
+            "去重"
         );
-        assert_eq!(plan.propagated, 0);
     }
 
-    /// ⭐ A3 判据 ② **`propagate-same-uid-only`**：传播只沿**同一个 uid**；
-    /// ⛔ uid 不同 ⇒ 绝不传播（哪怕同一台设备、同一个名字）。
+    /// ⭐ A3 判据 ② **`no-propagation-on-batch`**（owner 2026-11-21 拍）：
+    /// **不做传播** —— 另一个候选即使 `space_uid` **完全相同**，只要没被勾，就**一行都不写**
+    /// （理由：不让用户没有逐行看见的行被写）。
     #[test]
-    fn 传播只认_uid_相同_不同的一行都不带() {
+    fn 批量不传播_同_uid_的其它候选一行都不写() {
         let cands = vec![
+            // 同一台设备、同名、不同 uid
             cand("dev-a", "uid-1"),
-            // 同一台设备、同名、但 uid 不同 ⇒ ⛔ 绝不传播
             cand("dev-a", "uid-2"),
-            // 另一台设备、同一个 uid ⇒ 同一空间身份 ⇒ 传播
+            // **另一台设备、完全相同的 uid** ⇒ 旧口径会传播；新口径 ⛔ 一行都不写
             cand("dev-b", "uid-1"),
-            // 另一台设备、不同 uid ⇒ ⛔ 不带
+            // 另一台设备、不同 uid
             cand("dev-b", "uid-9"),
         ];
         let plan = plan_batch_confirm(&cands, &[key("dev-a", "uid-1")]);
         assert_eq!(
-            plan.write,
-            vec![
-                ("dev-a".to_string(), "uid-1".to_string()),
-                ("dev-b".to_string(), "uid-1".to_string()),
-            ],
-            "只有 uid-1 那两条被写"
+            plan,
+            vec![("dev-a".to_string(), "uid-1".to_string())],
+            "⛔ 只写被勾的那一行 —— dev-b/uid-1 哪怕同 uid 也不写"
         );
-        assert_eq!(plan.propagated, 1);
         assert!(
-            !plan.write.iter().any(|(_, u)| u == "uid-2" || u == "uid-9"),
-            "⛔ uid 不同的一行都不许出现：{:?}",
-            plan.write
+            !plan
+                .iter()
+                .any(|(d, u)| d == "dev-b" || u == "uid-2" || u == "uid-9"),
+            "⛔ 任何未被勾的候选都不许出现：{plan:?}"
         );
     }
 
-    /// ⭐ A3 判据 ③ **`empty-selection-writes-nothing`**：空选／空键／没有候选 ⇒ 空计划。
+    /// ⭐ A3 判据 ③ **`empty-selection-writes-nothing`**：空选／空键／没有候选 ⇒ 空清单。
     #[test]
     fn 空选或没有候选_产出空计划() {
         let cands = vec![cand("dev-a", "uid-1")];
@@ -358,39 +321,39 @@ mod tests {
             vec![key("  ", "uid-1")],
             vec![key("dev-a", "   ")],
         ] {
-            assert_eq!(
-                plan_batch_confirm(&cands, &selected),
-                BatchConfirmPlan::default(),
+            assert!(
+                plan_batch_confirm(&cands, &selected).is_empty(),
                 "空选/空键 ⇒ 不写：{selected:?}"
             );
         }
         // 没有候选 ⇒ 哪怕勾了东西也不写
-        assert_eq!(
-            plan_batch_confirm(&[], &[key("dev-a", "uid-1")]),
-            BatchConfirmPlan::default()
-        );
+        assert!(plan_batch_confirm(&[], &[key("dev-a", "uid-1")]).is_empty());
     }
 
-    /// ⭐ A3（端到端那一半）：把计划**逐条**落进确认表 ⇒ 只有计划里的键被确认，
-    /// 同 uid 的另一台也放行，uid 不同的仍然拒绝。
+    /// ⭐ A3（端到端那一半）：把清单**逐条**落进确认表 ⇒ **只**确认清单里的键；
+    /// 同 uid 的另一台**仍然没被确认**（判据 `no-propagation-on-batch`）。
     #[test]
-    fn 计划落库后_同_uid_放行_不同_uid_仍然拒绝() {
+    fn 计划落库后_只确认清单里的那一对_同_uid_的仍拒绝() {
         let c = conn();
         record_candidate(&c, "dev-a", "uid-1", "山焦招标", "山焦招标", 1).unwrap();
         record_candidate(&c, "dev-b", "uid-1", "山焦招标", "山焦招标", 1).unwrap();
         record_candidate(&c, "dev-a", "uid-2", "山焦招标", "山焦招标", 1).unwrap();
         let cands = list_candidates(&c).unwrap();
         let plan = plan_batch_confirm(&cands, &[key("dev-a", "uid-1")]);
-        for (dev, uid) in &plan.write {
+        for (dev, uid) in &plan {
             confirm(&c, dev, uid, 10).unwrap();
         }
-        assert!(is_confirmed(&c, "dev-a", "uid-1"));
-        assert!(is_confirmed(&c, "dev-b", "uid-1"), "同 uid 的那台也被写");
+        assert!(is_confirmed(&c, "dev-a", "uid-1"), "勾中的那一对被确认");
         assert!(
-            !is_confirmed(&c, "dev-a", "uid-2"),
-            "⛔ uid 不同 ⇒ 绝不传播"
+            !is_confirmed(&c, "dev-b", "uid-1"),
+            "⛔ 同 uid 的另一台**没有**被写（不传播）"
         );
-        assert_eq!(plan.write.len(), 2, "只写两行");
+        assert!(!is_confirmed(&c, "dev-a", "uid-2"), "⛔ uid 不同更不会被写");
+        // dev-b/uid-1 仍在候选表里，等用户自己勾
+        assert!(list_candidates(&c)
+            .unwrap()
+            .iter()
+            .any(|r| r.peer_device == "dev-b" && r.peer_uid == "uid-1"));
     }
 
     fn key(dev: &str, uid: &str) -> MeshUidKey {

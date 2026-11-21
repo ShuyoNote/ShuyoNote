@@ -5,9 +5,10 @@
 // ② 有冲突 ⇒ 列出本地名字；**界面上不出现**对端 uid / 设备 id（内部标识）；
 // ③ 点确认 ⇒ 先弹二次确认（window.confirm），确认后才调命令并刷新。
 //
-// ⭐ A3（2026-11-21）：批量勾选 ＋ 一次确认 —— 三条判据（与后端纯函数同名）：
+// ⭐ A3（2026-11-21，owner 拍「只批量、不传播」）—— 三条判据（与后端纯函数同名）：
 // ① `batch-selected-only`：请求体**逐个都是勾选的**（勾两行 ⇒ 只送两行）；
-// ② `propagate-same-uid-only`：界面上"另外 N 对"只数 **uid 相同** 的（uid 不同 ⇒ 不数）；
+// ② `no-propagation-on-batch`：**不做传播** —— 点一行只送那一行、勾一行只送那一行，
+//    同 uid 的兄弟候选**一个都不送**；界面上也不再有"另外 N 对会一并确认"的预告；
 // ③ `empty-selection-writes-nothing`：一个都不勾 ⇒ 按钮禁用、点不动也**不发请求**。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
@@ -34,9 +35,9 @@ const row = {
   peerName: "山焦招标",
   lastSeenAt: 1000,
 };
-/** 另一台设备、**同一个 uid**（＝ 同一个空间身份 ⇒ 该被传播）。 */
+/** 另一台设备、**同一个 uid**（旧口径会传播；新口径 ⛔ 绝不传播）。 */
 const rowSameUid = { ...row, peerDevice: "device-peer-yyyy" };
-/** 同一台设备、**uid 不同**（⛔ 绝不传播）。 */
+/** 同一台设备、**uid 不同**。 */
 const rowOtherUid = { ...row, peerUid: "uid-peer-other" };
 
 let host: HTMLDivElement;
@@ -88,7 +89,7 @@ describe("MeshUidConflicts", () => {
 
   it("点「确认这一对」⇒ 二次确认通过后才调批量命令（一条也走同一语义）；确认后刷新列表", async () => {
     meshUidConflicts.mockResolvedValueOnce([row]).mockResolvedValueOnce([]);
-    meshUidConfirmBatch.mockResolvedValue({ written: 1, propagated: 0 });
+    meshUidConfirmBatch.mockResolvedValue({ written: 1 });
     const confirmSpy = vi.fn().mockReturnValue(true);
     vi.stubGlobal("confirm", confirmSpy);
     flushSync(() => root.render(<MeshUidConflicts />));
@@ -120,7 +121,7 @@ describe("MeshUidConflicts", () => {
 
   it("① batch-selected-only：勾两行再点批量 ⇒ **只送勾选的那两对**", async () => {
     meshUidConflicts.mockResolvedValue([row, rowOtherUid]);
-    meshUidConfirmBatch.mockResolvedValue({ written: 2, propagated: 0 });
+    meshUidConfirmBatch.mockResolvedValue({ written: 2 });
     vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
     flushSync(() => root.render(<MeshUidConflicts />));
     await settle();
@@ -136,18 +137,26 @@ describe("MeshUidConflicts", () => {
     });
   });
 
-  it("② propagate-same-uid-only：界面那句「另外 N 对」只数 uid 相同的（uid 不同 ⇒ 0）", async () => {
+  it("② no-propagation-on-batch：勾一行只送一行，同 uid 的兄弟候选不送，也没有「另外 N 对」预告", async () => {
     meshUidConflicts.mockResolvedValue([row, rowSameUid, rowOtherUid]);
+    meshUidConfirmBatch.mockResolvedValue({ written: 1 });
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
     flushSync(() => root.render(<MeshUidConflicts />));
     await settle();
     const boxes = host.querySelectorAll<HTMLButtonElement>('[data-testid="mesh-uid-check"]');
-    // 勾第 1 行（uid-1）⇒ 第 2 行同 uid 会被一并确认；第 3 行同设备但 uid 不同 ⇒ 不算
+    // 只勾第 1 行（uid 与第 2 行完全相同）
     click(boxes[0]);
-    expect(host.textContent ?? "").toContain("另外 1 对");
-    // 换成只勾第 3 行（uid 不同那个）⇒ 没有任何"另外 N 对"
-    click(boxes[0]);
-    click(boxes[2]);
     expect(host.textContent ?? "").not.toContain("另外");
+    expect(host.textContent ?? "").not.toContain("一并确认");
+    click(host.querySelector('[data-testid="mesh-uid-confirm-batch"]')!);
+    await settle();
+    expect(meshUidConfirmBatch).toHaveBeenCalledTimes(1);
+    expect(meshUidConfirmBatch).toHaveBeenCalledWith({
+      keys: [{ peerDevice: row.peerDevice, peerUid: row.peerUid }],
+    });
+    // ⛔ dev-b/uid-1 哪怕同 uid 也不在请求体里
+    const sent = (meshUidConfirmBatch.mock.calls[0][0] as { keys: unknown[] }).keys;
+    expect(sent).toHaveLength(1);
   });
 
   it("③ empty-selection-writes-nothing：一个都不勾 ⇒ 批量按钮禁用，点它也不发请求", async () => {
@@ -164,7 +173,7 @@ describe("MeshUidConflicts", () => {
 
   it("全选 ⇒ 每一行的键都进请求体（仍是一次点击）", async () => {
     meshUidConflicts.mockResolvedValueOnce([row, rowOtherUid]).mockResolvedValueOnce([]);
-    meshUidConfirmBatch.mockResolvedValue({ written: 2, propagated: 1 });
+    meshUidConfirmBatch.mockResolvedValue({ written: 2 });
     vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
     flushSync(() => root.render(<MeshUidConflicts />));
     await settle();
