@@ -505,7 +505,10 @@ JSON 报告可以直接并入基线，不用手抄数字、也不用人工算术
 ```powershell
 # 1) 让 Linux 侧跑一次 rust 组并留下报告
 #    · GitCode：手动运行 .gitcode/workflows/rust-baseline.yml → 下载 rust-report.json
-#    · GitHub：ci.yml 的 rust-tests job 已经跑 --group rust，从 artifact 里取 test-report-rust.json
+#    · GitHub：ci.yml 的 rust-tests job 跑 rust 组的**默认特性那条线**（6 条，三条有基线下限的
+#      `rust-test` / `rust-plugins-alone` / `rust-no-sm-crypto` 都在里面）⇒ 从工件 `test-report-rust`
+#      里取 test-report-rust.json；`rust-sm-wired` / `gm-registry-clean` / `check-crypto-backend`
+#      由并行的 `rust-gm-wiring` job 跑（工件 `test-report-rust-gm`，这三条没有基线下限）
 # 2) 并入（只写 tests/baseline.json 的读数值，不跑任何门禁）
 node scripts/test-report.mjs --baseline-from rust-report.json
 ```
@@ -537,6 +540,13 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   `euleros-2.10.1` **不在**白名单）；每个 step 必须有合法 `name`（字符集受限，全角逗号与加号都不行）；
   action 只能用 `actions/xxx@vN`（`checkout-action@0.0.1` 这类简写校验器报"不存在"）。
   ⚠️ 剩下的边界只是**运行时**：本机没有 GitCode runner，所以"真跑一次"仍待首次合并到默认分支后确认。
+- **rust 组现在由两个 job 并行跑**（2026-11-21 拆的，**判据一条没动**）：`rust-tests` 跑默认特性
+  那条线（`rust-test` / `check-rustfmt` / `rust-plugins-alone` / `gm-conformance` / `rust-no-sm-crypto` /
+  `check-sys-deps-linux`，外加两次 feature check 与打包自检），`rust-gm-wiring` 跑 `rust-sm-wired` /
+  `gm-registry-clean` / `check-crypto-backend`。两份 `--only` 名单**合起来＝`scripts/lib/gates.mjs` 的
+  整个 rust 组** ⇒ 加 rust 门禁时**两个 job 都要改**（否则它会静默没有 job 跑它）。
+  拆法、代价与实测分项（单 job 39.1 min 里 `rust-sm-wired` 18.1 / `rust-test` 10.3 / `no-sm-crypto` 4.4）
+  写在 `.github/workflows/ci.yml` 的 `rust-tests` job 开头 —— 那些数字取自 run #1798 的工件。
 - **随包 Rust 桥是独立 crate ⇒ rust 组碰不到它**：`tools/shuyonote-mcp-rust`（只依赖 `serde_json`）
   不在 `src-tauri` 包里，所以 rust 组的 `cargo test` 跑不到它的 8 条桥单测。它们由 `.github/workflows/ci.yml`
   的 `rust-tests` job 里一条**具名 step** 跑（`cargo test --manifest-path tools/shuyonote-mcp-rust/Cargo.toml --locked`）。

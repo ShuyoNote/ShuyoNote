@@ -165,8 +165,10 @@
   （`rust-test` **519/0/18** ＋ `plugin_host` 12；`rust-plugins-alone` 117；`gm-registry-clean` 绿；`rust-sm-wired` 自报跳过或真跑 **520 passed / 0 failed** 视有没有 SM 版 OpenSSL 前缀）；
   `vitest` **≈1990 用例**；`tsc --noEmit` exit=0；`smoke-web` **363/363**；`two-device-sync` **84/84**。
   断言数「只增不减」由 `tests/baseline.json` 硬校验（**新增测试要抬高基线**：`pnpm verify:baseline`）。
-- Rust 侧 CI（`.github/workflows/ci.yml` 的 `rust-tests`）：`cargo test`（含宿主子进程集成测试）
-  + **`plugins::` 单独跑**那一条 —— 2026-09-13 加的门禁，挡"只有全量跑才绿"的测试
+- Rust 侧 CI（`.github/workflows/ci.yml`）：`rust-tests`（默认特性这条线：`cargo test`（含宿主子进程集成测试）
+  + **`plugins::` 单独跑**那一条 + 两次 feature 构建检查 + 打包自检）与 `rust-gm-wiring`（`--features sm-library`
+  下的全量单测＋两条读产物/registry 的检查；2026-11-21 从 `rust-tests` 拆出，**并行**跑）。`plugins::` 单独跑
+  是 2026-09-13 加的门禁，挡"只有全量跑才绿"的测试
   （那种测试单跑必红，最费时间）。
 - Android：改 `.github/workflows/android.yml` **或** `src-tauri/src/**` / `Cargo.toml` / `Cargo.lock` /
   `src/**` / `scripts/**` / `tauri.conf.json` 等构建输入**都会触发**它（2026-09-13 之前 paths 只含
