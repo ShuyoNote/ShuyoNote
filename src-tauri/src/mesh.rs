@@ -865,6 +865,11 @@ pub fn absorb_peer_batch(
     //   `docs/specs/2026-10-09-multidevice-merge-semantics.md` §2「作用范围」）。
     let out =
         crate::sync::apply_pulled_changes(c, incoming, 0, now, crate::doc_content::Ingest::Peer)?;
+    // ⭐ **F2-2b（2026-11-21）**：把"对端这一版我见过了"记进**本地那一份实体摘要** ——
+    //   F2-2b 的"先比摘要"靠它才有意义（本机 `changes` 只记本机自己的编辑，拉回来的实体不在里面）。
+    //   ⚠️ 只记 `device_seq > 0` 的行（`record_entity_seen` 里挡着 manifest 补页那一档的 0）；
+    //   ⚠️ 失败**不连坐这一批落库**（只影响下一轮对账的摘要）。
+    record_entity_seen(c, space_id, peer_device, rows);
     let tail = rows.iter().map(|r| r.device_seq).max().unwrap_or(0);
     Ok(Absorbed {
         applied: out.count,
@@ -1869,6 +1874,11 @@ pub async fn pull_and_absorb(
     // ⭐ P3：顺带对一次"页清单"（只读、6 小时一次）—— 把"你这儿有、我这儿没有"如实打出来。
     //   ⚠️ 这一版**只报告不自动补**（自动按 id 取页是下一步；先让缺口可见，再动手补）。
     maybe_report_manifest_gap(conn, &*ep, peer, space_id, token, device_level).await;
+    // ⭐ **F2-2b（2026-11-21，owner 拍接线）**：实体级对账 —— 先比摘要（一次很小的往返），
+    //   不一样才换逐实体表，按 `entities_to_pull` 只补「我没有 / 对端更新」的那些实体。
+    //   ⚠️ 每一档失败/超限/锁态都**降级**（见函数头注），⛔ 不许打断这一轮同步；
+    //   ⛔ 不改"谁赢"、⛔ 不按序号补（序号洞大多无害 —— F2-2a 的真机教训）。
+    maybe_reconcile_entities(conn, &*ep, peer, space_id, token, device_level).await;
     // ⭐ §13 Phase 0：这一轮的基线读数（只进日志）+ 恢复时长（上次失败 → 这次成功）。
     {
         let now = crate::db::now_ms();
@@ -3715,6 +3725,13 @@ pub enum Route {
     /// ⭐ 2026-10-24（P3 对账）：`GET /mesh/page?space_id=…&id=…` —— **按 id 取单页**。
     /// 对"从未记账"的页（changes 里没有）也能按**当前状态**重播一次 ⇒ 对账能补回它。
     Page,
+    /// ⭐ **F2-2b（2026-11-21）**：`GET /mesh/entities?space_id=…` —— 这个空间里**我这一栏**的
+    /// 「实体 → 最新 `device_seq`」表 ＋ 它的**摘要**（只读；⛔ 不含 payload / 标题 / 正文）。
+    ///
+    /// 为什么给**实体级**而不是序号段：`record_change` 会把同实体的旧 upsert **取代删除**
+    /// ⇒ `device_seq` 天生稀疏，序号洞大多无害（F2-2a 真机教训）。对账只该问"哪些实体我还没有/更旧"。
+    /// ⚠️ `?digest_only=1` ⇒ **只回摘要**（固定大小，一次往返先比；不一样才来换整张表）。
+    Entities,
     /// ⭐ **2026-10-28（owner：「可否一方取消配对，另一方自动也取消？」）**：
     /// `GET /mesh/revoked?space_id=…` —— **对方撤销了本机** ⇒ 本机也把对方从名单里删掉 ✓。
     /// ⚠️ 这个端点**只认签名那一档**（见 `authorized_signed` ✓）。
@@ -3738,6 +3755,7 @@ pub fn route(method: &str, target: &str) -> Route {
         "GET" if path == "/mesh/keyring" => Route::Keyring,
         "GET" if path == "/mesh/manifest" => Route::Manifest,
         "GET" if path == "/mesh/page" => Route::Page,
+        "GET" if path == "/mesh/entities" => Route::Entities,
         "GET" if path == "/mesh/revoked" => Route::Revoke,
         _ => match not_yet(path) {
             Some(what) => Route::NotYet(what),
@@ -4695,6 +4713,7 @@ pub(crate) fn dispatch(state: &State, req: &Request) -> Reply {
         Route::Keyring => handle_keyring(state),
         Route::Manifest => handle_manifest(state, &req.target),
         Route::Page => handle_page(state, &req.target),
+        Route::Entities => handle_entities(state, &req.target),
         Route::Revoke => handle_revoked(state, req),
         Route::NotYet(what) => Reply::json(
             501,
@@ -5491,6 +5510,118 @@ fn handle_manifest(state: &State, target: &str) -> Reply {
     Reply::json(200, "OK", serde_json::json!({ "pages": rows }).to_string())
 }
 
+/// ⭐ **F2-2b（2026-11-21）**：实体表最多回这么多条 —— 超过就**只回摘要 ＋ `truncated:true`**。
+///
+/// 为什么必须有上限：这个端点的行数与"这个空间有多少个实体"成正比（页 ＋ 附件 …）。
+/// 一个几万页的空间在网线上换整张表 = 一次几十 KB～几 MB 的往返，而**对账是修复不是搬家**。
+/// ⚠️ 超限时客户端**降级成"只报不补"**（⛔ 不许拿半张表瞎补：那会把"没看到"当成"不需要" ✗）。
+const MAX_ENTITY_ROWS_IN_RESPONSE: usize = 2000;
+
+/// `GET /mesh/entities?space_id=…`（可选 `&digest_only=1`）—— 本机这一栏的实体表 ＋ 摘要。
+///
+/// ## 五条口径
+/// 1. **与 `/mesh/pull` 同一道门**（`dispatch` 里 `authorized` 已经跑过）：未配对 ⇒ 401、空间不对 ⇒ 403；
+/// 2. **数据源就是 `changes` 里"我自己"那一栏**：`GROUP BY entity_id` 取 `MAX(device_seq)`
+///    —— 与 `serve_own_records` 同一把尺（`device_id = 我`），⛔ 不掺别人的账；
+/// 3. **只读**：⛔ 不写任何表、⛔ 不含 payload（实体 id 与序号就已经够对账了）；
+/// 4. **锁态**（这个空间我知道、但这一轮打不开）⇒ **409 ＋ `{"unavailable":true}`** ——
+///    如实说"给不了表"，⛔ 不编一份空表（空表会被客户端读成"对端一个实体都没有" ✗）；
+/// 5. **> 2000 个实体** ⇒ 只回 `{digest, truncated:true, count}`（客户端据此降级）。
+///
+/// `digest_only=1` 时只回 `{digest, truncated, count}` —— 这是"先比摘要"的那一次往返：
+/// 响应大小与实体条数**无关**（一行 JSON），不一样才来换整张表。
+fn handle_entities(state: &State, target: &str) -> Reply {
+    // ① 锁态：库打不开 ⇒ 409（⛔ 不编空表）。⚠️ 与 `authorized` 同一口径：`serves || locked`。
+    let asked = match query_get(target, "space_id") {
+        Ok(v) => v,
+        Err(e) => return Reply::json(400, "Bad Request", json_error(&e)),
+    };
+    if let Some(sp) = asked.as_deref() {
+        if !state.serves(sp) && state.is_locked(sp) {
+            return Reply::json(
+                409,
+                "Conflict",
+                serde_json::json!({
+                    "unavailable": true,
+                    "locked": true,
+                    "error": "这个空间这一轮打不开（锁着）⇒ 没有实体表可给（⛔ 不编一份空的）",
+                })
+                .to_string(),
+            );
+        }
+    }
+    let conn = match state.select_space(target) {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    // ⚠️ 用窗口自称的那台设备（与 `handle_pull` 的 `max_own_device_seq` 同一来源 ⇒ 同一把尺）。
+    let own = state.cfg.device_id.trim();
+    if own.is_empty() {
+        return Reply::json(
+            500,
+            "Internal Server Error",
+            json_error("这个窗口没有 `device_id` ⇒ 不知道哪一栏是我自己的（⛔ 不猜一份表）"),
+        );
+    }
+    let g = match conn.lock() {
+        Ok(g) => g,
+        Err(_) => {
+            return Reply::json(
+                500,
+                "Internal Server Error",
+                json_error("空间库的锁被毒掉了"),
+            )
+        }
+    };
+    let table: BTreeMap<String, i64> = match g
+        .prepare(
+            "SELECT entity_id, MAX(device_seq) FROM changes
+              WHERE device_id = ?1 GROUP BY entity_id ORDER BY entity_id ASC",
+        )
+        .and_then(|mut st| {
+            st.query_map(params![own], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })
+            .and_then(|m| m.collect::<Result<Vec<_>, _>>())
+        }) {
+        Ok(v) => v.into_iter().collect(),
+        Err(e) => {
+            return Reply::json(
+                500,
+                "Internal Server Error",
+                json_error(&format!("读实体表失败（⛔ 不猜一份空表）：{e}")),
+            )
+        }
+    };
+    let digest = entity_digest(&table);
+    let count = table.len();
+    let truncated = count > MAX_ENTITY_ROWS_IN_RESPONSE;
+    let digest_only = matches!(
+        query_get(target, "digest_only"),
+        Ok(Some(v)) if v == "1" || v == "true"
+    );
+    if digest_only || truncated {
+        return Reply::json(
+            200,
+            "OK",
+            serde_json::json!({ "digest": digest, "truncated": truncated, "count": count })
+                .to_string(),
+        );
+    }
+    let entities: Vec<serde_json::Value> = table
+        .iter()
+        .map(|(id, seq)| serde_json::json!({ "id": id, "latest_seq": seq }))
+        .collect();
+    Reply::json(
+        200,
+        "OK",
+        serde_json::json!({
+            "digest": digest, "entities": entities, "truncated": false, "count": count,
+        })
+        .to_string(),
+    )
+}
+
 /// 客户端：取对端的页清单（对账用）。老对端 404 ⇒ `None`（不是错误）。
 pub async fn fetch_peer_manifest(
     // ⭐ 2026-10-25（Step 1a）：**只认端点**，不认"怎么连上的"——
@@ -5772,6 +5903,414 @@ async fn maybe_report_manifest_gap(
 
 /// 一轮对账最多补几页（⛔ 不许一次把几万页全拉：对账是修复，不是搬家）。
 const MAX_REPAIR_PER_ROUND: usize = 20;
+
+/// ⭐ **F2-2b**：一轮实体级对账最多补几个实体（与 `MAX_REPAIR_PER_ROUND` 同一口径：
+/// 对账是修复、不是搬家；剩下的下一轮接着补）。
+const MAX_ENTITY_REPAIR_PER_ROUND: usize = 20;
+
+// ─────────────── ⭐ F2-2b（2026-11-21）：实体级对账（摘要 → 实体表 → 按实体补） ───────────────
+//
+// ## 它解决什么
+// F2-0/F2-2a 只**报**缺口（"你落后到超出对端保留期了" / "中段有 N 个序号已不存在"）。
+// F2-2b 才是**补**：不按序号段补（序号洞大多无害 —— 同实体旧 upsert 被 `record_change` 取代删除），
+// 而是按**实体**比：对端有我没有 / 对端更新 ⇒ 按 id 拉回来；我更新 ⇒ ⛔ 不补（那是对端该来找我）。
+//
+// ## 两步（为什么先比摘要）
+// ① `?digest_only=1` 换一次**摘要**（响应固定一行，与实体数无关）；
+// ② 摘要不一样才换**逐实体表**，用纯函数 [`entities_to_pull`] 得到清单。
+// 内容一样时只花一次很小的往返 —— 而实体表可能几千行。
+//
+// ## 本地那一半摘要比的是什么（⚠️ 这条不写清就会被当成死循环）
+// 比的是「**我已经从这台对端收到过的**每实体最新 `device_seq`」（`meta.sync_state` 的
+// `mesh_entity_seen:*`），⛔ **不是**本机自己的 `changes`：`changes` 记的是**本机写下的**变更，
+// 从对端拉回来、应用进 `pages` 的那些**不会在那里留行** ⇒ 拿它当本地那一份，摘要永远对不上、
+// 每轮都把同一批实体重拉一遍（那不是补。⚠️ 这正是设计里"先比摘要"能成立的前提）。
+// `mesh_entity_seen:*` **只记"对端这一版我见过了"**，⛔ 不是第二条实体写库路（落库仍只有 `absorb_peer_batch` 那一条）。
+//
+// ## 三条不改
+// ⛔ 不动 `page_lineage_conflicts` 的判定；⛔ 不过滤授权（门与签名原样）；⛔ 不改"谁赢"
+// （补回来的每一条都走既有 `absorb_peer_batch` → `apply_pulled_changes`，胜负仍由那一层判）。
+
+/// 实体表的请求 target（⭐ **一处拼** ✗：签的是它、发的也是它 ✓）。
+pub(crate) fn entities_target(space_id: &str) -> String {
+    format!("/mesh/entities?space_id={space_id}")
+}
+
+/// 只要摘要那一档的 target（第一次往返；⛔ 与上面那串不同 ⇒ 签名要按各自那串签 ✓）。
+pub(crate) fn entities_digest_target(space_id: &str) -> String {
+    format!("/mesh/entities?space_id={space_id}&digest_only=1")
+}
+
+/// 对端 `/mesh/entities` 回的那一份：摘要 ＋ 逐实体表（⛔ 没有 payload）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PeerEntities {
+    pub digest: String,
+    pub entities: BTreeMap<String, i64>,
+    pub truncated: bool,
+    /// 对端说它那一栏一共多少个实体（`truncated` 时为 0 行也照样有这个数 ⇒ 日志说得出"多大"）。
+    pub count: usize,
+}
+
+/// `/mesh/entities` 的三种结局（⭐ "对端没有这个端点" / "它这一轮打不开" / "拿到表" 分开说）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EntitiesReply {
+    Table(PeerEntities),
+    /// 老构建：没有这个端点 ⇒ 跳过（⛔ 当同步失败、⛔ 当"没有实体"）
+    Unsupported,
+    /// 对端锁着（库打不开）⇒ 如实跳过（⛔ 不补、⛔ 不编空表）
+    Unavailable,
+}
+
+/// 客户端：换一次实体表/摘要（对端 404 ⇒ `Unsupported`；409/`unavailable` ⇒ `Unavailable`）。
+pub(crate) async fn fetch_peer_entities(
+    ep: &dyn crate::mesh_endpoint::Endpoint,
+    peer: &MeshPeer,
+    target: &str,
+    auth: Option<(&str, i64, &str)>,
+    token: Option<&str>,
+) -> Result<EntitiesReply, String> {
+    let reply = ep
+        .get(target, auth, token)
+        .await
+        .map_err(|e| format!("取实体表失败（对端 {}：{e}）", peer.device_id))?;
+    let status = reply.status;
+    let body = reply.body;
+    if status == 404 {
+        return Ok(EntitiesReply::Unsupported);
+    }
+    if !(200..300).contains(&status) {
+        // ⚠️ 先看它是不是"锁着"：这一档是**如实降级**，不是同步失败（两种处置完全不同）。
+        let unavailable = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("unavailable").and_then(|b| b.as_bool()))
+            .unwrap_or(false);
+        if status == 409 || unavailable {
+            return Ok(EntitiesReply::Unavailable);
+        }
+        let tail: String = body.trim().chars().take(160).collect();
+        return Err(format!("取实体表被拒：HTTP {status}：{tail}"));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("实体表响应不是 JSON：{e}"))?;
+    if v.get("unavailable")
+        .and_then(|b| b.as_bool())
+        .unwrap_or(false)
+    {
+        return Ok(EntitiesReply::Unavailable);
+    }
+    let digest = v
+        .get("digest")
+        .and_then(|d| d.as_str())
+        .ok_or_else(|| "实体表里没有 digest（版本不认识？）".to_string())?
+        .to_string();
+    let truncated = v
+        .get("truncated")
+        .and_then(|b| b.as_bool())
+        .unwrap_or(false);
+    let mut entities: BTreeMap<String, i64> = BTreeMap::new();
+    if let Some(arr) = v.get("entities").and_then(|e| e.as_array()) {
+        for it in arr {
+            let (Some(id), Some(seq)) = (
+                it.get("id").and_then(|x| x.as_str()),
+                it.get("latest_seq").and_then(|x| x.as_i64()),
+            ) else {
+                continue; // 坏条目跳过（⛔ 不拿它当 0 序号去补）
+            };
+            entities.insert(id.to_string(), seq);
+        }
+    }
+    let count = v
+        .get("count")
+        .and_then(|x| x.as_u64())
+        .map(|n| n as usize)
+        .unwrap_or(entities.len());
+    Ok(EntitiesReply::Table(PeerEntities {
+        digest,
+        entities,
+        truncated,
+        count,
+    }))
+}
+
+/// 「我已经从这台对端收到过」那一份的键前缀（`meta.sync_state`）。
+fn entity_seen_prefix(space_id: &str, peer_device: &str) -> String {
+    format!("mesh_entity_seen:{space_id}:{peer_device}:")
+}
+
+/// 读回本地那一份（⛔ **不是**本机 `changes` —— 理由见上面 F2-2b 的大段注释）。
+fn entity_seen_map(c: &Connection, space_id: &str, peer_device: &str) -> BTreeMap<String, i64> {
+    let prefix = entity_seen_prefix(space_id, peer_device);
+    let mut out: BTreeMap<String, i64> = BTreeMap::new();
+    // ⚠️ 不用 `LIKE prefix || '%'`：`LIKE` 的 `%`/`_` 是通配符，而空间 id / 实体 id 是外部字符串
+    //   ⇒ 用 `substr(...) =` 做**字面前缀**比较（长度按字符算，与 SQLite 的 TEXT 语义一致）。
+    let Ok(mut st) =
+        c.prepare("SELECT key, value FROM meta.sync_state WHERE substr(key, 1, length(?1)) = ?1")
+    else {
+        return out;
+    };
+    let Ok(rows) = st.query_map(params![prefix], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    }) else {
+        return out;
+    };
+    for (k, v) in rows.flatten() {
+        let Some(id) = k.strip_prefix(&prefix) else {
+            continue;
+        };
+        let Ok(seq) = v.parse::<i64>() else { continue };
+        if id.is_empty() || seq <= 0 {
+            continue;
+        }
+        out.insert(id.to_string(), seq);
+    }
+    out
+}
+
+/// 记**一个**实体"对端这一版我见过了"（只记变新，⛔ 不许倒退；回"记上了吗"）。
+fn record_one_entity_seen(
+    c: &Connection,
+    space_id: &str,
+    peer_device: &str,
+    entity_id: &str,
+    seq: i64,
+) -> bool {
+    if seq <= 0 || entity_id.is_empty() {
+        return false;
+    }
+    let key = format!("{}{}", entity_seen_prefix(space_id, peer_device), entity_id);
+    let cur = crate::sync::get_meta_state(c, &key)
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
+    if seq <= cur {
+        return false;
+    }
+    crate::sync::set_meta_state(c, &key, &seq.to_string()).is_ok()
+}
+
+/// 把**这一批真的收到过的**记进本地那一份摘要（只记"变新"，⛔ 不许倒退）。
+///
+/// ⚠️ 只记 `device_seq > 0`：manifest 补页那一档塞的行是 `device_seq: 0`（**不是对端的账**，
+/// 是"按当前状态重播"）⇒ 记 0 会把已见过的更高序号盖掉，下一轮又去补一遍。
+/// ⚠️ 失败**不连坐这一批落库**：它只影响下一轮对账的摘要（最坏是多跑一次对账）。
+fn record_entity_seen(c: &Connection, space_id: &str, peer_device: &str, rows: &[MeshRow]) {
+    let mut failed = 0usize;
+    for r in rows {
+        if r.device_seq <= 0 {
+            continue;
+        }
+        let key = format!(
+            "{}{}",
+            entity_seen_prefix(space_id, peer_device),
+            r.entity_id
+        );
+        let cur = crate::sync::get_meta_state(c, &key)
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
+        if r.device_seq > cur
+            && crate::sync::set_meta_state(c, &key, &r.device_seq.to_string()).is_err()
+        {
+            failed += 1;
+        }
+    }
+    if failed > 0 {
+        eprintln!(
+            "[mesh] 对端实体水位有 {failed} 条没记下来（只影响下一轮对账的摘要，不影响这一批落库）"
+        );
+    }
+}
+
+/// 一次 GET 的凭证（拿锁只做这一件事；⛔ 不跨 `await` 持锁 —— 本仓老规矩）。
+fn sign_get(
+    conn: &Mutex<Connection>,
+    space_id: &str,
+    target: &str,
+) -> Option<(String, i64, String)> {
+    let g = conn.lock().ok()?;
+    let device_id = crate::sync::device_id(&g).unwrap_or_default();
+    if device_id.trim().is_empty() {
+        return None;
+    }
+    sign_request(&g, &device_id, space_id, "GET", target, crate::db::now_ms())
+        .map(|(ts, sig)| (device_id, ts, sig))
+}
+
+/// ⭐ **F2-2b**：一轮同步末尾的实体级对账（只读 ＋ 按实体补；⛔ 不改"谁赢"、⛔ 不按序号补）。
+///
+/// 流程：本地那一份摘要 → 一次 `digest_only` 往返 → 一样就结束；不一样才换逐实体表 →
+/// [`entities_to_pull`] 得到"我没有 / 对端更新"的那些 → 逐条走**既有** `/mesh/page` ＋
+/// `absorb_peer_batch`（⛔ 不另开写库路）→ 再折一次摘要并打**一行**诊断（⛔ 不打实体 id）。
+///
+/// 失败的每一档都**降级**、不打断这一轮同步：
+/// · 拿不到摘要（网络/5xx）⇒ 记一句，跳过；
+/// · 对端没有这个端点（旧构建）⇒ 记一句，跳过；
+/// · 对端锁着（409/`unavailable`）⇒ 记一句，**这一轮不补**（如实）；
+/// · 实体数超上限（`truncated`）⇒ **只报不补**（⛔ 拿半张表瞎补）。
+async fn maybe_reconcile_entities(
+    conn: &Mutex<Connection>,
+    ep: &dyn crate::mesh_endpoint::Endpoint,
+    peer: &MeshPeer,
+    space_id: &str,
+    token: Option<&str>,
+    device_level: bool,
+) {
+    let dev8: String = peer.device_id.chars().take(8).collect();
+    // ① 本地那一份 ＋ 摘要（拿锁只这一小段）
+    let (local, before) = {
+        let Ok(g) = conn.lock() else { return };
+        let local = entity_seen_map(&g, space_id, &peer.device_id);
+        let before = entity_digest(&local);
+        (local, before)
+    };
+    // ② 第一次往返：只要摘要
+    let t1 = entities_digest_target(space_id);
+    let auth = sign_get(conn, space_id, &t1);
+    let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
+    let first = match fetch_peer_entities(ep, peer, &t1, auth_ref, token).await {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[mesh] 实体级对账：对端 {dev8} 取摘要失败（不影响这一轮同步）：{e}");
+            return;
+        }
+    };
+    let summary = match first {
+        EntitiesReply::Unsupported => {
+            eprintln!(
+                "[mesh] 实体级对账：对端 {dev8} 没有 /mesh/entities（旧构建）⇒ 跳过（等它升级）"
+            );
+            return;
+        }
+        EntitiesReply::Unavailable => {
+            eprintln!("[mesh] 实体级对账：对端 {dev8} 锁着（打不开空间库）⇒ 这一轮不补（如实）");
+            return;
+        }
+        EntitiesReply::Table(t) => t,
+    };
+    if summary.truncated {
+        eprintln!(
+            "[mesh] 实体级对账：对端 {dev8} 的实体数超过上限（{} 个）⇒ **只报不补**（⛔ 不拿半张表瞎补）｜ 摘要 {}",
+            summary.count, summary.digest
+        );
+        return;
+    }
+    // 摘要一致 ⇒ 它那一份我在本地已经对齐（这一次往返就到此为止）
+    if summary.digest == before {
+        return;
+    }
+    // ③ 第二次往返：换逐实体表
+    let t2 = entities_target(space_id);
+    let auth = sign_get(conn, space_id, &t2);
+    let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
+    let table = match fetch_peer_entities(ep, peer, &t2, auth_ref, token).await {
+        Ok(EntitiesReply::Table(t)) => t,
+        Ok(EntitiesReply::Unsupported) => {
+            eprintln!("[mesh] 实体级对账：对端 {dev8} 这次没有 /mesh/entities（旧构建？）⇒ 跳过");
+            return;
+        }
+        Ok(EntitiesReply::Unavailable) => {
+            eprintln!("[mesh] 实体级对账：对端 {dev8} 锁着（打不开空间库）⇒ 这一轮不补（如实）");
+            return;
+        }
+        Err(e) => {
+            eprintln!("[mesh] 实体级对账：对端 {dev8} 取实体表失败（不影响这一轮同步）：{e}");
+            return;
+        }
+    };
+    if table.truncated {
+        eprintln!(
+            "[mesh] 实体级对账：对端 {dev8} 的实体数超过上限 ⇒ **只报不补**（⛔ 不拿半张表瞎补）｜ 摘要 {}",
+            table.digest
+        );
+        return;
+    }
+    let need = entities_to_pull(&local, &table.entities);
+    // ④ 按实体补：只补清单上的；一条一条走 `/mesh/page` ＋ 既有 apply（⛔ 不另开写库路）
+    let mut repaired = 0usize;
+    let mut not_page = 0usize;
+    for (id, rseq) in need.iter().take(MAX_ENTITY_REPAIR_PER_ROUND) {
+        let target = format!("/mesh/page?space_id={space_id}&id={id}");
+        let auth = sign_get(conn, space_id, &target);
+        let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
+        match fetch_peer_page(ep, peer, space_id, id, auth_ref, token).await {
+            Ok(Some((payload, updated_at))) => {
+                let Ok(g) = conn.lock() else { return };
+                let local_name = crate::sync::local_space_name(&g).unwrap_or_default();
+                let row = MeshRow {
+                    // ⭐ 记的是**对端这一条的** `device_seq`（⇒ 下面 `absorb` 顺手把它记进本地那一份摘要）。
+                    device_seq: *rseq,
+                    entity: "page".to_string(),
+                    entity_id: id.clone(),
+                    op: "upsert".to_string(),
+                    payload: Some(payload),
+                    updated_at,
+                    sealed: None,
+                };
+                match absorb_peer_batch(
+                    &g,
+                    &[row],
+                    &peer.device_id,
+                    space_id,
+                    device_level,
+                    if local_name.is_empty() {
+                        None
+                    } else {
+                        Some(local_name.as_str())
+                    },
+                ) {
+                    Ok(ab) => repaired += ab.applied,
+                    Err(e) => {
+                        eprintln!("[mesh] 实体级对账：补一个实体失败（不影响这一轮同步）：{e}")
+                    }
+                }
+            }
+            // 不是页实体（附件走它自己的 `/mesh/attachment` 路，本片不碰）或对端也没了。
+            // ⚠️ **要记 seen**：不记的话这些 id 每轮都会占掉"最多补 20 个"里的一格
+            //   （实体表按 id 排，附件/墓碑 id 排在前面时，页就永远轮不到 ⇒ 饥饿）。
+            //   404 是**确定**的（`handle_page` 只在"这一台没有这一页"时回 404）⇒ 记下来不是瞎补，
+            //   而是"这一版我问过了、这一档没有可拉的页"；下一轮不再重复问它。
+            Ok(None) => {
+                not_page += 1;
+                if let Ok(g) = conn.lock() {
+                    record_one_entity_seen(&g, space_id, &peer.device_id, id, *rseq);
+                }
+            }
+            Err(e) => eprintln!("[mesh] 实体级对账：按实体取回失败（不影响这一轮同步）：{e}"),
+        }
+    }
+    // ⑤ 拉完再折一次摘要 ＋ 一行诊断（⛔ 不打 entity_id：日志会在诊断包里外传）
+    let after = {
+        let Ok(g) = conn.lock() else { return };
+        let m = entity_seen_map(&g, space_id, &peer.device_id);
+        entity_digest(&m)
+    };
+    // ⚠️ 去重（与 F2-2a 同一手法）：补不了的那几个会让 `need` 长期 > 0 ⇒ 同一签名只打一次，
+    //    否则每台对端每轮刷一行（"刷多了就没人看"）。签名 = 对端摘要 ＋ 需补数 ＋ 这轮补了几条。
+    let sig = format!("{}|{}|{repaired}", table.digest, need.len());
+    let key = format!("mesh_entities_report:{space_id}:{}", peer.device_id);
+    let last = {
+        let Ok(g) = conn.lock() else { return };
+        crate::sync::get_meta_state(&g, &key)
+    };
+    if last.as_deref() == Some(sig.as_str()) {
+        return;
+    }
+    eprintln!(
+        "[mesh] 实体级对账：对端 {dev8} 台 ｜ 需补 {} 个实体 ｜ 摘要 before={before} after={after}",
+        need.len()
+    );
+    if after != table.digest {
+        eprintln!(
+            "[mesh] 实体级对账：仍在差异（对端摘要={}）{}⇒ 下一轮继续（⛔ 不按序号补、⛔ 不瞎补）",
+            table.digest,
+            if not_page > 0 {
+                format!("；其中 {not_page} 个这一档补不了（不是页 / 对端也没了）")
+            } else {
+                String::new()
+            }
+        );
+    }
+    let Ok(g) = conn.lock() else { return };
+    let _ = crate::sync::set_meta_state(&g, &key, &sig);
+}
 
 /// ⭐ P3：对一次页清单，报告"对端有、我这边没有"的页（6 小时最多一次；只读）。
 /// ⭐ P3：**按 id 取单页**（对账补缺用）。
@@ -10132,6 +10671,568 @@ mod tests {
         assert_eq!(route("GET", "/mesh/keyring?space_id=s"), Route::Keyring);
         assert_eq!(route("GET", "/mesh/keyring/"), Route::Keyring);
         assert_eq!(route("POST", "/mesh/keyring"), Route::Unknown, "只认 GET");
+    }
+
+    // ─────────── ⭐ F2-2b（2026-11-21）：实体级对账（端点 ＋ 客户端接线）的判据 ───────────
+
+    /// ⭐ **F2-2b**：`/mesh/entities` 是**真路由**，而且它回的表与摘要**能被复算**。
+    ///
+    /// 三格：① 只认 GET；② 表里只有**这台设备自己那一栏**的 `MAX(device_seq)`（别人的账不许混进来）；
+    /// ③ `digest` 与 `entity_digest` 用同一张表折出**同一个串**（客户端"先比摘要"才成立）。
+    #[test]
+    fn the_entities_endpoint_returns_the_table_and_a_recomputable_digest() {
+        assert_eq!(route("GET", "/mesh/entities?space_id=s"), Route::Entities);
+        assert_eq!(route("GET", "/mesh/entities/"), Route::Entities);
+        assert_eq!(route("POST", "/mesh/entities"), Route::Unknown, "只认 GET");
+
+        let c = Arc::new(Mutex::new(space_conn("A")));
+        {
+            let g = c.lock().unwrap();
+            crate::sync::record_change(&g, "page", "p1", "upsert", Some("{}"), 1).unwrap();
+            crate::sync::record_change(&g, "page", "p2", "upsert", Some("{}"), 2).unwrap();
+            crate::sync::record_change(&g, "attachment", "a1", "upsert", Some("{}"), 3).unwrap();
+            // ⚠️ 另一台设备的账（真实库里 `changes` 会同时有别人的行）⇒ **不许**出现在这张表里
+            g.execute(
+                "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at)
+                 VALUES ('B', 999, 'page', 'not-mine', 'upsert', NULL, 1)",
+                [],
+            )
+            .unwrap();
+        }
+        let win = start1s_card(
+            "space-x",
+            "right",
+            MeshConfig {
+                bind: "127.0.0.1:0".into(),
+                device_id: "A".into(),
+                data_dir: None,
+            },
+            c,
+        )
+        .unwrap();
+
+        let (code, body) = http_get(win.addr(), "/mesh/entities?space_id=space-x", Some("right"));
+        assert_eq!(code, 200, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let mut expect: BTreeMap<String, i64> = BTreeMap::new();
+        // `record_change` 的 `device_seq` 就是自增 `seq` ⇒ 三行依次是 1 / 2 / 3
+        expect.insert("p1".to_string(), 1);
+        expect.insert("p2".to_string(), 2);
+        expect.insert("a1".to_string(), 3);
+        assert_eq!(
+            v["digest"].as_str().unwrap(),
+            entity_digest(&expect),
+            "摘要必须由同一张表折出来：{body}"
+        );
+        assert_eq!(v["count"].as_u64().unwrap(), 3);
+        assert_eq!(v["truncated"].as_bool().unwrap(), false);
+        let arr = v["entities"].as_array().unwrap();
+        assert_eq!(arr.len(), 3);
+        for it in arr {
+            let id = it["id"].as_str().unwrap();
+            assert_eq!(
+                it["latest_seq"].as_i64().unwrap(),
+                expect[id],
+                "实体 {id} 的最新序号不对"
+            );
+        }
+        assert!(
+            !body.contains("not-mine"),
+            "别的设备那一栏不许混进来：{body}"
+        );
+
+        // `digest_only=1`：同一摘要、**没有 entities**（体量与实体条数无关）
+        let (code, body) = http_get(
+            win.addr(),
+            "/mesh/entities?space_id=space-x&digest_only=1",
+            Some("right"),
+        );
+        assert_eq!(code, 200, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["digest"].as_str().unwrap(), entity_digest(&expect));
+        assert!(
+            v.get("entities").is_none(),
+            "只要摘要那一档不许回整张表：{body}"
+        );
+        assert_eq!(v["count"].as_u64().unwrap(), 3);
+    }
+
+    /// ⭐ **F2-2b**：实体数超过上限 ⇒ **只回摘要 ＋ `truncated:true`**。
+    ///
+    /// 为什么必须这样：客户端拿到半张表会把"没看到"当成"不需要" ⇒ **瞎补**（⛔ 简报明令禁止）。
+    /// 所以超限时连 `entities` 这一格都不给，客户端只能降级成"只报不补"。
+    #[test]
+    fn the_entities_endpoint_degrades_to_digest_only_above_the_row_cap() {
+        let c = Arc::new(Mutex::new(space_conn("A")));
+        let mut expect: BTreeMap<String, i64> = BTreeMap::new();
+        {
+            let g = c.lock().unwrap();
+            for i in 0..=MAX_ENTITY_ROWS_IN_RESPONSE {
+                let id = format!("p{i}");
+                let seq = i as i64 + 1;
+                g.execute(
+                    "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at)
+                     VALUES ('A', ?1, 'page', ?2, 'upsert', NULL, 1)",
+                    params![seq, id],
+                )
+                .unwrap();
+                expect.insert(id, seq);
+            }
+        }
+        assert_eq!(expect.len(), MAX_ENTITY_ROWS_IN_RESPONSE + 1);
+        let win = start1s_card(
+            "space-x",
+            "right",
+            MeshConfig {
+                bind: "127.0.0.1:0".into(),
+                device_id: "A".into(),
+                data_dir: None,
+            },
+            c,
+        )
+        .unwrap();
+        let (code, body) = http_get(win.addr(), "/mesh/entities?space_id=space-x", Some("right"));
+        assert_eq!(code, 200, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["truncated"].as_bool().unwrap(), true, "{body}");
+        assert_eq!(v["count"].as_u64().unwrap() as usize, expect.len());
+        assert!(
+            v.get("entities").is_none(),
+            "超限时不许回半张表（「没看到」≠「不需要」）：{body}"
+        );
+        assert_eq!(
+            v["digest"].as_str().unwrap(),
+            entity_digest(&expect),
+            "超限只影响回不回行，不影响摘要本身"
+        );
+    }
+
+    /// ⭐ **F2-2b**：锁态（空间我知道、但这一轮打不开）⇒ **409 ＋ `unavailable:true`**。
+    /// ⛔ 不许编一份空表：空表会被客户端读成"对端一个实体都没有"。
+    #[test]
+    fn the_entities_endpoint_reports_a_locked_space_instead_of_an_empty_table() {
+        let c = Arc::new(Mutex::new(space_conn("A")));
+        let mut m = std::collections::HashMap::new();
+        m.insert("space-x".to_string(), c);
+        let mut cards: CardBook = std::collections::HashMap::new();
+        for sp in ["space-x", "space-locked"] {
+            cards
+                .entry(sp.to_string())
+                .or_default()
+                .hashes
+                .insert(crate::db::sha256_hex("right"));
+        }
+        let win = start(
+            MeshConfig {
+                bind: "127.0.0.1:0".into(),
+                device_id: "A".into(),
+                data_dir: None,
+            },
+            Arc::new(Mutex::new(m)),
+            Arc::new(Mutex::new(cards)),
+        )
+        .unwrap();
+        win.mark_locked("space-locked");
+
+        let (code, body) = http_get(
+            win.addr(),
+            "/mesh/entities?space_id=space-locked",
+            Some("right"),
+        );
+        assert_eq!(code, 409, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["unavailable"].as_bool().unwrap(), true, "{body}");
+        assert!(
+            v.get("entities").is_none(),
+            "锁着时一个字节的表都不该出现：{body}"
+        );
+        // 开着的那个空间照旧给表（别把闸门做成「谁都不给」）
+        let (code, _) = http_get(win.addr(), "/mesh/entities?space_id=space-x", Some("right"));
+        assert_eq!(code, 200);
+    }
+
+    /// ⭐ **F2-2b**：`absorb` 要把"对端这一版我见过了"记进**本地那一份摘要**
+    /// （`meta.sync_state` 的 `mesh_entity_seen:*`）—— 它是"先比摘要"能成立的前提。
+    ///
+    /// 两条边界：① `device_seq = 0`（manifest 按当前状态重播那一档）**不记**；
+    /// ② 只记**变新**（旧值不许把新水位盖回去）。
+    #[test]
+    fn absorbing_a_peers_batch_records_the_entity_watermark_for_the_local_digest() {
+        let c = space_conn("B");
+        let row = |seq: i64| MeshRow {
+            device_seq: seq,
+            entity: "page".to_string(),
+            entity_id: "p9".to_string(),
+            op: "upsert".to_string(),
+            payload: None,
+            updated_at: 1,
+            sealed: None,
+        };
+        absorb_peer_batch(&c, &[row(4)], "A", "ws", false, None).unwrap();
+        assert_eq!(
+            entity_seen_map(&c, "ws", "A").get("p9"),
+            Some(&4),
+            "收到过 ⇒ 记下对端那个序号"
+        );
+        // ① 0 序号不记，而且**不许**把真实的 4 盖掉
+        absorb_peer_batch(&c, &[row(0)], "A", "ws", false, None).unwrap();
+        assert_eq!(entity_seen_map(&c, "ws", "A").get("p9"), Some(&4));
+        // ② 更旧的序号也不许倒退
+        absorb_peer_batch(&c, &[row(2)], "A", "ws", false, None).unwrap();
+        assert_eq!(entity_seen_map(&c, "ws", "A").get("p9"), Some(&4));
+        // ③ 更新的照常推进
+        absorb_peer_batch(&c, &[row(9)], "A", "ws", false, None).unwrap();
+        assert_eq!(entity_seen_map(&c, "ws", "A").get("p9"), Some(&9));
+        // ④ 别的对端的账分开记（同一空间 ≠ 同一台对端）
+        assert!(entity_seen_map(&c, "ws", "OTHER").is_empty());
+    }
+
+    /// ⭐⭐ **F2-2b 的接线判据**：摘要不一致 ⇒ 只拉「我没有 / 对端更新」的那个实体，
+    /// 走**既有** `/mesh/page` ＋ `absorb`（⛔ 不另开写库路）；拉完本地摘要与对端一致；
+    /// 一致之后**一整个实体表都不再换**（只发一次 `digest_only`）。
+    ///
+    /// **变异**：删掉 `maybe_reconcile_entities` 里 `if summary.digest == before { return; }`
+    /// ⇒ 第二次调用会再换一次表 ⇒ 最后那条"只该有 digest_only"的断言当场红。
+    #[tokio::test]
+    async fn entity_reconcile_pulls_only_the_missing_entity_and_then_goes_quiet() {
+        use crate::mesh_endpoint::{Endpoint, HttpReply};
+        use std::future::Future;
+        use std::pin::Pin;
+
+        let peer_map: BTreeMap<String, i64> = [("p1".to_string(), 7), ("p2".to_string(), 5)]
+            .into_iter()
+            .collect();
+        let peer_digest = entity_digest(&peer_map);
+        let page_payload = serde_json::to_string(&page("p1", "对端的", 10)).unwrap();
+
+        struct Fake {
+            peer_digest: String,
+            page_payload: String,
+            seen: Mutex<Vec<String>>,
+        }
+        impl Endpoint for Fake {
+            fn get<'a>(
+                &'a self,
+                target: &'a str,
+                _auth: Option<(&'a str, i64, &'a str)>,
+                _token: Option<&'a str>,
+            ) -> Pin<Box<dyn Future<Output = Result<HttpReply, String>> + Send + 'a>> {
+                self.seen.lock().unwrap().push(target.to_string());
+                let (status, body) = if target.ends_with("digest_only=1") {
+                    (
+                        200,
+                        serde_json::json!({
+                            "digest": self.peer_digest, "truncated": false, "count": 2
+                        })
+                        .to_string(),
+                    )
+                } else if target == "/mesh/entities?space_id=space-z" {
+                    (
+                        200,
+                        serde_json::json!({
+                            "digest": self.peer_digest, "truncated": false, "count": 2,
+                            "entities": [
+                                {"id": "p1", "latest_seq": 7},
+                                {"id": "p2", "latest_seq": 5}
+                            ]
+                        })
+                        .to_string(),
+                    )
+                } else if target == "/mesh/page?space_id=space-z&id=p1" {
+                    (
+                        200,
+                        serde_json::json!({
+                            "id": "p1", "updated_at": 10, "payload": self.page_payload
+                        })
+                        .to_string(),
+                    )
+                } else {
+                    (404, "{}".to_string())
+                };
+                Box::pin(async move { Ok(HttpReply { status, body }) })
+            }
+        }
+
+        let c = Mutex::new(space_conn("me"));
+        // 本地已经收到过 p2@5 ⇒ 只有 p1 该补
+        {
+            let g = c.lock().unwrap();
+            record_entity_seen(
+                &g,
+                "space-z",
+                "dev-x",
+                &[MeshRow {
+                    device_seq: 5,
+                    entity: "page".to_string(),
+                    entity_id: "p2".to_string(),
+                    op: "upsert".to_string(),
+                    payload: None,
+                    updated_at: 1,
+                    sealed: None,
+                }],
+            );
+        }
+        let fake = Fake {
+            peer_digest: peer_digest.clone(),
+            page_payload,
+            seen: Mutex::new(Vec::new()),
+        };
+        let peer = MeshPeer {
+            device_id: "dev-x".to_string(),
+            base: "http://not-used.invalid:1".to_string(),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
+        };
+
+        maybe_reconcile_entities(&c, &fake, &peer, "space-z", None, false).await;
+
+        {
+            let g = c.lock().unwrap();
+            let n: i64 = g
+                .query_row("SELECT COUNT(*) FROM pages WHERE id = 'p1'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert_eq!(n, 1, "缺的那个实体要真的补回来（走既有 absorb → apply）");
+            assert_eq!(
+                entity_digest(&entity_seen_map(&g, "space-z", "dev-x")),
+                peer_digest,
+                "补完本地那一份摘要必须与对端一致（否则下一轮还会重拉同一批）"
+            );
+        }
+        {
+            let seen = fake.seen.lock().unwrap().clone();
+            assert_eq!(
+                seen.iter().filter(|t| t.starts_with("/mesh/page")).count(),
+                1,
+                "只该拉缺的那一个：{seen:?}"
+            );
+            assert_eq!(
+                seen.iter().filter(|t| !t.contains("digest_only")).count(),
+                2,
+                "摘要 ＋ 一次实体表（p2 不在清单里 ⇒ 不多拉）：{seen:?}"
+            );
+        }
+
+        // 一致之后：只发一次 digest_only，⛔ 不再换表、⛔ 不再拉页
+        fake.seen.lock().unwrap().clear();
+        maybe_reconcile_entities(&c, &fake, &peer, "space-z", None, false).await;
+        assert_eq!(
+            fake.seen.lock().unwrap().as_slice(),
+            ["/mesh/entities?space_id=space-z&digest_only=1"],
+            "摘要一致 ⇒ 这一次往返就结束（⛔ 不许每轮都换整张表）"
+        );
+    }
+
+    /// ⭐ **F2-2b**：**补不了**的实体（附件 / 对端也没了的墓碑）也要记进本地那一份摘要。
+    ///
+    /// 为什么这是承重的：实体表按 id 排序、每轮最多补 20 个 —— 若不记，这些 id 每轮都会占掉
+    /// 一格（附件 UUID 排在前面时，页就永远轮不到 ⇒ **饥饿**，而日志里只会一直说"需补 N 个"）。
+    /// 判据：`a1`（非页）与 `p1`（页）**都问过**；`a1` 也被记下 ⇒ 摘要收敛；第二轮安静。
+    #[tokio::test]
+    async fn entity_reconcile_accounts_for_entities_it_cannot_pull_so_they_cannot_starve_the_budget(
+    ) {
+        use crate::mesh_endpoint::{Endpoint, HttpReply};
+        use std::future::Future;
+        use std::pin::Pin;
+
+        let peer_map: BTreeMap<String, i64> = [("a1".to_string(), 9), ("p1".to_string(), 7)]
+            .into_iter()
+            .collect();
+        let peer_digest = entity_digest(&peer_map);
+        let page_payload = serde_json::to_string(&page("p1", "对端的", 10)).unwrap();
+
+        struct Fake {
+            peer_digest: String,
+            page_payload: String,
+            seen: Mutex<Vec<String>>,
+        }
+        impl Endpoint for Fake {
+            fn get<'a>(
+                &'a self,
+                target: &'a str,
+                _auth: Option<(&'a str, i64, &'a str)>,
+                _token: Option<&'a str>,
+            ) -> Pin<Box<dyn Future<Output = Result<HttpReply, String>> + Send + 'a>> {
+                self.seen.lock().unwrap().push(target.to_string());
+                let (status, body) = if target.ends_with("digest_only=1") {
+                    (
+                        200,
+                        serde_json::json!({"digest": self.peer_digest, "truncated": false, "count": 2})
+                            .to_string(),
+                    )
+                } else if target == "/mesh/entities?space_id=space-z" {
+                    (
+                        200,
+                        serde_json::json!({
+                            "digest": self.peer_digest, "truncated": false, "count": 2,
+                            "entities": [
+                                {"id": "a1", "latest_seq": 9},
+                                {"id": "p1", "latest_seq": 7}
+                            ]
+                        })
+                        .to_string(),
+                    )
+                } else if target == "/mesh/page?space_id=space-z&id=p1" {
+                    (
+                        200,
+                        serde_json::json!({"id": "p1", "updated_at": 10, "payload": self.page_payload})
+                            .to_string(),
+                    )
+                } else {
+                    // `a1` 不是页（附件 / 墓碑）⇒ 对端按页取就是 404
+                    (404, "{}".to_string())
+                };
+                Box::pin(async move { Ok(HttpReply { status, body }) })
+            }
+        }
+
+        let c = Mutex::new(space_conn("me"));
+        let fake = Fake {
+            peer_digest: peer_digest.clone(),
+            page_payload,
+            seen: Mutex::new(Vec::new()),
+        };
+        let peer = MeshPeer {
+            device_id: "dev-x".to_string(),
+            base: "http://not-used.invalid:1".to_string(),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
+        };
+
+        maybe_reconcile_entities(&c, &fake, &peer, "space-z", None, false).await;
+
+        {
+            let g = c.lock().unwrap();
+            let seen_map = entity_seen_map(&g, "space-z", "dev-x");
+            assert_eq!(
+                seen_map.get("a1"),
+                Some(&9),
+                "补不了的那个也要记（否则每轮占一格）"
+            );
+            assert_eq!(seen_map.get("p1"), Some(&7));
+            assert_eq!(
+                entity_digest(&seen_map),
+                peer_digest,
+                "记下了 ⇒ 本地那一份摘要与对端一致（下一轮不再为它换表）"
+            );
+        }
+        {
+            let seen = fake.seen.lock().unwrap().clone();
+            assert_eq!(
+                seen.iter().filter(|t| t.starts_with("/mesh/page")).count(),
+                2,
+                "两个实体都问过（一个 404 一个 200）：{seen:?}"
+            );
+        }
+        // 第二轮：摘要一致 ⇒ 只发 digest_only
+        fake.seen.lock().unwrap().clear();
+        maybe_reconcile_entities(&c, &fake, &peer, "space-z", None, false).await;
+        assert_eq!(
+            fake.seen.lock().unwrap().as_slice(),
+            ["/mesh/entities?space_id=space-z&digest_only=1"],
+            "补不了的那些不许让它每轮都重来"
+        );
+    }
+
+    /// ⭐ **F2-2b**：对端实体数超上限（`truncated`）⇒ **只报不补**：
+    /// 只换一次摘要，⛔ 不换表、⛔ 不按实体拉（拿半张表补 = 瞎补）。
+    #[tokio::test]
+    async fn entity_reconcile_stops_at_the_summary_when_the_peer_table_is_truncated() {
+        use crate::mesh_endpoint::{Endpoint, HttpReply};
+        use std::future::Future;
+        use std::pin::Pin;
+        struct Fake {
+            seen: Mutex<Vec<String>>,
+        }
+        impl Endpoint for Fake {
+            fn get<'a>(
+                &'a self,
+                target: &'a str,
+                _auth: Option<(&'a str, i64, &'a str)>,
+                _token: Option<&'a str>,
+            ) -> Pin<Box<dyn Future<Output = Result<HttpReply, String>> + Send + 'a>> {
+                self.seen.lock().unwrap().push(target.to_string());
+                Box::pin(async move {
+                    Ok(HttpReply {
+                        status: 200,
+                        body: serde_json::json!({
+                            "digest": "fnv1a64:deadbeefdeadbeef:5000",
+                            "truncated": true,
+                            "count": 5000
+                        })
+                        .to_string(),
+                    })
+                })
+            }
+        }
+        let c = Mutex::new(space_conn("me"));
+        let fake = Fake {
+            seen: Mutex::new(Vec::new()),
+        };
+        let peer = MeshPeer {
+            device_id: "dev-x".to_string(),
+            base: "http://not-used.invalid:1".to_string(),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
+        };
+        maybe_reconcile_entities(&c, &fake, &peer, "space-z", None, false).await;
+        assert_eq!(
+            fake.seen.lock().unwrap().as_slice(),
+            ["/mesh/entities?space_id=space-z&digest_only=1"],
+            "超限 ⇒ 只换摘要（⛔ 不换表、⛔ 不拉页）"
+        );
+        let g = c.lock().unwrap();
+        assert!(
+            entity_seen_map(&g, "space-z", "dev-x").is_empty(),
+            "什么都没拉 ⇒ 本地那一份摘要不许凭空变化"
+        );
+    }
+
+    /// ⭐ **F2-2b**：对端锁着（409 / `unavailable:true`）⇒ **如实跳过**，⛔ 不当成"空表"、
+    /// ⛔ 不当成同步失败去重试/补数据。
+    #[tokio::test]
+    async fn entity_reconcile_treats_a_locked_peer_as_unavailable_not_as_an_empty_table() {
+        use crate::mesh_endpoint::{Endpoint, HttpReply};
+        use std::future::Future;
+        use std::pin::Pin;
+        struct Fake {
+            seen: Mutex<Vec<String>>,
+        }
+        impl Endpoint for Fake {
+            fn get<'a>(
+                &'a self,
+                target: &'a str,
+                _auth: Option<(&'a str, i64, &'a str)>,
+                _token: Option<&'a str>,
+            ) -> Pin<Box<dyn Future<Output = Result<HttpReply, String>> + Send + 'a>> {
+                self.seen.lock().unwrap().push(target.to_string());
+                Box::pin(async move {
+                    Ok(HttpReply {
+                        status: 409,
+                        body: serde_json::json!({"unavailable": true, "locked": true}).to_string(),
+                    })
+                })
+            }
+        }
+        let c = Mutex::new(space_conn("me"));
+        let fake = Fake {
+            seen: Mutex::new(Vec::new()),
+        };
+        let peer = MeshPeer {
+            device_id: "dev-x".to_string(),
+            base: "http://not-used.invalid:1".to_string(),
+            quic_addrs: Vec::new(),
+            node_id: String::new(),
+        };
+        maybe_reconcile_entities(&c, &fake, &peer, "space-z", None, false).await;
+        assert_eq!(
+            fake.seen.lock().unwrap().as_slice(),
+            ["/mesh/entities?space_id=space-z&digest_only=1"],
+            "锁着 ⇒ 第一次往返就收手（⛔ 不换表、⛔ 不拉页）"
+        );
+        let g = c.lock().unwrap();
+        assert!(entity_seen_map(&g, "space-z", "dev-x").is_empty());
     }
 
     /// ★ 丙-④：窗口那条路由**认得**新端点（不认得就会被 `not_yet` 抢走回 501）。
