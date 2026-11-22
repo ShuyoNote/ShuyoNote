@@ -445,6 +445,73 @@ export function summarizeCadence(rows) {
 }
 
 /**
+ * ⭐ **F3 Phase 0（2026-11-22）**：解析一行公告发送读数。
+ *
+ * 形状（`lan::announce_send_line`）：
+ * `[HH:MM:SS] [mesh] 公告：发出 S/N（目标 N 条：受限广播 B ｜ 回环 L ｜ 其它 O）｜ 空间 xxxx…`
+ *
+ * ⚠️ 只读这条**已有的**日志（⛔ 不新增埋点、不改公告行为）；只取扇出计数，不取空间标识。
+ */
+export function parseAnnounceLine(line) {
+    const text = String(line ?? "").replace(/\r$/, "");
+    const at = text.indexOf("公告：发出 ");
+    if (at < 0) return null;
+    const m = text
+        .slice(at)
+        .match(/公告：发出 (\d+)\/(\d+)（目标 (\d+) 条：受限广播 (\d+) ｜ 回环 (\d+) ｜ 其它 (\d+)）/);
+    if (!m) return null;
+    const n = (i) => Number(m[i]);
+    return {
+        sent: n(1),
+        targets: n(2),
+        bcast: n(4),
+        loopback: n(5),
+        other: n(6),
+        failures: (text.match(/发送失败/g) || []).length,
+    };
+}
+
+/**
+ * ⭐ F3 Phase 0：公告扇出汇总 —— **每轮公告的实际目标数**。
+ *
+ * 口径：公告间隔是常量 10s（`ANNOUNCE_INTERVAL_MS`）⇒ 每 10s 的报文数 ≈ 平均目标数；
+ * ⚠️ 这是**按代码算式**的估计，⛔ 不冒充真机“每 10s 实测报文数”（真机要抓包）。
+ *
+ * @param {{sent:number, targets:number, bcast:number, loopback:number, other:number, failures:number}[]} rows
+ */
+export function summarizeAnnounce(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    if (list.length === 0) return null;
+    const sorted = list.map((r) => r.targets).sort((a, b) => a - b);
+    const total = sorted.reduce((s, x) => s + x, 0);
+    const sent = list.reduce((s, r) => s + r.sent, 0);
+    const targets = list.reduce((s, r) => s + r.targets, 0);
+    return {
+        cycles: list.length,
+        p50: percentile(sorted, 50),
+        p95: percentile(sorted, 95),
+        max: sorted[sorted.length - 1],
+        mean: Math.round(total / list.length),
+        sendRatio: targets > 0 ? sent / targets : null,
+        failures: list.reduce((s, r) => s + r.failures, 0),
+    };
+}
+
+/**
+ * 报告里的一行「公告扇出」。
+ * @param {ReturnType<typeof summarizeAnnounce>} a
+ */
+export function announceSummaryText(a) {
+    if (!a) return "没量到（日志里没有 [mesh] 公告：发出 … 行）";
+    return (
+        `${a.cycles} 轮公告 · 目标数 p50 ${a.p50}/轮 · p95 ${a.p95}/轮 · max ${a.max} · 平均 ${a.mean}/轮` +
+        ` ｜ 发送成功 ${a.sendRatio == null ? "?" : `${Math.round(a.sendRatio * 100)}%`}` +
+        ` ｜ 失败 ${a.failures} 条` +
+        `（公告间隔 10s ⇒ 每 10s 报文数 ≈ 平均目标数；⛔ 按代码算式，非抓包实测）`
+    );
+}
+
+/**
  * @typedef {object} BaselineSummary
  * @property {number} rounds 解析成功了多少行
  * @property {number} skipped 看着像 `[sync-metrics]` 但形状不认识的行数（⛔ 不是 0 就当没看见）

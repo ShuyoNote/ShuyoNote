@@ -24,6 +24,9 @@ import {
   parsePeerErrClassLine,
   parsePeerSkipLine,
   parseRoundTimingLine,
+  parseAnnounceLine,
+  summarizeAnnounce,
+  announceSummaryText,
   summarizeMetrics,
 } from "./lib/syncBaseline.mjs";
 
@@ -90,6 +93,8 @@ async function scanFile(file, maxLines) {
   const skipRows = [];
   /** @type {{skip: boolean, kinds: number}[]} ⭐ F3：错误分类行 */
   const errRows = [];
+  /** @type {import("./lib/syncBaseline.mjs").AnnounceRow[]} ⭐ F3：公告扇出 */
+  const announceRows = [];
   let suspicious = 0;
   let seen = 0;
   const rl = createInterface({ input: createReadStream(file, { encoding: "utf8" }), crlfDelay: Infinity });
@@ -128,8 +133,13 @@ async function scanFile(file, maxLines) {
       if (ec) errRows.push(ec);
       else suspicious += 1;
     }
+    // ⭐ F3 Phase 0（2026-11-22）：公告扇出 —— 只读已有日志行，⛔ 不改公告行为
+    if (line.includes("公告：发出 ")) {
+      const an = parseAnnounceLine(line);
+      if (an) announceRows.push(an);
+    }
   }
-  return { rows, latencies, roundRows, skipRows, errRows, suspicious };
+  return { rows, latencies, roundRows, skipRows, errRows, announceRows, suspicious };
 }
 
 async function main() {
@@ -167,6 +177,8 @@ async function main() {
   const skipRows = [];
   /** @type {{skip: boolean, kinds: number}[]} ⭐ F3：错误分类行 */
   const errRows = [];
+  /** @type {import("./lib/syncBaseline.mjs").AnnounceRow[]} ⭐ F3：公告扇出 */
+  const announceRows = [];
   let suspicious = 0;
   for (const file of args.logs) {
     const {
@@ -175,6 +187,7 @@ async function main() {
       roundRows: rts,
       skipRows: sks,
       errRows: ers,
+      announceRows: ans,
       suspicious: bad,
     } = await scanFile(file, args.maxLines);
     all.push(...rows);
@@ -182,15 +195,19 @@ async function main() {
     roundRows.push(...rts);
     skipRows.push(...sks);
     errRows.push(...ers);
+    announceRows.push(...ans);
     suspicious += bad;
   }
 
   const summary = summarizeMetrics(all, suspicious, latencies, roundRows, skipRows, errRows);
+  const announce = summarizeAnnounce(announceRows);
   if (args.json) {
     // ⛔ 不输出原始 id：这里只给数字与编号标签。
-    console.log(JSON.stringify(summary, null, 2));
+    console.log(JSON.stringify({ ...summary, announce }, null, 2));
   } else {
     console.log(formatBaselineReport(summary));
+    console.log("", "公告扇出（F3 Phase 0，只读已有日志；⛔ 不改公告行为）：");
+    console.log(" ", announceSummaryText(announce));
     console.log("", `本次扫了 ${args.logs.length} 份日志${args.maxLines > 0 ? `（每份只扫前 ${args.maxLines} 行）` : ""}。`);
   }
   // 没量到 ⇒ 2（没查过 ≠ 通过；与仓内其它工具同一档）

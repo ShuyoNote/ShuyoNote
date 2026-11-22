@@ -22,6 +22,9 @@ import {
   splitRoundBlocks,
   summarizeMetrics,
   summarizeCadence,
+  parseAnnounceLine,
+  summarizeAnnounce,
+  announceSummaryText,
   summarizeRoundTiming,
   summarizeSchedulingFailures,
 } from "./syncBaseline.mjs";
@@ -543,5 +546,31 @@ describe("轮节奏按轮分组", () => {
     expect(c.steady.samples).toBe(1);
     expect(c.steady.p50).toBe(30000);
     expect(c.burst.samples).toBe(0);
+  });
+});
+
+// ⭐ F3 Phase 0（2026-11-22）：公告扇出 —— 只读已有日志行，⛔ 不改公告行为。
+describe("F3：公告扇出读数", () => {
+  it("解析公告行：发送/目标/三类目标/失败条数", () => {
+    const r = parseAnnounceLine(
+      "[10:00:01] [mesh] 公告：发出 7/7（目标 7 条：受限广播 2 ｜ 回环 2 ｜ 其它 3）｜ 空间 f280… ⚠️ 1.2.3.4:47821 发送失败：timeout",
+    );
+    expect(r).toMatchObject({ sent: 7, targets: 7, bcast: 2, loopback: 2, other: 3, failures: 1 });
+  });
+
+  it("不是公告行 ⇒ null；扇出汇总给出 p50/p95/均值/成功率", () => {
+    expect(parseAnnounceLine("[mesh] 收到公告：来源 x")).toBeNull();
+    const rows = [
+      { sent: 7, targets: 7, bcast: 2, loopback: 2, other: 3, failures: 0 },
+      { sent: 6, targets: 6, bcast: 2, loopback: 2, other: 2, failures: 0 },
+    ];
+    const a = summarizeAnnounce(rows);
+    expect(a).toMatchObject({ cycles: 2, p50: 6, p95: 7, max: 7, mean: 7, failures: 0 });
+    expect(a.sendRatio).toBeCloseTo(13 / 13, 5);
+  });
+
+  it("一行都没有 ⇒ null，报告明说没量到（⛔ 不写 0）", () => {
+    expect(summarizeAnnounce([])).toBeNull();
+    expect(announceSummaryText(null)).toContain("没量到");
   });
 });
