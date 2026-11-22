@@ -1571,12 +1571,20 @@ fn log_link_state(space_id: &str, device: &str, online: bool, now_ms: i64) {
             .lock()
             .ok()
             .and_then(|m| m.get(&format!("{space_id}|{device}")).copied())
-            .and_then(|(last_ok, _)| if last_ok > 0 { Some(now_ms - last_ok) } else { None })
+            .and_then(|(last_ok, _)| {
+                if last_ok > 0 {
+                    Some(now_ms - last_ok)
+                } else {
+                    None
+                }
+            })
     };
     let dev8: String = device.chars().take(8).collect();
     eprintln!(
         "[link-state] peer={dev8} online={online} last_ok_ago_ms={} cause={}",
-        last_ok_ago.map(|v| v.to_string()).unwrap_or_else(|| "unknown".to_string()),
+        last_ok_ago
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
         if online { "round_ok" } else { "round_fail" }
     );
 }

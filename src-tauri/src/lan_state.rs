@@ -691,7 +691,9 @@ static NETWATCH_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 /// S2 P0 开关（env 只读一次；⛔ 拿不准一律关）。
 fn netwatch_enabled() -> bool {
     *NETWATCH_ENABLED.get_or_init(|| {
-        crate::lan_netwatch::netwatch_enabled_from(std::env::var("SHUYONOTE_LAN_NETWATCH").ok().as_deref())
+        crate::lan_netwatch::netwatch_enabled_from(
+            std::env::var("SHUYONOTE_LAN_NETWATCH").ok().as_deref(),
+        )
     })
 }
 
@@ -1606,7 +1608,12 @@ fn spawn_background_round(
                     if debug_latency() {
                         eprintln!(
                             "{}",
-                            round_timing_line(&proto_space, true, space_t0.elapsed().as_millis(), crate::db::now_ms())
+                            round_timing_line(
+                                &proto_space,
+                                true,
+                                space_t0.elapsed().as_millis(),
+                                crate::db::now_ms()
+                            )
                         );
                     }
                     // ⭐ 2026-10-24：后台轮也要告诉前端“改了哪些页”（网格没有 SSE；
@@ -1698,7 +1705,12 @@ fn spawn_background_round(
                     if debug_latency() {
                         eprintln!(
                             "{}",
-                            round_timing_line(&proto_space, false, space_t0.elapsed().as_millis(), crate::db::now_ms())
+                            round_timing_line(
+                                &proto_space,
+                                false,
+                                space_t0.elapsed().as_millis(),
+                                crate::db::now_ms()
+                            )
                         );
                     }
                 }
@@ -3891,7 +3903,12 @@ mod tests {
     /// ⭐ **2026-11-18（根因 A 取证）**：每空间耗时的那一行 —— 形状固定、空间必须先脱敏。
     #[test]
     fn round_timing_line_masks_the_space_and_keeps_the_shape() {
-        let line = round_timing_line("2ae7009bff614f96c64c703021609443", true, 21_345, 1_700_000_000_000);
+        let line = round_timing_line(
+            "2ae7009bff614f96c64c703021609443",
+            true,
+            21_345,
+            1_700_000_000_000,
+        );
         assert!(
             line.starts_with("[round-timing] space="),
             "前缀变了：{line}"
