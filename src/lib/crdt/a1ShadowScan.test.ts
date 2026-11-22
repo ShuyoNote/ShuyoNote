@@ -10,8 +10,8 @@ import { isDeepStrictEqual } from "node:util";
 import {
   lineageClientIds,
   lineagesRelated,
-} from "../src/lib/crdt/pageBinding";
-import { openPageSession, projectStateToJson } from "../src/lib/crdt/yDocBridge";
+} from "./pageBinding";
+import { openPageSession, projectStateToJson } from "./yDocBridge";
 
 const RUN = process.env.A1_SHADOW_SCAN === "1";
 const DATA_DIR = process.env.SHUYONOTE_DATA_DIR ?? join(process.env.APPDATA ?? "", "cn.shuyo.shuyonote");
@@ -84,7 +84,7 @@ function scanSpace(dbPath: string) {
   const hasStale = cols.some((c) => c.name === "text_stale");
   const pages = db
     .prepare(`SELECT id, content_json${hasStale ? ", text_stale" : ""} FROM pages WHERE deleted_at IS NULL`)
-    .all() as PageRow[];
+    .all() as unknown as PageRow[];
   const pageById = new Map(pages.map((p) => [p.id, p]));
 
   const local = new Map<string, Uint8Array>();
@@ -95,7 +95,7 @@ function scanSpace(dbPath: string) {
     if (r.state?.length) local.set(r.page_id, r.state);
   }
   const pending = (
-    db.prepare("SELECT page_id, seq, state FROM page_crdt_pending ORDER BY page_id, seq").all() as PendingRow[]
+    db.prepare("SELECT page_id, seq, state FROM page_crdt_pending ORDER BY page_id, seq").all() as unknown as PendingRow[]
   ).filter((p) => p.state?.length);
 
   for (const row of pending) {
