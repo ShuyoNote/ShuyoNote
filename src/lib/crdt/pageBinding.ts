@@ -159,6 +159,10 @@ export interface MergedRemoteState {
    * （`refreshPageTextIfStale` 的两条出口）⇒ 这一处宁可多标一次，也不漏标。
    */
   derivedStale: boolean;
+  /** A1 G0：合并过程抛错 ⇒ **本机状态原样保留**（⛔ 不写坏、不丢）。 */
+  mergeFailed?: boolean;
+  /** A1 G0：开关关掉（kill switch）⇒ 不合并、保留本机（用于回滚）。 */
+  disabled?: boolean;
   /**
    * ★ **血统冲突**（有值 ⇒ 这次**没有合并**，本机那一版被原样保留）。
    *
@@ -180,11 +184,21 @@ export interface MergedRemoteState {
  * —— 投影怎么跟上归 S6 的口径（今天编辑器打开时会用状态的投影覆盖，所以界面上看到的是对的内容）。
  * ⚠️ 也**不**标脏（`dirty`）：合并产物该不该回推由调用方决定（S5 服务端那一侧）。
  */
+/**
+ * A1 G0 kill switch：**默认开**（今天的同血统合并已经在跑；关掉才是回滚）。
+ * 只认显式 `0/false/off` 为关；未设置/其它值 ⇒ 开。⛔ 不引入第二个真相源。
+ */
+export function a1AutoMergeEnabledFrom(value: string | undefined | null): boolean {
+  const v = (value ?? "").trim().toLowerCase();
+  return !(v === "0" || v === "false" || v === "off");
+}
+
 export function mergeRemotePageState(
   db: ContentSql,
   pageId: string,
   remote: Uint8Array,
   now: number,
+  enabled: boolean = a1AutoMergeEnabledFrom(import.meta.env.VITE_CRDT_A1),
 ): MergedRemoteState {
   const mine = readPageCrdtState(db, pageId);
   if (!mine) {
@@ -223,6 +237,12 @@ export function mergeRemotePageState(
     return { adopted: false, state: mine, derivedStale: false, lineageConflict: conflict };
   }
 
+  if (!enabled) {
+    // A1 G0 kill switch：不合并、保留本机（远端那一版仍留在待裁决侧，⛔ 不丢）。
+    console.warn(`[a1] 自动合并开关已关，保留本机版本 page=${pageId}`);
+    return { adopted: false, state: mine, derivedStale: false, disabled: true };
+  }
+
   const session = openPageSession({ state: mine });
   try {
     session.merge(remote);
@@ -239,6 +259,10 @@ export function mergeRemotePageState(
       markTextStale(db, pageId);
     }
     return { adopted: false, state: merged, derivedStale: changed };
+  } catch (err) {
+    // A1 G0：合并异常 ⇒ **保本机**（不写坏状态、不丢远端；由调用方提示可重试）。
+    console.error(`[a1] 自动合并失败，保留本机版本 page=${pageId}`, err);
+    return { adopted: false, state: mine, derivedStale: false, mergeFailed: true };
   } finally {
     session.dispose();
   }
