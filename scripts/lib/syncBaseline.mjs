@@ -381,20 +381,33 @@ function groupBy(rows, keyOf) {
  * @returns {{samples:number, p50:number, p95:number, max:number, gaps:number, gapMaxMs:number|null, thresholdMs:number, peers:number}|null}
  */
 export function summarizeCadence(rows) {
-  /** @type {Map<string, number[]>} */
-  const byPeer = new Map();
+  // ⭐ 2026-11-22：**按“轮”分组**，不是逐行 —— 同一轮里会依次出现多个空间；
+  //   只有「空间又开始重复」才说明上一轮结束、新的一轮开始。
+  //   ⛔ 逐行相减会把“一轮内的空间先后”当成轮间隔（那正是 82ms 假读数的来源）。
+  /** @type {Map<string, {start: number, seen: Set<string>}[]>} */
+  const roundsByPeer = new Map();
   for (const r of rows) {
     if (typeof r.atMs !== "number" || r.atMs <= 0) continue;
-    const list = byPeer.get(r.peer);
-    if (list) list.push(r.atMs);
-    else byPeer.set(r.peer, [r.atMs]);
+    const space = typeof r.space === "string" ? r.space : "";
+    let rounds = roundsByPeer.get(r.peer);
+    if (!rounds) {
+      rounds = [{ start: r.atMs, seen: new Set([space]) }];
+      roundsByPeer.set(r.peer, rounds);
+      continue;
+    }
+    const cur = rounds[rounds.length - 1];
+    if (cur.seen.has(space)) {
+      rounds.push({ start: r.atMs, seen: new Set([space]) });
+    } else {
+      cur.seen.add(space);
+    }
   }
   /** @type {number[]} */
   const intervals = [];
-  for (const list of byPeer.values()) {
-    const sorted = [...list].sort((a, b) => a - b);
-    for (let i = 1; i < sorted.length; i += 1) {
-      const d = sorted[i] - sorted[i - 1];
+  for (const rounds of roundsByPeer.values()) {
+    const starts = rounds.map((x) => x.start).sort((a, b) => a - b);
+    for (let i = 1; i < starts.length; i += 1) {
+      const d = starts[i] - starts[i - 1];
       if (d > 0) intervals.push(d);
     }
   }
@@ -415,7 +428,7 @@ export function summarizeCadence(rows) {
     gaps: gaps.length,
     gapMaxMs: gaps.length > 0 ? gaps[gaps.length - 1] : null,
     thresholdMs,
-    peers: byPeer.size,
+    peers: roundsByPeer.size,
     burst: {
       samples: burst.length,
       p50: percentile(burst, 50),
