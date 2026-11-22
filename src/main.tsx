@@ -48,8 +48,13 @@ setCrdtRemoteApplier((db, pageId, state) => {
     toast(refusal.message, "error");
   }
   // A1 G0：合并失败也必须让人看见（⛔ 不静默吞）；本机版本已保留，可重试。
-  if (res.mergeFailed) {
-    toast("这一页的自动合并没有完成，已保留本机版本；可重试，或改用「另存为新页 / 保留本地」。", "error");
+  if (res.mergeFailed || res.staleState) {
+    toast(
+      res.staleState
+        ? "这一页的本机历史与内容不一致，已保留本机版本（未自动合并）；请先保存一次或改用「另存为新页」。"
+        : "这一页的自动合并没有完成，已保留本机版本；可重试，或改用「另存为新页 / 保留本地」。",
+      "error",
+    );
   }
   // 返回是否真的合并/采用：false ⇒ 平台层会把远端那一版继续留在待并队列（⛔ 不静默丢）。
   return !res.mergeFailed && !res.disabled;

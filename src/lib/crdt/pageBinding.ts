@@ -22,6 +22,7 @@ import * as Y from "yjs";
 import {
   ensurePageCrdtState,
   markTextStale,
+  readContent,
   readPageCrdtState,
   recordLineageConflict,
   writeContentProjection,
@@ -164,6 +165,8 @@ export interface MergedRemoteState {
   mergeFailed?: boolean;
   /** A1 G0：开关关掉（kill switch）⇒ 不合并、保留本机（用于回滚）。 */
   disabled?: boolean;
+  /** A1 G0：本机 CRDT 状态投影 ≠ 内容列（状态陈旧）⇒ 拒绝合并、保本机（⛔ 不覆盖新内容）。 */
+  staleState?: boolean;
   /**
    * ★ **血统冲突**（有值 ⇒ 这次**没有合并**，本机那一版被原样保留）。
    *
@@ -212,6 +215,20 @@ export function mergeRemotePageState(
   enabled: boolean = a1AutoMergeEnabled(),
 ): MergedRemoteState {
   const mine = readPageCrdtState(db, pageId);
+  if (mine) {
+    // ⭐ A1 安全闸（2026-11-22 影子扫描发现 5 页状态投影 ≠ 内容列）：
+    //   状态陈旧时合并再写投影会**覆盖用户的新内容** ⇒ 宁可拒绝，⛔ 不赌。
+    //   老库/测试夹具读不到内容列 ⇒ 不拦（保持既有测试与老页行为）。
+    try {
+      const stored = readContent(db, pageId);
+      if (stored && projectStateToJson(mine) !== stored.json) {
+        console.warn(`[a1] 本机 CRDT 状态与内容列不一致（状态陈旧）⇒ 拒绝合并 page=${pageId}`);
+        return { adopted: false, state: mine, derivedStale: false, staleState: true };
+      }
+    } catch {
+      // 内容列读不出/解析失败 ⇒ 不做这个判断（不拦，但也不写坏：后续合并仍有 try/catch）。
+    }
+  }
   if (!mine) {
     writePageCrdtState(db, pageId, remote, now);
     // ★ S6 尾巴：落盘那一列（反链/插件/AI/导出读的**投影**）也跟上 —— 由**状态**重新序列化。
