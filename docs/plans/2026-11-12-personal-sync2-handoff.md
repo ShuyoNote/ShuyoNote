@@ -29,7 +29,7 @@ relay：7ab13cbc（TLS 热重载实际 24 小时 / days_left 启动时算一次 
   2.1.16 发版（2026-11-22）：
     · tag v2.1.16（annotated 1a62a75e → c109299a）；GitHub Release 已发布
     · 资产 5 个：win exe / linux deb / AppImage / android apk / apk.sha256
-    · macOS：notarytool 403（Apple 协议未签）⇒ 按既有口径**删除 mac 资产**（不发布未公证包）
+    · macOS：首次 notarytool 403（Apple 协议）⇒ 删除 mac 资产；**16:1x 协议签署后重跑公证 success**（Accepted/装订/Gatekeeper），3 个 mac 资产已补进 Release
     · 首个 release commit 的 CI 红：check-rustfmt（4 文件）+ check-main-only-commits（发布线独有提交）
       ⇒ 已由 c29c2a63 修（cargo fmt + dev/main 同步；CI 重跑中）
     · GitCode Release 与 `/app/latest.json`（当前 2.1.14）仍待运营发布/部署
