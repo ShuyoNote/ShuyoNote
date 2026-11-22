@@ -154,14 +154,6 @@ const relTime = (ts: number) => {
 };
 const fmtDuration = (ms: number) => (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + " 秒";
 /** C1：本次下载量说成人话（只用来展示，精度不重要）。 */
-/** ★ 2026-09-29（IA）：「同步方式」那一行的右侧摘要值。
- *  三档的文案与下面 <select> 里的 <option> **逐字一致** —— 不新造词，也不拍扁成
- *  「自动（推荐）」那种说法（拍扁了就说不清用户现在到底在哪一档）。 */
-const SYNC_MODE_TEXT: Record<SyncMode, string> = {
-  off: "关闭",
-  interval: "按间隔（每 30 秒）",
-  realtime: "近实时（连着服务端时立刻拉）",
-};
 /** ★ 2026-09-29（IA）：「同步预算」那一行的右侧摘要值。
  *  取值区间与 `.sync-budget-row` 里那些 <option> 一一对应（256/512/1024/2048/5120 MB）
  *  ⇒ 摘要值念出来与展开后那个下拉里选中的一项**是同一个说法**。 */
@@ -1434,8 +1426,9 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   //   ⚠️ ⛔ 一个都不写死 ✗：读不到 ⇒ 如实说「还没配对／不在线」✓（⛔ 不拿「看起来正常」冒充 ✗）。
   const meshPaired = duList.length > 0;
   const meshOnline = !!lanStatus?.enabled;
+  // ⭐ 2026-11-22（owner：「产品这两个字还有必要吗」）：高级里**不再重复空间名** ——
+  //   面板本来就只在当前空间里，那行只留「上次同步 / 今天同步了 N 项」这两条真读数。
   const heroSub = [
-    activeRow?.name ?? "",
     lastSync ? relTime(lastSync.at) : "",
     todayItems > 0 ? `今天同步了 ${todayItems} 项` : "",
   ]
@@ -2592,30 +2585,24 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
 
               <div className="sync-subhead">连接与配对</div>
               {/* ① 同步方式 ← 原来的 `.sync-auto` ＋ `.sync-auto-hint`
-                  （还是同一个 <select>、同一句 `syncModeHint`；行头那颗字是它的 `<label>`） */}
-              <details className="sync-row">
-                <summary>
-                  <span className="sync-row-label">同步方式</span>
-                  <span className="sync-row-value">{SYNC_MODE_TEXT[syncMode]}</span>
-                  <span className="sync-row-caret" aria-hidden>›</span>
-                </summary>
-                <div className="sync-row-body">
-                  <div className="sync-auto">
-                    <select
-                      className="sync-input"
-                      value={syncMode}
-                      onChange={(e) => applySyncMode(e.target.value as SyncMode)}
-                    >
-                      <option value="off">关闭</option>
-                      <option value="interval">按间隔（每 30 秒）</option>
-                      {/* ⚠️ 只有桌面才有那条流（Web 上是浏览器自带 SSE、没有开关；Rust 侧才有
-                          `sync_stream_*`）。Web 上不摆这一档 —— 摆了就是承诺一个不存在的档。 */}
-                      {isDesktopPlatform() && <option value="realtime">近实时（连着服务端时立刻拉）</option>}
-                    </select>
-                  </div>
-                  <span className="sync-hint sync-auto-hint">{syncModeHint(syncMode)}</span>
-                </div>
-              </details>
+                  （还是同一个 <select>、同一句 `syncModeHint`；行头那颗字是它的 `<label>`）
+                  ⭐ 2026-11-22（方案 C）：改成**行内下拉**，不再点开一张表单。 */}
+              <div className="sync-row sync-row-inline" title={syncModeHint(syncMode)}>
+                <span className="sync-row-label">同步方式</span>
+                <span className="sync-row-value sync-row-value-inline">
+                  <select
+                    className="sync-select-inline"
+                    value={syncMode}
+                    onChange={(e) => applySyncMode(e.target.value as SyncMode)}
+                  >
+                    <option value="off">关闭</option>
+                    <option value="interval">按间隔（每 30 秒）</option>
+                    {/* ⚠️ 只有桌面才有那条流（Web 上是浏览器自带 SSE、没有开关；Rust 侧才有
+                        `sync_stream_*`）。Web 上不摆这一档 —— 摆了就是承诺一个不存在的档。 */}
+                    {isDesktopPlatform() && <option value="realtime">近实时（连着服务端时立刻拉）</option>}
+                  </select>
+                </span>
+              </div>
 
               {/* ⭐⭐ **R176-A（owner 2026-10-28 拍 A）②③** ✗：个人版那两格**只在这里**（「高级」里）——
                   · **广播端口**：⭐ 预置好了、**默认藏起来**（主界面一个端口输入都没有 ⇒ J12
@@ -2652,7 +2639,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                       aria-label="手动添加设备"
                       onClick={() => setManualOpen(false)}
                     >
-                      <div className="sync-dialog" onClick={(e) => e.stopPropagation()}>
+                      <div className="sync-dialog sync-dialog-form" onClick={(e) => e.stopPropagation()}>
                         <div className="sync-dialog-head">
                           <span className="sync-dialog-title">手动添加设备</span>
                           <button className="sync-mini-btn" onClick={() => setManualOpen(false)}>
@@ -2686,27 +2673,23 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                         }}
                       />
                     </div>
-                    <div className="sync-field">
-                      <button
-                        className="sync-mini-btn"
-                        data-testid="manual-device-add"
-                        disabled={
-                          manualDeviceBusy ||
-                          !manualDeviceId.trim() ||
-                          !manualDeviceBase.trim()
-                        }
-                        onClick={() => void addManualDevice()}
-                      >
-                        {manualDeviceBusy ? "保存中…" : "添加"}
-                      </button>
-                    </div>
-                        </div>
-                      </div>
-                    </div>
-                  , document.body)}
+                    <button
+                      className="sync-btn primary sync-manual-add"
+                      data-testid="manual-device-add"
+                      disabled={
+                        manualDeviceBusy ||
+                        !manualDeviceId.trim() ||
+                        !manualDeviceBase.trim()
+                      }
+                      onClick={() => void addManualDevice()}
+                    >
+                      {manualDeviceBusy ? "保存中…" : "添加设备"}
+                    </button>
                     <div className="sync-hint" data-testid="manual-device-hint">
-                      只有<b>本空间已配对</b>的设备会进入直连候选；未配对只保存、不连接（⛔
-                      不凭空信任）。请先在另一台/附近设备完成配对。
+                      只有<b>本空间已配对</b>的设备会进入直连候选；未配对只保存、不连接（⛔ 不凭空信任）。
+                    </div>
+                    <div className="sync-manual-list-title">
+                      已添加 {Object.keys(manualPeers ?? {}).length} 台
                     </div>
                     <div data-testid="manual-device-list">
                       {Object.keys(manualPeers ?? {}).length === 0 ? (
@@ -2743,7 +2726,11 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                           })
                       )}
                     </div>
-                </div>
+                      </div>
+                    </div>
+                  </div>
+                  , document.body)}
+                                    </div>
               )}
 
               {/* ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：**永久缺失**。
@@ -2766,47 +2753,33 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
 
               {isPersonalActive && isDesktopPlatform() && (
                 <>
-                  <details className="sync-row" data-testid="mesh-port-row">
-                    <summary>
-                      <span className="sync-row-label">广播端口</span>
-                      <span className="sync-row-value">{bindPort || "未读到"}</span>
-                      <span className="sync-row-caret" aria-hidden>›</span>
-                    </summary>
-                    <div className="sync-row-body">
-                      <div className="sync-field">
-                        <label htmlFor="sync-mesh-port">端口</label>
-                        <input
-                          id="sync-mesh-port"
-                          className="sync-input"
-                          data-testid="mesh-port-input"
-                          value={shownPort}
-                          inputMode="numeric"
-                          placeholder="预置值（读到这里就能改）"
-                          disabled={!bindPort}
-                          onChange={(e) => setMeshPortDraft(e.target.value)}
-                        />
-                        <button
-                          className="sync-btn"
-                          data-testid="mesh-port-save"
-                          disabled={!bindPort}
-                          onClick={() => void saveMeshPort()}
-                        >
-                          保存端口
-                        </button>
-                      </div>
-                      <p className="sync-hint">{PORT_ADVANCED_HINT}</p>
-                    </div>
-                  </details>
-                  <details className="sync-row" data-testid="mesh-password-row">
-                    <summary>
-                      <span className="sync-row-label">同步密码</span>
-                      <span className="sync-row-value">{PASSWORD_AUTO_VALUE}</span>
-                      <span className="sync-row-caret" aria-hidden>›</span>
-                    </summary>
-                    <div className="sync-row-body">
-                      <p className="sync-hint">{PASSWORD_AUTO_HINT}</p>
-                    </div>
-                  </details>
+                  <div className="sync-row sync-row-inline" data-testid="mesh-port-row" title={PORT_ADVANCED_HINT}>
+                    <span className="sync-row-label">广播端口</span>
+                    <span className="sync-row-actions">
+                      <input
+                        id="sync-mesh-port"
+                        className="sync-input sync-input-inline"
+                        data-testid="mesh-port-input"
+                        value={shownPort}
+                        inputMode="numeric"
+                        placeholder="预置值"
+                        disabled={!bindPort}
+                        onChange={(e) => setMeshPortDraft(e.target.value)}
+                      />
+                      <button
+                        className="sync-mini-btn"
+                        data-testid="mesh-port-save"
+                        disabled={!bindPort}
+                        onClick={() => void saveMeshPort()}
+                      >
+                        保存
+                      </button>
+                    </span>
+                  </div>
+                  <div className="sync-row sync-row-inline" data-testid="mesh-password-row" title={PASSWORD_AUTO_HINT}>
+                    <span className="sync-row-label">同步密码</span>
+                    <span className="sync-row-value sync-row-value-end">{PASSWORD_AUTO_VALUE}</span>
+                  </div>
                 </>
               )}
 
@@ -2864,7 +2837,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
           {/* ⚠️ **刀二十（2026-10-14）** ✗：⭐ 原来这里有一句「【进阶】这一组是 `.sync-profiles` 的**兄弟**」，
               ⭐ 那是为 `SpacePrivacySection` 的位置写的 ✓ —— ⭐ 而它**已经删掉**（owner：与设置的安全面板重复 ✓）
               ⇒ ⭐ 这句连同那个理由一起退役 ✓（⛔ 不留一句描述已删东西的注释 ✗）。 */}
-          <div className="sync-group is-advanced" data-card="v2" style={{ marginLeft: 14, marginRight: 14, width: "calc(100% - 28px)" }}>
+          <div className="sync-group is-advanced" data-card="v2">
             <div className="sync-card-head">
               <span className="sync-card-icon is-health" aria-hidden><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></span>
               <div className="sync-card-title-wrap">
@@ -3271,7 +3244,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
             , document.body)}
           </div>
 
-          <div className="sync-group sync-card-outer" data-card="v2" style={{ marginLeft: 14, marginRight: 14, width: "calc(100% - 28px)" }}>
+          <div className="sync-group sync-card-outer" data-card="v2">
             <div className="sync-card-head">
               <span className="sync-card-icon is-globe" aria-hidden><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/></svg></span>
               <div className="sync-card-title-wrap">
