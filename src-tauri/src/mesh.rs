@@ -1522,6 +1522,40 @@ fn round_health() -> &'static RoundHealth {
     ROUND_HEALTH.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
+/// ⭐ **2026-11-22（S1 Phase 0）**：健康表的状态迁移（纯函数）。
+///
+/// 为什么需要它：`recovered_after_ms` 的语义是「**上一次失败 → 这次成功**」，
+/// 但今天只有成功路径写这格（`(now, 0)`）—— 失败路径**从不写** ⇒ 那一格在真机上一直是空的。
+/// 这把失败也记进去（保留上次成功的时刻），恢复读数才第一次真的能出现。
+fn next_round_health(prev: Option<(i64, i64)>, ok: bool, now: i64) -> (i64, i64) {
+    match (prev, ok) {
+        // 失败：保留"上次成功时刻"，把"上次失败时刻"更新为现在
+        (Some((last_ok, _)), false) => (last_ok, now),
+        (None, false) => (0, now),
+        // 成功：成功时刻=现在，清掉失败时刻
+        (_, true) => (now, 0),
+    }
+}
+
+#[cfg(test)]
+mod round_health_state_tests {
+    use super::next_round_health;
+
+    #[test]
+    fn failure_records_err_time_and_keeps_last_ok() {
+        assert_eq!(next_round_health(None, false, 100), (0, 100));
+        assert_eq!(next_round_health(Some((50, 0)), false, 100), (50, 100));
+        // 连续失败：last_ok 不动，err 时间往后推
+        assert_eq!(next_round_health(Some((50, 100)), false, 200), (50, 200));
+    }
+
+    #[test]
+    fn success_clears_err_and_sets_last_ok() {
+        assert_eq!(next_round_health(Some((50, 100)), true, 300), (300, 0));
+        assert_eq!(next_round_health(None, true, 300), (300, 0));
+    }
+}
+
 /// ⭐ **2026-11-12（§13 S1 第一刀）**：在线视角的**纯函数** —— `last_ok_ms <= 0`（还没有成功记录）
 /// ⇒ `None`（结论未知，⛔ 不冒充离线）；否则按 TTL 判在线。
 pub(crate) fn presence_online(last_ok_ms: i64, now_ms: i64, online_ttl_ms: i64) -> Option<bool> {
@@ -2042,7 +2076,9 @@ async fn absorb_and_report(
             )
         );
         if let Ok(mut m) = round_health().lock() {
-            m.insert(format!("{space_id}|{}", peer.device_id), (now, 0));
+            let key = format!("{space_id}|{}", peer.device_id);
+            let prev = m.get(&key).copied();
+            m.insert(key, next_round_health(prev, true, now));
         }
     }
     Ok(PeerPullReport {
@@ -3020,6 +3056,13 @@ async fn round_candidates_inner(
             }
             // ⚠️ **不连坐**：这一台拉不动，别的照拉；错原样带回给界面。
             Err(e) => {
+                // ⭐ **2026-11-22（S1 Phase 0）**：失败也写健康表 —— 否则 `recovered_after_ms`
+                //   永远没有起点（今天只有成功路径写）。⛔ 只记录，不改任何重试/节流行为。
+                if let Ok(mut m) = round_health().lock() {
+                    let key = format!("{space_id}|{}", p.device_id);
+                    let prev = m.get(&key).copied();
+                    m.insert(key, next_round_health(prev, false, crate::db::now_ms()));
+                }
                 // ⭐ S3：**失败的也留一行日志** —— 新出现的失败模式（每台超时）如果只写进
                 //   `PeerPullReport`，排障时又变成"只能靠界面猜"（本仓被这条咬过多次）。
                 //   ⚠️ 成功那一行**逐字未变**；这一行是**新增**的（只多不多）。
