@@ -432,6 +432,26 @@ owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workf
 
 ```
 
+### 操作环境坑（2026-11-21/22 实测，⛔ 别再用错误结论覆盖它们）
+
+1. **dev 版必须配 Vite**：先 `pnpm dev`（1420），再开 `src-tauri\target\debug\shuyonote.exe`。
+   只开 exe ⇒ 窗口是 Edge 的「127.0.0.1 拒绝连接」错误页；此时 CDP 读 localStorage 全是 `undefined`。
+   ⚠️ 2026-11-22 我据此**误判**成「影子扫描没跑」，连试 4 次 —— 真相是应用没起来。
+   ⇒ 看到 CDP 返回 `undefined`/空白，先 `Test-NetConnection 127.0.0.1 -Port 1420`。
+
+2. **跑 Rust 测试前先设 `TMP`/`TEMP`** 到**仓外**可写目录（例：`C:\Users\cnzen\zhai\_tmp\logs`）。
+   否则 `cl.exe`/`link` 写临时文件失败 ⇒ 全量 lib 出现**成片假红**（2026-11-22 实测 353 条失败、64 s 内）。
+   同一份代码设好 TEMP 后 **1578 passed / 0 failed**（311 s）—— 判据就是「设与不设」的对照。
+
+3. **新 worktree 缺构建资产**：`src-tauri/vendor/pdfium/` 是 gitignored ⇒ 冷构建先跑
+   `node scripts/fetch-pdfium.mjs`（钉死版本＋校验和）。
+
+4. **本机只跑 `--lib`**：`win-cargo-test.ps1` 不含集成测试；改到数据库开库点必须补跑
+   `cargo test --manifest-path src-tauri/Cargo.toml --test db_openers --no-run` 后直接执行 exe（9/9）。
+   ⚠️ 2026-11-20 就因为漏了这条，CI 上 `every_real_db_open_point_is_registered` 连红两笔。
+
+5. **多行 `git merge -m` 会被当成参数**：2026-11-21 我用多行消息合并，git 报
+   `… - not something we can merge`，**合并其实没发生**（那一轮门禁跑在未合并的树上）。⇒ `-m` 用**单行**。
 ## 4. 红线与待拍板
 ```text
 红线（不可自主）：
