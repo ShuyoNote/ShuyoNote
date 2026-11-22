@@ -147,7 +147,7 @@ export function InvitePairingSection({ activeId }: { activeId: string }) {
       </div>
       <div className="sync-device-name" style={{ gap: 8 }} data-testid="invite-actions">
         <button
-          className="sync-btn"
+          className="sync-mini-btn"
           data-testid="invite-generate"
           disabled={busy !== null}
           onClick={() => void generate()}
@@ -174,7 +174,7 @@ export function InvitePairingSection({ activeId }: { activeId: string }) {
             aria-label="邀请内容"
             style={{ width: "100%", minHeight: 64, fontSize: 11, boxSizing: "border-box" }}
           />
-          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+          <div className="sync-device-name" style={{ gap: 8, marginTop: 6 }}>
             <button className="sync-mini-btn" data-testid="invite-copy" onClick={() => void copyText()}>
               复制邀请
             </button>
@@ -203,9 +203,9 @@ export function InvitePairingSection({ activeId }: { activeId: string }) {
             aria-label="邀请内容（粘贴）"
             style={{ width: "100%", minHeight: 64, fontSize: 11, boxSizing: "border-box" }}
           />
-          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+          <div className="sync-device-name" style={{ gap: 8, marginTop: 6 }}>
             <button
-              className="sync-btn"
+              className="sync-mini-btn"
               data-testid="invite-import-submit"
               disabled={busy !== null}
               onClick={() => void redeem()}
