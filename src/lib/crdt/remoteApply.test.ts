@@ -57,6 +57,7 @@ describe("冲刺 S4b-1b：远端状态的落地（注入）", () => {
       calls.push({ pageId, n: state.length });
       // 实现拿到的确实是我们传进去的那个库（同一个引用）
       expect(d).toBe(db);
+      return true;
     });
     applyRemoteCrdtState(db, "p1", new Uint8Array([7, 8]));
     expect(calls).toEqual([{ pageId: "p1", n: 2 }]);
@@ -64,7 +65,7 @@ describe("冲刺 S4b-1b：远端状态的落地（注入）", () => {
 
   it("③ 集成：注册**真实现**（`mergeRemotePageState`）⇒ 远端那一版真的落进本机", () => {
     const { db } = fakeDb();
-    setCrdtRemoteApplier((d, pageId, state) => mergeRemotePageState(d, pageId, state, 1));
+    setCrdtRemoteApplier((d, pageId, state) => !mergeRemotePageState(d, pageId, state, 1).mergeFailed);
 
     const remote = openPageSession({ json: SAMPLE }).exportState();
     applyRemoteCrdtState(db, "p1", remote);

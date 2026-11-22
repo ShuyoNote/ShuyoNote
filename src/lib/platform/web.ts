@@ -4,6 +4,7 @@ import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
 import { ciphertextRefusalMessage, looksLikeCiphertext } from "../ciphertextSniff";
+import { a1AutoMergeEnabled } from "../crdt/a1Gate";
 import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, recordLineageConflict, unresolvedLineageConflict, resolveLineageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, pageDocJsonInSpace, readPageCrdtState, writePageCrdtState, writePageProjectionIfChanged, type RemotePageRow } from "../docContent";
 import { withCrdtWire, decodeCrdtWire } from "../crdt/wireState";
 import { resolveWorkspaceSyncScope, type ClaimScopeRow } from "../crdt/claimScope";
@@ -927,26 +928,33 @@ export function applyChange(store: SqliteStore, change: SyncChange): void {
         return;
       }
       {
+        // ★ 冲刺 S4b-1b：载荷里若带 **CRDT 状态** ⇒ 先在**同一条血统**上并，再谈正文列。
+        //   ⚠️ 顺序是 A1 审查 P0-2 的修法：**先并 CRDT、失败就 stash 并 return** ——
+        //   否则 applyRemoteContent 已经把远端正文写进去，又丢掉远端 CRDT 状态，
+        //   就成了“内容远端、状态本机、远端版本不可重试”的半写。
+        const wire = decodeCrdtWire((p as Record<string, unknown>).crdt_state);
+        if (wire.kind === "ok") {
+          if (!a1AutoMergeEnabled()) {
+            stashPendingRemote(store, p as RemotePageRow, change.seq, Date.now());
+            return;
+          }
+          const merged = applyRemoteCrdtState(store, String(p.id), wire.state);
+          if (!merged) {
+            // 合并失败/被关：远端整行（含 crdt_state）留在待并队列，⛔ 不丢版本。
+            stashPendingRemote(store, p as RemotePageRow, change.seq, Date.now());
+            return;
+          }
+        } else if (wire.kind === "unknown-version") {
+          console.warn(
+            `[sync] page ${p.id} 的 CRDT 状态版本 ${String(wire.v)} 本机不认识 ⇒ 未合并（不猜；内容按今天那条路落库）`,
+          );
+        }
         // ★ **阶段 1**：落库走那一层的**唯一入口** `applyRemoteContent` —— 它内部先试一次
         // **逐块合并**（两端各自改**不同块** ⇒ 两边的编辑都保留），不合并时就是接线前的行为：
         // 老内容（顶层块没有身份）／脏 JSON，或**有冲突**（`rev` 相等而内容不同、任一侧缺 `rev`）——
         // 裁定 (iii) 要求"不静默选边"，而提示 UI 还没做，所以这一片必须先回落。
         // ⚠️ 那一行的**正文文本**仍是远端那一份（派生文本要编辑器语义，不能在同步路径现算）。
         applyRemoteContent(store, String(p.id), { ...p, id: String(p.id) }, change.seq);
-        // ★ 冲刺 S4b-1b（2026-09-23）：载荷里若带了 **CRDT 状态** ⇒ 把它并进本机**同一条血统**。
-        //   三种情形**分开**处置（混成一种的下场是静默丢块）：
-        //     · `ok`             ⇒ 交给**已注册的**落地实现（`applyRemoteCrdtState` ⇒ `mergeRemotePageState`）；
-        //     · `none`（老载荷） ⇒ 什么也不做 ⇒ 与接线前**逐字相同**（如实降级）；
-        //     · `unknown-version`⇒ **如实报出**（不猜着解 —— 猜错＝静默丢块）。
-        //   ⚠️ 落地实现是**注入**的：这一层（会被 Node 侧脚本加载）不许 import `pageBinding`。
-        const wire = decodeCrdtWire((p as Record<string, unknown>).crdt_state);
-        if (wire.kind === "ok") {
-          applyRemoteCrdtState(store, String(p.id), wire.state);
-        } else if (wire.kind === "unknown-version") {
-          console.warn(
-            `[sync] page ${p.id} 的 CRDT 状态版本 ${String(wire.v)} 本机不认识 ⇒ 未合并（不猜；内容按今天那条路落库）`,
-          );
-        }
         // B 方案：**更新的远端版本已经应用** ⇒ 之前存下的那一版（seq 更小）已经是陈的，清掉
         //（与 Rust `do_pull` 里那一段逐字对应：不清就是"清单永远挂着几条假账"）。
         const stashed = pendingRemoteSeq(store, String(p.id));

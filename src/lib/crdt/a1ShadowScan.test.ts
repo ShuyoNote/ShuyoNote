@@ -4,7 +4,7 @@
 //   ⛔ 不注册进 scripts/lib/gates.mjs；不进 pre-commit / baseline。
 import { describe, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
 import { basename, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -13,7 +13,9 @@ import {
 } from "./pageBinding";
 import { openPageSession, projectStateToJson } from "./yDocBridge";
 
-const RUN = process.env.A1_SHADOW_SCAN === "1";
+const RUN =
+  process.env.A1_SHADOW_SCAN === "1" &&
+  (!process.env.CI || process.env.A1_SHADOW_FORCE === "1");
 const DATA_DIR = process.env.SHUYONOTE_DATA_DIR ?? join(process.env.APPDATA ?? "", "cn.shuyo.shuyonote");
 const MAGIC = Buffer.from("SQLite format 3\0", "utf8");
 
@@ -23,12 +25,20 @@ type Cat =
   | "merged_fewer_blocks"
   | "projection_mismatch"
   | "projection_meta_only"
+  | "projection_direction"
   | "projection_stale"
   | "lineage_incompatible"
   | "exception";
 
 function openRo(path: string): DatabaseSync {
-  const head = readFileSync(path).subarray(0, MAGIC.length);
+  const fd = openSync(path, "r");
+  const buf = Buffer.alloc(MAGIC.length);
+  try {
+    readSync(fd, buf, 0, MAGIC.length, 0);
+  } finally {
+    closeSync(fd);
+  }
+  const head = buf;
   if (!head.equals(MAGIC)) throw new Error(`不是明文 SQLite（可能是加密空间）：${path}`);
   const db = new DatabaseSync(path, { readOnly: true });
   db.exec("PRAGMA query_only=ON");
@@ -52,12 +62,25 @@ function stripVolatile(json: string): unknown {
       for (const x of v) walk(x);
     } else if (v && typeof v === "object") {
       delete (v as Record<string, unknown>).blockRev;
-      delete (v as Record<string, unknown>).direction;
       for (const x of Object.values(v as Record<string, unknown>)) walk(x);
     }
   };
   walk(o);
   return o;
+}
+
+/** 只额外忽略 `direction`：用于把“排版方向差异”与“内容差异”分开。 */
+function stripDirection(v: unknown): unknown {
+  const copy = JSON.parse(JSON.stringify(v));
+  const walk = (x: unknown) => {
+    if (Array.isArray(x)) x.forEach(walk);
+    else if (x && typeof x === "object") {
+      delete (x as Record<string, unknown>).direction;
+      Object.values(x as Record<string, unknown>).forEach(walk);
+    }
+  };
+  walk(copy);
+  return copy;
 }
 
 function norm(json: string): unknown {
@@ -88,6 +111,7 @@ function scanSpace(dbPath: string) {
     merged_fewer_blocks: 0,
     projection_mismatch: 0,
     projection_meta_only: 0,
+    projection_direction: 0,
     projection_stale: 0,
     lineage_incompatible: 0,
     exception: 0,
@@ -164,15 +188,26 @@ function scanSpace(dbPath: string) {
     const stored = norm(page.content_json);
     if (!isDeepStrictEqual(norm(mineJson), stored)) {
       let metaOnly = false;
+      let dirOnly = false;
       try {
-        metaOnly = isDeepStrictEqual(stripVolatile(mineJson), stripVolatile(page.content_json));
+        const a = stripVolatile(mineJson);
+        const b = stripVolatile(page.content_json);
+        metaOnly = isDeepStrictEqual(a, b);
+        dirOnly = isDeepStrictEqual(stripDirection(a), stripDirection(b));
       } catch {
         metaOnly = false;
+        dirOnly = false;
       }
       add(
         row.page_id,
-        metaOnly ? "projection_meta_only" : page.text_stale === 1 ? "projection_stale" : "projection_mismatch",
-        `seq=${row.seq} 本机状态投影≠pages.content_json${metaOnly ? "（仅 blockRev 等元数据）" : ""}`,
+        dirOnly
+          ? "projection_direction"
+          : metaOnly
+            ? "projection_meta_only"
+            : page.text_stale === 1
+              ? "projection_stale"
+              : "projection_mismatch",
+        `seq=${row.seq} 本机状态投影≠pages.content_json${dirOnly ? "（仅 direction）" : metaOnly ? "（仅 blockRev 等元数据）" : ""}`,
       );
     }
   }
@@ -208,6 +243,7 @@ describe.skipIf(!RUN)("A1 影子扫描（只读）", () => {
         merged_fewer_blocks: sum("merged_fewer_blocks"),
         projection_mismatch: sum("projection_mismatch"),
         projection_meta_only: sum("projection_meta_only"),
+        projection_direction: sum("projection_direction"),
         projection_stale: sum("projection_stale"),
         lineage_incompatible: sum("lineage_incompatible"),
         exception: sum("exception"),
@@ -222,6 +258,9 @@ describe.skipIf(!RUN)("A1 影子扫描（只读）", () => {
         ` ｜ 异常 ${report.totals.exception} ｜ 读不到 ${report.totals.unreadable}`,
     );
 
+    if (all.length === 0 || all.every((s) => s.pageWithCrdt === 0)) {
+      throw new Error("NOT_VERIFIED：没有可扫描的 page_crdt 页（零覆盖不算通过）");
+    }
     if (unreadable.length > 0) throw new Error(`NOT_VERIFIED：有 ${unreadable.length} 个空间读不到（不算通过）`);
     if (report.totals.merged_fewer_blocks + report.totals.projection_mismatch + report.totals.exception > 0) {
       throw new Error("发现危险差异（少块/投影不一致/异常）——未通过");

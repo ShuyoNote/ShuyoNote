@@ -51,7 +51,7 @@ import type { ContentSql } from "../docContent";
 // =====================================================================================
 
 /** 远端状态落地：由"有编辑器的那一侧"注册（生产 `src/main.tsx` ⇒ `mergeRemotePageState`）。 */
-export type CrdtRemoteApplier = (db: ContentSql, pageId: string, state: Uint8Array) => void;
+export type CrdtRemoteApplier = (db: ContentSql, pageId: string, state: Uint8Array) => boolean;
 
 let remoteApplier: CrdtRemoteApplier | null = null;
 
@@ -66,12 +66,12 @@ export function setCrdtRemoteApplier(fn: CrdtRemoteApplier): void {
  * ⚠️ 没注册 ⇒ **如实抛**（不静默吞掉那一版 —— 吞掉就是丢更新）。
  * ⚠️ 只该由**同步路径**调用（`web.ts::applyChange` 的页面分支）。
  */
-export function applyRemoteCrdtState(db: ContentSql, pageId: string, state: Uint8Array): void {
+export function applyRemoteCrdtState(db: ContentSql, pageId: string, state: Uint8Array): boolean {
   if (!remoteApplier) {
     throw new Error(
       "远端 CRDT 状态没有注册落地实现：界面侧应在启动时调 setCrdtRemoteApplier(...)（见 src/main.tsx）。" +
         "同步路径不许自己去 import 实现 —— 那会把编辑器节点表拖进 Node 侧脚本的依赖图。",
     );
   }
-  remoteApplier(db, pageId, state);
+  return remoteApplier(db, pageId, state);
 }

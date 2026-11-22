@@ -17,6 +17,7 @@
 // `import { yDocToContentJson }` 就被门禁当场判红（`pageBinding.ts（1 处）`）⇒ 改用桥接层提供的
 // 别名 `projectStateToJson`。这就是层清单决策树里那条"会反复撞的税"。
 import type { LexicalEditor } from "lexical";
+import { a1AutoMergeEnabled, a1AutoMergeEnabledFrom } from "./a1Gate";
 import * as Y from "yjs";
 import {
   ensurePageCrdtState,
@@ -188,17 +189,14 @@ export interface MergedRemoteState {
  * A1 G0 kill switch：**默认开**（今天的同血统合并已经在跑；关掉才是回滚）。
  * 只认显式 `0/false/off` 为关；未设置/其它值 ⇒ 开。⛔ 不引入第二个真相源。
  */
-export function a1AutoMergeEnabledFrom(value: string | undefined | null): boolean {
-  const v = (value ?? "").trim().toLowerCase();
-  return !(v === "0" || v === "false" || v === "off");
-}
+export { a1AutoMergeEnabledFrom };
 
 export function mergeRemotePageState(
   db: ContentSql,
   pageId: string,
   remote: Uint8Array,
   now: number,
-  enabled: boolean = a1AutoMergeEnabledFrom(import.meta.env.VITE_CRDT_A1),
+  enabled: boolean = a1AutoMergeEnabled(),
 ): MergedRemoteState {
   const mine = readPageCrdtState(db, pageId);
   if (!mine) {
@@ -252,12 +250,13 @@ export function mergeRemotePageState(
     //   判据用**投影**比（内容级），不用字节比：同一份状态两次编码在 yjs 里是稳定的，
     //   但"字节不同"未必意味着内容不同，拿它当判据会多标。
     const changed = projectStateToJson(mine) !== projectStateToJson(merged);
-    writePageCrdtState(db, pageId, merged, now);
+    // ⭐ A1 审查 P0-3：**先写投影/标记，再写状态** —— 若投影写失败，状态还没落，
+    //   catch 里“保本机”才成立；反过来会出现“状态已 merged、投影没跟上”的半写。
     if (changed) {
-      // ★ S6 尾巴：**内容真的变了**才把投影写回（没变就一次写库都不做，免得制造假账）。
       writeContentProjection(db, pageId, projectStateToJson(merged));
       markTextStale(db, pageId);
     }
+    writePageCrdtState(db, pageId, merged, now);
     return { adopted: false, state: merged, derivedStale: changed };
   } catch (err) {
     // A1 G0：合并异常 ⇒ **保本机**（不写坏状态、不丢远端；由调用方提示可重试）。
@@ -330,6 +329,8 @@ export interface AsyncPageBinding {
   adopted?: boolean;
   /** 待并状态里因为"不是同一条血统"被**拒绝合并**的条数（> 0 ⇒ 有痕，调用方该如实报出来）。 */
   pendingSkipped?: number;
+  /** A1 G0：开关关/合并失败而**保留**的待并项数（>0 ⇒ 调用方该知道“这次没并完”）。 */
+  pendingDeferred?: number;
   persist(): Promise<void>;
   dispose(): void;
 }
@@ -369,6 +370,8 @@ export async function bindPageToEditorViaPort(opts: {
     let ids = lineageClientIds(base);
     let merged = false;
     let skipped = 0;
+    let deferred = 0;
+    const a1Enabled = a1AutoMergeEnabled();
     for (const p of state ? pending : pending.slice(1)) {
       const remoteIds = lineageClientIds(p.state);
       // ★ 与 `mergeRemotePageState` **同一条护栏**（复用同一对纯函数，不另写一份判定）：
@@ -392,7 +395,18 @@ export async function bindPageToEditorViaPort(opts: {
         }
         continue;
       }
-      session.merge(p.state);
+      if (!a1Enabled) {
+        // A1 G0 kill switch：不合并；**保留待并项**（下次打开/重开开关还能并）。
+        deferred += 1;
+        continue;
+      }
+      try {
+        session.merge(p.state);
+      } catch (e) {
+        deferred += 1;
+        console.warn(`[a1] 待并状态合并失败，保留待并项 page=${pageId} seq=${p.seq}`, e);
+        continue;
+      }
       merged = true;
       ids = new Set([...ids, ...remoteIds]);
     }
@@ -423,7 +437,7 @@ export async function bindPageToEditorViaPort(opts: {
       }
     }
     // 合并过就清（不实现 `clearPending` ⇒ 不清 —— 那会让同一批状态每次打开都再并一遍；调用方该实现它）
-    if (pending.length > 0) {
+    if (pending.length > 0 && deferred === 0) {
       await port.clearPending?.(pageId);
     }
     return {
@@ -431,6 +445,7 @@ export async function bindPageToEditorViaPort(opts: {
       seeded: false,
       adopted: state === null,
       pendingSkipped: skipped,
+      pendingDeferred: deferred,
       async persist() {
         await port.save(pageId, session.exportState());
       },

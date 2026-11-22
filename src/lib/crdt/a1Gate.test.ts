@@ -80,9 +80,10 @@ describe("A1 G0", () => {
 
   it("接线：开关、失败字段、用户提示都在", () => {
     const root = process.cwd();
+    const gate = readFileSync(resolve(root, "src/lib/crdt/a1Gate.ts"), "utf8");
     const pageBinding = readFileSync(resolve(root, "src/lib/crdt/pageBinding.ts"), "utf8");
     const main = readFileSync(resolve(root, "src/main.tsx"), "utf8");
-    expect(pageBinding).toContain("VITE_CRDT_A1");
+    expect(gate).toContain("VITE_CRDT_A1");
     expect(pageBinding).toContain("mergeFailed");
     expect(main).toContain("res.mergeFailed");
   });
