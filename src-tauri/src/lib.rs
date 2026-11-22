@@ -199,6 +199,8 @@ mod lan_state;
 mod lan_netwatch;
 // ⭐ §13.2 S1 P0（2026-11-22）：心跳策略纯函数层（⛔ 未接线，默认零行为变化）。
 mod lan_heartbeat;
+// ⭐ §13.3 F3 P0（2026-11-22）：公告扇出节流（默认关）。
+mod lan_fanout;
 // 配对载荷（B 片纯函数内核）：见 [`pairing`] 模块头 —— 二维码 / 短码 PAKE / 界面在接线那一片。
 // ⚠️ 本模块**不含任何密码学**：短码通道必须 PAKE，而选型要单独过一次目（见该文件头）。
 mod cap_limits;
