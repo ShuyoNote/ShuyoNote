@@ -21,6 +21,7 @@ import {
   splitMetricLines,
   splitRoundBlocks,
   summarizeMetrics,
+  summarizeCadence,
   summarizeRoundTiming,
   summarizeSchedulingFailures,
 } from "./syncBaseline.mjs";
@@ -237,11 +238,12 @@ describe("F2/F3 Phase 0 · [round-timing] 逐空间耗时（F3 调度）", () =>
   const T = "[round-timing] space=f280… ok=true ms=98";
 
   it("解析：忠实读 ok 与 ms；CRLF 行也认；⛔ 不还原脱敏标签、也不打印它", () => {
-    expect(parseRoundTimingLine(T)).toEqual({ space: "f280…", ok: true, ms: 98 });
+    expect(parseRoundTimingLine(T)).toEqual({ space: "f280…", ok: true, ms: 98, atMs: null });
     expect(parseRoundTimingLine("[round-timing] space=1c02… ok=false ms=21061\r")).toEqual({
       space: "1c02…",
       ok: false,
       ms: 21061,
+      atMs: null,
     });
   });
 
@@ -433,5 +435,58 @@ describe("F3 · 失败面（[peer-skip] / [peer-err-class]）", () => {
     expect(withData).toContain("错误文本合计 10 字符");
     const empty = formatBaselineReport(summarizeMetrics([row], 0, [], [], [], []));
     expect(empty).toContain("没量到：这批日志没有 [peer-skip]");
+  });
+});
+
+// ⭐ S1/S2 Phase 0（2026-11-22）：`at_ms` 与"轮节奏"代理基线（⛔ 不是换网/休眠真实事件）。
+describe("S1/S2 Phase 0：at_ms 与轮节奏", () => {
+  const metrics = (extra = "") =>
+    `[sync-metrics] space=a peer=b since=1 max_seq=2 gap=1 fetched=1 applied=1 ms=10${extra}`;
+
+  it("parseMetricsLine 读 at_ms；老日志没有 ⇒ null（⛔ 不猜）", () => {
+    expect(parseMetricsLine(metrics(" at_ms=1700000000000")).atMs).toBe(1700000000000);
+    expect(parseMetricsLine(metrics()).atMs).toBeNull();
+  });
+
+  it("parseRoundTimingLine 也读 at_ms", () => {
+    const r = parseRoundTimingLine("[round-timing] space=sp ok=true ms=12 at_ms=1700000000000");
+    expect(r.atMs).toBe(1700000000000);
+    expect(parseRoundTimingLine("[round-timing] space=sp ok=true ms=12").atMs).toBeNull();
+  });
+
+  it("summarizeCadence：同对端相邻间隔 + 长间隔（阈值 max(3×p50, 4 分钟)）", () => {
+    const T0 = 1_700_000_000_000;
+    const c = summarizeCadence([
+      { peer: "p1", atMs: T0 },
+      { peer: "p1", atMs: T0 + 1000 },
+      { peer: "p1", atMs: T0 + 2000 },
+      { peer: "p1", atMs: T0 + 3000 },
+      { peer: "p1", atMs: T0 + 4000 },
+      { peer: "p1", atMs: T0 + 500000 },
+      { peer: "p2", atMs: T0 },
+      { peer: "p2", atMs: T0 + 1000 },
+      { peer: "p2", atMs: T0 + 2000 },
+    ]);
+    expect(c.samples).toBe(7); // p1 五个 + p2 两个
+    expect(c.p50).toBe(1000);
+    expect(c.thresholdMs).toBe(240000);
+    expect(c.gaps).toBe(1); // 只有 496000 超过阈值
+    expect(c.gapMaxMs).toBe(496000);
+    expect(c.peers).toBe(2);
+  });
+
+  it("没有 at_ms ⇒ null（⛔ 不拿 0 当读数）", () => {
+    expect(summarizeCadence([{ peer: "p1", atMs: null }])).toBeNull();
+  });
+
+  it("报告含轮节奏行（有轮次时；⛔ 不改行为）", () => {
+    const s = summarizeMetrics([
+      { space: "s1", peer: "p1", since: 0, maxSeq: 0, gap: 0, fetched: 0, applied: 0, ms: 10, recoveredAfterMs: null, atMs: 1000 },
+      { space: "s1", peer: "p1", since: 0, maxSeq: 0, gap: 0, fetched: 0, applied: 0, ms: 10, recoveredAfterMs: null, atMs: 2000 },
+    ]);
+    const text = formatBaselineReport(s);
+    expect(text).toContain("轮节奏");
+    expect(text).toContain("长间隔");
+    expect(text).toContain("1 个间隔");
   });
 });

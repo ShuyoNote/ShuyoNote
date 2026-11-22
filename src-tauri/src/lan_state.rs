@@ -1279,9 +1279,9 @@ pub fn peer_cooldown_key(peer_device: &str) -> String {
 /// ⭐ **2026-11-18（根因 A 取证，纯函数）**：一个空间在这一轮里花了多久。///
 /// 形状：`[round-timing] space=<脱敏空间> ok=<true|false> ms=<耗时>`
 /// ⚠️ 空间名**必须**先过 `mask_space`（⛔ 原始 id/名字不进日志：与 `[mesh] 后台一轮完成` 同一把尺）。
-pub fn round_timing_line(space: &str, ok: bool, ms: u128) -> String {
+pub fn round_timing_line(space: &str, ok: bool, ms: u128, at_ms: i64) -> String {
     format!(
-        "[round-timing] space={} ok={ok} ms={ms}",
+        "[round-timing] space={} ok={ok} ms={ms} at_ms={at_ms}",
         crate::lan::mask_space(space)
     )
 }
@@ -1594,7 +1594,7 @@ fn spawn_background_round(
                     if debug_latency() {
                         eprintln!(
                             "{}",
-                            round_timing_line(&proto_space, true, space_t0.elapsed().as_millis())
+                            round_timing_line(&proto_space, true, space_t0.elapsed().as_millis(), crate::db::now_ms())
                         );
                     }
                     // ⭐ 2026-10-24：后台轮也要告诉前端“改了哪些页”（网格没有 SSE；
@@ -1686,7 +1686,7 @@ fn spawn_background_round(
                     if debug_latency() {
                         eprintln!(
                             "{}",
-                            round_timing_line(&proto_space, false, space_t0.elapsed().as_millis())
+                            round_timing_line(&proto_space, false, space_t0.elapsed().as_millis(), crate::db::now_ms())
                         );
                     }
                 }
@@ -3832,21 +3832,26 @@ mod tests {
         assert!(!should_skip_peer_for_rest_of_round(None));
     }
 
-    /// ⭐ **2026-11-18（根因 A 取证）**：每空间耗时的那一行 —— 形状固定、空间必须先脱敏。    #[test]
+    /// ⭐ **2026-11-18（根因 A 取证）**：每空间耗时的那一行 —— 形状固定、空间必须先脱敏。
+    #[test]
     fn round_timing_line_masks_the_space_and_keeps_the_shape() {
-        let line = round_timing_line("2ae7009bff614f96c64c703021609443", true, 21_345);
+        let line = round_timing_line("2ae7009bff614f96c64c703021609443", true, 21_345, 1_700_000_000_000);
         assert!(
             line.starts_with("[round-timing] space="),
             "前缀变了：{line}"
         );
         assert!(line.contains(" ok=true "), "结果没写进去：{line}");
         assert!(line.contains(" ms=21345"), "耗时没写进去：{line}");
+        assert!(
+            line.contains(" at_ms=1700000000000"),
+            "at_ms 没写进去：{line}"
+        );
         // ⛔ 原始空间 id 不许进日志（与 `[mesh] 后台一轮完成` 同一把尺：只留前 8 位 + 省略号）
         assert!(
             !line.contains("2ae7009bff614f96c64c703021609443"),
             "空间 id 没脱敏：{line}"
         );
-        let bad = round_timing_line("sp-1", false, 0);
+        let bad = round_timing_line("sp-1", false, 0, 1_700_000_000_000);
         assert!(bad.contains(" ok=false "));
         assert!(bad.contains(" ms=0"));
     }

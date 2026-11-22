@@ -87,6 +87,7 @@ export function parseMetricsLine(line) {
   }
   if (ms === null || ms < 0) return null;
   const recovered = intOf(kv.get("recovered_after_ms"));
+  const atMs = intOf(kv.get("at_ms"));
   return {
     space,
     peer,
@@ -97,6 +98,8 @@ export function parseMetricsLine(line) {
     applied,
     ms,
     recoveredAfterMs: recovered === null || recovered < 0 ? null : recovered,
+    // ⭐ S1/S2 Phase 0：这一行发生的墙钟毫秒（2026-11-22 起打；老日志没有 ⇒ null，⛔ 不猜）。
+    atMs: atMs === null || atMs <= 0 ? null : atMs,
   };
 }
 
@@ -214,7 +217,13 @@ export function parseRoundTimingLine(line) {
   if (!space || space.length > 64) return null;
   if (okRaw !== "true" && okRaw !== "false") return null;
   if (ms === null || ms < 0) return null;
-  return { space, ok: okRaw === "true", ms };
+  const atMs = intOf(kv.get("at_ms"));
+  return {
+    space,
+    ok: okRaw === "true",
+    ms,
+    atMs: atMs === null || atMs <= 0 ? null : atMs,
+  };
 }
 
 /**
@@ -362,6 +371,51 @@ function groupBy(rows, keyOf) {
 }
 
 /**
+ * ⭐ **S1/S2 Phase 0（2026-11-22）**：轮节奏代理基线 —— 用 `[sync-metrics]` 的 `at_ms`
+ * 算同一对端相邻两轮的间隔分布，以及"长间隔"（默认阈值 = max(3×p50, 4 分钟)）。
+ *
+ * ⚠️ 这是**代理读数**：日志没有"换 Wi-Fi/休眠唤醒"事件，所以长间隔只能说明"这一段没同步"，
+ *    ⛔ 不能断言原因；真实换网/休眠恢复时间要等这两类事件埋点之后才量得到。
+ *
+ * @param {MetricRow[]} rows
+ * @returns {{samples:number, p50:number, p95:number, max:number, gaps:number, gapMaxMs:number|null, thresholdMs:number, peers:number}|null}
+ */
+export function summarizeCadence(rows) {
+  /** @type {Map<string, number[]>} */
+  const byPeer = new Map();
+  for (const r of rows) {
+    if (typeof r.atMs !== "number" || r.atMs <= 0) continue;
+    const list = byPeer.get(r.peer);
+    if (list) list.push(r.atMs);
+    else byPeer.set(r.peer, [r.atMs]);
+  }
+  /** @type {number[]} */
+  const intervals = [];
+  for (const list of byPeer.values()) {
+    const sorted = [...list].sort((a, b) => a - b);
+    for (let i = 1; i < sorted.length; i += 1) {
+      const d = sorted[i] - sorted[i - 1];
+      if (d > 0) intervals.push(d);
+    }
+  }
+  if (intervals.length === 0) return null;
+  const sorted = [...intervals].sort((a, b) => a - b);
+  const p50 = percentile(sorted, 50);
+  const thresholdMs = Math.max((p50 ?? 0) * 3, 4 * 60 * 1000);
+  const gaps = sorted.filter((d) => d > thresholdMs);
+  return {
+    samples: sorted.length,
+    p50,
+    p95: percentile(sorted, 95),
+    max: sorted[sorted.length - 1],
+    gaps: gaps.length,
+    gapMaxMs: gaps.length > 0 ? gaps[gaps.length - 1] : null,
+    thresholdMs,
+    peers: byPeer.size,
+  };
+}
+
+/**
  * @typedef {object} BaselineSummary
  * @property {number} rounds 解析成功了多少行
  * @property {number} skipped 看着像 `[sync-metrics]` 但形状不认识的行数（⛔ 不是 0 就当没看见）
@@ -442,6 +496,7 @@ export function summarizeMetrics(
     peers,
     segments,
     scheduling: summarizeRoundTiming(roundRows),
+    cadence: summarizeCadence(rows),
     failures: summarizeSchedulingFailures(skipRows, errRows),
   };
 }
@@ -450,6 +505,16 @@ export function summarizeMetrics(
 function percText(s) {
   if (!s) return "没量到（⛔ 不算 0）";
   return `p50 ${s.p50}ms · p95 ${s.p95}ms · max ${s.max}ms · >1s ${s.over1s} 条 · >100ms ${s.over100ms} 条（${s.count} 轮）`;
+}
+
+/** @param {ReturnType<typeof summarizeCadence>} c */
+function cadenceText(c) {
+  if (!c) return "没量到（日志缺 at_ms 或不足两条）";
+  return (
+    `p50 ${c.p50}ms · p95 ${c.p95}ms · max ${c.max}ms · 长间隔 ${c.gaps} 次` +
+    (c.gapMaxMs == null ? "" : `（最长 ${c.gapMaxMs}ms）`) +
+    `（${c.samples} 个间隔 / ${c.peers} 台对端，阈值 ${c.thresholdMs}ms）`
+  );
 }
 
 /** @param {LatencySegment[]} segments */
@@ -566,6 +631,7 @@ export function formatBaselineReport(s, title = "个人版同步 2.0 · Phase 0 
       s.recovered ? percText(s.recovered) : `没出现这一格（0/${s.rounds} 轮）`
     }`,
     `缺口：${s.gap.gappedRounds}/${s.gap.rounds} 轮有缺口（gap>0），合计缺口 ${s.gap.totalGap} 条`,
+    `轮节奏（S1/S2 代理：同一对端相邻两轮间隔的 p50/p95；⛔ 不是换网/休眠真实事件）：${cadenceText(s.cadence)}`,
     `明细：fetched 合计 ${s.fetched} · applied 合计 ${s.applied}`,
     "",
     "按空间（编号代替空间名/哈希）：",
