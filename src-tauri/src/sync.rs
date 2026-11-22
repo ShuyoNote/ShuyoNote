@@ -12507,10 +12507,7 @@ mod tests {
         stash(&c, &theirs, 9);
 
         let err = resolve_pending_remote(&c, "p1", PendingChoice::Merge).unwrap_err();
-        assert!(
-            err.contains("两条互不相关的编辑历史"),
-            "错误要可读：{err}"
-        );
+        assert!(err.contains("两条互不相关的编辑历史"), "错误要可读：{err}");
         assert_eq!(local_json(&c, "p1"), mine, "拒绝合并 ⇒ 正文一个字都不许动");
         assert_eq!(
             crate::doc_content::pending_remote_seq(&c, "p1").unwrap(),

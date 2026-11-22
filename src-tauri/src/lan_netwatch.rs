@@ -103,7 +103,10 @@ mod tests {
     fn first_sample_is_not_a_change() {
         let fp = fingerprint(&[a("eth0", "192.168.1.5")]);
         assert!(!is_change(None, &fp));
-        assert!(is_change(Some(&fp), &fingerprint(&[a("eth0", "192.168.1.6")])));
+        assert!(is_change(
+            Some(&fp),
+            &fingerprint(&[a("eth0", "192.168.1.6")])
+        ));
         assert!(!is_change(Some(&fp), &fp));
     }
 
@@ -112,7 +115,14 @@ mod tests {
         for v in [Some("1"), Some("true"), Some("ON"), Some(" on ")] {
             assert!(netwatch_enabled_from(v), "应打开：{v:?}");
         }
-        for v in [None, Some("0"), Some("false"), Some("off"), Some("yes"), Some("")] {
+        for v in [
+            None,
+            Some("0"),
+            Some("false"),
+            Some("off"),
+            Some("yes"),
+            Some(""),
+        ] {
             assert!(!netwatch_enabled_from(v), "应关闭：{v:?}");
         }
     }
