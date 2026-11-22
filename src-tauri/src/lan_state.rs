@@ -683,6 +683,18 @@ pub const ANNOUNCE_INTERVAL_MS: i64 = 10_000;
 /// （`recv_from` 会一直等）也照常发生。
 pub const RECV_SLICE_MS: u64 = 1_000;
 
+/// ⭐ **2026-11-22（S2 P0 接线）**：网络变化 ⇒ 强制重播的“到点”标记（0 ＝ 没有）。
+/// ⚠️ 只有 `SHUYONOTE_LAN_NETWATCH=1/true/on` 时才可能被置非 0；默认路径永远为 0。
+static FORCE_ANNOUNCE_AT_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static NETWATCH_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// S2 P0 开关（env 只读一次；⛔ 拿不准一律关）。
+fn netwatch_enabled() -> bool {
+    *NETWATCH_ENABLED.get_or_init(|| {
+        crate::lan_netwatch::netwatch_enabled_from(std::env::var("SHUYONOTE_LAN_NETWATCH").ok().as_deref())
+    })
+}
+
 /// 这一轮"该不该喊"（纯函数）。
 ///
 /// `last_announce_ms <= 0` ＝ 还没喊过（第一轮就要喊，别让新设备等一个间隔才露面）。
@@ -2201,8 +2213,37 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         //   ⛔ 不是每收到一条公告就推 ✗（公告每 30 秒一轮 ⇒ 那样等于把轮询搬到后端，还更吵）。
         //   ⚠️ 前端收到后**立刻重读一次** `lan_status`（5 秒轮询保留兜底 ⇒ 老构建/Web 照旧）。
         let mut last_lan_fp: String = String::new();
+        // ⭐ S2 P0：netwatch 的去抖状态（env 关时这些变量只待着，不产生副作用）。
+        let mut netwatch_tick: i64 = 0;
+        let mut netwatch_prev: Option<String> = None;
+        let mut netwatch_pending: Option<String> = None;
         loop {
             let now = crate::db::now_ms();
+            // ⭐ S2 P0：网络变化检测（env 关 ⇒ 连采样都不做，逐字节保持今天行为）。
+            //   2 拍采一次 + 连续 2 个相同的新指纹才算变化（去抖）；变化只置“强制重播”标记。
+            if netwatch_enabled() {
+                netwatch_tick += 1;
+                if netwatch_tick % 2 == 0 {
+                    let fp = crate::lan_netwatch::fingerprint(&crate::mesh::local_addrs_named());
+                    if netwatch_prev.as_deref() != Some(fp.as_str()) {
+                        if netwatch_pending.as_deref() == Some(fp.as_str()) {
+                            if crate::lan_netwatch::is_change(netwatch_prev.as_deref(), &fp) {
+                                FORCE_ANNOUNCE_AT_MS.store(now, Ordering::SeqCst);
+                                eprintln!(
+                                    "[{}] [net-watch] 地址变化 ⇒ 强制重播（env=SHUYONOTE_LAN_NETWATCH）",
+                                    lan::log_stamp()
+                                );
+                            }
+                            netwatch_prev = Some(fp);
+                            netwatch_pending = None;
+                        } else {
+                            netwatch_pending = Some(fp);
+                        }
+                    } else {
+                        netwatch_pending = None;
+                    }
+                }
+            }
             // ① 收（有超时 ⇒ "网段里没人说话"时循环照常推进，广播与腾表不会被卡住）。
             //    ⚠️ 收报走 `recv_into_within` ⇒ **解码只有一处**（`record_datagram`）。
             // ⭐ **2026-10-09（task-8）**：⭐ **四种结果各自打一行** ✓ —— 真机上「发了没」「收了没」
@@ -2407,14 +2448,21 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             // ⭐⭐ **2026-11-18（修法 B，第二版）**：公告条件改成「到点 **或** 有 dirty 且离上次够远」——
             //   dirty 由**保存那一刻**挂上（`request_round_now_from_source`），公告块自己 `swap(false)`
             //   消费它 ⇒ **一次保存只播一次**；⛔ 不再每 tick 重刷 `last_announce_ms`（那版播了 4,311 条）。
+            let force_announce = netwatch_enabled()
+                && crate::lan_netwatch::force_due(
+                    FORCE_ANNOUNCE_AT_MS.load(Ordering::SeqCst),
+                    now,
+                    last_announce_ms,
+                    DIRTY_ANNOUNCE_MIN_GAP_MS,
+                );
             if state.is_enabled()
-                && announce_due_with_dirty(
+                && (announce_due_with_dirty(
                     last_announce_ms,
                     now,
                     ANNOUNCE_INTERVAL_MS,
                     ANNOUNCE_DIRTY_PENDING.load(Ordering::SeqCst),
                     DIRTY_ANNOUNCE_MIN_GAP_MS,
-                )
+                ) || force_announce)
             {
                 // ★★ 2026-09-26（真机抓到的**单向发现**）：目标**每一轮重算**，而且要带上
                 //    **已经认识的对端地址**（单播）。理由见 `lan::announce_targets` 的头注：
@@ -2467,6 +2515,7 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                         a
                     })
                     .collect();
+                let mut force_sent = false;
                 for mut a in announced {
                     // ⭐ 2026-11-03：把**本机实际监听的端口**写进公告 —— 对端据此单播回来
                     //    （两端可能绑在不同候选端口上；老对端忽略这一格，仍按候选端口全打）。
@@ -2475,13 +2524,16 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     // "发出去几条 / 目标长什么样 / **哪一条失败了、为什么**" 以前**完全不可见** ✗
                     // （`announce_once` 只留最后一条错误、且只在**全部**失败时才报 ⇒ 部分失败静默 ✗）。
                     match lan::announce_once(&sock, &targets, &a).await {
-                        Ok(o) => eprintln!(
-                            "{}",
-                            lan::announce_send_line(
-                                &o,
-                                a.hub_spaces.first().map(String::as_str).unwrap_or("")
-                            )
-                        ),
+                        Ok(o) => {
+                            force_sent = true;
+                            eprintln!(
+                                "{}",
+                                lan::announce_send_line(
+                                    &o,
+                                    a.hub_spaces.first().map(String::as_str).unwrap_or("")
+                                )
+                            );
+                        }
                         Err(e) => eprintln!("[mesh] 公告一条都没发出去：{e}"),
                     }
                 }
@@ -2499,6 +2551,10 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                             eprintln!("{line}");
                         }
                     }
+                }
+                // S2：强制重播只要**真发出去过一条**就消费掉（全失败 ⇒ 保留，下一拍再试）。
+                if force_announce && force_sent {
+                    FORCE_ANNOUNCE_AT_MS.store(0, Ordering::SeqCst);
                 }
                 last_announce_ms = now;
             }

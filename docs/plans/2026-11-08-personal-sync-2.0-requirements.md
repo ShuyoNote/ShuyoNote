@@ -434,7 +434,7 @@ LAN 直连成功率 ≥ 99%（同 Wi-Fi、正常防火墙）
 
 > **S1 Phase 0 补丁（2026-11-22）**：失败路径也写 `round_health`（保留上次成功时刻）—— `recovered_after_ms` 此前只有成功路径写、真机上一直为空；现在「上次失败 → 这次成功」的恢复读数第一次可用（判据 `next_round_health` 2 条）。⛔ 不改任何重试/节流；心跳/自适应仍未做。
 >
-> **S2 P0（2026-11-22）**：新增 `src-tauri/src/lan_netwatch.rs` 纯函数层 —— 本机地址指纹（只 IPv4、去 loopback、排序）、`is_change`（首个样本不算变化）、`force_due`（到点/时钟回拨保护）；判据 4 条。**尚未接线**（默认零行为变化）；接线时只在 `SHUYONOTE_LAN_NETWATCH=1/true/on` 下生效，且需 owner 拍板。
+> **S2 P0（2026-11-22）**：新增 `src-tauri/src/lan_netwatch.rs` 纯函数层 —— 本机地址指纹（只 IPv4、去 loopback、排序）、`is_change`（首个样本不算变化）、`force_due`（到点/时钟回拨保护）。**已接线（env 门控）**：1s 循环里 2 拍采样一次、连续 2 个相同的新指纹才算变化；变化只置“强制重播”，公告条件加 `|| force_due(...)`，真发出去一条后才消费。**不设 `SHUYONOTE_LAN_NETWATCH` ⇒ 连采样都不做（零行为变化）**；判据 6 条（含源码级接线）。默认开仍需 owner 拍。
 >
 > **S1/S2 状态（2026-11-22）**：Phase 0 **代理基线**已可量 ——`[sync-metrics]` / `[round-timing]` 行新增 `at_ms`（只加日志、⛔ 不改行为），`summarizeCadence()` 统计同一对端相邻两轮间隔（p50/p95/max、长间隔次数/最长）。⚠️ 这是**代理**：真实「换 Wi-Fi / 休眠唤醒 / 对端重启」事件**尚未埋点**，恢复时间仍量不到（⛔ 不拿轮间隔冒充）。S1 心跳/自适应、S2 换网即时反应仍**未做**（行为变更，等 owner 拍）。
 

@@ -62,6 +62,16 @@ pub fn force_due(force_at_ms: i64, now_ms: i64, last_announce_ms: i64, min_gap_m
     now_ms.saturating_sub(last_announce_ms) >= min_gap_ms.max(0)
 }
 
+/// 开关解析（纯函数）：只有显式 `1/true/on`（大小写不敏感）才算开；其余一律关。
+///
+/// 与 `SHUYONOTE_MESH_AUTOSYNC=0` 同一套“只认显式值”的纪律：⛔ 拿不准不打开。
+pub fn netwatch_enabled_from(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1") | Some("true") | Some("on")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,6 +105,25 @@ mod tests {
         assert!(!is_change(None, &fp));
         assert!(is_change(Some(&fp), &fingerprint(&[a("eth0", "192.168.1.6")])));
         assert!(!is_change(Some(&fp), &fp));
+    }
+
+    #[test]
+    fn env_gate_only_explicit_on_values_open_it() {
+        for v in [Some("1"), Some("true"), Some("ON"), Some(" on ")] {
+            assert!(netwatch_enabled_from(v), "应打开：{v:?}");
+        }
+        for v in [None, Some("0"), Some("false"), Some("off"), Some("yes"), Some("")] {
+            assert!(!netwatch_enabled_from(v), "应关闭：{v:?}");
+        }
+    }
+
+    /// 源码级：接线只在 env 门下、且公告条件真的用了 `force_due`（⛔ 默认路径不受影响）。
+    #[test]
+    fn wiring_is_env_gated_and_announce_uses_force_due() {
+        let src = include_str!("lan_state.rs");
+        assert!(src.contains("SHUYONOTE_LAN_NETWATCH"));
+        assert!(src.contains("force_due("));
+        assert!(src.contains("FORCE_ANNOUNCE_AT_MS"));
     }
 
     #[test]
