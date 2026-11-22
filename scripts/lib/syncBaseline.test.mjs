@@ -528,3 +528,20 @@ describe("轮节奏分档（连拉 / 中间 / 稳态）", () => {
     expect(text2).toContain("没量到（⛔ 不拿连拉冒充稳态）");
   });
 });
+
+// ⭐ 2026-11-22：按「轮」分组 —— 同一轮里多个空间不算轮间隔（修正 82ms 假读数的根因）。
+describe("轮节奏按轮分组", () => {
+  it("一轮内 s1→s2 不产生间隔；下一轮 s1 才开始新的一轮", () => {
+    const T0 = 1_700_000_000_000;
+    const c = summarizeCadence([
+      { peer: "p1", space: "s1", atMs: T0 },
+      { peer: "p1", space: "s2", atMs: T0 + 100 },
+      { peer: "p1", space: "s1", atMs: T0 + 30000 },
+      { peer: "p1", space: "s2", atMs: T0 + 30100 },
+    ]);
+    expect(c.samples).toBe(1); // 只有两轮之间那一个间隔
+    expect(c.steady.samples).toBe(1);
+    expect(c.steady.p50).toBe(30000);
+    expect(c.burst.samples).toBe(0);
+  });
+});
