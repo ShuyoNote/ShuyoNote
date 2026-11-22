@@ -81,7 +81,13 @@ export function pasteErrorText(code: string): string {
   }
 }
 
-export function LicenseSection() {
+export function LicenseSection({
+  onSubscribedChange,
+}: {
+  /** ⭐ 2026-11-22：把「是否已订阅」交给外层（未订阅时把「跨网与订阅」收成一行）。
+   *  `null` = 还没读到（外层按展开渲染，⛔ 不提前收）。 */
+  onSubscribedChange?: (v: boolean | null) => void;
+} = {}) {
   const [cards, setCards] = useState<StoredCard[]>(() => readCards());
   const [dev, setDev] = useState<string | null>(null);
   const [issuer, setIssuer] = useState<{ ready: boolean; why?: string } | null>(null);
@@ -144,6 +150,18 @@ export function LicenseSection() {
   const current = pickCurrent(parsed.map((p) => ({ ...p.parsed, text: p.text })));
   const now = nowTs() + 0 * tick; // tick 只用来触发重渲染；时间每次渲染现取
   const state: CardState | null = current ? cardState(current.payload, now) : null;
+  // ⭐ 2026-11-22：外层的「未订阅 ⇒ 收成一行」判据（⛔ 不拿"没有粘贴卡"直接当成未订阅：
+  //   中继侧 `relay/license.txt` 也可能已装；两处任一给出 active/grace 都算已订阅）。
+  const subscribed =
+    (!!current && (state === "active" || state === "grace")) ||
+    relayLic?.state === "active" ||
+    relayLic?.state === "grace";
+  // ⚠️ 这里**总是**给一个布尔（没有卡、也没有中继侧读数 ⇒ 按「未订阅」处理）：
+  //    否则「读不到中继配置」的机器会永远停在"未知"、永远不收起（owner 2026-11-22 要的就是收起）。
+  //    代价：真已订阅但首帧还没读到时会先收成一行，读到后自动展开（可接受）。
+  useEffect(() => {
+    onSubscribedChange?.(subscribed);
+  }, [subscribed, onSubscribedChange]);
   const days = current ? daysLeft(current.payload, now) : 0;
   const grace = current ? graceDaysLeft(current.payload, now) : 0;
   const decision = state ? renewDecision(state, days) : null;
