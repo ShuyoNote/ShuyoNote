@@ -5,15 +5,43 @@
 
 > 换会话/换机器时先读这一页；细节都在 git 与日志里，这里只写「现在在哪、下一步、什么不能碰」。
 
+## 2026-11-22 战报（本轮“开火”收口）
+
+```text
+本轮提交（ShuyoNote dev）：
+  58eecd2a  F3 读数：同步核心行显示空转次数/下一轮延迟（零行为变化）
+  b5d3ed04  U4 安全闸：分叉页拒绝「合并这一页」（判据 1 条）
+  31a93347  S1 Phase 0：失败也写 round_health（判据 2 条）
+  98000b75  S2 纯函数：地址指纹 / is_change / force_due（判据 4 条）
+  0498fe78  S2 接线（env 门控；不设 SHUYONOTE_LAN_NETWATCH 即零行为变化；判据 6 条）
+  6b89f13a  S2 换网 / S1 唤醒 真机验收操作单（文档，待执行）
+  cb2c776d  F3 公告扇出读数（675 轮 / 目标 p50 7/轮 / 发送成功 100%）
+relay：7ab13cbc（TLS 热重载实际 24 小时 / days_left 启动时算一次 / 自检工具就位 —— 文档纠真）
+
+本轮读数：
+  轮间隔 p50 6.8s / p95 11.0s（141 个，按轮分组；与默认拉取间隔 5s 相符）
+  后台定时轮 ≈ 2 分钟/轮（16 分钟 8 轮）
+  公告扇出 675 轮 · p50/p95/max = 7/7/7 目标/轮 · 发送成功 100% · 失败 0
+  F2-2b：游标越过 ⇒ 需补 1 个实体 ⇒ 摘要 16→17 ⇒ 页 6c5a65fc 补回 ⇒ 下一轮安静
+
+仍待（需 owner）：
+  S2 换网 / S1 唤醒真机读数（操作单已写）；U4 块级「两机同块冲突」窗口；
+  A1 11-24 第 7 天、11-25 拍灰度；行为变更拍板（S2 默认开 / F3 扇出节流 /
+  S1 真心跳 / relay P1）
+
+过程提醒：45f0152f 曾因状态行里写“不是已完成”被 check-plan-status 判红（门禁只认词），
+已由 6b89f13a 改成“不是完成态”并复绿 —— 以后状态行别带完成词。
+```
+
 ## 1. 当前版本
 
 ```text
-ShuyoNote  dev = **d8a71fb7**（2026-11-18；两远端已同步）
+ShuyoNote  dev = **cb2c776d**（2026-11-22；两远端已同步）
            main = **f8712fb7**（tag 之后又落的一笔 README 文档提交；两远端已同步）
            tag  = **v2.1.15**（annotated 5e32b690 → 047ba801；047ba801 是 main 的祖先）
            ⚠️ 这三行是**读数不是承诺**：判据 = `git rev-parse --short=8 HEAD main` ＋
               `git ls-remote origin|github refs/heads/dev|main`（⛔ 别照抄；读完再写）
-relay      main = dabfd8d5（本文未复核，以 relay 仓为准）
+relay      main = 7ab13cbc（2026-11-22 文档纠真；两远端已推）
 collab     HEAD = 见信箱（U4 线程 reply-22 已收口；当前待回 0）
 本机 dev   ：**未在跑**（2026-11-18 17:4x 收摊时已关；要用时见 §6 启动命令）
               ⚠️ 直跑形态（可脚本化）：`Start-Process src-tauri\target\debug\shuyonote.exe` ＋
