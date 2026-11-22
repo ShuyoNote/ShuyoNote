@@ -34,7 +34,9 @@ export function SyncAdvancedFold({ children }: SyncAdvancedFoldProps) {
     //    ⛔ 不新造类名 ✗（新类名要配 `App.css` 规则 ✓，而本笔不碰样式表 ✓）。
     <details className="sync-advanced">
       <summary>高级</summary>
-      {children}
+      {/* ⭐ 2026-11-22：外面包一层，给「三卡网格」一个真正的容器
+          （`<details>` 在 Chromium 里把内容装进 `::details-content`，直接对 details 设 grid 不生效）。 */}
+      <div className="sync-advanced-body">{children}</div>
     </details>
   );
 }

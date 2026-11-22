@@ -233,11 +233,266 @@
 .sync-sub-fold > summary::before { content: "▸ "; }
 .sync-sub-fold[open] > summary::before { content: "▾ "; }
 
+/* ⭐ 2026-11-22（owner：「高级太丑，按方案 C 卡片式复原」）：
+   把高级拆成三张卡（连接 / 数据健康 / 跨网），卡片头带图标与副标题，
+   行不再各自描边（卡内用细分隔线），状态用胶囊。 */
+.sync-group[data-card="v2"] {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  gap: 0 !important;
+  row-gap: 0 !important;
+}
+
+/* ⭐ 2026-11-22（owner：三张卡的宽度布局怎么优化）：
+   两列网格 —— 「连接与配对」│「数据健康」并排，「跨网与订阅」通栏；
+   窄窗口自动回落成单列。 */
+/* ⭐ 2026-11-22（owner：单列居中）—— 三张卡纵向排列、居中，最大宽度 760 */
+.sync-advanced-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px;
+}
+.sync-advanced-body > .sync-profiles { display: contents; }
+/* ⚠️ 必须带 `.sync-popover.is-inline` 前缀：它后面有一条同族规则把 `.sync-group` 的
+   `max-width` 设成了 none（0,3,0）⇒ 这里用 (0,4,0) 才压得住。 */
+.sync-popover.is-inline .sync-advanced-body > .sync-profiles > .sync-group[data-card="v2"],
+.sync-popover.is-inline .sync-advanced-body > .sync-group[data-card="v2"] {
+  width: 100%;
+}
+
+/* 旧的分组小标题在卡片头里已由 .sync-card-title 取代（同一信息不重复）；
+   「跨网与订阅」例外：它要作为卡内小节的分隔标题保留。 */
+[data-card="v2"] > .sync-subhead { display: none; }
+[data-card="v2"] > .sync-subhead.sync-card-section {
+  display: block;
+  margin: 16px 0 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.sync-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 4px;
+}
+.sync-card-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.sync-card-icon.is-link {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent);
+}
+.sync-card-icon.is-health {
+  background: color-mix(in srgb, var(--success) 12%, var(--surface));
+  color: var(--success);
+}
+.sync-card-icon.is-globe {
+  background: color-mix(in srgb, var(--cat-purple, #7c3aed) 12%, var(--surface));
+  color: var(--cat-purple, #7c3aed);
+}
+.sync-card-title { font-size: var(--fs-13-5, 13.5px); font-weight: 600; color: var(--text); }
+/* ⭐ 2026-11-22（owner：高级卡里的字比别处大、不统一）——
+   卡内行显式对齐面板既有字号：标签 13、值 12（⛔ 不再继承外层的大字号）。 */
+[data-card="v2"] .sync-row-label { font-size: var(--fs-13); color: var(--text); }
+[data-card="v2"] .sync-row-value { font-size: var(--fs-12); color: var(--text-faint); }
+
+/* ⭐ 2026-11-22（owner：标题下面的内容要左对齐）：
+   卡片头是「图标 28 + 间距 10」；行内文字再缩进 26 ⇒ 与卡片标题同一左边缘。 */
+[data-card="v2"] .sync-row {
+  padding-left: 38px;
+}
+/* 行高统一 44：details / 行内控件 / 手动添加设备三种行不再一高一矮 */
+[data-card="v2"] .sync-row-inline,
+[data-card="v2"] .sync-row-summary-row {
+  min-height: 44px;
+  padding-top: 0;
+  padding-bottom: 0;
+  box-sizing: border-box;
+}
+[data-card="v2"] .sync-row-summary-row { padding-left: 0; }
+.sync-card-sub { font-size: var(--fs-11-5); color: var(--text-faint); margin-top: 1px; }
+.sync-card-actions { display: flex; justify-content: flex-end; margin: 4px 0 8px; }
+
+/* 方案 C：不是 <details> 的行（手动添加设备）也用同一套行高与分隔线 */
+.sync-row-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 12px;
+}
+.sync-row-summary-row > .sync-mini-btn { margin-left: auto; }
+
+/* ⭐ 2026-11-22（方案 C）：行内控件（不再点开表单） */
+.sync-row-inline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 6px 12px;
+}
+.sync-row-inline > .sync-row-label { flex: none; }
+.sync-row-value-inline { margin-left: auto; display: inline-flex; align-items: center; }
+.sync-row-value-end { margin-left: auto; color: var(--text-faint); font-size: var(--fs-12-5); }
+.sync-row-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.sync-row-actions > .sync-mini-btn {
+  white-space: nowrap;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 12px;
+  /* ⭐ 2026-11-22：与左侧 30px 输入框**同一水平线**（flex 基线在该行偏 4px） */
+  position: relative;
+  top: 4px;
+}
+.sync-select-inline,
+.sync-input.sync-input-inline {
+  height: 30px;
+  min-height: 30px;
+  font-size: var(--fs-12-5);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+}
+.sync-select-inline { min-width: 210px; }
+.sync-input.sync-input-inline { width: 84px; }
+
+/* ⭐ 2026-11-22（方案 C）：诊断改为弹窗 —— 背板 ＋ 面板 ＋ 可滚内容 */
+.sync-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(15, 23, 42, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.sync-dialog {
+  width: min(760px, 92vw);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+  overflow: hidden;
+}
+.sync-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.sync-dialog-title { font-size: var(--fs-13-5, 13.5px); font-weight: 600; color: var(--text); }
+.sync-dialog-body { padding: 4px 18px 16px; overflow: auto; }
+.sync-dialog-body > .sync-row {
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+
+/* ⭐ 2026-11-22（owner：「这个窗口样式太丑」）：表单型弹窗 —— 窄、控件统一 34px、按钮整行、列表收成小节 */
+.sync-dialog-form { width: min(460px, 92vw); }
+.sync-dialog-form .sync-dialog-body { padding: 16px 18px 16px; }
+.sync-dialog-form .sync-field { gap: 5px; margin-bottom: 12px; }
+.sync-dialog-form .sync-field > label {
+  font-size: var(--fs-11-5);
+  font-weight: 500;
+  color: var(--text-faint);
+}
+.sync-dialog-form .sync-input {
+  width: 100%;
+  max-width: none;
+  height: 34px;
+  min-height: 34px;
+  font-size: var(--fs-13);
+  padding: 0 10px;
+}
+.sync-dialog-form .sync-manual-add {
+  width: 100%;
+  height: 36px;
+  min-height: 36px;
+  margin-top: 2px;
+}
+.sync-dialog-form .sync-hint {
+  font-size: var(--fs-11);
+  line-height: 1.5;
+  margin-top: 10px;
+  color: var(--text-faint);
+}
+.sync-manual-list-title {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-11-5);
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.sync-dialog-form [data-testid="manual-device-row"] {
+  font-size: var(--fs-11);
+  padding: 3px 0;
+}
+
+.sync-card-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0 6px 38px;
+}
+.sync-chip {
+  font-size: var(--fs-11-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  padding: 4px 9px;
+  color: var(--text-dim);
+  background: var(--bg);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-chip.is-ok {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 30%, var(--border));
+  background: color-mix(in srgb, var(--success) 8%, var(--surface));
+}
+.sync-chip.is-warn {
+  color: var(--cat-yellow, #b45309);
+  border-color: color-mix(in srgb, var(--cat-yellow, #b45309) 30%, var(--border));
+  background: var(--cat-yellow-soft, #fffbeb);
+}
+
+/* 卡内行：不再各自画一圈框，只用细分隔线（第一行也有一条，与卡片头分开） */
+[data-card="v2"] > .sync-row {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  border-top: 1px solid var(--border);
+}
+[data-card="v2"] > .sync-row > summary { padding-left: 0; padding-right: 12px; }
+
 /* ⚠️ 【进阶】那一组是 `.sync-profiles` 的**兄弟**（不是孩子）—— `SpacePrivacySection`
    不能进 `.sync-profiles`（Web 档 `is-disabled` ⇒ 变灰且点不动）⇒ 它在外面，就得自己
    对齐那 16px（`.sync-profiles` 的横向内边距）。 */
 .sync-group.is-advanced {
-  margin: 0 var(--space-4) var(--space-3);
+  margin: 0;
 }
 
 .sync-row {
@@ -346,6 +601,26 @@
    否则两张卡会贴在一起。 */
 .sync-row-body > .sync-card + .sync-card,
 .sync-row-body > .sync-empty-state + .sync-card { margin-top: var(--space-3); }
+
+/* ⭐ 2026-11-22（owner：「展开后这些输入框/按钮铺满整行太丑」）：
+   行体里的表单改成**设置行**（标签左、控件右），⛔ 不再"标签一行 + 输入一条横条"；
+   按钮回到内容宽；多条 `.sync-field` 之间补统一间距。⚠️ 只作用于折叠行体内部。 */
+.sync-row-body > .sync-field + .sync-field { margin-top: 10px; }
+.sync-row-body .sync-field {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 360px);
+  align-items: center;
+  gap: 10px;
+}
+.sync-row-body .sync-field > label { margin: 0; }
+.sync-row-body .sync-field > .sync-input { grid-column: 2; max-width: 360px; }
+.sync-row-body .sync-field > .sync-btn,
+.sync-row-body .sync-field > .sync-mini-btn { grid-column: 2; justify-self: start; }
+.sync-row-body .sync-field > .sync-btn { min-width: 120px; }
+.sync-row-body .sync-field > .sync-hint,
+.sync-row-body .sync-field > p { grid-column: 1 / -1; }
+/* 端口这一格是短数字：单独再窄一点（id 稳定，界面只此一处） */
+#sync-mesh-port { max-width: 180px; }
 
 /* ── ★ 2026-09-29（丙档「设备直连」）：三样新东西的样式 ─────────────────────────────
    口径（本档的落地要求）：**只用既有变量**（`--border` / `--card-bg` / `--text-dim` /

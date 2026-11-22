@@ -1461,16 +1461,26 @@ pub fn stash_pending_remote(
 }
 
 /// 待取回的远端版本队列（`limit` 由调用方夹住 —— 这是界面列表，不是批量作业）。
+///
+/// ⚠️ **2026-11-22**：只列**当前还存在且未删**的页 —— `pending_remote_pages` 是一张
+/// 没有外键的暂存表；页被删/被清掉之后行还留着 ⇒ 界面会列出一堆"已经删掉的页"
+/// （真机：37 条全部 `pages` 里已不存在）。这里用 JOIN 过滤，坏行不再进清单。
 pub fn pending_remote_queue(c: &Connection, limit: usize) -> Result<PendingRemoteQueue, String> {
     let total: i64 = c
-        .query_row("SELECT COUNT(*) FROM pending_remote_pages", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT COUNT(*) FROM pending_remote_pages p \
+             JOIN pages pg ON pg.id = p.page_id WHERE pg.deleted_at IS NULL",
+            [],
+            |row| row.get(0),
+        )
         .map_err(|e| e.to_string())?;
     let mut stmt = c
         .prepare(
-            "SELECT page_id, title, seq, remote_updated_at, stashed_at
-             FROM pending_remote_pages ORDER BY stashed_at DESC, page_id LIMIT ?1",
+            "SELECT p.page_id, p.title, p.seq, p.remote_updated_at, p.stashed_at
+             FROM pending_remote_pages p
+             JOIN pages pg ON pg.id = p.page_id
+             WHERE pg.deleted_at IS NULL
+             ORDER BY p.stashed_at DESC, p.page_id LIMIT ?1",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -3076,6 +3086,46 @@ mod tests {
             pending_remote_queue(&c, 10).unwrap().pages[0].seq,
             5,
             "标题差异同样要裁决"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⚠️ **2026-11-22（真机：37 条待取回全部指向已删页）**：暂存行没有外键，页被删/清掉后
+    /// 行还留着；清单必须 JOIN `pages` 过滤掉 —— ⛔ 不许把"已删除的页"摆给用户裁决。
+    #[test]
+    fn pending_remote_rows_for_missing_or_deleted_pages_are_not_listed() {
+        let (c, dir) = conflict_conn("pending-orphan");
+        // ① 页整行被清掉（硬删/被清库）⇒ 暂存行还在，但清单不许列
+        insert_conflict_page(&c, "p1", &jdoc(vec![jblk(Some("b1"), Some(1), "本地")]));
+        stash_pending_remote(
+            &c,
+            &stashed_page("p1", &jdoc(vec![jblk(Some("b1"), Some(2), "远端")]), "页"),
+            4,
+            100,
+        )
+        .unwrap();
+        c.execute("DELETE FROM pages WHERE id = 'p1'", []).unwrap();
+        assert_eq!(
+            pending_remote_queue(&c, 10).unwrap().total,
+            0,
+            "页已不存在 ⇒ 不进清单"
+        );
+
+        // ② 页还在但已软删（`deleted_at` 非空）⇒ 同样不进
+        insert_conflict_page(&c, "p2", &jdoc(vec![jblk(Some("b1"), Some(1), "本地")]));
+        stash_pending_remote(
+            &c,
+            &stashed_page("p2", &jdoc(vec![jblk(Some("b1"), Some(2), "远端")]), "页"),
+            5,
+            200,
+        )
+        .unwrap();
+        c.execute("UPDATE pages SET deleted_at = 1 WHERE id = 'p2'", [])
+            .unwrap();
+        assert_eq!(
+            pending_remote_queue(&c, 10).unwrap().total,
+            0,
+            "页已软删 ⇒ 不进清单"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

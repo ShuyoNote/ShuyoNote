@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { isMobileViewport } from "../hooks/useMobile";
 import { useMobileNav } from "../store/mobileNav";
 import { usePopover } from "../hooks/usePopover";
@@ -153,14 +154,6 @@ const relTime = (ts: number) => {
 };
 const fmtDuration = (ms: number) => (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + " 秒";
 /** C1：本次下载量说成人话（只用来展示，精度不重要）。 */
-/** ★ 2026-09-29（IA）：「同步方式」那一行的右侧摘要值。
- *  三档的文案与下面 <select> 里的 <option> **逐字一致** —— 不新造词，也不拍扁成
- *  「自动（推荐）」那种说法（拍扁了就说不清用户现在到底在哪一档）。 */
-const SYNC_MODE_TEXT: Record<SyncMode, string> = {
-  off: "关闭",
-  interval: "按间隔（每 30 秒）",
-  realtime: "近实时（连着服务端时立刻拉）",
-};
 /** ★ 2026-09-29（IA）：「同步预算」那一行的右侧摘要值。
  *  取值区间与 `.sync-budget-row` 里那些 <option> 一一对应（256/512/1024/2048/5120 MB）
  *  ⇒ 摘要值念出来与展开后那个下拉里选中的一项**是同一个说法**。 */
@@ -314,6 +307,10 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   const [lanStatus, setLanStatus] = useState<LanStatus | null>(null);
   // ⭐ 2026-11-22：订阅态由 `LicenseSection` 回传；`false` 时把「跨网与订阅」收成一行。
   const [crossNetSubscribed, setCrossNetSubscribed] = useState<boolean | null>(null);
+  // ⭐ 2026-11-22：诊断弹窗（方案 C：数据健康卡只留状态胶囊＋一个入口）。
+  const [diagOpen, setDiagOpen] = useState(false);
+  // ⭐ 2026-11-22：手动添加设备弹窗（方案 C：卡里只留一行＋「添加设备…」）。
+  const [manualOpen, setManualOpen] = useState(false);
   /** ⭐ P1「连接体检」（2026-11-08）：对话框开关 ＋ **本轮网格读数**。
    *  ⚠️ `lastRound` 只用来把「上一轮网格同步」那一项喂给体检（⛔ 不新增读数／⛔ 不改同步逻辑 ✗）；
    *  它就是 `syncMeshNow` 刚拿到的那个返回值 ✓。 */
@@ -1429,8 +1426,9 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   //   ⚠️ ⛔ 一个都不写死 ✗：读不到 ⇒ 如实说「还没配对／不在线」✓（⛔ 不拿「看起来正常」冒充 ✗）。
   const meshPaired = duList.length > 0;
   const meshOnline = !!lanStatus?.enabled;
+  // ⭐ 2026-11-22（owner：「产品这两个字还有必要吗」）：高级里**不再重复空间名** ——
+  //   面板本来就只在当前空间里，那行只留「上次同步 / 今天同步了 N 项」这两条真读数。
   const heroSub = [
-    activeRow?.name ?? "",
     lastSync ? relTime(lastSync.at) : "",
     todayItems > 0 ? `今天同步了 ${todayItems} 项` : "",
   ]
@@ -2563,7 +2561,15 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                 {heroSub && <div className="sync-hint">{heroSub}</div>}
             {/* ⛔ **2026-10-14（owner：「去掉这部分」）** ✗：这一组的标题「设置」也去掉了 ✓
                 （⭐ 它下面那些行自己说得清 ✓；⛔ 组容器留着 ✗ —— 折叠与中继卡都在它里面 ✓）。 */}
-            <div className="sync-group">
+            <div className="sync-group" data-card="v2">
+            <div className="sync-card-head">
+              <span className="sync-card-icon is-link" aria-hidden><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></svg></span>
+              <div className="sync-card-title-wrap">
+                <div className="sync-card-title">连接与配对</div>
+                <div className="sync-card-sub">同网段自动发现，不用手填</div>
+              </div>
+            </div>
+
 
               {/* ⚠️ 2026-09-28（D1）：**设置类控件搬出吸底条** ——
                  §2 第 2 条 `INV-UI-sync-panel-persistent-chrome` 的口径是：
@@ -2579,30 +2585,24 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
 
               <div className="sync-subhead">连接与配对</div>
               {/* ① 同步方式 ← 原来的 `.sync-auto` ＋ `.sync-auto-hint`
-                  （还是同一个 <select>、同一句 `syncModeHint`；行头那颗字是它的 `<label>`） */}
-              <details className="sync-row">
-                <summary>
-                  <span className="sync-row-label">同步方式</span>
-                  <span className="sync-row-value">{SYNC_MODE_TEXT[syncMode]}</span>
-                  <span className="sync-row-caret" aria-hidden>›</span>
-                </summary>
-                <div className="sync-row-body">
-                  <div className="sync-auto">
-                    <select
-                      className="sync-input"
-                      value={syncMode}
-                      onChange={(e) => applySyncMode(e.target.value as SyncMode)}
-                    >
-                      <option value="off">关闭</option>
-                      <option value="interval">按间隔（每 30 秒）</option>
-                      {/* ⚠️ 只有桌面才有那条流（Web 上是浏览器自带 SSE、没有开关；Rust 侧才有
-                          `sync_stream_*`）。Web 上不摆这一档 —— 摆了就是承诺一个不存在的档。 */}
-                      {isDesktopPlatform() && <option value="realtime">近实时（连着服务端时立刻拉）</option>}
-                    </select>
-                  </div>
-                  <span className="sync-hint sync-auto-hint">{syncModeHint(syncMode)}</span>
-                </div>
-              </details>
+                  （还是同一个 <select>、同一句 `syncModeHint`；行头那颗字是它的 `<label>`）
+                  ⭐ 2026-11-22（方案 C）：改成**行内下拉**，不再点开一张表单。 */}
+              <div className="sync-row sync-row-inline" title={syncModeHint(syncMode)}>
+                <span className="sync-row-label">同步方式</span>
+                <span className="sync-row-value sync-row-value-inline">
+                  <select
+                    className="sync-select-inline"
+                    value={syncMode}
+                    onChange={(e) => applySyncMode(e.target.value as SyncMode)}
+                  >
+                    <option value="off">关闭</option>
+                    <option value="interval">按间隔（每 30 秒）</option>
+                    {/* ⚠️ 只有桌面才有那条流（Web 上是浏览器自带 SSE、没有开关；Rust 侧才有
+                        `sync_stream_*`）。Web 上不摆这一档 —— 摆了就是承诺一个不存在的档。 */}
+                    {isDesktopPlatform() && <option value="realtime">近实时（连着服务端时立刻拉）</option>}
+                  </select>
+                </span>
+              </div>
 
               {/* ⭐⭐ **R176-A（owner 2026-10-28 拍 A）②③** ✗：个人版那两格**只在这里**（「高级」里）——
                   · **广播端口**：⭐ 预置好了、**默认藏起来**（主界面一个端口输入都没有 ⇒ J12
@@ -2617,15 +2617,36 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                   只保存 device_id＋base；⛔ 不信任/不配对：候选构造只追加**本空间已配对**的设备，
                   未配对 ⇒ 只保存、不连接（后端配对门；见 mesh::append_manual_candidates）。 */}
               {isDesktopPlatform() && (
-                <details className="sync-row" data-testid="manual-device-entry">
-                  <summary>
+                <div className="sync-row" data-testid="manual-device-entry">
+                  <div className="sync-row-summary-row">
                     <span className="sync-row-label">手动添加设备</span>
                     <span className="sync-row-value">
                       已添加 {Object.keys(manualPeers ?? {}).length} 台
                     </span>
-                    <span className="sync-row-caret" aria-hidden>›</span>
-                  </summary>
-                  <div className="sync-row-body">
+                    <button
+                      className="sync-mini-btn"
+                      data-testid="manual-device-open"
+                      onClick={() => setManualOpen(true)}
+                    >
+                      添加设备…
+                    </button>
+                  </div>
+                  {manualOpen && createPortal(
+                    <div
+                      className="sync-dialog-backdrop"
+                      role="dialog"
+                      aria-modal="true"
+                      aria-label="手动添加设备"
+                      onClick={() => setManualOpen(false)}
+                    >
+                      <div className="sync-dialog sync-dialog-form" onClick={(e) => e.stopPropagation()}>
+                        <div className="sync-dialog-head">
+                          <span className="sync-dialog-title">手动添加设备</span>
+                          <button className="sync-mini-btn" onClick={() => setManualOpen(false)}>
+                            关闭
+                          </button>
+                        </div>
+                        <div className="sync-dialog-body">
                     <div className="sync-field">
                       <label htmlFor="manual-device-id">设备 ID</label>
                       <input
@@ -2652,23 +2673,23 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                         }}
                       />
                     </div>
-                    <div className="sync-field">
-                      <button
-                        className="sync-mini-btn"
-                        data-testid="manual-device-add"
-                        disabled={
-                          manualDeviceBusy ||
-                          !manualDeviceId.trim() ||
-                          !manualDeviceBase.trim()
-                        }
-                        onClick={() => void addManualDevice()}
-                      >
-                        {manualDeviceBusy ? "保存中…" : "添加"}
-                      </button>
-                    </div>
+                    <button
+                      className="sync-btn primary sync-manual-add"
+                      data-testid="manual-device-add"
+                      disabled={
+                        manualDeviceBusy ||
+                        !manualDeviceId.trim() ||
+                        !manualDeviceBase.trim()
+                      }
+                      onClick={() => void addManualDevice()}
+                    >
+                      {manualDeviceBusy ? "保存中…" : "添加设备"}
+                    </button>
                     <div className="sync-hint" data-testid="manual-device-hint">
-                      只有<b>本空间已配对</b>的设备会进入直连候选；未配对只保存、不连接（⛔
-                      不凭空信任）。请先在另一台/附近设备完成配对。
+                      只有<b>本空间已配对</b>的设备会进入直连候选；未配对只保存、不连接（⛔ 不凭空信任）。
+                    </div>
+                    <div className="sync-manual-list-title">
+                      已添加 {Object.keys(manualPeers ?? {}).length} 台
                     </div>
                     <div data-testid="manual-device-list">
                       {Object.keys(manualPeers ?? {}).length === 0 ? (
@@ -2705,8 +2726,11 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                           })
                       )}
                     </div>
+                      </div>
+                    </div>
                   </div>
-                </details>
+                  , document.body)}
+                                    </div>
               )}
 
               {/* ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：**永久缺失**。
@@ -2725,8 +2749,132 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                 </div>
               )}
 
-              <details className="sync-sub-fold" data-testid="sync-diagnostics-fold">
-                <summary>诊断（只读）</summary>
+
+
+              {isPersonalActive && isDesktopPlatform() && (
+                <>
+                  <div className="sync-row sync-row-inline" data-testid="mesh-port-row" title={PORT_ADVANCED_HINT}>
+                    <span className="sync-row-label">广播端口</span>
+                    <span className="sync-row-actions">
+                      <input
+                        id="sync-mesh-port"
+                        className="sync-input sync-input-inline"
+                        data-testid="mesh-port-input"
+                        value={shownPort}
+                        inputMode="numeric"
+                        placeholder="预置值"
+                        disabled={!bindPort}
+                        onChange={(e) => setMeshPortDraft(e.target.value)}
+                      />
+                      <button
+                        className="sync-mini-btn"
+                        data-testid="mesh-port-save"
+                        disabled={!bindPort}
+                        onClick={() => void saveMeshPort()}
+                      >
+                        保存
+                      </button>
+                    </span>
+                  </div>
+                  <div className="sync-row sync-row-inline" data-testid="mesh-password-row" title={PASSWORD_AUTO_HINT}>
+                    <span className="sync-row-label">同步密码</span>
+                    <span className="sync-row-value sync-row-value-end">{PASSWORD_AUTO_VALUE}</span>
+                  </div>
+                </>
+              )}
+
+              {/* ★ 2026-09-29（规格 §9.2）：**总闸关了要说出来** —— 而且要说清"设备直连也停着"。
+                  owner 原话「服务器不灰」，但他要求**在值旁边标明**「当前不自动同步」，不许让用户
+                  以为它已经在跑；这一块就是那句话（照效果图的黄框：位置在「同步方式」下面）。
+                  ⚠️ 用的是既有那一类"提示框"的样式（`.sync-web-note` 的**底色来自既有变量**），
+                    不新引色值（规格 §9 的落地要求：新增 CSS 只用既有变量）。 */}
+              {totalOff && (
+                <div className="sync-web-note is-inline" role="note">
+                  <span>【注意】设备直连也停着</span>
+                  <span>（总闸优先：关了就不动，如实说）</span>
+                </div>
+              )}
+
+              {/* C2 网络闸门：只在**真查得到**网络类型的平台上出现（桌面回 "n/a" = 不适用）。
+                  与其在桌面上显示一个永远不起作用的开关，不如按能力把它收起来。 */}
+              {netKind !== "n/a" && (
+                <details className="sync-row">
+                  <summary>
+                    <span className="sync-row-label">只在 Wi-Fi 下自动同步</span>
+                    <span className="sync-row-value">{wifiText}</span>
+                    <span className="sync-row-caret" aria-hidden>›</span>
+                  </summary>
+                  <div className="sync-row-body">
+                    <label className="sync-att sync-net">
+                      <input
+                        type="checkbox"
+                        checked={budget?.wifi_only ?? true}
+                        disabled={budgetBusy}
+                        onChange={(e) => budget && void saveBudget({ ...budget, wifi_only: e.target.checked })}
+                      />
+                      <span className="sync-att-text">
+                        <span className="sync-hint">
+                          关掉后蜂窝网络也会自动同步（可能消耗流量）。手动点「同步」始终可用——这条只管自动同步。
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                </details>
+              )}
+
+              {/* ③ 服务器 ← 原来 `.sync-profiles` 里那串 `<section class="sync-card">`
+                  （服务器 / 账号 / 组织空间 / 成员管理 / 附件 / 保存 —— 一块都没删，只是折进这一行）
+                  ★ 2026-09-29（规格 §9.2）：**总闸关闭时这一行【不灰】** —— owner 原话「服务器不灰」，
+                     因为那一行装的是**配置入口**（地址/账号/组织空间/成员），不是开关；灰掉它 ⇒
+                     用户没法先准备配置。**但要在值旁边标明「当前不自动同步」**（不许让用户以为它在跑）。 */}
+              {/* ⚠️ **2026-10-04 改**（owner：「个人空间不显示登录状态文案信息」）：
+                  ⭐ 个人空间**整行不显示** ✗ —— 这一行的摘要写的是「未绑定」（服务器口径 ✓），
+                  而个人空间根本不经过服务器 ✓（owner 裁定），它的远程路径是下面的**设备直连** ✓。 */}
+
+
+            </div>
+          </div>
+          {/* ⚠️ **刀二十（2026-10-14）** ✗：⭐ 原来这里有一句「【进阶】这一组是 `.sync-profiles` 的**兄弟**」，
+              ⭐ 那是为 `SpacePrivacySection` 的位置写的 ✓ —— ⭐ 而它**已经删掉**（owner：与设置的安全面板重复 ✓）
+              ⇒ ⭐ 这句连同那个理由一起退役 ✓（⛔ 不留一句描述已删东西的注释 ✗）。 */}
+          <div className="sync-group is-advanced" data-card="v2">
+            <div className="sync-card-head">
+              <span className="sync-card-icon is-health" aria-hidden><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></span>
+              <div className="sync-card-title-wrap">
+                <div className="sync-card-title">数据健康</div>
+                <div className="sync-card-sub">只读 · 不影响同步</div>
+              </div>
+            </div>
+            <div className="sync-card-chips">
+              <span className="sync-chip">影子观测：{shadowHistory ? shadowHistory.text : "无记录"}</span>
+              <span className="sync-chip">CRDT 体检：{crdtShadowResult ? crdtShadowResult.differ + " 页不一致" : "还没跑过"}</span>
+              <span className="sync-chip">多设备：{watermarks && meshGraph.readable.watermarks ? "对端 " + meshGraphRows.length + " 台 · 已齐 " + meshGraph.counts.ok : "暂无对端水位"}</span>
+            </div>
+            <div className="sync-card-actions">
+              <button className="sync-mini-btn" data-testid="sync-diagnostics-open" onClick={() => setDiagOpen(true)}>
+                打开诊断…
+              </button>
+            </div>
+            {diagOpen && createPortal(
+              <div
+                className="sync-dialog-backdrop"
+                role="dialog"
+                aria-modal="true"
+                aria-label="同步诊断"
+                onClick={() => setDiagOpen(false)}
+              >
+                <div className="sync-dialog" onClick={(e) => e.stopPropagation()}>
+                  <div className="sync-dialog-head">
+                    <span className="sync-dialog-title">诊断（只读）</span>
+                    <button
+                      className="sync-mini-btn"
+                      data-testid="sync-diagnostics-close"
+                      onClick={() => setDiagOpen(false)}
+                    >
+                      关闭
+                    </button>
+                  </div>
+                  <div className="sync-dialog-body">
               {/* ⭐ P3-1a 第四刀（task-57）：**只读**「同步核心」状态行（高级区；桌面）。
                   默认 Core 不启动 ⇒ 显示「未启用」；读不出 ⇒ unknown（⛔ 不假装）。
                   ⚠️ 本版**不提供开关**（不从这里启用）。 */}
@@ -2837,112 +2985,6 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                   </div>
                 </details>
               )}
-              </details>
-
-              {isPersonalActive && isDesktopPlatform() && (
-                <>
-                  <details className="sync-row" data-testid="mesh-port-row">
-                    <summary>
-                      <span className="sync-row-label">广播端口</span>
-                      <span className="sync-row-value">{bindPort || "未读到"}</span>
-                      <span className="sync-row-caret" aria-hidden>›</span>
-                    </summary>
-                    <div className="sync-row-body">
-                      <div className="sync-field">
-                        <label htmlFor="sync-mesh-port">端口</label>
-                        <input
-                          id="sync-mesh-port"
-                          className="sync-input"
-                          data-testid="mesh-port-input"
-                          value={shownPort}
-                          inputMode="numeric"
-                          placeholder="预置值（读到这里就能改）"
-                          disabled={!bindPort}
-                          onChange={(e) => setMeshPortDraft(e.target.value)}
-                        />
-                        <button
-                          className="sync-btn"
-                          data-testid="mesh-port-save"
-                          disabled={!bindPort}
-                          onClick={() => void saveMeshPort()}
-                        >
-                          保存端口
-                        </button>
-                      </div>
-                      <p className="sync-hint">{PORT_ADVANCED_HINT}</p>
-                    </div>
-                  </details>
-                  <details className="sync-row" data-testid="mesh-password-row">
-                    <summary>
-                      <span className="sync-row-label">同步密码</span>
-                      <span className="sync-row-value">{PASSWORD_AUTO_VALUE}</span>
-                      <span className="sync-row-caret" aria-hidden>›</span>
-                    </summary>
-                    <div className="sync-row-body">
-                      <p className="sync-hint">{PASSWORD_AUTO_HINT}</p>
-                    </div>
-                  </details>
-                </>
-              )}
-
-              {/* ★ 2026-09-29（规格 §9.2）：**总闸关了要说出来** —— 而且要说清"设备直连也停着"。
-                  owner 原话「服务器不灰」，但他要求**在值旁边标明**「当前不自动同步」，不许让用户
-                  以为它已经在跑；这一块就是那句话（照效果图的黄框：位置在「同步方式」下面）。
-                  ⚠️ 用的是既有那一类"提示框"的样式（`.sync-web-note` 的**底色来自既有变量**），
-                    不新引色值（规格 §9 的落地要求：新增 CSS 只用既有变量）。 */}
-              {totalOff && (
-                <div className="sync-web-note is-inline" role="note">
-                  <span>【注意】设备直连也停着</span>
-                  <span>（总闸优先：关了就不动，如实说）</span>
-                </div>
-              )}
-
-              {/* C2 网络闸门：只在**真查得到**网络类型的平台上出现（桌面回 "n/a" = 不适用）。
-                  与其在桌面上显示一个永远不起作用的开关，不如按能力把它收起来。 */}
-              {netKind !== "n/a" && (
-                <details className="sync-row">
-                  <summary>
-                    <span className="sync-row-label">只在 Wi-Fi 下自动同步</span>
-                    <span className="sync-row-value">{wifiText}</span>
-                    <span className="sync-row-caret" aria-hidden>›</span>
-                  </summary>
-                  <div className="sync-row-body">
-                    <label className="sync-att sync-net">
-                      <input
-                        type="checkbox"
-                        checked={budget?.wifi_only ?? true}
-                        disabled={budgetBusy}
-                        onChange={(e) => budget && void saveBudget({ ...budget, wifi_only: e.target.checked })}
-                      />
-                      <span className="sync-att-text">
-                        <span className="sync-hint">
-                          关掉后蜂窝网络也会自动同步（可能消耗流量）。手动点「同步」始终可用——这条只管自动同步。
-                        </span>
-                      </span>
-                    </label>
-                  </div>
-                </details>
-              )}
-
-              {/* ③ 服务器 ← 原来 `.sync-profiles` 里那串 `<section class="sync-card">`
-                  （服务器 / 账号 / 组织空间 / 成员管理 / 附件 / 保存 —— 一块都没删，只是折进这一行）
-                  ★ 2026-09-29（规格 §9.2）：**总闸关闭时这一行【不灰】** —— owner 原话「服务器不灰」，
-                     因为那一行装的是**配置入口**（地址/账号/组织空间/成员），不是开关；灰掉它 ⇒
-                     用户没法先准备配置。**但要在值旁边标明「当前不自动同步」**（不许让用户以为它在跑）。 */}
-              {/* ⚠️ **2026-10-04 改**（owner：「个人空间不显示登录状态文案信息」）：
-                  ⭐ 个人空间**整行不显示** ✗ —— 这一行的摘要写的是「未绑定」（服务器口径 ✓），
-                  而个人空间根本不经过服务器 ✓（owner 裁定），它的远程路径是下面的**设备直连** ✓。 */}
-
-
-            </div>
-          </div>
-          {/* ⚠️ **刀二十（2026-10-14）** ✗：⭐ 原来这里有一句「【进阶】这一组是 `.sync-profiles` 的**兄弟**」，
-              ⭐ 那是为 `SpacePrivacySection` 的位置写的 ✓ —— ⭐ 而它**已经删掉**（owner：与设置的安全面板重复 ✓）
-              ⇒ ⭐ 这句连同那个理由一起退役 ✓（⛔ 不留一句描述已删东西的注释 ✗）。 */}
-          <div className="sync-group is-advanced">
-
-
-            <div className="sync-subhead">数据健康（只读）</div>
             {/* ⭐ **§13.6 O1（2026-11-18，owner 拍「在面板上真画出来」）**：多设备同步图。
                 一眼要能看出「哪条边断了」—— 每台一行，词只有四个：已齐 / 落后 / 断了 / 未知。
                 ⚠️ 状态与读数**全部**来自 `meshSyncGraph()` ＋ `syncGraphRows()`（纯函数，有判据）；
@@ -3196,13 +3238,26 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                 ⭐ 而「AP 隔离／开手机热点」那句**按图搬到主视图三方段之后的虚线空框**里 ✓（⛔ 没删字 ✗）。
                 ⇒ ⭐ 这条门槛现在的对象＝ ⭐「设备直连设置」那一组（`MeshAdvancedForm` ✓）
                    ＋ 中继（`RelayStatusSection` ✓）⭐ 仍然是**个人空间也要看得到** ✓（判据 `syncPanelMesh` ② 钉着 ✓）。 */}
-            {crossNetSubscribed !== false && <div className="sync-subhead">跨网与订阅</div>}
+                  </div>
+                </div>
+              </div>
+            , document.body)}
+          </div>
+
+          <div className="sync-group sync-card-outer" data-card="v2">
+            <div className="sync-card-head">
+              <span className="sync-card-icon is-globe" aria-hidden><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/></svg></span>
+              <div className="sync-card-title-wrap">
+                <div className="sync-card-title">跨网与订阅</div>
+                <div className="sync-card-sub">未启用 · 按需开通，不影响本机读写</div>
+              </div>
+            </div>
             {isDesktopPlatform() && lanStatus && (!!activeRow || isPersonalActive) && (
               <>
                 {crossNetSubscribed === false ? (
                   <details className="sync-row" data-testid="crossnet-collapsed">
                     <summary>
-                      <span className="sync-row-label">跨网与订阅</span>
+                      <span className="sync-row-label">跨网同步</span>
                       <span className="sync-row-value">未启用 · 点开看中继与订阅</span>
                       <span className="sync-row-caret" aria-hidden>›</span>
                     </summary>
