@@ -118,7 +118,8 @@ describe("J12：默认流程零手输端口（端口只在「高级」）", () =
     expect(advancedFlow).toContain('data-testid="mesh-port-row"');
     expect(advancedFlow).toContain('data-testid="mesh-port-input"');
     // 那一格的值来自读数（⛔ 界面不写死默认端口 ✗）
-    const row = between(advancedFlow, 'data-testid="mesh-port-row"', "</details>");
+    // ⭐ 2026-11-22（方案 C）：端口改成行内控件（不再是 <details>）⇒ 切到下一行（密码）为止
+    const row = between(advancedFlow, 'data-testid="mesh-port-row"', 'data-testid="mesh-password-row"');
     expect(row).toContain("bindPort");
     expect(row, "⛔ 端口号不许写死在界面上（值只许来自 `lanStatus.mesh.bind`）").not.toMatch(/\b8788\b/);
   });
@@ -165,7 +166,8 @@ describe("J13：密码自动（用户不用知道密码就能接入）＋ 状态
 
   it("② 「高级」里那一格是**只读**的（自动生成，没有手填框）", () => {
     expect(advancedFlow).toContain('data-testid="mesh-password-row"');
-    const row = between(advancedFlow, 'data-testid="mesh-password-row"', "</details>");
+    // ⭐ 2026-11-22（方案 C）：密码改成行内只读行（不再是 <details>）⇒ 切到下一块（Wi-Fi 那行）为止
+    const row = between(advancedFlow, 'data-testid="mesh-password-row"', 'netKind !== "n/a"');
     expect(row, "值必须来自那一个常量（自动生成 · 不用你填）").toContain("{PASSWORD_AUTO_VALUE}");
     expect(row, "解释也要在").toContain("{PASSWORD_AUTO_HINT}");
     expect(row, "⛔ 这一格不许有输入框（密码不手输）").not.toContain("<input");

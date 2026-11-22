@@ -691,6 +691,17 @@ static NETWATCH_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 /// ⭐ S1 P0（2026-11-22）：睡醒/长暂停后立即补一轮的开关（默认关）。
 static HEARTBEAT_WAKE_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
+/// ⭐ F3 P0（2026-11-22）：公告扇出节流开关（默认关）。
+static FANOUT_THROTTLE_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+fn fanout_throttle_enabled() -> bool {
+    *FANOUT_THROTTLE_ENABLED.get_or_init(|| {
+        crate::lan_fanout::fanout_throttle_enabled_from(
+            std::env::var("SHUYONOTE_LAN_FANOUT_THROTTLE").ok().as_deref(),
+        )
+    })
+}
+
 fn heartbeat_wake_enabled() -> bool {
     *HEARTBEAT_WAKE_ENABLED.get_or_init(|| {
         crate::lan_heartbeat::wake_resync_enabled_from(
@@ -2237,6 +2248,7 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         //   ⚠️ 前端收到后**立刻重读一次** `lan_status`（5 秒轮询保留兜底 ⇒ 老构建/Web 照旧）。
         let mut last_lan_fp: String = String::new();
         // ⭐ S2 P0：netwatch 的去抖状态（env 关时这些变量只待着，不产生副作用）。
+        let mut announce_cycle: u64 = 0;
         let mut last_tick_ms: i64 = 0;
         let mut netwatch_tick: i64 = 0;
         let mut netwatch_prev: Option<String> = None;
@@ -2524,8 +2536,16 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
                     lan::unicast_targets_from_bases(&crate::mesh::manual_peer_bases_any(&c), &ports)
                 };
+                // ⭐ F3 P0：空闲轮次对端单播每 2 轮发一次；dirty/关闭时照旧。
+                announce_cycle = announce_cycle.wrapping_add(1);
+                let dirty_pending = ANNOUNCE_DIRTY_PENDING.load(Ordering::SeqCst);
+                let throttle_peers = fanout_throttle_enabled()
+                    && !crate::lan_fanout::peer_unicast_due(announce_cycle, dirty_pending, 2);
+                let peers_now = state.peers(now);
+                let empty_peers = Vec::new();
+                let announce_peers = if throttle_peers { &empty_peers } else { &peers_now };
                 let mut targets =
-                    lan::append_extra_targets(lan::announce_targets_all(&ports, &state.peers(now)));
+                    lan::append_extra_targets(lan::announce_targets_all(&ports, announce_peers));
                 for t in manual_unicast {
                     if !targets.contains(&t) {
                         targets.push(t);
