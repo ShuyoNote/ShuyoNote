@@ -26,6 +26,14 @@ relay：7ab13cbc（TLS 热重载实际 24 小时 / days_left 启动时算一次 
   S2 真机：关 Wi-Fi 12:10:22 检出（强制重播）⇒ 开回 12:10:54 检出 ⇒ 首次成功 12:11:11
          ⇒ **检出变化→恢复 17 秒**（≤30s 目标达成；人工触发，秒级；2 样本去抖 ~2s）
   S1 真机：两次尝试（合盖 30s / 对端短断）都没有断连现场 ⇒ **未取得恢复读数，⛔ 不算通过**；
+  2.1.16 发版（2026-11-22）：
+    · tag v2.1.16（annotated 1a62a75e → c109299a）；GitHub Release 已发布
+    · 资产 5 个：win exe / linux deb / AppImage / android apk / apk.sha256
+    · macOS：notarytool 403（Apple 协议未签）⇒ 按既有口径**删除 mac 资产**（不发布未公证包）
+    · 首个 release commit 的 CI 红：check-rustfmt（4 文件）+ check-main-only-commits（发布线独有提交）
+      ⇒ 已由 c29c2a63 修（cargo fmt + dev/main 同步；CI 重跑中）
+    · GitCode Release 与 `/app/latest.json`（当前 2.1.14）仍待运营发布/部署
+
          下次用「对端 app 退出 ≥90s」跨轮制造 offline→online
 
 仍待（需 owner）：
@@ -40,9 +48,9 @@ relay：7ab13cbc（TLS 热重载实际 24 小时 / days_left 启动时算一次 
 ## 1. 当前版本
 
 ```text
-ShuyoNote  dev = **cb2c776d**（2026-11-22；两远端已同步）
-           main = **f8712fb7**（tag 之后又落的一笔 README 文档提交；两远端已同步）
-           tag  = **v2.1.15**（annotated 5e32b690 → 047ba801；047ba801 是 main 的祖先）
+ShuyoNote  dev = **c29c2a63**（2026-11-22；两远端已同步）
+           main = **c29c2a63**（2026-11-22；两远端已同步）
+           tag  = **v2.1.16**（annotated 1a62a75e → c109299a；c109299a 是 main 的祖先）
            ⚠️ 这三行是**读数不是承诺**：判据 = `git rev-parse --short=8 HEAD main` ＋
               `git ls-remote origin|github refs/heads/dev|main`（⛔ 别照抄；读完再写）
 relay      main = 7ab13cbc（2026-11-22 文档纠真；两远端已推）
