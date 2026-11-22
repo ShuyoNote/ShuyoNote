@@ -85,6 +85,7 @@ describe("A1 G0", () => {
     const main = readFileSync(resolve(root, "src/main.tsx"), "utf8");
     expect(gate).toContain("VITE_CRDT_A1");
     expect(pageBinding).toContain("mergeFailed");
+    expect(pageBinding).toContain("a1-merge-failures");
     expect(main).toContain("res.mergeFailed");
   });
 });
