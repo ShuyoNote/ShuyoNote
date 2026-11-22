@@ -1715,6 +1715,18 @@ pub fn resolve_pending_remote(
             report.discarded_local_changes = discard_unsent_page_changes(c, page_id)?;
         }
         PendingChoice::Merge => {
+            // ⭐ **2026-11-22（U4 安全闸）**：`Merge` 直接调 `apply_remote_page`，**绕过了
+            // `apply_upsert` 里的 U4-B 血统闸** ⇒ 在分叉页上可能整页覆盖本机、或把两棵顶层块并成两份。
+            // 这里补同一把闸：分叉 ⇒ **拒绝合并**（用户仍可「另存为新页」或「保留本地」）。
+            // ⚠️ 兼容（任一侧没有 fp）⇒ 照旧合并，老数据/老对端行为不变。
+            let local_fp = crate::sync::lineage_fp_of(c, page_id);
+            if !crate::doc_content::lineage_compatible(local_fp.as_deref(), &page.lineage_fp) {
+                return Err(format!(
+                    "这一页有两条互不相关的编辑历史（本机 {} / 远端 {}），不能合并；请改用「另存为新页」或「保留本地」",
+                    local_fp.as_deref().unwrap_or("未知"),
+                    page.lineage_fp
+                ));
+            }
             // 与自动路径**同一套**（`apply_remote_page`：先逐块合并，判不了才回落远端原样并留痕）。
             // ⚠️ `from` 同上一支（用户裁决入口 ⇒ `Server`，理由见 `TakeRemote` 那段的注释）。
             let from = crate::doc_content::Ingest::Server;
@@ -12479,6 +12491,31 @@ mod tests {
         assert_eq!(
             crate::doc_content::pending_remote_seq(&c, "p1").unwrap(),
             None
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐ 2026-11-22（U4 安全闸）：分叉页上「合并这一页」必须拒绝，且正文一个字不动、存档不丢。
+    #[test]
+    fn merging_a_diverged_lineage_is_refused_and_keeps_everything() {
+        let (c, dir) = pending_conn("merge-diverged");
+        let mine = page_json("b1", 1, "我本地改的");
+        insert_local_page(&c, "p1", &mine, 1, 1);
+        crate::sync::set_lineage_fp(&c, "p1", "1,2,9").unwrap();
+        let mut theirs = remote_page("p1", &page_json("b1", 9, "他改的"));
+        theirs.lineage_fp = "3,4".into();
+        stash(&c, &theirs, 9);
+
+        let err = resolve_pending_remote(&c, "p1", PendingChoice::Merge).unwrap_err();
+        assert!(
+            err.contains("两条互不相关的编辑历史"),
+            "错误要可读：{err}"
+        );
+        assert_eq!(local_json(&c, "p1"), mine, "拒绝合并 ⇒ 正文一个字都不许动");
+        assert_eq!(
+            crate::doc_content::pending_remote_seq(&c, "p1").unwrap(),
+            Some(9),
+            "存档不许被清掉（用户还要选另存/保留）"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

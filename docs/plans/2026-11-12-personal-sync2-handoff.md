@@ -418,7 +418,8 @@ owner 决定（2026-11-17）：先发三平台，macOS 不阻断 Release（workf
       `D8050 / LNK1104`；把 `$env:TMP`/`$env:TEMP` 指到**仓外可写目录**后一切正常（`win-cargo-test.ps1` 原样跑）。
 
 ⬜ **今天留下的两条待办（都要 owner 拍）**：
-  ✅ **F2-2b 真机验证（2026-11-22 10:2x，windows ↔ amd）**：把测试空间游标 265→**266**（越过 AMD 新建页 seq=266）⇒ 普通 pull 拿不到 ⇒ 对账日志「需补 **1** 个实体 ｜ 摘要 before=fnv1a64:3b4df2dd5651a28d:**16** after=fnv1a64:d283e4f55c4e70fc:**17**」⇒ `F22B-C2-02:12:47`（id 6c5a65fc…）补回；**再触发一轮安静**（无新“需补”行）。现场：`_tmp/scratch/dev-c2.err.log`（本机、不入库）；信箱回复 windows-personal-verify-f22b-s3.reply-11。
+  ✅ **U4 安全闸（2026-11-22）**：`resolve_pending_remote(Merge)` 原先直接 `apply_remote_page`、绕过 U4-B 血统闸 ⇒ 分叉页上可能整页覆盖本机或顶层块翻倍；现已补同一把闸：**分叉 ⇒ 拒绝合并（Err）**，正文一字不动、存档保留，用户仍可「另存为新页 / 保留本地」；兼容（任一侧无 fp）照旧。判据 `merging_a_diverged_lineage_is_refused_and_keeps_everything`。
+✅ **F2-2b 真机验证（2026-11-22 10:2x，windows ↔ amd）**：把测试空间游标 265→**266**（越过 AMD 新建页 seq=266）⇒ 普通 pull 拿不到 ⇒ 对账日志「需补 **1** 个实体 ｜ 摘要 before=fnv1a64:3b4df2dd5651a28d:**16** after=fnv1a64:d283e4f55c4e70fc:**17**」⇒ `F22B-C2-02:12:47`（id 6c5a65fc…）补回；**再触发一轮安静**（无新“需补”行）。现场：`_tmp/scratch/dev-c2.err.log`（本机、不入库）；信箱回复 windows-personal-verify-f22b-s3.reply-11。
 · **F2-2b 定向补齐**：前置难点已写进设计稿 —— 只按序号计数**区分不了**「同实体旧 upsert 被取代删除（无害）」
     与「保留期丢失（真丢）」，必须先能区分，否则会白补一堆。
   · **A1 CRDT 灰度默认开**：owner 2026-11-22 拍 **B（顺延、证据最干净）** —— 11-21 记录缺分类两列 ⇒ **不计入**；已有 5 个有效日（11-14/18/19/20/22），还需 **11-23、11-24** 两天记录 ⇒ **11-24 为第 7 天、11-25 可判**；缺任何一天就再顺延（⛔ 不补造）。判读口径见 runbook §4。
