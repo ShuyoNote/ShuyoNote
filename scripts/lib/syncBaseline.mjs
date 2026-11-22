@@ -88,6 +88,7 @@ export function parseMetricsLine(line) {
   if (ms === null || ms < 0) return null;
   const recovered = intOf(kv.get("recovered_after_ms"));
   const atMs = intOf(kv.get("at_ms"));
+  const bytes = intOf(kv.get("bytes"));
   return {
     space,
     peer,
@@ -98,6 +99,8 @@ export function parseMetricsLine(line) {
     applied,
     ms,
     recoveredAfterMs: recovered === null || recovered < 0 ? null : recovered,
+    // ⭐ F3 Phase 0（2026-11-22）：这一批载荷字节数；老日志没有 ⇒ null（⛔ 不拿 0 冒充）。
+    bytes: bytes === null || bytes < 0 ? null : bytes,
     // ⭐ S1/S2 Phase 0：这一行发生的墙钟毫秒（2026-11-22 起打；老日志没有 ⇒ null，⛔ 不猜）。
     atMs: atMs === null || atMs <= 0 ? null : atMs,
   };
@@ -581,6 +584,9 @@ export function summarizeMetrics(
     latency: statsOf(rows.map((r) => r.ms)),
     recovered: statsOf(recoveredValues),
     recoveredRounds: recoveredValues.length,
+    // ⭐ F3：传输字节（没有这一列的老日志 ⇒ null；0 字节是合法读数）
+    bytes: statsOf(rows.map((r) => r.bytes).filter((v) => v !== null)),
+    byteRounds: rows.filter((r) => r.bytes !== null).length,
     gap: {
       rounds: rows.length,
       gappedRounds: rows.filter((r) => r.gap > 0).length,
@@ -730,6 +736,7 @@ export function formatBaselineReport(s, title = "个人版同步 2.0 · Phase 0 
   lines.push(
     `轮数：${s.rounds} 条（跳过/可疑 ${s.skipped} 条）`,
     `单轮拉取耗时：${percText(s.latency)}`,
+    `传输字节（F3 带宽读数）：${s.byteRounds > 0 ? percText(s.bytes) : "没量到（日志无 bytes 列）"}`,
     `恢复耗时（recovered_after_ms，断过多长时间才恢复）：${
       s.recovered ? percText(s.recovered) : `没出现这一格（0/${s.rounds} 轮）`
     }`,
