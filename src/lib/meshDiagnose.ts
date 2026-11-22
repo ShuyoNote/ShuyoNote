@@ -18,8 +18,14 @@
 //
 // 判据：`src/lib/meshDiagnose.test.ts`（纯函数 ≥5 场景 ＋ 脱敏 ＋ 面板接线）。
 
-import type { LanStatus, MeshRoundReport, NearbyPeer } from "./platform/commands";
+import type { LanStatus, MeshRoundReport, MeshWatermarks, NearbyPeer } from "./platform/commands";
 import { READOUT_UNREAD, portMismatchNotice } from "./personalSyncReadout";
+import { agoText, plainText } from "./diagnoseText";
+import {
+  meshSyncGraph,
+  meshSyncGraphDiagnosticLines,
+  type MeshSyncGraph,
+} from "./meshSyncGraph";
 
 /** 一项体检查结论的四个级别。`unknown` ＝ **没有结论**（读不到），⛔ 不是"没问题"。 */
 export type DiagnoseLevel = "ok" | "warn" | "bad" | "unknown";
@@ -79,8 +85,206 @@ export interface MeshDiagnosis {
   items: DiagnoseItem[];
   /** 脱敏的设备摘要（诊断包用；界面不用它记事，界面用 `items`）。 */
   peers: PeerDigest[];
+  /** ⭐ §13.6 O2：当前空间的水位摘要（来自 `mesh_watermarks`；读不到＝null）。 */
+  watermarks: WatermarkDigest | null;
+  /** ⭐ §13.6 O2 第二刀：最近 N 轮同步（来自 `listSyncHistory`；读不到＝null）。 */
+  history: HistoryDigest | null;
+  /**
+   * ⭐ §13.6 **O1 接线**（owner 2026-11-18 拍：只进复制诊断包、主界面不动）：
+   * 多设备同步图（由 `meshSyncGraph()` 从**同一份** `watermarks` ＋ `history` 算出来）。
+   * ⛔ 组件里不许另算一遍；诊断包那一段直接用 `meshSyncGraphDiagnosticLines(graph)`。
+   */
+  graph: MeshSyncGraph;
   /** 生成时刻（ms）；诊断包里会写成可读时间。 */
   at: number;
+}
+
+/**
+ * ⭐ §13.6 O2：水位矩阵里的一台对端（**脱敏**：只有序号与读数，
+ * ⛔ 不含 device_id / 设备名 / 地址 / 公钥）。
+ */
+export interface PeerWatermarkDigest {
+  index: number;
+  cursor: number;
+  online: boolean | null;
+  lastOkAgoMs: number | null;
+}
+
+/** ⭐ §13.6 O2：当前空间的水位摘要（⛔ 不含空间名 —— 空间名可能带业务信息）。 */
+export interface WatermarkDigest {
+  localMaxSeq: number;
+  peerCount: number;
+  onlineCount: number;
+  offlineCount: number;
+  unknownCount: number;
+  peers: PeerWatermarkDigest[];
+}
+
+/** `mesh_watermarks` → 诊断用摘要（读不到＝null；⛔ 不猜 0）。 */
+export function watermarkDigest(w: MeshWatermarks | null | undefined): WatermarkDigest | null {
+  if (!w || typeof w !== "object") return null;
+  const peers = Array.isArray(w.peers) ? w.peers : [];
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return {
+    localMaxSeq: num(w.localMaxSeq),
+    peerCount: peers.length,
+    onlineCount: num(w.onlineCount),
+    offlineCount: num(w.offlineCount),
+    unknownCount: num(w.unknownCount),
+    peers: peers.map((p) => ({
+      index: num(p.index),
+      cursor: num(p.cursor),
+      online: p.online === true ? true : p.online === false ? false : null,
+      lastOkAgoMs:
+        typeof p.lastOkAgoMs === "number" && Number.isFinite(p.lastOkAgoMs) ? p.lastOkAgoMs : null,
+    })),
+  };
+}
+
+/** ⭐ §13.6 O2 第二刀：一条同步历史（只取判据需要的字段；⛔ 不含条目标题/空间名）。 */
+export interface SyncHistoryRow {
+  at: number;
+  ok: boolean;
+  pushed: number;
+  pulled: number;
+  message: string;
+  /** 该轮明细条数（只数数量，⛔ 不读 title/entity_id）。 */
+  items?: unknown[];
+}
+
+export interface HistoryRoundDigest {
+  at: number;
+  ok: boolean;
+  pushed: number;
+  pulled: number;
+  message: string;
+  itemCount: number;
+}
+
+/** 最近 N 轮的脱敏摘要（读不到＝null；⛔ 不拿空数组冒充“没有失败”）。 */
+export interface HistoryDigest {
+  total: number;
+  okCount: number;
+  failCount: number;
+  rounds: HistoryRoundDigest[];
+}
+
+/** `listSyncHistory` 的读数 → 诊断用摘要（最多取最近 N 轮；⛔ 不含标题/空间名）。 */
+export function historyDigest(
+  rows: SyncHistoryRow[] | null | undefined,
+  limit = 5,
+): HistoryDigest | null {
+  if (!Array.isArray(rows)) return null;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const rounds = rows.slice(0, Math.max(0, limit)).map((r) => ({
+    at: num(r.at),
+    ok: r.ok === true,
+    pushed: num(r.pushed),
+    pulled: num(r.pulled),
+    message: String(r.message ?? "").slice(0, 200),
+    itemCount: Array.isArray(r.items) ? r.items.length : 0,
+  }));
+  return {
+    total: rows.length,
+    okCount: rows.filter((r) => r.ok === true).length,
+    failCount: rows.filter((r) => r.ok !== true).length,
+    rounds,
+  };
+}
+
+/** §13.6 O2 第二刀：把最近 N 轮变成「总结 ＋ 逐轮」体检项。 */
+function historyItems(h: HistoryDigest, at: number): DiagnoseItem[] {
+  const items: DiagnoseItem[] = [];
+  const level: DiagnoseLevel = h.failCount > 0 ? "warn" : "ok";
+  items.push({
+    key: "history",
+    level,
+    title: "最近的同步轮次",
+    reason:
+      `最近 ${h.total} 轮：成功 ${h.okCount} · 失败 ${h.failCount}` +
+      (h.rounds[0]
+        ? `；最近一轮${h.rounds[0].ok ? "成功" : "失败"}（拉取 ${h.rounds[0].pulled} · 推送 ${h.rounds[0].pushed}）`
+        : ""),
+    next: level === "ok" ? "不用处理" : "看下面逐轮原因；点「重试」或「立即同步」再试",
+  });
+  h.rounds.forEach((r, i) => {
+    const when = agoText(at - r.at);
+    const tail = `拉取 ${r.pulled} · 推送 ${r.pushed} · 明细 ${r.itemCount} 条`;
+    items.push({
+      key: `history-${i + 1}`,
+      level: r.ok ? "ok" : "warn",
+      title: r.ok ? "这一轮同步成功" : "这一轮同步失败",
+      reason:
+        `${when}：${r.ok ? "成功" : "失败"}；${tail}` +
+        (r.message ? `；后端原文：${plainText(r.message)}` : ""),
+      next: r.ok ? "不用处理" : "点「重试」；仍失败就看上面逐台/水位那几项",
+    });
+  });
+  return items;
+}
+
+/** §13.6 O2：把水位摘要变成逐台体检项（"哪一台不同步、差多少、为什么"）。 */
+function watermarkItems(w: WatermarkDigest): DiagnoseItem[] {
+  const items: DiagnoseItem[] = [];
+  const lagging = w.peers.filter((p) => p.cursor < w.localMaxSeq);
+  const offline = w.peers.filter((p) => p.online === false);
+  const level: DiagnoseLevel =
+    offline.length > 0 || lagging.length > 0
+      ? "warn"
+      : w.peers.some((p) => p.online === null)
+        ? "unknown"
+        : "ok";
+  items.push({
+    key: "watermarks",
+    level,
+    title: "当前空间的水位矩阵",
+    reason:
+      `本机高水位 ${w.localMaxSeq}；对端 ${w.peerCount} 台` +
+      `（在线 ${w.onlineCount} · 离线 ${w.offlineCount} · 未知 ${w.unknownCount}）` +
+      (lagging.length > 0 ? `；其中 ${lagging.length} 台还没拉齐` : ""),
+    next: level === "ok" ? "不用处理" : "看下面逐台的水位差；等对端上线后点「立即同步」",
+  });
+  for (const p of w.peers) {
+    const lag = Math.max(0, w.localMaxSeq - p.cursor);
+    const detail =
+      `已收 ${p.cursor} / 本机 ${w.localMaxSeq}` +
+      (lag > 0 ? `（落后 ${lag}）` : "（已齐）") +
+      `；最近成功：${agoText(p.lastOkAgoMs)}`;
+    if (p.online === null) {
+      items.push({
+        key: `watermark-${p.index}`,
+        level: "unknown",
+        title: "这一台还没有成功记录",
+        reason: `对端 ${p.index}：${detail}`,
+        next: "等它上线后点「立即同步」；仍无记录就看它是否配对、是否同网段",
+      });
+    } else if (p.online === false) {
+      items.push({
+        key: `watermark-${p.index}`,
+        level: "warn",
+        title: "这一台离线",
+        reason: `对端 ${p.index}：离线；${detail}`,
+        next: "等它上线；它离线期间的变化会在重连后补拉",
+      });
+    } else if (lag > 0) {
+      items.push({
+        key: `watermark-${p.index}`,
+        level: "warn",
+        title: "这一台在线但没拉齐",
+        reason: `对端 ${p.index}：在线；${detail}`,
+        next: "点「立即同步」再试；仍落后就看同步历史里的失败原因",
+      });
+    } else {
+      items.push({
+        key: `watermark-${p.index}`,
+        level: "ok",
+        title: "这一台已拉齐",
+        reason: `对端 ${p.index}：在线；${detail}`,
+        next: "不用处理",
+      });
+    }
+  }
+  return items;
 }
 
 /** 把 `mesh.bind`（形如 `0.0.0.0:8788` / `[::]:8788`）拆出端口号。 */
@@ -207,7 +411,7 @@ function headlineOf(counts: Record<DiagnoseLevel, number>, overall: DiagnoseLeve
 export function diagnoseMesh(
   status: LanStatus | null | undefined,
   round?: MeshRoundReport | null,
-  opts?: { at?: number },
+  opts?: { at?: number; watermarks?: MeshWatermarks | null; history?: SyncHistoryRow[] | null },
 ): MeshDiagnosis {
   const at = opts?.at ?? Date.now();
   const items: DiagnoseItem[] = [];
@@ -228,6 +432,10 @@ export function diagnoseMesh(
       counts: counts0,
       items,
       peers: [],
+      watermarks: null,
+      history: null,
+      // 连局域网读数都读不到 ⇒ 图也按"两支都没读到"记（⛔ 不拿 opts 里可能过期的读数装成现在）。
+      graph: meshSyncGraph({ at }),
       at,
     };
   }
@@ -510,9 +718,28 @@ export function diagnoseMesh(
     }
   }
 
+  // ⑧ §13.6 O2：当前空间的水位矩阵（可选）。读不到 ⇒ 不加项（⛔ 不装成"已齐"）。
+  const wm = watermarkDigest(opts?.watermarks);
+  if (wm) items.push(...watermarkItems(wm));
+
+  // ⑨ §13.6 O2 第二刀：最近 N 轮同步（可选）。读不到 ⇒ 不加项（⛔ 不拿空数组冒充"没有失败"）。
+  const hs = historyDigest(opts?.history);
+  if (hs) items.push(...historyItems(hs, at));
+
   const counts = countsOf(items);
   const overall = overallOf(counts);
-  return { overall, headline: headlineOf(counts, overall), counts, items, peers, at };
+  return {
+    overall,
+    headline: headlineOf(counts, overall),
+    counts,
+    items,
+    peers,
+    watermarks: wm,
+    history: hs,
+    // ⭐ §13.6 O1：图从**同一份**输入算（⛔ 不另取一份读数，也⛔ 不在组件里重算）。
+    graph: meshSyncGraph({ watermarks: opts?.watermarks, history: opts?.history, at }),
+    at,
+  };
 }
 
 /** 读数的三档写法：开 / 关 / 未读到（⛔ 不让"读不到"混进"关"）。 */
@@ -530,12 +757,6 @@ function keyText(p: PeerDigest): string {
   if (p.keyChanged === true) return "变了";
   if (p.keyChanged === false) return "未变";
   return `读不到（${p.keyReason || "无原因码"}）`;
-}
-
-/** 诊断包里的原因写成**纯文本**：后端原文可能带行内 Markdown 的 `**`（如 `round.note`），
- *  诊断包是给人贴进聊天框/工单的 ⇒ 只去掉成对标记本身，⛔ 不吞字、⛔ 不改语义。 */
-function plainText(s: string): string {
-  return s.replace(/\*\*/g, "");
 }
 
 /**
@@ -574,6 +795,43 @@ export function meshDiagnosticText(d: MeshDiagnosis): string {
       );
     }
   }
+  // ⭐ §13.6 O2：水位矩阵（只写序号与读数；⛔ 不含空间名/设备号/地址，见文件头第 3 条）。
+  if (d.watermarks) {
+    const w = d.watermarks;
+    lines.push(
+      "",
+      "水位矩阵（当前空间；脱敏：不含空间名、设备号与地址）：",
+      `  本机高水位=${w.localMaxSeq} · 对端 ${w.peerCount} 台（在线 ${w.onlineCount} / 离线 ${w.offlineCount} / 未知 ${w.unknownCount}）`,
+    );
+    for (const p of w.peers) {
+      const lag = Math.max(0, w.localMaxSeq - p.cursor);
+      lines.push(
+        `  对端[${p.index}] 已收=${p.cursor} · 本机=${w.localMaxSeq} · 落后=${lag}` +
+          ` · 在线=${p.online === null ? "未知" : p.online ? "是" : "否"}` +
+          ` · 最近成功=${agoText(p.lastOkAgoMs)}`,
+      );
+    }
+  }
+  // ⭐ §13.6 O2 第二刀：最近 N 轮（只写轮次读数与后端原文；⛔ 不含空间名/条目标题）。
+  if (d.history) {
+    const h = d.history;
+    lines.push(
+      "",
+      "最近同步轮次（脱敏：不含空间名与条目标题）：",
+      `  共 ${h.total} 轮：成功 ${h.okCount} · 失败 ${h.failCount}`,
+    );
+    h.rounds.forEach((r, i) => {
+      lines.push(
+        `  第 ${i + 1} 轮 ${agoText(d.at - r.at)} ${r.ok ? "成功" : "失败"}` +
+          ` · 拉取=${r.pulled} · 推送=${r.pushed} · 明细=${r.itemCount} 条` +
+          (r.message ? ` · 原文：${plainText(r.message)}` : ""),
+      );
+    });
+  }
+  // ⭐ §13.6 **O1 接线**（owner 2026-11-18 拍：只进复制诊断包、主界面不动）：
+  //   图的段落由 `meshSyncGraphDiagnosticLines()` 一处生成（⛔ 这里不另拼一套格式）。
+  //   它只在**两支读数都读不到**时才最空 —— 但那时它仍要说清"读不到"，所以**永远加**这一段。
+  lines.push("", ...meshSyncGraphDiagnosticLines(d.graph));
   lines.push(
     "",
     "（这份诊断包只含读数与原因码；不含设备号、网络地址、配对秘密或页面内容。）",

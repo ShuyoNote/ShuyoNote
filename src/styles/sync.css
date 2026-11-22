@@ -620,6 +620,53 @@
   color: var(--text-faint);
 }
 
+/* ⭐ §13.6 O1（2026-11-18）：多设备同步图 —— 每台一行，左边一个状态小胶囊。
+   四档与 `syncGraphRows()` 的 `level` 一一对应（⛔ 组件里不自己判色）。
+   ⚠️ `unknown` 用中性色：那是"没有结论"，⛔ 不能长得像"断了"。 */
+.mesh-sync-graph-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.mesh-sync-graph-state {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  line-height: 1.6;
+  background: var(--hover);
+  color: var(--text-dim);
+}
+
+/* ⚠️ 没有 `--success-soft` 这个变量 ✗ ⇒ 与 `.sync-hero-card` 同一手法：`color-mix` 把
+   `--success` 混进 `--surface`（深浅主题都跟着走，⛔ 不写死色值）。 */
+.mesh-sync-graph-state.is-ok {
+  background: color-mix(in srgb, var(--success) 12%, var(--surface));
+  color: var(--success);
+}
+
+.mesh-sync-graph-state.is-warn {
+  background: var(--cat-yellow-soft);
+  color: var(--cat-yellow);
+}
+
+.mesh-sync-graph-state.is-bad {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.mesh-sync-graph-state.is-unknown {
+  background: var(--hover);
+  color: var(--text-faint);
+}
+
+.mesh-sync-graph-detail {
+  color: var(--text-faint);
+}
+
 /* 已登录但无组织空间时的引导行：提示 + 「创建空间」按钮并排。 */
 .sync-space-guide {
   display: flex;

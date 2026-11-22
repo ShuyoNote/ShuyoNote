@@ -195,6 +195,8 @@ mod smtp;
 mod lan;
 // 发现层的**归属**：对端表 = 应用级单例 ＋ 按需启用（owner 2026-09-25 拍板，见 workorder §8 ②）。
 mod lan_state;
+// ⭐ §13.2 S2 P0（2026-11-22）：网络变化检测的纯函数层（⛔ 未接线，默认零行为变化）。
+mod lan_netwatch;
 // 配对载荷（B 片纯函数内核）：见 [`pairing`] 模块头 —— 二维码 / 短码 PAKE / 界面在接线那一片。
 // ⚠️ 本模块**不含任何密码学**：短码通道必须 PAKE，而选型要单独过一次目（见该文件头）。
 mod cap_limits;
@@ -1262,8 +1264,11 @@ pub fn run() {
             // ⭐ 2026-11-10（owner 批 B）：「同名但 uid 不同」冲突的列表与确认（只碰元数据）。
             mesh_panel::mesh_uid_conflicts,
             mesh_panel::mesh_uid_confirm,
+            // ⭐ A3（2026-11-21）：一次确认多对（批量勾选 ＋ 同 uid 传播；⛔ 仍只由用户点击发起）。
+            mesh_panel::mesh_uid_confirm_batch,
             // ⭐ 2026-11-11（§13 A2）：只读「设备×空间水位」。
             mesh_panel::mesh_watermarks,
+            mesh_panel::list_sync_gaps,
             // 甲-1 接线第 1／3 件（2026-09-25）：局域网发现的**启动**与**读数**。
             // ⚠️ 只有桌面：发现靠 Rust 收发的 UDP（`lan.rs`），Web 平台上没有这一层 ——
             //    Web 侧的实现如实回"配置地址那一档 ＋ 局域网不可用"（不是假装发现了谁）。
@@ -1292,6 +1297,7 @@ pub fn run() {
             commands::record_lineage_conflict,
             commands::list_lineage_conflicts,
             commands::resolve_lineage_conflict,
+            commands::set_page_lineage_fp,
             // 阶段 1 · 正文文本的本地修复（合并/裁决之后由"有编辑器的那一侧"喂正确文本）
             commands::refresh_page_text,
             // 阶段 1 · B1："正文待重建"队列（补算器按它把合并/裁决过的页面补上）

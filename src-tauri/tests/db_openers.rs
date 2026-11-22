@@ -257,6 +257,21 @@ const REGISTERED: &[(&str, &str, usize, &str)] = &[
         "后台网格轮次：逐空间旁路连接",
     ),
     (
+        "src/lan_state.rs",
+        "clear_peer_cooldowns",
+        1,
+        "F3-2：收到公告后清掉该设备的跨轮冷却（打开 meta.db 写 sync_state）",
+    ),
+    (
+        "src/lan_state.rs",
+        "space_last_edited_at",
+        1,
+        // ⚠️ F3 一段（2026-11-21）：这一条是**新增写者盘点里唯一新增的连接**，且它**只读**——
+        //   为"一轮里最近编辑的空间先跑"按空间读 `changes.MAX(updated_at)`；跑完立刻 drop，
+        //   与真正跑轮次那条连接（`spawn_background_round`，仍 1 处）是两条不同的连接。
+        "F3 一段：给一轮的空间排序读最近编辑时刻（旁路只读连接，不改库）",
+    ),
+    (
         "src/mesh.rs",
         "add_space",
         1,
@@ -479,15 +494,30 @@ const REGISTERED: &[(&str, &str, usize, &str)] = &[
     ),
     (
         "src/mesh_panel.rs",
+        "list_sync_gaps",
+        2,
+        "同步面板：列当前空间的『永久缺失』（旁路开空间库取 proto ＋ 开 meta.db 读签名）",
+    ),
+    (
+        "src/mesh_panel.rs",
         "mesh_uid_confirm",
         1,
         "同步面板：确认同名空间 uid（旁路打开空间库写确认行）",
     ),
+    // ⭐ A3（2026-11-21）：批量确认也走同一条旁路（空选时提前返回、不开库）。
+    (
+        "src/mesh_panel.rs",
+        "mesh_uid_confirm_batch",
+        1,
+        "同步面板：批量确认同名空间 uid（旁路打开空间库、单事务写确认行）",
+    ),
     (
         "src/mesh_panel.rs",
         "mesh_watermarks",
-        1,
-        "同步面板：读各对端水位（旁路打开空间库）",
+        2,
+        // ⚠️ 2026-11-19：**两处** —— ① 旁路打开空间库读本机高水位/空间名；
+        //   ② 再显式开 **meta 连接**读 `mesh_cursor:*`（游标其实住 meta.db，空间库里是空的）。
+        "同步面板：读各对端水位（旁路打开空间库 ＋ 显式开 meta 读游标）",
     ),
 ];
 

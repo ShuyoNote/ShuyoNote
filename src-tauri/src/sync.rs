@@ -347,18 +347,149 @@ fn mirror_change_to_mesh_outbox(
         return;
     }
     // ⚠️ **必须有这一句**：镜像没有上限 ⇒ 明文库会跟着无限长（那 672 MB 的形状 ✗）。
-    //   保留期口径见方案 §6-②（7 天 / 64 MB，先到者）；体积那一半等 S4 的水位裁剪一起做，
-    //   这一处先把**时间**这一半关上（索引 `idx_mesh_outbox_age` 就是为它建的）。
-    if let Err(e) = c.execute(
-        "DELETE FROM meta.mesh_outbox WHERE space_id = ?1 AND mirrored_at < ?2",
-        params![space, crate::db::now_ms() - MESH_OUTBOX_KEEP_MS],
-    ) {
+    //   ⭐ **F2-1（2026-11-20，owner「全面开火」拍接线）**：从"只按时间删"换成三条件 ——
+    //     ① **时间**（7 天）+ ② **对端游标**（还有对端没拿到的，多留，但最多多留 7 天）+ ③ **条数上限**。
+    //   ⚠️ 任何一步算不出来 ⇒ **退回只按时间删**并如实打一行（⛔ 不许因为新判据坏了就不清）。
+    if let Err(e) = mesh_outbox_cleanup(c, &space) {
         eprintln!("[mesh] 搬运缓存过期清理失败（不影响保存）：{e}");
     }
 }
 
+/// ⭐ **F2-1（2026-11-20）**：镜像清理 —— 时间 ＋ 对端游标 ＋ 条数上限（三条件）。
+///
+/// 为什么要对端游标：现状只看时间 ⇒ **还有对端没拿到这一条**也照删 ⇒ 那台设备永久缺这一段
+/// （F2-0 只能把"你缺了"说出来，补不回来）。这里让"最落后的那台"决定下界（见 `retain_cutoff`）。
+///
+/// ⚠️ 三条边界（都是"不许因此不清"）：
+/// 1. 算不出 proto 空间（`mesh_scope_at` 失败）⇒ 退回只按时间删；
+/// 2. 这个空间没有任何已知对端游标 ⇒ `retain_cutoff` 返回 `i64::MAX` ⇒ 同样按时间删；
+/// 3. 条数上限**独立生效**：哪怕所有对端都落后，超过 `MESH_OUTBOX_MAX_ROWS` 也从最老的删（⛔ 无界增长更糟）。
+fn mesh_outbox_cleanup(c: &Connection, ws_space: &str) -> Result<(), String> {
+    let now = crate::db::now_ms();
+    let cutoff = match crate::sync::mesh_scope_at(c, Some(ws_space)) {
+        Ok(scope) => min_peer_cursor_for_space(c, &scope.space),
+        Err(_) => None, // 算不出 proto ⇒ 退回只按时间删（下面 cutoff 走 i64::MAX）
+    };
+    let cap = retain_cutoff(&cutoff.map(|v| vec![v]).unwrap_or_default());
+    let age_cut = now - MESH_OUTBOX_KEEP_MS;
+    c.execute(
+        "DELETE FROM meta.mesh_outbox
+          WHERE space_id = ?1 AND mirrored_at < ?2 AND device_seq <= ?3",
+        params![ws_space, age_cut, cap],
+    )
+    .map_err(|e| e.to_string())?;
+    // ② 条数上限：从最老的开始删到只剩 MESH_OUTBOX_MAX_ROWS 条（⛔ 与游标无关，体积必须封住）
+    let deleted = c
+        .execute(
+            "DELETE FROM meta.mesh_outbox
+              WHERE space_id = ?1 AND device_seq NOT IN (
+                    SELECT device_seq FROM meta.mesh_outbox
+                     WHERE space_id = ?1 ORDER BY device_seq DESC LIMIT ?2
+              )",
+            params![ws_space, MESH_OUTBOX_MAX_ROWS],
+        )
+        .map_err(|e| e.to_string())?;
+    if deleted > 0 {
+        eprintln!(
+            "[mesh] 搬运缓存超出每空间上限 {MESH_OUTBOX_MAX_ROWS} 条 ⇒ 删了最老的 {deleted} 条             （⛔ 可能含某台还没拿到的；它下次会缺这一段）"
+        );
+    }
+    Ok(())
+}
+
+/// ⭐ **F2-1**：这个空间里**最落后的已知对端游标**（没有 ⇒ `None`）。
+///
+/// 读法：`mesh_cursor:<proto>:<device>`（见 `crate::mesh::cursor_key`）—— 值解析不了就**跳过**
+/// （⛔ 不拿 0 当"最落后"，那会让镜像永远删不掉）。
+fn min_peer_cursor_for_space(c: &Connection, proto_space: &str) -> Option<i64> {
+    let like = format!("mesh_cursor:{proto_space}:%");
+    let mut stmt = c
+        .prepare("SELECT value FROM meta.sync_state WHERE key LIKE ?1")
+        .ok()?;
+    let rows = stmt
+        .query_map(params![like], |r| r.get::<_, String>(0))
+        .ok()?;
+    let mut out: Option<i64> = None;
+    for v in rows.flatten() {
+        let Ok(n) = v.parse::<i64>() else { continue };
+        if n < 0 {
+            continue;
+        }
+        out = Some(match out {
+            Some(m) => m.min(n),
+            None => n,
+        });
+    }
+    out
+}
+
 /// 搬运缓存的时间上限（方案 §6-② 的提案值：**7 天**；体积那一半由 S4 的水位裁剪补上）。
 const MESH_OUTBOX_KEEP_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+/// ⭐ **F2-1（2026-11-20）**：**这一条密封镜像现在能不能删**（纯函数；⛔ 还没有接进那条 DELETE）。
+///
+/// 现状（`mirror_change_to_mesh_outbox` 末尾那句）只看时间：`mirrored_at < now - 7 天` ⇒ 删。
+/// 问题：**还有对端没拿到这一条**也照删 —— 那些对端从此永久缺这一段（F2-0 只能说"你缺了"，补不回来）。
+///
+/// 新口径（三条，按顺序）：
+/// ① `peer_cursors` 为空（本空间**没有任何已知对端游标**）⇒ **按时间删**（否则无界增长）；
+/// ② 有对端、且**每一个**游标都 `>= device_seq`（都拿到了）⇒ **按时间删**；
+/// ③ 有对端游标 `< device_seq`（还没拿到）⇒ **不删**，但最多多留 [`MIRROR_MAX_EXTRA_MS`]：
+///    超过 `keep_ms + 上限` 之后仍然删（⛔ 宁可让某个长期离线的对端丢一段，也不许镜像无界长）。
+///
+/// ⚠️ `device_seq` 与 `peer_cursors` **必须是同一把尺**（`changes.device_seq` / `mesh_cursor:*`）——
+///    两者混用会让"都拿到了"永远不成立，镜像就再也不会被清（无界增长的另一种形态）。
+pub fn may_drop_mirror(
+    mirrored_at: i64,
+    now: i64,
+    keep_ms: i64,
+    device_seq: i64,
+    peer_cursors: &[i64],
+) -> bool {
+    if keep_ms < 0 || device_seq < 0 {
+        return false; // 坏参数 ⇒ ⛔ 不删（保守）
+    }
+    let aged_out = now.saturating_sub(mirrored_at) >= keep_ms;
+    if !aged_out {
+        return false; // 还没到保留期：一律不删（与现状一致）
+    }
+    let all_caught_up = peer_cursors.iter().all(|c| *c >= device_seq);
+    if all_caught_up {
+        return true; // 没对端，或全部已收到 ⇒ 照旧按时间删
+    }
+    // 还有对端没拿到：多留一段，但有硬上限（防无界）
+    let hard_cap = keep_ms.saturating_add(MIRROR_MAX_EXTRA_MS);
+    now.saturating_sub(mirrored_at) >= hard_cap
+}
+
+/// ⭐ **F2-1**：为"还有对端没拿到"的条目**最多多留多久**（超过就照删，⛔ 不许无界增长）。
+pub const MIRROR_MAX_EXTRA_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+/// ⭐ **F2-1（2026-11-20）**：每个空间**最多留多少条**镜像（体积那一半的上限；⛔ 不许无界增长）。
+///
+/// 口径说明：这是"条数"不是"字节"—— 按字节要扫 payload 长度，代价高；按条数足以挡住"越存越多"。
+/// 超出时**从最老的开始删**，并打一行（⛔ 不静默：删掉的可能是某台还没拿到的）。
+pub const MESH_OUTBOX_MAX_ROWS: i64 = 20_000;
+
+/// ⭐ **F2-1**：`may_drop_mirror` 的 SQL 版 —— 把"哪些行**可以按时间删**"折成一个**序号下界**。
+///
+/// 语义：只有 `device_seq <= 返回值` 的行才允许按时间删（因为**所有**已知对端都已经拿到它们了）。
+/// · `peer_cursors` 为空（这个空间没有任何已知对端游标）⇒ `i64::MAX`（＝照旧按时间删，⛔ 不许因此永不清）；
+/// · 否则取**最小**的游标（最落后的那台决定一切）。
+/// ⚠️ 一把尺纪律：这里的 `peer_cursors` 必须是 `changes.device_seq` 口径（与 `mesh_cursor:*` 一致）。
+pub fn retain_cutoff(peer_cursors: &[i64]) -> i64 {
+    let mut min: Option<i64> = None;
+    for c in peer_cursors {
+        if *c < 0 {
+            continue; // 坏值 ⇒ 忽略（⛔ 不拿它当"最落后"，否则永远不删）
+        }
+        min = Some(match min {
+            Some(m) => m.min(*c),
+            None => *c,
+        });
+    }
+    min.unwrap_or(i64::MAX)
+}
 
 /// 从搬运缓存里删掉这几位 —— 名单与 `changes` 那次删除**是同一份**（§ `record_change`）。
 ///
@@ -397,6 +528,13 @@ pub const SPACE_NAME_PAYLOAD_FIELD: &str = "_space_name";
 /// 与 [`SPACE_NAME_PAYLOAD_FIELD`] **同一处挂/同一处读**（推：`record_page_upsert`；收：融合闸）；
 /// ⚠️ **它不替代名字**：融合闸是 **uid 有结论用 uid、判不了回落名字**（`mesh_merge_ledger::batch_merge_gate_uid`）。
 pub const SPACE_UID_PAYLOAD_FIELD: &str = "_space_uid";
+
+/// ⭐ **U4-B S1（2026-11-19）**：载荷里"这一版写在哪条血统上"的字段名。
+///
+/// 值 = 该页 CRDT client id 集合（排序、逗号分隔），由**前端**在保存时算好并存进 KV
+/// （`page_crdt` 在库里是不透明二进制，Rust 侧没有解码器 ⇒ 不在 Rust 里算）。
+/// ⚠️ 空/没有 ⇒ 载荷**逐字节不变**（老对端、老数据 ⇒ 收侧退回旧规则）；⛔ 不升 wire 版本。
+pub const LINEAGE_FP_PAYLOAD_FIELD: &str = "_lineage_fp";
 
 /// 本机当前空间的 **`space_uid`**（`meta.workspaces.space_uid`，由 P3-3b 迁移回填）。
 ///
@@ -1058,8 +1196,52 @@ pub(crate) fn with_space_name(payload_json: &str, space_name: &str) -> Result<St
     serde_json::to_string(&value).map_err(|e| e.to_string())
 }
 
-/// 从载荷里读空间名。⭐ **老载荷／老对端 ⇒ `None`**（不是错误 ✓）；读不出来（形状不对）也 `None`
-/// —— 这一格**只用于"同名"提示** ⇒ 保守取"没有"最安全（⛔ 不猜、⛔ 不从 id 反推 ✗）。
+/// ⭐ **U4-B S1（2026-11-19）**：把任意字符串字段挂到载荷上（与 [`with_space_uid`] 同形）。
+///
+/// 空值 ⇒ 载荷**逐字节不变**；不是 JSON ⇒ 响亮报错；非对象 ⇒ 原样返回。
+/// 为什么单立一个：`_space_uid` / `_lineage_fp` 这类"外壳字段"以后还会加，
+/// 每加一个就复制二十行不是好账（规则只有一条：**空 ⇒ 不动字节**）。
+pub(crate) fn with_payload_string_field(
+    payload_json: &str,
+    field: &str,
+    value: &str,
+) -> Result<String, String> {
+    let v = value.trim();
+    if v.is_empty() {
+        return Ok(payload_json.to_string());
+    }
+    let mut parsed: serde_json::Value =
+        serde_json::from_str(payload_json).map_err(|e| e.to_string())?;
+    let Some(obj) = parsed.as_object_mut() else {
+        return Ok(payload_json.to_string());
+    };
+    obj.insert(field.to_string(), serde_json::Value::String(v.to_string()));
+    serde_json::to_string(&parsed).map_err(|e| e.to_string())
+}
+
+/// ⭐ **U4-B S1**：这一页"上一版写在哪条血统上"（KV `lineage_fp:<page>`；⛔ 读不到 = `None`，不猜）。
+pub fn lineage_fp_of(c: &Connection, page_id: &str) -> Option<String> {
+    get_meta_state(c, &format!("lineage_fp:{page_id}"))
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// ⭐ **U4-B S1**：记下"这一页之后推出去的版本写在哪条血统上"（**由前端在保存时算好再调**）。
+///
+/// ⚠️ 空串 ⇒ **删掉这一格**（＝"不知道"），⛔ 不写空值占位（空值会让"有没有血统"这件事变含糊）。
+pub fn set_lineage_fp(c: &Connection, page_id: &str, fp: &str) -> Result<(), String> {
+    let key = format!("lineage_fp:{page_id}");
+    let v = fp.trim();
+    if v.is_empty() {
+        return c
+            .execute("DELETE FROM meta.sync_state WHERE key = ?1", params![key])
+            .map(|_| ())
+            .map_err(|e| e.to_string());
+    }
+    set_meta_state(c, &key, v)
+}
+
+/// 从载荷里读空间名。⭐ **老载荷／老对端 ⇒ `None`**（不是错误 ✓）；读不出来（形状不对）也 `None`/// —— 这一格**只用于"同名"提示** ⇒ 保守取"没有"最安全（⛔ 不猜、⛔ 不从 id 反推 ✗）。
 pub(crate) fn space_name_of_payload(payload_json: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(payload_json).ok()?;
     let s = value
@@ -1111,6 +1293,13 @@ pub(crate) fn space_uid_of_payload(payload_json: &str) -> Option<String> {
 
 pub fn record_page_upsert(c: &Connection, page: &PageDetail) -> Result<(), String> {
     let payload = serde_json::to_string(page).map_err(|e| e.to_string())?;
+    // ⭐ **U4-B S1（2026-11-19）**：把"这一版写在哪条血统上"挂到载荷上（与"空间名/uid"同一处、同一手法）。
+    //   值来自**保存时前端算好的 KV**（`lineage_fp:<page>`）；没有 ⇒ **载荷逐字节不变**（老路径零感知）。
+    //   收侧据此判"两边血统是否分叉"（方案 `docs/plans/2026-11-19-u4b-lineage-in-payload.md` §4）。
+    let payload = match crate::sync::lineage_fp_of(c, &page.id) {
+        Some(fp) => with_payload_string_field(&payload, LINEAGE_FP_PAYLOAD_FIELD, &fp)?,
+        None => payload,
+    };
     // ★ §11.4 收口（第 42 轮）· **推**那一半：这一页有 CRDT 状态 ⇒ 把它挂到载荷上
     //   （与 TS 的 `withCrdtWire` 同一形状、同一字段名）。在此之前**桌面推出去的载荷从不带状态**
     //   ⇒ 桌面↔Web 之间那条 CRDT 链路是断的（Web 对端只能按块级 LWW 收）。
@@ -1324,6 +1513,22 @@ fn apply_upsert(
     }
     // ★ 合并判定搬进「文档内容」那一层（`crate::doc_content::merge`）——**唯一的合并点**：
     // 页级 LWW + dirty 优先本地 + seq 权威；阶段 1/2/3 换块级 LWW、CRDT 时只改那个函数。
+    //
+    // ⭐ **U4-B S2（2026-11-19）**：**血统分叉 ⇒ 留本机**（连"谁赢"都不判，直接不覆盖）。
+    //   本机这一版的血统来自 KV（保存时前端算的），远端那一版来自载荷 `_lineage_fp`。
+    //   任一侧没有 ⇒ 兼容 ⇒ 照旧走下面那三条（老对端/老数据行为**逐字不变**）。
+    //   ⚠️ 留本地这一支在拉取路径上会**顺手把对端那版存进暂存**（`stash_pending_remote`），
+    //     所以"不覆盖"不等于"丢掉对端那一版" ✓ —— 这正是方案 §4 的 D 格。
+    let local_fp = crate::sync::lineage_fp_of(c, &page.id);
+    if !crate::doc_content::lineage_compatible(local_fp.as_deref(), &page.lineage_fp) {
+        eprintln!(
+            "[sync] **血统分叉 ⇒ 留本机、不覆盖**（page={} 本机fp={:?} 远端fp={:?}）——对端那版会进暂存等用户裁决",
+            page.id,
+            local_fp.as_deref().unwrap_or(""),
+            page.lineage_fp
+        );
+        return Ok(UpsertApply::KeptLocal);
+    }
     let local = crate::doc_content::local_state(c, &page.id)?;
     if crate::doc_content::merge_with_stamp(local, sync_seq, stamp)
         == crate::doc_content::MergeDecision::KeepLocal
@@ -1510,6 +1715,18 @@ pub fn resolve_pending_remote(
             report.discarded_local_changes = discard_unsent_page_changes(c, page_id)?;
         }
         PendingChoice::Merge => {
+            // ⭐ **2026-11-22（U4 安全闸）**：`Merge` 直接调 `apply_remote_page`，**绕过了
+            // `apply_upsert` 里的 U4-B 血统闸** ⇒ 在分叉页上可能整页覆盖本机、或把两棵顶层块并成两份。
+            // 这里补同一把闸：分叉 ⇒ **拒绝合并**（用户仍可「另存为新页」或「保留本地」）。
+            // ⚠️ 兼容（任一侧没有 fp）⇒ 照旧合并，老数据/老对端行为不变。
+            let local_fp = crate::sync::lineage_fp_of(c, page_id);
+            if !crate::doc_content::lineage_compatible(local_fp.as_deref(), &page.lineage_fp) {
+                return Err(format!(
+                    "这一页有两条互不相关的编辑历史（本机 {} / 远端 {}），不能合并；请改用「另存为新页」或「保留本地」",
+                    local_fp.as_deref().unwrap_or("未知"),
+                    page.lineage_fp
+                ));
+            }
             // 与自动路径**同一套**（`apply_remote_page`：先逐块合并，判不了才回落远端原样并留痕）。
             // ⚠️ `from` 同上一支（用户裁决入口 ⇒ `Server`，理由见 `TakeRemote` 那段的注释）。
             let from = crate::doc_content::Ingest::Server;
@@ -4617,6 +4834,8 @@ async fn mesh_sync_one(
                 &scope.space,
                 &scope.device,
                 &peers,
+                // ⚠️ 手动同步**不跳过**（用户点了就是要试一遍；只有后台轮用本轮失败名单）。
+                &[],
                 scope.device_level,
             )
             .await?
@@ -4630,6 +4849,8 @@ async fn mesh_sync_one(
                     &scope.db_space,
                     &scope.device,
                     &peers,
+                    // ⚠️ 手动同步**不跳过**（用户点了就是要试一遍；只有后台轮带"本轮失败名单"）。
+                    &[],
                     scope.device_level,
                 )
                 .await?
@@ -4887,6 +5108,8 @@ pub(crate) async fn mesh_round_once(
     db_space: &str,
     my_device: &str,
     peers: &[crate::lan::Peer],
+    // ⭐ 2026-11-18（修法 i）：本轮已经失败过的对端（后台轮才有；空表 ⇒ 与改动前逐字相同）。
+    skip_peers: &[String],
     // ⭐⭐ 2026-10-11（设备级 ✓）：⭐ 同上 —— 判定由**调用方**从 `mesh_scope` 传进来 ✓（⛔ 不在这里再判一次 ✗）。
     device_level: bool,
 ) -> Result<crate::mesh::MeshRoundReport, String> {
@@ -4896,7 +5119,15 @@ pub(crate) async fn mesh_round_once(
         let c = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
         let _ = note_pending_trust_asks(&c, proto_space, my_device, peers, crate::db::now_ms());
     }
-    let mut report = crate::mesh::round(conn, proto_space, my_device, peers, device_level).await?;
+    let mut report = crate::mesh::round(
+        conn,
+        proto_space,
+        my_device,
+        peers,
+        skip_peers,
+        device_level,
+    )
+    .await?;
     report.window = crate::mesh::window_addr(proto_space).map(|a| format!("http://{a}"));
     // ⭐ **可核读数**：只在这一档**真的开着**时计数 ✓（没开 ⇒ 不算"跑过一轮" ✓）。
     if report.enabled {
@@ -11801,6 +12032,8 @@ mod tests {
             sort_order: 0.0,
             created_at: 0,
             updated_at: 0,
+            // ⭐ U4-B S1：夹具默认空（＝"不知道"）
+            lineage_fp: String::new(),
         }
     }
 
@@ -12055,8 +12288,54 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// ⭐⭐ 2026-10-27（owner：「多端同步时，有些删除的页面又出来了」）：**旧的远端 upsert 不许掀墓碑**。
-    ///
+    /// ⭐ **U4-B S2（2026-11-19）**：**血统分叉 ⇒ 连"谁赢"都不判，直接留本机**
+    /// （哪怕本机 `dirty=0`、远端 `seq` 更大 —— 旧规则在这种局面下会**静默覆盖**用户那一版）。
+    /// 四格里的三格（空/相等/超集）**必须**照旧走旧规则，否则正常同步会被冻住。
+    #[test]
+    fn a_diverged_lineage_keeps_local_even_when_the_old_rules_would_take_remote() {
+        let (c, dir) = pending_conn("lineage-gate");
+        let mine = page_json("b1", 1, "我本地改的");
+        // ① 反证：**不带指纹**（老路径）时，dirty=0 + 远端 seq 更大 ⇒ 旧规则**确实**会用远端
+        insert_local_page(&c, "p1", &mine, 1, 0);
+        assert_eq!(
+            apply_upsert(
+                &c,
+                &remote_page("p1", &page_json("b1", 9, "他改的")),
+                9,
+                None,
+                crate::doc_content::Ingest::Server
+            )
+            .unwrap(),
+            UpsertApply::Applied { unresolved: 0 },
+        );
+        assert!(local_json(&c, "p1").contains("他改的"));
+
+        // ② 真分叉：本机 fp 与远端 fp 各加了不同 id ⇒ 必须留本机、正文一个字都不动
+        insert_local_page(&c, "p2", &mine, 1, 0);
+        crate::sync::set_lineage_fp(&c, "p2", "1,2,9").unwrap();
+        let mut remote = remote_page("p2", &page_json("b1", 10, "他又改的"));
+        remote.lineage_fp = "1,2,8".to_string();
+        assert_eq!(
+            apply_upsert(&c, &remote, 10, None, crate::doc_content::Ingest::Server).unwrap(),
+            UpsertApply::KeptLocal,
+            "真分叉 ⇒ 留本机（⛔ 不许按 seq/dirty 判赢）"
+        );
+        assert_eq!(local_json(&c, "p2"), mine, "留本机 ⇒ 正文一个字都不许动");
+
+        // ③ 超集（本机 ⊆ 远端）⇒ **兼容** ⇒ 照旧用远端（防"把正常同步冻住"）
+        insert_local_page(&c, "p3", &mine, 1, 0);
+        crate::sync::set_lineage_fp(&c, "p3", "1,2").unwrap();
+        let mut superset = remote_page("p3", &page_json("b1", 11, "他合并后的"));
+        superset.lineage_fp = "1,2,8".to_string();
+        assert_eq!(
+            apply_upsert(&c, &superset, 11, None, crate::doc_content::Ingest::Server).unwrap(),
+            UpsertApply::Applied { unresolved: 0 },
+            "超集 ⇒ 兼容 ⇒ 旧规则照旧（⛔ 不许冻住正常同步）"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐⭐ 2026-10-27（owner：「多端同步时，有些删除的页面又出来了」）：**旧的远端 upsert 不许掀墓碑**。    ///
     /// 红读数（修前）：`apply_upsert` 直接走 `apply_remote_page`，而 `upsert_remote` 的 SQL 里
     /// `deleted_at = NULL` 是**有意**的（回收站还原靠它传播）⇒ 对端离线/游标落后时队列里的
     /// **历史 upsert** 一到，删掉的页就**静默复活**（真机现场：`changes` 里 delete 在 upsert 之后，
@@ -12212,6 +12491,31 @@ mod tests {
         assert_eq!(
             crate::doc_content::pending_remote_seq(&c, "p1").unwrap(),
             None
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐ 2026-11-22（U4 安全闸）：分叉页上「合并这一页」必须拒绝，且正文一个字不动、存档不丢。
+    #[test]
+    fn merging_a_diverged_lineage_is_refused_and_keeps_everything() {
+        let (c, dir) = pending_conn("merge-diverged");
+        let mine = page_json("b1", 1, "我本地改的");
+        insert_local_page(&c, "p1", &mine, 1, 1);
+        crate::sync::set_lineage_fp(&c, "p1", "1,2,9").unwrap();
+        let mut theirs = remote_page("p1", &page_json("b1", 9, "他改的"));
+        theirs.lineage_fp = "3,4".into();
+        stash(&c, &theirs, 9);
+
+        let err = resolve_pending_remote(&c, "p1", PendingChoice::Merge).unwrap_err();
+        assert!(
+            err.contains("两条互不相关的编辑历史"),
+            "错误要可读：{err}"
+        );
+        assert_eq!(local_json(&c, "p1"), mine, "拒绝合并 ⇒ 正文一个字都不许动");
+        assert_eq!(
+            crate::doc_content::pending_remote_seq(&c, "p1").unwrap(),
+            Some(9),
+            "存档不许被清掉（用户还要选另存/保留）"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -14228,6 +14532,153 @@ mod tests {
                 local_space_kind(&c),
                 Some(crate::mesh_merge_ledger::SpaceKind::Unclassified),
                 "⭐ 读到了（未分类）与读不到**必须分得开**"
+            );
+        }
+
+        /// ⭐ **F2-1（2026-11-20）**：`may_drop_mirror` 的四格真值表 —— 只判"**这一条现在能不能删**"。
+        /// ⚠️ 它**还没接线**（那条 DELETE 仍只看时间）：这一组只是在把口径先钉死。
+        #[test]
+        fn may_drop_mirror_keeps_only_what_a_peer_still_needs() {
+            const DAY: i64 = 86_400_000;
+            let now = 1_000 * DAY;
+            // ① 还没到保留期 ⇒ 一律不删（与现状一致）
+            assert!(!may_drop_mirror(now - DAY, now, 7 * DAY, 5, &[]));
+            assert!(!may_drop_mirror(now - DAY, now, 7 * DAY, 5, &[0]));
+            // ② 到了保留期 + **没有任何已知对端** ⇒ 照旧删（⛔ 不许无界增长）
+            assert!(may_drop_mirror(now - 8 * DAY, now, 7 * DAY, 5, &[]));
+            // ③ 到了保留期 + 对端**都拿到了**（游标 >= 这一条）⇒ 删
+            assert!(may_drop_mirror(now - 8 * DAY, now, 7 * DAY, 5, &[5, 9]));
+            assert!(may_drop_mirror(now - 8 * DAY, now, 7 * DAY, 5, &[5]));
+            // ④ 到了保留期 + 有对端**还没拿到** ⇒ 多留（不删）
+            assert!(!may_drop_mirror(now - 8 * DAY, now, 7 * DAY, 5, &[4]));
+            assert!(!may_drop_mirror(now - 8 * DAY, now, 7 * DAY, 5, &[9, 2]));
+            // ⑤ 但硬上限到了 ⇒ 照删（⛔ 宁可让长期离线的对端丢一段，也不许无界）
+            let hard = 7 * DAY + MIRROR_MAX_EXTRA_MS;
+            assert!(may_drop_mirror(now - hard, now, 7 * DAY, 5, &[4]));
+            assert!(!may_drop_mirror(now - hard + 1, now, 7 * DAY, 5, &[4]));
+            // ⑥ 坏参数（负的保留期/负的 seq）⇒ 保守不删
+            assert!(!may_drop_mirror(now - 30 * DAY, now, -1, 5, &[]));
+            assert!(!may_drop_mirror(now - 30 * DAY, now, 7 * DAY, -1, &[]));
+        }
+
+        /// ⭐ **F2-1（2026-11-20）**：`min_peer_cursor_for_space` 的读取口径 —— 这是 SQL 那条路里**最容易静默失效**的一格。
+        ///
+        /// 三种失败形状都钉住：① 把**别的空间**的游标算进来（LIKE 写错）② 前缀相似的空间被串进来
+        /// （`proto-a` vs `proto-ab`）③ **坏值被当成 0**（那会让镜像永远删不掉）。
+        #[test]
+        fn min_peer_cursor_reads_only_this_space_and_skips_bad_values() {
+            let c = crate::sync::tests::conn_with_meta();
+            for (k, v) in [
+                ("mesh_cursor:proto-a:dev1", "9"),
+                ("mesh_cursor:proto-a:dev2", "3"),
+                ("mesh_cursor:proto-b:dev1", "1"), // 别的空间 ⇒ ⛔ 不算
+                ("mesh_cursor:proto-a:dev3", "abc"), // 坏值 ⇒ 跳过（⛔ 不当 0）
+                ("mesh_cursor:proto-a:dev4", "-7"), // 负值 ⇒ 跳过
+            ] {
+                c.execute(
+                    "INSERT INTO meta.sync_state(key, value) VALUES(?1, ?2)",
+                    params![k, v],
+                )
+                .unwrap();
+            }
+            assert_eq!(
+                min_peer_cursor_for_space(&c, "proto-a"),
+                Some(3),
+                "最落后那台决定下界；别的空间与坏值都不许参与"
+            );
+            // 前缀相似的空间不许串进来（`proto-a` vs `proto-ab`）
+            c.execute(
+                "INSERT INTO meta.sync_state(key, value) VALUES('mesh_cursor:proto-ab:dev1', '1')",
+                [],
+            )
+            .unwrap();
+            assert_eq!(
+                min_peer_cursor_for_space(&c, "proto-a"),
+                Some(3),
+                "LIKE 前缀不许把 proto-ab 的游标算进 proto-a"
+            );
+            assert_eq!(
+                min_peer_cursor_for_space(&c, "proto-zzz"),
+                None,
+                "没有这个空间的游标 ⇒ None（⛔ 不返回 0，否则镜像永远删不掉）"
+            );
+        }
+
+        /// ⭐ **F2-1（2026-11-20）**：`retain_cutoff` 的三格 —— 决定"按时间删"的下界。
+        /// ⚠️ 关键反例：**没有任何对端游标 ⇒ i64::MAX（照旧按时间删）**，
+        ///    否则"没有已知对端"这个正常状态会让镜像**永远删不掉**（无界增长的另一种形态）。
+        #[test]
+        fn retain_cutoff_is_decided_by_the_most_lagging_peer_and_never_blocks_cleanup() {
+            assert_eq!(retain_cutoff(&[]), i64::MAX, "没有对端 ⇒ 照旧按时间删");
+            assert_eq!(retain_cutoff(&[9]), 9);
+            assert_eq!(retain_cutoff(&[9, 4, 7]), 4, "最落后的那台决定一切");
+            assert_eq!(retain_cutoff(&[0]), 0, "0 是合法游标（还没拉到过）");
+            // 坏值（负数）⇒ 忽略；全是坏值 ⇒ 等同"没有对端"
+            assert_eq!(retain_cutoff(&[-5, 6]), 6);
+            assert_eq!(retain_cutoff(&[-5, -1]), i64::MAX);
+        }
+
+        /// ⭐ **U4-B S1（2026-11-19）**：`_lineage_fp` 挂件的四条口径 ——
+        /// ① 有值 ⇒ 挂上且**页内容不变**；② 空/没值 ⇒ 载荷**逐字节不变**（老路径零感知）；
+        /// ③ 坏 JSON ⇒ 响亮报错；非对象 ⇒ 原样返回；④ KV 里空串 ⇒ **删掉这一格**（＝不知道）。
+        #[test]
+        fn lineage_fp_lands_only_when_known_and_never_changes_page_bytes() {
+            let p =
+                with_payload_string_field(&payload(), LINEAGE_FP_PAYLOAD_FIELD, "  a,b  ").unwrap();
+            let v: serde_json::Value = serde_json::from_str(&p).unwrap();
+            assert_eq!(
+                v[LINEAGE_FP_PAYLOAD_FIELD], "a,b",
+                "⛔ 没挂上（或没折空白）"
+            );
+            let orig: serde_json::Value = serde_json::from_str(&payload()).unwrap();
+            assert_eq!(v["title"], orig["title"], "⛔ 页内容被改了");
+            // 空 ⇒ 逐字节不变
+            assert_eq!(
+                with_payload_string_field(&payload(), LINEAGE_FP_PAYLOAD_FIELD, "").unwrap(),
+                payload()
+            );
+            assert_eq!(
+                with_payload_string_field(&payload(), LINEAGE_FP_PAYLOAD_FIELD, "   ").unwrap(),
+                payload()
+            );
+            // 坏形状
+            assert!(with_payload_string_field("not json", LINEAGE_FP_PAYLOAD_FIELD, "a").is_err());
+            assert_eq!(
+                with_payload_string_field("[1,2]", LINEAGE_FP_PAYLOAD_FIELD, "a").unwrap(),
+                "[1,2]"
+            );
+            // ⑤ **结构体 ↔ 载荷键名必须一致**（今天差点写成两套：结构体叫 `lineage_fp`、载荷键叫 `_lineage_fp`
+            //   ⇒ 收侧永远读不到）。这里用一次往返把它钉住：空 ⇒ 键不出现；有 ⇒ 收得回来。
+            let page = crate::models::PageDetail {
+                id: "p1".to_string(),
+                workspace_id: "w1".to_string(),
+                parent_id: None,
+                title: "页".to_string(),
+                content_json: "{}".to_string(),
+                content_text: String::new(),
+                cover: String::new(),
+                icon: String::new(),
+                cover_height: 300,
+                cover_pos: 50.0,
+                kind: "page".to_string(),
+                sort_order: 1.0,
+                created_at: 1,
+                updated_at: 2,
+                lineage_fp: String::new(),
+            };
+            let empty_json = serde_json::to_string(&page).unwrap();
+            assert!(
+                !empty_json.contains(LINEAGE_FP_PAYLOAD_FIELD),
+                "空血统 ⇒ 载荷里**不许**出现这个键（否则老路径不是逐字节不变）"
+            );
+            let round_trip = format!(
+                r#"{{"id":"p1","workspace_id":"w1","parent_id":null,"title":"页","content_json":"{{}}","content_text":"","cover":"","icon":"","cover_height":300,"cover_pos":50.0,"kind":"page","sort_order":1.0,"created_at":1,"updated_at":2,"{}":"a,b"}}"#,
+                LINEAGE_FP_PAYLOAD_FIELD
+            );
+            let back: crate::models::PageDetail = serde_json::from_str(&round_trip).unwrap();
+            assert_eq!(
+                back.lineage_fp, "a,b",
+                "⛔ 收侧读不到（结构体字段名与载荷键名不一致）"
             );
         }
 

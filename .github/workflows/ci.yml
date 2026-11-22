@@ -207,14 +207,88 @@ jobs:
   # 拿到应用二进制并 re-exec 自己，所以必须编译 bin target。那些断言（分流在 Tauri 之前、
   # 握手先于请求、能力通道穿得过、父进程 drop 不留孤儿）**只有在 CI 里跑才有价值**——
   # 它们正是"进程边界可用"的回归。构建时间长一点是值得的（方案 §6.2：宁可测试慢一点）。
+  #
+  # ★ 2026-11-21（owner 拍「把 rust 这条线的墙钟压下来」）：**一个 job 拆成两个**，判据一条没动。
+  #
+  # 读数从哪来（可核）：run #1798（`d4c8527c`）的工件 `test-report-rust` 里 9 条门禁各自的
+  # `durationMs`，逐个相加 = **2028.6 s = 33.8 min**，与 job 墙钟 **39.1 min** 对得上
+  # （差额是 checkout / 工具链 / 缓存恢复 / apt / 打包）：
+  #   `rust-sm-wired`      1084.6 s（18.1 min）← rust 组的 **53.5%**，一条门禁占掉一半
+  #   `rust-test`           617.2 s（10.3 min）
+  #   `rust-no-sm-crypto`   262.2 s（ 4.4 min）
+  #   `rust-plugins-alone`   56.6 s
+  #   其余 5 条合计            7.7 s（fmt 3.3 / gm-conformance 3.3 / sys-deps 0.6 / registry-clean 0.4 / crypto-backend 0.1）
+  #   （逐项相加 = 2028.3 s，与上面的 2028.6 s 差 0.3 s 是各自四舍五入）
+  # 另两步也量过（同一 artifact 之外的 step 计时）：`--features lan-quic` **2.45 min**、
+  # `--features relay` **0.23 min**（后者复用前者的 target ⇒ **别把两次 feature check 拆成两个 job**，
+  # 拆开就没有那 0.23 了）、打包自检 **0.90 min**。
+  #
+  # ⇒ 结论与"看起来该拆"的直觉相反：**打包（0.9 min）和两次 feature check（2.7 min）都不是瓶颈**，
+  #   39.1 min 里 33.8 是这 9 条 cargo 门禁**串行相加**。所以只按"能不能共用同一份 target"拆一刀：
+  #   ① 本 job：默认特性这条线（rust-test / fmt / plugins-alone / gm-conformance / no-sm-crypto / sys-deps）
+  #      ＋ 两次 feature check（复用本 job 默认特性的 target，见上面 0.23 那条读数）
+  #      ＋ 打包自检（`--group artifact` 里的两条要 `cargo test --lib`，也是默认特性 ⇒ 复用同一份；
+  #      单独拆出去反而要白白重编一遍）。
+  #   ② `rust-gm-wiring`：国密补丁那条线（`rust-sm-wired` ＋ 两条读"补丁已还原后"状态的检查）。
+  #      它要往 `.gm-build/` 打补丁、`cargo clean -p` 两个 crate、用 `--features sm-library` 整编，
+  #      最后再 `cargo build --lib` 把默认特性编回来 —— 与 ① **共用不了** target（feature 集不同 +
+  #      补丁态），今天本来就是三次独立整编串在一个 job 里 ⇒ 拆开只是让它们**并行**。
+  #
+  # ⚠️ 为什么不顺手拆成 3 个 job：`rust-sm-wired` 一条就 18.1 min，第三刀（把 4.4 min 的
+  #   no-sm-crypto 或 2.7 min 的 feature check 拆出去）只会让**最慢那个**还是 ~20 min，却多付一份
+  #   checkout/工具链/apt/缓存恢复（实测 1.46 min）+ 一份 target 缓存。**拆法要让"最慢"变小，
+  #   不能只让"平均"变小。**
+  #
+  # ⚠️ 拆 job 的代价（量化，别当成免费的）：target 缓存从一份变两份（shared-key 分开）。
+  #   `rust-tests` 沿用旧 `shared-key` ⇒ 它拆完**首跑就命中**现有那份缓存（不重新冷编）；
+  #   而 `rust-gm-wiring` **首跑**要自己冷编一遍依赖树（**估计 25~35 min，无实测**；依据：无缓存时
+  #   这个组实测到过 19~52 min，而缓存命中后编译只占 ~83 s），稳定后回到 ~20 min。
+  #   ⚠️ 若首跑代价不可接受，可退成"两个 job 共用 `shared-key: rust-tests`"：B 立刻拿到那份含
+  #   sm-library 产物的缓存，但两者争同一个 key、且 rust-cache 命中主键时**不覆盖保存** ⇒
+  #   长期有一方拿不到自己的增量。默认选"分开"，因为它可确定、可解释。
+  #   但**不会**变成"整棵依赖树 ×3"：今天那份 1593 MB 缓存里本来就同时躺着三套 feature 集的产物
+  #   （默认 / no-default / sm-library），拆开只是把它们分到两个 key 下，总字节上限 ~2×1593 MB。
+  #   且实测缓存命中后 job 墙钟是 39.1 min（未命中 40.1）⇒ 缓存省的不是主要成本，主要成本是
+  #   **测试执行本身**：run #1798 的日志里 `rust-test` 这一格 617 s = 编译 83 s + 单测跑 526 s
+  #   （`test result: ok. 1559 passed; … finished in 526.09s`）⇒ 拆 job 能并行的只是"不同 feature 集的
+  #   整编 + 国密那条独立链"，**并不到测试运行时**。想再往下压只有两条路：减测试耗时，或改
+  #   `check-gm-wired.mjs` 的收尾（它在独立 job 里不必再把默认特性编回来）——后者要改门禁脚本，
+  #   属于另一次改动。
   rust-tests:
-    name: Rust 测试（cargo test，含宿主子进程集成测试）
+    name: Rust 测试（cargo test ＋ feature 构建 ＋ 打包验收）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      # ⭐ **2026-11-20（owner 拍「加缓存」）**：这个仓**一直零缓存** ⇒ 每次 CI 都冷编译整棵依赖树
+      #   （tauri / iroh / …）。实测当天 12 次 rust 组的耗时：**19 / 23 / 24 / 30 / 31 / 32 / 33 / 52 分钟**
+      #   （`_tmp` 里那份 `read-ci` 读数），而测试本身只占约 9 分钟（本机全量 lib 530 s 量级）。
+      #   ⇒ 加一层 Rust 构建缓存，把"每次重编依赖"这部分压掉。
+      #
+      # 为什么用 `Swatinem/rust-cache` 而不是手写 `actions/cache`：
+      #   它按 `Cargo.lock` ＋ rustc 版本算 key、自动做"只存不覆盖/PR 用只读缓存"、并清掉无用 artifacts；
+      #   手写要自己处理 key 公式与 `save-if`，写错会**静默变成永久不命中**（这比没有缓存更糟：看不出没生效）。
+      #
+      # ⚠️ 三条边界：
+      #   1. `workspaces: src-tauri -> target` —— 这个仓的 target 在 `src-tauri/target`，
+      #      不写这一行它会去缓存**根目录**的 target（那里没有）⇒ 缓存永远空转；
+      #   2. 缓存只影响**速度**，不影响判定：同一份代码在命中/未命中两种情况下都必须给出同样结论
+      #      （所以它不能替代任何门禁，也不许因为"缓存里是绿的"就跳过测试）；
+      #   3. 缓存坏了就是**慢**，不会变红 —— 真出问题把 `shared-key` 或 `key` 换一个即可。
+      #
+      #   ⭐ 2026-11-21 复核（别把缓存当万能）：装上之后两次实测 **40.1 / 39.1 分钟**，缓存**命中**
+      #      （run #1798 的日志逐字：`Cache hit for: v0-rust-rust-tests-Linux-x64-2fd77104-0952ff42`、
+      #      `Cache Size: ~1593 MB (1670653807 B)`、`Cache restored successfully`）只省约 **1 分钟**
+      #      ⇒ **"重编依赖"不是主要成本**：同一次跑的 `rust-test` 617 s 里编译只占 ~83 s，
+      #      其余 526 s 是**测试执行**（见本 job 开头那段）。
+      - name: Rust 构建缓存
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: rust-tests
 
       - name: 确保 rustfmt（rust 组的 fmt 门禁用它）
         # `dtolnay/rust-toolchain@stable` 的默认 profile 带 rustfmt；这一行是**显式钉住**：
@@ -239,12 +313,25 @@ jobs:
         # （2026-09-13 那类缺陷：某测试依赖进程级 APP_DATA_DIR ⇒ 单跑必红、全量反而绿，
         # 改一行只跑一条时极易误判；修法是测试自给自足，这条门禁防它回来）。
         #
+        # ★ 2026-11-21：命令从 `--group rust` 改成 `--group rust --only <本 job 那 6 条>`，
+        #   因为 `rust-sm-wired` 挪去 `rust-gm-wiring` 并行跑了（读数与拆法见上面这个 job 的开头）。
+        #   ⚠️ `--group rust` **仍要给**：`test-report.mjs` 用它算"本轮未覆盖的组"，只给 `--only`
+        #   会在 CI 摘要里写成「rust 组未覆盖」——那是假话（`--only` 只决定*跑哪几条*）。
+        #   ⛔ 这条 `--only` 名单必须与 `rust-gm-wiring` 那条**合起来 = gates.mjs 的整个 rust 组**。
+        #   门禁清单的唯一出处仍是 `scripts/lib/gates.mjs`；这里只是"哪条在哪个 job 跑"的映射，
+        #   将来**加一条 rust 门禁时两个 job 都要看一眼**（否则它会静默没有 job 跑它）。
+        #   ⚠️ 读 CI 摘要时注意：本 job 的摘要是 rust 组的**部分读数**（6 条），另外 3 条在
+        #   `rust-gm-wiring` 的摘要里 —— 别把这里的 "rust 6/6" 读成"rust 组只有 6 条"。
+        #
         # ⚠️ 一条必须留在这里的教训：那条命令含行尾冒号（`--lib plugins::`）——YAML 的 plain scalar
         # 不允许以 `:` 结尾。若有人把它抄回本文件的 `run:` 且不加引号，整个 workflow 文件编译不过；
         # GitHub 对这种错误**不给行号、不给日志**，只产出一条 0 个 job 的红色 run（run 名是文件路径
         # 而不是 `name: CI`）——2026-09-12 起 49 次 push 全红、连纯文档提交也红，就是这一行。
         # 现在它跑在 .mjs 里，绕开了 YAML 标量规则；`check-workflow-yaml` 另有窄规则兜底。
-        run: node scripts/test-report.mjs --group rust --json test-report-rust.json
+        run: >-
+          node scripts/test-report.mjs --group rust
+          --only rust-test,check-rustfmt,rust-plugins-alone,gm-conformance,rust-no-sm-crypto,check-sys-deps-linux
+          --json test-report-rust.json
 
       # ★ 2026-11-08（复核 #4 最小步）：**feature 构建也要进 CI**。
       #
@@ -349,3 +436,98 @@ jobs:
 
       # 打包不许依赖命令行 `zip` 的那条门禁已搬进注册表（artifact 组的 `plugin-fragment-no-zip`，
       # 见 scripts/lib/gates.mjs）——它在 Windows 上跑得动，不像这里的 grep 只认 Linux。
+
+  # ============================================================================
+  # ★ 2026-11-21：国密接线构建**单独一个 job**（原先排在 `rust-tests` 里，是那三条门禁之一）。
+  #
+  # 为什么拆：`rust-sm-wired` 在 run #1798（`d4c8527c`）里 **1084.6 s = 18.1 min**，
+  #   占整个 rust 组（33.8 min）的 **53.5%**、占 job 墙钟（39.1 min）的 46% —— 一条门禁就是瓶颈。
+  #   而它**没法**和默认特性那几套共用 target：① 往 `.gm-build/` 打国密补丁；② `cargo clean -p`
+  #   `libsqlite3-sys` / `shuyonote`；③ 用 `--features sm-library` 把整棵目标重编一遍并跑全量单测；
+  #   ④ 还原补丁，再把**默认特性**编回来（为了同一 job 里后面的 `check-crypto-backend` 不读到混态）。
+  #   ①–④ 全在一条门禁内部串行 ⇒ 拆成独立 job 后它与 `rust-tests` **同时**跑，
+  #   墙钟从"相加"变"取最大"。
+  #
+  # 为什么 `gm-registry-clean` / `check-crypto-backend` 也在这：这两条读的是**跑过 cargo 之后**的
+  #   registry 与构建产物，而今天它们排在 `rust-sm-wired` **后面**，看到的正是"补丁已还原、默认特性
+  #   已编回"那个状态 ⇒ 搬过来才与今天**同形**（`gm-registry-clean` 的一半价值就是"还原干净没"）。
+  #   搬到 `rust-tests` 会让它们读一个**从没打过补丁**的 registry —— 照样绿，但那个观察点没了。
+  #
+  # ⚠️ 系统依赖配方与 `rust-tests` 的 `Linux system deps` **逐字相同**（少一个包就编不过）。
+  #   注意 `scripts/check-sys-deps.mjs` 的 `readCiRecipe()` 只取文件里**第一处**
+  #   `name: Linux system deps` ⇒ 第一处（`rust-tests` 里那份）仍是硬判据的唯一来源；
+  #   两处必须同步改，否则判据会悄悄只校一份。
+  #
+  # ⚠️ PDFium 也必须取：`rust-sm-wired` 跑的是**全量** `cargo test`，其中
+  #   `pdfium_matches_mupdf_on_fixtures` 在库不在时会**响亮自报跳过**（不判红）⇒ 忘了取不会红，
+  #   但那一条就静默地没做比对。这正是本仓最反对的"跳过冒充通过"，所以照抄 `rust-tests` 那一步。
+  #
+  # ⚠️ 缓存：`shared-key` 与 `rust-tests` **分开**（`rust-gm-wiring`），理由见 `rust-tests` 开头那段
+  #   代价量化 —— 首次跑是冷的（估计 25~35 min，无实测），之后回到 ~20 min。
+  # ============================================================================
+  rust-gm-wiring:
+    name: Rust 国密接线构建（sm-library 全量单测）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust 构建缓存（国密接线专用 key）
+        # `workspaces: src-tauri -> target` 与主 job 同理：target 在 `src-tauri/target`，
+        # 不写这一行会去缓存根目录的 target（那里没有）⇒ 缓存永远空转。
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: rust-gm-wiring
+
+      - name: Linux system deps
+        # ⚠️ 与 `rust-tests` 那份**逐字相同**（上面注释解释了为什么必须同步）。
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libclang-dev xdg-utils
+
+      - name: 取 PDFium 运行时（Linux）
+        # 见上面那条 ⚠️：全量 `cargo test` 里的 PDFium 对拍靠它才真跑（取不到就红在这一步）。
+        run: node scripts/fetch-pdfium.mjs --check --platform linux-x64 || node scripts/fetch-pdfium.mjs --platform linux-x64
+
+      # 🔴 **2026-11-21 真机（拆 job 后第一轮就红，`509e5298`）**：必须先把依赖**编一次**。
+      #
+      # 红的原文（`rust-sm-wired` 的准备步骤）：
+      #   ❌ Cargo.lock 锁的是 libsqlite3-sys **0.38.2**，但 registry 里找到的是 [（无）]
+      #      ⇒ 不挑别的版本（按 mtime 挑会挑到陈旧副本）
+      # 根因：国密补丁要改 registry 里 `libsqlite3-sys-<ver>/sqlcipher` 的源码
+      #   （`scripts/lib/sm-library-source.mjs` 的 `resolveSqlcipherSource` 就是在 `registry/src/*/` 下找它），
+      #   而**解包发生在编译时**：`cargo fetch` 只下载、不把源码铺到 `registry/src/`（第一版修法就踩这个）。
+      # 旧单 job 里是 `rust-test` 先跑 `cargo test` 把它解出来的；拆成独立 job 后没人先跑过 ⇒ registry/src 是空的。
+      # ⇒ 这一步编一次默认特性（缓存命中后约 1.5 分钟），让 `registry/src/` 有那份源码。
+      - name: 先编一次默认特性（国密补丁要改 registry/src 里 libsqlite3-sys 的源码）
+        run: cargo build --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Rust 国密接线构建（rust-sm-wired ＋ 两条产物/registry 检查）
+        # 这 3 条合起来就是 `rust-tests` 那条 `--only` 名单的**补集**（9 条 rust 门禁全在 CI 里跑）。
+        # 顺序按注册表：`rust-sm-wired` → `gm-registry-clean` → `check-crypto-backend`，
+        # 与今天在单 job 里的相对顺序**完全一致**（后两条必须排在打补丁/还原之后）。
+        # ⚠️ 本 job 的 CI 摘要只会写 "rust 3/3"（rust 组的另外 6 条在 `rust-tests` 的摘要里）。
+        run: >-
+          node scripts/test-report.mjs --group rust
+          --only rust-sm-wired,gm-registry-clean,check-crypto-backend
+          --json test-report-rust-gm.json
+
+      - name: 失败时把「哪条门禁红了」变成注解（国密接线 job）
+        # 与其它 job 那几条同一个理由：日志要鉴权时，注解是唯一无需鉴权的失败证据通道。
+        # 只报告、不改变结论（`if: failure()` + `exit 0`）。
+        if: failure()
+        run: node scripts/test-report-annotate.mjs test-report-rust-gm.json
+
+      - name: 上传回归报告（机器可读，国密接线）
+        # `if: always()`：报告在**失败那一轮**最有价值。
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-rust-gm
+          path: test-report-rust-gm.json
+          retention-days: 30

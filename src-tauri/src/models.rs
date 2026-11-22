@@ -38,6 +38,25 @@ pub struct PageDetail {
     pub sort_order: f64,
     pub created_at: i64,
     pub updated_at: i64,
+    /// ⭐ **2026-11-19（U4-B S1）**：这一版**写在哪条血统上** —— 该页 CRDT client id 集合，
+    /// 排序后逗号分隔（与 `lineage_conflict` 的 `mine_fp`／`remote_fp` **同一个函数产出** ⇒ 单一真相源）。
+    ///
+    /// 为什么放进载荷：合并点（`doc_content::merge`）只看得到 `dirty`/`seq`，**判不出血统是否分叉**
+    /// ⇒ 只能先按 LWW 覆盖，等打开页面才发现"两条血统"（横幅那句"本机这一版原样保留"因此在真机上不成立）。
+    /// 方案与判据：`docs/plans/2026-11-19-u4b-lineage-in-payload.md`。
+    ///
+    /// ⚠️ `#[serde(default)]` ⇒ **老对端不发也收得下**（读到空 = "不知道" ⇒ 退回旧规则，⛔ 不升 wire 版本）；
+    /// ⛔ 它是**血统**标识，**不是设备标识** —— 不许拿它判"同一台设备"。
+    ///
+    /// ⚠️ **2026-11-19 修正**：载荷里的键是 **`_lineage_fp`**（与 `_space_name`/`_space_uid` 同一套"外壳字段"约定：
+    /// 下划线前缀 ＝ 不是页内容）⇒ 这里必须 `rename`，否则**收侧永远读不到**（结构体字段名与载荷键名是两件事）。
+    /// 顺序也定死：`skip_serializing_if`（空 ⇒ 载荷里**没有这个键**，与老版本逐字节相同）→ 收侧 `default`（缺 ⇒ 空）。
+    #[serde(
+        rename = "_lineage_fp",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub lineage_fp: String,
 }
 
 fn default_kind() -> String {

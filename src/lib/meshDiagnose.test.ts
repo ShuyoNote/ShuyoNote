@@ -16,13 +16,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import type { LanStatus, MeshRoundReport, NearbyPeer } from "./platform/commands";
+import type { LanStatus, MeshRoundReport, MeshWatermarks, NearbyPeer } from "./platform/commands";
 import {
   LEVEL_LABEL,
   diagnoseMesh,
   levelCountText,
   meshDiagnosticText,
   portOfBind,
+  type SyncHistoryRow,
 } from "./meshDiagnose";
 
 /** 内部设备号：⛔ 诊断包**绝不许**出现它（脱敏判据的探针）。 */
@@ -383,5 +384,254 @@ describe("面板接线 · 连接体检（文本级，与 syncPanelMesh.wiring.te
     // ⛔ 自己写的 JSX 文案不许用 Markdown 粗体（会在界面上原样显示星号）
     const bold = code.match(/\*\*[^*\n]{1,40}\*\*/g);
     expect(bold, `JSX 文本里出现了 Markdown 粗体：${bold?.[0]}`).toBeNull();
+  });
+});
+
+// ⭐ §13.6 O2：诊断包升级 —— 当前空间水位矩阵（哪一台不同步、差多少、为什么）。
+describe("体检纯函数 · §13.6 O2 水位矩阵", () => {
+  function wm(over: Partial<MeshWatermarks> = {}): MeshWatermarks {
+    return {
+      spaceName: "研发空间",
+      localMaxSeq: 120,
+      peers: [
+        { index: 1, cursor: 120, online: true, lastOkAgoMs: 12_000 },
+        { index: 2, cursor: 100, online: false, lastOkAgoMs: 3_600_000 },
+      ],
+      onlineCount: 1,
+      offlineCount: 1,
+      unknownCount: 0,
+      note: "读数来自本机记录",
+      ...over,
+    };
+  }
+
+  it("离线且落后 ⇒ warn，原因写清差多少、最近成功多久", () => {
+    const s = diagnoseMesh(okStatus(), null, { watermarks: wm() });
+    expectWellFormed(s);
+    const it2 = item(s, "watermark-2")!;
+    expect(it2.level).toBe("warn");
+    expect(it2.reason).toContain("落后 20");
+    expect(it2.reason).toContain("离线");
+    expect(it2.reason).toContain("1 小时前");
+    expect(s.overall).toBe("warn");
+  });
+
+  it("在线但没拉齐 ⇒ warn；已拉齐 ⇒ ok", () => {
+    const s = diagnoseMesh(okStatus(), null, {
+      watermarks: wm({
+        peers: [
+          { index: 1, cursor: 120, online: true, lastOkAgoMs: 1000 },
+          { index: 2, cursor: 119, online: true, lastOkAgoMs: 2000 },
+        ],
+        onlineCount: 2,
+        offlineCount: 0,
+      }),
+    });
+    expect(item(s, "watermark-1")!.level).toBe("ok");
+    expect(item(s, "watermark-2")!.level).toBe("warn");
+    expect(item(s, "watermark-2")!.title).toContain("在线但没拉齐");
+    expect(item(s, "watermark-2")!.reason).toContain("落后 1");
+  });
+
+  it("没有成功记录 ⇒ unknown（⛔ 不写成已齐）", () => {
+    const s = diagnoseMesh(okStatus(), null, {
+      watermarks: wm({
+        peers: [{ index: 1, cursor: 0, online: null, lastOkAgoMs: null }],
+        onlineCount: 0,
+        offlineCount: 0,
+        unknownCount: 1,
+      }),
+    });
+    expect(item(s, "watermark-1")!.level).toBe("unknown");
+    expect(item(s, "watermark-1")!.reason).toContain("还没有成功记录");
+  });
+
+  it("不传水位 ⇒ 一项都不添（旧构建/读不到，⛔ 不装成已齐）", () => {
+    const s = diagnoseMesh(okStatus(), null, { at: 1 });
+    expect(s.watermarks).toBeNull();
+    expect(s.items.some((i) => i.key.startsWith("watermark"))).toBe(false);
+    expect(meshDiagnosticText(s)).not.toContain("水位矩阵");
+  });
+
+  it("诊断包含矩阵且脱敏：有对端序号/落后，⛔ 无空间名/设备名/设备号/地址", () => {
+    const s = diagnoseMesh(okStatus(), null, { watermarks: wm() });
+    const text = meshDiagnosticText(s);
+    expect(text).toContain("水位矩阵");
+    expect(text).toContain("对端[2]");
+    expect(text).toContain("落后=20");
+    expect(text).not.toContain("研发空间");
+    expect(text).not.toContain(DEVICE_ID);
+    expect(text).not.toContain(DEVICE_NAME);
+    expect(text).not.toContain(PEER_ADDR);
+  });
+});
+
+// ⭐ §13.6 O2 接线：面板把 `mesh_watermarks` 传给对话框，对话框再交给纯函数（⛔ 组件里不自判）。
+describe("接线 · O2 水位矩阵", () => {
+  it("SyncPanel 传入 watermarks；对话框把它交给 diagnoseMesh", () => {
+    const panel = readFileSync(resolve("src/components/SyncPanel.tsx"), "utf8");
+    const dialog = readFileSync(resolve("src/components/MeshDiagnoseDialog.tsx"), "utf8");
+    expect(panel).toContain("watermarks={watermarks}");
+    expect(panel).toContain("history={history}");
+    expect(dialog).toContain("{ watermarks, history }");
+    expect(dialog).toContain("diagnoseMesh(status, round, { watermarks, history })");
+  });
+});
+
+// ⭐ §13.6 O2 第二刀：最近 N 轮（最近发生了什么、失败原文）。
+describe("体检纯函数 · §13.6 O2 最近同步轮次", () => {
+  const AT = 1_700_000_000_000;
+  function rows(): SyncHistoryRow[] {
+    return [
+      {
+        at: AT - 60_000,
+        ok: false,
+        pushed: 0,
+        pulled: 0,
+        message: "**拉不动**：401",
+        items: [{}, {}],
+      },
+      { at: AT - 300_000, ok: true, pushed: 2, pulled: 3, message: "", items: [{}] },
+    ];
+  }
+
+  it("最近一轮失败 ⇒ 总结与逐轮都是 warn，原因带后端原文（去掉 Markdown 粗体标记）", () => {
+    const s = diagnoseMesh(okStatus(), null, { at: AT, history: rows() });
+    expectWellFormed(s);
+    const sum = item(s, "history")!;
+    expect(sum.level).toBe("warn");
+    expect(sum.reason).toContain("成功 1 · 失败 1");
+    const r1 = item(s, "history-1")!;
+    expect(r1.level).toBe("warn");
+    expect(r1.title).toContain("失败");
+    expect(r1.reason).toContain("拉不动：401");
+    expect(r1.reason).not.toContain("**");
+    expect(item(s, "history-2")!.level).toBe("ok");
+  });
+
+  it("全部成功 ⇒ history 项是 ok", () => {
+    const s = diagnoseMesh(okStatus(), null, {
+      at: AT,
+      history: [{ at: AT - 1000, ok: true, pushed: 1, pulled: 1, message: "", items: [] }],
+    });
+    expect(item(s, "history")!.level).toBe("ok");
+    expect(s.overall).toBe("ok");
+  });
+
+  it("不传历史 ⇒ 一项都不添（读不到 ≠ 没有失败）", () => {
+    const s = diagnoseMesh(okStatus(), null, { at: AT });
+    expect(s.history).toBeNull();
+    expect(s.items.some((i) => i.key === "history" || i.key.startsWith("history-"))).toBe(false);
+    expect(meshDiagnosticText(s)).not.toContain("最近同步轮次");
+  });
+
+  it("诊断包含最近轮次且脱敏：有轮次/拉取/推送，⛔ 无空间名/条目标题/设备号", () => {
+    const withTitle = rows().map((r) => ({
+      ...r,
+      // 模拟后端行里可能带的敏感字段：摘要函数只取白名单字段，它们不该出现。
+      ws_name: "研发空间",
+      items: [{ title: "机密页标题" }],
+    })) as unknown as SyncHistoryRow[];
+    const s = diagnoseMesh(okStatus(), null, { at: AT, history: withTitle });
+    const text = meshDiagnosticText(s);
+    expect(text).toContain("最近同步轮次");
+    expect(text).toContain("第 1 轮");
+    expect(text).toContain("拉取=0 · 推送=0");
+    expect(text).toContain("失败");
+    expect(text).not.toContain("研发空间");
+    expect(text).not.toContain("机密页标题");
+    expect(text).not.toContain(DEVICE_ID);
+    expect(text).not.toContain(PEER_ADDR);
+  });
+});
+
+// ⭐ §13.6 **O1 接线**（owner 2026-11-18 拍：只进「连接体检」的复制诊断包，主界面一个像素不动）。
+// 钉三件事：① 图必须与体检用**同一份**读数（⛔ 组件里另算）；② 包里说得出**哪条边断了**；
+// ③ 包里仍然脱敏，且**不跟 O2 那两段撞标题**（否则 `not.toContain("水位矩阵")` 那类判据会假红）。
+describe("体检纯函数 · §13.6 O1 同步图（只进复制诊断包）", () => {
+  const AT = 1_700_000_000_000;
+
+  function wm(): MeshWatermarks {
+    return {
+      spaceName: "研发空间",
+      localMaxSeq: 120,
+      peers: [
+        { index: 1, cursor: 120, online: true, lastOkAgoMs: 12_000 },
+        { index: 2, cursor: 100, online: true, lastOkAgoMs: 60_000 },
+        { index: 3, cursor: 120, online: false, lastOkAgoMs: 3_600_000 },
+      ],
+      onlineCount: 2,
+      offlineCount: 1,
+      unknownCount: 0,
+      note: "读数来自本机记录",
+    };
+  }
+
+  /** 后端行的**完整**形状（含 `ws_name` / `items[].title` 这类不该进包的字段）。 */
+  function rows(): SyncHistoryRow[] {
+    return [
+      {
+        ws_id: "ws-secret-1",
+        ws_name: "研发空间",
+        at: AT - 60_000,
+        ok: false,
+        pushed: 0,
+        pulled: 0,
+        message: "**拉不动**：连接超时",
+        items: [{ title: "机密页标题" }],
+      },
+    ] as unknown as SyncHistoryRow[];
+  }
+
+  it("图与体检同一份读数：3 台里 1 台断，包里写得出是哪条边", () => {
+    const s = diagnoseMesh(okStatus(), null, { at: AT, watermarks: wm(), history: rows() });
+    // 纯函数结果本身（⛔ 不是组件里第二份实现）
+    expect(s.graph.edges).toHaveLength(3);
+    expect(s.graph.counts).toEqual({ ok: 1, behind: 1, down: 1, unknown: 0 });
+    expect(s.graph.at).toBe(AT);
+    const text = meshDiagnosticText(s);
+    expect(text).toContain("多设备同步图");
+    expect(text).toContain("断 1");
+    expect(text).toContain("对端 3：down");
+    expect(text).toContain("对端 2：behind");
+    expect(text).toContain("落后 20");
+    expect(text).toContain("各空间轮次");
+    // 后端原文照写（owner 拍③），但 `**` 要剥掉（诊断包是纯文本）
+    expect(text).toContain("拉不动：连接超时");
+    expect(text).not.toContain("**");
+  });
+
+  it("包里仍然脱敏：⛔ 无空间名/空间号/设备号/设备名/条目标题", () => {
+    const s = diagnoseMesh(okStatus(), null, { at: AT, watermarks: wm(), history: rows() });
+    const text = meshDiagnosticText(s);
+    expect(text).not.toContain("研发空间");
+    expect(text).not.toContain("ws-secret-1");
+    expect(text).not.toContain("机密页标题");
+    expect(text, `⛔ 泄漏设备号：${DEVICE_ID}`).not.toContain(DEVICE_ID);
+    expect(text, `⛔ 泄漏设备名：${DEVICE_NAME}`).not.toContain(DEVICE_NAME);
+    expect(text, `⛔ 泄漏地址：${PEER_ADDR}`).not.toContain(PEER_ADDR);
+  });
+
+  it("两支都没读到 ⇒ 图照样出现在包里，但写「读不到」而⛔ 不写 0 台、也⛔ 不跟 O2 两段撞标题", () => {
+    const s = diagnoseMesh(okStatus(), null, { at: AT });
+    expect(s.graph.readable).toEqual({ watermarks: false, history: false });
+    const text = meshDiagnosticText(s);
+    expect(text).toContain("多设备同步图");
+    expect(text).toContain("这一次读不到");
+    expect(text).not.toContain("水位矩阵");
+    expect(text).not.toContain("最近同步轮次");
+  });
+
+  it("界面读数整支读不到时（status=null）图也按「没读到」记 —— ⛔ 不拿过期读数装成现在", () => {
+    const s = diagnoseMesh(null, null, { at: AT, watermarks: wm(), history: rows() });
+    expect(s.graph.readable).toEqual({ watermarks: false, history: false });
+    expect(s.graph.edges).toHaveLength(0);
+  });
+
+  it("接线：对话框不另算图（只调 diagnoseMesh ＋ meshDiagnosticText），面板照旧传两支读数", () => {
+    const dialog = readFileSync(resolve(process.cwd(), "src/components/MeshDiagnoseDialog.tsx"), "utf8");
+    expect(dialog, "⛔ 对话框里另算了一份图 ⇒ 会出现两份真相源").not.toContain("meshSyncGraph(");
+    expect(dialog).toContain("diagnoseMesh(status, round, { watermarks, history })");
+    expect(dialog).toContain("meshDiagnosticText(diag)");
   });
 });

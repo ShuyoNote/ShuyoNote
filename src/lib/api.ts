@@ -353,6 +353,15 @@ export const api = {
   savePageState: (id: string, state: Uint8Array) =>
     invoke("save_page_state", { args: { page_id: id, state: Array.from(state) } }),
   /**
+   * ⭐ **U4-B S1（2026-11-19）**：记下"这一页写在哪条血统上"（client id 集合，排序、逗号分隔）。
+   *
+   * 为什么由前端算：`page_crdt` 在库里是**不透明二进制**，Rust 侧没有 CRDT 解码器。
+   * 存进 KV 后，推那一侧会把它挂到载荷 `_lineage_fp`（空 ⇒ 载荷逐字节不变）。
+   * ⚠️ 失败**不许**把"保存"整件事拖红（它只服务"冲突时能不能判"）⇒ 调用方 catch 后 warn。
+   */
+  setPageLineageFp: (pageId: string, fp: string) =>
+    invoke("set_page_lineage_fp", { pageId, fp }),
+  /**
    * 冲刺 S9：**CRDT 血统 claim** —— 问同步服务"这一页的首条血统归谁"。
    *
    * ⚠️ `workspace_id` 是**本地**工作空间 id（页所属那一个）——**不是**远端 `space_id`。
@@ -648,8 +657,19 @@ export const api = {
   /** 确认「这一台对端的这个 uid」＝本机同名空间（之后融合闸放行；只写同步元数据）。 */
   meshUidConfirm: (a: { peerDevice: string; peerUid: string }) =>
     invoke("mesh_uid_confirm", a) as Promise<boolean>,
+  /**
+   * ⭐ **A3（2026-11-21，owner 拍「只批量、不传播」）**：**一次确认多对**（批量勾选）。
+   *
+   * ① 只把**勾选的**键送上去（前端 `selectedPairs` 保证）；② ⛔ **不做传播** ——
+   * 同 uid 的其它候选只要没被勾就一行都不写（后端纯函数 `plan_batch_confirm` 同一判据）；
+   * ③ 空选 ⇒ 调用点**不发请求**。
+   */
+  meshUidConfirmBatch: (a: { keys: Array<{ peerDevice: string; peerUid: string }> }) =>
+    invoke("mesh_uid_confirm_batch", a) as Promise<{ written: number }>,
   /** ⭐ 2026-11-11（§13 A2）：只读「设备×空间水位」（对端只回序号，⛔ 无设备 id）。 */
   meshWatermarks: () => invoke("mesh_watermarks") as Promise<MeshWatermarks>,
+  /** ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：当前空间的**永久缺失**清单（只读）。 */
+  listSyncGaps: () => invoke("list_sync_gaps") as Promise<Array<{ from: number; to: number }>>,
   /** ⭐ **P-4 片③-a（2026-10-14）**：⭐ 逐台「对码」读数 ✓（⭐ 比对码由**后端**算 ✓ ——
    *  `code: null` ＝ **读不到** ✓，人话原因在 `reason` 里 ✓）。 */
   pairingCodeReading: (a: { peerDeviceId: string; peerPubkey: string }) =>

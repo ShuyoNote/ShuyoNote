@@ -27,6 +27,7 @@
       "check-changelog-numbers",
       "check-changelog-tags",
       "check-changelog-version-parity",
+      "check-ci-rust-groups",
       "check-crdt-plane",
       "check-crdt-snapshot-contract",
       "check-dead-code-receipts",

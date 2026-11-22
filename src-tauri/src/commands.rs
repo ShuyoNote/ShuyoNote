@@ -30,6 +30,8 @@ pub fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
                 sort_order: row.get(11)?,
                 created_at: row.get(12)?,
                 updated_at: row.get(13)?,
+                // ⭐ U4-B S1：读面不填（空 = "不知道" ⇒ 合并退回旧规则）；填它的是推送路径（下一步）
+                lineage_fp: String::new(),
             })
         },
     )
@@ -1573,13 +1575,30 @@ pub fn record_lineage_conflict(
 }
 
 /// 这一页**未决**的页级血统冲突（至多一条；`null` ＝ 没有 —— 这是常态，不是错误）。
+///
+/// ⭐ **2026-11-19（owner 拍 A）**：**两边正文已经一样就自动结案**（记 `local`、行不再返回）——
+/// 真机上出现过"冲突还没裁决，页面已被对端版覆盖 ⇒ `remote_doc` 与当前页逐字相同"，
+/// 那样横幅会**永远挂着**、同一页被反复检出（证据见交接单 §3 第 15 条）。
+/// ⚠️ 只在**逐值相等**时结案（解析不了 ⇒ 照旧问用户，⛔ 不猜）。
 #[tauri::command]
 pub fn list_lineage_conflicts(
     db: State<Db>,
     page_id: String,
 ) -> Result<Option<crate::lineage_conflict::PageLineageConflict>, String> {
     let c = conn(&db);
-    crate::lineage_conflict::unresolved_lineage_conflict(&c, &page_id)
+    let Some(row) = crate::lineage_conflict::unresolved_lineage_conflict(&c, &page_id)? else {
+        return Ok(None);
+    };
+    if crate::lineage_conflict::projection_equals_page(&c, &page_id, &row.remote_doc)? {
+        // 结案写成 `local`：两边内容一样，留本机那份＝信息量不变（⛔ 不是"替用户选边"）。
+        crate::lineage_conflict::resolve_lineage_conflict(&c, &row.id, "local", now_ms())?;
+        eprintln!(
+            "[mesh] 血统冲突自动结案：对端那版与本页正文已逐值相同（页 {}…）",
+            &page_id[..page_id.len().min(8)]
+        );
+        return Ok(None);
+    }
+    Ok(Some(row))
 }
 
 /// **裁决一条**：`choice` = `"local"`（保留本机）/ `"saved-as-new"`（已把对端那版另存为新页），
@@ -1592,6 +1611,19 @@ pub fn resolve_lineage_conflict(
 ) -> Result<(), String> {
     let c = conn(&db);
     crate::lineage_conflict::resolve_lineage_conflict(&c, &conflict_id, &choice, now_ms())
+}
+
+/// ⭐ **U4-B S1（2026-11-19）**：记下"这一页之后推出去的版本写在哪条血统上"（**前端算、后端存**）。
+///
+/// 为什么前端算：`page_crdt` 在库里是**不透明二进制**（`Vec<u8>`），Rust 侧没有 CRDT 解码器 ⇒
+/// 只有前端（手里有 live 文档）算得出 client id 集合。存进 KV 后，`record_page_upsert` 推那一侧
+/// 会把它挂到载荷 `_lineage_fp` 上（空 ⇒ 载荷逐字节不变）。
+///
+/// ⚠️ 空串 ⇒ **删掉那一格**（＝"不知道"），⛔ 不写空占位；判据见 `sync` 那侧。
+#[tauri::command]
+pub fn set_page_lineage_fp(db: State<Db>, page_id: String, fp: String) -> Result<(), String> {
+    let c = conn(&db);
+    crate::sync::set_lineage_fp(&c, &page_id, &fp)
 }
 
 /// **裁决一处冲突**：`choice` = `"local"` / `"remote"`（其余值一律报错，**不默认选边**）。

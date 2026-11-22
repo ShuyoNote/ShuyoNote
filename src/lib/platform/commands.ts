@@ -469,6 +469,22 @@ export interface MeshUidConflict {
 }
 
 /**
+ * ⭐ **A3（2026-11-21）**：一条**用户勾选**的待确认键（＝ 确认表的主键）。
+ *
+ * ⚠️ 只在请求体里出现；⛔ 不进界面文案（内部标识，`INV-UI-copy-no-internal-ids`）。
+ */
+export interface MeshUidKey {
+  peerDevice: string;
+  peerUid: string;
+}
+
+/** ⭐ **A3（2026-11-21，owner 拍「只批量、不传播」）**：批量确认的**读数**（只回数量，⛔ 不回任何 uid/正文）。 */
+export interface MeshUidBatchDone {
+  /** 真正写进确认表的对数（＝ 勾选命中数；**不做传播**）。 */
+  written: number;
+}
+
+/**
  * ⭐ **2026-11-11（§13 A2）**：一条对等体的只读水位（⛔ 不含 `device_id`／正文）。
  * 界面按 `index` 显示（内部设备 id 不上界面 —— `INV-UI-copy-no-internal-ids`）。
  */
@@ -1265,6 +1281,8 @@ export interface CommandMap {
     } | null;
   };
   resolve_lineage_conflict: { args: { conflictId: string; choice: string }; result: null };
+  // ⭐ U4-B S1（2026-11-19）：把"这一页写在哪条血统上"记进 KV（前端算 → 后端存 → 推的时候挂进载荷 `_lineage_fp`）。
+  set_page_lineage_fp: { args: { pageId: string; fp: string }; result: null };
   // 桌面「近实时」流通道（2026-09-23 第 48 轮）：Rust 订 SSE 变更流，**只发"有变更"事件**
   //（`sync-stream-change`），拉取仍由前端 `syncWorkspace` 发起 ⇒ 自动过 C2 闸门/防重入/状态行。
   // ⚠️ 这三条**只有桌面**：浏览器自带 SSE（Web 侧是 `useSyncStream.ts` 自己那条流）⇒ 硬在 `web.ts`
@@ -1351,7 +1369,23 @@ export interface CommandMap {
   mesh_uid_conflicts: { args: undefined; result: MeshUidConflict[] };
   /** 确认「这一台对端的这个 uid」就是本机同名空间 ⇒ 融合闸放行（只写同步元数据）。 */
   mesh_uid_confirm: { args: { peerDevice: string; peerUid: string }; result: boolean };
+  /**
+   * ⭐ **A3（2026-11-21，owner 拍「只批量、不传播」）**：**一次确认多对**（批量勾选）。
+   *
+   * 口径（三条判据与后端纯函数同名，见 `src-tauri/src/mesh_uid_confirm.rs`）：
+   * ① `batch-selected-only`：只写**勾选且候选表里真有**的键；
+   * ② `no-propagation-on-batch`：**不做传播** —— 同 uid 的其它候选只要没被勾，一行都不写；
+   * ③ `empty-selection-writes-nothing`：空选 ⇒ 不发请求、不开库、不写行。
+   *
+   * ⚠️ 确认动作仍然**只能由用户点击发起**（⛔ 无后台调用点）。
+   */
+  mesh_uid_confirm_batch: { args: { keys: MeshUidKey[] }; result: MeshUidBatchDone };
   /** ⭐ 2026-11-11（§13 A2）：只读「设备×空间水位」（对端只回序号，⛔ 无设备 id/正文）。 */
+  /**
+   * ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：当前空间的**永久缺失**清单（只读）。
+   * ⚠️ 每段是**闭区间**（from..to），可能有多段；空数组 = 没有已知缺口（或还没有过拉取）。
+   */
+  list_sync_gaps: { args: undefined; result: Array<{ from: number; to: number }> };
   mesh_watermarks: { args: undefined; result: MeshWatermarks };
   /**
    * 丙-③-b-2b：**写网格设置**（监听地址 / 口令），并把窗口的开关跟着改。

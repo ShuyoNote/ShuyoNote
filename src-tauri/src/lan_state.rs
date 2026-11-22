@@ -671,13 +671,29 @@ fn is_fully_bound(space_id: &str, server_url: &str) -> bool {
 /// 广播间隔。**只决定"多久喊一次"，不决定"还在不在"** —— 那个由 `lan::PEER_TTL_MS` 管，
 /// 判据 `the_peer_ttl_outlives_the_announce_interval`（本文件 `tests`）钉着两者的大小关系。
 ///
-/// ⚠️ 30s 不是随手取的：网段里 N 台设备 ≈ 每 30s 就有 N 条广播（噪音可控），
-/// 而它对 `PEER_TTL_MS`（90s）有 3× 余量 ⇒ **连丢两条公告也还不至于把对端判死**。
-pub const ANNOUNCE_INTERVAL_MS: i64 = 30_000;
+/// ⚠️ **2026-11-19（owner 拍「掉线发现得太慢」）**：30 s → **10 s**。
+///   原来：公告 30 s ＋ TTL 90 s ⇒ 一台**关掉的机器**在面板上要**挂满 90 秒**才消失。
+///   现在：公告 10 s ＋ TTL 30 s（`lan.rs`）⇒ **≤30 秒**就能看出来，**仍保留 3× 余量**
+///   （丢两条公告才判死 —— 与从前同一个安全系数）。
+///   代价：网段里的广播量 ×3（3 台设备 ≈ 18 条/分钟，仍是每台每 10 秒一条的常数级）。
+///   ⛔ 不新增协议、⛔ 不要求对端升级：老对端 30 s 发一次，本机照样按 TTL 判死（只是慢一点）。
+pub const ANNOUNCE_INTERVAL_MS: i64 = 10_000;
 
 /// 收报的等待上限：每这么久回一次头，好让**广播与腾表**即使网段里一条公告都没有
 /// （`recv_from` 会一直等）也照常发生。
 pub const RECV_SLICE_MS: u64 = 1_000;
+
+/// ⭐ **2026-11-22（S2 P0 接线）**：网络变化 ⇒ 强制重播的“到点”标记（0 ＝ 没有）。
+/// ⚠️ 只有 `SHUYONOTE_LAN_NETWATCH=1/true/on` 时才可能被置非 0；默认路径永远为 0。
+static FORCE_ANNOUNCE_AT_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static NETWATCH_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// S2 P0 开关（env 只读一次；⛔ 拿不准一律关）。
+fn netwatch_enabled() -> bool {
+    *NETWATCH_ENABLED.get_or_init(|| {
+        crate::lan_netwatch::netwatch_enabled_from(std::env::var("SHUYONOTE_LAN_NETWATCH").ok().as_deref())
+    })
+}
 
 /// 这一轮"该不该喊"（纯函数）。
 ///
@@ -809,6 +825,38 @@ static ANNOUNCE_DIRTY_PENDING: AtomicBool = AtomicBool::new(false);
 /// **两边互相唤醒，永不停**（2026-11-12 真机实测：一边 57 MB 日志、CPU 1625s / 23 min）。
 /// ⇒ 只有本地保存的那一轮许发 `dirty`；对端唤醒的轮**只拉不发**。
 static LOCAL_SAVE_PENDING: AtomicBool = AtomicBool::new(false);
+
+/// ⭐⭐ **§13.12 Phase 0 埋点（2026-11-18，owner 拍「动埋点」）**：两段**本机时刻**，
+/// 用来量「保存 → 公告发出」与「收到对端 dirty 公告 → 这一轮跑完」。
+///
+/// ⚠️ **只报本机两段**（两个时刻都取自本机同一个时钟 ⇒ 可以相减）：
+/// 跨机的「改 → 对端可见」需要**共同时钟**，日志里没有 ⇒ ⛔ 不许把两台机器的读数相减
+/// （与 2026-11-12 F1 真机那次的裁决同一口径）。
+/// ⚠️ 默认**一个字都不打**：只在 `SHUYONOTE_LAN_DEBUG_ANNOUNCE` 开着时输出
+/// （与 `lan::announce_recv_line` 同一个开关）⇒ ⛔ 不是用户可见行为。
+static LOCAL_SAVE_AT_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+/// 见上：收到**对端 dirty 公告**的本机时刻（0 ＝ 没有起点）。
+static PEER_DIRTY_SEEN_AT_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+/// ⭐ **2026-11-18（慢支取证）**：保存唤醒一共"武装"过几次（只用于日志配对，⛔ 不参与任何判断）。
+static WAKE_ARM_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// ⭐ **2026-11-18（慢支取证）**：这次保存的唤醒**从什么时候开始被挡住**（0 ＝ 没被挡）。
+/// 只在"被解开"时打**一行**（`[wake-blocked] waited_ms=… outcome=…`）—— ⛔ 不按 tick 刷屏。
+static WAKE_BLOCKED_SINCE_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// ⭐ **2026-11-18（慢支取证）**：把"这次保存的唤醒被挡了多久、最后怎么解的"打**一行**。
+///
+/// 为什么要有：2026-11-18 实测「保存 → 公告」双峰，慢支 **74 s**；取证发现慢支的形状是
+/// **`in_flight=true` 长时间不归还** ⇒ 这次保存的唤醒一直排在后面（`event_round_ready` 每条 tick 都 false）。
+/// 没有这一行，那种"等一轮跑完"只会变成一句无法核对的猜测。
+/// ⚠️ 只在 `SHUYONOTE_LAN_DEBUG_ANNOUNCE` 开着时输出；⛔ 不改变任何 gate/时序。
+fn report_wake_blocked(outcome: &str) {
+    let since = WAKE_BLOCKED_SINCE_MS.swap(0, Ordering::SeqCst);
+    if since <= 0 || !debug_latency() {
+        return;
+    }
+    let waited = crate::db::now_ms().saturating_sub(since).max(0);
+    eprintln!("[wake-blocked] waited_ms={waited} outcome={outcome}");
+}
 
 /// ⭐ **F1 小尾巴（2026-11-12）**：最近一次"本地保存唤醒"的**来源标签**（日志用）。
 ///
@@ -988,6 +1036,29 @@ pub fn event_round_ready(
     !paused && meshed_n > 0 && !in_flight && event_round_due(last_event_ms, now_ms)
 }
 
+/// ⭐ **§13.12 Phase 0 埋点（2026-11-18，纯函数）**：把**本机两段时刻**写成一行读数。
+///
+/// 形状：`[sync-latency] seg=<段名> ms=<两时刻之差>`
+/// · `seg=save_to_announce`：本地保存 → 那条带 `dirty` 的公告**真的发出去**；
+/// · `seg=announce_to_round_done`：收到对端 `dirty` 公告 → 被唤醒的那一轮**跑完**。
+///
+/// 三条口径（都是判据）：
+/// ① `started_ms <= 0`（没有起点）⇒ `None` —— ⛔ **不许拿 0 当"0 毫秒"**；
+/// ② 终点早于起点（时钟被改过）⇒ 取 **0**，⛔ 不写负数；
+/// ③ `seg` 只接受调用方传的**代码常量**（⛔ 不许运行时拼接用户内容）。
+pub fn latency_line(seg: &str, started_ms: i64, ended_ms: i64) -> Option<String> {
+    if started_ms <= 0 {
+        return None;
+    }
+    let ms = ended_ms.saturating_sub(started_ms).max(0);
+    Some(format!("[sync-latency] seg={seg} ms={ms}"))
+}
+
+/// 埋点开关：与 `lan::announce_recv_line` **同一个环境变量**（⛔ 不另立一套开关）。
+fn debug_latency() -> bool {
+    std::env::var_os("SHUYONOTE_LAN_DEBUG_ANNOUNCE").is_some()
+}
+
 /// ⭐ **P3-1a**：请求"本地刚保存，后台轮醒来跑一轮"（**只在保存成功后调**）。
 ///
 /// ⚠️ 只置位 + 叫醒，不直接跑：真正的 gate/合并由 `start` 循环里的 `event_round_ready` 判
@@ -1012,6 +1083,18 @@ pub fn request_round_now_from_source(source: &'static str) {
     }
     // ⭐ 2026-11-12（F1 修复）：本地保存 ⇒ 这一轮**可以**对外发 dirty。
     LOCAL_SAVE_PENDING.store(true, Ordering::SeqCst);
+    // ⭐⭐ **2026-11-18（慢支修法 B，第二版，owner 拍）**：**在保存这一刻**挂 dirty ——
+    //   公告于是不再等"这一轮能不能跑"（第一版把 `last_announce_ms=0` 每 tick 重刷 ⇒ 60 s 4,311 条公告，
+    //   被复测当场抓住）。⛔ 只有本地保存会挂它：对端 dirty 唤醒的轮不挂（活锁纪律）。
+    ANNOUNCE_DIRTY_PENDING.store(true, Ordering::SeqCst);
+    // ⭐ §13.12 Phase 0：记下**保存这一刻**（`save_to_announce` 那一段的起点）。
+    LOCAL_SAVE_AT_MS.store(crate::db::now_ms(), Ordering::SeqCst);
+    // ⭐ **2026-11-18（慢支取证）**：给每次"武装"编号，好在日志里与"循环有没有看到它"配对。
+    //   ⛔ 只诊断：不改变任何 gate/时序。
+    let n = WAKE_ARM_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+    if debug_latency() {
+        eprintln!("[wake-arm] n={n} source={source}");
+    }
     EVENT_ROUND_PENDING.store(true, Ordering::SeqCst);
     ROUND_NOTIFY.notify_one();
 }
@@ -1036,6 +1119,8 @@ pub fn local_save_wake_line(what: &str, source: &str) -> String {
 /// ⛔ **不许**置 [`LOCAL_SAVE_PENDING`]：我们这一轮没产生任何本地改动，再发 `dirty` 只会让
 /// 对端也唤醒一轮并回发 `dirty` ⇒ 两边互相唤醒的活锁（真机实测过）。
 pub fn request_round_now_from_peer() {
+    // ⭐ §13.12 Phase 0：记下**收到对端 dirty 公告那一刻**（`announce_to_round_done` 的起点）。
+    PEER_DIRTY_SEEN_AT_MS.store(crate::db::now_ms(), Ordering::SeqCst);
     EVENT_ROUND_PENDING.store(true, Ordering::SeqCst);
     ROUND_NOTIFY.notify_one();
 }
@@ -1046,6 +1131,171 @@ pub fn request_round_now_from_peer() {
 /// （暂停/没配网格 ⇒ 不许对外说"我有改动"）。
 pub fn event_round_announces_dirty(from_local_save: bool, gate_open: bool) -> bool {
     from_local_save && gate_open
+}
+
+/// ⭐⭐ **2026-11-18（慢支修法 B，owner 拍；第二版）**：**节流版"立刻播"** ——
+/// `dirty` 挂着就**不必等满一个公告间隔**，但必须满足一个**最小间隔**（⛔ 不许每个 tick 都播）。
+///
+/// 来由（两次实测，见 `docs/plans/2026-11-18-sync2-phase0-baseline.md` §4.7–§4.9）：
+/// · 第一版把 `last_announce_ms = 0` 每 tick 重刷 ⇒ 60 s 里 **4,311** 条公告（dirty 4,302 条）——**当场被复测抓住**；
+/// · 正确形状：**"保存"那一刻**挂 `dirty`；公告条件 = 「到点」**或**「有 dirty 且离上次 ≥ 最小间隔」；
+///   `dirty` 由公告块自己 `swap(false)` 消费 ⇒ 一次保存只播一次。
+///
+/// ⛔ 活锁纪律没动：`dirty` 仍然只由**本地保存**挂上（对端 dirty 唤醒的轮不挂）。
+pub fn announce_due_with_dirty(
+    last_announce_ms: i64,
+    now_ms: i64,
+    interval_ms: i64,
+    dirty_pending: bool,
+    min_gap_ms: i64,
+) -> bool {
+    if announce_due(last_announce_ms, now_ms, interval_ms) {
+        return true;
+    }
+    if !dirty_pending {
+        return false;
+    }
+    // 有 dirty 但还没到常规间隔 ⇒ 只要离上一次公告够远就播（`last_announce_ms <= 0` ＝ 还没播过）。
+    last_announce_ms <= 0 || now_ms.saturating_sub(last_announce_ms) >= min_gap_ms
+}
+
+/// `dirty` 驱动公告的**最小间隔**：一次保存 1 秒内只播一次（保存可以很密，公告不能）。
+pub const DIRTY_ANNOUNCE_MIN_GAP_MS: i64 = 1_000;
+
+/// ⭐⭐ **2026-11-18（根因 A 修法 i，owner 拍，纯函数）**：本轮里这台对端还要不要继续试？
+///
+/// 判据：**只有"会等超时"的那类失败**（`auto_retryable` ＝ 网络类）才在**本轮**跳过它 ——
+/// 因为它的代价是"每个空间各等满一次超时"（实测 21.06 s × 9 ≈ 188 s/轮）。
+/// ⛔ 身份类（401/被移出/没配对）**不跳过**：它们本来就不等超时，跳过只会掩盖"换个空间也许能成"。
+/// ⚠️ 这是**本轮**的跳过，⛔ 不是永久拉黑：下一轮照旧重试（`spawn_background_round` 的清单只活一轮）。
+pub fn should_skip_peer_for_rest_of_round(err: Option<&str>) -> bool {
+    match err {
+        Some(e) => {
+            // ⚠️ 只**复用** U3 的词表（⛔ 不另抄一份），并补一次**小写归一**：
+            //   Windows/reqwest 会吐 `Connection refused`（首字母大写），而词表里是小写 ——
+            //   不归一的话这一格会"看起来有判据、实际上永远匹配不上"。
+            auto_retryable(e) || auto_retryable(&e.to_ascii_lowercase())
+        }
+        None => false,
+    }
+}
+
+/// ⭐ **F3-2（2026-11-20）**：一台对端**要不要在接下来若干轮里先别试**（跨轮冷却；纯函数，⛔ 还没接线）。
+///
+/// 现状：`should_skip_peer_for_rest_of_round` 只管**本轮**（清单只活一轮 ⇒ 下一轮照旧重试）。
+/// 今天量到的代价（`dev-20261119-uid.log.err`，459 轮 / 9 空间）：`被跳过 8 次（按空间计）`、
+/// 每轮合计 `p95 1661ms / max 21479ms` —— 尾巴几乎都来自"**等一个明显连不上的对端超时**"。
+///
+/// 口径（四条，按顺序）：
+/// 1. `consecutive_misses < min_misses` ⇒ **不冷却**（一次失败可能只是丢包，⛔ 不许一次就拉黑）；
+/// 2. 已经冷却中（`now < cooldown_until_ms`）⇒ **继续冷却**；
+/// 3. 冷却已过期 ⇒ **恢复重试**（⛔ 不许永久拉黑：那台机器可能已经修好了）；
+/// 4. `min_misses == 0` 或 `cooldown_ms <= 0` ⇒ **一律不冷却**（坏参数 ⇒ 保持现状，⛔ 不猜）。
+///
+/// ⚠️ 与 `should_skip_peer_for_rest_of_round` 的**分工**：那条判"**这一轮的错**该不该立刻收手"，
+///    这条判"**连续几轮都错**之后，接下来几轮还值不值得试"——两条都必须成立才跳（见判据）。
+/// ⚠️ **身份类错误（401/被移出/没配对）不适用**：它们不等超时，冷却没有收益（调用方负责不喂进来）。
+pub fn should_cooldown_peer(
+    consecutive_misses: u32,
+    min_misses: u32,
+    cooldown_until_ms: i64,
+    now_ms: i64,
+    cooldown_ms: i64,
+) -> bool {
+    if min_misses == 0 || cooldown_ms <= 0 {
+        return false;
+    }
+    if now_ms < cooldown_until_ms {
+        return true; // 还在冷却里
+    }
+    consecutive_misses >= min_misses
+}
+
+/// ⭐ **F3-2**：一次失败之后，冷却到什么时候（返回 `now + cooldown_ms`）。
+///
+/// ⚠️ 只在**真的该冷却**时调用（`should_cooldown_peer` 为真）；`cooldown_ms <= 0` ⇒ 原样返回 `now`
+/// （＝不设置冷却窗，⛔ 不拿负数造一个"永远冷却"的假象）。
+pub fn cooldown_until(now_ms: i64, cooldown_ms: i64) -> i64 {
+    if cooldown_ms <= 0 {
+        return now_ms;
+    }
+    now_ms.saturating_add(cooldown_ms)
+}
+
+/// ⭐ **F3-2（2026-11-20）**：跨轮冷却的**参数**（owner「全面开火」时拍的保守档）。
+///
+/// 为什么是 3 轮 / 180 秒：今天量到 `被跳过 8 次（按空间计）`、每轮合计 `p95 1661ms / max 21479ms` ——
+/// 尾巴来自"等明显连不上的对端超时"。
+/// ⚠️ **真机教训（2026-11-20 13:0x）**：第一版设 30 秒，结果一轮都没见到"仍在冷却窗内" ——
+///   因为**后台轮 120 秒才一拍，30 秒的窗早就过期了**（`被跳过` 照旧每轮重等一次超时）。
+///   ⇒ 冷却窗**必须长于轮间隔**才有效：改成 180 秒（1.5 个轮间隔）。
+/// ⚠️ 与"刚回网"的矛盾由 ② 解决：**收到该设备的公告 ⇒ 立刻清冷却**（公告＝它活着的实证），
+///   所以 180 秒不会把一台真的回来了的机器晾住。
+pub const PEER_COOLDOWN_MIN_MISSES: u32 = 3;
+pub const PEER_COOLDOWN_MS: i64 = 180_000;
+
+/// ⭐ **F3-2（2026-11-20）**：收到某台设备的公告 ⇒ **清掉它在所有空间上的冷却与连续失败计数**。
+///
+/// 为什么是"所有空间"：公告是按设备发的（它代言哪些空间另说）⇒ 它活着这一条对所有空间都成立。
+/// ⚠️ 清不掉只记一行：⛔ 不许让"清冷却失败"影响收公告那条路。
+pub fn clear_peer_cooldowns(peer_device: &str) {
+    let Some(dir) = crate::db::app_data_dir_ref() else {
+        return;
+    };
+    let Ok(c) = crate::db::open_meta_conn_at(dir) else {
+        return;
+    };
+    // ⚠️ **真机教训（2026-11-20 13:3x）**：公告一来就清冷却，对"**有手动地址覆盖**"的设备是错的 ——
+    //   它在广播（我们收得到公告），但我们**根本不会去拨它的广播地址**（手动地址优先），
+    //   所以"收得到公告"并不能证明"手动那条路能通"。这正是今早实测的真实场景
+    //   （死的手动地址 192.168.43.190 ⇒ 190 秒/轮全失败，而我们照样每 10 秒听到它的公告）。
+    //   ⇒ 有手动覆盖 ⇒ **不清**（让冷却按 3 轮/180 秒工作）；没有覆盖 ⇒ 照清（它真的回来了）。
+    if let Some(mb) = crate::mesh::manual_peer_bases_any(&c)
+        .get(peer_device)
+        .cloned()
+    {
+        if !mb.trim().is_empty() {
+            eprintln!(
+                "[peer-cooldown] 收到公告但该设备有**手动地址覆盖** ⇒ 冷却不因公告清零（公告证明的是它在广播，不是那条路能通）"
+            );
+            return;
+        }
+    }
+    let like_cd = format!("peer_cooldown:{peer_device}");
+    let like_ms = format!("peer_misses:{peer_device}");
+    for like in [like_cd, like_ms] {
+        if let Err(e) = c.execute(
+            "UPDATE meta.sync_state SET value = '0' WHERE key LIKE ?1",
+            rusqlite::params![like],
+        ) {
+            eprintln!("[peer-cooldown] 清冷却失败（不影响收公告）：{e}");
+        }
+    }
+}
+
+/// ⭐ **F3-2**：连续失败计数与冷却窗的**键名**（都在 `meta.sync_state`；⛔ 不新开表）。
+///
+/// ⚠️ **按设备、不按空间**（2026-11-20 15:2x 真机读数纠正的第一版）：第一版键里带空间，
+/// 结果**每轮只有一个空间**真的去试那台（第一个空间失败后，修法 i 的 `failed_peers` 会把其余 8 个空间都跳过）
+/// ⇒ 只有那 1 个空间的计数能累到 3 ⇒ 冷却只对 1 个空间生效、下一轮只省下 1 次尝试。
+/// 而"这台连不上"本来就是**设备级事实** ⇒ 改成按设备记（每次失败只在**本轮第一次**遇到它时 +1）。
+pub fn peer_miss_key(peer_device: &str) -> String {
+    format!("peer_misses:{peer_device}")
+}
+
+/// 见 [`peer_miss_key`]。
+pub fn peer_cooldown_key(peer_device: &str) -> String {
+    format!("peer_cooldown:{peer_device}")
+}
+
+/// ⭐ **2026-11-18（根因 A 取证，纯函数）**：一个空间在这一轮里花了多久。///
+/// 形状：`[round-timing] space=<脱敏空间> ok=<true|false> ms=<耗时>`
+/// ⚠️ 空间名**必须**先过 `mask_space`（⛔ 原始 id/名字不进日志：与 `[mesh] 后台一轮完成` 同一把尺）。
+pub fn round_timing_line(space: &str, ok: bool, ms: u128, at_ms: i64) -> String {
+    format!(
+        "[round-timing] space={} ok={ok} ms={ms} at_ms={at_ms}",
+        crate::lan::mask_space(space)
+    )
 }
 
 /// ⭐ **task-12（Lead 拍）**：最近**连续几次**后台轮是空手的（`候选 0` ✓）——
@@ -1080,6 +1330,57 @@ impl Drop for BackgroundInFlightGuard {
     }
 }
 
+/// ⭐ **F3 一段（2026-11-21，owner 路线图 §13.3 F3「最近编辑空间优先」）**：一轮里
+/// **最近编辑过的空间先跑**（纯函数 ⇒ 判据够得着，不用真起一轮网格 ✓）。
+///
+/// 三条口径与 owner 的三条判据一一对应：
+/// 1. **最近编辑的在先** —— `last_edited` 里时刻大的排前面；
+/// 2. **集合不变** —— 只是**重排**输入那一个 `Vec`：长度与元素一一对应，⛔ 不筛、不去重、不补；
+/// 3. **没有编辑记录 ⇒ 原顺序** —— 排序是**稳定**的：无信号的条目彼此保持原相对顺序，
+///    全都没有记录时输出**逐项等于输入**（确定性；⛔ 不靠 `HashMap` 的遍历序）。
+///
+/// ⚠️ 键是 `ws`（本地空间 id ＝ 库文件名那一半），不是 `proto_space`（配对暗号）：`changes`
+///   住在**空间库**里，只能按库定位 ✓。
+pub(crate) fn order_spaces_by_recent_edit(
+    pairs: Vec<(String, String, bool)>,
+    last_edited: &std::collections::HashMap<String, i64>,
+) -> Vec<(String, String, bool)> {
+    let mut rows: Vec<(usize, (String, String, bool))> = pairs.into_iter().enumerate().collect();
+    rows.sort_by(|(ia, a), (ib, b)| {
+        let ka = last_edited.get(&a.1);
+        let kb = last_edited.get(&b.1);
+        // `Option<i64>` 的 `cmp`：`None` < `Some(_)` ⇒ 降序排即"有记录的先、且时刻大的在前" ✓；
+        // 相等（含两边都 `None`）时按**原下标**升序 ⇒ 稳定、确定 ✓。
+        kb.cmp(&ka).then(ia.cmp(ib))
+    });
+    rows.into_iter().map(|(_, p)| p).collect()
+}
+
+/// ⭐ **F3 一段**：这个空间**最近一次编辑的时刻**（`changes.MAX(updated_at)`，毫秒）。
+///
+/// 为什么是这一列：`changes` 是同步日志，`append_change` 落库时写的就是**这次变更发生的时刻**
+/// ⇒ "最近编辑"＝这张表的最大 `updated_at`；⛔ **不新开表**、⛔ **不改协议**、⛔ 不写任何东西 ✓。
+///
+/// ⚠️ **只读探测**：为排序而开的**一条旁路连接**（与下面真正跑轮次那条是两条 —— 排序要在
+///   开跑**之前**拿到全部信号）。打不开（锁着 / 加密未解锁 / 库不在）或表里一行都没有 ⇒ `None`
+///   ⇒ 该空间**没有排序信号**（回落原顺序 ✓，⛔ 不猜、也不因此少跑一个空间）。
+fn space_last_edited_at(dir: &std::path::Path, db_space: &str) -> Option<i64> {
+    let c = crate::db::open_space_conn_at(db_space, dir).ok()?;
+    last_edited_at_query(&c)
+}
+
+/// [`space_last_edited_at`] 的那一句 SQL（单独一层 ⇒ 判据能拿内存库钉住"读的是哪张表哪一列"）。
+///
+/// ⚠️ `MAX()` 在空表上是**一行 `NULL`**（不是零行）⇒ 必须按 `Option<i64>` 读再 `flatten`；
+/// 读成 `i64` 会在"这个空间还没编辑过"时变成错误（那正是判据③要的口径：没有记录 ≠ 0 时刻）。
+fn last_edited_at_query(c: &rusqlite::Connection) -> Option<i64> {
+    c.query_row("SELECT MAX(updated_at) FROM changes", [], |r| {
+        r.get::<_, Option<i64>>(0)
+    })
+    .ok()
+    .flatten()
+}
+
 /// ⭐ **task-12（owner 拍 C）**：把后台那一轮**扔出去跑** ✓（⛔ 不阻塞发现循环 ✗）。
 ///
 /// 返回一句人话（这一轮真的要跑了）／`None`（上一轮还没跑完 ⇒ **这一轮跳过** ✓，不是错误 ✓）。
@@ -1091,11 +1392,15 @@ fn spawn_background_round(
     device_id: &str,
     mesh_cfgs: &[(String, String, crate::mesh::MeshSettings, bool)],
     peers: &[lan::Peer],
+    // ⭐ §13.12 Phase 0：这一轮是不是「收到对端 dirty 公告」唤醒的（是 ⇒ 跑完时量那一段）。
+    peer_dirty_wake: bool,
 ) -> Option<String> {
     if BACKGROUND_IN_FLIGHT.swap(true, Ordering::SeqCst) {
         return None;
     }
-    let pairs: Vec<(String, String, bool)> = mesh_cfgs
+    // ⚠️ `mut`：F3 一段会在**异步块里**按"最近编辑"重排（⛔ 不在发现层循环里排序 —— 那里排会
+    //   同步读 N 个空间库，把广播/收报那一步拖住 ✗）。
+    let mut pairs: Vec<(String, String, bool)> = mesh_cfgs
         .iter()
         .map(|(space, ws, _, device_level)| (space.clone(), ws.clone(), *device_level))
         .collect();
@@ -1126,6 +1431,36 @@ fn spawn_background_round(
         let mut fail_any = false;
         let mut retriable_any = false;
         let mut identity_any = false;
+        // ⭐⭐ **2026-11-18（根因 A 修法 i，owner 拍）**：本轮里**已经等满超时**的对端 ——
+        //   后面的空间不再为它重等一次（实测每空间 21.06 s × 9 空间 ≈ 188 s/轮）。
+        //   ⚠️ 只跳过**网络类**失败（身份类本来就不等超时，跳它反而会把"某空间能成"变成误导）；
+        //   ⚠️ **下一轮照旧重试**（这个清单只活在这一轮里）。
+        let mut failed_peers: Vec<String> = Vec::new();
+        // ⭐ F3-2：本轮**已记过失败**的设备（一台设备在本轮多个空间失败只记一次）。
+        let mut counted_fail: Vec<String> = Vec::new();
+        // ⭐ **F3 一段（owner 路线图 §13.3 F3「最近编辑空间优先」）**：⚠️ **只改顺序** ——
+        //   ① "跑哪些空间"仍是 `mesh_cfgs`（过滤在 `lan_state.rs` 那一段 `.filter(...)` 里，⛔ 一个字没动）；
+        //   ② "跑不跑"仍是上面那三道闸（in_flight / paused / 有没有网格）；⛔ 这里既不筛也不跳 ✓。
+        //   依据＝**已经在写**的本地信号：各空间库 `changes.MAX(updated_at)`（⛔ 不新开表、⛔ 不改协议）。
+        //   读不到（锁着 / 加密未解锁 / 库不在）⇒ 那个空间**没有信号** ⇒ 排在后面、彼此保持原顺序 ✓。
+        let last_edited: std::collections::HashMap<String, i64> =
+            match crate::db::app_data_dir_ref() {
+                Some(dir) => pairs
+                    .iter()
+                    .filter_map(|(_, ws, _)| space_last_edited_at(dir, ws).map(|t| (ws.clone(), t)))
+                    .collect(),
+                // ⚠️ 取不到 app data 目录 ⇒ 一个信号都没有 ⇒ 顺序**与原来逐项相同**（不报错、不少跑 ✓）。
+                None => std::collections::HashMap::new(),
+            };
+        if debug_latency() {
+            // ⛔ 不打空间 id（与 `[peer-err-class]` 同一把尺：日志里只留计数）。
+            eprintln!(
+                "[round-order] 最近编辑优先：{} 个空间里有 {} 个有编辑记录（其余按原顺序排在后面）",
+                pairs.len(),
+                last_edited.len()
+            );
+        }
+        pairs = order_spaces_by_recent_edit(pairs, &last_edited);
         for (proto_space, db_space, device_level) in pairs {
             // ⭐ 2026-10-11（设备级 ✓）：⭐ 判定**在上面那一处算好**（`mesh::is_device_level_space` ✓）
             //   再传进来 ✗ —— `mesh_round_once` 自己不判 ✓（否则就是第二份口径 ✓；方案 §9.1／§10.3 ✓）。
@@ -1134,6 +1469,55 @@ fn spawn_background_round(
             //   同一个 `&db.0`，而 `mesh::round` 把这个 conn 当"空间连接"用（读设置、读名字、落库）
             //   ⇒ "10 个空间"其实是**同一份库跑了 10 次**（日志里那 10 条一模一样的拉取就是它 ✓）。
             //   ⚠️ 顺带接上"锁着也能收"：库打不开时走 `sealed_round`（只进 inbox，不解密不应用 ✓）。
+            // ⭐ **2026-11-18（根因 A 取证）**：每个空间各量一次耗时 ——
+            //   "一轮几十秒"到底是"网段没人"还是"每台对端等超时"，只有这一行能分开。
+            //   ⛔ 只诊断（同一 debug 开关），不改任何 gate/时序。
+            let space_t0 = std::time::Instant::now();
+            // ⭐ **2026-11-18（修法 i）**：这一轮里已经失败过的对端不再交给本空间。
+            // ⭐ 2026-11-18（修法 i 下沉）：**不在这一层过滤 peers** —— 候选还会被手动地址/跨网路线
+            //   追加（实测 LAN 对端表为空时候选仍有一台手动设备）。名单交给 `mesh::round`，
+            //   在候选**建完之后**过滤（`drop_skipped_candidates`）。
+            //
+            // ⭐ **F3-2（2026-11-20，owner「全面开火」拍接线）**：把**上一轮留下的跨轮冷却**并进来 ——
+            //   与本轮内跳过走同一条过滤（`mesh::round` 的 `skipped`），⛔ 不另开一条"不试"的路。
+            //   ⚠️ 冷却窗是**会自己过期**的（`should_cooldown_peer` 里判 `now < until`）⇒ 到点就恢复重试。
+            let mut skipped: Vec<String> = failed_peers.clone();
+            let mut cooled_now: usize = 0;
+            {
+                let db2 = app2.state::<Db>();
+                let c = db2.0.lock().unwrap_or_else(|e| e.into_inner());
+                let now = crate::db::now_ms();
+                for p in &peers {
+                    let until =
+                        crate::sync::get_meta_state(&c, &peer_cooldown_key(&p.announce.device_id))
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .unwrap_or(0);
+                    if should_cooldown_peer(
+                        0,
+                        PEER_COOLDOWN_MIN_MISSES,
+                        until,
+                        now,
+                        PEER_COOLDOWN_MS,
+                    ) {
+                        cooled_now += 1;
+                        if !skipped.iter().any(|d| d == &p.announce.device_id) {
+                            skipped.push(p.announce.device_id.clone());
+                        }
+                    }
+                }
+            }
+            if debug_latency() && cooled_now > 0 {
+                // ⛔ 不打设备号（与 `[peer-err-class]` 同一把尺：日志里只留计数）
+                eprintln!(
+                    "[peer-cooldown] {cooled_now} 台仍在冷却窗内 ⇒ 本空间这一轮不试它们（到点自动恢复）"
+                );
+            }
+            if debug_latency() && !failed_peers.is_empty() {
+                eprintln!(
+                    "[peer-skip] 本轮已失败 {} 台 ⇒ 本空间不再试它们（下一轮照旧重试）",
+                    failed_peers.len()
+                );
+            }
             let round_result = match crate::db::app_data_dir_ref()
                 .and_then(|dir| crate::db::open_space_conn_at(&db_space, dir).ok())
             {
@@ -1145,6 +1529,7 @@ fn spawn_background_round(
                         &db_space,
                         &dev,
                         &peers,
+                        &skipped,
                         device_level,
                     )
                     .await
@@ -1157,6 +1542,7 @@ fn spawn_background_round(
                             &db_space,
                             &dev,
                             &peers,
+                            &skipped,
                             device_level,
                         )
                         .await
@@ -1164,8 +1550,65 @@ fn spawn_background_round(
                     None => Err("app data 目录读不到 ⇒ 这一轮连搬运缓存都读不了".to_string()),
                 },
             };
+            // ⭐ **F3-2（2026-11-20）**：按**这一轮的结果**记"连续网络类失败"，够 3 轮就设 30 秒冷却窗；
+            //   成功 ⇒ 清零（⛔ 不许让历史的失败拖累一个已经恢复的对端）。
+            //   ⚠️ 只记**网络类**（`should_skip_peer_for_rest_of_round`）—— 身份类（401/被移出）不等超时，
+            //      给它们冷却只会掩盖"换个空间也许能成"。
+            if let Ok(r) = &round_result {
+                let db3 = app2.state::<Db>();
+                let c = db3.0.lock().unwrap_or_else(|e| e.into_inner());
+                let now = crate::db::now_ms();
+                for p in &r.peers {
+                    let miss_key = peer_miss_key(&p.peer);
+                    let cd_key = peer_cooldown_key(&p.peer);
+                    let network_fail =
+                        p.error.is_some() && should_skip_peer_for_rest_of_round(p.error.as_deref());
+                    if network_fail {
+                        // ⚠️ 每轮每设备只 +1：一台设备在这一轮的 9 个空间里可能各失败一次，
+                        //    而"它没回话"是一件事（⛔ 不许一轮就 +9 ⇒ 3 轮门槛变成"一天"）。
+                        if counted_fail.iter().any(|d| d == &p.peer) {
+                            continue;
+                        }
+                        counted_fail.push(p.peer.clone());
+                        let n: u32 = crate::sync::get_meta_state(&c, &miss_key)
+                            .and_then(|s| s.parse::<u32>().ok())
+                            .unwrap_or(0)
+                            .saturating_add(1);
+                        let _ = crate::sync::set_meta_state(&c, &miss_key, &n.to_string());
+                        let until = crate::sync::get_meta_state(&c, &cd_key)
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .unwrap_or(0);
+                        if should_cooldown_peer(
+                            n,
+                            PEER_COOLDOWN_MIN_MISSES,
+                            until,
+                            now,
+                            PEER_COOLDOWN_MS,
+                        ) {
+                            let next = cooldown_until(now, PEER_COOLDOWN_MS);
+                            let _ = crate::sync::set_meta_state(&c, &cd_key, &next.to_string());
+                            if debug_latency() {
+                                eprintln!(
+                                    "[peer-cooldown] 连续 {n} 轮网络类失败 ⇒ 冷却 {}s（到点自动恢复；⛔ 不是拉黑）",
+                                    PEER_COOLDOWN_MS / 1000
+                                );
+                            }
+                        }
+                    } else if p.error.is_none() {
+                        // 成功 ⇒ 连续失败数与冷却窗一起清掉（⛔ 留着会让"恢复过一次"的对端下次更容易被冷却）
+                        let _ = crate::sync::set_meta_state(&c, &miss_key, "0");
+                        let _ = crate::sync::set_meta_state(&c, &cd_key, "0");
+                    }
+                }
+            }
             match round_result {
                 Ok(r) => {
+                    if debug_latency() {
+                        eprintln!(
+                            "{}",
+                            round_timing_line(&proto_space, true, space_t0.elapsed().as_millis(), crate::db::now_ms())
+                        );
+                    }
                     // ⭐ 2026-10-24：后台轮也要告诉前端“改了哪些页”（网格没有 SSE；
                     //   不刷新的话，编辑器里那份旧 doc 之后一保存就盖掉刚并进来的块）。
                     let touched = crate::mesh::round_touched_pages(&r);
@@ -1189,6 +1632,41 @@ fn spawn_background_round(
                             retriable_any = true;
                         } else {
                             identity_any = true;
+                        }
+                    }
+                    // ⭐ **2026-11-18（根因 A 修法 i，owner 拍）**：**网络类**失败的对端记下来，
+                    //   本轮后面那些空间不再为它重等一次超时（实测每空间 21.06 s）。
+                    //   ⚠️ 只记网络类：身份类（401/被移出）本来就不等超时，跳它没有收益、还会误导。
+                    //   ⚠️ 这个清单**只活在这一轮**：下一轮照旧重试（⛔ 不是"永久拉黑"）。
+                    for p in r.peers.iter().filter(|p| p.error.is_some()) {
+                        if should_skip_peer_for_rest_of_round(p.error.as_deref())
+                            && !failed_peers.iter().any(|d| d == &p.peer)
+                        {
+                            failed_peers.push(p.peer.clone());
+                        }
+                        // ⭐ 2026-11-18（修法 i 取证）：只打"命中哪个词 + 判成什么"，
+                        //   ⛔ 不打错误原文（里面有对端地址）。
+                        if debug_latency() {
+                            let e = p.error.as_deref().unwrap_or("").to_ascii_lowercase();
+                            let hits: Vec<&str> = [
+                                "timeout",
+                                "超时",
+                                "连接被拒",
+                                "connection refused",
+                                "connection reset",
+                                "error sending request",
+                                "端口被占",
+                                "地址已被占用",
+                            ]
+                            .iter()
+                            .filter(|m| e.contains(*m))
+                            .copied()
+                            .collect();
+                            eprintln!(
+                                "[peer-err-class] skip={} hits={hits:?} len={}",
+                                should_skip_peer_for_rest_of_round(p.error.as_deref()),
+                                e.len()
+                            );
                         }
                     }
                     eprintln!(
@@ -1216,7 +1694,13 @@ fn spawn_background_round(
                         "[{}] [mesh] 后台一轮失败：空间 {} ｜ {e}",
                         lan::log_stamp(),
                         crate::lan::mask_space(&proto_space)
-                    )
+                    );
+                    if debug_latency() {
+                        eprintln!(
+                            "{}",
+                            round_timing_line(&proto_space, false, space_t0.elapsed().as_millis(), crate::db::now_ms())
+                        );
+                    }
                 }
             }
         }
@@ -1261,6 +1745,20 @@ fn spawn_background_round(
             BACKGROUND_EMPTY_STREAK.store(0, Ordering::SeqCst);
         } else {
             BACKGROUND_EMPTY_STREAK.fetch_add(1, Ordering::SeqCst);
+        }
+        // ⭐ §13.12 Phase 0：这一轮**是被对端 dirty 公告唤醒的** ⇒ 量「收到公告 → 跑完」。
+        //   ⚠️ 只有这一种轮才量（本地保存唤醒的轮跟这条公告无关 ⇒ ⛔ 不许拿它冒充）。
+        //   起点同样 `swap(0)` 消费掉：量一次就够，⛔ 不让它跨轮复用成假读数。
+        if peer_dirty_wake {
+            if let Some(line) = latency_line(
+                "announce_to_round_done",
+                PEER_DIRTY_SEEN_AT_MS.swap(0, Ordering::SeqCst),
+                crate::db::now_ms(),
+            ) {
+                if debug_latency() {
+                    eprintln!("{line}");
+                }
+            }
         }
         // ⭐ **task-12（Lead 批）**：把"这一轮看到了什么"**落进库** ✓ ——
         //   ① `候选 0` 与 ② `看到了但没什么可拉` **再也不用猜** ✓（⭐ 日志会被句柄弄丢 ✗，⭐ 库里的键不会 ✓）。
@@ -1715,8 +2213,37 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         //   ⛔ 不是每收到一条公告就推 ✗（公告每 30 秒一轮 ⇒ 那样等于把轮询搬到后端，还更吵）。
         //   ⚠️ 前端收到后**立刻重读一次** `lan_status`（5 秒轮询保留兜底 ⇒ 老构建/Web 照旧）。
         let mut last_lan_fp: String = String::new();
+        // ⭐ S2 P0：netwatch 的去抖状态（env 关时这些变量只待着，不产生副作用）。
+        let mut netwatch_tick: i64 = 0;
+        let mut netwatch_prev: Option<String> = None;
+        let mut netwatch_pending: Option<String> = None;
         loop {
             let now = crate::db::now_ms();
+            // ⭐ S2 P0：网络变化检测（env 关 ⇒ 连采样都不做，逐字节保持今天行为）。
+            //   2 拍采一次 + 连续 2 个相同的新指纹才算变化（去抖）；变化只置“强制重播”标记。
+            if netwatch_enabled() {
+                netwatch_tick += 1;
+                if netwatch_tick % 2 == 0 {
+                    let fp = crate::lan_netwatch::fingerprint(&crate::mesh::local_addrs_named());
+                    if netwatch_prev.as_deref() != Some(fp.as_str()) {
+                        if netwatch_pending.as_deref() == Some(fp.as_str()) {
+                            if crate::lan_netwatch::is_change(netwatch_prev.as_deref(), &fp) {
+                                FORCE_ANNOUNCE_AT_MS.store(now, Ordering::SeqCst);
+                                eprintln!(
+                                    "[{}] [net-watch] 地址变化 ⇒ 强制重播（env=SHUYONOTE_LAN_NETWATCH）",
+                                    lan::log_stamp()
+                                );
+                            }
+                            netwatch_prev = Some(fp);
+                            netwatch_pending = None;
+                        } else {
+                            netwatch_pending = Some(fp);
+                        }
+                    } else {
+                        netwatch_pending = None;
+                    }
+                }
+            }
             // ① 收（有超时 ⇒ "网段里没人说话"时循环照常推进，广播与腾表不会被卡住）。
             //    ⚠️ 收报走 `recv_into_within` ⇒ **解码只有一处**（`record_datagram`）。
             // ⭐ **2026-10-09（task-8）**：⭐ **四种结果各自打一行** ✓ —— 真机上「发了没」「收了没」
@@ -1739,6 +2266,10 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                         BACKGROUND_EMPTY_STREAK.store(0, Ordering::SeqCst);
                         BACKGROUND_HEARD_TOTAL.fetch_add(1, Ordering::SeqCst);
                         eprintln!("{}", lan::announce_recv_line(&p, &own_spaces));
+                        // ⭐ **F3-2（2026-11-20）**：**收到它的公告 ⇒ 立刻清掉它的跨轮冷却**。
+                        //   理由：公告是"它活着、能说话"的**直接实证** —— 冷却判的是"可能不在"，
+                        //   实证一到就不该再拿历史失败拖住它（否则刚回网的机器会被白晾一个冷却窗）。
+                        clear_peer_cooldowns(&p.announce.device_id);
                         // ⭐ 2026-11-12（§13 F1 第一刀）：对端说“我刚有改动” ⇒ **立刻唤醒一轮**
                         //   去拉（不等 2 分钟）。老对端没有这一格 ⇒ false ⇒ 行为不变。
                         //   ⚠️ **F1 修复**：必须走「只唤醒、不置 dirty」的入口 —— 走本地保存那
@@ -1914,7 +2445,25 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             crate::mesh::retry_pending_revokes(&app2, &state.peers(now));
             state.set_enabled(should_run_discovery(&profiles, &meshed));
             // ③ 到点就喊一轮。
-            if state.is_enabled() && announce_due(last_announce_ms, now, ANNOUNCE_INTERVAL_MS) {
+            // ⭐⭐ **2026-11-18（修法 B，第二版）**：公告条件改成「到点 **或** 有 dirty 且离上次够远」——
+            //   dirty 由**保存那一刻**挂上（`request_round_now_from_source`），公告块自己 `swap(false)`
+            //   消费它 ⇒ **一次保存只播一次**；⛔ 不再每 tick 重刷 `last_announce_ms`（那版播了 4,311 条）。
+            let force_announce = netwatch_enabled()
+                && crate::lan_netwatch::force_due(
+                    FORCE_ANNOUNCE_AT_MS.load(Ordering::SeqCst),
+                    now,
+                    last_announce_ms,
+                    DIRTY_ANNOUNCE_MIN_GAP_MS,
+                );
+            if state.is_enabled()
+                && (announce_due_with_dirty(
+                    last_announce_ms,
+                    now,
+                    ANNOUNCE_INTERVAL_MS,
+                    ANNOUNCE_DIRTY_PENDING.load(Ordering::SeqCst),
+                    DIRTY_ANNOUNCE_MIN_GAP_MS,
+                ) || force_announce)
+            {
                 // ★★ 2026-09-26（真机抓到的**单向发现**）：目标**每一轮重算**，而且要带上
                 //    **已经认识的对端地址**（单播）。理由见 `lan::announce_targets` 的头注：
                 //    热点主机那条 `255.255.255.255` 按默认路由走**蜂窝** ⇒ 底下的客户端永远收不到；
@@ -1966,6 +2515,7 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                         a
                     })
                     .collect();
+                let mut force_sent = false;
                 for mut a in announced {
                     // ⭐ 2026-11-03：把**本机实际监听的端口**写进公告 —— 对端据此单播回来
                     //    （两端可能绑在不同候选端口上；老对端忽略这一格，仍按候选端口全打）。
@@ -1974,18 +2524,38 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     // "发出去几条 / 目标长什么样 / **哪一条失败了、为什么**" 以前**完全不可见** ✗
                     // （`announce_once` 只留最后一条错误、且只在**全部**失败时才报 ⇒ 部分失败静默 ✗）。
                     match lan::announce_once(&sock, &targets, &a).await {
-                        Ok(o) => eprintln!(
-                            "{}",
-                            lan::announce_send_line(
-                                &o,
-                                a.hub_spaces.first().map(String::as_str).unwrap_or("")
-                            )
-                        ),
+                        Ok(o) => {
+                            force_sent = true;
+                            eprintln!(
+                                "{}",
+                                lan::announce_send_line(
+                                    &o,
+                                    a.hub_spaces.first().map(String::as_str).unwrap_or("")
+                                )
+                            );
+                        }
                         Err(e) => eprintln!("[mesh] 公告一条都没发出去：{e}"),
                     }
                 }
                 // ⚠️ **不管发出去几条都记时刻**：一条没发出去只说明"这个网段的广播被禁了"
                 //    （受限网络），每 1s 重试一次等于自己打自己 ⇒ 到点才试下一轮。
+                // ⭐ §13.12 Phase 0：只在**这一条真的带 dirty**时量「保存 → 公告发出」；
+                //   起点用 `swap(0)` 消费掉（量一次就够，⛔ 不让它跨轮复用成假读数）。
+                if dirty_now {
+                    if let Some(line) = latency_line(
+                        "save_to_announce",
+                        LOCAL_SAVE_AT_MS.swap(0, Ordering::SeqCst),
+                        crate::db::now_ms(),
+                    ) {
+                        if debug_latency() {
+                            eprintln!("{line}");
+                        }
+                    }
+                }
+                // S2：强制重播只要**真发出去过一条**就消费掉（全失败 ⇒ 保留，下一拍再试）。
+                if force_announce && force_sent {
+                    FORCE_ANNOUNCE_AT_MS.store(0, Ordering::SeqCst);
+                }
                 last_announce_ms = now;
             }
             // ⭐ **P3-1a**：本地保存事件 → 唤醒后台轮（2s 合并；⛔ 不绕 paused/未配网格/在飞 gate）。
@@ -1996,6 +2566,9 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 //   ⛔ F1 第一刀原来在这里无条件置 dirty，且对端 dirty 唤醒的轮走同一分支
                 //   ⇒ 你 dirty 唤醒我、我这一轮又 dirty ⇒ 两边互相唤醒（真机活锁）。
                 let from_local_save = LOCAL_SAVE_PENDING.swap(false, Ordering::SeqCst);
+                // ⚠️ dirty 的挂载**已挪到保存那一刻**（`request_round_now_from_source`）——
+                //   这里⛔ 不许再置一次，也⛔ 不许再重刷 `last_announce_ms`
+                //   （第一版就是每 tick 重刷 ⇒ 60 s 播了 4,311 条，被复测当场抓住）。
                 if !event_round_ready(
                     paused,
                     meshed.len(),
@@ -2010,21 +2583,44 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                         // ⚠️ 这一轮**还没真的跑** ⇒ 本地保存那格要一起留着，不然 dirty 被吞掉。
                         if from_local_save {
                             LOCAL_SAVE_PENDING.store(true, Ordering::SeqCst);
+                            // ⭐ **2026-11-18（慢支取证）**：记下"这次保存的唤醒被挡住了"的起点
+                            //   （只记第一次；被解开时由 `report_wake_blocked` 打**一行**）。
+                            //   ⛔ 只诊断：不改变任何 gate。
+                            let _ = WAKE_BLOCKED_SINCE_MS.compare_exchange(
+                                0,
+                                crate::db::now_ms(),
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                            );
                         }
+                    } else if debug_latency() {
+                        // ⭐ **2026-11-18（72 s 慢支取证）**：这是**唯一会静默丢掉一次保存唤醒**的分支
+                        //   （门关着 ⇒ 事件作废、不排队、不打任何日志）⇒ 慢支到底是不是死在这里，
+                        //   只能靠这一行判定。⛔ 只诊断，不改行为。
+                        eprintln!(
+                            "[wake-drop] reason=gate_closed paused={paused} meshed={} from_local_save={from_local_save}",
+                            meshed.len()
+                        );
                     }
                 } else {
                     last_event_round_ms = now;
-                    // ⭐ F1 修复：**只有本地保存**触发的轮才「立刻公告 ＋ 标 dirty」；
-                    //   对端 dirty 唤醒的轮**只拉不发**（否则两边互相唤醒）。
-                    //   ⚠️ 放在「轮真的会跑」这一支：原来每个 tick 都重刷 `last_announce_ms=0`，
-                    //   会在 2s 合并窗里把公告按 tick 频率刷出去（日志暴涨的另一半原因）。
-                    if event_round_announces_dirty(from_local_save, gate_open) {
-                        ANNOUNCE_DIRTY_PENDING.store(true, Ordering::SeqCst);
-                        last_announce_ms = 0;
-                    }
+                    // ⭐ 2026-11-18（慢支取证）：之前被挡下的那次保存唤醒，到这一刻才算排到 ——
+                    //   打一行"等了多久"（⛔ 无开启关闭之分：诊断只在 debug 开关下输出）。
+                    report_wake_blocked("spawned");
+                    // ⚠️ dirty 武装**已挪到上面**（`arm_announce_now`，修法 B）—— 那里不再依赖
+                    //   "这一轮能不能跑"；这里⛔ 不要再置一次（否则就成了两份口径，且会重复刷公告）。
                     // 事件轮也重算原后台节拍（下一轮仍按 `background_round_interval_ms` 的 backoff ✓）。
                     last_bg_round_ms = now;
-                    match spawn_background_round(&app2, &device_id, &mesh_cfgs, &state.peers(now)) {
+                    // ⭐ §13.12 Phase 0：这一轮是不是「对端 dirty」唤醒的（⛔ 与本地保存那一路分开）。
+                    let peer_woken =
+                        !from_local_save && PEER_DIRTY_SEEN_AT_MS.load(Ordering::SeqCst) > 0;
+                    match spawn_background_round(
+                        &app2,
+                        &device_id,
+                        &mesh_cfgs,
+                        &state.peers(now),
+                        peer_woken,
+                    ) {
                         Some(what) => {
                             // ⭐ U3：真开跑了 ⇒ 加速截止时刻已消费（⛔ 别让它再触发一次）。
                             clear_auto_retry_deadline();
@@ -2060,7 +2656,14 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 auto_retry_next_at(),
             ) {
                 last_bg_round_ms = now;
-                match spawn_background_round(&app2, &device_id, &mesh_cfgs, &state.peers(now)) {
+                // ⭐ §13.12 Phase 0：常态节拍那一路**不是**对端 dirty 唤醒的 ⇒ 第四格 `false`。
+                match spawn_background_round(
+                    &app2,
+                    &device_id,
+                    &mesh_cfgs,
+                    &state.peers(now),
+                    false,
+                ) {
                     Some(what) => {
                         // ⭐ U3：真开跑了 ⇒ 截止时刻已消费（跳过那一支**不许**清它 —— 那正是真机踩过的坑）。
                         clear_auto_retry_deadline();
@@ -3214,6 +3817,212 @@ mod tests {
             "极端回绕也不许 panic"
         );
     }
+
+    /// ⭐ **§13.12 Phase 0 埋点（2026-11-18）**：那一行读数的四条口径。
+    #[test]
+    fn latency_line_says_the_segment_and_never_fakes_a_zero() {
+        // ① 正常：两段时刻相减，段名照写
+        assert_eq!(
+            latency_line("save_to_announce", 1_000, 1_750).as_deref(),
+            Some("[sync-latency] seg=save_to_announce ms=750")
+        );
+        // ② 没有起点 ⇒ None（⛔ 不许拿 0 当"0 毫秒"）
+        assert_eq!(latency_line("save_to_announce", 0, 1_750), None);
+        assert_eq!(latency_line("announce_to_round_done", -5, 1_750), None);
+        // ③ 时钟被调回去 ⇒ 0，⛔ 不写负数
+        assert_eq!(
+            latency_line("announce_to_round_done", 2_000, 1_000).as_deref(),
+            Some("[sync-latency] seg=announce_to_round_done ms=0")
+        );
+        // ④ 两个段名是**代码常量**（判据按字面取；改名会先红在这一条）
+        for seg in ["save_to_announce", "announce_to_round_done"] {
+            let line = latency_line(seg, 1, 2).expect("有起点就该有读数");
+            assert!(line.starts_with("[sync-latency] seg="), "前缀变了：{line}");
+            assert!(
+                line.contains(&format!("seg={seg} ")),
+                "段名没写进去：{line}"
+            );
+        }
+    }
+
+    /// ⭐⭐ **2026-11-18（根因 A 修法 i，owner 拍）**：本轮跳过**只**给"会等超时"的那一类失败，
+    /// 而且**只跳过本轮**（下一轮照旧重试）。
+    #[test]
+    fn only_a_network_failure_is_skipped_for_the_rest_of_the_round() {
+        // ① 网络类（会等超时）⇒ 本轮跳过（这就是那 188 s/轮 的来源）
+        //   ⚠️ 词表**只在 `auto_retryable` 一处**（U3 的契约）；这里只复用，⛔ 不新增词。
+        for reason in [
+            "连接超时",
+            "timeout",
+            "error sending request",
+            "connection refused",
+            "Connection refused", // 大写形态（Windows/reqwest 会这么吐）必须也能匹配
+        ] {
+            assert!(
+                should_skip_peer_for_rest_of_round(Some(reason)),
+                "网络类失败本轮该跳过：{reason}"
+            );
+        }
+        // ①c **真机那条原文**（2026-11-18 从 sync_history 抄下来的形状）也必须判成网络类
+        assert!(
+            should_skip_peer_for_rest_of_round(Some(
+                "拉对端 4b345a0a-bdbb-4075-8768-0605b30784a2 失败：error sending request for url (http://192.168.43.190:8788/mesh/pull?space_id=1c02&since=215&limit=1000)"
+            )),
+            "真机那条『error sending request …』必须判成网络类"
+        );
+        // ①b **词表里没有的原因 ⇒ 不跳过**（保守方向：宁可这轮慢，也不许因为"不认识"就少试一台）
+        for reason in ["network unreachable", "磁盘满了", "未知错误 X"] {
+            assert!(
+                !should_skip_peer_for_rest_of_round(Some(reason)),
+                "不认识的原因⛔ 不许当成网络类跳过：{reason}"
+            );
+        }
+        // ② 身份类 ⇒ 不跳过（它们本来就不等超时；跳过只会掩盖"换个空间也许能成"）
+        for reason in ["没通过", "401", "被移出", "没配对"] {
+            assert!(
+                !should_skip_peer_for_rest_of_round(Some(reason)),
+                "身份类失败⛔ 不许跳过：{reason}"
+            );
+        }
+        // ③ 没失败 ⇒ 当然不跳过
+        assert!(!should_skip_peer_for_rest_of_round(None));
+    }
+
+    /// ⭐ **2026-11-18（根因 A 取证）**：每空间耗时的那一行 —— 形状固定、空间必须先脱敏。
+    #[test]
+    fn round_timing_line_masks_the_space_and_keeps_the_shape() {
+        let line = round_timing_line("2ae7009bff614f96c64c703021609443", true, 21_345, 1_700_000_000_000);
+        assert!(
+            line.starts_with("[round-timing] space="),
+            "前缀变了：{line}"
+        );
+        assert!(line.contains(" ok=true "), "结果没写进去：{line}");
+        assert!(line.contains(" ms=21345"), "耗时没写进去：{line}");
+        assert!(
+            line.contains(" at_ms=1700000000000"),
+            "at_ms 没写进去：{line}"
+        );
+        // ⛔ 原始空间 id 不许进日志（与 `[mesh] 后台一轮完成` 同一把尺：只留前 8 位 + 省略号）
+        assert!(
+            !line.contains("2ae7009bff614f96c64c703021609443"),
+            "空间 id 没脱敏：{line}"
+        );
+        let bad = round_timing_line("sp-1", false, 0, 1_700_000_000_000);
+        assert!(bad.contains(" ok=false "));
+        assert!(bad.contains(" ms=0"));
+    }
+
+    /// ⭐⭐ **2026-11-18（慢支修法 B，第二版，owner 拍）**：`dirty` 驱动的公告**不许等 30 s 节拍**，
+    /// 但也**不许每 tick 都播** —— 第一版就是这么播了 4,311 条（复测当场抓住）。
+    /// ⭐ **F3-2（2026-11-20）**：跨轮冷却的判据 —— 只判"**连续几轮都失败之后，接下来几轮还值不值得试**"。
+    /// ⚠️ 它**还没接线**（今天仍只有"本轮内跳过"）：这一组先把口径钉死，接线＝行为变更，要 owner 拍。
+    #[test]
+    fn cooldown_only_after_several_consecutive_misses_and_expires_itself() {
+        const CD: i64 = 60_000;
+        let now = 1_000_000;
+        // ① 没到门槛 ⇒ 不冷却（一次失败可能只是丢包）
+        assert!(!should_cooldown_peer(0, 3, 0, now, CD));
+        assert!(!should_cooldown_peer(2, 3, 0, now, CD));
+        // ② 到门槛且没有冷却窗 ⇒ 该冷却
+        assert!(should_cooldown_peer(3, 3, 0, now, CD));
+        assert!(should_cooldown_peer(9, 3, 0, now, CD));
+        // ③ 冷却窗内 ⇒ 继续冷却（哪怕 miss 数被重置成 0 —— 冷却本身就是判据）
+        assert!(should_cooldown_peer(0, 3, now + 1, now, CD));
+        // ④ 冷却窗过期 ⇒ 恢复重试（⛔ 不许永久拉黑）
+        assert!(!should_cooldown_peer(0, 2, now - 1, now, CD));
+        // ⑤ 坏参数 ⇒ 一律不冷却（保持现状，⛔ 不猜）
+        assert!(!should_cooldown_peer(99, 0, now + 999_999, now, CD));
+        assert!(!should_cooldown_peer(99, 3, 0, now, 0));
+        // ⑥ `cooldown_until` 的两格：正常加、坏参数原样
+        assert_eq!(cooldown_until(now, CD), now + CD);
+        assert_eq!(cooldown_until(now, 0), now);
+        assert_eq!(cooldown_until(now, -5), now);
+    }
+
+    /// ⭐ **F3-2（2026-11-20）**：冷却的**键按设备**（⛔ 不按空间）。
+    ///
+    /// ⚠️ **第一版是"按空间"，真机读数把它否掉了**：每轮只有**第一个**空间真的会去试那台
+    /// （第一处失败后修法 i 的 `failed_peers` 把其余 8 个空间都跳过）⇒ 只有 1 个空间的计数能累到 3
+    /// ⇒ 冷却只对一个空间生效（4 轮里只观察到 1 次跳过）。而"这台连不上"本来就是**设备级事实**。
+    #[test]
+    fn cooldown_keys_are_scoped_per_device_not_per_space() {
+        assert_eq!(peer_miss_key("dev1"), "peer_misses:dev1");
+        assert_eq!(peer_cooldown_key("dev1"), "peer_cooldown:dev1");
+        assert_ne!(peer_miss_key("dev1"), peer_miss_key("dev2"));
+        assert_ne!(peer_miss_key("dev1"), peer_cooldown_key("dev1"));
+        // 键里**不许**再出现空间（否则又回到"每轮只有一个空间记账"的老坑）
+        assert!(
+            !peer_miss_key("dev1").contains(':') || peer_miss_key("dev1").matches(':').count() == 1
+        );
+    }
+
+    #[test]
+    fn a_pending_dirty_announces_soon_but_never_twice_within_the_min_gap() {
+        let interval = ANNOUNCE_INTERVAL_MS;
+        // ① 到点 ⇒ 播（与旧行为一致）
+        assert!(announce_due_with_dirty(
+            0,
+            10_000,
+            interval,
+            false,
+            DIRTY_ANNOUNCE_MIN_GAP_MS
+        ));
+        assert!(announce_due_with_dirty(
+            10_000,
+            10_000 + interval,
+            interval,
+            false,
+            DIRTY_ANNOUNCE_MIN_GAP_MS
+        ));
+        // ② **有 dirty 但还没到 30 s** ⇒ 过了最小间隔就要播（这就是这次修法：保存后不再等节拍）
+        assert!(
+            announce_due_with_dirty(10_000, 11_000, interval, true, DIRTY_ANNOUNCE_MIN_GAP_MS),
+            "保存后挂着 dirty ⇒ 过了最小间隔就该播（⛔ 不许再等 30 s 节拍）"
+        );
+        // ③ 但**最小间隔内不许重播**（否则一次保存刷出一屏公告 —— 第一版就是 4,311 条）
+        assert!(!announce_due_with_dirty(
+            10_000,
+            10_100,
+            interval,
+            true,
+            DIRTY_ANNOUNCE_MIN_GAP_MS
+        ));
+        assert!(!announce_due_with_dirty(
+            10_000,
+            10_500,
+            interval,
+            true,
+            DIRTY_ANNOUNCE_MIN_GAP_MS
+        ));
+        assert!(!announce_due_with_dirty(
+            10_000,
+            10_999,
+            interval,
+            true,
+            DIRTY_ANNOUNCE_MIN_GAP_MS
+        ));
+        // ④ 没 dirty 又没到点 ⇒ 不播（常规节拍照旧）
+        // ⚠️ 2026-11-19：这里原来写死 `+10_000` —— 那时 interval 是 30 s，等于"才过 1/3"；
+        //   现在 interval 是 10 s ⇒ 那个数**正好到点**（会真播）。改用 `interval / 2`，
+        //   判据的**本意**（没到点就不播）与常量取值解耦。
+        assert!(!announce_due_with_dirty(
+            10_000,
+            10_000 + interval / 2,
+            interval,
+            false,
+            DIRTY_ANNOUNCE_MIN_GAP_MS
+        ));
+        // ⑤ 还没播过（`last <= 0`）且挂着 dirty ⇒ 立刻播
+        assert!(announce_due_with_dirty(
+            0,
+            5,
+            interval,
+            true,
+            DIRTY_ANNOUNCE_MIN_GAP_MS
+        ));
+        // ⑥ 最小间隔必须**明显小于**常规间隔（否则"提前播"没意义）
+        assert!(DIRTY_ANNOUNCE_MIN_GAP_MS < interval);
+    }
 }
 
 /// 「本机名回退链」的判据（2026-10-10，08-a①）—— **行为**读数 ✓。
@@ -4354,7 +5163,8 @@ mod p31_event_round_tests {
         );
         assert!(!event_round_announces_dirty(false, false));
 
-        // ② 对端 dirty 唤醒 ⇒ 只置轮次，不冒充本地保存
+        // ② 对端 dirty 唤醒 ⇒ 只置轮次，不冒充本地保存，**也⛔ 不许挂 dirty**（挂了就会互相唤醒）
+        ANNOUNCE_DIRTY_PENDING.store(false, Ordering::SeqCst);
         request_round_now_from_peer();
         assert!(
             EVENT_ROUND_PENDING.load(Ordering::SeqCst),
@@ -4364,14 +5174,20 @@ mod p31_event_round_tests {
             !LOCAL_SAVE_PENDING.load(Ordering::SeqCst),
             "对端 dirty ⛔ 不许冒充本地保存"
         );
+        assert!(
+            !ANNOUNCE_DIRTY_PENDING.load(Ordering::SeqCst),
+            "对端 dirty ⛔ 不许挂本机 dirty（那会两边互相唤醒）"
+        );
         let from_local = LOCAL_SAVE_PENDING.swap(false, Ordering::SeqCst);
         assert!(
             !event_round_announces_dirty(from_local, true),
             "对端唤醒的轮 ⛔ 不许再发 dirty（那会两边互相唤醒）"
         );
 
-        // ③ 本地保存 ⇒ 置 pending，且本轮可以发 dirty
+        // ③ 本地保存 ⇒ 置 pending，且**这一刻就挂 dirty**（⭐ 2026-11-18 修法 B：
+        //   公告不再等"这一轮能不能跑"；只由公告块 `swap(false)` 消费 ⇒ 一次保存只播一次）
         EVENT_ROUND_PENDING.store(false, Ordering::SeqCst);
+        ANNOUNCE_DIRTY_PENDING.store(false, Ordering::SeqCst);
         request_round_now();
         assert!(EVENT_ROUND_PENDING.load(Ordering::SeqCst));
         let from_local = LOCAL_SAVE_PENDING.swap(false, Ordering::SeqCst);
@@ -4379,7 +5195,11 @@ mod p31_event_round_tests {
             event_round_announces_dirty(from_local, true),
             "本地保存的轮必须发 dirty"
         );
-        assert!(!ANNOUNCE_DIRTY_PENDING.load(Ordering::SeqCst));
+        assert!(
+            ANNOUNCE_DIRTY_PENDING.load(Ordering::SeqCst),
+            "本地保存那一刻就该挂 dirty（修法 B：⛔ 不许再等这一轮跑完）"
+        );
+        ANNOUNCE_DIRTY_PENDING.store(false, Ordering::SeqCst);
         EVENT_ROUND_PENDING.store(false, Ordering::SeqCst);
     }
 
@@ -4463,5 +5283,145 @@ mod p33b_hub_space_uids_tests {
             "缺 uid ⇒ 空串占位，保持与 hub_spaces 一一对齐"
         );
         assert_eq!(a.hub_space_uids.len(), a.hub_spaces.len());
+    }
+}
+
+/// ⭐ **F3 一段（2026-11-21，owner 路线图 §13.3 F3「最近编辑空间优先」）**：三条判据 ＋ 一条**依据**判据。
+///
+/// ⚠️ 判据只看**纯函数**（⛔ 不起网格、⛔ 不联网、⛔ 不碰用户的库）：把"顺序"这件事从
+///   网络/锁/加密那一堆里单独拎出来钉死，真机上跑一轮读不到证据也不会让它静默变绿。
+#[cfg(test)]
+mod f3_space_order_tests {
+    use super::*;
+
+    fn pair(proto: &str, ws: &str) -> (String, String, bool) {
+        (proto.to_string(), ws.to_string(), false)
+    }
+
+    fn order(pairs: &[(String, String, bool)]) -> Vec<String> {
+        pairs.iter().map(|(_, ws, _)| ws.clone()).collect()
+    }
+
+    fn times(entries: &[(&str, i64)]) -> std::collections::HashMap<String, i64> {
+        entries.iter().map(|(w, t)| (w.to_string(), *t)).collect()
+    }
+
+    /// **判据①**：两个空间、**最近编辑的在先**。
+    ///
+    /// ⚠️ 反证格：同样的两个空间把时刻对调 ⇒ 顺序也必须对调（排的是时刻，不是名字/输入位置）。
+    #[test]
+    fn the_most_recently_edited_space_runs_first() {
+        let pairs = vec![pair("sp-old", "ws-old"), pair("sp-new", "ws-new")];
+        let got =
+            order_spaces_by_recent_edit(pairs.clone(), &times(&[("ws-old", 100), ("ws-new", 200)]));
+        assert_eq!(
+            order(&got),
+            vec!["ws-new".to_string(), "ws-old".to_string()],
+            "最近编辑过的那个必须先跑"
+        );
+
+        let got = order_spaces_by_recent_edit(pairs, &times(&[("ws-old", 900), ("ws-new", 200)]));
+        assert_eq!(
+            order(&got),
+            vec!["ws-old".to_string(), "ws-new".to_string()],
+            "把时刻对调 ⇒ 顺序必须跟着对调"
+        );
+    }
+
+    /// **判据②**：集合与原来一致 —— **只是顺序**（长度/元素/重复次数都不许变）。
+    #[test]
+    fn ordering_only_permutes_the_same_spaces() {
+        let pairs = vec![pair("a", "ws-1"), pair("b", "ws-2"), pair("c", "ws-3")];
+        let got =
+            order_spaces_by_recent_edit(pairs.clone(), &times(&[("ws-3", 300), ("ws-1", 100)]));
+        assert_eq!(got.len(), pairs.len(), "空间数不许变 —— F3 只改顺序");
+
+        let mut want = order(&pairs);
+        want.sort();
+        let mut have = order(&got);
+        have.sort();
+        assert_eq!(have, want, "跑哪些空间一个字都不许变（只是顺序）");
+
+        // 三元组整体逐项相等：proto_space / ws / device_level 都不许被换掉或丢字段。
+        let mut a = pairs;
+        a.sort();
+        let mut b = got;
+        b.sort();
+        assert_eq!(a, b);
+    }
+
+    /// **判据③**：**没有编辑记录时退回原顺序**（确定性）。
+    #[test]
+    fn without_any_edit_record_the_order_is_the_original_one() {
+        let pairs = vec![
+            pair("p-c", "ws-c"),
+            pair("p-a", "ws-a"),
+            pair("p-b", "ws-b"),
+        ];
+        assert_eq!(
+            order_spaces_by_recent_edit(pairs.clone(), &std::collections::HashMap::new()),
+            pairs,
+            "一个编辑记录都没有 ⇒ 输出必须**逐项等于输入**（⛔ 不许看 HashMap 的遍历序）"
+        );
+        // 同一份输入跑两遍必须一模一样（确定性，不是"这次刚好"）。
+        let m = times(&[("ws-b", 500)]);
+        assert_eq!(
+            order_spaces_by_recent_edit(pairs.clone(), &m),
+            order_spaces_by_recent_edit(pairs, &m),
+            "同一份输入两次排序必须相同"
+        );
+    }
+
+    /// 判据③的加强格：**部分**有记录 ⇒ 有记录的按时刻在前，**没有记录的保持原相对顺序**。
+    #[test]
+    fn spaces_without_a_record_keep_their_relative_order() {
+        let pairs = vec![pair("x", "ws-x"), pair("y", "ws-y"), pair("z", "ws-z")];
+        // 只有 y 有记录 ⇒ y 先，x/z 之间仍是原来的 x 在前。
+        let got = order_spaces_by_recent_edit(pairs, &times(&[("ws-y", 42)]));
+        assert_eq!(
+            order(&got),
+            vec!["ws-y".to_string(), "ws-x".to_string(), "ws-z".to_string()],
+            "有记录的先；没有记录的彼此保持原相对顺序"
+        );
+    }
+
+    /// **依据判据**：排序读的就是 `changes.MAX(updated_at)`（拿**真的表形**钉住，⛔ 不靠注释）。
+    ///
+    /// 空表必须是 `None`（`MAX()` 在空表上是一行 `NULL`）—— 读成 `0` 就会把"没编辑过"
+    /// 说成"1970 年编辑过"，判据③会假成立。
+    #[test]
+    fn the_edit_signal_is_the_max_updated_at_of_changes() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE changes (
+                 seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+                 device_id   TEXT NOT NULL,
+                 device_seq  INTEGER NOT NULL,
+                 entity      TEXT NOT NULL,
+                 entity_id   TEXT NOT NULL,
+                 op          TEXT NOT NULL,
+                 payload     TEXT,
+                 updated_at  INTEGER NOT NULL,
+                 UNIQUE(device_id, device_seq)
+             );",
+        )
+        .unwrap();
+        assert_eq!(
+            last_edited_at_query(&c),
+            None,
+            "这个空间还没编辑过 ⇒ 没有信号（⛔ 不是 0 时刻）"
+        );
+        c.execute_batch(
+            "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at)
+             VALUES ('dev-a', 1, 'page', 'p1', 'upsert', '{}', 111),
+                    ('dev-a', 2, 'page', 'p1', 'upsert', '{}', 999),
+                    ('dev-a', 3, 'page', 'p2', 'upsert', '{}', 555);",
+        )
+        .unwrap();
+        assert_eq!(
+            last_edited_at_query(&c),
+            Some(999),
+            "取全空间最大的 updated_at（＝最近那次编辑），不是第一行也不是最后一行的 seq"
+        );
     }
 }

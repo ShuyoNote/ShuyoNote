@@ -1824,6 +1824,16 @@ export function makeInvoke(store: SqliteStore) {
       // 没有网格层 ⇒ 无从确认；如实回 false（界面据此提示"这一档只在桌面版可用"）。
       return false as T;
     }
+    if (cmd === "mesh_uid_confirm_batch") {
+      // ⭐ A3（2026-11-21，owner 拍「只批量、不传播」）：Web 版没有设备直连层 ⇒ 没有候选可确认；
+      //   如实回"一行都没写"（⛔ 不编 written>0；候选列表在 Web 上本来就是空的，界面根本不会走到这里）。
+      return { written: 0 } as T;
+    }
+    if (cmd === "list_sync_gaps") {
+      // ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：Web 版没有设备直连层，
+      //   也就没有"缺口签名"可读 ⇒ **如实回空**（⛔ 不编读数、⛔ 不说"没有缺口"）。
+      return [] as T;
+    }
     if (cmd === "mesh_watermarks") {
       // Web 版没有设备直连层 ⇒ 没有"对端水位"可读；如实回空（⛔ 不编读数）。
       return {
@@ -3709,6 +3719,15 @@ export function makeInvoke(store: SqliteStore) {
     if (cmd === "resolve_lineage_conflict") {
       const conflictId = String(a.conflictId ?? a.conflict_id ?? "");
       resolveLineageConflict(store, conflictId, String(a.choice ?? ""));
+      return null as T;
+    }
+    if (cmd === "set_page_lineage_fp") {
+      // ⭐ **U4-B S1（2026-11-19）**：**Web 侧是一项如实说明的空实现**。
+      //
+      // 为什么可以空：这一格唯一的消费者是**桌面 mesh 推载荷**（`record_page_upsert` 会把它挂到 `_lineage_fp`）；
+      // Web 平台**不拼那个载荷**（它走服务端同步，本文件里没有任何 `_space_name`/`_space_uid` 的挂载代码 ⇒ 同一条路）。
+      // ⇒ 在这里写进 KV 只会让"Web 与服务端"两套载荷口径分叉；⛔ 不做"看起来实现了"的假存储。
+      // ⚠️ 若将来 Web 也开始拼 page 载荷 ⇒ 这一条**必须**改成真的存下来（否则 Web 推出去的版本没有血统信息）。
       return null as T;
     }
     if (cmd === "list_stale_text_pages") {

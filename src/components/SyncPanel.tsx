@@ -21,9 +21,15 @@ import { InvitePairingSection } from "./InvitePairingSection";
 // ⭐ P1「连接体检」（2026-11-08）：只读现有读数 → 结构化诊断 ＋ 复制诊断包（⛔ 不新增命令 ✗）。
 //   入口在「局域网同步」状态卡里（见下面 `mesh-diagnose-entry` ✓）；纯函数在 `src/lib/meshDiagnose.ts` ✓。
 import { MeshDiagnoseDialog } from "./MeshDiagnoseDialog";
+// ⭐ §13.6 O1（2026-11-18，owner 拍「在同步面板上真画出来」）：多设备同步图。
+//   读数/状态**只由纯函数算**（`meshSyncGraph` ＋ `syncGraphRows`），组件只负责摆 ——
+//   ⛔ 这里不许出现 `p.online === false` 这类自判（判据 `meshSyncGraph.test.ts` 的接线用例钉着）。
+import { meshSyncGraph, syncGraphRows } from "../lib/meshSyncGraph";
 // ⭐ P3-3a 第三小步（task-56）：CRDT 影子**手动体检** —— 只读扫描当前空间，文案全是纯函数，
 //   ⛔ 不自动修复/不改数据/不显示正文（差异只回数量）。
 import { shadowScanSpace } from "../lib/crdtShadowScan";
+// ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：把后端那行"缺口已过期"搬到界面上。
+import { gapNoticeText, type SyncGap } from "../lib/syncGaps";
 // ⭐ P3-3a 第四小步（task-67）：影子观测近 7 天历史（只读；纯函数解析/摘要，面板只显示）。
 import {
   SHADOW_HISTORY_KEY,
@@ -233,10 +239,22 @@ export function syncCoreRowText(
   }
   const last = status.lastRound;
   const lastText = last
-    ? `｜上一轮：服务端 ${last.serverSpaces} 个空间（失败 ${last.serverErrors}）· 网格 ${last.meshSpaces} 个空间（收下 ${last.meshApplied} 条）`
+    ? `｜上一轮：服务端 ${last.serverSpaces} 个空间（失败 ${last.serverErrors}）· 网格 ${last.meshSpaces} 个空间（收下 ${last.meshApplied} 条）` +
+      idleBackoffText(last)
     : "｜还没跑过";
   const state = status.running ? "运行中" : "已停止";
   return { detail: `${state}${lastText}`, tone: status.running ? "ok" : "warn" };
+}
+
+/**
+ * ⭐ §13.3 F3：把**已经在载荷里**的空闲退避读数摆出来（⛔ 不在这里另算节拍）。
+ * `emptyStreak=0` ⇒ 不加任何字；读不到（unknown）由上层提前返回。
+ */
+function idleBackoffText(last: NonNullable<SyncCoreStatus["lastRound"]>): string {
+  if (last.emptyStreak <= 0) return "";
+  const delay =
+    last.nextDelayMs >= 1000 ? `${Math.round(last.nextDelayMs / 1000)} 秒` : `${last.nextDelayMs} ms`;
+  return `｜空转 ${last.emptyStreak} 次 ⇒ 下一轮 ${delay}`;
 }
 
 export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {}) {
@@ -344,6 +362,9 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
       unlisten?.();
     };
   }, [open, contentOnly]);
+  // ⭐ 2026-11-20：当前空间的**永久缺失**（只读；来自后端 `list_sync_gaps`）。
+  //   ⚠️ 空数组＝**没有已知缺口**（⛔ 不渲染"0 条"）；读失败＝保持空且不打扰用户（它只是提示面）。
+  const [syncGaps, setSyncGaps] = useState<SyncGap[]>([]);
   // ⭐ task-67：只读影子观测历史；坏 JSON/读不出 ⇒ unknown（⛔ 不假装"无记录"）。
   const [shadowHistory, setShadowHistory] = useState<ShadowHistorySummary | null>(null);
   useEffect(() => {
@@ -1273,8 +1294,19 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   // ⭐⭐ **2026-10-20（owner「没看到三个选项的界面」）**：面板**一打开就去读**待取回清单** ✓
   //   旧行为：清单**只在一轮同步之后**才被读（doSync 里）⇒ 刚打开面板、还没点同步时，
   //   队列里明明有 5 页，界面上却**一个字都没有** ✗（真机就是这么被耍的 ✓）。
+  /** ⭐ 2026-11-20：读"永久缺失"（只读；失败不打扰用户 —— 与 loadPendingRemote 同一口径）。 */
+  const loadSyncGaps = async () => {
+    try {
+      const rows = await api.listSyncGaps();
+      setSyncGaps(Array.isArray(rows) ? rows : []);
+    } catch {
+      setSyncGaps([]);
+    }
+  };
+
   useEffect(() => {
     void loadPendingRemote();
+    void loadSyncGaps();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1673,6 +1705,15 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   const historyText = `${history.length} 条 · 今天 ${todayHistory.length} 项 · ${
     todayHistory.some((h) => !h.ok) ? "有失败" : "没有失败"
   }`;
+  // ⭐ §13.6 O1（owner 2026-11-18 拍「在面板上真画出来」）：图的**唯一**来源就是这条纯函数 ——
+  //   ⛔ 这下面不许再拿 `watermarks.peers` 自己拼状态（那就成了两份真相源）。
+  //   ⭐ 2026-11-19（owner 拍）：再喂一个「附近在线且服务当前空间的台数」——
+  //   否则"我拉过它、它当时没新东西"的对端**不落游标行** ⇒ 三台在场上图里只出现一台。
+  const onlineServingNearby = (lanStatus?.nearby ?? []).filter(
+    (p) => p.serves_current === true,
+  ).length;
+  const meshGraph = meshSyncGraph({ watermarks, history, onlineServingNearby });
+  const meshGraphRows = syncGraphRows(meshGraph);
   // 同步预算：两个档位与展开后下拉里的 <option> 逐字一致（见 `optMb`）。
   const budgetText = budget
     ? `磁盘余量 ${optMb(budget.disk_floor_mb)} · 单文件 ${budget.max_file_mb === 0 ? "不限" : optMb(budget.max_file_mb)}`
@@ -2415,7 +2456,12 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                 ))}
               </ul>
               <div className="sync-conflict-hint">
-                这些页面当时保留了本地（本地有未推送的改动），对端那一版已替你存下 —— 三个选项都会真的改数据。
+                {/* ⭐ 2026-11-19（U4-B S2 上线后，真机核对发现文案只说了两种原因里的一种）：
+                    以前这里写死「本地有未推送的改动」；但 S2 之后，**血统分叉**（两条互不相干的编辑树）
+                    也会走这一支 ⇒ 那句话在真机上会说错原因（我 21:4x 的截图就是这种）。
+                    ⛔ 不改数据、不加列：把两种可能都如实说出来即可。 */}
+                这些页面当时保留了本地（本地有未推送的改动，或两边的编辑血统分了叉），对端那一版已替你存下
+                —— 三个选项都会真的改数据。
               </div>
             </div>
           )}
@@ -2687,6 +2733,21 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                 </div>
               )}
 
+              {/* ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：**永久缺失**。
+                  只在**真有缺口**时出现（没有 ⇒ 整行不渲染，⛔ 不显示"0 条"这种噪音）；
+                  ⛔ 不提供"修复/重试"按钮：这段本来就补不回来（只能全量重同步或从备份恢复）。 */}
+              {gapNoticeText(syncGaps) && (
+                <div className="sync-device-name" data-testid="sync-permanent-gap">
+                  <span
+                    className="sync-hint"
+                    style={{ flex: "1 1 auto", minWidth: 0, color: "var(--warn, #b45309)" }}
+                    data-testid="sync-permanent-gap-text"
+                  >
+                    {gapNoticeText(syncGaps)}
+                  </span>
+                </div>
+              )}
+
               {/* ⭐ P3-3a 第四小步（task-67）：**影子观测**只读行（高级区；桌面；只显示计数/日期）。
                   ⛔ 不提供清除/修复/自动改数据；"复制摘要"只走脱敏文案。 */}
               {isDesktopPlatform() && (
@@ -2874,41 +2935,50 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
           <div className="sync-group is-advanced">
 
 
-            {/* ⭐ 2026-11-11（§13 A2）：只读「各对端水位」——本机已发到哪 ＋ 各对端已收到哪。
-                ⚠️ 对端只用**序号**（内部设备 id 不上界面）；读不到就不显示（⛔ 不编 0）。 */}
-            {watermarks && (watermarks.localMaxSeq > 0 || watermarks.peers.length > 0) && (
-              <details className="sync-row">
+            {/* ⭐ **§13.6 O1（2026-11-18，owner 拍「在面板上真画出来」）**：多设备同步图。
+                一眼要能看出「哪条边断了」—— 每台一行，词只有四个：已齐 / 落后 / 断了 / 未知。
+                ⚠️ 状态与读数**全部**来自 `meshSyncGraph()` ＋ `syncGraphRows()`（纯函数，有判据）；
+                ⛔ 这里不许再拿 `watermarks.peers` 自己判在线/落后（两份真相源）。
+                ⚠️ 对端只用**序号**（内部设备 id 不上界面）；水位整支读不到 ⇒ 这块不显示（⛔ 不编 0）。 */}
+            {watermarks && meshGraph.readable.watermarks && (
+              <details className="sync-row" open>
                 <summary>
-                  <span className="sync-row-label">各对端水位</span>
-                  <span className="sync-row-value">
-                    本机 {watermarks.localMaxSeq} ｜ 对端 {watermarks.peers.length} 台（在线{" "}
-                    {watermarks.onlineCount} / 离线 {watermarks.offlineCount} / 未知{" "}
-                    {watermarks.unknownCount}）
+                  <span className="sync-row-label">多设备同步图</span>
+                  <span className="sync-row-value" data-testid="mesh-sync-graph-summary">
+                    对端 {meshGraphRows.length} 台 · 已齐 {meshGraph.counts.ok} / 落后{" "}
+                    {meshGraph.counts.behind} / 断 <b>{meshGraph.counts.down}</b> / 未知{" "}
+                    {meshGraph.counts.unknown}
                   </span>
                   <span className="sync-row-caret" aria-hidden>›</span>
                 </summary>
-                <div className="sync-row-body">
-                  <div className="sync-hint" data-testid="mesh-watermarks">
-                    {watermarks.peers.length === 0
-                      ? "还没有对端水位（没和任何设备同步过）"
-                      : watermarks.peers
-                          .map((p) => {
-                            const state =
-                              p.online === true
-                                ? "在线"
-                                : p.online === false
-                                  ? "离线"
-                                  : "未知";
-                            const ago =
-                              p.lastOkAgoMs != null
-                                ? `，上次成功 ${Math.max(1, Math.round(p.lastOkAgoMs / 1000))} 秒前`
-                                : "";
-                            return `对端 ${p.index}：已收至 ${p.cursor}（${state}${ago}）`;
-                          })
-                          .join(" ｜ ")}
-                    <div className="sync-hint" style={{ marginTop: 4 }}>
-                      {watermarks.note}
+                <div className="sync-row-body" data-testid="mesh-sync-graph">
+                  {/* ⭐ owner 2026-11-18 拍：「没有对端水位时也要说一声」——
+                      原来没数据整块不显示 ⇒ 用户根本不知道有这块东西。⛔ 不编 0：
+                      这里说的是"还没和任何设备成功同步过"，不是"0 台已齐"。 */}
+                  {meshGraphRows.length === 0 && (
+                    <div className="sync-hint" data-testid="mesh-sync-graph-empty">
+                      这个空间还没有对端水位（还没和任何设备成功同步过）。
+                      <br />
+                      等有一次成功同步后，这里会逐台写「已齐 / 落后 / 断了 / 未知」。
                     </div>
+                  )}
+                  {meshGraphRows.map((r) => (
+                    <div
+                      key={r.key}
+                      className={`sync-hint mesh-sync-graph-row is-${r.level}`}
+                      data-testid="mesh-sync-graph-row"
+                    >
+                      <span className={`mesh-sync-graph-state is-${r.level}`}>{r.statusText}</span>{" "}
+                      <b>{r.label}</b>
+                      <span className="mesh-sync-graph-detail">：{r.detail}</span>
+                    </div>
+                  ))}
+                  <div className="sync-hint" style={{ marginTop: 4 }}>
+                    词的意思：已齐＝对方收到了我这里的全部改动；落后＝还差几条；断了＝它离线或没在同步；
+                    未知＝还没有成功记录（⛔ 不当作离线）。
+                  </div>
+                  <div className="sync-hint" style={{ marginTop: 4 }}>
+                    ⚠️ 这张图只看得到 <b>当前空间</b>；每个空间 × 每台设备的全图要另加只读读数（见交接单）。
                   </div>
                 </div>
               </details>
@@ -3229,6 +3299,8 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
           open={meshDiagnoseOpen}
           status={lanStatus}
           round={lastRound}
+          watermarks={watermarks}
+          history={history}
           onReload={reloadLanForDiagnose}
           onClose={() => setMeshDiagnoseOpen(false)}
         />

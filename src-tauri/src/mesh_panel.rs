@@ -173,6 +173,60 @@ pub fn mesh_uid_confirm(
     Ok(true)
 }
 
+/// ⭐ **A3（2026-11-21，owner 拍「只批量、不传播」）**：**一次确认多对**同名 uid 候选。
+///
+/// 为什么要有它：原先每对设备、每对 uid 各点一次（DEC-D 人工闸）。这里只把
+/// "一次点击"的**覆盖范围**变成"勾了的那几对"：
+///
+/// 1. ⛔ **不代用户确认**：确认仍然只由界面上的一次点击发起（本命令没有后台调用点）；
+/// 2. 只写**勾选且候选表里真有**的键（判据 `batch-selected-only`）；
+/// 3. ⛔ **不做传播**（判据 `no-propagation-on-batch`）：另一个候选哪怕 `space_uid`
+///    **完全相同**，只要没被勾就**一行都不写** —— 不让用户没有逐行看见的行被写；
+/// 4. 空选／全是空键／没有候选 ⇒ **连空间库都不开**（判据 `empty-selection-writes-nothing`）。
+///
+/// ⚠️ 只写两张小表（确认记录 ＋ 移出候选），⛔ 不碰任何页面正文；整个写入在一个事务里。
+#[tauri::command]
+pub fn mesh_uid_confirm_batch(
+    db: State<'_, crate::db::Db>,
+    keys: Vec<crate::mesh_uid_confirm::MeshUidKey>,
+) -> Result<crate::mesh_uid_confirm::MeshUidBatchDone, String> {
+    use crate::mesh_uid_confirm::{plan_batch_confirm, MeshUidBatchDone};
+    let done_none = MeshUidBatchDone { written: 0 };
+    // ③ 空选 ⇒ **不开库、不写库**（判据 `empty-selection-writes-nothing`）。
+    let has_any = keys
+        .iter()
+        .any(|k| !k.peer_device.trim().is_empty() && !k.peer_uid.trim().is_empty());
+    if !has_any {
+        return Ok(done_none);
+    }
+    let app_data = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "bad_state: app data dir 未初始化".to_string())?;
+    let space = {
+        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+        crate::attachments::active_space_id(&c)
+    };
+    let mut sc = crate::db::open_space_conn_at(&space, app_data)?;
+    let candidates = crate::mesh_uid_confirm::list_candidates(&sc).map_err(|e| e.to_string())?;
+    // ① / ② 都在这个纯函数里（判据有单测）；这里只负责照清单写。
+    let write = plan_batch_confirm(&candidates, &keys);
+    if write.is_empty() {
+        return Ok(done_none);
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let tx = sc.transaction().map_err(|e| e.to_string())?;
+    for (peer_device, peer_uid) in &write {
+        crate::mesh_uid_confirm::confirm(&tx, peer_device, peer_uid, now)
+            .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(MeshUidBatchDone {
+        written: write.len(),
+    })
+}
+
 /// ⭐ **2026-11-11（§13 A2）**：一条对等体的**只读水位**（⛔ 不含 `device_id`／正文）。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -185,6 +239,66 @@ pub struct MeshPeerWatermark {
     pub online: Option<bool>,
     /// ⭐ 距离最近一次成功同步过了多少毫秒（`null` ＝ 还没有成功记录）。
     pub last_ok_ago_ms: Option<i64>,
+}
+
+/// ⭐ **2026-11-20（owner 拍「让报警出现在界面上」）**：一段**永久缺失**的序号（闭区间）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncGap {
+    pub from: i64,
+    pub to: i64,
+}
+
+/// ⭐ **2026-11-20**：把"缺口签名"（`cursor|min`）解析成一段永久缺失（纯函数，⛔ 不碰库）。
+///
+/// 口径：
+/// 1. 形状不对（不是 `a|b`、解析不出整数）⇒ `None`（⛔ 不猜）；
+/// 2. 复用 `mesh::missing_range`（**同一个判定函数**，⛔ 不在这里另写一份口径）；
+/// 3. 它判"没丢"时也返回 `None`（例如游标已追上）。
+pub fn gap_from_signature(sig: &str) -> Option<SyncGap> {
+    let (a, b) = sig.split_once('|')?;
+    let cursor: i64 = a.trim().parse().ok()?;
+    let min_seq: i64 = b.trim().parse().ok()?;
+    let (from, to) = crate::mesh::missing_range(cursor, min_seq)?;
+    Some(SyncGap { from, to })
+}
+
+/// ⭐ **2026-11-20（owner 拍「让报警出现在界面上」）**：只读「当前空间的永久缺失清单」。
+///
+/// 为什么要它：F2-0 的 `[mesh] 缺口已过期` 只打在 stderr —— 用户**永远看不见**"某空间缺了一段、
+/// 而且补不回来"。这一格把它搬到界面上（⛔ 仍然只读：不拉、不补、不改任何状态）。
+///
+/// 数据来源：`meta.sync_state` 的 `peer_gap:<proto>:<device> = "cursor|min"`（拉取那一轮写下的签名）。
+/// ⚠️ 只报**当前空间**的：跨空间的缺口混在一起会让用户不知道去哪儿处理。
+#[tauri::command]
+pub fn list_sync_gaps(db: State<'_, crate::db::Db>) -> Result<Vec<SyncGap>, String> {
+    let app_data = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "bad_state: app data dir 未初始化".to_string())?;
+    let space = {
+        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+        crate::attachments::active_space_id(&c)
+    };
+    let sc = crate::db::open_space_conn_at(&space, app_data)?;
+    let proto = crate::sync::mesh_scope_at(&sc, Some(&space))
+        .map(|s| s.space)
+        .unwrap_or_default();
+    if proto.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let like = format!("peer_gap:{proto}:%");
+    let c = crate::db::open_meta_conn_at(app_data)?;
+    let mut stmt = c
+        .prepare("SELECT value FROM sync_state WHERE key LIKE ?1")
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<String> = stmt
+        .query_map(rusqlite::params![like], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+    let mut out: Vec<SyncGap> = rows.iter().filter_map(|s| gap_from_signature(s)).collect();
+    out.sort_by_key(|g| g.from);
+    out.dedup();
+    Ok(out)
 }
 
 /// ⭐ **2026-11-11（§13 A2 第一刀）**：当前空间的只读水位读数（本机高水位 ＋ 各对端已收水位）。
@@ -220,6 +334,46 @@ fn parse_peer_cursors(rows: &[(String, String)]) -> Vec<(String, i64)> {
     out
 }
 
+/// ⭐ **2026-11-19 修**：游标行**两个库都要看** —— 生产上 `mesh_cursor:*` 写在 **meta.db**
+/// （`sync_state` 全局键），而空间库那份在多数机器上是空的（实测：meta 12 行 / 空间库 0 行）
+/// ⇒ 原来只读空间库 ⇒ 面板「多设备同步图」**永远空**（"同步成功却一台都没有"）。
+///
+/// ⚠️ **必须按当前空间（对暗号那个 id）过滤**：同一个 meta 库里挤着**所有空间**的游标
+/// （实测一次读出 5 台，其中 1505/475 其实是**别的空间**的计数）——
+/// 不过滤就会把别的空间的进度混进本空间，算出"已收 1505 / 本机 317（落后 0）"这种假读数（2026-11-19 实测过）。
+///
+/// 合并口径：**同一台设备取较大游标**（两处都有时不许让旧值盖新值），按游标降序。
+fn merge_peer_cursors(
+    space_key: &str,
+    meta_rows: &[(String, String)],
+    space_rows: &[(String, String)],
+) -> Vec<(String, i64)> {
+    // 只保留 `mesh_cursor:<当前空间>:<设备>` 这一族；别的空间一律不算。
+    if space_key.trim().is_empty() {
+        return Vec::new();
+    }
+    let prefix = format!("mesh_cursor:{}:", space_key);
+    let keep = |rows: &[(String, String)]| -> Vec<(String, String)> {
+        rows.iter()
+            .filter(|(k, _)| k.starts_with(&prefix))
+            .cloned()
+            .collect()
+    };
+    let mut by_dev: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for (dev, cursor) in parse_peer_cursors(&keep(meta_rows))
+        .into_iter()
+        .chain(parse_peer_cursors(&keep(space_rows)))
+    {
+        let e = by_dev.entry(dev).or_insert(cursor);
+        if cursor > *e {
+            *e = cursor;
+        }
+    }
+    let mut out: Vec<(String, i64)> = by_dev.into_iter().collect();
+    out.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    out
+}
+
 /// ⭐ **2026-11-11（§13 A2）**：只读「设备×空间水位」——当前空间：本机高水位 ＋ 各对端已收水位。
 ///
 /// 口径：**只读**（不建连接、不发包、不写库）；对端只用**序号**表示（内部 id 不上界面）。
@@ -238,19 +392,38 @@ pub fn mesh_watermarks(db: State<'_, crate::db::Db>) -> Result<MeshWatermarks, S
     let space_name = crate::sync::local_space_name(&sc).unwrap_or_default();
     let device = crate::sync::device_id(&sc).unwrap_or_default();
     let local_max_seq = crate::mesh::max_own_device_seq_for_ui(&sc, &device).unwrap_or(0);
-    let mut stmt = sc
-        .prepare("SELECT key, value FROM sync_state WHERE key LIKE 'mesh_cursor:%'")
-        .map_err(|e| e.to_string())?;
-    let rows: Vec<(String, String)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-        .map_err(|e| e.to_string())?
-        .filter_map(Result::ok)
-        .collect();
+    // ⭐ 2026-11-19 修：游标在 **meta.db**（生产实况），空间库那份通常为空 ⇒ 两边都读再合并。
+    //   ⚠️ 绑定要写得让借用活得够久（`query_map` 的行借用 `stmt`）。
+    let space_rows: Vec<(String, String)> = {
+        let mut stmt = sc
+            .prepare("SELECT key, value FROM sync_state WHERE key LIKE 'mesh_cursor:%'")
+            .map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?;
+        mapped.filter_map(Result::ok).collect()
+    };
+    let meta_rows: Vec<(String, String)> = {
+        // ⚠️ 必须显式开 **meta.db**：游标是"跨空间的全局计数"，`Db.0` 那一份不是它（实测读出来 0 行）。
+        let c = crate::db::open_meta_conn_at(app_data)?;
+        let mut stmt = c
+            .prepare("SELECT key, value FROM sync_state WHERE key LIKE 'mesh_cursor:%'")
+            .map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?;
+        mapped.filter_map(Result::ok).collect()
+    };
     let now = crate::db::now_ms();
+    // ⭐ 2026-11-19：水位必须**按当前空间**取（`mesh_cursor:<对暗号 id>:<设备>`）——
+    //   这里先把这个空间的"对暗号 id"算出来（与同步轮同一处口径：`mesh_scope_at`）。
+    let space_key = crate::sync::mesh_scope_at(&sc, Some(&space))
+        .map(|s| s.space)
+        .unwrap_or_default();
     let mut online_count = 0usize;
     let mut offline_count = 0usize;
     let mut unknown_count = 0usize;
-    let peers = parse_peer_cursors(&rows)
+    let peers = merge_peer_cursors(&space_key, &meta_rows, &space_rows)
         .into_iter()
         .enumerate()
         .map(|(i, (dev, cursor))| {
@@ -288,6 +461,30 @@ pub fn mesh_watermarks(db: State<'_, crate::db::Db>) -> Result<MeshWatermarks, S
 mod tests {
     use super::*;
 
+    /// ⭐ **2026-11-20**：`gap_from_signature` 的五格 —— 界面那一行"永久缺失"的唯一判据。
+    /// ⚠️ 复用 `mesh::missing_range`（⛔ 不在这里另写一份口径）；形状不对 ⇒ `None`（⛔ 不猜）。
+    #[test]
+    fn gap_from_signature_parses_only_real_gaps() {
+        assert_eq!(gap_from_signature("5|10"), Some(SyncGap { from: 6, to: 9 }));
+        assert_eq!(
+            gap_from_signature("0|59"),
+            Some(SyncGap { from: 1, to: 58 })
+        );
+        // 只缺 1 条也要报
+        assert_eq!(
+            gap_from_signature("9|11"),
+            Some(SyncGap { from: 10, to: 10 })
+        );
+        // 已经追上 / 对端没报 min ⇒ 不报
+        assert_eq!(gap_from_signature("9|10"), None);
+        assert_eq!(gap_from_signature("50|0"), None);
+        // 坏形状一律 None（⛔ 不猜）
+        assert_eq!(gap_from_signature("x|y"), None);
+        assert_eq!(gap_from_signature("5"), None);
+        assert_eq!(gap_from_signature("5|10|"), None);
+        assert_eq!(gap_from_signature(""), None);
+    }
+
     /// ⭐ 2026-11-11（§13 A2）：只读水位矩阵的**解析**判据 —— 只认 `mesh_cursor:<space>:<device>`，
     /// 值必须是非负整数；形状不对/不是整数 ⇒ 跳过（⛔ 不猜、不把坏值当 0 混进来）。
     #[test]
@@ -305,6 +502,32 @@ mod tests {
             vec![("dev-a".to_string(), 12), ("dev-b".to_string(), 7)],
             "只留良构且按水位降序；坏值/坏 key 跳过"
         );
+    }
+
+    /// ⭐ **2026-11-19（真机修）**：水位合并的判据 ——
+    /// ① 只认**当前空间**那一族 key（别的空间哪怕游标更大也不许混进来）；
+    /// ② 两个库（meta / 空间库）都有同一台时**取较大值**（不许旧值盖新值）；
+    /// ③ 空间 key 为空 ⇒ **一条都不返回**（⛔ 不猜"大概就是这台"）。
+    #[test]
+    fn merge_peer_cursors_scopes_to_the_space_and_keeps_the_larger_value() {
+        let meta = vec![
+            // 当前空间：dev-a 两个库里都有 → 取大的 50
+            ("mesh_cursor:sp-x:dev-a".to_string(), "50".to_string()),
+            // 别的空间：dev-b 游标 999 —— ⛔ 不许混进本空间（真机 2026-11-19 就是这么混出 1505 的）
+            ("mesh_cursor:sp-other:dev-b".to_string(), "999".to_string()),
+            ("mesh_cursor:sp-x:dev-c".to_string(), "7".to_string()),
+        ];
+        let space = vec![("mesh_cursor:sp-x:dev-a".to_string(), "12".to_string())];
+        let got = merge_peer_cursors("sp-x", &meta, &space);
+        assert_eq!(
+            got,
+            vec![("dev-a".to_string(), 50), ("dev-c".to_string(), 7)],
+            "按空间过滤＋同设备取大＋降序"
+        );
+        // 空间 key 为空 ⇒ 一条都不给（而不是"全给"或"随便给"）
+        assert!(merge_peer_cursors("", &meta, &space).is_empty());
+        // 本空间没有任何游标 ⇒ 空表（面板据此显示"还没有对端水位"）
+        assert!(merge_peer_cursors("sp-empty", &meta, &space).is_empty());
     }
 
     /// ⭐ 2026-11-12（§13 S1）：在线视角三态 —— 没有成功记录＝未知（⛔ 不冒充离线）；TTL 内＝在线。

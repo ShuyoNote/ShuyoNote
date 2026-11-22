@@ -67,7 +67,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 86 条（contract 58 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 9 / artifact 3 / deploy 1）· 能力 70 条 · 命令 Rust 308 / web 266 / CommandMap 309
+门禁 87 条（contract 59 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 9 / artifact 3 / deploy 1）· 能力 70 条 · 命令 Rust 311 / web 269 / CommandMap 312
 基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 3585 · smoke-web 365 · check-pdf-reload 8 · check-panel-layout 66 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 68 · mobile-overlays 756 · mobile-views 249 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
@@ -95,6 +95,8 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-invariants-pointers` | **规格在说一件没有的事**：标「能」的 `INV-KB-*` 指的判据**不存在**／**没进注册表**（＝不进 `pnpm verify`／CI ⇒ 等于没人跑 ✗） |
 | contract | `check-spec-judge-carriers` | **规格点名的承重渠道必须真实存在**：`nearby-devices-spec` 那族（`INV-NS-*`／`INV-NEARBY-*`／`INV-AWARE-*`）按铁律**不进 `INVARIANTS.md`**，而它点名的判据**大多不是 `check-*.mjs`**（是 Rust 单测 `mesh::tests::…` 与 vitest wiring），表也是 4/3 列 ⇒ 上一条**够不到它**（硬套只会逼人写假名字，或一行都解析不到＝假红）。本判据补这一档：① 点名的 `check-*.mjs` **必须存在且已注册**；② 点名的 `mod::tests::name` 必须在 `src-tauri/src/*.rs` 里有 **`fn <name>`（整名匹配 —— 只判前缀会假绿，变异实测抓过）**；③ **§18.1 索引表的 id 卫生**：同一个 id 不许两行都 live、被划掉（`~~`）的**必须点出取代者**（`取代/并入/改名/现名/退休`）—— 那是 `DEC-10` 那类病的机器版。⚠️ **边界**：**不扫普通路径引用**（本规格留痕很重：`src-tauri/src/nearby_invite.rs` 是已按 `0c7ad349` 删掉的、`scripts/criteria-mutations.json` 是从来没存在过的通道 ⇒ 一律"路径必须在"会误伤留痕） |
 | contract | `check-crdt-plane` | **混版本共存的地基被拆**：`content_json` 不再是 JSON（TEXT）／CRDT 状态混进它／Rust 引入 Yjs／转换或合成长出第二份实现 ⇒ **老客户端的页打不开** ✗ |
+- `check-ci-rust-groups` —— **CI 的两份 `--only` 并集必须 == 注册表 rust 组**：
+  2026-11-21 拆 job 后新增。挡「拆完没人跑」的假绿（往 rust 组加门禁时只改一处 ⇒ CI 全绿但少验一条）。
 | contract | `check-doc-facts` | 文档里的**机器事实**（门禁条数／能力条数／命令数）与代码脱节：这类数字靠人抄，抄错不报错，只会让照文档做的人做到一半发现文档是旧的。它还要求**每条门禁都在本表里有名字**（上线当天抓到 7 条漏写） |
 | contract | `check-api-surface-version` | **改接口不升 `apiVersion`**（id／kind／scope／permission 变化 ⇒ 外部程序无信号坏掉）；指纹刻意**不含 desc**（改文案不算破坏接口），`--update` 是文档化出口 |
 | contract | `check-generated-artifacts` | **生成物不自证来源 / 已标脏 / 不可重建**：逐个 `_generated/*.md` 要求「来源路径 ＋ 来源 sha256（与当前源一致）＋ 生成命令且脚本存在」；将来新增生成物**自动被管** |
@@ -505,7 +507,10 @@ JSON 报告可以直接并入基线，不用手抄数字、也不用人工算术
 ```powershell
 # 1) 让 Linux 侧跑一次 rust 组并留下报告
 #    · GitCode：手动运行 .gitcode/workflows/rust-baseline.yml → 下载 rust-report.json
-#    · GitHub：ci.yml 的 rust-tests job 已经跑 --group rust，从 artifact 里取 test-report-rust.json
+#    · GitHub：ci.yml 的 rust-tests job 跑 rust 组的**默认特性那条线**（6 条，三条有基线下限的
+#      `rust-test` / `rust-plugins-alone` / `rust-no-sm-crypto` 都在里面）⇒ 从工件 `test-report-rust`
+#      里取 test-report-rust.json；`rust-sm-wired` / `gm-registry-clean` / `check-crypto-backend`
+#      由并行的 `rust-gm-wiring` job 跑（工件 `test-report-rust-gm`，这三条没有基线下限）
 # 2) 并入（只写 tests/baseline.json 的读数值，不跑任何门禁）
 node scripts/test-report.mjs --baseline-from rust-report.json
 ```
@@ -537,6 +542,13 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   `euleros-2.10.1` **不在**白名单）；每个 step 必须有合法 `name`（字符集受限，全角逗号与加号都不行）；
   action 只能用 `actions/xxx@vN`（`checkout-action@0.0.1` 这类简写校验器报"不存在"）。
   ⚠️ 剩下的边界只是**运行时**：本机没有 GitCode runner，所以"真跑一次"仍待首次合并到默认分支后确认。
+- **rust 组现在由两个 job 并行跑**（2026-11-21 拆的，**判据一条没动**）：`rust-tests` 跑默认特性
+  那条线（`rust-test` / `check-rustfmt` / `rust-plugins-alone` / `gm-conformance` / `rust-no-sm-crypto` /
+  `check-sys-deps-linux`，外加两次 feature check 与打包自检），`rust-gm-wiring` 跑 `rust-sm-wired` /
+  `gm-registry-clean` / `check-crypto-backend`。两份 `--only` 名单**合起来＝`scripts/lib/gates.mjs` 的
+  整个 rust 组** ⇒ 加 rust 门禁时**两个 job 都要改**（否则它会静默没有 job 跑它）。
+  拆法、代价与实测分项（单 job 39.1 min 里 `rust-sm-wired` 18.1 / `rust-test` 10.3 / `no-sm-crypto` 4.4）
+  写在 `.github/workflows/ci.yml` 的 `rust-tests` job 开头 —— 那些数字取自 run #1798 的工件。
 - **随包 Rust 桥是独立 crate ⇒ rust 组碰不到它**：`tools/shuyonote-mcp-rust`（只依赖 `serde_json`）
   不在 `src-tauri` 包里，所以 rust 组的 `cargo test` 跑不到它的 8 条桥单测。它们由 `.github/workflows/ci.yml`
   的 `rust-tests` job 里一条**具名 step** 跑（`cargo test --manifest-path tools/shuyonote-mcp-rust/Cargo.toml --locked`）。

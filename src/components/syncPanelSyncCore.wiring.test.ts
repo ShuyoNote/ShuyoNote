@@ -50,6 +50,31 @@ describe("syncCoreRowText：只读状态文案矩阵", () => {
     expect(t.tone).toBe("ok");
   });
 
+  it("空闲退避读数：emptyStreak>0 ⇒ 明说空转次数与下一轮延迟（⛔ 组件不另算）", () => {
+    const t = syncCoreRowText(
+      status({
+        enabled: true,
+        running: true,
+        lastRound: { ...round, emptyStreak: 3, nextDelayMs: 40000 },
+      }),
+    );
+    expect(t.detail).toContain("空转 3 次");
+    expect(t.detail).toContain("下一轮 40 秒");
+  });
+
+  it("emptyStreak=0 ⇒ 不出现「空转」（⛔ 不把 0 说成空转）；<1s 用毫秒如实写", () => {
+    const zero = syncCoreRowText(status({ enabled: true, running: true, lastRound: round }));
+    expect(zero.detail).not.toContain("空转");
+    const fast = syncCoreRowText(
+      status({
+        enabled: true,
+        running: true,
+        lastRound: { ...round, emptyStreak: 1, nextDelayMs: 500 },
+      }),
+    );
+    expect(fast.detail).toContain("下一轮 500 ms");
+  });
+
   it("enabled＋已停止 ⇒ 已停止；没跑过则如实说「还没跑过」", () => {
     const t = syncCoreRowText(status({ enabled: true, running: false, lastRound: null }));
     expect(t.detail).toContain("已停止");

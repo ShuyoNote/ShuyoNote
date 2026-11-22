@@ -23,6 +23,8 @@ import { useNotes } from "../store/notes";
 import { shouldDropPendingSave } from "../lib/pendingSave";
 import {
   bindPageToEditorViaPort,
+  lineageClientIds,
+  lineageFingerprint,
   type AsyncPageBinding,
   type PageStatePort,
 } from "../lib/crdt/pageBinding";
@@ -518,7 +520,17 @@ function PageCrdtBinding({
 
     const port: PageStatePort = {
       read: (id) => api.readPageState(id),
-      save: (id, state) => api.savePageState(id, state),
+      save: async (id, state) => {
+        await api.savePageState(id, state);
+        // ⭐ **U4-B S1（2026-11-19）**：顺手记下"这一版写在哪条血统上"（前端算 —— Rust 侧解不了 CRDT 二进制）。
+        //   推那一侧会把它挂到载荷 `_lineage_fp`；空 ⇒ 载荷逐字节不变。
+        //   ⚠️ 失败**不许**把"保存"拖红（它只服务"冲突时能不能判"），但也不许静默。
+        try {
+          await api.setPageLineageFp(id, lineageFingerprint(lineageClientIds(state)));
+        } catch (e) {
+          console.warn("[crdt] 血统指纹没记上（下一次保存会再试）", e);
+        }
+      },
       // §11.4 收口：桌面 pull 收下的**待并远端状态**（Web 平台恒为空 —— 它当场合并）。
       readPending: (id) => api.readPendingPageStates(id),
       clearPending: (id) => api.clearPendingPageStates(id),
