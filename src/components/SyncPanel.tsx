@@ -312,6 +312,8 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   // 发现层是进程常驻的（`setup` 里就起了），面板关着就没人看这一行（少一次 IPC/秒）。
   // ⚠️ `line` 是 Rust 侧 `lan::status_line` 的**原文**，这里**只显示、不解释**（档位由 Route 决定）。
   const [lanStatus, setLanStatus] = useState<LanStatus | null>(null);
+  // ⭐ 2026-11-22：订阅态由 `LicenseSection` 回传；`false` 时把「跨网与订阅」收成一行。
+  const [crossNetSubscribed, setCrossNetSubscribed] = useState<boolean | null>(null);
   /** ⭐ P1「连接体检」（2026-11-08）：对话框开关 ＋ **本轮网格读数**。
    *  ⚠️ `lastRound` 只用来把「上一轮网格同步」那一项喂给体检（⛔ 不新增读数／⛔ 不改同步逻辑 ✗）；
    *  它就是 `syncMeshNow` 刚拿到的那个返回值 ✓。 */
@@ -3194,13 +3196,29 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                 ⭐ 而「AP 隔离／开手机热点」那句**按图搬到主视图三方段之后的虚线空框**里 ✓（⛔ 没删字 ✗）。
                 ⇒ ⭐ 这条门槛现在的对象＝ ⭐「设备直连设置」那一组（`MeshAdvancedForm` ✓）
                    ＋ 中继（`RelayStatusSection` ✓）⭐ 仍然是**个人空间也要看得到** ✓（判据 `syncPanelMesh` ② 钉着 ✓）。 */}
-            <div className="sync-subhead">跨网与订阅</div>
+            {crossNetSubscribed !== false && <div className="sync-subhead">跨网与订阅</div>}
             {isDesktopPlatform() && lanStatus && (!!activeRow || isPersonalActive) && (
               <>
+                {crossNetSubscribed === false ? (
+                  <details className="sync-row" data-testid="crossnet-collapsed">
+                    <summary>
+                      <span className="sync-row-label">跨网与订阅</span>
+                      <span className="sync-row-value">未启用 · 点开看中继与订阅</span>
+                      <span className="sync-row-caret" aria-hidden>›</span>
+                    </summary>
+                    <div className="sync-row-body">
+                      <RelayStatusSection />
+                      <LicenseSection onSubscribedChange={setCrossNetSubscribed} />
+                    </div>
+                  </details>
+                ) : (
+                  <>
                   <RelayStatusSection />
                   {/* ⭐ 2026-10-18：个人版「跨网同步订阅」的状态与续期（桌面专属 —— Web 没有本机私钥）。
                       ⚠️ 停卡那一档写的是「已停卡 · 只停了跨网」，⛔ 不许写"已过期"（判据 `license/uiText.test.ts`）。 */}
-                  <LicenseSection />
+                  <LicenseSection onSubscribedChange={setCrossNetSubscribed} />
+                  </>
+                )}
                   {/* ⭐ **U3（2026-11-12，owner 拍 ①A）**：自动重试已停止 —— **如实显示**并指向
                       **已有**手动入口（⛔ 不新造按钮/新同步路）。判据 `syncPanelAutoRetry.wiring.test.ts`。 */}
                   {lanStatus.mesh?.autoRetryStopped && (
