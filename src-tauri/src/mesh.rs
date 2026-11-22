@@ -1537,6 +1537,73 @@ fn next_round_health(prev: Option<(i64, i64)>, ok: bool, now: i64) -> (i64, i64)
     }
 }
 
+/// ⭐ **2026-11-22（S1 Phase 0）**：在线态迁移日志用的“上次已知状态”。
+/// 只在本机内存里，重启即清；⛔ 不参与任何同步/重试决策。
+static LINK_STATE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, bool>>> =
+    std::sync::OnceLock::new();
+
+fn link_state() -> &'static std::sync::Mutex<std::collections::HashMap<String, bool>> {
+    LINK_STATE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// 是否发生在线态迁移（纯函数）：首次读数算迁移；同态不重复打日志。
+fn is_link_transition(prev: Option<bool>, online: bool) -> bool {
+    prev != Some(online)
+}
+
+/// 迁移到 online/offline 时打**一行** `[link-state]`（只诊断；⛔ 不改任何行为）。
+///
+/// 用途：S1 的「对端重启/换 IP/休眠唤醒后多久恢复」今天没有埋点；这行把
+/// `round_ok` / `round_fail` 的**迁移时刻**写出来，配合 `recovered_after_ms` 就能读恢复时间。
+fn log_link_state(space_id: &str, device: &str, online: bool, now_ms: i64) {
+    let key = format!("{space_id}|{device}");
+    let prev = link_state().lock().ok().and_then(|m| m.get(&key).copied());
+    if !is_link_transition(prev, online) {
+        return;
+    }
+    if let Ok(mut m) = link_state().lock() {
+        m.insert(key, online);
+    }
+    let last_ok_ago = if online {
+        Some(0)
+    } else {
+        round_health()
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&format!("{space_id}|{device}")).copied())
+            .and_then(|(last_ok, _)| if last_ok > 0 { Some(now_ms - last_ok) } else { None })
+    };
+    let dev8: String = device.chars().take(8).collect();
+    eprintln!(
+        "[link-state] peer={dev8} online={online} last_ok_ago_ms={} cause={}",
+        last_ok_ago.map(|v| v.to_string()).unwrap_or_else(|| "unknown".to_string()),
+        if online { "round_ok" } else { "round_fail" }
+    );
+}
+
+#[cfg(test)]
+mod link_state_tests {
+    use super::is_link_transition;
+
+    #[test]
+    fn first_reading_counts_as_transition() {
+        assert!(is_link_transition(None, true));
+        assert!(is_link_transition(None, false));
+    }
+
+    #[test]
+    fn same_state_does_not_repeat() {
+        assert!(!is_link_transition(Some(true), true));
+        assert!(!is_link_transition(Some(false), false));
+    }
+
+    #[test]
+    fn flipping_state_is_a_transition() {
+        assert!(is_link_transition(Some(true), false));
+        assert!(is_link_transition(Some(false), true));
+    }
+}
+
 #[cfg(test)]
 mod round_health_state_tests {
     use super::next_round_health;
@@ -2080,6 +2147,7 @@ async fn absorb_and_report(
             let prev = m.get(&key).copied();
             m.insert(key, next_round_health(prev, true, now));
         }
+        log_link_state(space_id, &peer.device_id, true, now);
     }
     Ok(PeerPullReport {
         peer: peer.device_id.clone(),
@@ -3063,6 +3131,7 @@ async fn round_candidates_inner(
                     let prev = m.get(&key).copied();
                     m.insert(key, next_round_health(prev, false, crate::db::now_ms()));
                 }
+                log_link_state(space_id, &p.device_id, false, crate::db::now_ms());
                 // ⭐ S3：**失败的也留一行日志** —— 新出现的失败模式（每台超时）如果只写进
                 //   `PeerPullReport`，排障时又变成"只能靠界面猜"（本仓被这条咬过多次）。
                 //   ⚠️ 成功那一行**逐字未变**；这一行是**新增**的（只多不多）。
