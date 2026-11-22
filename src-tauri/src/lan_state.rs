@@ -688,6 +688,17 @@ pub const RECV_SLICE_MS: u64 = 1_000;
 static FORCE_ANNOUNCE_AT_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 static NETWATCH_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
+/// ⭐ S1 P0（2026-11-22）：睡醒/长暂停后立即补一轮的开关（默认关）。
+static HEARTBEAT_WAKE_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+fn heartbeat_wake_enabled() -> bool {
+    *HEARTBEAT_WAKE_ENABLED.get_or_init(|| {
+        crate::lan_heartbeat::wake_resync_enabled_from(
+            std::env::var("SHUYONOTE_LAN_WAKE_RESYNC").ok().as_deref(),
+        )
+    })
+}
+
 /// S2 P0 开关（env 只读一次；⛔ 拿不准一律关）。
 fn netwatch_enabled() -> bool {
     *NETWATCH_ENABLED.get_or_init(|| {
@@ -2226,6 +2237,7 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         //   ⚠️ 前端收到后**立刻重读一次** `lan_status`（5 秒轮询保留兜底 ⇒ 老构建/Web 照旧）。
         let mut last_lan_fp: String = String::new();
         // ⭐ S2 P0：netwatch 的去抖状态（env 关时这些变量只待着，不产生副作用）。
+        let mut last_tick_ms: i64 = 0;
         let mut netwatch_tick: i64 = 0;
         let mut netwatch_prev: Option<String> = None;
         let mut netwatch_pending: Option<String> = None;
@@ -2256,6 +2268,23 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     }
                 }
             }
+            // ⭐ S1 P0：睡醒/长暂停检测（只诊断 + 可选立即补一轮；默认关）。
+            let tick_gap = crate::lan_heartbeat::loop_gap_ms(last_tick_ms, now);
+            last_tick_ms = now;
+            if crate::lan_heartbeat::is_wake_gap(tick_gap, 5_000) {
+                eprintln!(
+                    "[{}] [loop-gap] gap_ms={tick_gap} ⇒ 可能刚睡醒/长暂停（⛔ 不据此断言原因）",
+                    lan::log_stamp()
+                );
+                if heartbeat_wake_enabled() {
+                    request_round_now_from_peer();
+                    eprintln!(
+                        "[{}] [wake-resync] 请求立即补一轮（env=SHUYONOTE_LAN_WAKE_RESYNC）",
+                        lan::log_stamp()
+                    );
+                }
+            }
+
             // ① 收（有超时 ⇒ "网段里没人说话"时循环照常推进，广播与腾表不会被卡住）。
             //    ⚠️ 收报走 `recv_into_within` ⇒ **解码只有一处**（`record_datagram`）。
             // ⭐ **2026-10-09（task-8）**：⭐ **四种结果各自打一行** ✓ —— 真机上「发了没」「收了没」
