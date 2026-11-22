@@ -1501,6 +1501,7 @@ pub(crate) fn metrics_line(
     ms: u128,
     recovered_after_ms: Option<i64>,
     at_ms: i64,
+    bytes: usize,
 ) -> String {
     let gap = if max_seq > 0 {
         (max_seq - since).max(0)
@@ -1511,7 +1512,7 @@ pub(crate) fn metrics_line(
         .map(|v| format!(" recovered_after_ms={v}"))
         .unwrap_or_default();
     format!(
-        "[sync-metrics] space={space} peer={peer} since={since} max_seq={max_seq} gap={gap} fetched={fetched} applied={applied} ms={ms}{rec} at_ms={at_ms}"
+        "[sync-metrics] space={space} peer={peer} since={since} max_seq={max_seq} gap={gap} fetched={fetched} applied={applied} ms={ms}{rec} at_ms={at_ms} bytes={bytes}"
     )
 }
 
@@ -2067,6 +2068,15 @@ async fn absorb_and_report(
     }
     // ── ② 吸收（**写库的唯一入口**，整轮串行调用 ⇒ 任何时刻只有一个任务在写这个空间库 ✓）
     let fetched = rows.len();
+    // ⭐ F3 Phase 0（2026-11-22）：这一批实际传输的载荷字节数（明文 + 封包）——
+    //   只进日志读数，⛔ 不参与任何调度/节流；是"带宽自适应"的前置读数。
+    let fetched_bytes: usize = rows
+        .iter()
+        .map(|r| {
+            r.payload.as_ref().map(|v| v.len()).unwrap_or(0)
+                + r.sealed.as_ref().map(|v| v.len()).unwrap_or(0)
+        })
+        .sum();
     // ⭐ 2026-10-09（task-8）：把**这一批真的换过来的条**留给 `sync_history` 的明细 ✓。
     //    ⚠️ 与服务器那条路同一口径（`sync::item_title` ✓）、同一条 dir＝`"pull"`（网格这一轮只拉 ✓）。
     let items: Vec<crate::sync::SyncItem> = rows
@@ -2148,6 +2158,7 @@ async fn absorb_and_report(
                 fetch_ms + absorb_t0.elapsed().as_millis(),
                 recovered,
                 now,
+                fetched_bytes,
             )
         );
         if let Ok(mut m) = round_health().lock() {
@@ -15807,10 +15818,12 @@ mod p0_metrics_tests {
     /// ⭐ §13 Phase 0：基线读数行可核 —— gap 有值、恢复时长只在"知道上次失败"时出现。
     #[test]
     fn metrics_line_carries_gap_and_recovery_readings() {
-        let a = metrics_line("sp", "dev", 10, 13, 2, 2, 42, Some(900), 1_700_000_000_000);
+        let a = metrics_line("sp", "dev", 10, 13, 2, 2, 42, Some(900), 1_700_000_000_000, 1024);
         assert!(a.contains("gap=3"), "{a}");
         assert!(a.contains("recovered_after_ms=900"), "{a}");
-        let b = metrics_line("sp", "dev", 10, 0, 0, 0, 5, None, 1_700_000_000_000);
+        assert!(a.contains("bytes=1024"), "{a}");
+        let b = metrics_line("sp", "dev", 10, 0, 0, 0, 5, None, 1_700_000_000_000, 0);
+        assert!(b.contains("bytes=0"), "{b}");
         assert!(
             b.contains("gap=0"),
             "对端没报高水位 ⇒ gap 记 0（⛔ 不冒充刚好齐）：{b}"

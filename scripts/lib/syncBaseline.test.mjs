@@ -574,3 +574,38 @@ describe("F3：公告扇出读数", () => {
     expect(announceSummaryText(null)).toContain("没量到");
   });
 });
+
+// ⭐ F3 Phase 0（2026-11-22）：传输字节读数（老日志没有这一列 ⇒ null，不冒充 0）。
+describe("F3：bytes 读数", () => {
+  const line = (extra = "") =>
+    `[sync-metrics] space=a peer=b since=1 max_seq=2 gap=1 fetched=1 applied=1 ms=10 at_ms=1700000000000${extra}`;
+
+  it("解析 bytes；老日志没有 ⇒ null", () => {
+    expect(parseMetricsLine(line(" bytes=1024")).bytes).toBe(1024);
+    expect(parseMetricsLine(line()).bytes).toBeNull();
+  });
+
+  it("汇总：byteRounds 只数有这一列的行，0 字节是合法读数", () => {
+    const rows = [
+      { space: "s", peer: "p", since: 0, maxSeq: 0, gap: 0, fetched: 1, applied: 1, ms: 10, recoveredAfterMs: null, atMs: 1, bytes: 0 },
+      { space: "s", peer: "p", since: 0, maxSeq: 0, gap: 0, fetched: 1, applied: 1, ms: 10, recoveredAfterMs: null, atMs: 2, bytes: 2048 },
+      { space: "s", peer: "p", since: 0, maxSeq: 0, gap: 0, fetched: 0, applied: 0, ms: 10, recoveredAfterMs: null, atMs: 3, bytes: null },
+    ];
+    const s = summarizeMetrics(rows);
+    expect(s.byteRounds).toBe(2);
+    expect(s.bytes.count).toBe(2);
+    expect(s.bytes.max).toBe(2048);
+  });
+
+  it("报告：有读数写字节分位；没有时明说没量到", () => {
+    const withBytes = summarizeMetrics([
+      { space: "s", peer: "p", since: 0, maxSeq: 0, gap: 0, fetched: 1, applied: 1, ms: 10, recoveredAfterMs: null, atMs: 1, bytes: 1024 },
+    ]);
+    expect(formatBaselineReport(withBytes)).toContain("传输字节");
+    expect(formatBaselineReport(withBytes)).toContain("1024");
+    const legacy = summarizeMetrics([
+      { space: "s", peer: "p", since: 0, maxSeq: 0, gap: 0, fetched: 1, applied: 1, ms: 10, recoveredAfterMs: null, atMs: 1, bytes: null },
+    ]);
+    expect(formatBaselineReport(legacy)).toContain("没量到（日志无 bytes 列）");
+  });
+});
