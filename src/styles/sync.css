@@ -347,6 +347,26 @@
 .sync-row-body > .sync-card + .sync-card,
 .sync-row-body > .sync-empty-state + .sync-card { margin-top: var(--space-3); }
 
+/* ⭐ 2026-11-22（owner：「展开后这些输入框/按钮铺满整行太丑」）：
+   行体里的表单改成**设置行**（标签左、控件右），⛔ 不再"标签一行 + 输入一条横条"；
+   按钮回到内容宽；多条 `.sync-field` 之间补统一间距。⚠️ 只作用于折叠行体内部。 */
+.sync-row-body > .sync-field + .sync-field { margin-top: 10px; }
+.sync-row-body .sync-field {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 360px);
+  align-items: center;
+  gap: 10px;
+}
+.sync-row-body .sync-field > label { margin: 0; }
+.sync-row-body .sync-field > .sync-input { grid-column: 2; max-width: 360px; }
+.sync-row-body .sync-field > .sync-btn,
+.sync-row-body .sync-field > .sync-mini-btn { grid-column: 2; justify-self: start; }
+.sync-row-body .sync-field > .sync-btn { min-width: 120px; }
+.sync-row-body .sync-field > .sync-hint,
+.sync-row-body .sync-field > p { grid-column: 1 / -1; }
+/* 端口这一格是短数字：单独再窄一点（id 稳定，界面只此一处） */
+#sync-mesh-port { max-width: 180px; }
+
 /* ── ★ 2026-09-29（丙档「设备直连」）：三样新东西的样式 ─────────────────────────────
    口径（本档的落地要求）：**只用既有变量**（`--border` / `--card-bg` / `--text-dim` /
    `--text-faint` / `--radius-md` / `--accent` / `--text`），**不引入任何新色值**。
