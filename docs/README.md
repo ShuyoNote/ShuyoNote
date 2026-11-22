@@ -362,6 +362,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-11-19-u4b-lineage-in-payload.md](plans/2026-11-19-u4b-lineage-in-payload.md) | ⭐ **U4-B 方案（2026-11-19）**：把「血统指纹」带进同步载荷 —— 冲突时**不许先覆盖本机那版**（现状：LWW 先覆盖、横幅再问，原样保留 那句在真机上不成立）。含载荷改法／四格判定／四片落地／两机验证配方／风险 |
 | [plans/2026-11-20-f2-anti-entropy-design.md](plans/2026-11-20-f2-anti-entropy-design.md) | ⭐ **F2 反熵设计稿（2026-11-20，含「要不要做」的判断）**：真实理由是**锁着空间的密封镜像只有 7 天** ＋ **静默**（pull 回复没有「最老还有哪条」）⇒ 离线/未解锁超 7 天会**永久丢段且无人知道**；⚠️ 订正：不是「多台对齐慢」（跳过只迟到不丢）。落地顺序 F2-0 加 `min_seq` 只报不修 → F2-1 保留期挂钩 → **F2-2 段清单/定向补齐暂缓** |
 | [plans/2026-11-22-a1-grayscale-recommendation.md](plans/2026-11-22-a1-grayscale-recommendation.md) | ⭐ **A1 块级合并灰度 —— 建议（草案，待 2026-11-25 拍）**：先纠正「没有合并开关」；G0 实现→G1 自用（3 天）→G2 单空间→G3 默认；回滚不迁数据；明确停止条件与观测指标；11-25 只拍「是否开工/批次」 |
+| [plans/2026-11-22-s2-s1-recovery-acceptance.md](plans/2026-11-22-s2-s1-recovery-acceptance.md) | ⭐ **S2 换网 / S1 唤醒恢复 —— 真机验收操作单（待执行）**：前置（两台设 env 重启）、换网/唤醒步骤、记录格式、停止条件、回滚；目标换网 ≤30s、唤醒 ≤15s；需 owner 双手 |
 | [plans/2026-11-08-personal-sync-2.0-p3-adr.md](plans/2026-11-08-personal-sync-2.0-p3-adr.md) | ⭐ **个人版同步 2.0 P3 落地 ADR（草案；DEC-A..E 已按推荐拍板 A）**：daemon 两段式/DB 单写者/回环 IPC/托盘/升级；lan-quic feature 拆分、单 iroh 端点、UDP 公告带 quic_addrs、HTTP 退出 C1–C4；CRDT 影子闸/space_uid/不首刀清单；MCP 无 UI 危险写三档；阶段判据、R1–R8 与不建议清单 |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
