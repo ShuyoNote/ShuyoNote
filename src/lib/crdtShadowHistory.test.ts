@@ -30,6 +30,9 @@ const rec = (date: string, differ = 0): ShadowDayRecord => ({
   equal: 3 - differ,
   differ,
   uncomparable: 0,
+  // ⭐ 2026-11-22：新记录一律带分类列；旧格式的用例显式把它们删掉来构造。
+  differPending: 0,
+  differUnexplained: differ,
 });
 
 const at = (y: number, m: number, d: number) => new Date(y, m - 1, d, 12, 0, 0);
@@ -187,5 +190,44 @@ describe("crdtShadowHistory：摘要", () => {
     expect(text).not.toContain("differPageIds");
     expect(text).not.toContain("content");
     expect(dayRecordFromSummary(rows({ total: 1 }), at(2026, 11, 9)).date).toBe("2026-11-09");
+  });
+});
+
+// ⭐ 2026-11-22（owner 拍 B 后补的机器判据）：缺分类列的记录 ⇒ 不可归类、不计入有效日。
+describe("crdtShadowHistory：分类列缺失（2026-11-22 起）", () => {
+  it("解析时保留差异分类两列（此前被丢掉的回归）", () => {
+    const parsed = parseShadowHistory(
+      JSON.stringify([
+        { date: "2026-11-22", total: 3, withState: 3, equal: 2, differ: 1, uncomparable: 0, differPending: 1, differUnexplained: 0 },
+      ]),
+    );
+    expect(parsed.records[0]).toMatchObject({
+      differPending: 1,
+      differUnexplained: 0,
+    });
+  });
+
+  it("起始日之后缺分类列 ⇒ schemaOutdated，不计入；起始日之前缺列仍有效（不追溯）", () => {
+    const before = { ...rec("2026-11-21", 1) } as ShadowDayRecord;
+    delete before.differPending;
+    delete before.differUnexplained;
+    const after = { ...rec("2026-11-22", 1) } as ShadowDayRecord;
+    delete after.differPending;
+    delete after.differUnexplained;
+
+    const s = summarizeShadowHistory([before, after]);
+    expect(s.days, "11-21 不追溯、11-22 缺列不计入").toBe(1);
+    expect(s.schemaOutdatedDays).toBe(1);
+    expect(s.schemaOutdatedDates).toEqual(["2026-11-22"]);
+    expect(s.text).toContain("1 天记录格式旧");
+    expect(shadowHistoryCopyText(s)).toContain("记录格式旧·不计入：2026-11-22");
+  });
+
+  it("起始日之后带分类列 ⇒ 正常计入（11-22 的真实形态）", () => {
+    const s = summarizeShadowHistory([rec("2026-11-22", 1)]);
+    expect(s.days).toBe(1);
+    expect(s.schemaOutdatedDays).toBe(0);
+    expect(s.differDays).toBe(1);
+    expect(s.text).not.toContain("记录格式旧");
   });
 });

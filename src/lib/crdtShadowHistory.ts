@@ -24,6 +24,29 @@ export const SHADOW_HISTORY_DAYS = 7;
  */
 export const SHADOW_VALID_FROM_DATE = "2026-11-14";
 
+/**
+ * ⭐ **2026-11-22（owner 拍 B 后补的机器判据）**：**从这一天起**，一天的记录必须带
+ * `differPending` 与 `differUnexplained` 两列；缺失 ⇒ 判「记录格式旧、不可归类」，
+ * **不计入有效日**（⛔ 不补造、不按 0 处理）。
+ *
+ * 为什么是 11-22：11-20/11-21 那两天的记录**确实丢过这两列** —— 根因是 `parseShadowHistory`
+ * 只回读了 6 个计数字段、把可选分类字段丢了，随后 `recordShadowDay` 再把整份历史写回时
+ * 这两列就永久消失（本文件同日修掉：解析时保留它们）。11-22 起写入/回读都带分类字段，
+ * 所以拿它当"必须带分类"的起点；更早的日子按 owner 已接受的书面解释（U4-B T-B 测试页）处理，
+ * 不在这里追溯判无效。
+ */
+export const SHADOW_CLASSIFY_FROM_DATE = "2026-11-22";
+
+/** 一条记录的分类字段是否齐全（两者都必须是合法计数）。 */
+export function isClassificationComplete(r: ShadowDayRecord): boolean {
+  return (
+    typeof r.differPending === "number" &&
+    typeof r.differUnexplained === "number" &&
+    Number.isFinite(r.differPending) &&
+    Number.isFinite(r.differUnexplained)
+  );
+}
+
 
 export interface ShadowDayRecord {
   date: string;
@@ -134,6 +157,10 @@ export function parseShadowHistory(raw: string | null | undefined): ShadowHistor
       equal: r.equal,
       differ: r.differ,
       uncomparable: r.uncomparable,
+      // ⭐ 2026-11-22 修：**保留**可选分类字段。原先这里只回读 6 个计数 ⇒ 历史被写回时
+      //   两列永久丢失（11-20/21 的"未分类"就是这么来的）。缺字段仍保持 undefined。
+      ...(typeof r.differPending === "number" ? { differPending: r.differPending } : {}),
+      ...(typeof r.differUnexplained === "number" ? { differUnexplained: r.differUnexplained } : {}),
     });
   }
   return { records, dropped: reasons.length, reasons };
@@ -169,6 +196,9 @@ export interface ShadowHistorySummary {
   lastDifferDate: string | null;
   /** ⭐ **2026-11-19**：`SHADOW_VALID_FROM_DATE` 之前的记录天数（**作废、不计入**；记录本身不删）。 */
   voidedDays: number;
+  /** ⭐ 2026-11-22：记录格式旧（缺分类列、不可归类）而被剔除的天数（⛔ 不补造、不按 0 算）。 */
+  schemaOutdatedDays: number;
+  schemaOutdatedDates: string[];
   text: string;
   tone: ShadowHistoryTone;
 }
@@ -186,6 +216,8 @@ export function summarizeShadowHistory(
       differDays: 0,
       lastDifferDate: null,
       voidedDays: 0,
+      schemaOutdatedDays: 0,
+      schemaOutdatedDates: [],
       text: "未知（历史读不出来或格式坏了）",
       tone: "muted",
     };
@@ -195,8 +227,15 @@ export function summarizeShadowHistory(
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(-SHADOW_HISTORY_DAYS);
   // ⭐ 2026-11-19（owner 拍）：口径修好（2026-11-14）之前的记录**作废** —— 只从"计入"里去掉，记录不删。
-  const valid = clean.filter((r) => r.date >= SHADOW_VALID_FROM_DATE);
-  const voidedDays = clean.length - valid.length;
+  const validFrom = clean.filter((r) => r.date >= SHADOW_VALID_FROM_DATE);
+  const voidedDays = clean.length - validFrom.length;
+  // ⭐ 2026-11-22（owner 拍 B 后）：从 SHADOW_CLASSIFY_FROM_DATE 起，缺分类列的记录**不可归类** ⇒ 不计入。
+  const outdated = validFrom.filter(
+    (r) => r.date >= SHADOW_CLASSIFY_FROM_DATE && !isClassificationComplete(r),
+  );
+  const valid = validFrom.filter((r) => !outdated.includes(r));
+  const schemaOutdatedDays = outdated.length;
+  const schemaOutdatedDates = outdated.map((r) => r.date);
   if (valid.length === 0) {
     return {
       days: 0,
@@ -206,9 +245,11 @@ export function summarizeShadowHistory(
       differDays: 0,
       lastDifferDate: null,
       voidedDays,
+      schemaOutdatedDays,
+      schemaOutdatedDates,
       text:
-        voidedDays > 0
-          ? `无有效记录（另有 ${voidedDays} 天是 2026-11-14 之前的作废数据，不计入）`
+        voidedDays > 0 || schemaOutdatedDays > 0
+          ? `无有效记录（另有 ${voidedDays} 天作废${schemaOutdatedDays > 0 ? `、${schemaOutdatedDays} 天记录格式旧` : ""}，不计入）`
           : "无记录（还没跑过影子扫描）",
       tone: "muted",
     };
@@ -216,7 +257,11 @@ export function summarizeShadowHistory(
   const last = valid[valid.length - 1];
   const differ = valid.filter((r) => r.differ > 0);
   const lastDifferDate = differ.length ? differ[differ.length - 1].date : null;
-  const voidedNote = voidedDays > 0 ? `（另有 ${voidedDays} 天作废·不计入）` : "";
+  const notes = [
+    voidedDays > 0 ? `${voidedDays} 天作废` : "",
+    schemaOutdatedDays > 0 ? `${schemaOutdatedDays} 天记录格式旧` : "",
+  ].filter(Boolean);
+  const voidedNote = notes.length ? `（另有 ${notes.join("、")}·不计入）` : "";
   const text =
     differ.length === 0
       ? `最近 ${valid.length} 天无差异 / 最近 ${last.date}${voidedNote}`
@@ -229,6 +274,8 @@ export function summarizeShadowHistory(
     differDays: differ.length,
     lastDifferDate,
     voidedDays,
+    schemaOutdatedDays,
+    schemaOutdatedDates,
     text,
     tone: differ.length > 0 ? "warn" : "ok",
   };
@@ -242,6 +289,12 @@ export function shadowHistoryCopyText(summary: ShadowHistorySummary): string {
     ...(summary.last
       ? [
           `最近一次：${summary.last.date} 总 ${summary.last.total} / 有状态 ${summary.last.withState} / 一致 ${summary.last.equal} / 差异 ${summary.last.differ} / 不可比 ${summary.last.uncomparable}`,
+        ]
+      : []),
+    // ⭐ 2026-11-22：记录格式旧的日子单列，别让人以为"没差异"或"有差异"。
+    ...(summary.schemaOutdatedDays > 0
+      ? [
+          `记录格式旧·不计入：${summary.schemaOutdatedDates.join(" / ")}（缺分类列；⛔ 不补造）`,
         ]
       : []),
   ].join("\n");
