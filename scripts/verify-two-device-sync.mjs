@@ -807,6 +807,7 @@ async function main() {
     const seen = [];
     setCrdtRemoteApplier((db, pageId, state) => {
       seen.push({ pageId, bytes: Array.from(state) });
+      return true; // applier 现在返回 boolean；false 会被平台层当成没并成而 stash
       // 真实现是 `mergeRemotePageState(db, pageId, state, Date.now())`（在应用里由 `main.tsx` 注册）。
       // 本脚本只验**这一段**是通的；"合得对不对"归 vitest 那三条判据。
     });
@@ -844,7 +845,7 @@ async function main() {
     ok(seen.length === 1, `O: ★ 版本不认识 ⇒ 也**不**交给落地实现（仍 ${seen.length} 次；内容按今天那条路落库）`);
     ok(getRow(NA, PO3)?.title === "带 CRDT 状态的页", "O: 不认识的版本**不阻塞**主路径（页面照常落库）");
 
-    setCrdtRemoteApplier(() => {}); // 收尾：别把记录器留给后面的场景
+    setCrdtRemoteApplier(() => true); // 收尾：别把记录器留给后面的场景
   }
 
   // =========== 汇总 ===========

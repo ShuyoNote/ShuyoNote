@@ -651,3 +651,25 @@ node docs/plans/personal-sync-2.0-mockups/render.mjs      # 需要 Edge（路径
 ④ 看最后日志：_tmp/scratch/dev-*.log.err 尾巴（公告/metrics/错误行）
 ⑤ 继续 §3 的 #1（F1 端到端验证）或按 owner 指定顺序
 ```
+
+## 9. 2.x 进展（2026-11-22，owner「尽快接近全部」）
+
+```text
+路线图：docs/plans/2026-11-22-sync2x-fast-roadmap.md（4 周可滚动）
+A1 G0 设计：docs/plans/2026-11-22-a1-g0-design.md
+U3/U4 操作单：docs/plans/2026-11-22-u3-u4-real-machine-sheets.md（待执行）
+
+已落（默认关/可回滚，零行为或 kill switch）：
+· S1 心跳纯函数 ＋ 睡醒/长暂停 [loop-gap]；SHUYONOTE_LAN_WAKE_RESYNC=1 才补一轮
+· F3 bytes 读数（[sync-metrics] bytes=；基线报告「传输字节」段）
+· F3 公告扇出节流：SHUYONOTE_LAN_FANOUT_THROTTLE=1；空闲轮对端单播每 2 轮一次
+· A1 G0：VITE_CRDT_A1=0 关自动合并（默认开＝现行为）；合并失败保本机 + toast
+· A1 影子扫描：src/lib/crdt/a1ShadowScan.test.ts（默认 skip；A1_SHADOW_SCAN=1）
+
+读数（不宣称完成）：
+· F3 节流开启 63 轮：目标数 p50 6/轮（基线 7/轮），成功 100%，失败 0；dirty 轮仍 7
+· A1 首扫 119 处投影不一致 ⇒ 归因 blockRev/direction 元数据；内容级重扫 0；
+  仍 NOT_VERIFIED（1 个加密空间读不到 + pending 队列在动），灰度需 7 天稳定窗口
+· S1 唤醒：只有诊断接线；真机断连 ≥90s 的读数仍未取
+```
+

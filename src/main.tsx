@@ -51,6 +51,8 @@ setCrdtRemoteApplier((db, pageId, state) => {
   if (res.mergeFailed) {
     toast("这一页的自动合并没有完成，已保留本机版本；可重试，或改用「另存为新页 / 保留本地」。", "error");
   }
+  // 返回是否真的合并/采用：false ⇒ 平台层会把远端那一版继续留在待并队列（⛔ 不静默丢）。
+  return !res.mergeFailed && !res.disabled;
 });
 
 // The lazily-loaded @excalidraw/excalidraw bundle reads `process.env.NODE_ENV` at
