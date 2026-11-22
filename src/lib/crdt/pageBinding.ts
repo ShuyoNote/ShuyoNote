@@ -191,6 +191,19 @@ export interface MergedRemoteState {
  */
 export { a1AutoMergeEnabledFrom };
 
+/** A1 G0：合并失败留一条本地痕（最多 20 条；⛔ 不写库、不迁移；DB 持久化留 G1）。 */
+function recordA1Failure(pageId: string, error: unknown): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    const key = "shuyonote:a1-merge-failures";
+    const prev = JSON.parse(localStorage.getItem(key) ?? "[]") as unknown[];
+    prev.push({ pageId, at: new Date().toISOString(), error: String(error).slice(0, 300) });
+    localStorage.setItem(key, JSON.stringify(prev.slice(-20)));
+  } catch {
+    // 留痕失败不许影响主路径（页面已经保本机了）。
+  }
+}
+
 export function mergeRemotePageState(
   db: ContentSql,
   pageId: string,
@@ -261,6 +274,7 @@ export function mergeRemotePageState(
   } catch (err) {
     // A1 G0：合并异常 ⇒ **保本机**（不写坏状态、不丢远端；由调用方提示可重试）。
     console.error(`[a1] 自动合并失败，保留本机版本 page=${pageId}`, err);
+    recordA1Failure(pageId, err);
     return { adopted: false, state: mine, derivedStale: false, mergeFailed: true };
   } finally {
     session.dispose();

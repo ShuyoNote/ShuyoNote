@@ -212,6 +212,44 @@ function scanSpace(dbPath: string) {
     }
   }
 
+  // ⭐ 审查 P1-4：**没有 pending 的页也要比投影**（否则“状态陈旧”会被判成安全）。
+  const pendingPages = new Set(pending.map((p) => p.page_id));
+  for (const [pageId, mine] of local) {
+    if (pendingPages.has(pageId)) continue;
+    const page = pageById.get(pageId);
+    if (!page) continue;
+    let mineJson: string;
+    try {
+      mineJson = projectStateToJson(mine);
+    } catch (e) {
+      add(pageId, "exception", `本机状态投影失败（无 pending）：${String(e)}`);
+      continue;
+    }
+    if (isDeepStrictEqual(norm(mineJson), norm(page.content_json))) continue;
+    let metaOnly = false;
+    let dirOnly = false;
+    try {
+      const a = stripVolatile(mineJson);
+      const b = stripVolatile(page.content_json);
+      metaOnly = isDeepStrictEqual(a, b);
+      dirOnly = isDeepStrictEqual(stripDirection(a), stripDirection(b));
+    } catch {
+      metaOnly = false;
+      dirOnly = false;
+    }
+    add(
+      pageId,
+      dirOnly
+        ? "projection_direction"
+        : metaOnly
+          ? "projection_meta_only"
+          : page.text_stale === 1
+            ? "projection_stale"
+            : "projection_mismatch",
+      "无 pending" + (dirOnly ? "（仅 direction）" : metaOnly ? "（仅 blockRev 等元数据）" : ""),
+    );
+  }
+
   return { space, pages: pages.length, pageWithCrdt: local.size, pending: pending.length, totals, samples };
 }
 
