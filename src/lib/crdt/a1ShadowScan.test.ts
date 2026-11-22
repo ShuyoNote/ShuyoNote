@@ -22,6 +22,7 @@ type Cat =
   | "merged_more_blocks"
   | "merged_fewer_blocks"
   | "projection_mismatch"
+  | "projection_meta_only"
   | "projection_stale"
   | "lineage_incompatible"
   | "exception";
@@ -41,6 +42,22 @@ function blockCount(json: string): number {
   } catch {
     return -1;
   }
+}
+
+/** 只比“内容”：`blockRev` 是编辑次数元数据，CRDT 状态投影与本地内容列会差它。 */
+function stripVolatile(json: string): unknown {
+  const o = JSON.parse(json);
+  const walk = (v: unknown) => {
+    if (Array.isArray(v)) {
+      for (const x of v) walk(x);
+    } else if (v && typeof v === "object") {
+      delete (v as Record<string, unknown>).blockRev;
+      delete (v as Record<string, unknown>).direction;
+      for (const x of Object.values(v as Record<string, unknown>)) walk(x);
+    }
+  };
+  walk(o);
+  return o;
 }
 
 function norm(json: string): unknown {
@@ -70,6 +87,7 @@ function scanSpace(dbPath: string) {
     merged_more_blocks: 0,
     merged_fewer_blocks: 0,
     projection_mismatch: 0,
+    projection_meta_only: 0,
     projection_stale: 0,
     lineage_incompatible: 0,
     exception: 0,
@@ -145,10 +163,16 @@ function scanSpace(dbPath: string) {
 
     const stored = norm(page.content_json);
     if (!isDeepStrictEqual(norm(mineJson), stored)) {
+      let metaOnly = false;
+      try {
+        metaOnly = isDeepStrictEqual(stripVolatile(mineJson), stripVolatile(page.content_json));
+      } catch {
+        metaOnly = false;
+      }
       add(
         row.page_id,
-        page.text_stale === 1 ? "projection_stale" : "projection_mismatch",
-        `seq=${row.seq} 本机状态投影≠pages.content_json`,
+        metaOnly ? "projection_meta_only" : page.text_stale === 1 ? "projection_stale" : "projection_mismatch",
+        `seq=${row.seq} 本机状态投影≠pages.content_json${metaOnly ? "（仅 blockRev 等元数据）" : ""}`,
       );
     }
   }
@@ -183,6 +207,7 @@ describe.skipIf(!RUN)("A1 影子扫描（只读）", () => {
         merged_more_blocks: sum("merged_more_blocks"),
         merged_fewer_blocks: sum("merged_fewer_blocks"),
         projection_mismatch: sum("projection_mismatch"),
+        projection_meta_only: sum("projection_meta_only"),
         projection_stale: sum("projection_stale"),
         lineage_incompatible: sum("lineage_incompatible"),
         exception: sum("exception"),
