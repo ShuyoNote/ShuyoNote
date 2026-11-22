@@ -221,12 +221,12 @@
 .sync-subhead:first-child { margin-top: 2px; }
 
 /* 二级折叠（「诊断（只读）」「怎么读这张图」）：比行更轻，⛔ 不套外框（否则盒中盒） */
-.sync-sub-fold { margin: 2px 0 4px; }
+.sync-sub-fold { margin: 2px 0 var(--space-1); }
 .sync-sub-fold > summary {
   cursor: pointer;
   color: var(--text-dim);
   font-size: var(--fs-11-5);
-  padding: 4px 2px;
+  padding: var(--space-1) 2px;
   list-style: none;
 }
 .sync-sub-fold > summary::-webkit-details-marker { display: none; }
