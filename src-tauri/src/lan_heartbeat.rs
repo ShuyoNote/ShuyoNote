@@ -50,6 +50,28 @@ pub fn backoff_after_fail(fails: u32) -> i64 {
     ms.min(300_000)
 }
 
+/// 两次循环 tick 的间隔（毫秒）：时钟回拨/首次 ⇒ 0（⛔ 不出负数，避免假 wake）。
+pub fn loop_gap_ms(last_tick_ms: i64, now_ms: i64) -> i64 {
+    if last_tick_ms <= 0 || now_ms < last_tick_ms {
+        0
+    } else {
+        now_ms - last_tick_ms
+    }
+}
+
+/// 是否算“睡醒/长暂停”：间隔 ≥ 阈值（默认 5s；1s 切片远小于它）。
+pub fn is_wake_gap(gap_ms: i64, threshold_ms: i64) -> bool {
+    gap_ms >= threshold_ms.max(0)
+}
+
+/// 唤醒后立即补一轮的开关：只有显式 `1/true/on` 才开（默认关）。
+pub fn wake_resync_enabled_from(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1") | Some("true") | Some("on")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,6 +96,25 @@ mod tests {
         assert!(probe_due(10_000, 20_000, 10_000));
         assert!(!probe_due(10_000, 19_999, 10_000));
         assert!(!probe_due(10_000, 9_000, 10_000), "时钟回拨不探");
+    }
+
+    #[test]
+    fn loop_gap_handles_first_tick_and_clock_rollback() {
+        assert_eq!(loop_gap_ms(0, 100_000), 0, "首次不算 gap");
+        assert_eq!(loop_gap_ms(100_000, 99_000), 0, "时钟回拨不出负数");
+        assert_eq!(loop_gap_ms(100_000, 107_500), 7_500);
+    }
+
+    #[test]
+    fn wake_gap_threshold_and_env_gate() {
+        assert!(!is_wake_gap(4_999, 5_000));
+        assert!(is_wake_gap(5_000, 5_000));
+        for v in [Some("1"), Some("true"), Some("ON"), Some(" on ")] {
+            assert!(wake_resync_enabled_from(v), "应打开：{v:?}");
+        }
+        for v in [None, Some("0"), Some("false"), Some("off"), Some("")] {
+            assert!(!wake_resync_enabled_from(v), "应关闭：{v:?}");
+        }
     }
 
     #[test]
