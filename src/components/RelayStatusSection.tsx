@@ -125,7 +125,7 @@ export function RelayStatusSection() {
         {/* ⚠️ 这句只许陈述事实：⛔ 不承诺功能、⛔ 不写"请配置"（全仓没有写入者能建那份配置 ⇒
             用户在界面上做不到 ✗）；判据：`relayStatus.test.ts` ④（那条正则钉的就是上面这句 ✓）。 */}
         <div className="sync-att">
-          <button className="sync-btn" disabled={busy} onClick={() => void recheck()}>
+          <button className="sync-mini-btn" disabled={busy} onClick={() => void recheck()}>
             {busy ? "正在检查…" : "重新检查"}
           </button>
         </div>

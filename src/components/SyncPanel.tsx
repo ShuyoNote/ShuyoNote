@@ -2575,6 +2575,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                  ⚠️ 保留在 footer 的 `.sync-lan` 是【读数行】，按上面那条口径**允许**留在常驻区。
                  ⚠️ 本笔只搬位置，**一个字都不改**（文案是另一条不变式的事）。 */}
 
+              <div className="sync-subhead">连接与配对</div>
               {/* ① 同步方式 ← 原来的 `.sync-auto` ＋ `.sync-auto-hint`
                   （还是同一个 <select>、同一句 `syncModeHint`；行头那颗字是它的 `<label>`） */}
               <details className="sync-row">
@@ -2706,6 +2707,24 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                 </details>
               )}
 
+              {/* ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：**永久缺失**。
+                  只在**真有缺口**时出现（没有 ⇒ 整行不渲染，⛔ 不显示"0 条"这种噪音）；
+                  ⛔ 不提供"修复/重试"按钮：这段本来就补不回来（只能全量重同步或从备份恢复）。
+                  ⚠️ 它**不进**下面的「诊断（只读）」折叠 —— 报警必须一眼看到。 */}
+              {gapNoticeText(syncGaps) && (
+                <div className="sync-device-name" data-testid="sync-permanent-gap">
+                  <span
+                    className="sync-hint"
+                    style={{ flex: "1 1 auto", minWidth: 0, color: "var(--warn, #b45309)" }}
+                    data-testid="sync-permanent-gap-text"
+                  >
+                    {gapNoticeText(syncGaps)}
+                  </span>
+                </div>
+              )}
+
+              <details className="sync-sub-fold" data-testid="sync-diagnostics-fold">
+                <summary>诊断（只读）</summary>
               {/* ⭐ P3-1a 第四刀（task-57）：**只读**「同步核心」状态行（高级区；桌面）。
                   默认 Core 不启动 ⇒ 显示「未启用」；读不出 ⇒ unknown（⛔ 不假装）。
                   ⚠️ 本版**不提供开关**（不从这里启用）。 */}
@@ -2729,21 +2748,6 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                       : syncCoreRowText(coreStatus).tone === "warn"
                         ? "○"
                         : "—"}
-                  </span>
-                </div>
-              )}
-
-              {/* ⭐ 2026-11-20（owner 拍「让报警出现在界面上」）：**永久缺失**。
-                  只在**真有缺口**时出现（没有 ⇒ 整行不渲染，⛔ 不显示"0 条"这种噪音）；
-                  ⛔ 不提供"修复/重试"按钮：这段本来就补不回来（只能全量重同步或从备份恢复）。 */}
-              {gapNoticeText(syncGaps) && (
-                <div className="sync-device-name" data-testid="sync-permanent-gap">
-                  <span
-                    className="sync-hint"
-                    style={{ flex: "1 1 auto", minWidth: 0, color: "var(--warn, #b45309)" }}
-                    data-testid="sync-permanent-gap-text"
-                  >
-                    {gapNoticeText(syncGaps)}
                   </span>
                 </div>
               )}
@@ -2831,6 +2835,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                   </div>
                 </details>
               )}
+              </details>
 
               {isPersonalActive && isDesktopPlatform() && (
                 <>
@@ -2935,6 +2940,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
           <div className="sync-group is-advanced">
 
 
+            <div className="sync-subhead">数据健康（只读）</div>
             {/* ⭐ **§13.6 O1（2026-11-18，owner 拍「在面板上真画出来」）**：多设备同步图。
                 一眼要能看出「哪条边断了」—— 每台一行，词只有四个：已齐 / 落后 / 断了 / 未知。
                 ⚠️ 状态与读数**全部**来自 `meshSyncGraph()` ＋ `syncGraphRows()`（纯函数，有判据）；
@@ -2973,13 +2979,16 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                       <span className="mesh-sync-graph-detail">：{r.detail}</span>
                     </div>
                   ))}
-                  <div className="sync-hint" style={{ marginTop: 4 }}>
-                    词的意思：已齐＝对方收到了我这里的全部改动；落后＝还差几条；断了＝它离线或没在同步；
-                    未知＝还没有成功记录（⛔ 不当作离线）。
-                  </div>
-                  <div className="sync-hint" style={{ marginTop: 4 }}>
-                    ⚠️ 这张图只看得到 <b>当前空间</b>；每个空间 × 每台设备的全图要另加只读读数（见交接单）。
-                  </div>
+                  <details className="sync-sub-fold" data-testid="mesh-sync-graph-legend">
+                    <summary>怎么读这张图</summary>
+                    <div className="sync-hint" style={{ marginTop: 4 }}>
+                      词的意思：已齐＝对方收到了我这里的全部改动；落后＝还差几条；断了＝它离线或没在同步；
+                      未知＝还没有成功记录（⛔ 不当作离线）。
+                    </div>
+                    <div className="sync-hint" style={{ marginTop: 4 }}>
+                      ⚠️ 这张图只看得到 <b>当前空间</b>；每个空间 × 每台设备的全图要另加只读读数（见交接单）。
+                    </div>
+                  </details>
                 </div>
               </details>
             )}
@@ -3185,6 +3194,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                 ⭐ 而「AP 隔离／开手机热点」那句**按图搬到主视图三方段之后的虚线空框**里 ✓（⛔ 没删字 ✗）。
                 ⇒ ⭐ 这条门槛现在的对象＝ ⭐「设备直连设置」那一组（`MeshAdvancedForm` ✓）
                    ＋ 中继（`RelayStatusSection` ✓）⭐ 仍然是**个人空间也要看得到** ✓（判据 `syncPanelMesh` ② 钉着 ✓）。 */}
+            <div className="sync-subhead">跨网与订阅</div>
             {isDesktopPlatform() && lanStatus && (!!activeRow || isPersonalActive) && (
               <>
                   <RelayStatusSection />

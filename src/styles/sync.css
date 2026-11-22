@@ -209,6 +209,30 @@
   margin-left: 2px;
 }
 
+/* ⭐ 2026-11-22（owner：「高级里 14 行权重一样」）：**组内小标题 ＋ 二级只读折叠**。
+   只加分组/包裹，⛔ 不动行内容与 testid —— 既有 wiring 判据照旧能匹配。 */
+.sync-subhead {
+  margin: 10px 0 2px;
+  font-size: var(--fs-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.sync-subhead:first-child { margin-top: 2px; }
+
+/* 二级折叠（「诊断（只读）」「怎么读这张图」）：比行更轻，⛔ 不套外框（否则盒中盒） */
+.sync-sub-fold { margin: 2px 0 4px; }
+.sync-sub-fold > summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: var(--fs-11-5);
+  padding: 4px 2px;
+  list-style: none;
+}
+.sync-sub-fold > summary::-webkit-details-marker { display: none; }
+.sync-sub-fold > summary::before { content: "▸ "; }
+.sync-sub-fold[open] > summary::before { content: "▾ "; }
+
 /* ⚠️ 【进阶】那一组是 `.sync-profiles` 的**兄弟**（不是孩子）—— `SpacePrivacySection`
    不能进 `.sync-profiles`（Web 档 `is-disabled` ⇒ 变灰且点不动）⇒ 它在外面，就得自己
    对齐那 16px（`.sync-profiles` 的横向内边距）。 */
