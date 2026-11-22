@@ -239,10 +239,22 @@ export function syncCoreRowText(
   }
   const last = status.lastRound;
   const lastText = last
-    ? `｜上一轮：服务端 ${last.serverSpaces} 个空间（失败 ${last.serverErrors}）· 网格 ${last.meshSpaces} 个空间（收下 ${last.meshApplied} 条）`
+    ? `｜上一轮：服务端 ${last.serverSpaces} 个空间（失败 ${last.serverErrors}）· 网格 ${last.meshSpaces} 个空间（收下 ${last.meshApplied} 条）` +
+      idleBackoffText(last)
     : "｜还没跑过";
   const state = status.running ? "运行中" : "已停止";
   return { detail: `${state}${lastText}`, tone: status.running ? "ok" : "warn" };
+}
+
+/**
+ * ⭐ §13.3 F3：把**已经在载荷里**的空闲退避读数摆出来（⛔ 不在这里另算节拍）。
+ * `emptyStreak=0` ⇒ 不加任何字；读不到（unknown）由上层提前返回。
+ */
+function idleBackoffText(last: NonNullable<SyncCoreStatus["lastRound"]>): string {
+  if (last.emptyStreak <= 0) return "";
+  const delay =
+    last.nextDelayMs >= 1000 ? `${Math.round(last.nextDelayMs / 1000)} 秒` : `${last.nextDelayMs} ms`;
+  return `｜空转 ${last.emptyStreak} 次 ⇒ 下一轮 ${delay}`;
 }
 
 export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {}) {
