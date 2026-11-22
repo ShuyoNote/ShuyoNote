@@ -626,6 +626,19 @@ function cadenceText(c) {
   );
 }
 
+/** 字节数 → 人话（⛔ 不要拿 percText 的 ms 口径套 bytes）。 */
+function humanBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** @param {PercStats|null} s @param {number} rounds */
+function byteText(s, rounds) {
+  if (!s || rounds === 0) return "没量到（日志无 bytes 列）";
+  return `p50 ${humanBytes(s.p50)} · p95 ${humanBytes(s.p95)} · max ${humanBytes(s.max)}（${rounds} 轮有读数；0 B 合法）`;
+}
+
 /** @param {LatencySegment[]} segments */
 function segmentLines(segments) {
   if (segments.length === 0) {
@@ -736,7 +749,7 @@ export function formatBaselineReport(s, title = "个人版同步 2.0 · Phase 0 
   lines.push(
     `轮数：${s.rounds} 条（跳过/可疑 ${s.skipped} 条）`,
     `单轮拉取耗时：${percText(s.latency)}`,
-    `传输字节（F3 带宽读数）：${s.byteRounds > 0 ? percText(s.bytes) : "没量到（日志无 bytes 列）"}`,
+    `传输字节（F3 带宽读数）：${byteText(s.bytes, s.byteRounds)}`,
     `恢复耗时（recovered_after_ms，断过多长时间才恢复）：${
       s.recovered ? percText(s.recovered) : `没出现这一格（0/${s.rounds} 轮）`
     }`,

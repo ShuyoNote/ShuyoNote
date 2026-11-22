@@ -602,7 +602,7 @@ describe("F3：bytes 读数", () => {
       { space: "s", peer: "p", since: 0, maxSeq: 0, gap: 0, fetched: 1, applied: 1, ms: 10, recoveredAfterMs: null, atMs: 1, bytes: 1024 },
     ]);
     expect(formatBaselineReport(withBytes)).toContain("传输字节");
-    expect(formatBaselineReport(withBytes)).toContain("1024");
+    expect(formatBaselineReport(withBytes)).toContain("1.0 KB");
     const legacy = summarizeMetrics([
       { space: "s", peer: "p", since: 0, maxSeq: 0, gap: 0, fetched: 1, applied: 1, ms: 10, recoveredAfterMs: null, atMs: 1, bytes: null },
     ]);
