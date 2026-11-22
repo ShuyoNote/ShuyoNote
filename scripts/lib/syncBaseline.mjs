@@ -403,6 +403,10 @@ export function summarizeCadence(rows) {
   const p50 = percentile(sorted, 50);
   const thresholdMs = Math.max((p50 ?? 0) * 3, 4 * 60 * 1000);
   const gaps = sorted.filter((d) => d > thresholdMs);
+  // ⭐ 2026-11-22（S1/S2 Phase 0）：**分档** —— 后台连拉（<1s）与稳态（≥30s）不能混算。
+  const burst = sorted.filter((d) => d < 1000);
+  const steady = sorted.filter((d) => d >= 30_000);
+  const middle = sorted.filter((d) => d >= 1000 && d < 30_000);
   return {
     samples: sorted.length,
     p50,
@@ -412,6 +416,18 @@ export function summarizeCadence(rows) {
     gapMaxMs: gaps.length > 0 ? gaps[gaps.length - 1] : null,
     thresholdMs,
     peers: byPeer.size,
+    burst: {
+      samples: burst.length,
+      p50: percentile(burst, 50),
+      max: burst.length > 0 ? burst[burst.length - 1] : null,
+    },
+    steady: {
+      samples: steady.length,
+      p50: percentile(steady, 50),
+      p95: percentile(steady, 95),
+      max: steady.length > 0 ? steady[steady.length - 1] : null,
+    },
+    middleSamples: middle.length,
   };
 }
 
@@ -510,10 +526,17 @@ function percText(s) {
 /** @param {ReturnType<typeof summarizeCadence>} c */
 function cadenceText(c) {
   if (!c) return "没量到（日志缺 at_ms 或不足两条）";
+  const burst = c.burst.samples > 0 ? `${c.burst.samples} 个 · p50 ${c.burst.p50}ms · max ${c.burst.max}ms` : "没量到";
+  const steady =
+    c.steady.samples > 0
+      ? `${c.steady.samples} 个 · p50 ${c.steady.p50}ms · p95 ${c.steady.p95}ms · max ${c.steady.max}ms`
+      : "**没量到（⛔ 不拿连拉冒充稳态）**";
   return (
-    `p50 ${c.p50}ms · p95 ${c.p95}ms · max ${c.max}ms · 长间隔 ${c.gaps} 次` +
+    `连拉档(<1s)：${burst} ｜ 稳态档(≥30s)：${steady}` +
+    (c.middleSamples > 0 ? ` ｜ 中间档(1–30s)：${c.middleSamples} 个` : "") +
+    ` ｜ 总 ${c.samples} 个间隔 / ${c.peers} 台对端 · 长间隔 ${c.gaps} 次` +
     (c.gapMaxMs == null ? "" : `（最长 ${c.gapMaxMs}ms）`) +
-    `（${c.samples} 个间隔 / ${c.peers} 台对端，阈值 ${c.thresholdMs}ms）`
+    ` · 阈值 ${c.thresholdMs}ms`
   );
 }
 

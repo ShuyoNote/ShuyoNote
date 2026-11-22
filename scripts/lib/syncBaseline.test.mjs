@@ -490,3 +490,41 @@ describe("S1/S2 Phase 0：at_ms 与轮节奏", () => {
     expect(text).toContain("1 个间隔");
   });
 });
+
+// ⭐ 2026-11-22：轮节奏分档 —— 后台连拉与稳态不能混算（S1/S2 Phase 0 口径）。
+describe("轮节奏分档（连拉 / 中间 / 稳态）", () => {
+  it("三档各自计数，互不混算", () => {
+    const T0 = 1_700_000_000_000;
+    const c = summarizeCadence([
+      { peer: "p1", atMs: T0 },
+      { peer: "p1", atMs: T0 + 100 },
+      { peer: "p1", atMs: T0 + 200 },
+      { peer: "p1", atMs: T0 + 5000 },
+      { peer: "p1", atMs: T0 + 95000 },
+      { peer: "p1", atMs: T0 + 185000 },
+    ]);
+    // 间隔：100 / 100 / 4800 / 90000 / 90000
+    expect(c.burst.samples).toBe(2);
+    expect(c.middleSamples).toBe(1);
+    expect(c.steady.samples).toBe(2);
+    expect(c.steady.p50).toBe(90000);
+    expect(c.samples).toBe(5);
+  });
+
+  it("报告分开写「连拉档」与「稳态档」；没有稳态样本时明说没量到", () => {
+    const T0 = 1_700_000_000_000;
+    const row = (atMs) => ({
+      space: "s1", peer: "p1", since: 0, maxSeq: 0, gap: 0,
+      fetched: 0, applied: 0, ms: 10, recoveredAfterMs: null, atMs,
+    });
+    const withSteady = summarizeMetrics([row(T0), row(T0 + 90000)]);
+    const text = formatBaselineReport(withSteady);
+    expect(text).toContain("连拉档");
+    expect(text).toContain("稳态档");
+    expect(text).toContain("p50 90000ms");
+
+    const burstOnly = summarizeMetrics([row(T0), row(T0 + 100)]);
+    const text2 = formatBaselineReport(burstOnly);
+    expect(text2).toContain("没量到（⛔ 不拿连拉冒充稳态）");
+  });
+});
