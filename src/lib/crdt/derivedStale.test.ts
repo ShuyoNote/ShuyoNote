@@ -21,7 +21,7 @@ import { openPageSession } from "./yDocBridge";
 /** 认 `page_crdt` ＋ `pages` 上那三条（正文列/待重建标记）的极简库。 */
 function fakeDb() {
   const crdt = new Map<string, Uint8Array>();
-  const pages = new Map<string, { text: string; stale: number }>();
+  const pages = new Map<string, { text: string; stale: number; json: string }>();
   const db = {
     run(sql: string, params: unknown[]) {
       if (/INSERT INTO page_crdt/.test(sql)) {
@@ -29,24 +29,29 @@ function fakeDb() {
         return;
       }
       if (/UPDATE pages SET text_stale = 1/.test(sql)) {
-        const cur = pages.get(String(params[0])) ?? { text: "", stale: 0 };
+        const cur = pages.get(String(params[0])) ?? { text: "", stale: 0, json: "{}" };
         pages.set(String(params[0]), { ...cur, stale: 1 });
         return;
       }
       if (/UPDATE pages SET text_stale = 0/.test(sql)) {
-        const cur = pages.get(String(params[0])) ?? { text: "", stale: 0 };
+        const cur = pages.get(String(params[0])) ?? { text: "", stale: 0, json: "{}" };
         pages.set(String(params[0]), { ...cur, stale: 0 });
         return;
       }
       if (/UPDATE pages SET content_text = \?/.test(sql)) {
         const [text, id] = params as [string, string];
-        const cur = pages.get(id) ?? { text: "", stale: 0 };
+        const cur = pages.get(id) ?? { text: "", stale: 0, json: "{}" };
         pages.set(id, { ...cur, text });
         return;
       }
       if (/UPDATE pages SET title = \?/.test(sql)) return; // writeContent 那条（本判据不关心）
       // S6 尾巴起：合并会把**投影写回**那一列（本判据不关心值，只要求形状被认）。
-      if (/UPDATE pages SET content_json = \?/.test(sql)) return;
+      if (/UPDATE pages SET content_json = \?/.test(sql)) {
+      const [json, id] = params as [string, string];
+      const cur = pages.get(id) ?? { text: "", stale: 0, json: "{}" };
+      pages.set(id, { ...cur, json });
+      return;
+    }
       throw new Error(`fakeDb 不认这条 run：${sql.slice(0, 48)}`);
     },
     query(sql: string, params?: unknown[]) {
@@ -60,13 +65,13 @@ function fakeDb() {
       }
       if (/SELECT title, content_json, content_text FROM pages WHERE id = \?/.test(sql)) {
         const r = pages.get(String((params ?? [])[0]));
-        return r ? [{ title: "页", content_json: "{}", content_text: r.text }] : [];
+        return r ? [{ title: "页", content_json: r.json, content_text: r.text }] : [];
       }
       return [];
     },
   };
   const ensurePage = (id: string, text = "旧正文") => {
-    if (!pages.has(id)) pages.set(id, { text, stale: 0 });
+    if (!pages.has(id)) pages.set(id, { text, stale: 0, json: "{}" });
   };
   return { db: db as unknown as ContentSql, pages, ensurePage, crdt };
 }
