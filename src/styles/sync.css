@@ -233,6 +233,155 @@
 .sync-sub-fold > summary::before { content: "▸ "; }
 .sync-sub-fold[open] > summary::before { content: "▾ "; }
 
+/* ⭐ 2026-11-22（owner：「高级太丑，按方案 C 卡片式复原」）：
+   把高级拆成三张卡（连接 / 数据健康 / 跨网），卡片头带图标与副标题，
+   行不再各自描边（卡内用细分隔线），状态用胶囊。 */
+.sync-group[data-card="v2"] {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 16px 6px;
+  gap: 0;
+  margin: 0 0 12px;
+}
+.sync-group.is-advanced[data-card="v2"] { margin: 0 0 12px; }
+
+/* ⭐ 2026-11-22（owner：三张卡宽度要对齐第一张）：
+   卡 2/3 的父容器比卡 1 宽 28px（两侧各 14）⇒ 用同样的外边距把它们的**左右边**拉回卡 1 的位置。 */
+.sync-group.is-advanced[data-card="v2"],
+.sync-group.sync-card-outer[data-card="v2"] {
+  margin-left: 14px;
+  margin-right: 14px;
+}
+
+/* 旧的分组小标题在卡片头里已由 .sync-card-title 取代（同一信息不重复）；
+   「跨网与订阅」例外：它要作为卡内小节的分隔标题保留。 */
+[data-card="v2"] > .sync-subhead { display: none; }
+[data-card="v2"] > .sync-subhead.sync-card-section {
+  display: block;
+  margin: 16px 0 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.sync-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 4px;
+}
+.sync-card-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.sync-card-icon.is-link {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent);
+}
+.sync-card-icon.is-health {
+  background: color-mix(in srgb, var(--success) 12%, var(--surface));
+  color: var(--success);
+}
+.sync-card-icon.is-globe {
+  background: color-mix(in srgb, var(--cat-purple, #7c3aed) 12%, var(--surface));
+  color: var(--cat-purple, #7c3aed);
+}
+.sync-card-title { font-size: var(--fs-13-5, 13.5px); font-weight: 600; color: var(--text); }
+.sync-card-sub { font-size: var(--fs-11-5); color: var(--text-faint); margin-top: 1px; }
+.sync-card-actions { display: flex; justify-content: flex-end; margin: 4px 0 8px; }
+
+/* 方案 C：不是 <details> 的行（手动添加设备）也用同一套行高与分隔线 */
+.sync-row-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 12px;
+}
+.sync-row-summary-row > .sync-mini-btn { margin-left: auto; }
+
+/* ⭐ 2026-11-22（方案 C）：诊断改为弹窗 —— 背板 ＋ 面板 ＋ 可滚内容 */
+.sync-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(15, 23, 42, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.sync-dialog {
+  width: min(760px, 92vw);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+  overflow: hidden;
+}
+.sync-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.sync-dialog-title { font-size: var(--fs-13-5, 13.5px); font-weight: 600; color: var(--text); }
+.sync-dialog-body { padding: 4px 18px 16px; overflow: auto; }
+.sync-dialog-body > .sync-row {
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.sync-card-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0 6px 38px;
+}
+.sync-chip {
+  font-size: var(--fs-11-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  padding: 4px 9px;
+  color: var(--text-dim);
+  background: var(--bg);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-chip.is-ok {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 30%, var(--border));
+  background: color-mix(in srgb, var(--success) 8%, var(--surface));
+}
+.sync-chip.is-warn {
+  color: var(--cat-yellow, #b45309);
+  border-color: color-mix(in srgb, var(--cat-yellow, #b45309) 30%, var(--border));
+  background: var(--cat-yellow-soft, #fffbeb);
+}
+
+/* 卡内行：不再各自画一圈框，只用细分隔线（第一行也有一条，与卡片头分开） */
+[data-card="v2"] > .sync-row {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  border-top: 1px solid var(--border);
+}
+[data-card="v2"] > .sync-row > summary { padding-left: 2px; padding-right: 2px; }
+
 /* ⚠️ 【进阶】那一组是 `.sync-profiles` 的**兄弟**（不是孩子）—— `SpacePrivacySection`
    不能进 `.sync-profiles`（Web 档 `is-disabled` ⇒ 变灰且点不动）⇒ 它在外面，就得自己
    对齐那 16px（`.sync-profiles` 的横向内边距）。 */
