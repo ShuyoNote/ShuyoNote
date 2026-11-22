@@ -364,6 +364,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-11-22-a1-grayscale-recommendation.md](plans/2026-11-22-a1-grayscale-recommendation.md) | ⭐ **A1 块级合并灰度 —— 建议（草案，待 2026-11-25 拍）**：先纠正「没有合并开关」；G0 实现→G1 自用（3 天）→G2 单空间→G3 默认；回滚不迁数据；明确停止条件与观测指标；11-25 只拍「是否开工/批次」 |
 | [plans/2026-11-22-s2-s1-recovery-acceptance.md](plans/2026-11-22-s2-s1-recovery-acceptance.md) | ⭐ **S2 换网 / S1 唤醒恢复 —— 真机验收操作单（待执行）**：前置（两台设 env 重启）、换网/唤醒步骤、记录格式、停止条件、回滚；目标换网 ≤30s、唤醒 ≤15s；需 owner 双手 |
 | [plans/2026-11-22-sync2-closeout-plan.md](plans/2026-11-22-sync2-closeout-plan.md) | ⭐ **同步 2.0 收口计划（A1 移 2.x，11-26 发 2.0）**：范围（G1–G5 + U3/U4 片4 + 发版/通道）、移出项（A1/S1 心跳/F3 扇出/ACME）、11-22→11-26 排期、发版前检查、风险与回滚 |
+| [plans/2026-11-22-2.1.16-ops-publish.md](plans/2026-11-22-2.1.16-ops-publish.md) | ⭐ **2.1.16 运营发布清单（待执行）**：GitCode Release（5 资产）＋ `/app/latest.json` 推到 2.1.16；发版脚本命令、`check-release-state` 判据、回滚与令牌纪律 |
 | [plans/2026-11-08-personal-sync-2.0-p3-adr.md](plans/2026-11-08-personal-sync-2.0-p3-adr.md) | ⭐ **个人版同步 2.0 P3 落地 ADR（草案；DEC-A..E 已按推荐拍板 A）**：daemon 两段式/DB 单写者/回环 IPC/托盘/升级；lan-quic feature 拆分、单 iroh 端点、UDP 公告带 quic_addrs、HTTP 退出 C1–C4；CRDT 影子闸/space_uid/不首刀清单；MCP 无 UI 危险写三档；阶段判据、R1–R8 与不建议清单 |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
