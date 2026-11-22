@@ -268,8 +268,8 @@
 [data-card="v2"] > .sync-subhead { display: none; }
 [data-card="v2"] > .sync-subhead.sync-card-section {
   display: block;
-  margin: 16px 0 2px;
-  padding-top: 12px;
+  margin: var(--space-4) 0 2px;
+  padding-top: var(--space-3);
   border-top: 1px solid var(--border);
 }
 
@@ -277,12 +277,12 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 2px 0 4px;
+  margin: 2px 0 var(--space-1);
 }
 .sync-card-icon {
   width: 28px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -321,7 +321,7 @@
 }
 [data-card="v2"] .sync-row-summary-row { padding-left: 0; }
 .sync-card-sub { font-size: var(--fs-11-5); color: var(--text-faint); margin-top: 1px; }
-.sync-card-actions { display: flex; justify-content: flex-end; margin: 4px 0 8px; }
+.sync-card-actions { display: flex; justify-content: flex-end; margin: var(--space-1) 0 var(--space-2); }
 
 /* 方案 C：不是 <details> 的行（手动添加设备）也用同一套行高与分隔线 */
 .sync-row-summary-row {
@@ -329,7 +329,7 @@
   align-items: center;
   gap: 10px;
   min-height: 40px;
-  padding: 6px 12px;
+  padding: 6px var(--space-3);
 }
 .sync-row-summary-row > .sync-mini-btn { margin-left: auto; }
 
@@ -337,19 +337,19 @@
 .sync-row-inline {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   min-height: 44px;
-  padding: 6px 12px;
+  padding: 6px var(--space-3);
 }
 .sync-row-inline > .sync-row-label { flex: none; }
 .sync-row-value-inline { margin-left: auto; display: inline-flex; align-items: center; }
 .sync-row-value-end { margin-left: auto; color: var(--text-faint); font-size: var(--fs-12-5); }
-.sync-row-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.sync-row-actions { margin-left: auto; display: inline-flex; align-items: center; gap: var(--space-2); }
 .sync-row-actions > .sync-mini-btn {
   white-space: nowrap;
   height: 30px;
   min-height: 30px;
-  padding: 0 12px;
+  padding: 0 var(--space-3);
   /* ⭐ 2026-11-22：与左侧 30px 输入框**同一水平线**（flex 基线在该行偏 4px） */
   position: relative;
   top: 4px;
@@ -360,8 +360,8 @@
   min-height: 30px;
   font-size: var(--fs-12-5);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0 8px;
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-2);
   background: var(--surface);
   color: var(--text);
   font-family: inherit;
@@ -378,7 +378,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: var(--space-5);
 }
 .sync-dialog {
   width: min(760px, 92vw);
@@ -395,12 +395,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   padding: 14px 18px;
   border-bottom: 1px solid var(--border);
 }
 .sync-dialog-title { font-size: var(--fs-13-5, 13.5px); font-weight: 600; color: var(--text); }
-.sync-dialog-body { padding: 4px 18px 16px; overflow: auto; }
+.sync-dialog-body { padding: var(--space-1) 18px var(--space-4); overflow: auto; }
 .sync-dialog-body > .sync-row {
   border: 0;
   border-top: 1px solid var(--border);
@@ -410,8 +410,8 @@
 
 /* ⭐ 2026-11-22（owner：「这个窗口样式太丑」）：表单型弹窗 —— 窄、控件统一 34px、按钮整行、列表收成小节 */
 .sync-dialog-form { width: min(460px, 92vw); }
-.sync-dialog-form .sync-dialog-body { padding: 16px 18px 16px; }
-.sync-dialog-form .sync-field { gap: 5px; margin-bottom: 12px; }
+.sync-dialog-form .sync-dialog-body { padding: var(--space-4) 18px var(--space-4); }
+.sync-dialog-form .sync-field { gap: 5px; margin-bottom: var(--space-3); }
 .sync-dialog-form .sync-field > label {
   font-size: var(--fs-11-5);
   font-weight: 500;
@@ -452,7 +452,7 @@
 
 .sync-card-chips {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   flex-wrap: wrap;
   margin: 10px 0 6px 38px;
 }
@@ -460,7 +460,7 @@
   font-size: var(--fs-11-5);
   border: 1px solid var(--border);
   border-radius: var(--radius-full);
-  padding: 4px 9px;
+  padding: var(--space-1) 9px;
   color: var(--text-dim);
   background: var(--bg);
   max-width: 100%;
@@ -486,7 +486,7 @@
   background: transparent;
   border-top: 1px solid var(--border);
 }
-[data-card="v2"] > .sync-row > summary { padding-left: 0; padding-right: 12px; }
+[data-card="v2"] > .sync-row > summary { padding-left: 0; padding-right: var(--space-3); }
 
 /* ⚠️ 【进阶】那一组是 `.sync-profiles` 的**兄弟**（不是孩子）—— `SpacePrivacySection`
    不能进 `.sync-profiles`（Web 档 `is-disabled` ⇒ 变灰且点不动）⇒ 它在外面，就得自己
@@ -1655,7 +1655,7 @@
 
 /* ═══ ⭐ 刀十八（2026-10-14，owner：「上下没有铺满；去掉底部那个滚动条」）✗ ═══
    ⭐ 真因（⭐ 量出来的 ✓）：⭐ 全站 `box-sizing` 只在 **34 处**逐个组件设 ✓ ⇒ ⭐ `.sync-popover.is-inline`
-   ⭐ 这棵子树**没设** ✗ ⇒ ⭐ `width: 100%` ＋ `padding: 24px 28px`（⭐ 上一刀 ✓）＋ ⭐ `.sync-nearby-row` 的
+   ⭐ 这棵子树**没设** ✗ ⇒ ⭐ `width: 100%` ＋ `padding: var(--space-5) 28px`（⭐ 上一刀 ✓）＋ ⭐ `.sync-nearby-row` 的
    ⭐ `width: 100%` ＋ `padding: 10px 12px`（⭐ 本来就有 ✓）⭐ **每层都宽出 padding** ✗ ⇒ ⭐ 底部横条 ✓。
    ⭐ 上下：⭐ 那一档没有高度约束 ✗ ⇒ ⭐ 补满高 ✓（⭐ 外层是 flex 时另加 `align-self: stretch` ✓）。
    ⚠️ ⭐ **只钉 `.sync-popover.is-inline`** ✓（⛔ 浮层那份一条没动 ✗、⛔ 没全站改 ✗）；⭐ 这轮**没用** `overflow-x` 兜底 ✓（⭐ 真因是 `box-sizing` ✓）。 */
