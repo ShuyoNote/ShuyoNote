@@ -47,6 +47,10 @@ setCrdtRemoteApplier((db, pageId, state) => {
     console.error(refusal.log);
     toast(refusal.message, "error");
   }
+  // A1 G0：合并失败也必须让人看见（⛔ 不静默吞）；本机版本已保留，可重试。
+  if (res.mergeFailed) {
+    toast("这一页的自动合并没有完成，已保留本机版本；可重试，或改用「另存为新页 / 保留本地」。", "error");
+  }
 });
 
 // The lazily-loaded @excalidraw/excalidraw bundle reads `process.env.NODE_ENV` at
