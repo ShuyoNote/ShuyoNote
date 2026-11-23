@@ -7,6 +7,7 @@ import type { PdfRenderEngineApi } from "../lib/pdfRender";
 import { useAiStore } from "../store/ai";
 import { useNotes } from "../store/notes";
 import { api } from "../lib/api";
+import { invalidatePageCrdtState } from "../lib/crdt/seedPageState";
 import { toast } from "../store/toast";
 import { pageToBlock } from "../lib/pdfAnnotation";
 
@@ -100,6 +101,9 @@ export function PdfAskBar({ attachmentId, pageCount, getEngine, onDone }: Props)
         doc.root.children.push(blockNode);
         const newJson = JSON.stringify(doc);
         await api.savePage({ id: notes.current.id, content_json: newJson, content_text: contentTextOf(newJson) });
+        // ⭐ A1 写穿：PDF 摘录/AI 帮读/批注导出只改正文，没有 Yjs 会话 ⇒ 把旧状态**失效**，
+        //    下次打开按当前正文重新播种（⛔ 不让旧状态在下一次合并时覆盖新正文）。
+        await invalidatePageCrdtState(notes.current.id);
         await notes.openPage(notes.current.id);
         toast("问答已存到当前页", "success");
       } catch {
