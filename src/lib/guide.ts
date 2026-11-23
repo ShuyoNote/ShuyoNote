@@ -6,6 +6,7 @@
 import { SHORTCUTS, shortcutLabel, shortcutGroups } from "./shortcuts";
 import { GUIDE_COVER } from "./covers";
 import { api } from "./api";
+import { invalidatePageCrdtState } from "./crdt/seedPageState";
 import { useNotes } from "../store/notes";
 
 export const GUIDE_TITLE = "使用指南";
@@ -1094,6 +1095,8 @@ export async function openGuide(opts: { open?: boolean } = {}): Promise<void> {
           content_json: pageJson(page.blocks),
           content_text: pageText(page.blocks),
         });
+        // A1：guide 重存正文后失效旧 CRDT 状态（指南是系统页；旧状态不能拿去合并覆盖）
+        await invalidatePageCrdtState(id);
       } catch {
         // non-fatal: keep existing content
       }
