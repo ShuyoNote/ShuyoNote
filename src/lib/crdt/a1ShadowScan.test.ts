@@ -261,7 +261,12 @@ describe.skipIf(!RUN)("A1 影子扫描（只读）", () => {
     let Ctor: SqliteCtor;
     try {
       // ⛔ 不在模块顶层 import：CI 的 Node 22 没有 `node:sqlite`（需实验开关）⇒ 会让整个文件收集失败。
-      const mod = await import("node:sqlite");
+      // ⚠️ 也不能写静态字面量 `import("node:sqlite")`：Vite 会在 transform 阶段就解析它
+      //   （实测 Node 22 下报“Cannot bundle Node.js built-in node:sqlite”）⇒ 用 Function 绕过静态分析。
+      const load = new Function("return import('node:sqlite')") as () => Promise<{
+        DatabaseSync: unknown;
+      }>;
+      const mod = await load();
       Ctor = mod.DatabaseSync as unknown as SqliteCtor;
     } catch (e) {
       throw new Error(`NOT_VERIFIED：本机 node:sqlite 不可用（${String(e)}）`);
