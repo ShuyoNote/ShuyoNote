@@ -1803,7 +1803,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                   浮层形态下顺手 `close()` 收起自己；`contentOnly`（左栏内容区）不关。
                   ⛔ 没有新命令、没有新面板。 */}
               <button
-                className="sync-btn"
+                className="sync-btn sync-btn--compact"
                 data-testid="plaintext-go-encrypt"
                 onClick={() => {
                   useEditorStore.getState().openSettings("spaces");

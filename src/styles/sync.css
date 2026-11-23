@@ -1087,6 +1087,14 @@
   width: 100%;
 }
 
+/* 「去开加密」这类行内提示按钮：比表单主按钮矮一档（owner 2026-11-23：按钮紧凑些）。
+   ⚠️ 只用在提示条里，⛔ 不要拿它替换输入框并排的主按钮（那条仍守 min-height:44px）。 */
+.sync-btn.sync-btn--compact {
+  min-height: 30px;
+  padding: var(--space-1) 10px;
+  font-size: var(--fs-12);
+}
+
 /* 登录/注册 tab：选中高亮下划线，另 tab 弱化。 */
 .sync-tab.on {
   color: var(--text);
