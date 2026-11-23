@@ -655,6 +655,12 @@ node docs/plans/personal-sync-2.0-mockups/render.mjs      # 需要 Edge（路径
 ## 9. 2.x 进展（2026-11-22，owner「尽快接近全部」）
 
 ```text
+2026-11-23 追加：CI 全绿（fe4f8572：Rust/单测/移动端/构建 全 success）；
+check-release-state 24/24；「去开加密」按钮紧凑；
+A1 影子窗口第 1 天（明文空间）内容级不一致 0；每日 09:00 定时扫描已建。
+```
+
+```text
 路线图：docs/plans/2026-11-22-sync2x-fast-roadmap.md（4 周可滚动）
 A1 G0 设计：docs/plans/2026-11-22-a1-g0-design.md
 U3/U4 操作单：docs/plans/2026-11-22-u3-u4-real-machine-sheets.md（待执行）
