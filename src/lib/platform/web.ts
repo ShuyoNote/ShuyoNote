@@ -5,7 +5,7 @@ import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
 import { ciphertextRefusalMessage, looksLikeCiphertext } from "../ciphertextSniff";
 import { a1AutoMergeEnabled } from "../crdt/a1Gate";
-import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, recordLineageConflict, unresolvedLineageConflict, resolveLineageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, pageDocJsonInSpace, readPageCrdtState, writePageCrdtState, writePageProjectionIfChanged, type RemotePageRow } from "../docContent";
+import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, recordLineageConflict, unresolvedLineageConflict, resolveLineageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, pageDocJsonInSpace, readPageCrdtState, writePageCrdtState, clearPageCrdtState, writePageProjectionIfChanged, type RemotePageRow } from "../docContent";
 import { withCrdtWire, decodeCrdtWire } from "../crdt/wireState";
 import { resolveWorkspaceSyncScope, type ClaimScopeRow } from "../crdt/claimScope";
 import { applyRemoteCrdtState } from "../crdt/plane";
@@ -955,6 +955,18 @@ export function applyChange(store: SqliteStore, change: SyncChange): void {
         // 裁定 (iii) 要求"不静默选边"，而提示 UI 还没做，所以这一片必须先回落。
         // ⚠️ 那一行的**正文文本**仍是远端那一份（派生文本要编辑器语义，不能在同步路径现算）。
         applyRemoteContent(store, String(p.id), { ...p, id: String(p.id) }, change.seq);
+        // ⭐ A1：老载荷（无 crdt_state）或版本不认识 ⇒ 正文已按老路落了，
+        //   但本机可能还留着一份**旧状态**；下次合并会拿它覆盖新正文 ⇒ 清掉（下次打开重新播种）。
+        if (wire.kind !== "ok") {
+          try {
+            if (readPageCrdtState(store, String(p.id))) {
+              clearPageCrdtState(store, String(p.id));
+              console.warn(`[crdt] page ${p.id} 的远端载荷没有可用 CRDT 状态 ⇒ 已清掉本机旧状态（下次打开重新播种）`);
+            }
+          } catch (e) {
+            console.warn(`[crdt] page ${p.id} 清旧状态失败（不阻塞正文落库）`, e);
+          }
+        }
         // B 方案：**更新的远端版本已经应用** ⇒ 之前存下的那一版（seq 更小）已经是陈的，清掉
         //（与 Rust `do_pull` 里那一段逐字对应：不清就是"清单永远挂着几条假账"）。
         const stashed = pendingRemoteSeq(store, String(p.id));
