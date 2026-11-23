@@ -697,7 +697,9 @@ static FANOUT_THROTTLE_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock:
 fn fanout_throttle_enabled() -> bool {
     *FANOUT_THROTTLE_ENABLED.get_or_init(|| {
         crate::lan_fanout::fanout_throttle_enabled_from(
-            std::env::var("SHUYONOTE_LAN_FANOUT_THROTTLE").ok().as_deref(),
+            std::env::var("SHUYONOTE_LAN_FANOUT_THROTTLE")
+                .ok()
+                .as_deref(),
         )
     })
 }
@@ -2543,7 +2545,11 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     && !crate::lan_fanout::peer_unicast_due(announce_cycle, dirty_pending, 2);
                 let peers_now = state.peers(now);
                 let empty_peers = Vec::new();
-                let announce_peers = if throttle_peers { &empty_peers } else { &peers_now };
+                let announce_peers = if throttle_peers {
+                    &empty_peers
+                } else {
+                    &peers_now
+                };
                 let mut targets =
                     lan::append_extra_targets(lan::announce_targets_all(&ports, announce_peers));
                 for t in manual_unicast {

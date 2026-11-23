@@ -3,7 +3,8 @@
 //   运行：$env:A1_SHADOW_SCAN="1"; pnpm exec vitest run scripts/a1-shadow-scan.test.ts --reporter=verbose
 //   ⛔ 不注册进 scripts/lib/gates.mjs；不进 pre-commit / baseline。
 import { describe, it } from "vitest";
-import { DatabaseSync } from "node:sqlite";
+type SqliteDb = import("node:sqlite").DatabaseSync;
+type SqliteCtor = new (path: string, opts?: { readOnly?: boolean }) => SqliteDb;
 import { closeSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
 import { basename, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -32,7 +33,7 @@ type Cat =
   | "lineage_incompatible"
   | "exception";
 
-function openRo(path: string): DatabaseSync {
+function openRo(path: string, Ctor: SqliteCtor): SqliteDb {
   const fd = openSync(path, "r");
   const buf = Buffer.alloc(MAGIC.length);
   try {
@@ -42,7 +43,7 @@ function openRo(path: string): DatabaseSync {
   }
   const head = buf;
   if (!head.equals(MAGIC)) throw new Error(`不是明文 SQLite（可能是加密空间）：${path}`);
-  const db = new DatabaseSync(path, { readOnly: true });
+  const db = new Ctor(path, { readOnly: true });
   db.exec("PRAGMA query_only=ON");
   return db;
 }
@@ -104,8 +105,8 @@ interface PendingRow {
   state: Uint8Array;
 }
 
-function scanSpace(dbPath: string) {
-  const db = openRo(dbPath);
+function scanSpace(dbPath: string, Ctor: SqliteCtor) {
+  const db = openRo(dbPath, Ctor);
   const space = basename(dbPath, ".db");
   const totals: Record<Cat, number> = {
     no_change: 0,
@@ -256,7 +257,15 @@ function scanSpace(dbPath: string) {
 }
 
 describe.skipIf(!RUN)("A1 影子扫描（只读）", () => {
-  it("扫描全部分空间并输出分类", () => {
+  it("扫描全部分空间并输出分类", async () => {
+    let Ctor: SqliteCtor;
+    try {
+      // ⛔ 不在模块顶层 import：CI 的 Node 22 没有 `node:sqlite`（需实验开关）⇒ 会让整个文件收集失败。
+      const mod = await import("node:sqlite");
+      Ctor = mod.DatabaseSync as unknown as SqliteCtor;
+    } catch (e) {
+      throw new Error(`NOT_VERIFIED：本机 node:sqlite 不可用（${String(e)}）`);
+    }
     if (!existsSync(DATA_DIR)) throw new Error(`NOT_VERIFIED：找不到数据目录 ${DATA_DIR}`);
     const spacesDir = join(DATA_DIR, "spaces");
     if (!existsSync(spacesDir)) throw new Error(`NOT_VERIFIED：找不到 ${spacesDir}`);
@@ -265,7 +274,7 @@ describe.skipIf(!RUN)("A1 影子扫描（只读）", () => {
     const unreadable: Array<{ space: string; reason: string }> = [];
     for (const name of readdirSync(spacesDir).filter((n) => n.endsWith(".db"))) {
       try {
-        all.push(scanSpace(join(spacesDir, name)));
+        all.push(scanSpace(join(spacesDir, name), Ctor));
       } catch (e) {
         unreadable.push({ space: name, reason: String(e) });
       }

@@ -15818,7 +15818,18 @@ mod p0_metrics_tests {
     /// ⭐ §13 Phase 0：基线读数行可核 —— gap 有值、恢复时长只在"知道上次失败"时出现。
     #[test]
     fn metrics_line_carries_gap_and_recovery_readings() {
-        let a = metrics_line("sp", "dev", 10, 13, 2, 2, 42, Some(900), 1_700_000_000_000, 1024);
+        let a = metrics_line(
+            "sp",
+            "dev",
+            10,
+            13,
+            2,
+            2,
+            42,
+            Some(900),
+            1_700_000_000_000,
+            1024,
+        );
         assert!(a.contains("gap=3"), "{a}");
         assert!(a.contains("recovered_after_ms=900"), "{a}");
         assert!(a.contains("bytes=1024"), "{a}");
