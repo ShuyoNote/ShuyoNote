@@ -106,6 +106,16 @@ export async function seedPageCrdtState(
  * 而两侧编辑器都是「有状态就载入」⇒ 只给桌面播种＝把 F1 留在 Web/PWA（深度分析 §2 F1）。
  * 失败只带回 `status:"failed"`（恢复本身照常成功，但必须提示“重启可能回滚”）。
  */
+/**
+ * 把这一页的 CRDT 状态**清空**（下次打开按当前正文重新播种）。
+ *
+ * 用途：PDF 摘录/AI 帮读/批注导出这类“只改正文、没有 Yjs 会话”的写入 ——
+ * 与其留一份旧状态（合并时会拿旧状态覆盖新正文），不如失效；本函数不碰正文。
+ */
+export async function invalidatePageCrdtState(pageId: string): Promise<void> {
+  await api.savePageState(pageId, new Uint8Array());
+}
+
 export async function seedPageCrdtStateAfterRestore(
   page: PageDetail,
   overrides: SeedPageStateDeps = {},
