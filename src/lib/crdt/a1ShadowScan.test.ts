@@ -16,6 +16,8 @@ import { openPageSession, projectStateToJson } from "./yDocBridge";
 const RUN =
   process.env.A1_SHADOW_SCAN === "1" &&
   (!process.env.CI || process.env.A1_SHADOW_FORCE === "1");
+// ⭐ G0 明确不覆盖加密空间：只有显式声明时才允许“排除”并继续；默认仍 NOT_VERIFIED。
+const ALLOW_EXCLUDED = process.env.A1_ALLOW_ENCRYPTED_EXCLUDED === "1";
 const DATA_DIR = process.env.SHUYONOTE_DATA_DIR ?? join(process.env.APPDATA ?? "", "cn.shuyo.shuyonote");
 const MAGIC = Buffer.from("SQLite format 3\0", "utf8");
 
@@ -286,6 +288,7 @@ describe.skipIf(!RUN)("A1 影子扫描（只读）", () => {
         lineage_incompatible: sum("lineage_incompatible"),
         exception: sum("exception"),
         unreadable: unreadable.length,
+        excluded_nonplaintext: ALLOW_EXCLUDED ? unreadable.length : 0,
       },
     };
     console.log(JSON.stringify(report, null, 2));
@@ -299,7 +302,9 @@ describe.skipIf(!RUN)("A1 影子扫描（只读）", () => {
     if (all.length === 0 || all.every((s) => s.pageWithCrdt === 0)) {
       throw new Error("NOT_VERIFIED：没有可扫描的 page_crdt 页（零覆盖不算通过）");
     }
-    if (unreadable.length > 0) throw new Error(`NOT_VERIFIED：有 ${unreadable.length} 个空间读不到（不算通过）`);
+    if (unreadable.length > 0 && !ALLOW_EXCLUDED) {
+      throw new Error(`NOT_VERIFIED：有 ${unreadable.length} 个空间读不到（不算通过；确认要排除加密空间请设 A1_ALLOW_ENCRYPTED_EXCLUDED=1）`);
+    }
     if (report.totals.merged_fewer_blocks + report.totals.projection_mismatch + report.totals.exception > 0) {
       throw new Error("发现危险差异（少块/投影不一致/异常）——未通过");
     }
