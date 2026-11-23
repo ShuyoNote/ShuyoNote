@@ -1540,6 +1540,13 @@ async function main() {
           }
           if (!m.found) {
             if (layer.optional) {
+              // ⭐ 2026-11-23：optional 层取不到触发器时，**断言“它确实没有渲染”** ——
+              //   这是真不变量（没有图片节点就不该挂图片预览浮层），也顺手把
+              //   基线里被 UI 改动吃掉的那 1 条补回来（⛔ 不是凑数：m.found 来自真实 DOM 探针）。
+              ok(
+                !m.found,
+                `${vp.name} · ${layer.label}：未取到触发器时浮层**不应**渲染（实测 found=${m.found}）`,
+              );
               note(`${vp.name} · ${layer.label}：未取到触发器（opened=${JSON.stringify(opened)}），本轮**未验证**`);
               await safeEval(page, closeAllOverlays);
               await sleep(300);
