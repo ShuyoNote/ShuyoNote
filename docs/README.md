@@ -369,6 +369,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-11-22-sync2x-fast-roadmap.md](plans/2026-11-22-sync2x-fast-roadmap.md) | ⭐ **个人版同步 2.x 快速路线（尽快接近全部）**：S1 心跳/F3 扇出与带宽/A1 CRDT/relay ACME/U3-U4；四周可滚动排期、默认关+回滚+判据、三条线并行、需 owner 的窗口 |
 | [plans/2026-11-22-a1-g0-design.md](plans/2026-11-22-a1-g0-design.md) | ⭐ **A1 G0 设计稿**：同血统块级自动合并（默认关）、失败保本地、血统不相容仍拒绝；开关/回滚/判据/影子窗口重启/风险止损 |
 | [plans/2026-11-24-a1-g1-grayscale-plan.md](plans/2026-11-24-a1-g1-grayscale-plan.md) | ⭐ **A1 G1 灰度预案（待拍板）**：仅明文空间＋空间级开关默认关；7 天窗口前置、分批、每日判据、回滚边界 |
+| [plans/2026-11-24-2.1.17-release-checklist.md](plans/2026-11-24-2.1.17-release-checklist.md) | ⭐ **2.1.17 发版检查单（候选）**：A1 默认关/空间开关、F3/S1 默认关能力；前置、版本、Web zip、macOS、通道与回滚 |
 | [plans/2026-11-22-u3-u4-real-machine-sheets.md](plans/2026-11-22-u3-u4-real-machine-sheets.md) | ⭐ **U3/U4 片4 真机操作单（待执行）**：U4 块级同块冲突造法/读数/判据/留证；U3 60s 重试与 401 两条路径；止损与回滚 |
 | [plans/2026-11-08-personal-sync-2.0-p3-adr.md](plans/2026-11-08-personal-sync-2.0-p3-adr.md) | ⭐ **个人版同步 2.0 P3 落地 ADR（草案；DEC-A..E 已按推荐拍板 A）**：daemon 两段式/DB 单写者/回环 IPC/托盘/升级；lan-quic feature 拆分、单 iroh 端点、UDP 公告带 quic_addrs、HTTP 退出 C1–C4；CRDT 影子闸/space_uid/不首刀清单；MCP 无 UI 危险写三档；阶段判据、R1–R8 与不建议清单 |
 
