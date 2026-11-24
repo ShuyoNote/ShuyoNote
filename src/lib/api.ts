@@ -340,6 +340,8 @@ export const api = {
     content_json?: string;
     content_text?: string;
     space_id?: string;
+    /** A1：非编辑器调用方显式要求“正文已换 ⇒ 清掉旧 CRDT 状态”（默认 false）。 */
+    invalidate_crdt?: boolean;
   }) => invoke("save_page", { args }),
   /**
    * 冲刺 S3b-2c：读这一页的 **CRDT 状态**（没有 ⇒ `null`）。

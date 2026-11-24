@@ -1650,6 +1650,8 @@ export function makeInvoke(store: SqliteStore) {
         // Snapshot the current state before overwriting (version history).
         snapshotBeforeSave(store, id, next.title, next.json, next.text);
         writeContent(store, id, next, Date.now());
+        // A1：非编辑器调用方显式要求 ⇒ 清旧状态（只清状态，不动正文）。
+        if (args.invalidate_crdt === true) clearPageCrdtState(store, id);
         const updatedRow = store.query("SELECT * FROM pages WHERE id = ?", [id])[0];
         recordChange(store, "page", id, "upsert", updatedRow ?? { id, title: next.title, content_json: next.json, content_text: next.text, updated_at: Date.now() }, Date.now());
         return updatedRow as T;
