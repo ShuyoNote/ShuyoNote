@@ -21,3 +21,25 @@ export function a1AutoMergeEnabled(): boolean {
     return false;
   }
 }
+
+/** 空间级开关的 localStorage key（设备本地；按 workspace id 分开）。 */
+export function spaceAutoMergeKey(spaceId: string): string {
+  return `shuyonote:crdt.autoMerge.${spaceId}`;
+}
+
+/** 空间级开关：只认 "1"（默认关）。 */
+export function spaceAutoMergeEnabledFrom(value: string | null | undefined): boolean {
+  return value === "1";
+}
+
+/** 读本机这个空间的开关（没有 localStorage ⇒ false）。 */
+export function spaceAutoMergeEnabledFor(spaceId: string): boolean {
+  try {
+    return (
+      typeof localStorage !== "undefined" &&
+      spaceAutoMergeEnabledFrom(localStorage.getItem(spaceAutoMergeKey(spaceId)))
+    );
+  } catch {
+    return false;
+  }
+}

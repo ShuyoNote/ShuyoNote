@@ -12,6 +12,7 @@ import { installBackBridge } from "./lib/overlayStack";
 import { setCrdtRemoteApplier } from "./lib/crdt/plane";
 import { mergeRemotePageState } from "./lib/crdt/pageBinding";
 import { a1AutoMergeEnabled } from "./lib/crdt/a1Gate";
+import { spaceAutoMergeEnabled } from "./lib/crdt/pageBinding";
 // ⚠️ `lineageNotice` 刻意是**零依赖的纯模块**（不 import 任何东西）⇒ 拉它进来不会把编辑器节点表
 //    或别的实现拖进启动路径（这正是上面那条"同步路径只认签名"的约束要防的事）。
 import { lineageRefusalNotice } from "./lib/crdt/lineageNotice";
@@ -35,7 +36,7 @@ installBackBridge();
 //    连带的收益：**生产入口不再 import 带编辑器节点表的 `yDocBridge`**（上面那行已删）——
 //    它在生产里另有正当入口（`pageBinding` ⇒ `openPageSession`），但少一条无谓的依赖线总是好的。
 setCrdtRemoteApplier((db, pageId, state) => {
-  const res = mergeRemotePageState(db, pageId, state, Date.now(), a1AutoMergeEnabled());
+  const res = mergeRemotePageState(db, pageId, state, Date.now(), a1AutoMergeEnabled() && spaceAutoMergeEnabled(db));
   // ★ S8：**血统冲突必须报出去**（不许静默）—— 那意味着这一页出现了两条互不相关的编辑历史：
   //   本机那一版**原样保留、没有合并**（合了就会"一块变两块"，见 `mergeability.test.ts` ①）。
   //   护栏本身已经 console.warn 过一次；这里再给用户可见的一次提示。
