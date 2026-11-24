@@ -3,12 +3,13 @@
 //   ② 开关关掉 ⇒ 不合并、保留本机（真实调用，不是 source grep）；
 //   ③ 合并抛错 ⇒ 保本机 + `mergeFailed`（⛔ 不把坏状态写进库）；
 //   ④ 接线（源码级）：开关/失败字段/用户提示都在。
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { readPageCrdtState, type ContentSql } from "../docContent";
 import * as Y from "yjs";
 import { mergeRemotePageState, a1AutoMergeEnabledFrom } from "./pageBinding";
+import { spaceAutoMergeEnabledFor, spaceAutoMergeKey } from "./a1Gate";
 
 function fakeDb() {
   const rows = new Map<string, Uint8Array>();
@@ -87,5 +88,25 @@ describe("A1 G0", () => {
     expect(pageBinding).toContain("mergeFailed");
     expect(pageBinding).toContain("a1-merge-failures");
     expect(main).toContain("res.mergeFailed");
+  });
+});
+
+describe("A1 空间级开关", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("key 按 workspace id 分开；只认 '1'；默认关", () => {
+    expect(spaceAutoMergeKey("ws1")).toBe("shuyonote:crdt.autoMerge.ws1");
+    const map = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => map.set(k, v),
+      removeItem: (k: string) => map.delete(k),
+    });
+    expect(spaceAutoMergeEnabledFor("ws1")).toBe(false);
+    map.set(spaceAutoMergeKey("ws1"), "1");
+    expect(spaceAutoMergeEnabledFor("ws1")).toBe(true);
+    expect(spaceAutoMergeEnabledFor("ws2")).toBe(false);
+    map.set(spaceAutoMergeKey("ws2"), "true");
+    expect(spaceAutoMergeEnabledFor("ws2")).toBe(false);
   });
 });
