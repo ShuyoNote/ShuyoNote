@@ -46,8 +46,8 @@ function initialState(): Uint8Array {
 }
 
 describe("A1 G0", () => {
-  it("kill switch：默认开，只有显式 0/false/off 才关", () => {
-    expect(a1AutoMergeEnabledFrom(undefined)).toBe(true);
+  it("kill switch：默认关，只有显式 1/true/on 才开", () => {
+    expect(a1AutoMergeEnabledFrom(undefined)).toBe(false);
     expect(a1AutoMergeEnabledFrom("1")).toBe(true);
     expect(a1AutoMergeEnabledFrom("true")).toBe(true);
     for (const v of ["0", "false", "off", " OFF "]) expect(a1AutoMergeEnabledFrom(v)).toBe(false);

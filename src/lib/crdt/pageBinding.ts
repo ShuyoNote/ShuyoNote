@@ -212,7 +212,7 @@ export function mergeRemotePageState(
   pageId: string,
   remote: Uint8Array,
   now: number,
-  enabled: boolean = a1AutoMergeEnabled(),
+  enabled: boolean = true, // 直接调用者/判据默认按“允许合并”；生产调用方显式传 a1AutoMergeEnabled()
 ): MergedRemoteState {
   const mine = readPageCrdtState(db, pageId);
   if (mine) {
@@ -386,6 +386,8 @@ export async function bindPageToEditorViaPort(opts: {
   claim?: PageClaimPort;
   /** S9：本机 device id（claim 要带上；不传时只影响 claim，不影响其它）。 */
   deviceId?: string;
+  /** A1：是否允许自动合并；不传 ⇒ 运行时开关（默认关）。判据/自用可显式 true。 */
+  a1Enabled?: boolean;
 }): Promise<AsyncPageBinding> {
   const { port, pageId, editor, seedJson } = opts;
   const state = await port.read(pageId);
@@ -402,7 +404,7 @@ export async function bindPageToEditorViaPort(opts: {
     let merged = false;
     let skipped = 0;
     let deferred = 0;
-    const a1Enabled = a1AutoMergeEnabled();
+    const a1Enabled = opts.a1Enabled ?? a1AutoMergeEnabled();
     for (const p of state ? pending : pending.slice(1)) {
       const remoteIds = lineageClientIds(p.state);
       // ★ 与 `mergeRemotePageState` **同一条护栏**（复用同一对纯函数，不另写一份判定）：

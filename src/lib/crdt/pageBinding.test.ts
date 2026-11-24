@@ -191,7 +191,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     };
 
     const e1 = appEditor(BASE);
-    const b1 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e1, seedJson: serialize(e1) });
+    const b1 = await bindPageToEditorViaPort({ a1Enabled: true, port, pageId: "p1", editor: e1, seedJson: serialize(e1) });
     expect(b1.seeded).toBe(true);
     expect(store.has("p1")).toBe(true); // 首开那次已经落盘
 
@@ -202,7 +202,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     // 换一个编辑器（＝重开页面）：这一次必须**只载入**（给编辑器的内容用状态的投影）
     const seedForSecond = projectStateToJson(store.get("p1")!);
     const e2 = appEditor(seedForSecond);
-    const b2 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e2, seedJson: serialize(e2) });
+    const b2 = await bindPageToEditorViaPort({ a1Enabled: true, port, pageId: "p1", editor: e2, seedJson: serialize(e2) });
     expect(b2.seeded).toBe(false);
     expect(idsOf(b2.session.exportJson())).toEqual(["blk-1", "blk-2", "blk-port"]);
 
@@ -214,7 +214,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
 
     // 两个绑定是**同一条血统**：与 b1 那一支的状态合并 ⇒ 两处都在
     const e1Again = appEditor(seedForSecond);
-    const b3 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e1Again, seedJson: serialize(e1Again) });
+    const b3 = await bindPageToEditorViaPort({ a1Enabled: true, port, pageId: "p1", editor: e1Again, seedJson: serialize(e1Again) });
     b3.session.merge(stateB2);
     const ids = idsOf(b3.session.exportJson());
     expect(new Set(ids).size).toBe(ids.length);
@@ -317,7 +317,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     };
 
     const e = appEditor(BASE);
-    const b = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e, seedJson: serialize(e), claim, deviceId: "dev" });
+    const b = await bindPageToEditorViaPort({ a1Enabled: true, port, pageId: "p1", editor: e, seedJson: serialize(e), claim, deviceId: "dev" });
 
     console.log(`【⑱ 实测】承接后 = ${JSON.stringify(idsOf(b.session.exportJson()))}`);
     expect(b.seeded).toBe(false); // 血统**不是**本机建的
@@ -349,7 +349,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
 
     // 本机首开建血统，并打一块
     const e0 = appEditor(BASE);
-    const b0 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e0, seedJson: serialize(e0) });
+    const b0 = await bindPageToEditorViaPort({ a1Enabled: true, port, pageId: "p1", editor: e0, seedJson: serialize(e0) });
     expect(b0.seeded).toBe(true);
     typeBlock(e0, "blk-mine", "本机打的");
     await b0.persist();
@@ -359,7 +359,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     // ① 同血统的对端状态 ⇒ 合并：两处都在、不重复，pending 清空
     pending = [{ seq: 8, state: peerStateFrom(mineState, "blk-peer", "对端加的") }];
     const e1 = appEditor(projectStateToJson(mineState));
-    const b1 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e1, seedJson: serialize(e1) });
+    const b1 = await bindPageToEditorViaPort({ a1Enabled: true, port, pageId: "p1", editor: e1, seedJson: serialize(e1) });
     const mergedIds = idsOf(b1.session.exportJson());
     console.log(`【⑲ 实测】合并后 = ${JSON.stringify(mergedIds)}`);
     expect(b1.adopted).toBe(false); // 本机本来就有状态
@@ -375,7 +375,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     pending = [{ seq: 9, state: independent }];
     const before = idsOf(projectStateToJson(store.get("p1")!));
     const e2 = appEditor(projectStateToJson(store.get("p1")!));
-    const b2 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e2, seedJson: serialize(e2) });
+    const b2 = await bindPageToEditorViaPort({ a1Enabled: true, port, pageId: "p1", editor: e2, seedJson: serialize(e2) });
     const after = idsOf(b2.session.exportJson());
     console.log(`【⑲② 实测】独立血统被拒后 = ${JSON.stringify(after)}`);
     expect(b2.pendingSkipped).toBe(1); // ★ 有痕（调用方能如实报出来）
@@ -419,7 +419,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
 
     // ① 本机有状态 ＋ **同血统**待并 ⇒ 合并 ⇒ 按**合并结果**写
     const e0 = appEditor(BASE);
-    const b0 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e0, seedJson: serialize(e0) });
+    const b0 = await bindPageToEditorViaPort({ a1Enabled: true, port, pageId: "p1", editor: e0, seedJson: serialize(e0) });
     typeBlock(e0, "blk-mine", "本机打的");
     await b0.persist();
     const mineState = store.get("p1")!;
@@ -427,7 +427,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
 
     pending = [{ seq: 8, state: peerStateFrom(mineState, "blk-peer", "对端加的") }];
     const e1 = appEditor(projectStateToJson(mineState));
-    const b1 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e1, seedJson: serialize(e1) });
+    const b1 = await bindPageToEditorViaPort({ a1Enabled: true, port, pageId: "p1", editor: e1, seedJson: serialize(e1) });
     expect(writes.length, "合并改变了内容 ⇒ 必须写一次投影").toBe(1);
     expect(writes[0].id).toBe("p1");
     expect(idsOf(writes[0].json), "写的必须是**合并后**那一版（不是旧的、也不是只有对端的）").toEqual(
@@ -442,7 +442,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     const before = store.get("p1")!;
     pending = [{ seq: 9, state: peerStateFrom({ json: BASE }, "blk-other", "另一套身份") }];
     const e2 = appEditor(projectStateToJson(before));
-    const b2 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e2, seedJson: serialize(e2) });
+    const b2 = await bindPageToEditorViaPort({ a1Enabled: true, port, pageId: "p1", editor: e2, seedJson: serialize(e2) });
     expect(b2.pendingSkipped).toBe(1);
     expect(writes.length, "没有并进来任何东西 ⇒ 一次写库都不该发生").toBe(0);
     b2.dispose();
@@ -451,7 +451,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     writes.length = 0;
     pending = [{ seq: 10, state: peerStateFrom({ json: BASE }, "blk-adopt", "对端建的") }];
     const e3 = appEditor(BASE);
-    const b3 = await bindPageToEditorViaPort({ port, pageId: "p2", editor: e3, seedJson: serialize(e3) });
+    const b3 = await bindPageToEditorViaPort({ a1Enabled: true, port, pageId: "p2", editor: e3, seedJson: serialize(e3) });
     expect(b3.adopted).toBe(true);
     expect(writes.length, "承接 ⇒ 这一页的内容整个来自对端，投影必须写").toBe(1);
     expect(idsOf(writes[0].json)).toContain("blk-adopt");
@@ -461,7 +461,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     writes.length = 0;
     pending = [];
     const e4 = appEditor(BASE);
-    const b4 = await bindPageToEditorViaPort({ port, pageId: "p3", editor: e4, seedJson: serialize(e4) });
+    const b4 = await bindPageToEditorViaPort({ a1Enabled: true, port, pageId: "p3", editor: e4, seedJson: serialize(e4) });
     expect(writes.length, "没有待并 ⇒ 一个字都不多算、一次都不调").toBe(0);
     b4.dispose();
   });
@@ -484,7 +484,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
       },
     };
     const e0 = appEditor(BASE);
-    const b0 = await bindPageToEditorViaPort({ port: bare, pageId: "q1", editor: e0, seedJson: serialize(e0) });
+    const b0 = await bindPageToEditorViaPort({ a1Enabled: true, port: bare, pageId: "q1", editor: e0, seedJson: serialize(e0) });
     typeBlock(e0, "blk-mine", "本机");
     await b0.persist();
     const mine = store.get("q1")!;
@@ -492,7 +492,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
 
     pending = [{ seq: 1, state: peerStateFrom(mine, "blk-peer", "对端") }];
     const e1 = appEditor(projectStateToJson(mine));
-    const b1 = await bindPageToEditorViaPort({ port: bare, pageId: "q1", editor: e1, seedJson: serialize(e1) });
+    const b1 = await bindPageToEditorViaPort({ a1Enabled: true, port: bare, pageId: "q1", editor: e1, seedJson: serialize(e1) });
     expect(b1.seeded).toBe(false);
     expect(idsOf(b1.session.exportJson())).toEqual(["blk-1", "blk-2", "blk-mine", "blk-peer"]);
     b1.dispose();
@@ -518,7 +518,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
       },
     };
     const e2 = appEditor(BASE);
-    const b2 = await bindPageToEditorViaPort({ port: angry, pageId: "q2", editor: e2, seedJson: serialize(e2) });
+    const b2 = await bindPageToEditorViaPort({ a1Enabled: true, port: angry, pageId: "q2", editor: e2, seedJson: serialize(e2) });
     typeBlock(e2, "blk-mine", "本机");
     await b2.persist();
     const mine2 = store2.get("q2")!;
@@ -526,7 +526,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
 
     pending2 = [{ seq: 2, state: peerStateFrom(mine2, "blk-peer", "对端") }];
     const e3 = appEditor(projectStateToJson(mine2));
-    const b3 = await bindPageToEditorViaPort({ port: angry, pageId: "q2", editor: e3, seedJson: serialize(e3) });
+    const b3 = await bindPageToEditorViaPort({ a1Enabled: true, port: angry, pageId: "q2", editor: e3, seedJson: serialize(e3) });
     expect(idsOf(b3.session.exportJson())).toContain("blk-peer"); // 绑定成功、合并生效
     expect(warn.mock.calls.some((c) => String(c[0]).includes("投影写回失败")), "失败必须留痕").toBe(true);
     b3.dispose();
@@ -571,7 +571,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
 
     // 本机首开建血统，并打一块
     const e0 = appEditor(BASE);
-    const b0 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e0, seedJson: serialize(e0) });
+    const b0 = await bindPageToEditorViaPort({ a1Enabled: true, port, pageId: "p1", editor: e0, seedJson: serialize(e0) });
     typeBlock(e0, "blk-mine", "本机打的");
     await b0.persist();
     const mineState = store.get("p1")!;
@@ -580,7 +580,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     // ① **同血统**的正常合并 ⇒ 这不是冲突，不许留痕
     pending = [{ seq: 8, state: peerStateFrom(mineState, "blk-peer", "对端加的") }];
     const e1 = appEditor(projectStateToJson(mineState));
-    const b1 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e1, seedJson: serialize(e1) });
+    const b1 = await bindPageToEditorViaPort({ a1Enabled: true, port, pageId: "p1", editor: e1, seedJson: serialize(e1) });
     expect(b1.pendingSkipped).toBe(0);
     expect(records.length, "合得上就不是冲突 ⇒ 不该留痕").toBe(0);
     b1.dispose();
@@ -589,7 +589,7 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     const independent = peerStateFrom({ json: BASE }, "blk-other", "另一套身份");
     pending = [{ seq: 9, state: independent }];
     const e2 = appEditor(projectStateToJson(store.get("p1")!));
-    const b2 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e2, seedJson: serialize(e2) });
+    const b2 = await bindPageToEditorViaPort({ a1Enabled: true, port, pageId: "p1", editor: e2, seedJson: serialize(e2) });
     expect(b2.pendingSkipped).toBe(1);
     expect(records.length, "被拒就要留痕（不然用户永远不知道有东西没合进来）").toBe(1);
     expect(records[0].pageId).toBe("p1");
