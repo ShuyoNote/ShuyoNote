@@ -314,7 +314,7 @@ describe.skipIf(!RUN)("A1 影子扫描（只读）", () => {
       `A1 影子：无差异 ${report.totals.no_change} ｜ 多块 ${report.totals.merged_more_blocks}` +
         ` ｜ 少块 ${report.totals.merged_fewer_blocks} ｜ 投影不一致 ${report.totals.projection_mismatch}` +
         ` ｜ 待重建 ${report.totals.projection_stale} ｜ 血统不相容 ${report.totals.lineage_incompatible}` +
-        ` ｜ 异常 ${report.totals.exception} ｜ 读不到 ${report.totals.unreadable}`,
+        ` ｜ 异常 ${report.totals.exception} ｜ 读不到 ${report.totals.unreadable} ｜ 排除加密 ${report.totals.excluded_nonplaintext}`,
     );
 
     if (all.length === 0 || all.every((s) => s.pageWithCrdt === 0)) {
