@@ -26,6 +26,7 @@ import { accountKey } from "../lib/emailAccount";
 import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
 import { useSpaceStore } from "../store/space";
+import { spaceAutoMergeEnabledFor, spaceAutoMergeKey } from "../lib/crdt/a1Gate";
 // ⭐ 2026-10-10：空间**筛选**（20+ 个空间）—— 与侧栏那个空间切换器**共用这一份**匹配 ✓
 import { filterSpaces } from "../lib/spaceFilter";
 import { spaceCryptoBadge } from "../lib/spaceSecurity";
@@ -250,6 +251,8 @@ function SpacesPane() {
   const spaces = useSpaceStore((s) => s.spaces);
   const activeId = useSpaceStore((s) => s.activeId);
   const [colorFor, setColorFor] = useState<string | null>(null);
+  // A1 实验开关：按空间（localStorage 设备级；默认关）
+  const [a1State, setA1State] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   // ⭐ 2026-10-10：筛选词（owner：「20+ 个空间怎么办」✓）⇒ 只影响**列表显示**：
   //    ⛔ 不动 `spaces`、⛔ 不动"当前空间" ✗（见 `filterSpaces`：签名里根本没有 active ✓）
@@ -350,6 +353,19 @@ function SpacesPane() {
     setColorFor(null);
     const ok = await useSpaceStore.getState().setSettings(id, color);
     if (!ok) toast("设置颜色失败", "error");
+  };
+
+  const toggleA1 = (id: string) => {
+    const on = !(a1State[id] ?? spaceAutoMergeEnabledFor(id));
+    try {
+      localStorage.setItem("shuyonote:crdt.autoMerge", "1");
+      if (on) localStorage.setItem(spaceAutoMergeKey(id), "1");
+      else localStorage.removeItem(spaceAutoMergeKey(id));
+    } catch {
+      // localStorage 不可用：保持原状（不假装成功）
+      return;
+    }
+    setA1State((prev) => ({ ...prev, [id]: on }));
   };
 
   const doRemove = async (id: string, name: string) => {
@@ -498,6 +514,18 @@ function SpacesPane() {
                       >
                         <LockIcon width={14} height={14} />
                         <span>{secViews[s.id]?.encrypted_on_disk || s.encrypted_on_disk ? "关闭加密…" : "开启加密…"}</span>
+                      </button>
+                      <button
+                        className="set-btn"
+                        title="A1 自动合并是实验能力：关闭时更安全；只对当前空间生效"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleA1(s.id);
+                        }}
+                      >
+                        <span>
+                          A1 自动合并：{(a1State[s.id] ?? spaceAutoMergeEnabledFor(s.id)) ? "开" : "关"}（实验）
+                        </span>
                       </button>
                       <button
                         className={`set-btn${colorFor === s.id ? " is-on" : ""}`}
