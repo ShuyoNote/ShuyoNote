@@ -41,7 +41,8 @@ G1 只对**明文空间、且显式打开 `crdt.autoMerge` 的空间**启用块�
     localStorage `shuyonote:crdt.autoMerge.<workspace_id> = 1`
     桌面主路径按空间库的 workspace id 读；Web 按载荷里的 workspace_id 读。
   ⇒ 两者都开才合并；只开设备级不再等于全空间开。
-· 仍缺：**UI 开关**（目前需 devtools 写 localStorage）；端口/待并路径仍是设备级。
+· **UI 开关（2026-11-24 已补）**：设置 → 空间卡片「⋯」→「A1 自动合并：开/关（实验）」；
+  开时自动写设备级 + 当前空间的 key。端口/待并路径仍是设备级。
 · 既有 pageBinding 判据已按“直接调用默认合并/生产默认关”更新并通过。
 ```
 
