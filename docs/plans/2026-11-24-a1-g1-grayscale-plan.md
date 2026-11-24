@@ -33,10 +33,13 @@ G1 只对**明文空间、且显式打开 `crdt.autoMerge` 的空间**启用块�
 运行时：两者都开才走合并；否则走“保本机 + 提示”（现有 disabled/staleState 路径）
 ⛔ 不新增数据库表；设置存空间 KV（与现有空间设置同层）。
 
-⚠️ **前置代码差距（2026-11-24 如实记）**：G0 的 kill switch **默认是开**的
-（`a1AutoMergeEnabledFrom` 只认显式 0/false/off 为关）⇒ 今天同血统页**已经在自动合并**。
-G1 要的“默认关 + 按空间开”**尚未实现**；在实现前，⛔ 不能把当前状态称作“G1 灰度”。
-实现时需把默认值/空间门加进去，并更新既有 pageBinding 判据（它们默认期待合并）。
+⚠️ **实现进度（2026-11-24 如实记）**：
+· **已改默认关**：`a1AutoMergeEnabledFrom` 只认显式 1/true/on；
+  生产调用方（main.tsx / web applyChange / 端口绑定）都过运行时开关。
+· **当前是设备级开关**：localStorage `shuyonote:crdt.autoMerge=1` 才开；
+  ⛔ **空间级 `crdt.autoMerge` 还没做** ⇒ G1-a（自用）可先用设备级，
+  G1-b（真实空间）前必须补空间级，否则“只开一个空间”做不到。
+· 既有 pageBinding 判据已按“直接调用默认合并/生产默认关”更新并通过。
 ```
 
 ## 3. 批次（个人版，空间少）

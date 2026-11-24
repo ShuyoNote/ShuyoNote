@@ -805,6 +805,13 @@ async function main() {
   {
     const PO = "p-crdt-wire";
     const seen = [];
+    // A1 默认关（2026-11-24）：本场景要验“状态走到落地实现”，显式打开设备级开关。
+    const prevLS = globalThis.localStorage;
+    globalThis.localStorage = {
+      getItem: (k) => (k === "shuyonote:crdt.autoMerge" ? "1" : null),
+      setItem: () => {},
+      removeItem: () => {},
+    };
     setCrdtRemoteApplier((db, pageId, state) => {
       seen.push({ pageId, bytes: Array.from(state) });
       return true; // applier 现在返回 boolean；false 会被平台层当成没并成而 stash
@@ -846,6 +853,8 @@ async function main() {
     ok(getRow(NA, PO3)?.title === "带 CRDT 状态的页", "O: 不认识的版本**不阻塞**主路径（页面照常落库）");
 
     setCrdtRemoteApplier(() => true); // 收尾：别把记录器留给后面的场景
+    if (prevLS === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = prevLS;
   }
 
   // =========== 汇总 ===========
