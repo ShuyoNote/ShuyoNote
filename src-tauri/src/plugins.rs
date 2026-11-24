@@ -17878,6 +17878,7 @@ register({ id: "s.run", title: "结构化", run: function () {
                     content_json: Some(newdoc.to_string()),
                     content_text: Some("新".to_string()),
                     space_id: None,
+                    invalidate_crdt: false,
                 },
             )
             .expect("目标空间保存应成功");
